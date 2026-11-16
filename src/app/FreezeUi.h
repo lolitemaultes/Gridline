@@ -70,7 +70,7 @@ void drawShade(App& a, ImDrawList* dl, Unit u, ImVec2 p0, ImVec2 p1);
 void channelMenuItems(App& a, ObjectId channel);                  // before "Render to sampled instrument..."
 void rackMenuItems(App& a, const std::vector<ObjectId>& channels);  // after "Route selected to free mixer tracks"
 void mixerMenuItems(App& a, const std::vector<ObjectId>& tracks);   // after "Disable track"
-void trackMenuItems(App& a, int track);                           // after "Lock"
+void trackMenuItems(App& a, int track, bool freezeOnly = false);  // after "Lock" (N48-18: Clips: "Freeze track" alone)
 void toolsMacroItems(App& a);                                     // Tools > Macros
 void optionsItems(App& a);                                        // Options, after delay compensation
 void exportItems(App& a);                                         // File > Export, after the zipped project

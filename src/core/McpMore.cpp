@@ -1450,6 +1450,9 @@ ToolResult tSetSetting(Environment& env, const Json& a) {
 const std::vector<std::pair<const char*, std::vector<const char*>>>& examples() {
   static const std::vector<std::pair<const char*, std::vector<const char*>>> v = {
       {"get_song", {"{}"}},
+      {"assistant_inbox", {"{}"}},
+      {"assistant_say", {"{\"text\": \"I added a bass line to Pattern 2; accept it in the panel to keep it.\"}"}},
+      {"get_proposals", {"{}"}},
       {"find", {"{\"query\": \"kick\"}", "{\"query\": \"reverb\", \"includeCommands\": false}"}},
       {"inspect", {"{\"path\": \"channel/2\"}", "{\"path\": \"mixer/3/sends\"}", "{\"path\": \"song\", \"fields\": true}", "{\"path\": \"clip/57\"}"}},
       {"patch",
@@ -1557,6 +1560,46 @@ void addMoreTools(std::vector<Tool>& v) {
       if (std::strcmp(n, tool) == 0 && !list.empty()) return std::string(" Example: ") + list[0];
     return std::string();
   };
+  // K-92: the in-app assistant panel. The user types requests there; an assistant reads them,
+  // answers in the panel, and at the Propose level sees whether its changes were accepted.
+  add("assistant_inbox", "read the panel",
+      "What the user typed in Gridline's AI assistant panel since you last asked (oldest first), and the permission level: "
+      "\"read only\", \"propose\" (your changes wait for the user to accept them) or \"allow\". Poll it while you work "
+      "with the user through the panel." + ex("assistant_inbox"),
+      objSchema({{"all", boolP("Every line of the conversation, not only the unread ones")}}), true, [](Environment& env, const Json& args) {
+        const Json* all = args.find("all");
+        const bool every = all && all->is(Json::Type::Bool) && all->boolean;
+        Json lines = Json::makeArray();
+        uint64_t last = env.chatRead;
+        for (const auto& c : env.chat) {
+          if (!every && (!c.fromUser || c.id <= env.chatRead)) continue;
+          lines.array.push_back(jobj({{"from", jstr(c.fromUser ? "user" : c.who)}, {"text", jstr(c.text)}}));
+          if (c.fromUser) last = std::max(last, c.id);
+        }
+        env.chatRead = last;
+        const char* level = !env.allowEdits ? "read only" : env.propose ? "propose" : "allow";
+        return ok(jobj({{"messages", lines}, {"level", jstr(level)}, {"waitingProposals", jnum(static_cast<double>(env.proposals.size()))}}),
+                  std::to_string(lines.array.size()) + " messages");
+      });
+  add("assistant_say", "answer in the panel",
+      "Shows your text in Gridline's AI assistant panel, as your answer to the user (plain text, up to 4000 characters)." + ex("assistant_say"),
+      objSchema({{"text", strP("What to tell the user", 4000)}}, {"text"}), true, [](Environment& env, const Json& args) {
+        env.say(false, "assistant", args.text("text"));
+        return ok(jobj({{"shown", jbool(true)}}), "said: " + args.text("text").substr(0, 60));
+      });
+  add("get_proposals", "proposed changes",
+      "At the Propose level: your changes that still wait for the user (number, tool, what changes). A proposal that is gone was "
+      "accepted or discarded." + ex("get_proposals"),
+      objSchema({}), true, [](Environment& env, const Json&) {
+        Json list = Json::makeArray();
+        for (const auto& p : env.proposals) {
+          Json lines = Json::makeArray();
+          for (const auto& l : p.diff) lines.array.push_back(jstr(l));
+          list.array.push_back(jobj({{"proposal", jnum(static_cast<double>(p.id))}, {"tool", jstr(p.tool)}, {"changes", lines}}));
+        }
+        return ok(jobj({{"proposals", list}, {"level", jstr(!env.allowEdits ? "read only" : env.propose ? "propose" : "allow")}}),
+                  std::to_string(env.proposals.size()) + " waiting");
+      });
   add("help", "help",
       "How to use Gridline's tools: an overview, the tool list, path syntax, the fields of every object kind, or one tool's "
       "description, schema and examples. Call it first when unsure.",

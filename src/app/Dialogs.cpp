@@ -1,7 +1,9 @@
 // Gridline — dialogs (file, settings, project info, export, history, about,
 // shortcuts, unsaved changes) and global keyboard shortcuts.
+#include "WindowRaise.h"
 #include "LayoutShellUi.h"
 #include "LiveLook.h"
+#include "ChopUi.h"
 #include "../core/ChromeOs.h"
 #include "../core/LayoutShell.h"
 #include "CollabUi.h"
@@ -65,6 +67,7 @@
 #include "MeterUi.h"
 #include "../core/MeterEdit.h"
 #include "Windows.h"
+#include "SpeechUi.h"
 #include "GrooveUi.h"
 #include "Viewports.h"
 #include "../core/WheelRoute.h"
@@ -1125,16 +1128,30 @@ void confirmPrompt(App& a) {
     ImGui::PopTextWrapPos();
   }
   ImGui::Dummy(ImVec2(372, theme::kS1 + theme::kS2));
-  alignRight(90 + 100 + theme::kS2);
+  const bool third = !c.noLabel.empty();
+  const float okW = third ? 120.0f : 100.0f;
+  alignRight(90 + okW + theme::kS2 + (third ? okW + theme::kS2 : 0.0f));
   if (ui::TextButton("Cancel", false, 90) || ::gl::keys::escapePressed()) {
-    c.action = nullptr;
+    c.action = c.noAction = nullptr;
+    c.noLabel.clear();
     ImGui::CloseCurrentPopup();
   }
+  if (third) {
+    ImGui::SameLine(0, theme::kS2);
+    if (ui::TextButton(c.noLabel.c_str(), false, okW) || ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+      auto run = std::move(c.noAction);
+      c.action = c.noAction = nullptr;
+      c.noLabel.clear();
+      ImGui::CloseCurrentPopup();
+      if (run) run();
+    }
+  }
   ImGui::SameLine(0, theme::kS2);
-  if (ui::PrimaryButton(c.okLabel.empty() ? "OK" : c.okLabel.c_str(), 100) || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+  if (ui::PrimaryButton(c.okLabel.empty() ? "OK" : c.okLabel.c_str(), okW) || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
       ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
     auto run = std::move(c.action);
-    c.action = nullptr;
+    c.action = c.noAction = nullptr;
+    c.noLabel.clear();
     ImGui::CloseCurrentPopup();
     if (run) run();
   }
@@ -1252,6 +1269,7 @@ void drawDialogs(App& a) {
   shortcutsWindow(a);
   unsavedPrompt(a);
   confirmPrompt(a);           // J-82: delete clip sources, …
+  speechui::draw(a);          // K-107: Speech
   ui::drawDisplayConfirm(a);  // J-77: Keep / Revert for size, theme, language, layout and audio changes
   updui::draw(a);             // J-89: update check (startup / Help), its popup
   suiteui::draw(a);           // J-131: Gridline Suite, first-launch question
@@ -1316,11 +1334,10 @@ void endPointerGesture(App& a) {
 void pointerGestureFrameEnd(App& a) { endPointerGesture(a); }
 
 namespace {
-// K-124: the focused window is one of the editors or plugin windows Esc leaves for the playlist.
-bool editorWindowFocused() {
-  const ImGuiWindow* nav = GImGui->NavWindow;
-  if (!nav) return false;
-  const char* full = nav->RootWindow ? nav->RootWindow->Name : nav->Name;
+// K-124: the window is one of the editors or plugin windows Esc leaves for the playlist.
+bool editorWindow(const ImGuiWindow* w) {
+  if (!w) return false;
+  const char* full = w->RootWindow ? w->RootWindow->Name : w->Name;
   const char* id = ui::stableWindowName(full);
   for (const char* n : {"Piano roll", "Channel rack", "Mixer", "Loupe"})
     if (!std::strcmp(id, n)) return true;
@@ -1328,13 +1345,208 @@ bool editorWindowFocused() {
     if (std::strstr(full, tag)) return true;
   return false;
 }
+bool editorWindowFocused() { return editorWindow(GImGui->NavWindow); }
+
+// K-297: the window a key closes: the focused floating window (not docked in a layout) that has a
+// close button. Esc (dialogsOnly) closes dialogs and tool windows: one that never docks (About,
+// Render, Project info, a tool's window), or one of the panels that only ever open over the
+// layout; never an editor or plugin window (Esc there brings the playlist forward, K-124) and
+// never a panel that is part of a layout (the playlist, mixer or browser floating). Cmd+W
+// (window.close) closes any of them. It closes on the window's next Begin(), as its close
+// button does (GRIDLINE PATCH K-297 in imgui.cpp).
+bool closableWindow(const ImGuiWindow* w, bool dialogsOnly) {
+  if (!w || !w->HasCloseButton || !(w->Active || w->WasActive) || w->Hidden || w->DockIsActive || w->Collapsed) return false;
+  if (w->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_Modal)) return false;
+  if (w->Name[0] == '#' && w->Name[1] == '#') return false;
+  if (!dialogsOnly) return true;
+  if (editorWindow(w) || std::strstr(w->Name, "###fxmore")) return false;
+  if (w->Flags & ImGuiWindowFlags_NoDocking) return true;
+  const char* id = ui::stableWindowName(w->Name);
+  for (const char* n : {"Settings", "Keyboard shortcuts", "Plugin manager", "Project info", "Undo history", "Performance", "Sync review"})
+    if (!std::strcmp(id, n)) return true;
+  return false;
+}
+
+// K-297 (round 4, K-301 R04-07): Gridline's own chrome holds the focus (the top bar, a layout's
+// toolbar or menu strip, the status bar: windows that draw their own title or none, "##..."), or
+// nothing does: the key goes to the front-most window it may close, as the reference's Esc goes
+// to the dialog in front. A click on the top bar's menu or transport after a dialog opened (the
+// About item, Smooth's own menu strip) left Esc with nowhere to go.
+bool chromeWindow(const ImGuiWindow* w) {
+  return w && w->Name[0] == '#' && w->Name[1] == '#' && !(w->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_Modal | ImGuiWindowFlags_ChildMenu));
+}
+
+// K-297 (round 6): the bars themselves (the top bar, the status bar, the dock space behind the
+// windows, the splash): never the place for the keys. (Other "##" windows, such as the command
+// palette, a crash report or the launcher, are real places to type.)
+bool barWindow(const ImGuiWindow* w) {
+  if (!chromeWindow(w)) return false;
+  for (const char* n : {"##topbar", "##status", "##dockhost", "##splash"})
+    if (!std::strcmp(w->Name, n)) return true;
+  return false;
+}
+
+ImGuiWindow* closableFocusedWindow(bool dialogsOnly) {
+  ImGuiContext& g = *GImGui;
+  const ImGuiWindow* nav = g.NavWindow;
+  ImGuiWindow* w = nav ? nav->RootWindow : nullptr;
+  while (w && (w->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu | ImGuiWindowFlags_Tooltip)) && w->ParentWindow)
+    w = w->ParentWindow->RootWindow;  // (a popup of the window: the popup goes first, by itself)
+  if (w && !w->Active && !w->WasActive) w = nullptr;  // the focus left on a window that closed (the project load card at start)
+  if (!w || chromeWindow(w)) {
+    for (int i = g.Windows.Size - 1; i >= 0; --i)  // (display order: the front one last)
+      if (ImGuiWindow* o = g.Windows[i]; o == o->RootWindow && closableWindow(o, dialogsOnly)) return o;
+    return nullptr;
+  }
+  return closableWindow(w, dialogsOnly) ? w : nullptr;
+}
+
+void closeFocusedWindow(bool dialogsOnly) {
+  if (ImGuiWindow* w = closableFocusedWindow(dialogsOnly)) GImGui->CloseWindowRequest = w->ID;
+}
+
+// K-297 (round 4): the keyboard goes back to the main view when the window that had it closes (a
+// dialog closed by Esc, Cmd+W or its close button; the project load card at start). ImGui handed
+// the focus to the window focused before it, often the top bar or the status bar (the click that
+// opened the dialog, or nothing at start): the keys of the main view (its context) then did nothing
+// until a click in it. A focus that falls on another real window (an editor, a second dialog) stays
+// there. (Round 6: a click on the bars gives the keys back to the window that had them.)
+const char* shownMainView() {  // the layout's main view when it is on screen (nullptr otherwise)
+  for (const char* n : {"Pattern editor", "Playlist", "Live pads"})
+    if (layoutui::active() == layout::Preset::Tracker || std::strcmp(n, "Pattern editor"))
+      if (const ImGuiWindow* m = ImGui::FindWindowByName(n); m && m->Active && !m->Hidden &&
+          (!m->DockIsActive || !m->DockNode || m->DockNode->VisibleWindow == m))  // (not a tab behind another)
+        return n;
+  return nullptr;
+}
+
+void focusBackToMainView(App& a) {
+  static ImGuiID prevId = 0;
+  ImGuiContext& g = *GImGui;
+  ImGuiWindow* cur = g.NavWindow ? g.NavWindow->RootWindow : nullptr;
+  ImGuiWindow* prev = prevId ? ImGui::FindWindowByID(prevId) : nullptr;
+  prevId = cur ? cur->ID : 0;
+  // K-297 (round 6): every layout starts with the keys in its main view. Studio and Clips started
+  // with them in the status bar (the last window to appear on the first frame after the splash takes
+  // the focus, and the main view's focus asked for while the splash showed found no window), so the
+  // main view's keys did nothing until a click in it. Once the main view is on screen, a focus still
+  // on the bars, the splash or nowhere goes to it; a real window that took the focus keeps it.
+  static bool started = false;
+  if (!started && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {  // (a menu open at start keeps it)
+    if (const char* n = shownMainView()) {
+      started = true;
+      if ((!cur || barWindow(cur)) && a.focusWindow.empty() && !ImGui::IsAnyMouseDown()) {
+        ImGuiWindow* m = ImGui::FindWindowByName(n);
+        ImGui::FocusWindow(m);  // (now, not next frame: a menu opened in between would close)
+        prevId = m->ID;
+        return;
+      }
+    }
+  }
+  // K-297 (round 5): the keyboard never stays with a tab hidden behind another one of its region.
+  // Esc on a Tracker page (Settings, Keyboard shortcuts) brings the pattern editor forward and keeps
+  // the page open behind it: the hidden page kept the keys and the pattern editor took none until
+  // clicked. The tab shown in that region takes them once the hidden one has held them a few frames
+  // (a window just opened into a region is shown a frame after it takes the focus).
+  static int hiddenFrames = 0;
+  ImGuiDockNode* node = cur && cur->DockIsActive ? cur->DockNode : nullptr;
+  ImGuiWindow* shown = node ? node->VisibleWindow : nullptr;
+  hiddenFrames = shown && shown != cur && !cur->DockTabIsVisible && shown->Active ? hiddenFrames + 1 : 0;
+  if (hiddenFrames >= 3 && !ImGui::IsAnyMouseDown() && !g.IO.WantTextInput &&
+      !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+    hiddenFrames = 0;
+    ImGui::FocusWindow(shown);
+    prevId = shown->ID;
+    return;
+  }
+  // K-297 (round 6): the bars never keep the keys. A click on the top bar or the status bar (a
+  // transport button, a window button, the tempo) gave them the keyboard focus, and the keys of the
+  // view in use did nothing until a click back in it. Once the click is over (no button held, no menu
+  // or pop-up open, no text being typed) the keys go back to the window that had them, or the main view.
+  static ImGuiID lastReal = 0;
+  static int barFrames = 0;
+  const bool popupOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+  if (cur && !chromeWindow(cur) && !(cur->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu | ImGuiWindowFlags_Tooltip)))
+    lastReal = cur->ID;
+  barFrames = cur && barWindow(cur) && !ImGui::IsAnyMouseDown() && !popupOpen && !g.IO.WantTextInput && a.focusWindow.empty() ? barFrames + 1 : 0;
+  if (barFrames >= 2) {
+    barFrames = 0;
+    ImGuiWindow* back = lastReal ? ImGui::FindWindowByID(lastReal) : nullptr;
+    if (back && back->Active && !back->Hidden && (!back->DockIsActive || !back->DockNode || back->DockNode->VisibleWindow == back)) {
+      ImGui::FocusWindow(back);
+      prevId = back->ID;
+      return;
+    }
+    if (const char* n = shownMainView()) {
+      a.focusWindow = n;
+      return;
+    }
+  }
+  if (!prev || prev == cur || prev->Active || chromeWindow(prev)) return;  // (nothing closed)
+  if ((prev->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu | ImGuiWindowFlags_Tooltip)) && !(prev->Flags & ImGuiWindowFlags_Modal))
+    return;  // (a menu or pop-up closed: the focus stays where it was opened from)
+  if (cur && !chromeWindow(cur) && (cur->Active || cur->WasActive)) return;
+  if (!a.focusWindow.empty() || ImGui::IsAnyMouseDown() || g.IO.WantTextInput ||
+      ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel))
+    return;
+  if (const char* n = shownMainView()) a.focusWindow = n;
+}
+// K-297 (round 6): a text field ended with Enter or Esc. Esc in a field of a small pop-up (the
+// tempo typed in, a rename) closes the pop-up as well: the first Esc only put the old text back and
+// a second one was needed. A field of the bars or the browser gives the keys to the main view once
+// typing ends (the search box kept them, and the main view's keys did nothing until a click).
+void textFieldEnded(App& a) {
+  static ImGuiID textId = 0, textWin = 0;
+  static int toMain = 0;
+  ImGuiContext& g = *GImGui;
+  const bool esc = ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+  const bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
+  if (textId && g.ActiveId != textId && (esc || enter)) {
+    ImGuiWindow* w = ImGui::FindWindowByID(textWin);
+    if (w && (w->Flags & ImGuiWindowFlags_Popup) && !(w->Flags & (ImGuiWindowFlags_Modal | ImGuiWindowFlags_ChildMenu))) {
+      if (esc)
+        for (int i = 0; i < g.OpenPopupStack.Size; ++i)
+          if (g.OpenPopupStack[i].Window == w) {
+            ImGui::ClosePopupToLevel(i, true);
+            break;
+          }
+      w = w->ParentWindow;  // (the window the pop-up was opened from)
+    }
+    ImGuiWindow* root = w ? w->RootWindow : nullptr;
+    auto named = [&](const char* n) {  // (a window's name, or its stable id after "###")
+      const char* id = std::strstr(root->Name, "###");
+      return !std::strcmp(id ? id + 3 : root->Name, n);
+    };
+    const bool panel = root && (barWindow(root) || named("Browser") || named("Library") || named("Notes") ||
+                                (layoutui::active() == layout::Preset::Tracker && named("Order list")));  // (the Tracker's header band)
+    if (panel) toMain = 3;
+  }
+  const bool typing = g.ActiveId && g.InputTextState.ID == g.ActiveId && g.ActiveIdWindow;
+  // (a few frames later, unless the field took the keys again: a name refused shows why and stays
+  // open for another try; a dialog over it keeps them too)
+  if (typing || ImGui::GetTopMostPopupModal() || ImGui::IsAnyMouseDown()) toMain = 0;
+  if (toMain > 0 && --toMain == 0)
+    if (const char* n = shownMainView()) a.focusWindow = n;
+  // A field opened again starts afresh: the whole text selected, as the first time. ImGui kept the
+  // ended field's state while no other field took its place, and a rename opened a second time
+  // put the cursor where the last typing had left it ("Drums" renamed again became "Drumsqq").
+  if (!typing && g.InputTextState.ID && g.ActiveId != g.InputTextState.ID) g.InputTextState.ID = 0;
+  textId = typing ? g.ActiveId : 0;
+  textWin = typing ? g.ActiveIdWindow->ID : 0;
+}
 }  // namespace
 
+void closeFrontWindow(bool dialogsOnly) { closeFocusedWindow(dialogsOnly); }
+
 void handleGlobalShortcuts(App& a) {
+  GImGui->CloseWindowRequest = 0;  // K-297: a close asked for last frame was taken by the window's Begin() (or it is gone)
   endPointerGesture(a);
+  textFieldEnded(a);
+  focusBackToMainView(a);
   if (menuShortcuts(a)) return;
   ImGuiIO& io = ImGui::GetIO();
   if (io.WantTextInput) return;
+  if (newtracks::holdsKeys()) return;  // R06-07: the New tracks dialog is modal
   using keys::pressed;
   // K-79: with the typing keyboard on, letters and digits play notes: a command on such a key
   // without Ctrl / Alt / Cmd (the tracks set: B, X, E, R, K, ...) waits until it is off.
@@ -1346,7 +1558,11 @@ void handleGlobalShortcuts(App& a) {
       }
     return keys::pressed(id);
   };
-  if (pressed("transport.play")) a.engine.playing() ? menuparity::stopPressed(a) : (void)menuparity::playPressed(a);  // J-109: Stop releases everything; J-112: stops plugin playback first
+  if (pressed("transport.play")) {
+    if (!a.engine.playing()) (void)menuparity::playPressed(a);
+    else if (layoutui::active() == layout::Preset::Logic) menuparity::tracksStop(a);  // R02-11: Space stops in place
+    else menuparity::stopPressed(a);
+  }  // J-109: Stop releases everything; J-112: stops plugin playback first
   undoui::frame(a);  // K-141: Undo / Redo (not while a menu or dialog is open; waits for an open edit)
   if (pressed("edit.history")) a.showHistory = !a.showHistory;
   if (pressed("file.save")) a.save();
@@ -1361,7 +1577,13 @@ void handleGlobalShortcuts(App& a) {
   if (pressed("transport.tapTempo")) a.tapTempo();  // K-48
   for (const bool audio : {true, false})  // K-112c: a new track of the Clips set, selected
     if (pressed(audio ? "track.newAudio" : "track.newMidi"))
-      if (const int t = audio ? trackmodes::addAudioTrack(a.doc) : trackmodes::addMidiTrack(a.doc); t >= 0) a.playlist.trackSel = {t};
+      livelook::newTrack(a, audio);  // N45-08: after the selected track, selected
+  if (livelook::active(a)) {  // N47-11: the Clips set's return track, detail bands and Session record keys
+    if (pressed("track.newReturn")) livelook::newReturnTrack(a);
+    if (pressed("clips.insertMidiClip")) livelook::gridInsertMidiClip(a);  // N49-07
+    if (pressed("view.detail")) livelook::toggleDetail(a);
+    if (pressed("transport.sessionRecord")) livelook::toggleSessionRecord(a);
+  }
   if (pressed("options.typingKeyboard")) a.typingKeyboard = !a.typingKeyboard;
   if (typed("options.metronome")) a.metronome = !a.metronome;
   if (!a.typingKeyboard && pressed("transport.songMode"))
@@ -1372,6 +1594,10 @@ void handleGlobalShortcuts(App& a) {
     if (id) a.selectPattern(id);
   }
   auto toggle = [&](bool& f, const char* name) {
+    // K-297 (round 6): the key of a window open as a tab behind another one of its region brings it
+    // forward (with the keys). It closed it: F5 with the piano roll in front of the playlist closed
+    // the playlist nobody could see, and a second F5 was needed to show it.
+    if (f && ui::bringTabForward(name)) return;
     f = !f;
     if (f) a.focusWindow = name;
   };
@@ -1389,25 +1615,62 @@ void handleGlobalShortcuts(App& a) {
     if (typed("view.files")) trackerview::setHeaderSwap(trackerview::headerSwap() == 2 ? 0 : 2);
     if (typed("help.trackerKeys")) trackerview::setHeaderSwap(trackerview::headerSwap() == 1 ? 0 : 1);
     if (typed("view.headerBand")) trackerview::setExtended(a, !trackerview::extended());
+    if (typed("view.transposeBox")) trackerview::toggleScopeTool(a, 1);
+    if (typed("view.cleanUp")) trackerview::toggleScopeTool(a, 2);
+    if (typed("view.advancedEdit")) trackerview::toggleScopeTool(a, 3);
+    if (typed("view.audioEditor")) trackerview::toggleAudioPage(a);  // as the header's Audio editor button
   } else {
-    if (typed("view.playlist")) toggle(a.showPlaylist, "Playlist");
+    if (typed("view.playlist")) {
+      // K-112B: in the Tracks layout the key (Cmd+1) brings the main window to the front, as the
+      // reference's Open Main Window does; the tracks area there never closes.
+      if (layoutui::active() == layout::Preset::Logic) a.showPlaylist = true, a.focusWindow = "Playlist";
+      else toggle(a.showPlaylist, "Playlist");
+    }
     if (typed("view.channelRack")) toggle(a.showRack, "Channel rack");
     if (typed("view.pianoRoll")) toggle(a.showPiano, "Piano roll");
     if (typed("view.mixer")) toggle(a.showMixer, "Mixer");
-    if (typed("view.patternEditor"))
+    if (typed("view.patternEditor") && layoutui::active() != layout::Preset::Live)  // N46-09: not in Clips
       if (bool* f = layoutui::windowOpenFlag(a, "Pattern editor")) toggle(*f, "Pattern editor");
     if (typed("view.pads")) toggle(a.showLivePads, "Live pads");
   }
   if (typed("view.browser")) toggle(a.showBrowser, "Browser");
   if (typed("view.channelSettings")) a.settingsChannel = a.settingsChannel != kNoId ? kNoId : a.selChannel;
-  if (typed("view.audioEditor")) a.settings.set("ui.loupePinned", !a.settings.getBool("ui.loupePinned"));
+  if (typed("view.audioEditor") && layoutui::active() != layout::Preset::Tracker) {  // the Tracker's key opens its own page (above)
+    if (layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic)) toggleTracksAudioEditor(a);  // R01-15
+    else a.settings.set("ui.loupePinned", !a.settings.getBool("ui.loupePinned"));
+  }
   if (typed("view.stage")) toggle(a.showStage, "Mixer");  // the mixer window's Stage view (stageui::sync opens the mixer)
   // K-124: Esc in an editor or plugin window brings the playlist (the main window) to the front,
   // once nothing else used the key this frame: a popup, menu or dialog, a drag, a text field, a tool.
-  if (!keys::escapeBusy() && editorWindowFocused() && keys::pressedPastEditor("view.backToPlaylist")) layoutui::showPlaylist(a);
+  // K-297: in the Tracker a page docked in the centre goes as its Exit does (Esc, Cmd+W).
+  const bool trackerOn = layoutui::active() == layout::Preset::Tracker && layoutui::shellBuilt(a, layout::Preset::Tracker);
+  // R8-02: the instrument steps from anywhere in the Tracker (the pattern takes the key itself).
+  if (trackerOn && !trackerview::hasKeyboard() && (io.KeyCtrl || io.KeySuper) && io.KeyShift && !io.KeyAlt &&
+      (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_DownArrow)))
+    trackerview::stepInstrument(a, ImGui::IsKeyPressed(ImGuiKey_UpArrow) ? -1 : 1);
+  if (!(trackerOn && trackerview::closeFrontPageKey(a))) {
+    // N45-01: in Clips Escape never changes the main view (only Tab swaps the grid and the arrangement).
+    if (!livelook::active(a) && !keys::escapeBusy() && editorWindowFocused() && keys::pressedPastEditor("view.backToPlaylist")) layoutui::showPlaylist(a);
+    // K-297: Esc in a dialog or tool window closes it (K-301 R02-19), once nothing else used the key.
+    if (!keys::escapeBusy() && !io.KeyCtrl && !io.KeyShift && !io.KeyAlt && !io.KeySuper && ImGui::IsKeyPressed(ImGuiKey_Escape, false) &&
+        closableFocusedWindow(true)) {
+      closeFocusedWindow(true);
+      keys::claimEscape();
+    }
+    if (pressed("window.close")) closeFocusedWindow(false);  // K-297: Cmd+W in the sets that have it (K-301 R02-08)
+  }
   if (pressed("file.projectInfo")) a.showInfo = !a.showInfo;
   // K-79: commands the layout presets' shortcut sets put on single keys.
-  if (typed("transport.record")) a.recordArmed = !a.recordArmed;
+  if (typed("transport.record")) {
+    // R05-07: in the Tracks layout R is Record: armed and playing at once (with the count-in when it
+    // is on); pressed while recording, it stops recording and playback goes on.
+    if (logicplug::active(a) && !a.recordArmed && !a.engine.playing()) {
+      a.recordArmed = true;
+      (void)menuparity::playPressed(a);
+    } else {
+      livelook::toggleArrangementRecord(a);  // (outside Clips: the switch alone)
+    }
+  }
   if (typed("transport.toStart")) a.engine.setPosition(0);
   if (typed("transport.rewindBar") || typed("transport.forwardBar")) {
     const Tick bar = std::max<Tick>(1, a.doc.song().barTicks());
@@ -1441,12 +1704,12 @@ void handleGlobalShortcuts(App& a) {
     pane("view.inspector", "logic.inspector");
     // R01-08: Quick help is a small floating window (LayoutParts.cpp quickHelpFloat), not a pane.
     if (typed("view.quickHelp")) a.settings.set("ui.logicQuickHelp", !a.settings.getBool("ui.logicQuickHelp"));
+    if (typed("view.automation")) toggleAutomationLanes();  // R02-15: A, the selected tracks' lanes
     if (typed("view.smartControls"))  // R01-07: Y, the Smart controls in the lower pane
       if (bool* sm = layoutui::windowOpenFlag(a, "Smart controls")) {
         if (*sm && shown("logic.lower")) layoutui::setRegionVisible(a, "logic.lower", false);
         else layoutui::setRegionVisible(a, "logic.lower", true), *sm = true;
       }
-    if (typed("view.audioEditor") && a.settings.getBool("ui.loupePinned")) layoutui::setRegionVisible(a, "logic.lower", true);  // W
     if (typed("view.toolbar")) a.settings.set("ui.logicToolbar", !a.settings.getBool("ui.logicToolbar"));
     auto side = [&](const char* cmd, const char* window) {  // a panel of the right pane: shows it there, or hides the pane
       if (!typed(cmd)) return;
@@ -1458,15 +1721,24 @@ void handleGlobalShortcuts(App& a) {
     side("view.lists", "Lists");
     side("view.notes", "Notes");
     side("view.files", "Files");  // O: the project's files
-    if (typed("view.hidePlugins")) logicplug::toggleHidden(a);
+    // (V, view.hidePlugins: menuShortcuts takes it for every layout, K-297)
+    if (typed("playlist.toolMenu")) openToolMenu();  // R01-18
+    if (typed("view.globalTracks")) a.settings.set("ui.logicGlobalTracks", !a.settings.getBool("ui.logicGlobalTracks"));  // R01-15
     // K-112B (checkpoint 39): the Track and Navigate menu keys.
     if (pressed("track.newTracks")) newtracks::open();
     if (typed("transport.cycle")) toggleCycle(a);
+    if (pressed("transport.cycleSelection")) cycleToSelection(a);  // R02-13
+    if (pressed("transport.prevMarker")) gotoMarker(a, -1);       // R02-15
+    if (pressed("transport.nextMarker")) gotoMarker(a, 1);
+    if (typed("transport.goToPosition")) goToPositionPrompt(a);
     if (pressed("track.duplicate")) tracksNewSameSettings(a);
+    if (keys::focusContext() == keys::Context::Playlist && typed("track.mute")) tracksMuteSelected(a);  // R04-11
+    if (keys::focusContext() == keys::Context::Playlist && typed("track.solo")) tracksSoloSelected(a);
     if (pressed("track.delete")) tracksDeleteSelected(a);
   }
   if (keys::focusContext() == keys::Context::Playlist && typed("playlist.splitAtSongPos")) {
     if (layoutui::active() == layout::Preset::Logic) tracksSplitAtPlayhead(a);  // the Tracks layout: the selected clips only
+    else if (livelook::active(a) && a.playlist.selEnd > a.playlist.selStart) chopui::splitAtSelection(a);  // N48-05: both edges
     else splitClipsAtPlayhead(a);
   }
   const auto& pats = a.doc.song().patterns;

@@ -8,6 +8,9 @@
 //               time · voice · wave scope).
 //   MIDI Out  → MIDI out panel (558 × 389: channel / patch / bank / port
 //               selectors, 3 × 3 controller wheels, bottom bar).
+#include <cfloat>
+#include <map>
+#include "../engine/EffectsHw.h"
 #include "../core/I18n.h"
 #include "../engine/Dsp.h"
 #include "../engine/ClipSource.h"
@@ -611,6 +614,81 @@ void editorMidiOutFl(App& a, const PluginTarget& t, float width) {
   endForm(F, width, kH);
 }
 
+// ======================================================================= Hardware Insert (K-101)
+// MIDI Out's companion: the same panel colours. Send and return pairs, their levels, the dry /
+// wet mix, and the round trip the ping measures (written into the project as one undo step).
+void editorHwInsert(App& a, const PluginTarget& t, float width) {
+  const PluginState st = *t.state(a.doc.song());
+  const skin::Skin& K = midiSkin();
+  constexpr float kW = 558, kH = 214;
+  skin::Form F = fitForm(width, kW, kH, 440);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  skin::panel(dl, F.o, F.p(kW, kH), K, 4);
+  skin::Scope scope(K);
+  const float fl = lf(F, 9.5f);
+  // Where it goes and comes back.
+  skin::text(dl, F.p(8, 16), K.text, "Send", fl);
+  skin::digi(a, t, HwSend, F.p(48, 10), F.sz(120, 25), K);
+  skin::text(dl, F.p(190, 16), K.text, "Return", fl);
+  skin::digi(a, t, HwReturn, F.p(240, 10), F.sz(90, 25), K);
+  static const char* modes[2] = {"STEREO", "MONO"};
+  skin::switchSel(a, t, HwReturnMono, F.p(346, 10), F.sz(204, 25), K, modes, 2, true);
+  // Levels.
+  skin::well(dl, F.p(0, 46), F.p(558, 150), K, 3 * F.s);
+  const int knobs[3] = {HwSendGain, HwReturnGain, HwMix};
+  static const char* names[3] = {"Send level", "Return level", "Mix"};
+  for (int i = 0; i < 3; ++i) {
+    const float x = 30 + i * 180.0f, y = 56;
+    ImGui::PushID(i + 2000);
+    skin::wheel(a, t, knobs[i], F.p(x, y), 70 * F.s, K, skin::WheelBigLine);
+    skin::text(dl, F.p(x + 76, y + 14), K.text, names[i], lf(F, 8.5f));
+    const std::string v = describeParam(a.doc.song(), t.pid(knobs[i]))->format(val(st, knobs[i]));
+    skin::text(dl, F.p(x + 76, y + 34), skin::hex(0x797F83), v.c_str(), lf(F, 8));
+    ImGui::PopID();
+  }
+  // The round trip, the ping and what the device offers.
+  auto rt = t.isChannel() ? nullptr : a.builder.effectRuntime(t.owner, t.slot);
+  auto* fx = rt ? dynamic_cast<HwInsertFx*>(rt->fx.get()) : nullptr;
+  const bool connected = rt && rt->bands[2].load() > 0.5f;
+  const bool pinging = rt && rt->bands[1].load() > 0.5f;
+  skin::text(dl, F.p(8, 169.75f), K.text, "Round trip", fl);
+  skin::digi(a, t, HwLatency, F.p(78, 162), F.sz(70, 25), K, nullptr, 0, 2000.0f);
+  skin::text(dl, F.p(156, 169.75f), K.textDim, "samples", fl);
+  skin::text(dl, F.p(212, 169.75f), K.text, "Offset", fl);
+  skin::digi(a, t, HwOffset, F.p(254, 162), F.sz(60, 25), K, nullptr, 0, 400.0f);
+  const bool canPing = fx && connected && ival(st, HwSend) > 0;
+  if (skin::button("##ping", F.p(330, 162), F.sz(64, 25), K, "", pinging, fl) && canPing) fx->requestPing();
+  {  // the caption on the row's baseline (the labels beside it)
+    const char* cap = pinging ? "..." : "PING";
+    const float w = ImGui::GetFont()->CalcTextSizeA(fl, FLT_MAX, 0.f, cap).x;
+    skin::text(dl, ImVec2(F.p(362, 169.75f).x - 0.5f * w, F.p(362, 169.75f).y), canPing ? K.text : K.textDim, cap, fl);
+  }
+  if (ImGui::IsItemHovered())
+    a.setHint(canPing ? "Send one click out and time how long it takes to come back: that is the round trip"
+                      : "The ping needs a send and a return the audio device has");
+  // A ping that ended since it was asked for writes its result (one undo step).
+  static std::map<uint64_t, int> done;  // per insert: the last ping serial seen
+  if (fx) {
+    int& seen = done[t.key()];
+    const int serial = fx->pingSerial();
+    if (serial != seen) {
+      seen = serial;
+      const int r = fx->pingResult();
+      if (r >= 0) {
+        a.doc.setParam(t.pid(HwLatency), r, false);
+        a.notify("Round trip: " + std::to_string(r) + " samples", false);
+      } else if (r == -2) {
+        a.notify("No click came back within a second: check the cables and the return input", true);
+      }
+    }
+  }
+  const char* status = !rt ? "" : connected ? "connected" : "not connected";
+  skin::text(dl, F.p(410, 169.75f), connected ? K.textDim : skin::hex(0xE5484D), status, fl);
+  if (rt && !connected && ImGui::IsMouseHoveringRect(F.p(406, 162), F.p(554, 187)))
+    a.setHint("The audio device has no such output pair or input: the insert passes the sound on unchanged");
+  endForm(F, width, kH);
+}
+
 }  // namespace
 
 bool drawFlSynthEditor2(App& a, const PluginTarget& t, float width) {
@@ -621,6 +699,7 @@ bool drawFlSynthEditor2(App& a, const PluginTarget& t, float width) {
   else if (ty == "gl.sampler") editorSamplerFl(a, t, width);
   else if (ty == "gl.granular") editorGranularFl(a, t, width);
   else if (ty == "gl.midiout") editorMidiOutFl(a, t, width);
+  else if (ty == "gl.hwinsert") editorHwInsert(a, t, width);
   else return false;
   return true;
 }

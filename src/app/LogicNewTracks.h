@@ -11,6 +11,8 @@ namespace gl::newtracks {
 
 void open();
 bool isOpen();
+// R06-07: the dialog is modal: while open (and the frame it closes) no shortcut acts behind it.
+bool holdsKeys();
 void draw(App& a);
 
 }  // namespace gl::newtracks

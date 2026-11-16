@@ -15,6 +15,7 @@
 #include "sfx_convolver.h"
 #include "../../core/I18n.h"
 #include "../../core/KnobMagnet.h"
+#include "../../core/TimeKnob.h"
 #include "sfx_skin.h"
 #include "sfx_widgets.h"
 #include "sfx_flcurves.h"
@@ -1425,8 +1426,10 @@ void editorMultiDelay(App& a, const PluginTarget& t, float width) {
   W(a, t, P(MdFbPan), F, 280, 157, 44, K, "PAN");
   W(a, t, P(MdFeedback), F, 280, 216, 44, K, "VOL", ref ? skin::WheelBigLine | skin::WheelCentered : skin::WheelBigLine);
   {
-    std::string tv = pfmt(a, t, timeP);
+    const auto tk = timeknob::forParam("gl.multidelay", timeP);  // K-230: names the note value
+    std::string tv = tk && tapTempo(st, k) ? timeknob::readout(*tk, val(st, timeP), 0, true) : pfmt(a, t, timeP);
     skin::valueStrip(dl, F.p(280, 133), F.p(326, 147), K, tv.c_str(), F.font(7.5f));
+
   }
   if (ref) {
     skin::digi(a, t, P(MdFbFType), F.p(340, 97), F.sz(46, 17), K, shortTypes[std::clamp(ival(P(MdFbFType)), 0, 7)], F.font(8.0f));
@@ -2622,9 +2625,8 @@ void editorPhaser(App& a, const PluginTarget& t, float width) {
   W(a, t, VpDelayStereo, F, 456, dy + 71, 42, K, "STEREO", skin::WheelBigLine | skin::WheelCentered);
   if (val(st, VpDelaySync) >= 0.5f) {
     if (ref) {
-      pui::nextMagnets(magnet::syncDivisions(1, 768));  // K-147
-      W(a, t, VpDelayTicks, F, 535, dy + 71, 60, K, nullptr);
-      std::string tv = ticksText(VpDelayTicks);
+      W(a, t, VpDelayTicks, F, 535, dy + 71, 60, K, nullptr);  // K-230: the delay time knob's snapping (core/TimeKnob.h)
+      std::string tv = timeknob::readout(*timeknob::forParam("gl.vphaser", VpDelayTicks), val(st, VpDelayTicks), 0, true);
       skin::valueStrip(dl, F.p(540, dy + 133), F.p(590, dy + 146), K, tv.c_str(), F.font(7.5f));
     } else {
       menu(a, t, VpDelaySyncTime, F, 532, dy + 90, 64, 18, K);

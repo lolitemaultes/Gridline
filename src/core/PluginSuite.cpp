@@ -68,6 +68,7 @@ struct Exclusion {
 };
 const Exclusion kExcluded[] = {
     {"gl.midiout", "sends MIDI to other Gridline channels"},
+    {"gl.hwinsert", "sends to and returns from the audio device Gridline plays on"},
     {"gl.send", "routes audio to another Gridline mixer track"},
     {"gl.bussend", "routes audio to a Gridline audio bus"},
     {"gl.busreturn", "returns audio from a Gridline audio bus"},

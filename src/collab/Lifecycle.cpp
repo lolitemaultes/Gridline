@@ -10,6 +10,7 @@
 #include "../core/Platform.h"
 #include "../core/Project.h"
 #include "../core/ProjectInterop.h"
+#include "../core/SafeFs.h"
 
 namespace fs = std::filesystem;
 
@@ -43,7 +44,7 @@ bool exportPlainProject(const Song& song, const std::string& srcFolder, const st
         fs::create_directories(dst / "Audio", e2);
         const fs::path to = dst / "Audio" / file;
         if (!fs::exists(to, e2)) fs::copy_file(fs::path(srcAudio) / file, to, fs::copy_options::overwrite_existing, e2);
-        if (e2 && fs::exists(fs::path(srcAudio) / file)) ok = false;  // (a file that never arrived stays a missing reference)
+        if (e2 && safefs::existsAt(fs::path(srcAudio) / file)) ok = false;  // (a file that never arrived stays a missing reference)
         for (const auto& m : bundleMembers((fs::path(srcAudio) / file).string())) {  // what a map or a folder names beside it
           std::error_code e3;
           const fs::path member = dst / "Audio" / fs::path(m).filename();

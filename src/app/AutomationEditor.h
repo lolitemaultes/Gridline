@@ -70,6 +70,8 @@ bool& automationRecording();
 // While true, parameter changes are not recorded as automation (an instrument records them
 // its own way, J-159).
 bool& automationRecordHold();
+// R06-11: a take is writing this parameter now (its control shows the value written, not the curve).
+bool automationTakeActive(ParamId pid);
 
 // ---- piano roll: pattern automation lane: AutomationLane.h (K-171) ----
 

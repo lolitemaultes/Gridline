@@ -16,15 +16,18 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "App.h"
+#include "LogicPlugins.h"
 #include "ScrollBarUi.h"
 #include "SmoothScrollUi.h"
 #include "AutomationEditor.h"
 #include "EditTools.h"
 #include "ScriptUi.h"
 #include "../core/Grouping.h"
+#include "../core/SongTools.h"
 #include "../core/MenuParity.h"
 #include "../core/MeterEdit.h"
 #include "../core/NoteBend.h"
+#include "../core/NoteExprEdit.h"
 #include "../core/NoteLaneEdit.h"
 #include "../core/NoteTools.h"
 #include "../core/SmoothSnap.h"
@@ -41,6 +44,14 @@
 #include "LayoutShellUi.h"
 
 namespace gl {
+
+// GitHub #70: the play position inside the pattern shown (pattern ticks, -1: not playing there):
+// in pattern mode while it is the pattern playing, in song mode wherever a clip of it plays.
+static double rollPlayPos(App& a, ObjectId pat) {
+  const PlayMode m = a.engine.mode();
+  if (m == PlayMode::Live) return -1;
+  return trk::patternPlayPos(a.doc.song(), pat, m == PlayMode::Song, a.engine.pattern(), a.engine.position());
+}
 
 using theme::pal;
 
@@ -83,6 +94,16 @@ struct Gesture {
   bool drawResize = false;  // K-20: a Shift+click drew this note; its length follows the drag once it starts
   bool drawn = false;       // the click just drew this note: it follows the pointer at once
   std::set<size_t> selBefore;
+  // K-198 follow-up: a drag of a selection spanning the edited channels (every channel moves together).
+  bool multi = false;
+  multinote::Lists mbase;     // the selection's channels' lists at the press
+  multinote::Selection msel;  // the selection at the press (target included)
+  multinote::Selection editSelBefore;
+  int anchorPitch = 60, anchorVel = 100;  // the pressed note (preview, scale snap)
+  Tick anchorStart = 0, anchorLen = 1;
+  bool multiCopy = false;            // Shift+drag: copies move, the originals stay
+  ObjectId anchorCh = kNoId;         // an edited channel's note pressed (not the target's)
+  size_t anchorIdx = 0;
   // A delete sweep takes only the topmost note at each point: where it already deleted one, the note
   // that was under it stays (a later frame of the same press would otherwise take that one too).
   struct ErasedSpan {
@@ -130,14 +151,17 @@ struct NoteAnimTarget {
 } noteAnimT;
 
 // ---- note properties: the property lane, new-note colour and slide mode
-enum class Lane { Velocity, Pan, Release, Fine, ModX, ModY, Count };
-const char* const kLaneNames[] = {"Velocity", "Pan", "Release velocity", "Fine pitch", "Mod X", "Mod Y"};
-const char* const kLaneShort[] = {"VEL", "PAN", "REL", "FINE", "MOD X", "MOD Y"};
+// K-99: Pressure and Timbre are the notes' expression lanes (MPE): a line over each note's length.
+enum class Lane { Velocity, Pan, Release, Fine, ModX, ModY, Pressure, Timbre, Count };
+const char* const kLaneNames[] = {"Velocity", "Pan", "Release velocity", "Fine pitch", "Mod X", "Mod Y", "Note pressure", "Note timbre"};
+const char* const kLaneShort[] = {"VEL", "PAN", "REL", "FINE", "MOD X", "MOD Y", "PRESS", "TIMBRE"};
 Lane lane = Lane::Velocity;
 int newColor = 0;       // colour group of new notes
 bool newSlide = false;  // new notes are slide notes
 
-bool laneBipolar(Lane l) { return l == Lane::Pan || l == Lane::Fine; }
+bool laneBipolar(Lane l) { return l == Lane::Pan || l == Lane::Fine || l == Lane::Timbre; }
+bool exprLane(Lane l) { return l == Lane::Pressure || l == Lane::Timbre; }
+ExprDim laneDim(Lane l) { return l == Lane::Timbre ? ExprDim::Timbre : ExprDim::Pressure; }
 // Property value as 0..1 (0.5 = centre for bipolar lanes).
 float laneValue(const Note& n, Lane l) {
   switch (l) {
@@ -232,6 +256,30 @@ std::vector<bool> selVector(const App& a, size_t n) {
   for (size_t i : a.piano.selected)
     if (i < n) v[i] = true;
   return v;
+}
+
+// K-198 follow-up: the selection over the target channel (`selected`) and the channels edited
+// beside it (`editSel`). Edits of it are one undo step over every channel touched.
+bool multiSel(const App& a) { return !a.piano.editSel.empty(); }
+multinote::Selection unionSel(const App& a, ObjectId ch) {
+  multinote::Selection s = a.piano.editSel;
+  if (!a.piano.selected.empty()) s[ch] = a.piano.selected;
+  return s;
+}
+void splitSel(App& a, ObjectId ch, multinote::Selection s) {
+  auto it = s.find(ch);
+  a.piano.selected = it != s.end() ? it->second : std::set<size_t>{};
+  s.erase(ch);
+  multinote::prune(s);
+  a.piano.editSel = std::move(s);
+}
+void multiApply(App& a, ObjectId pat, ObjectId ch, const std::function<void(Note&)>& fn, const char* label) {
+  const multinote::Selection sel = unionSel(a, ch);
+  const multinote::Lists base = multinote::lists(a.doc.song(), pat, sel);
+  a.doc.beginGroup(label);
+  multinote::Selection out = multinote::transform(a.doc, pat, base, sel, fn, false, label);
+  a.doc.endGroup();
+  splitSel(a, ch, std::move(out));
 }
 
 void previewOn(App& a, ObjectId ch, int pitch, int vel) {
@@ -578,7 +626,7 @@ static void liveToolbar(App& a, const Pattern*& pat, const Channel*& chan, const
     if (!hlHere) ImGui::MenuItem(i18n::tr("Highlight scale"), nullptr, &st.highlightScale);
     const bool follow = a.settings.getBool("ui.autoScrollPattern");
     if (ImGui::MenuItem(i18n::tr("Follow the pattern position"), nullptr, follow)) a.settings.set("ui.autoScrollPattern", !follow);
-    if (ImGui::MenuItem(i18n::tr("Quantize"), "Ctrl+Q", false, pat && chan)) {
+    if (ImGui::MenuItem(i18n::tr("Quantize"), keys::shownText("Ctrl+Q"), false, pat && chan)) {
       if (std::vector<Note> ns = rollNotes(a, pat->id, chan->id); !ns.empty()) {
         const Tick gsz = st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap);
         auto sel = selVector(a, ns.size());
@@ -668,6 +716,15 @@ void drawPianoRoll(App& a) {
       ui::EndDockWindow();
       return;
     }
+  // C44-26: in Clips the clip band shows the selected clip only; with none selected it is empty.
+  if (livelook::active(a) && a.playlist.selected.empty()) {
+    const ImVec2 p0 = ImGui::GetCursorScreenPos(), av = ImGui::GetContentRegionAvail();
+    ui::EmptyState(ImGui::GetWindowDrawList(), p0, ImVec2(p0.x + av.x, p0.y + std::max(av.y, 60.0f)), i18n::tr("No clip selected"),
+                   i18n::tr("Select a clip in the clip grid or the arrangement to edit it here"));
+    ImGui::Dummy(ImVec2(av.x, std::max(av.y, 60.0f)));
+    ui::EndDockWindow();
+    return;
+  }
   // K-112c: the Live layout's clip column on the left; the piano roll indents itself past it and
   // stays one window (no child), so its focus, hover, popups and shortcuts are as everywhere else.
   if (trackerpages::active(a)) {  // K-106: the Tracker's Roll page has the pages' title bar (pattern and channel as the tracker numbers them)
@@ -695,10 +752,20 @@ void drawPianoRoll(App& a) {
     return n.empty() ? nullptr : &n;
   };
   if (st.selPattern != a.curPattern || st.selChannel != a.selChannel) {
-    st.selected.clear();
+    // K-198 follow-up: a new target from the picker keeps the selection over the edited channels.
+    std::set<size_t> took;
+    if (st.selPattern != a.curPattern) {
+      st.editSel.clear();
+    } else {
+      if (auto it = st.editSel.find(a.selChannel); it != st.editSel.end()) took = it->second, st.editSel.erase(it);
+      if (st.editChannels.count(st.selChannel) && !st.selected.empty()) st.editSel[st.selChannel] = st.selected;
+    }
+    st.selected = took;
     st.selPattern = a.curPattern;
     st.selChannel = a.selChannel;
   }
+  for (auto it = st.editSel.begin(); it != st.editSel.end();)  // only channels still edited here
+    it = st.editChannels.count(it->first) && it->first != a.selChannel && !it->second.empty() ? std::next(it) : st.editSel.erase(it);
   j31::pianoKey(a, st.scaleRoot, st.scale);  // J-31: scale highlighting follows key markers
 
   // ---------------- toolbar ----------------
@@ -748,20 +815,48 @@ void drawPianoRoll(App& a) {
       tdl->AddRectFilled(p, ImVec2(p.x + chanW, p.y + fh), open || hov ? theme::mix(P.field, P.surface700, 0.5f) : P.field, theme::kRadius);
       if (chan) tdl->AddRectFilled(ImVec2(p.x + 6, p.y + 6), ImVec2(p.x + 10, p.y + fh - 6), theme::rgb(chan->color), 2);
       theme::textEllipsis(tdl, a.fontRegular, theme::kFontBody, ImVec2(p.x + 16, std::round(p.y + (fh - theme::kFontBody) * 0.5f)),
-                          chanW - 36, P.text, chan ? chan->name.c_str() : "No channel");
+                          chanW - 36 - (st.editChannels.empty() ? 0.0f : 24.0f), P.text, chan ? chan->name.c_str() : "No channel");
+      if (!st.editChannels.empty()) {  // K-198: how many channels are edited beside the target
+        const std::string more = "+" + std::to_string(st.editChannels.size());
+        tdl->AddText(ImVec2(p.x + chanW - 22 - ImGui::CalcTextSize(more.c_str()).x, std::round(p.y + (fh - theme::kFontBody) * 0.5f)), P.hot, more.c_str());
+      }
       ui::drawIcon(tdl, ui::Icon::ChevronDown, ImVec2(p.x + chanW - 12, p.y + fh * 0.5f), 11, P.textDim);
-      ui::Hint("Channel being edited");
+      ui::Hint(st.editChannels.empty() ? "Target channel: the channel being edited (tick others in the list to edit them here too)"
+                                       : "Target channel: new notes go here; the other ticked channels are edited here too (click one of their notes to make it the target)");
       ImGui::SetNextWindowPos(ImVec2(p.x, p.y + fh + 2));
       if (ImGui::BeginPopup("##chanpop")) {
+        // K-198: the row picks the target; the box at its end edits that channel here too.
+        const float rowW = std::max(200.0f, chanW + 40);
         for (const auto& c : s.channels) {
           ImGui::PushID(static_cast<int>(c.id));
           ImVec2 q = ImGui::GetCursorScreenPos();
           float lh = ImGui::GetTextLineHeight();
-          if (ImGui::Selectable("##c", c.id == a.selChannel, 0, ImVec2(std::max(160.0f, chanW), 0))) a.selectChannel(c.id);
+          const bool target = c.id == a.selChannel;
+          bool edited = target || st.editChannels.count(c.id) > 0;
+          if (ImGui::Selectable("##c", target, ImGuiSelectableFlags_AllowOverlap, ImVec2(rowW - lh - 8, 0))) {
+            if (!st.editChannels.empty()) ops::retarget(st.editChannels, a.selChannel, c.id);
+            a.selectChannel(c.id);
+          }
           ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(q.x + 2, q.y + 2), ImVec2(q.x + 6, q.y + lh - 2), theme::rgb(c.color), 2);
-          ImGui::GetWindowDrawList()->AddText(ImVec2(q.x + 14, q.y), P.text, c.name.c_str());
+          ImGui::GetWindowDrawList()->AddText(ImVec2(q.x + 14, q.y), target ? P.hot : P.text, c.name.c_str());
+          ImGui::SameLine(rowW - lh);
+          ImGui::BeginDisabled(target);
+          ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
+          if (ImGui::Checkbox("##edit", &edited)) {
+            if (edited) st.editChannels.insert(c.id);
+            else st.editChannels.erase(c.id);
+          }
+          ImGui::PopStyleVar();
+          ImGui::EndDisabled();
+          ui::Hint(target ? "The target channel (new notes go here)" : "Edit this channel's notes here too");
           ImGui::PopID();
         }
+        ImGui::Separator();
+        if (pat && ImGui::MenuItem(i18n::tr("Edit every channel with notes here"))) {
+          const std::vector<ObjectId> with = ops::channelsWithNotes(s, *pat, a.selChannel);
+          st.editChannels = std::set<ObjectId>(with.begin(), with.end());
+        }
+        if (ImGui::MenuItem(i18n::tr("Edit the target channel only"), nullptr, false, !st.editChannels.empty())) st.editChannels.clear();
         ImGui::EndPopup();
       }
     }
@@ -883,7 +978,29 @@ void drawPianoRoll(App& a) {
     float room = roomLeft();
     if (room > 120 + 60) {
       ui::ToolbarDivider();
-      if (ui::TextButton("Quantize", false, 0, "Quantize note starts to the snap grid (Ctrl+Q)") && pat && chan) {
+      const bool quantize = ui::TextButton("Quantize", false, 0, "Quantize note starts to the snap grid (Ctrl+Q)") && pat && chan;
+      if (quantize && multiSel(a)) {  // K-198 follow-up: the selection over every edited channel
+        const Tick gsz = st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap);
+        multiApply(a, pat->id, chan->id, [&](Note& n) { n.start = gsz > 1 ? std::max<Tick>(0, ((n.start + gsz / 2) / gsz) * gsz) : n.start; },
+                   "quantize notes");
+        pat = s.pattern(a.curPattern), chan = s.channel(a.selChannel);
+      } else if (quantize && !st.editChannels.empty() && st.selected.empty()) {
+        // K-198: nothing selected and other channels edited here: every edited channel, one undo step.
+        const Tick gsz = st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap);
+        std::vector<ObjectId> chans{chan->id};
+        for (ObjectId c : st.editChannels)
+          if (c != chan->id && s.channel(c)) chans.push_back(c);
+        a.doc.beginGroup("quantize notes");
+        for (ObjectId c : chans) {
+          std::vector<Note> ns = rollNotes(a, pat->id, c);
+          if (ns.empty()) continue;
+          ops::quantizeStarts(ns, gsz);
+          std::sort(ns.begin(), ns.end(), [](const Note& x, const Note& y) { return x.start != y.start ? x.start < y.start : x.pitch < y.pitch; });
+          stepnotes::write(a.doc, pat->id, c, ns, "quantize notes", 0);
+        }
+        a.doc.endGroup(false);
+        pat = s.pattern(a.curPattern), chan = s.channel(a.selChannel);
+      } else if (quantize) {
         if (std::vector<Note> ns = rollNotes(a, pat->id, chan->id); !ns.empty()) {
           Tick gsz = st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap);
           auto sel = selVector(a, ns.size());
@@ -1059,10 +1176,14 @@ void drawPianoRoll(App& a) {
     // heading, two sliders and the button, never a button cut at the pane's foot.
     const float lh = ImGui::GetTextLineHeight(), sp = ImGui::GetStyle().ItemSpacing.y;
     const bool showQuant = ImGui::GetContentRegionAvail().y >= 10 + lh + sp + 2 * (lh + 2 + 16 + 2 * sp) + ImGui::GetFrameHeight() + sp;
+    // R02-21: a short pane (960 x 600) keeps the Quantize button on its own (strength and swing as
+    // last set): the reference's inspector always shows its time quantize.
+    const bool quantButton = showQuant || ImGui::GetContentRegionAvail().y >= 10 + ImGui::GetFrameHeight() + sp + 10 + lh + 2 + 16 + 2 * sp + 4;
     if (showQuant) section("Quantize");
+    if (!showQuant && quantButton) section(nullptr);
     if (showQuant) valueSlider("##prqstr", "Strength", &strength, 0, 100, "How far the notes move toward the grid, in percent");
     if (showQuant) valueSlider("##prqswing", "Swing", &swing, 0, 100, "50: straight; higher: every second grid position later, lower: earlier");
-    if (showQuant && ui::TextButton("Quantize notes", false, ImGui::GetContentRegionAvail().x, "Quantize the selected notes (none selected: every note) to the snap grid")) {
+    if (quantButton && ui::TextButton("Quantize notes", false, ImGui::GetContentRegionAvail().x, "Quantize the selected notes (none selected: every note) to the snap grid")) {
       std::vector<Note> ns = notes;
       const Tick gsz = std::max<Tick>(1, st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap == Snap::None ? Snap::Line : st.snap));
       auto sel = selVector(a, ns.size());
@@ -1116,6 +1237,7 @@ void drawPianoRoll(App& a) {
       if (valueSlider("##prvel", "Velocity", &vel, 1, 127, "The selected notes' velocity (none selected: the velocity new notes get)") && vel != before) {
         if (st.selected.empty()) {
           st.lastVelocity = vel;
+          st.lastSet = true;
         } else {
           std::vector<Note> ns = notes;
           auto sel = selVector(a, ns.size());
@@ -1219,10 +1341,15 @@ void drawPianoRoll(App& a) {
   const float rowH = st.rowHeight;
   layoutKeys(rowH);
   const Tick patLen = s.patternContentLength(*pat);
+  // N48-12: in Clips the selected clip's Start and End bound the notes that play: the brace, the
+  // shading and the clip view's fields are that one region (its ends drag in the brace row).
+  Tick regA = 0, regB = patLen;
+  const ObjectId regClip = livelook::clipRegion(a, pat->id, regA, regB);
+  bool braceTook = false;
   // The scrollable time: the pattern and eight bars after it (as the playlist's
   // song), in proportion to the zoom so the scroller's thumb and ends track the
   // pointer exactly while they scroll and zoom.
-  const Tick contentTicks = patLen + pm.baseBar() * 8;
+  const Tick contentTicks = std::max(patLen, regB) + pm.baseBar() * 8;
   auto maxScrollAt = [&](float pxPerTick) { return std::max(0.0f, static_cast<float>(contentTicks) * pxPerTick - gridW); };
   // First open: centre on the notes (C5-ish at the top when there are none).
   // Re-centred for a few frames while the dock layout settles the window size.
@@ -1302,15 +1429,20 @@ void drawPianoRoll(App& a) {
   scrollui::zoomEnd(st.zoomGlide, st.pxPerTick, st.scrollX, (wheelZoom && !smoothscroll::isNotch(io.MouseWheel)) || barZoom);
   // K-4: auto scrolling: page along with the pattern position while this pattern plays
   // (not while the user drags or scrolls the view; off: the view stays where it is).
-  if (a.engine.playing() && a.engine.mode() == PlayMode::Pattern && a.engine.pattern() == patId && a.settings.getBool("ui.autoScrollPattern") &&
-      !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Middle))
-    st.scrollX = ops::followScroll(st.scrollX, static_cast<float>(a.engine.position()) * st.pxPerTick, gridW);
+  const double playPos = a.engine.playing() ? rollPlayPos(a, patId) : -1.0;  // #70: song mode too
+  if (playPos >= 0 && a.settings.getBool("ui.autoScrollPattern") && !ImGui::IsMouseDown(ImGuiMouseButton_Left) &&
+      !ImGui::IsMouseDown(ImGuiMouseButton_Middle))
+    st.scrollX = ops::followScroll(st.scrollX, static_cast<float>(playPos) * st.pxPerTick, gridW);
   // ---- snapping: the visible grid (Line/Cell) or a fixed size; Alt inverts ----
   const Tick visGrid = timeline::visibleGrid(pm, st.pxPerTick);
   st.effGrid = timeline::snapGrid(pm, st.snap, st.pxPerTick, false);
   const Tick grid = std::max<Tick>(1, st.effGrid);  // keyboard nudges / quantize
   const Tick snapG = timeline::snapGrid(pm, st.snap, st.pxPerTick, io.KeyAlt);
-  const Tick defLen = st.lastLength > 0 ? st.lastLength : std::max<Tick>(1, s.ppq / 4);
+  // R02-17: the Tracks layout starts as the reference does (a 16th note at velocity 80) until a
+  // note is touched; then new notes copy the last edited one.
+  const bool tracksDefaults = !st.lastSet && logicplug::active(a);
+  const Tick defLen = st.lastLength > 0 && !tracksDefaults ? st.lastLength : std::max<Tick>(1, s.ppq / 4);
+  const int defVel = tracksDefaults ? 80 : st.lastVelocity;
 
   // Scroll & zoom.
   // J-67: wheel / trackpad input goes through the smooth scroller: a notch
@@ -1413,29 +1545,53 @@ void drawPianoRoll(App& a) {
       const pixelgrid::Span l = pixelgrid::line(xOf(t), dpp);
       dl->AddRectFilled(ImVec2(l.x0, gridMin.y), ImVec2(l.x1, gridMax.y), c);
     }
-    // Pattern end shading.
-    float xe = snapX(patLen);
+    // Pattern end shading (N48-12: in Clips, outside the clip's Start and End).
+    float xe = snapX(regClip != kNoId ? regB : patLen);
     if (xe < gridMax.x) dl->AddRectFilled(ImVec2(std::max(xe, gridMin.x), gridMin.y), gridMax, theme::withAlpha(P.surface950, 0.55f));
+    if (regClip != kNoId && regA > 0) {
+      const float xa = snapX(regA);
+      if (xa > gridMin.x) dl->AddRectFilled(gridMin, ImVec2(std::min(xa, gridMax.x), gridMax.y), theme::withAlpha(P.surface950, 0.55f));
+    }
   }
   j31::drawPianoBackground(a, gridMin.x, gridMin.y, gridMax.x, gridMax.y, static_cast<double>(tickAt(gridMin.x)),
                            1.0 / std::max(1e-6, static_cast<double>(st.pxPerTick)));  // J-31
   // Ghost notes from other channels (all others, or the chosen ones).
-  struct GhostHit { ObjectId ch; int pitch; };
-  GhostHit ghostHover{kNoId, -1};
-  if (st.ghostNotes)
-    for (const auto& [cid, ns] : pat->notes) {
-      if (cid == chId || (!st.ghostChannels.empty() && !st.ghostChannels.count(cid))) continue;
+  struct GhostHit { ObjectId ch; int pitch; int index; };
+  GhostHit ghostHover{kNoId, -1, -1};
+  // K-198: channels edited beside the target draw solid in their colour (a click takes them); their
+  // lists are the piano roll's (rack steps as step notes), so a selection of them lines up.
+  if (st.ghostNotes || !st.editChannels.empty()) {
+    std::vector<ObjectId> ghostChans;
+    for (const auto& [cid, ns] : pat->notes) ghostChans.push_back(cid);
+    for (ObjectId cid : st.editChannels)
+      if (!pat->notes.count(cid)) ghostChans.push_back(cid);
+    for (ObjectId cid : ghostChans) {
+      const bool edited = st.editChannels.count(cid) > 0;
+      if (cid == chId || (!edited && (!st.ghostNotes || (!st.ghostChannels.empty() && !st.ghostChannels.count(cid))))) continue;
       const Channel* oc = s.channel(cid);
+      if (edited && !oc) continue;
       const ImU32 gcol = oc ? theme::rgb(oc->color) : P.text;
-      for (const auto& n : ns) {
+      const std::vector<Note> viewNs = edited ? rollNotes(a, patId, cid) : std::vector<Note>{};
+      const std::vector<Note>& ns = edited ? viewNs : pat->notes.at(cid);
+      const auto selIt = st.editSel.find(cid);
+      for (size_t i = 0; i < ns.size(); ++i) {
+        const Note& n = ns[i];
         float y = yOf(n.pitch);
         const pixelgrid::Span gsx = pixelgrid::block(xOf(n.start), xOf(n.start + n.length), dpp, 0.0f, 1.0f), gsy = pixelgrid::block(y, y + rowH, dpp);
         ImVec2 g0(gsx.x0, gsy.x0), g1(gsx.x1, gsy.x1);
-        dl->AddRectFilled(g0, g1, theme::withAlpha(gcol, 0.13f), 2);
-        dl->AddRect(g0, g1, theme::withAlpha(gcol, 0.32f), 2);
-        if (hovered && io.MousePos.x >= g0.x && io.MousePos.x < g1.x && io.MousePos.y >= g0.y && io.MousePos.y < g1.y) ghostHover = {cid, n.pitch};
+        const bool picked = edited && selIt != st.editSel.end() && selIt->second.count(i) > 0;
+        dl->AddRectFilled(g0, g1, picked ? theme::mix(gcol, P.paper, 0.45f) : theme::withAlpha(gcol, edited ? 0.62f : 0.13f), 2);
+        if (picked) {  // K-198 follow-up: selected, with the lit rim of the target's selected notes
+          const float rimIn = pixelgrid::strokeIn(1.5f);
+          dl->AddRect(ImVec2(g0.x + rimIn, g0.y + rimIn), ImVec2(g1.x - rimIn, g1.y - rimIn), P.hot, 2, 0, 1.5f);
+        } else {
+          dl->AddRect(g0, g1, edited ? theme::withAlpha(P.ink, 0.6f) : theme::withAlpha(gcol, 0.32f), 2);
+        }
+        if (hovered && io.MousePos.x >= g0.x && io.MousePos.x < g1.x && io.MousePos.y >= g0.y && io.MousePos.y < g1.y)
+          ghostHover = {cid, n.pitch, edited ? static_cast<int>(i) : -1};
       }
     }
+  }
   // Notes.
   const ImU32 noteCol = theme::rgb(chan->color);
   // K-112b: the Logic layout colours notes by velocity (soft: cool, loud: warm), as all the
@@ -1715,9 +1871,15 @@ void drawPianoRoll(App& a) {
         if (bendTool) drawPoints(k);
       }
   }
-  // Playhead.
-  if (a.engine.playing() && a.engine.mode() == PlayMode::Pattern && a.engine.pattern() == patId) {
-    float x = xOf(static_cast<Tick>(a.engine.position()));
+  // Playhead (#70: song mode too). N47-06: in Clips also a launched clip's place in its notes (the clip launch mode).
+  double liveTick = 0;
+  const bool livePh = a.engine.playing() && a.engine.mode() == PlayMode::Live && livelook::clipPlayhead(a, patId, liveTick);
+  if (livePh) {
+    const float x = xOf(static_cast<Tick>(liveTick));
+    dl->AddLine(ImVec2(x, gridMin.y), ImVec2(x, gridMax.y), P.playhead, 1.5f);
+  }
+  if (playPos >= 0) {
+    float x = xOf(static_cast<Tick>(playPos));
     dl->AddLine(ImVec2(x, gridMin.y), ImVec2(x, gridMax.y), P.playhead, 1.5f);
   }
   // Step record cursor: where the next played chord goes (Alt+click in the grid moves it).
@@ -1913,27 +2075,59 @@ void drawPianoRoll(App& a) {
         dl->AddRectFilled(ImVec2(l.x0, r1.y - braceH - len), ImVec2(l.x1, r1.y - braceH - 1), major ? P.lineStrong : P.line);
       if (major) {
         std::string lbl = timeline::rulerLabel(pm, t, labelGrid);
+        if (lgKeys && t % bar == 0) lbl = std::to_string(t / bar + 1);  // R02-18: a bar reads as its number ("2", not "2.1"), as the reference's
         // K-112b (checkpoint 25): the Tracks layout's numbers in the interface face at caption size, as the
         // tracks area's ruler and 144, 152 set them.
         if (lgKeys) dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x + 4, rulerTop + numDy - 1), t % bar == 0 ? P.text : P.textFaint, lbl.c_str());
         else dl->AddText(livelook::numFont(a), theme::kFontLabel, ImVec2(x + 4, rulerTop + numDy), t % bar == 0 ? P.text : P.textFaint, lbl.c_str());
       }
     }
-    if (a.engine.mode() == PlayMode::Pattern) {  // position marker cap
-      float px = snapX(static_cast<Tick>(a.engine.position()));
+    // position marker cap (pattern mode: the pattern position; #70 song mode: where a clip of this
+    // pattern plays; N47-06 Clips: a launched clip's place)
+    const double capPos = livePh ? liveTick : a.engine.mode() == PlayMode::Pattern ? a.engine.position() : rollPlayPos(a, patId);
+    if (capPos >= 0) {
+      float px = snapX(static_cast<Tick>(capPos));
       dl->AddTriangleFilled(ImVec2(px - 5, r1.y - braceH - 9), ImVec2(px + 5, r1.y - braceH - 9), ImVec2(px, r1.y - braceH - 1), P.playhead);
     }
     float xe = snapX(patLen);
     if (braceH > 0) {
       // K-112 (Live): the loop brace: a bar in the pattern's colour from its start to its end, with a
       // flag at each end, on its own row under the bar numbers.
-      const float by0 = r1.y - braceH + 1, by1 = r1.y - 2, xs = snapX(0);
+      const float by0 = r1.y - braceH + 1, by1 = r1.y - 2, xs = snapX(regA);
+      if (regClip != kNoId) xe = snapX(regB);
+      // N48-12: the brace is the clip's Start to End: its ends drag them, its middle moves both.
+      static int bDrag = 0;  // 1 the start, 2 the end, 3 the whole region
+      static Tick bA = 0, bB = 0;
+      static float bX = 0;
+      if (regClip != kNoId) {
+        const float mx = io.MousePos.x;
+        const bool inBrace = hovered && io.MousePos.y >= by0 - 3 && io.MousePos.y < r1.y + 1 && mx >= xs - 6 && mx < xe + 6;
+        const int part = std::fabs(mx - xs) <= 5.0f ? 1 : std::fabs(mx - xe) <= 5.0f ? 2 : 3;
+        if (inBrace || bDrag) ImGui::SetMouseCursor((bDrag ? bDrag : part) == 3 ? ImGuiMouseCursor_Hand : ImGuiMouseCursor_ResizeEW);
+        if (inBrace && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) bDrag = part, bA = regA, bB = regB, bX = mx;
+        if (bDrag && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+          braceTook = true;
+          const Tick six = std::max<Tick>(1, s.beatTicks() / 4);
+          const double dt = static_cast<double>(mx - bX) / std::max(1e-6, static_cast<double>(st.pxPerTick));
+          const Tick d = static_cast<Tick>(std::llround(dt / static_cast<double>(six))) * six;
+          Tick na = bA, nb = bB;
+          if (bDrag == 1) na = std::clamp<Tick>(bA + d, 0, bB - six);
+          else if (bDrag == 2) nb = std::max<Tick>(bA + six, bB + d);
+          else na = std::max<Tick>(0, bA + d), nb = na + (bB - bA);
+          if (na != regA || nb != regB)
+            livelook::setClipRegion(a, regClip, na, nb, bDrag == 3 ? "move clip loop" : bDrag == 1 ? "clip start" : "clip end",
+                                    0x4252414345000000ull ^ static_cast<uint64_t>(regClip) ^ (static_cast<uint64_t>(bDrag) << 40));
+        } else if (bDrag) {
+          bDrag = 0;
+        }
+      }
       const ImU32 bc = theme::rgb(pat->color);
       dl->AddRectFilled(ImVec2(xs, by0), ImVec2(xe, by1), theme::withAlpha(bc, 0.85f));
       dl->AddTriangleFilled(ImVec2(xs, by0), ImVec2(xs + 5, (by0 + by1) * 0.5f), ImVec2(xs, by1), theme::contrastText(bc));
       dl->AddTriangleFilled(ImVec2(xe, by0), ImVec2(xe - 5, (by0 + by1) * 0.5f), ImVec2(xe, by1), theme::contrastText(bc));
       if (hovered && io.MousePos.y >= by0 - 2 && io.MousePos.y < by1 + 2 && io.MousePos.x >= xs && io.MousePos.x < xe)
-        a.setHint(i18n::tr("The pattern's loop: its length is set in the clip column"));
+        a.setHint(i18n::tr(regClip != kNoId ? "The clip's Start and End: drag an end to move it, the middle to move both"
+                                             : "The pattern's loop: its length is set in the clip column"));
     } else {
       dl->AddTriangleFilled(ImVec2(xe - 5, r1.y - 9), ImVec2(xe + 5, r1.y - 9), ImVec2(xe, r1.y - 2), P.textFaint);
     }
@@ -1981,8 +2175,8 @@ void drawPianoRoll(App& a) {
       const float y = std::round(my1 - f * (my1 - my0));
       dl->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + 2), st.selected.count(i) ? selCol : markCol);
     }
-    if (a.engine.mode() == PlayMode::Pattern && a.engine.pattern() == patId) {
-      const float px = std::round(hBar.toRail(static_cast<float>(a.engine.position()) * st.pxPerTick));
+    if (const double hp = rollPlayPos(a, patId); hp >= 0) {
+      const float px = std::round(hBar.toRail(static_cast<float>(hp) * st.pxPerTick));
       dl->AddLine(ImVec2(px, hBar.p0.y), ImVec2(px, hBar.p1.y), P.playhead, 1.0f);
     }
     dl->PopClipRect();
@@ -2040,7 +2234,7 @@ void drawPianoRoll(App& a) {
     const std::string autoLabel = patternLaneLabel(a);  // J-5: pattern automation lane shown instead
     // K-112c (Live): the lane's name in the sans face and sentence case, as the refs label it.
     const bool liveL = livelook::active(a);
-    static const char* const kLaneLive[] = {"Velocity", "Pan", "Release", "Fine pitch", "Mod X", "Mod Y"};
+    static const char* const kLaneLive[] = {"Velocity", "Pan", "Release", "Fine pitch", "Mod X", "Mod Y", "Pressure", "Timbre"};
     const char* laneName = autoLabel.empty() ? (liveL ? i18n::tr(kLaneLive[static_cast<int>(lane)]) : kLaneShort[static_cast<int>(lane)]) : autoLabel.c_str();
     theme::textEllipsis(dl, livelook::numFont(a), theme::kFontLabel, ImVec2(l0.x + 4, l0.y + 3), l1.x - l0.x - 16, lh ? P.text : P.textFaint, laneName);
     ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(l1.x - 6, (l0.y + l1.y) * 0.5f), 9, lh ? P.text : P.textFaint);
@@ -2066,6 +2260,30 @@ void drawPianoRoll(App& a) {
   const bool liveVel = livelook::active(a);
   for (size_t i = 0; i < notes.size() && !autoLane; ++i) {
     const Note& n = notes[i];
+    if (exprLane(lane)) {  // K-99: the note's pressure or timbre line over its length
+      const ExprDim d = laneDim(lane);
+      const float span = vMax.y - vMin.y;
+      const float x0 = snapX(n.start), x1 = snapX(n.start + n.length);
+      if (x1 < vMin.x - 2 || x0 > vMax.x + 2) continue;
+      const bool lsel = st.selected.count(i) > 0;
+      const ImU32 c = lsel ? P.hot : theme::mix(groupColor(n.color, noteCol), P.paper, 0.15f);
+      const bool has = !exprlane::laneOf(n, d).empty();
+      const int steps = std::clamp(static_cast<int>((x1 - x0) / 3.0f), 1, 400);
+      ImVec2 pts[401];
+      for (int k = 0; k <= steps; ++k) {
+        const double t = static_cast<double>(n.length) * k / steps;
+        pts[k] = ImVec2(x0 + (x1 - x0) * static_cast<float>(k) / static_cast<float>(steps),
+                        std::round(vMax.y - span * exprlane::valueAt(n, d, t)) + 0.5f);
+      }
+      const float yBase = std::round(vMax.y - span * (d == ExprDim::Timbre ? 0.5f : 0.0f)) + 0.5f;
+      if (has) {  // a soft fill between the line and its neutral value
+        for (int k = 0; k < steps; ++k)
+          dl->AddQuadFilled(ImVec2(pts[k].x, yBase), pts[k], pts[k + 1], ImVec2(pts[k + 1].x, yBase), theme::withAlpha(c, 0.12f));
+      }
+      dl->AddPolyline(pts, steps + 1, has ? c : theme::withAlpha(c, 0.35f), 0, has ? 1.5f : 1.0f);
+      dl->AddRectFilled(ImVec2(x0, std::min(pts[0].y, yBase) - 0.5f), ImVec2(x0 + 2, std::max(pts[0].y, yBase) + 0.5f), c);  // the note's start
+      continue;
+    }
     // Q-10: the bar glides to its new height (display only; the note already has the value).
     const uint64_t barKey = (static_cast<uint64_t>(chId) << 40) ^ (static_cast<uint64_t>(n.start) << 12) ^ (static_cast<uint64_t>(n.pitch) << 4) ^
                             static_cast<uint64_t>(lane);
@@ -2269,6 +2487,7 @@ void drawPianoRoll(App& a) {
       (keys::pressedHeld("piano.cancelDrag") || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
     if (g.grouped) a.doc.cancelGroup();
     st.selected = g.selBefore;
+    st.editSel = g.editSelBefore;
     previewOff(a, chId);
     noteAnim.clear();
     g = Gesture{};
@@ -2277,10 +2496,21 @@ void drawPianoRoll(App& a) {
     notes = rollNotes(a, patId, chId);
   }
 
+  // N47-05: in Clips a double-click on an empty spot of the grid adds a note whatever the tool (as the
+  // reference's pointer), by the Draw path below; the tool comes back after.
+  const Tool toolKept = st.tool;
+  // N48-09: did the first click of this double-click draw the note now under the pointer? (Then the
+  // second click keeps it; a double-click on a note that was already there deletes it.)
+  static bool clickDrewNote = false;
+  const bool drewThisNote = clickDrewNote;
+  if (lClick) clickDrewNote = false;
+  const bool liveAdd = livelook::active(a) && lClick && dbl && inGrid && hoverNote < 0 && !io.KeyCtrl && st.tool != Tool::Draw && st.tool != Tool::Bend;
+  if (liveAdd) st.tool = Tool::Draw;
   if (lClick || rClick) {
     if (!inVel && !(liveEnvelope && overGrid)) automationLaneBlur();  // K-171: the editing keys go back to the notes
     g = Gesture{};
     g.selBefore = st.selected;
+    g.editSelBefore = st.editSel;
     g.start = m;
     g.startTick = tickAt(m.x);
     g.startPitch = pitchAt(m.y);
@@ -2291,7 +2521,7 @@ void drawPianoRoll(App& a) {
     if (inKeys && lClick) {
       g.kind = Gesture::Keys;  // K-21: a glissando while held: the key under the pointer sounds, one at a time
       previewOn(a, chId, pitchAt(m.y), 100);
-    } else if (inRuler && lClick) {
+    } else if (inRuler && lClick && !braceTook) {
       if (a.engine.mode() != PlayMode::Pattern) {  // J-49 (J-77: scrubbing here keeps the rack where it is)
         a.engine.setMode(PlayMode::Pattern);
         a.rackReveal.quietSwitch(PlayMode::Pattern);
@@ -2410,18 +2640,56 @@ void drawPianoRoll(App& a) {
             g.bendT = bp.tick, g.bendV = bp.semis;
           }
         }
+      } else if (!dbl && !ctrl && hoverNote < 0 && ghostHover.index >= 0 && st.editChannels.count(ghostHover.ch) &&
+                 (st.tool == Tool::Draw || st.tool == Tool::Select || st.tool == Tool::Paint) &&
+                 (io.KeyShift || (st.editSel.count(ghostHover.ch) && st.editSel[ghostHover.ch].count(static_cast<size_t>(ghostHover.index))))) {
+        // K-198 follow-up: Shift+click adds an edited channel's note to the selection (the target
+        // stays); a press on a selected one drags the whole selection, every channel together
+        // (Shift+drag copies it).
+        const size_t gi = static_cast<size_t>(ghostHover.index);
+        std::set<size_t>& es = st.editSel[ghostHover.ch];
+        if (!es.count(gi)) {
+          es.insert(gi);
+        } else {
+          const std::vector<Note> ens = rollNotes(a, patId, ghostHover.ch);
+          if (gi < ens.size()) {
+            g.kind = Gesture::Move;
+            g.anchor = -1;
+            g.anchorCh = ghostHover.ch, g.anchorIdx = gi;
+            g.anchorPitch = ens[gi].pitch, g.anchorVel = ens[gi].velocity, g.anchorStart = ens[gi].start, g.anchorLen = ens[gi].length;
+            g.multi = true;
+            g.multiCopy = io.KeyShift;
+            g.msel = unionSel(a, chId);
+            g.mbase = multinote::lists(s, patId, g.msel);
+            a.doc.beginGroup(g.multiCopy ? "copy notes" : "move notes");
+            g.grouped = true;
+          }
+        }
+      } else if (!dbl && hoverNote < 0 && ghostHover.ch != kNoId && st.editChannels.count(ghostHover.ch) &&
+                 j31::takeEditedNoteAt(a, tickAt(m.x), ghostHover.pitch)) {
+        // K-198: a note of an edited channel: its channel is the target now, the note selected.
       } else if (!dbl && hoverNote < 0 && ghostHover.ch != kNoId && j31::editGhostAt(a, tickAt(m.x), ghostHover.pitch)) {
         // J-31 editable ghosts: the click switched to the ghost's channel with the note selected.
       } else if (dbl && hoverNote < 0 && ghostHover.ch != kNoId) {
         // Multi-channel editing: double-clicking a ghost note edits its channel.
         a.selectChannel(ghostHover.ch);
         a.notify("Editing " + std::string(s.channel(ghostHover.ch) ? s.channel(ghostHover.ch)->name : "channel"));
+      } else if (livelook::active(a) && dbl && toolKept == Tool::Draw && (hoverNote < 0 || drewThisNote)) {
+        // N47-04: the first click of a double-click in Draw drew the note: the second adds nothing.
+      } else if (livelook::active(a) && dbl && hoverNote >= 0) {
+        // N47-05: a double-click on a note deletes it, as the reference's (its properties: right-click).
+        std::vector<Note> ns = notes;
+        ns.erase(ns.begin() + hoverNote);
+        st.selected.clear();
+        commit(a, patId, chId, ns, std::vector<bool>(ns.size(), false), "delete note", 0);
+        notes = rollNotes(a, patId, chId);
+        g.base = notes;
       } else if (dbl && hoverNote >= 0) {
         propsNote = hoverNote;
         ImGui::OpenPopup("##noteprops");
       } else if (ctrl || st.tool == Tool::Select) {
         g.kind = Gesture::Select;
-        if (!io.KeyShift) st.selected.clear();
+        if (!io.KeyShift) st.selected.clear(), st.editSel.clear();
       } else if (st.tool == Tool::Erase) {
         g.kind = Gesture::Erase;
       } else if (st.tool == Tool::Slice) {
@@ -2449,50 +2717,72 @@ void drawPianoRoll(App& a) {
           // note when it is not selected), like FL; the copies follow the pointer.
           const bool shiftCopy = io.KeyShift && !io.KeyCtrl && !hoverEdge;
           if (!st.selected.count(static_cast<size_t>(hoverNote))) {
-            if (!io.KeyShift || shiftCopy) st.selected.clear();
+            if (!io.KeyShift || shiftCopy) st.selected.clear(), st.editSel.clear();
             st.selected.insert(static_cast<size_t>(hoverNote));
             j31::expandNoteGroups(a);  // J-31: grouped notes come along
             g.sel = selVector(a, notes.size());
           }
           g.kind = hoverEdge ? Gesture::Resize : Gesture::Move;
           g.copyPending = shiftCopy;
+          if (multiSel(a)) {  // K-198 follow-up: the selection spans the edited channels: they all go along
+            const Note& hn0 = notes[static_cast<size_t>(hoverNote)];
+            g.multi = true;
+            g.multiCopy = shiftCopy;
+            g.copyPending = false;
+            g.msel = unionSel(a, chId);
+            g.mbase = multinote::lists(s, patId, g.msel);
+            g.anchorPitch = hn0.pitch, g.anchorVel = hn0.velocity, g.anchorStart = hn0.start, g.anchorLen = hn0.length;
+          }
           a.doc.beginGroup(shiftCopy ? "copy notes" : hoverEdge ? "resize notes" : "move notes");  // one undo step (empty: none)
           g.grouped = true;
           const Note& hn = notes[static_cast<size_t>(hoverNote)];
           previewOn(a, chId, hn.pitch, hn.velocity);
           st.lastLength = hn.length;
           st.lastVelocity = hn.velocity;
+          st.lastSet = true;
         } else {
           // Add a note and start moving it.
+          st.editSel.clear();  // K-198 follow-up: the new note alone is the selection
           Note n;
           n.start = std::max<Tick>(0, snapDown(tickAt(m.x), snapG));
           n.length = defLen;
           n.pitch = pitchAt(m.y);
-          n.velocity = st.lastVelocity;
+          n.velocity = defVel;
           n.color = newColor;
           n.slide = newSlide;
           std::vector<Note> ns = notes;
           std::vector<bool> sel(ns.size(), false);
-          for (const Note& x : notesToAdd(st, n)) ns.push_back(x), sel.push_back(true);  // one note or a chord stamp
+          for (const Note& x : notesToAdd(st, n)) {  // one note or a chord stamp
+            // N47-04: in Clips never a second note on the same key at the same start (the reference keeps one)
+            if (livelook::active(a) && std::any_of(ns.begin(), ns.end(), [&](const Note& y) { return y.pitch == x.pitch && y.start == x.start; })) continue;
+            ns.push_back(x), sel.push_back(true);
+          }
           if (st.snapToScale && st.scale > 0) n.pitch = tools::snapPitchToScale(n.pitch, st.scaleRoot, st.scale);
-          commit(a, patId, chId, ns, sel, st.stampChord >= 0 ? "add chord" : "add note", g.key);
-          if (st.stampOnce && (st.stampChord >= 0 || st.stampAuto > 0)) st.stampChord = -1, st.stampAuto = 0, st.stampOnce = false;
-          notes = rollNotes(a, patId, chId);
-          g.base = notes;
-          g.sel = selVector(a, notes.size());
-          g.anchor = static_cast<int>(*st.selected.begin());
-          g.startTick = n.start;
-          // K-20: Shift+click draws the note and the drag sets its length (FL-familiar); a click
-          // without a drag keeps the default length.
-          g.kind = io.KeyShift ? Gesture::Resize : Gesture::Move;
-          g.drawResize = io.KeyShift;
-          g.drawn = true;
-          previewOn(a, chId, n.pitch, n.velocity);
+          if (ns.size() != notes.size()) {  // N47-04: already there: nothing added, nothing dragged
+            clickDrewNote = true;
+            commit(a, patId, chId, ns, sel, st.stampChord >= 0 ? "add chord" : "add note", g.key);
+            if (st.stampOnce && (st.stampChord >= 0 || st.stampAuto > 0)) st.stampChord = -1, st.stampAuto = 0, st.stampOnce = false;
+            notes = rollNotes(a, patId, chId);
+            g.base = notes;
+            g.sel = selVector(a, notes.size());
+            g.anchor = static_cast<int>(*st.selected.begin());
+            // N47-04: in Clips the drag counts from the click itself, not the snapped start: a click past
+            // the middle of a step moved the new note one step on, out from under the pointer (so a
+            // second click missed it and drew another).
+            g.startTick = livelook::active(a) ? tickAt(m.x) : n.start;
+            // K-20: Shift+click draws the note and the drag sets its length (FL-familiar); a click
+            // without a drag keeps the default length.
+            g.kind = io.KeyShift ? Gesture::Resize : Gesture::Move;
+            g.drawResize = io.KeyShift;
+            g.drawn = true;
+            previewOn(a, chId, n.pitch, n.velocity);
+          }
         }
       }
     }
   }
 
+  st.tool = toolKept;
   if (lClick || rClick) {  // J-37: a new drag starts its own glide
     noteAnim.clear();
     noteAnimT = NoteAnimTarget{patId, chId, {}};
@@ -2522,6 +2812,21 @@ void drawPianoRoll(App& a) {
         break;
       }
       case Gesture::Move: {
+        if (g.multi) {  // K-198 follow-up: every selected note of every edited channel moves by one delta
+          if (!g.moved && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f)) break;
+          const Tick earliest = multinote::earliestStart(g.mbase, g.msel, g.anchorStart);
+          const Tick dt = timeline::moveDistance(curTick - g.startTick, snapG, st.snap, earliest);
+          int dp = curPitch - g.startPitch;
+          if (st.snapToScale && st.scale > 0) dp = tools::snapPitchToScale(g.anchorPitch + dp, st.scaleRoot, st.scale) - g.anchorPitch;
+          dp = multinote::clampPitchDelta(g.mbase, g.msel, dp);
+          noteAnimT.d = {static_cast<double>(dt), static_cast<double>(dp), 0.0};
+          if (dt == 0 && dp == 0 && !g.moved) break;
+          g.moved = true;
+          splitSel(a, chId, multinote::transform(a.doc, patId, g.mbase, g.msel, [&](Note& n) { n.start += dt, n.pitch += dp; }, g.multiCopy,
+                                                 g.multiCopy ? "copy notes" : "move notes", g.key));
+          if (g.anchor >= 0) previewOn(a, chId, g.anchorPitch + dp, g.anchorVel);
+          break;
+        }
         if (g.anchor < 0 || static_cast<size_t>(g.anchor) >= g.base.size()) break;
         if (!g.moved && !g.drawn && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f)) break;  // a click moves nothing
         const Note& an = g.base[static_cast<size_t>(g.anchor)];
@@ -2560,10 +2865,18 @@ void drawPianoRoll(App& a) {
         const Note& an = g.base[static_cast<size_t>(g.anchor)];
         Tick end = timeline::snapTick(curTick, snapG, Snap::Line);
         Tick dl2 = std::max<Tick>(end, an.start + std::max<Tick>(1, snapG)) - (an.start + an.length);
+        if (g.multi) {  // K-198 follow-up: every selected note of every edited channel takes the same change
+          st.lastLength = std::max<Tick>(1, an.length + dl2);
+          noteAnimT.d = {0.0, 0.0, static_cast<double>(dl2)};
+          splitSel(a, chId, multinote::transform(a.doc, patId, g.mbase, g.msel, [&](Note& n) { n.length = std::max<Tick>(1, n.length + dl2); },
+                                                 false, "resize notes", g.key));
+          break;
+        }
         std::vector<Note> ns = g.base;
         for (size_t i = 0; i < ns.size(); ++i)
           if (g.sel[i]) ns[i].length = std::max<Tick>(1, ns[i].length + dl2);
         st.lastLength = std::max<Tick>(1, an.length + dl2);
+        st.lastSet = true;
         noteAnimT.d = {0.0, 0.0, static_cast<double>(dl2)};
         commit(a, patId, chId, ns, g.sel, "resize notes", g.key);
         break;
@@ -2579,6 +2892,17 @@ void drawPianoRoll(App& a) {
           if (x1 >= lo.x && x0 <= hi.x && y + rowH >= lo.y && y <= hi.y) sel.insert(i);
         }
         st.selected = sel;
+        // K-198 follow-up: the box takes the edited channels' notes too.
+        multinote::Selection es = io.KeyShift ? g.editSelBefore : multinote::Selection{};
+        for (ObjectId cid : st.editChannels) {
+          if (cid == chId) continue;
+          const std::vector<Note> ens = rollNotes(a, patId, cid);
+          for (size_t i = 0; i < ens.size(); ++i) {
+            float x0 = xOf(ens[i].start), x1 = xOf(ens[i].start + ens[i].length), y = yOf(ens[i].pitch);
+            if (x1 >= lo.x && x0 <= hi.x && y + rowH >= lo.y && y <= hi.y) es[cid].insert(i);
+          }
+        }
+        st.editSel = std::move(es);
         break;
       }
       case Gesture::Paint: {
@@ -2717,6 +3041,32 @@ void drawPianoRoll(App& a) {
         Note shown;
         setLaneValue(shown, lane, frac);
         const char* label = lane == Lane::Velocity ? "change velocity" : "change note property";
+        if (!ld.select && exprLane(lane)) {  // K-99: a pressure or timbre line painted over the notes
+          const ExprDim d = laneDim(lane);
+          const double grain = std::max(1.0, static_cast<double>(s.ppq) / 48.0);
+          const char* elabel = d == ExprDim::Pressure ? "change note pressure" : "change note timbre";
+          if (ld.line) {  // right drag: a straight line from the press, live from the gesture's start state
+            std::vector<Note> ns = g.base;
+            exprlane::paint(ns, only, d, ld.tickA, ld.fracA, t, frac, grain);
+            if (ns != notes) commit(a, patId, chId, ns, g.sel, elabel, g.key);
+          } else {  // paint along the pointer's path; Alt takes the lane back to neutral
+            std::vector<Note> ns = notes;
+            const double t0 = ld.hasPrev ? ld.prevTick : t;
+            const float f0 = ld.hasPrev ? ld.prevFrac : frac;
+            const bool changed = ld.reset ? exprlane::clear(ns, only, d, t0, t) : exprlane::paint(ns, only, d, t0, f0, t, frac, grain);
+            if (changed) commit(a, patId, chId, ns, g.sel, elabel, g.key);
+            ld.hasPrev = true;
+            ld.prevTick = t;
+            ld.prevFrac = frac;
+          }
+          char hb[48];
+          if (d == ExprDim::Timbre)
+            std::snprintf(hb, sizeof hb, "%s %+d%%", i18n::tr("Timbre"), static_cast<int>(std::lround((frac - 0.5f) * 200.0f)));
+          else
+            std::snprintf(hb, sizeof hb, "%s %d%%", i18n::tr("Pressure"), static_cast<int>(std::lround(frac * 100.0f)));
+          a.setHint(ld.reset ? i18n::tr("Back to neutral") : hb);
+          break;
+        }
         if (ld.select) {
           // Ctrl + drag: select the notes starting inside the dragged time span.
           std::set<size_t> sel;
@@ -2853,6 +3203,11 @@ void drawPianoRoll(App& a) {
     }
     if (g.kind == Gesture::Move && !g.moved && g.anchor >= 0 && !io.KeyShift) {
       st.selected = {static_cast<size_t>(std::min<int>(g.anchor, static_cast<int>(notes.size()) - 1))};
+      st.editSel.clear();
+    }
+    if (g.kind == Gesture::Move && !g.moved && g.multi && g.anchor < 0 && g.anchorCh != kNoId && !io.KeyShift) {
+      st.selected.clear();  // K-198 follow-up: a click on a selected edited note keeps just that note
+      st.editSel = {{g.anchorCh, {g.anchorIdx}}};
     }
     if (g.grouped) a.doc.endGroup();
     a.doc.endGesture();
@@ -3048,15 +3403,30 @@ void drawPianoRoll(App& a) {
     const bool laneKeys = autoLane && automationLaneKeys(a, patId, std::max<Tick>(1, snapG));
     std::vector<Note> ns = notes;
     auto sel = selVector(a, ns.size());
-    bool anySel = !st.selected.empty();
+    // K-198 follow-up: a selection spanning the edited channels: every edit below takes all of
+    // them, one undo step.
+    const bool multi = multiSel(a);
+    bool anySel = !st.selected.empty() || multi;
     auto applyToSel = [&](auto fn, const char* label) {
       if (!anySel) return;
+      if (multi) return multiApply(a, patId, chId, fn, label);
       for (size_t i = 0; i < ns.size(); ++i)
         if (sel[i]) fn(ns[i]);
       commit(a, patId, chId, ns, sel, label, 0);
     };
+    auto multiErase = [&](const char* label) {  // deletes the selection over every channel
+      const multinote::Selection all = unionSel(a, chId);
+      const multinote::Lists base = multinote::lists(s, patId, all);
+      a.doc.beginGroup(label);
+      multinote::erase(a.doc, patId, base, all, label);
+      a.doc.endGroup();
+      st.selected.clear();
+      st.editSel.clear();
+    };
     if (!laneKeys && keys::pressed("piano.delete")) {
-      if (anySel) {
+      if (multi) {
+        multiErase("delete notes");
+      } else if (anySel) {
         std::vector<Note> keep;
         for (size_t i = 0; i < ns.size(); ++i)
           if (!sel[i]) keep.push_back(ns[i]);
@@ -3066,21 +3436,47 @@ void drawPianoRoll(App& a) {
     if (!laneKeys && keys::pressed("piano.selectAll")) {
       st.selected.clear();
       for (size_t i = 0; i < ns.size(); ++i) st.selected.insert(i);
+      st.editSel.clear();  // K-198 follow-up: the edited channels' notes too
+      for (ObjectId cid : st.editChannels)
+        if (cid != chId)
+          if (const size_t n = rollNotes(a, patId, cid).size())
+            for (size_t i = 0; i < n; ++i) st.editSel[cid].insert(i);
     }
-    if (!laneKeys && keys::pressed("piano.deselect")) st.selected.clear();
-    if (!laneKeys && keys::pressed("piano.copy") && anySel) {
+    if (!laneKeys && keys::pressed("piano.deselect")) st.selected.clear(), st.editSel.clear();
+    if (!laneKeys && (keys::pressed("piano.copy") || keys::pressed("piano.cut")) && multi) {
+      const bool cut = keys::pressed("piano.cut");
+      const multinote::Selection all = unionSel(a, chId);
+      st.multiClipboard = multinote::copy(multinote::lists(s, patId, all), all);
       st.clipboard.clear();
-      for (size_t i = 0; i < ns.size(); ++i)
-        if (sel[i]) st.clipboard.push_back(ns[i]);
-      a.notify(std::to_string(st.clipboard.size()) + " notes copied");
+      a.notify(std::to_string(st.multiClipboard.size()) + " notes copied from " + std::to_string(all.size()) + " channels");
+      if (cut) multiErase("cut notes");
+    } else {
+      if (!laneKeys && keys::pressed("piano.copy") && anySel) {
+        st.clipboard.clear();
+        st.multiClipboard.clear();
+        for (size_t i = 0; i < ns.size(); ++i)
+          if (sel[i]) st.clipboard.push_back(ns[i]);
+        a.notify(std::to_string(st.clipboard.size()) + " notes copied");
+      }
+      if (!laneKeys && keys::pressed("piano.cut") && anySel) {
+        st.clipboard.clear();
+        st.multiClipboard.clear();
+        std::vector<Note> keep;
+        for (size_t i = 0; i < ns.size(); ++i) (sel[i] ? st.clipboard : keep).push_back(ns[i]);
+        commit(a, patId, chId, keep, {}, "cut notes", 0);
+      }
     }
-    if (!laneKeys && keys::pressed("piano.cut") && anySel) {
-      st.clipboard.clear();
-      std::vector<Note> keep;
-      for (size_t i = 0; i < ns.size(); ++i) (sel[i] ? st.clipboard : keep).push_back(ns[i]);
-      commit(a, patId, chId, keep, {}, "cut notes", 0);
-    }
-    if (!laneKeys && keys::pressed("piano.paste") && !st.clipboard.empty()) {
+    if (!laneKeys && keys::pressed("piano.paste") && !st.multiClipboard.empty()) {
+      // K-198 follow-up: each note back into its own channel, after the end of the copied block.
+      const Tick shift = multinote::pasteShift(st.multiClipboard, grid);
+      a.doc.beginGroup("paste notes");
+      multinote::Selection out = multinote::paste(a.doc, patId, st.multiClipboard, shift, "paste notes");
+      a.doc.endGroup();
+      for (auto& cn : st.multiClipboard) cn.note.start += shift;  // repeated pastes keep going
+      for (const auto& [cid, ix] : out)  // a pasted channel not edited here yet is edited now
+        if (cid != chId) st.editChannels.insert(cid);
+      splitSel(a, chId, std::move(out));
+    } else if (!laneKeys && keys::pressed("piano.paste") && !st.clipboard.empty()) {
       // Paste after the end of the copied block.
       Tick lo = st.clipboard[0].start, hi = 0;
       for (const auto& n : st.clipboard) lo = std::min(lo, n.start), hi = std::max(hi, n.start + n.length);
@@ -3094,7 +3490,9 @@ void drawPianoRoll(App& a) {
       for (auto& n : st.clipboard) n.start += shift;  // repeated pastes keep going
       commit(a, patId, chId, ns, nsel, "paste notes", 0);
     }
-    if (!laneKeys && keys::pressed("piano.quickQuantize")) {
+    if (!laneKeys && keys::pressed("piano.quickQuantize") && multi) {
+      multiApply(a, patId, chId, [&](Note& n) { n.start = snapNearest(n.start, grid); }, "quantize notes");
+    } else if (!laneKeys && keys::pressed("piano.quickQuantize")) {
       for (size_t i = 0; i < ns.size(); ++i)
         if (!anySel || sel[i]) ns[i].start = snapNearest(ns[i].start, grid);
       commit(a, patId, chId, ns, sel, "quantize notes", 0);

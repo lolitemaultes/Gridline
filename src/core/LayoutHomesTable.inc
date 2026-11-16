@@ -326,3 +326,4 @@
 {"F178", "Pulse", "", "gl.minipulse", "", {{HomeKind::Float, "", false}, {HomeKind::Host, "live.device", false}, {HomeKind::Float, "", false}, {HomeKind::Host, "tracker.lower", false}}},
 {"F179", "Chater", "", "gl.chater", "", {{HomeKind::Float, "", false}, {HomeKind::Host, "live.device", false}, {HomeKind::Float, "", false}, {HomeKind::Host, "tracker.lower", false}}},
 {"F180", "CV In", "", "gl.cvin", "", {{HomeKind::Float, "", false}, {HomeKind::Host, "live.device", false}, {HomeKind::Float, "", false}, {HomeKind::Host, "tracker.lower", false}}},
+{"F181", "Hardware Insert", "", "gl.hwinsert", "", {{HomeKind::Float, "", false}, {HomeKind::Host, "live.device", false}, {HomeKind::Float, "", false}, {HomeKind::Host, "tracker.lower", false}}},

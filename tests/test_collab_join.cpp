@@ -312,7 +312,7 @@ bool replyJoin(double delay, const char* tag, int* attempts = nullptr) {
     std::printf("# reply: %s\n", err.c_str());
     return false;
   }
-  if (!a.hub->invite(id)->replyUsed) return false;
+  if (!a.hub->invite(id)->replyUsed || !a.hub->invite(id)->peerPublicAddress) return false;  // #42: a reply with a way in
   const bool ok = w.runUntil(60, [&] { return synced(a, b); });
   if (attempts) *attempts = b.hub->joinView().attempts;
   return ok && a.hub->invite(id)->status == Hub::InviteStatus::Connected;

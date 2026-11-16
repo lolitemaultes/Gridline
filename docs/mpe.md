@@ -62,5 +62,45 @@ keeps them in step with the note, as its bend line is. When the song plays, the 
 follows them as it follows a controller. Notes without lanes play exactly as before, and
 projects from earlier versions open unchanged.
 
-The piano roll does not draw or record these lanes yet. Scripts can read and write them as
-`pressure` and `timbre` point lists on a note (see [scripting.md](scripting.md)).
+Scripts can read and write them as `pressure` and `timbre` point lists on a note (see
+[scripting.md](scripting.md)).
+
+## Recording
+
+With **MPE controller** ticked, recording keeps what each finger did with its note: the
+member channel's pitch bend becomes the note's pitch bend line, its channel pressure the
+note's pressure lane and its CC 74 the note's timbre lane, timed as you played them (a
+quantized note takes its lanes with it). The lanes are thinned to the points that shape them,
+at most 32 a lane, so a long performance stays light.
+
+## Editing in the piano roll
+
+Pick **Note pressure** or **Note timbre** in the lane under the notes (click its name, or turn
+the wheel over it). Each note shows its line over its length, faint while it has none:
+
+- **Drag** across the lane to paint the line into the notes you cross (only the selected notes
+  while some are selected).
+- **Right-drag** draws a straight line from where you pressed, across as many notes as it spans.
+- **Alt+drag** takes the lane back to neutral where you drag.
+
+Each drag is one undo step. Pitch is drawn with the **Pitch bend** tool, as before. Moving,
+copying and resizing a note keep its lanes with it.
+
+## Sending MPE out
+
+- **Plugins.** Per-note pressure and timbre reach a hosted instrument as its format carries
+  them: as CLAP note expressions (pressure and brightness), as VST3 poly pressure and the
+  brightness note expression, or, for formats without note expressions, pressure as the
+  note's poly aftertouch. Set the plugin's **Per-note pitch** to MPE and every note goes out
+  on a channel of its own with its own pitch bend, channel pressure and CC 74, the MPE zone
+  and bend range announced first.
+- **MIDI Out.** Switch on **MPE out** under EXPRESSION in a MIDI Out channel's settings: channel 1 becomes the
+  master channel, every note goes out on its own channel 2 to 16 with its own pitch bend (48
+  semitones), channel pressure and CC 74, and slides and bend lines glide each note by itself.
+  The zone and the bend range are announced when it is switched on.
+- **MIDI files.** A channel whose notes carry pressure or timbre lanes is written as an MPE
+  track: every note on its own member channel with its pitch bend, channel pressure and CC 74,
+  the zone announced at the start. Other channels are written as before. Opening or dragging
+  in an MPE file (one that announces an MPE zone, or whose notes sit one at a time on member
+  channels with their own bends and pressure) keeps the track together and gives each note its
+  bend line, pressure and timbre back.

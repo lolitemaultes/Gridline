@@ -553,6 +553,36 @@ target_link_libraries(gridline_tests_j2 PRIVATE gridline_core)
 target_include_directories(gridline_tests_j2 PRIVATE tests)
 target_compile_options(gridline_tests_j2 PRIVATE ${GL_WARN})
 add_test(NAME j2_instruments COMMAND gridline_tests_j2 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-306 (R6-10): the New project's starter kit renders under full scale (master Limiter).
+add_executable(gridline_tests_k306_headroom tests/test_k306_headroom.cpp)
+target_link_libraries(gridline_tests_k306_headroom PRIVATE gridline_core)
+target_include_directories(gridline_tests_k306_headroom PRIVATE tests)
+target_compile_options(gridline_tests_k306_headroom PRIVATE ${GL_WARN})
+add_test(NAME k306_starter_headroom COMMAND gridline_tests_k306_headroom WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-217: Kerf's classic engine (GitHub #54): mod routes, ...
+add_executable(gridline_tests_k217 tests/test_k217.cpp)
+target_link_libraries(gridline_tests_k217 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k217 PRIVATE tests)
+target_compile_options(gridline_tests_k217 PRIVATE ${GL_WARN})
+add_test(NAME k217_kerf COMMAND gridline_tests_k217 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-307: strings from plugins and projects never reach a throwing file system call (export crash).
+add_executable(gridline_tests_k307 tests/test_k307.cpp)
+target_link_libraries(gridline_tests_k307 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k307 PRIVATE tests)
+target_compile_options(gridline_tests_k307 PRIVATE ${GL_WARN})
+add_test(NAME k307_safe_paths COMMAND gridline_tests_k307 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-101: Hardware Insert against a simulated device loop (ping, latency, alignment, engine send).
+add_executable(gridline_tests_k101 tests/test_k101.cpp)
+target_link_libraries(gridline_tests_k101 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k101 PRIVATE tests)
+target_compile_options(gridline_tests_k101 PRIVATE ${GL_WARN})
+add_test(NAME k101_hwinsert COMMAND gridline_tests_k101 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-214: Mackie Control / HUI surfaces against a simulated device; K-278: the Mackie transport template.
+add_executable(gridline_tests_k214 tests/test_k214.cpp)
+target_link_libraries(gridline_tests_k214 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k214 PRIVATE tests)
+target_compile_options(gridline_tests_k214 PRIVATE ${GL_WARN})
+add_test(NAME k214_mackie COMMAND gridline_tests_k214 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 # J-32: level laws (Matrix FM pluck / waveshaper), Maximus decode, live-mode offline render.
 add_executable(gridline_tests_j32 tests/test_j32.cpp)
 target_link_libraries(gridline_tests_j32 PRIVATE gridline_core)
@@ -590,6 +620,11 @@ target_include_directories(gridline_tests_wheel_route PRIVATE tests)
 target_compile_options(gridline_tests_wheel_route PRIVATE ${GL_WARN})
 add_test(NAME wheel_route COMMAND gridline_tests_wheel_route WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 # J-84: channel rack layout (knobs at every width / length, name truncation, step scroll) and rack wheel routing.
+add_executable(gridline_tests_k104_theme_import tests/test_k104_theme_import.cpp)
+target_link_libraries(gridline_tests_k104_theme_import PRIVATE gridline_core)
+target_include_directories(gridline_tests_k104_theme_import PRIVATE tests)
+target_compile_options(gridline_tests_k104_theme_import PRIVATE ${GL_WARN})
+add_test(NAME k104_theme_import COMMAND gridline_tests_k104_theme_import WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_executable(gridline_tests_rack_layout tests/test_rack_layout.cpp)
 target_link_libraries(gridline_tests_rack_layout PRIVATE gridline_core)
 target_include_directories(gridline_tests_rack_layout PRIVATE tests)
@@ -1547,6 +1582,36 @@ target_link_libraries(gridline_tests_k147 PRIVATE gridline_core)
 target_include_directories(gridline_tests_k147 PRIVATE tests src)
 target_compile_options(gridline_tests_k147 PRIVATE ${GL_WARN})
 add_test(NAME k147_magnets COMMAND gridline_tests_k147 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-230: one snapping for every delay time knob (note values, round ms, even travel, readouts).
+add_executable(gridline_tests_k230 tests/test_k230.cpp)
+target_link_libraries(gridline_tests_k230 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k230 PRIVATE tests src)
+target_compile_options(gridline_tests_k230 PRIVATE ${GL_WARN})
+add_test(NAME k230_time_knobs COMMAND gridline_tests_k230 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-261: Tracer has one view; every saved state keeps its engine and sound.
+add_executable(gridline_tests_k261 tests/test_k261.cpp)
+target_link_libraries(gridline_tests_k261 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k261 PRIVATE tests src)
+target_compile_options(gridline_tests_k261 PRIVATE ${GL_WARN})
+add_test(NAME k261_tracer_one_view COMMAND gridline_tests_k261 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-232 / K-234: the rack's select buttons, the keyboard on every selected channel, selection follow.
+add_executable(gridline_tests_k232 tests/test_k232.cpp)
+target_link_libraries(gridline_tests_k232 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k232 PRIVATE tests src)
+target_compile_options(gridline_tests_k232 PRIVATE ${GL_WARN})
+add_test(NAME k232_rack_select COMMAND gridline_tests_k232 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-264: the MCP server's listen address (loopback default; WSL / VMs, one address, all networks), host checks, throttle.
+add_executable(gridline_tests_k264 tests/test_k264.cpp)
+target_link_libraries(gridline_tests_k264 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k264 PRIVATE tests src)
+target_compile_options(gridline_tests_k264 PRIVATE ${GL_WARN})
+add_test(NAME k264_mcp_listen COMMAND gridline_tests_k264 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-265: the data folder setting (pointer file, portable folder, missing folder, copy, revert).
+add_executable(gridline_tests_k265 tests/test_k265.cpp)
+target_link_libraries(gridline_tests_k265 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k265 PRIVATE tests src)
+target_compile_options(gridline_tests_k265 PRIVATE ${GL_WARN})
+add_test(NAME k265_data_folder COMMAND gridline_tests_k265 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # K-25: per-note pitch bend lines: shape, save / load, undo, note edits, playback (measured pitch,
 # per voice, block sizes, MIDI Out), MIDI file export / import, FL export report.
 add_executable(gridline_tests_k25 tests/test_k25.cpp)
@@ -2143,6 +2208,28 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -P ${CMAKE_SOURCE_DIR}/tests/k186_rack_headphones_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k186_rack_headphones_app PROPERTIES TIMEOUT 600)
+    # K-232 / K-233: the rack's select buttons toggle, typing plays every selected channel, a
+    # double-click on a name opens the piano roll.
+    add_test(NAME k232_rack_select_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k232_rack_select
+                     -P ${CMAKE_SOURCE_DIR}/tests/k232_rack_select_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k232_rack_select_app PROPERTIES TIMEOUT 600)
+    # K-235: pressing a row of the playlist's clip sources list auditions it while held.
+    add_test(NAME k235_picker_audition_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k235_picker_audition
+                     -P ${CMAKE_SOURCE_DIR}/tests/k235_picker_audition_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k235_picker_audition_app PROPERTIES TIMEOUT 600)
+    # K-278: a click on a pattern clip selects its note channel; a double-click opens the piano roll.
+    add_test(NAME k278_pattern_clip_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k278_pattern_clip
+                     -P ${CMAKE_SOURCE_DIR}/tests/k278_pattern_clip_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k278_pattern_clip_app PROPERTIES TIMEOUT 600)
 
     # J-109: Stop releases preview keys, typed keys (also on focus loss) and the browser preview; Stop twice = panic.
     add_test(NAME j109_stop_sound_app
@@ -2266,6 +2353,11 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k112_clips_tracks_app -P ${CMAKE_SOURCE_DIR}/tests/k112_clips_tracks_app.cmake)
     set_tests_properties(k112_clips_tracks_app PROPERTIES TIMEOUT 600)
+    # K-112c (checkpoint 48): Session record into a grid slot (clips play on) and Capture into a new clip.
+    add_test(NAME k112_clips_record_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k112_clips_record_app
+                     -P ${CMAKE_SOURCE_DIR}/tests/k112_clips_record_app.cmake)
+    set_tests_properties(k112_clips_record_app PROPERTIES TIMEOUT 600)
     # K-112c (round 43): files dropped onto Clips' clip grid land in the slot under the pointer, or make a new track in the free column.
     add_test(NAME k112_clips_drop_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json

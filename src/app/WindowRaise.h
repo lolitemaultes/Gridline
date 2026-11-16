@@ -22,4 +22,9 @@ void raiseOnPress();
 // that was last raised by a press, to stdout.
 void devDumpZOrder(int frame);
 
+// K-297 (round 6): a window open as a docked tab behind another one of its region comes to the
+// front of it (its tab selected). Returns false when the window is not such a hidden tab (shown,
+// floating or closed): a show/hide toggle then toggles. A toggle used to close the hidden tab.
+bool bringTabForward(const char* name);
+
 }  // namespace gl::ui

@@ -12,12 +12,15 @@
 #include <string>
 #include <unordered_map>
 #include "GrooveUi.h"
+#include "MeterUi.h"
+#include "../core/MeterEdit.h"
 #include "PixelGrid.h"
 #include "CollabUi.h"
 #include "CursorAnchor.h"
 #include "../core/I18n.h"
 #include "../core/ExternalDrop.h"
 #include "../core/RackLayout.h"
+#include "../core/RackSelect.h"
 #include "../core/WheelRoute.h"
 #include "Keys.h"
 #include "../../third_party/imgui/imgui.h"
@@ -138,18 +141,16 @@ float rackPlayLight(App& a, const Channel& c, size_t index) {
   return e.light.alpha();
 }
 
-// The channel's sound light, between the name button and the steps (K-127 / K-186): a meter only,
-// dark while the channel makes no sound (a muted channel makes none) and glowing with its sound,
-// fading after (J-186). Mute and solo live on the headphones button.
-void drawRowLamp(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level) {
+// The channel's select button, between the name button and the steps (K-232; K-127 / K-186 drew a
+// sound meter here): lit green while the channel is selected, and a soft glow with its sound
+// (J-186). Mute and solo live on the headphones button.
+void drawRowLamp(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level, bool selected, bool hot) {
   const auto& P = pal();
-  const ImU32 idle = P.dark ? theme::mix(P.field, P.ink, 0.35f) : theme::mix(P.surface700, P.ink, 0.18f);
-  dl->AddRectFilled(p0, p1, idle, 2.0f);
-  if (level > 0.003f) {
-    const float l = std::min(1.0f, level);
-    dl->AddRectFilled(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), theme::withAlpha(P.led, 0.22f * l), 3.0f);  // glow
-    dl->AddRectFilled(p0, p1, theme::mix(idle, theme::mix(P.led, P.paper, 0.2f * l * l), l), 2.0f);
-  }
+  ImU32 idle = P.dark ? theme::mix(P.field, P.ink, 0.35f) : theme::mix(P.surface700, P.ink, 0.18f);
+  if (hot && !selected) idle = theme::mix(idle, P.led, 0.25f);
+  if (level > 0.003f)  // the sound: a soft glow around the button (the fill is the selection)
+    dl->AddRectFilled(ImVec2(p0.x - 2, p0.y - 2), ImVec2(p1.x + 2, p1.y + 2), theme::withAlpha(P.led, 0.22f * std::min(1.0f, level)), 3.0f);
+  dl->AddRectFilled(p0, p1, selected ? theme::mix(P.led, P.paper, hot ? 0.2f : 0.0f) : idle, 2.0f);
   dl->AddRect(p0, p1, theme::withAlpha(P.ink, P.dark ? 0.5f : 0.25f), 2.0f);
 }
 
@@ -402,6 +403,11 @@ void drawChannelRack(App& a) {
       return true;
     };
     const bool showLen = pat && fits(wLen);
+    // K-236: a pattern in another meter than 4/4 shows it after its name; a click on it picks another.
+    const int mNum = pat ? s.patternMeterNum(*pat) : 4, mDen = pat ? s.patternMeterDen(*pat) : 4;
+    const std::string ml = pat && (mNum != 4 || mDen != 4 || pat->ownMeter()) ? meter::text(mNum, mDen) : std::string();
+    const float mw = ml.empty() ? 0.0f : std::ceil(a.fontMono->CalcTextSizeA(theme::kFontBody, FLT_MAX, 0.0f, ml.c_str()).x) + 10;
+    const bool meterFits = mw > 0 && fits(mw + 4);
     const bool showGroup = fits(wGroup);
     bool showSwing = pat && fits(wSwing);
     const bool showGraphBtn = fits(wGraph);
@@ -433,11 +439,36 @@ void drawChannelRack(App& a) {
     // Pattern chip: colour + name.
     {
       ImVec2 p = ImGui::GetCursorScreenPos();
-      ImGui::Dummy(ImVec2(nameW, fh));
+      const char* pname = pat ? pat->name.c_str() : "No pattern";
+      const float pnameW = a.fontBold->CalcTextSizeA(theme::kFontBody, FLT_MAX, 0.0f, pname).x;
+      const float nameRoom = nameW;
+      ImGui::Dummy(ImVec2(nameRoom, fh));
       if (pat) dl->AddRectFilled(ImVec2(p.x, p.y + 5), ImVec2(p.x + 4, p.y + fh - 5), theme::rgb(pat->color), 1);
-      theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(p.x + 10, std::round(p.y + (fh - theme::kFontBody) * 0.5f)), nameW - 14,
-                          P.text, pat ? pat->name.c_str() : "No pattern");
+      theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(p.x + 10, std::round(p.y + (fh - theme::kFontBody) * 0.5f)), nameRoom - 14,
+                          P.text, pname);
       ui::Hint("Pattern being edited (pick another in the top bar or the playlist)");
+      if (meterFits) {
+        // Right after the name (or at the end of a long, shortened one).
+        const float nw = std::min(nameRoom - 14, pnameW);
+        const ImVec2 m0(p.x + 10 + nw + 4, p.y);
+        ImGui::SetCursorScreenPos(m0);
+        const bool click = ImGui::InvisibleButton("##rackmeter", ImVec2(mw, fh));
+        const bool hov = ImGui::IsItemHovered();
+        devRackRect("meter");
+        if (hov) dl->AddRectFilled(ImVec2(m0.x, m0.y + 3), ImVec2(m0.x + mw, m0.y + fh - 3), theme::withAlpha(P.text, 0.10f), theme::kRadiusSm);
+        dl->AddText(a.fontMono, theme::kFontBody, ImVec2(m0.x + 5, std::round(p.y + (fh - theme::kFontBody) * 0.5f)),
+                    pat->ownMeter() ? P.hot : P.textDim, ml.c_str());
+        ui::Hint(pat->ownMeter() ? "Meter of this pattern, its own (click to change)" : "Meter of this pattern: the song's (click to give it its own)");
+        if (click) ImGui::OpenPopup("##rackmeterpop");
+        if (ImGui::BeginPopup("##rackmeterpop")) {
+          const ObjectId pid = pat->id;
+          meterui::patternMeterMenu(a, pid, false);
+          ImGui::EndPopup();
+          pat = s.pattern(pid);  // the meter edit may have replaced the pattern
+        }
+        ImGui::SetCursorScreenPos(ImVec2(p.x + nameW + mw + 4, p.y));
+        ImGui::Dummy(ImVec2(0, fh));
+      }
     }
     // Right cluster, laid out from the right edge.
     const float right = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x;
@@ -469,7 +500,11 @@ void drawChannelRack(App& a) {
       for (int i = 0; i < 4; ++i)
         if (spbChoices[i] == pat->stepsPerBar) sel = i;
       const char* spbNames[] = {"12 / bar", "16 / bar", "24 / bar", "32 / bar"};
-      if (ui::BeginCombo("##spb", spbNames[sel], 88)) {
+      bool listed = false;
+      for (int c : spbChoices) listed = listed || c == pat->stepsPerBar;
+      char spbNow[24];  // K-236: a meter's own step count (14 in 7/8) shows as it is
+      std::snprintf(spbNow, sizeof spbNow, "%d / bar", pat->stepsPerBar);
+      if (ui::BeginCombo("##spb", listed ? spbNames[sel] : spbNow, 88)) {
         for (int i = 0; i < 4; ++i)
           if (ImGui::Selectable(spbNames[i], i == sel)) a.doc.setPatternLength(pat->id, pat->bars, spbChoices[i]);
         ImGui::EndCombo();
@@ -560,7 +595,15 @@ void drawChannelRack(App& a) {
   const float avail = ImGui::GetContentRegionAvail().x;
   a.rack.lastAvail = avail;
   // Checkpoint 28 (Tracks layout): the steps fill the pane's width, as 188 and 052 do (up to 64 px a step).
-  const racklayout::Layout L = racklayout::compute({avail, total, lgSteps ? 64.0f : racklayout::kStepMax});
+  // K-295: the name button keeps what the widest channel name needs (the text plus the button's
+  // 14 px of padding, as the row draws it below), so a long pattern in a narrow rack scrolls its
+  // last steps instead of cutting every name to three letters.
+  float nameNeed = 0;
+  for (const auto& ch : s.channels)
+    nameNeed = std::max(nameNeed, a.fontRegular->CalcTextSizeA(theme::kFontCaption + 1, 1e9f, 0, ch.name.c_str()).x + 14);
+  // K-236: the steps group by beats of the pattern's meter (3/4: three groups a bar; 7/8: pairs).
+  const int stepGrp = pat ? racklayout::stepGroup(pat->stepsPerBar, s.patternMeterNum(*pat), s.patternMeterDen(*pat)) : 4;
+  const racklayout::Layout L = racklayout::compute({avail, total, lgSteps ? 64.0f : racklayout::kStepMax, nameNeed, stepGrp});
   const float xLeft = racklayout::kXLeft, xPan = racklayout::kXPan, xVol = racklayout::kXVol, xMix = racklayout::kXMix,
               nameX = racklayout::kNameX, nameW = L.nameW, stepsX = L.stepsX, stepW = L.stepW, stepGap = racklayout::kStepGap,
               groupGap = racklayout::kGroupGap, viewW = L.viewW, rowW = L.rowW;
@@ -605,7 +648,7 @@ void drawChannelRack(App& a) {
       if (x0 + stepW < viewX0 || x0 > viewX1) continue;
       bool lit = k == playStep;
       dl->AddRectFilled(ImVec2(x0 + 1, lp.y + 1), ImVec2(x0 + stepW - 1, lp.y + 5),
-                        lit ? P.led : theme::mix(P.field, (k / 4) % 2 ? P.stepOffAlt : P.stepOff, 0.35f), 1.5f);
+                        lit ? P.led : theme::mix(P.field, (k / L.group) % 2 ? P.stepOffAlt : P.stepOff, 0.35f), 1.5f);
     }
     ImGui::PopClipRect();
     ImGui::Dummy(ImVec2(rowW, 8));
@@ -752,14 +795,33 @@ void drawChannelRack(App& a) {
       ImGui::InvisibleButton("name", ImVec2(nameW, cellH));
       geom.name = rectOf(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
       bool hov = ImGui::IsItemHovered();
-      // Click (without dragging): select the channel and toggle its settings / info
-      // window, like the reference channel button. No sound; Ctrl+click only adds to the selection.
+      // Click (without dragging): select the channel and toggle its plugin window, like the
+      // reference channel button. No sound; Ctrl+click only adds to the selection.
+      // K-233: a double-click opens the channel's piano roll instead. The window of a single click
+      // opens once the double-click time has passed without a second click (it would otherwise
+      // open over the name and catch the second click).
+      static ObjectId dblHeld = kNoId;  // the press of a double-click: its release toggles nothing
+      static struct {
+        ObjectId id = kNoId;
+        double at = 0;
+      } pendingToggle;
+      const double now = ImGui::GetTime();
       if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) a.selectChannel(c.id, ImGui::GetIO().KeyCtrl);
-      if (ImGui::IsItemDeactivated() && !ImGui::GetIO().KeyCtrl &&
-          ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).x * ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).x +
-                  ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y * ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y <
-              16.0f)
-        togglePluginWindow(a, PluginTarget{c.id, -1});
+      if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !ImGui::GetIO().KeyCtrl) {
+        dblHeld = c.id;
+        pendingToggle = {};
+        a.openPianoRoll(c.id);
+      }
+      if (ImGui::IsItemDeactivated()) {
+        const ImVec2 dd = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f);
+        if (dblHeld == c.id) dblHeld = kNoId;
+        else if (!ImGui::GetIO().KeyCtrl && dd.x * dd.x + dd.y * dd.y < 16.0f) pendingToggle = {c.id, now + ImGui::GetIO().MouseDoubleClickTime};
+      }
+      if (pendingToggle.id == c.id && now >= pendingToggle.at) {
+        if (now - pendingToggle.at < 1.0) togglePluginWindow(a, PluginTarget{c.id, -1});  // a stale one (the rack hidden meanwhile) is dropped
+        pendingToggle = {};
+      }
+
       if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
         a.selectChannel(c.id);
         chMenuChannel = c.id;
@@ -908,7 +970,7 @@ void drawChannelRack(App& a) {
           a.doc.editPattern(pat->id, "change step velocity", [&](Pattern& p) { p.steps[c.id] = nr; }, kStepGestureKey ^ (pat->id + 7));
           wheelUsed = true;
         }
-        const bool alt = (k / 4) % 2 == 1;
+        const bool alt = (k / L.group) % 2 == 1;  // K-236: one colour band a beat
         // K-276: the pad on whole device pixels, its gap to the next pad whole too (PixelGrid.h), so
         // the gaps stay even at every interface scale (a pad may be a device pixel wider instead).
         const float nextX = sp.x + stepPos(k + 1);
@@ -956,19 +1018,31 @@ void drawChannelRack(App& a) {
         dl->AddRectFilledMultiColor(ImVec2(viewX1 - 6, sp.y), ImVec2(viewX1, sp.y + cellH), edge, edgeIn, edgeIn, edge);
     }
     geom.steps = rectOf(ImVec2(viewX0, sp.y), ImVec2(viewX1, sp.y + cellH));
-    // The channel's sound light (K-127: between the name button and the steps, as in the reference
-    // rack): a meter only (K-186), glowing with the channel's sound (J-186). No clicks: mute and
-    // solo are on the headphones button.
+    // K-232: the channel's select button (between the name button and the steps, as in the
+    // reference rack): click adds the channel to the selection or takes it out, right-click
+    // selects it alone, Shift+click selects a run. It never opens a window: the typing keyboard
+    // plays every selected instrument. Lit green while selected; glows with the channel's sound.
     {
       const float lx = std::round(rp.x + L.lampX + (racklayout::kSelLampW - 6) * 0.5f);
       ImVec2 l0(lx, cy - cellH * 0.5f + 2), l1(l0.x + 6, cy + cellH * 0.5f - 2);
       ImGui::SetCursorScreenPos(ImVec2(rp.x + L.lampX, cy - cellH * 0.5f));
-      ImGui::Dummy(ImVec2(racklayout::kSelLampW, cellH));
+      ImGui::InvisibleButton("sel", ImVec2(racklayout::kSelLampW, cellH));
+      const bool lhov = ImGui::IsItemHovered();
+      const bool lclick = ImGui::IsItemClicked(ImGuiMouseButton_Left), rclick = ImGui::IsItemClicked(ImGuiMouseButton_Right);
+      if (lclick || rclick) {
+        std::vector<ObjectId> order;
+        order.reserve(s.channels.size());
+        for (const auto& oc : s.channels) order.push_back(oc.id);
+        const rackselect::Click how = rclick ? rackselect::Click::Only : ImGui::GetIO().KeyShift ? rackselect::Click::Range : rackselect::Click::Toggle;
+        rackselect::click(order, a.selChannels, a.selChannel, c.id, how);
+        selected = a.selChannels.count(c.id) > 0;
+      }
       geom.lamp = rectOf(l0, l1);
       ++geom.lights;
-      ui::Hint("Shows the channel's sound");
-      drawRowLamp(dl, l0, l1, rackPlayLight(a, c, ci));
+      ui::Hint(i18n::N_("Select: click adds or removes this channel \xC2\xB7 right-click: this one only \xC2\xB7 Shift+click: a run \xC2\xB7 the keyboard plays every selected channel"));
+      drawRowLamp(dl, l0, l1, rackPlayLight(a, c, ci), selected, lhov);
     }
+
     const ObjectId rowId = c.id;
     const uint64_t dropRev = a.doc.revision();
     rowDropTarget(a, c, static_cast<int>(ci), rp, rowW, rowH, rowGap, stepsX + 6);  // J-97: drop to replace / insert
@@ -1186,7 +1260,7 @@ void drawChannelRack(App& a) {
     if (h == 0 && !rowsScroll && !wheelUsed && m.x >= viewX0 && m.x < viewX1 && ImGui::TestKeyOwner(ImGuiKey_MouseWheelY, ImGuiKeyOwner_NoOwner))
       h = io.MouseWheel;
     if (h != 0) {
-      wheelDx = -h * 4 * (stepW + stepGap);  // a notch: one beat
+      wheelDx = -h * static_cast<float>(L.group) * (stepW + stepGap);  // a notch: one beat (K-236: of the pattern's meter)
       wheelNotch = smoothscroll::isNotch(h);
     }
   }

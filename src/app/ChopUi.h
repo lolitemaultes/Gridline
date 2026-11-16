@@ -29,6 +29,8 @@ void timeSelectionItems(App& a);
 void shortcuts(App& a);
 // Region actions shared by menus and shortcuts.
 void duplicateTime(App& a);
+// N48-05: Clips' Cmd+E with a time selection: the clips in it are cut at both of its edges.
+void splitAtSelection(App& a);
 void insertSpace(App& a);
 void deleteSpace(App& a);
 void consolidateTime(App& a);

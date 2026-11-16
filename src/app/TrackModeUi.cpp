@@ -11,6 +11,7 @@
 #include "App.h"
 #include "AudioRecordUi.h"
 #include "LayoutStyleUi.h"
+#include "LiveLook.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -279,7 +280,9 @@ const char* headerHint(App& a, int track, int control) {
     return h.c_str();
   }
   if (mode == TrackMode::Instrument) {
-    h = "Instrument track \xC2\xB7 " + trackmodes::linkedChannel(s, track)->name + "   (pattern clips only; right-click: track menu)";
+    // N49-14: Clips calls them MIDI tracks, which hold MIDI clips
+    h = livelook::active(a) ? "MIDI track \xC2\xB7 " + trackmodes::linkedChannel(s, track)->name + "   (MIDI clips only; right-click: track menu)"
+                            : "Instrument track \xC2\xB7 " + trackmodes::linkedChannel(s, track)->name + "   (pattern clips only; right-click: track menu)";
     return h.c_str();
   }
   return "";

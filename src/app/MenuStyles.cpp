@@ -18,16 +18,24 @@
 #include "LayoutParts.h"
 #include "ExportUi.h"
 #include "LiveLook.h"
+#include "UndoUi.h"
 #include "Keys.h"
 #include "LayoutPresets.h"
+#include "HostedUi.h"
 #include "LayoutShellUi.h"
 #include "LogicPlugins.h"
+#include "UpdateUi.h"
 #include "LogicNewTracks.h"
 #include "MenuDef.h"
 #include "imgui_hooks/ImGuiItemHook.h"
 #include "MidiUi.h"
 #include "TrackerView.h"
 #include "Windows.h"
+#include "AudioRecordUi.h"
+#include "FreezeUi.h"
+#include "../core/MenuParity.h"
+#include "../engine/ClipOps.h"
+#include <set>
 
 namespace gl {
 
@@ -36,6 +44,9 @@ using namespace menus;
 using i18n::N_;
 
 namespace {
+
+bool notClips(App& a) { return !livelook::active(a); }  // N45-07 / N45-09
+bool studioModes(App& a) { return notClips(a) && !logicplug::active(a); }  // the play modes: neither Clips nor Smooth
 
 const md::Menu& navigateDef() {
   static const md::Menu m = {
@@ -66,9 +77,15 @@ const md::Menu& navigateDef() {
                     }
                     if (!shown) ImGui::MenuItem(i18n::tr("No markers"), nullptr, false, false);
                   })}),
+      // R02-15: as the reference's Navigate menu.
+      md::item(N_("Go to position..."), "transport.goToPosition", [](App& a) { goToPositionPrompt(a); }).only([](App& a) { return logicplug::active(a); }),  // (the Tracks layout's Navigate)
+      md::item(N_("Previous marker"), "transport.prevMarker", [](App& a) { gotoMarker(a, -1); }).only([](App& a) { return logicplug::active(a); }),
+      md::item(N_("Next marker"), "transport.nextMarker", [](App& a) { gotoMarker(a, 1); }).only([](App& a) { return logicplug::active(a); }),
       md::separator(),
       md::item(N_("Cycle"), "transport.cycle", [](App& a) { toggleCycle(a); })
           .check([](App& a) { return a.playlist.selEnd > a.playlist.selStart; }),
+      md::item(N_("Set the cycle to the selected regions"), "transport.cycleSelection", [](App& a) { cycleToSelection(a); })
+          .when([](App& a) { return !a.playlist.selected.empty(); }).only([](App& a) { return logicplug::active(a); }),
       md::item(N_("Add marker"), "playlist.marker", [](App& a) { tracksAddMarker(a); }),
       md::separator(),  // K-112b: grouped as MAP.md 2.1: go to, scroll, zoom, then our play modes
       md::item(N_("Follow the song position"), [](App& a) { a.settings.set("ui.autoScroll", !a.settings.getBool("ui.autoScroll")); })
@@ -76,13 +93,23 @@ const md::Menu& navigateDef() {
       md::separator(),
       md::submenu(N_("Zoom"), {md::item(N_("Zoom in"), "playlist.zoomIn", [](App& a) { a.playlist.zoomRequest *= 1.5f; }),
                                md::item(N_("Zoom out"), "playlist.zoomOut", [](App& a) { a.playlist.zoomRequest /= 1.5f; }),
-                               md::item(N_("Zoom to fit the song"), "playlist.zoomFit", [](App& a) { a.playlist.fitRequest = true; })}),
-      md::separator(),
+                               md::item(N_("Zoom to fit the song"), "playlist.zoomFit", [](App& a) { a.playlist.fitRequest = true; })})
+          .only([](App& a) { return !logicplug::active(a); }),  // R04-09: zoom is in the Tracks layout's View menu
+      // N45-07 / N45-09: Studio's play modes; Clips has none (its grid and arrangement are its modes),
+      // nor has Smooth (R04-09).
+      md::separator().only(notClips),
       md::item(N_("Song mode"), "transport.songMode", [](App& a) { a.engine.setMode(PlayMode::Song); })
-          .check([](App& a) { return a.engine.mode() == PlayMode::Song; }),
-      md::item(N_("Pattern mode"), [](App& a) { a.engine.setMode(PlayMode::Pattern); }).check([](App& a) { return a.engine.mode() == PlayMode::Pattern; }),
+          .check([](App& a) { return a.engine.mode() == PlayMode::Song; })
+          .only(studioModes),
+      md::item(N_("Pattern mode"),
+               [](App& a) {
+                 if (logicplug::active(a)) a.rackReveal.quietSwitch(PlayMode::Pattern);  // R02-22: no step sequencer pops up
+                 a.engine.setMode(PlayMode::Pattern);
+               }).check([](App& a) { return a.engine.mode() == PlayMode::Pattern; })
+          .only(studioModes),
       md::item(N_("Live mode"), [](App& a) { a.engine.setMode(a.engine.mode() == PlayMode::Live ? PlayMode::Song : PlayMode::Live); })
-          .check([](App& a) { return a.engine.mode() == PlayMode::Live; }),
+          .check([](App& a) { return a.engine.mode() == PlayMode::Live; })
+          .only(studioModes),
   };
   return m;
 }
@@ -100,6 +127,24 @@ const md::Menu& recordDef() {
       md::submenu(N_("Typing keyboard options"), {md::provider([](App& a) { typingKeyboardMenu(a); })}),
       md::toggle(N_("Multilink to controllers"), nullptr, [](App& a) { return &a.multilink; }),
   };
+  return m;
+}
+
+// N46-09 (round 04): Clips' recording submenu: each row once (Step record is in Recording options,
+// so not again here); Session record joins the arrangement's Record.
+const md::Menu& clipsRecordDef() {
+  static const md::Menu m = {
+      md::item(N_("Arrangement record"), "transport.record", [](App& a) { livelook::toggleArrangementRecord(a); }).check([](App& a) { return a.recordArmed; }),
+      md::item(N_("Session record"), "transport.sessionRecord", [](App& a) { livelook::toggleSessionRecord(a); })
+          .check([](App& a) { return livelook::sessionRecording(a); }),
+      md::separator(),
+      md::toggle(N_("Metronome"), "options.metronome", [](App& a) { return &a.metronome; }),
+      md::item(N_("Count-in"), "options.countIn", [](App& a) { a.countInBars = a.countInBars > 0 ? 0 : 1; }).check([](App& a) { return a.countInBars > 0; }),
+      md::submenu(N_("Recording options"), {md::provider([](App& a) { recordOptionsMenu(a); })}),
+      md::separator(),
+      md::toggle(N_("Typing keyboard to piano"), "options.typingKeyboard", [](App& a) { return &a.typingKeyboard; }),
+      md::submenu(N_("Typing keyboard options"), {md::provider([](App& a) { typingKeyboardMenu(a); })}),
+  };  // N49-12: no Multilink in Clips
   return m;
 }
 
@@ -125,10 +170,12 @@ const md::Menu& tracksRecordDef() {
 const md::Menu& mixDef() {
   static const md::Menu m = {
       md::toggle(N_("Mixer"), "view.mixer", [](App& a) { return &a.showMixer; }),
-      md::toggle(N_("Stage"), "view.stage", [](App& a) { return &a.showStage; }),
+      md::toggle(N_("Stage"), "view.stage", [](App& a) { return &a.showStage; }).only([](App& a) { return !logicplug::active(a); }),  // R05-18
       md::toggle(N_("Master chain"), nullptr, [](App& a) { return &a.showMaster; }),
       md::toggle(N_("Performance"), nullptr, [](App& a) { return &a.showPerformance; }),
       md::separator(),
+      // R02-15: as the reference's Mix menu (guide: Mix > Show Automation, or A).
+      md::item(N_("Show automation"), "view.automation", [](App&) { toggleAutomationLanes(); }).check([](App& a) { return automationLanesShown(a); }),
       // K-112B (checkpoint 39): groups of the selected mixer tracks, as MAP.md 2.1 / 5.3 open the Mix menu.
       md::submenu(N_("Group"), {md::provider([](App& a) {
                     const Song& s = a.doc.song();
@@ -195,6 +242,22 @@ const md::Menu& trackDef() {
                  if (id != kNoId) a.selMixer = id;
                }),
       md::separator(),
+      md::item(N_("Rename track..."), "edit.rename", [](App& a) { menus::renameFocused(a); }),  // R04-09: Shift-Return
+      md::item(N_("Mute track"), "track.mute", [](App& a) { tracksMuteSelected(a); }),
+      md::item(N_("Solo track"), "track.solo", [](App& a) { tracksSoloSelected(a); }),
+      md::separator(),
+      // R04-09: the reference's track functions, where Gridline has them.
+      md::item(N_("Create track stack"), [](App& a) { tracksCreateStack(a); })
+          .when([](App& a) { return tracksCanStack(a); })
+          .tip(N_("The selected tracks (neighbours, not in a stack yet) go into a new stack track above them")),
+      md::item(N_("Freeze track"), [](App& a) { tracksFreeze(a); })
+          .check([](App& a) { return tracksFrozen(a); })
+          .when([](App& a) { return tracksCanFreeze(a); })
+          .tip(N_("Renders the track's instrument or audio once and unloads its plugins; again: unfreeze")),
+      md::item(N_("Bounce track in place"), [](App& a) { tracksBounceInPlace(a); })
+          .tip(N_("Renders the selected tracks' regions to one audio region on a new track below; the originals are muted")),
+      md::submenu(N_("Configure track header"), {md::provider([](App& a) { configureTrackHeaderItems(a); })}),
+      md::separator(),
       md::item(N_("Delete track"), "track.delete", [](App& a) { tracksDeleteSelected(a); })
           .when([](App& a) { return a.doc.song().tracks.size() > 1; }),
   };
@@ -213,35 +276,106 @@ void showLower(App& a, int which) {
 
 const md::Menu& windowDef() {
   static const md::Menu m = {
-      md::item(N_("Main window"), [](App& a) { a.focusWindow = "Playlist"; }),
-      md::item(N_("Mixer"), "view.mixer", [](App& a) { showLower(a, 2); }),
+      // K-112B: the window keys (Cmd with a digit) as the reference's Window menu shows them; the
+      // View menu keeps the single letters.
+      md::item(N_("Main window"), "view.playlist", [](App& a) { a.showPlaylist = true, a.focusWindow = "Playlist"; })
+          .keyText([](App&) { return keys::modLabel("view.playlist"); }),
+      md::item(N_("Mixer"), "view.mixer", [](App& a) { showLower(a, 2); }).keyText([](App&) { return keys::modLabel("view.mixer"); }),
       md::item(N_("Step sequencer"), "view.channelRack", [](App& a) { showLower(a, 1); }),
-      md::item(N_("Piano roll"), "view.pianoRoll", [](App& a) { showLower(a, 0); }),
+      md::item(N_("Piano roll"), "view.pianoRoll", [](App& a) { showLower(a, 0); }).keyText([](App&) { return keys::modLabel("view.pianoRoll"); }),
       md::item(N_("Smart controls"), [](App& a) { showLower(a, 3); }),
       md::separator(),
       md::toggle(N_("Undo history"), "edit.history", [](App& a) { return &a.showHistory; }),
       md::toggle(N_("Performance"), nullptr, [](App& a) { return &a.showPerformance; }),
       md::toggle(N_("Typing keyboard to piano"), "options.typingKeyboard", [](App& a) { return &a.typingKeyboard; }),
       md::separator(),
-      md::item(N_("Hide all plugin windows"), "view.hidePlugins", [](App& a) { logicplug::toggleHidden(a); })
+      md::item(N_("Hide all plugin windows"), "view.hidePlugins",
+               [](App& a) {
+                 toggleHostedEditorsHidden();  // K-297: as the V key (installed plugins' windows too)
+                 logicplug::toggleHidden(a);
+               })
           .check([](App&) { return logicplug::hidden(); }),
+  };
+  return m;
+}
+
+// R04-09: the Tracks layout's View menu: its panes, with their single-letter keys (the commands
+// run as their keys do, next frame).
+void injectNext(const char* id) { keys::inject(id, ImGui::GetFrameCount() + 1); }
+
+const md::Menu& tracksViewDef() {
+  // (each item runs its command as the key does, next frame)
+  static const md::Menu m = {
+      md::item(N_("Library"), "view.library", [](App&) { injectNext("view.library"); }),
+      md::item(N_("Inspector"), "view.inspector", [](App&) { injectNext("view.inspector"); }),
+      md::item(N_("Quick help"), "view.quickHelp", [](App&) { injectNext("view.quickHelp"); }).check([](App& a) { return a.settings.getBool("ui.logicQuickHelp"); }),
+      md::item(N_("Toolbar"), "view.toolbar", [](App&) { injectNext("view.toolbar"); }).check([](App& a) { return a.settings.getBool("ui.logicToolbar"); }),
+      md::separator(),
+      md::item(N_("Smart controls"), "view.smartControls", [](App&) { injectNext("view.smartControls"); }),
+      md::item(N_("Editors"), "view.editors", [](App&) { injectNext("view.editors"); }),
+      md::item(N_("List editors"), "view.lists", [](App&) { injectNext("view.lists"); }),
+      md::item(N_("Notes"), "view.notes", [](App&) { injectNext("view.notes"); }),
+      md::item(N_("Project files"), "view.files", [](App&) { injectNext("view.files"); }),
+      md::separator(),
+      md::item(N_("Global tracks"), "view.globalTracks", [](App&) { injectNext("view.globalTracks"); }).check([](App& a) { return a.settings.getBool("ui.logicGlobalTracks"); }),
+      md::item(N_("Show automation"), "view.automation", [](App&) { toggleAutomationLanes(); }).check([](App& a) { return automationLanesShown(a); }),
+      md::separator(),
+      md::item(N_("Zoom in"), "playlist.zoomIn", [](App& a) { a.playlist.zoomRequest *= 1.5f; }),
+      md::item(N_("Zoom out"), "playlist.zoomOut", [](App& a) { a.playlist.zoomRequest /= 1.5f; }),
+      md::item(N_("Zoom to fit the song"), "playlist.zoomFit", [](App& a) { a.playlist.fitRequest = true; }),
+  };
+  return m;
+}
+
+// R04-09: the Tracks layout's File additions: the reference's Close items and its Bounce submenu
+// (the whole song or the cycle area through Render, regions and tracks rendered in place).
+const md::Menu& tracksFileDef() {
+  static const md::Menu m = {
+      md::separator(),
+      md::item(N_("Close window"), "window.close", [](App&) { closeFrontWindow(false); }),  // K-297's shared close (Cmd+W)
+      md::item(N_("Close project"), [](App& a) { a.later([&a] { a.closeProject(); }); })
+          .tip(N_("Closes the project (asking to save changes) and starts an empty one")),
+      md::submenu(N_("Bounce"),
+                  {md::item(N_("Project or section..."), "file.render", [](App& a) { exportui::openRender(a, exportui::Preset::Audio); }),
+                   md::item(N_("Regions in place"), [](App& a) { regionsBounceInPlace(a); })
+                       .when([](App& a) { return !a.playlist.selected.empty(); })
+                       .tip(N_("Renders the selected regions to one audio region in their place; the originals go")),
+                   md::item(N_("Tracks in place"), [](App& a) { tracksBounceInPlace(a); })
+                       .tip(N_("Renders the selected tracks' regions to one audio region on a new track below; the originals are muted"))}),
   };
   return m;
 }
 
 // K-112c (round 45): Create in the Clips layout, as the reference's (MAP.md 2.4): new tracks first,
 // then a marker, then the imports; Studio's Add follows in a submenu (MenuStyle.cpp).
-void selectNewTrack(App& a, int t) {
-  if (t >= 0) a.playlist.trackSel = {t};
+
+// Checkpoint 49 (N47-13): Studio's Add is no submenu here; its effect row (on the selected track's
+// mixer track) and its automation clip row join the tracks and the clips. Its pattern, mixer track
+// and "8 tracks" rows are Insert MIDI clip, New return track and the new track rows here.
+const md::Entry& addRow(md::Kind kind) {
+  for (const md::Entry& e : md::studio(2))
+    if (e.kind == kind && !e.label) return e;  // the effect submenu (its label is made when shown), the automation provider
+  static const md::Entry none = md::separator();
+  return none;
 }
 
 const md::Menu& clipsCreateDef() {
   static const md::Menu m = {
-      md::item(N_("New audio track"), "track.newAudio", [](App& a) { a.later([&a] { selectNewTrack(a, trackmodes::addAudioTrack(a.doc)); }); })
-          .tip(N_("A track for audio clips and recording, on a mixer track of its own, after the shown tracks")),
-      md::item(N_("New MIDI track"), "track.newMidi", [](App& a) { a.later([&a] { selectNewTrack(a, trackmodes::addMidiTrack(a.doc)); }); })
-          .tip(N_("An empty track for pattern clips, after the shown tracks")),
+      md::item(N_("New audio track"), "track.newAudio", [](App& a) { a.later([&a] { livelook::newTrack(a, true); }); })
+          .tip(N_("A track for audio clips and recording, on a mixer track of its own, after the selected track")),
+      md::item(N_("New MIDI track"), "track.newMidi", [](App& a) { a.later([&a] { livelook::newTrack(a, false); }); })
+          .tip(N_("An empty track for pattern clips, after the selected track")),
       md::submenu(N_("New instrument track"), {md::provider([](App& a) { addChannelMenu(a); })}),
+      // C44-16: a return track (every shown track sends to it, at zero), scenes and clips of the grid.
+      md::item(N_("New return track"), "track.newReturn", [](App& a) { livelook::newReturnTrack(a); })
+          .tip(N_("A mixer track the shown tracks send to (their sends start at zero)")),
+      addRow(md::Kind::Submenu),
+      md::separator(),
+      md::item(N_("Insert scene"), [](App& a) { livelook::gridInsertScene(a); })
+          .tip(N_("An empty row of slots under the selected slot's scene")),
+      md::item(N_("Insert MIDI clip"), "clips.insertMidiClip", [](App& a) { livelook::gridInsertMidiClip(a); })
+          .tip(N_("A new one-bar MIDI clip in the selected slot of a MIDI track")),
+      addRow(md::Kind::Provider),
       md::separator(),
       md::item(N_("Add marker at the song position"),
                [](App& a) { ops::addMarker(a.doc, std::max<Tick>(0, static_cast<Tick>(a.engine.position())), ops::nextMarkerName(a.doc.song())); }),
@@ -270,11 +404,14 @@ const md::Menu& clipsNavigateDef() {
       md::item(N_("Clip grid"), [](App& a) { livelook::showView(a, true); }).check([](App& a) { return livelook::gridView(a); }),
       md::separator(),
       md::toggle(N_("Browser"), "view.browser", [](App& a) { return &a.showBrowser; }),
-      // One detail band at a time (round 45): choosing one swaps it in; choosing the shown one hides it.
-      md::item(N_("Clip band"), [](App& a) { layoutui::setRegionVisible(a, "live.clip", !bandShown(a, "live.clip")); })
+      // Checkpoint 48: each band shows or hides on its own; both shown stack, the clip band over the
+      // device band (refs 456, 466). Shift+Tab swaps one for the other.
+      md::item(N_("Clip band"), [](App& a) { layoutui::setRegionVisible(a, "live.clip", !bandShown(a, "live.clip"), false); })
           .check([](App& a) { return bandShown(a, "live.clip"); }),
-      md::item(N_("Device band"), [](App& a) { layoutui::setRegionVisible(a, "live.device", !bandShown(a, "live.device")); })
+      md::item(N_("Device band"), [](App& a) { layoutui::setRegionVisible(a, "live.device", !bandShown(a, "live.device"), false); })
           .check([](App& a) { return bandShown(a, "live.device"); }),
+      md::item(N_("Clip and device bands"), "view.detail", [](App& a) { livelook::toggleDetail(a); })
+          .check([](App& a) { return bandShown(a, "live.clip") || bandShown(a, "live.device"); }),
       md::toggle(N_("Mixer"), "view.mixer", [](App& a) { return &a.showMixer; }),
       md::separator(),
   };
@@ -284,6 +421,7 @@ const md::Menu& clipsNavigateDef() {
 const md::Menu& programDef() {
   static const md::Menu m = {
       md::item(N_("About Gridline"), [](App& a) { a.showAbout = true; }),
+      md::item(N_("Check for updates..."), [](App& a) { updui::checkNow(a); }).only([](App&) { return updui::started(); }),  // R02-22
       md::separator(),
       md::item(N_("Settings..."), "view.settings",
                [](App& a) {
@@ -321,6 +459,12 @@ const md::Menu& pagesDef() {
       md::separator(),
       md::item(N_("Header band"), "view.headerBand", [](App& a) { trackerview::setExtended(a, !trackerview::extended()); })
           .check([](App&) { return !trackerview::extended(); }),
+      md::item(N_("Transpose box"), "view.transposeBox", [](App& a) { trackerview::toggleScopeTool(a, 1); })
+          .check([](App&) { return trackerview::scopeTool() == 1; }),
+      md::item(N_("Advanced edit"), "view.advancedEdit", [](App& a) { trackerview::toggleScopeTool(a, 3); })
+          .check([](App&) { return trackerview::scopeTool() == 3; }),
+      md::item(N_("Clean up box"), "view.cleanUp", [](App& a) { trackerview::toggleScopeTool(a, 2); })
+          .check([](App&) { return trackerview::scopeTool() == 2; }),
   };
   return m;
 }
@@ -337,7 +481,7 @@ const char* editKeyOf(const App& a, const char* op) {
 const char* trackerKey(App& a, const char* tracker, const char* op) { return onPattern(a) ? tracker : editKeyOf(a, op); }
 const md::Menu& trackerEditDef() {
   static const md::Menu m = {
-      md::item(nullptr, "edit.undo", [](App& a) { a.doc.undo(); })
+      md::item(nullptr, "edit.undo", [](App& a) { undoui::undo(a); })  // (N49-06: waits while Clips records)
           .text([](App& a) {
             const auto& h = a.doc.history();
             return h.canUndo() ? "Undo " + h.undoLabel() : std::string("Undo");
@@ -468,11 +612,16 @@ const md::Menu* blockMenu(menustyle::Block b) {
     case B::TracksEdit: return &md::tracksEdit();
     case B::TracksRecord: return &tracksRecordDef();
     case B::Pages: return &pagesDef();
+    case B::TracksView: return &tracksViewDef();
     case B::TrackerEdit: return &trackerEditDef();
     case B::TrackerPattern: return &trackerPatternDef();
     case B::TrackerView: return &trackerViewDef();
     case B::ClipsCreate: return &clipsCreateDef();
     case B::ClipsNavigate: return &clipsNavigateDef();
+    case B::ClipsRecord: return &clipsRecordDef();
+    case B::TracksFile: return &tracksFileDef();
+    case B::ClipsFile: return &md::clipsFile();
+    case B::ClipsEdit: return &md::clipsEdit();
     default: return nullptr;
   }
 }
@@ -481,24 +630,182 @@ const md::Menu* blockMenu(menustyle::Block b) {
 
 // K-112B (checkpoint 39), as the reference's Track menu behaves: a new track right below the current
 // one with its settings (name, colour, height) and none of its clips.
+namespace {
+std::vector<int> selectedTracks(const App& a) {
+  std::vector<int> v(a.playlist.trackSel.begin(), a.playlist.trackSel.end());
+  if (v.empty())
+    if (const int f = logicplug::focusTrack(a); f >= 0) v.push_back(f);
+  const int n = static_cast<int>(a.doc.song().tracks.size());
+  v.erase(std::remove_if(v.begin(), v.end(), [n](int t) { return t < 0 || t >= n; }), v.end());
+  return v;
+}
+}  // namespace
+
+void tracksMuteSelected(App& a) {
+  const std::vector<int> v = selectedTracks(a);
+  if (v.empty()) return;
+  const bool to = !a.doc.song().tracks[static_cast<size_t>(v.front())].muted;
+  a.doc.editSong(to ? "mute track" : "unmute track", [&](Song& x) {
+    for (const int t : v) x.tracks[static_cast<size_t>(t)].muted = to;
+  });
+}
+
+void tracksSoloSelected(App& a) {
+  // R05-03: as the reference's S (Toggle Channel Strip Solo): solo is the track's channel strip's own
+  // state. Other tracks go quiet without being muted, so their M stays as the person set it, and
+  // ending the solo leaves every mute as it was.
+  const std::vector<int> v = selectedTracks(a);
+  const Song& s = a.doc.song();
+  std::vector<ObjectId> strips;
+  for (const int t : v)
+    if (const MixerTrack* m = logicplug::trackStrip(s, t); m && std::find(strips.begin(), strips.end(), m->id) == strips.end()) strips.push_back(m->id);
+  if (strips.empty()) {
+    a.setHint(i18n::tr("This track has no channel strip to solo yet"));
+    return;
+  }
+  bool all = true;
+  for (const ObjectId id : strips) all = all && s.mixerTrack(id)->solo;
+  const bool to = !all;
+  a.doc.editSong(to ? "solo track" : "unsolo track", [&](Song& x) {
+    for (MixerTrack& m : x.mixer)
+      if (std::find(strips.begin(), strips.end(), m.id) != strips.end()) m.solo = to, m.soloAlone = false;
+  });
+}
+
+void configureTrackHeaderItems(App& a) {
+  struct Part {
+    int bit;
+    const char* name;
+  };
+  static const Part parts[] = {{kHeadIcon, N_("Icon")},           {kHeadPower, N_("On/off button")}, {kHeadMuteSolo, N_("Mute and solo buttons")},
+                               {kHeadRecord, N_("Record button")}, {kHeadVolume, N_("Volume slider")}, {kHeadPan, N_("Pan knob")}};
+  const int hide = static_cast<int>(a.settings.getNumber("ui.logicHeaderHide"));
+  for (const Part& pt : parts)
+    if (ImGui::MenuItem(i18n::tr(pt.name), nullptr, (hide & pt.bit) == 0)) a.settings.set("ui.logicHeaderHide", hide ^ pt.bit);
+}
+
+bool trackHeaderShows(App& a, int part) { return (static_cast<int>(a.settings.getNumber("ui.logicHeaderHide")) & part) == 0; }
+
+namespace {
+// The selected tracks when they are one run of neighbours outside any stack, sorted; else empty.
+std::vector<int> stackRun(App& a) {
+  std::vector<int> v = selectedTracks(a);
+  std::sort(v.begin(), v.end());
+  const Song& s = a.doc.song();
+  if (v.empty() || static_cast<int>(s.tracks.size()) >= kMaxPlaylistTracks) return {};
+  for (size_t k = 0; k < v.size(); ++k)
+    if ((k > 0 && v[k] != v[k - 1] + 1) || ops::trackGroupOf(s, v[k]).first >= 0) return {};
+  return v;
+}
+std::vector<freeze::Unit> frozenTargets(App& a) {
+  std::vector<freeze::Unit> out;
+  for (const int t : selectedTracks(a)) {
+    freeze::Unit u;
+    if (freezeui::trackUnit(a.doc.song(), t, u)) out.push_back(u);
+    else if (const Channel* ch = logicplug::trackSound(a.doc.song(), t, nullptr)) out.push_back(freeze::channelUnit(ch->id));  // a free track: the sound it plays
+  }
+  return out;
+}
+}  // namespace
+
+bool tracksCanStack(App& a) { return !stackRun(a).empty(); }
+
+// As the reference's Create Track Stack: a new track above the selected ones holds them (Gridline's
+// track group: the head folds and colours them), one undo step, the new stack selected.
+void tracksCreateStack(App& a) {
+  const std::vector<int> v = stackRun(a);
+  if (v.empty()) {
+    a.setHint(i18n::tr("Select neighbouring tracks that are not in a stack yet"));
+    return;
+  }
+  const int at = v.front(), n = static_cast<int>(v.size());
+  a.later([&a, at, n] {
+    a.doc.editSong("create track stack", [&](Song& x) {
+      PlaylistTrack head;
+      head.name = "Track stack";
+      head.groupSize = n;
+      x.tracks.insert(x.tracks.begin() + at, head);
+      for (Clip& c : x.playlist)
+        if (c.track >= at) ++c.track;
+    });
+    a.playlist.trackSel = {at};
+  });
+}
+
+bool tracksCanFreeze(App& a) { return !frozenTargets(a).empty(); }
+bool tracksFrozen(App& a) {
+  const std::vector<freeze::Unit> u = frozenTargets(a);
+  return !u.empty() && freeze::frozen(a.doc.song(), u.front());
+}
+void tracksFreeze(App& a) {
+  const std::vector<freeze::Unit> u = frozenTargets(a);
+  if (u.empty()) {
+    a.setHint(i18n::tr("This track has no instrument or audio of its own to freeze"));
+    return;
+  }
+  if (freeze::frozen(a.doc.song(), u.front())) a.later([&a, u] { freezeui::unfreezeUnits(a, u); });
+  else a.later([&a, u] { freezeui::freezeUnits(a, u); });
+}
+
+void tracksBounceInPlace(App& a) {
+  std::vector<int> v = selectedTracks(a);
+  std::sort(v.rbegin(), v.rend());  // from the last: a bounce below one track never moves another's
+  const std::string dir = renderedDir(a);
+  const double sr = a.engine.sampleRate();
+  a.later([&a, v, dir, sr] {
+    int done = 0;
+    a.doc.beginGroup("bounce tracks in place");
+    for (const int t : v) {
+      ObjectId nid = kNoId;
+      a.doc.editSong("bounce track", [&](Song& x) { nid = bounceTrack(x, t, dir, sr); });
+      if (nid != kNoId) ++done;
+    }
+    a.doc.endGroup();
+    a.notify(done ? i18n::tr("Bounced in place: the original regions are muted") : i18n::tr("Nothing to bounce on the selected tracks"), done == 0);
+  });
+}
+
+void regionsBounceInPlace(App& a) {
+  std::set<ObjectId> sel;
+  for (const ObjectId id : a.playlist.selected)
+    if (const Clip* c = a.doc.song().clip(id); c && !logicplug::laneClip(a.doc.song(), *c)) sel.insert(id);
+  if (sel.empty()) {
+    a.setHint(i18n::tr("Select the regions to bounce first"));
+    return;
+  }
+  const std::string dir = renderedDir(a);
+  const double sr = a.engine.sampleRate();
+  a.later([&a, sel, dir, sr] {
+    ObjectId nid = kNoId;
+    a.doc.editSong("bounce regions in place", [&](Song& x) { nid = consolidateClips(x, sel, dir, sr, true); });
+    if (nid != kNoId) a.playlist.selected = {nid};
+    else a.notify(i18n::tr("Nothing to render"), true);
+  });
+}
+
 void tracksNewSameSettings(App& a) {
   if (static_cast<int>(a.doc.song().tracks.size()) >= kMaxPlaylistTracks) return;
   const int at = currentTrack(a);
-  a.later([&a, at] {
-    if (ops::clonePlaylistTrack(a.doc, at, false)) a.playlist.trackSel = {at + 1};
-  });
+  a.later([&a, at] { logicplug::newTrackSameSettings(a, at, false); });  // R02-14: with its own channel strip
 }
 
 // Every selected track goes (one undo step), the current one when none is selected; one track always stays.
 void tracksDeleteSelected(App& a) {
   std::vector<int> del(a.playlist.trackSel.begin(), a.playlist.trackSel.end());
   if (del.empty()) del.push_back(currentTrack(a));
-  a.later([&a, del] {
+  const bool lanes = logicplug::active(a);  // R04-13: the Tracks layout's track automation goes with its track
+  a.later([&a, del, lanes] {
     a.doc.beginGroup("delete tracks");
     for (auto it = del.rbegin(); it != del.rend(); ++it)
-      if (a.doc.song().tracks.size() > 1) ops::deletePlaylistTrack(a.doc, *it);
+      if (a.doc.song().tracks.size() > 1) {
+        if (lanes) logicplug::deleteTrack(a, *it);  // R06-06: with its strip and the sounds only it used
+        else ops::deletePlaylistTrack(a.doc, *it, false);
+      }
     a.doc.endGroup();
+    // R02-14: a track is always selected: the one that took the first deleted one's place.
+    const int n = static_cast<int>(a.doc.song().tracks.size());
     a.playlist.trackSel.clear();
+    if (n > 0) a.playlist.trackSel.insert(std::min(*std::min_element(del.begin(), del.end()), n - 1));
   });
 }
 
@@ -508,7 +815,13 @@ void tracksAddMarker(App& a) {
   const MeterMap mm(s);
   const Tick pos = static_cast<Tick>(a.engine.position());
   const Tick from = mm.barStartAt(pos), to = mm.nextBar(from);
-  ops::addMarker(a.doc, pos - from <= to - pos ? from : to, ops::nextMarkerName(s));
+  const Tick at = pos - from <= to - pos ? from : to;
+  for (const Marker& m : s.markers)  // R02-16: one marker per position; a second would hide the first's name
+    if (m.pos == at) {
+      a.setHint(i18n::tr("A marker is already at this bar: ") + m.name);
+      return;
+    }
+  ops::addMarker(a.doc, at, ops::nextMarkerName(s));
 }
 
 // Split: the selected clips at the song position; with nothing selected nothing splits, as there.
@@ -535,7 +848,8 @@ bool trackerDrops(menustyle::Block b, const md::Entry& e) {
   if (b == B::Options) return key == "transport.songMode" || label == "Song mode" || key == "options.metronome" || key == "options.typingKeyboard" || label == "Typing keyboard options";
   if (b == B::Add) return key == "pattern.new";
   if (b == B::Patterns) return e.kind == md::Kind::Submenu && label == "Length";  // T-26: the header's Rows is the one control
-  if (b == B::Record) return e.kind != md::Kind::Submenu && key == "options.typingKeyboard";  // its options submenu has the same switch
+  if (b == B::Record)  // its options submenu has the same switch; N-06: the header's Metronome button is the metronome's control
+    return e.kind != md::Kind::Submenu && (key == "options.typingKeyboard" || key == "options.metronome");
   return false;
 }
 // T-26: the shortcuts the Tracker's menus do not show: the playlist's zoom keys (PgUp, PgDn and

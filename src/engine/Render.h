@@ -78,6 +78,7 @@ struct RenderJob {
   // Render switches.
   bool insertEffects = true;    // effect slots of the insert tracks
   bool masterEffects = true;    // effect slots + strip EQ of the master track
+  bool arrangementOnly = false;  // N48-10: the Clips layout renders its arrangement only (never the live area)
   bool polyphonyLimits = true;  // false: channels' maximum polyphony is ignored ("disable max polyphony")
   RenderInterp interp = RenderInterp::Linear;
   int oversample = 1;           // 1, 2 or 4: the engine runs at sampleRate × oversample, then decimates

@@ -52,6 +52,12 @@ Range rangeOrAll(const Content& c, Range r) {
   return r.empty() ? Range{0, c.frames()} : r;
 }
 
+Range rangeAfterEdit(const Content& before, const Content& after, Range edited) {
+  edited = clampRange(before, edited);
+  edited.b = std::max(edited.a, edited.b + (after.frames() - before.frames()));
+  return clampRange(after, edited);
+}
+
 void fixMono(Audio& a) {
   if (a.channels == 1) a.R = a.L;
 }

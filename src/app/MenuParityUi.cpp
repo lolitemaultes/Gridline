@@ -28,9 +28,12 @@
 #include "ExportUi.h"
 #include "Midi.h"
 #include "Keys.h"
+#include "LayoutPresets.h"
+#include "LiveLook.h"
 #include "ScriptUi.h"
 #include "Widgets.h"
 #include "Windows.h"
+#include "../core/SafeFs.h"
 
 namespace gl::menuparity {
 
@@ -246,7 +249,7 @@ void toolsNoteItems(App& a) {
     std::string path;
     for (int k = 1; k < 10000; ++k) {
       path = (fs::path(dir) / ("Notes " + std::to_string(k) + ".mid")).string();
-      if (!fs::exists(path)) break;
+      if (!safefs::existsAt(path)) break;
     }
     std::string err;
     if (writeMidiFile(path, ops::notesToMidiFile(a.piano.clipboard, a.doc.song().ppq, a.doc.song().tempo, "Notes"), &err))
@@ -259,11 +262,14 @@ void toolsNoteItems(App& a) {
 void toolsMacroItems(App& a) {
   if (ImGui::MenuItem(i18n::tr("Lock every playlist track"))) ops::setAllTracksLocked(a.doc, true);
   if (ImGui::MenuItem(i18n::tr("Unlock every playlist track"))) ops::setAllTracksLocked(a.doc, false);
-  if (ImGui::MenuItem(i18n::tr("Prepare the live area"))) {
-    Tick t = ops::prepareLiveArea(a.doc);
-    a.notify(t ? std::string("Live area ready: each clip once per track at the song start") : std::string("Nothing to prepare"));
+  // N46-09: Clips has its own clip grid (scenes); the Studio live area is not one of its tools.
+  if (!livelook::active(a) && ImGui::MenuItem(i18n::tr("Prepare the live area"))) {
+    // K-112c (C44-07): in Clips, one clip to a slot of the clip grid (scene i: each track's i-th clip).
+    Tick t = livelook::active(a) ? ops::prepareClipGrid(a.doc, std::max<Tick>(1, a.doc.song().barTicks()) * livelook::kSceneBars) : ops::prepareLiveArea(a.doc);
+    a.notify(t && livelook::active(a) ? std::string("Clip grid ready: each track's clips one to a slot, scene by scene")
+             : t ? std::string("Live area ready: each clip once per track at the song start") : std::string("Nothing to prepare"));
   }
-  ui::Hint("Puts every different clip of each track once into a live area at the song start (the song moves right)");
+  if (!livelook::active(a)) ui::Hint("Puts every different clip of each track once into a live area at the song start (the song moves right)");
   if (ImGui::BeginMenu(i18n::tr("Audio clip channels"))) {
     timeModeItems(a);
     ImGui::EndMenu();
@@ -514,7 +520,24 @@ void stopPressed(App& a) {
 // already stopped (a second click, or a double-click), it also puts the song
 // and pattern position markers back at the beginning (the set position is
 // cleared, so the next Stop returns there too).
+// R02-11: the Tracks layout stops as the reference does: Space and the first Stop stop where the
+// playhead is; Stop while stopped goes to the start, or to the cycle's start when Cycle is on.
+void tracksStop(App& a) {
+  if (a.engine.playing()) {
+    a.engine.pause();
+    a.engine.releaseAllNotes();
+    return;
+  }
+  const PlaylistState& pst = a.playlist;
+  if (pst.selEnd > pst.selStart && a.engine.mode() == PlayMode::Song) a.engine.setPosition(pst.selStart);
+  else a.engine.stopToStart();
+}
+
 void stopButtonPressed(App& a) {
+  if (layoutui::active() == layout::Preset::Logic) {
+    tracksStop(a);
+    return;
+  }
   const bool wasStopped = !a.engine.playing();
   stopPressed(a);
   if (wasStopped) a.engine.stopToStart();
@@ -571,6 +594,13 @@ bool playPressed(App& a) {
   if (a.engine.playing()) return false;
   const AudioEngine::OwnPlayback own = a.engine.pluginPlayback();
   if (own.kind == AudioEngine::OwnPlay::None) {
+    // R04-06: in the Tracks layout, with Cycle on, playback starts at the cycle's start (the
+    // reference's rule). A playhead already inside the cycle (stopped in place) plays on from there.
+    const PlaylistState& pst = a.playlist;
+    if (layoutui::active() == layout::Preset::Logic && pst.selEnd > pst.selStart && a.engine.mode() == PlayMode::Song) {
+      const Tick at = static_cast<Tick>(a.engine.position());
+      if (at < pst.selStart || at >= pst.selEnd) a.engine.setPosition(pst.selStart);
+    }
     a.startPlayback();
     return true;
   }

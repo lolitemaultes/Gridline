@@ -7570,6 +7570,7 @@ gl.midiout	436	Knob 72 number	combination	16383	434=127
 gl.midiout	437	Knob 72 min	combination	16383	1049010=63.5
 gl.midiout	438	Knob 72 max	combination	16383	1049010=63.5
 gl.midiout	439	Knob 72 channel	combination	16	434=127
+gl.midiout	440	MPE	working	1	
 gl.multiband	0	Low band edge	working	20	
 gl.multiband	1	High band edge	working	20	
 gl.multiband	2	Low threshold	working	0	
@@ -13560,7 +13561,7 @@ gl.slicer	17	Filter	working	2
 gl.slicer	18	Cutoff	combination	20	17=1
 gl.slicer	19	Resonance	combination	1	17=1
 gl.slicer	20	Pan	working	1	
-gl.slicer	21	Velocity to level	working	0	
+gl.slicer	21	Velocity amount	working	0	
 gl.slicer	22	Chromatic slice	combination	31	0=4;664=99
 gl.slicer	23	Minimum slice gap	combination	0.5	1=1
 gl.slicer	24	Slice 1 position	combination	0	858=2
@@ -14395,8 +14396,8 @@ gl.slicer	852	Slice 64 resonance	inert	0
 gl.slicer	853	Slice 64 delay	inert	0	
 gl.slicer	854	Slice 64 cut group	inert	0	
 gl.slicer	855	Slice 64 key	inert	0	
-gl.slicer	856	Modulation X (cutoff)	combination	0	17=1
-gl.slicer	857	Modulation Y (resonance)	combination	1	17=1
+gl.slicer	856	Modulation X	combination	0	17=1
+gl.slicer	857	Modulation Y	combination	1	17=1
 gl.slicer	858	Engine	working	2	
 gl.slicer	859	Master level	inert	0	
 gl.slicer	860	Processed pitch	combination	-1200	858=2;24=0;25=0.25
@@ -14414,6 +14415,1184 @@ gl.slicer	871	Grid meter	combination	5	0=6
 gl.slicer	872	Grid cuts on the hits	combination	0	0=6
 gl.slicer	873	Grid cuts on zero crossings	combination	0	0=6
 gl.slicer	874	Grid follows the detected beats	combination	0	15=1;0=6
+gl.slicer	875	Modulation X target	combination	6	877=1;0=2
+gl.slicer	876	Modulation X amount	combination	-1	875=1;0=2
+gl.slicer	877	Modulation Y target	combination	1	857=0
+gl.slicer	878	Modulation Y amount	combination	-1	877=1;0=2
+gl.slicer	879	Velocity target	working	4	
+gl.slicer	880	Slice 1 speed	working	0.25	
+gl.slicer	881	Slice 1 envelope set	combination	1	4=0.5
+gl.slicer	882	Slice 2 speed	combination	0.25	0=4;664=99
+gl.slicer	883	Slice 2 envelope set	combination	1	1=1;4=0.5
+gl.slicer	884	Slice 3 speed	combination	0.25	0=4;664=99
+gl.slicer	885	Slice 3 envelope set	combination	1	1=1;4=0.5
+gl.slicer	886	Slice 4 speed	combination	0.25	0=4;664=99
+gl.slicer	887	Slice 4 envelope set	combination	1	1=1;4=0.5
+gl.slicer	888	Slice 5 speed	combination	0.25	0=4;664=99
+gl.slicer	889	Slice 5 envelope set	combination	1	0=6;4=0.5
+gl.slicer	890	Slice 6 speed	combination	0.25	0=4;664=99
+gl.slicer	891	Slice 6 envelope set	combination	1	0=6;4=0.5
+gl.slicer	892	Slice 7 speed	combination	0.25	0=4;664=99
+gl.slicer	893	Slice 7 envelope set	combination	1	0=6;4=0.5
+gl.slicer	894	Slice 8 speed	combination	0.25	0=4;664=99
+gl.slicer	895	Slice 8 envelope set	combination	1	0=6;4=0.5
+gl.slicer	896	Slice 9 speed	combination	0.25	0=4;664=99
+gl.slicer	897	Slice 9 envelope set	combination	1	4=0.5;0=3
+gl.slicer	898	Slice 10 speed	combination	0.25	0=4;664=99
+gl.slicer	899	Slice 10 envelope set	combination	1	4=0.5;0=3
+gl.slicer	900	Slice 11 speed	combination	0.25	0=4;664=99
+gl.slicer	901	Slice 11 envelope set	combination	1	4=0.5;0=3
+gl.slicer	902	Slice 12 speed	combination	0.25	0=4;664=99
+gl.slicer	903	Slice 12 envelope set	combination	1	4=0.5;0=3
+gl.slicer	904	Slice 13 speed	combination	0.25	0=4;664=99
+gl.slicer	905	Slice 13 envelope set	combination	1	4=0.5;0=3
+gl.slicer	906	Slice 14 speed	combination	0.25	0=4;664=99
+gl.slicer	907	Slice 14 envelope set	combination	1	4=0.5;0=3
+gl.slicer	908	Slice 15 speed	combination	0.25	0=4;664=99
+gl.slicer	909	Slice 15 envelope set	combination	1	4=0.5;0=3
+gl.slicer	910	Slice 16 speed	combination	0.25	0=4;664=99
+gl.slicer	911	Slice 16 envelope set	combination	1	4=0.5;0=3
+gl.slicer	912	Slice 17 speed	combination	0.25	0=4;664=99
+gl.slicer	913	Slice 17 envelope set	combination	1	4=0.5;0=4
+gl.slicer	914	Slice 18 speed	combination	0.25	0=4;664=99
+gl.slicer	915	Slice 18 envelope set	combination	1	4=0.5;0=4
+gl.slicer	916	Slice 19 speed	combination	0.25	0=4;664=99
+gl.slicer	917	Slice 19 envelope set	combination	1	4=0.5;0=4
+gl.slicer	918	Slice 20 speed	combination	0.25	0=4;664=99
+gl.slicer	919	Slice 20 envelope set	combination	1	4=0.5;0=4
+gl.slicer	920	Slice 21 speed	combination	0.25	0=4;664=99
+gl.slicer	921	Slice 21 envelope set	combination	1	4=0.5;0=4
+gl.slicer	922	Slice 22 speed	combination	0.25	0=4;664=99
+gl.slicer	923	Slice 22 envelope set	combination	1	4=0.5;0=4
+gl.slicer	924	Slice 23 speed	combination	0.25	0=4;664=99
+gl.slicer	925	Slice 23 envelope set	combination	1	4=0.5;0=4
+gl.slicer	926	Slice 24 speed	combination	0.25	0=4;664=99
+gl.slicer	927	Slice 24 envelope set	combination	1	4=0.5;0=4
+gl.slicer	928	Slice 25 speed	combination	0.25	0=4;664=99
+gl.slicer	929	Slice 25 envelope set	combination	1	4=0.5;0=4
+gl.slicer	930	Slice 26 speed	combination	0.25	0=4;664=99
+gl.slicer	931	Slice 26 envelope set	combination	1	4=0.5;0=4
+gl.slicer	932	Slice 27 speed	combination	0.25	0=4;664=99
+gl.slicer	933	Slice 27 envelope set	combination	1	4=0.5;0=4
+gl.slicer	934	Slice 28 speed	combination	0.25	0=4;664=99
+gl.slicer	935	Slice 28 envelope set	combination	1	4=0.5;0=4
+gl.slicer	936	Slice 29 speed	combination	0.25	0=4;664=99
+gl.slicer	937	Slice 29 envelope set	combination	1	4=0.5;0=4
+gl.slicer	938	Slice 30 speed	combination	0.25	0=4;664=99
+gl.slicer	939	Slice 30 envelope set	combination	1	4=0.5;0=4
+gl.slicer	940	Slice 31 speed	combination	0.25	0=4;664=99
+gl.slicer	941	Slice 31 envelope set	combination	1	4=0.5;0=4
+gl.slicer	942	Slice 32 speed	combination	0.25	0=4;664=99
+gl.slicer	943	Slice 32 envelope set	combination	1	4=0.5;0=4
+gl.slicer	944	Slice 33 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	945	Slice 33 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	946	Slice 34 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	947	Slice 34 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	948	Slice 35 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	949	Slice 35 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	950	Slice 36 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	951	Slice 36 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	952	Slice 37 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	953	Slice 37 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	954	Slice 38 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	955	Slice 38 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	956	Slice 39 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	957	Slice 39 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	958	Slice 40 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	959	Slice 40 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	960	Slice 41 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	961	Slice 41 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	962	Slice 42 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	963	Slice 42 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	964	Slice 43 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	965	Slice 43 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	966	Slice 44 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	967	Slice 44 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	968	Slice 45 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	969	Slice 45 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	970	Slice 46 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	971	Slice 46 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	972	Slice 47 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	973	Slice 47 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	974	Slice 48 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	975	Slice 48 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	976	Slice 49 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	977	Slice 49 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	978	Slice 50 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	979	Slice 50 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	980	Slice 51 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	981	Slice 51 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	982	Slice 52 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	983	Slice 52 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	984	Slice 53 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	985	Slice 53 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	986	Slice 54 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	987	Slice 54 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	988	Slice 55 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	989	Slice 55 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	990	Slice 56 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	991	Slice 56 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	992	Slice 57 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	993	Slice 57 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	994	Slice 58 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	995	Slice 58 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	996	Slice 59 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	997	Slice 59 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	998	Slice 60 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	999	Slice 60 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1000	Slice 61 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1001	Slice 61 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1002	Slice 62 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1003	Slice 62 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1004	Slice 63 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1005	Slice 63 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1006	Slice 64 speed	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1007	Slice 64 envelope set	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1008	Decay	combination	0.00200000009	4=0.0158113883;1009=0.5;5=0.0447213595;1010=0.05;1011=0.141421356;1012=0.5;1013=0.141421356;1014=1;1015=0.05;1016=0.141421356;1017=0.5;1018=0.141421356;1019=48;1020=0.05;1021=0.141421356;1022=0.5;1023=0.141421356;1024=8	
+gl.slicer	1009	Sustain	working	0	
+gl.slicer	1010	pan envelope attack	combination	5	4=0.0158113883;1008=0.141421356;1009=0.5;5=0.0447213595;1011=0.141421356;1012=0.5;1013=0.141421356;1014=1;1015=0.05;1016=0.141421356;1017=0.5;1018=0.141421356;1019=48;1020=0.05;1021=0.141421356;1022=0.5;1023=0.141421356;1024=8	
+gl.slicer	1011	pan envelope decay	combination	0.00200000009	4=0.0158113883;1008=0.141421356;1009=0.5;5=0.0447213595;1010=0.05;1012=0.5;1013=0.141421356;1014=1;1015=0.05;1016=0.141421356;1017=0.5;1018=0.141421356;1019=48;1020=0.05;1021=0.141421356;1022=0.5;1023=0.141421356;1024=8	
+gl.slicer	1012	pan envelope sustain	combination	1	4=0.0158113883;1008=0.141421356;1009=0.5;5=0.0447213595;1010=0.05;1011=0.141421356;1013=0.141421356;1014=1;1015=0.05;1016=0.141421356;1017=0.5;1018=0.141421356;1019=48;1020=0.05;1021=0.141421356;1022=0.5;1023=0.141421356;1024=8	
+gl.slicer	1013	pan envelope release	combination	0.00200000009	4=0.0158113883;1008=0.141421356;1009=0.5;5=0.0447213595;1010=0.05;1011=0.141421356;1012=0.5;1014=1;1015=0.05;1016=0.141421356;1017=0.5;1018=0.141421356;1019=48;1020=0.05;1021=0.141421356;1022=0.5;1023=0.141421356;1024=8	
+gl.slicer	1014	pan envelope amount	working	1	
+gl.slicer	1015	pitch envelope attack	combination	5	4=0.0158113883;1008=0.141421356;1009=0.5;5=0.0447213595;1010=0.05;1011=0.141421356;1012=0.5;1013=0.141421356;1014=1;1016=0.141421356;1017=0.5;1018=0.141421356;1019=48;1020=0.05;1021=0.141421356;1022=0.5;1023=0.141421356;1024=8	
+gl.slicer	1016	pitch envelope decay	combination	0.00200000009	4=0.0158113883;1008=0.141421356;1009=0.5;5=0.0447213595;1010=0.05;1011=0.141421356;1012=0.5;1013=0.141421356;1014=1;1015=0.05;1017=0.5;1018=0.141421356;1019=48;1020=0.05;1021=0.141421356;1022=0.5;1023=0.141421356;1024=8	
+gl.slicer	1017	pitch envelope sustain	combination	1	4=0.0158113883;1008=0.141421356;1009=0.5;5=0.0447213595;1010=0.05;1011=0.141421356;1012=0.5;1013=0.141421356;1014=1;1015=0.05;1016=0.141421356;1018=0.141421356;1019=48;1020=0.05;1021=0.141421356;1022=0.5;1023=0.141421356;1024=8	
+gl.slicer	1018	pitch envelope release	combination	0.00200000009	4=0.0158113883;1008=0.141421356;1009=0.5;5=0.0447213595;1010=0.05;1011=0.141421356;1012=0.5;1013=0.141421356;1014=1;1015=0.05;1016=0.141421356;1017=0.5;1019=48;1020=0.05;1021=0.141421356;1022=0.5;1023=0.141421356;1024=8	
+gl.slicer	1019	pitch envelope amount	working	-48	
+gl.slicer	1020	filter envelope attack	combination	5	4=0.0158113883;1008=0.141421356;1009=0.5;5=0.0447213595;1010=0.05;1011=0.141421356;1012=0.5;1013=0.141421356;1014=1;1021=0.141421356;1022=0.5;1023=0.141421356;1024=48;1021=0.141421356;1022=0.5;1023=0.141421356;1024=8;17=1;18=400	
+gl.slicer	1021	filter envelope decay	combination	0.00200000009	4=0.0158113883;1008=0.141421356;1009=0.5;5=0.0447213595;1010=0.05;1011=0.141421356;1012=0.5;1013=0.141421356;1014=1;1020=0.05;1022=0.5;1023=0.141421356;1024=48;1020=0.05;1022=0.5;1023=0.141421356;1024=8;17=1;18=400	
+gl.slicer	1022	filter envelope sustain	combination	1	4=0.0158113883;1008=0.141421356;1009=0.5;5=0.0447213595;1010=0.05;1011=0.141421356;1012=0.5;1013=0.141421356;1014=1;1020=0.05;1021=0.141421356;1023=0.141421356;1024=48;1020=0.05;1021=0.141421356;1023=0.141421356;1024=8;17=1;18=400	
+gl.slicer	1023	filter envelope release	combination	0.00200000009	4=0.0158113883;1008=0.141421356;1009=0.5;5=0.0447213595;1010=0.05;1011=0.141421356;1012=0.5;1013=0.141421356;1014=1;1020=0.05;1021=0.141421356;1022=0.5;1024=48;1020=0.05;1021=0.141421356;1022=0.5;1024=8;17=1;18=400	
+gl.slicer	1024	filter envelope amount	combination	-8	17=1
+gl.slicer	1025	Set 2 attack	combination	0.5	881=1
+gl.slicer	1026	Set 2 decay	combination	0.00200000009	1025=0.0158113883;1027=0.5;1028=0.0447213595;1029=0.05;1030=0.141421356;1031=0.5;1032=0.141421356;1033=1;1034=0.05;1035=0.141421356;1036=0.5;1037=0.141421356;1038=48;1039=0.05;1040=0.141421356;1041=0.5;1042=0.141421356;1043=8;881=1
+gl.slicer	1027	Set 2 sustain	combination	0	881=1
+gl.slicer	1028	Set 2 release	combination	1	881=1
+gl.slicer	1029	Set 2 pan envelope attack	combination	5	1025=0.0158113883;1026=0.141421356;1027=0.5;1028=0.0447213595;1030=0.141421356;1031=0.5;1032=0.141421356;1033=1;1034=0.05;1035=0.141421356;1036=0.5;1037=0.141421356;1038=48;1039=0.05;1040=0.141421356;1041=0.5;1042=0.141421356;1043=8;881=1
+gl.slicer	1030	Set 2 pan envelope decay	combination	0.00200000009	1025=0.0158113883;1026=0.141421356;1027=0.5;1028=0.0447213595;1029=0.05;1031=0.5;1032=0.141421356;1033=1;1034=0.05;1035=0.141421356;1036=0.5;1037=0.141421356;1038=48;1039=0.05;1040=0.141421356;1041=0.5;1042=0.141421356;1043=8;881=1
+gl.slicer	1031	Set 2 pan envelope sustain	combination	1	1025=0.0158113883;1026=0.141421356;1027=0.5;1028=0.0447213595;1029=0.05;1030=0.141421356;1032=0.141421356;1033=1;1034=0.05;1035=0.141421356;1036=0.5;1037=0.141421356;1038=48;1039=0.05;1040=0.141421356;1041=0.5;1042=0.141421356;1043=8;881=1
+gl.slicer	1032	Set 2 pan envelope release	combination	0.00200000009	1025=0.0158113883;1026=0.141421356;1027=0.5;1028=0.0447213595;1029=0.05;1030=0.141421356;1031=0.5;1033=1;1034=0.05;1035=0.141421356;1036=0.5;1037=0.141421356;1038=48;1039=0.05;1040=0.141421356;1041=0.5;1042=0.141421356;1043=8;881=1
+gl.slicer	1033	Set 2 pan envelope amount	combination	-1	881=1
+gl.slicer	1034	Set 2 pitch envelope attack	combination	5	1025=0.0158113883;1026=0.141421356;1027=0.5;1028=0.0447213595;1029=0.05;1030=0.141421356;1031=0.5;1032=0.141421356;1033=1;1035=0.141421356;1036=0.5;1037=0.141421356;1038=48;1039=0.05;1040=0.141421356;1041=0.5;1042=0.141421356;1043=8;881=1
+gl.slicer	1035	Set 2 pitch envelope decay	combination	0.00200000009	1025=0.0158113883;1026=0.141421356;1027=0.5;1028=0.0447213595;1029=0.05;1030=0.141421356;1031=0.5;1032=0.141421356;1033=1;1034=0.05;1036=0.5;1037=0.141421356;1038=48;1039=0.05;1040=0.141421356;1041=0.5;1042=0.141421356;1043=8;881=1
+gl.slicer	1036	Set 2 pitch envelope sustain	combination	1	1025=0.0158113883;1026=0.141421356;1027=0.5;1028=0.0447213595;1029=0.05;1030=0.141421356;1031=0.5;1032=0.141421356;1033=1;1034=0.05;1035=0.141421356;1037=0.141421356;1038=48;1039=0.05;1040=0.141421356;1041=0.5;1042=0.141421356;1043=8;881=1
+gl.slicer	1037	Set 2 pitch envelope release	combination	0.00200000009	1025=0.0158113883;1026=0.141421356;1027=0.5;1028=0.0447213595;1029=0.05;1030=0.141421356;1031=0.5;1032=0.141421356;1033=1;1034=0.05;1035=0.141421356;1036=0.5;1038=48;1039=0.05;1040=0.141421356;1041=0.5;1042=0.141421356;1043=8;881=1
+gl.slicer	1038	Set 2 pitch envelope amount	combination	-48	881=1
+gl.slicer	1039	Set 2 filter envelope attack	combination	5	1025=0.0158113883;1026=0.141421356;1027=0.5;1028=0.0447213595;1029=0.05;1030=0.141421356;1031=0.5;1032=0.141421356;1033=1;1040=0.141421356;1041=0.5;1042=0.141421356;1043=48;1040=0.141421356;1041=0.5;1042=0.141421356;1043=8;17=1;18=400;881=1	
+gl.slicer	1040	Set 2 filter envelope decay	combination	0.00200000009	1025=0.0158113883;1026=0.141421356;1027=0.5;1028=0.0447213595;1029=0.05;1030=0.141421356;1031=0.5;1032=0.141421356;1033=1;1039=0.05;1041=0.5;1042=0.141421356;1043=48;1039=0.05;1041=0.5;1042=0.141421356;1043=8;17=1;18=400;881=1	
+gl.slicer	1041	Set 2 filter envelope sustain	combination	1	1025=0.0158113883;1026=0.141421356;1027=0.5;1028=0.0447213595;1029=0.05;1030=0.141421356;1031=0.5;1032=0.141421356;1033=1;1039=0.05;1040=0.141421356;1042=0.141421356;1043=48;1039=0.05;1040=0.141421356;1042=0.141421356;1043=8;17=1;18=400;881=1	
+gl.slicer	1042	Set 2 filter envelope release	combination	0.00200000009	1025=0.0158113883;1026=0.141421356;1027=0.5;1028=0.0447213595;1029=0.05;1030=0.141421356;1031=0.5;1032=0.141421356;1033=1;1039=0.05;1040=0.141421356;1041=0.5;1043=48;1039=0.05;1040=0.141421356;1041=0.5;1043=8;17=1;18=400;881=1	
+gl.slicer	1043	Set 2 filter envelope amount	combination	-8	17=1;881=1
+gl.slicer	1044	Set 3 attack	combination	0.5	881=2
+gl.slicer	1045	Set 3 decay	combination	0.00200000009	1044=0.0158113883;1046=0.5;1047=0.0447213595;1048=0.05;1049=0.141421356;1050=0.5;1051=0.141421356;1052=1;1053=0.05;1054=0.141421356;1055=0.5;1056=0.141421356;1057=48;1058=0.05;1059=0.141421356;1060=0.5;1061=0.141421356;1062=8;881=2
+gl.slicer	1046	Set 3 sustain	combination	0	881=2
+gl.slicer	1047	Set 3 release	combination	1	881=2
+gl.slicer	1048	Set 3 pan envelope attack	combination	5	1044=0.0158113883;1045=0.141421356;1046=0.5;1047=0.0447213595;1049=0.141421356;1050=0.5;1051=0.141421356;1052=1;1053=0.05;1054=0.141421356;1055=0.5;1056=0.141421356;1057=48;1058=0.05;1059=0.141421356;1060=0.5;1061=0.141421356;1062=8;881=2
+gl.slicer	1049	Set 3 pan envelope decay	combination	0.00200000009	1044=0.0158113883;1045=0.141421356;1046=0.5;1047=0.0447213595;1048=0.05;1050=0.5;1051=0.141421356;1052=1;1053=0.05;1054=0.141421356;1055=0.5;1056=0.141421356;1057=48;1058=0.05;1059=0.141421356;1060=0.5;1061=0.141421356;1062=8;881=2
+gl.slicer	1050	Set 3 pan envelope sustain	combination	1	1044=0.0158113883;1045=0.141421356;1046=0.5;1047=0.0447213595;1048=0.05;1049=0.141421356;1051=0.141421356;1052=1;1053=0.05;1054=0.141421356;1055=0.5;1056=0.141421356;1057=48;1058=0.05;1059=0.141421356;1060=0.5;1061=0.141421356;1062=8;881=2
+gl.slicer	1051	Set 3 pan envelope release	combination	0.00200000009	1044=0.0158113883;1045=0.141421356;1046=0.5;1047=0.0447213595;1048=0.05;1049=0.141421356;1050=0.5;1052=1;1053=0.05;1054=0.141421356;1055=0.5;1056=0.141421356;1057=48;1058=0.05;1059=0.141421356;1060=0.5;1061=0.141421356;1062=8;881=2
+gl.slicer	1052	Set 3 pan envelope amount	combination	-1	881=2
+gl.slicer	1053	Set 3 pitch envelope attack	combination	5	1044=0.0158113883;1045=0.141421356;1046=0.5;1047=0.0447213595;1048=0.05;1049=0.141421356;1050=0.5;1051=0.141421356;1052=1;1054=0.141421356;1055=0.5;1056=0.141421356;1057=48;1058=0.05;1059=0.141421356;1060=0.5;1061=0.141421356;1062=8;881=2
+gl.slicer	1054	Set 3 pitch envelope decay	combination	0.00200000009	1044=0.0158113883;1045=0.141421356;1046=0.5;1047=0.0447213595;1048=0.05;1049=0.141421356;1050=0.5;1051=0.141421356;1052=1;1053=0.05;1055=0.5;1056=0.141421356;1057=48;1058=0.05;1059=0.141421356;1060=0.5;1061=0.141421356;1062=8;881=2
+gl.slicer	1055	Set 3 pitch envelope sustain	combination	1	1044=0.0158113883;1045=0.141421356;1046=0.5;1047=0.0447213595;1048=0.05;1049=0.141421356;1050=0.5;1051=0.141421356;1052=1;1053=0.05;1054=0.141421356;1056=0.141421356;1057=48;1058=0.05;1059=0.141421356;1060=0.5;1061=0.141421356;1062=8;881=2
+gl.slicer	1056	Set 3 pitch envelope release	combination	0.00200000009	1044=0.0158113883;1045=0.141421356;1046=0.5;1047=0.0447213595;1048=0.05;1049=0.141421356;1050=0.5;1051=0.141421356;1052=1;1053=0.05;1054=0.141421356;1055=0.5;1057=48;1058=0.05;1059=0.141421356;1060=0.5;1061=0.141421356;1062=8;881=2
+gl.slicer	1057	Set 3 pitch envelope amount	combination	-48	881=2
+gl.slicer	1058	Set 3 filter envelope attack	combination	5	1044=0.0158113883;1045=0.141421356;1046=0.5;1047=0.0447213595;1048=0.05;1049=0.141421356;1050=0.5;1051=0.141421356;1052=1;1059=0.141421356;1060=0.5;1061=0.141421356;1062=48;1059=0.141421356;1060=0.5;1061=0.141421356;1062=8;17=1;18=400;881=2	
+gl.slicer	1059	Set 3 filter envelope decay	combination	0.00200000009	1044=0.0158113883;1045=0.141421356;1046=0.5;1047=0.0447213595;1048=0.05;1049=0.141421356;1050=0.5;1051=0.141421356;1052=1;1058=0.05;1060=0.5;1061=0.141421356;1062=48;1058=0.05;1060=0.5;1061=0.141421356;1062=8;17=1;18=400;881=2	
+gl.slicer	1060	Set 3 filter envelope sustain	combination	1	1044=0.0158113883;1045=0.141421356;1046=0.5;1047=0.0447213595;1048=0.05;1049=0.141421356;1050=0.5;1051=0.141421356;1052=1;1058=0.05;1059=0.141421356;1061=0.141421356;1062=48;1058=0.05;1059=0.141421356;1061=0.141421356;1062=8;17=1;18=400;881=2	
+gl.slicer	1061	Set 3 filter envelope release	combination	0.00200000009	1044=0.0158113883;1045=0.141421356;1046=0.5;1047=0.0447213595;1048=0.05;1049=0.141421356;1050=0.5;1051=0.141421356;1052=1;1058=0.05;1059=0.141421356;1060=0.5;1062=48;1058=0.05;1059=0.141421356;1060=0.5;1062=8;17=1;18=400;881=2	
+gl.slicer	1062	Set 3 filter envelope amount	combination	-8	17=1;881=2
+gl.slicer	1063	Set 4 attack	combination	0.5	881=3
+gl.slicer	1064	Set 4 decay	combination	0.00200000009	1063=0.0158113883;1065=0.5;1066=0.0447213595;1067=0.05;1068=0.141421356;1069=0.5;1070=0.141421356;1071=1;1072=0.05;1073=0.141421356;1074=0.5;1075=0.141421356;1076=48;1077=0.05;1078=0.141421356;1079=0.5;1080=0.141421356;1081=8;881=3
+gl.slicer	1065	Set 4 sustain	combination	0	881=3
+gl.slicer	1066	Set 4 release	combination	1	881=3
+gl.slicer	1067	Set 4 pan envelope attack	combination	5	1063=0.0158113883;1064=0.141421356;1065=0.5;1066=0.0447213595;1068=0.141421356;1069=0.5;1070=0.141421356;1071=1;1072=0.05;1073=0.141421356;1074=0.5;1075=0.141421356;1076=48;1077=0.05;1078=0.141421356;1079=0.5;1080=0.141421356;1081=8;881=3
+gl.slicer	1068	Set 4 pan envelope decay	combination	0.00200000009	1063=0.0158113883;1064=0.141421356;1065=0.5;1066=0.0447213595;1067=0.05;1069=0.5;1070=0.141421356;1071=1;1072=0.05;1073=0.141421356;1074=0.5;1075=0.141421356;1076=48;1077=0.05;1078=0.141421356;1079=0.5;1080=0.141421356;1081=8;881=3
+gl.slicer	1069	Set 4 pan envelope sustain	combination	1	1063=0.0158113883;1064=0.141421356;1065=0.5;1066=0.0447213595;1067=0.05;1068=0.141421356;1070=0.141421356;1071=1;1072=0.05;1073=0.141421356;1074=0.5;1075=0.141421356;1076=48;1077=0.05;1078=0.141421356;1079=0.5;1080=0.141421356;1081=8;881=3
+gl.slicer	1070	Set 4 pan envelope release	combination	0.00200000009	1063=0.0158113883;1064=0.141421356;1065=0.5;1066=0.0447213595;1067=0.05;1068=0.141421356;1069=0.5;1071=1;1072=0.05;1073=0.141421356;1074=0.5;1075=0.141421356;1076=48;1077=0.05;1078=0.141421356;1079=0.5;1080=0.141421356;1081=8;881=3
+gl.slicer	1071	Set 4 pan envelope amount	combination	-1	881=3
+gl.slicer	1072	Set 4 pitch envelope attack	combination	5	1063=0.0158113883;1064=0.141421356;1065=0.5;1066=0.0447213595;1067=0.05;1068=0.141421356;1069=0.5;1070=0.141421356;1071=1;1073=0.141421356;1074=0.5;1075=0.141421356;1076=48;1077=0.05;1078=0.141421356;1079=0.5;1080=0.141421356;1081=8;881=3
+gl.slicer	1073	Set 4 pitch envelope decay	combination	0.00200000009	1063=0.0158113883;1064=0.141421356;1065=0.5;1066=0.0447213595;1067=0.05;1068=0.141421356;1069=0.5;1070=0.141421356;1071=1;1072=0.05;1074=0.5;1075=0.141421356;1076=48;1077=0.05;1078=0.141421356;1079=0.5;1080=0.141421356;1081=8;881=3
+gl.slicer	1074	Set 4 pitch envelope sustain	combination	1	1063=0.0158113883;1064=0.141421356;1065=0.5;1066=0.0447213595;1067=0.05;1068=0.141421356;1069=0.5;1070=0.141421356;1071=1;1072=0.05;1073=0.141421356;1075=0.141421356;1076=48;1077=0.05;1078=0.141421356;1079=0.5;1080=0.141421356;1081=8;881=3
+gl.slicer	1075	Set 4 pitch envelope release	combination	0.00200000009	1063=0.0158113883;1064=0.141421356;1065=0.5;1066=0.0447213595;1067=0.05;1068=0.141421356;1069=0.5;1070=0.141421356;1071=1;1072=0.05;1073=0.141421356;1074=0.5;1076=48;1077=0.05;1078=0.141421356;1079=0.5;1080=0.141421356;1081=8;881=3
+gl.slicer	1076	Set 4 pitch envelope amount	combination	-48	881=3
+gl.slicer	1077	Set 4 filter envelope attack	combination	5	1063=0.0158113883;1064=0.141421356;1065=0.5;1066=0.0447213595;1067=0.05;1068=0.141421356;1069=0.5;1070=0.141421356;1071=1;1078=0.141421356;1079=0.5;1080=0.141421356;1081=48;1078=0.141421356;1079=0.5;1080=0.141421356;1081=8;17=1;18=400;881=3	
+gl.slicer	1078	Set 4 filter envelope decay	combination	0.00200000009	1063=0.0158113883;1064=0.141421356;1065=0.5;1066=0.0447213595;1067=0.05;1068=0.141421356;1069=0.5;1070=0.141421356;1071=1;1077=0.05;1079=0.5;1080=0.141421356;1081=48;1077=0.05;1079=0.5;1080=0.141421356;1081=8;17=1;18=400;881=3	
+gl.slicer	1079	Set 4 filter envelope sustain	combination	1	1063=0.0158113883;1064=0.141421356;1065=0.5;1066=0.0447213595;1067=0.05;1068=0.141421356;1069=0.5;1070=0.141421356;1071=1;1077=0.05;1078=0.141421356;1080=0.141421356;1081=48;1077=0.05;1078=0.141421356;1080=0.141421356;1081=8;17=1;18=400;881=3	
+gl.slicer	1080	Set 4 filter envelope release	combination	0.00200000009	1063=0.0158113883;1064=0.141421356;1065=0.5;1066=0.0447213595;1067=0.05;1068=0.141421356;1069=0.5;1070=0.141421356;1071=1;1077=0.05;1078=0.141421356;1079=0.5;1081=48;1077=0.05;1078=0.141421356;1079=0.5;1081=8;17=1;18=400;881=3	
+gl.slicer	1081	Set 4 filter envelope amount	combination	-8	17=1;881=3
+gl.slicer	1082	LFO shape	combination	4	1089=12	
+gl.slicer	1083	LFO rate	combination	30	1089=12	
+gl.slicer	1084	LFO tempo sync	combination	3	1089=12	
+gl.slicer	1085	LFO delay	combination	4	1089=12	
+gl.slicer	1086	LFO restarts with each note	combination	0	1089=12	
+gl.slicer	1087	LFO to volume	working	1	
+gl.slicer	1088	LFO to pan	working	1	
+gl.slicer	1089	LFO to pitch	working	12	
+gl.slicer	1090	LFO to cutoff	combination	2	17=1
+gl.slicer	1091	Slice layer	combination	1	1163=1
+gl.slicer	1092	Layer switch key	combination	62.5	0=4;664=99
+gl.slicer	1093	Layer B slice 1 position	combination	0.5	1091=1
+gl.slicer	1094	Layer B slice 2 position	combination	0.5	1091=1
+gl.slicer	1095	Layer B slice 3 position	combination	0.5	1091=1
+gl.slicer	1096	Layer B slice 4 position	combination	0.5	1091=1
+gl.slicer	1097	Layer B slice 5 position	combination	0.5	1091=1
+gl.slicer	1098	Layer B slice 6 position	combination	0.5	1091=1
+gl.slicer	1099	Layer B slice 7 position	combination	0.5	1091=1
+gl.slicer	1100	Layer B slice 8 position	combination	0.5	1091=1
+gl.slicer	1101	Layer B slice 9 position	combination	0.5	1091=1
+gl.slicer	1102	Layer B slice 10 position	combination	0.5	1091=1
+gl.slicer	1103	Layer B slice 11 position	combination	0.5	1091=1
+gl.slicer	1104	Layer B slice 12 position	combination	0.5	1091=1
+gl.slicer	1105	Layer B slice 13 position	combination	0.5	1091=1
+gl.slicer	1106	Layer B slice 14 position	combination	0.5	1091=1
+gl.slicer	1107	Layer B slice 15 position	combination	0.5	1091=1
+gl.slicer	1108	Layer B slice 16 position	combination	0.5	1091=1
+gl.slicer	1109	Layer B slice 17 position	combination	0.5	1091=1
+gl.slicer	1110	Layer B slice 18 position	combination	0.5	1091=1
+gl.slicer	1111	Layer B slice 19 position	combination	0.5	1091=1
+gl.slicer	1112	Layer B slice 20 position	combination	0.5	1091=1
+gl.slicer	1113	Layer B slice 21 position	combination	0.5	1091=1
+gl.slicer	1114	Layer B slice 22 position	combination	0.5	1091=1
+gl.slicer	1115	Layer B slice 23 position	combination	0.5	1091=1
+gl.slicer	1116	Layer B slice 24 position	combination	0.5	1091=1
+gl.slicer	1117	Layer B slice 25 position	combination	0.5	1091=1
+gl.slicer	1118	Layer B slice 26 position	combination	0.5	1091=1
+gl.slicer	1119	Layer B slice 27 position	combination	0.5	1091=1
+gl.slicer	1120	Layer B slice 28 position	combination	0.5	1091=1
+gl.slicer	1121	Layer B slice 29 position	combination	0.5	1091=1
+gl.slicer	1122	Layer B slice 30 position	combination	0.5	1091=1
+gl.slicer	1123	Layer B slice 31 position	combination	0.5	1091=1
+gl.slicer	1124	Layer B slice 32 position	combination	0.5	1091=1
+gl.slicer	1125	Layer B slice 33 position	combination	0.5	1091=1
+gl.slicer	1126	Layer B slice 34 position	combination	0.5	1091=1
+gl.slicer	1127	Layer B slice 35 position	combination	0.5	1091=1
+gl.slicer	1128	Layer B slice 36 position	combination	0.5	1091=1
+gl.slicer	1129	Layer B slice 37 position	combination	0.5	1091=1
+gl.slicer	1130	Layer B slice 38 position	combination	0.5	1091=1
+gl.slicer	1131	Layer B slice 39 position	combination	0.5	1091=1
+gl.slicer	1132	Layer B slice 40 position	combination	0.5	1091=1
+gl.slicer	1133	Layer B slice 41 position	combination	0.5	1091=1
+gl.slicer	1134	Layer B slice 42 position	combination	0.5	1091=1
+gl.slicer	1135	Layer B slice 43 position	combination	0.5	1091=1
+gl.slicer	1136	Layer B slice 44 position	combination	0.5	1091=1
+gl.slicer	1137	Layer B slice 45 position	combination	0.5	1091=1
+gl.slicer	1138	Layer B slice 46 position	combination	0.5	1091=1
+gl.slicer	1139	Layer B slice 47 position	combination	0.5	1091=1
+gl.slicer	1140	Layer B slice 48 position	combination	0.5	1091=1
+gl.slicer	1141	Layer B slice 49 position	combination	0.5	1091=1
+gl.slicer	1142	Layer B slice 50 position	combination	0.5	1091=1
+gl.slicer	1143	Layer B slice 51 position	combination	0.5	1091=1
+gl.slicer	1144	Layer B slice 52 position	combination	0.5	1091=1
+gl.slicer	1145	Layer B slice 53 position	combination	0.5	1091=1
+gl.slicer	1146	Layer B slice 54 position	combination	0.5	1091=1
+gl.slicer	1147	Layer B slice 55 position	combination	0.5	1091=1
+gl.slicer	1148	Layer B slice 56 position	combination	0.5	1091=1
+gl.slicer	1149	Layer B slice 57 position	combination	0.5	1091=1
+gl.slicer	1150	Layer B slice 58 position	combination	0.5	1091=1
+gl.slicer	1151	Layer B slice 59 position	combination	0.5	1091=1
+gl.slicer	1152	Layer B slice 60 position	combination	0.5	1091=1
+gl.slicer	1153	Layer B slice 61 position	combination	0.5	1091=1
+gl.slicer	1154	Layer B slice 62 position	combination	0.5	1091=1
+gl.slicer	1155	Layer B slice 63 position	combination	0.5	1091=1
+gl.slicer	1156	Layer B slice 64 position	combination	0.5	1091=1
+gl.slicer	1157	Layer B slice 1 gain	combination	12	1091=1
+gl.slicer	1158	Layer B slice 1 pan	combination	1	1091=1
+gl.slicer	1159	Layer B slice 1 pitch	combination	-24	1091=1
+gl.slicer	1160	Layer B slice 1 reverse	combination	1	1091=1
+gl.slicer	1161	Layer B slice 1 cutoff	combination	-1	17=1;1091=1
+gl.slicer	1162	Layer B slice 1 start	combination	0.75	1091=1
+gl.slicer	1163	Layer B slice 1 mute	combination	1	1091=1
+gl.slicer	1164	Layer B slice 2 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1165	Layer B slice 2 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1166	Layer B slice 2 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1167	Layer B slice 2 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1168	Layer B slice 2 cutoff	combination	-1	17=1;0=1;1091=1
+gl.slicer	1169	Layer B slice 2 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1170	Layer B slice 2 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1171	Layer B slice 3 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1172	Layer B slice 3 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1173	Layer B slice 3 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1174	Layer B slice 3 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1175	Layer B slice 3 cutoff	combination	-1	17=1;0=1;1091=1
+gl.slicer	1176	Layer B slice 3 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1177	Layer B slice 3 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1178	Layer B slice 4 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1179	Layer B slice 4 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1180	Layer B slice 4 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1181	Layer B slice 4 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1182	Layer B slice 4 cutoff	combination	-1	17=1;0=1;1091=1
+gl.slicer	1183	Layer B slice 4 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1184	Layer B slice 4 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1185	Layer B slice 5 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1186	Layer B slice 5 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1187	Layer B slice 5 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1188	Layer B slice 5 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1189	Layer B slice 5 cutoff	combination	-1	17=1;0=2;1091=1
+gl.slicer	1190	Layer B slice 5 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1191	Layer B slice 5 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1192	Layer B slice 6 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1193	Layer B slice 6 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1194	Layer B slice 6 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1195	Layer B slice 6 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1196	Layer B slice 6 cutoff	combination	-1	17=1;0=2;1091=1
+gl.slicer	1197	Layer B slice 6 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1198	Layer B slice 6 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1199	Layer B slice 7 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1200	Layer B slice 7 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1201	Layer B slice 7 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1202	Layer B slice 7 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1203	Layer B slice 7 cutoff	combination	-1	17=1;0=2;1091=1
+gl.slicer	1204	Layer B slice 7 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1205	Layer B slice 7 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1206	Layer B slice 8 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1207	Layer B slice 8 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1208	Layer B slice 8 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1209	Layer B slice 8 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1210	Layer B slice 8 cutoff	combination	-1	17=1;0=2;1091=1
+gl.slicer	1211	Layer B slice 8 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1212	Layer B slice 8 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1213	Layer B slice 9 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1214	Layer B slice 9 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1215	Layer B slice 9 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1216	Layer B slice 9 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1217	Layer B slice 9 cutoff	combination	-1	17=1;0=3;1091=1
+gl.slicer	1218	Layer B slice 9 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1219	Layer B slice 9 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1220	Layer B slice 10 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1221	Layer B slice 10 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1222	Layer B slice 10 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1223	Layer B slice 10 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1224	Layer B slice 10 cutoff	combination	-1	17=1;0=3;1091=1
+gl.slicer	1225	Layer B slice 10 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1226	Layer B slice 10 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1227	Layer B slice 11 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1228	Layer B slice 11 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1229	Layer B slice 11 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1230	Layer B slice 11 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1231	Layer B slice 11 cutoff	combination	-1	17=1;0=3;1091=1
+gl.slicer	1232	Layer B slice 11 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1233	Layer B slice 11 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1234	Layer B slice 12 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1235	Layer B slice 12 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1236	Layer B slice 12 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1237	Layer B slice 12 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1238	Layer B slice 12 cutoff	combination	-1	17=1;0=3;1091=1
+gl.slicer	1239	Layer B slice 12 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1240	Layer B slice 12 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1241	Layer B slice 13 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1242	Layer B slice 13 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1243	Layer B slice 13 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1244	Layer B slice 13 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1245	Layer B slice 13 cutoff	combination	-1	17=1;0=3;1091=1
+gl.slicer	1246	Layer B slice 13 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1247	Layer B slice 13 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1248	Layer B slice 14 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1249	Layer B slice 14 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1250	Layer B slice 14 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1251	Layer B slice 14 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1252	Layer B slice 14 cutoff	combination	-1	17=1;0=3;1091=1
+gl.slicer	1253	Layer B slice 14 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1254	Layer B slice 14 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1255	Layer B slice 15 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1256	Layer B slice 15 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1257	Layer B slice 15 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1258	Layer B slice 15 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1259	Layer B slice 15 cutoff	combination	-1	17=1;0=3;1091=1
+gl.slicer	1260	Layer B slice 15 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1261	Layer B slice 15 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1262	Layer B slice 16 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1263	Layer B slice 16 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1264	Layer B slice 16 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1265	Layer B slice 16 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1266	Layer B slice 16 cutoff	combination	-1	17=1;0=3;1091=1
+gl.slicer	1267	Layer B slice 16 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1268	Layer B slice 16 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1269	Layer B slice 17 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1270	Layer B slice 17 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1271	Layer B slice 17 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1272	Layer B slice 17 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1273	Layer B slice 17 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1274	Layer B slice 17 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1275	Layer B slice 17 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1276	Layer B slice 18 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1277	Layer B slice 18 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1278	Layer B slice 18 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1279	Layer B slice 18 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1280	Layer B slice 18 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1281	Layer B slice 18 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1282	Layer B slice 18 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1283	Layer B slice 19 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1284	Layer B slice 19 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1285	Layer B slice 19 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1286	Layer B slice 19 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1287	Layer B slice 19 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1288	Layer B slice 19 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1289	Layer B slice 19 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1290	Layer B slice 20 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1291	Layer B slice 20 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1292	Layer B slice 20 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1293	Layer B slice 20 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1294	Layer B slice 20 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1295	Layer B slice 20 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1296	Layer B slice 20 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1297	Layer B slice 21 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1298	Layer B slice 21 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1299	Layer B slice 21 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1300	Layer B slice 21 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1301	Layer B slice 21 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1302	Layer B slice 21 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1303	Layer B slice 21 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1304	Layer B slice 22 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1305	Layer B slice 22 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1306	Layer B slice 22 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1307	Layer B slice 22 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1308	Layer B slice 22 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1309	Layer B slice 22 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1310	Layer B slice 22 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1311	Layer B slice 23 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1312	Layer B slice 23 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1313	Layer B slice 23 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1314	Layer B slice 23 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1315	Layer B slice 23 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1316	Layer B slice 23 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1317	Layer B slice 23 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1318	Layer B slice 24 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1319	Layer B slice 24 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1320	Layer B slice 24 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1321	Layer B slice 24 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1322	Layer B slice 24 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1323	Layer B slice 24 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1324	Layer B slice 24 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1325	Layer B slice 25 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1326	Layer B slice 25 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1327	Layer B slice 25 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1328	Layer B slice 25 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1329	Layer B slice 25 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1330	Layer B slice 25 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1331	Layer B slice 25 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1332	Layer B slice 26 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1333	Layer B slice 26 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1334	Layer B slice 26 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1335	Layer B slice 26 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1336	Layer B slice 26 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1337	Layer B slice 26 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1338	Layer B slice 26 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1339	Layer B slice 27 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1340	Layer B slice 27 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1341	Layer B slice 27 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1342	Layer B slice 27 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1343	Layer B slice 27 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1344	Layer B slice 27 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1345	Layer B slice 27 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1346	Layer B slice 28 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1347	Layer B slice 28 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1348	Layer B slice 28 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1349	Layer B slice 28 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1350	Layer B slice 28 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1351	Layer B slice 28 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1352	Layer B slice 28 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1353	Layer B slice 29 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1354	Layer B slice 29 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1355	Layer B slice 29 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1356	Layer B slice 29 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1357	Layer B slice 29 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1358	Layer B slice 29 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1359	Layer B slice 29 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1360	Layer B slice 30 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1361	Layer B slice 30 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1362	Layer B slice 30 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1363	Layer B slice 30 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1364	Layer B slice 30 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1365	Layer B slice 30 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1366	Layer B slice 30 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1367	Layer B slice 31 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1368	Layer B slice 31 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1369	Layer B slice 31 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1370	Layer B slice 31 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1371	Layer B slice 31 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1372	Layer B slice 31 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1373	Layer B slice 31 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1374	Layer B slice 32 gain	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1375	Layer B slice 32 pan	combination	-1	0=4;1733=99;1091=1
+gl.slicer	1376	Layer B slice 32 pitch	combination	-24	0=4;1733=99;1091=1
+gl.slicer	1377	Layer B slice 32 reverse	combination	1	0=4;1733=99;1091=1
+gl.slicer	1378	Layer B slice 32 cutoff	combination	-1	17=1;0=4;1091=1
+gl.slicer	1379	Layer B slice 32 start	combination	1	0=4;1733=99;1091=1
+gl.slicer	1380	Layer B slice 32 mute	combination	1	0=4;1733=99;1091=1
+gl.slicer	1381	Layer B slice 33 gain	inert	0	1091=1
+gl.slicer	1382	Layer B slice 33 pan	inert	0	1091=1
+gl.slicer	1383	Layer B slice 33 pitch	inert	0	1091=1
+gl.slicer	1384	Layer B slice 33 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1385	Layer B slice 33 cutoff	inert	0	1091=1
+gl.slicer	1386	Layer B slice 33 start	inert	0	1091=1
+gl.slicer	1387	Layer B slice 33 mute	inert	0	1091=1
+gl.slicer	1388	Layer B slice 34 gain	inert	0	1091=1
+gl.slicer	1389	Layer B slice 34 pan	inert	0	1091=1
+gl.slicer	1390	Layer B slice 34 pitch	inert	0	1091=1
+gl.slicer	1391	Layer B slice 34 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1392	Layer B slice 34 cutoff	inert	0	1091=1
+gl.slicer	1393	Layer B slice 34 start	inert	0	1091=1
+gl.slicer	1394	Layer B slice 34 mute	inert	0	1091=1
+gl.slicer	1395	Layer B slice 35 gain	inert	0	1091=1
+gl.slicer	1396	Layer B slice 35 pan	inert	0	1091=1
+gl.slicer	1397	Layer B slice 35 pitch	inert	0	1091=1
+gl.slicer	1398	Layer B slice 35 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1399	Layer B slice 35 cutoff	inert	0	1091=1
+gl.slicer	1400	Layer B slice 35 start	inert	0	1091=1
+gl.slicer	1401	Layer B slice 35 mute	inert	0	1091=1
+gl.slicer	1402	Layer B slice 36 gain	inert	0	1091=1
+gl.slicer	1403	Layer B slice 36 pan	inert	0	1091=1
+gl.slicer	1404	Layer B slice 36 pitch	inert	0	1091=1
+gl.slicer	1405	Layer B slice 36 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1406	Layer B slice 36 cutoff	inert	0	1091=1
+gl.slicer	1407	Layer B slice 36 start	inert	0	1091=1
+gl.slicer	1408	Layer B slice 36 mute	inert	0	1091=1
+gl.slicer	1409	Layer B slice 37 gain	inert	0	1091=1
+gl.slicer	1410	Layer B slice 37 pan	inert	0	1091=1
+gl.slicer	1411	Layer B slice 37 pitch	inert	0	1091=1
+gl.slicer	1412	Layer B slice 37 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1413	Layer B slice 37 cutoff	inert	0	1091=1
+gl.slicer	1414	Layer B slice 37 start	inert	0	1091=1
+gl.slicer	1415	Layer B slice 37 mute	inert	0	1091=1
+gl.slicer	1416	Layer B slice 38 gain	inert	0	1091=1
+gl.slicer	1417	Layer B slice 38 pan	inert	0	1091=1
+gl.slicer	1418	Layer B slice 38 pitch	inert	0	1091=1
+gl.slicer	1419	Layer B slice 38 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1420	Layer B slice 38 cutoff	inert	0	1091=1
+gl.slicer	1421	Layer B slice 38 start	inert	0	1091=1
+gl.slicer	1422	Layer B slice 38 mute	inert	0	1091=1
+gl.slicer	1423	Layer B slice 39 gain	inert	0	1091=1
+gl.slicer	1424	Layer B slice 39 pan	inert	0	1091=1
+gl.slicer	1425	Layer B slice 39 pitch	inert	0	1091=1
+gl.slicer	1426	Layer B slice 39 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1427	Layer B slice 39 cutoff	inert	0	1091=1
+gl.slicer	1428	Layer B slice 39 start	inert	0	1091=1
+gl.slicer	1429	Layer B slice 39 mute	inert	0	1091=1
+gl.slicer	1430	Layer B slice 40 gain	inert	0	1091=1
+gl.slicer	1431	Layer B slice 40 pan	inert	0	1091=1
+gl.slicer	1432	Layer B slice 40 pitch	inert	0	1091=1
+gl.slicer	1433	Layer B slice 40 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1434	Layer B slice 40 cutoff	inert	0	1091=1
+gl.slicer	1435	Layer B slice 40 start	inert	0	1091=1
+gl.slicer	1436	Layer B slice 40 mute	inert	0	1091=1
+gl.slicer	1437	Layer B slice 41 gain	inert	0	1091=1
+gl.slicer	1438	Layer B slice 41 pan	inert	0	1091=1
+gl.slicer	1439	Layer B slice 41 pitch	inert	0	1091=1
+gl.slicer	1440	Layer B slice 41 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1441	Layer B slice 41 cutoff	inert	0	1091=1
+gl.slicer	1442	Layer B slice 41 start	inert	0	1091=1
+gl.slicer	1443	Layer B slice 41 mute	inert	0	1091=1
+gl.slicer	1444	Layer B slice 42 gain	inert	0	1091=1
+gl.slicer	1445	Layer B slice 42 pan	inert	0	1091=1
+gl.slicer	1446	Layer B slice 42 pitch	inert	0	1091=1
+gl.slicer	1447	Layer B slice 42 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1448	Layer B slice 42 cutoff	inert	0	1091=1
+gl.slicer	1449	Layer B slice 42 start	inert	0	1091=1
+gl.slicer	1450	Layer B slice 42 mute	inert	0	1091=1
+gl.slicer	1451	Layer B slice 43 gain	inert	0	1091=1
+gl.slicer	1452	Layer B slice 43 pan	inert	0	1091=1
+gl.slicer	1453	Layer B slice 43 pitch	inert	0	1091=1
+gl.slicer	1454	Layer B slice 43 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1455	Layer B slice 43 cutoff	inert	0	1091=1
+gl.slicer	1456	Layer B slice 43 start	inert	0	1091=1
+gl.slicer	1457	Layer B slice 43 mute	inert	0	1091=1
+gl.slicer	1458	Layer B slice 44 gain	inert	0	1091=1
+gl.slicer	1459	Layer B slice 44 pan	inert	0	1091=1
+gl.slicer	1460	Layer B slice 44 pitch	inert	0	1091=1
+gl.slicer	1461	Layer B slice 44 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1462	Layer B slice 44 cutoff	inert	0	1091=1
+gl.slicer	1463	Layer B slice 44 start	inert	0	1091=1
+gl.slicer	1464	Layer B slice 44 mute	inert	0	1091=1
+gl.slicer	1465	Layer B slice 45 gain	inert	0	1091=1
+gl.slicer	1466	Layer B slice 45 pan	inert	0	1091=1
+gl.slicer	1467	Layer B slice 45 pitch	inert	0	1091=1
+gl.slicer	1468	Layer B slice 45 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1469	Layer B slice 45 cutoff	inert	0	1091=1
+gl.slicer	1470	Layer B slice 45 start	inert	0	1091=1
+gl.slicer	1471	Layer B slice 45 mute	inert	0	1091=1
+gl.slicer	1472	Layer B slice 46 gain	inert	0	1091=1
+gl.slicer	1473	Layer B slice 46 pan	inert	0	1091=1
+gl.slicer	1474	Layer B slice 46 pitch	inert	0	1091=1
+gl.slicer	1475	Layer B slice 46 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1476	Layer B slice 46 cutoff	inert	0	1091=1
+gl.slicer	1477	Layer B slice 46 start	inert	0	1091=1
+gl.slicer	1478	Layer B slice 46 mute	inert	0	1091=1
+gl.slicer	1479	Layer B slice 47 gain	inert	0	1091=1
+gl.slicer	1480	Layer B slice 47 pan	inert	0	1091=1
+gl.slicer	1481	Layer B slice 47 pitch	inert	0	1091=1
+gl.slicer	1482	Layer B slice 47 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1483	Layer B slice 47 cutoff	inert	0	1091=1
+gl.slicer	1484	Layer B slice 47 start	inert	0	1091=1
+gl.slicer	1485	Layer B slice 47 mute	inert	0	1091=1
+gl.slicer	1486	Layer B slice 48 gain	inert	0	1091=1
+gl.slicer	1487	Layer B slice 48 pan	inert	0	1091=1
+gl.slicer	1488	Layer B slice 48 pitch	inert	0	1091=1
+gl.slicer	1489	Layer B slice 48 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1490	Layer B slice 48 cutoff	inert	0	1091=1
+gl.slicer	1491	Layer B slice 48 start	inert	0	1091=1
+gl.slicer	1492	Layer B slice 48 mute	inert	0	1091=1
+gl.slicer	1493	Layer B slice 49 gain	inert	0	1091=1
+gl.slicer	1494	Layer B slice 49 pan	inert	0	1091=1
+gl.slicer	1495	Layer B slice 49 pitch	inert	0	1091=1
+gl.slicer	1496	Layer B slice 49 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1497	Layer B slice 49 cutoff	inert	0	1091=1
+gl.slicer	1498	Layer B slice 49 start	inert	0	1091=1
+gl.slicer	1499	Layer B slice 49 mute	inert	0	1091=1
+gl.slicer	1500	Layer B slice 50 gain	inert	0	1091=1
+gl.slicer	1501	Layer B slice 50 pan	inert	0	1091=1
+gl.slicer	1502	Layer B slice 50 pitch	inert	0	1091=1
+gl.slicer	1503	Layer B slice 50 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1504	Layer B slice 50 cutoff	inert	0	1091=1
+gl.slicer	1505	Layer B slice 50 start	inert	0	1091=1
+gl.slicer	1506	Layer B slice 50 mute	inert	0	1091=1
+gl.slicer	1507	Layer B slice 51 gain	inert	0	1091=1
+gl.slicer	1508	Layer B slice 51 pan	inert	0	1091=1
+gl.slicer	1509	Layer B slice 51 pitch	inert	0	1091=1
+gl.slicer	1510	Layer B slice 51 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1511	Layer B slice 51 cutoff	inert	0	1091=1
+gl.slicer	1512	Layer B slice 51 start	inert	0	1091=1
+gl.slicer	1513	Layer B slice 51 mute	inert	0	1091=1
+gl.slicer	1514	Layer B slice 52 gain	inert	0	1091=1
+gl.slicer	1515	Layer B slice 52 pan	inert	0	1091=1
+gl.slicer	1516	Layer B slice 52 pitch	inert	0	1091=1
+gl.slicer	1517	Layer B slice 52 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1518	Layer B slice 52 cutoff	inert	0	1091=1
+gl.slicer	1519	Layer B slice 52 start	inert	0	1091=1
+gl.slicer	1520	Layer B slice 52 mute	inert	0	1091=1
+gl.slicer	1521	Layer B slice 53 gain	inert	0	1091=1
+gl.slicer	1522	Layer B slice 53 pan	inert	0	1091=1
+gl.slicer	1523	Layer B slice 53 pitch	inert	0	1091=1
+gl.slicer	1524	Layer B slice 53 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1525	Layer B slice 53 cutoff	inert	0	1091=1
+gl.slicer	1526	Layer B slice 53 start	inert	0	1091=1
+gl.slicer	1527	Layer B slice 53 mute	inert	0	1091=1
+gl.slicer	1528	Layer B slice 54 gain	inert	0	1091=1
+gl.slicer	1529	Layer B slice 54 pan	inert	0	1091=1
+gl.slicer	1530	Layer B slice 54 pitch	inert	0	1091=1
+gl.slicer	1531	Layer B slice 54 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1532	Layer B slice 54 cutoff	inert	0	1091=1
+gl.slicer	1533	Layer B slice 54 start	inert	0	1091=1
+gl.slicer	1534	Layer B slice 54 mute	inert	0	1091=1
+gl.slicer	1535	Layer B slice 55 gain	inert	0	1091=1
+gl.slicer	1536	Layer B slice 55 pan	inert	0	1091=1
+gl.slicer	1537	Layer B slice 55 pitch	inert	0	1091=1
+gl.slicer	1538	Layer B slice 55 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1539	Layer B slice 55 cutoff	inert	0	1091=1
+gl.slicer	1540	Layer B slice 55 start	inert	0	1091=1
+gl.slicer	1541	Layer B slice 55 mute	inert	0	1091=1
+gl.slicer	1542	Layer B slice 56 gain	inert	0	1091=1
+gl.slicer	1543	Layer B slice 56 pan	inert	0	1091=1
+gl.slicer	1544	Layer B slice 56 pitch	inert	0	1091=1
+gl.slicer	1545	Layer B slice 56 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1546	Layer B slice 56 cutoff	inert	0	1091=1
+gl.slicer	1547	Layer B slice 56 start	inert	0	1091=1
+gl.slicer	1548	Layer B slice 56 mute	inert	0	1091=1
+gl.slicer	1549	Layer B slice 57 gain	inert	0	1091=1
+gl.slicer	1550	Layer B slice 57 pan	inert	0	1091=1
+gl.slicer	1551	Layer B slice 57 pitch	inert	0	1091=1
+gl.slicer	1552	Layer B slice 57 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1553	Layer B slice 57 cutoff	inert	0	1091=1
+gl.slicer	1554	Layer B slice 57 start	inert	0	1091=1
+gl.slicer	1555	Layer B slice 57 mute	inert	0	1091=1
+gl.slicer	1556	Layer B slice 58 gain	inert	0	1091=1
+gl.slicer	1557	Layer B slice 58 pan	inert	0	1091=1
+gl.slicer	1558	Layer B slice 58 pitch	inert	0	1091=1
+gl.slicer	1559	Layer B slice 58 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1560	Layer B slice 58 cutoff	inert	0	1091=1
+gl.slicer	1561	Layer B slice 58 start	inert	0	1091=1
+gl.slicer	1562	Layer B slice 58 mute	inert	0	1091=1
+gl.slicer	1563	Layer B slice 59 gain	inert	0	1091=1
+gl.slicer	1564	Layer B slice 59 pan	inert	0	1091=1
+gl.slicer	1565	Layer B slice 59 pitch	inert	0	1091=1
+gl.slicer	1566	Layer B slice 59 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1567	Layer B slice 59 cutoff	inert	0	1091=1
+gl.slicer	1568	Layer B slice 59 start	inert	0	1091=1
+gl.slicer	1569	Layer B slice 59 mute	inert	0	1091=1
+gl.slicer	1570	Layer B slice 60 gain	inert	0	1091=1
+gl.slicer	1571	Layer B slice 60 pan	inert	0	1091=1
+gl.slicer	1572	Layer B slice 60 pitch	inert	0	1091=1
+gl.slicer	1573	Layer B slice 60 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1574	Layer B slice 60 cutoff	inert	0	1091=1
+gl.slicer	1575	Layer B slice 60 start	inert	0	1091=1
+gl.slicer	1576	Layer B slice 60 mute	inert	0	1091=1
+gl.slicer	1577	Layer B slice 61 gain	inert	0	1091=1
+gl.slicer	1578	Layer B slice 61 pan	inert	0	1091=1
+gl.slicer	1579	Layer B slice 61 pitch	inert	0	1091=1
+gl.slicer	1580	Layer B slice 61 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1581	Layer B slice 61 cutoff	inert	0	1091=1
+gl.slicer	1582	Layer B slice 61 start	inert	0	1091=1
+gl.slicer	1583	Layer B slice 61 mute	inert	0	1091=1
+gl.slicer	1584	Layer B slice 62 gain	inert	0	1091=1
+gl.slicer	1585	Layer B slice 62 pan	inert	0	1091=1
+gl.slicer	1586	Layer B slice 62 pitch	inert	0	1091=1
+gl.slicer	1587	Layer B slice 62 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1588	Layer B slice 62 cutoff	inert	0	1091=1
+gl.slicer	1589	Layer B slice 62 start	inert	0	1091=1
+gl.slicer	1590	Layer B slice 62 mute	inert	0	1091=1
+gl.slicer	1591	Layer B slice 63 gain	inert	0	1091=1
+gl.slicer	1592	Layer B slice 63 pan	inert	0	1091=1
+gl.slicer	1593	Layer B slice 63 pitch	inert	0	1091=1
+gl.slicer	1594	Layer B slice 63 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1595	Layer B slice 63 cutoff	inert	0	1091=1
+gl.slicer	1596	Layer B slice 63 start	inert	0	1091=1
+gl.slicer	1597	Layer B slice 63 mute	inert	0	1091=1
+gl.slicer	1598	Layer B slice 64 gain	inert	0	1091=1
+gl.slicer	1599	Layer B slice 64 pan	inert	0	1091=1
+gl.slicer	1600	Layer B slice 64 pitch	inert	0	1091=1
+gl.slicer	1601	Layer B slice 64 reverse	inert	0		slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1602	Layer B slice 64 cutoff	inert	0	1091=1
+gl.slicer	1603	Layer B slice 64 start	inert	0	1091=1
+gl.slicer	1604	Layer B slice 64 mute	inert	0	1091=1
+gl.slicer	1605	Layer B slice 1 end	combination	0	1091=1
+gl.slicer	1606	Layer B slice 1 resonance	combination	1	17=1;1091=1
+gl.slicer	1607	Layer B slice 1 delay	combination	1	1091=1
+gl.slicer	1608	Layer B slice 1 cut group	combination	99	10=1;1091=1
+gl.slicer	1609	Layer B slice 1 key	combination	127	1091=1
+gl.slicer	1610	Layer B slice 2 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1611	Layer B slice 2 resonance	combination	1	17=1;0=1;1091=1
+gl.slicer	1612	Layer B slice 2 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1613	Layer B slice 2 cut group	combination	99	1220=-6;1221=1;1222=24;1223=1;1224=1;1225=0.5;1226=1;1650=0;1651=1;1652=0.5;1653=49.5;1654=63;0=4;1733=99;1091=1
+gl.slicer	1614	Layer B slice 2 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1615	Layer B slice 3 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1616	Layer B slice 3 resonance	combination	1	17=1;0=1;1091=1
+gl.slicer	1617	Layer B slice 3 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1618	Layer B slice 3 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1619	Layer B slice 3 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1620	Layer B slice 4 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1621	Layer B slice 4 resonance	combination	1	17=1;0=1;1091=1
+gl.slicer	1622	Layer B slice 4 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1623	Layer B slice 4 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1624	Layer B slice 4 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1625	Layer B slice 5 end	combination	1	0=4;1733=99;1091=1
+gl.slicer	1626	Layer B slice 5 resonance	combination	1	17=1;0=2;1091=1
+gl.slicer	1627	Layer B slice 5 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1628	Layer B slice 5 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1629	Layer B slice 5 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1630	Layer B slice 6 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1631	Layer B slice 6 resonance	combination	1	17=1;0=2;1091=1
+gl.slicer	1632	Layer B slice 6 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1633	Layer B slice 6 cut group	combination	99	1220=-6;1221=1;1222=24;1223=1;1224=1;1225=0.5;1226=1;1650=0;1651=1;1652=0.5;1653=49.5;1654=63;0=4;1733=99;1091=1
+gl.slicer	1634	Layer B slice 6 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1635	Layer B slice 7 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1636	Layer B slice 7 resonance	combination	1	17=1;0=2;1091=1
+gl.slicer	1637	Layer B slice 7 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1638	Layer B slice 7 cut group	combination	49.5	1220=-6;1221=1;1222=24;1223=1;1224=1;1225=0.5;1650=0;1651=1;1652=0.5;1653=49.5;1654=63;0=4;1733=99;1091=1
+gl.slicer	1639	Layer B slice 7 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1640	Layer B slice 8 end	combination	1	0=4;1733=99;1091=1
+gl.slicer	1641	Layer B slice 8 resonance	combination	1	17=1;0=2;1091=1
+gl.slicer	1642	Layer B slice 8 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1643	Layer B slice 8 cut group	combination	49.5	1220=-6;1221=1;1222=24;1223=1;1224=1;1225=0.5;1650=0;1651=1;1652=0.5;1653=49.5;1654=63;0=4;1733=99;1091=1
+gl.slicer	1644	Layer B slice 8 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1645	Layer B slice 9 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1646	Layer B slice 9 resonance	combination	1	17=1;0=3;1091=1
+gl.slicer	1647	Layer B slice 9 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1648	Layer B slice 9 cut group	combination	49.5	1220=-6;1221=1;1222=24;1223=1;1224=1;1225=0.5;1650=0;1651=1;1652=0.5;1653=49.5;1654=63;0=4;1733=99;1091=1
+gl.slicer	1649	Layer B slice 9 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1650	Layer B slice 10 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1651	Layer B slice 10 resonance	combination	1	17=1;0=3;1091=1
+gl.slicer	1652	Layer B slice 10 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1653	Layer B slice 10 cut group	combination	49.5	1227=-6;1228=1;1229=24;1230=1;1231=1;1232=0.5;1655=0;1656=1;1657=0.5;1658=49.5;1659=63;0=4;1733=99;1091=1
+gl.slicer	1654	Layer B slice 10 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1655	Layer B slice 11 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1656	Layer B slice 11 resonance	combination	1	17=1;0=3;1091=1
+gl.slicer	1657	Layer B slice 11 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1658	Layer B slice 11 cut group	combination	49.5	1220=-6;1221=1;1222=24;1223=1;1224=1;1225=0.5;1650=0;1651=1;1652=0.5;1653=49.5;1654=63;0=4;1733=99;1091=1
+gl.slicer	1659	Layer B slice 11 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1660	Layer B slice 12 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1661	Layer B slice 12 resonance	combination	1	17=1;0=3;1091=1
+gl.slicer	1662	Layer B slice 12 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1663	Layer B slice 12 cut group	combination	49.5	1220=-6;1221=1;1222=24;1223=1;1224=1;1225=0.5;1650=0;1651=1;1652=0.5;1653=49.5;1654=63;0=4;1733=99;1091=1
+gl.slicer	1664	Layer B slice 12 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1665	Layer B slice 13 end	combination	1	0=4;1733=99;1091=1
+gl.slicer	1666	Layer B slice 13 resonance	combination	1	17=1;0=3;1091=1
+gl.slicer	1667	Layer B slice 13 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1668	Layer B slice 13 cut group	combination	99	1220=-6;1221=1;1222=24;1223=1;1224=1;1225=0.5;1650=0;1651=1;1652=0.5;1653=49.5;1654=63;0=4;1733=99;1091=1
+gl.slicer	1669	Layer B slice 13 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1670	Layer B slice 14 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1671	Layer B slice 14 resonance	combination	1	17=1;0=3;1091=1
+gl.slicer	1672	Layer B slice 14 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1673	Layer B slice 14 cut group	combination	49.5	1220=-6;1221=1;1222=24;1223=1;1224=1;1225=0.5;1650=0;1651=1;1652=0.5;1653=49.5;1654=63;0=4;1733=99;1091=1
+gl.slicer	1674	Layer B slice 14 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1675	Layer B slice 15 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1676	Layer B slice 15 resonance	combination	1	17=1;0=3;1091=1
+gl.slicer	1677	Layer B slice 15 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1678	Layer B slice 15 cut group	combination	49.5	1220=-6;1221=1;1222=24;1223=1;1224=1;1225=0.5;1650=0;1651=1;1652=0.5;1653=49.5;1654=63;0=4;1733=99;1091=1
+gl.slicer	1679	Layer B slice 15 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1680	Layer B slice 16 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1681	Layer B slice 16 resonance	combination	1	17=1;0=3;1091=1
+gl.slicer	1682	Layer B slice 16 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1683	Layer B slice 16 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1684	Layer B slice 16 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1685	Layer B slice 17 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1686	Layer B slice 17 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1687	Layer B slice 17 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1688	Layer B slice 17 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1689	Layer B slice 17 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1690	Layer B slice 18 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1691	Layer B slice 18 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1692	Layer B slice 18 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1693	Layer B slice 18 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1694	Layer B slice 18 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1695	Layer B slice 19 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1696	Layer B slice 19 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1697	Layer B slice 19 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1698	Layer B slice 19 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1699	Layer B slice 19 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1700	Layer B slice 20 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1701	Layer B slice 20 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1702	Layer B slice 20 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1703	Layer B slice 20 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1704	Layer B slice 20 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1705	Layer B slice 21 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1706	Layer B slice 21 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1707	Layer B slice 21 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1708	Layer B slice 21 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1709	Layer B slice 21 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1710	Layer B slice 22 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1711	Layer B slice 22 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1712	Layer B slice 22 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1713	Layer B slice 22 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1714	Layer B slice 22 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1715	Layer B slice 23 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1716	Layer B slice 23 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1717	Layer B slice 23 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1718	Layer B slice 23 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1719	Layer B slice 23 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1720	Layer B slice 24 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1721	Layer B slice 24 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1722	Layer B slice 24 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1723	Layer B slice 24 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1724	Layer B slice 24 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1725	Layer B slice 25 end	combination	1	0=4;1733=99;1091=1
+gl.slicer	1726	Layer B slice 25 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1727	Layer B slice 25 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1728	Layer B slice 25 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1729	Layer B slice 25 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1730	Layer B slice 26 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1731	Layer B slice 26 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1732	Layer B slice 26 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1733	Layer B slice 26 cut group	inert	0	1091=1
+gl.slicer	1734	Layer B slice 26 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1735	Layer B slice 27 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1736	Layer B slice 27 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1737	Layer B slice 27 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1738	Layer B slice 27 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1739	Layer B slice 27 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1740	Layer B slice 28 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1741	Layer B slice 28 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1742	Layer B slice 28 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1743	Layer B slice 28 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1744	Layer B slice 28 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1745	Layer B slice 29 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1746	Layer B slice 29 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1747	Layer B slice 29 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1748	Layer B slice 29 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1749	Layer B slice 29 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1750	Layer B slice 30 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1751	Layer B slice 30 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1752	Layer B slice 30 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1753	Layer B slice 30 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1754	Layer B slice 30 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1755	Layer B slice 31 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1756	Layer B slice 31 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1757	Layer B slice 31 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1758	Layer B slice 31 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1759	Layer B slice 31 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1760	Layer B slice 32 end	combination	0	0=4;1733=99;1091=1
+gl.slicer	1761	Layer B slice 32 resonance	combination	1	17=1;0=4;1091=1
+gl.slicer	1762	Layer B slice 32 delay	combination	1	0=4;1733=99;1091=1
+gl.slicer	1763	Layer B slice 32 cut group	combination	99	0=4;1733=99;1091=1
+gl.slicer	1764	Layer B slice 32 key	combination	127	0=4;1733=99;1091=1
+gl.slicer	1765	Layer B slice 33 end	inert	0	1091=1
+gl.slicer	1766	Layer B slice 33 resonance	inert	0	1091=1
+gl.slicer	1767	Layer B slice 33 delay	inert	0	1091=1
+gl.slicer	1768	Layer B slice 33 cut group	inert	0	1091=1
+gl.slicer	1769	Layer B slice 33 key	inert	0	1091=1
+gl.slicer	1770	Layer B slice 34 end	inert	0	1091=1
+gl.slicer	1771	Layer B slice 34 resonance	inert	0	1091=1
+gl.slicer	1772	Layer B slice 34 delay	inert	0	1091=1
+gl.slicer	1773	Layer B slice 34 cut group	inert	0	1091=1
+gl.slicer	1774	Layer B slice 34 key	inert	0	1091=1
+gl.slicer	1775	Layer B slice 35 end	inert	0	1091=1
+gl.slicer	1776	Layer B slice 35 resonance	inert	0	1091=1
+gl.slicer	1777	Layer B slice 35 delay	inert	0	1091=1
+gl.slicer	1778	Layer B slice 35 cut group	inert	0	1091=1
+gl.slicer	1779	Layer B slice 35 key	inert	0	1091=1
+gl.slicer	1780	Layer B slice 36 end	inert	0	1091=1
+gl.slicer	1781	Layer B slice 36 resonance	inert	0	1091=1
+gl.slicer	1782	Layer B slice 36 delay	inert	0	1091=1
+gl.slicer	1783	Layer B slice 36 cut group	inert	0	1091=1
+gl.slicer	1784	Layer B slice 36 key	inert	0	1091=1
+gl.slicer	1785	Layer B slice 37 end	inert	0	1091=1
+gl.slicer	1786	Layer B slice 37 resonance	inert	0	1091=1
+gl.slicer	1787	Layer B slice 37 delay	inert	0	1091=1
+gl.slicer	1788	Layer B slice 37 cut group	inert	0	1091=1
+gl.slicer	1789	Layer B slice 37 key	inert	0	1091=1
+gl.slicer	1790	Layer B slice 38 end	inert	0	1091=1
+gl.slicer	1791	Layer B slice 38 resonance	inert	0	1091=1
+gl.slicer	1792	Layer B slice 38 delay	inert	0	1091=1
+gl.slicer	1793	Layer B slice 38 cut group	inert	0	1091=1
+gl.slicer	1794	Layer B slice 38 key	inert	0	1091=1
+gl.slicer	1795	Layer B slice 39 end	inert	0	1091=1
+gl.slicer	1796	Layer B slice 39 resonance	inert	0	1091=1
+gl.slicer	1797	Layer B slice 39 delay	inert	0	1091=1
+gl.slicer	1798	Layer B slice 39 cut group	inert	0	1091=1
+gl.slicer	1799	Layer B slice 39 key	inert	0	1091=1
+gl.slicer	1800	Layer B slice 40 end	inert	0	1091=1
+gl.slicer	1801	Layer B slice 40 resonance	inert	0	1091=1
+gl.slicer	1802	Layer B slice 40 delay	inert	0	1091=1
+gl.slicer	1803	Layer B slice 40 cut group	inert	0	1091=1
+gl.slicer	1804	Layer B slice 40 key	inert	0	1091=1
+gl.slicer	1805	Layer B slice 41 end	inert	0	1091=1
+gl.slicer	1806	Layer B slice 41 resonance	inert	0	1091=1
+gl.slicer	1807	Layer B slice 41 delay	inert	0	1091=1
+gl.slicer	1808	Layer B slice 41 cut group	inert	0	1091=1
+gl.slicer	1809	Layer B slice 41 key	inert	0	1091=1
+gl.slicer	1810	Layer B slice 42 end	inert	0	1091=1
+gl.slicer	1811	Layer B slice 42 resonance	inert	0	1091=1
+gl.slicer	1812	Layer B slice 42 delay	inert	0	1091=1
+gl.slicer	1813	Layer B slice 42 cut group	inert	0	1091=1
+gl.slicer	1814	Layer B slice 42 key	inert	0	1091=1
+gl.slicer	1815	Layer B slice 43 end	inert	0	1091=1
+gl.slicer	1816	Layer B slice 43 resonance	inert	0	1091=1
+gl.slicer	1817	Layer B slice 43 delay	inert	0	1091=1
+gl.slicer	1818	Layer B slice 43 cut group	inert	0	1091=1
+gl.slicer	1819	Layer B slice 43 key	inert	0	1091=1
+gl.slicer	1820	Layer B slice 44 end	inert	0	1091=1
+gl.slicer	1821	Layer B slice 44 resonance	inert	0	1091=1
+gl.slicer	1822	Layer B slice 44 delay	inert	0	1091=1
+gl.slicer	1823	Layer B slice 44 cut group	inert	0	1091=1
+gl.slicer	1824	Layer B slice 44 key	inert	0	1091=1
+gl.slicer	1825	Layer B slice 45 end	inert	0	1091=1
+gl.slicer	1826	Layer B slice 45 resonance	inert	0	1091=1
+gl.slicer	1827	Layer B slice 45 delay	inert	0	1091=1
+gl.slicer	1828	Layer B slice 45 cut group	inert	0	1091=1
+gl.slicer	1829	Layer B slice 45 key	inert	0	1091=1
+gl.slicer	1830	Layer B slice 46 end	inert	0	1091=1
+gl.slicer	1831	Layer B slice 46 resonance	inert	0	1091=1
+gl.slicer	1832	Layer B slice 46 delay	inert	0	1091=1
+gl.slicer	1833	Layer B slice 46 cut group	inert	0	1091=1
+gl.slicer	1834	Layer B slice 46 key	inert	0	1091=1
+gl.slicer	1835	Layer B slice 47 end	inert	0	1091=1
+gl.slicer	1836	Layer B slice 47 resonance	inert	0	1091=1
+gl.slicer	1837	Layer B slice 47 delay	inert	0	1091=1
+gl.slicer	1838	Layer B slice 47 cut group	inert	0	1091=1
+gl.slicer	1839	Layer B slice 47 key	inert	0	1091=1
+gl.slicer	1840	Layer B slice 48 end	inert	0	1091=1
+gl.slicer	1841	Layer B slice 48 resonance	inert	0	1091=1
+gl.slicer	1842	Layer B slice 48 delay	inert	0	1091=1
+gl.slicer	1843	Layer B slice 48 cut group	inert	0	1091=1
+gl.slicer	1844	Layer B slice 48 key	inert	0	1091=1
+gl.slicer	1845	Layer B slice 49 end	inert	0	1091=1
+gl.slicer	1846	Layer B slice 49 resonance	inert	0	1091=1
+gl.slicer	1847	Layer B slice 49 delay	inert	0	1091=1
+gl.slicer	1848	Layer B slice 49 cut group	inert	0	1091=1
+gl.slicer	1849	Layer B slice 49 key	inert	0	1091=1
+gl.slicer	1850	Layer B slice 50 end	inert	0	1091=1
+gl.slicer	1851	Layer B slice 50 resonance	inert	0	1091=1
+gl.slicer	1852	Layer B slice 50 delay	inert	0	1091=1
+gl.slicer	1853	Layer B slice 50 cut group	inert	0	1091=1
+gl.slicer	1854	Layer B slice 50 key	inert	0	1091=1
+gl.slicer	1855	Layer B slice 51 end	inert	0	1091=1
+gl.slicer	1856	Layer B slice 51 resonance	inert	0	1091=1
+gl.slicer	1857	Layer B slice 51 delay	inert	0	1091=1
+gl.slicer	1858	Layer B slice 51 cut group	inert	0	1091=1
+gl.slicer	1859	Layer B slice 51 key	inert	0	1091=1
+gl.slicer	1860	Layer B slice 52 end	inert	0	1091=1
+gl.slicer	1861	Layer B slice 52 resonance	inert	0	1091=1
+gl.slicer	1862	Layer B slice 52 delay	inert	0	1091=1
+gl.slicer	1863	Layer B slice 52 cut group	inert	0	1091=1
+gl.slicer	1864	Layer B slice 52 key	inert	0	1091=1
+gl.slicer	1865	Layer B slice 53 end	inert	0	1091=1
+gl.slicer	1866	Layer B slice 53 resonance	inert	0	1091=1
+gl.slicer	1867	Layer B slice 53 delay	inert	0	1091=1
+gl.slicer	1868	Layer B slice 53 cut group	inert	0	1091=1
+gl.slicer	1869	Layer B slice 53 key	inert	0	1091=1
+gl.slicer	1870	Layer B slice 54 end	inert	0	1091=1
+gl.slicer	1871	Layer B slice 54 resonance	inert	0	1091=1
+gl.slicer	1872	Layer B slice 54 delay	inert	0	1091=1
+gl.slicer	1873	Layer B slice 54 cut group	inert	0	1091=1
+gl.slicer	1874	Layer B slice 54 key	inert	0	1091=1
+gl.slicer	1875	Layer B slice 55 end	inert	0	1091=1
+gl.slicer	1876	Layer B slice 55 resonance	inert	0	1091=1
+gl.slicer	1877	Layer B slice 55 delay	inert	0	1091=1
+gl.slicer	1878	Layer B slice 55 cut group	inert	0	1091=1
+gl.slicer	1879	Layer B slice 55 key	inert	0	1091=1
+gl.slicer	1880	Layer B slice 56 end	inert	0	1091=1
+gl.slicer	1881	Layer B slice 56 resonance	inert	0	1091=1
+gl.slicer	1882	Layer B slice 56 delay	inert	0	1091=1
+gl.slicer	1883	Layer B slice 56 cut group	inert	0	1091=1
+gl.slicer	1884	Layer B slice 56 key	inert	0	1091=1
+gl.slicer	1885	Layer B slice 57 end	inert	0	1091=1
+gl.slicer	1886	Layer B slice 57 resonance	inert	0	1091=1
+gl.slicer	1887	Layer B slice 57 delay	inert	0	1091=1
+gl.slicer	1888	Layer B slice 57 cut group	inert	0	1091=1
+gl.slicer	1889	Layer B slice 57 key	inert	0	1091=1
+gl.slicer	1890	Layer B slice 58 end	inert	0	1091=1
+gl.slicer	1891	Layer B slice 58 resonance	inert	0	1091=1
+gl.slicer	1892	Layer B slice 58 delay	inert	0	1091=1
+gl.slicer	1893	Layer B slice 58 cut group	inert	0	1091=1
+gl.slicer	1894	Layer B slice 58 key	inert	0	1091=1
+gl.slicer	1895	Layer B slice 59 end	inert	0	1091=1
+gl.slicer	1896	Layer B slice 59 resonance	inert	0	1091=1
+gl.slicer	1897	Layer B slice 59 delay	inert	0	1091=1
+gl.slicer	1898	Layer B slice 59 cut group	inert	0	1091=1
+gl.slicer	1899	Layer B slice 59 key	inert	0	1091=1
+gl.slicer	1900	Layer B slice 60 end	inert	0	1091=1
+gl.slicer	1901	Layer B slice 60 resonance	inert	0	1091=1
+gl.slicer	1902	Layer B slice 60 delay	inert	0	1091=1
+gl.slicer	1903	Layer B slice 60 cut group	inert	0	1091=1
+gl.slicer	1904	Layer B slice 60 key	inert	0	1091=1
+gl.slicer	1905	Layer B slice 61 end	inert	0	1091=1
+gl.slicer	1906	Layer B slice 61 resonance	inert	0	1091=1
+gl.slicer	1907	Layer B slice 61 delay	inert	0	1091=1
+gl.slicer	1908	Layer B slice 61 cut group	inert	0	1091=1
+gl.slicer	1909	Layer B slice 61 key	inert	0	1091=1
+gl.slicer	1910	Layer B slice 62 end	inert	0	1091=1
+gl.slicer	1911	Layer B slice 62 resonance	inert	0	1091=1
+gl.slicer	1912	Layer B slice 62 delay	inert	0	1091=1
+gl.slicer	1913	Layer B slice 62 cut group	inert	0	1091=1
+gl.slicer	1914	Layer B slice 62 key	inert	0	1091=1
+gl.slicer	1915	Layer B slice 63 end	inert	0	1091=1
+gl.slicer	1916	Layer B slice 63 resonance	inert	0	1091=1
+gl.slicer	1917	Layer B slice 63 delay	inert	0	1091=1
+gl.slicer	1918	Layer B slice 63 cut group	inert	0	1091=1
+gl.slicer	1919	Layer B slice 63 key	inert	0	1091=1
+gl.slicer	1920	Layer B slice 64 end	inert	0	1091=1
+gl.slicer	1921	Layer B slice 64 resonance	inert	0	1091=1
+gl.slicer	1922	Layer B slice 64 delay	inert	0	1091=1
+gl.slicer	1923	Layer B slice 64 cut group	inert	0	1091=1
+gl.slicer	1924	Layer B slice 64 key	inert	0	1091=1
+gl.slicer	1925	Layer B slice 1 speed	combination	0.25	1091=1
+gl.slicer	1926	Layer B slice 1 envelope set	combination	1	4=0.5;1091=1
+gl.slicer	1927	Layer B slice 2 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1928	Layer B slice 2 envelope set	combination	1	1=1;4=0.5;1091=1
+gl.slicer	1929	Layer B slice 3 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1930	Layer B slice 3 envelope set	combination	1	1=1;4=0.5;1091=1
+gl.slicer	1931	Layer B slice 4 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1932	Layer B slice 4 envelope set	combination	1	1=1;4=0.5;1091=1
+gl.slicer	1933	Layer B slice 5 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1934	Layer B slice 5 envelope set	combination	1	0=6;4=0.5;1091=1
+gl.slicer	1935	Layer B slice 6 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1936	Layer B slice 6 envelope set	combination	1	0=6;4=0.5;1091=1
+gl.slicer	1937	Layer B slice 7 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1938	Layer B slice 7 envelope set	combination	1	0=6;4=0.5;1091=1
+gl.slicer	1939	Layer B slice 8 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1940	Layer B slice 8 envelope set	combination	1	0=6;4=0.5;1091=1
+gl.slicer	1941	Layer B slice 9 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1942	Layer B slice 9 envelope set	combination	1	4=0.5;0=3;1091=1
+gl.slicer	1943	Layer B slice 10 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1944	Layer B slice 10 envelope set	combination	1	4=0.5;0=3;1091=1
+gl.slicer	1945	Layer B slice 11 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1946	Layer B slice 11 envelope set	combination	1	4=0.5;0=3;1091=1
+gl.slicer	1947	Layer B slice 12 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1948	Layer B slice 12 envelope set	combination	1	4=0.5;0=3;1091=1
+gl.slicer	1949	Layer B slice 13 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1950	Layer B slice 13 envelope set	combination	1	4=0.5;0=3;1091=1
+gl.slicer	1951	Layer B slice 14 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1952	Layer B slice 14 envelope set	combination	1	4=0.5;0=3;1091=1
+gl.slicer	1953	Layer B slice 15 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1954	Layer B slice 15 envelope set	combination	1	4=0.5;0=3;1091=1
+gl.slicer	1955	Layer B slice 16 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1956	Layer B slice 16 envelope set	combination	1	4=0.5;0=3;1091=1
+gl.slicer	1957	Layer B slice 17 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1958	Layer B slice 17 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1959	Layer B slice 18 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1960	Layer B slice 18 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1961	Layer B slice 19 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1962	Layer B slice 19 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1963	Layer B slice 20 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1964	Layer B slice 20 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1965	Layer B slice 21 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1966	Layer B slice 21 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1967	Layer B slice 22 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1968	Layer B slice 22 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1969	Layer B slice 23 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1970	Layer B slice 23 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1971	Layer B slice 24 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1972	Layer B slice 24 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1973	Layer B slice 25 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1974	Layer B slice 25 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1975	Layer B slice 26 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1976	Layer B slice 26 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1977	Layer B slice 27 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1978	Layer B slice 27 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1979	Layer B slice 28 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1980	Layer B slice 28 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1981	Layer B slice 29 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1982	Layer B slice 29 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1983	Layer B slice 30 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1984	Layer B slice 30 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1985	Layer B slice 31 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1986	Layer B slice 31 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1987	Layer B slice 32 speed	combination	0.25	0=4;1733=99;1091=1
+gl.slicer	1988	Layer B slice 32 envelope set	combination	1	4=0.5;0=4;1091=1
+gl.slicer	1989	Layer B slice 33 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1990	Layer B slice 33 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1991	Layer B slice 34 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1992	Layer B slice 34 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1993	Layer B slice 35 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1994	Layer B slice 35 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1995	Layer B slice 36 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1996	Layer B slice 36 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1997	Layer B slice 37 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1998	Layer B slice 37 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	1999	Layer B slice 38 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2000	Layer B slice 38 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2001	Layer B slice 39 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2002	Layer B slice 39 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2003	Layer B slice 40 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2004	Layer B slice 40 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2005	Layer B slice 41 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2006	Layer B slice 41 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2007	Layer B slice 42 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2008	Layer B slice 42 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2009	Layer B slice 43 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2010	Layer B slice 43 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2011	Layer B slice 44 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2012	Layer B slice 44 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2013	Layer B slice 45 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2014	Layer B slice 45 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2015	Layer B slice 46 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2016	Layer B slice 46 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2017	Layer B slice 47 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2018	Layer B slice 47 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2019	Layer B slice 48 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2020	Layer B slice 48 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2021	Layer B slice 49 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2022	Layer B slice 49 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2023	Layer B slice 50 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2024	Layer B slice 50 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2025	Layer B slice 51 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2026	Layer B slice 51 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2027	Layer B slice 52 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2028	Layer B slice 52 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2029	Layer B slice 53 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2030	Layer B slice 53 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2031	Layer B slice 54 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2032	Layer B slice 54 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2033	Layer B slice 55 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2034	Layer B slice 55 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2035	Layer B slice 56 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2036	Layer B slice 56 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2037	Layer B slice 57 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2038	Layer B slice 57 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2039	Layer B slice 58 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2040	Layer B slice 58 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2041	Layer B slice 59 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2042	Layer B slice 59 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2043	Layer B slice 60 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2044	Layer B slice 60 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2045	Layer B slice 61 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2046	Layer B slice 61 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2047	Layer B slice 62 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2048	Layer B slice 62 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2049	Layer B slice 63 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2050	Layer B slice 63 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2051	Layer B slice 64 speed	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
+gl.slicer	2052	Layer B slice 64 envelope set	inert	0	1091=1	slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)
 gl.snare	0	Tone	working	0	
 gl.snare	1	Snappy	working	0	
 gl.snare	2	Body decay	working	1	
@@ -15181,6 +16360,14 @@ gl.utility	7	Mute which	combination	1	6=1
 gl.utility	8	Remove DC	working	1	
 gl.utility	9	Pan law	combination	0	1=1
 gl.utility	10	Mono	working	1	
+gl.hwinsert	0	Send	inert	0		acts on the audio device's outputs and inputs, which an offline render has none of (covered by test_k101)
+gl.hwinsert	1	Return	inert	0		acts on the audio device's outputs and inputs, which an offline render has none of (covered by test_k101)
+gl.hwinsert	2	Return mono	inert	0		acts on the audio device's outputs and inputs, which an offline render has none of (covered by test_k101)
+gl.hwinsert	3	Send level	inert	0		acts on the audio device's outputs and inputs, which an offline render has none of (covered by test_k101)
+gl.hwinsert	4	Return level	inert	0		acts on the audio device's outputs and inputs, which an offline render has none of (covered by test_k101)
+gl.hwinsert	5	Mix	inert	0		acts on the audio device's outputs and inputs, which an offline render has none of (covered by test_k101)
+gl.hwinsert	6	Round trip	inert	0		acts on the audio device's outputs and inputs, which an offline render has none of (covered by test_k101)
+gl.hwinsert	7	Round trip offset	inert	0		acts on the audio device's outputs and inputs, which an offline render has none of (covered by test_k101)
 gl.velscale	0	Target	combination	1	2=2
 gl.velscale	1	Centre	combination	1	2=2
 gl.velscale	2	Multiply	working	-2	

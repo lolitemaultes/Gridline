@@ -6,6 +6,9 @@
 #include <fstream>
 #include <map>
 #include <sstream>
+#include "Document.h"
+#include "PluginInfo.h"
+#include "PluginParams.h"
 #include "Project.h"
 #include "ProjectFiles.h"
 
@@ -139,6 +142,48 @@ std::string templateSummary(const Song& s) {
      << (inserts == 1 ? "track" : "tracks") << " in use \xC2\xB7 " << static_cast<int>(std::lround(s.tempo)) << " BPM \xC2\xB7 "
      << s.timeSigNum << "/" << s.timeSigDen << " \xC2\xB7 " << s.ppq << " PPQ";
   return os.str();
+}
+
+Song addStarterKit(Song base) {
+  Document doc(std::move(base));
+  struct Starter {
+    const char* name;
+    const char* type;
+    uint32_t color;
+    float volume;  // channel volume (0.78 = unity)
+  };
+  // R6-10: the instruments play at full level, so the kit's channels start below unity
+  // (kick and snare about -7 dB, clap -8, hat and synth -4): four hits together peak
+  // near -2 dBFS and the master Limiter only catches rare overs.
+  const Starter kit[] = {{"Kick", "gl.kick", 0xD8775A, 0.50f}, {"Clap", "gl.clap", 0xC9A43C, 0.46f}, {"Hat", "gl.hat", 0x4FB8B0, 0.62f},
+                         {"Snare", "gl.snare", 0x5A8FD8, 0.48f}, {"Synth", "gl.synth", 0xA56CD8, 0.62f}};
+  int insert = 1;
+  for (const auto& k : kit) {
+    if (static_cast<size_t>(insert) >= doc.song().mixer.size()) break;
+    ObjectId id = doc.addChannel(k.name, k.type);
+    ObjectId mt = doc.song().mixer[static_cast<size_t>(insert)].id;
+    doc.editChannel(id, "", [&](Channel& c) {
+      c.color = k.color;
+      c.gain = k.volume;
+      c.mixerTrack = mt;
+    });
+    doc.editMixerTrack(mt, "", [&](MixerTrack& m) {
+      m.name = k.name;
+      m.color = k.color;
+    });
+    ++insert;
+  }
+  Song out = doc.song();
+  const ObjectId master = out.masterId();
+  for (auto& m : out.mixer)
+    if (m.id == master && !m.slots.empty()) {
+      // A -1 dB ceiling: the export's peaks stay clear of full scale (and of
+      // inter-sample overs after an MP3 / AAC encode).
+      PluginState lim = defaultPluginState("gl.limiter");
+      lim.params[static_cast<size_t>(pp::LimCeiling)] = -1.0f;
+      m.slots.back().plugin = std::move(lim);
+    }
+  return out;
 }
 
 }  // namespace gl

@@ -148,6 +148,14 @@ void testTemplates() {
   }
   expect(!ship.empty(), "templates: the shipped templates are found");
   expect(!sketch && !songwriting, "templates: Song sketch (and its Songwriting folder) are gone");
+  // K-306: File > New from template lists the built-in items (Menus.cpp, the template browser's
+  // Gridline entries) and then the shipped templates: none may read like a built-in one (a shipped
+  // "Empty project" showed twice in every layout's menu).
+  bool clash = false;
+  for (const auto& t : ship)
+    for (const char* builtin : {"Empty project", "Starter kit", "Starter kit (drums + synth)", "Demo song", "Browse templates..."})
+      clash = clash || t.name == builtin;
+  expect(!clash, "templates: no shipped template has the name of a built-in New from template item");
 }
 
 }  // namespace

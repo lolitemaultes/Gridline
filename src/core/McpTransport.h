@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 #include "Mcp.h"
+#include "McpListen.h"
 
 namespace gl::mcp {
 
@@ -33,7 +34,7 @@ std::string randomToken();
 // Compares without an early exit (tokens).
 bool constantTimeEqual(const std::string& a, const std::string& b);
 
-// ---- minimal HTTP/1.1 server, loopback only --------------------------------------
+// ---- minimal HTTP/1.1 server, loopback unless the listen policy says otherwise (K-264) ----
 class HttpServer {
  public:
   static constexpr size_t kMaxHeader = 16u << 10;
@@ -44,6 +45,7 @@ class HttpServer {
     std::string method, path;
     std::map<std::string, std::string> headers;  // lower-case names
     std::string body;
+    uint32_t peer = 0x7F000001u;  // K-264: the client's IPv4 address (host order)
     std::string header(const std::string& name) const {
       auto it = headers.find(name);
       return it == headers.end() ? std::string() : it->second;
@@ -67,9 +69,9 @@ class HttpServer {
   HttpServer(const HttpServer&) = delete;
   HttpServer& operator=(const HttpServer&) = delete;
 
-  // Listens on 127.0.0.1:port (0 = any free port). There is no way to bind
-  // another address.
-  bool start(int port, std::string* err = nullptr);
+  // Listens on 127.0.0.1:port (0 = any free port). K-264: a listen policy beyond loopback
+  // (opt-in, Settings > Integrations) binds as it says and accepts only the peers it allows.
+  bool start(int port, std::string* err = nullptr, const listen::Policy& policy = {});
   void stop();
   bool running() const { return fd_ >= 0; }
   int port() const { return port_; }
@@ -87,8 +89,10 @@ class HttpServer {
     double opened = 0;
     std::function<bool(std::string&)> pump;  // streamed reply in progress
     bool pumpDone = false;
+    uint32_t peer = 0x7F000001u;
   };
   void closeConn(size_t i);
+  listen::Policy policy_;
   std::intptr_t fd_ = -1;
   int port_ = 0;
   std::vector<Conn> conns_;
@@ -96,7 +100,7 @@ class HttpServer {
 
 std::string httpReason(int status);
 
-// Blocking HTTP POST / DELETE to 127.0.0.1:port (the attach bridge, tests).
+// Blocking HTTP POST / DELETE to host:port (the attach bridge, tests); host is an IPv4 literal.
 struct HttpReply {
   int status = 0;
   std::map<std::string, std::string> headers;  // lower-case names
@@ -105,7 +109,7 @@ struct HttpReply {
 // `onBody` (optional) receives the body as it arrives (event streams).
 bool httpRequest(int port, const std::string& method, const std::string& path, const std::vector<std::pair<std::string, std::string>>& headers,
                  const std::string& body, HttpReply& reply, std::string* err = nullptr, int timeoutSeconds = 900,
-                 const std::function<void(const std::string& chunk)>& onBody = nullptr);
+                 const std::function<void(const std::string& chunk)>& onBody = nullptr, const std::string& host = "127.0.0.1");
 // Splits text/event-stream data into the data payloads of complete events;
 // `buffer` keeps an unfinished event between calls.
 std::vector<std::string> sseEvents(std::string& buffer, const std::string& chunk);
@@ -115,7 +119,14 @@ class HttpEndpoint {
  public:
   static constexpr size_t kMaxSessions = 16;
   HttpEndpoint(Environment& env, std::string token) : env_(env), token_(std::move(token)) {}
-  bool start(int port, std::string* err = nullptr) { return server_.start(port, err); }
+  bool start(int port, std::string* err = nullptr) { return server_.start(port, err, policy_); }
+  // K-264: where to listen (takes effect at the next start) and this computer's own addresses
+  // (the Host header may name one of them beyond loopback).
+  void setListen(const listen::Policy& p, std::vector<uint32_t> ownAddresses) {
+    policy_ = p;
+    own_ = std::move(ownAddresses);
+  }
+  const listen::Policy& listenPolicy() const { return policy_; }
   void stop() {
     server_.stop();
     sessions_.clear();
@@ -139,14 +150,20 @@ class HttpEndpoint {
   };
   Environment& env_;
   std::string token_;
+  listen::Policy policy_;
+  std::vector<uint32_t> own_;
+  listen::AuthThrottle throttle_;
   HttpServer server_;
   std::map<std::string, Entry> sessions_;
 };
 
-// Endpoint file: {"port": N, "token": "...", "pid": N} (mode 0600).
+// Endpoint file: {"port": N, "token": "...", "pid": N, "host": "..."} (mode 0600). K-264: host is
+// the address clients use (127.0.0.1 unless the server listens on one chosen address).
 std::string defaultEndpointFile();  // <config>/gridline/mcp-endpoint.json
-bool writeEndpointFile(const std::string& path, int port, const std::string& token, std::string* err = nullptr);
+bool writeEndpointFile(const std::string& path, int port, const std::string& token, std::string* err = nullptr,
+                       const std::string& host = "127.0.0.1");
 bool readEndpointFile(const std::string& path, int& port, std::string& token);
+bool readEndpointFile(const std::string& path, int& port, std::string& token, std::string& host);
 
 // ---- stdio ------------------------------------------------------------------------------
 // Serves one session on line-framed JSON until `in` ends. Lines longer than

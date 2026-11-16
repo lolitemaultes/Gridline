@@ -2,7 +2,7 @@
 # The editor's own layout audit (GRIDLINE_KERF_TRACE) lists every control box and text run of a
 # frame: no two controls may overlap, controls of one row share their top and height, no text is
 # cut off or smaller than the minimum size. Checked on every frame it reports:
-#   1. 1440 x 960: empty, a loop dropped in, each view tab, 32 even slices, the compact display.
+#   1. 1440 x 960: empty, a loop dropped in, each view tab (K-217: MOD too), 32 even slices, the compact display.
 #   2. 1280 x 800: the same, and the whole form fits in the window at no less than 0.86 scale.
 #   3. Interface scale 1.5 (a 2160 x 1440 window: the same room as 1440 x 960).
 #   cmake -DAPP=<gridline-app> -DTESTBIN=<gridline_test_seltmann> -DOUT=<dir> -P j183_kerf_layout.cmake
@@ -77,6 +77,15 @@ function(check tag size)
   centre("${l}" tab_amp ax ay)
   centre("${l}" tab_region rx ry)
   centre("${l}" tab_detect tx ty)
+  centre("${l}" tab_mod mx my)  # K-217
+  centre("${l}" tab_env ex ey)
+  centre("${l}" tab_lfo lx ly)
+  # K-217: the layer switch's B cell (form 108..126, 109..125), placed from the load button (39..139, 222..248).
+  if(NOT l MATCHES " loadbig=([0-9]+),([0-9]+),([0-9]+),([0-9]+)")
+    message(FATAL_ERROR "FAIL ${tag}: no load button: ${l}")
+  endif()
+  math(EXPR bx "${CMAKE_MATCH_1} + 78 * (${CMAKE_MATCH_3} - ${CMAKE_MATCH_1}) / 100")
+  math(EXPR by "${CMAKE_MATCH_2} - 105 * (${CMAKE_MATCH_3} - ${CMAKE_MATCH_1}) / 100")
   if(NOT l MATCHES " slmode=([0-9]+),([0-9]+),([0-9]+),([0-9]+)")
     message(FATAL_ERROR "FAIL ${tag}: no slicing mode selector: ${l}")
   endif()
@@ -96,12 +105,24 @@ function(check tag size)
 74 move ${tx} ${ty}
 76 down 0
 78 up 0
+81 move ${mx} ${my}
+83 down 0
+85 up 0
 88 move ${ax} ${ay}
 90 down 0
 92 up 0
-102 move ${sx} ${sy}
-104 down 0
-106 up 0
+95 move ${ex} ${ey}
+97 down 0
+99 up 0
+100 move ${lx} ${ly}
+101 down 0
+102 up 0
+103 move ${sx} ${sy}
+105 down 0
+107 up 0
+110 move ${bx} ${by}
+112 down 0
+114 up 0
 116 move 10 10
 126 move ${dx} ${dy}
 128 down 0
@@ -118,14 +139,26 @@ function(check tag size)
     if(x MATCHES " tab=2 ")
       string(APPEND saw "d")
     endif()
+    if(x MATCHES " tab=3 ")
+      string(APPEND saw "m")
+    endif()
+    if(x MATCHES " tab=4 ")
+      string(APPEND saw "e")
+    endif()
+    if(x MATCHES " tab=5 ")
+      string(APPEND saw "l")
+    endif()
     if(x MATCHES " regions=32 ")
       string(APPEND saw "s")
     endif()
     if(x MATCHES " display=3 ")
       string(APPEND saw "c")
     endif()
+    if(x MATCHES " layer=1 ")
+      string(APPEND saw "b")
+    endif()
   endforeach()
-  foreach(c r d s c)
+  foreach(c r d m e l s c b)
     if(NOT saw MATCHES "${c}")
       message(FATAL_ERROR "FAIL ${tag}: a click did not respond (${c} missing in '${saw}'). Output:\n${${tag}_full_out}")
     endif()

@@ -31,4 +31,11 @@ bool loadTemplate(const std::string& path, Song& out, std::string* err = nullptr
 // Short summary of a template's content for the browser ("6 channels · 4 patterns · 140 BPM").
 std::string templateSummary(const Song& song);
 
+// The New project's starter kit (no template chosen): four drum voices on inserts 1-4 and a
+// synth on insert 5, added to `base` (a song from makeEmptySong). K-306 (R6-10): the kit's
+// voices are full-level instruments at unity gain, so hits that land together go past full
+// scale; the master ends with the Limiter (last slot, as in the Beat starter template) so
+// playback and the first export stay under 0 dBFS.
+Song addStarterKit(Song base);
+
 }  // namespace gl

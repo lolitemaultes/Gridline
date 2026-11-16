@@ -327,6 +327,7 @@ std::unique_ptr<Effect> createEffectW2(const std::string& type);  // Effects2.cp
 std::unique_ptr<Effect> createEffectW3(const std::string& type);  // Effects3.cpp (dynamics)
 std::unique_ptr<Effect> createEffectW4(const std::string& type);  // Effects4.cpp
 std::unique_ptr<Effect> createEffectW5(const std::string& type);  // Effects5.cpp (delay, reverb, modulation, filter)
+std::unique_ptr<Effect> createEffectHw(const std::string& type);  // EffectsHw.cpp (K-101 Hardware Insert)
 
 namespace {
 std::atomic<EffectFactory> gTestFactory{nullptr};
@@ -344,6 +345,7 @@ std::unique_ptr<Effect> createEffect(const std::string& type) {
     if (auto fx = f(type)) return fx;
   if (isHostedType(type)) return host::createHostedEffect(type);
   if (auto fx = createEffectK3(type)) return fx;
+  if (auto fx = createEffectHw(type)) return fx;
   if (auto fx = createEffectW3(type)) return fx;
   if (auto fx = createEffectW4(type)) return fx;
   if (auto fx = createEffectW5(type)) return fx;

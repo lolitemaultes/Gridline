@@ -65,11 +65,13 @@ uint8_t mouseMods() {
 struct LabelCache {
   uint32_t version = 0;
   std::unordered_map<std::string, std::string> text;
+  std::unordered_map<std::string, std::string> mod;  // modLabel()
 };
 LabelCache& labelCache() {
   static LabelCache c;
   if (c.version != keymap().version()) {
     c.text.clear();
+    c.mod.clear();
     c.version = keymap().version();
   }
   return c;
@@ -160,6 +162,18 @@ void escapeFrameBegin() {
   gEscBusyAtStart = io.WantTextInput || capturing() || ImGui::IsAnyMouseDown() || ImGui::GetActiveID() != 0 ||
                     ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) ||
                     ImGui::GetDragDropPayload() != nullptr;
+  // K-297: Esc closes the open menu or popup with its submenus, as a click outside it does. Keyboard
+  // navigation is off, so ImGui never did: a menu stayed open, and the next click on another menu
+  // title only closed it (K-301 R02-07). Not a modal dialog (it answers Esc itself) nor what it
+  // opened over, not while a field or another item holds the key. The frame counts as busy, so no
+  // command also takes it.
+  ImGuiContext& g = *GImGui;
+  if (g.OpenPopupStack.Size > 0 && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !io.WantTextInput && !capturing() &&
+      ImGui::GetActiveID() == 0) {
+    int level = g.OpenPopupStack.Size;
+    while (level > 0 && g.OpenPopupStack[level - 1].Window && !(g.OpenPopupStack[level - 1].Window->Flags & ImGuiWindowFlags_Modal)) --level;
+    if (level < g.OpenPopupStack.Size) ImGui::ClosePopupToLevel(level, true);
+  }
 }
 
 bool escapePressed(bool repeat) {
@@ -201,12 +215,46 @@ bool modifierIncludes(const char* id) {
   return want != 0 && (mouseMods() & want) == want;
 }
 
+std::string shown(const Chord& c) {
+  std::string s = format(c);
+#ifdef __APPLE__
+  if (keymap().profile() == Profile::Live && !keymap().separateCmd() && s.compare(0, 5, "Ctrl+") == 0) s.replace(0, 4, "Cmd");
+#endif
+  return s;
+}
+
+const char* shownText(const char* text) {
+#ifdef __APPLE__
+  if (text && keymap().profile() == Profile::Live && !keymap().separateCmd() && std::strncmp(text, "Ctrl+", 5) == 0) {
+    static std::unordered_map<std::string, std::string> cache;
+    auto it = cache.find(text);
+    if (it == cache.end()) it = cache.emplace(text, std::string("Cmd") + (text + 4)).first;
+    return it->second.c_str();
+  }
+#endif
+  return text;
+}
+
 const char* label(const char* id) {
   LabelCache& lc = labelCache();
   auto it = lc.text.find(id);
   if (it == lc.text.end()) {
     const auto& b = keymap().bindings(id);
-    it = lc.text.emplace(id, b.empty() ? std::string() : format(b.front())).first;
+    it = lc.text.emplace(id, b.empty() ? std::string() : shown(b.front())).first;
+  }
+  return it->second.empty() ? nullptr : it->second.c_str();
+}
+
+const char* modLabel(const char* id) {
+  LabelCache& lc = labelCache();
+  auto it = lc.mod.find(id);
+  if (it == lc.mod.end()) {
+    const auto& b = keymap().bindings(id);
+    std::string t;
+    for (const Chord& c : b)
+      if (t.empty() && c.mods != 0) t = format(c);
+    if (t.empty() && !b.empty()) t = format(b.front());
+    it = lc.mod.emplace(id, t).first;
   }
   return it->second.empty() ? nullptr : it->second.c_str();
 }
@@ -215,6 +263,8 @@ const char* commandForLabel(const char* text) {
   if (!text) return nullptr;
   const LabelCache& lc = labelCache();
   for (const auto& [id, t] : lc.text)
+    if (t.c_str() == text) return findCommand(id) ? findCommand(id)->id : nullptr;
+  for (const auto& [id, t] : lc.mod)
     if (t.c_str() == text) return findCommand(id) ? findCommand(id)->id : nullptr;
   return nullptr;
 }
@@ -226,7 +276,7 @@ void inject(const char* id, int frame) {
 
 std::string labels(const char* id) {
   std::string s;
-  for (const Chord& c : keymap().bindings(id)) s += (s.empty() ? "" : " / ") + format(c);
+  for (const Chord& c : keymap().bindings(id)) s += (s.empty() ? "" : " / ") + shown(c);
   return s;
 }
 

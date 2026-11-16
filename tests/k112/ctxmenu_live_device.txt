@@ -12,6 +12,7 @@ Compare: copy to the other side
 Presets >
 Load preset from file...
 Save preset to file...
+Show channel header
 Copy state
 Paste state
 Randomize
@@ -43,6 +44,7 @@ Presets > Punchy
 Presets > Lo-fi
 Load preset from file...
 Save preset to file...
+Show channel header
 Copy state
 Paste state
 Randomize

@@ -5,6 +5,7 @@
 #include "Keys.h"
 #include "LayoutStyleUi.h"
 #include "Widgets.h"
+#include "WindowRaise.h"
 #include "Windows.h"
 #include "imgui_hooks/ImGuiItemHook.h"
 
@@ -82,11 +83,9 @@ void emit(App& a, const Menu& m, imhook::MenuWalker* w) {
       case Kind::Toggle: {
         const char* sc = e.dynKey ? e.dynKey(a) : e.key ? keys::label(e.key) : nullptr;
         bool* f = e.flag(a);
-        if (w) {
-          if (w->menuItem(lab, sc, *f, true)) *f = !*f;
-        } else {
-          ImGui::MenuItem(lab, sc, f);
-        }
+        // K-297 (round 6): a window open as a tab hidden behind another comes forward (it closed)
+        if (w ? w->menuItem(lab, sc, *f, true) : ImGui::MenuItem(lab, sc, *f))
+          if (!*f || !ui::bringTabForward(e.label)) *f = !*f;
         if (e.hint) ui::Hint(e.hint);
         break;
       }

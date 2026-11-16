@@ -45,6 +45,9 @@ void drawPianoBackground(App& a, float x0, float y0, float x1, float y1, double 
 // A click on a ghost note with editable ghosts on: switches to its channel and
 // selects the note. Returns true when it handled the click.
 bool editGhostAt(App& a, Tick t, int pitch);
+// K-198: a note of a channel edited beside the target (PianoRollState::editChannels) under the
+// pointer becomes the selection and its channel the target (the old target stays edited).
+bool takeEditedNoteAt(App& a, Tick t, int pitch);
 // Selection after a click: grouped notes come along.
 void expandNoteGroups(App& a);
 

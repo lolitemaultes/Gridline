@@ -21,6 +21,8 @@
 #include "../core/MenuParity.h"
 #include "../core/PluginParams.h"
 #include "../core/Presets.h"
+#include "../core/Platform.h"
+#include "../core/SoundLibraries.h"
 #include "../core/flp/Flp.h"
 #include "../core/flp/FlpPresets.h"
 #include "../engine/LoopFile.h"
@@ -30,6 +32,8 @@
 #include "../packs/PacksUi.h"
 #include "App.h"
 #include "BrowserUi.h"
+#include "LiveLook.h"
+#include "SystemMenu.h"
 #include "../core/RemoteFs.h"
 #include "../core/ProjectFiles.h"
 #include "../core/HydrogenKit.h"
@@ -39,6 +43,7 @@
 #include "PluginUI.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "../core/SafeFs.h"
 
 namespace gl::browserui {
 
@@ -188,8 +193,40 @@ namespace {
 double lastPass = 0;
 }
 
+namespace {
+bool librariesChecked = false;
+
+// K-218: once, the sound libraries already on this computer are offered for the browser. Only
+// known folders are checked for existence; nothing is listed or read before the user says yes.
+void offerLibraries(App& a) {
+  if (librariesChecked || a.confirm.open || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) return;
+  librariesChecked = true;
+  if (sysmenu::hiddenRun()) return;  // test and capture runs never ask
+  const std::vector<soundlib::Library> libs = soundlib::toOffer(a.configDir(), platform::homeDir());
+  if (libs.empty()) return;
+  soundlib::answer(a.configDir(), libs, false);  // asked once, whatever the answer
+  std::string names;
+  for (const auto& l : libs) {
+    if (names.find(l.name) != std::string::npos) continue;
+    names += (names.empty() ? "" : ", ") + l.name;
+  }
+  a.confirm.title = i18n::tr("Add the sound libraries on this computer?");
+  a.confirm.subtitle = std::string(i18n::tr("Found: ")) + names + ". " +
+                       i18n::tr("The browser lists them and finds their tempo, key and sound kind in the background. You can remove them from the browser later.");
+  a.confirm.okLabel = i18n::tr("Add");
+  const std::string cfg = a.configDir();
+  a.confirm.action = [&a, libs, cfg] {
+    for (const auto& l : libs) addBrowserFolder(a, l.path);
+    soundlib::answer(cfg, libs, true);
+    refreshIndex(a);
+  };
+  a.confirm.open = true;
+}
+}  // namespace
+
 void tickIndex(App& a) {
   tickInstrumentPreview(a);
+  if (indexStarted) offerLibraries(a);
   if (!indexStarted || index().busy()) return;
   if (lastPass <= 0) lastPass = a.now;
   if (a.now - lastPass > 240.0) {
@@ -782,13 +819,24 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
       }
       browse::FileMeta meta;
       const bool ownTempo = facts && li.loop && li.bpm > 0;  // K-161: the file states its tempo
-      const double bpm = ownTempo ? li.bpm : index().lookup(path, meta) && meta.bpm > 0 ? meta.bpm : browse::bpmFromName(fname);
+      double bpm = ownTempo ? li.bpm : index().lookup(path, meta) && meta.bpm > 0 ? meta.bpm : browse::bpmFromName(fname);
+      // C44-24: in Clips a dropped loop follows the set's tempo, as the reference warps loops on
+      // import: its tempo from the file, its name, or else its length (whole 1 to 16 bars of 4/4
+      // between 75 and 165 BPM, the reading nearest the set's tempo).
+      const bool clipsWarp = livelook::active(a);
+      if (clipsWarp && bpm <= 0 && s->seconds() >= 0.5 && s->seconds() <= 64.0) {
+        const double songBpm = a.doc.song().tempo;
+        for (int bars : {1, 2, 4, 8, 16}) {
+          const double b = bars * 4 * 60.0 / s->seconds();
+          if (b >= 75.0 && b <= 165.0 && (bpm <= 0 || std::fabs(b - songBpm) < std::fabs(bpm - songBpm))) bpm = b;
+        }
+      }
       a.doc.beginGroup("add audio clip");
       ObjectId ch = a.addInstrument("gl.sampler", path);
       const int track = std::clamp(place.track, 0, kMaxPlaylistTracks - 1);
       const Tick start = std::max<Tick>(0, place.tick);
-      const bool sync = ownTempo || (previewSync() && bpm > 0);
-      if (ownTempo)  // K-161: stretched to the song tempo, its pitch kept
+      const bool sync = ownTempo || ((previewSync() || clipsWarp) && bpm > 0);
+      if (ownTempo || (clipsWarp && sync))  // K-161: stretched to the song tempo, its pitch kept
         a.doc.editChannel(ch, "", [](Channel& c) {
           if (c.plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode)) c.plugin.params[pp::SmpStretchMode] = 1.0f;
         });
@@ -1100,6 +1148,15 @@ bool performItems(App& a, const std::vector<xdrop::Item>& items, DropTarget targ
       }
     if (last >= static_cast<int>(a.doc.song().tracks.size())) a.doc.setPlaylistTrackCount(std::min(last + 1, kMaxPlaylistTracks));
     ops::extendLiveArea(a.doc, end);
+    // C44-07: a clip dropped on a slot replaces the slot's clip (a slot holds one clip).
+    a.doc.editSong("replace slot clip", [&](Song& sg) {
+      for (const xdrop::Step& s : p.steps) {
+        if (!clipStep(s)) continue;
+        const Tick k0 = s.tick / place.slotTicks * place.slotTicks, k1 = k0 + place.slotTicks;
+        auto& pl = sg.playlist;
+        pl.erase(std::remove_if(pl.begin(), pl.end(), [&](const Clip& c) { return c.track == s.track && c.start >= k0 && c.start < k1; }), pl.end());
+      }
+    });
   }
   bool any = false;
   std::set<ObjectId> clips;
@@ -1127,6 +1184,12 @@ bool performItems(App& a, const std::vector<xdrop::Item>& items, DropTarget targ
       if (const Clip* c = sg.clip(made)) prevEnd = c->start + sg.clipLength(*c);
     }
   }
+  if (slots || livelook::active(a))  // N47-14 / N49-08: in Clips a dropped audio clip takes its track's colour, in both views (refs 455, 531)
+    a.doc.editSong("clip colour", [&](Song& sg) {
+      for (ObjectId id : clips)
+        if (const Clip* c = sg.clip(id); c && c->kind == ClipKind::Audio && c->track >= 0 && c->track < static_cast<int>(sg.tracks.size()))
+          if (Channel* ch = sg.channel(c->source)) ch->color = sg.tracks[static_cast<size_t>(c->track)].color;
+    });
   a.doc.endGroup();
   if (!clips.empty()) a.playlist.selected = clips;
   if (any && items.size() > 1) a.notify(p.label.rfind(i18n::tr("Drop to "), 0) == 0 ? p.label.substr(std::strlen(i18n::tr("Drop to "))) : p.label);
@@ -1329,11 +1392,11 @@ bool performPluginDrop(App& a, const std::string& type, DropTarget target, const
       return false;
     case PlugAct::ReplaceChannel:
       if (!replaceChannel(a, p.owner, type, nullptr, "", info ? info->name : type, "replace instrument")) return false;
-      a.showNewInstrument(p.owner);  // K-125: a new instrument opens its editor, wherever it is dropped
+      if (!livelook::instrumentDropped(a, p.owner, info ? info->name : type)) a.showNewInstrument(p.owner);  // K-125: a new instrument opens its editor, wherever it is dropped
       return true;
     case PlugAct::NewChannel: {
       const ObjectId id = a.addInstrument(type);
-      a.showNewInstrument(id);
+      if (!livelook::instrumentDropped(a, id, "")) a.showNewInstrument(id);
       return id != kNoId;
     }
     case PlugAct::InsertChannel: {
@@ -1348,13 +1411,21 @@ bool performPluginDrop(App& a, const std::string& type, DropTarget target, const
         a.notify(why.empty() ? std::string(i18n::tr("This instrument can't play on that track")) : why, true);
         return false;
       }
-      a.showNewInstrument(ch);
+      if (!livelook::instrumentDropped(a, ch, info ? info->name : type)) a.showNewInstrument(ch);
       return true;
     }
-    case PlugAct::ReplaceTrackInstrument:
-      if (!replaceChannel(a, p.owner, type, nullptr, "", info ? info->name : type, "replace instrument track")) return false;
-      a.showNewInstrument(p.owner);
+    case PlugAct::ReplaceTrackInstrument: {
+      a.doc.beginGroup("replace instrument track");
+      const bool ok = replaceChannel(a, p.owner, type, nullptr, "", info ? info->name : type, "replace instrument track");
+      // N46-02: an instrument taking a Clips MIDI track's note-only channel (on Main) gets a mixer
+      // track of its own, as a new instrument track does.
+      if (const Channel* c = a.doc.song().channel(p.owner); ok && c && (c->mixerTrack == kNoId || c->mixerTrack == a.doc.song().masterId()))
+        if (const ObjectId fm = trackmodes::freeMixer(a.doc.song()); fm != kNoId) a.doc.routeChannel(p.owner, fm);
+      a.doc.endGroup();
+      if (!ok) return false;
+      if (!livelook::instrumentDropped(a, p.owner, info ? info->name : type)) a.showNewInstrument(p.owner);
       return true;
+    }
     case PlugAct::FreeSlot:
     case PlugAct::Slot:
       if (!a.doc.setSlotPlugin(p.owner, p.slot, type)) return false;
@@ -1408,7 +1479,7 @@ void openFile(App& a, const std::string& path) {
     drumkitui::load(a, path);
     return;
   }
-  if (fs::is_directory(path)) {
+  if (safefs::isDirAt(path)) {
     addBrowserFolder(a, path);
     return;
   }
@@ -1481,6 +1552,12 @@ void openFiles(App& a, const std::vector<xdrop::Item>& items) {
       return;
     }
     rest.push_back(it);
+  }
+  // N46-06: in Clips, files let go where no track, slot or device takes them make nothing (the
+  // reference ignores them); a hidden sampler channel was made before.
+  if (livelook::active(a) && !rest.empty()) {
+    a.notify(i18n::tr("Drop files on a track, a slot or the empty column to make clips"));
+    return;
   }
   if (rest.size() == 1 && !rest[0].dir) {
     const Kind k = dropItemFor(rest[0]).kind;

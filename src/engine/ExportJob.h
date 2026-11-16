@@ -20,7 +20,7 @@ struct ExportSettings {
   int wavBits = 24;                  // 16 / 24 / 32 (float)
   int flacBits = 24;                 // 16 / 24
   DitherMode dither = DitherMode::Tpdf;
-  int mp3Bitrate = 320, oggBitrate = 256, m4aBitrate = 256;
+  int mp3Bitrate = 320, oggBitrate = 256, m4aBitrate = 256, opusBitrate = 192;
   ChannelMode channels = ChannelMode::Stereo;
   bool normalize = false;
   double normalizeDb = 0.0;          // peak target (dBFS); with normalizeLoudness: the peak ceiling

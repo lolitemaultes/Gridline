@@ -115,9 +115,16 @@ struct Tweaks {
   float contrast = 0.0f;      // -1 .. 1: text and lines against the panels
   float brightness = 0.0f;    // -1 .. 1: panels and fields lighter / darker; -1 = pitch black (K-177)
   bool whiteText = false;     // K-177: pure white text and glyphs on dark faces
+  // K-104: the panels' tint (hue turn, -1 .. 1 = -180 .. 180 degrees; saturation -1 grey .. 1 coloured)
+  // and the step sequencer's two off colours (kKeep = the theme's).
+  float hue = 0.0f;
+  float saturation = 0.0f;
+  uint32_t stepEven = kKeep;
+  uint32_t stepOdd = kKeep;
   bool operator==(const Tweaks& o) const {
     return accent == o.accent && hot == o.hot && led == o.led && playhead == o.playhead && contrast == o.contrast &&
-           brightness == o.brightness && whiteText == o.whiteText;
+           brightness == o.brightness && whiteText == o.whiteText && hue == o.hue && saturation == o.saturation &&
+           stepEven == o.stepEven && stepOdd == o.stepOdd;
   }
   bool operator!=(const Tweaks& o) const { return !(*this == o); }
 };

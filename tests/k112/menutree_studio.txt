@@ -4,7 +4,7 @@ File > New from template > Empty project			e-
 File > New from template > Starter kit (drums + synth)			e-
 File > New from template > Demo song			e-
 File > New from template > Beat starter			e-
-File > New from template > Empty project			e-
+File > New from template > Empty with mixer tracks			e-
 File > New from template > Mixing desk			e-
 File > New from loop starter...			e-
 File > Open...	Ctrl+O	file.open	e-
@@ -18,6 +18,7 @@ File > Save as template...			e-
 File > Save to a new project folder...			e-
 File > Revert to last backup			e-
 File > Import > MIDI file...			e-
+File > Import > DAWproject file...			e-
 File > Import > FL Studio presets...			e-
 File > Import > Audio file into a sampler...			e-
 File > Import > Multisample instrument (.sfz, .sf2)...			e-
@@ -34,6 +35,7 @@ File > Export > Time selection as MIDI file...			--
 File > Export > Project data files...			e-
 File > Export > Project bones...			e-
 File > Export > Gridline zipped project (.gridlinez)...			e-
+File > Export > DAWproject (.dawproject)...			e-
 File > Export > Leave out frozen audio			e-
 File > Export > FL Studio project (.flp)...			e-
 File > Export > FL Studio zipped loop package (.zip)...			e-
@@ -48,15 +50,16 @@ File > Quit	Ctrl+Q	file.quit	e-
 Edit > Undo	Ctrl+Z	edit.undo	--
 Edit > Redo	Ctrl+Y	edit.redo	--
 Edit > Undo history	Alt+Z	edit.history	e-
-Edit > Cut	Ctrl+X	piano.cut	e-
-Edit > Copy	Ctrl+C	piano.copy	e-
-Edit > Paste	Ctrl+V	piano.paste	--
-Edit > Duplicate	Ctrl+B	piano.duplicate	e-
-Edit > Delete	Del	piano.delete	e-
-Edit > Select all	Ctrl+A	piano.selectAll	e-
-Edit > Deselect	Ctrl+D	piano.deselect	e-
+Edit > Cut			e-
+Edit > Copy	Ctrl+C	playlist.copy	e-
+Edit > Paste	Ctrl+V	playlist.paste	--
+Edit > Duplicate	Ctrl+B	playlist.duplicate	e-
+Edit > Delete	Del	playlist.delete	e-
+Edit > Select all	Ctrl+A	playlist.selectAll	e-
+Edit > Deselect	Ctrl+D	playlist.deselect	e-
 Edit > Rename...	F2	edit.rename	e-
 Add > Instrument channel > Audio file as sampler...			e-
+Add > Instrument channel > Speech...			e-
 Add > Pattern	F4	pattern.new	e-
 Add > Automation clip for the last moved control			--
 Add > Clip of the current pattern at the song end			e-
@@ -138,10 +141,10 @@ View > Clear time selection			--
 View > Close plugin windows	Alt+F12	view.closePlugins	e-
 View > Close all windows	F12	view.closeAll	e-
 View > Bring all windows back into Gridline			--
-View > Window layout >       Studio			ec
-View > Window layout >       Clips	Preview		e-
-View > Window layout >       Smooth	Preview		e-
-View > Window layout >       Tracker	Preview		e-
+View > Window layout > Studio			ec
+View > Window layout > Clips	Preview		e-
+View > Window layout > Smooth	Preview		e-
+View > Window layout > Tracker	Preview		e-
 View > Window layout > Layout settings...			e-
 View > Reset window layout	Ctrl+Shift+H	view.resetLayout	e-
 View > Dark theme			ec

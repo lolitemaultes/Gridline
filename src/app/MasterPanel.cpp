@@ -6,12 +6,14 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Mastering.h"
 #include "../core/PluginInfo.h"
 #include "../packs/utility/utility_rt.h"
 #include "App.h"
 #include "HostedBodies.h"
 #include "HostedUi.h"
+#include "LiveLook.h"
 #include "PluginUI.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -228,8 +230,23 @@ void drawMasterChainBody(App& a, const BodyFrame&) {
 }
 
 void drawMasterPanel(App& a) {
+  static bool wasShown = false;
+  const bool opening = a.showMaster && !wasShown;
+  wasShown = a.showMaster;
   if (!a.showMaster) return;
   if (hostbody::claimed(hostbody::Body::MasterChain)) return;  // K-112: a layout part draws it in its own frame
+  // Checkpoint 49 (K-297 note): Clips has no region for the chain, so it floats. Opened while it is a
+  // stub (160 x 96 at the corner) or new, it gets its first size, centred over the work area.
+  if (opening && livelook::active(a)) {
+    const ImGuiWindow* w = ImGui::FindWindowByName(ui::windowTitle("Master chain").c_str());
+    if (!w || (!w->DockIsActive && (w->Size.x < 400.0f || w->Size.y < 160.0f))) {
+      const ImGuiViewport* vp = ImGui::GetMainViewport();
+      const ImVec2 sz(std::min(820.0f, vp->WorkSize.x - 40.0f), std::min(300.0f, vp->WorkSize.y - 40.0f));
+      ImGui::SetNextWindowSize(sz, ImGuiCond_Always);
+      ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + std::round((vp->WorkSize.x - sz.x) * 0.5f), vp->WorkPos.y + std::round((vp->WorkSize.y - sz.y) * 0.5f)),
+                              ImGuiCond_Always);
+    }
+  }
   if (!ui::BeginDockWindow("Master chain", &a.showMaster, ImVec2(820, 300))) {
     ui::EndDockWindow();
     return;

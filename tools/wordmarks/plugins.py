@@ -145,6 +145,7 @@ P = {
     'gl.patcherfx': ('structure', 'junction', 'Patch host: plugins wired into one effect'),
     'gl.send': ('structure', 'send', 'Mixer send'),
     'gl.bussend': ('structure', 'bussend', 'Bus send'),
+    'gl.hwinsert': ('structure', 'jack', 'Outboard gear in a mixer insert (send, return, ping)'),
     'gl.busreturn': ('structure', 'busreturn', 'Bus return'),
     'gl.scduck': ('dynamics', 'duck', 'Sidechain ducker'),
     'gl.drawneq': ('tone', 'drawncurve', 'Drawn-curve EQ'),

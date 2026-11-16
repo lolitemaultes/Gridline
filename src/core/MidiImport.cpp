@@ -31,24 +31,44 @@ std::string pluginOr(const std::string& type, const std::string& fallback) { ret
 struct BendReader {
   std::vector<MidiCtl> bends[16];                          // per MIDI channel, by tick
   std::vector<std::pair<int64_t, double>> ranges[16];      // (tick, semitones) from RPN 0
-  explicit BendReader(const MidiTrack& tr) {
+  // K-99: an MPE track: member channels bend 48 semitones until the file says otherwise, and
+  // their channel pressure and CC 74 become the notes' pressure and timbre lanes.
+  bool mpe = false;
+  std::vector<MidiCtl> press[16], timbre[16];
+  explicit BendReader(const MidiTrack& tr) : mpe(isMpeTrack(tr)) {
     int msb[16], lsb[16];
     std::fill(std::begin(msb), std::end(msb), 127);
     std::fill(std::begin(lsb), std::end(lsb), 127);
     for (const auto& c : tr.ctls) {
       const int ch = c.channel & 15;
       if (c.controller == kMidiPitchBend) bends[ch].push_back(c);
+      else if (mpe && ch != 0 && c.controller == kMidiChannelPressure) press[ch].push_back(c);
+      else if (mpe && ch != 0 && c.controller == 74) timbre[ch].push_back(c);
       else if (c.controller == 101) msb[ch] = c.value;
       else if (c.controller == 100) lsb[ch] = c.value;
       else if (c.controller == 6 && msb[ch] == 0 && lsb[ch] == 0) ranges[ch].push_back({c.tick, static_cast<double>(std::max(1, c.value))});
     }
     for (auto& b : bends) std::stable_sort(b.begin(), b.end(), [](const MidiCtl& x, const MidiCtl& y) { return x.tick < y.tick; });
   }
+  // K-99: the note's pressure (dim 0) or timbre (dim 1) lane from its member channel, as played.
+  std::vector<BendPoint> exprFor(const MidiNote& mn, int dim, int division, int ppq) const {
+    const auto& cs = dim == 0 ? press[mn.channel & 15] : timbre[mn.channel & 15];
+    if (!mpe || cs.empty()) return {};
+    const double toSong = static_cast<double>(ppq) / std::max(1, division);
+    auto val = [&](int v) { return std::clamp(v, 0, 127) / 127.0 - (dim == 0 ? 0.0 : 0.5); };
+    std::vector<std::pair<double, double>> samples;
+    auto it = std::upper_bound(cs.begin(), cs.end(), mn.start, [](int64_t t, const MidiCtl& c) { return t < c.tick; });
+    samples.push_back({0.0, it != cs.begin() ? val(std::prev(it)->value) : 0.0});
+    for (; it != cs.end() && it->tick < mn.start + mn.length; ++it) samples.push_back({static_cast<double>(it->tick - mn.start) * toSong, val(it->value)});
+    std::vector<BendPoint> line = bend::fromSamples(samples, 0.004, std::max(1.0, ppq / 8.0));
+    if (std::all_of(line.begin(), line.end(), [](const BendPoint& p) { return std::fabs(p.semis) < 0.004f; })) line.clear();
+    return line;
+  }
   std::vector<BendPoint> lineFor(const MidiNote& mn, int division, int ppq) const {
     const int ch = mn.channel & 15;
     const auto& bs = bends[ch];
     if (bs.empty()) return {};
-    double range = 2.0;
+    double range = mpe && ch != 0 ? static_cast<double>(kMpeBendRange) : 2.0;
     for (const auto& r : ranges[ch])
       if (r.first <= mn.start) range = r.second;
     const double toSong = static_cast<double>(ppq) / std::max(1, division);
@@ -224,6 +244,8 @@ MidiImportResult importMidiIntoSong(Song& song, const MidiFileData& midiIn, cons
       Note x(T(mn.start), std::max<Tick>(1, T(mn.start + mn.length) - T(mn.start)), std::clamp(mn.pitch, 0, 127),
              std::clamp(mn.velocity, 1, 127));
       x.bend = bends.lineFor(mn, midi.division, ppq);  // K-25
+      x.pressure = bends.exprFor(mn, 0, midi.division, ppq);  // K-99: an MPE track's per-note pressure and timbre
+      x.timbre = bends.exprFor(mn, 1, midi.division, ppq);
       notes.push_back(x);
       maxEnd = std::max(maxEnd, x.start + x.length);
     }
@@ -235,7 +257,8 @@ MidiImportResult importMidiIntoSong(Song& song, const MidiFileData& midiIn, cons
         lanes[static_cast<uint32_t>(ChannelParam::Volume)].push_back({T(c.tick), c.value / 127.0});
       else if (o.controllers && c.controller == 10)
         lanes[static_cast<uint32_t>(ChannelParam::Pan)].push_back({T(c.tick), std::clamp((c.value - 64) / 64.0, -1.0, 1.0)});
-      else if (c.controller != kMidiPitchBend && c.controller != 101 && c.controller != 100 && c.controller != 6 && c.controller != 38)  // K-25: pitch bend (and its RPN 0 range) went into the notes' bend lines
+      else if (c.controller != kMidiPitchBend && c.controller != 101 && c.controller != 100 && c.controller != 6 && c.controller != 38 &&
+               !(bends.mpe && c.channel != 0 && (c.controller == kMidiChannelPressure || c.controller == 74)))  // K-25: pitch bend (and its RPN 0 range) went into the notes' bend lines; K-99: MPE expression into their lanes
         ++res.skippedControllers;
     }
     if (notes.empty() && lanes.empty()) continue;
@@ -313,6 +336,8 @@ int insertMidiNotes(Song& song, ObjectId pattern, ObjectId channel, Tick at, con
       Note x(at + s, std::max<Tick>(1, midiToSongTicks(mn.start + mn.length, midi.division, song.ppq) - s), std::clamp(mn.pitch, 0, 127),
              std::clamp(mn.velocity, 1, 127));
       x.bend = bends.lineFor(mn, midi.division, song.ppq);  // K-25
+      x.pressure = bends.exprFor(mn, 0, midi.division, song.ppq);  // K-99
+      x.timbre = bends.exprFor(mn, 1, midi.division, song.ppq);
       dst.push_back(x);
       maxEnd = std::max(maxEnd, x.start + x.length);
       ++added;

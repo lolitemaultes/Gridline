@@ -88,6 +88,10 @@ Content makeContent(Audio a);
 Range clampRange(const Content& c, Range r);
 // The selection or, when it is empty, the whole file.
 Range rangeOrAll(const Content& c, Range r);
+// GitHub #69: where an edited range lies after an edit that changed its length (a time stretch
+// or varispeed of the selection, a paste over it): it starts where it did and its end moves by the
+// change in the file's length, so a selection keeps covering what it became. Clamped to `after`.
+Range rangeAfterEdit(const Content& before, const Content& after, Range edited);
 
 // Undo history of an editor (snapshots; audio buffers are shared between
 // snapshots, so an edit that keeps the audio costs nothing).

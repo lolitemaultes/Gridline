@@ -576,8 +576,60 @@ bool gradientColor(Document& d, const std::vector<ObjectId>& tracks) {
 }
 
 bool setGroup(Document& d, const std::vector<ObjectId>& tracks, const std::string& group) {
-  return editEach(d, tracks, group.empty() ? "ungroup mixer tracks" : "group mixer tracks",
-                  [&group](MixerTrack& m) { m.group = group; });
+  // K-238: tracks joining a group take its link (a new group starts linked or not as asked).
+  const auto members = groupMembers(d.song(), group);
+  bool link = false;
+  for (ObjectId id : members)
+    if (std::find(tracks.begin(), tracks.end(), id) == tracks.end())
+      if (const MixerTrack* m = d.song().mixerTrack(id)) link = m->groupLink;
+  return editEach(d, tracks, group.empty() ? "ungroup mixer tracks" : "group mixer tracks", [&group, link](MixerTrack& m) {
+    m.group = group;
+    m.groupLink = !group.empty() && link;
+  });
+}
+
+bool createGroup(Document& d, const std::vector<ObjectId>& tracks, const std::string& group, bool linked) {
+  if (group.empty() || tracks.empty()) return false;
+  return editEach(d, tracks, "group mixer tracks", [&group, linked](MixerTrack& m) {
+    m.group = group;
+    m.groupLink = linked;
+  });
+}
+
+bool setGroupLink(Document& d, const std::string& group, bool linked) {
+  return editEach(d, groupMembers(d.song(), group), linked ? "link mixer group" : "unlink mixer group",
+                  [linked](MixerTrack& m) { m.groupLink = linked; });
+}
+
+bool groupLinked(const Song& s, const std::string& group) {
+  if (group.empty()) return false;
+  for (const auto& m : s.mixer)
+    if (m.group == group && m.groupLink) return true;
+  return false;
+}
+
+std::vector<ObjectId> linkedPartners(const Song& s, ObjectId track) {
+  std::vector<ObjectId> out;
+  const MixerTrack* t = s.mixerTrack(track);
+  if (!t || t->group.empty() || !t->groupLink) return out;
+  for (const auto& m : s.mixer)
+    if (m.id != track && m.group == t->group && m.groupLink) out.push_back(m.id);
+  return out;
+}
+
+bool toggleSolo(Document& d, ObjectId track) {
+  const MixerTrack* t = d.song().mixerTrack(track);
+  if (!t) return false;
+  const bool on = !t->solo;
+  std::vector<ObjectId> ids = linkedPartners(d.song(), track);
+  ids.insert(ids.begin(), track);
+  return editEach(d, ids, on ? "solo mixer track" : "unsolo mixer track", [on](MixerTrack& m) { m.solo = on; });
+}
+
+bool toggleMute(Document& d, ObjectId track) {
+  const MixerTrack* t = d.song().mixerTrack(track);
+  if (!t) return false;
+  return d.setParam(mixerParam(track, MixerParam::Mute), t->muted ? 0.0 : 1.0, false);  // linked members follow (Document)
 }
 
 std::vector<std::string> groupNames(const Song& s) {
@@ -720,6 +772,7 @@ std::string trackStateText(const MixerTrack& t) {
   j.object.erase("solo");
   j.object.erase("dock");
   j.object.erase("group");
+  j.object.erase("groupLink");  // K-238
   j.object.erase("armed");
   j.object.erase("roomId");  // K-224: a track's Stage room belongs to the project, not to the sound
   j.object["format"] = Json::makeString(kTrackStateTag);
@@ -745,6 +798,7 @@ bool applyTrackState(Document& d, ObjectId track, const std::string& text, std::
   loaded.solo = cur->solo;
   loaded.dock = cur->dock;
   loaded.group = cur->group;
+  loaded.groupLink = cur->groupLink;  // K-238
   loaded.armed = cur->armed;
   loaded.room = cur->room;  // K-224: loading a sound never moves the track to another room
   d.beginGroup("load mixer track state");

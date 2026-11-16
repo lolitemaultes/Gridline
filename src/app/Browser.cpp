@@ -57,6 +57,7 @@
 #include "Windows.h"
 #include "../core/Platform.h"
 #include "../packs/PacksUi.h"
+#include "../core/SafeFs.h"
 
 namespace gl {
 
@@ -155,7 +156,7 @@ void loadFolders(App& a) {
     const char* h = gl::platform::homeEnv();
     std::string home = h ? h : ".";
     for (const char* sub : {"Music", "Documents", "Downloads"})
-      if (fs::is_directory(fs::path(home) / sub)) folders.push_back((fs::path(home) / sub).string());
+      if (safefs::isDirAt(fs::path(home) / sub)) folders.push_back((fs::path(home) / sub).string());
   }
 }
 void saveFolders(App& a) {
@@ -572,6 +573,7 @@ struct FileOpsState {
   char buf[256] = "";
   std::string error;        // shown under the field
   std::string trashAsk;     // asked about in the trash dialog
+  bool trashFiles = false;  // K-106: asked from the Tracker's Files screen (its own rule, filesLockedWhy)
   bool trashOpen = false;
   std::string browserDrag;  // the browser file row being dragged (moves inside the browser)
 } fops;
@@ -625,7 +627,33 @@ std::vector<std::string> editableRoots(App& a) {
 
 // Why `path` cannot be renamed, moved or deleted ("" when it can). `asParent`: the
 // folder receives a new folder or a moved item instead (a browser root may).
-std::string lockedWhy(App& a, const std::string& path, bool asParent = false) {
+// R7-02, R7-16: the Tracker's Files screen lists any folder, so its rule is its own: a file or
+// folder may change wherever the user may write, except shipped content, the file system's root and
+// the home folder themselves, the open project (Save as moves it) and what a shared project uses.
+// Neutral wording (no other program named).
+std::string filesLockedWhy(App& a, const std::string& path, bool asParent) {
+  const std::string fl = browserui::flDataDir();
+  if (!fl.empty() && fileops::isInside(path, fl)) return i18n::N_("This folder is read-only");
+  if (!asParent) {
+    const fs::path p = fs::path(path).lexically_normal();
+    const char* h = std::getenv("HOME");
+    if (p == p.root_path() || (h && *h && fileops::isInside(std::string(h), path))) return i18n::N_("Your home folder and the folders above it stay as they are");
+    if (!a.projectPath.empty() && fileops::isInside(a.projectPath, path))
+      return i18n::N_("The open project is saved here: use File > Save as to move it");
+  }
+  if (collabui::active(a)) {
+    const std::string shared = a.projectPath.empty() ? std::string() : fs::path(a.projectPath).parent_path().string();
+    if ((!shared.empty() && fileops::isInside(path, shared)) || (!asParent && refsTo(a, path) > 0))
+      return i18n::N_("Shared with the collaborative project: the others refer to it by this name");
+  }
+  const std::string dir = asParent ? path : fs::path(path).parent_path().string();
+  if (!platform::writable(dir)) return i18n::N_("This folder is read-only");
+  return "";
+}
+
+// `files`: asked from the Tracker's Files screen (filesLockedWhy's rule instead).
+std::string lockedWhy(App& a, const std::string& path, bool asParent = false, bool files = false) {
+  if (files) return filesLockedWhy(a, path, asParent);
   const std::string fl = browserui::flDataDir();
   if (!fl.empty() && fileops::isInside(path, fl)) return i18n::N_("FL Studio's shipped content is read-only");
   bool inRoot = false, isRoot = false;
@@ -699,7 +727,7 @@ void afterMoves(App& a, const fileops::Result& r, const std::string& label) {
 
 // Renames `path` to the name typed (a file keeps its extension when none is typed).
 // Returns the error to show ("" when done).
-std::string commitRename(App& a, const std::string& path, std::string name) {
+std::string commitRename(App& a, const std::string& path, std::string name, bool files = false) {
   while (!name.empty() && name.back() == ' ') name.pop_back();
   std::error_code ec;
   const fs::path p(path);
@@ -707,7 +735,7 @@ std::string commitRename(App& a, const std::string& path, std::string name) {
   const std::string ext = folder ? std::string() : p.extension().string();
   if (!ext.empty() && (name.size() < ext.size() || lower(name.substr(name.size() - ext.size())) != lower(ext))) name += ext;
   if (name == p.filename().string()) return "";
-  if (std::string why = lockedWhy(a, path); !why.empty()) return i18n::tr(why.c_str());
+  if (std::string why = lockedWhy(a, path, false, files); !why.empty()) return i18n::tr(why.c_str());
   const fileops::Result r = fileops::rename(path, name);
   if (!r.ok) return i18n::tr(r.error.c_str());
   afterMoves(a, r, i18n::tr("Renamed"));
@@ -893,9 +921,11 @@ bool rootHeaderMenu(const HeaderHit& h, const char* id) {
 // The trash dialog's action: `fops.trashAsk` to the system trash.
 void trashNow(App& a) {
   const std::string path = fops.trashAsk;
+  const bool files = fops.trashFiles;
   fops.trashAsk.clear();
+  fops.trashFiles = false;
   if (path.empty()) return;
-  const std::string why = lockedWhy(a, path);
+  const std::string why = lockedWhy(a, path, false, files);
   if (!why.empty()) {
     a.notify(i18n::tr(why.c_str()), true);
     return;
@@ -958,11 +988,12 @@ void trashDialog(App& a) {
   ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kW - ui::ButtonRowWidth(2, kButtonW));
   const bool cancel = ui::TextButton("Cancel", false, kButtonW) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
-  if (ui::DangerButton("Move to trash", true, kButtonW)) {
+  if (ui::DangerButton("Move to trash", true, kButtonW) || ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {  // R7-07: Enter, as the other prompts
     trashNow(a);
     ImGui::CloseCurrentPopup();
   } else if (cancel) {
     fops.trashAsk.clear();
+    fops.trashFiles = false;
     ImGui::CloseCurrentPopup();
   }
   ImGui::EndPopup();
@@ -1181,13 +1212,30 @@ void pluginRow(App& a, const PluginInfo& p, float indent, const char* detail, bo
 }
 
 // Built-in plugins of one kind, by category (collapsible).
-void builtinPlugins(App& a, PluginKind kind, float indent, const char* keyBase) {
+// K-112c (checkpoint 48): `only` (non-empty): that category's plugins alone, as one flat list (the
+// Clips browser's filter chips).
+// N48-16: `flat` (Clips, no kind chip lit): one list of every device, by name, as the reference's
+// browser, whose tags filter one result list (the chips above are the kinds, so no folders repeat them).
+void builtinPlugins(App& a, PluginKind kind, float indent, const char* keyBase, const std::string& only = std::string(), bool flat = false) {
   const host::PluginPrefs prefs = host::pluginPrefs();
+  if (flat && only.empty()) {
+    std::vector<const PluginInfo*> all;
+    for (const auto& p : pluginCatalog())
+      if (p.kind == kind && !p.hidden) all.push_back(&p);
+    std::sort(all.begin(), all.end(), [](const PluginInfo* x, const PluginInfo* y) { return x->name < y->name; });
+    for (const PluginInfo* p : all) pluginRow(a, *p, indent, nullptr, prefs.favourites.count(p->type) > 0);
+    return;
+  }
   std::map<std::string, std::vector<const PluginInfo*>> byCat;
   for (const auto& p : pluginCatalog())
     if (p.kind == kind && !p.hidden) byCat[p.category.empty() ? "Other" : p.category].push_back(&p);
   for (auto& [cat, list] : byCat) {
     std::sort(list.begin(), list.end(), [](const PluginInfo* x, const PluginInfo* y) { return x->name < y->name; });
+    if (!only.empty()) {
+      if (cat == only)
+        for (const PluginInfo* p : list) pluginRow(a, *p, indent, nullptr, prefs.favourites.count(p->type) > 0);
+      continue;
+    }
     const std::string key = std::string(keyBase) + cat;
     if (!treeNode(key, cat.c_str(), static_cast<int>(list.size()), indent, browserui::categoryRole(cat, static_cast<int>(kind)))) continue;
     for (const PluginInfo* p : list) pluginRow(a, *p, indent + 14, nullptr, prefs.favourites.count(p->type) > 0);
@@ -2090,9 +2138,56 @@ void liveSidebar(App& a, bool twoPane) {
 std::vector<std::pair<std::string, int>> filterTags;
 uint64_t filterTagsGen = ~0ull;
 int devFilterChips = 0;  // chips drawn last frame (dev checks)
+// K-112c (checkpoint 48): the device places filter by kind too, as ref 487's Devices tags: one chip
+// per category of the place's plugins; a chip shows that category's plugins alone (a flat list), the
+// lit one shows them all again. Cleared when another place is chosen.
+std::string liveKindCat;
+int liveKindCatFor = -1;
+void liveKindChips(App& a, float w) {
+  const auto& P = pal();
+  const PluginKind kind = liveCat == LcInstruments ? PluginKind::Generator : liveCat == LcAudioFx ? PluginKind::Effect : PluginKind::NoteFx;
+  std::vector<std::string> cats;
+  for (const auto& p : pluginCatalog())
+    if (p.kind == kind && !p.hidden) {
+      const std::string c = p.category.empty() ? "Other" : p.category;
+      if (std::find(cats.begin(), cats.end(), c) == cats.end()) cats.push_back(c);
+    }
+  std::sort(cats.begin(), cats.end());
+  if (cats.size() < 2) return;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 o = ImGui::GetCursorScreenPos();
+  const float fs = theme::kFontLabel, ch = 16, gap = 4, pad = 6;
+  float x = o.x + 6, y = o.y + 1;
+  for (size_t i = 0; i < cats.size(); ++i) {
+    const std::string& t = cats[i];
+    const float cw = std::ceil(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, t.c_str()).x) + pad * 2;
+    if (x + cw > o.x + w - 6) x = o.x + 6, y += ch + gap;
+    const bool on = t == liveKindCat;
+    ImGui::SetCursorScreenPos(ImVec2(x, y));
+    ImGui::PushID(static_cast<int>(i) + 500);
+    if (ImGui::InvisibleButton("##kchip", ImVec2(cw, ch))) liveKindCat = on ? std::string() : t;
+    const bool hov = ImGui::IsItemHovered();
+    if (i == 0) devNoteRect("brkchip");
+    ImGui::PopID();
+    ui::Hint(on ? i18n::tr("Click to show every kind again") : i18n::tr("Click to show only this kind"));
+    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + cw, y + ch), on ? P.hot : hov ? P.surface600 : P.surface700, 1.0f);
+    theme::centreText(dl, a.fontRegular, fs, ImVec2(x, y), ImVec2(x + cw, y + ch), on ? theme::contrastText(P.hot) : hov ? P.text : theme::mix(P.textDim, P.text, 0.5f), t.c_str());
+    x += cw + gap;
+    ++devFilterChips;
+  }
+  ImGui::SetCursorScreenPos(ImVec2(o.x, o.y));
+  ImGui::Dummy(ImVec2(w, y + ch + 3 - o.y));
+  dl->AddLine(ImVec2(o.x, y + ch + 2.5f), ImVec2(o.x + w, y + ch + 2.5f), P.line);
+}
+
 void liveFilterRows(App& a, float w) {
   const auto& P = pal();
   devFilterChips = 0;
+  if (liveKindCatFor != liveCat) liveKindCat.clear(), liveKindCatFor = liveCat;
+  if (liveCat == LcInstruments || liveCat == LcAudioFx || liveCat == LcNoteFx) {
+    liveKindChips(a, w);
+    return;
+  }
   const bool files = liveCat == LcSamples || liveCat == LcFolders || liveCat == LcDrums || liveCat == LcRecent || liveCat == LcStarred;
   if (!files) return;
   const uint64_t gen = browserui::index().generation();
@@ -2106,13 +2201,16 @@ void liveFilterRows(App& a, float w) {
   float x = o.x + 6, y = o.y + 1;
   int rowsUsed = 1;
   for (size_t i = 0; i < filterTags.size(); ++i) {
-    const std::string& t = filterTags[i].first;
+    const std::string& tag = filterTags[i].first;
+    if (liveCat == LcDrums && tag == "drums") continue;  // N48-16: every file here is one
+    std::string t = tag;  // N48-16: shown in title case, as the other places' chips
+    if (!t.empty()) t[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(t[0])));
     const float cw = std::ceil(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, t.c_str()).x) + pad * 2;
     if (x + cw > o.x + w - 6) {
       if (rowsUsed == 2) break;
       ++rowsUsed, x = o.x + 6, y += ch + gap;
     }
-    const std::string q = "tag:" + t;
+    const std::string q = "tag:" + tag;
     const bool on = q == filterBuf;
     ImGui::SetCursorScreenPos(ImVec2(x, y));
     ImGui::PushID(static_cast<int>(i));
@@ -2134,16 +2232,14 @@ void liveFilterRows(App& a, float w) {
 
 void liveListHead(App& a) {
   const auto& P = pal();
-  static const char* names[LcCount] = {i18n::N_("Starred"), i18n::N_("Sounds"), i18n::N_("Drums"), i18n::N_("Instruments"),
-                                       i18n::N_("Audio effects"), i18n::N_("Note effects"), i18n::N_("Plugins"), i18n::N_("Clips"),
-                                       i18n::N_("Samples"), i18n::N_("Grooves"), i18n::N_("Recent"), i18n::N_("Projects"),
-                                       i18n::N_("Folders")};
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 p0 = ImGui::GetCursorScreenPos();
   const float w = ImGui::GetContentRegionAvail().x, hh = 20;
   dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + hh), P.surface800);
   dl->AddLine(ImVec2(p0.x, p0.y + hh - 0.5f), ImVec2(p0.x + w, p0.y + hh - 0.5f), P.line);
-  const char* n = liveCat >= 0 && liveCat < LcCount ? i18n::tr(names[liveCat]) : "";
+  // K-112c (checkpoint 48): the list's column head (two panes only) says what the column is, Name, as
+  // every ref's (487, 564, 457); the place stays lit in the rows beside it.
+  const char* n = i18n::tr("Name");
   dl->AddText(a.fontBold, theme::kFontCaption, ImVec2(p0.x + 8, std::round(p0.y + (hh - theme::kFontCaption) * 0.5f)), P.textDim, n);
   ImGui::Dummy(ImVec2(w, hh + 2));
   liveFilterRows(a, w);
@@ -2163,11 +2259,11 @@ void liveContent(App& a) {
       else emptyLine("No drum folders yet: add one with Add folder below", 12);
       break;
     case LcInstruments:
-      builtinPlugins(a, PluginKind::Generator, 12, "##lc.g.");
-      installedPlugins(a, 12);
+      builtinPlugins(a, PluginKind::Generator, 12, "##lc.g.", liveKindCat, true);
+      if (liveKindCat.empty()) installedPlugins(a, 12);
       break;
-    case LcAudioFx: builtinPlugins(a, PluginKind::Effect, 12, "##lc.e."); break;
-    case LcNoteFx: builtinPlugins(a, PluginKind::NoteFx, 12, "##lc.n."); break;
+    case LcAudioFx: builtinPlugins(a, PluginKind::Effect, 12, "##lc.e.", liveKindCat, true); break;
+    case LcNoteFx: builtinPlugins(a, PluginKind::NoteFx, 12, "##lc.n.", liveKindCat, true); break;
     case LcPlugins: sectionPluginDatabase(a); break;
     case LcClips: sectionCurrentProject(a); break;
     case LcSamples:
@@ -2748,5 +2844,24 @@ void showProjectTab(App& a) {
   a.showBrowser = true;
 }
 }  // namespace browserui
+
+// K-106: the Tracker's Files screen (its own list, the browser's file operations).
+std::string filesRename(App& a, const std::string& path, const std::string& name) { return commitRename(a, path, name, true); }
+void filesAskTrash(const std::string& path) {
+  fops.trashAsk = path;
+  fops.trashFiles = true;
+  fops.trashOpen = true;
+}
+std::string filesLocked(App& a, const std::string& path, bool asParent) { return filesLockedWhy(a, path, asParent); }
+bool filesTrashMoved() {
+  static bool was = false;
+  const bool now = !fops.trashAsk.empty() || fops.trashOpen;
+  const bool done = was && !now;
+  was = now;
+  return done;
+}
+void browserTrashDialog(App& a) {
+  if (!a.showBrowser) trashDialog(a);  // (the browser window runs it while it is open)
+}
 
 }  // namespace gl

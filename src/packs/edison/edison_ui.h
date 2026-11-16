@@ -7,6 +7,7 @@
 #include <functional>
 #include <future>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include "../../app/App.h"
@@ -181,8 +182,11 @@ bool loopOn(App& a, const Session& s);
 void setLoop(App& a, Session& s, bool on);
 void setParam(App& a, const Session& s, int k, double v);
 
-// Edits: run `op` on the worker; its result becomes one undo step.
-void runEdit(App& a, Session& s, const std::string& label, std::function<Content(const Content&)> op);
+// Edits: run `op` on the worker; its result becomes one undo step. `follow` (GitHub #69): the
+// selection the edit changed the length of (stretch, varispeed, paste over it); afterwards the
+// selection covers what it became (rangeAfterEdit), unless it was changed while the edit ran.
+// Without it the selection stays where it was (clamped to the new length).
+void runEdit(App& a, Session& s, const std::string& label, std::function<Content(const Content&)> op, std::optional<Range> follow = std::nullopt);
 // Same, immediately on the UI thread (cheap edits: markers, loop points).
 void applyNow(App& a, Session& s, const std::string& label, const Content& next);
 void undo(App& a, Session& s);
@@ -241,6 +245,7 @@ bool pinned(App& a);
 bool inPanel(const Session& s);  // this session is the one the panel shows
 void pinTo(App& a, Session& s, DockSpot spot);
 void unpin(App& a);              // the panel closes; its session goes back to its own window
+void closeOwnWindows(App& a);     // every Loupe window of its own closes (the panel stays)
 void dockMenuItems(App& a, Session& s);
 // An audio file on its own (the browser's Edit in Loupe): its own window, no owner.
 bool openFileInLoupe(App& a, const std::string& path);  // View menu: Pin to the layout / Unpin

@@ -220,6 +220,62 @@ void devPerformClose(const Window& w) {
   if (w.handle) [(NSWindow*)w.handle performClose:nil];
 }
 
+namespace {
+// The menu bar's item for a key equivalent (Command + `key`, no other modifier), searched through
+// every submenu.
+NSMenuItem* menuItemForCommand(NSMenu* m, NSString* key) {
+  for (NSMenuItem* it in [m itemArray]) {
+    if ([[it keyEquivalent] isEqualToString:key] &&
+        ([it keyEquivalentModifierMask] & (NSEventModifierFlagCommand | NSEventModifierFlagOption | NSEventModifierFlagControl |
+                                            NSEventModifierFlagShift)) == NSEventModifierFlagCommand)
+      return it;
+    if ([it submenu])
+      if (NSMenuItem* r = menuItemForCommand([it submenu], key)) return r;
+  }
+  return nil;
+}
+}  // namespace
+
+std::string devCommandW(const Window& w, int phase) {
+  if (!w.handle || !NSApp) return "no window";
+  NSWindow* win = (NSWindow*)w.handle;
+  const NSEventModifierFlags cmdDown = NSEventModifierFlagCommand | 0x8;  // | NX_DEVICELCMDKEYMASK: the left Command key
+  auto key = [&](NSEventType t, NSEventModifierFlags flags, NSString* chars, unsigned short code) {
+    return [NSEvent keyEventWithType:t
+                            location:NSZeroPoint
+                       modifierFlags:flags
+                           timestamp:[[NSProcessInfo processInfo] systemUptime]
+                        windowNumber:[win windowNumber]
+                             context:nil
+                          characters:chars
+         charactersIgnoringModifiers:chars
+                           isARepeat:NO
+                             keyCode:code];
+  };
+  std::string what;
+  if (phase != 2) {
+    NSMenuItem* item = [NSApp mainMenu] ? menuItemForCommand([NSApp mainMenu], @"w") : nil;
+    id target = item ? [NSApp targetForAction:[item action] to:[item target] from:item] : nil;
+    [NSApp sendEvent:key(NSEventTypeFlagsChanged, cmdDown, @"", 55)];  // kVK_Command
+    [NSApp sendEvent:key(NSEventTypeKeyDown, cmdDown, @"w", 13)];      // kVK_ANSI_W: SDL's key, then the menu's key equivalent
+    if (!item) {
+      what = "no Command+W item in the menu bar: the key only";
+    } else if (target) {
+      what = std::string("menu item \"") + [[item title] UTF8String] + "\" ran (" + sel_getName([item action]) + ")";
+    } else {
+      // A hidden run has no key window, so the menu found nothing to close: as with this window key.
+      [NSApp sendAction:[item action] to:win from:item];
+      what = std::string("menu item \"") + [[item title] UTF8String] + "\" sent to the window (" + sel_getName([item action]) + ", no key window)";
+    }
+    [NSApp sendEvent:key(NSEventTypeKeyUp, cmdDown, @"w", 13)];
+  }
+  if (phase != 1) {
+    [NSApp sendEvent:key(NSEventTypeFlagsChanged, 0, @"", 55)];
+    if (what.empty()) what = "Command let go";
+  }
+  return what;
+}
+
 DrawStats takeDrawStats() {
   DrawStats s;
   s.views = gViews.exchange(0);

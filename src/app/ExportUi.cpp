@@ -9,6 +9,7 @@
 #include "Keys.h"
 #include "LiveLook.h"
 #include "../core/TrackReceipt.h"
+#include "../core/Meter.h"
 #include "ExportUi.h"
 #include "LogicPlugins.h"
 #include "../core/Crash.h"
@@ -34,6 +35,7 @@
 #include "../core/flp/FlpExport.h"
 #include "../core/flp/FlpPackage.h"
 #include "../core/ProjectFiles.h"
+#include "../core/DawProject.h"
 #include "../core/MidiFile.h"
 #include "../core/MidiImport.h"
 #include "../core/Project.h"
@@ -45,6 +47,7 @@
 #include "../packs/PacksUi.h"
 #include "FreezeUi.h"
 #include "App.h"
+#include "BrowserUi.h"
 #include "CollabUi.h"
 #include "ContextMenus.h"
 #include "DevSignal.h"
@@ -75,10 +78,10 @@ struct Dialog {
   ExportSettings s;
   int scope = 0;           // 0 song, 1 pattern, 2 time selection, 3 marker range
   int markerA = 0, markerB = 1;
-  bool fmt[5] = {true, false, false, false, false};  // WAV FLAC MP3 Ogg M4A
+  bool fmt[6] = {true, false, false, false, false, false};  // WAV FLAC MP3 Ogg M4A Opus
   int wavBits = 1;         // 0 16, 1 24, 2 32f
   int flacBits = 1;        // 0 16, 1 24
-  int mp3Rate = 3, oggRate = 2, m4aRate = 2;  // index in kBitrates
+  int mp3Rate = 3, oggRate = 2, m4aRate = 2, opusRate = 1;  // index in kBitrates
   int rateIdx = 2;         // index in kRates
   int dest = 0;            // Dest
   bool replacePattern = false;
@@ -224,6 +227,12 @@ int firstFreeTrack(const Song& s) {
 bool applyScope(const App& a, RenderJob& r, std::string* why) {
   const Song& s = a.doc.song();
   r.scope = RenderScope::Song;
+  r.arrangementOnly = livelook::active(a);  // N48-10: Clips exports its arrangement, never the clip grid's slots
+  if (r.arrangementOnly && dlg.scope == 0) {
+    bool any = false;
+    for (const Clip& c : s.playlist) any = any || (c.start >= s.live.areaEnd && !c.muted && c.kind != ClipKind::Automation);
+    if (!any) return why && (*why = "the arrangement is empty", false);
+  }
   switch (dlg.scope) {
     case 1:
       r.scope = RenderScope::Pattern;
@@ -247,7 +256,7 @@ bool applyScope(const App& a, RenderJob& r, std::string* why) {
       break;
     }
     default:
-      if (s.lengthTicks() <= 0) return why && (*why = "the playlist is empty", false);
+      if (s.lengthTicks() <= 0) return why && (*why = logicplug::active(a) ? "the project is empty" : "the playlist is empty", false);  // R06-13
       break;
   }
   return true;
@@ -331,6 +340,7 @@ void startJob(App& a) {
   s.mp3Bitrate = kBitrates[dlg.mp3Rate];
   s.oggBitrate = kBitrates[dlg.oggRate];
   s.m4aBitrate = kBitrates[dlg.m4aRate];
+  s.opusBitrate = kBitrates[dlg.opusRate];
   s.render.sampleRate = kRates[dlg.rateIdx];
   s.partPattern = dlg.pattern;
   s.projectTitle = projectName(a);
@@ -509,8 +519,24 @@ void drawRenderDialog(App& a) {
   ui::BeginSection("EXPORT TYPE", colW);
   {
     formLabel("Render");
-    const char* scopes[] = {"Song", "Pattern", "Time selection", "Marker range"};
+    // R05-11: in the Tracks layout the time selection is the cycle area, and its range is shown.
+    const bool tracksLook = logicplug::active(a);
+    const char* scopes[] = {"Song", "Pattern", tracksLook ? "Cycle area" : "Time selection", "Marker range"};
     combo("##scope", &dlg.scope, scopes, 4, colW - 148);
+    if (dlg.scope == 2 && tracksLook) {
+      const PlaylistState& pst = a.playlist;
+      formLabel("Start / end");
+      if (pst.selEnd > pst.selStart) {
+        const MeterMap mm(song);
+        const auto at = [&](Tick t) {
+          const MeterMap::Bbt q = mm.toBbt(t);
+          return std::to_string(q.bar + 1) + "." + std::to_string(q.beat + 1);
+        };
+        ImGui::Text("%s  -  %s", at(pst.selStart).c_str(), at(pst.selEnd).c_str());
+      } else {
+        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Turn Cycle on to render its area"));
+      }
+    }
     if (dlg.scope == 3) {
       std::vector<std::string> names;
       for (size_t k = 0; k < song.markers.size(); ++k)
@@ -561,7 +587,7 @@ void drawRenderDialog(App& a) {
   ui::BeginSection("DESTINATION", colW);
   {
     formLabel("Render to", livelook::active(a) ? 132.0f : 110.0f);  // K-112c (round 32): on the value column in Clips
-    const char* dests[] = {"Files", "Audio clip", "Loupe"};
+    const char* dests[] = {"Files", logicplug::active(a) ? "Audio region" : "Audio clip", "Loupe"};  // R04-13: the Tracks layout's word
     ui::Segmented("dest", dests, 3, &dlg.dest, 76);
     if (!files) {
       ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("32-bit float WAV in %s"), theme::fitText(renderedFolder(a).c_str(), colW - 140));
@@ -619,6 +645,7 @@ void drawRenderDialog(App& a) {
       row(2, "MP3", br, 4, &dlg.mp3Rate);
       row(3, "Ogg Vorbis", br, 4, &dlg.oggRate);
       row(4, "AAC (.m4a)", br, 4, &dlg.m4aRate);
+      row(5, "Opus", br, 4, &dlg.opusRate);  // K-109
       ImGui::Checkbox(i18n::tr("MIDI"), &s.midi);
       formLabel("Channels");
       int cm = static_cast<int>(s.channels);
@@ -670,16 +697,18 @@ void drawRenderDialog(App& a) {
       ui::ToggleRow(i18n::tr("Also render the full mix"), &s.stemsIncludeMaster);
       ImGui::Unindent(18);
     }
-    ui::ToggleRow(i18n::tr("Split playlist tracks"), &s.splitPlaylist);
-    ui::Tooltip("One file per playlist track that holds clips");
-    ui::ToggleRow(i18n::tr("Split playlist track groups"), &s.splitPlaylistGroups);  // J-31
-    ui::Tooltip("One file per playlist track group (a group track and the tracks it holds)");
+    const bool tracksWords = logicplug::active(a);  // R04-13: the Tracks layout names them tracks and regions
+    ui::ToggleRow(tracksWords ? i18n::tr("Split tracks") : i18n::tr("Split playlist tracks"), &s.splitPlaylist);
+    ui::Tooltip(tracksWords ? "One file per track that holds regions" : "One file per playlist track that holds clips");
+    ui::ToggleRow(tracksWords ? i18n::tr("Split track groups") : i18n::tr("Split playlist track groups"), &s.splitPlaylistGroups);  // J-31
+    ui::Tooltip(tracksWords ? "One file per track group (a group track and the tracks it holds)"
+                            : "One file per playlist track group (a group track and the tracks it holds)");
     ImGui::EndDisabled();
     ui::ToggleRow(i18n::tr("Enable master effects"), &s.render.masterEffects);
     ui::ToggleRow(i18n::tr("Enable insert effects"), &s.render.insertEffects);
     ImGui::BeginDisabled(!files);
     ui::ToggleRow(i18n::tr("Save tempo information (WAV)"), &s.tempoInfo);
-    ui::ToggleRow(i18n::tr("Playlist markers as WAV cue points"), &s.markers);
+    ui::ToggleRow(i18n::tr(logicplug::active(a) ? i18n::N_("Markers as WAV cue points") : i18n::N_("Playlist markers as WAV cue points")), &s.markers);  // R06-13
     ImGui::EndDisabled();
     ui::ToggleRow(i18n::tr("Normalize"), &s.normalize);
     if (s.normalize) {
@@ -721,6 +750,13 @@ void drawRenderDialog(App& a) {
 }
 
 }  // namespace
+
+bool closeRender() {
+  const bool was = dlg.open;
+  dlg.open = false;
+  return was;
+}
+
 
 bool progressBody(const std::string& status, double progress, bool escapeCancels) {
   ImGui::TextUnformatted(i18n::trMessage(status).c_str());
@@ -1164,12 +1200,15 @@ void openRender(App& a, Preset p) {
   if (p == Preset::Midi) {
     for (bool& f : dlg.fmt) f = false;
     dlg.s.midi = true;
-  } else if (p != Preset::AudioClip && p != Preset::PatternReplace && !dlg.fmt[0] && !dlg.fmt[1] && !dlg.fmt[2] && !dlg.fmt[3] && !dlg.fmt[4]) {
+  } else if (p != Preset::AudioClip && p != Preset::PatternReplace && !dlg.fmt[0] && !dlg.fmt[1] && !dlg.fmt[2] && !dlg.fmt[3] && !dlg.fmt[4] && !dlg.fmt[5]) {
     dlg.fmt[0] = true;
   }
   if (p == Preset::PatternReplace) dlg.dest = static_cast<int>(Dest::AudioClip);
   if (p == Preset::AudioClip || p == Preset::PatternReplace || p == Preset::PatternFile) dlg.scope = 1;
   if (p == Preset::Audio || p == Preset::Stems || p == Preset::PlaylistTracks || p == Preset::TrackGroups) dlg.scope = dlg.scope == 1 ? 0 : dlg.scope;
+  // R05-11: the reference's Bounce starts and ends at the cycle area while Cycle is on; else the song.
+  if (logicplug::active(a) && p != Preset::AudioClip && p != Preset::PatternReplace && p != Preset::PatternFile)
+    dlg.scope = a.playlist.selEnd > a.playlist.selStart ? 2 : (dlg.scope == 2 ? 0 : dlg.scope);
   dlg.replacePattern = p == Preset::PatternReplace;
 }
 
@@ -1177,7 +1216,7 @@ void openRenderAgain(App& a) {  // J-27: the dialog exactly as last used (format
   initDialog(a);
   dlg.open = true;
   a.showExport = false;
-  if (!dlg.fmt[0] && !dlg.fmt[1] && !dlg.fmt[2] && !dlg.fmt[3] && !dlg.fmt[4] && !dlg.s.midi) dlg.fmt[0] = true;
+  if (!dlg.fmt[0] && !dlg.fmt[1] && !dlg.fmt[2] && !dlg.fmt[3] && !dlg.fmt[4] && !dlg.fmt[5] && !dlg.s.midi) dlg.fmt[0] = true;
 }
 
 void startRenderTo(App& a, const std::string& folder) {
@@ -1188,7 +1227,7 @@ void startRenderTo(App& a, const std::string& folder) {
 
 void devStart(App& a, const DevRender& r) {
   initDialog(a);
-  for (int k = 0; k < 5; ++k) dlg.fmt[k] = (r.formats >> k) & 1;
+  for (int k = 0; k < 6; ++k) dlg.fmt[k] = (r.formats >> k) & 1;
   dlg.scope = r.scope;
   dlg.dest = r.dest;
   dlg.rateIdx = std::clamp(r.sampleRate, 0, 6);
@@ -1444,6 +1483,52 @@ void exportZipDialog(App& a) {
              });
 }
 
+// K-89: DAWproject files. What could not be carried is shown after the export or import.
+namespace {
+void showReport(App& a, const std::string& title, const dawproject::Report& r) {
+  if (r.lines.empty()) return;
+  std::string body = i18n::tr("Not carried over exactly:");
+  for (const auto& l : r.lines) body += "\n- " + l;
+  a.confirm.title = title;
+  a.confirm.subtitle = body;
+  a.confirm.okLabel = i18n::tr("OK");
+  a.confirm.action = nullptr;
+  a.confirm.open = true;
+}
+}  // namespace
+
+void exportDawProjectDialog(App& a) {
+  fileDialog(a, "Export DAWproject", true, {".dawproject"}, safeFileName(projectName(a)) + ".dawproject", [&a](const std::string& p) {
+    std::string path = p;
+    if (!dawproject::isDawProject(path)) path += ".dawproject";
+    dawproject::Report rep;
+    std::string err;
+    if (!dawproject::exportFile(a.doc.song(), path, &rep, &err)) {
+      a.notify("Could not export " + fs::path(path).filename().string() + ": " + err, true);
+      return;
+    }
+    a.notify("Exported " + fs::path(path).filename().string(), false, path);
+    a.uiSound(uisound::Event::Export);
+    showReport(a, i18n::tr("DAWproject exported"), rep);
+  });
+}
+
+void importDawProject(App& a, const std::string& path) {
+  a.guardUnsaved([&a, path] {
+    Song s;
+    dawproject::Report rep;
+    std::string err;
+    const std::string audio = (fs::path(browserui::contentDir(a, "Imported audio")) / fs::path(path).stem()).string();
+    if (!dawproject::importFile(path, audio, s, &rep, &err)) {
+      a.notify("Could not open " + fs::path(path).filename().string() + ": " + err, true);
+      return;
+    }
+    a.startProject(std::move(s));
+    a.notify("Opened " + fs::path(path).filename().string());
+    showReport(a, i18n::tr("DAWproject opened"), rep);
+  });
+}
+
 void openMissingSamples(App& a) {
   // K-42: from a menu: the list fills from a check off the interface thread.
   openMissingSamples(a, remotefs::isRemote(a.projectFile()) ? std::vector<std::string>{} : missingFiles(a.doc.song()));
@@ -1490,6 +1575,10 @@ void importAudioAsClip(App& a, const std::string& path) {
 }
 
 bool openAny(App& a, const std::string& path) {
+  if (dawproject::isDawProject(path)) {  // K-89
+    importDawProject(a, path);
+    return true;
+  }
   if (hasExt(path, {".mid", ".midi", ".rmi"})) {
     importMidiFile(a, path);
     return true;

@@ -25,6 +25,7 @@ struct State {
   std::unordered_map<int, std::pair<float, float>> refInk;  // icon -> ink fraction (w, h) of a 48 px raster
   int fitsReset = -1;
   std::vector<uint64_t> pending;  // fits asked for while deferring, worked out later (serviceDeferred)
+  std::vector<std::pair<int, float>> pendingDraws;  // K-291: draw() sizes asked for while deferring (icon, logical px)
   std::unordered_map<int, std::array<float, 5>> geom;  // icon -> geometry bounds (viewBox units), stroked flag
 };
 
@@ -118,13 +119,34 @@ float standardSize(float logicalPx) {
 float toggleIconBox(float button) { return standardSize(std::round(button * 0.52f) * 1.2f); }
 float toolIconBox(float button) { return standardSize(button * (2.0f / 3.0f)); }
 
+namespace {
+bool gDefer = false;  // K-112: a layout switch frame: new icon sizes are put off (see drawFit, draw)
+}  // namespace
+
 void draw(ImDrawList* dl, int svgIndex, ImVec2 c, float logicalPx, ImU32 col) {
   if (!dl || svgIndex < 0 || (col & IM_COL32_A_MASK) == 0) return;
   State& st = state();
   const ImGuiIO& io = ImGui::GetIO();
   const float d = io.DisplayFramebufferScale.x > 0 ? io.DisplayFramebufferScale.x : 1.0f;
   st.atlas.setDensity(d);
-  const Atlas::Rect* r = st.atlas.get(svgIndex, logicalPx);
+  const Atlas::Rect* r = gDefer ? st.atlas.find(svgIndex, logicalPx) : st.atlas.get(svgIndex, logicalPx);
+  if (!r && gDefer) {
+    // K-291: a size not made yet is rasterised after the switch frame (serviceDeferred, a
+    // rasterisation costs up to a few ms); meanwhile the largest size made so far stands in,
+    // scaled into the box, under the switch snapshot.
+    const std::pair<int, float> want(svgIndex, logicalPx);
+    if (std::find(st.pendingDraws.begin(), st.pendingDraws.end(), want) == st.pendingDraws.end()) st.pendingDraws.push_back(want);
+    const Atlas::Rect* best = st.atlas.largestMade(svgIndex);
+    if (!best) return;
+    sync(st);
+    ImTextureData* t = st.tex[static_cast<size_t>(best->page)];
+    const float n = static_cast<float>(st.atlas.devicePx(logicalPx));
+    const float x0 = std::round(c.x * d - n * 0.5f) / d, y0 = std::round(c.y * d - n * 0.5f) / d;
+    const float inv = 1.0f / static_cast<float>(Atlas::kPage), m = static_cast<float>(best->size);
+    dl->AddImage(t->GetTexRef(), ImVec2(x0, y0), ImVec2(x0 + n / d, y0 + n / d), ImVec2(static_cast<float>(best->x) * inv, static_cast<float>(best->y) * inv),
+                 ImVec2((static_cast<float>(best->x) + m) * inv, (static_cast<float>(best->y) + m) * inv), col);
+    return;
+  }
   if (!r) return;
   sync(st);
   ImTextureData* t = st.tex[static_cast<size_t>(r->page)];
@@ -185,7 +207,6 @@ State::Fit computeFit(State& st, int svgIndex, int tw, int th, float d) {
 // K-112: while deferring (a layout switch frame), a fit not worked out yet is queued and the icon
 // drawn from a size already rasterised, scaled into its box, until serviceDeferred() has the
 // exact one (a frame or two later, under the switch snapshot).
-bool gDefer = false;
 
 bool drawApprox(State& st, ImDrawList* dl, int svgIndex, float bx0, float by0, int tw, int th, float d, ImU32 col) {
   const Atlas::Rect* best = nullptr;
@@ -257,14 +278,21 @@ void setDeferFits(bool on) { gDefer = on; }
 
 int serviceDeferred(double budgetMs) {
   State& st = state();
+  const auto t0 = std::chrono::steady_clock::now();
+  int done = 0;
+  // K-291: the draw() sizes a switch frame put off, a few a frame (the next draw finds them made).
+  while (!st.pendingDraws.empty()) {
+    const std::pair<int, float> w = st.pendingDraws.front();
+    st.pendingDraws.erase(st.pendingDraws.begin());
+    if (!st.atlas.find(w.first, w.second)) st.atlas.get(w.first, w.second), ++done;
+    if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() >= budgetMs) return done;
+  }
   if (st.pending.empty() || st.fitsReset != st.atlas.resetCount()) {
     if (st.fitsReset != st.atlas.resetCount()) st.pending.clear();
-    return 0;
+    return done;
   }
   const ImGuiIO& io = ImGui::GetIO();
   const float d = io.DisplayFramebufferScale.x > 0 ? io.DisplayFramebufferScale.x : 1.0f;
-  const auto t0 = std::chrono::steady_clock::now();
-  int done = 0;
   while (!st.pending.empty()) {
     const uint64_t key = st.pending.front();
     st.pending.erase(st.pending.begin());
@@ -278,7 +306,7 @@ int serviceDeferred(double budgetMs) {
   return done;
 }
 
-int deferredCount() { return static_cast<int>(state().pending.size()); }
+int deferredCount() { return static_cast<int>(state().pending.size() + state().pendingDraws.size()); }
 
 bool glyphInk(ImFont* font, float size, ImWchar ch, ImVec2 pos, ImVec2* inkMin, ImVec2* inkMax) {
   ImFontBaked* baked = font ? font->GetFontBaked(size) : nullptr;

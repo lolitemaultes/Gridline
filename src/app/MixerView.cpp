@@ -711,7 +711,7 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
     const ImVec2 bs(stripW >= 60 ? 20.0f : 16.0f, 14);
     ImGui::SetCursorScreenPos(ImVec2(p.x + stripW - bs.x - 4, lampY - bs.y * 0.5f));
     if (stripToggle("s", "S", t.solo, P.hot, bs, "Solo (keeps tracks routed to and from it)"))
-      a.doc.editMixerTrack(t.id, "solo mixer track", [](MixerTrack& m) { m.solo = !m.solo; });
+      mixops::toggleSolo(a.doc, t.id);  // K-238: a linked group solos together
   }
   // Pan & stereo separation.
   const float kr = D.knobR;
@@ -1649,7 +1649,7 @@ void drawMixer(App& a) {
             const ImVec2 ts = a.fontMono->CalcTextSizeA(9.0f, 1e9f, 0, t.group.c_str());
             dl->AddRectFilled(ImVec2(p.x, p.y - bandH), ImVec2(p.x + std::min(ts.x + 8, c.w), p.y - bandH + 11), P.surface800, 2);
             dl->PushClipRect(ImVec2(p.x, p.y - bandH), ImVec2(p.x + c.w, p.y), true);
-            dl->AddText(a.fontMono, 9.0f, ImVec2(p.x + 4, p.y - bandH), P.text, t.group.c_str());
+            dl->AddText(a.fontMono, 9.0f, ImVec2(p.x + 4, p.y - bandH), t.groupLink ? P.hot : P.text, t.group.c_str());  // K-238: lit when linked
             dl->PopClipRect();
           }
         }
@@ -1731,7 +1731,7 @@ void drawMixer(App& a) {
         if (startRun) {
           ImVec2 ts = a.fontMono->CalcTextSizeA(9.0f, 1e9f, 0, t.group.c_str());
           dl->AddRectFilled(ImVec2(p.x, p.y), ImVec2(p.x + ts.x + 8, p.y + 11), P.surface800, 2);
-          dl->AddText(a.fontMono, 9.0f, ImVec2(p.x + 4, p.y), P.text, t.group.c_str());
+          dl->AddText(a.fontMono, 9.0f, ImVec2(p.x + 4, p.y), t.groupLink ? P.hot : P.text, t.group.c_str());  // K-238: lit when linked
         }
       }
     // Strips scrolled out of view are skipped (hundreds of inserts: J-25) unless
@@ -2057,9 +2057,9 @@ void drawEffectEditorBody(App& a, ObjectId mixerTrack, int slot, const BodyFrame
     logicplug::drawControls(a, target, std::floor(f.width));
     return;
   }
-  if (f.zoom) edzoomui::begin(a, "fxeditor");  // K-210b: only the editor zooms, its header row keeps the interface size
+  if (f.zoom) edzoomui::begin(a, f.zoomKey);  // K-210b: only the editor zooms, its header row keeps the interface size
   drawPluginBody(a, target, std::floor(f.width));
-  if (f.zoom) edzoomui::end(a, "fxeditor");
+  if (f.zoom) edzoomui::end(a, f.zoomKey);
 }
 
 void drawEffectEditor(App& a) {

@@ -163,5 +163,12 @@ void devPostMouse(const Window& w, int kind, double x, double y);
 void devLiveResize(const Window& w, double dx, double dy, int steps);
 // Dev (J-116, macOS): what the window's red close button does (-[NSWindow performClose:]). No-op elsewhere.
 void devPerformClose(const Window& w);
+// Dev (K-106, macOS): Command+W pressed on `w` as AppKit delivers it: the Command key's flags change,
+// the W key down (SDL's own key handling first, then the menu bar's key equivalents, as -[NSApp
+// sendEvent:] does), the W key up. phase 0 also lets go of Command at once (all four in one batch of
+// events, a quick tap), 1 keeps Command held, 2 only lets it go. When the menu's Close item has no
+// window to act on (a hidden run: no key window) its action goes to `w`, as it would with `w` key.
+// Returns what happened (one line). No-op elsewhere.
+std::string devCommandW(const Window& w, int phase);
 
 }  // namespace gl::host::native

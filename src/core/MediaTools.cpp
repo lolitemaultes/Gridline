@@ -10,6 +10,7 @@
 #include "Platform.h"
 #include "UrlImport.h"
 #include "Zip.h"
+#include "SafeFs.h"
 #if defined(__APPLE__)
 #include <sys/xattr.h>
 #endif
@@ -401,7 +402,7 @@ InstallResult installFfmpeg(const Net& net, const std::string& dir, const Progre
   fs::path root = unpack;
   if (!fs::exists(root / exeName("ffmpeg"), ec))
     for (fs::directory_iterator it(unpack, ec), end; !ec && it != end; it.increment(ec))
-      if (it->is_directory() && fs::exists(it->path() / exeName("ffmpeg"))) root = it->path();
+      if (safefs::isDirAt(it->path()) && safefs::existsAt(it->path() / exeName("ffmpeg"))) root = it->path();
   const fs::path fresh = root / exeName("ffmpeg");
   if (!fs::is_regular_file(fresh, ec)) {
     fs::remove_all(unpack, ec);

@@ -13,6 +13,7 @@
 #include "core/Project.h"
 #include "core/Song.h"
 #include "core/TrackerGrid.h"
+#include "core/TrackerStream.h"
 
 using namespace gl;
 using namespace gl::trk;
@@ -99,6 +100,7 @@ int main() {
   }
   // ---- text ----
   expect(noteText(60) == "C-4" && noteText(61) == "C#4" && noteText(69) == "A-4" && noteText(0) == "C--", "note names: 60 is C-4");
+  expect(noteText(61, true) == "Db4" && noteText(70, true) == "Bb4" && noteText(60, true) == "C-4", "note names with flats: 61 is Db4");
   expect(rowText(0x1F, true) == "1F" && rowText(31, false) == "31" && rowText(0x100, true) == "100", "row numbers in hex and decimal");
   expect(hex2(127) == "7F", "two hex digits");
 
@@ -219,12 +221,21 @@ int main() {
            "Insert: later notes move one row, a note across the row grows");
     edit(doc, kPat, kLead, [](Rows& x, const Track&, const Grid& g) { return deleteRow(x.notes, x.steps, x.props, g, 2); });
     expect(notesOf(doc, kPat, kLead) == before, "Backspace on the same row brings everything back exactly");
-    // A note pushed past the end is kept and counted (R16).
-    for (int i = 0; i < 13; ++i) edit(doc, kPat, kLead, [](Rows& x, const Track&, const Grid& g) { return insertRow(x.notes, x.steps, x.props, g, 1); });
-    const Track t = trackOf(doc, kPat, kLead);
-    expect(notesOf(doc, kPat, kLead).size() == 2 && t.pastEnd == 1, "a note pushed past the pattern end is kept and marked");
-    for (int i = 0; i < 13; ++i) edit(doc, kPat, kLead, [](Rows& x, const Track&, const Grid& g) { return deleteRow(x.notes, x.steps, x.props, g, 1); });
-    expect(notesOf(doc, kPat, kLead) == before, "and comes back when the rows are deleted");
+    // R9-06: an insert that would push a note off the last row is refused (never kept out of sight).
+    int moved = 0;
+    for (int i = 0; i < 16; ++i) {
+      std::vector<Note> ns2 = notesOf(doc, kPat, kLead);
+      std::vector<uint8_t> st2;
+      std::vector<StepProps> pr2;
+      const Result r = insertRow(ns2, st2, pr2, gridOf(doc.song(), *doc.song().pattern(kPat)), 1);
+      if (!r.refused.empty()) break;
+      edit(doc, kPat, kLead, [](Rows& x, const Track&, const Grid& g) { return insertRow(x.notes, x.steps, x.props, g, 1); });
+      ++moved;
+    }
+    expect(moved > 0 && trackOf(doc, kPat, kLead).pastEnd == 0 && notesOf(doc, kPat, kLead).size() == 2,
+           "inserts stop at the one that would push a note past the end: nothing hidden past it");
+    for (int i = 0; i < moved; ++i) edit(doc, kPat, kLead, [](Rows& x, const Track&, const Grid& g) { return deleteRow(x.notes, x.steps, x.props, g, 1); });
+    expect(notesOf(doc, kPat, kLead) == before, "and the deletes bring everything back");
   }
   // ---- off-grid notes stay exactly (R1, R2) ----
   {
@@ -267,6 +278,25 @@ int main() {
     expect(notesOf(d, kPat, kLead).size() == 4, "pasting again over the same rows replaces, never doubles");
     edit(d, kPat, kLead, [&](Rows& x, const Track&, const Grid& gg) { return cutRows(x.notes, x.steps, gg, 8, 11); });
     expect(notesOf(d, kPat, kLead).size() == 2, "cut removes the block's notes");
+    // R7-03: a block pasted near the end keeps nothing past the last row.
+    const int rowsN = g.rows;
+    edit(d, kPat, kLead, [&](Rows& x, const Track&, const Grid& gg) { return pasteRows(x.notes, x.steps, gg, rowsN - 1, 4, block); });
+    bool inside = true;
+    for (const Note& n : notesOf(d, kPat, kLead)) inside = inside && n.start < g.tickOf(rowsN) && n.start + n.length <= g.tickOf(rowsN);
+    expect(inside && notesOf(d, kPat, kLead).size() == 3, "R7-03: a block pasted at the last row is clipped to the pattern");
+  }
+  // R7-06: a pasted note cuts the note that still sounds before it (no second column).
+  {
+    Song s = makeSong();
+    Document d(s);
+    edit(d, kPat, kLead, [](Rows& x, const Track& t, const Grid& g) { return putNote(x.notes, t, g, 0, 0, 60, 100); });
+    const Grid g = gridOf(d.song(), *d.song().pattern(kPat));
+    const std::vector<Note> block = copyRows(notesOf(d, kPat, kLead), {}, {}, g, 0, 3);
+    edit(d, kPat, kLead, [&](Rows& x, const Track&, const Grid& gg) { return pasteRows(x.notes, x.steps, gg, 8, 4, block); });
+    const auto& ns = notesOf(d, kPat, kLead);
+    int cols = 0;
+    assignColumns(ns, &cols);
+    expect(ns.size() == 2 && ns[0].start + ns[0].length == 8 * 24 && cols == 1, "R7-06: the pasted note cuts the one sounding before it, one column");
   }
   // ---- rack steps (R17) ----
   {
@@ -324,6 +354,13 @@ int main() {
            "the play row: the pattern's own tick under the song position");
     expect(patternAt(s, 2 * bar + 1) == kPat2 && patternAt(s, 9 * bar) == kNoId, "the pattern under the playhead is the top clip's");
     expect(patternNumber(s, kPat2) == 2, "pattern numbers are Gridline's own (1-based)");
+    // GitHub #70: the piano roll's play line in song mode (the pattern's tick under the song position).
+    expect(patternPlayPos(s, kPat, true, kNoId, bar + 30.5) == 30.5 && patternPlayPos(s, kPat2, true, kPat, 3.0 * bar + 5) == bar + 5.0,
+           "song mode: the play line sits at the pattern's own position, whichever pattern pattern mode last played");
+    expect(patternPlayPos(s, kPat2, true, kPat2, 10) == -1 && patternPlayPos(s, kPat, true, kPat, 9.0 * bar) == -1,
+           "song mode: no play line where no clip of the pattern plays");
+    expect(patternPlayPos(s, kPat, false, kPat, 77.25) == 77.25 && patternPlayPos(s, kPat2, false, kPat, 77) == -1,
+           "pattern mode: the engine's position while that pattern plays, none for another pattern");
     // T-13: audio clips. One under the first pattern entry (counted on it, no cut); two after the
     // song's patterns overlapping (audio parts cut at their starts and ends).
     auto audio = [&](ObjectId id, int track, Tick start, Tick len) {
@@ -393,6 +430,29 @@ int main() {
     expect(p1.size() == 3 && p1[0] == std::make_pair(kPat2, Tick(0)) && p1[1] == std::make_pair(kPat2, 2 * bar) && p1[2].second == 4 * bar,
            "B is a bar longer than A: the song after it moved a bar right");
     expect(doc.undo() && starts()[1] == std::make_pair(kPat2, bar), "one undo");
+    // R6-02: A twice as long: the song keeps its order (B and the second A move a bar right).
+    {
+      const int spb = doc.song().pattern(kPat)->stepsPerBar, was = doc.song().pattern(kPat)->bars;
+      setPatternLengthInSong(doc, kPat, was * 2, spb);
+      const auto l1 = starts();
+      const Tick grow = static_cast<Tick>(was) * bar;
+      expect(l1.size() == 3 && l1[0] == std::make_pair(kPat, Tick(0)) && l1[1] == std::make_pair(kPat2, bar + grow) && l1[2] == std::make_pair(kPat, 3 * bar + grow),
+             "a longer pattern moves the entries after each of its clips, none overlap");
+      expect(doc.undo() && doc.song().pattern(kPat)->bars == was && starts()[1] == std::make_pair(kPat2, bar), "one undo takes the length and the moves back");
+      // R6-02 follow-up: "Loop to" (the song loop marker) on entry 2 stays on entry 2, in the same undo step.
+      doc.editSong("loop", [&](Song& s) {
+        Marker m;
+        m.pos = 3 * bar, m.name = "Loop", m.action = MarkerAction::SongLoop;
+        s.markers.push_back(m);
+      });
+      const size_t undoAt = doc.history().position();
+      setPatternLengthInSong(doc, kPat, was * 2, spb);
+      const auto l2 = starts();
+      expect(doc.song().markers.size() == 1 && l2.size() == 3 && doc.song().markers[0].pos == l2[2].second, "the song loop marker follows its entry");
+      expect(doc.history().position() == undoAt + 1, "the length, the moves and the marker are one undo step");
+      expect(doc.undo() && doc.song().markers[0].pos == 3 * bar, "undo puts the marker back");
+      doc.undo();  // the marker itself
+    }
     // A clip under two entries is never cut.
     Song t = makeSong();
     t.tracks.resize(4);
@@ -404,6 +464,28 @@ int main() {
     Document d2(t);
     expect(orderList(d2.song()).size() == 2 && orderRemove(d2, 1) == OrderEdit::Spans && d2.song().playlist.size() == 2,
            "an entry whose clip runs into another entry is refused, nothing removed");
+    // R9-01: A also on a parallel track beside B: the song after them moves once, by what that
+    // block's end moves (no silent bar).
+    {
+      Song u = makeSong();
+      u.tracks.resize(4);
+      const Tick lenA = u.patternLength(*u.pattern(kPat)), lenB = u.patternLength(*u.pattern(kPat2));
+      Clip a0, b0, a1, b1;
+      a0.id = 80, a0.pattern = kPat, a0.track = 0, a0.start = 0;
+      b0.id = 81, b0.pattern = kPat2, b0.track = 0, b0.start = lenA;
+      a1.id = 82, a1.pattern = kPat, a1.track = 1, a1.start = lenA;
+      b1.id = 83, b1.pattern = kPat2, b1.track = 0, b1.start = lenA + std::max(lenA, lenB);
+      u.playlist = {a0, b0, a1, b1};
+      Document d3(u);
+      const int spb = d3.song().pattern(kPat)->stepsPerBar, was = d3.song().pattern(kPat)->bars;
+      setPatternLengthInSong(d3, kPat, was * 2, spb);
+      const Song& v = d3.song();
+      const Tick blk = std::max(lenB, 2 * lenA);  // the second block's new length
+      expect(v.clip(81)->start == 2 * lenA && v.clip(82)->start == 2 * lenA && v.clip(83)->start == 2 * lenA + blk,
+             "the parallel A moves with its block; the last entry follows the block's end, once");
+      setPatternLengthInSong(d3, kPat, was, spb);
+      expect(v.clip(81)->start == lenA && v.clip(83)->start == lenA + std::max(lenA, lenB), "shorter again: back where they were");
+    }
   }
   // ---- interpolate (Edit > Interpolate volume / pan / effect) ----
   {
@@ -425,6 +507,169 @@ int main() {
     std::vector<Note> mixed = fx;
     mixed[2].modX = kNoteModCentre, mixed[2].modY = 10;
     expect(!interpolate(mixed, g, 0, 2, Field::Effect).changed, "different letters at the ends: refused");
+  }
+  // ---- clipboard masks (Advanced edit) ----
+  {
+    Song s = makeSong();
+    const Grid g = gridOf(s, *s.pattern(kPat));  // 24 ticks a row
+    const bool all[kParts] = {true, true, true, true};
+    // The block: row 0 a C-5 at volume 40 with pan -30, row 2 empty, row 3 an E-5 with fine tune.
+    std::vector<Note> block = {Note(0, 24, 60, 40), Note(72, 24, 64, 100)};
+    block[0].pan = -30, block[1].fine = 12;
+    auto dest = [] {
+      std::vector<Note> d = {Note(96, 24, 50, 70), Note(144, 24, 52, 90), Note(168, 24, 53, 110)};
+      d[0].pan = 20, d[1].modX = 7;
+      return d;
+    };
+    std::vector<uint8_t> steps;
+    // Everything on: an ordinary paste (row 4 on: rows 4..7 replaced).
+    {
+      std::vector<Note> d = dest();
+      Masks m;
+      expect(pasteRowsMasked(d, steps, g, 4, 4, block, all, m).changed && d.size() == 2 && d[0].pitch == 60 && d[0].start == 96 && d[0].velocity == 40 &&
+                 d[1].pitch == 64 && d[1].start == 168 && d[1].fine == 12,
+             "masks all on: the block replaces the rows, as a plain paste");
+    }
+    // The note part transparent: row 6 (empty in the block) keeps its note.
+    {
+      std::vector<Note> d = dest();
+      Masks m;
+      m.transparent[static_cast<int>(Part::Note)] = true;
+      pasteRowsMasked(d, steps, g, 4, 4, block, all, m);
+      expect(d.size() == 3 && d[0].pitch == 60 && d[1].pitch == 52 && d[1].start == 144 && d[2].pitch == 64,
+             "transparent notes: a row the block leaves empty keeps its note");
+    }
+    // Volume only (no note part): the notes stay, row 4's takes volume 40, pan stays.
+    {
+      std::vector<Note> d = dest();
+      Masks m;
+      for (bool& p : m.paste) p = false;
+      m.paste[static_cast<int>(Part::Volume)] = true;
+      pasteRowsMasked(d, steps, g, 4, 4, block, all, m);
+      expect(d.size() == 3 && d[0].pitch == 50 && d[0].velocity == 40 && d[0].pan == 20 && d[2].pitch == 53 && d[2].velocity == 100,
+             "volume only: the notes keep pitch and place and take the block's volumes, row by row");
+    }
+    // Notes pasted, pan not: the new note keeps the pan of the note it replaces.
+    {
+      std::vector<Note> d = dest();
+      Masks m;
+      m.paste[static_cast<int>(Part::Pan)] = false;
+      pasteRowsMasked(d, steps, g, 4, 4, block, all, m);
+      expect(d[0].pitch == 60 && d[0].pan == 20 && d[0].velocity == 40, "pan not pasted: the replaced note's pan stays with the new note");
+    }
+    // Transparent effect: an empty effect does not clear one (row 7 E-5 has fine tune; row 6 ...).
+    {
+      std::vector<Note> d = dest();
+      Masks m;
+      for (bool& p : m.paste) p = false;
+      m.paste[static_cast<int>(Part::Effect)] = true;
+      m.transparent[static_cast<int>(Part::Effect)] = true;
+      std::vector<Note> b2 = {Note(48, 24, 61, 100)};  // row 2 (dest row 6): no effect
+      pasteRowsMasked(d, steps, g, 4, 4, b2, all, m);
+      expect(d[1].modX == 7, "a transparent effect part does not clear the row's effect");
+      m.transparent[static_cast<int>(Part::Effect)] = false;
+      pasteRowsMasked(d, steps, g, 4, 4, b2, all, m);
+      expect(d[1].modX == kNoteModCentre, "not transparent: the empty effect clears it");
+    }
+    // The copy mask: parts left out go back to defaults, and are not carried.
+    {
+      std::vector<Note> b = block;
+      Masks m;
+      m.copy[static_cast<int>(Part::Volume)] = false;
+      maskCopied(b, m);
+      expect(b[0].velocity == 100 && b[0].pan == -30, "copy mask: the volume left out is the default, the pan kept");
+      std::vector<Note> d = dest();
+      const bool carried[kParts] = {true, false, true, true};
+      Masks pm;
+      for (bool& p : pm.paste) p = false;
+      pm.paste[static_cast<int>(Part::Volume)] = true;
+      expect(!pasteRowsMasked(d, steps, g, 4, 4, b, carried, pm).changed, "a part the copy left out is never pasted");
+    }
+  }
+  // R8-01: a paste through the masks cuts the note still sounding, as a plain paste does (R7-06).
+  {
+    Song s = makeSong();
+    const Grid g = gridOf(s, *s.pattern(kPat));
+    std::vector<Note> d = {Note(0, 3 * 24, 48, 100)};  // rows 0 to 2
+    std::vector<uint8_t> steps;
+    const std::vector<Note> b = {Note(0, 24, 50, 100)};
+    const bool all[kParts] = {true, true, true, true};
+    Masks m;
+    expect(pasteRowsMasked(d, steps, g, 1, 1, b, all, m).changed, "masked paste on row 1");
+    expect(d.size() == 2 && d[0].length == 24 && d[1].start == 24, "the note sounding from row 0 ends where the pasted one starts");
+    const Track t = buildTrack([&] { Song x = s; x.patterns[0].notes[kLead] = d; return x; }(), [&] { Pattern p = s.patterns[0]; p.notes[kLead] = d; return p; }(), kLead, g);
+    expect(t.voices == 1, "one note column, not two");
+  }
+  // ---- an imported module's cells (Note::tracker) ----
+  {
+    using tracker::Cell;
+    // A voice: row 0 C-4 instrument 1 volume 30 effect A0F, rows 1-2 empty, row 3 volume slide -2 and C20, then 4 empty rows.
+    tracker::StreamHeader h;
+    tracker::StreamWriter w(h);
+    auto row = [&](Cell c) {
+      tracker::StreamRow r;
+      r.cell = c;
+      w.row(r);
+    };
+    row(Cell{49, 1, 0x40, 0x0A, 0x0F});
+    row(Cell{});
+    row(Cell{});
+    row(Cell{0, 0, 0x62, 0x0C, 0x20});
+    for (int i = 0; i < 4; ++i) row(Cell{});
+    const std::vector<uint8_t> bytes = w.finish();
+    Song s = makeSong();
+    const Grid g = gridOf(s, *s.pattern(kPat));
+    std::vector<Note> notes = {Note(0, 8 * 24, 60, 100)};
+    notes[0].tracker = bytes;
+    const Track t = buildTrack(s, *s.pattern(kPat), kLead, g);
+    // (the track is built from the song: give it the note)
+    Song s2 = s;
+    s2.patterns[0].notes[kLead] = notes;
+    const Track t2 = buildTrack(s2, s2.patterns[0], kLead, g);
+    (void)t;
+    const std::vector<Cell> rows = moduleRows(notes[0], 64);
+    expect(rows.size() == 8 && rows[0] == (Cell{49, 1, 0x40, 0x0A, 0x0F}) && rows[3].vol == 0x62, "module rows read back as written");
+    expect(moduleVolText(0x40) == "30" && moduleVolText(0x50) == "40" && moduleVolText(0x62) == "-2" && moduleVolText(0xF3) == "M3" && moduleVolText(0).empty(),
+           "volume column in the classic notation");
+    expect(moduleEffectText(0x0A, 0x0F) == "A0F" && moduleEffectText(0, 0x37) == "037" && moduleEffectText(0, 0).empty() && moduleEffectText(0x21, 1) == "X01",
+           "effects in the classic notation");
+    int k = -1;
+    expect(moduleNoteAt(notes, t2, g, 3, 0, &k) == 0 && k == 3, "row 3 is the voice's fourth row");
+    expect(moduleNoteAt(notes, t2, g, 8, 0, &k) == -1, "past the note: no module cell");
+    // Editing: set volume on an empty row splits the empty run; the rest reads the same.
+    {
+      std::vector<Note> d = notes;
+      expect(setModuleVolume(d, t2, g, 1, 0, 0x20).changed, "a set volume typed on an empty module row");
+      const std::vector<Cell> r2 = moduleRows(d[0], 64);
+      expect(r2.size() == 8 && r2[1].vol == 0x30 && r2[0] == rows[0] && r2[3] == rows[3] && r2[2].empty(), "only that row changed");
+      expect(setModuleVolume(d, t2, g, 1, 0, -1).changed && moduleRows(d[0], 64) == rows, "cleared again, the cells are as before");
+      expect(!setModuleVolume(d, t2, g, 3, 0, 0x10).refused.empty(), "a volume column effect is not overwritten");
+      expect(!setModuleEffect(d, t2, g, 0, 0, 0x0C, 0x10).refused.empty(), "an arpeggio / slide effect stays as imported");
+      expect(setModuleEffect(d, t2, g, 3, 0, 0x0C, 0x30).changed && moduleRows(d[0], 64)[3].param == 0x30, "C on a C row: its value changes");
+      expect(setModuleEffect(d, t2, g, 5, 0, 0x08, 0x80).changed && moduleRows(d[0], 64)[5].efx == 0x08, "8 on an empty row");
+      expect(!setModuleEffect(d, t2, g, 6, 0, 0x0A, 0x01).refused.empty(), "other effects are not typed into module cells");
+      Note probe;
+      expect(!setModuleVolume(d, t2, g, 9, 0, 0x10).changed, "no module cell: nothing changes");
+      (void)probe;
+    }
+    // In place: a set volume changed on a written row keeps the stream's length (the bytes move nowhere).
+    {
+      std::vector<uint8_t> b = bytes;
+      expect(setStreamCell(b, 0, Cell{49, 1, 0x30, 0x0A, 0x0F}) && b.size() == bytes.size(), "a written row changes in place");
+      expect(!setStreamCell(b, 40, Cell{0, 0, 0x20, 0, 0}), "no row 40: refused");
+    }
+    // R9-02, R9-04: edits that would cut, move or drop a voice's later cells are refused; nothing changes.
+    {
+      std::vector<Note> d = notes;
+      std::vector<uint8_t> st;
+      std::vector<StepProps> pr;
+      expect(!putNote(d, t2, g, 5, 0, 72, 100).refused.empty() && d == notes, "a note typed inside the voice: refused");
+      expect(!putOff(d, t2, g, 5, 0).refused.empty() && d == notes, "a key off inside the voice: refused");
+      expect(!clearField(d, st, pr, t2, g, 0, 0, Field::Note).refused.empty() && d == notes, "the imported note deleted: refused");
+      expect(!insertRow(d, st, pr, g, 3).refused.empty() && d == notes, "a row inserted through the voice: refused");
+      expect(!deleteRow(d, st, pr, g, 0).refused.empty() && !deleteRow(d, st, pr, g, 3).refused.empty() && d == notes,
+             "a row deleted on or through the voice: refused");
+      expect(insertRow(d, st, pr, g, 0).changed && d[0].start == 24 && d[0].tracker == bytes, "a row inserted above it moves the whole voice");    }
   }
   return finish();
 }

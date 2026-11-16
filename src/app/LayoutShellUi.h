@@ -55,6 +55,9 @@ ImGuiID regionNode(const std::string& region);
 std::string stripWindowName(const std::string& region);
 // The windows a shell layout opens with (the homes' openByDefault), the others in its regions closed.
 void showShellWindows(App& a, layout::Preset p);
+// R02-05: Reset layout: the Tracks layout's remembered open windows are dropped (they came back
+// over the default set once the confirmation dialog had closed).
+void forgetLogicWindows();
 // On a layout switch, before the new layout applies: windows an exclusive region hid open again
 // (K-297: a region shell's panes and region state are kept for this run first).
 void leaveLayout(App& a);
@@ -69,12 +72,17 @@ void shellFrame(App& a);
 layout::State regionState(const App& a, layout::Preset p);
 void setRegionState(App& a, layout::Preset p, const layout::State& st);
 // Shows or hides a region of the active layout (its windows close with it; the dock tree is rebuilt).
-void setRegionVisible(App& a, const std::string& region, bool on);
+void setRegionVisible(App& a, const std::string& region, bool on, bool alone = true);  // alone: see layout::setVisible
 bool takeShellRebuild();  // main.cpp: a region was shown or hidden, rebuild the dock tree keeping the windows
 // K-112c: a fixed band grows by `px` this frame and the next (the Live device band while devices'
 // whole editors show in the expanded panel above its chain). Not saved: it ends when the caller stops
 // asking, and the band never takes more than 60 % of its parent.
 void setBandBoost(const std::string& region, float px);
+// K-106: a fixed band is exactly `px` this frame and the next (the Tracker's header: a strip while
+// the pattern is extended, taller while its help shows), at most 60 % of its parent. Not saved.
+// `maxShare`: the most of its parent the band may take (K-106 R6-05: the Tracker's instrument editor
+// takes nearly all the lower part, as the classic one replaces the pattern).
+void setBandSize(const std::string& region, float px, float maxShare = 0.6f);
 
 // The window flags a window's Begin uses in the active layout: docked homes drop NoDocking
 // and AlwaysAutoResize (R2), and a window that opens (appears) goes to its region. Studio and

@@ -1,7 +1,9 @@
 // Gridline - the tracker view of a pattern (K-106). See TrackerGrid.h.
 #include "TrackerGrid.h"
+#include <cmath>
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 #include <cmath>
 #include <iterator>
 #include <map>
@@ -9,6 +11,7 @@
 #include <set>
 #include "ClipLoop.h"
 #include "Document.h"
+#include "TrackerStream.h"
 
 namespace gl::trk {
 
@@ -165,11 +168,12 @@ Track buildTrack(const Song& s, const Pattern& p, ObjectId channel, const Grid& 
 }
 
 // ---- text ----
-std::string noteText(int pitch) {
+std::string noteText(int pitch, bool flats) {
   static const char* names[12] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"};
+  static const char* flatNames[12] = {"C-", "Db", "D-", "Eb", "E-", "F-", "Gb", "G-", "Ab", "A-", "Bb", "B-"};
   const int p = std::clamp(pitch, 0, 127);
   const int octave = p / 12 - 1;
-  std::string s = names[p % 12];
+  std::string s = (flats ? flatNames : names)[p % 12];
   s += octave < 0 ? '-' : static_cast<char>('0' + octave);
   return s;
 }
@@ -230,8 +234,8 @@ void resetEffect(Note& n, char letter) {
 std::string effectHelp(char letter, int value) {
   char b[96];
   switch (letter) {
-    case 'G': return "G: glides into this note from the one sounding (slide; the speed is the channel's)";
-    case 'P': return "P: starts at the previous note's pitch and bends to this one (the channel's time)";
+    case 'G': return "G01: glides into this note from the one sounding (on or off; the speed is the channel's)";
+    case 'P': return "P01: starts at the previous note's pitch and bends to this one (on or off; the channel's time)";
     case 'T':
       std::snprintf(b, sizeof b, "T%s: fine tune %+d cents", hex2(value).c_str(), value >= 128 ? value - 256 : value);
       return b;
@@ -240,6 +244,174 @@ std::string effectHelp(char letter, int value) {
     case 'R': std::snprintf(b, sizeof b, "R%s: release velocity %d", hex2(value).c_str(), value); return b;
     default: return "Effect letters: G slide, P portamento, T fine tune, X and Y modulation, R release";
   }
+}
+
+// ---- an imported module's cells ----
+std::vector<tracker::Cell> moduleRows(const Note& n, int maxRows) {
+  std::vector<tracker::Cell> out;
+  if (n.tracker.empty() || maxRows <= 0) return out;
+  tracker::StreamReader rd;
+  tracker::StreamHeader h;
+  if (!rd.open(n.tracker.data(), n.tracker.size(), h)) return out;
+  for (int k = 0; k < maxRows && k < 1024; ++k) {
+    const tracker::StreamRow r = rd.next();
+    if (rd.done()) break;
+    out.push_back(r.cell);
+  }
+  return out;
+}
+
+namespace {
+// Rows a note sounds through, from its start row: up to the row its end falls in (a note ending
+// exactly on a row boundary leaves that row out), within the pattern.
+int coveredRows(const Note& n, const Grid& g, int startRow) {
+  const Tick end = n.start + std::max<Tick>(1, n.length);
+  const int endRow = static_cast<int>((end + g.rowTicks - 1) / std::max<Tick>(1, g.rowTicks));
+  return std::max(1, std::min(endRow, g.rows) - startRow);
+}
+}  // namespace
+
+int moduleNoteAt(const std::vector<Note>& notes, const Track& t, const Grid& g, int row, int column, int* k) {
+  if (g.rowTicks <= 0) return -1;
+  for (size_t i = 0; i < notes.size() && i < t.col.size(); ++i) {
+    const Note& n = notes[i];
+    if (n.tracker.empty() || t.col[i] != column || n.start < 0) continue;
+    const int startRow = static_cast<int>(n.start / g.rowTicks);
+    if (row < startRow || row >= startRow + coveredRows(n, g, startRow)) continue;
+    const int kk = row - startRow;
+    if (static_cast<int>(moduleRows(n, kk + 1).size()) <= kk) continue;
+    if (k) *k = kk;
+    return static_cast<int>(i);
+  }
+  return -1;
+}
+
+namespace {
+// R9-02, R9-04: an imported voice carries its cells for the rows after its first (core/TrackerStream.h).
+// A note typed or deleted inside it, or a row inserted or deleted through it, would leave those cells
+// on the wrong rows or drop them, so such edits are refused with this reason.
+const char* const kInVoice =
+    "inside an imported voice: its later cells (effects, volume column) belong to that voice, and moving or "
+    "cutting it would need the module played again; edit outside it, or after the voice ends";
+// Whether an imported voice on the track covers `row` with its cells, past its first row (`first`: its
+// first row counts too).
+bool voiceOver(const std::vector<Note>& notes, const Grid& g, int row, bool first) {
+  if (g.rowTicks <= 0) return false;
+  for (const Note& n : notes) {
+    if (n.tracker.empty() || n.start < 0) continue;
+    const int startRow = static_cast<int>(n.start / g.rowTicks);
+    const int kk = row - startRow;
+    if (kk < (first ? 0 : 1) || kk >= coveredRows(n, g, startRow)) continue;
+    if (static_cast<int>(moduleRows(n, kk + 1).size()) > kk) return true;
+  }
+  return false;
+}
+}  // namespace
+
+std::string moduleVolText(uint8_t vol) {
+  if (vol < 0x10) return "";
+  if (vol <= 0x50) return hex2(vol - 0x10);
+  static const char kLetters[] = "......-+DUSVPLRM";
+  const char hexd[] = "0123456789ABCDEF";
+  return std::string(1, kLetters[vol >> 4]) + hexd[vol & 0x0F];
+}
+
+std::string moduleEffectText(uint8_t efx, uint8_t param) {
+  if (efx == 0 && param == 0) return "";
+  const char c = efx < 10 ? static_cast<char>('0' + efx) : efx < 36 ? static_cast<char>('A' + efx - 10) : '?';
+  return std::string(1, c) + hex2(param);
+}
+
+bool setStreamCell(std::vector<uint8_t>& s, int k, const tracker::Cell& c) {
+  if (s.size() < 4 || s[0] != tracker::kStreamVersion || k < 0) return false;
+  size_t pos = 4 + ((s[1] & tracker::kHasState) ? sizeof(tracker::State) : 0);
+  int row = 0;
+  auto room = [&](size_t more) { return s.size() + more <= tracker::kStreamMax; };
+  while (pos < s.size()) {
+    const uint8_t op = s[pos];
+    if (op == 0x00) return false;
+    if (op & 0x80) {
+      const int n = op & 0x7F;
+      if (k < row + n) {
+        if (c.empty()) return true;  // empty already
+        std::vector<uint8_t> rep;
+        if (k > row) rep.push_back(static_cast<uint8_t>(0x80 | (k - row)));
+        rep.insert(rep.end(), {0x02, c.note, c.instr, c.vol, c.efx, c.param});
+        if (row + n - k - 1 > 0) rep.push_back(static_cast<uint8_t>(0x80 | (row + n - k - 1)));
+        if (!room(rep.size() - 1)) return false;
+        s.erase(s.begin() + static_cast<std::ptrdiff_t>(pos));
+        s.insert(s.begin() + static_cast<std::ptrdiff_t>(pos), rep.begin(), rep.end());
+        return true;
+      }
+      row += n;
+      pos += 1;
+      continue;
+    }
+    if (op == 0x02) {
+      if (pos + 6 > s.size()) return false;
+      if (row == k) {
+        if (c.empty()) {
+          s.erase(s.begin() + static_cast<std::ptrdiff_t>(pos) + 1, s.begin() + static_cast<std::ptrdiff_t>(pos) + 6);
+          s[pos] = 0x81;
+        } else {
+          s[pos + 1] = c.note, s[pos + 2] = c.instr, s[pos + 3] = c.vol, s[pos + 4] = c.efx, s[pos + 5] = c.param;
+        }
+        return true;
+      }
+      ++row;
+      pos += 6;
+      continue;
+    }
+    if (op == 0x01) pos += 3;
+    else if (op == 0x03) pos += 2;
+    else if (op == 0x04) pos += 2;
+    else if (op == 0x05) pos += 4;
+    else return false;  // unknown: left alone
+  }
+  return false;
+}
+
+namespace {
+Result editModuleCell(std::vector<Note>& notes, const Track& t, const Grid& g, int row, int column, const std::function<const char*(tracker::Cell&)>& fn) {
+  Result r;
+  int k = -1;
+  const int i = moduleNoteAt(notes, t, g, row, column, &k);
+  if (i < 0) return r.refused = "No module cell here", r;
+  Note& n = notes[static_cast<size_t>(i)];
+  const std::vector<tracker::Cell> cells = moduleRows(n, k + 1);
+  tracker::Cell c = cells[static_cast<size_t>(k)];
+  const tracker::Cell was = c;
+  if (const char* why = fn(c)) return r.refused = why, r;
+  if (c == was) return r;
+  std::vector<uint8_t> s = n.tracker;
+  if (!setStreamCell(s, k, c)) return r.refused = "This module cell cannot be changed (its voice is full)", r;
+  n.tracker = std::move(s);
+  r.changed = true;
+  return r;
+}
+}  // namespace
+
+Result setModuleVolume(std::vector<Note>& notes, const Track& t, const Grid& g, int row, int column, int volume) {
+  return editModuleCell(notes, t, g, row, column, [volume](tracker::Cell& c) -> const char* {
+    if (c.vol > 0x50) return "A volume column effect stays as imported here: only a set volume (00 to 40) is changed";
+    c.vol = volume < 0 ? 0 : static_cast<uint8_t>(0x10 + std::clamp(volume, 0, 0x40));
+    return nullptr;
+  });
+}
+
+Result setModuleEffect(std::vector<Note>& notes, const Track& t, const Grid& g, int row, int column, int efx, int param) {
+  return editModuleCell(notes, t, g, row, column, [efx, param](tracker::Cell& c) -> const char* {
+    const bool editable = (c.efx == 0 && c.param == 0) || c.efx == 0x08 || c.efx == 0x0C;
+    if (!editable) return "This module effect stays as imported: only 8 (pan) and C (volume) are changed here";
+    if (efx < 0) {
+      c.efx = c.param = 0;
+      return nullptr;
+    }
+    if (efx != 0x08 && efx != 0x0C) return "Module cells take the effects 8 (pan) and C (volume) here";
+    c.efx = static_cast<uint8_t>(efx);
+    c.param = static_cast<uint8_t>(efx == 0x0C ? std::clamp(param, 0, 0x40) : std::clamp(param, 0, 0xFF));
+    return nullptr;
+  });
 }
 
 // ---- edits ----
@@ -289,6 +461,7 @@ Result putNote(std::vector<Note>& notes, const Track& t, const Grid& g, int row,
   if (pitch < 0 || pitch > 127) return refuse("that key is outside the note range");
   const Cell& c = t.at(row, column);
   if (c.kind == Cell::Step) return refuse("a rack step: change its key in Steps");
+  if (int k = 0; moduleNoteAt(notes, t, g, row, column, &k) >= 0 && k > 0) return refuse(kInVoice);
   if (c.kind == Cell::On) {
     Note& n = notes[static_cast<size_t>(c.note)];
     if (n.pitch == pitch) return done(false);
@@ -314,6 +487,7 @@ Result putOff(std::vector<Note>& notes, const Track& t, const Grid& g, int row, 
   if (row < 0 || row >= g.rows) return refuse("outside the pattern");
   const Cell& c = t.at(row, column);
   if (c.kind == Cell::Step) return refuse("a rack step: it lasts one step");
+  if (moduleNoteAt(notes, t, g, row, column, nullptr) >= 0) return refuse(kInVoice);
   const Tick tick = g.tickOf(row);
   const int sounding = soundingAt(notes, t, column, tick);
   if (c.kind == Cell::Off && c.note == sounding) return done(false);
@@ -337,6 +511,8 @@ Result clearField(std::vector<Note>& notes, std::vector<uint8_t>& steps, std::ve
                   int row, int column, Field f) {
   const Cell& c = t.at(row, column);
   if (c.kind == Cell::Empty) return done(false);
+  if ((f == Field::Note || f == Field::Instrument) && c.kind == Cell::On && moduleNoteAt(notes, t, g, row, column, nullptr) >= 0)
+    return refuse(kInVoice);
   if (c.kind == Cell::Step) {
     const size_t i = static_cast<size_t>(c.step);
     if (i >= steps.size()) return done(false);
@@ -440,7 +616,13 @@ Result insertRow(std::vector<Note>& notes, std::vector<uint8_t>& steps, std::vec
   if (row < 0 || row >= g.rows) return refuse("outside the pattern");
   const size_t r = static_cast<size_t>(row);
   if (steps.size() > r && steps.back() != 0) return refuse("a rack step would fall off the end of the pattern");
+  if (voiceOver(notes, g, row, false)) return refuse(kInVoice);
   const Tick tick = g.tickOf(row);
+  // R9-06: a note the insert would push off the last row is not kept out of sight past the end (it
+  // came back on a later delete): the insert is refused, as for a rack step.
+  for (const Note& n : notes)
+    if (n.start >= tick && n.start < g.length() && n.start + g.rowTicks >= g.length())
+      return refuse("a note would fall off the end of the pattern (with Insert, delete: length on, Shift+Insert adds a bar)");
   bool changed = false;
   for (Note& n : notes) {
     if (n.start >= tick) n.start += g.rowTicks, changed = true;
@@ -463,6 +645,7 @@ Result insertRow(std::vector<Note>& notes, std::vector<uint8_t>& steps, std::vec
 
 Result deleteRow(std::vector<Note>& notes, std::vector<uint8_t>& steps, std::vector<StepProps>& props, const Grid& g, int row) {
   if (row < 0 || row >= g.rows) return refuse("outside the pattern");
+  if (voiceOver(notes, g, row, true)) return refuse(kInVoice);
   const Tick tick = g.tickOf(row), next = tick + g.rowTicks;
   bool changed = false;
   std::vector<Note> out;
@@ -602,18 +785,152 @@ Result cutRows(std::vector<Note>& notes, std::vector<uint8_t>& steps, const Grid
   return done(changed);
 }
 
+namespace {
+// R7-06: a pasted note cuts the note before it that still sounds (one each), as a typed note does,
+// so the block lands in the same column instead of opening a second one. `put` is sorted here.
+void cutSounding(std::vector<Note>& notes, std::vector<Note>& put) {
+  std::sort(put.begin(), put.end(), [](const Note& x, const Note& y) { return x.start < y.start; });
+  const size_t had = notes.size();
+  std::vector<bool> cut(had, false);
+  for (const Note& p : put) {
+    size_t best = had;
+    for (size_t i = 0; i < had; ++i)
+      if (!cut[i] && notes[i].start < p.start && notes[i].start + notes[i].length > p.start && (best == had || notes[i].start > notes[best].start)) best = i;
+    if (best < had) notes[best].length = p.start - notes[best].start, cut[best] = true;
+  }
+}
+}  // namespace
+
 Result pasteRows(std::vector<Note>& notes, std::vector<uint8_t>& steps, const Grid& g, int row, int rows, const std::vector<Note>& block) {
   if (row < 0 || row >= g.rows || rows <= 0) return refuse("outside the pattern");
   const std::vector<Note> before = notes;
   const std::vector<uint8_t> stepsBefore = steps;
-  cutRows(notes, steps, g, row, row + rows - 1);
-  const Tick at = g.tickOf(row);
+  const int last = std::min(g.rows, row + rows) - 1;
+  cutRows(notes, steps, g, row, last);
+  const Tick at = g.tickOf(row), end = g.tickOf(g.rows);
+  // R7-03: what falls past the pattern's last row is dropped and a note ends at the pattern's end
+  // (as FT2 clips a block to the rows left), so nothing hidden comes back when the pattern grows.
+  std::vector<Note> put;
   for (Note n : block) {
     n.start += at;
-    notes.push_back(n);
+    if (n.start >= end) continue;
+    if (n.start + n.length > end) n.length = end - n.start;
+    put.push_back(n);
   }
+  cutSounding(notes, put);
+  for (const Note& n : put) notes.push_back(n);
   normalize(notes);
   return done(notes != before || steps != stepsBefore);
+}
+
+// ---- clipboard masks ----
+bool partEmpty(const Note& n, Part p) {
+  switch (p) {
+    case Part::Volume: return n.velocity == Note{}.velocity;
+    case Part::Pan: return n.pan == 0;
+    case Part::Effect: return effectsOf(n).empty();
+    default: return false;
+  }
+}
+
+void copyPart(const Note& from, Note& to, Part p) {
+  switch (p) {
+    case Part::Volume: to.velocity = from.velocity; break;
+    case Part::Pan: to.pan = from.pan; break;
+    case Part::Effect:
+      to.slide = from.slide, to.porta = from.porta, to.fine = from.fine;
+      to.modX = from.modX, to.modY = from.modY, to.release = from.release;
+      break;
+    default: break;
+  }
+}
+
+void maskCopied(std::vector<Note>& block, const Masks& m) {
+  const Note def{};
+  for (Note& n : block)
+    for (Part p : {Part::Volume, Part::Pan, Part::Effect})
+      if (!m.copy[static_cast<int>(p)]) copyPart(def, n, p);
+}
+
+Result pasteRowsMasked(std::vector<Note>& notes, std::vector<uint8_t>& steps, const Grid& g, int row, int rows, const std::vector<Note>& block,
+                       const bool carried[kParts], const Masks& m) {
+  if (row < 0 || row >= g.rows || rows <= 0) return refuse("outside the pattern");
+  bool put[kParts];
+  for (int i = 0; i < kParts; ++i) put[i] = carried[i] && m.paste[i];
+  const bool putNote = put[static_cast<int>(Part::Note)], noteClear = putNote && !m.transparent[static_cast<int>(Part::Note)];
+  const std::vector<Note> before = notes;
+  const std::vector<uint8_t> stepsBefore = steps;
+  const Tick rt = std::max<Tick>(1, g.rowTicks);
+  // The block's notes and the pattern's, by row (in start then pitch order).
+  std::map<int, std::vector<Note>> src;
+  for (const Note& n : block) src[static_cast<int>(n.start / rt)].push_back(n);
+  const Tick a = g.tickOf(row), b = g.tickOf(row + rows);
+  std::map<int, std::vector<size_t>> dst;
+  for (size_t i = 0; i < notes.size(); ++i)
+    if (notes[i].start >= a && notes[i].start < b) dst[static_cast<int>((notes[i].start - a) / rt)].push_back(i);
+  auto takeParts = [&](const Note& from, Note& to) {
+    for (Part p : {Part::Volume, Part::Pan, Part::Effect}) {
+      const int k = static_cast<int>(p);
+      if (!put[k] || (m.transparent[k] && partEmpty(from, p))) continue;
+      copyPart(from, to, p);
+    }
+  };
+  std::vector<bool> drop(notes.size(), false);
+  std::vector<Note> added;
+  for (int r = 0; r < rows && row + r < g.rows; ++r) {
+    const auto si = src.find(r);
+    const std::vector<Note> none;
+    const std::vector<Note>& s = si == src.end() ? none : si->second;
+    const auto di = dst.find(r);
+    const std::vector<size_t> noIdx;
+    const std::vector<size_t>& d = di == dst.end() ? noIdx : di->second;
+    if (putNote) {
+      if (s.empty() && !noteClear) continue;  // transparent: an empty row keeps what is there
+      for (size_t k = 0; k < s.size(); ++k) {
+        Note n = k < d.size() ? notes[d[k]] : Note{};
+        n.start = s[k].start + a, n.length = s[k].length, n.pitch = s[k].pitch, n.frac = s[k].frac, n.endFrac = s[k].endFrac;
+        n.bend = s[k].bend, n.step = s[k].step;
+        if (const Tick pe = g.tickOf(g.rows); n.start + n.length > pe) n.length = std::max<Tick>(1, pe - n.start);  // R7-03: ends at the pattern end
+        takeParts(s[k], n);
+        added.push_back(n);
+      }
+      for (size_t k : d) drop[k] = true;
+      const size_t sr = static_cast<size_t>(row + r);
+      if (sr < steps.size() && steps[sr] && (noteClear || !s.empty())) steps[sr] = 0;
+    } else {
+      for (size_t k = 0; k < s.size() && k < d.size(); ++k) takeParts(s[k], notes[d[k]]);
+    }
+  }
+  std::vector<Note> out;
+  for (size_t i = 0; i < notes.size(); ++i)
+    if (!drop[i]) out.push_back(notes[i]);
+  if (putNote) cutSounding(out, added);  // R8-01: as pasteRows (R7-06), whatever the masks
+  for (const Note& n : added) out.push_back(n);
+  notes = std::move(out);
+  normalize(notes);
+  return done(notes != before || steps != stepsBefore);
+}
+
+int playedRows(const Song& s, const Pattern& p, const Grid& g) {
+  bool module = false;
+  for (const auto& [ch, notes] : p.notes) {
+    for (const Note& n : notes)
+      if (!n.tracker.empty()) {
+        module = true;
+        break;
+      }
+    if (module) break;
+  }
+  if (!module || g.rowTicks <= 0) return g.rows;
+  Tick far = 0;
+  bool any = false;
+  for (const Clip& c : s.playlist) {
+    if (c.kind != ClipKind::Pattern || c.pattern != p.id) continue;
+    any = true;
+    far = std::max(far, c.offset + s.clipLength(c));
+  }
+  if (!any || far >= g.length()) return g.rows;
+  return std::clamp(static_cast<int>((far + g.rowTicks - 1) / g.rowTicks), 1, g.rows);
 }
 
 // ---- the song ----
@@ -704,6 +1021,14 @@ Tick patternTickAt(const Song& s, ObjectId pattern, Tick pos) {
   return at;
 }
 
+double patternPlayPos(const Song& s, ObjectId pattern, bool songMode, ObjectId playingPattern, double pos) {
+  if (pattern == kNoId || pos < 0) return -1;
+  if (!songMode) return playingPattern == pattern ? pos : -1;
+  const double whole = std::floor(pos);
+  const Tick at = patternTickAt(s, pattern, static_cast<Tick>(whole));
+  return at < 0 ? -1 : static_cast<double>(at) + (pos - whole);
+}
+
 ObjectId patternAt(const Song& s, Tick pos) {
   const Clip* best = nullptr;
   for (const Clip& c : s.playlist) {
@@ -717,11 +1042,22 @@ int patternNumber(const Song& s, ObjectId pattern) { return s.patternIndex(patte
 
 namespace {
 // Every clip from `from` on (the live area never: `from` is past it) moves by `by` ticks.
+// The song from `from` on moves by `by`: its clips and its markers (the song loop marker, "Loop to",
+// stays on the entry it names when entries before it grow, shrink, come or go). A marker at the very
+// start stays there (the song's first meter and key belong to its start).
 bool shiftFrom(Document& d, Tick from, Tick by, const char* label) {
-  return d.editClips(label, [&](std::vector<Clip>& cs) {
+  const bool moved = d.editClips(label, [&](std::vector<Clip>& cs) {
     for (Clip& c : cs)
       if (c.start >= from) c.start += by;
   });
+  bool markers = false;
+  for (const Marker& m : d.song().markers) markers = markers || (m.pos >= from && m.pos > 0);
+  if (markers && by != 0)
+    d.editSong(label, [&](Song& s) {
+      for (Marker& m : s.markers)
+        if (m.pos >= from && m.pos > 0) m.pos = std::max<Tick>(0, m.pos + by);
+    });
+  return moved || markers;
 }
 }  // namespace
 
@@ -776,6 +1112,52 @@ OrderEdit orderRemove(Document& d, int at) {
   shiftFrom(d, e.end, -(e.end - e.start), "remove order entry");
   d.endGroup();
   return OrderEdit::Done;
+}
+
+void setPatternLengthInSong(Document& d, ObjectId pattern, int bars, int stepsPerBar) {
+  const Song& s = d.song();
+  const Pattern* p = s.pattern(pattern);
+  if (!p) return;
+  const Tick before = s.patternLength(*p);
+  // R9-01: the song is cut into blocks of clips that play together (overlapping in time; clips that
+  // only touch start the next block). A block gets longer or shorter by what its own end moves: the
+  // latest of its clips' ends, with the pattern's instances at their new length. An instance among
+  // longer parallel clips moves nothing. (Before, each instance's end moved the rest of the song, so
+  // an instance on a parallel track shifted it a second time and left a silent bar.)
+  struct Item {
+    Tick start, end;
+    bool own;  // plays the pattern at its own length
+  };
+  std::vector<Item> items;
+  for (const Clip& c : s.playlist)
+    if (inSong(s, c)) items.push_back({c.start, c.start + s.clipLength(c), c.pattern == pattern && c.length == 0});
+  std::sort(items.begin(), items.end(), [](const Item& x, const Item& y) { return x.start < y.start; });
+  struct Block {
+    Tick start, end;
+    std::vector<Item> items;
+  };
+  std::vector<Block> blocks;
+  for (const Item& it : items) {
+    if (blocks.empty() || it.start >= blocks.back().end) blocks.push_back({it.start, it.end, {}});
+    blocks.back().end = std::max(blocks.back().end, it.end);
+    blocks.back().items.push_back(it);
+  }
+  d.beginGroup("pattern length");
+  d.setPatternLength(pattern, bars, stepsPerBar);
+  const Pattern* q = d.song().pattern(pattern);
+  const Tick delta = q ? d.song().patternLength(*q) - before : 0;
+  if (delta != 0)
+    for (size_t k = blocks.size(); k-- > 0;) {  // latest first: a shift never moves a block not yet looked at
+      const Block& b = blocks[k];
+      bool has = false;
+      Tick end = b.start;
+      for (const Item& it : b.items) {
+        has = has || it.own;
+        end = std::max(end, it.own ? it.start + before + delta : it.end);
+      }
+      if (has && end != b.end) shiftFrom(d, b.end, end - b.end, "pattern length");
+    }
+  d.endGroup();
 }
 
 OrderEdit orderSetPattern(Document& d, int at, ObjectId pattern) {

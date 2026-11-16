@@ -17,7 +17,7 @@
 
 namespace gl {
 
-enum class ExportFormat : int { Wav = 0, Flac, Mp3, Ogg, M4a, Count };
+enum class ExportFormat : int { Wav = 0, Flac, Mp3, Ogg, M4a, Opus, Count };  // K-109: Opus appended
 const char* exportFormatName(ExportFormat f);
 const char* exportFormatExt(ExportFormat f);  // ".wav", …
 bool exportFormatExternal(ExportFormat f);    // needs an encoder program

@@ -3,6 +3,11 @@
 // modulation / diffusion / distortion + transfer display underneath), drawn
 // with the plugin's rack skin. Shown for the reference delay model.
 #include "../core/DelayCurves.h"
+#include "../core/TimeKnob.h"
+#include "../core/TracerView.h"
+#include <array>
+#include <vector>
+
 #include "../engine/Delay3Ref.h"
 #include "../core/I18n.h"
 #include "../engine/Dsp.h"
@@ -54,15 +59,6 @@ const Division kDivisions[] = {{"1/64", 12},        {"1/32", 24},       {"1/16",
                                {"1/2", 384},        {"1/16 dotted", 72}, {"1/8 dotted", 144}, {"1/4 dotted", 288}, {"1/2 dotted", 576},
                                {"1/16 triplet", 32}, {"1/8 triplet", 64}, {"1/4 triplet", 128}, {"1/2 triplet", 256}, {"1 bar", 768}};
 
-// K-147: the divisions as soft magnets on the synced Time knob.
-const std::vector<double>& divisionMagnets() {
-  static const std::vector<double> m = [] {
-    std::vector<double> v;
-    for (const Division& d : kDivisions) v.push_back(d.ticks);
-    return v;
-  }();
-  return m;
-}
 
 // Transfer curve of the loop distortion (limit / saturate): the feedback display.
 void distortionVisual(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const PluginState& st, const skin::Skin& k) {
@@ -100,53 +96,12 @@ void distortionVisual(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const PluginState& s
 
 }  // namespace
 
-// J-26: the classic tempo delay (DlyModel = 2) on a compact three-row panel.
-void editorDelayClassic(App& a, const PluginTarget& t, float width, const PluginState& st) {
-  const skin::Skin& K = delaySkin();
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  constexpr float kW = 500, kH = 182;
-  skin::Form F = skin::Form::fit(width, kW);
-  skin::panel(dl, F.o, F.p(kW, kH), K, 4);
-  skin::Scope scope(K);
-  const float c0 = 5, c1 = 170, c2 = 335, bw = 160, bh = 45;
-  skin::paramBox(a, t, DlyClsIn, F, c0, 5, bw, bh, K, "INPUT");
-  skin::paramBox(a, t, DlyClsPan, F, c1, 5, bw, bh, K, "INPUT PAN", nullptr, skin::WheelBigLine | skin::WheelCentered);
-  skin::paramBox(a, t, DlyClsDry, F, c2, 5, bw, bh, K, "DRY");
-  skin::paramBox(a, t, DlyClsFb, F, c0, 55, bw, bh, K, "FEEDBACK");
-  skin::paramBox(a, t, DlyClsCoef, F, c1, 55, bw, bh, K, "CUTOFF");
-  {
-    char b[24];
-    int ticks = static_cast<int>(std::lround(val(st, DlyTicks, 144)));
-    std::snprintf(b, sizeof b, "%d:%02d", ticks / 48, ticks % 48);
-    skin::paramBox(a, t, DlyTicks, F, c2, 55, bw, bh, K, "TIME", b);
-  }
-  skin::paramBox(a, t, DlyClsOffset, F, c0, 105, bw, bh, K, "STEREO OFFSET", nullptr, skin::WheelBigLine | skin::WheelCentered);
-  {
-    skin::well(dl, F.p(c1, 105), F.p(c1 + bw, 105 + bh), K, 4 * F.s);
-    static const char* md[3] = {"NORMAL", "SWAP", "P.PONG"};
-    skin::switchSel(a, t, DlyClsMode, F.p(c1 + 4, 112), F.sz(bw - 8, 30), K, md, 3, true);
-  }
-  {
-    char b[24];
-    double bpm = val(st, DlyClsBpm);
-    if (bpm <= 0) std::snprintf(b, sizeof b, "host");
-    else std::snprintf(b, sizeof b, "%.0f BPM", bpm);
-    skin::paramBox(a, t, DlyClsBpm, F, c2, 105, bw, bh, K, "TEMPO", b);
-  }
-  static const char* models[4] = {"LEGACY", "REF", "CLASSIC", "STEREO"};
-  skin::text(dl, F.p(c0 + 4, 162), K.textDim, "MODEL", F.font(8));
-  skin::switchSel(a, t, DlyModel, F.p(c0 + 46, 157), F.sz(220, 20), K, models, 4, true);
-  skin::toggle(a, t, DlyClsStepRound, F.p(c1 + 110, 157), F.sz(70, 20), K, "1/16 GRID", F.font(7.5f));
-  skin::toggle(a, t, DlyClsScaleSr, F.p(c2 + 85, 157), F.sz(75, 20), K, "RATE COMP", F.font(7.5f));
-  F.end(kW, kH);
-}
-
 // J-35: the stereo delay reference (DlyModel = 3): the same grid, every control
 // bound to the reference's normalised value (DlyD3Raw0 + index).
 void editorDelayStereo(App& a, const PluginTarget& t, float width, const PluginState& st) {
   const skin::Skin& K = delaySkin();
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  constexpr float kW = 747, kH = 242;
+  constexpr float kW = 747, kH = 217  /* K-261: no model row */;
   skin::Form F{ImGui::GetCursorScreenPos(), width / kW};
   const float s = F.s;
   const float fsL = std::clamp(8.0f * s, 10.0f, 13.0f), fsV = std::clamp(8.5f * s, 10.0f, 13.0f);
@@ -257,9 +212,6 @@ void editorDelayStereo(App& a, const PluginTarget& t, float width, const PluginS
     ImGui::InvisibleButton("##d3fbvis", ImVec2(q1.x - q0.x, q1.y - q0.y));
     if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Feedback distortion: input level (x) to output level (y)"));
   }
-  static const char* models[4] = {"LEGACY", "REFERENCE", "CLASSIC", "STEREO REF"};
-  skin::text(dl, F.p(10, 222), K.textDim, "MODEL", F.font(8));
-  skin::switchSel(a, t, DlyModel, F.p(56, 217), F.sz(300, 20), K, models, 4, true);
   ImGui::SetCursorScreenPos(F.o);
   ImGui::Dummy(ImVec2(width, kH * s));
 }
@@ -268,11 +220,11 @@ void editorDelayRef(App& a, const PluginTarget& t, float width) {
   const PluginState* sp = t.state(a.doc.song());
   if (!sp) return;
   const PluginState st = *sp;
-  if (ival(st, DlyModel) == 2) {
-    editorDelayClassic(a, t, width, st);
-    return;
-  }
-  if (ival(st, DlyModel) == 3) {
+  // K-261: one view. A state keeps the engine it was saved with (core/TracerView.h): the stereo
+  // reference engine has its own normalised controls on this same panel; the others bind each
+  // control to the parameter their engine plays, and dim the controls they have no use for.
+  const int engine = tracer::engineOf(val(st, DlyModel, 1));
+  if (engine == 3) {
     editorDelayStereo(a, t, width, st);
     return;
   }
@@ -302,25 +254,42 @@ void editorDelayRef(App& a, const PluginTarget& t, float width) {
   caption(262, 370, 126, "DIFFUSION");
   caption(380, 684, 126, "DISTORTION");
 
-  // Input level slider (11,26) 38×153.
-  skin::vslider(a, t, DlyInput, F.p(11, 26), ImVec2(38 * s, 153 * s), K);
-  skin::label(dl, F.p(30, 0).x, F.p(0, 182).y, "WET", K.textDim, fsL);
-  // Time (67,30) 64 + read-out (79,96) 40×15.
-  const bool sync = bval(st, DlySync, true);
-  if (sync) pui::nextMagnets(divisionMagnets());  // K-147: magnetic divisions, free in between
-  skin::wheel(a, t, sync ? DlyTicks : DlyTimeMs, F.p(67, 30), 64 * s, K, skin::WheelBigLine);
+  // K-261: the parameter each control edits on this state's engine; -1: dimmed.
+  auto P = [&](int ref) { return tracer::control(engine, ref); };
+  auto B = [&](int ref) { return P(ref) >= 0 ? P(ref) : ref; };
+  std::vector<std::array<float, 4>> dimmed;  // form rects of the dimmed controls
+  auto deadFrom = [&](int ref, float x, float y, float w, float h) {
+    if (P(ref) >= 0) return false;
+    dimmed.push_back({x, y, w, h});
+    ImGui::BeginDisabled();
+    return true;
+  };
+  auto deadTo = [&](bool d) {
+    if (d) ImGui::EndDisabled();
+  };
+  // Input level slider (11,26) 38x153.
   {
-    char buf[24];
-    if (sync) {
-      int ticks = ival(st, DlyTicks, 192);
-      std::snprintf(buf, sizeof buf, "%d:%02d", ticks / 48, ticks % 48);
-    } else {
-      std::snprintf(buf, sizeof buf, "%.0f ms", val(st, DlyTimeMs, 300));
-    }
-    skin::lcd(dl, F.p(73, 97), F.p(121, 112), K, buf, fsV);
+    const bool d = deadFrom(DlyInput, 9, 22, 42, 166);
+    skin::vslider(a, t, B(DlyInput), F.p(11, 26), ImVec2(38 * s, 153 * s), K);
+    deadTo(d);
+  }
+  skin::label(dl, F.p(30, 0).x, F.p(0, 182).y, "WET", K.textDim, fsL);
+  // Time (67,30) 64 + read-out (79,96) 40x15.
+  const bool sync = engine == 2 || bval(st, DlySync, true);
+  // K-230: note values (synced) or round milliseconds (free) as gentle magnets, an even travel
+  // (core/TimeKnob.h), and the readout names the value ("1/8 D", "250 ms").
+  const int timeP = sync ? P(DlyTicks) : DlyTimeMs;
+  skin::wheel(a, t, timeP, F.p(67, 30), 64 * s, K, skin::WheelBigLine);
+  {
+    std::string buf;
+    if (const auto tk = timeknob::forParam("gl.delay", timeP)) buf = timeknob::readout(*tk, val(st, timeP, sync ? 192 : 300), 0, true);
+    else if (timeP == DlyTime)  // the first engine: a note-value choice
+      buf = timeknob::noteName(static_cast<int>(std::lround(pp::kDelayBeats[std::clamp(ival(st, DlyTime, 3), 0, pp::kDelayBeatCount - 1)] * 192)), true);
+    skin::lcd(dl, F.p(73, 97), F.p(121, 112), K, buf.c_str(), fsV);
     // Divisions menu (the reference's wheel "Set" submenu).
-    if (sync && skin::button("##divs", F.p(123, 97), ImVec2(11 * s, 15 * s), K, GL_ICON_LABEL("chevron-down", "v"), false, fsL)) ImGui::OpenPopup("##dlydivs");
-    if (sync && ImGui::IsItemHovered()) a.setHint("Set the time to a musical division");
+    const bool menu = sync && timeP == DlyTicks;
+    if (menu && skin::button("##divs", F.p(123, 97), ImVec2(11 * s, 15 * s), K, GL_ICON_LABEL("chevron-down", "v"), false, fsL)) ImGui::OpenPopup("##dlydivs");
+    if (menu && ImGui::IsItemHovered()) a.setHint("Set the time to a musical division");
     if (ImGui::BeginPopup("##dlydivs")) {
       int cur = ival(st, DlyTicks, 192);
       for (const Division& d : kDivisions)
@@ -328,47 +297,83 @@ void editorDelayRef(App& a, const PluginTarget& t, float width) {
       ImGui::EndPopup();
     }
   }
-  skin::check(a, t, DlySync, F.p(137, 35), ImVec2(65 * s, 17 * s), K, "TEMPO SYNC");
-  skin::check(a, t, DlyKeepPitch, F.p(137, 54), ImVec2(65 * s, 17 * s), K, "KEEP PITCH");
-  skin::hslider(a, t, DlyTimeSmooth, F.p(135, 78), ImVec2(71 * s, 15 * s), K);
-  skin::label(dl, F.p(170, 0).x, F.p(0, 95).y, "SMOOTH", K.textDim, fsL);
-  wheelL(a, t, DlyTimeR, F, 207, 42, 40, K, "R/L OFS", skin::WheelCentered | skin::WheelBigLine);
+  {
+    const bool d = deadFrom(DlySync, 135, 33, 70, 40);
+    skin::check(a, t, DlySync, F.p(137, 35), ImVec2(65 * s, 17 * s), K, "TEMPO SYNC");
+    skin::check(a, t, DlyKeepPitch, F.p(137, 54), ImVec2(65 * s, 17 * s), K, "KEEP PITCH");
+    deadTo(d);
+  }
+  {
+    const bool d = deadFrom(DlyTimeSmooth, 133, 76, 75, 30);
+    skin::hslider(a, t, DlyTimeSmooth, F.p(135, 78), ImVec2(71 * s, 15 * s), K);
+    skin::label(dl, F.p(170, 0).x, F.p(0, 95).y, "SMOOTH", K.textDim, fsL);
+    deadTo(d);
+  }
+  wheelL(a, t, B(DlyTimeR), F, 207, 42, 40, K, "R/L OFS", skin::WheelCentered | skin::WheelBigLine);
   {
     static const char* types[4] = {"FAKE ST", "STEREO", "PING PONG", "OFF"};
-    skin::switchSel(a, t, DlyType3, F.p(258, 31), ImVec2(66 * s, 62 * s), K, types, 4);
+    static const char* first[5] = {"NORMAL", "PING PONG", "INVERT", "MONO", "OFF"};
+    static const char* classic[3] = {"NORMAL", "SWAP", "PING PONG"};
+    const char* const* lbl = engine == 0 ? first : engine == 2 ? classic : types;
+    skin::switchSel(a, t, B(DlyType3), F.p(258, 31), ImVec2(66 * s, 62 * s), K, lbl, engine == 0 ? 5 : engine == 2 ? 3 : 4);
   }
-  wheelL(a, t, DlySpread3, F, 330, 42, 40, K, "SPREAD", skin::WheelBigLine);
-  // Feedback (382,30) 64, cutoff (452,42) + read-out, resonance (499,42), mode (551,31) 35×62.
-  skin::wheel(a, t, DlyFeedback, F.p(382, 30), 64 * s, K, skin::WheelBigLine);
+  {
+    const bool d = deadFrom(DlySpread3, 328, 40, 44, 56);
+    wheelL(a, t, B(DlySpread3), F, 330, 42, 40, K, "SPREAD", skin::WheelBigLine);
+    deadTo(d);
+  }
+  // Feedback (382,30) 64, cutoff (452,42) + read-out, resonance (499,42), mode (551,31) 35x62.
+  skin::wheel(a, t, B(DlyFeedback), F.p(382, 30), 64 * s, K, skin::WheelBigLine);
   {
     char buf[24];
-    std::snprintf(buf, sizeof buf, "%.0f%%", val(st, DlyFeedback, 0.625f) * 100);
+    std::snprintf(buf, sizeof buf, "%.0f%%", val(st, B(DlyFeedback), 0.625f) * 100);
     skin::lcd(dl, F.p(390, 97), F.p(438, 112), K, buf, fsV);
   }
-  const int fmode = ival(st, DlyFilter3);
-  skin::wheel(a, t, DlyCutoff3, F.p(452, 42), 40 * s, K, skin::WheelBigLine);
+  const int fmode = ival(st, B(DlyFilter3));
+  const bool filterOff = (engine == 1 && fmode == 3) || (engine == 0 && fmode == 4);
+  skin::wheel(a, t, B(DlyCutoff3), F.p(452, 42), 40 * s, K, skin::WheelBigLine);
   {
     char buf[24];
-    double hz = val(st, DlyCutoff3, 22000);
-    if (hz >= 1000) std::snprintf(buf, sizeof buf, "%.1fk", hz / 1000);
-    else std::snprintf(buf, sizeof buf, "%.0f", hz);
-    skin::lcd(dl, F.p(450, 97), F.p(494, 112), K, fmode == 3 ? "off" : buf, fsV);
+    if (engine == 2) {
+      std::snprintf(buf, sizeof buf, "%.0f%%", val(st, DlyClsCoef, 1) * 100);
+    } else {
+      double hz = val(st, B(DlyCutoff3), 22000);
+      if (hz >= 1000) std::snprintf(buf, sizeof buf, "%.1fk", hz / 1000);
+      else std::snprintf(buf, sizeof buf, "%.0f", hz);
+    }
+    skin::lcd(dl, F.p(450, 97), F.p(494, 112), K, filterOff ? "off" : buf, fsV);
   }
-  wheelL(a, t, DlyResonance, F, 499, 42, 40, K, "RES", skin::WheelBigLine);
+  {
+    const bool d = deadFrom(DlyResonance, 497, 40, 44, 56);
+    wheelL(a, t, DlyResonance, F, 499, 42, 40, K, "RES", skin::WheelBigLine);
+    deadTo(d);
+  }
   {
     static const char* modes[4] = {"LP", "HP", "BP", "OFF"};
-    skin::switchSel(a, t, DlyFilter3, F.p(551, 31), ImVec2(35 * s, 62 * s), K, modes, 4);
+    static const char* first[5] = {"SOFT", "LP", "HP", "BP", "OFF"};
+    const bool d = deadFrom(DlyFilter3, 549, 29, 39, 66);
+    skin::switchSel(a, t, B(DlyFilter3), F.p(551, 31), ImVec2(35 * s, 62 * s), K, engine == 0 ? first : modes, engine == 0 ? 5 : 4);
+    deadTo(d);
   }
-  wheelL(a, t, DlyRate3, F, 591, 42, 40, K, "RATE", skin::WheelBigLine);
-  wheelL(a, t, DlyBits, F, 639, 42, 40, K, "BITS", skin::WheelBigLine);
-  wheelL(a, t, DlyWet, F, 696, 31, 40, K, "WET", skin::WheelBigLine);
-  wheelL(a, t, DlyTone, F, 696, 93, 40, K, "TONE", skin::WheelCentered | skin::WheelBigLine);
-  wheelL(a, t, DlyDry, F, 696, 155, 40, K, "DRY", skin::WheelBigLine);
-  // Modulation: rate (66,146) 48 → arrow → time (156,150) + cutoff (207,150), read-outs underneath.
-  skin::wheel(a, t, DlyModRate3, F.p(66, 146), 48 * s, K, skin::WheelBigLine);
+  {
+    const bool d = deadFrom(DlyRate3, 589, 40, 92, 56);
+    wheelL(a, t, B(DlyRate3), F, 591, 42, 40, K, "RATE", skin::WheelBigLine);
+    wheelL(a, t, DlyBits, F, 639, 42, 40, K, "BITS", skin::WheelBigLine);
+    deadTo(d);
+  }
+  {
+    const bool d = deadFrom(DlyWet, 694, 29, 44, 56);
+    wheelL(a, t, DlyWet, F, 696, 31, 40, K, "WET", skin::WheelBigLine);
+    deadTo(d);
+  }
+  wheelL(a, t, B(DlyTone), F, 696, 93, 40, K, engine == 2 ? "PAN" : "TONE", skin::WheelCentered | skin::WheelBigLine);
+  wheelL(a, t, B(DlyDry), F, 696, 155, 40, K, "DRY", skin::WheelBigLine);
+  // Modulation: rate (66,146) 48 -> arrow -> time (156,150) + cutoff (207,150), read-outs underneath.
+  const bool modDead = deadFrom(DlyModRate3, 60, 140, 196, 74);
+  skin::wheel(a, t, B(DlyModRate3), F.p(66, 146), 48 * s, K, skin::WheelBigLine);
   {
     char buf[24];
-    std::snprintf(buf, sizeof buf, "%.2f Hz", val(st, DlyModRate3, 1.14f));
+    std::snprintf(buf, sizeof buf, "%.2f Hz", val(st, B(DlyModRate3), 1.14f));
     skin::lcd(dl, F.p(62, 197), F.p(118, 212), K, buf, fsL);
     ImVec2 c = F.p(136, 170);
     float r = 6 * s;
@@ -384,6 +389,9 @@ void editorDelayRef(App& a, const PluginTarget& t, float width) {
     std::snprintf(buf, sizeof buf, "CUT %.0f%%", val(st, DlyModCutoff) * 100);
     skin::lcd(dl, F.p(204, 197), F.p(254, 212), K, buf, fsL);
   }
+  deadTo(modDead);
+  const bool restDead = deadFrom(DlyDiffusion, 262, 140, 422, 74);
+  if (restDead) dimmed.pop_back(), dimmed.push_back({262, 140, 108, 74}), dimmed.push_back({380, 140, 304, 74});
   wheelL(a, t, DlyDiffusion, F, 269, 150, 40, K, "LEVEL", skin::WheelBigLine);
   wheelL(a, t, DlyDiffSpread, F, 321, 150, 40, K, "SPREAD", skin::WheelBigLine);
   {
@@ -393,7 +401,16 @@ void editorDelayRef(App& a, const PluginTarget& t, float width) {
   wheelL(a, t, DlyDistThresh, F, 452, 150, 40, K, "THRES", skin::WheelBigLine);
   wheelL(a, t, DlyDistHardness, F, 499, 150, 40, K, "HARD", skin::WheelBigLine);
   wheelL(a, t, DlyDistSymmetry, F, 550, 150, 40, K, "SYM", skin::WheelBigLine);
+  deadTo(restDead);
   distortionVisual(dl, F.p(610, 138), F.p(680, 208), st, K);
+  // K-261: controls this state's engine has no use for, dimmed under the panel's colour.
+  for (const auto& r : dimmed) dl->AddRectFilled(F.p(r[0], r[1]), F.p(r[0] + r[2], r[1] + r[3]), theme::withAlpha(K.panel, 0.72f), 3 * s);
+  bool overDimmed = false;
+  for (const auto& r : dimmed) overDimmed = overDimmed || ImGui::IsMouseHoveringRect(F.p(r[0], r[1]), F.p(r[0] + r[2], r[1] + r[3]));
+  if (overDimmed && ImGui::IsWindowHovered()) {
+    a.setHint(engine == 2 ? i18n::tr("This Tracer plays the classic tempo delay it was saved with: the dimmed controls are not part of it")
+                            : i18n::tr("This Tracer plays the first Tracer engine it was saved with: the dimmed controls are not part of it"));
+  }
   ImGui::SetCursorScreenPos(F.o);
   ImGui::Dummy(ImVec2(width, kH * s));
 }

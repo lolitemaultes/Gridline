@@ -56,6 +56,15 @@ class Effect {
   virtual float inputLevel() const { return -120.0f; }
   // Sidechain / send / return buffers for the next processAux() (default: ignored).
   virtual void setSideIo(const SideIo& io) { (void)io; }
+  // K-101: an effect that writes to a device output pair of its own (Hardware Insert's send):
+  // pair k of ProcessContext::directOutPairs and its frames of the last process() call. The
+  // engine adds them to that pair after the mixer (see Generator::directOutput).
+  virtual bool directOutput(int& pair, const float*& L, const float*& R) const {
+    (void)pair;
+    (void)L;
+    (void)R;
+    return false;
+  }
   // Hosted plugins: see Generator::prepareHost (UI thread, every Program build).
   virtual void prepareHost(const PluginState& state, double sampleRate) {
     (void)state;

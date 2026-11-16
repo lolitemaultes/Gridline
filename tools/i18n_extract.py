@@ -39,6 +39,10 @@ HELPERS = {
     "confirmTheme": [2],
     # K-112b: layout parts (LayoutParts.cpp): strip slot hints, inspector card labels and hints.
     "stripSlot": [5], "cardRow": [1, 3], "cardStepper": [1, 7],
+    # K-106: the Tracker band's widgets (TrackerFrame.cpp): bevel buttons, radio and check rows, steppers,
+    # readouts and box titles (label, hint), and the settings screen's check rows.
+    "bevelButton": [2, 6], "radioRow": [2, 6], "checkRow": [2, 6], "stepper": [2, 7], "readout": [1, 6], "boxTitle": [2],
+    "checkSetting": [1, 6],
 }
 # Helpers called on an object (a.notify(...)).
 MEMBER_HELPERS = {"notify"}

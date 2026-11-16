@@ -5,9 +5,14 @@
 
 namespace gl {
 
-Tick prepareOfflineLive(Song& s) {
+Tick prepareOfflineLive(Song& s, bool arrangementOnly) {
   const Tick zone = s.live.areaEnd;
   if (zone <= 0) return 0;
+  if (arrangementOnly) {  // N48-10 / N48-06: the arrangement alone (no slot clip, nor a long one's tail)
+    s.playlist.erase(std::remove_if(s.playlist.begin(), s.playlist.end(), [&](const Clip& c) { return c.start < zone; }), s.playlist.end());
+    s.live.areaEnd = 0;
+    return zone;
+  }
   // Arranged content after the live area (automation alone does not count).
   Tick arrangedEnd = 0;
   bool arranged = false;

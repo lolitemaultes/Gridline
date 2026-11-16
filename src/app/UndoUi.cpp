@@ -130,7 +130,18 @@ void noteSteps(App& a) {
 
 bool anyPopup() { return ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel); }
 
+// N49-06: in Clips, Undo and Redo wait while anything records (the reference ignores them then): an
+// undo in the middle of a take cut it short, and the take was lost from the history.
+bool recordingBlocks(App& a) {
+  if (!livelook::active(a)) return false;
+  if (!(a.engine.recordingOn() || a.recorder.active() || livelook::sessionRecording(a) || livelook::audioTakePending(a))) return false;
+  a.setHint(i18n::tr("Stop recording to undo"));
+  a.notify(i18n::tr("Stop recording to undo"));
+  return true;
+}
+
 bool step(App& a, int dir) {
+  if (recordingBlocks(a)) return false;
   const bool moved = dir < 0 ? a.doc.undo() : a.doc.redo();
   if (!moved && !collabui::session(a)) {
     const UndoStack& h = a.doc.history();
@@ -189,6 +200,7 @@ void frame(App& a) {
   if (keys::pressed("edit.undo")) dir = -1;
   else if (keys::pressed("edit.redo")) dir = 1;
   if (dir == 0) return;
+  if (recordingBlocks(a)) return;
   if (a.doc.groupDepth() > 0) {
     t.queued = dir;
     t.queuedFrames = 0;

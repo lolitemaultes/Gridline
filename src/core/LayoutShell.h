@@ -85,7 +85,9 @@ struct State {
   }
 };
 bool visible(const Shell& sh, const State& st, const std::string& region);
-void setVisible(const Shell& sh, State& st, const std::string& region, bool on);
+// `alone` (the default): showing a region of a group hides the group's others. K-112c (checkpoint 48):
+// false shows it beside them (the Clips clip band stacked over the device band, as the reference's).
+void setVisible(const Shell& sh, State& st, const std::string& region, bool on, bool alone = true);
 // Compact JSON text for settings.json ("" for the default state) and back. Unknown or broken
 // text gives the default state; unknown region ids are dropped.
 std::string toJson(const State& st);

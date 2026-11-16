@@ -6,6 +6,11 @@
 #include <cstdio>
 #include <filesystem>
 #include "../core/Crash.h"
+#include "../core/DataFolder.h"
+#include "../core/Platform.h"
+#include <atomic>
+#include <memory>
+#include <thread>
 #include "CollabUi.h"
 #include <algorithm>
 #include <cstdio>
@@ -116,6 +121,114 @@ void generalSettingsPage(App& a, float fieldW) {
 }
 
 // -------------------------------------------------------------------- Files ----
+// K-265: Settings > Files > Data folder. The copy runs on a worker thread; the choice takes effect
+// at the next start (core/DataFolder.h).
+struct DataFolderCopy {
+  std::atomic<double> progress{0};
+  std::atomic<bool> done{false}, ok{false}, cancel{false};
+  std::string folder, error;  // error: written by the worker before done
+  std::thread worker;
+  ~DataFolderCopy() {
+    cancel = true;
+    if (worker.joinable()) worker.join();
+  }
+};
+
+void dataFolderSection(App& a, float fieldW) {
+  namespace df = datafolder;
+  static std::unique_ptr<DataFolderCopy> job;
+  static char buf[1024];
+  static bool init = false;
+  static bool justCopied = false;  // the Keep / Revert prompt after a copy
+  const df::Info& in = platform::dataFolder();
+  const std::string defRoot = platform::defaultConfigRoot();
+  if (!init) std::snprintf(buf, sizeof buf, "%s", in.wanted.c_str()), init = true;
+  const auto& P = pal();
+  ui::BeginSection(tr("DATA FOLDER"));
+  label("In use");
+  {
+    std::string now = in.folder.empty() ? std::string(tr("The default folders")) : in.folder;
+    if (in.portable) now += std::string("  (") + tr("portable: beside the program") + ")";
+    ui::TextFit(now.c_str(), std::max(80.0f, ImGui::GetContentRegionAvail().x), P.text, true);
+  }
+  if (in.envOverride) {
+    label("");
+    ImGui::TextColored(theme::vec(P.textDim), "%s", tr("GRIDLINE_CONFIG_HOME is set: the data folder setting is off for this run."));
+  } else if (in.missing) {
+    label("");
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextColored(theme::vec(P.danger), "%s %s", tr("Not found, so the default folders are in use:"), in.wanted.c_str());
+    ImGui::PopTextWrapPos();
+  }
+  const bool busy = job && !job->done;
+  if (!in.envOverride && !in.portable) {
+    label("Move to");
+    ImGui::SetNextItemWidth(fieldW);
+    ImGui::BeginDisabled(busy);
+    ImGui::InputTextWithHint("##datafolder", tr("A full path, for example on an external drive"), buf, sizeof buf);
+    ui::FocusRing();
+    ImGui::EndDisabled();
+    ui::Hint("Settings, caches and downloaded data move under this folder (config, cache, data). It takes effect at the next start");
+    label("");
+    const std::string want = buf;
+    ImGui::BeginDisabled(busy || want.empty() || want == in.folder);
+    if (ui::TextButton(tr("Copy my data there and use it"), false, 0)) {
+      job = std::make_unique<DataFolderCopy>();
+      job->folder = want;
+      DataFolderCopy* j = job.get();
+      const std::string cfg = platform::configRoot(), cache = platform::cacheRoot(), data = platform::dataRoot();
+      j->worker = std::thread([j, cfg, cache, data, defRoot] {
+        std::string err;
+        bool ok = df::copyInto(cfg, cache, data, j->folder,
+                               [j](double f, const std::string&) {
+                                 j->progress = f;
+                                 return !j->cancel.load();
+                               },
+                               &err);
+        if (ok) ok = df::writePointer(defRoot, j->folder, &err);
+        j->error = err;
+        j->ok = ok;
+        j->done = true;
+      });
+    }
+    ImGui::EndDisabled();
+    if (!in.folder.empty() && !busy) {
+      ImGui::SameLine();
+      if (ui::TextButton(tr("Use the default folders"), false, 0, "From the next start; the files in the chosen folder stay where they are")) {
+        std::string err;
+        if (df::writePointer(defRoot, "", &err)) a.notify(tr("Gridline uses the default folders from the next start"));
+        else a.notify(std::string(tr("Could not change the data folder: ")) + err, true);
+      }
+    }
+  }
+  if (busy) {
+    label("Copying");
+    ImGui::ProgressBar(static_cast<float>(job->progress.load()), ImVec2(std::min(fieldW, 260.0f), 0));
+    ImGui::SameLine();
+    if (ui::TextButton(tr("Cancel"), false, 0)) job->cancel = true;
+  } else if (job && job->done) {
+    if (job->worker.joinable()) job->worker.join();
+    if (job->ok) justCopied = true;
+    else a.notify(std::string(tr("The data folder was not changed: ")) + job->error, true);
+    job.reset();
+  }
+  if (justCopied) {
+    label("");
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextColored(theme::vec(P.text), "%s", tr("Copied. Gridline uses the new folder from the next start; your files also stay where they were."));
+    ImGui::PopTextWrapPos();
+    label("");
+    if (ui::TextButton(tr("Keep"), false, 0)) justCopied = false;
+    ImGui::SameLine();
+    if (ui::TextButton(tr("Revert"), false, 0, "Go on using the folders in use now")) {
+      std::string err;
+      if (in.folder.empty() ? df::writePointer(defRoot, "", &err) : df::writePointer(defRoot, in.folder, &err)) justCopied = false;
+      else a.notify(std::string(tr("Could not change the data folder: ")) + err, true);
+    }
+  }
+  ui::EndSection();
+}
+
 void fileSettingsPage(App& a, float fieldW) {
   Settings& st = a.settings;
   ui::BeginSection(tr("FOLDERS"));
@@ -140,6 +253,7 @@ void fileSettingsPage(App& a, float fieldW) {
   folder("Controller scripts", userScriptsDir(a, "controllers"));
   folder("Backups", a.backups->policy().globalFolder);
   ui::EndSection();
+  dataFolderSection(a, fieldW);  // K-265
   cacheui::settingsSection(a);  // K-45
 
   ui::BeginSection(tr("SCRIPTS"));

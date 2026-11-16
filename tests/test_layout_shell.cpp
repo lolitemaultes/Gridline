@@ -124,6 +124,17 @@ int main() {
     expect(layout::visible(sh, st, "live.clip") && !layout::visible(sh, st, "live.device"), "showing the clip band hides the device band");
     layout::setVisible(sh, st, "live.device", true);
     expect(!layout::visible(sh, st, "live.clip") && layout::visible(sh, st, "live.device"), "and the other way round");
+    {  // K-112c (checkpoint 48): the band toggles stack the clip band over the device band (refs 456, 466)
+      layout::State both = st;
+      layout::setVisible(sh, both, "live.clip", true, false);
+      expect(layout::visible(sh, both, "live.clip") && layout::visible(sh, both, "live.device"), "a stacked clip band keeps the device band");
+      float clipY = -1, devY = -1, clipH = 0, devH = 0;
+      for (const auto& pl : layout::solve(Preset::Live, 1440, 860, both)) {
+        if (pl.id == "live.clip") clipY = pl.rect.y, clipH = pl.rect.h;
+        if (pl.id == "live.device") devY = pl.rect.y, devH = pl.rect.h;
+      }
+      expect(clipY >= 0 && devY > clipY && clipH >= 150 && devH == 188, "stacked: the clip band sits over the device band, both full size");
+    }
     layout::setVisible(sh, st, "live.mixer", true);
     expect(layout::visible(sh, st, "live.mixer") && layout::visible(sh, st, "live.device"), "the mixer band is not in the group");
     expect(layout::defaultVersion(Preset::Live) == 2 && layout::defaultVersion(Preset::Logic) == 1, "the Clips default replaces saved layouts once");

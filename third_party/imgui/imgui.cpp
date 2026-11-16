@@ -4380,6 +4380,7 @@ ImGuiContext::ImGuiContext(ImFontAtlas* shared_font_atlas)
     CloseRequestFilter = NULL; // GRIDLINE PATCH (J-116)
     GlyphHook = NULL; // GRIDLINE PATCH (SVG icons)
     WindowsMovedHook = NULL; // GRIDLINE PATCH (J-117)
+    CloseWindowRequest = 0; // GRIDLINE PATCH (K-297)
     ViewportFocusedStampCount = 0;
 
     NavCursorVisible = false;
@@ -8144,6 +8145,12 @@ bool ImGui::Begin(const char* name, bool* p_open, ImGuiWindowFlags flags)
         const bool window_just_appearing_after_hidden_for_resize = (window->HiddenFramesCannotSkipItems > 0);
         window->Active = true;
         window->HasCloseButton = (p_open != NULL);
+        if (g.CloseWindowRequest == window->ID) // GRIDLINE PATCH (K-297): closed by a key (Esc, Cmd+W) as by its close button
+        {
+            g.CloseWindowRequest = 0;
+            if (p_open != NULL && (g.CloseRequestFilter == NULL || !g.CloseRequestFilter(window)))
+                *p_open = false;
+        }
         window->ClipRect = ImVec4(-FLT_MAX, -FLT_MAX, +FLT_MAX, +FLT_MAX);
         window->IDStack.resize(1);
         window->DrawList->_ResetForNewFrame();

@@ -26,6 +26,7 @@ const char* exportFormatName(ExportFormat f) {
     case ExportFormat::Mp3: return "MP3";
     case ExportFormat::Ogg: return "Ogg Vorbis";
     case ExportFormat::M4a: return "AAC (.m4a)";
+    case ExportFormat::Opus: return "Opus";
     default: return "?";
   }
 }
@@ -36,10 +37,13 @@ const char* exportFormatExt(ExportFormat f) {
     case ExportFormat::Mp3: return ".mp3";
     case ExportFormat::Ogg: return ".ogg";
     case ExportFormat::M4a: return ".m4a";
+    case ExportFormat::Opus: return ".opus";
     default: return "";
   }
 }
-bool exportFormatExternal(ExportFormat f) { return f == ExportFormat::Mp3 || f == ExportFormat::Ogg || f == ExportFormat::M4a; }
+bool exportFormatExternal(ExportFormat f) {
+  return f == ExportFormat::Mp3 || f == ExportFormat::Ogg || f == ExportFormat::M4a || f == ExportFormat::Opus;
+}
 
 const char* ditherName(DitherMode d) {
   switch (d) {
@@ -312,6 +316,7 @@ std::vector<std::string> candidates(ExportFormat f) {
     case ExportFormat::Mp3: return {"ffmpeg", "lame"};
     case ExportFormat::Ogg: return {"ffmpeg", "oggenc"};
     case ExportFormat::M4a: return {"ffmpeg"};
+    case ExportFormat::Opus: return {"ffmpeg", "opusenc"};  // K-109
     default: return {};
   }
 }
@@ -363,7 +368,7 @@ bool encodeExternal(const std::string& path, const AudioBuffer& buf, int sampleR
   const std::string tmp = (out.parent_path() / (".gridline-encode-" + std::to_string(platform::processId()) + "-" + out.stem().string() + ".wav")).string();
   AudioBuffer pcm = buf;
   int bits = 32;
-  if (prog != "ffmpeg") {  // lame / oggenc read integer PCM
+  if (prog != "ffmpeg") {  // lame / oggenc / opusenc read integer PCM
     bits = prog == "lame" ? 16 : 24;
     quantizeBuffer(pcm, bits, o.dither, o.seed);
   }
@@ -371,10 +376,15 @@ bool encodeExternal(const std::string& path, const AudioBuffer& buf, int sampleR
   const std::string br = std::to_string(std::clamp(o.bitrate, 32, 512));
   std::vector<std::string> args;
   if (prog == "ffmpeg") {
-    const char* codec = o.format == ExportFormat::Mp3 ? "libmp3lame" : o.format == ExportFormat::Ogg ? "libvorbis" : "aac";
+    const char* codec = o.format == ExportFormat::Mp3    ? "libmp3lame"
+                        : o.format == ExportFormat::Ogg  ? "libvorbis"
+                        : o.format == ExportFormat::Opus ? "libopus"  // (ffmpeg resamples to 48 kHz)
+                                                         : "aac";
     args = {exe, "-nostdin", "-y", "-hide_banner", "-loglevel", "error", "-i", tmp, "-c:a", codec, "-b:a", br + "k", path};
   } else if (prog == "lame") {
     args = {exe, "--quiet", "-b", br, tmp, path};
+  } else if (prog == "opusenc") {
+    args = {exe, "--quiet", "--bitrate", br, tmp, path};
   } else {
     args = {exe, "-Q", "-b", br, "-o", path, tmp};
   }
@@ -412,7 +422,8 @@ bool writeAudioFile(const std::string& path, const AudioBuffer& buf, int sampleR
     }
     case ExportFormat::Mp3:
     case ExportFormat::Ogg:
-    case ExportFormat::M4a: return encodeExternal(path, buf, sampleRate, o, err);
+    case ExportFormat::M4a:
+    case ExportFormat::Opus: return encodeExternal(path, buf, sampleRate, o, err);
     default: return fail(err, "unknown format");
   }
 }

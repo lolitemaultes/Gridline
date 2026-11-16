@@ -17,6 +17,8 @@ namespace gl {
 // launched clips become arrangement clips after it and the live-area clips go,
 // or the live area is dissolved into the arrangement) and returns the tick the
 // render starts at (0 when the song has no live area).
-Tick prepareOfflineLive(Song& s);
+// N48-10 (checkpoint 49): `arrangementOnly` (the Clips layout, as the reference exports): the live area
+// never plays, launched or not; the render starts at its end (an empty arrangement renders nothing).
+Tick prepareOfflineLive(Song& s, bool arrangementOnly = false);
 
 }  // namespace gl

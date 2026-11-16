@@ -28,6 +28,7 @@ void frame(App& a);
 void setDevForce(bool on);
 // Hidden runs (tests) keep the in-window menu row unless forced.
 void setHiddenRun(bool hidden);
+bool hiddenRun();
 // The X11 window the menus belong to (Linux global menu; 0 = none).
 void setWindow(unsigned long xid);
 // Dev: the installed tree as text, one item per line, indented by depth ("Undo|Ctrl+Z|on").

@@ -91,6 +91,27 @@ GhostHit ghostNoteAt(const Pattern& p, ObjectId exclude, const std::set<ObjectId
   return hit;
 }
 
+void retarget(std::set<ObjectId>& edit, ObjectId from, ObjectId to) {
+  if (from == to) return;
+  edit.erase(to);
+  if (from != kNoId) edit.insert(from);
+}
+
+std::vector<ObjectId> channelsWithNotes(const Song& s, const Pattern& p, ObjectId exclude) {
+  std::vector<ObjectId> out;
+  for (const Channel& c : s.channels) {
+    if (c.id == exclude) continue;
+    auto it = p.notes.find(c.id);
+    if (it != p.notes.end() && !it->second.empty()) out.push_back(c.id);
+  }
+  return out;
+}
+
+void quantizeStarts(std::vector<Note>& notes, Tick grid) {
+  if (grid <= 1) return;
+  for (Note& n : notes) n.start = std::max<Tick>(0, ((n.start + grid / 2) / grid) * grid);
+}
+
 // ---------------------------------------------------------- background waveform ----
 
 std::vector<std::pair<float, float>> waveformColumns(const float* L, const float* R, size_t frames, double sampleRate,

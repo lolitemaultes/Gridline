@@ -1477,6 +1477,43 @@ void testClapSlides() {
   host::setHostOptions(kClapSynth, host::HostOptions{});
 }
 
+// K-99: a note's pressure and timbre reach a hosted instrument: as CLAP note expressions
+// (pressure, brightness) automatically, and as channel pressure and CC 74 on the note's own
+// member channel in MPE mode.
+void testClapExpression() {
+  auto* cp = probe<GridlineClapProbe>(clapBinary(), "gridline_clap_probe");
+  if (!cp) return;
+  auto play = [&]() {
+    auto g = createGenerator(kClapSynth);
+    PluginState st = defaultPluginState(kClapSynth);
+    g->prepareHost(st, 48000);
+    std::vector<float> L, R;
+    g->noteOn(9, 64.0, 1.0f, 0);
+    runGen(*g, st, L, R, 512);
+    g->expr(9, ExprDim::Pressure, 0.6f, 0);
+    g->expr(9, ExprDim::Timbre, 0.8f, 0);
+    runGen(*g, st, L, R, 512);
+    return g;
+  };
+  cp->exprPressure = cp->exprBrightness = -1;
+  {
+    auto g = play();
+    expect(std::fabs(cp->exprPressure - 0.6) < 1e-4 && std::fabs(cp->exprBrightness - 0.8) < 1e-4,
+           "hosted expression: pressure and timbre as CLAP note expressions");
+  }
+  host::HostOptions mo;
+  mo.notePitch = host::HostOptions::PitchMpe;
+  host::setHostOptions(kClapSynth, mo);
+  cp->chanPressure = cp->cc74 = cp->exprChannel = -1;
+  {
+    auto g = play();
+    std::printf("# hosted MPE expression: pressure %d, CC 74 %d on channel %d\n", cp->chanPressure, cp->cc74, cp->exprChannel);
+    expect(cp->chanPressure == 76 && cp->cc74 == 102 && cp->exprChannel > 0,
+           "hosted MPE: pressure and timbre as channel pressure and CC 74 on the note's member channel");
+  }
+  host::setHostOptions(kClapSynth, host::HostOptions{});
+}
+
 // CLAP: links / automation as non-destructive modulation.
 void testClapModulation() {
   auto* cp = probe<GridlineClapProbe>(clapBinary(), "gridline_clap_probe");
@@ -2242,6 +2279,7 @@ int main() {
   testLatencyChange();
   testClapModulation();
   testClapSlides();
+  testClapExpression();
   testLostPlugin();
   testBridgedClose();
   testSandboxEmbeddedInterface();

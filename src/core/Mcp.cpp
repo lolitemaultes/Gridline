@@ -2,6 +2,7 @@
 // validation, resources and prompts (see Mcp.h). The tools are in McpTools.cpp.
 #include "GridlineVersion.h"
 #include "Mcp.h"
+#include "SongDiff.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -157,6 +158,76 @@ bool RateLimiter::take(double now) {
 double Environment::clock() const {
   if (now) return now();
   return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+void Environment::say(bool fromUser, const std::string& who, const std::string& text) {
+  ChatLine c;
+  c.id = nextChat++;
+  c.fromUser = fromUser;
+  c.who = who;
+  c.text = text.size() > 4000 ? text.substr(0, 4000) : text;
+  c.time = clock();
+  chat.push_back(std::move(c));
+  if (chat.size() > 200) chat.erase(chat.begin());
+}
+
+bool discardProposal(Environment& env, uint64_t id) {
+  for (auto it = env.proposals.begin(); it != env.proposals.end(); ++it)
+    if (it->id == id) {
+      Activity a;
+      a.time = env.clock();
+      a.client = it->client;
+      a.tool = it->tool;
+      a.summary = "proposal #" + std::to_string(id) + " discarded";
+      env.log.add(a);
+      env.proposals.erase(it);
+      return true;
+    }
+  return false;
+}
+
+bool acceptProposal(Environment& env, uint64_t id, std::string& err) {
+  auto it = std::find_if(env.proposals.begin(), env.proposals.end(), [&](const Proposal& p) { return p.id == id; });
+  if (it == env.proposals.end()) {
+    err = "no such proposal";
+    return false;
+  }
+  Proposal p = std::move(*it);
+  env.proposals.erase(it);
+  Document& doc = env.doc;
+  const std::string label = "AI: " + p.title;
+  if (doc.song() == p.before) {
+    doc.editSong(label, [&](Song& s) { s = p.after; });
+  } else {  // the project moved on: the call again, on the project as it is now
+    const Tool* t = findTool(p.tool);
+    if (!t || !t->run) {
+      err = "the tool is gone";
+      return false;
+    }
+    doc.endGesture();
+    doc.beginGroup(label);
+    ToolResult r;
+    try {
+      r = t->run(env, p.args);
+    } catch (const std::exception& e) {
+      r.error = e.what();
+    }
+    if (!r.error.empty()) {
+      doc.cancelGroup();
+      err = r.error;
+      return false;
+    }
+    doc.endGroup(false);
+  }
+  Activity a;
+  a.time = env.clock();
+  a.client = p.client;
+  a.tool = p.tool;
+  a.summary = "proposal #" + std::to_string(id) + " accepted";
+  a.changed = true;
+  env.log.add(a);
+  if (env.onActivity) env.onActivity(a);
+  return true;
 }
 
 std::vector<std::string> Environment::writeRoots() const {
@@ -508,7 +579,7 @@ Json Session::dispatch(const std::string& method, const Json& params, bool& ok, 
     protocol_ = std::find(sup.begin(), sup.end(), want) != sup.end() ? want : std::string(kLatestProtocol);
     if (const Json* ci = params.find("clientInfo")) {
       std::string n = ci->text("name");
-      if (!n.empty()) client_ = n.substr(0, 64);
+      if (!n.empty()) client_ = n.substr(0, 64) + (addr_.empty() ? std::string() : " @ " + addr_);
     }
     gotInitialize_ = true;
     Activity a;
@@ -794,8 +865,14 @@ Json Session::callTool(const Json& params, bool& ok, int& code, std::string& msg
       if (protocol_ >= "2025-06-18") result.object["structuredContent"] = jobJson(*job);
       return result;
     }
+  } else if (env_.propose && !tool->readOnly && (tool->writesFiles || !tool->grouped)) {
+    r.error = tool->writesFiles ? "Files are not written while changes are proposed: ask the user to choose \"Allow changes\" in the AI assistant panel."
+                                : "This tool cannot be proposed (the user reviews changes in the AI assistant panel).";
   } else {
     Document& doc = env_.doc;
+    const bool proposing = env_.propose && !tool->readOnly;
+    Song before;
+    if (proposing) before = doc.song();
     const uint64_t serial = doc.history().stateSerial();
     const size_t depth = doc.groupDepth();
     const bool grouped = !tool->readOnly && tool->grouped;
@@ -818,6 +895,32 @@ Json Session::callTool(const Json& params, bool& ok, int& code, std::string& msg
       doc.endGesture();
     }
     r.changed = r.changed || doc.history().stateSerial() != serial;
+    // K-92: measured, then undone and kept for the user.
+    if (proposing && r.error.empty() && r.changed && doc.history().stateSerial() != serial) {
+      Proposal p;
+      p.id = env_.nextProposal++;
+      p.client = client_;
+      p.tool = name;
+      p.title = tool->title;
+      p.args = args;
+      p.time = now;
+      p.after = doc.song();
+      doc.undo();
+      doc.dropRedo();
+      p.before = before;
+      p.diff = songDiff(p.before, p.after);
+      Json lines = Json::makeArray();
+      for (const auto& l : p.diff) lines.array.push_back(jstr(l));
+      Json data = jobj({{"proposed", jnum(static_cast<double>(p.id))},
+                        {"status", jstr("waiting for the user to accept or discard it in Gridline's AI assistant panel")},
+                        {"changes", lines}});
+      if (r.data.is(Json::Type::Object)) data.object["result"] = r.data;
+      r.data = data;
+      r.summary = "proposed #" + std::to_string(p.id) + (p.diff.empty() ? std::string() : ": " + p.diff[0]);
+      r.changed = false;
+      env_.proposals.push_back(std::move(p));
+      if (env_.proposals.size() > 50) env_.proposals.erase(env_.proposals.begin());
+    }
   }
   logCall(env_, client_, name, now, r, tool->readOnly);
   return resultJson(r, protocol_);

@@ -88,6 +88,7 @@ std::set<int> regionTracks(const App& a) {
   std::set<int> t;
   for (ObjectId id : a.playlist.selected)
     if (const Clip* c = a.doc.song().clip(id)) t.insert(c->track);
+  if (t.empty()) t = a.playlist.selTracks;  // N48-05: Clips: a selection drawn in the lanes keeps to its tracks
   return t;
 }
 
@@ -565,6 +566,14 @@ void duplicateTime(App& a) {
   if (out.empty()) return;
   a.playlist.selected = std::set<ObjectId>(out.begin(), out.end());
   a.playlist.selStart = hi, a.playlist.selEnd = hi + (hi - lo);  // the next duplicate follows on
+}
+
+void splitAtSelection(App& a) {
+  if (!hasTimeSel(a)) return;
+  const Tick lo = a.playlist.selStart, hi = a.playlist.selEnd;
+  const auto tracks = regionTracks(a);
+  if (chop::clipsInRange(a.doc.song(), lo, hi, tracks).empty()) return;
+  a.doc.editSong("split clips", [&](Song& s) { chop::isolateRange(s, lo, hi, tracks); });
 }
 
 void insertSpace(App& a) {

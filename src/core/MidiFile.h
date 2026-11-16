@@ -22,6 +22,8 @@ struct MidiNote {
 // Controller / pitch bend event. controller 0..127 = CC (value 0..127),
 // kMidiPitchBend = pitch bend (value 0..16383, 8192 = centre).
 inline constexpr int kMidiPitchBend = 128;
+// K-99: channel pressure (value 0..127).
+inline constexpr int kMidiChannelPressure = 129;
 struct MidiCtl {
   int64_t tick = 0;
   int controller = 0;
@@ -72,7 +74,13 @@ std::vector<uint8_t> encodeMidi(const MidiFileData& data, int format = 1);
 
 // Format 0 files (or tracks mixing MIDI channels): one track per MIDI channel.
 // Tracks keep their name (with " ch N" added when a track was split).
+// K-99: MPE tracks (every note on its own member channel) stay whole.
 void splitTracksByChannel(MidiFileData& m);
+// K-99: an MPE track: it announces an MPE zone (RPN 6), or its notes sit one at a time on
+// member channels 2..16 with per-channel pitch bend, pressure or CC 74.
+bool isMpeTrack(const MidiTrack& t);
+// K-99: the per-note pitch bend range of an MPE track's member channels (the MPE default).
+inline constexpr int kMpeBendRange = 48;
 
 // ---- song → MIDI ----
 struct MidiExportOptions {
@@ -80,6 +88,10 @@ struct MidiExportOptions {
   bool tempoMap = true;         // tempo automation → tempo changes
   bool markers = true;          // song markers → marker events (song exports)
   bool automation = true;       // channel volume / pan automation → CC 7 / CC 10
+  // K-99: MPE tracks (each note on its own MIDI channel 2..16 with its own pitch bend, channel
+  // pressure and CC 74): 0 for the channels whose notes carry pressure or timbre lanes, 1 never,
+  // 2 every channel.
+  int mpe = 0;
 };
 // Notes of one pattern, one track per channel that has notes or steps.
 MidiFileData patternToMidi(const Song& song, ObjectId pattern, const MidiExportOptions& o = {});

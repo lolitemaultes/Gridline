@@ -1,9 +1,13 @@
 // Gridline - K-112b: plugin windows in the Tracks layout (see LogicPlugins.h).
 #include "LogicPlugins.h"
+#include "ExportUi.h"
+#include "Keys.h"
+#include "../packs/PacksUi.h"
 #include "LayoutStyleUi.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <map>
 #include <set>
@@ -15,11 +19,15 @@
 #include "../core/I18n.h"
 #include "../core/Params.h"
 #include "../core/PluginInfo.h"
+#include "../core/WindowPlacement.h"
+#include "../core/ClipSources.h"
+#include "../core/MenuOps.h"
 #include "../core/TrackModes.h"
 #include "App.h"
 #include "EditorZoomUi.h"
 #include "HostedBodies.h"
 #include "HostedUi.h"
+#include "Keys.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
 #include "PluginUI.h"
@@ -50,6 +58,107 @@ const Channel* trackSound(const Song& s, int track, const Clip* clip) {
   return first ? soundOf(*first) : nullptr;
 }
 
+bool deleteTrack(App& a, int track) {
+  const Song& s = a.doc.song();
+  if (track < 0 || track >= static_cast<int>(s.tracks.size()) || s.tracks.size() <= 1) return false;
+  const ObjectId master = s.mixer.empty() ? kNoId : s.mixer[0].id;
+  const MixerTrack* st = trackStrip(s, track);
+  ObjectId strip = st && st->id != master ? st->id : kNoId;
+  // The sounds the track plays, and the ones anything else plays (other tracks, other arrangements).
+  std::set<ObjectId> mine, others;
+  auto sounds = [&s](const Clip& k, std::set<ObjectId>& into) {
+    if (k.kind == ClipKind::Audio) into.insert(k.source);
+    else if (k.kind == ClipKind::Pattern)
+      if (const Pattern* p = s.pattern(k.pattern))
+        for (const Channel& c : s.channels)
+          if (p->notes.count(c.id) || p->steps.count(c.id)) into.insert(c.id);
+  };
+  if (const Channel* lc = trackmodes::linkedChannel(s, track)) mine.insert(lc->id);
+  for (const Clip& k : s.playlist) sounds(k, k.track == track ? mine : others);
+  for (int i = 0; i < static_cast<int>(s.arrangements.size()); ++i)
+    if (i != s.currentArrangement)
+      for (const Clip& k : s.arrangements[static_cast<size_t>(i)].playlist) sounds(k, others);
+  std::vector<ObjectId> drop;
+  for (const ObjectId id : mine) {
+    const Channel* c = s.channel(id);
+    const int linkedTo = trackmodes::instrumentTrackOf(s, id);
+    if (c && !others.count(id) && (linkedTo < 0 || linkedTo == track)) drop.push_back(id);
+  }
+  // The strip goes only when nothing but the dropped sounds plays or sends into it, and no other track uses it.
+  if (strip != kNoId) {
+    for (const Channel& c : s.channels)
+      if (c.mixerTrack == strip && std::find(drop.begin(), drop.end(), c.id) == drop.end()) strip = kNoId;
+    for (const MixerTrack& m : s.mixer)
+      for (const Send& sd : m.sends)
+        if (sd.to == strip && m.id != strip) strip = kNoId;
+    for (int t = 0; t < static_cast<int>(s.tracks.size()) && strip != kNoId; ++t)
+      if (t != track)
+        if (const MixerTrack* o = trackStrip(s, t); o && o->id == strip) strip = kNoId;
+  }
+  std::set<ObjectId> owners(drop.begin(), drop.end());
+  if (strip != kNoId) owners.insert(strip);
+  a.doc.beginGroup("delete track");
+  ops::deletePlaylistTrack(a.doc, track, true);
+  // Their automation: the data aimed at the dropped strip or sounds, and the regions that play it
+  // (only data no other arrangement plays).
+  std::set<ObjectId> autos;
+  for (const AutomationClip& ac : a.doc.song().automations)
+    if (owners.count(ac.owner)) {
+      int here = 0;
+      for (const Clip& k : a.doc.song().playlist) here += k.kind == ClipKind::Automation && k.source == ac.id ? 1 : 0;
+      if (ops::clipSourceUses(a.doc.song(), ClipKind::Automation, ac.id) == here) autos.insert(ac.id);
+    }
+  if (!autos.empty())
+    a.doc.editSong("delete track automation", [&autos](Song& x) {
+      x.playlist.erase(std::remove_if(x.playlist.begin(), x.playlist.end(),
+                                      [&](const Clip& k) { return k.kind == ClipKind::Automation && autos.count(k.source); }),
+                       x.playlist.end());
+      x.automations.erase(std::remove_if(x.automations.begin(), x.automations.end(), [&](const AutomationClip& ac) { return autos.count(ac.id) > 0; }),
+                          x.automations.end());
+    });
+  if (!drop.empty()) ops::removeChannels(a.doc, drop);
+  if (strip != kNoId) a.doc.removeMixerTrack(strip);
+  a.doc.endGroup();
+  return true;
+}
+
+const MixerTrack* trackStrip(const Song& s, int track) {
+  if (track < 0 || track >= static_cast<int>(s.tracks.size()) || s.mixer.empty()) return nullptr;
+  const ObjectId master = s.mixer[0].id;
+  if (const MixerTrack* mt = trackmodes::linkedMixer(s, track); mt && mt->id != master) return mt;
+  std::vector<ObjectId> outs;  // the mixer tracks the track's sounds play into, in order
+  auto add = [&](const Channel* c) {
+    if (c && c->mixerTrack != master && s.mixerTrack(c->mixerTrack) && std::find(outs.begin(), outs.end(), c->mixerTrack) == outs.end()) outs.push_back(c->mixerTrack);
+  };
+  if (const Channel* c = trackmodes::linkedChannel(s, track)) add(c);
+  if (outs.empty())
+    for (const Clip& k : s.playlist) {
+      if (k.track != track) continue;
+      if (k.kind == ClipKind::Audio) add(s.channel(k.source));
+      else if (k.kind == ClipKind::Pattern)
+        if (const Pattern* p = s.pattern(k.pattern))
+          for (const Channel& c : s.channels)
+            if (p->notes.count(c.id) || p->steps.count(c.id)) add(&c);
+    }
+  if (outs.empty()) return nullptr;
+  if (outs.size() == 1) return s.mixerTrack(outs.front());
+  // Several: the first mixer track (not the master) every one of them sends its sound into.
+  const MixerTrack* first = s.mixerTrack(outs.front());
+  for (const Send& sd : first->sends) {
+    if (sd.sidechain || sd.to == master) continue;
+    bool all = true;
+    for (const ObjectId o : outs) {
+      const MixerTrack* m = s.mixerTrack(o);
+      bool sends = false;
+      for (const Send& q : m->sends) sends = sends || (q.to == sd.to && !q.sidechain);
+      all = all && sends;
+    }
+    if (all)
+      if (const MixerTrack* bus = s.mixerTrack(sd.to)) return bus;
+  }
+  return first;
+}
+
 // The track the layout is about: the first selected region's, else the first selected track, else
 // (as the reference always has one track selected) the track that plays the selected channel, else
 // the first track.
@@ -63,6 +172,57 @@ int focusTrack(const App& a) {
     for (int t = 0; t < n; ++t)
       if (const Channel* c = trackSound(s, t, nullptr); c && c->id == a.selChannel) return t;
   return n > 0 ? 0 : -1;
+}
+
+int newTrackSameSettings(App& a, int track, bool withContent) {
+  const Song& s0 = a.doc.song();
+  if (track < 0 || track >= static_cast<int>(s0.tracks.size()) || static_cast<int>(s0.tracks.size()) >= kMaxPlaylistTracks) return -1;
+  const bool audioTrack = s0.tracks[static_cast<size_t>(track)].mode == TrackMode::Audio;
+  // The instrument to copy: the linked channel, else the first pattern region's sound (a free
+  // track). A track of audio regions only has no instrument to copy.
+  const Channel* src = trackmodes::linkedChannel(s0, track);
+  if (!src && !audioTrack) {
+    bool audioOnly = true;
+    for (const Clip& k : s0.playlist)
+      if (k.track == track && k.kind == ClipKind::Pattern) audioOnly = false;
+    if (!audioOnly) src = trackSound(s0, track, nullptr);
+  }
+  const ObjectId srcId = src ? src->id : kNoId;
+  a.doc.beginGroup("new track with the same settings");
+  const bool ok = ops::clonePlaylistTrack(a.doc, track, withContent);
+  if (ok && srcId != kNoId && !audioTrack) {
+    const Channel copy = *a.doc.song().channel(srcId);
+    const ObjectId srcMixer = copy.mixerTrack;
+    const int at = a.doc.song().channelIndex(srcId);
+    const ObjectId nid = a.doc.addChannel(copy.name, copy.plugin.type, at + 1);
+    if (nid != kNoId) {
+      a.doc.editChannel(nid, "new track with the same settings", [&](Channel& c) {
+        const ObjectId keep = c.id;
+        c = copy;
+        c.id = keep;
+      });
+      std::string why;
+      if (trackmodes::makeInstrumentTrack(a.doc, track + 1, nid, &why)) {
+        // Its own insert (makeInstrumentTrack moved it off a shared one) gets the same plugins.
+        const Song& s = a.doc.song();
+        const Channel* nc = s.channel(nid);
+        const MixerTrack* from = s.mixerTrack(srcMixer);
+        if (nc && from && nc->mixerTrack != srcMixer && s.mixerTrack(nc->mixerTrack) && !s.mixer.empty() && srcMixer != s.mixer[0].id) {
+          const auto slots = from->slots;
+          const float vol = from->volume, pan = from->pan;
+          a.doc.editMixerTrack(nc->mixerTrack, "new track with the same settings", [&](MixerTrack& m) {
+            m.slots = slots;
+            m.volume = vol;
+            m.pan = pan;
+          });
+        }
+      }
+    }
+  }
+  a.doc.endGroup();
+  if (!ok) return -1;
+  a.playlist.trackSel = {track + 1};
+  return track + 1;
 }
 
 namespace {
@@ -245,10 +405,13 @@ void setLink(App& a, int mode) { a.settings.set("ui.logicPluginLink", std::clamp
 namespace {
 std::vector<std::pair<ObjectId, int>> gMoreFx;
 std::pair<ObjectId, int> gPrevFx{kNoId, -1};
+// K-297 / R02-09: where each window stood as the effect window, so it stays there (and as large)
+// when the next effect takes the effect window; it jumped up over the control bar and grew.
+std::map<std::pair<ObjectId, int>, ImVec2> gMorePos;
 
 void trackMoreFx(App& a, int mode) {
   if (mode != 0) {
-    gMoreFx.clear();
+    gMoreFx.clear(), gMorePos.clear();
     gPrevFx = a.fxEditor;
     return;
   }
@@ -259,8 +422,16 @@ void trackMoreFx(App& a, int mode) {
            !isHostedType(m->slots[static_cast<size_t>(f.second)].plugin.type);
   };
   if (a.fxEditor.first != kNoId && gPrevFx.first != kNoId && a.fxEditor != gPrevFx && builtIn(gPrevFx) &&
-      std::find(gMoreFx.begin(), gMoreFx.end(), gPrevFx) == gMoreFx.end())
+      std::find(gMoreFx.begin(), gMoreFx.end(), gPrevFx) == gMoreFx.end()) {
     gMoreFx.push_back(gPrevFx);
+    // K-297: it stays where the effect window showed it (K-301 R02-09: it jumped to the centre and up over the control bar).
+    if (ImGuiWindow* w = ImGui::FindWindowByName("###fxeditor"); w && w->WasActive && !w->Hidden) {
+      gMorePos[gPrevFx] = w->Pos;
+      ImGui::SetWindowPos(w, ImVec2(w->Pos.x + 28, w->Pos.y + 28), ImGuiCond_Always);  // the new one cascades (G-218)
+    } else {
+      gMorePos.erase(gPrevFx);
+    }
+  }
   gMoreFx.erase(std::remove_if(gMoreFx.begin(), gMoreFx.end(), [&](const auto& f) { return f == a.fxEditor || !builtIn(f); }), gMoreFx.end());
   gPrevFx = a.fxEditor;
 }
@@ -279,9 +450,20 @@ void drawMoreFx(App& a) {
     }
     const std::string title = mixerTrackName(s, static_cast<size_t>(std::max(0, s.mixerIndex(m->id)))) + "###fxmore" + std::to_string(m->id) + "_" +
                               std::to_string(f.second);
-    const float width = info->editorWidth > 0 ? info->editorWidth : (info->type == "gl.eq" ? 780.0f : 600.0f);
+    float width = info->editorWidth > 0 ? info->editorWidth : (info->type == "gl.eq" ? 780.0f : 600.0f);
+    if (info->editorMinWidth > 0) {  // R02-09: fitted to the main window as the effect window fits it
+      const ImVec2 area = ui::EditorArea();
+      width = std::floor(place::fitEditor(width, info->editorMinWidth, 24.0f + ImGui::GetStyle().ScrollbarSize, area.x, area.y).content);
+    }
+    // R02-09: drawn at the editor size the effect window had (it grew to full size once it left)
+    const std::string zkey = "fxmore" + std::to_string(m->id) + "_" + std::to_string(f.second);
+    const bool zoomable = !isHostedType(info->type);
+    edzoomui::prepare(a, zkey.c_str(), info->type, width, zoomable);
+    const int fitFlags = zoomable ? edzoomui::nextWindowSize(zkey.c_str()) : 0;
     bool open = true;
-    {
+    if (const auto at = gMorePos.find(f); at != gMorePos.end()) {
+      ImGui::SetNextWindowPos(at->second, ImGuiCond_Appearing);  // K-297: where it was
+    } else {
       const ImGuiViewport* vp = ImGui::GetMainViewport();
       const float step = 28.0f * static_cast<float>(i + 1);
       ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f - step, vp->WorkPos.y + vp->WorkSize.y * 0.42f - step), ImGuiCond_Appearing,
@@ -292,15 +474,20 @@ void drawMoreFx(App& a) {
     bool vis = false;
     {  // K-112b: the title bar's underline (drawn by Begin from the frame outline) stays as in every layout
       const layoutui::BaseBorderScope border;
-      vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoFocusOnAppearing);
+      vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoFocusOnAppearing | fitFlags);
     }
     if (vis) {
-      drawEffectEditorBody(a, f.first, f.second, BodyFrame{width, false, ""});
+      ui::KeepWindowInViewport();  // K-297: between the control bar and the window's bottom, as the effect window
+      BodyFrame bf{width, zoomable, ""};
+      bf.zoomKey = zkey.c_str();
+      drawEffectEditorBody(a, f.first, f.second, bf);
     }
+    gMorePos[f] = ImGui::GetWindowPos();  // K-297: hidden (V) and shown again, it comes back where it was left
     ImGui::End();
     if (appearing)
       if (ImGuiWindow* front = ImGui::FindWindowByName("###fxeditor")) ImGui::BringWindowToDisplayFront(front);
     if (!open) {
+      gMorePos.erase(f);
       gMoreFx.erase(gMoreFx.begin() + static_cast<long>(i));
       continue;
     }
@@ -308,16 +495,38 @@ void drawMoreFx(App& a) {
   }
 }
 
+void closeMoreFx() { gMoreFx.clear(), gMorePos.clear(); }
+
+bool laneClip(const Song& s, const Clip& c) {
+  return c.kind == ClipKind::Automation && c.track >= 0 && static_cast<size_t>(c.track) < s.tracks.size() &&
+         s.tracks[static_cast<size_t>(c.track)].laneSet;
+}
+
 void frame(App& a) {
+  // R04-04: the lower pane shows one editor. When the piano roll, the step sequencer or the mixer
+  // takes it (a click on a MIDI region, a key), the audio editor leaves it: still pinned it went on
+  // drawing as a big floating window over the tracks, and took the next W.
+  {
+    static bool wasPiano = true, wasRack = true, wasMixer = true;
+    const bool opened = (a.showPiano && !wasPiano) || (a.showRack && !wasRack) || (a.showMixer && !wasMixer);
+    wasPiano = a.showPiano, wasRack = a.showRack, wasMixer = a.showMixer;
+    if (opened && active(a) && a.settings.getBool("ui.loupePinned")) {
+      a.settings.set("ui.loupePinned", false);
+      packs::closeAudioEditorSampleWindows();  // (its own window, opened while it followed the selection)
+    }
+  }
   {  // R01-02: the tracks area's tool is the layout's own. The Tracks layout opens with the pointer
      // (the reference's default tool: a click on empty space deselects, regions are drawn with the
      // pencil); the other layouts get back the tool they had.
     static bool was = false;
     static Tool tracksTool = Tool::Select, otherTool = Tool::Draw;
+    // R05-12: the piano roll's left tool is the Pointer too (notes come from the Pencil or the
+    // Command-click tool); the other layouts get theirs back.
+    static Tool tracksPiano = Tool::Select, otherPiano = Tool::Draw;
     const bool on = active(a);
     if (on != was) {
-      if (on) otherTool = a.playlist.tool, a.playlist.tool = tracksTool;
-      else tracksTool = a.playlist.tool, a.playlist.tool = otherTool;
+      if (on) otherTool = a.playlist.tool, a.playlist.tool = tracksTool, otherPiano = a.piano.tool, a.piano.tool = tracksPiano;
+      else tracksTool = a.playlist.tool, a.playlist.tool = otherTool, tracksPiano = a.piano.tool, a.piano.tool = otherPiano;
       was = on;
     }
   }
@@ -325,11 +534,45 @@ void frame(App& a) {
   // pop-ups, a region's menu), as the reference's do; it left them open, so the next click on the
   // menu's own button only closed it. Modal dialogs and typing keep the key.
   if (active(a) && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantTextInput &&
-      ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !ImGui::GetTopMostPopupModal())
+      ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !ImGui::GetTopMostPopupModal()) {
     ImGui::ClosePopupsExceptModals();
+    keys::claimEscape();  // (the key is used: nothing after this closes a window with it)
+  }
+  if (active(a) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
+    // K-297: the area with key focus (the tracks area, the inspector, the lower pane's editor, a
+    // list) carries a quiet accent frame, as the reference marks where the keys go. Only docked
+    // content areas of some size: not the control bar, not dialogs.
+    ImGuiContext& g = *GImGui;
+    // The focused window can be a child inside a docked part (the inspector's body): its frame is
+    // the docked window it sits in (its RootWindow runs on to the dock host, which is no area).
+    const ImGuiWindow* area = g.NavWindow;
+    while (area && !area->DockIsActive && (area->Flags & ImGuiWindowFlags_ChildWindow) && area->ParentWindow) area = area->ParentWindow;
+    if (area && area->DockIsActive && area->Size.x >= 160 && area->Size.y >= 120 && !(area->Flags & ImGuiWindowFlags_NoInputs)) {
+      const ImVec2 p0(std::round(area->Pos.x) + 0.5f, std::round(area->Pos.y) + 0.5f);
+      const ImVec2 p1(std::round(area->Pos.x + area->Size.x) - 0.5f, std::round(area->Pos.y + area->Size.y) - 0.5f);
+      ImGui::GetForegroundDrawList(area->Viewport)->AddRect(p0, p1, theme::withAlpha(pal().accent, 0.55f), 0.0f, 0, 1.0f);
+    }
+  }
+  // (R02-19, R04-07: Escape closing the dialog or tool window in front, Render and About included,
+  // is the shared handler's in every layout: K-297, handleGlobalShortcuts. One Escape closes one window.)
+  {  // R06-08: Stop ends recording and the Record button goes out, as the reference's does
+    static bool wasPlaying = false;
+    const bool playing = a.engine.playing();
+    if (active(a) && wasPlaying && !playing && a.recordArmed) a.recordArmed = false;
+    wasPlaying = playing;
+  }
+  {  // R03-06: a new or opened project closes the old one's render window, as the reference closes its windows
+    static uint64_t epoch = 0;
+    if (active(a) && a.doc.projectEpoch() != epoch && epoch != 0) {
+      a.showExport = false;
+      // R05-08: the Tracks layout has no pattern mode; a new or opened project plays its timeline
+      if (a.engine.mode() == PlayMode::Pattern) a.engine.setMode(PlayMode::Song);
+    }
+    epoch = a.doc.projectEpoch();
+  }
   if (!active(a)) {  // another layout: nothing of this runs (hidden windows come back)
     if (gHidden) show(a);
-    gMoreFx.clear();
+    gMoreFx.clear(), gMorePos.clear();
     gPrevFx = a.fxEditor;
     return;
   }

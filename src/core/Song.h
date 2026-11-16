@@ -386,10 +386,23 @@ struct PlaylistTrack {
   TrackMode mode = TrackMode::Unassigned;
   ObjectId mixer = kNoId;    // Audio: the linked mixer track (Instrument: optional, else the channel's)
   ObjectId channel = kNoId;  // Instrument: the linked rack channel
+  // K-112b (R02-01): the automation lane under the track in the Tracks layout. It is part of the
+  // track, so it moves with it and is saved with the project. laneSet: a parameter was chosen
+  // (laneOwner / laneIndex, a ParamId); laneShown: the lane is open.
+  bool laneShown = false;
+  bool laneSet = false;
+  ObjectId laneOwner = kNoId;
+  uint32_t laneIndex = 0;
+  // K-112B: the track's automation mode in the Tracks layout (AutoMode): Off ignores the track's
+  // automation, Read plays it, Touch writes while a control is moved, Latch writes from the
+  // first move until playback stops, Write writes from the start of playback.
+  uint8_t autoMode = 1;
   bool operator==(const PlaylistTrack& o) const {
     return name == o.name && color == o.color && muted == o.muted && height == o.height && launch == o.launch &&
            pad == o.pad && follow == o.follow && syncStart == o.syncStart && groupSize == o.groupSize && folded == o.folded &&
-           locked == o.locked && flIcon == o.flIcon && icon == o.icon && mode == o.mode && mixer == o.mixer && channel == o.channel;
+           locked == o.locked && flIcon == o.flIcon && icon == o.icon && mode == o.mode && mixer == o.mixer && channel == o.channel &&
+           laneShown == o.laneShown && laneSet == o.laneSet && laneOwner == o.laneOwner && laneIndex == o.laneIndex &&
+           autoMode == o.autoMode;
   }
   bool liveDefaults() const {
     return launch == LaunchGrid::FourBeats && pad == PadMode::Trigger && follow == FollowMode::Loop && syncStart == LaunchGrid::Now;
@@ -398,6 +411,9 @@ struct PlaylistTrack {
 
 struct LiveSettings {
   Tick areaEnd = 0;  // clips starting before this tick are launched by hand (0 = no live area)
+  // N48-07: the Clips view the project was last saved in ("grid", "arrangement"; "" = never saved
+  // from Clips, and then not written). View state: not part of the comparison (no undo step).
+  std::string view;
   bool operator==(const LiveSettings& o) const { return areaEnd == o.areaEnd; }
 };
 
@@ -528,6 +544,9 @@ struct MixerTrack {
   int latencyOffset = 0;      // manual latency in samples, added to the effects' latency for compensation
   bool threaded = true;       // may run on a worker thread (off: always on the audio thread)
   std::string group;          // mixer track group ("" = none)
+  // K-238: a linked group: volume, pan, mute and solo of one member move every member (set on all
+  // members alike, mixops::setGroupLink).
+  bool groupLink = false;
   // Audio input (J-8): the device input channel feeding this track (0-based,
   // -1 = none); stereo takes `input` and `input + 1`. Input monitoring (see
   // InputMonitor) and the disk-record arm.
@@ -560,7 +579,7 @@ struct MixerTrack {
            stereoSep == o.stereoSep && depth == o.depth && focus == o.focus && muted == o.muted && solo == o.solo && invertPolarity == o.invertPolarity &&
            swapLR == o.swapLR && slots == o.slots && sends == o.sends && eqGain == o.eqGain && eqFreq == o.eqFreq &&
            eqQ == o.eqQ && icon == o.icon && disabled == o.disabled && dock == o.dock &&
-           latencyOffset == o.latencyOffset && threaded == o.threaded && group == o.group && input == o.input &&
+           latencyOffset == o.latencyOffset && threaded == o.threaded && group == o.group && groupLink == o.groupLink && input == o.input &&
            inputStereo == o.inputStereo && monitor == o.monitor && armed == o.armed && recPoint == o.recPoint &&
            soloAlone == o.soloAlone && separator == o.separator && locked == o.locked && flIcon == o.flIcon &&
            freeze == o.freeze && hibernate == o.hibernate && room == o.room;
@@ -782,6 +801,10 @@ struct Song {
   LiveSettings live;
   std::vector<Arrangement> arrangements;
   int currentArrangement = 0;
+  // K-112b (R02-04): the cycle area (the locators, a range of ticks; cycleEnd <= cycleStart: none
+  // set) and whether Cycle is on. Part of the project, as the reference saves them.
+  Tick cycleStart = 0, cycleEnd = 0;
+  bool cycleOn = false;
   // J-38: overlapping audio clips on a track crossfade automatically (project
   // setting; core/Fades.h).
   bool autoCrossfades = true;
@@ -864,7 +887,7 @@ struct Song {
            channels == o.channels && patterns == o.patterns && playlist == o.playlist && tracks == o.tracks &&
            mixer == o.mixer && links == o.links && modLinks == o.modLinks && automations == o.automations &&
            markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live &&
-           arrangements == o.arrangements &&
+           arrangements == o.arrangements && cycleStart == o.cycleStart && cycleEnd == o.cycleEnd && cycleOn == o.cycleOn &&
            currentArrangement == o.currentArrangement && panLaw == o.panLaw && stage == o.stage && stageRooms == o.stageRooms && trackReceipt == o.trackReceipt && flExportGridline == o.flExportGridline && flOrigin == o.flOrigin;
   }
   bool operator!=(const Song& o) const { return !(*this == o); }

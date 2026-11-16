@@ -12,9 +12,12 @@
 #include "ScriptUi.h"
 #include "ChordEditorUi.h"
 #include "J31Ui.h"
+#include "LiveLook.h"
+#include "LogicPlugins.h"
 #include "../core/Automation.h"
 #include "../core/Meter.h"
 #include "../packs/PacksUi.h"
+#include "MackieUi.h"
 
 namespace gl {
 
@@ -220,7 +223,13 @@ double App::recordTick(double stamp) const {
   const double sr = engine.sampleRate() > 0 ? engine.sampleRate() : 44100.0;
   const double latency = static_cast<double>(std::max(0, audioBuffer) + std::max(0, engine.outputLatency())) / sr;
   double t = 0;
-  return engine.heardTick(stamp, latency, &t) ? t : engine.position();
+  const double heard = engine.heardTick(stamp, latency, &t) ? t : engine.position();
+  // Checkpoint 48: Clips' Session record places the notes in the playing clip's own ticks.
+  ObjectId sp = kNoId;
+  Tick sl = 0;
+  double so = 0;
+  if (livelook::sessionRecordTarget(*this, sp, sl, so)) return heard - so;
+  return heard;
 }
 
 void App::playedNoteOn(ObjectId channel, int pitch, int velocity, double stamp) {
@@ -256,31 +265,44 @@ void App::processMidi() {
 
   // ---- recording session follows the transport ----
   // K-226: from the count-in on, so notes played in its last beat (pickups) are kept.
-  const bool recNow = recordArmed && engine.playing() && engine.mode() != PlayMode::Live;
+  ObjectId sessPattern = kNoId;  // Checkpoint 48: Clips' Session record (the clip launch mode plays on)
+  Tick sessLength = 0;
+  double sessOrigin = 0;
+  const bool sess = livelook::sessionRecordTarget(*this, sessPattern, sessLength, sessOrigin);
+  const bool recNow = (recordArmed && engine.playing() && engine.mode() != PlayMode::Live) || sess;
   if (recNow && !recorder.active()) {
     RecordOptions o = recOptions;
     Tick g = piano.effGrid > 0 ? piano.effGrid : snapTicks(doc.song(), piano.snap);
     o.grid = std::max<Tick>(1, g);
     const Song& s = doc.song();
     RecordSetup st;
-    // Where it starts: the transport waits there during a count-in; armed while playing, the tick heard now.
-    const double at = engine.countingIn() ? engine.position() : recordTick();
-    st.start = std::max<Tick>(0, static_cast<Tick>(std::llround(std::max(0.0, at))));
-    if (engine.mode() == PlayMode::Song) {
-      st.pickup = MeterMap(s).segAt(st.start).beat;
-      const bool sel = playlist.selEnd > playlist.selStart;
-      if (sel) {
-        st.loopStart = playlist.selStart;
-        st.loopEnd = playlist.selEnd;
-        if (recPunch) {
-          st.punchIn = playlist.selStart;
-          st.punchOut = playlist.selEnd;
+    if (sess) {  // the notes join the clip's (the reference's Session record overdubs), pass after pass
+      o.overdub = true;
+      o.takes = false;
+      st.start = std::max<Tick>(0, static_cast<Tick>(std::llround(std::max(0.0, recordTick()))));
+      st.pickup = std::max<Tick>(1, s.beatTicks());
+      recorder.beginPattern(doc, sessPattern, o, sessLength, st);
+    } else {
+      // Where it starts: the transport waits there during a count-in; armed while playing, the tick heard now.
+      const double at = engine.countingIn() ? engine.position() : recordTick();
+      st.start = std::max<Tick>(0, static_cast<Tick>(std::llround(std::max(0.0, at))));
+      if (engine.mode() == PlayMode::Song) {
+        st.pickup = MeterMap(s).segAt(st.start).beat;
+        const bool sel = playlist.selEnd > playlist.selStart;
+        if (sel) {
+          st.loopStart = playlist.selStart;
+          st.loopEnd = playlist.selEnd;
+          if (recPunch) {
+            st.punchIn = playlist.selStart;
+            st.punchOut = playlist.selEnd;
+          }
         }
+        if (logicplug::active(*this)) st.track = logicplug::focusTrack(*this);  // R05-02: onto the selected track
+        recorder.beginSong(doc, curPattern, o, st);
+      } else if (const Pattern* p = s.pattern(curPattern)) {
+        st.pickup = std::max<Tick>(1, s.patternBarTicks(*p) / std::max(1, p->meterNum > 0 ? p->meterNum : s.timeSigNum));
+        recorder.beginPattern(doc, curPattern, o, std::max<Tick>(1, s.patternContentLength(*p)), st);
       }
-      recorder.beginSong(doc, curPattern, o, st);
-    } else if (const Pattern* p = s.pattern(curPattern)) {
-      st.pickup = std::max<Tick>(1, s.patternBarTicks(*p) / std::max(1, p->meterNum > 0 ? p->meterNum : s.timeSigNum));
-      recorder.beginPattern(doc, curPattern, o, std::max<Tick>(1, s.patternContentLength(*p)), st);
     }
   } else if (recorder.active() && (!recNow || recorder.songMode() != (engine.mode() == PlayMode::Song))) {
     recorder.end(doc, lastRecPos_);  // stopped, disarmed, or the play mode changed (a new take starts next frame)
@@ -371,6 +393,7 @@ void App::processMidi() {
   }
   for (RemoteAction act : midi->pollActions()) runAction(act, true);  // MMC
   controllerScriptsTick(*this);  // J-24: device scripts (load, onIdle, onRefresh)
+  mackieTick(*this);             // K-214: Mackie Control / HUI surfaces
 
   const Song& song = doc.song();
   for (const auto& e : midi->poll()) {
@@ -392,6 +415,31 @@ void App::processMidi() {
     // Controller script of the device (J-24) sees the message first.
     if (controllerScriptMidi(*this, e.port, m)) {
       lastCcTime_ = now;  // its edits merge until the controller pauses
+      continue;
+    }
+    if (mackieMidi(*this, e.port, m)) {  // K-214
+      lastCcTime_ = now;
+      continue;
+    }
+
+    // K-99: an MPE controller (Settings > MIDI): a member channel's pitch bend, pressure and
+    // CC 74 belong to its note (the engine plays them); a recording keeps them in the note's lanes.
+    const MidiRouting& mr = midi->routing;
+    auto routedChannel = [&](int midiCh) {
+      if (mr.byChannel && midiCh != mr.omniChannel && mr.route[midiCh] >= 0 && mr.route[midiCh] < static_cast<int>(song.channels.size()))
+        return song.channels[static_cast<size_t>(mr.route[midiCh])].id;
+      return selChannel;
+    };
+    auto mpeFeed = [&](double stamp) {
+      MpeInput::Change ch[4];
+      mpeIn.bendRange = mr.mpeBendRange;
+      const int k = mpeIn.feed(m.status, m.d1, m.d2, ch, 4);
+      if (recorder.active())
+        for (int i = 0; i < k; ++i)
+          recorder.expression(routedChannel(ch[i].midiChannel), j31::incomingPitch(*this, ch[i].key), ch[i].dim, ch[i].value, recordTick(stamp));
+    };
+    if (mr.mpe && m.channel() != 0 && (kind == 0xE0 || kind == 0xD0 || (kind == 0xB0 && m.d1 == 74))) {
+      mpeFeed(e.time);
       continue;
     }
 
@@ -505,10 +553,13 @@ void App::processMidi() {
         ch = song.channels[static_cast<size_t>(r.route[m.channel()])].id;
       if (kind == 0xB0) {  // the pedal as played (the notes keep the lengths the keys were held)
         if (recorder.active()) recorder.pedal(ch, m.d2 >= 64, recordTick(e.time));
-      } else if (m.noteOn())
+      } else if (m.noteOn()) {
         playedNoteOn(ch, j31::incomingPitch(*this, m.d1), m.d2, e.time);  // J-31: snap incoming MIDI to the scale
-      else if (!r.ignoreNoteOff)
+        if (r.mpe && m.channel() != 0) mpeFeed(e.time);  // K-99: the note starts with its channel's values
+      } else if (!r.ignoreNoteOff) {
         playedNoteOff(ch, j31::incomingPitch(*this, m.d1), e.time);
+        if (r.mpe && m.channel() != 0) mpeFeed(e.time);
+      }
     }
   }
   // A controller gesture ends after a short pause: one undo step per move.
@@ -530,6 +581,12 @@ void App::followRecording() {
       recorder.setSongLoop(playlist.selStart, playlist.selEnd);
     else
       recorder.setSongLoop(0, 0);
+  } else if (Tick sl = 0; [&] {
+               ObjectId sp = kNoId;
+               double so = 0;
+               return livelook::sessionRecordTarget(*this, sp, sl, so);
+             }()) {
+    recorder.setLoopLength(sl);  // Clips' Session record: the loop is the clip's length (it grows)
   } else if (const Pattern* p = s.pattern(recorder.pattern())) {
     recorder.setLoopLength(std::max<Tick>(1, s.patternContentLength(*p)));  // the loop follows the pattern
   }

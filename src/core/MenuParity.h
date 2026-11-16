@@ -187,6 +187,11 @@ int deleteLayerChildren(Document& d, ObjectId layer);
 // song start (the arrangement moves right to make room). Returns the area
 // length in ticks (0: nothing to prepare).
 Tick prepareLiveArea(Document& d);
+// K-112c (C44-07): the Clips layout's way to fill its clip grid: scene i (a span of `sceneTicks`
+// in the live area) holds each track's i-th distinct clip, one clip to a slot whatever its length;
+// the live area becomes whole scenes past every placed clip's end (the arrangement after it moves
+// right by as much, so it plays as before). One undo step. Returns how much the area grew (0: nothing).
+Tick prepareClipGrid(Document& d, Tick sceneTicks);
 // K-112c (round 43): grows the live area to end at `end` at least (a clip dropped into an empty
 // row of the clip grid): the song after it (its clips and markers) moves right by as much, so
 // nothing of the arrangement becomes launched by hand. One undo step. Returns false when the area

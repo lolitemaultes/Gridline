@@ -279,6 +279,7 @@ class Vst2Backend final : public Backend {
         e.data[2] = static_cast<uint8_t>(std::clamp(static_cast<int>(std::lround(n.velocity * 127)), 0, 127));
         break;
       case NoteEvent::Tuning:
+      case NoteEvent::Expression:
         return;  // no per-note tuning in this format
       case NoteEvent::Midi:
         std::memcpy(e.data, n.midi, 3);

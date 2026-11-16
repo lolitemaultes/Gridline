@@ -287,6 +287,21 @@ class Backend final : public host::Backend {
         e.noteExpressionValue.noteId = n.noteId;
         e.noteExpressionValue.value = std::clamp(0.5 + n.tuning / 240.0, 0.0, 1.0);
         break;
+      case host::NoteEvent::Expression:  // K-99: pressure as the note's poly pressure, timbre as its brightness
+        if (n.expr == host::NoteEvent::ExprPressure) {
+          e.type = sv::Event::kPolyPressureEvent;
+          e.polyPressure.channel = n.channel;
+          e.polyPressure.pitch = n.key;
+          e.polyPressure.pressure = std::clamp(n.value, 0.0f, 1.0f);
+          e.polyPressure.noteId = n.noteId;
+          break;
+        }
+        if (!p_->supportsExpression(sv::kBrightnessTypeID)) return;
+        e.type = sv::Event::kNoteExpressionValueEvent;
+        e.noteExpressionValue.typeId = sv::kBrightnessTypeID;
+        e.noteExpressionValue.noteId = n.noteId;
+        e.noteExpressionValue.value = std::clamp(static_cast<double>(n.value), 0.0, 1.0);
+        break;
       case host::NoteEvent::Midi: {
         const int st = n.midi[0] & 0xF0, ch = n.midi[0] & 0x0F;
         if (st == 0xA0) {  // polyphonic pressure: an event

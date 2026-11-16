@@ -175,6 +175,15 @@ void nextMagnets(const std::vector<double>& values);
 // The magnets set for the next knob, normalised for `d` (empty when none); knob
 // drawers call this before dragParamItem to draw the ticks.
 const std::vector<double>& pendingMagnets(const ParamDesc& d);
+// K-230: how the next knob for `pid` travels and where its magnets sit: the pending magnets
+// (above), else a delay time knob's note values or round milliseconds with its even travel
+// (core/TimeKnob.h). Knob drawers take it before dragParamItem and draw the pointer at pos().
+struct KnobTravel {
+  std::vector<double> magnets;  // knob positions 0..1
+  double offset = 0;            // > 0: log travel (timeknob::Spec::offset)
+  double pos(const ParamDesc& d, double v) const;
+};
+KnobTravel knobTravel(App& a, ParamId pid, const ParamDesc& d);
 // Ticks on a knob ring at normalised positions `at` (sweep a0 .. a1, screen radians).
 void magnetTicks(ImDrawList* dl, ImVec2 c, float r, float a0, float a1, const std::vector<double>& at, ImU32 col, double current);
 // The same along a slider track from `lo` (value 0) to `hi` (value 1): short marks across

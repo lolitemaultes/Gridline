@@ -446,6 +446,17 @@ void testResampleAndFormats() {
   err.clear();
   expect(!writeAudioFile((fs::path(scratch) / "x.mp3").string(), tone, 44100, fo, &err) && err.find("encoder") != std::string::npos,
          "MP3 without an encoder program fails with a clear message");
+  // K-109: Opus, through ffmpeg (libopus) or opusenc.
+  setEncoderOverride("opusenc", "");
+  expect(std::string(exportFormatExt(ExportFormat::Opus)) == ".opus" && exportFormatExternal(ExportFormat::Opus) &&
+             std::string(exportFormatName(ExportFormat::Opus)) == "Opus",
+         "Opus: .opus, made by an encoder program");
+  fo.format = ExportFormat::Opus;
+  err.clear();
+  expect(!writeAudioFile((fs::path(scratch) / "x.opus").string(), tone, 44100, fo, &err) && err.find("encoder") != std::string::npos &&
+             encoderStatus(ExportFormat::Opus).find("ffmpeg or opusenc") != std::string::npos,
+         "Opus without an encoder program fails with a clear message naming ffmpeg or opusenc");
+  fo.format = ExportFormat::Mp3;
   setEncoderOverride("ffmpeg", "/usr/local/bin/ffmpeg");
   setEncoderOverride("lame", "/usr/local/bin/lame");
   if (std::error_code ec; fs::is_regular_file("/usr/local/bin/ffmpeg", ec)) {
@@ -460,6 +471,13 @@ void testResampleAndFormats() {
     SamplePtr og = okOgg ? loadSample(ogg) : nullptr;
     expect(m3 && std::fabs(m3->seconds() - 1.0) < 0.1 && og && std::fabs(og->seconds() - 1.0) < 0.1,
            "MP3 / Ogg through ffmpeg decode back to the same length");
+    const std::string opus = (fs::path(scratch) / "t.opus").string();
+    fo.format = ExportFormat::Opus;
+    std::string oerr;
+    const bool okOpus = writeAudioFile(opus, longer, 44100, fo, &oerr);
+    std::error_code oec;
+    if (okOpus) expect(fs::file_size(opus, oec) > 1000, "Opus through ffmpeg writes a file");
+    else expect(oerr.find("ffmpeg failed") == 0, ("Opus: an ffmpeg without libopus reports its failure (" + oerr + ")").c_str());
   } else {
     expect(true, "ffmpeg not installed: external encoder round trip skipped");
   }
@@ -962,6 +980,28 @@ void testExportJob() {
          "export job: playlist markers become WAV cue points at their frame");
   std::string sb(bytes.begin(), bytes.end());
   expect(sb.find("acid") != std::string::npos, "export job: tempo information saved");
+  // K-109: a loop export (the tail wraps to the start) also carries the sampler loop over the
+  // whole file ('smpl'); a cut tail does not.
+  expect(sb.find("smpl") == std::string::npos, "export job: a cut tail has no sampler loop");
+  {
+    ExportSettings lp = es;
+    lp.splitMixer = false;
+    lp.midi = false;
+    lp.formats = {ExportFormat::Wav};
+    lp.render.tail = TailMode::Wrap;
+    lp.folder = (fs::path(scratch) / "job_loop").string();
+    const ExportOutcome lo = runExport(s, lp, [](double, const std::string&) {});
+    const auto lb = readBytes((fs::path(lp.folder) / "Job Song.wav").string());
+    const std::string ls(lb.begin(), lb.end());
+    auto le32 = [&](size_t at) {
+      return at + 4 <= lb.size() ? static_cast<uint32_t>(lb[at] | lb[at + 1] << 8 | lb[at + 2] << 16 | static_cast<uint32_t>(lb[at + 3]) << 24) : ~0u;
+    };
+    const size_t sm = ls.find("smpl"), da = ls.find("data");
+    const uint32_t frames = da == std::string::npos ? 0 : le32(da + 4) / 4;  // 16-bit stereo
+    const uint32_t loops = sm == std::string::npos ? 0 : le32(sm + 8 + 28), start = le32(sm + 8 + 36 + 8), end = le32(sm + 8 + 36 + 12);
+    expect(lo.errors.empty() && sm != std::string::npos && loops == 1 && start == 0 && frames > 0 && end + 1 == frames,
+           "export job: a loop export carries a sampler loop over the whole file");
+  }
   // Mono + normalize.
   ExportSettings m = es;
   m.splitMixer = false;

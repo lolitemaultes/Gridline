@@ -6,7 +6,7 @@ src/app/Theme.cpp	23	the palette definition: the stock dark and light role colou
 # Brand assets (logo guide: Paper on 950, fixed by the brand, not the theme)
 src/app/Dialogs.cpp	4	About window: brand lockup and its fixed Paper / grey text on the brand black
 src/app/Splash.cpp	1	splash screen: brand lockup in Paper on the brand black
-src/app/TrackerFrame.cpp	1	Tracker wordmark strip: the fixed brand orange with its light top edge, whatever the theme
+src/app/TrackerFrame.cpp	5	Tracker wordmark strip: the fixed brand orange with its light top edge, whatever the theme; the About screen's fixed dark starfield (its version and credit inks); valueInk(), the value colour stepped toward black or white until it reads on the field
 # Pointer
 src/app/main.cpp	1	the drawn mouse pointer: a white arrow in a black outline, readable on every face
 # Opt-in control styles (Settings > Theme > Controls): fixed material designs; the default style (Slate) is built from the theme

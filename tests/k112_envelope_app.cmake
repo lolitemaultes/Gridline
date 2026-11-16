@@ -66,7 +66,7 @@ function(alane out frame prefix)
 endfunction()
 
 # ---- A. Live: the envelope over the whole grid
-run(live live 24 "20 alane\n")
+run(live live 24 "4 clipsel 39\n20 alane\n")  # (C44-26: Clips' clip band shows the selected clip only: clip 39 plays the current pattern)
 set(last_out "${live_out}")
 alane("${live_out}" 20 L)
 check("Live: the demo envelope has points (${L_points})" L_points GREATER 2)
@@ -77,7 +77,7 @@ check("Live: ... and the draw-curve chip sits in that band under the grid, not i
 math(EXPR xa "${L_x0} + (${L_x1} - ${L_x0}) / 8")
 math(EXPR xb "${L_x0} + (${L_x1} - ${L_x0}) / 3")
 math(EXPR ya "${L_y0} + (${L_y1} - ${L_y0}) / 5")
-run(draw live 44 "20 alane\n22 pianotool draw\n24 move ${xa} ${ya}\n26 down 0\n28 move ${xb} ${ya}\n30 move ${xb} ${ya}\n32 up 0\n36 alane\n")
+run(draw live 44 "4 clipsel 39\n20 alane\n22 pianotool draw\n24 move ${xa} ${ya}\n26 down 0\n28 move ${xb} ${ya}\n30 move ${xb} ${ya}\n32 up 0\n36 alane\n")
 set(last_out "${draw_out}")
 alane("${draw_out}" 20 D0)
 alane("${draw_out}" 36 D1)

@@ -149,6 +149,9 @@ class Hub {
     int attempts = 0;           // fresh connection attempts since the reply
     bool codeChanged = false;   // this computer's public address changed: the code was renewed
     bool publicAddress = true;  // the code offers a public way in (else: same network only)
+    // GitHub #42: their reply code offers a public way in (else their computer found no public
+    // address, so only the same network can work, whatever this side does)
+    bool peerPublicAddress = true;
   };
   // `readmit`: an admin's re-invite of someone who was removed (only such an invite lets them back).
   std::string createInvite(int minutes, SiteId readmit = 0);

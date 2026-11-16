@@ -916,6 +916,7 @@ bool Hub::acceptReply(const std::string& code, std::string* err) {
     lr.descDirty = true;
   }
   r.view.replyUsed = true;
+  r.view.peerPublicAddress = !fabric_->real() || descriptionHasPublicPath(ri.ice);
   r.replyAt = now_;
   r.attemptsAtReply = lr.restarts;
   debugf("invite %s: reply code used (%s)", ri.inviteId.substr(0, 8).c_str(), again ? "again: fresh attempt" : "their candidates");

@@ -21,6 +21,7 @@
 #include "../core/LayoutHomes.h"
 #include "../core/MenuOpsExtra.h"
 #include "../core/MixerOps.h"
+#include "../core/Automation.h"
 #include "../core/Params.h"
 #include "../core/PluginInfo.h"
 #include "../core/PluginParams.h"
@@ -132,7 +133,7 @@ std::string tickText(App& a, Tick t) {
     const MeterMap mm(s);
     const MeterMap::Bbt b = mm.toBbt(std::max<Tick>(0, t));
     const Tick div = std::max<Tick>(1, static_cast<Tick>(s.ppq) / 4);
-    char buf[64];
+    char buf[96];  // room for three 64-bit fields, an int and spaces (GCC format-truncation)
     std::snprintf(buf, sizeof buf, "%lld %d %lld %lld", static_cast<long long>(b.bar + 1), b.beat + 1, static_cast<long long>(b.tick / div + 1),
                   static_cast<long long>(b.tick % div + 1));
     return buf;
@@ -356,6 +357,74 @@ float centredX(ImFont* f, float fs, const char* text, float x, float room) {
   return tw < room ? std::round(x + (room - tw) * 0.5f) : x;
 }
 
+// R05-14: the Tracks layout's Sends and Output slots open a list of where the track can go, as the
+// reference's: Sends add a send to a bus; Output moves the track's main route (one undo step).
+void routeMenu(App& a, const char* popup, const MixerTrack& t, bool output) {
+  if (!ImGui::BeginPopup(popup)) return;
+  const Song& s = a.doc.song();
+  ObjectId cur = kNoId;
+  for (const Send& sd : t.sends)
+    if (!sd.sidechain && cur == kNoId) cur = sd.to;
+  ImGui::TextDisabled("%s", i18n::tr(output ? "Output" : "Send to bus"));
+  for (size_t k = 0; k < s.mixer.size(); ++k) {
+    const MixerTrack& m = s.mixer[k];
+    if (m.id == t.id || (!output && k == 0)) continue;
+    // R06-02: every bus, used or not, as the reference lists them: a mixer track no channel plays
+    // into directly (a channel's own strip is not a bus), that the track can reach without a loop.
+    bool bus = k == 0;
+    if (!bus) {
+      bool fed = false;
+      for (const Channel& c : s.channels) fed = fed || c.mixerTrack == m.id;
+      fed = fed || trackmodes::audioTrackOf(s, m.id) >= 0;  // an audio track's own strip is not a bus either
+      bus = !fed && (canRoute(s, t.id, m.id) || std::any_of(t.sends.begin(), t.sends.end(), [&](const Send& sd) { return sd.to == m.id; }));
+    }
+    if (!bus) continue;
+    bool has = false;
+    for (const Send& sd : t.sends) has = has || (sd.to == m.id && !sd.sidechain);
+    // A send is any route but the main one (the output): the output's bus is not ticked as a send.
+    const bool isOut = m.id == cur || (cur == kNoId && k == 0);
+    const bool on = output ? isOut : has && !isOut;
+    if (ImGui::MenuItem(mixerTrackName(s, k).c_str(), nullptr, on, output || (!has && !isOut))) {
+      if (output) {
+        float lvl = 1.0f;
+        for (const Send& sd : t.sends)
+          if (sd.to == cur) lvl = sd.level;
+        const ObjectId from = t.id, to = m.id, old = cur;
+        a.doc.beginGroup("track output");
+        if (old != kNoId && old != to) a.doc.setSend(from, old, 0.0f);
+        if (!(k == 0 && old == kNoId)) a.doc.setSend(from, to, lvl);
+        a.doc.endGroup(false);
+      } else {
+        a.doc.setSend(t.id, m.id, 0.5f);
+      }
+      break;  // the song changed: stop walking it
+    }
+  }
+  // R06-02: a new bus, as choosing an unused bus in the reference creates its aux strip.
+  ImGui::Separator();
+  if (ImGui::MenuItem(i18n::tr("New bus"))) {
+    const ObjectId from = t.id;
+    a.later([&a, from, output] {
+      a.doc.beginGroup(output ? "track output" : "add send");
+      if (const ObjectId bus = a.doc.addMixerTrack(); bus != kNoId) {
+        if (output) {
+          ObjectId old = kNoId;
+          float lvl = 1.0f;
+          if (const MixerTrack* f = a.doc.song().mixerTrack(from))
+            for (const Send& sd : f->sends)
+              if (!sd.sidechain && old == kNoId) old = sd.to, lvl = sd.level;
+          if (old != kNoId) a.doc.setSend(from, old, 0.0f);
+          a.doc.setSend(from, bus, lvl);
+        } else {
+          a.doc.setSend(from, bus, 0.5f);
+        }
+      }
+      a.doc.endGroup(false);
+    });
+  }
+  ImGui::EndPopup();
+}
+
 bool stripSlot(const char* id, const std::string& name, bool lit, bool empty, float w, const char* hint, ImU32 fill = 0) {
   App& a = app();
   const auto& P = pal();
@@ -420,6 +489,7 @@ void fxPill(App& a, const MixerTrack& t, int k, float w) {
   const ImVec2 p = ImGui::GetCursorScreenPos();
   const float h = 17;
   const bool click = ImGui::InvisibleButton("##fx", ImVec2(w, h));
+  if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##slotmenu");  // R03-07: a right-click gives the slot's menu
   const bool hov = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
   const bool inBypass = hov && io.MousePos.x < p.x + 15, inMenu = hov && io.MousePos.x > p.x + w - 13;
   const ParamId en = slotEnableParam(t.id, k);
@@ -697,10 +767,9 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
         ImGui::Dummy(ImVec2(w, 17));
         gap();
       }
-      if (stripSlot("##sends", i18n::tr("Sends"), false, true, w, "The track's sends: shows it in the mixer")) {
-        a.selMixer = t.id;
-        a.showMixer = true;
-      }
+      if (stripSlot("##sends", i18n::tr("Sends"), false, true, w, "The track's sends: click to send to a bus") || ImGui::IsItemClicked(ImGuiMouseButton_Right))
+        ImGui::OpenPopup("##sendsmenu");
+      routeMenu(a, "##sendsmenu", t, false);
       gap();
     } else if (!(hide & HideSends)) {
       mark(RowSends);
@@ -716,7 +785,11 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
     for (const Send& sd : t.sends)
       if (!sd.sidechain && !out) out = s.mixerTrack(sd.to);
     const std::string outName = index == 0 ? std::string(i18n::tr("Device")) : out ? mixerTrackName(s, static_cast<size_t>(std::max(0, s.mixerIndex(out->id)))) : std::string(i18n::tr("Master"));
-    if (stripSlot("##out", outName, false, false, w, "Where the track goes: shows it in the mixer")) {
+    if (logicplug::active(a) && index > 0) {  // R05-14
+      if (stripSlot("##out", outName, false, false, w, "Where the track goes: click to choose") || ImGui::IsItemClicked(ImGuiMouseButton_Right))
+        ImGui::OpenPopup("##outmenu");
+      routeMenu(a, "##outmenu", t, true);
+    } else if (stripSlot("##out", outName, false, false, w, "Where the track goes: shows it in the mixer")) {
       a.selMixer = t.id;
       a.showMixer = true;
     }
@@ -741,7 +814,7 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
         ImGui::Separator();
         if (ImGui::MenuItem(i18n::tr("Create group...")))
           menus::openPrompt("Group name", mixops::newGroupName(s), [&a, id](const std::string& n) {
-            if (!n.empty()) mixops::setGroup(a.doc, {id}, n);
+            if (!n.empty()) mixops::createGroup(a.doc, {id}, n, true);  // K-238: a new group starts linked
           });
         ImGui::EndPopup();
       }
@@ -779,7 +852,8 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
     hp = std::max(hp, std::max(r.peakL, r.peakR));
     const float bw = std::floor((size.x - 12) * 0.5f), bh = dbH;
     const ImVec2 b0(p.x + 2, y), b1(p.x + 2 + bw + 4, y);
-    const std::string db = dbText(t.volume), pk = hp > 0.00001f ? dbText(hp) : std::string("-inf");
+    // R04-03: the fader in dB by the mixer's own law (the lane and the engine read it so).
+    const std::string db = dbText(static_cast<float>(dsp::faderGain(t.volume, 0.8))), pk = hp > 0.00001f ? dbText(hp) : std::string("-inf");
     for (int k = 0; k < 2; ++k) {
       const ImVec2 q = k == 0 ? b0 : b1;
       dl->AddRectFilled(q, ImVec2(q.x + bw, q.y + bh), P.field, 3.0f);
@@ -813,7 +887,22 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
       }
   ImGui::SetCursorScreenPos(ImVec2(x0, y));
   ui::setFaderTicks(tickN, tickCount);
+  bool readLocked = false;  // R05-04: a track in Read with a curve on this fader: the curve moves it, a drag can't
+  if (logicplug::active(a) && a.engine.playing()) {
+    bool curve = false;  // a volume curve on this strip
+    for (const AutomationLane& l : automationLanes(s)) curve = curve || l.targets(volPid.owner, volPid.index);
+    for (int tr = 0; curve && tr < static_cast<int>(s.tracks.size()) && !readLocked; ++tr) {
+      const PlaylistTrack& pt = s.tracks[static_cast<size_t>(tr)];
+      if (pt.autoMode != 1) continue;
+      if (pt.laneSet) readLocked = pt.laneOwner == volPid.owner && pt.laneIndex == volPid.index;
+      else if (const MixerTrack* st = logicplug::trackStrip(s, tr)) readLocked = st->id == volPid.owner;
+    }
+  }
+  ui::setFaderLocked(readLocked);
+  ui::setFaderDb(logicplug::active(a) ? 0.8 : -1.0);  // R05-15: the Tracks layout's strips read in dB
   ui::ParamFader("##f", volPid, ImVec2(faderW, fh));
+  ui::setFaderDb(-1.0);
+  ui::setFaderLocked(false);
   ui::setFaderTicks(nullptr, 0);
   const float meterX = x0 + faderW + fg + (scaleCol ? scaleW + fg : 0.0f);
   if (scaleCol) {
@@ -859,7 +948,7 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
     if (ImGui::IsItemHovered()) ui::Hint(t.muted ? "Track is muted: click to unmute" : "Track is on: click to mute");
     if (twoBtn) {
       if (btn("##s", "S", t.solo, theme::rgb(theme::role::kStamp), mixStrip ? p.x + size.x - 5 - bw : bx + bw + 4))  // mixer: 4 px from the column's edge
-        a.doc.editMixerTrack(t.id, "solo mixer track", [](MixerTrack& m) { m.solo = !m.solo; });
+        mixops::toggleSolo(a.doc, t.id);  // K-238: a linked group solos together
       if (ImGui::IsItemHovered()) ui::Hint("Solo (keeps tracks routed to and from it)");
     }
     y += bh + 4;
@@ -1028,6 +1117,8 @@ void inspector(App& a) {
         }
     }
     if (!linked && !ch && logicplug::active(a)) ch = logicplug::trackSound(s, track, clip);  // R01-10: a free track's regions' sound
+    // R05-13: a free track's strip is the one its sounds play into (a kit's bus), not its first sound's.
+    if (!linked && logicplug::active(a)) mt = logicplug::trackStrip(s, track);
     if (cardFold("##tfold", std::string(i18n::tr("Track")) + ": " + playlistTrackName(s, static_cast<size_t>(track)), &trackOpen)) {
       cardBegin();
       const TrackMode mode = trackmodes::modeOf(s, track);
@@ -1143,7 +1234,12 @@ void logicLists(App& a) {
     if (ui::IconButton("lgaddmk", ui::Icon::Plus, false, fh, "Add a marker at the song position"))
       ops::addMarker(a.doc, static_cast<Tick>(a.engine.position()), ops::nextMarkerName(s));
     ImGui::EndDisabled();
-    const float segW = std::min(84.0f, std::floor((W - fh * 2 - 16) / 3));
+    float segW = std::min(84.0f, std::floor((W - fh * 2 - 16) / 3));
+    // R02-21: a narrow pane (1024 x 640) still shows "Signature" whole: the segments take the room
+    // the centring kept free before they cut a name.
+    float need = 0;
+    for (const char* tl : tabs) need = std::max(need, std::ceil(ImGui::CalcTextSize(tl).x) + 14);
+    if (segW < need) segW = std::max(segW, std::min(need, std::floor((W - fh - 12) / 3)));
     ImGui::SameLine(0, 0);
     ImGui::SetCursorPos(ImVec2(x0 + std::max(fh + 8, std::floor((W - segW * 3 - 4) * 0.5f)), y0));
     ui::Segmented("##lglists", tabs, 3, &tab, segW, 0, hints);
@@ -1604,6 +1700,9 @@ void notes(App& a) {
   if (!editing) buf = s.info.comments;  // a collaborator's edit shows at once
   if (gNotesDev.focus) ImGui::SetKeyboardFocusHere(), gNotesDev.focus = false;
   if (gNotesDev.blur && editing) ImGui::ClearActiveID(), gNotesDev.blur = false;
+  // K-297 (round 6): Esc ends the typing and keeps the notes. The field put back the text it had
+  // when the typing began (a text field's Esc), so everything typed since the click was lost.
+  if (editing && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::ClearActiveID();
   ImGui::InputTextMultiline("##notes", buf.data(), buf.capacity() + 1, ImGui::GetContentRegionAvail(), ImGuiInputTextFlags_CallbackResize,
                             growString, &buf);
   editing = ImGui::IsItemActive();
@@ -1628,7 +1727,12 @@ const PartDef kParts[] = {
     {"Pattern editor", {960, 560}, trackerview::patternEditor}, {"Order list", {300, 360}, trackerview::orderList},
 };
 // K-112b: built for the Tracks layout so far; the other layouts' menus do not list it yet.
-bool partListed(const char* window) { return std::strcmp(window, "Smart controls") != 0 || layoutui::active() == layout::Preset::Logic; }
+bool partListed(const char* window) {
+  // N45-09: the Tracker's panels are the Tracker's; Clips does not list them.
+  const bool tracker = std::strcmp(window, "Pattern editor") == 0 || std::strcmp(window, "Order list") == 0;
+  if (tracker && layoutui::active() == layout::Preset::Live) return false;
+  return std::strcmp(window, "Smart controls") != 0 || layoutui::active() == layout::Preset::Logic;
+}
 
 }  // namespace
 

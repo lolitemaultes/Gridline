@@ -330,6 +330,11 @@ if(BEFORE AND EXISTS "${BEFORE}")
     endif()
     math(EXPR checked "${checked} + 1")
     string(FIND "${segs}" "\n${label}\n" at)
+    # Add > "Effect on <track>" names the selected mixer track, which follows the rack's selection
+    # since K-234 (the before list has it on Master): any track counts.
+    if(at LESS 0 AND label MATCHES "^Effect on ")
+      string(FIND "${segs}" "\nEffect on " at)
+    endif()
     if(at LESS 0)
       fail("${menu}: \"${label}\" was in this menu before and is gone")
       math(EXPR missing "${missing} + 1")

@@ -22,6 +22,8 @@ GL_DECLARE_PACK_UI(chater)
 namespace gl::packs::edison {
 void drawWindows(App& a);
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
+void closeOwnWindows(App& a);
+void closeStandaloneWindows();
 bool openFileInLoupe(App& a, const std::string& path);
 int armTransportRecording(App& a, ObjectId track);
 bool claimEffectEditor(App& a, const PluginTarget& t);  // K-15
@@ -76,8 +78,11 @@ bool claimMidi(App& a, const std::string& device) { return platter::claimMidi(a,
 bool recordsWithTransport(App& a) { return platter::recordsWithTransport(a); }
 
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel) { return edison::openAudioEditor(a, path, channel); }
+void closeAudioEditorWindows(App& a) { edison::closeOwnWindows(a); }
 
 bool openFileInLoupe(App& a, const std::string& path) { return edison::openFileInLoupe(a, path); }
+
+void closeAudioEditorSampleWindows() { edison::closeStandaloneWindows(); }
 
 bool claimEffectEditor(App& a, const PluginTarget& t) { return edison::claimEffectEditor(a, t); }
 void drawLoupeBody(App& a, float w, float h) { edison::drawPanelBody(a, ImVec2(w, h)); }

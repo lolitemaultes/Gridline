@@ -12,6 +12,9 @@
 namespace gl {
 
 class App;
+namespace script {
+class ControllerHost;
+}
 
 // Folders: shipped <assets>/scripts/<kind>, user <config>/scripts/<kind>.
 std::string userScriptsDir(const App& a, const char* kind);
@@ -36,6 +39,8 @@ void controllerScriptsTick(App& a);
 void shutdownControllerScripts();
 // Status line for a device ("running", the error, …).
 std::string controllerScriptStatus(const std::string& device);
+// K-214: the app's controller host for a device (what scripts drive), for native surfaces.
+std::unique_ptr<script::ControllerHost> makeAppControllerHost(App& a, const std::string& device);
 
 // ---- project scripts (SC-02) ----
 // Tools > Project scripts: scripts that edit the whole project (one undo step per run).

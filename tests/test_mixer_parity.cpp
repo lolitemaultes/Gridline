@@ -505,5 +505,41 @@ int main() {
     expect(songFromJson(songToJson(s), back, &perr) && back == s, "project round trip keeps the new mixer fields");
   }
 
+  // ---- K-238: linked mixer groups ----
+  {
+    Document d(makeEmptySong());
+    const Song& s = d.song();
+    const ObjectId i1 = s.mixer[1].id, i2 = s.mixer[2].id, i3 = s.mixer[3].id, i4 = s.mixer[4].id;
+    d.setParam(mixerParam(i1, MixerParam::Volume), 0.8, false);
+    d.setParam(mixerParam(i2, MixerParam::Volume), 0.4, false);
+    d.setParam(mixerParam(i2, MixerParam::Pan), -0.2, false);
+    expect(mo::createGroup(d, {i1, i2}, "Drums", true) && mo::groupLinked(s, "Drums") && mo::linkedPartners(s, i1) == std::vector<ObjectId>{i2},
+           "a new group starts linked");
+    const size_t before = d.history().size();
+    d.setParam(mixerParam(i1, MixerParam::Volume), 0.4, false);  // -6 dB on the first member
+    expect(std::fabs(s.mixerTrack(i1)->volume - 0.4f) < 1e-6f && std::fabs(s.mixerTrack(i2)->volume - 0.2f) < 1e-6f,
+           "linked volume: the other member moves by the same dB");
+    expect(d.history().size() == before + 1, "linked volume: one undo step");
+    expect(d.lastTouchedParam() == mixerParam(i1, MixerParam::Volume), "linked volume: the moved fader stays the last touched control");
+    d.undo();
+    expect(std::fabs(s.mixerTrack(i1)->volume - 0.8f) < 1e-6f && std::fabs(s.mixerTrack(i2)->volume - 0.4f) < 1e-6f, "linked volume: undo restores both");
+    d.setParam(mixerParam(i1, MixerParam::Pan), 0.3, false);
+    expect(std::fabs(s.mixerTrack(i2)->pan - 0.1f) < 1e-6f, "linked pan: the same move");
+    d.setParam(mixerParam(i2, MixerParam::Mute), 1, false);
+    expect(s.mixerTrack(i1)->muted && s.mixerTrack(i2)->muted && !s.mixerTrack(i3)->muted, "linked mute: the group, nothing else");
+    expect(mo::toggleSolo(d, i1) && s.mixerTrack(i1)->solo && s.mixerTrack(i2)->solo && !s.mixerTrack(i3)->solo, "linked solo");
+    expect(mo::toggleSolo(d, i2) && !s.mixerTrack(i1)->solo && !s.mixerTrack(i2)->solo, "linked unsolo");
+    expect(mo::setGroup(d, {i3}, "Drums") && s.mixerTrack(i3)->groupLink, "a track added to a linked group is linked");
+    expect(mo::setGroup(d, {i3}, "") && !s.mixerTrack(i3)->groupLink, "a track leaving a group is unlinked");
+    expect(mo::setGroupLink(d, "Drums", false) && !mo::groupLinked(s, "Drums"), "unlink the group");
+    d.setParam(mixerParam(i1, MixerParam::Volume), 0.2, false);
+    expect(std::fabs(s.mixerTrack(i2)->volume - 0.4f) < 1e-6f, "unlinked group: members move alone");
+    expect(mo::createGroup(d, {i4}, "Solo", false) && !s.mixerTrack(i4)->groupLink, "a group made unlinked");
+    mo::setGroupLink(d, "Drums", true);
+    Song back;
+    std::string perr;
+    expect(songFromJson(songToJson(s), back, &perr) && back == s && back.mixerTrack(i1)->groupLink, "project round trip keeps the link");
+  }
+
   return finish();
 }

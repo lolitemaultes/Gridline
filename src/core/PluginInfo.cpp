@@ -594,7 +594,7 @@ GL_NOINLINE void addInfo12(std::vector<PluginInfo>& v) {
   p.params[SlCutoff] = lg("Cutoff", "Hz", 20, 20000, 20000);
   p.params[SlReso] = lin("Resonance", "%", 0, 1, 0);
   p.params[SlPan] = lin("Pan", "pan", -1, 1, 0);
-  p.params[SlVelocity] = lin("Velocity to level", "%", 0, 1, 1);
+  p.params[SlVelocity] = lin("Velocity amount", "%", 0, 1, 1);
   p.params[SlChromatic] = lin("Chromatic slice", "", -1, 63, -1);
   p.params[SlMinGap] = lg("Minimum slice gap", "s", 0.01, 0.5, 0.06);
   for (int k = 0; k < kMaxSlices; ++k) {
@@ -613,8 +613,8 @@ GL_NOINLINE void addInfo12(std::vector<PluginInfo>& v) {
     p.params[slParam2(k, SliceCut)] = lin((n + " cut group").c_str(), "", 0, 99, 0);
     p.params[slParam2(k, SliceKey)] = lin((n + " key").c_str(), "", -1, 127, -1);
   }
-  p.params[SlModX] = lin("Modulation X (cutoff)", "%", 0, 1, 0.5);
-  p.params[SlModY] = lin("Modulation Y (resonance)", "%", 0, 1, 0.5);
+  p.params[SlModX] = lin("Modulation X", "%", 0, 1, 0.5);
+  p.params[SlModY] = lin("Modulation Y", "%", 0, 1, 0.5);
   p.params[SlEngine] = ch("Engine", {"Classic", "Regions", "Processed"}, 0);
   p.params[SlMaster] = lin("Master level", "x", 0, 2, 1);
   p.params[SlProcPitch] = lin("Processed pitch", "ct", -1200, 1200, 0);
@@ -634,6 +634,63 @@ GL_NOINLINE void addInfo12(std::vector<PluginInfo>& v) {
   p.params[SlGridHits] = tog("Grid cuts on the hits", 1);
   p.params[SlGridZero] = tog("Grid cuts on zero crossings", 1);
   p.params[SlGridFollow] = tog("Grid follows the detected beats", 1);
+  // K-217: assignable Mod X / Y and velocity (pp::SlDest order).
+  const std::vector<std::string> dests = {"Off", "Level", "Cutoff", "Resonance", "Pitch", "Pan", "Start"};
+  p.params[SlModXDest] = ch("Modulation X target", dests, SlDestCutoff);
+  p.params[SlModXAmt] = lin("Modulation X amount", "%", -1, 1, 1);
+  p.params[SlModYDest] = ch("Modulation Y target", dests, SlDestReso);
+  p.params[SlModYAmt] = lin("Modulation Y amount", "%", -1, 1, 1);
+  p.params[SlVelDest] = ch("Velocity target", dests, SlDestLevel);
+  for (int k = 0; k < kMaxSlices; ++k) {  // K-217: per-slice speed and envelope set
+    std::string n = "Slice " + std::to_string(k + 1);
+    p.params[slParam3(k, SliceSpeed)] = lg((n + " speed").c_str(), "x", 0.25, 4, 1);
+    p.params[slParam3(k, SliceEnvSet)] = ch((n + " envelope set").c_str(), {"Main", "Set 2", "Set 3", "Set 4"}, 0);
+  }
+  // K-217: envelope sets (pp::slVolEnv / slModEnv).
+  p.params[SlVolDecay] = lg("Decay", "s", 0.002, 10, 0.5);
+  p.params[SlVolSustain] = lin("Sustain", "%", 0, 1, 1);
+  for (int e = 0; e < kEnvSets; ++e) {
+    const std::string set = e == 0 ? std::string() : "Set " + std::to_string(e + 1) + " ";
+    if (e > 0) {
+      p.params[slVolEnv(e, SlEnvA)] = lg((set + "attack").c_str(), "s", 0.0005, 0.5, 0.001);
+      p.params[slVolEnv(e, SlEnvD)] = lg((set + "decay").c_str(), "s", 0.002, 10, 0.5);
+      p.params[slVolEnv(e, SlEnvS)] = lin((set + "sustain").c_str(), "%", 0, 1, 1);
+      p.params[slVolEnv(e, SlEnvR)] = lg((set + "release").c_str(), "s", 0.002, 1, 0.01);
+    }
+    static const char* const kinds[SlEnvKinds] = {"pan", "pitch", "filter"};
+    for (int k = 0; k < SlEnvKinds; ++k) {
+      const std::string n = set + kinds[k] + " envelope ";
+      p.params[slModEnv(e, k, SlEnvA)] = lg((n + "attack").c_str(), "s", 0.0005, 5, 0.01);
+      p.params[slModEnv(e, k, SlEnvD)] = lg((n + "decay").c_str(), "s", 0.002, 10, 0.3);
+      p.params[slModEnv(e, k, SlEnvS)] = lin((n + "sustain").c_str(), "%", 0, 1, 0);
+      p.params[slModEnv(e, k, SlEnvR)] = lg((n + "release").c_str(), "s", 0.002, 10, 0.3);
+      p.params[slModEnv(e, k, SlEnvAmt)] = k == SlEnvPan     ? lin((n + "amount").c_str(), "pan", -1, 1, 0)
+                                           : k == SlEnvPitch ? lin((n + "amount").c_str(), "st", -48, 48, 0)
+                                                             : lin((n + "amount").c_str(), "oct", -8, 8, 0);
+    }
+  }
+  // K-217: the LFO.
+  p.params[SlLfoShape] = ch("LFO shape", {"Sine", "Triangle", "Saw up", "Saw down", "Square", "Random"}, 0);
+  p.params[SlLfoRate] = lg("LFO rate", "Hz", 0.05, 30, 4);
+  p.params[SlLfoSync] = ch("LFO tempo sync", {"Off", "4 bars", "2 bars", "1 bar", "1/2", "1/4", "1/8", "1/16", "1/32"}, 0);
+  p.params[SlLfoDelay] = lin("LFO delay", "s", 0, 4, 0);
+  p.params[SlLfoRetrig] = tog("LFO restarts with each note", 1);
+  p.params[SlLfoVol] = lin("LFO to volume", "%", 0, 1, 0);
+  p.params[SlLfoPan] = lin("LFO to pan", "%", 0, 1, 0);
+  p.params[SlLfoPitch] = lin("LFO to pitch", "st", 0, 12, 0);
+  p.params[SlLfoCut] = lin("LFO to cutoff", "oct", 0, 4, 0);
+  // K-217: slice layers; layer B's per-slice parameters copy layer A's (pp::layerPid).
+  p.params[SlLayer] = ch("Slice layer", {"A", "B"}, 0);
+  p.params[SlLayerKey] = lin("Layer switch key", "", -1, 126, -1);
+  auto layerB = [&](int pid) {
+    ParamDesc b = p.params[static_cast<size_t>(pid)];
+    std::string n = b.name;
+    if (!n.empty() && n[0] >= 'A' && n[0] <= 'Z') n[0] = static_cast<char>(n[0] - 'A' + 'a');
+    b.name = "Layer B " + n;
+    p.params[static_cast<size_t>(layerPid(1, pid))] = b;
+  };
+  for (int pid = SlMarkers; pid < SlModX; ++pid) layerB(pid);
+  for (int pid = Slice3Base; pid < Slice3Base + kMaxSlices * SliceFields3; ++pid) layerB(pid);
   p.presets = {{"Transients", {}}, {"Even 16ths, mono", {{SlMode, 3.f}, {SlMono, 1.f}}}, {"Fit to tempo", {{SlFitTempo, 1.f}, {SlMono, 1.f}}},
                {"On the beat, 8ths", {{SlMode, static_cast<float>(SlModeGrid)}, {SlGridDiv, 3.f}, {SlMono, 1.f}}},
                {"Lo-fi", {{SlFilterType, 1.f}, {SlCutoff, 3000.f}, {SlPitch, -2.f}}}};
@@ -685,6 +742,7 @@ GL_NOINLINE void addInfo14(std::vector<PluginInfo>& v) {
   p.params[MoBankLsb] = lin("Bank LSB", "", -1, 127, -1);
   p.params[MoBendRange] = lin("Pitch bend range", "st", 1, 48, 2);
   p.params[MoVelCurve] = ch("Velocity curve", {"Linear", "Soft", "Hard", "Fixed 100"}, 0);
+  p.params[MoMpe] = ch("MPE", {"Off", "On"}, 0);  // K-99
   for (int k = 0; k < kMoKnobs; ++k) {
     std::string n = "Knob " + std::to_string(k + 1);
     p.params[moKnob(k, MoKnobValue)] = lin((n).c_str(), "", 0, 127, 0);
@@ -1614,6 +1672,26 @@ GL_NOINLINE void addInfo41(std::vector<PluginInfo>& v) {
   v.push_back(p);
 }
 
+GL_NOINLINE void addInfo42(std::vector<PluginInfo>& v) {  // K-101
+  using namespace pp;
+  PluginInfo p{"gl.hwinsert", "Hardware Insert", "Misc", PluginKind::Effect, {}, false, {}};
+  p.params.resize(HwCount);
+  std::vector<std::string> sends = {"None"}, rets;
+  for (int k = 0; k < 15; ++k) sends.push_back("Extra pair " + std::to_string(k + 1));
+  for (int k = 0; k < 8; ++k) rets.push_back("In " + std::to_string(2 * k + 1) + "-" + std::to_string(2 * k + 2));
+  p.params[HwSend] = ch("Send", sends, 1);
+  p.params[HwReturn] = ch("Return", rets, 0);
+  p.params[HwReturnMono] = tog("Return mono", 0);
+  p.params[HwSendGain] = lin("Send level", "dB", -24, 24, 0);
+  p.params[HwReturnGain] = lin("Return level", "dB", -24, 24, 0);
+  p.params[HwMix] = lin("Mix", "%", 0, 1, 1);
+  p.params[HwLatency] = lin("Round trip", "", 0, 96000, 0);
+  p.params[HwOffset] = lin("Round trip offset", "", -2000, 2000, 0);
+  p.presets = {{"Outboard insert", {}}, {"Parallel (half dry)", {{HwMix, 0.5f}}}, {"Instrument return", {{HwSend, 0.f}}}};
+  p.editorWidth = 558;
+  v.push_back(p);
+}
+
 std::vector<PluginInfo> build() {
   std::vector<PluginInfo> v;
   addInfo1(v);
@@ -1658,6 +1736,7 @@ std::vector<PluginInfo> build() {
   addInfo39(v);
   addInfo40(v);
   addInfo41(v);
+  addInfo42(v);
   return v;
 }
 

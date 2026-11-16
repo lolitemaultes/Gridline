@@ -2,6 +2,7 @@
 #include "TrackModes.h"
 #include <algorithm>
 #include <functional>
+#include <set>
 #include "Document.h"
 #include "PluginInfo.h"
 #include "PluginParams.h"
@@ -150,10 +151,40 @@ std::vector<ObjectId> playedMixers(const Song& s, int track) {
   return out;
 }
 
+ObjectId outputOf(const MixerTrack& m) {
+  for (const Send& sd : m.sends)
+    if (!sd.sidechain && !sd.stageRoom) return sd.to;
+  return kNoId;
+}
+
+std::vector<size_t> returnTracks(const Song& s) {
+  std::set<ObjectId> aux;
+  for (const MixerTrack& m : s.mixer) {
+    const ObjectId out = outputOf(m);
+    for (const Send& sd : m.sends)
+      if (!sd.sidechain && !sd.stageRoom && sd.to != out) aux.insert(sd.to);
+  }
+  std::vector<size_t> rows;
+  for (size_t j = 1; j < s.mixer.size(); ++j)
+    if (aux.count(s.mixer[j].id)) rows.push_back(j);
+  return rows;
+}
+
 const MixerTrack* playedMixer(const Song& s, int track) {
-  if (const MixerTrack* m = linkedMixer(s, track)) return m;
+  // An instrument on Main has no strip of its own (its fader would be Main's).
+  if (const MixerTrack* m = linkedMixer(s, track)) return m->id == s.masterId() ? nullptr : m;
   const std::vector<ObjectId> v = playedMixers(s, track);
-  return v.size() == 1 && v[0] != s.masterId() ? s.mixerTrack(v[0]) : nullptr;
+  if (v.size() == 1) return v[0] != s.masterId() ? s.mixerTrack(v[0]) : nullptr;
+  if (v.empty()) return nullptr;
+  // Several: the bus they all route into, when there is one (N45-05).
+  ObjectId bus = kNoId;
+  for (ObjectId id : v) {
+    const MixerTrack* m = s.mixerTrack(id);
+    const ObjectId out = m && id != s.masterId() ? outputOf(*m) : kNoId;
+    if (out == kNoId || out == s.masterId() || (bus != kNoId && out != bus)) return nullptr;
+    bus = out;
+  }
+  return s.mixerTrack(bus);
 }
 
 const Channel* linkedChannel(const Song& s, int track) {
@@ -297,6 +328,28 @@ void makeClipsStarterTracks(Song& s) {
               from.sends.push_back(sd);
             }
   }
+}
+
+ObjectId addReturnTrack(Song& s, const std::string& name) {
+  const ObjectId id = freeMixer(s);
+  MixerTrack* m = nullptr;
+  for (MixerTrack& x : s.mixer)
+    if (x.id == id) m = &x;
+  if (!m) return kNoId;
+  m->name = name;
+  m->color = 0xC79A6A;
+  std::set<ObjectId> from;  // every shown track's mixer track (its own, or its instrument's)
+  const int n = usedTrackCount(s);
+  for (int i = 0; i < n; ++i)
+    if (const MixerTrack* pm = playedMixer(s, i); pm && pm->id != s.masterId() && pm->id != id) from.insert(pm->id);
+  for (MixerTrack& x : s.mixer)
+    if (from.count(x.id)) {
+      Send sd;
+      sd.to = id;
+      sd.level = 0.0f;
+      x.sends.push_back(sd);
+    }
+  return id;
 }
 
 bool clipAllowed(const Song& s, ClipKind kind, int track) {
@@ -497,20 +550,77 @@ int addUsedTrack(Document& d, int count) {
 }
 
 namespace {
-int addNamedTrack(Document& d, bool audio) {
+// N45-08: the track colours new Clips tracks take in turn (the starter tracks are the first four).
+constexpr Rgb kTrackCycle[] = {0x4FA8B8, 0x58B394, 0x86B04C, 0xC8B23E, 0xDE9A45, 0xD97862, 0xD4729A, 0xAE82C8,
+                               0x8589D4, 0x5E97D2, 0x6CB8D6, 0x9DC06A, 0xCDAA72, 0x9AA3AE};
+constexpr int kTrackCycleN = static_cast<int>(sizeof kTrackCycle / sizeof kTrackCycle[0]);
+
+// A name the Clips layout gave a track by its place ("3 Audio", "12 MIDI"): its number, else 0.
+int placeNumber(const std::string& n, std::string* kind) {
+  size_t i = 0;
+  while (i < n.size() && n[i] >= '0' && n[i] <= '9') ++i;
+  if (i == 0 || i > 3 || i >= n.size() || n[i] != ' ') return 0;
+  const std::string rest = n.substr(i + 1);
+  if (rest != "Audio" && rest != "MIDI") return 0;
+  if (kind) *kind = rest;
+  return std::stoi(n.substr(0, i));
+}
+
+// A new empty track at `at`, the tracks from there moving down one (their clips with them, a group
+// around it growing), as the arrangement's Insert track. The tracks named by their place are renamed
+// for their new place, as the reference numbers its unnamed tracks. False when the list is full.
+bool insertTrackAt(Song& s, int at) {
+  if (at < 0 || at > static_cast<int>(s.tracks.size())) return false;
+  if (static_cast<int>(s.tracks.size()) >= kMaxPlaylistTracks) {
+    const int last = static_cast<int>(s.tracks.size()) - 1;
+    const PlaylistTrack& lt = s.tracks.back();
+    if (last < at || lt.mode != TrackMode::Unassigned || !lt.name.empty() || trackHasClips(s, last)) return false;
+    s.tracks.pop_back();  // an unused track at the very end makes the room
+  }
+  for (int g = 0; g < at; ++g)
+    if (const int gs = s.tracks[static_cast<size_t>(g)].groupSize; gs > 0 && at <= g + gs) ++s.tracks[static_cast<size_t>(g)].groupSize;
+  s.tracks.insert(s.tracks.begin() + at, PlaylistTrack{});
+  for (Clip& c : s.playlist)
+    if (c.track >= at) ++c.track;
+  for (int i = at + 1; i < static_cast<int>(s.tracks.size()); ++i) {
+    std::string kind;
+    PlaylistTrack& tr = s.tracks[static_cast<size_t>(i)];
+    if (placeNumber(tr.name, &kind) != i) continue;
+    const std::string was = tr.name;
+    tr.name = std::to_string(i + 1) + " " + kind;
+    // N47-09: its mixer track and instrument named after it follow (they are one thing in Clips; Studio,
+    // Smooth and the routing lists show their names).
+    for (MixerTrack& m : s.mixer)
+      if (m.id == tr.mixer && m.name == was) m.name = tr.name;
+    for (Channel& c : s.channels)
+      if (c.id == tr.channel && c.name == was) c.name = tr.name;
+  }
+  return true;
+}
+
+int addNamedTrack(Document& d, bool audio, int after) {
   int t = -1;
   runEdit(d, audio ? "new audio track" : "new MIDI track", [&](Song& s) {
-    t = usedTrackCount(s);
-    // A shown empty track (a new set's fourth, say) is taken first: it is the next free one in view.
-    for (int k = 0; k < t; ++k)
-      if (k >= static_cast<int>(s.tracks.size()) || (s.tracks[static_cast<size_t>(k)].mode == TrackMode::Unassigned && s.tracks[static_cast<size_t>(k)].name.empty() && !trackHasClips(s, k))) {
-        t = k;
-        break;
-      }
-    if (t >= kMaxPlaylistTracks) return t = -1, false;
-    makeRoom(s, t);
+    const int used = usedTrackCount(s);
+    if (after >= 0 && after < used - 1) {
+      // N45-08: right after the selected track, as the reference.
+      t = after + 1;
+      if (!insertTrackAt(s, t)) return t = -1, false;
+    } else {
+      t = used;
+      // A shown empty track (a new set's fourth, say) is taken first: it is the next free one in view.
+      for (int k = 0; k < t; ++k)
+        if (k >= static_cast<int>(s.tracks.size()) || (s.tracks[static_cast<size_t>(k)].mode == TrackMode::Unassigned && s.tracks[static_cast<size_t>(k)].name.empty() && !trackHasClips(s, k))) {
+          t = k;
+          break;
+        }
+      if (t >= kMaxPlaylistTracks) return t = -1, false;
+      makeRoom(s, t);
+    }
     PlaylistTrack& tr = s.tracks[static_cast<size_t>(t)];
     tr.name = std::to_string(t + 1) + (audio ? " Audio" : " MIDI");
+    // The next colour of the cycle (counted over the tracks in use, so every peer picks the same).
+    tr.color = kTrackCycle[(usedTrackCount(s) - 1 + kTrackCycleN) % kTrackCycleN];
     if (audio && !makeAudioTrack(s, t, kNoId, nullptr)) return t = -1, false;
     return true;
   });
@@ -518,8 +628,8 @@ int addNamedTrack(Document& d, bool audio) {
 }
 }  // namespace
 
-int addAudioTrack(Document& d) { return addNamedTrack(d, true); }
-int addMidiTrack(Document& d) { return addNamedTrack(d, false); }
+int addAudioTrack(Document& d, int after) { return addNamedTrack(d, true, after); }
+int addMidiTrack(Document& d, int after) { return addNamedTrack(d, false, after); }
 
 bool makeInstrumentTrack(Document& d, int track, ObjectId channel, std::string* why) {
   return runEdit(d, "make instrument track", [&](Song& s) { return makeInstrumentTrack(s, track, channel, why); });

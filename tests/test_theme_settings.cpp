@@ -3,6 +3,7 @@
 // settings, apply to the palette and the ImGui style, keep the role colours
 // distinct, and reset. J-129: the control style (theme.controls) defaults to
 // slate, reads unknown text as slate, round-trips and applies. Headless Dear ImGui (no window, no renderer).
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -105,6 +106,29 @@ int main() {
   theme::Tweaks bright;
   bright.brightness = 1.0f;
   expect(lum(theme::makePalette(true, bright).surface900) > lum(darkBase.surface900), "positive brightness lightens the panels");
+  {  // K-104: the panels' tint and the step colours
+    auto chroma = [](ImU32 c) {
+      const int r = c & 0xFF, g = (c >> 8) & 0xFF, b = (c >> 16) & 0xFF;
+      return std::max({r, g, b}) - std::min({r, g, b});
+    };
+    theme::Tweaks grey;
+    grey.saturation = -1.0f;
+    expect(chroma(theme::makePalette(true, grey).surface900) <= 1, "saturation -1: grey panels");
+    theme::Tweaks tint;
+    tint.saturation = 1.0f, tint.hue = 0.5f;
+    const theme::Palette tp = theme::makePalette(true, tint);
+    expect(chroma(tp.surface900) > chroma(darkBase.surface900) && tp.text == darkBase.text && tp.accent == darkBase.accent,
+           "hue and saturation tint the panels only");
+    theme::Tweaks steps;
+    steps.stepEven = 0x112233, steps.stepOdd = 0x445566;
+    const theme::Palette sp = theme::makePalette(true, steps);
+    expect(sp.stepOff == theme::rgb(0x112233) && sp.stepOffAlt == theme::rgb(0x445566), "step colours override the step sequencer's off steps");
+    Settings sx;
+    theme::Tweaks all = tint;
+    all.stepEven = 0x112233;
+    theme::tweaksToSettings(all, sx);
+    expect(theme::tweaksFromSettings(sx) == all, "hue, saturation and step colours round-trip through the settings");
+  }
 
   // Reset: tweaks gone, the light / dark choice stays.
   theme::resetThemeSettings(st2);

@@ -899,6 +899,14 @@ void trackExtrasToJson(const PlaylistTrack& t, Json& jt) {
   if (t.mode != TrackMode::Unassigned) jt.object["mode"] = num(static_cast<int>(t.mode));
   if (t.mixer != kNoId) jt.object["mixer"] = num(t.mixer);
   if (t.channel != kNoId) jt.object["channel"] = num(t.channel);
+  if (t.laneSet) {  // K-112b (R02-01): the track's automation lane
+    Json jl = Json::makeObject();
+    jl.object["owner"] = num(t.laneOwner);
+    jl.object["index"] = num(t.laneIndex);
+    if (t.laneShown) jl.object["shown"] = boolean(true);
+    jt.object["lane"] = std::move(jl);
+  }
+  if (t.autoMode != 1) jt.object["autoMode"] = num(t.autoMode);  // K-112B: Read is the default
 }
 
 void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
@@ -915,6 +923,13 @@ void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
   t.mode = static_cast<TrackMode>(e("mode", 0, static_cast<int>(TrackMode::Count)));  // PL-08 (stale links dropped after load)
   t.mixer = jsonInt<ObjectId>(std::max(0.0, jt.num("mixer", 0)));
   t.channel = jsonInt<ObjectId>(std::max(0.0, jt.num("channel", 0)));
+  if (const Json* jl = jt.find("lane"); jl && jl->is(Json::Type::Object)) {  // K-112b (R02-01)
+    t.laneSet = true;
+    t.laneOwner = jsonInt<ObjectId>(std::max(0.0, jl->num("owner", 0)));
+    t.laneIndex = jsonInt<uint32_t>(std::max(0.0, jl->num("index", 0)));
+    t.laneShown = flag(*jl, "shown");
+  }
+  t.autoMode = static_cast<uint8_t>(e("autoMode", 1, 5));  // K-112B: Off, Read, Touch, Latch, Write
 }
 
 Json clipToJson(const Clip& c) {
@@ -929,9 +944,17 @@ Json clipToJson(const Clip& c) {
 }
 
 void songExtrasToJson(const Song& s, Json& j) {
-  if (s.live.areaEnd > 0) {
+  if (s.cycleEnd > s.cycleStart) {  // K-112b (R02-04)
+    Json jc = Json::makeObject();
+    jc.object["start"] = num(static_cast<double>(s.cycleStart));
+    jc.object["end"] = num(static_cast<double>(s.cycleEnd));
+    if (s.cycleOn) jc.object["on"] = boolean(true);
+    j.object["cycle"] = std::move(jc);
+  }
+  if (s.live.areaEnd > 0 || !s.live.view.empty()) {
     Json jl = Json::makeObject();
-    jl.object["areaEnd"] = num(static_cast<double>(s.live.areaEnd));
+    if (s.live.areaEnd > 0) jl.object["areaEnd"] = num(static_cast<double>(s.live.areaEnd));
+    if (!s.live.view.empty()) jl.object["view"] = Json::makeString(s.live.view);  // N48-07 (only once saved from Clips)
     j.object["live"] = std::move(jl);
   }
   // Arrangements: written when there are several, or the single one was renamed.
@@ -986,8 +1009,17 @@ void songExtrasToJson(const Song& s, Json& j) {
 // After patterns, channels, automation clips and the current playlist: parked
 // clips get unique ids; clips whose content is gone are dropped.
 bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const Json&, ObjectId&)>& takeId, std::string* err) {
-  if (const Json* jl = j.find("live"); jl && jl->is(Json::Type::Object))
+  if (const Json* jl = j.find("live"); jl && jl->is(Json::Type::Object)) {
     s.live.areaEnd = std::max<Tick>(0, jsonTick(jl->num("areaEnd", 0)));
+    s.live.view = jl->text("view", "");
+    if (s.live.view != "grid" && s.live.view != "arrangement") s.live.view.clear();
+  }
+  if (const Json* jc = j.find("cycle"); jc && jc->is(Json::Type::Object)) {  // K-112b (R02-04)
+    s.cycleStart = std::max<Tick>(0, jsonTick(jc->num("start", 0)));
+    s.cycleEnd = std::max<Tick>(0, jsonTick(jc->num("end", 0)));
+    s.cycleOn = s.cycleEnd > s.cycleStart && flag(*jc, "on");
+    if (s.cycleEnd <= s.cycleStart) s.cycleStart = s.cycleEnd = 0;
+  }
   const Json* arr = j.find("arrangements");
   if (!arr || !arr->is(Json::Type::Array) || arr->array.empty()) return true;
   const int cur = jsonInt<int>(std::clamp(j.num("currentArrangement", 0), 0.0, static_cast<double>(arr->array.size() - 1)));
@@ -1190,6 +1222,7 @@ Json mixerTrackToJson(const MixerTrack& m) {
   if (m.latencyOffset) jm.object["latencyOffset"] = num(m.latencyOffset);
   if (!m.threaded) jm.object["threaded"] = boolean(false);
   if (!m.group.empty()) jm.object["group"] = str(m.group);
+  if (!m.group.empty() && m.groupLink) jm.object["groupLink"] = boolean(true);  // K-238
   if (m.freeze.frozen()) jm.object["freeze"] = freezeToJson(m.freeze);  // K-87
   if (m.hibernate) jm.object["hibernate"] = boolean(true);
   return jm;
@@ -1559,6 +1592,7 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
   m.latencyOffset = jsonInt<int>(std::clamp(jm.num("latencyOffset", 0), 0.0, static_cast<double>(kMaxManualLatency)));
   m.threaded = flag(jm, "threaded", true);
   m.group = jm.text("group");
+  m.groupLink = !m.group.empty() && flag(jm, "groupLink");  // K-238
   m.freeze = freezeFromJson(jm.find("freeze"));  // K-87
   m.hibernate = flag(jm, "hibernate");
 }

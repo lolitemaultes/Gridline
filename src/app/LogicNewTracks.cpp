@@ -24,7 +24,8 @@ namespace {
 using theme::pal;
 
 bool gOpen = false, gAppearing = false;
-int gKind = 0;  // 0 instrument, 1 empty playlist track, 2 mixer track
+int gClosedAt = -10;  // R06-07: the frame the dialog closed (its Return is not a shortcut too)
+int gKind = 0;  // 0 instrument, 1 empty playlist track, 2 mixer track, 3 audio track (R05-09)
 int gCount = 1;
 std::string gType = "gl.synth";
 bool gOpenEditor = true;
@@ -37,10 +38,11 @@ struct Kind {
 };
 const Kind kKinds[] = {
     {i18n::N_("Instrument"), i18n::N_("A channel with an instrument, on a track"), ui::Icon::CatSynth, 0x3B8F55},
-    {i18n::N_("Track"), i18n::N_("An empty playlist track for clips and audio"), ui::Icon::Playlist, 0x5B57C9},
+    {i18n::N_("Track"), i18n::N_("An empty track for any regions, MIDI or audio"), ui::Icon::Playlist, 0x5B57C9},
     {i18n::N_("Mixer track"), i18n::N_("A mixer track for effects and sends"), ui::Icon::Mixer, 0x2F7EDB},
+    {i18n::N_("Audio"), i18n::N_("A track for recording and audio regions, on a mixer track of its own"), ui::Icon::Wave, 0xB0573A},
 };
-constexpr int kKindCount = 3;
+constexpr int kKindCount = 4;
 
 // One kind as a card: an icon disc, the name, a line under it; the chosen one has an accent ring.
 bool card(App& a, int k, ImVec2 size) {
@@ -102,7 +104,27 @@ void create(App& a) {
   const int n = std::clamp(gCount, 1, 16);
   if (gKind == 0) {
     ObjectId last = kNoId;
-    for (int i = 0; i < n; ++i) last = a.addInstrument(gType);
+    for (int i = 0; i < n; ++i) {
+      last = a.addInstrument(gType);
+      // R05-08: each instrument gets a track named after it, as the reference's software instrument
+      // track: the first empty free track, else a new one at the end; it is selected.
+      if (last == kNoId) continue;
+      const Song& s = a.doc.song();
+      int t = -1;
+      for (int k = 0; k < static_cast<int>(s.tracks.size()) && t < 0; ++k) {
+        bool used = trackmodes::modeOf(s, k) != TrackMode::Unassigned;
+        for (const Clip& c : s.playlist) used = used || c.track == k;
+        if (!used) t = k;
+      }
+      if (t < 0 && ops::insertPlaylistTrack(a.doc, static_cast<int>(s.tracks.size()))) t = static_cast<int>(a.doc.song().tracks.size()) - 1;
+      if (t < 0) continue;
+      trackmodes::makeInstrumentTrack(a.doc, t, last);
+      if (const Channel* ch = a.doc.song().channel(last)) {
+        const std::string nm = ch->name;
+        a.doc.editPlaylistTrack(t, "name track", [nm](PlaylistTrack& x) { x.name = nm; });
+      }
+      a.playlist.trackSel = {t};
+    }
     if (gOpenEditor && last != kNoId) a.showNewInstrument(last);
   } else if (gKind == 1 && livelook::active(a)) {
     // K-112c (round 39): in Clips a new track comes right after the tracks in use, so it shows at
@@ -111,6 +133,17 @@ void create(App& a) {
   } else if (gKind == 1) {
     for (int i = 0; i < n && static_cast<int>(a.doc.song().tracks.size()) < kMaxPlaylistTracks; ++i)
       ops::insertPlaylistTrack(a.doc, static_cast<int>(a.doc.song().tracks.size()));
+  } else if (gKind == 3) {  // R05-09
+    for (int i = 0; i < n; ++i)
+      if (const int t = trackmodes::addAudioTrack(a.doc); t >= 0) {
+        a.playlist.trackSel = {t};
+        // R06-13: named as the reference names a new audio track: "Audio 1", "Audio 2", ...
+        const Song& s = a.doc.song();
+        int k = 0;
+        for (int j = 0; j < static_cast<int>(s.tracks.size()); ++j) k += j != t && trackmodes::modeOf(s, j) == TrackMode::Audio ? 1 : 0;
+        const std::string nm = std::string(i18n::tr("Audio")) + " " + std::to_string(k + 1);
+        a.doc.editPlaylistTrack(t, "name track", [nm](PlaylistTrack& x) { x.name = nm; });
+      }
   } else {
     ObjectId last = kNoId;
     for (int i = 0; i < n; ++i)
@@ -123,6 +156,7 @@ void create(App& a) {
 
 void open() { gOpen = gAppearing = true; }
 bool isOpen() { return gOpen; }
+bool holdsKeys() { return gOpen || ImGui::GetFrameCount() <= gClosedAt + 1; }
 
 void draw(App& a) {
   if (!gOpen) return;
@@ -177,7 +211,9 @@ void draw(App& a) {
     ImGui::Dummy(ImVec2(0, 0));
     ImGui::SameLine(col);
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(theme::vec(P.textDim), "%s", gKind == 1 ? i18n::tr("Added below the last track") : i18n::tr("Added after the last mixer track"));
+    ImGui::TextColored(theme::vec(P.textDim), "%s", gKind == 1   ? i18n::tr("Added below the last track")
+                                                       : gKind == 3 ? i18n::tr("Records from the audio input; added after the tracks in use")
+                                                                    : i18n::tr("Added after the last mixer track"));
   }
   ui::SetFormColumn(0);
   // Footer: how many in the middle, Cancel and Create on the right.
@@ -201,13 +237,18 @@ void draw(App& a) {
   ImGui::SetCursorPos(ImVec2(pad + fw - ui::ButtonRowWidth(2, 96), y));
   const bool cancel = ui::TextButton(i18n::tr("Cancel"), false, 96) || keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
-  const bool ok = ui::PrimaryButton(i18n::tr("Create"), 96, nullptr, gKind != 0 || findPlugin(gType) != nullptr);
+  const bool can = gKind != 0 || findPlugin(gType) != nullptr;
+  // R06-07: Create is the default button: Return (or Enter) presses it while the dialog has the keys.
+  const bool enter = can && ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && !ImGui::IsAnyItemActive() &&
+                     (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false));
+  const bool ok = ui::PrimaryButton(i18n::tr("Create"), 96, nullptr, can) || enter;
   if (ok) {
     a.later([&a] { create(a); });
     gOpen = false;
   } else if (cancel) {
     gOpen = false;
   }
+  if (!gOpen) gClosedAt = ImGui::GetFrameCount();
   ImGui::End();
 }
 

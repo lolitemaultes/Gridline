@@ -55,6 +55,9 @@ Settings::Settings() {
       {"freeze.autoHibernate", b(false)},
       {"freeze.sleepSeconds", Json::makeNumber(30)},
       {"freeze.zipLeaveOut", b(false)},
+      {"rack.selectionFollows", b(true)},  // K-234: rack and mixer selections follow each other
+      {"ui.channelHeader", b(true)},  // K-279: the channel window's header row (colour, name, instrument, route)
+      {"playlist.pickerAudition", b(true)},  // K-235: pressing a clip source in the picker auditions it
       {"freeze.restSilent", b(true)},  // K-277: silent instruments rest (Options > Rest silent instruments)
       {"audio.threads", Json::makeNumber(0)},  // mixer processing threads (0 = automatic)
       // Audio input & recording (J-8).
@@ -117,6 +120,26 @@ Settings::Settings() {
       {"tracker.panColumn", b(true)},        // K-106: ... the pan sub-column
       {"tracker.effectColumn", b(true)},     // K-106: ... the effect sub-column
       {"tracker.rowBase", Json::makeString("hex")},  // K-106: row numbers "hex" or "dec"
+      {"tracker.emptyDots", b(true)},        // K-106: empty fields show dots (off: blank)
+      {"tracker.flats", b(false)},          // K-106: note names with flats (Db4) instead of sharps (C#4)
+      {"tracker.multiEdit", b(false)},      // K-106: notes typed together go to the next enabled tracks, on one row
+      {"tracker.trackBase", Json::makeNumber(1)},  // K-106, R6-04: track numbers count from 1 (2.08, refs 149 and 165; one number per track and instrument) or 0
+      {"tracker.visibleTracks", Json::makeNumber(0)},  // K-106: tracks in view at most (0: as many as fit; 4, 6, 8, 12, 16)
+      {"tracker.volumeMacros", Json::makeString("")},  // K-106: the ten volume macros ("20,,40,...")
+      {"tracker.effectMacros", Json::makeString("")},  // K-106: the ten effect macros ("P01,,...")
+      {"tracker.multiRecord", b(false)},   // K-106: each recorded note goes to the next enabled track
+      {"tracker.multiJazz", b(false)},     // K-106: notes only played sound on the enabled tracks in turn
+      {"tracker.recordKeyOff", b(false)},  // K-106: a key let go while recording writes the note's end there
+      {"tracker.cutCopies", b(true)},      // K-106: a cut keeps what it took in the clipboard (off: it only deletes)
+      {"tracker.insDelLength", b(false)},  // K-106, R7-15: a line inserted / deleted on every track changes the pattern length
+      {"tracker.tallRows", b(false)},      // K-106: taller pattern rows (more space between them)
+      {"tracker.beatHighlight", b(true)},  // K-106: beat and bar rows lit (and their row numbers)
+      {"tracker.trackFrames", b(true)},    // K-106: lines between the tracks
+      {"tracker.trackNumbers", b(true)},   // K-106: the track headers show the track's number
+      {"tracker.scopeLines", b(false)},    // K-106: the scopes draw a line, not filled bars
+      {"tracker.diskFolder", Json::makeString("")},   // K-106: the Files screen's folder (empty: the project's, else home)
+      {"tracker.diskSort", Json::makeString("name")},  // K-106: the Files list by "name" or by "type" (extension first)
+      {"tracker.diskAll", b(false)},       // K-106: the Files list shows every file, not only the kind picked
       {"ui.plasmaFull", b(false)},           // K-164: Plasma editor shows every control in place (Full) instead of Simple
       {"loupe.autoScroll", b(true)},         // Loupe follows the playhead while it plays (its own toggle sets it)
       {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
@@ -151,6 +174,10 @@ Settings::Settings() {
       {"theme.contrast", Json::makeNumber(0)},       // -1 .. 1
       {"theme.brightness", Json::makeNumber(0)},     // -1 .. 1 (-1 = pitch black)
       {"theme.whiteText", b(false)},                 // K-177: white text and glyphs on dark faces
+      {"theme.hue", Json::makeNumber(0)},            // K-104: the panels' tint, -1 .. 1 (half a turn each way)
+      {"theme.saturation", Json::makeNumber(0)},     // K-104: -1 grey .. 1 coloured panels
+      {"theme.stepEven", Json::makeString("")},      // K-104: step sequencer off colours ("" = the theme's)
+      {"theme.stepOdd", Json::makeString("")},
       {"theme.controls", Json::makeString("slate")}, // control style: slate | graphite | hairline | lumen | classic (J-129)
       {"ui.mixerWheel", Json::makeNumber(2)},  // J-83: wheel over mixer controls: 0 adjust, 1 scroll the mixer, 2 auto (scroll when narrow)
       {"ui.mixerLayout", Json::makeNumber(1)},  // mixer strip width: 0 compact, 1 normal, 2 wide
@@ -174,7 +201,10 @@ Settings::Settings() {
       // K-79: window layout presets (core/LayoutPreset.h): "studio" | "live" | "logic". Per user, never in a project.
       {"ui.layout", Json::makeString("studio")},
       {"ui.layoutChosen", b(false)},                 // the welcome screen has offered the choice once
-      {"ui.logicToolbar", b(false)},                 // K-112b: the Logic layout shows the tracks area toolbar (its TB switch)
+      {"ui.logicGlobalTracks", b(true)},             // R01-15: the Tracks layout's global tracks (the markers lane; G)
+      {"ui.logicToolbar", b(false)},
+      {"ui.logicHeaderHide", Json::makeNumber(0)},   // R04-09: the track header parts hidden (Configure track header)
+      {"ui.logicDragMode", Json::makeNumber(1)},     // R01-26: the Tracks layout's drag mode (0 overlap, 1 no overlap)                 // K-112b: the Logic layout shows the tracks area toolbar (its TB switch)
       {"ui.logicMixerDetail", b(false)},             // K-112b: the Logic layout shows the detailed mixer instead of its strips
       {"ui.logicPluginLink", Json::makeNumber(0)},   // K-112b: plugin windows: 0 off, 1 single window, 2 follow the selected strip
       {"ui.logicControlsTypes", Json::makeString("")},  // K-112b: plugin types whose window shows the parameter list (one per line)
@@ -204,6 +234,10 @@ Settings::Settings() {
       {"layout.logic.state", Json::makeString("")},
       {"layout.tracker.state", Json::makeString("")},
       {"ui.layout.live.view", Json::makeString("playlist")},  // main view in front: "playlist" | "pads"
+      // N45-10: the sets last saved in the Clips layout with the Arrangement in front (one path a line,
+      // newest first, at most 40); any other set opens in Clips on the clip grid. Per person, never in a project.
+      {"clips.arrangementSets", Json::makeString("")},
+      {"clips.returnTracks", b(true)},  // C47: View > Return tracks: the returns shown beside Main (Clips)
       {"ui.menuStyle", Json::makeString("studio")},
       {"keys.profile", Json::makeString("studio")},
       {"keys.bindings.live", Json::makeString("")},  // shortcut overrides of the other shortcut sets
@@ -237,8 +271,12 @@ Settings::Settings() {
       // SC-07: MCP server for AI assistants (Settings > Integrations); off until the user opts in.
       {"mcp.enabled", b(false)},                 // listen on 127.0.0.1 for assistants
       {"mcp.allowEdits", b(false)},              // assistants may change the project and write files
+      {"mcp.propose", b(false)},                 // K-92: with allowEdits, changes wait for the user to accept them
       {"mcp.port", Json::makeNumber(47390)},     // loopback port (0 = any free port)
       {"mcp.token", Json::makeString("")},       // bearer token ("" = generated on first start)
+      {"mcp.listen", Json::makeString("loopback")},  // K-264: loopback / vms / address / all (core/McpListen.h)
+      {"mcp.listenAddress", Json::makeString("")},   // K-264: the address for "address"
+      {"mcp.listenConfirmed", b(false)},             // K-264: the user confirmed listening beyond this computer once
       {"mcp.exportFolder", Json::makeString("")},  // extra folder assistants may write renders / exports to
       // OSC (Settings > MIDI, docs/osc.md): off until switched on, this computer only by default.
       {"osc.enabled", b(false)},                       // receive OSC

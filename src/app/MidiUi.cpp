@@ -9,15 +9,18 @@
 #include <cstdio>
 #include <filesystem>
 #include "../core/I18n.h"
+#include "../core/Params.h"
 #include "Keys.h"
 #include "../../third_party/imgui/imgui.h"
 #include "App.h"
 #include "MidiUi.h"
 #include "../core/Osc.h"
 #include "OscUi.h"
+#include "MackieUi.h"
 #include "ScriptUi.h"
 #include "AudioRecordUi.h"
 #include "J31Ui.h"
+#include "LiveLook.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -247,6 +250,44 @@ void drawRemoteDialog(App& a) {
 
   ui::EndSection();
 
+  // GitHub #60: an internal controller (Envelope Mod, Peak Follower, X-Y Pad, a layer macro, ...)
+  // can drive the same control. Chosen here, applied on Accept as the control's ModLink.
+  struct Internal {
+    bool chosen = false;  // the user picked something in the combo since the dialog opened
+    bool none = true;
+    ObjectId owner = kNoId;
+    int slot = -1, output = 0;
+    ControllerLink opened;  // the MIDI side as it opened (a new, untouched one is not saved with an internal pick)
+  };
+  static Internal in;
+  const bool paramTarget = l.action == RemoteAction::None;
+  const ParamId target{l.owner, l.index};
+  if (ImGui::IsWindowAppearing()) in = Internal{}, in.opened = l;
+  if (paramTarget) {
+    ui::BeginSection("INTERNAL CONTROLLER");
+    const ModLink* cur = findModLink(a.doc.song(), l.owner, l.index);
+    const bool none = in.chosen ? in.none : cur == nullptr;
+    const ObjectId so = in.chosen ? in.owner : cur ? cur->sourceOwner : kNoId;
+    const int ss = in.chosen ? in.slot : cur ? cur->sourceSlot : -1, sout = in.chosen ? in.output : cur ? cur->sourceOutput : 0;
+    const auto outs = listControllerOutputs(a.doc.song());
+    label("Controller");
+    const std::string shown = none ? std::string(i18n::tr("None")) : controllerOutputName(a.doc.song(), so, ss, sout);
+    if (ui::BeginCombo("##internal", shown.c_str(), w + 140)) {
+      if (ImGui::Selectable(i18n::tr("None"), none)) in.chosen = true, in.none = true;
+      for (const auto& o : outs)
+        if (ImGui::Selectable(o.label.c_str(), !none && o.owner == so && o.slot == ss && o.output == sout))
+          in.chosen = true, in.none = false, in.owner = o.owner, in.slot = o.slot, in.output = o.output;
+      ImGui::EndCombo();
+    }
+    ui::Hint("A controller in this project moves this control as it plays");
+    if (outs.empty()) {
+      ImGui::Dummy(ImVec2(150, 0));
+      ImGui::SameLine();
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No controllers yet: add Envelope Mod, Peak Follower, X-Y Pad or Formula Mod first."));
+    }
+    ui::EndSection();
+  }
+
   // Mapping.
   ui::BeginSection("MAPPING");
   const ImVec2 graphPos(ImGui::GetCursorScreenPos().x + 150 + w + theme::kS6, ImGui::GetCursorScreenPos().y);
@@ -355,7 +396,21 @@ void drawRemoteDialog(App& a) {
   ImGui::SameLine(0, theme::kS2);
   const bool oscOk = l.source != RemoteSource::Osc || osc::validAddress(l.oscAddress);
   if (ui::PrimaryButton("Accept", 96, oscOk ? nullptr : "Enter or learn an OSC address first", oscOk)) {
-    saveLink(a);
+    // GitHub #60: the internal controller first; a new MIDI link nobody set up is not saved with it
+    bool skipMidi = false;
+    if (paramTarget && in.chosen) {
+      const ModLink* cur = findModLink(a.doc.song(), target.owner, target.index);
+      if (in.none) {
+        if (cur) a.doc.removeModLink(target);
+      } else if (!cur || cur->sourceOwner != in.owner || cur->sourceSlot != in.slot || cur->sourceOutput != in.output) {
+        ModLink m = cur ? *cur : ModLink{};
+        m.sourceOwner = in.owner, m.sourceSlot = in.slot, m.sourceOutput = in.output;
+        m.owner = target.owner, m.index = target.index;
+        if (!a.doc.setModLink(m)) a.notify("Cannot link this parameter", true);
+      }
+      skipMidi = !in.none && a.remoteEditIndex < 0 && l == in.opened;
+    }
+    if (!skipMidi) saveLink(a);
     close = true;
   }
   ImGui::End();
@@ -369,13 +424,15 @@ void remoteLinkMenuItems(App& a, ParamId pid) {
   const auto& links = a.doc.song().links;
   for (size_t i = 0; i < links.size(); ++i)
     if (links[i].action == RemoteAction::None && links[i].owner == pid.owner && links[i].index == pid.index) idx = static_cast<int>(i);
-  if (ImGui::MenuItem(idx >= 0 ? i18n::tr("Edit controller link…") : i18n::tr("Link to controller…"))) a.openRemoteDialog(pid);
+  const bool clips = livelook::active(a);  // N49-11: Clips maps a control to MIDI; no Multilink
+  if (ImGui::MenuItem(clips ? i18n::tr("Edit MIDI map…") : idx >= 0 ? i18n::tr("Edit controller link…") : i18n::tr("Link to controller…")))
+    a.openRemoteDialog(pid);
   if (idx >= 0) {
     ImGui::TextDisabled("  %s", remoteSourceLabel(links[static_cast<size_t>(idx)]).c_str());
     if (ImGui::MenuItem(i18n::tr("Remove controller link"))) removeLinkAt(a, idx);
   }
   if (a.extraParamMenu) a.extraParamMenu(pid);  // PH-09: host macros (plugin build)
-  if (ImGui::MenuItem(i18n::tr("Multilink to controllers"), nullptr, a.multilink)) {
+  if (!clips && ImGui::MenuItem(i18n::tr("Multilink to controllers"), nullptr, a.multilink)) {
     a.multilink = !a.multilink;
     if (a.multilink) {
       a.multilinkQueue = {pid};
@@ -400,29 +457,35 @@ void recordOptionsMenu(App& a) {
   ImGui::Separator();
   ImGui::TextDisabled("%s", i18n::tr("Note recording"));  // K-77: was "Notes", the same as the switch above
   if (ImGui::MenuItem(i18n::tr("Overdub (keep existing notes)"), nullptr, o.overdub)) o.overdub = true;
-  if (ImGui::MenuItem(i18n::tr("Replace (clear the channel's notes)"), nullptr, !o.overdub)) o.overdub = false;
+  // N48-15 (checkpoint 49): Clips names the clip, and keeps the Studio-only rows (takes per pass, the
+  // controller target, step record) out of its menu.
+  const bool clipsRows = livelook::active(a);
+  if (ImGui::MenuItem(clipsRows ? i18n::tr("Replace (clear the clip's notes)") : i18n::tr("Replace (clear the channel's notes)"), nullptr, !o.overdub)) o.overdub = false;
   ImGui::Separator();
   ImGui::MenuItem(i18n::tr("Quantize note starts to the snap"), nullptr, &o.quantize);
   ImGui::MenuItem(i18n::tr("Quantize note lengths"), nullptr, &o.quantizeLength);
-  ImGui::MenuItem(i18n::tr("Loop recording: new take per pass"), nullptr, &o.takes);
-  if (ImGui::BeginMenu(i18n::tr("Controller moves go to"))) {
+  if (!clipsRows) ImGui::MenuItem(i18n::tr("Loop recording: new take per pass"), nullptr, &o.takes);
+  if (!clipsRows && ImGui::BeginMenu(i18n::tr("Controller moves go to"))) {
     for (int i = 0; i < static_cast<int>(AutoRecordTarget::Count); ++i)
       if (ImGui::MenuItem(autoRecordTargetName(static_cast<AutoRecordTarget>(i)), nullptr, static_cast<int>(o.autoTarget) == i))
         o.autoTarget = static_cast<AutoRecordTarget>(i);
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu(i18n::tr("Count-in"))) {
+  // N48-15 (checkpoint 49): in Clips the Count-in switch is the row beside this submenu: here only its length.
+  const bool clips = livelook::active(a);
+  if (ImGui::BeginMenu(clips ? i18n::tr("Count-in length") : i18n::tr("Count-in"))) {
     const int bars[] = {0, 1, 2, 4};
     for (int b : bars) {
+      if (clips && b == 0) continue;
       std::string n = b == 0 ? "Off" : std::to_string(b) + (b == 1 ? " bar" : " bars");
       if (ImGui::MenuItem(n.c_str(), nullptr, a.countInBars == b)) a.countInBars = b;
     }
     ImGui::EndMenu();
   }
   ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Step record (keyboard enters notes at the step cursor)"), nullptr, a.stepRecord)) a.stepRecord = !a.stepRecord;
-  ImGui::Separator();
-  actionLinkMenuItems(a, RemoteAction::Record);
+  if (!clips && ImGui::MenuItem(i18n::tr("Step record (keyboard enters notes at the step cursor)"), nullptr, a.stepRecord)) a.stepRecord = !a.stepRecord;
+  if (!clips) ImGui::Separator();
+  if (!clips) actionLinkMenuItems(a, RemoteAction::Record);  // N49-12: Clips maps controls from its MIDI map
 }
 
 int (*typingLayoutKey)(int position) = nullptr;
@@ -462,17 +525,20 @@ void typingLayoutItems(App& a) {
 void typingKeyboardMenu(App& a) {
   TypingKeyboard& k = a.typing;
   ImGui::TextDisabled("%s", i18n::tr("Typing keyboard"));
-  if (ImGui::MenuItem(i18n::tr("Play notes from the computer keyboard"), keys::label("options.typingKeyboard"), a.typingKeyboard)) a.typingKeyboard = !a.typingKeyboard;
+  // N48-15: Clips shows the switch once, beside this submenu. N48-08: its note keys start at A.
+  const bool clips = livelook::active(a);
+  if (!clips && ImGui::MenuItem(i18n::tr("Play notes from the computer keyboard"), keys::label("options.typingKeyboard"), a.typingKeyboard))
+    a.typingKeyboard = !a.typingKeyboard;
   if (ImGui::BeginMenu(i18n::tr("Octave"))) {
     for (int o = 1; o <= 8; ++o) {
-      std::string n = typingKeyName('z') + " = " + midiNoteName(12 * o);
+      std::string n = clips ? typingKeyName('a') + " = " + midiNoteName(12 * (o + 1)) : typingKeyName('z') + " = " + midiNoteName(12 * o);
       if (ImGui::MenuItem(n.c_str(), nullptr, k.octave == o)) k.octave = o;
     }
     ImGui::EndMenu();
   }
   ImGui::SetNextItemWidth(160);
   ImGui::SliderInt(i18n::tr("Velocity"), &k.velocity, 1, 127);
-  ImGui::MenuItem(i18n::tr("Chord mode"), typingKeyName('\\').c_str(), &k.chordMode);
+  ImGui::MenuItem(i18n::tr("Chord mode"), clips ? nullptr : typingKeyName('\\').c_str(), &k.chordMode);  // (no chord key on the A row)
   if (ImGui::BeginMenu(i18n::tr("Chord"))) {
     for (int i = 0; i < static_cast<int>(ChordType::Count); ++i)
       if (ImGui::MenuItem(chordTypeName(static_cast<ChordType>(i)), nullptr, static_cast<int>(k.chord) == i)) k.chord = static_cast<ChordType>(i);
@@ -483,6 +549,11 @@ void typingKeyboardMenu(App& a) {
     ImGui::EndMenu();
   }
   ImGui::Separator();
+  if (clips) {
+    ImGui::TextDisabled(i18n::tr("%s…%s play · %s %s octave · %s %s velocity"), typingKeyName('a').c_str(), typingKeyName('\'').c_str(),
+                        typingKeyName('z').c_str(), typingKeyName('x').c_str(), typingKeyName('c').c_str(), typingKeyName('v').c_str());
+    return;
+  }
   ImGui::TextDisabled(i18n::tr("%s…%s and %s…%s play · %s %s octave · %s %s velocity"), typingKeyName('z').c_str(), typingKeyName('/').c_str(),
                       typingKeyName('q').c_str(), typingKeyName('p').c_str(), typingKeyName('[').c_str(), typingKeyName(']').c_str(),
                       typingKeyName('-').c_str(), typingKeyName('=').c_str());
@@ -604,6 +675,8 @@ void midiSettingsPage(App& a, float fieldW) {
                                                                   if ("script:" + s.id == c->controllerType) return "Script: " + s.name;
                                                                 return "Script: " + c->controllerType.substr(7) + " (missing)";
                                                               }
+                                                              for (const auto& [id, label] : mackieControllerTypes())  // K-214
+                                                                if (id == c->controllerType) return label;
                                                               auto* t = findControllerTemplate(a.controllerTemplates, c->controllerType);
                                                               return t ? t->name : c->controllerType;
                                                             }();
@@ -612,6 +685,10 @@ void midiSettingsPage(App& a, float fieldW) {
         if (ImGui::Selectable(i18n::tr("(none)"), c->controllerType == "none")) c->controllerType = "none", changed = true;
         for (const auto& t : a.controllerTemplates)
           if (ImGui::Selectable(t.name.c_str(), c->controllerType == t.id)) c->controllerType = t.id, changed = true;
+        // K-214: Mackie Control / HUI surfaces (the protocol, not a template).
+        ImGui::SeparatorText(i18n::tr("Control surfaces"));
+        for (const auto& [id, label] : mackieControllerTypes())
+          if (ImGui::Selectable((label + "##" + id).c_str(), c->controllerType == id)) c->controllerType = id, changed = true;
         // J-24: Lua controller scripts as an alternative to JSON templates.
         if (!controllerScripts(a).empty()) ImGui::SeparatorText(i18n::tr("Scripts"));
         for (const auto& s : controllerScripts(a)) {

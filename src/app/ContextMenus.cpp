@@ -1,6 +1,7 @@
 // Gridline — context menus (channel, pattern, playlist track/clip, piano roll,
 // mixer track/slot, knob, plugin window) and the editing helpers they share
 // with the main menu. Window files open these popups and call the bodies here.
+#include "SpeechUi.h"
 #include "FreezeUi.h"
 #include "EditorZoomUi.h"
 #include "../core/ClipLoop.h"
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -141,7 +143,9 @@ void openPrompt(const std::string& title, const std::string& initial, std::funct
 }
 
 void drawPrompt() {
-  if (prompt.requested) {
+  // R03-03: a prompt asked for with Shift+Return opens once Return is up (opened while it was
+  // down, the field took that Return and closed at once with the old name).
+  if (prompt.requested && !ImGui::IsKeyDown(ImGuiKey_Enter) && !ImGui::IsKeyDown(ImGuiKey_KeypadEnter)) {
     ImGui::OpenPopup("##menuprompt");
     prompt.requested = false;
   }
@@ -351,8 +355,8 @@ void pianoToolItems(App& a) {
 
 void pianoSelectItems(App& a) {
   bool ok = pianoHasTarget(a);
-  if (ImGui::MenuItem(i18n::tr("Select all"), "Ctrl+A", false, ok)) pianoEdit(a, "", [](auto& n, auto& s) { ops::selectAll(n, s); });
-  if (ImGui::MenuItem(i18n::tr("Deselect"), "Ctrl+D", false, ok)) pianoEdit(a, "", [](auto&, auto& s) { ops::selectNone(s); });
+  if (ImGui::MenuItem(i18n::tr("Select all"), keys::shownText("Ctrl+A"), false, ok)) pianoEdit(a, "", [](auto& n, auto& s) { ops::selectAll(n, s); });
+  if (ImGui::MenuItem(i18n::tr("Deselect"), keys::shownText("Ctrl+D"), false, ok)) pianoEdit(a, "", [](auto&, auto& s) { ops::selectNone(s); });
   if (ImGui::MenuItem(i18n::tr("Invert selection"), keys::label("piano.invertSelection"), false, ok)) pianoEdit(a, "", [](auto&, auto& s) { ops::invertSelection(s); });
   if (ImGui::MenuItem(i18n::tr("Every other note"), nullptr, false, ok)) pianoEdit(a, "", [](auto& n, auto& s) { ops::selectOdd(n, s); });
   if (ImGui::MenuItem(i18n::tr("Same pitches as selection"), nullptr, false, ok && pianoSelectionCount(a)))
@@ -590,7 +594,8 @@ void editSelectAll(App& a) {
   switch (a.editFocus) {
     case App::EditFocus::Playlist:
       a.playlist.selected.clear();
-      for (const auto& c : s.playlist) a.playlist.selected.insert(c.id);
+      for (const auto& c : s.playlist)
+        if (!logicplug::active(a) || !logicplug::laneClip(s, c)) a.playlist.selected.insert(c.id);  // R04-05
       break;
     case App::EditFocus::Rack:
       a.selChannels.clear();
@@ -632,6 +637,10 @@ void editDuplicate(App& a) {
 
 void renameFocused(App& a) {
   const Song& s = a.doc.song();
+  if (livelook::active(a) && a.editFocus != App::EditFocus::Mixer) {  // checkpoint 49: as the reference's Rename (Cmd+R)
+    if (a.playlist.selected.size() == 1) return livelook::renameClip(a, *a.playlist.selected.begin());
+    if (!a.playlist.trackSel.empty()) return livelook::renameTrack(a, *a.playlist.trackSel.begin());
+  }
   if (a.editFocus == App::EditFocus::Rack && s.channel(a.selChannel)) {
     ObjectId id = a.selChannel;
     openPrompt("Rename channel", s.channel(id)->name, [&a, id](const std::string& n) { a.doc.renameChannel(id, n); });
@@ -639,6 +648,11 @@ void renameFocused(App& a) {
     ObjectId id = a.selMixer;
     openPrompt("Rename mixer track", mixerTrackName(s, static_cast<size_t>(s.mixerIndex(id))),
                [&a, id](const std::string& n) { a.doc.editMixerTrack(id, "rename mixer track", [&](MixerTrack& m) { m.name = n; }); });
+  } else if (const int tr = logicplug::active(a) ? logicplug::focusTrack(a) : -1; tr >= 0 && tr < static_cast<int>(s.tracks.size())) {
+    // R02-22: the Tracks layout renames the track it is about (there is no pattern to name there).
+    openPrompt("Rename track", s.tracks[static_cast<size_t>(tr)].name, [&a, tr](const std::string& n) {
+      a.doc.editPlaylistTrack(tr, "rename track", [&](PlaylistTrack& t) { t.name = n; });
+    });
   } else if (const Pattern* p = s.pattern(a.curPattern)) {
     ObjectId id = p->id;
     openPrompt("Rename pattern", p->name, [&a, id](const std::string& n) { a.doc.renamePattern(id, n); });
@@ -650,6 +664,40 @@ void renameFocused(App& a) {
 using namespace menus;
 
 // ---------------------------------------------------------- shared helpers ----
+
+// Coordinator item (R01-16): the Tracks layout's menus say "region" where the others say "clip",
+// as the reference names them. Other layouts keep their words.
+const char* regionWord(const char* s) {
+  static const std::pair<const char*, const char*> k[] = {
+      {"Pitch selected audio clips a semitone up", i18n::N_("Pitch selected audio regions a semitone up")},
+      {"Pitch selected audio clips a semitone down", i18n::N_("Pitch selected audio regions a semitone down")},
+      {"Reverse selected audio clips", i18n::N_("Reverse selected audio regions")},
+      {"Reset fades of selected audio clips", i18n::N_("Reset fades of selected audio regions")},
+      {"Merge selected automation clips", i18n::N_("Merge selected automation regions")},
+      {"Make selected clips unique", i18n::N_("Make selected regions unique")},
+      {"Merge selected clips", i18n::N_("Join selected regions")},
+      {"Slice at the song position", i18n::N_("Split regions at the playhead")},
+      {"Clips of the current pattern", i18n::N_("Regions of the current pattern")},
+      {"Mute / unmute selected clips", i18n::N_("Mute / unmute selected regions")},
+      {"Chop selected clips", i18n::N_("Chop selected regions")},
+      {"Clips with the same source as the selection", i18n::N_("Regions with the same source as the selection")},
+      {"Time around the selected clips", i18n::N_("Time around the selected regions")},
+      {"Muted clips", i18n::N_("Muted regions")},
+      // R01-16 (round 04): the region and track header menus
+      {"Mute clip", i18n::N_("Mute region")},
+      {"Edit pattern", i18n::N_("Edit region")},
+      {"Automation in this pattern", i18n::N_("Automation in this region")},
+      {"Select all clips on track", i18n::N_("Select all regions on track")},
+      {"Delete all clips on track", i18n::N_("Delete all regions on track")},
+      {"Clips", i18n::N_("Regions")},
+      {"Mute all clips", i18n::N_("Mute all regions")},
+      {"Unmute all clips", i18n::N_("Unmute all regions")},
+      {"Merge pattern clips", i18n::N_("Join MIDI regions")}};
+  if (layoutui::active() == layout::Preset::Logic)
+    for (const auto& [from, to] : k)
+      if (!std::strcmp(s, from)) return i18n::tr(to);
+  return i18n::tr(s);
+}
 
 // Context menu caption (the object the menu acts on): a dim heading in the
 // label column with a hairline, like the studio menus' title rows.
@@ -721,6 +769,7 @@ void addChannelMenu(App& a) {
     fileDialog(a, "Load audio file into a new sampler", false, {".wav", ".flac", ".mp3", ".ogg", ".aif", ".aiff", ".m4a", ".aac"}, "",
                [&a](const std::string& p) { a.showNewInstrument(a.addInstrument("gl.sampler", p)); });
   }
+  if (ImGui::MenuItem(i18n::tr("Speech..."))) speechui::open(a);  // K-107
 }
 
 void channelContextMenu(App& a, ObjectId id) {
@@ -753,13 +802,13 @@ void channelContextMenu(App& a, ObjectId id) {
   ImGui::Separator();
   if (p) {
     a.editFocus = App::EditFocus::Rack;  // edit commands below act on the selected channel
-    if (ImGui::MenuItem(i18n::tr("Cut"), "Ctrl+X"))
+    if (ImGui::MenuItem(i18n::tr("Cut"), keys::shownText("Ctrl+X")))
       a.later([&a] {
         a.editFocus = App::EditFocus::Rack;
         editCut(a);
       });
-    if (ImGui::MenuItem(i18n::tr("Copy"), "Ctrl+C")) editCopy(a);
-    if (ImGui::MenuItem(i18n::tr("Paste"), "Ctrl+V", false, canPaste(a)))
+    if (ImGui::MenuItem(i18n::tr("Copy"), keys::shownText("Ctrl+C"))) editCopy(a);
+    if (ImGui::MenuItem(i18n::tr("Paste"), keys::shownText("Ctrl+V"), false, canPaste(a)))
       a.later([&a] {
         a.editFocus = App::EditFocus::Rack;
         editPaste(a);
@@ -916,7 +965,7 @@ void channelContextMenu(App& a, ObjectId id) {
 void autoScrollItem(App& a, bool pattern) {
   const char* key = pattern ? "ui.autoScrollPattern" : "ui.autoScroll";
   const bool on = a.settings.getBool(key);
-  const char* label = pattern ? i18n::tr("Auto scrolling in pattern editors") : i18n::tr("Auto scrolling");
+  const char* label = pattern ? (livelook::active(a) ? i18n::tr("Auto scrolling in the notes editor") : i18n::tr("Auto scrolling in pattern editors")) : i18n::tr("Auto scrolling");  // N47-13
   if (ImGui::MenuItem(label, nullptr, on)) a.settings.set(key, !on);
   ui::Hint(pattern ? "The piano roll and the channel rack follow the pattern position while it plays (off: the view stays where you put it)"
                    : "The playlist follows the song position while it plays (off: the view stays where you put it)");
@@ -1002,13 +1051,19 @@ void rackOptionsMenu(App& a) {
     ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("Select their mixer tracks"), nullptr, false, any))
       if (const Channel* c = s.channel(sel.front())) a.selMixer = c->mixerTrack, a.showMixer = true;
+    {  // K-234
+      const bool follow = a.settings.getBool("rack.selectionFollows");
+      if (ImGui::MenuItem(i18n::tr("Selection follows the mixer"), nullptr, follow)) a.settings.set("rack.selectionFollows", !follow);
+      ui::Hint(i18n::N_("Selecting a channel selects its mixer track, selecting a mixer track selects the channels routed to it"));
+    }
+
     ImGui::EndMenu();
   }
   if (ImGui::MenuItem(i18n::tr("Move selected up"), keys::label("rack.moveUp"), false, any)) ops::moveChannels(a.doc, sel, -1);
   if (ImGui::MenuItem(i18n::tr("Move selected down"), keys::label("rack.moveDown"), false, any)) ops::moveChannels(a.doc, sel, 1);
   if (ImGui::MenuItem(i18n::tr("Delete selected"), keys::label("rack.delete"), false, any)) ops::removeChannels(a.doc, sel);
   ImGui::SeparatorText(i18n::tr("All channels"));
-  if (ImGui::MenuItem(i18n::tr("Select all"), "Ctrl+A")) {
+  if (ImGui::MenuItem(i18n::tr("Select all"), keys::shownText("Ctrl+A"))) {
     a.selChannels.clear();
     for (const auto& c : s.channels) a.selChannels.insert(c.id);
   }
@@ -1158,6 +1213,17 @@ void playlistTrackMenu(App& a, int track) {
     }
   };
   const auto renameRow = [&] {
+    if (livelook::active(a)) {  // checkpoint 49: a command, as the reference's (the title takes the typing)
+      if (ImGui::MenuItem(i18n::tr("Rename"), keys::label("edit.rename"))) livelook::renameTrack(a, track);
+      return;
+    }
+    if (layoutui::active() == layout::Preset::Logic) {
+      if (ImGui::MenuItem(i18n::tr("Rename track..."), keys::label("edit.rename")))
+        openPrompt("Rename track", t.name, [&a, track](const std::string& nm) {
+          a.doc.editPlaylistTrack(track, "rename track", [&](PlaylistTrack& x) { x.name = nm; });
+        });
+      return;
+    }
     if (ImGui::BeginMenu(i18n::tr("Rename..."))) {
       renameField(t.name, [&a, track](const std::string& nm) {
         a.doc.editPlaylistTrack(track, "rename playlist track", [&](PlaylistTrack& x) { x.name = nm; });
@@ -1219,7 +1285,7 @@ void playlistTrackMenu(App& a, int track) {
     }
   };
   const auto muteLock = [&] {
-    if (ImGui::MenuItem(i18n::tr("Mute"), nullptr, t.muted))
+    if (ImGui::MenuItem(i18n::tr("Mute"), layoutui::active() == layout::Preset::Logic ? keys::label("track.mute") : nullptr, t.muted))  // R05-18
       a.doc.editPlaylistTrack(track, "mute playlist track", [](PlaylistTrack& x) { x.muted = !x.muted; });
     if (ImGui::MenuItem(i18n::tr("Lock"), nullptr, t.locked)) ops::setTrackLocked(a.doc, track, !t.locked);
   };
@@ -1227,7 +1293,8 @@ void playlistTrackMenu(App& a, int track) {
     freezeui::trackMenuItems(a, track);  // K-87: the linked channel or mixer track
   };
   const auto liveSettings = [&] {
-    if (ImGui::BeginMenu(i18n::tr("Live settings"))) {
+    // N45-09: in Clips the old layout name never shows: these are the track's launch settings there.
+    if (ImGui::BeginMenu(livelook::active(a) ? i18n::tr("Launch settings") : i18n::tr("Live settings"))) {
       liveTrackMenu(a, track);
       ImGui::EndMenu();
     }
@@ -1270,27 +1337,27 @@ void playlistTrackMenu(App& a, int track) {
     trackui::trackMenuItems(a, track);  // PL-08: track mode, input, arm, monitoring (a section of its own when set)
   };
   const auto selectClips = [&] {
-    if (ImGui::MenuItem(i18n::tr("Select all clips on track"))) {
+    if (ImGui::MenuItem(regionWord("Select all clips on track"))) {
       a.playlist.selected.clear();
       for (const auto& c : s.playlist)
         if (c.track == track) a.playlist.selected.insert(c.id);
     }
   };
   const auto clipsRow = [&] {
-    if (subMenu(i18n::tr("Clips"), "trmenu clips")) {  // K-158: the rest of the clips section
+    if (subMenu(regionWord("Clips"), "trmenu clips")) {  // K-158: the rest of the clips section
       const Pattern* cur = s.pattern(a.curPattern);
       const std::string send = cur ? "Send \"" + cur->name + "\" clips here" : std::string("Send pattern clips here");
       if (ImGui::MenuItem(send.c_str(), nullptr, false, cur != nullptr)) {
         const int n2 = ops::sendPatternClipsToTrack(a.doc, a.curPattern, track);
         if (n2 == 0) a.notify("No clips of this pattern to move");
       }
-      if (ImGui::MenuItem(i18n::tr("Merge pattern clips"))) {
+      if (ImGui::MenuItem(regionWord("Merge pattern clips"))) {
         ObjectId nc = ops::mergeTrackPatternClips(a.doc, track);
         if (nc) a.playlist.selected = {nc};
         else a.notify("Merging needs at least two pattern clips on the track");
       }
-      if (ImGui::MenuItem(i18n::tr("Mute all clips"))) ops::muteTrackClips(a.doc, track, true);
-      if (ImGui::MenuItem(i18n::tr("Unmute all clips"))) ops::muteTrackClips(a.doc, track, false);
+      if (ImGui::MenuItem(regionWord("Mute all clips"))) ops::muteTrackClips(a.doc, track, true);
+      if (ImGui::MenuItem(regionWord("Unmute all clips"))) ops::muteTrackClips(a.doc, track, false);
       ImGui::EndMenu();
     }
   };
@@ -1306,39 +1373,47 @@ void playlistTrackMenu(App& a, int track) {
     }
   };
   const auto deleteClips = [&] {
-    if (ImGui::MenuItem(i18n::tr("Delete all clips on track"))) ops::clearPlaylistTrack(a.doc, track);
+    if (ImGui::MenuItem(regionWord("Delete all clips on track"))) ops::clearPlaylistTrack(a.doc, track);
   };
   const auto deleteTrack = [&] {
-    if (ImGui::MenuItem(i18n::tr("Delete track"), nullptr, false, n > 1)) a.later([&a, track] { ops::deletePlaylistTrack(a.doc, track); });
+    if (ImGui::MenuItem(i18n::tr("Delete track"), nullptr, false, n > 1)) a.later([&a, track] {  // R04-13, R06-06
+        if (logicplug::active(a)) logicplug::deleteTrack(a, track);
+        else ops::deletePlaylistTrack(a.doc, track, false);
+      });
     devMenuItem("trmenu delete");
   };
   if (livelook::active(a)) {
     // K-112 (Live): the object menu skeleton: edit (duplicate, delete), rename, freeze, insert and
     // group, the track's content, playback, order, its look last. No title row.
-    cloneTrack();
-    deleteTrack();
+    // C47: the reference's track menu: Duplicate (a copy right after it), and the new audio, MIDI and
+    // return tracks, which go right after this track (MAP.md 2.9), in place of Studio's insert rows.
+    // N48-18: only the reference's rows: edit, rename, freeze, the new tracks, the colours. Launch
+    // settings live in the clip view, mute in the track's activator, the order in a drag.
+    if (ImGui::MenuItem(i18n::tr("Duplicate"), nullptr, false, n < kMaxPlaylistTracks)) a.later([&a, track] { ops::clonePlaylistTrack(a.doc, track); });
+    if (ImGui::MenuItem(i18n::tr("Delete"), nullptr, false, n > 1)) a.later([&a, track] { ops::deletePlaylistTrack(a.doc, track); });
+    devMenuItem("trmenu delete");
     ImGui::Separator();
     renameRow();
     ImGui::Separator();
     const float beforeFreeze = ImGui::GetCursorPosY();
-    freezeRows();
+    freezeui::trackMenuItems(a, track, true);
     if (ImGui::GetCursorPosY() > beforeFreeze) ImGui::Separator();  // a track without a freezable unit has none
-    insertAbove();
-    add8();
-    groupRow();
+    if (ImGui::MenuItem(i18n::tr("New audio track"), keys::label("track.newAudio"), false, n < kMaxPlaylistTracks))
+      a.later([&a, track] { livelook::newTrackAfter(a, true, track); });
+    if (ImGui::MenuItem(i18n::tr("New MIDI track"), keys::label("track.newMidi"), false, n < kMaxPlaylistTracks))
+      a.later([&a, track] { livelook::newTrackAfter(a, false, track); });
+    if (ImGui::MenuItem(i18n::tr("New return track"), keys::label("track.newReturn")))
+      a.later([&a] { a.doc.editSong("new return track", [](Song& x) { trackmodes::addReturnTrack(x, "Return"); }); });
     ImGui::Separator();
-    selectClips();
-    clipsRow();
-    deleteClips();
-    ImGui::Separator();
-    muteLock();
-    liveSettings();
-    modeRows();
-    ImGui::Separator();
-    moveRows();
-    ImGui::Separator();
-    propertiesRow();
-    colourRow();
+    {  // the colour palette in the menu itself, as the reference's
+      uint32_t col;
+      if (colorGrid(&col)) {
+        a.doc.editPlaylistTrack(track, "change track colour", [&](PlaylistTrack& x) { x.color = col; });
+        ImGui::CloseCurrentPopup();
+      }
+    }
+    (void)groupRow, (void)selectClips, (void)clipsRow, (void)deleteClips, (void)muteLock, (void)liveSettings, (void)modeRows, (void)moveRows,
+        (void)propertiesRow, (void)colourRow, (void)freezeRows, (void)deleteTrack;
     return;
   }
   if (logicplug::active(a)) {
@@ -1347,9 +1422,9 @@ void playlistTrackMenu(App& a, int track) {
     // regions and its place. No title row.
     if (ImGui::MenuItem(i18n::tr("New tracks..."), keys::label("track.newTracks"), false, n < kMaxPlaylistTracks)) newtracks::open();
     if (ImGui::MenuItem(i18n::tr("New track with the same settings"), keys::label("track.duplicate"), false, n < kMaxPlaylistTracks))
-      a.later([&a, track] { ops::clonePlaylistTrack(a.doc, track, false); });
+      a.later([&a, track] { logicplug::newTrackSameSettings(a, track, false); });  // R02-14
     if (ImGui::MenuItem(i18n::tr("New track with the same settings and content"), nullptr, false, n < kMaxPlaylistTracks))
-      a.later([&a, track] { ops::clonePlaylistTrack(a.doc, track, true); });
+      a.later([&a, track] { logicplug::newTrackSameSettings(a, track, true); });
     newInstrument();
     ImGui::Separator();
     renameRow();
@@ -1414,7 +1489,7 @@ void clipContextMenuTracks(App& a, ObjectId clip) {
       if (const Channel* ch = s.channel(c->source); ch && ImGui::MenuItem(i18n::tr("Edit audio"), nullptr, false, !ch->plugin.data.empty())) {
         a.settings.set("ui.loupePinned", true);  // the audio editor in the lower pane
         layoutui::setRegionVisible(a, "logic.lower", true);
-        a.showPiano = a.showRack = false;  // in place of the piano roll the pane opens with
+        a.showPiano = a.showRack = a.showMixer = false;  // in place of the piano roll the pane opens with
         packs::openAudioEditor(a, ch->plugin.data, ch->id);
       }
     if (c->kind == ClipKind::Automation && ImGui::MenuItem(i18n::tr("Edit automation"))) openAutomationEditor(a, c->source, c->id);
@@ -1428,7 +1503,7 @@ void clipContextMenuTracks(App& a, ObjectId clip) {
   const Pattern* p = s.pattern(c->pattern);
   if (!p) return;
   ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Edit pattern"))) {
+  if (ImGui::MenuItem(regionWord("Edit pattern"))) {
     a.selectPattern(p->id);
     a.showPiano = true;
     a.focusWindow = "Piano roll";
@@ -1515,6 +1590,7 @@ void clipContextMenuTracks(App& a, ObjectId clip) {
 
 void clipContextMenu(App& a, ObjectId clip) { clipContextMenu(a, clip, {}); }
 
+bool gClipMenuFromSlot = false;
 void clipContextMenu(App& a, ObjectId clip, const std::function<bool()>& clipRows) {
   if (logicplug::active(a)) return clipContextMenuTracks(a, clip);
   const Song& s = a.doc.song();
@@ -1528,7 +1604,7 @@ void clipContextMenu(App& a, ObjectId clip, const std::function<bool()>& clipRow
   if (!sel.count(clip)) sel = {clip};
   const Tick patLen = s.patternContentLength(*p), len = s.clipLength(*c);
   const auto editPattern = [&]() -> bool {
-    if (ImGui::MenuItem(i18n::tr("Edit pattern"))) {
+    if (ImGui::MenuItem(regionWord("Edit pattern"))) {
       a.selectPattern(p->id);
       a.showPiano = true;
       a.focusWindow = "Piano roll";
@@ -1536,7 +1612,7 @@ void clipContextMenu(App& a, ObjectId clip, const std::function<bool()>& clipRow
     return false;
   };
   const auto duplicate = [&]() -> bool {
-    if (ImGui::MenuItem(i18n::tr("Duplicate"), "Ctrl+B")) {
+    if (ImGui::MenuItem(i18n::tr("Duplicate"), keys::shownText("Ctrl+B"))) {
       auto ids = ops::duplicateClips(a.doc, sel);
       a.playlist.selected = std::set<ObjectId>(ids.begin(), ids.end());
       return true;
@@ -1628,19 +1704,66 @@ void clipContextMenu(App& a, ObjectId clip, const std::function<bool()>& clipRow
     return false;
   };
   if (livelook::active(a)) {
-    // K-112 (Live): the object menu skeleton: duplicate, delete; rename and the clip's own rows
-    // (from the caller: mute, loop); crop (fit); cut up; the pattern's look last. No title row.
+    // K-112 (Live): the object menu skeleton. N46-08: one Cut, Copy, Paste, Duplicate, Delete block
+    // with the Clips keys (a grid slot's menu has its own, so none here), then Rename and the colour,
+    // the clip's own rows (from the caller: mute, loop, launch), crop (fit), cut up. Studio's pattern
+    // rows (edit, make unique, select the same) are not the reference's. No title row.
     const uint64_t rev = a.doc.revision();
-    if (duplicate() || deleteClips()) return;
-    ImGui::Separator();
-    if (renamePattern() || editPattern() || makeUnique() || selectSame()) return;
+    if (!gClipMenuFromSlot) {
+      if (ImGui::MenuItem(i18n::tr("Cut"))) {
+        a.playlist.selected = sel;
+        editCut(a);
+        return;
+      }
+      if (ImGui::MenuItem(i18n::tr("Copy"), keys::label("playlist.copy"))) {
+        a.playlist.selected = sel;
+        editCopy(a);
+      }
+      if (ImGui::MenuItem(i18n::tr("Paste"), keys::label("playlist.paste"), false, canPaste(a))) {
+        editPaste(a);
+        return;
+      }
+      if (ImGui::MenuItem(i18n::tr("Duplicate"), keys::label("playlist.duplicate"))) {
+        auto ids = ops::duplicateClips(a.doc, sel);
+        a.playlist.selected = std::set<ObjectId>(ids.begin(), ids.end());
+        return;
+      }
+      if (ImGui::MenuItem(i18n::tr("Delete"), keys::label("playlist.delete"))) {
+        ops::removeClips(a.doc, sel);
+        a.playlist.selected.clear();
+        return;
+      }
+      ImGui::Separator();
+    }
+    // N47-12: Rename is a command (the clip band's Name field takes the typing, as the reference renames
+    // in place), not a submenu; then the colour, the clip's own rows, Crop, Consolidate, Split.
+    if (ImGui::MenuItem(i18n::tr("Rename"), keys::label("edit.rename"))) {
+      a.playlist.selected = {clip};
+      livelook::renameClip(a, clip);
+      return;
+    }
+    if (ImGui::BeginMenu(i18n::tr("Colour"))) {
+      uint32_t col;
+      if (colorGrid(&col)) ops::setPatternColor(a.doc, p->id, col);
+      ImGui::EndMenu();
+    }
     if (clipRows && (clipRows() || a.doc.revision() != rev || !a.doc.song().clip(clip))) return;
     ImGui::Separator();
-    if (fitLength()) return;
-    ImGui::Separator();
-    if (splitRepeats() || sliceHere() || chopRows() || splitChannels() || mergeSel()) return;
-    ImGui::Separator();
-    patternColour();
+    if (ImGui::MenuItem(i18n::tr("Crop clip"), nullptr, false, c->length != 0 && c->length != patLen)) {
+      a.doc.setClipLength(clip, 0);  // the clip as long as its notes' loop
+      return;
+    }
+    if (ImGui::MenuItem(i18n::tr("Consolidate"), keys::label("playlist.merge"), false, sel.size() >= 2)) {
+      if (const ObjectId nc = ops::mergeClips(a.doc, sel)) a.playlist.selected = {nc};
+      return;
+    }
+    {
+      const Tick pos = static_cast<Tick>(a.engine.position());
+      if (ImGui::MenuItem(i18n::tr("Split"), keys::label("playlist.splitAtSongPos"), false, pos > c->start && pos < c->start + len)) {
+        ops::sliceClip(a.doc, clip, pos);
+        return;
+      }
+    }
     return;
   }
   menuTitle(p->name.c_str());
@@ -1673,14 +1796,14 @@ void playlistOptionsMenu(App& a, int part) {
       for (const auto& c : s.playlist)
         if (a.playlist.selected.count(c.id)) audioSel = audioSel || c.kind == ClipKind::Audio, autoSel = autoSel || c.kind == ClipKind::Automation;
       if (sepFirst) ImGui::Separator();
-      if (ImGui::MenuItem(i18n::tr("Pitch selected audio clips a semitone up"), nullptr, false, audioSel)) ops::pitchAudioClips(a.doc, a.playlist.selected, 100.0f);
-      if (ImGui::MenuItem(i18n::tr("Pitch selected audio clips a semitone down"), nullptr, false, audioSel)) ops::pitchAudioClips(a.doc, a.playlist.selected, -100.0f);
-      if (ImGui::MenuItem(i18n::tr("Reverse selected audio clips"), nullptr, false, audioSel)) ops::reverseAudioClips(a.doc, a.playlist.selected);
+      if (ImGui::MenuItem(regionWord("Pitch selected audio clips a semitone up"), nullptr, false, audioSel)) ops::pitchAudioClips(a.doc, a.playlist.selected, 100.0f);
+      if (ImGui::MenuItem(regionWord("Pitch selected audio clips a semitone down"), nullptr, false, audioSel)) ops::pitchAudioClips(a.doc, a.playlist.selected, -100.0f);
+      if (ImGui::MenuItem(regionWord("Reverse selected audio clips"), nullptr, false, audioSel)) ops::reverseAudioClips(a.doc, a.playlist.selected);
       // J-38: fades and automatic crossfades.
       if (ImGui::MenuItem(i18n::tr("Automatic crossfades"), nullptr, s.autoCrossfades))
         a.doc.editSong(s.autoCrossfades ? "automatic crossfades off" : "automatic crossfades on", [](Song& x) { x.autoCrossfades = !x.autoCrossfades; });
       ui::Hint("Overlapping audio clips on a track crossfade over the overlap (this project)");
-      if (ImGui::MenuItem(i18n::tr("Reset fades of selected audio clips"), nullptr, false, audioSel)) {
+      if (ImGui::MenuItem(regionWord("Reset fades of selected audio clips"), nullptr, false, audioSel)) {
         const auto sel = a.playlist.selected;
         a.doc.editClips("reset fades", [&](std::vector<Clip>& v) {
           for (Clip& x : v)
@@ -1690,36 +1813,26 @@ void playlistOptionsMenu(App& a, int part) {
             }
         });
       }
-      if (ImGui::MenuItem(i18n::tr("Merge selected automation clips"), nullptr, false, autoSel)) {
+      if (ImGui::MenuItem(regionWord("Merge selected automation clips"), nullptr, false, autoSel)) {
         ObjectId nc = ops::mergeAutomationClips(a.doc, a.playlist.selected);
         if (nc) a.playlist.selected = {nc};
         else a.notify("Merging needs two automation clips of the same parameter");
       }
     }
-    if (ImGui::MenuItem(i18n::tr("Make selected clips unique"), nullptr, false, any)) {
+    if (ImGui::MenuItem(regionWord("Make selected clips unique"), nullptr, false, any)) {
       a.doc.beginGroup("make clips unique");
       for (ObjectId id : a.playlist.selected) ops::makeClipUnique(a.doc, id);
       a.doc.endGroup();
     }
   };
-  if (part == 1 || (all && ImGui::BeginMenu(i18n::tr("Edit")))) {
-    if (lg) {  // K-112b: the pane's Edit starts as the main Edit does
-      if (ImGui::MenuItem(i18n::tr("Undo"), keys::label("edit.undo"), false, a.doc.history().canUndo())) a.later([&a] { a.doc.undo(); });
-      if (ImGui::MenuItem(i18n::tr("Redo"), keys::label("edit.redo"), false, a.doc.history().canRedo())) a.later([&a] { a.doc.redo(); });
-      ImGui::Separator();
-    }
-    if (ImGui::MenuItem(i18n::tr("Cut"), lg ? keys::label("playlist.cut") : "Ctrl+X", false, any)) editCut(a);
-    if (ImGui::MenuItem(i18n::tr("Copy"), lg ? keys::label("playlist.copy") : "Ctrl+C", false, any)) editCopy(a);
-    if (ImGui::MenuItem(i18n::tr("Paste"), lg ? keys::label("playlist.paste") : "Ctrl+V", false, canPaste(a))) editPaste(a);
-    if (ImGui::MenuItem(i18n::tr("Duplicate"), lg ? keys::label("playlist.duplicate") : "Ctrl+B", false, any)) editDuplicate(a);
-    if (ImGui::MenuItem(i18n::tr("Delete"), lg ? keys::label("playlist.delete") : "Del", false, any)) editDelete(a);
-    ImGui::Separator();
-    if (ImGui::MenuItem(i18n::tr("Merge selected clips"), keys::label("playlist.merge"), false, a.playlist.selected.size() >= 2)) {
+  // R01-16: join, split and chop: in Edit, or in Functions in the Tracks layout.
+  const auto regionFunctions = [&]() {
+    if (ImGui::MenuItem(regionWord("Merge selected clips"), keys::label("playlist.merge"), false, a.playlist.selected.size() >= 2)) {
       ObjectId nc = ops::mergeClips(a.doc, a.playlist.selected);
       if (nc) a.playlist.selected = {nc};
     }
-    if (ImGui::MenuItem(i18n::tr("Mute / unmute selected clips"), "M", false, any)) ops::muteClips(a.doc, a.playlist.selected, 2);
-    if (ImGui::BeginMenu(i18n::tr("Chop selected clips"), any)) {
+    if (!lg && ImGui::MenuItem(regionWord("Mute / unmute selected clips"), keys::label("playlist.mute"), false, any)) ops::muteClips(a.doc, a.playlist.selected, 2);
+    if (ImGui::BeginMenu(regionWord("Chop selected clips"), any)) {
       const Tick bar = s.barTicks(), beat = s.beatTicks();
       if (ImGui::MenuItem(i18n::tr("Every bar"))) chopui::sliceSelectedAtGrid(a, bar);
       if (ImGui::MenuItem(i18n::tr("Every 2 beats"))) chopui::sliceSelectedAtGrid(a, beat * 2);
@@ -1729,19 +1842,34 @@ void playlistOptionsMenu(App& a, int part) {
     }
     if (ImGui::MenuItem(i18n::tr("Chop and stutter..."), keys::label("playlist.chopWindow"), false, any || a.playlist.selEnd > a.playlist.selStart))
       chopui::open(a);
-    if (ImGui::MenuItem(i18n::tr("Slice at the song position"), nullptr, false, true)) {  // J-28: every clip kind, audio included
+    if (ImGui::MenuItem(regionWord("Slice at the song position"), nullptr, false, true)) {  // J-28: every clip kind, audio included
       const Tick at = static_cast<Tick>(a.engine.position());
       const auto ids = pltools::clipsAcross(s, at, 0, static_cast<int>(s.tracks.size()) - 1);
       if (!ids.empty()) a.doc.editSong("slice clips", [&](Song& x) { pltools::sliceClips(x, ids, at, a.playlist.zeroCross); });
     }
+  };
+  if (part == 1 || (all && ImGui::BeginMenu(i18n::tr("Edit")))) {
+    if (lg) {  // K-112b: the pane's Edit starts as the main Edit does
+      if (ImGui::MenuItem(i18n::tr("Undo"), keys::label("edit.undo"), false, a.doc.history().canUndo())) a.later([&a] { a.doc.undo(); });
+      if (ImGui::MenuItem(i18n::tr("Redo"), keys::label("edit.redo"), false, a.doc.history().canRedo())) a.later([&a] { a.doc.redo(); });
+      ImGui::Separator();
+    }
+    if (ImGui::MenuItem(i18n::tr("Cut"), lg ? keys::label("playlist.cut") : keys::shownText("Ctrl+X"), false, any)) editCut(a);
+    if (ImGui::MenuItem(i18n::tr("Copy"), lg ? keys::label("playlist.copy") : keys::shownText("Ctrl+C"), false, any)) editCopy(a);
+    if (ImGui::MenuItem(i18n::tr("Paste"), lg ? keys::label("playlist.paste") : keys::shownText("Ctrl+V"), false, canPaste(a))) editPaste(a);
+    if (ImGui::MenuItem(i18n::tr("Duplicate"), lg ? keys::label("playlist.duplicate") : keys::shownText("Ctrl+B"), false, any)) editDuplicate(a);
+    if (ImGui::MenuItem(i18n::tr("Delete"), lg ? keys::label("playlist.delete") : "Del", false, any)) editDelete(a);
+    ImGui::Separator();
+    if (!lg) regionFunctions();
+    if (lg && ImGui::MenuItem(regionWord("Mute / unmute selected clips"), keys::label("playlist.mute"), false, any)) ops::muteClips(a.doc, a.playlist.selected, 2);
     if (!lg) processing(true);
     if (all) ImGui::EndMenu();
   }
   if (part == 1) ImGui::Separator();
   if ((all || part == 1) && ImGui::BeginMenu(i18n::tr("Select"))) {
-    if (ImGui::MenuItem(i18n::tr("Select all"), lg ? keys::label("playlist.selectAll") : "Ctrl+A")) editSelectAll(a);
-    if (ImGui::MenuItem(i18n::tr("Deselect"), lg ? keys::label("playlist.deselect") : "Ctrl+D")) editDeselect(a);
-    if (ImGui::MenuItem(i18n::tr("Clips with the same source as the selection"), nullptr, false, any)) {
+    if (ImGui::MenuItem(i18n::tr("Select all"), lg ? keys::label("playlist.selectAll") : keys::shownText("Ctrl+A"))) editSelectAll(a);
+    if (ImGui::MenuItem(i18n::tr("Deselect"), lg ? keys::label("playlist.deselect") : keys::shownText("Ctrl+D"))) editDeselect(a);
+    if (ImGui::MenuItem(regionWord("Clips with the same source as the selection"), nullptr, false, any)) {
       std::set<ObjectId> out;
       for (ObjectId id : a.playlist.selected)
         for (ObjectId k : ops::clipsOfSameSource(s, id)) out.insert(k);
@@ -1749,7 +1877,7 @@ void playlistOptionsMenu(App& a, int part) {
     }
     {  // J-28: time selection from the clips / stepped by its own length (helpers from J-27)
       ImGui::Separator();
-      if (ImGui::MenuItem(i18n::tr("Time around the selected clips"), nullptr, false, any)) {
+      if (ImGui::MenuItem(regionWord("Time around the selected clips"), nullptr, false, any)) {
         const auto r = ops::clipsTimeRange(s, a.playlist.selected);
         a.playlist.selStart = r.first, a.playlist.selEnd = r.second;
       }
@@ -1764,12 +1892,12 @@ void playlistOptionsMenu(App& a, int part) {
       }
       ImGui::Separator();
     }
-    if (ImGui::MenuItem(i18n::tr("Muted clips"))) {
+    if (ImGui::MenuItem(regionWord("Muted clips"))) {
       a.playlist.selected.clear();
       for (const auto& c : s.playlist)
         if (c.muted) a.playlist.selected.insert(c.id);
     }
-    if (ImGui::MenuItem(i18n::tr("Clips of the current pattern"))) {
+    if (ImGui::MenuItem(regionWord("Clips of the current pattern"))) {
       a.playlist.selected.clear();
       for (const auto& c : s.playlist)
         if (c.pattern == a.curPattern) a.playlist.selected.insert(c.id);
@@ -1784,6 +1912,8 @@ void playlistOptionsMenu(App& a, int part) {
   }
   if (all || part == 2) {
   if (lg) {
+    regionFunctions();
+    ImGui::Separator();
     processing(false);
     ImGui::Separator();
   }
@@ -1892,7 +2022,38 @@ void playlistOptionsMenu(App& a, int part) {
   };
   if (!lg) toolSnapZoom();
   if (part == 3 && !lg) ImGui::Separator();
-  if (part == 3 || ImGui::BeginMenu(i18n::tr("View"))) {  // K-77: no separator above its first item
+  if (lg && (part == 3 || ImGui::BeginMenu(i18n::tr("View")))) {
+    // R05-10: the tracks area's own View menu, as the reference's (235): track zoom first, then what
+    // the tracks show, then what the regions show; the tools, snap and zoom follow.
+    if (ImGui::MenuItem(i18n::tr("Reset track heights"), nullptr, false, std::fabs(a.playlist.trackHeight - playlistDefaultTrackHeight(true)) >= 0.5f)) {
+      a.playlist.trackHeight = playlistDefaultTrackHeight(true);
+      a.settings.set("ui.playlistTrackHeightSet", false);
+    }
+    if (ImGui::BeginMenu(i18n::tr("Track height"))) {
+      for (int pct : {50, 75, 100, 150, 200}) {
+        const std::string l = std::to_string(pct) + "%";
+        const float h = playlistDefaultTrackHeight(true) * pct / 100.0f;
+        if (ImGui::MenuItem(l.c_str(), nullptr, std::fabs(a.playlist.trackHeight - h) < 0.5f)) a.playlist.trackHeight = std::clamp(h, 24.0f, 120.0f);
+      }
+      ImGui::EndMenu();
+    }
+    ImGui::Separator();
+    ImGui::TextDisabled("%s", i18n::tr("Tracks"));
+    {
+      const bool g = a.settings.getBool("ui.logicGlobalTracks");
+      if (ImGui::MenuItem(i18n::tr("Global tracks"), keys::label("view.globalTracks"), g)) a.settings.set("ui.logicGlobalTracks", !g);
+    }
+    if (ImGui::MenuItem(i18n::tr("Show automation"), keys::label("view.automation"), automationLanesShown(a))) toggleAutomationLanes();
+    autoScrollItem(a, false);  // the reference's Scroll in Play
+    ImGui::Separator();
+    ImGui::TextDisabled("%s", i18n::tr("Regions"));
+    if (ImGui::MenuItem(i18n::tr("Notes and automation"), nullptr, a.playlist.patternPreview == 0)) a.playlist.patternPreview = 0;
+    if (ImGui::MenuItem(i18n::tr("Notes only"), nullptr, a.playlist.patternPreview == 1)) a.playlist.patternPreview = 1;
+    if (ImGui::MenuItem(i18n::tr("Fade and volume handles on audio regions"), keys::label("playlist.fades"), &a.playlist.showFades)) {}
+    ImGui::Separator();
+    toolSnapZoom();
+    if (all) ImGui::EndMenu();
+  } else if (!lg && (part == 3 || ImGui::BeginMenu(i18n::tr("View")))) {  // K-77: no separator above its first item
     for (int pct : {50, 75, 100, 150, 200}) {
       std::string l = "Track height " + std::to_string(pct) + "%";
       float h = playlistDefaultTrackHeight(logicplug::active(a)) * pct / 100.0f;
@@ -1934,7 +2095,7 @@ void playlistOptionsMenu(App& a, int part) {
   }
   if (ImGui::MenuItem(i18n::tr("Collapse all grouped tracks"))) ops::setAllGroupsFolded(a.doc, true);   // J-28 (operation: J-27)
   if (ImGui::MenuItem(i18n::tr("Expand all grouped tracks"))) ops::setAllGroupsFolded(a.doc, false);
-  if (ImGui::BeginMenu(i18n::tr("Sort patterns"))) {
+  if (!lg && ImGui::BeginMenu(i18n::tr("Sort patterns"))) {  // R01-16: the Tracks layout has no pattern list to sort
     if (ImGui::MenuItem(i18n::tr("By name"))) ops::sortPatterns(a.doc, ops::PatternSort::Name);
     if (ImGui::MenuItem(i18n::tr("By colour"))) ops::sortPatterns(a.doc, ops::PatternSort::Color);
     ImGui::EndMenu();
@@ -1949,7 +2110,7 @@ void playlistOptionsMenu(App& a, int part) {
       }
     });
   }
-  if (ImGui::MenuItem(i18n::tr("Delete unused patterns"))) {
+  if (ImGui::MenuItem(lg ? i18n::tr("Delete unused MIDI data") : i18n::tr("Delete unused patterns"))) {
     int n = ops::deleteUnusedPatterns(a.doc);
     a.notify(n ? "Deleted " + std::to_string(n) + " unused pattern(s)" : std::string("No unused patterns"));
   }
@@ -2127,10 +2288,10 @@ void pianoRollMenu(App& a, int part) {
     ImGui::EndMenu();
   }
   if (in(1) && open("Edit")) {
-    if (ImGui::MenuItem(i18n::tr("Cut"), "Ctrl+X", false, ok)) editCut(a);
-    if (ImGui::MenuItem(i18n::tr("Copy"), "Ctrl+C", false, ok)) editCopy(a);
-    if (ImGui::MenuItem(i18n::tr("Paste"), "Ctrl+V", false, ok && canPaste(a))) editPaste(a);
-    if (ImGui::MenuItem(i18n::tr("Duplicate"), "Ctrl+B", false, ok)) editDuplicate(a);
+    if (ImGui::MenuItem(i18n::tr("Cut"), keys::shownText("Ctrl+X"), false, ok)) editCut(a);
+    if (ImGui::MenuItem(i18n::tr("Copy"), keys::shownText("Ctrl+C"), false, ok)) editCopy(a);
+    if (ImGui::MenuItem(i18n::tr("Paste"), keys::shownText("Ctrl+V"), false, ok && canPaste(a))) editPaste(a);
+    if (ImGui::MenuItem(i18n::tr("Duplicate"), keys::shownText("Ctrl+B"), false, ok)) editDuplicate(a);
     if (ImGui::MenuItem(i18n::tr("Delete"), "Del", false, ok && any)) editDelete(a);
     ImGui::Separator();
     sendNotesItems(a, true);
@@ -2328,7 +2489,7 @@ void mixerTrackMenu(App& a, size_t index) {
         if (!mixops::loadTrackState(a.doc, id, p, &err)) a.notify(err, true);
       });
     }
-    if (ImGui::MenuItem(i18n::tr("Save mixer track state as..."), "Ctrl+Shift+S")) {
+    if (ImGui::MenuItem(i18n::tr("Save mixer track state as..."), keys::shownText("Ctrl+Shift+S"))) {
       fileDialog(a, "Save mixer track state", true, {mixops::kTrackStateExt}, mixerTrackName(s, index), [&a, id](const std::string& path) {
         std::string p = path;
         if (fs::path(p).extension().empty()) p += mixops::kTrackStateExt;
@@ -2361,7 +2522,7 @@ void mixerTrackMenu(App& a, size_t index) {
   if (changed()) return;
 
   ImGui::Separator();
-  if (ImGui::MenuItem(t.muted ? i18n::tr("Unmute") : i18n::tr("Mute"))) a.doc.editMixerTrack(id, "mute mixer track", [](MixerTrack& m) { m.muted = !m.muted; });
+  if (ImGui::MenuItem(t.muted ? i18n::tr("Unmute") : i18n::tr("Mute"))) mixops::toggleMute(a.doc, id);  // K-238: with a linked group
   if (ImGui::MenuItem(i18n::tr("Solo"), "S", t.solo)) a.later([&a, id] { ops::soloMixerTrack(a.doc, id); });
   if (changed()) return;
   j31::mixerSoloItems(a, id);  // J-31: alt solo
@@ -2498,7 +2659,7 @@ void mixerTrackMenu(App& a, size_t index) {
     if (ImGui::MenuItem(i18n::tr("Create group..."))) {
       std::vector<ObjectId> ids = selIds;
       menus::openPrompt("Group name", mixops::newGroupName(s), [&a, ids](const std::string& n) {
-        if (!n.empty()) mixops::setGroup(a.doc, ids, n);
+        if (!n.empty()) mixops::createGroup(a.doc, ids, n, true);  // K-238: a new group starts linked
       });
     }
     const auto groups = mixops::groupNames(s);
@@ -2508,6 +2669,12 @@ void mixerTrackMenu(App& a, size_t index) {
       ImGui::EndMenu();
     }
     if (ImGui::MenuItem(i18n::tr("Remove from group"), nullptr, false, !t.group.empty())) mixops::setGroup(a.doc, selIds, "");
+    {  // K-238: a linked group's volume, pan, mute and solo move together
+      const bool linked = mixops::groupLinked(s, t.group);
+      if (ImGui::MenuItem(i18n::tr("Link volume, pan, mute and solo"), nullptr, linked, !t.group.empty()))
+        mixops::setGroupLink(a.doc, t.group, !linked);
+      ui::Hint("Moving one member's fader, pan knob, mute or solo moves the whole group (the fader by the same number of dB)");
+    }
     if (ImGui::MenuItem(i18n::tr("Auto colour group"), nullptr, false, mixops::groupMembers(s, t.group).size() >= 3))
       mixops::gradientColor(a.doc, mixops::groupMembers(s, t.group));
     ImGui::EndMenu();
@@ -2530,8 +2697,8 @@ void mixerTrackMenu(App& a, size_t index) {
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu(i18n::tr("Effect chain"))) {
-    if (ImGui::MenuItem(i18n::tr("Copy effect chain"), "Ctrl+C")) editCopy(a);
-    if (ImGui::MenuItem(i18n::tr("Paste effect chain"), "Ctrl+V", false, canPaste(a))) editPaste(a);
+    if (ImGui::MenuItem(i18n::tr("Copy effect chain"), keys::shownText("Ctrl+C"))) editCopy(a);
+    if (ImGui::MenuItem(i18n::tr("Paste effect chain"), keys::shownText("Ctrl+V"), false, canPaste(a))) editPaste(a);
     if (ImGui::MenuItem(i18n::tr("Clear all effects"))) a.doc.editMixerTrack(id, "clear effects", [](MixerTrack& m) { m.slots.assign(kEffectSlots, EffectSlot{}); });
     // Effect-chain presets from the preset library (yours and imported ones).
     if (ImGui::BeginMenu(i18n::tr("Load effect chain"))) {
@@ -2735,6 +2902,10 @@ void knobContextMenu(App& a, ParamId pid) {
   auto d = describeParam(a.doc.song(), pid);
   auto v = getParam(a.doc.song(), pid);
   if (!d || !v) return;
+  if (livelook::active(a)) {  // N49-11: the reference's Reset (to the default value) heads the menu
+    if (ImGui::MenuItem(i18n::tr("Reset"), nullptr, false, *v != d->def)) a.doc.setParam(pid, d->def, false);
+    ImGui::Separator();
+  }
   if (ImGui::MenuItem(i18n::tr("Copy value"))) valueClip = d->toNormalized(*v), hasClip = true;
   if (ImGui::MenuItem(i18n::tr("Paste value"), nullptr, false, hasClip)) a.doc.setParam(pid, d->fromNormalized(valueClip), false);
   if (d->kind == ParamKind::Continuous && ImGui::BeginMenu(i18n::tr("Set to"))) {
@@ -2851,6 +3022,11 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot) {
     });
   }
   if (ImGui::MenuItem(i18n::tr("Save preset to file..."))) savePresetDialog(a, owner, slot);
+  if (slot < 0) {  // K-279: the channel window's header row (colour, name, instrument, mixer track)
+    const bool shown = a.settings.getBool("ui.channelHeader");
+    if (ImGui::MenuItem(i18n::tr("Show channel header"), nullptr, shown)) a.settings.set("ui.channelHeader", !shown);
+    ui::Hint("The row with the channel's colour, name, instrument and mixer track above the pages");
+  }
   if (ImGui::MenuItem(i18n::tr("Copy state"))) stateClip = *st;
   if (ImGui::MenuItem(i18n::tr("Paste state"), nullptr, false, stateClip.type == st->type)) {
     PluginState ns = stateClip;

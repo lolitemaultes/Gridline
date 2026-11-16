@@ -34,8 +34,17 @@ const MixerTrack* linkedMixer(const Song& s, int track);
 // one, else the one mixer track (not Main) every channel of its clips goes to (pattern clips: each
 // channel with steps or notes; audio clips: their channel). nullptr when there is none or several.
 const MixerTrack* playedMixer(const Song& s, int track);
+// N45-05: when the clips play into several mixer tracks that all route into one bus (a drum kit's
+// tracks into "Drum Bus"), that bus: the one fader, pan and sends that reach every sound of the track,
+// as the reference's track with an instrument rack.
 // Every mixer track the track's clips play into (Main included), in the order first met.
 std::vector<ObjectId> playedMixers(const Song& s, int track);
+// K-112c (C47): a mixer track's output: its first send that is not a sidechain (an insert sends to
+// the master by default; a bus's members send there first). kNoId when it has none.
+ObjectId outputOf(const MixerTrack& m);
+// The return tracks, by mixer index in mixer order: the mixer tracks (not the master) that some track
+// reaches by an aux send, a send other than its output. A bus fed only by outputs is not a return.
+std::vector<size_t> returnTracks(const Song& s);
 const Channel* linkedChannel(const Song& s, int track);
 // Track of the current arrangement linked to a mixer track as an audio track
 // (-1 = none), and the instrument track of a channel.
@@ -73,6 +82,9 @@ int addUsedTrack(Song& s);
 // K-112c (round 45): and two returns, "Reverb" and "Delay" (shown as A Reverb, B Delay; Gridline's, fully
 // wet, on the next free mixer tracks), which each audio track sends to at zero level.
 void makeClipsStarterTracks(Song& s);
+// K-112c (C44-16): a new return track: the first free mixer track, named `name`, with a send at zero
+// level from every shown track's mixer track. Returns its id (kNoId: no free mixer track).
+ObjectId addReturnTrack(Song& s, const std::string& name);
 // Whether a clip of this kind may sit on the track: instrument tracks take
 // pattern clips only.
 bool clipAllowed(const Song& s, ClipKind kind, int track);
@@ -125,8 +137,10 @@ int addUsedTrack(Document& d, int count = 1);  // `count` new tracks in one undo
 // K-112c (round 45): the Clips Create menu's new tracks, right after the shown ones, one undo step
 // each: an audio track on a free mixer track, or an empty MIDI track (it takes pattern clips),
 // named "<number> Audio" / "<number> MIDI" as a new set's. Return the index (-1: none made).
-int addAudioTrack(Document& d);
-int addMidiTrack(Document& d);
+// N45-08: `after` >= 0 puts it right after that track (else after the tracks in use); it takes the
+// next colour of the Clips track colours.
+int addAudioTrack(Document& d, int after = -1);
+int addMidiTrack(Document& d, int after = -1);
 bool setArmed(Document& d, int track, bool armed);
 bool setInput(Document& d, int track, int input, bool stereo);
 bool setMonitor(Document& d, int track, InputMonitor m);

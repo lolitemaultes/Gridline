@@ -1,6 +1,7 @@
 // Gridline — MCP transports: loopback HTTP server / client, stdio loop,
 // attach bridge (see McpTransport.h).
 #include "McpTransport.h"
+#include "Log.h"
 #include "Net.h"
 #include "Platform.h"
 #include <algorithm>
@@ -89,8 +90,9 @@ std::string httpReason(int s) {
 
 // ============================================================ HTTP server ====
 
-bool HttpServer::start(int port, std::string* err) {
+bool HttpServer::start(int port, std::string* err, const listen::Policy& policy) {
   stop();
+  policy_ = policy;
   const net::Sock fd = net::tcpSocket();
   if (fd == net::kNoSock) {
     if (err) *err = "socket: " + net::lastError();
@@ -103,9 +105,10 @@ bool HttpServer::start(int port, std::string* err) {
   sockaddr_in a{};
   a.sin_family = AF_INET;
   a.sin_port = htons(static_cast<uint16_t>(port));
-  a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);  // 127.0.0.1 only, never INADDR_ANY
+  // 127.0.0.1 unless the user opted in to more (K-264, listen::bindAddress)
+  a.sin_addr.s_addr = htonl(listen::bindAddress(policy));
   if (::bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0 || ::listen(fd, 16) != 0) {
-    if (err) *err = "cannot listen on 127.0.0.1:" + std::to_string(port) + ": " + net::lastError();
+    if (err) *err = "cannot listen on " + listen::ipv4Text(listen::bindAddress(policy)) + ":" + std::to_string(port) + ": " + net::lastError();
     net::closeSock(fd);
     return false;
   }
@@ -172,15 +175,15 @@ void HttpServer::poll(const Handler& handler, int timeoutMs) {
   }
   if (streaming) timeoutMs = std::min(timeoutMs, 20);
   if (net::pollSocks(fds.data(), fds.size(), timeoutMs) < 0) return;
-  // New connections (loopback peers only).
+  // New connections (loopback peers, or the peers the listen policy allows: K-264).
   if (fds[0].revents & POLLIN)
     for (int k = 0; k < 8; ++k) {
       sockaddr_in peer{};
       net::SockLen len = sizeof peer;
       const net::Sock c = static_cast<net::Sock>(::accept(fd_, reinterpret_cast<sockaddr*>(&peer), &len));
       if (c == net::kNoSock) break;
-      const bool loop = peer.sin_family == AF_INET && (ntohl(peer.sin_addr.s_addr) >> 24) == 127;
-      if (!loop || conns_.size() >= kMaxConnections) {
+      const uint32_t from = peer.sin_family == AF_INET ? ntohl(peer.sin_addr.s_addr) : 0u;
+      if (peer.sin_family != AF_INET || !listen::peerAllowed(policy_, from) || conns_.size() >= kMaxConnections) {
         net::closeSock(c);
         continue;
       }
@@ -189,6 +192,7 @@ void HttpServer::poll(const Handler& handler, int timeoutMs) {
       net::setNoSigPipe(c);
       Conn n;
       n.fd = c;
+      n.peer = from;
       n.opened = monoNow();
       conns_.push_back(std::move(n));
     }
@@ -271,6 +275,7 @@ void HttpServer::poll(const Handler& handler, int timeoutMs) {
         }
         if (!bad && c.in.size() >= he + 4 + len) {
           rq.body = c.in.substr(he + 4, len);
+          rq.peer = c.peer;
           resp = handler(rq);
           answer = true;
         }
@@ -297,7 +302,12 @@ void HttpServer::poll(const Handler& handler, int timeoutMs) {
 
 bool httpRequest(int port, const std::string& method, const std::string& path, const std::vector<std::pair<std::string, std::string>>& headers,
                  const std::string& body, HttpReply& reply, std::string* err, int timeoutSeconds,
-                 const std::function<void(const std::string& chunk)>& onBody) {
+                 const std::function<void(const std::string& chunk)>& onBody, const std::string& host) {
+  uint32_t hostIp = 0x7F000001u;
+  if (!listen::parseIpv4(host, hostIp)) {
+    if (err) *err = "not an IPv4 address: " + host;
+    return false;
+  }
   reply = HttpReply();
   const net::Sock fd = net::tcpSocket();
   if (fd == net::kNoSock) {
@@ -309,13 +319,13 @@ bool httpRequest(int port, const std::string& method, const std::string& path, c
   sockaddr_in a{};
   a.sin_family = AF_INET;
   a.sin_port = htons(static_cast<uint16_t>(port));
-  a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  a.sin_addr.s_addr = htonl(hostIp);
   if (::connect(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) != 0) {
-    if (err) *err = std::string("cannot connect to 127.0.0.1:") + std::to_string(port) + ": " + net::lastError();
+    if (err) *err = "cannot connect to " + host + ":" + std::to_string(port) + ": " + net::lastError();
     net::closeSock(fd);
     return false;
   }
-  std::string req = method + " " + path + " HTTP/1.1\r\nHost: 127.0.0.1:" + std::to_string(port) + "\r\nConnection: close\r\n";
+  std::string req = method + " " + path + " HTTP/1.1\r\nHost: " + host + ":" + std::to_string(port) + "\r\nConnection: close\r\n";
   for (const auto& [k, v] : headers) req += k + ": " + v + "\r\n";
   req += "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
   size_t sent = 0;
@@ -413,9 +423,11 @@ bool loopbackHost(const std::string& hostPort) {
 HttpServer::Response HttpEndpoint::handle(const HttpServer::Request& r) {
   std::string path = r.path.substr(0, r.path.find('?'));
   if (path != "/mcp" && path != "/mcp/") return simple(404, "not found (the MCP endpoint is /mcp)");
-  // DNS rebinding: only requests addressed to the loopback host, and no
-  // foreign web page origins.
-  if (!loopbackHost(r.header("host"))) return simple(403, "forbidden host");
+  // DNS rebinding: only requests addressed to the loopback host (K-264: or, beyond loopback, to
+  // one of this computer's own IP literals, never a name), and no foreign web page origins.
+  if (!listen::hostAllowed(policy_, r.header("host"), own_)) return simple(403, "forbidden host");
+  const double now = monoNow();
+  if (throttle_.blocked(r.peer, now)) return simple(429, "too many wrong tokens from this address: wait a minute");
   const std::string origin = lowerStr(r.header("origin"));
   if (!origin.empty() && origin != "null") {
     const std::string o = origin.substr(origin.find("://") == std::string::npos ? 0 : origin.find("://") + 3);
@@ -423,10 +435,13 @@ HttpServer::Response HttpEndpoint::handle(const HttpServer::Request& r) {
   }
   const std::string auth = r.header("authorization");
   if (token_.empty() || auth.size() < 7 || lowerStr(auth.substr(0, 7)) != "bearer " || !constantTimeEqual(trim(auth.substr(7)), token_)) {
+    throttle_.failed(r.peer, now);
+    if (!listen::isLoopback(r.peer)) logging::warning("mcp", "wrong token from " + listen::ipv4Text(r.peer));
     HttpServer::Response resp = simple(401, "missing or wrong token (Settings > Integrations shows it)");
     resp.headers.push_back({"WWW-Authenticate", "Bearer realm=\"gridline\""});
     return resp;
   }
+  throttle_.succeeded(r.peer);
   const std::string pv = r.header("mcp-protocol-version");
   if (!pv.empty()) {
     const auto& sup = supportedProtocols();
@@ -462,6 +477,7 @@ HttpServer::Response HttpEndpoint::handle(const HttpServer::Request& r) {
     newId = randomToken();
     Entry& n = sessions_[newId];
     n.session = std::make_unique<Session>(env_);
+    if (!listen::isLoopback(r.peer)) n.session->setAddress(listen::ipv4Text(r.peer));  // K-264: shown in the activity log
     e = &n;
   } else {
     if (sid.empty()) return simple(400, "missing Mcp-Session-Id header (send initialize first)");
@@ -541,11 +557,11 @@ std::vector<std::string> HttpEndpoint::clients() const {
 
 std::string defaultEndpointFile() { return (fs::path(Settings::defaultPath()).parent_path() / "mcp-endpoint.json").string(); }
 
-bool writeEndpointFile(const std::string& path, int port, const std::string& token, std::string* err) {
+bool writeEndpointFile(const std::string& path, int port, const std::string& token, std::string* err, const std::string& host) {
   std::error_code ec;
   fs::create_directories(fs::path(path).parent_path(), ec);
   const std::string tmp = path + ".tmp";
-  const std::string text = dump(jobj({{"port", jnum(port)}, {"token", jstr(token)}, {"pid", jnum(static_cast<double>(platform::processId()))}})) + "\n";
+  const std::string text = dump(jobj({{"port", jnum(port)}, {"token", jstr(token)}, {"pid", jnum(static_cast<double>(platform::processId()))}, {"host", jstr(host)}})) + "\n";
   // Owner-only (0600 on POSIX; Windows: the user's profile folder is private to the user).
   if (!platform::writePrivateFile(tmp, text)) {
     if (err) *err = "cannot write " + path;
@@ -561,6 +577,11 @@ bool writeEndpointFile(const std::string& path, int port, const std::string& tok
 }
 
 bool readEndpointFile(const std::string& path, int& port, std::string& token) {
+  std::string host;
+  return readEndpointFile(path, port, token, host);
+}
+
+bool readEndpointFile(const std::string& path, int& port, std::string& token, std::string& host) {
   std::ifstream is(path, std::ios::binary);
   if (!is) return false;
   std::stringstream ss;
@@ -569,6 +590,9 @@ bool readEndpointFile(const std::string& path, int& port, std::string& token) {
   if (!parse(ss.str(), j, 1 << 16) || !j.is(Json::Type::Object)) return false;
   port = static_cast<int>(j.num("port", 0));
   token = j.text("token");
+  host = j.text("host");
+  uint32_t ip = 0;
+  if (!listen::parseIpv4(host, ip)) host = "127.0.0.1";
   return port > 0 && port < 65536 && !token.empty();
 }
 
@@ -618,8 +642,8 @@ int attachBridge(std::FILE* in, std::FILE* out, const std::string& endpointFile)
   bool tooLong = false;
   auto post = [&](const std::string& body, HttpReply& rep, std::string& err) {
     int port = 0;
-    std::string token;
-    if (!readEndpointFile(endpointFile, port, token)) {
+    std::string token, host;
+    if (!readEndpointFile(endpointFile, port, token, host)) {
       err = "Gridline is not running, or \"Allow AI assistants to control Gridline\" is off (Settings > Integrations)";
       return false;
     }
@@ -642,7 +666,7 @@ int attachBridge(std::FILE* in, std::FILE* out, const std::string& endpointFile)
         if (parse(ev, m) && m.find("method")) writeLine(out, dump(m));  // notifications now; the reply below
       }
     };
-    if (!httpRequest(port, "POST", "/mcp", h, body, rep, &err, 900, onBody)) {
+    if (!httpRequest(port, "POST", "/mcp", h, body, rep, &err, 900, onBody, host)) {
       err = "Gridline is not reachable (" + err + "): start it and enable Settings > Integrations > \"Allow AI assistants to control Gridline\"";
       return false;
     }

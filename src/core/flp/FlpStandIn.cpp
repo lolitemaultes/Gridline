@@ -74,6 +74,7 @@ StandInPolicy standInPolicy(const std::string& type) {
     mapped("gl.keys", "FL Keys");
     // Neutral, with the reason.
     neutral("gl.busreturn", "bus return: the audio arrives through the bus send's Fruity Send route; nothing to process here");
+    neutral("gl.hwinsert", "hardware insert: outboard gear on this studio's audio device; the slot stays neutral (FL routes outboard through the mixer's audio inputs and outputs)");  // K-101
     neutral("gl.shaper", "step volume / filter shaper: no FL effect plays a tempo-synced 16-step volume, filter and pan pattern");
     neutral("gl.arp", "note processor: FL's channel arpeggiator carries one arpeggiator (rendered instruments include it)");
     neutral("gl.chord", "note processor: FL channels have no chord generator; a rendered instrument plays the chords as rendered");

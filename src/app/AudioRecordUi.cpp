@@ -6,8 +6,14 @@
 #include "DialogLayout.h"
 #include "LiveTakes.h"
 #include "AudioRecordUi.h"
+#include "LogicPlugins.h"
 #include "AsioUi.h"
 #include "ChopUi.h"
+#include "ContextMenus.h"
+#include "FreezeUi.h"
+#include "Keys.h"
+#include "Windows.h"
+#include "../core/MenuParity.h"
 #include "ClipMultiUi.h"
 #include "StemsUi.h"
 #include <algorithm>
@@ -174,8 +180,11 @@ void App::processAudioRecording() {
   }
   audioRecArmedPrev = recordArmed;
 
-  const bool rolling = engine.playing() && engine.mode() != PlayMode::Live;
-  const bool want = recordArmed && rolling && armedTracks && recAudio;
+  // K-112c (checkpoint 48, N47-01): Clips' Session record of an armed audio track records in the clip
+  // launch mode, into a grid slot (livelook::audioTakesCommitted moves the take there).
+  const bool sessAudio = livelook::sessionRecordAudio(*this);
+  const bool rolling = engine.playing() && (engine.mode() != PlayMode::Live || sessAudio);
+  const bool want = ((recordArmed && recAudio) || sessAudio) && rolling && armedTracks;
   const bool song = engine.mode() == PlayMode::Song;
   const bool sel = playlist.selEnd > playlist.selStart;
   // J-175: what records besides armed tracks: a deck setup's performance passes (Platter)
@@ -184,7 +193,9 @@ void App::processAudioRecording() {
   // button is armed and something records, before the transport rolls, so the song never wraps
   // under a recording (J-175: a wrap ends a deck pass there and starts another one); looping
   // comes back once nothing records any more (stopped, disarmed, another mode).
-  const bool pastEnd = recordArmed && song && !sel && ((armedTracks && recAudio) || packRecords);
+  // R06-01: the Tracks layout loops only inside the cycle; without one playback and recording run
+  // on past the song end (a new project's one bar never wraps a take onto itself).
+  const bool pastEnd = song && !sel && ((recordArmed && ((armedTracks && recAudio) || packRecords)) || logicplug::active(*this));
   if (pastEnd && audioRecLoopRestore < 0) {
     engine.setLooping(false);
     audioRecLoopRestore = 1;
@@ -211,7 +222,7 @@ void App::processAudioRecording() {
   }
   // Hosted plugins see "recording" whenever the record button is armed and the
   // transport rolls; armed tracks capture while it is set.
-  engine.setRecording(recordArmed && rolling && !audioRecFinishing);
+  engine.setRecording((recordArmed || sessAudio) && rolling && !audioRecFinishing);
   if (!audioRecSession) {
     livetake::reset();  // J-217
     return;
@@ -243,9 +254,13 @@ void App::processAudioRecording() {
       o.naming = settings.getNumber("record.naming") > 0.5 ? TakeCommitOptions::Naming::Input : TakeCommitOptions::Naming::Insert;
       o.nameTracks = settings.getBool("record.nameTracks");
       TakeCommitResult r;
+      const bool clipsTake = livelook::audioTakePending(*this);  // checkpoint 49: the take and its move into the slot are one undo step
+      if (clipsTake) doc.beginGroup("Record audio");
       doc.editSong("Record audio", [&](Song& x) { r = commitTakes(x, takes, o); });
       livetake::handoff(takes, r);  // J-217: the clips draw from the live summaries
       if (!r.error.empty()) notify("Recording: " + r.error, true);
+      if (livelook::audioTakesCommitted(*this, r.clips)) r.clips.clear();  // Clips: into the grid slot (it said so)
+      if (clipsTake) doc.endGroup();
       char b[128];
       std::snprintf(b, sizeof b, "Recorded %zu audio clip%s into the playlist (%s)", r.clips.size(), r.clips.size() == 1 ? "" : "s",
                     fs::path(o.dir).filename().string().c_str());
@@ -268,8 +283,13 @@ void App::processAudioRecording() {
 
 void audioRecordFilterMenu(App& a) {
   ImGui::TextDisabled("%s", i18n::tr("What to record"));
-  ImGui::MenuItem(i18n::tr("Audio, into the playlist as audio clips"), nullptr, &a.recAudio);
-  ImGui::MenuItem(i18n::tr("Audio, into Loupe (armed tracks)"), nullptr, &a.recAudioEditor);
+  // N47-13: Clips has no playlist: its arrangement and grid take the clips.
+  // R05-18: the Tracks layout words it as its tracks and regions.
+  ImGui::MenuItem(livelook::active(a)    ? i18n::tr("Audio, as audio clips")
+                  : logicplug::active(a) ? i18n::tr("Audio, into the tracks as audio regions")
+                                         : i18n::tr("Audio, into the playlist as audio clips"),
+                  nullptr, &a.recAudio);
+  if (!livelook::active(a)) ImGui::MenuItem(i18n::tr("Audio, into Loupe (armed tracks)"), nullptr, &a.recAudioEditor);  // N49-12: Studio's editor
   ImGui::MenuItem(i18n::tr("Notes"), nullptr, &a.recOptions.notes);
   ImGui::MenuItem(i18n::tr("Automation (controller moves)"), nullptr, &a.recOptions.automation);
   if (ImGui::MenuItem(i18n::tr("Everything"))) a.recAudio = a.recOptions.notes = a.recOptions.automation = true;
@@ -471,6 +491,82 @@ void audioClipMenu(App& a, ObjectId id) {
     editSongClip(a, "bounce track", [&](Song& x) { nid = bounceTrack(x, tr, dir, sr); });
     if (nid != kNoId) a.notify("Track bounced to audio: the original clips are muted");
   }
+}
+
+void clipsAudioClipMenu(App& a, ObjectId id) {
+  const Song& s = a.doc.song();
+  const Clip* c = s.clip(id);
+  if (!c || c->kind != ClipKind::Audio) return;
+  std::set<ObjectId> sel = a.playlist.selected;
+  if (!sel.count(id)) sel = {id};
+  // An item that edits the song returns at once: `s` and `c` point into the song it replaced.
+  if (!gClipMenuFromSlot) {
+    if (ImGui::MenuItem(i18n::tr("Cut"))) {
+      a.playlist.selected = sel;
+      menus::editCut(a);
+      return;
+    }
+    if (ImGui::MenuItem(i18n::tr("Copy"), keys::label("playlist.copy"))) {
+      a.playlist.selected = sel;
+      menus::editCopy(a);
+    }
+    if (ImGui::MenuItem(i18n::tr("Paste"), keys::label("playlist.paste"), false, menus::canPaste(a))) {
+      menus::editPaste(a);
+      return;
+    }
+    if (ImGui::MenuItem(i18n::tr("Duplicate"), keys::label("playlist.duplicate"))) {
+      auto ids = ops::duplicateClips(a.doc, sel);
+      a.playlist.selected = std::set<ObjectId>(ids.begin(), ids.end());
+      return;
+    }
+    if (ImGui::MenuItem(i18n::tr("Delete"), keys::label("playlist.delete"))) {
+      ops::removeClips(a.doc, sel);
+      a.playlist.selected.clear();
+      return;
+    }
+    ImGui::Separator();
+  }
+  // Rename is a command: the clip band shows the clip and its Name field takes the typing.
+  if (ImGui::MenuItem(i18n::tr("Rename"), keys::label("edit.rename"))) {
+    livelook::renameClip(a, id);
+    return;
+  }
+  if (ImGui::BeginMenu(i18n::tr("Colour"))) {  // an audio clip has its source's colour
+    uint32_t col;
+    const ObjectId src = c->source;
+    const bool picked = menus::colorGrid(&col);
+    if (picked) ops::setChannelsColor(a.doc, {src}, col);
+    ImGui::EndMenu();
+    if (picked) return;
+  }
+  if (ImGui::MenuItem(i18n::tr("Deactivate"), keys::label("playlist.mute"), c->muted)) {
+    a.doc.editClip(id, c->muted ? "activate clip" : "deactivate clip", [](Clip& x) { x.muted = !x.muted; });
+    return;
+  }
+  ImGui::Separator();  // N49-13: no freeze or hibernate rows: those are the track's (its menu has Freeze track)
+  if (ImGui::MenuItem(i18n::tr("Consolidate"), keys::label("playlist.merge"))) {  // the clips rendered to one new audio clip
+    const std::string dir = renderedDir(a);
+    const double sr = a.engine.sampleRate();
+    ObjectId nid = kNoId;
+    a.doc.editSong("consolidate clips", [&](Song& x) { nid = consolidateClips(x, sel, dir, sr, true); });
+    if (nid != kNoId) a.playlist.selected = {nid};
+    else a.notify("Nothing to render", true);
+    return;
+  }
+  {
+    const Tick pos = static_cast<Tick>(a.engine.position());
+    if (ImGui::MenuItem(i18n::tr("Split"), keys::label("playlist.splitAtSongPos"), false, pos > c->start && pos < c->start + s.clipLength(*c))) {
+      a.playlist.selected = sel;
+      splitClipsAtPlayhead(a);
+      return;
+    }
+  }
+  if (ImGui::MenuItem(i18n::tr("Reverse"), nullptr, c->reverse)) {
+    ops::reverseAudioClips(a.doc, sel);
+    return;
+  }
+  ImGui::Separator();
+  stemsui::clipMenuItem(a, id);  // J-191: vocals, drums, bass and the rest onto new audio tracks
 }
 
 void drawClipProperties(App& a) {

@@ -45,8 +45,40 @@ struct State {
   // J-61: the token lives in the Keychain / a private file, read once.
   std::string token;
   bool tokenStored = false;
+  // K-264: where the running server listens, this computer's addresses (read when it starts),
+  // and why a chosen address could not be used.
+  mcp::listen::Policy policy;
+  std::vector<uint32_t> own;
+  std::string listenProblem;
+  int confirmMode = -1;  // a mode beyond loopback waiting for the one-time confirmation
 };
 State M;
+
+// K-264: the listen policy the settings ask for. Beyond loopback only once confirmed; a specific
+// address must be one of this computer's own (otherwise this computer only, with a reason).
+mcp::listen::Policy wantedPolicy(const Settings& st, const std::vector<uint32_t>& own, std::string& problem) {
+  namespace L = mcp::listen;
+  problem.clear();
+  L::Policy p;
+  p.mode = L::modeFromId(st.getString("mcp.listen"));
+  if (p.mode == L::Mode::Loopback) return p;
+  if (!st.getBool("mcp.listenConfirmed")) return L::Policy{};
+  if (p.mode == L::Mode::Address) {
+    uint32_t ip = 0;
+    if (!L::parseIpv4(st.getString("mcp.listenAddress"), ip)) {
+      problem = tr("Not an IPv4 address: listening on this computer only");
+      return L::Policy{};
+    }
+    if (std::find(own.begin(), own.end(), ip) == own.end()) {
+      problem = tr("Not an address of this computer: listening on this computer only");
+      return L::Policy{};
+    }
+    p.address = ip;
+  }
+  return p;
+}
+
+bool samePolicy(const mcp::listen::Policy& x, const mcp::listen::Policy& y) { return x.mode == y.mode && x.address == y.address; }
 
 void label(const char* text, float x = 168.0f) { ui::FormLabelFit(tr(text), x, pal().textDim); }
 
@@ -205,7 +237,9 @@ std::string jsonEscaped(const std::string& text) {
 
 std::string claudeCodeCommand(App& a) {
   const int port = M.ep && M.ep->running() ? M.ep->port() : static_cast<int>(a.settings.getNumber("mcp.port"));
-  return "claude mcp add --transport http gridline http://127.0.0.1:" + std::to_string(port) + "/mcp --header \"Authorization: Bearer " +
+  // K-264: the address a client uses (this computer's address beyond loopback: WSL, a VM)
+  const std::string host = mcp::listen::clientHost(M.policy, M.own);
+  return "claude mcp add --transport http gridline http://" + host + ":" + std::to_string(port) + "/mcp --header \"Authorization: Bearer " +
          token(a) + "\"";
 }
 
@@ -225,6 +259,7 @@ void tick(App& a) {
   ensureEnv(a);
   mcp::Environment& e = *M.env;
   e.allowEdits = a.settings.getBool("mcp.allowEdits");
+  e.propose = a.settings.getBool("mcp.propose");  // K-92
   e.allowScripts = a.settings.getBool("scripts.enabled");
   e.projectPath = a.projectFile();
   e.exportDir = a.settings.getString("mcp.exportFolder");
@@ -233,19 +268,27 @@ void tick(App& a) {
   const std::string tok = token(a);
   const int port = std::clamp(static_cast<int>(a.settings.getNumber("mcp.port")), 0, 65535);
   if (M.ep->running() && port != M.port) stopServer();
+  if (!M.ep->running() && a.now >= M.retryAt) M.own = mcp::listen::localAddresses();  // K-264: read once per start
+  const mcp::listen::Policy pol = wantedPolicy(a.settings, M.own, M.listenProblem);
+  if (M.ep->running() && !samePolicy(pol, M.policy)) stopServer();  // K-264: a new listen address
   if (M.ep->running() && M.ep->token() != tok) {  // new token: old clients must reconnect
     M.ep->stop();
     M.port = -1;
   }
   if (!M.ep->running() && a.now >= M.retryAt) {
     M.ep->setToken(tok);
+    M.ep->setListen(pol, M.own);
+    M.policy = pol;
     std::string err;
     if (M.ep->start(port, &err)) {
       M.port = port;
       M.error.clear();
       std::string ferr;
-      if (!mcp::writeEndpointFile(M.endpointFile, M.ep->port(), tok, &ferr)) logging::warning("mcp", ferr);
-      logging::info("mcp", "AI assistant server on 127.0.0.1:" + std::to_string(M.ep->port()));
+      // the bridge runs on this computer: loopback reaches every mode but a specific address
+      const std::string host = pol.mode == mcp::listen::Mode::Address ? mcp::listen::ipv4Text(pol.address) : std::string("127.0.0.1");
+      if (!mcp::writeEndpointFile(M.endpointFile, M.ep->port(), tok, &ferr, host)) logging::warning("mcp", ferr);
+      logging::info("mcp", "AI assistant server on " + mcp::listen::ipv4Text(mcp::listen::bindAddress(pol)) + ":" + std::to_string(M.ep->port()) +
+                               (pol.mode == mcp::listen::Mode::Loopback ? "" : std::string(" (") + mcp::listen::modeId(pol.mode) + ")"));
     } else {
       M.error = err;
       M.retryAt = a.now + 5.0;
@@ -318,10 +361,16 @@ void settingsPage(App& a, float fieldW) {
   label("Assistants");
   bool on = st.getBool("mcp.enabled");
   if (ImGui::Checkbox(tr("Allow AI assistants to control Gridline"), &on)) st.set("mcp.enabled", on);
-  ui::Hint("Starts a server for MCP clients such as Claude Desktop or Claude Code, reachable from this computer only (127.0.0.1)");
+  ui::Hint("Starts a server for MCP clients such as Claude Desktop or Claude Code, reachable from this computer only (127.0.0.1) unless Listen on says otherwise");
   label("Changes");
   bool edits = st.getBool("mcp.allowEdits");
   if (ImGui::Checkbox(tr("Allow assistants to change the project and write files"), &edits)) st.set("mcp.allowEdits", edits);
+  {  // K-92: the Propose level
+    bool prop = st.getBool("mcp.propose");
+    if (!edits) ImGui::BeginDisabled();
+    if (ImGui::Checkbox(tr("Propose changes first (accept or discard each in the AI assistant panel)"), &prop)) st.set("mcp.propose", prop);
+    if (!edits) ImGui::EndDisabled();
+  }
   ui::Hint("Off: assistants can only look at the project and measure it. Every change is one undo step labelled AI");
   label("Status");
   {
@@ -331,7 +380,8 @@ void settingsPage(App& a, float fieldW) {
       s = tr("Off");
     } else if (M.ep && M.ep->running()) {
       char b[160];
-      std::snprintf(b, sizeof b, tr("Listening on 127.0.0.1:%d, %d assistant session(s)"), M.ep->port(), static_cast<int>(M.ep->sessionCount()));
+      std::snprintf(b, sizeof b, tr("Listening on %s:%d, %d assistant session(s)"), mcp::listen::ipv4Text(mcp::listen::bindAddress(M.policy)).c_str(),
+                    M.ep->port(), static_cast<int>(M.ep->sessionCount()));
       s = b;
       col = P.text;
     } else if (!M.error.empty()) {
@@ -349,7 +399,73 @@ void settingsPage(App& a, float fieldW) {
     int port = static_cast<int>(st.getNumber("mcp.port"));
     ImGui::SetNextItemWidth(std::min(fieldW, 140.0f));
     if (ImGui::InputInt("##mcpport", &port, 0, 0, ImGuiInputTextFlags_EnterReturnsTrue)) st.set("mcp.port", std::clamp(port, 0, 65535));
-    ui::Hint("Loopback port of the server (0 = any free port; the attach bridge finds it either way)");
+    ui::Hint("Port of the server (0 = any free port; the attach bridge finds it either way)");
+  }
+  // K-264: where the server listens. Loopback is the default; the others are opt-in, in red, and
+  // ask once for a confirmation. The token is required whatever the address.
+  label("Listen on");
+  {
+    namespace L = mcp::listen;
+    static const char* names[4] = {"This computer only", "This computer, WSL and virtual machines", "A specific address", "All networks"};
+    const L::Mode cur = L::modeFromId(st.getString("mcp.listen"));
+    ImGui::SetNextItemWidth(fieldW);
+    if (ImGui::BeginCombo("##mcplisten", tr(names[static_cast<int>(cur)]))) {
+      for (int i = 0; i < 4; ++i) {
+        if (i > 0) ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.danger));
+        if (ImGui::Selectable(tr(names[i]), i == static_cast<int>(cur))) {
+          if (i == 0 || st.getBool("mcp.listenConfirmed")) st.set("mcp.listen", std::string(L::modeId(static_cast<L::Mode>(i))));
+          else M.confirmMode = i;
+        }
+        if (i > 0) ImGui::PopStyleColor();
+      }
+      ImGui::EndCombo();
+    }
+    ui::Hint("This computer only: 127.0.0.1. WSL and virtual machines: also private addresses (10.x, 172.16-31.x, 192.168.x). "
+             "All networks: any address. The token is always required");
+    if (M.confirmMode > 0) ImGui::OpenPopup("##mcplistenconfirm");
+    if (ImGui::BeginPopupModal("##mcplistenconfirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar)) {
+      ImGui::TextColored(theme::vec(P.danger), "%s", tr("Let assistants on other machines reach Gridline?"));
+      ImGui::PushTextWrapPos(420);
+      ImGui::TextUnformatted(tr("The server will accept connections from outside this computer. Anyone who has the token can then read and, if "
+                                "changes are allowed, edit your project. Use this only on a network you trust, and make a new token if it "
+                                "was shared."));
+      ImGui::PopTextWrapPos();
+      if (ui::TextButton(tr("Listen beyond this computer"), false, 0)) {
+        st.set("mcp.listenConfirmed", true);
+        st.set("mcp.listen", std::string(L::modeId(static_cast<L::Mode>(M.confirmMode))));
+        M.confirmMode = -1;
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::SameLine();
+      if (ui::TextButton(tr("Cancel"), false, 0) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        M.confirmMode = -1;
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::EndPopup();
+    }
+    if (cur == L::Mode::Address) {
+      label("Address");
+      static char buf[64];
+      static bool init = false;
+      if (!init) std::snprintf(buf, sizeof buf, "%s", st.getString("mcp.listenAddress").c_str()), init = true;
+      std::string mine;
+      for (uint32_t o : M.own.empty() ? L::localAddresses() : M.own)
+        if (!L::isLoopback(o)) mine += (mine.empty() ? "" : ", ") + L::ipv4Text(o);
+      ImGui::SetNextItemWidth(std::min(fieldW, 180.0f));
+      if (ImGui::InputTextWithHint("##mcpaddr", mine.empty() ? "192.168.1.20" : mine.substr(0, mine.find(',')).c_str(), buf, sizeof buf))
+        st.set("mcp.listenAddress", std::string(buf));
+      ui::FocusRing();
+      ui::Hint((std::string(tr("One of this computer's addresses")) + (mine.empty() ? std::string() : ": " + mine)).c_str());
+    }
+    if (cur != L::Mode::Loopback) {
+      label("");
+      ImGui::PushTextWrapPos(0);
+      ImGui::TextColored(theme::vec(P.danger), "%s",
+                         !M.listenProblem.empty() ? M.listenProblem.c_str()
+                         : cur == L::Mode::All ? tr("Reachable from any network this computer is on. Keep the token secret.")
+                                               : tr("Reachable from other machines on private addresses. Keep the token secret."));
+      ImGui::PopTextWrapPos();
+    }
   }
   label("Token");
   {
@@ -417,12 +533,70 @@ void drawActivityWindow(App& a) {
   } else if (M.ep && M.ep->running()) {
     std::string who;
     for (const auto& c : M.ep->clients()) who += (who.empty() ? "" : ", ") + c;
-    ImGui::TextColored(theme::vec(P.text), "%s %d", tr("Listening on 127.0.0.1 port"), M.ep->port());
+    ImGui::TextColored(theme::vec(P.text), "%s %s %s %d", tr("Listening on"), mcp::listen::ipv4Text(mcp::listen::bindAddress(M.policy)).c_str(), tr("port"),
+                       M.ep->port());
     if (!who.empty()) {
       ImGui::SameLine();
       ImGui::TextColored(theme::vec(P.textDim), "(%s)", who.c_str());
     }
-    if (!a.settings.getBool("mcp.allowEdits")) ImGui::TextColored(theme::vec(P.textFaint), "%s", tr("Read only: changes are switched off."));
+  }
+  // K-92: the permission level, the proposals waiting for an answer and the conversation.
+  {
+    static const char* levels[] = {i18n::N_("Read only"), i18n::N_("Propose"), i18n::N_("Allow changes")};
+    const int cur = !a.settings.getBool("mcp.allowEdits") ? 0 : a.settings.getBool("mcp.propose") ? 1 : 2;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.textDim), "%s", tr("Assistants may"));
+    for (int k = 0; k < 3; ++k) {
+      ImGui::SameLine(0, k ? 2.0f : theme::kS2);
+      if (ui::TextButton(tr(levels[k]), k == cur, 0,
+                         k == 0   ? tr("Assistants read the project; every change is refused")
+                         : k == 1 ? tr("Each change waits here for you to accept or discard it")
+                                  : tr("Assistants change the project and write files; each change is one undo step"))) {
+        a.settings.set("mcp.allowEdits", k > 0);
+        a.settings.set("mcp.propose", k == 1);
+      }
+    }
+  }
+  if (M.env && !M.env->proposals.empty()) {
+    ImGui::Separator();
+    uint64_t accept = 0, discard = 0;
+    for (const auto& p : M.env->proposals) {
+      ImGui::PushID(static_cast<int>(p.id));
+      ImGui::TextColored(theme::vec(P.hot), "%s #%llu  %s (%s)", tr("Proposal"), static_cast<unsigned long long>(p.id), p.title.c_str(), p.client.c_str());
+      for (const auto& l : p.diff) ImGui::TextColored(theme::vec(P.text), "  %s", l.c_str());
+      if (ui::PrimaryButton(tr("Accept"), 90)) accept = p.id;
+      ImGui::SameLine(0, theme::kS2);
+      if (ui::TextButton(tr("Discard"), false, 90)) discard = p.id;
+      ImGui::PopID();
+    }
+    if (accept) {
+      std::string err;
+      if (!mcp::acceptProposal(*M.env, accept, err)) a.notify(std::string(tr("Could not apply the proposal: ")) + err, true);
+    }
+    if (discard) mcp::discardProposal(*M.env, discard);
+  }
+  if (M.env) {
+    ImGui::Separator();
+    const float h = std::min(140.0f, 22.0f * static_cast<float>(M.env->chat.size()) + 4.0f);
+    if (!M.env->chat.empty() && ImGui::BeginChild("##mcpchat", ImVec2(0, h), false)) {
+      for (const auto& c : M.env->chat) {
+        ImGui::TextColored(theme::vec(c.fromUser ? P.textDim : P.hot), "%s:", c.fromUser ? tr("You") : c.who.c_str());
+        ImGui::SameLine();
+        ImGui::PushTextWrapPos(0);
+        ImGui::TextUnformatted(c.text.c_str());
+        ImGui::PopTextWrapPos();
+      }
+      if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 4) ImGui::SetScrollHereY(1.0f);
+    }
+    if (!M.env->chat.empty()) ImGui::EndChild();
+    static char ask[1024] = "";
+    ImGui::SetNextItemWidth(-90);
+    const bool enter = ImGui::InputTextWithHint("##mcpask", tr("Ask the connected assistant..."), ask, sizeof ask, ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    if ((ui::TextButton(tr("Send"), false, 80) || enter) && ask[0]) {
+      M.env->say(true, "user", ask);
+      ask[0] = 0;
+    }
   }
   const std::string undo = a.doc.history().undoLabel();
   const bool aiUndo = undo.rfind("AI: ", 0) == 0;

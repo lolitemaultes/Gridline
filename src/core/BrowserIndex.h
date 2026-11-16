@@ -52,6 +52,12 @@ struct FileMeta {
   // (format, loop or one-shot, category, genre, descriptors), its slices.
   std::vector<std::string> fileTags;
   int slices = 0;
+  // K-218: what the audio itself sounds like ("kick", "snare", "hat", "bass", "vocal", "drums",
+  // "tonal", ...; sound::analyse), and whether the tempo / key came from the audio.
+  std::string sound;
+  bool bpmHeard = false, keyHeard = false;
+  // Length in beats at its tempo; 0 when either is unknown.
+  double beats() const { return bpm > 0 && seconds > 0 ? seconds * bpm / 60.0 : 0.0; }
 };
 
 // Tempo from a file name: "120bpm", "120 BPM", "loop_128_", "bpm95"; 0 if none.
@@ -95,6 +101,9 @@ std::vector<float> computePeaks(const std::vector<float>& left, const std::vecto
 //   bpm:N     N±1, bpm:A-B range, bpm:>N / bpm:<N
 //   key:K     pitch class (+ mode when given)
 //   len:<S / len:>S / len:A-B   length in seconds (audio)
+//   sound:S   K-218: the sound kind heard in the audio (kick, snare, hat, bass, vocal, drums, ...)
+//   scale:major|minor   the mode, any key
+//   beats:N / beats:A-B   length in beats at the file's tempo (N±0.5)
 struct Query {
   std::vector<std::string> words;
   std::set<Kind> kinds;
@@ -103,7 +112,11 @@ struct Query {
   double bpmLo = 0, bpmHi = 0;  // 0/0 = any
   int key = -1, minor = -1;
   double lenLo = 0, lenHi = 0;  // 0/0 = any
-  bool fileFilters() const { return !kinds.empty() || !tags.empty() || bpmHi > 0 || key >= 0 || lenHi > 0; }
+  std::vector<std::string> sounds;  // any of them
+  double beatsLo = 0, beatsHi = 0;  // 0/0 = any
+  bool fileFilters() const {
+    return !kinds.empty() || !tags.empty() || bpmHi > 0 || key >= 0 || minor >= 0 || lenHi > 0 || !sounds.empty() || beatsHi > 0;
+  }
   bool empty() const { return words.empty() && pluginKinds.empty() && !fileFilters(); }
 };
 Query parseQuery(const std::string& text);

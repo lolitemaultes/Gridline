@@ -242,7 +242,7 @@ void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
       Audio clip = clipboard();
       Range sel = s.sel;
       int64_t at = s.cursor;
-      runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); });
+      runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); }, sel);
     }
     gap();
     if (tb("t_loop", ui::Icon::EdisonLoopSet, "Set loop points from the selection / right-click: crossfade the loop seam", s.cur().hasLoop(), hasAudio))
@@ -501,7 +501,7 @@ void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::M
           Audio clip = clipboard();
           Range sel = s.sel;
           int64_t at = s.cursor;
-          runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); });
+          runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); }, sel);
         }
         if (ImGui::MenuItem(i18n::tr("Delete"), "Del", false, has && !s.sel.empty() && !busy)) {
           Range r = s.sel;
@@ -635,6 +635,9 @@ void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::M
 void handleKeys(App& a, Session& s) {
   ImGuiIO& io = ImGui::GetIO();
   if (io.WantTextInput || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) return;
+  // Ctrl+Alt chords are the app's (the Tracker's screen keys: Ctrl+Alt+X back to the main screen,
+  // K-106 R5-02); the editor has none, so it leaves them unclaimed.
+  if ((io.KeyCtrl || io.KeySuper) && io.KeyAlt) return;
   const bool ctrl = io.KeyCtrl || io.KeySuper;
   auto key = [](ImGuiKey k) {
     if (!ImGui::IsKeyPressed(k, false)) return false;
@@ -658,7 +661,7 @@ void handleKeys(App& a, Session& s) {
     Audio clip = clipboard();
     Range sel = s.sel;
     int64_t at = s.cursor;
-    runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); });
+    runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); }, sel);
   }
   if (!busy && ctrl && key(ImGuiKey_T) && !s.sel.empty()) {
     Range r = s.sel;

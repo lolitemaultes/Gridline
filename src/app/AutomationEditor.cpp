@@ -11,6 +11,8 @@
 #include "Keys.h"
 #include "AutomationEditor.h"
 #include "LayoutShellUi.h"
+#include "LogicPlugins.h"
+#include "LiveLook.h"
 #include "AutomationLane.h"
 #include "PixelGrid.h"
 #include "ScrollBarUi.h"
@@ -292,7 +294,7 @@ void editorMenu(App& a) {
   if (ImGui::MenuItem(i18n::tr("Copy"), keys::label("auto.copy"), false, !E.sel.empty())) copySelection(a, *ac);
   if (ImGui::MenuItem(i18n::tr("Paste (insert)"), keys::label("auto.paste"), false, !automationClipboard().empty())) pasteAt(a, pasteTick(a, *ac), false);
   if (ImGui::MenuItem(i18n::tr("Paste (replace)"), keys::label("auto.pasteReplace"), false, !automationClipboard().empty())) pasteAt(a, pasteTick(a, *ac), true);
-  if (ImGui::MenuItem(i18n::tr("Duplicate"), "Ctrl+B", false, E.sel.size() >= 1)) {
+  if (ImGui::MenuItem(i18n::tr("Duplicate"), keys::shownText("Ctrl+B"), false, E.sel.size() >= 1)) {
     ae::Points c = ae::copyPoints(ac->points, E.sel);
     Tick at = ac->points[static_cast<size_t>(*E.sel.rbegin())].pos + std::max<Tick>(ae::clipSpan(c), s.beatTicks() / 4);
     std::swap(c, automationClipboard());
@@ -1430,11 +1432,48 @@ struct Recording {
   ae::Points pts;                               // absolute ticks (song or pattern), parameter-normalized values
   double last = 0;
   uint64_t step = 0;  // K-141: the history step of the knob move recorded (the take joins it: one step)
+  // K-112B: a take a track's automation mode makes (Tracks layout): the lane's track (new curves go
+  // there), and Latch / Write: the take runs on with the last value until playback stops.
+  int laneTrack = -1;
+  bool latch = false;
+  bool write = false;  // R05-06: a Write pass (the track drops to Latch after it)
+  double lastValue = 0;  // normalized
+  Tick lastPos = 0;
+  // R06-03: a lane take on a parameter with no automation yet: the value before the touch
+  // (normalized; < 0 unknown). The take keeps it before the touch point and Touch returns to it.
+  double base = -1;
+  bool fresh = false;
 };
 std::vector<Recording> recs;
+std::map<uint64_t, double> gLaneBase;  // R06-03: each lane parameter's value before a take (normalized)
 bool recordOn = false;
 bool recordHold = false;
 bool observerInstalled = false;
+
+// K-112B: the track whose lane shows `pid` and its automation mode (0 Off, 1 Read, 2 Touch,
+// 3 Latch, 4 Write); -1 when no lane shows it.
+int laneTrackOf(const Song& s, ParamId pid, int* mode) {
+  for (size_t i = 0; i < s.tracks.size(); ++i) {
+    const PlaylistTrack& t = s.tracks[i];
+    if (t.laneSet && t.laneOwner == pid.owner && t.laneIndex == pid.index) {
+      if (mode) *mode = t.autoMode;
+      return static_cast<int>(i);
+    }
+  }
+  // R06-05: in Touch, Latch and Write any control of the track's channel strip or its sound records
+  // too, not only the lane's (the take goes on that track; its lane can show it by its parameter).
+  for (size_t i = 0; i < s.tracks.size(); ++i) {
+    const PlaylistTrack& t = s.tracks[i];
+    if (t.autoMode < 2) continue;
+    const MixerTrack* st = logicplug::trackStrip(s, static_cast<int>(i));
+    const Channel* ch = logicplug::trackSound(s, static_cast<int>(i), nullptr);
+    if ((st && st->id == pid.owner) || (ch && ch->id == pid.owner)) {
+      if (mode) *mode = t.autoMode;
+      return static_cast<int>(i);
+    }
+  }
+  return -1;
+}
 
 void commitRecording(App& a, Recording& r) {
   if (r.pts.size() < 1) return;
@@ -1482,9 +1521,9 @@ void commitRecording(App& a, Recording& r) {
   ae::mergeRecorded(pts, rec, from - start, to - start, tol);
   ParamId pid = r.pid;
   std::string name = paramDisplayName(s, pid);
-  // A free playlist track for [start, start + len).
-  int track = 0;
-  for (;; ++track) {
+  // A free playlist track for [start, start + len) (K-112B: a lane's take: the lane's own track).
+  int track = r.laneTrack >= 0 ? r.laneTrack : 0;
+  for (; r.laneTrack < 0; ++track) {
     bool busy = false;
     for (const auto& c : s.playlist) busy = busy || (c.track == track && c.start < start + len && c.start + s.clipLength(c) > start);
     if (!busy) break;
@@ -1510,8 +1549,12 @@ void commitRecording(App& a, Recording& r) {
 }
 
 void onParamSet(App& a, ParamId pid, double value) {
-  if (!recordOn || recordHold || !a.engine.playing()) return;
+  if (recordHold || !a.engine.playing()) return;
   const Song& s = a.doc.song();
+  int mode = 1;
+  const int laneTr = laneTrackOf(s, pid, &mode);
+  const bool byMode = laneTr >= 0 && mode >= 2 && a.engine.mode() != PlayMode::Pattern;  // K-112B: Touch, Latch, Write
+  if (!recordOn && !byMode) return;
   auto d = describeParam(s, pid);
   if (!d) return;
   const double n = d->toNormalized(value);
@@ -1537,6 +1580,16 @@ void onParamSet(App& a, ParamId pid, double value) {
         if (!ac || ac->owner != pid.owner || ac->index != pid.index || c.muted) continue;
         if (t >= c.start && t < c.start + s.clipLength(c)) nr.autoId = ac->id, nr.placement = c.id;
       }
+    if (byMode) {
+      nr.laneTrack = laneTr, nr.latch = mode >= 3;
+      // R06-03: the parameter's first take keeps the value it had before the touch, from the song start.
+      bool any = false;
+      for (const AutomationClip& ac : s.automations) any = any || (ac.owner == pid.owner && ac.index == pid.index);
+      if (const auto it = gLaneBase.find(pid.packed()); it != gLaneBase.end()) nr.base = it->second;
+      else nr.base = std::clamp(d->toNormalized(a.doc.paramBefore), 0.0, 1.0);  // R06-05: another control of the track
+      nr.fresh = !any && nr.base >= 0;
+      if (nr.fresh && t > 0) nr.pts.push_back(AutoPoint{0, static_cast<float>(nr.base), 0, AutoShape::Hold});
+    }
     recs.push_back(nr);
     r = &recs.back();
   }
@@ -1545,6 +1598,7 @@ void onParamSet(App& a, ParamId pid, double value) {
   p.value = static_cast<float>(n);
   p.shape = AutoShape::Hold;
   r->pts.push_back(p);
+  r->lastValue = n, r->lastPos = t;
   r->last = a.now;
   r->step = a.doc.groupDepth() == 0 ? a.doc.history().stateSerial() : 0;
 }
@@ -1554,11 +1608,94 @@ void recorderTick(App& a) {
     observerInstalled = true;
     a.doc.paramObserver = [&a](ParamId pid, double v) { onParamSet(a, pid, v); };
   }
+  const Song& s = a.doc.song();
+  // R06-03: each lane parameter's value while no take is writing it (the value a take returns to).
+  for (const PlaylistTrack& t : s.tracks) {
+    if (!t.laneSet || t.autoMode < 2) continue;
+    const ParamId pid{t.laneOwner, t.laneIndex};
+    bool taking = false;
+    for (const auto& x : recs) taking = taking || x.pid == pid;
+    if (taking) continue;
+    const auto d = describeParam(s, pid);
+    const auto v = getParam(s, pid);
+    if (d && v) gLaneBase[pid.packed()] = d->toNormalized(*v);
+  }
+  // K-112B: a Write lane writes its control's value from the start of playback, touched or not.
+  if (a.engine.playing() && a.engine.mode() != PlayMode::Pattern && !recordHold)
+    for (size_t i = 0; i < s.tracks.size(); ++i) {
+      const PlaylistTrack& t = s.tracks[i];
+      if (t.autoMode != 4 || !t.laneSet) continue;
+      const ParamId pid{t.laneOwner, t.laneIndex};
+      bool has = false;
+      for (const auto& x : recs) has = has || x.pid == pid;
+      if (has) continue;
+      const auto d = describeParam(s, pid);
+      const auto v = getParam(s, pid);
+      if (!d || !v) continue;
+      Recording nr;
+      nr.pid = pid;
+      nr.laneTrack = static_cast<int>(i), nr.latch = true, nr.write = true;
+      Tick at = static_cast<Tick>(a.engine.position());
+      if (at <= std::max(1, s.ppq / 8)) at = 0;  // R05-06: a pass from the song's start writes from its first tick (no step left at 0)
+      for (const auto& c : s.playlist) {
+        const AutomationClip* ac = c.kind == ClipKind::Automation ? s.automation(c.source) : nullptr;
+        if (ac && ac->owner == pid.owner && ac->index == pid.index && !c.muted && at >= c.start && at < c.start + s.clipLength(c))
+          nr.autoId = ac->id, nr.placement = c.id;
+      }
+      nr.lastValue = d->toNormalized(*v), nr.lastPos = at;
+      nr.base = nr.lastValue;  // R06-03: the strip's own value stays as it was
+      nr.pts.push_back(AutoPoint{at, static_cast<float>(nr.lastValue), 0, AutoShape::Hold});
+      nr.last = a.now;
+      nr.step = a.doc.groupDepth() == 0 ? a.doc.history().stateSerial() : 0;
+      recs.push_back(nr);
+    }
+  // R05-05: Touch writes while the control is held, moving or not (a held mouse button).
+  const bool held = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+  for (auto& x : recs)  // Latch / Write (and a held Touch): the take holds its last value while the song plays on
+    if ((x.latch || (x.laneTrack >= 0 && held)) && a.engine.playing()) {
+      const Tick at = static_cast<Tick>(a.engine.position());
+      if (at >= x.lastPos) x.lastPos = at;
+    }
   for (size_t i = 0; i < recs.size();) {
-    if (!a.engine.playing() || a.now - recs[i].last > 0.35 || !recordOn) {
+    const bool laneTake = recs[i].laneTrack >= 0;
+    const bool touchLet = laneTake && !recs[i].latch;  // R05-05: a Touch take ends when the control is let go
+    const bool ends = !a.engine.playing() || (touchLet ? !held : (!recs[i].latch && a.now - recs[i].last > 0.35)) || (!recordOn && !laneTake) ||
+                      static_cast<Tick>(a.engine.position()) + 1 < recs[i].lastPos;  // a jump back (a cycle pass) ends the take
+    if (ends) {
+      if ((recs[i].latch || touchLet) && recs[i].lastPos > recs[i].pts.back().pos)  // the held value up to where the take ended
+        recs[i].pts.push_back(AutoPoint{recs[i].lastPos, static_cast<float>(recs[i].lastValue), 0, AutoShape::Hold});
+      if (touchLet && a.engine.playing()) {
+        // R05-05: let go, the parameter goes back to the curve that was there, over a short ramp
+        // (the reference's Touch return), so the old curve after it plays on unchanged.
+        const Tick back = recs[i].pts.back().pos + std::max(1, s.ppq / 4);
+        bool found = false;
+        for (const AutomationLane& l : automationLanes(s))
+          if (l.targets(recs[i].pid.owner, recs[i].pid.index)) {
+            found = true;
+            recs[i].pts.back().shape = AutoShape::Curve;
+            recs[i].pts.push_back(AutoPoint{back, static_cast<float>(std::clamp(l.valueAt(static_cast<double>(back)), 0.0, 1.0)), 0, AutoShape::Curve});
+          }
+        if (!found && recs[i].fresh) {  // R06-03: no curve before: back to the value before the touch
+          recs[i].pts.back().shape = AutoShape::Curve;
+          recs[i].pts.push_back(AutoPoint{back, static_cast<float>(recs[i].base), 0, AutoShape::Curve});
+        }
+      }
       Recording r = recs[i];
       recs.erase(recs.begin() + static_cast<long>(i));
-      a.doc.amendStep(r.step, [&] { commitRecording(a, r); });  // K-141: with the knob move, one undo step
+      a.doc.amendStep(r.step, [&] {
+        commitRecording(a, r);  // K-141: with the knob move, one undo step
+        // R06-03: a lane take writes automation, not the control's own value: that goes back to
+        // what it was before the take (the curve drives the parameter from now on).
+        if (r.laneTrack >= 0 && r.base >= 0)
+          if (const auto d = describeParam(a.doc.song(), r.pid)) {
+            const bool hold = recordHold;
+            recordHold = true;
+            a.doc.setParam(r.pid, d->fromNormalized(r.base));
+            recordHold = hold;
+          }
+        if (r.write && r.laneTrack >= 0 && r.laneTrack < static_cast<int>(a.doc.song().tracks.size()))  // R05-06: Write drops to Latch after a pass
+          a.doc.editSong("automation mode", [tr = r.laneTrack](Song& x) { x.tracks[static_cast<size_t>(tr)].autoMode = 3; });
+      });
       a.doc.endGesture();
     } else {
       ++i;
@@ -1572,6 +1709,11 @@ void recorderTick(App& a) {
 
 bool& automationRecording() { return recordOn; }
 bool& automationRecordHold() { return recordHold; }
+bool automationTakeActive(ParamId pid) {
+  for (const auto& x : recs)
+    if (x.pid == pid) return true;
+  return false;
+}
 
 void closeAutomationEditor() { E.open = false; }
 
@@ -1799,6 +1941,26 @@ void automationMenuItems(App& a, ParamId pid) {
   if (!describeParam(s, pid)) return;
   // J-173: a clip in the playlist or inside the current pattern (the pattern first while
   // pattern mode plays, the arrangement first in song mode).
+  if (livelook::active(a)) {  // N49-11: Clips shows and deletes the control's automation; no pattern or event terms
+    std::vector<ObjectId> ids;
+    for (const auto& c : s.automations)
+      if (c.owner == pid.owner && c.index == pid.index) ids.push_back(c.id);
+    if (ImGui::MenuItem(i18n::tr("Show automation"))) {
+      if (ids.empty()) createAutomationClip(a, pid);
+      else openAutomationEditor(a, ids.front());
+    }
+    if (ImGui::MenuItem(i18n::tr("Delete automation"), nullptr, false, !ids.empty())) {
+      const std::set<ObjectId> gone(ids.begin(), ids.end());
+      a.doc.editSong("delete automation", [&gone](Song& x) {
+        x.playlist.erase(std::remove_if(x.playlist.begin(), x.playlist.end(),
+                                        [&](const Clip& c) { return c.kind == ClipKind::Automation && gone.count(c.source) > 0; }),
+                         x.playlist.end());
+        x.automations.erase(std::remove_if(x.automations.begin(), x.automations.end(), [&](const AutomationClip& c) { return gone.count(c.id) > 0; }),
+                            x.automations.end());
+      });
+    }
+    return;
+  }
   const Pattern* curPat = s.pattern(a.curPattern);
   const bool hasInPat = curPat && findPatternLane(*curPat, pid.owner, pid.index);
   const std::string inPat = curPat ? (hasInPat ? std::string(i18n::tr("Edit automation clip in pattern")) + " \"" + curPat->name + "\""

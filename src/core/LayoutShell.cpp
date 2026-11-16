@@ -126,11 +126,11 @@ bool visible(const Shell& sh, const State& st, const std::string& region) {
   return false;
 }
 
-void setVisible(const Shell& sh, State& st, const std::string& region, bool on) {
+void setVisible(const Shell& sh, State& st, const std::string& region, bool on, bool alone) {
   const Region* self = nullptr;
   for (const Region& r : sh.regions)
     if (region == r.id) self = &r;
-  if (on && self && *self->group)  // K-112c: one region of a group at a time
+  if (on && alone && self && *self->group)  // K-112c: one region of a group at a time (unless stacked)
     for (const Region& r : sh.regions)
       if (region != r.id && std::string(r.group) == self->group && visible(sh, st, r.id)) setVisible(sh, st, r.id, false);
   for (const Region& r : sh.regions)

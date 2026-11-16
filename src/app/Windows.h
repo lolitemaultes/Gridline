@@ -17,11 +17,31 @@ float drawTopBar(App& a);      // menu + transport; returns height used
 bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& y1);
 void devNoteRect(const char* name);  // the last item's rectangle as an "sdlat" target (browser: "brsearch", "brclear", "brcollapse"; channel window: "chroute", "chroutefree", "chroutelist"; piano roll: "prstamp", "prstamplbl", "prstampchip")
 void splitClipsAtPlayhead(App& a);  // K-112b: the clips across the song position split there (Dialogs.cpp)
-void tracksNewSameSettings(App& a);  // K-112B: the Tracks layout's Track menu and keys (MenuStyles.cpp)
+void tracksNewSameSettings(App& a);
+void tracksMuteSelected(App& a);  // R04-11: M, the selected tracks (or the focused one)
+void tracksSoloSelected(App& a);  // R04-11: S  // K-112B: the Tracks layout's Track menu and keys (MenuStyles.cpp)
 void tracksDeleteSelected(App& a);
+// R04-09: the Tracks layout's Track menu: a stack over the selected tracks (one run of neighbours,
+// none in a stack yet), freeze, bounce in place (tracks, regions), and the header's parts.
+void tracksCreateStack(App& a);
+bool tracksCanStack(App& a);
+void tracksFreeze(App& a);
+bool tracksFrozen(App& a);
+bool tracksCanFreeze(App& a);
+void tracksBounceInPlace(App& a);
+void regionsBounceInPlace(App& a);
+// The header's parts the person hid (Configure track header): bits of ui.logicHeaderHide.
+enum TrackHeaderPart : int { kHeadIcon = 1, kHeadPower = 2, kHeadMuteSolo = 4, kHeadRecord = 8, kHeadVolume = 16, kHeadPan = 32 };
+bool trackHeaderShows(App& a, int part);
+void configureTrackHeaderItems(App& a);  // the parts as checked menu items
 void tracksSplitAtPlayhead(App& a);
 void tracksAddMarker(App& a);  // at the nearest bar
-void toggleCycle(App& a);  // K-112b: cycle on or off (the Tracks control bar, Navigate menu and C key)
+void toggleCycle(App& a);
+// R02-13: the cycle area over the selected regions (Cmd+U), Cycle on. Nothing selected: no change.
+void cycleToSelection(App& a);
+// R02-15: the playhead to the previous / next marker (dir -1 / +1), and the Go to position prompt.
+void gotoMarker(App& a, int dir);
+void goToPositionPrompt(App& a);  // K-112b: cycle on or off (the Tracks control bar, Navigate menu and C key)
 void devTopBarFitWidth(float w);  // K-132: dev, the top bar fits its groups into w px (0 = the window's width)
 float topBarMetronomeMirror();
 double topBarMetronomeBeat();  // dev: the beat that pose was drawn for
@@ -30,6 +50,17 @@ void drawStatusBar(App& a);    // hint bar + notifications
 void drawNotificationCards(App& a);  // J-141: the notification cards alone (the launcher has no status bar)
 void drawBrowser(App& a);
 void browserProjectFiles(App& a);  // K-106: recent files and the project folder, with the browser's rows (Tracker Files screen)
+// K-106: the Tracker Files screen's file operations, as the browser's: rename ("" when done, else the
+// error), move to the trash (asks first, in the dialog browserTrashDialog draws every frame).
+// R7-02: Files has its own rule (any folder the user may write in, but shipped content, the root and
+// home themselves, the open project and a shared project's files).
+std::string filesRename(App& a, const std::string& path, const std::string& name);
+void filesAskTrash(const std::string& path);
+// Why Files may not rename or trash `path` ("" when it may); `asParent`: a new folder goes in it.
+std::string filesLocked(App& a, const std::string& path, bool asParent);
+// True once, on the frame after the trash prompt Files asked closed (moved or cancelled): the list reads again.
+bool filesTrashMoved();
+void browserTrashDialog(App& a);
 void drawChannelRack(App& a);
 // J-84 dev checks: --rack <spec> (comma separated: steps<N> pattern length,
 // w<W> / h<H> floating rack size, dock = docked beside the browser, scroll<px>
@@ -101,6 +132,14 @@ struct PlaylistGeometry {
 const PlaylistGeometry& playlistGeometry();
 // K-112b (dev, "autolane <track>"): the Tracks layout shows the automation lane under that playlist track.
 void devShowAutomationLane(int track);
+// R02-15: A / Mix > Show automation: the selected tracks' automation lanes (the focus track's when
+// no header is selected) show, or hide when one of them shows. Runs in the next tracks frame.
+void toggleAutomationLanes();
+// R01-15: W in the Tracks layout: the audio editor in the lower pane (the selected audio region's
+// sound, else the focus track's first audio region's); pressed while it shows, the pane closes.
+void toggleTracksAudioEditor(App& a);
+void openToolMenu();  // R01-18: T: the tracks area's tool menu opens (next frame)
+bool automationLanesShown(const App& a);
 // K-112c (dev, "plrows"): the next drawn playlist prints its rows (index, name, a point on the header's name: 24 px in, mid-row).
 void devPlaylistRowsAsk();
 // K-112b dev input "menu open <id>" (the same name and syntax as the other layouts'): asks the
@@ -154,6 +193,7 @@ void arrangementSelector(App& a, float width);     // toolbar combo
 void liveTrackMenu(App& a, int track);             // menu body: a track's live settings
 void setLiveArea(App& a, Tick end);                // 0 removes it      // file dialog, settings, info, export, history, about, prompts
 void handleGlobalShortcuts(App& a);
+void closeFrontWindow(bool dialogsOnly);  // K-297's shared close of the front window (Cmd+W; dialogsOnly: Escape's)
 // One undo step per pointer gesture in every editor (Document::beginPointerGesture): opened
 // right after ImGui::NewFrame when a mouse button is down or the wheel turns, closed by
 // handleGlobalShortcuts after the frame of the release (a wheel burst: after 0.4 s and 8 frames
@@ -203,6 +243,8 @@ void clipContextMenu(App& a, ObjectId clip);
 // K-112: with the clip's own rows (`clipRows`, true when it edited the song) placed in the menu by
 // Live's order; Studio's order ignores them (its caller draws them above the menu).
 void clipContextMenu(App& a, ObjectId clip, const std::function<bool()>& clipRows);
+// N46-08: set while a Clips grid slot's menu draws the clip menu (the slot has its own edit block).
+extern bool gClipMenuFromSlot;
 void playlistOptionsMenu(App& a, int part = 0);  // part: 0 every menu, 1 edit, 2 functions, 3 view (K-112b)
 void pianoRollMenu(App& a, int part = 0);  // part: 0 every menu, 1 edit, 2 functions, 3 view (K-112b)
 void markerMenu(App& a, int index);  // playlist ruler: one marker (J-11)

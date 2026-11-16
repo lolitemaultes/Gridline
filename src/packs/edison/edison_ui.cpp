@@ -27,6 +27,7 @@
 #include "../../engine/KerfMarks.h"
 #include "edison_dock.h"
 #include "edison_ui.h"
+#include "../../core/SafeFs.h"
 
 namespace gl::packs::edison {
 
@@ -400,7 +401,7 @@ Audio& clipboard() {
   return clip;
 }
 
-void runEdit(App& a, Session& s, const std::string& label, std::function<Content(const Content&)> op) {
+void runEdit(App& a, Session& s, const std::string& label, std::function<Content(const Content&)> op, std::optional<Range> follow) {
   if (s.job.active()) {
     say(s, "Busy: " + s.job.label);
     return;
@@ -409,7 +410,9 @@ void runEdit(App& a, Session& s, const std::string& label, std::function<Content
   const std::string dir = audioDir(a), name = displayName(a, s);
   Session* sp = &s;
   App* ap = &a;
-  launch(a, s, label, [c, op, dir, name, sp, ap, label]() -> std::function<void()> {
+  const Range was = s.sel, cur = clampRange(c, s.sel);
+  if (follow && (cur.empty() || follow->a != cur.a || follow->b != cur.b)) follow.reset();  // only the selection follows
+  launch(a, s, label, [c, op, dir, name, sp, ap, label, follow, was]() -> std::function<void()> {
     Content next = op(c);
     if (next.audio == c.audio && next.markers.size() == c.markers.size() && next.regions.size() == c.regions.size() &&
         next.loopStart == c.loopStart && next.loopEnd == c.loopEnd) {
@@ -418,9 +421,11 @@ void runEdit(App& a, Session& s, const std::string& label, std::function<Content
       if (sameMarkers) return [sp, label]() { say(*sp, label + ": nothing to change"); };
     }
     auto saved = saveVersion(next, dir, name);
-    return [sp, ap, next, saved, label]() {
+    const std::optional<Range> after = follow ? std::optional<Range>(rangeAfterEdit(c, next, *follow)) : std::nullopt;
+    return [sp, ap, next, saved, label, after, was]() {
       sp->hist.push(label, next);
-      sp->sel = clampRange(next, sp->sel);
+      const bool same = after && sp->sel.a == was.a && sp->sel.b == was.b;  // not changed while the edit ran
+      sp->sel = same ? *after : clampRange(next, sp->sel);
       sp->cursor = std::min(sp->cursor, next.frames());
       if (sp->viewStart + sp->viewLen > static_cast<double>(next.frames()) * 1.05 || sp->viewLen <= 0) zoomAll(*sp);
       applySaved(*ap, *sp, saved.first, saved.second, "Loupe: " + label);
@@ -693,7 +698,7 @@ namespace {
 // The current version's file, saved now if needed (UI thread).
 std::string currentFile(App& a, Session& s) {
   if (s.job.active()) return "";
-  if (s.committed.empty() || s.committed[0] == '\x01' || !fs::exists(s.committed)) {
+  if (s.committed.empty() || s.committed[0] == '\x01' || !safefs::exists(s.committed)) {
     auto saved = saveVersion(s.cur(), audioDir(a), displayName(a, s));
     applySaved(a, s, saved.first, saved.second, "Loupe: save");
   }
@@ -981,6 +986,11 @@ int armTransportRecording(App& a, ObjectId track) {
 namespace {
 uint64_t& panelKey();  // K-15 (below)
 }  // namespace
+
+void closeStandaloneWindows() {
+  for (auto& [k, sp] : sessions())
+    if (!sp->slot && sp->file.empty()) sp->open = false;
+}
 
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel) {
   if (path.empty() || channel == kNoId) return false;
@@ -1336,6 +1346,16 @@ void drawWindows(App& a) {
       stopPlay(a, s);
       s.open = false;
     }
+  }
+}
+
+// R4-02 (K-106): every Loupe window of its own closes (a sample's or a file's; the pinned panel stays).
+void closeOwnWindows(App& a) {
+  for (auto& [k, sp] : sessions()) {
+    Session& s = *sp;
+    if (s.slot || !s.open || (pinned(a) && inPanel(s))) continue;
+    stopPlay(a, s);
+    s.open = false;
   }
 }
 

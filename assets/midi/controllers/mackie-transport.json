@@ -1,0 +1,16 @@
+{
+  "id": "mackie-transport",
+  "name": "Mackie Control transport (keyboards in Mackie / MCU mode)",
+  "match": [],
+  "takeover": "jump",
+  "transport": {
+    "play": {"note": 94},
+    "stop": {"note": 93},
+    "record": {"note": 95},
+    "songmode": {"note": 86},
+    "metronome": {"note": 89},
+    "undo": {"note": 81},
+    "prevpattern": {"note": 46},
+    "nextpattern": {"note": 47}
+  }
+}

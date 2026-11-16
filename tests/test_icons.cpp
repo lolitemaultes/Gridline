@@ -294,6 +294,26 @@ int main() {
       white = white && (p[3] == 0 || (p[0] == 255 && p[1] == 255 && p[2] == 255));
     }
     expect(white && lit > 0, "page texture: white + alpha");
+    // K-291: on a layout switch frame (deferring) a size not made yet is not rasterised (a few ms
+    // each): the largest size made stands in, scaled, and serviceDeferred makes it afterwards.
+    {
+      const int before = at.rasterCount();
+      icons::setDeferFits(true);
+      io.DisplayFramebufferScale = ImVec2(2.0f, 2.0f);
+      ImGui::NewFrame();
+      ImDrawList* dl = ImGui::GetForegroundDrawList();
+      const int vtx0 = dl->VtxBuffer.Size;
+      icons::draw(dl, svgs[0].name, ImVec2(100, 100), 40.0f, IM_COL32_WHITE);  // made at 20 px only
+      const int stoodIn = dl->VtxBuffer.Size - vtx0;
+      ImGui::Render();
+      icons::setDeferFits(false);
+      expect(at.rasterCount() == before && icons::deferredCount() >= 1 && stoodIn > 0,
+             "K-291: deferring, a new size is put off and the size already made stands in");
+      int rounds = 0;
+      while (icons::deferredCount() > 0 && rounds++ < 100) icons::serviceDeferred(50.0);
+      expect(icons::deferredCount() == 0 && at.rasterCount() == before + 1 && at.find(at.indexOf(svgs[0].name), 40.0f) != nullptr,
+             "K-291: serviceDeferred makes the put-off size once");
+    }
     ImGui::DestroyContext();
   }
   return finish();

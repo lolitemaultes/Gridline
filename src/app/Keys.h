@@ -65,8 +65,16 @@ bool escapeBusy();
 
 // Menu shortcut text: the first chord ("Ctrl+S"), nullptr when unbound.
 const char* label(const char* id);
+// K-112B: the first chord with a modifier ("Cmd+2" where the command also has a plain "X"), else
+// label(): a Window menu names the window keys, as the reference's does.
+const char* modLabel(const char* id);
 // Every chord, "Ctrl+Y / Ctrl+Shift+Z" ("" when unbound).
 std::string labels(const char* id);
+// K-297: a chord as shown in menus and Settings. On macOS the Clips set (Cmd and Ctrl folded into
+// one modifier) shows it as Cmd, the key a Mac user presses; the other sets show it as before.
+std::string shown(const Chord& c);
+// The same for a fixed menu hint written as "Ctrl+X" (a pointer that stays valid).
+const char* shownText(const char* text);
 // K-93: the command whose label() returned exactly this pointer (a menu item's shortcut
 // text), nullptr when it is not one (a literal or unbound).
 const char* commandForLabel(const char* text);

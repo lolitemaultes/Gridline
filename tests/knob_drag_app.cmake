@@ -38,7 +38,9 @@ endforeach()
 # plugin editor.
 sweep(chanmisc "# no setup\n" 12 "^channelsettings$" --show chanmisc)
 sweep(chanenv "# no setup\n" 12 "^channelsettings$" --show chanenv)
-sweep(mixer "# no setup\n" 12 "^Mixer$" --show mixer)
+# (K-234: the mixer opens on the selected channel's insert track, whose column reaches below 900 px: a
+# taller window keeps its EQ knobs on screen.)
+sweep(mixer "# no setup\n" 12 "^Mixer$" --show mixer --size 1440x1200)
 sweep(autolfo "# no setup\n" 12 "^autolfo$" --show autolfo)
 sweep(plugin "# no setup\n" 12 "^channelsettings$" --plugin gl.synth)
 # The channel rack and the top bar (song swing, channel volume and pan, master volume and pitch).

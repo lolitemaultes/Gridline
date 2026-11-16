@@ -498,6 +498,9 @@ ObjectId AudioEngine::liveActive(int track) const {
 ObjectId AudioEngine::liveQueued(int track) const {
   return track >= 0 && track < kMaxPlaylistTracks ? liveQueuedUi_[track].load(std::memory_order_relaxed) : kNoId;
 }
+Tick AudioEngine::liveOrigin(int track) const {
+  return track >= 0 && track < kMaxPlaylistTracks ? liveOriginUi_[track].load(std::memory_order_relaxed) : 0;
+}
 
 void AudioEngine::midiEvent(uint8_t status, uint8_t d1, uint8_t d2) {
   size_t h = mHead_.load(std::memory_order_relaxed);
@@ -2386,6 +2389,7 @@ void AudioEngine::clearLive() {
     liveTracks_[t] = LiveTrack{};
     liveActiveUi_[t].store(kNoId, std::memory_order_relaxed);
     liveQueuedUi_[t].store(kNoId, std::memory_order_relaxed);
+    liveOriginUi_[t].store(0, std::memory_order_relaxed);
   }
 }
 
@@ -2529,6 +2533,7 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
   }
   for (const ProgLiveTrack& lt : p->liveTracks)
     if (lt.track >= 0 && lt.track < kMaxPlaylistTracks) {
+      liveOriginUi_[lt.track].store(liveTracks_[lt.track].origin, std::memory_order_relaxed);
       liveActiveUi_[lt.track].store(liveTracks_[lt.track].active, std::memory_order_relaxed);
       liveQueuedUi_[lt.track].store(liveTracks_[lt.track].queued, std::memory_order_relaxed);
     }
@@ -2981,6 +2986,20 @@ void AudioEngine::copyTaps(const Program* p, int offset, int n) {
       r[i] += gr[i];
     }
   }
+  for (const ProgMixer& m : p->mixer)  // K-101: mixer effects sending to a pair (Hardware Insert)
+    for (const ProgSlot& s : m.slots) {
+      if (!s.rt || !s.rt->fx) continue;
+      int pair = -1;
+      const float* fl = nullptr;
+      const float* fr = nullptr;
+      if (!s.rt->fx->directOutput(pair, fl, fr) || pair < 0 || pair >= taps_->count || !fl || !fr) continue;
+      float* l = taps_->L[pair] + offset;
+      float* r = taps_->R[pair] + offset;
+      for (int i = 0; i < n; ++i) {
+        l[i] += fl[i];
+        r[i] += fr[i];
+      }
+    }
 }
 
 // PH-09: the transport follows the host (see HostTransport).

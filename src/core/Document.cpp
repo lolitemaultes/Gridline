@@ -798,10 +798,43 @@ bool Document::routeChannel(ObjectId id, ObjectId mixerTrack) {
 
 // --- parameters ---------------------------------------------------------------
 
+namespace {
+bool gGroupLinking = false;  // K-238: a linked group's members are being set (no recursion)
+}  // namespace
+
 bool Document::setParam(ParamId id, double value, bool merge) {
   auto before = getParam(song_, id);
   if (!before) return false;
   double after = describeParam(song_, id)->clamp(value);
+  // K-238: a linked mixer group: the members' volume (the same change in dB), pan (the same
+  // move) and mute follow, in the same undo step.
+  if (!gGroupLinking && (id.index == static_cast<uint32_t>(MixerParam::Volume) || id.index == static_cast<uint32_t>(MixerParam::Pan) ||
+                         id.index == static_cast<uint32_t>(MixerParam::Mute)) && after != *before) {
+    const MixerTrack* t = song_.mixerTrack(id.owner);
+    if (t && t->groupLink && !t->group.empty()) {
+      std::vector<std::pair<ParamId, double>> follow;
+      for (const auto& m : song_.mixer) {
+        if (m.id == t->id || m.group != t->group || !m.groupLink) continue;
+        const ParamId pid{m.id, id.index};
+        const auto cur = getParam(song_, pid);
+        if (!cur) continue;
+        double v = after;
+        if (id.index == static_cast<uint32_t>(MixerParam::Volume)) v = *before > 1e-9 ? *cur * (after / *before) : after;
+        else if (id.index == static_cast<uint32_t>(MixerParam::Pan)) v = *cur + (after - *before);
+        follow.emplace_back(pid, v);
+      }
+      if (!follow.empty()) {
+        gGroupLinking = true;
+        beginGroup(id.index == static_cast<uint32_t>(MixerParam::Mute) ? "mute linked group" : "change linked group");
+        setParam(id, value, merge);
+        for (const auto& [pid, v] : follow) setParam(pid, v, merge);
+        endGroup();
+        lastTouched_ = id;  // the control the user moved
+        gGroupLinking = false;
+        return true;
+      }
+    }
+  }
   if (id != lastTouched_ && lastTouched_.owner != kNoId) prevTouched_ = lastTouched_;  // J-27: next to last tweaked
   lastTouched_ = id;
   ++touchSerial_;
@@ -809,6 +842,7 @@ bool Document::setParam(ParamId id, double value, bool merge) {
   if (!merge) undo_.breakMerge();
   exec(std::make_unique<ParamCommand>(id, *before, after, merge, song_.channel(id.owner) != nullptr));
   if (!merge) undo_.breakMerge();
+  paramBefore = *before;
   if (paramObserver) paramObserver(id, after);
   return true;
 }

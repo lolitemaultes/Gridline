@@ -14,6 +14,7 @@
 #include <sstream>
 #include "../engine/LoopFile.h"
 #include "../engine/Sample.h"
+#include "SoundAnalysis.h"
 #include "Json.h"
 #include "PluginBrand.h"
 #include "Project.h"
@@ -513,6 +514,23 @@ Query parseQuery(const std::string& text) {
         if (parseKey(val, pc, mn)) q.key = pc, q.minor = mn;
         continue;
       }
+      if (key == "sound" || key == "sounds") {  // K-218
+        std::stringstream ss(lower(val));
+        for (std::string v; std::getline(ss, v, ',');)
+          if (!v.empty()) q.sounds.push_back(v);
+        continue;
+      }
+      if (key == "scale" || key == "mode") {
+        const std::string v = lower(val);
+        if (v == "major" || v == "maj") q.minor = 0;
+        else if (v == "minor" || v == "min") q.minor = 1;
+        continue;
+      }
+      if (key == "beats") {
+        double lo = 0, hi = 0;
+        if (range(val, lo, hi, 0.5)) q.beatsLo = lo, q.beatsHi = hi;
+        continue;
+      }
       if (key == "len" || key == "length" || key == "dur") {
         double lo = 0, hi = 0;
         if (range(val, lo, hi, 0.25)) q.lenLo = lo, q.lenHi = hi;
@@ -534,6 +552,7 @@ bool hasTag(const FileMeta& m, const std::string& tag, const std::vector<std::st
     if (t == tag || t.rfind(tag, 0) == 0) return true;
   for (const auto& t : m.fileTags)
     if (t == tag || t.rfind(tag, 0) == 0) return true;
+  if (!m.sound.empty() && (m.sound == tag || m.sound.rfind(tag, 0) == 0)) return true;
   for (const auto& t : autos)
     if (t == tag || t.rfind(tag, 0) == 0) return true;
   return false;
@@ -545,6 +564,17 @@ bool matches(const FileMeta& m, const Query& q) {
   if (!q.kinds.empty() && !q.kinds.count(m.kind)) return false;
   if (q.bpmHi > 0 && !(m.bpm > 0 && m.bpm >= q.bpmLo && m.bpm <= q.bpmHi)) return false;
   if (q.key >= 0 && !(m.key == q.key && (q.minor < 0 || m.minor == (q.minor == 1)))) return false;
+  if (q.key < 0 && q.minor >= 0 && !(m.key >= 0 && m.minor == (q.minor == 1))) return false;
+  if (q.beatsHi > 0 && !(m.beats() > 0 && m.beats() >= q.beatsLo && m.beats() <= q.beatsHi)) return false;
+  if (!q.sounds.empty()) {
+    bool any = false;
+    for (const auto& snd : q.sounds) any = any || m.sound == snd;
+    if (!any) {
+      const std::vector<std::string> au = autoTags(m.path);  // a name that says it counts too
+      for (const auto& snd : q.sounds) any = any || std::find(au.begin(), au.end(), snd) != au.end();
+    }
+    if (!any) return false;
+  }
   if (q.lenHi > 0 && !(m.seconds > 0 && m.seconds >= q.lenLo && m.seconds <= q.lenHi)) return false;
   std::vector<std::string> autos;
   if (!q.tags.empty() || !q.words.empty()) autos = autoTags(m.path);
@@ -555,6 +585,7 @@ bool matches(const FileMeta& m, const Query& q) {
     for (const std::string& part : tailParts(m.path, 3)) hay += (hay.empty() ? "" : " ") + lower(part);
     for (const auto& t : m.tags) hay += " " + t;
     for (const auto& t : m.fileTags) hay += " " + t;
+    if (!m.sound.empty()) hay += " " + m.sound;
     for (const auto& t : autos) hay += " " + t;
     for (const auto& w : q.words)
       if (hay.find(w) == std::string::npos) return false;
@@ -738,7 +769,7 @@ const char* dropActionLabel(DropAction a) {
 
 // Bumped when the analysis changes (2: ACID tempo, 3: loop files' own tempo, key, tags and
 // slices); older cached analyses are redone.
-constexpr double kCacheVersion = 3;
+constexpr double kCacheVersion = 4;  // K-218: the sound kind, tempo and key heard in the audio
 
 Index::~Index() { stop(); }
 
@@ -841,6 +872,16 @@ FileMeta Index::describe(const std::string& path, bool analyse) {
           const auto tags = autoTags(path);
           if (std::find(tags.begin(), tags.end(), "loop") != tags.end()) m.bpm = bpmFromLength(m.seconds);
         }
+        // K-218: what the audio itself says (this runs on the indexer's thread; cached).
+        std::vector<float> mono(s->left.size());
+        const std::vector<float>& rv = s->right.vec();
+        for (size_t i = 0; i < mono.size(); ++i) mono[i] = 0.5f * (s->left[i] + (i < rv.size() ? rv[i] : s->left[i]));
+        const sound::Analysis an = sound::analyse(mono, s->sampleRate, m.seconds);
+        m.sound = an.kind;
+        const bool oneShot = !m.fileTags.empty() && m.bpm <= 0;  // the file says it is not a loop
+        if (m.bpm <= 0 && !oneShot && an.bpm > 0)  // (one-shots have too few onsets to give one)
+          m.bpm = an.bpm, m.bpmHeard = true;
+        if (m.key < 0 && an.key >= 0) m.key = an.key, m.minor = an.minor, m.keyHeard = true;
       }
     }
   }
@@ -1001,6 +1042,7 @@ std::vector<std::pair<std::string, int>> Index::tagCounts(size_t limit) const {
       std::set<std::string> mine(m.fileTags.begin(), m.fileTags.end());
       if (auto t = tags_.find(p); t != tags_.end()) mine.insert(t->second.begin(), t->second.end());
       for (std::string& t : autoTags(m.path)) mine.insert(std::move(t));
+      if (!m.sound.empty()) mine.insert(m.sound);  // K-218
       for (const std::string& t : mine)
         if (!t.empty() && t != "starred") ++n[t];
     }
@@ -1047,6 +1089,8 @@ bool Index::save() const {
         e.object["ft"] = std::move(ft);
       }
       if (m.slices > 0) e.object["sl"] = Json::makeNumber(m.slices);
+      if (!m.sound.empty()) e.object["snd"] = Json::makeString(m.sound);
+      if (m.bpmHeard || m.keyHeard) e.object["heard"] = Json::makeNumber((m.bpmHeard ? 1 : 0) + (m.keyHeard ? 2 : 0));
       files.object[p] = std::move(e);
     }
     root.object["files"] = std::move(files);
@@ -1102,6 +1146,9 @@ bool Index::load() {
         for (const auto& x : ft->array)
           if (x.is(Json::Type::String)) m.fileTags.push_back(x.str);
       m.slices = jsonInt<int>(e.num("sl"));
+      m.sound = e.text("snd");
+      const int heard = jsonInt<int>(e.num("heard"));
+      m.bpmHeard = heard & 1, m.keyHeard = (heard & 2) != 0;
       if (auto t = tags_.find(p); t != tags_.end()) m.tags = t->second;
       entries_[p] = std::move(m);
     }

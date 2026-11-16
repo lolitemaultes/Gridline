@@ -321,6 +321,16 @@ void addRow(std::vector<Entry>& rows, std::vector<Action>& acts, Entry e, Action
   acts.push_back(std::move(act));
 }
 
+// N46-09: the Tracker's own screens and help are not Clips commands (the pattern editor would
+// dock in the clip band).
+// N47-13: nor Studio's song / pattern switch, its Back to the playlist, its playlist tools and the
+// window keys of the windows above.
+bool notClipsCommand(const char* id) {
+  return std::strcmp(id, "view.patternEditor") == 0 || std::strcmp(id, "help.trackerKeys") == 0 || std::strcmp(id, "transport.songMode") == 0 ||
+         std::strcmp(id, "view.backToPlaylist") == 0 || std::strcmp(id, "view.playlist") == 0 || std::strcmp(id, "view.channelRack") == 0 ||
+         (std::strncmp(id, "playlist.tool", 13) == 0 && std::strcmp(id, "playlist.toolDraw") != 0);
+}
+
 void build(App& a) {
   std::vector<Entry> rows;
   std::vector<Action> acts;
@@ -408,9 +418,15 @@ void build(App& a) {
   }
 
   // 2. The windows no menu item opened.
+  // N47-13: Clips has no playlist, channel rack, pads or groove windows of Studio's (its grid and
+  // arrangement are the main view; the clip band shows the notes): the palette doesn't offer them.
+  const bool clips = layoutui::active() == layout::Preset::Live;
   for (int k = 0; k < kWindowCount; ++k) {
     if (winRow[static_cast<size_t>(k)] >= 0) continue;
     const WinDef& w = kWindows[k];
+    if (clips && (std::strcmp(w.name, "Playlist") == 0 || std::strcmp(w.name, "Channel rack") == 0 || std::strcmp(w.name, "Live pads") == 0 ||
+                  std::strcmp(w.name, "Groove editor") == 0))
+      continue;
     Entry e;
     e.id = std::string("win:") + rowName(w);
     e.kind = Kind::Window;
@@ -468,6 +484,7 @@ void build(App& a) {
   const bool autoOpen = automationEditorTarget(&autoClip, &autoPattern, &autoTarget);
   for (const keys::Command& c : keys::commands()) {
     if (usedCmds.count(c.id)) continue;
+    if (clips && notClipsCommand(c.id)) continue;
     Entry e;
     e.id = std::string("cmd:") + c.id;
     e.kind = Kind::Command;
@@ -1009,7 +1026,10 @@ void devDump(App& a, int frame) {
     std::printf("ROW\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", kinds[static_cast<int>(e.kind)], e.id.c_str(), e.commandId.empty() ? "-" : e.commandId.c_str(),
                 e.enabled ? 1 : 0, e.label.c_str(), e.labelEn.empty() ? e.label.c_str() : e.labelEn.c_str(), e.path.c_str(), e.shortcut.c_str());
   for (const MenuRec& r : S.menuRecs) std::printf("MENU\t%s\t%s\t%s\t%d\t%s\n", r.rowId.c_str(), join(r.en, " > ").c_str(), r.labelEn.c_str(), r.occ, r.label.c_str());
-  for (const keys::Command& c : keys::commands()) std::printf("KEYCMD\t%s\n", c.id);
+  // (the commands the palette lists: Clips leaves out the ones that are not its own, N46-09 / N47-13)
+  const bool clips = layoutui::active() == layout::Preset::Live;
+  for (const keys::Command& c : keys::commands())
+    if (!clips || !notClipsCommand(c.id)) std::printf("KEYCMD\t%s\n", c.id);
   std::printf("PALETTE END\n");
   std::fflush(stdout);
 }

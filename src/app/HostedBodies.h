@@ -20,6 +20,7 @@ struct BodyFrame {
   float width = 600;       // the room the body has (logical px)
   bool zoom = false;       // run the editor zoom region (K-19); hosts bypass it and fit instead
   const char* host = "";   // the host's id, for reports ("Device chain")
+  const char* zoomKey = "fxeditor";  // the zoom region's window key (K-112b: an extra effect window has its own)
 };
 
 // Inside a window or child of the host's own: the channel's header row, strip, pages and

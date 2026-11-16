@@ -9,6 +9,7 @@
 // and channel colours only.
 #pragma once
 #include <string>
+#include <vector>
 #include "../../third_party/imgui/imgui.h"
 #include "../core/Types.h"
 
@@ -26,14 +27,56 @@ ImFont* numFont(const App& a);
 // K-112c: the envelope line drawn over the notes (and the curve glyph of its chooser).
 ImU32 envelopeColour();
 // K-112c: the control bar's Capture, Session record and Draw mode. captureNow: the notes kept by
-// App::capture into the current pattern (how many, with a notification). Session record: the
+// App::capture into the current pattern (how many, with a notification); in Clips (checkpoint 48)
+// into the clip the selected MIDI track plays, else a new clip in its slot that then plays. Session record: the
 // record button in pattern mode, playback started; sessionRecording: it is armed in pattern mode.
 // Draw mode: the arrangement's and the notes editor's tool, the pencil or select.
 int captureNow(App& a);
 bool sessionRecording(const App& a);
 void toggleSessionRecord(App& a);
+// Checkpoint 48 (Clips): Session record as the reference's, with the other clips playing on. Started
+// from the control bar (the selected MIDI track: into the clip it plays, else a new clip in its
+// selected or first empty slot) or an empty slot's record button (that slot). A new clip is launched
+// and grows by bars while it records (up to a scene); a stop keeps its whole bars and it plays on.
+// sessionRecordTarget: while the clip plays, what NoteRecorder records into (App::processMidi): its
+// pattern, its length and the transport tick of its content's start. sessionRecordFrame: per Clips
+// frame (launch, start, growth, the end when the transport stops or the track plays another clip).
+void startSessionRecord(App& a, int track, int slot);
+void stopSessionRecord(App& a);
+ObjectId sessionRecordClip(const App& a);
+bool sessionRecordTarget(const App& a, ObjectId& pattern, Tick& loopLength, double& origin);
+void sessionRecordFrame(App& a);
+// N47-01: Session record of an armed audio track (its input records while the clips play on), and the
+// takes written when it stops: placed in the grid slot (true: they were Clips' and were handled).
+bool sessionRecordAudio(const App& a);
+bool audioTakesCommitted(App& a, const std::vector<ObjectId>& clips);
+// Checkpoint 49: a Clips Session take is waiting to be written (its writing and its move into the slot
+// are then one undo step).
+bool audioTakePending(const App& a);
+// N47-10: a track records when armed: an audio track by its mixer track's arm, a MIDI track by its arm
+// button (this session) or by being the selected track (as the reference arms it by itself).
+bool trackArmed(const App& a, int track);
+bool midiArmedByHand(int track);
+void toggleMidiArm(App& a, int track, bool exclusive);
+// N47-06: the notes editor's play position for `pattern` while a launched grid clip plays it (the
+// selected clip first): its tick in the pattern. False when no grid clip of it plays.
+bool clipPlayhead(const App& a, ObjectId pattern, double& tick);
+// N47-03 / N47-15: an instrument dropped in Clips: its track takes its name (when still the default),
+// is selected, and the device band shows it (no editor window for built-in devices). False outside Clips.
+bool instrumentDropped(App& a, ObjectId channel, const std::string& name);
 bool drawMode(const App& a);
+// N48-11: the Arrangement record switch (F9, the record button, the menu row). In Clips turning it on
+// starts the transport, and the clip grid's launches are recorded into the arrangement.
+void toggleArrangementRecord(App& a);
+// N49-09: Main's title (grid, mixer band): Main selected, its chain shown.
+void selectMain(App& a);
 void setDrawMode(App& a, bool on);
+
+// K-112c (C44-20, the user's "Hide it"): the live area stays where every layout stores it (the start
+// of the playlist), but in Clips it is the clip grid's storage only: the arrangement view, its song
+// length, its ruler numbers and song playback all begin where the live area ends, so the grid and the
+// arrangement behave as two separate sets of clips. 0 outside Clips (or with no live area).
+Tick arrangementOrigin(const App& a);
 
 // ---- the main view: clip grid or arrangement (one at a time, Tab swaps) ----
 bool gridView(const App& a);
@@ -41,9 +84,24 @@ void showView(App& a, bool grid);
 // Per frame while Live is active: keeps exactly one of the two views open (a view closed from a
 // menu brings the other one back), and Tab swaps them when no text field has the keyboard.
 void viewFrame(App& a);
+// N45-10: a set opened in Clips shows the view it was last saved in here (the Arrangement when it was
+// saved with the Arrangement in front, else the clip grid, as a new set); saving remembers which.
+void projectOpened(App& a, const std::string& file);
+// N47-17: a new set: its first track is selected on Clips' next frame.
+void setOpenedNew();
+// N47-12: the clip menu's Rename: the clip band shows the clip and its Name field takes the typing.
+void renameClip(App& a, ObjectId clip);
+// Checkpoint 49: true on the frame the clip band's Name field (MIDI or audio clip) takes the typing.
+bool renameFocusNow();
+// Checkpoint 49: the track menu's Rename (and Cmd+R on a selected track): in the clip grid the track's
+// title becomes a name field in place, as the reference's; in the arrangement a name prompt.
+void renameTrack(App& a, int track);
+void projectSaved(App& a, const std::string& file);
+// Per frame while Live is not active (puts back what viewFrame changes in Dear ImGui).
+void leftFrame();
 
 // ---- the arrangement's track headers (right of the lanes) ----
-constexpr float kHeaderW = 186.0f;  // the header column at 100 %
+constexpr float kHeaderW = 216.0f;  // the header column at 100 % (wide enough for the demo song's track names)
 // What part of a header is under the pointer.
 enum class HeaderPart : int { None = 0, Name, Activator, Solo, Arm, Volume, BackToArrangement, Pan };
 struct HeaderDraw {
@@ -84,6 +142,20 @@ void drawClipGrid(App& a);
 void drawMixerBand(App& a);
 // K-287 (dev input "livegrid"): the next drawn clip grid prints each slot's centre and clip.
 void devGridAsk();
+// C44-16: the Create menu's grid items: an empty scene under the selected slot's (else at the end), and
+// a one-bar MIDI clip in the selected slot (else the selected track's first empty one). Run next frame.
+void gridInsertScene(App& a);
+void gridInsertMidiClip(App& a);
+// N45-08: the track a new track goes after: the selected title or header, else the selected slot's
+// track, else a selected clip's track; -1 when nothing is selected (it then goes after the tracks in
+// use). newTrack makes an audio or MIDI track there and selects it (title and slot).
+int selectedTrack(App& a);
+int newTrack(App& a, bool audio);
+// N47-11: Create's New return track (one undo step), and the detail bands shown or hidden together
+// (both hidden: the clip band comes back).
+void newReturnTrack(App& a);
+void toggleDetail(App& a);
+int newTrackAfter(App& a, bool audio, int after);
 
 // ---- parts drawn the Live way (LayoutParts calls these while Live is active) ----
 // The device chain as a row of devices. `pick` is the chain's device (the one opened last: from the
@@ -122,6 +194,14 @@ void devDeviceMenu(App& a);
 // edge past which the column scrolls (call before EndChild).
 bool columnSection(App& a, const char* title, ImU32 fill, const char* foldId);
 float columnRow(App& a, const char* label, int col, int cols);
+// N48-12: a bars. beats. sixteenths field of the clip view (drag, wheel, arrows once picked,
+// double-click to type); `duration` counts from 0. 0. 0. True when `v` changed.
+bool positionField(App& a, const char* id, Tick& v, Tick lo, Tick hi, float w, const char* hint, bool duration = false);
+// N48-12: the one pattern clip selected that plays `pattern` (kNoId: none) and its region in the
+// notes, [Start, End): its offset and its end. The clip view's fields and the notes editor's brace
+// both show and change it (setClipRegion: one undo step per drag with `mergeKey`).
+ObjectId clipRegion(const App& a, ObjectId pattern, Tick& start, Tick& end);
+void setClipRegion(App& a, ObjectId clip, Tick start, Tick end, const char* label, uint64_t mergeKey = 0);
 // K-112c (round 23): a read-only value in a box the field's colour with its 1 px rim, `w` wide and a
 // frame tall, its text where a field's text starts (the refs box every value in the clip column).
 void valueBox(App& a, const char* text, float w);

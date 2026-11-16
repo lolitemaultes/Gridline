@@ -4,6 +4,7 @@
 // recording, and the typing-keyboard layout (octave, velocity, chord mode).
 // All edits go through Document, so they are undoable.
 #pragma once
+#include <array>
 #include <functional>
 #include <map>
 #include <set>
@@ -43,6 +44,9 @@ struct RecordSetup {
   Tick pickup = 0;                  // notes played up to this much before `start` (the count-in's last beat) are kept at the start
   Tick punchIn = 0, punchOut = 0;   // song mode: only notes inside [in, out) record (out <= in: no punch)
   Tick loopStart = 0, loopEnd = 0;  // song mode: the range the transport loops over (end <= start: none known)
+  // K-112B (R05-02): song mode: the track the take goes on (the Tracks layout's selected track; its
+  // earlier regions there stay, the take plays over them). -1: the note's instrument track, else a free one.
+  int track = -1;
 };
 
 // Records notes (MIDI, the typing keyboard) and controller moves while the transport plays. Every
@@ -87,6 +91,11 @@ class NoteRecorder {
   void position(Document& doc, double tick);
   void noteOn(Document& doc, ObjectId channel, int pitch, int velocity, double tick);
   void noteOff(Document& doc, ObjectId channel, int pitch, double tick);
+  // K-99: per-note expression of the held note (`channel`, `pitch`) at `tick` (an MPE
+  // controller's member channel): pitch in semitones off the key, pressure 0..1, timbre 0..1
+  // (0.5 = centre). Kept with the note and written into its lanes (bend, pressure, timbre) when
+  // it ends, thinned to what the engine plays. Nothing held there: ignored.
+  void expression(ObjectId channel, int pitch, ExprDim dim, float value, double tick);
   // A linked parameter moved (normalized value) at `tick`.
   void controller(ParamId target, double normalized, double tick);
   // The sustain pedal (CC 64) of `channel` went down or up at `tick`: recorded with the notes
@@ -142,6 +151,8 @@ class NoteRecorder {
   std::vector<ObjectId> takeIds_;
   std::vector<ObjectId> takeClips_;
   std::map<std::pair<ObjectId, int>, Held> held_;  // (channel, pitch)
+  // K-99: the held notes' expression as played: per dimension, (ticks after the key went down, value).
+  std::map<std::pair<ObjectId, int>, std::array<std::vector<std::pair<double, float>>, 3>> heldExpr_;
   std::map<ObjectId, Replace> replace_;            // replace mode: by channel, this pass
   std::vector<Mine> mine_;                         // replace mode: the notes this pass recorded
   std::map<uint64_t, std::vector<std::pair<double, double>>> auto_;  // ParamId → (tick, value)
@@ -213,6 +224,10 @@ class TypingKeyboard {
   int velocity = 100;  // 1..127
   bool chordMode = false;
   ChordType chord = ChordType::Major;
+  // N48-08 (checkpoint 49): the Clips layout's note keys, as the reference's computer keyboard: the
+  // A row plays from the base C (W E T Y U O P the black keys), Z and X move the octave, C and V
+  // the velocity; M and the other keys play nothing.
+  bool aRow = false;
 
   int baseNote() const { return 12 * octave; }  // octave 4 → 48 (C4 in FL naming, 60 = C5)
   // Key codes are lower-case ASCII ('z', ',', '[', …). Returns the notes the
@@ -229,6 +244,8 @@ class TypingKeyboard {
   // The key code of a key by where it sits, whatever the layout types there: `position` is its USB
   // usage (SDL's scan codes use the same numbers, named after US QWERTY). 0 = not a typing key.
   static int keyAtPosition(int position);
+  // The key at `position` in the mode in use (the A row's A, F and K count only with aRow).
+  int keyAt(int position) const;
   // Where a key code sits, 0 if it has no place.
   static int positionOfKey(int key);
   // What to call a key on this keyboard: `typed`, the character its position types on the layout

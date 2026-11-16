@@ -101,6 +101,7 @@
 #include "Keys.h"
 #include "KeyGlide.h"
 #include "App.h"
+#include "../core/RackSelect.h"
 #include "../core/RemoteFs.h"
 #include "../core/SingleInstance.h"
 #include "WindowActivate.h"
@@ -154,6 +155,7 @@
 #include "UpdateUi.h"
 #include "UrlImportUi.h"
 #include "../host/net/Http.h"
+#include "../core/SafeFs.h"
 
 namespace fs = std::filesystem;
 using namespace gl;
@@ -753,21 +755,28 @@ void drawVideoCursor() {  // K-10: --video-cursor, a plain arrow at the dev poin
   arrow(0.1f, 0.25f, IM_COL32(255, 255, 255, 255));  // (in from the tip, so the white never passes the outline there)
 }
 
-// Typing keyboard: where a key sits → the key code TypingKeyboard uses, so the rows stay a piano
-// on any layout. 0 = not a typing key.
-int typingKey(SDL_Scancode s) { return TypingKeyboard::keyAtPosition(static_cast<int>(s)); }
 
 struct HeldNote {
   ObjectId channel;
   int pitch;
   double startTick;
+  std::vector<ObjectId> also;  // K-232: the other selected channels the key plays (sound only)
 };
+
+// K-232: the channels a typed key plays: the selected channel first, then every other selected one.
+std::vector<ObjectId> typedTargets(const App& app) {
+  std::vector<ObjectId> order;
+  order.reserve(app.doc.song().channels.size());
+  for (const auto& c : app.doc.song().channels) order.push_back(c.id);
+  return rackselect::playTargets(order, app.selChannels, app.selChannel);
+}
 
 // J-109: ends every note held on the typing keyboard (on the channel each key started it on).
 void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
   for (const auto& [k, h] : held)
-    for (int p : app.typing.keyUp(typingKey(k))) {
+    for (int p : app.typing.keyUp(app.typing.keyAt(static_cast<int>(k)))) {
       app.engine.noteOff(h.channel, p);
+      for (ObjectId o : h.also) app.engine.noteOff(o, p);
       app.playedNoteOff(h.channel, p);
     }
   for (int p : app.typing.releaseAllKeys()) {  // (keys not in `held`; K-175: every key counts as up)
@@ -1075,7 +1084,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   // The scripted pointer stays put between commands (the backend would
   // otherwise report the real pointer whenever the window has focus).
   static ImVec2 pointer(-FLT_MAX, -FLT_MAX);
-  if (pointer.x > -FLT_MAX) io.AddMousePosEvent(pointer.x, pointer.y);
+  // C44-06: not during a file drag from another program, whose position is the pointer (xdragui).
+  if (pointer.x > -FLT_MAX && !xdragui::active()) io.AddMousePosEvent(pointer.x, pointer.y);
   if (devMomentum.left > 0) {  // the fling decays like an OS momentum phase (~0.9 per 60 Hz frame);
     // events land on two of every three frames, like OS event timing against frame timing
     if (devMomentum.left % 3 != 0) io.AddMouseWheelEvent(devMomentum.dx, devMomentum.dy);
@@ -1497,6 +1507,10 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         e.key.windowID = w ? SDL_GetWindowID(w) : 0;
         e.key.state = down ? SDL_PRESSED : SDL_RELEASED;
         e.key.keysym.sym = l.a0.empty() ? 0 : static_cast<SDL_Keycode>(l.a0[0]);
+        // K-112c: a key by its name ("escape", "tab", "return", "left"): before, "sdlkey escape" sent
+        // its first letter, 'e' (a script that meant to close a menu left it open).
+        if (l.a0.size() > 1 && l.a0[0] != '#' && l.a0[1] != '@')
+          if (const SDL_Keycode named = SDL_GetKeyFromName(l.a0.c_str()); named != SDLK_UNKNOWN) e.key.keysym.sym = named;
         e.key.keysym.scancode = SDL_GetScancodeFromKey(e.key.keysym.sym);
         if (l.a0.size() == 3 && l.a0[1] == '@')  // ";@z": the key in the Z position types ';' (another layout)
           e.key.keysym.scancode = static_cast<SDL_Scancode>(TypingKeyboard::positionOfKey(l.a0[2]));
@@ -1597,6 +1611,18 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       app.startPlayback();
     } else if (l.cmd == "focus") {
       app.focusWindow = l.args.empty() ? l.a0 : l.args[0];
+    } else if (l.cmd == "focusinfo") {  // K-297: the window with the keys, and whether it is on screen
+      const ImGuiContext& g = *ImGui::GetCurrentContext();
+      const ImGuiWindow* nav = g.NavWindow ? g.NavWindow->RootWindow : nullptr;
+      const ImGuiDockNode* n = nav && nav->DockIsActive ? nav->DockNode : nullptr;
+      const ImGuiWindow* vis = n ? n->VisibleWindow : nullptr;
+      const ImGuiWindow* hov = g.HoveredWindow ? g.HoveredWindow->RootWindow : nullptr;
+      std::printf("focusinfo frame %d: focus \"%s\" active %d hidden %d docked %d front \"%s\" text %d active-id %u"
+                  " drag %d type \"%s\" accept %d cursor %d over \"%s\"\n", frame,
+                  nav ? nav->Name : "-", nav && nav->Active ? 1 : 0, nav && nav->Hidden ? 1 : 0, n ? 1 : 0, vis ? vis->Name : "-",
+                  g.IO.WantTextInput ? 1 : 0, static_cast<unsigned>(g.ActiveId), g.DragDropActive ? 1 : 0,
+                  g.DragDropActive ? g.DragDropPayload.DataType : "", g.DragDropAcceptIdPrev ? 1 : 0, static_cast<int>(g.MouseCursor), hov ? hov->Name : "-");
+      std::fflush(stdout);
     } else if (l.cmd == "playstate") {
       const ImGuiContext& g = *ImGui::GetCurrentContext();
       const ImGuiWindow* nav = g.NavWindow ? g.NavWindow->RootWindow : nullptr;
@@ -1673,6 +1699,28 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       SDL_PushEvent(&q);
     } else if (l.cmd == "browser") {  // K-17 / K-18: browser rows and file operations (BrowserUi.h)
       browserui::devCommand(app, l.args, frame);
+    } else if (l.cmd == "layout" && !l.args.empty() && (l.args[0] == "minimize" || l.args[0] == "restore")) {
+      // K-297 (development builds): the main window minimised or restored, as the window system does
+      // it. A hidden run cannot minimise its window: there the events a real minimise sends (focus
+      // lost, minimised; restored, focus gained) are queued for the next frame instead. (Here, not in
+      // LayoutShellUi.cpp: the plugin bundles link the interface without SDL.)
+      SDL_Window* w = SDL_GetWindowFromID(static_cast<Uint32>(reinterpret_cast<intptr_t>(ImGui::GetMainViewport()->PlatformHandle)));
+      if (w && layout::devSetting(app.settings)) {  // (the backend keeps its id)
+        const bool down = l.args[0] == "minimize";
+        const bool shown = (SDL_GetWindowFlags(w) & SDL_WINDOW_SHOWN) != 0;
+        if (shown && down) SDL_MinimizeWindow(w);
+        else if (shown) SDL_RestoreWindow(w);
+        else
+          for (const Uint8 ev : down ? std::vector<Uint8>{SDL_WINDOWEVENT_FOCUS_LOST, SDL_WINDOWEVENT_MINIMIZED}
+                                     : std::vector<Uint8>{SDL_WINDOWEVENT_RESTORED, SDL_WINDOWEVENT_FOCUS_GAINED}) {
+            SDL_Event e{};
+            e.type = SDL_WINDOWEVENT;
+            e.window.windowID = SDL_GetWindowID(w);
+            e.window.event = ev;
+            SDL_PushEvent(&e);
+          }
+        std::printf("frame %d layout %s (%s)\n", frame, l.args[0].c_str(), shown ? "window system" : "events");
+      }
     } else if (l.cmd == "layout") {  // K-112: the region shell (LayoutShellUi.h): dump, show/hide <region>, open/close <window>, state
       layoutui::devCommand(app, l.args, frame);
     } else if (l.cmd == "tracker") {  // K-106: the pattern editor (TrackerView.h): dump, focus, cursor, edit, step, follow, select, geometry
@@ -2102,6 +2150,15 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                     static_cast<unsigned>(c.source), c.audioEnd, c.fadeIn, c.fadeOut, static_cast<double>(c.gain),
                     static_cast<double>(c.pitch), c.stretch, c.reverse ? 1 : 0, c.syncBpm, c.tempoLock ? 1 : 0, c.loop ? 1 : 0,
                     static_cast<long long>(c.loopStart), static_cast<long long>(c.loopLength), c.warp.size());  // (K-114: loop; K-140: its own loop; K-85: warp markers)
+      // K-112b (R02-01 / R02-04): the tracks' automation lanes and the cycle area.
+      // (no ";" in dumps: CMake tests split a captured output at it)
+      std::printf("  cycle on %d start %lld end %lld, tracks %zu, channels %zu, automations %zu, position %lld\n", s.cycleOn ? 1 : 0,
+                  static_cast<long long>(s.cycleStart), static_cast<long long>(s.cycleEnd), s.tracks.size(), s.channels.size(), s.automations.size(),
+                  static_cast<long long>(app.engine.position()));
+      for (size_t t = 0; t < s.tracks.size(); ++t)
+        if (s.tracks[t].laneSet || s.tracks[t].channel != kNoId)
+          std::printf("  track %zu name %s lane shown %d set %d owner %u index %u channel %u\n", t, s.tracks[t].name.c_str(), s.tracks[t].laneShown ? 1 : 0,
+                      s.tracks[t].laneSet ? 1 : 0, static_cast<unsigned>(s.tracks[t].laneOwner), s.tracks[t].laneIndex, static_cast<unsigned>(s.tracks[t].channel));
       std::fflush(stdout);
     } else if (l.cmd == "builds") {  // J-196: program builds and clip level patches so far, renders waiting for an edit to end
       std::printf("builds frame %d: builds %llu patches %llu deferred %d voices made %llu kept %llu\n", frame,
@@ -2813,7 +2870,7 @@ int main(int argc, char** argv) {
     std::error_code ec;
     fs::create_directories(app.configDir(), ec);
   }
-  bool firstRun = !fs::exists(iniPath);
+  bool firstRun = !gl::safefs::existsAt(iniPath);
 
   splash(0.42f, "Starting audio engine");
   app.audioSampleRate = static_cast<int>(app.settings.getNumber("audio.sampleRate"));
@@ -2893,6 +2950,8 @@ int main(int argc, char** argv) {
   bool devSwitchCheck = false;
   std::string devStyleReport;             // K-112 --style-report <file>: the layout style report of the last frame
   int devSwitchFrame = -100;  // the frame a layout switch was applied on (for --switch-check)
+  Uint64 devCheckTicks = 0;   // K-291: the switch frame's own state check (wall, counter ticks) and CPU time (ns)
+  long long devCheckCpu = 0;
   std::vector<std::pair<int, std::string>> devSwitches;  // K-79 --switch-layout <id>@<frame>: choose a preset while running
   std::string devFocus;                   // --show <window>: focus a docked window once the layout exists
   bool devLive = false;                   // --live: launch live clips once the program exists
@@ -3241,7 +3300,7 @@ int main(int argc, char** argv) {
       // K-45: scripted runs leave the default cache alone (their own has GRIDLINE_CACHE_DIR).
       if (!std::getenv("GRIDLINE_CACHE_DIR")) cacheui::skipStartupSweep();
       sysmenu::setHiddenRun(true);  // K-112: a scripted run never takes over the desktop's menu bar
-    } else if ((gl::remotefs::isRemote(arg) || fs::exists(arg)) && !onlyPaths) {
+    } else if ((gl::remotefs::isRemote(arg) || gl::safefs::exists(arg)) && !onlyPaths) {
       // Options after the project (--chan, --fx, --edit, --plugin) act on it: it loads now (J-167).
       argProject = app.openProject(arg) || argProject;
       app.finishProjectLoad();
@@ -3402,7 +3461,7 @@ int main(int argc, char** argv) {
   if (layoutPreset == layout::Preset::Live && !argOpened && !argProject && app.projectFile().empty() && app.doc.history().position() == 0)
     app.newProject();
   iniPath = (fs::path(app.configDir()) / layoutui::iniFile(app, layoutPreset)).string();
-  firstRun = !fs::exists(iniPath);
+  firstRun = !gl::safefs::existsAt(iniPath);
   bool layoutRebuild = false;  // K-79: a preset switch found no saved layout file
   bool layoutRebuildKeep = false;  // ... and the windows open before the switch stay open
   ImGui::LoadIniSettingsFromDisk(iniPath.c_str());
@@ -3464,7 +3523,14 @@ int main(int argc, char** argv) {
       pumpHostedPlugins(app);
       crashui::frame(app);  // K-39: the recovery copy
       app.processMidi();
+      app.followSelection();        // K-234
+      if (static bool dataFolderTold = false; !dataFolderTold) {  // K-265: once a run
+        dataFolderTold = true;
+        if (const auto& df = platform::dataFolder(); df.missing)
+          app.notify("The data folder " + df.wanted + " is not there (an unplugged drive?): Gridline uses the default folders for now.", true);
+      }
       app.processAudioRecording();  // J-8
+
     }
     app.engine.setMetronome(app.metronome);
     app.engine.setReturnToSeek(app.settings.getBool("transport.rememberSeek"));  // J-49
@@ -3679,6 +3745,13 @@ int main(int argc, char** argv) {
         layoutui::setRegionState(app, preset, layout::State{});
       const bool shellLayout = layoutui::shellBuilt(app, preset);  // K-112: built from the layout's region tree
       workspace::Rect r;
+      // R02-05: Reset layout brings a region layout back to its default regions (and so its windows).
+      if (shellLayout && app.resetLayout) {
+        layoutui::setRegionState(app, preset, layout::State{});
+        layoutRebuildKeep = false;  // its default windows open, the others close (an open one would reopen its pane)
+        layoutui::forgetLogicWindows();
+        if (preset == layout::Preset::Logic) app.settings.set("ui.logicQuickHelp", false);
+      }
       if (shellLayout) layoutui::buildShell(app, preset, dockId, inner);
       else r = buildLayout(preset, dockId, inner, static_cast<int>(app.doc.song().channels.size()));
       rackPlacement = {dpos.x + 4 + r.x, dpos.y + 4 + r.y, r.w, r.h};
@@ -3747,6 +3820,7 @@ int main(int argc, char** argv) {
       prof::Scope ps("shell");
       layoutui::shellFrame(app);  // K-112: the region shell's exclusive regions and fixed bands
       if (livelook::active(app)) livelook::viewFrame(app);  // K-112c: the clip grid or the arrangement, one at a time
+      else livelook::leftFrame();
     }
     {
       prof::Scope ps("livepads");
@@ -3927,8 +4001,28 @@ int main(int argc, char** argv) {
         if (c.start < ls.live.areaEnd && seen.insert(c.track).second) app.engine.launchClip(c.id);
     }
     if (!app.focusWindow.empty()) {
-      ImGui::SetWindowFocus(app.focusWindow.c_str());
-      app.focusWindow.clear();
+      // R06-10: a window is named "Shown###English" (ui::windowTitle), and one just opened exists only
+      // from the next frame: look it up by either name, and keep asking a few frames until it is there.
+      static int tries = 0;
+      ImGuiWindow* fw = ImGui::FindWindowByName(app.focusWindow.c_str());
+      if (!fw && app.focusWindow.find("###") == std::string::npos) fw = ImGui::FindWindowByName(("###" + app.focusWindow).c_str());
+      // A press this frame focuses the window under it when the frame ends (ImGui's click focus):
+      // the request waits for a frame without one, or the press's window would take the keys back.
+      const ImGuiIO& fio = ImGui::GetIO();
+      const bool press = fio.MouseClicked[0] || fio.MouseClicked[1] || fio.MouseClicked[2];
+      // A modal pop-up open over it (a drum kit's import report over the channel settings it opened)
+      // keeps the request until it closes: focusing a window behind a modal closes the modal.
+      const ImGuiWindow* modal = ImGui::GetTopMostPopupModal();
+      if (fw && modal && fw->RootWindow != modal->RootWindow) {
+        // (held: no try counted)
+      } else if (fw && press && tries < 6) {
+        ++tries;
+      } else if (fw) {
+        ImGui::FocusWindow(fw);
+        app.focusWindow.clear(), tries = 0;
+      } else if (++tries > 6) {
+        app.focusWindow.clear(), tries = 0;
+      }
     }
     if (app.typingKeyboard && app.hint.empty()) {
       std::string h = "Typing keyboard: " + typingKeyName('z') + "…" + typingKeyName('/') + " and " + typingKeyName('q') + "…" + typingKeyName('p') +
@@ -3948,6 +4042,26 @@ int main(int argc, char** argv) {
     }
 
     xdragui::endFrame(app);  // J-75: a drop no window took opens the files
+    {
+      // K-297 (round 6): an item of Gridline's own dragged over a place that takes no drop shows the
+      // not-allowed pointer. It kept the plain arrow over the bars, the browser and the empty parts
+      // of the panels, the same as over a place that takes it (those light up and show the hand).
+      // (A drag from another application keeps the arrow: dropped where no window takes it, it opens.)
+      const ImGuiContext& g = *ImGui::GetCurrentContext();
+      const bool ours = g.DragDropActive && !xdragui::active() && !std::strncmp(g.DragDropPayload.DataType, "GL_", 3);
+      if (ours && g.MouseCursor == ImGuiMouseCursor_Arrow)  // (a place that takes it: the hand, as the browser's file drops show)
+        ImGui::SetMouseCursor(g.DragDropAcceptIdCurr ? ImGuiMouseCursor_Hand : ImGuiMouseCursor_NotAllowed);
+      // A drop taken by another window gives it the keys: a pattern dropped from the browser onto the
+      // playlist is selected there, and Delete or the arrows act on it (the browser kept them). (The
+      // target ends the drag as it takes it: the drag of the frame before was over a taker, the button
+      // went up in this one.)
+      static bool overTaker = false;
+      ImGuiWindow* to = g.HoveredWindow ? g.HoveredWindow->RootWindow : nullptr;
+      if (overTaker && (!g.DragDropActive || g.DragDropPayload.Delivery) && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && to && to->Name[0] != '#' &&
+          !(to->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip)) && (!g.NavWindow || g.NavWindow->RootWindow != to))
+        ImGui::FocusWindow(to);
+      overTaker = ours && g.DragDropAcceptIdCurr;
+    }
     ui::wheelFrameEnd();     // J-83
     collabui::drawCursors(app);  // J-111: collaborators' cursors, last: on top of every window, popup and menu
     layoutui::devFrame(app, frameNo);  // K-112: "layout inventory" (dev), once every window of the frame is drawn
@@ -3969,9 +4083,14 @@ int main(int argc, char** argv) {
     if (devSwitchCheck && frameNo == devSwitchFrame + 8)  // K-112: the icon sizes the switch put off are made by now
       std::fprintf(stderr, "[layout-switch] frame %d icons pending %d\n", frameNo, icons::deferredCount());
     if (devSwitchCheck && frameNo >= devSwitchFrame && frameNo <= devSwitchFrame + 12) {  // K-112: what the switch kept, frame by frame
+      // K-291: the check itself (the project's hash of a big project, every window's state) is the
+      // test's work, not the switch's: its time is taken out of the switch frame's figures below.
+      const Uint64 check0 = SDL_GetPerformanceCounter();
+      const long long checkCpu0 = prof::threadCpuNow();
       const std::string bad = layoutui::switchCheck(app);
       std::printf("frame %d %s check %s\n", frameNo, layoutui::stateLine(app).c_str(), bad.empty() ? "ok" : bad.c_str());
       std::fflush(stdout);
+      if (frameNo == devSwitchFrame) devCheckTicks = SDL_GetPerformanceCounter() - check0, devCheckCpu = prof::threadCpuNow() - checkCpu0;
     }
     if (devVideoCursor) drawVideoCursor();  // K-10
     if (!devStyleReport.empty() && !shotPath.empty() && frameNo == shotFrames - 1) {  // K-112: the Studio golden's text level
@@ -4013,8 +4132,10 @@ int main(int argc, char** argv) {
     if (iconsDeferredThisFrame) icons::setDeferFits(false);
     else icons::serviceDeferred(4.0);  // K-112: the icon sizes a switch put off, a few each frame
     if (devSwitchCheck && frameNo == devSwitchFrame) {  // K-112: the whole switch frame (load, rebuild, every window, drawing)
-      const double ms = 1e3 * static_cast<double>(SDL_GetPerformanceCounter() - frameStart) / static_cast<double>(SDL_GetPerformanceFrequency());
-      const double cpuMs = static_cast<double>(prof::threadCpuNow() - frameCpu0) * 1e-6;
+      const double ms = 1e3 * static_cast<double>(SDL_GetPerformanceCounter() - frameStart - devCheckTicks) / static_cast<double>(SDL_GetPerformanceFrequency());
+      const double cpuMs = static_cast<double>(prof::threadCpuNow() - frameCpu0 - devCheckCpu) * 1e-6;
+      const double checkMs = 1e3 * static_cast<double>(devCheckTicks) / static_cast<double>(SDL_GetPerformanceFrequency());
+      devCheckTicks = 0, devCheckCpu = 0;
       // The GL calls' share and whether the renderer is a software one (Mesa's llvmpipe, softpipe or
       // swrast, SwiftShader, Apple's software renderer): there the drawing itself runs on the CPU,
       // k112_switch holds the interface's own CPU time and gives the wall time a software budget.
@@ -4026,8 +4147,8 @@ int main(int argc, char** argv) {
           if (low.find(k) != std::string::npos) return true;
         return false;
       }();
-      std::fprintf(stderr, "[layout-switch] frame %d whole frame %.2f ms cpu %.2f ms gl %.2f ms renderer %s\n", frameNo, ms, cpuMs,
-                   static_cast<double>(switchGlCpu) * 1e-6, softGl ? "software" : "hardware");
+      std::fprintf(stderr, "[layout-switch] frame %d whole frame %.2f ms cpu %.2f ms gl %.2f ms renderer %s (state check %.2f ms not counted)\n", frameNo, ms,
+                   cpuMs, static_cast<double>(switchGlCpu) * 1e-6, softGl ? "software" : "hardware", checkMs);
       prof::setTrace(false);
     }
     if (browserui::thumbMode() && !browserui::thumbCapture(app, fbW, fbH)) running = false;
@@ -4307,6 +4428,8 @@ int main(int argc, char** argv) {
     int paceEvents = 0;
     uint64_t statT = fstats::stamp();
     liveresize::pumpBegin();
+    static Uint32 cmdWDownAt = 0;
+    static Uint32 pageCloseAt = 0;  // K-106: when a page took the window's close request (SDL's quit after it, below)  // K-106: when W went down with Command (the close request it brings, below)
     std::vector<SDL_Scancode> pendingUps;  // K-175: typed keys let go in this batch of events
     std::map<SDL_Scancode, double> upStamps;  // K-226: when they were let go
     // K-226: when SDL saw a key event (MidiManager::clockNow seconds), so a recorded note lands where it
@@ -4319,9 +4442,11 @@ int main(int argc, char** argv) {
     auto endTypedKey = [&](SDL_Scancode sc, double stamp) {
       const auto h = held.find(sc);
       const ObjectId chId = h != held.end() ? h->second.channel : app.selChannel;
-      if (h != held.end()) held.erase(h);
+      std::vector<ObjectId> also;
+      if (h != held.end()) also = h->second.also, held.erase(h);
       for (int p : app.typing.release(sc)) {
         app.engine.noteOff(chId, p);
+        for (ObjectId o : also) app.engine.noteOff(o, p);
         app.playedNoteOff(chId, p, stamp);
       }
     };
@@ -4354,9 +4479,31 @@ int main(int argc, char** argv) {
         }
       }
       if (hostedEditorEvent(app, ev)) continue;  // plugin editor windows
+      if (ev.type == SDL_KEYDOWN && ev.key.keysym.scancode == SDL_SCANCODE_W && (ev.key.keysym.mod & KMOD_GUI) && !ev.key.repeat)
+        cmdWDownAt = ev.key.timestamp ? ev.key.timestamp : 1;
       if (ev.type == SDL_QUIT || (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_CLOSE &&
-                                  ev.window.windowID == SDL_GetWindowID(window)))
-        app.quitRequested = true;
+                                  ev.window.windowID == SDL_GetWindowID(window))) {
+        // K-297: Cmd+W (the window menu's Close, Cmd held) on a Tracker page closes the page.
+        // K-106: on macOS SDL reports the W key down before AppKit's menu sends the close request
+        // (SDL_cocoaevents.m: SDL's key handling, then -[NSApplication sendEvent:]'s key
+        // equivalents), in the same batch of events; a quick tap may let go of Command in that batch
+        // too, so the W press with Command counts as well as Command still held.
+        const bool cmdClose = ev.type == SDL_WINDOWEVENT &&
+                              ((SDL_GetModState() & KMOD_GUI) != 0 || (cmdWDownAt != 0 && ev.window.timestamp - cmdWDownAt <= 500));
+        if (ev.type == SDL_QUIT && pageCloseAt != 0 && ev.quit.timestamp - pageCloseAt <= 250) {
+          // K-106: SDL follows the last window's close request with a quit of its own
+          // (SDL_windowevents.c, SDL_HINT_QUIT_ON_LAST_WINDOW_CLOSE): a request a page took closes
+          // only the page.
+          pageCloseAt = 0;
+        } else if (cmdClose && trackerview::closePageOnCloseRequest(app)) {
+          pageCloseAt = ev.window.timestamp ? ev.window.timestamp : 1;
+          if (startHidden) std::printf("close request: Command+W, a page closes\n"), std::fflush(stdout);
+        } else {
+          if (startHidden) std::printf("close request: %s, quit\n", ev.type == SDL_QUIT ? "SDL quit" : cmdClose ? "Command+W, no page in front" : "window"), std::fflush(stdout);
+          app.quitRequested = true;
+        }
+        cmdWDownAt = 0;
+      }
       // J-55: "Follow system" picks up a desktop appearance change when Gridline is focused again.
       if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
           ev.window.windowID == SDL_GetWindowID(window) && theme::modeFromSettings(app.settings) == theme::Mode::System)
@@ -4396,14 +4543,18 @@ int main(int argc, char** argv) {
           else
             app.stepRecorder.backspace(app.doc, app.curPattern, app.selChannel);
         }
-        if (typingKey(sc) > 0 && app.selChannel != kNoId) {
+        if (app.typing.keyAt(static_cast<int>(sc)) > 0 && app.selChannel != kNoId) {
           std::vector<int> on = app.typing.press(sc, ev.key.repeat != 0);
           const double stamp = keyStamp(ev.key.timestamp);
+          std::vector<ObjectId> also = typedTargets(app);  // K-232: every selected instrument plays
+          if (!also.empty()) also.erase(also.begin());
           for (int p : on) {
             app.engine.noteOn(app.selChannel, p, app.typing.velocity / 127.0f);
+            for (ObjectId o : also) app.engine.noteOn(o, p, app.typing.velocity / 127.0f);
             app.playedNoteOn(app.selChannel, p, app.typing.velocity, stamp);
           }
-          if (!on.empty()) held[sc] = {app.selChannel, 0, 0};
+          if (!on.empty()) held[sc] = {app.selChannel, 0, 0, also};
+
         }
       }
     }
@@ -4412,6 +4563,7 @@ int main(int argc, char** argv) {
     app.typing.settle();  // K-175: keys pressed from the next batch of events on are presses again
     // K-175: while the typing keyboard plays, its keys run no other command (keypad - + also
     // switching the pattern, - = zooming, a single-key shortcut set's letters).
+    app.typing.aRow = livelook::active(app);  // N48-08: Clips plays the reference's A-row note keys
     keys::setTypingKeyboard(app.typingKeyboard && app.selChannel != kNoId);
     keys::setEditorKeys(trackerview::hasKeyboard());  // K-106: the pattern editor's own keys run no command
     liveresize::pumpEnd();

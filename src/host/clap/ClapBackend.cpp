@@ -484,6 +484,17 @@ class ClapBackend final : public Backend {
         e.expr.value = std::clamp(n.tuning, -120.0, 120.0);
         in_.add(e);
         return;
+      case NoteEvent::Expression:  // K-99: a note's pressure or timbre (brightness), 0..1
+        if (!clapDialect_) return;
+        e.expr.header = header(CLAP_EVENT_NOTE_EXPRESSION, sizeof(clap_event_note_expression_t), n.offset);
+        e.expr.expression_id = n.expr == NoteEvent::ExprBrightness ? CLAP_NOTE_EXPRESSION_BRIGHTNESS : CLAP_NOTE_EXPRESSION_PRESSURE;
+        e.expr.note_id = n.noteId;
+        e.expr.port_index = static_cast<int16_t>(notePort_);
+        e.expr.channel = n.channel;
+        e.expr.key = n.key;
+        e.expr.value = std::clamp(static_cast<double>(n.value), 0.0, 1.0);
+        in_.add(e);
+        return;
       case NoteEvent::Midi:
         if (!midiDialect_ && !noteIn_) return;
         e.midi.header = header(CLAP_EVENT_MIDI, sizeof(clap_event_midi_t), n.offset);

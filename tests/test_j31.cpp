@@ -16,6 +16,7 @@
 #include "core/Document.h"
 #include "core/Grouping.h"
 #include "core/MenuParity.h"
+#include "core/MultiNoteEdit.h"
 #include "core/NoteTools.h"
 #include "core/Project.h"
 #include "core/SongTools.h"
@@ -762,6 +763,157 @@ void testSerialization() {
 
 }  // namespace
 
+// K-198: several channels edited in one piano roll (the target keeps the new notes).
+void testMultiChannelEdit() {
+  Song s = makeEmptySong();
+  std::vector<ObjectId> ids;
+  for (int i = 0; i < 4; ++i) {
+    Channel c;
+    c.id = s.allocateId();
+    c.name = "c" + std::to_string(i);
+    c.mixerTrack = s.masterId();
+    s.channels.push_back(c);
+    ids.push_back(c.id);
+  }
+  Pattern& p = s.patterns[0];
+  p.notes[ids[2]] = {Note(0, 96, 60, 100)};
+  p.notes[ids[0]] = {Note(96, 96, 64, 100)};
+  p.notes[ids[3]] = {};
+  const std::vector<ObjectId> with = ops::channelsWithNotes(s, p, ids[0]);
+  expect(with == std::vector<ObjectId>{ids[2]}, "multi-channel: channels with notes, in rack order, target and empty lists left out");
+  std::set<ObjectId> edit{ids[2], ids[1]};
+  ops::retarget(edit, ids[0], ids[2]);
+  expect(edit == std::set<ObjectId>{ids[0], ids[1]}, "multi-channel: the new target leaves the set, the old one joins it");
+  ops::retarget(edit, ids[0], ids[0]);
+  expect(edit == std::set<ObjectId>{ids[0], ids[1]}, "multi-channel: retargeting to the target changes nothing");
+  const auto h = ops::ghostNoteAt(p, ids[0], std::set<ObjectId>{ids[2]}, 10, 60);
+  expect(h.channel == ids[2] && h.index == 0, "multi-channel: a click finds the edited channel's note");
+  expect(ops::ghostNoteAt(p, ids[0], std::set<ObjectId>{ids[1]}, 10, 60).channel == kNoId, "multi-channel: channels not edited are not hit");
+  std::vector<Note> q = {Note(30, 10, 60, 100), Note(50, 10, 62, 100), Note(5, 10, 64, 100)};
+  ops::quantizeStarts(q, 48);
+  expect(q[0].start == 48 && q[1].start == 48 && q[2].start == 0, "multi-channel: quantize snaps every start to the nearest grid line");
+
+  // One undo step for an edit across channels.
+  Document d(s);
+  const ObjectId pat = d.song().patterns[0].id;
+  d.beginGroup("quantize notes");
+  for (ObjectId c : {ids[0], ids[2]}) {
+    std::vector<Note> ns = d.song().patterns[0].notes.at(c);
+    ops::quantizeStarts(ns, 384);
+    d.setNotes(pat, c, ns, "quantize notes");
+  }
+  d.endGroup(false);
+  expect(d.song().patterns[0].notes.at(ids[0])[0].start == 0, "multi-channel: edited");
+  d.undo();
+  expect(d.song().patterns[0].notes.at(ids[0])[0].start == 96 && d.song().patterns[0].notes.at(ids[2])[0].start == 0,
+         "multi-channel: one undo takes back every channel's edit");
+}
+
+// K-198 follow-up: one selection over several channels; move, drag, nudge, transpose, delete,
+// copy and paste take every channel in one undo step.
+void testMultiChannelSelection() {
+  Song s = makeEmptySong();
+  std::vector<ObjectId> ids;
+  for (int i = 0; i < 3; ++i) {
+    Channel c;
+    c.id = s.allocateId();
+    c.name = "m" + std::to_string(i);
+    c.mixerTrack = s.masterId();
+    s.channels.push_back(c);
+    ids.push_back(c.id);
+  }
+  Pattern& p0 = s.patterns[0];
+  p0.notes[ids[0]] = {Note(0, 96, 60, 100), Note(192, 96, 62, 100)};
+  p0.notes[ids[1]] = {Note(96, 96, 72, 100), Note(288, 96, 120, 100)};
+  // The third channel holds rack steps only (they show as step notes and move into its notes).
+  p0.steps[ids[2]] = std::vector<uint8_t>(16, 0);
+  p0.steps[ids[2]][4] = 100;
+  Document d(s);
+  const ObjectId pat = d.song().patterns[0].id;
+  auto notesOf = [&](ObjectId c) {
+    const Pattern& p = d.song().patterns[0];
+    auto it = p.notes.find(c);
+    return it == p.notes.end() ? std::vector<Note>{} : it->second;
+  };
+
+  multinote::Selection sel{{ids[0], {1}}, {ids[1], {0, 1}}, {ids[2], {0}}};
+  multinote::Lists base = multinote::lists(d.song(), pat, sel);
+  expect(base.size() == 3 && base[ids[2]].size() == 1 && base[ids[2]][0].step, "multi-select: lists are the piano roll's (steps as step notes)");
+  expect(multinote::count(sel) == 4, "multi-select: count");
+  expect(multinote::clampPitchDelta(base, sel, 12) == 7, "multi-select: a transpose keeps every selected note in range");
+  expect(multinote::clampPitchDelta(base, sel, -70) == -60, "multi-select: the low end too");
+  expect(multinote::earliestStart(base, sel, -1) == 96, "multi-select: earliest selected start");
+
+  // A drag: many frames with one merge key inside one group = one undo step.
+  const size_t steps0 = d.history().size();
+  d.beginGroup("move notes");
+  multinote::Selection out;
+  for (int frame = 1; frame <= 4; ++frame) {
+    const Tick dt = 24 * frame;
+    out = multinote::transform(d, pat, base, sel, [&](Note& n) { n.start += dt, n.pitch += 1; }, false, "move notes", 0xABCDull);
+  }
+  d.endGroup(false);
+  expect(d.history().size() == steps0 + 1, "multi-select drag: one undo step for every frame and channel");
+  expect(notesOf(ids[0])[1].start == 192 + 96 && notesOf(ids[0])[1].pitch == 63 && notesOf(ids[0])[0].start == 0,
+         "multi-select drag: the target's selected note moved, the other stayed");
+  expect(notesOf(ids[1])[0].start == 192 && notesOf(ids[1])[1].pitch == 121, "multi-select drag: the edited channel's notes moved");
+  expect(notesOf(ids[2]).size() == 1 && notesOf(ids[2])[0].start == base[ids[2]][0].start + 96 && !d.song().patterns[0].steps.count(ids[2]),
+         "multi-select drag: the step channel's step moved into its notes");
+  expect(multinote::count(out) == 4 && out.at(ids[0]) == std::set<size_t>{1}, "multi-select drag: the selection follows the notes");
+  d.undo();
+  expect(notesOf(ids[0])[1].start == 192 && notesOf(ids[1])[0].start == 96 && d.song().patterns[0].steps.count(ids[2]) &&
+             notesOf(ids[2]).empty(),
+         "multi-select drag: one undo puts every channel back (the steps too)");
+
+  // Nudge and transpose (keyboard): one undo step each.
+  d.beginGroup("transpose notes");
+  out = multinote::transform(d, pat, multinote::lists(d.song(), pat, sel), sel, [](Note& n) { n.pitch += 12; }, false, "transpose notes");
+  d.endGroup();
+  expect(notesOf(ids[0])[1].pitch == 74 && notesOf(ids[1])[1].pitch == 127, "multi-select transpose: every channel (clamped at the top)");
+  d.undo();
+  expect(notesOf(ids[0])[1].pitch == 62 && notesOf(ids[1])[1].pitch == 120, "multi-select transpose: one undo");
+
+  // Shift+drag copy: the originals stay, the copies are the new selection.
+  d.beginGroup("copy notes");
+  out = multinote::transform(d, pat, multinote::lists(d.song(), pat, sel), sel, [](Note& n) { n.start += 384; }, true, "copy notes");
+  d.endGroup();
+  expect(notesOf(ids[0]).size() == 3 && notesOf(ids[1]).size() == 4, "multi-select copy: copies added to each channel");
+  expect(out.at(ids[1]).size() == 2 && notesOf(ids[1])[*out.at(ids[1]).begin()].start == 96 + 384, "multi-select copy: the copies are selected");
+  d.undo();
+  expect(notesOf(ids[0]).size() == 2 && notesOf(ids[1]).size() == 2, "multi-select copy: one undo");
+
+  // Copy and paste: each note back into its own channel, past the copied block.
+  const multinote::Selection two{{ids[0], {0}}, {ids[1], {0}}};
+  const std::vector<multinote::ChannelNote> clip = multinote::copy(multinote::lists(d.song(), pat, two), two);
+  expect(clip.size() == 2, "multi-select copy: both channels' notes on the clipboard");
+  const Tick shift = multinote::pasteShift(clip, 96);
+  expect(shift == 192, "multi-select paste: after the copied block's end, on the grid");
+  d.beginGroup("paste notes");
+  out = multinote::paste(d, pat, clip, shift, "paste notes");
+  d.endGroup();
+  expect(notesOf(ids[0]).size() == 3 && notesOf(ids[1]).size() == 3 && notesOf(ids[1])[*out.at(ids[1]).begin()].start == 96 + 192,
+         "multi-select paste: each channel gets its own notes back, selected");
+  d.undo();
+  expect(notesOf(ids[0]).size() == 2 && notesOf(ids[1]).size() == 2, "multi-select paste: one undo");
+
+  // Delete: every channel in one step.
+  const size_t steps1 = d.history().position();  // (after an undo, the redo step goes when the next is made)
+  d.beginGroup("delete notes");
+  multinote::erase(d, pat, multinote::lists(d.song(), pat, two), two, "delete notes");
+  d.endGroup();
+  expect(notesOf(ids[0]).size() == 1 && notesOf(ids[1]).size() == 1 && d.history().position() == steps1 + 1, "multi-select delete: one step");
+  d.undo();
+  expect(notesOf(ids[0]).size() == 2 && notesOf(ids[1]).size() == 2, "multi-select delete: one undo");
+
+  // A channel removed from the song is skipped, not written.
+  multinote::Selection gone{{ids[0], {0}}, {ObjectId{999999}, {0}}};
+  out = multinote::transform(d, pat, multinote::lists(d.song(), pat, gone), gone, [](Note& n) { n.start += 1; }, false, "move notes");
+  expect(out.size() == 1 && out.count(ids[0]), "multi-select: unknown channels skipped");
+  multinote::Selection pr{{ids[0], {}}, {ids[1], {1}}};
+  multinote::prune(pr);
+  expect(pr.size() == 1, "multi-select: prune drops empty channels");
+}
+
 int main() {
   gl::test::hermeticTestEnv("j31");
   testChordVocabulary();
@@ -786,5 +938,7 @@ int main() {
   testMidiSnapAndKeyRange();
   testExportGroups();
   testSerialization();
+  testMultiChannelEdit();
+  testMultiChannelSelection();
   return finish();
 }

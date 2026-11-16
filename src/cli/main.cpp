@@ -44,6 +44,7 @@
 #include "host/Smoke.h"
 #include "host/vst3/Vst3Scan.h"
 #include "packs/seltmann/seltmann.h"
+#include "../core/SafeFs.h"
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -818,7 +819,7 @@ int main(int argc, char** argv) {
       } else if (arg("--channels")) {
         std::string c = argv[++i];
         es.channels = c == "mono" ? gl::ChannelMode::MonoMerged : c == "left" ? gl::ChannelMode::MonoLeft : c == "right" ? gl::ChannelMode::MonoRight : gl::ChannelMode::Stereo;
-      } else if (arg("--bitrate")) es.mp3Bitrate = es.oggBitrate = es.m4aBitrate = std::atoi(argv[++i]);
+      } else if (arg("--bitrate")) es.mp3Bitrate = es.oggBitrate = es.m4aBitrate = es.opusBitrate = std::atoi(argv[++i]);
       else if (arg("--interp")) es.render.interp = static_cast<gl::RenderInterp>(std::clamp(std::atoi(argv[++i]), 0, 7));
       else if (arg("--oversample")) es.render.oversample = std::atoi(argv[++i]);
       else if (arg("--names")) es.partPattern = argv[++i];
@@ -862,7 +863,7 @@ int main(int argc, char** argv) {
       es.render.end = mm.barStart(b - 1);
     }
     std::filesystem::path op(out);
-    const bool folder = out.back() == '/' || std::filesystem::is_directory(op);
+    const bool folder = out.back() == '/' || gl::safefs::isDirAt(op);
     es.folder = folder ? op.string() : (op.has_parent_path() ? op.parent_path().string() : ".");
     es.baseName = folder ? song.info.title : op.stem().string();
     es.projectTitle = song.info.title;

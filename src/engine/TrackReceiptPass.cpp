@@ -17,6 +17,7 @@
 #include "Render.h"
 #include "Sample.h"
 #include "SampleTap.h"
+#include "../core/SafeFs.h"
 
 namespace gl::receipt {
 
@@ -180,6 +181,7 @@ std::vector<FileRef> fileRefs(const Song& song) {
   std::set<std::string> seen;
   auto add = [&](FileRef r) {
     if (r.path.empty() || r.path.rfind("builtin:", 0) == 0 || r.path.rfind("tone:", 0) == 0) return;
+    if (!safefs::plausiblePath(r.path)) return;  // K-307: text in a plugin's state (lines, a list), not a file
     if (!isAudioName(r.path)) return;
     const std::string key = r.path + "|" + std::to_string(r.owner) + "|" + std::to_string(r.slot) + (r.hosted ? "|h" : "");
     if (seen.insert(key).second) refs.push_back(std::move(r));
@@ -224,7 +226,7 @@ std::vector<FileRef> fileRefs(const Song& song) {
     if (r.path.find('/') == std::string::npos && r.path.find('\\') == std::string::npos) {
       auto it = byName.find(lower(r.path));
       if (it != byName.end()) r.path = it->second;
-    } else if (r.path.find('\\') != std::string::npos && !fs::exists(fs::path(r.path))) {
+    } else if (r.path.find('\\') != std::string::npos && !safefs::exists(r.path)) {  // (K-307: never throws)
       // A Windows path saved on another computer: the project's file of that name.
       auto it = byName.find(lower(baseName(r.path)));
       if (it != byName.end() && it->second != r.path) r.path = it->second;
@@ -303,7 +305,7 @@ Measurement scan(const Song& song, bool decode) {
     FileIn f;
     f.path = r.path;
     std::error_code ec;
-    f.exists = fs::path(r.path).is_absolute() && fs::is_regular_file(r.path, ec);
+    f.exists = safefs::toPath(r.path).is_absolute() && safefs::isFile(r.path);
     if (f.exists && decode)
       if (SamplePtr s = sampleCache().get(r.path)) f.seconds = s->seconds();
     f.chain = originChain(r.path);

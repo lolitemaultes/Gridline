@@ -119,6 +119,32 @@ int main() {
     const Layout d = compute({190, 64});
     expect(d.nameW >= kNameFloor && d.viewW >= kMinView - 0.01f && d.scrolls(), "docked-narrow rack: name floor, a few steps, scroll");
   }
+  {  // K-295: a 32-step pattern in a narrow floating rack (the demo at 1920x1080, scale 2: 674
+     // px of rows) used to squeeze every name to about 53 px ("Ope...", "Sha..."). The name
+     // button now keeps what the names need, up to kNameRead, and the last steps scroll.
+    const Layout old = compute({680, 32});
+    expect(old.nameW < 60, "K-295: without a name need the old squeeze stands (names about 53 px, nothing scrolls)");
+    const Layout l = compute({674, 32, kStepMax, 300});
+    expect(near(l.nameW, kNameRead) && !l.scrolls() && near(l.stepW, kStepTight),
+           "K-295: names keep the width they need; the 32 steps tighten a pixel and still fit (no scroll)");
+    const Layout n = compute({520, 32, kStepMax, 70});
+    expect(n.nameW >= 70 && n.scrolls() && n.stepW >= kStepTight, "K-295: a narrower rack keeps the names and scrolls the steps");
+    const Layout cap = compute({680, 32, kStepMax, 300});
+    expect(near(cap.nameW, kNameRead), "K-295: a very long name holds the button open only up to kNameRead (tooltip for the rest)");
+    const Layout wide = compute({760, 16, kStepMax, 70}), wide0 = compute({760, 16});
+    expect(near(wide.nameW, wide0.nameW) && near(wide.stepW, wide0.stepW) && !wide.scrolls(),
+           "K-295: where names already fit (16 steps, default rack) nothing changes");
+    const Layout tiny = compute({190, 64, kStepMax, kNameRead});
+    expect(tiny.nameW >= kNameFloor && tiny.viewW >= kMinView - 0.01f, "K-295: a tiny rack still keeps a few steps visible");
+    bool mono = true;
+    float prev = 0;
+    for (float w = 180; w <= 2400; w += 20) {
+      const Layout m = compute({w, 32, kStepMax, kNameRead});
+      mono = mono && m.nameW >= prev - 0.01f && m.rowW <= std::max(w, kNameX + kNameFloor + kNameGap + kMinView + kSelLampW) + 0.01f;
+      prev = m.nameW;
+    }
+    expect(mono, "K-295: with a name need the name never narrows in a wider rack and rows fit the pane");
+  }
   {  // Steps: positions, hit test, groups of four.
     const Layout l = compute({500, 64});
     bool hit = true, order = true;
@@ -208,6 +234,27 @@ int main() {
     expect(racklayout::rowsRegion(rows(5), 600) == rows(5), "short list: the rows take their content's height (add bar under the last row)");
     expect(racklayout::rowsRegion(rows(30), 600) == 0, "long list: the rows fill the room and scroll");
     expect(racklayout::rowsRegion(0, 600) == 0, "not measured yet: fill the room");
+  }
+  // K-236: the step groups follow the pattern's meter (one beat a group).
+  {
+    expect(stepGroup(16, 4, 4) == 4 && stepGroup(12, 3, 4) == 4 && stepGroup(20, 5, 4) == 4, "meter groups: quarter beats of four sixteenth steps");
+    expect(stepGroup(14, 7, 8) == 2 && stepGroup(10, 5, 8) == 2, "meter groups: eighth beats of two steps (7/8, 5/8)");
+    expect(stepGroup(12, 6, 8) == 6 && stepGroup(18, 9, 8) == 6 && stepGroup(24, 12, 8) == 6, "meter groups: compound meters count dotted beats");
+    expect(stepGroup(12, 4, 4) == 3 && stepGroup(24, 4, 4) == 6 && stepGroup(32, 4, 4) == 8, "meter groups: triplet and fine steps group per beat");
+    expect(stepGroup(13, 4, 4) == 4 && stepGroup(0, 4, 4) == 4 && stepGroup(64, 2, 4) == 4, "meter groups: steps that do not fit the beats keep fours");
+    Input in;
+    in.avail = 900, in.steps = 14, in.group = 2;
+    const Layout l = compute(in);
+    expect(l.group == 2, "layout keeps the meter's group");
+    const float pitch = l.stepW + kStepGap;
+    expect(near(l.stepPos(2) - l.stepPos(1), pitch + kGroupGap) && near(l.stepPos(1) - l.stepPos(0), pitch), "7/8: a group gap after every second step");
+    bool found = true;
+    for (int k = 0; k < 14; ++k) found = found && l.stepAt(l.stepPos(k) + 1) == k;
+    expect(found, "7/8: every step is found under its own pad");
+    expect(near(l.contentW, contentWidth(14, l.stepW, 2)), "7/8: content width counts its six group gaps");
+    Input four;
+    four.avail = 900;
+    expect(compute(four).group == 4, "default input: groups of four as before");
   }
   return finish();
 }

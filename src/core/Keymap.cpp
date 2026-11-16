@@ -104,6 +104,9 @@ std::vector<Command> buildCommands() {
       {"view.audioEditor", G, N_("Audio editor"), {}},
       {"view.files", G, N_("Files"), {}},
       {"view.headerBand", G, N_("Header band"), {}},
+      {"view.transposeBox", G, N_("Transpose box"), {}},
+      {"view.advancedEdit", G, N_("Advanced edit"), {}},
+      {"view.cleanUp", G, N_("Clean up box"), {}},
       {"help.trackerKeys", G, N_("Tracker help"), {}},
       {"view.settings", G, N_("Settings (MIDI page)"), {ch(K::F10)}},
       {"view.backToPlaylist", G, N_("Back to the playlist (from an editor or plugin window)"), {ch(K::Escape)}},  // K-124
@@ -111,6 +114,8 @@ std::vector<Command> buildCommands() {
       {"view.closePlugins", G, N_("Close plugin windows"), {ch(K::F12, A)}},
       // K-112: no default key (Studio as before); the Live set gives it Ctrl+Alt+P, the Tracks set (K-112b) V.
       {"view.hidePlugins", G, N_("Hide or show plugin windows (they stay open)"), {}},
+      // K-297: no default key (Studio as before); the Tracks set (Smooth) gives it Cmd+W.
+      {"window.close", G, N_("Close the front window"), {}},
       {"view.resetLayout", G, N_("Reset window layout"), {ch(K::H, C | S)}},
       {"help.shortcuts", G, N_("Keyboard shortcuts"), {ch(K::F1)}},
       // K-93: the command palette. Ctrl+K (Cmd+K on macOS) everywhere except the channel rack, whose
@@ -126,6 +131,9 @@ std::vector<Command> buildCommands() {
       {"view.inspector", G, N_("Inspector pane (show / hide)"), {}},
       {"view.quickHelp", G, N_("Quick help pane (show / hide)"), {}},
       {"view.smartControls", G, N_("Smart controls (show / hide)"), {}},  // R01-07
+      {"view.automation", G, N_("Automation of the selected tracks (show / hide)"), {}},  // R02-15
+      {"view.globalTracks", G, N_("Global tracks (show / hide)"), {}},  // R01-15  // R02-08: a key in the Tracks set only
+      {"playlist.toolMenu", G, N_("Tool menu"), {}},  // R01-18: T in the Tracks set
       {"view.toolbar", G, N_("Toolbar under the control bar (show / hide)"), {}},
       {"view.lists", G, N_("Lists in the right pane (show / hide)"), {}},
       {"view.notes", G, N_("Notes in the right pane (show / hide)"), {}},
@@ -133,15 +141,28 @@ std::vector<Command> buildCommands() {
       {"track.newTracks", G, N_("New tracks..."), {}},
       {"track.duplicate", PL, N_("New track with the same settings"), {}},
       {"track.delete", PL, N_("Delete track"), {}},
+      {"track.mute", PL, N_("Mute track"), {}},
+      {"track.solo", PL, N_("Solo track"), {}},
       {"transport.cycle", G, N_("Cycle"), {}},
+      // R02-13 / R02-15: the reference's Navigate commands (keys only in the Tracks set).
+      {"transport.cycleSelection", G, N_("Set the cycle to the selected regions"), {}},
+      {"transport.prevMarker", G, N_("Go to the previous marker"), {}},
+      {"transport.nextMarker", G, N_("Go to the next marker"), {}},
+      {"transport.goToPosition", G, N_("Go to position..."), {}},
       // K-112c: new tracks (no key outside the Clips set, which gives them Ctrl+T and Ctrl+Shift+T).
       {"track.newAudio", G, N_("New audio track"), {}},
       {"track.newMidi", G, N_("New MIDI track"), {}},
+      // N47-11: the Clips set's return track, detail bands and Session record keys (no key elsewhere).
+      {"track.newReturn", G, N_("New return track"), {}},
+      {"clips.insertMidiClip", G, N_("Insert MIDI clip"), {}},  // N49-07: Clips only (Cmd+Shift+M)
+      {"view.detail", G, N_("Clip and device bands (show / hide)"), {}},
+      {"transport.sessionRecord", G, N_("Session record"), {}},
       // ---- playlist ----
       {"playlist.delete", PL, N_("Delete selected clips"), {ch(K::Delete), ch(K::Backspace)}},
       {"playlist.selectAll", PL, N_("Select all clips"), {ch(K::A, C)}},
       {"playlist.deselect", PL, N_("Deselect"), {ch(K::D, C)}},
       {"playlist.copy", PL, N_("Copy clips"), {ch(K::C, C)}},
+      {"playlist.cut", PL, N_("Cut clips"), {}},  // R02-22: a key in the Tracks set only
       {"playlist.paste", PL, N_("Paste clips"), {ch(K::V, C)}},
       {"playlist.duplicate", PL, N_("Duplicate selected clips"), {ch(K::B, C)}},
       {"playlist.merge", PL, N_("Merge selected clips"), {ch(K::G, C)}},
@@ -579,7 +600,9 @@ Rows liveRows() {
   set("view.pianoRoll", {ch(K::D3, C | A)});
   set("view.editors", {ch(K::E, C | A)});
   set("edit.history", {ch(K::Z, C | A)});
+  set("edit.redo", {ch(K::Z, C | S), ch(K::Y, C)});  // N49-12: Cmd+Shift+Z first, as on the Mac
   set("view.settings", {ch(K::Comma, C)});
+  set("window.close", {ch(K::W, C)});  // K-297's front-window close (Cmd+W on a Mac, the reference's Close Window)
   set("file.render", {ch(K::R, C | S)});
   set("file.renderStems", {});
   set("file.exportMidi", {ch(K::E, C | S)});
@@ -592,6 +615,10 @@ Rows liveRows() {
   set("view.hidePlugins", {ch(K::P, C | A)});  // K-112: plugin windows hide and show again
   set("track.newAudio", {ch(K::T, C)});      // K-112c: as in the Create menu; tap tempo keeps its button
   set("track.newMidi", {ch(K::T, C | S)});
+  set("track.newReturn", {ch(K::T, C | A)});  // N47-11
+  set("clips.insertMidiClip", {ch(K::M, C | S)});  // N49-07
+  set("view.detail", {ch(K::L, C | A)});
+  set("transport.sessionRecord", {ch(K::F9, S)});
   // playlist
   set("playlist.duplicate", {ch(K::D, C)});
   set("playlist.deselect", {ch(K::A, C | S)});
@@ -610,7 +637,7 @@ Rows liveRows() {
   set("piano.duplicate", {ch(K::D, C)});
   set("piano.deselect", {ch(K::A, C | S)});
   set("piano.quickQuantize", {ch(K::U, C)});
-  set("piano.chopSteps", {ch(K::E, C)});
+  set("piano.chopSteps", {});  // N49-12: Cmd+E is Split (Edit menu) alone
   set("piano.glue", {ch(K::J, C)});
   set("piano.toolDraw", {ch(K::B)});
   set("piano.zoomIn", {ch(K::Equal), ch(K::PageUp)});
@@ -641,18 +668,23 @@ Rows logicRows(bool sep) {
   // R01-07 / R01-15: as the reference's keys: B the browser on the left (the library), Y the Smart
   // controls, O the project's files, W the audio editor. The right pane's file browser has no key.
   add("view.browser", {});
+  add("view.playlist", {ch(K::D1, M)});  // K-112B: Cmd+1, the main window (the Window menu's first item)
   add("view.mixer", {ch(K::X), ch(K::D2, M)});
   add("view.editors", {ch(K::E)});
   add("view.library", {ch(K::B)});
   add("view.smartControls", {ch(K::Y)});
-  add("view.files", {ch(K::O)});
-  add("view.audioEditor", {ch(K::W)});
+  add("view.automation", {ch(K::A)});  // R02-15: A shows or hides the automation lanes
+  add("view.globalTracks", {ch(K::G)});  // R01-15: G, the global tracks (the markers lane)
+  add("playlist.toolMenu", {ch(K::T)});  // R01-18: T opens the tool menu
+  add("view.files", {ch(K::O), ch(K::D8, M)});
+  add("view.audioEditor", {ch(K::W), ch(K::D6, M)});
   add("view.inspector", {ch(K::I)});
   add("view.quickHelp", {ch(K::Slash, S)});
   add("view.toolbar", {sep ? ch(K::T, kCtrl | kAlt | kCmd) : ch(K::T, kCtrl | kAlt | kShift)});
-  add("view.lists", {ch(K::D)});
+  add("view.lists", {ch(K::D), ch(K::D7, M)});
   add("view.notes", {ch(K::P, M | A)});
   add("view.hidePlugins", {ch(K::V)});
+  add("window.close", {ch(K::W, M)});  // K-297: the front window (K-301 R02-08)
   add("view.pianoRoll", {ch(K::P), ch(K::D4, M)});
   add("view.channelRack", {ch(K::D3, M)});
   add("view.settings", {ch(K::Comma, M)});
@@ -665,6 +697,8 @@ Rows logicRows(bool sep) {
   add("track.newTracks", {ch(K::N, M | A)});
   add("track.duplicate", {ch(K::D, M)});
   add("track.delete", {ch(K::Backspace, M)});
+  add("track.mute", {ch(K::M)});  // R04-11: M and S mute and solo the selected tracks, as the reference's
+  add("track.solo", {ch(K::S)});
   add("transport.cycle", {ch(K::C)});
   add("edit.rename", {ch(K::Enter, S), ch(K::F2)});
   add("tools.stopSound", {sep ? ch(K::Period, kCtrl | kAlt | kCmd) : ch(K::H, C)});
@@ -673,8 +707,13 @@ Rows logicRows(bool sep) {
   add("playlist.merge", {ch(K::J, M)});
   add("playlist.duplicate", {ch(K::R, M)});
   add("playlist.mute", {ch(K::M, LC)});
-  add("playlist.loopMarkers", {ch(K::U, M)});
+  add("playlist.loopMarkers", {});
+  add("transport.cycleSelection", {ch(K::U, M)});  // R02-13: Cmd+U sets the cycle to the selected regions
+  add("transport.prevMarker", {ch(K::Comma, A)});
+  add("transport.nextMarker", {ch(K::Period, A)});
+  add("transport.goToPosition", {ch(K::Slash)});
   add("playlist.zoomFit", {ch(K::Z)});
+  add("playlist.cut", {ch(K::X, M)});
   add("playlist.zoomIn", {ch(K::Right, M), ch(K::PageUp)});
   add("playlist.zoomOut", {ch(K::Left, M), ch(K::PageDown)});
   add("playlist.marker", {ch(K::Apostrophe, A)});
@@ -692,7 +731,7 @@ Rows logicRows(bool sep) {
 
 // K-112 Tracker: the function keys work as in trackers: F1 to F8 pick the typing keyboard's
 // octave and do nothing else. The window commands that had F1, F2 and F4 to F8 move to Ctrl+Alt
-// keys; F9 (mixer), F10 (settings), F11 (project info) and F12 (close all) stay. The set adds
+// keys; F9 (mixer) and F10 (settings) stay; F11 and F12 go (Ctrl+Alt+X closes every screen). The set adds
 // no key that deletes, clears or rewrites anything: every chord it adds opens, shows or picks.
 Rows trackerRows() {
   using K = Key;
@@ -715,9 +754,22 @@ Rows trackerRows() {
   add("view.channelSettings", {ch(K::D7, C | A), ch(K::I, C | A)});  // K-66: I, the instrument
   add("view.audioEditor", {ch(K::D8, C | A)});
   add("view.files", {ch(K::D9, C | A), ch(K::D, C | A)});  // K-63: D, the disk screen
-  add("view.settings", {ch(K::D0, C | A), ch(K::F10)});  // (F10 likewise)
+  add("view.settings", {ch(K::D0, C | A), ch(K::C, C | A), ch(K::F10)});  // (F10 likewise; K-62: C, the config screen)
   add("help.trackerKeys", {ch(K::Minus, C | A), ch(K::H, C | A)});  // K-65: H, help
   add("view.headerBand", {ch(K::Z, C | A)});  // K-73: Z, the extended pattern editor
+  // K-60, K-70, K-72: the scope box's tools with the classic letters (A advanced edit, R trim, T transpose).
+  add("view.transposeBox", {ch(K::T, C | A)});
+  add("view.advancedEdit", {ch(K::A, C | A)});
+  add("view.cleanUp", {ch(K::R, C | A)});
+  // N-05, N-06: X, back to the main screen (every screen closes, the pattern page in front), in place of
+  // F12; F11 (Project info) goes too: in the pattern the function keys jump rows, so the menus do
+  // not show keys the pattern holds back. Project info stays in the File menu.
+  add("view.closeAll", {ch(K::X, C | A)});
+  // R8-02: Ctrl+Shift+Up / Down step the instrument (the classic Shift+Up / Down) wherever the keys
+  // are: the playlist's Move pattern up / down keeps its menu items but has no key here.
+  add("pattern.moveUp", {});
+  add("pattern.moveDown", {});
+  add("file.projectInfo", {});
   add("view.pluginPicker", {ch(K::F, C | A)});  // K-69: the picker moves to F (find), P is the Pattern screen
   add("view.browser", {ch(K::B, C | A)});
   return r;

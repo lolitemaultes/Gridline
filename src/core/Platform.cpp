@@ -140,8 +140,7 @@ std::string homeDir() {
   return h ? std::string(h) : std::string(".");
 }
 
-std::string configRoot() {
-  if (std::string g = env("GRIDLINE_CONFIG_HOME"); !g.empty()) return g;
+std::string defaultConfigRoot() {
   if (std::string x = env("XDG_CONFIG_HOME"); !x.empty()) return x;
 #if defined(_WIN32)
   if (std::string a = env("APPDATA"); !a.empty()) return a;
@@ -149,8 +148,21 @@ std::string configRoot() {
   return (fs::path(homeDir()) / ".config").string();
 }
 
+const datafolder::Info& dataFolder() {  // K-265: read once per run
+  static const datafolder::Info info = datafolder::resolve(defaultConfigRoot(), executablePath(), !env("GRIDLINE_CONFIG_HOME").empty());
+  return info;
+}
+
+std::string configRoot() {
+  if (std::string g = env("GRIDLINE_CONFIG_HOME"); !g.empty()) return g;
+  if (std::string x = env("XDG_CONFIG_HOME"); !x.empty()) return x;
+  if (const std::string& f = dataFolder().folder; !f.empty()) return (fs::u8path(f) / "config").u8string();  // K-265
+  return defaultConfigRoot();
+}
+
 std::string cacheRoot() {
   if (std::string x = env("XDG_CACHE_HOME"); !x.empty()) return x;
+  if (const std::string& f = dataFolder().folder; !f.empty()) return (fs::u8path(f) / "cache").u8string();  // K-265
 #if defined(_WIN32)
   if (std::string a = env("LOCALAPPDATA"); !a.empty()) return a;
 #endif
@@ -159,6 +171,7 @@ std::string cacheRoot() {
 
 std::string dataRoot() {
   if (std::string x = env("XDG_DATA_HOME"); !x.empty()) return x;
+  if (const std::string& f = dataFolder().folder; !f.empty()) return (fs::u8path(f) / "data").u8string();  // K-265
 #if defined(_WIN32)
   if (std::string a = env("APPDATA"); !a.empty()) return a;
 #endif

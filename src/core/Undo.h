@@ -161,6 +161,9 @@ class UndoStack {
   // serial changes and pushCount() does not.
   bool canAmend() const { return pos_ > 0 && pos_ == cmds_.size(); }
   void amendTop(CommandPtr cmd);
+  // N48-04 (checkpoint 49): the newest `n` steps become one step named `label` (a recording made over
+  // many frames: the new clip, its notes, its length). Needs the position at the end of the history.
+  bool squashTop(size_t n, const std::string& label);
   // J-111: number of new (not merged) steps pushed so far.
   uint64_t pushCount() const { return pushCount_; }
 

@@ -38,12 +38,29 @@ namespace gl::logicplug {
 
 // The Tracks layout is on screen.
 bool active(const App& a);
+// R04-01 / R04-05: an automation clip on a track that has an automation lane is the track's own
+// automation (drawn in the lane, never a region): it is not selected, moved or deleted as a region.
+bool laneClip(const Song& s, const Clip& c);
 
 // The sound a track plays (its linked channel, else its regions' sound; `clip` first when it lies
 // on the track), and the track the layout is about (the selected region's or track, else the
 // selected channel's, else the first: a track is always selected, as in the reference).
 const Channel* trackSound(const Song& s, int track, const Clip* clip);
+// R05-13: the track's channel strip (the reference's track Volume, Pan, Mute and Solo): its own mixer
+// track, else the mixer track its sounds play into; a kit whose sounds play into several mixer
+// tracks gets the one they all send into (its bus). Never the master (nullptr then).
+const MixerTrack* trackStrip(const Song& s, int track);
 int focusTrack(const App& a);
+// R06-06: Delete track, as the reference's: the track, its regions, and the channel strip and the
+// sounds only it used (no other track or arrangement plays them, nothing sends into the strip),
+// with their automation. One undo step (inside the caller's group when there is one).
+bool deleteTrack(App& a, int track);
+// R02-14: New track with the same settings (Cmd+D): a track right below `track` with its settings
+// and, as the reference's, a channel strip of its own: a copy of the sound the track plays (its
+// instrument and settings, no notes) on a mixer insert of its own carrying the same plugins. An
+// audio track gets a free mixer track. `withContent` also copies its regions. One undo step.
+// Returns the new track (-1 when none was made).
+int newTrackSameSettings(App& a, int track, bool withContent);
 
 // Link: 0 off, 1 single, 2 follow the selected strip.
 int link(const App& a);
@@ -52,6 +69,8 @@ void setLink(App& a, int mode);
 void drawEmptyRow(App& a);
 // Off: the built-in effects opened before the one in the effect window, each in its own window.
 void drawMoreFx(App& a);
+// K-297: closes those windows (Close plugin windows, Close all windows: they stayed open).
+void closeMoreFx();
 
 // Per frame, before the plugin windows draw: the saved states, Link following, the hidden state.
 void frame(App& a);

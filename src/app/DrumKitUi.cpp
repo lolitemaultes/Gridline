@@ -22,6 +22,7 @@
 #include "Keys.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "../core/SafeFs.h"
 
 namespace gl::drumkitui {
 
@@ -339,7 +340,7 @@ bool devCommand(App& a, const std::vector<std::string>& args) {
     std::printf("drumkit summary: %s", !s ? "reading\n" : s->ok ? "ok" : ("error " + s->error + "\n").c_str());
     if (s && s->ok) {
       int previews = 0;
-      for (const auto& p : s->previews) previews += !p.empty() && fs::is_regular_file(fs::u8path(p)) ? 1 : 0;
+      for (const auto& p : s->previews) previews += !p.empty() && safefs::isFile(p) ? 1 : 0;
       std::printf(" name \"%s\" license \"%s\" instruments %zu previews %d layers %d\n", s->name.c_str(), s->license.c_str(), s->instruments.size(), previews,
                   s->layers);
     }

@@ -1,5 +1,6 @@
 // Gridline — meter changes in the interface (see MeterUi.h).
 #include "MeterUi.h"
+#include "Keys.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -253,6 +254,8 @@ void drawEditor(App& a) {
     return;
   }
   ui::KeepWindowInViewport();
+  // Escape closes it, focused or not (opened from the control bar, it does not take the keys).
+  if (!ImGui::IsAnyItemActive() && keys::escapePressed()) open = false;
   const float labelW = 92.0f;
   auto rowLabel = [&](const char* l) {
     ImGui::AlignTextToFramePadding();
@@ -351,10 +354,10 @@ void drawEditor(App& a) {
   ed.open = open;
 }
 
-void patternMeterMenu(App& a, ObjectId pattern) {
+void patternMeterMenu(App& a, ObjectId pattern, bool submenu) {
   const Song& s = a.doc.song();
   const Pattern* p = s.pattern(pattern);
-  if (!ImGui::BeginMenu(i18n::tr("Meter"), p != nullptr)) return;
+  if (submenu ? !ImGui::BeginMenu(i18n::tr("Meter"), p != nullptr) : p == nullptr) return;
   char songLabel[64];
   std::snprintf(songLabel, sizeof songLabel, i18n::tr("Song (%s)"), label(s.timeSigNum, s.timeSigDen).c_str());
   if (ImGui::MenuItem(songLabel, nullptr, !p->ownMeter())) meter::setPatternMeter(a.doc, pattern, 0, 0);
@@ -364,7 +367,7 @@ void patternMeterMenu(App& a, ObjectId pattern) {
       meter::setPatternMeter(a.doc, pattern, c[0], c[1]);
   ImGui::Separator();
   ImGui::TextDisabled("%s", i18n::tr("Its bars stay, so its length follows the meter"));
-  ImGui::EndMenu();
+  if (submenu) ImGui::EndMenu();
 }
 
 void clipMeterItems(App& a, ObjectId clip) {

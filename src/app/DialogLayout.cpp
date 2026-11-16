@@ -2,6 +2,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cfloat>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <unordered_map>
@@ -64,10 +66,29 @@ ImVec2 ClampWindowPos(ImVec2 pos, ImVec2 size, ImVec2 a0, ImVec2 a1, bool draggi
   return p;
 }
 
+namespace {
+// K-297: the main window's bars as drawn. A layout's control bar can be taller than Studio's top
+// bar (Smooth 88 px, Clips 70 px) or shorter (Tracker's menu row), and some layouts have no status
+// bar: a window kept below Studio's 48 px covered Smooth's control bar. Before the bars are drawn
+// (and on the home screen) Studio's sizes.
+void mainBars(const ImGuiViewport* m, float& top, float& bottom) {
+  top = m->WorkPos.y + theme::kTopBarH;
+  bottom = m->WorkPos.y + m->WorkSize.y - theme::kStatusBarH;
+  const ImGuiWindow* tb = ImGui::FindWindowByName("##topbar");
+  if (!tb || !(tb->Active || tb->WasActive) || tb->Hidden) return;
+  top = std::clamp(tb->Pos.y + tb->Size.y, m->WorkPos.y, m->WorkPos.y + m->WorkSize.y * 0.5f);
+  const ImGuiWindow* sb = ImGui::FindWindowByName("##status");
+  bottom = sb && (sb->Active || sb->WasActive) && !sb->Hidden ? std::clamp(sb->Pos.y, top + 1.0f, m->WorkPos.y + m->WorkSize.y)
+                                                              : m->WorkPos.y + m->WorkSize.y;
+}
+}  // namespace
+
 void WorkArea(ImVec2& a0, ImVec2& a1) {
   const ImGuiViewport* vp = ImGui::GetMainViewport();
-  a0 = ImVec2(vp->WorkPos.x, vp->WorkPos.y + theme::kTopBarH);
-  a1 = ImVec2(vp->WorkPos.x + vp->WorkSize.x, vp->WorkPos.y + vp->WorkSize.y - theme::kStatusBarH);
+  float top = 0, bottom = 0;
+  mainBars(vp, top, bottom);
+  a0 = ImVec2(vp->WorkPos.x, top);
+  a1 = ImVec2(vp->WorkPos.x + vp->WorkSize.x, bottom);
 }
 
 namespace {
@@ -119,8 +140,7 @@ Anchor dialogAnchor() {
   const int mi = static_cast<const ImGuiViewportP*>(vp)->PlatformMonitor;
   Anchor a;
   if (vp == m || mi < 0 || mi >= mons.Size) {
-    a.a0 = ImVec2(m->WorkPos.x, m->WorkPos.y + theme::kTopBarH);
-    a.a1 = ImVec2(m->WorkPos.x + m->WorkSize.x, m->WorkPos.y + m->WorkSize.y - theme::kStatusBarH);
+    WorkArea(a.a0, a.a1);  // K-297: between the bars as drawn
     a.centre = ImVec2(m->WorkPos.x + m->WorkSize.x * 0.5f, (a.a0.y + a.a1.y) * 0.5f);
     return a;
   }
@@ -204,15 +224,116 @@ bool elasticWindow(const ImGuiWindow* w, bool tracked) {
 // where the window no longer was). The first frame of a context, before the hook is installed,
 // it runs from ClampTrackedWindows() after NewFrame().
 int gElasticFrame = -1;
+
+// K-297: a window that opens where another one already is (ImGui puts every window that has no
+// place of its own at the same spot, 60,60: Undo history, Performance and Master chain opened
+// exactly over each other) moves down and right by a title bar's height, as far as the work area
+// lets it.
+ImVec2 cascaded(const ImGuiContext& g, const ImGuiWindow* w, ImVec2 p, ImVec2 a1) {
+  const float step = std::max(16.0f, std::round(w->TitleBarHeight > 0 ? w->TitleBarHeight : g.FontSize + 2 * g.Style.FramePadding.y));
+  for (int k = 0; k < 16; ++k) {
+    bool taken = false;
+    for (const ImGuiWindow* o : g.Windows)
+      if (o != w && elasticWindow(o, isTracked(o->ID)) && std::fabs(o->Pos.x - p.x) < 4.0f && std::fabs(o->Pos.y - p.y) < 4.0f) {
+        taken = true;
+        break;
+      }
+    if (!taken) return p;
+    const ImVec2 n(p.x + step, p.y + step);
+    if (n.x + w->Size.x > a1.x || n.y + w->Size.y > a1.y) return p;  // it would be pushed back (kept inside)
+    p = n;
+  }
+  return p;
+}
+
+// K-297 (round 4): a window a layout docks (Settings and Keyboard shortcuts are pages of the
+// Tracker, Keyboard shortcuts is Clips' side panel) floats again in a layout that does not. ImGui
+// left it with its region's size: after a round of switches Settings floated at 1424 x 810 over the
+// whole window, and Keyboard shortcuts on top of it. Each such window gets back the size it last had
+// floating and where it had it; one only ever seen docked, page-sized, keeps at most two thirds
+// of the work area, centred. A tab the
+// user drags out of its region keeps ImGui's behaviour (the region's size), as before.
+struct DockSeen {
+  bool docked = false;
+  ImVec2 floatSize{0, 0}, floatPos{0, 0};
+  ImVec2 lastSize{0, 0};
+  int stable = 0;  // frames its floating size has not changed
+  int seen = -100;  // the last frame it was shown
+};
+std::unordered_map<ImGuiID, DockSeen> gDockSeen;
+bool traceFloat() {
+  static const bool on = std::getenv("GRIDLINE_TRACE_FLOATBACK") != nullptr;  // (dev: where a docked window floats back)
+  return on;
+}
+void floatSizeBack(ImGuiContext& g, ImVec2 a0, ImVec2 a1) {
+  const ImGuiWindow* moving = g.MovingWindow ? g.MovingWindow->RootWindowDockTree : nullptr;
+  for (ImGuiWindow* w : g.Windows) {
+    if (w->IsFallbackWindow || w != w->RootWindow || (w->Name[0] == '#' && w->Name[1] == '#')) continue;
+    if (w->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_DockNodeHost)) continue;
+    // Docked: in a tab or region (a docked window counts as a child of its host; a hidden tab still
+    // runs). A window alone in a floating node is not: it is its node's host.
+    // (A closed window keeps the dock it had; reopened in a layout that floats it, it comes back.)
+    DockSeen& d = gDockSeen[w->ID];
+    if (w->DockIsActive || (!w->WasActive && w->DockId != 0)) {
+      d.docked = true;
+      continue;
+    }
+    if (!w->WasActive || (w->Flags & ImGuiWindowFlags_ChildWindow)) continue;
+    if (!d.docked) {
+      // Its floating place, once it has settled (a window's first frames show ImGui's default size
+      // before the window or its layout sizes it).
+      const bool still = std::fabs(d.lastSize.x - w->SizeFull.x) < 0.5f && std::fabs(d.lastSize.y - w->SizeFull.y) < 0.5f;
+      d.stable = still ? std::min(d.stable + 1, 100) : 0;
+      d.lastSize = w->SizeFull;
+      if (d.stable >= 3 && !(w->Flags & ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (traceFloat() && (d.floatPos.x != w->Pos.x || d.floatPos.y != w->Pos.y))
+          std::fprintf(stderr, "[floatback] frame %d %s floats at %.0f,%.0f %.0fx%.0f (dock %08X active %d hidden %d)\n", g.FrameCount, w->Name,
+                       static_cast<double>(w->Pos.x), static_cast<double>(w->Pos.y), static_cast<double>(w->SizeFull.x),
+                       static_cast<double>(w->SizeFull.y), w->DockId, w->DockIsActive ? 1 : 0, w->Hidden ? 1 : 0);
+        d.floatSize = w->SizeFull, d.floatPos = w->Pos;
+      }
+      continue;
+    }
+    d.stable = 0;
+    d.docked = false;
+    if (w == moving || (w->Flags & ImGuiWindowFlags_AlwaysAutoResize) || (viewportsOn() && outsideMain(w))) continue;  // (dragged out by the user)
+    const ImVec2 room(std::max(240.0f, (a1.x - a0.x) * (2.0f / 3.0f)), std::max(200.0f, (a1.y - a0.y) * (2.0f / 3.0f)));
+    const bool known = d.floatSize.x > 0 && d.floatSize.y > 0;
+    // Never seen floating: only a page-sized one (a whole region in both directions) is cut down; a
+    // band (Studio's master chain, 1436 x 150) is a layout's own floating size and stays.
+    if (!known && (w->SizeFull.x <= room.x || w->SizeFull.y <= room.y)) continue;
+    const ImVec2 size = known ? ImVec2(std::min(d.floatSize.x, a1.x - a0.x), std::min(d.floatSize.y, a1.y - a0.y))
+                              : ImVec2(std::min(w->SizeFull.x, room.x), std::min(w->SizeFull.y, room.y));
+    if (std::fabs(size.x - w->SizeFull.x) < 1.0f && std::fabs(size.y - w->SizeFull.y) < 1.0f) continue;
+    // Where it floated last (kept inside the work area afterwards), else centred.
+    const ImVec2 pos = known ? d.floatPos : ImVec2(std::round((a0.x + a1.x - size.x) * 0.5f), std::round((a0.y + a1.y - size.y) * 0.5f));
+    if (traceFloat())
+      std::fprintf(stderr, "[floatback] frame %d %s back from %.0f,%.0f %.0fx%.0f to %.0f,%.0f %.0fx%.0f\n", g.FrameCount, w->Name,
+                   static_cast<double>(w->Pos.x), static_cast<double>(w->Pos.y), static_cast<double>(w->SizeFull.x), static_cast<double>(w->SizeFull.y),
+                   static_cast<double>(pos.x), static_cast<double>(pos.y), static_cast<double>(size.x), static_cast<double>(size.y));
+    ImGui::SetWindowSize(w, size, ImGuiCond_Always);
+    // K-297 (round 5): the size it is drawn at changes too. ImGui only takes the new size at its next
+    // Begin; the work area check below (this same frame) measured the old, page-sized one, and pushed
+    // the window into the work area's top-left corner (Settings back from the Tracker at 16,64, not
+    // where it had floated).
+    w->Size = w->SizeFull;
+    ImGui::SetWindowPos(w, pos, ImGuiCond_Always);
+    if (ImGuiDockNode* n = w->DockNode; n && n->HostWindow == w) n->Pos = pos, n->Size = size;  // (alone in a floating node: its host)
+  }
+  if (gDockSeen.size() > 512)  // (windows gone for good)
+    for (auto it = gDockSeen.begin(); it != gDockSeen.end();) it = ImGui::FindWindowByID(it->first) ? std::next(it) : gDockSeen.erase(it);
+}
+
 void keepInWorkArea(ImGuiContext* ctx) {
   ImGuiContext& g = *ctx;
   if (gTrackedCtx != &g) gTracked.clear(), gTrackedCtx = &g;
-  if (gElasticCtx != &g) gElastic.clear(), gElasticCtx = &g, gElasticFrame = -1;
+  if (gElasticCtx != &g) gElastic.clear(), gDockSeen.clear(), gElasticCtx = &g, gElasticFrame = -1;
   if (gElasticFrame == g.FrameCount) return;
   gElasticFrame = g.FrameCount;
   for (auto it = gElastic.begin(); it != gElastic.end();) it = g.FrameCount - it->second.seen > 120 ? gElastic.erase(it) : std::next(it);
   ImVec2 a0, a1;
   WorkArea(a0, a1);
+  floatSizeBack(g, a0, a1);
   const double dt = static_cast<double>(g.IO.DeltaTime);
   const ImGuiWindow* moving = g.MovingWindow ? g.MovingWindow->RootWindowDockTree : nullptr;
   for (ImGuiWindow* w : g.Windows) {
@@ -234,7 +355,8 @@ void keepInWorkArea(ImGuiContext* ctx) {
         e.x = w->Pos.x, e.y = w->Pos.y;
         continue;
       }
-      const ImVec2 target(rubber::rest(w->Pos.x, rx), rubber::rest(w->Pos.y, ry));
+      ImVec2 target(rubber::rest(w->Pos.x, rx), rubber::rest(w->Pos.y, ry));
+      if (fresh) target = cascaded(g, w, target, a1);  // K-297: never exactly over another window
       if (target.x == w->Pos.x && target.y == w->Pos.y) {
         e.x = w->Pos.x, e.y = w->Pos.y;
         continue;
@@ -248,6 +370,10 @@ void keepInWorkArea(ImGuiContext* ctx) {
     }
     e.x = p.x, e.y = p.y;
     if (p.x != w->Pos.x || p.y != w->Pos.y) {
+      if (traceFloat())
+        std::fprintf(stderr, "[floatback] frame %d %s kept in from %.0f,%.0f to %.0f,%.0f (fresh %d, area %.0f,%.0f %.0f,%.0f)\n", g.FrameCount, w->Name,
+                     static_cast<double>(w->Pos.x), static_cast<double>(w->Pos.y), static_cast<double>(p.x), static_cast<double>(p.y), fresh ? 1 : 0,
+                     static_cast<double>(a0.x), static_cast<double>(a0.y), static_cast<double>(a1.x), static_cast<double>(a1.y));
       ImGui::SetWindowPos(w, p, ImGuiCond_Always);
       if (ImGuiDockNode* n = w->DockNodeAsHost) n->Pos = w->Pos;
     }
@@ -256,7 +382,6 @@ void keepInWorkArea(ImGuiContext* ctx) {
 }  // namespace
 
 void SetWindowRubber(bool elastic) { gRubber.elastic = elastic; }
-
 void ClampTrackedWindows() {
   ImGuiContext& g = *GImGui;
   if (gTrackedCtx != &g) gTracked.clear(), gTrackedCtx = &g;

@@ -825,6 +825,186 @@ void testWholeSongRender() {
   testTempoInBlock();
 }
 
+// ---------------------------------------------------------------- K-106: effects tick by tick
+// The FT2 functional audit: each effect's period, volume, pan and retrigger on every tick, against
+// values worked out by hand from FT2's replayer as ft2-clone documents it (arpeggio reads its tick
+// counter downwards, so a speed-6 row plays note, +y, +x, note, +y, +x; vibrato starts at phase 0
+// on the first tick after the note and keeps its period across a row that continues it; and so on).
+struct TickLog {
+  std::vector<int> period, vol, pan;
+  std::vector<int> trig;  // tick numbers (0-based from the first row) with a trigger
+};
+
+void logRows(trk::Channel& c, const std::vector<trk::Cell>& rows, int speed, TickLog& t) {
+  trk::SongFx fx;
+  int n = static_cast<int>(t.period.size());
+  auto rec = [&] {
+    c.updateEnvelopes();
+    const uint8_t st = c.takeStatus();
+    t.period.push_back(c.s.finalPeriod);
+    t.vol.push_back(c.s.outVol);
+    t.pan.push_back(c.s.outPan);
+    if (st & trk::kTrigger) t.trig.push_back(n);
+    ++n;
+  };
+  for (const trk::Cell& cell : rows) {
+    c.row(cell, speed, fx);
+    rec();
+    for (int td = speed - 1; td >= 1; --td) {
+      c.tick(speed, td, fx);
+      rec();
+    }
+  }
+}
+
+TickLog runFx(const std::vector<trk::Cell>& rows, int speed = 6) {
+  static trk::InstrumentDef def;
+  def.samples[0].length = 200000;
+  def.samples[0].volume = 64;
+  trk::Channel c;
+  c.reset();
+  c.fixed = &def;
+  TickLog t;
+  logRows(c, rows, speed, t);
+  return t;
+}
+
+std::string seq(const std::vector<int>& v) {
+  std::string s;
+  for (int x : v) s += (s.empty() ? "" : " ") + std::to_string(x);
+  return s;
+}
+
+void expectSeq(const std::vector<int>& got, const std::vector<int>& want, const std::string& name) {
+  const std::vector<int> head(got.begin(), got.begin() + static_cast<long>(std::min(got.size(), want.size())));
+  expect(head == want, name + (head == want ? "" : " (got " + seq(head) + ", FT2 " + seq(want) + ")"));
+}
+
+void testEffectsPerTick() {
+  constexpr int C4 = 4608, semi = 64;  // linear periods: 64 units a semitone
+  // 0xy arpeggio, speed 6: note, +y, +x, note, +y, +x; the next row without it is the note again.
+  {
+    const TickLog t = runFx({trk::Cell{49, 1, 0, 0x00, 0x37}, trk::Cell{}});
+    expectSeq(t.period, {C4, C4 - 7 * semi, C4 - 3 * semi, C4, C4 - 7 * semi, C4 - 3 * semi, C4}, "fx 037 arpeggio: FT2's tick order");
+  }
+  // Speed 3: note, +y, +x (the table read at 2, 1).
+  {
+    const TickLog t = runFx({trk::Cell{49, 1, 0, 0x00, 0x47}}, 3);
+    expectSeq(t.period, {C4, C4 - 7 * semi, C4 - 4 * semi}, "fx 047 arpeggio at speed 3");
+  }
+  // 1xx / 2xx: 4 period units per step on every tick but the first; 00 repeats the last speed.
+  {
+    const TickLog t = runFx({trk::Cell{49, 1, 0, 0x02, 0x08}, trk::Cell{0, 0, 0, 0x02, 0x00}});
+    expectSeq(t.period, {C4, C4 + 32, C4 + 64, C4 + 96, C4 + 128, C4 + 160, C4 + 160, C4 + 192}, "fx 208 slide down, 200 goes on");
+  }
+  // 3xx glide: no new trigger, 4 x xx units a tick, stops on the note.
+  {
+    const TickLog t = runFx({trk::Cell{49, 1, 0, 0, 0}, trk::Cell{53, 0, 0, 0x03, 0x10}});
+    expectSeq(t.period, {C4, C4, C4, C4, C4, C4, C4, C4 - 64, C4 - 128, C4 - 192, C4 - 256, C4 - 256}, "fx 310 glide to E-4 stops on it");
+    expect(t.trig == std::vector<int>{0}, "fx 310 glide does not retrigger");
+  }
+  // Volume column Mx: the same glide at x * 16.
+  {
+    const TickLog t = runFx({trk::Cell{49, 1, 0, 0, 0}, trk::Cell{53, 0, 0xF1, 0, 0}});
+    expectSeq(std::vector<int>(t.period.begin() + 6, t.period.end()), {C4, C4 - 64, C4 - 128, C4 - 192, C4 - 256, C4 - 256}, "volume column M1 glides as 310");
+  }
+  // 4xy vibrato (speed 4, depth 8), continued by 400, then a row without it.
+  {
+    const TickLog t = runFx({trk::Cell{49, 1, 0, 0x04, 0x48}, trk::Cell{0, 0, 0, 0x04, 0x00}, trk::Cell{}});
+    expectSeq(t.period, {C4, C4, C4 + 24, C4 + 45, C4 + 58, C4 + 63, C4 + 63, C4 + 58, C4 + 45, C4 + 24, C4, C4 - 24, C4}, "fx 448 vibrato, 400 goes on, then stops");
+  }
+  // Volume column S4 then V8: the same vibrato from the column.
+  {
+    const TickLog t = runFx({trk::Cell{49, 1, 0xA4, 0, 0}, trk::Cell{0, 0, 0xB8, 0, 0}});
+    expectSeq(std::vector<int>(t.period.begin() + 6, t.period.end()), {C4, C4, C4 + 24, C4 + 45, C4 + 58, C4 + 63}, "volume column S4 V8 vibrato");
+  }
+  // E1x / E2x: once, on the row's first tick.
+  {
+    const TickLog t = runFx({trk::Cell{49, 1, 0, 0x0E, 0x14}, trk::Cell{0, 0, 0, 0x0E, 0x23}});
+    expectSeq(t.period, {C4 - 16, C4 - 16, C4 - 16, C4 - 16, C4 - 16, C4 - 16, C4 - 4, C4 - 4}, "fx E14 then E23 fine slides");
+  }
+  // E9x retrigger every 2 ticks (ticks 0, 2, 4).
+  {
+    const TickLog t = runFx({trk::Cell{49, 1, 0, 0x0E, 0x92}});
+    expect(t.trig == (std::vector<int>{0, 2, 4}), "fx E92 retriggers on ticks 0, 2, 4 (got " + seq(t.trig) + ")");
+  }
+  // ECx cut on tick 3.
+  {
+    const TickLog t = runFx({trk::Cell{49, 1, 0, 0x0E, 0xC3}});
+    expectSeq(t.vol, {64, 64, 64, 0, 0, 0}, "fx EC3 cuts on tick 3");
+  }
+  // EDx delay to tick 3 (the volume column applies with it).
+  {
+    const TickLog t = runFx({trk::Cell{49, 1, 0x30, 0x0E, 0xD3}});
+    expect(t.trig == std::vector<int>{3} && t.vol.size() == 6 && t.vol[3] == 32, "fx ED3 starts the note on tick 3 at the column's volume (got " + seq(t.trig) + ")");
+  }
+  // Volume column: set, slide down per tick, fine up once; Axy slides on ticks after the first.
+  {
+    const TickLog t = runFx({trk::Cell{49, 1, 0x30, 0, 0}, trk::Cell{0, 0, 0x62, 0, 0}, trk::Cell{0, 0, 0x94, 0, 0}, trk::Cell{0, 0, 0, 0x0A, 0x20}});
+    expectSeq(t.vol, {32, 32, 32, 32, 32, 32, 32, 30, 28, 26, 24, 22, 26, 26, 26, 26, 26, 26, 26, 28, 30, 32, 34, 36}, "volume column 30, -2, U4 and A20");
+  }
+  // Volume column pan: P4 sets 0x40, R4 and L2 slide on each tick after the first.
+  {
+    const TickLog t = runFx({trk::Cell{49, 1, 0xC4, 0, 0}, trk::Cell{0, 0, 0xE4, 0, 0}, trk::Cell{0, 0, 0xD2, 0, 0}});
+    expectSeq(t.pan, {64, 64, 64, 64, 64, 64, 64, 68, 72, 76, 80, 84, 84, 82, 80, 78, 76, 74}, "volume column P4, R4, L2");
+  }
+}
+
+// The same effects heard: a song rendered through the engine, the pitch of each tick measured from
+// the audio (rising zero crossings of a looped sine), against FT2's period for that tick.
+void testEffectsHeard() {
+  const std::string dir = tempDir("fxheard");
+  XSong s = basicSong(8);
+  s.bpm = 32;  // long ticks: 2.5 / 32 s, about 20 cycles of C-4 each
+  XSmp sine;
+  for (int i = 0; i < 32; ++i) sine.data.push_back(static_cast<int16_t>(std::lround(100 * std::sin(i * 2 * 3.14159265358979 / 32))));
+  sine.loop = 1, sine.loopStart = 0, sine.loopLen = 32;
+  s.ins[0].smps[0] = sine;
+  s.patterns[0][0][0] = XCell{49, 1, 0, 0x00, 0x37};  // arpeggio
+  s.patterns[0][1][0] = XCell{0, 0, 0, 0x04, 0x8F};   // vibrato speed 8, depth 15
+  s.patterns[0][2][0] = XCell{61, 0, 0, 0x03, 0x40};  // glide up an octave
+  s.patterns[0][3][0] = XCell{0, 0, 0, 0x0E, 0x18};   // fine slide up 8
+  Song song;
+  trk::ImportReport rep;
+  expect(build(s, song, rep, dir), "fx heard: builds");
+  for (auto& c : song.channels) {
+    c.plugin.params[trk::PInterp] = trk::InterpLinear;
+    c.plugin.params[trk::PRamp] = 0;
+  }
+  RenderOptions ro;
+  ro.sampleRate = 44100;
+  const AudioBuffer buf = renderSong(song, ro);
+  // FT2's periods per tick for the four rows (worked by hand as in testEffectsPerTick).
+  const TickLog want = runFx({trk::Cell{49, 1, 0, 0x00, 0x37}, trk::Cell{0, 0, 0, 0x04, 0x8F}, trk::Cell{61, 0, 0, 0x03, 0x40}, trk::Cell{0, 0, 0, 0x0E, 0x18}});
+  const double tickSec = 2.5 / 32.0;
+  int good = 0, total = 0;
+  std::string bad;
+  for (size_t k = 0; k < want.period.size(); ++k) {
+    const size_t a = static_cast<size_t>((static_cast<double>(k) + 0.15) * tickSec * 44100), b = static_cast<size_t>((static_cast<double>(k) + 0.85) * tickSec * 44100);
+    double first = -1, last = -1;
+    int n = 0;
+    for (size_t i = a; i + 1 < b && i + 1 < buf.frames; ++i) {
+      const float x0 = buf.data[i], x1 = buf.data[i + 1];
+      if (x0 < 0 && x1 >= 0) {
+        const double at = static_cast<double>(i) + x0 / (x0 - x1);
+        if (first < 0) first = at;
+        last = at, ++n;
+      }
+    }
+    if (n < 3) continue;
+    ++total;
+    const double heard = (n - 1) / (last - first) * 44100.0;
+    const double ft2 = trk::periodHz(static_cast<uint16_t>(want.period[k]), true) / 32.0;
+    const double cents = 1200.0 * std::log2(heard / ft2);
+    if (std::abs(cents) < 5) ++good;
+    else bad += " t" + std::to_string(k) + ":" + std::to_string(static_cast<int>(cents)) + "c";
+  }
+  expect(total == static_cast<int>(want.period.size()) && good == total,
+         "fx heard: every tick's pitch within 5 cents of FT2's (" + std::to_string(good) + "/" + std::to_string(total) + bad + ")");
+  std::error_code ec;
+  fs::remove_all(fs::u8path(dir), ec);
+}
+
 void testProjectAndFiles() {
   // Notes keep their cells through a save.
   XSong s = basicSong(8);
@@ -883,6 +1063,8 @@ int main() {
   testTempoAndVolume();
   testSampler();
   testWholeSongRender();
+  testEffectsPerTick();
+  testEffectsHeard();
   testProjectAndFiles();
   return finish();
 }

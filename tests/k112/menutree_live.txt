@@ -1,130 +1,83 @@
 File > New	Ctrl+N	file.new	e-
+File > Open...	Ctrl+O	file.open	e-
+File > Open recent > song.gridline.json			e-
+File > Open recent > Clear list			e-
+File > Save	Ctrl+S	file.save	e-
+File > Save as...	Ctrl+Shift+S	file.saveAs	e-
+File > Save new version	Ctrl+Alt+S	file.saveNewVersion	e-
+File > Save to a new project folder...			e-
+File > Save as template...			e-
+File > Locate missing samples...			e-
+File > Project info...	F11	file.projectInfo	e-
+File > Export audio...	Ctrl+Shift+R	file.render	e-
+File > Export MIDI clip...			e-
+File > Export the arrangement as MIDI...	Ctrl+Shift+E	file.exportMidi	e-
 File > New from template > Browse templates...			e-
 File > New from template > Empty project			e-
 File > New from template > Starter kit (drums + synth)			e-
 File > New from template > Demo song			e-
 File > New from template > Beat starter			e-
-File > New from template > Empty project			e-
+File > New from template > Empty with mixer tracks			e-
 File > New from template > Mixing desk			e-
 File > New from loop starter...			e-
-File > Open...	Ctrl+O	file.open	e-
-File > Open recent > song.gridline.json			e-
-File > Open recent > Clear list			e-
 File > Welcome screen			e-
-File > Save	Ctrl+S	file.save	e-
-File > Save as...	Ctrl+Shift+S	file.saveAs	e-
-File > Save new version	Ctrl+Alt+S	file.saveNewVersion	e-
-File > Save as template...			e-
-File > Save to a new project folder...			e-
 File > Revert to last backup			e-
-File > Import > MIDI file...			e-
-File > Import > FL Studio presets...			e-
-File > Import > Audio file into a sampler...			e-
-File > Import > Multisample instrument (.sfz, .sf2)...			e-
-File > Import > Audio file as playlist clip...			e-
-File > Import > Import from URL...	Ctrl+Shift+U	file.importUrl	e-
-File > Export > Render to file (WAV, FLAC, MP3, Ogg)...	Ctrl+Shift+R	file.render	e-
-File > Export > Mixer tracks (stems)...			e-
-File > Export > All playlist tracks...			e-
-File > Export > All playlist track groups...			e-
-File > Export > Render again with the last settings...			e-
-File > Export > Song as MIDI file...	Ctrl+Shift+E	file.exportMidi	e-
-File > Export > Pattern as MIDI file...			e-
-File > Export > Time selection as MIDI file...			--
-File > Export > Project data files...			e-
-File > Export > Project bones...			e-
-File > Export > Gridline zipped project (.gridlinez)...			e-
-File > Export > Leave out frozen audio			e-
-File > Export > FL Studio project (.flp)...			e-
-File > Export > FL Studio zipped loop package (.zip)...			e-
-File > Export > FL Studio export report...			--
-File > Locate missing samples...			e-
+File > Other imports and exports > MIDI file...			e-
+File > Other imports and exports > Audio file into a sampler...			e-
+File > Other imports and exports > Multisample instrument (.sfz, .sf2)...			e-
+File > Other imports and exports > Import from URL...	Ctrl+Shift+U	file.importUrl	e-
+File > Other imports and exports > FL Studio presets...			e-
+File > Other imports and exports > Mixer tracks (stems)...			e-
+File > Other imports and exports > Each track...			e-
+File > Other imports and exports > Each track group...			e-
+File > Other imports and exports > Render again with the last settings...			e-
+File > Other imports and exports > Time selection as MIDI file...			--
+File > Other imports and exports > Project data files...			e-
+File > Other imports and exports > Project bones...			e-
+File > Other imports and exports > Gridline zipped project (.gridlinez)...			e-
+File > Other imports and exports > Leave out frozen audio			e-
+File > Other imports and exports > FL Studio project (.flp)...			e-
+File > Other imports and exports > FL Studio zipped loop package (.zip)...			e-
+File > Other imports and exports > FL Studio export report...			--
 File > New collaborative project...			e-
 File > Open collaborative project...			e-
 File > Join collaborative project...			e-
 File > Collaboration...			e-
-File > Project info...	F11	file.projectInfo	e-
 File > Quit	Ctrl+Q	file.quit	e-
 Edit > Undo	Ctrl+Z	edit.undo	--
-Edit > Redo	Ctrl+Y	edit.redo	--
+Edit > Redo	Ctrl+Shift+Z	edit.redo	--
 Edit > Undo history	Ctrl+Alt+Z	edit.history	e-
 Edit > Cut	Ctrl+X	piano.cut	e-
 Edit > Copy	Ctrl+C	piano.copy	e-
 Edit > Paste	Ctrl+V	piano.paste	--
 Edit > Duplicate	Ctrl+D	piano.duplicate	e-
 Edit > Delete	Del	piano.delete	e-
+Edit > Split	Ctrl+E	playlist.splitAtSongPos	--
+Edit > Consolidate	Ctrl+J	playlist.merge	--
+Edit > Crop clip			--
+Edit > Rename...	Ctrl+R	edit.rename	e-
 Edit > Select all	Ctrl+A	piano.selectAll	e-
 Edit > Deselect	Ctrl+Shift+A	piano.deselect	e-
-Edit > Rename...	Ctrl+R	edit.rename	e-
-Edit > Pattern > New pattern	F4	pattern.new	e-
-Edit > Pattern > Insert one before	Ctrl+Shift+Ins	pattern.insert	e-
-Edit > Pattern > Clone	Ctrl+Shift+C	pattern.clone	e-
-Edit > Pattern > Find first empty	Shift+F4	pattern.findFirstEmpty	e-
-Edit > Pattern > Find next empty	Ctrl+F4	pattern.findNextEmpty	e-
-Edit > Pattern > Go to > Beat			ec
-Edit > Pattern > Go to > Fill			e-
-Edit > Pattern > Go to > Bassline			e-
-Edit > Pattern > Go to > Chords			e-
-Edit > Pattern > Next pattern	Num +	pattern.next	e-
-Edit > Pattern > Previous pattern	Num -	pattern.previous	--
-Edit > Pattern > Rename...	Ctrl+R	edit.rename	e-
-Edit > Pattern > Random colour			e-
-Edit > Pattern > Length > 1 bar			ec
-Edit > Pattern > Length > 2 bars			e-
-Edit > Pattern > Length > 4 bars			e-
-Edit > Pattern > Length > 8 bars			e-
-Edit > Pattern > Length > 16 bars			e-
-Edit > Pattern > Meter > Song (4/4)			ec
-Edit > Pattern > Meter > 2/4			e-
-Edit > Pattern > Meter > 3/4			e-
-Edit > Pattern > Meter > 4/4			e-
-Edit > Pattern > Meter > 5/4			e-
-Edit > Pattern > Meter > 6/8			e-
-Edit > Pattern > Meter > 7/8			e-
-Edit > Pattern > Meter > 9/8			e-
-Edit > Pattern > Meter > 12/8			e-
-Edit > Pattern > Transpose > +12 (octave)			e-
-Edit > Pattern > Transpose > +1 semitone			e-
-Edit > Pattern > Transpose > -1 semitone			e-
-Edit > Pattern > Transpose > -12 (octave)			e-
-Edit > Pattern > Split by channel			e-
-Edit > Pattern > Select in playlist			e-
-Edit > Pattern > Pattern groups > New group with the current pattern...			e-
-Edit > Pattern > Pattern groups > Take the current pattern out of its group			--
-Edit > Pattern > Move up	Ctrl+Shift+Up	pattern.moveUp	--
-Edit > Pattern > Move down	Ctrl+Shift+Down	pattern.moveDown	e-
-Edit > Pattern > Render pattern to file...			e-
-Edit > Pattern > Render as audio clip...			e-
-Edit > Pattern > Render and replace...			e-
-Edit > Pattern > Delete	Ctrl+Shift+Del	pattern.delete	e-
-Edit > Pattern > Delete unused patterns			e-
+Edit > Deactivate	0	playlist.mute	--
+Edit > Render clip to audio...			e-
+Edit > Render clip in place...			e-
 Create > New audio track	Ctrl+T	track.newAudio	e-
 Create > New MIDI track	Ctrl+Shift+T	track.newMidi	e-
 Create > New instrument track > Audio file as sampler...			e-
+Create > New instrument track > Speech...			e-
+Create > New return track	Ctrl+Alt+T	track.newReturn	e-
+Create > Insert scene			e-
+Create > Insert MIDI clip	Ctrl+Shift+M	clips.insertMidiClip	e-
+Create > Automation clip for the last moved control			--
 Create > Add marker at the song position			e-
 Create > Import audio file...			e-
 Create > Import MIDI file...			e-
-Create > Instruments, effects and clips > Instrument channel > Audio file as sampler...			e-
-Create > Instruments, effects and clips > Pattern	F4	pattern.new	e-
-Create > Instruments, effects and clips > Automation clip for the last moved control			--
-Create > Instruments, effects and clips > Clip of the current pattern at the song end			e-
-Create > Instruments, effects and clips > Mixer track			e-
-Create > Instruments, effects and clips > 8 playlist tracks			e-
 View > Command palette...	Ctrl+K	view.commandPalette	e-
-View > Playlist	F5	view.playlist	ec
-View > Channel rack	F6	view.channelRack	e-
-View > Piano roll	Ctrl+Alt+3	view.pianoRoll	e-
 View > Mixer	Ctrl+Alt+M	view.mixer	e-
+View > Return tracks			ec
 View > Browser	Ctrl+Alt+B	view.browser	ec
-View > Plugin picker	F8	view.pluginPicker	e-
-View > Project picker			e-
-View > Channel settings			e-
-View > Master chain			e-
-View > Pads			e-
 View > Undo history	Ctrl+Alt+Z	edit.history	e-
 View > Performance			e-
-View > Groove editor			e-
-View > Stage			e-
 View > Panels > Inspector			e-
 View > Panels > Library			e-
 View > Panels > Lists			e-
@@ -134,20 +87,17 @@ View > Panels > Track scopes			e-
 View > Panels > Info box			ec
 View > Panels > Files			e-
 View > Panels > Notes			e-
-View > Panels > Pattern editor			e-
-View > Panels > Order list			e-
 View > Zoom in	=	playlist.zoomIn	e-
 View > Zoom out	-	playlist.zoomOut	e-
 View > Zoom to fit the song	Home	playlist.zoomFit	e-
-View > Zoom to ticks (snap turns free)			e-
 View > Clear time selection			--
 View > Close plugin windows	Alt+F12	view.closePlugins	e-
 View > Close all windows	F12	view.closeAll	e-
 View > Bring all windows back into Gridline			--
-View > Window layout >       Studio			e-
-View > Window layout >       Clips	Preview		ec
-View > Window layout >       Smooth	Preview		e-
-View > Window layout >       Tracker	Preview		e-
+View > Window layout > Studio			e-
+View > Window layout > Clips	Preview		ec
+View > Window layout > Smooth	Preview		e-
+View > Window layout > Tracker	Preview		e-
 View > Window layout > Layout settings...			e-
 View > Reset window layout	Ctrl+Shift+H	view.resetLayout	e-
 View > Dark theme			ec
@@ -176,97 +126,25 @@ Options > Debug log and script console...			e-
 Options > Keyboard shortcuts...			e-
 Options > Theme...			e-
 Options > Plugin manager...			e-
-Options > Song mode	L		ec
-Options > Live mode			e-
-Options > Arrangements > Arrangement			ec
-Options > Arrangements > New arrangement			e-
-Options > Arrangements > Duplicate arrangement			e-
-Options > Arrangements > Delete arrangement			--
-Options > Arrangements > Previous arrangement			--
-Options > Arrangements > Next arrangement			--
 Options > Song position jumps > At once			ec
 Options > Song position jumps > Next beat			e-
 Options > Song position jumps > Next bar			e-
 Options > Song position jumps > Next 2 bars			e-
 Options > Song position jumps > Next 4 bars			e-
 Options > Song position jumps > Next 8 bars			e-
-Options > Metronome	O	options.metronome	e-
 Options > Plugin delay compensation			ec
 Options > Refreeze out-of-date freezes			ec
-Options > Hibernate unused plugins automatically			e-
 Options > Rest silent instruments			ec
-Options > Woken plugins sleep again after > 10 seconds			e-
-Options > Woken plugins sleep again after > 30 seconds			ec
-Options > Woken plugins sleep again after > 2 minutes			e-
-Options > Woken plugins sleep again after > 10 minutes			e-
-Options > Woken plugins sleep again after > Never			e-
 Options > Send MIDI clock (master sync)			e-
-Options > Record notes			e-
-Options > Step record			e-
 Options > Record automation			e-
-Options > Recording options > Audio, into the playlist as audio clips			ec
-Options > Recording options > Audio, into Loupe (armed tracks)			e-
-Options > Recording options > Notes			ec
-Options > Recording options > Automation (controller moves)			ec
-Options > Recording options > Everything			e-
-Options > Recording options > Punch in/out at the time selection			ec
-Options > Recording options > Audio file format > 32-bit float WAV			ec
-Options > Recording options > Audio file format > 24-bit WAV			e-
-Options > Recording options > Audio file format > 16-bit WAV			e-
-Options > Recording options > Disarm tracks after recording			e-
-Options > Recording options > Drop silent takes			e-
-Options > Recording options > Name empty playlist tracks after the take			ec
-Options > Recording options > Name takes after the mixer track			ec
-Options > Recording options > Name takes after the audio input			e-
-Options > Recording options > Overdub (keep existing notes)			ec
-Options > Recording options > Replace (clear the channel's notes)			e-
-Options > Recording options > Quantize note starts to the snap			ec
-Options > Recording options > Quantize note lengths			e-
-Options > Recording options > Loop recording: new take per pass			e-
-Options > Recording options > Controller moves go to > Automatic			ec
-Options > Recording options > Controller moves go to > Pattern events			e-
-Options > Recording options > Controller moves go to > Automation clips			e-
-Options > Recording options > Count-in > Off			ec
-Options > Recording options > Count-in > 1 bar			e-
-Options > Recording options > Count-in > 2 bars			e-
-Options > Recording options > Count-in > 4 bars			e-
-Options > Recording options > Step record (keyboard enters notes at the step cursor)			e-
-Options > Recording options > Link to controller (Record)…			e-
-Options > Typing keyboard to piano	M	options.typingKeyboard	e-
-Options > Typing keyboard options > Play notes from the computer keyboard	M	options.typingKeyboard	e-
-Options > Typing keyboard options > Octave > Z = C1			e-
-Options > Typing keyboard options > Octave > Z = C2			e-
-Options > Typing keyboard options > Octave > Z = C3			e-
-Options > Typing keyboard options > Octave > Z = C4			ec
-Options > Typing keyboard options > Octave > Z = C5			e-
-Options > Typing keyboard options > Octave > Z = C6			e-
-Options > Typing keyboard options > Octave > Z = C7			e-
-Options > Typing keyboard options > Octave > Z = C8			e-
-Options > Typing keyboard options > Chord mode	\		e-
-Options > Typing keyboard options > Chord > Major			ec
-Options > Typing keyboard options > Chord > Minor			e-
-Options > Typing keyboard options > Chord > Dominant 7th			e-
-Options > Typing keyboard options > Chord > Major 7th			e-
-Options > Typing keyboard options > Chord > Minor 7th			e-
-Options > Typing keyboard options > Chord > Sus 4			e-
-Options > Typing keyboard options > Chord > Power (5th)			e-
-Options > Typing keyboard options > Chord > Octave			e-
-Options > Typing keyboard options > Keyboard layout > Standard (QWERTY)			ec
-Options > Typing keyboard options > Keyboard layout > QWERTZ			e-
-Options > Typing keyboard options > Keyboard layout > AZERTY			e-
-Options > Typing keyboard options > Keyboard layout > Dvorak			e-
-Options > Typing keyboard options > Keyboard layout > Colemak			e-
-Options > Typing keyboard options > Keyboard layout > Follow the computer			e-
-Options > Multilink to controllers			e-
 Options > Auto scrolling			ec
-Options > Auto scrolling in pattern editors			ec
+Options > Auto scrolling in the notes editor			ec
 Options > Smooth snapping			ec
-Options > Recording and metronome > Record	F9	transport.record	e-
+Options > Recording and metronome > Arrangement record	F9	transport.record	e-
+Options > Recording and metronome > Session record	Shift+F9	transport.sessionRecord	e-
 Options > Recording and metronome > Metronome	O	options.metronome	e-
 Options > Recording and metronome > Count-in	Ctrl+Alt+Shift+K	options.countIn	e-
-Options > Recording and metronome > Step record			e-
-Options > Recording and metronome > Recording options > Audio, into the playlist as audio clips			ec
-Options > Recording and metronome > Recording options > Audio, into Loupe (armed tracks)			e-
+Options > Recording and metronome > Recording options > Audio, as audio clips			ec
 Options > Recording and metronome > Recording options > Notes			ec
 Options > Recording and metronome > Recording options > Automation (controller moves)			ec
 Options > Recording and metronome > Recording options > Everything			e-
@@ -276,34 +154,24 @@ Options > Recording and metronome > Recording options > Audio file format > 24-b
 Options > Recording and metronome > Recording options > Audio file format > 16-bit WAV			e-
 Options > Recording and metronome > Recording options > Disarm tracks after recording			e-
 Options > Recording and metronome > Recording options > Drop silent takes			e-
-Options > Recording and metronome > Recording options > Name empty playlist tracks after the take			ec
-Options > Recording and metronome > Recording options > Name takes after the mixer track			ec
-Options > Recording and metronome > Recording options > Name takes after the audio input			e-
+Options > Recording and metronome > Recording options > Name empty tracks after the take			ec
 Options > Recording and metronome > Recording options > Overdub (keep existing notes)			ec
-Options > Recording and metronome > Recording options > Replace (clear the channel's notes)			e-
+Options > Recording and metronome > Recording options > Replace (clear the clip's notes)			e-
 Options > Recording and metronome > Recording options > Quantize note starts to the snap			ec
 Options > Recording and metronome > Recording options > Quantize note lengths			e-
-Options > Recording and metronome > Recording options > Loop recording: new take per pass			e-
-Options > Recording and metronome > Recording options > Controller moves go to > Automatic			ec
-Options > Recording and metronome > Recording options > Controller moves go to > Pattern events			e-
-Options > Recording and metronome > Recording options > Controller moves go to > Automation clips			e-
-Options > Recording and metronome > Recording options > Count-in > Off			ec
-Options > Recording and metronome > Recording options > Count-in > 1 bar			e-
-Options > Recording and metronome > Recording options > Count-in > 2 bars			e-
-Options > Recording and metronome > Recording options > Count-in > 4 bars			e-
-Options > Recording and metronome > Recording options > Step record (keyboard enters notes at the step cursor)			e-
-Options > Recording and metronome > Recording options > Link to controller (Record)…			e-
+Options > Recording and metronome > Recording options > Count-in length > 1 bar			e-
+Options > Recording and metronome > Recording options > Count-in length > 2 bars			e-
+Options > Recording and metronome > Recording options > Count-in length > 4 bars			e-
 Options > Recording and metronome > Typing keyboard to piano	M	options.typingKeyboard	e-
-Options > Recording and metronome > Typing keyboard options > Play notes from the computer keyboard	M	options.typingKeyboard	e-
-Options > Recording and metronome > Typing keyboard options > Octave > Z = C1			e-
-Options > Recording and metronome > Typing keyboard options > Octave > Z = C2			e-
-Options > Recording and metronome > Typing keyboard options > Octave > Z = C3			e-
-Options > Recording and metronome > Typing keyboard options > Octave > Z = C4			ec
-Options > Recording and metronome > Typing keyboard options > Octave > Z = C5			e-
-Options > Recording and metronome > Typing keyboard options > Octave > Z = C6			e-
-Options > Recording and metronome > Typing keyboard options > Octave > Z = C7			e-
-Options > Recording and metronome > Typing keyboard options > Octave > Z = C8			e-
-Options > Recording and metronome > Typing keyboard options > Chord mode	\		e-
+Options > Recording and metronome > Typing keyboard options > Octave > A = C2			e-
+Options > Recording and metronome > Typing keyboard options > Octave > A = C3			e-
+Options > Recording and metronome > Typing keyboard options > Octave > A = C4			e-
+Options > Recording and metronome > Typing keyboard options > Octave > A = C5			ec
+Options > Recording and metronome > Typing keyboard options > Octave > A = C6			e-
+Options > Recording and metronome > Typing keyboard options > Octave > A = C7			e-
+Options > Recording and metronome > Typing keyboard options > Octave > A = C8			e-
+Options > Recording and metronome > Typing keyboard options > Octave > A = C9			e-
+Options > Recording and metronome > Typing keyboard options > Chord mode			e-
 Options > Recording and metronome > Typing keyboard options > Chord > Major			ec
 Options > Recording and metronome > Typing keyboard options > Chord > Minor			e-
 Options > Recording and metronome > Typing keyboard options > Chord > Dominant 7th			e-
@@ -318,12 +186,12 @@ Options > Recording and metronome > Typing keyboard options > Keyboard layout > 
 Options > Recording and metronome > Typing keyboard options > Keyboard layout > Dvorak			e-
 Options > Recording and metronome > Typing keyboard options > Keyboard layout > Colemak			e-
 Options > Recording and metronome > Typing keyboard options > Keyboard layout > Follow the computer			e-
-Options > Recording and metronome > Multilink to controllers			e-
-Navigate > Arrangement			ec
-Navigate > Clip grid			e-
+Navigate > Arrangement			e-
+Navigate > Clip grid			ec
 Navigate > Browser	Ctrl+Alt+B	view.browser	ec
 Navigate > Clip band			e-
 Navigate > Device band			ec
+Navigate > Clip and device bands	Ctrl+Alt+L	view.detail	ec
 Navigate > Mixer	Ctrl+Alt+M	view.mixer	e-
 Navigate > Go to the start	Ctrl+Alt+Shift+Home	transport.toStart	e-
 Navigate > Back one bar	Ctrl+Alt+Shift+Left	transport.rewindBar	e-
@@ -335,9 +203,6 @@ Navigate > Follow the song position			ec
 Navigate > Zoom > Zoom in	=	playlist.zoomIn	e-
 Navigate > Zoom > Zoom out	-	playlist.zoomOut	e-
 Navigate > Zoom > Zoom to fit the song	Home	playlist.zoomFit	e-
-Navigate > Song mode			ec
-Navigate > Pattern mode			e-
-Navigate > Live mode			e-
 Tools > Stop all sound	Ctrl+H	tools.stopSound	e-
 Tools > Loop starter...			e-
 Tools > Swing presets > Straight			e-
@@ -404,7 +269,7 @@ Tools > Piano roll tools > Quantize...	Alt+Q	piano.quantize	e-
 Tools > Piano roll tools > Quick legato	Ctrl+L	piano.legato	e-
 Tools > Piano roll tools > Articulate...	Alt+L	piano.articulate	e-
 Tools > Piano roll tools > Chop...	Alt+U	piano.chop	e-
-Tools > Piano roll tools > Quick chop > Into steps	Ctrl+E	piano.chopSteps	e-
+Tools > Piano roll tools > Quick chop > Into steps			e-
 Tools > Piano roll tools > Quick chop > Into half steps			e-
 Tools > Piano roll tools > Quick chop > Into beats			e-
 Tools > Piano roll tools > Quick chop > Into snap grid			e-
@@ -533,7 +398,6 @@ Tools > Macros > Route every channel to its own mixer track			e-
 Tools > Macros > Select unused channels			e-
 Tools > Macros > Lock every playlist track			e-
 Tools > Macros > Unlock every playlist track			e-
-Tools > Macros > Prepare the live area			e-
 Tools > Macros > Audio clip channels > Stretch			e-
 Tools > Macros > Audio clip channels > Rubber Band			e-
 Tools > Macros > Audio clip channels > Resample			e-

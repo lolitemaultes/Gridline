@@ -1,8 +1,8 @@
 # Gridline - K-112c: the Live control bar's Capture, Session record and Draw mode buttons, clicked
 # in the real app (hidden, isolated config and HOME):
-#   1. Capture: notes played on the typing keyboard while nothing records are kept; the button
+#   1. Capture: notes played on the typing keyboard (A, S, D: Z and X move the octave in Clips) while nothing records are kept; the button
 #      writes them into the current pattern as one undo step and forgets them;
-#   2. Session record: arms recording in pattern mode and starts playback; a second click disarms;
+#   2. Session record: records into the clip grid while playing; a second click ends it;
 #   3. Draw mode: lit with the pencil; a click switches the editors to select, another back;
 #   4. the device title bars draw the hot-swap and save buttons (the device band shown first: since
 #      round 45 the clip band takes its place while a clip is selected).
@@ -20,12 +20,12 @@ file(WRITE "${OUT}/cfg/gridline/settings.json"
 configure_file("${DEMO}" "${OUT}/song.gridline.json" COPYONLY)
 file(WRITE "${OUT}/in.txt" "8 typing on
 10 livebar
-12 sdlkey z down
-16 sdlkey z up
-20 sdlkey x down
-24 sdlkey x up
-28 sdlkey c down
-32 sdlkey c up
+12 sdlkey a down
+16 sdlkey a up
+20 sdlkey s down
+24 sdlkey s up
+28 sdlkey d down
+32 sdlkey d up
 36 typing off
 38 livebar
 40 sdlat capture
@@ -102,9 +102,10 @@ check("another: the pencil again (${d2_draw})" d2_draw EQUAL 1)
 
 at(s1 74)
 at(s2 82)
-check("session record: armed in pattern mode and playing (${s1_armed} ${s1_pat} ${s1_playing})" s1_armed EQUAL 1 AND s1_pat EQUAL 1 AND s1_playing EQUAL 1)
-check("... recording (${s1_rec})" s1_rec EQUAL 1)
-check("a second click: disarmed (${s2_armed})" s2_armed EQUAL 0)
+# Since checkpoint 47 Clips' Session record records into a grid slot in the clip launch mode (not
+# the pattern mode's armed record button): it records while playing, a second click ends it.
+check("session record: recording and playing (${s1_rec} ${s1_playing})" s1_rec EQUAL 1 AND s1_playing EQUAL 1)
+check("a second click: stopped recording (${s2_rec})" s2_rec EQUAL 0)
 
 # K-112c: the device title bar's hot-swap and save buttons are drawn
 check("device title bar: hot-swap button" out MATCHES "sdlat frame 86: devswap at")

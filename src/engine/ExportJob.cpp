@@ -89,20 +89,26 @@ struct Writer {
       if (s.render.scope == RenderScope::Pattern)
         if (const Pattern* p = song.pattern(s.render.pattern)) meta.meterNum = song.patternMeterNum(*p), meta.meterDen = song.patternMeterDen(*p);
       meta.loop = s.render.tail == TailMode::Wrap;
+      // K-109: a loop export also carries the sampler loop ('smpl': the whole file loops), so
+      // samplers that read it loop it seamlessly as they load it.
+      if (meta.loop && buf.frames > 1) meta.loopStart = 0, meta.loopEnd = static_cast<int64_t>(buf.frames);
     }
     for (ExportFormat f : s.formats) {
       AudioFileOptions o;
       o.format = f;
       o.dither = s.dither;
       o.bits = f == ExportFormat::Flac ? s.flacBits : s.wavBits;
-      o.bitrate = f == ExportFormat::Mp3 ? s.mp3Bitrate : f == ExportFormat::Ogg ? s.oggBitrate : s.m4aBitrate;
+      o.bitrate = f == ExportFormat::Mp3 ? s.mp3Bitrate : f == ExportFormat::Ogg ? s.oggBitrate : f == ExportFormat::Opus ? s.opusBitrate : s.m4aBitrate;
       o.cancel = cancel;
       if (f == ExportFormat::Wav) o.meta = meta;
       const std::string path = (fs::path(s.folder) / (stem + exportFormatExt(f))).string();
       std::string err;
       if (writeAudioFile(path, buf, s.render.sampleRate, o, &err)) {
         out.files.push_back(path);
-        receipt::writeRenderOrigin(song, path);  // J-219: a later use of this render maps back (Track Receipt)
+        try {  // K-307: the sidecar is a courtesy; nothing in it may stop the export
+          receipt::writeRenderOrigin(song, path);  // J-219: a later use of this render maps back (Track Receipt)
+        } catch (...) {
+        }
       } else {
         out.errors.push_back(fs::path(path).filename().string() + ": " + err);
       }

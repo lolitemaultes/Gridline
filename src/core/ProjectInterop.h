@@ -30,6 +30,11 @@ bool looksLikeFilePath(const std::string& s);
 // processors, mixer slots, all arrangements). `fn` may change the path; the
 // state is rewritten when it does. Returns the number of references changed.
 int forEachFileRef(Song& song, const std::function<void(std::string& path)>& fn);
+// R9-05: the files `song` refers to inside `cacheRoot` (an imported module's or archive's unpacked
+// samples) copied into `folder` and `song` pointed at the copies, so a saved project does not depend
+// on a cache that may be cleared. Copies with the same content are reused. Returns how many
+// references moved (0: none in the cache); `err` gets the first copy that failed.
+int adoptCacheFiles(Song& song, const std::string& cacheRoot, const std::string& folder, std::string* err = nullptr);
 // The file references of one plugin state (same rules as forEachFileRef).
 // Returns true when `fn` changed one.
 bool forEachStateFileRef(PluginState& state, const std::function<void(std::string& path)>& fn);

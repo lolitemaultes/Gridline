@@ -633,6 +633,49 @@ bool forEachStateFileRef(PluginState& state, const std::function<void(std::strin
 
 int forEachFileRef(Song& song, const std::function<void(std::string& path)>& fn) { return visitSong(song, filesOnly(fn)); }
 
+int adoptCacheFiles(Song& song, const std::string& cacheRoot, const std::string& folder, std::string* err) {
+  if (cacheRoot.empty() || folder.empty()) return 0;
+  std::error_code ec;
+  const fs::path root = fs::weakly_canonical(fs::u8path(cacheRoot), ec);
+  auto inCache = [&](const std::string& p) {
+    std::error_code e2;
+    const fs::path f = fs::weakly_canonical(fs::u8path(p), e2);
+    if (e2) return false;
+    auto r = root.begin();
+    auto i = f.begin();
+    for (; r != root.end() && i != f.end(); ++r, ++i)
+      if (*r != *i) return false;
+    return r == root.end() && i != f.end();
+  };
+  std::map<std::string, std::string> done;  // source → copy
+  int copied = 0;
+  forEachFileRef(song, [&](std::string& p) {
+    if (p.empty() || !inCache(p) || !fs::is_regular_file(fs::u8path(p), ec)) return;
+    if (auto it = done.find(p); it != done.end()) {
+      p = it->second;
+      return;
+    }
+    std::error_code e3;
+    fs::create_directories(fs::u8path(folder), e3);
+    fs::path to;
+    for (int k = 0;; ++k) {  // a free name, or a copy already there with the same content
+      to = fs::u8path(folder) / fs::u8path(numberedName(fileNameOf(p), k));
+      if (!fs::exists(to, e3) || sameContent(fs::u8path(p), to)) break;
+    }
+    if (!fs::exists(to, e3)) {
+      fs::copy_file(fs::u8path(p), to, e3);
+      if (e3) {
+        if (err && err->empty()) *err = "could not copy " + fileNameOf(p) + ": " + e3.message();
+        return;
+      }
+      ++copied;
+    }
+    done[p] = to.u8string();
+    p = to.u8string();
+  });
+  return static_cast<int>(done.size()) > 0 ? std::max(copied, 1) : 0;
+}
+
 int forEachRef(Song& song, const std::function<void(std::string& path, bool folder)>& fn) {
   return visitSong(song, [&fn](std::string& p, RefKind k) { fn(p, k == RefKind::Folder); });
 }

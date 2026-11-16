@@ -291,6 +291,10 @@ void setFaderPointer(bool on);
 // K-112b (checkpoint 25): the next faders draw their ruler ticks at these normalised positions (the
 // strip's dB marks) instead of every eighth of the travel; nullptr or count 0 restores the eighths.
 void setFaderTicks(const float* norms, int count);
+// R05-04: the next ParamFader calls only show (the Tracks layout's Read mode: the curve drives it).
+void setFaderLocked(bool on);
+// R05-15: while set (> 0), ParamFader reads its value in dB (the volume curve with that unity position).
+void setFaderDb(double unity);
 void DrawMeter(ImDrawList* dl, ImVec2 p, ImVec2 size, float gainL, float gainR, float holdL, float holdR, bool vertical = true);
 
 // Small coloured swatch that opens a palette popup; returns true when changed.

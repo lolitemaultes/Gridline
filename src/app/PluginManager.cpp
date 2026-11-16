@@ -1326,7 +1326,7 @@ void keyboard(Model& md) {
   const ImGuiIO& io = ImGui::GetIO();
   if ((io.KeyCtrl || io.KeySuper) && ImGui::IsKeyPressed(ImGuiKey_F, false)) ms.focusSearch = true;
   if (io.WantTextInput) return;
-  if (::gl::keys::escapePressed(false) && ms.search[0]) ms.search[0] = 0;
+  if (ms.search[0] && ::gl::keys::escapePressed(false)) ms.search[0] = 0;  // K-297: an empty search leaves Esc to close the window
   // K-73: the keys are listed only when a key moves the selection (thousands of rows).
   if (!ImGui::IsKeyPressed(ImGuiKey_DownArrow) && !ImGui::IsKeyPressed(ImGuiKey_UpArrow) && !ImGui::IsKeyPressed(ImGuiKey_PageDown) &&
       !ImGui::IsKeyPressed(ImGuiKey_PageUp) && !ImGui::IsKeyPressed(ImGuiKey_Home, false) && !ImGui::IsKeyPressed(ImGuiKey_End, false))

@@ -1114,6 +1114,15 @@ class SlicerGen final : public Generator {
     double notePitch = 60, baseRate = 1, semi = 0, semiTo = 0, semiStep = 0;  // K-144: a slide off the played pitch
     int64_t semiLeft = 0;
     float vel = 0, gl = 1, gr = 1, fade = 1, fadeStep = 0;
+    // K-217: what the control blocks start from: the slice's own gain (with velocity on the
+    // level), pan, cutoff (octaves) and resonance offsets, the note's mod X / Y, and the
+    // modulation's pitch factor on the read rate.
+    double gain0 = 1, pan0 = 0, cutOct0 = 0, reso0 = 0, nmx = 0, nmy = 0, modRate = 1;
+    int ctlLeft = 0;  // samples to the next control block
+    int envSet = 0;                          // K-217: the slice's envelope set
+    double lfoPh = 0;                        // K-217: the note's LFO phase (cycles) and age (samples)
+    int64_t lfoAge = 0;
+    std::array<Adsr, pp::SlEnvKinds> menv;   // pan / pitch / filter envelopes (control rate)
     bool reverse = false;
     int64_t delayLeft = 0;  // region start delay (samples)
     Adsr env;
@@ -1147,6 +1156,9 @@ class SlicerGen final : public Generator {
     velAmt_ = param(s, SlVelocity, 1);
     chromatic_ = static_cast<int>(std::lround(param(s, SlChromatic, -1)));
     modX_ = param(s, SlModX, 0.5f), modY_ = param(s, SlModY, 0.5f);
+    auto dest = [&](int pid, int def) { return std::clamp(static_cast<int>(std::lround(param(s, pid, static_cast<float>(def)))), 0, SlDestCount - 1); };
+    xDest_ = dest(SlModXDest, SlDestCutoff), yDest_ = dest(SlModYDest, SlDestReso), velDest_ = dest(SlVelDest, SlDestLevel);
+    xAmt_ = param(s, SlModXAmt, 1), yAmt_ = param(s, SlModYAmt, 1);
     speed_ = 1.0;
     SamplePtr smp = aux.sample();
     if (smp && param(s, SlFitTempo) >= 0.5f && smp->seconds() > 0) {
@@ -1174,8 +1186,41 @@ class SlicerGen final : public Generator {
     } else {
       for (size_t k = 0; k < aux.slices.size() && nSlices_ < kMaxSlices; ++k) starts_[nSlices_++] = aux.slices[k];
     }
-    for (auto& v : voices_) v.env.set(sr_, std::max(declick_ ? 0.001 : 0.0, static_cast<double>(param(s, SlAttack, 0.001f))), 30, 1,
-                                    std::max(declick_ ? 0.002 : 0.0, static_cast<double>(param(s, SlRelease, 0.01f))));
+    // K-217: slice layers (classic engine): A's cuts above; B's from its own markers, else A's.
+    nA_ = nSlices_;
+    std::copy(starts_, starts_ + nSlices_, startsA_);
+    nB_ = 0;
+    if (!proc_ && smp) {
+      for (int k = 0; k < kMaxSlices; ++k) {
+        const float m = param(s, layerPid(1, slMarker(k)), -1);
+        if (m >= 0) startsB_[nB_++] = std::llround(static_cast<double>(m) * static_cast<double>(smp->frames()));
+      }
+      std::sort(startsB_, startsB_ + nB_);
+    }
+    const int layerParam = std::clamp(static_cast<int>(std::lround(param(s, SlLayer))), 0, 1);
+    if (layerParam != layerParam_) layerParam_ = layerParam, layer_ = layerParam;  // a key switch holds until the parameter moves
+    if (proc_) layer_ = 0;
+    layerKey_ = proc_ ? -1 : static_cast<int>(std::lround(param(s, SlLayerKey, -1)));
+    selectLayer();
+    // K-217: the envelope sets (volume per sample; pan / pitch / filter every control block).
+    for (int e = 0; e < kEnvSets; ++e) {
+      EnvSet& es = sets_[static_cast<size_t>(e)];
+      es.a = std::max(declick_ ? 0.001 : 0.0, static_cast<double>(param(s, slVolEnv(e, SlEnvA), 0.001f)));
+      es.d = param(s, slVolEnv(e, SlEnvD), 0.5f), es.s = param(s, slVolEnv(e, SlEnvS), 1);
+      es.r = std::max(declick_ ? 0.002 : 0.0, static_cast<double>(param(s, slVolEnv(e, SlEnvR), 0.01f)));
+      for (int k = 0; k < SlEnvKinds; ++k) {
+        auto& m = es.mod[static_cast<size_t>(k)];
+        m.a = param(s, slModEnv(e, k, SlEnvA), 0.01f), m.d = param(s, slModEnv(e, k, SlEnvD), 0.3f);
+        m.s = param(s, slModEnv(e, k, SlEnvS), 0), m.r = param(s, slModEnv(e, k, SlEnvR), 0.3f);
+        m.amt = param(s, slModEnv(e, k, SlEnvAmt), 0);
+      }
+    }
+    for (auto& v : voices_) applySet(v);
+    lfoShape_ = std::clamp(static_cast<int>(std::lround(param(s, SlLfoShape))), 0, SlLfoShapeCount - 1);
+    const int sync = std::clamp(static_cast<int>(std::lround(param(s, SlLfoSync))), 0, 8);
+    lfoRate_ = sync > 0 ? std::max(20.0, ctx.tempo) / 60.0 / kLfoSyncBeats[sync] : static_cast<double>(param(s, SlLfoRate, 4));
+    lfoDelay_ = param(s, SlLfoDelay) * sr_, lfoRetrig_ = param(s, SlLfoRetrig, 1) >= 0.5f;
+    lfoVol_ = param(s, SlLfoVol), lfoPan_ = param(s, SlLfoPan), lfoPitch_ = param(s, SlLfoPitch), lfoCut_ = param(s, SlLfoCut);
   }
   void onNoteOnEx(uint32_t id, double pitch, float vel, const NoteProps& np) override {
     if (sx_) {
@@ -1194,14 +1239,39 @@ class SlicerGen final : public Generator {
       sxe_.noteOn(id, pitch, vel, NoteProps{});
       return;
     }
-    SamplePtr smp = aux_ ? aux_->sample() : nullptr;
-    if (!smp || nSlices_ == 0) return;
+    if (layerSwitch(pitch)) return;
+    startVoice(id, pitch, vel);
+  }
+  // K-217: the playing layer's cuts (B without markers of its own cuts where A does).
+  void selectLayer() {
+    if (layer_ == 1 && nB_ > 0) {
+      nSlices_ = nB_;
+      std::copy(startsB_, startsB_ + nB_, starts_);
+    } else {
+      nSlices_ = nA_;
+      std::copy(startsA_, startsA_ + nA_, starts_);
+    }
+  }
+  // K-217: a layer switch key (the key: layer A, the key above: B) switches and does not sound.
+  bool layerSwitch(double pitch) {
+    if (layerKey_ < 0) return false;
+    const int note = static_cast<int>(std::lround(pitch - detune_));
+    if (note != layerKey_ && note != layerKey_ + 1) return false;
+    layer_ = note - layerKey_;
+    selectLayer();
+    return true;
+  }
+  // The playing layer's copy of a per-slice parameter.
+  int lp(int pid) const { return layer_ == 1 ? pp::layerPid(1, pid) : pid; }
+  // The slice a pitch plays (-1: none) and the semitones it is tuned by.
+  int sliceFor(double pitch, double& semis) const {
+    using namespace pp;
     const PluginState& s = *state_;
-    int note = static_cast<int>(std::lround(pitch - detune_));  // J-180: the written key (fine / channel pitch tune the slice)
+    const int note = static_cast<int>(std::lround(pitch - detune_));  // J-180: the written key (fine / channel pitch tune the slice)
     int k = -1;
     for (int j = 0; j < nSlices_ && k < 0; ++j)  // regions assigned to a key
-      if (static_cast<int>(std::lround(param(s, slParam2(j, SliceKey), -1))) == note) k = j;
-    double semis = 0;
+      if (static_cast<int>(std::lround(param(s, lp(slParam2(j, SliceKey)), -1))) == note) k = j;
+    semis = 0;
     if (k < 0) {
       k = note - base_;
       if (chromatic_ >= 0 && chromatic_ < nSlices_) {  // one slice played across the keyboard
@@ -1209,10 +1279,19 @@ class SlicerGen final : public Generator {
         k = chromatic_;
       }
     }
-    if (k < 0 || k >= nSlices_) return;
-    if (param(s, slParam(k, SliceMute)) >= 0.5f) return;
+    if (k < 0 || k >= nSlices_ || param(s, lp(slParam(k, SliceMute))) >= 0.5f) return -1;
     semis += pitch - note;  // J-74: the note's fine pitch (the rest after the key) still tunes the slice
-    const int cut = static_cast<int>(std::lround(param(s, slParam2(k, SliceCut))));
+    return k;
+  }
+  Voice* startVoice(uint32_t id, double pitch, float vel) {
+    using namespace pp;
+    SamplePtr smp = aux_ ? aux_->sample() : nullptr;
+    if (!smp || nSlices_ == 0) return nullptr;
+    const PluginState& s = *state_;
+    double semis = 0;
+    const int k = sliceFor(pitch, semis);
+    if (k < 0) return nullptr;
+    const int cut = static_cast<int>(std::lround(param(s, lp(slParam2(k, SliceCut)))));
     for (auto& v : voices_)
       if (v.on && (mono_ || (cut > 0 && v.cut == cut))) v.fadeStep = static_cast<float>(1.0 / std::max(1.0, 0.003 * sr_));
     Voice* pick = &voices_[next_++ % voices_.size()];
@@ -1228,42 +1307,70 @@ class SlicerGen final : public Generator {
     v.slice = k;
     v.cut = cut;
     v.fade = 1, v.fadeStep = 0;
-    v.delayLeft = static_cast<int64_t>(param(s, slParam2(k, SliceDelay)) * sr_);
+    v.delayLeft = static_cast<int64_t>(param(s, lp(slParam2(k, SliceDelay))) * sr_);
     double sliceStart = static_cast<double>(starts_[k]);
     double sliceEnd = !playToEnd_ && k + 1 < nSlices_ ? static_cast<double>(starts_[k + 1]) : static_cast<double>(smp->frames() - 1);
-    const double endPos = param(s, slParam2(k, SliceEnd), -1);
+    const double endPos = param(s, lp(slParam2(k, SliceEnd)), -1);
     if (endPos >= 0 && !playToEnd_) sliceEnd = std::clamp(endPos * static_cast<double>(smp->frames()), std::min(sliceStart + 1, static_cast<double>(smp->frames() - 1)), static_cast<double>(smp->frames() - 1));
-    v.start = sliceStart + param(s, slParam(k, SliceStart)) * (sliceEnd - sliceStart);
+    v.nmx = noteModX_, v.nmy = noteModY_, v.vel = vel;
+    Mods m0;
+    mods(v, m0);
+    double startShare = param(s, lp(slParam(k, SliceStart)));
+    if (m0.start != 0) startShare = std::clamp(startShare + m0.start, 0.0, 0.98);  // K-217: a source on the start point
+    v.start = sliceStart + startShare * (sliceEnd - sliceStart);
     v.end = sliceEnd;
-    v.reverse = reverse_ != (!proc_ && param(s, slParam(k, SliceReverse)) >= 0.5f);  // (processed: reversed offline)
+    v.reverse = reverse_ != (!proc_ && param(s, lp(slParam(k, SliceReverse))) >= 0.5f);  // (processed: reversed offline)
     v.pos = v.reverse ? v.end - 1 : v.start;
-    v.rate = std::pow(2.0, (pitch_ + semis + param(s, slParam(k, SlicePitch))) / 12.0) * smp->sampleRate / sr_ * speed_;
+    v.rate = std::pow(2.0, (pitch_ + semis + param(s, lp(slParam(k, SlicePitch)))) / 12.0) * smp->sampleRate / sr_ * speed_;
+    const double sliceSpeed = param(s, lp(slParam3(k, SliceSpeed)), 1);  // K-217
+    if (sliceSpeed != 1) v.rate *= std::clamp(sliceSpeed, 0.25, 4.0);
     v.notePitch = pitch, v.baseRate = v.rate, v.semi = 0, v.semiLeft = 0;
-    double g = dbToGain(param(s, slParam(k, SliceGain))) * (1 - velAmt_ + velAmt_ * vel);
-    double pl, pr;
-    panGains(param(s, slParam(k, SlicePan)), pl, pr);
-    v.gl = static_cast<float>(g * pl * panL_), v.gr = static_cast<float>(g * pr * panR_);
-    if (ftype_ > 0) {
-      double fc = cutoff_ * std::pow(2.0, param(s, slParam(k, SliceCutoff)) * 5.0 + ((modX_ - 0.5) + noteModX_) * 8.0);
-      double rs = std::clamp(reso_ + param(s, slParam2(k, SliceReso)) * 0.5 + ((modY_ - 0.5) + noteModY_), 0.0, 1.0);
-      fc = std::clamp(fc, 20.0, sr_ * 0.45);
-      v.filt[0].set(sr_, fc, rs), v.filt[1].set(sr_, fc, rs);
-      v.filt[0].reset(), v.filt[1].reset();
-    }
+    v.gain0 = dbToGain(param(s, lp(slParam(k, SliceGain))));
+    if (velDest_ == SlDestLevel) v.gain0 *= 1 - velAmt_ + velAmt_ * vel;
+    v.pan0 = param(s, lp(slParam(k, SlicePan)));
+    v.cutOct0 = param(s, lp(slParam(k, SliceCutoff))) * 5.0, v.reso0 = param(s, lp(slParam2(k, SliceReso))) * 0.5;
+    v.filt[0].reset(), v.filt[1].reset();
+    v.envSet = std::clamp(static_cast<int>(std::lround(param(s, lp(slParam3(k, SliceEnvSet))))), 0, kEnvSets - 1);
+    applySet(v);
+    for (auto& e : v.menv) e.level = 0, e.gate(true);
+    v.lfoPh = lfoRetrig_ ? 0.0 : lfoPhase_, v.lfoAge = 0;
+    control(v, m0);
     v.env.level = 0;
     v.env.gate(true);
     ra_.started(static_cast<int>(&v - voices_.data()), k);  // J-186
+    return &v;
   }
   // K-144: a slide plays the slice faster or slower by its interval from the played pitch.
   bool supportsGlide() const override { return !sx_; }
+  // K-217: a slide to a key that plays another slice moves on to that slice: it starts there
+  // at the pitch sounding now and glides to its own, while the old slice fades out.
   void onGlide(uint32_t id, double pitch, double seconds) override {
     if (sx_) return;
-    for (auto& v : voices_)
-      if (v.on && v.id == id) {
-        v.semiTo = pitch - v.notePitch;
-        v.semiLeft = std::max<int64_t>(1, static_cast<int64_t>(seconds * sr_));
-        v.semiStep = (v.semiTo - v.semi) / static_cast<double>(v.semiLeft);
+    const int64_t len = std::max<int64_t>(1, static_cast<int64_t>(seconds * sr_));
+    for (size_t i = 0; i < voices_.size(); ++i) {
+      Voice& v = voices_[i];
+      if (!v.on || v.id != id) continue;
+      double semis = 0;
+      const int k = state_ ? sliceFor(pitch, semis) : -1;
+      if (k >= 0 && k != v.slice && v.held) {
+        const double from = v.notePitch + v.semi;  // the pitch sounding now
+        const float vel = v.vel;
+        noteModX_ = v.nmx, noteModY_ = v.nmy;
+        v.id = 0, v.held = false;  // the old slice: no more events, out over the crossfade
+        Voice* n = startVoice(id, pitch, vel);
+        noteModX_ = noteModY_ = 0;
+        const double xf = std::clamp(seconds, 0.003, 0.03) * sr_;
+        if (v.fadeStep <= 0 || v.fadeStep < 1.0 / xf) v.fadeStep = static_cast<float>(1.0 / xf);
+        if (!n || n == &v) continue;
+        n->semi = from - pitch, n->semiTo = 0, n->semiLeft = len;
+        n->semiStep = -n->semi / static_cast<double>(len);
+        n->rate = n->baseRate * std::exp2(n->semi / 12.0);
+        return;
       }
+      v.semiTo = pitch - v.notePitch;
+      v.semiLeft = len;
+      v.semiStep = (v.semiTo - v.semi) / static_cast<double>(v.semiLeft);
+    }
   }
   void onNoteOff(uint32_t id) override {
     if (sx_) {
@@ -1275,11 +1382,15 @@ class SlicerGen final : public Generator {
       if (v.on && v.held && v.id == id) {
         v.held = false;
         v.env.gate(false);
+        for (auto& e : v.menv) e.gate(false);
       }
   }
   void onAllOff() override {
     sxe_.allOff();
-    for (auto& v : voices_) v.env.gate(false), v.held = false;
+    for (auto& v : voices_) {
+      v.env.gate(false), v.held = false;
+      for (auto& e : v.menv) e.gate(false);
+    }
   }
   void onKill() override {
     sxe_.kill();
@@ -1291,6 +1402,8 @@ class SlicerGen final : public Generator {
       return;
     }
     SamplePtr smp = aux_ ? aux_->sample() : nullptr;
+    lfoPhase_ += lfoRate_ * n / sr_;  // K-217: the free-running LFO
+    lfoPhase_ -= std::floor(lfoPhase_);
     if (!smp) {
       for (int i = 0; i < RegionActivity::kSlots; ++i) ra_.off(i);
       return;
@@ -1342,7 +1455,14 @@ class SlicerGen final : public Generator {
           v.semi = v.semiLeft == 0 ? v.semiTo : v.semi + v.semiStep;
           if ((v.semiLeft & 15) == 0) v.rate = v.baseRate * std::exp2(v.semi / 12.0);
         }
-        interpBl(*smp, v.pos, v.rate, bl, br);
+        if (--v.ctlLeft <= 0) {  // K-217: the modulation, every 16 samples
+          Mods m;
+          mods(v, m);
+          envelopes(v, m);
+          control(v, m);
+        }
+        const double rate = v.rate * v.modRate;
+        interpBl(*smp, v.pos, rate, bl, br);
         double l = bl, r = br;
         if (ftype_ > 0) {
           double io[2] = {l, r};
@@ -1361,7 +1481,7 @@ class SlicerGen final : public Generator {
           L[i] += static_cast<float>(l * g * v.gl);
           R[i] += static_cast<float>(r * g * v.gr);
         }
-        v.pos += v.reverse ? -v.rate : v.rate;
+        v.pos += v.reverse ? -rate : rate;
         v.fade -= v.fadeStep;
       }
       if (procSlot && procHi >= procLo && v.slice >= 0 && v.slice < nProcFrac_) {
@@ -1373,6 +1493,102 @@ class SlicerGen final : public Generator {
   }
 
  private:
+  // K-217: one control block's modulation of a voice: level (dB), cutoff (octaves),
+  // resonance, pitch (semitones), pan and start-point offsets.
+  struct Mods {
+    double db = 0, oct = 0, reso = 0, semi = 0, pan = 0, start = 0;
+  };
+  // A source value `x` (-0.5..0.5, centre: no change) on target `d` with amount `amt`;
+  // the scales keep the old fixed routes (X: +-4 octaves of cutoff, Y: +-0.5 resonance).
+  static void route(Mods& m, int d, double x, double amt) {
+    const double u = x * amt;
+    switch (d) {
+      case pp::SlDestLevel: m.db += 24.0 * u; break;
+      case pp::SlDestCutoff: m.oct += u * 8.0; break;
+      case pp::SlDestReso: m.reso += u; break;
+      case pp::SlDestPitch: m.semi += 24.0 * u; break;
+      case pp::SlDestPan: m.pan += 2.0 * u; break;
+      case pp::SlDestStart: m.start += std::max(0.0, 2.0 * u); break;
+      default: break;
+    }
+  }
+  void mods(const Voice& v, Mods& m) const {
+    route(m, xDest_, (modX_ - 0.5) + v.nmx, xAmt_);
+    route(m, yDest_, (modY_ - 0.5) + v.nmy, yAmt_);
+    // Velocity: full velocity is the slice as set, softer notes move down by the amount
+    // (level keeps its own law, at note on).
+    if (velDest_ != pp::SlDestLevel) route(m, velDest_, (static_cast<double>(v.vel) - 1.0) * 0.5, velAmt_);
+  }
+  // K-217: one envelope set, as configured (volume per sample, the others per block).
+  struct EnvSet {
+    double a = 0.001, d = 0.5, s = 1, r = 0.01;
+    struct Mod {
+      double a = 0.01, d = 0.3, s = 0, r = 0.3, amt = 0;
+    };
+    std::array<Mod, pp::SlEnvKinds> mod{};
+  };
+  void applySet(Voice& v) {
+    const EnvSet& es = sets_[static_cast<size_t>(v.envSet)];
+    v.env.set(sr_, es.a, es.d, es.s, es.r);
+    for (int k = 0; k < pp::SlEnvKinds; ++k) {
+      const auto& m = es.mod[static_cast<size_t>(k)];
+      v.menv[static_cast<size_t>(k)].set(sr_ / 16.0, m.a, m.d, m.s, m.r);
+    }
+  }
+  // The pan, pitch and filter envelopes' step (one control block) added to the modulation.
+  void envelopes(Voice& v, Mods& m) {
+    const EnvSet& es = sets_[static_cast<size_t>(v.envSet)];
+    for (int k = 0; k < pp::SlEnvKinds; ++k) {
+      const double amt = es.mod[static_cast<size_t>(k)].amt;
+      Adsr& e = v.menv[static_cast<size_t>(k)];
+      const double lv = e.next();
+      if (amt == 0) continue;
+      if (k == pp::SlEnvPan) m.pan += lv * amt;
+      else if (k == pp::SlEnvPitch) m.semi += lv * amt;
+      else m.oct += lv * amt;
+    }
+    // K-217: the LFO (per-note phase, or the free-running one), faded in over its delay.
+    if (lfoRetrig_) v.lfoPh += lfoRate_ * 16.0 / sr_;
+    else v.lfoPh = lfoPhase_;
+    v.lfoAge += 16;
+    if (lfoVol_ == 0 && lfoPan_ == 0 && lfoPitch_ == 0 && lfoCut_ == 0) return;
+    const double depth = lfoDelay_ > 0 ? std::min(1.0, static_cast<double>(v.lfoAge) / lfoDelay_) : 1.0;
+    const double w = lfoWave(v.lfoPh) * depth;
+    if (lfoVol_ != 0) m.db += 20.0 * std::log10(std::max(1e-4, 1.0 - lfoVol_ * depth * (0.5 - 0.5 * lfoWave(v.lfoPh))));
+    m.pan += w * lfoPan_, m.semi += w * lfoPitch_, m.oct += w * lfoCut_;
+  }
+  // The LFO's value (-1..1) at phase `ph` (cycles).
+  double lfoWave(double ph) const {
+    const double f = ph - std::floor(ph);
+    switch (lfoShape_) {
+      case pp::SlLfoTri: return f < 0.25 ? 4 * f : f < 0.75 ? 2 - 4 * f : 4 * f - 4;
+      case pp::SlLfoSawUp: return 2 * f - 1;
+      case pp::SlLfoSawDown: return 1 - 2 * f;
+      case pp::SlLfoSquare: return f < 0.5 ? 1.0 : -1.0;
+      case pp::SlLfoRandom: {  // a new value each cycle (held)
+        uint32_t x = static_cast<uint32_t>(static_cast<int64_t>(std::floor(ph)) * 2654435761u + 0x9E3779B9u);
+        x ^= x >> 15, x *= 0x2C1B3C6Du, x ^= x >> 12;
+        return (x & 0xFFFF) / 32767.5 - 1.0;
+      }
+      default: return std::sin(2.0 * 3.14159265358979323846 * f);
+    }
+  }
+  // The voice's gains, filter and pitch factor for the next block.
+  void control(Voice& v, const Mods& m) {
+    v.ctlLeft = 16;
+    double g = v.gain0;
+    if (m.db != 0) g *= dbToGain(m.db);
+    double pl, pr;
+    panGains(m.pan != 0 ? std::clamp(v.pan0 + m.pan, -1.0, 1.0) : v.pan0, pl, pr);
+    v.gl = static_cast<float>(g * pl * panL_), v.gr = static_cast<float>(g * pr * panR_);
+    v.modRate = m.semi != 0 ? std::exp2(m.semi / 12.0) : 1.0;
+    if (ftype_ > 0) {
+      double fc = cutoff_ * std::pow(2.0, v.cutOct0 + m.oct);
+      const double rs = std::clamp(reso_ + v.reso0 + m.reso, 0.0, 1.0);
+      fc = std::clamp(fc, 20.0, sr_ * 0.45);
+      v.filt[0].set(sr_, fc, rs), v.filt[1].set(sr_, fc, rs);
+    }
+  }
   // J-186: the slices the voices play, for the editor (processed slices: no read position,
   // the voices read the processed audio).
   void publish() {
@@ -1393,10 +1609,18 @@ class SlicerGen final : public Generator {
   const ChannelAux* aux_ = nullptr;
   const PluginState* state_ = nullptr;
   int64_t starts_[pp::kMaxSlices] = {};
+  int64_t startsA_[pp::kMaxSlices] = {}, startsB_[pp::kMaxSlices] = {};  // K-217: each layer's cuts
+  int nA_ = 0, nB_ = 0, layer_ = 0, layerParam_ = -1, layerKey_ = -1;
   int nSlices_ = 0;
   double sr_ = 44100, pitch_ = 0, speed_ = 1, fadeIn_ = 0, fadeOut_ = 0, cutoff_ = 20000, reso_ = 0, panL_ = 1, panR_ = 1, velAmt_ = 1;
   int base_ = 60, ftype_ = 0, chromatic_ = -1;
   double modX_ = 0.5, modY_ = 0.5, noteModX_ = 0, noteModY_ = 0, detune_ = 0;  // detune_: J-180
+  int xDest_ = pp::SlDestCutoff, yDest_ = pp::SlDestReso, velDest_ = pp::SlDestLevel;  // K-217
+  std::array<EnvSet, pp::kEnvSets> sets_{};
+  int lfoShape_ = 0;  // K-217: the LFO
+  bool lfoRetrig_ = true;
+  double lfoRate_ = 4, lfoDelay_ = 0, lfoVol_ = 0, lfoPan_ = 0, lfoPitch_ = 0, lfoCut_ = 0, lfoPhase_ = 0;
+  double xAmt_ = 1, yAmt_ = 1;
   bool reverse_ = false, playToEnd_ = false, hold_ = false, mono_ = false, declick_ = true;
   float vol_ = 0.8f;
   size_t next_ = 0;
@@ -1620,6 +1844,11 @@ class MidiOutGen final : public Generator {
   bool active() const override { return false; }
   void setMidiOut(MidiOutRing* r) override { out_ = r; }
   float noteBendRange() const override { return static_cast<float>(std::max(1, bendRange_)); }  // K-25
+  // K-99: MPE out: each note glides and takes its pressure and timbre on its own channel.
+  bool supportsGlide() const override { return mpe_; }
+  unsigned ownExpression() const override {
+    return mpe_ ? (1u << static_cast<unsigned>(ExprDim::Pressure)) | (1u << static_cast<unsigned>(ExprDim::Timbre)) : 0u;
+  }
   // Every message of the last process(), at its sample offset in the block, for the channels
   // listening on this channel's port (the engine delivers them in the same block).
   int takeMidiOut(MidiOutEvent* out, int max) override {
@@ -1659,6 +1888,22 @@ class MidiOutGen final : public Generator {
     bendRange_ = range;
     velScale_ = param(s, MoVelocity, 1);
     velCurve_ = static_cast<int>(param(s, MoVelCurve) + 0.5f);
+    sampleRate_ = ctx.sampleRate > 0 ? ctx.sampleRate : 44100.0;
+    const bool mpe = param(s, MoMpe) > 0.5f;
+    if (mpe != mpe_) {
+      onAllOff();  // the notes held move to other channels
+      mpe_ = mpe;
+      if (mpe_) {  // the MPE configuration (RPN 6 on channel 1: 15 member channels) and each member's bend range
+        auto rpn = [&](int c, int msb, int value) {
+          const uint8_t cc = static_cast<uint8_t>(0xB0 | c);
+          emit(cc, 101, 0), emit(cc, 100, static_cast<uint8_t>(msb)), emit(cc, 6, static_cast<uint8_t>(value)), emit(cc, 38, 0);
+          emit(cc, 101, 127), emit(cc, 100, 127);
+        };
+        rpn(0, 6, 15);
+        for (int c = 1; c < 16; ++c) rpn(c, 0, kMpeRange);
+        for (int& b : chanBend_) b = 8192;
+      }
+    }
     // Controller knobs: send when the value changes.
     for (int k = 0; k < kMoKnobs; ++k) {
       int value = static_cast<int>(std::lround(param(s, moKnob(k, MoKnobValue))));
@@ -1703,23 +1948,29 @@ class MidiOutGen final : public Generator {
     const int r7 = std::clamp(static_cast<int>(std::lround(static_cast<double>(np.release) * 127)), 0, 127);
     // The receiver knows a note by its key: an earlier note on this key ends first, or its
     // note-off would end the new one.
+    const int chan = mpe_ ? mpeChannel() : ch_;  // K-99: MPE: a member channel of its own
     for (auto& h : held_)
-      if (h.id != 0 && h.pitch == p) onNoteOff(h.id);
+      if (h.id != 0 && h.pitch == p && h.chan == chan) onNoteOff(h.id);
     for (auto& h : held_)
       if (h.id == 0) {
-        h = {id, p, v7, r7};
+        h = {id, p, v7, r7, chan, pitch, pitch, 0, 0};
         break;
       }
     if (bus_) bus_->set(port_, p, v7);
     const bool exact = std::fabs(pitch - static_cast<double>(p)) <= 1e-6;
-    emit(static_cast<uint8_t>(0x90 | ch_), static_cast<uint8_t>(p), static_cast<uint8_t>(v7), exact ? -1.0f : static_cast<float>(pitch),
+    if (mpe_) {  // its pitch off the key as its channel's bend; pressure and timbre start neutral
+      sendBend(chan, pitch - static_cast<double>(p));
+      emit(static_cast<uint8_t>(0xD0 | chan), 0, 0);
+      emit(static_cast<uint8_t>(0xB0 | chan), 74, 64);
+    }
+    emit(static_cast<uint8_t>(0x90 | chan), static_cast<uint8_t>(p), static_cast<uint8_t>(v7), exact ? -1.0f : static_cast<float>(pitch),
          np.detune);
   }
   void onNoteOff(uint32_t id) override {
     for (auto& h : held_)
       if (h.id == id && id != 0) {
         if (bus_) bus_->set(port_, h.pitch, 0);
-        emit(static_cast<uint8_t>(0x80 | ch_), static_cast<uint8_t>(h.pitch), static_cast<uint8_t>(h.release));
+        emit(static_cast<uint8_t>(0x80 | h.chan), static_cast<uint8_t>(h.pitch), static_cast<uint8_t>(h.release));
         h = {};
       }
   }
@@ -1727,15 +1978,43 @@ class MidiOutGen final : public Generator {
     for (auto& h : held_)
       if (h.id) {
         if (bus_) bus_->set(port_, h.pitch, 0);
-        emit(static_cast<uint8_t>(0x80 | ch_), static_cast<uint8_t>(h.pitch), static_cast<uint8_t>(h.release));
+        emit(static_cast<uint8_t>(0x80 | h.chan), static_cast<uint8_t>(h.pitch), static_cast<uint8_t>(h.release));
         h = {};
+      }
+  }
+  // K-99 (MPE out): a slide, porta or bend line glides the note's own channel bend.
+  void onGlide(uint32_t id, double pitch, double seconds) override {
+    if (!mpe_) return;
+    for (auto& h : held_)
+      if (h.id == id && id != 0) {
+        h.glideTo = pitch;
+        h.glideLeft = std::max<int64_t>(1, static_cast<int64_t>(seconds * sampleRate_));
+        h.glideStep = (pitch - h.cur) / static_cast<double>(h.glideLeft);
+      }
+  }
+  void onExpr(uint32_t id, ExprDim dim, float value) override {
+    if (!mpe_ || dim == ExprDim::Pitch) return;
+    const uint8_t v7 = static_cast<uint8_t>(std::clamp(static_cast<int>(std::lround(value * 127.0f)), 0, 127));
+    for (auto& h : held_)
+      if (h.id == id && id != 0) {
+        if (dim == ExprDim::Pressure) emit(static_cast<uint8_t>(0xD0 | h.chan), v7, 0);
+        else emit(static_cast<uint8_t>(0xB0 | h.chan), 74, v7);
       }
   }
   void onKill() override {
     onAllOff();
     emit(static_cast<uint8_t>(0xB0 | ch_), 123, 0);
   }
-  void render(float*, float*, int) override {}
+  void render(float*, float*, int n) override {
+    if (!mpe_) return;
+    for (auto& h : held_) {  // K-99: gliding notes: one bend per block on their own channel
+      if (!h.id || h.glideLeft <= 0) continue;
+      const int64_t step = std::min<int64_t>(h.glideLeft, n);
+      h.glideLeft -= step;
+      h.cur = h.glideLeft == 0 ? h.glideTo : h.cur + h.glideStep * static_cast<double>(step);
+      sendBend(h.chan, h.cur - static_cast<double>(h.pitch));
+    }
+  }
   // J-92: pitch bend and channel pressure from the keyboard go out on this channel; K-144: so do
   // key pressure, program changes it is sent and controllers, the pedals (CC 64, 66, 67) included: the receiver decides what
   // they do (with Sustain holds notes on, Gridline also holds this channel's note-offs). Slide
@@ -1765,7 +2044,37 @@ class MidiOutGen final : public Generator {
     int pitch = 0;
     int vel = 100;
     int release = 64;
+    int chan = 0;                      // K-99: the MIDI channel it went out on
+    double cur = 0, glideTo = 0;       // K-99 (MPE): its pitch now and where it glides
+    double glideStep = 0;
+    int64_t glideLeft = 0;
   };
+  // K-99: MPE (lower zone): member channels 1..15 (MIDI 2..16), each note on the one free the longest.
+  static constexpr int kMpeRange = 48;  // semitones of a full member-channel bend (the MPE default)
+  int mpeChannel() {
+    int best = 1;
+    int64_t bestAt = INT64_MAX;
+    bool bestFree = false;
+    for (int c = 1; c < 16; ++c) {
+      bool busy = false;
+      for (const auto& h : held_) busy = busy || (h.id != 0 && h.chan == c);
+      if (busy && bestFree) continue;
+      if ((!busy && !bestFree) || chanAt_[c] < bestAt) best = c, bestAt = chanAt_[c], bestFree = !busy;
+    }
+    chanAt_[best] = ++chanClock_;
+    return best;
+  }
+  void sendBend(int chan, double semis) {
+    const int v = std::clamp(8192 + static_cast<int>(std::lround(semis / kMpeRange * 8192.0)), 0, 16383);
+    if (v == chanBend_[chan & 15]) return;
+    chanBend_[chan & 15] = v;
+    emit(static_cast<uint8_t>(0xE0 | (chan & 15)), static_cast<uint8_t>(v & 0x7F), static_cast<uint8_t>(v >> 7));
+  }
+  bool mpe_ = false;
+  double sampleRate_ = 44100.0;
+  int64_t chanAt_[16] = {};
+  int64_t chanClock_ = 0;
+  int chanBend_[16] = {8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192};
   std::array<MidiOutEvent, 1024> sent_{};
   int sentCount_ = 0;
   std::array<Held, 128> held_{};

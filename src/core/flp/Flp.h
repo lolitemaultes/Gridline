@@ -250,6 +250,10 @@ struct FlTarget {
   double toNormalized(double fl) const { return convert ? convert(fl) : min + fl * (max - min); }
 };
 inline constexpr uint32_t kFlTempoTarget = 0x40000005u;
+// K-152: the main swing (global controller 1, 0..1 = 0..128). UNVERIFIED: taken from FL's public
+// MIDI scripting constant (REC_MainShuffle = REC_Global + 1); none of the 164 projects FL ships
+// automates swing (they only automate tempo, 0x40000005), so no real file confirms it yet.
+inline constexpr uint32_t kFlSwingTarget = 0x40000001u;
 // FL target id (event 227 / pattern events; see FlpArrangement.cpp) → parameter.
 // Valid after importArrangement (needs the decoded plugins and audio channels).
 bool resolveFlTarget(Context& c, uint32_t target, FlTarget& out);

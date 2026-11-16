@@ -706,7 +706,8 @@ class Lv2Backend final : public Backend {
         if (n.midi[0] < 0x80 || n.midi[0] >= 0xF0) return;  // channel messages only
         break;
       }
-      case NoteEvent::Tuning: return;
+      case NoteEvent::Tuning:
+      case NoteEvent::Expression: return;
     }
     int i = eventCount_++;
     while (i > 0 && events2_[i - 1].offset > e.offset) {

@@ -758,5 +758,30 @@ int main() {
     Audio tr = rr.take();
     expect(tr.frames() == 100 + 640 && tr.L[99] == 0.f && tr.L[100] == 0.25f, "slot capture feeds the recorder with pre-roll");
   }
+  {
+    // GitHub #69: after a time stretch of the selection, the selection covers the stretched audio.
+    Audio src = makeAudio(44100, 1, 44100);
+    for (int64_t i = 0; i < src.frames(); ++i) src.L[static_cast<size_t>(i)] = 0.3f * static_cast<float>(std::sin(i * 0.05));
+    const Content c = makeContent(src);
+    const Range sel{16200, 33500};  // 0.367 s to 0.760 s, as in the report
+    for (Stretch m : {Stretch::Elastic, Stretch::Tape}) {
+      const Content n = m == Stretch::Tape ? stretch(c, sel, 1.0, -24.0, m, 1) : stretch(c, sel, 4.0, 0.0, m, 1);
+      const int64_t grown = n.frames() - c.frames();
+      const Range after = rangeAfterEdit(c, n, sel);
+      expect(grown > 3 * sel.len() - 200 && after.a == sel.a && after.b == sel.b + grown && after.len() == sel.len() + grown,
+             "a stretched selection (x4, or two octaves down by varispeed) covers the new, longer audio");
+      std::printf("# #69 %s: %lld frames -> %lld, selection [%lld, %lld)\n", stretchName(m), static_cast<long long>(sel.len()),
+                  static_cast<long long>(after.len()), static_cast<long long>(after.a), static_cast<long long>(after.b));
+    }
+    const Content shorter = stretch(c, sel, 0.5, 0.0, Stretch::Elastic, 1);
+    const Range s2 = rangeAfterEdit(c, shorter, sel);
+    expect(s2.a == sel.a && std::llabs(s2.len() - sel.len() / 2) < 64 && s2.b <= shorter.frames(), "a shortened selection shrinks with it");
+    Audio clip = makeAudio(44100, 1, 1000);
+    const Content pasted = replaceRange(c, sel, clip);
+    const Range s3 = rangeAfterEdit(c, pasted, sel);
+    expect(s3.a == sel.a && s3.len() == 1000, "a paste over the selection leaves the pasted audio selected");
+    const Range s4 = rangeAfterEdit(c, makeContent(makeAudio(44100, 1, 20000)), sel);
+    expect(s4.a <= s4.b && s4.b <= 20000, "the range never runs past the end of the edited file");
+  }
   return finish();
 }

@@ -48,6 +48,7 @@ void timeFormatMenu(App& a);                    // right-click on the song posit
 void stopMenuItems(App& a);                     // right-click on the stop button
 void stopPressed(App& a);                       // the stop button (remember seek time; J-109: twice = panic)
 void stopButtonPressed(App& a);                 // the button itself: pressed while stopped, also back to the beginning
+void tracksStop(App& a);                        // R02-11: the Tracks layout: stop in place; stopped: to the start (or the cycle's)
 void panicPressed(App& a);                      // J-109: stop and silence everything now
 // J-112: the Play the user presses while the transport is stopped (Space, the
 // Play button, the Play / Pause remote / MIDI / MMC action). Plugin playback

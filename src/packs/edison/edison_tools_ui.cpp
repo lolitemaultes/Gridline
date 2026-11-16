@@ -325,7 +325,8 @@ void drawToolDialogs(App& a, Session& s) {
         const double f = s.tStretch, st = s.tSemis;
         const Stretch m = static_cast<Stretch>(s.tMode);
         const int qq = s.tQuality;
-        runEdit(a, s, s.tMode == 1 ? "Varispeed" : "Time stretch / pitch shift", [tr, f, st, m, qq](const Content& c) { return stretch(c, tr, f, st, m, qq); });
+        runEdit(a, s, s.tMode == 1 ? "Varispeed" : "Time stretch / pitch shift", [tr, f, st, m, qq](const Content& c) { return stretch(c, tr, f, st, m, qq); },
+                tr);
       }
       break;
     }

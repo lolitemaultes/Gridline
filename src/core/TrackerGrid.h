@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 #include "Song.h"
+#include "TrackerChannel.h"
 
 namespace gl {
 class Document;
@@ -69,7 +70,7 @@ constexpr int kMaxColumns = 16;
 Track buildTrack(const Song& s, const Pattern& p, ObjectId channel, const Grid& g, int minColumns = 1);
 
 // ---- text ----
-std::string noteText(int pitch);    // "C-4", "C#4" (Gridline's names: 60 = C-4)
+std::string noteText(int pitch, bool flats = false);  // ("Db4" with flats)    // "C-4", "C#4" (Gridline's names: 60 = C-4)
 std::string hex2(int v);            // "7F"
 std::string rowText(int row, bool hex);  // "1F" / "31" (3 digits past FF / 99)
 
@@ -142,6 +143,7 @@ Result interpolate(std::vector<Note>& notes, const Grid& g, int r0, int r1, Fiel
 struct Block {
   int rows = 0;
   std::vector<std::vector<Note>> tracks;
+  bool carried[4] = {true, true, true, true};  // the parts it holds (Part order: note, volume, pan, effect; the copy mask)
   bool empty() const { return tracks.empty() || rows <= 0; }
 };
 std::vector<Note> copyRows(const std::vector<Note>& notes, const std::vector<uint8_t>& steps, const std::vector<StepProps>& props,
@@ -150,6 +152,67 @@ std::vector<Note> copyRows(const std::vector<Note>& notes, const std::vector<uin
 Result cutRows(std::vector<Note>& notes, std::vector<uint8_t>& steps, const Grid& g, int r0, int r1);
 // Pastes one track of a block at `row`: the notes starting in the rows it covers go first.
 Result pasteRows(std::vector<Note>& notes, std::vector<uint8_t>& steps, const Grid& g, int row, int rows, const std::vector<Note>& block);
+
+// ---- clipboard masks (the Advanced edit box) ----
+// The parts of a cell the masks act on: the note itself (pitch, place and length), its volume
+// (velocity), its pan and its effect letters.
+enum class Part : uint8_t { Note, Volume, Pan, Effect, Count };
+constexpr int kParts = static_cast<int>(Part::Count);
+static_assert(kParts == 4, "Block::carried holds one flag per part");
+struct Masks {
+  bool copy[kParts] = {true, true, true, true};         // parts a copy or cut takes
+  bool paste[kParts] = {true, true, true, true};        // parts a paste writes
+  bool transparent[kParts] = {false, false, false, false};  // a pasted part left empty keeps what is there
+};
+// A part at Gridline's default (no volume, pan or effect set: velocity 100, centre pan, no letter).
+bool partEmpty(const Note& n, Part p);
+// Copies part `p` (not the note part) from `from` into `to`.
+void copyPart(const Note& from, Note& to, Part p);
+// The copy mask on copied rows: the parts it leaves out go back to their defaults.
+void maskCopied(std::vector<Note>& block, const Masks& m);
+// A paste through the masks. `carried`: the parts the block holds (the copy mask when it was
+// taken). Row by row: with the note part pasted, the block's notes replace the row's (each keeps
+// the parts not pasted from the note it replaces, the first with the first); transparent, a row
+// the block leaves empty keeps its notes. Without the note part, the row's notes keep their
+// pitch and place and take the pasted parts from the block's notes on that row, in order. A
+// transparent part does not overwrite with an empty one.
+Result pasteRowsMasked(std::vector<Note>& notes, std::vector<uint8_t>& steps, const Grid& g, int row, int rows, const std::vector<Note>& block,
+                       const bool carried[kParts], const Masks& m);
+
+// ---- an imported module's cells (K-106; Note::tracker, core/TrackerStream.h) ----
+// A note imported from a module carries the module's cells of the rows it sounds through: its
+// own row (note, instrument, volume column, effect) and the rows after it on its tracker channel
+// (volume column and effects that act on the sounding voice). The Tracker shows them in the
+// module's own notation; nothing is converted, so showing them changes nothing.
+//
+// The cells of `n` from its first row: out[k] is the module cell of row (start row + k). At most
+// `maxRows`. Empty for a note that carries none.
+std::vector<tracker::Cell> moduleRows(const Note& n, int maxRows);
+// The imported note sounding in `column` on `row` whose cells cover the row: its index in
+// `notes`, and `k` the row's place in its cells. -1 when none.
+int moduleNoteAt(const std::vector<Note>& notes, const Track& t, const Grid& g, int row, int column, int* k);
+// The volume column as the classic editor writes it: "40" (set volume, 00 to 40), "-3", "+3",
+// "D3", "U3" (fine down, up), "S3" (vibrato speed), "V3" (vibrato), "P8" (pan), "L3", "R3" (pan
+// slides), "M3" (glide). "" when empty.
+std::string moduleVolText(uint8_t vol);
+// The effect: its digit or letter (0 to 9, A to Z) and two hex digits, "" when empty.
+std::string moduleEffectText(uint8_t efx, uint8_t param);
+// The cell of row `k` of a stream replaced, in place (Gridline stores only these bytes, so the
+// edit is exact and nothing else in the stream moves). False: no such row, or the stream would
+// grow past what a voice keeps.
+bool setStreamCell(std::vector<uint8_t>& stream, int k, const tracker::Cell& c);
+// Edits of a module cell that change only that cell's own bytes and the voice it is on, and
+// that Gridline therefore stores exactly: the volume column's set volume (0 to 0x40, -1 clears
+// it) and the effects 8 (set pan) and C (set volume) (`efx` -1 clears it). Any other change of a
+// module cell is refused with the reason (the rest of the module was played out at import).
+Result setModuleVolume(std::vector<Note>& notes, const Track& t, const Grid& g, int row, int column, int volume);
+Result setModuleEffect(std::vector<Note>& notes, const Track& t, const Grid& g, int row, int column, int efx, int param);
+
+// R8-03: the rows of an imported pattern that the song plays. A module's pattern of 33 rows comes
+// in as whole bars (48 rows) and its song clips play the first 33: the rows past the furthest any
+// clip of it reaches never play. g.rows for every other pattern (no module notes, a clip playing
+// it whole or looping it, or no clip).
+int playedRows(const Song& s, const Pattern& p, const Grid& g);
 
 // ---- the song ----
 // One order list entry: a slice of the song between two places where a pattern clip starts or ends.
@@ -169,6 +232,11 @@ std::vector<OrderEntry> orderList(const Song& s);
 bool hasPatternEntries(const Song& s);
 // The pattern tick `pattern` plays at song position `pos`, -1 when no clip of it plays there.
 Tick patternTickAt(const Song& s, ObjectId pattern, Tick pos);
+// GitHub #70: where the editors of `pattern` (piano roll, tracker) show the play position, in
+// pattern ticks with the fraction kept so the line glides (-1: it is not playing there). Pattern
+// mode: the engine's position while `pattern` is the pattern playing. Song mode: the pattern tick
+// under the song position `pos`, through the top clip of the pattern there (patternTickAt).
+double patternPlayPos(const Song& s, ObjectId pattern, bool songMode, ObjectId playingPattern, double pos);
 // The pattern of the top pattern clip under `pos` (kNoId: none).
 ObjectId patternAt(const Song& s, Tick pos);
 // Gridline's own pattern number (1-based, as Studio names it).
@@ -187,5 +255,10 @@ OrderEdit orderRemove(Document& d, int at);
 //   pattern: entry `at` plays `pattern` instead (its one clip changes pattern; when the clip takes
 //            its pattern's length, the song after it moves by the difference).
 OrderEdit orderSetPattern(Document& d, int at, ObjectId pattern);
+// R6-02: a pattern's new length, the song keeping its order: each song clip that plays the pattern's
+// own length grows or shrinks with it and the clips after it move by the difference (the song gets
+// longer or shorter; two entries never overlap). One undo step with the length change when the
+// caller groups them; a group of its own otherwise.
+void setPatternLengthInSong(Document& d, ObjectId pattern, int bars, int stepsPerBar);
 
 }  // namespace gl::trk

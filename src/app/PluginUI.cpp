@@ -21,8 +21,10 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Json.h"
 #include "../core/KnobMagnet.h"
+#include "../core/TimeKnob.h"
 #include "../core/Project.h"
 #include "../packs/modulation/junction.h"
+#include "../packs/modulation/modulation_ui.h"
 #include "App.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
@@ -895,6 +897,7 @@ void paramMenu(App& a, ParamId pid, const ParamDesc& d, bool* wantType) {
   ImGui::Separator();
   automationMenuItems(a, pid);  // J-5: create / edit automation, edit events, record
   ImGui::Separator();
+  packs::modulation::drawLinkMenu(a, pid);  // GitHub #60: internal controllers, as on every other knob
   remoteLinkMenuItems(a, pid);  // MIDI remote control (MidiUi.cpp)
 }
 
@@ -946,7 +949,13 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   const double pressed = ui::ValueAtPress(val);
   bool changed = false;
-  double n = d.toNormalized(val);
+  // K-230: a delay time knob (core/TimeKnob.h) brings its own magnets and an even travel, unless
+  // the editor set magnets of its own for this knob.
+  std::optional<timeknob::Spec> tk;
+  if (magnetsRaw().empty() && magnetsNext().empty()) tk = timeknob::forParam(a.doc.song(), pid);
+  auto posOf = [&](double v) { return tk ? timeknob::toPos(*tk, d, v) : d.toNormalized(v); };
+  auto valOf = [&](double p, bool coarse) { return tk ? timeknob::toValue(*tk, d, p, coarse) : d.fromNormalized(p); };
+  double n = posOf(val);
   ImGuiID id = ImGui::GetItemID();
   static std::map<ImGuiID, double> accum;  // choice params step through accumulated motion
   // Track sliders: the pointer position and the normalized value at the grab (re-anchored when Shift changes).
@@ -958,9 +967,14 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
   static Anchor anchor;
   const float along = horizontal ? io.MousePos.x : io.MousePos.y;
   // K-147: soft magnets for this knob (pui::nextMagnets), shaped in drag pixels on screen.
-  normaliseMagnets(d);
   std::vector<double> mags;
-  mags.swap(magnetsNext());
+  if (tk) {
+    for (double m : tk->magnets)
+      if (m >= std::min(d.min, d.max) && m <= std::max(d.min, d.max)) mags.push_back(timeknob::toPos(*tk, d, m));
+  } else {
+    normaliseMagnets(d);
+    mags.swap(magnetsNext());
+  }
   const double zone = static_cast<double>(magnet::kZonePx) / (static_cast<double>(std::max(40.0f, pixels)) * std::max(0.1f, edzoomui::currentZoom()));
   static bool fineDrag = false;
   if (ImGui::IsItemActivated()) {
@@ -978,7 +992,7 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
     if (along != anchor.pos) {
       const double dir = horizontal ? 1.0 : -1.0;  // vertical: up raises the value
       const double nn = std::clamp(anchor.n + dir * (along - anchor.pos) / track->len * (anchor.fine ? 0.125 : 1.0), 0.0, 1.0);
-      const double v = d.fromNormalized(mags.empty() || anchor.fine ? nn : magnet::shape(nn, mags, zone));  // K-147
+      const double v = valOf(mags.empty() || anchor.fine ? nn : magnet::shape(nn, mags, zone), !anchor.fine);  // K-147
       if (v != val) {
         val = v;
         a.doc.setParam(pid, val, true);
@@ -995,7 +1009,7 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
     if (delta != 0) {
       double speed = (io.KeyShift ? 0.12 : 1.0) / std::max(40.0f, pixels);
       acc = std::clamp(acc + delta * speed, 0.0, 1.0);
-      double v = d.fromNormalized(mags.empty() || fineDrag ? acc : magnet::shape(acc, mags, zone));
+      double v = valOf(mags.empty() || fineDrag ? acc : magnet::shape(acc, mags, zone), !fineDrag);
       if (v != val) {
         val = v;
         a.doc.setParam(pid, val, true);
@@ -1007,8 +1021,8 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
   if (hov && !act && io.MouseWheel != 0) {
     double step = d.kind == ParamKind::Choice ? 1.0 / std::max<size_t>(1, d.choices.empty() ? 1 : d.choices.size() - 1)
                                               : (io.KeyShift ? 0.005 : 0.025);
-    double v = d.fromNormalized(std::clamp(n + io.MouseWheel * step, 0.0, 1.0));
-    if (!mags.empty() && !io.KeyShift) v = d.fromNormalized(magnet::step(n, mags, io.MouseWheel > 0 ? 1 : -1));  // K-147: magnet to magnet
+    double v = valOf(std::clamp(n + io.MouseWheel * step, 0.0, 1.0), false);
+    if (!mags.empty() && !io.KeyShift) v = valOf(magnet::step(n, mags, io.MouseWheel > 0 ? 1 : -1), true);  // K-147: magnet to magnet
     if (v != val) {
       val = v;
       a.doc.setParam(pid, val, false);
@@ -1017,7 +1031,7 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
   }
   if (ui::ParamDoubleClickReset(pid, d, val, pressed)) {  // J-136: or opens "##type" at the default
     changed = true;
-    accum[id] = d.toNormalized(val);  // a drag that follows starts from the default
+    accum[id] = posOf(val);  // a drag that follows starts from the default
     anchor = {along, accum[id], io.KeyShift};
   }
   bool wantType = false;
@@ -1029,12 +1043,13 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
   if (wantType) ImGui::OpenPopup("##type");
   ui::ParamTypePopup(pid, d);
   if (hov || act) {
-    a.setHint(d.name + ": " + d.format(val) + "   (" + ui::ParamControlHint() + ")");
+    const std::string shown = tk ? timeknob::readout(*tk, val, a.doc.song().tempo, false) : d.format(val);  // K-230
+    a.setHint(d.name + ": " + shown + "   (" + ui::ParamControlHint() + ")");
     if (act || ImGui::GetCurrentContext()->HoveredIdTimer > 0.5f) {
       ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(7, 4));
       ImGui::BeginTooltip();
       ImGui::PushFont(a.fontMono, 11.0f);
-      ImGui::TextUnformatted(d.format(val).c_str());
+      ImGui::TextUnformatted(shown.c_str());
       ImGui::PopFont();
       ImGui::EndTooltip();
       ImGui::PopStyleVar();
@@ -1077,6 +1092,27 @@ const std::vector<double>& pendingMagnets(const ParamDesc& d) {
   return magnetsNext();
 }
 
+KnobTravel knobTravel(App& a, ParamId pid, const ParamDesc& d) {
+  KnobTravel tv;
+  normaliseMagnets(d);
+  if (!magnetsNext().empty()) {
+    tv.magnets = magnetsNext();
+    return tv;
+  }
+  if (auto tk = timeknob::forParam(a.doc.song(), pid)) {
+    for (double m : tk->magnets)
+      if (m >= std::min(d.min, d.max) && m <= std::max(d.min, d.max)) tv.magnets.push_back(timeknob::toPos(*tk, d, m));
+    tv.offset = tk->offset;
+  }
+  return tv;
+}
+
+double KnobTravel::pos(const ParamDesc& d, double v) const {
+  timeknob::Spec s;
+  s.offset = offset;
+  return timeknob::toPos(s, d, v);
+}
+
 void magnetTicks(ImDrawList* dl, ImVec2 c, float r, float a0, float a1, const std::vector<double>& at, ImU32 col, double current) {
   for (double m : at) {
     const float an = a0 + static_cast<float>(std::clamp(m, 0.0, 1.0)) * (a1 - a0);
@@ -1111,7 +1147,7 @@ bool dragParamTrack(App& a, ParamId pid, const ParamDesc& d, double& val, float 
   const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
   dv.start = trackStart, dv.len = trackLen, dv.horizontal = horizontal;
   dv.cross = horizontal ? (r0.y + r1.y) * 0.5f : (r0.x + r1.x) * 0.5f;
-  dv.norm = d.toNormalized(val), dv.value = val, dv.frame = ImGui::GetFrameCount();
+  dv.norm = knobTravel(a, pid, d).pos(d, val), dv.value = val, dv.frame = ImGui::GetFrameCount();
   return changed;
 }
 bool devTrack(uint32_t paramIndex, DevTrack& out) {
@@ -1170,10 +1206,11 @@ bool knobImpl(App& a, const PluginTarget& t, int param, const char* label, float
   ImGui::InvisibleButton("##k", ImVec2(radius * 2, radius * 2));
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   audit::nextKind(align::kKnob);  // J-128
+  const KnobTravel tv = knobTravel(a, pid, *d);  // K-230: a delay time knob's even travel
   bool changed = dragParam(a, pid, *d, val, 160.0f, false);
   bool bip = d->min < 0 && d->max > 0;
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  drawDial(dl, ImVec2(p.x + cell * 0.5f, p.y + radius), radius, d->toNormalized(val), bip, hov, act, isLinked(a, pid),
+  drawDial(dl, ImVec2(p.x + cell * 0.5f, p.y + radius), radius, tv.pos(*d, val), bip, hov, act, isLinked(a, pid),
            a.midiLearning && a.midiLearnTarget == pid);
   if (text) {
     std::string vs = d->format(val);

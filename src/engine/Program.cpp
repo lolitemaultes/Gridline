@@ -701,6 +701,12 @@ double swingWarp(double x, double swing, Tick stepTicks, int stepsPerBar) {
   return barStart + pairStart + w;
 }
 
+namespace {
+// K-152: the song swing a pattern is compiled with (< 0: Song::swing). Swing automation compiles a
+// pattern clip's passes with the swing the automation has where each pass starts.
+thread_local double gSwingOverride = -1.0;
+}  // namespace
+
 std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, const Channel& c) {
   std::vector<NoteEv> out;
   const ObjectId channel = c.id;
@@ -712,7 +718,8 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
   if (auto lt = p.stepLoop.find(channel); lt != p.stepLoop.end() && lt->second > 0 && static_cast<size_t>(lt->second) < total)
     loop = static_cast<size_t>(lt->second);
   // Song swing x the channel's share (J-138: steps and piano-roll notes alike).
-  const double swing = std::clamp(static_cast<double>(song.swing) * static_cast<double>(c.swingMix), 0.0, 1.0);
+  const double songSwing = gSwingOverride >= 0.0 ? gSwingOverride : static_cast<double>(song.swing);  // K-152
+  const double swing = std::clamp(songSwing * static_cast<double>(c.swingMix), 0.0, 1.0);
   // K-151: the song's swing shape (the classic step swing unless a preset or the groove editor
   // changed it; that one places every step and note exactly as swingWarp does).
   const groove::Warp gw = groove::makeWarp(song, &p, song.groove.shape, swing,
@@ -1403,7 +1410,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   prog->flatMap.setConstant(song.tempo, song.ppq);
   // Compiles one lane (false: target not automatable, e.g. song parameters).
   auto compileLane = [&](AutomationLane&& lane, std::vector<ProgAutoLane>& out) {
-    if (lane.owner == kSongId) return false;  // tempo: tempo map; swing / master pitch: not automated
+    if (lane.owner == kSongId) return false;  // tempo: tempo map; swing: pattern clips (K-152); master pitch: not automated
     ProgAutoLane al;
     ParamId target{lane.owner, lane.index};
     if (!resolveTarget(song, *prog, target, al.target)) return false;
@@ -1490,6 +1497,17 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   }
   const std::vector<ClipFades> clipFades = resolveAllFades(song, prog->tempoMap);  // J-38
   bool deferred = false;  // J-196: some clip's render waits for the edit to settle
+  // K-152: the song's swing automation (song mode), if any: pattern clips follow it pass by pass.
+  std::vector<AutomationLane> songLanes;
+  const AutomationLane* swingLane = nullptr;
+  for (const auto& am : song.automations)
+    if (am.owner == kSongId && am.index == static_cast<uint32_t>(SongParam::Swing)) {
+      songLanes = automationLanes(song);
+      for (const auto& l : songLanes)
+        if (l.targets(kSongId, static_cast<uint32_t>(SongParam::Swing))) swingLane = &l;
+      break;
+    }
+  std::map<std::pair<ObjectId, int>, std::vector<std::vector<NoteEv>>> swingVariants;
   std::unordered_set<ObjectId> mutedClips;  // K-64: they keep what they had (clipRenders_, clipVoices_)
   for (size_t clipIdx = 0; clipIdx < song.playlist.size(); ++clipIdx) {
     const Clip& clip = song.playlist[clipIdx];
@@ -1522,9 +1540,24 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     const Tick len = song.clipLength(clip);
     const std::vector<ClipPass> passes = clipPasses(song, clip);
     const bool play = clipplay::active(clip);
-    for (size_t ci = 0; ci < pp->perChannel.size(); ++ci)
-      for (const ClipPass& ps : passes)
-        for (const auto& e : pp->perChannel[ci]) {
+    for (const ClipPass& ps : passes) {
+      // K-152: swing automation: this pass plays with the swing the automation has where it starts.
+      const std::vector<std::vector<NoteEv>>* per = &pp->perChannel;
+      if (swingLane) {
+        const int q = static_cast<int>(std::lround(std::clamp(swingLane->valueAt(static_cast<double>(clip.start + ps.at)), 0.0, 1.0) * 1000.0));
+        if (q != static_cast<int>(std::lround(std::clamp(static_cast<double>(song.swing), 0.0, 1.0) * 1000.0))) {
+          auto& v = swingVariants[{clip.pattern, q}];
+          if (v.empty())
+            if (const Pattern* pat = song.pattern(clip.pattern)) {
+              gSwingOverride = q / 1000.0;
+              for (const auto& c : song.channels) v.push_back(compilePatternChannel(song, *pat, c.id));
+              gSwingOverride = -1.0;
+            }
+          if (v.size() == pp->perChannel.size()) per = &v;
+        }
+      }
+      for (size_t ci = 0; ci < per->size(); ++ci)
+        for (const auto& e : (*per)[ci]) {
           if (e.on < ps.content || e.on >= ps.content + ps.len) continue;
           NoteEv x = e;
           x.on = clip.start + ps.at + (e.on - ps.content);
@@ -1533,6 +1566,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
           if (noteOffTick(x) > static_cast<double>(clip.start + len)) x.off = clip.start + len, x.offFrac = 0;
           prog->channels[ci].song.push_back(x);
         }
+    }
   }
   // --- live area: clips compiled for launching (content ticks from 0) ---
   for (size_t k = 0; k < liveIdx.size(); ++k) {

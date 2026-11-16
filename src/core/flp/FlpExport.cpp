@@ -364,6 +364,7 @@ bool Exporter::flTarget(ParamId id, uint32_t& target) {
   std::vector<uint32_t> cand;
   if (id.owner == kSongId) {
     if (id.index == static_cast<uint32_t>(SongParam::Tempo)) cand.push_back(0x40000005u);
+    if (id.index == static_cast<uint32_t>(SongParam::Swing)) cand.push_back(kFlSwingTarget);  // K-152
   } else if (int ch = im.ch(id.owner); ch >= 0) {
     const uint32_t hi = static_cast<uint32_t>(ch) << 16;
     switch (id.index) {

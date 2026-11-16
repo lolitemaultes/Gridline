@@ -1,7 +1,9 @@
 #include "MidiUi.h"
 #include "DisplayConfirm.h"
 #include "../core/Platform.h"
+#include "../core/DawProject.h"
 #include "HostedUi.h"
+#include "LogicPlugins.h"
 #include "McpUi.h"
 #include "OscUi.h"
 #include "App.h"
@@ -9,6 +11,7 @@
 #include "../core/ChromeOs.h"
 #include "LayoutPresets.h"
 #include "LiveLook.h"
+#include "../core/SelectionFollow.h"
 #include "../core/TrackModes.h"
 #include "../core/LayoutShell.h"
 #include "../core/Crash.h"
@@ -25,6 +28,7 @@
 #include "../core/ExternalDrop.h"
 #include "../core/Presets.h"
 #include <algorithm>
+#include <cstring>
 #include <cctype>
 #include <chrono>
 #include <cmath>
@@ -484,6 +488,7 @@ void App::newProject() {
     livelook::showView(*this, true);
     livelook::setDrawMode(*this, false);  // and in select mode (B switches to drawing)
   }
+  livelook::setOpenedNew();  // N47-17: its first track selected (Clips only)
   // A default template chosen in Settings > General replaces the starter kit.
   if (std::string key = settings.getString("general.defaultTemplate"); !key.empty()) {
     if (const TemplateInfo* t = findTemplate(key)) {
@@ -511,26 +516,7 @@ Song App::starterSong() const {
     trackmodes::makeClipsStarterTracks(s);
     return s;
   }
-  Document doc(s);
-  // Starter kit: four drum voices on inserts 1-4 and a synth on insert 5.
-  struct Starter { const char* name; const char* type; uint32_t color; };
-  const Starter kit[] = {{"Kick", "gl.kick", 0xD8775A}, {"Clap", "gl.clap", 0xC9A43C}, {"Hat", "gl.hat", 0x4FB8B0},
-                         {"Snare", "gl.snare", 0x5A8FD8}, {"Synth", "gl.synth", 0xA56CD8}};
-  int insert = 1;
-  for (const auto& k : kit) {
-    ObjectId id = doc.addChannel(k.name, k.type);
-    ObjectId mt = doc.song().mixer[static_cast<size_t>(insert)].id;
-    doc.editChannel(id, "", [&](Channel& c) {
-      c.color = k.color;
-      c.mixerTrack = mt;
-    });
-    doc.editMixerTrack(mt, "", [&](MixerTrack& m) {
-      m.name = k.name;
-      m.color = k.color;
-    });
-    ++insert;
-  }
-  return doc.song();
+  return addStarterKit(std::move(s));  // starter kit and master limiter (core/Templates.h)
 }
 
 void App::applyProjectDefaults(Song& s) const {
@@ -650,6 +636,7 @@ bool App::openProjectFile(const std::string& pathIn) {
   // J-52: FL Studio projects and zipped projects open as projects; MIDI and
   // audio files are imported into the open project.
   bool collab = false;
+  if (dawproject::isDawProject(path)) return exportui::openAny(*this, path);  // K-89: a new project from it
   switch (openKindOf(path)) {
     case OpenKind::Midi:
     case OpenKind::Audio: return exportui::openAny(*this, path);
@@ -727,6 +714,9 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
   // K-47: the background saves write the song as it is now. By the time one is done the person may
   // have edited on (those edits stay unsaved) or opened another project (nothing of this applies to it).
   const uint64_t epoch = doc.projectEpoch(), serial = doc.saveSerial();
+  // N48-07 (checkpoint 49): the view is noted when the save starts (the view it was saved in), not only
+  // once the background write is done: a quit or an open in between lost it.
+  if (!collabui::active(*this)) livelook::projectSaved(*this, p);
   auto saved = [this, p, format, epoch, serial]() {
     if (doc.projectEpoch() != epoch) return;
     if (collabui::active(*this)) {  // J-111: a copy; the project stays the collaborative one
@@ -739,6 +729,7 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
     doc.markSavedAt(serial);
     addRecent(p);
     rememberSketch(p);  // J-141: the launcher's tile shows what was saved
+    livelook::projectSaved(*this, p);  // N45-10: the view it was saved in
   };
   // What was waiting for this save (closing, opening another project) only goes on if nothing
   // unsaved would be lost by it.
@@ -751,10 +742,27 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
     switch (format) {
       case SaveFormat::Gridline:
       case SaveFormat::GridlineJson:
-        if (!gl::saveProject(p, doc.song(), &err)) {
+      {
+        // R9-05: samples that live only in the unpack cache (an imported module's, an opened
+        // archive's) are copied beside the project ("<name> Samples") and the saved file names the
+        // copies, so clearing the cache never leaves a saved project silent. The open song keeps
+        // pointing at the cache (no edit is made to it); the next save reuses the copies.
+        Song out = doc.song();
+        std::string copyErr;
+        const fs::path pp = fs::u8path(p);
+        std::string stem = pp.filename().u8string();
+        for (const char* ext : {".gridline.json", ".gridline", ".json"})
+          if (stem.size() > std::strlen(ext) && stem.compare(stem.size() - std::strlen(ext), std::strlen(ext), ext) == 0) {
+            stem.resize(stem.size() - std::strlen(ext));
+            break;
+          }
+        const int adopted = adoptCacheFiles(out, archive::defaultCacheRoot(), (pp.parent_path() / fs::u8path(stem + " Samples")).u8string(), &copyErr);
+        if (!copyErr.empty()) notify("Some samples stay in the cache only: " + copyErr, true);
+        if (!gl::saveProject(p, adopted > 0 ? out : doc.song(), &err)) {
           notify("Could not save the project: " + err, true, p);
           return false;
         }
+      }
         archive::pinUnpacked(doc.song());  // K-42: the samples it points at stay in the cache
         break;
       case SaveFormat::Flp:
@@ -952,7 +960,19 @@ void App::selectChannel(ObjectId id, bool additive) {
     selChannels.insert(id);
 }
 
+void App::followSelection() {
+  static selfollow::State st;
+  if (!settings.getBool("rack.selectionFollows")) {
+    st.channel = selChannel, st.mixer = selMixer;
+    return;
+  }
+  const ObjectId before = selMixer;
+  selfollow::step(doc.song(), st, selChannels, selChannel, selMixer);
+  if (selMixer != before && !mixerView.sel.empty() && !mixerView.sel.count(selMixer)) mixerView.sel = {selMixer};
+}
+
 void App::openPianoRoll(ObjectId channel) {
+
   selectChannel(channel);
   showPiano = true;
   focusWindow = "Piano roll";
@@ -1003,6 +1023,7 @@ void App::stopPreview() {
 // ---------------------------------------------------------------- MIDI ----
 #include "../core/MidiFile.h"
 #include "ExportUi.h"
+#include "../core/SafeFs.h"
 
 namespace gl {
 
@@ -1045,7 +1066,7 @@ void App::saveNewVersion() {
   do {
     ++ver;
     next = cur.parent_path() / withSaveExtension(stem + " " + std::to_string(ver), projectFormat);
-  } while (fs::exists(next));
+  } while (safefs::existsAt(next));
   saveProjectAs(next.string(), projectFormat);
 }
 
@@ -1084,7 +1105,7 @@ void App::newFromTemplate(const std::string& which) {
     // collaborators get the same; Studio's demo is not changed).
     if (layoutui::active() == layout::Preset::Live) {
       Document d(s);
-      ops::prepareLiveArea(d);
+      ops::prepareClipGrid(d, std::max<Tick>(1, d.song().barTicks()) * livelook::kSceneBars);  // C44-07: one clip to a slot
       s = d.song();
     }
   } else {
@@ -1096,6 +1117,7 @@ void App::newFromTemplate(const std::string& which) {
     if (s.info.author.empty()) s.info.author = settings.getString("project.defaultAuthor");
   }
   startProject(std::move(s));
+  if (livelook::active(*this)) livelook::setDrawMode(*this, false);  // N45-12: Clips opens a set with the pointer
 }
 
 std::vector<std::string> App::templateFiles() const {
@@ -1152,6 +1174,14 @@ int App::exportStems(const std::string& dir, int bits, int sampleRate) {
 }
 
 void App::closeAllWindows() {
+  // R02-06: in the Tracks layout the tracks area is the main window and the panes are part of it;
+  // closing all windows closes the floating ones only (dialogs, tool windows, plugin windows).
+  if (layoutui::active() == layout::Preset::Logic) {
+    showSettings = showInfo = showHistory = showAbout = showExport = showShortcuts = showPluginManager = showPerformance = showGroove = false;
+    showMaster = false;
+    closePluginWindows();
+    return;
+  }
   showBrowser = showRack = showPiano = showPlaylist = showMixer = false;
   showSettings = showInfo = showHistory = showAbout = showExport = showShortcuts = showPluginManager = showPerformance = showGroove = false;
   closePluginWindows();
@@ -1159,6 +1189,7 @@ void App::closeAllWindows() {
 
 void App::closePluginWindows() {
   closeAllHostedEditors(*this);
+  logicplug::closeMoreFx();  // K-297: Smooth's earlier effect windows too
   settingsChannel = kNoId;
   fxEditor = {kNoId, -1};
 }

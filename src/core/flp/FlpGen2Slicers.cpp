@@ -260,9 +260,13 @@ bool decodeSlicexClassic(Context& c, const std::vector<Event>& evs, PluginMappin
     set(m, slParam(ik, SlicePitch), std::clamp(s.i32(r + 40) / 100.0, -12.0, 12.0));
     set(m, slParam2(ik, SliceCut), std::clamp(s.i32(r + 0), 0, 99));
     set(m, slParam2(ik, SliceDelay), std::clamp(s.i32(r + 52) / 12800.0 * 0.5, 0.0, 1.0));  // beats → s at 120 BPM
+    if (const int st = s.i32(r + 56); st > 0 && w.frames > 0 && k < regs.size()) {  // K-217: start offset (its first 0.1 s)
+      const double len = std::max(1.0, static_cast<double>(k + 1 < regs.size() ? regs[k + 1].start : static_cast<int64_t>(w.frames)) - static_cast<double>(regs[k].start));
+      set(m, slParam(ik, SliceStart), std::clamp(st / 12800.0 * std::min(len, 4410.0) / len, 0.0, 1.0));
+    }
     static const int kDefault[17] = {0, 0, 0, 8000, 0, 12800, 128, 128, 0, 12800, 0, 0, 12800, 0, 0, 0, 12800};
     for (int f = 0; f < 17; ++f)
-      if (f != 0 && f != 2 && f != 3 && f != 10 && f != 13 && s.i32(r + 4 * static_cast<size_t>(f)) != kDefault[f]) regionsDefault = false;
+      if (f != 0 && f != 2 && f != 3 && f != 10 && f != 13 && f != 14 && s.i32(r + 4 * static_cast<size_t>(f)) != kDefault[f]) regionsDefault = false;
   }
   if (!regionsDefault) c.report.warn("Slicex: region articulator / delay settings are not imported");
   linkParams(m, {{2, SlVolume, [](double n) { return std::clamp((std::pow(11.0, n * 16000.0 / 12800.0) - 1.0) / 10.0, 0.0, 1.0); }},
@@ -273,6 +277,130 @@ bool decodeSlicexClassic(Context& c, const std::vector<Event>& evs, PluginMappin
   return true;
 }
 
+
+// K-217 (stage 6): the classic engine's own modulation from a Slicex model, so a loop brought in
+// from FL keeps its envelopes, LFO and mod routes when it is switched to the Classic engine (the
+// region engine, which plays the import, keeps playing the model as it is). Approximations:
+// a point envelope becomes an ADSR (attack to its largest point, decay to the sustain point, release
+// to the end; times at 120 BPM); groups 1..4 become envelope sets Main..4 (each region takes its
+// amp group's set); group 1 gives the LFO and the mod X / Y / velocity routes.
+struct EnvFit {
+  bool on = false;
+  double a = 0.001, d = 0.5, s = 1, r = 0.01, peak = 1;  // seconds; s relative to the peak
+};
+EnvFit fitEnvelope(const flart::Record& e, double centre) {
+  EnvFit f;
+  const int n = static_cast<int>(e.pts.size());
+  if (!e.on() || n < 2) return f;
+  std::vector<double> v(static_cast<size_t>(n));
+  double prev = centre;
+  for (int k = 0; k < n; ++k) prev = v[static_cast<size_t>(k)] = std::isnan(e.pts[static_cast<size_t>(k)].value) ? prev : e.pts[static_cast<size_t>(k)].value;
+  const int end = e.sustain >= 0 && e.sustain < n ? e.sustain : n - 1;  // where the held note stays
+  int pk = 0;
+  for (int k = 1; k <= end; ++k)
+    if (std::fabs(v[static_cast<size_t>(k)] - centre) > std::fabs(v[static_cast<size_t>(pk)] - centre) + 1e-9) pk = k;
+  auto span = [&](int from, int to) {  // segments ending at points from..to, in seconds (1 unit = 0.5 s)
+    double t = 0;
+    for (int k = std::max(0, from); k <= to && k < n; ++k) t += std::max(0.0, e.pts[static_cast<size_t>(k)].time);
+    return 0.5 * t;
+  };
+  const double sa = e.extra[0] / 128.0, sd = e.extra[1] / 128.0, sr = e.extra[3] / 128.0;
+  f.on = true;
+  f.peak = v[static_cast<size_t>(pk)] - centre;
+  f.a = span(0, pk) * (sa > 0 ? sa : 1);
+  f.d = span(pk + 1, end) * (sd > 0 ? sd : 1);
+  f.r = span(end + 1, n - 1) * (sr > 0 ? sr : 1);
+  f.s = std::fabs(f.peak) > 1e-9 ? std::clamp((v[static_cast<size_t>(end)] - centre) / f.peak, 0.0, 1.0) : 0.0;
+  return f;
+}
+
+void classicFromModel(const sx::Model& md, PluginMapping& m, uint64_t frames) {
+  using namespace pp;
+  const auto& regs = md.decks[0].regions;
+  bool setUsed[kEnvSets] = {true, false, false, false};
+  for (size_t k = 0; k < regs.size() && k < static_cast<size_t>(kMaxSlices); ++k) {
+    const auto& rec = regs[k].rec;
+    const int g = rec[sx::RAmpGroup];
+    const int ik = static_cast<int>(k);
+    if (g > 0 && g < kEnvSets) set(m, slParam3(ik, SliceEnvSet), g), setUsed[g] = true;
+    // Sample start: a share of the region (whole region) or of its first 0.1 s.
+    if (rec[sx::RStart] > 0 && frames > 0) {
+      const double s0 = static_cast<double>(regs[k].start);
+      const double s1 = regs[k].length >= 0 ? s0 + static_cast<double>(regs[k].length)
+                                            : (k + 1 < regs.size() ? static_cast<double>(regs[k + 1].start) : static_cast<double>(frames));
+      const double len = std::max(1.0, s1 - s0), ofs = rec[sx::RStart] / 12800.0;
+      const double share = md.opt(sx::OStartWhole) ? ofs : ofs * std::min(len, 0.1 * 44100.0) / len;
+      set(m, slParam(ik, SliceStart), std::clamp(share, 0.0, 1.0));
+    }
+  }
+  for (int e = 0; e < kEnvSets; ++e) {
+    if (!setUsed[e]) continue;
+    const sx::Group& gr = md.groups[static_cast<size_t>(e)];
+    const EnvFit vol = fitEnvelope(gr.arts[sx::TVol].env, 0.0);
+    if (vol.on) {
+      set(m, slVolEnv(e, SlEnvA), std::clamp(vol.a, 0.0005, 0.5));
+      set(m, slVolEnv(e, SlEnvD), std::clamp(vol.d, 0.002, 10.0));
+      set(m, slVolEnv(e, SlEnvS), vol.s);
+      set(m, slVolEnv(e, SlEnvR), std::clamp(vol.r, 0.002, 1.0));
+    }
+    auto modEnv = [&](int kind, const EnvFit& f, double amount, double lo, double hi) {
+      if (!f.on || amount == 0) return;
+      set(m, slModEnv(e, kind, SlEnvA), std::clamp(f.a, 0.0005, 5.0));
+      set(m, slModEnv(e, kind, SlEnvD), std::clamp(f.d, 0.002, 10.0));
+      set(m, slModEnv(e, kind, SlEnvS), f.s);
+      set(m, slModEnv(e, kind, SlEnvR), std::clamp(f.r, 0.002, 10.0));
+      set(m, slModEnv(e, kind, SlEnvAmt), std::clamp(amount, lo, hi));
+    };
+    const EnvFit pan = fitEnvelope(gr.arts[sx::TPan].env, 0.5);
+    modEnv(SlEnvPan, pan, 2.0 * gr.arts[sx::TPan].floats[1] * pan.peak, -1, 1);
+    const EnvFit cut = fitEnvelope(gr.arts[sx::TCut].env, 0.5);
+    modEnv(SlEnvCut, cut, 10.0 * gr.hdr[0] / 128.0 * cut.peak, -8, 8);
+    const EnvFit spd = fitEnvelope(gr.arts[sx::TSpeed].env, 0.0);  // the speed envelope moves the pitch (tape)
+    modEnv(SlEnvPitch, spd, 12.0 * std::log2(std::max(0.05, 1.0 + 8.0 * spd.peak)), -48, 48);
+  }
+  // LFO: group 1's first running one (volume, pan, cutoff, speed).
+  const sx::Group& g0 = md.groups[0];
+  const double masterLfo = md.knobs[4] / 128.0;
+  for (int t : {sx::TVol, sx::TPan, sx::TCut, sx::TSpeed}) {
+    const sx::Articulator& a = g0.arts[static_cast<size_t>(t)];
+    if (!a.lfo.on()) continue;
+    const double depth = (t == sx::TCut ? g0.hdr[0] / 128.0 : a.floats[2]) * masterLfo;
+    const double cycles = flart::lfoRate(a.lfo.extra[0]);  // per time unit (0.5 s, or a beat when tempo-based)
+    if (a.lfo.flags & flart::kTempoTime) {
+      int best = 5;
+      for (int s = 1; s < 9; ++s)
+        if (cycles > 0 && std::fabs(std::log2(kLfoSyncBeats[s] * cycles)) < std::fabs(std::log2(kLfoSyncBeats[best] * cycles))) best = s;
+      set(m, SlLfoSync, best);
+    } else {
+      set(m, SlLfoRate, std::clamp(2.0 * cycles, 0.05, 30.0));
+    }
+    const int shape = a.lfo.extra[3] != 0 ? SlLfoSquare : a.lfo.extra[2] > 64 ? SlLfoSawUp : a.lfo.extra[2] < -64 ? SlLfoSawDown : SlLfoSine;
+    set(m, SlLfoShape, shape);
+    set(m, SlLfoRetrig, (a.lfo.flags & flart::kShared) ? 0 : 1);
+    if (t == sx::TVol) set(m, SlLfoVol, std::clamp(depth, 0.0, 1.0));
+    if (t == sx::TPan) set(m, SlLfoPan, std::clamp(depth, 0.0, 1.0));
+    if (t == sx::TCut) set(m, SlLfoCut, std::clamp(5.0 * depth, 0.0, 4.0));
+    if (t == sx::TSpeed) set(m, SlLfoPitch, std::clamp(12.0 * std::log2(1.0 + 4.0 * depth), 0.0, 12.0));
+    break;
+  }
+  // Mod X / Y and velocity: the first target group 1 maps them to (the slope of the map gives the sign).
+  static const int kDest[sx::kTargets] = {SlDestPan, SlDestLevel, SlDestCutoff, SlDestReso, SlDestPitch, SlDestStart};
+  auto route = [&](int map, int destPid, int amtPid) {
+    for (int t : {sx::TVol, sx::TCut, sx::TRes, sx::TPan, sx::TSpeed, sx::TStart}) {
+      const flart::Prepared p = flart::prepare(g0.arts[static_cast<size_t>(t)].maps[static_cast<size_t>(map)], (t == sx::TVol || t == sx::TSpeed) ? 1.0 : 0.5);
+      if (p.flat) continue;
+      const double slope = flart::mapValue(p, 1.0, 0.0) - flart::mapValue(p, 0.0, 0.0);
+      set(m, destPid, kDest[t]);
+      if (amtPid >= 0) set(m, amtPid, std::clamp(slope * 2.0, -1.0, 1.0));
+      else set(m, SlVelocity, std::clamp(std::fabs(slope), 0.0, 1.0));
+      return;
+    }
+    if (amtPid >= 0) set(m, destPid, SlDestOff);  // mod X / Y move nothing in Slicex until mapped
+  };
+  route(0, SlModXDest, SlModXAmt);
+  route(1, SlModYDest, SlModYAmt);
+  route(2, SlVelDest, -1);
+}
 
 // ------------------------------------------------------------------ Slicex
 // Full state (J-41, behaviour study notes Part A): parsed
@@ -387,6 +515,7 @@ bool decodeSlicex(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
     set(m, slParam2(ik, SliceDelay), std::clamp(rec[sx::RDelay] / 12800.0 * 0.5, 0.0, 1.0));  // beats → s at 120 BPM
     if (rec[sx::ROutput] != 0) exact = false;  // per-region mixer outputs are not routed
   }
+  classicFromModel(md, m, wa.frames);  // K-217: what the Classic engine plays when switched to it
   linkParams(m, {{2, SlMaster, [](double n) { return sx::masterGain(static_cast<int32_t>(std::lround(n * 16000.0))); }},
                  {5, SlPitch, [](double n) { return (-1200.0 + 2400.0 * n) / 100.0; }},
                  {6, SlModX, [](double n) { return std::round(n * 512.0) / 512.0; }},

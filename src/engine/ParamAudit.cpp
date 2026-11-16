@@ -98,6 +98,7 @@ const InertDoc kInert[] = {
     {"gl.convolver", "Reported latency", "read-only: the latency the engine reports"},
     // Routing (resolved by the engine graph / MIDI ports; covered by the routing tests).
     {"gl.midiout", "Port", "MIDI output port (routing)"},
+    {"gl.hwinsert", "*", "acts on the audio device's outputs and inputs, which an offline render has none of (covered by test_k101)"},
     {"gl.send", "Target track", "send destination (routing)"},
     {"gl.send", "Target numbering", "send destination numbering (routing)"},
     {"gl.bussend", "Bus", "bus destination (routing)"},
@@ -197,6 +198,7 @@ const InertDoc kInert[] = {
     {"gl.master", "* point 1 tension", "the first curve point has no segment leading into it"},
     {"gl.slicer", "Master level", "read by the region engine, which needs a region model (FL import)"},
     {"gl.slicer", "Slice * *", "slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)"},
+    {"gl.slicer", "Layer B slice * *", "slices 33..64 exist only when a sample has more than 32 slices (the test sample has 4 hits)"},  // K-217
     {"gl.amprack", "Module * automation block", "kept for the FL round trip; the engine does not use it"},
     {"gl.amprack", "Module * smoothing", "smooths changes of the filter cutoff / resonance; no effect on fixed settings"},
     {"gl.amprack", "Board value *", "pedal-board slot not read by any pedal type (kept for the FL round trip)"},

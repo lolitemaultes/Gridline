@@ -46,6 +46,15 @@ struct GhostHit {
 // under song tick `t` and `pitch`; the shortest one wins.
 GhostHit ghostNoteAt(const Pattern& p, ObjectId exclude, const std::set<ObjectId>& only, Tick t, int pitch);
 
+// K-198: several channels edited in one piano roll. `edit` holds the channels edited beside the
+// target (the channel new notes go to). Making `to` the target keeps the old target editable
+// (`from`, when it is a channel) and takes `to` out of the set.
+void retarget(std::set<ObjectId>& edit, ObjectId from, ObjectId to);
+// The channels with notes in `p`, but `exclude`, in the song's channel order.
+std::vector<ObjectId> channelsWithNotes(const Song& s, const Pattern& p, ObjectId exclude);
+// Snaps every note start of `notes` to the nearest multiple of `grid` (> 1).
+void quantizeStarts(std::vector<Note>& notes, Tick grid);
+
 // ---------------------------------------------------------- background waveform ----
 // Peak columns (min, max per column, -1..1) of a sample drawn behind the
 // notes: column k covers ticks [t0 + k * ticksPerCol, …). `secPerTick` maps

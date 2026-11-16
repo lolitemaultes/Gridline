@@ -148,6 +148,8 @@ void synthEvent(Synth* s, const clap_event_header_t* h, const clap_output_events
     case CLAP_EVENT_NOTE_EXPRESSION: {
       auto* e = reinterpret_cast<const clap_event_note_expression_t*>(h);
       if (e->expression_id == CLAP_NOTE_EXPRESSION_TUNING && (e->note_id == s->noteId || e->note_id == -1)) s->expr = e->value;
+      if (e->expression_id == CLAP_NOTE_EXPRESSION_PRESSURE) gProbe.exprPressure = e->value;  // K-99
+      if (e->expression_id == CLAP_NOTE_EXPRESSION_BRIGHTNESS) gProbe.exprBrightness = e->value;
       break;
     }
     case CLAP_EVENT_PARAM_VALUE: {
@@ -179,6 +181,9 @@ void synthEvent(Synth* s, const clap_event_header_t* h, const clap_output_events
         if (ch == 0 && gProbe.rpnMsb[0] == 6) gProbe.mpeZone = m->data[2];
         if (ch == 1 && gProbe.rpnMsb[1] == 0) gProbe.mpeRange = m->data[2];
       }
+      if (st == 0xD0) gProbe.chanPressure = m->data[1], gProbe.exprChannel = m->data[0] & 15;  // K-99
+      if (st == 0xB0 && m->data[1] == 74) gProbe.cc74 = m->data[2], gProbe.exprChannel = m->data[0] & 15;
+      if (st == 0xA0) gProbe.polyPressure = m->data[2];
       if (st == 0xB0 && m->data[1] == 123) ++gProbe.allNotesOff, s->amp = 0;
       if (st == 0xB0 && m->data[1] == 120) ++gProbe.allSoundOff, s->amp = 0;
       if (st == 0xB0 && m->data[1] == 64 && m->data[2] == 0) ++gProbe.sustainOff;

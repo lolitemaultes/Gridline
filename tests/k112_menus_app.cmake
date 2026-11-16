@@ -58,6 +58,11 @@ foreach(P IN LISTS passes)
     continue()
   endif()
   set(tree "${CMAKE_MATCH_1}")
+  # Clips shows its Ctrl shortcuts as Cmd on macOS (the key pressed there; Cmd and Ctrl are one
+  # modifier in that set): the golden, the same on every system, keeps Ctrl.
+  if(CMAKE_HOST_APPLE AND P STREQUAL "live")
+    string(REPLACE "\tCmd+" "\tCtrl+" tree "${tree}")
+  endif()
   file(WRITE "${OUT}/menutree_${P}.txt" "${tree}")
   # Items, commands and order (shortcuts aside: each layout brings its own key set; states aside).
   string(REGEX REPLACE "\t[e-][c-]\n" "\n" plain "\n${tree}")

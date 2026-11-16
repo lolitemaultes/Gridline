@@ -16,15 +16,20 @@
 #include "../core/I18n.h"
 #include "../core/LayoutHomes.h"
 #include "../core/LayoutShell.h"
+#include "../core/MenuOps.h"
+#include "../core/MenuParity.h"
 #include "../core/Params.h"
 #include "../core/PluginInfo.h"
 #include "../core/Arrangements.h"
 #include "../core/TrackModes.h"
 #include "../core/TrackOrder.h"
+#include "../engine/Chop.h"
+#include "MenuParityUi.h"
 #include "../packs/PacksUi.h"
 #include "App.h"
 #include "BrowserUi.h"
 #include "CollabUi.h"
+#include "ContextMenus.h"
 #include "CursorAnchor.h"
 #include "DeviceViews.h"
 #include "HostedUi.h"
@@ -45,11 +50,144 @@ using theme::pal;
 
 bool active(const App& a) { return layoutui::active() == layout::Preset::Live && layoutui::shellBuilt(a, layout::Preset::Live); }
 
+bool gOutside = true;  // N45-10: a frame outside Clips went by (the next Clips frame is an entry)
+void leftFrame() {
+  GImGui->ConfigNavEnableTabbing = true;  // (C44-03: tabbing as before outside Clips)
+  gOutside = true;
+}
+
+Tick arrangementOrigin(const App& a) { return active(a) ? std::max<Tick>(0, a.doc.song().live.areaEnd) : 0; }
+
 ImFont* numFont(const App& a) { return active(a) ? a.fontRegular : a.fontMono; }
 ImU32 envelopeColour() { return theme::rgb(0xEE5A50); }
 
+namespace {
+// C47: the clip grid's side of Session record and Capture (defined with the grid below).
+void launch(App& a, ObjectId clip);
+// Checkpoint 48: Session record, as the reference's. It records into a clip of the grid while the other
+// tracks' clips go on playing (the engine stays in its clip-launch mode): into the clip the track is
+// playing (overdub), else into a new clip in the slot, launched, which grows bar by bar while it
+// records (up to a scene's length, then it loops on, overdubbing). Stopping keeps the clip playing.
+struct SessionRec {
+  bool on = false;
+  ObjectId clip = kNoId;
+  int track = -1;
+  bool grow = false;     // a new clip: it grows while recording, and is cut to whole bars at the stop
+  bool started = false;  // the clip played (the notes are placed from then on)
+  int launchTries = 0;   // frames the new clip's launch is retried (until the engine has the clip)
+  double lastAt = 0;     // the content tick last frame (a smaller one: the clip looped)
+  std::vector<std::pair<int, ObjectId>> extras;  // N49-04: the other armed MIDI tracks' new clips (track, clip)
+};
+SessionRec gRec;
+// N47-01 / N48-01 (checkpoint 49): the audio part of a Session record, beside the MIDI part: every armed
+// audio track of the grid records its input; each take goes into its track's slot of scene `slot`.
+struct AudioSessionRec {
+  bool on = false;
+  bool pending = false;  // stopped: the takes are still being written (audioTakesCommitted places them)
+  int track = -1;        // the first armed audio track (its slot picks the scene)
+  int slot = -1;
+  int waitFrames = 0;    // N49-02: frames the transport may still take to start (the MIDI clip's launch starts it)
+};
+AudioSessionRec gARec;
+// N48-04: the history's push count when a Session record began: once every part is done, the steps
+// since (the scene, the new clip, its notes and length, the takes) become one undo step.
+uint64_t gRecPushes0 = 0;
+bool gRecSquash = false;
+int gRecSquashTries = 0;  // frames left to retry while an edit group is still open (the audio takes' commit)
+void squashRecording(App& a) {
+  if (!gRecSquash || gRec.on || gARec.on || gARec.pending || a.doc.groupDepth() > 0) return;  // (the takes' group lands first)
+  const uint64_t n = a.doc.history().pushCount() - gRecPushes0;
+  if (n <= 1 || a.doc.squashSteps(static_cast<size_t>(n), "record clip") || ++gRecSquashTries > 10) gRecSquash = false, gRecSquashTries = 0;
+}
+// N47-10: MIDI tracks armed with their arm buttons (this session; the reference also arms the selected
+// MIDI track by itself). Audio tracks keep their mixer track's arm, as before.
+std::set<int> gMidiArmed;
+bool midiTrack(const Song& s, int t) {
+  return t >= 0 && t < static_cast<int>(s.tracks.size()) && trackmodes::clipAllowed(s, ClipKind::Pattern, t) &&
+         trackmodes::modeOf(s, t) != TrackMode::Audio;
+}
+// The clip's content tick heard now (the transport tick less where the clip's content began).
+double recContentTick(const App& a) { return a.engine.position() - static_cast<double>(a.engine.liveOrigin(gRec.track)); }
+// Clip and pattern to `bars` bars (in the recording's undo step while it records).
+void recSetBars(App& a, int bars) {
+  const Clip* c = a.doc.song().clip(gRec.clip);
+  const Pattern* p = c ? a.doc.song().pattern(c->pattern) : nullptr;
+  if (!p || bars < 1) return;
+  const ObjectId pid = p->id, cid = c->id;
+  const int spb = p->stepsPerBar;
+  const Tick len = static_cast<Tick>(bars) * std::max<Tick>(1, a.doc.song().barTicks());
+  auto fn = [&a, pid, cid, spb, bars, len] {
+    a.doc.setPatternLength(pid, bars, spb);
+    a.doc.editClip(cid, "record clip length", [len](Clip& x) { x.length = len; });
+  };
+  if (a.recorder.active()) a.recorder.edit(a.doc, fn);
+  else fn();
+}
+int sessionRecordSlotFor(App& a, int t, int k);
+int audioRecordSlotFor(App& a, int t, int k);
+bool newMidiClipIn(App& a, int t, int k, ObjectId* made);
+void ensureNoteChannel(App& a, int t);
+int gridColumns(const Song& s);
+Tick sceneTicks(const Song& s);
+std::vector<int> slotClips(const Song& s, int t, int k);
+void ensureScene(App& a, int k);
+int selectedScene();
+void selectSlot(App& a, int t, int k);
+std::vector<ObjectId> trackChannels(const Song& s, int t);
+void focusTrack(App& a, int t);
+}  // namespace
+
 int captureNow(App& a) {
   const Song& s = a.doc.song();
+  if (active(a)) {
+    // Checkpoint 48: Capture in the clip grid, as the reference's: into the clip the selected MIDI track
+    // plays (added to its notes), else into a new clip in the selected slot (or the track's first empty
+    // one), as long as the phrase in whole bars (up to a scene), which then plays.
+    const int t = selectedTrack(a);
+    if (!midiTrack(s, t)) {
+      a.notify(i18n::tr("Select a MIDI track to capture into"), true);
+      return 0;
+    }
+    if (a.capture.size() == 0) {
+      a.notify(i18n::tr("Nothing to capture: play some notes first"));
+      return 0;
+    }
+    const Clip* playing = s.clip(a.engine.liveActive(t));
+    if (playing && playing->kind == ClipKind::Pattern) {
+      const std::string name = s.pattern(playing->pattern) ? s.pattern(playing->pattern)->name : std::string();
+      const int n = a.capture.commit(a.doc, playing->pattern, s.tempo, 0, a.now);
+      if (n > 0) a.notify(std::to_string(n) + " " + i18n::tr("notes captured into") + " " + name);
+      return n;
+    }
+    const int k = sessionRecordSlotFor(a, t, -1);
+    a.doc.beginGroup("capture");
+    ObjectId clip = kNoId;
+    if (k >= 0 && newMidiClipIn(a, t, k, &clip)) {
+      const Clip* c = a.doc.song().clip(clip);
+      const ObjectId pat = c ? c->pattern : kNoId;
+      const int n = pat != kNoId ? a.capture.commit(a.doc, pat, a.doc.song().tempo, 0, a.now) : 0;
+      Tick end = 0;
+      if (const Pattern* p = a.doc.song().pattern(pat))
+        for (const auto& [ch, notes] : p->notes)
+          for (const Note& nt : notes) end = std::max(end, nt.start + nt.length);
+      const Tick bar = std::max<Tick>(1, a.doc.song().barTicks());
+      const int bars = static_cast<int>(std::clamp<Tick>((end + bar - 1) / bar, 1, kSceneBars));
+      if (const Pattern* p = a.doc.song().pattern(pat); p && bars != p->bars) {
+        a.doc.setPatternLength(pat, bars, p->stepsPerBar);
+        a.doc.editClip(clip, "capture", [bars, bar](Clip& x) { x.length = bar * bars; });
+      }
+      a.doc.endGroup();
+      if (n > 0) {
+        gRec = {};
+        gRec.clip = clip, gRec.track = t, gRec.launchTries = 30;  // it plays (launched once the engine has it)
+        a.notify(std::to_string(n) + " " + i18n::tr("notes captured into a new clip"));
+      }
+      return n;
+    }
+    a.doc.endGroup();
+    a.notify(i18n::tr("No empty slot to capture into"), true);
+    return 0;
+  }
   const Pattern* p = s.pattern(a.curPattern);
   if (!p) {
     a.notify(i18n::tr("Select a pattern first"), true);
@@ -62,16 +200,498 @@ int captureNow(App& a) {
   return n;
 }
 
-bool sessionRecording(const App& a) { return a.recordArmed && a.engine.mode() == PlayMode::Pattern; }
+bool sessionRecording(const App& a) { return active(a) ? gRec.on || gARec.on : a.recordArmed && a.engine.mode() == PlayMode::Pattern; }
+ObjectId sessionRecordClip(const App&) { return gRec.on ? gRec.clip : kNoId; }
+
+bool sessionRecordTarget(const App& a, ObjectId& pattern, Tick& loopLength, double& origin) {
+  if (!gRec.on || !gRec.started || !a.engine.playing() || a.engine.liveActive(gRec.track) != gRec.clip) return false;
+  const Clip* c = a.doc.song().clip(gRec.clip);
+  if (!c || c->kind != ClipKind::Pattern || !a.doc.song().pattern(c->pattern)) return false;
+  pattern = c->pattern;
+  loopLength = std::max<Tick>(1, a.doc.song().clipLength(*c));
+  origin = static_cast<double>(a.engine.liveOrigin(gRec.track));
+  return true;
+}
+
+namespace {
+// N49-04: the notes the first armed MIDI track recorded go to every other armed MIDI track's new clip
+// (on that track's own instrument), with the same length.
+void copyToExtras(App& a) {
+  if (gRec.extras.empty()) return;
+  const Song& s = a.doc.song();
+  const Clip* mc = s.clip(gRec.clip);
+  const Pattern* mp = mc ? s.pattern(mc->pattern) : nullptr;
+  if (!mp) return;
+  std::vector<Note> notes;
+  for (const auto& [ch, ns] : mp->notes) notes.insert(notes.end(), ns.begin(), ns.end());
+  const int bars = mp->bars;
+  const Tick len = s.clipLength(*mc);
+  for (const auto& [xt, xc] : gRec.extras) {
+    const Clip* c = a.doc.song().clip(xc);
+    const Pattern* p = c ? a.doc.song().pattern(c->pattern) : nullptr;
+    const Channel* ch = trackmodes::linkedChannel(a.doc.song(), xt);
+    if (!p || !ch) continue;
+    const ObjectId pid = p->id, chId = ch->id, clipId = xc;
+    const int spb = p->stepsPerBar;
+    a.doc.setPatternLength(pid, bars, spb);
+    a.doc.editSong("record clip", [&notes, pid, chId, clipId, len](Song& x) {
+      if (Pattern* xp = x.pattern(pid)) xp->notes[chId] = notes;
+      if (Clip* cc = x.clip(clipId)) cc->length = len;
+    });
+  }
+  gRec.extras.clear();
+}
+}  // namespace
+
+void stopSessionRecord(App& a) {
+  if (gARec.on) {  // the takes are written over the next frames, then placed in their slots
+    gARec.on = false;
+    gARec.pending = true;
+  }
+  if (!gRec.on) return;
+  // A new clip keeps the whole bars it recorded (at least one), as the reference cuts it at the launch grid.
+  if (gRec.grow && gRec.started && a.doc.song().clip(gRec.clip)) {
+    const Tick bar = std::max<Tick>(1, a.doc.song().barTicks());
+    const double at = recContentTick(a);
+    const int bars = static_cast<int>(std::clamp<double>(std::ceil(std::max(1.0, at) / static_cast<double>(bar)), 1.0, kSceneBars));
+    const Clip* c = a.doc.song().clip(gRec.clip);
+    if (c && bars < static_cast<int>(a.doc.song().clipLength(*c) / bar)) recSetBars(a, bars);
+  }
+  copyToExtras(a);
+  gRec.on = false;
+  gRec.launchTries = 0;
+  squashRecording(a);
+}
+
+void startSessionRecord(App& a, int t, int k) {
+  const Song& s = a.doc.song();
+  gRecPushes0 = a.doc.history().pushCount();
+  gRecSquash = true;
+  // N48-01: the reference records into the selected scene in all armed tracks: every armed audio track
+  // of the grid, and the armed MIDI track (the selected one, else the first armed).
+  int audioT = -1;
+  if (t >= 0 && t < static_cast<int>(s.tracks.size()) && trackmodes::modeOf(s, t) == TrackMode::Audio && trackArmed(a, t)) audioT = t;
+  for (int i = 0; i < gridColumns(s) && audioT < 0; ++i)
+    if (trackmodes::modeOf(s, i) == TrackMode::Audio && trackArmed(a, i)) audioT = i;
+  int midiT = t >= 0 ? t : selectedTrack(a);
+  if (!midiTrack(s, midiT) || !trackArmed(a, midiT)) {
+    midiT = -1;
+    for (int i = 0; i < gridColumns(s) && midiT < 0; ++i)
+      if (midiTrack(s, i) && trackArmed(a, i)) midiT = i;
+  }
+  if (audioT < 0 && midiT < 0) {
+    gRecSquash = false;
+    a.notify(i18n::tr("Arm a track to record into, or select a MIDI track"), true);
+    return;
+  }
+  const int scene = k >= 0 ? k : selectedScene();  // the selected scene
+  if (!a.engine.playing()) {  // N48-03: from a stopped transport the count-in plays first, as the reference's
+    if (a.engine.mode() != PlayMode::Live) a.engine.setMode(PlayMode::Live);
+    if (a.countInBars > 0) a.engine.playWithCountIn(static_cast<double>(a.countInBars * std::max<Tick>(1, s.barTicks())));
+    else if (audioT >= 0 && midiT < 0) a.engine.play();
+    // N49-02: with a MIDI part the new clip's launch starts the transport, so the audio takes and the
+    // notes begin on the same tick (a play first made the launch wait for the next bar).
+  }
+  if (audioT >= 0) {
+    // N47-01: the armed audio tracks record their inputs in the clip launch mode; the takes land in
+    // their slots of the scene when the recording stops.
+    gARec = {};
+    gARec.track = audioT, gARec.slot = audioRecordSlotFor(a, audioT, scene), gARec.on = true;
+    gARec.waitFrames = 60;
+    ensureScene(a, gARec.slot);
+  }
+  if (midiT < 0) return;
+  gRec = {};
+  gRec.track = midiT;
+  // The clip the track plays (no slot named): the new notes join it.
+  if (const Clip* c = a.doc.song().clip(a.engine.liveActive(midiT)); k < 0 && c && c->kind == ClipKind::Pattern && a.engine.playing()) {
+    gRec.clip = c->id;
+    gRec.on = true;
+    return;
+  }
+  int mk = k >= 0 ? sessionRecordSlotFor(a, midiT, k) : -1;
+  if (k < 0 &&!a.doc.song().tracks[static_cast<size_t>(midiT)].locked) {  // the selected scene's slot, or the next empty one below
+    mk = std::max(0, scene);
+    while (!slotClips(a.doc.song(), midiT, mk).empty()) ++mk;
+  }
+  ObjectId clip = kNoId;
+  if (mk < 0 || !newMidiClipIn(a, midiT, mk, &clip)) {
+    a.notify(i18n::tr("No empty slot to record into"), true);
+    if (audioT >= 0 && !a.engine.playing() && a.countInBars <= 0) a.engine.play();
+    squashRecording(a);
+    return;
+  }
+  gRec.clip = clip;
+  gRec.grow = true;
+  gRec.on = true;
+  gRec.launchTries = 30;
+  // N49-04: every other armed MIDI track records too: a new clip in its slot of the same scene, which
+  // plays beside the first and takes the same notes when the recording stops (the same input reaches
+  // every armed track, as the reference's).
+  gRec.extras.clear();
+  for (int i = 0; i < gridColumns(a.doc.song()); ++i) {
+    if (i == midiT || !midiTrack(a.doc.song(), i) || !trackArmed(a, i) || a.doc.song().tracks[static_cast<size_t>(i)].locked) continue;
+    if (!slotClips(a.doc.song(), i, mk).empty()) continue;
+    ObjectId xc = kNoId;
+    if (newMidiClipIn(a, i, mk, &xc)) gRec.extras.push_back({i, xc});
+  }
+}
 
 void toggleSessionRecord(App& a) {
+  if (active(a)) {
+    if (gRec.on || gARec.on) stopSessionRecord(a);
+    else a.later([&a] { startSessionRecord(a, -1, -1); });
+    return;
+  }
+  // Outside Clips: the record button in pattern mode.
   if (sessionRecording(a)) {
     a.recordArmed = false;
     return;
   }
-  a.engine.setMode(PlayMode::Pattern);
-  a.recordArmed = true;
-  if (!a.engine.playing()) a.startPlayback();
+  a.later([&a] {
+    a.engine.setMode(PlayMode::Pattern);
+    a.recordArmed = true;
+    if (!a.engine.playing()) a.startPlayback();
+  });
+}
+
+bool sessionRecordAudio(const App& a) { return gARec.on && a.engine.playing(); }
+
+bool audioTakePending(const App&) { return gARec.pending || gARec.on; }
+
+bool audioTakesCommitted(App& a, const std::vector<ObjectId>& clips) {
+  if (!gARec.pending && !gARec.on) return false;
+  const int t = gARec.track, k = gARec.slot;
+  gARec.on = gARec.pending = false;
+  const Song& s = a.doc.song();
+  const Tick st = sceneTicks(s), bar = std::max<Tick>(1, s.barTicks());
+  // Each armed grid track's take goes into its own slot of the scene (when empty), whole bars up to a
+  // scene; a take anywhere else (a new take track, a track out of the grid) is dropped.
+  ObjectId mine = kNoId;
+  a.doc.beginGroup("record clip");
+  for (ObjectId id : clips) {
+    const Clip* c = a.doc.song().clip(id);
+    if (!c) continue;
+    const int ct = c->track;
+    bool taken = false;  // another clip (not this take, which may sit in the slot already) holds the slot
+    for (const int i : slotClips(a.doc.song(), ct, k)) taken = taken || a.doc.song().playlist[static_cast<size_t>(i)].id != id;
+    const MixerTrack* mx = ct >= 0 ? trackmodes::linkedMixer(a.doc.song(), ct) : nullptr;
+    if (ct < 0 || ct >= gridColumns(a.doc.song()) || trackmodes::modeOf(a.doc.song(), ct) != TrackMode::Audio || taken || !mx || !mx->armed) {
+      a.doc.removeClip(id);
+      continue;
+    }
+    const Tick len = std::clamp<Tick>((a.doc.song().clipLength(*c) + bar - 1) / bar * bar, bar, st);
+    const Rgb col = a.doc.song().tracks[static_cast<size_t>(ct)].color;
+    a.doc.editClip(id, "record clip", [k, st, len](Clip& x) { x.start = static_cast<Tick>(k) * st, x.length = len, x.muted = false; });
+    a.doc.editSong("record clip", [&](Song& x) {  // N47-14: the track's colour
+      if (const Clip* cc = x.clip(id))
+        if (Channel* ch = x.channel(cc->source)) ch->color = col;
+    });
+    if (ct == t) mine = id;
+  }
+  a.doc.endGroup();
+  if (mine != kNoId) {
+    if (!gRec.on) {  // (a MIDI part still recording keeps its own clip to launch)
+      selectSlot(a, t, k);
+      gRec.clip = mine, gRec.track = t;
+      gRec.launchTries = 30;  // it plays (as the reference's recorded clip goes on looping)
+    } else {
+      launch(a, mine);
+    }
+    a.notify(i18n::tr("Recorded into the clip slot"));
+  }
+  squashRecording(a);
+  return true;
+}
+
+bool trackArmed(const App& a, int t) {
+  const Song& s = a.doc.song();
+  if (t < 0 || t >= static_cast<int>(s.tracks.size())) return false;
+  if (trackmodes::modeOf(s, t) == TrackMode::Audio) {
+    const MixerTrack* m = trackmodes::linkedMixer(s, t);
+    return m && m->armed;
+  }
+  return midiTrack(s, t) && (gMidiArmed.count(t) > 0 || t == selectedTrack(const_cast<App&>(a)));
+}
+
+bool midiArmedByHand(int t) { return gMidiArmed.count(t) > 0; }
+
+bool instrumentDropped(App& a, ObjectId channel, const std::string& name) {
+  if (!active(a)) return false;
+  const Song& s = a.doc.song();
+  int track = -1;
+  for (int t = 0; t < static_cast<int>(s.tracks.size()) && track < 0; ++t) {
+    const std::vector<ObjectId> ch = trackChannels(s, t);
+    if (std::find(ch.begin(), ch.end(), channel) != ch.end()) track = t;
+  }
+  if (track >= 0 && !name.empty()) {
+    // N47-15: a track still named by its place (or not at all) takes the instrument's name after its
+    // number ("1 Analog Synth"); a name the user gave stays. Its instrument and mixer track follow.
+    const std::string was = s.tracks[static_cast<size_t>(track)].name;
+    const std::string def1 = std::to_string(track + 1) + " MIDI", def2 = std::to_string(track + 1) + " Audio";
+    if (was.empty() || was == def1 || was == def2 || was == name) {
+      const std::string to = std::to_string(track + 1) + " " + name;
+      a.doc.editSong("name track", [track, to, channel, was, name](Song& x) {
+        PlaylistTrack& tr = x.tracks[static_cast<size_t>(track)];
+        tr.name = to;
+        if (Channel* c = x.channel(channel)) {
+          c->name = to;
+          for (MixerTrack& m : x.mixer)
+            if (m.id == c->mixerTrack && (m.name.empty() || m.name == was || m.name == name || m.name.rfind("Insert ", 0) == 0)) m.name = to;
+        }
+      });
+    }
+  }
+  // N47-03: the device shows in the device band, as the reference's chain (refs 487, 462, 481); nothing
+  // else in the window moves. An installed plugin still opens its own window.
+  a.selectChannel(channel);
+  if (track >= 0) {
+    a.playlist.trackSel = {track};
+    focusTrack(a, track);
+  }
+  layoutui::setRegionVisible(a, "live.device", true, false);
+  if (bool* f = layoutui::windowOpenFlag(a, "Device chain")) *f = true;
+  if (const Channel* c = a.doc.song().channel(channel); c && isHostedType(c->plugin.type)) a.openChannelWindow(channel);
+  return true;
+}
+
+bool clipPlayhead(const App& a, ObjectId pattern, double& tick) {
+  if (!active(a)) return false;
+  const Song& s = a.doc.song();
+  const Clip* best = nullptr;
+  int bestTrack = -1;
+  for (int t = 0; t < gridColumns(s); ++t) {
+    const Clip* c = s.clip(a.engine.liveActive(t));
+    if (!c || c->kind != ClipKind::Pattern || c->pattern != pattern) continue;
+    if (!best || a.playlist.selected.count(c->id)) best = c, bestTrack = t;
+  }
+  const Pattern* p = s.pattern(pattern);
+  if (!best || !p) return false;
+  const double len = static_cast<double>(std::max<Tick>(1, s.clipLength(*best)));
+  const double in = std::fmod(std::max(0.0, a.engine.position() - static_cast<double>(a.engine.liveOrigin(bestTrack))), len);
+  double pt = static_cast<double>(best->offset) + in;
+  const double plen = static_cast<double>(std::max<Tick>(1, s.patternContentLength(*p)));
+  if (p->loop && pt >= plen) pt = std::fmod(pt, plen);
+  tick = pt;
+  return true;
+}
+
+void toggleMidiArm(App& a, int t, bool exclusive) {
+  if (!midiTrack(a.doc.song(), t)) return;
+  const bool on = !gMidiArmed.count(t);
+  if (exclusive) gMidiArmed.clear();  // as the reference: one arm at a time unless Cmd is held
+  if (on) gMidiArmed.insert(t);
+  else gMidiArmed.erase(t);
+}
+
+namespace {
+void captureFrame(App& a);
+}
+void sessionRecordFrame(App& a) {
+  squashRecording(a);  // (a squash the audio commit's open edit group put off)
+  captureFrame(a);     // N48-11
+  const Song& s = a.doc.song();
+  if (gRec.launchTries > 0) {  // the new clip plays once the engine has it (the program is rebuilt after the edit)
+    if (!s.clip(gRec.clip)) gRec.launchTries = 0;
+    else if (a.engine.liveActive(gRec.track) == gRec.clip || a.engine.liveQueued(gRec.track) == gRec.clip) gRec.launchTries = 0;
+    else if (--gRec.launchTries < 29) launch(a, gRec.clip);
+    for (const auto& [xt, xc] : gRec.extras)  // N49-04: the other armed tracks' clips start with it
+      if (a.doc.song().clip(xc) && a.engine.liveActive(xt) != xc && a.engine.liveQueued(xt) != xc) launch(a, xc);
+  }
+  if (gARec.on && (a.engine.playing() || a.engine.countingIn())) gARec.waitFrames = 0;
+  else if (gARec.on && gARec.waitFrames > 0) --gARec.waitFrames;  // N49-02: the launch has not started it yet
+  else if (gARec.on)  // the transport stopping ends the audio part (the takes then land)
+    gARec.on = false, gARec.pending = true;
+  if (!gRec.on) return;
+  const Clip* c = s.clip(gRec.clip);
+  const ObjectId act = a.engine.liveActive(gRec.track);
+  if (!c) {
+    gRec.on = false;  // the clip was deleted (or undone)
+    return;
+  }
+  if (!gRec.started) {
+    if (act == gRec.clip && a.engine.playing() && !a.engine.countingIn()) gRec.started = true;
+    else if (a.engine.countingIn()) gRec.launchTries = std::max(gRec.launchTries, 2);  // N49-01: it records once the count-in is done
+    else if (gRec.launchTries == 0 && a.engine.liveQueued(gRec.track) != gRec.clip) gRec.on = false;  // it never played
+    return;
+  }
+  if (!a.engine.playing() || act != gRec.clip) {  // the transport stopped, or the track plays another clip or none
+    stopSessionRecord(a);
+    return;
+  }
+  const double at = recContentTick(a);
+  const Tick bar = std::max<Tick>(1, s.barTicks());
+  if (at < gRec.lastAt - static_cast<double>(bar / 2)) gRec.grow = false;  // it looped: its length stays
+  gRec.lastAt = at;
+  if (gRec.grow) {  // half a bar before its end, a new clip grows by a bar (up to a scene's length)
+    const Tick len = s.clipLength(*c);
+    const int bars = static_cast<int>(len / bar);
+    if (bars >= kSceneBars) gRec.grow = false;
+    else if (at > static_cast<double>(len - bar / 2)) recSetBars(a, bars + 1);
+  }
+}
+
+// ------------------------------------------------ arrangement record ----
+// N48-11: with Arrangement record on, what the clip grid plays is written into the arrangement when
+// the transport stops (or the record button goes off): each track's launched clip, one copy per
+// pass, from its launch to the next launch or stop, as the reference records session launches.
+namespace {
+struct CapSeg {
+  int track = 0;
+  ObjectId clip = kNoId;
+  Tick origin = 0, from = 0, to = 0;  // clip-launch clock ticks: the clip's content tick 0, the stretch it played
+  Tick off = 0;                       // arrangement tick = clock tick + off
+};
+// The clip-launch mode runs its own clock (it starts again at 0 when the first launch leaves the
+// arrangement's playback), so the capture keeps the arrangement's time itself: it goes on from where
+// the arrangement played, frame by frame, and each stretch notes how its clock maps onto it.
+struct Capture {
+  bool on = false;
+  double arrNow = 0;           // the arrangement tick now
+  double lastPos = 0;          // the transport last frame
+  PlayMode lastMode = PlayMode::Song;
+  double liveStart = -1;       // the clip-launch clock when the capture first saw it run
+  std::map<int, CapSeg> open;  // by track
+  std::vector<CapSeg> done;
+} gCap;
+
+Tick capDest(const CapSeg& sg, Tick t) { return t + sg.off; }
+
+void writeCapture(App& a) {
+  std::vector<CapSeg> segs;
+  for (const auto& sg : gCap.done)
+    if (sg.to > sg.from) segs.push_back(sg);
+  if (segs.empty()) return;
+  int placed = 0;
+  a.doc.editSong("record clips into the arrangement", [&](Song& s) {
+    for (const CapSeg& sg : segs) {
+      const Clip* src = s.clip(sg.clip);
+      if (!src) continue;
+      const Clip c = *src;  // (a copy: the playlist grows below)
+      const Tick len = std::max<Tick>(1, s.clipLength(c)), d0 = capDest(sg, sg.from), d1 = capDest(sg, sg.to);
+      if (d1 <= d0) continue;
+      const std::set<int> tr{sg.track};
+      // The destination is cleared (clips across its edges are cut), then filled pass by pass.
+      const std::set<ObjectId> under = chop::isolateRange(s, d0, d1, tr);
+      s.playlist.erase(std::remove_if(s.playlist.begin(), s.playlist.end(), [&](const Clip& x) { return under.count(x.id) > 0; }),
+                       s.playlist.end());
+      std::set<ObjectId> before;
+      for (const auto& x : s.playlist)
+        if (x.track == sg.track) before.insert(x.id);
+      Tick o = sg.origin;
+      if (o + len <= sg.from) o += (sg.from - o) / len * len;
+      for (int guard = 0; o < sg.to && guard < 4096; o += len, ++guard) {
+        if (o + len <= sg.from) continue;
+        Clip n = c;
+        n.id = s.allocateId();
+        n.start = capDest(sg, o);
+        n.launched = false;
+        n.takeGroup = kNoId, n.take = 0;
+        n.group = kNoId;
+        s.playlist.push_back(n);
+      }
+      // Only the part played stays: the passes are cut at the stretch's edges, the rest goes.
+      const std::set<ObjectId> inside = chop::isolateRange(s, d0, d1, tr);
+      s.playlist.erase(std::remove_if(s.playlist.begin(), s.playlist.end(),
+                                      [&](const Clip& x) { return x.track == sg.track && !before.count(x.id) && !inside.count(x.id); }),
+                       s.playlist.end());
+      placed += static_cast<int>(inside.size());
+    }
+  });
+  std::printf("arrangement record: %d clips from %d launches\n", placed, static_cast<int>(segs.size()));
+  std::fflush(stdout);
+  if (placed > 0) a.notify(std::to_string(placed) + " clips recorded into the arrangement");
+}
+
+void captureFrame(App& a) {
+  const bool want = a.recordArmed && a.engine.playing() && !a.engine.countingIn();
+  const int nTracks = std::min<int>(static_cast<int>(a.doc.song().tracks.size()), kMaxPlaylistTracks);
+  const Tick o = arrangementOrigin(a);
+  if (want && !gCap.on) {
+    gCap = Capture{};
+    gCap.on = true;
+    gCap.lastPos = a.engine.position();
+    gCap.lastMode = a.engine.mode();
+    // From the arrangement's play position (a capture begun while the grid plays: the arrangement's start).
+    gCap.arrNow = gCap.lastMode == PlayMode::Live ? static_cast<double>(o) : std::max(gCap.lastPos, static_cast<double>(o));
+  }
+  if (!gCap.on) return;
+  if (want) {
+    const double pos = a.engine.position();
+    const PlayMode mode = a.engine.mode();
+    const bool sameClock = mode == gCap.lastMode && pos >= gCap.lastPos;
+    // A clock that changed this frame: what ends ends where the old clock stood.
+    const double endPos = sameClock ? pos : gCap.lastPos;
+    if (sameClock) gCap.arrNow += pos - gCap.lastPos;
+    gCap.lastPos = pos, gCap.lastMode = mode;
+    if (mode == PlayMode::Live && gCap.liveStart < 0) gCap.liveStart = pos;
+    const Tick beat = std::max<Tick>(1, a.doc.song().beatTicks());
+    for (int t = 0; t < nTracks; ++t) {
+      const ObjectId act = mode == PlayMode::Live ? a.engine.liveActive(t) : kNoId;
+      const Tick org = a.engine.liveOrigin(t);
+      auto it = gCap.open.find(t);
+      if (it != gCap.open.end() && (act != it->second.clip || org != it->second.origin || !sameClock)) {
+        it->second.to = act != kNoId && sameClock ? std::max(it->second.from, org) : std::max(it->second.from, static_cast<Tick>(endPos));
+        gCap.done.push_back(it->second);
+        gCap.open.erase(it);
+      }
+      if (act != kNoId && !gCap.open.count(t)) {
+        CapSeg sg;
+        sg.track = t, sg.clip = act, sg.origin = org;
+        sg.from = std::max(org, static_cast<Tick>(gCap.liveStart));
+        // This clock's tick 0 in the arrangement, on the beat grid (the clock restarts on a launch).
+        const double off = gCap.arrNow - pos;
+        sg.off = static_cast<Tick>(std::llround(off / static_cast<double>(beat))) * beat;
+        gCap.open[t] = sg;
+      }
+    }
+    return;
+  }
+  for (auto& [t, sg] : gCap.open) {  // the transport stopped (or recording went off): the open stretches end here
+    sg.to = std::max(sg.from, static_cast<Tick>(gCap.lastPos));
+    gCap.done.push_back(sg);
+  }
+  gCap.open.clear();
+  gCap.on = false;
+  writeCapture(a);
+  gCap.done.clear();
+}
+}  // namespace
+
+void selectMain(App& a) {
+  // N49-09: Main is selected and its devices show: the Master chain window (820 x 300, centred, in Clips).
+  const Song& s = a.doc.song();
+  if (s.mixer.empty()) return;
+  a.selMixer = s.mixer[0].id;
+  a.showMaster = true;
+  a.focusWindow = "Master chain";
+}
+
+void toggleArrangementRecord(App& a) {
+  a.recordArmed = !a.recordArmed;
+  // N48-11: in Clips, Arrangement record starts the transport (from the arrangement's play position).
+  if (a.recordArmed && active(a)) {
+    // N49-03: the armed MIDI track (the selected one first) takes the notes: it gets its note-only
+    // channel when it has no instrument, and its channel is what the keys play, so the take lands on it.
+    const Song& s = a.doc.song();
+    int mt = selectedTrack(a);
+    if (!midiTrack(s, mt) || !trackArmed(a, mt)) {
+      mt = -1;
+      for (int i = 0; i < gridColumns(s) && mt < 0; ++i)
+        if (midiTrack(s, i) && trackArmed(a, i)) mt = i;
+    }
+    if (mt >= 0) {
+      ensureNoteChannel(a, mt);
+      if (const Channel* ch = trackmodes::linkedChannel(a.doc.song(), mt)) a.selectChannel(ch->id);
+      else if (const std::vector<ObjectId> chs = trackChannels(a.doc.song(), mt); !chs.empty()) a.selectChannel(chs.front());
+    }
+  }
+  if (a.recordArmed && active(a) && !a.engine.playing()) {
+    if (a.engine.mode() == PlayMode::Pattern) a.engine.setMode(PlayMode::Song);
+    const Tick o = arrangementOrigin(a);
+    if (a.engine.mode() == PlayMode::Song && a.engine.position() < static_cast<double>(o)) a.engine.setPosition(o);
+    (void)menuparity::playPressed(a);
+  }
 }
 
 bool drawMode(const App& a) { return (a.editFocus == App::EditFocus::Piano ? a.piano.tool : a.playlist.tool) == Tool::Draw; }
@@ -88,7 +708,144 @@ void showView(App& a, bool grid) {
   a.focusWindow = grid ? "Live pads" : "Playlist";
 }
 
+namespace {
+void selectClipChannel(App& a, const Clip& c);  // (with the clip grid, below)
+// C47 (C44-23): the track the device band follows when the track has no channel of its own to select
+// (an audio track: its mixer track's inserts; an empty MIDI track: nothing yet). Valid while the
+// selected channel is still the one there was when the track was chosen.
+struct TrackFocus {
+  int t = -1;
+  ObjectId ch = kNoId;
+};
+TrackFocus gFocus;
+// The channels a track plays, in order: an instrument track's own, else those its pattern clips play
+// (an audio track's are its clips' sources, which are not shown as its devices: none).
+std::vector<ObjectId> trackChannels(const Song& s, int t) {
+  if (const Channel* c = trackmodes::linkedChannel(s, t)) return {c->id};
+  std::vector<ObjectId> v;
+  if (trackmodes::modeOf(s, t) == TrackMode::Audio) return v;
+  for (const Clip& c : s.playlist) {
+    if (c.track != t || c.kind != ClipKind::Pattern) continue;
+    const Pattern* p = s.pattern(c.pattern);
+    if (!p) continue;
+    auto take = [&](ObjectId id) {
+      if (s.channel(id) && std::find(v.begin(), v.end(), id) == v.end()) v.push_back(id);
+    };
+    for (const auto& [ch, n] : p->notes)
+      if (!n.empty()) take(ch);
+    for (const auto& [ch, st] : p->steps)
+      if (std::any_of(st.begin(), st.end(), [](uint8_t x) { return x != 0; })) take(ch);
+  }
+  return v;
+}
+// A track chosen (its title, its header or one of its slots): the device band shows its devices.
+void focusTrack(App& a, int t) {
+  const std::vector<ObjectId> chans = trackChannels(a.doc.song(), t);
+  if (!chans.empty()) {
+    if (std::find(chans.begin(), chans.end(), a.selChannel) == chans.end()) a.selectChannel(chans.front());
+    gFocus = {};
+    return;
+  }
+  gFocus = {t, a.selChannel};
+}
+constexpr size_t kArrangementSetsMax = 40;
+// N45-10: the view an opened set asks for, held over the first frames (a launch with a file builds the
+// layout after the load, and that opens the shell's default windows again).
+int gOpenView = -1, gOpenFrames = 0;
+// N47-17: a set opened or made new (and the first one at launch) starts with its first track selected,
+// as the reference always has a track selected: the device band then shows that track.
+bool gPickFirst = true;
+int gRenameFrames = 0;  // N47-12: frames until the clip band's Name field takes the keyboard
+std::vector<std::string> arrangementSets(const App& a) {
+  std::vector<std::string> v;
+  const std::string all = a.settings.getString("clips.arrangementSets");
+  size_t p = 0;
+  while (p < all.size()) {
+    const size_t e = all.find('\n', p);
+    const std::string line = all.substr(p, e == std::string::npos ? std::string::npos : e - p);
+    if (!line.empty()) v.push_back(line);
+    if (e == std::string::npos) break;
+    p = e + 1;
+  }
+  return v;
+}
+}  // namespace
+
+void projectOpened(App& a, const std::string& file) {
+  // On a launch with a file the shell is not built yet: the view waits for Clips' first frames
+  // (viewFrame runs only in Clips, so another layout never sees it).
+  const bool now = layoutui::active() == layout::Preset::Live;
+  if (!now && a.settings.getString("ui.layout") != "live") return;
+  const std::vector<std::string> v = arrangementSets(a);
+  bool grid = file.empty() || std::find(v.begin(), v.end(), file) == v.end();
+  // N48-07: the project's own note of its view first (it travels with the file, so a fresh config
+  // or another computer opens it the same way); this config's list for older files.
+  const std::string& pv = a.doc.song().live.view;
+  if (!file.empty() && !pv.empty()) grid = pv == "grid";
+  if (now) showView(a, grid);
+  gOpenView = grid ? 1 : 0;
+  gOpenFrames = 4;
+  gPickFirst = true;
+}
+
+void setOpenedNew() { gPickFirst = true; }
+
+void renameClip(App& a, ObjectId clip) {
+  const Clip* c = a.doc.song().clip(clip);
+  if (!c) return;
+  a.playlist.selected = {clip};
+  if (c->kind == ClipKind::Pattern) a.selectPattern(c->pattern);
+  layoutui::setRegionVisible(a, "live.clip", true, false);
+  if (bool* f = layoutui::windowOpenFlag(a, "Piano roll")) *f = true;
+  gRenameFrames = 3;  // after the menu closes and the band is built
+}
+
+bool renameFocusNow() { return gRenameFrames > 0 && --gRenameFrames == 0; }
+
+int gRenTrack = -1, gRenTrackFrames = 0, gRenTrackIdle = 0;  // checkpoint 49: the track whose grid title is a name field
+void renameTrack(App& a, int track) {
+  const Song& s = a.doc.song();
+  if (track < 0 || track >= static_cast<int>(s.tracks.size())) return;
+  a.playlist.trackSel = {track};
+  if (gridView(a)) {
+    gRenTrack = track, gRenTrackFrames = 2, gRenTrackIdle = 0;
+    return;
+  }
+  menus::openPrompt("Rename track", playlistTrackName(s, static_cast<size_t>(track)), [&a, track](const std::string& n) {
+    if (track < static_cast<int>(a.doc.song().tracks.size()) && !n.empty())
+      a.doc.editPlaylistTrack(track, "rename playlist track", [n](PlaylistTrack& x) { x.name = n; });
+  });
+}
+
+void projectSaved(App& a, const std::string& file) {
+  if (!active(a) || file.empty()) return;
+  {  // N48-07: noted in the project as well (no undo step; called before the save writes the song)
+    const char* view = gridView(a) ? "grid" : "arrangement";
+    if (a.doc.song().live.view != view) a.doc.patchSong([view](Song& x) { x.live.view = view; });
+  }
+  std::vector<std::string> v = arrangementSets(a);
+  v.erase(std::remove(v.begin(), v.end(), file), v.end());
+  if (!gridView(a)) v.insert(v.begin(), file);
+  if (v.size() > kArrangementSetsMax) v.resize(kArrangementSetsMax);
+  std::string all;
+  for (const std::string& f : v) all += (all.empty() ? "" : "\n") + f;
+  a.settings.set("clips.arrangementSets", all);
+}
+
 void viewFrame(App& a) {
+  sessionRecordFrame(a);
+  if (gPickFirst && GImGui->OpenPopupStack.Size == 0) {
+    gPickFirst = false;
+    const Song& s = a.doc.song();
+    if (a.playlist.trackSel.empty() && a.playlist.selected.empty() && trackmodes::usedTrackCount(s) > 0) {
+      a.playlist.trackSel = {0};
+      focusTrack(a, 0);
+    }
+  }
+  if (gOutside) {  // N45-10: coming into Clips (a switch, a launch) shows the set in the view it was saved in
+    gOutside = false;
+    projectOpened(a, a.projectPath);
+  }
   {  // the Live way with installed plugins' windows (Settings > Interface)
     PluginWindowPolicy p;
     p.managed = true;
@@ -103,17 +860,70 @@ void viewFrame(App& a) {
   }
   {  // Round 45: selecting a clip shows the clip band in place of the device band (one detail band at a
      // time, as the reference's detail view turns to the clip view when a clip is selected).
-    // Not while the button is held: the press that selects a clip also starts its drag, and the band
+    // Not while a mouse button is held (integ-1117: any button, so a right-press that selects a clip
+    // waits for its menu too): the press that selects a clip also starts its drag, and the band
     // swap rebuilds the dock (the arrangement moves under the pointer and the drag was lost). The
     // band turns once the button is released.
     static std::set<ObjectId> lastSel;
-    if (a.playlist.selected != lastSel && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    static std::set<int> lastTracks;  // C47: a newly selected track brings its devices to the band
+    if (a.playlist.trackSel != lastTracks) {
+      lastTracks = a.playlist.trackSel;
+      if (lastTracks.size() == 1) focusTrack(a, *lastTracks.begin());
+    }
+    // N46-01: not while a menu is open (the band swap closed the clip menu a right-click had just
+    // opened); it happens when the menu closes.
+    if (a.playlist.selected != lastSel && GImGui->OpenPopupStack.Size == 0 && !ImGui::IsAnyMouseDown()) {
       lastSel = a.playlist.selected;
       if (!lastSel.empty()) layoutui::setRegionVisible(a, "live.clip", true);
+      // N46-03: one clip selected (grid or arrangement): the clip band edits its own pattern and channel.
+      if (lastSel.size() == 1)
+        if (const Clip* c = a.doc.song().clip(*lastSel.begin()); c && c->kind == ClipKind::Pattern) {
+          a.selectPattern(c->pattern);
+          selectClipChannel(a, *c);
+        }
     }
   }
+  {  // C44-03: Tab is the view swap. Dear ImGui's own tabbing (always on) moved the keyboard into the
+     // next text field of the focused window (the mixer band's volume fields), after which every Tab
+     // went to that field; in Clips it only runs while a text field already has the keyboard.
+    const ImGuiIO& io = ImGui::GetIO();
+    GImGui->ConfigNavEnableTabbing = io.WantTextInput;
+    // C44-17: Shift+Tab swaps the clip band and the device band (one detail band at a time).
+    if (!io.WantTextInput && io.KeyShift && !io.KeyCtrl && !io.KeyAlt && !io.KeySuper && !a.showStage && GImGui->OpenPopupStack.Size == 0 &&
+        ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
+      const bool clipShown = layout::visible(layout::shell(layout::Preset::Live), layoutui::regionState(a, layout::Preset::Live), "live.clip");
+      layoutui::setRegionVisible(a, clipShown ? "live.device" : "live.clip", true);
+    }
+  }
+  {  // C44-08: Esc closes the open menu or context menu (the top one; a dialog keeps its own Esc)
+    ImGuiContext& g = *GImGui;
+    if (g.OpenPopupStack.Size > 0 && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+      ImGuiWindow* top = g.OpenPopupStack.back().Window;
+      if (!top || !(top->Flags & ImGuiWindowFlags_Modal)) ImGui::ClosePopupToLevel(g.OpenPopupStack.Size - 1, true);
+    }
+  }
+  {  // C44-20: song playback starts at the arrangement's start, never inside the clip grid's storage
+    // N45-02: Clips has no pattern mode: Space plays the arrangement (or the launched clips). C47: but
+    // Session record runs in it (the recorded clip's pattern loops while it records).
+    if (a.engine.mode() == PlayMode::Pattern && !a.recordArmed) a.engine.setMode(PlayMode::Song);
+    const Tick o = arrangementOrigin(a);
+    if (o > 0 && !a.engine.playing() && a.engine.mode() == PlayMode::Song && a.engine.position() < static_cast<double>(o))
+      a.engine.setPosition(o);
+  }
   static bool wasGrid = false;
-  if (a.showLivePads && a.showPlaylist) showView(a, !wasGrid);  // one just opened: it wins
+  // C44-09: coming back to Clips from another layout brings back the view it was left in (the
+  // other layouts open their own main windows, which said nothing about which view Clips showed).
+  static int lastFrame = -10;
+  static bool everShown = false;
+  const int fc = ImGui::GetFrameCount();
+  const bool back = everShown && fc - lastFrame > 1;
+  lastFrame = fc;
+  everShown = true;
+  if (gOpenFrames > 0 && gOpenView >= 0) {  // N45-10: an opened set's view
+    --gOpenFrames;
+    if (gridView(a) != (gOpenView == 1) || a.showLivePads == a.showPlaylist) showView(a, gOpenView == 1);  // (only a change: a menu stays open)
+  } else if (back) showView(a, wasGrid);
+  else if (a.showLivePads && a.showPlaylist) showView(a, !wasGrid);  // one just opened: it wins
   else if (!a.showLivePads && !a.showPlaylist) showView(a, wasGrid);  // both closed: the last one comes back
   wasGrid = gridView(a);
 }
@@ -161,7 +971,15 @@ HeaderCells cellsOf(const HeaderDraw& h) {
   return c;
 }
 
+// C44-25: a track's solo is its own mixer track's solo, so the activators (the tracks' mutes) keep
+// their states; a track with no mixer track of its own falls back to muting the others.
+const MixerTrack* soloMixer(const Song& s, int track) {
+  const MixerTrack* mx = trackmodes::playedMixer(s, track);
+  return mx && !s.mixer.empty() && mx->id != s.mixer[0].id ? mx : nullptr;
+}
+
 bool soloed(const Song& s, int track) {
+  if (const MixerTrack* mx = track >= 0 && track < static_cast<int>(s.tracks.size()) ? soloMixer(s, track) : nullptr) return mx->solo;
   if (track < 0 || track >= static_cast<int>(s.tracks.size()) || s.tracks[static_cast<size_t>(track)].muted || s.tracks.size() < 2) return false;
   for (size_t k = 0; k < s.tracks.size(); ++k)
     if (static_cast<int>(k) != track && !s.tracks[k].muted) return false;
@@ -261,17 +1079,11 @@ void drawMainRow(App& a, ImDrawList* dl, float x0, float x1, float y) {
 }
 
 namespace {
-// Returns: mixer tracks that a send reaches (not the master), in mixer order.
-std::vector<size_t> returnTracks(const Song& s) {
-  std::vector<size_t> rows;
-  for (size_t j = 1; j < s.mixer.size(); ++j) {
-    bool target = false;
-    for (const MixerTrack& m : s.mixer)
-      for (const Send& sd : m.sends) target = target || (!sd.sidechain && sd.to == s.mixer[j].id);
-    if (target) rows.push_back(j);
-  }
-  return rows;
-}
+// Returns: mixer tracks an aux send reaches (not the master, not a bus fed by outputs), in mixer order.
+// K-112c (C47): a bus (the demo's Drum Bus) is where its members' outputs go, not a return.
+std::vector<size_t> returnTracks(const Song& s) { return trackmodes::returnTracks(s); }
+// C47: View > Return tracks off folds their strips, titles and rows away (the sends stay on the tracks).
+bool returnsShown(const App& a) { return a.settings.getBool("clips.returnTracks"); }
 // A return's letter (A, B, ... by its place among the returns), or 0.
 char returnLetter(const Song& s, int mixerIndex) {
   const std::vector<size_t> r = returnTracks(s);
@@ -284,6 +1096,7 @@ char returnLetter(const Song& s, int mixerIndex) {
 float drawBusRows(App& a, ImDrawList* dl, float x0, float x1, float top, float bottom) {
   const Song& s = a.doc.song();
   if (s.mixer.empty()) return 0;
+  if (!returnsShown(a)) return 0;
   const std::vector<size_t> rows = returnTracks(s);
   float y = top + 6;  // a gap after the last track
   for (size_t j : rows) {
@@ -329,12 +1142,17 @@ HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h) {
   const bool solo = soloed(s, h.track);
   square(dl, c.solo, solo ? P.solo : P.surface900, h.hovered && c.solo.contains(m));
   centredText(dl, a.fontBold, theme::kFontLabel, c.solo, solo ? theme::contrastText(P.solo) : P.textDim, "S");
-  const MixerTrack* mx = trackmodes::linkedMixer(s, h.track);
+  // N45-05: the volume, pan and meter are the mixer track the track plays through (its strip's: an
+  // instrument's, or the bus its sounds share); arm is the audio track's own.
+  const MixerTrack* mx = trackmodes::playedMixer(s, h.track);
+  const MixerTrack* lm = trackmodes::linkedMixer(s, h.track);
   const bool audio = trackmodes::modeOf(s, h.track) == TrackMode::Audio;
-  const bool armed = audio && mx && mx->armed;
-  square(dl, c.arm, armed ? theme::withAlpha(P.arm, 0.85f) : P.surface900, audio && h.hovered && c.arm.contains(m));
+  const bool midiT = !audio && midiTrack(s, h.track);
+  const bool armed = (audio && lm && lm->armed) || (midiT && midiArmedByHand(h.track));
+  const bool autoArm = midiT && !armed && trackArmed(a, h.track);  // N47-10: the selected MIDI track, armed by itself
+  square(dl, c.arm, armed ? theme::withAlpha(P.arm, 0.85f) : autoArm ? theme::withAlpha(P.arm, 0.45f) : P.surface900, (audio || midiT) && h.hovered && c.arm.contains(m));
   const ImVec2 ac((c.arm.a.x + c.arm.b.x) * 0.5f, (c.arm.a.y + c.arm.b.y) * 0.5f);
-  dl->AddCircleFilled(ac, 3.5f, armed ? theme::contrastText(P.arm) : audio ? P.text : theme::withAlpha(P.textDim, 0.45f), 12);  // K-112c (round 19): a neutral dot until armed (142, 157, 143)
+  dl->AddCircleFilled(ac, 3.5f, armed || autoArm ? theme::contrastText(P.arm) : audio || midiT ? P.text : theme::withAlpha(P.textDim, 0.45f), 12);  // K-112c (round 19): a neutral dot until armed (142, 157, 143)
   // Volume (the linked mixer track's fader) or, while the grid plays a clip here, Back to arrangement.
   const bool onGrid = a.engine.mode() == PlayMode::Live && a.engine.liveActive(h.track) != kNoId;
   if (onGrid) {
@@ -392,7 +1210,7 @@ HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h) {
   if (!h.hovered) return HeaderPart::None;
   if (c.act.contains(m)) return HeaderPart::Activator;
   if (c.solo.contains(m)) return HeaderPart::Solo;
-  if (c.arm.contains(m)) return audio ? HeaderPart::Arm : HeaderPart::None;
+  if (c.arm.contains(m)) return audio || midiTrack(s, h.track) ? HeaderPart::Arm : HeaderPart::None;  // N47-10: MIDI tracks arm too
   if (c.vol.contains(m)) return onGrid ? HeaderPart::BackToArrangement : mx ? HeaderPart::Volume : HeaderPart::None;
   if (c.hasPan && c.pan.contains(m)) return mx ? HeaderPart::Pan : HeaderPart::None;
   if (c.name.contains(m)) return HeaderPart::Name;
@@ -410,6 +1228,10 @@ bool clickHeader(App& a, int track, HeaderPart part, bool right) {
       }
       [[fallthrough]];  // right-click: solo, as Studio's switch
     case HeaderPart::Solo: {
+      if (const MixerTrack* mx = soloMixer(s, track)) {
+        ops::soloMixerTrack(a.doc, mx->id);
+        return true;
+      }
       const bool solo = soloed(s, track);
       a.doc.editSong(solo ? "unsolo playlist track" : "solo playlist track", [track, solo](Song& x) {
         for (size_t k = 0; k < x.tracks.size(); ++k) x.tracks[k].muted = solo ? false : static_cast<int>(k) != track;
@@ -417,21 +1239,46 @@ bool clickHeader(App& a, int track, HeaderPart part, bool right) {
       return true;
     }
     case HeaderPart::Arm: {
+      // N49-15: arming is exclusive for every track, MIDI and audio alike (Cmd keeps the others), as
+      // the reference's Exclusive Arm.
+      const ImGuiIO& io = ImGui::GetIO();
+      const bool exclusive = !(io.KeySuper || io.KeyCtrl);
+      auto otherAudioArmed = [&] {
+        for (int i = 0; i < static_cast<int>(s.tracks.size()); ++i)
+          if (i != track && trackmodes::modeOf(s, i) == TrackMode::Audio)
+            if (const MixerTrack* m = trackmodes::linkedMixer(s, i); m && m->armed) return true;
+        return false;
+      };
+      auto disarmOthers = [track](Song& x) {
+        for (int i = 0; i < static_cast<int>(x.tracks.size()); ++i)
+          if (i != track && trackmodes::modeOf(x, i) == TrackMode::Audio)
+            if (const MixerTrack* m = trackmodes::linkedMixer(x, i); m && m->armed) trackmodes::setArmed(x, i, false);
+      };
+      if (trackmodes::modeOf(s, track) != TrackMode::Audio) {  // N47-10: a MIDI track's arm
+        const bool on = !midiArmedByHand(track);
+        toggleMidiArm(a, track, exclusive);
+        if (on && exclusive && otherAudioArmed()) a.doc.editSong("disarm track", disarmOthers);
+        return true;
+      }
       const MixerTrack* mx = trackmodes::linkedMixer(s, track);
       const bool to = !(mx && mx->armed);
-      a.doc.editSong(to ? "arm track" : "disarm track", [track, to](Song& x) { trackmodes::setArmed(x, track, to); });
+      a.doc.editSong(to ? "arm track" : "disarm track", [track, to, exclusive, disarmOthers](Song& x) {
+        if (to && exclusive) disarmOthers(x);
+        trackmodes::setArmed(x, track, to);
+      });
+      if (to && exclusive) gMidiArmed.clear();
       return true;
     }
     case HeaderPart::Volume:
       if (right) return false;
-      if (const MixerTrack* mx = trackmodes::linkedMixer(s, track)) {
+      if (const MixerTrack* mx = trackmodes::playedMixer(s, track)) {
         gVol.mixer = mx->id;
         gVol.start = mx->volume;
         gVol.y0 = ImGui::GetIO().MousePos.y;
       }
       return true;
     case HeaderPart::Pan:
-      if (const MixerTrack* mx = trackmodes::linkedMixer(s, track)) {
+      if (const MixerTrack* mx = trackmodes::playedMixer(s, track)) {
         if (right || ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper) {  // back to the centre
           a.doc.setParam(mixerParam(mx->id, MixerParam::Pan), 0.0, false);
           return true;
@@ -465,8 +1312,24 @@ const char* headerHint(HeaderPart part) {
 // ----------------------------------------------------------- status line ----
 
 namespace {
+// N49-10: the selected clip's track first (the status bar named the header selected before it).
+int statusTrack(App& a) {
+  const Song& s = a.doc.song();
+  if (a.playlist.selected.size() == 1)
+    if (const Clip* c = s.clip(*a.playlist.selected.begin()); c && c->track >= 0 && c->track < static_cast<int>(s.tracks.size())) return c->track;
+  if (!a.playlist.trackSel.empty()) {
+    const int t = *a.playlist.trackSel.begin();
+    if (t >= 0 && t < static_cast<int>(s.tracks.size())) return t;
+  }
+  if (const Channel* c = s.channel(a.selChannel)) return trackmodes::instrumentTrackOf(s, c->id);
+  return -1;
+}
+
 std::string selectedTrackName(App& a) {
   const Song& s = a.doc.song();
+  if (const Clip* c = a.playlist.selected.size() == 1 ? s.clip(*a.playlist.selected.begin()) : nullptr;
+      c && c->track >= 0 && c->track < static_cast<int>(s.tracks.size()))
+    return std::to_string(c->track + 1) + ". " + playlistTrackName(s, static_cast<size_t>(c->track));
   if (!a.playlist.trackSel.empty()) {
     const int t = *a.playlist.trackSel.begin();
     if (t >= 0 && t < static_cast<int>(s.tracks.size())) return std::to_string(t + 1) + ". " + playlistTrackName(s, static_cast<size_t>(t));
@@ -534,7 +1397,9 @@ void drawStatusBar(App& a) {
       if (on) {
         layoutui::setRegionVisible(a, t.region, false);
       } else {
-        layoutui::setRegionVisible(a, t.region, true);
+        // Checkpoint 48: the toggles are independent, as the reference's: turning one on with the other
+        // shown stacks them, the clip band over the device band (refs 456, 466; Shift+Tab swaps).
+        layoutui::setRegionVisible(a, t.region, true, false);
         // A band with nothing open in it opens its main part: the notes editor, the device chain, the mixer.
         if (bool* f = layoutui::windowOpenFlag(a, t.part)) *f = true;
       }
@@ -543,8 +1408,14 @@ void drawStatusBar(App& a) {
   }
   rx -= theme::kS3;
   std::string sel = selectedTrackName(a);
-  if (const Channel* c = a.doc.song().channel(a.selChannel))
-    if (const PluginInfo* pi = findPlugin(c->plugin.type)) sel += (sel.empty() ? "" : " \xC2\xB7 ") + pi->name;
+  {  // N49-10: the device of that track (its instrument), none for an empty MIDI track's note-only channel
+    const Song& s = a.doc.song();
+    const int t = statusTrack(a);
+    const Channel* c = t >= 0 ? trackmodes::linkedChannel(s, t) : s.channel(a.selChannel);
+    const bool notesOnly = c && c->plugin.type == "gl.midiout" && c->mixerTrack == kNoId;
+    if (c && !notesOnly)
+      if (const PluginInfo* pi = findPlugin(c->plugin.type)) sel += (sel.empty() ? "" : " \xC2\xB7 ") + pi->name;
+  }
   if (!sel.empty()) {
     const float sw = std::min(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, sel.c_str()).x, W * 0.3f);
     rx -= sw;
@@ -572,7 +1443,7 @@ void drawStatusBar(App& a) {
   // Left: the view and what it is for.
   const bool grid = gridView(a);
   const std::string view = grid ? i18n::tr("Clip grid") : i18n::tr("Arrangement");
-  const char* what = grid ? i18n::tr("click a slot to launch its clip, the scene button launches the row")
+  const char* what = grid ? i18n::tr("click a slot to select it, its triangle launches the clip, a scene's triangle launches the row")
                           : i18n::tr("the Grid switch at the top shows the clip grid");
   // K-112c (round 19): the message sits in a long recessed field from the info button to the right
   // end's items, as every ref's status bar (072, 093, 198, 276, 280).
@@ -1410,16 +2281,31 @@ void deviceBand(App& a, BandPick& pick) {
   const ObjectId chId = a.settingsChannel != kNoId ? a.settingsChannel : a.selChannel;
   const Channel* ch = s.channel(chId);
   const MixerTrack* mt = ch ? s.mixerTrack(ch->mixerTrack) : s.mixerTrack(a.selMixer);
+  // C47 (C44-23): a chosen track with no channel of its own: its mixer track's inserts (an audio track),
+  // or nothing yet (an empty MIDI track), not the master's.
+  const bool trackFocus = gFocus.t >= 0 && gFocus.t < trackmodes::usedTrackCount(s) && a.selChannel == gFocus.ch && a.settingsChannel == kNoId && pick.kind != 1;
+  if (trackFocus) {
+    ch = nullptr;
+    mt = trackmodes::playedMixer(s, gFocus.t);
+  }
   // An effect opened on another mixer track (from the mixer): the band shows that track's inserts.
   if (pick.kind == 1 && pick.fxTrack != kNoId && (!mt || mt->id != pick.fxTrack))
     if (const MixerTrack* fxt = s.mixerTrack(pick.fxTrack)) {
       mt = fxt;
       if (ch && ch->mixerTrack != fxt->id) ch = nullptr;
     }
+  // N48-13: the note-only channel a new clip gives an empty MIDI track (silent, on no mixer track) is no
+  // device: the band still asks for an instrument, as the reference's.
+  const bool notesOnly = ch && ch->plugin.type == "gl.midiout" && ch->mixerTrack == kNoId && pick.kind != 1;
+  if (notesOnly) ch = nullptr, mt = nullptr;
   if (!ch && !mt) {
     const ImVec2 p0 = ImGui::GetCursorScreenPos(), av = ImGui::GetContentRegionAvail();
-    ui::EmptyState(ImGui::GetWindowDrawList(), p0, ImVec2(p0.x + av.x, p0.y + std::max(av.y, 60.0f)), "No device",
-                   "Select a track: its instrument and the inserts of its mixer track show here");
+    if (trackFocus || notesOnly)
+      ui::EmptyState(ImGui::GetWindowDrawList(), p0, ImVec2(p0.x + av.x, p0.y + std::max(av.y, 60.0f)), "No instrument yet",
+                     "Drag an instrument from the browser onto this track: it and its effects show here");
+    else
+      ui::EmptyState(ImGui::GetWindowDrawList(), p0, ImVec2(p0.x + av.x, p0.y + std::max(av.y, 60.0f)), "No device",
+                     "Select a track: its instrument and the inserts of its mixer track show here");
     ImGui::Dummy(ImVec2(av.x, std::max(av.y, 60.0f)));
     return;
   }
@@ -1605,8 +2491,8 @@ void deviceBand(App& a, BandPick& pick) {
       dl->AddLine(ImVec2(bx1, y), ImVec2(bx1, std::min(y + 4, by1)), bc);
     }
     const size_t mtIndex = static_cast<size_t>(mt - s.mixer.data());
-    const std::string lbl = (mtIndex == 0 ? std::string(i18n::tr("Master")) : std::string(i18n::tr("Mixer track")) + " " + std::to_string(mtIndex)) +
-                            " \xC2\xB7 " + i18n::tr("inserts");
+    // N48-20 (checkpoint 49): the chain's owner by its Clips name (Main, or the track's), no Studio terms.
+    const std::string lbl = mtIndex == 0 ? std::string(i18n::tr("Main")) : !mt->name.empty() ? mt->name : std::string(i18n::tr("Track")) + " " + std::to_string(mtIndex);
     const ImVec2 ls = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, lbl.c_str());
     dl->AddRectFilled(ImVec2(bx0 + 10, by1 - ls.y * 0.5f - 1), ImVec2(bx0 + 16 + ls.x, by1 + ls.y * 0.5f), P.surface900);
     dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(bx0 + 13, by1 - ls.y * 0.5f - 1), bc, lbl.c_str());
@@ -1706,6 +2592,9 @@ namespace {
 // else the first selected header.
 int clipTrack(App& a) {
   const Song& s = a.doc.song();
+  // C44-10: the selected clip's track first (the Launch section fills as soon as a clip is selected).
+  if (a.playlist.selected.size() == 1)
+    if (const Clip* c = s.clip(*a.playlist.selected.begin()); c && c->track >= 0 && c->track < static_cast<int>(s.tracks.size())) return c->track;
   if (const Channel* c = s.channel(a.selChannel))
     if (const int t = trackmodes::instrumentTrackOf(s, c->id); t >= 0) return t;
   if (!a.playlist.trackSel.empty()) {
@@ -1791,6 +2680,103 @@ void valueBox(App& a, const char* text, float w) {
   (void)a;
 }
 
+// Checkpoint 48: a clip position as the reference's clip values read it, bars.beats.sixteenths from
+// 1.1.1, in a box as valueBox (`duration`: a length, from 0.0.0). A vertical drag moves it a beat per
+// 6 px (Shift: a sixteenth), the wheel a beat. N48-12: a click picks the field, and then the Up and
+// Down arrows step it; a double-click types it ("2.3.1", "2.3" or "2"; Enter sets it, Escape keeps
+// it). `v` changes within [lo, hi]. Returns true when it changed this frame.
+bool positionField(App& a, const char* id, Tick& v, Tick lo, Tick hi, float w, const char* hint, bool duration) {
+  const Song& s = a.doc.song();
+  const Tick bar = std::max<Tick>(1, s.barTicks()), beat = std::max<Tick>(1, s.beatTicks()), six = std::max<Tick>(1, beat / 4);
+  const long long one = duration ? 0 : 1;
+  char text[96];  // (room for three 64-bit numbers: GCC -Wformat-truncation)
+  const Tick c = std::max<Tick>(0, v);
+  std::snprintf(text, sizeof text, "%lld. %lld. %lld", static_cast<long long>(c / bar) + one, static_cast<long long>(c % bar / beat) + one,
+                static_cast<long long>(c % beat / six) + one);
+  const ImGuiID gid = ImGui::GetID(id);
+  static ImGuiID typing = 0, picked = 0;
+  static bool focusNext = false;
+  static char buf[96] = {};  // (holds the field text: GCC -Wformat-truncation)
+  Tick nv = v;
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  if (typing == gid) {
+    ImGui::PushID(id);
+    ImGui::SetNextItemWidth(w);
+    if (focusNext) ImGui::SetKeyboardFocusHere(), focusNext = false;
+    const bool enter = ImGui::InputText("##type", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+    const bool gone = !enter && !ImGui::IsItemActive() && !ImGui::IsItemActivated();
+    ImGui::PopID();
+    if (enter) {
+      long long f[3] = {one, one, one};
+      int n = 0;
+      for (const char* q = buf; *q && n < 3;) {
+        while (*q && !std::isdigit(static_cast<unsigned char>(*q)) && *q != '-') ++q;
+        if (!*q) break;
+        char* e = nullptr;
+        f[n++] = std::strtoll(q, &e, 10);
+        q = e;
+      }
+      if (n > 0) nv = static_cast<Tick>((f[0] - one) * bar + (f[1] - one) * beat + (f[2] - one) * six);
+      typing = 0;
+    } else if (gone) {
+      typing = 0;  // clicked away or Escape: the value stays
+    }
+  } else {
+    valueBox(a, text, w);
+    ImGui::SetCursorScreenPos(p);
+    ImGui::InvisibleButton(id, ImVec2(w, ImGui::GetFrameHeight()));
+    ui::Hint(hint);
+    const Tick step = ImGui::GetIO().KeyShift ? six : beat;
+    static float acc = 0;
+    if (ImGui::IsItemActivated()) acc = 0, picked = gid;
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+      typing = gid, focusNext = true;
+      std::snprintf(buf, sizeof buf, "%s", text);
+    } else if (ImGui::IsItemActive()) {
+      ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+      acc -= ImGui::GetIO().MouseDelta.y;
+      const int n = static_cast<int>(acc / 6.0f);
+      acc -= static_cast<float>(n) * 6.0f;
+      nv += step * n;
+    } else if (ImGui::IsItemHovered() && ImGui::GetIO().MouseWheel != 0.0f) {
+      nv += step * (ImGui::GetIO().MouseWheel > 0 ? 1 : -1);
+    }
+    if (picked == gid) {
+      if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !ImGui::IsItemHovered()) picked = 0;  // a click elsewhere lets go
+      else if (!ImGui::GetIO().WantTextInput && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) nv += step;
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) nv -= step;
+      }
+      if (picked == gid) {
+        const ImVec2 q(p.x + w, p.y + ImGui::GetFrameHeight());
+        ImGui::GetWindowDrawList()->AddRect(p, q, pal().accent, theme::kRadiusSm, 0, 1.0f);  // the picked field
+      }
+    }
+  }
+  nv = std::clamp(nv, lo, std::max(lo, hi));
+  if (nv == v) return false;
+  v = nv;
+  return true;
+}
+
+ObjectId clipRegion(const App& a, ObjectId pattern, Tick& start, Tick& end) {
+  if (!active(a) || a.playlist.selected.size() != 1) return kNoId;
+  const Song& s = a.doc.song();
+  const Clip* c = s.clip(*a.playlist.selected.begin());
+  if (!c || c->kind != ClipKind::Pattern || c->pattern != pattern) return kNoId;
+  start = c->offset, end = c->offset + s.clipLength(*c);
+  return c->id;
+}
+
+void setClipRegion(App& a, ObjectId clip, Tick start, Tick end, const char* label, uint64_t mergeKey) {
+  const Tick len = std::max<Tick>(1, end - start);
+  start = std::max<Tick>(0, start);
+  a.doc.editClip(clip, label, [start, len](Clip& x) {
+    x.offset = start, x.length = len;
+    if (x.loop) x.loopStart = start, x.loopLength = len;  // a looping clip repeats what the brace holds
+  }, mergeKey);
+}
+
 void columnScrollEdges() {
   // More rows past an edge: the edge fades and a small arrow says the wheel scrolls there.
   const auto& P = pal();
@@ -1853,15 +2839,59 @@ float clipColumn(App& a) {
       nameFor = pat->id;
     }
     ImGui::SetNextItemWidth(nameW);
+    if (renameFocusNow()) ImGui::SetKeyboardFocusHere();  // N47-12: the clip menu's Rename
     ImGui::InputText("##name", name, sizeof name, ImGuiInputTextFlags_AutoSelectAll);
     if (ImGui::IsItemDeactivatedAfterEdit() && pat->name != name) a.doc.renamePattern(pat->id, name);
-    ui::Hint("The pattern's name (the same name the channel rack and the playlist show)");
-    const float lenW = columnField(a, i18n::tr("Length"), 0, 2);
-    {
+    ui::Hint("The clip's name (every copy of this clip shows it)");
+    // Checkpoint 48: the clip's Start and End, as the reference's first row (456, 454): where the clip
+    // starts in its notes and where it ends; a drag moves either (the other stays). For the one clip
+    // selected (grid or arrangement) that plays this pattern.
+    const Clip* sel = nullptr;
+    if (a.playlist.selected.size() == 1)
+      if (const Clip* c = s.clip(*a.playlist.selected.begin()); c && c->kind == ClipKind::Pattern && c->pattern == pat->id) sel = c;
+    if (sel) {
+      const ObjectId cid = sel->id;
+      const Tick six = std::max<Tick>(1, s.beatTicks() / 4);
+      Tick start = sel->offset, end = sel->offset + s.clipLength(*sel);
+      const float sw = columnField(a, i18n::tr("Start"), 0, 2);
+      // N48-12: Start, End and Length are one region, the brace over the notes (the editor drags its ends).
+      if (positionField(a, "##cstart", start, 0, end - six, sw,
+                        "Where the clip starts in its notes (the brace's left end): drag, wheel or arrows, double-click to type")) {
+        setClipRegion(a, cid, start, end, "clip start", ImGui::GetID("##cstart"));
+      }
+      const float ew = columnField(a, i18n::tr("End"), 1, 2);
+      const Tick maxEnd = start + 512 * std::max<Tick>(1, s.barTicks());
+      if (positionField(a, "##cend", end, start + six, maxEnd, ew,
+                        "Where the clip ends (a grid clip starts again from its start there): drag, wheel or arrows, double-click to type")) {
+        setClipRegion(a, cid, start, end, "clip end", ImGui::GetID("##cend"));
+      }
+      Tick len = end - start;
+      const float lw = columnField(a, i18n::tr("Length"), 0, 2);
+      if (positionField(a, "##clen", len, six, maxEnd - start, lw, "The clip's length (bars. beats. sixteenths): End moves with it", true))
+        setClipRegion(a, cid, start, start + len, "clip end", ImGui::GetID("##cend"));
+    }
+    const float lenW = sel ? 0.0f : columnField(a, i18n::tr("Length"), 0, 2);
+    if (!sel) {
       const float bw = ImGui::GetFrameHeight();
       char len[32];
       std::snprintf(len, sizeof len, "%d %s", pat->bars, pat->bars == 1 ? i18n::tr("bar") : i18n::tr("bars"));
-      if (ImGui::Button("-", ImVec2(bw, 0)) && pat->bars > 1) a.doc.setPatternLength(pat->id, pat->bars - 1, pat->stepsPerBar);
+      // Checkpoint 48: the notes' length; a clip that played the whole pattern goes on playing all of it
+      // (before, a longer pattern still played only its first bars in a grid clip).
+      auto setBars = [&a, &s](const Pattern& pp, int bars) {
+        const Tick oldLen = s.patternContentLength(pp);
+        std::vector<ObjectId> follow;
+        for (const Clip& c : s.playlist)
+          if (c.kind == ClipKind::Pattern && c.pattern == pp.id && c.offset == 0 && c.length == oldLen) follow.push_back(c.id);
+        const ObjectId pid = pp.id;
+        a.doc.beginGroup("pattern length");
+        a.doc.setPatternLength(pid, bars, pp.stepsPerBar);
+        if (const Pattern* np = a.doc.song().pattern(pid)) {
+          const Tick newLen = a.doc.song().patternContentLength(*np);
+          for (ObjectId id : follow) a.doc.editClip(id, "pattern length", [newLen](Clip& x) { x.length = newLen; });
+        }
+        a.doc.endGroup();
+      };
+      if (ImGui::Button("-", ImVec2(bw, 0)) && pat->bars > 1) setBars(*pat, pat->bars - 1);
       ui::Hint("One bar shorter");
       ImGui::SameLine(0, 2);
       const ImVec2 lp = ImGui::GetCursorScreenPos();
@@ -1871,23 +2901,26 @@ float clipColumn(App& a) {
       ImGui::GetWindowDrawList()->AddRect(lp, ImVec2(lp.x + lw, lp.y + bw), ImGui::GetColorU32(ImGuiCol_Border), theme::kRadiusSm, 1.0f, 0);  // round 23: the fields' rim
       theme::centreText(ImGui::GetWindowDrawList(), a.fontRegular, theme::kFontLabel + 1, lp, ImVec2(lp.x + lw, lp.y + bw), P.text, len);
       ImGui::SameLine(0, 2);
-      if (ImGui::Button("+", ImVec2(bw, 0)) && pat->bars < 512) a.doc.setPatternLength(pat->id, pat->bars + 1, pat->stepsPerBar);
+      if (ImGui::Button("+", ImVec2(bw, 0)) && pat->bars < 512) setBars(*pat, pat->bars + 1);
       ui::Hint("One bar longer");
     }
-    const float meterW = columnField(a, i18n::tr("Meter"), 1, 2);
+    const float meterW = columnField(a, i18n::tr("Signature"), 1, 2);  // checkpoint 48: the reference's word (456)
     {
       char m[32];
       if (pat->ownMeter()) std::snprintf(m, sizeof m, "%d / %d", pat->meterNum, pat->meterDen);
-      else std::snprintf(m, sizeof m, "%s", i18n::tr("the song's"));
+      else std::snprintf(m, sizeof m, "%d / %d", s.timeSigNum, s.timeSigDen);  // N46-10: numbers, as the reference
       valueBox(a, m, meterW);  // K-112c (round 23): boxed, as every ref's clip values (038, 041, 045, 112)
-      ui::Hint("The pattern's own meter, or the song's (change it from the piano roll's toolbar)");
+      ui::Hint(pat->ownMeter() ? "The pattern's own meter (change it from the piano roll's toolbar)"
+                               : "The song's meter (give the pattern its own from the piano roll's toolbar)");
     }
     ImGui::PopID();
   }
   ImGui::Dummy(ImVec2(0, 4));
   // Launch: how the clip's track starts and ends its clips (the same settings as the track's menu).
-  const bool launchOpen = columnHeading(a, i18n::tr("Launch"), 0, 0, "##foldlaunch");
-  if (!launchOpen) {
+  // N46-10: only for the grid's clips; an arrangement clip plays where it sits, so the reference
+  // shows no launch settings for it.
+  const bool launchOpen = gridView(a) && columnHeading(a, i18n::tr("Launch"), 0, 0, "##foldlaunch");
+  if (!gridView(a) || !launchOpen) {
     // folded: only the title bar
   } else if (track < 0) {
     ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.textFaint));
@@ -1993,6 +3026,8 @@ void selectClipChannel(App& a, const Clip& c) {
       a.selectChannel(ch.id);
       return;
     }
+  // N46-02: an empty clip: its track's instrument (or note-only channel), so its notes can be drawn.
+  if (const Channel* lc = trackmodes::linkedChannel(s, c.track)) a.selectChannel(lc->id);
 }
 
 void launch(App& a, ObjectId clip) {
@@ -2001,10 +3036,314 @@ void launch(App& a, ObjectId clip) {
 }
 
 bool gGridAsked = false;  // K-287 (dev): the next drawn clip grid prints its slots
+float gGridScrollX = 0.0f;  // C44-28: the clip grid's horizontal scroll (the mixer band under it follows)
+
+// ---- K-112c (C44-11, C44-12, C44-13, C44-14, C44-15): the grid's own selection and slot edits ----
+// The selected slot (track, scene); a press on a clip selects it without launching it (its launch
+// triangle launches), and the grid's keys work on the selected slot. Every edit is a document edit
+// (one undo step, collaborators get it); the live area grows (the arrangement after it moves on,
+// out of sight in Clips) when a clip lands in a row past its end.
+struct GridSel {
+  int t = -1, k = -1;
+};
+GridSel gSel;
+int selectedScene() { return gSel.k; }
+int gSelFocus = 0;  // C44-12: frames the grid keeps the keyboard after a selection (the clip band appearing takes it)
+std::vector<Clip> gClipboard;     // a slot's clips, copied (start relative to the scene's start)
+
+Tick sceneTicks(const Song& s) { return std::max<Tick>(1, s.barTicks()) * kSceneBars; }
+
+// Playlist indices of the live clips on track t starting in scene k.
+std::vector<int> slotClips(const Song& s, int t, int k) {
+  std::vector<int> out;
+  const Tick st = sceneTicks(s), a0 = static_cast<Tick>(k) * st, a1 = a0 + st;
+  if (t < 0 || k < 0) return out;
+  for (int ci : liveClips(s, t)) {
+    const Clip& c = s.playlist[static_cast<size_t>(ci)];
+    if (c.start >= a0 && c.start < a1) out.push_back(ci);
+  }
+  return out;
+}
+
+// The live area reaches the end of scene k at least.
+void ensureScene(App& a, int k) { ops::extendLiveArea(a.doc, static_cast<Tick>(k + 1) * sceneTicks(a.doc.song())); }
+
+void selectSlot(App& a, int t, int k) {
+  gSel = {t, k};
+  gSelFocus = 3;
+  a.playlist.trackSel = {t};  // C47: as the reference, a slot's track is the selected track
+  const Song& s = a.doc.song();
+  const std::vector<int> in = slotClips(s, t, k);
+  if (in.empty()) {
+    a.playlist.selected.clear();  // an empty slot: the clip band empties (C44-26)
+    return;
+  }
+  const Clip& c = s.playlist[static_cast<size_t>(in.front())];
+  a.playlist.selected = {c.id};  // the clip band shows the clip (its notes, or an audio clip's sample)
+  if (c.kind == ClipKind::Pattern) a.selectPattern(c.pattern);
+  selectClipChannel(a, c);
+}
+
+void copySlot(App& a, int t, int k) {
+  const Song& s = a.doc.song();
+  gClipboard.clear();
+  const Tick at = static_cast<Tick>(k) * sceneTicks(s);
+  for (int ci : slotClips(s, t, k)) {
+    Clip c = s.playlist[static_cast<size_t>(ci)];
+    c.start -= at;
+    gClipboard.push_back(c);
+  }
+}
+
+bool deleteSlot(App& a, int t, int k, const char* label = "delete clip") {
+  const std::vector<int> in = slotClips(a.doc.song(), t, k);
+  if (in.empty() || a.doc.song().tracks[static_cast<size_t>(t)].locked) return false;
+  std::vector<ObjectId> ids;
+  for (int ci : in) ids.push_back(a.doc.song().playlist[static_cast<size_t>(ci)].id);
+  a.doc.beginGroup(label);
+  for (ObjectId id : ids) a.doc.removeClip(id);
+  a.doc.endGroup();
+  a.playlist.selected.clear();
+  return true;
+}
+
+// Puts copies of `clips` (starts relative to the scene) into slot (t, k), replacing what is there.
+// Returns false when the track does not take them.
+bool placeInSlot(App& a, const std::vector<Clip>& clips, int t, int k, const char* label) {
+  const Song& s = a.doc.song();
+  if (clips.empty() || t < 0 || t >= static_cast<int>(s.tracks.size()) || k < 0 || s.tracks[static_cast<size_t>(t)].locked) return false;
+  for (const Clip& c : clips)
+    if (!trackmodes::clipAllowed(s, c.kind, t)) return false;
+  a.doc.beginGroup(label);
+  ensureScene(a, k);
+  std::set<ObjectId> old;
+  for (int ci : slotClips(a.doc.song(), t, k)) old.insert(a.doc.song().playlist[static_cast<size_t>(ci)].id);
+  const Tick at = static_cast<Tick>(k) * sceneTicks(a.doc.song());
+  std::set<ObjectId> added;
+  a.doc.editSong(label, [&](Song& x) {
+    x.playlist.erase(std::remove_if(x.playlist.begin(), x.playlist.end(), [&](const Clip& c) { return old.count(c.id) > 0; }), x.playlist.end());
+    for (Clip c : clips) {
+      c.id = x.allocateId();
+      c.start = at + std::max<Tick>(0, c.start);
+      c.track = t;
+      c.takeGroup = kNoId, c.take = 0;
+      x.playlist.push_back(c);
+      added.insert(c.id);
+    }
+  });
+  a.doc.endGroup();
+  selectSlot(a, t, k);
+  return true;
+}
+
+// Inserts an empty scene under scene k (every clip of a later scene moves down one row).
+void insertScene(App& a, int k) {
+  const Tick st = sceneTicks(a.doc.song());
+  a.doc.editSong("insert scene", [&](Song& x) {
+    const Tick from = x.live.areaEnd, at = static_cast<Tick>(k + 1) * st;
+    const Tick newEnd = std::max(from, at) + st, shift = newEnd - from;
+    for (Clip& c : x.playlist) {
+      if (c.start >= from) c.start += shift;
+      else if (c.start >= at) c.start += st;
+    }
+    for (Marker& m : x.markers)
+      if (m.pos >= from) m.pos += shift;
+    x.live.areaEnd = newEnd;
+  });
+}
+
+// Duplicates slot (t, k) into the slot under it (a scene is inserted when that one holds a clip).
+void duplicateSlot(App& a, int t, int k) {
+  if (slotClips(a.doc.song(), t, k).empty()) return;
+  std::vector<Clip> keep = gClipboard;
+  copySlot(a, t, k);
+  std::vector<Clip> src = gClipboard;
+  gClipboard = std::move(keep);
+  a.doc.beginGroup("duplicate clip");
+  if (!slotClips(a.doc.song(), t, k + 1).empty()) insertScene(a, k);
+  placeInSlot(a, src, t, k + 1, "duplicate clip");
+  a.doc.endGroup();
+}
+
+// A new empty MIDI clip (one bar) in an empty slot of a track that takes notes (`made`: its id).
+bool newMidiClipIn(App& a, int t, int k, ObjectId* made) {
+  const Song& s = a.doc.song();
+  if (t < 0 || t >= static_cast<int>(s.tracks.size()) || s.tracks[static_cast<size_t>(t)].locked || !trackmodes::clipAllowed(s, ClipKind::Pattern, t) ||
+      trackmodes::modeOf(s, t) == TrackMode::Audio ||  // an audio track's slot takes no MIDI clip
+      !slotClips(s, t, k).empty())
+    return false;
+  a.doc.beginGroup("insert MIDI clip");
+  ensureScene(a, k);
+  ensureNoteChannel(a, t);
+  const ObjectId p = a.doc.addPattern("");  // N47-14: an empty clip has no name until given one (refs 455, 531)
+  ObjectId id = kNoId;
+  if (p != kNoId) {
+    const Rgb col = a.doc.song().tracks[static_cast<size_t>(t)].color;  // N46-02: the clip takes the track's colour
+    a.doc.editSong("pattern colour", [&](Song& x) {
+      if (Pattern* pp = x.pattern(p)) pp->color = col;
+    });
+    id = a.doc.addClip(p, t, static_cast<Tick>(k) * sceneTicks(a.doc.song()), std::max<Tick>(1, a.doc.song().barTicks()));
+  }
+  a.doc.endGroup();
+  if (id == kNoId) return false;
+  if (const Channel* ch = trackmodes::linkedChannel(a.doc.song(), t)) a.selectChannel(ch->id);
+  else if (const std::vector<ObjectId> chs = trackChannels(a.doc.song(), t); !chs.empty()) a.selectChannel(chs.front());
+  a.selectPattern(p);
+  selectSlot(a, t, k);
+  layoutui::setRegionVisible(a, "live.clip", true);  // it opens in the clip band
+  if (made) *made = id;
+  return true;
+}
+
+void ensureNoteChannel(App& a, int t) {
+  // N46-02: notes need a channel. A MIDI track with no instrument and no notes yet gets a note-only
+  // channel (MIDI Out, silent, on Main: no strip of its own), linked as its instrument, so the clip
+  // opens ready to draw; an instrument dropped on the track later takes that channel's place and
+  // keeps the notes (the track's ReplaceTrackInstrument drop).
+  if (!trackmodes::linkedChannel(a.doc.song(), t) && trackChannels(a.doc.song(), t).empty()) {
+    const PlaylistTrack& tr0 = a.doc.song().tracks[static_cast<size_t>(t)];
+    const Rgb col = tr0.color;
+    const ObjectId nc = a.doc.addChannel(playlistTrackName(a.doc.song(), static_cast<size_t>(t)), "gl.midiout");
+    if (nc != kNoId)
+      a.doc.editSong("link MIDI track", [&](Song& x) {
+        if (Channel* c = x.channel(nc)) c->color = col, c->mixerTrack = kNoId;
+        PlaylistTrack& tr = x.tracks[static_cast<size_t>(t)];
+        tr.mode = TrackMode::Instrument, tr.channel = nc, tr.mixer = kNoId;
+      });
+  }
+}
+bool newMidiClip(App& a, int t, int k) { return newMidiClipIn(a, t, k, nullptr); }
+
+// The clip's own edits at the head (run next frame: the grid's slot lists hold playlist indices) of its menu (C44-15), then the arrangement's clip menu.
+void slotEditItems(App& a, int t, int k, bool hasClip) {
+  if (hasClip) {
+    if (ImGui::MenuItem(i18n::tr("Cut"))) a.later([&a, t, k] { copySlot(a, t, k), deleteSlot(a, t, k, "cut clip"); });
+    if (ImGui::MenuItem(i18n::tr("Copy"), keys::label("playlist.copy"))) copySlot(a, t, k);
+  }
+  if (ImGui::MenuItem(i18n::tr("Paste"), keys::label("playlist.paste"), false, !gClipboard.empty())) a.later([&a, t, k] { placeInSlot(a, gClipboard, t, k, "paste clip"); });
+  if (hasClip) {
+    if (ImGui::MenuItem(i18n::tr("Duplicate"), keys::label("playlist.duplicate"))) a.later([&a, t, k] { duplicateSlot(a, t, k); });
+    if (ImGui::MenuItem(i18n::tr("Delete"), keys::label("playlist.delete"))) a.later([&a, t, k] { deleteSlot(a, t, k); });
+  } else {
+    const bool midi = trackmodes::clipAllowed(a.doc.song(), ClipKind::Pattern, t) && trackmodes::modeOf(a.doc.song(), t) != TrackMode::Audio;
+    if (ImGui::MenuItem(i18n::tr("Insert MIDI clip"), nullptr, false, midi)) a.later([&a, t, k] { newMidiClip(a, t, k); });
+  }
+  if (ImGui::MenuItem(i18n::tr("Insert scene"), keys::label("playlist.insertSpace"))) a.later([&a, k] { insertScene(a, k); });
+}
 
 }  // namespace
 
 void devGridAsk() { gGridAsked = true; }
+namespace {
+// Checkpoint 48: the slot Session record or Capture makes its clip in on track t: slot k when it is
+// empty, else (k < 0) the selected slot of the track when empty, else the track's first empty slot
+// at or after it. -1 when the track takes no MIDI clip.
+int sessionRecordSlotFor(App& a, int t, int k) {
+  const Song& s = a.doc.song();
+  if (!midiTrack(s, t) || s.tracks[static_cast<size_t>(t)].locked) return -1;
+  if (k >= 0) return slotClips(s, t, k).empty() ? k : -1;
+  k = gSel.t == t && gSel.k >= 0 ? gSel.k : 0;
+  while (!slotClips(s, t, k).empty()) ++k;
+  return k;
+}
+// N47-01: an audio track's slot to record into: k when empty, else the selected (or first) empty one.
+int audioRecordSlotFor(App& a, int t, int k) {
+  const Song& s = a.doc.song();
+  if (k < 0) k = gSel.t == t && gSel.k >= 0 ? gSel.k : 0;
+  while (!slotClips(s, t, k).empty()) ++k;
+  return k;
+}
+}  // namespace
+int selectedTrack(App& a) {
+  const Song& s = a.doc.song();
+  const int n = gridColumns(s);
+  if (!a.playlist.trackSel.empty() && *a.playlist.trackSel.begin() < n) return *a.playlist.trackSel.begin();
+  if (gSel.t >= 0 && gSel.t < n) return gSel.t;
+  for (ObjectId id : a.playlist.selected)
+    if (const Clip* c = s.clip(id); c && c->track < n) return c->track;
+  return -1;
+}
+void newReturnTrack(App& a) {
+  a.later([&a] { a.doc.editSong("new return track", [](Song& s) { trackmodes::addReturnTrack(s, "Return"); }); });
+}
+
+void toggleDetail(App& a) {
+  const layout::Shell& sh = layout::shell(layout::Preset::Live);
+  const layout::State st = layoutui::regionState(a, layout::Preset::Live);
+  const bool clip = layout::visible(sh, st, "live.clip"), dev = layout::visible(sh, st, "live.device");
+  if (clip || dev) {
+    layoutui::setRegionVisible(a, "live.clip", false, false);
+    layoutui::setRegionVisible(a, "live.device", false, false);
+  } else {
+    layoutui::setRegionVisible(a, "live.clip", true, false);
+  }
+}
+
+int newTrack(App& a, bool audio) { return newTrackAfter(a, audio, active(a) ? selectedTrack(a) : -1); }
+int newTrackAfter(App& a, bool audio, int after) {
+  const int t = audio ? trackmodes::addAudioTrack(a.doc, after) : trackmodes::addMidiTrack(a.doc, after);
+  if (t >= 0) {
+    a.playlist.trackSel = {t};
+    if (gSel.t >= 0) gSel.t = t;
+  }
+  return t;
+}
+void gridInsertScene(App& a) {
+  const int k = gSel.k >= 0 ? gSel.k : std::max(0, static_cast<int>((a.doc.song().live.areaEnd + sceneTicks(a.doc.song()) - 1) / sceneTicks(a.doc.song())) - 1);
+  a.later([&a, k] { insertScene(a, k); });
+}
+void gridInsertMidiClip(App& a) {
+  const Song& s = a.doc.song();
+  if (!gridView(a)) {
+    // N49-07: in the Arrangement an empty MIDI clip over the time selection, else a bar at the insert
+    // marker, on the selected track (the time selection's first track first).
+    int t = !a.playlist.selTracks.empty() && a.playlist.selEnd > a.playlist.selStart ? *a.playlist.selTracks.begin()
+            : !a.playlist.trackSel.empty()                                         ? *a.playlist.trackSel.begin()
+                                                                                   : selectedTrack(a);
+    if (!midiTrack(s, t)) {
+      a.notify(i18n::tr("Select a MIDI track first"));
+      return;
+    }
+    const Tick bar = std::max<Tick>(1, s.barTicks()), o = arrangementOrigin(a);
+    Tick at = std::max(o, static_cast<Tick>(a.engine.position())), len = bar;
+    if (a.playlist.selEnd > a.playlist.selStart) at = std::max(o, a.playlist.selStart), len = std::max<Tick>(1, a.playlist.selEnd - at);
+    a.later([&a, t, at, len, bar] {
+      if (a.doc.song().tracks[static_cast<size_t>(t)].locked) return;
+      a.doc.beginGroup("insert MIDI clip");
+      ensureNoteChannel(a, t);
+      const int bars = static_cast<int>(std::max<Tick>(1, (len + bar - 1) / bar));
+      const ObjectId p = a.doc.addPattern("", bars);
+      ObjectId id = kNoId;
+      if (p != kNoId) {
+        const Rgb col = a.doc.song().tracks[static_cast<size_t>(t)].color;
+        a.doc.editSong("pattern colour", [&](Song& x) {
+          if (Pattern* pp = x.pattern(p)) pp->color = col;
+        });
+        id = a.doc.addClip(p, t, at, len);
+      }
+      a.doc.endGroup();
+      if (id == kNoId) return;
+      if (const Channel* ch = trackmodes::linkedChannel(a.doc.song(), t)) a.selectChannel(ch->id);
+      a.selectPattern(p);
+      a.playlist.selected = {id};
+      layoutui::setRegionVisible(a, "live.clip", true);
+    });
+    return;
+  }
+  int t = gSel.t, k = gSel.k;
+  if (t < 0 && !a.playlist.trackSel.empty()) t = *a.playlist.trackSel.begin();
+  if (t < 0 || t >= static_cast<int>(s.tracks.size())) {
+    a.notify(i18n::tr("Select a slot of a MIDI track first"));
+    return;
+  }
+  if (k < 0 || !slotClips(s, t, k).empty()) {  // the track's first empty slot
+    k = 0;
+    while (!slotClips(s, t, k).empty()) ++k;
+  }
+  a.later([&a, t, k] {
+    if (!newMidiClip(a, t, k)) a.notify(i18n::tr("MIDI clips go on MIDI tracks"));
+  });
+}
 
 namespace {
 
@@ -2013,17 +3352,20 @@ struct StripRow {
   float y0 = 0, h = 0;     // the strips' top and height
   bool sendsRow = false;  // the sends row across their top
 };
-// A track's first two sends to a return (not the master, which every track reaches): (send index, mixer index).
-std::vector<std::pair<size_t, int>> sendsOf(const Song& s, const MixerTrack* mx) {
-  std::vector<std::pair<size_t, int>> v;
+// N45-03: one send per return, as the reference's strips (every track has a knob for every return,
+// a new track or return included): (send index or -1 when the track has no send there yet, the
+// return's mixer index). A mixer track never sends to itself.
+constexpr int kMaxStripSends = 6;
+std::vector<std::pair<int, int>> sendsOf(const Song& s, const MixerTrack* mx) {
+  std::vector<std::pair<int, int>> v;
   if (!mx) return v;
-  for (size_t k = 0; k < mx->sends.size() && v.size() < 2; ++k) {
-    const Send& sd = mx->sends[k];
-    if (sd.sidechain) continue;
-    int dest = -1;
-    for (size_t j = 0; j < s.mixer.size(); ++j)
-      if (s.mixer[j].id == sd.to) dest = static_cast<int>(j);
-    if (dest > 0) v.emplace_back(k, dest);
+  for (size_t j : returnTracks(s)) {
+    if (s.mixer[j].id == mx->id) continue;
+    int k = -1;
+    for (size_t i = 0; i < mx->sends.size() && k < 0; ++i)
+      if (!mx->sends[i].sidechain && !mx->sends[i].stageRoom && mx->sends[i].to == s.mixer[j].id) k = static_cast<int>(i);
+    v.emplace_back(k, static_cast<int>(j));
+    if (v.size() >= static_cast<size_t>(kMaxStripSends)) break;
   }
   return v;
 }
@@ -2031,11 +3373,34 @@ std::vector<std::pair<size_t, int>> sendsOf(const Song& s, const MixerTrack* mx)
 // and the meter, with "Sends" at the right and the knobs staggered, each with its return's letter
 // in its open foot (143, 141, 112). The row is kept on every strip (blank where a track sends
 // nowhere) so the faders line up, and dropped when the strips are too short for it.
+// C47: three knobs to a row, a second row from the fourth return (up to six on the strip).
 constexpr float kSendsH = 34.0f;
-bool anySends(const Song& s) {
-  for (int t = 0; t < gridColumns(s); ++t)
-    if (!sendsOf(s, trackmodes::playedMixer(s, t)).empty()) return true;
-  return false;
+float sendsHeight(const Song& s) {
+  const int n = std::min<int>(static_cast<int>(returnTracks(s).size()), kMaxStripSends);
+  if (n == 0) return 0.0f;
+  const int per = std::min(n, 3), rowsN = (n + 2) / 3;
+  return kSendsH + 8.0f * static_cast<float>(per - 2 > 0 ? per - 2 : 0) + 30.0f * static_cast<float>(rowsN - 1);
+}
+bool anySends(const Song& s) { return !returnTracks(s).empty(); }
+// A send knob for a send the track does not have yet: drawn at zero; touching it adds the send (to
+// the return, at zero) under the same widget id, so the drag goes on in the real knob next frame.
+void missingSendKnob(App& a, ObjectId from, int dest, float r) {
+  double v = 0.0;
+  const ParamDesc d{"Send level", "%", 0.0, 1.25, 1.0, ParamKind::Continuous, ParamScale::Linear, {}};
+  bool released = false;
+  const bool ch = ui::Knob("##send", &v, d, r, nullptr, false, &released);
+  const Song& s = a.doc.song();
+  const MixerTrack* fm = s.mixerTrack(from);
+  // (A track with no output at all is left alone: the send would become its output.)
+  if (ch && fm && !fm->sends.empty() && dest >= 0 && dest < static_cast<int>(s.mixer.size()) && canRoute(s, from, s.mixer[static_cast<size_t>(dest)].id)) {
+    const ObjectId to = s.mixer[static_cast<size_t>(dest)].id;
+    const float lv = static_cast<float>(std::clamp(v, 0.0, 1.25));
+    a.doc.editMixerTrack(from, "add send", [&](MixerTrack& t) {
+      for (const Send& sd : t.sends)
+        if (sd.to == to && !sd.sidechain) return;
+      t.sends.push_back({to, lv, false});
+    });
+  }
 }
 void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerTrack* mx, float x, float w, bool master, char letter = 0) {
   const auto& P = pal();
@@ -2054,7 +3419,7 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
   // The sends row (see above), then two columns. Left, top to bottom: the peak and the volume in
   // dB, pan, then the activator, S and arm stacked. Right: the fader beside a meter with its dB
   // scale, the rest of the strip's height.
-  const float bottom = my0 + mh, top = my0 + 4 + (sendsRow ? kSendsH : 0.0f);
+  const float bottom = my0 + mh, top = my0 + 4 + (sendsRow ? sendsHeight(s) : 0.0f);
   const float colL = std::min(44.0f, std::floor(w * 0.48f));  // the left column's width
   const float rx = x + colL + 4;                               // the right column
   if (sendsRow && mx && !master) {
@@ -2068,10 +3433,12 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
     constexpr float kR = 10.0f;
     for (size_t i = 0; i < sends.size(); ++i) {
       const auto [k, dest] = sends[i];
-      const ImVec2 kp(x + 4 + static_cast<float>(i) * (2 * kR + 6), sy + static_cast<float>(i) * 8.0f);
+      const float col = static_cast<float>(i % 3), rowN = static_cast<float>(i / 3);
+      const ImVec2 kp(x + 4 + col * (2 * kR + 6), sy + col * 8.0f + rowN * 30.0f);
       ImGui::SetCursorScreenPos(kp);
-      ImGui::PushID(static_cast<int>(k));
-      ui::ParamKnob("##send", sendParam(mx->id, dest), kR, nullptr, false);
+      ImGui::PushID(1000 + dest);  // by return (not by send), so a knob keeps its id when its send is made
+      if (k >= 0) ui::ParamKnob("##send", sendParam(mx->id, dest), kR, nullptr, false);
+      else missingSendKnob(a, mx->id, dest, kR);
       if (ImGui::IsItemHovered()) a.setHint(std::string(i18n::tr("Send to")) + " " + s.mixer[static_cast<size_t>(dest)].name);
       if (const char lt = returnLetter(s, dest)) {  // the return's letter in the knob's open foot
         const char ls[2] = {lt, 0};
@@ -2172,7 +3539,8 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
     // (empty02, 069), and a hint saying how the track gets one.
     // A track whose clips play into several mixer tracks shows their loudest level there instead
     // (read only: each has its own fader in the mixer).
-    const std::vector<ObjectId> outs = t >= 0 ? trackmodes::playedMixers(s, t) : std::vector<ObjectId>{};
+    std::vector<ObjectId> outs = t >= 0 ? trackmodes::playedMixers(s, t) : std::vector<ObjectId>{};
+    if (outs.size() == 1 && outs[0] == s.masterId()) outs.clear();  // (a note-only MIDI track: nothing of its own)
     const float mx0 = rx + 16, my1 = fy + fh;
     if (outs.empty()) {
       for (float yy = fy + 2; yy + 2 <= my1; yy += 5) dl->AddRectFilled(ImVec2(mx0 + 3, yy), ImVec2(mx0 + 6, yy + 2), theme::withAlpha(P.textFaint, 0.55f));
@@ -2220,9 +3588,14 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
       square(dl, cs, so ? P.solo : P.surface900, hovAny && cs.contains(m));
       centredText(dl, a.fontBold, theme::kFontLabel, cs, so ? theme::contrastText(P.solo) : P.textDim, "S");
     }
-    const bool audio = trackmodes::modeOf(ss, t) == TrackMode::Audio, armed = audio && mx && mx->armed;
-    if (fitArm) square(dl, cr, armed ? theme::withAlpha(P.arm, 0.85f) : P.surface900, audio && hovAny && cr.contains(m));
-    if (fitArm) dl->AddCircleFilled(ImVec2((cr.a.x + cr.b.x) * 0.5f, (cr.a.y + cr.b.y) * 0.5f), 3.5f, armed ? theme::contrastText(P.arm) : audio ? P.text : theme::withAlpha(P.textDim, 0.45f), 12);  // K-112c (round 19): a neutral dot until armed (142, 157, 143)
+    const bool audio = trackmodes::modeOf(ss, t) == TrackMode::Audio;
+    bool armed = audio && mx && mx->armed;
+    // Checkpoint 48: the selected MIDI track is armed for notes (its empty slots record), drawn lit softer.
+    const bool midiT = !audio && midiTrack(ss, t), handArm = midiT && midiArmedByHand(t);
+    const bool autoArm = midiT && !handArm && trackArmed(a, t);
+    if (handArm) armed = true;  // N47-10: a MIDI track's own arm
+    if (fitArm) square(dl, cr, armed ? theme::withAlpha(P.arm, 0.85f) : autoArm ? theme::withAlpha(P.arm, 0.45f) : P.surface900, (audio || midiT) && hovAny && cr.contains(m));
+    if (fitArm) dl->AddCircleFilled(ImVec2((cr.a.x + cr.b.x) * 0.5f, (cr.a.y + cr.b.y) * 0.5f), 3.5f, armed || autoArm ? theme::contrastText(P.arm) : audio ? P.text : theme::withAlpha(P.textDim, 0.45f), 12);  // K-112c (round 19): a neutral dot until armed (142, 157, 143)
     ImGui::SetCursorScreenPos(ca.a);
     if (ImGui::InvisibleButton("##act", ImVec2(ca.b.x - ca.a.x, ca.b.y - ca.a.y))) clickHeader(a, t, HeaderPart::Activator, false);
     ui::Hint(headerHint(HeaderPart::Activator));
@@ -2233,8 +3606,8 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
     }
     if (fitArm) {
       ImGui::SetCursorScreenPos(cr.a);
-      if (ImGui::InvisibleButton("##arm", ImVec2(cr.b.x - cr.a.x, cr.b.y - cr.a.y)) && audio) clickHeader(a, t, HeaderPart::Arm, false);
-      ui::Hint(headerHint(HeaderPart::Arm));
+      if (ImGui::InvisibleButton("##arm", ImVec2(cr.b.x - cr.a.x, cr.b.y - cr.a.y)) && (audio || midiT)) clickHeader(a, t, HeaderPart::Arm, false);
+      ui::Hint(audio ? headerHint(HeaderPart::Arm) : i18n::tr("Record arm: an armed MIDI track records notes into its empty slots (the selected one is armed by itself; Cmd arms several)"));
     }
   }
   // K-112c (round 32): Main's strip no longer draws a "Main" box where the tracks have their
@@ -2253,6 +3626,10 @@ void drawClipGrid(App& a) {
   const auto& P = pal();
   const Song& s = a.doc.song();
   ImGui::BeginChild("##clipgrid", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+  if (gSelFocus > 0) {  // C44-12: the keys stay on the grid while the clip band opens for the selected clip
+    --gSelFocus;
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) ImGui::SetWindowFocus();
+  }
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float dpp = pixelgrid::frameScale();  // K-276: every cell edge on a device pixel, at any interface scale
   const ImVec2 o(livegrid::snap(ImGui::GetCursorScreenPos().x, dpp), livegrid::snap(ImGui::GetCursorScreenPos().y, dpp));
@@ -2283,30 +3660,55 @@ void drawClipGrid(App& a) {
   const bool footMixer = !(a.showMixer && !a.showStage);
   const float mixH = footMixer ? std::clamp(av.y * 0.45f, 110.0f, 260.0f) : 0.0f;
   const int rowsFit = std::max(1, static_cast<int>((av.y - kPad * 2 - kTitleH - kGap - mixH - kSlotH) / kSlotH));  // and the stop row
-  const int rows = std::max(nScenes, rowsFit);  // K-112c (round 25): empty slot rows fill the panel down to the mixer, as 276 and 355
+  // N46-12 (C44-23 part 3): a set shows its scenes, and at least the reference new set's eight; the
+  // panel under them stays clear down to the stop row (no longer as many rows as the window holds).
+  const int rows = std::max(nScenes, 8);
   const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(a.now) * 8.0f);
   static ObjectId held = kNoId;
   static std::pair<int, int> dragFrom{-1, -1};  // K-287: the slot (track, scene) a press started on
   static int titleDrag = -1;                     // K-112c (round 39): a column dragged by its title (moves the track)
   const ImVec2 m = ImGui::GetIO().MousePos;
-  const float y0 = livegrid::titleY(o.y, dpp), yT1 = livegrid::titleBottom(o.y, dpp), titleH = yT1 - y0;
+  // N45-04: only the scene rows scroll up and down: the titles stay at the top and the stop row and
+  // the mixer under them at the foot, as the reference's Session view (101, 143). `oyPin` is the
+  // grid's origin with the vertical scroll taken out; the rows keep o.y.
+  const float scrollY = ImGui::GetScrollY();
+  const float oyPin = o.y + scrollY;
+  const float y0 = livegrid::titleY(oyPin, dpp), yT1 = livegrid::titleBottom(oyPin, dpp), titleH = yT1 - y0;
+  const pixelgrid::Span stopSpan = livegrid::row(oyPin, rowsFit, dpp);  // the stop row, pinned under the rows that fit
+  const float slotsY0 = yT1 + kGap, slotsY1 = stopSpan.x0 - kGap;      // where scene rows show
+  auto rowShown = [&](const pixelgrid::Span& rs) { return rs.x1 > slotsY0 && rs.x0 < slotsY1; };
   const float fs = theme::kFontCaption + 1;
   auto column = [&](int t) { return livegrid::columnX(o.x, t, dpp); };
-  const float mainX = std::max(column(nCols) + 4, livegrid::snap(o.x + av.x - kPad - kMainW + 4, dpp));
-  // K-112c (round 36): the returns stand beside Main at the right, as 101, 112 and 357, not right
-  // after the tracks with the spare width between them and Main. The shift is whole columns' worth
-  // of snapped space, so each return keeps the K-276 column span and gaps.
+  // C44-19: Main (the scenes and Stop all) stands pinned at the window's right edge and the returns
+  // beside it, as 101, 112 and 357; the track columns scroll under them (clipped at the returns), and
+  // the content is as wide as the tracks, a free column and the pinned part, so the last track
+  // scrolls into view next to them. (K-112c round 36: the shift is whole columns' worth of snapped
+  // space, so each return keeps the K-276 column span and gaps.)
+  const float scrollX = ImGui::GetScrollX();
+  gGridScrollX = scrollX;
+  const float visX0 = o.x + scrollX;
+  const float mainX = livegrid::snap(visX0 + av.x - kPad - kMainW + 4, dpp);
   float retShift = 0.0f;
   int nFit = 0;
   {
     const std::vector<size_t> rets = returnTracks(s);
-    while (nFit < static_cast<int>(rets.size()) && nFit < 26 && column(nCols + nFit) + colW - 4 <= mainX - 6) ++nFit;
-    if (nFit > 0) retShift = std::max(0.0f, livegrid::snap(mainX - column(nCols + nFit), dpp));
+    nFit = returnsShown(a) ? std::min<int>(static_cast<int>(rets.size()), 26) : 0;
+    if (nFit > 0) retShift = livegrid::snap(mainX - column(nCols + nFit), dpp);
   }
   auto retColumn = [&](int i) { return livegrid::column(o.x + retShift, nCols + i, dpp); };
+  const float pinX0 = nFit > 0 ? retColumn(0).x0 : mainX;  // the pinned part's left edge
+  const float trackClipX1 = pinX0 - kGap;                    // track columns end here
   // K-112c (round 43): the free column between the last track and the returns (or Main), where
   // files and instruments dropped make new tracks (101, 069, 375, empty02).
-  const float freeX0 = column(nCols), freeX1 = (nFit > 0 ? retColumn(0).x0 : mainX) - kGap;
+  const float freeX0 = column(nCols), freeX1 = trackClipX1;
+  // N47-18: a column cut by the pinned part to a sliver (under half its width) is not shown at all:
+  // the last whole column ends where the returns begin (455, 457).
+  float gridClipX1 = trackClipX1;
+  for (int t = 0; t < nCols; ++t) {
+    const pixelgrid::Span cs = livegrid::column(o.x, t, dpp);
+    if (cs.x0 < trackClipX1 && cs.x1 > trackClipX1 && trackClipX1 - cs.x0 < cs.w() * 0.5f) gridClipX1 = cs.x0;
+  }
+  ImGui::PushClipRect(ImVec2(visX0, -1e6f), ImVec2(std::max(visX0, gridClipX1), 1e6f), true);  // the track columns (popped after the stop row)
   for (int t = 0; t < nCols; ++t) {
     const PlaylistTrack& tr = s.tracks[static_cast<size_t>(t)];
     const pixelgrid::Span cs = livegrid::column(o.x, t, dpp);
@@ -2325,9 +3727,28 @@ void drawClipGrid(App& a) {
     const std::string name = playlistTrackName(s, static_cast<size_t>(t));  // K-112c (round 30): the name alone (357, 093, 143)
     theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(x + 6, theme::textTop(a.fontRegular, fs, y0, titleH)), w - 10, theme::contrastText(tc), name.c_str());
     ImGui::SetCursorScreenPos(ImVec2(x, y0));
-    if (ImGui::InvisibleButton("##title", ImVec2(w, titleH))) {
+    if (gRenTrack == t) {  // checkpoint 49: Rename: the title is a name field until Enter, Escape or a click away
+      static char nbuf[128];
+      if (gRenTrackFrames > 0) {
+        std::snprintf(nbuf, sizeof nbuf, "%s", name.c_str());
+        if (--gRenTrackFrames == 0) ImGui::SetKeyboardFocusHere();
+      }
+      ImGui::SetNextItemWidth(w);
+      ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(5, std::max(0.0f, (titleH - ImGui::GetFontSize()) * 0.5f)));
+      ImGui::InputText("##trname", nbuf, sizeof nbuf, ImGuiInputTextFlags_AutoSelectAll);
+      ImGui::PopStyleVar();
+      const bool done = ImGui::IsItemDeactivated();
+      gRenTrackIdle = ImGui::IsItemActive() || gRenTrackFrames > 0 ? 0 : gRenTrackIdle + 1;
+      if (done && !ImGui::IsKeyPressed(ImGuiKey_Escape) && name != nbuf && nbuf[0]) {
+        const std::string nn = nbuf;
+        a.doc.editPlaylistTrack(t, "rename playlist track", [nn](PlaylistTrack& x) { x.name = nn; });
+      }
+      if (done || gRenTrackIdle > 3) gRenTrack = -1;
+      ImGui::SetCursorScreenPos(ImVec2(x, y0));
+      ImGui::Dummy(ImVec2(w, titleH));
+    } else if (ImGui::InvisibleButton("##title", ImVec2(w, titleH))) {
       a.playlist.trackSel = {t};
-      if (const Channel* ch = trackmodes::linkedChannel(s, t)) a.selectChannel(ch->id);
+      focusTrack(a, t);
     }
     if (ImGui::BeginPopupContextItem("##trlive")) {
       playlistTrackMenu(a, t);  // the track's whole menu (its launch settings under Live settings)
@@ -2336,70 +3757,151 @@ void drawClipGrid(App& a) {
     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 6.0f)) titleDrag = t;  // K-112c (round 39)
     ui::Hint("The track: click selects it (its devices show below), drag to move it, right-click: the track's menu");
     const ObjectId act = a.engine.liveActive(t), que = a.engine.liveQueued(t);
+    const bool autoArmed = trackArmed(a, t) && !s.tracks[static_cast<size_t>(t)].locked;  // N47-10: its empty slots record
+    ImGui::PushClipRect(ImVec2(visX0, slotsY0), ImVec2(std::max(visX0, trackClipX1), std::max(slotsY0, slotsY1)), true);  // N45-04
     for (int k = 0; k < rows; ++k) {
       const pixelgrid::Span rs = livegrid::row(o.y, k, dpp);
+      if (!rowShown(rs)) continue;
       const float sy = rs.x0;
       const ImVec2 q0(x, sy), q1(x + w, rs.x1);
       ImGui::PushID(k);
       ImGui::SetCursorScreenPos(q0);
-      ImGui::InvisibleButton("##slot", ImVec2(w, q1.y - q0.y));
+      ImGui::InvisibleButton("##slot", ImVec2(w, q1.y - q0.y), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
       const bool hov = ImGui::IsItemHovered(), pressed = ImGui::IsItemActive();  // K-112c (round 31): a press sinks the slot
+      // C44-11: the launch triangle (or an empty slot's stop square) has a cell of its own at the left;
+      // a press anywhere else selects the slot, opens its menu or starts a drag, and launches nothing.
+      const bool onButton = m.x < q0.x + 16.5f;
       const std::vector<int>* in = k < nScenes ? &slot[static_cast<size_t>(t)][static_cast<size_t>(k)] : nullptr;
+      if (ImGui::IsItemActivated() || (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
+        selectSlot(a, t, k);
+        if (ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##slotmenu");
+      }
+      const bool selSlot = gSel.t == t && gSel.k == k;
       if (in && !in->empty()) {
         const Clip& c = s.playlist[static_cast<size_t>(in->front())];
-        if (ImGui::IsItemActivated()) {
-          launch(a, c.id);
-          held = c.id;
+        const bool recording = gRec.on && gRec.clip == c.id;  // checkpoint 48: Session record runs into it
+        if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+          if (onButton && recording) {
+            stopSessionRecord(a);  // as the reference: its launch button ends the recording, the clip plays on
+          } else if (onButton) {
+            launch(a, c.id);
+            held = c.id;
+          }
           dragFrom = {t, k};  // K-287: dragged onto another slot, the clip moves there
-          a.playlist.selected = {c.id};  // the clip band shows the clip (its notes, or an audio clip's sample)
-          if (c.kind == ClipKind::Pattern) a.selectPattern(c.pattern);
-          selectClipChannel(a, c);
         }
-        if (ImGui::BeginPopupContextItem("##slotmenu")) {  // the clip's menu, as in the arrangement
+        if (ImGui::BeginPopup("##slotmenu")) {  // the clip's menu: its edits, then the arrangement's clip menu
+          slotEditItems(a, t, k, true);
+          ImGui::Separator();
+          gClipMenuFromSlot = true;  // N46-08: one edit block (the slot's)
           devArrangementClipMenu(a, c.id);
+          gClipMenuFromSlot = false;
           ImGui::EndPopup();
         }
         const bool on = act == c.id, waiting = que == c.id;
-        const ImU32 base = theme::content(clipColour(s, c));
+        // C44-12: a deactivated clip (its activator key) is drawn grey.
+        const ImU32 base = c.muted ? theme::mix(theme::content(clipColour(s, c)), P.surface700, 0.75f) : theme::content(clipColour(s, c));
         const ImU32 fill = pressed && !on ? theme::mix(base, IM_COL32(0, 0, 0, 255), 0.14f) : hov && !on ? theme::mix(base, P.paper, 0.12f) : base;
         dl->AddRectFilled(q0, q1, fill, 0.0f);
         // K-276: the 2 px ring stroked wholly inside the cell (centred on its edge it reached into the gap).
         const float ri = pixelgrid::strokeIn(2.0f);
         const ImVec2 r0(q0.x + ri, q0.y + ri), r1(q1.x - ri, q1.y - ri);
-        if (on) dl->AddRect(r0, r1, P.launch, 0.0f, 2.0f, 0);
+        if (on) dl->AddRect(r0, r1, recording ? P.arm : P.launch, 0.0f, 2.0f, 0);  // checkpoint 48: red while it records
         // K-112c (round 32): a collaborator's change to the clip flashes its slot, as the arrangement's clips.
         if (ImU32 fc = 0; const float fl = collabui::flash(a, "playlist/#" + std::to_string(c.id), &fc))
           dl->AddRect(r0, r1, theme::withAlpha(fc, fl), 0.0f, 0, 2.0f);
         if (waiting) dl->AddRect(r0, r1, theme::withAlpha(P.launch, 0.35f + 0.65f * pulse), 0.0f, 2.0f, 0);
+        if (selSlot && !on && !waiting) dl->AddRect(r0, r1, P.text, 0.0f, 0, 1.5f);  // the selected slot
         const ImU32 ink = theme::contrastText(fill);
         const float cyy = (q0.y + q1.y) * 0.5f;
         // K-112c: the launch triangle in a cell of its own (a divider), drawn soft, as the refs do.
-        ui::drawIconFit(dl, ui::Icon::Play, ImVec2(q0.x + 6, cyy - 4.5f), ImVec2(q0.x + 13, cyy + 4.5f), theme::withAlpha(ink, 0.6f));
+        // N46-11: a playing clip's triangle turns the launch green (a queued one blinks it), as the reference.
+        const ImU32 triCol = on        ? P.launch
+                             : waiting ? theme::withAlpha(P.launch, 0.35f + 0.65f * pulse)
+                                       : theme::withAlpha(ink, hov && onButton ? 1.0f : 0.6f);
+        if (on || waiting || recording)  // the green reads on any clip colour
+          dl->AddRectFilled(ImVec2(q0.x + 2.0f, q0.y + 2.0f), ImVec2(q0.x + 16.0f, q1.y - 2.0f), theme::mix(fill, IM_COL32(0, 0, 0, 255), 0.55f));
+        if (recording)  // a recording clip's button is the record dot, as the reference's
+          dl->AddCircleFilled(ImVec2(q0.x + 9.0f, cyy), 4.0f, P.arm, 16);
+        else
+          ui::drawIconFit(dl, ui::Icon::Play, ImVec2(q0.x + 6, cyy - 4.5f), ImVec2(q0.x + 13, cyy + 4.5f), triCol);
         dl->AddLine(ImVec2(q0.x + 16.5f, q0.y), ImVec2(q0.x + 16.5f, q1.y), theme::withAlpha(IM_COL32(16, 18, 22, 255), 0.35f));
         std::string lbl = clipLabel(s, c);
         if (in->size() > 1) lbl += " +" + std::to_string(in->size() - 1);
         theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(q0.x + 19, theme::textTop(a.fontRegular, theme::kFontCaption, cyy, 0)), w - 24, ink, lbl.c_str());
-        ui::Hint("Clip slot: press to launch the clip at the track's launch grid, right-click: the clip's menu");
+        ui::Hint(onButton && recording ? "Recording: click to stop recording (the clip plays on)"
+                 : onButton            ? "Launch: plays the clip at the track's launch grid (Enter launches the selected slot)"
+                                       : "Clip: click selects it, drag moves it, double-click shows it in the clip band, right-click: its menu");
+        if (hov && !onButton && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) layoutui::setRegionVisible(a, "live.clip", true);
       } else {
-        // An empty slot stops the track.
-        if (ImGui::IsItemClicked()) a.engine.stopLiveTrack(t);
+        // An empty slot's stop square stops the track; the rest of it selects the slot (a
+        // double-click there makes a MIDI clip on a MIDI track, C44-13).
+        // Checkpoint 48: the selected MIDI track is armed for notes (the reference arms the selected
+        // track for its keyboard): its empty slots show a record button, which records a new clip there.
+        const bool recButton = autoArmed;
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && onButton) {
+          if (gARec.on && k == gARec.slot && recButton) stopSessionRecord(a);  // N48-02: its button ends the recording
+          else if (recButton) a.later([&a, t, k] { startSessionRecord(a, t, k); });
+          else a.engine.stopLiveTrack(t);
+        }
+        if (hov && !onButton && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) a.later([&a, t, k] { newMidiClip(a, t, k); });
+        if (ImGui::BeginPopup("##slotmenu")) {  // C44-14: Paste, Insert MIDI clip, Insert scene
+          slotEditItems(a, t, k, false);
+          ImGui::EndPopup();
+        }
         dl->AddRectFilled(q0, q1, pressed ? P.surface600 : hov ? P.surface700 : P.surface800, 0.0f);
+        if (gARec.on && k == gARec.slot && trackmodes::modeOf(s, t) == TrackMode::Audio && trackArmed(a, t)) {
+          // N48-02: the take recording here shows as a clip in the track's colour with the red record
+          // button from the start, as the reference's (it lands as a clip when the recording stops).
+          dl->AddRectFilled(q0, q1, theme::content(tr.color), 0.0f);
+          const float ri = pixelgrid::strokeIn(2.0f);
+          dl->AddRect(ImVec2(q0.x + ri, q0.y + ri), ImVec2(q1.x - ri, q1.y - ri), P.arm, 0.0f, 0, 2.0f);
+          const float ry = std::round((q0.y + q1.y) * 0.5f);
+          dl->AddRectFilled(ImVec2(q0.x + 2.0f, q0.y + 2.0f), ImVec2(q0.x + 16.0f, q1.y - 2.0f), theme::mix(theme::content(tr.color), IM_COL32(0, 0, 0, 255), 0.55f));
+          dl->AddCircleFilled(ImVec2(q0.x + 9.0f, ry), 4.0f, P.arm, 16);
+          theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(q0.x + 19, theme::textTop(a.fontRegular, theme::kFontCaption, ry, 0)), w - 24,
+                              theme::contrastText(theme::content(tr.color)), i18n::tr("Recording"));
+          ImGui::PopID();
+          continue;
+        }
+        if (selSlot) {
+          const float ri = pixelgrid::strokeIn(1.5f);
+          dl->AddRect(ImVec2(q0.x + ri, q0.y + ri), ImVec2(q1.x - ri, q1.y - ri), P.textDim, 0.0f, 0, 1.5f);
+        }
         const float cyy = std::round((q0.y + q1.y) * 0.5f);
         // The stop square on the launch triangle's centre line (both centred 9 px in), so they line up down a column.
-        dl->AddRectFilled(ImVec2(q0.x + 6, cyy - 3), ImVec2(q0.x + 12, cyy + 3), hov ? P.textDim : P.textFaint);
-        ui::Hint("Empty slot: click to stop the track's clip");
+        if (recButton)
+          dl->AddCircleFilled(ImVec2(q0.x + 9.0f, cyy), 3.5f, hov && onButton ? P.arm : theme::withAlpha(P.arm, hov ? 0.7f : 0.45f), 16);
+        else
+          dl->AddRectFilled(ImVec2(q0.x + 6, cyy - 3), ImVec2(q0.x + 12, cyy + 3), hov && onButton ? P.text : hov ? P.textDim : P.textFaint);
+        ui::Hint(onButton && recButton ? "Record: records a new clip here (the track is armed)"
+                 : onButton            ? "Stop: stops the track's clip"
+                                       : "Empty slot: click selects it, double-click makes a MIDI clip, right-click: paste or insert");
       }
       ImGui::PopID();
     }
+    ImGui::PopClipRect();
     ImGui::PopID();
   }
+  ImGui::PopClipRect();  // (the track columns' clip, C44-19)
   // Main column: scenes (launch every track's slot in the row, stop the others), Stop all.
   {
     const float x = mainX, w = pixelgrid::whole(kMainW - 8, dpp);
     dl->AddRectFilled(ImVec2(x, y0), ImVec2(x + w, yT1), mainFill(), 0.0f);  // K-112c: square, as the track titles
     dl->AddText(a.fontRegular, fs, ImVec2(x + 6, theme::textTop(a.fontRegular, fs, y0, titleH)), theme::contrastText(mainFill()), i18n::tr("Main"));
+    {  // N49-09: a click (or right-click) on Main's title selects it: its chain opens
+      ImGui::SetCursorScreenPos(ImVec2(x, y0));
+      ImGui::InvisibleButton("##maintitle", ImVec2(w, std::max(1.0f, titleH)), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)) selectMain(a);
+      ui::Hint("Main: click to show its devices");
+      if (!s.mixer.empty() && a.selMixer == s.mixer[0].id && a.showMaster) {
+        const float in = pixelgrid::strokeIn(1.5f);
+        dl->AddRect(ImVec2(x + in, y0 + in), ImVec2(x + w - in, yT1 - in), P.hot, 0.0f, 0, 1.5f);
+      }
+    }
+    ImGui::PushClipRect(ImVec2(x, slotsY0), ImVec2(x + w, std::max(slotsY0, slotsY1)), true);  // N45-04
     for (int k = 0; k < rows; ++k) {
       const pixelgrid::Span rs = livegrid::row(o.y, k, dpp);
+      if (!rowShown(rs)) continue;
       const float sy = rs.x0;
       const ImVec2 q0(x, sy), q1(x + w, rs.x1);
       ImGui::PushID(1000 + k);
@@ -2426,8 +3928,9 @@ void drawClipGrid(App& a) {
       ui::Hint("Scene: launches every track's clip in this row (tracks with an empty slot stop)");
       ImGui::PopID();
     }
+    ImGui::PopClipRect();
   }
-  float gridBottom = livegrid::rowY(o.y, rows, dpp);
+  float gridBottom = stopSpan.x0;
   if (gGridAsked) {  // K-287 (dev): each slot's centre and its first clip (0: empty)
     gGridAsked = false;
     std::printf("livegrid cols %d scenes %d rows %d\n", nCols, nScenes, rows);
@@ -2450,7 +3953,8 @@ void drawClipGrid(App& a) {
   // and Stop all under the scenes. K-112c (round 42): always, as a new set's grid in the refs (no
   // live area yet is a grid of empty slots, not a message).
   {
-    const float sy = gridBottom, sy1 = livegrid::row(o.y, rows, dpp).x1;  // the rows' own gap above it
+    const float sy = stopSpan.x0, sy1 = stopSpan.x1;  // the rows' own gap above it (N45-04: pinned)
+    ImGui::PushClipRect(ImVec2(visX0, -1e6f), ImVec2(std::max(visX0, trackClipX1), 1e6f), true);  // C44-19
     for (int t = 0; t < nCols; ++t) {
       const pixelgrid::Span cs = livegrid::column(o.x, t, dpp);
       const float x = cs.x0, w = cs.w();
@@ -2467,7 +3971,29 @@ void drawClipGrid(App& a) {
       dl->AddRectFilled(q0, q1, hov ? P.surface700 : P.surface800, 0.0f);
       const float cyy = (q0.y + q1.y) * 0.5f;
       dl->AddRectFilled(ImVec2(q0.x + 6, cyy - 4), ImVec2(q0.x + 14, cyy + 4), live || hov ? P.text : P.textDim, 1.0f);
+      // C44-18: the playing clip's progress, a pie filling round once per pass of the clip (counted
+      // from the frame the track's clip started, on the transport's free-running position).
+      static std::map<int, std::pair<ObjectId, double>> started;
+      const ObjectId act = live ? a.engine.liveActive(t) : kNoId;
+      auto it = started.find(t);
+      if (act == kNoId) {
+        if (it != started.end()) started.erase(it);
+      } else {
+        if (it == started.end() || it->second.first != act) it = started.insert_or_assign(t, std::make_pair(act, a.engine.position())).first;
+        const Clip* pc = s.clip(act);
+        const double len = pc ? static_cast<double>(std::max<Tick>(1, s.clipLength(*pc))) : 1.0;
+        const double f = std::fmod(std::max(0.0, a.engine.position() - it->second.second), len) / len;
+        const ImVec2 pcn(q0.x + 25.0f, cyy);
+        const float r = 5.0f;
+        dl->AddCircle(pcn, r, P.launch, 20, 1.2f);
+        if (f > 0.001) {
+          dl->PathLineTo(pcn);
+          dl->PathArcTo(pcn, r, -IM_PI * 0.5f, -IM_PI * 0.5f + static_cast<float>(f) * 2.0f * IM_PI, 20);
+          dl->PathFillConvex(P.launch);
+        }
+      }
     }
+    ImGui::PopClipRect();
     const float x = mainX, w = pixelgrid::whole(kMainW - 8, dpp);
     const ImVec2 q0(x, sy), q1(x + w, sy1);
     ImGui::SetCursorScreenPos(q0);
@@ -2479,7 +4005,7 @@ void drawClipGrid(App& a) {
     const float cyy = (q0.y + q1.y) * 0.5f;
     dl->AddRectFilled(ImVec2(q0.x + 5, cyy - 5), ImVec2(q0.x + 15, cyy + 5), hov ? P.text : P.textDim, 1.0f);
     dl->AddRect(ImVec2(q0.x + 4.5f, cyy - 5.5f), ImVec2(q0.x + 15.5f, cyy + 5.5f), IM_COL32(16, 18, 22, 200), 1.5f);
-    gridBottom = livegrid::rowY(o.y, rows + 1, dpp);
+    gridBottom = livegrid::rowY(oyPin, rowsFit + 1, dpp);
   }
   // K-112c (round 43): the free column, and files or instruments dropped onto the grid. The free
   // column is a quiet panel with its hint, as the refs' (101, 069, 375, empty02); what drops there
@@ -2487,14 +4013,14 @@ void drawClipGrid(App& a) {
   // empty slot) puts the files in that track's slots, one per scene from there, through the same
   // drop as the arrangement's (one undo step, collaborators see it). Dropped audio opens nothing.
   {
-    const float fy0 = y0, fy1 = livegrid::row(o.y, rows, dpp).x1;
-    const bool freeCol = freeX1 - freeX0 >= 40.0f;
+    const float fy0 = y0, fy1 = stopSpan.x1;
+    const bool freeCol = freeX1 - std::max(freeX0, visX0) >= 40.0f;
     if (freeCol) {
       dl->AddRectFilled(ImVec2(freeX0, fy0), ImVec2(freeX1, fy1), theme::withAlpha(P.surface800, 0.55f), 0.0f);
       const char* ht = i18n::tr("Drop files and instruments here");
       const float wrapW = freeX1 - freeX0 - 16.0f;  // a narrow column wraps it, a wide one keeps one line (101 / empty02)
       const ImVec2 ts = a.fontRegular->CalcTextSizeA(theme::kFontCaption, FLT_MAX, wrapW, ht);
-      const float midY = (livegrid::rowY(o.y, 0, dpp) + livegrid::row(o.y, std::min(rows, 8) - 1, dpp).x1) * 0.5f;
+      const float midY = (livegrid::rowY(oyPin, 0, dpp) + livegrid::row(oyPin, std::min(rows, 8) - 1, dpp).x1) * 0.5f;
       // Each wrapped line centred on its own, as the refs set the hint.
       const char* line = ht;
       const char* htEnd = ht + std::strlen(ht);
@@ -2519,18 +4045,18 @@ void drawClipGrid(App& a) {
         while (*line == ' ') ++line;
       }
     }
-    const float dx1 = freeCol ? freeX1 : column(nCols) - kGap;
+    const float dx1 = std::min(trackClipX1, freeCol ? freeX1 : column(nCols) - kGap);
     if (nCols > 0 && dx1 > column(0) && ImGui::BeginDragDropTargetCustom(ImRect(column(0), fy0, dx1, fy1), ImGui::GetID("##griddrop"))) {
       int tt = -1;
       for (int t = 0; t < nCols && tt < 0; ++t) {
         const pixelgrid::Span cs = livegrid::column(o.x, t, dpp);
-        if (m.x >= cs.x0 && m.x < cs.x1 + kGap) tt = t;
+        if (m.x >= cs.x0 && m.x < cs.x1 + kGap && m.x < trackClipX1) tt = t;
       }
       const bool inFree = tt < 0 && freeCol && m.x >= freeX0;
       int tk = -1;
       for (int k = 0; k < rows && tk < 0; ++k) {
         const pixelgrid::Span rs = livegrid::row(o.y, k, dpp);
-        if (m.y >= rs.x0 - kGap && m.y < rs.x1) tk = k;
+        if (m.y >= rs.x0 - kGap && m.y < rs.x1 && m.y >= slotsY0 && m.y < slotsY1) tk = k;
       }
       if (tt >= 0 && tk < 0) {  // the title or the stop cell: the column's first empty slot
         tk = 0;
@@ -2554,6 +4080,7 @@ void drawClipGrid(App& a) {
         const float ri = pixelgrid::strokeIn(2.0f);
         dl->PushClipRect(ImVec2(column(0), fy0), ImVec2(std::max(dx1, column(0) + 1), fy1), true);
         if (const browserui::HoverPlan* hp = fb.hovering ? browserui::hoverPlan(browse::DropTarget::Playlist) : nullptr) {
+          dl->PushClipRect(ImVec2(column(0), slotsY0), ImVec2(std::max(dx1, column(0) + 1), std::max(slotsY0, slotsY1)), true);  // N45-04
           for (const xdrop::Step& sp : hp->plan.steps) {
             if (sp.action != browse::DropAction::AudioClip && sp.action != browse::DropAction::MidiPatternClip) continue;
             const int k = static_cast<int>(sp.tick / sceneT);
@@ -2565,6 +4092,7 @@ void drawClipGrid(App& a) {
               theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(q.x0 + 19, theme::textTop(a.fontRegular, theme::kFontCaption, (q.y0 + q.y1) * 0.5f, 0)),
                                   q.x1 - q.x0 - 24, P.text, xdrop::displayName(hp->items[sp.item]).c_str());
           }
+          dl->PopClipRect();
         } else if (pfb.hovering) {
           const pixelgrid::Span cs = livegrid::column(o.x, tt, dpp);
           const ImU32 hot = theme::rgb(theme::role::kDraw);
@@ -2583,15 +4111,17 @@ void drawClipGrid(App& a) {
     int tt = -1, tk = -1;
     for (int t = 0; t < nCols && tt < 0; ++t) {
       const pixelgrid::Span cs = livegrid::column(o.x, t, dpp);
-      if (m.x >= cs.x0 && m.x < cs.x1) tt = t;
+      if (m.x >= cs.x0 && m.x < cs.x1 && m.x < trackClipX1) tt = t;
     }
-    for (int k = 0; k < nScenes && tk < 0; ++k) {
+    // C44-05: any row is a target, the empty ones past the live area too (it grows to take the clip).
+    for (int k = 0; k < rows && tk < 0; ++k) {
       const pixelgrid::Span rs = livegrid::row(o.y, k, dpp);
-      if (m.y >= rs.x0 && m.y < rs.x1) tk = k;
+      if (m.y >= rs.x0 && m.y < rs.x1 && m.y >= slotsY0 && m.y < slotsY1) tk = k;
     }
     const bool srcOk = ft < nCols && fk < nScenes && !slot[static_cast<size_t>(ft)][static_cast<size_t>(fk)].empty();
-    bool ok = srcOk && tt >= 0 && tk >= 0 && (tt != ft || tk != fk) && slot[static_cast<size_t>(tt)][static_cast<size_t>(tk)].empty() &&
-              !s.tracks[static_cast<size_t>(tt)].locked && !s.tracks[static_cast<size_t>(ft)].locked;
+    const bool dstFree = tk >= nScenes || (tk >= 0 && tt >= 0 && slot[static_cast<size_t>(tt)][static_cast<size_t>(tk)].empty());
+    bool ok = srcOk && tt >= 0 && tk >= 0 && (tt != ft || tk != fk) && dstFree && !s.tracks[static_cast<size_t>(tt)].locked &&
+              !s.tracks[static_cast<size_t>(ft)].locked;
     if (ok)
       for (int ci : slot[static_cast<size_t>(ft)][static_cast<size_t>(fk)]) ok = ok && trackmodes::clipAllowed(s, s.playlist[static_cast<size_t>(ci)].kind, tt);
     const bool dragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.0f);
@@ -2607,10 +4137,14 @@ void drawClipGrid(App& a) {
         std::set<ObjectId> ids;
         for (int ci : slot[static_cast<size_t>(ft)][static_cast<size_t>(fk)]) ids.insert(s.playlist[static_cast<size_t>(ci)].id);
         const Tick dt = static_cast<Tick>(tk - fk) * sceneT;
+        a.doc.beginGroup("move clips");
+        ensureScene(a, tk);
         a.doc.editClips("move clips", [&](std::vector<Clip>& cs) {
           for (Clip& c : cs)
             if (ids.count(c.id)) c.start += dt, c.track = tt;
         });
+        a.doc.endGroup();
+        selectSlot(a, tt, tk);
       }
       dragFrom = {-1, -1};
     }
@@ -2636,14 +4170,16 @@ void drawClipGrid(App& a) {
     held = kNoId;
   }
   // ---- mixer controls under the columns (the linked mixer track of each column) ----
-  const float my0 = std::max(gridBottom + 8, o.y + av.y - kPad - mixH);
-  if (footMixer) dl->AddLine(ImVec2(o.x + kPad, my0 - 4), ImVec2(mainX + kMainW - 8, my0 - 4), P.line);
-  const float mh = footMixer ? std::max(100.0f, o.y + av.y - kPad - my0) : 0.0f;
-  const StripRow srow{my0, mh, anySends(s) && mh >= 165.0f};  // room for the sends row, the fields and the pan above the buttons  // room for the row, the fields and the pan above the buttons
+  const float my0 = std::max(gridBottom + 8, oyPin + av.y - kPad - mixH);
+  if (footMixer) dl->AddLine(ImVec2(visX0 + kPad, my0 - 4), ImVec2(mainX + kMainW - 8, my0 - 4), P.line);
+  const float mh = footMixer ? std::max(100.0f, oyPin + av.y - kPad - my0) : 0.0f;
+  const StripRow srow{my0, mh, anySends(s) && mh >= 131.0f + sendsHeight(s)};  // room for the sends row, the fields and the pan above the buttons  // room for the row, the fields and the pan above the buttons
   auto strip = [&](int t, const MixerTrack* mx, float x, float w, bool master, char letter = 0) {
     if (footMixer) sessionStrip(a, dl, srow, t, mx, x, w, master, letter);
   };
+  ImGui::PushClipRect(ImVec2(visX0, -1e6f), ImVec2(std::max(visX0, trackClipX1), 1e6f), true);  // C44-19
   for (int t = 0; t < nCols; ++t) strip(t, trackmodes::playedMixer(s, t), column(t), colW - 4, false);
+  ImGui::PopClipRect();
   // K-112c (round 19): the return tracks as strips between the tracks and Main, each titled in the
   // grid's title row with its letter and name and no slots, as every ref's mixer (143, 141, 280, 093).
   // (Where they stand: retShift / nFit above.)
@@ -2674,22 +4210,77 @@ void drawClipGrid(App& a) {
     // when the returns stand apart from it.
     const float ex = t == nCols + nRet ? mainX : t >= nCols ? retColumn(t - nCols).x0 : column(t);
     const pixelgrid::Span lx = pixelgrid::line(ex - 3, dpp);  // one crisp device column
-    dl->AddRectFilled(ImVec2(lx.x0, my0 + 2), ImVec2(lx.x1, my0 + mh - 2), P.line);
-    if (t == nCols && nRet > 0 && retShift > 0.0f) {
+    if (t >= nCols || (ex - 3 > visX0 && ex - 3 < trackClipX1)) dl->AddRectFilled(ImVec2(lx.x0, my0 + 2), ImVec2(lx.x1, my0 + mh - 2), P.line);
+    if (t == nCols && nRet > 0 && column(nCols) - 3 < trackClipX1) {
       const pixelgrid::Span lt = pixelgrid::line(column(nCols) - 3, dpp);
       dl->AddRectFilled(ImVec2(lt.x0, my0 + 2), ImVec2(lt.x1, my0 + mh - 2), P.line);
     }
   }
   if (!s.mixer.empty()) strip(-1, &s.mixer[0], mainX, kMainW - 8, true);
+  // C44-12: the grid's keys, on the selected slot while the grid has the keyboard: the arrows move
+  // the selection, Enter launches its clip (an empty slot: stops the track), Delete, copy, cut, paste
+  // and duplicate edit it, the activator key mutes its clip and Insert scene adds a row under it.
+  if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() && nCols > 0) {
+    if (gSel.t < 0 || gSel.k < 0) {
+      if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_LeftArrow) ||
+          ImGui::IsKeyPressed(ImGuiKey_RightArrow))
+        selectSlot(a, 0, 0);
+    } else {
+      const ImGuiIO& io = ImGui::GetIO();
+      const bool plain = !io.KeyCtrl && !io.KeySuper && !io.KeyAlt && !io.KeyShift;
+      int nt = gSel.t, nk = gSel.k;
+      if (plain && ImGui::IsKeyPressed(ImGuiKey_UpArrow)) nk = std::max(0, nk - 1);
+      if (plain && ImGui::IsKeyPressed(ImGuiKey_DownArrow)) nk = std::min(rows - 1, nk + 1);
+      if (plain && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) nt = std::max(0, nt - 1);
+      if (plain && ImGui::IsKeyPressed(ImGuiKey_RightArrow)) nt = std::min(nCols - 1, nt + 1);
+      nt = std::min(nt, nCols - 1);
+      if (nt != gSel.t || nk != gSel.k) {
+        selectSlot(a, nt, nk);
+        const pixelgrid::Span rs = livegrid::row(o.y, nk, dpp);  // N45-04: the selected row scrolls into view
+        if (rs.x0 < slotsY0) ImGui::SetScrollY(std::max(0.0f, scrollY - (slotsY0 - rs.x0)));
+        if (rs.x1 > slotsY1) ImGui::SetScrollY(scrollY + (rs.x1 - slotsY1));
+        // N46-05: and its column clear of the pinned returns and Main.
+        const pixelgrid::Span cs = livegrid::column(o.x, nt, dpp);
+        if (cs.x1 > trackClipX1) ImGui::SetScrollX(scrollX + (cs.x1 - trackClipX1));
+        if (cs.x0 < visX0 + kPad) ImGui::SetScrollX(std::max(0.0f, scrollX - (visX0 + kPad - cs.x0)));
+      }
+      const int t = gSel.t, k = gSel.k;
+      const std::vector<int> here = slotClips(s, t, k);
+      if (plain && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
+        if (!here.empty()) launch(a, s.playlist[static_cast<size_t>(here.front())].id);
+        else a.engine.stopLiveTrack(t);
+      }
+      const bool cmd = io.KeyCtrl || io.KeySuper;
+      if (keys::pressed("playlist.delete")) a.later([&a, t, k] { deleteSlot(a, t, k); });
+      if (keys::pressed("playlist.copy")) copySlot(a, t, k);
+      if (cmd && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_X, false) && !here.empty()) a.later([&a, t, k] { copySlot(a, t, k), deleteSlot(a, t, k, "cut clip"); });
+      if (keys::pressed("playlist.paste") && !gClipboard.empty()) a.later([&a, t, k] { placeInSlot(a, gClipboard, t, k, "paste clip"); });
+      if (keys::pressed("playlist.duplicate")) a.later([&a, t, k] { duplicateSlot(a, t, k); });
+      if (keys::pressed("playlist.insertSpace")) a.later([&a, k] { insertScene(a, k); });
+      if (cmd && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_M, false)) a.later([&a, t, k] { newMidiClip(a, t, k); });
+      if (keys::pressed("playlist.mute") && !here.empty()) {
+        const ObjectId id = s.playlist[static_cast<size_t>(here.front())].id;
+        const bool to = !s.playlist[static_cast<size_t>(here.front())].muted;
+        a.later([&a, id, to] { a.doc.editClip(id, to ? "deactivate clip" : "activate clip", [to](Clip& c) { c.muted = to; }); });
+      }
+    }
+  }
   ImGui::SetCursorScreenPos(o);
-  ImGui::Dummy(ImVec2(mainX + kMainW - o.x + kPad - 4, std::max(av.y - 2, my0 + mh - o.y)));
+  // C44-19: as wide as the tracks, a free column and the pinned returns and Main.
+  // N45-04: as tall as the window plus the scene rows that do not fit (they scroll under the titles).
+  ImGui::Dummy(ImVec2(column(nCols) + colW - o.x + (mainX + kMainW + kPad - 4 - pinX0), av.y - 2 + static_cast<float>(std::max(0, rows - rowsFit)) * kSlotH));
   ImGui::EndChild();
 }
 
 void drawMixerBand(App& a) {
   const auto& P = pal();
   const Song& s = a.doc.song();
-  ImGui::BeginChild("##clipsmixer", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+  // C44-28: under the clip grid the band is the foot of the grid's own columns: no title row of its
+  // own (the grid's titles name them) and no scroller of its own (it follows the grid's).
+  const bool underGrid = gridView(a);
+  if (underGrid) ImGui::SetNextWindowScroll(ImVec2(gGridScrollX, -1.0f));
+  ImGui::BeginChild("##clipsmixer", ImVec2(0, 0), ImGuiChildFlags_None,
+                    underGrid ? ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse : ImGuiWindowFlags_HorizontalScrollbar);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float dpp = pixelgrid::frameScale();
   const ImVec2 o(livegrid::snap(ImGui::GetCursorScreenPos().x, dpp), livegrid::snap(ImGui::GetCursorScreenPos().y, dpp));
@@ -2701,12 +4292,15 @@ void drawMixerBand(App& a) {
   // The titles, then the strips: the clip grid's columns, returns beside Main at the right (357).
   const float y0 = livegrid::titleY(o.y, dpp), yT1 = livegrid::titleBottom(o.y, dpp), titleH = yT1 - y0;
   auto column = [&](int t) { return livegrid::column(o.x, t, dpp); };
-  const float mainX = std::max(column(nCols).x0 + 4, livegrid::snap(o.x + av.x - kPad - kMainW + 4, dpp));
-  const float my0 = livegrid::snap(yT1 + kGap + 2, dpp);
+  // C44-19: Main and the returns pinned at the right edge, the tracks scrolling under them (as the grid).
+  const float visX0 = o.x + ImGui::GetScrollX();
+  const float mainX = livegrid::snap(visX0 + av.x - kPad - kMainW + 4, dpp);
+  const float my0 = underGrid ? livegrid::snap(o.y + kPad, dpp) : livegrid::snap(yT1 + kGap + 2, dpp);
   const float mh = std::max(100.0f, o.y + av.y - kPad - my0);
-  const StripRow srow{my0, mh, anySends(s) && mh >= 165.0f};
+  const StripRow srow{my0, mh, anySends(s) && mh >= 131.0f + sendsHeight(s)};
   // A title: the fill and name of a column (a click selects its mixer track; a selected one is ringed).
   auto title = [&](float x0, float x1, ImU32 fill, const std::string& name, const MixerTrack* mx, int id) {
+    if (underGrid) return;
     dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, yT1), fill, 0.0f);
     if (mx && a.selMixer == mx->id) {
       const float in = pixelgrid::strokeIn(1.5f);
@@ -2716,21 +4310,32 @@ void drawMixerBand(App& a) {
                         theme::contrastText(fill), name.c_str());
     ImGui::SetCursorScreenPos(ImVec2(x0, y0));
     ImGui::PushID(id);
-    if (ImGui::InvisibleButton("##mtitle", ImVec2(x1 - x0, titleH)) && mx) a.selMixer = mx->id;
+    ImGui::InvisibleButton("##mtitle", ImVec2(x1 - x0, titleH), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    if ((ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)) && mx) {
+      if (!s.mixer.empty() && mx->id == s.mixer[0].id) selectMain(a);  // N49-09
+      else a.selMixer = mx->id;
+    }
     ImGui::PopID();
     if (mx) ui::Hint("Click to select this mixer track");
   };
+  // The returns, right-aligned against Main (as the clip grid, round 36).
+  const std::vector<size_t> rets = returnTracks(s);
+  const int nFit = returnsShown(a) ? std::min<int>(static_cast<int>(rets.size()), 26) : 0;
+  const float retShift = nFit > 0 ? livegrid::snap(mainX - column(nCols + nFit).x0, dpp) : 0.0f;
+  const float pinX0 = nFit > 0 ? livegrid::column(o.x + retShift, nCols, dpp).x0 : mainX;
+  const float trackClipX1 = pinX0 - kGap;
+  ImGui::PushClipRect(ImVec2(visX0, -1e6f), ImVec2(std::max(visX0, trackClipX1), 1e6f), true);
   for (int t = 0; t < nCols; ++t) {
     const pixelgrid::Span cs = column(t);
     const MixerTrack* mx = trackmodes::playedMixer(s, t);
     title(cs.x0, cs.x1, theme::content(s.tracks[static_cast<size_t>(t)].color), playlistTrackName(s, static_cast<size_t>(t)), mx, 3000 + t);
     sessionStrip(a, dl, srow, t, mx, cs.x0, colW - 4, false);
   }
-  // The returns that fit before Main, right-aligned against it (as the clip grid, round 36).
-  const std::vector<size_t> rets = returnTracks(s);
-  int nFit = 0;
-  while (nFit < static_cast<int>(rets.size()) && nFit < 26 && column(nCols + nFit).x0 + colW - 4 <= mainX - 6) ++nFit;
-  const float retShift = nFit > 0 ? std::max(0.0f, livegrid::snap(mainX - column(nCols + nFit).x0, dpp)) : 0.0f;
+  for (int t = 1; t <= nCols; ++t) {  // the dividers between the tracks' strips
+    const pixelgrid::Span lx = pixelgrid::line(column(t).x0 - 3, dpp);
+    dl->AddRectFilled(ImVec2(lx.x0, my0 + 2), ImVec2(lx.x1, my0 + mh - 2), P.line);
+  }
+  ImGui::PopClipRect();
   for (int i = 0; i < nFit; ++i) {
     const pixelgrid::Span cs = livegrid::column(o.x + retShift, nCols + i, dpp);
     const MixerTrack& rt = s.mixer[rets[static_cast<size_t>(i)]];
@@ -2743,9 +4348,8 @@ void drawMixerBand(App& a) {
     const pixelgrid::Span lx = pixelgrid::line(ex - 3, dpp);
     dl->AddRectFilled(ImVec2(lx.x0, my0 + 2), ImVec2(lx.x1, my0 + mh - 2), P.line);
   };
-  for (int t = 1; t <= nCols; ++t) divider(column(t).x0);
   for (int i = 1; i < nFit; ++i) divider(livegrid::column(o.x + retShift, nCols + i, dpp).x0);
-  if (nFit > 0 && retShift > 0.0f) divider(livegrid::column(o.x + retShift, nCols, dpp).x0);
+  if (nFit > 0) divider(livegrid::column(o.x + retShift, nCols, dpp).x0);
   divider(mainX);
   if (!s.mixer.empty()) {
     const pixelgrid::Span ms{mainX, livegrid::snap(mainX + kMainW - 8, dpp)};
@@ -2753,7 +4357,7 @@ void drawMixerBand(App& a) {
     sessionStrip(a, dl, srow, -1, &s.mixer[0], mainX, kMainW - 8, true);
   }
   ImGui::SetCursorScreenPos(o);
-  ImGui::Dummy(ImVec2(mainX + kMainW - o.x + kPad - 4, std::max(av.y - 2, my0 + mh - o.y)));
+  ImGui::Dummy(ImVec2(column(nCols).x0 + kGap - o.x + (mainX + kMainW + kPad - 4 - pinX0), std::max(av.y - 2, my0 + mh - o.y)));
   ImGui::EndChild();
 }
 

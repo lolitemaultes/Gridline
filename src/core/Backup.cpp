@@ -4,6 +4,7 @@
 #include <filesystem>
 #include "Project.h"
 #include "RemoteFs.h"
+#include "SafeFs.h"
 
 namespace gl {
 
@@ -57,7 +58,7 @@ std::vector<std::string> BackupManager::list(const std::string& projectPath) con
   std::string prefix = stemOf(projectPath) + kBackupTag;
   for (const auto& e : fs::directory_iterator(dir, ec)) {
     std::string n = e.path().filename().string();
-    if (e.is_regular_file() && n.compare(0, prefix.size(), prefix) == 0) out.push_back(e.path().string());
+    if (safefs::isFileAt(e.path()) && n.compare(0, prefix.size(), prefix) == 0) out.push_back(e.path().string());
   }
   std::sort(out.begin(), out.end());  // timestamped names sort chronologically
   return out;

@@ -86,7 +86,10 @@ bool routeChannels(Document& d, const std::vector<ObjectId>& channels, ObjectId 
 
 // ----------------------------------------------------------------- playlist ----
 bool insertPlaylistTrack(Document& d, int index);   // shifts later clips down
-bool deletePlaylistTrack(Document& d, int index);   // deletes its clips, shifts the rest up
+// Deletes its clips and shifts the rest up. K-112B (R04-13): dropAutomation also deletes the
+// automation clips those clips played that nothing else places any more (the Tracks layout's
+// track automation goes with its track), in the same undo step.
+bool deletePlaylistTrack(Document& d, int index, bool dropAutomation = false);
 bool movePlaylistTrack(Document& d, int index, int dir);  // past a neighbour, with its clips (core/TrackOrder.h)
 // Copies the track (name, colour, clips) into a new track right below it.
 // K-112B: withClips false copies only the track itself (the Tracks layout's "same settings", no content).

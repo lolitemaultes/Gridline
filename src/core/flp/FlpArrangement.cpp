@@ -15,7 +15,7 @@
 //       bytes after these (zero in every record seen so far; not read).
 //   234 automation points: see FlpAutomation.cpp; their range: FlClipRange (Flp.h).
 //   227 automation link: u16 source channel @2, u32 target @8.
-//       Target: 0x40000005 tempo; < 0x2000 << 16: channel (high word) +
+//       Target: 0x40000005 tempo, 0x40000001 main swing (K-152, unverified: see kFlSwingTarget); < 0x2000 << 16: channel (high word) +
 //       parameter (low word: 0 volume, 1 pan, 4 pitch, 0x10 pan offset,
 //       0x11 volume offset, 0x8000 + n generator parameter n);
 //       ≥ 0x2000 << 16: mixer, high word − base (0x2000, FL 2025: 0x7000) =
@@ -337,6 +337,13 @@ bool Importer::resolveTarget(uint32_t target, Target& t) {
     t.min = static_cast<float>(d->toNormalized(60.0));
     t.max = static_cast<float>(d->toNormalized(180.0));
     t.what = "tempo";
+    return true;
+  }
+  if (target == kFlSwingTarget) {  // K-152: the main swing (0..1 is the knob's 0..128, the project's swing)
+    t.id = songParam(SongParam::Swing);
+    t.min = 0.0f;
+    t.max = 1.0f;
+    t.what = "swing";
     return true;
   }
   if (hi < 0x2000) {  // channel parameter

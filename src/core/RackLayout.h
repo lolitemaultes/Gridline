@@ -16,7 +16,10 @@
 //      steps shrink below their comfortable width (the full name is then in
 //      a tooltip; kNameSqueeze for patterns of up to 32 steps, which can
 //      then still fit without scrolling), and down to kNameFloor only when even the minimum step
-//      viewport would not fit;
+//      viewport would not fit. K-295: never below what the rack's names need to read in full
+//      (Input::nameNeed, up to kNameRead): the steps of a pattern of up to 32 then tighten to
+//      kStepTight so they still fit (the default rack keeps a 2-bar pattern whole), and past that
+//      the last steps scroll, instead of every name being cut to three letters;
 //   3. steps shrink from kStepMax to kStepMin;
 //   4. past that the step area scrolls horizontally (scrollMax > 0) and the
 //      rack shows its time scroller.
@@ -32,10 +35,12 @@ inline constexpr float kPhonesW = 18;          // K-186: the headphones (mute / 
 inline constexpr float kKnobW = 18;            // pan / volume knob cell (radius 9)
 inline constexpr float kMixW = 24;             // mixer track box
 inline constexpr float kNameMax = 150, kNameMin = 64, kNameSqueeze = 48, kNameFloor = 36;
+inline constexpr float kNameRead = 78;      // K-295: the most a name's own need holds the button open (longer names: tooltip)
 inline constexpr float kNameGap = 8;           // name button -> steps (besides the lamp cell between them)
 inline constexpr float kLampGap = 4;           // K-127: name button -> light cell (the rest of kNameGap: light cell -> steps)
 inline constexpr float kStepMax = 22, kStepComfort = 16, kStepMin = 13;
-inline constexpr float kStepGap = 2, kGroupGap = 4;  // between steps / extra between groups of four
+inline constexpr float kStepTight = 12;  // K-295: up to 32 steps beside names that need their room
+inline constexpr float kStepGap = 2, kGroupGap = 4;  // between steps / extra between step groups (one beat each)
 inline constexpr float kSelLampW = 14;         // the channel's light cell, between the name and the steps
 inline constexpr float kMinView = 2 * (kStepMin + kStepGap);  // smallest step viewport (two steps)
 
@@ -43,10 +48,18 @@ struct Input {
   float avail = 0;  // inner width of the rows pane
   int steps = 16;   // pattern steps (bars x steps per bar)
   float stepMax = kStepMax;  // widest step (a layout whose steps fill the pane passes more)
+  float nameNeed = 0;        // K-295: name button width the widest channel name needs (0: unknown)
+  int group = 4;             // K-236: steps per group (one beat of the pattern's meter, stepGroup)
 };
+
+// K-236: steps in one beat of a pattern's meter, the rack's step group (its gap and its colour
+// band): 4 in 4/4 and 3/4 at 16 / 12 steps a bar, 2 in 7/8 at 14, 6 in 6/8 (a dotted quarter
+// beat). Steps that do not divide into the meter's beats keep groups of four.
+int stepGroup(int stepsPerBar, int meterNum, int meterDen);
 
 struct Layout {
   int steps = 16;
+  int group = 4;            // K-236: steps per group
   float nameW = kNameMax;
   bool nameShrunk = false;  // below kNameMax: names may be truncated (tooltip)
   float stepsX = 0;         // step viewport left edge (row-relative)
@@ -64,7 +77,7 @@ struct Layout {
   bool scrolls() const { return scrollMax > 0; }
 };
 
-float contentWidth(int steps, float stepW);
+float contentWidth(int steps, float stepW, int group = 4);  // K-236: `group` steps per group
 Layout compute(const Input& in);
 
 // Keeps a scroll position inside [0, scrollMax] (a pattern got shorter, the

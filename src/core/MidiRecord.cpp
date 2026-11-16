@@ -1,5 +1,7 @@
 #include "MidiRecord.h"
 #include "Meter.h"
+#include "NoteBend.h"
+#include "NoteExprEdit.h"
 #include "Settings.h"
 #include <algorithm>
 #include <cmath>
@@ -197,6 +199,7 @@ bool NoteRecorder::ensureTake(Document& doc, double tick, ObjectId channel) {
   if (nextTake && track_ >= 0)
     for (int t = track_ + 1; t < kMaxPlaylistTracks && track < 0; ++t)
       if (freeAt(t)) track = t;
+  if (track < 0 && !nextTake && setup_.track >= 0 && setup_.track < static_cast<int>(s.tracks.size())) track = setup_.track;  // R05-02
   if (track < 0 && !nextTake) track = trackmodes::instrumentTrackOf(s, channel);
   for (int t = 0; t < kMaxPlaylistTracks && track < 0; ++t)
     if (freeAt(t)) track = t;
@@ -283,8 +286,21 @@ void NoteRecorder::noteOff(Document& doc, ObjectId channel, int pitch, double ti
   commitNote(doc, h, pitch, tick);
 }
 
+void NoteRecorder::expression(ObjectId channel, int pitch, ExprDim dim, float value, double tick) {
+  if (!active_) return;
+  auto it = held_.find({channel, pitch});
+  if (it == held_.end() || !std::isfinite(value)) return;
+  auto& lane = heldExpr_[{channel, pitch}][static_cast<size_t>(dim) % 3];
+  const double rel = std::max(0.0, tick - it->second.played);
+  if (!lane.empty() && lane.back().first > rel) return;  // (a loop wrap: the note is cut there)
+  if (!lane.empty() && rel - lane.back().first < 0.5) lane.back().second = value;  // one value per half tick
+  else if (lane.size() < 4096) lane.emplace_back(rel, value);
+}
+
 void NoteRecorder::commitNote(Document& doc, const Held& h, int pitch, double endTick) {
   const Song& s = doc.song();
+  std::array<std::vector<std::pair<double, float>>, 3> played;  // K-99: the note's expression as played
+  if (auto e = heldExpr_.find({h.channel, pitch}); e != heldExpr_.end()) played = std::move(e->second), heldExpr_.erase(e);
   if (!s.pattern(h.pattern) || !s.channel(h.channel)) return;
   const Tick g = std::max<Tick>(1, opt_.grid);
   if (!started_ && endTick < h.start) endTick = h.start + std::max(1.0, endTick - h.played);  // a pickup let go in the count-in
@@ -320,7 +336,24 @@ void NoteRecorder::commitNote(Document& doc, const Held& h, int pitch, double en
   if (opt_.quantizeLength) ql = std::max(g, quantizeTick(ql, g));
   if (!song_ && loop_ > 0 && qs + ql > loop_) ql = std::max<Tick>(1, loop_ - qs);  // never past the loop end
   const ObjectId pat = h.pattern, ch = h.channel;
-  const Note note(qs, ql, pitch, h.velocity);
+  Note note(qs, ql, pitch, h.velocity);
+  // K-99: the expression played into the note's lanes, timed from where the key went down (a
+  // quantized start moves the lanes with it, so they stay on the performance).
+  const double shift = start - static_cast<double>(qs);
+  for (int d = 0; d < 3; ++d) {
+    if (played[static_cast<size_t>(d)].empty()) continue;
+    const ExprDim dim = static_cast<ExprDim>(d);
+    std::vector<BendPoint>& lane = exprlane::laneOf(note, dim);
+    for (const auto& [rel, v] : played[static_cast<size_t>(d)]) {
+      const double t = std::max(0.0, rel + shift);
+      if (t > static_cast<double>(ql)) break;
+      const float stored = dim == ExprDim::Pitch ? std::clamp(v, -bend::kMaxSemis, bend::kMaxSemis)
+                                                 : exprlane::stored(dim, std::clamp(v, 0.0f, 1.0f));
+      if (!lane.empty() && static_cast<double>(lane.back().tick) >= t) lane.back().semis = stored;
+      else lane.emplace_back(static_cast<float>(t), stored);
+    }
+    exprlane::simplify(lane, dim == ExprDim::Pitch ? 0.02f : 0.004f, bend::kMaxPoints);
+  }
   edit(doc, [&] { doc.addNote(pat, ch, note); });
   if (h.pass == pass_) mine_.push_back(Mine{pat, ch, qs, pitch});
   ++recorded_;
@@ -789,8 +822,26 @@ std::vector<int> TypingKeyboard::heldNotes() const {
   return notes;
 }
 
+namespace {
+int aRowOffset(int key) {
+  static const char row[] = "awsedftgyhujkolp;'";
+  for (int i = 0; row[i]; ++i)
+    if (row[i] == key) return i;
+  return -1;
+}
+}  // namespace
+
 std::vector<int> TypingKeyboard::keyDown(int key) {
-  switch (key) {
+  if (aRow) {
+    switch (key) {
+      case 'z': octave = std::max(0, octave - 1); return {};
+      case 'x': octave = std::min(9, octave + 1); return {};
+      case 'c': velocity = std::max(1, velocity - 20); return {};
+      case 'v': velocity = std::min(127, velocity + 20); return {};
+      default: break;
+    }
+  } else {
+    switch (key) {
     case '[': octave = std::max(0, octave - 1); return {};
     case ']': octave = std::min(9, octave + 1); return {};
     case '-': velocity = std::max(1, velocity - 10); return {};
@@ -800,11 +851,12 @@ std::vector<int> TypingKeyboard::keyDown(int key) {
       chord = static_cast<ChordType>((static_cast<int>(chord) + 1) % static_cast<int>(ChordType::Count));
       return {};
     default: break;
+    }
   }
-  int off = keyOffset(key);
+  const int off = aRow ? aRowOffset(key) : keyOffset(key);
   if (off < 0 || held_.count(key)) return {};
   std::vector<int> notes;
-  const int root = baseNote() + off;
+  const int root = baseNote() + off + (aRow ? 12 : 0);  // (the A row's A is middle C, 60, as the reference's)
   if (chordMode) {
     for (int iv : chordIntervals(chord))
       if (root + iv >= 0 && root + iv <= 127) notes.push_back(root + iv);
@@ -827,8 +879,14 @@ std::vector<int> TypingKeyboard::keyUp(int key) {
   return v;
 }
 
+int TypingKeyboard::keyAt(int position) const {
+  if (const int k = keyAtPosition(position)) return k;
+  if (!aRow) return 0;
+  return position == 4 ? 'a' : position == 9 ? 'f' : position == 14 ? 'k' : 0;  // N48-08: the A row's other keys
+}
+
 std::vector<int> TypingKeyboard::press(int position, bool repeat) {
-  const int key = keyAtPosition(position);
+  const int key = keyAt(position);
   if (key == 0 || repeat || !down_.insert(position).second || settling_) return {};
   const int before = octave;
   std::vector<int> on = keyDown(key);
@@ -838,7 +896,7 @@ std::vector<int> TypingKeyboard::press(int position, bool repeat) {
 
 std::vector<int> TypingKeyboard::release(int position) {
   down_.erase(position);
-  const int key = keyAtPosition(position);
+  const int key = keyAt(position);
   return key ? keyUp(key) : std::vector<int>{};
 }
 

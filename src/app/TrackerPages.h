@@ -2,6 +2,8 @@
 #pragma once
 #include <string>
 
+#include "../core/Types.h"
+
 namespace gl {
 class App;
 }
@@ -23,5 +25,7 @@ void pads(App& a);    // the Live pads window's body
 // A page title bar in the Tracker look (the title left, `info` right in the monospaced face) at
 // the window cursor, full width; the cursor moves below it. For the pages their own views draw (Roll).
 void pageTitle(App& a, const char* title, const std::string& info);
+// The clip picked on the Song page (its clip box edits it); view state, never saved.
+extern ObjectId gSongClip;
 
 }  // namespace gl::trackerpages

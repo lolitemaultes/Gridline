@@ -335,7 +335,8 @@ math(EXPR u1 "${u0} + 1")
 want("rack: ... in one undo step" "${k_undo}" "${u1}")
 chans(32)
 want("rack: undo brings it back" "${n_chans}" "${c0}")
-run(rkey 1600x1300 "" "4 move ${lampx} ${lampy}\n6 down 0\n7 up 0\n10 mod alt 1\n11 key delete\n12 mod alt 0\n20 rack\n26 quit discard\n")
+# K-232: a right-click on the select light selects only that channel (a left click adds to the selection).
+run(rkey 1600x1300 "" "4 move ${lampx} ${lampy}\n6 down 1\n7 up 1\n10 mod alt 1\n11 key delete\n12 mod alt 0\n20 rack\n26 quit discard\n")
 chans(20)
 want("rack: Alt+Delete removes the selected middle channel" "${n_chans}" "${c1}")
 

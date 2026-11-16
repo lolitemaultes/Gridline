@@ -1,6 +1,7 @@
 // Gridline — J-75: drags from other applications inside the interface (ExternalDragUi.h).
 #include "ExternalDragUi.h"
 #include "Keys.h"
+#include "LiveLook.h"
 #include "../core/RemoteFs.h"
 #include "../core/ProjectFiles.h"
 #include <algorithm>
@@ -18,6 +19,7 @@
 #include "BrowserUi.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "../core/SafeFs.h"
 
 namespace gl::xdragui {
 
@@ -177,7 +179,7 @@ void apply(const xdrop::Event& e, Deferred& d) {
     it.name = fs::path(e.path).filename().string();
     it.pending = false;
     it.guessed = false;
-    it.dir = fs::is_directory(e.path);
+    it.dir = safefs::isDirAt(e.path);
     d.status[e.index] = 1;
   } else if (e.type == xdrop::EventType::Failed) {
     d.status[e.index] = 2;
@@ -284,8 +286,15 @@ void beginFrame(App& a) {
     // No window took the drag last frame: what dropping here would do.
     if (GImGui->DragDropAcceptIdPrev == 0 && !st.items.empty() && !isDevPlugin(st.items)) {
       const xdrop::Plan p = browserui::planFor(a, st.items, browse::DropTarget::Workspace, browserui::DropPlace{}, browserui::currentMods());
-      if (!p.label.empty()) a.setHint(p.label);
-      xdrop::setHoverAccepted(p.accepted());
+      bool projects = true;  // N46-06 (see openFiles): in Clips only projects open from here
+      for (const xdrop::Item& it : st.items) projects = projects && (xdrop::kindOf(it) == browse::Kind::Project || xdrop::kindOf(it) == browse::Kind::Flp);
+      if (livelook::active(a) && !projects) {
+        a.setHint(i18n::tr("Drop files on a track, a slot or the empty column to make clips"));
+        xdrop::setHoverAccepted(false);
+      } else {
+        if (!p.label.empty()) a.setHint(p.label);
+        xdrop::setHoverAccepted(p.accepted());
+      }
     } else {
       xdrop::setHoverAccepted(true);
     }

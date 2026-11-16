@@ -27,6 +27,8 @@
 #include "Theme.h"
 #include "ThemeLayout.h"
 #include "ThemeSettings.h"
+#include "ContextMenus.h"
+#include "../core/ThemeImport.h"
 #include "Widgets.h"
 
 namespace gl {
@@ -79,7 +81,7 @@ void commitChord(App& a, const std::string& id, keys::Chord c, bool add) {
   std::vector<std::string> lost = km.assign(id, c, !add);
   saveKeymap(a);
   const keys::Command* cmd = keys::findCommand(id);
-  std::string msg = keys::format(c) + " " + tr("now runs") + " " + (cmd ? commandName(*cmd) : id) + ".";
+  std::string msg = keys::shown(c) + " " + tr("now runs") + " " + (cmd ? commandName(*cmd) : id) + ".";
   for (const auto& l : lost)
     if (const keys::Command* o = keys::findCommand(l)) msg += " " + std::string(tr("Removed from")) + " " + tr(o->label) + ".";
   for (const keys::Command* s : km.shadows(id, c))
@@ -302,7 +304,7 @@ void shortcutSettingsPage(App& a, float fieldW) {
       } else {
         float x = q0.x;
         for (const auto& ch : km.bindings(c.id)) {
-          const std::string t = keys::format(ch);
+          const std::string t = keys::shown(ch);
           if (x + 40 > maxX) break;
           x += keyChip(a, dl, ImVec2(x, q0.y), t.c_str(), custom ? P.hot : P.line) + theme::kS1;
         }
@@ -311,7 +313,7 @@ void shortcutSettingsPage(App& a, float fieldW) {
       if (ImGui::IsItemHovered() && !chords.empty()) {
         std::string tip = chords;
         for (const auto& ch : km.bindings(c.id))
-          for (const keys::Command* s : km.shadows(c.id, ch)) tip += "\n" + keys::format(ch) + ": " + std::string(tr("also")) + " " + commandName(*s);
+          for (const keys::Command* s : km.shadows(c.id, ch)) tip += "\n" + keys::shown(ch) + ": " + std::string(tr("also")) + " " + commandName(*s);
         ui::Tooltip(tip.c_str());
       }
     }
@@ -688,6 +690,9 @@ void themeSettingsPage(App& a, float fieldW) {
     changed |= roleColour("hot", "Lit glyphs", "Active tools, toggles, tab marks and LCD digits", &t.hot, rgbOf(base.hot));
     changed |= roleColour("led", "LEDs", "Mute, select and effect lamps, the low meter range", &t.led, rgbOf(base.led));
     changed |= roleColour("playhead", "Song position", "The playback line in the playlist and the editors", &t.playhead, rgbOf(base.playhead));
+    // K-104: the step sequencer's two off colours (every other beat)
+    changed |= roleColour("stepEven", "Steps", "Off steps of the channel rack, the first beat of each pair", &t.stepEven, rgbOf(base.stepOff));
+    changed |= roleColour("stepOdd", "Steps between", "Off steps of the channel rack, the second beat of each pair", &t.stepOdd, rgbOf(base.stepOffAlt));
   }
   ui::EndSection();
 
@@ -719,6 +724,23 @@ void themeSettingsPage(App& a, float fieldW) {
     ui::Hint(tr("Panels, fields and grids lighter or darker, down to pitch black"));
     ImGui::SameLine(0, theme::kS2);
     ImGui::Text("%+.0f%%", static_cast<double>(b));
+    // K-104: the panels' tint
+    label("Hue");
+    float hu = t.hue * 180.0f;
+    ImGui::SetNextItemWidth(fieldW - 56);
+    if (ImGui::SliderFloat("##hue", &hu, -180.0f, 180.0f, " ")) t.hue = hu / 180.0f, changed = true;
+    dragConfirm("Hue");
+    ui::Hint(tr("Turns the colour of the panels, fields and grids round the colour wheel"));
+    ImGui::SameLine(0, theme::kS2);
+    ImGui::Text("%+.0f", static_cast<double>(hu));
+    label("Saturation");
+    float sa = t.saturation * 100.0f;
+    ImGui::SetNextItemWidth(fieldW - 56);
+    if (ImGui::SliderFloat("##saturation", &sa, -100.0f, 100.0f, " ")) t.saturation = sa / 100.0f, changed = true;
+    dragConfirm("Saturation");
+    ui::Hint(tr("More colour in the panels, or none (grey)"));
+    ImGui::SameLine(0, theme::kS2);
+    ImGui::Text("%+.0f%%", static_cast<double>(sa));
     label("Text");
     bool white = t.whiteText;
     if (ImGui::Checkbox(tr("White text and glyphs"), &white)) {
@@ -748,6 +770,29 @@ void themeSettingsPage(App& a, float fieldW) {
     theme::resetThemeSettings(st);
     applyTheme(a);
     ui::confirmTheme(a, before, "Theme reset");  // J-77: colours and adjustments can come back
+  }
+  ImGui::SameLine(0, theme::kS2);
+  // K-104: a theme file of the reference DAW onto these settings (mode, adjustments, role colours)
+  if (ui::TextButton(tr("Import theme file..."), false, 0,
+                     tr("Read a theme file (.flstheme): its lightness, contrast, tint and colours become these settings"))) {
+    menus::fileDialog(a, "Import theme file", false, {".flstheme"}, "", [&a](const std::string& path) {
+      Settings& cfg = a.settings;
+      const dispconf::Snapshot before = dispconf::take(cfg, dispconf::themeKeys());
+      std::string err;
+      themeimport::File f;
+      if (!themeimport::importFile(path, cfg, &err, &f)) {
+        a.notify(err, true);
+        return;
+      }
+      theme::applyFromSettings(cfg, true);
+      ui::confirmTheme(a, before, "Imported theme");
+      if (!f.skipped.empty()) {
+        char msg[160];
+        std::snprintf(msg, sizeof msg, i18n::tr("Theme imported; %d of its settings have no place here yet (meters, grid backgrounds, pictures)"),
+                      static_cast<int>(f.skipped.size()));
+        a.notify(msg);
+      }
+    });
   }
 
   groupHeading(a, i18n::N_("Controls"));

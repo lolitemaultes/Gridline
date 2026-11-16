@@ -28,6 +28,9 @@
 #include "../core/I18n.h"
 #include "../core/LevelMeter.h"
 #include "../core/WheelRoute.h"
+#include "../engine/Dsp.h"
+#include "../core/Automation.h"
+#include "LogicPlugins.h"
 
 namespace gl::ui {
 
@@ -1056,8 +1059,40 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
 // link plays it: the live value, so the strips and the Stage agree during playback. Edits
 // still write the stored value.
 static bool liveMixerValue(App& a, ParamId pid, double& v) {
-  if (!a.engine.playing() || pid.index >= kSlotBase || !a.doc.song().mixerTrack(pid.owner)) return false;
-  return a.builder.modulatedValue(pid, v);
+  const Song& s = a.doc.song();
+  const bool tracks = logicplug::active(a);
+  // R06-04: in the Tracks layout every automated control follows its curve while playing (a
+  // plugin's and a channel's too), as the reference moves them; elsewhere the mixer's own.
+  if (a.engine.playing()) {
+    if (!tracks && (pid.index >= kSlotBase || !s.mixerTrack(pid.owner))) return false;
+    return a.builder.modulatedValue(pid, v);
+  }
+  // R06-12: stopped, a Read track's control shows its curve at the playhead (song mode).
+  if (!tracks || a.engine.mode() != PlayMode::Song) return false;
+  static int frame = -1;
+  static uint64_t rev = 0;
+  static std::vector<AutomationLane> lanes;
+  if (frame != ImGui::GetFrameCount() || rev != a.doc.revision()) {
+    frame = ImGui::GetFrameCount(), rev = a.doc.revision();
+    lanes = automationLanes(s);
+  }
+  const AutomationLane* lane = nullptr;
+  for (const AutomationLane& l : lanes)
+    if (l.targets(pid.owner, pid.index)) lane = &l;
+  if (!lane) return false;
+  bool read = false;
+  for (int tr = 0; tr < static_cast<int>(s.tracks.size()) && !read; ++tr) {
+    const PlaylistTrack& pt = s.tracks[static_cast<size_t>(tr)];
+    if (pt.autoMode != 1) continue;
+    if (pt.laneSet) read = pt.laneOwner == pid.owner && pt.laneIndex == pid.index;
+    if (!read)
+      if (const MixerTrack* st = logicplug::trackStrip(s, tr)) read = st->id == pid.owner;
+  }
+  if (!read) return false;
+  const auto d = describeParam(s, pid);
+  if (!d) return false;
+  v = d->fromNormalized(std::clamp(lane->valueAt(a.engine.position()), 0.0, 1.0));
+  return true;
 }
 
 bool ParamKnob(const char* id, ParamId pid, float radius, const char* label, bool bipolar) {
@@ -1106,6 +1141,11 @@ namespace {
 const float* gFaderTicks = nullptr;
 int gFaderTickCount = 0;
 }  // namespace
+static bool gFaderLocked = false;  // R05-04
+void setFaderLocked(bool on) { gFaderLocked = on; }
+static double gFaderDbUnity = -1;  // R05-15: > 0: the fader's value reads in dB (its unity position)
+void setFaderDb(double unity) { gFaderDbUnity = unity; }
+
 void setFaderTicks(const float* norms, int count) { gFaderTicks = count > 0 ? norms : nullptr, gFaderTickCount = gFaderTicks ? count : 0; }
 
 // J-137: the drawing of ParamFader alone (norm / defNorm 0..1: the value and the default mark).
@@ -1172,18 +1212,18 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   bool changed = false;
   float capH = 18.0f, travel = size.y - capH;
   KnobDragPos(n);  // K-148: the shared drag path
-  if (act && wg.dragOk && io.MouseDelta.y != 0) {
+  if (act && wg.dragOk && io.MouseDelta.y != 0 && !gFaderLocked) {
     const double nn = KnobDragMove(-io.MouseDelta.y / travel * (io.KeyShift ? 0.15 : 1.0));
     a.doc.setParam(pid, d->fromNormalized(nn), true);
     changed = true;
   }
-  if (wg.scale > 0 && io.MouseWheel != 0 && !act) {
+  if (wg.scale > 0 && io.MouseWheel != 0 && !act && !gFaderLocked) {
     a.doc.setParam(pid, d->fromNormalized(std::clamp(n + io.MouseWheel * 0.02 * wg.scale, 0.0, 1.0)), true);
     a.doc.endGesture();
   }
   {  // J-136: double-click resets, or types when already the default
     double cv = *v;
-    if (ParamDoubleClickReset(pid, *d, cv, pressed)) changed = true, KnobDragSet(d->toNormalized(cv));
+    if (!gFaderLocked && ParamDoubleClickReset(pid, *d, cv, pressed)) changed = true, KnobDragSet(d->toNormalized(cv));
   }
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   bool wantType = false;
@@ -1200,13 +1240,23 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   if (wantType) ImGui::OpenPopup("##type");
   ParamTypePopup(pid, *d);
   double shown = *getParam(a.doc.song(), pid);
-  if (double live = 0; !act && liveMixerValue(a, pid, live)) shown = live;  // automation playing
+  if (double live = 0; (!act || gFaderLocked) && liveMixerValue(a, pid, live)) shown = live;  // automation playing
   DrawFader(ImGui::GetWindowDrawList(), p, size, static_cast<float>(d->toNormalized(shown)), static_cast<float>(d->toNormalized(d->def)), hov, act);
   if (hov || act) {
-    std::string txt = d->name + ": " + d->format(*getParam(a.doc.song(), pid)) + "   (" + ParamControlHint() + ")";
+    auto valueText = [&](double v) {
+      if (gFaderDbUnity <= 0) return d->format(v);
+      const double g = dsp::faderGain(v, gFaderDbUnity);
+      if (g < 1e-5) return std::string("-inf dB");
+      double db = dsp::gainToDb(g);
+      if (std::fabs(db) < 0.05) db = 0.0;
+      char b[24];
+      std::snprintf(b, sizeof b, "%.1f dB", db);
+      return std::string(b);
+    };
+    std::string txt = d->name + ": " + valueText(*getParam(a.doc.song(), pid)) + "   (" + ParamControlHint() + ")";
     if (wg.hint) txt += std::string("   ") + wheelHintText();
     app().setHint(txt);
-    if (act) ImGui::SetTooltip("%s", d->format(*getParam(a.doc.song(), pid)).c_str());
+    if (act && !gFaderLocked) ImGui::SetTooltip("%s", valueText(*getParam(a.doc.song(), pid)).c_str());  // R06-11: none on a refused drag
   }
   if (wg.hint) Tooltip("Drag to change, Ctrl+wheel to fine-tune");  // J-83 (delayed, after the hover settles)
   ImGui::PopID();

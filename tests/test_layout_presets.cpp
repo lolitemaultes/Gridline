@@ -267,7 +267,7 @@ void testMenus() {
     return s;
   };
   expect(names(Preset::Live) == "File Edit Create View Options Navigate Tools Help", "live menu order");
-  expect(names(Preset::Logic) == "File Edit Track Patterns Navigate Record Mix View Tools Window Help", "logic menu order");
+  expect(names(Preset::Logic) == "File Edit Track Navigate Record Mix View Window Help", "logic menu order");  // R01-16: no Patterns or Tools menu (in Track and Window)
   expect(names(Preset::Tracker) == "File Edit View Pattern Song Options Tools Help", "tracker menu order");
   int programs = 0;
   for (const auto& m : menustyle::menus(Preset::Logic)) programs += m.name ? 0 : 1;
@@ -307,9 +307,14 @@ void testKeys() {
       std::snprintf(name, sizeof name, "%s set (Cmd %s): Alt+L and Ctrl+Alt+L select what is routed to the mixer track",
                     keys::profileId(p), sep ? "separate" : "folded");
       const bool cmd = km.separateCmd();
-      expect(first(km, "mixer.selectRoutedChannels") == "Alt+L" && first(km, "mixer.selectRoutedTo") == (cmd ? "Cmd+Alt+L" : "Ctrl+Alt+L") &&
+      // K-112C checkpoint 48: the Clips set gives Ctrl+Alt+L to the clip and device bands (view.detail),
+      // as the reference does; its mixer item then shows no key (the label reads the set).
+      const bool clips = p == keys::Profile::Live;
+      expect(first(km, "mixer.selectRoutedChannels") == "Alt+L" &&
+                 (clips ? km.bindings("mixer.selectRoutedTo").empty() && first(km, "view.detail") == (cmd ? "Cmd+Alt+L" : "Ctrl+Alt+L")
+                        : first(km, "mixer.selectRoutedTo") == (cmd ? "Cmd+Alt+L" : "Ctrl+Alt+L")) &&
                  km.lookup(keys::Context::Mixer, keys::parse("Alt+L")).size() == 1 &&
-                 km.lookup(keys::Context::Mixer, keys::parse(cmd ? "Cmd+Alt+L" : "Ctrl+Alt+L")).size() == 1,
+                 km.lookup(keys::Context::Mixer, keys::parse(cmd ? "Cmd+Alt+L" : "Ctrl+Alt+L")).size() == (clips ? 0u : 1u),
              name);
     }
   expect(!hasCmd(keys::profileDefaults(keys::Profile::Logic, false)), "logic on Linux and Windows: no Cmd chords");

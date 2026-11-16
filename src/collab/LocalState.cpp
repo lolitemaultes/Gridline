@@ -56,6 +56,11 @@ const Rule kRules[] = {
     {"gl.scope", "Display engine"},
     {"gl.tuner", "Display"},
     {"gl.clock", "Display"},
+    {"gl.hwinsert", "Send"},               // Hardware Insert: this studio's wiring and its round trip
+    {"gl.hwinsert", "Return"},
+    {"gl.hwinsert", "Return mono"},
+    {"gl.hwinsert", "Round trip"},
+    {"gl.hwinsert", "Round trip offset"},
 };
 
 bool ruleMatches(const Rule& r, const std::string& name) {

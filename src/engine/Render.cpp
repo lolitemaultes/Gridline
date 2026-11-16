@@ -123,7 +123,7 @@ bool renderScopeTicks(const Song& song, const RenderJob& job, Tick& start, Tick&
       break;
     default: {
       Song s = song;
-      start = prepareOfflineLive(s);
+      start = prepareOfflineLive(s, job.arrangementOnly);
       end = s.lengthTicks();
       break;
     }
@@ -145,7 +145,7 @@ RenderResult renderAudio(const Song& source, const RenderJob& job) {
   res.sampleRate = job.sampleRate;
   Song song = prepareRenderSong(source, job);
   // Live area (performance mode): launched clips play from the song start (J-32).
-  const Tick liveStart = job.scope == RenderScope::Song ? prepareOfflineLive(song) : 0;
+  const Tick liveStart = job.scope == RenderScope::Song ? prepareOfflineLive(song, job.arrangementOnly) : 0;
   const int os = job.oversample >= 4 ? 4 : job.oversample >= 2 ? 2 : 1;
   const int sr = job.sampleRate * os;
   if (job.sampleRate < 8000 || job.sampleRate > 384000) {

@@ -450,14 +450,15 @@ bool wheel(App& a, const PluginTarget& t, int param, ImVec2 tl, float size, cons
   ImGui::InvisibleButton("##w", ImVec2(size, size));
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   audit::nextKind(align::kKnob);  // J-128
-  const std::vector<double> mags = pui::pendingMagnets(b.d);  // K-147: ticks at the magnets (dragParamItem takes them)
+  const pui::KnobTravel tv = pui::knobTravel(a, b.pid, b.d);  // K-147 / K-230: ticks at the magnets (dragParamItem takes them)
+  const std::vector<double>& mags = tv.magnets;
   bool changed = pui::dragParamItem(a, b.pid, b.d, b.val, 170.0f, false);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   bool centred = (flags & WheelCentered) || (b.d.min < 0 && b.d.max > 0);
-  drawWheel(dl, ImVec2(tl.x + size * 0.5f, tl.y + size * 0.5f), size * 0.5f, b.d.toNormalized(b.val), centred, flags & WheelBigLine, hov || act, k,
+  drawWheel(dl, ImVec2(tl.x + size * 0.5f, tl.y + size * 0.5f), size * 0.5f, tv.pos(b.d, b.val), centred, flags & WheelBigLine, hov || act, k,
             act ? (fill ? lighten(fill, 0.2f) : k.fillPressed) : (fill ? fill : k.fill));
   if (!mags.empty())
-    pui::magnetTicks(dl, ImVec2(tl.x + size * 0.5f, tl.y + size * 0.5f), size * 0.5f, kPi * 0.75f, kPi * 2.25f, mags, k.textDim, b.d.toNormalized(b.val));
+    pui::magnetTicks(dl, ImVec2(tl.x + size * 0.5f, tl.y + size * 0.5f), size * 0.5f, kPi * 0.75f, kPi * 2.25f, mags, k.textDim, tv.pos(b.d, b.val));
   if (pui::paramLinked(a, b.pid)) dl->AddCircleFilled(ImVec2(tl.x + size * 0.9f, tl.y + size * 0.1f), 2.5f, k.fill);
   ImGui::PopID();
   return changed;
@@ -477,18 +478,19 @@ bool vslider(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, c
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   float hh = std::max(6.0f, std::min(size.x * 0.55f, 12.0f));  // handle height
   float top = tl.y + hh * 0.5f, bot = tl.y + size.y - hh * 0.5f, travel = bot - top;
-  const std::vector<double> mags = pui::pendingMagnets(b.d);  // K-147: marks at the magnets
+  const pui::KnobTravel tv = pui::knobTravel(a, b.pid, b.d);  // K-147 / K-230: marks at the magnets
+  const std::vector<double>& mags = tv.magnets;
   bool changed = pui::dragParamTrack(a, b.pid, b.d, b.val, top, travel, false);  // J-98: handle stays under the pointer
   ImDrawList* dl = ImGui::GetWindowDrawList();
   if (!mags.empty()) {
     const float cx = std::round(tl.x + size.x * 0.5f);
-    pui::magnetTicksTrack(dl, ImVec2(cx, bot), ImVec2(cx, top), size.x * 0.5f, mags, k.fill, b.d.toNormalized(b.val));
+    pui::magnetTicksTrack(dl, ImVec2(cx, bot), ImVec2(cx, top), size.x * 0.5f, mags, k.fill, tv.pos(b.d, b.val));
     ruler = false;  // the division marks replace the plain ruler
   }
   if (!fill) fill = k.fill;
   if (look::styled()) {  // J-129 control style
     look::Slider s;
-    s.vertical = true, s.norm = static_cast<float>(b.d.toNormalized(b.val)), s.bipolar = b.d.min < 0 && b.d.max > 0;
+    s.vertical = true, s.norm = static_cast<float>(tv.pos(b.d, b.val)), s.bipolar = b.d.min < 0 && b.d.max > 0;
     s.state = (hov ? look::Hover : 0) | (act ? look::Active : 0), s.tint.value = look::hookTint(fill);
     look::slider(dl, ImVec2(tl.x, top - 6), ImVec2(tl.x + size.x, bot + 6), s);
     ImGui::PopID();
@@ -504,7 +506,7 @@ bool vslider(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, c
       dl->AddLine(ImVec2(cx + rw, y), ImVec2(cx + w, y), theme::withAlpha(k.textDim, 0.45f), 1.0f);
     }
   dl->AddRectFilled(ImVec2(cx - rw * 0.5f, top), ImVec2(cx + rw * 0.5f, bot), k.rail, rw * 0.5f);
-  float n = static_cast<float>(b.d.toNormalized(b.val));
+  float n = static_cast<float>(tv.pos(b.d, b.val));
   bool bip = b.d.min < 0 && b.d.max > 0;
   float y0 = bip ? top + (1 - static_cast<float>(b.d.toNormalized(0))) * travel : bot;
   float yv = top + (1 - n) * travel;

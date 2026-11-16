@@ -283,6 +283,41 @@ void testPlaylist() {
   expect(ops::deletePlaylistTrack(f.d, 1) && s.playlist.size() == 2, "delete track removes its clips");
   expect(ops::clearPlaylistTrack(f.d, 0) && s.playlist.empty(), "clear track");
   f.d.reset(base);
+  {  // K-112B (R04-13): dropAutomation deletes the track's automation data nothing else places, in one undo step
+    ObjectId kept = 0, gone = 0;
+    f.d.editSong("two automation clips", [&](Song& x) {
+      x.tracks.resize(std::max<size_t>(x.tracks.size(), 3));
+      for (int k = 0; k < 2; ++k) {
+        AutomationClip ac;
+        ac.id = x.allocateId();
+        ac.points = {AutoPoint{0, 0.5f, 0, AutoShape::Curve}};
+        Clip c;
+        c.id = x.allocateId();
+        c.kind = ClipKind::Automation;
+        c.source = ac.id;
+        c.track = 2;
+        c.length = 96;
+        if (k == 0) {  // the first is placed on track 1 too: its data stays
+          Clip c2 = c;
+          c2.id = x.allocateId();
+          c2.track = 1;
+          x.playlist.push_back(c2);
+          kept = ac.id;
+        } else {
+          gone = ac.id;
+        }
+        x.automations.push_back(ac);
+        x.playlist.push_back(c);
+      }
+    });
+    const size_t autos = s.automations.size();
+    const size_t tracks = s.tracks.size();
+    expect(ops::deletePlaylistTrack(f.d, 2, true), "delete track with automation");
+    expect(s.automations.size() == autos - 1 && s.automation(kept) && !s.automation(gone), "its own automation data goes, shared data stays");
+    expect(f.d.undo() && s.automations.size() == autos && s.automation(gone) && s.tracks.size() == tracks,
+           "one undo step brings the track and its automation back");
+    f.d.reset(base);
+  }
   auto dup = ops::duplicateClips(f.d, {f.c1, f.c2});
   expect(dup.size() == 2 && s.clip(dup[0])->start == 2 * s.barTicks(), "duplicate clips after the selection");
   f.d.reset(base);

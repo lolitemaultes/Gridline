@@ -1,4 +1,6 @@
 #include "Automation.h"
+
+#include <set>
 #include "ClipLoop.h"
 #include <functional>
 #include <algorithm>
@@ -221,11 +223,18 @@ double AutomationLane::nextEventStep(double tick) const {
 std::vector<AutomationLane> automationLanes(const Song& song) {
   std::map<std::pair<ObjectId, bool>, std::shared_ptr<const AutomationClip>> copies;  // (curve, the placement loops)
   std::map<std::pair<ObjectId, uint32_t>, AutomationLane> lanes;
+  // K-112B: a track whose automation mode is Off: its own automation clips and the parameter its
+  // lane shows play no automation.
+  std::set<std::pair<ObjectId, uint32_t>> offParams;
+  for (const auto& t : song.tracks)
+    if (t.autoMode == 0 && t.laneSet) offParams.insert({t.laneOwner, t.laneIndex});
   for (const auto& c : song.playlist) {
     if (c.kind != ClipKind::Automation || c.muted || c.start < song.live.areaEnd) continue;  // live area: launched by hand
     if (c.track >= 0 && static_cast<size_t>(c.track) < song.tracks.size() && song.tracks[static_cast<size_t>(c.track)].muted) continue;
+    if (c.track >= 0 && static_cast<size_t>(c.track) < song.tracks.size() && song.tracks[static_cast<size_t>(c.track)].autoMode == 0) continue;
     const AutomationClip* a = song.automation(c.source);
     if (!a || a->points.empty() || a->owner == kNoId) continue;
+    if (!offParams.empty() && offParams.count({a->owner, a->index})) continue;
     // K-114: only a placement that loops repeats the curve (Clip::loop); the others hold its last value.
     // K-140: a cut clip that loops repeats its own part of the curve: one instance per pass.
     const bool own = c.loop && c.loopLength > 0;

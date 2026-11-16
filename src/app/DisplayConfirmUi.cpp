@@ -10,6 +10,7 @@
 #include "../core/I18n.h"
 #include "../core/Settings.h"
 #include "App.h"
+#include "LayoutPresets.h"
 #include "Theme.h"
 #include "ThemeSettings.h"
 #include "Widgets.h"
@@ -129,6 +130,13 @@ void layoutPreview(const dispconf::Change&) {
     dl->AddText(ImGui::GetFont(), theme::kFontLabel - 1, ImVec2(x + x0 * w + 4, o.y + y0 * h + 3), P.textDim, t);
   };
   dl->AddRectFilled(ImVec2(x - 4, o.y - 4), ImVec2(x + w + 4, o.y + h + 4), P.surface950, theme::kRadiusLg);
+  if (layoutui::active() == layout::Preset::Logic) {  // R02-05: the Tracks layout's own default
+    box(0, 0, 1, 0.2f, P.surface700, tr("Control bar"));
+    box(0, 0.2f, 0.2f, 1, P.surface800, tr("Inspector"));
+    box(0.2f, 0.2f, 1, 1, P.surface800, tr("Tracks"));
+    ImGui::Dummy(ImVec2(kDialogW, h + 8));
+    return;
+  }
   box(0, 0, 0.18f, 1, P.surface800, tr("Browser"));
   box(0.18f, 0, 0.74f, 1, P.surface800, tr("Playlist"));
   box(0.74f, 0, 1, 1, P.surface800, tr("Mixer"));
@@ -188,7 +196,8 @@ void drawDisplayConfirm(App& a) {
   {  // "Interface size   100%  ->  150%"
     ImGui::TextColored(theme::vec(P.textDim), "%s", tr(c->label.c_str()));
     ImGui::SameLine(0, theme::kS3);
-    ImGui::PushFont(a.fontMono, theme::kFontBody);
+    // (Values in the figures face; R02-05: words, as the layout reset's, in the interface face.)
+    ImGui::PushFont(c->preview == dispconf::Preview::Layout ? a.fontRegular : a.fontMono, theme::kFontBody);
     ImGui::TextColored(theme::vec(P.textDim), "%s", c->before.c_str());
     ImGui::SameLine(0, theme::kS2);
     ImGui::TextColored(theme::vec(P.textFaint), "\xE2\x86\x92");

@@ -21,6 +21,11 @@ void drawLoupeBody(App& a, float w, float h);
 bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);
 // Opens the audio editor (gl.edison) on a channel's sample in its own window.
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
+// The audio editor's windows of their own close (the panel pinned into the layout stays).
+void closeAudioEditorWindows(App& a);
+// K-112B (R04-04): closes the audio editor's own windows on channel samples (the Tracks layout:
+// the lower pane shows one editor, so another editor taking it closes the audio editor).
+void closeAudioEditorSampleWindows();
 // Opens an audio file on its own in the audio editor (the browser's "Edit in Loupe"): the
 // file itself is never changed; edits stay in the editor to drag out, send or save.
 bool openFileInLoupe(App& a, const std::string& path);

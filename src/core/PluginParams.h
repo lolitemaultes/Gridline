@@ -223,7 +223,73 @@ inline constexpr int SlGridMeter = SlGridDiv + 1;
 inline constexpr int SlGridHits = SlGridMeter + 1;
 inline constexpr int SlGridZero = SlGridHits + 1;
 inline constexpr int SlGridFollow = SlGridZero + 1;
-inline constexpr int SlCount = SlGridFollow + 1;
+// K-217 (GitHub #54): Mod X, Mod Y and velocity each go to a target (SlDest) with an
+// amount (X / Y: -1..1; velocity: SlVelocity, 0..1). The defaults (X: cutoff, Y:
+// resonance, velocity: level) are how Kerf played before. Classic engine only.
+enum SlDest { SlDestOff, SlDestLevel, SlDestCutoff, SlDestReso, SlDestPitch, SlDestPan, SlDestStart, SlDestCount };
+inline constexpr int SlModXDest = SlGridFollow + 1;
+inline constexpr int SlModXAmt = SlModXDest + 1;
+inline constexpr int SlModYDest = SlModXAmt + 1;
+inline constexpr int SlModYAmt = SlModYDest + 1;
+inline constexpr int SlVelDest = SlModYAmt + 1;
+// K-217: third per-slice block: playback speed (x, tape-style: the pitch moves with it)
+// and the envelope set the slice plays with (0 = Main, engine/stage 3).
+enum SliceField3 { SliceSpeed, SliceEnvSet, SliceFields3 };
+inline constexpr int Slice3Base = SlVelDest + 1;
+inline constexpr int slParam3(int slice, int field) { return Slice3Base + slice * SliceFields3 + field; }
+// K-217: envelope sets. Each slice plays with one of four sets (SliceEnvSet; 0 = Main).
+// A set has a volume ADSR and three modulation ADSRs (pan, pitch, filter cutoff) with an
+// amount each (pan -1..1, pitch +-48 semitones, cutoff +-8 octaves; 0 = off). Main's volume
+// attack and release are SlAttack / SlRelease, its decay and sustain SlVolDecay / SlVolSustain.
+inline constexpr int kEnvSets = 4;
+enum SlEnvKind { SlEnvPan, SlEnvPitch, SlEnvCut, SlEnvKinds };
+enum SlEnvField { SlEnvA, SlEnvD, SlEnvS, SlEnvR, SlEnvAmt, SlEnvFields };
+inline constexpr int SlVolDecay = Slice3Base + kMaxSlices * SliceFields3;
+inline constexpr int SlVolSustain = SlVolDecay + 1;
+inline constexpr int SlEnvBase = SlVolSustain + 1;
+inline constexpr int kEnvModFields = SlEnvKinds * SlEnvFields;  // 15
+inline constexpr int kEnvSetFields = 4 + kEnvModFields;         // sets 2..4: volume A D S R, then the three
+// The volume envelope's field f (SlEnvA / D / S / R) of set `set`.
+inline constexpr int slVolEnv(int set, int f) {
+  return set == 0 ? (f == SlEnvA ? SlAttack : f == SlEnvD ? SlVolDecay : f == SlEnvS ? SlVolSustain : SlRelease)
+                  : SlEnvBase + kEnvModFields + (set - 1) * kEnvSetFields + f;
+}
+// Field f of modulation envelope `kind` of set `set`.
+inline constexpr int slModEnv(int set, int kind, int f) {
+  return set == 0 ? SlEnvBase + kind * SlEnvFields + f : SlEnvBase + kEnvModFields + (set - 1) * kEnvSetFields + 4 + kind * SlEnvFields + f;
+}
+// K-217: one LFO: shape (SlLfoShapes), rate (Hz) or tempo sync (SlLfoSync: 0 = off, else
+// kLfoSyncBeats), a fade-in delay, per-note phase (else free running), and its depth on the
+// volume (0..1), pan (0..1), pitch (semitones) and filter cutoff (octaves).
+enum SlLfoShapes { SlLfoSine, SlLfoTri, SlLfoSawUp, SlLfoSawDown, SlLfoSquare, SlLfoRandom, SlLfoShapeCount };
+inline constexpr double kLfoSyncBeats[9] = {0, 16, 8, 4, 2, 1, 0.5, 0.25, 0.125};
+inline constexpr int SlLfoShape = SlEnvBase + kEnvModFields + (kEnvSets - 1) * kEnvSetFields;
+inline constexpr int SlLfoRate = SlLfoShape + 1;
+inline constexpr int SlLfoSync = SlLfoRate + 1;
+inline constexpr int SlLfoDelay = SlLfoSync + 1;
+inline constexpr int SlLfoRetrig = SlLfoDelay + 1;
+inline constexpr int SlLfoVol = SlLfoRetrig + 1;
+inline constexpr int SlLfoPan = SlLfoVol + 1;
+inline constexpr int SlLfoPitch = SlLfoPan + 1;
+inline constexpr int SlLfoCut = SlLfoPitch + 1;
+// K-217: two slice layers on the same loop. SlLayer picks the one that plays (automatable);
+// SlLayerKey (-1 off) makes that key switch to layer A and the key above it to B (neither
+// sounds). Layer B has its own markers and per-slice settings, laid out as A's (the marker and
+// slice blocks 1 and 2, then slice block 3); with no markers of its own it cuts where A does.
+// Classic engine only.
+inline constexpr int SlLayer = SlLfoCut + 1;
+inline constexpr int SlLayerKey = SlLayer + 1;
+inline constexpr int SlBMarkers = SlLayerKey + 1;
+inline constexpr int kLayerBlock = SlModX - SlMarkers;  // markers, slice blocks 1 and 2 (832)
+inline constexpr int SlBSlice3 = SlBMarkers + kLayerBlock;
+inline constexpr int SlCount = SlBSlice3 + kMaxSlices * SliceFields3;
+// Layer `layer`'s copy of layer A's per-slice parameter `pid` (other parameters: `pid`).
+inline constexpr int layerPid(int layer, int pid) {
+  return layer == 0 ? pid
+         : pid >= SlMarkers && pid < SlModX ? SlBMarkers + (pid - SlMarkers)
+         : pid >= Slice3Base && pid < Slice3Base + kMaxSlices * SliceFields3 ? SlBSlice3 + (pid - Slice3Base)
+                                                                             : pid;
+}
 // "gl.granular"
 enum Granular {
   GrPosition, GrSpread, GrSize, GrDensity, GrPitchRand, GrStereo, GrAttack, GrRelease, GrFreeze, GrVolume,
@@ -239,7 +305,9 @@ enum MidiOut {
 enum MoKnobField { MoKnobValue, MoKnobType, MoKnobNumber, MoKnobMin, MoKnobMax, MoKnobChannel, MoKnobFields };
 inline constexpr int kMoKnobs = 72;  // J-33: the reference keeps up to 72 controllers (values 0x22..0x142)
 inline constexpr int moKnob(int k, int field) { return MoKnobs + k * MoKnobFields + field; }
-inline constexpr int MoCount = MoKnobs + kMoKnobs * MoKnobFields;
+// K-99: MPE out (0 off, 1 on): every note on its own MIDI channel with its own bend, pressure and CC 74.
+inline constexpr int MoMpe = MoKnobs + kMoKnobs * MoKnobFields;
+inline constexpr int MoCount = MoMpe + 1;
 
 // ------------------------------------------------------------------- effects
 // "gl.eq" — seven-band parametric EQ. Per band: type, freq, gain, Q, slope.
@@ -566,6 +634,10 @@ enum Utility {
   UtlInvertMode, UtlMute, UtlMuteChannel, UtlDcRemove, UtlPanLaw, UtlMono,  // 0.5
   UtlCount
 };
+
+// K-101: Hardware Insert (gl.hwinsert). HwSend 0 = none (an audio return only), k = extra
+// output pair k; HwReturn k = device inputs 2k + 1 and 2k + 2.
+enum HwInsert { HwSend, HwReturn, HwReturnMono, HwSendGain, HwReturnGain, HwMix, HwLatency, HwOffset, HwCount };
 
 // Delay time choices (beats) for "gl.delay" DlyTime.
 inline constexpr double kDelayBeats[] = {0.125, 1.0 / 6, 0.1875, 0.25, 1.0 / 3, 0.375, 0.5, 2.0 / 3, 0.75, 1.0, 1.5, 2.0,

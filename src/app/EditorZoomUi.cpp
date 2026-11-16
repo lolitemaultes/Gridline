@@ -212,8 +212,21 @@ constexpr int kReopenFrames = 8;  // K-286: frames a window opened again holds i
 
 // K-286: a window opened again goes where it was, moved only as far as it takes to keep the whole
 // window in the work area (a taller editor than last time)
-static void placeReopened(const Slot& s) {
+static void placeReopened(Slot& s) {
   const ImGuiViewport* vp = ImGui::GetMainViewport();
+  // K-297: another window already there (Smooth hands the effect it showed to a window of its own
+  // at this place) moves this one down and right by a title bar, as fresh windows cascade
+  const ImGuiContext& g = *GImGui;
+  const float step = g.FontSize + g.Style.FramePadding.y * 2.0f;
+  for (int pass = 0; pass < 8; ++pass) {
+    bool hit = false;
+    for (const ImGuiWindow* w : g.Windows) {
+      if (w == s.host || !w->WasActive || w->Hidden || (w->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip))) continue;
+      if (std::fabs(w->Pos.x - s.placedPos.x) <= 4.0f && std::fabs(w->Pos.y - s.placedPos.y) <= 4.0f) hit = true;
+    }
+    if (!hit) break;
+    s.placedPos.x += step, s.placedPos.y += step;
+  }
   ImVec2 p = s.placedPos;
   if (s.host && s.shownFrames > 1) {
     const ImVec2 sz = s.host->Size;
@@ -233,6 +246,12 @@ float prepare(App& a, const char* key, const std::string& type, float contentW, 
     s.rowW = s.rowsAbove;
   }
   if (s.lastFrame < frame - 1) s.reopened = s.placed;  // K-286: opened again: where it was, not centred
+  if (s.lastFrame >= frame - 1 && s.type != type && s.host && s.shownFrames > 1) {
+    // K-297: another plugin shown in the open window keeps the window's top-left (it re-centred,
+    // jumping by half the size difference every time another effect was opened)
+    s.reopened = true;
+    s.placedPos = s.host->Pos;
+  }
   if (s.lastFrame < frame - 1 || s.type != type) {  // (re)appeared, or another plugin in the window
     s.shownFrames = 0;
     s.rowW = 0;

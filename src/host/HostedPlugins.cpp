@@ -1126,6 +1126,41 @@ class HostedGenerator final : public Generator {
     n->glideStep = (pitch - n->cur) / static_cast<double>(n->glideLeft);
     n->glideFrom = eventOffset();
   }
+  // K-99: a note's pressure and timbre reach the plugin as the plugin's format carries them: MPE
+  // (channel pressure and CC 74 on the note's own channel), note expressions (CLAP's note
+  // dialect: pressure and brightness; VST3: poly pressure and brightness), or else the note's
+  // poly aftertouch (pressure only: plain MIDI has no per-note timbre).
+  unsigned ownExpression() const override {
+    return (1u << static_cast<unsigned>(ExprDim::Pressure)) | (1u << static_cast<unsigned>(ExprDim::Timbre));
+  }
+  void onExpr(uint32_t id, ExprDim dim, float value) override {
+    Note* n = find(id);
+    if (!n || dim == ExprDim::Pitch || !std::isfinite(value)) return;
+    const bool pressure = dim == ExprDim::Pressure;
+    value = std::clamp(value, 0.0f, 1.0f);
+    float& last = pressure ? n->pressure : n->timbre;
+    const int v7 = std::clamp(static_cast<int>(std::lround(value * 127.0f)), 0, 127);
+    NoteEvent e;
+    e.channel = n->channel;
+    e.key = n->key;
+    e.noteId = n->noteId;
+    if (mpe() || !core_->backend()->supportsTuning()) {
+      if (v7 == static_cast<int>(std::lround(last * 127.0f))) return;
+      if (!mpe() && !pressure) return;  // no per-note timbre in plain MIDI
+      e.type = NoteEvent::Midi;
+      const int ch = n->channel & 15;
+      if (mpe() && pressure) e.midi[0] = static_cast<uint8_t>(0xD0 | ch), e.midi[1] = static_cast<uint8_t>(v7);
+      else if (mpe()) e.midi[0] = static_cast<uint8_t>(0xB0 | ch), e.midi[1] = 74, e.midi[2] = static_cast<uint8_t>(v7);
+      else e.midi[0] = static_cast<uint8_t>(0xA0 | ch), e.midi[1] = static_cast<uint8_t>(n->key & 0x7F), e.midi[2] = static_cast<uint8_t>(v7);
+    } else {
+      if (std::fabs(value - last) < 1e-4f) return;
+      e.type = NoteEvent::Expression;
+      e.expr = pressure ? NoteEvent::ExprPressure : NoteEvent::ExprBrightness;
+      e.value = value;
+    }
+    last = value;
+    queue(e, eventOffset());
+  }
   void onMidi(uint8_t s, uint8_t a, uint8_t b) override {
     NoteEvent e;
     e.type = NoteEvent::Midi;
@@ -1202,6 +1237,7 @@ class HostedGenerator final : public Generator {
     int64_t glideLeft = 0;
     int glideFrom = 0;  // offset in the block where the glide starts
     int64_t startAt = 0;  // sample it started on (frames this instrument has run)
+    float pressure = 0, timbre = 0.5f;  // K-99: the expression last sent
   };
   Note* find(uint32_t id) {
     for (auto& n : notes_)
@@ -1259,6 +1295,14 @@ class HostedGenerator final : public Generator {
     if (mpe()) {  // the note's pitch off its key as its channel's bend, before it starts
       sendBend(slot->channel, e.tuning);
       e.tuning = 0;
+      // K-99: its channel's pressure and timbre start neutral (a note before it may have left them moved)
+      NoteEvent z;
+      z.type = NoteEvent::Midi;
+      z.channel = slot->channel;
+      z.midi[0] = static_cast<uint8_t>(0xD0 | (slot->channel & 15)), z.midi[1] = 0, z.midi[2] = 0;
+      queue(z, eventOffset());
+      z.midi[0] = static_cast<uint8_t>(0xB0 | (slot->channel & 15)), z.midi[1] = 74, z.midi[2] = 64;
+      queue(z, eventOffset());
     }
     if (props) {
       e.hasProps = true;

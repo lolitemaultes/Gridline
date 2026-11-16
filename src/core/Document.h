@@ -91,6 +91,8 @@ class Document {
   uint64_t moveSerial() const { return moveSerial_; }
   // Called after every successful setParam (automation recording listens here).
   std::function<void(ParamId, double)> paramObserver;
+  // R06-03: during that call, the value the change replaced (an automation take starts from it).
+  double paramBefore = 0;
   // The parameter most recently changed through setParam and a counter that
   // increases with every such change (MIDI multilink: "move a control, then a
   // hardware knob").
@@ -168,6 +170,8 @@ class Document {
   void beginGroup(const std::string& label);
   // `joinGesture` false: never folded into a pointer gesture's step (a recorded pass, J-159).
   void endGroup(bool joinGesture = true);
+  // N48-04: the newest `n` history steps as one (UndoStack::squashTop); false when they cannot be.
+  bool squashSteps(size_t n, const std::string& label) { return groups_.empty() && undo_.squashTop(n, label); }
   // Drops the innermost open group: its edits are reverted and nothing is
   // recorded (a script that failed halfway, SC-02).
   void cancelGroup();
@@ -179,6 +183,8 @@ class Document {
   bool redo();
   void jumpTo(size_t position);
   const UndoStack& history() const { return undo_; }
+  // K-92: forgets the undone steps (an assistant's proposal measured and taken back: Redo must not bring it).
+  void dropRedo() { undo_.truncate(undo_.position()); }
   void setMaxUndoLevels(size_t n) { undo_.setMaxLevels(n); }
   // K-141: the history's memory budget (UndoStack::setMaxBytes).
   void setMaxUndoBytes(size_t n) { undo_.setMaxBytes(n); }

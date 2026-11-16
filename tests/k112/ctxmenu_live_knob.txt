@@ -1,35 +1,28 @@
+Reset
+--------------------------------
 Copy value
 Paste value
 Set to >
 --------------------------------
-Create automation clip
-Create automation clip in pattern "Beat"
-Edit automation clip >
-Edit events
-Start the song at this value
-Record automation
+Show automation
+Delete automation
 Show automation in a new lane
 Re-enable automation
 --------------------------------
 Copy the parameter's name
 --------------------------------
-Link to controller…
-Multilink to controllers
+Edit MIDI map…
 ==== tree ====
+Reset
 Copy value
 Paste value
 Set to >
 Set to > Minimum
 Set to > Centre
 Set to > Maximum
-Create automation clip
-Create automation clip in pattern "Beat"
-Edit automation clip >
-Edit events
-Start the song at this value
-Record automation
+Show automation
+Delete automation
 Show automation in a new lane
 Re-enable automation
 Copy the parameter's name
-Link to controller…
-Multilink to controllers
+Edit MIDI map…

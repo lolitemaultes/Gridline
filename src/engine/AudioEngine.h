@@ -221,6 +221,9 @@ class AudioEngine {
   // Clip playing / waiting to start on a playlist track (kNoId = none).
   ObjectId liveActive(int track) const;
   ObjectId liveQueued(int track) const;
+  // K-112c (checkpoint 48): the transport tick of the playing clip's content tick 0 (Session record
+  // places the notes played at their place in the clip).
+  Tick liveOrigin(int track) const;
   // Plays a sample directly to the output (browser preview); nullptr stops it.
   // J-112: `own` = an editor's own Play (Loupe standalone), plugin playback.
   // `loopFrom` >= 0 (an editor's own loop): at the end the preview goes on from that frame,
@@ -778,6 +781,7 @@ class AudioEngine {
   LiveTrack liveTracks_[kMaxPlaylistTracks];
   std::atomic<ObjectId> liveActiveUi_[kMaxPlaylistTracks] = {};
   std::atomic<ObjectId> liveQueuedUi_[kMaxPlaylistTracks] = {};
+  std::atomic<Tick> liveOriginUi_[kMaxPlaylistTracks] = {};
   uint32_t liveRng_ = 0x9E3779B9u;
   // Audio of launched audio clips, rendered with the channels (this block).
   struct LivePiece {

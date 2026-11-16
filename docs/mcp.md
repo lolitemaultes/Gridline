@@ -14,20 +14,45 @@ Both speak the same protocol and offer the same tools, resources and prompts.
 ## Safety
 
 * The server in the app is **off by default**. Turning it on starts a listener on `127.0.0.1`
-  only: other computers cannot reach it. It never binds to another address.
+  only: other computers cannot reach it.
+* **Listen on** (Settings > Integrations) chooses where the server listens. The default,
+  "This computer only", binds `127.0.0.1` and accepts this computer only. The other choices are
+  opt-in, shown in red, and ask once for a confirmation before they take effect:
+  * "This computer, WSL and virtual machines" listens on every interface but accepts only this
+    computer and private addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, link-local
+    169.254.0.0/16, shared 100.64.0.0/10), which is where WSL, virtual machines and containers live;
+  * "A specific address" listens on one of this computer's own IPv4 addresses, with the same
+    private-range allow list;
+  * "All networks" listens on every interface and accepts any address. Use it only on a network
+    you trust; the token is still required.
+  The connect command and the endpoint file follow the choice (they name the address to use).
 * Every request to the app must carry the token shown in Settings > Integrations
-  (`Authorization: Bearer <token>`). "New" makes a new token; clients with the old one are
-  refused. Requests that name another host or come from a web page on another origin are refused
-  as well. The token is kept in the macOS Keychain (item "Gridline mcp-token") or, on Linux, in
+  (`Authorization: Bearer <token>`), whatever the address. "New" makes a new token; clients with
+  the old one are refused. An address that sends five wrong tokens within a minute is refused for
+  a minute (HTTP 429).
+* The `Host` header must name `127.0.0.1`, `localhost` or, beyond loopback, one of this computer's
+  own IP addresses written as numbers: a host name is never accepted, so a web page cannot point a
+  name at your computer (DNS rebinding). Requests from a web page on another origin are refused. The token is kept in the macOS Keychain (item "Gridline mcp-token") or, on Linux, in
   `secrets/mcp-token` in Gridline's settings folder (readable by you only, mode 0600), not in
   `settings.json`; a token from an older version is moved there on first use.
 * A second switch, "Allow assistants to change the project and write files", is also off by
   default. While it is off, assistants can read the project and measure loudness, but every tool
   that edits, renders to a file, exports or saves answers with an explanation instead.
+* **Propose** sits between read only and allowing changes. Pick it at the top of Tools > AI
+  assistant activity (Read only, Propose, Allow changes), or tick "Propose changes first" in
+  Settings > Integrations. An assistant's change then waits in that window as a proposal: what
+  it would change, in words ("Tempo 120 -> 128", "Pattern 'Verse', channel 'Bass': 8 notes
+  added"), with **Accept** and **Discard**. The project stays as it was until you accept; an
+  accepted proposal is one undo step, as an allowed change would have been. If you edited the
+  project in the meantime, accepting runs the assistant's call again on the project as it is now,
+  so your edits stay. While proposing, assistants cannot write files or use undo and redo.
+* The same window holds a conversation with the connected assistant: type a request and press
+  Enter. The assistant reads it with `assistant_inbox`, answers with `assistant_say`, and sees
+  its waiting proposals with `get_proposals`.
 * Every editing call is **one undo step** labelled `AI: <action>` in Edit > Undo history, so you
   can undo any assistant change with Ctrl+Z (or the "Undo last assistant change" button). A call
   that fails changes nothing.
-* Tools > AI assistant activity lists every call (time, assistant, action, result). The `AI` lamp
+* Tools > AI assistant activity lists every call (time, assistant, its address, action, result). The `AI` lamp
   in the status bar is lit while an assistant is connected and turns orange while it works.
 * Files are written only inside the project's folder and the export folder you choose in
   Settings > Integrations. Paths that leave those folders (`..`, links pointing elsewhere) are refused, and

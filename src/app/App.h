@@ -16,9 +16,11 @@
 #include "../core/Backup.h"
 #include "../core/MenuOpsExtra.h"
 #include "../core/Document.h"
+#include "../core/MultiNoteEdit.h"
 #include "../core/Launcher.h"
 #include "../core/Recents.h"
 #include "../core/MidiRecord.h"
+#include "../core/MpeInput.h"
 #include "../engine/AudioRecord.h"
 #include "../core/MidiTemplates.h"
 #include "../core/ProjectFiles.h"
@@ -45,7 +47,8 @@ class Controller;
 // Editing tools of the piano roll and the playlist. J-11 added Slip (playlist:
 // move a clip's content inside it), Play (audition / scrub while held), Zoom
 // (drag a range, click in, right-click out) and Detune (drag notes' fine pitch).
-enum class Tool { Draw, Paint, Erase, Select, Slice, Mute, Slip, Play, Zoom, Detune, Bend, Warp };  // K-25: Bend = the piano roll's pitch bend tool; K-85: Warp = the playlist's warp markers
+enum class Tool { Draw, Paint, Erase, Select, Slice, Mute, Slip, Play, Zoom, Detune, Bend, Warp, Fade, Marquee,
+                  Text, Glue, Solo, AutoSelect, AutoCurve };  // R05-17: the Tracks layout's own tools  // K-25: Bend = the piano roll's pitch bend tool; K-85: Warp = the playlist's warp markers
 
 struct PianoRollState {
   float pxPerTick = 0.25f;
@@ -65,6 +68,7 @@ struct PianoRollState {
   ObjectId selPattern = kNoId, selChannel = kNoId;
   Tick lastLength = 0;  // remembered note length (0 = one step)
   int lastVelocity = 100;
+  bool lastSet = false;  // R02-17: a note was touched or the velocity set (else the layout's defaults)
   bool ghostNotes = true;
   std::vector<Note> clipboard;
   // J-11 helpers.
@@ -79,6 +83,13 @@ struct PianoRollState {
   bool fold = false;          // K-112 (Live): only the rows that hold notes
   bool highlightScale = true; // K-112 (Live): rows outside the scale shaded (the scale stays chosen)
   std::set<ObjectId> ghostChannels;  // channels shown as ghost notes (empty = all others)
+  // K-198: channels edited beside the target channel (a.selChannel, where new notes go): their
+  // notes show solid in their colour and a click on one makes its channel the target.
+  std::set<ObjectId> editChannels;
+  // K-198 follow-up: notes of the edited channels selected beside `selected` (the target's); moves,
+  // drags, nudges, transposes, deletes and copies take them all in one undo step.
+  multinote::Selection editSel;
+  std::vector<multinote::ChannelNote> multiClipboard;  // a copy that spans channels (each note keeps its channel)
 };
 
 // Channel rack view state (J-11): zipped rows, graph / keyboard editor lane,
@@ -115,7 +126,13 @@ struct PlaylistState {
   float zoomRequest = 1.0f;      // toolbar zoom buttons: applied once the canvas size is known
   bool fitRequest = false;       // zoom to fit the song
   Tick selStart = 0, selEnd = 0; // time selection (selEnd <= selStart: none)
+  // R01-18 (Tracks layout): the tool held Cmd gives (the reference's Command-click tool), and the
+  // Marquee tool's area: a time range on a run of tracks (mqB <= mqA: none).
+  Tool cmdTool = Tool::Marquee;
+  Tick mqA = 0, mqB = 0;
+  int mqT0 = 0, mqT1 = -1;
   std::set<ObjectId> selected;  // clip ids
+  std::set<int> selTracks;      // N48-05: Clips: the tracks a time selection drawn in the lanes covers (empty: every track)
   std::set<int> trackSel;       // GitHub #46: selected track headers (indexes; Ctrl / Shift+click), moved together
   std::vector<Clip> clipboard;
   // J-28: FL-style playlist controls.
@@ -282,6 +299,9 @@ class App {
     bool open = false;
     std::string title, subtitle, okLabel;
     std::function<void()> action;
+    // K-106: a third answer (a "No" that still does something), shown when noLabel is set.
+    std::string noLabel;
+    std::function<void()> noAction;
   } confirm;
   std::function<void()> afterDiscard;
   // Song edits picked in a menu drawn inside a window that keeps pointers into the song while it
@@ -376,6 +396,7 @@ class App {
   bool stepRecord = false;                     // step editing from the keyboard (stopped transport)
   NoteRecorder recorder;
   StepRecorder stepRecorder;
+  MpeInput mpeIn;  // K-99: an MPE controller's per-note pitch, pressure and timbre (recorded into the notes' lanes)
   NoteCapture capture;  // K-112c: notes played while nothing records (the Live bar's Capture)
   TypingKeyboard typing;
   // Starts playback (with the count-in when recording).
@@ -492,6 +513,10 @@ class App {
   void selectPattern(ObjectId id);
   void selectChannel(ObjectId id, bool additive = false);
   void openPianoRoll(ObjectId channel);
+  // K-234: once a frame: the mixer follows the selected channel and the channels follow the
+  // selected mixer track (core/SelectionFollow.h; setting rack.selectionFollows).
+  void followSelection();
+
   void previewSample(const std::string& path);
   // K-42: a file on a web drive: decoded in the background, starts when it has arrived.
   void previewWhenReady(const std::string& path);

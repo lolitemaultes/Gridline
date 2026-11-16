@@ -853,6 +853,51 @@ Tick prepareLiveArea(Document& d) {
   return area;
 }
 
+Tick prepareClipGrid(Document& d, Tick sceneTicks) {
+  const Song& s = d.song();
+  if (s.playlist.empty() || sceneTicks <= 0) return 0;
+  struct Src {
+    ClipKind kind;
+    ObjectId id;
+    Clip sample;
+  };
+  std::map<int, std::vector<Src>> perTrack;
+  std::vector<Clip> ordered = s.playlist;
+  std::stable_sort(ordered.begin(), ordered.end(), [](const Clip& a, const Clip& b) { return a.start < b.start; });
+  for (const auto& c : ordered) {
+    if (c.start < s.live.areaEnd) continue;
+    const ObjectId src = c.kind == ClipKind::Pattern ? c.pattern : c.source;
+    auto& v = perTrack[c.track];
+    bool seen = false;
+    for (const auto& x : v) seen = seen || (x.kind == c.kind && x.id == src);
+    if (!seen) v.push_back(Src{c.kind, src, c});
+  }
+  // Scene i holds each track's i-th clip; the live area is whole scenes, past every clip's end.
+  const Tick base = (s.live.areaEnd + sceneTicks - 1) / sceneTicks * sceneTicks;
+  Tick end = base;
+  for (const auto& [t, v] : perTrack)
+    for (size_t i = 0; i < v.size(); ++i) end = std::max(end, base + static_cast<Tick>(i) * sceneTicks + std::max<Tick>(1, s.clipLength(v[i].sample)));
+  end = (end + sceneTicks - 1) / sceneTicks * sceneTicks;
+  if (end <= base) return 0;
+  const Tick from = s.live.areaEnd, shift = end - from;
+  d.editSong("prepare the clip grid", [&](Song& x) {
+    for (auto& c : x.playlist)
+      if (c.start >= from) c.start += shift;
+    for (auto& m : x.markers)
+      if (m.pos >= from) m.pos += shift;
+    for (const auto& [t, v] : perTrack)
+      for (size_t i = 0; i < v.size(); ++i) {
+        Clip k = v[i].sample;
+        k.id = x.allocateId();
+        k.start = base + static_cast<Tick>(i) * sceneTicks;
+        k.muted = false;
+        x.playlist.push_back(k);
+      }
+    x.live.areaEnd = end;
+  });
+  return end - from;
+}
+
 bool extendLiveArea(Document& d, Tick end) {
   const Tick from = d.song().live.areaEnd;
   if (end <= from) return false;

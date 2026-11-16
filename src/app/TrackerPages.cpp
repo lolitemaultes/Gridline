@@ -16,6 +16,7 @@
 #include "../core/Arrangements.h"
 #include "../core/ClipGain.h"
 #include "../engine/ClipSource.h"
+#include "../engine/PlaylistTools.h"
 #include "../core/I18n.h"
 #include "../core/LayoutHomes.h"
 #include "../core/MenuOps.h"
@@ -24,6 +25,7 @@
 #include "App.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
+#include "MenuParityUi.h"
 #include "MixerMeters.h"
 #include "PixelGrid.h"
 #include "Theme.h"
@@ -62,16 +64,22 @@ constexpr float kGap = 2;
 
 float rowHeight() { return std::round(ImGui::GetFontSize() + 4); }
 
-// The page's title bar: a raised box with the title left and `info` right (monospaced).
+// The page's title bar: a raised box with the title left, `info` right (monospaced), and at the
+// right end Exit, back to the pattern (S-03: the pages are screens swapped into the centre, as the
+// classic tracker's; each has its Exit, and the page strip switches between them. They do not
+// close or float: the centre always shows one page and nothing gets lost behind another window).
 float titleBar(App& a, ImVec2 o, float w, const char* title, const std::string& info) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float fs = ImGui::GetFontSize(), h = std::round(fs + 8);
   bevelBox(dl, o, ImVec2(o.x + w, o.y + h));
   boxTitle(a, ImVec2(o.x + 6, std::round(o.y + (h - fs) * 0.5f)), title);
+  const float ew = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Exit")).x) + 24;
+  if (bevelButton(a, "##pageexit", "Exit", ImVec2(o.x + w - 2 - ew, o.y + 2), ImVec2(o.x + w - 2, o.y + h - 2), false, "Back to the pattern"))
+    trackerview::showPage(a, "Pattern editor");
   if (!info.empty()) {
     ImFont* mono = monoFont(a);
     const float tw = mono->CalcTextSizeA(fs, FLT_MAX, 0, info.c_str()).x;
-    dl->AddText(mono, fs, ImVec2(std::round(o.x + w - 6 - tw), std::round(o.y + (h - fs) * 0.5f)), pal().textDim, info.c_str());
+    dl->AddText(mono, fs, ImVec2(std::round(o.x + w - ew - 10 - tw), std::round(o.y + (h - fs) * 0.5f)), pal().textDim, info.c_str());
   }
   return h;
 }
@@ -155,6 +163,33 @@ void endBody(float contentH) {
   ImGui::EndChild();
 }
 
+// One channel's row of step cells (K-306: its own function; inside steps() it crashed clang-cl
+// 20.1.8's x86 instruction selection on the Windows CI).
+void stepCells(App& a, ImDrawList* dl, const Pattern* pat, ObjectId channel, const std::vector<uint8_t>* row, int nSteps, int playStep, float gx,
+               float y, float rh, float cw, float group) {
+  const auto& P = pal();
+  for (int k = 0; k < nSteps; ++k) {
+    const float x = std::round(gx + static_cast<float>(k) * (cw + 1) + group * static_cast<float>(k / 4));
+    const ImVec2 s0(x, y + 1), s1(x + cw, y + rh - 2);
+    const uint8_t v = row && static_cast<size_t>(k) < row->size() ? (*row)[static_cast<size_t>(k)] : 0;
+    ImGui::SetCursorScreenPos(s0);
+    ImGui::PushID(k);
+    const bool click = ImGui::InvisibleButton("##st", ImVec2(cw, s1.y - s0.y));
+    const bool hov = ImGui::IsItemHovered();
+    ImGui::PopID();
+    const bool beat = (k / 4) % 2 == 0;
+    bevelBox(dl, s0, s1, v == 0);
+    if (v > 0) {
+      dl->AddRectFilled(ImVec2(s0.x + 1, s0.y + 1), ImVec2(s1.x - 1, s1.y - 1), theme::mix(P.surface700, P.hot, 0.35f + 0.65f * static_cast<float>(v) / 127.0f));
+    } else {
+      dl->AddRectFilled(ImVec2(s0.x + 1, s0.y + 1), ImVec2(s1.x - 1, s1.y - 1), beat ? P.surface900 : P.surface950);
+    }
+    if (hov) dl->AddRectFilled(ImVec2(s0.x + 1, s0.y + 1), ImVec2(s1.x - 1, s1.y - 1), theme::withAlpha(P.text, 0.12f));
+    if (k == playStep) dl->AddRectFilled(ImVec2(s0.x + 1, s1.y - 3), ImVec2(s1.x - 1, s1.y - 1), P.playhead);
+    if (click && pat) a.doc.setStep(pat->id, channel, k, v > 0 ? 0 : 100);
+  }
+}
+
 }  // namespace
 
 void pageTitle(App& a, const char* title, const std::string& info) {
@@ -228,26 +263,7 @@ void steps(App& a) {
         if (ImGui::InvisibleButton("##notes", ImVec2(std::max(1.0f, avail), rh - 1))) a.selectChannel(c.id);
         ui::Hint("This channel plays notes: the pattern editor and the piano roll edit them");
       } else {
-        for (int k = 0; k < nSteps; ++k) {
-          const float x = std::round(gx + static_cast<float>(k) * (cw + 1) + group * static_cast<float>(k / 4));
-          const ImVec2 s0(x, y + 1), s1(x + cw, y + rh - 2);
-          const uint8_t v = row && static_cast<size_t>(k) < row->size() ? (*row)[static_cast<size_t>(k)] : 0;
-          ImGui::SetCursorScreenPos(s0);
-          ImGui::PushID(k);
-          const bool click = ImGui::InvisibleButton("##st", ImVec2(cw, s1.y - s0.y));
-          const bool hov = ImGui::IsItemHovered();
-          ImGui::PopID();
-          const bool beat = (k / 4) % 2 == 0;
-          bevelBox(dl, s0, s1, v == 0);
-          if (v > 0) {
-            dl->AddRectFilled(ImVec2(s0.x + 1, s0.y + 1), ImVec2(s1.x - 1, s1.y - 1), theme::mix(P.surface700, P.hot, 0.35f + 0.65f * static_cast<float>(v) / 127.0f));
-          } else {
-            dl->AddRectFilled(ImVec2(s0.x + 1, s0.y + 1), ImVec2(s1.x - 1, s1.y - 1), beat ? P.surface900 : P.surface950);
-          }
-          if (hov) dl->AddRectFilled(ImVec2(s0.x + 1, s0.y + 1), ImVec2(s1.x - 1, s1.y - 1), theme::withAlpha(P.text, 0.12f));
-          if (k == playStep) dl->AddRectFilled(ImVec2(s0.x + 1, s1.y - 3), ImVec2(s1.x - 1, s1.y - 1), P.playhead);
-          if (click && pat) a.doc.setStep(pat->id, c.id, k, v > 0 ? 0 : 100);
-        }
+        stepCells(a, dl, pat, c.id, row, nSteps, playStep, gx, y, rh, cw, group);
       }
       ImGui::PopID();
     }
@@ -278,9 +294,26 @@ std::string clipTitle(const Song& s, const Clip& c) {
 }
 
 // The clip box: the picked clip's properties, edited in place, each change one Document edit (the
-// same edits the Studio playlist's clip menu makes, so every layout shows the same clip): where it
-// is, mute; an audio clip's gain, pitch, fades and direction; a pattern clip's playback transpose.
-// "More" opens the clip's whole menu (warp, audio tools, curves, export, as in the playlist).
+// same edits the Studio playlist's clip menu and edge drags make, so every layout shows the same
+// clip; nothing is stored that the other layouts lack). T-13: where it starts, how long it is and
+// where its content starts inside it (the offset), its mute; an audio clip's gain, fades, pitch and
+// direction; a pattern clip's playback transpose. Each value is a stepper (the arrows, the wheel, or
+// a drag on the value): positions in rows of the song grid, Shift a whole bar. "More" opens the
+// clip's whole menu (warp, audio tools, curves, export, as in the playlist).
+// A note the clip box shows in its title row for a moment (instead of a toast over its fields).
+std::string gBoxNote;
+double gBoxNoteUntil = 0;
+
+float clipBoxHeight() { return std::round(ImGui::GetFontSize() + 4) * 4 + 4 * 5 + 2; }
+
+// bars:beats:rows of a length or an offset, from 0 ("+": and some ticks more).
+std::string barsText(Tick t, Tick bar, Tick beat, Tick row) {
+  char b[96];  // (room for three 64-bit numbers: GCC -Wformat-truncation)
+  const Tick bars = t / bar, beats = (t % bar) / beat, rows = (t % beat) / row, rest = t % row;
+  std::snprintf(b, sizeof b, "%lld:%lld:%02lld%s", static_cast<long long>(bars), static_cast<long long>(beats), static_cast<long long>(rows), rest ? "+" : "");
+  return b;
+}
+
 void clipBox(App& a, ImVec2 p0, ImVec2 p1) {
   const auto& P = pal();
   const Song& s = a.doc.song();
@@ -292,74 +325,156 @@ void clipBox(App& a, ImVec2 p0, ImVec2 p1) {
   ImFont* mono = monoFont(a);
   const ObjectId id = c->id;
   const Tick bar = std::max<Tick>(1, s.barTicks());
-  const float x0 = p0.x + 6, y0 = p0.y + 4;
-  // Title: kind, name, place.
-  char where[96];
-  std::snprintf(where, sizeof where, "%s %s  %s %s  %s %.2f", i18n::tr("Track"), trk::hex2(c->track + 1).c_str(), i18n::tr("Bar"),
-                trk::hex2(static_cast<int>(c->start / bar)).c_str(), i18n::tr("bars"), static_cast<double>(s.clipLength(*c)) / static_cast<double>(bar));
-  const char* kind = c->kind == ClipKind::Audio ? i18n::tr("Audio clip") : c->kind == ClipKind::Pattern ? i18n::tr("Pattern clip") : i18n::tr("Automation clip");
-  boxTitle(a, ImVec2(x0, y0), kind);
-  const float kw = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, kind).x) + 10;
-  theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(x0 + kw, y0), (p1.x - x0 - kw) * 0.5f, P.text, clipTitle(s, *c).c_str());
-  const float ww = mono->CalcTextSizeA(fs, FLT_MAX, 0, where).x;
-  dl->AddText(mono, fs, ImVec2(std::round(p1.x - 6 - ww), y0), P.textDim, where);
-  // The fields, one row.
-  ImGui::SetCursorScreenPos(ImVec2(x0, std::round(y0 + fs + 6)));
-  ImGui::PushID("##songclipbox");
+  const Tick beat = std::max<Tick>(1, s.ppq);
+  const Tick row = std::max<Tick>(1, s.ppq / 4);  // one row of the song grid (four to the beat)
+  static TempoMap tm;
+  static uint64_t tmRev = ~0ull;
+  if (tmRev != a.doc.revision()) tm.build(s), tmRev = a.doc.revision();
+  const bool shift = ImGui::GetIO().KeyShift;
+  const Tick unit = shift ? bar : row;
   static uint64_t key = 0x54524b00;
-  const float fw = std::round(fs * 6.5f);
-  auto label = [&](const char* t) {
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(i18n::tr(t));
-    ImGui::SameLine();
+  const float rh = std::round(fs + 4), pad = 4;
+  const float x0 = p0.x + 6, y0 = p0.y + pad;
+  // Title: kind, name; the track at the right.
+  const char* kind = c->kind == ClipKind::Audio ? i18n::tr("Audio clip") : c->kind == ClipKind::Pattern ? i18n::tr("Pattern clip") : i18n::tr("Automation clip");
+  const float ty = std::round(y0 + (rh - fs) * 0.5f);
+  boxTitle(a, ImVec2(x0, ty), kind);
+  const float kw = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, kind).x) + 10;
+  char where[48];
+  std::snprintf(where, sizeof where, "%s %s", i18n::tr("Track"), trk::hex2(c->track + 1).c_str());
+  const float ww = mono->CalcTextSizeA(fs, FLT_MAX, 0, where).x;
+  const bool note = !gBoxNote.empty() && a.now < gBoxNoteUntil;
+  theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(x0 + kw, ty), p1.x - 12 - ww - (x0 + kw) - 10, note ? P.hot : P.text, note ? gBoxNote.c_str() : clipTitle(s, *c).c_str());
+  dl->AddText(mono, fs, ImVec2(std::round(p1.x - 6 - ww), ty), P.textDim, where);
+  ImGui::PushID("##songclipbox");
+  // The fields: a grid of steppers, four to a row (a narrow page: as many as fit).
+  const float inner = p1.x - p0.x - 12;
+  const int perRow = std::clamp(static_cast<int>(inner / std::max(fs * 13.0f, 160.0f)), 2, 4);
+  const float cellW = std::floor((inner - static_cast<float>(perRow - 1) * 10) / static_cast<float>(perRow));
+  int n = 0;
+  auto cell = [&](ImVec2* at) {
+    const int r = 1 + n / perRow, k = n % perRow;
+    *at = ImVec2(std::round(x0 + static_cast<float>(k) * (cellW + 10)), std::round(y0 + static_cast<float>(r) * (rh + pad)));
+    ++n;
+    return at->y + rh <= p1.y - 2;  // (a short box shows the fields that fit)
   };
-  bool muted = c->muted;
-  if (ImGui::Checkbox(i18n::tr("Mute"), &muted)) a.doc.editClip(id, "mute clip", [muted](Clip& x) { x.muted = muted; });
-  ui::Hint("The clip stays in place, silent");
-  if (c->kind == ClipKind::Audio) {
-    float gainDb = static_cast<float>(std::max(clipgain::kMinDb, clipgain::toDb(c->gain)));
-    float cents = c->pitch;
-    float fi = static_cast<float>(c->fadeIn * 1000.0), fo = static_cast<float>(c->fadeOut * 1000.0);
-    ImGui::SameLine(0, 14);
-    label("Gain");
-    ImGui::SetNextItemWidth(fw);
-    if (ImGui::DragFloat("##gain", &gainDb, 0.1f, static_cast<float>(clipgain::kMinDb), static_cast<float>(clipgain::kMaxDb), "%.1f dB"))
-      a.doc.editClip(id, "clip gain", [&](Clip& x) { x.gain = clipgain::fromDb(gainDb <= clipgain::kMinDb ? clipgain::kMinDb - 0.1 : gainDb); }, key);
-    ImGui::SameLine(0, 14);
-    label("Pitch");
-    ImGui::SetNextItemWidth(fw);
-    if (ImGui::DragFloat("##pitch", &cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct")) a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = cents; }, key + 1);
-    ImGui::SameLine(0, 14);
-    label("Fade in");
-    ImGui::SetNextItemWidth(fw);
-    if (ImGui::DragFloat("##fi", &fi, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
-      a.doc.editClip(id, "clip fade in", [&](Clip& x) { x.fadeIn = std::max(0.0f, fi) / 1000.0, x.fadeInManual = true; }, key + 2);
-    ImGui::SameLine(0, 14);
-    label("Fade out");
-    ImGui::SetNextItemWidth(fw);
-    if (ImGui::DragFloat("##fo", &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
-      a.doc.editClip(id, "clip fade out", [&](Clip& x) { x.fadeOut = std::max(0.0f, fo) / 1000.0, x.fadeOutManual = true; }, key + 3);
-    ImGui::SameLine(0, 14);
-    bool rev = c->reverse;
-    if (ImGui::Checkbox(i18n::tr("Reverse"), &rev)) a.doc.editClip(id, "reverse clip", [&a](Clip& x) { toggleClipReverse(a.doc.song(), x); });
-    ui::Hint("Plays the clip backwards (keeps the same audio)");
-  } else if (c->kind == ClipKind::Pattern) {
-    int tr = c->playTranspose;
-    ImGui::SameLine(0, 14);
-    label("Transpose");
-    ImGui::SetNextItemWidth(fw);
-    if (ImGui::DragInt("##tr", &tr, 0.2f, -48, 48, "%d st")) a.doc.editClip(id, "clip transpose", [tr](Clip& x) { x.playTranspose = std::clamp(tr, -48, 48); }, key + 4);
-    ui::Hint("Plays the pattern's notes this many semitones higher or lower (the pattern stays as written)");
+  const float lw = std::round(std::min(cellW * 0.42f, a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Fade out")).x + 10));
+  auto field = [&](const char* sid, const char* label, const std::string& value, const char* hint) {
+    ImVec2 at;
+    if (!cell(&at)) return 0;
+    return trackerview::stepper(a, sid, label, value, at, cellW, rh, hint, lw, true);
+  };
+  auto toggle = [&](const char* sid, const char* label, bool on, const char* hint) {
+    ImVec2 at;
+    if (!cell(&at)) return false;
+    return bevelButton(a, sid, label, at, ImVec2(at.x + std::min(cellW, std::round(fs * 6)), at.y + rh), on, hint);
+  };
+  // Start: the whole clip moves (its content with it).
+  if (const int d = field("start", "Start", menuparity::positionText(a, static_cast<double>(c->start)),
+                          "Where the clip starts in the song (a row a step, Shift: a bar; drag the value for more)")) {
+    const Tick to = std::max<Tick>(0, c->start + unit * d);
+    if (to != c->start) a.doc.editClip(id, "move clip", [to](Clip& x) { x.start = to; }, key + 10);
   }
-  ImGui::SameLine(0, 14);
-  if (ui::TextButton(i18n::tr("More..."), false, 0)) ImGui::OpenPopup("##songclipmore");
-  ui::Hint("The clip's whole menu, as in the playlist: warp markers, audio tools, curves, export");
+  // Length: the right edge (audio stops at the end of its audio, as the playlist's edge drag).
+  const Tick len = s.clipLength(*c);
+  if (const int d = field("len", "Length", barsText(len, bar, beat, row), "How long the clip plays, in bars:beats:rows (a row a step, Shift: a bar)")) {
+    const Tick by = std::max<Tick>(row, len + unit * d) - len;
+    if (by != 0) {
+      const std::vector<Clip> after = pltools::resizeEnds(s, s.playlist, {id}, by, false, &tm);
+      // R3-08: an audio clip at the end of its audio grows no further: say so.
+      if (by > 0 && c->kind == ClipKind::Audio)
+        for (const Clip& x : after)
+          if (x.id == id && s.clipLength(x) <= len) {
+            // R4-08: said in the box's title row (a toast would cover its fields); the Offset hint
+            // only when an earlier offset has audio to give.
+            gBoxNote = i18n::tr(c->audioStart > 0.0005 ? "The audio ends there: the clip plays no longer (an earlier Offset gives it more)"
+                                                       : "The audio ends there: the clip plays no longer");
+            gBoxNoteUntil = a.now + 4.0;
+          }
+      a.doc.editClips("resize clips", [&after](std::vector<Clip>& cs) {
+        if (cs.size() == after.size()) cs = after;
+      }, key + 11);
+    }
+  }
+  // Offset: where the content starts inside the clip (the playlist's slip edit).
+  {
+    std::string off;
+    if (c->kind == ClipKind::Audio) {
+      char b[32];
+      std::snprintf(b, sizeof b, "%.3f s", c->audioStart);
+      off = b;
+    } else {
+      off = barsText(c->offset, bar, beat, row);
+    }
+    if (const int d = field("off", "Offset", off,
+                            c->kind == ClipKind::Audio ? "Where the clip's audio starts in its sample (a row a step, Shift: a bar)"
+                                                       : "Where the clip's content starts inside it (a row a step, Shift: a bar)")) {
+      const Clip after = pltools::slipClip(s, tm, *c, -unit * d);
+      a.doc.editClip(id, "slip clip", [after](Clip& x) { x = after; }, key + 12);
+    }
+  }
+  if (toggle("##mute", "Mute", c->muted, "The clip stays in place, silent")) {
+    const bool m = !c->muted;
+    a.doc.editClip(id, "mute clip", [m](Clip& x) { x.muted = m; });
+  }
+  if (c->kind == ClipKind::Audio) {
+    n = std::max(n, perRow);  // the audio's own values from the next row (R3-07: n counts from the first field row)
+    char g[32];
+    const double db = clipgain::toDb(c->gain);
+    if (db < clipgain::kMinDb) std::snprintf(g, sizeof g, "-inf dB");
+    else std::snprintf(g, sizeof g, "%+.1f dB", db);
+    if (const int d = field("gain", "Gain", g, "The clip's volume (0.5 dB a step, Shift: 6 dB)")) {
+      const double base = db < clipgain::kMinDb ? clipgain::kMinDb - 0.1 : db;
+      const double to = std::clamp(std::round((base + (shift ? 6.0 : 0.5) * d) * 10.0) / 10.0, clipgain::kMinDb - 0.1, clipgain::kMaxDb);
+      a.doc.editClip(id, "clip gain", [to](Clip& x) { x.gain = clipgain::fromDb(to); }, key);
+    }
+    auto ms = [](double sec) {
+      char b[32];
+      std::snprintf(b, sizeof b, "%.0f ms", sec * 1000.0);
+      return std::string(b);
+    };
+    const double fstep = shift ? 0.1 : 0.01;
+    if (const int d = field("fi", "Fade in", ms(c->fadeIn), "The fade at the clip's start (10 ms a step, Shift: 100 ms)")) {
+      const double to = std::max(0.0, std::round((c->fadeIn + fstep * d) * 1000.0) / 1000.0);
+      a.doc.editClip(id, "clip fade in", [to](Clip& x) { x.fadeIn = to, x.fadeInManual = true; }, key + 2);
+    }
+    if (const int d = field("fo", "Fade out", ms(c->fadeOut), "The fade at the clip's end (10 ms a step, Shift: 100 ms)")) {
+      const double to = std::max(0.0, std::round((c->fadeOut + fstep * d) * 1000.0) / 1000.0);
+      a.doc.editClip(id, "clip fade out", [to](Clip& x) { x.fadeOut = to, x.fadeOutManual = true; }, key + 3);
+    }
+    char pc[32];
+    std::snprintf(pc, sizeof pc, "%+.0f ct", static_cast<double>(c->pitch));
+    if (const int d = field("pitch", "Pitch", pc, "The clip's pitch in cents (10 a step, Shift: a semitone)")) {
+      const float to = std::clamp(std::round(c->pitch + static_cast<float>((shift ? 100 : 10) * d)), -2400.0f, 2400.0f);
+      a.doc.editClip(id, "clip pitch", [to](Clip& x) { x.pitch = to; }, key + 1);
+    }
+    n = std::max(n, perRow * 2);
+    if (toggle("##rev", "Reverse", c->reverse, "Plays the clip backwards (keeps the same audio)"))
+      a.doc.editClip(id, "reverse clip", [&a](Clip& x) { toggleClipReverse(a.doc.song(), x); });
+  } else if (c->kind == ClipKind::Pattern) {
+    n = std::max(n, perRow);
+    char t[16];
+    std::snprintf(t, sizeof t, "%+d st", c->playTranspose);
+    if (const int d = field("tr", "Transpose", t, "Plays the pattern's notes this many semitones higher or lower (the pattern stays as written; Shift: an octave)")) {
+      const int to = std::clamp(c->playTranspose + d * (shift ? 12 : 1), -48, 48);
+      a.doc.editClip(id, "clip transpose", [to](Clip& x) { x.playTranspose = to; }, key + 4);
+    }
+  } else {
+    n = std::max(n, perRow);
+  }
+  {
+    ImVec2 at;
+    if (cell(&at) && bevelButton(a, "##more", "More...", at, ImVec2(at.x + std::min(cellW, std::round(fs * 6)), at.y + rh), false,
+                                 "The clip's whole menu, as in the playlist: warp markers, audio tools, curves, export"))
+      ImGui::OpenPopup("##songclipmore");
+  }
   if (ImGui::BeginPopup("##songclipmore")) {
     devArrangementClipMenu(a, id);
     ImGui::EndPopup();
   }
   ImGui::PopID();
-  a.doc.endGesture();
+  // A held arrow or a dragged value is one undo step; it ends when the mouse lets go.
+  if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) a.doc.endGesture();
 }
 }  // namespace
 
@@ -394,10 +509,10 @@ void song(App& a) {
     nameField(a, ImVec2(x, hy), ImVec2(x + colW, hy + rh), t + 1, tr.color, name, false, tr.muted);
   }
   if (!s.clip(gSongClip)) gSongClip = kNoId;
-  const float boxH = gSongClip != kNoId ? std::round(fs * 2 + 22) : 0.0f;  // the clip box under the rows
+  const float boxH = gSongClip != kNoId ? clipBoxHeight() : 0.0f;  // the clip box under the rows
   const ImVec2 b0(o.x, hy + rh + kGap), b1(o.x + av.x, o.y + std::max(av.y - (boxH > 0 ? boxH + kGap : 0.0f), th + rh * 4));
   const float contentH = static_cast<float>(bars) * rh + 2;
-  const Tick pos = static_cast<Tick>(a.engine.position());
+  const Tick pos = a.engine.playing() && a.engine.mode() == PlayMode::Pattern ? trackerview::songPosition(a) : static_cast<Tick>(a.engine.position());
   const int playBar = static_cast<int>(pos / bar);
   (void)wdl;
   static ObjectId menuClip = kNoId;
@@ -431,15 +546,36 @@ void song(App& a) {
         const float x = std::round(c0.x + numW + 1 + static_cast<float>(t) * (colW + kGap));
         if (x >= dl->GetClipRectMax().x) break;  // the tracks past the page's right edge
         const Tick b0t = static_cast<Tick>(r) * bar, b1t = b0t + bar;
-        const Clip* starts = nullptr;
-        const Clip* runs = nullptr;
-        int startCount = 0;  // clips starting in this bar (the first is drawn, the rest counted)
-        for (const Span& sp : byTrack[static_cast<size_t>(t)]) {
-          const Clip& c = *sp.clip;
-          if (c.start >= b0t && c.start < b1t) ++startCount;
-          if (c.start >= b0t && c.start < b1t && !starts) starts = &c;
-          else if (c.start < b0t && sp.end > b0t && !runs) runs = &c;
-        }
+        // R3-08, R4-05: the clip drawn in a bar is the longest of those starting in it, else the
+        // longest of those running through it; every other clip covering the bar is counted ("+n").
+        // A bar whose drawn clip is not the one drawn in the bar above names it (a clip that goes on
+        // after the drawn one ended is named where it shows).
+        struct Pick {
+          const Clip* clip = nullptr;
+          bool starts = false;
+          int covering = 0;
+        };
+        auto pick = [&](Tick from, Tick to) {
+          Pick k;
+          Tick sEnd = 0, rEnd = 0;
+          const Clip* runs = nullptr;
+          for (const Span& sp : byTrack[static_cast<size_t>(t)]) {
+            const Clip& c = *sp.clip;
+            if (c.start >= from && c.start < to) {
+              ++k.covering;
+              if (!k.starts || sp.end > sEnd) k.clip = &c, k.starts = true, sEnd = sp.end;
+            } else if (c.start < from && sp.end > from) {
+              ++k.covering;
+              if (sp.end > rEnd) runs = &c, rEnd = sp.end;
+            }
+          }
+          if (!k.starts) k.clip = runs;
+          return k;
+        };
+        const Pick here = pick(b0t, b1t);
+        const Clip* starts = here.starts ? here.clip : nullptr;
+        const int stackCount = here.covering;  // the drawn clip and the others under it
+        const bool named = here.clip && (here.starts || r == 0 || pick(b0t - bar, b0t).clip != here.clip);
         const float ty = std::round(y + (rh - fs) * 0.5f);
         ImGui::SetCursorScreenPos(ImVec2(x, y));
         ImGui::PushID(r * 1024 + t);
@@ -449,7 +585,7 @@ void song(App& a) {
         const bool rclick = ImGui::IsItemClicked(ImGuiMouseButton_Right);
         ImGui::PopID();
         if (hov) dl->AddRectFilled(ImVec2(x, y), ImVec2(x + colW, y + rh), theme::withAlpha(P.text, 0.08f));
-        const Clip* c = starts ? starts : runs;
+        const Clip* c = here.clip;
         if (c) {
           const Pattern* cp = c->kind == ClipKind::Pattern ? s.pattern(c->pattern) : nullptr;
           // An audio or automation clip: its channel's or automation's name and colour (no pattern number).
@@ -462,15 +598,20 @@ void song(App& a) {
           }
           // The clip's bars in a faint wash of its colour, the stripe at the left, the picked clip
           // outlined as one box over all its bars (top on the first, bottom on the last).
-          const bool first = starts != nullptr, last = c->start + s.clipLength(*c) <= b1t;
-          dl->AddRectFilled(ImVec2(x + 4, y), ImVec2(x + colW, y + rh), theme::withAlpha(theme::rgb(col), 0.12f));
-          dl->AddRectFilled(ImVec2(x + 1, y), ImVec2(x + 4, y + rh), theme::rgb(col));
-          if (c->muted) dl->AddRectFilled(ImVec2(x + 4, y), ImVec2(x + colW, y + rh), theme::withAlpha(P.surface950, 0.45f));
+          const Tick cEnd = c->start + s.clipLength(*c);
+          const bool first = starts != nullptr, last = cEnd <= b1t;
+          // T-13: the clip's box starts where it starts inside its first bar and ends where it ends
+          // in its last (a clip half a bar in is drawn from the middle of the bar).
+          const float yT = first ? std::round(y + rh * static_cast<float>(c->start - b0t) / static_cast<float>(bar)) : y;
+          const float yB = last ? std::max(yT + 2, std::round(y + rh * static_cast<float>(cEnd - b0t) / static_cast<float>(bar))) : y + rh;
+          dl->AddRectFilled(ImVec2(x + 4, yT), ImVec2(x + colW, yB), theme::withAlpha(theme::rgb(col), 0.12f));
+          dl->AddRectFilled(ImVec2(x + 1, yT), ImVec2(x + 4, yB), theme::rgb(col));
+          if (c->muted) dl->AddRectFilled(ImVec2(x + 4, yT), ImVec2(x + colW, yB), theme::withAlpha(P.surface950, 0.45f));
           if (c->id == gSongClip) {
-            dl->AddRectFilled(ImVec2(x, y), ImVec2(x + 1, y + rh), P.hot);
-            dl->AddRectFilled(ImVec2(x + colW - 1, y), ImVec2(x + colW, y + rh), P.hot);
-            if (first) dl->AddRectFilled(ImVec2(x, y), ImVec2(x + colW, y + 1), P.hot);
-            if (last) dl->AddRectFilled(ImVec2(x, y + rh - 1), ImVec2(x + colW, y + rh), P.hot);
+            dl->AddRectFilled(ImVec2(x, yT), ImVec2(x + 1, yB), P.hot);
+            dl->AddRectFilled(ImVec2(x + colW - 1, yT), ImVec2(x + colW, yB), P.hot);
+            if (first) dl->AddRectFilled(ImVec2(x, yT), ImVec2(x + colW, yT + 1), P.hot);
+            if (last) dl->AddRectFilled(ImVec2(x, yB - 1), ImVec2(x + colW, yB), P.hot);
           }
           // An audio clip: its fades as ramps over the bars they cover, its gain in the first bar.
           if (c->kind == ClipKind::Audio) {
@@ -493,26 +634,46 @@ void song(App& a) {
               if (db < clipgain::kMinDb) std::snprintf(g, sizeof g, "-inf");
               else std::snprintf(g, sizeof g, "%+.1f", db);
               const float gw = mono->CalcTextSizeA(fs * 0.85f, FLT_MAX, 0, g).x;
-              dl->AddText(mono, fs * 0.85f, ImVec2(std::round(x + colW - 6 - gw - colW * 0.12f), std::round(y + (rh - fs * 0.85f) * 0.5f)), P.textDim, g);
+              const float mutedW = c->muted ? mono->CalcTextSizeA(fs * 0.85f, FLT_MAX, 0, "M").x + 10 : 0.0f;
+              dl->AddText(mono, fs * 0.85f, ImVec2(std::round(x + colW - 6 - gw - colW * 0.12f - mutedW), std::round(y + (rh - fs * 0.85f) * 0.5f)), P.textDim, g);
             }
           }
-          if (starts && textOk) {
+          if (named && textOk) {
+            // T-13: content that starts later than the clip (an offset) shows after the name: ">" and
+            // where it starts (seconds of audio, or bars:beats:rows of the pattern).
+            std::string off;
+            if (!starts) {
+              // (a clip named where it goes on: no offset, it is not its start)
+            } else if (c->kind == ClipKind::Audio && c->audioStart > 0.0005) {
+              char b[32];
+              std::snprintf(b, sizeof b, "  >%.3fs", c->audioStart);
+              off = b;
+            } else if (c->kind != ClipKind::Audio && c->offset > 0) {
+              off = "  >" + barsText(c->offset, bar, std::max<Tick>(1, s.ppq), std::max<Tick>(1, s.ppq / 4));
+            }
             if (cp) {
               const std::string label = trk::hex2(trk::patternNumber(s, cp->id));
               dl->AddText(mono, fs, ImVec2(x + 8, ty), cp->id == a.curPattern ? P.hot : P.text, label.c_str());
               const float lx = x + 8 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00 ").x;
-              theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(lx, ty), x + colW - lx - 4, P.textDim, cp->name.c_str());
+              theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(lx, ty), x + colW - lx - 4, P.textDim, (cp->name + off).c_str());
             } else {
-              theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(x + 8, ty), colW - 12, P.textDim, other.c_str());
+              theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(x + 8, ty), colW - 12, P.textDim, (other + off).c_str());
             }
+          }
+          // T-13: a muted clip says so in its first bar ("M" in a dark tag at the right).
+          if (starts && textOk && c->muted) {
+            const float mw = mono->CalcTextSizeA(fs * 0.85f, FLT_MAX, 0, "M").x;
+            const ImVec2 m0(std::round(x + colW - mw - 9), y + 2), m1(x + colW - 3, y + rh - 2);
+            dl->AddRectFilled(m0, m1, theme::withAlpha(P.surface950, 0.9f));
+            dl->AddText(mono, fs * 0.85f, ImVec2(m0.x + 3, std::round(y + (rh - fs * 0.85f) * 0.5f)), P.textFaint, "M");
           }
           // A clip starting inside the bar: a tick where it starts; more clips in the bar: "+n".
           if (starts && starts->start > b0t) {
             const float sy = std::round(y + rh * static_cast<float>(starts->start - b0t) / static_cast<float>(bar));
             dl->AddRectFilled(ImVec2(x + 4, sy), ImVec2(x + 10, sy + 1), P.text);
           }
-          if (startCount > 1 && textOk) {
-            const std::string more = "+" + std::to_string(startCount - 1);
+          if (stackCount > 1 && textOk) {
+            const std::string more = "+" + std::to_string(stackCount - 1);
             const float mw = mono->CalcTextSizeA(fs * 0.85f, FLT_MAX, 0, more.c_str()).x;
             dl->AddRectFilled(ImVec2(x + colW - mw - 8, y + 1), ImVec2(x + colW - 1, y + rh - 1), theme::withAlpha(P.surface900, 0.9f));
             dl->AddText(mono, fs * 0.85f, ImVec2(x + colW - mw - 4, std::round(y + (rh - fs * 0.85f) * 0.5f)), P.hot, more.c_str());
@@ -521,7 +682,7 @@ void song(App& a) {
           if (textOk) dl->AddText(mono, fs, ImVec2(x + 8, ty), theme::withAlpha(P.textFaint, 0.55f), "\xC2\xB7\xC2\xB7");
         }
         if (click) {
-          a.engine.setPosition(b0t, true);
+          trackerview::setSongPosition(a, b0t);  // (kept while a pattern plays)
           gSongClip = c ? c->id : kNoId;
           if (c && c->kind == ClipKind::Pattern) a.selectPattern(c->pattern);
         }
@@ -534,8 +695,8 @@ void song(App& a) {
       }
     }
     if (ImGui::BeginPopup("##songclipmenu")) {
-      if (const Clip* mc = s.clip(menuClip)) {
-        ImGui::TextDisabled("%s", clipTitle(s, *mc).c_str());
+      if (s.clip(menuClip)) {
+        // (N-08: the clip's menu below opens with its name; no second title here)
         if (ImGui::MenuItem(i18n::tr("Delete clip"))) {
           a.doc.removeClip(menuClip);
           if (gSongClip == menuClip) gSongClip = kNoId;

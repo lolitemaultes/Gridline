@@ -5,6 +5,7 @@
 //                    vertical waveform · move keyboard · playback/shape panels
 #include <algorithm>
 #include <bitset>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -634,6 +635,8 @@ iskin::Palette dwPalette() {
 struct DwUi {
   int page = 2;     // 0 sample, 1 program, 2 zone
   int zoneTab[5] = {0, 0, 0, 0, 0};
+  bool hideKeys = false;  // K-279: the key zone map hidden (a SoundFont shows its patch list there)
+  char sf2Filter[64] = {};
 };
 std::map<uint64_t, DwUi> gDw;
 
@@ -825,6 +828,43 @@ void dwZonePage(App& a, const PluginTarget& t, const iskin::Skin& k, float ox, f
 
 #include "sfz_ui.h"
 
+std::string lowerCopy(std::string t) {
+  for (auto& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return t;
+}
+
+// K-279: every patch of the loaded SoundFont as a list (bank:program and name); a click loads it.
+void dwPatchList(App& a, const PluginTarget& t, const ZoneMap& m, MsEd& ed, DwUi& ui, ImVec2 size) {
+  const auto& P = pal();
+  auto f = loadSf2(m.sf2Path);
+  ImGui::BeginGroup();
+  ImGui::SetNextItemWidth(size.x);
+  ImGui::InputTextWithHint("##sf2findlist", i18n::tr("Find a patch"), ui.sf2Filter, sizeof ui.sf2Filter);
+  const float listH = size.y - ImGui::GetFrameHeight() - ImGui::GetStyle().ItemSpacing.y;
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface950));
+  ImGui::BeginChild("##sf2patches", ImVec2(size.x, listH), ImGuiChildFlags_None);
+  if (!f) {
+    ImGui::TextDisabled("%s", i18n::tr("The SoundFont cannot be read"));
+  } else {
+    const std::string want = lowerCopy(ui.sf2Filter);
+    for (size_t i = 0; i < f->presets.size(); ++i) {
+      const Sf2Preset& pr = f->presets[i];
+      char row[96];
+      std::snprintf(row, sizeof row, "%03d:%03d  %s##sf2l%zu", pr.bank, pr.program, pr.name.c_str(), i);
+      if (!want.empty() && lowerCopy(row).find(want) == std::string::npos) continue;
+      const bool now = pr.bank == m.sf2Bank && pr.program == m.sf2Program;
+      if (ImGui::Selectable(row, now) && !now) {
+        ZoneMap nm = sf2PresetMap(m.sf2Path, i);
+        ed.sel = 0;
+        commitMap(a, t, nm, "change soundfont preset");
+      }
+    }
+  }
+  ImGui::EndChild();
+  ImGui::PopStyleColor();
+  ImGui::EndGroup();
+}
+
 void editorDirectWave(App& a, const PluginTarget& t, float width) {
   const PluginState* sp = t.state(a.doc.song());
   if (!sp) return;
@@ -898,6 +938,38 @@ void editorDirectWave(App& a, const PluginTarget& t, float width) {
       };
       if (iskin::button(k, "##sfp", 415, 13, 22, 18, GL_ICON_LABEL("chevron-left", "<"), false, 9)) pick(cur - 1);
       if (iskin::button(k, "##sfn", 439, 13, 22, 18, GL_ICON_LABEL("chevron-right", ">"), false, 9)) pick(cur + 1);
+      // K-279: the patch drop-down: a click on the name opens the file's whole patch list.
+      if (f && !f->presets.empty()) {
+        ImGui::SetCursorScreenPos(k.at(201, 13));
+        if (ImGui::InvisibleButton("##sf2list", ImVec2(k.px(208), k.px(18)))) ImGui::OpenPopup("##sf2pop");
+        if (ImGui::IsItemHovered()) {
+          ImGui::GetWindowDrawList()->AddRect(k.at(201, 13), k.at(409, 31), theme::withAlpha(k.c.text, 0.45f), 2);
+          ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+          a.setHint("Click: choose a patch of this SoundFont from its list");
+        }
+        ImGui::SetNextWindowSizeConstraints(ImVec2(k.px(260), 0), ImVec2(k.px(420), k.px(360)));
+        if (ImGui::BeginPopup("##sf2pop")) {
+          if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+          ImGui::SetNextItemWidth(-1);
+          ImGui::InputTextWithHint("##sf2find", i18n::tr("Find a patch"), ui.sf2Filter, sizeof ui.sf2Filter);
+          const std::string want = lowerCopy(ui.sf2Filter);
+          ImGui::BeginChild("##sf2rows", ImVec2(0, k.px(300)));
+          for (size_t i = 0; i < f->presets.size(); ++i) {
+            const Sf2Preset& pr = f->presets[i];
+            char row[96];
+            std::snprintf(row, sizeof row, "%03d:%03d  %s##sf2p%zu", pr.bank, pr.program, pr.name.c_str(), i);
+            if (!want.empty() && lowerCopy(row).find(want) == std::string::npos) continue;
+            const bool now = static_cast<int>(i) == cur;
+            if (ImGui::Selectable(row, now)) {
+              pick(static_cast<int>(i));
+              ImGui::CloseCurrentPopup();
+            }
+            if (now && ImGui::IsWindowAppearing()) ImGui::SetScrollHereY(0.4f);
+          }
+          ImGui::EndChild();
+          ImGui::EndPopup();
+        }
+      }
     }
   }
   if (iskin::button(k, "##dwauto", 525, 13, 66, 18, "AUTO-MAP", false, 8)) autoMap(m.zones), commitMap(a, t, m, "auto-map zones");
@@ -917,12 +989,28 @@ void editorDirectWave(App& a, const PluginTarget& t, float width) {
   // ---- zone grid panel: list + map.
   iskin::bevel(k, 7, 40, 722, 352, iskin::rgb(0x282B2E), k.c.panelLine, 3);
   iskin::text(k, 14, 42, 200, 16, "ZONES", 9, k.c.label, 0, false, true);
+  // K-279: hide the key zone map (a SoundFont then lists its patches in its place).
+  const bool sf2 = !m.sf2Path.empty();
+  if (iskin::button(k, "##dwkeys", 619, 42, 104, 15, ui.hideKeys ? "SHOW KEYS" : sf2 ? "PATCH LIST" : "HIDE KEYS",
+                    ui.hideKeys, 7.5f))
+    ui.hideKeys = !ui.hideKeys;
+  if (ImGui::IsItemHovered())
+    a.setHint(ui.hideKeys ? "Show the key zone map again"
+                          : sf2 ? "Hide the key zone map and list the SoundFont's patches in its place" : "Hide the key zone map: the zone list takes the room");
   ImGui::SetCursorScreenPos(k.at(14, 60));
-  msZoneList(a, t, m, ed, ImVec2(k.px(222), k.px(326)));
-  ImGui::SetCursorScreenPos(k.at(242, 60));
-  ImGui::BeginGroup();
-  msZoneMap(a, t, m, ed, ImVec2(k.px(482), k.px(326)));
-  ImGui::EndGroup();
+  if (!ui.hideKeys) {
+    msZoneList(a, t, m, ed, ImVec2(k.px(222), k.px(326)));
+    ImGui::SetCursorScreenPos(k.at(242, 60));
+    ImGui::BeginGroup();
+    msZoneMap(a, t, m, ed, ImVec2(k.px(482), k.px(326)));
+    ImGui::EndGroup();
+  } else if (sf2) {
+    msZoneList(a, t, m, ed, ImVec2(k.px(222), k.px(326)));
+    ImGui::SetCursorScreenPos(k.at(242, 60));
+    dwPatchList(a, t, m, ed, ui, ImVec2(k.px(482), k.px(326)));
+  } else {
+    msZoneList(a, t, m, ed, ImVec2(k.px(710), k.px(326)));
+  }
   // ---- page selector + pages.
   static const char* pages[3] = {"SAMPLE", "PROGRAM", "ZONE"};
   for (int p = 0; p < 3; ++p) {

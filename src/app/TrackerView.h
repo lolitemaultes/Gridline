@@ -18,8 +18,13 @@
 #include <string>
 #include <vector>
 
+#include "../core/Types.h"
+
 namespace gl {
 class App;
+}
+namespace gl::trk {
+struct Masks;
 }
 
 namespace gl::trackerview {
@@ -33,11 +38,28 @@ void orderList(App& a);
 // main.cpp, for every SDL key event: true when the pattern editor takes it (the typing keyboard and
 // the other handlers then leave it). Key-ups end the notes a key auditioned and are never taken.
 bool sdlKey(App& a, int scancode, int keycode, int mods, bool down, bool repeat);
+// R4-01, R4-04: the song position (the order list's, Ins, Del and Enter act there): the engine's in
+// song mode, kept apart while the engine is in pattern mode (a pattern play counts its own rows).
+// setSongPosition moves it (the engine too, outside pattern mode); songMode switches the engine to
+// song mode at it.
+Tick songPosition(App& a);
+void setSongPosition(App& a, Tick t);
+void songMode(App& a);
+// R4-09: the tracks multichannel edit writes to, by channel (view state kept per project, never
+// saved; every track is on until a scope's right-click turns it off).
+bool multiTrackOn(App& a, ObjectId channel);
+void toggleMultiTrack(App& a, ObjectId channel);
+// A message in the pattern editor's status line (where its own keys answer).
+void status(const std::string& text);
+// The number the first track shows: 0 as the classic tracker counts channels, or 1 (Config).
+int trackBase(const App& a);
 // The editor had the keyboard on the last frame.
 bool hasKeyboard();
 // A header button was clicked: the keyboard goes back to the pattern editor when its page is the
 // one shown (the classic tracker's buttons never take the keys from the pattern).
 void keysBackToPattern();
+// R3-06: the cursor to the channel's track, the keys back to the pattern (an instrument picked).
+void cursorToChannel(App& a, ObjectId channel);
 // The editor was drawn on the last frame (it is the pattern page: PAT does not bring the rack forward over it).
 bool shown();
 
@@ -50,9 +72,21 @@ void setEditMode(bool on);
 // expand / shrink (rows spread twice as far apart, or every other row kept closer).
 void transposeBlock(App& a, int semis);
 void scaleBlock(App& a, bool expand);
-// Transpose by scope: the cursor's track, every track of the pattern, or the block.
-enum class TransposeScope { Track, Pattern, Block };
-void transposeScope(App& a, TransposeScope scope, int semis);
+// Transpose by scope: the cursor's track, every track of the pattern, every pattern of the song, or
+// the block. `current`: only the current instrument's notes (the selected channel's track), as the
+// classic Transpose box's "current instrument" half; otherwise every instrument's.
+enum class TransposeScope { Track, Pattern, Song, Block };
+void transposeScope(App& a, TransposeScope scope, int semis, bool current = false);
+// The Advanced edit box: the old instrument's notes move to the new one's track, in the scope
+// (Track: the cursor's track, which must be the old instrument's; Block: the marked rows).
+void remapInstrument(App& a, TransposeScope scope, ObjectId from, ObjectId to);
+// Its clipboard masks (view state, never saved): which parts a copy takes, a paste writes, and
+// which parts paste transparently; on or off as a whole.
+trk::Masks& masks();
+bool masking();
+void setMasking(bool on);
+// Files shown in the band: Backspace goes to the folder above (true: done there).
+bool diskParent(App& a);
 // The Edit and Pattern menus' pattern commands (the same as the editor's keys; a menu item runs
 // whether edit mode is on or not). Each edit is one undo step through the Document.
 enum class BlockOp { Cut, Copy, Paste, Clear, SelectAll, Deselect };
@@ -84,6 +118,27 @@ void bringPage(const char* window);
 void pumpPage(App& a);
 // What the header shows: 0 its boxes, 1 Help, 2 Files (the header-left swap).
 void setHeaderSwap(int which);
+// Ctrl+Alt+8, as the Audio editor button: the audio editor in front, or (in front already) the pattern.
+void toggleAudioPage(App& a);
+// K-297: Esc (when nothing else took it) or Cmd+W (Ctrl+W) on a page docked in the centre, other
+// than the pattern: a page of the page strip does what its Exit does (the pattern in front); any
+// other window docked there (Settings, the browser) closes, and the pattern comes to the front.
+// True when it acted (the key is used).
+bool closeFrontPageKey(App& a);
+// K-297 on macOS: Cmd+W is the window menu's Close, which reaches Gridline as the main window's
+// close request (with Cmd held). When a Tracker page other than the pattern is in front, the
+// request closes that page on the next frame instead (true); otherwise it is the window's (false).
+bool closePageOnCloseRequest(App& a);
+// R8-02: the previous (-1) or next (+1) instrument, as Ctrl+Shift+Up / Down in the pattern, from
+// anywhere in the Tracker (the instrument editor open and focused too); the keys go back to the pattern.
+void stepInstrument(App& a, int d);
+// The scope box's tool (0 the scopes, 1 Transpose, 2 Clean up, 3 Advanced edit): shown, or (shown
+// already) back to the scopes. The keys Ctrl+Alt+T, R and A.
+void toggleScopeTool(App& a, int which);
+int scopeTool();
+// N-05: back to the main screen (Ctrl+Alt+X, as the classic Ctrl+X): the header's swaps and scope
+// tools close, the band comes back from Extend, the pattern page comes to the front.
+void mainScreen(App& a);
 int headerSwap();
 
 // Dev (--dev-input "tracker ..."):
@@ -94,6 +149,8 @@ int headerSwap();
 //   tracker geometry             the editor's rectangle, the row height and the cursor cell's rectangle
 //   tracker page <window>        a centre page to the front ("Pattern editor", "Playlist", "Channel rack", "Mixer", "Live pads", "Piano roll")
 //   tracker swap none|help|files the header's swap
+//   tracker extend on|off        the band as a strip (the classic Extend) or back
+//   tracker songclip <index>     the Song page picks the playlist's clip at that index
 void devCommand(App& a, const std::vector<std::string>& args, int frame);
 
 }  // namespace gl::trackerview

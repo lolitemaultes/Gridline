@@ -45,8 +45,39 @@ using iskin::lerp;
 using iskin::rgb;
 namespace fs = std::filesystem;
 
+// K-217: the modulation targets' short names (pp::SlDest order).
+const char* const kDestShort[pp::SlDestCount] = {"OFF", "LEVEL", "CUTOFF", "RES", "PITCH", "PAN", "START"};
 constexpr float kSxW = 714;  // form width (the full form is 625 high: the bands below)
 constexpr uint32_t kOrange = 0xFFA830, kOrangeDeep = 0xF5781B;
+
+// K-217: slice layers. The editor shows the layer chosen by SlLayer (classic engine); every
+// per-slice id goes through it. Layer B keeps its marker names on slots 64.. of the names.
+int g_layer = 0;
+int lMarker(int k) { return layerPid(g_layer, slMarker(k)); }
+int lParam(int s, int f) { return layerPid(g_layer, slParam(s, f)); }
+int lParam2(int s, int f) { return layerPid(g_layer, slParam2(s, f)); }
+int lParam3(int s, int f) { return layerPid(g_layer, slParam3(s, f)); }
+bool layerBCut(const PluginState& st) {  // layer B has markers of its own
+  for (int k = 0; k < kMaxSlices; ++k)
+    if (ed::val(st, layerPid(1, slMarker(k)), -1) >= 0) return true;
+  return false;
+}
+// The shown layer's slicing mode: layer B with its own markers is cut by hand, else it cuts where A does.
+int lMode(const PluginState& st) { return g_layer == 1 && layerBCut(st) ? SlModeManual : ed::ival(st, SlMode); }
+std::map<int, std::string> layerNames(const std::string& data) {
+  std::map<int, std::string> out;
+  for (const auto& [slot, nm] : kerfmarks::namesOf(data))
+    if (slot / kMaxSlices == g_layer) out[slot % kMaxSlices] = nm;
+  return out;
+}
+// The data with the shown layer's names replaced (the other layer's names kept).
+std::string withLayerNames(const std::string& data, const std::map<int, std::string>& names) {
+  std::map<int, std::string> all;
+  for (const auto& [slot, nm] : kerfmarks::namesOf(data))
+    if (slot / kMaxSlices != g_layer) all[slot] = nm;
+  for (const auto& [slot, nm] : names) all[slot + g_layer * kMaxSlices] = nm;
+  return kerfmarks::withNames(data, all);
+}
 
 // J-110: the deck's Play (one region played at a time, whichever instance);
 // J-181: Loop plays it again each time it ends.
@@ -111,6 +142,8 @@ struct SlicerUi {
   int kbLow = -1;                    // the keyboard's lowest key (follows the selected region)
   int tab = -1;                      // region panel view: 0 amp, 1 region, 2 detection (-1: by engine)
   int ampPart = 0;                   // amp view: 0 envelope, 1 velocity
+  int modPart = 0;                   // K-217: mod view: 0 Mod X, 1 Mod Y, 2 velocity
+  int envSet = 0, envKind = 0;       // K-217: env view: the set edited, the envelope (volume, pan, pitch, filter)
   int display = 0;                   // 0 full, 1 no wave editor, 2 no region panel, 3 compact
   bool keys = true;                  // keyboard band shown
   int kbMenuKey = -1;                // key under the keyboard's context menu
@@ -165,16 +198,16 @@ const playlight::RegionLights& regionLights(App& a, const PluginTarget& t, int r
 std::vector<int64_t> sliceStarts(const PluginState& st, const Sample* smp) {
   std::vector<int64_t> out;
   if (!smp || smp->frames() == 0) return out;
-  if (ed::ival(st, SlMode) == SlModeManual) {
+  if (lMode(st) == SlModeManual) {
     for (int k = 0; k < kMaxSlices; ++k) {
-      float m = ed::val(st, slMarker(k), -1);
+      float m = ed::val(st, lMarker(k), -1);
       if (m >= 0) out.push_back(std::llround(static_cast<double>(m) * static_cast<double>(smp->frames())));  // J-166: nearest frame
     }
     std::sort(out.begin(), out.end());
   } else {
     static std::map<std::string, std::pair<std::array<float, 3>, std::vector<int64_t>>> cache;
     auto& c = cache[smp->path];
-    const std::array<float, 3> key{static_cast<float>(ed::ival(st, SlMode)), ed::val(st, SlSensitivity, 0.5f), ed::val(st, SlMinGap, 0.06f)};
+    const std::array<float, 3> key{static_cast<float>(lMode(st)), ed::val(st, SlSensitivity, 0.5f), ed::val(st, SlMinGap, 0.06f)};
     if (c.first != key || c.second.empty()) c.first = key, c.second = computeSlices(*smp, static_cast<int>(key[0]), key[1], key[2]);
     out = c.second;
     if (out.size() > static_cast<size_t>(kMaxSlices)) out.resize(kMaxSlices);
@@ -186,16 +219,16 @@ std::vector<int64_t> sliceStarts(const PluginState& st, const Sample* smp) {
 // slice k on marker slot k. J-182: names of earlier hand-set markers go (the slots are new).
 PluginState manualState(const PluginState& st, const std::vector<int64_t>& starts, const Sample* smp) {
   PluginState ns = st;
-  if (!smp || ed::ival(st, SlMode) == SlModeManual) return ns;
-  ns.params[static_cast<size_t>(SlMode)] = SlModeManual;
+  if (!smp || lMode(st) == SlModeManual) return ns;
+  if (g_layer == 0) ns.params[static_cast<size_t>(SlMode)] = SlModeManual;  // (layer B: its own markers)
   for (int k = 0; k < kMaxSlices; ++k)
-    ns.params[static_cast<size_t>(slMarker(k))] =
+    ns.params[static_cast<size_t>(lMarker(k))] =
         k < static_cast<int>(starts.size()) ? static_cast<float>(static_cast<double>(starts[static_cast<size_t>(k)]) / static_cast<double>(smp->frames())) : -1.f;
-  ns.data = kerfmarks::pathOf(st.data);
+  ns.data = withLayerNames(st.data, {});
   return ns;
 }
 void makeManual(App& a, const PluginTarget& t, const PluginState& st, const std::vector<int64_t>& starts, const Sample* smp) {
-  if (!smp || ed::ival(st, SlMode) == SlModeManual) return;
+  if (!smp || lMode(st) == SlModeManual) return;
   setPluginState(a, t, manualState(st, starts, smp), "edit slices by hand");
 }
 
@@ -220,7 +253,7 @@ RegionView regionView(const PluginState& st, const Sample* smp) {
   for (size_t k = 0; k < regs.size(); ++k) {
     const int64_t s = regs[k].start;
     int64_t e = regs[k].length >= 0 ? s + regs[k].length : (k + 1 < regs.size() ? regs[k + 1].start : frames);
-    const float pe = k < static_cast<size_t>(kMaxSlices) ? ed::val(st, slParam2(static_cast<int>(k), SliceEnd), -1) : -1.0f;
+    const float pe = k < static_cast<size_t>(kMaxSlices) ? ed::val(st, lParam2(static_cast<int>(k), SliceEnd), -1) : -1.0f;
     if (pe >= 0 && frames > 0) e = std::llround(static_cast<double>(pe) * static_cast<double>(frames));
     v.starts.push_back(s);
     v.ends.push_back(std::clamp<int64_t>(e, s + 1, std::max<int64_t>(s + 1, frames)));
@@ -240,14 +273,14 @@ void moveRegionStart(App& a, const PluginTarget& t, const PluginState& st, const
   rg.start = start;
   PluginState ns = st;
   ns.data = slicex::sampleOf(st.data) + "\n" + slicex::writeText(md);
-  if (r < kMaxSlices && ns.params.size() > static_cast<size_t>(slMarker(r)))
-    ns.params[static_cast<size_t>(slMarker(r))] = static_cast<float>(static_cast<double>(start) / static_cast<double>(std::max<int64_t>(1, frames)));
+  if (r < kMaxSlices && ns.params.size() > static_cast<size_t>(lMarker(r)))
+    ns.params[static_cast<size_t>(lMarker(r))] = static_cast<float>(static_cast<double>(start) / static_cast<double>(std::max<int64_t>(1, frames)));
   setPluginState(a, t, ns, "move region start");
 }
 
 int markerParamAt(const PluginState& st, double pos) {
   for (int m = 0; m < kMaxSlices; ++m)
-    if (std::fabs(ed::val(st, slMarker(m), -1) - pos) < 1e-6) return m;
+    if (std::fabs(ed::val(st, lMarker(m), -1) - pos) < 1e-6) return m;
   return -1;
 }
 // The marker parameter nearest to a position (fractions are stored, starts are frames).
@@ -255,7 +288,7 @@ int nearestMarkerParam(const PluginState& st, double pos) {
   int mp = markerParamAt(st, pos);
   double best = 1e9;
   for (int q = 0; mp < 0 && q < kMaxSlices; ++q) {
-    const double v = ed::val(st, slMarker(q), -1);
+    const double v = ed::val(st, lMarker(q), -1);
     if (v >= 0 && std::fabs(v - pos) < best) best = std::fabs(v - pos), mp = q;
   }
   return mp;
@@ -318,9 +351,10 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   SlicerUi& ui = slicerUi[t.key()];
   const std::string file = slicex::sampleOf(st.data);  // J-41: region-model data starts with the sample
   SamplePtr smp = file.empty() ? nullptr : sampleCache().get(file);
+  g_layer = ed::val(st, SlEngine, 0) < 0.5f && ed::ival(st, SlLayer) == 1 ? 1 : 0;  // K-217
   const RegionView rv = regionView(st, smp.get());
   // J-190: slices on the beat grid (the detected beats; the loop-length grid while the analysis runs).
-  const bool gridMode = !rv.on && ed::ival(st, SlMode) == SlModeGrid;
+  const bool gridMode = !rv.on && lMode(st) == SlModeGrid;
   const kerfgrid::ResultPtr kg = smp && gridMode ? kerfgrid::resultFor(st, smp, false) : nullptr;
   const std::vector<int64_t> starts = rv.on ? rv.starts : gridMode && kg ? kg->cuts : sliceStarts(st, smp.get());
   if (gridMode && kg && !kg->analysing) devsig::reach("kerf-grid-ready");  // dev checks (waitfor): the analysis is in
@@ -346,7 +380,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   const int kp = std::min(k, kMaxSlices - 1);  // parameter slot of the selected region
   const int base = ed::ival(st, SlBaseNote, 60);
   const bool classic = !rv.on;
-  const bool manual = classic && ed::ival(st, SlMode) == SlModeManual;
+  const bool manual = classic && lMode(st) == SlModeManual;
   if (ui.tab < 0 || (rv.on && ui.tab != 1)) ui.tab = rv.on ? 1 : 0;
   // Keys of every region (region engine: from the key map, one pass).
   std::vector<int> keyOf(static_cast<size_t>(nSl), -1);
@@ -356,7 +390,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         if (e >= 0 && e < nSl) keyOf[static_cast<size_t>(e)] = kk;
   } else {
     for (int s = 0; s < nSl; ++s) {
-      const int kk = ed::ival(st, slParam2(s, SliceKey), -1);
+      const int kk = ed::ival(st, lParam2(s, SliceKey), -1);
       keyOf[static_cast<size_t>(s)] = kk >= 0 ? kk : base + s;
     }
   }
@@ -368,7 +402,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   auto sliceEnd = [&](int s) {
     if (rv.on) return static_cast<double>(rv.ends[static_cast<size_t>(s)]);
     double s1 = s + 1 < nSl ? static_cast<double>(starts[static_cast<size_t>(s + 1)]) : frames;
-    float e = ed::val(st, slParam2(s, SliceEnd), -1);
+    float e = ed::val(st, lParam2(s, SliceEnd), -1);
     if (e >= 0) s1 = std::min(s1, static_cast<double>(e) * frames);
     return s1;
   };
@@ -377,7 +411,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     return kk >= 0 ? ed::noteName(kk) : std::string("-");
   };
   // J-182: classic engine names belong to hand-set markers (marker slot -> name, kept after the sample path).
-  const std::map<int, std::string> classicNames = manual ? kerfmarks::namesOf(st.data) : std::map<int, std::string>();
+  const std::map<int, std::string> classicNames = manual ? layerNames(st.data) : std::map<int, std::string>();
   auto regionName = [&](int s) {
     if (rv.on) return static_cast<size_t>(s) < rv.md.decks[0].regions.size() ? rv.md.decks[0].regions[static_cast<size_t>(s)].name : std::string();
     if (classicNames.empty() || s < 0 || s >= nSl) return std::string();
@@ -455,18 +489,44 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       }
     };
   };
-  auto setMode = [&](int mode) { a.doc.setParam(t.pid(SlMode), mode, false); };
+  // K-217: layer B is cut by its own markers: slicing it writes them (A's mode stays).
+  auto setLayerCuts = [&](const std::vector<int64_t>& cuts, const char* what) {
+    if (!smp) return;
+    PluginState ns = st;
+    for (int m = 0; m < kMaxSlices; ++m)
+      ns.params[static_cast<size_t>(lMarker(m))] =
+          m < static_cast<int>(cuts.size()) ? static_cast<float>(static_cast<double>(cuts[static_cast<size_t>(m)]) / frames) : -1.f;
+    ns.data = withLayerNames(st.data, {});
+    setPluginState(a, t, ns, what);
+  };
   // J-190: the beat grid's cell (choosing one slices on the grid), meter and options.
   auto setGridDiv = [&](int div) {
+    if (g_layer == 1) {  // K-217: layer B: the grid's cuts become its markers (once the beat is found)
+      PluginState gs = st;
+      gs.params[static_cast<size_t>(SlGridDiv)] = static_cast<float>(div);
+      gs.params[static_cast<size_t>(SlMode)] = static_cast<float>(SlModeGrid);
+      const kerfgrid::ResultPtr r = smp ? kerfgrid::resultFor(gs, smp, false) : nullptr;
+      if (r && !r->analysing) setLayerCuts(r->cuts, "slice layer B on the beat grid");
+      else a.notify(i18n::tr("Finding the beat of the loop... try again in a moment"), true);
+      return;
+    }
     PluginState ns = st;
     ns.params[static_cast<size_t>(SlGridDiv)] = static_cast<float>(div);
     ns.params[static_cast<size_t>(SlMode)] = static_cast<float>(SlModeGrid);
     setPluginState(a, t, ns, "slice on the beat grid");
   };
+  auto setMode = [&](int mode) {
+    if (g_layer == 1 && smp && mode != SlModeManual) {  // K-217: layer B is sliced into its own markers
+      if (mode == SlModeGrid) setGridDiv(kerfgrid::settingsOf(st).division);
+      else setLayerCuts(computeSlices(*smp, mode, ed::val(st, SlSensitivity, 0.5f), ed::val(st, SlMinGap, 0.06f)), "slice layer B");
+      return;
+    }
+    a.doc.setParam(t.pid(SlMode), mode, false);
+  };
   auto clearMarkers = [&]() {
     PluginState ns = st;
-    for (int m = 0; m < kMaxSlices; ++m) ns.params[static_cast<size_t>(slMarker(m))] = m == 0 ? 0.f : -1.f;
-    ns.data = kerfmarks::pathOf(st.data);  // J-182: their names go with them
+    for (int m = 0; m < kMaxSlices; ++m) ns.params[static_cast<size_t>(lMarker(m))] = m == 0 ? 0.f : -1.f;
+    ns.data = withLayerNames(st.data, {});  // J-182: their names go with them
     setPluginState(a, t, ns, "clear slice markers");
   };
   auto addMarkerAt = [&](int64_t frame) {  // classic engine: a manual marker at a frame (one undo step)
@@ -477,12 +537,12 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         return;
       }
     PluginState ns = manualState(st, starts, smp.get());
-    auto names = kerfmarks::namesOf(ns.data);
+    auto names = layerNames(ns.data);
     for (int q = 0; q < kMaxSlices; ++q)
-      if (ns.params[static_cast<size_t>(slMarker(q))] < 0) {
-        ns.params[static_cast<size_t>(slMarker(q))] = static_cast<float>(static_cast<double>(frame) / frames);
+      if (ns.params[static_cast<size_t>(lMarker(q))] < 0) {
+        ns.params[static_cast<size_t>(lMarker(q))] = static_cast<float>(static_cast<double>(frame) / frames);
         names.erase(q);  // a free slot keeps no old name
-        ns.data = kerfmarks::withNames(ns.data, names);
+        ns.data = withLayerNames(ns.data, names);
         ui.lastAdd = frame;
         ui.follow = frame;
         setPluginState(a, t, ns, "add slice marker");
@@ -490,9 +550,61 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       }
     a.notify(i18n::tr("Every marker is in use (64)"), true);
   };
+  auto setLayer = [&](int l) { a.doc.setParam(t.pid(SlLayer), l, false); };
+  // K-217: layer A's cuts, settings and marker names onto layer B (one undo step); B shown.
+  auto copyAToB = [&]() {
+    PluginState ns = st;
+    const int saved = g_layer;
+    g_layer = 0;
+    const bool gridA = ed::ival(st, SlMode) == SlModeGrid;
+    const kerfgrid::ResultPtr ka = gridA && smp ? kerfgrid::resultFor(st, smp, false) : nullptr;
+    const std::vector<int64_t> cutsA = gridA ? (ka && !ka->analysing ? ka->cuts : std::vector<int64_t>()) : sliceStarts(st, smp.get());
+    const bool manualA = ed::ival(st, SlMode) == SlModeManual;
+    g_layer = saved;
+    for (int q = 0; q < kMaxSlices; ++q) {
+      float m = -1.f;
+      if (manualA) m = ed::val(st, slMarker(q), -1);
+      else if (smp && q < static_cast<int>(cutsA.size())) m = static_cast<float>(static_cast<double>(cutsA[static_cast<size_t>(q)]) / frames);
+      ns.params[static_cast<size_t>(layerPid(1, slMarker(q)))] = m;
+      for (int f = 0; f < SliceFields; ++f) ns.params[static_cast<size_t>(layerPid(1, slParam(q, f)))] = ed::val(st, slParam(q, f));
+      for (int f = 0; f < SliceFields2; ++f) ns.params[static_cast<size_t>(layerPid(1, slParam2(q, f)))] = ed::val(st, slParam2(q, f));
+      for (int f = 0; f < SliceFields3; ++f) ns.params[static_cast<size_t>(layerPid(1, slParam3(q, f)))] = ed::val(st, slParam3(q, f));
+    }
+    std::map<int, std::string> names;
+    for (const auto& [slot, nm] : kerfmarks::namesOf(st.data))
+      if (slot < kMaxSlices) names[slot] = nm, names[slot + kMaxSlices] = manualA ? nm : std::string();
+    ns.data = kerfmarks::withNames(st.data, names);
+    ns.params[static_cast<size_t>(SlLayer)] = 1.f;
+    setPluginState(a, t, ns, "copy layer A to B");
+  };
+  auto clearLayerB = [&]() {  // layer B cuts where A does again
+    PluginState ns = st;
+    for (int q = 0; q < kMaxSlices; ++q) ns.params[static_cast<size_t>(layerPid(1, slMarker(q)))] = -1.f;
+    std::map<int, std::string> names;
+    for (const auto& [slot, nm] : kerfmarks::namesOf(st.data))
+      if (slot < kMaxSlices) names[slot] = nm;
+    ns.data = kerfmarks::withNames(st.data, names);
+    setPluginState(a, t, ns, "layer B cuts where A does");
+  };
+  auto layerMenuItems = [&]() {
+    const bool on = classic && ed::val(st, SlEngine, 0) < 0.5f;
+    if (ImGui::MenuItem(i18n::tr("Show and play layer A"), nullptr, g_layer == 0, on)) setLayer(0);
+    if (ImGui::MenuItem(i18n::tr("Show and play layer B"), nullptr, g_layer == 1, on)) setLayer(1);
+    if (ImGui::MenuItem(i18n::tr("Copy layer A to B"), nullptr, false, on && smp)) copyAToB();
+    if (ImGui::MenuItem(i18n::tr("Layer B cuts where A does"), nullptr, false, on && layerBCut(st))) clearLayerB();
+    const int lk = ed::ival(st, SlLayerKey, -1);
+    if (ImGui::BeginMenu(i18n::tr("Layer switch keys"), on)) {
+      if (ImGui::MenuItem(i18n::tr("Off"), nullptr, lk < 0)) a.doc.setParam(t.pid(SlLayerKey), -1, false);
+      for (int kk = 0; kk < 48; ++kk) {
+        const std::string lb = ed::noteName(kk) + " (A) / " + ed::noteName(kk + 1) + " (B)##lk" + std::to_string(kk);
+        if (ImGui::MenuItem(lb.c_str(), nullptr, lk == kk)) a.doc.setParam(t.pid(SlLayerKey), kk, false);
+      }
+      ImGui::EndMenu();
+    }
+  };
   auto resetKeys = [&]() {  // every region back on its automatic key (base note upwards)
     PluginState ns = st;
-    for (int s = 0; s < kMaxSlices; ++s) ns.params[static_cast<size_t>(slParam2(s, SliceKey))] = -1.f;
+    for (int s = 0; s < kMaxSlices; ++s) ns.params[static_cast<size_t>(lParam2(s, SliceKey))] = -1.f;
     setPluginState(a, t, ns, "map regions from the base note");
   };
   auto resetRegion = [&](int s, bool all) {  // per-region settings back to their defaults
@@ -501,15 +613,15 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     PluginState ns = st;
     for (int q = all ? 0 : s; q <= (all ? kMaxSlices - 1 : s); ++q) {
       for (int f = 0; f < SliceFields; ++f)
-        ns.params[static_cast<size_t>(slParam(q, f))] = static_cast<float>(info->params[static_cast<size_t>(slParam(q, f))].def);
+        ns.params[static_cast<size_t>(lParam(q, f))] = static_cast<float>(info->params[static_cast<size_t>(lParam(q, f))].def);
       for (int f = 0; f < SliceFields2; ++f)
-        ns.params[static_cast<size_t>(slParam2(q, f))] = static_cast<float>(info->params[static_cast<size_t>(slParam2(q, f))].def);
+        ns.params[static_cast<size_t>(lParam2(q, f))] = static_cast<float>(info->params[static_cast<size_t>(lParam2(q, f))].def);
     }
     setPluginState(a, t, ns, all ? "reset every region" : "reset region");
   };
   auto assignKey = [&](int s, int key) {
     if (s < 0 || s >= kMaxSlices || key < 0 || key > 127) return;
-    a.doc.setParam(t.pid(slParam2(s, SliceKey)), key, false);
+    a.doc.setParam(t.pid(lParam2(s, SliceKey)), key, false);
   };
   // Region s in song ticks (start, length): at the loop's own speed, or stretched to its beats (Fit tempo).
   auto regionTicks = [&](int s) {
@@ -572,10 +684,10 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     } else if (manual) {
       const int mp = nearestMarkerParam(st, static_cast<double>(starts[static_cast<size_t>(s)]) / frames);
       if (mp < 0) return;
-      a.doc.setParam(t.pid(slMarker(mp)), static_cast<float>(static_cast<double>(to) / frames), false);
+      a.doc.setParam(t.pid(lMarker(mp)), static_cast<float>(static_cast<double>(to) / frames), false);
     } else {
       PluginState ns = manualState(st, starts, smp.get());
-      ns.params[static_cast<size_t>(slMarker(s))] = static_cast<float>(static_cast<double>(to) / frames);
+      ns.params[static_cast<size_t>(lMarker(s))] = static_cast<float>(static_cast<double>(to) / frames);
       setPluginState(a, t, ns, "move slice marker");
     }
     ui.follow = to;
@@ -600,10 +712,10 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     PluginState ns = manualState(st, starts, smp.get());
     const int slot = manual ? nearestMarkerParam(ns, static_cast<double>(starts[static_cast<size_t>(s)]) / frames) : s;
     if (slot < 0) return;
-    auto names = kerfmarks::namesOf(ns.data);
+    auto names = layerNames(ns.data);
     if (nm.empty()) names.erase(slot);
     else names[slot] = nm;
-    ns.data = kerfmarks::withNames(ns.data, names);
+    ns.data = withLayerNames(ns.data, names);
     setPluginState(a, t, ns, "rename region");
   };
   auto removeMarker = [&](int s) {  // classic hand-set marker (and its name)
@@ -611,10 +723,10 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     const int mp = nearestMarkerParam(st, static_cast<double>(starts[static_cast<size_t>(s)]) / frames);
     if (mp < 0) return;
     PluginState ns = st;
-    ns.params[static_cast<size_t>(slMarker(mp))] = -1.f;
-    auto names = kerfmarks::namesOf(ns.data);
+    ns.params[static_cast<size_t>(lMarker(mp))] = -1.f;
+    auto names = layerNames(ns.data);
     names.erase(mp);
-    ns.data = kerfmarks::withNames(ns.data, names);
+    ns.data = withLayerNames(ns.data, names);
     setPluginState(a, t, ns, "remove slice marker");
   };
   auto beginRename = [&](int s) {
@@ -795,16 +907,16 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         a.doc.setParam(t.pid(SlModY), std::clamp((p1.y - m.y) / (p1.y - p0.y), 0.0f, 1.0f), true);
       }
       if (ImGui::IsItemDeactivated()) a.doc.endGesture();
-      if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Modulation X (filter cutoff) and Y (resonance): drag"));
+      if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Modulation X and Y (their targets: the MOD tab): drag"));
       ctl(sk, "##xy", 136, 14, 74, 74);
       iskin::wheel(a, t, sk, SlModX, 220, 36, 24, rgb(0x959EA6));
       ctl(sk, "##modx", 220, 36, 24, 24);
       kerf::text(sk, 250, 36, 14, 24, "X", Role::Title, rgb(0xB4BEC7));
-      kerf::text(sk, 266, 36, 64, 24, "CUTOFF", Role::Label, capLight);
+      kerf::text(sk, 266, 36, 64, 24, kDestShort[std::clamp(ed::ival(st, SlModXDest), 0, SlDestCount - 1)], Role::Label, capLight);
       iskin::wheel(a, t, sk, SlModY, 220, 64, 24, rgb(0x959EA6));
       ctl(sk, "##mody", 220, 64, 24, 24);
       kerf::text(sk, 250, 64, 14, 24, "Y", Role::Title, rgb(0xB4BEC7));
-      kerf::text(sk, 266, 64, 64, 24, "RES", Role::Label, capLight);
+      kerf::text(sk, 266, 64, 64, 24, kDestShort[std::clamp(ed::ival(st, SlModYDest), 0, SlDestCount - 1)], Role::Label, capLight);
     }
     // PLAYBACK: how a region plays (one choice over Hold and Play to end), fit to tempo and its beats, options, mono, declick.
     kerf::text(sk, 346, 12, 74, 16, "PLAYBACK", Role::Title, titleLight);
@@ -939,14 +1051,31 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         ImGui::Separator();
         if (ImGui::MenuItem(i18n::tr("Rename the region..."), nullptr, false, canRename(k))) beginRename(k);
         if (ImGui::MenuItem(i18n::tr("Reset this region's settings"), nullptr, false, classic && nSl > 0 && hasParams)) resetRegion(kp, false);
-        if (ImGui::MenuItem(i18n::tr("Back to its automatic key"), nullptr, false, classic && nSl > 0 && hasParams)) a.doc.setParam(t.pid(slParam2(kp, SliceKey)), -1, false);
+        if (ImGui::MenuItem(i18n::tr("Back to its automatic key"), nullptr, false, classic && nSl > 0 && hasParams)) a.doc.setParam(t.pid(lParam2(kp, SliceKey)), -1, false);
         ImGui::EndPopup();
       }
-      kerf::text(sk, 34, 108, 70, 18, "REGION", Role::Title, titleDarkCol);
+      kerf::text(sk, 34, 108, 56, 18, "REGION", Role::Title, titleDarkCol);
       {
         char cnt[24];
         std::snprintf(cnt, sizeof cnt, "%d / %d", nSl > 0 ? k + 1 : 0, nSl);
-        kerf::text(sk, 106, 108, 60, 18, cnt, Role::Eyebrow, rgb(0x30373C), 2);
+        kerf::text(sk, 128, 108, 38, 18, cnt, Role::Eyebrow, rgb(0x30373C), 2);
+      }
+      {  // K-217: slice layer A / B (the layer shown and played; right-click: the layer menu)
+        static const char* const labels[2] = {"A", "B"};
+        static const char* const hints[2] = {"Slice layer A (right-click: layer options)", "Slice layer B: its own cuts and settings (right-click: layer options)"};
+        const bool on = classic && ed::val(st, SlEngine, 0) < 0.5f;
+        ImGui::BeginDisabled(!on);
+        const int lc = kerf::segmented(a, sk, "##layer", 90, 109, 36, 16, labels, nullptr, 2, on ? g_layer : -1, hints, true);
+        ImGui::EndDisabled();
+        if (lc >= 0 && lc != g_layer) setLayer(lc);
+        if (on && ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) && ImGui::IsMouseHoveringRect(sk.at(90, 109), sk.at(126, 125)) && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+          ImGui::OpenPopup("##layermenu");
+        if (ImGui::BeginPopup("##layermenu")) {
+          layerMenuItems();
+          ImGui::EndPopup();
+        }
+        traceRect("layersw", sk.at(90, 109), sk.at(126, 125));
+        traceRect("layerb", sk.at(108, 109), sk.at(126, 125));
       }
       const std::string cur = nSl > 0 ? regionLabel(k) : std::string(i18n::tr("(no regions)"));
       iskin::lcd(sk, 12, 130, 154, 20, "", sk.c.lcdBg, sk.c.lcdText, 10);
@@ -995,26 +1124,26 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       if (hasParams || nSl == 0) {
         ImGui::BeginDisabled(nSl == 0);
         rowLabel(156, 22, "KEY");
-        iskin::digi(a, t, sk, slParam2(kp, SliceKey), 58, 156, 52, 22, [&](double v) {
+        iskin::digi(a, t, sk, lParam2(kp, SliceKey), 58, 156, 52, 22, [&](double v) {
           int n = static_cast<int>(std::lround(v));
           if (n < 0) return keyName(k) + "*";  // automatic: the key the region gets
           return ed::noteName(n);
         }, 10);
         ctl(sk, "##key", 58, 156, 52, 22);
         kerf::text(sk, 114, 156, 26, 22, "CUT", Role::Label, capDarkCol, 2);
-        iskin::digi(a, t, sk, slParam2(kp, SliceCut), 142, 156, 26, 22, [](double v) {
+        iskin::digi(a, t, sk, lParam2(kp, SliceCut), 142, 156, 26, 22, [](double v) {
           int n = static_cast<int>(std::lround(v));
           return n <= 0 ? std::string("-") : std::to_string(n);
         }, 10);
         ctl(sk, "##cut", 142, 156, 26, 22);
         rowLabel(184, 24, "AMP");
-        rw("##rpan", slParam(kp, SlicePan), 58, 184);
-        rw("##rvol", slParam(kp, SliceGain), 86, 184);
+        rw("##rpan", lParam(kp, SlicePan), 58, 184);
+        rw("##rvol", lParam(kp, SliceGain), 86, 184);
         rowLabel(212, 24, "FILTER");
         rowLabel(240, 24, "PITCH");
-        rw("##rpitch", slParam(kp, SlicePitch), 86, 240);
+        rw("##rpitch", lParam(kp, SlicePitch), 86, 240);
         kerf::text(sk, 114, 240, 26, 24, "END", Role::Label, capDarkCol, 2);
-        iskin::digi(a, t, sk, slParam2(kp, SliceEnd), 142, 240, 26, 24, [](double v) {
+        iskin::digi(a, t, sk, lParam2(kp, SliceEnd), 142, 240, 26, 24, [](double v) {
           if (v < 0) return std::string("next");
           char b[16];
           std::snprintf(b, sizeof b, "%.0f%%", v * 100);
@@ -1022,18 +1151,20 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         }, 9.5f);
         ctl(sk, "##end", 142, 240, 26, 24);
         rowLabel(268, 24, "START");
-        rw("##rdelay", slParam2(kp, SliceDelay), 58, 268);
+        rw("##rdelay", lParam2(kp, SliceDelay), 58, 268);
         ImGui::EndDisabled();
         ImGui::BeginDisabled(nSl == 0 || rv.on);  // classic engine only
-        rw("##rcut", slParam(kp, SliceCutoff), 58, 212);
-        rw("##rres", slParam2(kp, SliceReso), 86, 212);
-        rw("##rstart", slParam(kp, SliceStart), 86, 268);
-        regionToggle("##rrev", slParam(kp, SliceReverse), 184, "REV");
-        regionToggle("##rmute", slParam(kp, SliceMute), 212, "MUTE");
+        rw("##rcut", lParam(kp, SliceCutoff), 58, 212);
+        rw("##rres", lParam2(kp, SliceReso), 86, 212);
+        rw("##rstart", lParam(kp, SliceStart), 86, 268);
+        rw("##rspeed", lParam3(kp, SliceSpeed), 58, 240);  // K-217: the slice's speed beside its pitch
+        regionToggle("##rrev", lParam(kp, SliceReverse), 184, "REV");
+        regionToggle("##rmute", lParam(kp, SliceMute), 212, "MUTE");
         ImGui::EndDisabled();
         if (rv.on) {
           dimArea(sk, 56, 210, 56, 28, 0x5A6166);
           dimArea(sk, 84, 266, 28, 28, 0x5A6166);
+          dimArea(sk, 56, 238, 28, 28, 0x5A6166);
           dimArea(sk, 114, 182, 56, 56, 0x5A6166);
         }
       } else {  // regions past the 64 slice parameters: their imported settings play as they are
@@ -1056,7 +1187,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         static const char* const hints[7] = {"Slice at the hits (transients)", "Four even slices", "Eight even slices", "Sixteen even slices",
                                              "Thirty-two even slices", "Slice on the beat grid (the size: the field above)",
                                              "Slice at the markers set by hand"};
-        const int md = ed::ival(st, SlMode);
+        const int md = lMode(st);
         const int cur = !classic ? -1 : md == SlModeGrid ? 5 : md == SlModeManual ? 6 : md;
         const int mc = kerf::segmented(a, sk, "##slmode", 178, 130, 152, 20, labels, icons, 7, cur, hints, false);
         if (mc >= 0) {
@@ -1141,17 +1272,27 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     {
       const float ex = 338, ew = 368;
       const ImU32 acc = rgb(kOrange);
-      const char* targets[3] = {"AMP", "REGION", "DETECT"};
-      const char* targetHints[3] = {"Amp envelope and velocity", "The selected region", "How the loop is sliced"};
-      const bool targetOn[3] = {classic, true, classic};
-      const int tc = kerf::tabStrip(a, sk, "##target", ex, 106, ew, 16, targets, 3, ui.tab, targetOn, targetHints, acc);
+      constexpr int kTabs = 6;  // K-217: MOD, ENV and LFO appended (the stored tab numbers stay)
+      const char* targets[kTabs] = {"AMP", "REGION", "DETECT", "MOD", "ENV", "LFO"};
+      const char* targetHints[kTabs] = {"Amp envelope and velocity", "The selected region", "How the loop is sliced",
+                                        "Where Mod X, Mod Y and velocity go", "Envelope sets: volume, pan, pitch and filter",
+                                        "The LFO: shape, rate and where it goes"};
+      const bool targetOn[kTabs] = {classic, true, classic, classic, classic, classic};
+      const int tc = kerf::tabStrip(a, sk, "##target", ex, 106, ew, 16, targets, kTabs, ui.tab, targetOn, targetHints, acc);
       if (tc >= 0) ui.tab = tc;
       ctl(sk, "##target", ex, 106, ew, 16);
-      traceRect("tab_amp", sk.at(ex, 106), sk.at(ex + ew / 3, 122));
-      traceRect("tab_region", sk.at(ex + ew / 3, 106), sk.at(ex + ew * 2 / 3, 122));
-      traceRect("tab_detect", sk.at(ex + ew * 2 / 3, 106), sk.at(ex + ew, 122));
+      const float tw = ew / kTabs;
+      traceRect("tab_amp", sk.at(ex, 106), sk.at(ex + tw, 122));
+      traceRect("tab_region", sk.at(ex + tw, 106), sk.at(ex + tw * 2, 122));
+      traceRect("tab_detect", sk.at(ex + tw * 2, 106), sk.at(ex + tw * 3, 122));
+      traceRect("tab_mod", sk.at(ex + tw * 3, 106), sk.at(ex + tw * 4, 122));
+      traceRect("tab_env", sk.at(ex + tw * 4, 106), sk.at(ex + tw * 5, 122));
+      traceRect("tab_lfo", sk.at(ex + tw * 5, 106), sk.at(ex + tw * 6, 122));
       darkWell(sk, ex, 142, ew, 116, 3);
-      ctl(sk, "##view", ex, 142, ew, 116);
+      if (ui.tab >= 3)  // K-217: the MOD / ENV / LFO views hold their selectors over the graph
+        ctl(sk, "##view", ex, 172, ew, 86);
+      else
+        ctl(sk, "##view", ex, 142, ew, 116);
       const ImVec2 p0 = sk.at(ex + 5, 148), p1 = sk.at(ex + ew - 5, 252);
       // A knob of the row under the view with its caption to the right.
       auto knobCell = [&](const char* id, int param, float x, float capW, const char* cap) {
@@ -1254,10 +1395,136 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         }
         dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), rgb(kOrange), 0, std::max(1.4f, sk.px(1.8f)));
         traceRect("part_vel", sk.at(ex + ew / 2, 124), sk.at(ex + ew, 140));
+      } else if (ui.tab == 3) {  // ---- K-217: modulation routes (source part, its target, the response)
+        const char* parts[3] = {"MOD X", "MOD Y", "VELOCITY"};
+        const char* partHints[3] = {"Where Modulation X goes", "Where Modulation Y goes", "Where velocity goes"};
+        const int pc = kerf::tabStrip(a, sk, "##modpart", ex, 124, ew, 16, parts, 3, ui.modPart, nullptr, partHints, acc);
+        if (pc >= 0) ui.modPart = pc;
+        ctl(sk, "##part", ex, 124, ew, 16);
+        const int destP = ui.modPart == 0 ? SlModXDest : ui.modPart == 1 ? SlModYDest : SlVelDest;
+        const int amtP = ui.modPart == 0 ? SlModXAmt : ui.modPart == 1 ? SlModYAmt : SlVelocity;
+        const int dest = std::clamp(ed::ival(st, destP), 0, SlDestCount - 1);
+        static const char* const destHints[SlDestCount] = {"Not routed", "The level", "The filter cutoff (with the filter on)", "The filter resonance (with the filter on)",
+                                                           "The pitch", "The pan", "Where the slice starts playing"};
+        const int dc = kerf::segmented(a, sk, "##moddest", ex + 6, 148, ew - 12, 20, kDestShort, nullptr, SlDestCount, dest, destHints, true);
+        if (dc >= 0) a.doc.setParam(t.pid(destP), static_cast<float>(dc), false);
+        traceRect("mod_dest", sk.at(ex + 6, 148), sk.at(ex + ew - 6, 168));
+        // The response: the source across, the target's change up (centre line: no change).
+        const ImVec2 g0 = sk.at(ex + 6, 174), g1 = sk.at(ex + ew - 6, 252);
+        faintGrid(dl, g0, g1, 8, 2, 0.04f);
+        const double amt = ed::val(st, amtP, 1);
+        std::vector<ImVec2> pts;
+        for (int i = 0; i <= 60; ++i) {
+          const double u = i / 60.0;
+          double y;
+          if (ui.modPart == 2)
+            y = dest == SlDestLevel ? (1.0 - amt + amt * u) - 0.5 : (u - 1.0) * 0.5 * amt;  // velocity
+          else
+            y = (u - 0.5) * amt;
+          if (dest == SlDestStart) y = std::max(0.0, y);
+          if (dest == SlDestOff) y = 0;
+          pts.push_back(ImVec2(g0.x + static_cast<float>(u) * (g1.x - g0.x), (g0.y + g1.y) * 0.5f - static_cast<float>(std::clamp(y, -0.5, 0.5)) * (g1.y - g0.y)));
+        }
+        dl->AddLine(ImVec2(g0.x, (g0.y + g1.y) * 0.5f), ImVec2(g1.x, (g0.y + g1.y) * 0.5f), theme::withAlpha(IM_COL32_WHITE, 0.10f));
+        dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), dest == SlDestOff ? rgb(0x6E7A85) : rgb(kOrange), 0, std::max(1.4f, sk.px(1.8f)));
+        kerf::text(sk, ex + 8, 236, 80, 14, ui.modPart == 2 ? "SOFT" : "LOW", Role::Eyebrow, rgb(0x6F7B85), 0);
+        kerf::text(sk, ex + ew - 88, 236, 80, 14, ui.modPart == 2 ? "HARD" : "HIGH", Role::Eyebrow, rgb(0x6F7B85), 2);
+        knobCell("##modamt", amtP, ex + 2, 62, "AMOUNT");
+        if (ui.modPart < 2) knobCell("##modsrc", ui.modPart == 0 ? SlModX : SlModY, ex + 94, 62, ui.modPart == 0 ? "MOD X" : "MOD Y");
+      } else if (ui.tab == 4) {  // ---- K-217: envelope sets (set part, envelope, the region's set, shape, knobs)
+        const char* parts[kEnvSets] = {"MAIN", "SET 2", "SET 3", "SET 4"};
+        const char* partHints[kEnvSets] = {"The envelopes every region plays with unless it picks another set", "Envelope set 2",
+                                           "Envelope set 3", "Envelope set 4"};
+        const int pc = kerf::tabStrip(a, sk, "##envpart", ex, 124, ew, 16, parts, kEnvSets, ui.envSet, nullptr, partHints, acc);
+        if (pc >= 0) ui.envSet = pc;
+        ctl(sk, "##part", ex, 124, ew, 16);
+        static const char* const kinds[4] = {"VOLUME", "PAN", "PITCH", "FILTER"};
+        static const char* const kindHints[4] = {"The level of each note", "Moves the pan by the amount", "Bends the pitch by the amount (semitones)",
+                                                 "Moves the filter cutoff by the amount (octaves; with the filter on)"};
+        const int kc = kerf::segmented(a, sk, "##envkind", ex + 6, 148, 228, 20, kinds, nullptr, 4, ui.envKind, kindHints, true);
+        if (kc >= 0) ui.envKind = kc;
+        traceRect("env_kind", sk.at(ex + 6, 148), sk.at(ex + 234, 168));
+        if (nSl > 0 && k < kMaxSlices) {  // the selected region's set
+          iskin::digi(a, t, sk, lParam3(k, SliceEnvSet), ex + 240, 148, ew - 246, 20, [&](double v) {
+            const int e = std::clamp(static_cast<int>(std::lround(v)), 0, kEnvSets - 1);
+            return std::string(i18n::tr("Region")) + " " + std::to_string(k + 1) + ": " + (e == 0 ? std::string("Main") : "Set " + std::to_string(e + 1));
+          }, 10);
+          ctl(sk, "##envset", ex + 240, 148, ew - 246, 20);
+        }
+        const int set = std::clamp(ui.envSet, 0, kEnvSets - 1), kind = std::clamp(ui.envKind, 0, 3);
+        auto pid = [&](int f) { return kind == 0 ? slVolEnv(set, f) : slModEnv(set, kind - 1, f); };
+        const double at = ed::val(st, pid(SlEnvA)), de = ed::val(st, pid(SlEnvD)), su = ed::val(st, pid(SlEnvS)), re = ed::val(st, pid(SlEnvR));
+        const double amt = kind == 0 ? 1.0 : ed::val(st, pid(SlEnvAmt));
+        // The shape: attack, decay to the sustain level, a held stretch, release (widths grow with the times).
+        const ImVec2 g0 = sk.at(ex + 6, 174), g1 = sk.at(ex + ew - 6, 252);
+        faintGrid(dl, g0, g1, 8, 2, 0.04f);
+        const double wa = 0.04 + 0.2 * std::sqrt(std::clamp(at / 5.0, 0.0, 1.0)), wd = 0.04 + 0.2 * std::sqrt(std::clamp(de / 10.0, 0.0, 1.0));
+        const double wr = 0.04 + 0.2 * std::sqrt(std::clamp(re / 10.0, 0.0, 1.0)), ws = std::max(0.1, 1.0 - wa - wd - wr);
+        const double tot = wa + wd + ws + wr;
+        std::vector<ImVec2> pts;
+        auto P = [&](double u, double v) {
+          pts.push_back(ImVec2(g0.x + static_cast<float>(u / tot) * (g1.x - g0.x), g1.y - static_cast<float>(std::clamp(v, 0.0, 1.0) * 0.9) * (g1.y - g0.y)));
+        };
+        P(0, 0), P(wa, 1);
+        for (int i = 1; i <= 20; ++i) P(wa + wd * i / 20.0, su + (1 - su) * std::exp(-4.0 * i / 20.0));
+        P(wa + wd + ws, su);
+        for (int i = 1; i <= 20; ++i) P(wa + wd + ws + wr * i / 20.0, su * std::exp(-4.0 * i / 20.0));
+        dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), amt == 0 ? rgb(0x6E7A85) : rgb(kOrange), 0, std::max(1.4f, sk.px(1.8f)));
+        if (kind > 0 && amt == 0) kerf::text(sk, ex + 8, 236, 200, 14, "OFF (AMOUNT 0)", Role::Eyebrow, rgb(0x6F7B85), 0);
+        knobCell("##enva", pid(SlEnvA), ex + 2, 40, "ATT");
+        knobCell("##envd", pid(SlEnvD), ex + 74, 40, "DEC");
+        knobCell("##envs", pid(SlEnvS), ex + 146, 40, "SUS");
+        knobCell("##envr", pid(SlEnvR), ex + 218, 40, "REL");
+        if (kind > 0) knobCell("##envamt", pid(SlEnvAmt), ex + 290, 40, "AMT");
+      } else if (ui.tab == 5) {  // ---- K-217: the LFO (shape strip, sync and phase, the wave, rate / delay / depths)
+        static const char* const shapes[SlLfoShapeCount] = {"SINE", "TRI", "SAW UP", "SAW DN", "SQUARE", "RANDOM"};
+        static const char* const shapeHints[SlLfoShapeCount] = {"Sine", "Triangle", "Saw rising", "Saw falling", "Square", "Random (a new value each cycle)"};
+        const int shape = std::clamp(ed::ival(st, SlLfoShape), 0, SlLfoShapeCount - 1);
+        const int sc = kerf::tabStrip(a, sk, "##lfoshape", ex, 124, ew, 16, shapes, SlLfoShapeCount, shape, nullptr, shapeHints, acc);
+        if (sc >= 0) a.doc.setParam(t.pid(SlLfoShape), static_cast<float>(sc), false);
+        ctl(sk, "##part", ex, 124, ew, 16);
+        iskin::digi(a, t, sk, SlLfoSync, ex + 6, 148, 120, 20, [](double v) {
+          static const char* const n[9] = {"Free (rate)", "4 bars", "2 bars", "1 bar", "1/2", "1/4", "1/8", "1/16", "1/32"};
+          return std::string("Sync: ") + n[std::clamp(static_cast<int>(std::lround(v)), 0, 8)];
+        }, 10);
+        ctl(sk, "##lfosync", ex + 6, 148, 120, 20);
+        const bool retrig = ed::bval(st, SlLfoRetrig);
+        if (kerf::ledToggle(a, sk, "##lforetrig", ex + 132, 148, 112, 20, "PER NOTE", retrig, nullptr, false))
+          a.doc.setParam(t.pid(SlLfoRetrig), retrig ? 0 : 1, false);
+        if (ImGui::IsItemHovered()) a.setHint(i18n::tr("On: the LFO starts with each note. Off: one LFO runs for every note"));
+        // Two cycles of the wave, faded in over the delay (as a share of the view: 2 s).
+        const ImVec2 g0 = sk.at(ex + 6, 174), g1 = sk.at(ex + ew - 6, 252);
+        faintGrid(dl, g0, g1, 8, 2, 0.04f);
+        const double delay = ed::val(st, SlLfoDelay);
+        const bool on = ed::val(st, SlLfoVol) > 0 || ed::val(st, SlLfoPan) > 0 || ed::val(st, SlLfoPitch) > 0 || ed::val(st, SlLfoCut) > 0;
+        std::vector<ImVec2> pts;
+        for (int i = 0; i <= 160; ++i) {
+          const double u = i / 160.0, ph = u * 2.0, f = ph - std::floor(ph);
+          double w;
+          switch (shape) {
+            case SlLfoTri: w = f < 0.25 ? 4 * f : f < 0.75 ? 2 - 4 * f : 4 * f - 4; break;
+            case SlLfoSawUp: w = 2 * f - 1; break;
+            case SlLfoSawDown: w = 1 - 2 * f; break;
+            case SlLfoSquare: w = f < 0.5 ? 1.0 : -1.0; break;
+            case SlLfoRandom: w = std::floor(ph) < 1 ? 0.55 : -0.35; break;
+            default: w = std::sin(2.0 * 3.14159265358979323846 * f);
+          }
+          if (delay > 0) w *= std::min(1.0, u * 2.0 / delay);
+          pts.push_back(ImVec2(g0.x + static_cast<float>(u) * (g1.x - g0.x), (g0.y + g1.y) * 0.5f - static_cast<float>(w * 0.42) * (g1.y - g0.y)));
+        }
+        dl->AddLine(ImVec2(g0.x, (g0.y + g1.y) * 0.5f), ImVec2(g1.x, (g0.y + g1.y) * 0.5f), theme::withAlpha(IM_COL32_WHITE, 0.10f));
+        dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), on ? rgb(kOrange) : rgb(0x6E7A85), 0, std::max(1.4f, sk.px(1.8f)));
+        if (!on) kerf::text(sk, ex + 8, 236, 220, 14, "OFF (EVERY DEPTH 0)", Role::Eyebrow, rgb(0x6F7B85), 0);
+        knobCell("##lforate", SlLfoRate, ex + 2, 30, "RATE");
+        knobCell("##lfodelay", SlLfoDelay, ex + 63, 30, "DELAY");
+        knobCell("##lfovol", SlLfoVol, ex + 124, 30, "VOL");
+        knobCell("##lfopan", SlLfoPan, ex + 185, 30, "PAN");
+        knobCell("##lfopitch", SlLfoPitch, ex + 246, 30, "PITCH");
+        knobCell("##lfocut", SlLfoCut, ex + 307, 30, "CUT");
       } else {  // ---- detection: the loop with its cuts, sensitivity / gap (the mode is the SLICES card's)
         char b[96];
         std::snprintf(b, sizeof b, "%d %s  \xC2\xB7  %.1f BPM  \xC2\xB7  %s", nSl, i18n::tr("slices"), tempoEst,
-                      ed::ival(st, SlMode) == 0 ? i18n::tr("cut at the hits") : manual ? i18n::tr("cut at the markers")
+                      lMode(st) == 0 ? i18n::tr("cut at the hits") : manual ? i18n::tr("cut at the markers")
                       : !gridMode                ? i18n::tr("even slices")
                       : kg && kg->analysing      ? i18n::tr("finding the beat...")
                       : detectedGrid             ? i18n::tr("on the detected beat")
@@ -1280,7 +1547,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         } else {
           kerf::text(sk, ex, 142, ew, 116, i18n::tr("Load a loop to see where it is cut"), Role::Body, rgb(0x6E7A85), 1);
         }
-        const bool detect = ed::ival(st, SlMode) == 0;
+        const bool detect = lMode(st) == 0;
         ImGui::BeginDisabled(!detect);
         knobCell("##ksens", SlSensitivity, ex + 2, 80, "SENSITIVITY");
         knobCell("##kgap", SlMinGap, ex + 114, 62, "MIN GAP");
@@ -1392,7 +1659,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     }
     if (tile("##mregions", 264, ui::Icon::ToolSlice, "Regions: slicing", 0, true)) ImGui::OpenPopup("##regionsmenu");
     if (ImGui::BeginPopup("##regionsmenu")) {
-      const int md = ed::ival(st, SlMode);
+      const int md = lMode(st);
       if (ImGui::MenuItem(i18n::tr("Slice at the hits"), nullptr, classic && md == 0, classic)) setMode(0);
       if (ImGui::MenuItem(i18n::tr("Even slices: 4"), nullptr, classic && md == 1, classic)) setMode(1);
       if (ImGui::MenuItem(i18n::tr("Even slices: 8"), nullptr, classic && md == 2, classic)) setMode(2);
@@ -1408,6 +1675,8 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         addMarkerAt(snapped((static_cast<double>(starts[static_cast<size_t>(k)]) + sliceEnd(k)) * 0.5, false));
       }
       if (ImGui::MenuItem(i18n::tr("Clear markers"), nullptr, false, manual)) clearMarkers();
+      ImGui::Separator();
+      layerMenuItems();  // K-217
       ImGui::Separator();
       // J-182: the selected region's marker: name, exact position, one snap step either way.
       if (ImGui::MenuItem(i18n::tr("Rename the region..."), nullptr, false, canRename(k))) beginRename(k);
@@ -1494,11 +1763,11 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       makeManual(a, t, st, starts, smp.get());
     if (tile("##add", 580, ui::Icon::Flag, "Add a marker in the middle of the selected region") && smp && nSl > 0)
       addMarkerAt(snapped((static_cast<double>(starts[static_cast<size_t>(k)]) + sliceEnd(k)) * 0.5, false));
-    if (tile("##auto", 604, ui::Icon::SliceWave, "Slice at the hits (right-click: even slices)", classic && ed::ival(st, SlMode) == 0)) setMode(0);
+    if (tile("##auto", 604, ui::Icon::SliceWave, "Slice at the hits (right-click: even slices)", classic && lMode(st) == 0)) setMode(0);
     if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##kevens");
     ImGui::EndDisabled();
     if (ImGui::BeginPopup("##kevens")) {
-      const int md = ed::ival(st, SlMode);
+      const int md = lMode(st);
       for (int m = 1; m <= 4; ++m) {
         char lb[48];
         std::snprintf(lb, sizeof lb, "%s: %d", i18n::tr("Even slices"), 2 << m);
@@ -1623,7 +1892,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       for (int s = 0; s < nSl; ++s) {  // region shading (J-166: region engine: the region's own end)
         const double s0 = static_cast<double>(starts[static_cast<size_t>(s)]), s1 = sliceEnd(s);
         if (s1 < f0 || s0 > f1) continue;
-        const bool muted = classic && s < kMaxSlices && ed::bval(st, slParam(s, SliceMute));
+        const bool muted = classic && s < kMaxSlices && ed::bval(st, lParam(s, SliceMute));
         const ImVec2 r0(fx(s0), p0.y), r1(fx(s1), p1.y);
         if (s == k) {
           dl->AddRectFilledMultiColor(r0, r1, rgb(kOrange, 0.16f), rgb(kOrange, 0.16f), rgb(kOrange, 0.06f), rgb(kOrange, 0.06f));
@@ -2121,8 +2390,8 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
                   static_cast<long long>(nSl > 0 ? starts[static_cast<size_t>(k)] : -1), static_cast<long long>(ui.lastAdd), startSum, selName.c_str(), litList.c_str());
     // J-190: the beat grid (mode, source 0 detected / 1 loop length, analysing, tempo, meter) and every slice start.
     char g[160];
-    std::snprintf(g, sizeof g, " slmode=%d gridsrc=%d analysing=%d gridbpm=%.3f gridbpb=%d gridcell=%d starts=", ed::ival(st, SlMode),
-                  kg ? kg->source : -1, kg && kg->analysing ? 1 : 0, kg ? kg->bpm : 0.0, kg ? kg->beatsPerBar : 0, ed::ival(st, SlGridDiv));
+    std::snprintf(g, sizeof g, " slmode=%d gridsrc=%d analysing=%d gridbpm=%.3f gridbpb=%d gridcell=%d layer=%d starts=", lMode(st),
+                  kg ? kg->source : -1, kg && kg->analysing ? 1 : 0, kg ? kg->bpm : 0.0, kg ? kg->beatsPerBar : 0, ed::ival(st, SlGridDiv), g_layer);
     std::string startList;
     for (int64_t f : starts) startList += (startList.empty() ? "" : ",") + std::to_string(static_cast<long long>(f));
     const std::string line = "kerf-ui:" + traceLine + b + g + (startList.empty() ? std::string("-") : startList);
@@ -2152,6 +2421,7 @@ bool drawSlicerEditorJ2(App& a, const PluginTarget& t, float width) {
   const PluginState* st = t.state(a.doc.song());
   if (!st || st->type != "gl.slicer") return false;
   editorSlicex(a, t, width);
+  g_layer = 0;
   return true;
 }
 

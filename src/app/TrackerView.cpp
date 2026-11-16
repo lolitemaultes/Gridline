@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -29,6 +30,7 @@
 #include "../packs/PacksUi.h"
 #include "Theme.h"
 #include "TrackerLook.h"
+#include "TrackerPages.h"
 #include "Widgets.h"
 
 namespace gl::trackerview {
@@ -60,7 +62,11 @@ struct KeyEv {
 struct Held {
   ObjectId channel = kNoId;
   int pitch = 0;
+  int track = -1, column = 0;  // record key-off: where the note was written (-1: only played)
 };
+// The classic tracker's three clipboards: the block's, the track's and the pattern's (each keeps
+// its own rows, so a track copied with Shift+F4 pastes again after a block was copied).
+enum class Buf { Block, Track, Pattern };
 
 struct State {
   Cursor cur;
@@ -69,10 +75,12 @@ struct State {
   int step = 1;
   bool follow = true;
   bool hasKb = false;      // the editor had the keyboard on the last frame
+  int chordRow = -1;       // multichannel edit: the row the notes held together go to
+  bool chordGroup = false; // R5-08: the notes typed while note keys are held are one undo step
   bool wantFocus = false;  // dev / page switch: focus the editor next frame
   std::vector<KeyEv> keys;
   std::map<ObjectId, int> extraCols;  // note columns added by hand (view only)
-  trk::Block clip;
+  trk::Block clip, clipTrack, clipPattern;
   std::string status;
   double statusT = -10;
   std::map<int, Held> held;  // scan code -> the note it auditions
@@ -102,11 +110,49 @@ State& st() {
 // The sub-columns shown (View > Columns; the note and instrument always are).
 bool gShow[static_cast<int>(Field::Count)] = {true, true, true, true, true};
 bool fieldShown(Field f) { return gShow[static_cast<int>(f)]; }
+bool gDots = true;    // empty fields as dots (Settings: off, blank)
+bool gFlats = false;  // note names with flats
+bool gMulti = false;  // multichannel edit: each typed note moves the cursor to the next track
+bool gMultiRec = false;   // multichannel record: each recorded note goes to the next enabled track
+bool gMultiJazz = false;  // multichannel key jazz: notes only played go to the enabled tracks in turn
+bool gRecOff = false;     // record key-off notes: a key released while recording ends its note there
+bool gCutCopies = true;   // a cut also copies (off: it only deletes)
+bool gInsDelLength = false;  // R7-15: inserting / deleting a line on every track changes the pattern length
+bool gTall = false;       // Settings, Layout: taller rows
+bool gBeats = true;       // ... beat and bar rows lit
+bool gFrames = true;      // ... lines between the tracks
+bool gNumbers = true;     // ... track numbers in the headers
+trk::Masks gMasks;        // the Advanced edit box's clipboard masks
+bool gMasking = false;    // ... turned on
+int gVisible = 0;     // tracks in view at most (0: as many as fit), the classic "maximum visible channels"
 void loadColumns(App& a) {
+  gVisible = static_cast<int>(a.settings.getNumber("tracker.visibleTracks"));
+  gMulti = a.settings.getBool("tracker.multiEdit");
+  gMultiRec = a.settings.getBool("tracker.multiRecord");
+  gMultiJazz = a.settings.getBool("tracker.multiJazz");
+  gRecOff = a.settings.getBool("tracker.recordKeyOff");
+  gCutCopies = a.settings.getBool("tracker.cutCopies");
+  gInsDelLength = a.settings.getBool("tracker.insDelLength");
+  gTall = a.settings.getBool("tracker.tallRows");
+  gBeats = a.settings.getBool("tracker.beatHighlight");
+  gFrames = a.settings.getBool("tracker.trackFrames");
+  gNumbers = a.settings.getBool("tracker.trackNumbers");
   gShow[static_cast<int>(Field::Volume)] = a.settings.getBool("tracker.volumeColumn");
   gShow[static_cast<int>(Field::Pan)] = a.settings.getBool("tracker.panColumn");
   gShow[static_cast<int>(Field::Effect)] = a.settings.getBool("tracker.effectColumn");
+  gDots = a.settings.getBool("tracker.emptyDots");
+  gFlats = a.settings.getBool("tracker.flats");
 }
+// The next track after `ti` that multichannel edit writes to (the enabled ones; none other: `ti`).
+int nextMultiTrack(App& a, const std::vector<trk::Track>& tracks, int ti) {
+  const int n = static_cast<int>(tracks.size());
+  for (int d = 1; d < n; ++d) {
+    const int t = (ti + d) % n;
+    if (multiTrackOn(a, tracks[static_cast<size_t>(t)].channel)) return t;
+  }
+  return ti;
+}
+
 // The next shown field from `f` in direction `dir` (Field::Count, or -1 as int, past the ends).
 int nextShown(int f, int dir) {
   while (f >= 0 && f < static_cast<int>(Field::Count) && !gShow[f]) f += dir;
@@ -322,46 +368,97 @@ void audition(App& a, int sc, ObjectId ch, int pitch, int velocity) {
   s.held[sc] = {ch, pitch};
 }
 
+// Multichannel edit: a note key other than `sc` still held (the notes are a chord).
+bool otherNoteHeld(int sc) {
+  for (const auto& [k, h] : st().held)
+    if (k != sc) return true;
+  return false;
+}
+
 void releaseAll(App& a) {
   for (const auto& [sc, h] : st().held) a.engine.noteOff(h.channel, h.pitch);
   st().held.clear();
 }
 
 // ---- block operations ----
-void copyBlock(const View& v, bool cut, App& a) {
+trk::Block& buffer(Buf which) {
+  State& s = st();
+  return which == Buf::Track ? s.clipTrack : which == Buf::Pattern ? s.clipPattern : s.clip;
+}
+
+void copyBlock(const View& v, bool cut, App& a, Buf which = Buf::Block) {
   int t0, t1, r0, r1;
   const State& s = st();
   if (s.sel.on) blockRange(&t0, &t1, &r0, &r1);
   else t0 = t1 = s.cur.track, r0 = 0, r1 = v.g.rows - 1;  // no block: the whole track
-  trk::Block b;
-  b.rows = r1 - r0 + 1;
-  for (int t = t0; t <= t1 && t < static_cast<int>(v.tracks.size()); ++t) {
-    const Rows r = rowsOf(*v.p, v.tracks[static_cast<size_t>(t)].channel);
-    b.tracks.push_back(trk::copyRows(r.notes, r.steps, r.props, v.g, r0, r1));
+  // Cut without copying (Settings: a cut only deletes): the clipboard keeps what it had.
+  if (!cut || gCutCopies) {
+    trk::Block b;
+    b.rows = r1 - r0 + 1;
+    for (int t = t0; t <= t1 && t < static_cast<int>(v.tracks.size()); ++t) {
+      const Rows r = rowsOf(*v.p, v.tracks[static_cast<size_t>(t)].channel);
+      b.tracks.push_back(trk::copyRows(r.notes, r.steps, r.props, v.g, r0, r1));
+      if (gMasking) trk::maskCopied(b.tracks.back(), gMasks);  // the copy mask: the parts left out are not taken
+    }
+    for (int k = 0; k < trk::kParts; ++k) b.carried[k] = !gMasking || gMasks.copy[k];
+    buffer(which) = b;
   }
-  st().clip = b;
   if (cut) {
     a.doc.beginGroup("cut rows");
     for (int t = t0; t <= t1 && t < static_cast<int>(v.tracks.size()); ++t)
       applyEdit(a, v, t, "cut rows", [&](Rows& x, const trk::Track&, const trk::Grid& g) { return trk::cutRows(x.notes, x.steps, g, r0, r1); });
     a.doc.endGroup(false);
   }
-  say(cut ? i18n::tr("Cut to the tracker clipboard") : i18n::tr("Copied to the tracker clipboard"));
+  const char* what = which == Buf::Track ? (cut ? "Track cut" : "Track copied") : which == Buf::Pattern ? (cut ? "Pattern cut" : "Pattern copied")
+                                                                                                    : (cut ? "Block cut" : "Block copied");
+  say(std::string(i18n::tr(what)) + (cut && !gCutCopies ? std::string(" (") + i18n::tr("not kept: Settings, Miscellaneous") + ")" : std::string()) +
+      (gMasking ? std::string(" \xC2\xB7 ") + i18n::tr("masks on") : std::string()));
 }
 
-void pasteBlock(const View& v, App& a) {
+void pasteBlock(const View& v, App& a, Buf which = Buf::Block) {
   const State& s = st();
-  if (s.clip.empty()) {
-    say(i18n::tr("Nothing copied yet: select rows with Shift and the arrows, then Ctrl+C"));
+  const trk::Block& src = buffer(which);
+  if (src.empty()) {
+    say(i18n::tr(which == Buf::Track ? "No track copied yet: Shift+F4 copies the cursor's track"
+                 : which == Buf::Pattern ? "No pattern copied yet: Ctrl+F4 copies the pattern"
+                                         : "Nothing copied yet: mark a block (Alt or Shift and the arrows), then Alt+F4 or Ctrl+C"));
     return;
   }
-  const trk::Block b = s.clip;
+  trk::Block b = src;
   const int row = s.cur.row;
+  // R7-09: a track or a pattern pastes over the whole track (the classic editor's buffer holds
+  // empty rows past the copy): the rows past a shorter copy are cleared, through the masks.
+  if (which != Buf::Block) b.rows = std::max(b.rows, v.g.rows - row);
   a.doc.beginGroup("paste rows");
   for (size_t i = 0; i < b.tracks.size(); ++i) {
     const int t = s.cur.track + static_cast<int>(i);
     if (t >= static_cast<int>(v.tracks.size())) break;
-    applyEdit(a, v, t, "paste rows", [&](Rows& x, const trk::Track&, const trk::Grid& g) { return trk::pasteRows(x.notes, x.steps, g, row, b.rows, b.tracks[i]); });
+    applyEdit(a, v, t, "paste rows", [&](Rows& x, const trk::Track&, const trk::Grid& g) {
+      return gMasking ? trk::pasteRowsMasked(x.notes, x.steps, g, row, b.rows, b.tracks[i], b.carried, gMasks)
+                      : trk::pasteRows(x.notes, x.steps, g, row, b.rows, b.tracks[i]);
+    });
+  }
+  a.doc.endGroup(false);
+}
+
+// R7-09: the pattern clipboard pasted over pattern `pid` from its top, after the prompt (the view is
+// built again: the prompt closes frames later). `bars` > 0: the pattern takes that length first, in
+// the same undo step (the song's later entries move along, R6-02).
+void pasteWhole(App& a, Buf which, ObjectId pid, int bars) {
+  State& s = st();
+  View v = build(a);
+  if (!v.p || v.p->id != pid) return;
+  a.doc.beginGroup("paste pattern");
+  if (bars > 0 && bars != v.p->bars) {
+    trk::setPatternLengthInSong(a.doc, pid, bars, v.p->stepsPerBar);
+    v = build(a);
+  }
+  if (v.p && v.p->id == pid) {
+    const Cursor keep = s.cur;
+    s.cur.track = 0, s.cur.row = 0;
+    pasteBlock(v, a, which);
+    s.cur = keep;
+    clampCursor(v);
   }
   a.doc.endGroup(false);
 }
@@ -375,23 +472,73 @@ void clearBlock(const View& v, App& a) {
   a.doc.endGroup(false);
 }
 
+// Whether any track has a note starting, or a step set, at or after row `r0` (past the end too).
+bool rowsUsed(const View& v, int r0) {
+  if (!v.p) return false;
+  const Tick from = v.g.tickOf(r0);
+  for (const auto& t : v.tracks) {
+    const Rows r = rowsOf(*v.p, t.channel);
+    for (const Note& n : r.notes)
+      if (n.start >= from) return true;
+    for (size_t i = static_cast<size_t>(std::max(0, r0)); i < r.steps.size(); ++i)
+      if (r.steps[i] != 0) return true;
+  }
+  return false;
+}
+
 // A row inserted / deleted at the cursor's row: its track, or every track.
-void rowEdit(App& a, const View& v, bool ins, bool everyTrack) {
+// R7-15 (Settings, Miscellaneous): with "Insert and delete change the length", a line inserted or
+// deleted on every track changes the pattern's length, as the classic option does. Gridline's
+// patterns are whole bars, so the length follows by bars: an insert that would push a note or a
+// step off the last row first adds a bar; a delete that empties the last bar (it held something
+// before) takes that bar away. One undo step; the song's later entries move along (R6-02).
+void rowEdit(App& a, const View& v0, bool ins, bool everyTrack) {
+  View v = v0;
   const int row = st().cur.row;
   const int lo = everyTrack ? 0 : st().cur.track, hi = everyTrack ? static_cast<int>(v.tracks.size()) - 1 : st().cur.track;
   a.doc.beginGroup(ins ? "insert row" : "delete row");
-  for (int x = lo; x <= hi; ++x)
-    applyEdit(a, v, x, ins ? "insert row" : "delete row", [&](Rows& r, const trk::Track&, const trk::Grid& g) {
-      return ins ? trk::insertRow(r.notes, r.steps, r.props, g, row) : trk::deleteRow(r.notes, r.steps, r.props, g, row);
-    });
+  const bool stretch = gInsDelLength && everyTrack && v.p;
+  const ObjectId pid = v.p ? v.p->id : kNoId;
+  const int spb = v.p ? std::max(1, v.p->stepsPerBar) : 1;
+  bool lastBarHad = false;
+  if (stretch && ins && rowsUsed(v, v.g.rows - 1) && v.g.rows + spb <= 256 && v.p->bars < kMaxPatternBars) {
+    trk::setPatternLengthInSong(a.doc, pid, v.p->bars + 1, v.p->stepsPerBar);
+    v = build(a);
+  }
+  if (stretch && !ins) lastBarHad = v.p->bars > 1 && rowsUsed(v, v.g.rows - spb);
+  // A line on every track moves every track or none (R9-04, R9-06: a track that refuses, an imported
+  // voice across the row or a note that would fall off the end, keeps the others as they are too).
+  if (v.p && v.p->id == pid && hi > lo)
+    for (int x = lo; x <= hi; ++x) {
+      Rows r = rowsOf(*v.p, v.tracks[static_cast<size_t>(x)].channel);
+      const trk::Result t = ins ? trk::insertRow(r.notes, r.steps, r.props, v.g, row) : trk::deleteRow(r.notes, r.steps, r.props, v.g, row);
+      if (!t.refused.empty()) {
+        say(i18n::tr(t.refused.c_str()));
+        a.doc.cancelGroup();
+        return;
+      }
+    }
+  if (v.p && v.p->id == pid)
+    for (int x = lo; x <= hi; ++x)
+      applyEdit(a, v, x, ins ? "insert row" : "delete row", [&](Rows& r, const trk::Track&, const trk::Grid& g) {
+        return ins ? trk::insertRow(r.notes, r.steps, r.props, g, row) : trk::deleteRow(r.notes, r.steps, r.props, g, row);
+      });
+  if (stretch && !ins && lastBarHad) {
+    v = build(a);
+    if (v.p && v.p->id == pid && v.p->bars > 1 && !rowsUsed(v, v.g.rows - spb)) {
+      trk::setPatternLengthInSong(a.doc, pid, v.p->bars - 1, v.p->stepsPerBar);
+      clampCursor(build(a));
+    }
+  }
   a.doc.endGroup(false);
 }
 
 // A note moved to another channel (the instrument typed): out of one, into the other, one undo step.
 void moveToChannel(App& a, const View& v, int ti, int noteIndex, int target) {
   const Song& s = a.doc.song();
-  if (target < 0 || target >= static_cast<int>(s.channels.size()) || target == ti) return;
+  if (target < 0 || target >= static_cast<int>(s.channels.size())) return;
   const ObjectId from = v.tracks[static_cast<size_t>(ti)].channel, to = s.channels[static_cast<size_t>(target)].id;
+  if (from == to) return;  // (compared by channel: tracks skip audio clips' source channels, so a track's place is not its number)
   std::vector<Note> src = rowsOf(*v.p, from).notes, dst = rowsOf(*v.p, to).notes;
   if (noteIndex < 0 || noteIndex >= static_cast<int>(src.size())) return;
   const Note n = src[static_cast<size_t>(noteIndex)];
@@ -408,6 +555,23 @@ void moveToChannel(App& a, const View& v, int ti, int noteIndex, int target) {
 // ---- the Tracker key set's pattern keys (core/Keymap Profile::Tracker; FT2-MAP section 9) ----
 bool trackerKeySet() { return keys::keymap().profile() == keys::Profile::Tracker; }
 
+// R6-01: an effect letter typed at its default value (T00, X80, Y80, R40) changes nothing in the note,
+// so the letter waits on the note (drawn "T..") until its digits come; any edit lets it go.
+struct PendingFx {
+  ObjectId pattern = kNoId, channel = kNoId;
+  Tick start = -1;
+  int pitch = -1;
+  char letter = 0;
+  uint64_t revision = 0;
+};
+PendingFx gPendFx;
+char pendingEffect(const App& a, ObjectId pattern, ObjectId channel, const Note* n) {
+  const PendingFx& f = gPendFx;
+  return n && f.letter && f.pattern == pattern && f.channel == channel && f.start == n->start && f.pitch == n->pitch && f.revision == a.doc.revision()
+             ? f.letter
+             : 0;
+}
+
 // Alt+Q..I: tracks 0 to 7, Alt+A..K: tracks 8 to 15 (-1: not one of them).
 int trackJump(int sc) {
   static const int row1[8] = {SDL_SCANCODE_Q, SDL_SCANCODE_W, SDL_SCANCODE_E, SDL_SCANCODE_R, SDL_SCANCODE_T, SDL_SCANCODE_Y, SDL_SCANCODE_U, SDL_SCANCODE_I};
@@ -423,6 +587,10 @@ int trackJump(int sc) {
 bool trackerTakes(int sc, int mods) {
   if (!trackerKeySet()) return false;
   const bool ctrl = (mods & (KMOD_CTRL | KMOD_GUI)) != 0, alt = (mods & KMOD_ALT) != 0, shift = (mods & KMOD_SHIFT) != 0;
+  // N-04: the play keys. Right Ctrl and Enter play the song, Right Alt and Ctrl+Enter the pattern,
+  // Shift+Enter the pattern from the cursor's row.
+  if (sc == SDL_SCANCODE_RCTRL || sc == SDL_SCANCODE_RALT) return !shift;
+  if (sc == SDL_SCANCODE_RETURN && !alt) return true;
   if (ctrl && alt) return false;
   if (sc >= SDL_SCANCODE_F9 && sc <= SDL_SCANCODE_F12 && !alt) return true;  // jump rows (Shift: store, Ctrl: play from); Alt+F12 closes the plugin windows
   const bool mod = shift || ctrl || alt;
@@ -430,10 +598,112 @@ bool trackerTakes(int sc, int mods) {
   if ((sc == SDL_SCANCODE_F3 || sc == SDL_SCANCODE_F4 || sc == SDL_SCANCODE_F5) && (shift || ctrl)) return true;  // track / pattern clipboard
   if (sc == SDL_SCANCODE_GRAVE && !ctrl && !alt) return true;  // edit step
   if (sc == SDL_SCANCODE_CAPSLOCK) return true;                // note off
+  if (alt && !ctrl && sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_0) return true;  // macros: Alt writes one, Shift+Alt stores it
+  if (!ctrl && !alt && ((sc >= SDL_SCANCODE_KP_1 && sc <= SDL_SCANCODE_KP_8) || sc == SDL_SCANCODE_KP_ENTER)) return true;  // keypad instruments
+  if (ctrl && !alt && (sc == SDL_SCANCODE_KP_PLUS || sc == SDL_SCANCODE_KP_MINUS)) return true;  // the master volume
   if (alt && (trackJump(sc) >= 0 || sc == SDL_SCANCODE_C || sc == SDL_SCANCODE_DELETE || (sc >= SDL_SCANCODE_RIGHT && sc <= SDL_SCANCODE_UP)))
     return true;
-  if (ctrl && (sc == SDL_SCANCODE_LEFT || sc == SDL_SCANCODE_RIGHT || sc == SDL_SCANCODE_RETURN || (sc == SDL_SCANCODE_DELETE && !shift))) return true;  // Ctrl+Shift+Del deletes the pattern
+  if (ctrl && (sc == SDL_SCANCODE_LEFT || sc == SDL_SCANCODE_RIGHT || (sc == SDL_SCANCODE_DELETE && !shift))) return true;  // Ctrl+Shift+Del deletes the pattern
   return false;
+}
+
+// The macros (the classic volume and effect macros, R4-06): two banks of ten, one for volumes and
+// one for effects. The field the cursor is on picks the bank: Shift+Alt+1 to 0 stores the cell's
+// volume or effect in its slot, Alt+1 to 0 writes the slot into the note at the cursor and moves on
+// by the edit step. Both banks are kept in the settings (tracker.volumeMacros, tracker.effectMacros:
+// ten comma separated slots, "20" or "P01", empty when unused).
+struct Macro {
+  bool set = false;
+  int value = 0;
+  char letter = 0;  // the effect bank's letter
+};
+struct MacroBanks {
+  Macro vol[10], fx[10];
+};
+
+MacroBanks& macros(App& a) {
+  static MacroBanks m;
+  static bool loaded = false;
+  if (loaded) return m;
+  loaded = true;
+  auto load = [&](const char* key, Macro* bank, bool effect) {
+    const std::string t = a.settings.getString(key);
+    size_t at = 0;
+    for (int i = 0; i < 10 && at <= t.size(); ++i) {
+      const size_t e = std::min(t.find(',', at), t.size());
+      const std::string v = t.substr(at, e - at);
+      at = e + 1;
+      if (v.empty() || (effect && v.size() < 2)) continue;
+      char* end = nullptr;
+      const long n = std::strtol(v.c_str() + (effect ? 1 : 0), &end, 16);
+      if (!end || *end || n < 0 || n > 255) continue;
+      bank[i] = {true, static_cast<int>(n), effect ? v[0] : static_cast<char>(0)};
+    }
+  };
+  load("tracker.volumeMacros", m.vol, false);
+  load("tracker.effectMacros", m.fx, true);
+  return m;
+}
+
+void saveMacros(App& a) {
+  const MacroBanks& m = macros(a);
+  auto text = [](const Macro* bank, bool effect) {
+    std::string t;
+    for (int i = 0; i < 10; ++i) {
+      if (i) t += ',';
+      if (bank[i].set) t += (effect ? std::string(1, bank[i].letter) : std::string()) + trk::hex2(bank[i].value);
+    }
+    return t;
+  };
+  a.settings.set("tracker.volumeMacros", text(m.vol, false));
+  a.settings.set("tracker.effectMacros", text(m.fx, true));
+}
+
+int macroKey(App& a, const View& v, int slot, bool store) {
+  State& s = st();
+  Cursor& c = s.cur;
+  const trk::Track& t = v.tracks[static_cast<size_t>(c.track)];
+  const Cell& cell = t.at(c.row, c.column);
+  const Note* note = cell.kind == Cell::On ? &notesRef(*v.p, t.channel)[static_cast<size_t>(cell.note)] : nullptr;
+  const std::string n = std::to_string(slot + 1 == 10 ? 0 : slot + 1);
+  if (c.field != Field::Volume && c.field != Field::Effect) {
+    say(i18n::tr("The macros store and write a volume or an effect: put the cursor on that field"));
+    return 0;
+  }
+  const bool vol = c.field == Field::Volume;
+  Macro& m = vol ? macros(a).vol[slot] : macros(a).fx[slot];
+  const std::string kind = i18n::tr(vol ? "Volume macro" : "Effect macro");
+  if (store) {
+    if (vol && note) {
+      m = {true, std::min(note->velocity, 255), 0};
+    } else if (!vol && note && !trk::effectsOf(*note).empty()) {
+      const trk::Effect e = trk::effectsOf(*note).front();
+      m = {true, e.value, e.letter};
+    } else {
+      say(i18n::tr(vol ? "No note here: a volume macro stores a note's volume" : "No effect here: an effect macro stores a note's effect"));
+      return 0;
+    }
+    saveMacros(a);
+    say(kind + " " + n + ": " + (vol ? trk::hex2(m.value) : std::string(1, m.letter) + trk::hex2(m.value)));
+    return 0;
+  }
+  if (!m.set) return say(kind + " " + n + " " + i18n::tr("is empty: Shift+Alt+") + n + " " + i18n::tr("stores the field at the cursor")), 0;
+  if (!s.edit) return say(i18n::tr("Edit mode is off: Esc turns it on (the keys only play)")), 0;
+  if (!note) return say(i18n::tr("No note here")), 0;
+  trk::Result r;
+  if (vol) {
+    r = applyEdit(a, v, c.track, "macro", [&](Rows& x, const trk::Track& tr, const trk::Grid&) {
+      return trk::setVolume(x.notes, x.steps, tr, c.row, c.column, std::min(m.value, 127));
+    });
+  } else {
+    const std::vector<trk::Effect> fx = trk::effectsOf(*note);
+    const char shown = fx.empty() ? 0 : fx.front().letter;
+    r = applyEdit(a, v, c.track, "macro", [&](Rows& x, const trk::Track& tr, const trk::Grid&) {
+      return trk::setEffectAt(x.notes, tr, c.row, c.column, shown, m.letter, m.value);
+    });
+  }
+  if (r.refused.empty()) moveRow(v, s.step, true);
+  return 1;
 }
 
 // One of those keys: 0 handled (no song change), 1 handled (the song may have changed), -1 not one.
@@ -443,6 +713,36 @@ int trackerKey(App& a, const View& v, const KeyEv& k) {
   Cursor& c = s.cur;
   const bool ctrl = (k.mods & (KMOD_CTRL | KMOD_GUI)) != 0, shift = (k.mods & KMOD_SHIFT) != 0, alt = (k.mods & KMOD_ALT) != 0;
   const int tracks = static_cast<int>(v.tracks.size());
+  // N-04: the play keys (the classic tracker's).
+  {
+    const bool rctrl = k.sc == SDL_SCANCODE_RCTRL, ralt = k.sc == SDL_SCANCODE_RALT, enter = k.sc == SDL_SCANCODE_RETURN;
+    if ((rctrl && !alt) || (enter && !ctrl && !shift)) {  // the song, from the current order entry
+      if (k.repeat) return 0;
+      const Tick pos = songPosition(a);
+      Tick from = 0;
+      for (const trk::OrderEntry& e : trk::orderList(a.doc.song()))
+        if (pos >= e.start && pos < e.end) from = e.start;
+      a.engine.setMode(PlayMode::Song);
+      setSongPosition(a, from);
+      if (!a.engine.playing()) menuparity::playPressed(a);
+      return 0;
+    }
+    if (k.sc == SDL_SCANCODE_RSHIFT) {  // Right Shift tapped: record the pattern (as the header's Record pattern)
+      a.engine.setMode(PlayMode::Pattern);
+      a.engine.setPattern(a.curPattern);
+      a.recordArmed = true;
+      if (!a.engine.playing()) menuparity::playPressed(a);
+      return 0;
+    }
+    if (ralt || (enter && (ctrl || shift))) {  // the pattern, from its start (Shift+Enter: from the cursor's row)
+      if (k.repeat) return 0;
+      a.engine.setMode(PlayMode::Pattern);
+      a.engine.setPattern(a.curPattern);
+      a.engine.setPosition(enter && shift ? static_cast<double>(static_cast<Tick>(s.cur.row) * v.g.rowTicks) : 0.0, true);
+      if (!a.engine.playing()) menuparity::playPressed(a);
+      return 0;
+    }
+  }
   const char* noEdit = "Edit mode is off: Esc turns it on (the keys only play)";
   // F9 to F12: jump rows.
   if (k.sc >= SDL_SCANCODE_F9 && k.sc <= SDL_SCANCODE_F12) {
@@ -476,18 +776,38 @@ int trackerKey(App& a, const View& v, const KeyEv& k) {
   if ((k.sc == SDL_SCANCODE_F3 || k.sc == SDL_SCANCODE_F4 || k.sc == SDL_SCANCODE_F5) && (shift || ctrl) && !alt) {  // (Alt: the block, below)
     const Cursor keep = c;
     const Selection keepSel = s.sel;
+    const Buf which = ctrl ? Buf::Pattern : Buf::Track;
     if (k.sc == SDL_SCANCODE_F5) {
+      if (!s.edit) return say(i18n::tr(noEdit)), 1;
+      const trk::Block& src = buffer(which);
+      // R7-09: a pattern of another length: asked first, as the classic editor does, whether this
+      // pattern takes the copy's length (Gridline's lengths are whole bars: asked when it can).
+      const int spb = std::max(1, v.p->stepsPerBar);
+      if (ctrl && !src.empty() && src.rows != v.g.rows && src.rows % spb == 0 && src.rows / spb <= kMaxPatternBars) {
+        const ObjectId pid = v.p->id;
+        const int bars = src.rows / spb, rows = src.rows;
+        a.confirm.open = true;
+        a.confirm.title = i18n::tr("Make this pattern as long as the copy?");
+        a.confirm.subtitle = std::to_string(v.g.rows) + " " + i18n::tr("rows here") + ", " + std::to_string(rows) + " " +
+                             i18n::tr("copied. Either way the whole pattern is replaced; rows past the copy are cleared.");
+        a.confirm.okLabel = i18n::N_("Match length");
+        a.confirm.noLabel = i18n::N_("Keep length");
+        a.confirm.action = [&a, pid, bars] { pasteWhole(a, Buf::Pattern, pid, bars); };
+        a.confirm.noAction = [&a, pid] { pasteWhole(a, Buf::Pattern, pid, 0); };
+        return 1;
+      }
       if (ctrl) c.track = 0;
       c.row = 0;
-      if (s.edit) pasteBlock(v, a);
+      pasteBlock(v, a, which);
       c = keep;
-      if (!s.edit) say(i18n::tr(noEdit));
+      if (ctrl && !src.empty() && src.rows != v.g.rows)
+        say(std::to_string(src.rows) + " " + i18n::tr("rows pasted; the pattern keeps its length (a whole number of bars)"));
       return 1;
     }
     s.sel = {true, ctrl ? 0 : c.track, 0, ctrl ? tracks - 1 : c.track, std::max(0, v.g.rows - 1)};
     const bool cut = k.sc == SDL_SCANCODE_F3;
     if (cut && !s.edit) say(i18n::tr(noEdit));
-    else copyBlock(v, cut, a);
+    else copyBlock(v, cut, a, which);
     s.sel = keepSel;
     return cut ? 1 : 0;
   }
@@ -509,6 +829,37 @@ int trackerKey(App& a, const View& v, const KeyEv& k) {
     applyEdit(a, v, c.track, "note off", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) { return trk::putOff(x.notes, tr, g, c.row, c.column); });
     moveRow(v, s.step, true);
     return 1;
+  }
+  if (alt && !ctrl && k.sc >= SDL_SCANCODE_1 && k.sc <= SDL_SCANCODE_0) return macroKey(a, v, k.sc - SDL_SCANCODE_1, shift);
+  // Ctrl+keypad plus and minus: the master volume up or down (about a sixteenth a press, as the classic).
+  if (ctrl && !alt && (k.sc == SDL_SCANCODE_KP_PLUS || k.sc == SDL_SCANCODE_KP_MINUS)) {
+    const Song& song = a.doc.song();
+    if (song.mixer.empty()) return 0;
+    const ParamId id = mixerParam(song.masterId(), MixerParam::Volume);
+    const double now = getParam(song, id).value_or(0.8);
+    const double to = std::clamp(std::round((now + (k.sc == SDL_SCANCODE_KP_PLUS ? 0.0625 : -0.0625)) * 1000.0) / 1000.0, 0.0, 1.0);
+    a.doc.setParam(id, to, true);
+    say(std::string(i18n::tr("Master volume")) + " " + std::to_string(static_cast<int>(std::lround(to * 100))) + "%");
+    return 1;
+  }
+  // The keypad picks instruments as the classic one: 1 to 8 the instruments of the keypad's group
+  // of eight, Enter the next group (wraps); the cursor goes to the instrument's track.
+  if (!ctrl && !alt && ((k.sc >= SDL_SCANCODE_KP_1 && k.sc <= SDL_SCANCODE_KP_8) || k.sc == SDL_SCANCODE_KP_ENTER)) {
+    static int group = 0;
+    const Song& song = a.doc.song();
+    const int n = static_cast<int>(song.channels.size()), groups = std::max(1, (n + 7) / 8);
+    group = std::clamp(group, 0, groups - 1);
+    if (k.sc == SDL_SCANCODE_KP_ENTER) {
+      group = (group + 1) % groups;
+      say(std::string(i18n::tr("Keypad instruments")) + " " + trk::hex2(group * 8 + 1) + "-" + trk::hex2(std::min(n, group * 8 + 8)));
+      return 0;
+    }
+    const int i = group * 8 + (k.sc - SDL_SCANCODE_KP_1);
+    if (i >= n) return say(std::string(i18n::tr("No instrument")) + " " + trk::hex2(i + 1)), 0;
+    const ObjectId id = song.channels[static_cast<size_t>(i)].id;
+    a.selectChannel(id);
+    cursorToChannel(a, id);
+    return 0;
   }
   if (alt && !ctrl) {
     if (const int j = trackJump(k.sc); j >= 0) {
@@ -549,15 +900,6 @@ int trackerKey(App& a, const View& v, const KeyEv& k) {
       if (i >= 0 && i < static_cast<int>(song.patterns.size())) a.selectPattern(song.patterns[static_cast<size_t>(i)].id);
       return 1;
     }
-    if (k.sc == SDL_SCANCODE_RETURN) {  // insert a row (Shift: in every track), as Insert
-      if (!s.edit) return say(i18n::tr(noEdit)), 0;
-      const int row = c.row, lo = shift ? 0 : c.track, hi = shift ? tracks - 1 : c.track;
-      a.doc.beginGroup("insert row");
-      for (int x = lo; x <= hi; ++x)
-        applyEdit(a, v, x, "insert row", [&](Rows& r, const trk::Track&, const trk::Grid& g) { return trk::insertRow(r.notes, r.steps, r.props, g, row); });
-      a.doc.endGroup(false);
-      return 1;
-    }
     if (k.sc == SDL_SCANCODE_DELETE) {  // volume and effect
       if (!s.edit) return say(i18n::tr(noEdit)), 0;
       a.doc.beginGroup("clear volume and effect");
@@ -577,6 +919,13 @@ int trackerKey(App& a, const View& v, const KeyEv& k) {
 bool handleKey(App& a, const View& v, const KeyEv& k) {
   State& s = st();
   Cursor& c = s.cur;
+  if (k.sc < 0) {  // a note key let go while recording (record key-off): its note ends on the row playing
+    const int ti = -1 - k.sc;
+    if (!v.p || ti >= static_cast<int>(v.tracks.size()) || s.playRow < 0 || s.playRow >= v.g.rows) return false;
+    const int row = s.playRow, col = k.kc;
+    applyEdit(a, v, ti, "record key-off", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) { return trk::putOff(x.notes, tr, g, row, col); });
+    return true;
+  }
   if (!v.tracks.empty() && v.p)
     if (const int r = trackerKey(a, v, k); r >= 0) return r == 1;
   const bool ctrl = (k.mods & (KMOD_CTRL | KMOD_GUI)) != 0, shift = (k.mods & KMOD_SHIFT) != 0, alt = (k.mods & KMOD_ALT) != 0;
@@ -650,17 +999,37 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
   }
   const int ti = c.track;
   const trk::Track& t = v.tracks[static_cast<size_t>(ti)];
-  const Cell& cell = t.at(c.row, c.column);
   const Channel* ch = v.channels[static_cast<size_t>(ti)];
   const char* noEdit = "Edit mode is off: Esc turns it on (the keys only play)";
+  // Record pattern / Record song (the classic record modes): the keys edit the row playing and the
+  // cursor stays with it; in edit mode they edit the cursor's row and the cursor moves on by the
+  // edit step. Neither: the keys only play.
+  const bool rec = a.recordArmed && a.engine.playing() && s.playRow >= 0 && s.playRow < v.g.rows;
+  const bool canEdit = s.edit || rec;
+  const int row = rec ? s.playRow : c.row;
+  auto stepOn = [&] {
+    if (!rec) moveRow(v, s.step, true);
+  };
+  const Cell& cell = t.at(row, c.column);
+  // K-106: a row an imported module's voice sounds through: its volume column and effect are the
+  // module's own (trk::setModuleVolume / setModuleEffect say which edits are stored exactly).
+  int modK = -1;
+  const int modNote = c.field == Field::Volume || c.field == Field::Effect ? trk::moduleNoteAt(notesRef(*v.p, t.channel), t, v.g, row, c.column, &modK) : -1;
   switch (k.sc) {
     case SDL_SCANCODE_DELETE:
-      if (!s.edit) return say(i18n::tr(noEdit)), false;
+      if (!canEdit) return say(i18n::tr(noEdit)), false;
       if (s.sel.on) return clearBlock(v, a), true;
+      if (modNote >= 0) {
+        const trk::Result r = applyEdit(a, v, ti, "clear", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) {
+          return c.field == Field::Volume ? trk::setModuleVolume(x.notes, tr, g, row, c.column, -1) : trk::setModuleEffect(x.notes, tr, g, row, c.column, -1, 0);
+        });
+        if (r.refused.empty()) stepOn();
+        return true;
+      }
       applyEdit(a, v, ti, "clear", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) {
-        return trk::clearField(x.notes, x.steps, x.props, tr, g, c.row, c.column, c.field);
+        return trk::clearField(x.notes, x.steps, x.props, tr, g, row, c.column, c.field);
       });
-      moveRow(v, s.step, true);
+      stepOn();
       return true;
     case SDL_SCANCODE_INSERT:
     case SDL_SCANCODE_BACKSPACE: {
@@ -680,77 +1049,171 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
   if (c.field == Field::Note) {
     const int pitch = notePitch(a, k.sc);
     if (pitch >= 0) {
-      if (k.repeat) return false;
-      audition(a, k.sc, ch->id, pitch, a.typing.velocity);
+      // A held key repeats only in edit mode (the note goes on down the rows by the edit step), as
+      // the classic editor's key repeat; playing or recording, a held key is one note.
+      if (k.repeat && (!s.edit || rec || gMulti)) return false;
+      // Multichannel key jazz (Settings): notes only played go to the enabled tracks in turn, so
+      // a chord sounds on several instruments.
+      ObjectId playOn = ch->id;
+      if (!canEdit && gMultiJazz && v.tracks.size() > 1) {
+        static int jazz = -1;
+        jazz = nextMultiTrack(a, v.tracks, jazz < 0 || jazz >= static_cast<int>(v.tracks.size()) ? ti : jazz);
+        playOn = v.tracks[static_cast<size_t>(jazz)].channel;
+      }
+      if (!k.repeat) audition(a, k.sc, playOn, pitch, a.typing.velocity);
       // Record pattern / Record song: the note lands on the row playing (edit mode or not).
-      if (a.recordArmed && a.engine.playing() && s.playRow >= 0) {
-        const int row = s.playRow;
+      if (rec) {
         applyEdit(a, v, ti, "record note", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) {
           return trk::putNote(x.notes, tr, g, row, c.column, pitch, a.typing.velocity);
         });
+        if (auto it = s.held.find(k.sc); it != s.held.end()) it->second.track = ti, it->second.column = c.column;  // record key-off
+        // Multichannel record: the next note goes to the next enabled track.
+        if (gMultiRec && v.tracks.size() > 1) c.track = nextMultiTrack(a, v.tracks, ti), c.column = 0, c.digit = 0;
         return true;
       }
       if (!s.edit) return false;
       // A song without pattern clips: the pattern typed in becomes its first order entry (as a new
       // classic song starts with entry 00), so Play song plays it. One undo step with the note.
       const bool first = !trk::hasPatternEntries(a.doc.song());
+      // Multichannel edit (Settings; R4-09): each note goes to the cursor's track and the cursor to
+      // the next enabled track (a scope's right-click enables it). Notes held together are a chord:
+      // they land on the row the first of them went to, the row moving on once (by the edit step).
+      const bool multi = gMulti && v.tracks.size() > 1;
+      const bool chord = multi && s.chordRow >= 0 && s.chordRow < v.g.rows && otherNoteHeld(k.sc);
+      const int at = chord ? s.chordRow : c.row;
+      // R5-08: notes typed together (multichannel edit) are one undo step: a group opens with the
+      // first and closes when no note key is held any more (pumpPage, every frame).
+      if (multi && !s.chordGroup) {
+        a.doc.beginGroup("type chord");
+        s.chordGroup = true;
+      }
       if (first) a.doc.beginGroup("type note");
       applyEdit(a, v, ti, "type note", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) {
-        return trk::putNote(x.notes, tr, g, c.row, c.column, pitch, a.typing.velocity);
+        return trk::putNote(x.notes, tr, g, at, c.column, pitch, a.typing.velocity);
       });
       if (first) {
         a.doc.addClip(a.curPattern, 0, 0);
         a.doc.endGroup(false);
       }
-      moveRow(v, s.step, true);
+      if (!chord) {
+        s.chordRow = c.row;
+        moveRow(v, s.step, true);
+      }
+      if (multi) c.track = nextMultiTrack(a, v.tracks, ti), c.column = 0, c.digit = 0;
       return true;
     }
     if (isOffKey(k.sc)) {
-      if (!s.edit) return say(i18n::tr(noEdit)), false;
-      applyEdit(a, v, ti, "note off", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) { return trk::putOff(x.notes, tr, g, c.row, c.column); });
-      moveRow(v, s.step, true);
+      if (!canEdit) return say(i18n::tr(noEdit)), false;
+      applyEdit(a, v, ti, "note off", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) { return trk::putOff(x.notes, tr, g, row, c.column); });
+      stepOn();
       return true;
     }
     return false;
   }
-  if (!s.edit) {
+  if (!canEdit) {
     if (hexDigit(k.kc) >= 0) say(i18n::tr(noEdit));
     return false;
   }
-  auto advance = [&] {
-    if (c.digit + 1 < trk::fieldDigits(c.field)) {
-      ++c.digit;
-      return;
+  // Each digit or letter typed into a value goes in and the cursor moves down by the edit step,
+  // staying on the same digit (the classic editor: a column of values is typed straight down;
+  // Right moves on to the next digit, an edit step of 0 keeps the row).
+  auto advance = [&] { stepOn(); };
+  if (modNote >= 0) {
+    const std::vector<tracker::Cell> mcs = trk::moduleRows(notesRef(*v.p, t.channel)[static_cast<size_t>(modNote)], modK + 1);
+    if (modK >= static_cast<int>(mcs.size())) return false;
+    const tracker::Cell mc = mcs[static_cast<size_t>(modK)];
+    if (c.field == Field::Volume) {
+      const int nib = hexDigit(k.kc);
+      if (nib < 0) return false;
+      const int now = mc.vol >= 0x10 && mc.vol <= 0x50 ? mc.vol - 0x10 : 0;
+      const int want = std::min(setNibble(now, c.digit, nib), 0x40);
+      const trk::Result r = applyEdit(a, v, ti, "volume", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) {
+        return trk::setModuleVolume(x.notes, tr, g, row, c.column, want);
+      });
+      if (r.refused.empty()) {
+        say(std::string(i18n::tr("Module volume")) + " " + trk::hex2(want) + " " + i18n::tr("of 40"));
+        advance();
+      }
+      return true;
     }
-    c.digit = 0;
-    moveRow(v, s.step, true);
-  };
+    int efx = mc.efx, param = mc.param;
+    if (c.digit == 0) {
+      const int up = k.kc >= 'a' && k.kc <= 'z' ? k.kc - 'a' + 'A' : k.kc;
+      efx = up >= '0' && up <= '9' ? up - '0' : up >= 'A' && up <= 'Z' ? up - 'A' + 10 : -1;
+      if (efx < 0) return false;
+      if (efx != mc.efx || (mc.efx == 0 && mc.param == 0)) param = efx == 0x0C ? 0x40 : 0x80;  // a new effect starts at full volume, centre pan
+    } else {
+      const int nib = hexDigit(k.kc);
+      if (nib < 0) return false;
+      if (mc.efx == 0 && mc.param == 0) return say(i18n::tr("Type the effect first: 8 (pan) or C (volume)")), false;
+      param = setNibble(mc.param, c.digit - 1, nib);
+    }
+    const trk::Result r = applyEdit(a, v, ti, "effect", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) {
+      return trk::setModuleEffect(x.notes, tr, g, row, c.column, efx, param);
+    });
+    if (r.refused.empty()) {
+      say(efx == 0x0C ? std::string(i18n::tr("Module effect C: set volume")) + " " + trk::hex2(std::min(param, 0x40))
+                      : std::string(i18n::tr("Module effect 8: set pan")) + " " + trk::hex2(param));
+      if (c.digit >= 2) advance();
+    }
+    return true;
+  }
   const Note* note = cell.kind == Cell::On ? &notesRef(*v.p, t.channel)[static_cast<size_t>(cell.note)] : nullptr;
   if (c.field == Field::Effect) {
     const std::vector<trk::Effect> fx = note ? trk::effectsOf(*note) : std::vector<trk::Effect>{};
     const char shown = fx.empty() ? 0 : fx.front().letter;
     int value = fx.empty() ? 0 : fx.front().value;
     char letter = shown;
+    char offDigit = 0;  // G or P given a digit other than 0 or 1
+    static bool rHigh = false;  // R's high digit was past 7 (the value stops at 7F)
+    // The letter's own value as the note has it (its default when the note has none).
+    auto valueOf = [note](char l) {
+      const Note probe = note ? *note : Note{};
+      return l == 'G' || l == 'P' ? 1 : l == 'X' ? probe.modX : l == 'Y' ? probe.modY : l == 'R' ? probe.release : probe.fine & 0xFF;
+    };
     if (c.digit == 0) {
       const int up = k.kc >= 'a' && k.kc <= 'z' ? k.kc - 'a' + 'A' : k.kc;
       if (!std::strchr(trk::kEffectLetters, up) || up == 0) return false;
       letter = static_cast<char>(up);
-      if (letter != shown) {  // the letter's own value as the note has it
-        const Note probe = note ? *note : Note{};
-        value = letter == 'G' || letter == 'P' ? 1 : letter == 'X' ? probe.modX : letter == 'Y' ? probe.modY : letter == 'R' ? probe.release : probe.fine & 0xFF;
-      }
+      if (letter != shown) value = valueOf(letter);
     } else {
       const int nib = hexDigit(k.kc);
       if (nib < 0) return false;
-      if (!shown) return say(i18n::tr("Type the effect letter first: G P T X Y R")), false;
+      if (!shown) {
+        // R6-01: a letter typed at its default value (T00, X80 ...) changes nothing in the note, so it
+        // waits on the note ("T.."): the digits then set it.
+        const char held = pendingEffect(a, v.p->id, t.channel, note);
+        if (!held) return say(i18n::tr("Type the effect letter first: G P T X Y R")), false;
+        letter = held;
+        value = valueOf(held);
+      }
       value = setNibble(value, c.digit - 1, nib);
+      // R7-10: G and P are on or off: a digit that is neither 0 nor 1 (or a high digit past 0) says so.
+      if ((letter == 'G' || letter == 'P') && (c.digit == 1 ? nib != 0 : nib > 1)) offDigit = letter;
+      if (letter == 'R' && c.digit == 1) rHigh = nib > 7;
+      if (letter == 'R' && (value > 0x7F || (c.digit == 2 && rHigh))) offDigit = 'R';
     }
+    const Tick nStart = note ? note->start : 0;  // (the edit may move the notes: kept by value)
+    const int nPitch = note ? note->pitch : 0;
     const trk::Result r = applyEdit(a, v, ti, "effect", [&](Rows& x, const trk::Track& tr, const trk::Grid&) {
-      return trk::setEffectAt(x.notes, tr, c.row, c.column, shown, letter, value);
+      return trk::setEffectAt(x.notes, tr, row, c.column, shown, letter, value);
     });
     if (r.refused.empty()) {
-      say(trk::effectHelp(letter, value));
-      advance();
+      // Nothing changed (the letter at its default): the letter waits on this note for its digits.
+      // The letter still at its default value (T00 typed, or its first digit 0): it keeps waiting.
+      Note probe;
+      trk::setEffect(probe, letter, value);
+      gPendFx = {};
+      if (note && letter && trk::effectsOf(probe).empty()) gPendFx = {v.p->id, t.channel, nStart, nPitch, letter, a.doc.revision()};
+      if (offDigit == 'R')  // (round 08) the release velocity stops at 7F
+        say(i18n::tr("R is a release velocity, 00 to 7F: it stays at 7F"));
+      else if (offDigit)
+        say(std::string(1, offDigit) + i18n::tr(" is on or off: it shows 01 whatever the digits (Delete turns it off)"));
+      else
+        say(trk::effectHelp(letter, value));
+      // R7-04: the edit step applies once the effect is complete (its last digit): the letter and
+      // the high digit keep the row, so the digits after them land on the same note.
+      if (c.digit >= 2) advance();
     }
     return true;
   }
@@ -758,10 +1221,10 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
   if (nib < 0) return false;
   if (c.field == Field::Instrument) {
     if (cell.kind != Cell::On) return say(i18n::tr(cell.kind == Cell::Step ? "A rack step belongs to its channel" : "No note here")), false;
-    const int now = ti + 1;
+    const int now = a.doc.song().channelIndex(t.channel) + 1;
     const int want = setNibble(now, c.digit, nib);
     advance();
-    if (want - 1 != ti) moveToChannel(a, v, ti, cell.note, want - 1);
+    if (want != now) moveToChannel(a, v, ti, cell.note, want - 1);
     return true;
   }
   int now = 0;
@@ -769,7 +1232,7 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
     now = note ? note->velocity : cell.kind == Cell::Step ? stepsRef(*v.p, t.channel)[static_cast<size_t>(cell.step)] : 100;
     const int want = setNibble(now, c.digit, nib);
     const trk::Result r = applyEdit(a, v, ti, "volume", [&](Rows& x, const trk::Track& tr, const trk::Grid&) {
-      return trk::setVolume(x.notes, x.steps, tr, c.row, c.column, std::min(want, 127));
+      return trk::setVolume(x.notes, x.steps, tr, row, c.column, std::min(want, 127));
     });
     if (r.refused.empty()) advance();
     return true;
@@ -779,7 +1242,7 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
     now = note ? note->pan + 64 : cell.kind == Cell::Step && static_cast<size_t>(cell.step) < pr.size() ? pr[static_cast<size_t>(cell.step)].pan + 64 : 64;
     const int want = setNibble(now, c.digit, nib);
     const trk::Result r = applyEdit(a, v, ti, "pan", [&](Rows& x, const trk::Track& tr, const trk::Grid&) {
-      return trk::setPan(x.notes, x.props, tr, c.row, c.column, std::min(want, 128));
+      return trk::setPan(x.notes, x.props, tr, row, c.column, std::min(want, 128));
     });
     if (r.refused.empty()) advance();
     return true;
@@ -856,6 +1319,48 @@ static bool windowFrontNow(const char* window) {
   return w && w->DockIsActive && w->DockNode && w->DockNode->VisibleWindow == w;
 }
 
+void status(const std::string& text) { say(text); }
+int trackBase(const App& a) { return a.settings.getNumber("tracker.trackBase") >= 1 ? 1 : 0; }
+
+// R4-09, R5-07: the tracks multichannel edit leaves out, by channel, kept per project as this
+// person's view state: never saved in the song, never in the app's settings (another project's
+// channels are its own), and a moved track keeps its mark. The open project's set belongs to its
+// session (the Document's project epoch: a new, opened or recovered project starts a new one), so
+// two unsaved projects never share one; saving it under a name keeps the set, and the set is filed
+// under that name for when the project is opened again in this run.
+namespace {
+std::set<ObjectId>& multiOff(const App& a) {
+  static std::map<std::string, std::set<ObjectId>> byFile;  // saved projects' sets (this run)
+  static std::set<ObjectId> current;
+  static uint64_t epoch = ~uint64_t{0};
+  static std::string file;
+  const uint64_t now = a.doc.projectEpoch();
+  const std::string& f = a.projectFile();
+  if (now != epoch) {  // another project: file the old set, take the new one's (none: all on)
+    if (!file.empty()) byFile[file] = current;
+    epoch = now;
+    file = f;
+    const auto it = f.empty() ? byFile.end() : byFile.find(f);
+    current = it == byFile.end() ? std::set<ObjectId>{} : it->second;
+  } else if (f != file) {  // the same project saved (as): its set goes with it
+    if (file.empty() && current.empty())
+      if (const auto it = byFile.find(f); it != byFile.end()) current = it->second;  // (opened, then named this frame)
+    file = f;
+  }
+  if (!file.empty()) byFile[file] = current;
+  return current;
+}
+}  // namespace
+bool multiTrackOn(App& a, ObjectId channel) {
+  if (a.doc.song().channelIndex(channel) < 0) return false;
+  return multiOff(a).count(channel) == 0;
+}
+void toggleMultiTrack(App& a, ObjectId channel) {
+  if (a.doc.song().channelIndex(channel) < 0) return;
+  std::set<ObjectId>& off = multiOff(a);
+  if (!off.erase(channel)) off.insert(channel);
+}
+
 void keysBackToPattern() {
   if (windowFrontNow("Pattern editor")) st().wantFocus = true;
 }
@@ -863,45 +1368,13 @@ void keysBackToPattern() {
 void setExtended(App& a, bool on) {
   if (gExtended == on) return;
   gExtended = on;
-  layoutui::setRegionVisible(a, "tracker.header", !on);
-  // The band holds the page strip: without it the pattern page stays in front (its bar has the
-  // button that brings the band back). T-05: the region change docks the pages again a frame or
-  // two later (the first page docked comes to the front), so the request waits for that.
-  if (on || windowFrontNow("Pattern editor")) {
+  // The band shrinks to one strip (the header draws it; the classic Extend): the pattern page comes
+  // to the front with about 40 rows; the strip's own button brings the band back.
+  if (on) {
+    layoutui::setRegionVisible(a, "tracker.header", true);  // (a band hidden from View > Panels comes back as the strip)
     showPage(a, "Pattern editor");
     st().pendingHold = 4;
   }
-}
-
-void transposeScope(App& a, TransposeScope scope, int semis) {
-  if (scope == TransposeScope::Block) return transposeBlock(a, semis);
-  const View v = build(a);
-  if (!v.p || v.tracks.empty()) return;
-  clampCursor(v);
-  const int t0 = scope == TransposeScope::Track ? st().cur.track : 0;
-  const int t1 = scope == TransposeScope::Track ? st().cur.track : static_cast<int>(v.tracks.size()) - 1;
-  int refused = 0;
-  a.doc.beginGroup("transpose");
-  for (int t = t0; t <= t1 && t < static_cast<int>(v.tracks.size()); ++t)
-    refused += applyEdit(a, v, t, "transpose", [&](Rows& x, const trk::Track&, const trk::Grid& g) {
-                 return trk::transpose(x.notes, g, 0, std::max(g.rows - 1, 0) + 1024, semis);
-               }).refusedCount;
-  a.doc.endGroup(false);
-  if (refused > 0) say(std::to_string(refused) + " " + i18n::tr("notes would leave the note range and stay where they are"));
-}
-
-void scaleBlock(App& a, bool expand) {
-  const View v = build(a);
-  if (!v.p || v.tracks.empty()) return;
-  clampCursor(v);
-  int t0, t1, r0, r1;
-  if (st().sel.on) blockRange(&t0, &t1, &r0, &r1);
-  else t0 = t1 = st().cur.track, r0 = 0, r1 = v.g.rows - 1;
-  a.doc.beginGroup(expand ? "expand rows" : "shrink rows");
-  for (int t = t0; t <= t1 && t < static_cast<int>(v.tracks.size()); ++t)
-    applyEdit(a, v, t, expand ? "expand rows" : "shrink rows",
-              [&](Rows& x, const trk::Track&, const trk::Grid& g) { return trk::scaleRows(x.notes, g, r0, r1, expand); });
-  a.doc.endGroup(false);
 }
 
 namespace {
@@ -914,6 +1387,177 @@ bool menuView(App& a, View* v) {
   return true;
 }
 }  // namespace
+
+void transposeScope(App& a, TransposeScope scope, int semis, bool current) {
+  const Song& song = a.doc.song();
+  const ObjectId inst = current ? a.selChannel : kNoId;
+  if (current && song.channelIndex(inst) < 0) {
+    say(i18n::tr("No instrument selected"));
+    return;
+  }
+  int refused = 0;
+  if (scope == TransposeScope::Song) {
+    // Every pattern of the song (one undo step), the instrument's notes or all of them.
+    std::vector<std::pair<ObjectId, ObjectId>> work;  // pattern, channel
+    for (const Pattern& p : song.patterns)
+      for (const auto& [ch, notes] : p.notes)
+        if (!notes.empty() && (!current || ch == inst)) work.emplace_back(p.id, ch);
+    a.doc.beginGroup("transpose");
+    for (const auto& [pid, ch] : work) {
+      const Pattern* p = a.doc.song().pattern(pid);
+      if (!p) continue;
+      const trk::Grid g = trk::gridOf(a.doc.song(), *p);
+      Rows r = rowsOf(*p, ch);
+      const Rows before = r;
+      const trk::Result res = trk::transpose(r.notes, g, 0, std::max(g.rows - 1, 0) + 1024, semis);
+      refused += res.refusedCount;
+      if (res.changed) commit(a, pid, ch, r, before, "transpose");
+    }
+    a.doc.endGroup(false);
+  } else {
+    const View v = build(a);
+    if (!v.p || v.tracks.empty()) return;
+    clampCursor(v);
+    int t0 = 0, t1 = static_cast<int>(v.tracks.size()) - 1, r0 = 0, r1 = std::max(v.g.rows - 1, 0) + 1024;
+    if (scope == TransposeScope::Track) t0 = t1 = st().cur.track;
+    if (scope == TransposeScope::Block) blockRange(&t0, &t1, &r0, &r1);
+    bool any = false;
+    a.doc.beginGroup("transpose");
+    for (int t = t0; t <= t1 && t < static_cast<int>(v.tracks.size()); ++t) {
+      if (current && v.tracks[static_cast<size_t>(t)].channel != inst) continue;
+      any = true;
+      refused += applyEdit(a, v, t, "transpose", [&](Rows& x, const trk::Track&, const trk::Grid& g) {
+                   return trk::transpose(x.notes, g, r0, r1, semis);
+                 }).refusedCount;
+    }
+    a.doc.endGroup(false);
+    if (current && !any) {
+      say(i18n::tr(scope == TransposeScope::Pattern ? "The current instrument has no track in this pattern"
+                                                    : "The current instrument's notes are not in this track or block"));
+      return;
+    }
+  }
+  if (refused > 0) say(std::to_string(refused) + " " + i18n::tr("notes would leave the note range and stay where they are"));
+}
+
+// The Advanced edit box's instrument remap: the old instrument's notes (and rack steps, as notes)
+// move to the new instrument's track, in the cursor's track, the pattern, every pattern or the
+// block. One undo step; the notes keep their place, pitch and properties.
+void remapInstrument(App& a, TransposeScope scope, ObjectId from, ObjectId to) {
+  const Song& song = a.doc.song();
+  if (song.channelIndex(from) < 0 || song.channelIndex(to) < 0) {
+    say(i18n::tr("Pick the old and the new instrument first"));
+    return;
+  }
+  if (from == to) {
+    say(i18n::tr("The old and the new instrument are the same"));
+    return;
+  }
+  std::vector<ObjectId> pats;
+  int lo = 0, hi = 1 << 20;  // every row (and notes past the end)
+  if (scope == TransposeScope::Song) {
+    for (const Pattern& p : song.patterns) pats.push_back(p.id);
+  } else {
+    View v;
+    if (!menuView(a, &v)) return;
+    const State& s = st();
+    if (scope == TransposeScope::Track && v.tracks[static_cast<size_t>(s.cur.track)].channel != from) {
+      say(i18n::tr("The cursor's track is not the old instrument's: Pattern remaps wherever it is"));
+      return;
+    }
+    if (scope == TransposeScope::Block) {
+      int t0, t1;
+      if (!s.sel.on) {
+        say(i18n::tr("No block marked"));
+        return;
+      }
+      blockRange(&t0, &t1, &lo, &hi);
+      bool inside = false;
+      for (int t = t0; t <= t1 && t < static_cast<int>(v.tracks.size()); ++t) inside = inside || v.tracks[static_cast<size_t>(t)].channel == from;
+      if (!inside) {
+        say(i18n::tr("The block does not hold the old instrument's track"));
+        return;
+      }
+    }
+    pats.push_back(v.p->id);
+  }
+  int moved = 0;
+  a.doc.beginGroup("remap instrument");
+  for (ObjectId pid : pats) {
+    const Pattern* p = a.doc.song().pattern(pid);
+    if (!p) continue;
+    const trk::Grid g = trk::gridOf(a.doc.song(), *p);
+    Rows src = rowsOf(*p, from), dst = rowsOf(*p, to);
+    const Rows srcBefore = src, dstBefore = dst;
+    std::vector<Note> take = trk::copyRows(src.notes, src.steps, src.props, g, lo, hi);
+    if (take.empty()) continue;
+    trk::cutRows(src.notes, src.steps, g, lo, hi);
+    for (Note& n : take) {
+      n.start += g.tickOf(lo);
+      dst.notes.push_back(n);
+    }
+    trk::normalize(dst.notes);
+    moved += static_cast<int>(take.size());
+    commit(a, pid, from, src, srcBefore, "remap instrument");
+    commit(a, pid, to, dst, dstBefore, "remap instrument");
+  }
+  a.doc.endGroup(false);
+  const Channel* nc = a.doc.song().channel(to);
+  say(moved ? std::to_string(moved) + " " + i18n::tr(moved == 1 ? "note moved to" : "notes moved to") + " " + (nc ? nc->name : std::string())
+            : std::string(i18n::tr("The old instrument has no notes there")));
+}
+
+trk::Masks& masks() { return gMasks; }
+bool masking() { return gMasking; }
+void setMasking(bool on) { gMasking = on; }
+
+void scaleBlock(App& a, bool expand) {
+  View v = build(a);
+  if (!v.p || v.tracks.empty()) return;
+  clampCursor(v);
+  const char* label = expand ? "expand rows" : "shrink rows";
+  // N-03: with a block, the block (refused when a note would be pushed past the block's end); with
+  // none, the whole pattern as the classic Expand and Shrink: Expand doubles the pattern's length
+  // first, so nothing falls off; Shrink halves it after (an odd number of bars keeps its length).
+  if (st().sel.on) {
+    int t0, t1, r0, r1;
+    blockRange(&t0, &t1, &r0, &r1);
+    if (expand) {
+      // R3-04: the notes stay inside the block (below it they would land on the notes there).
+      const Tick a0 = v.g.tickOf(r0), b0 = v.g.tickOf(r1 + 1);
+      for (int t = t0; t <= t1 && t < static_cast<int>(v.tracks.size()); ++t)
+        for (const Note& n : notesRef(*v.src[static_cast<size_t>(t)], v.tracks[static_cast<size_t>(t)].channel))
+          if (n.start >= a0 && n.start < b0 && a0 + (n.start - a0) * 2 >= b0) {
+            say(i18n::tr("Expand would push notes past the block's end: mark a block twice as long (its second half empty), or expand without a block"));
+            return;
+          }
+    }
+    a.doc.beginGroup(label);
+    for (int t = t0; t <= t1 && t < static_cast<int>(v.tracks.size()); ++t)
+      applyEdit(a, v, t, label, [&](Rows& x, const trk::Track&, const trk::Grid& g) { return trk::scaleRows(x.notes, g, r0, r1, expand); });
+    a.doc.endGroup(false);
+    return;
+  }
+  const ObjectId pid = v.p->id;
+  const int bars = v.p->bars, spb = v.p->stepsPerBar, rows = v.g.rows;
+  // R3-05: at most 256 rows (as the classic Expand), and never past the longest pattern.
+  if (expand && (bars * 2 > kMaxPatternBars || rows * 2 > 256)) {
+    say(i18n::tr("A pattern is at most 256 rows long: Expand would double it past that"));
+    return;
+  }
+  a.doc.beginGroup(label);
+  if (expand) {
+    trk::setPatternLengthInSong(a.doc, pid, bars * 2, spb);  // R6-02: the song's later entries move along
+    v = build(a);
+  }
+  if (v.p && v.p->id == pid)
+    for (int t = 0; t < static_cast<int>(v.tracks.size()); ++t)
+      applyEdit(a, v, t, label, [&](Rows& x, const trk::Track&, const trk::Grid& g) { return trk::scaleRows(x.notes, g, 0, rows - 1, expand); });
+  if (!expand && bars % 2 == 0) trk::setPatternLengthInSong(a.doc, pid, bars / 2, spb);
+  a.doc.endGroup(false);
+  say(i18n::tr(expand ? "The pattern is twice as long, its notes twice as far apart" : "The pattern's notes twice as close"));
+}
+
 
 void blockOp(App& a, BlockOp op) {
   View v;
@@ -967,6 +1611,19 @@ void interpolate(App& a) {
   else if (changed) say(i18n::tr(f == Field::Pan ? "Pan interpolated" : f == Field::Effect ? "Effect interpolated" : "Volume interpolated"));
 }
 
+// R3-06: an instrument picked in the header's list: the cursor goes to its track (the notes typed
+// next are its), and the pattern keeps the keys.
+void cursorToChannel(App& a, ObjectId channel) {
+  View v;
+  if (menuView(a, &v))
+    for (int t = 0; t < static_cast<int>(v.tracks.size()); ++t)
+      if (v.tracks[static_cast<size_t>(t)].channel == channel && st().cur.track != t) {
+        st().cur.track = t, st().cur.column = 0, st().cur.field = Field::Note, st().cur.digit = 0;
+        break;
+      }
+  keysBackToPattern();
+}
+
 void addColumn(App& a, int delta) {
   View v;
   if (!menuView(a, &v)) return;
@@ -982,7 +1639,22 @@ int cursorField() { return static_cast<int>(st().cur.field); }
 bool sdlKey(App& a, int scancode, int keycode, int mods, bool down, bool repeat) {
   State& s = st();
   // Caps Lock comes as a key down when it locks and a key up when it unlocks (macOS): each is a press.
+#ifdef __APPLE__
+  // (N-02: only macOS; elsewhere every press sends a down and an up, and the up is not a press.)
   if (scancode == SDL_SCANCODE_CAPSLOCK && !down && trackerKeySet() && hasKeyboard()) down = true, repeat = false;
+#endif
+  // Right Shift alone (pressed and let go with no other key) records the pattern, as the classic
+  // Right Shift; held with another key it is an ordinary Shift.
+  static bool rshift = false, rshiftUsed = false;
+  if (scancode == SDL_SCANCODE_RSHIFT) {
+    if (down && !repeat) rshift = true, rshiftUsed = false;
+    if (!down && rshift && !rshiftUsed && trackerKeySet() && hasKeyboard()) s.keys.push_back({SDL_SCANCODE_RSHIFT, 0, 0, false});
+    if (!down) rshift = false;
+    return false;
+  }
+  if (down && rshift) rshiftUsed = true;
+  // Files shown in the band: Backspace is its parent folder (the classic Disk op.), not a row edit.
+  if (down && scancode == SDL_SCANCODE_BACKSPACE && (mods & (KMOD_CTRL | KMOD_GUI | KMOD_ALT | KMOD_SHIFT)) == 0 && hasKeyboard() && diskParent(a)) return true;
   if (down && hasKeyboard() && trackerTakes(scancode, mods)) {
     s.keys.push_back({scancode, keycode, mods, repeat});
     return true;
@@ -990,6 +1662,9 @@ bool sdlKey(App& a, int scancode, int keycode, int mods, bool down, bool repeat)
   if (!down) {
     if (const auto it = s.held.find(scancode); it != s.held.end()) {
       a.engine.noteOff(it->second.channel, it->second.pitch);
+      // Record key-off notes (Settings): a key let go while recording ends its note on the row playing.
+      if (gRecOff && it->second.track >= 0 && a.recordArmed && a.engine.playing() && s.playRow >= 0)
+        s.keys.push_back({-1 - it->second.track, it->second.column, 0, false});
       s.held.erase(it);
     }
     return false;
@@ -1019,6 +1694,10 @@ void showPage(App& a, const char* window) {
   }
   if (std::strcmp(window, "Loupe") == 0) {  // T-11: the pinned panel docks with the centre's pages: it comes to the front
     a.settings.set("ui.loupePinned", true);
+    // The instrument editor gives the lower band to the audio editor (the classic sample editor
+    // replaces the instrument editor; both edit the current instrument).
+    a.settingsChannel = kNoId;
+    if (bool* f = layoutui::windowOpenFlag(a, "Device chain")) *f = false;
     // The selected channel's sample, as the classic sample editor edits the current instrument's.
     if (const Channel* ch = a.doc.song().channel(a.selChannel); ch && ch->plugin.type == "gl.sampler" && !ch->plugin.data.empty())
       packs::openAudioEditor(a, ch->plugin.data, ch->id);
@@ -1034,6 +1713,58 @@ void showPage(App& a, const char* window) {
   if (std::strcmp(window, "Pattern editor") == 0) st().wantFocus = true;
 }
 
+namespace {
+int gCloseAsked = -10;  // the frame of the main window's close request a page took (closePageOnCloseRequest)
+
+// The focused window when it is a page docked in the centre other than the pattern (else null).
+ImGuiWindow* frontPage() {
+  if (!GImGui) return nullptr;
+  ImGuiWindow* nav = GImGui->NavWindow;
+  ImGuiWindow* w = nav ? nav->RootWindow : nullptr;
+  const ImGuiWindow* pe = ImGui::FindWindowByName("###Pattern editor");
+  if (!w || !pe || w == pe || !w->DockIsActive || !w->DockNode || w->DockNode != pe->DockNode) return nullptr;
+  return w;
+}
+}  // namespace
+
+void stepInstrument(App& a, int d) {
+  const View v = build(a);
+  if (!v.p || v.tracks.empty()) return;
+  State& s = st();
+  s.sel.on = false;
+  s.cur.track = std::clamp(s.cur.track + d, 0, static_cast<int>(v.tracks.size()) - 1);
+  s.cur.column = 0, s.cur.field = Field::Note, s.cur.digit = 0;
+  a.selChannel = s.cursorChannel = v.tracks[static_cast<size_t>(s.cur.track)].channel;
+  s.wantFocus = true;
+}
+
+bool closePageOnCloseRequest(App& a) {
+  if (!(layoutui::active() == layout::Preset::Tracker && layoutui::shellBuilt(a, layout::Preset::Tracker)) || !frontPage()) return false;
+  gCloseAsked = ImGui::GetFrameCount();
+  return true;
+}
+
+bool closeFrontPageKey(App& a) {
+  ImGuiIO& io = ImGui::GetIO();
+  const bool asked = ImGui::GetFrameCount() - gCloseAsked <= 2;  // (asked between frames: taken on the next)
+  gCloseAsked = -10;
+  if (io.WantTextInput || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return false;
+  const bool esc = ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !keys::escapeBusy();
+  const bool cmdW = asked || (ImGui::IsKeyPressed(ImGuiKey_W, false) && (io.KeySuper || io.KeyCtrl) && !io.KeyAlt && !io.KeyShift);
+  if (!esc && !cmdW) return false;
+  ImGuiWindow* w = frontPage();
+  if (!w) return false;
+  const char* id = ui::stableWindowName(w->Name);
+  static const char* const kStrip[] = {"Playlist", "Piano roll", "Channel rack", "Mixer", "Live pads", "Loupe"};
+  bool strip = false;
+  for (const char* n : kStrip) strip = strip || std::strcmp(id, n) == 0;
+  if (!strip)
+    if (bool* f = layoutui::windowOpenFlag(a, id)) *f = false;  // closed, not left behind as a hidden tab
+  if (esc) keys::claimEscape();
+  showPage(a, "Pattern editor");
+  return true;
+}
+
 void bringPage(const char* window) {
   st().pendingPage = window;
   st().pendingFrames = st().pendingWait = st().pendingHold = 0;
@@ -1046,6 +1777,10 @@ void pumpPage(App& a) {
   static int pumped = -1;
   if (pumped == ImGui::GetFrameCount()) return;
   pumped = ImGui::GetFrameCount();
+  if (s.chordGroup && s.held.empty()) {  // R5-08: the chord's keys are all up: its notes are one step
+    a.doc.endGroup(false);
+    s.chordGroup = false;
+  }
   if (s.pendingPage.empty()) return;
   if (s.pendingHold > 0) {  // the layout docks its pages again first
     --s.pendingHold;
@@ -1064,7 +1799,7 @@ void pumpPage(App& a) {
   s.pendingWait += 1;
   if (front || (open && !*open) || s.pendingFrames > 60 || s.pendingWait > 180) {
     s.pendingWait = 0;
-    if (w && s.pendingFrames <= 60) ImGui::FocusWindow(w);
+    if (w && s.pendingFrames <= 60 && !ImGui::FindBlockingModal(w)) ImGui::FocusWindow(w);  // (a prompt stays open)
     s.pendingPage.clear();
     return;
   }
@@ -1092,7 +1827,12 @@ void patternEditor(App& a) {
   s.hasKb = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !io.WantTextInput;
   if (hadKb && !s.hasKb) releaseAll(a);  // the keyboard went elsewhere: no note keeps sounding
   if (s.wantFocus) {
-    ImGui::SetWindowFocus("###Pattern editor");  // the part window ("Label###English"; focusing the child would pick no dock tab)
+    // The part window ("Label###English"; focusing the child would pick no dock tab). R7-01: never
+    // over a prompt: a header button's click asks for the keys back on the frame its own prompt
+    // (App::confirm: Clean up, Replace) opens, and a plain focus closed every popup above the
+    // pattern, so the prompt vanished before it was drawn.
+    if (ImGuiWindow* w = ImGui::FindWindowByName("###Pattern editor"); w && !ImGui::FindBlockingModal(w))
+      ImGui::FocusWindow(w);
     s.wantFocus = false;
   }
   View v = build(a);
@@ -1205,7 +1945,7 @@ void patternEditor(App& a) {
     m.colW = std::round(m.cw * static_cast<float>(noteChars()) + 6 * k);
     m.pad = std::round(4 * k);
     m.numW = std::round(m.cw * 3 + 10 * k);
-    m.rowH = std::round(pf * 1.12f + 2);
+    m.rowH = std::round(pf * (gTall ? 1.5f : 1.12f) + 2);
     return m;
   };
   auto tracksW = [&](const Metrics& m, size_t n) {
@@ -1219,7 +1959,11 @@ void patternEditor(App& a) {
     const Metrics m0 = metricsAt(fs);
     while (shown > 1 && tracksW(m0, shown) + m0.numW * 2 > areaW) --shown;
   }
-  const float minRows = 27;  // T-20: the classic view's 27 rows (13 each side of the edit row) before the glyphs grow
+  // Settings' "Visible tracks": at most that many share the width (wider tracks, the rest scroll).
+  if (gVisible > 0) shown = std::min(shown, static_cast<size_t>(gVisible));
+  // T-20: the classic view's 27 rows (13 each side of the edit row) before the glyphs grow; R3-09:
+  // extended, about 40 (the room goes to rows, not to bigger glyphs).
+  const float minRows = gExtended ? 41 : 27;
   const float pfMax = std::max(fs, std::min(std::floor(fs * 2.2f), std::floor(((a1.y - a0.y - headH) / minRows - 2) / 1.12f)));
   float pf = fs;
   for (float t = pfMax; t > fs; t -= 1) {
@@ -1275,6 +2019,11 @@ void patternEditor(App& a) {
   };
   scrollTo(first);
   const float gx0 = a0.x + numW, gx1 = a1.x - numW;  // the tracks' area
+  // Only whole tracks show: tracks of different widths (a chord column more) can leave a gap at the
+  // right too narrow for the next one; the gap stays empty rather than showing part of a track.
+  int lastShown = std::clamp(first, 0, std::max(0, nTracks - 1));
+  while (lastShown + 1 < nTracks && trackX[static_cast<size_t>(lastShown + 1)] + trackW[static_cast<size_t>(lastShown + 1)] - scrollX <= viewW + 1) ++lastShown;
+  const float gxEnd = lastShown + 1 < nTracks ? std::min(gx1, gx0 + trackX[static_cast<size_t>(lastShown)] + trackW[static_cast<size_t>(lastShown)] - scrollX + 1) : gx1;
   // T-19: a scrollbar under the tracks when they do not all fit.
   const bool hbar = lastFirst > 0;
   const float sbH = hbar ? std::max(9.0f, std::round(fs * 0.75f)) : 0.0f;
@@ -1295,6 +2044,7 @@ void patternEditor(App& a) {
     *row = firstRow + static_cast<int>(std::floor((m.y - body0) / rowH));
     const float lx = m.x - gx0 + scrollX;
     *track = -1;
+    if (m.x >= gxEnd) return;  // the empty gap after the last whole track
     for (size_t i = 0; i < v.tracks.size(); ++i) {
       const float l = trackX[i] + inset[i];
       if (lx >= trackX[i] && lx < trackX[i] + trackW[i] + 1) {
@@ -1391,16 +2141,24 @@ void patternEditor(App& a) {
     const pixelgrid::Span sy = pixelgrid::block(y0, y1, dpp, 0, 0);
     dl->AddRectFilled(ImVec2(pixelgrid::edge(l, dpp), sy.x0), ImVec2(pixelgrid::edge(r, dpp), sy.x1), col);
   };
-  {  // before the first row and after the last: shaded
-    const float yTop = body0 + static_cast<float>(-firstRow) * rowH, yEnd = body0 + static_cast<float>(v.g.rows - firstRow) * rowH;
+  // Before the first row and after the last (shaded below; the track lines go on through them).
+  const float yTop = body0 + static_cast<float>(-firstRow) * rowH, yEnd = body0 + static_cast<float>(v.g.rows - firstRow) * rowH;
+  {
     const ImU32 shade = theme::mix(P.well, P.surface950, 0.75f);
     if (yTop > body0) band(body0, std::min(yTop, body1), a0.x, a1.x, shade);
     if (yEnd < body1) band(std::max(yEnd, body0), body1, a0.x, a1.x, shade);
+    // R8-03: an imported pattern's rows past what the song plays (whole bars round it up): shaded
+    // lighter, so the module's own length reads at a glance.
+    if (const int played = trk::playedRows(a.doc.song(), *v.p, v.g); played < v.g.rows) {
+      const float yPlay = body0 + static_cast<float>(played - firstRow) * rowH;
+      if (yPlay < std::min(yEnd, body1)) band(std::max(yPlay, body0), std::min(yEnd, body1), a0.x, a1.x, theme::withAlpha(shade, 0.6f));
+    }
   }
   for (int i = 0; i < visRows; ++i) {
     const int row = firstRow + i;
     if (row < 0 || row >= v.g.rows) continue;
     const float y = body0 + static_cast<float>(i) * rowH;
+    if (!gBeats) continue;
     if (row % v.g.rowsPerBar == 0) band(y, y + rowH, a0.x, a1.x, theme::withAlpha(P.gridBar, 0.55f));
     else if (row % v.g.rowsPerBeat == 0) band(y, y + rowH, a0.x, a1.x, theme::withAlpha(P.gridBeat, 0.45f));
   }
@@ -1419,7 +2177,7 @@ void patternEditor(App& a) {
     if (row < 0 || row >= v.g.rows) continue;
     const float y = body0 + static_cast<float>(i) * rowH + std::round((rowH - pf) * 0.5f);
     const std::string t = trk::rowText(row, hex);
-    const ImU32 col = row % v.g.rowsPerBeat == 0 ? P.text : P.textFaint;
+    const ImU32 col = !gBeats || row % v.g.rowsPerBeat == 0 ? P.text : P.textFaint;
     const float tw = mono->CalcTextSizeA(pf, FLT_MAX, 0, t.c_str()).x;
     dl->AddText(mono, pf, ImVec2(std::round(a0.x + numW - 6 - tw), y), col, t.c_str());
     dl->AddText(mono, pf, ImVec2(std::round(a1.x - numW + 6), y), col, t.c_str());
@@ -1431,7 +2189,8 @@ void patternEditor(App& a) {
   }
 
   // ---- tracks ----
-  dl->PushClipRect(ImVec2(gx0, a0.y), ImVec2(gx1, a1.y), true);
+  if (gxEnd < gx1 - 1) dl->AddRectFilled(ImVec2(gxEnd, a0.y), ImVec2(gx1, a1.y), theme::mix(P.well, P.surface950, 0.75f));
+  dl->PushClipRect(ImVec2(gx0, a0.y), ImVec2(gxEnd, a1.y), true);
   const Song& sg = a.doc.song();
   const ops::ChannelSolo& solo = soloMemory();
   int hoverTrackHead = -1;
@@ -1440,16 +2199,23 @@ void patternEditor(App& a) {
     const Channel* ch = v.channels[ti];
     const float tx = gx0 + trackX[ti] - scrollX;
     const float tw = trackW[ti];
-    if (tx > gx1 || tx + tw < gx0) continue;
+    if (tx >= gxEnd || tx + tw < gx0) continue;
     // Separator.
     const pixelgrid::Span sep = pixelgrid::line(tx + tw, dpp);
-    dl->AddRectFilled(ImVec2(sep.x0, a0.y), ImVec2(sep.x1, a1.y), P.line);
+    dl->AddRectFilled(ImVec2(sep.x0, a0.y), ImVec2(sep.x1, gFrames ? a1.y : a0.y + headH), P.line);  // (no frames: the headers only)
+    // K-106 (refs 100, 140): the track columns run on through the empty space above the first row and
+    // below the last, as the classic screen's channel boxes do; on the darker shade there the line
+    // is drawn lighter (the rows' own ground) so it still reads.
+    if (gFrames) {
+      if (yTop > body0) dl->AddRectFilled(ImVec2(sep.x0, body0), ImVec2(sep.x1, std::min(yTop, body1)), P.well);
+      if (yEnd < body1) dl->AddRectFilled(ImVec2(sep.x0, std::max(yEnd, body0)), ImVec2(sep.x1, body1), P.well);
+    }
     // Header: colour bar, number and name, the mute lamp, + and - columns.
     const bool muted = ch->muted, soloed = ops::channelSoloed(sg, ch->id, solo);
     const ImVec2 h0(tx, a0.y), h1(tx + tw, a0.y + headH - 1);
     trackerview::bevelBox(dl, h0, h1, false);  // a raised header, as the band above
     dl->AddRectFilled(h0, ImVec2(h1.x, h0.y + 3), theme::rgb(ch->color, muted ? 0.35f : 1.0f));
-    const std::string name = std::to_string(ti + 1) + " " + ch->name;
+    const std::string name = gNumbers ? std::to_string(sg.channelIndex(ch->id) + trackBase(a)) + " " + ch->name : ch->name;
     const float lampW = std::round(fs * 0.7f);
     const float btnW = std::round(cwH * 1.6f);
     theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(h0.x + 6, std::round(h0.y + 3 + (headH - 4 - fs) * 0.5f)), tw - 12 - lampW - btnW * 2 - 8,
@@ -1487,6 +2253,27 @@ void patternEditor(App& a) {
     const std::vector<Note>& tNotes = notesRef(*v.src[ti], t.channel);
     const std::vector<uint8_t>& tSteps = stepsRef(*v.src[ti], t.channel);
     const std::vector<StepProps>& tProps = propsRef(*v.src[ti], t.channel);
+    // K-106: an imported module's cells, in its own notation, on the rows each voice sounds through
+    // (read from the notes' cells, nothing converted or stored).
+    std::vector<tracker::Cell> mod;
+    std::vector<uint8_t> modSet;
+    for (size_t i = 0; i < tNotes.size() && i < t.col.size(); ++i) {
+      const Note& n = tNotes[i];
+      if (n.tracker.empty() || t.col[i] >= t.columns || v.g.rowTicks <= 0 || n.start < 0) continue;
+      if (mod.empty()) mod.assign(static_cast<size_t>(std::max(0, t.rows)) * static_cast<size_t>(t.columns), {}), modSet.assign(mod.size(), 0);
+      const int startRow = static_cast<int>(n.start / v.g.rowTicks);
+      // The rows the note covers (trk::moduleNoteAt's rule, so an edit finds the cell shown).
+      const Tick end = n.start + std::max<Tick>(1, n.length);
+      const int cover = std::max(1, std::min(static_cast<int>((end + v.g.rowTicks - 1) / v.g.rowTicks), v.g.rows) - startRow);
+      const std::vector<tracker::Cell> cells = trk::moduleRows(n, std::min(cover, std::max(0, t.rows - startRow)));
+      for (size_t k = 0; k < cells.size(); ++k) {
+        const int r = startRow + static_cast<int>(k);
+        if (r >= t.rows) break;
+        const size_t at = static_cast<size_t>(r) * static_cast<size_t>(t.columns) + static_cast<size_t>(t.col[i]);
+        mod[at] = cells[k];
+        modSet[at] = 1;
+      }
+    }
     for (int i = 0; i < visRows; ++i) {
       const int row = firstRow + i;
       if (row < 0 || row >= v.g.rows) continue;
@@ -1496,11 +2283,32 @@ void patternEditor(App& a) {
         const Cell& ce = t.at(row + v.rowOff[ti], c);
         const Note* n = ce.kind == Cell::On || ce.kind == Cell::Off ? &tNotes[static_cast<size_t>(ce.note)] : nullptr;
         const bool dimmed = muted || (n && n->muted);
+        const ImU32 faint = theme::withAlpha(P.textFaint, 0.55f);
         auto put = [&](Field f, const std::string& text, ImU32 col) {
           if (!fieldShown(f)) return;
+          if (!gDots && col == faint) return;  // empty fields blank
           dl->AddText(mono, pf, ImVec2(cx + cw * static_cast<float>(fieldOffset(f)), y), dimmed ? theme::withAlpha(col, 0.45f) : col, text.c_str());
         };
-        const ImU32 faint = theme::withAlpha(P.textFaint, 0.55f);
+        const int mr = row + v.rowOff[ti];
+        const size_t mAt = static_cast<size_t>(std::max(0, mr)) * static_cast<size_t>(t.columns) + static_cast<size_t>(c);
+        const tracker::Cell* mc = mr >= 0 && mAt < modSet.size() && modSet[mAt] ? &mod[mAt] : nullptr;
+        if (mc && ce.kind != Cell::On) {
+          // A row the module's voice sounds through: its volume column and effect (a key off as OFF).
+          if (ce.kind == Cell::Off) put(Field::Note, "OFF", P.textDim);
+          else if (mc->note == 97) put(Field::Note, "OFF", P.textDim);
+          // R9-03: a note inside a voice is a glide's target (3xx, 5xx, Mx: the voice slides to it, no
+          // new note starts): shown as the module wrote it, read only (module note 49 is C-4).
+          else if (mc->note >= 1 && mc->note <= 96) put(Field::Note, trk::noteText(mc->note + 11, gFlats), P.textDim);
+          else put(Field::Note, "\xC2\xB7\xC2\xB7\xC2\xB7", faint);
+          if (ce.offGrid && ce.kind == Cell::Off) dl->AddText(mono, pf, ImVec2(cx + cw * 3, y), P.hot, "~");
+          if (mc->instr) put(Field::Instrument, trk::hex2(mc->instr), theme::withAlpha(fieldColour(Field::Instrument), 0.7f));
+          else put(Field::Instrument, "\xC2\xB7\xC2\xB7", faint);
+          const std::string vt = trk::moduleVolText(mc->vol), et = trk::moduleEffectText(mc->efx, mc->param);
+          put(Field::Volume, vt.empty() ? std::string("\xC2\xB7\xC2\xB7") : vt, vt.empty() ? faint : fieldColour(Field::Volume));
+          put(Field::Pan, "\xC2\xB7\xC2\xB7", faint);
+          put(Field::Effect, et.empty() ? std::string("\xC2\xB7\xC2\xB7\xC2\xB7") : et, et.empty() ? faint : fieldColour(Field::Effect));
+          continue;
+        }
         switch (ce.kind) {
           case Cell::Empty:
             put(Field::Note, "\xC2\xB7\xC2\xB7\xC2\xB7", faint);
@@ -1517,12 +2325,16 @@ void patternEditor(App& a) {
             put(Field::Effect, "\xC2\xB7\xC2\xB7\xC2\xB7", faint);
             break;
           case Cell::On: {
-            put(Field::Note, trk::noteText(n->pitch), fieldColour(Field::Note));
-            put(Field::Instrument, trk::hex2(static_cast<int>(ti) + 1), fieldColour(Field::Instrument));
-            put(Field::Volume, trk::hex2(n->velocity), fieldColour(Field::Volume));
+            put(Field::Note, trk::noteText(n->pitch, gFlats), fieldColour(Field::Note));
+            put(Field::Instrument, trk::hex2(sg.channelIndex(ch->id) + 1), fieldColour(Field::Instrument));
+            const std::string mvt = mc ? trk::moduleVolText(mc->vol) : std::string(), met = mc ? trk::moduleEffectText(mc->efx, mc->param) : std::string();
+            if (mc) put(Field::Volume, mvt.empty() ? std::string("\xC2\xB7\xC2\xB7") : mvt, mvt.empty() ? faint : fieldColour(Field::Volume));
+            else put(Field::Volume, trk::hex2(n->velocity), fieldColour(Field::Volume));
             put(Field::Pan, n->pan == 0 ? std::string("\xC2\xB7\xC2\xB7") : trk::hex2(n->pan + 64), n->pan == 0 ? faint : fieldColour(Field::Pan));
             const std::vector<trk::Effect> fx = trk::effectsOf(*n);
-            if (fx.empty()) put(Field::Effect, "\xC2\xB7\xC2\xB7\xC2\xB7", faint);
+            if (!met.empty()) put(Field::Effect, met, fieldColour(Field::Effect));  // the module's effect on its own row
+            else if (const char held = fx.empty() ? pendingEffect(a, v.src[ti]->id, t.channel, n) : 0) put(Field::Effect, std::string(1, held) + "..", fieldColour(Field::Effect));
+            else if (fx.empty()) put(Field::Effect, "\xC2\xB7\xC2\xB7\xC2\xB7", faint);
             else put(Field::Effect, std::string(1, fx[0].letter) + (fx[0].exact ? trk::hex2(fx[0].value) : std::string("!!")), fieldColour(Field::Effect));
             // Marks in the gaps: off the row grid (~), more letters (+), expression or a curved bend (e).
             if (ce.offGrid) dl->AddText(mono, pf, ImVec2(cx + cw * 3, y), P.hot, "~");
@@ -1537,8 +2349,8 @@ void patternEditor(App& a) {
           case Cell::Step: {
             const size_t si = static_cast<size_t>(ce.step);
             const int pitch = si < tProps.size() && tProps[si].pitch >= 0 ? tProps[si].pitch : 60;
-            put(Field::Note, trk::noteText(pitch), theme::mix(fieldColour(Field::Note), P.led, 0.35f));
-            put(Field::Instrument, trk::hex2(static_cast<int>(ti) + 1), fieldColour(Field::Instrument));
+            put(Field::Note, trk::noteText(pitch, gFlats), theme::mix(fieldColour(Field::Note), P.led, 0.35f));
+            put(Field::Instrument, trk::hex2(sg.channelIndex(ch->id) + 1), fieldColour(Field::Instrument));
             put(Field::Volume, trk::hex2(si < tSteps.size() ? tSteps[si] : 0), fieldColour(Field::Volume));
             const int pan = si < tProps.size() ? tProps[si].pan : 0;
             put(Field::Pan, pan == 0 ? std::string("\xC2\xB7\xC2\xB7") : trk::hex2(pan + 64), pan == 0 ? faint : fieldColour(Field::Pan));
@@ -1665,7 +2477,7 @@ void patternEditor(App& a) {
     int nL = 0, nR = 0, nearL = -1, nearR = -1;
     for (size_t ti = 0; ti < v.tracks.size(); ++ti) {
       const float tx = gx0 + trackX[ti] - scrollX;
-      const bool left = tx + trackW[ti] <= gx0 + 1, right = tx >= gx1 - 1;
+      const bool left = tx + trackW[ti] <= gx0 + 1, right = tx + trackW[ti] > gxEnd + 1;
       if (!left && !right) continue;
       const trk::Track& t = v.tracks[ti];
       bool has = false;
@@ -1701,17 +2513,11 @@ void patternEditor(App& a) {
   // ---- the pattern bar: what is shown, the cell under the cursor, the last message ----
   {
     ImVec2 b0(a0.x, a1.y + 2), b1(a1.x, a1.y + barH);
-    if (extended()) {  // the header is hidden: a button brings it back
-      const char* lbl = i18n::tr("Header band");
-      const float w = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, lbl).x) + 20;
-      if (trackerview::bevelButton(a, "##showhdr", "Header band", ImVec2(b1.x - w, b0.y), b1, false, "The header band back")) setExtended(a, false);
-      b1.x -= w + 2;
-    }
     trackerview::bevelBox(dl, b0, b1);
     const Pattern& p = *v.p;
     char info[200];
     std::snprintf(info, sizeof info, "%s %s \xC2\xB7 %s %s \xC2\xB7 %s %d \xC2\xB7 %s %d \xC2\xB7 %s %d \xC2\xB7 %s %s", i18n::tr("Pattern"),
-                  trk::hex2(trk::patternNumber(song, p.id)).c_str(), i18n::tr("length"), trk::rowText(v.g.rows, hex).c_str(), i18n::tr("rows per beat"),
+                  trk::hex2(trk::patternNumber(song, p.id)).c_str(), i18n::tr("length"), trk::rowText(trk::playedRows(song, p, v.g), hex).c_str(), i18n::tr("rows per beat"),
                   v.g.rowsPerBeat, i18n::tr("edit step"), s.step, i18n::tr("octave"), a.typing.octave, i18n::tr("follow"),
                   s.follow ? i18n::tr("on") : i18n::tr("off"));
     std::string right;
@@ -1725,7 +2531,7 @@ void patternEditor(App& a) {
       if (s.cur.field == Field::Effect && !fx.empty()) right = trk::effectHelp(fx[0].letter, fx[0].value);
       else {
         char b[160];
-        std::snprintf(b, sizeof b, "%s \xC2\xB7 %s %lld \xC2\xB7 %s %lld %s", trk::noteText(n.pitch).c_str(), i18n::tr("starts at tick"),
+        std::snprintf(b, sizeof b, "%s \xC2\xB7 %s %lld \xC2\xB7 %s %lld %s", trk::noteText(n.pitch, gFlats).c_str(), i18n::tr("starts at tick"),
                       static_cast<long long>(n.start), i18n::tr("lasts"), static_cast<long long>(n.length), i18n::tr("ticks"));
         right = b;
       }
@@ -1734,7 +2540,14 @@ void patternEditor(App& a) {
     } else if (s.cur.field == Field::Effect) {
       right = trk::effectHelp(0, 0);
     }
-    if (s.stacked > 0 && (ImGui::GetTime() - s.statusT >= 4.0 || s.status.empty()))
+    // N-09: the song plays an audio part (no pattern there): the editor keeps the pattern picked,
+    // dimmed, and the bar says so.
+    const Tick songPos = static_cast<Tick>(a.engine.position());
+    const bool auPart = a.engine.playing() && a.engine.mode() == PlayMode::Song && songPos < song.lengthTicks() && trk::patternAt(song, songPos) == kNoId;
+    if (auPart) {
+      dl->AddRectFilled(ImVec2(a0.x, a0.y + headH), a1, theme::withAlpha(P.surface950, 0.45f));
+      right = i18n::tr("No pattern plays here (an audio part, on the Song page): this is the pattern picked");
+    } else if (s.stacked > 0 && (ImGui::GetTime() - s.statusT >= 4.0 || s.status.empty()))
       right = std::to_string(s.stacked) + " " + i18n::tr(s.stacked == 1 ? "more pattern plays here (the Song page shows it)" : "more patterns play here (the Song page shows them)");
     const float ty = std::round(b0.y + (barH - 2 - fs) * 0.5f);
     dl->AddText(mono, fs, ImVec2(b0.x + 8, ty), P.textDim, info);
@@ -1771,14 +2584,20 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     // The page strip's names too (Song is the Playlist window, Mix the Mixer, ...).
     static const std::pair<const char*, const char*> names[] = {{"Pattern", "Pattern editor"}, {"Song", "Playlist"},  {"Roll", "Piano roll"},
                                                                 {"Steps", "Channel rack"},     {"Mix", "Mixer"},       {"Pads", "Live pads"},
-                                                                {"Sample", "Loupe"}};
+                                                                {"Sample", "Loupe"},           {"Audio", "Loupe"}};
     for (const auto& [label, window] : names)
       if (w == label) w = window;
     showPage(a, w.c_str());
     std::printf("tracker page frame %d: %s\n", frame, w.c_str());
-  } else if (cmd == "swap") {
+  } else if (cmd == "swap") {  // none|help|files|config|about
     const std::string w = args.size() > 1 ? args[1] : "none";
-    setHeaderSwap(w == "help" ? 1 : w == "files" ? 2 : w == "config" ? 3 : 0);
+    setHeaderSwap(w == "help" ? 1 : w == "files" ? 2 : w == "config" ? 3 : w == "about" ? 4 : 0);
+  } else if (cmd == "extend") {
+    setExtended(a, args.size() > 1 && args[1] == "on");
+  } else if (cmd == "songclip") {  // the Song page's picked clip: by its index in the playlist
+    const int i = arg(1, -1);
+    const auto& pl = a.doc.song().playlist;
+    trackerpages::gSongClip = i >= 0 && i < static_cast<int>(pl.size()) ? pl[static_cast<size_t>(i)].id : kNoId;
   } else if (cmd == "edit") {
     s.edit = args.size() > 1 && args[1] == "on";
   } else if (cmd == "step") {
@@ -1794,7 +2613,7 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     std::printf("tracker geometry frame %d: scrollbar %.1f %.1f %.1f %.1f scroll %.0f\n", frame, static_cast<double>(s.hbar0.x), static_cast<double>(s.hbar0.y),
                 static_cast<double>(s.hbar1.x), static_cast<double>(s.hbar1.y), static_cast<double>(s.scrollX));
     // The centre pages: each window's rectangle, its dock node's, and whether it is the one shown.
-    for (const char* pg : {"Pattern editor", "Playlist", "Channel rack", "Mixer", "Live pads", "Piano roll", "Browser", "Device chain"}) {
+    for (const char* pg : {"Pattern editor", "Playlist", "Channel rack", "Mixer", "Live pads", "Piano roll", "Browser", "Device chain", "Settings"}) {
       const ImGuiWindow* w = ImGui::FindWindowByName((std::string("###") + pg).c_str());
       if (!w) continue;
       const ImGuiDockNode* n = w->DockNode;
@@ -1812,15 +2631,23 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     }
   } else if (cmd == "dump") {
     const View v = build(a);
-    std::printf("tracker dump frame %d: pattern %d rows %d edit %d step %d octave %d keyboard %d cursor %d %d %d %d play %d undo %zu engine %d %u %u drawn %d off %d %d scroll %.0f stacked %d\n", frame,
+    std::printf("tracker dump frame %d: pattern %d rows %d edit %d step %d octave %d keyboard %d cursor %d %d %d %d play %d undo %zu engine %d %u %u drawn %d off %d %d scroll %.0f stacked %d songpos %lld\n", frame,
                 v.p ? trk::patternNumber(a.doc.song(), v.p->id) : 0, v.p ? v.g.rows : 0, s.edit ? 1 : 0, s.step, a.typing.octave, hasKeyboard() ? 1 : 0,
-                s.cur.track, s.cur.row, s.cur.column, static_cast<int>(s.cur.field), s.playRow, a.doc.history().position(), a.engine.playing() ? static_cast<int>(a.engine.mode()) : -1, a.engine.pattern(), a.curPattern, s.drawnFrame, s.offLeft, s.offRight, static_cast<double>(s.scrollX), s.stacked);
+                s.cur.track, s.cur.row, s.cur.column, static_cast<int>(s.cur.field), s.playRow, a.doc.history().position(), a.engine.playing() ? static_cast<int>(a.engine.mode()) : -1, a.engine.pattern(), a.curPattern, s.drawnFrame, s.offLeft, s.offRight, static_cast<double>(s.scrollX), s.stacked, static_cast<long long>(songPosition(a)));
+    std::printf("tracker status: %s\n", s.status.c_str());
     for (size_t ti = 0; v.p && ti < v.tracks.size(); ++ti) {
       const trk::Track& t = v.tracks[ti];
       const Rows r = rowsOf(*v.p, t.channel);
       for (int row = 0; row < v.g.rows; ++row)
         for (int c = 0; c < t.columns; ++c) {
           const Cell& ce = t.at(row, c);
+          int mk = -1;  // K-106: a module cell on this row (its volume column and effect, as shown)
+          if (const int mi = trk::moduleNoteAt(r.notes, t, v.g, row, c, &mk); mi >= 0) {
+            const std::vector<tracker::Cell> mcs = trk::moduleRows(r.notes[static_cast<size_t>(mi)], mk + 1);
+            const tracker::Cell& m = mcs[static_cast<size_t>(mk)];
+            const std::string vt = trk::moduleVolText(m.vol), et = trk::moduleEffectText(m.efx, m.param);
+            std::printf("  module %zu %d %d note %d instr %d vol %s fx %s\n", ti, row, c, m.note, m.instr, vt.empty() ? ".." : vt.c_str(), et.empty() ? "..." : et.c_str());
+          }
           if (ce.kind == Cell::Empty) continue;
           if (ce.kind == Cell::On) {
             const Note& n = r.notes[static_cast<size_t>(ce.note)];

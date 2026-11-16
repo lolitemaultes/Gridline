@@ -189,6 +189,7 @@ std::string idAt(const std::vector<nm::Item>& v, const std::vector<std::string>&
 bool active() { return nm::installed(); }
 void setDevForce(bool on) { gForce = on; }
 void setHiddenRun(bool hidden) { gHidden = hidden; }
+bool hiddenRun() { return gHidden; }
 void setWindow(unsigned long xid) { nm::setWindow(xid); }
 
 void frame(App& a) {

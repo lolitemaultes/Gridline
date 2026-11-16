@@ -27,7 +27,8 @@ void addAndEdit(App& a, Tick pos);
 void drawEditor(App& a);
 
 // The "Meter" submenu of a pattern's menus: follows the song, or a meter of its own.
-void patternMeterMenu(App& a, ObjectId pattern);
+// `submenu` false: the items alone, for a popup that is already the meter menu (K-236: the rack's meter).
+void patternMeterMenu(App& a, ObjectId pattern, bool submenu = true);
 // Playlist clip menu items for a pattern clip: make the pattern's meter match the section it starts in.
 void clipMeterItems(App& a, ObjectId clip);
 

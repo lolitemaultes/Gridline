@@ -13,6 +13,9 @@ namespace gl {
 
 class App;
 
+// R01-16: the Tracks layout's word for a clip menu row ("region"); other layouts keep the text.
+const char* regionWord(const char* english);
+
 namespace menus {
 
 // Palette grid inside a menu; returns true and sets *out when a colour is picked.

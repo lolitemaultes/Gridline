@@ -28,6 +28,7 @@
 #include "DialogLayout.h"
 #include "ExportUi.h"
 #include "LauncherUi.h"
+#include "LiveLook.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -178,6 +179,7 @@ void App::completeProjectLoad() {
   selChannels = {selChannel};
   selMixer = doc.song().masterId();
   playlist.selected.clear();
+  livelook::projectOpened(*this, projectPath);  // N45-10: Clips opens it in the view it was saved in
   engine.setMode(doc.song().playlist.empty() ? PlayMode::Pattern : PlayMode::Song);
   rackReveal.quietSwitch(engine.mode());  // J-77: opening a project does not count as choosing PAT
   syncEngine();

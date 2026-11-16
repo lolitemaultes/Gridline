@@ -67,6 +67,10 @@ Tweaks tweaksFromSettings(const Settings& s) {
   t.contrast = static_cast<float>(std::clamp(s.getNumber("theme.contrast"), -1.0, 1.0));
   t.brightness = static_cast<float>(std::clamp(s.getNumber("theme.brightness"), -1.0, 1.0));
   t.whiteText = s.getBool("theme.whiteText");
+  t.hue = static_cast<float>(std::clamp(s.getNumber("theme.hue"), -1.0, 1.0));  // K-104
+  t.saturation = static_cast<float>(std::clamp(s.getNumber("theme.saturation"), -1.0, 1.0));
+  t.stepEven = parseColour(s.getString("theme.stepEven"));
+  t.stepOdd = parseColour(s.getString("theme.stepOdd"));
   return t;
 }
 
@@ -78,6 +82,10 @@ void tweaksToSettings(const Tweaks& t, Settings& s) {
   s.set("theme.contrast", static_cast<double>(t.contrast));
   s.set("theme.brightness", static_cast<double>(t.brightness));
   s.set("theme.whiteText", t.whiteText);
+  s.set("theme.hue", static_cast<double>(t.hue));  // K-104
+  s.set("theme.saturation", static_cast<double>(t.saturation));
+  s.set("theme.stepEven", colourText(t.stepEven));
+  s.set("theme.stepOdd", colourText(t.stepOdd));
 }
 
 ui::ControlStyle controlStyleFromSettings(const Settings& s) { return ui::controlStyleFromText(s.getString("theme.controls")); }

@@ -762,6 +762,76 @@ void testFreeze() {
   fs::remove_all(dir, ec);
 }
 
+// K-152: song swing automation: each pass of a pattern clip plays with the swing the automation has
+// where the pass starts; FL's main swing automation (global target 1) imports onto it.
+void testSwingAutomation() {
+  ObjectId ch = kNoId;
+  Song s = grooveSong(96, ch);
+  s.swing = 0.0f;
+  s.patterns[0].steps[ch] = std::vector<uint8_t>(16, 0);
+  s.patterns[0].steps[ch][1] = 100;  // the off-beat sixteenth (24 ticks straight)
+  Clip second = s.playlist[0];
+  second.id = s.allocateId();
+  second.start = 384;
+  Clip third = second;
+  third.id = s.allocateId();
+  third.start = 768;
+  s.playlist.push_back(second);
+  s.playlist.push_back(third);
+  AutomationClip a;
+  a.id = s.allocateId();
+  a.owner = kSongId;
+  a.index = static_cast<uint32_t>(SongParam::Swing);
+  a.points = {{0, 0.0f, 0, AutoShape::Hold}, {384, 1.0f, 0, AutoShape::Hold}, {768, 0.5f, 0, AutoShape::Hold}};
+  s.automations.push_back(a);
+  Clip ac;
+  ac.id = s.allocateId(), ac.kind = ClipKind::Automation, ac.source = a.id, ac.start = 0, ac.length = 1152, ac.track = 1;
+  s.playlist.push_back(ac);
+  auto ons = [&](const Song& song) {
+    ProgramBuilder b;
+    auto prog = b.build(song);
+    std::vector<double> out;
+    int ci = song.channelIndex(ch);
+    for (size_t i = 0; ci < 0 && i < song.channels.size(); ++i)
+      if (song.channels[i].name == "synth") ci = static_cast<int>(i);  // an imported copy
+    if (prog && ci >= 0)
+      for (const NoteEv& e : prog->channels[static_cast<size_t>(ci)].song) out.push_back(noteOnTick(e));
+    std::sort(out.begin(), out.end());
+    return out;
+  };
+  const std::vector<double> got = ons(s);
+  const double full = swingWarp(24.0, 1.0, 24, 16), half = swingWarp(24.0, 0.5, 24, 16);
+  expect(got.size() == 3, "swing automation: three passes, three steps");
+  expect(got.size() == 3 && near(got[0], 24.0, 1e-6) && near(got[1], 384.0 + full, 1e-6) && near(got[2], 768.0 + half, 1e-6),
+         "swing automation: each clip swings as the automation says where it starts (0, full, half)");
+  std::printf("# swing automation onsets: %.2f %.2f %.2f\n", got.size() > 0 ? got[0] : -1.0, got.size() > 1 ? got[1] : -1.0,
+              got.size() > 2 ? got[2] : -1.0);
+  Song m = s;
+  m.playlist.back().muted = true;  // a muted automation clip: the project's swing again
+  const std::vector<double> plain = ons(m);
+  expect(plain.size() == 3 && near(plain[1], 384.0 + 24.0, 1e-6), "swing automation: a muted clip leaves the project swing");
+  Song k = s;
+  k.swing = 1.0f;  // a pass at the project's own swing uses the pattern as compiled
+  const std::vector<double> same = ons(k);
+  expect(same.size() == 3 && near(same[1], 384.0 + full, 1e-6) && near(same[0], 24.0, 1e-6), "swing automation: passes at and away from the project swing");
+  // FLP: written as FL's main swing automation (global target 1) and read back onto the project swing.
+  flp::ExportOptions opt;
+  opt.renderInstruments = false;
+  flp::ExportReport rep;
+  flp::Bytes out;
+  flp::exportFlp(s, out, rep, opt);
+  Song back;
+  flp::Report r;
+  std::string err;
+  bool found = false;
+  if (importFlpBytes(out, back, r, &err))
+    for (const AutomationClip& x : back.automations)
+      found = found || (x.owner == kSongId && x.index == static_cast<uint32_t>(SongParam::Swing) && x.points.size() >= 3);
+  expect(found, "FLP: swing automation goes out as FL's main swing automation and comes back onto the project swing");
+  const std::vector<double> again = ons(back);
+  expect(again.size() == 3 && near(again[1], 384.0 + full, 0.5) && near(again[2], 768.0 + half, 0.5), "FLP: the imported song swings as the original");
+}
+
 int main() {
   const std::string& tmp = gl::test::hermeticTestEnv("k151");
   const std::string root = (fs::path(tmp) / "presets").string();
@@ -777,5 +847,6 @@ int main() {
   testQuantize(root);
   testScripts(root);
   testFreeze();
+  testSwingAutomation();
   return finish();
 }

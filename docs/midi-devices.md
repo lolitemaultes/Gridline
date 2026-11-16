@@ -17,6 +17,28 @@ the device's name, a script, or none), a port number that links can filter on, a
 (whether the device plays notes or only drives controls). **Rescan devices** looks for devices
 plugged in since Gridline started; new devices are switched on with the next free port number.
 
+## Control surfaces: Mackie Control and HUI
+
+Surfaces that speak the Mackie Control protocol (and the many that copy it in their "MC" or "MCU" mode) or HUI drive the mixer and transport. In **Settings > MIDI**, set the surface's input to one of the **Control surfaces** controller types, and enable its output of the same name: Gridline sends the fader positions, LEDs, rings, names, timecode and meters back to it.
+
+| Controller type | What it is |
+| --- | --- |
+| Mackie Control (main unit) | eight strips, transport, jog wheel, displays |
+| Mackie Control extender 1, 2, 3 | eight more strips each, to the right of the main unit (needs the main unit) |
+| Mackie Control, one strip | one fader that follows the selected mixer insert |
+| HUI | eight strips and transport over the HUI protocol |
+
+- **Faders** set each insert's volume and follow it when it changes in Gridline (a fader you are holding is left alone).
+- **Encoders** pan; push one to centre it. The LED ring shows the pan.
+- **Rec, Solo, Mute, Select** per strip. Select also selects the insert in the mixer.
+- **Bank** buttons move the strips by eight inserts, **Channel** buttons by one.
+- **Play, Stop, Record, Rewind and Fast forward** (a bar back or on), **Cycle** (song / pattern mode), **Click** (metronome), **Undo** and the **jog wheel** (moves the play position a beat per step). The main unit's master fader sets the master volume.
+- The **scribble strips** show each insert's name and the **timecode display** shows bars, beats and ticks.
+
+Each move is one undo step, and in a shared session it reaches the other people like a mouse edit.
+
+Keyboards whose transport buttons send Mackie notes can use the **Mackie Control transport** controller template instead, which only maps the transport buttons.
+
 ## Pedals
 
 **Settings > MIDI > Pedals** sets what the pedals of a keyboard do:
@@ -62,6 +84,17 @@ at **None**, and projects made before it open with every channel set to None.
   channel or several, the link that closes the circle is left out and the listening channel's
   **MIDI input** says so.
 - A frozen channel keeps the notes a MIDI Out channel sent it in its render.
+
+## Hardware Insert
+
+The **Hardware Insert** effect (in a mixer insert's effect slots) puts outboard gear in the mix: a compressor, a pedal, a tape machine.
+
+- **Send** is the extra output pair of the audio device the track goes out of (the pairs after the main outputs; the ASIO driver opens them). **Return** is the input pair it comes back on; **Return mono** takes one input for both sides.
+- **Send level**, **Return level** and **Mix** (dry against what comes back).
+- **PING** sends a single click out of the send and counts the samples until it comes back on the return. That **round trip** is written into the insert (one undo step) and reported as its latency, so plugin delay compensation holds the rest of the mix back by the same amount and the gear stays in time. **Offset** trims it by hand. Ping again after changing the buffer size or the device.
+- **External instruments:** set **Send** to **None** and the insert is an audio return. Put it on the mixer track of a [MIDI Out](#midi-out-to-other-channels) channel that plays a hardware synth, with the synth's audio on the return inputs, and set the round trip by hand (the synth's delay from note to sound). The synth then plays in time with the rest.
+
+Without the outputs or inputs it names, and when exporting (outboard gear cannot run faster than real time), the insert passes the sound on unchanged. In a shared session the send, the return and the round trip belong to each person's own studio and are not shared.
 
 ## When MIDI devices are unavailable
 

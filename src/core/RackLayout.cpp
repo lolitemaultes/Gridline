@@ -6,43 +6,72 @@
 
 namespace gl::racklayout {
 
-float contentWidth(int steps, float stepW) {
+namespace {
+float widthOf(int steps, float stepW, int group) {
   if (steps <= 0) return 0;
-  return static_cast<float>(steps) * stepW + static_cast<float>(steps - 1) * kStepGap + static_cast<float>((steps - 1) / 4) * kGroupGap;
+  return static_cast<float>(steps) * stepW + static_cast<float>(steps - 1) * kStepGap +
+         static_cast<float>((steps - 1) / std::max(1, group)) * kGroupGap;
+}
+}  // namespace
+
+int stepGroup(int stepsPerBar, int meterNum, int meterDen) {
+  if (stepsPerBar <= 0 || meterNum <= 0 || meterDen <= 0) return 4;
+  // Compound meters (6/8, 9/8, 12/8, 6/16 ...) count dotted beats of three.
+  const bool compound = (meterDen == 8 || meterDen == 16) && meterNum >= 6 && meterNum % 3 == 0;
+  const int beats = compound ? meterNum / 3 : meterNum;
+  if (stepsPerBar % beats != 0) return 4;
+  const int g = stepsPerBar / beats;
+  return g >= 2 && g <= 8 ? g : 4;
 }
 
-float Layout::stepPos(int k) const { return static_cast<float>(k) * (stepW + kStepGap) + static_cast<float>(k / 4) * kGroupGap; }
+float contentWidth(int steps, float stepW, int group) { return widthOf(steps, stepW, std::clamp(group, 1, 16)); }
+
+float Layout::stepPos(int k) const {
+  return static_cast<float>(k) * (stepW + kStepGap) + static_cast<float>(k / std::max(1, group)) * kGroupGap;
+}
 
 int Layout::stepAt(float x) const {
   if (x < 0 || x >= contentW) return -1;
-  // Steps are evenly spaced within groups of four: find the group, then the step.
-  const float groupW = 4 * (stepW + kStepGap) + kGroupGap;
+  // Steps are evenly spaced within their groups: find the group, then the step.
+  const int gs = std::max(1, group);
+  const float groupW = static_cast<float>(gs) * (stepW + kStepGap) + kGroupGap;
   const int g = static_cast<int>(x / groupW);
   const float in = x - static_cast<float>(g) * groupW;
-  const int k = g * 4 + std::min(3, static_cast<int>(in / (stepW + kStepGap)));
+  const int k = g * gs + std::min(gs - 1, static_cast<int>(in / (stepW + kStepGap)));
   return k < steps ? k : -1;
 }
 
 Layout compute(const Input& in) {
   Layout l;
   l.steps = std::max(1, in.steps);
+  l.group = std::clamp(in.group, 1, 16);
   const int n = l.steps;
   const float room = std::max(0.0f, in.avail - kNameX - kNameGap - kSelLampW);  // name + step viewport (the lamp cell sits between)
   // The name yields to the first bars of the pattern: a 16-step pattern at a
   // comfortable step size, up to 32 steps at the smallest size. Longer
   // patterns scroll instead of squeezing the names further.
-  const float want = std::max(contentWidth(std::min(n, 16), kStepComfort), contentWidth(std::min(n, 32), kStepMin));
+  const float want = std::max(widthOf(std::min(n, 16), kStepComfort, l.group), widthOf(std::min(n, 32), kStepMin, l.group));
   // Patterns of up to 32 steps can fit without scrolling: there the name may
   // give way down to kNameSqueeze (no scroller that moves a few pixels);
   // longer patterns scroll anyway and keep kNameMin.
-  float nameW = std::clamp(room - want, n <= 32 ? kNameSqueeze : kNameMin, kNameMax);
+  const float baseMin = n <= 32 ? kNameSqueeze : kNameMin;
+  // K-295: the names stay readable: the button keeps what the widest name needs (up to
+  // kNameRead); a pattern of up to 32 steps then tightens its steps to kStepTight, and past
+  // that the steps scroll. (The name never narrows as the rack widens, so a rack a few pixels
+  // short of the tight steps scrolls those few pixels.)
+  const float nameMin = std::max(baseMin, std::min(std::ceil(in.nameNeed), kNameRead));
+  const float baseName = std::clamp(room - want, baseMin, kNameMax);
+  float nameW = std::clamp(room - want, nameMin, kNameMax);
   if (room - nameW < kMinView) nameW = std::max(kNameFloor, room - kMinView);  // tiny rack: keep a few steps visible
   l.nameW = std::floor(nameW);
   l.nameShrunk = l.nameW < kNameMax;
   const float viewMax = std::max(kMinView, room - l.nameW);
-  const float gaps = static_cast<float>(n - 1) * kStepGap + static_cast<float>((n - 1) / 4) * kGroupGap;
-  l.stepW = std::clamp(std::floor((viewMax - gaps) / static_cast<float>(n)), kStepMin, std::max(kStepMin, in.stepMax));
-  l.contentW = contentWidth(n, l.stepW);
+  const float gaps = static_cast<float>(n - 1) * kStepGap + static_cast<float>((n - 1) / l.group) * kGroupGap;
+  // K-295: names held open by their need squeeze a pattern of up to 32 steps a pixel tighter
+  // before it scrolls.
+  const float stepMin = n <= 32 && l.nameW > std::floor(baseName) ? kStepTight : kStepMin;
+  l.stepW = std::clamp(std::floor((viewMax - gaps) / static_cast<float>(n)), stepMin, std::max(stepMin, in.stepMax));
+  l.contentW = widthOf(n, l.stepW, l.group);
   l.viewW = std::min(l.contentW, viewMax);
   l.scrollMax = std::max(0.0f, l.contentW - l.viewW);
   // K-127: name button, the lamp cell, then the steps.

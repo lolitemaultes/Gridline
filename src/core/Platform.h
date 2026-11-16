@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include "DataFolder.h"
 
 namespace gl::platform {
 
@@ -33,6 +34,10 @@ namespace gl::platform {
 const char* homeEnv();
 std::string homeDir();  // homeEnv() or "."
 std::string configRoot();
+// K-265: the config root without the data folder setting or GRIDLINE_CONFIG_HOME (where the data
+// folder pointer lives), and the data folder this run uses (core/DataFolder.h; read once).
+std::string defaultConfigRoot();
+const datafolder::Info& dataFolder();
 // K-64: the calling background worker runs below normal priority, so it never competes with the
 // audio thread or the interface for a core.
 void lowerThisThreadPriority();

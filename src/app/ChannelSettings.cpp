@@ -337,6 +337,13 @@ static void drawNoteSettings(App& a, ObjectId id) {
     useCombo("##xpress", i18n::tr("Pressure"), c->expr.pressure, i18n::tr("What pressing harder on a held note does"), &ExprSettings::pressure);
     ImGui::SameLine(0, theme::kS2);
     useCombo("##xtimbre", i18n::tr("Timbre"), c->expr.timbre, i18n::tr("What sliding on a held note (CC 74) does"), &ExprSettings::timbre);
+    if (c->plugin.type == "gl.midiout") {  // K-99: MPE out
+      const bool on = static_cast<int>(c->plugin.params.size()) > pp::MoMpe && c->plugin.params[pp::MoMpe] > 0.5f;
+      ImGui::SameLine(0, theme::kS2);
+      if (ui::TextButton(i18n::tr("MPE out"), on, 80,
+                         i18n::tr("Every note on its own MIDI channel (2 to 16) with its own pitch bend, pressure and CC 74; channel 1 is the master")))
+        a.doc.setParam(ParamId{id, kChannelPluginBase + static_cast<uint32_t>(pp::MoMpe)}, on ? 0.0 : 1.0, false);
+    }
   }
   ImGui::EndGroup();
   ImGui::SameLine(0, theme::kS2);
@@ -684,75 +691,87 @@ void drawChannelSettingsBody(App& a, ObjectId channel, const BodyFrame& f) {
     a.focusPluginSlot = -1;
   }
 
-  // Header: colour, name, instrument, routing.
+  // Header: colour, name, instrument, routing. K-279: the user may hide it (instrument menu, or
+  // right-click the header) to give the plugin page the room; the window title keeps the name.
   const auto& P = pal();
-  uint32_t col = c->color;
   const float fh = ImGui::GetFrameHeight();
-  if (ui::ColorSwatch("col", &col, ImVec2(fh, fh))) a.doc.editChannel(id, "change channel colour", [&](Channel& x) { x.color = col; });
-  ui::Hint("Channel colour");
-  ImGui::SameLine(0, theme::kS2);
-  static char nameBuf[128];
-  static ObjectId nameFor = kNoId;
-  if (nameFor != id || !ImGui::IsAnyItemActive()) {
-    std::snprintf(nameBuf, sizeof nameBuf, "%s", c->name.c_str());
-    nameFor = id;
-  }
-  ImGui::SetNextItemWidth(200);
-  if (ImGui::InputText("##name", nameBuf, sizeof nameBuf, ImGuiInputTextFlags_EnterReturnsTrue) ||
-      (ImGui::IsItemDeactivatedAfterEdit()))
-    if (c->name != nameBuf) a.doc.renameChannel(id, nameBuf);
-  ui::FocusRing();
-  ui::Hint("Channel name");
-  ImGui::SameLine(0, theme::kS2);
-  if (ui::BeginCombo("##inst", info ? info->name.c_str() : (c->isLayer() ? "Layer" : "None"), 170)) {
-    std::string cat;
-    for (const auto& p : pluginCatalog()) {
-      if (p.kind != PluginKind::Generator || p.hidden) continue;
-      if (p.category != cat) {
-        cat = p.category;
-        ui::Label(cat.c_str());
-      }
-      if (ImGui::Selectable(p.name.c_str(), p.type == c->plugin.type) && a.doc.setChannelPlugin(id, p.type))
-        pui::pluginReplaced(PluginTarget{id, -1}), a.showNewInstrument(id);  // J-213: the preset selector starts over; K-125
-    }
-    ImGui::EndCombo();
-  }
-  ui::Hint("Instrument");
-  ImGui::SameLine(0, theme::kS2);
-  int mi = std::max(0, s.mixerIndex(c->mixerTrack));
-  std::string mlabel = mi == 0 ? "Master" : std::to_string(mi) + "  " + mixerTrackName(s, static_cast<size_t>(mi));
-  // J-195: room for the free-track button and the strip eye after the list.
-  const bool routeOpen =
-      ui::BeginCombo("##route", ("\xE2\x86\x92 " + mlabel).c_str(), std::max(100.0f, ImGui::GetContentRegionAvail().x - 2 * (fh + theme::kS2)));  // K-147: fits a 600 px window
-  devNoteRect("chroute");
-  if (routeOpen) {
-    if (chanroute::listItem()) pendingFreeRoute(a) = id;
-    devNoteRect("chroutelist");
-    ImGui::Separator();
-    for (size_t i = 0; i < s.mixer.size(); ++i) {
-      std::string l = (i == 0 ? std::string("Master") : std::to_string(i) + "  " + mixerTrackName(s, i)) + "##" + std::to_string(i);
-      if (ImGui::Selectable(l.c_str(), static_cast<int>(i) == mi)) a.doc.routeChannel(id, s.mixer[i].id);
-    }
-    ImGui::EndCombo();
-  }
-  ui::Hint("Mixer track this channel plays through");
-  // J-195: route this channel to the next free mixer track (named after it).
-  ImGui::SameLine(0, theme::kS2);
-  if (chanroute::button(a, id, fh)) pendingFreeRoute(a) = id;
-  devNoteRect("chroutefree");
-  // The channel strip's show / hide eye (the mixer's eye icon and button).
-  ImGui::SameLine(0, theme::kS2);
+  const bool showHeader = !info || a.settings.getBool("ui.channelHeader");
   StripState& strip = stripState(a);
-  const bool stripOn = strip.shown;
-  if (ui::IconButton("##strip", ui::eyeIcon(stripOn), stripOn, fh,
-                     stripOn ? "Hide the channel strip (volume, pan, pitch, keyboard)" : "Show the channel strip (volume, pan, pitch, keyboard)"))
-    strip.shown = !stripOn;
   StripDev& sd = stripDev();
-  sd.eyeMin = ImGui::GetItemRectMin();
-  sd.eyeMax = ImGui::GetItemRectMax();
-  ImGui::Dummy(ImVec2(0, theme::kS1));
-  ImGui::Separator();
-  ImGui::Dummy(ImVec2(0, theme::kS1));
+  if (showHeader) {
+    uint32_t col = c->color;
+    if (ui::ColorSwatch("col", &col, ImVec2(fh, fh))) a.doc.editChannel(id, "change channel colour", [&](Channel& x) { x.color = col; });
+    ui::Hint("Channel colour");
+    ImGui::SameLine(0, theme::kS2);
+    static char nameBuf[128];
+    static ObjectId nameFor = kNoId;
+    if (nameFor != id || !ImGui::IsAnyItemActive()) {
+      std::snprintf(nameBuf, sizeof nameBuf, "%s", c->name.c_str());
+      nameFor = id;
+    }
+    ImGui::SetNextItemWidth(200);
+    if (ImGui::InputText("##name", nameBuf, sizeof nameBuf, ImGuiInputTextFlags_EnterReturnsTrue) ||
+        (ImGui::IsItemDeactivatedAfterEdit()))
+      if (c->name != nameBuf) a.doc.renameChannel(id, nameBuf);
+    ui::FocusRing();
+    ui::Hint("Channel name");
+    ImGui::SameLine(0, theme::kS2);
+    if (ui::BeginCombo("##inst", info ? info->name.c_str() : (c->isLayer() ? "Layer" : "None"), 170)) {
+      std::string cat;
+      for (const auto& p : pluginCatalog()) {
+        if (p.kind != PluginKind::Generator || p.hidden) continue;
+        if (p.category != cat) {
+          cat = p.category;
+          ui::Label(cat.c_str());
+        }
+        if (ImGui::Selectable(p.name.c_str(), p.type == c->plugin.type) && a.doc.setChannelPlugin(id, p.type))
+          pui::pluginReplaced(PluginTarget{id, -1}), a.showNewInstrument(id);  // J-213: the preset selector starts over; K-125
+      }
+      ImGui::EndCombo();
+    }
+    ui::Hint("Instrument");
+    ImGui::SameLine(0, theme::kS2);
+    int mi = std::max(0, s.mixerIndex(c->mixerTrack));
+    std::string mlabel = mi == 0 ? "Master" : std::to_string(mi) + "  " + mixerTrackName(s, static_cast<size_t>(mi));
+    // J-195: room for the free-track button and the strip eye after the list.
+    const bool routeOpen =
+        ui::BeginCombo("##route", ("\xE2\x86\x92 " + mlabel).c_str(), std::max(100.0f, ImGui::GetContentRegionAvail().x - 2 * (fh + theme::kS2)));  // K-147: fits a 600 px window
+    devNoteRect("chroute");
+    if (routeOpen) {
+      if (chanroute::listItem()) pendingFreeRoute(a) = id;
+      devNoteRect("chroutelist");
+      ImGui::Separator();
+      for (size_t i = 0; i < s.mixer.size(); ++i) {
+        std::string l = (i == 0 ? std::string("Master") : std::to_string(i) + "  " + mixerTrackName(s, i)) + "##" + std::to_string(i);
+        if (ImGui::Selectable(l.c_str(), static_cast<int>(i) == mi)) a.doc.routeChannel(id, s.mixer[i].id);
+      }
+      ImGui::EndCombo();
+    }
+    ui::Hint("Mixer track this channel plays through");
+    // J-195: route this channel to the next free mixer track (named after it).
+    ImGui::SameLine(0, theme::kS2);
+    if (chanroute::button(a, id, fh)) pendingFreeRoute(a) = id;
+    devNoteRect("chroutefree");
+    // The channel strip's show / hide eye (the mixer's eye icon and button).
+    ImGui::SameLine(0, theme::kS2);
+    const bool stripOn = strip.shown;
+    if (ui::IconButton("##strip", ui::eyeIcon(stripOn), stripOn, fh,
+                       stripOn ? "Hide the channel strip (volume, pan, pitch, keyboard)" : "Show the channel strip (volume, pan, pitch, keyboard)"))
+      strip.shown = !stripOn;
+    sd.eyeMin = ImGui::GetItemRectMin();
+    sd.eyeMax = ImGui::GetItemRectMax();
+    if (info && ImGui::IsMouseClicked(ImGuiMouseButton_Right) &&
+        ImGui::IsMouseHoveringRect(ImVec2(ImGui::GetWindowPos().x, sd.eyeMin.y), ImVec2(sd.eyeMax.x + 4, sd.eyeMax.y)))
+      ImGui::OpenPopup("##chheadermenu");
+    if (ImGui::BeginPopup("##chheadermenu")) {
+      if (ImGui::MenuItem(i18n::tr("Hide this header"))) a.settings.set("ui.channelHeader", false);
+      ui::Hint("Colour, name, instrument and mixer track; show it again from the instrument menu");
+      ImGui::EndPopup();
+    }
+    ImGui::Dummy(ImVec2(0, theme::kS1));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0, theme::kS1));
+  }
 
   // Strip: volume / pan / pitch + a two-octave preview keyboard, shown with the
   // header's eye (ChannelStrip.h): it slides down from under the header into a
@@ -824,6 +843,12 @@ void drawChannelSettingsBody(App& a, ObjectId channel, const BodyFrame& f) {
   }
   if (tab == 1) {
     drawNoteSettings(a, id);
+    // K-279: the note processors (arpeggiator, chords, ...) live on the Misc page; J-151: not for
+    // instruments that leave them out (while none is set)
+    if (const Channel* cc = a.doc.song().channel(id); !info || info->noteFxPanel || (cc && !cc->noteFx.empty())) {
+      ImGui::Dummy(ImVec2(0, theme::kS1));
+      packs::modulation::drawChannelNoteFx(a, id, 600.0f);
+    }
     return;
   }
 
@@ -898,11 +923,8 @@ void drawChannelSettingsBody(App& a, ObjectId channel, const BodyFrame& f) {
     if (f.zoom) edzoomui::begin(a, "channelsettings");
     layerui::drawEditor(a, id, editorW);
     if (f.zoom) edzoomui::end(a, "channelsettings");
-    ImGui::Dummy(ImVec2(0, theme::kS1));
   }
-  // note processors (arpeggiator, chords, ...); J-151: not for instruments that leave them out (while none is set)
-  if (const Channel* cc = a.doc.song().channel(id); !info || info->noteFxPanel || (cc && !cc->noteFx.empty()))
-    packs::modulation::drawChannelNoteFx(a, id, 600.0f);
+  ImGui::Dummy(ImVec2(0, theme::kS1));  // K-279: a margin under the editor (the note processors moved to Misc)
 }
 
 void drawChannelSettings(App& a) {

@@ -238,6 +238,7 @@ void orderAbove(const Window&, const Window&) {}
 void raiseChild(const Window&, const Window&) {}  // an activated owned window comes to the top of its owner's windows
 void devLiveResize(const Window&, double, double, int) {}
 void devPerformClose(const Window&) {}
+std::string devCommandW(const Window&, int) { return "no AppKit"; }
 
 // J-116: DefWindowProc's modal size / move loop (WM_ENTERSIZEMOVE .. WM_EXITSIZEMOVE) blocks the
 // event pump; SDL keeps sending RESIZED (WM_WINDOWPOSCHANGED) and EXPOSED (its 10 ms timer) then.

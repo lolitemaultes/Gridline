@@ -84,7 +84,12 @@ struct OutputValue {
 
 // Note / MIDI input event for the next process() call.
 struct NoteEvent {
-  enum Type : uint8_t { NoteOn, NoteOff, Tuning, Midi } type = NoteOn;
+  // K-99: Expression = a held note's pressure or timbre (formats with note expressions: CLAP's
+  // note dialect, VST3); `expr` says which, `value` is 0..1 (timbre: 0.5 = centre).
+  enum Type : uint8_t { NoteOn, NoteOff, Tuning, Midi, Expression } type = NoteOn;
+  enum Expr : uint8_t { ExprPressure = 0, ExprBrightness = 1 };
+  uint8_t expr = ExprPressure;
+  float value = 0;
   int offset = 0;       // sample offset in the block
   int32_t noteId = -1;  // host note id (NoteOn / NoteOff / Tuning)
   int16_t key = 60;     // MIDI key

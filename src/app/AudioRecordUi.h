@@ -26,6 +26,9 @@ bool stripArmButton(App& a, const MixerTrack& t, ImVec2 pos);
 void toggleArm(App& a, ObjectId track);
 // Playlist audio clip menu items and the clip properties window.
 void audioClipMenu(App& a, ObjectId clip);
+// Checkpoint 49: an audio clip's menu in the Clips layout, as the reference's: the edit block (not from a
+// grid slot, which has its own), Rename, Colour, Deactivate, freeze, Consolidate, Split, Reverse, stems.
+void clipsAudioClipMenu(App& a, ObjectId clip);
 void audioClipTempoItems(App& a, ObjectId clip);  // K-158: fit to tempo, normalize (the clip menu's Audio submenu)
 void drawClipProperties(App& a);
 // Settings → Audio: input device, channels, recording offset and format.

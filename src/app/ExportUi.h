@@ -29,6 +29,8 @@ enum class Preset {
 void openRender(App& a, Preset p = Preset::Audio);
 // Opens the render dialog with the settings of the last render (formats, scope, splitting).
 void openRenderAgain(App& a);
+// Closes the render dialog (Escape in the Tracks layout); false when it was not open.
+bool closeRender();
 // Starts the render with the dialog's settings into `folder` (dev checks / scripting).
 void startRenderTo(App& a, const std::string& folder);
 // Dev checks and the stress run: a render with these choices, its cancel and its state in a line.
@@ -61,6 +63,9 @@ void exportZipDialog(App& a);
 // File > Export > FL Studio project (.flp) (J-34) / FL Studio zipped loop
 // package (.zip: the .flp and the files it uses, J-52).
 void exportFlpDialog(App& a);
+// K-89: DAWproject export (a file dialog, then the approximation report) and import (a new project).
+void exportDawProjectDialog(App& a);
+void importDawProject(App& a, const std::string& path);
 void exportFlpZipDialog(App& a);
 // Writes the open song as an .flp / FL zipped loop package (Save as, the
 // export dialogs) as a background job with progress and cancel (J-80,

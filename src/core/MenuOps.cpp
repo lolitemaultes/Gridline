@@ -1,5 +1,6 @@
 #include "MenuOps.h"
 #include "ClipLoop.h"
+#include "ClipSources.h"
 #include "NoteBend.h"
 #include "ChordTools.h"
 #include "MeterEdit.h"
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <functional>
 #include <map>
+#include <set>
 
 namespace gl::ops {
 
@@ -516,14 +518,20 @@ bool insertPlaylistTrack(Document& d, int index) {
   return true;
 }
 
-bool deletePlaylistTrack(Document& d, int index) {
+bool deletePlaylistTrack(Document& d, int index, bool dropAutomation) {
   const Song& s = d.song();
   if (index < 0 || index >= static_cast<int>(s.tracks.size()) || s.tracks.size() <= 1) return false;
   d.editSong("delete playlist track", [&](Song& x) {
+    std::set<ObjectId> autos;
+    if (dropAutomation)
+      for (const Clip& c : x.playlist)
+        if (c.track == index && c.kind == ClipKind::Automation) autos.insert(c.source);
     eraseIf<Clip>(x.playlist, [&](const Clip& c) { return c.track == index; });
     for (auto& c : x.playlist)
       if (c.track > index) --c.track;
     x.tracks.erase(x.tracks.begin() + index);
+    for (const ObjectId id : autos)  // only data no other clip (in any arrangement) still plays
+      if (clipSourceUses(x, ClipKind::Automation, id) == 0) eraseIf<AutomationClip>(x.automations, [id](const AutomationClip& a) { return a.id == id; });
   });
   return true;
 }
@@ -543,6 +551,7 @@ bool clonePlaylistTrack(Document& d, int index, bool withClips) {
       const bool audio = k.mode == TrackMode::Audio;
       k.mode = TrackMode::Unassigned;
       k.mixer = k.channel = kNoId;
+      k.laneShown = k.laneSet = false;  // K-112b (R02-01): the automation lane stays with the original
       if (audio) trackmodes::makeAudioTrack(x, index + 1);
     }
     std::vector<Clip> copies;

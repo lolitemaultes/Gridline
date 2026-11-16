@@ -596,6 +596,7 @@ void orderAbove(const Window&, const Window&) {}
 void raiseChild(const Window&, const Window&) {}  // the window manager raises a clicked transient
 void devLiveResize(const Window&, double, double, int) {}
 void devPerformClose(const Window&) {}
+std::string devCommandW(const Window&, int) { return "no AppKit"; }
 // J-116: X11 has no modal resize loop: ConfigureNotify arrives in the event pump, which returns.
 bool inModalSizeLoop() { return false; }
 bool frameClockStart(const Window&) { return false; }

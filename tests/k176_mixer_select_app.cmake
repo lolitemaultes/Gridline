@@ -68,15 +68,18 @@ set(all_inserts "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16")
 set(unity "0.8000")
 
 # ---- 1. Ctrl+A follows the focus ----
-run(keys 1440x900 44 "8 focus Playlist\n11 playstate\n12 mod ${P} 1\n13 key a\n15 mod ${P} 0\n18 mixer\n20 focus Mixer\n23 playstate\n24 mod ${P} 1\n25 key a\n27 mod ${P} 0\n30 mixer\n32 mod ${P} 1\n33 key d\n35 mod ${P} 0\n38 mixer\n")
+run(keys 1440x900 44 "8 focus Playlist\n10 mixer\n11 playstate\n12 mod ${P} 1\n13 key a\n15 mod ${P} 0\n18 mixer\n20 focus Mixer\n23 playstate\n24 mod ${P} 1\n25 key a\n27 mod ${P} 0\n30 mixer\n32 mod ${P} 1\n33 key d\n35 mod ${P} 0\n38 mixer\n")
 check("the playlist has the focus" keys_out MATCHES "playstate frame 11:[^\n]*focus \"[^\"]*Playlist")
 check("the mixer has the focus" keys_out MATCHES "playstate frame 23:[^\n]*focus \"[^\"]*Mixer")
+# (K-234: the mixer selection follows the rack's, so it may start on the selected channel's track.)
 dump(keys 0)
-check("Ctrl+A with the playlist focused leaves the mixer selection (${d_sel})" d_sel STREQUAL "0")
+set(sel_before "${d_sel}")
 dump(keys 1)
-check("Ctrl+A with the mixer focused selects every insert, not the master (${d_sel})" d_sel STREQUAL all_inserts)
-check("the focus moves from the master to the first insert (${d_focus})" d_focus EQUAL 1)
+check("Ctrl+A with the playlist focused leaves the mixer selection (${sel_before} -> ${d_sel})" d_sel STREQUAL sel_before)
 dump(keys 2)
+check("Ctrl+A with the mixer focused selects every insert, not the master (${d_sel})" d_sel STREQUAL all_inserts)
+check("the focus is on an insert (${d_focus})" d_focus EQUAL 1)
+dump(keys 3)
 check("Ctrl+D goes back to the focused track (${d_sel})" d_sel STREQUAL "1")
 
 # A text prompt open over the mixer keeps Ctrl+A for itself (double-click on a name: rename).

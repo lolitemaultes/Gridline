@@ -250,6 +250,20 @@ bool Atlas::place(int w, int h, Rect& out) {
 
 const Atlas::Rect* Atlas::get(const std::string& name, float logicalPx) { return get(indexOf(name), logicalPx); }
 
+const Atlas::Rect* Atlas::find(int svgIndex, float logicalPx) const {
+  const int px = std::min(devicePx(logicalPx), kPage - 2 * kPad);
+  const uint64_t key = (static_cast<uint64_t>(svgIndex) << 32) | static_cast<uint32_t>(px);
+  const auto it = rects_.find(key);
+  return it != rects_.end() && it->second.page >= 0 ? &it->second : nullptr;
+}
+
+const Atlas::Rect* Atlas::largestMade(int svgIndex) const {
+  const Rect* best = nullptr;
+  for (const auto& kv : rects_)
+    if (static_cast<int>(kv.first >> 32) == svgIndex && kv.second.page >= 0 && (!best || kv.second.size > best->size)) best = &kv.second;
+  return best;
+}
+
 const Atlas::Rect* Atlas::get(int svgIndex, float logicalPx, float strokeDevicePx) {
   int n = 0;
   const SvgSource* src = embeddedSvgs(&n);

@@ -29,6 +29,7 @@
 #include "ContextMenus.h"
 #include "ExportUi.h"
 #include "HostedUi.h"
+#include "LogicPlugins.h"
 #include "FlpExportUi.h"
 #include "Theme.h"
 #include "UpdateUi.h"
@@ -36,6 +37,8 @@
 #include "Widgets.h"
 #include "MeterUi.h"
 #include "LayoutPresets.h"
+#include "LayoutShellUi.h"
+#include "TrackerView.h"
 #include "Windows.h"
 #include "Keys.h"
 #include "ThemeSettings.h"
@@ -82,8 +85,20 @@ void findEmptyPattern(App& a, bool first, bool askName) {
   }
 }
 
+// Every window closes; in the Tracker also every screen (N-05: Ctrl+Alt+X, the classic main screen).
+void closeAll(App& a) {
+  a.closeAllWindows();
+  if (layoutui::active() == layout::Preset::Tracker) trackerview::mainScreen(a);
+}
+
 void deletePattern(App& a) {
-  if (a.doc.song().patterns.size() > 1) a.doc.removePattern(a.curPattern);
+  if (a.doc.song().patterns.size() <= 1) return;
+  // N-10: in the Tracker the key sits next to the pattern editor's clear keys: say what went and
+  // how to bring it back.
+  std::string name;
+  if (const Pattern* p = a.doc.song().pattern(a.curPattern)) name = p->name;
+  a.doc.removePattern(a.curPattern);
+  if (layoutui::active() == layout::Preset::Tracker) a.notify(std::string(i18n::tr("Pattern deleted with its clips (Undo brings them back): ")) + name);
 }
 
 void movePattern(App& a, int dir) {
@@ -115,11 +130,16 @@ using i18n::N_;
 namespace {
 
 bool notEmbedded(App& a) { return !a.embedded; }
+// R05-18: Studio's own items the Tracks layout leaves out (its windows, playlist wording, repeats).
+bool notTracks(App& a) { return !logicplug::active(a); }
 
 void templateItems(App& a) {
   // Shipped and user templates by category (J-24).
   std::string cat;
   for (const auto& t : a.templates()) {
+    // R02-22: the Tracks layout lists "Empty project" once (the item above makes the same project);
+    // N49-12: Clips lists it once too (the row above).
+    if ((logicplug::active(a) || livelook::active(a)) && t.name == "Empty project") continue;
     if (t.category != cat) {
       cat = t.category;
       ImGui::SeparatorText(cat.c_str());
@@ -186,6 +206,11 @@ const md::Menu& fileDef() {
                                  fileDialog(a, "Import MIDI file", false, importMidiTypes()[0].exts, "",
                                             [&a](const std::string& p) { exportui::importMidiFile(a, p); });
                                }),
+                      md::item(N_("DAWproject file..."),  // K-89: opens as a new project
+                               [](App& a) {
+                                 fileDialog(a, "Import DAWproject", false, {".dawproject"}, "",
+                                            [&a](const std::string& p) { exportui::importDawProject(a, p); });
+                               }),
                       md::item(N_("FL Studio presets..."),
                                [](App& a) {
                                  a.startPresetImport();
@@ -208,7 +233,12 @@ const md::Menu& fileDef() {
                                [](App& a) {
                                  fileDialog(a, "Import audio clip", false, importAudioTypes()[0].exts, "",
                                             [&a](const std::string& p) { exportui::importAudioAsClip(a, p); });
-                               }),
+                               }).only(notTracks),
+                      md::item(N_("Audio file as a region..."),  // R05-18: the Tracks layout's wording
+                               [](App& a) {
+                                 fileDialog(a, "Import audio file", false, importAudioTypes()[0].exts, "",
+                                            [&a](const std::string& p) { exportui::importAudioAsClip(a, p); });
+                               }).only([](App& a) { return logicplug::active(a); }),
                       md::item(N_("Import from URL..."), "file.importUrl", [](App& a) { urlimportui::open(a); })  // J-192
                           .tip(N_("A link to a video or audio page: its best audio as a lossless WAV clip")),
                   }),
@@ -217,7 +247,9 @@ const md::Menu& fileDef() {
                       md::heading(N_("Audio")),
                       md::item(N_("Render to file (WAV, FLAC, MP3, Ogg)..."), "file.render", [](App& a) { exportui::openRender(a, exportui::Preset::Audio); }),
                       md::item(N_("Mixer tracks (stems)..."), "file.renderStems", [](App& a) { exportui::openRender(a, exportui::Preset::Stems); }),
-                      md::item(N_("All playlist tracks..."), [](App& a) { exportui::openRender(a, exportui::Preset::PlaylistTracks); }),
+                      md::item(N_("All playlist tracks..."), [](App& a) { exportui::openRender(a, exportui::Preset::PlaylistTracks); }).only(notTracks),
+                      md::item(N_("All tracks as audio files..."), [](App& a) { exportui::openRender(a, exportui::Preset::PlaylistTracks); })
+                          .only([](App& a) { return logicplug::active(a); }),  // R05-18
                       md::item(N_("All playlist track groups..."), [](App& a) { exportui::openRender(a, exportui::Preset::TrackGroups); }),  // J-31
                       md::provider([](App& a) { menuparity::exportItems(a); }),  // J-27
                       md::heading(N_("MIDI")),
@@ -229,6 +261,7 @@ const md::Menu& fileDef() {
                       md::item(N_("Project data files..."), [](App& a) { exportui::exportDataFilesDialog(a); }),
                       md::item(N_("Project bones..."), [](App& a) { exportui::exportBonesDialog(a); }),
                       md::item(N_("Gridline zipped project (.gridlinez)..."), [](App& a) { exportui::exportZipDialog(a); }),
+                      md::item(N_("DAWproject (.dawproject)..."), [](App& a) { exportui::exportDawProjectDialog(a); }),  // K-89
                       md::provider([](App& a) { freezeui::exportItems(a); }),  // K-87
                       md::item(N_("FL Studio project (.flp)..."), [](App& a) { exportui::exportFlpDialog(a); }),  // J-34
                       md::item(N_("FL Studio zipped loop package (.zip)..."), [](App& a) { exportui::exportFlpZipDialog(a); }),  // J-52
@@ -241,8 +274,9 @@ const md::Menu& fileDef() {
       md::provider([](App& a) { collabui::fileMenu(a); }).only(notEmbedded),  // J-111
       md::separator(),
       md::item(N_("Project info..."), "file.projectInfo", [](App& a) { a.showInfo = true; }),
-      md::separator(),
-      md::item(N_("Quit"), "file.quit", [](App& a) { a.quitRequested = true; }),
+      // R04-09: the Tracks layout quits from its program menu (its File ends with Close and Bounce).
+      md::separator().only([](App& a) { return !logicplug::active(a); }),
+      md::item(N_("Quit"), "file.quit", [](App& a) { a.quitRequested = true; }).only([](App& a) { return !logicplug::active(a); }),
   };
   return m;
 }
@@ -377,7 +411,7 @@ const md::Menu& addDef() {
                  const Tick at = MeterMap(s).roundUpToBar(s.lengthTicks());  // K-193: the next bar line of the song's meters
                  ObjectId id = a.doc.addClip(a.curPattern, track, at);
                  if (id) a.playlist.selected = {id};
-               }),
+               }).only(notTracks),
       md::separator(),
       md::item(N_("Mixer track"),
                [](App& a) {
@@ -389,7 +423,8 @@ const md::Menu& addDef() {
                  if (livelook::active(a)) trackmodes::addUsedTrack(a.doc, 8);  // K-112c: Clips lists the tracks in use
                  else a.doc.setPlaylistTrackCount(static_cast<int>(a.doc.song().tracks.size()) + 8);
                })
-          .when([](App& a) { return static_cast<int>(a.doc.song().tracks.size()) + 8 <= kMaxPlaylistTracks; }),
+          .when([](App& a) { return static_cast<int>(a.doc.song().tracks.size()) + 8 <= kMaxPlaylistTracks; })
+          .only(notTracks),
   };
   return m;
 }
@@ -423,6 +458,8 @@ const md::Menu& patternsDef() {
                  const ObjectId id = a.curPattern;
                  openPrompt("Rename pattern", a.doc.song().pattern(id)->name, [&a, id](const std::string& n) { a.doc.renamePattern(id, n); });
                })
+          // K-112B: in the Tracks layout Shift-Return renames the track, so this item shows no key there.
+          .keyText([](App& a) { return logicplug::active(a) ? nullptr : keys::label("edit.rename"); })
           .when(hasPattern),
       md::submenu(N_("Colour"), {md::provider([](App& a) {
                     uint32_t col;
@@ -483,45 +520,207 @@ const md::Menu& patternsDef() {
   return m;
 }
 
+// ------------------------------------------------------- Clips' File and Edit (N47-13) ----
+//
+// Checkpoint 49: the Clips layout's own File and Edit, as the reference's (MAP.md 2.2, 2.3), in place
+// of Studio's whole menus. The rows are Studio's (copied, so each does exactly what it does there),
+// regrouped and worded for clips and tracks; Studio's pattern list rows (go to, next, move, find empty,
+// pattern groups) have no place here: a MIDI clip is made, renamed, coloured, sized and deleted as a clip.
+
+const md::Entry& rowOf(const md::Menu& m, const char* label) {
+  for (const md::Entry& e : m)
+    if (e.label && !std::strcmp(e.label, label)) return e;
+  static const md::Entry none = md::separator();
+  return none;
+}
+
+bool anySelected(App& a) { return !a.playlist.selected.empty(); }
+
+// The one selected pattern clip whose length is not its notes' loop (Crop has work to do).
+ObjectId cropTarget(App& a) {
+  if (a.playlist.selected.size() != 1) return kNoId;
+  const Song& s = a.doc.song();
+  const Clip* c = s.clip(*a.playlist.selected.begin());
+  const Pattern* p = c && c->kind == ClipKind::Pattern ? s.pattern(c->pattern) : nullptr;
+  return p && c->length != 0 && c->length != s.patternContentLength(*p) ? c->id : kNoId;
+}
+
+const md::Menu& clipsFileDef() {
+  // New, open and recent; the saves (a new project folder is the reference's collect and save);
+  // the project's files; Export audio and Export MIDI clip; then Gridline's own rows (templates,
+  // the loop starter, the welcome screen, backups, the other imports and exports in one submenu,
+  // sharing); Quit.
+  static const md::Menu m = [] {
+    const md::Menu& f = fileDef();
+    const md::Menu& imp = rowOf(f, "Import").children;
+    const md::Menu& exp = rowOf(f, "Export").children;
+    md::Menu out = {
+        rowOf(f, "New"),
+        md::item(N_("Open..."), "file.open", [](App& a) { a.openDialog(); }).tip(N_("Gridline projects and zipped projects")),
+        rowOf(f, "Open recent"),
+        md::separator(),
+        rowOf(f, "Save"),
+        rowOf(f, "Save as..."),
+        rowOf(f, "Save new version"),
+        md::provider([](App& a) { menuparity::fileItems(a); }),  // Save to a new project folder: every sample copied in
+        rowOf(f, "Save as template..."),
+        md::separator(),
+        rowOf(f, "Locate missing samples..."),
+        rowOf(f, "Project info..."),
+        md::separator(),
+        md::item(N_("Export audio..."), "file.render", [](App& a) { exportui::openRender(a, exportui::Preset::Audio); })
+            .tip(N_("The song, or a part of it, as a WAV, FLAC, MP3 or Ogg file")),
+        md::item(N_("Export MIDI clip..."), [](App& a) { exportui::exportMidiDialog(a, 1); })
+            .when(hasPattern)
+            .tip(N_("The selected MIDI clip's notes as a MIDI file")),
+        md::item(N_("Export the arrangement as MIDI..."), "file.exportMidi", [](App& a) { exportui::exportMidiDialog(a, 0); }),
+        md::separator(),
+        rowOf(f, "New from template"),
+        rowOf(f, "New from loop starter..."),
+        rowOf(f, "Welcome screen"),
+        rowOf(f, "Revert to last backup"),
+        md::submenu(N_("Other imports and exports"),
+                    {
+                        md::heading(N_("Import")),
+                        rowOf(imp, "MIDI file..."),
+                        rowOf(imp, "Audio file into a sampler..."),
+                        rowOf(imp, "Multisample instrument (.sfz, .sf2)..."),
+                        rowOf(imp, "Import from URL..."),
+                        rowOf(imp, "FL Studio presets..."),
+                        md::heading(N_("Audio")),
+                        rowOf(exp, "Mixer tracks (stems)..."),
+                        md::item(N_("Each track..."), [](App& a) { exportui::openRender(a, exportui::Preset::PlaylistTracks); }),
+                        md::item(N_("Each track group..."), [](App& a) { exportui::openRender(a, exportui::Preset::TrackGroups); }),
+                        md::provider([](App& a) { menuparity::exportItems(a); }),
+                        md::heading(N_("MIDI")),
+                        rowOf(exp, "Time selection as MIDI file..."),
+                        md::heading(N_("Project")),
+                        rowOf(exp, "Project data files..."),
+                        rowOf(exp, "Project bones..."),
+                        rowOf(exp, "Gridline zipped project (.gridlinez)..."),
+                        md::provider([](App& a) { freezeui::exportItems(a); }),
+                        rowOf(exp, "FL Studio project (.flp)..."),
+                        rowOf(exp, "FL Studio zipped loop package (.zip)..."),
+                        rowOf(exp, "FL Studio export report..."),
+                    }),
+        md::separator().only(notEmbedded),
+        md::provider([](App& a) { collabui::fileMenu(a); }).only(notEmbedded),
+        md::separator(),
+        rowOf(f, "Quit"),
+    };
+    return out;
+  }();
+  return m;
+}
+
+const md::Menu& clipsEditDef() {
+  // Undo; the clipboard; the clip edits (split, consolidate, crop); rename, select and deactivate;
+  // the clip renders last (the reference's bounce rows).
+  static const md::Menu m = [] {
+    const md::Menu& e = editDef();
+    md::Menu out = {
+        e[0], e[1], e[2],  // Undo, Redo, Undo history
+        md::separator(),
+        rowOf(e, "Cut"),
+        rowOf(e, "Copy"),
+        rowOf(e, "Paste"),
+        rowOf(e, "Duplicate"),
+        rowOf(e, "Delete"),
+        md::separator(),
+        md::item(N_("Split"), "playlist.splitAtSongPos", [](App& a) { tracksSplitAtPlayhead(a); }).when(anySelected),
+        md::item(N_("Consolidate"), "playlist.merge",
+                 [](App& a) {
+                   if (const ObjectId nc = ops::mergeClips(a.doc, a.playlist.selected)) a.playlist.selected = {nc};
+                 })
+            .when([](App& a) { return a.playlist.selected.size() >= 2; }),
+        md::item(N_("Crop clip"), [](App& a) { a.doc.setClipLength(cropTarget(a), 0); }).when([](App& a) { return cropTarget(a) != kNoId; }),
+        md::separator(),
+        rowOf(e, "Rename..."),
+        rowOf(e, "Select all"),
+        rowOf(e, "Deselect"),
+        md::item(N_("Deactivate"), "playlist.mute",
+                 [](App& a) {
+                   const std::set<ObjectId> sel = a.playlist.selected;
+                   bool all = true;
+                   for (ObjectId id : sel)
+                     if (const Clip* c = a.doc.song().clip(id)) all = all && c->muted;
+                   a.doc.beginGroup(all ? "activate clips" : "deactivate clips");
+                   for (ObjectId id : sel) a.doc.editClip(id, "deactivate clip", [all](Clip& x) { x.muted = !all; });
+                   a.doc.endGroup();
+                 })
+            .when(anySelected)
+            .check([](App& a) {
+              bool any = false;
+              for (ObjectId id : a.playlist.selected)
+                if (const Clip* c = a.doc.song().clip(id)) {
+                  if (!c->muted) return false;
+                  any = true;
+                }
+              return any;
+            }),
+        md::separator(),
+        md::item(N_("Render clip to audio..."), [](App& a) { exportui::openRender(a, exportui::Preset::AudioClip); })
+            .when(hasPattern)
+            .tip(N_("The selected MIDI clip rendered to an audio clip")),
+        md::item(N_("Render clip in place..."), [](App& a) { exportui::openRender(a, exportui::Preset::PatternReplace); })
+            .when(hasPattern)
+            .tip(N_("The selected MIDI clip rendered to audio, in its place")),
+    };
+    return out;
+  }();
+  return m;
+}
+
 // View: zoom acts on the piano roll when it was the last editor used, otherwise on the playlist.
 bool zoomPiano(App& a) { return a.editFocus == App::EditFocus::Piano; }
 float& zoomRequest(App& a) { return zoomPiano(a) ? a.piano.zoomRequest : a.playlist.zoomRequest; }
+
+// C47: Studio's windows that the Clips layout has no place for (its bands and views are in Navigate).
+bool studioWindows(App& a) { return !livelook::active(a); }
+bool studioNotTracks(App& a) { return studioWindows(a) && notTracks(a); }  // neither Clips nor Tracks
 
 const md::Menu& viewDef() {
   static const md::Menu m = {
       md::item(N_("Command palette..."), "view.commandPalette", [](App& a) { cmdpalette::open(a); })  // K-93
           .tip(N_("Find and run any command, menu item, window, setting or plugin by typing part of its name")),
       md::heading(N_("Windows")),
-      md::toggle(N_("Playlist"), "view.playlist", [](App& a) { return &a.showPlaylist; }),
-      md::toggle(N_("Channel rack"), "view.channelRack", [](App& a) { return &a.showRack; }),
-      md::toggle(N_("Piano roll"), "view.pianoRoll", [](App& a) { return &a.showPiano; }),
+      md::toggle(N_("Playlist"), "view.playlist", [](App& a) { return &a.showPlaylist; }).only(studioNotTracks),
+      md::toggle(N_("Channel rack"), "view.channelRack", [](App& a) { return &a.showRack; }).only(studioNotTracks),
+      md::toggle(N_("Piano roll"), "view.pianoRoll", [](App& a) { return &a.showPiano; }).only(studioWindows),
       md::toggle(N_("Mixer"), "view.mixer", [](App& a) { return &a.showMixer; }),  // K-77: with the other main editors
+      // C47: the return tracks' strips and rows shown or folded away, as the reference's mixer controls.
+      md::item(N_("Return tracks"), [](App& a) { a.settings.set("clips.returnTracks", !a.settings.getBool("clips.returnTracks")); })
+          .check([](App& a) { return a.settings.getBool("clips.returnTracks"); })
+          .tip(N_("Show the return tracks beside Main in the clip grid, the mixer and the arrangement"))
+          .only([](App& a) { return livelook::active(a); }),
       md::toggle(N_("Browser"), "view.browser", [](App& a) { return &a.showBrowser; }),
-      md::item(N_("Plugin picker"), "view.pluginPicker", [](App&) { browserui::togglePluginPicker(); }).check([](App&) { return browserui::pluginPickerOpen(); }),
-      md::provider([](App& a) { menuparity::viewItems(a); }),  // J-27: project picker
+      md::item(N_("Plugin picker"), "view.pluginPicker", [](App&) { browserui::togglePluginPicker(); }).check([](App&) { return browserui::pluginPickerOpen(); }).only(studioWindows),
+      md::provider([](App& a) { menuparity::viewItems(a); }).only(studioNotTracks),  // J-27: project picker
       md::item(N_("Channel settings"), [](App& a) { a.settingsChannel = a.settingsChannel != kNoId ? kNoId : a.selChannel; })
           .check([](App& a) { return a.settingsChannel != kNoId; })
-          .when([](App& a) { return a.doc.song().channel(a.selChannel) != nullptr; }),
-      md::toggle(N_("Master chain"), nullptr, [](App& a) { return &a.showMaster; }),  // RN-09
-      md::toggle(N_("Pads"), nullptr, [](App& a) { return &a.showLivePads; }),
+          .when([](App& a) { return a.doc.song().channel(a.selChannel) != nullptr; })
+          .only(studioWindows),
+      md::toggle(N_("Master chain"), nullptr, [](App& a) { return &a.showMaster; }).only(studioWindows),  // RN-09
+      md::toggle(N_("Pads"), nullptr, [](App& a) { return &a.showLivePads; }).only(studioNotTracks),
       md::toggle(N_("Undo history"), "edit.history", [](App& a) { return &a.showHistory; }),
       md::toggle(N_("Performance"), nullptr, [](App& a) { return &a.showPerformance; }),
-      md::toggle(N_("Groove editor"), nullptr, [](App& a) { return &a.showGroove; }),  // K-151
-      md::toggle(N_("Stage"), "view.stage", [](App& a) { return &a.showStage; }),
+      md::toggle(N_("Groove editor"), nullptr, [](App& a) { return &a.showGroove; }).only(studioNotTracks),  // K-151
+      md::toggle(N_("Stage"), "view.stage", [](App& a) { return &a.showStage; }).only(studioNotTracks),
       md::submenu(N_("Panels"), {md::provider([](App& a) { layoutparts::panelsMenu(a); })}),  // the layout parts, in every layout
-      md::heading(nullptr).text([](App& a) { return std::string(zoomPiano(a) ? i18n::tr("Zoom (piano roll)") : i18n::tr("Zoom (playlist)")); }),
-      md::item(N_("Zoom in"), [](App& a) { zoomRequest(a) *= 1.5f; }).keyText([](App& a) { return keys::label(zoomPiano(a) ? "piano.zoomIn" : "playlist.zoomIn"); }),
-      md::item(N_("Zoom out"), [](App& a) { zoomRequest(a) /= 1.5f; }).keyText([](App& a) { return keys::label(zoomPiano(a) ? "piano.zoomOut" : "playlist.zoomOut"); }),
+      // R05-18: the Tracks layout's View has its own Zoom submenu (no repeat here).
+      md::heading(nullptr).text([](App& a) { return std::string(zoomPiano(a) ? i18n::tr("Zoom (piano roll)") : i18n::tr("Zoom (playlist)")); }).only(notTracks),
+      md::item(N_("Zoom in"), [](App& a) { zoomRequest(a) *= 1.5f; }).keyText([](App& a) { return keys::label(zoomPiano(a) ? "piano.zoomIn" : "playlist.zoomIn"); }).only(notTracks),
+      md::item(N_("Zoom out"), [](App& a) { zoomRequest(a) /= 1.5f; }).keyText([](App& a) { return keys::label(zoomPiano(a) ? "piano.zoomOut" : "playlist.zoomOut"); }).only(notTracks),
       md::item(nullptr, [](App& a) { (zoomPiano(a) ? a.piano.fitRequest : a.playlist.fitRequest) = true; })
           .text([](App& a) { return std::string(zoomPiano(a) ? i18n::tr("Zoom to fit the pattern") : i18n::tr("Zoom to fit the song")); })
-          .keyText([](App& a) { return keys::label(zoomPiano(a) ? "piano.zoomFit" : "playlist.zoomFit"); }),
-      md::item(N_("Zoom to ticks (snap turns free)"), [](App& a) { zoomRequest(a) = 1e9f; }),
+          .keyText([](App& a) { return keys::label(zoomPiano(a) ? "piano.zoomFit" : "playlist.zoomFit"); }).only(notTracks),
+      md::item(N_("Zoom to ticks (snap turns free)"), [](App& a) { zoomRequest(a) = 1e9f; }).only(studioNotTracks),
       md::item(N_("Clear time selection"), [](App& a) { a.playlist.selStart = a.playlist.selEnd = 0; })
           .only([](App& a) { return !zoomPiano(a); })
           .when([](App& a) { return a.playlist.selEnd > a.playlist.selStart; }),
       md::heading(N_("Layout")),
       md::item(N_("Close plugin windows"), "view.closePlugins", [](App& a) { a.closePluginWindows(); }),
-      md::item(N_("Close all windows"), "view.closeAll", [](App& a) { a.closeAllWindows(); }),
+      md::item(N_("Close all windows"), "view.closeAll", [](App& a) { closeAll(a); }),
       md::item(N_("Bring all windows back into Gridline"), [](App&) { viewports::gatherAll(); })  // J-113
           .when([](App&) { return viewports::detachedCount() > 0; }),
       md::submenu(N_("Window layout"), {md::provider([](App& a) { layoutui::viewLayoutMenu(a); })}),  // K-79
@@ -570,7 +769,8 @@ const md::Menu& optionsDef() {
   static const md::Menu m = {
       md::heading(N_("Settings")),
       md::item(N_("Audio settings..."), [](App& a) { openSettings(a, 0); }),
-      md::item(N_("MIDI settings..."), "view.settings", [](App& a) { openSettings(a, 1); }),
+      md::item(N_("MIDI settings..."), "view.settings", [](App& a) { openSettings(a, 1); })
+          .keyText([](App& a) { return logicplug::active(a) ? nullptr : keys::label("view.settings"); }),  // R02-22: Cmd+, is Settings... there
       md::item(N_("Project settings..."), [](App& a) { openSettings(a, 2); }),
       md::item(N_("Backup settings..."), [](App& a) { openSettings(a, 3); }),
       md::item(N_("Interface settings..."), [](App& a) { openSettings(a, 4); }),
@@ -584,12 +784,14 @@ const md::Menu& optionsDef() {
       md::item(N_("Song mode"),
                [](App& a) { a.engine.setMode(a.engine.mode() == PlayMode::Song ? PlayMode::Pattern : PlayMode::Song); })
           .keyText([](App&) { return "L"; })
-          .check([](App& a) { return a.engine.mode() == PlayMode::Song; }),
+          .check([](App& a) { return a.engine.mode() == PlayMode::Song; })
+          .only(studioNotTracks),  // N45-09: Clips has no play modes to pick; R05-18: the Tracks layout always plays its tracks
       md::item(N_("Live mode"), [](App& a) { a.engine.setMode(a.engine.mode() == PlayMode::Live ? PlayMode::Song : PlayMode::Live); })
-          .check([](App& a) { return a.engine.mode() == PlayMode::Live; }),
-      md::submenu(N_("Arrangements"), {md::provider([](App& a) { arrangementMenu(a); })}),
+          .check([](App& a) { return a.engine.mode() == PlayMode::Live; })
+          .only(studioNotTracks),
+      md::submenu(N_("Arrangements"), {md::provider([](App& a) { arrangementMenu(a); })}).only(studioWindows),  // N49-12: one Arrangement per Set
       md::provider([](App& a) { j31::optionsItems(a); }),  // J-31: song position jumps
-      md::toggle(N_("Metronome"), "options.metronome", [](App& a) { return &a.metronome; }),
+      md::toggle(N_("Metronome"), "options.metronome", [](App& a) { return &a.metronome; }).only(studioWindows),  // N48-15: Clips: in Recording and metronome
       md::item(N_("Plugin delay compensation"),
                [](App& a) {
                  a.settings.set("audio.pdc", !a.settings.getBool("audio.pdc"));
@@ -600,14 +802,15 @@ const md::Menu& optionsDef() {
       md::provider([](App& a) { freezeui::optionsItems(a); }),     // K-87: refreeze, hibernate
       md::provider([](App& a) { menuparity::optionsItems(a); }),  // J-27: MIDI clock out
       md::heading(N_("Recording")),
-      md::toggle(N_("Record notes"), nullptr, [](App& a) { return &a.recordArmed; }),
-      md::toggle(N_("Step record"), nullptr, [](App& a) { return &a.stepRecord; }),
+      md::toggle(N_("Record notes"), nullptr, [](App& a) { return &a.recordArmed; }).only(studioWindows),  // N48-15: Clips: Arrangement record
+      // Clips: these rows are once, in Options > Recording and metronome (the same rows twice before).
+      md::toggle(N_("Step record"), nullptr, [](App& a) { return &a.stepRecord; }).only(studioWindows),
       md::toggle(N_("Record automation"), nullptr, [](App&) { return &automationRecording(); }),
-      md::submenu(N_("Recording options"), {md::provider([](App& a) { recordOptionsMenu(a); })}),  // the record button's menu (audio takes included)
-      md::heading(N_("Keyboard and controllers")),
-      md::toggle(N_("Typing keyboard to piano"), "options.typingKeyboard", [](App& a) { return &a.typingKeyboard; }),
-      md::submenu(N_("Typing keyboard options"), {md::provider([](App& a) { typingKeyboardMenu(a); })}),
-      md::toggle(N_("Multilink to controllers"), nullptr, [](App& a) { return &a.multilink; }),
+      md::submenu(N_("Recording options"), {md::provider([](App& a) { recordOptionsMenu(a); })}).only(studioWindows),  // the record button's menu (audio takes included)
+      md::heading(N_("Keyboard and controllers")).only(studioWindows),
+      md::toggle(N_("Typing keyboard to piano"), "options.typingKeyboard", [](App& a) { return &a.typingKeyboard; }).only(studioWindows),
+      md::submenu(N_("Typing keyboard options"), {md::provider([](App& a) { typingKeyboardMenu(a); })}).only(studioWindows),
+      md::toggle(N_("Multilink to controllers"), nullptr, [](App& a) { return &a.multilink; }).only(studioWindows),
       md::heading(N_("Editing")),
       md::provider([](App& a) {
         autoScrollItem(a, false);  // K-4: the playlist, and the pattern editors on their own
@@ -730,8 +933,9 @@ const md::Menu& helpDef() {
       md::item(N_("Track Receipt..."), [](App& a) { receiptui::open(a); }),  // J-219: parts of licensed samples used
       md::item(N_("Show settings folder"), [](App& a) { a.notify("Settings, presets and templates: " + a.configDir()); }),
       md::separator(),
-      md::item(N_("Check for updates..."), [](App& a) { updui::checkNow(a); }).only([](App&) { return updui::started(); }),  // J-89
-      md::item(N_("About Gridline"), [](App& a) { a.showAbout = true; }),
+      md::item(N_("Check for updates..."), [](App& a) { updui::checkNow(a); })  // J-89 (R02-22: the Tracks layout has it in the app menu)
+          .only([](App& a) { return updui::started() && !logicplug::active(a); }),
+      md::item(N_("About Gridline"), [](App& a) { a.showAbout = true; }).only(notTracks),  // R05-18: in the app menu there
   };
   return m;
 }
@@ -739,6 +943,8 @@ const md::Menu& helpDef() {
 }  // namespace
 
 const menudef::Menu& menudef::tracksEdit() { return tracksEditDef(); }
+const menudef::Menu& menudef::clipsFile() { return clipsFileDef(); }
+const menudef::Menu& menudef::clipsEdit() { return clipsEditDef(); }
 
 const menudef::Menu& menudef::studio(int which) {
   switch (which) {
@@ -813,13 +1019,23 @@ bool menuShortcuts(App& a) {
   if (!inPiano && !inRack && key("pattern.moveDown")) movePattern(a, 1);
   // View / Options.
   if (key("view.commandPalette")) cmdpalette::toggle(a);  // K-93
-  if (key("view.settings")) {
+  if (!key("view.settings")) {
+  } else if (layoutui::active() == layout::Preset::Tracker) {
+    // R3-03: in the Tracker, Settings is the header's Config screen (as its button), whose "All
+    // settings" opens the window.
+    trackerview::setHeaderSwap(trackerview::headerSwap() == 3 ? 0 : 3);
+  } else {
     a.showSettings = !a.showSettings;
     if (a.showSettings) a.settingsTab = 1;  // MIDI tab, like the menu entry
   }
-  if (key("view.closeAll")) a.closeAllWindows();
+  if (key("view.closeAll")) closeAll(a);
   if (key("view.closePlugins")) a.closePluginWindows();
-  if (key("view.hidePlugins")) toggleHostedEditorsHidden();  // K-112
+  if (key("view.hidePlugins")) {  // K-112; R02-08: in the Tracks layout V hides every plugin window (the built-in ones too)
+    toggleHostedEditorsHidden();
+    // K-297: Smooth's built-in effect windows too. The key was taken here, so the Smooth branch of
+    // handleGlobalShortcuts never saw it: V left them all open (K-301 R02-08).
+    if (logicplug::active(a)) logicplug::toggleHidden(a);
+  }
   if (key("view.resetLayout")) ui::confirmLayoutReset(a);
 
   // Channel rack.

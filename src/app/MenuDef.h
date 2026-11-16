@@ -76,6 +76,9 @@ void emit(App& a, const Menu& m, imhook::MenuWalker* w = nullptr);
 const Menu& studio(int which);
 // K-112b: Edit in the Tracks layout's grouping.
 const Menu& tracksEdit();
+// Checkpoint 49 (N47-13): File and Edit in the Clips layout (Studio's rows, regrouped and reworded).
+const Menu& clipsFile();
+const Menu& clipsEdit();
 // The gathered menus of the other menu styles (MenuStyles.cpp): 0 Navigate, 1 Record, 2 Mix,
 // 3 Program.
 const Menu& gathered(int which);

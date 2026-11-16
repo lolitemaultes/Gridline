@@ -4,6 +4,7 @@
 // engine/AudioLogger and engine/AudioRecord.
 #include "../core/I18n.h"
 #include "J31Ui.h"
+#include "LiveLook.h"
 #include <algorithm>
 #include <cmath>
 #include <ctime>
@@ -25,6 +26,7 @@
 #include "AudioRecordUi.h"
 #include "ChordEditorUi.h"
 #include "ContextMenus.h"
+#include "LayoutPresets.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "Windows.h"
@@ -232,11 +234,14 @@ void recordingOptionItems(App& a) {
     if (ImGui::MenuItem(i18n::tr("Drop silent takes"), nullptr, &b)) a.settings.set("record.ignoreSilent", b);
     ui::Hint("Takes that never rise above -60 dBFS are not placed in the playlist");
     b = a.settings.getBool("record.nameTracks");
-    if (ImGui::MenuItem(i18n::tr("Name empty playlist tracks after the take"), nullptr, &b)) a.settings.set("record.nameTracks", b);
+    if (ImGui::MenuItem(livelook::active(a) ? i18n::tr("Name empty tracks after the take") : i18n::tr("Name empty playlist tracks after the take"), nullptr, &b))  // N47-13
+      a.settings.set("record.nameTracks", b);
     const int naming = static_cast<int>(a.settings.getNumber("record.naming"));
-    ImGui::Separator();
-    if (ImGui::MenuItem(i18n::tr("Name takes after the mixer track"), nullptr, naming == 0)) a.settings.set("record.naming", 0);
-    if (ImGui::MenuItem(i18n::tr("Name takes after the audio input"), nullptr, naming == 1)) a.settings.set("record.naming", 1);
+    if (!livelook::active(a)) {  // N49-12: Clips names takes after their track
+      ImGui::Separator();
+      if (ImGui::MenuItem(i18n::tr("Name takes after the mixer track"), nullptr, naming == 0)) a.settings.set("record.naming", 0);
+      if (ImGui::MenuItem(i18n::tr("Name takes after the audio input"), nullptr, naming == 1)) a.settings.set("record.naming", 1);
+    }
   }
 }
 
@@ -363,10 +368,12 @@ void pianoViewItems(App& a) {
 
 void playlistItems(App& a) {
   const auto& sel = a.playlist.selected;
-  if (ImGui::BeginMenu(i18n::tr("Clip groups"))) {
-    if (ImGui::MenuItem(i18n::tr("Group the selected clips"), nullptr, false, sel.size() >= 2))
-      if (ops::groupClips(a.doc, sel) != kNoId) a.notify("Grouped clips move and select together");
-    if (ImGui::MenuItem(i18n::tr("Ungroup the selected clips"), nullptr, false, !sel.empty())) ops::ungroupClips(a.doc, sel);
+  const bool rg = layoutui::active() == layout::Preset::Logic;  // R01-16: the Tracks layout says "region"
+  if (ImGui::BeginMenu(rg ? i18n::tr("Region groups") : i18n::tr("Clip groups"))) {
+    if (ImGui::MenuItem(rg ? i18n::tr("Group the selected regions") : i18n::tr("Group the selected clips"), nullptr, false, sel.size() >= 2))
+      if (ops::groupClips(a.doc, sel) != kNoId) a.notify(rg ? "Grouped regions move and select together" : "Grouped clips move and select together");
+    if (ImGui::MenuItem(rg ? i18n::tr("Ungroup the selected regions") : i18n::tr("Ungroup the selected clips"), nullptr, false, !sel.empty()))
+      ops::ungroupClips(a.doc, sel);
     if (ImGui::MenuItem(i18n::tr("Select whole groups"), nullptr, false, !sel.empty())) a.playlist.selected = ops::expandClipGroups(a.doc.song(), sel);
     ImGui::EndMenu();
   }
@@ -455,12 +462,10 @@ void drawPianoBackground(App& a, float x0, float y0, float x1, float y1, double 
   }
 }
 
-bool editGhostAt(App& a, Tick t, int pitch) {
-  if (!a.settings.getBool("piano.editableGhosts")) return false;
-  const Pattern* p = a.doc.song().pattern(a.curPattern);
-  if (!p) return false;
-  const auto h = ops::ghostNoteAt(*p, a.selChannel, a.piano.ghostChannels, t, pitch);
-  if (h.channel == kNoId) return false;
+namespace {
+bool takeNote(App& a, const Pattern* p, ops::GhostHit h) {
+  if (!p || h.channel == kNoId) return false;
+  ops::retarget(a.piano.editChannels, a.selChannel, h.channel);
   a.selectChannel(h.channel);
   a.piano.selPattern = a.curPattern;
   a.piano.selChannel = h.channel;
@@ -470,7 +475,25 @@ bool editGhostAt(App& a, Tick t, int pitch) {
     if (auto f = std::find(ns.begin(), ns.end(), it->second[at]); f != ns.end()) at = static_cast<size_t>(f - ns.begin());
   }
   a.piano.selected = {at};
+  a.piano.editSel.clear();  // K-198 follow-up: a plain click keeps just this note
   return true;
+}
+}  // namespace
+
+bool editGhostAt(App& a, Tick t, int pitch) {
+  if (!a.settings.getBool("piano.editableGhosts")) return false;
+  const Pattern* p = a.doc.song().pattern(a.curPattern);
+  if (!p) return false;
+  const std::set<ObjectId> was = a.piano.editChannels;
+  const bool ok = takeNote(a, p, ops::ghostNoteAt(*p, a.selChannel, a.piano.ghostChannels, t, pitch));
+  if (ok && was.empty()) a.piano.editChannels.clear();  // a ghost click switches channels only
+  return ok;
+}
+
+bool takeEditedNoteAt(App& a, Tick t, int pitch) {
+  const Pattern* p = a.doc.song().pattern(a.curPattern);
+  if (!p || a.piano.editChannels.empty()) return false;
+  return takeNote(a, p, ops::ghostNoteAt(*p, a.selChannel, a.piano.editChannels, t, pitch));
 }
 
 void expandNoteGroups(App& a) {

@@ -74,4 +74,13 @@ void devDumpZOrder(int frame) {
   std::fflush(stdout);
 }
 
+bool bringTabForward(const char* name) {
+  ImGuiWindow* w = name ? ImGui::FindWindowByName(name) : nullptr;
+  ImGuiDockNode* n = w && w->DockIsActive ? w->DockNode : nullptr;
+  if (!n || !n->VisibleWindow || n->VisibleWindow == w) return false;
+  if (n->TabBar) n->TabBar->NextSelectedTabId = w->TabId;
+  ImGui::FocusWindow(w);
+  return true;
+}
+
 }  // namespace gl::ui

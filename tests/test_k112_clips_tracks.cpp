@@ -13,6 +13,8 @@
 //  * K-112c (round 43): a clip dropped into an empty row of the grid grows the live area
 //    (ops::extendLiveArea): the song after it moves right by as much, one undo step, and the
 //    other person gets it.
+#include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include "Check.h"
@@ -184,6 +186,39 @@ void testDemoGrid() {
   expect(s.playlist.size() == demo.playlist.size() + static_cast<size_t>(inArea), "the arrangement keeps every clip (moved right)");
 }
 
+// C44-07 / C44-20: the Clips way to fill the grid puts one clip in each slot (scene i of a track
+// holds its i-th distinct clip, at the scene's start, whatever its length), the live area is whole
+// scenes past every clip's end, and the arrangement after it is the demo's, moved right as a whole.
+void testClipGrid() {
+  const Song demo = makeDemoTrack();
+  Document d(demo);
+  const Tick scene = std::max<Tick>(1, demo.barTicks()) * 4;
+  const Tick grew = ops::prepareClipGrid(d, scene);
+  const Song& s = d.song();
+  expect(grew > 0 && s.live.areaEnd == grew && s.live.areaEnd % scene == 0, "the clip grid's area is whole scenes");
+  bool oneEach = true, atStart = true, insideArea = true;
+  std::map<std::pair<int, Tick>, int> slots;
+  for (const Clip& c : s.playlist) {
+    if (c.start >= s.live.areaEnd) continue;
+    atStart = atStart && c.start % scene == 0;
+    oneEach = oneEach && ++slots[{c.track, c.start / scene}] == 1;
+    insideArea = insideArea && c.start + s.clipLength(c) <= s.live.areaEnd;
+  }
+  expect(!slots.empty() && oneEach, "one clip to a slot");
+  expect(atStart, "each clip starts at its scene's start");
+  expect(insideArea, "no grid clip reaches into the arrangement");
+  size_t arr = 0;
+  bool same = true;
+  for (const Clip& c : s.playlist)
+    if (c.start >= s.live.areaEnd) {
+      ++arr;
+      const Clip* o = demo.clip(c.id);
+      same = same && o && o->start + s.live.areaEnd == c.start && o->track == c.track;
+    }
+  expect(arr == demo.playlist.size() && same, "the arrangement is the demo's, moved right by the area");
+  expect(d.undo() && d.song().live.areaEnd == 0 && d.song().playlist.size() == demo.playlist.size(), "one undo step takes it back");
+}
+
 // K-112c (round 44): the mixer track a track plays through (its Clips strip).
 void testPlayedMixer() {
   Document d;
@@ -209,6 +244,72 @@ void testPlayedMixer() {
   t.tracks.resize(kDefaultPlaylistTracks);
   trackmodes::makeClipsStarterTracks(t);
   expect(trackmodes::playedMixer(t, 2) == trackmodes::linkedMixer(t, 2) && trackmodes::playedMixer(t, 2), "an audio track shows its own mixer track");
+}
+
+// C47 / N45-05: a bus is not a return. The demo routes its drum, bass, music and weather sounds
+// into four buses (each sound's output) and sends to three effect returns: the strips show the
+// three returns, and a track whose sounds all go into one bus shows that bus's fader.
+void testBusesAndReturns() {
+  const Song demo = makeDemoTrack();
+  std::vector<std::string> names;
+  for (size_t j : trackmodes::returnTracks(demo)) names.push_back(demo.mixer[j].name);
+  expect(joined(names) == "Hall,Echo,Space", ("the demo's returns are its three effect returns, not its buses (" + joined(names) + ")").c_str());
+  int drums = -1;
+  for (int t = 0; t < static_cast<int>(demo.tracks.size()); ++t)
+    if (demo.tracks[static_cast<size_t>(t)].name == "Drums") drums = t;
+  const MixerTrack* bus = drums >= 0 ? trackmodes::playedMixer(demo, drums) : nullptr;
+  expect(trackmodes::playedMixers(demo, drums).size() > 1 && bus && bus->name == "Drum Bus",
+         "a track playing several drum sounds, all routed into Drum Bus, shows Drum Bus");
+  Song s = demo;
+  for (MixerTrack& m : s.mixer)
+    if (m.name == "Snare") m.sends.front().to = s.masterId();  // one sound out of the bus
+  expect(trackmodes::playedMixer(s, drums) == nullptr, "when one of its sounds goes elsewhere, it shows none");
+  Song n = makeEmptySong();
+  n.tracks.resize(kDefaultPlaylistTracks);
+  trackmodes::makeClipsStarterTracks(n);
+  names.clear();
+  for (size_t j : trackmodes::returnTracks(n)) names.push_back(n.mixer[j].name);
+  expect(joined(names) == "Reverb,Delay", "a new set's returns are A Reverb and B Delay");
+}
+
+// N45-08: a new track goes right after the selected one and takes the next track colour; the
+// tracks named by their place follow their new place, as the reference numbers its tracks.
+void testInsertAfter() {
+  Document d;
+  Song st = makeEmptySong();
+  st.tracks.resize(kDefaultPlaylistTracks);
+  trackmodes::makeClipsStarterTracks(st);
+  const ObjectId pat = st.patterns.empty() ? kNoId : st.patterns[0].id;
+  d.reset(st);
+  if (pat != kNoId) d.addClip(pat, 1, 0);  // a clip on 2 MIDI
+  const size_t undo0 = d.history().position();
+  const int t = trackmodes::addMidiTrack(d, 0);
+  const Song& s = d.song();
+  expect(t == 1, "a new MIDI track goes right after the selected first track");
+  expect(joined(listed(s)) == "1 MIDI,2 MIDI,3 MIDI,4 Audio,5 Audio", ("the tracks after it are numbered for their place (" + joined(listed(s)) + ")").c_str());
+  bool moved = true;
+  for (const Clip& c : s.playlist) moved = moved && c.track == 2;
+  expect(pat == kNoId || (!s.playlist.empty() && moved), "the clips of the tracks after it move down with them");
+  expect(s.tracks[1].color != PlaylistTrack{}.color && s.tracks[1].color != s.tracks[0].color && s.tracks[1].color != s.tracks[3].color,
+         "it has a colour of its own");
+  expect(trackmodes::modeOf(s, 3) == TrackMode::Audio && trackmodes::linkedMixer(s, 3) && trackmodes::linkedMixer(s, 3)->name == "4 Audio" &&
+             trackmodes::linkedMixer(s, 4) && trackmodes::linkedMixer(s, 4)->name == "5 Audio",
+         "an audio track keeps its mixer track as it moves, and the mixer track takes its new name (N47-09)");
+  expect(d.history().position() == undo0 + 1, "one undo step");
+  const int e = trackmodes::addAudioTrack(d, 4);
+  expect(e == 5 && d.song().tracks[5].name == "6 Audio", "after the last track it goes at the end");
+  {  // N47-09: no two mixer tracks share a track's name after the renumbering
+    std::set<std::string> names;
+    bool unique = true;
+    for (int i = 2; i <= 5; ++i)
+      if (const MixerTrack* m = trackmodes::linkedMixer(d.song(), i)) unique = unique && names.insert(m->name).second;
+    expect(unique, "the audio tracks' mixer tracks have one name each");
+  }
+  expect(trackmodes::addAudioTrack(d) == 6, "with nothing selected it goes after the tracks in use");
+  d.undo();
+  d.undo();
+  d.undo();
+  expect(joined(listed(d.song())) == "1 MIDI,2 MIDI,3 Audio,4 Audio", "undo puts the set back");
 }
 
 void testLiveArea() {
@@ -285,7 +386,10 @@ int main() {
   testStarter();
   testNewTracks();
   testDemoGrid();
+  testClipGrid();
   testPlayedMixer();
+  testBusesAndReturns();
+  testInsertAfter();
   testLiveArea();
   testCollab();
   return finish();

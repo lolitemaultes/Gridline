@@ -31,4 +31,8 @@ struct GridlineClapProbe {
   double tsigBeats[8] = {};
   int lastTsig = 0;
   bool throwInProcess = false;  // K-9: process throws, as a bridge does when its other process is gone
+  // K-99: per-note expression seen: the last pressure and brightness note expressions (-1 =
+  // none), and the last channel pressure, CC 74 and poly aftertouch (with its channel) received.
+  double exprPressure = -1, exprBrightness = -1;
+  int chanPressure = -1, cc74 = -1, polyPressure = -1, exprChannel = -1;
 };

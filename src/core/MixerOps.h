@@ -139,6 +139,17 @@ bool gradientColor(Document& d, const std::vector<ObjectId>& tracks);
 bool setGroup(Document& d, const std::vector<ObjectId>& tracks, const std::string& group);
 std::vector<std::string> groupNames(const Song& s);  // in mixer order of first member
 std::vector<ObjectId> groupMembers(const Song& s, const std::string& group);
+// K-238 linked groups: volume, pan and mute (Document::setParam) and solo (toggleSolo) of one
+// member move every member. A new group from "Create group" starts linked or not as asked;
+// tracks added to a group take its link.
+bool createGroup(Document& d, const std::vector<ObjectId>& tracks, const std::string& group, bool linked);
+bool setGroupLink(Document& d, const std::string& group, bool linked);
+bool groupLinked(const Song& s, const std::string& group);
+// The other members of `track`'s group when it is linked (empty otherwise).
+std::vector<ObjectId> linkedPartners(const Song& s, ObjectId track);
+// Solo / mute on a strip: with its linked partners, one undo step.
+bool toggleSolo(Document& d, ObjectId track);
+bool toggleMute(Document& d, ObjectId track);
 // A group name not used yet ("Group 1", "Group 2", …).
 std::string newGroupName(const Song& s);
 // Strip order on screen: master, left-docked, middle, right-docked inserts

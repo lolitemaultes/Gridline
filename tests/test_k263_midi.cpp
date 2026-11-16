@@ -277,6 +277,35 @@ int main() {
     std::printf("# envelope A: %.3f without the port, %.3f with it\n", without, with);
   }
 
+  {
+    // GitHub #60 (follow-up): the envelope controller drives a MIDI Out controller knob through an
+    // internal controller link, and the knob's CC goes out as the envelope moves.
+    Document d(makeEmptySong());
+    ObjectId out = d.addChannel("out", "gl.midiout");
+    ObjectId env = d.addChannel("env", "gl.envctl");
+    const ObjectId pat = d.song().patterns[0].id;
+    d.addNote(pat, env, {0, 192, 60, 110});
+    auto ccValues = [&]() {
+      std::vector<Msg> sent;
+      play(d, pat, 44100, 64, out, &sent);
+      std::vector<int> v;
+      for (const auto& m : sent)
+        if ((m.s & 0xF0) == 0xB0 && m.a == 20) v.push_back(m.b);
+      return v;
+    };
+    const std::vector<int> before = ccValues();
+    ModLink m;
+    m.sourceOwner = env, m.sourceSlot = -1, m.sourceOutput = 0;
+    const ParamId knob = channelPluginParam(out, pp::moKnob(0, pp::MoKnobValue));
+    m.owner = knob.owner, m.index = knob.index;
+    expect(d.setModLink(m), "an envelope controller output links to a MIDI Out controller knob");
+    const std::vector<int> after = ccValues();
+    int hi = 0;
+    for (int v : after) hi = std::max(hi, v);
+    expect(before.empty() && after.size() > 8 && hi > 90, "the linked knob's CC 20 follows the envelope (it was silent unlinked)");
+    std::printf("# #60 envelope -> CC 20: %zu messages unlinked, %zu linked, peak %d\n", before.size(), after.size(), hi);
+  }
+
   // ------------------------------------------------------------ loop protection
   {
     Document d(makeEmptySong());

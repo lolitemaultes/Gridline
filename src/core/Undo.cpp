@@ -50,6 +50,28 @@ void UndoStack::amendTop(CommandPtr cmd) {
   trim();
 }
 
+bool UndoStack::squashTop(size_t n, const std::string& label) {
+  if (n < 2 || pos_ != cmds_.size() || n > pos_) return false;
+  const size_t from = pos_ - n;
+  auto group = std::make_unique<GroupCommand>(label);
+  for (size_t i = from; i < pos_; ++i) {
+    bytes_ -= sizes_[i];
+    group->add(std::move(cmds_[i]));
+  }
+  cmds_.resize(from);
+  serials_.resize(from);
+  notes_.resize(from);
+  sizes_.resize(from);
+  cmds_.push_back(std::move(group));
+  serials_.push_back(nextSerial_++);
+  notes_.push_back({});
+  sizes_.push_back(0);
+  touchBytes(from);
+  pos_ = cmds_.size();
+  mergeOpen_ = false;
+  return true;
+}
+
 bool UndoStack::undo(Song& song) {
   if (!canUndo()) return false;
   cmds_[--pos_]->revert(song);

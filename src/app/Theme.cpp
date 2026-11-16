@@ -135,6 +135,22 @@ void applyTweaks(Palette& p, const Tweaks& t) {
                                                {&p.gridBar, K.gridBar},       {&p.gridBeat, K.gridBeat},   {&p.gridStep, K.gridStep},
                                                {&p.stepOff, K.stepOff},       {&p.stepOffAlt, K.stepOffAlt}};
   for (const auto& [c, black] : faces) *c = lighten(*c, b, black);
+  // K-104: the panels' tint: their hue turned and their colour raised or taken out (role colours,
+  // text and glyphs keep theirs).
+  if (t.hue != 0.0f || t.saturation != 0.0f) {
+    const float turn = std::clamp(t.hue, -1.0f, 1.0f) * 0.5f, sat = std::clamp(t.saturation, -1.0f, 1.0f);
+    for (const auto& fc : faces) {
+      ImU32& c = *fc.first;
+      const ImVec4 v = ImGui::ColorConvertU32ToFloat4(c);
+      float h = 0, sv = 0, val = 0;
+      ImGui::ColorConvertRGBtoHSV(v.x, v.y, v.z, h, sv, val);
+      h = h + turn - std::floor(h + turn);
+      sv = sat >= 0.0f ? sv + (0.45f - sv) * sat : sv * (1.0f + sat);
+      float r = 0, g = 0, bl = 0;
+      ImGui::ColorConvertHSVtoRGB(h, std::clamp(sv, 0.0f, 1.0f), val, r, g, bl);
+      c = ImGui::ColorConvertFloat4ToU32(ImVec4(r, g, bl, v.w));
+    }
+  }
   if (b < 0.0f) {
     // K-177: light faces taken down far enough read as dark ones: the text, glyph and knob
     // roles become the dark theme's once those read better, so nothing dark sits on near-black panels.
@@ -175,6 +191,8 @@ void applyTweaks(Palette& p, const Tweaks& t) {
   if (t.hot != Tweaks::kKeep) p.hot = hex(t.hot & 0xFFFFFF);
   if (t.led != Tweaks::kKeep) p.led = hex(t.led & 0xFFFFFF), p.meterLow = p.led;
   if (t.playhead != Tweaks::kKeep) p.playhead = hex(t.playhead & 0xFFFFFF);
+  if (t.stepEven != Tweaks::kKeep) p.stepOff = hex(t.stepEven & 0xFFFFFF);  // K-104
+  if (t.stepOdd != Tweaks::kKeep) p.stepOffAlt = hex(t.stepOdd & 0xFFFFFF);
   p.chrome = p.surface950;
   // K-177: white text and glyphs, on dark faces (light faces keep their dark text: white on
   // them would not read). Dim and faint text stay steps of the same white over the panels.

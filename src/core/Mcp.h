@@ -208,6 +208,27 @@ struct AppBridge {
   bool available() const { return static_cast<bool>(commands); }
 };
 
+// ---- K-92: proposed changes and the assistant panel's conversation -----------------------
+// At the Propose level a tool call that would change the project is run, measured (the song
+// before and after, and what changed in words), undone again and kept as a proposal; the user
+// accepts it (one undo step, as an allowed call would have made) or discards it.
+struct Proposal {
+  uint64_t id = 0;
+  std::string client, tool, title;
+  Json args;
+  double time = 0;
+  std::vector<std::string> diff;  // songDiff lines
+  Song before, after;
+};
+// A line of the in-app assistant panel's conversation: typed by the user (fromUser) or said by
+// the connected assistant (assistant_say).
+struct ChatLine {
+  uint64_t id = 0;
+  bool fromUser = false;
+  std::string who, text;
+  double time = 0;
+};
+
 // ---- what the tools work on --------------------------------------------------------
 struct Environment {
   Environment(Document& d, script::ProjectHost& h) : doc(d), host(h) {}
@@ -218,6 +239,14 @@ struct Environment {
   std::string presetRoot;         // user preset library ("" = factory presets only)
   std::string factoryData;        // FL Studio data folder for FLP export ("" = detect)
   bool allowEdits = true;         // tools that change the project / write files
+  // K-92: the Propose level (with allowEdits): changes wait as proposals for the user; no
+  // files are written and the undo tools are refused.
+  bool propose = false;
+  std::vector<Proposal> proposals;  // waiting, oldest first
+  uint64_t nextProposal = 1;
+  std::vector<ChatLine> chat;       // the panel's conversation, oldest first (at most 200 lines)
+  uint64_t nextChat = 1, chatRead = 0;  // chatRead: the last user line an assistant has read
+  void say(bool fromUser, const std::string& who, const std::string& text);
   bool allowScripts = true;       // run_script (the app's "Run scripts" setting)
   std::string editsOffMessage = "Changes are switched off: enable \"Allow assistants to change the project\" in Gridline's settings.";
   script::Limits scriptLimits;    // run_script budgets
@@ -247,6 +276,12 @@ struct Environment {
   // Folders file writes may go to (canonical, existing): project folder first.
   std::vector<std::string> writeRoots() const;
 };
+
+// K-92: the user's answer to a proposal. Accept applies it as one undo step "AI: <title>": the
+// measured result when the project is still as it was, else the call again on the project as it
+// is now (false + err when that fails). Discard drops it. Both false when `id` is unknown.
+bool acceptProposal(Environment& env, uint64_t id, std::string& err);
+bool discardProposal(Environment& env, uint64_t id);
 
 // Resolves a path an assistant asked to write: relative paths are taken from
 // the first of `roots`; the result must stay inside one of `roots` (after
@@ -316,6 +351,11 @@ class Session {
   bool initialized() const { return initialized_; }
   const std::string& protocolVersion() const { return protocol_; }
   const std::string& clientName() const { return client_; }
+  // K-264: a client beyond this computer: its address follows its name in the activity log.
+  void setAddress(const std::string& a) {
+    addr_ = a;
+    client_ += " @ " + a;
+  }
 
   static Json errorReply(const Json& id, int code, const std::string& message);
 
@@ -341,6 +381,7 @@ class Session {
   bool initialized_ = false, gotInitialize_ = false;
   std::string protocol_ = kLatestProtocol;
   std::string client_ = "assistant";
+  std::string addr_;
   bool defer_ = false;
   std::shared_ptr<Job> deferred_;  // set by callTool for the current request
   std::vector<Pending> pending_;

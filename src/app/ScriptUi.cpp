@@ -344,6 +344,14 @@ class AppHost final : public script::ControllerHost {
   std::string device_;
 };
 
+}  // namespace
+
+std::unique_ptr<script::ControllerHost> makeAppControllerHost(App& a, const std::string& device) {
+  return std::make_unique<AppHost>(a, device);
+}
+
+namespace {
+
 struct DeviceScript {
   std::string id;
   std::unique_ptr<AppHost> host;

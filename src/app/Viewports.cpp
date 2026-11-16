@@ -651,6 +651,35 @@ void publishMonitors() {
   }
 }
 
+// K-297 (round 4): the monitors changed (one unplugged, a resolution or scale changed): a detached
+// window that is now mostly off every monitor is moved (and shrunk if it must be) fully onto the
+// monitor it overlaps most, or the nearest. Before, it was only kept reachable by a strip of its
+// title bar (a window left on a monitor that went away showed 19 px at the edge of the other one).
+void monitorsChanged() {
+  static std::vector<place::Rect> last;  // (OS units: a move of the main window changes none of them)
+  const std::vector<place::Rect> mons = monitorRects();
+  std::vector<place::Rect> os;
+  for (const place::Rect& m : mons) {
+    const ImVec2 p = toOs(ImVec2(m.x, m.y));
+    os.push_back({std::round(p.x), std::round(p.y), std::round(m.w * S.scale), std::round(m.h * S.scale)});
+  }
+  bool same = os.size() == last.size();
+  for (size_t i = 0; same && i < os.size(); ++i)
+    same = os[i].x == last[i].x && os[i].y == last[i].y && os[i].w == last[i].w && os[i].h == last[i].h;
+  const bool first = last.empty();
+  last = os;
+  if (same || first || mons.empty()) return;
+  for (ImGuiWindow* w : GImGui->Windows) {
+    if (w != w->RootWindowDockTree || !w->WasActive || !isOut(w)) continue;
+    const place::Rect r{w->Pos.x, w->Pos.y, w->Size.x, w->Size.y};
+    float on = 0;
+    for (const place::Rect& m : mons) on += place::overlapArea(r, m);
+    if (on >= 0.5f * r.w * r.h) continue;
+    const place::Rect f = place::fitInside(r, mons[static_cast<size_t>(place::monitorFor(r, mons))]);
+    placeOut(w, ImVec2(f.x, f.y), ImVec2(f.w, f.h), f.w < r.w || f.h < r.h);
+  }
+}
+
 bool isDetachedId(ImGuiID viewportId) { return viewportId != 0 && viewportId != ImGui::GetMainViewport()->ID; }
 
 // The main window moved by `d` (ImGui units): ImGui's coordinates are relative to it, so the
@@ -1052,6 +1081,7 @@ void beginFrame(float uiScale, ImVec2 mainLogicalSize) {
   }
   if (S.monDirty || seconds(S.monReadAt, now()) > 2.0) readMonitors();
   publishMonitors();
+  monitorsChanged();
   // The backend reports the pointer in OS coordinates while viewports are on: main-window
   // relative here, divided by the interface scale by main.cpp like every pointer position.
   ImGuiContext& g = *GImGui;
@@ -1447,6 +1477,14 @@ bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& 
     if (ImGuiViewport* vp = viewportOf(window())) push(idOf(vp), SDL_WINDOWEVENT_CLOSE);
   } else if (cmd == "nsclose") {  // nsclose <window> (macOS): its red close button (-[NSWindow performClose:])
     if (ImGuiViewport* vp = viewportOf(window())) host::native::devPerformClose(nativeOf(sdlOf(vp)));
+  } else if (cmd == "nscmdw") {
+    // nscmdw [tap|hold|release] (macOS, K-106): Command+W on the main window as AppKit delivers it
+    // (SDL's key events, then the menu bar's Close and its window close request). tap: Command is let
+    // go in the same batch of events (a quick press); hold: Command stays down until "nscmdw release".
+    const std::string how = args.empty() ? "tap" : args[0];
+    const int phase = how == "hold" ? 1 : how == "release" ? 2 : 0;
+    std::printf("nscmdw frame %d: %s: %s\n", ImGui::GetFrameCount(), how.c_str(), host::native::devCommandW(nativeOf(S.main), phase).c_str());
+    std::fflush(stdout);
   } else if (cmd == "liveresize") {
     // liveresize <window> w h [steps]: the user resizes the detached window to w x h (ImGui units)
     // in `steps` steps while the window system blocks the event pump (simulated: SDL's size /

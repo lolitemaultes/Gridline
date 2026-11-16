@@ -67,11 +67,16 @@ void keymapTests() {
   bool unique = true, labelled = true;
   // K-112b: the Tracks layout's pane commands have keys only in its own key set.
   const std::set<std::string> tracksPanes = {"view.library", "view.inspector", "view.quickHelp", "view.smartControls", "view.toolbar", "view.lists", "view.notes", "view.hidePlugins",
-                                            "track.newTracks", "track.duplicate", "track.delete", "transport.cycle",
+                                            "track.newTracks", "track.duplicate", "track.delete", "track.mute", "track.solo", "transport.cycle",
+                                             "window.close",  // K-297: Cmd+W in the Tracks and Clips sets only (it replaced R02-08's view.closeWindow)
                                              // K-106: the Tracker's screens, keyed in its own set (Ctrl+Alt with the digits)
                                              "view.patternEditor", "view.pads", "view.channelSettings", "view.audioEditor", "view.files",
-                                             "view.headerBand", "help.trackerKeys",
-                                             "track.newAudio", "track.newMidi"};  // K-112c: keys in the Clips set only
+                                             "view.headerBand", "help.trackerKeys", "view.transposeBox", "view.cleanUp", "view.advancedEdit",
+                                             // K-112B checkpoint 42: the Tracks set's own keys (automation, windows, markers, cycle)
+                                             "view.automation", "view.globalTracks", "playlist.toolMenu", "transport.cycleSelection",
+                                             "transport.prevMarker", "transport.nextMarker", "transport.goToPosition", "playlist.cut",
+                                             "track.newAudio", "track.newMidi", "track.newReturn", "view.detail", "transport.sessionRecord",
+                                             "clips.insertMidiClip"};  // K-112c: keys in the Clips set only (N49-07)
   for (const auto& c : keys::commands()) {
     unique &= ids.insert(c.id).second;
     // The Stage opens from the View menu; the typing octave commands have keys only in the

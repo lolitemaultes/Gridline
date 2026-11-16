@@ -84,6 +84,10 @@ class Atlas {
   // stroke rule's width (device px): used to fit icons to glyphs drawn thinner.
   const Rect* get(int svgIndex, float logicalPx, float strokeDevicePx = 0);
   int indexOf(const std::string& name) const;
+  // K-291: the icon's rect at this size when it is already rasterised (never rasterises), and
+  // the largest size of the icon made so far (for drawing it scaled while its size is put off).
+  const Rect* find(int svgIndex, float logicalPx) const;
+  const Rect* largestMade(int svgIndex) const;
 
   const std::vector<Page>& pages() const { return pages_; }
   std::vector<Page>& pages() { return pages_; }

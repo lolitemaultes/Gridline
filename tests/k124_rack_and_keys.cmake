@@ -6,8 +6,8 @@
 #          rack or the playlist and the plugin picker opens its editor, focused; undo / redo, a
 #          project load and a collaborator's new channel open nothing.
 #   K-126: the headphones button (K-186): right-click solos (one undo step), again unsolos; undo;
-#          click mutes; Ctrl+click solos; Shift+click selects. The sound light before the steps
-#          takes no clicks (K-186: a meter only).
+#          click mutes; Ctrl+click solos; Shift+click selects. The light before the steps is the
+#          channel's select button (K-232): its clicks change the selection, never mutes or the undo history.
 #   K-127: every row has exactly one light, right of the name button and left of the steps, the
 #          left section's controls (K-186: the headphones button first) do not overlap, at 100% and 200% and in a narrow and a wide rack;
 #          screenshots of the playing rack at 100% and 200%.
@@ -351,7 +351,8 @@ foreach(n RANGE 10)
 endforeach()
 message(STATUS "k126: the headphones' mute, solo and select paths:${seen}")
 
-# The sound light takes no clicks: click, right-click, Ctrl+click and Shift+click change nothing.
+# K-232: the light is the select button: click, right-click, Ctrl+click and Shift+click change the
+# selection only (no mute, no undo step).
 run(lightclicks 60 "5 toasts clear
 6 closeplugins
 9 focus \"Channel rack\"
@@ -376,10 +377,13 @@ mutes(lightclicks 1 ${k} lc1)
 string(REGEX MATCH "rack frame 12: [^\n]* undo ([0-9]+)" _ "${lightclicks_out}")
 set(lu0 "${CMAKE_MATCH_1}")
 string(REGEX MATCH "rack frame 40: [^\n]* undo ([0-9]+)" _ "${lightclicks_out}")
-if(NOT lc0 STREQUAL lc1 OR NOT lu0 STREQUAL CMAKE_MATCH_1)
-  fail(lightclicks "clicks on the sound light changed something: ${lc0} -> ${lc1}, undo ${lu0} -> ${CMAKE_MATCH_1}")
+set(lu1 "${CMAKE_MATCH_1}")  # (a REGEX REPLACE resets CMAKE_MATCH_*)
+string(REGEX REPLACE "/.*" "" lm0 "${lc0}")
+string(REGEX REPLACE "/.*" "" lm1 "${lc1}")
+if(NOT lm0 STREQUAL lm1 OR NOT lu0 STREQUAL lu1)
+  fail(lightclicks "clicks on the select light changed more than the selection: ${lc0} -> ${lc1}, undo ${lu0} -> ${lu1}")
 endif()
-message(STATUS "k186: the sound light takes no clicks (${lc0})")
+message(STATUS "k232: the select light changes the selection only (${lc0} -> ${lc1})")
 
 # ---------------------------------------------------------------- K-127 ----
 function(checkRows tag n)

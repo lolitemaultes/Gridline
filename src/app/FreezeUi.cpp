@@ -24,6 +24,7 @@
 #include "Windows.h"
 #include "HostedUi.h"
 #include "PluginUI.h"
+#include "LiveLook.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -790,7 +791,9 @@ void drawShade(App& a, ImDrawList* dl, Unit u, ImVec2 p0, ImVec2 p1) {
 
 namespace {
 
-void unitItems(App& a, const std::vector<Unit>& units, bool many) {
+// N48-18: `track` (Clips' track menu): "Freeze track" alone, as the reference's track menu, without
+// the hibernate and keep-running rows.
+void unitItems(App& a, const std::vector<Unit>& units, bool many, bool track = false) {
   const Song& s = a.doc.song();
   std::vector<Unit> canFreeze, frozenOnes, stale, canSleep, sleeping;
   std::string why;
@@ -810,16 +813,18 @@ void unitItems(App& a, const std::vector<Unit>& units, bool many) {
   if (allFrozen) {
     // (Each action runs at the start of the next frame: these menus are drawn inside views that hold
     // references into the song while they draw, and an unfreeze replaces the song. App::later.)
-    if (ImGui::MenuItem(many ? tr("Unfreeze selected") : tr("Unfreeze"))) a.later([&a, frozenOnes] { unfreezeUnits(a, frozenOnes); });
+    if (ImGui::MenuItem(many ? tr("Unfreeze selected") : track ? tr("Unfreeze track") : tr("Unfreeze"))) a.later([&a, frozenOnes] { unfreezeUnits(a, frozenOnes); });
     devRackItem(many ? "menu unfreeze selected" : "menu unfreeze");
     ui::Hint("Loads its plugins again and plays them live; the render stays on disk");
     if (!stale.empty() && ImGui::MenuItem(tr("Render the freeze again"))) a.later([&a, stale] { refreezeUnits(a, stale); });
   } else {
-    if (ImGui::MenuItem(many ? tr("Freeze selected") : tr("Freeze"), nullptr, false, !canFreeze.empty())) a.later([&a, canFreeze] { freezeUnits(a, canFreeze); });
+    if (ImGui::MenuItem(many ? tr("Freeze selected") : track ? tr("Freeze track") : tr("Freeze"), nullptr, false, !canFreeze.empty()))
+      a.later([&a, canFreeze] { freezeUnits(a, canFreeze); });
     devRackItem(many ? "menu freeze selected" : "menu freeze");
     if (canFreeze.empty() && !why.empty()) ui::Hint(why);
     else ui::Hint("Renders its sound once and unloads its plugins; volume, pan and sends stay live");
   }
+  if (track) return;
   const bool allSleeping = !units.empty() && sleeping.size() == units.size();
   if (ImGui::MenuItem(many ? tr("Hibernate selected") : tr("Hibernate"), nullptr, allSleeping, allSleeping || !canSleep.empty())) {
     std::vector<Unit> which = allSleeping ? sleeping : canSleep;
@@ -861,10 +866,10 @@ void mixerMenuItems(App& a, const std::vector<ObjectId>& tracks) {
   unitItems(a, us, us.size() > 1);
 }
 
-void trackMenuItems(App& a, int track) {
+void trackMenuItems(App& a, int track, bool freezeOnly) {
   Unit u;
   if (!trackUnit(a.doc.song(), track, u)) return;
-  unitItems(a, {u}, false);
+  unitItems(a, {u}, false, freezeOnly);
 }
 
 void toolsMacroItems(App& a) {
@@ -885,12 +890,13 @@ void optionsItems(App& a) {
   const bool re = a.settings.getBool("freeze.autoRefreeze");
   if (ImGui::MenuItem(tr("Refreeze out-of-date freezes"), nullptr, re)) a.settings.set("freeze.autoRefreeze", !re);
   ui::Hint("On: an edit a freeze depends on plays live and renders again a second later. Off: the old render plays on, marked amber");
+  const bool clips = livelook::active(a);  // N49-12: Clips keeps the freeze and rest rows, not Studio's hibernation
   const bool hib = a.settings.getBool("freeze.autoHibernate");
-  if (ImGui::MenuItem(tr("Hibernate unused plugins automatically"), nullptr, hib)) a.settings.set("freeze.autoHibernate", !hib);
+  if (!clips && ImGui::MenuItem(tr("Hibernate unused plugins automatically"), nullptr, hib)) a.settings.set("freeze.autoHibernate", !hib);
   const bool rest = a.settings.getBool("freeze.restSilent");  // K-277
   if (ImGui::MenuItem(tr("Rest silent instruments"), nullptr, rest)) a.settings.set("freeze.restSilent", !rest);
   ui::Hint("Instruments that are silent with no notes to play stop using the processor until a note comes");
-  if (ImGui::BeginMenu(tr("Woken plugins sleep again after"))) {
+  if (!clips && ImGui::BeginMenu(tr("Woken plugins sleep again after"))) {
     const double cur = sleepAfter(a);
     const struct {
       const char* label;

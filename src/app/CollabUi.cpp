@@ -1343,7 +1343,10 @@ void drawInvite(App& a, Session& s, Hub& hub) {
     if (iv->replyUsed && !connecting) {
       note(fmt2(tr("Trying for %s, attempt %s. Their Join window keeps trying too, so leave both open."), countdown(static_cast<int64_t>(iv->replyWaited)),
                 std::to_string(std::max(1, iv->attempts))));
-      if (iv->replyWaited > 90)
+      if (!iv->peerPublicAddress)  // GitHub #42: the problem is on their side, say so
+        note(tr("Their reply code has no public internet address: their computer couldn't reach the address servers, so it can only connect on the same network. On their computer, check the connection, a VPN or firewall, and run Test my connection in Settings > Collaboration."),
+             theme::lit(P.danger));
+      else if (iv->replyWaited > 90)
         note(tr("Still not connected: a router or firewall on one side probably blocks direct connections. Turn off VPNs, allow Gridline through the firewall, and run Test my connection in Settings > Collaboration on both computers."),
              theme::lit(P.hot));
     }
@@ -4975,6 +4978,14 @@ void settingsPage(App& a, float fieldW) {
     ImGui::SameLine(0, theme::kS2);
     ImGui::SetNextItemWidth((fieldW - theme::kS2) * 0.5f);
     if (ImGui::InputTextWithHint("##turnpass", tr("password"), pass, sizeof pass, ImGuiInputTextFlags_Password)) secrets::Store().set("collab-turn-password", pass);
+    // GitHub #42: a user name and password without a relay address do nothing; say so
+    if (host[0] == 0 && (user[0] != 0 || pass[0] != 0)) {
+      label("");
+      ImGui::PushTextWrapPos(0);
+      ImGui::TextColored(theme::vec(theme::lit(pal().hot)), "%s",
+                         tr("No relay is used: these are the user name and password of a TURN relay you run or rent. Enter its address above, or leave all three empty."));
+      ImGui::PopTextWrapPos();
+    }
   }
   label("Test");
   netTestBlock(a, 168.0f);

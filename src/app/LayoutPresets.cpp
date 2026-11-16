@@ -112,17 +112,20 @@ bool takeSwitch(Preset* out) {
 
 void viewLayoutMenu(App& a) {
   const layout::Linked linked = layout::linkedFromSettings(a.settings);
-  // Each item leads with the layout's glyph: room for it is kept with spaces before the name.
+  // Each item leads with the layout's glyph, drawn in the menu's icon column (widened for it past the
+  // check mark's gutter). K-297: the room was spaces before the name, which the system menu bar, the
+  // command palette and the menu tree showed as part of the label.
   const float glyphW = std::round(ImGui::GetFontSize() * 1.15f);
   const float spaceW = std::max(1.0f, ImGui::CalcTextSize(" ").x);
-  const std::string pad(static_cast<size_t>(std::ceil((glyphW + 8.0f) / spaceW)), ' ');
+  const float gutterW = std::trunc(ImGui::GetFontSize() * 1.35f);  // the check mark's column (MenuItemEx)
+  const std::string room(static_cast<size_t>(std::ceil((gutterW + glyphW + 8.0f) / spaceW)), ' ');
   for (int i = 0; i < layout::kPresetCount; ++i) {
     const Preset p = static_cast<Preset>(i);
-    const std::string label = pad + i18n::tr(layout::displayName(p));
     const bool on = gActive == p;
-    if (ImGui::MenuItem(label.c_str(), layout::isPreview(p) ? i18n::tr(layout::previewTag()) : nullptr, on)) choose(a, p, linked);
+    if (ImGui::MenuItemEx(i18n::tr(layout::displayName(p)), room.c_str(), layout::isPreview(p) ? i18n::tr(layout::previewTag()) : nullptr, on))
+      choose(a, p, linked);
     const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
-    const float x = r0.x + GImGui->CurrentWindow->DC.MenuColumns.OffsetLabel + glyphW * 0.5f;
+    const float x = r0.x + GImGui->CurrentWindow->DC.MenuColumns.OffsetLabel - 8.0f - glyphW * 0.5f;
     drawGlyph(ImGui::GetWindowDrawList(), ImVec2(x, std::round((r0.y + r1.y) * 0.5f)), glyphW, p,
               ImGui::GetColorU32(on ? ImGuiCol_Text : ImGuiCol_TextDisabled));
     if (ImGui::IsItemHovered()) ui::Hint(i18n::tr(layout::blurb(p)));
