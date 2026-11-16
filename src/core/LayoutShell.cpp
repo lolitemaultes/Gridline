@@ -56,7 +56,7 @@ Shell logic() {
   // Sizes at 1440x900 as the approved picture: Library 240, Inspector 200, right pane 300 (with the
   // quick help box along its lower edge), the lower pane half of the centre column.
   s.regions = {R("logic.library", "", Edge::Left, px(240, 0.2f, 180), false, false, TabStyle::None),
-               R("logic.inspector", "", Edge::Left, px(200, 0.2f, 180), true, false, TabStyle::None),
+               R("logic.inspector", "", Edge::Left, px(230, 0.2f, 180), true, false, TabStyle::None),  // K-112D (audit E7): 105 px strips
                // K-112b8: the pads grid beside the tracks (hidden until shown; Tab or the tracks bar's grid switch)
                R("logic.grid", "", Edge::Left, px(360, 0.3f, 220), false, false, TabStyle::None),
                R("logic.right", "", Edge::Right, px(300, 0.3f, 220), false, true, TabStyle::Segmented),
@@ -92,7 +92,9 @@ Shell tracker() {
   s.preset = Preset::Tracker;
   s.centre = "tracker.pages";
   s.centreTabs = TabStyle::Pages;  // K-106: one page at a time, picked in the header band's page strip
-  s.regions = {R("tracker.header", "", Edge::Top, px(232, 0.35f, 120), true, false, TabStyle::Dock, true),
+  // K-106 cp14: 248 (was 232): the order list's five entries in the band's text size took the
+  // height from the scope box's tools; the classic band is taller still for its window.
+  s.regions = {R("tracker.header", "", Edge::Top, px(248, 0.35f, 120), true, false, TabStyle::Dock, true),
                R("tracker.side", "", Edge::Right, px(190, 0.25f, 150), false),
                R("tracker.lower", "", Edge::Bottom, px(150, 0.3f, 100), false, false, TabStyle::Dock, true)};
   return s;
@@ -170,6 +172,12 @@ std::string toJson(const State& st) {
     for (const auto& [k, v] : st.regionSize) m.object[k] = Json::makeNumber(std::round(static_cast<double>(v)));
     o.object["region"] = m;
   }
+  if (!st.tabs.empty()) {
+    Json m = Json::makeObject();
+    for (const auto& [k, v] : st.tabs) m.object[k] = Json::makeString(v);
+    o.object["tabs"] = m;
+  }
+  if (!st.maximised.empty()) o.object["max"] = list(st.maximised);
   return jsonCompact(o);
 }
 
@@ -194,6 +202,12 @@ State fromJson(Preset p, const std::string& text) {
   if (const Json* m = o.find("region"); m && m->is(Json::Type::Object))
     for (const auto& [k, v] : m->object)
       if (known(k) && v.is(Json::Type::Number) && std::isfinite(v.number)) st.regionSize[k] = static_cast<float>(std::clamp(v.number, 40.0, 4000.0));
+  if (const Json* m = o.find("tabs"); m && m->is(Json::Type::Object))
+    for (const auto& [k, v] : m->object)
+      if (known(k) && v.is(Json::Type::String) && !v.str.empty() && v.str.size() < 4096) st.tabs[k] = v.str;
+  if (const Json* a = o.find("max"); a && a->is(Json::Type::Array))
+    for (const Json& v : a->array)
+      if (v.is(Json::Type::String) && known(v.str)) st.maximised.insert(v.str);
   return st;
 }
 
@@ -210,6 +224,8 @@ float regionExtent(const Region& r, float parent, const State& st, const std::st
   if (r.size.maxPx > 0 && !dragged) v = std::min(v, r.size.maxPx);
   if (r.size.maxShare > 0) v = std::min(v, std::floor(parent * (dragged ? std::max(r.size.maxShare, 0.7f) : r.size.maxShare)));
   v = std::max(v, std::min(r.size.minPx, std::floor(parent * 0.5f)));
+  // K-237: a maximised pane takes most of its parent (the main area keeps the rest) until restored.
+  if (st.maximised.count(r.id)) v = std::floor(parent * kMaximisedShare);
   return std::floor(std::clamp(v, 0.0f, std::max(0.0f, parent - 1.0f)));
 }
 

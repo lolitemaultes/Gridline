@@ -1,12 +1,14 @@
 // Gridline — command line: the Gridline Suite (J-131).
 //   gridline suite-info [suite] [--json] [--excluded]      members and plugin ids
 //   gridline suite-info <suite> --plist <out> --version N --factory F --name N --id ID --exe E --min M
-//                                                          (build: the AU bundle's Info.plist)
+//                [--members <gridline-members.txt>]       (build: the AU bundle's Info.plist; K-308: only the listed members)
+//   gridline suite-info <suite> --member-list <out> <type>...  (K-308: write a bundle's member list)
 //   gridline suite status|install|remove [--json]          the suite in this user's plug-in folders
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 #include "core/Json.h"
@@ -57,7 +59,16 @@ int writePlist(const std::string& suiteId, int argc, char** argv) {
   kv("CFBundleVersion", ver);
   kv("LSMinimumSystemVersion", minOs);
   p += "<key>NSHighResolutionCapable</key><true/>\n";
-  p += gl::suite::auComponentsPlist(suiteId, auVer, factory);
+  std::string memberList;  // K-308: --members <gridline-members.txt>: only the bundle's members
+  if (const std::string ml = arg(argc, argv, "--members"); !ml.empty()) {
+    std::ifstream in(ml, std::ios::binary);
+    if (!in) {
+      std::fprintf(stderr, "cannot read %s\n", ml.c_str());
+      return 1;
+    }
+    memberList.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+  p += gl::suite::auComponentsPlist(suiteId, auVer, factory, memberList);
   p += "</dict></plist>\n";
   std::ofstream f(out, std::ios::binary);
   f << p;
@@ -100,6 +111,14 @@ int suiteCliMain(int argc, char** argv) {
       return 2;
     }
     if (!arg(argc, argv, "--plist").empty()) return writePlist(suiteId, argc, argv);
+    if (const std::string out = arg(argc, argv, "--member-list"); !out.empty()) {  // K-308
+      std::vector<std::string> types;
+      for (int i = 3; i < argc; ++i)
+        if (std::strncmp(argv[i], "gl.", 3) == 0) types.push_back(argv[i]);
+      std::ofstream os(out, std::ios::binary);
+      os << gl::suite::memberListText(suiteId, types);
+      return os ? 0 : 1;
+    }
     if (flag(argc, argv, "--excluded")) {
       for (const auto& p : gl::pluginCatalog())
         if (const std::string r = gl::suite::exclusionReason(p); !r.empty()) std::printf("%-16s %-24s %s\n", p.type.c_str(), p.name.c_str(), r.c_str());

@@ -12,6 +12,8 @@
 
 namespace gl {
 
+struct Sample;
+
 // Source seconds an audio clip plays at song tick t (follows the engine's
 // mapping: resample, pitch-preserving stretch, tempo sync).
 double clipSourceAt(const Song& song, const Clip& clip, const TempoMap& map, double tick);
@@ -61,6 +63,13 @@ ObjectId splitClipAt(Song& song, ObjectId clip, Tick at);
 // Returns the ids of all pieces (the original first).
 std::vector<ObjectId> sliceClipAtGrid(Song& song, ObjectId clip, Tick grid);
 std::vector<ObjectId> sliceClipAtTransients(Song& song, ObjectId clip, double sensitivity = 0.5);
+// Slices an audio clip at the slices its file states (WAV cue points such as a
+// speech sample's words, sliced loops, beat markers). Returns the ids of all
+// pieces (the original first; only it when the file states no slices).
+std::vector<ObjectId> sliceClipAtFileSlices(Song& song, ObjectId clip);
+// The file's own slice starts (frames of the decoded sample, the first slice's
+// start left out); empty when the file states fewer than two slices.
+std::vector<int64_t> fileSliceFrames(const Sample& smp);
 
 // Fit to tempo: guesses the number of beats the audio spans at the song
 // tempo, makes the clip follow the tempo and sets its length to that many

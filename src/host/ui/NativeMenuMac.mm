@@ -10,15 +10,12 @@
 #include <algorithm>
 #include <string>
 #include "NativeMenu.h"
-
-@interface GridlineMenuTarget : NSObject
-- (void)chosen:(id)sender;
-@end
+#include "ObjcClass.h"
 
 namespace {
 std::string gChosen;
 NSMenu* gOriginal = nil;  // the menu bar the program started with (SDL's)
-GridlineMenuTarget* gTarget = nil;
+id gTarget = nil;  // the items' target, of a class made at run time (ObjcClass.h)
 bool gInstalled = false;
 bool gHideKey = true, gHideOthersKey = true;  // the key set leaves Command+H / Command+Alt+H free
 
@@ -38,6 +35,18 @@ NSAttributedString* titleWith(const std::string& label, const std::string& short
   NSDictionary* dim = @{NSFontAttributeName : font, NSParagraphStyleAttributeName : para, NSForegroundColorAttributeName : [NSColor secondaryLabelColor]};
   [t appendAttributedString:[[[NSAttributedString alloc] initWithString:[@"\t" stringByAppendingString:str(shortcut)] attributes:dim] autorelease]];
   return t;
+}
+
+Class targetClass() {
+  static gl::objc::RuntimeClass rc("GridlineMenuTarget", [NSObject class]);
+  static Class c = rc.method(@selector(chosen:), +[](id, SEL, id sender) {
+                       id obj = [sender representedObject];
+                       if ([obj isKindOfClass:[NSString class]]) {
+                         const char* t = [(NSString*)obj UTF8String];
+                         gChosen = t ? t : "";
+                       }
+                     }).done();
+  return c;
 }
 
 NSMenu* build(const std::string& title, const std::vector<gl::host::nativemenu::Item>& items) {
@@ -73,16 +82,6 @@ NSMenu* build(const std::string& title, const std::vector<gl::host::nativemenu::
 }
 }  // namespace
 
-@implementation GridlineMenuTarget
-- (void)chosen:(id)sender {
-  id obj = [sender representedObject];
-  if ([obj isKindOfClass:[NSString class]]) {
-    const char* c = [(NSString*)obj UTF8String];
-    gChosen = c ? c : "";
-  }
-}
-@end
-
 namespace gl::host::nativemenu {
 
 bool available() { return NSApp != nil; }
@@ -101,7 +100,7 @@ void poll() {}  // AppKit calls the target from the event loop SDL runs
 void install(const std::vector<Item>& appMenu, const std::vector<Item>& menus) {
   if (!NSApp) return;
   @autoreleasepool {
-    if (!gTarget) gTarget = [[GridlineMenuTarget alloc] init];
+    if (!gTarget) gTarget = [[targetClass() alloc] init];
     if (!gInstalled) gOriginal = [[NSApp mainMenu] retain];
     NSMenu* bar = [[[NSMenu alloc] initWithTitle:@""] autorelease];
     NSString* appName = [[NSProcessInfo processInfo] processName];

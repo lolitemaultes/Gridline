@@ -13,6 +13,8 @@ using ItemFn = void (*)(ImGuiID id, ImVec2 min, ImVec2 max);
 void setItemHook(ItemFn fn);
 // J-111d: a second, independent hook (collaborator cursors); both may be on.
 void setCursorHook(ItemFn fn);
+// K-311: a third (the plugin editors' type-in menu, TypeInMenu.h: on for one frame at a time).
+void setTypeInHook(ItemFn fn);
 
 // K-93: every item's label and status flags (ImGuiItemStatusFlags), right after the item
 // (ImGui::GetItemRectMin/Max are the item's). nullptr = off.

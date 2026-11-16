@@ -12,6 +12,7 @@
 #include "AudioRecordUi.h"
 #include "LayoutStyleUi.h"
 #include "LiveLook.h"
+#include "LogicPlugins.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -68,7 +69,8 @@ void speakerGlyph(ImDrawList* dl, ImVec2 c, ImU32 col, bool waves) {
 void trackMenuItems(App& a, int track) {
   const Song& s = a.doc.song();
   const TrackMode mode = trackmodes::modeOf(s, track);
-  if (ImGui::BeginMenu(i18n::tr("Track mode"))) {
+  // R06-13: the Tracks layout's tracks have no modes (a track plays what its regions hold)
+  if (!logicplug::active(a) && ImGui::BeginMenu(i18n::tr("Track mode"))) {
     if (ImGui::MenuItem(i18n::tr("Ordinary track"), nullptr, mode == TrackMode::Unassigned, mode != TrackMode::Unassigned))
       a.later([&a, track] { trackmodes::unassign(a.doc, track); });
     if (ImGui::BeginMenu(i18n::tr("Audio track"))) {
@@ -274,6 +276,14 @@ const char* headerHint(App& a, int track, int control) {
     default: break;
   }
   const TrackMode mode = trackmodes::modeOf(s, track);
+  if (mode == TrackMode::Audio && livelook::active(a) && trackmodes::isGroupTrack(s, track)) {  // checkpoint 52 (N51-11)
+    h = "Group track \xC2\xB7 its tracks play into it   (the triangle folds it; right-click: the group's menu)";
+    return h.c_str();
+  }
+  if (mode == TrackMode::Audio && livelook::active(a)) {
+    h = "Audio track   (audio clips only; right-click: track menu)";
+    return h.c_str();
+  }
   if (mode == TrackMode::Audio) {
     h = "Audio track \xC2\xB7 mixer insert " + std::to_string(s.mixerIndex(trackmodes::linkedMixer(s, track)->id)) +
         "   (right-click: track menu \xE2\x86\x92 track mode, input, arm)";

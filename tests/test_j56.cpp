@@ -185,6 +185,7 @@ void testRecordingOnAudioTrack() {
   TakeCommitOptions o;
   o.dir = (fs::path(gDir) / "rec").string();
   o.sampleRate = 48000;
+  o.lanes = false;  // K-123: the stacked layout (lanes: test_k123_takes)
   TakeCommitResult r = commitTakes(s, takes, o);
   expect(r.clips.size() == 2 && s.clip(r.clips[0])->track == 5 && s.clip(r.clips[1])->track == 6, "recording: passes stack below the audio track");
   expect(s.channel(r.channels[0])->mixerTrack == ins, "recording: the take plays through the linked insert");

@@ -20,6 +20,7 @@
 //    monitoring, the audio input channel(s) and the record point;
 //  - a playlist clip's "launched" flag (a live-mode clip playing right now);
 //  - playlist track folding and height (view);
+//  - the Smooth layout's window state (Song::smooth: whether its Library pane shows);
 //  - plugin parameters that are performance gestures or listening aids, not
 //    sound settings (isSessionParam: Solo / Listen / Delta / Hold / Freeze /
 //    Latch / Running toggles of Gridline's own plugins).

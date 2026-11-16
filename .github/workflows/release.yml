@@ -723,7 +723,7 @@ jobs:
       - name: Collect and checksum
         run: |
           mkdir -p files
-          find dl -type f \( -name "Gridline-$VER-*" \) -exec cp {} files/ \;
+          find dl -type f \( -name "Gridline-$VER-*" -o -name "Gridline-Suite-*$VER*" \) -exec cp {} files/ \;
           cp dl/release-notes/notes.md .
           cd files
           for f in *; do case "$f" in *"$VER"*) ;; *) echo "::error::$f has no version in its name"; exit 1 ;; esac; done
@@ -737,6 +737,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: src
+      - name: Downloads list and the release page's download sections
+        run: |
+          # Gridline-<v>-downloads.json (every file: product, kind, system, plugin, size, SHA-256) and
+          # the release body: the app, Gridline Suite, Suite Mini and Extras, then the notes.
+          python3 -I src/tools/release/downloads.py list files --version "$VER" --sums "files/Gridline-$VER-SHA256SUMS" \
+            --out "files/Gridline-$VER-downloads.json"
+          python3 -I src/tools/release/downloads.py body "files/Gridline-$VER-downloads.json" --notes notes.md --out notes-body.md
+          mv notes-body.md notes.md
+          cat notes.md
       - name: Distribution channel files (K-1)
         run: |
           # Flathub, AUR, Homebrew, the Windows package managers, the FreeBSD port, COPR and the

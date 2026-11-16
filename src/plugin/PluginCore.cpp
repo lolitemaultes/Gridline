@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include "../app/App.h"
 #include "../app/HostedUi.h"
 #include "../core/I18n.h"
@@ -68,6 +70,28 @@ std::string findPluginAssets() {
     if (fs::exists(c / "fonts" / "Inter-Regular.ttf", ec)) return fs::weakly_canonical(c, ec).string();
   }
   return {};
+}
+
+const std::vector<const gl::suite::Member*>& bundleMembers(const char* suiteId) {
+  static const std::vector<const gl::suite::Member*> list = [suiteId] {
+    std::string text;
+    if (const std::string self = host::dl::pathOf(reinterpret_cast<const void*>(&findPluginAssets)); !self.empty()) {
+      const fs::path bin = fs::u8path(self).parent_path();  // <bundle>/Contents/<arch or MacOS>, or the CLAP's folder
+      const fs::path cands[] = {bin / ".." / "Resources" / gl::suite::kMemberListFile,
+                                bin / (fs::u8path(self).stem().string() + "-assets") / gl::suite::kMemberListFile,
+                                bin / ".." / ".." / "Resources" / gl::suite::kMemberListFile};  // VST3 on Windows / Linux: Contents/<arch>/x.so
+      for (const fs::path& c : cands) {
+        std::error_code ec;
+        if (!fs::is_regular_file(c, ec) || fs::file_size(c, ec) > 65536) continue;
+        std::ifstream in(c, std::ios::binary);
+        if (!in) continue;
+        text.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+        break;
+      }
+    }
+    return gl::suite::listedMembers(suiteId ? suiteId : "", text);
+  }();
+  return list;
 }
 
 namespace {

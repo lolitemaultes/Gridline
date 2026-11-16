@@ -34,7 +34,23 @@ int forEachFileRef(Song& song, const std::function<void(std::string& path)>& fn)
 // samples) copied into `folder` and `song` pointed at the copies, so a saved project does not depend
 // on a cache that may be cleared. Copies with the same content are reused. Returns how many
 // references moved (0: none in the cache); `err` gets the first copy that failed.
-int adoptCacheFiles(Song& song, const std::string& cacheRoot, const std::string& folder, std::string* err = nullptr);
+// R10-01: with `relativeTo` (the project's folder) the song names the copies relative to it, so the
+// project and its folder can move together (loadProject resolves them against the project).
+int adoptCacheFiles(Song& song, const std::string& cacheRoot, const std::string& folder, std::string* err = nullptr, const std::string& relativeTo = "");
+// R11-02: the folders Gridline makes beside a project ("Edited audio", "<name> Samples") travel
+// with it. Each pair is a source folder and the name it takes inside `projectDir`; a file the song
+// refers to inside a source folder is copied to that name in `projectDir` (unless the same file or
+// the same content is there already: a save in place copies nothing) and named relative to
+// `projectDir`. Returns how many references changed; `err` gets the first copy that failed.
+int adoptProjectFolders(Song& song, const std::vector<std::pair<std::string, std::string>>& folders, const std::string& projectDir,
+                        std::string* err = nullptr);
+// R12-01: the Gridline-made folders the song's files live in, wherever that is (a project saved two
+// "Save as" steps ago still holds them): an "Edited audio" folder or a "<name> Samples" folder that
+// sits beside a Gridline project file (<name>.gridline or .gridline.json; for "Edited audio" any
+// Gridline project file there). Pairs for adoptProjectFolders: "Edited audio" keeps its name, a
+// samples folder takes `newStem` + " Samples". Folders that are not Gridline's (a sample library
+// named "Drum Samples" with no project beside it) are never listed.
+std::vector<std::pair<std::string, std::string>> gridlineMadeFolders(Song& song, const std::string& newStem);
 // The file references of one plugin state (same rules as forEachFileRef).
 // Returns true when `fn` changed one.
 bool forEachStateFileRef(PluginState& state, const std::function<void(std::string& path)>& fn);

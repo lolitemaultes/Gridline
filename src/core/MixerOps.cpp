@@ -800,6 +800,7 @@ bool applyTrackState(Document& d, ObjectId track, const std::string& text, std::
   loaded.group = cur->group;
   loaded.groupLink = cur->groupLink;  // K-238
   loaded.armed = cur->armed;
+  loaded.recordSafe = cur->recordSafe;  // K-123
   loaded.room = cur->room;  // K-224: loading a sound never moves the track to another room
   d.beginGroup("load mixer track state");
   for (int k = 0; k < kEffectSlots; ++k)  // links into the replaced effects no longer apply

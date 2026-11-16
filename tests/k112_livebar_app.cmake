@@ -3,7 +3,7 @@
 #   1. Capture: notes played on the typing keyboard (A, S, D: Z and X move the octave in Clips) while nothing records are kept; the button
 #      writes them into the current pattern as one undo step and forgets them;
 #   2. Session record: records into the clip grid while playing; a second click ends it;
-#   3. Draw mode: lit with the pencil; a click switches the editors to select, another back;
+#   3. Draw mode: off at first (a set opens with the pointer); a click switches the editors to the pencil, another back;
 #   4. the device title bars draw the hot-swap and save buttons (the device band shown first: since
 #      round 45 the clip band takes its place while a clip is selected).
 # Screenshot: <OUT>/bar.ppm.
@@ -96,9 +96,10 @@ check("... and forgotten (${b2_kept})" b2_kept EQUAL 0)
 at(d0 46)
 at(d1 56)
 at(d2 62)
-check("draw mode lit with the pencil (${d0_draw})" d0_draw EQUAL 1)
-check("a click: select (${d1_draw})" d1_draw EQUAL 0)
-check("another: the pencil again (${d2_draw})" d2_draw EQUAL 1)
+# (N45-12, N50-03: a set opens in pointer mode, Draw mode off)
+check("draw mode off at first, the pointer (${d0_draw})" d0_draw EQUAL 0)
+check("a click: the pencil (${d1_draw})" d1_draw EQUAL 1)
+check("another: select again (${d2_draw})" d2_draw EQUAL 0)
 
 at(s1 74)
 at(s2 82)

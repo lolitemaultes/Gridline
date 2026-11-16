@@ -20,6 +20,7 @@
 //   Controls    a plugin's window shows Gridline's plain parameter list instead of its editor
 //               (per plugin type, per user).
 #pragma once
+#include <set>
 #include <string>
 #include <vector>
 #include "../core/Types.h"
@@ -41,6 +42,45 @@ bool active(const App& a);
 // R04-01 / R04-05: an automation clip on a track that has an automation lane is the track's own
 // automation (drawn in the lane, never a region): it is not selected, moved or deleted as a region.
 bool laneClip(const Song& s, const Clip& c);
+// Checkpoint 47 (R07-10): Join for audio regions that are not pieces of one file, or not end to end
+// (the reference's Join): the regions of one track are mixed, at their own gain and fades but before
+// the strip (unity, centre, no effects; gaps silent), into a new file in `dir`. One region replaces
+// them on that track, named after the first, playing through the first one's strip. kNoId: nothing.
+ObjectId joinAudioRegions(Song& s, const std::set<ObjectId>& clips, const std::string& dir, double sampleRate);
+
+// K-112B (checkpoint 46): automation-only tracks as lanes. The reference has no automation regions:
+// a parameter's automation is a curve on the track it belongs to. In this layout only, and as a
+// view (the project and the other layouts are unchanged), a track holding nothing but automation
+// regions whose parameters each belong to one track takes no room: its curves show on that track's
+// automation lane (laneClip is true for them, so they are never regions here). The automation-only
+// tracks whose parameters belong to no single track (a bus several tracks play into) stay together
+// in one compact Automation folder row, closed by default (ui.logicAutoFolderOpen opens it: its
+// tracks show again as rows of regions). ui.logicAutoAsLanes (default on) turns the view off.
+struct AutoFold {
+  bool on = false;
+  bool open = false;                 // the folder is open
+  std::vector<char> hidden;          // per track: an automation-only track shown on its targets' lanes
+  std::vector<char> member;          // per track: in the Automation folder
+  std::vector<int> folder;           // the folder's tracks, in order (the first one is its row)
+  std::vector<int> clipTarget;       // per playlist clip: the track its curve shows on (hidden tracks), else -1
+  std::vector<ObjectId> busStrip;    // checkpoint 48: per track: the bus whose automation it shows (a bus track), else kNoId
+  int head() const { return folder.empty() ? -1 : folder.front(); }
+  bool isHidden(int t) const { return on && t >= 0 && t < static_cast<int>(hidden.size()) && hidden[static_cast<size_t>(t)]; }
+  bool isBus(int t) const { return on && t >= 0 && t < static_cast<int>(busStrip.size()) && busStrip[static_cast<size_t>(t)] != kNoId; }
+  bool isMember(int t) const { return on && t >= 0 && t < static_cast<int>(member.size()) && member[static_cast<size_t>(t)]; }
+  // The row takes no room: a hidden track, or a folder track under the closed folder's row.
+  bool takesNoRoom(int t) const { return isHidden(t) || (isMember(t) && !open && t != head()); }
+};
+// Worked out once per document revision (and when the layout or the setting changes).
+const AutoFold& autoFold(const App& a);
+void setAutoFolderOpen(App& a, bool open);
+// K-112B (checkpoint 46): the Project End marker: the end of the last region, rounded up to a bar
+// line (bar 129 in an empty project). Without a cycle, playback stops there (recording runs on).
+Tick projectEnd(const App& a);
+// The one track a parameter owner (a sound, a mixer track) belongs to, else -1: the track that plays
+// the sound or has it as its channel strip; else the one track whose sounds play into that mixer
+// track. Automation-only tracks never count.
+int ownerTrack(const Song& s, ObjectId owner);
 
 // The sound a track plays (its linked channel, else its regions' sound; `clip` first when it lies
 // on the track), and the track the layout is about (the selected region's or track, else the
@@ -55,6 +95,11 @@ int focusTrack(const App& a);
 // sounds only it used (no other track or arrangement plays them, nothing sends into the strip),
 // with their automation. One undo step (inside the caller's group when there is one).
 bool deleteTrack(App& a, int track);
+// R08-07: before regions go (Delete, the Eraser, the region menu), a track that loses its last
+// region keeps the sound they played (PlaylistTrack::sound), so its strip, its header controls and
+// its automation lane stay, as the reference's track does. Only in this layout; call it inside the
+// deletion's undo group.
+void keepTrackSounds(App& a, const std::set<ObjectId>& clips);
 // R02-14: New track with the same settings (Cmd+D): a track right below `track` with its settings
 // and, as the reference's, a channel strip of its own: a copy of the sound the track plays (its
 // instrument and settings, no notes) on a mixer insert of its own carrying the same plugins. An

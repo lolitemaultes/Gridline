@@ -468,6 +468,33 @@ def check_rendered(out, forms):
     inst = os.path.join(out, f"winget/manifests/g/Gridline/Gridline/{v}/Gridline.Gridline.installer.yaml")
     if not app_id or f"ProductCode: '{app_id.group(1)}_is1'" not in read(inst):
         bad("winget: ProductCode is not the installer's AppId + _is1 (tools/windows/gridline.iss)")
+    # The plugin suites on their own (packaging/suite): each written for both suites.
+    inst_mod = load_module("suite_installer", os.path.join(ROOT, "tools", "release", "suite-installer.py"))
+    for pkg, winget, sid in (("gridline-suite", "GridlineSuite", "gridline"), ("gridline-suite-mini", "GridlineSuiteMini", "mini")):
+        for rel, needle in ((f"homebrew/Casks/{pkg}.rb", f'version "{v}"'), (f"scoop/{pkg}.json", f'"version": "{v}"'),
+                            (f"chocolatey/{pkg}/{pkg}.nuspec", f"<version>{v}</version>"), (f"aur/{pkg}-bin/PKGBUILD", f"_ver={v}\n"),
+                            (f"aur/{pkg}-bin/.SRCINFO", f"\tpkgver = {forms['pkgver']}\n"),
+                            (f"winget/manifests/g/Gridline/{winget}/{v}/Gridline.{winget}.yaml", f"PackageVersion: {v}\n")):
+            p = os.path.join(out, rel)
+            if not os.path.isfile(p):
+                bad(f"render.py did not write {rel}")
+            elif needle not in read(p):
+                bad(f"{rel}: does not carry version {v}")
+        try:
+            json.loads(read(os.path.join(out, f"scoop/{pkg}.json")))
+            ET.parse(os.path.join(out, f"chocolatey/{pkg}/{pkg}.nuspec"))
+        except (OSError, ValueError, ET.ParseError) as e:
+            bad(f"{pkg}: {e}")
+        iss_text = inst_mod.windows_iss(sid, v, [], {})
+        code = re.search(r"^AppId=\{(\{[0-9A-F-]+\})", iss_text, re.M)
+        inst = os.path.join(out, f"winget/manifests/g/Gridline/{winget}/{v}/Gridline.{winget}.installer.yaml")
+        if not code or f"ProductCode: '{code.group(1)}_is1'" not in read(inst):
+            bad(f"winget {winget}: ProductCode is not the plugin installer's AppId + _is1 (tools/release/suite-installer.py)")
+        if app_id and code and code.group(1) == app_id.group(1):
+            bad(f"{pkg}: the plugin installer shares the app's AppId")
+        if yaml is not None:
+            for n in (f"Gridline.{winget}.yaml", f"Gridline.{winget}.installer.yaml", f"Gridline.{winget}.locale.en-US.yaml"):
+                load_yaml(os.path.join(out, f"winget/manifests/g/Gridline/{winget}/{v}/{n}"))
     if yaml is not None:
         for rel in [f"winget/manifests/g/Gridline/Gridline/{v}/{n}" for n in
                     ("Gridline.Gridline.yaml", "Gridline.Gridline.installer.yaml", "Gridline.Gridline.locale.en-US.yaml")] + ["snap/snapcraft.yaml"]:

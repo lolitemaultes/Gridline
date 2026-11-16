@@ -61,6 +61,20 @@ const std::vector<Member>& members(const std::string& suiteId);
 // Same, for a literal id (the plugin entries' GRIDLINE_SUITE): no temporary string at the call site,
 // so a reference to the result never looks like it is bound to one.
 const std::vector<Member>& members(const char* suiteId);
+// K-308: a bundle's member list ("gridline-members.txt" in the bundle's Resources, or in the
+// "<name>-assets" folder beside a Windows / Linux CLAP): which members of the suite this bundle
+// exposes. One engine binary per format serves a whole-suite bundle (every member), a single-plugin
+// bundle (one member) and a bundle an installer wrote with the person's picks. Text form:
+//   # comment
+//   suite <suite id>
+//   gl.<type>        (one per line)
+// The members named, in catalogue order. Missing or empty text, another suite's list, or a list
+// naming no known member of the suite gives every member (a bundle never ends up with none).
+std::vector<const Member*> listedMembers(const std::string& suiteId, const std::string& listText);
+// The text form for a suite and some of its members (unknown types are left out).
+std::string memberListText(const std::string& suiteId, const std::vector<std::string>& types);
+constexpr const char* kMemberListFile = "gridline-members.txt";
+
 // The member for a type in whatever suite holds it; nullptr when excluded / unknown.
 const Member* findMember(const std::string& type);
 // Lookups by plugin identity (nullptr when none).
@@ -77,6 +91,7 @@ std::string vst3UidText(const uint32_t uid[4]);
 
 // The suite's Audio Unit components as an Info.plist "AudioComponents" array
 // (keys and values only, no plist header); version as 0xMMMMmmbb.
-std::string auComponentsPlist(const std::string& suiteId, uint32_t version, const std::string& factory);
+// K-308: `memberList` (a member list's text) limits it to the bundle's members ("" = every member).
+std::string auComponentsPlist(const std::string& suiteId, uint32_t version, const std::string& factory, const std::string& memberList = "");
 
 }  // namespace gl::suite

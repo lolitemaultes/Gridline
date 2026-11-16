@@ -42,20 +42,40 @@ Gridline > Options > Send MIDI clock (master sync)			e-
 Gridline > Options > Record notes			e-
 Gridline > Options > Step record			e-
 Gridline > Options > Record automation			e-
+Gridline > Options > Recording options > Record window...			e-
 Gridline > Options > Recording options > Audio, into the tracks as audio regions			ec
 Gridline > Options > Recording options > Audio, into Loupe (armed tracks)			e-
 Gridline > Options > Recording options > Notes			ec
 Gridline > Options > Recording options > Automation (controller moves)			ec
 Gridline > Options > Recording options > Everything			e-
 Gridline > Options > Recording options > Punch in/out at the time selection			ec
+Gridline > Options > Recording options > Pre-roll > Off			ec
+Gridline > Options > Recording options > Pre-roll > 1 beat			e-
+Gridline > Options > Recording options > Pre-roll > 2 beats			e-
+Gridline > Options > Recording options > Pre-roll > 4 beats			e-
+Gridline > Options > Recording options > Pre-roll > 8 beats			e-
+Gridline > Options > Recording options > Pre-roll > 16 beats			e-
+Gridline > Options > Recording options > Post-roll > Off			ec
+Gridline > Options > Recording options > Post-roll > 1 beat			e-
+Gridline > Options > Recording options > Post-roll > 2 beats			e-
+Gridline > Options > Recording options > Post-roll > 4 beats			e-
+Gridline > Options > Recording options > Post-roll > 8 beats			e-
+Gridline > Options > Recording options > Post-roll > 16 beats			e-
+Gridline > Options > Recording options > Count-in > Off			ec
+Gridline > Options > Recording options > Count-in > 1 bar			e-
+Gridline > Options > Recording options > Count-in > 2 bars			e-
+Gridline > Options > Recording options > Count-in > 4 bars			e-
 Gridline > Options > Recording options > Audio file format > 32-bit float WAV			ec
 Gridline > Options > Recording options > Audio file format > 24-bit WAV			e-
 Gridline > Options > Recording options > Audio file format > 16-bit WAV			e-
-Gridline > Options > Recording options > Disarm tracks after recording			e-
+Gridline > Options > Recording options > Loop passes as take lanes			ec
 Gridline > Options > Recording options > Drop silent takes			e-
+Gridline > Options > Recording options > Disarm tracks after recording			e-
 Gridline > Options > Recording options > Name empty playlist tracks after the take			ec
-Gridline > Options > Recording options > Name takes after the mixer track			ec
-Gridline > Options > Recording options > Name takes after the audio input			e-
+Gridline > Options > Recording options > Name takes after > The mixer track			ec
+Gridline > Options > Recording options > Name takes after > The audio input			e-
+Gridline > Options > Recording options > Input only			e-
+Gridline > Options > Recording options > Low latency			e-
 Gridline > Options > Recording options > Overdub (keep existing notes)			ec
 Gridline > Options > Recording options > Replace (clear the channel's notes)			e-
 Gridline > Options > Recording options > Quantize note starts to the snap			ec
@@ -64,23 +84,25 @@ Gridline > Options > Recording options > Loop recording: new take per pass			e-
 Gridline > Options > Recording options > Controller moves go to > Automatic			ec
 Gridline > Options > Recording options > Controller moves go to > Pattern events			e-
 Gridline > Options > Recording options > Controller moves go to > Automation clips			e-
-Gridline > Options > Recording options > Count-in > Off			ec
-Gridline > Options > Recording options > Count-in > 1 bar			e-
-Gridline > Options > Recording options > Count-in > 2 bars			e-
-Gridline > Options > Recording options > Count-in > 4 bars			e-
+Gridline > Options > Recording options > Record controls > Every time			ec
+Gridline > Options > Recording options > Record controls > First time per song			e-
+Gridline > Options > Recording options > Record controls > Never			e-
+Gridline > Options > Recording options > Record controls > Card			ec
+Gridline > Options > Recording options > Record controls > Strip			e-
+Gridline > Options > Recording options > Record controls > The Record window			e-
 Gridline > Options > Recording options > Step record (keyboard enters notes at the step cursor)			e-
 Gridline > Options > Recording options > Link to controller (Record)…			e-
 Gridline > Options > Typing keyboard to piano	Ctrl+K	options.typingKeyboard	e-
 Gridline > Options > Typing keyboard options > Play notes from the computer keyboard	Ctrl+K	options.typingKeyboard	e-
-Gridline > Options > Typing keyboard options > Octave > Z = C1			e-
-Gridline > Options > Typing keyboard options > Octave > Z = C2			e-
-Gridline > Options > Typing keyboard options > Octave > Z = C3			e-
-Gridline > Options > Typing keyboard options > Octave > Z = C4			ec
-Gridline > Options > Typing keyboard options > Octave > Z = C5			e-
-Gridline > Options > Typing keyboard options > Octave > Z = C6			e-
-Gridline > Options > Typing keyboard options > Octave > Z = C7			e-
-Gridline > Options > Typing keyboard options > Octave > Z = C8			e-
-Gridline > Options > Typing keyboard options > Chord mode	\		e-
+Gridline > Options > Typing keyboard options > Octave > A = C2			e-
+Gridline > Options > Typing keyboard options > Octave > A = C3			e-
+Gridline > Options > Typing keyboard options > Octave > A = C4			e-
+Gridline > Options > Typing keyboard options > Octave > A = C5			ec
+Gridline > Options > Typing keyboard options > Octave > A = C6			e-
+Gridline > Options > Typing keyboard options > Octave > A = C7			e-
+Gridline > Options > Typing keyboard options > Octave > A = C8			e-
+Gridline > Options > Typing keyboard options > Octave > A = C9			e-
+Gridline > Options > Typing keyboard options > Chord mode			e-
 Gridline > Options > Typing keyboard options > Chord > Major			ec
 Gridline > Options > Typing keyboard options > Chord > Minor			e-
 Gridline > Options > Typing keyboard options > Chord > Dominant 7th			e-
@@ -240,23 +262,46 @@ Navigate > Previous marker	Alt+,	transport.prevMarker	e-
 Navigate > Next marker	Alt+.	transport.nextMarker	e-
 Navigate > Cycle	C	transport.cycle	e-
 Navigate > Set the cycle to the selected regions	Ctrl+U	transport.cycleSelection	--
+Navigate > Set the locators to the selected regions			--
+Navigate > Go to the left locator			--
+Navigate > Go to the right locator			--
 Navigate > Add marker	Alt+'	playlist.marker	e-
 Navigate > Follow the song position			ec
 Record > Record	R	transport.record	e-
+Record > Recording options > Record window...			e-
 Record > Recording options > Audio, into the tracks as audio regions			ec
 Record > Recording options > Audio, into Loupe (armed tracks)			e-
 Record > Recording options > Notes			ec
 Record > Recording options > Automation (controller moves)			ec
 Record > Recording options > Everything			e-
 Record > Recording options > Punch in/out at the time selection			ec
+Record > Recording options > Pre-roll > Off			ec
+Record > Recording options > Pre-roll > 1 beat			e-
+Record > Recording options > Pre-roll > 2 beats			e-
+Record > Recording options > Pre-roll > 4 beats			e-
+Record > Recording options > Pre-roll > 8 beats			e-
+Record > Recording options > Pre-roll > 16 beats			e-
+Record > Recording options > Post-roll > Off			ec
+Record > Recording options > Post-roll > 1 beat			e-
+Record > Recording options > Post-roll > 2 beats			e-
+Record > Recording options > Post-roll > 4 beats			e-
+Record > Recording options > Post-roll > 8 beats			e-
+Record > Recording options > Post-roll > 16 beats			e-
+Record > Recording options > Count-in > Off			ec
+Record > Recording options > Count-in > 1 bar			e-
+Record > Recording options > Count-in > 2 bars			e-
+Record > Recording options > Count-in > 4 bars			e-
 Record > Recording options > Audio file format > 32-bit float WAV			ec
 Record > Recording options > Audio file format > 24-bit WAV			e-
 Record > Recording options > Audio file format > 16-bit WAV			e-
-Record > Recording options > Disarm tracks after recording			e-
+Record > Recording options > Loop passes as take lanes			ec
 Record > Recording options > Drop silent takes			e-
+Record > Recording options > Disarm tracks after recording			e-
 Record > Recording options > Name empty playlist tracks after the take			ec
-Record > Recording options > Name takes after the mixer track			ec
-Record > Recording options > Name takes after the audio input			e-
+Record > Recording options > Name takes after > The mixer track			ec
+Record > Recording options > Name takes after > The audio input			e-
+Record > Recording options > Input only			e-
+Record > Recording options > Low latency			e-
 Record > Recording options > Overdub (keep existing notes)			ec
 Record > Recording options > Replace (clear the channel's notes)			e-
 Record > Recording options > Quantize note starts to the snap			ec
@@ -265,10 +310,12 @@ Record > Recording options > Loop recording: new take per pass			e-
 Record > Recording options > Controller moves go to > Automatic			ec
 Record > Recording options > Controller moves go to > Pattern events			e-
 Record > Recording options > Controller moves go to > Automation clips			e-
-Record > Recording options > Count-in > Off			ec
-Record > Recording options > Count-in > 1 bar			e-
-Record > Recording options > Count-in > 2 bars			e-
-Record > Recording options > Count-in > 4 bars			e-
+Record > Recording options > Record controls > Every time			ec
+Record > Recording options > Record controls > First time per song			e-
+Record > Recording options > Record controls > Never			e-
+Record > Recording options > Record controls > Card			ec
+Record > Recording options > Record controls > Strip			e-
+Record > Recording options > Record controls > The Record window			e-
 Record > Recording options > Step record (keyboard enters notes at the step cursor)			e-
 Record > Recording options > Link to controller (Record)…			e-
 Record > Metronome	K	options.metronome	e-
@@ -276,15 +323,15 @@ Record > Count-in	Shift+K	options.countIn	e-
 Record > Step record			e-
 Record > Typing keyboard to piano	Ctrl+K	options.typingKeyboard	e-
 Record > Typing keyboard options > Play notes from the computer keyboard	Ctrl+K	options.typingKeyboard	e-
-Record > Typing keyboard options > Octave > Z = C1			e-
-Record > Typing keyboard options > Octave > Z = C2			e-
-Record > Typing keyboard options > Octave > Z = C3			e-
-Record > Typing keyboard options > Octave > Z = C4			ec
-Record > Typing keyboard options > Octave > Z = C5			e-
-Record > Typing keyboard options > Octave > Z = C6			e-
-Record > Typing keyboard options > Octave > Z = C7			e-
-Record > Typing keyboard options > Octave > Z = C8			e-
-Record > Typing keyboard options > Chord mode	\		e-
+Record > Typing keyboard options > Octave > A = C2			e-
+Record > Typing keyboard options > Octave > A = C3			e-
+Record > Typing keyboard options > Octave > A = C4			e-
+Record > Typing keyboard options > Octave > A = C5			ec
+Record > Typing keyboard options > Octave > A = C6			e-
+Record > Typing keyboard options > Octave > A = C7			e-
+Record > Typing keyboard options > Octave > A = C8			e-
+Record > Typing keyboard options > Octave > A = C9			e-
+Record > Typing keyboard options > Chord mode			e-
 Record > Typing keyboard options > Chord > Major			ec
 Record > Typing keyboard options > Chord > Minor			e-
 Record > Typing keyboard options > Chord > Dominant 7th			e-
@@ -334,7 +381,7 @@ View > More windows and views > Master chain			e-
 View > More windows and views > Undo history	Alt+Z	edit.history	e-
 View > More windows and views > Performance			e-
 View > More windows and views > Panels > Inspector			ec
-View > More windows and views > Panels > Library			e-
+View > More windows and views > Panels > Library			ec
 View > More windows and views > Panels > Lists			e-
 View > More windows and views > Panels > Device chain			e-
 View > More windows and views > Panels > Clip panel			e-
@@ -354,6 +401,11 @@ View > More windows and views > Window layout > Clips	Preview		e-
 View > More windows and views > Window layout > Smooth	Preview		ec
 View > More windows and views > Window layout > Tracker	Preview		e-
 View > More windows and views > Window layout > Layout settings...			e-
+View > More windows and views > Workspaces > New workspace			e-
+View > More windows and views > Workspaces > Add starter workspaces			e-
+View > More windows and views > Workspaces > Close workspace			--
+View > More windows and views > Workspaces > Tracks			ec
+View > More windows and views > Reopen closed pane tab	Ctrl+Alt+T	view.reopenTab	e-
 View > More windows and views > Reset window layout	Ctrl+Shift+H	view.resetLayout	e-
 View > More windows and views > Dark theme			ec
 View > More windows and views > White text and glyphs			e-

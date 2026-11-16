@@ -1,7 +1,9 @@
-Duplicate
-Delete
+Duplicate ( Ctrl+D )
+Delete ( Del )
 --------------------------------
 Rename ( Ctrl+R )
+--------------------------------
+Group tracks ( Ctrl+G )
 --------------------------------
 New audio track ( Ctrl+T )
 New MIDI track ( Ctrl+Shift+T )
@@ -12,6 +14,7 @@ New return track ( Ctrl+Alt+T )
 Duplicate
 Delete
 Rename
+Group tracks
 New audio track
 New MIDI track
 New return track

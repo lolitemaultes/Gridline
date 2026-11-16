@@ -348,6 +348,26 @@ class AudioEngine {
   // which the input lags the music the performer hears (device input + output
   // latency + manual offset); captured frames are placed that much earlier.
   void setRecording(bool on) { recordOn_.store(on); }
+  // K-123 monitoring, for every armed track (Settings: record.monitor.*). Input only: an armed
+  // track in Auto hears its input all the time; otherwise (tape style) it hears it while stopped
+  // and inside the punch range, and not before the punch in or after the punch out. Low latency:
+  // while recording, armed tracks skip their effects that add latency.
+  void setMonitorInputOnly(bool on) { monInputOnly_.store(on, std::memory_order_relaxed); }
+  bool monitorInputOnly() const { return monInputOnly_.load(std::memory_order_relaxed); }
+  // K-123 pre-roll and post-roll (song ticks), used while the record button is armed in song mode
+  // with a punch range: Play starts `pre` before the punch in (the first pass only; a looping
+  // selection wraps to its start as before), and with `post` > 0 the transport plays on past the
+  // punch out instead of looping and stops `post` after it (rollStops() counts those stops).
+  void setRecordRoll(bool armed, double pre, double post) {
+    rollArmed_.store(armed, std::memory_order_relaxed);
+    preRoll_.store(std::max(0.0, pre), std::memory_order_relaxed);
+    postRoll_.store(std::max(0.0, post), std::memory_order_relaxed);
+  }
+  int rollStops() const { return rollStops_.load(std::memory_order_relaxed); }
+  void setLowLatencyMonitoring(bool on) { lowLatMon_.store(on, std::memory_order_relaxed); }
+  bool lowLatencyMonitoring() const { return lowLatMon_.load(std::memory_order_relaxed); }
+  // K-123: does an armed (or any) track hear its input now (the graph's rule, for tests and the UI).
+  bool hearsInput(uint8_t monitor, bool armed, bool playing, double tick) const;
   bool recordingOn() const { return recordOn_.load(); }
   void setRecordLatency(int samples);
   int recordLatency() const { return recLatency_.load(std::memory_order_relaxed); }
@@ -431,6 +451,12 @@ class AudioEngine {
   // ---- audio thread ----
   // Writes n interleaved stereo frames.
   void processInterleaved(float* out, int frames);
+  // K-101 follow-up: a device opened with more than two channels (the system audio on macOS and
+  // Linux). Channels 1-2 are the main mix; channels 3-4, 5-6, ... are extra output pairs 0, 1, ...
+  // that direct outputs (Hardware Insert sends, Voltage Out) write to; an odd last channel is
+  // silent. `channels` <= 2 is processInterleaved above, unchanged.
+  void processInterleaved(float* out, int frames, int channels);
+  static constexpr int kMaxDevicePairs = 15;  // extra output pairs (as the ASIO extras)
   // Writes n frames to separate buffers (overwrites). `taps`: extra outputs
   // (direct mode only; with a fixed block they are silent).
   void process(float* L, float* R, int frames, const OutputTaps* taps = nullptr);
@@ -547,6 +573,11 @@ class AudioEngine {
   // J-210: frames until the next step of a recorded-events lane or the loop end
   // (at most n), so that the block after it starts on that sample.
   int untilEventStep(const Program* p, int n) const;
+  // R08-01: frames from here (on the control grid) that may render as one block although the
+  // Program has automation: a multiple of kControlBlock when every arrangement lane holds one value
+  // from the last control-grid evaluation to the block's end and nothing else needs the grid,
+  // else kControlBlock. The output is the same: links would be evaluated to the same values.
+  int settledGridBlock(const Program* p, int n) const;
   // K-193: frames until the next meter change in song time or (K-203) the song loop's wrap (at most n), so that the block after it
   // starts on the change's first sample and hosted plugins see the new meter from there.
   int untilMeterChange(const Program* p, int n) const;
@@ -600,6 +631,7 @@ class AudioEngine {
   void logAudio(const Program* p, const float* mL, const float* mR, int n);  // J-31 audio logger
   void pushRecEvent(const RecEvent& e);
   // Input block of a mixer track (mono tracks duplicate their channel).
+  void trimInputs(const Program* p, int n);  // K-123
   const float* inputL(const ProgMixer& m) const;
   const float* inputR(const ProgMixer& m) const;
   double loopEnd(const Program* p) const;
@@ -733,6 +765,7 @@ class AudioEngine {
   PlayMode tMode_ = PlayMode::Pattern;
   ObjectId tPattern_ = kNoId;
   double anchorTick_ = 0;   // tick at sample clock 0
+  double lastGridTick_ = -1;  // R08-01: song tick of the last control-grid link evaluation (-1: none yet)
   int64_t clock_ = 0;       // samples since the anchor
   uint64_t lastMapSig_ = 0;  // tempo map of the last block (re-anchor when it changes)
   double curTick_ = 0;       // position at the end of the last block
@@ -800,6 +833,7 @@ class AudioEngine {
   MidiPortBus ports_;  // notes MIDI Out channels hold per port (read by MIDI-input effects)
   NoteHitBus hits_;    // J-165: notes / clip starts / MIDI input notes of the current block (note triggers)
   std::vector<float> tmpL_, tmpR_;
+  std::vector<float> devTapL_, devTapR_;  // kMaxDevicePairs * kMaxBlock: extra pairs of a multichannel device
   // Per-thread scratch for tasks (index = worker; 0 = audio thread).
   struct Scratch {
     float chL[kEngineMaxBlock], chR[kEngineMaxBlock];
@@ -856,6 +890,11 @@ class AudioEngine {
   std::atomic<bool> recordOn_{false};
   std::atomic<int> recLatency_{0};
   std::atomic<double> punchA_{0}, punchB_{0};
+  std::atomic<bool> monInputOnly_{false}, lowLatMon_{false};  // K-123
+  std::atomic<bool> rollArmed_{false};                       // K-123 pre / post-roll
+  std::atomic<double> preRoll_{0}, postRoll_{0};
+  std::atomic<int> rollStops_{0};
+  bool rollPunch(double& pa, double& pb) const;  // audio thread: armed, song mode, a punch range
   static constexpr size_t kTickHistory = size_t{1} << 17;  // delayed timeline for latency compensation
   std::vector<double> tickHist_;
   size_t tickHistPos_ = 0;

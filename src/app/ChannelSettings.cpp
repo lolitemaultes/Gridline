@@ -19,6 +19,7 @@
 #include "../engine/ChannelIns.h"
 #include "App.h"
 #include "LogicPlugins.h"
+#include "GamepadUi.h"
 #include "LayoutPresets.h"
 #include "../host/HostedPlugins.h"
 #include "HostedUi.h"
@@ -128,6 +129,9 @@ static void drawWaveform(App& a, ObjectId channel, const SamplePtr& smp, ImVec2 
 // window shows it, its slide and the content height measured when it was last
 // drawn; dev checks read StripDev.
 namespace {
+
+ImVec2 devPlace;        // (dev) plugwin at: where the channel window goes
+int devPlaceFrames = 0;  // and for how many more frames
 
 ObjectId& pendingFreeRoute(const App& a) {  // J-195: per application, the channel to route to a free mixer track next frame
   static std::map<const App*, ObjectId> m;
@@ -555,6 +559,9 @@ bool pluginWindowDevCommand(App& a, const std::string& cmd, const std::vector<st
     } else if (what == "fx" && args.size() > 2) {
       const size_t mi = static_cast<size_t>(std::max(0, std::atoi(args[1].c_str())));
       if (mi < s.mixer.size()) a.fxEditor = {s.mixer[mi].id, std::atoi(args[2].c_str())};
+    } else if (what == "at" && args.size() > 2) {  // at <x> <y>: the channel window's top-left corner (tests)
+      devPlace = ImVec2(static_cast<float>(std::atof(args[1].c_str())), static_cast<float>(std::atof(args[2].c_str())));
+      devPlaceFrames = 4;
     } else if (what == "close") {
       a.closePluginWindows();
     } else if (what == "info") {  // K-9: open plugin windows and their native windows to stdout
@@ -963,13 +970,20 @@ void drawChannelSettings(App& a) {
   {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    if (devPlaceFrames > 0) {  // (dev) plugwin at <x> <y>: the top-left corner held there for a few frames
+      ImGui::SetNextWindowPos(devPlace, ImGuiCond_Always);
+      --devPlaceFrames;
+    }
   }
   // K-19: the window's own size on top of the interface scale (installed plugins keep theirs).
   const bool zoomable = !info || !isHostedType(info->type);
   // K-210b: only the editor itself zooms; the channel's own rows above and below it (kChannelMinW wide) keep the interface size
   edzoomui::prepare(a, "channelsettings", info ? info->type : std::string("(layer)"), zoomable ? regionW : winW, zoomable, kChannelMinW);
   // K-79: the performance preset docks the channel settings in its bottom panel (they scroll there).
-  const bool docks = layoutui::active() == layout::Preset::Live;
+  // K-199: a Game mode session shows one window: built-in editors dock with the main view there.
+  const bool gameDock = layoutui::active() != layout::Preset::Live && zoomable && gamepadui::dockPlugins(a);
+  const bool docks = layoutui::active() == layout::Preset::Live || gameDock;
+  if (gameDock) gamepadui::nextPluginWindowDocked(a);
   const int fitFlags =  // J-158: capped to the work area, the rest scrolls
       docks ? 0 : zoomable ? edzoomui::nextWindowSize("channelsettings") : ui::NextFloatingWindowSize(winW);
   viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself

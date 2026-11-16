@@ -176,9 +176,57 @@ void testEngine() {
   expect(fx->pingResult() > 0 && fx->pingResult() < 48000, "the engine's ping comes back through the device input");
 }
 
+// K-101 follow-up: the system audio device opened with 6 channels (macOS Core Audio, Linux via
+// SDL): the main mix on 1-2, the insert's send on 3-4 (pair 0), 5-6 silent; a simulated device
+// loops 3-4 back to inputs 3-4 a block later and the ping hears it. Stereo stays as before.
+void testMultichannelDevice() {
+  Document d(makeEmptySong());
+  if (d.song().mixer.size() < 2) d.addMixerTrack();
+  const ObjectId tr = d.song().mixer[1].id;
+  expect(d.setSlotPlugin(tr, 0, "gl.hwinsert"), "multichannel: an insert");
+  d.setParam(slotParam(tr, 0, HwReturn), 1, false);  // return from inputs 3-4
+  ProgramBuilder b;
+  AudioEngine eng{kSr};
+  eng.setProgram(b.build(d.song()));
+  eng.setInputChannels(4);
+  auto rt = b.effectRuntime(tr, 0);
+  auto* fx = rt ? dynamic_cast<HwInsertFx*>(rt->fx.get()) : nullptr;
+  expect(fx != nullptr, "multichannel: the insert runs");
+  if (!fx) return;
+  fx->requestPing();
+  constexpr int kCh = 6, kN = 256;
+  std::vector<float> out(static_cast<size_t>(kCh * kN)), back(static_cast<size_t>(4 * kN), 0.f);
+  bool clicked = false, otherSilent = true;
+  for (int k = 0; k < 400; ++k) {
+    eng.pushInput(back.data(), kN);
+    eng.processInterleaved(out.data(), kN, kCh);
+    for (int i = 0; i < kN; ++i) {
+      const float* f = out.data() + static_cast<size_t>(i * kCh);
+      clicked = clicked || f[2] > 0.4f;
+      otherSilent = otherSilent && f[4] == 0.f && f[5] == 0.f;
+      float* in = back.data() + static_cast<size_t>(4 * i);
+      in[0] = in[1] = 0.f;
+      in[2] = f[2], in[3] = f[3];
+    }
+  }
+  expect(clicked, "multichannel: the click goes out on channels 3-4");
+  expect(otherSilent, "multichannel: channels 5-6 stay silent");
+  expect(fx->pingResult() > 0 && fx->pingResult() < 48000, "multichannel: the ping comes back on inputs 3-4");
+  // Two channels: the stereo path, no pairs, the insert passes the sound on.
+  AudioEngine st{kSr};
+  ProgramBuilder b2;
+  st.setProgram(b2.build(d.song()));
+  std::vector<float> a(2 * kN);
+  st.processInterleaved(a.data(), kN, 2);
+  auto rt2 = b2.effectRuntime(tr, 0);
+  auto* fx2 = rt2 ? dynamic_cast<HwInsertFx*>(rt2->fx.get()) : nullptr;
+  expect(fx2 && !fx2->connected(), "stereo device: no pair, not connected");
+}
+
 }  // namespace
 
 int main() {
+  testMultichannelDevice();
   testPing();
   testLatencyAndAlignment();
   testOfflineAndReturnOnly();

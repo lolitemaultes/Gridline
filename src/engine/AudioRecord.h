@@ -6,8 +6,8 @@
 // stop, the punch-out point or a loop wrap. Positions are already latency
 // compensated. AudioRecorder (UI thread) drains rings and events into takes;
 // commitTakes() writes them as WAV files and places them on the playlist as
-// audio clips (loop passes become stacked takes on the tracks below, earlier
-// passes muted). compTakes() picks the take heard in a time range.
+// audio clips (loop passes become take lanes on the track, or stacked takes on
+// the tracks below, earlier passes muted). compTakes() picks the take heard in a time range.
 #pragma once
 #include <functional>
 #include <set>
@@ -63,6 +63,9 @@ struct TakeCommitOptions {
   int bits = 32;               // 32 = float, 24 / 16 = PCM
   double sampleRate = 44100;
   bool muteEarlierTakes = true;
+  // K-123: loop passes of one track land on that track as take lanes (engine/TakeLanes.h);
+  // off, they stack on the tracks below (the earlier layout).
+  bool lanes = true;
   // J-31 naming: clips (and empty playlist tracks) are named after the
   // recorded insert, or after its device input ("In 1 - In 2").
   enum class Naming : uint8_t { Insert = 0, Input };
@@ -99,6 +102,7 @@ struct TakePlacement {
   bool grouped = false;   // the mixer track recorded several passes (a take group)
   int take = 0;           // take number within the group
   bool muted = false;     // an earlier pass (with muteEarlierTakes)
+  bool lane = false;      // K-123: a pass in the track's take lanes (grouped, TakeCommitOptions::lanes)
   bool stereo = true;     // the clip's file is stereo
   std::string name;       // clip / channel name
   Rgb color = 0xC8724E;   // channel colour

@@ -24,6 +24,7 @@
 #include "DeviceViews.h"
 #include "PluginEditorsCommon.h"
 #include "PluginSkin.h"
+#include "TypeInMenu.h"
 
 namespace gl {
 
@@ -606,7 +607,12 @@ void editorEqRef(App& a, const PluginTarget& t, float width) {
     }
   }
   if (ImGui::BeginPopup("##eqbandmenu")) {
-    if (ui.selected >= 0) bandMenu(a, t, st, ui.selected);
+    if (ui.selected >= 0) {
+      bandMenu(a, t, st, ui.selected);
+      ImGui::Separator();  // K-311: the node's values typed in
+      const int b = ui.selected;
+      typein::menuItems(a, {t.pid(eqParam(b, EqFreq)), t.pid(eqParam(b, EqGain)), t.pid(eqFl(b, EqWidth))});
+    }
     ImGui::EndPopup();
   }
   // Frequency labels under the graph (centred on their grid lines).

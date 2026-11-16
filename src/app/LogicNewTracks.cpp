@@ -24,6 +24,7 @@ namespace {
 using theme::pal;
 
 bool gOpen = false, gAppearing = false;
+int gCentreFrames = 0;  // K-297 (round 7): frames the dialog is centred again while its auto size settles
 int gClosedAt = -10;  // R06-07: the frame the dialog closed (its Return is not a shortcut too)
 int gKind = 0;  // 0 instrument, 1 empty playlist track, 2 mixer track, 3 audio track (R05-09)
 int gCount = 1;
@@ -143,6 +144,9 @@ void create(App& a) {
         for (int j = 0; j < static_cast<int>(s.tracks.size()); ++j) k += j != t && trackmodes::modeOf(s, j) == TrackMode::Audio ? 1 : 0;
         const std::string nm = std::string(i18n::tr("Audio")) + " " + std::to_string(k + 1);
         a.doc.editPlaylistTrack(t, "name track", [nm](PlaylistTrack& x) { x.name = nm; });
+        // R07-11: its strip carries the same name (it read "2 Audio")
+        if (const MixerTrack* mt = trackmodes::linkedMixer(a.doc.song(), t))
+          a.doc.editMixerTrack(mt->id, "name track", [nm](MixerTrack& x) { x.name = nm; });
       }
   } else {
     ObjectId last = kNoId;
@@ -154,7 +158,10 @@ void create(App& a) {
 
 }  // namespace
 
-void open() { gOpen = gAppearing = true; }
+void open() {
+  gOpen = gAppearing = true;
+  gCentreFrames = 4;
+}
 bool isOpen() { return gOpen; }
 bool holdsKeys() { return gOpen || ImGui::GetFrameCount() <= gClosedAt + 1; }
 
@@ -163,7 +170,10 @@ void draw(App& a) {
   const auto& P = pal();
   const float cardW = 196, cardH = 172, gap = theme::kS3, pad = theme::kS6;
   const float w = cardW * kKindCount + gap * (kKindCount - 1) + pad * 2;
-  ui::PlaceNextDialog(ImVec2(w, 0), gAppearing ? ImGuiCond_Always : ImGuiCond_Appearing);
+  // (The first time it opens its height is not known yet: it is centred again until its auto size
+  // settles. It opened at the top left corner, centred only from the second time on.)
+  ui::PlaceNextDialog(ImVec2(w, 0), gCentreFrames > 0 ? ImGuiCond_Always : ImGuiCond_Appearing);
+  if (gCentreFrames > 0) --gCentreFrames;
   if (gAppearing) ImGui::SetNextWindowFocus();
   gAppearing = false;
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, theme::kS4));

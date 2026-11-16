@@ -40,7 +40,12 @@ function(run tag script)
 endfunction()
 
 # ---- 1. state ----
-set(sel "5 toasts clear\n8 layout select\n15 layout state\n")
+# K-306: the Tracker's pattern editor follows the song while it plays (Follow, on by default: it
+# shows, and so selects, the pattern under the playhead). The playhead moves in real time, so on a
+# slow runner it reached the song's second pattern (tick 1152) by the switch into the Tracker, and the
+# selection changed by design. Follow is off here: this test is about what a switch itself keeps
+# (k106_tracker covers Follow).
+set(sel "5 toasts clear\n6 tracker follow off\n8 layout select\n15 layout state\n")
 run(still "${sel}" --play --frames 150)
 run(switched "${sel}" --play --frames 150 --switch-check --switch-layout live@20 --switch-layout logic@40
     --switch-layout tracker@60 --switch-layout studio@80 --switch-layout logic@100 --switch-layout studio@120)

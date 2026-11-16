@@ -49,6 +49,7 @@ TakeCommitOptions placeOptions(const App& a) {
   o.sampleRate = a.engine.sampleRate();
   o.naming = a.settings.getNumber("record.naming") > 0.5 ? TakeCommitOptions::Naming::Input : TakeCommitOptions::Naming::Insert;
   o.nameTracks = a.settings.getBool("record.nameTracks");
+  o.lanes = a.settings.getBool("record.takeLanes");
   return o;
 }
 

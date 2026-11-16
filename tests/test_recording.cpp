@@ -279,6 +279,7 @@ void testLoopTakes() {
   TakeCommitOptions o;
   o.dir = gDir + "/Recorded";
   o.sampleRate = r.sr;
+  o.lanes = false;  // K-123: the stacked layout (lanes: test_k123_takes)
   auto res = commitTakes(r.song, takes, o);
   expect(res.clips.size() == 3, "three take clips");
   if (res.clips.size() != 3) return;

@@ -25,6 +25,8 @@ void beginStyleFrame(App& a, bool welcomeScreen);
 void endStyleFrame();
 // True between begin and end when a layout style is applied (not Studio).
 bool styled();
+// K-112D: true while Smooth's neutral faces and blue accent are on (Smooth, dark theme, untinted).
+bool smoothFaces();
 
 struct BaseStyleScope {
   BaseStyleScope();
@@ -36,6 +38,7 @@ struct BaseStyleScope {
   bool flat = false;
   int colours = 0;  // checkpoint 38: base check box colours pushed
   float checkRound = -1.0f;  // checkpoint 38: the check box rounding put back at the end
+  bool faces = false;        // K-112D: Smooth's neutral faces were taken out for the body
 };
 
 // K-112b (checkpoint 20): the base frame outline only, for a plugin window's own controls around the

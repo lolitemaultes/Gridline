@@ -356,7 +356,7 @@ void macroBody(Ctx& c, float x, float& y, float w) {
     const float cx = x + dx * (i % per + 0.5f), cy = y + 26 + (i / per) * 92.f;
     const std::string nm = c.m.macroName[static_cast<size_t>(i)].empty() ? "Macro " + std::to_string(i + 1) : c.m.macroName[static_cast<size_t>(i)];
     knob(c, macroP(i), cx, cy, 18, nm.c_str(), KnobValue);
-    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) macroRenameRequest() = i;
+    // (renaming is in the knob's own right-click menu, Rename...)
     sourceGrip(c, SrcMacro1 + i, cx - 26, cy - 18, 5.5f);
     const int links = linksOf(c, SrcMacro1 + i);
     char b[24];

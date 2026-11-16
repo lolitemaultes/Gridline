@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+# Template: packaging/render.py fills in the version.
+PackageIdentifier: Gridline.@SUITE_WINGET@
+PackageVersion: @VERSION@
+PackageLocale: en-US
+Publisher: Gridline
+PublisherUrl: https://github.com/lolitemaultes/Gridline
+PublisherSupportUrl: https://github.com/lolitemaultes/Gridline/issues
+PackageName: @SUITE_NAME@
+PackageUrl: https://github.com/lolitemaultes/Gridline/blob/main/docs/gridline-suite.md
+License: GPL-3.0-or-later
+LicenseUrl: https://github.com/lolitemaultes/Gridline/blob/main/LICENSE
+ShortDescription: @SUITE_DESC@
+Description: @SUITE_LONG@
+Tags:
+  - vst3
+  - clap
+  - plugins
+  - music-production
+ReleaseNotesUrl: https://github.com/lolitemaultes/Gridline/releases/tag/v@VERSION@
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0

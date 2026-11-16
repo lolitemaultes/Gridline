@@ -75,10 +75,10 @@ foreach(layout studio live logic)
   if(layout STREQUAL "logic")
     set(pane --pane browser)  # Smooth starts with its browser closed
   endif()
-  if(layout STREQUAL "live")
-    set(pick "8 browser cat 12")  # Clips: the Folders category
+  if(layout STREQUAL "studio")
+    set(pick "8 browser tab 3")   # Studio: the Sounds tab
   else()
-    set(pick "8 browser tab 3")   # Studio, Smooth: the Sounds tab
+    set(pick "8 browser cat 12")  # Clips, Smooth: the Folders category
   endif()
   run(geo_${layout} ${layout} "6 browser rows on\n${pick}\n14 browser rows\n" ${pane})
   row_at(folder "${L}/sub")

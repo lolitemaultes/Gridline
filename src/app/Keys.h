@@ -30,6 +30,9 @@ bool editorTakes(const Chord& c);
 // its modifiers (Ctrl also matches Cmd). Never true while text is typed or
 // while the shortcut editor is capturing a chord.
 bool pressed(const char* id);
+// K-297 (round 8): like pressed(), and also while text is typed for a chord with Ctrl or Cmd
+// (Cmd+W closes the window in front even with the cursor in its search field).
+bool pressedOverText(const char* id);
 // Like pressed(), whatever modifiers are held (Q-3: Esc cancels a drag that
 // started with Shift / Ctrl held). Only for commands bound to plain keys.
 bool pressedHeld(const char* id);
@@ -62,6 +65,11 @@ void escapeFrameBegin();
 bool escapePressed(bool repeat = true);
 void claimEscape();
 bool escapeBusy();
+// K-297 (round 7): Enter (or the keypad's) for a dialog's default button: true when the window being
+// drawn (or a child of it) has the keys, no modifier is held, no menu or list pop-up is open over it
+// and no multi-line text field takes the key. A one-line field ends its typing with Enter and the
+// dialog goes ahead, as with the default button of a system dialog.
+bool defaultPressed();
 
 // Menu shortcut text: the first chord ("Ctrl+S"), nullptr when unbound.
 const char* label(const char* id);

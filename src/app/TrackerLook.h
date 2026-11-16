@@ -22,8 +22,10 @@ bool arrowButton(App& a, const char* id, ImVec2 p0, ImVec2 p1, bool up, const ch
 // One stepper row of width `w`: the label, the value in a sunken field after it (at `labelW` from
 // the left; < 0: 42 percent), the up and down arrows at the right. Returns the step asked for: +1 or
 // -1 from an arrow or the wheel, more while the value is dragged (right or up: more). `fill`: the
-// value's field runs from the label column to the arrows.
+// value's field runs from the label column to the arrows. `typed` (optional, K-297 round 7): a click
+// on the value (no drag) opens it for typing; Enter or a click elsewhere stores the number typed there
+// (Esc keeps the old value). While it is open, keys (Space too) go to the field.
 int stepper(App& a, const char* id, const char* label, const std::string& value, ImVec2 p0, float w, float h, const char* hint, float labelW = -1,
-            bool fill = false);
+            bool fill = false, double* typed = nullptr);
 
 }  // namespace gl::trackerview

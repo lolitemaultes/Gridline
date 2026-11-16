@@ -58,6 +58,12 @@ struct AutomationLane {
   // J-210: the first song tick after `tick` at which an events clip steps
   // (one of its points; +infinity when none follows).
   double nextEventStep(double tick) const;
+  // R08-01: true when valueAt is the same for every tick in [a, b] (both ends included): the
+  // range stays before the lane's first point, after its last one, or past a clip's end, within
+  // one instance (or before the first). Conservative: a looping clip or a range that meets a
+  // point or an instance start answers false. The engine then renders that stretch in long
+  // blocks instead of control blocks, with the same output.
+  bool constantBetween(double a, double b) const;
   bool targets(ObjectId o, uint32_t i) const { return owner == o && index == i; }
 };
 // One lane per automated parameter. Muted clips, clips on muted tracks and

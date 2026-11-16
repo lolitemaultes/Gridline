@@ -27,16 +27,32 @@ struct NetSettings {
   bool enabled = true;
   std::string stunHost = "stun.l.google.com";
   uint16_t stunPort = 19302;
-  // K-174: when the default address server gives no answer (blocked on some networks), a
-  // fresh attempt asks this one instead. Only used while stunHost is the default.
-  std::string stunFallbackHost = "stun.cloudflare.com";
-  uint16_t stunFallbackPort = 3478;
+  // K-312: backup address servers, asked in order when the one before gave no public address
+  // (an attempt that found none moves on to the next) and as the second server of the router
+  // type check. Public servers whose operators allow general use (Settings > Collaboration
+  // edits the list; kDefaultStunBackups ships).
+  struct Stun {
+    std::string host;
+    uint16_t port = 3478;
+  };
+  std::vector<Stun> stunBackups = {{"stun.cloudflare.com", 3478}, {"stun1.l.google.com", 19302}};
+  // K-312: "Use this UDP port" (0 = any): the first connection attempt listens on it, and
+  // `portForwarded` says the router forwards it here, so the codes offer it at the public address.
+  uint16_t fixedPort = 0;
+  bool portForwarded = false;
   std::string turnHost;   // "" = no TURN relay
   uint16_t turnPort = 3478;
   std::string turnUser, turnPass;
   bool portMapping = true;  // ask the router (UPnP-IGD / NAT-PMP / PCP) for a temporary mapping
   bool loopback = false;    // also offer 127.0.0.1 / ::1 candidates (tests on one computer)
 };
+
+// K-312: stunHost then the backups, without repeats.
+std::vector<NetSettings::Stun> stunServers(const NetSettings& s);
+// K-312: "host:port, host:port" (a missing port is 3478) to a list and back (Settings).
+std::vector<NetSettings::Stun> parseStunList(const std::string& text);
+std::string formatStunList(const std::vector<NetSettings::Stun>& list);
+inline constexpr const char* kDefaultStunBackups = "stun.cloudflare.com:3478, stun1.l.google.com:19302";
 
 class Endpoint {
  public:
@@ -62,6 +78,9 @@ class Endpoint {
   // 30 s after the last packet. A join that waits for a reply code restarts its agent so both
   // computers are still sending when the code arrives. false: not supported.
   virtual bool restart() { return false; }
+  // K-312: housekeeping from the hub's network step (the next address server when one did
+  // not answer). True when the description changed (codes are renewed).
+  virtual bool tick() { return false; }
   // Datagrams in, from any thread.
   std::function<void(const std::string&)> onReceive;
 };
@@ -71,11 +90,24 @@ class Fabric {
   virtual ~Fabric() = default;
   virtual std::unique_ptr<Endpoint> create(const EndpointConfig& cfg) = 0;
   virtual bool real() const { return false; }  // a real network (ICE)
+  // K-312: this computer's router behaviour, from two address servers asked from one socket:
+  // 'c' cone (one public port for every destination: hole punching can work), 's' symmetric
+  // (a new public port per destination), 'u' unknown; 0 while the probe still runs.
+  // probeNat starts one (again when the last result is 10 minutes old); it never blocks.
+  virtual void probeNat() {}
+  virtual char natType() const { return 'u'; }
 };
 
 // The process-wide router port mapper (libplum), reference counted.
 void portMapperAcquire();
 void portMapperRelease();
+// K-312: collect the port mapper's own report lines (which protocol answered, and why one
+// failed) between capture(true) and capture(false); portMapperLog returns and clears them.
+void portMapperCapture(bool on);
+std::vector<std::string> portMapperLog();
+// K-312: one TURN allocation with the settings' server (Test my connection). True when the
+// server gave a relay address; `why` says what failed in plain words.
+bool tryTurnAllocation(const NetSettings& s, int timeoutMs, std::string* why);
 
 // libjuice (nullptr when collaboration networking is not built in).
 std::unique_ptr<Fabric> makeJuiceFabric(const NetSettings& s);
@@ -90,6 +122,8 @@ class MemFabric : public Fabric {
   // A datagram is lost with this probability (seeded).
   double loss = 0.0;
   uint32_t seed = 1;
+  char nat = 'u';  // K-312: what natType() reports (tests)
+  char natType() const override { return nat; }
   std::unique_ptr<Endpoint> create(const EndpointConfig& cfg) override;
   // Several fabrics (one per simulated computer) share one "internet";
   // `label` names this computer for block().

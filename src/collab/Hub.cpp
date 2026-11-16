@@ -243,6 +243,9 @@ Session::Ticket InviteInfo::ticket() const {
   return t;
 }
 
+// K-312: a code's "nat" field (older codes have none)
+static char natOf(const std::string& v) { return v == "c" || v == "s" ? v[0] : 'u'; }
+
 std::string makeInviteCode(const InviteInfo& i) {
   Json j = Json::makeObject();
   j.object["v"] = Json::makeNumber(1);
@@ -258,6 +261,7 @@ std::string makeInviteCode(const InviteInfo& i) {
   j.object["k"] = Json::makeString(keyHex(i.secret));
   j.object["exp"] = Json::makeNumber(static_cast<double>(i.expires));
   j.object["ice"] = Json::makeString(i.ice);
+  if (i.nat == 'c' || i.nat == 's') j.object["nat"] = Json::makeString(std::string(1, i.nat));
   j.object["av"] = Json::makeString(i.appVersion);
   return encodeCode(kInvitePrefix, j);
 }
@@ -293,6 +297,7 @@ bool parseInviteCode(const std::string& code, InviteInfo& out, std::string* err)
   i.inviteId = id;
   i.expires = static_cast<int64_t>(j.num("exp", 0));
   i.ice = j.text("ice");
+  i.nat = natOf(j.text("nat"));
   i.appVersion = j.text("av");
   out = std::move(i);
   return true;
@@ -313,6 +318,7 @@ std::string makeReplyCode(const ReplyInfo& r) {
   j.object["v"] = Json::makeNumber(1);
   j.object["id"] = Json::makeString(r.inviteId);
   j.object["ice"] = Json::makeString(r.ice);
+  if (r.nat == 'c' || r.nat == 's') j.object["nat"] = Json::makeString(std::string(1, r.nat));
   return encodeCode(kReplyPrefix, j);
 }
 
@@ -330,35 +336,63 @@ bool parseReplyCode(const std::string& code, ReplyInfo& out, std::string* err) {
   }
   out.inviteId = j.text("id");
   out.ice = j.text("ice");
+  out.nat = natOf(j.text("nat"));
   return true;
 }
 
-bool descriptionHasPublicPath(const std::string& ice) {
+namespace {
+// a description line with a global IPv6 address (not link-local fe80::/10, not unique-local fc00::/7)
+bool lineHasGlobalIpv6(const std::string& line) {
+  std::vector<std::string> f;
+  size_t p = 0;
+  while (p < line.size() && f.size() < 6) {
+    const size_t sp = line.find(' ', p);
+    f.push_back(line.substr(p, sp == std::string::npos ? std::string::npos : sp - p));
+    if (sp == std::string::npos) break;
+    p = sp + 1;
+  }
+  if (f.size() < 5 || f[4].find(':') == std::string::npos) return false;
+  std::string a = f[4];
+  for (auto& ch : a) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  const bool local = a.rfind("fe8", 0) == 0 || a.rfind("fe9", 0) == 0 || a.rfind("fea", 0) == 0 || a.rfind("feb", 0) == 0 ||
+                     a.rfind("fc", 0) == 0 || a.rfind("fd", 0) == 0 || a == "::1";
+  return !local;
+}
+std::vector<std::string> candidateLines(const std::string& ice) {
+  std::vector<std::string> out;
   size_t at = 0;
   while ((at = ice.find("a=candidate:", at)) != std::string::npos) {
     const size_t nl = ice.find('\n', at);
-    const std::string line = ice.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+    out.push_back(ice.substr(at, nl == std::string::npos ? std::string::npos : nl - at));
     at += 12;
-    if (line.find(" typ srflx") != std::string::npos || line.find(" typ relay") != std::string::npos ||
-        line.find(" typ prflx") != std::string::npos)
-      return true;
-    // a global IPv6 address (not link-local fe80::/10, not unique-local fc00::/7)
-    std::vector<std::string> f;
-    size_t p = 0;
-    while (p < line.size() && f.size() < 6) {
-      const size_t sp = line.find(' ', p);
-      f.push_back(line.substr(p, sp == std::string::npos ? std::string::npos : sp - p));
-      if (sp == std::string::npos) break;
-      p = sp + 1;
-    }
-    if (f.size() >= 5 && f[4].find(':') != std::string::npos) {
-      std::string a = f[4];
-      for (auto& ch : a) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-      const bool local = a.rfind("fe8", 0) == 0 || a.rfind("fe9", 0) == 0 || a.rfind("fea", 0) == 0 || a.rfind("feb", 0) == 0 ||
-                         a.rfind("fc", 0) == 0 || a.rfind("fd", 0) == 0 || a == "::1";
-      if (!local) return true;
-    }
   }
+  return out;
+}
+// a way in that needs no hole punching: a router port mapping (JuiceLink's candidate 9) or a TURN relay
+bool offersOpenPort(const std::string& ice) {
+  for (const auto& l : candidateLines(ice))
+    if (l.find(" typ relay") != std::string::npos || (l.rfind("a=candidate:9 1 UDP 1694498815 ", 0) == 0)) return true;
+  return false;
+}
+bool hasGlobalIpv6(const std::string& ice) {
+  for (const auto& l : candidateLines(ice))
+    if (lineHasGlobalIpv6(l)) return true;
+  return false;
+}
+}  // namespace
+
+bool directImpossible(char natA, const std::string& iceA, char natB, const std::string& iceB) {
+  const bool sym = (natA == 's' && natB != 'u') || (natB == 's' && natA != 'u');
+  if (!sym) return false;
+  if (offersOpenPort(iceA) || offersOpenPort(iceB)) return false;
+  return !(hasGlobalIpv6(iceA) && hasGlobalIpv6(iceB));
+}
+
+bool descriptionHasPublicPath(const std::string& ice) {
+  for (const auto& line : candidateLines(ice))
+    if (line.find(" typ srflx") != std::string::npos || line.find(" typ relay") != std::string::npos ||
+        line.find(" typ prflx") != std::string::npos || lineHasGlobalIpv6(line))
+      return true;
   return false;
 }
 
@@ -371,6 +405,8 @@ std::string joinProblemText(JoinProblem p, const std::string& inviter) {
       return subst(i18n::tr("The computers reached each other, but %1's Gridline did not answer. The invite may have been cancelled or replaced."), who);
     case JoinProblem::Expired:
       return i18n::tr("The invite expired while waiting. Ask for a new one.");
+    case JoinProblem::DirectImpossible:
+      return subst(i18n::tr("%1's router and this one can't connect directly: at least one of them is a symmetric NAT (it gives every connection a new public port) and neither opened a port, so each router drops the other's packets. Waiting longer will not help."), who);
     case JoinProblem::NoAnswer:
       break;
   }
@@ -385,10 +421,12 @@ std::string joinProblemHelp(JoinProblem p) {
       return i18n::tr("Ask for a new invite and join with it. Both of you need the same Gridline version.");
     case JoinProblem::Expired:
       return i18n::tr("Invites work for the time chosen when they were made. Ask for a new one; if they just made it, check that the date and time on both computers are set automatically.");
+    case JoinProblem::DirectImpossible:
+      return i18n::tr("What works: a TURN relay you run yourself, set in Settings > Collaboration on either computer (see How to run your own relay); a UDP port forwarded on one router to that computer (Settings > Collaboration > UDP port); a private network that both computers join; or a collaborator who reaches you both invites you. Test my connection shows each router's type.");
     case JoinProblem::NoAnswer:
       break;
   }
-  return i18n::tr("Make sure they pasted your reply code under their invite and pressed Use reply. Turn off VPNs on both computers and allow Gridline through the firewall when asked (private and public networks). Then join again. Test my connection (Settings > Collaboration) on both computers: when it says symmetric NAT on both sides, a direct connection can't work; a collaborator who reaches both of you, or a TURN relay, can carry it.");
+  return i18n::tr("Make sure they pasted your reply code under their invite and pressed Use reply. Turn off VPNs on both computers and allow Gridline through the firewall when asked (private and public networks). Then join again. Test my connection (Settings > Collaboration) on both computers: when it says symmetric NAT on either side, a direct connection usually can't work; a TURN relay, a forwarded port, or a collaborator who reaches both of you can carry it.");
 }
 
 std::string refusalText(const std::string& reason, const std::string& by) {
@@ -785,6 +823,7 @@ std::string Hub::createInvite(int minutes, SiteId readmit) {
   r.info.appVersion = version_.app;
   r.view.id = crypto::toHex(iid.data(), 16);
   r.view.expires = r.info.expires;
+  fabric_->probeNat();  // K-312: the router type goes into the code
   EndpointConfig ec;
   ec.ufrag = credHex(crypto::randomKey(), 8);
   ec.pwd = credHex(crypto::randomKey(), 32);
@@ -915,6 +954,12 @@ bool Hub::acceptReply(const std::string& code, std::string* err) {
     lr.restartedAt = now_;
     lr.descDirty = true;
   }
+  // K-312: their router type with ours: when they can't connect directly, say so now
+  if (directImpossible(r.info.nat, r.info.ice, ri.nat, ri.ice)) {
+    r.view.natBlocked = true;
+    r.view.natNote = i18n::tr("Their router and this one can't connect directly: at least one is a symmetric NAT and neither opened a port, so waiting will not help. Set a TURN relay you run yourself in Settings > Collaboration, forward a UDP port on one router (Settings > Collaboration > UDP port), or join both computers to one private network, then make a new invite.");
+    debugf("invite %s: their router (%c) and ours (%c) can't connect directly", ri.inviteId.substr(0, 8).c_str(), ri.nat, r.info.nat);
+  }
   r.view.replyUsed = true;
   r.view.peerPublicAddress = !fabric_->real() || descriptionHasPublicPath(ri.ice);
   r.replyAt = now_;
@@ -933,6 +978,7 @@ bool Hub::join(const InviteInfo& info, std::string* err) {
     return false;
   }
   joinInfo_ = info;
+  if (fabric_) fabric_->probeNat();  // K-312: told apart from the inviter's router before a reply code is offered
   EndpointConfig ec;
   ec.ufrag = credHex(crypto::kdf(info.secret, "ufrag-j"), 8);
   ec.pwd = credHex(crypto::kdf(info.secret, "pwd-j"), 32);
@@ -1249,6 +1295,7 @@ void Hub::transportStep(double t) {
   for (auto& [id, lp] : links_) {
     LinkRec& l = *lp;
     if (l.dead) continue;
+    if (l.ep->tick()) l.descDirty = true;  // K-312: the next address server
     if (l.heldUntil >= 0 && now_ >= l.heldUntil) {
       debugf("%s test: the remote candidates arrive now", l.sl->tag.c_str());
       l.heldUntil = -1;
@@ -1428,7 +1475,7 @@ void Hub::poll(double nowSec) {
         const std::string desc = l.ep->localDescription();
         join_.publicAddress = !fabric_->real() || descriptionHasPublicPath(desc);
         if (join_.status == JoinStatus::NeedReply) {
-          ReplyInfo ri{crypto::toHex(joinInfo_.inviteId.data(), 16), desc};
+          ReplyInfo ri{crypto::toHex(joinInfo_.inviteId.data(), 16), desc, fabric_->natType() ? fabric_->natType() : 'u'};
           const std::string again = makeReplyCode(ri);
           ReplyInfo old;
           if (again != join_.reply && parseReplyCode(join_.reply, old) && candidateSet(old.ice) != candidateSet(desc)) {
@@ -1439,11 +1486,23 @@ void Hub::poll(double nowSec) {
         }
       }
     }
-    if (l.kind == LinkRec::Kind::InviteJoin && join_.status == JoinStatus::Connecting && age > 5 && l.ep->gathered()) {
-      join_.status = JoinStatus::NeedReply;
+    if (l.kind == LinkRec::Kind::InviteJoin && join_.status == JoinStatus::Connecting && age > 5 && l.ep->gathered() &&
+        (fabric_->natType() != 0 || age > 8)) {
       const std::string desc = l.ep->localDescription();
+      const char mine = fabric_->natType() ? fabric_->natType() : 'u';
+      if (directImpossible(mine, desc, joinInfo_.nat, joinInfo_.ice)) {
+        // K-312: say at once what can't work and what does, instead of trying for 15 minutes
+        join_.status = JoinStatus::Failed;
+        join_.message = joinProblemText(JoinProblem::DirectImpossible, joinInfo_.inviterName);
+        join_.help = joinProblemHelp(JoinProblem::DirectImpossible);
+        l.dead = true;
+        ++net_[l.peer].failures;
+        debugf("%s routers can't connect directly (this one %c, the inviter's %c): stopped", l.sl->tag.c_str(), mine, joinInfo_.nat);
+        continue;
+      }
+      join_.status = JoinStatus::NeedReply;
       join_.publicAddress = !fabric_->real() || descriptionHasPublicPath(desc);
-      join_.reply = makeReplyCode(ReplyInfo{crypto::toHex(joinInfo_.inviteId.data(), 16), desc});
+      join_.reply = makeReplyCode(ReplyInfo{crypto::toHex(joinInfo_.inviteId.data(), 16), desc, mine});
       debugf("%s not connected after %.1f s: reply code offered", l.sl->tag.c_str(), age);
     }
     // member links that learnt no candidates: send ours through a relay once gathered
@@ -1469,8 +1528,13 @@ void Hub::poll(double nowSec) {
   for (auto& [k, r] : invites_) {
     auto l = links_.find(r.link);
     if (r.view.status == InviteStatus::Preparing && l != links_.end()) {
-      if (l->second->ep->gathered() || (r.gatheredAt >= 0 && now_ - r.gatheredAt > 3)) {
+      // (K-312: and the router type, for at most 5 s)
+      if ((l->second->ep->gathered() || (r.gatheredAt >= 0 && now_ - r.gatheredAt > 3)) &&
+          (fabric_->natType() != 0 || now_ - l->second->created > 5)) {
         r.info.ice = l->second->ep->localDescription();
+        r.info.nat = fabric_->natType() ? fabric_->natType() : 'u';
+        if (r.info.nat == 's' && directImpossible('s', r.info.ice, 'c', std::string()))
+          r.view.natNote = i18n::tr("This computer's router is a symmetric NAT: someone whose router also blocks unexpected connections (most home routers do) can't join directly. A TURN relay in Settings > Collaboration, or a UDP port forwarded on this router, makes it work.");
         r.view.code = makeInviteCode(r.info);
         r.view.status = InviteStatus::Ready;
         debugf("invite %s ready after %.2f s (%s)", k.substr(0, 8).c_str(), now_ - l->second->created,
@@ -1495,6 +1559,7 @@ void Hub::poll(double nowSec) {
         if (candidateSet(desc) != candidateSet(r.info.ice) && !candidateSet(desc).empty()) {
           const bool first = r.info.ice.empty();
           r.info.ice = desc;
+          if (fabric_->natType()) r.info.nat = fabric_->natType();
           r.view.code = makeInviteCode(r.info);
           if (!first) {
             r.view.codeChanged = true;

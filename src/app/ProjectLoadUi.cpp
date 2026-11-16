@@ -27,6 +27,7 @@
 #include "DevSignal.h"
 #include "DialogLayout.h"
 #include "ExportUi.h"
+#include "HostedUi.h"
 #include "LauncherUi.h"
 #include "LiveLook.h"
 #include "Theme.h"
@@ -158,6 +159,10 @@ void App::completeProjectLoad() {
     return;
   }
   collabui::closeSession(*this);  // J-111
+  // K-297 (round 9): the closed project's plugin windows close; the opened one's saved ones open.
+  std::vector<std::pair<ObjectId, int>> pluginWins;
+  for (const Song::OpenPluginWindow& w : r.song.pluginWindows) pluginWins.emplace_back(w.owner, w.slot);
+  closePluginWindows();
   doc.reset(std::move(r.song));
   cacheui::projectChanged(*this, std::move(r.copyUse));  // K-45: this copy stays claimed, the closed project's can go
   trimSamplesAt_ = now + 1.0;  // J-30: the old project's samples go
@@ -183,6 +188,7 @@ void App::completeProjectLoad() {
   engine.setMode(doc.song().playlist.empty() ? PlayMode::Pattern : PlayMode::Song);
   rackReveal.quietSwitch(engine.mode());  // J-77: opening a project does not count as choosing PAT
   syncEngine();
+  reopenPluginWindowList(*this, pluginWins);
   home.projectOpened(now);
   if (r.fromFl) {
     importReport = ImportReport{};

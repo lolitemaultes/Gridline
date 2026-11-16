@@ -15,6 +15,7 @@
 
 namespace gl {
 class App;
+struct Song;
 }
 
 namespace gl::livelook {
@@ -103,7 +104,7 @@ void leftFrame();
 // ---- the arrangement's track headers (right of the lanes) ----
 constexpr float kHeaderW = 216.0f;  // the header column at 100 % (wide enough for the demo song's track names)
 // What part of a header is under the pointer.
-enum class HeaderPart : int { None = 0, Name, Activator, Solo, Arm, Volume, BackToArrangement, Pan };
+enum class HeaderPart : int { None = 0, Name, Activator, Solo, Arm, Volume, BackToArrangement, Pan, Fold };  // Fold: checkpoint 51, a group's
 struct HeaderDraw {
   int track = -1;
   ImVec2 h0, h1;          // the header's rectangle
@@ -156,6 +157,17 @@ int newTrack(App& a, bool audio);
 void newReturnTrack(App& a);
 void toggleDetail(App& a);
 int newTrackAfter(App& a, bool audio, int after);
+// Checkpoint 51: Cmd+G groups the selected tracks (`track` >= 0: that track's menu: the selection
+// when it holds that track, else the track alone) into a group track; Cmd+Shift+G ungroups the
+// selected group (a member selected: its group). trackmodes::groupTracks / ungroupTracks.
+// N50-02: whether a clip of this kind may land on the track in Clips: MIDI clips on MIDI tracks,
+// audio clips on audio tracks, nothing on a group track (automation clips anywhere).
+bool clipFitsTrack(const Song& s, ClipKind kind, int track);
+// Checkpoint 52: Clips' Delete / Duplicate of the selected tracks (or `track`): a group brings its tracks.
+void deleteTracks(App& a, int track);
+void duplicateTracks(App& a, int track);
+void groupTracks(App& a, int track = -1);
+void ungroupTracks(App& a, int track = -1);
 
 // ---- parts drawn the Live way (LayoutParts calls these while Live is active) ----
 // The device chain as a row of devices. `pick` is the chain's device (the one opened last: from the

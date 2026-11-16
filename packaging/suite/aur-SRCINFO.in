@@ -1,0 +1,22 @@
+pkgbase = @SUITE_PKG@-bin
+	pkgdesc = @SUITE_DESC@ (official release build)
+	pkgver = @PKGVER@
+	pkgrel = 1
+	url = https://github.com/lolitemaultes/Gridline
+	arch = x86_64
+	arch = aarch64
+	license = GPL-3.0-or-later
+	depends = gcc-libs
+	depends = glibc
+	depends = libgl
+	depends = libx11
+	provides = @SUITE_PKG@
+	conflicts = @SUITE_PKG@
+	conflicts = gridline
+	conflicts = gridline-bin
+	options = !strip
+	options = !debug
+	source = https://github.com/lolitemaultes/Gridline/releases/download/v@VERSION@/@SUITE_FILE@-@VERSION@-linux-all.zip
+	sha256sums = @SHA256:@SUITE_KEY@-linux-all.zip@
+
+pkgname = @SUITE_PKG@-bin

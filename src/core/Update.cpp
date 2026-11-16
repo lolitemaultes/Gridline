@@ -307,6 +307,26 @@ const Asset* pickAsset(const Release& r, const Target& t) {
   return nullptr;
 }
 
+const Asset* pickSuiteAsset(const Release& r, const Target& t, bool mini) {
+  std::string suffix;
+  if (t.os == "macos") suffix = "-macos-universal.pkg";
+  else if (t.os == "windows") suffix = "-windows-setup.exe";
+  else if ((t.os == "linux" || t.os == "freebsd" || t.os == "openbsd" || t.os == "netbsd") && (t.arch == "x86_64" || t.arch == "aarch64"))
+    suffix = "-" + t.os + "-" + t.arch + "-setup.run";
+  if (suffix.empty()) return nullptr;
+  const std::string prefix = mini ? "gridline-suite-mini-" : "gridline-suite-";
+  const std::string v = r.version.valid ? lower(toString(r.version)) : std::string();
+  const Asset* loose = nullptr;
+  for (const Asset& a : r.assets) {
+    const std::string n = lower(a.name);
+    if (n.rfind(prefix, 0) != 0 || !endsWith(n, suffix)) continue;
+    if (!mini && n.rfind("gridline-suite-mini-", 0) == 0) continue;  // the other suite
+    if (!v.empty() && n == prefix + v + suffix) return &a;
+    if (!loose) loose = &a;
+  }
+  return loose;
+}
+
 const Asset* checksumAsset(const Release& r) {
   for (const Asset& a : r.assets)
     if (endsWith(lower(a.name), "sha256sums") || endsWith(lower(a.name), "sha256sums.txt")) return &a;

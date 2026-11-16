@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+# Template: packaging/render.py fills in the version, date and checksum.
+# The installer is Inno Setup (tools/release/suite-installer.py), one file for x64 and ARM64; a
+# silent install puts every plugin in every format.
+PackageIdentifier: Gridline.@SUITE_WINGET@
+PackageVersion: @VERSION@
+InstallerType: inno
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+ReleaseDate: '@DATE@'
+ProductCode: '@SUITE_PRODUCT_CODE@_is1'
+AppsAndFeaturesEntries:
+  - DisplayName: @SUITE_NAME@
+    Publisher: Gridline
+    ProductCode: '@SUITE_PRODUCT_CODE@_is1'
+Installers:
+  - Architecture: x64
+    Scope: machine
+    InstallerUrl: https://github.com/lolitemaultes/Gridline/releases/download/v@VERSION@/@SUITE_FILE@-@VERSION@-windows-setup.exe
+    InstallerSha256: '@SHA256UPPER:@SUITE_KEY@-windows-setup.exe@'
+    InstallerSwitches:
+      Custom: /ALLUSERS
+  - Architecture: x64
+    Scope: user
+    InstallerUrl: https://github.com/lolitemaultes/Gridline/releases/download/v@VERSION@/@SUITE_FILE@-@VERSION@-windows-setup.exe
+    InstallerSha256: '@SHA256UPPER:@SUITE_KEY@-windows-setup.exe@'
+    InstallerSwitches:
+      Custom: /CURRENTUSER
+  - Architecture: arm64
+    Scope: machine
+    InstallerUrl: https://github.com/lolitemaultes/Gridline/releases/download/v@VERSION@/@SUITE_FILE@-@VERSION@-windows-setup.exe
+    InstallerSha256: '@SHA256UPPER:@SUITE_KEY@-windows-setup.exe@'
+    InstallerSwitches:
+      Custom: /ALLUSERS
+  - Architecture: arm64
+    Scope: user
+    InstallerUrl: https://github.com/lolitemaultes/Gridline/releases/download/v@VERSION@/@SUITE_FILE@-@VERSION@-windows-setup.exe
+    InstallerSha256: '@SHA256UPPER:@SUITE_KEY@-windows-setup.exe@'
+    InstallerSwitches:
+      Custom: /CURRENTUSER
+ManifestType: installer
+ManifestVersion: 1.10.0

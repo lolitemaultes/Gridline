@@ -86,6 +86,13 @@ const md::Menu& navigateDef() {
           .check([](App& a) { return a.playlist.selEnd > a.playlist.selStart; }),
       md::item(N_("Set the cycle to the selected regions"), "transport.cycleSelection", [](App& a) { cycleToSelection(a); })
           .when([](App& a) { return !a.playlist.selected.empty(); }).only([](App& a) { return logicplug::active(a); }),
+      // Checkpoint 47: the locators work with Cycle off too, as the reference's (Go To and Set Locators)
+      md::item(N_("Set the locators to the selected regions"), [](App& a) { locatorsToSelection(a); })
+          .when([](App& a) { return !a.playlist.selected.empty(); }).only([](App& a) { return logicplug::active(a); }),
+      md::item(N_("Go to the left locator"), [](App& a) { gotoLocator(a, false); })
+          .when([](App& a) { Tick l, r; return locators(a, l, r); }).only([](App& a) { return logicplug::active(a); }),
+      md::item(N_("Go to the right locator"), [](App& a) { gotoLocator(a, true); })
+          .when([](App& a) { Tick l, r; return locators(a, l, r); }).only([](App& a) { return logicplug::active(a); }),
       md::item(N_("Add marker"), "playlist.marker", [](App& a) { tracksAddMarker(a); }),
       md::separator(),  // K-112b: grouped as MAP.md 2.1: go to, scroll, zoom, then our play modes
       md::item(N_("Follow the song position"), [](App& a) { a.settings.set("ui.autoScroll", !a.settings.getBool("ui.autoScroll")); })
@@ -272,6 +279,8 @@ void showLower(App& a, int which) {
   a.showMixer = which == 2;
   if (which == 0) a.showPiano = true;
   if (which == 1) a.showRack = true;
+  // K-297 (round 8): the pane the menu opens takes the keys (they stayed in the tracks area).
+  a.focusWindow = which == 0 ? "Piano roll" : which == 1 ? "Channel rack" : which == 2 ? "Mixer" : "Smart controls";
 }
 
 const md::Menu& windowDef() {
@@ -465,6 +474,10 @@ const md::Menu& pagesDef() {
           .check([](App&) { return trackerview::scopeTool() == 3; }),
       md::item(N_("Clean up box"), "view.cleanUp", [](App& a) { trackerview::toggleScopeTool(a, 2); })
           .check([](App&) { return trackerview::scopeTool() == 2; }),
+      md::item(N_("MIDI box"), "view.midiBox", [](App& a) { trackerview::toggleScopeTool(a, 4); })
+          .check([](App&) { return trackerview::scopeTool() == 4; }),
+      md::item(N_("Sample tools box"), "view.sampleTools", [](App& a) { trackerview::toggleScopeTool(a, 5); })
+          .check([](App&) { return trackerview::scopeTool() == 5; }),
   };
   return m;
 }
@@ -890,6 +903,17 @@ const md::Menu* trackerBlock(menustyle::Block b, const md::Menu* def) {
 void drawStyleMenu(App& a, const menustyle::Menu& m, imhook::MenuWalker* w) {
   bool first = true;
   const bool tracker = layoutui::menuStyle(a) == layout::Preset::Tracker;
+  // K-112D (audit I1): Smooth's menus have the reference's roomy rows, about 24 px a row.
+  const bool roomy = !w && logicplug::active(a);
+  if (roomy) ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 10.0f));
+  // K-112D (audit I4): the separators a faint hairline, as the reference's (white at about 8 %).
+  if (roomy) ImGui::PushStyleColor(ImGuiCol_Separator, ImVec4(1.0f, 1.0f, 1.0f, 0.08f));
+  struct PopRoomy {
+    bool on;
+    ~PopRoomy() {
+      if (on) ImGui::PopStyleVar(), ImGui::PopStyleColor();
+    }
+  } popRoomy{roomy};
   for (const menustyle::Item& it : m.items) {
     const md::Menu* def = tracker ? trackerBlock(it.block, blockMenu(it.block)) : blockMenu(it.block);
     if (it.submenu) {

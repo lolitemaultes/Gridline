@@ -2,6 +2,7 @@
 #include "Look.h"
 #include "../core/I18n.h"
 #include "PluginSkin.h"
+#include "TypeInMenu.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include <functional>
 #include <cstring>
@@ -1503,6 +1504,7 @@ bool selector(App& a, const PluginTarget& t, const View& v, const char* name, in
   if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##selm");
   if (ImGui::BeginPopup("##selm")) {
     if (ImGui::MenuItem(i18n::tr("Reset"))) pui::setParamValue(a, t, param, pv.d->def, false);
+    typein::menuItems(a, {t.pid(param)});  // K-311
     ImGui::EndPopup();
   }
   if (hov) app().setHint(pv.d->name + ": " + pv.d->format(cur + valueOffset));

@@ -340,7 +340,7 @@ void AudioEngine::runChannel(size_t ci, int worker) {
     }
     const float fL = rt->fromL, fR = rt->fromR, tL = ch.gainL, tR = ch.gainR;
     for (int i = 0; i < n; ++i) {
-      float k = static_cast<float>(gpos + i + 1) / static_cast<float>(kControlBlock);
+      float k = std::min(1.f, static_cast<float>(gpos + i + 1) / static_cast<float>(kControlBlock));  // (R08-01: a held block may run past one control block)
       float l = cL[i] * (fL + (tL - fL) * k), r = cR[i] * (fR + (tR - fR) * k);
       oL[i] = l;
       oR[i] = r;
@@ -493,8 +493,7 @@ void AudioEngine::runMixer(size_t idx, int worker) {
       if (pl > rt->inPeakL.load(std::memory_order_relaxed)) rt->inPeakL.store(pl, std::memory_order_relaxed);
       if (pr > rt->inPeakR.load(std::memory_order_relaxed)) rt->inPeakR.store(pr, std::memory_order_relaxed);
     }
-    const auto mon = static_cast<InputMonitor>(m.monitor);
-    if (mon == InputMonitor::On || (mon == InputMonitor::Auto && (m.armed || !bc_.ctx.playing)))
+    if (hearsInput(m.monitor, m.armed, bc_.ctx.playing, curTick_))  // K-123
       for (int i = 0; i < n; ++i) {
         bL[i] += iL[i];
         bR[i] += iR[i];
@@ -544,8 +543,10 @@ void AudioEngine::runMixer(size_t idx, int worker) {
     }
     return;
   }
+  // K-123 low-latency monitoring: while recording, an armed track skips its effects that add latency.
+  const bool lowLat = m.armed && lowLatMon_.load(std::memory_order_relaxed) && recordOn_.load(std::memory_order_relaxed);
   for (const auto& slot : m.slots) {
-    if (!slot.rt || !slot.rt->fx || !slot.enabled) {
+    if (!slot.rt || !slot.rt->fx || !slot.enabled || (lowLat && slot.latency > 0)) {
       if (slot.rt) {  // keep a bypassed return's compensation lines running
         for (const auto& in : slot.auxIn) in.tap.run(nullptr, nullptr, 0.f, scr.auxL, scr.auxR, n);
         for (const auto& in : slot.sideIn) in.tap.run(nullptr, nullptr, 0.f, scr.sideL, scr.sideR, n);
@@ -712,7 +713,7 @@ void AudioEngine::runMixer(size_t idx, int worker) {
       preR[i] = r * sign;
     }
     if (gridRamp) {
-      float k = static_cast<float>(gpos + i + 1) / static_cast<float>(kControlBlock);
+      float k = std::min(1.f, static_cast<float>(gpos + i + 1) / static_cast<float>(kControlBlock));  // (R08-01: a held block may run past one control block)
       gL = rt->fromL + (m.gainL - rt->fromL) * k;
       gR = rt->fromR + (m.gainR - rt->fromR) * k;
     } else {

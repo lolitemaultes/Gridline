@@ -176,6 +176,32 @@ std::vector<ObjectId> sliceAtTransients(Song& s, const std::set<ObjectId>& clips
   return out;
 }
 
+std::vector<ObjectId> sliceAtFileSlices(Song& s, const std::set<ObjectId>& clips) {
+  std::vector<ObjectId> out;
+  for (ObjectId id : ordered(s, clips)) {
+    const Clip* c = s.clip(id);
+    if (!c) continue;
+    std::vector<ObjectId> pieces;
+    if (c->kind == ClipKind::Audio) pieces = sliceClipAtFileSlices(s, id);
+    if (pieces.empty()) pieces.push_back(id);
+    out.insert(out.end(), pieces.begin(), pieces.end());
+  }
+  return out;
+}
+
+int clipsWithFileSlices(const Song& s, const std::set<ObjectId>& clips) {
+  int n = 0;
+  for (ObjectId id : clips) {
+    const Clip* c = s.clip(id);
+    if (!c || c->kind != ClipKind::Audio) continue;
+    const Channel* ch = s.channel(c->source);
+    if (!ch) continue;
+    SamplePtr smp = clipSource(*ch).sample;
+    if (smp && !fileSliceFrames(*smp).empty()) ++n;
+  }
+  return n;
+}
+
 // ------------------------------------------------------------------ stutter ----
 
 bool StutterParams::operator==(const StutterParams& o) const {

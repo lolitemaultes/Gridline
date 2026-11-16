@@ -1,5 +1,6 @@
 // Gridline — dialogs (file, settings, project info, export, history, about,
 // shortcuts, unsaved changes) and global keyboard shortcuts.
+#include "RecordCard.h"
 #include "WindowRaise.h"
 #include "LayoutShellUi.h"
 #include "LiveLook.h"
@@ -43,6 +44,7 @@
 #include "LogicNewTracks.h"
 #include "LayoutPresets.h"
 #include "TrackerView.h"
+#include "BrowserUi.h"
 #include "../engine/PlaylistTools.h"
 #include "AudioRecordUi.h"
 #include "AsioUi.h"
@@ -176,6 +178,21 @@ void settingsPageBody(App& a, int& page, float fieldW) {
           st.set("audio.bufferFrames", bufs[idx]);
           ui::confirmAudio(a, before);
         }
+      }
+      // K-101 follow-up: extra output pairs of the system device (Hardware Insert sends, Voltage Out).
+      formLabel("Output channels");
+      {
+        const int outs[] = {2, 4, 6, 8};
+        const char* labels[] = {"2", "4", "6", "8"};
+        const int cur = static_cast<int>(st.getNumber("audio.outputChannels"));
+        int idx = -1;
+        for (int i = 0; i < 4; ++i)
+          if (cur == outs[i]) idx = i;
+        if (ui::OptionRow("outch", labels, 4, &idx, 160.0f) && cur != outs[idx]) {
+          st.set("audio.outputChannels", outs[idx]);
+          a.audioReopen = true;
+        }
+        ui::Hint("Channels opened on the output device: 3-4, 5-6 and 7-8 are extra pairs for Hardware Insert sends and Voltage Out");
       }
       char lat[96];
       std::snprintf(lat, sizeof lat, "%.1f ms", 1000.0 * a.audioBuffer / std::max(1, a.audioSampleRate));
@@ -948,7 +965,7 @@ void infoWindow(App& a) {
     alignRight(ui::ButtonRowWidth(2, 110));
     const bool cancel = ui::TextButton("Cancel", false, 110) || ::gl::keys::escapePressed();
     ImGui::SameLine(0, theme::kS2);
-    if (ui::PrimaryButton("Change PPQ", 110)) {
+    if (ui::PrimaryButton("Change PPQ", 110) || ::gl::keys::defaultPressed()) {
       a.doc.setPpq(pendingPpq);
       pendingPpq = 0;
       ImGui::CloseCurrentPopup();
@@ -1090,7 +1107,7 @@ void unsavedPrompt(App& a) {
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine(0, theme::kS2);
-    if (ui::PrimaryButton("Save", 100)) {
+    if (ui::PrimaryButton("Save", 100) || ::gl::keys::defaultPressed()) {
       ImGui::CloseCurrentPopup();
       auto then = a.afterDiscard;
       if (!a.projectPath.empty()) {
@@ -1278,6 +1295,7 @@ void drawDialogs(App& a) {
   drawPluginManager(a);
   drawRemoteDialog(a);
   j31::drawWindows(a);  // J-31: chord progression editor, audio logger, MIDI scale snap
+  recordcard::draw(a);  // K-123: the Recording card
   drumkitui::draw(a);   // K-162: drum kits read on a worker, their import report
   drawProjectScriptWindow(a);  // J-57: project script settings / run
   mcpui::tick(a);                // SC-07: AI assistant server (opt-in, loopback only)
@@ -1545,6 +1563,14 @@ void handleGlobalShortcuts(App& a) {
   focusBackToMainView(a);
   if (menuShortcuts(a)) return;
   ImGuiIO& io = ImGui::GetIO();
+  // K-297: Cmd+W in the sets that have it (K-301 R02-08). Round 8: also with the cursor in a text
+  // field (the plugin picker's search, a dialog's field), and the plugin picker (an overlay without
+  // a close button) closes too, as Esc closes it.
+  if (keys::pressedOverText("window.close")) {
+    const ImGuiWindow* nav = GImGui->NavWindow ? GImGui->NavWindow->RootWindow : nullptr;
+    if (browserui::pluginPickerOpen() && nav && std::strncmp(nav->Name, "Plugin picker##", 15) == 0) browserui::togglePluginPicker();
+    else closeFocusedWindow(false);
+  }
   if (io.WantTextInput) return;
   if (newtracks::holdsKeys()) return;  // R06-07: the New tracks dialog is modal
   using keys::pressed;
@@ -1581,6 +1607,11 @@ void handleGlobalShortcuts(App& a) {
   if (livelook::active(a)) {  // N47-11: the Clips set's return track, detail bands and Session record keys
     if (pressed("track.newReturn")) livelook::newReturnTrack(a);
     if (pressed("clips.insertMidiClip")) livelook::gridInsertMidiClip(a);  // N49-07
+    // Checkpoint 52 (S10): not while the device chain has the keyboard (the reference groups devices there).
+    const ImGuiWindow* nw = GImGui->NavWindow;
+    const bool chainKeys = nw && (std::strstr(nw->Name, "##chain") || std::strstr(nw->Name, "##expanded") || std::strstr(nw->Name, "##body"));
+    if (!chainKeys && pressed("track.group")) livelook::groupTracks(a);  // checkpoint 51
+    if (!chainKeys && pressed("track.ungroup")) livelook::ungroupTracks(a);
     if (pressed("view.detail")) livelook::toggleDetail(a);
     if (pressed("transport.sessionRecord")) livelook::toggleSessionRecord(a);
   }
@@ -1618,6 +1649,8 @@ void handleGlobalShortcuts(App& a) {
     if (typed("view.transposeBox")) trackerview::toggleScopeTool(a, 1);
     if (typed("view.cleanUp")) trackerview::toggleScopeTool(a, 2);
     if (typed("view.advancedEdit")) trackerview::toggleScopeTool(a, 3);
+    if (typed("view.midiBox")) trackerview::toggleScopeTool(a, 4);
+    if (typed("view.sampleTools")) trackerview::toggleScopeTool(a, 5);
     if (typed("view.audioEditor")) trackerview::toggleAudioPage(a);  // as the header's Audio editor button
   } else {
     if (typed("view.playlist")) {
@@ -1657,7 +1690,7 @@ void handleGlobalShortcuts(App& a) {
       closeFocusedWindow(true);
       keys::claimEscape();
     }
-    if (pressed("window.close")) closeFocusedWindow(false);  // K-297: Cmd+W in the sets that have it (K-301 R02-08)
+    // (Cmd+W: at the top, also over a text field.)
   }
   if (pressed("file.projectInfo")) a.showInfo = !a.showInfo;
   // K-79: commands the layout presets' shortcut sets put on single keys.
@@ -1728,6 +1761,7 @@ void handleGlobalShortcuts(App& a) {
     if (pressed("track.newTracks")) newtracks::open();
     if (typed("transport.cycle")) toggleCycle(a);
     if (pressed("transport.cycleSelection")) cycleToSelection(a);  // R02-13
+    if (keys::focusContext() == keys::Context::Playlist) tracksNavKeys(a);  // checkpoint 47
     if (pressed("transport.prevMarker")) gotoMarker(a, -1);       // R02-15
     if (pressed("transport.nextMarker")) gotoMarker(a, 1);
     if (typed("transport.goToPosition")) goToPositionPrompt(a);

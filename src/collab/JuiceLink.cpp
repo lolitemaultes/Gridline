@@ -2,8 +2,12 @@
 // mapping (libplum). See Link.h. Compiled to stubs without GRIDLINE_COLLAB_NET.
 #include "Link.h"
 #include "Debug.h"
+#include "NetTest.h"
+#include "../core/I18n.h"
 #if defined(GRIDLINE_COLLAB_NET)
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -20,6 +24,12 @@ namespace gl::collab {
 bool networkBuiltIn() { return false; }
 void portMapperAcquire() {}
 void portMapperRelease() {}
+void portMapperCapture(bool) {}
+std::vector<std::string> portMapperLog() { return {}; }
+bool tryTurnAllocation(const NetSettings&, int, std::string* why) {
+  if (why) *why = "Networking is not built in.";
+  return false;
+}
 std::unique_ptr<Fabric> makeJuiceFabric(const NetSettings&) { return nullptr; }
 
 #else
@@ -56,6 +66,21 @@ struct Early {
   uint16_t port;
 };
 std::map<int, Early> gEarly;  // results that arrived before mapPort registered the id
+
+// K-312: libplum's own lines while Test my connection runs (which protocol answered, and why one
+// failed). The log level is fixed when libplum starts, so it always reports and we keep only
+// what a capture asks for.
+std::mutex gPlumLogMu;
+bool gPlumCapture = false;
+std::vector<std::string> gPlumLog;
+void plumLog(plum_log_level_t, const char* message) {
+  if (!message) return;
+  {
+    std::lock_guard<std::mutex> lk(gPlumLogMu);
+    if (gPlumCapture && gPlumLog.size() < 400) gPlumLog.emplace_back(message);
+  }
+  if (debugOn()) debugf("libplum: %s", message);
+}
 
 void applyResult(MapState& st, plum_state_t state, const std::string& host, uint16_t port) {
   std::lock_guard<std::mutex> lk(st.mu);
@@ -95,7 +120,8 @@ void plumAcquire() {
     }
     plum_config_t cfg;
     std::memset(&cfg, 0, sizeof cfg);
-    cfg.log_level = PLUM_LOG_LEVEL_NONE;
+    cfg.log_level = PLUM_LOG_LEVEL_DEBUG;
+    cfg.log_callback = plumLog;
     cfg.discover_timeout = 4000;
     cfg.mapping_timeout = 4000;
     plum_init(&cfg);
@@ -151,6 +177,27 @@ std::string candidateType(const char* sdp) {
   return r;
 }
 
+std::atomic<bool> gFixedPortUsed{false};
+
+// the n-th space-separated field of a candidate line
+std::string field(const std::string& line, size_t n) {
+  size_t p = 0;
+  for (size_t i = 0; i < n && p != std::string::npos; ++i) {
+    p = line.find(' ', p);
+    if (p != std::string::npos) ++p;
+  }
+  if (p == std::string::npos) return {};
+  const size_t e = line.find_first_of(" \r\n", p);
+  return line.substr(p, e == std::string::npos ? std::string::npos : e - p);
+}
+bool isGlobalIpv6Line(const std::string& line) {
+  std::string a = field(line, 4);
+  if (a.find(':') == std::string::npos) return false;
+  for (auto& ch : a) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  return !(a.rfind("fe8", 0) == 0 || a.rfind("fe9", 0) == 0 || a.rfind("fea", 0) == 0 || a.rfind("feb", 0) == 0 || a.rfind("fc", 0) == 0 ||
+           a.rfind("fd", 0) == 0 || a == "::1");
+}  // K-312: the fixed port went to one agent (per process)
+
 uint16_t randomPort() {
   std::random_device rd;
   return static_cast<uint16_t>(49152 + rd() % (65535 - 49152));
@@ -158,9 +205,10 @@ uint16_t randomPort() {
 
 class JuiceEndpoint : public Endpoint {
  public:
-  JuiceEndpoint(const NetSettings& s, const EndpointConfig& cfg) : settings_(s), cfg_(cfg) {}
+  JuiceEndpoint(const NetSettings& s, const EndpointConfig& cfg) : settings_(s), cfg_(cfg), stuns_(stunServers(s)) {}
   ~JuiceEndpoint() override {
     if (agent_) juice_destroy(agent_);
+    if (usedFixed_) gFixedPortUsed = false;
     if (map_) {
       int id = -1;
       {
@@ -173,7 +221,11 @@ class JuiceEndpoint : public Endpoint {
   }
 
   bool init() {
-    if (!createAgent(cfg_.localPort)) return false;
+    // K-312: "Use this UDP port": the first attempt that asks for any port takes it (taken: any)
+    uint16_t want = cfg_.localPort;
+    if (!want && settings_.fixedPort && !gFixedPortUsed.exchange(true)) want = settings_.fixedPort, usedFixed_ = true;
+    if (!createAgent(want)) return false;
+    if (usedFixed_ && port_ != settings_.fixedPort) usedFixed_ = false, gFixedPortUsed = false;  // taken by another program
     debugf("%s ice agent on UDP port %u (asked %u)%s", cfg_.tag.c_str(), static_cast<unsigned>(port_), static_cast<unsigned>(cfg_.localPort),
            cfg_.controlling ? " controlling" : "");
     if (settings_.portMapping) {
@@ -189,18 +241,25 @@ class JuiceEndpoint : public Endpoint {
   bool restart() override {
     if (!agent_) return false;
     const bool hadPublic = hasCandidateType("srflx");
+    if (!hadPublic && stuns_.size() > 1) stunIndex_ = (stunIndex_ + 1) % stuns_.size();  // K-312: the next address server
+    stunTries_ = 0;
+    ++restarts_;
+    return renew(true, "restarted");
+  }
+
+  // A fresh agent on the same port (see restart); `gather`: start gathering at once.
+  bool renew(bool gather, const char* why) {
     juice_destroy(agent_);
     agent_ = nullptr;
     state_ = JUICE_STATE_DISCONNECTED;
     gathered_ = false;
     gatherStarted_ = false;
     sendFailures_ = 0;
-    if (!hadPublic && settings_.stunHost == NetSettings().stunHost && !settings_.stunFallbackHost.empty()) useFallback_ = !useFallback_;
     const uint16_t before = port_;
     if (!createAgent(port_)) return false;
-    ++restarts_;
-    debugf("%s ice restarted (attempt %d) on UDP port %u%s%s", cfg_.tag.c_str(), restarts_ + 1, static_cast<unsigned>(port_),
-           port_ != before ? " (the old port was taken)" : "", useFallback_ ? ", fallback address server" : "");
+    debugf("%s ice %s (attempt %d) on UDP port %u%s%s", cfg_.tag.c_str(), why, restarts_ + 1, static_cast<unsigned>(port_),
+           port_ != before ? " (the old port was taken)" : "", stunIndex_ ? (", address server " + stuns_[stunIndex_].host).c_str() : "");
+    if (!gather) return true;
     // The agent opens its socket when it gathers. On Linux the old agent's socket keeps its port
     // for a moment after it is closed (its network thread may still be waiting on it), so binding
     // the same port can fail at once: try again shortly, as the codes already sent name this port.
@@ -226,14 +285,18 @@ class JuiceEndpoint : public Endpoint {
     // (no public address in an invite). IPv4 is what home connections and STUN servers have.
     c.bind_address = "0.0.0.0";
 #endif
-    if (useFallback_) {
-      c.stun_server_host = settings_.stunFallbackHost.c_str();
-      c.stun_server_port = settings_.stunFallbackPort;
-    } else if (!settings_.stunHost.empty()) {
-      c.stun_server_host = settings_.stunHost.c_str();
-      c.stun_server_port = settings_.stunPort;
+    if (!stuns_.empty()) {
+      const NetSettings::Stun& st = stuns_[stunIndex_ % stuns_.size()];
+      c.stun_server_host = st.host.c_str();
+      c.stun_server_port = st.port;
     }
-    if (!settings_.turnHost.empty()) {
+    if (settings_.turnHost.empty()) {
+      // K-312: a user name or password without a server: say so (the agent works without TURN)
+      if ((!settings_.turnUser.empty() || !settings_.turnPass.empty()) && !turnWarned_) {
+        turnWarned_ = true;
+        debugf("%s TURN server missing: a TURN user or password is set but no server, so no relay is used", cfg_.tag.c_str());
+      }
+    } else {
       turn_.host = settings_.turnHost.c_str();
       turn_.port = settings_.turnPort;
       turn_.username = settings_.turnUser.c_str();
@@ -303,11 +366,24 @@ class JuiceEndpoint : public Endpoint {
   }
 
   void gather() override { gatherNow(); }
+  // K-312: gathering ended without a public address: the address server gave no answer, so
+  // ask the next one in the list (each once per attempt), unless already connected.
+  bool tick() override {
+    // done gathering, or still waiting on an address server that answers within a second when it answers at all
+    const bool slow = gatherStarted_ && std::chrono::steady_clock::now() - gatherAt_ > std::chrono::milliseconds(2500);
+    if (!agent_ || !(gathered_ || slow) || stunTries_ + 1 >= stuns_.size() || hasCandidateType("srflx")) return false;
+    if (state_ == JUICE_STATE_CONNECTED || state_ == JUICE_STATE_COMPLETED) return false;
+    ++stunTries_;
+    stunIndex_ = (stunIndex_ + 1) % stuns_.size();
+    debugf("%s no answer from the address server: asking %s", cfg_.tag.c_str(), stuns_[stunIndex_].host.c_str());
+    return renew(true, "renewed for the next address server");
+  }
   // False when the agent could not open its socket (its port taken): it then counts as failed,
   // so the hub starts a fresh attempt instead of waiting on an agent that never gathers.
   bool gatherNow() {
     if (!agent_ || gatherStarted_) return true;
     gatherStarted_ = true;
+    gatherAt_ = std::chrono::steady_clock::now();
     if (juice_gather_candidates(agent_) >= 0) return true;
     gatherStarted_ = false;
     state_ = JUICE_STATE_FAILED;
@@ -316,6 +392,9 @@ class JuiceEndpoint : public Endpoint {
   }
   bool gathered() const override {
     if (!gathered_) return false;
+    // K-312: no public address yet and another address server to ask (tick does): not done
+    if (stunTries_ + 1 < stuns_.size() && !hasCandidateType("srflx") && state_ != JUICE_STATE_CONNECTED && state_ != JUICE_STATE_COMPLETED)
+      return false;
     if (!map_) return true;
     std::lock_guard<std::mutex> lk(map_->mu);
     return map_->done;
@@ -323,7 +402,7 @@ class JuiceEndpoint : public Endpoint {
   std::string localDescription() const override {
     char buf[JUICE_MAX_SDP_STRING_LEN];
     if (!agent_ || juice_get_local_description(agent_, buf, sizeof buf) < 0) return {};
-    std::string out;
+    std::string out, forwardedIp;
     // loopback candidates only for tests on one computer
     const std::string all = buf;
     size_t at = 0;
@@ -340,8 +419,19 @@ class JuiceEndpoint : public Endpoint {
       // offers at most 8 of its own addresses
       const bool host = line.find(" typ host") != std::string::npos;
       if (host && (line.find(" fe80:") != std::string::npos || line.find(" FE80:") != std::string::npos)) continue;
-      if (host && line.rfind("a=candidate:", 0) == 0 && ++hosts > 8) continue;
+      // K-312: a global IPv6 address never counts against the 8 (it needs no router to cross)
+      const bool v6 = host && isGlobalIpv6Line(line);
+      if (host && !v6 && line.rfind("a=candidate:", 0) == 0 && ++hosts > 8) continue;
+      if (settings_.portForwarded && line.find(" typ srflx") != std::string::npos && forwardedIp.empty()) forwardedIp = field(line, 4);
       if (!loop || settings_.loopback) out += line;
+    }
+    // K-312: a port the user forwarded on the router, at the public address (opens a way in, as
+    // a router port mapping does)
+    if (settings_.portForwarded && settings_.fixedPort && port_ == settings_.fixedPort && !forwardedIp.empty() &&
+        forwardedIp.find(':') == std::string::npos) {
+      char c[256];
+      std::snprintf(c, sizeof c, "a=candidate:9 1 UDP 1694498815 %s %u typ srflx raddr 0.0.0.0 rport 0\r\n", forwardedIp.c_str(), static_cast<unsigned>(port_));
+      out += c;
     }
     if (map_) {
       std::lock_guard<std::mutex> lk(map_->mu);
@@ -362,8 +452,44 @@ class JuiceEndpoint : public Endpoint {
       for (size_t at = d.find("a=candidate:"); at != std::string::npos; at = d.find("a=candidate:", at + 1)) ++n;
       debugf("%s remote description: %d candidates%s", cfg_.tag.c_str(), n, remoteSet_ ? " (added)" : "");
     }
-    if (remotes_.size() < 16) remotes_.push_back(d);  // given again to a restarted agent
+    // K-312: libjuice takes no more candidates once the remote side's gathering is marked done
+    // (applyRemote does that), so a second reply code with other addresses was dropped, and a
+    // restart replayed the first one first. When a description brings addresses the agent does
+    // not have, a fresh agent (same port and credentials) gets only the newest description.
+    if (!remotes_.empty()) {
+      const auto have = addressSet(remotes_.back()), add = addressSet(d);
+      if (std::includes(have.begin(), have.end(), add.begin(), add.end())) return;  // nothing new
+      remotes_.assign(1, d);
+      renew(gatherStarted_, "renewed for the newest remote description");
+      return;
+    }
+    remotes_.push_back(d);  // given again to a restarted agent
     applyRemote(d);
+  }
+
+  // "address port type" of every candidate in a description, sorted
+  static std::vector<std::string> addressSet(const std::string& d) {
+    std::vector<std::string> out;
+    size_t at = 0;
+    while ((at = d.find("a=candidate:", at)) != std::string::npos) {
+      size_t nl = d.find('\n', at);
+      if (nl == std::string::npos) nl = d.size();
+      std::vector<std::string> f;
+      size_t p = at;
+      while (p < nl && f.size() < 8) {
+        size_t sp = d.find(' ', p);
+        if (sp == std::string::npos || sp > nl) sp = nl;
+        std::string w = d.substr(p, sp - p);
+        while (!w.empty() && (w.back() == '\r' || w.back() == '\n')) w.pop_back();
+        f.push_back(w);
+        p = sp + 1;
+      }
+      if (f.size() >= 8) out.push_back(f[4] + " " + f[5] + " " + f[7]);
+      at = nl;
+    }
+    std::sort(out.begin(), out.end());
+    out.erase(std::unique(out.begin(), out.end()), out.end());
+    return out;
   }
   void send(const std::string& d) override {
     if (!agent_) return;
@@ -407,8 +533,12 @@ class JuiceEndpoint : public Endpoint {
   int sendFailures_ = 0;
   uint16_t port_ = 0;
   std::shared_ptr<MapState> map_;
-  std::vector<std::string> remotes_;  // K-174: every remote description, for restarts
-  bool useFallback_ = false;          // K-174: the fallback address server
+  std::vector<std::string> remotes_;  // the newest remote description, for restarts (K-174, K-312)
+  bool turnWarned_ = false;
+  std::vector<NetSettings::Stun> stuns_;  // K-312: the address servers, in order
+  size_t stunIndex_ = 0, stunTries_ = 0;
+  bool usedFixed_ = false;
+  std::chrono::steady_clock::time_point gatherAt_{};  // this agent holds the "Use this UDP port" port
   int restarts_ = 0;
 };
 
@@ -428,9 +558,37 @@ class JuiceFabric : public Fabric {
     return e;
   }
   bool real() const override { return true; }
+  void probeNat() override {
+    std::lock_guard<std::mutex> lk(nat_->mu);
+    const auto now = std::chrono::steady_clock::now();
+    if (nat_->running || (nat_->result && now - nat_->at < std::chrono::minutes(10))) return;
+    nat_->running = true;
+    auto st = nat_;
+    const NetSettings s = s_;
+    std::thread([st, s] {
+      const char r = probeNatType(s, 1500);
+      std::lock_guard<std::mutex> lk2(st->mu);
+      st->result = r;
+      st->running = false;
+      st->at = std::chrono::steady_clock::now();
+      debugf("router behaviour: %s", r == 'c' ? "cone" : r == 's' ? "symmetric" : "unknown");
+    }).detach();
+  }
+  char natType() const override {
+    std::lock_guard<std::mutex> lk(nat_->mu);
+    if (nat_->result) return nat_->result;
+    return nat_->running ? 0 : 'u';
+  }
 
  private:
+  struct NatProbe {
+    std::mutex mu;
+    char result = 0;
+    bool running = false;
+    std::chrono::steady_clock::time_point at;
+  };
   NetSettings s_;
+  std::shared_ptr<NatProbe> nat_ = std::make_shared<NatProbe>();  // shared with a probe thread that may outlive us
 };
 
 }  // namespace
@@ -438,6 +596,62 @@ class JuiceFabric : public Fabric {
 std::unique_ptr<Fabric> makeJuiceFabric(const NetSettings& s) { return std::make_unique<JuiceFabric>(s); }
 void portMapperAcquire() { plumAcquire(); }
 void portMapperRelease() { plumRelease(); }
+void portMapperCapture(bool on) {
+  std::lock_guard<std::mutex> lk(gPlumLogMu);
+  gPlumCapture = on;
+  if (on) gPlumLog.clear();
+}
+std::vector<std::string> portMapperLog() {
+  std::lock_guard<std::mutex> lk(gPlumLogMu);
+  std::vector<std::string> out;
+  out.swap(gPlumLog);
+  return out;
+}
+
+bool tryTurnAllocation(const NetSettings& s, int timeoutMs, std::string* why) {
+  if (s.turnHost.empty()) {
+    if (why) *why = i18n::tr("No TURN server is set.");
+    return false;
+  }
+  struct Wait {
+    std::atomic<bool> done{false};
+  } w;
+  juice_config_t c;
+  std::memset(&c, 0, sizeof c);
+  c.concurrency_mode = JUICE_CONCURRENCY_MODE_POLL;
+  juice_turn_server_t t{};
+  t.host = s.turnHost.c_str();
+  t.port = s.turnPort;
+  t.username = s.turnUser.c_str();
+  t.password = s.turnPass.c_str();
+  c.turn_servers = &t;
+  c.turn_servers_count = 1;
+  c.cb_gathering_done = [](juice_agent_t*, void* u) { static_cast<Wait*>(u)->done = true; };
+  c.user_ptr = &w;
+  juice_agent_t* ag = juice_create(&c);
+  if (!ag) {
+    if (why) *why = i18n::tr("Could not open a network socket for the test.");
+    return false;
+  }
+  juice_gather_candidates(ag);
+  const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+  bool relay = false;
+  while (!relay && std::chrono::steady_clock::now() < end) {
+    char buf[JUICE_MAX_SDP_STRING_LEN];
+    if (juice_get_local_description(ag, buf, sizeof buf) >= 0 && std::strstr(buf, " typ relay")) relay = true;
+    if (w.done) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  if (!relay) {
+    char buf[JUICE_MAX_SDP_STRING_LEN];
+    relay = juice_get_local_description(ag, buf, sizeof buf) >= 0 && std::strstr(buf, " typ relay");
+  }
+  juice_destroy(ag);
+  if (!relay && why)
+    *why = w.done ? i18n::tr("The TURN server gave no relay address: check its port, the user name and the password.")
+                  : i18n::tr("The TURN server did not answer in time: check its address and port, and that this network allows UDP to it.");
+  return relay;
+}
 
 #endif
 

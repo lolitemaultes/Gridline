@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <map>
 #include <random>
 
@@ -169,48 +170,174 @@ const Voice* findVoice(const std::string& name) {
   return nullptr;
 }
 
-std::vector<std::string> phonemes(const std::string& text) {
-  std::vector<std::string> out;
-  std::string w;
-  auto flush = [&] {
-    if (w.empty()) return;
-    if (!out.empty() && out.back() != "_" && out.back() != ".") out.push_back("|");
-    word(w, out);
-    w.clear();
-  };
-  for (char ch : text) {
-    const unsigned char u = static_cast<unsigned char>(ch);
-    if (std::isalpha(u)) {
-      w += static_cast<char>(std::tolower(u));
-    } else if (std::isdigit(u)) {
-      flush();
-      w = kDigits[ch - '0'];
-      flush();
-    } else {
-      flush();
-      if (ch == ',' || ch == ';' || ch == ':' || ch == '-') out.push_back("_");
-      else if (ch == '.' || ch == '!' || ch == '?' || ch == '\n') out.push_back(".");
-    }
+const char* styleId(Style s) {
+  switch (s) {
+    case Style::Sing: return "sing";
+    case Style::Random: return "random";
+    case Style::Natural: break;
   }
-  flush();
-  while (!out.empty() && (out.back() == "|" || out.back() == "_")) out.pop_back();
-  return out;
+  return "natural";
+}
+Style styleFromId(const std::string& id) {
+  if (id == "sing") return Style::Sing;
+  if (id == "random") return Style::Random;
+  return Style::Natural;
 }
 
+namespace {
+// The phonemes of a text, each with its word (-1: a pause or a word gap), and the parse.
+struct Seq {
+  std::vector<std::string> ph;
+  std::vector<int> word;
+  Parsed parsed;
+};
+
+bool markValue(const std::string& inside, double& out) {
+  size_t a = 0, b = inside.size();
+  while (a < b && std::isspace(static_cast<unsigned char>(inside[a]))) ++a;
+  while (b > a && std::isspace(static_cast<unsigned char>(inside[b - 1]))) --b;
+  if (a == b) return false;
+  const std::string s = inside.substr(a, b - a);
+  char* end = nullptr;
+  const double v = std::strtod(s.c_str(), &end);
+  if (!end || *end != '\0' || !std::isfinite(v) || std::fabs(v) > 24.0) return false;
+  out = v;
+  return true;
+}
+
+Seq sequence(const std::string& text) {
+  Seq q;
+  std::vector<Word>& words = q.parsed.words;
+  std::string w;
+  bool inWord = false;
+  auto push = [&](const std::string& p, int wi) {
+    q.ph.push_back(p);
+    q.word.push_back(wi);
+  };
+  auto part = [&] {  // the letters so far, spoken as part of the current word
+    if (w.empty()) return;
+    std::vector<std::string> ps;
+    word(w, ps);
+    for (const auto& p : ps) push(p, static_cast<int>(words.size()) - 1);
+    w.clear();
+  };
+  auto startWord = [&](size_t at) {
+    if (inWord) return;
+    if (!q.ph.empty() && q.ph.back() != "_" && q.ph.back() != ".") push("|", -1);
+    inWord = true;
+    Word nw;
+    nw.begin = at;
+    words.push_back(nw);
+  };
+  auto endWord = [&](size_t at) {
+    if (!inWord) return;
+    part();
+    inWord = false;
+    words.back().end = at;
+    words.back().text = text.substr(words.back().begin, at - words.back().begin);
+  };
+  for (size_t i = 0; i < text.size(); ++i) {
+    const char ch = text[i];
+    const unsigned char u = static_cast<unsigned char>(ch);
+    if (std::isalpha(u)) {
+      startWord(i);
+      w += static_cast<char>(std::tolower(u));
+    } else if (ch == '_' && inWord) {
+      part();  // joined: the next letters go on in the same word, with no gap
+    } else if (std::isdigit(u)) {
+      endWord(i);
+      startWord(i);
+      w = kDigits[ch - '0'];
+      endWord(i + 1);
+    } else if (ch == '(') {
+      endWord(i);
+      // A pitch mark: right after a word (spaces allowed between), once per word.
+      bool after = !words.empty() && !words.back().marked;
+      if (after)
+        for (size_t k = words.back().end; k < i; ++k)
+          if (text[k] != ' ' && text[k] != '\t') after = false;
+      if (!after) continue;  // an ordinary bracket: what is inside is spoken
+      size_t close = text.find(')', i + 1);
+      const size_t nl = text.find('\n', i + 1);
+      Mark m;
+      m.begin = i;
+      if (close == std::string::npos || (nl != std::string::npos && nl < close)) {
+        m.end = nl == std::string::npos ? text.size() : nl;  // never closed: up to the end of the line
+        m.valid = false;
+      } else {
+        m.end = close + 1;
+        m.valid = markValue(text.substr(i + 1, close - i - 1), m.semis);
+      }
+      if (m.valid) words.back().semis = m.semis, words.back().marked = true;
+      q.parsed.marks.push_back(m);
+      i = m.end - 1;  // the mark is never spoken
+    } else {
+      endWord(i);
+      if (ch == ',' || ch == ';' || ch == ':' || ch == '-') push("_", -1);
+      else if (ch == '.' || ch == '!' || ch == '?' || ch == '\n') push(".", -1);
+    }
+  }
+  endWord(text.size());
+  while (!q.ph.empty() && (q.ph.back() == "|" || q.ph.back() == "_")) q.ph.pop_back(), q.word.pop_back();
+  return q;
+}
+
+uint32_t hashText(const std::string& s) {
+  uint32_t h = 2166136261u;
+  for (char c : s) h = (h ^ static_cast<unsigned char>(c)) * 16777619u;
+  return h;
+}
+
+void put16(std::vector<uint8_t>& b, uint32_t v) {
+  b.push_back(static_cast<uint8_t>(v & 0xFF));
+  b.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+}
+void put32(std::vector<uint8_t>& b, uint32_t v) {
+  put16(b, v & 0xFFFF);
+  put16(b, v >> 16);
+}
+void putTag(std::vector<uint8_t>& b, const char* t) { b.insert(b.end(), t, t + 4); }
+}  // namespace
+
+Parsed parse(const std::string& text) { return sequence(text).parsed; }
+
+std::vector<std::string> phonemes(const std::string& text) { return sequence(text).ph; }
+
 std::vector<float> render(const std::string& text, const Voice& v, int sampleRate, double maxSeconds) {
-  const std::vector<std::string> ph = phonemes(text);
+  return renderWords(text, v, sampleRate, maxSeconds).samples;
+}
+
+Rendered renderWords(const std::string& text, const Voice& v, int sampleRate, double maxSeconds) {
+  const Seq q = sequence(text);
+  const std::vector<std::string>& ph = q.ph;
+  Rendered res;
+  res.wordStarts.assign(q.parsed.words.size(), -1);
+  // Each word's pitch offset (semitones): its mark, plus a few semitones either way for Random.
+  std::vector<double> offset(q.parsed.words.size(), 0.0);
+  std::mt19937 wordRng(hashText(text));
+  std::uniform_real_distribution<double> wander(-3.0, 3.0);
+  for (size_t k = 0; k < offset.size(); ++k) {
+    offset[k] = q.parsed.words[k].semis;
+    if (v.style == Style::Random) offset[k] += std::round(wander(wordRng) * 2.0) / 2.0;
+  }
+  const bool sing = v.style == Style::Sing;
   const double sr = sampleRate;
   const double speed = std::clamp(static_cast<double>(v.speed), 0.25, 4.0);
   const size_t cap = static_cast<size_t>(maxSeconds * sr);
-  std::vector<float> out;
+  std::vector<float>& out = res.samples;
   out.reserve(static_cast<size_t>(sr * 2));
   std::mt19937 rng(12345);
   std::uniform_real_distribution<double> noise(-1.0, 1.0);
   Reso r1, r2, r3, rn, nasal;
   double f1 = 500, f2 = 1500, f3 = 2500, av = 0, an = 0, nf = 3000, phase = 0, glot = 0, ringPh = 0, vibPh = 0;
+  double semis = 0, wantSemis = 0;  // the pitch offset, gliding (about 25 ms) from word to word
+  const double ks = 1 - std::exp(-1.0 / (0.025 * sr));
   // The phrase's pitch falls from its start to its end; stressed vowels (a word's first) lift.
   size_t phraseStart = 0;
   for (size_t i = 0; i < ph.size() && out.size() < cap; ++i) {
+    const int wi = q.word[i];
+    if (wi >= 0 && res.wordStarts[static_cast<size_t>(wi)] < 0) res.wordStarts[static_cast<size_t>(wi)] = static_cast<int64_t>(out.size());
+    if (wi >= 0) wantSemis = offset[static_cast<size_t>(wi)];
     auto it = table().find(ph[i]);
     if (it == table().end()) continue;
     const Ph& p = it->second;
@@ -258,12 +385,14 @@ std::vector<float> render(const std::string& text, const Voice& v, int sampleRat
       const double kf = 1 - std::exp(-1.0 / (0.012 * sr)), ka = 1 - std::exp(-1.0 / (0.004 * sr));
       f1 += (g1 - f1) * kf, f2 += (g2 - f2) * kf, f3 += (g3 - f3) * kf, nf += (tnf - nf) * kf;
       av += (wantAv - av) * ka, an += (wantAn - an) * ka;
-      // Pitch.
+      // Pitch: the voice's line (Sing: held flat), then the word's offset.
       double f0 = v.pitch;
-      if (v.robot < 0.5) {
+      if (v.robot < 0.5 && !sing) {
         f0 *= 1.0 + v.intonation * (0.12 - 0.25 * (where + frac / static_cast<double>(phraseLen)));
         if (stressed) f0 *= 1.0 + 0.12 * v.intonation * std::sin(kPi * frac);
       }
+      semis += (wantSemis - semis) * ks;
+      if (semis != 0.0) f0 *= std::pow(2.0, semis / 12.0);
       vibPh += 5.5 / sr;
       f0 *= std::pow(2.0, v.vibrato * std::sin(2 * kPi * vibPh) / 12.0);
       phase += f0 / sr;
@@ -300,7 +429,79 @@ std::vector<float> render(const std::string& text, const Voice& v, int sampleRat
   for (float x : out) peak = std::max(peak, std::fabs(x));
   if (peak > 0)
     for (float& x : out) x *= 0.8f / peak;
-  return out;
+  // A word cut off by the length cap starts at the end; the first word starts at the beginning.
+  for (auto& s : res.wordStarts)
+    if (s < 0) s = static_cast<int64_t>(out.size());
+  if (!res.wordStarts.empty()) res.wordStarts[0] = 0;
+  return res;
+}
+
+std::vector<uint8_t> wavWithWords(const Rendered& r, const std::vector<Word>& words, int sampleRate, const std::string& comment) {
+  std::vector<uint8_t> b;
+  const uint32_t frames = static_cast<uint32_t>(r.samples.size());
+  putTag(b, "RIFF");
+  put32(b, 0);  // filled in below
+  putTag(b, "WAVE");
+  putTag(b, "fmt ");
+  put32(b, 16);
+  put16(b, 1);  // PCM
+  put16(b, 1);  // mono
+  put32(b, static_cast<uint32_t>(sampleRate));
+  put32(b, static_cast<uint32_t>(sampleRate) * 2);
+  put16(b, 2);
+  put16(b, 16);
+  putTag(b, "data");
+  put32(b, frames * 2);
+  for (float x : r.samples) {
+    const int v = static_cast<int>(std::lround(std::clamp(static_cast<double>(x), -1.0, 1.0) * 32767.0));
+    put16(b, static_cast<uint32_t>(static_cast<uint16_t>(static_cast<int16_t>(v))));
+  }
+  // "cue ": one point per word (id k + 1), at the word's start.
+  const size_t n = std::min(words.size(), r.wordStarts.size());
+  if (n > 0) {
+    putTag(b, "cue ");
+    put32(b, static_cast<uint32_t>(4 + 24 * n));
+    put32(b, static_cast<uint32_t>(n));
+    for (size_t k = 0; k < n; ++k) {
+      const uint32_t at = static_cast<uint32_t>(std::clamp<int64_t>(r.wordStarts[k], 0, frames));
+      put32(b, static_cast<uint32_t>(k + 1));
+      put32(b, at);
+      putTag(b, "data");
+      put32(b, 0);
+      put32(b, 0);
+      put32(b, at);
+    }
+    // "LIST adtl": each cue's label (the word).
+    std::vector<uint8_t> l;
+    putTag(l, "adtl");
+    for (size_t k = 0; k < n; ++k) {
+      const std::string& t = words[k].text;
+      putTag(l, "labl");
+      put32(l, static_cast<uint32_t>(4 + t.size() + 1));
+      put32(l, static_cast<uint32_t>(k + 1));
+      l.insert(l.end(), t.begin(), t.end());
+      l.push_back(0);
+      if ((t.size() + 1) & 1u) l.push_back(0);
+    }
+    putTag(b, "LIST");
+    put32(b, static_cast<uint32_t>(l.size()));
+    b.insert(b.end(), l.begin(), l.end());
+  }
+  if (!comment.empty()) {  // "LIST INFO" ICMT: the text and the voice it was said with
+    std::vector<uint8_t> l;
+    putTag(l, "INFO");
+    putTag(l, "ICMT");
+    put32(l, static_cast<uint32_t>(comment.size() + 1));
+    l.insert(l.end(), comment.begin(), comment.end());
+    l.push_back(0);
+    if ((comment.size() + 1) & 1u) l.push_back(0);
+    putTag(b, "LIST");
+    put32(b, static_cast<uint32_t>(l.size()));
+    b.insert(b.end(), l.begin(), l.end());
+  }
+  const uint32_t riff = static_cast<uint32_t>(b.size() - 8);
+  for (int k = 0; k < 4; ++k) b[4 + static_cast<size_t>(k)] = static_cast<uint8_t>((riff >> (8 * k)) & 0xFF);
+  return b;
 }
 
 }  // namespace gl::speech

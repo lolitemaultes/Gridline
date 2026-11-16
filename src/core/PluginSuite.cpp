@@ -1,5 +1,6 @@
 // Gridline — plugin suites (J-131): membership and plugin identities.
 #include "PluginSuite.h"
+#include <set>
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -261,6 +262,40 @@ const std::vector<Member>& members(const char* suiteId) {
   return members(id);
 }
 
+std::vector<const Member*> listedMembers(const std::string& suiteId, const std::string& listText) {
+  const std::vector<Member>& all = members(suiteId);
+  std::vector<const Member*> out;
+  std::set<std::string> want;
+  std::string listSuite;
+  size_t pos = 0;
+  while (pos <= listText.size()) {
+    size_t end = listText.find('\n', pos);
+    if (end == std::string::npos) end = listText.size();
+    std::string line = listText.substr(pos, end - pos);
+    pos = end + 1;
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
+    const size_t a = line.find_first_not_of(" \t");
+    if (a == std::string::npos || line[a] == '#') continue;
+    line = line.substr(a);
+    if (line.rfind("suite ", 0) == 0) listSuite = line.substr(6);
+    else want.insert(line);
+  }
+  if (listSuite.empty() || listSuite == suiteId)
+    for (const Member& m : all)
+      if (want.count(m.type)) out.push_back(&m);
+  if (out.empty())
+    for (const Member& m : all) out.push_back(&m);
+  return out;
+}
+
+std::string memberListText(const std::string& suiteId, const std::vector<std::string>& types) {
+  std::string out = "# Gridline plugin bundle: the plugins it shows to hosts\nsuite " + suiteId + "\n";
+  const std::set<std::string> want(types.begin(), types.end());
+  for (const Member& m : members(suiteId))
+    if (want.count(m.type)) out += m.type + "\n";
+  return out;
+}
+
 const Member* findMember(const std::string& type) {
   const auto& t = tables();
   auto it = t.byType.find(type);
@@ -332,9 +367,10 @@ std::string xmlEscape(const std::string& s) {
 }
 }  // namespace
 
-std::string auComponentsPlist(const std::string& suiteId, uint32_t version, const std::string& factory) {
+std::string auComponentsPlist(const std::string& suiteId, uint32_t version, const std::string& factory, const std::string& memberList) {
   std::string out = "<key>AudioComponents</key><array>\n";
-  for (const Member& m : members(suiteId)) {
+  for (const Member* mp : listedMembers(suiteId, memberList)) {
+    const Member& m = *mp;
     out += "<dict><key>type</key><string>" + fourcc(m.auType) + "</string><key>subtype</key><string>" + fourcc(m.auSubtype) +
            "</string><key>manufacturer</key><string>GrLn</string><key>name</key><string>Gridline: " + xmlEscape(m.name) +
            "</string><key>description</key><string>" + xmlEscape(m.name) + "</string><key>version</key><integer>" +

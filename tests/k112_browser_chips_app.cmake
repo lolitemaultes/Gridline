@@ -3,15 +3,16 @@
 #   1. Live, a place that lists files (Folders): chips for the tags the files carry (kick, snare
 #      among them), the most used first;
 #   2. a click on the first chip searches for its tag; a second click clears the search;
-#   3. Studio draws no filter rows.
+#   3. Studio draws no filter rows on its first look (All tab); K-218: its Sounds tab shows them.
 # Screenshot: <OUT>/chips.ppm.
 #   cmake -DAPP=<gridline-app> -DDEMO=<demo.gridline.json> -DOUT=<dir> -P k112_browser_chips_app.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
-file(MAKE_DIRECTORY "${OUT}/lib" "${OUT}/hm")
+file(MAKE_DIRECTORY "${OUT}/lib" "${OUT}/hm" "${OUT}/nofl")
 set(ENV{SDL_AUDIODRIVER} "dummy")
 set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
 set(ENV{HOME} "${OUT}/hm")
+set(ENV{GRIDLINE_FL_DATA} "${OUT}/nofl")  # no factory content: the index holds this folder and Gridline's own folders only
 get_filename_component(src "${DEMO}" DIRECTORY)
 set(wav "${src}/../../assets/sounds/classic/open.wav")
 foreach(n "Kick 1" "Kick 2" "Snare 1")
@@ -58,7 +59,7 @@ endfunction()
 run(live live "6 browser cat 12\n40 browser chips\n42 sdlat brchip\n44 sdldown 0\n45 sdlup 0\n50 browser chips\n52 sdlat brchip\n54 sdldown 0\n55 sdlup 0\n60 browser chips\n")
 chips_at(c0 40)
 check("live: chips drawn (${c0_n})" c0_n GREATER 1)
-# (The index also holds Gridline's own sounds, so the counts are larger than this folder's.)
+# (The index holds only this folder and the empty Gridline folders: GRIDLINE_FL_DATA points at an empty one.)
 check("... kick and snare among them (${c0_tags})" c0_tags MATCHES " kick=[0-9]+" AND c0_tags MATCHES " snare=[0-9]+")
 string(REGEX MATCHALL "=[0-9]+" counts "${c0_tags}")
 set(prev 999999999)
@@ -78,7 +79,9 @@ check("a click on it searches for the tag (${c1_q})" c1_q STREQUAL want)
 chips_at(c2 60)
 check("a second click clears the search" NOT c2_q)
 
-# ---- Studio: no filter rows
-run(studio studio "6 browser tab 3\n40 browser chips\n")
+# ---- Studio: no filter rows on its first look (All tab); K-218: on the Sounds tab they show
+run(studio studio "6 browser tab 0\n40 browser chips\n42 browser tab 3\n80 browser chips\n")
 chips_at(s0 40)
-check("studio: no chips (${s0_n})" s0_n EQUAL 0)
+check("studio: no chips on the All tab (${s0_n})" s0_n EQUAL 0)
+chips_at(s1 80)
+check("studio: chips on the Sounds tab (${s1_n})" s1_n GREATER 1)

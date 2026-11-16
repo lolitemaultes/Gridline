@@ -17,6 +17,7 @@
 #include "App.h"
 #include "AudioRecordUi.h"
 #include "Keys.h"
+#include "LiveLook.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -28,7 +29,7 @@ namespace ed = packs::edison;
 namespace {
 
 enum Mode { kSlice = 0, kStutter = 1 };
-enum SliceMode { kGrid = 0, kEqual = 1, kTransients = 2 };
+enum SliceMode { kGrid = 0, kEqual = 1, kTransients = 2, kFileSlices = 3 };
 
 // Grid choices of the slice mode (in beats; the snap grid is the last one).
 struct GridChoice {
@@ -110,7 +111,10 @@ void applyOp(App& a) {
     const double sens = q.sensitivity;
     const int sm = q.sliceMode;
     a.doc.editSong("chop clips", [&](Song& s) {
-      out = sm == kGrid ? chop::sliceAtGrid(s, clips, g) : sm == kEqual ? chop::sliceEqual(s, clips, parts) : chop::sliceAtTransients(s, clips, sens);
+      out = sm == kGrid           ? chop::sliceAtGrid(s, clips, g)
+            : sm == kEqual        ? chop::sliceEqual(s, clips, parts)
+            : sm == kFileSlices   ? chop::sliceAtFileSlices(s, clips)
+                                  : chop::sliceAtTransients(s, clips, sens);
     });
   } else {
     const auto p = q.p;
@@ -325,12 +329,13 @@ void stutterControls() {
     if (p == chop::presetParams(static_cast<chop::Preset>(i))) q.preset = i;
 }
 
-void sliceControls() {
+void sliceControls(const App& a) {
   State& q = st();
-  const char* modes[] = {i18n::tr("At the grid"), i18n::tr("Equal parts"), i18n::tr("At transients")};
+  const char* modes[] = {i18n::tr("At the grid"), i18n::tr("Equal parts"), i18n::tr("At transients"), i18n::tr("File's slices")};
   const char* hints[] = {i18n::tr("Cuts at every grid line"), i18n::tr("Cuts each clip into pieces of equal length"),
-                         i18n::tr("Audio: cuts at the attacks; patterns: at the note starts")};
-  ui::Segmented("##slmode", modes, 3, &q.sliceMode, 0, 0, hints);
+                         i18n::tr("Audio: cuts at the attacks; patterns: at the note starts"),
+                         i18n::tr("Audio: cuts where the file marks its own slices, such as one piece per word of a speech sample")};
+  ui::Segmented("##slmode", modes, 4, &q.sliceMode, 0, 0, hints);
   ImGui::Dummy(ImVec2(0, theme::kS1));
   ui::BeginSection(i18n::tr("Slices"));
   if (q.sliceMode == kGrid) {
@@ -345,6 +350,20 @@ void sliceControls() {
     ImGui::SameLine(0, theme::kS3);
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(theme::vec(pal().textDim), i18n::tr("%d pieces per clip"), q.parts);
+  } else if (q.sliceMode == kFileSlices) {
+    // The file is read when the selection changes, not every frame.
+    static std::set<ObjectId> seen;
+    static uint64_t seenSerial = ~0ull;
+    static int marked = 0;
+    if (seen != q.clips || seenSerial != a.doc.history().stateSerial()) {
+      seen = q.clips, seenSerial = a.doc.history().stateSerial();
+      marked = chop::clipsWithFileSlices(a.doc.song(), q.clips);
+    }
+    ImGui::AlignTextToFramePadding();
+    if (marked > 0)
+      ImGui::TextColored(theme::vec(pal().textDim), i18n::tr("%d of %d clips have slices in their file"), marked, static_cast<int>(q.clips.size()));
+    else
+      ImGui::TextColored(theme::vec(pal().textDim), "%s", i18n::tr("No slices in these files: speech samples and sliced loops have them"));
   } else {
     double sens = q.sensitivity * 100.0;
     knob("sens", &sens, lin(i18n::tr("Sensitivity"), "%", 0, 100, 50), i18n::tr("Sensitivity"), false, true, 1);
@@ -455,7 +474,7 @@ void draw(App& a) {
   const char* mh[] = {i18n::tr("Cut the clips into pieces"), i18n::tr("Repeat slices of the region with rate, decay, pitch and gate")};
   ui::Segmented("##chopmode", modes, 2, &q.mode, 96, 0, mh);
   ImGui::Dummy(ImVec2(0, theme::kS1));
-  if (q.mode == kSlice) sliceControls();
+  if (q.mode == kSlice) sliceControls(a);
   else stutterControls();
   ImGui::Dummy(ImVec2(0, theme::kS1));
   drawPlan(a, ImGui::GetContentRegionAvail().x, 64.0f);
@@ -541,6 +560,9 @@ void clipMenuItems(App& a, ObjectId clip) {
     const double vals[] = {0.25, 0.5, 0.8};
     for (int i = 0; i < 3; ++i)
       if (ImGui::MenuItem(i18n::tr(lv[i]))) run("slice clip at transients", [&](Song& x) { return chop::sliceAtTransients(x, sel, vals[i]); });
+    if (ImGui::MenuItem(i18n::tr("At the file's slices"), nullptr, false, chop::clipsWithFileSlices(a.doc.song(), sel) > 0))
+      run("chop clips", [&](Song& x) { return chop::sliceAtFileSlices(x, sel); });
+    ui::Hint(i18n::tr("Cuts where the file marks its own slices, such as one piece per word of a speech sample"));
   } else if (kind == ClipKind::Pattern) {
     if (ImGui::MenuItem(i18n::tr("At the note starts"))) run("chop clips", [&](Song& x) { return chop::sliceAtTransients(x, sel, 0.5); });
   }
@@ -568,6 +590,20 @@ void duplicateTime(App& a) {
   a.playlist.selStart = hi, a.playlist.selEnd = hi + (hi - lo);  // the next duplicate follows on
 }
 
+// Checkpoint 52: the reference's Duplicate Time (Cmd+Shift+D in Clips): the copy is inserted after the
+// selection on every track (markers too), so what followed moves right instead of being overwritten.
+void duplicateTimeInsert(App& a) {
+  if (!hasTimeSel(a)) return;
+  const Tick lo = a.playlist.selStart, hi = a.playlist.selEnd;
+  std::vector<ObjectId> out;
+  a.doc.editSong("duplicate time", [&](Song& s) {
+    chop::insertSpace(s, hi, hi - lo, {});
+    out = chop::duplicateRange(s, lo, hi, {});
+  });
+  a.playlist.selected = std::set<ObjectId>(out.begin(), out.end());
+  a.playlist.selStart = hi, a.playlist.selEnd = hi + (hi - lo);  // the next one follows on
+}
+
 void splitAtSelection(App& a) {
   if (!hasTimeSel(a)) return;
   const Tick lo = a.playlist.selStart, hi = a.playlist.selEnd;
@@ -579,14 +615,16 @@ void splitAtSelection(App& a) {
 void insertSpace(App& a) {
   if (!hasTimeSel(a)) return;
   const Tick lo = a.playlist.selStart, len = a.playlist.selEnd - a.playlist.selStart;
-  const auto tracks = regionTracks(a);
+  // Checkpoint 52 (S12): Clips' Insert Silence / Delete Time act on every track, as the reference's.
+  const auto tracks = livelook::active(a) ? std::set<int>{} : regionTracks(a);
   a.doc.editSong("insert space", [&](Song& s) { chop::insertSpace(s, lo, len, tracks); });
 }
 
 void deleteSpace(App& a) {
   if (!hasTimeSel(a)) return;
   const Tick lo = a.playlist.selStart, hi = a.playlist.selEnd;
-  const auto tracks = regionTracks(a);
+  // Checkpoint 52 (S12): Clips' Insert Silence / Delete Time act on every track, as the reference's.
+  const auto tracks = livelook::active(a) ? std::set<int>{} : regionTracks(a);
   a.doc.editSong("delete space", [&](Song& s) { chop::deleteSpace(s, lo, hi, tracks); });
   a.playlist.selected.clear();
 }
@@ -628,8 +666,13 @@ void chopTimeToSlicer(App& a, Tick grid) {
 
 void timeSelectionItems(App& a) {
   const bool sel = hasTimeSel(a);
-  if (ImGui::MenuItem(i18n::tr("Duplicate"), keys::label("playlist.duplicateTime"), false, sel)) duplicateTime(a);
-  ui::Hint(i18n::tr("Copies the selected time right after it (on the selected clips' tracks, else on all)"));
+  if (livelook::active(a)) {  // checkpoint 52: Clips' Duplicate Time inserts
+    if (ImGui::MenuItem(i18n::tr("Duplicate time"), keys::label("playlist.duplicateTime"), false, sel)) duplicateTimeInsert(a);
+    ui::Hint(i18n::tr("Inserts a copy of the selected time right after it on every track: what follows moves right"));
+  } else {
+    if (ImGui::MenuItem(i18n::tr("Duplicate"), keys::label("playlist.duplicateTime"), false, sel)) duplicateTime(a);
+    ui::Hint(i18n::tr("Copies the selected time right after it (on the selected clips' tracks, else on all)"));
+  }
   if (ImGui::MenuItem(i18n::tr("Insert space"), keys::label("playlist.insertSpace"), false, sel)) insertSpace(a);
   ui::Hint(i18n::tr("Moves everything from the selection start right by the selection length"));
   if (ImGui::MenuItem(i18n::tr("Delete space"), keys::label("playlist.deleteSpace"), false, sel)) deleteSpace(a);
@@ -659,7 +702,7 @@ void timeSelectionItems(App& a) {
 void shortcuts(App& a) {
   if (keys::pressed("playlist.chopWindow")) open(a);
   if (keys::pressed("playlist.sliceGrid")) sliceSelectedAtGrid(a, gridTicks(a, kGridCount - 1));
-  if (keys::pressed("playlist.duplicateTime")) duplicateTime(a);
+  if (keys::pressed("playlist.duplicateTime")) livelook::active(a) ? duplicateTimeInsert(a) : duplicateTime(a);
   if (keys::pressed("playlist.insertSpace")) insertSpace(a);
   if (keys::pressed("playlist.deleteSpace")) deleteSpace(a);
   if (keys::pressed("playlist.consolidateTime")) consolidateTime(a);

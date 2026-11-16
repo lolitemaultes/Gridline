@@ -106,6 +106,34 @@ bool midiTrack(const Song& s, int t) {
   return t >= 0 && t < static_cast<int>(s.tracks.size()) && trackmodes::clipAllowed(s, ClipKind::Pattern, t) &&
          trackmodes::modeOf(s, t) != TrackMode::Audio;
 }
+// K-112c (checkpoint 51): the clip grid's and the mixer band's columns. A folded group's members take
+// none (they still play and launch with their scenes); `col` is each track's column (a hidden
+// member's is its group's), `n` the columns shown.
+struct ColMap {
+  std::vector<int> col;
+  std::vector<char> hidden, group;
+  int n = 0;
+};
+ColMap colMap(const Song& s, int nCols) {
+  ColMap m;
+  m.col.assign(static_cast<size_t>(std::max(0, nCols)), 0);
+  m.hidden.assign(m.col.size(), 0);
+  m.group.assign(m.col.size(), 0);
+  int hideTo = -1;
+  for (int t = 0; t < nCols; ++t) {
+    if (t <= hideTo) {
+      m.hidden[static_cast<size_t>(t)] = 1;
+      m.col[static_cast<size_t>(t)] = std::max(0, m.n - 1);
+      continue;
+    }
+    m.col[static_cast<size_t>(t)] = m.n++;
+    if (trackmodes::isGroupTrack(s, t)) {
+      m.group[static_cast<size_t>(t)] = 1;
+      if (s.tracks[static_cast<size_t>(t)].gridFolded) hideTo = std::max(hideTo, t + s.tracks[static_cast<size_t>(t)].groupSize);  // (a group inside an open group: checkpoint 52)
+    }
+  }
+  return m;
+}
 // The clip's content tick heard now (the transport tick less where the clip's content began).
 double recContentTick(const App& a) { return a.engine.position() - static_cast<double>(a.engine.liveOrigin(gRec.track)); }
 // Clip and pattern to `bars` bars (in the recording's undo step while it records).
@@ -135,6 +163,8 @@ int selectedScene();
 void selectSlot(App& a, int t, int k);
 std::vector<ObjectId> trackChannels(const Song& s, int t);
 void focusTrack(App& a, int t);
+void foldedSelection(App& a, int g, bool grid);
+void clearGridSel();
 }  // namespace
 
 int captureNow(App& a) {
@@ -490,6 +520,36 @@ void captureFrame(App& a);
 void sessionRecordFrame(App& a) {
   squashRecording(a);  // (a squash the audio commit's open edit group put off)
   captureFrame(a);     // N48-11
+  {  // N50-07: stopping the transport ends Arrangement Record too, as the reference's (the next Play does not record)
+    static bool wasPlaying = false;
+    const bool playing = a.engine.playing();
+    if (wasPlaying && !playing && a.recordArmed && !a.engine.countingIn()) a.recordArmed = false;
+    wasPlaying = playing;
+  }
+  // N49-08: a MIDI take recorded into the Arrangement (F9) takes its track's colour, in the take's own
+  // undo step, as a dropped or inserted clip does.
+  if (a.recorder.active() && a.recorder.songMode()) {
+    const Song& s0 = a.doc.song();
+    const Clip* c = s0.clip(a.recorder.takeClip());
+    const Pattern* p = c ? s0.pattern(c->pattern) : nullptr;
+    if (p && c->track >= 0 && c->track < static_cast<int>(s0.tracks.size())) {
+      const Rgb col = s0.tracks[static_cast<size_t>(c->track)].color;
+      if (p->color != col) {
+        const ObjectId pid = p->id;
+        a.recorder.edit(a.doc, [&a, pid, col] { a.doc.editPattern(pid, "take colour", [col](Pattern& x) { x.color = col; }); });
+      }
+      // N50-06: the take is as long as the recording so far (it ends where recording stops, as the
+      // reference's), not its notes' last bar; grown a sixteenth at a time, in the take's undo step.
+      const Tick six = std::max<Tick>(1, s0.beatTicks() / 4);
+      const Tick upTo = static_cast<Tick>(std::max({0.0, a.recordTick(), a.engine.position()})) - c->start;  // the later of the heard and the played clock
+      // N51-10: the clip's own length (the pattern grows by bars under it), up to the sixteenth reached.
+      const Tick len = std::max(six, (upTo + six - 1) / six * six);
+      if (a.engine.playing() && !a.engine.countingIn() && upTo > 0 && (c->length <= 0 || len > c->length)) {
+        const ObjectId cid = c->id;
+        a.recorder.edit(a.doc, [&a, cid, len] { a.doc.editClip(cid, "take length", [len](Clip& x) { x.length = std::max(x.length, len); }); });
+      }
+    }
+  }
   const Song& s = a.doc.song();
   if (gRec.launchTries > 0) {  // the new clip plays once the engine has it (the program is rebuilt after the edit)
     if (!s.clip(gRec.clip)) gRec.launchTries = 0;
@@ -664,6 +724,8 @@ void selectMain(App& a) {
   if (s.mixer.empty()) return;
   a.selMixer = s.mixer[0].id;
   a.showMaster = true;
+  a.playlist.trackSel.clear();  // N50-10: Main is the selected track now (no track title stays outlined)
+  a.playlist.selected.clear();
   a.focusWindow = "Master chain";
 }
 
@@ -739,6 +801,21 @@ std::vector<ObjectId> trackChannels(const Song& s, int t) {
   return v;
 }
 // A track chosen (its title, its header or one of its slots): the device band shows its devices.
+// Checkpoint 52 (N51-11): a group folded with its hidden track selected selects the group (the device
+// band then shows the group's chain, not a track out of sight).
+void foldedSelection(App& a, int g, bool grid) {
+  const Song& s = a.doc.song();
+  if (g < 0 || g >= static_cast<int>(s.tracks.size())) return;
+  if (!(grid ? s.tracks[static_cast<size_t>(g)].gridFolded : s.tracks[static_cast<size_t>(g)].folded)) return;
+  const int gs = s.tracks[static_cast<size_t>(g)].groupSize;
+  const int cur = selectedTrack(a);
+  bool hidden = cur > g && cur <= g + gs;
+  for (int t : a.playlist.trackSel) hidden = hidden || (t > g && t <= g + gs);
+  if (!hidden) return;
+  a.playlist.trackSel = {g};
+  clearGridSel();
+  focusTrack(a, g);
+}
 void focusTrack(App& a, int t) {
   const std::vector<ObjectId> chans = trackChannels(a.doc.song(), t);
   if (!chans.empty()) {
@@ -836,6 +913,7 @@ void viewFrame(App& a) {
   sessionRecordFrame(a);
   if (gPickFirst && GImGui->OpenPopupStack.Size == 0) {
     gPickFirst = false;
+    setDrawMode(a, false);  // N50-03: a set opens in pointer mode (Draw mode is the person's own toggle, B)
     const Song& s = a.doc.song();
     if (a.playlist.trackSel.empty() && a.playlist.selected.empty() && trackmodes::usedTrackCount(s) > 0) {
       a.playlist.trackSel = {0};
@@ -1131,7 +1209,8 @@ HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h) {
   dl->PushClipRect(c.name.a, c.name.b, true);
   float nx = c.name.a.x + 5;
   if (trackmodes::modeOf(s, h.track) != TrackMode::Unassigned) nx += trackui::drawNameGlyph(a, dl, h.track, ImVec2(nx, ty), theme::withAlpha(ink, 0.8f));  // K-112c (round 37): the name's ink, not a faint grey on the colour
-  theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(nx, ty), c.name.b.x - nx - 4, ink, label.c_str());  // regular weight (280, 141, 142)
+  const bool group = trackmodes::isGroupTrack(s, h.track);
+  theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(nx, ty), c.name.b.x - nx - (group ? 22 : 4), ink, label.c_str());  // regular weight (280, 141, 142)
   dl->PopClipRect();
   // Activator (the track's mute, numbered), solo, arm.
   const bool on = !t.muted;
@@ -1150,9 +1229,11 @@ HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h) {
   const bool midiT = !audio && midiTrack(s, h.track);
   const bool armed = (audio && lm && lm->armed) || (midiT && midiArmedByHand(h.track));
   const bool autoArm = midiT && !armed && trackArmed(a, h.track);  // N47-10: the selected MIDI track, armed by itself
-  square(dl, c.arm, armed ? theme::withAlpha(P.arm, 0.85f) : autoArm ? theme::withAlpha(P.arm, 0.45f) : P.surface900, (audio || midiT) && h.hovered && c.arm.contains(m));
-  const ImVec2 ac((c.arm.a.x + c.arm.b.x) * 0.5f, (c.arm.a.y + c.arm.b.y) * 0.5f);
-  dl->AddCircleFilled(ac, 3.5f, armed || autoArm ? theme::contrastText(P.arm) : audio || midiT ? P.text : theme::withAlpha(P.textDim, 0.45f), 12);  // K-112c (round 19): a neutral dot until armed (142, 157, 143)
+  if (!group) {  // checkpoint 52 (N51-11): a group records nothing (no arm, as in the grid)
+    square(dl, c.arm, armed ? theme::withAlpha(P.arm, 0.85f) : autoArm ? theme::withAlpha(P.arm, 0.45f) : P.surface900, (audio || midiT) && h.hovered && c.arm.contains(m));
+    const ImVec2 ac((c.arm.a.x + c.arm.b.x) * 0.5f, (c.arm.a.y + c.arm.b.y) * 0.5f);
+    dl->AddCircleFilled(ac, 3.5f, armed || autoArm ? theme::contrastText(P.arm) : audio || midiT ? P.text : theme::withAlpha(P.textDim, 0.45f), 12);  // K-112c (round 19): a neutral dot until armed (142, 157, 143)
+  }
   // Volume (the linked mixer track's fader) or, while the grid plays a clip here, Back to arrangement.
   const bool onGrid = a.engine.mode() == PlayMode::Live && a.engine.liveActive(h.track) != kNoId;
   if (onGrid) {
@@ -1207,10 +1288,20 @@ HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h) {
       gVol = VolDrag{};
     }
   }
+  // Checkpoint 51: a group's ringed fold button at the name block's right end (150).
+  const float fcx = c.name.b.x - 11, fcy = std::round((c.act.a.y + c.act.b.y) * 0.5f);
+  const bool onFold = group && h.hovered && std::fabs(m.x - fcx) <= 8 && std::fabs(m.y - fcy) <= 8;
+  if (group) {
+    const ImU32 fi = theme::withAlpha(ink, onFold ? 1.0f : 0.8f);
+    dl->AddCircle(ImVec2(fcx, fcy), 6.5f, fi, 20, 1.2f);
+    if (t.folded) dl->AddTriangleFilled(ImVec2(fcx - 1.5f, fcy - 3), ImVec2(fcx - 1.5f, fcy + 3), ImVec2(fcx + 2.5f, fcy), fi);
+    else dl->AddTriangleFilled(ImVec2(fcx - 3, fcy - 1.5f), ImVec2(fcx + 3, fcy - 1.5f), ImVec2(fcx, fcy + 2.5f), fi);
+  }
   if (!h.hovered) return HeaderPart::None;
+  if (onFold) return HeaderPart::Fold;
   if (c.act.contains(m)) return HeaderPart::Activator;
   if (c.solo.contains(m)) return HeaderPart::Solo;
-  if (c.arm.contains(m)) return audio || midiTrack(s, h.track) ? HeaderPart::Arm : HeaderPart::None;  // N47-10: MIDI tracks arm too
+  if (c.arm.contains(m)) return (audio && !group) || midiTrack(s, h.track) ? HeaderPart::Arm : HeaderPart::None;  // N47-10: MIDI tracks arm too
   if (c.vol.contains(m)) return onGrid ? HeaderPart::BackToArrangement : mx ? HeaderPart::Volume : HeaderPart::None;
   if (c.hasPan && c.pan.contains(m)) return mx ? HeaderPart::Pan : HeaderPart::None;
   if (c.name.contains(m)) return HeaderPart::Name;
@@ -1221,8 +1312,22 @@ bool clickHeader(App& a, int track, HeaderPart part, bool right) {
   const Song& s = a.doc.song();
   if (track < 0 || track >= static_cast<int>(s.tracks.size())) return false;
   switch (part) {
+    case HeaderPart::Fold:
+      if (right) return false;
+      a.doc.editPlaylistTrack(track, s.tracks[static_cast<size_t>(track)].folded ? "unfold group" : "fold group", [](PlaylistTrack& t) { t.folded = !t.folded; });
+      foldedSelection(a, track, false);
+      return true;
     case HeaderPart::Activator:
       if (!right) {
+        if (trackmodes::isGroupTrack(s, track)) {  // checkpoint 52 (N51-02): a group's activator silences all it plays
+          const bool to = !s.tracks[static_cast<size_t>(track)].muted;
+          a.doc.editSong(to ? "deactivate group" : "activate group", [track, to](Song& x) {
+            PlaylistTrack& g = x.tracks[static_cast<size_t>(track)];
+            g.muted = to;
+            if (MixerTrack* m = x.mixerTrack(g.mixer)) m->muted = to;
+          });
+          return true;
+        }
         a.doc.editPlaylistTrack(track, "mute playlist track", [](PlaylistTrack& t) { t.muted = !t.muted; });
         return true;
       }
@@ -1298,6 +1403,7 @@ bool clickHeader(App& a, int track, HeaderPart part, bool right) {
 
 const char* headerHint(HeaderPart part) {
   switch (part) {
+    case HeaderPart::Fold: return i18n::tr("Fold: shows or hides the group's tracks");
     case HeaderPart::Activator: return i18n::tr("Track on / off: click mutes or unmutes it, right-click solos it");
     case HeaderPart::Solo: return i18n::tr("Solo: only this track plays (click again for all)");
     case HeaderPart::Arm: return i18n::tr("Record arm: the track's mixer track records its input");
@@ -2511,9 +2617,12 @@ void deviceBand(App& a, BandPick& pick) {
     const ImVec2 o0(p.x, p.y), o1(p.x + ow, p.y + h - 4);
     dl->AddRectFilled(o0, o1, P.surface800, theme::kRadiusLg);
     dl->AddText(a.fontBold, theme::kFontCaption, ImVec2(o0.x + 8, o0.y + 6), P.text, i18n::tr("Out"));
-    std::string to = i18n::tr("to Main");
+    // Checkpoint 52 (N51-11): the output is where it plays (Main, or its group); the rest are sends.
+    const ObjectId outId = trackmodes::outputOf(*mt);
+    const MixerTrack* outM = s.mixerTrack(outId);
+    std::string to = outM && outM != &s.mixer[0] ? std::string(i18n::tr("to")) + "\xC2\xA0" + outM->name : std::string(i18n::tr("to Main"));
     for (const Send& sd : mt->sends)
-      if (const MixerTrack* dst = s.mixerTrack(sd.to); dst && dst != &s.mixer[0]) {
+      if (const MixerTrack* dst = s.mixerTrack(sd.to); dst && dst != &s.mixer[0] && sd.to != outId) {
         char lv[16];
         // K-112: no-break spaces keep a level with its % sign and "send" with the track's name when the line wraps.
         std::snprintf(lv, sizeof lv, "\xC2\xA0%d\xC2\xA0%%", static_cast<int>(std::lround(sd.level * 100)));
@@ -2696,15 +2805,19 @@ bool positionField(App& a, const char* id, Tick& v, Tick lo, Tick hi, float w, c
   const ImGuiID gid = ImGui::GetID(id);
   static ImGuiID typing = 0, picked = 0;
   static bool focusNext = false;
+  static int typeGrace = 0;  // N50-04: frames the new field has to take the keyboard before "not active" means it was left
   static char buf[96] = {};  // (holds the field text: GCC -Wformat-truncation)
   Tick nv = v;
   const ImVec2 p = ImGui::GetCursorScreenPos();
   if (typing == gid) {
     ImGui::PushID(id);
     ImGui::SetNextItemWidth(w);
-    if (focusNext) ImGui::SetKeyboardFocusHere(), focusNext = false;
+    if (focusNext || typeGrace > 0) ImGui::SetKeyboardFocusHere(), focusNext = false;
     const bool enter = ImGui::InputText("##type", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-    const bool gone = !enter && !ImGui::IsItemActive() && !ImGui::IsItemActivated();
+    const bool active = ImGui::IsItemActive() || ImGui::IsItemActivated();
+    if (active) typeGrace = 0;
+    else if (typeGrace > 0) --typeGrace;
+    const bool gone = !enter && !active && typeGrace == 0;
     ImGui::PopID();
     if (enter) {
       long long f[3] = {one, one, one};
@@ -2730,7 +2843,7 @@ bool positionField(App& a, const char* id, Tick& v, Tick lo, Tick hi, float w, c
     static float acc = 0;
     if (ImGui::IsItemActivated()) acc = 0, picked = gid;
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-      typing = gid, focusNext = true;
+      typing = gid, focusNext = true, typeGrace = 4;
       std::snprintf(buf, sizeof buf, "%s", text);
     } else if (ImGui::IsItemActive()) {
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
@@ -2765,6 +2878,7 @@ ObjectId clipRegion(const App& a, ObjectId pattern, Tick& start, Tick& end) {
   const Clip* c = s.clip(*a.playlist.selected.begin());
   if (!c || c->kind != ClipKind::Pattern || c->pattern != pattern) return kNoId;
   start = c->offset, end = c->offset + s.clipLength(*c);
+  if (c->loop && c->loopLength > 0) start = c->loopStart, end = c->loopStart + c->loopLength;  // N50-05: with Loop on the brace is the loop
   return c->id;
 }
 
@@ -2772,8 +2886,9 @@ void setClipRegion(App& a, ObjectId clip, Tick start, Tick end, const char* labe
   const Tick len = std::max<Tick>(1, end - start);
   start = std::max<Tick>(0, start);
   a.doc.editClip(clip, label, [start, len](Clip& x) {
-    x.offset = start, x.length = len;
-    if (x.loop) x.loopStart = start, x.loopLength = len;  // a looping clip repeats what the brace holds
+    // N50-05: with Loop on (and a loop of its own) the brace is the loop: Position and Length.
+    if (x.loop && x.loopLength > 0) x.loopStart = start, x.loopLength = len;
+    else x.offset = start, x.length = len;
   }, mergeKey);
 }
 
@@ -2869,6 +2984,38 @@ float clipColumn(App& a) {
       const float lw = columnField(a, i18n::tr("Length"), 0, 2);
       if (positionField(a, "##clen", len, six, maxEnd - start, lw, "The clip's length (bars. beats. sixteenths): End moves with it", true))
         setClipRegion(a, cid, start, start + len, "clip end", ImGui::GetID("##cend"));
+      // N50-05: Loop, and the loop's Position and Length inside the clip, as the reference's (046, 047):
+      // with Loop on the clip repeats [Position, Position + Length) and the note editor's brace is the loop.
+      const bool looping = sel->loop && sel->loopLength > 0;
+      const float loopW = columnField(a, i18n::tr("Loop"), 1, 2);
+      {
+        const ImVec2 lp = ImGui::GetCursorScreenPos();
+        const float bh = ImGui::GetFrameHeight();
+        if (ImGui::InvisibleButton("##cloop", ImVec2(loopW, bh))) {
+          const Tick ls = start, ll = std::max<Tick>(six, end - start);
+          a.doc.editClip(cid, looping ? "clip loop off" : "clip loop on", [looping, ls, ll](Clip& x) {
+            if (looping) x.loop = false, x.loopStart = 0, x.loopLength = 0;
+            else x.loop = true, x.loopStart = ls, x.loopLength = ll;  // the loop starts as the clip's region
+          });
+        }
+        const bool hov = ImGui::IsItemHovered();
+        ImDrawList* ldl = ImGui::GetWindowDrawList();
+        const ImU32 on = P.hot, fill = looping ? on : hov ? P.surface700 : P.field;
+        ldl->AddRectFilled(lp, ImVec2(lp.x + loopW, lp.y + bh), fill, theme::kRadiusSm);
+        ldl->AddRect(lp, ImVec2(lp.x + loopW, lp.y + bh), ImGui::GetColorU32(ImGuiCol_Border), theme::kRadiusSm, 0, 1.0f);
+        theme::centreText(ldl, a.fontRegular, theme::kFontLabel + 1, lp, ImVec2(lp.x + loopW, lp.y + bh), looping ? theme::contrastText(on) : P.textDim,
+                          i18n::tr("Loop"));
+        ui::Hint("Loop: the clip repeats its loop (Position and Length) for as long as it plays");
+      }
+      if (looping) {
+        Tick lpos = sel->loopStart, llen = sel->loopLength;
+        const float pw = columnField(a, i18n::tr("Position"), 0, 2);
+        if (positionField(a, "##clpos", lpos, 0, std::max<Tick>(0, maxEnd - llen), pw, "Where the loop starts in the clip's notes: drag, wheel or arrows, double-click to type"))
+          a.doc.editClip(cid, "clip loop position", [lpos](Clip& x) { x.loopStart = std::max<Tick>(0, lpos); }, ImGui::GetID("##clpos"));
+        const float plw = columnField(a, i18n::tr("Length"), 1, 2);
+        if (positionField(a, "##cllen", llen, six, maxEnd, plw, "The loop's length (bars. beats. sixteenths)", true))
+          a.doc.editClip(cid, "clip loop length", [llen, six](Clip& x) { x.loopLength = std::max<Tick>(six, llen); }, ImGui::GetID("##cllen"));
+      }
     }
     const float lenW = sel ? 0.0f : columnField(a, i18n::tr("Length"), 0, 2);
     if (!sel) {
@@ -2904,7 +3051,7 @@ float clipColumn(App& a) {
       if (ImGui::Button("+", ImVec2(bw, 0)) && pat->bars < 512) setBars(*pat, pat->bars + 1);
       ui::Hint("One bar longer");
     }
-    const float meterW = columnField(a, i18n::tr("Signature"), 1, 2);  // checkpoint 48: the reference's word (456)
+    const float meterW = columnField(a, i18n::tr("Signature"), sel ? 0 : 1, 2);  // N50-05: a row of its own under Loop  // checkpoint 48: the reference's word (456)
     {
       char m[32];
       if (pat->ownMeter()) std::snprintf(m, sizeof m, "%d / %d", pat->meterNum, pat->meterDen);
@@ -3047,6 +3194,7 @@ struct GridSel {
   int t = -1, k = -1;
 };
 GridSel gSel;
+void clearGridSel() { gSel = {}; }
 int selectedScene() { return gSel.k; }
 int gSelFocus = 0;  // C44-12: frames the grid keeps the keyboard after a selection (the clip band appearing takes it)
 std::vector<Clip> gClipboard;     // a slot's clips, copied (start relative to the scene's start)
@@ -3113,7 +3261,7 @@ bool placeInSlot(App& a, const std::vector<Clip>& clips, int t, int k, const cha
   const Song& s = a.doc.song();
   if (clips.empty() || t < 0 || t >= static_cast<int>(s.tracks.size()) || k < 0 || s.tracks[static_cast<size_t>(t)].locked) return false;
   for (const Clip& c : clips)
-    if (!trackmodes::clipAllowed(s, c.kind, t)) return false;
+    if (!trackmodes::clipAllowed(s, c.kind, t) || (c.kind != ClipKind::Automation && trackmodes::isGroupTrack(s, t))) return false;  // checkpoint 52: never onto a group
   a.doc.beginGroup(label);
   ensureScene(a, k);
   std::set<ObjectId> old;
@@ -3287,6 +3435,70 @@ int newTrackAfter(App& a, bool audio, int after) {
     if (gSel.t >= 0) gSel.t = t;
   }
   return t;
+}
+bool clipFitsTrack(const Song& s, ClipKind kind, int track) {
+  if (kind == ClipKind::Automation) return true;
+  if (trackmodes::isGroupTrack(s, track)) return false;
+  if (trackmodes::modeOf(s, track) == TrackMode::Audio) return kind == ClipKind::Audio;
+  return kind == ClipKind::Pattern;
+}
+void groupTracks(App& a, int track) {
+  std::vector<int> sel(a.playlist.trackSel.begin(), a.playlist.trackSel.end());
+  if (track >= 0 && !a.playlist.trackSel.count(track)) sel = {track};
+  if (sel.empty() && selectedTrack(a) >= 0) sel = {selectedTrack(a)};
+  a.later([&a, sel] {
+    std::string why;
+    const int g = trackmodes::groupTracks(a.doc, sel, &why);
+    if (g < 0) {
+      a.notify(i18n::tr(why.empty() ? "Select the tracks to group" : why.c_str()));
+      return;
+    }
+    a.playlist.trackSel = {g};
+    gSel = {};
+    focusTrack(a, g);
+  });
+}
+// Checkpoint 52 (N51-03, N51-07): the selected tracks (or the one clicked when it is not among them).
+std::vector<int> tracksFor(App& a, int track) {
+  std::vector<int> sel(a.playlist.trackSel.begin(), a.playlist.trackSel.end());
+  if (track >= 0 && !a.playlist.trackSel.count(track)) sel = {track};
+  if (sel.empty() && selectedTrack(a) >= 0) sel = {selectedTrack(a)};
+  return sel;
+}
+void deleteTracks(App& a, int track) {
+  const std::vector<int> sel = tracksFor(a, track);
+  a.later([&a, sel] {
+    std::string why;
+    if (trackmodes::deleteTracks(a.doc, sel, &why) <= 0) return a.notify(i18n::tr(why.empty() ? "Select the tracks to delete" : why.c_str()));
+    const int n = trackmodes::usedTrackCount(a.doc.song());
+    a.playlist.trackSel = {std::clamp(sel.empty() ? 0 : sel.front(), 0, std::max(0, n - 1))};
+    gSel = {};
+  });
+}
+void duplicateTracks(App& a, int track) {
+  const std::vector<int> sel = tracksFor(a, track);
+  a.later([&a, sel] {
+    std::string why;
+    const int t = trackmodes::duplicateTracks(a.doc, sel, &why);
+    if (t < 0) return a.notify(i18n::tr(why.empty() ? "Select the tracks to duplicate" : why.c_str()));
+    a.playlist.trackSel = {t};
+    gSel = {};
+    focusTrack(a, t);
+  });
+}
+void ungroupTracks(App& a, int track) {
+  int t = track >= 0 ? track : !a.playlist.trackSel.empty() ? *a.playlist.trackSel.begin() : selectedTrack(a);
+  if (!trackmodes::isGroupTrack(a.doc.song(), t)) t = trackmodes::groupTrackOf(a.doc.song(), t);
+  if (t < 0) {
+    a.notify(i18n::tr("Select a group track to ungroup"));
+    return;
+  }
+  a.later([&a, t] {
+    std::string why;
+    if (!trackmodes::ungroupTracks(a.doc, t, &why)) return a.notify(i18n::tr(why.c_str()));
+    a.playlist.trackSel = {t};
+    gSel = {};
+  });
 }
 void gridInsertScene(App& a) {
   const int k = gSel.k >= 0 ? gSel.k : std::max(0, static_cast<int>((a.doc.song().live.areaEnd + sceneTicks(a.doc.song()) - 1) / sceneTicks(a.doc.song())) - 1);
@@ -3504,7 +3716,7 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
     if (nb == 2) soloY = base - 15, actY = soloY - 21;
     if (nb == 1) actY = base - 19;
   }
-  const bool showPan = !compact && panY >= minY, fitSolo = nb >= 2, fitArm = nb >= 3;
+  const bool showPan = !compact && panY >= minY, fitSolo = nb >= 2, fitArm = nb >= 3 && !trackmodes::isGroupTrack(a.doc.song(), t);  // checkpoint 51: a group records nothing
   // Fader and meter of the mixer track, with the scale on the right.
   const float fy = top, fh = std::max(24.0f, bottom - kFootH - kFootGap - 1 - top);
   if (mx) {
@@ -3635,6 +3847,10 @@ void drawClipGrid(App& a) {
   const ImVec2 o(livegrid::snap(ImGui::GetCursorScreenPos().x, dpp), livegrid::snap(ImGui::GetCursorScreenPos().y, dpp));
   const ImVec2 av = ImGui::GetContentRegionAvail();
   const int nCols = gridColumns(s);
+  const ColMap cm = colMap(s, nCols);  // checkpoint 51: folded groups' members take no column
+  auto vc = [&](int t) { return t < nCols ? cm.col[static_cast<size_t>(t)] : cm.n + (t - nCols); };
+  auto hiddenCol = [&](int t) { return t >= 0 && t < nCols && cm.hidden[static_cast<size_t>(t)]; };
+  auto groupCol = [&](int t) { return t >= 0 && t < nCols && cm.group[static_cast<size_t>(t)]; };
   // Track columns keep one width whatever the window's (spare width stays free between the last
   // column and Main, which sits at the right edge). K-112c (round 19): one gap everywhere: kGap
   // between columns, between slot rows, under the titles and above the stop row (18 px cells).
@@ -3678,7 +3894,7 @@ void drawClipGrid(App& a) {
   const float slotsY0 = yT1 + kGap, slotsY1 = stopSpan.x0 - kGap;      // where scene rows show
   auto rowShown = [&](const pixelgrid::Span& rs) { return rs.x1 > slotsY0 && rs.x0 < slotsY1; };
   const float fs = theme::kFontCaption + 1;
-  auto column = [&](int t) { return livegrid::columnX(o.x, t, dpp); };
+  auto column = [&](int t) { return livegrid::columnX(o.x, vc(t), dpp); };
   // C44-19: Main (the scenes and Stop all) stands pinned at the window's right edge and the returns
   // beside it, as 101, 112 and 357; the track columns scroll under them (clipped at the returns), and
   // the content is as wide as the tracks, a free column and the pinned part, so the last track
@@ -3695,7 +3911,7 @@ void drawClipGrid(App& a) {
     nFit = returnsShown(a) ? std::min<int>(static_cast<int>(rets.size()), 26) : 0;
     if (nFit > 0) retShift = livegrid::snap(mainX - column(nCols + nFit), dpp);
   }
-  auto retColumn = [&](int i) { return livegrid::column(o.x + retShift, nCols + i, dpp); };
+  auto retColumn = [&](int i) { return livegrid::column(o.x + retShift, cm.n + i, dpp); };
   const float pinX0 = nFit > 0 ? retColumn(0).x0 : mainX;  // the pinned part's left edge
   const float trackClipX1 = pinX0 - kGap;                    // track columns end here
   // K-112c (round 43): the free column between the last track and the returns (or Main), where
@@ -3705,13 +3921,14 @@ void drawClipGrid(App& a) {
   // the last whole column ends where the returns begin (455, 457).
   float gridClipX1 = trackClipX1;
   for (int t = 0; t < nCols; ++t) {
-    const pixelgrid::Span cs = livegrid::column(o.x, t, dpp);
+    const pixelgrid::Span cs = livegrid::column(o.x, vc(t), dpp);
     if (cs.x0 < trackClipX1 && cs.x1 > trackClipX1 && trackClipX1 - cs.x0 < cs.w() * 0.5f) gridClipX1 = cs.x0;
   }
   ImGui::PushClipRect(ImVec2(visX0, -1e6f), ImVec2(std::max(visX0, gridClipX1), 1e6f), true);  // the track columns (popped after the stop row)
   for (int t = 0; t < nCols; ++t) {
+    if (hiddenCol(t)) continue;
     const PlaylistTrack& tr = s.tracks[static_cast<size_t>(t)];
-    const pixelgrid::Span cs = livegrid::column(o.x, t, dpp);
+    const pixelgrid::Span cs = livegrid::column(o.x, vc(t), dpp);
     const float x = cs.x0, w = cs.w();  // K-112c: columns kGap apart, square slots, as the refs
     ImGui::PushID(t);
     // Title: the track's colour and name (a click selects the track, as a header does).
@@ -3725,7 +3942,16 @@ void drawClipGrid(App& a) {
       dl->AddRect(ImVec2(x + in, y0 + in), ImVec2(x + w - in, yT1 - in), P.text, 0.0f, 1.5f, 0);
     }
     const std::string name = playlistTrackName(s, static_cast<size_t>(t));  // K-112c (round 30): the name alone (357, 093, 143)
-    theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(x + 6, theme::textTop(a.fontRegular, fs, y0, titleH)), w - 10, theme::contrastText(tc), name.c_str());
+    theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(x + 6, theme::textTop(a.fontRegular, fs, y0, titleH)), w - (groupCol(t) ? 26 : 10), theme::contrastText(tc), name.c_str());
+    const bool onFold = groupCol(t) && m.x >= x + w - 18 && m.y >= y0 && m.y < yT1;
+    if (groupCol(t)) {  // checkpoint 51: the group's fold button at the title's right end
+      const float fx = x + w - 16, cy = std::round((y0 + yT1) * 0.5f);
+      const ImU32 ink = theme::withAlpha(theme::contrastText(tc), onFold ? 1.0f : 0.8f);
+      // A ringed fold button (149, 172): pointing right while folded, down while open.
+      dl->AddCircle(ImVec2(fx + 7.5f, cy), 6.5f, ink, 20, 1.2f);
+      if (tr.gridFolded) dl->AddTriangleFilled(ImVec2(fx + 6, cy - 3), ImVec2(fx + 6, cy + 3), ImVec2(fx + 10, cy), ink);
+      else dl->AddTriangleFilled(ImVec2(fx + 4.5f, cy - 1.5f), ImVec2(fx + 10.5f, cy - 1.5f), ImVec2(fx + 7.5f, cy + 2.5f), ink);
+    }
     ImGui::SetCursorScreenPos(ImVec2(x, y0));
     if (gRenTrack == t) {  // checkpoint 49: Rename: the title is a name field until Enter, Escape or a click away
       static char nbuf[128];
@@ -3747,15 +3973,104 @@ void drawClipGrid(App& a) {
       ImGui::SetCursorScreenPos(ImVec2(x, y0));
       ImGui::Dummy(ImVec2(w, titleH));
     } else if (ImGui::InvisibleButton("##title", ImVec2(w, titleH))) {
-      a.playlist.trackSel = {t};
-      focusTrack(a, t);
+      if (onFold) {
+        const bool f = !tr.gridFolded;  // S01: the grid folds on its own, as the reference's views
+        a.later([&a, t, f] {
+          a.doc.editPlaylistTrack(t, f ? "fold group" : "unfold group", [f](PlaylistTrack& x) { x.gridFolded = f; });
+          foldedSelection(a, t, true);
+        });
+      } else {
+        // Checkpoint 51: Shift adds the tracks between (from the first selected), Cmd adds or takes
+        // one, as the reference's titles (the selection Cmd+G groups).
+        const ImGuiIO& io = ImGui::GetIO();
+        static int anchor = -1;  // S06: Shift ranges from the last title clicked, as the reference's
+        if (io.KeyShift && !a.playlist.trackSel.empty()) {
+          const int from = a.playlist.trackSel.count(anchor) ? anchor : *a.playlist.trackSel.begin();
+          a.playlist.trackSel.clear();
+          for (int u = std::min(from, t); u <= std::max(from, t); ++u)
+            if (!hiddenCol(u)) a.playlist.trackSel.insert(u);
+          if (a.playlist.trackSel.empty()) a.playlist.trackSel = {t};
+          anchor = from;
+        } else if ((io.KeySuper || io.KeyCtrl) && !a.playlist.trackSel.empty()) {
+          if (!a.playlist.trackSel.erase(t)) a.playlist.trackSel.insert(t);
+          anchor = t;
+        } else {
+          a.playlist.trackSel = {t};
+          anchor = t;
+        }
+        gSel = {};  // checkpoint 52 (N51-07): the title has the keys (Delete, Cmd+D), not a slot
+        focusTrack(a, t);
+      }
     }
     if (ImGui::BeginPopupContextItem("##trlive")) {
       playlistTrackMenu(a, t);  // the track's whole menu (its launch settings under Live settings)
       ImGui::EndPopup();
     }
     if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 6.0f)) titleDrag = t;  // K-112c (round 39)
-    ui::Hint("The track: click selects it (its devices show below), drag to move it, right-click: the track's menu");
+    ui::Hint(onFold          ? "Fold: shows or hides the group's tracks"
+             : groupCol(t) ? "The group: click selects it (its devices show below), drag to move it with its tracks, right-click: its menu"
+                           : "The track: click selects it (its devices show below), drag to move it, right-click: the track's menu");
+    if (groupCol(t)) {  // checkpoint 51: a group's slots launch its tracks' clips of the scene
+      const int g1 = std::min(nCols - 1, t + tr.groupSize);
+      ImGui::PushClipRect(ImVec2(visX0, slotsY0), ImVec2(std::max(visX0, trackClipX1), std::max(slotsY0, slotsY1)), true);
+      for (int k = 0; k < rows; ++k) {
+        const pixelgrid::Span rs = livegrid::row(o.y, k, dpp);
+        if (!rowShown(rs)) continue;
+        const ImVec2 q0(x, rs.x0), q1(x + w, rs.x1);
+        std::vector<const Clip*> mem;
+        bool any = false, anyOn = false, anyQueued = false;
+        for (int u = t + 1; u <= g1; ++u) {
+          const std::vector<int>* in = k < nScenes ? &slot[static_cast<size_t>(u)][static_cast<size_t>(k)] : nullptr;
+          const Clip* c = in && !in->empty() ? &s.playlist[static_cast<size_t>(in->front())] : nullptr;
+          mem.push_back(c);
+          any = any || c;
+          anyOn = anyOn || (c && a.engine.liveActive(u) == c->id);
+          anyQueued = anyQueued || (c && a.engine.liveQueued(u) == c->id);
+        }
+        ImGui::PushID(k);
+        ImGui::SetCursorScreenPos(q0);
+        ImGui::InvisibleButton("##gslot", ImVec2(w, q1.y - q0.y));
+        const bool hov = ImGui::IsItemHovered(), onButton = m.x < q0.x + 16.5f;
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && onButton)
+          for (int u = t + 1; u <= g1; ++u) {
+            const Clip* c = mem[static_cast<size_t>(u - t - 1)];
+            if (c) launch(a, c->id);
+            else a.engine.stopLiveTrack(u);
+          }
+        const float cyy = std::round((q0.y + q1.y) * 0.5f);
+        if (any) {
+          // As the reference's group slot (149, 172): a plain cell a shade up from an empty slot, its
+          // launch button, and a small hatched square in the group's colour at the right end.
+          const ImU32 base = P.surface600;
+          dl->AddRectFilled(q0, q1, hov && !onButton ? theme::mix(base, P.paper, 0.08f) : base, 0.0f);
+          const float ri = pixelgrid::strokeIn(2.0f);
+          if (anyOn) dl->AddRect(ImVec2(q0.x + ri, q0.y + ri), ImVec2(q1.x - ri, q1.y - ri), P.launch, 0.0f, 0, 2.0f);
+          else if (anyQueued) dl->AddRect(ImVec2(q0.x + ri, q0.y + ri), ImVec2(q1.x - ri, q1.y - ri), theme::withAlpha(P.launch, 0.35f + 0.65f * pulse), 0.0f, 0, 2.0f);
+          {
+            const float hs = std::round(q1.y - q0.y - 6), hx1 = std::round(q1.x - 4), hx0 = hx1 - hs, hy0 = std::round(q0.y + 3);
+            const ImU32 gc = theme::content(tr.color);
+            dl->AddRectFilled(ImVec2(hx0, hy0), ImVec2(hx1, hy0 + hs), theme::mix(gc, base, 0.55f), 0.0f);
+            dl->PushClipRect(ImVec2(hx0, hy0), ImVec2(hx1, hy0 + hs), true);
+            for (float d = -hs; d < hs; d += 4.0f) dl->AddLine(ImVec2(hx0 + d, hy0 + hs), ImVec2(hx0 + d + hs, hy0), gc, 1.6f);
+            dl->PopClipRect();
+          }
+          const ImU32 ink = theme::contrastText(base);
+          ui::drawIconFit(dl, ui::Icon::Play, ImVec2(q0.x + 6, cyy - 4.5f), ImVec2(q0.x + 13, cyy + 4.5f),
+                          anyOn ? P.launch : theme::withAlpha(ink, hov && onButton ? 1.0f : 0.6f));
+          dl->AddLine(ImVec2(q0.x + 16.5f, q0.y), ImVec2(q0.x + 16.5f, q1.y), theme::withAlpha(IM_COL32(16, 18, 22, 255), 0.35f));
+          ui::Hint(onButton ? "Launch: plays the group's clips in this scene (its tracks with an empty slot stop)" : "Group slot: the clips of the group's tracks in this scene");
+        } else {
+          dl->AddRectFilled(q0, q1, hov ? P.surface700 : P.surface800, 0.0f);
+          dl->AddRectFilled(ImVec2(q0.x + 6, cyy - 3), ImVec2(q0.x + 12, cyy + 3), hov && onButton ? P.text : hov ? P.textDim : P.textFaint);
+          ui::Hint(onButton ? "Stop: stops the group's tracks" : "Group slot: none of the group's tracks has a clip in this scene");
+        }
+        if (gSel.t == t && gSel.k == k) dl->AddRect(q0, q1, P.text, 0.0f, 0, 1.5f);  // S11: the selected (keyboard) slot
+        ImGui::PopID();
+      }
+      ImGui::PopClipRect();
+      ImGui::PopID();
+      continue;
+    }
     const ObjectId act = a.engine.liveActive(t), que = a.engine.liveQueued(t);
     const bool autoArmed = trackArmed(a, t) && !s.tracks[static_cast<size_t>(t)].locked;  // N47-10: its empty slots record
     ImGui::PushClipRect(ImVec2(visX0, slotsY0), ImVec2(std::max(visX0, trackClipX1), std::max(slotsY0, slotsY1)), true);  // N45-04
@@ -3935,14 +4250,14 @@ void drawClipGrid(App& a) {
     gGridAsked = false;
     std::printf("livegrid cols %d scenes %d rows %d\n", nCols, nScenes, rows);
     for (int t = 0; t < nCols; ++t)  // K-112c (round 39): each column's title: its track's name and centre
-      std::printf("livegrid title %d \"%s\" %.0f %.0f\n", t, playlistTrackName(s, static_cast<size_t>(t)).c_str(),
+      if (!hiddenCol(t)) std::printf("livegrid title %d \"%s\" %.0f %.0f\n", t, playlistTrackName(s, static_cast<size_t>(t)).c_str(),
                   static_cast<double>(column(t) + (colW - 4) * 0.5f), static_cast<double>((y0 + yT1) * 0.5f));
     for (int k = 0; k < rows; ++k)  // K-112c (round 43): every slot row's centre, and the free column's
       std::printf("livegrid row %d y %.1f\n", k, static_cast<double>((livegrid::row(o.y, k, dpp).x0 + livegrid::row(o.y, k, dpp).x1) * 0.5f));
     if (freeX1 - freeX0 >= 40.0f) std::printf("livegrid free x %.1f w %.1f\n", static_cast<double>((freeX0 + freeX1) * 0.5f), static_cast<double>(freeX1 - freeX0));
     for (int t = 0; t < nCols; ++t)
-      for (int k = 0; k < nScenes; ++k) {
-        const livegrid::Cell q = livegrid::slot(o.x, o.y, t, k, dpp);
+      for (int k = 0; k < nScenes && !hiddenCol(t) && !groupCol(t); ++k) {
+        const livegrid::Cell q = livegrid::slot(o.x, o.y, vc(t), k, dpp);
         const std::vector<int>& in = slot[static_cast<size_t>(t)][static_cast<size_t>(k)];
         std::printf("  slot %d %d x %.1f y %.1f clip %u\n", t, k, static_cast<double>((q.x0 + q.x1) * 0.5f), static_cast<double>((q.y0 + q.y1) * 0.5f),
                     in.empty() ? 0u : static_cast<unsigned>(s.playlist[static_cast<size_t>(in.front())].id));
@@ -3954,18 +4269,23 @@ void drawClipGrid(App& a) {
   // live area yet is a grid of empty slots, not a message).
   {
     const float sy = stopSpan.x0, sy1 = stopSpan.x1;  // the rows' own gap above it (N45-04: pinned)
-    ImGui::PushClipRect(ImVec2(visX0, -1e6f), ImVec2(std::max(visX0, trackClipX1), 1e6f), true);  // C44-19
+    ImGui::PushClipRect(ImVec2(visX0, -1e6f), ImVec2(std::max(visX0, gridClipX1), 1e6f), true);  // C44-19
     for (int t = 0; t < nCols; ++t) {
-      const pixelgrid::Span cs = livegrid::column(o.x, t, dpp);
+      if (hiddenCol(t)) continue;
+      const pixelgrid::Span cs = livegrid::column(o.x, vc(t), dpp);
       const float x = cs.x0, w = cs.w();
       const ImVec2 q0(x, sy), q1(x + w, sy1);
+      // Checkpoint 51: a group's stop button stops its tracks.
+      const int u1 = groupCol(t) ? std::min(nCols - 1, t + s.tracks[static_cast<size_t>(t)].groupSize) : t;
       ImGui::PushID(3000 + t);
       ImGui::SetCursorScreenPos(q0);
-      if (ImGui::InvisibleButton("##stoptrack", ImVec2(w, q1.y - q0.y))) a.engine.stopLiveTrack(t);
+      if (ImGui::InvisibleButton("##stoptrack", ImVec2(w, q1.y - q0.y)))
+        for (int u = t; u <= u1; ++u) a.engine.stopLiveTrack(u);
       const bool hov = ImGui::IsItemHovered();
-      ui::Hint("Stop: this track's grid clip stops");
+      ui::Hint(groupCol(t) ? "Stop: the group's tracks stop" : "Stop: this track's grid clip stops");
       ImGui::PopID();
-      const bool live = a.engine.mode() == PlayMode::Live && a.engine.liveActive(t) != kNoId;
+      bool live = false;
+      for (int u = t; u <= u1; ++u) live = live || (a.engine.mode() == PlayMode::Live && a.engine.liveActive(u) != kNoId);
       // K-112c: the stop row is a row of cells like the slots, its square at the left under the
       // slots' squares (the refs line the stop buttons up with the launch column).
       dl->AddRectFilled(q0, q1, hov ? P.surface700 : P.surface800, 0.0f);
@@ -4049,16 +4369,18 @@ void drawClipGrid(App& a) {
     if (nCols > 0 && dx1 > column(0) && ImGui::BeginDragDropTargetCustom(ImRect(column(0), fy0, dx1, fy1), ImGui::GetID("##griddrop"))) {
       int tt = -1;
       for (int t = 0; t < nCols && tt < 0; ++t) {
-        const pixelgrid::Span cs = livegrid::column(o.x, t, dpp);
+        if (hiddenCol(t)) continue;
+        const pixelgrid::Span cs = livegrid::column(o.x, vc(t), dpp);
         if (m.x >= cs.x0 && m.x < cs.x1 + kGap && m.x < trackClipX1) tt = t;
       }
+      const bool onGroup = tt >= 0 && groupCol(tt);  // S09: a group takes effects (its bus), never clips
       const bool inFree = tt < 0 && freeCol && m.x >= freeX0;
       int tk = -1;
       for (int k = 0; k < rows && tk < 0; ++k) {
         const pixelgrid::Span rs = livegrid::row(o.y, k, dpp);
         if (m.y >= rs.x0 - kGap && m.y < rs.x1 && m.y >= slotsY0 && m.y < slotsY1) tk = k;
       }
-      if (tt >= 0 && tk < 0) {  // the title or the stop cell: the column's first empty slot
+      if (tt >= 0 && tk < 0 && !onGroup) {  // the title or the stop cell: the column's first empty slot
         tk = 0;
         while (tk < nScenes && !slot[static_cast<size_t>(tt)][static_cast<size_t>(tk)].empty()) ++tk;
       }
@@ -4071,7 +4393,16 @@ void drawClipGrid(App& a) {
         place.newTracks = inFree;
         browserui::DropFeedback fb;
         fb.highlight = false;
-        browserui::acceptFileDrop(a, browse::DropTarget::Playlist, place, &fb);
+        if (onGroup) {
+          const ImGuiPayload* pl = ImGui::GetDragDropPayload();
+          if (pl && (pl->IsDataType("GL_FILE") || pl->IsDataType("GL_ITEM") || pl->IsDataType("GL_FILES"))) {
+            ImGui::SetTooltip("%s", i18n::tr("A group track holds no clips: put them on one of its tracks"));
+            ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
+          }
+          place.tick = 0;
+        } else {
+          browserui::acceptFileDrop(a, browse::DropTarget::Playlist, place, &fb);
+        }
         browserui::DropFeedback pfb;
         pfb.highlight = false;
         browserui::acceptPluginDrop(a, browse::DropTarget::Playlist, place, &pfb);
@@ -4094,7 +4425,7 @@ void drawClipGrid(App& a) {
           }
           dl->PopClipRect();
         } else if (pfb.hovering) {
-          const pixelgrid::Span cs = livegrid::column(o.x, tt, dpp);
+          const pixelgrid::Span cs = livegrid::column(o.x, vc(tt), dpp);
           const ImU32 hot = theme::rgb(theme::role::kDraw);
           dl->AddRectFilled(ImVec2(cs.x0, fy0), ImVec2(cs.x1, fy1), theme::withAlpha(hot, 0.16f));
           dl->AddRect(ImVec2(cs.x0 + ri, fy0 + ri), ImVec2(cs.x1 - ri, fy1 - ri), theme::withAlpha(hot, 0.95f), 0.0f, 0, 2.0f);
@@ -4110,7 +4441,8 @@ void drawClipGrid(App& a) {
     const auto [ft, fk] = dragFrom;
     int tt = -1, tk = -1;
     for (int t = 0; t < nCols && tt < 0; ++t) {
-      const pixelgrid::Span cs = livegrid::column(o.x, t, dpp);
+      if (hiddenCol(t) || groupCol(t)) continue;
+      const pixelgrid::Span cs = livegrid::column(o.x, vc(t), dpp);
       if (m.x >= cs.x0 && m.x < cs.x1 && m.x < trackClipX1) tt = t;
     }
     // C44-05: any row is a target, the empty ones past the live area too (it grows to take the clip).
@@ -4123,7 +4455,7 @@ void drawClipGrid(App& a) {
     bool ok = srcOk && tt >= 0 && tk >= 0 && (tt != ft || tk != fk) && dstFree && !s.tracks[static_cast<size_t>(tt)].locked &&
               !s.tracks[static_cast<size_t>(ft)].locked;
     if (ok)
-      for (int ci : slot[static_cast<size_t>(ft)][static_cast<size_t>(fk)]) ok = ok && trackmodes::clipAllowed(s, s.playlist[static_cast<size_t>(ci)].kind, tt);
+      for (int ci : slot[static_cast<size_t>(ft)][static_cast<size_t>(fk)]) ok = ok && trackmodes::clipAllowed(s, s.playlist[static_cast<size_t>(ci)].kind, tt) && clipFitsTrack(s, s.playlist[static_cast<size_t>(ci)].kind, tt);  // N50-02
     const bool dragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.0f);
     if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
       if (dragging && ok) {  // the slot it would land in
@@ -4153,14 +4485,27 @@ void drawClipGrid(App& a) {
   // header does (the same document edit: the arrangement's rows follow, and collaborators get it).
   if (titleDrag >= nCols) titleDrag = -1;
   if (titleDrag >= 0) {
-    const int before = std::clamp(static_cast<int>(std::floor((m.x - (o.x + kPad)) / colW + 0.5f)), 0, nCols);
+    int before = nCols;  // checkpoint 51: the first shown column whose middle is right of the pointer
+    for (int t = 0; t < nCols; ++t)
+      if (!hiddenCol(t) && m.x < column(t) + colW * 0.5f) {
+        before = t;
+        break;
+      }
     const float lx = before < nCols ? column(before) - 3 : column(nCols - 1) + colW - 3;
     const pixelgrid::Span ls = pixelgrid::line(lx, dpp);
     dl->AddRectFilled(ImVec2(ls.x0 - 1, y0), ImVec2(ls.x1 + 1, yT1), P.hot);
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
       if (before != titleDrag && before != titleDrag + 1) {
         std::vector<int> now;
-        if (trackorder::movePlaylistTracks(a.doc, {titleDrag}, before, &now) && !now.empty()) a.playlist.trackSel = {now.front()};
+        std::vector<int> moved{titleDrag};
+        if (groupCol(titleDrag))
+          for (int u = titleDrag + 1; u <= std::min(nCols - 1, titleDrag + s.tracks[static_cast<size_t>(titleDrag)].groupSize); ++u) moved.push_back(u);
+        a.doc.beginGroup("move tracks");
+        if (trackorder::movePlaylistTracks(a.doc, moved, before, &now) && !now.empty()) {
+          a.playlist.trackSel = {now.front()};
+          trackmodes::syncGroupRouting(a.doc);  // N51-06: in or out of a group, the routing follows (the same undo step)
+        }
+        a.doc.endGroup();
       }
       titleDrag = -1;
     }
@@ -4177,8 +4522,9 @@ void drawClipGrid(App& a) {
   auto strip = [&](int t, const MixerTrack* mx, float x, float w, bool master, char letter = 0) {
     if (footMixer) sessionStrip(a, dl, srow, t, mx, x, w, master, letter);
   };
-  ImGui::PushClipRect(ImVec2(visX0, -1e6f), ImVec2(std::max(visX0, trackClipX1), 1e6f), true);  // C44-19
-  for (int t = 0; t < nCols; ++t) strip(t, trackmodes::playedMixer(s, t), column(t), colW - 4, false);
+  ImGui::PushClipRect(ImVec2(visX0, -1e6f), ImVec2(std::max(visX0, gridClipX1), 1e6f), true);  // C44-19
+  for (int t = 0; t < nCols; ++t)
+    if (!hiddenCol(t)) strip(t, trackmodes::playedMixer(s, t), column(t), colW - 4, false);
   ImGui::PopClipRect();
   // K-112c (round 19): the return tracks as strips between the tracks and Main, each titled in the
   // grid's title row with its letter and name and no slots, as every ref's mixer (143, 141, 280, 093).
@@ -4206,6 +4552,7 @@ void drawClipGrid(App& a) {
   }
   // K-112c: a 1 px divider between strips (and before Main), as the refs' mixers draw them.
   for (int t = 1; footMixer && t <= nCols + nRet; ++t) {
+    if (hiddenCol(t)) continue;
     // A track's left edge, a return's (shifted) left edge, or Main's; plus the last track's right edge
     // when the returns stand apart from it.
     const float ex = t == nCols + nRet ? mainX : t >= nCols ? retColumn(t - nCols).x0 : column(t);
@@ -4221,7 +4568,11 @@ void drawClipGrid(App& a) {
   // the selection, Enter launches its clip (an empty slot: stops the track), Delete, copy, cut, paste
   // and duplicate edit it, the activator key mutes its clip and Insert scene adds a row under it.
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() && nCols > 0) {
-    if (gSel.t < 0 || gSel.k < 0) {
+    if ((gSel.t < 0 || gSel.k < 0) && !a.playlist.trackSel.empty() && (keys::pressed("playlist.delete") || keys::pressed("playlist.duplicate"))) {
+      // Checkpoint 52 (N51-07): Delete and Cmd+D on the selected track titles, as the reference's.
+      if (keys::pressed("playlist.delete")) deleteTracks(a, -1);
+      else duplicateTracks(a, -1);
+    } else if (gSel.t < 0 || gSel.k < 0) {
       if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || ImGui::IsKeyPressed(ImGuiKey_DownArrow) || ImGui::IsKeyPressed(ImGuiKey_LeftArrow) ||
           ImGui::IsKeyPressed(ImGuiKey_RightArrow))
         selectSlot(a, 0, 0);
@@ -4234,19 +4585,30 @@ void drawClipGrid(App& a) {
       if (plain && ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) nt = std::max(0, nt - 1);
       if (plain && ImGui::IsKeyPressed(ImGuiKey_RightArrow)) nt = std::min(nCols - 1, nt + 1);
       nt = std::min(nt, nCols - 1);
+      {  // checkpoint 51: past folded tracks (S11: a group's slots are reached too: Enter launches them)
+        const int dir = nt < gSel.t ? -1 : 1;
+        while (nt >= 0 && nt < nCols && hiddenCol(nt)) nt += dir;
+        if (nt < 0 || nt >= nCols) nt = gSel.t;
+      }
       if (nt != gSel.t || nk != gSel.k) {
         selectSlot(a, nt, nk);
         const pixelgrid::Span rs = livegrid::row(o.y, nk, dpp);  // N45-04: the selected row scrolls into view
         if (rs.x0 < slotsY0) ImGui::SetScrollY(std::max(0.0f, scrollY - (slotsY0 - rs.x0)));
         if (rs.x1 > slotsY1) ImGui::SetScrollY(scrollY + (rs.x1 - slotsY1));
         // N46-05: and its column clear of the pinned returns and Main.
-        const pixelgrid::Span cs = livegrid::column(o.x, nt, dpp);
+        const pixelgrid::Span cs = livegrid::column(o.x, vc(nt), dpp);
         if (cs.x1 > trackClipX1) ImGui::SetScrollX(scrollX + (cs.x1 - trackClipX1));
         if (cs.x0 < visX0 + kPad) ImGui::SetScrollX(std::max(0.0f, scrollX - (visX0 + kPad - cs.x0)));
       }
       const int t = gSel.t, k = gSel.k;
       const std::vector<int> here = slotClips(s, t, k);
-      if (plain && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
+      if (plain && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) && groupCol(t)) {
+        for (int u = t + 1; u <= std::min(nCols - 1, t + s.tracks[static_cast<size_t>(t)].groupSize); ++u) {
+          const std::vector<int> in = slotClips(s, u, k);
+          if (!in.empty()) launch(a, s.playlist[static_cast<size_t>(in.front())].id);
+          else a.engine.stopLiveTrack(u);
+        }
+      } else if (plain && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) {
         if (!here.empty()) launch(a, s.playlist[static_cast<size_t>(here.front())].id);
         else a.engine.stopLiveTrack(t);
       }
@@ -4254,10 +4616,10 @@ void drawClipGrid(App& a) {
       if (keys::pressed("playlist.delete")) a.later([&a, t, k] { deleteSlot(a, t, k); });
       if (keys::pressed("playlist.copy")) copySlot(a, t, k);
       if (cmd && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_X, false) && !here.empty()) a.later([&a, t, k] { copySlot(a, t, k), deleteSlot(a, t, k, "cut clip"); });
-      if (keys::pressed("playlist.paste") && !gClipboard.empty()) a.later([&a, t, k] { placeInSlot(a, gClipboard, t, k, "paste clip"); });
-      if (keys::pressed("playlist.duplicate")) a.later([&a, t, k] { duplicateSlot(a, t, k); });
+      if (keys::pressed("playlist.paste") && !gClipboard.empty() && !groupCol(t)) a.later([&a, t, k] { placeInSlot(a, gClipboard, t, k, "paste clip"); });
+      if (keys::pressed("playlist.duplicate") && !groupCol(t)) a.later([&a, t, k] { duplicateSlot(a, t, k); });
       if (keys::pressed("playlist.insertSpace")) a.later([&a, k] { insertScene(a, k); });
-      if (cmd && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_M, false)) a.later([&a, t, k] { newMidiClip(a, t, k); });
+      if (cmd && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_M, false) && !groupCol(t)) a.later([&a, t, k] { newMidiClip(a, t, k); });
       if (keys::pressed("playlist.mute") && !here.empty()) {
         const ObjectId id = s.playlist[static_cast<size_t>(here.front())].id;
         const bool to = !s.playlist[static_cast<size_t>(here.front())].muted;
@@ -4286,12 +4648,14 @@ void drawMixerBand(App& a) {
   const ImVec2 o(livegrid::snap(ImGui::GetCursorScreenPos().x, dpp), livegrid::snap(ImGui::GetCursorScreenPos().y, dpp));
   const ImVec2 av = ImGui::GetContentRegionAvail();
   const int nCols = gridColumns(s);
+  const ColMap cm = colMap(s, nCols);  // checkpoint 51: as the grid's columns
+  auto vc = [&](int t) { return t < nCols ? cm.col[static_cast<size_t>(t)] : cm.n + (t - nCols); };
   using livegrid::kPad, livegrid::kGap;
   constexpr float kMainW = 140, colW = livegrid::kColW;
   const float fs = theme::kFontCaption + 1;
   // The titles, then the strips: the clip grid's columns, returns beside Main at the right (357).
   const float y0 = livegrid::titleY(o.y, dpp), yT1 = livegrid::titleBottom(o.y, dpp), titleH = yT1 - y0;
-  auto column = [&](int t) { return livegrid::column(o.x, t, dpp); };
+  auto column = [&](int t) { return livegrid::column(o.x, vc(t), dpp); };
   // C44-19: Main and the returns pinned at the right edge, the tracks scrolling under them (as the grid).
   const float visX0 = o.x + ImGui::GetScrollX();
   const float mainX = livegrid::snap(visX0 + av.x - kPad - kMainW + 4, dpp);
@@ -4322,22 +4686,30 @@ void drawMixerBand(App& a) {
   const std::vector<size_t> rets = returnTracks(s);
   const int nFit = returnsShown(a) ? std::min<int>(static_cast<int>(rets.size()), 26) : 0;
   const float retShift = nFit > 0 ? livegrid::snap(mainX - column(nCols + nFit).x0, dpp) : 0.0f;
-  const float pinX0 = nFit > 0 ? livegrid::column(o.x + retShift, nCols, dpp).x0 : mainX;
+  const float pinX0 = nFit > 0 ? livegrid::column(o.x + retShift, cm.n, dpp).x0 : mainX;
   const float trackClipX1 = pinX0 - kGap;
-  ImGui::PushClipRect(ImVec2(visX0, -1e6f), ImVec2(std::max(visX0, trackClipX1), 1e6f), true);
+  float bandClipX1 = trackClipX1;  // checkpoint 52: N47-18's rule here too (a strip cut to a sliver is not shown)
   for (int t = 0; t < nCols; ++t) {
+    if (cm.hidden[static_cast<size_t>(t)]) continue;
+    const pixelgrid::Span cs = column(t);
+    if (cs.x0 < trackClipX1 && cs.x1 > trackClipX1 && trackClipX1 - cs.x0 < cs.w() * 0.5f) bandClipX1 = cs.x0;
+  }
+  ImGui::PushClipRect(ImVec2(visX0, -1e6f), ImVec2(std::max(visX0, bandClipX1), 1e6f), true);
+  for (int t = 0; t < nCols; ++t) {
+    if (cm.hidden[static_cast<size_t>(t)]) continue;
     const pixelgrid::Span cs = column(t);
     const MixerTrack* mx = trackmodes::playedMixer(s, t);
     title(cs.x0, cs.x1, theme::content(s.tracks[static_cast<size_t>(t)].color), playlistTrackName(s, static_cast<size_t>(t)), mx, 3000 + t);
     sessionStrip(a, dl, srow, t, mx, cs.x0, colW - 4, false);
   }
   for (int t = 1; t <= nCols; ++t) {  // the dividers between the tracks' strips
+    if (t < nCols && cm.hidden[static_cast<size_t>(t)]) continue;
     const pixelgrid::Span lx = pixelgrid::line(column(t).x0 - 3, dpp);
     dl->AddRectFilled(ImVec2(lx.x0, my0 + 2), ImVec2(lx.x1, my0 + mh - 2), P.line);
   }
   ImGui::PopClipRect();
   for (int i = 0; i < nFit; ++i) {
-    const pixelgrid::Span cs = livegrid::column(o.x + retShift, nCols + i, dpp);
+    const pixelgrid::Span cs = livegrid::column(o.x + retShift, cm.n + i, dpp);
     const MixerTrack& rt = s.mixer[rets[static_cast<size_t>(i)]];
     const char lt = static_cast<char>('A' + i);
     title(cs.x0, cs.x1, returnFill(), std::string(1, lt) + " " + rt.name, &rt, 3500 + i);
@@ -4348,8 +4720,8 @@ void drawMixerBand(App& a) {
     const pixelgrid::Span lx = pixelgrid::line(ex - 3, dpp);
     dl->AddRectFilled(ImVec2(lx.x0, my0 + 2), ImVec2(lx.x1, my0 + mh - 2), P.line);
   };
-  for (int i = 1; i < nFit; ++i) divider(livegrid::column(o.x + retShift, nCols + i, dpp).x0);
-  if (nFit > 0) divider(livegrid::column(o.x + retShift, nCols, dpp).x0);
+  for (int i = 1; i < nFit; ++i) divider(livegrid::column(o.x + retShift, cm.n + i, dpp).x0);
+  if (nFit > 0) divider(livegrid::column(o.x + retShift, cm.n, dpp).x0);
   divider(mainX);
   if (!s.mixer.empty()) {
     const pixelgrid::Span ms{mainX, livegrid::snap(mainX + kMainW - 8, dpp)};

@@ -232,7 +232,7 @@ Edit readEdit(const std::string& data, int sound) {
       e.eightBit[static_cast<size_t>(k)] = bits == 8;
     }
   }
-  e.text.def.mute = e.midi.mute;
+  e.text.def.mute = e.midi.on && e.midi.mute;  // R11-07: the own sound is muted only while notes go to MIDI
   return e;
 }
 
@@ -435,6 +435,54 @@ int duplicateSample(Edit& e, int from) {
   return slot;
 }
 
+// K-106 (the classic "Copy smp."): slot `sslot` of `src` (another instrument's edit, or this one)
+// into slot `dslot` of `dst`: its file, settings, name, cuts and bit depth. The key map stays, as
+// in the classic editor, except in an instrument that had no sample: every key plays it then.
+// -1 when the source slot is empty or a slot is out of range.
+int copySampleInto(Edit& dst, int dslot, const Edit& src, int sslot) {
+  if (dslot < 0 || dslot >= trk::kMaxSamples || sslot < 0 || sslot >= trk::kMaxSamples) return -1;
+  const auto i = static_cast<size_t>(dslot), j = static_cast<size_t>(sslot);
+  const int f = src.text.fileOf[j];
+  if (!src.text.def.samples[j].present() && f < 0) return -1;
+  bool any = false;
+  for (int k = 0; k < trk::kMaxSamples; ++k)
+    any = any || dst.text.def.samples[static_cast<size_t>(k)].present() || dst.text.fileOf[static_cast<size_t>(k)] >= 0;
+  // Read everything first: `src` may be `dst`.
+  const trk::SampleDef sd = src.text.def.samples[j];
+  const std::string path = f >= 0 && f < static_cast<int>(src.text.files.size()) ? src.text.files[static_cast<size_t>(f)] : std::string();
+  const std::string name = src.text.sampleNames[j];
+  const int32_t cs = src.cuts.start[j], ce = src.cuts.end[j];
+  const bool eight = src.eightBit[j];
+  dst.text.def.samples[i] = sd;
+  if (path.empty()) {
+    dst.text.fileOf[i] = -1;
+  } else {
+    dst.text.fileOf[i] = static_cast<int>(dst.text.files.size());
+    dst.text.files.push_back(path);
+  }
+  dst.text.sampleNames[i] = name;
+  dst.cuts.start[i] = cs;
+  dst.cuts.end[i] = ce;
+  dst.eightBit[i] = eight;
+  if (!any) dst.text.def.keymap.fill(static_cast<uint8_t>(dslot));
+  compactFiles(dst);
+  return dslot;
+}
+
+// K-106 (the classic "Xchg smp."): two slots trade their samples; the key map stays, so the keys
+// that played one now play the other.
+void exchangeSampleData(Edit& e, int a, int b) {
+  if (a == b || a < 0 || b < 0 || a >= trk::kMaxSamples || b >= trk::kMaxSamples) return;
+  const auto i = static_cast<size_t>(a), j = static_cast<size_t>(b);
+  std::swap(e.text.def.samples[i], e.text.def.samples[j]);
+  std::swap(e.text.fileOf[i], e.text.fileOf[j]);
+  std::swap(e.text.sampleNames[i], e.text.sampleNames[j]);
+  std::swap(e.cuts.start[i], e.cuts.start[j]);
+  std::swap(e.cuts.end[i], e.cuts.end[j]);
+  std::swap(e.eightBit[i], e.eightBit[j]);
+  compactFiles(e);
+}
+
 // ---- envelope slots ----
 
 namespace {
@@ -593,6 +641,100 @@ EnvSlot takeEnvSlot(const trk::InstrumentDef& d, bool pan) {
 int auditionPitch(const Edit& e, int slot, double rate) {
   if (slot < 0 || slot >= trk::kMaxSamples) return 60;
   return rootNote(e.text.def.samples[static_cast<size_t>(slot)], rate) + trk::kPitchOffset;
+}
+
+namespace {
+bool slotUsed(const Edit& e, int k) {
+  const auto i = static_cast<size_t>(k);
+  return e.text.def.samples[i].present() || e.text.fileOf[i] >= 0;
+}
+int soundOfState(const PluginState& st) {
+  return st.params.size() > static_cast<size_t>(trk::PSound) ? std::clamp(static_cast<int>(std::lround(st.params[trk::PSound])), 0, kSoundCount) : 0;
+}
+}  // namespace
+
+int replaceSample(Edit& e, int slot, const std::string& path, int32_t frames, double rate, const std::string& name) {
+  if (path.empty() || frames < 1) return -1;
+  bool any = false;
+  for (int k = 0; k < trk::kMaxSamples; ++k) any = any || slotUsed(e, k);
+  if (!any || slot < 0 || slot >= trk::kMaxSamples) return addSample(e, path, frames, rate, name);
+  const auto i = static_cast<size_t>(slot);
+  trk::SampleDef s;
+  s.length = frames;
+  tuneForRate(s, rate);
+  e.text.def.samples[i] = s;
+  e.text.fileOf[i] = static_cast<int>(e.text.files.size());
+  e.text.files.push_back(path);
+  e.text.sampleNames[i] = oneLine(name);
+  e.cuts.start[i] = e.cuts.end[i] = 0;
+  e.eightBit[i] = false;
+  compactFiles(e);
+  return slot;
+}
+
+SampleTrim trimSamples(Edit& e, bool unused, bool afterLoop, bool eightBits) {
+  SampleTrim n;
+  auto& def = e.text.def;
+  if (unused) {
+    // The classic trim: a sample no key plays goes, the others move up in their order (the key map
+    // follows them).
+    std::array<bool, trk::kMaxSamples> keyed{};
+    for (uint8_t k : def.keymap) keyed[k % trk::kMaxSamples] = true;
+    for (int k = 0; k < trk::kMaxSamples; ++k)
+      if (slotUsed(e, k) && !keyed[static_cast<size_t>(k)]) removeSample(e, k), ++n.removed;
+    if (n.removed > 0) {
+      int to = 0;
+      for (int k = 0; k < trk::kMaxSamples; ++k) {
+        if (!slotUsed(e, k)) continue;
+        if (k != to) swapSamples(e, k, to);
+        ++to;
+      }
+    }
+  }
+  for (int k = 0; k < trk::kMaxSamples; ++k) {
+    const auto i = static_cast<size_t>(k);
+    const trk::SampleDef& sd = def.samples[i];
+    if (!sd.present()) continue;
+    if (afterLoop && sd.loop != trk::kLoopOff && sd.loopLength > 0) {
+      // Loop points and the end point are frames of the file: the sample now ends where its loop does.
+      const int32_t le = sd.loopStart + sd.loopLength;
+      const int32_t end = e.cuts.end[i] > 0 ? std::min(e.cuts.end[i], sd.length) : sd.length;
+      if (le > e.cuts.start[i] && le < end) e.cuts.end[i] = le, ++n.trimmed;
+    }
+    if (eightBits && !e.eightBit[i]) e.eightBit[i] = true, ++n.eightBit;
+  }
+  return n;
+}
+
+bool trimSampleState(PluginState& st, bool unused, bool afterLoop, bool eightBits, SampleTrim* counts) {
+  if (st.type != trk::kInstrumentType || (!unused && !afterLoop && !eightBits)) return false;
+  Edit e = readEdit(st.data, soundOfState(st));
+  const SampleTrim n = trimSamples(e, unused, afterLoop, eightBits);
+  if (counts) *counts = n;
+  if (n.total() == 0) return false;
+  const std::string data = writeEdit(e);
+  if (data == st.data) return false;
+  st.data = data;
+  return true;
+}
+
+bool midiMuted(const PluginState& st) {
+  if (st.type != trk::kInstrumentType || st.data.find("midi ") == std::string::npos) return false;
+  return readEdit(st.data, soundOfState(st)).text.def.mute;
+}
+
+long long sampleBytes(const PluginState& st) {
+  if (st.type != trk::kInstrumentType) return 0;
+  const std::shared_ptr<const InstrumentAux> inst = instrumentFor(st);
+  if (!inst) return 0;
+  long long bytes = 0;
+  for (int k = 0; k < trk::kMaxSamples; ++k) {
+    const auto i = static_cast<size_t>(k);
+    if (!inst->data[i]) continue;
+    const long long frames = std::max(0, inst->text.def.samples[i].length);
+    bytes += frames * (inst->dataR[i] ? 2 : 1) * (inst->eightBit[i] ? 1 : 2);
+  }
+  return bytes;
 }
 
 }  // namespace gl::packs::trackerpack

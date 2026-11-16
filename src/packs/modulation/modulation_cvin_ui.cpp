@@ -567,13 +567,13 @@ void cvOutInterface(EditTarget& e, const skin::Form& F, const skin::Skin& K, flo
   sk::selector(e, CvOutMode, F.p(16, y0 + 20), F.sz(270, 18), K, nullptr);
   const bool direct = e.ip(CvOutMode) == CvmDirect;
   if (direct) {
-    if (a.asio.active) {
+    if (a.asio.active || a.audioOutputPairs > 0) {  // K-101 follow-up: or the system device's extra pairs
       sk::menuBox(e, CvOutPair, F.p(16, y0 + 44), F.sz(130, 18), K);
       char buf[48];
-      std::snprintf(buf, sizeof buf, "%d %s", a.asio.extraOuts, i18n::tr("PAIRS OPEN"));
+      std::snprintf(buf, sizeof buf, "%d %s", a.asio.active ? a.asio.extraOuts : a.audioOutputPairs, i18n::tr("PAIRS OPEN"));
       sk::text(dl, F, 156, y0 + 48, K, buf, 7.0f);
     } else {
-      sk::text(dl, F, 16, y0 + 48, K, i18n::tr("DIRECT NEEDS THE ASIO DRIVER: VIA THE MIXER HERE"), 6.5f, false, skin::hex(0xFFC097));
+      sk::text(dl, F, 16, y0 + 48, K, i18n::tr("NO EXTRA OUTPUTS OPEN: VIA THE MIXER HERE"), 6.5f, false, skin::hex(0xFFC097));
     }
   } else {
     sk::text(dl, F, 16, y0 + 48, K, i18n::tr("KEEP THE CHANNEL AND MIXER AT UNITY"), 6.5f);

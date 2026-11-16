@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include "../core/Params.h"
+#include "../core/Types.h"
 #include "ClipHeaderHit.h"
 #include "MidiUi.h"
 
@@ -39,6 +40,17 @@ void tracksAddMarker(App& a);  // at the nearest bar
 void toggleCycle(App& a);
 // R02-13: the cycle area over the selected regions (Cmd+U), Cycle on. Nothing selected: no change.
 void cycleToSelection(App& a);
+// Checkpoint 47: the Tracks layout's Join, for the tool, the menus, the key and the toolbar (Playlist.cpp).
+// kind: the regions' kind to join (ClipKind::Automation: the first selected region's kind).
+void tracksJoin(App& a, ClipKind kind = ClipKind::Automation);
+// Checkpoint 47: the arrow keys (previous / next region and track), Option-arrow nudge and L (loop).
+void tracksNavKeys(App& a);
+// Checkpoint 47: the locators are the cycle's range while Cycle is on, else the range the project
+// keeps (the grey area). False when none is set. The playhead to one of them, and the locators over
+// the selected regions without turning Cycle on (on: the cycle moves there).
+bool locators(const App& a, Tick& left, Tick& right);
+void gotoLocator(App& a, bool right);
+void locatorsToSelection(App& a);
 // R02-15: the playhead to the previous / next marker (dir -1 / +1), and the Go to position prompt.
 void gotoMarker(App& a, int dir);
 void goToPositionPrompt(App& a);  // K-112b: cycle on or off (the Tracks control bar, Navigate menu and C key)

@@ -26,5 +26,17 @@ void devDumpZOrder(int frame);
 // front of it (its tab selected). Returns false when the window is not such a hidden tab (shown,
 // floating or closed): a show/hide toggle then toggles. A toggle used to close the hidden tab.
 bool bringTabForward(const char* name);
+// K-297 (round 7): gives a window the keys by program (a page switch, keys back after a button)
+// without closing what is open over it: under a modal dialog or with a menu or pop-up open it does
+// nothing and returns false. ImGui's FocusWindow closes every pop-up above the window it focuses, so
+// the Tracker's Files > Save as opened the save dialog and the keys going back to the pattern closed
+// it the next frame.
+bool focusWindowKeepPopups(ImGuiWindow* w);
+// K-297 (round 7): the docked area with the keys (a main view, a side panel, an editor band, a list)
+// carries a quiet 1 px accent frame, so it is clear where typing and shortcuts go. Only docked
+// content areas of some size (not the bars, not dialogs or floating windows, whose captions show
+// it) and not while a menu or pop-up is open. Drawn once a frame, after every window. colour 0: the
+// palette's accent; otherwise that colour (an ImU32, alpha included).
+void drawKeyFocusFrame(unsigned int colour = 0);
 
 }  // namespace gl::ui

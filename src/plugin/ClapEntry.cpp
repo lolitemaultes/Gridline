@@ -58,7 +58,7 @@ struct SuiteDescs {
 const SuiteDescs& suiteDescs() {
   static const SuiteDescs d = [] {
     SuiteDescs s;
-    for (const auto& m : gl::suite::members(GRIDLINE_SUITE)) s.members.push_back(&m);
+    s.members = gl::plugin::bundleMembers(GRIDLINE_SUITE);  // K-308: the bundle's member list (every member without one)
     const gl::suite::Suite* suite = gl::suite::findSuite(GRIDLINE_SUITE);
     const std::string suiteName = suite ? suite->name : "Gridline Suite";
     for (const gl::suite::Member* m : s.members) {

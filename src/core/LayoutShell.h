@@ -65,6 +65,8 @@ struct Shell {
 };
 // The height of the title strip a Segmented region draws its windows' names in (logical px).
 constexpr float kPaneStripH = 26.0f;
+// K-237: the share of its parent a maximised pane takes (the main area keeps the rest, never lost).
+constexpr float kMaximisedShare = 0.82f;
 
 const Shell& shell(Preset p);
 const Region* findRegion(Preset p, const std::string& id);
@@ -80,8 +82,13 @@ struct State {
   // K-297: where the person dragged a region's divider (px along its split axis). Kept across
   // rebuilds (a region shown or hidden) and window resizes; a fixed band keeps it as its pixel size.
   std::map<std::string, float> regionSize;
+  // K-237: each pane's tab strip (core/PaneTabs.h text form: order, pins, active tab) and the panes
+  // the person maximised (the region takes most of its parent until restored).
+  std::map<std::string, std::string> tabs;
+  std::set<std::string> maximised;
   bool operator==(const State& o) const {
-    return hidden == o.hidden && shown == o.shown && member == o.member && memberSize == o.memberSize && regionSize == o.regionSize;
+    return hidden == o.hidden && shown == o.shown && member == o.member && memberSize == o.memberSize && regionSize == o.regionSize &&
+           tabs == o.tabs && maximised == o.maximised;
   }
 };
 bool visible(const Shell& sh, const State& st, const std::string& region);

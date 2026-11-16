@@ -290,9 +290,8 @@ namespace {
 // R9-02, R9-04: an imported voice carries its cells for the rows after its first (core/TrackerStream.h).
 // A note typed or deleted inside it, or a row inserted or deleted through it, would leave those cells
 // on the wrong rows or drop them, so such edits are refused with this reason.
-const char* const kInVoice =
-    "inside an imported voice: its later cells (effects, volume column) belong to that voice, and moving or "
-    "cutting it would need the module played again; edit outside it, or after the voice ends";
+// R10-06: short, the useful part first (the status line shows it whole).
+const char* const kInVoice = "Inside an imported voice: edit its first row, or after it ends";
 // Whether an imported voice on the track covers `row` with its cells, past its first row (`first`: its
 // first row counts too).
 bool voiceOver(const std::vector<Note>& notes, const Grid& g, int row, bool first) {
@@ -448,6 +447,43 @@ Result refuse(const char* why) {
   return r;
 }
 
+// ---- R11-05: one voice per track, as the classic tracker plays a channel ----
+// A track plays one voice when no two of its notes overlap or start together and none is an
+// imported module voice (those keep their own rows). `notes` sorted (normalize).
+bool oneVoice(const std::vector<Note>& notes) {
+  for (size_t i = 0; i < notes.size(); ++i) {
+    if (!notes[i].tracker.empty()) return false;
+    if (i + 1 < notes.size() && (notes[i + 1].start <= notes[i].start || notes[i].start + notes[i].length > notes[i + 1].start)) return false;
+  }
+  return true;
+}
+// The notes that ring on to the next note (or to `end`, the pattern's or the block's end): no OFF
+// before it. As (start + `shift`, pitch).
+using TieSet = std::set<std::pair<Tick, int>>;
+void ringingNotes(const std::vector<Note>& notes, Tick end, Tick shift, TieSet& out) {
+  for (size_t i = 0; i < notes.size(); ++i) {
+    // The last note keeps its length as the moves always kept it (whether it reached the end on
+    // purpose cannot be told); a block's last note rings on to the block's end.
+    const bool last = i + 1 >= notes.size();
+    if (last && end <= 0) continue;
+    const Tick next = last ? end : notes[i + 1].start;
+    if (notes[i].start + notes[i].length >= next) out.insert({notes[i].start + shift, notes[i].pitch});
+  }
+}
+// After rows moved: a note that rang on rings on to the next note (or the pattern's end); no note
+// lasts past the next one's start (a second voice would open a second column).
+void retie(std::vector<Note>& notes, const TieSet& ringing, Tick end) {
+  normalize(notes);
+  for (size_t i = 0; i < notes.size(); ++i) {
+    Note& n = notes[i];
+    const bool last = i + 1 >= notes.size();
+    const Tick next = last ? end : notes[i + 1].start;
+    if (next <= n.start) continue;  // a chord after a paste, a note past the end: left as they are
+    if (ringing.count({n.start, n.pitch})) n.length = next - n.start, n.endFrac = 0;
+    else if (!last && n.start + n.length > next) n.length = next - n.start, n.endFrac = 0;
+  }
+}
+
 Result done(bool changed) {
   Result r;
   r.changed = changed;
@@ -455,6 +491,14 @@ Result done(bool changed) {
 }
 
 }  // namespace
+
+int snapRecordRow(int row, float frac, int snap, int rows) {
+  if (rows <= 0) return 0;
+  if (snap <= 0) return std::clamp(row, 0, rows - 1);
+  const double pos = static_cast<double>(row) + std::clamp(static_cast<double>(frac), 0.0, 1.0);
+  const int r = static_cast<int>(std::floor(pos / snap + 0.5)) * snap;
+  return r >= rows ? 0 : std::max(0, r);
+}
 
 Result putNote(std::vector<Note>& notes, const Track& t, const Grid& g, int row, int column, int pitch, int velocity) {
   if (row < 0 || row >= g.rows) return refuse("outside the pattern");
@@ -615,18 +659,36 @@ Result setEffectAt(std::vector<Note>& notes, const Track& t, int row, int column
 Result insertRow(std::vector<Note>& notes, std::vector<uint8_t>& steps, std::vector<StepProps>& props, const Grid& g, int row) {
   if (row < 0 || row >= g.rows) return refuse("outside the pattern");
   const size_t r = static_cast<size_t>(row);
-  if (steps.size() > r && steps.back() != 0) return refuse("a rack step would fall off the end of the pattern");
   if (voiceOver(notes, g, row, false)) return refuse(kInVoice);
   const Tick tick = g.tickOf(row);
-  // R9-06: a note the insert would push off the last row is not kept out of sight past the end (it
-  // came back on a later delete): the insert is refused, as for a rack step.
+  // R11-05: the notes that ring on keep ringing on to the next note once the rows moved.
+  const bool voice = oneVoice(notes);
+  TieSet ring;
+  if (voice) {
+    TieSet was;
+    ringingNotes(notes, 0, 0, was);  // (its last note keeps its length)
+    for (const auto& [at, pitch] : was) ring.insert({at >= tick ? at + g.rowTicks : at, pitch});
+  }
+  // R10-02 (was R9-06's refusal): as the classic insert, what the insert pushes off the last row is
+  // dropped (in the same undo step; the caller says so), never kept out of sight past the end.
+  // An imported voice it would push off is refused instead (its later cells belong to it).
+  int dropped = 0;
   for (const Note& n : notes)
-    if (n.start >= tick && n.start < g.length() && n.start + g.rowTicks >= g.length())
-      return refuse("a note would fall off the end of the pattern (with Insert, delete: length on, Shift+Insert adds a bar)");
-  bool changed = false;
+    if (n.start >= tick && n.start < g.length() && n.start + g.rowTicks >= g.length()) {
+      if (!n.tracker.empty()) return refuse(kInVoice);
+      ++dropped;
+    }
+  if (steps.size() > r && steps.back() != 0) ++dropped;
+  if (dropped)
+    notes.erase(std::remove_if(notes.begin(), notes.end(),
+                               [&](const Note& n) { return n.start >= tick && n.start < g.length() && n.start + g.rowTicks >= g.length(); }),
+                notes.end());
+  bool changed = dropped > 0;
   for (Note& n : notes) {
     if (n.start >= tick) n.start += g.rowTicks, changed = true;
-    else if (n.start + n.length > tick) n.length += g.rowTicks, changed = true;
+    // R12-02: an OFF on the row (a note ending where it starts) moves down with the row, as the
+    // delete takes it away with the row.
+    else if (n.start + n.length >= tick) n.length += g.rowTicks, changed = true;
   }
   if (steps.size() > r) {
     const size_t len = steps.size();
@@ -640,13 +702,33 @@ Result insertRow(std::vector<Note>& notes, std::vector<uint8_t>& steps, std::vec
     }
   }
   if (changed) normalize(notes);
-  return done(changed);
+  if (changed && voice) retie(notes, ring, g.length());
+  Result res = done(changed);
+  res.dropped = dropped;
+  return res;
 }
 
 Result deleteRow(std::vector<Note>& notes, std::vector<uint8_t>& steps, std::vector<StepProps>& props, const Grid& g, int row) {
   if (row < 0 || row >= g.rows) return refuse("outside the pattern");
   if (voiceOver(notes, g, row, true)) return refuse(kInVoice);
   const Tick tick = g.tickOf(row), next = tick + g.rowTicks;
+  // R11-05: as insertRow (a note whose next note went rings on to the one after, as the classic
+  // tracker's channel does: no OFF appears where none was typed).
+  const bool voice = oneVoice(notes);
+  TieSet ring;
+  if (voice) {
+    TieSet was;
+    ringingNotes(notes, 0, 0, was);  // (its last note keeps its length...)
+    // R12-02: ...except one ending exactly at the pattern's end: it keeps reaching it (no OFF appears
+    // on the last row). One running past the end (an OFF an insert pushed off the pattern) keeps its
+    // length until it reaches the end, then rings on as one with no OFF does.
+    if (!notes.empty() && notes.back().start + notes.back().length == g.length()) was.insert({notes.back().start, notes.back().pitch});
+    for (const auto& [at, pitch] : was)
+      if (at < tick || at >= next) ring.insert({at >= next ? at - g.rowTicks : at, pitch});
+    // R12-02: an OFF on the deleted row goes with the row: its note rings on to the next one.
+    for (const Note& n : notes)
+      if (n.start < tick && n.start + n.length >= tick && n.start + n.length < next) ring.insert({n.start, n.pitch});
+  }
   bool changed = false;
   std::vector<Note> out;
   out.reserve(notes.size());
@@ -671,6 +753,7 @@ Result deleteRow(std::vector<Note>& notes, std::vector<uint8_t>& steps, std::vec
     }
   }
   if (changed) normalize(notes);
+  if (changed && voice) retie(notes, ring, g.length());
   return done(changed);
 }
 
@@ -806,8 +889,22 @@ Result pasteRows(std::vector<Note>& notes, std::vector<uint8_t>& steps, const Gr
   const std::vector<Note> before = notes;
   const std::vector<uint8_t> stepsBefore = steps;
   const int last = std::min(g.rows, row + rows) - 1;
-  cutRows(notes, steps, g, row, last);
   const Tick at = g.tickOf(row), end = g.tickOf(g.rows);
+  // R11-05: a one-voice track with a one-voice block stays one voice: the pasted notes and the
+  // track's ring on to their next notes (a pasted note is cut by the next one), as typed notes do.
+  std::vector<Note> sortedBlock = block;
+  normalize(sortedBlock);
+  const bool voice = oneVoice(notes) && oneVoice(sortedBlock);
+  TieSet ring;
+  if (voice) {
+    TieSet was;
+    ringingNotes(notes, 0, 0, was);  // (its last note keeps its length)
+    const Tick b = g.tickOf(last + 1);
+    for (const auto& k : was)
+      if (k.first < at || k.first >= b) ring.insert(k);
+    ringingNotes(sortedBlock, static_cast<Tick>(rows) * g.rowTicks, at, ring);
+  }
+  cutRows(notes, steps, g, row, last);
   // R7-03: what falls past the pattern's last row is dropped and a note ends at the pattern's end
   // (as FT2 clips a block to the rows left), so nothing hidden comes back when the pattern grows.
   std::vector<Note> put;
@@ -820,6 +917,7 @@ Result pasteRows(std::vector<Note>& notes, std::vector<uint8_t>& steps, const Gr
   cutSounding(notes, put);
   for (const Note& n : put) notes.push_back(n);
   normalize(notes);
+  if (voice) retie(notes, ring, end);
   return done(notes != before || steps != stepsBefore);
 }
 
@@ -865,6 +963,18 @@ Result pasteRowsMasked(std::vector<Note>& notes, std::vector<uint8_t>& steps, co
   std::map<int, std::vector<Note>> src;
   for (const Note& n : block) src[static_cast<int>(n.start / rt)].push_back(n);
   const Tick a = g.tickOf(row), b = g.tickOf(row + rows);
+  // R11-05: as pasteRows, when the notes themselves are pasted.
+  std::vector<Note> sortedBlock = block;
+  normalize(sortedBlock);
+  const bool voice = putNote && oneVoice(notes) && oneVoice(sortedBlock);
+  TieSet ring;
+  if (voice) {
+    TieSet was;
+    ringingNotes(notes, 0, 0, was);  // (its last note keeps its length)
+    for (const auto& k : was)
+      if (k.first < a || k.first >= b) ring.insert(k);
+    ringingNotes(sortedBlock, static_cast<Tick>(rows) * g.rowTicks, a, ring);
+  }
   std::map<int, std::vector<size_t>> dst;
   for (size_t i = 0; i < notes.size(); ++i)
     if (notes[i].start >= a && notes[i].start < b) dst[static_cast<int>((notes[i].start - a) / rt)].push_back(i);
@@ -908,6 +1018,7 @@ Result pasteRowsMasked(std::vector<Note>& notes, std::vector<uint8_t>& steps, co
   for (const Note& n : added) out.push_back(n);
   notes = std::move(out);
   normalize(notes);
+  if (voice) retie(notes, ring, g.length());
   return done(notes != before || steps != stepsBefore);
 }
 

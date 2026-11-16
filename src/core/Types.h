@@ -160,6 +160,9 @@ struct Clip {
   // content plays once: an empty pattern past its end, audio up to the end of
   // its window, automation holding its last value.
   bool loop = false;
+  // R07-01: the region's own name (the Tracks layout's Text tool); empty: its pattern's or sound's.
+  // Written only when set, so projects without one save byte for byte as before.
+  std::string name;
   // K-140: a looping pattern or automation clip that was cut short (it showed
   // less than its pattern or curve) repeats what it showed: content ticks
   // [loopStart, loopStart + loopLength). loopLength 0: the content's own loop
@@ -231,7 +234,8 @@ struct Clip {
            fadeOutShape == o.fadeOutShape && fadeInTension == o.fadeInTension && fadeOutTension == o.fadeOutTension &&
            fadeInManual == o.fadeInManual && fadeOutManual == o.fadeOutManual &&
            fadeInDeclick == o.fadeInDeclick && fadeOutDeclick == o.fadeOutDeclick && warp == o.warp &&
-           playTranspose == o.playTranspose && playVelocity == o.playVelocity && playDelay == o.playDelay && playQuantize == o.playQuantize;
+           playTranspose == o.playTranspose && playVelocity == o.playVelocity && playDelay == o.playDelay && playQuantize == o.playQuantize &&
+           name == o.name;
   }
 };
 

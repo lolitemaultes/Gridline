@@ -878,6 +878,7 @@ void toolsMacroItems(App& a) {
   for (const auto& c : s.channels) anyFrozen |= c.freeze.frozen(), anySleeping |= c.hibernate;
   for (const auto& m : s.mixer) anyFrozen |= m.freeze.frozen(), anySleeping |= m.hibernate;
   if (ImGui::MenuItem(tr("Unfreeze all"), nullptr, false, anyFrozen)) unfreezeAll(a);
+  if (livelook::active(a)) return;  // N50-09: Clips has no hibernation (its Freeze menu is Unfreeze all)
   if (ImGui::MenuItem(tr("Hibernate unused plugins"))) {
     const int n = hibernateUnused(a);
     a.notify(n ? "Hibernating " + std::to_string(n) + " unused plugin(s)" : std::string("No unused plugins to hibernate"));

@@ -348,6 +348,7 @@ class App {
   std::vector<std::string> audioInputDevices;
   std::string audioInputDevice;  // "" = no input, "*" = system default
   int audioInputChannels = 2;    // channels the input stream delivers
+  int audioOutputPairs = 0;      // K-101 follow-up: extra output pairs of the system audio device (channels 3-4, ...)
   int audioInputLatency = 0;     // samples: capture buffer + jitter buffer + output buffer
   std::string audioInputStatus;
   bool recAudio = true;          // record filter: audio into the playlist (armed tracks)

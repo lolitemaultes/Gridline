@@ -27,6 +27,11 @@ std::vector<ObjectId> sliceEqual(Song& s, const std::set<ObjectId>& clips, int p
 // Audio clips: cuts at the transients of their audio (sensitivity 0..1);
 // pattern clips: at the note onsets of their content (steps included).
 std::vector<ObjectId> sliceAtTransients(Song& s, const std::set<ObjectId>& clips, double sensitivity);
+// Audio clips: cuts at the slices their file states (cue points such as a speech
+// sample's words, sliced loops, beat markers); other clips stay whole.
+std::vector<ObjectId> sliceAtFileSlices(Song& s, const std::set<ObjectId>& clips);
+// How many of the listed clips are audio clips whose file states slices.
+int clipsWithFileSlices(const Song& s, const std::set<ObjectId>& clips);
 // Song ticks where a pattern clip's notes start (inside the clip, exclusive of its start).
 std::vector<Tick> patternOnsets(const Song& s, const Clip& c);
 

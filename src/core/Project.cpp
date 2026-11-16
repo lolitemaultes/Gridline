@@ -573,6 +573,7 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.fadeOutTension != 0.0f) jc.object["fadeOutTension"] = num(c.fadeOutTension);
   if (c.fadeInManual) jc.object["fadeInManual"] = boolean(true);
   if (c.fadeOutManual) jc.object["fadeOutManual"] = boolean(true);
+  if (!c.name.empty()) jc.object["name"] = str(c.name);  // R07-01
   if (c.fadeInDeclick != 0) jc.object["fadeInDeclick"] = num(c.fadeInDeclick);  // J-43
   if (c.fadeOutDeclick != 0) jc.object["fadeOutDeclick"] = num(c.fadeOutDeclick);
   // K-112b3: pattern clip playback (written only when set).
@@ -631,6 +632,7 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.fadeOutDeclick = static_cast<uint8_t>(jsonInt<int>(std::clamp(jc.num("fadeOutDeclick", 0), 0.0, 7.0)));
   c.fadeInManual = flag(jc, "fadeInManual");
   c.fadeOutManual = flag(jc, "fadeOutManual");
+  c.name = jc.text("name");  // R07-01
   c.playTranspose = static_cast<int>(std::lround(std::clamp(jc.num("playTranspose", 0), -48.0, 48.0)));  // K-112b3
   c.playVelocity = static_cast<int>(std::lround(std::clamp(jc.num("playVelocity", 0), -127.0, 127.0)));
   c.playDelay = static_cast<Tick>(std::llround(std::clamp(jc.num("playDelay", 0), -1.0e6, 1.0e6)));
@@ -892,7 +894,9 @@ void trackExtrasToJson(const PlaylistTrack& t, Json& jt) {
   if (t.syncStart != LaunchGrid::Now) jt.object["syncStart"] = num(static_cast<int>(t.syncStart));
   if (t.groupSize > 0) jt.object["groupSize"] = num(t.groupSize);
   if (t.folded) jt.object["folded"] = boolean(true);
+  if (t.gridFolded) jt.object["gridFolded"] = boolean(true);  // K-112c (checkpoint 52)
   if (t.locked) jt.object["locked"] = boolean(true);
+  if (t.takeLanes) jt.object["takeLanes"] = boolean(true);  // K-123
   if (t.flIcon) jt.object["flIcon"] = num(t.flIcon);  // J-39
   if (t.icon || t.flIcon) jt.object["icon"] = num(t.icon);        // J-211
   // PL-08: track mode and links.
@@ -907,6 +911,7 @@ void trackExtrasToJson(const PlaylistTrack& t, Json& jt) {
     jt.object["lane"] = std::move(jl);
   }
   if (t.autoMode != 1) jt.object["autoMode"] = num(t.autoMode);  // K-112B: Read is the default
+  if (t.sound != kNoId) jt.object["sound"] = num(t.sound);         // K-112B (R08-07)
 }
 
 void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
@@ -917,7 +922,9 @@ void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
   t.syncStart = static_cast<LaunchGrid>(e("syncStart", 0, static_cast<int>(LaunchGrid::Count)));
   t.groupSize = jsonInt<int>(std::clamp(jt.num("groupSize", 0), 0.0, static_cast<double>(kMaxPlaylistTracks)));
   t.folded = flag(jt, "folded");
+  t.gridFolded = flag(jt, "gridFolded");
   t.locked = flag(jt, "locked");
+  t.takeLanes = flag(jt, "takeLanes");  // K-123
   t.flIcon = jsonInt<int>(std::clamp(jt.num("flIcon", 0), 0.0, 65535.0));  // J-39
   t.icon = iconFromJson(jt, t.flIcon);                                         // J-211
   t.mode = static_cast<TrackMode>(e("mode", 0, static_cast<int>(TrackMode::Count)));  // PL-08 (stale links dropped after load)
@@ -930,6 +937,7 @@ void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
     t.laneShown = flag(*jl, "shown");
   }
   t.autoMode = static_cast<uint8_t>(e("autoMode", 1, 5));  // K-112B: Off, Read, Touch, Latch, Write
+  t.sound = jsonInt<ObjectId>(std::max(0.0, jt.num("sound", 0)));  // K-112B (R08-07)
 }
 
 Json clipToJson(const Clip& c) {
@@ -951,11 +959,27 @@ void songExtrasToJson(const Song& s, Json& j) {
     if (s.cycleOn) jc.object["on"] = boolean(true);
     j.object["cycle"] = std::move(jc);
   }
+  if (s.projectEnd > 0) j.object["projectEnd"] = num(static_cast<double>(s.projectEnd));  // K-112B (checkpoint 47)
+  if (!s.pluginWindows.empty()) {  // K-297 (round 9): [[owner, slot], ...] (slot -1: the instrument)
+    Json jw = Json::makeArray();
+    for (const Song::OpenPluginWindow& w : s.pluginWindows) {
+      Json e = Json::makeArray();
+      e.array.push_back(num(static_cast<double>(w.owner)));
+      e.array.push_back(num(w.slot));
+      jw.array.push_back(std::move(e));
+    }
+    j.object["pluginWindows"] = std::move(jw);
+  }
   if (s.live.areaEnd > 0 || !s.live.view.empty()) {
     Json jl = Json::makeObject();
     if (s.live.areaEnd > 0) jl.object["areaEnd"] = num(static_cast<double>(s.live.areaEnd));
     if (!s.live.view.empty()) jl.object["view"] = Json::makeString(s.live.view);  // N48-07 (only once saved from Clips)
     j.object["live"] = std::move(jl);
+  }
+  if (!s.smooth.library.empty()) {  // K-112D: the Smooth layout's Library pane, once set there
+    Json js = Json::makeObject();
+    js.object["library"] = Json::makeString(s.smooth.library);
+    j.object["smooth"] = std::move(js);
   }
   // Arrangements: written when there are several, or the single one was renamed.
   if (s.arrangements.size() > 1 || (s.arrangements.size() == 1 && s.arrangements[0].name != "Arrangement")) {
@@ -1009,10 +1033,27 @@ void songExtrasToJson(const Song& s, Json& j) {
 // After patterns, channels, automation clips and the current playlist: parked
 // clips get unique ids; clips whose content is gone are dropped.
 bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const Json&, ObjectId&)>& takeId, std::string* err) {
+  // K-297 (round 9): open plugin windows; one naming nothing in the song (or twice) is left out.
+  if (const Json* jw = j.find("pluginWindows"); jw && jw->is(Json::Type::Array)) {
+    for (const Json& e : jw->array) {
+      if (!e.is(Json::Type::Array) || e.array.size() < 2 || !e.array[0].is(Json::Type::Number) || !e.array[1].is(Json::Type::Number)) continue;
+      const double o = e.array[0].number, k = e.array[1].number;
+      if (!std::isfinite(o) || !std::isfinite(k) || o < 1 || k < -1 || k >= kEffectSlots) continue;
+      Song::OpenPluginWindow w{static_cast<ObjectId>(o), static_cast<int>(k)};
+      const MixerTrack* m = w.slot >= 0 ? s.mixerTrack(w.owner) : nullptr;
+      const bool exists = w.slot < 0 ? s.channel(w.owner) != nullptr
+                                     : m && w.slot < static_cast<int>(m->slots.size()) && !m->slots[static_cast<size_t>(w.slot)].plugin.type.empty();
+      if (exists && std::find(s.pluginWindows.begin(), s.pluginWindows.end(), w) == s.pluginWindows.end()) s.pluginWindows.push_back(w);
+    }
+  }
   if (const Json* jl = j.find("live"); jl && jl->is(Json::Type::Object)) {
     s.live.areaEnd = std::max<Tick>(0, jsonTick(jl->num("areaEnd", 0)));
     s.live.view = jl->text("view", "");
     if (s.live.view != "grid" && s.live.view != "arrangement") s.live.view.clear();
+  }
+  if (const Json* js = j.find("smooth"); js && js->is(Json::Type::Object)) {  // K-112D
+    s.smooth.library = js->text("library", "");
+    if (s.smooth.library != "open" && s.smooth.library != "closed") s.smooth.library.clear();
   }
   if (const Json* jc = j.find("cycle"); jc && jc->is(Json::Type::Object)) {  // K-112b (R02-04)
     s.cycleStart = std::max<Tick>(0, jsonTick(jc->num("start", 0)));
@@ -1020,6 +1061,7 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
     s.cycleOn = s.cycleEnd > s.cycleStart && flag(*jc, "on");
     if (s.cycleEnd <= s.cycleStart) s.cycleStart = s.cycleEnd = 0;
   }
+  s.projectEnd = std::max<Tick>(0, jsonTick(j.num("projectEnd", 0)));  // K-112B (checkpoint 47)
   const Json* arr = j.find("arrangements");
   if (!arr || !arr->is(Json::Type::Array) || arr->array.empty()) return true;
   const int cur = jsonInt<int>(std::clamp(j.num("currentArrangement", 0), 0.0, static_cast<double>(arr->array.size() - 1)));
@@ -1174,7 +1216,10 @@ Json mixerTrackToJson(const MixerTrack& m) {
   if (m.input >= 0) jm.object["input"] = num(m.input);
   if (!m.inputStereo) jm.object["inputStereo"] = boolean(false);
   if (m.monitor != 0) jm.object["monitor"] = num(m.monitor);
+  if (m.inputTrim != 0.0f) jm.object["inputTrim"] = num(m.inputTrim);  // K-123
+  if (m.inputInvert) jm.object["inputInvert"] = boolean(true);
   if (m.armed) jm.object["armed"] = boolean(true);
+  if (m.recordSafe) jm.object["recordSafe"] = boolean(true);  // K-123
   if (m.recPoint != 0) jm.object["recPoint"] = num(m.recPoint);  // J-31
   if (m.soloAlone) jm.object["soloAlone"] = boolean(true);
   if (m.separator) jm.object["separator"] = boolean(true);  // J-39
@@ -1558,7 +1603,11 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
   m.input = jsonInt<int>(std::clamp(jm.num("input", -1), -1.0, static_cast<double>(kMaxInputChannels - 1)));
   if (const Json* st = jm.find("inputStereo"); st && st->is(Json::Type::Bool)) m.inputStereo = st->boolean;
   m.monitor = jsonInt<uint8_t>(std::clamp(jm.num("monitor", 0), 0.0, static_cast<double>(static_cast<int>(InputMonitor::Count) - 1)));
-  m.armed = flag(jm, "armed");
+  m.recordSafe = flag(jm, "recordSafe");  // K-123
+  m.armed = flag(jm, "armed") && !m.recordSafe;
+  m.inputTrim = static_cast<float>(std::clamp(jm.num("inputTrim", 0), static_cast<double>(kInputTrimMin), static_cast<double>(kInputTrimMax)));  // K-123
+  if (!std::isfinite(m.inputTrim)) m.inputTrim = 0.0f;
+  m.inputInvert = flag(jm, "inputInvert");
   m.soloAlone = flag(jm, "soloAlone");  // J-31
   m.separator = flag(jm, "separator");  // J-39
   m.locked = flag(jm, "locked");

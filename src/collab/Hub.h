@@ -57,6 +57,7 @@ struct InviteInfo {
   crypto::Key secret{};
   int64_t expires = 0;    // unix seconds
   std::string ice;        // the inviter's ICE description
+  char nat = 'u';         // K-312: the inviter's router: 'c' cone, 's' symmetric, 'u' unknown (Fabric::natType)
   std::string appVersion;
   bool expired(int64_t nowSec) const { return nowSec > expires; }
   // K-174: a join that is waiting stops once the invite expired by this computer's clock with
@@ -83,6 +84,7 @@ char codeKind(const std::string& text);
 struct ReplyInfo {
   std::string inviteId;  // hex, the invite it answers
   std::string ice;       // the invitee's ICE description
+  char nat = 'u';        // K-312: the invitee's router (as InviteInfo::nat)
 };
 std::string makeReplyCode(const ReplyInfo& r);
 bool parseReplyCode(const std::string& code, ReplyInfo& out, std::string* err = nullptr);
@@ -90,12 +92,18 @@ bool parseReplyCode(const std::string& code, ReplyInfo& out, std::string* err = 
 // a router port mapping, a relay or a global IPv6 address); without one only computers on the
 // same network can connect.
 bool descriptionHasPublicPath(const std::string& ice);
+// K-312: two routers that can't reach each other directly: a symmetric NAT on one side and a
+// known router type on the other, with no port that lets anything in (a router port mapping
+// or a TURN relay in either description) and no IPv6 on both. Hole punching then always fails,
+// so the join says so at once instead of trying for 15 minutes.
+bool directImpossible(char natA, const std::string& iceA, char natB, const std::string& iceB);
 // K-174: why a join did not connect, in plain words (the join window), and what to try.
 enum class JoinProblem {
   NoAnswer,         // ICE never connected: routers or a firewall block the direct path
   NoPublicAddress,  // this computer found no public address: same network only
   NoHandshake,      // connected, but the inviter's Gridline did not answer (invite closed)
   Expired,          // the invite expired while waiting
+  DirectImpossible, // K-312: both routers known, one symmetric, nothing opens a way in
 };
 std::string joinProblemText(JoinProblem p, const std::string& inviter);
 std::string joinProblemHelp(JoinProblem p);
@@ -149,6 +157,10 @@ class Hub {
     int attempts = 0;           // fresh connection attempts since the reply
     bool codeChanged = false;   // this computer's public address changed: the code was renewed
     bool publicAddress = true;  // the code offers a public way in (else: same network only)
+    // K-312: this router is symmetric (a warning with the code), or their reply code shows
+    // the two routers can't connect directly (natBlocked)
+    std::string natNote;
+    bool natBlocked = false;
     // GitHub #42: their reply code offers a public way in (else their computer found no public
     // address, so only the same network can work, whatever this side does)
     bool peerPublicAddress = true;

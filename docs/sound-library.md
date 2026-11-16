@@ -27,8 +27,10 @@ are cached with the index, so a file is analysed once, and again only when it ch
 
 ## Filtering
 
-The sound kinds show up as tags (in the tag chips of the browser's filter rows, and for `tag:`),
-and the search field takes these filters beside the ones in [loop-files.md](loop-files.md):
+The sound kinds show up as tags (in the tag chips of the browser's filter rows, and for `tag:`). In
+the Clips layout the chips sit over the browser's file lists; in Studio and Smooth they appear on the
+browser's **Sounds** tab and while you search, and a lit chip clears its filter again. The
+search field takes these filters beside the ones in [loop-files.md](loop-files.md):
 
 | Filter | Finds |
 | --- | --- |

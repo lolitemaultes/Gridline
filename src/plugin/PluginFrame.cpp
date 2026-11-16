@@ -7,14 +7,20 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <atomic>
+#include <functional>
+#include <ctime>
 #include <filesystem>
+#include <mutex>
 #include <string>
+#include <thread>
 #if defined(__APPLE__)
 #define GL_SILENCE_DEPRECATION
 #include <OpenGL/gl3.h>
 #else
 #if defined(_WIN32)
 #include <windows.h>  // GL/gl.h needs its APIENTRY / WINGDIAPI
+#include <shellapi.h>  // K-308: ShellExecuteW (the update notice opens the download page)
 #endif
 #include <GL/gl.h>
 #endif
@@ -34,6 +40,9 @@
 #include "../app/Windows.h"
 #include "../core/I18n.h"
 #include "../core/Platform.h"
+#include "../core/UpdateShared.h"
+#include "../host/net/Http.h"
+#include "GridlineVersion.h"
 #include "../engine/ChannelIns.h"
 #include "../engine/Sample.h"
 #include "../packs/PacksUi.h"
@@ -138,6 +147,152 @@ void drawHostLink(Instance& inst) {
   }
   ImGui::End();
 }
+
+// K-308: the plugins' update notice. One check a day between every plugin instance in every host
+// and the app (core/UpdateShared.h: a shared state file and a lock), made on a worker thread, never
+// on the audio or UI thread. It reads the latest GitHub release only, sends nothing personal, can
+// be turned off in the plugin's menu, and only ever offers a Download button that opens the
+// browser: nothing installs by itself. The worker is joined when the plugin library unloads (a
+// request ends within its 15 s timeout), so no thread outlives the code it runs.
+namespace updates {
+
+struct Check {
+  std::mutex m;
+  update::shared::State st;  // the latest answer (guarded by m)
+  bool have = false;
+  std::atomic<bool> busy{false};
+  double startedAt = -1e18;  // this process's last automatic check
+  std::thread worker;
+  ~Check() {
+    if (worker.joinable()) worker.join();
+  }
+};
+Check& check() {
+  static Check c;
+  return c;
+}
+
+const char* envOf(const char* k) { return std::getenv(k); }
+
+std::string stateDir() {
+#if defined(_WIN32)
+  return update::shared::configDir(envOf, true);
+#else
+  return update::shared::configDir(envOf, false);
+#endif
+}
+
+double wallNow() { return static_cast<double>(std::time(nullptr)); }
+
+// Starts a check when none ran in this process today (`forced`: "Check now", still one at a time).
+void kick(bool forced) {
+  Check& c = check();
+  if (update::shared::disabledByEnv(envOf) && !forced) return;
+  const double now = wallNow();
+  if (!forced && now - c.startedAt < update::shared::kDay) return;
+  if (c.busy.exchange(true)) return;
+  if (c.worker.joinable()) c.worker.join();  // the last one has finished (busy was false)
+  c.startedAt = now;
+  c.worker = std::thread([forced, now] {
+    Check& k = check();
+    const update::shared::State st =
+        update::shared::runCheck(stateDir(), now, envOf, http::fetcher(), GRIDLINE_VERSION, update::currentTarget(), forced);
+    {
+      std::lock_guard<std::mutex> lock(k.m);
+      k.st = st;
+      k.have = true;
+    }
+    k.busy = false;
+  });
+}
+
+update::shared::State snapshot(bool* have) {
+  Check& c = check();
+  std::lock_guard<std::mutex> lock(c.m);
+  *have = c.have;
+  return c.st;
+}
+
+// Writes a change the person made (reminder, skip, automatic checks) to the shared state.
+void change(const std::function<void(update::shared::State&)>& f) {
+  Check& c = check();
+  const std::string dir = stateDir();
+  update::shared::State s;
+  update::shared::read(dir, s);
+  f(s);
+  update::shared::write(dir, s);
+  std::lock_guard<std::mutex> lock(c.m);
+  f(c.st);
+  c.have = true;
+}
+
+// The system browser, for Gridline's own release pages only.
+void openPage(const std::string& url) {
+  if (url.rfind("https://github.com/lolitemaultes/Gridline/", 0) != 0) return;
+#if defined(_WIN32)
+  const int n = MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, nullptr, 0);
+  std::wstring w(static_cast<size_t>(n > 0 ? n : 1), L'\0');
+  if (n > 0) MultiByteToWideChar(CP_UTF8, 0, url.c_str(), -1, w.data(), n);
+  ShellExecuteW(nullptr, L"open", w.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+#if defined(__APPLE__)
+  const std::string exe = "/usr/bin/open";
+#else
+  std::string exe;
+  if (const char* path = std::getenv("PATH"))
+    for (std::string rest = path; !rest.empty() && exe.empty();) {
+      const size_t colon = rest.find(':');
+      const std::string dir = rest.substr(0, colon);
+      rest = colon == std::string::npos ? std::string() : rest.substr(colon + 1);
+      std::error_code ec;
+      if (!dir.empty() && fs::exists(fs::path(dir) / "xdg-open", ec)) exe = (fs::path(dir) / "xdg-open").string();
+    }
+  if (exe.empty()) return;
+#endif
+  platform::Process p;
+  if (p.start(exe, {exe, url})) p.wait(5);  // both hand the page to the browser and return at once
+#endif
+}
+
+// The items in the plugin's menu.
+void menuItems() {
+  bool have = false;
+  const update::shared::State st = snapshot(&have);
+  ImGui::Separator();
+  bool autoCheck = !have || st.pluginsAuto;
+  if (ImGui::MenuItem(i18n::tr("Check for updates once a day"), nullptr, &autoCheck))
+    change([autoCheck](update::shared::State& s) { s.pluginsAuto = autoCheck; });
+  if (ImGui::MenuItem(i18n::tr("Check for updates now"), nullptr, false, !check().busy)) kick(true);
+}
+
+// The notice on the logo row: the new version, Download, Later and Skip. Draws nothing (and takes
+// no room) while there is no newer version.
+void notice(bool mini) {
+  bool have = false;
+  const update::shared::State st = snapshot(&have);
+  if (!have || !update::shared::shouldShow(st, GRIDLINE_VERSION, wallNow())) return;
+  const ImVec2 row = ImGui::GetCursorScreenPos();
+  char text[96];
+  std::snprintf(text, sizeof text, i18n::tr("Version %s is out."), st.latest.c_str());
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextDisabled("%s", text);
+  ImGui::SameLine(0, 8);
+  if (ImGui::SmallButton(i18n::tr("Download"))) {
+    const std::string url = mini ? st.miniUrl : st.suiteUrl;
+    openPage(url.empty() ? st.page : url);
+  }
+  if (ImGui::IsItemHovered()) ui::Hint("Opens the download page in your browser. Nothing is installed by itself.");
+  ImGui::SameLine(0, 4);
+  if (ImGui::SmallButton(i18n::tr("Later"))) change([](update::shared::State& s) { s.remindAfter = wallNow() + 7 * update::shared::kDay; });
+  ImGui::SameLine(0, 4);
+  if (ImGui::SmallButton(i18n::tr("Skip this version"))) {
+    const std::string v = st.latest;
+    change([v](update::shared::State& s) { s.skipVersion = v; });
+  }
+  ImGui::SetCursorScreenPos(row);  // the logo keeps its place on the same row
+}
+
+}  // namespace updates
 
 // J-130: the suite's Tile logo in a Gridline Suite editor, right-aligned on
 // its own row under the editor, `height` logical pixels tall; the suite's name
@@ -251,12 +406,16 @@ void Frame::drawSingle(int winW, int winH, int fbW, int fbH) {
       drawChannelEnvelope(app, owner);
     } else {
       if (target.isChannel() && info.type == "gl.sampler") drawSampleRow(app, owner);
-      menuButton("suitemenu", target.isChannel() ? "Instrument menu: presets, state" : "Effect menu: presets, state",
-                 [&app, target]() { pluginWindowMenu(app, target.owner, target.slot); });
+      menuButton("suitemenu", target.isChannel() ? "Instrument menu: presets, state" : "Effect menu: presets, state", [&app, target]() {
+        pluginWindowMenu(app, target.owner, target.slot);
+        updates::menuItems();  // K-308
+      });
       ImGui::SameLine(0, 8);
       drawPluginHeader(app, target);
       drawPluginBody(app, target, width);
     }
+    updates::kick(false);  // K-308: at most once a day, on a worker thread
+    updates::notice(info.type.rfind("gl.mini", 0) == 0);
     drawSuiteLogo(app, info.type.rfind("gl.mini", 0) == 0 ? "Gridline Suite Mini" : "Gridline Suite", 14.0f);
     // The editor's natural size: auto-resize clamps the window to the display,
     // which is the view at the current zoom, so a larger editor would never be

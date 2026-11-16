@@ -20,6 +20,10 @@
 #include "../../core/TrackerData.h"
 #include "../../engine/Generators.h"
 
+namespace gl {
+class App;
+}
+
 namespace gl::packs::trackerpack {
 
 namespace trk = gl::tracker;
@@ -103,6 +107,32 @@ void deleteEnvPoint(trk::Envelope& env, int index);
 // K-129: a copy of slot `from` in the first free slot (its file, settings, cuts; no keys): the
 // new slot, -1 when none is free.
 int duplicateSample(Edit& e, int from);
+// K-106 (the classic "Copy smp."): `src`'s slot `sslot` into `dst`'s slot `dslot` (file, settings,
+// name, cuts, bit depth; the key map stays, or every key plays it in an instrument with no sample).
+// `dslot`, or -1 when the source slot is empty.
+int copySampleInto(Edit& dst, int dslot, const Edit& src, int sslot);
+// K-106 (the classic "Xchg smp."): two slots trade their samples, the key map stays.
+void exchangeSampleData(Edit& e, int a, int b);
+// K-106: the file into slot `slot` (the Files screen's load into the selected sample): its keys,
+// the other samples and the instrument stay; an instrument with no sample takes it as addSample
+// does. The slot, -1 when nothing was loaded.
+int replaceSample(Edit& e, int slot, const std::string& path, int32_t frames, double rate, const std::string& name);
+// K-106: the Clean up box's sample parts (the classic Trim): samples no key plays go (the rest move
+// up in order, the key map following), looped samples end at their loop's end (the sample's end
+// point; the file stays), samples play at 8 bits. Counts of each.
+struct SampleTrim {
+  int removed = 0, trimmed = 0, eightBit = 0;
+  int total() const { return removed + trimmed + eightBit; }
+};
+SampleTrim trimSamples(Edit& e, bool unused, bool afterLoop, bool eightBits);
+// The same on a Tracker Sampler's state: false (and nothing changed) for other instruments or when
+// nothing would change.
+bool trimSampleState(PluginState& st, bool unused, bool afterLoop, bool eightBits, SampleTrim* counts = nullptr);
+// The bytes of sample data the instrument plays (each sample's played frames, channels, 2 bytes a
+// value or 1 at 8 bits), for the Clean up box's size estimate.
+long long sampleBytes(const PluginState& st);
+// R11-07: a Tracker Sampler whose own sound is silent (its notes go to MIDI with Mute on).
+bool midiMuted(const PluginState& st);
 // A sample value as an 8-bit sample holds it (256 steps).
 inline float eightBitValue(float v) {
   const float q = std::floor(v * 128.0f + 0.5f);
@@ -170,6 +200,55 @@ bool waveMinimise(Wave& w);                               // drops what follows 
 // Writes the wave as a new file in `dir` (named after `name` and its content) and points the slot
 // at it with the wave's points. Returns the path ("" when it could not be written).
 std::string commitWave(Edit& e, int slot, const Wave& w, const std::string& dir, const std::string& name);
+
+// ---- K-106: the Tracker layout's header tools (its scope box) on a channel's Tracker Sampler ----
+// The classic sample editor's extension (range tools) and instrument editor's extension (MIDI)
+// work on the current instrument. Here they act on the sample its editor has selected (the first
+// one when the editor never opened) and on the range dragged out on its waveform there, with the
+// editor's own edits (one undo step each, the edited audio written as a new file).
+struct HeaderView {
+  bool tracker = false;        // the channel plays a Tracker Sampler
+  int slot = -1, samples = 0;  // the selected slot (-1: no sample) and how many there are
+  std::string name;
+  int32_t frames = 0;
+  double rate = 44100;
+  Span range;                  // empty: no range (the tools take the whole sample)
+  bool looped = false;
+  int32_t clipFrames = 0;      // the sample clipboard (0: empty)
+  MidiSettings midi;
+};
+HeaderView headerView(App& a, ObjectId channel);
+enum class HeaderEdit { Reverse, Normalise, FadeIn, FadeOut, FixDc, Silence, Crop, Delete, Cut, Copy, Paste, TrimLoop, SelectAll, ClearRange, EmptyClipboard };
+bool headerEdit(App& a, ObjectId channel, HeaderEdit what);
+// Another sample of the instrument (the next present slot in direction `d`).
+void headerStepSample(App& a, ObjectId channel, int d);
+// The edits that ask for values first ("volume", "resample", "echo", "mix", "xfade"): opens one in
+// the current window; headerPopups draws them there (each frame the tools show).
+void headerOpenPopup(const char* which);
+void headerPopups(App& a, ObjectId channel);
+// The MIDI settings (`field` merges the steps of one control into one undo step).
+void headerSetMidi(App& a, ObjectId channel, const MidiSettings& m, const char* label, int field);
+// K-106: the Files screen's sample load: the file into the selected sample slot (an instrument with
+// no sample takes it as its first), one undo step. The slot, or -1 (not a Tracker Sampler, or the
+// file has no audio).
+int headerLoadSample(App& a, ObjectId channel, const std::string& path);
+// K-106: the header band's sample list: each present sample's slot and name (the name it was given
+// or loaded as, never an edit's file name), the selected slot, and whether a built-in sound plays
+// while there is none. `tracker` false: not a Tracker Sampler.
+struct HeaderSamples {
+  bool tracker = false;
+  int sel = -1, sound = 0;
+  std::vector<std::pair<int, std::string>> list;
+};
+HeaderSamples headerSamples(App& a, ObjectId channel);
+void headerSelectSample(App& a, ObjectId channel, int slot);
+// K-106 (SX-13, SX-15): the source instrument's slot `srcSlot` over the current instrument's
+// selected sample (one undo step), and two of the current instrument's samples trading places
+// (the selected one and `srcSlot`). False, with the reason on the status line, when nothing changed.
+bool headerCopySample(App& a, ObjectId channel, ObjectId srcChannel, int srcSlot);
+bool headerExchangeSamples(App& a, ObjectId channel, int srcSlot);
+// The name of a channel's sample slot ("" when the slot is empty or it is not a Tracker Sampler).
+std::string headerSampleName(App& a, ObjectId channel, int slot);
 
 // K-129: the MIDI pitch of key `key` (0 = C0 .. 95 = B7) of the editor's key strip.
 inline int stripKeyPitch(int key) { return key + 1 + trk::kPitchOffset; }

@@ -170,6 +170,8 @@ bool Segmented(const char* id, const char* const* labels, int count, int* index,
 bool ParamKnob(const char* id, ParamId pid, float radius = 14.0f, const char* label = nullptr, bool bipolar = false);
 // Vertical fader bound to a parameter.
 bool ParamFader(const char* id, ParamId pid, ImVec2 size);
+// R07-08: the value a control shows now (automation playing, a Read curve when stopped), false: its stored one.
+bool shownParamValue(ParamId pid, double& v);
 // J-83: wheel routing (core/WheelRoute.h). Inside a scope whose pane scrolls
 // (the thin mixer, or Settings > Interface "Mouse wheel over mixer controls:
 // scroll") the plain wheel over a knob / fader / slot scrolls the pane; the
@@ -226,6 +228,10 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
 // The step of the next Knob (1: whole numbers): its value lands on min + k * step
 // and a wheel notch moves one step (choice knobs always step by one choice).
 void SetNextKnobStep(double step);
+// K-112D: the next Knob draws its face with `fn` instead of the style's (the control, its menus and
+// gestures stay the same). fn gets the centre, radius, the normalized value, bipolar, hovered and held.
+using KnobFaceFn = void (*)(ImDrawList* dl, ImVec2 c, float radius, float norm, bool bipolar, bool hov, bool act);
+void SetNextKnobFace(KnobFaceFn fn);
 // The one drag path of every knob (Knob, ParamFader and the editors' own dials):
 // right after the control's item, KnobDragPos(norm) gives where the drag has got
 // to while that item is dragged (normalized, unrounded, from where it was grabbed),

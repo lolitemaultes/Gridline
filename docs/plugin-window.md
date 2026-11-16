@@ -101,6 +101,29 @@ That window has no channel strip, so the slide never moves or resizes a native p
 hosted plugin shown in Gridline's own panel (generic editor, no interface, sandbox placeholder)
 is drawn by Gridline in the channel window and slides like any built-in editor.
 
+## Typing a value
+
+Right-click any knob, slider or parameter in a Gridline plugin editor (in the app, and in the
+plugins as VST3, CLAP and AU) and choose **Type a value...** (a double-click on a control that sits
+at its default opens the same box). The box shows the value with its unit; type the new one the
+way you would say it:
+
+| Type | For |
+| --- | --- |
+| `2.5k`, `2.5 kHz`, `440` | frequencies |
+| `-6`, `-6 dB` | levels and gains |
+| `250 ms`, `0.5 s` | times |
+| `1/4`, `1/8 dotted`, `1/16 t`, `2 bars`, `1.5 beats` | delay times (at the song tempo when the time is free) |
+| `50%` | percent controls; on other controls, that far along the travel |
+| `C4`, `A#3`, `Bb3` | notes |
+| `50% left`, `30 R`, `centre` | pan |
+| `4:1` | ratios |
+| `x1.5` | multipliers |
+| a name, `on`, `off` | choices and switches |
+
+Enter applies the value as one undo step, Escape cancels, and a value beyond the range stops at
+its end. A text that is no value for that control leaves the box open with a note.
+
 ## Magnetic divisions on knobs
 
 A knob or slider can carry soft magnets (`pui::nextMagnets(values)` before it is drawn, in the

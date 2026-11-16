@@ -24,7 +24,10 @@ void closeChordEditor(App& a);  // K-112 (dev): keeps the changes, as its close 
 void patternsItems(App& a);  // Patterns: pattern groups
 void toolsItems(App& a);     // Tools: audio logger, cancel recording
 void optionsItems(App& a);   // Options: quantized jumps
-void recordingOptionItems(App& a);  // the record options menu: audio take handling (inside an open menu)
+void recordingOptionItems(App& a);   // K-123: the record options menu's groups (inside an open menu): audio takes
+void recordingRollItems(App& a);     // pre-roll and post-roll
+void recordingMonitorItems(App& a);  // monitoring of the armed tracks
+void recordingControlsMenu(App& a);  // Record controls >: when they open and how they show
 
 // ---- context menus ----
 void channelStepItems(App& a, ObjectId channel);                  // channel menu > Steps: step loop, truncated swing
@@ -58,6 +61,8 @@ void songJump(App& a, Tick tick);
 int incomingPitch(App& a, int pitch);
 // "Cancel recording" was chosen: the session's takes are discarded (AudioRecordUi).
 bool takeCancelRequested();
+// Stops and discards the takes being recorded (Cancel recording; K-123: the card's Discard this take).
+void cancelRecording(App& a);
 
 }  // namespace j31
 }  // namespace gl

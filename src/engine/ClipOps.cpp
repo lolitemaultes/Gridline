@@ -10,6 +10,7 @@
 #include "../core/TrackReceipt.h"
 #include "../packs/edison/edison.h"
 #include "ClipSource.h"
+#include "LoopFile.h"
 #include "Render.h"
 #include "Sample.h"
 #include "TimeStretch.h"
@@ -296,26 +297,20 @@ std::vector<ObjectId> sliceClipAtGrid(Song& song, ObjectId id, Tick grid) {
   return out;
 }
 
-std::vector<ObjectId> sliceClipAtTransients(Song& song, ObjectId id, double sensitivity) {
-  const Clip* c = song.clip(id);
-  SamplePtr smp;
-  double a = 0, b = 0;
-  if (!c || !sourceWindow(song, *c, smp, a, b)) return {};
-  ed::Audio au = ed::fromSample(*smp);
-  const Clip base = *c;
+namespace {
+
+// Cuts an audio clip where its source plays the given file frames (frames of `smp`,
+// in file order). Returns the ids of all pieces (the original first).
+std::vector<ObjectId> cutAtSourceFrames(Song& song, ObjectId id, const SamplePtr& smp, const std::vector<int64_t>& frames) {
+  const Clip base = *song.clip(id);
   const bool rev = clipPlaysReversed(*song.channel(base.source), base);
-  // K-85: the window is in the clip's direction; reversed, it reads the file from its last frame back.
   const double last = static_cast<double>(smp->frames() - 1) / smp->sampleRate;
-  const double fa = rev ? std::max(0.0, last - b) : a, fb = rev ? last - a : b;
-  const auto r0 = static_cast<int64_t>(std::llround(fa * smp->sampleRate));
-  const auto r1 = std::min<int64_t>(au.frames(), static_cast<int64_t>(std::llround(fb * smp->sampleRate)));
-  std::vector<int64_t> on = ed::detectOnsets(au, {r0, r1}, sensitivity);
-  // Onsets → song ticks (the clip's mapping is monotonic: invert by bisection).
+  // Frames -> song ticks (the clip's mapping is monotonic: invert by bisection).
   TempoMap map;
   map.build(song);
   const Tick len = song.clipLength(base);
   std::vector<Tick> cuts;
-  for (int64_t f : on) {
+  for (int64_t f : frames) {
     double src = static_cast<double>(f) / smp->sampleRate;
     if (rev) src = last - src;  // reversed clips read from the end
     double lo = static_cast<double>(base.start), hi = static_cast<double>(base.start + len);
@@ -337,6 +332,42 @@ std::vector<ObjectId> sliceClipAtTransients(Song& song, ObjectId id, double sens
     cur = r;
   }
   return out;
+}
+
+}  // namespace
+
+std::vector<ObjectId> sliceClipAtTransients(Song& song, ObjectId id, double sensitivity) {
+  const Clip* c = song.clip(id);
+  SamplePtr smp;
+  double a = 0, b = 0;
+  if (!c || !sourceWindow(song, *c, smp, a, b)) return {};
+  ed::Audio au = ed::fromSample(*smp);
+  const bool rev = clipPlaysReversed(*song.channel(c->source), *c);
+  // K-85: the window is in the clip's direction; reversed, it reads the file from its last frame back.
+  const double last = static_cast<double>(smp->frames() - 1) / smp->sampleRate;
+  const double fa = rev ? std::max(0.0, last - b) : a, fb = rev ? last - a : b;
+  const auto r0 = static_cast<int64_t>(std::llround(fa * smp->sampleRate));
+  const auto r1 = std::min<int64_t>(au.frames(), static_cast<int64_t>(std::llround(fb * smp->sampleRate)));
+  return cutAtSourceFrames(song, id, smp, ed::detectOnsets(au, {r0, r1}, sensitivity));
+}
+
+std::vector<int64_t> fileSliceFrames(const Sample& smp) {
+  std::vector<int64_t> out;
+  loopfile::Info li;
+  if (smp.path.empty() || !loopfile::read(smp.path, li) || li.slices.size() < 2) return out;
+  // The file's frames at its own rate; the decoded sample may run at another one.
+  const double k = li.sampleRate > 0 ? smp.sampleRate / li.sampleRate : 1.0;
+  for (const auto& sl : li.slices)
+    if (sl.start > 0) out.push_back(static_cast<int64_t>(std::llround(static_cast<double>(sl.start) * k)));
+  return out;
+}
+
+std::vector<ObjectId> sliceClipAtFileSlices(Song& song, ObjectId id) {
+  const Clip* c = song.clip(id);
+  SamplePtr smp;
+  double a = 0, b = 0;
+  if (!c || !sourceWindow(song, *c, smp, a, b)) return {};
+  return cutAtSourceFrames(song, id, smp, fileSliceFrames(*smp));
 }
 
 int fitClipToTempo(Song& song, ObjectId id) {

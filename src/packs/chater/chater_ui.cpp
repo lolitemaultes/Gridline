@@ -415,7 +415,7 @@ void knobMenu(Ctx& c) {
         dl->AddText(fMono(), 11, ImVec2(p0.x + w - 9 - tw, p0.y + 7), L.ink, vs.c_str());
         ImGui::Dummy(ImVec2(w, 30));
       }
-      if (ImGui::MenuItem(tr("Type in value"), "Enter")) c.u.typeParam = k;
+      if (ImGui::MenuItem(tr("Type a value..."), "Enter")) c.u.typeParam = k;
       if (ImGui::MenuItem(tr("Reset to default"), display(k, d.def).c_str(), false, !d.isDefault(val))) setParam(c, k, d.def);
       if (ImGui::MenuItem(tr("Copy value"))) gClipboard = d.toNormalized(val), gHasClip = true;
       if (ImGui::MenuItem(tr("Paste value"), nullptr, false, gHasClip)) setParam(c, k, d.fromNormalized(gClipboard));

@@ -107,6 +107,8 @@ std::vector<Command> buildCommands() {
       {"view.transposeBox", G, N_("Transpose box"), {}},
       {"view.advancedEdit", G, N_("Advanced edit"), {}},
       {"view.cleanUp", G, N_("Clean up box"), {}},
+      {"view.midiBox", G, N_("MIDI box"), {}},
+      {"view.sampleTools", G, N_("Sample tools box"), {}},
       {"help.trackerKeys", G, N_("Tracker help"), {}},
       {"view.settings", G, N_("Settings (MIDI page)"), {ch(K::F10)}},
       {"view.backToPlaylist", G, N_("Back to the playlist (from an editor or plugin window)"), {ch(K::Escape)}},  // K-124
@@ -117,6 +119,22 @@ std::vector<Command> buildCommands() {
       // K-297: no default key (Studio as before); the Tracks set (Smooth) gives it Cmd+W.
       {"window.close", G, N_("Close the front window"), {}},
       {"view.resetLayout", G, N_("Reset window layout"), {ch(K::H, C | S)}},
+      // K-237: the layout panes' tab strips (Ctrl+Tab stays the window switcher).
+      {"view.paneNextTab", G, N_("Next tab in the pane"), {ch(K::PageDown, C)}},
+      {"view.panePrevTab", G, N_("Previous tab in the pane"), {ch(K::PageUp, C)}},
+      {"view.reopenTab", G, N_("Reopen the last closed pane tab"), {ch(K::T, C | A)}},
+      // K-237: workspaces of the layout. Ctrl+1 .. 9 where the shortcut set leaves them free.
+      {"view.workspace1", G, N_("Workspace 1"), {ch(K::D1, C)}},
+      {"view.workspace2", G, N_("Workspace 2"), {ch(K::D2, C)}},
+      {"view.workspace3", G, N_("Workspace 3"), {ch(K::D3, C)}},
+      {"view.workspace4", G, N_("Workspace 4"), {ch(K::D4, C)}},
+      {"view.workspace5", G, N_("Workspace 5"), {ch(K::D5, C)}},
+      {"view.workspace6", G, N_("Workspace 6"), {ch(K::D6, C)}},
+      {"view.workspace7", G, N_("Workspace 7"), {ch(K::D7, C)}},
+      {"view.workspace8", G, N_("Workspace 8"), {ch(K::D8, C)}},
+      {"view.workspace9", G, N_("Workspace 9"), {ch(K::D9, C)}},
+      {"view.workspaceNext", G, N_("Next workspace"), {ch(K::PageDown, C | A)}},
+      {"view.workspacePrevious", G, N_("Previous workspace"), {ch(K::PageUp, C | A)}},
       {"help.shortcuts", G, N_("Keyboard shortcuts"), {ch(K::F1)}},
       // K-93: the command palette. Ctrl+K (Cmd+K on macOS) everywhere except the channel rack, whose
       // Ctrl+K stays the graph editor (the editor wins); Ctrl+Shift+P works there too. The logic set
@@ -149,12 +167,22 @@ std::vector<Command> buildCommands() {
       {"transport.prevMarker", G, N_("Go to the previous marker"), {}},
       {"transport.nextMarker", G, N_("Go to the next marker"), {}},
       {"transport.goToPosition", G, N_("Go to position..."), {}},
+      // Checkpoint 47: the reference's most used tracks-area keys (keys only in the Tracks set).
+      {"playlist.prevRegion", PL, N_("Select the previous region"), {}, true},
+      {"playlist.nextRegion", PL, N_("Select the next region"), {}, true},
+      {"playlist.prevTrack", PL, N_("Select the previous track"), {}, true},
+      {"playlist.nextTrack", PL, N_("Select the next track"), {}, true},
+      {"playlist.nudgeLeft", PL, N_("Nudge the selected regions left"), {}, true},
+      {"playlist.nudgeRight", PL, N_("Nudge the selected regions right"), {}, true},
+      {"playlist.loopRegion", PL, N_("Loop the selected regions on or off"), {}},
       // K-112c: new tracks (no key outside the Clips set, which gives them Ctrl+T and Ctrl+Shift+T).
       {"track.newAudio", G, N_("New audio track"), {}},
       {"track.newMidi", G, N_("New MIDI track"), {}},
       // N47-11: the Clips set's return track, detail bands and Session record keys (no key elsewhere).
       {"track.newReturn", G, N_("New return track"), {}},
       {"clips.insertMidiClip", G, N_("Insert MIDI clip"), {}},  // N49-07: Clips only (Cmd+Shift+M)
+      {"track.group", G, N_("Group tracks"), {}},      // checkpoint 51: Clips only (Cmd+G)
+      {"track.ungroup", G, N_("Ungroup tracks"), {}},  // checkpoint 51: Clips only (Cmd+Shift+G)
       {"view.detail", G, N_("Clip and device bands (show / hide)"), {}},
       {"transport.sessionRecord", G, N_("Session record"), {}},
       // ---- playlist ----
@@ -162,7 +190,7 @@ std::vector<Command> buildCommands() {
       {"playlist.selectAll", PL, N_("Select all clips"), {ch(K::A, C)}},
       {"playlist.deselect", PL, N_("Deselect"), {ch(K::D, C)}},
       {"playlist.copy", PL, N_("Copy clips"), {ch(K::C, C)}},
-      {"playlist.cut", PL, N_("Cut clips"), {}},  // R02-22: a key in the Tracks set only
+      {"playlist.cut", PL, N_("Cut clips"), {ch(K::X, C)}},  // R02-22; K-297 (round 8): Studio and Clips too (Edit > Cut shows it)
       {"playlist.paste", PL, N_("Paste clips"), {ch(K::V, C)}},
       {"playlist.duplicate", PL, N_("Duplicate selected clips"), {ch(K::B, C)}},
       {"playlist.merge", PL, N_("Merge selected clips"), {ch(K::G, C)}},
@@ -296,7 +324,10 @@ std::vector<Command> buildCommands() {
       {"stage.mute", ST, N_("Mute the selected tracks"), {ch(K::M)}},
       {"stage.solo", ST, N_("Solo the selected tracks"), {ch(K::S)}},
       {"stage.reset", ST, N_("Reset the position of the selected tracks"), {ch(K::D0)}},
-      {"stage.rename", ST, N_("Rename the focused track"), {ch(K::Enter)}},
+      // K-297 (round 9): no key of its own: F2 (Edit > Rename, every set's rename key) renames the
+      // focused track here too. Enter opened a rename prompt whenever the mixer in its Stage view had
+      // the keys (Studio and Clips), where Enter renames nothing else.
+      {"stage.rename", ST, N_("Rename the focused track"), {}},
       {"stage.selectAll", ST, N_("Select every track shown"), {ch(K::A, C)}},
       {"stage.deselect", ST, N_("Deselect tracks (keeps the focused one)"), {ch(K::D, C)}},
       {"stage.roomsPanel", ST, N_("Open or close the rooms column"), {ch(K::Backslash)}},
@@ -617,6 +648,8 @@ Rows liveRows() {
   set("track.newMidi", {ch(K::T, C | S)});
   set("track.newReturn", {ch(K::T, C | A)});  // N47-11
   set("clips.insertMidiClip", {ch(K::M, C | S)});  // N49-07
+  set("track.group", {ch(K::G, C)});         // checkpoint 51
+  set("track.ungroup", {ch(K::G, C | S)});
   set("view.detail", {ch(K::L, C | A)});
   set("transport.sessionRecord", {ch(K::F9, S)});
   // playlist
@@ -664,7 +697,14 @@ Rows logicRows(bool sep) {
   add("transport.forwardBar", {ch(K::Period)});
   add("options.metronome", {ch(K::K)});
   add("options.countIn", {ch(K::K, S)});
-  add("transport.songMode", {ch(K::L)});
+  add("transport.songMode", {});  // checkpoint 47: L loops the selected regions, as the reference's
+  add("playlist.loopRegion", {ch(K::L)});
+  add("playlist.prevRegion", {ch(K::Left)});
+  add("playlist.nextRegion", {ch(K::Right)});
+  add("playlist.prevTrack", {ch(K::Up)});
+  add("playlist.nextTrack", {ch(K::Down)});
+  add("playlist.nudgeLeft", {ch(K::Left, A)});
+  add("playlist.nudgeRight", {ch(K::Right, A)});
   // R01-07 / R01-15: as the reference's keys: B the browser on the left (the library), Y the Smart
   // controls, O the project's files, W the audio editor. The right pane's file browser has no key.
   add("view.browser", {});
@@ -761,6 +801,8 @@ Rows trackerRows() {
   add("view.transposeBox", {ch(K::T, C | A)});
   add("view.advancedEdit", {ch(K::A, C | A)});
   add("view.cleanUp", {ch(K::R, C | A)});
+  add("view.midiBox", {ch(K::J, C | A)});      // cp13: the MIDI box (the classic I.E.Ext)
+  add("view.sampleTools", {ch(K::K, C | A)});  // cp13: the Sample tools box (the classic S.E.Ext)
   // N-05, N-06: X, back to the main screen (every screen closes, the pattern page in front), in place of
   // F12; F11 (Project info) goes too: in the pattern the function keys jump rows, so the menus do
   // not show keys the pattern holds back. Project info stays in the File menu.

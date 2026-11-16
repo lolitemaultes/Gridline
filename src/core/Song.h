@@ -379,7 +379,10 @@ struct PlaylistTrack {
   // Folding: a track can hold the tracks below it as a group.
   int groupSize = 0;      // number of following tracks in this track's group (0 = not a group)
   bool folded = false;    // group collapsed in the playlist
+  bool gridFolded = false;  // K-112c (checkpoint 52, S01): the group collapsed in Clips' clip grid (each view folds on its own)
   bool locked = false;    // J-11: clips on the track cannot be edited
+  // K-123: the track shows its recorded takes as lanes under it (engine/TakeLanes.h).
+  bool takeLanes = false;
   int flIcon = 0;         // J-39 (FL interop): FL's icon number (0 = none), kept for export
   int icon = 0;           // J-211: Gridline track icon (core/TrackIconSet.h, 0 = none)
   // PL-08: track mode and its links (kNoId = none; ids that no longer exist count as none).
@@ -397,12 +400,16 @@ struct PlaylistTrack {
   // automation, Read plays it, Touch writes while a control is moved, Latch writes from the
   // first move until playback stops, Write writes from the start of playback.
   uint8_t autoMode = 1;
+  // K-112B (R08-07): the sound a track keeps in the Tracks layout once its last region is deleted
+  // (the reference's track keeps its channel strip and automation without regions). Only a track
+  // with no instrument or audio link of its own; other layouts ignore it (kNoId = none).
+  ObjectId sound = kNoId;
   bool operator==(const PlaylistTrack& o) const {
     return name == o.name && color == o.color && muted == o.muted && height == o.height && launch == o.launch &&
-           pad == o.pad && follow == o.follow && syncStart == o.syncStart && groupSize == o.groupSize && folded == o.folded &&
-           locked == o.locked && flIcon == o.flIcon && icon == o.icon && mode == o.mode && mixer == o.mixer && channel == o.channel &&
+           pad == o.pad && follow == o.follow && syncStart == o.syncStart && groupSize == o.groupSize && folded == o.folded && gridFolded == o.gridFolded &&
+           locked == o.locked && takeLanes == o.takeLanes && flIcon == o.flIcon && icon == o.icon && mode == o.mode && mixer == o.mixer && channel == o.channel &&
            laneShown == o.laneShown && laneSet == o.laneSet && laneOwner == o.laneOwner && laneIndex == o.laneIndex &&
-           autoMode == o.autoMode;
+           autoMode == o.autoMode && sound == o.sound;
   }
   bool liveDefaults() const {
     return launch == LaunchGrid::FourBeats && pad == PadMode::Trigger && follow == FollowMode::Loop && syncStart == LaunchGrid::Now;
@@ -415,6 +422,13 @@ struct LiveSettings {
   // from Clips, and then not written). View state: not part of the comparison (no undo step).
   std::string view;
   bool operator==(const LiveSettings& o) const { return areaEnd == o.areaEnd; }
+};
+
+// K-112D: the Smooth layout's window state, saved with the project as its reference saves its windows.
+// library: the Library pane "open" or "closed" ("" = never set from Smooth: it opens). View state: not
+// part of the comparison (no undo step), written only once set.
+struct SmoothView {
+  std::string library;
 };
 
 // --- arrangement: automation clips and song markers ---------------------------
@@ -507,6 +521,7 @@ enum class RecordPoint : uint8_t { Input = 0, PostEffects, PostFader, Count };
 // track is armed for recording, and whenever the transport is stopped.
 enum class InputMonitor : uint8_t { Auto = 0, On, Off, Count };
 inline constexpr int kMaxInputChannels = 16;  // device input channels the engine takes
+inline constexpr float kInputTrimMin = -24.0f, kInputTrimMax = 24.0f;  // K-123: MixerTrack::inputTrim (dB)
 // Strip EQ defaults (MixerTrack::eqFreq / eqQ).
 // (FL's strip EQ defaults: 5777 / 33145 / 55825 on its frequency table.)
 inline constexpr float kStripEqDefFreq[3] = {84.12763f, 1562.2952f, 9444.748f};
@@ -554,6 +569,13 @@ struct MixerTrack {
   bool inputStereo = true;
   uint8_t monitor = 0;  // InputMonitor
   bool armed = false;
+  // K-123: record safe: the track can't be armed (a finished take is protected). Song state,
+  // shared with collaborators.
+  bool recordSafe = false;
+  // K-123: the input's trim (dB, kInputTrimMin..kInputTrimMax) and polarity, applied before the
+  // meter, the monitoring and the recording (the track's own polarity switch acts after them).
+  float inputTrim = 0.0f;
+  bool inputInvert = false;
   // J-31: where disk recording taps the track (RecordPoint).
   uint8_t recPoint = 0;
   // J-31 alt solo: soloed on its own; tracks feeding it stay silent (a plain
@@ -581,6 +603,7 @@ struct MixerTrack {
            eqQ == o.eqQ && icon == o.icon && disabled == o.disabled && dock == o.dock &&
            latencyOffset == o.latencyOffset && threaded == o.threaded && group == o.group && groupLink == o.groupLink && input == o.input &&
            inputStereo == o.inputStereo && monitor == o.monitor && armed == o.armed && recPoint == o.recPoint &&
+           inputTrim == o.inputTrim && inputInvert == o.inputInvert &&
            soloAlone == o.soloAlone && separator == o.separator && locked == o.locked && flIcon == o.flIcon &&
            freeze == o.freeze && hibernate == o.hibernate && room == o.room;
   }
@@ -799,12 +822,16 @@ struct Song {
   // current one, named "Arrangement"); its entry at `currentArrangement` only
   // carries the name, the others keep their content (core/Arrangements.h).
   LiveSettings live;
+  SmoothView smooth;  // K-112D (not compared)
   std::vector<Arrangement> arrangements;
   int currentArrangement = 0;
   // K-112b (R02-04): the cycle area (the locators, a range of ticks; cycleEnd <= cycleStart: none
   // set) and whether Cycle is on. Part of the project, as the reference saves them.
   Tick cycleStart = 0, cycleEnd = 0;
   bool cycleOn = false;
+  // K-112B (checkpoint 47): the Project End marker where the user put it (ticks; 0: not placed, the end
+  // follows the last region). Saved only when placed, so older projects load and save as before.
+  Tick projectEnd = 0;
   // J-38: overlapping audio clips on a track crossfade automatically (project
   // setting; core/Fades.h).
   bool autoCrossfades = true;
@@ -819,6 +846,16 @@ struct Song {
   // "suite+fallback"; core/flp/FlpExport.h GridlinePlugins). Empty = the app's default.
   std::string flExportGridline;
   FlOrigin flOrigin;  // FL Studio import data for the FL exporter (see FlOrigin)
+  // K-297 (round 9): the plugin windows open when the project was last saved, in the order they
+  // opened (slot -1: a channel's instrument; else a mixer track's effect slot). Opened again with the
+  // project, as the reference does. View state: not compared (no undo step); written only when some
+  // are open, so older projects and projects saved with none open read and write as before.
+  struct OpenPluginWindow {
+    ObjectId owner = kNoId;
+    int slot = -1;
+    bool operator==(const OpenPluginWindow& o) const { return owner == o.owner && slot == o.slot; }
+  };
+  std::vector<OpenPluginWindow> pluginWindows;
 
   // J-111 (collaboration): object ids are partitioned between collaborators so
   // two computers never hand out the same id: with idStride > 1 every id this
@@ -887,7 +924,7 @@ struct Song {
            channels == o.channels && patterns == o.patterns && playlist == o.playlist && tracks == o.tracks &&
            mixer == o.mixer && links == o.links && modLinks == o.modLinks && automations == o.automations &&
            markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live &&
-           arrangements == o.arrangements && cycleStart == o.cycleStart && cycleEnd == o.cycleEnd && cycleOn == o.cycleOn &&
+           arrangements == o.arrangements && cycleStart == o.cycleStart && cycleEnd == o.cycleEnd && cycleOn == o.cycleOn && projectEnd == o.projectEnd &&
            currentArrangement == o.currentArrangement && panLaw == o.panLaw && stage == o.stage && stageRooms == o.stageRooms && trackReceipt == o.trackReceipt && flExportGridline == o.flExportGridline && flOrigin == o.flOrigin;
   }
   bool operator!=(const Song& o) const { return !(*this == o); }

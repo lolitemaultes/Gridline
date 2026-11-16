@@ -39,6 +39,7 @@
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
 #include "TrackerView.h"
+#include "WorkspacesUi.h"
 #include "Windows.h"
 #include "Keys.h"
 #include "ThemeSettings.h"
@@ -363,6 +364,7 @@ const md::Menu& tracksEditDef() {
       md::item(N_("Split"), "playlist.splitAtSongPos", [](App& a) { tracksSplitAtPlayhead(a); }).when([](App& a) { return !a.playlist.selected.empty(); }),
       md::item(N_("Join"), "playlist.merge",
                [](App& a) {
+                 if (logicplug::active(a)) return tracksJoin(a);  // checkpoint 47: the Join tool's rules
                  const ObjectId nc = ops::mergeClips(a.doc, a.playlist.selected);
                  if (nc) a.playlist.selected = {nc};
                })
@@ -588,7 +590,7 @@ const md::Menu& clipsFileDef() {
                         rowOf(imp, "Import from URL..."),
                         rowOf(imp, "FL Studio presets..."),
                         md::heading(N_("Audio")),
-                        rowOf(exp, "Mixer tracks (stems)..."),
+                        // N50-09: no mixer-track stems row in Clips: "Each track..." is the reference's individual tracks
                         md::item(N_("Each track..."), [](App& a) { exportui::openRender(a, exportui::Preset::PlaylistTracks); }),
                         md::item(N_("Each track group..."), [](App& a) { exportui::openRender(a, exportui::Preset::TrackGroups); }),
                         md::provider([](App& a) { menuparity::exportItems(a); }),
@@ -634,6 +636,10 @@ const md::Menu& clipsEditDef() {
                  })
             .when([](App& a) { return a.playlist.selected.size() >= 2; }),
         md::item(N_("Crop clip"), [](App& a) { a.doc.setClipLength(cropTarget(a), 0); }).when([](App& a) { return cropTarget(a) != kNoId; }),
+        md::separator(),
+        // Checkpoint 52 (N51-11): grouping in the Edit menu as well, as the reference's.
+        md::item(N_("Group tracks"), "track.group", [](App& a) { livelook::groupTracks(a); }),
+        md::item(N_("Ungroup tracks"), "track.ungroup", [](App& a) { livelook::ungroupTracks(a); }),
         md::separator(),
         rowOf(e, "Rename..."),
         rowOf(e, "Select all"),
@@ -724,6 +730,8 @@ const md::Menu& viewDef() {
       md::item(N_("Bring all windows back into Gridline"), [](App&) { viewports::gatherAll(); })  // J-113
           .when([](App&) { return viewports::detachedCount() > 0; }),
       md::submenu(N_("Window layout"), {md::provider([](App& a) { layoutui::viewLayoutMenu(a); })}),  // K-79
+      md::submenu(N_("Workspaces"), {md::provider([](App& a) { workspacesui::menu(a); })}),  // K-237
+      md::item(N_("Reopen closed pane tab"), "view.reopenTab", [](App& a) { layoutui::reopenClosedTab(a); }),
       md::item(N_("Reset window layout"), "view.resetLayout", [](App& a) { ui::confirmLayoutReset(a); }),
       md::heading(N_("Appearance")),
       md::item(N_("Dark theme"),
@@ -850,7 +858,8 @@ const md::Menu& toolsDef() {
       md::submenu(N_("Swing presets"), {md::provider([](App& a) { grooveui::presetMenuItems(a); })}),  // K-151
       md::submenu(N_("Chord progression"), {md::provider([](App& a) { progressionItems(a, false); })}),
       md::submenu(N_("Riff from progression"), {md::provider([](App& a) { progressionItems(a, true); })}),
-      md::submenu(N_("Piano roll tools"), {md::provider([](App& a) { pianoToolItems(a); })}),
+      md::submenu(N_("Piano roll tools"), {md::provider([](App& a) { pianoToolItems(a); })})
+          .only(studioWindows),  // checkpoint 52 (N50-09): in Clips these are the note editor's
       md::submenu(N_("Composing"),
                   {
                       md::submenu(N_("Piano roll selection"), {md::provider([](App& a) { pianoSelectItems(a); })}),
@@ -864,7 +873,8 @@ const md::Menu& toolsDef() {
       md::provider([](App& a) { j31::toolsItems(a); }),                 // J-31: audio logger, cancel recording
       md::provider([](App& a) { menuparity::toolsScoreLogItem(a); }),  // J-27
       md::separator(),
-      md::item(N_("Route channels to free mixer tracks"), "rack.routeFree", [](App& a) { chanroute::routeToFree(a, selectedChannels(a)); }),
+      md::item(N_("Route channels to free mixer tracks"), "rack.routeFree", [](App& a) { chanroute::routeToFree(a, selectedChannels(a)); })
+          .only(studioWindows),  // N50-09: Studio's rack and mixer terms (Clips' tracks are their own strips)
       md::item(N_("Unmute all channels"),
                [](App& a) {
                  std::vector<ObjectId> all;
@@ -876,7 +886,15 @@ const md::Menu& toolsDef() {
                  a.doc.editSong("unsolo all", [](Song& s) {
                    for (auto& m : s.mixer) m.solo = false;
                  });
-               }),
+               })
+          .only(studioWindows),
+      md::item(N_("Unsolo all tracks"),  // N50-09: Clips' wording
+               [](App& a) {
+                 a.doc.editSong("unsolo all", [](Song& s) {
+                   for (auto& m : s.mixer) m.solo = false;
+                 });
+               })
+          .only([](App& a) { return !studioWindows(a); }),
       md::item(N_("Close plugin windows"), "view.closePlugins", [](App& a) { a.closePluginWindows(); }),
       md::submenu(N_("Macros"),
                   {
@@ -887,7 +905,8 @@ const md::Menu& toolsDef() {
                                    if (c.mixerTrack == a.doc.song().masterId()) all.push_back(c.id);
                                  auto t = ops::routeToFreeMixerTracks(a.doc, all);
                                  a.notify(t.empty() ? std::string("Every channel already has a mixer track") : "Routed " + std::to_string(t.size()) + " channel(s)");
-                               }),
+                               })
+                          .only(studioWindows),
                       md::item(N_("Select unused channels"),
                                [](App& a) {
                                  auto u = ops::unusedChannels(a.doc.song());
@@ -903,6 +922,9 @@ const md::Menu& toolsDef() {
                   })
           .rect("toolsmenu macros"),  // K-158: scripted screenshots open it
       md::submenu(N_("Freeze and hibernate"), {md::provider([](App& a) { freezeui::toolsMacroItems(a); })})  // K-87
+          .only(studioWindows),
+      md::submenu(N_("Freeze"), {md::provider([](App& a) { freezeui::toolsMacroItems(a); })})  // N50-09: Clips has no hibernation
+          .only([](App& a) { return !studioWindows(a); })
           .rect("toolsmenu freeze"),
       md::separator(),
       md::submenu(N_("Clean up"),
@@ -911,7 +933,8 @@ const md::Menu& toolsDef() {
                                [](App& a) {
                                  int n = ops::trimUnusedMixerTracks(a.doc);
                                  a.notify(n ? "Removed " + std::to_string(n) + " unused mixer track(s)" : std::string("No unused mixer tracks at the end"));
-                               }),
+                               })
+                          .only(studioWindows),
                       md::provider([](App& a) { menuparity::toolsCleanupItems(a); }),  // J-27: unused automation clips
                       md::item(N_("Delete unused patterns"),
                                [](App& a) {
@@ -1037,6 +1060,10 @@ bool menuShortcuts(App& a) {
     if (logicplug::active(a)) logicplug::toggleHidden(a);
   }
   if (key("view.resetLayout")) ui::confirmLayoutReset(a);
+  if (key("view.paneNextTab")) layoutui::cyclePaneTab(a, 1);  // K-237
+  if (key("view.panePrevTab")) layoutui::cyclePaneTab(a, -1);
+  if (key("view.reopenTab")) layoutui::reopenClosedTab(a);
+  workspacesui::frameKeys(a);
 
   // Channel rack.
   if (inRack) {
@@ -1094,7 +1121,9 @@ bool menuShortcuts(App& a) {
     }
   }
   // Playlist.
-  if (inPlaylist && a.playlist.selected.size() >= 2 && key("playlist.merge")) {
+  if (inPlaylist && a.playlist.selected.size() >= 2 && key("playlist.merge") && logicplug::active(a)) {
+    tracksJoin(a);  // checkpoint 47: the Join tool's rules
+  } else if (inPlaylist && a.playlist.selected.size() >= 2 && key("playlist.merge")) {
     ObjectId nc = ops::mergeClips(a.doc, a.playlist.selected);
     if (nc) a.playlist.selected = {nc};
   }

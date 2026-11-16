@@ -10,6 +10,7 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/I18n.h"
+#include "../core/LayoutHomes.h"
 #include "../core/Keymap.h"
 #include "../core/MenuStyle.h"
 #include "../core/PluginInfo.h"
@@ -20,6 +21,7 @@
 #include "LayoutPresets.h"
 #include "SettingsPages.h"
 #include "Theme.h"
+#include "TrackerView.h"
 #include "Widgets.h"
 #include "Windows.h"
 #include "imgui_hooks/ImGuiItemHook.h"
@@ -571,6 +573,13 @@ void runMenu(App& a, const Action& act) {
 }
 
 void showWindow(App& a, bool App::*flag, const char* name) {
+  // K-297 (round 8): in the Tracker a window that is one of the centre's pages comes to the front as
+  // its page strip shows it (the pages are tabs without a tab bar: focus alone left it behind).
+  if (name && layoutui::active() == layout::Preset::Tracker && std::strcmp(layout::windowHome(name, layout::Preset::Tracker).region, "tracker.pages") == 0 &&
+      layout::windowHome(name, layout::Preset::Tracker).kind == layout::HomeKind::Dock) {
+    trackerview::showPage(a, name);
+    return;
+  }
   if (flag) a.*flag = true;
   if (name) a.focusWindow = name;
 }
@@ -594,15 +603,15 @@ void perform(App& a, const Action& act) {
       if (!browserui::pluginPickerOpen()) browserui::togglePluginPicker();
       break;
     case Act::Channel:
-      if (a.doc.song().channel(act.obj)) {
-        a.selChannel = act.obj;
-        a.settingsChannel = act.obj;
-      }
+      // K-297 (round 8): an instrument window already open behind others comes to the front with the
+      // keys (it stayed where it was, the keys in the main view).
+      if (a.doc.song().channel(act.obj)) a.openChannelWindow(act.obj);
       break;
     case Act::Effect:
       if (a.doc.song().mixerTrack(act.obj)) {
         a.selMixer = act.obj;
         a.fxEditor = {act.obj, act.slot};
+        if (layout::windowHome("###fxeditor", layoutui::active()).kind != layout::HomeKind::Host) a.focusWindow = "###fxeditor";  // K-297 (round 8): as above
       }
       break;
     case Act::Setting:

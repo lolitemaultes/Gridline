@@ -14,7 +14,9 @@
 #include <cstring>
 #include <cstdio>
 #include <functional>
+#include <map>
 #include <set>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include "../core/Arrangements.h"
@@ -705,6 +707,7 @@ namespace {
 // K-152: the song swing a pattern is compiled with (< 0: Song::swing). Swing automation compiles a
 // pattern clip's passes with the swing the automation has where each pass starts.
 thread_local double gSwingOverride = -1.0;
+thread_local double gAccentOverride = -1.0;  // the same for the groove's accents (< 0: SongGroove::accent)
 }  // namespace
 
 std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, const Channel& c) {
@@ -723,7 +726,7 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
   // K-151: the song's swing shape (the classic step swing unless a preset or the groove editor
   // changed it; that one places every step and note exactly as swingWarp does).
   const groove::Warp gw = groove::makeWarp(song, &p, song.groove.shape, swing,
-                                           std::clamp(static_cast<double>(song.groove.accent) * static_cast<double>(c.swingMix), 0.0, 1.0));
+                                           std::clamp((gAccentOverride >= 0.0 ? gAccentOverride : static_cast<double>(song.groove.accent)) * static_cast<double>(c.swingMix), 0.0, 1.0));
   auto warpAt = [&gw](double x) { return gw.active ? std::max(0.0, gw.map(x)) : x; };
   auto accent = [&gw](NoteEv& e, double written) {
     if (gw.accents) e.velocity = std::clamp(e.velocity * gw.velocityAt(written), 0.0f, 1.0f);
@@ -1050,6 +1053,12 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     pm.swap = m.swapLR;
     pm.inFirst = m.input;
     pm.inStereo = m.inputStereo;
+    pm.inGain = std::pow(10.0f, std::clamp(m.inputTrim, kInputTrimMin, kInputTrimMax) / 20.0f) * (m.inputInvert ? -1.0f : 1.0f);
+    pm.inProcessed = m.input >= 0 && pm.inGain != 1.0f;
+    if (pm.inProcessed && pm.rt->inL.size() < static_cast<size_t>(kEngineMaxBlock)) {
+      pm.rt->inL.assign(static_cast<size_t>(kEngineMaxBlock), 0.f);
+      pm.rt->inR.assign(static_cast<size_t>(kEngineMaxBlock), 0.f);
+    }
     pm.monitor = m.monitor;
     pm.armed = m.records();
     pm.recPoint = m.recPoint;
@@ -1410,7 +1419,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   prog->flatMap.setConstant(song.tempo, song.ppq);
   // Compiles one lane (false: target not automatable, e.g. song parameters).
   auto compileLane = [&](AutomationLane&& lane, std::vector<ProgAutoLane>& out) {
-    if (lane.owner == kSongId) return false;  // tempo: tempo map; swing: pattern clips (K-152); master pitch: not automated
+    if (lane.owner == kSongId) return false;  // tempo: tempo map; swing, groove accents: pattern clips (K-152); master pitch: not automated
     ProgAutoLane al;
     ParamId target{lane.owner, lane.index};
     if (!resolveTarget(song, *prog, target, al.target)) return false;
@@ -1497,17 +1506,24 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   }
   const std::vector<ClipFades> clipFades = resolveAllFades(song, prog->tempoMap);  // J-38
   bool deferred = false;  // J-196: some clip's render waits for the edit to settle
-  // K-152: the song's swing automation (song mode), if any: pattern clips follow it pass by pass.
+  // K-152: the song's swing and groove accent automation (song mode), if any: pattern clips follow
+  // them pass by pass.
   std::vector<AutomationLane> songLanes;
   const AutomationLane* swingLane = nullptr;
+  const AutomationLane* accentLane = nullptr;
   for (const auto& am : song.automations)
-    if (am.owner == kSongId && am.index == static_cast<uint32_t>(SongParam::Swing)) {
+    if (am.owner == kSongId && (am.index == static_cast<uint32_t>(SongParam::Swing) || am.index == static_cast<uint32_t>(SongParam::GrooveAccent))) {
       songLanes = automationLanes(song);
-      for (const auto& l : songLanes)
+      for (const auto& l : songLanes) {
         if (l.targets(kSongId, static_cast<uint32_t>(SongParam::Swing))) swingLane = &l;
+        if (l.targets(kSongId, static_cast<uint32_t>(SongParam::GrooveAccent))) accentLane = &l;
+      }
       break;
     }
-  std::map<std::pair<ObjectId, int>, std::vector<std::vector<NoteEv>>> swingVariants;
+  // Swing and accent in thousandths: the project's, and what a lane has at tick t.
+  auto milli = [](double v) { return static_cast<int>(std::lround(std::clamp(v, 0.0, 1.0) * 1000.0)); };
+  const int baseSwing = milli(static_cast<double>(song.swing)), baseAccent = milli(static_cast<double>(song.groove.accent));
+  std::map<std::tuple<ObjectId, int, int>, std::vector<std::vector<NoteEv>>> swingVariants;
   std::unordered_set<ObjectId> mutedClips;  // K-64: they keep what they had (clipRenders_, clipVoices_)
   for (size_t clipIdx = 0; clipIdx < song.playlist.size(); ++clipIdx) {
     const Clip& clip = song.playlist[clipIdx];
@@ -1543,15 +1559,16 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     for (const ClipPass& ps : passes) {
       // K-152: swing automation: this pass plays with the swing the automation has where it starts.
       const std::vector<std::vector<NoteEv>>* per = &pp->perChannel;
-      if (swingLane) {
-        const int q = static_cast<int>(std::lround(std::clamp(swingLane->valueAt(static_cast<double>(clip.start + ps.at)), 0.0, 1.0) * 1000.0));
-        if (q != static_cast<int>(std::lround(std::clamp(static_cast<double>(song.swing), 0.0, 1.0) * 1000.0))) {
-          auto& v = swingVariants[{clip.pattern, q}];
+      if (swingLane || accentLane) {
+        const double at = static_cast<double>(clip.start + ps.at);
+        const int qs = swingLane ? milli(swingLane->valueAt(at)) : baseSwing, qa = accentLane ? milli(accentLane->valueAt(at)) : baseAccent;
+        if (qs != baseSwing || qa != baseAccent) {
+          auto& v = swingVariants[{clip.pattern, qs, qa}];
           if (v.empty())
             if (const Pattern* pat = song.pattern(clip.pattern)) {
-              gSwingOverride = q / 1000.0;
+              gSwingOverride = qs / 1000.0, gAccentOverride = qa / 1000.0;
               for (const auto& c : song.channels) v.push_back(compilePatternChannel(song, *pat, c.id));
-              gSwingOverride = -1.0;
+              gSwingOverride = gAccentOverride = -1.0;
             }
           if (v.size() == pp->perChannel.size()) per = &v;
         }

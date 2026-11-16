@@ -506,6 +506,12 @@ void drawPluginPicker(App& a) {
   }
   ImGui::EndChild();
   ImGui::PopStyleVar();
+  // K-297 (round 7): Enter with a search typed adds the first plugin shown, as a click on it does
+  // (Esc closes the picker). It did nothing: only a click picked.
+  if (S.search[0] && !groups.empty() && !groups.front().items.empty() && ::gl::keys::defaultPressed()) {
+    addPlugin(a, *groups.front().items.front());
+    pickerOpen = false;
+  }
   ImGui::End();
 }
 

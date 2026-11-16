@@ -17,6 +17,7 @@
 #include "../core/I18n.h"
 #include "../core/Platform.h"
 #include "ExportUi.h"
+#include "GamepadUi.h"
 #include "Keys.h"
 #include "MixerMeters.h"
 #include "StageView.h"
@@ -759,7 +760,7 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
     else
       std::snprintf(buf, sizeof buf, "%+.1f", 20 * std::log10(g));
     ImVec2 ts = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, buf);
-    const bool armRow = i > 0 && (t.armed || t.input >= 0 || ImGui::IsMouseHoveringRect(p, ImVec2(p.x + stripW, p.y + stripH)));
+    const bool armRow = i > 0 && (t.armed || t.recordSafe || t.input >= 0 || ImGui::IsMouseHoveringRect(p, ImVec2(p.x + stripW, p.y + stripH)));
     // With the record arm shown, the level moves right of the input name.
     const float vx = armRow ? std::round(p.x + stripW - ts.x - 5) : std::round(cx - ts.x * 0.5f);
     dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(vx, fy + fh + 7), P.textDim, buf);
@@ -2103,14 +2104,18 @@ void drawEffectEditor(App& a) {
   // K-147: the window is exactly the editor's width at its size (plus the padding).
   const bool zoomable = !isHostedType(info->type);
   edzoomui::prepare(a, "fxeditor", info->type, width, zoomable);  // K-210b: the header row keeps the interface size (the window holds it)
+  // K-199: a Game mode session shows one window: built-in editors dock with the main view there.
+  const bool gameDock = zoomable && !logicplug::active(a) && gamepadui::dockPlugins(a);
   const int fitFlags =  // J-158: capped to the work area, the rest scrolls
-      zoomable ? edzoomui::nextWindowSize("fxeditor") : ui::NextFloatingWindowSize(width + 24);
+      gameDock ? 0 : zoomable ? edzoomui::nextWindowSize("fxeditor") : ui::NextFloatingWindowSize(width + 24);
+  if (gameDock) gamepadui::nextPluginWindowDocked(a);
   viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
   // K-112b: the title bar's underline (drawn by Begin from the frame outline) stays as in every layout
   bool vis = false;
   {
     const layoutui::BaseBorderScope border;
-    vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags);
+    vis = ImGui::Begin(title.c_str(), &open,
+                       gameDock ? ImGuiWindowFlags_HorizontalScrollbar : (ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags));
   }
   if (vis) {
     ui::KeepWindowInViewport();

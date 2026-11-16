@@ -28,6 +28,7 @@
 #include "ThemeLayout.h"
 #include "ThemeSettings.h"
 #include "ContextMenus.h"
+#include "GamepadUi.h"
 #include "../core/ThemeImport.h"
 #include "Widgets.h"
 
@@ -73,6 +74,7 @@ struct KeyEditor {
   std::string message;       // last result (shadow notes, what was unbound)
   std::string selected;      // checkpoint 28 (Tracks layout): the row whose actions the side panel shows
   int show = 0;              // checkpoint 29 (Tracks layout): all, with a shortcut, without one, changed
+  bool showPad = false;      // K-199: the controller's buttons in place of the key table
 };
 KeyEditor gKE;
 
@@ -163,6 +165,19 @@ void shortcutSettingsPage(App& a, float fieldW) {
     E.message = tr("All shortcuts are back to their defaults.");
   }
   ImGui::EndDisabled();
+  // K-199: with a controller in use, its buttons can be listed in place of the key table.
+  const bool padList = gamepadui::listening(a);
+  static bool padFirst = true;
+  if (padFirst) E.showPad = gamepadui::gameMode(), padFirst = false;  // no keyboard in Game mode: the buttons first
+  if (padList) {
+    ImGui::SameLine(0, theme::kS2);
+    if (ui::TextButton(tr("Controller"), E.showPad, 0, tr("The game controller's buttons in place of the key list"))) E.showPad = !E.showPad;
+  }
+  if (padList && E.showPad) {
+    ImGui::Dummy(ImVec2(0, theme::kS1));
+    gamepadui::bindingsTable(a, std::max(160.0f, ImGui::GetContentRegionAvail().y - 4));
+    return;
+  }
 
   // Conflict question / last message.
   if (!E.pendingId.empty()) {

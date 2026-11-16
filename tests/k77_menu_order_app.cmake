@@ -273,7 +273,8 @@ check(slot
 check(plugin
       "Presets" "Load preset from file..." "Save preset to file..." "Copy state" "Paste state" "Randomize" "Reset to default" "Piano roll" "Replace instrument" "Route to a free mixer track" "Clone channel" "Rename..." "Colour" "Delete channel" "Close window")
 check(record
-      "Audio, into the playlist as audio clips" "Disarm tracks after recording" "Drop silent takes" "Name takes after the audio input" "Note recording" "Overdub (keep existing notes)" "Quantize note starts to the snap" "Count-in")
+      # K-123: in groups (What to record, Punch and count-in, Audio takes, Monitoring, Notes)
+      "Audio, into the playlist as audio clips" "Count-in" "Drop silent takes" "Disarm tracks after recording" "Name takes after" "Overdub (keep existing notes)" "Quantize note starts to the snap")
 check(knob
       "Copy value" "Paste value")
 # (the marker menu needs a song with markers: the fixture has none; its order is unchanged)
@@ -292,7 +293,10 @@ set(kGone "channel|Fill every step" "channel|Fill every 2 steps" "channel|Fill e
           # moved: into the clip menu's Audio submenu (checked in the arrclip tree above)
           "audioclip|Fit to tempo" "audioclip|Normalize"
           # renamed: meter changes replaced time signature markers ("Add meter change" in the same menu)
-          "playlist|Add time signature marker")
+          "playlist|Add time signature marker"
+          # K-123: into the "Name takes after" submenu ("The mixer track", "The audio input")
+          "options|Name takes after the audio input" "options|Name takes after the mixer track"
+          "record|Name takes after the audio input" "record|Name takes after the mixer track")
 if(BEFORE AND EXISTS "${BEFORE}")
   file(STRINGS "${BEFORE}" before)
   set(cur "")

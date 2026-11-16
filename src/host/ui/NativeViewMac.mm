@@ -9,53 +9,53 @@
 #include <string>
 #include <vector>
 #include "NativeView.h"
+#include "ObjcClass.h"
 #include "../../core/UiScale.h"
+
+namespace {
+using gl::objc::RuntimeClass;
 
 // Container view for a plugin's interface: flipped is irrelevant to plugins
 // (they place their own view at the origin), but it must not let the window
 // background or the GL surface underneath draw over it. Keys the interface
 // passes up the responder chain arrive here and go to Gridline (J-66).
-@interface GridlinePluginContainer : NSView
-@end
-@implementation GridlinePluginContainer
-- (BOOL)isOpaque {
-  return NO;
+// Classes made at run time (ObjcClass.h): a plugin bundle that links this code
+// never shares a class name with the app or with another bundle.
+Class containerClass() {
+  static RuntimeClass rc("GridlinePluginContainer", [NSView class]);
+  static Class c = [] {
+    static Class self_ = Nil;
+    rc.method(@selector(isOpaque), +[](id, SEL) -> BOOL { return NO; })
+        .method(@selector(acceptsFirstMouse:), +[](id, SEL, NSEvent*) -> BOOL { return YES; })  // first click goes straight to the plugin's control
+        // Not passed on: the window would beep for a key nobody handled.
+        .method(@selector(keyDown:), +[](id self, SEL sel, NSEvent* e) {
+          if (!gl::host::native::containerKey(self, e, true)) gl::objc::callSuper<void>(self, self_, sel, e);
+        })
+        .method(@selector(keyUp:), +[](id self, SEL sel, NSEvent* e) {
+          if (!gl::host::native::containerKey(self, e, false)) gl::objc::callSuper<void>(self, self_, sel, e);
+        });
+    self_ = rc.done();
+    return self_;
+  }();
+  return c;
 }
-- (BOOL)acceptsFirstMouse:(NSEvent*)event {
-  (void)event;
-  return YES;  // first click goes straight to the plugin's control
-}
-- (void)keyDown:(NSEvent*)e {
-  // Not passed on: the window would beep for a key nobody handled.
-  if (!gl::host::native::containerKey(self, e, true)) [super keyDown:e];
-}
-- (void)keyUp:(NSEvent*)e {
-  if (!gl::host::native::containerKey(self, e, false)) [super keyUp:e];
-}
-@end
 
 // Test views (devTestKeyView): an interface view that passes keys on, one
 // that uses every key.
-@interface GridlineTestKeyPassView : NSView
-@end
-@implementation GridlineTestKeyPassView
-- (BOOL)acceptsFirstResponder {
-  return YES;
+Class testKeyPassClass() {
+  static RuntimeClass rc("GridlineTestKeyPassView", [NSView class]);
+  static Class c = rc.method(@selector(acceptsFirstResponder), +[](id, SEL) -> BOOL { return YES; }).done();
+  return c;
 }
-@end
-@interface GridlineTestKeyEatView : NSView
-@end
-@implementation GridlineTestKeyEatView
-- (BOOL)acceptsFirstResponder {
-  return YES;
+Class testKeyEatClass() {
+  static RuntimeClass rc("GridlineTestKeyEatView", [NSView class]);
+  static Class c = rc.method(@selector(acceptsFirstResponder), +[](id, SEL) -> BOOL { return YES; })
+                       .method(@selector(keyDown:), +[](id, SEL, NSEvent*) {})
+                       .method(@selector(keyUp:), +[](id, SEL, NSEvent*) {})
+                       .done();
+  return c;
 }
-- (void)keyDown:(NSEvent*)e {
-  (void)e;
-}
-- (void)keyUp:(NSEvent*)e {
-  (void)e;
-}
-@end
+}  // namespace
 
 namespace gl::host::native {
 
@@ -134,7 +134,7 @@ Window windowOfView(void* view) {
 void* createContainer(const Window& w, const layout::Rect& r) {
   NSView* content = contentOf(w);
   if (!content) return nullptr;
-  GridlinePluginContainer* v = [[GridlinePluginContainer alloc] initWithFrame:toFrame(content, r)];
+  NSView* v = [[containerClass() alloc] initWithFrame:toFrame(content, r)];
   // Stays glued to the top-left corner when the window grows or shrinks
   // below it (settings panel unfolding).
   [v setAutoresizingMask:[content isFlipped] ? NSViewMaxYMargin : NSViewMinYMargin];
@@ -368,9 +368,9 @@ void* devTestKeyView(void* container, int kind) {
     [t setEditable:YES];
     v = t;
   } else if (kind == 1) {
-    v = [[GridlineTestKeyEatView alloc] initWithFrame:r];
+    v = [[testKeyEatClass() alloc] initWithFrame:r];
   } else {
-    v = [[GridlineTestKeyPassView alloc] initWithFrame:r];
+    v = [[testKeyPassClass() alloc] initWithFrame:r];
   }
   [c addSubview:v];
   [v release];  // owned by the container

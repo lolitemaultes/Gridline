@@ -1,0 +1,36 @@
+{
+    "version": "@VERSION@",
+    "description": "@SUITE_DESC@",
+    "homepage": "https://github.com/lolitemaultes/Gridline/blob/main/docs/gridline-suite.md",
+    "license": "GPL-3.0-or-later",
+    "notes": [
+        "@SUITE_NAME@ is copied into %LOCALAPPDATA%\\Programs\\Common\\VST3 and ...\\CLAP; rescan plugins in your music program.",
+        "The Gridline app (scoop gridline) already carries these plugins: install one or the other."
+    ],
+    "url": "https://github.com/lolitemaultes/Gridline/releases/download/v@VERSION@/@SUITE_FILE@-@VERSION@-windows-all.zip",
+    "hash": "@SHA256:@SUITE_KEY@-windows-all.zip@",
+    "extract_dir": "@SUITE_NAME@",
+    "post_install": [
+        "$common = \"$env:LOCALAPPDATA\\Programs\\Common\"",
+        "$arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }",
+        "New-Item -ItemType Directory -Force \"$common\\VST3\", \"$common\\CLAP\" | Out-Null",
+        "Copy-Item -Recurse -Force \"$dir\\VST3\\Gridline Suite\\@SUITE_NAME@.vst3\" \"$common\\VST3\\\"",
+        "Copy-Item -Force \"$dir\\CLAP\\$arch\\Gridline Suite\\@SUITE_NAME@.clap\" \"$common\\CLAP\\\"",
+        "Copy-Item -Recurse -Force \"$dir\\CLAP\\$arch\\Gridline Suite\\@SUITE_NAME@-assets\" \"$common\\CLAP\\\""
+    ],
+    "uninstaller": {
+        "script": [
+            "$common = \"$env:LOCALAPPDATA\\Programs\\Common\"",
+            "Remove-Item -Recurse -Force -ErrorAction SilentlyContinue \"$common\\VST3\\@SUITE_NAME@.vst3\", \"$common\\CLAP\\@SUITE_NAME@.clap\", \"$common\\CLAP\\@SUITE_NAME@-assets\""
+        ]
+    },
+    "checkver": {
+        "github": "https://github.com/lolitemaultes/Gridline"
+    },
+    "autoupdate": {
+        "url": "https://github.com/lolitemaultes/Gridline/releases/download/v$version/@SUITE_FILE@-$version-windows-all.zip",
+        "hash": {
+            "url": "$baseurl/Gridline-$version-SHA256SUMS"
+        }
+    }
+}

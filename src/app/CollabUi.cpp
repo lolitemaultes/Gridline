@@ -1346,10 +1346,12 @@ void drawInvite(App& a, Session& s, Hub& hub) {
       if (!iv->peerPublicAddress)  // GitHub #42: the problem is on their side, say so
         note(tr("Their reply code has no public internet address: their computer couldn't reach the address servers, so it can only connect on the same network. On their computer, check the connection, a VPN or firewall, and run Test my connection in Settings > Collaboration."),
              theme::lit(P.danger));
-      else if (iv->replyWaited > 90)
+      else if (iv->replyWaited > 90 && !iv->natBlocked)
         note(tr("Still not connected: a router or firewall on one side probably blocks direct connections. Turn off VPNs, allow Gridline through the firewall, and run Test my connection in Settings > Collaboration on both computers."),
              theme::lit(P.hot));
     }
+    // K-312: router types that can't meet directly
+    if (!iv->natNote.empty()) note(iv->natNote, theme::lit(iv->natBlocked ? P.danger : P.hot));
     if (iv->codeChanged) note(tr("This computer's network address changed, so the code was renewed. If they have not joined yet, send them this new code."), theme::lit(P.hot));
     if (!iv->publicAddress)
       note(tr("This computer couldn't find its public internet address, so this code only works on the same network. Check the connection, a VPN or firewall, or the STUN server in Settings > Collaboration."),
@@ -1472,7 +1474,7 @@ void netTestBlock(App& a, float x) {
   }
   if (!u.haveReport) return;
   const NetReport& r = u.lastReport;
-  static const char* nat[] = {i18n::N_("unknown"), i18n::N_("no NAT"), i18n::N_("cone NAT (hole punching works)"), i18n::N_("symmetric NAT"),
+  static const char* nat[] = {i18n::N_("unknown"), i18n::N_("no NAT"), i18n::N_("cone NAT (direct works unless the other side is symmetric)"), i18n::N_("symmetric NAT"),
                               i18n::N_("UDP blocked")};
   auto row = [&](const char* l, const std::string& v, bool mono) {
     label(l, x);
@@ -1483,6 +1485,7 @@ void netTestBlock(App& a, float x) {
   row("Public address", r.publicAddress.empty() ? std::string(tr("unknown")) : r.publicAddress, !r.publicAddress.empty());
   row("Router", tr(nat[static_cast<int>(r.nat)]), false);
   row("Port opening", r.portMapping ? r.portMappingProtocol + " (" + r.mappedAddress + ")" : std::string(tr("no")), false);
+  if (r.turnTried) row("TURN relay", r.turnOk ? std::string(tr("works")) : std::string(tr("failed")), false);
   row("IPv6", r.ipv6 ? r.ipv6Address : std::string(tr("no")), r.ipv6);
   if (!r.summary.empty()) {
     label("", x);
@@ -2129,6 +2132,9 @@ void joinWindow(App& a) {
       ui::BeginSection(tr("WHAT YOU CAN DO"));
       note(jv.help.empty() ? std::string(tr("Try again from another network, ask a collaborator who is online with the inviter to invite you, or set a TURN server in Settings > Collaboration."))
                            : jv.help);
+      // K-312: the guide to running your own TURN relay
+      if (ui::TextButton("How to run your own relay...", false, 0, "Opens the step-by-step guide to a TURN relay of your own (docs/turn-relay.md)"))
+        openUrl("https://github.com/lolitemaultes/Gridline/blob/main/docs/turn-relay.md");
       ui::EndSection();
     }
     ImGui::EndChild();
@@ -4952,6 +4958,36 @@ void settingsPage(App& a, float fieldW) {
     if (ImGui::InputInt("##stunport", &port, 0, 0)) st.set("collab.stunPort", std::clamp(port, 1, 65535));
     ui::Hint("Tells this computer its public address. The server sees your IP address, nothing else");
   }
+  // K-312: backup address servers (asked in order when one does not answer; the router type
+  // check uses the first two that answer)
+  label("Backup servers");
+  {
+    static char bk[512];
+    static bool init = false;
+    if (!init) std::snprintf(bk, sizeof bk, "%s", st.getString("collab.stunBackups").c_str()), init = true;
+    ImGui::SetNextItemWidth(fieldW - 90);
+    if (ImGui::InputTextWithHint("##stunbk", tr("host:port, host:port"), bk, sizeof bk)) st.set("collab.stunBackups", std::string(bk));
+    ui::FocusRing();
+    ui::Hint("Public address servers asked when the one above gives no answer, in this order. Each sees your IP address, nothing else");
+    ImGui::SameLine();
+    if (ui::TextButton("Default##stunbk")) {
+      std::snprintf(bk, sizeof bk, "%s", kDefaultStunBackups);
+      st.set("collab.stunBackups", std::string(bk));
+    }
+  }
+  // K-312: a fixed UDP port, for a port forwarded on the router by hand
+  label("UDP port");
+  {
+    int port = static_cast<int>(st.getNumber("collab.udpPort"));
+    ImGui::SetNextItemWidth(90);
+    if (ImGui::InputInt("##udpport", &port, 0, 0)) st.set("collab.udpPort", std::clamp(port, 0, 65535));
+    ui::Hint("0: any port. Set one (for example 50000) to forward it on your router: then a collaborator can always reach this computer");
+    ImGui::SameLine(0, theme::kS2);
+    bool fw = st.getBool("collab.portForwarded");
+    if (port <= 0) ImGui::BeginDisabled();
+    if (ImGui::Checkbox(tr("My router forwards this UDP port to this computer"), &fw)) st.set("collab.portForwarded", fw);
+    if (port <= 0) ImGui::EndDisabled();
+  }
   label("TURN relay");
   {
     static char host[256], user[128], pass[128];
@@ -4978,12 +5014,16 @@ void settingsPage(App& a, float fieldW) {
     ImGui::SameLine(0, theme::kS2);
     ImGui::SetNextItemWidth((fieldW - theme::kS2) * 0.5f);
     if (ImGui::InputTextWithHint("##turnpass", tr("password"), pass, sizeof pass, ImGuiInputTextFlags_Password)) secrets::Store().set("collab-turn-password", pass);
-    // GitHub #42: a user name and password without a relay address do nothing; say so
-    if (host[0] == 0 && (user[0] != 0 || pass[0] != 0)) {
+    // K-312: a half-filled TURN setting is ignored: say so where it is filled in
+    NetSettings filled;
+    filled.turnHost = host;
+    filled.turnUser = user;
+    filled.turnPass = pass;
+    const std::string problem = turnConfigProblem(filled);
+    if (!problem.empty()) {
       label("");
       ImGui::PushTextWrapPos(0);
-      ImGui::TextColored(theme::vec(theme::lit(pal().hot)), "%s",
-                         tr("No relay is used: these are the user name and password of a TURN relay you run or rent. Enter its address above, or leave all three empty."));
+      ImGui::TextColored(theme::vec(theme::lit(pal().hot)), "%s", problem.c_str());
       ImGui::PopTextWrapPos();
     }
   }

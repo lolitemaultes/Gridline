@@ -148,6 +148,7 @@ bool fromWav(const uint8_t* p, size_t n, Info& out) {
   uint32_t blockAlign = 0, dataSize = 0, flags = 0;
   uint16_t root = 0;
   float tempo = 0;
+  std::vector<uint32_t> cues;
   for (int guard = 0; at + 8 <= n && guard < 512; ++guard) {
     const uint8_t* c = p + at;
     const uint32_t size = le32(c + 4);
@@ -159,6 +160,10 @@ bool fromWav(const uint8_t* p, size_t n, Info& out) {
       blockAlign = le16(d + 12);
     } else if (std::memcmp(c, "data", 4) == 0) {
       dataSize = size;
+    } else if (std::memcmp(c, "cue ", 4) == 0 && have >= 4 && size >= 4) {  // K-313: cue points are slices
+      const uint32_t count = le32(d);
+      for (uint32_t k = 0; k < count && k < 4096 && 4 + 24 * (static_cast<size_t>(k) + 1) <= std::min<size_t>(size, have); ++k)
+        cues.push_back(le32(d + 4 + 24 * k + 20));
     } else if (std::memcmp(c, "acid", 4) == 0 && have >= 24 && size >= 24) {
       acid = true;
       flags = le32(d);
@@ -174,9 +179,23 @@ bool fromWav(const uint8_t* p, size_t n, Info& out) {
     if (static_cast<uint64_t>(size) + (size & 1u) > have) break;
     at = body + size + (size & 1u);
   }
-  if (!acid) return false;
+  if (!acid && cues.empty()) return false;
   out.format = Format::Wav;
   if (blockAlign > 0) out.frames = dataSize / blockAlign;
+  // K-313: cue points (a speech file's words, a marked-up recording) cut the file into slices.
+  std::sort(cues.begin(), cues.end());
+  cues.erase(std::unique(cues.begin(), cues.end()), cues.end());
+  while (!cues.empty() && (out.frames <= 0 || cues.back() >= out.frames)) cues.pop_back();
+  for (size_t k = 0; k < cues.size(); ++k) {
+    Slice sl;
+    sl.start = cues[k];
+    sl.length = (k + 1 < cues.size() ? static_cast<int64_t>(cues[k + 1]) : out.frames) - sl.start;
+    out.slices.push_back(sl);
+  }
+  if (!acid) {
+    out.loopEnd = out.frames;
+    return true;
+  }
   // Flag bit 0: one-shot; bit 1: the root note is set.
   out.loop = (flags & 1u) == 0 && std::isfinite(tempo) && tempo >= 20 && tempo <= 999;
   if (out.loop) out.bpm = tempo;

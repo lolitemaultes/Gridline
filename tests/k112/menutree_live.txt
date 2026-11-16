@@ -27,7 +27,6 @@ File > Other imports and exports > Audio file into a sampler...			e-
 File > Other imports and exports > Multisample instrument (.sfz, .sf2)...			e-
 File > Other imports and exports > Import from URL...	Ctrl+Shift+U	file.importUrl	e-
 File > Other imports and exports > FL Studio presets...			e-
-File > Other imports and exports > Mixer tracks (stems)...			e-
 File > Other imports and exports > Each track...			e-
 File > Other imports and exports > Each track group...			e-
 File > Other imports and exports > Render again with the last settings...			e-
@@ -55,6 +54,8 @@ Edit > Delete	Del	piano.delete	e-
 Edit > Split	Ctrl+E	playlist.splitAtSongPos	--
 Edit > Consolidate	Ctrl+J	playlist.merge	--
 Edit > Crop clip			--
+Edit > Group tracks	Ctrl+G	track.group	e-
+Edit > Ungroup tracks	Ctrl+Shift+G	track.ungroup	e-
 Edit > Rename...	Ctrl+R	edit.rename	e-
 Edit > Select all	Ctrl+A	piano.selectAll	e-
 Edit > Deselect	Ctrl+Shift+A	piano.deselect	e-
@@ -99,6 +100,11 @@ View > Window layout > Clips	Preview		ec
 View > Window layout > Smooth	Preview		e-
 View > Window layout > Tracker	Preview		e-
 View > Window layout > Layout settings...			e-
+View > Workspaces > New workspace			e-
+View > Workspaces > Add starter workspaces			e-
+View > Workspaces > Close workspace			--
+View > Workspaces > Session	Ctrl+1	view.workspace1	ec
+View > Reopen closed pane tab			e-
 View > Reset window layout	Ctrl+Shift+H	view.resetLayout	e-
 View > Dark theme			ec
 View > White text and glyphs			e-
@@ -144,24 +150,46 @@ Options > Recording and metronome > Arrangement record	F9	transport.record	e-
 Options > Recording and metronome > Session record	Shift+F9	transport.sessionRecord	e-
 Options > Recording and metronome > Metronome	O	options.metronome	e-
 Options > Recording and metronome > Count-in	Ctrl+Alt+Shift+K	options.countIn	e-
+Options > Recording and metronome > Recording options > Record window...			e-
 Options > Recording and metronome > Recording options > Audio, as audio clips			ec
 Options > Recording and metronome > Recording options > Notes			ec
 Options > Recording and metronome > Recording options > Automation (controller moves)			ec
 Options > Recording and metronome > Recording options > Everything			e-
 Options > Recording and metronome > Recording options > Punch in/out at the time selection			ec
+Options > Recording and metronome > Recording options > Pre-roll > Off			ec
+Options > Recording and metronome > Recording options > Pre-roll > 1 beat			e-
+Options > Recording and metronome > Recording options > Pre-roll > 2 beats			e-
+Options > Recording and metronome > Recording options > Pre-roll > 4 beats			e-
+Options > Recording and metronome > Recording options > Pre-roll > 8 beats			e-
+Options > Recording and metronome > Recording options > Pre-roll > 16 beats			e-
+Options > Recording and metronome > Recording options > Post-roll > Off			ec
+Options > Recording and metronome > Recording options > Post-roll > 1 beat			e-
+Options > Recording and metronome > Recording options > Post-roll > 2 beats			e-
+Options > Recording and metronome > Recording options > Post-roll > 4 beats			e-
+Options > Recording and metronome > Recording options > Post-roll > 8 beats			e-
+Options > Recording and metronome > Recording options > Post-roll > 16 beats			e-
+Options > Recording and metronome > Recording options > Count-in length > 1 bar			e-
+Options > Recording and metronome > Recording options > Count-in length > 2 bars			e-
+Options > Recording and metronome > Recording options > Count-in length > 4 bars			e-
 Options > Recording and metronome > Recording options > Audio file format > 32-bit float WAV			ec
 Options > Recording and metronome > Recording options > Audio file format > 24-bit WAV			e-
 Options > Recording and metronome > Recording options > Audio file format > 16-bit WAV			e-
-Options > Recording and metronome > Recording options > Disarm tracks after recording			e-
+Options > Recording and metronome > Recording options > Loop passes as take lanes			ec
 Options > Recording and metronome > Recording options > Drop silent takes			e-
+Options > Recording and metronome > Recording options > Disarm tracks after recording			e-
 Options > Recording and metronome > Recording options > Name empty tracks after the take			ec
+Options > Recording and metronome > Recording options > Input only			e-
+Options > Recording and metronome > Recording options > Low latency			e-
 Options > Recording and metronome > Recording options > Overdub (keep existing notes)			ec
 Options > Recording and metronome > Recording options > Replace (clear the clip's notes)			e-
 Options > Recording and metronome > Recording options > Quantize note starts to the snap			ec
 Options > Recording and metronome > Recording options > Quantize note lengths			e-
-Options > Recording and metronome > Recording options > Count-in length > 1 bar			e-
-Options > Recording and metronome > Recording options > Count-in length > 2 bars			e-
-Options > Recording and metronome > Recording options > Count-in length > 4 bars			e-
+Options > Recording and metronome > Recording options > Record controls > Every time			ec
+Options > Recording and metronome > Recording options > Record controls > First time per song			e-
+Options > Recording and metronome > Recording options > Record controls > Never			e-
+Options > Recording and metronome > Recording options > Record controls > Card			ec
+Options > Recording and metronome > Recording options > Record controls > Strip			e-
+Options > Recording and metronome > Recording options > Record controls > The Record window			e-
 Options > Recording and metronome > Typing keyboard to piano	M	options.typingKeyboard	e-
 Options > Recording and metronome > Typing keyboard options > Octave > A = C2			e-
 Options > Recording and metronome > Typing keyboard options > Octave > A = C3			e-
@@ -222,7 +250,6 @@ Tools > Swing presets > Groove editor...			e-
 Tools > Swing presets > Import preset...			e-
 Tools > Swing presets > Export current...			e-
 Tools > Swing presets > Show in Finder			e-
-Tools > Swing presets > Swing piano roll notes			ec
 Tools > Chord progression > Key > C			ec
 Tools > Chord progression > Key > C#			e-
 Tools > Chord progression > Key > D			e-
@@ -263,72 +290,6 @@ Tools > Riff from progression > Twelve-bar seed  (I IV I V)			e-
 Tools > Riff from progression > Night drive  (i VI III VII)			e-
 Tools > Riff from progression > Lament  (i iv VI v)			e-
 Tools > Riff from progression > Pulse  (i VII VI VII)			e-
-Tools > Piano roll tools > Quick quantize	Ctrl+U	piano.quickQuantize	e-
-Tools > Piano roll tools > Quantize starts and ends			e-
-Tools > Piano roll tools > Quantize...	Alt+Q	piano.quantize	e-
-Tools > Piano roll tools > Quick legato	Ctrl+L	piano.legato	e-
-Tools > Piano roll tools > Articulate...	Alt+L	piano.articulate	e-
-Tools > Piano roll tools > Chop...	Alt+U	piano.chop	e-
-Tools > Piano roll tools > Quick chop > Into steps			e-
-Tools > Piano roll tools > Quick chop > Into half steps			e-
-Tools > Piano roll tools > Quick chop > Into beats			e-
-Tools > Piano roll tools > Quick chop > Into snap grid			e-
-Tools > Piano roll tools > Glue	Ctrl+J	piano.glue	e-
-Tools > Piano roll tools > Discard lengths			e-
-Tools > Piano roll tools > Strum...	Alt+S	piano.strum	e-
-Tools > Piano roll tools > Arpeggiate...	Alt+A	piano.arpeggiate	e-
-Tools > Piano roll tools > Grace notes...	Alt+G	piano.flam	e-
-Tools > Piano roll tools > Quick strum > Wide (1/4 step)			e-
-Tools > Piano roll tools > Quick strum > Medium (1/8 step)			e-
-Tools > Piano roll tools > Quick strum > Tight (1/16 step)			e-
-Tools > Piano roll tools > Quick arpeggio > Steps			e-
-Tools > Piano roll tools > Quick arpeggio > Half steps			e-
-Tools > Piano roll tools > Quick arpeggio > Beats			e-
-Tools > Piano roll tools > Flip > Upside down (pitch)			e-
-Tools > Piano roll tools > Flip > Backwards (time)			e-
-Tools > Piano roll tools > Randomize...	Alt+R	piano.randomize	e-
-Tools > Piano roll tools > Riff generator...			e-
-Tools > Piano roll tools > Humanize	Alt+Shift+R	piano.humanize	e-
-Tools > Piano roll tools > Note LFO...	Alt+O	piano.lfo	e-
-Tools > Piano roll tools > Scale levels...	Alt+X	piano.scaleLevels	e-
-Tools > Piano roll tools > Limit key range...	Alt+K	piano.limit	e-
-Tools > Piano roll tools > Snap to the scale			--
-Tools > Piano roll tools > Scale velocity > 50%			e-
-Tools > Piano roll tools > Scale velocity > 75%			e-
-Tools > Piano roll tools > Scale velocity > 90%			e-
-Tools > Piano roll tools > Scale velocity > 110%			e-
-Tools > Piano roll tools > Scale velocity > 125%			e-
-Tools > Piano roll tools > Scale velocity > 150%			e-
-Tools > Piano roll tools > Note properties...	Alt+N	piano.properties	e-
-Tools > Piano roll tools > Mute > Mute			e-
-Tools > Piano roll tools > Mute > Unmute			e-
-Tools > Piano roll tools > Mute > Toggle			e-
-Tools > Piano roll tools > Slide and portamento > Make slide notes			e-
-Tools > Piano roll tools > Slide and portamento > Make normal notes			e-
-Tools > Piano roll tools > Slide and portamento > Portamento on			e-
-Tools > Piano roll tools > Slide and portamento > Portamento off			e-
-Tools > Piano roll tools > Colour group > Group 1 (channel colour)			e-
-Tools > Piano roll tools > Colour group > Group 2			e-
-Tools > Piano roll tools > Colour group > Group 3			e-
-Tools > Piano roll tools > Colour group > Group 4			e-
-Tools > Piano roll tools > Colour group > Group 5			e-
-Tools > Piano roll tools > Colour group > Group 6			e-
-Tools > Piano roll tools > Colour group > Group 7			e-
-Tools > Piano roll tools > Colour group > Group 8			e-
-Tools > Piano roll tools > Colour group > Group 9			e-
-Tools > Piano roll tools > Colour group > Group 10			e-
-Tools > Piano roll tools > Colour group > Group 11			e-
-Tools > Piano roll tools > Colour group > Group 12			e-
-Tools > Piano roll tools > Colour group > Group 13			e-
-Tools > Piano roll tools > Colour group > Group 14			e-
-Tools > Piano roll tools > Colour group > Group 15			e-
-Tools > Piano roll tools > Colour group > Group 16			e-
-Tools > Piano roll tools > Transpose up	Up		e-
-Tools > Piano roll tools > Transpose down	Down		e-
-Tools > Piano roll tools > Octave up	Shift+Up	piano.octaveUp	e-
-Tools > Piano roll tools > Octave down	Shift+Down	piano.octaveDown	e-
-Tools > Piano roll tools > Nudge left	Left		e-
-Tools > Piano roll tools > Nudge right	Right		e-
 Tools > Composing > Piano roll selection > Select all	Ctrl+A		e-
 Tools > Composing > Piano roll selection > Deselect	Ctrl+D		e-
 Tools > Composing > Piano roll selection > Invert selection	Shift+I	piano.invertSelection	e-
@@ -361,7 +322,7 @@ Tools > Composing > Project scripts > Section markers...			e-
 Tools > Composing > Project scripts > Tempo ramp...			e-
 Tools > Composing > Project scripts > Route drums to a bus...			e-
 Tools > Composing > Project scripts > Build a drum pattern...			e-
-Tools > Composing > Project scripts > Humanize playlist selection...			e-
+Tools > Composing > Project scripts > Humanize arrangement selection...			e-
 Tools > Composing > Project scripts > Name tracks after their clips...			e-
 Tools > Composing > Project scripts > Rescan scripts			e-
 Tools > Composing > Project scripts > Open your scripts folder			e-
@@ -374,7 +335,6 @@ Tools > Audio logger > 2 minutes			ec
 Tools > Audio logger > 5 minutes			e-
 Tools > Audio logger > 10 minutes			e-
 Tools > Audio logger > Save the last 2 minutes (0 s kept)			--
-Tools > Audio logger > Open the last minutes in Loupe			--
 Tools > Cancel recording			--
 Tools > Score logger > Put the notes played in the last > 1 minute			--
 Tools > Score logger > Put the notes played in the last > 2 minutes			--
@@ -390,14 +350,12 @@ Tools > Score logger > Keep notes for > 10 minutes			ec
 Tools > Score logger > Keep notes for > 20 minutes			e-
 Tools > Score logger > Keep notes for > 30 minutes			e-
 Tools > Score logger > Keep notes for > 60 minutes			e-
-Tools > Route channels to free mixer tracks	Ctrl+L	rack.routeFree	e-
 Tools > Unmute all channels			e-
-Tools > Unsolo all mixer tracks			e-
+Tools > Unsolo all tracks			e-
 Tools > Close plugin windows	Alt+F12	view.closePlugins	e-
-Tools > Macros > Route every channel to its own mixer track			e-
 Tools > Macros > Select unused channels			e-
-Tools > Macros > Lock every playlist track			e-
-Tools > Macros > Unlock every playlist track			e-
+Tools > Macros > Lock every track			e-
+Tools > Macros > Unlock every track			e-
 Tools > Macros > Audio clip channels > Stretch			e-
 Tools > Macros > Audio clip channels > Rubber Band			e-
 Tools > Macros > Audio clip channels > Resample			e-
@@ -409,10 +367,7 @@ Tools > Macros > Declicking of the selected channels > Out only			e-
 Tools > Macros > Declicking of the selected channels > Transient			e-
 Tools > Macros > Declicking of the selected channels > Generic			e-
 Tools > Macros > Declicking of the selected channels > Smooth			e-
-Tools > Freeze and hibernate > Unfreeze all			--
-Tools > Freeze and hibernate > Hibernate unused plugins			e-
-Tools > Freeze and hibernate > Wake all			--
-Tools > Clean up > Trim unused mixer tracks			e-
+Tools > Freeze > Unfreeze all			--
 Tools > Clean up > Delete unused automation clips			e-
 Tools > Clean up > Delete unused patterns			e-
 Tools > AI assistant activity			e-

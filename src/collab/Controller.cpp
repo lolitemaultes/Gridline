@@ -20,11 +20,15 @@ NetSettings netSettingsFrom(const Settings& s) {
   n.turnHost = s.getString("collab.turnHost");
   n.turnPort = static_cast<uint16_t>(std::clamp(s.getNumber("collab.turnPort"), 1.0, 65535.0));
   n.turnUser = s.getString("collab.turnUser");
-  if (!n.turnHost.empty()) {
+  // K-312: also with only a user name, so a half-filled setting (no server) is told apart
+  if (!n.turnHost.empty() || !n.turnUser.empty()) {
     secrets::Store st;
     st.get("collab-turn-password", n.turnPass);
   }
   n.portMapping = s.getBool("collab.portMapping");
+  n.stunBackups = parseStunList(s.getString("collab.stunBackups"));  // K-312
+  n.fixedPort = static_cast<uint16_t>(std::clamp(s.getNumber("collab.udpPort"), 0.0, 65535.0));
+  n.portForwarded = n.fixedPort && s.getBool("collab.portForwarded");
   return n;
 }
 

@@ -6,8 +6,8 @@
 #      grows (its geometry, peak count and envelope traced each check; the incremental summary equals
 #      a rescan of the take); after stop the committed clip's geometry and summary equal the last live
 #      frame, and its file's own summary too; one undo removes it.
-#   2. Loop recording over a one-bar time selection at 200 %: the passes stack on the tracks below
-#      while they record, earlier passes muted, exactly as they are committed. The script waits for the
+#   2. Loop recording over a one-bar time selection at 200 %: the passes land on the track as take
+#      lanes (K-123) while they record, earlier passes muted, exactly as they are committed. The script waits for the
 #      third live pass ("livetake-clips:3"), not a fixed time: a busy machine's audio runs late.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j217_live_take_app.cmake
 cmake_minimum_required(VERSION 3.16)
@@ -178,16 +178,16 @@ if(NOT looptrace MATCHES "live take [0-9]+ mixer [0-9]+ pass 0 track 0 start [0-
   set(ok FALSE)
 endif()
 foreach(p 1 2)
-  if(NOT looptrace MATCHES "live take [0-9]+ mixer [0-9]+ pass ${p} track ${p} start 0 ")
+  if(NOT looptrace MATCHES "live take [0-9]+ mixer [0-9]+ pass ${p} track 0 start 0 ")
     set(ok FALSE)
   endif()
 endforeach()
 if(NOT ok)
   message(STATUS "loop trace:\n${looptrace}")
 endif()
-check("loop recording: the passes stack on the tracks below, later passes from the loop start" ok)
+check("loop recording: the passes land on the track as take lanes, later passes from the loop start" ok)
 set(ok FALSE)
-if(looptrace MATCHES "pass 0 track 0 [^\n]* muted 1 " AND looptrace MATCHES "pass 1 track 1 [^\n]* muted 1 ")
+if(looptrace MATCHES "pass 0 track 0 [^\n]* muted 1 " AND looptrace MATCHES "pass 1 track 0 [^\n]* muted 1 ")
   set(ok TRUE)
 endif()
 check("loop recording: earlier passes show muted while the next one records" ok)

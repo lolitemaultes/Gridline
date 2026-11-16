@@ -182,12 +182,20 @@ int ungroupClips(Document& d, const std::set<ObjectId>& clips) {
 }
 
 std::set<ObjectId> expandClipGroups(const Song& s, const std::set<ObjectId>& clips) {
-  std::set<ObjectId> groups, out = clips;
+  std::set<ObjectId> groups, takeGroups, out = clips;
   for (ObjectId id : clips)
-    if (const Clip* c = s.clip(id); c && c->group != kNoId) groups.insert(c->group);
-  if (groups.empty()) return out;
+    if (const Clip* c = s.clip(id)) {
+      if (c->group != kNoId) groups.insert(c->group);
+      // K-123: takes recorded as lanes (the whole take group on one track) move together, so they stay lined up.
+      if (c->takeGroup != kNoId) takeGroups.insert(c->takeGroup);
+    }
+  for (const auto& c : s.playlist)  // a group spread over tracks (the earlier layout) is not one
+    if (takeGroups.count(c.takeGroup))
+      for (ObjectId id : clips)
+        if (const Clip* k = s.clip(id); k && k->takeGroup == c.takeGroup && k->track != c.track) takeGroups.erase(c.takeGroup);
+  if (groups.empty() && takeGroups.empty()) return out;
   for (const auto& c : s.playlist)
-    if (groups.count(c.group)) out.insert(c.id);
+    if (groups.count(c.group) || takeGroups.count(c.takeGroup)) out.insert(c.id);
   return out;
 }
 

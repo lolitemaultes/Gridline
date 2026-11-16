@@ -37,6 +37,7 @@
 #include <filesystem>
 #include <fstream>
 #include "../core/Demo.h"
+#include "../core/TrackerDemo.h"
 #include "../core/MenuParity.h"
 #include "../core/ProjectPreview.h"
 #include "../core/Recents.h"
@@ -290,6 +291,8 @@ void App::syncEngine() {
   // changes, when delay compensation is switched, and when a hosted plugin
   // reports a new latency.
   const bool pdc = settings.getBool("audio.pdc");
+  engine.setMonitorInputOnly(settings.getBool("record.monitor.inputOnly"));  // K-123 (relaxed stores)
+  engine.setLowLatencyMonitoring(settings.getBool("record.monitor.lowLatency"));
   // Stale hosted instances (restart requests) are polled ten times a second:
   // the check visits every plugin instance (J-25).
   static double staleChecked = -1;
@@ -717,6 +720,11 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
   // N48-07 (checkpoint 49): the view is noted when the save starts (the view it was saved in), not only
   // once the background write is done: a quit or an open in between lost it.
   if (!collabui::active(*this)) livelook::projectSaved(*this, p);
+  {  // K-297 (round 9): the plugin windows open now go in the project (view state: no undo step)
+    std::vector<Song::OpenPluginWindow> wins;
+    for (const auto& [owner, slot] : openPluginWindowList(*this)) wins.push_back({owner, slot});
+    if (doc.song().pluginWindows != wins) doc.patchSong([&wins](Song& s) { s.pluginWindows = wins; });
+  }
   auto saved = [this, p, format, epoch, serial]() {
     if (doc.projectEpoch() != epoch) return;
     if (collabui::active(*this)) {  // J-111: a copy; the project stays the collaborative one
@@ -756,8 +764,35 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
             stem.resize(stem.size() - std::strlen(ext));
             break;
           }
-        const int adopted = adoptCacheFiles(out, archive::defaultCacheRoot(), (pp.parent_path() / fs::u8path(stem + " Samples")).u8string(), &copyErr);
+        int adopted = adoptCacheFiles(out, archive::defaultCacheRoot(), (pp.parent_path() / fs::u8path(stem + " Samples")).u8string(), &copyErr,
+                                      pp.parent_path().u8string());
         if (!copyErr.empty()) notify("Some samples stay in the cache only: " + copyErr, true);
+        // R11-02: the folders Gridline made beside the project (or, before the first save, in the
+        // settings folder) go with it: the audio editors' "Edited audio" and the "<name> Samples"
+        // copies, copied on Save as and named relative to the project.
+        {
+          std::vector<std::pair<std::string, std::string>> folders;
+          folders.emplace_back((fs::u8path(configDir()) / "Edited audio").u8string(), "Edited audio");
+          if (!projectPath.empty()) {
+            const fs::path old = fs::u8path(projectPath);
+            std::string oldStem = old.filename().u8string();
+            for (const char* ext : {".gridline.json", ".gridline", ".json"})
+              if (oldStem.size() > std::strlen(ext) && oldStem.compare(oldStem.size() - std::strlen(ext), std::strlen(ext), ext) == 0) {
+                oldStem.resize(oldStem.size() - std::strlen(ext));
+                break;
+              }
+            folders.emplace_back((old.parent_path() / "Edited audio").u8string(), "Edited audio");
+            folders.emplace_back((old.parent_path() / fs::u8path(oldStem + " Samples")).u8string(), stem + " Samples");
+          }
+          folders.emplace_back((pp.parent_path() / "Edited audio").u8string(), "Edited audio");
+          folders.emplace_back((pp.parent_path() / fs::u8path(stem + " Samples")).u8string(), stem + " Samples");
+          // R12-01: and wherever else the song's files still live in a Gridline-made folder (the
+          // open song keeps the first project's paths: Save as B, then v2, then v3 finds B's).
+          for (auto& f : gridlineMadeFolders(out, stem)) folders.push_back(std::move(f));
+          std::string moveErr;
+          adopted += adoptProjectFolders(out, folders, pp.parent_path().u8string(), &moveErr);
+          if (!moveErr.empty()) notify("Some edited audio stays where it was: " + moveErr, true);
+        }
         if (!gl::saveProject(p, adopted > 0 ? out : doc.song(), &err)) {
           notify("Could not save the project: " + err, true, p);
           return false;
@@ -1098,6 +1133,8 @@ void App::newFromTemplate(const std::string& which) {
   if (which.empty()) {
     s = makeEmptySong();
     applyProjectDefaults(s);
+  } else if (which == "tracker") {
+    s = makeTrackerDemo();  // K-106 cp15: the Tracker's demo module
   } else if (which == "demo") {
     s = makeDemoTrack();  // J-135: the "Gridline" demo song
     // K-112c (round 45): opened in Clips, the demo starts with its clips in the grid (as the reference's

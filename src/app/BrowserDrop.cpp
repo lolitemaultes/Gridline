@@ -33,6 +33,7 @@
 #include "App.h"
 #include "BrowserUi.h"
 #include "LiveLook.h"
+#include "LogicPlugins.h"
 #include "SystemMenu.h"
 #include "../core/RemoteFs.h"
 #include "../core/ProjectFiles.h"
@@ -626,6 +627,29 @@ const HoverPlan* hoverPlan(DropTarget target) {
 
 bool acceptFileDrop(App& a, DropTarget target, const DropPlace& place) { return acceptFileDrop(a, target, place, nullptr); }
 
+std::vector<std::string> draggedAudioFiles(const char** payloadType) {
+  const ImGuiPayload* pl = ImGui::GetDragDropPayload();
+  if (!pl || !(pl->IsDataType("GL_FILE") || pl->IsDataType("GL_FILES"))) return {};
+  if (payloadType) *payloadType = pl->IsDataType("GL_FILE") ? "GL_FILE" : "GL_FILES";
+  std::vector<std::string> out;
+  for (const xdrop::Item& it : payloadItems(pl)) {
+    if (it.path.empty() || it.dir || xdrop::kindOf(it) != browse::Kind::Audio) return {};
+    out.push_back(it.path);
+  }
+  return out;
+}
+
+bool dropFiles(App& a, const std::vector<std::string>& paths, DropTarget target, const DropPlace& place) {
+  std::vector<xdrop::Item> items;
+  for (const std::string& p : paths) {
+    xdrop::Item it;
+    it.path = p;
+    it.name = fs::path(p).filename().string();
+    items.push_back(it);
+  }
+  return !items.empty() && performItems(a, items, target, place, xdrop::Mods{});
+}
+
 bool acceptFileDrop(App& a, DropTarget target, const DropPlace& place, DropFeedback* fb) {
   const ImGuiPayload* cur = ImGui::GetDragDropPayload();
   if (!cur) return false;
@@ -656,10 +680,14 @@ bool acceptFileDrop(App& a, DropTarget target, const DropPlace& place, DropFeedb
   if (items.empty()) return false;
   const xdrop::Mods mods = currentMods();
   const xdrop::Plan p = planFor(a, items, target, place, mods);
+  std::string label = p.label;  // R07-11: the Tracks layout says "region"
+  if (logicplug::active(a))
+    for (const char* w : {"clips", "clip"})
+      for (size_t at = label.find(w); at != std::string::npos; at = label.find(w, at + 1)) label.replace(at, std::strlen(w), std::strcmp(w, "clips") == 0 ? "regions" : "region");
   if (!p.accepted()) {
-    if (!p.label.empty()) {
-      ImGui::SetTooltip("%s", p.label.c_str());
-      a.setHint(p.label);
+    if (!label.empty()) {
+      ImGui::SetTooltip("%s", label.c_str());
+      a.setHint(label);
       ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
     }
     return false;
@@ -672,8 +700,8 @@ bool acceptFileDrop(App& a, DropTarget target, const DropPlace& place, DropFeedb
     // such as a Platter deck inside its plugin window, wins and draws its own)
     if (pl->Preview && (!fb || fb->highlight)) drawTargetHighlight(rect);
     if (fb) fb->hovering = true;
-    ImGui::SetTooltip("%s", p.label.c_str());
-    a.setHint(p.label);
+    ImGui::SetTooltip("%s", label.c_str());
+    a.setHint(label);
     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     gHover.plan = HoverPlan{target, p, items};
     gHover.frame = ImGui::GetFrameCount();
@@ -1184,6 +1212,12 @@ bool performItems(App& a, const std::vector<xdrop::Item>& items, DropTarget targ
       if (const Clip* c = sg.clip(made)) prevEnd = c->start + sg.clipLength(*c);
     }
   }
+  if (livelook::active(a))  // checkpoint 52 (N51-09): an audio clip on a new (unassigned) track makes it an audio track
+    a.doc.editSong("new audio track", [&](Song& sg) {
+      for (ObjectId id : clips)
+        if (const Clip* c = sg.clip(id); c && c->kind == ClipKind::Audio && trackmodes::modeOf(sg, c->track) == TrackMode::Unassigned)
+          trackmodes::makeNamedAudioTrack(sg, c->track);
+    });
   if (slots || livelook::active(a))  // N47-14 / N49-08: in Clips a dropped audio clip takes its track's colour, in both views (refs 455, 531)
     a.doc.editSong("clip colour", [&](Song& sg) {
       for (ObjectId id : clips)
@@ -1285,6 +1319,10 @@ PlugPlan planPlugin(App& a, const std::string& type, DropTarget target, const Dr
     }
     if (!gen) {
       p.why = genOnly;
+      return p;
+    }
+    if (mode == TrackMode::Audio && trackmodes::isGroupTrack(s, tr)) {  // checkpoint 52
+      p.why = i18n::tr("A group track plays its tracks: drop the instrument on one of them");
       return p;
     }
     if (mode == TrackMode::Audio) {
@@ -1421,6 +1459,9 @@ bool performPluginDrop(App& a, const std::string& type, DropTarget target, const
       // track of its own, as a new instrument track does.
       if (const Channel* c = a.doc.song().channel(p.owner); ok && c && (c->mixerTrack == kNoId || c->mixerTrack == a.doc.song().masterId()))
         if (const ObjectId fm = trackmodes::freeMixer(a.doc.song()); fm != kNoId) a.doc.routeChannel(p.owner, fm);
+      // Checkpoint 52: a track in a group plays into the group (as it would have at grouping).
+      if (const int t = trackmodes::instrumentTrackOf(a.doc.song(), p.owner); ok && t >= 0 && trackmodes::groupTrackOf(a.doc.song(), t) >= 0)
+        a.doc.editSong("group routing", [t](Song& sg) { trackmodes::routeIntoItsGroup(sg, t); });
       a.doc.endGroup();
       if (!ok) return false;
       if (!livelook::instrumentDropped(a, p.owner, info ? info->name : type)) a.showNewInstrument(p.owner);

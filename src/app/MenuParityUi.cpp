@@ -260,8 +260,9 @@ void toolsNoteItems(App& a) {
 }
 
 void toolsMacroItems(App& a) {
-  if (ImGui::MenuItem(i18n::tr("Lock every playlist track"))) ops::setAllTracksLocked(a.doc, true);
-  if (ImGui::MenuItem(i18n::tr("Unlock every playlist track"))) ops::setAllTracksLocked(a.doc, false);
+  const bool clips = livelook::active(a);  // N50-09: Clips' wording (its tracks, not playlist tracks)
+  if (ImGui::MenuItem(clips ? i18n::tr("Lock every track") : i18n::tr("Lock every playlist track"))) ops::setAllTracksLocked(a.doc, true);
+  if (ImGui::MenuItem(clips ? i18n::tr("Unlock every track") : i18n::tr("Unlock every playlist track"))) ops::setAllTracksLocked(a.doc, false);
   // N46-09: Clips has its own clip grid (scenes); the Studio live area is not one of its tools.
   if (!livelook::active(a) && ImGui::MenuItem(i18n::tr("Prepare the live area"))) {
     // K-112c (C44-07): in Clips, one clip to a slot of the clip grid (scene i: each track's i-th clip).

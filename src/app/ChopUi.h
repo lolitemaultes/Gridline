@@ -29,6 +29,8 @@ void timeSelectionItems(App& a);
 void shortcuts(App& a);
 // Region actions shared by menus and shortcuts.
 void duplicateTime(App& a);
+// Checkpoint 52: Clips' Duplicate Time: the copy is inserted on every track, later material moves right.
+void duplicateTimeInsert(App& a);
 // N48-05: Clips' Cmd+E with a time selection: the clips in it are cut at both of its edges.
 void splitAtSelection(App& a);
 void insertSpace(App& a);

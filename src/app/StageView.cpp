@@ -1270,7 +1270,8 @@ void tokenMenu(App& a, ObjectId id) {
   ImGui::TextDisabled("%s", mixerTrackName(s, static_cast<size_t>(i)).c_str());
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Effects..."))) openEffects(a, id);
-  if (ImGui::MenuItem(i18n::tr("Rename..."), keys::label("stage.rename"))) renameTrack(a, id);
+  const char* renameKey = keys::label("stage.rename");  // K-297 (round 9): else F2, which renames it (edit.rename)
+  if (ImGui::MenuItem(i18n::tr("Rename..."), renameKey ? renameKey : keys::label("edit.rename"))) renameTrack(a, id);
   if (ImGui::BeginMenu(i18n::tr("Colour"))) {
     uint32_t c = 0;
     if (menus::colorGrid(&c)) mixops::setColor(a.doc, scope, c);

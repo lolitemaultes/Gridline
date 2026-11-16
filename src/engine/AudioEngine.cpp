@@ -37,6 +37,7 @@ AudioEngine::AudioEngine(double sampleRate) : sr_(sampleRate), queue_(kQueue) {
   preL_.assign(buses, std::vector<float>(kMaxBlock, 0.f));
   preR_.assign(buses, std::vector<float>(kMaxBlock, 0.f));
   for (auto* v : {&tmpL_, &tmpR_}) v->assign(kMaxBlock, 0.f);
+  for (auto* v : {&devTapL_, &devTapR_}) v->assign(static_cast<size_t>(kMaxDevicePairs) * kMaxBlock, 0.f);
   scratch_.resize(WorkerPool::kMaxThreads);
   for (auto& r : bendRange_) r.store(2.0f);
   for (auto& m : macro_) m.store(-1.f);
@@ -153,13 +154,47 @@ void AudioEngine::readDeviceInput(int n) {
     }
 }
 
+bool AudioEngine::hearsInput(uint8_t monitor, bool armed, bool playing, double tick) const {
+  switch (static_cast<InputMonitor>(monitor)) {
+    case InputMonitor::On: return true;
+    case InputMonitor::Off: return false;
+    default: break;
+  }
+  if (!playing) return true;
+  if (!armed) return false;
+  if (monInputOnly_.load(std::memory_order_relaxed)) return true;
+  const double pa = punchA_.load(std::memory_order_relaxed), pb = punchB_.load(std::memory_order_relaxed);
+  if (recordOn_.load(std::memory_order_relaxed) && pb > pa && (tick < pa || tick >= pb)) return false;  // tape style
+  return true;
+}
+
+// K-123: each track's input with its trim and polarity, once per block (before the meters, the
+// monitoring and the capture read it).
+void AudioEngine::trimInputs(const Program* p, int n) {
+  if (!p) return;
+  const int ch = inChannels_.load(std::memory_order_relaxed);
+  for (const ProgMixer& m : p->mixer) {
+    if (!m.inProcessed || !m.rt || m.rt->inL.size() < static_cast<size_t>(n)) continue;
+    const float* sl = m.inFirst < ch ? inBuf_[static_cast<size_t>(m.inFirst)].data() : silence_.data();
+    const float* sr = m.inStereo && m.inFirst + 1 < ch ? inBuf_[static_cast<size_t>(m.inFirst + 1)].data() : sl;
+    float* dl = m.rt->inL.data();
+    float* dr = m.rt->inR.data();
+    for (int i = 0; i < n; ++i) {
+      dl[i] = sl[i] * m.inGain;
+      dr[i] = sr[i] * m.inGain;
+    }
+  }
+}
+
 const float* AudioEngine::inputL(const ProgMixer& m) const {
   const int ch = inChannels_.load(std::memory_order_relaxed);
+  if (m.inProcessed && m.inFirst >= 0 && m.rt && !m.rt->inL.empty()) return m.rt->inL.data();
   return m.inFirst >= 0 && m.inFirst < ch ? inBuf_[static_cast<size_t>(m.inFirst)].data() : silence_.data();
 }
 
 const float* AudioEngine::inputR(const ProgMixer& m) const {
   const int ch = inChannels_.load(std::memory_order_relaxed);
+  if (m.inProcessed && m.inFirst >= 0 && m.rt && !m.rt->inR.empty()) return m.rt->inR.data();
   if (m.inStereo && m.inFirst >= 0 && m.inFirst + 1 < ch) return inBuf_[static_cast<size_t>(m.inFirst + 1)].data();
   return inputL(m);
 }
@@ -747,7 +782,18 @@ enum class JumpLevel { Bars, Beat, Ticks };
 double clickFreqFor(int accent) { return accent >= 2 ? 1600.0 : accent == 1 ? 1300.0 : 1000.0; }
 }  // namespace
 
+bool AudioEngine::rollPunch(double& pa, double& pb) const {
+  if (tMode_ != PlayMode::Song || !rollArmed_.load(std::memory_order_relaxed) || hostFollow_ || offline_) return false;
+  pa = punchA_.load(std::memory_order_relaxed);
+  pb = punchB_.load(std::memory_order_relaxed);
+  return pb > pa;
+}
+
 double AudioEngine::loopEnd(const Program* p) const {
+  if (tMode_ == PlayMode::Song) {  // K-123 post-roll: no loop wrap; the transport stops after the punch out
+    double pa = 0, pb = 0;
+    if (postRoll_.load(std::memory_order_relaxed) > 0 && rollPunch(pa, pb)) return std::max(1e12, pb);
+  }
   if (tMode_ == PlayMode::Song) return loopB_ > loopA_ && !hostFollow_ ? loopB_ : static_cast<double>(p->songLoopEnd);
   if (tMode_ == PlayMode::Live) return 1e12;  // free-running transport
   const ProgPattern* pat = p->pattern(tPattern_);
@@ -1587,6 +1633,11 @@ void AudioEngine::drain(const Program* p) {
         heardRun_ = static_cast<uint32_t>(c.pitch);  // K-226: what is rendered from now on is this request's playback
         if (!tPlaying_) {
           startTick_ = here();
+          {  // K-123 pre-roll: from before the punch in
+            double pa = 0, pb = 0;
+            const double pre = preRoll_.load(std::memory_order_relaxed);
+            if (pre > 0 && rollPunch(pa, pb)) startTick_ = std::max(0.0, pa - pre);
+          }
           anchorTick_ = startTick_;
           clock_ = 0;
           tPlaying_ = true;
@@ -1863,6 +1914,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   std::memset(L, 0, sizeof(float) * static_cast<size_t>(n));
   std::memset(R, 0, sizeof(float) * static_cast<size_t>(n));
   readDeviceInput(n);
+  trimInputs(p, n);  // K-123
   if (!p) {
     if (panicLeft_ > 0) killEverything(nullptr);
     publishOwn(nullptr);
@@ -2003,6 +2055,20 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     curTick_ = tickAt(p, anchorTick_, static_cast<double>(clock_));
     posTick_.store(curTick_);
   }
+  if (tPlaying_ && p) {  // K-123 post-roll: stop that long after the punch out
+    double pa = 0, pb = 0;
+    const double post = postRoll_.load(std::memory_order_relaxed);
+    if (post > 0 && rollPunch(pa, pb) && curTick_ >= pb + post) {
+      releaseAll(p, n - 1, true);
+      pendJump_ = false;
+      tPlaying_ = false;
+      const double back = returnToSeek_.load(std::memory_order_relaxed) ? seekTick_.load(std::memory_order_relaxed) : loopB_ > loopA_ ? loopA_ : 0.0;
+      landAt(back);
+      curTick_ = back;
+      posTick_.store(curTick_);
+      rollStops_.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
   playing_.store(tPlaying_);
   // --- recording: the position of every frame, delayed by the input latency
   // (the music the performer heard when the input frame was played) ---
@@ -2046,6 +2112,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   // wrap that happened at its start, the new pass's).
   const double eventTick = segCount_ > 0 && segs_[0].from == 0 ? tickAt(p, segs_[0].anchor, static_cast<double>(segs_[0].clock)) : blockTick;
   if (grid && gpos == 0) {
+    lastGridTick_ = tPlaying_ ? blockTick : -1;  // R08-01: a stopped transport is never treated as settled
     evaluateLinks(p, kControlBlock, blockTick, eventTick);
   } else if (p->hasEventLanes) {  // J-210: a block that starts on a step of recorded events
     applyAutomation(p, blockTick, eventTick, true);
@@ -2646,6 +2713,23 @@ int AudioEngine::untilEventStep(const Program* p, int n) const {
   return s >= 1 && s < n ? static_cast<int>(s) : n;
 }
 
+int AudioEngine::settledGridBlock(const Program* p, int n) const {
+  const int grid = kControlBlock;
+  if (!tPlaying_ || countInLeft_ > 0 || tMode_ != PlayMode::Song || lastGridTick_ < 0) return grid;
+  if (!p->links.empty() || p->hasMacros || p->hasHostBank || p->hasEventLanes) return grid;
+  double anchor = anchorTick_;
+  int64_t clock = clock_;
+  if (tLoop_ && sampleAt(p, anchor, transportEnd(p)) <= clock) return grid;  // the block starts with the loop wrap
+  const int len = n / grid * grid;
+  const double t0 = tickAt(p, anchor, static_cast<double>(clock));
+  const double t1 = tickAt(p, anchor, static_cast<double>(clock + len));
+  if (tLoop_ && t1 >= transportEnd(p)) return grid;  // a wrap inside: as before
+  const double lo = std::min(lastGridTick_, t0), hi = std::max(t1, lastGridTick_);
+  for (const ProgAutoLane& a : p->autos)
+    if (!a.lane.constantBetween(lo, hi)) return grid;
+  return len;
+}
+
 int AudioEngine::untilMeterChange(const Program* p, int n) const {
   if (!tPlaying_ || countInLeft_ > 0 || tMode_ == PlayMode::Pattern || p->meter.constant()) return n;
   double anchor = anchorTick_;
@@ -2935,8 +3019,12 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
     }
     // With controller links, render on a fixed grid so link evaluation (once
     // per control block) is independent of the audio buffer size.
-    if (p && p->controlGrid())
-      n = std::min(n, kControlBlock - static_cast<int>(absClock_ % kControlBlock));
+    if (p && p->controlGrid()) {
+      const int toGrid = kControlBlock - static_cast<int>(absClock_ % kControlBlock);
+      // R08-01: automation that holds its value needs no 64-frame blocks (they made a bounce with
+      // one short lane several times slower, more so with several processing threads).
+      n = toGrid == kControlBlock && n > kControlBlock ? settledGridBlock(p, n) : std::min(n, toGrid);
+    }
     hits_.clear();  // J-165: filled by the commands, MIDI and sequencing below
     deliverHeld(p);  // K-87: notes that waited for an instrument to load
     drain(p);
@@ -3074,6 +3162,44 @@ void AudioEngine::processInterleaved(float* out, int frames) {
     for (int i = 0; i < n; ++i) {
       out[2 * (done + i)] = tmpL_[static_cast<size_t>(i)];
       out[2 * (done + i) + 1] = tmpR_[static_cast<size_t>(i)];
+    }
+    done += n;
+  }
+}
+
+void AudioEngine::processInterleaved(float* out, int frames, int channels) {
+  if (channels <= 2) {
+    processInterleaved(out, frames);
+    return;
+  }
+  const int pairs = std::min(kMaxDevicePairs, (channels - 2) / 2);
+  static constexpr int kNoMixer[kMaxDevicePairs] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+  float* tl[kMaxDevicePairs];
+  float* tr[kMaxDevicePairs];
+  for (int k = 0; k < pairs; ++k) {
+    tl[k] = devTapL_.data() + static_cast<size_t>(k) * kMaxBlock;
+    tr[k] = devTapR_.data() + static_cast<size_t>(k) * kMaxBlock;
+  }
+  OutputTaps taps;
+  taps.count = pairs;
+  taps.mixer = kNoMixer;
+  taps.L = tl;
+  taps.R = tr;
+  const auto ch = static_cast<size_t>(channels);
+  int done = 0;
+  while (done < frames) {
+    const int n = std::min(kMaxBlock, frames - done);
+    process(tmpL_.data(), tmpR_.data(), n, pairs > 0 ? &taps : nullptr);
+    for (int i = 0; i < n; ++i) {
+      float* f = out + static_cast<size_t>(done + i) * ch;
+      const auto si = static_cast<size_t>(i);
+      f[0] = tmpL_[si];
+      f[1] = tmpR_[si];
+      for (int k = 0; k < pairs; ++k) {
+        f[2 + 2 * k] = tl[k][i];
+        f[3 + 2 * k] = tr[k][i];
+      }
+      for (size_t c = 2 + 2 * static_cast<size_t>(pairs); c < ch; ++c) f[c] = 0.f;
     }
     done += n;
   }

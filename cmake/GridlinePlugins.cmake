@@ -60,14 +60,15 @@ function(gridline_plugin target format entry viewClass)
     target_link_libraries(${target} PRIVATE X11::X11)
   endif()
   target_compile_options(${target} PRIVATE ${GL_WARN})
-  target_compile_definitions(${target} PRIVATE GRIDLINE_VERSION_STRING="${GRIDLINE_VERSION_FULL}" GRIDLINE_PLUGIN_VIEW_CLASS=${viewClass})
+  target_compile_definitions(${target} PRIVATE GRIDLINE_VERSION_STRING="${GRIDLINE_VERSION_FULL}")
   set_target_properties(${target} PROPERTIES PREFIX "" OUTPUT_NAME "${name}")
   set(auFactory GridlineAUFactory)
   if(GP_SUITE)
     set(auFactory GridlineSuiteAUFactory)
-    # Objective-C classes are global in a host process: the suite's own names.
+    # Objective-C classes are global in a host process: the suite's own names. The AU view
+    # factory's ends in a tag the plugin downloads rewrite per bundle (package-plugins.py).
     target_compile_definitions(${target} PRIVATE GRIDLINE_SUITE="${GP_SUITE}" GRIDLINE_AU_FACTORY=${auFactory}
-                               GRIDLINE_AU_FACTORY_CLASS=${viewClass}Factory GRIDLINE_AU_VIEW_CLASS=${viewClass}AuView)
+                               GRIDLINE_AU_FACTORY_CLASS=${viewClass}Factory_T0000000000000000)
   endif()
   if(format STREQUAL "clap")
     set(bundle "${GRIDLINE_PLUGIN_DIR}/${name}.clap")
@@ -122,8 +123,12 @@ function(gridline_plugin target format entry viewClass)
     else()
       set(id ${idStem}.vst3)
     endif()
+    # (A suite's Audio Unit gets its Info.plist from the step after the link, above: written here
+    # too, a later configure would drop its components from a bundle that was not linked again.)
+    if(NOT (format STREQUAL "au" AND GP_SUITE))
     file(WRITE "${bundle}/Contents/Info.plist"
          "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict>\n<key>CFBundleDevelopmentRegion</key><string>English</string>\n<key>CFBundleName</key><string>${name}</string>\n<key>CFBundleDisplayName</key><string>${name}</string>\n<key>CFBundleExecutable</key><string>${name}</string>\n<key>CFBundleIdentifier</key><string>${id}</string>\n<key>CFBundleIconFile</key><string>Gridline</string>\n<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>\n<key>CFBundlePackageType</key><string>BNDL</string>\n<key>CFBundleSignature</key><string>????</string>\n<key>CFBundleShortVersionString</key><string>${GRIDLINE_VERSION_NUMERIC}</string>\n<key>CFBundleVersion</key><string>${GRIDLINE_VERSION_NUMERIC}</string>\n<key>LSMinimumSystemVersion</key><string>${GL_MACOS_MIN}</string>\n<key>NSHighResolutionCapable</key><true/>\n${components}</dict></plist>\n")
+    endif()
     file(WRITE "${bundle}/Contents/PkgInfo" "BNDL????")
     set(list "")
     foreach(sym ${exports})
@@ -338,3 +343,26 @@ if(APPLE)
                              GRIDLINE_MINI_AU="${GRIDLINE_PLUGIN_DIR}/Gridline Suite Mini.component")
 endif()
 add_test(NAME suite COMMAND gridline_tests_suite WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-308: the plugins' daily update check stays off in tests (no request, no state file written).
+set_property(TEST suite APPEND PROPERTY ENVIRONMENT "GRIDLINE_NO_UPDATE_CHECK=1")
+# K-308: single-plugin downloads made from these bundles share no Objective-C class (macOS).
+if(APPLE AND Python3_Interpreter_FOUND)
+  add_executable(gridline_tests_k308_objc tests/test_k308_objc_classes.mm)
+  target_link_libraries(gridline_tests_k308_objc PRIVATE gridline_core "-framework AppKit" "-framework AudioToolbox")
+  target_include_directories(gridline_tests_k308_objc PRIVATE tests src)
+  target_compile_options(gridline_tests_k308_objc PRIVATE ${GL_WARN})
+  target_compile_definitions(gridline_tests_k308_objc PRIVATE GRIDLINE_PLUGIN_DIR="${GRIDLINE_PLUGIN_DIR}" GRIDLINE_PYTHON="${Python3_EXECUTABLE}"
+                             GRIDLINE_PACKAGE_PLUGINS="${CMAKE_SOURCE_DIR}/tools/release/package-plugins.py")
+  add_dependencies(gridline_tests_k308_objc gridline_suite_gridline)
+  add_test(NAME k308_objc_classes COMMAND gridline_tests_k308_objc WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+  set_tests_properties(k308_objc_classes PROPERTIES ENVIRONMENT "GRIDLINE_NO_UPDATE_CHECK=1" TIMEOUT 600)
+endif()
+# K-309: the real installers of both suites from these bundles (.pkg built and its finish step
+# run and verified on a scratch copy; a .run installing into a scratch folder).
+if(APPLE AND Python3_Interpreter_FOUND)
+  foreach(sid gridline mini)
+    add_test(NAME k309_real_installers_${sid} COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/release/suite-installer.py
+             --real-test ${sid} ${GRIDLINE_PLUGIN_DIR} $<TARGET_FILE:gridline> WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(k309_real_installers_${sid} PROPERTIES TIMEOUT 900)
+  endforeach()
+endif()

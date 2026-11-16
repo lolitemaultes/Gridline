@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstring>
 #include <cstdio>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <sstream>
@@ -22,7 +23,12 @@
 #include "../core/WindowPlacement.h"
 #include "../core/ClipSources.h"
 #include "../core/MenuOps.h"
+#include "../core/Meter.h"
 #include "../core/TrackModes.h"
+#include "../core/Automation.h"
+#include "../engine/ClipOps.h"
+#include "../engine/Render.h"
+#include "../packs/edison/edison.h"
 #include "App.h"
 #include "EditorZoomUi.h"
 #include "HostedBodies.h"
@@ -32,9 +38,14 @@
 #include "LayoutShellUi.h"
 #include "PluginUI.h"
 #include "Theme.h"
+#include "TypeInMenu.h"
 #include "Widgets.h"
 
 namespace gl::logicplug {
+
+namespace {
+AutoFold gFold;  // K-112B (checkpoint 46): the automation view, worked out by autoFold
+}  // namespace
 
 // R01-10: the sound a track plays: its linked channel, else the sound of the given region (when it
 // lies on the track), else of the track's first region (an audio region's channel, a pattern
@@ -55,7 +66,28 @@ const Channel* trackSound(const Song& s, int track, const Clip* clip) {
   const Clip* first = nullptr;
   for (const Clip& k : s.playlist)
     if (k.track == track && (!first || k.start < first->start) && soundOf(k)) first = &k;
-  return first ? soundOf(*first) : nullptr;
+  if (first) return soundOf(*first);
+  return s.channel(s.tracks[static_cast<size_t>(track)].sound);  // R08-07: the sound it kept
+}
+
+void keepTrackSounds(App& a, const std::set<ObjectId>& clips) {
+  if (!active(a) || clips.empty()) return;
+  const Song& s = a.doc.song();
+  const int n = static_cast<int>(s.tracks.size());
+  std::map<int, ObjectId> keep;
+  for (const Clip& c : s.playlist) {
+    const int t = c.track;
+    if (!clips.count(c.id) || c.kind == ClipKind::Automation || t < 0 || t >= n || keep.count(t)) continue;
+    if (s.tracks[static_cast<size_t>(t)].sound != kNoId || trackmodes::linkedChannel(s, t) || trackmodes::linkedMixer(s, t)) continue;
+    bool stays = false;  // a region of the track that is not going
+    for (const Clip& k : s.playlist) stays = stays || (k.track == t && k.kind != ClipKind::Automation && !clips.count(k.id));
+    if (stays) continue;
+    if (const Channel* ch = trackSound(s, t, &c)) keep[t] = ch->id;
+  }
+  for (const auto& [t, id] : keep) {
+    const ObjectId keepId = id;
+    a.doc.editPlaylistTrack(t, "keep the track's sound", [keepId](PlaylistTrack& x) { x.sound = keepId; });
+  }
 }
 
 bool deleteTrack(App& a, int track) {
@@ -74,6 +106,7 @@ bool deleteTrack(App& a, int track) {
           if (p->notes.count(c.id) || p->steps.count(c.id)) into.insert(c.id);
   };
   if (const Channel* lc = trackmodes::linkedChannel(s, track)) mine.insert(lc->id);
+  if (const Channel* kc = s.channel(s.tracks[static_cast<size_t>(track)].sound)) mine.insert(kc->id);  // R08-07
   for (const Clip& k : s.playlist) sounds(k, k.track == track ? mine : others);
   for (int i = 0; i < static_cast<int>(s.arrangements.size()); ++i)
     if (i != s.currentArrangement)
@@ -97,6 +130,12 @@ bool deleteTrack(App& a, int track) {
   }
   std::set<ObjectId> owners(drop.begin(), drop.end());
   if (strip != kNoId) owners.insert(strip);
+  std::vector<int> shownHere;  // R08-03: automation-only tracks out of sight (lanes or the folder) that may empty
+  {
+    const AutoFold& f = autoFold(a);
+    for (int t = 0; t < static_cast<int>(s.tracks.size()); ++t)
+      if (t != track && (f.isHidden(t) || f.isMember(t))) shownHere.push_back(t);
+  }
   a.doc.beginGroup("delete track");
   ops::deletePlaylistTrack(a.doc, track, true);
   // Their automation: the data aimed at the dropped strip or sounds, and the regions that play it
@@ -118,6 +157,18 @@ bool deleteTrack(App& a, int track) {
     });
   if (!drop.empty()) ops::removeChannels(a.doc, drop);
   if (strip != kNoId) a.doc.removeMixerTrack(strip);
+  // R08-03: an automation-only track shown as this track's lane (or in the folder) that held only
+  // the automation just deleted goes too: nothing is left behind as an empty row.
+  for (auto it = shownHere.rbegin(); it != shownHere.rend(); ++it) {
+    const int t = *it > track ? *it - 1 : *it;
+    const Song& now = a.doc.song();
+    if (t < 0 || t >= static_cast<int>(now.tracks.size()) || now.tracks.size() <= 1) continue;
+    bool used = false;
+    for (const Clip& k : now.playlist) used = used || k.track == t;
+    for (const Arrangement& ar : now.arrangements)
+      for (const Clip& k : ar.playlist) used = used || k.track == t;
+    if (!used) ops::deletePlaylistTrack(a.doc, t, true);
+  }
   a.doc.endGroup();
   return true;
 }
@@ -140,7 +191,18 @@ const MixerTrack* trackStrip(const Song& s, int track) {
           for (const Channel& c : s.channels)
             if (p->notes.count(c.id) || p->steps.count(c.id)) add(&c);
     }
-  if (outs.empty()) return nullptr;
+  if (outs.empty()) add(s.channel(s.tracks[static_cast<size_t>(track)].sound));  // R08-07: the sound it kept
+  if (outs.empty()) {  // checkpoint 48: a bus track (automation of a bus) shows the bus's strip
+    if (gFold.on && gFold.busStrip.size() == s.tracks.size() && gFold.busStrip[static_cast<size_t>(track)] != kNoId) {
+      const ObjectId bus = gFold.busStrip[static_cast<size_t>(track)];
+      bool theirs = false;  // (the view is from this song: the track holds that bus's automation)
+      for (const Clip& k : s.playlist)
+        if (k.track == track && k.kind == ClipKind::Automation)
+          if (const AutomationClip* ac = s.automation(k.source); ac && ac->owner == bus) theirs = true;
+      if (theirs) return s.mixerTrack(bus);
+    }
+    return nullptr;
+  }
   if (outs.size() == 1) return s.mixerTrack(outs.front());
   // Several: the first mixer track (not the master) every one of them sends its sound into.
   const MixerTrack* first = s.mixerTrack(outs.front());
@@ -497,12 +559,270 @@ void drawMoreFx(App& a) {
 
 void closeMoreFx() { gMoreFx.clear(), gMorePos.clear(); }
 
+namespace {
+uint64_t gFoldRev = ~0ull;
+const Song* gFoldSong = nullptr;
+int gFoldKey = -1;
+
+// A track holding automation regions and nothing else, with no sound or strip of its own.
+bool automationOnly(const Song& s, int tr, const std::vector<int>& kinds) {
+  const PlaylistTrack& t = s.tracks[static_cast<size_t>(tr)];
+  return kinds[static_cast<size_t>(tr)] == 1 && t.groupSize == 0 && !trackmodes::linkedChannel(s, tr) && !trackmodes::linkedMixer(s, tr);
+}
+// Per track: 0 empty, 1 automation regions only, 2 anything else.
+std::vector<int> trackKinds(const Song& s) {
+  std::vector<int> k(s.tracks.size(), 0);
+  for (const Clip& c : s.playlist)
+    if (c.track >= 0 && static_cast<size_t>(c.track) < k.size()) {
+      int& v = k[static_cast<size_t>(c.track)];
+      v = c.kind == ClipKind::Automation ? std::max(v, 1) : 2;
+    }
+  return k;
+}
+int ownerTrackK(const Song& s, ObjectId owner, const std::vector<int>& kinds) {
+  if (owner == kNoId || s.mixer.empty() || owner == s.mixer[0].id) return -1;  // never the master
+  const int n = static_cast<int>(s.tracks.size());
+  std::vector<std::set<ObjectId>> plays(static_cast<size_t>(n));
+  for (const Clip& k : s.playlist) {
+    if (k.track < 0 || k.track >= n) continue;
+    if (k.kind == ClipKind::Audio) plays[static_cast<size_t>(k.track)].insert(k.source);
+    else if (k.kind == ClipKind::Pattern)
+      if (const Pattern* p = s.pattern(k.pattern))
+        for (const Channel& c : s.channels)
+          if (p->notes.count(c.id) || p->steps.count(c.id)) plays[static_cast<size_t>(k.track)].insert(c.id);
+  }
+  std::vector<int> own, routed;
+  for (int tr = 0; tr < n; ++tr) {
+    if (automationOnly(s, tr, kinds)) continue;
+    std::set<ObjectId>& p = plays[static_cast<size_t>(tr)];
+    if (const Channel* lc = trackmodes::linkedChannel(s, tr)) p.insert(lc->id);
+    if (p.empty() && s.channel(s.tracks[static_cast<size_t>(tr)].sound)) p.insert(s.tracks[static_cast<size_t>(tr)].sound);  // R08-07
+    const MixerTrack* strip = trackStrip(s, tr);
+    if (p.count(owner) || (strip && strip->id == owner)) {
+      own.push_back(tr);
+      continue;
+    }
+    for (const ObjectId id : p)
+      if (const Channel* c = s.channel(id); c && c->mixerTrack == owner) {
+        routed.push_back(tr);
+        break;
+      }
+  }
+  if (!own.empty()) return own.size() == 1 ? own.front() : -1;
+  return routed.size() == 1 ? routed.front() : -1;
+}
+}  // namespace
+
+int ownerTrack(const Song& s, ObjectId owner) { return ownerTrackK(s, owner, trackKinds(s)); }
+
+const AutoFold& autoFold(const App& a) {
+  const bool on = active(a) && a.settings.getBool("ui.logicAutoAsLanes");
+  const bool open = a.settings.getBool("ui.logicAutoFolderOpen");
+  const Song& s = a.doc.song();
+  const int key = (on ? 1 : 0) | (open ? 2 : 0);
+  if (key == gFoldKey && gFoldRev == a.doc.revision() && gFoldSong == &s && gFold.hidden.size() == s.tracks.size() &&
+      gFold.clipTarget.size() == s.playlist.size())
+    return gFold;
+  gFoldKey = key, gFoldRev = a.doc.revision(), gFoldSong = &s;
+  AutoFold f;
+  f.on = on, f.open = open;
+  f.hidden.assign(s.tracks.size(), 0);
+  f.member.assign(s.tracks.size(), 0);
+  f.clipTarget.assign(s.playlist.size(), -1);
+  f.busStrip.assign(s.tracks.size(), kNoId);
+  if (on) {
+    const std::vector<int> kinds = trackKinds(s);
+    std::map<ObjectId, int> byOwner;  // (owner -> track, worked out once each)
+    std::map<ObjectId, int> busTrack;  // checkpoint 48: bus -> the track that shows its automation
+    for (int tr = 0; tr < static_cast<int>(s.tracks.size()); ++tr) {
+      if (!automationOnly(s, tr, kinds)) continue;
+      bool all = true;
+      for (size_t ci = 0; ci < s.playlist.size(); ++ci) {
+        const Clip& c = s.playlist[ci];
+        if (c.track != tr) continue;
+        const AutomationClip* ac = s.automation(c.source);
+        int to = -1;
+        if (ac) {
+          auto it = byOwner.find(ac->owner);
+          if (it == byOwner.end()) it = byOwner.emplace(ac->owner, ownerTrackK(s, ac->owner, kinds)).first;
+          to = it->second;
+        }
+        f.clipTarget[ci] = to;
+        all = all && to >= 0;
+      }
+      if (all) {
+        f.hidden[static_cast<size_t>(tr)] = 1;
+        continue;
+      }
+      // Checkpoint 48: automation of one bus (or an effect on it) that no single track owns shows on
+      // that bus's track, as the reference shows a bus's automation on its aux track: the first such
+      // automation-only track becomes the bus's track (a row with the bus's strip and the curves on
+      // its lane); the bus's other automation-only tracks show on that one's lane.
+      ObjectId bus = kNoId;
+      bool one = true;
+      for (const Clip& c : s.playlist) {
+        if (c.track != tr) continue;
+        const AutomationClip* ac = s.automation(c.source);
+        const ObjectId o = ac ? ac->owner : kNoId;
+        if (bus == kNoId) bus = o;
+        one = one && o == bus;
+      }
+      if (one && bus != kNoId && s.mixerTrack(bus) && !s.mixer.empty() && bus != s.mixer[0].id) {
+        if (auto it = busTrack.find(bus); it == busTrack.end()) {
+          busTrack.emplace(bus, tr);
+          f.busStrip[static_cast<size_t>(tr)] = bus;
+          for (size_t ci = 0; ci < s.playlist.size(); ++ci)
+            if (s.playlist[ci].track == tr) f.clipTarget[ci] = -1;
+        } else {
+          f.hidden[static_cast<size_t>(tr)] = 1;
+          for (size_t ci = 0; ci < s.playlist.size(); ++ci)
+            if (s.playlist[ci].track == tr) f.clipTarget[ci] = it->second;
+        }
+        continue;
+      }
+      f.member[static_cast<size_t>(tr)] = 1, f.folder.push_back(tr);
+    }
+    for (size_t ci = 0; ci < s.playlist.size(); ++ci)  // (a folder track's curves stay its own)
+      if (const int tr = s.playlist[ci].track; tr >= 0 && static_cast<size_t>(tr) < f.member.size() && f.member[static_cast<size_t>(tr)])
+        f.clipTarget[ci] = -1;
+  }
+  gFold = std::move(f);
+  return gFold;
+}
+
+void setAutoFolderOpen(App& a, bool open) { a.settings.set("ui.logicAutoFolderOpen", open); }
+
+Tick projectEnd(const App& a) {
+  static uint64_t rev = ~0ull;
+  static const Song* song = nullptr;
+  static Tick end = 0;
+  const Song& s = a.doc.song();
+  if (rev == a.doc.revision() && song == &s) return end;
+  rev = a.doc.revision(), song = &s;
+  if (s.projectEnd > 0) return end = s.projectEnd;  // checkpoint 47: where the user put it
+  const MeterMap mm(s);
+  const Tick len = s.lengthTicks();
+  const Tick b = mm.barStartAt(len);
+  if (len <= 0) {  // an empty project: bar 129, the reference's new project's end
+    Tick t = 0;
+    for (int i = 0; i < 128; ++i) t = mm.nextBar(t);
+    end = t;
+  } else {
+    end = std::max(mm.nextBar(0), b == len ? b : mm.nextBar(len));
+  }
+  return end;
+}
+
 bool laneClip(const Song& s, const Clip& c) {
-  return c.kind == ClipKind::Automation && c.track >= 0 && static_cast<size_t>(c.track) < s.tracks.size() &&
-         s.tracks[static_cast<size_t>(c.track)].laneSet;
+  if (c.kind != ClipKind::Automation || c.track < 0 || static_cast<size_t>(c.track) >= s.tracks.size()) return false;
+  // K-112B (checkpoint 46): the curves of an automation-only track shown on their targets' lanes, and
+  // those of a closed Automation folder, are not regions either.
+  if (gFold.on && s.tracks.size() == gFold.hidden.size() &&
+      (gFold.isHidden(c.track) || (gFold.isMember(c.track) && !gFold.open) || gFold.isBus(c.track)))
+    return true;
+  return s.tracks[static_cast<size_t>(c.track)].laneSet;
+}
+
+ObjectId joinAudioRegions(Song& song, const std::set<ObjectId>& ids, const std::string& dir, double sr) {
+  namespace ed = packs::edison;
+  const Clip* first = nullptr;
+  Tick a = 0, b = 0;
+  for (const Clip& c : song.playlist) {
+    if (!ids.count(c.id) || c.kind != ClipKind::Audio) continue;
+    const Tick e = c.start + song.clipLength(c);
+    if (!first || c.start < first->start) first = &c;
+    b = std::max(b, e);
+  }
+  if (!first || sr <= 0) return kNoId;
+  a = first->start;
+  if (b <= a) return kNoId;
+  const Clip head = *first;
+  const Channel* ch0 = song.channel(head.source);
+  if (!ch0) return kNoId;
+  const std::string name = !head.name.empty() ? head.name : ch0->name;
+  // The mix: these regions alone, each sound straight into a neutral master.
+  Song r = song;
+  std::vector<Clip> kept;
+  std::set<ObjectId> sources;
+  for (const Clip& c : r.playlist)
+    if (ids.count(c.id) && c.kind == ClipKind::Audio && !c.muted) {
+      Clip k = c;
+      k.start -= a;
+      kept.push_back(k);
+      sources.insert(c.source);
+    }
+  if (kept.empty()) return kNoId;
+  r.playlist = std::move(kept);
+  r.live.areaEnd = 0;
+  r.projectEnd = 0;
+  for (auto& t : r.tracks) t.muted = false;
+  const ObjectId master = r.mixer.empty() ? kNoId : r.mixer[0].id;
+  for (Channel& c : r.channels)
+    if (sources.count(c.id)) c.gain = 0.78f, c.pan = 0, c.muted = false, c.mixerTrack = master;  // (0.78: the channel's unity)
+  if (!r.mixer.empty()) {
+    MixerTrack& m = r.mixer[0];
+    m.volume = 0.8f, m.pan = 0, m.stereoSep = 0, m.depth = 0, m.focus = 0, m.muted = false;
+    m.eqGain = {0.0f, 0.0f, 0.0f};
+    for (auto& e : m.slots) e.enabled = false;
+  }
+  RenderOptions opt;
+  opt.sampleRate = static_cast<int>(sr);
+  const AudioBuffer buf = renderSong(r, opt);
+  TempoMap map;
+  map.build(r);
+  const auto n = static_cast<int64_t>(std::llround(map.secondsAt(static_cast<double>(b - a)) * sr));
+  if (n <= 0) return kNoId;
+  ed::Audio au = ed::makeAudio(sr, 2, n);
+  for (int64_t i = 0; i < n && static_cast<size_t>(i) < buf.frames; ++i) {
+    au.L[static_cast<size_t>(i)] = buf.at(0, static_cast<size_t>(i));
+    au.R[static_cast<size_t>(i)] = buf.channels > 1 ? buf.at(1, static_cast<size_t>(i)) : buf.at(0, static_cast<size_t>(i));
+  }
+  std::error_code ec;
+  std::filesystem::create_directories(dir, ec);
+  const std::string path = ed::renderPath(dir, cleanFileName(name), ed::audioHash(au));
+  if (!ed::writeWavFile(path, ed::makeContent(au), 32)) return kNoId;
+  // The new sound plays through the first region's strip, at its level and pan.
+  Channel nc;
+  nc.id = song.allocateId();
+  nc.name = name;
+  nc.color = ch0->color;
+  nc.gain = ch0->gain, nc.pan = ch0->pan, nc.mixerTrack = ch0->mixerTrack;
+  nc.plugin = defaultPluginState("gl.sampler");
+  nc.plugin.data = path;
+  song.channels.push_back(nc);
+  song.playlist.erase(std::remove_if(song.playlist.begin(), song.playlist.end(), [&](const Clip& c) { return ids.count(c.id) && c.kind == ClipKind::Audio; }),
+                      song.playlist.end());
+  Clip c;
+  c.id = song.allocateId();
+  c.kind = ClipKind::Audio;
+  c.source = nc.id;
+  c.track = head.track;
+  c.start = a;
+  c.length = b - a;
+  song.playlist.push_back(c);
+  return c.id;
 }
 
 void frame(App& a) {
+  autoFold(a);  // K-112B (checkpoint 46): off again as soon as another layout is on screen
+  {  // R06-09: a round trip through the other layouts keeps the selected track and regions (the
+     // project window's view, as the reference keeps it); the automation view is in the project.
+    static bool wasOn = false;
+    static int keepTrack = -1;
+    static std::set<ObjectId> keepRegions;
+    static uint64_t keepEpoch = 0;
+    const bool on = active(a);
+    const Song& s = a.doc.song();
+    if (on && !wasOn && keepTrack >= 0 && keepEpoch == a.doc.projectEpoch() && keepTrack < static_cast<int>(s.tracks.size())) {
+      std::set<ObjectId> regions;
+      for (const ObjectId id : keepRegions)
+        if (s.clip(id)) regions.insert(id);
+      a.playlist.selected = regions;
+      a.playlist.trackSel = {keepTrack};
+    }
+    if (on) keepTrack = focusTrack(a), keepRegions = a.playlist.selected, keepEpoch = a.doc.projectEpoch();
+    wasOn = on;
+  }
   // R04-04: the lower pane shows one editor. When the piano roll, the step sequencer or the mixer
   // takes it (a click on a MIDI region, a key), the audio editor leaves it: still pinned it went on
   // drawing as a big floating window over the tracks, and took the next W.
@@ -538,21 +858,10 @@ void frame(App& a) {
     ImGui::ClosePopupsExceptModals();
     keys::claimEscape();  // (the key is used: nothing after this closes a window with it)
   }
-  if (active(a) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
-    // K-297: the area with key focus (the tracks area, the inspector, the lower pane's editor, a
-    // list) carries a quiet accent frame, as the reference marks where the keys go. Only docked
-    // content areas of some size: not the control bar, not dialogs.
-    ImGuiContext& g = *GImGui;
-    // The focused window can be a child inside a docked part (the inspector's body): its frame is
-    // the docked window it sits in (its RootWindow runs on to the dock host, which is no area).
-    const ImGuiWindow* area = g.NavWindow;
-    while (area && !area->DockIsActive && (area->Flags & ImGuiWindowFlags_ChildWindow) && area->ParentWindow) area = area->ParentWindow;
-    if (area && area->DockIsActive && area->Size.x >= 160 && area->Size.y >= 120 && !(area->Flags & ImGuiWindowFlags_NoInputs)) {
-      const ImVec2 p0(std::round(area->Pos.x) + 0.5f, std::round(area->Pos.y) + 0.5f);
-      const ImVec2 p1(std::round(area->Pos.x + area->Size.x) - 0.5f, std::round(area->Pos.y + area->Size.y) - 0.5f);
-      ImGui::GetForegroundDrawList(area->Viewport)->AddRect(p0, p1, theme::withAlpha(pal().accent, 0.55f), 0.0f, 0, 1.0f);
-    }
-  }
+  // K-297: the area with key focus (the tracks area, the inspector, the lower pane's editor, a list)
+  // carries a quiet accent frame, as the reference marks where the keys go: the shared frame
+  // (ui::drawKeyFocusFrame, drawn for every layout but Studio at the end of the frame in main.cpp;
+  // K-112D audit I5: in Smooth on the dark faces it takes the reference's blue, passed in there).
   // (R02-19, R04-07: Escape closing the dialog or tool window in front, Render and About included,
   // is the shared handler's in every layout: K-297, handleGlobalShortcuts. One Escape closes one window.)
   {  // R06-08: Stop ends recording and the Record button goes out, as the reference's does
@@ -560,6 +869,22 @@ void frame(App& a) {
     const bool playing = a.engine.playing();
     if (active(a) && wasPlaying && !playing && a.recordArmed) a.recordArmed = false;
     wasPlaying = playing;
+  }
+  {  // K-112B (checkpoint 46): playback stops at the Project End marker when no cycle is on, as the
+     // reference's does (a recording runs on past it, and a start past it plays on).
+    static double last = -1;
+    const bool cycle = a.playlist.selEnd > a.playlist.selStart;
+    const double pos = a.engine.position();
+    if (active(a) && a.engine.playing() && a.engine.mode() == PlayMode::Song && !cycle && !a.recordArmed) {
+      const double end = static_cast<double>(projectEnd(a));
+      if (last >= 0 && last < end && pos >= end) {
+        a.engine.stop();
+        a.engine.setPosition(static_cast<Tick>(end));
+      }
+      last = pos;
+    } else {
+      last = a.engine.playing() ? pos : -1;
+    }
   }
   {  // R03-06: a new or opened project closes the old one's render window, as the reference closes its windows
     static uint64_t epoch = 0;
@@ -746,7 +1071,14 @@ bool controlsView(const App& a, const std::string& type) {
   return std::find(v.begin(), v.end(), type) != v.end();
 }
 
+static void drawControlsIn(App& a, const PluginTarget& t, float width);
 void drawControls(App& a, const PluginTarget& t, float width) {
+  typein::begin(a);  // K-311: right-click a row: reset, type a value
+  drawControlsIn(a, t, width);
+  typein::end(a);
+}
+
+static void drawControlsIn(App& a, const PluginTarget& t, float width) {
   const Song& s = a.doc.song();
   const PluginInfo* info = t.info(s);
   if (!info) return;

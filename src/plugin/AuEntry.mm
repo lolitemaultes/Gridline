@@ -36,23 +36,25 @@
 #include <vector>
 #include "PluginCore.h"
 #include "PluginView.h"
+#include "../host/ui/ObjcClass.h"
 #ifdef GRIDLINE_SUITE
 #include "../core/PluginInfo.h"
 #include "../core/PluginSuite.h"
 #endif
 
-// Objective-C class names are global in a process: each bundle has its own.
+// Objective-C class names are global in a process. The view factory is the
+// one class a host looks up by name in the bundle (-[NSBundle classNamed:]),
+// so it is compiled in: each format build has its own name, and a suite's
+// name ends in a 16-character tag that the plugin downloads rewrite per
+// bundle (tools/release/package-plugins.py), so single-plugin bundles that
+// carry the same binary never share it. The view itself is made at run time
+// (host/ui/ObjcClass.h).
 #ifndef GRIDLINE_AU_FACTORY_CLASS
 #define GRIDLINE_AU_FACTORY_CLASS GridlineAuViewFactory
-#endif
-#ifndef GRIDLINE_AU_VIEW_CLASS
-#define GRIDLINE_AU_VIEW_CLASS GridlineAuView
 #endif
 #ifndef GRIDLINE_AU_FACTORY
 #define GRIDLINE_AU_FACTORY GridlineAUFactory
 #endif
-#define GRIDLINE_AU_STR2(x) #x
-#define GRIDLINE_AU_STR(x) GRIDLINE_AU_STR2(x)
 
 using gl::plugin::Instance;
 using gl::plugin::kExtraOutputs;
@@ -132,13 +134,11 @@ class EventRing {
 
 @interface GRIDLINE_AU_FACTORY_CLASS : NSObject <AUCocoaUIBase>
 @end
-@interface GRIDLINE_AU_VIEW_CLASS : NSView {
- @public
-  AuPlugin* owner;
-  gl::plugin::View* view;
-}
-- (void)detachGridline;
-@end
+namespace {
+// The Cocoa view (ivars "owner": AuPlugin*, "view": gl::plugin::View*).
+Class auViewClass();
+void detachAuView(NSView* v);
+}  // namespace
 
 namespace {
 
@@ -176,8 +176,8 @@ class AuPlugin : public AuInterface {
   }
 
   Instance* instance() { return inst_.get(); }
-  void addView(GRIDLINE_AU_VIEW_CLASS* v) { views_.push_back(v); }
-  void removeView(GRIDLINE_AU_VIEW_CLASS* v) { views_.erase(std::remove(views_.begin(), views_.end(), v), views_.end()); }
+  void addView(NSView* v) { views_.push_back(v); }
+  void removeView(NSView* v) { views_.erase(std::remove(views_.begin(), views_.end(), v), views_.end()); }
 
  private:
   struct Listener {
@@ -588,7 +588,7 @@ class AuPlugin : public AuInterface {
       case kAudioUnitProperty_CocoaUI: {
         AudioUnitCocoaViewInfo info{};
         info.mCocoaAUViewBundleLocation = bundleUrl();
-        info.mCocoaAUViewClass[0] = CFStringCreateWithCString(nullptr, GRIDLINE_AU_STR(GRIDLINE_AU_FACTORY_CLASS), kCFStringEncodingUTF8);
+        info.mCocoaAUViewClass[0] = CFStringCreateWithCString(nullptr, class_getName([GRIDLINE_AU_FACTORY_CLASS class]), kCFStringEncodingUTF8);
         if (!info.mCocoaAUViewBundleLocation) {
           CFRelease(info.mCocoaAUViewClass[0]);
           return kAudioUnitErr_InvalidProperty;
@@ -1055,8 +1055,8 @@ class AuPlugin : public AuInterface {
   }
 
   void detachViews() {
-    std::vector<GRIDLINE_AU_VIEW_CLASS*> v = views_;
-    for (GRIDLINE_AU_VIEW_CLASS* view : v) [view detachGridline];
+    std::vector<NSView*> v = views_;
+    for (NSView* view : v) detachAuView(view);
     views_.clear();
   }
 
@@ -1092,42 +1092,57 @@ class AuPlugin : public AuInterface {
   uint32_t delivered_ = 0;
   CFStringRef presetName_ = nullptr;
   CFStringRef contextName_ = nullptr;
-  std::vector<GRIDLINE_AU_VIEW_CLASS*> views_;
+  std::vector<NSView*> views_;
 };
 
 }  // namespace
 
 // ---------------------------------------------------------------- Cocoa view
 
-@implementation GRIDLINE_AU_VIEW_CLASS
-- (BOOL)isFlipped {
-  return YES;
-}
-- (void)detachGridline {
-  if (view) {
+namespace {
+
+AuPlugin* auOwner(id v) { return gl::objc::getPointer<AuPlugin>(v, "owner"); }
+gl::plugin::View* auGlView(id v) { return gl::objc::getPointer<gl::plugin::View>(v, "view"); }
+
+void detachAuView(NSView* self) {
+  if (gl::plugin::View* view = auGlView(self)) {
     devLog("auview closed frames=%d", view->frames());
     view->detach();
     delete view;
-    view = nullptr;
+    gl::objc::setPointer(self, "view", nullptr);
   }
-  if (owner) {
+  if (AuPlugin* owner = auOwner(self)) {
     owner->removeView(self);
-    owner = nullptr;
+    gl::objc::setPointer(self, "owner", nullptr);
   }
 }
-- (void)viewDidMoveToWindow {
-  [super viewDidMoveToWindow];
-  if (view) view->setVisible([self window] != nil);
+
+Class auViewClass() {
+  static gl::objc::RuntimeClass rc("GridlineAuView", [NSView class]);
+  static Class c = [] {
+    static Class self_ = Nil;
+    rc.pointer("owner")
+        .pointer("view")
+        .method(@selector(isFlipped), +[](id, SEL) -> BOOL { return YES; })
+        .method(@selector(viewDidMoveToWindow), +[](id self, SEL sel) {
+          gl::objc::callSuper<void>(self, self_, sel);
+          if (gl::plugin::View* view = auGlView(self)) view->setVisible([static_cast<NSView*>(self) window] != nil);
+        })
+        .method(@selector(setFrameSize:), +[](id self, SEL sel, NSSize size) {
+          gl::objc::callSuper<void>(self, self_, sel, size);
+          if (gl::plugin::View* view = auGlView(self)) view->setSize(static_cast<int>(size.width), static_cast<int>(size.height));
+        })
+        .method(@selector(dealloc), +[](id self, SEL sel) {
+          detachAuView(static_cast<NSView*>(self));
+          gl::objc::callSuper<void>(self, self_, sel);
+        });
+    self_ = rc.done();
+    return self_;
+  }();
+  return c;
 }
-- (void)setFrameSize:(NSSize)size {
-  [super setFrameSize:size];
-  if (view) view->setSize(static_cast<int>(size.width), static_cast<int>(size.height));
-}
-- (void)dealloc {
-  [self detachGridline];
-  [super dealloc];
-}
-@end
+
+}  // namespace
 
 @implementation GRIDLINE_AU_FACTORY_CLASS
 - (unsigned)interfaceVersion {
@@ -1148,19 +1163,19 @@ class AuPlugin : public AuInterface {
   // (A suite editor opens at its own size.)
   const int w = size.width >= minW && !plugin->instance()->single() ? static_cast<int>(size.width) : prefW;
   const int h = size.height >= minH && !plugin->instance()->single() ? static_cast<int>(size.height) : prefH;
-  GRIDLINE_AU_VIEW_CLASS* v = [[[GRIDLINE_AU_VIEW_CLASS alloc] initWithFrame:NSMakeRect(0, 0, w, h)] autorelease];
+  NSView* v = [[[auViewClass() alloc] initWithFrame:NSMakeRect(0, 0, w, h)] autorelease];
   std::unique_ptr<gl::plugin::View> gv = gl::plugin::createView(*plugin->instance());
   if (!gv) return nil;
   gv->setSize(w, h);
-  GRIDLINE_AU_VIEW_CLASS* weak = v;
+  NSView* weak = v;
   gv->requestResize = [weak, minW, minH](int nw, int nh) {
     [weak setFrameSize:NSMakeSize(std::max(nw, minW), std::max(nh, minH))];
     return true;
   };
   if (!gv->attach(v)) return nil;
   [v setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];  // hosts may resize it
-  v->view = gv.release();
-  v->owner = plugin;
+  gl::objc::setPointer(v, "view", gv.release());
+  gl::objc::setPointer(v, "owner", plugin);
   plugin->addView(v);
   devLog("auview opened size=%dx%d", w, h);
   return v;

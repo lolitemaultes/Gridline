@@ -200,7 +200,7 @@ studio	stage.previous	6	Shift+Tab;
 studio	stage.mute	6	M;
 studio	stage.solo	6	S;
 studio	stage.reset	6	0;
-studio	stage.rename	6	Enter;
+studio	stage.rename	6	
 studio	stage.selectAll	6	Ctrl+A;
 studio	stage.roomsPanel	6	\;
 studio	stage.deselect	6	Ctrl+D;
@@ -437,7 +437,7 @@ live	stage.previous	6	Shift+Tab;
 live	stage.mute	6	
 live	stage.solo	6	S;
 live	stage.reset	6	0;
-live	stage.rename	6	Enter;
+live	stage.rename	6	
 live	stage.selectAll	6	Ctrl+A;
 live	stage.roomsPanel	6	\;
 live	stage.deselect	6	Ctrl+D;
@@ -488,7 +488,7 @@ logic	edit.redo	0	Ctrl+Shift+Z;Ctrl+Y;
 logic	edit.history	0	Alt+Z;
 logic	edit.rename	0	Shift+Enter;F2;
 logic	transport.play	0	Space;Num Enter;Num 0;
-logic	transport.songMode	0	L;
+logic	transport.songMode	0	
 logic	transport.tapTempo	0	Ctrl+Shift+T;
 logic	options.typingKeyboard	0	Ctrl+K;
 logic	options.metronome	0	K;
@@ -541,6 +541,12 @@ logic	transport.sessionRecord	0
 logic	playlist.delete	1	Del;Backspace;
 logic	playlist.selectAll	1	Ctrl+A;
 logic	playlist.deselect	1	Shift+D;
+studio	playlist.cut	1	Ctrl+X;
+live	playlist.cut	1	Ctrl+X;
+logic	playlist.cut	1	Ctrl+X;
+studio+cmd	playlist.cut	1	Ctrl+X;
+live+cmd	playlist.cut	1	Ctrl+X;
+logic+cmd	playlist.cut	1	Cmd+X;
 logic	playlist.copy	1	Ctrl+C;
 logic	playlist.paste	1	Ctrl+V;
 logic	playlist.duplicate	1	Ctrl+R;
@@ -689,7 +695,7 @@ logic	auto.pasteReplace	5	Ctrl+R;
 logic	auto.toolDraw	5	
 logic	auto.toolSelect	5	
 logic	auto.toolDelete	5	
-logic	auto.lfo	5	
+logic	auto.lfo	5	L;
 logic	auto.quantize	5	Q;
 logic	auto.cancel	5	Esc;
 logic	track.newTracks	0	Ctrl+Alt+N;
@@ -911,7 +917,7 @@ studio+cmd	stage.previous	6	Shift+Tab;
 studio+cmd	stage.mute	6	M;
 studio+cmd	stage.solo	6	S;
 studio+cmd	stage.reset	6	0;
-studio+cmd	stage.rename	6	Enter;
+studio+cmd	stage.rename	6	
 studio+cmd	stage.selectAll	6	Ctrl+A;
 studio+cmd	stage.roomsPanel	6	\;
 studio+cmd	stage.deselect	6	Ctrl+D;
@@ -1148,7 +1154,7 @@ live+cmd	stage.previous	6	Shift+Tab;
 live+cmd	stage.mute	6	
 live+cmd	stage.solo	6	S;
 live+cmd	stage.reset	6	0;
-live+cmd	stage.rename	6	Enter;
+live+cmd	stage.rename	6	
 live+cmd	stage.selectAll	6	Ctrl+A;
 live+cmd	stage.roomsPanel	6	\;
 live+cmd	stage.deselect	6	Ctrl+D;
@@ -1199,7 +1205,7 @@ logic+cmd	edit.redo	0	Cmd+Shift+Z;Cmd+Y;
 logic+cmd	edit.history	0	Ctrl+Cmd+Alt+Z;
 logic+cmd	edit.rename	0	Shift+Enter;F2;
 logic+cmd	transport.play	0	Space;Num Enter;Num 0;
-logic+cmd	transport.songMode	0	L;
+logic+cmd	transport.songMode	0	
 logic+cmd	transport.tapTempo	0	Cmd+Shift+T;
 logic+cmd	options.typingKeyboard	0	Cmd+K;
 logic+cmd	options.metronome	0	K;
@@ -1400,7 +1406,7 @@ logic+cmd	auto.pasteReplace	5	Cmd+R;
 logic+cmd	auto.toolDraw	5	
 logic+cmd	auto.toolSelect	5	
 logic+cmd	auto.toolDelete	5	
-logic+cmd	auto.lfo	5	
+logic+cmd	auto.lfo	5	L;
 logic+cmd	auto.quantize	5	Q;
 logic+cmd	auto.cancel	5	Esc;
 logic+cmd	track.newTracks	0	Cmd+Alt+N;
@@ -1420,6 +1426,18 @@ logic+cmd	view.advancedEdit	0
 logic+cmd	view.cleanUp	0	
 logic+cmd	help.trackerKeys	0	
 logic+cmd	view.smartControls	0	Y;
+studio	track.group	0	
+studio	track.ungroup	0	
+live	track.group	0	Ctrl+G;
+live	track.ungroup	0	Ctrl+Shift+G;
+logic	track.group	0	
+logic	track.ungroup	0	
+studio+cmd	track.group	0	
+studio+cmd	track.ungroup	0	
+live+cmd	track.group	0	Ctrl+G;
+live+cmd	track.ungroup	0	Ctrl+Shift+G;
+logic+cmd	track.group	0	
+logic+cmd	track.ungroup	0	
 studio	view.automation	0	
 live	view.automation	0	
 logic	view.automation	0	A;
@@ -1456,15 +1474,147 @@ logic	transport.goToPosition	0	/;
 studio+cmd	transport.goToPosition	0	
 live+cmd	transport.goToPosition	0	
 logic+cmd	transport.goToPosition	0	/;
-studio	playlist.cut	1	
-live	playlist.cut	1	
-logic	playlist.cut	1	Ctrl+X;
-studio+cmd	playlist.cut	1	
-live+cmd	playlist.cut	1	
-logic+cmd	playlist.cut	1	Cmd+X;
 studio	playlist.toolMenu	0	
 live	playlist.toolMenu	0	
 logic	playlist.toolMenu	0	T;
 studio+cmd	playlist.toolMenu	0	
 live+cmd	playlist.toolMenu	0	
 logic+cmd	playlist.toolMenu	0	T;
+studio	view.paneNextTab	0	Ctrl+PgDn;
+studio	view.panePrevTab	0	Ctrl+PgUp;
+studio	view.reopenTab	0	Ctrl+Alt+T;
+studio	view.workspace1	0	Ctrl+1;
+studio	view.workspace2	0	Ctrl+2;
+studio	view.workspace3	0	Ctrl+3;
+studio	view.workspace4	0	Ctrl+4;
+studio	view.workspace5	0	Ctrl+5;
+studio	view.workspace6	0	Ctrl+6;
+studio	view.workspace7	0	Ctrl+7;
+studio	view.workspace8	0	Ctrl+8;
+studio	view.workspace9	0	Ctrl+9;
+studio	view.workspaceNext	0	Ctrl+Alt+PgDn;
+studio	view.workspacePrevious	0	Ctrl+Alt+PgUp;
+live	view.paneNextTab	0	Ctrl+PgDn;
+live	view.panePrevTab	0	Ctrl+PgUp;
+live	view.reopenTab	0	
+live	view.workspace1	0	Ctrl+1;
+live	view.workspace2	0	Ctrl+2;
+live	view.workspace3	0	Ctrl+3;
+live	view.workspace4	0	Ctrl+4;
+live	view.workspace5	0	Ctrl+5;
+live	view.workspace6	0	Ctrl+6;
+live	view.workspace7	0	Ctrl+7;
+live	view.workspace8	0	Ctrl+8;
+live	view.workspace9	0	Ctrl+9;
+live	view.workspaceNext	0	Ctrl+Alt+PgDn;
+live	view.workspacePrevious	0	Ctrl+Alt+PgUp;
+logic	view.paneNextTab	0	Ctrl+PgDn;
+logic	view.panePrevTab	0	Ctrl+PgUp;
+logic	view.reopenTab	0	Ctrl+Alt+T;
+logic	view.workspace1	0	
+logic	view.workspace2	0	
+logic	view.workspace3	0	
+logic	view.workspace4	0	
+logic	view.workspace5	0	Ctrl+5;
+logic	view.workspace6	0	
+logic	view.workspace7	0	
+logic	view.workspace8	0	
+logic	view.workspace9	0	Ctrl+9;
+logic	view.workspaceNext	0	Ctrl+Alt+PgDn;
+logic	view.workspacePrevious	0	Ctrl+Alt+PgUp;
+studio+cmd	view.paneNextTab	0	Ctrl+PgDn;
+studio+cmd	view.panePrevTab	0	Ctrl+PgUp;
+studio+cmd	view.reopenTab	0	Ctrl+Alt+T;
+studio+cmd	view.workspace1	0	Ctrl+1;
+studio+cmd	view.workspace2	0	Ctrl+2;
+studio+cmd	view.workspace3	0	Ctrl+3;
+studio+cmd	view.workspace4	0	Ctrl+4;
+studio+cmd	view.workspace5	0	Ctrl+5;
+studio+cmd	view.workspace6	0	Ctrl+6;
+studio+cmd	view.workspace7	0	Ctrl+7;
+studio+cmd	view.workspace8	0	Ctrl+8;
+studio+cmd	view.workspace9	0	Ctrl+9;
+studio+cmd	view.workspaceNext	0	Ctrl+Alt+PgDn;
+studio+cmd	view.workspacePrevious	0	Ctrl+Alt+PgUp;
+live+cmd	view.paneNextTab	0	Ctrl+PgDn;
+live+cmd	view.panePrevTab	0	Ctrl+PgUp;
+live+cmd	view.reopenTab	0	
+live+cmd	view.workspace1	0	Ctrl+1;
+live+cmd	view.workspace2	0	Ctrl+2;
+live+cmd	view.workspace3	0	Ctrl+3;
+live+cmd	view.workspace4	0	Ctrl+4;
+live+cmd	view.workspace5	0	Ctrl+5;
+live+cmd	view.workspace6	0	Ctrl+6;
+live+cmd	view.workspace7	0	Ctrl+7;
+live+cmd	view.workspace8	0	Ctrl+8;
+live+cmd	view.workspace9	0	Ctrl+9;
+live+cmd	view.workspaceNext	0	Ctrl+Alt+PgDn;
+live+cmd	view.workspacePrevious	0	Ctrl+Alt+PgUp;
+logic+cmd	view.paneNextTab	0	Cmd+PgDn;
+logic+cmd	view.panePrevTab	0	Cmd+PgUp;
+logic+cmd	view.reopenTab	0	Cmd+Alt+T;
+logic+cmd	view.workspace1	0	
+logic+cmd	view.workspace2	0	
+logic+cmd	view.workspace3	0	
+logic+cmd	view.workspace4	0	
+logic+cmd	view.workspace5	0	Cmd+5;
+logic+cmd	view.workspace6	0	
+logic+cmd	view.workspace7	0	
+logic+cmd	view.workspace8	0	
+logic+cmd	view.workspace9	0	Cmd+9;
+logic+cmd	view.workspaceNext	0	Cmd+Alt+PgDn;
+logic+cmd	view.workspacePrevious	0	Cmd+Alt+PgUp;
+studio	view.midiBox	0	
+studio	view.sampleTools	0	
+studio	playlist.prevRegion	1	
+studio	playlist.nextRegion	1	
+studio	playlist.prevTrack	1	
+studio	playlist.nextTrack	1	
+studio	playlist.nudgeLeft	1	
+studio	playlist.nudgeRight	1	
+studio	playlist.loopRegion	1	
+live	view.midiBox	0	
+live	view.sampleTools	0	
+live	playlist.prevRegion	1	
+live	playlist.nextRegion	1	
+live	playlist.prevTrack	1	
+live	playlist.nextTrack	1	
+live	playlist.nudgeLeft	1	
+live	playlist.nudgeRight	1	
+live	playlist.loopRegion	1	
+logic	view.midiBox	0	
+logic	view.sampleTools	0	
+logic	playlist.prevRegion	1	Left;
+logic	playlist.nextRegion	1	Right;
+logic	playlist.prevTrack	1	Up;
+logic	playlist.nextTrack	1	Down;
+logic	playlist.nudgeLeft	1	Alt+Left;
+logic	playlist.nudgeRight	1	Alt+Right;
+logic	playlist.loopRegion	1	L;
+studio+cmd	view.midiBox	0	
+studio+cmd	view.sampleTools	0	
+studio+cmd	playlist.prevRegion	1	
+studio+cmd	playlist.nextRegion	1	
+studio+cmd	playlist.prevTrack	1	
+studio+cmd	playlist.nextTrack	1	
+studio+cmd	playlist.nudgeLeft	1	
+studio+cmd	playlist.nudgeRight	1	
+studio+cmd	playlist.loopRegion	1	
+live+cmd	view.midiBox	0	
+live+cmd	view.sampleTools	0	
+live+cmd	playlist.prevRegion	1	
+live+cmd	playlist.nextRegion	1	
+live+cmd	playlist.prevTrack	1	
+live+cmd	playlist.nextTrack	1	
+live+cmd	playlist.nudgeLeft	1	
+live+cmd	playlist.nudgeRight	1	
+live+cmd	playlist.loopRegion	1	
+logic+cmd	view.midiBox	0	
+logic+cmd	view.sampleTools	0	
+logic+cmd	playlist.prevRegion	1	Left;
+logic+cmd	playlist.nextRegion	1	Right;
+logic+cmd	playlist.prevTrack	1	Up;
+logic+cmd	playlist.nextTrack	1	Down;
+logic+cmd	playlist.nudgeLeft	1	Alt+Left;
+logic+cmd	playlist.nudgeRight	1	Alt+Right;
+logic+cmd	playlist.loopRegion	1	L;

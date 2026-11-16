@@ -4,6 +4,7 @@
 #include "HostedUi.h"
 #include "MidiUi.h"
 #include "PluginUI.h"
+#include "../core/ParamText.h"
 #include "../core/PluginBrand.h"
 #include "../core/PluginStandIn.h"
 #include "../core/Presets.h"
@@ -36,6 +37,7 @@
 #include "LayoutStyleUi.h"
 #include "PluginSkin.h"
 #include "Theme.h"
+#include "TypeInMenu.h"
 #include "Widgets.h"
 
 namespace gl {
@@ -1603,55 +1605,7 @@ void caption(const char* text) {
 }
 
 bool parseValue(const ParamDesc& d, const std::string& text, double& out) {
-  std::string s;
-  for (char c : text)
-    if (!std::isspace(static_cast<unsigned char>(c))) s += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  if (s.empty()) return false;
-  if (d.kind == ParamKind::Choice) {
-    for (size_t i = 0; i < d.choices.size(); ++i) {
-      std::string c;
-      for (char ch : d.choices[i])
-        if (!std::isspace(static_cast<unsigned char>(ch))) c += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-      if (c == s) {
-        out = static_cast<double>(i);
-        return true;
-      }
-    }
-  }
-  if (d.kind == ParamKind::Toggle) {
-    if (s == "on" || s == "1" || s == "yes" || s == "true") return out = 1, true;
-    if (s == "off" || s == "0" || s == "no" || s == "false") return out = 0, true;
-  }
-  if (d.unit == "note") {  // "c4", "a#3"
-    static const char* names[] = {"c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b"};
-    for (int k = 11; k >= 0; --k) {
-      size_t len = std::strlen(names[k]);
-      if (s.compare(0, len, names[k]) == 0 && s.size() > len) {
-        char* end = nullptr;
-        long oct = std::strtol(s.c_str() + len, &end, 10);
-        if (end && *end == 0) {
-          out = d.clamp(static_cast<double>((oct + 1) * 12 + k));
-          return true;
-        }
-      }
-    }
-  }
-  if (d.unit == "rate" && (s == "off" || s == "max")) return out = d.max, true;  // J-104: Rate "Off" is the top of the travel
-  char* end = nullptr;
-  double v = std::strtod(s.c_str(), &end);
-  if (end == s.c_str()) return false;
-  std::string suf = end ? std::string(end) : std::string();
-  if (d.unit == "Hz" || d.unit == "rate") {
-    if (suf == "k" || suf == "khz") v *= 1000.0;
-  } else if (d.unit == "s") {
-    if (suf == "ms") v *= 0.001;
-    else if (suf.empty() && v > 20) v *= 0.001;  // bare numbers above 20 read as ms
-  } else if (d.unit == "%") {
-    if (suf != "x") v *= 0.01;  // typed as percent
-  }
-  if (d.kind == ParamKind::Choice) v = std::round(v);
-  out = d.clamp(v);
-  return true;
+  return paramtext::parse(d, text, out);  // K-311: one reading of typed values everywhere
 }
 
 bool knobInline(App& a, const PluginTarget& t, int param, const char* label, float width, float radius) {
@@ -1754,7 +1708,11 @@ static void drawPluginBodyIn(App& a, const PluginTarget& t, float width);
 void drawPluginBody(App& a, const PluginTarget& t, float width) {
   const layoutui::BaseStyleScope own;  // K-112: every editor keeps its own look in every layout
   edzoomui::markBody(width);  // K-147: the fit report measures the editor from here ...
+  const PluginInfo* info = t.info(a.doc.song());
+  const bool native = info && !isHostedType(info->type);  // K-311: Gridline's own editors
+  if (native) typein::begin(a);
   drawPluginBodyIn(a, t, width);
+  if (native) typein::end(a);  // the type-in menu of every control that has none of its own
   edzoomui::markBodyEnd();  // ... to here
 }
 

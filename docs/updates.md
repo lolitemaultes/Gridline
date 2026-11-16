@@ -83,6 +83,23 @@ never make a network request. `--fake-update <version>` shows the popup for a ma
 without using the network (for development and screenshots; its "Download installer" writes a small
 test file into the settings folder's `dev-downloads`).
 
+## Plugins
+
+The Gridline Suite and Suite Mini plugins look for a new version too, in whatever host they run:
+
+* **When**: at most once a day, when a plugin's editor is open. Every plugin in every host and the
+  Gridline app share one small file, `update-check.json` in Gridline's settings folder, so they make
+  one request a day between them; the others read the answer. The request runs in the background
+  and never holds up the editor or the sound.
+* **The notice**: a short line under the plugin's editor, "Version X is out.", with **Download**
+  (opens the download page for your system in your browser), **Later** (asks again in a week) and
+  **Skip this version**. Nothing is ever downloaded or installed by itself.
+* **Turning it off**: untick **Check for updates once a day** in any plugin's menu (it applies to
+  every plugin); **Check for updates now** in the same menu checks at once. The environment
+  variables `GRIDLINE_NO_UPDATE_CHECK` and `CI` turn plugin checks off as they do for the app.
+* **Privacy**: the same single request as the app's (below): the latest release from GitHub, with
+  no identifier, settings, host, project or usage information.
+
 ## Privacy
 
 A check is a single HTTPS request to the GitHub API:

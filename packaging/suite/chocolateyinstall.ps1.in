@@ -1,0 +1,14 @@
+# Installs @SUITE_NAME@ with the official plugin installer (Inno Setup, silent: every plugin, every format).
+# Template: packaging/render.py fills in the version and checksum.
+$ErrorActionPreference = 'Stop'
+$packageArgs = @{
+  packageName    = $env:ChocolateyPackageName
+  fileType       = 'exe'
+  url64bit       = 'https://github.com/lolitemaultes/Gridline/releases/download/v@VERSION@/@SUITE_FILE@-@VERSION@-windows-setup.exe'
+  checksum64     = '@SHA256:@SUITE_KEY@-windows-setup.exe@'
+  checksumType64 = 'sha256'
+  silentArgs     = '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /ALLUSERS'
+  validExitCodes = @(0)
+  softwareName   = '@SUITE_NAME@'
+}
+Install-ChocolateyPackage @packageArgs

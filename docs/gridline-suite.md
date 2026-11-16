@@ -10,7 +10,7 @@ The Gridline Suite is Gridline's own instruments and effects as plugins for othe
 | Windows | `Gridline Suite.vst3`, `Gridline Suite.clap` (plus the `Gridline Suite-assets` folder beside it) |
 | Linux, FreeBSD, OpenBSD, NetBSD | `Gridline Suite.vst3`, `Gridline Suite.clap` (plus `Gridline Suite-assets`) |
 
-One bundle per format holds every member, so a host lists them all under the vendor Gridline. VST3 and CLAP on every system and the Audio Unit on macOS cover Live, Logic (Audio Unit only), Reaper, Bitwig, FL Studio and Cubase. Every member passes `auval -strict`, and the test `suite` loads every member in every format through Gridline's own plugin host.
+One bundle per format holds every member, so a host lists them all under the vendor Gridline. VST3 and CLAP on every system and the Audio Unit on macOS cover the common plugin hosts (some macOS hosts take Audio Units only). Every member passes `auval -strict`, and the test `suite` loads every member in every format through Gridline's own plugin host.
 
 ## Where it is installed
 
@@ -32,6 +32,30 @@ gridline suite remove     # delete those copies (system-wide copies belong to th
 ```
 
 Each bundle carries `gridline-suite.txt` (`Gridline Suite <version> <build>`), which Gridline compares to tell whether a copy is current. Automated runs (`--hidden`, screenshots, `GRIDLINE_NO_PLUGIN_SCAN`, `GRIDLINE_NO_SUITE_INSTALL`) never ask and never copy. After installing, rescan plugins in the other program.
+
+## Downloads without the app
+
+Every release also has the suites on their own, for other music programs (names for Gridline Suite; Gridline Suite Mini files start with `Gridline-Suite-Mini-`):
+
+| File | What it is |
+|---|---|
+| `Gridline-Suite-<version>-macos-universal.pkg` | Installer: pick formats (VST3, CLAP, Audio Unit) and plugins, for everyone or for you only |
+| `Gridline-Suite-<version>-windows-setup.exe` | Installer for x64 and ARM64: pick formats (VST3, CLAP) and plugins, for everyone or for you only |
+| `Gridline-Suite-<version>-linux-<processor>-setup.run`, `-<bsd system>-x86_64-setup.run` | Installer in a terminal: `sh <file>`; `--help` for the scripted options |
+| `Gridline-Suite-<version>-<system>-all.zip` | Every plugin in every format, to copy yourself (README inside) |
+| `Gridline-Suite-<Plugin>-<version>-<system>.zip` | One plugin in every format (for example `Gridline-Suite-Plasma-<version>-macos.zip` with `Plasma.vst3`, `Plasma.clap` and `Plasma.component`) |
+
+Every plugin of a suite runs the same engine. A bundle shows hosts the plugins named in its member list (`gridline-members.txt`, in `Contents/Resources` or in the `-assets` folder beside a CLAP file): the app's and the all-plugins bundles list every member, a single-plugin bundle lists one, and an installer writes your picks. So an installer puts one bundle per format on disk, whatever you pick, and running it again changes the picks. Identifiers stay per plugin, so a project made with a single-plugin download opens with the whole suite and the other way round. A single-plugin download carries the whole engine; if you use several, the installer or the all-plugins zip is smaller and uses less memory. Plugin bundles carry only what the plugins read of Gridline's assets (fonts and translations; Loupe also its audio scripts).
+
+### Installing without Gridline
+
+| Installer | Installs to | Remove with |
+|---|---|---|
+| macOS `.pkg` | `/Library/Audio/Plug-Ins/{VST3,CLAP,Components}` (for everyone) or `~/Library/Audio/Plug-Ins/...` (for you only) | `Uninstall <suite name>.command` in `Library/Application Support/Gridline/<suite name>` |
+| Windows setup | `C:\Program Files\Common Files\{VST3,CLAP}` (all users) or `%LOCALAPPDATA%\Programs\Common\{VST3,CLAP}` (current user) | Installed apps, "Gridline Suite" or "Gridline Suite Mini" |
+| Linux, BSD `.run` | `~/.vst3`, `~/.clap` (default, no root) or `/usr/local/lib/{vst3,clap}` (`--system`) | `--uninstall`, or `uninstall` in `~/.local/share/gridline/suite/<suite id>` |
+
+The installers never touch `/usr/lib`, which belongs to the package manager: when a Gridline package already provides a suite there, the `.run` says so and skips that format. A bundle the app copied into the per-user folders is kept unless you agree to replace it (`--replace` in scripts). Each installer has a box for the plugins' daily update check (on by default). The macOS installer is not signed by Apple: if macOS says it cannot verify it, use System Settings > Privacy & Security > Open Anyway. Bundles installed by it carry no download flag, so music programs open them directly.
 
 ## What each plugin does
 

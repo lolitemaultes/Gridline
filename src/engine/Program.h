@@ -248,6 +248,7 @@ struct MixerRuntime {
   // Audio input (J-8): input level since the UI last read it, and the disk
   // recording capture (allocated on the UI thread while the track is armed).
   std::atomic<float> inPeakL{0}, inPeakR{0};
+  std::vector<float> inL, inR;  // K-123: the trimmed input (kEngineMaxBlock frames, sized on the UI thread)
   std::shared_ptr<packs::edison::CaptureRing> rec;
   bool recActive = false;   // (audio thread) a take is being captured
   double recLastTick = -1;  // (audio thread) position of the last captured frame
@@ -531,6 +532,8 @@ struct ProgMixer {
   // mono, monitoring mode (InputMonitor) and the record arm.
   int inFirst = -1;
   bool inStereo = true;
+  float inGain = 1.0f;     // K-123: the input's trim (linear; negative = polarity inverted)
+  bool inProcessed = false;  // inGain != 1: the input is read from MixerRuntime::inL / inR
   uint8_t monitor = 0;
   bool armed = false;
   uint8_t recPoint = 0;  // J-31: RecordPoint (MixerTrack::recPoint)

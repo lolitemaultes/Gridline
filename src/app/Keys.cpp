@@ -137,6 +137,17 @@ bool pressed(const char* id) {
   return false;
 }
 
+bool pressedOverText(const char* id) {
+  if (pressed(id)) return true;
+  if (capturing() || !ImGui::GetIO().WantTextInput) return false;
+  const Command* cmd = findCommand(id);
+  if (!cmd) return false;
+  const uint8_t mods = modsNow();
+  for (const Chord& c : keymap().bindings(id))
+    if (c.mods == mods && (c.mods & (kCtrl | kCmd)) && ImGui::IsKeyPressed(toImGui(c.key), cmd->repeat)) return true;
+  return false;
+}
+
 bool pressedPastEditor(const char* id) {
   if (injectedNow(id)) return true;
   if (capturing() || ImGui::GetIO().WantTextInput) return false;
@@ -185,6 +196,17 @@ bool escapePressed(bool repeat) {
 void claimEscape() { gEscClaimFrame = ImGui::GetFrameCount(); }
 
 bool escapeBusy() { return gEscBusyAtStart || gEscClaimFrame == ImGui::GetFrameCount(); }
+
+bool defaultPressed() {
+  const ImGuiContext& ctx = *GImGui;
+  const ImGuiIO& io = ctx.IO;
+  if (capturing() || io.KeyCtrl || io.KeyShift || io.KeyAlt || io.KeySuper) return false;
+  if (!ImGui::IsKeyPressed(ImGuiKey_Enter, false) && !ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) return false;
+  if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) return false;
+  if (ctx.ActiveId && ctx.InputTextState.ID == ctx.ActiveId && (ctx.InputTextState.Flags & ImGuiInputTextFlags_Multiline)) return false;
+  if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId)) return false;  // (a combo's list or a menu over the dialog takes it)
+  return true;
+}
 
 bool pressedHeld(const char* id) {
   if (injectedNow(id)) return true;

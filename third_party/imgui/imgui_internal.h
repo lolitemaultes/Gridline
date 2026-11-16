@@ -4411,6 +4411,9 @@ extern ImFont*      GImGuiGridlineTitleFont;
 // squares; its pill-round frames would make them circles). Set per frame by the layout style.
 extern float        GImGuiGridlineCheckRounding;
 extern ImU32        GImGuiGridlineMenuHover;      // K-112B: menu row hover fill in the Tracks layout (0 = the style's)
+// Gridline (K-106): while set, BeginMenu() and MenuItem() show the label it returns (a layout's own
+// words for the same item; it returns its argument when nothing changes). Set per frame by the layout style.
+extern const char* (*GImGuiGridlineMenuLabel)(const char* label);
 extern bool         ImGuiGridlineHook_BeginMenu(const char* label, bool enabled);
 extern void         ImGuiGridlineHook_EndMenu();
 extern bool         ImGuiGridlineHook_MenuItem(const char* label, const char* shortcut, bool selected, bool enabled);

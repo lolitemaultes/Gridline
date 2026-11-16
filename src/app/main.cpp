@@ -7,6 +7,8 @@
 #include "Look.h"
 #include "MidiUi.h"
 #include "SettingsPages.h"
+#include "SpeechUi.h"
+#include "GamepadUi.h"
 #include "GridlineVersion.h"
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -28,6 +30,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <thread>
+#include <csignal>
 #include <filesystem>
 #include <map>
 #include <set>
@@ -125,6 +128,7 @@
 #include "Theme.h"
 #include "Widgets.h"
 #include "LogicNewTracks.h"
+#include "LogicPlugins.h"
 #include "Windows.h"
 #include "TrackModeUi.h"
 #include "TrackPlusUi.h"
@@ -136,6 +140,7 @@
 #include "LayoutPresets.h"
 #include "LayoutReport.h"
 #include "LayoutShellUi.h"
+#include "WorkspacesUi.h"
 #include "../core/LayoutHomes.h"
 #include "LiveLook.h"
 #include "icons/IconTexture.h"
@@ -151,7 +156,9 @@
 #include "SuiteUi.h"
 #include "LauncherUi.h"
 #include "IdlePace.h"
+#include "ChromeBanner.h"
 #include "ProjectLoadUi.h"
+#include "RecordCard.h"
 #include "UpdateUi.h"
 #include "UrlImportUi.h"
 #include "../host/net/Http.h"
@@ -252,19 +259,38 @@ void videoClockStep(AudioEngine& eng) {
   ++gVideoFrames;
 }
 
+// K-101 follow-up: the system audio device's channel count (2 unless Settings > Audio > Output
+// channels asks for more: channels 3-4, 5-6, ... are then extra output pairs), and the main pair
+// of a multichannel buffer for the interface sounds (sized when the device opens).
+int gOutChannels = 2;
+std::vector<float> gMainPairMix;
+
 void audioCallback(void* user, Uint8* stream, int len) {
   auto* eng = static_cast<AudioEngine*>(user);
   crash::noteAudioThread();  // K-39: which thread a report comes from (a relaxed store)
   if (crash::audioCrashRequested()) crash::crashNowForTest();
-  const int frames = len / static_cast<int>(sizeof(float) * 2);
+  const int chans = gOutChannels;
+  const int frames = len / static_cast<int>(sizeof(float) * static_cast<size_t>(chans));
   const bool stats = fstats::enabled();
   const Uint64 t0 = stats ? SDL_GetPerformanceCounter() : 0;
   if (gSynthInput) pushSynthInput(*eng, frames);
   else feedTestInput(eng, frames);
-  eng->processInterleaved(reinterpret_cast<float*>(stream), frames);
-  // Interface sounds go on top of the finished output: outside the song mixer,
-  // so they are never recorded, rendered or metered.
-  if (gUiSounds) gUiSounds->mix(reinterpret_cast<float*>(stream), frames);
+  auto* out = reinterpret_cast<float*>(stream);
+  if (chans <= 2) {
+    eng->processInterleaved(out, frames);
+    // Interface sounds go on top of the finished output: outside the song mixer,
+    // so they are never recorded, rendered or metered.
+    if (gUiSounds) gUiSounds->mix(out, frames);
+  } else {
+    eng->processInterleaved(out, frames, chans);
+    if (gUiSounds && 2 * static_cast<size_t>(frames) <= gMainPairMix.size()) {  // the main pair only
+      float* m = gMainPairMix.data();
+      const auto c = static_cast<size_t>(chans);
+      for (size_t i = 0; i < static_cast<size_t>(frames); ++i) m[2 * i] = out[i * c], m[2 * i + 1] = out[i * c + 1];
+      gUiSounds->mix(m, frames);
+      for (size_t i = 0; i < static_cast<size_t>(frames); ++i) out[i * c] = m[2 * i], out[i * c + 1] = m[2 * i + 1];
+    }
+  }
   if (stats && eng->sampleRate() > 0)  // J-66 --frame-stats: blocks that missed their deadline
     fstats::audioBlock(static_cast<double>(SDL_GetPerformanceCounter() - t0) / static_cast<double>(SDL_GetPerformanceFrequency()),
                        static_cast<double>(frames) / eng->sampleRate());
@@ -601,6 +627,7 @@ void openAudio(App& a) {
     gDevice = 0;
   }
   closeAsio(a);
+  a.audioOutputPairs = 0;  // K-101 follow-up: set again when the system device opens with more channels
   if (gVideoFps > 0) {  // K-10: the engine runs from the frame loop (videoClockStep)
     a.engine.setSampleRate(a.audioSampleRate);
     a.audioStatus = "Video clock: no audio device.";
@@ -623,13 +650,30 @@ void openAudio(App& a) {
   SDL_AudioSpec want{}, have{};
   want.freq = a.audioSampleRate;
   want.format = AUDIO_F32SYS;
-  want.channels = 2;
+  // K-101 follow-up: more than two output channels when asked (Hardware Insert sends, Voltage Out);
+  // the default stays the stereo device exactly as before.
+  const int wantCh = std::clamp(static_cast<int>(a.settings.getNumber("audio.outputChannels")), 2, 2 + 2 * AudioEngine::kMaxDevicePairs);
+  want.channels = static_cast<Uint8>(wantCh);
   want.samples = static_cast<Uint16>(a.audioBuffer);
   want.callback = audioCallback;
   want.userdata = &a.engine;
   const char* name = a.audioDevice.empty() ? nullptr : a.audioDevice.c_str();
-  gDevice = SDL_OpenAudioDevice(name, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE);
-  if (!gDevice && name) gDevice = SDL_OpenAudioDevice(nullptr, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE);
+  const int flags = SDL_AUDIO_ALLOW_FREQUENCY_CHANGE | SDL_AUDIO_ALLOW_SAMPLES_CHANGE;
+  gOutChannels = 2;
+  a.audioOutputPairs = 0;
+  gDevice = SDL_OpenAudioDevice(name, 0, &want, &have, flags);
+  if (!gDevice && name) gDevice = SDL_OpenAudioDevice(nullptr, 0, &want, &have, flags);
+  if (!gDevice && wantCh > 2) {  // the device (or the driver) refuses that many: stereo, as before
+    a.notify("The audio device has no " + std::to_string(wantCh) + " output channels: using 2.", true);
+    want.channels = 2;
+    gDevice = SDL_OpenAudioDevice(name, 0, &want, &have, flags);
+    if (!gDevice && name) gDevice = SDL_OpenAudioDevice(nullptr, 0, &want, &have, flags);
+  }
+  if (gDevice) {
+    gOutChannels = std::max(2, static_cast<int>(have.channels));
+    a.audioOutputPairs = std::min(AudioEngine::kMaxDevicePairs, (gOutChannels - 2) / 2);
+    gMainPairMix.assign(gOutChannels > 2 ? 2 * static_cast<size_t>(std::max<int>(have.samples, 4096)) : 0, 0.f);
+  }
   char buf[256];
   if (!gDevice) {
     std::snprintf(buf, sizeof buf, "No audio output: %s", SDL_GetError());
@@ -644,8 +688,12 @@ void openAudio(App& a) {
     a.loadSoundTheme(have.freq, true);  // J-133: the chosen sound theme (assets/sounds/<theme>/)
     gUiSounds = &a.uiSounds;
   }
-  std::snprintf(buf, sizeof buf, "Running on %s via %s: %d Hz, %d-frame buffer.", name ? name : "the default device",
-                SDL_GetCurrentAudioDriver(), have.freq, have.samples);
+  if (gOutChannels > 2)
+    std::snprintf(buf, sizeof buf, "Running on %s via %s: %d Hz, %d-frame buffer, %d outputs (%d extra pair%s).", name ? name : "the default device",
+                  SDL_GetCurrentAudioDriver(), have.freq, have.samples, gOutChannels, a.audioOutputPairs, a.audioOutputPairs == 1 ? "" : "s");
+  else
+    std::snprintf(buf, sizeof buf, "Running on %s via %s: %d Hz, %d-frame buffer.", name ? name : "the default device",
+                  SDL_GetCurrentAudioDriver(), have.freq, have.samples);
   a.audioStatus = buf;
   SDL_PauseAudioDevice(gDevice, 0);
   openAudioInput(a, have.freq, have.samples);
@@ -873,7 +921,10 @@ struct DevWait {
 // double-click or one wheel gesture. On a slow machine (software OpenGL on a shared runner) a frame
 // can take a few hundred ms; the interface's clock then moves on at most this much per frame, so
 // the script means the same everywhere. (--fixed-dt sets every frame's step instead.)
-constexpr float kDevInputMaxStep = 0.1f;
+// K-306: under the double-click time (0.30 s) with room for three steps: down, up, down, up on
+// frames n, n+1, n+3, n+4 is a double-click on any machine. At 0.1 s the three steps came to
+// exactly the double-click time on a slow runner, and the second click was a single one.
+constexpr float kDevInputMaxStep = 0.09f;
 float devSoundPeak = 0;  // J-109: output peak since the last "sound" (also drained each frame for "output-silent")
 double devLongestFrameMs = 0;  // K-71: the longest frame (its work, not the wait for the display) since the last "scan"
 double devSecondFrameMs = 0;   // ... and the next longest (tests tell one outlier on a busy machine from a stall)
@@ -1225,6 +1276,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       continue;
     }
     if (viewports::devCommand(app, l.cmd, l.args, frame)) continue;  // J-113
+    if (chromebanner::devCommand(l.cmd, l.args, frame)) continue;  // K-315: banner time <s> | run | next | stats
     if (pluginWindowDevCommand(app, l.cmd, l.args, frame)) continue;  // plugin windows, their channel strip
     if (packs::devCommand(app, l.cmd, l.args)) continue;  // K-15: loupe [pin <tab|below|left|right|float> | unpin]
     if (livetake::devCommand(app, l.cmd, l.args, frame)) continue;  // J-217: live recording checks
@@ -1721,6 +1773,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
           }
         std::printf("frame %d layout %s (%s)\n", frame, l.args[0].c_str(), shown ? "window system" : "events");
       }
+    } else if (l.cmd == "workspace") {  // K-237: workspaces (WorkspacesUi.h): add, select, close, undo, rename, starters, dump
+      workspacesui::devCommand(app, l.args);
     } else if (l.cmd == "layout") {  // K-112: the region shell (LayoutShellUi.h): dump, show/hide <region>, open/close <window>, state
       layoutui::devCommand(app, l.args, frame);
     } else if (l.cmd == "tracker") {  // K-106: the pattern editor (TrackerView.h): dump, focus, cursor, edit, step, follow, select, geometry
@@ -2131,6 +2185,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "mknotes" || l.cmd == "notes" || l.cmd == "selnotes" || l.cmd == "lane" || l.cmd == "pianosnap" || l.cmd == "bendline" ||
                l.cmd == "alane" || l.cmd == "alanetarget" || l.cmd == "alaneshape" || l.cmd == "alanesimplify" || l.cmd == "pianotool") {
       devPianoCommand(app, l, frame);
+    } else if (l.cmd == "speech") {  // K-107: opens the Speech dialog (any layout); K-313: speech <style> "<text>" [preview]
+      if (l.args.empty()) speechui::open(app);
+      else speechui::devSet(l.args[0], l.args.size() > 1 ? l.args[1] : std::string(), l.args.size() > 2 && l.args[2] == "preview");
+    } else if (l.cmd == "gamepad") {  // K-199: gamepad button <name> [l1] | gamepad state
+      gamepadui::devCommand(app, l.args, frame);
     } else if (l.cmd == "launcher") {  // J-141: launcher [home|back|close]: the launcher's state and tiles to stdout
       if (l.a0 == "home") app.home.showHome(app.now);
       else if (l.a0 == "back") app.home.back(app.now);
@@ -3471,10 +3530,24 @@ int main(int argc, char** argv) {
   const bool keepSavedLayout = (devOptions || updateOpts.automated) && !std::getenv("GRIDLINE_SAVE_LAYOUT");
   io.IniFilename = keepSavedLayout ? nullptr : iniPath.c_str();
   if (keepSavedLayout) std::fprintf(stderr, "layout: %s is read, not saved (a run with options)\n", iniPath.c_str());
+  // K-297 (round 7): a start with the layout's dock file opens it as it was left. A region shell
+  // (Clips, Smooth, the Tracker) is built again from the person's region state (the splits kept in
+  // the settings) with the panes that were open; it came back with no regions, the windows of a new
+  // project floating over the tracks. Studio's dock file holds its arrangement: its open windows
+  // come back here.
+  bool restorePanesAtStart = !firstRun;
+  if (!firstRun) {
+    if (layoutui::shellBuilt(app, layoutPreset)) layoutRebuild = true;
+    else layoutui::restorePanes(app, layoutPreset);
+  }
 
   std::map<SDL_Scancode, HeldNote> held;
   std::string lastTitle;
   bool running = true;
+  // K-106: a hidden (development) run ends on SIGTERM at once, whatever it waits for (a script's
+  // "waitfor", a save question nobody can answer); SDL's own handler would only ask to quit.
+  static volatile std::sig_atomic_t termAsked = 0;
+  if (startHidden) std::signal(SIGTERM, [](int) { termAsked = 1; });
   Uint64 t0 = SDL_GetPerformanceCounter();
   // One complete frame after the events: tick, interface, render and swap of every window. The
   // main loop draws it after each event pump; J-116: SDL's event watch also draws it from inside
@@ -3501,6 +3574,11 @@ int main(int argc, char** argv) {
       SDL_SetModState(static_cast<SDL_Keymod>(SDL_GetModState() & (KMOD_NUM | KMOD_CAPS | KMOD_MODE)));
     }
     xdragui::pump(app);  // J-75: drags from other applications
+    if (termAsked) {
+      std::printf("close request: SIGTERM, quit\n"), std::fflush(stdout);
+      termAsked = 0;
+      running = false;
+    }
     if (app.quitRequested) {
       app.quitRequested = false;
       app.cancelProjectLoad();  // J-167: quitting while a project loads: the load stops, the open project is the one asked about
@@ -3707,6 +3785,11 @@ int main(int argc, char** argv) {
     {
       prof::Scope ps("topbar");
       topH = drawTopBar(app);
+      topH += recordcard::drawStrip(app, topH);  // K-123: the record strip, when chosen
+    }
+    {  // K-237: the workspace strip (only once the layout has a second workspace)
+      const ImGuiViewport* mvp = ImGui::GetMainViewport();
+      topH += workspacesui::drawStrip(app, ImVec2(mvp->WorkPos.x, mvp->WorkPos.y + topH), mvp->WorkSize.x);
     }
     // Dock space between the top bar and the status bar.
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -3765,6 +3848,8 @@ int main(int argc, char** argv) {
         else layoutui::showPresetWindows(app, preset);
       }
       if (clipsReset) livelook::showView(app, true);
+      if (restorePanesAtStart && shellLayout && !migrate) layoutui::restorePanes(app, preset);
+      restorePanesAtStart = false;
       layoutRebuildKeep = false;
       if (devPlaylistOnly) app.showBrowser = app.showRack = app.showPiano = app.showMixer = false;
       for (const std::string& w : devHide) {
@@ -3890,6 +3975,11 @@ int main(int argc, char** argv) {
       drawDialogs(app);
       browserui::drawPluginPicker(app);
       cmdpalette::draw(app);  // K-93: over the windows and dialogs, under collaboration and load pop-ups
+      {
+        static const bool gamepadStarted = (gamepadui::init(app), true);  // K-199: SDL's controllers, once
+        (void)gamepadStarted;
+      }
+      gamepadui::draw(app);   // K-199: controller commands and the command pad (only while open)
       collabui::draw(app);  // J-111
       projloadui::draw(app);  // J-167: last, at the root level (it replaces any popup open when a load starts)
       crashui::draw(app);     // K-39: a failure's pop-up goes over everything
@@ -4003,9 +4093,15 @@ int main(int argc, char** argv) {
     if (!app.focusWindow.empty()) {
       // R06-10: a window is named "Shown###English" (ui::windowTitle), and one just opened exists only
       // from the next frame: look it up by either name, and keep asking a few frames until it is there.
+      // K-297 (round 8): a window opened this frame is drawn first next frame (Clips' mixer, Smooth's
+      // lower pane the first time they open), and one homed in a region of the layout is asked again
+      // once it docks there: the rebuild that shows its region gave the keys back to the main view.
+      static std::string waitingFor;
       static int tries = 0;
+      if (waitingFor != app.focusWindow) waitingFor = app.focusWindow, tries = 0;
       ImGuiWindow* fw = ImGui::FindWindowByName(app.focusWindow.c_str());
       if (!fw && app.focusWindow.find("###") == std::string::npos) fw = ImGui::FindWindowByName(("###" + app.focusWindow).c_str());
+      if (fw && !(fw->Active || fw->WasActive)) fw = nullptr;  // (not drawn yet)
       // A press this frame focuses the window under it when the frame ends (ImGui's click focus):
       // the request waits for a frame without one, or the press's window would take the keys back.
       const ImGuiIO& fio = ImGui::GetIO();
@@ -4019,9 +4115,11 @@ int main(int argc, char** argv) {
         ++tries;
       } else if (fw) {
         ImGui::FocusWindow(fw);
-        app.focusWindow.clear(), tries = 0;
-      } else if (++tries > 6) {
-        app.focusWindow.clear(), tries = 0;
+        const bool docksLater = !fw->DockIsActive && layoutui::shellBuilt(app, layoutui::active()) &&
+                                layout::windowHome(ui::stableWindowName(fw->Name), layoutui::active()).kind == layout::HomeKind::Dock;
+        if (!docksLater || ++tries > 20) app.focusWindow.clear(), waitingFor.clear(), tries = 0;
+      } else if (++tries > 20) {
+        app.focusWindow.clear(), waitingFor.clear(), tries = 0;
       }
     }
     if (app.typingKeyboard && app.hint.empty()) {
@@ -4062,6 +4160,12 @@ int main(int argc, char** argv) {
         ImGui::FocusWindow(to);
       overTaker = ours && g.DragDropAcceptIdCurr;
     }
+    // K-297 (round 7): the docked area with the keys gets a quiet frame in Clips, Smooth (round 8:
+    // its own copy went) and the Tracker. Studio marks it on the tab's top line (its look stays as it is).
+    // K-112D (audit I5): Smooth's frame is the reference's blue on the dark faces (the frame's Smooth
+    // palette is put back by now, so its accent would read orange).
+    if (!homeShown && layoutui::active() != layout::Preset::Studio)
+      ui::drawKeyFocusFrame(layoutui::active() == layout::Preset::Logic && theme::pal().dark ? theme::withAlpha(theme::rgb(0x2F7FE0), 0.6f) : 0u);
     ui::wheelFrameEnd();     // J-83
     collabui::drawCursors(app);  // J-111: collaborators' cursors, last: on top of every window, popup and menu
     layoutui::devFrame(app, frameNo);  // K-112: "layout inventory" (dev), once every window of the frame is drawn
@@ -4400,6 +4504,7 @@ int main(int argc, char** argv) {
     if (mouseDown || ImGui::IsAnyItemActive() || ImGui::GetDragDropPayload() != nullptr) return true;
     if (app.engine.playing() || app.engine.liveHeld() > 0 || app.engine.previewing() || app.projectLoading() || !app.toasts.empty()) return true;
     if (host::scanStatus().running || collabui::active(app)) return true;
+    if (chromebanner::wantsFrames()) return true;  // K-315: the Tracker About banner on screen
 #if !defined(__APPLE__) && !defined(_WIN32)
     if (!openHostedEditorTargets().empty()) return true;  // plugin interfaces here live on the frames' event pump
 #endif
@@ -4456,6 +4561,7 @@ int main(int argc, char** argv) {
       adoptUnfocusedKeys(ev, window);        // GitHub issue #52: keys that name no window are the main window's
       ImGui_ImplSDL2_ProcessEvent(&ev);
       viewports::onEvent(ev);  // J-113: focus over Gridline's windows, minimise
+      gamepadui::handleEvent(app, ev);  // K-199: game controllers
       // K-175: a held typed key ends on its key-up whatever window gets it (a plugin window took the
       // focus meanwhile) and whatever changed meanwhile (a modifier pressed, a text field focused,
       // the typing keyboard switched off, a project loading, no channel selected); at the end of
@@ -4563,7 +4669,16 @@ int main(int argc, char** argv) {
     app.typing.settle();  // K-175: keys pressed from the next batch of events on are presses again
     // K-175: while the typing keyboard plays, its keys run no other command (keypad - + also
     // switching the pattern, - = zooming, a single-key shortcut set's letters).
-    app.typing.aRow = livelook::active(app);  // N48-08: Clips plays the reference's A-row note keys
+    {  // R06-15 / N48-08: the A-row note keys, scoped by layout: Clips always, Smooth unless the
+       // person chose the two rows (keys.typingRows "auto" / "home" / "two"); Studio the two rows.
+      const std::string rows = app.settings.getString("keys.typingRows");
+      const bool aRow = livelook::active(app) || rows == "home" || (rows != "two" && logicplug::active(app));
+      if (aRow != app.typing.aRow) {
+        releaseTypedNotes(app, held);
+        held.clear();
+        app.typing.aRow = aRow;
+      }
+    }
     keys::setTypingKeyboard(app.typingKeyboard && app.selChannel != kNoId);
     keys::setEditorKeys(trackerview::hasKeyboard());  // K-106: the pattern editor's own keys run no command
     liveresize::pumpEnd();
@@ -4613,6 +4728,7 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "profile: %d frames -> %s\n", prof::recordedFrames(), profilePath.c_str());
   }
 
+  if (!keepSavedLayout) layoutui::savePanes(app);  // K-297 (round 7): with the dock file, for the next start
   if (!devSaveAtExit.empty()) {
     captureHostedStates(app);
     std::fprintf(stderr, "%s %s\n", app.saveProject(devSaveAtExit) && (flpexport::wait(), exportui::waitFileJob(), true) ? "saved" : "could not save", devSaveAtExit.c_str());

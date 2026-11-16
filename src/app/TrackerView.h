@@ -58,6 +58,9 @@ bool hasKeyboard();
 // A header button was clicked: the keyboard goes back to the pattern editor when its page is the
 // one shown (the classic tracker's buttons never take the keys from the pattern).
 void keysBackToPattern();
+// R11-04: a button that opens a popup in the band keeps the keys there (focusing the pattern would
+// close the popup it just opened): cancels this frame's keysBackToPattern.
+void keepKeysHere();
 // R3-06: the cursor to the channel's track, the keys back to the pattern (an instrument picked).
 void cursorToChannel(App& a, ObjectId channel);
 // The editor was drawn on the last frame (it is the pattern page: PAT does not bring the rack forward over it).
@@ -109,13 +112,22 @@ int cursorField();
 // The header band hidden (the pattern gets the room) and back.
 void setExtended(App& a, bool on);
 bool extended();
+// The pattern's row height as last drawn (0 before the first frame).
+float patternRowHeight();
 // The centre page shown in the Tracker layout (a window homed in tracker.pages, or the instrument
 // page, which opens the selected channel's instrument).
 void showPage(App& a, const char* window);
 // Brings a centre page's hidden tab to the front (over the next frames, until it shows). The
 // centre has no tab bar, so focus alone does not pick the tab; the header band pumps this.
-void bringPage(const char* window);
+// K-297 (round 8): takeKeys false brings it without the keys (a layout rebuild: the window that
+// opened in another region keeps them).
+void bringPage(const char* window, bool takeKeys = true);
 void pumpPage(App& a);
+// K-297 (round 8): the page a restart brings back in front (the one in front at quit); the
+// Tracker's first frame on screen shows it instead of the pattern page. takeStartPage() hands it
+// over once ("" when none).
+void setStartPage(const std::string& window);
+std::string takeStartPage();
 // What the header shows: 0 its boxes, 1 Help, 2 Files (the header-left swap).
 void setHeaderSwap(int which);
 // Ctrl+Alt+8, as the Audio editor button: the audio editor in front, or (in front already) the pattern.
@@ -132,7 +144,13 @@ bool closePageOnCloseRequest(App& a);
 // R8-02: the previous (-1) or next (+1) instrument, as Ctrl+Shift+Up / Down in the pattern, from
 // anywhere in the Tracker (the instrument editor open and focused too); the keys go back to the pattern.
 void stepInstrument(App& a, int d);
-// The scope box's tool (0 the scopes, 1 Transpose, 2 Clean up, 3 Advanced edit): shown, or (shown
+// The previous / next pattern (Ctrl+Left / Right, the pattern box's arrows); past the last one, a
+// new empty pattern when the last holds something (R10-03).
+void stepPattern(App& a, int d);
+// R10-04: the previous / next song position (Ctrl+Shift+Left / Right, the order list's arrows): its
+// pattern shows, as a click on the entry.
+void stepSongPosition(App& a, int d);
+// The scope box's tool (0 the scopes, 1 Transpose, 2 Clean up, 3 Advanced edit, 4 MIDI, 5 Sample tools): shown, or (shown
 // already) back to the scopes. The keys Ctrl+Alt+T, R and A.
 void toggleScopeTool(App& a, int which);
 int scopeTool();
@@ -140,6 +158,10 @@ int scopeTool();
 // tools close, the band comes back from Extend, the pattern page comes to the front.
 void mainScreen(App& a);
 int headerSwap();
+// The settings screen's page (0 Layout, 1 Miscellaneous, 2 Audio, 3 MIDI input).
+void setConfigPage(int page);
+// The Files page's Samples open (a double-click on an audio file): into the current instrument.
+void filesLoadSample(App& a, const std::string& path);
 
 // Dev (--dev-input "tracker ..."):
 //   tracker dump                 the shown pattern: one line per non-empty cell, the cursor and the play row
@@ -151,6 +173,15 @@ int headerSwap();
 //   tracker swap none|help|files the header's swap
 //   tracker extend on|off        the band as a strip (the classic Extend) or back
 //   tracker songclip <index>     the Song page picks the playlist's clip at that index
+//   tracker busiest              the song position to the pattern with the most tracks in use (photos)
+//   tracker mididevs <n>         n stand-in MIDI input devices listed (nothing is opened)
+//   tracker loadsample <path>    the Files page loading an audio file into the current instrument
+//   tracker tool <n>             the scope box's tool (0 scopes .. 5 sample tools); swap config <page>: a settings page
 void devCommand(App& a, const std::vector<std::string>& args, int frame);
+
+// K-106: a menu label in the Tracker's own words (the shared menus say playlist, piano roll and
+// channel rack; the Tracker's pages are Song, Roll and Steps). Returns `label` when nothing changes;
+// otherwise a string kept for the program's life. The part after "##" (the item's id) is kept.
+const char* menuWords(const char* label);
 
 }  // namespace gl::trackerview

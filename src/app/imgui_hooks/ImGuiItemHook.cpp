@@ -8,16 +8,18 @@ ImFont* GImGuiGridlineTitleFont = nullptr;  // K-112b (checkpoint 28): read by i
 float GImGuiGridlineCheckRounding = -1.0f;  // checkpoint 38: read by imgui_widgets.cpp (Checkbox), set by layoutui
 ImU32 GImGuiGridlineMenuHover = 0;      // K-112B checkpoint 39: read by imgui_widgets.cpp (MenuItemEx, BeginMenuEx)
 bool GImGuiGridlineMenuWalk = false;  // K-93: read by imgui_widgets.cpp (BeginMenuEx, EndMenu, MenuItemEx)
+const char* (*GImGuiGridlineMenuLabel)(const char*) = nullptr;  // K-106: read by imgui_widgets.cpp (BeginMenuEx, MenuItemEx), set by layoutui
 
 namespace gl::imhook {
 namespace {
 ItemFn itemFn = nullptr;
 ItemFn cursorFn = nullptr;
+ItemFn typeInFn = nullptr;
 InfoFn infoFn = nullptr;
 MenuWalker* walker = nullptr;
 
 void update() {
-  if (ImGuiContext* g = ImGui::GetCurrentContext()) g->TestEngineHookItems = itemFn != nullptr || cursorFn != nullptr || infoFn != nullptr;
+  if (ImGuiContext* g = ImGui::GetCurrentContext()) g->TestEngineHookItems = itemFn != nullptr || cursorFn != nullptr || typeInFn != nullptr || infoFn != nullptr;
 }
 }  // namespace
 
@@ -28,6 +30,11 @@ void setItemHook(ItemFn fn) {
 
 void setCursorHook(ItemFn fn) {
   cursorFn = fn;
+  update();
+}
+
+void setTypeInHook(ItemFn fn) {
+  typeInFn = fn;
   update();
 }
 
@@ -48,6 +55,7 @@ MenuWalker* menuWalker() { return walker; }
 void ImGuiTestEngineHook_ItemAdd(ImGuiContext*, ImGuiID id, const ImRect& bb, const ImGuiLastItemData*) {
   if (gl::imhook::itemFn) gl::imhook::itemFn(id, bb.Min, bb.Max);
   if (gl::imhook::cursorFn) gl::imhook::cursorFn(id, bb.Min, bb.Max);
+  if (gl::imhook::typeInFn) gl::imhook::typeInFn(id, bb.Min, bb.Max);
 }
 void ImGuiTestEngineHook_ItemInfo(ImGuiContext*, ImGuiID id, const char* label, ImGuiItemStatusFlags flags) {
   if (gl::imhook::infoFn) gl::imhook::infoFn(id, label, static_cast<int>(flags));

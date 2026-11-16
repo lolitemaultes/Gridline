@@ -99,7 +99,7 @@ void maskMixerJson(Json& m) {
       b.boolean = false;
       return b;
     }();
-  for (const char* k : {"soloAlone", "armed", "monitor", "input", "inputStereo", "recPoint", "hibernate"}) m.object.erase(k);
+  for (const char* k : {"soloAlone", "armed", "monitor", "input", "inputStereo", "recPoint", "hibernate", "inputTrim", "inputInvert"}) m.object.erase(k);
 }
 
 // K-87: a hibernating channel is this computer's choice.
@@ -185,6 +185,7 @@ void maskSessionJson(Json& song) {
     eachIn(a, "playlist", maskClipJson);
     eachIn(a, "tracks", maskTrackJson);
   });
+  song.object.erase("smooth");  // K-112D: the Smooth layout's window state (the Library pane) stays here
   maskPlugins(song, 0);
 }
 
@@ -197,11 +198,13 @@ void keepChannelSession(Channel& in, const Channel& cur) {
 void keepMixerSession(MixerTrack& in, const MixerTrack& cur) {
   in.solo = cur.solo;
   in.soloAlone = cur.soloAlone;
-  in.armed = cur.armed;
+  in.armed = cur.armed && !in.recordSafe;  // K-123: a collaborator's record safe disarms it here too
   in.monitor = cur.monitor;
   in.input = cur.input;
   in.inputStereo = cur.inputStereo;
   in.recPoint = cur.recPoint;
+  in.inputTrim = cur.inputTrim;  // K-123: the input's trim and polarity go with the input
+  in.inputInvert = cur.inputInvert;
   in.hibernate = cur.hibernate;  // K-87
   for (size_t k = 0; k < in.slots.size() && k < cur.slots.size(); ++k) keepPluginSession(in.slots[k].plugin, cur.slots[k].plugin);
 }
@@ -219,6 +222,7 @@ void keepSessionState(Song& in, const Song& cur) {
     in.tracks[i].folded = cur.tracks[i].folded;
     in.tracks[i].height = cur.tracks[i].height;
   }
+  in.smooth = cur.smooth;  // K-112D: this computer's Smooth window state, whatever layout the change came from
 }
 
 uint64_t sessionStateHash(const Song& s) {
@@ -249,7 +253,13 @@ uint64_t sessionStateHash(const Song& s) {
     mix(m.id);
     mix(static_cast<uint64_t>(m.solo) | static_cast<uint64_t>(m.soloAlone) << 1 | static_cast<uint64_t>(m.armed) << 2 |
         static_cast<uint64_t>(m.inputStereo) << 3 | static_cast<uint64_t>(m.monitor) << 8 | static_cast<uint64_t>(m.recPoint) << 16 |
-        static_cast<uint64_t>(static_cast<uint32_t>(m.input)) << 24 | static_cast<uint64_t>(m.hibernate) << 56);
+        static_cast<uint64_t>(static_cast<uint32_t>(m.input)) << 24 | static_cast<uint64_t>(m.hibernate) << 56 |
+        static_cast<uint64_t>(m.inputInvert) << 57);
+    {
+      uint32_t bits = 0;
+      std::memcpy(&bits, &m.inputTrim, sizeof bits);
+      mix(bits);
+    }
     for (const auto& sl : m.slots) plugin(sl.plugin);
   }
   for (const auto& c : s.playlist)
@@ -275,7 +285,7 @@ uint64_t typeHash(const std::string& t) {
 
 auto keyTuple(const SessionKey& k) { return std::make_tuple(k.kind, k.id, k.a, k.b, k.type); }
 
-enum MixerField : int32_t { kSolo, kSoloAlone, kArmed, kMonitor, kInput, kInputStereo, kRecPoint };
+enum MixerField : int32_t { kSolo, kSoloAlone, kArmed, kMonitor, kInput, kInputStereo, kRecPoint, kInputTrim, kInputInvert };
 
 void pluginValues(SessionValues& out, const PluginState& p, SessionKey key) {
   const auto& tab = table();
@@ -318,8 +328,9 @@ SessionValues sessionValues(const Song& s) {
     k.id = m.id;
     k.kind = SessionKey::MixerField;
     const double fields[] = {m.solo ? 1.0 : 0.0, m.soloAlone ? 1.0 : 0.0, m.armed ? 1.0 : 0.0, static_cast<double>(m.monitor),
-                             static_cast<double>(m.input), m.inputStereo ? 1.0 : 0.0, static_cast<double>(m.recPoint)};
-    for (int32_t f = kSolo; f <= kRecPoint; ++f) {
+                             static_cast<double>(m.input), m.inputStereo ? 1.0 : 0.0, static_cast<double>(m.recPoint),
+                             static_cast<double>(m.inputTrim), m.inputInvert ? 1.0 : 0.0};
+    for (int32_t f = kSolo; f <= kInputInvert; ++f) {
       k.a = f;
       out.push_back({k, fields[f]});
     }
@@ -383,11 +394,13 @@ bool applySessionValue(Song& s, const SessionKey& key, double v) {
       switch (key.a) {
         case kSolo: m->solo = v != 0; break;
         case kSoloAlone: m->soloAlone = v != 0; break;
-        case kArmed: m->armed = v != 0; break;
+        case kArmed: m->armed = v != 0 && !m->recordSafe; break;  // K-123: record safe
         case kMonitor: m->monitor = static_cast<uint8_t>(v); break;
         case kInput: m->input = static_cast<int>(v); break;
         case kInputStereo: m->inputStereo = v != 0; break;
         case kRecPoint: m->recPoint = static_cast<uint8_t>(v); break;
+        case kInputTrim: m->inputTrim = static_cast<float>(v); break;
+        case kInputInvert: m->inputInvert = v != 0; break;
         default: return false;
       }
       return true;

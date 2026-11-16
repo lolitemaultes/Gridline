@@ -762,19 +762,27 @@ bool Document::setChannelPlugin(ObjectId id, const std::string& pluginType) {
   return ok;
 }
 
+// R12-06: a clone of "Kick #2" is "Kick #3" (not "Kick #2 #2"); any other name gets " #2".
+static std::string cloneName(const std::string& n) {
+  const size_t h = n.rfind(" #");
+  if (h != std::string::npos && h + 2 < n.size() && n.size() - h < 8 && n.find_first_not_of("0123456789", h + 2) == std::string::npos)
+    return n.substr(0, h) + " #" + std::to_string(std::stoi(n.substr(h + 2)) + 1);
+  return n + " #2";
+}
+
 ObjectId Document::cloneChannel(ObjectId id) {
   int idx = song_.channelIndex(id);
   if (idx < 0) return kNoId;
   Channel src = song_.channels[static_cast<size_t>(idx)];
   beginGroup("clone channel");
-  ObjectId nid = addChannel(src.name + " #2", src.plugin.type, idx + 1);
+  ObjectId nid = addChannel(cloneName(src.name), src.plugin.type, idx + 1);
   editChannel(nid, "clone channel", [&](Channel& c) {
     ObjectId keep = c.id;
     Rgb color = c.color;
     c = src;
     c.id = keep;
     c.color = color;
-    c.name = src.name + " #2";
+    c.name = cloneName(src.name);
   });
   for (const auto& p : song_.patterns) {
     auto st = p.steps.find(id);
@@ -914,12 +922,12 @@ ObjectId Document::clonePattern(ObjectId id) {
   if (idx < 0) return kNoId;
   Pattern src = song_.patterns[static_cast<size_t>(idx)];
   beginGroup("clone pattern");
-  ObjectId nid = addPattern(src.name + " #2", src.bars, src.stepsPerBar, idx + 1);
+  ObjectId nid = addPattern(cloneName(src.name), src.bars, src.stepsPerBar, idx + 1);
   editPattern(nid, "clone pattern", [&](Pattern& p) {
     ObjectId keep = p.id;
     p = src;
     p.id = keep;
-    p.name = src.name + " #2";
+    p.name = cloneName(src.name);
   });
   endGroup();
   return nid;

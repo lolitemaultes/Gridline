@@ -1,0 +1,26 @@
+# Maintainer: lolitemaultes <188165912+lolitemaultes@users.noreply.github.com>
+# @SUITE_NAME@ from the official release (@SUITE_FILE@-<version>-linux-all.zip): the plugins without the app.
+# Template: packaging/render.py fills in the version and checksum.
+pkgname=@SUITE_PKG@-bin
+_ver=@VERSION@
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc="@SUITE_DESC@ (official release build)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/lolitemaultes/Gridline"
+license=('GPL-3.0-or-later')
+depends=('gcc-libs' 'glibc' 'libgl' 'libx11')
+provides=('@SUITE_PKG@')
+# The Gridline packages carry this suite in the same place.
+conflicts=('@SUITE_PKG@' 'gridline' 'gridline-bin')
+options=('!strip' '!debug')
+source=("https://github.com/lolitemaultes/Gridline/releases/download/v${_ver}/@SUITE_FILE@-${_ver}-linux-all.zip")
+sha256sums=('@SHA256:@SUITE_KEY@-linux-all.zip@')
+
+package() {
+  cd "@SUITE_NAME@"
+  install -d "${pkgdir}/usr/lib/vst3" "${pkgdir}/usr/lib/clap"
+  cp -a "VST3/Gridline Suite/@SUITE_NAME@.vst3" "${pkgdir}/usr/lib/vst3/"
+  cp -a "CLAP/${CARCH}/Gridline Suite/@SUITE_NAME@.clap" "CLAP/${CARCH}/Gridline Suite/@SUITE_NAME@-assets" "${pkgdir}/usr/lib/clap/"
+  install -Dm644 README.txt "${pkgdir}/usr/share/doc/${pkgname}/README.txt"
+}

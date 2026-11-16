@@ -373,6 +373,42 @@ void routePluginWindows(App& a) {
 
 bool pluginWindowShown(App& a, const PluginTarget& t) { return hostedEditorOpen(t) || panelShowing(a, t); }
 
+std::vector<std::pair<ObjectId, int>> openPluginWindowList(App& a) {
+  std::vector<std::pair<ObjectId, int>> v;
+  auto add = [&v](ObjectId owner, int slot) {
+    if (owner != kNoId && std::find(v.begin(), v.end(), std::make_pair(owner, slot)) == v.end()) v.emplace_back(owner, slot);
+  };
+  const std::pair<ObjectId, int> chan{a.settingsChannel, -1};
+  for (const PluginTarget& t : openHostedEditorTargets())  // installed plugins' own windows
+    if (t.node == 0 && std::make_pair(t.owner, t.slot) != chan && std::make_pair(t.owner, t.slot) != a.fxEditor) add(t.owner, t.slot);
+  add(chan.first, -1);
+  add(a.fxEditor.first, a.fxEditor.second);
+  return v;
+}
+
+void reopenPluginWindowList(App& a, const std::vector<std::pair<ObjectId, int>>& list) {
+  const Song& s = a.doc.song();
+  ObjectId chan = kNoId;
+  std::pair<ObjectId, int> fx{kNoId, -1};
+  for (const auto& [owner, slot] : list) {
+    const PluginTarget t{owner, slot};
+    const PluginState* st = t.state(s);
+    if (!st || (slot >= 0 && st->type.empty())) continue;
+    if (slot < 0) {
+      if (chan != kNoId && isHostedType(s.channel(chan)->plugin.type)) hostedui::reopenLater(PluginTarget{chan, -1});
+      chan = owner;
+    } else {
+      if (fx.first != kNoId) {
+        const PluginState* was = PluginTarget{fx.first, fx.second}.state(s);
+        if (was && isHostedType(was->type)) hostedui::reopenLater(PluginTarget{fx.first, fx.second});
+      }
+      fx = {owner, slot};
+    }
+  }
+  if (chan != kNoId) a.settingsChannel = chan;
+  if (fx.first != kNoId) a.fxEditor = fx;
+}
+
 void togglePluginWindow(App& a, const PluginTarget& t) {
   if (hostedEditorOpen(t) && hostedEditorHidden(t)) {  // K-112: set aside: it comes back
     setHostedEditorHidden(t, false, kHideAny);

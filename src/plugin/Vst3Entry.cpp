@@ -732,7 +732,8 @@ class Factory final : public RefCounted, public IPluginFactory2 {
 #ifndef GRIDLINE_SUITE
   int32 PLUGIN_API countClasses() override { return 2; }
 #else
-  int32 PLUGIN_API countClasses() override { return static_cast<int32>(gl::suite::members(GRIDLINE_SUITE).size()); }
+  // K-308: the members this bundle's member list names (every member without a list).
+  int32 PLUGIN_API countClasses() override { return static_cast<int32>(gl::plugin::bundleMembers(GRIDLINE_SUITE).size()); }
 #endif
   tresult PLUGIN_API getClassInfo(int32 index, PClassInfo* info) override {
     PClassInfo2 i2{};
@@ -746,9 +747,9 @@ class Factory final : public RefCounted, public IPluginFactory2 {
   }
 #ifdef GRIDLINE_SUITE
   tresult PLUGIN_API getClassInfo2(int32 index, PClassInfo2* info) override {
-    const auto& ms = gl::suite::members(GRIDLINE_SUITE);
+    const auto& ms = gl::plugin::bundleMembers(GRIDLINE_SUITE);
     if (index < 0 || index >= static_cast<int32>(ms.size())) return kInvalidArgument;
-    const gl::suite::Member& m = ms[static_cast<size_t>(index)];
+    const gl::suite::Member& m = *ms[static_cast<size_t>(index)];
     *info = PClassInfo2{};
     std::memcpy(info->cid, FUID(m.vst3Uid[0], m.vst3Uid[1], m.vst3Uid[2], m.vst3Uid[3]).toTUID(), sizeof(TUID));
     info->cardinality = PClassInfo::kManyInstances;
@@ -763,8 +764,8 @@ class Factory final : public RefCounted, public IPluginFactory2 {
   tresult PLUGIN_API createInstance(FIDString cid, FIDString iid, void** obj) override {
     *obj = nullptr;
     FUnknown* inst = nullptr;
-    for (const gl::suite::Member& m : gl::suite::members(GRIDLINE_SUITE))
-      if (same(cid, FUID(m.vst3Uid[0], m.vst3Uid[1], m.vst3Uid[2], m.vst3Uid[3]))) {
+    for (const gl::suite::Member* mp : gl::plugin::bundleMembers(GRIDLINE_SUITE))
+      if (const gl::suite::Member& m = *mp; same(cid, FUID(m.vst3Uid[0], m.vst3Uid[1], m.vst3Uid[2], m.vst3Uid[3]))) {
         inst = static_cast<IComponent*>(new Component(m.instrument ? Variant::Instrument : Variant::Effect, m.type, m.sidechain, m.midiInput));
         break;
       }

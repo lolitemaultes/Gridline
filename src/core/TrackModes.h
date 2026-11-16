@@ -140,6 +140,9 @@ int addUsedTrack(Document& d, int count = 1);  // `count` new tracks in one undo
 // N45-08: `after` >= 0 puts it right after that track (else after the tracks in use); it takes the
 // next colour of the Clips track colours.
 int addAudioTrack(Document& d, int after = -1);
+// Checkpoint 52 (N51-09): an unassigned track that got an audio clip (a file dropped past the tracks in
+// Clips) becomes an audio track as Cmd+T makes: "N Audio", the next colour, a mixer track and the sends.
+bool makeNamedAudioTrack(Song& s, int track);
 int addMidiTrack(Document& d, int after = -1);
 bool setArmed(Document& d, int track, bool armed);
 bool setInput(Document& d, int track, int input, bool stereo);
@@ -148,5 +151,40 @@ int assignMixerToNewTrack(Document& d, ObjectId mixer, std::string* why = nullpt
 bool unassignMixer(Document& d, ObjectId mixer);
 int assignChannelToNewTrack(Document& d, ObjectId channel, std::string* why = nullptr);
 bool unassignChannel(Document& d, ObjectId channel);
+
+// ---- K-112c (checkpoint 51): the Clips layout's group tracks (Cmd+G) ----
+// A group track is a group head (groupSize > 0) that is an audio track with no clips of its own: a
+// bus its members play into, foldable, with no slots of its own (the clip grid shows the members'
+// clips in its slots). Studio's playlist groups (a head that holds clips) are not group tracks.
+bool isGroupTrack(const Song& s, int track);
+// The group track holding `track` as a member (-1: none).
+int groupTrackOf(const Song& s, int track);
+// Groups the tracks (in use, none already grouped or a group): they are moved together (the first
+// one's place), a group track named "<number> Group" in the first one's colour is put before them on
+// a free mixer track, and each member's mixer track (an instrument playing into Main: the
+// instrument) is routed into it instead of where it went. Returns the group track (-1: refused).
+int groupTracks(Song& s, std::vector<int> tracks, std::string* why = nullptr);
+// The group goes, its members stay where they are and play where the group played (Cmd+Shift+G).
+bool ungroupTracks(Song& s, int group, std::string* why = nullptr);
+int groupTracks(Document& d, const std::vector<int>& tracks, std::string* why = nullptr);  // one undo step, "group tracks"
+bool ungroupTracks(Document& d, int group, std::string* why = nullptr);                  // one undo step, "ungroup tracks"
+// Checkpoint 52: a track of a group plays into the group (its innermost one), as at grouping;
+// makeAudioTrack and makeInstrumentTrack call it, so a member given its sound later joins too.
+void routeIntoItsGroup(Song& s, int track);
+// Checkpoint 52 (N51-06): each track in use that plays into a group it is not in plays into its own
+// group (else Main); one in a group that plays into Main plays into the group. Run after a move.
+// Returns the tracks rerouted.
+int syncGroupRouting(Song& s);
+int syncGroupRouting(Document& d);  // one undo step "group routing" (none when nothing changes)
+// Tracks named by their place ("3 Audio") take their place's number again (N51-11: after a move).
+void renumberTrackNames(Song& s);
+// Checkpoint 52 (N51-03): Clips' Delete and Duplicate of tracks: a group brings all its tracks. Delete
+// frees a group's mixer track and shortens the groups around; Duplicate puts the copies (clips too,
+// audio tracks on new mixer tracks, a group copy with its tracks routed into it) right after the
+// originals, in the originals' group. Return the count deleted (0: refused) / the first copy (-1).
+int deleteTracks(Song& s, const std::vector<int>& tracks, std::string* why = nullptr);
+int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why = nullptr);
+int deleteTracks(Document& d, const std::vector<int>& tracks, std::string* why = nullptr);
+int duplicateTracks(Document& d, const std::vector<int>& tracks, std::string* why = nullptr);
 
 }  // namespace gl::trackmodes

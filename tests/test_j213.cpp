@@ -83,6 +83,8 @@ int main() {
     expect(d.song().channel(e)->name == nameOf(fm), "an empty name takes the instrument's name");
     const ObjectId cl = d.cloneChannel(addNamed(d, synth, nameOf(synth)));
     expect(d.song().channel(cl)->name == nameOf(synth) + " #2", "a clone is numbered");
+    const ObjectId cl2 = d.cloneChannel(cl);
+    expect(d.song().channel(cl2)->name == nameOf(synth) + " #3", "a clone of a numbered clone counts on (not #2 #2)");
     d.setChannelPlugin(cl, fm);
     expect(d.song().channel(cl)->name == nameOf(fm), "a replaced clone takes the new instrument's name");
   }

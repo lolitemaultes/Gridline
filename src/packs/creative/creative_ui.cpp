@@ -13,6 +13,7 @@
 #include "../../app/App.h"
 #include "../../app/EnvEditor.h"
 #include "../../app/PluginEditorsCommon.h"
+#include "../../app/TypeInMenu.h"
 #include "../../app/SkinForms.h"
 #include "../../app/PluginSkin.h"
 #include "../../engine/Program.h"
@@ -168,6 +169,10 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
           if (k == 1 || k == 3 || k == 11) ImGui::Separator();
           if (ImGui::MenuItem(kTypeNames[k], nullptr, type == k)) a.doc.setParam(t.pid(unitParam(u, UType)), k, false);
         }
+        // One menu per right-click: this list replaces the box's own menu (opened the same frame),
+        // so it carries that menu's Reset and Type a value items.
+        ImGui::Separator();
+        typein::menuItems(a, {t.pid(unitParam(u, UType))});  // K-311
         ImGui::EndPopup();
       }
       sk::textAt(dl, v.p(70, 82), v.p(102, 94), pal.textDim, "TYPE", std::clamp(v.px(6.5f), 8.f, 11.f));

@@ -1,6 +1,7 @@
 // Gridline - the layout style in the interface (K-112). See LayoutStyleUi.h.
 #include "LayoutStyleUi.h"
 #include <algorithm>
+#include <cmath>
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "App.h"
@@ -8,6 +9,7 @@
 #include "LayoutShellUi.h"
 #include "Look.h"
 #include "Theme.h"
+#include "TrackerView.h"
 
 namespace gl::layoutui {
 
@@ -16,6 +18,7 @@ struct Geometry {
   ImVec2 framePadding, itemSpacing, titleAlign;
   float frameRounding = 0, grabRounding = 0, tabRounding = 0, windowRounding = 0, childRounding = 0, popupRounding = 0, separator = 0;
   float frameBorder = 0;
+  float menuItemRounding = 0;  // K-112D
   float tabCloseSelected = 0;  // K-297
 };
 Geometry gBase;
@@ -28,6 +31,67 @@ ImVec4 gSep[2];       // checkpoint 30: the base splitter hover and held colours
 bool gSepSet = false;
 ImVec4 gChk[2];       // checkpoint 38: the base check mark and checked-box colours, put back at frame end
 bool gChkSet = false;
+// K-112D: Smooth's neutral faces. The reference's panels are neutral greys, darker than Gridline's slate:
+// while Smooth draws (dark theme, panels' tint and brightness untouched in Settings > Theme), every
+// face colour (the palette's panels, lines, fields and text, and the ImGui colours made from them) is
+// taken to grey and a step darker; role colours (accent, lit glyphs, LEDs, track colours) keep theirs.
+// Plugin bodies get the base colours back (BaseStyleScope), so no editor changes.
+constexpr uint32_t kSmoothBlue = 0x2F7FE0;  // audit X2: the accent, a muted system blue
+ImVec4 gFaceSaved[ImGuiCol_COUNT];
+bool gFaces = false;
+theme::Palette gFacePal, gFaceBase;
+
+// A face colour toward Smooth's grey: saturation out, darker in the dark range (text barely moves).
+ImVec4 smoothFace(ImVec4 c) {
+  float h = 0, sat = 0, v = 0;
+  ImGui::ColorConvertRGBtoHSV(c.x, c.y, c.z, h, sat, v);
+  if (sat > 0.32f) return c;  // a role colour
+  const float t = std::clamp((v - 0.45f) / 0.40f, 0.0f, 1.0f), e = 1.36f - 0.34f * t * t * (3.0f - 2.0f * t);
+  const float v2 = std::pow(std::max(v, 0.0f), e);
+  float r = 0, g = 0, b = 0;
+  ImGui::ColorConvertHSVtoRGB(h, sat * 0.06f, v2, r, g, b);
+  return ImVec4(r, g, b, c.w);
+}
+ImU32 smoothFaceU(ImU32 c) { return ImGui::ColorConvertFloat4ToU32(smoothFace(ImGui::ColorConvertU32ToFloat4(c))); }
+
+bool smoothFacesWanted(const layout::Style& s) {
+  if (s.preset != layout::Preset::Logic || !theme::pal().dark) return false;
+  const theme::Tweaks& t = theme::tweaks();
+  return t.hue == 0.0f && t.saturation == 0.0f && t.brightness == 0.0f;
+}
+
+void beginSmoothFaces(ImGuiStyle& st) {
+  // K-112D (audit X2): the reference's "on" colour is a muted system blue, not orange: the accent and
+  // the lit-glyph role turn blue (ImGui colours made from them too); solo, the cycle strip and input
+  // monitoring keep their yellow and orange, as the reference keeps them.
+  const theme::Palette base = theme::pal();
+  const ImU32 blue = theme::rgb(kSmoothBlue);
+  auto same = [](ImVec4 a, ImU32 b) {
+    const ImVec4 v = ImGui::ColorConvertU32ToFloat4(b);
+    return std::fabs(a.x - v.x) < 0.004f && std::fabs(a.y - v.y) < 0.004f && std::fabs(a.z - v.z) < 0.004f;
+  };
+  for (int i = 0; i < ImGuiCol_COUNT; ++i) {
+    gFaceSaved[i] = st.Colors[i];
+    ImVec4 c = st.Colors[i];
+    if (same(c, base.accent) || same(c, base.hot)) {
+      const ImVec4 b = ImGui::ColorConvertU32ToFloat4(blue);
+      c = ImVec4(b.x, b.y, b.z, c.w);
+    }
+    st.Colors[i] = smoothFace(c);
+  }
+  theme::Palette p = base;
+  gFaceBase = p;
+  p.accent = blue;
+  p.hot = blue;
+  p.selection = theme::withAlpha(blue, 0.35f);
+  p.playhead = theme::rgb(0xE6E6E6);  // audit C6: a light grey playhead, not lime
+  for (ImU32* c : {&p.surface950, &p.surface900, &p.surface800, &p.surface700, &p.surface600, &p.line, &p.lineStrong, &p.text, &p.textDim,
+                   &p.textFaint, &p.stepOff, &p.stepOffAlt, &p.gridBar, &p.gridBeat, &p.gridStep, &p.chrome, &p.well, &p.field, &p.keyBlack, &p.keyWhite, &p.knobFill})
+    *c = smoothFaceU(*c);
+  gFacePal = p;
+  theme::pushPalette(gFacePal);
+  gFaces = true;
+}
 
 Geometry read(const ImGuiStyle& st) {
   Geometry g;
@@ -43,6 +107,7 @@ Geometry read(const ImGuiStyle& st) {
   g.separator = st.DockingSeparatorSize;
   g.frameBorder = st.FrameBorderSize;
   g.tabCloseSelected = st.TabCloseButtonMinWidthSelected;
+  g.menuItemRounding = st.MenuItemRounding;
   return g;
 }
 void write(ImGuiStyle& st, const Geometry& g) {
@@ -58,6 +123,7 @@ void write(ImGuiStyle& st, const Geometry& g) {
   st.DockingSeparatorSize = g.separator;
   st.FrameBorderSize = g.frameBorder;
   st.TabCloseButtonMinWidthSelected = g.tabCloseSelected;
+  st.MenuItemRounding = g.menuItemRounding;
 }
 }  // namespace
 
@@ -65,10 +131,14 @@ const layout::Style& style() { return gStyle ? *gStyle : layout::style(layout::P
 
 bool styled() { return gStyled; }
 
+bool smoothFaces() { return gFaces; }
+
 void beginStyleFrame(App& a, bool welcomeScreen) {
   gStyle = shellBuilt(a, active()) ? &layout::style(active()) : &layout::style(layout::Preset::Studio);
   gStyled = false;
   const layout::Style& s = *gStyle;
+  // K-106: the Tracker's menus use its own words (Song, Roll, Steps) for the shared items.
+  GImGuiGridlineMenuLabel = !welcomeScreen && s.preset == layout::Preset::Tracker ? &trackerview::menuWords : nullptr;
   if (welcomeScreen || layout::isStudio(s)) return;  // Studio and the welcome screen: nothing changes
   ImGuiStyle& st = ImGui::GetStyle();
   gBase = read(st);
@@ -89,8 +159,11 @@ void beginStyleFrame(App& a, bool welcomeScreen) {
   // K-112b (checkpoint 20): flat buttons and fields, no outline, as every reference window draws its
   // controls (a fill on the panel, no stroke). Plugin editors get the outline back (BaseStyleScope).
   if (s.preset == layout::Preset::Logic) g.frameBorder = 0;
+  // K-112D (audit I3): the open menu's title in the menu bar is a rounded pill, not a square block.
+  if (s.preset == layout::Preset::Logic) g.menuItemRounding = 5.0f;
   write(st, g);
   gStyled = true;
+  if (smoothFacesWanted(s)) beginSmoothFaces(st);  // K-112D
   // K-112c (round 19): in Live a floating window's caption is the body's own colour, the focused one
   // a step lifted, as the refs' device and plugin windows (192, 194, 196, 424).
   if (s.preset == layout::Preset::Live) {
@@ -153,9 +226,19 @@ void endStyleFrame() {
   gChkSet = false;
   GImGuiGridlineCheckRounding = -1.0f;
   GImGuiGridlineMenuHover = 0;
+  GImGuiGridlineMenuLabel = nullptr;
   GImGuiGridlineMenuRight = false;
   GImGuiGridlineTitleFont = nullptr;
   look::setFlatFaces(false);
+  if (gFaces) {  // K-112D: the base colours back, after the overrides above
+    ImGuiStyle& st = ImGui::GetStyle();
+    // the theme applied during the frame (Settings > Theme): its new palette and colours stand
+    const bool applied = !(theme::pal().surface900 == gFacePal.surface900 && theme::pal().text == gFacePal.text);
+    for (int i = 0; i < ImGuiCol_COUNT; ++i) st.Colors[i] = gFaceSaved[i];
+    theme::popPalette();
+    if (applied) theme::apply(theme::isDark());
+    gFaces = false;
+  }
   gStyled = false;
 }
 
@@ -189,16 +272,24 @@ BaseStyleScope::BaseStyleScope() {
   GImGuiGridlineMenuRight = false;
   flat = look::flatFaces();  // checkpoint 29: an editor's buttons keep their own faces
   look::setFlatFaces(false);
+  if (gFaces) {  // K-112D: an editor keeps the base colours and palette (Smooth's neutral faces stay out)
+    for (int i = 0; i < ImGuiCol_COUNT; ++i) ImGui::PushStyleColor(i, gFaceSaved[i]);
+    colours = ImGuiCol_COUNT;
+    // the base palette over Smooth's faces (a palette an editor's skin pushed before stays as it is)
+    faces = theme::pal().surface900 == gFacePal.surface900 && theme::pal().text == gFacePal.text;
+    if (faces) theme::pushPalette(gFaceBase);
+  }
   if (gChkSet) {  // checkpoint 38: an editor's check boxes keep their own colours
     ImGui::PushStyleColor(ImGuiCol_CheckMark, gChk[0]);
     ImGui::PushStyleColor(ImGuiCol_CheckboxSelectedBg, gChk[1]);
-    colours = 2;
+    colours += 2;
     checkRound = GImGuiGridlineCheckRounding, GImGuiGridlineCheckRounding = -1.0f;
   }
 }
 
 BaseStyleScope::~BaseStyleScope() {
   --gBaseDepth;
+  if (faces) theme::popPalette();  // K-112D
   if (gBaseDepth >= 0 && gBaseDepth < 16) GImGuiGridlineToggleW = gToggleSaved[gBaseDepth], GImGuiGridlineMenuLive = gMenuSaved[gBaseDepth];
   if (colours) ImGui::PopStyleColor(colours), GImGuiGridlineCheckRounding = checkRound;
   if (pushed) ImGui::PopStyleVar(pushed);

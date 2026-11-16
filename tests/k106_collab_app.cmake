@@ -8,6 +8,9 @@
 #   3. presence: each side gets the other's edit cursor (the tracker's cursor; the other side's
 #      as set), by channel and pattern tick.
 #   Pairs: Tracker with Studio, Clips with Tracker, Tracker with Smooth (development layouts).
+#   Each side reads its report of a round before the other starts the next round's edits (the two
+#   windows count their own frames: on a slow runner one side's report came after the other's next
+#   edit), and neither quits before the other has read the cursors.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P k106_collab_app.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
@@ -66,12 +69,14 @@ ${A1}50 waitfor collab-notes:Lead:2 90
 51 waitfor collab-synced 60
 52 waitfor never 2
 53 collab report \"${D}/a-1.json\"
+54 waitfor \"file:${D}/b-1.json\" 120
 ${A2}80 waitfor collab-notes:Lead:4 90
 81 waitfor collab-synced 60
 82 waitfor never 3
 83 collab report \"${D}/a-2.json\"
 84 collab edits \"${D}/a-edits.json\"
 85 waitfor never 3
+86 waitfor \"file:${D}/b-edits.json\" 120
 90 quit
 ")
   set(B "5 collab profile Sam
@@ -85,12 +90,14 @@ ${B1}50 waitfor collab-notes:Lead:2 90
 51 waitfor collab-synced 60
 52 waitfor never 2
 53 collab report \"${D}/b-1.json\"
+54 waitfor \"file:${D}/a-1.json\" 120
 ${B2}80 waitfor collab-notes:Lead:4 90
 81 waitfor collab-synced 60
 82 waitfor never 3
 83 collab report \"${D}/b-2.json\"
 84 collab edits \"${D}/b-edits.json\"
 85 waitfor never 3
+86 waitfor \"file:${D}/a-edits.json\" 120
 90 quit
 ")
   file(MAKE_DIRECTORY "${D}")

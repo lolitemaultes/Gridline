@@ -30,6 +30,7 @@
 #include <vector>
 #include "../core/Params.h"
 #include "../core/PluginInfo.h"
+#include "../core/PluginSuite.h"
 
 namespace gl {
 class App;
@@ -252,5 +253,9 @@ class Instance {
 // Finds the assets folder for a plugin binary (bundle Resources, then the
 // source tree for builds that run from the build directory).
 std::string findPluginAssets();
+// K-308: the members this bundle shows to hosts, from its member list (core/PluginSuite.h
+// listedMembers): Contents/Resources/gridline-members.txt in a bundle, or "<name>-assets/" beside a
+// Windows / Linux CLAP. Read once; no list means every member of the suite.
+const std::vector<const gl::suite::Member*>& bundleMembers(const char* suiteId);
 
 }  // namespace gl::plugin

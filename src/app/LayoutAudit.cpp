@@ -3,6 +3,7 @@
 #include <cstring>
 #include <unordered_map>
 #include "../../third_party/imgui/imgui_internal.h"
+#include "TypeInMenu.h"
 
 namespace gl::audit {
 
@@ -293,6 +294,7 @@ void bindBegin() {
 
 void bindTouch(const ParamId& pid) {
   if (binding) ++bind.reads[pid.packed()];
+  typein::touch(pid);  // K-311: the parameters each control asks for (one branch when off)
 }
 
 void stateRead(int k) {

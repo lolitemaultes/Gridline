@@ -147,8 +147,10 @@ TakePlacement takePlacement(const Song& song, const std::vector<RecordedTake>& t
   r.name = takeBaseName(song, t.mixer, o.naming) + (r.grouped ? " take " + std::to_string(t.pass - firstPass + 1) : std::string(" rec"));
   r.color = mt && mt->color != 0x50565E ? mt->color : 0xC8724E;
   // The track's lane (later passes stack below).
-  r.track = std::clamp(recordTrackFor(song, t.mixer) + (r.grouped ? t.pass - firstPass : 0), 0, kMaxPlaylistTracks - 1);
+  // K-123: as lanes every pass stays on the track; otherwise later passes stack below.
+  r.track = std::clamp(recordTrackFor(song, t.mixer) + (r.grouped && !o.lanes ? t.pass - firstPass : 0), 0, kMaxPlaylistTracks - 1);
   if (r.grouped) {
+    r.lane = o.lanes;
     r.take = t.pass - firstPass;
     r.muted = o.muteEarlierTakes && t.pass != lastPass;
   }
@@ -220,7 +222,8 @@ TakeCommitResult commitTakes(Song& song, const std::vector<RecordedTake>& takes,
     // Clip on the track's lane (later passes stack below).
     const int track = pl.track;
     if (static_cast<int>(song.tracks.size()) <= track) song.tracks.resize(static_cast<size_t>(track) + 1);
-    if (o.nameTracks && song.tracks[static_cast<size_t>(track)].name.empty()) song.tracks[static_cast<size_t>(track)].name = name;
+    if (o.nameTracks && song.tracks[static_cast<size_t>(track)].name.empty())  // K-123: a lane track takes the base name ("Guitar")
+      song.tracks[static_cast<size_t>(track)].name = pl.lane ? takeBaseName(song, t.mixer, o.naming) : name;
     Clip c;
     c.id = song.allocateId();
     c.kind = ClipKind::Audio;
@@ -232,6 +235,7 @@ TakeCommitResult commitTakes(Song& song, const std::vector<RecordedTake>& takes,
       c.takeGroup = g->second;
       c.take = pl.take;
       c.muted = pl.muted;
+      if (o.lanes) song.tracks[static_cast<size_t>(track)].takeLanes = true;  // K-123: the new takes show
     }
     song.playlist.push_back(c);
     res.clips.push_back(c.id);

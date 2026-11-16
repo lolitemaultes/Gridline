@@ -31,6 +31,7 @@
 #include "Theme.h"
 #include "TrackerLook.h"
 #include "TrackerPages.h"
+#include "WindowRaise.h"
 #include "Widgets.h"
 
 namespace gl::trackerview {
@@ -83,8 +84,10 @@ struct State {
   trk::Block clip, clipTrack, clipPattern;
   std::string status;
   double statusT = -10;
+  uint64_t statusSerial = 0;  // R11-10: the undo position the message belongs to (0: taken on the next frame)
   std::map<int, Held> held;  // scan code -> the note it auditions
   int playRow = -1;
+  float playFrac = 0;  // how far the play position is through playRow (0..1)
   ImVec2 area0, area1, cell0, cell1;  // last frame (dev geometry)
   float rowH = 14;
   ObjectId pattern = kNoId;
@@ -92,6 +95,7 @@ struct State {
   int drawnFrame = -10;  // the ImGui frame the editor was last drawn in (a closed editor has no keyboard)
   std::string pendingPage;  // a centre page to bring to the front (bringPage)
   int pendingFrames = 0, pendingWait = 0;  // frames docked and waiting, frames in all
+  bool pendingQuiet = false;  // K-297 (round 8): the page comes to the front without taking the keys
   int pendingHold = 0;  // frames to wait before the request looks (the layout re-docks its pages)
   int jumps[4] = {-1, -1, -1, -1};  // F9 to F12 rows stored with Shift (-1: 0, a quarter, half, three quarters)
   float wheel = 0;          // wheel movement not yet a whole row (trackpads send small steps)
@@ -115,6 +119,7 @@ bool gFlats = false;  // note names with flats
 bool gMulti = false;  // multichannel edit: each typed note moves the cursor to the next track
 bool gMultiRec = false;   // multichannel record: each recorded note goes to the next enabled track
 bool gMultiJazz = false;  // multichannel key jazz: notes only played go to the enabled tracks in turn
+int gRecSnap = 0;         // cp15: record quantize (the classic "Quantize"): rows a recorded note snaps to (0: off)
 bool gRecOff = false;     // record key-off notes: a key released while recording ends its note there
 bool gCutCopies = true;   // a cut also copies (off: it only deletes)
 bool gInsDelLength = false;  // R7-15: inserting / deleting a line on every track changes the pattern length
@@ -131,6 +136,7 @@ void loadColumns(App& a) {
   gMultiRec = a.settings.getBool("tracker.multiRecord");
   gMultiJazz = a.settings.getBool("tracker.multiJazz");
   gRecOff = a.settings.getBool("tracker.recordKeyOff");
+  gRecSnap = std::clamp(static_cast<int>(a.settings.getNumber("tracker.recSnap")), 0, 16);
   gCutCopies = a.settings.getBool("tracker.cutCopies");
   gInsDelLength = a.settings.getBool("tracker.insDelLength");
   gTall = a.settings.getBool("tracker.tallRows");
@@ -167,6 +173,7 @@ ops::ChannelSolo& soloMemory() {
 void say(const std::string& text) {
   st().status = text;
   st().statusT = ImGui::GetTime();
+  st().statusSerial = 0;
 }
 
 // The tracks of the shown pattern.
@@ -267,6 +274,7 @@ Rows rowsOf(const Pattern& p, ObjectId ch) {
 void commit(App& a, ObjectId pattern, ObjectId ch, const Rows& r, const Rows& before, const std::string& label) {
   const bool notes = r.notes != before.notes, steps = r.steps != before.steps || r.props != before.props;
   if (!notes && !steps) return;
+  st().status.clear();  // R10-10: an edit made ends the last message (one about this edit is said after it)
   a.doc.beginGroup(label);
   if (notes) a.doc.setNotes(pattern, ch, r.notes, label);
   if (steps)
@@ -518,11 +526,20 @@ void rowEdit(App& a, const View& v0, bool ins, bool everyTrack) {
         return;
       }
     }
+  int dropped = 0;
   if (v.p && v.p->id == pid)
     for (int x = lo; x <= hi; ++x)
-      applyEdit(a, v, x, ins ? "insert row" : "delete row", [&](Rows& r, const trk::Track&, const trk::Grid& g) {
-        return ins ? trk::insertRow(r.notes, r.steps, r.props, g, row) : trk::deleteRow(r.notes, r.steps, r.props, g, row);
-      });
+      dropped += applyEdit(a, v, x, ins ? "insert row" : "delete row", [&](Rows& r, const trk::Track&, const trk::Grid& g) {
+                   return ins ? trk::insertRow(r.notes, r.steps, r.props, g, row) : trk::deleteRow(r.notes, r.steps, r.props, g, row);
+                 }).dropped;
+  // R10-02: what the insert pushed off the last row is gone, as in the classic tracker; the bar says
+  // so (the same undo step brings it back).
+  if (dropped > 0 && v.p) {
+    char b[160];
+    std::snprintf(b, sizeof b, i18n::tr("Row %s's %s dropped off the end (Undo brings it back)"), trk::rowText(v.g.rows - 1, a.settings.getString("tracker.rowBase") != "dec").c_str(),
+                  dropped == 1 ? i18n::tr("note") : i18n::tr("notes"));
+    say(b);
+  }
   if (stretch && !ins && lastBarHad) {
     v = build(a);
     if (v.p && v.p->id == pid && v.p->bars > 1 && !rowsUsed(v, v.g.rows - spb)) {
@@ -549,7 +566,8 @@ void moveToChannel(App& a, const View& v, int ti, int noteIndex, int target) {
   a.doc.setNotes(v.p->id, from, src, "move note to instrument");
   a.doc.setNotes(v.p->id, to, dst, "move note to instrument");
   a.doc.endGroup(false);
-  say(std::string(i18n::tr("Moved to")) + " " + s.channels[static_cast<size_t>(target)].name);
+  // R10-09: the note, and the track it went to (number and name, as its header shows them).
+  say(trk::noteText(n.pitch, gFlats) + " " + i18n::tr("moved to track") + " " + std::to_string(target + 1) + " " + s.channels[static_cast<size_t>(target)].name);
 }
 
 // ---- the Tracker key set's pattern keys (core/Keymap Profile::Tracker; FT2-MAP section 9) ----
@@ -894,10 +912,12 @@ int trackerKey(App& a, const View& v, const KeyEv& k) {
       c.column = 0, c.field = Field::Note, c.digit = 0;
       return 0;
     }
+    if (shift && (k.sc == SDL_SCANCODE_LEFT || k.sc == SDL_SCANCODE_RIGHT)) {  // R10-04: the previous / next song position
+      stepSongPosition(a, k.sc == SDL_SCANCODE_LEFT ? -1 : 1);
+      return 1;
+    }
     if (k.sc == SDL_SCANCODE_LEFT || k.sc == SDL_SCANCODE_RIGHT) {  // the previous / next pattern
-      const Song& song = a.doc.song();
-      const int i = song.patternIndex(a.curPattern) + (k.sc == SDL_SCANCODE_LEFT ? -1 : 1);
-      if (i >= 0 && i < static_cast<int>(song.patterns.size())) a.selectPattern(song.patterns[static_cast<size_t>(i)].id);
+      stepPattern(a, k.sc == SDL_SCANCODE_LEFT ? -1 : 1);
       return 1;
     }
     if (k.sc == SDL_SCANCODE_DELETE) {  // volume and effect
@@ -1006,7 +1026,10 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
   // edit step. Neither: the keys only play.
   const bool rec = a.recordArmed && a.engine.playing() && s.playRow >= 0 && s.playRow < v.g.rows;
   const bool canEdit = s.edit || rec;
-  const int row = rec ? s.playRow : c.row;
+  int row = rec ? s.playRow : c.row;
+  // cp15: record quantize (the classic Quantize): a recorded note goes to the nearest row that is a
+  // multiple of the snap (1: the nearest row), wrapping to the pattern's start; off, the row playing.
+  if (rec && gRecSnap > 0 && v.g.rows > 0) row = trk::snapRecordRow(s.playRow, s.playFrac, gRecSnap, v.g.rows);
   auto stepOn = [&] {
     if (!rec) moveRow(v, s.step, true);
   };
@@ -1313,6 +1336,7 @@ namespace {
 bool gExtended = false;
 }
 bool extended() { return gExtended; }
+float patternRowHeight() { return st().rowH; }
 // Whether a centre page is the one shown in its dock node this frame.
 static bool windowFrontNow(const char* window) {
   const ImGuiWindow* w = ImGui::FindWindowByName((std::string("###") + window).c_str());
@@ -1364,6 +1388,7 @@ void toggleMultiTrack(App& a, ObjectId channel) {
 void keysBackToPattern() {
   if (windowFrontNow("Pattern editor")) st().wantFocus = true;
 }
+void keepKeysHere() { st().wantFocus = false; }
 
 void setExtended(App& a, bool on) {
   if (gExtended == on) return;
@@ -1714,6 +1739,7 @@ void showPage(App& a, const char* window) {
 }
 
 namespace {
+std::string gStartPage;
 int gCloseAsked = -10;  // the frame of the main window's close request a page took (closePageOnCloseRequest)
 
 // The focused window when it is a page docked in the centre other than the pattern (else null).
@@ -1726,6 +1752,41 @@ ImGuiWindow* frontPage() {
   return w;
 }
 }  // namespace
+void setStartPage(const std::string& window) { gStartPage = window; }
+std::string takeStartPage() {
+  std::string w;
+  w.swap(gStartPage);
+  return w;
+}
+
+void stepPattern(App& a, int d) {
+  const Song& song = a.doc.song();
+  const int cur = song.patternIndex(a.curPattern), n = static_cast<int>(song.patterns.size());
+  const int i = cur + d;
+  if (i >= 0 && i < n) {
+    a.selectPattern(song.patterns[static_cast<size_t>(i)].id);
+    return;
+  }
+  // R10-03: past the last pattern comes a new, empty one, as the classic tracker's next number is
+  // always there to type in. Only after a pattern that holds something: an empty last one stays the
+  // last (stepping on never makes a row of empty patterns).
+  if (d <= 0 || cur != n - 1 || n == 0) return;
+  const Pattern& last = song.patterns.back();
+  bool used = !last.automation.empty();
+  for (const auto& [ch, v] : last.notes) used = used || !v.empty();
+  for (const auto& [ch, v] : last.steps)
+    for (uint8_t x : v) used = used || x != 0;
+  if (!used) {
+    say(i18n::tr("This is the last pattern, and it is empty: write in it first"));
+    return;
+  }
+  const int bars = last.bars, spb = last.stepsPerBar;  // the same length as the pattern before it
+  const ObjectId id = a.doc.addPattern("Pattern " + std::to_string(n + 1), bars, spb);
+  if (id) {
+    a.selectPattern(id);
+    say(i18n::tr("A new, empty pattern (Ins puts it in the song)"));
+  }
+}
 
 void stepInstrument(App& a, int d) {
   const View v = build(a);
@@ -1765,8 +1826,9 @@ bool closeFrontPageKey(App& a) {
   return true;
 }
 
-void bringPage(const char* window) {
+void bringPage(const char* window, bool takeKeys) {
   st().pendingPage = window;
+  st().pendingQuiet = !takeKeys;
   st().pendingFrames = st().pendingWait = st().pendingHold = 0;
 }
 
@@ -1799,7 +1861,7 @@ void pumpPage(App& a) {
   s.pendingWait += 1;
   if (front || (open && !*open) || s.pendingFrames > 60 || s.pendingWait > 180) {
     s.pendingWait = 0;
-    if (w && s.pendingFrames <= 60 && !ImGui::FindBlockingModal(w)) ImGui::FocusWindow(w);  // (a prompt stays open)
+    if (w && s.pendingFrames <= 60 && !s.pendingQuiet) ui::focusWindowKeepPopups(w);  // (a prompt stays open)
     s.pendingPage.clear();
     return;
   }
@@ -1818,6 +1880,12 @@ void pumpPage(App& a) {
 
 void patternEditor(App& a) {
   State& s = st();
+  // R11-10: an undo or redo (or any edit) after a message ends it, as an edit made here does.
+  if (!s.status.empty()) {
+    const uint64_t now = a.doc.history().stateSerial();
+    if (s.statusSerial == 0) s.statusSerial = now;
+    else if (s.statusSerial != now) s.status.clear();
+  }
   const auto& P = pal();
   ImGuiIO& io = ImGui::GetIO();
   const bool hadKb = s.hasKb;
@@ -1827,12 +1895,10 @@ void patternEditor(App& a) {
   s.hasKb = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !io.WantTextInput;
   if (hadKb && !s.hasKb) releaseAll(a);  // the keyboard went elsewhere: no note keeps sounding
   if (s.wantFocus) {
-    // The part window ("Label###English"; focusing the child would pick no dock tab). R7-01: never
-    // over a prompt: a header button's click asks for the keys back on the frame its own prompt
-    // (App::confirm: Clean up, Replace) opens, and a plain focus closed every popup above the
-    // pattern, so the prompt vanished before it was drawn.
-    if (ImGuiWindow* w = ImGui::FindWindowByName("###Pattern editor"); w && !ImGui::FindBlockingModal(w))
-      ImGui::FocusWindow(w);
+    // The part window ("Label###English"; focusing the child would pick no dock tab). R7-01, K-297:
+    // never over a prompt, dialog or menu a header button just opened (App::confirm's Clean up,
+    // Replace; Files > Save as): a plain focus closed every popup above the pattern.
+    ui::focusWindowKeepPopups(ImGui::FindWindowByName("###Pattern editor"));
     s.wantFocus = false;
   }
   View v = build(a);
@@ -1903,7 +1969,11 @@ void patternEditor(App& a) {
       }
       tick = trk::patternTickAt(song, a.curPattern, pos);
     }
-    if (tick >= 0 && v.g.rowTicks > 0) s.playRow = static_cast<int>((tick % std::max<Tick>(1, v.g.length())) / v.g.rowTicks);
+    if (tick >= 0 && v.g.rowTicks > 0) {
+      const Tick inPat = tick % std::max<Tick>(1, v.g.length());
+      s.playRow = static_cast<int>(inPat / v.g.rowTicks);
+      s.playFrac = static_cast<float>(inPat % v.g.rowTicks) / static_cast<float>(v.g.rowTicks);
+    }
     if (s.follow && s.playRow >= 0) s.cur.row = std::clamp(s.playRow, 0, v.g.rows - 1);
     if (a.engine.mode() == PlayMode::Song) s.stacked = stackedAt(song, a.curPattern, static_cast<Tick>(a.engine.position()));
   }
@@ -2269,6 +2339,11 @@ void patternEditor(App& a) {
       for (size_t k = 0; k < cells.size(); ++k) {
         const int r = startRow + static_cast<int>(k);
         if (r >= t.rows) break;
+        // R10-08: a note on a later row that is not a glide's target (3xx, 5xx, Mx) starts a voice of
+        // its own (a note delay, ED3, makes it a separate note): that row and the rest are its voice's,
+        // shown with it, not again as this one's.
+        const tracker::Cell& kc = cells[k];
+        if (k > 0 && kc.note >= 1 && kc.note <= 96 && kc.efx != 3 && kc.efx != 5 && kc.vol < 0xF0) break;
         const size_t at = static_cast<size_t>(r) * static_cast<size_t>(t.columns) + static_cast<size_t>(t.col[i]);
         mod[at] = cells[k];
         modSet[at] = 1;
@@ -2550,15 +2625,48 @@ void patternEditor(App& a) {
     } else if (s.stacked > 0 && (ImGui::GetTime() - s.statusT >= 4.0 || s.status.empty()))
       right = std::to_string(s.stacked) + " " + i18n::tr(s.stacked == 1 ? "more pattern plays here (the Song page shows it)" : "more patterns play here (the Song page shows them)");
     const float ty = std::round(b0.y + (barH - 2 - fs) * 0.5f);
-    dl->AddText(mono, fs, ImVec2(b0.x + 8, ty), P.textDim, info);
-    const float iw = mono->CalcTextSizeA(fs, FLT_MAX, 0, info).x;
-    theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(b0.x + 8 + iw + 24, ty), b1.x - (b0.x + 8 + iw + 24) - 120, P.text, right.c_str());
+    // R10-06: a message just said (a refusal, what an edit did) takes the whole bar, the info giving
+    // way, so it reads from its start; one still too long has its full text in a hint.
+    const bool fresh = ImGui::GetTime() - s.statusT < 4.0 && !s.status.empty() && right == s.status;
+    const float rx = fresh ? b0.x + 8 : b0.x + 8 + mono->CalcTextSizeA(fs, FLT_MAX, 0, info).x + 24;
+    if (!fresh) dl->AddText(mono, fs, ImVec2(b0.x + 8, ty), P.textDim, info);
+    const float rw = b1.x - rx - 120;
+    theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(rx, ty), rw, P.text, right.c_str());
+    if (!right.empty() && a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, right.c_str()).x > rw && ImGui::IsMouseHoveringRect(ImVec2(rx, b0.y), ImVec2(rx + rw, b1.y)))
+      ImGui::SetTooltip("%s", right.c_str());
     const char* mode = s.edit ? i18n::tr("Edit mode") : i18n::tr("Play keys");
     const float mw = a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, mode).x;
     dl->AddText(a.fontRegular, fs, ImVec2(b1.x - 8 - mw, ty), s.edit ? P.arm : P.textFaint, mode);
   }
   ImGui::SetCursorScreenPos(ImVec2(a0.x, a1.y + barH));
   ImGui::Dummy(ImVec2(1, 0));
+}
+
+const char* menuWords(const char* label) {
+  if (!label || !*label) return label;
+  static const std::pair<const char*, const char*> kWords[] = {
+      {"Piano roll", "Roll"},     {"piano roll", "roll"},     {"Playlist", "Song"},           {"playlist", "song"},
+      {"Channel rack", "Steps"},  {"channel rack", "steps"},  {"Step sequencer", "Steps"},    {"step sequencer", "steps"},
+      {"Mixer", "Mix"},           {"mixer", "mix"}};  // R12-06: the page strip says Mix
+  // Most labels hold none of the words: returned as they are.
+  const char* idPos = std::strstr(label, "##");
+  const size_t textLen = idPos ? static_cast<size_t>(idPos - label) : std::strlen(label);
+  bool any = false;
+  for (const auto& w : kWords) {
+    const char* f = std::strstr(label, w.first);
+    if (f && static_cast<size_t>(f - label) < textLen) any = true;
+  }
+  if (!any) return label;
+  static std::map<std::string, std::string> made;
+  auto it = made.find(label);
+  if (it != made.end()) return it->second.c_str();
+  if (made.size() > 4096) made.clear();  // labels made on the fly (file names) never pile up
+  std::string text(label, textLen);
+  for (const auto& w : kWords)
+    for (size_t at = text.find(w.first); at != std::string::npos; at = text.find(w.first, at + std::strlen(w.second)))
+      text.replace(at, std::strlen(w.first), w.second);
+  if (idPos) text += idPos;
+  return made.emplace(label, std::move(text)).first->second.c_str();
 }
 
 void devCommand(App& a, const std::vector<std::string>& args, int frame) {
@@ -2578,6 +2686,54 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     s.cur.field = static_cast<Field>(std::clamp(arg(4, 0), 0, static_cast<int>(Field::Count) - 1));
     s.cur.digit = 0;
     s.sel.on = false;
+  } else if (cmd == "busiest") {
+    // K-106 (dev, showcase photos): the song position moves to the pattern with the most notes
+    // and steps that the song plays (its first place in the song), which then shows.
+    // (Among the order list's entries, so the pattern is the one its entry shows.)
+    // cp14: the most tracks in use first (a photo of three busy tracks among twenty empty ones reads
+    // as an empty pattern), then the most notes; the cursor goes to the pattern's middle row, so the
+    // rows fill the editor above and below it.
+    const Song& song = a.doc.song();
+    const Pattern* best = nullptr;
+    Tick at = 0;
+    size_t most = 0, bestTracks = 0;
+    for (const trk::OrderEntry& e : trk::orderList(song)) {
+      const Pattern* p = song.pattern(e.pattern);
+      if (!p) continue;
+      size_t n = 0, tracks = 0;
+      std::set<ObjectId> used;
+      for (const auto& [ch, v] : p->notes)
+        if (!v.empty()) n += v.size(), used.insert(ch);
+      for (const auto& [ch, v] : p->steps)
+        for (uint8_t x : v)
+          if (x != 0) ++n, used.insert(ch);
+      tracks = used.size();
+      if (tracks > bestTracks || (tracks == bestTracks && n > most)) best = p, most = n, bestTracks = tracks, at = e.start;
+    }
+    if (best) {
+      a.selectPattern(best->id);
+      setSongPosition(a, at);
+      s.cur.row = std::max(0, trk::gridOf(song, *best).rows / 2);
+      s.sel.on = false;
+    }
+    std::printf("tracker busiest frame %d: %s (%zu notes and steps)\n", frame, best ? best->name.c_str() : "none", most);
+  } else if (cmd == "mididevs") {
+    // K-106 (dev): N stand-in MIDI input devices listed (nothing is opened), for the MIDI boxes'
+    // long lists in hidden runs.
+    if (a.midi) {
+      const int n = std::clamp(arg(1, 8), 0, 64);
+      for (int i = 1; i <= n; ++i) {
+        const std::string name = "Test keyboard controller MIDI port " + std::to_string(i);
+        if (std::find(a.midi->inputs.begin(), a.midi->inputs.end(), name) == a.midi->inputs.end()) a.midi->inputs.push_back(name);
+        if (!a.midi->inputConfig(name)) {
+          MidiInputConfig c;
+          c.name = name;
+          c.enabled = i % 3 != 0;
+          a.midi->inputCfg.push_back(c);
+        }
+      }
+    }
+    std::printf("tracker mididevs frame %d: %zu inputs\n", frame, a.midi ? a.midi->inputs.size() : static_cast<size_t>(0));
   } else if (cmd == "page" && args.size() > 1) {
     std::string w = args[1];
     for (size_t i = 2; i < args.size(); ++i) w += " " + args[i];
@@ -2592,6 +2748,15 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
   } else if (cmd == "swap") {  // none|help|files|config|about
     const std::string w = args.size() > 1 ? args[1] : "none";
     setHeaderSwap(w == "help" ? 1 : w == "files" ? 2 : w == "config" ? 3 : w == "about" ? 4 : 0);
+    if (w == "config" && args.size() > 2) setConfigPage(std::atoi(args[2].c_str()));
+  } else if (cmd == "loadsample" && args.size() > 1) {  // as a double-click on the file in Files, Samples
+    filesLoadSample(a, args[1]);
+    const Channel* c = a.doc.song().channel(a.selChannel);
+    std::printf("tracker loadsample frame %d: %s\n", frame, c ? c->plugin.type.c_str() : "none");
+  } else if (cmd == "tool" && args.size() > 1) {  // the scope box's tool (0 scopes .. 5 sample tools)
+    const int t = std::atoi(args[1].c_str());
+    if (scopeTool() != t) toggleScopeTool(a, t);
+    std::printf("tracker tool frame %d: %d\n", frame, scopeTool());
   } else if (cmd == "extend") {
     setExtended(a, args.size() > 1 && args[1] == "on");
   } else if (cmd == "songclip") {  // the Song page's picked clip: by its index in the playlist

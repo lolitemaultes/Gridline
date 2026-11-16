@@ -63,6 +63,7 @@ int sampleCountOf(const Edit& e) {
 // What the editor remembers per plugin window.
 struct Ed {
   int sel = 0;
+  int wantSlot = -1;  // R12-04: an empty slot picked in the header list: the next load from Files goes there
   double viewStart = 0, viewLen = 0;  // waveform view, file frames (0 = the whole file)
   int viewSlot = -1;
   int marker = -1;                    // waveform marker being dragged: 0 start, 1 end, 2 loop start, 3 loop end, 4 scroll
@@ -83,7 +84,7 @@ struct Ed {
   std::string insNameData;
   bool insNameSet = false;
   int rampStart = 100, rampEnd = 100;  // volume popup (percent)
-  int resTones = 12;                   // resample popup (semitones)
+  int resTones = 0;                    // resample popup (semitones; R12-06: 0, so an Apply by mistake changes nothing)
   int echoCount = 4, echoMs = 120, echoFeedback = 50;
   bool echoExtend = true;
   int mixSlot = -1, mixBalance = 50;
@@ -463,6 +464,22 @@ void editMenuItems(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
   if (ImGui::MenuItem(i18n::tr("Empty the clipboard"), nullptr, false, hasClip)) clipboard() = Wave{};
 }
 
+// R12-06: a popup's value slider: the grab runs in its own track and the value stands beside it in
+// fixed width, so the grab never sits on the digits (Ctrl+click still types a value).
+void valueSlider(const char* label, int* v, int lo, int hi, const char* fmt) {
+  ImGui::PushID(label);
+  ImGui::SetNextItemWidth(170);
+  ImGui::SliderInt("##v", v, lo, hi, "");
+  ImGui::SameLine(0, 8);
+  char b[32];
+  std::snprintf(b, sizeof b, fmt, *v);
+  const float x = ImGui::GetCursorPosX();
+  ImGui::TextUnformatted(b);
+  ImGui::SameLine(x + ImGui::CalcTextSize("-2000 ms").x + 8);
+  ImGui::TextUnformatted(label);
+  ImGui::PopID();
+}
+
 // The edits that ask for values first.
 void editPopups(App& a, const PluginTarget& t, Ed& ed, Edit& e, const InstrumentAux& inst, int k) {
   const Span sel = selectionOf(ed, k);
@@ -470,15 +487,14 @@ void editPopups(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrument
     ImGui::Dummy(ImVec2(0, 4));
     const bool go = ui::PrimaryButton(text, 96);
     ImGui::SameLine(0, 6);
-    if (ui::TextButton(i18n::tr("Cancel"), false, 96)) ImGui::CloseCurrentPopup();
-    return go;
+    // R12-05: Esc cancels, as Cancel does.
+    if (ui::TextButton(i18n::tr("Cancel"), false, 96) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::CloseCurrentPopup();
+    return go && !ImGui::IsKeyPressed(ImGuiKey_Escape, false);
   };
   if (ImGui::BeginPopup("##trkramp")) {
     dimCaption(sel.empty() ? i18n::tr("Volume from the start to the end of the sample") : i18n::tr("Volume from the start to the end of the range"));
-    ImGui::SetNextItemWidth(220);
-    ImGui::SliderInt(i18n::tr("Start"), &ed.rampStart, 0, 400, "%d%%");
-    ImGui::SetNextItemWidth(220);
-    ImGui::SliderInt(i18n::tr("End"), &ed.rampEnd, 0, 400, "%d%%");
+    valueSlider(i18n::tr("Start"), &ed.rampStart, 0, 400, "%d%%");
+    valueSlider(i18n::tr("End"), &ed.rampEnd, 0, 400, "%d%%");
     if (ui::TextButton(i18n::tr("Loudest without clipping"), false, 0)) {
       Wave w;
       if (waveOf(e, k, inst, w)) ed.rampStart = ed.rampEnd = std::clamp(static_cast<int>(std::floor(waveMaxScale(w, sel) * 100.0)), 0, 400);
@@ -492,8 +508,7 @@ void editPopups(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrument
   }
   if (ImGui::BeginPopup("##trkres")) {
     dimCaption(i18n::tr("More or fewer frames for the same pitch (the transpose follows)"));
-    ImGui::SetNextItemWidth(220);
-    ImGui::SliderInt(i18n::tr("Semitones"), &ed.resTones, -36, 36, "%+d");
+    valueSlider(i18n::tr("Semitones"), &ed.resTones, -36, 36, "%+d");
     if (apply(i18n::tr("Resample"))) {
       const int st = ed.resTones;
       if (editWave(a, t, ed, e, inst, k, "resample sample", [&](Wave& x) { return waveResample(x, st); })) ed.selA = ed.selB = -1;
@@ -503,12 +518,9 @@ void editPopups(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrument
   }
   if (ImGui::BeginPopup("##trkecho")) {
     dimCaption(i18n::tr("Repeats of the sample, each quieter than the last"));
-    ImGui::SetNextItemWidth(220);
-    ImGui::SliderInt(i18n::tr("Repeats"), &ed.echoCount, 1, 32);
-    ImGui::SetNextItemWidth(220);
-    ImGui::SliderInt(i18n::tr("Distance"), &ed.echoMs, 1, 2000, "%d ms");
-    ImGui::SetNextItemWidth(220);
-    ImGui::SliderInt(i18n::tr("Each repeat"), &ed.echoFeedback, 0, 100, "%d%%");
+    valueSlider(i18n::tr("Repeats"), &ed.echoCount, 1, 32, "%d");
+    valueSlider(i18n::tr("Distance"), &ed.echoMs, 1, 2000, "%d ms");
+    valueSlider(i18n::tr("Each repeat"), &ed.echoFeedback, 0, 100, "%d%%");
     ImGui::Checkbox(i18n::tr("Lengthen the sample to hold the repeats"), &ed.echoExtend);
     if (apply(i18n::tr("Apply"))) {
       Wave probe;
@@ -541,8 +553,7 @@ void editPopups(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrument
       }
       ImGui::EndCombo();
     }
-    ImGui::SetNextItemWidth(220);
-    ImGui::SliderInt(i18n::tr("Balance"), &ed.mixBalance, 0, 100, "%d%%");
+    valueSlider(i18n::tr("Balance"), &ed.mixBalance, 0, 100, "%d%%");
     if (apply(i18n::tr("Mix")) && ed.mixSlot >= 0) {
       Wave other;
       if (waveOf(e, ed.mixSlot, inst, other)) {
@@ -555,8 +566,7 @@ void editPopups(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrument
   }
   if (ImGui::BeginPopup("##trkxfade")) {
     dimCaption(i18n::tr("The loop's end fades into the sound before its start"));
-    ImGui::SetNextItemWidth(220);
-    ImGui::SliderInt(i18n::tr("Length"), &ed.fadeMs, 1, 500, "%d ms");
+    valueSlider(i18n::tr("Length"), &ed.fadeMs, 1, 500, "%d ms");
     if (apply(i18n::tr("Apply"))) {
       Wave probe;
       const double rate = waveOf(e, k, inst, probe) ? probe.rate : 44100.0;
@@ -1431,7 +1441,7 @@ void midiPanel(App& a, const PluginTarget& t, Edit& e, float w) {
   groupCaption(i18n::tr("Own sound"));
   if (ui::TextButton(i18n::tr("Mute"), m.mute, 64, i18n::tr("Silences the instrument's own sound; notes sent to MIDI still go out"))) {
     m.mute = !m.mute;
-    e.text.def.mute = m.mute;
+    e.text.def.mute = m.on && m.mute;
     commit(a, t, e, "mute instrument");
   }
   ImGui::EndGroup();
@@ -1598,6 +1608,279 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   }
   keyMapPanel(a, t, ed, e, *inst, w);
   return true;
+}
+
+// ---- K-106: the Tracker layout's header tools ----
+
+namespace {
+// The channel's Tracker Sampler as the tools see it: its target, state, edit, the editor's memory
+// (its selected slot made a present one).
+struct HeaderCtx {
+  PluginTarget t;
+  const PluginState* st = nullptr;
+  std::shared_ptr<const InstrumentAux> inst;
+  Edit e;
+  Ed* ed = nullptr;
+  bool ok() const { return st && inst; }
+};
+HeaderCtx headerCtx(App& a, ObjectId channel) {
+  HeaderCtx c;
+  c.t = PluginTarget{channel, -1};
+  c.st = c.t.state(a.doc.song());
+  if (!c.st || c.st->type != trk::kInstrumentType) {
+    c.st = nullptr;
+    return c;
+  }
+  c.inst = instrumentFor(*c.st);
+  c.e = readEdit(c.st->data, soundOf(*c.st));
+  c.ed = &gEd[c.t.key()];
+  if (!hasSample(c.e, c.ed->sel))
+    for (int k = 0; k < trk::kMaxSamples; ++k)
+      if (hasSample(c.e, k)) {
+        c.ed->sel = k;
+        break;
+      }
+  return c;
+}
+}  // namespace
+
+HeaderView headerView(App& a, ObjectId channel) {
+  HeaderView v;
+  HeaderCtx c = headerCtx(a, channel);
+  if (!c.ok()) return v;
+  v.tracker = true;
+  v.midi = c.e.midi;
+  v.samples = sampleCountOf(c.e);
+  v.clipFrames = clipboard().frames();
+  const int k = c.ed->sel;
+  if (!hasSample(c.e, k)) return v;
+  v.slot = k;
+  v.name = editName(c.e, k);
+  Wave w;
+  if (waveOf(c.e, k, *c.inst, w)) {
+    v.frames = w.frames();
+    v.rate = w.rate;
+    v.range = clampSpan(w, selectionOf(*c.ed, k));
+  }
+  const trk::SampleDef& sd = c.e.text.def.samples[static_cast<size_t>(k)];
+  v.looped = sd.loop != trk::kLoopOff && sd.loopLength > 0;
+  return v;
+}
+
+bool headerEdit(App& a, ObjectId channel, HeaderEdit what) {
+  HeaderCtx c = headerCtx(a, channel);
+  if (!c.ok() || !hasSample(c.e, c.ed->sel)) return false;
+  Ed& ed = *c.ed;
+  const int k = ed.sel;
+  Wave probe;
+  if (!waveOf(c.e, k, *c.inst, probe)) {
+    a.notify(i18n::tr("The sample file is missing"));
+    return false;
+  }
+  const int32_t frames = probe.frames();
+  const Span sel = clampSpan(probe, selectionOf(ed, k));
+  const bool part = !sel.empty() && sel.b - sel.a < frames;  // a range that leaves something
+  auto clear = [&] { ed.selA = ed.selB = -1; };
+  auto run = [&](const char* label, auto op) { return editWave(a, c.t, ed, c.e, *c.inst, k, label, op); };
+  switch (what) {
+    case HeaderEdit::Reverse: return run("reverse sample", [&](Wave& x) { return waveReverse(x, sel); });
+    case HeaderEdit::Normalise: return run("normalise sample", [&](Wave& x) { return waveNormalise(x, sel); });
+    case HeaderEdit::FadeIn: return run("fade in sample", [&](Wave& x) { return waveRamp(x, sel, 0.0, 1.0); });
+    case HeaderEdit::FadeOut: return run("fade out sample", [&](Wave& x) { return waveRamp(x, sel, 1.0, 0.0); });
+    case HeaderEdit::FixDc: return run("remove DC offset", [&](Wave& x) { return waveFixDc(x, sel); });
+    case HeaderEdit::Silence: return !sel.empty() && run("silence sample range", [&](Wave& x) { return waveSilence(x, sel); });
+    case HeaderEdit::Crop:
+      if (!part || !run("crop sample", [&](Wave& x) { return waveCrop(x, sel); })) return false;
+      clear();
+      return true;
+    // R11-06: after Delete and Cut the mark stays at the cut point (an empty range there), so
+    // Paste puts the clipboard back where it came from, as the classic editor does.
+    case HeaderEdit::Delete:
+      if (!part || !run("delete sample range", [&](Wave& x) { return waveDelete(x, sel); })) return false;
+      ed.selSlot = k, ed.selA = ed.selB = sel.a;
+      return true;
+    case HeaderEdit::Cut:
+      if (!part) return false;
+      clipboard() = waveCopy(probe, sel);
+      if (!run("cut sample range", [&](Wave& x) { return waveDelete(x, sel); })) return false;
+      ed.selSlot = k, ed.selA = ed.selB = sel.a;
+      return true;
+    case HeaderEdit::Copy:
+      clipboard() = waveCopy(probe, sel);
+      return true;
+    case HeaderEdit::Paste: {
+      if (clipboard().L.empty()) return false;
+      const int32_t cursor = ed.selSlot == k && ed.selA >= 0 ? std::min(ed.selA, frames) : 0;
+      const Span at = sel.empty() ? Span{cursor, cursor} : sel;
+      const auto n = static_cast<int32_t>(clipboard().L.size());
+      if (!run("paste into sample", [&](Wave& x) { return wavePaste(x, at, clipboard()); })) return false;
+      ed.selSlot = k, ed.selA = at.a, ed.selB = at.a + n;
+      return true;
+    }
+    case HeaderEdit::TrimLoop: return run("trim sample after loop", [&](Wave& x) { return waveMinimise(x); });
+    case HeaderEdit::SelectAll:
+      ed.selSlot = k, ed.selA = 0, ed.selB = frames;
+      return true;
+    case HeaderEdit::ClearRange:
+      clear();
+      return true;
+    case HeaderEdit::EmptyClipboard:
+      clipboard() = Wave{};
+      return true;
+  }
+  return false;
+}
+
+void headerStepSample(App& a, ObjectId channel, int d) {
+  HeaderCtx c = headerCtx(a, channel);
+  if (!c.ok() || d == 0) return;
+  for (int i = 1; i <= trk::kMaxSamples; ++i) {
+    const int k = ((c.ed->sel + d * i) % trk::kMaxSamples + trk::kMaxSamples) % trk::kMaxSamples;
+    if (hasSample(c.e, k)) {
+      c.ed->sel = k;
+      return;
+    }
+  }
+}
+
+void headerOpenPopup(const char* which) {
+  static const char* const names[][2] = {{"volume", "##trkramp"}, {"resample", "##trkres"}, {"echo", "##trkecho"}, {"mix", "##trkmix"}, {"xfade", "##trkxfade"}};
+  for (const auto& n : names)
+    if (std::strcmp(which, n[0]) == 0) ImGui::OpenPopup(n[1]);
+}
+
+void headerPopups(App& a, ObjectId channel) {
+  HeaderCtx c = headerCtx(a, channel);
+  if (!c.ok() || !hasSample(c.e, c.ed->sel)) return;
+  editPopups(a, c.t, *c.ed, c.e, *c.inst, c.ed->sel);
+}
+
+void headerSetMidi(App& a, ObjectId channel, const MidiSettings& m, const char* label, int field) {
+  HeaderCtx c = headerCtx(a, channel);
+  if (!c.ok()) return;
+  c.e.midi = m;
+  c.e.text.def.mute = m.on && m.mute;
+  // R11-10: clicks on one control's arrows, one after another with nothing edited between, are one
+  // undo step (each click is a pointer gesture of its own, so the merge key alone never joined them).
+  static uint64_t lastKey = 0, lastSerial = 0;
+  const uint64_t key = field > 0 ? mergeKey(c.t, 40 + field) : 0;
+  if (key != 0 && key == lastKey && lastSerial == a.doc.history().stateSerial())
+    a.doc.amendStep(lastSerial, [&] { commit(a, c.t, c.e, label, key); });
+  else
+    commit(a, c.t, c.e, label, key);
+  lastKey = key;
+  lastSerial = a.doc.history().stateSerial();
+}
+
+HeaderSamples headerSamples(App& a, ObjectId channel) {
+  HeaderSamples h;
+  HeaderCtx c = headerCtx(a, channel);
+  if (!c.st) return h;
+  h.tracker = true;
+  h.sound = soundOf(*c.st);
+  // R12-04: once the instrument has a sample, every slot is listed (an empty one with no name), so an
+  // empty slot can be picked and the next load from Files fills it.
+  const bool any = sampleCount(c.e) > 0;
+  for (int k = 0; k < trk::kMaxSamples; ++k)
+    if (hasSample(c.e, k)) h.list.emplace_back(k, editName(c.e, k));
+    else if (any) h.list.emplace_back(k, std::string());
+  if (c.ed->wantSlot >= 0 && hasSample(c.e, c.ed->wantSlot)) c.ed->wantSlot = -1;
+  if (c.ed->wantSlot >= 0) h.sel = c.ed->wantSlot;
+  else if (hasSample(c.e, c.ed->sel)) h.sel = c.ed->sel;
+  return h;
+}
+
+void headerSelectSample(App& a, ObjectId channel, int slot) {
+  HeaderCtx c = headerCtx(a, channel);
+  if (!c.st || slot < 0 || slot >= trk::kMaxSamples) return;
+  if (hasSample(c.e, slot)) c.ed->sel = slot, c.ed->wantSlot = -1;
+  else if (sampleCount(c.e) > 0) c.ed->wantSlot = slot;
+}
+
+bool headerCopySample(App& a, ObjectId channel, ObjectId srcChannel, int srcSlot) {
+  HeaderCtx c = headerCtx(a, channel);
+  if (!c.st) {
+    a.notify(i18n::tr("Copy sample: the current instrument is not a Tracker Sampler"));
+    return false;
+  }
+  const PluginTarget st{srcChannel, -1};
+  const PluginState* ss = st.state(a.doc.song());
+  if (!ss || ss->type != trk::kInstrumentType) {
+    a.notify(i18n::tr("Copy sample: the source instrument is not a Tracker Sampler"));
+    return false;
+  }
+  const Edit src = readEdit(ss->data, soundOf(*ss));
+  if (srcSlot < 0 || srcSlot >= trk::kMaxSamples || !hasSample(src, srcSlot)) {
+    a.notify(i18n::tr("Copy sample: the source sample is empty"));
+    return false;
+  }
+  const int dslot = hasSample(c.e, c.ed->sel) ? c.ed->sel : 0;
+  if (srcChannel == channel && dslot == srcSlot) {
+    a.notify(i18n::tr("Copy sample: the source and the current sample are the same"));
+    return false;
+  }
+  if (!c.e.body) {  // a new instrument's first sample: a plain envelope, as a drop gives it
+    const auto samples = c.e.text.def.samples;
+    c.e.text.def = defaultDefinition();
+    c.e.text.def.samples = samples;
+    c.e.body = true;
+  }
+  if (copySampleInto(c.e, dslot, src, srcSlot) < 0) return false;
+  commit(a, c.t, c.e, "copy sample");
+  c.ed->sel = dslot;
+  if (c.ed->selSlot == dslot) c.ed->selA = c.ed->selB = -1;
+  return true;
+}
+
+bool headerExchangeSamples(App& a, ObjectId channel, int srcSlot) {
+  HeaderCtx c = headerCtx(a, channel);
+  if (!c.ok()) return false;
+  const int k = c.ed->sel;
+  if (srcSlot < 0 || srcSlot >= trk::kMaxSamples || srcSlot == k || (!hasSample(c.e, k) && !hasSample(c.e, srcSlot))) {
+    a.notify(i18n::tr("Exchange samples: mark another sample of this instrument as the source (click its number)"));
+    return false;
+  }
+  exchangeSampleData(c.e, k, srcSlot);
+  commit(a, c.t, c.e, "exchange samples");
+  if (!hasSample(c.e, k) && hasSample(c.e, srcSlot)) c.ed->sel = srcSlot;
+  c.ed->selA = c.ed->selB = -1;
+  return true;
+}
+
+std::string headerSampleName(App& a, ObjectId channel, int slot) {
+  const PluginTarget t{channel, -1};
+  const PluginState* st = t.state(a.doc.song());
+  if (!st || st->type != trk::kInstrumentType || slot < 0 || slot >= trk::kMaxSamples) return {};
+  const Edit e = readEdit(st->data, soundOf(*st));
+  return hasSample(e, slot) ? editName(e, slot) : std::string();
+}
+
+int headerLoadSample(App& a, ObjectId channel, const std::string& path) {
+  HeaderCtx c = headerCtx(a, channel);
+  if (!c.st) return -1;
+  bool any = false;
+  for (int k = 0; k < trk::kMaxSamples; ++k) any = any || hasSample(c.e, k);
+  if (!any) {  // a new instrument's first sample: as a drop adds it
+    // R12-06: an instrument still called by its type takes the sample's name (one undo step with it).
+    const Channel* ch = a.doc.song().channel(channel);
+    const bool rename = ch && ch->name == "Tracker Sampler";
+    if (rename) a.doc.beginGroup("load sample");
+    const int k = addFiles(a, c.t, {path}, soundOf(*c.st));
+    if (k >= 0 && rename) a.doc.renameChannel(channel, fs::u8path(path).stem().u8string());
+    if (rename) a.doc.endGroup(false);
+    if (k >= 0) gEd[c.t.key()].sel = k;
+    return k;
+  }
+  SamplePtr sp = sampleCache().get(path);
+  if (!sp || sp->frames() == 0) return -1;
+  const int slot = c.ed->wantSlot >= 0 ? c.ed->wantSlot : std::clamp(c.ed->sel, 0, trk::kMaxSamples - 1);  // R12-04
+  c.ed->wantSlot = -1;
+  const int k = replaceSample(c.e, slot, path, static_cast<int32_t>(std::min<size_t>(sp->frames(), 0x3FFFFFFF)), sp->sampleRate,
+                              fs::u8path(path).stem().u8string());
+  if (k < 0) return -1;
+  commit(a, c.t, c.e, "load sample");
+  c.ed->sel = k;
+  return k;
 }
 
 }  // namespace gl::packs::trackerpack

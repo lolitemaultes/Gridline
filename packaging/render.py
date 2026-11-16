@@ -11,7 +11,12 @@ The templates (*.in) in packaging/ carry placeholders; this fills them in from t
     @RPMRELEASE@     1 / 0.1.beta.1
     @DATE@           release date, YYYY-MM-DD           @RPMDATE@  the same as "Mon Nov 02 2026"
     @MAINTAINER@     FreeBSD port maintainer (--maintainer)
-    @SHA256:<name>@  SHA-256 of Gridline-<version>-<name>  (@SHA256UPPER:...@ in capitals)
+    @SHA256:<name>@  SHA-256 of Gridline-<version>-<name>  (@SHA256UPPER:...@ in capitals);
+                     Suite-<rest> and Suite-Mini-<rest> name Gridline-Suite[-Mini]-<version>-<rest>
+
+The plugin suites' templates (packaging/suite/*.in) are written once per suite, with
+    @SUITE_NAME@ @SUITE_PKG@ @SUITE_FILE@ @SUITE_KEY@ @SUITE_WINGET@ @SUITE_DESC@ @SUITE_LONG@
+    @SUITE_PRODUCT_CODE@ (the Windows setup's AppId, as tools/release/suite-installer.py makes it)
 
 Checksums come from one of:
     --dist <dir>        the release files themselves (SHA-256 and size are computed)
@@ -29,6 +34,9 @@ Output (each folder is what goes into that channel's repository or submission):
     chocolatey/gridline/   gridline.nuspec + tools/
     freebsd/audio/gridline/   Makefile, distinfo, pkg-descr, pkg-plist
     copr/               gridline.spec
+    homebrew/Casks/gridline-suite.rb, winget/manifests/g/Gridline/GridlineSuite/<version>/,
+    scoop/gridline-suite.json, chocolatey/gridline-suite/, aur/gridline-suite-bin/
+                        the plugins without the app (and the same for gridline-suite-mini)
     snap/               snapcraft.yaml (copy it to snap/snapcraft.yaml at the source root)
 Nothing is uploaded or submitted anywhere.
 """
@@ -57,7 +65,54 @@ RELEASE_FILES = [
     "macos-universal.dmg",
     "windows-x64-setup.exe", "windows-arm64-setup.exe",
     "windows-x64.zip", "windows-arm64.zip",
+    "Suite-macos-all.zip", "Suite-windows-all.zip", "Suite-linux-all.zip", "Suite-windows-setup.exe",
+    "Suite-Mini-macos-all.zip", "Suite-Mini-windows-all.zip", "Suite-Mini-linux-all.zip", "Suite-Mini-windows-setup.exe",
 ]
+
+# The plugin suites on their own: templates written once per suite (see the module text).
+SUITE_TEMPLATES = [
+    ("suite/homebrew.rb.in", "homebrew/Casks/{pkg}.rb"),
+    ("suite/winget.yaml.in", "winget/manifests/g/Gridline/{winget}/{v}/Gridline.{winget}.yaml"),
+    ("suite/winget.installer.yaml.in", "winget/manifests/g/Gridline/{winget}/{v}/Gridline.{winget}.installer.yaml"),
+    ("suite/winget.locale.en-US.yaml.in", "winget/manifests/g/Gridline/{winget}/{v}/Gridline.{winget}.locale.en-US.yaml"),
+    ("suite/scoop.json.in", "scoop/{pkg}.json"),
+    ("suite/chocolatey.nuspec.in", "chocolatey/{pkg}/{pkg}.nuspec"),
+    ("suite/chocolateyinstall.ps1.in", "chocolatey/{pkg}/tools/chocolateyinstall.ps1"),
+    ("suite/aur-PKGBUILD.in", "aur/{pkg}-bin/PKGBUILD"),
+    ("suite/aur-SRCINFO.in", "aur/{pkg}-bin/.SRCINFO"),
+]
+
+
+def suite_product_code(suite_id):
+    """The Windows plugin installer's AppId (tools/release/suite-installer.py windows_iss)."""
+    import uuid
+    return "{%s}" % str(uuid.UUID(hashlib.md5(("gridline-suite-installer:" + suite_id).encode()).hexdigest())).upper()
+
+
+SUITES = [
+    {"SUITE_ID": "gridline", "SUITE_NAME": "Gridline Suite", "SUITE_PKG": "gridline-suite", "SUITE_FILE": "Gridline-Suite",
+     "SUITE_KEY": "Suite", "SUITE_WINGET": "GridlineSuite", "SUITE_DESC": "Gridline's instruments and effects as VST3, CLAP and Audio Unit plugins",
+     "SUITE_LONG": "Gridline Suite is the 121 instruments and effects of the Gridline music workstation as plugins for other music programs, without the app."},
+    {"SUITE_ID": "mini", "SUITE_NAME": "Gridline Suite Mini", "SUITE_PKG": "gridline-suite-mini", "SUITE_FILE": "Gridline-Suite-Mini",
+     "SUITE_KEY": "Suite-Mini", "SUITE_WINGET": "GridlineSuiteMini", "SUITE_DESC": "Gridline's compact effects as VST3, CLAP and Audio Unit plugins",
+     "SUITE_LONG": "Gridline Suite Mini is 35 compact effects from the Gridline music workstation as plugins for other music programs, without the app."},
+]
+
+
+def release_name(version, key):
+    """The release file a checksum key names (see the module text)."""
+    for k, p in (("Suite-Mini-", "Gridline-Suite-Mini-"), ("Suite-", "Gridline-Suite-")):
+        if key.startswith(k):
+            return f"{p}{version}-{key[len(k):]}"
+    return f"Gridline-{version}-{key}"
+
+
+def release_key(version, name):
+    """The checksum key of a release file name, or None."""
+    for p, k in ((f"Gridline-Suite-Mini-{version}-", "Suite-Mini-"), (f"Gridline-Suite-{version}-", "Suite-"), (f"Gridline-{version}-", "")):
+        if name.startswith(p):
+            return k + name[len(p):]
+    return None
 
 # template (relative to packaging/) -> output (relative to --out); {v} is the full version.
 TEMPLATES = [
@@ -118,14 +173,13 @@ def sha256_file(path):
 
 def parse_sums(text, version):
     out = {}
-    prefix = f"Gridline-{version}-"
     for line in text.splitlines():
         parts = line.split()
         if len(parts) != 2 or not re.fullmatch(r"[0-9a-f]{64}", parts[0]):
             continue
-        name = parts[1].lstrip("*")
-        if name.startswith(prefix):
-            out[name[len(prefix):]] = parts[0]
+        key = release_key(version, parts[1].lstrip("*"))
+        if key is not None:
+            out[key] = parts[0]
     return out
 
 
@@ -145,8 +199,9 @@ def from_github(version):
     sums_url = None
     prefix = f"Gridline-{version}-"
     for a in rel.get("assets", []):
-        if a["name"].startswith(prefix):
-            sizes[a["name"][len(prefix):]] = a["size"]
+        key = release_key(version, a["name"])
+        if key is not None:
+            sizes[key] = a["size"]
         if a["name"] == f"{prefix}SHA256SUMS":
             sums_url = a["browser_download_url"]
     if not sums_url:
@@ -226,6 +281,18 @@ def render(out, forms, sums, sizes, date, commit, maintainer, timestamp):
         with open(path, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
         written.append(path)
+    for suite in SUITES:
+        sv = dict(suite, SUITE_PRODUCT_CODE=suite_product_code(suite["SUITE_ID"]))
+        for src, dst in SUITE_TEMPLATES:
+            text = open(os.path.join(HERE, src), encoding="utf-8").read()
+            for k, val in sv.items():
+                text = text.replace(f"@{k}@", val)
+            text = substitute(text, values, sums, missing)
+            path = os.path.join(out, dst.format(v=v, pkg=suite["SUITE_PKG"], winget=suite["SUITE_WINGET"]))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(text)
+            written.append(path)
     for src, dst in COPIES:
         path = os.path.join(out, dst)
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -288,7 +355,7 @@ def main():
         commit = commit or "0" * 40
     if a.dist:
         for n in RELEASE_FILES:
-            p = os.path.join(a.dist, f"Gridline-{v}-{n}")
+            p = os.path.join(a.dist, release_name(v, n))
             if os.path.isfile(p):
                 sums[n] = sha256_file(p)
                 sizes[n] = os.path.getsize(p)
@@ -296,7 +363,7 @@ def main():
         listed = parse_sums(open(a.sums, encoding="utf-8").read(), v)
         for n, h in listed.items():
             if n in sums and sums[n] != h:
-                raise SystemExit(f"Gridline-{v}-{n}: the file's SHA-256 is not the one in {a.sums}")
+                raise SystemExit(f"{release_name(v, n)}: the file's SHA-256 is not the one in {a.sums}")
             sums[n] = h
     if a.from_github:
         gs, gsz, gdate, gcommit = from_github(v)
@@ -319,7 +386,7 @@ def main():
     if left:
         raise SystemExit("render: placeholders left:\n  " + "\n  ".join(left))
     if missing:
-        raise SystemExit("render: no checksum for: " + ", ".join(f"Gridline-{v}-{n}" for n in sorted(missing)))
+        raise SystemExit("render: no checksum for: " + ", ".join(release_name(v, n) for n in sorted(missing)))
 
 
 if __name__ == "__main__":

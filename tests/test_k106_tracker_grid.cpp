@@ -5,13 +5,20 @@
 //   - rack steps show and edit as steps; notes off the row grid and past the end are kept, never moved;
 //   - the edits go through the Document (undo) and the project file round-trips them;
 //   - the order list is derived from the playlist; the play row follows a clip in song mode.
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <string>
 #include <vector>
 #include "Check.h"
 #include "core/Document.h"
 #include "core/Json.h"
 #include "core/Project.h"
+#include "core/ProjectInterop.h"
 #include "core/Song.h"
+#include "core/Demo.h"
+#include "core/TrackerDemo.h"
 #include "core/TrackerGrid.h"
 #include "core/TrackerStream.h"
 
@@ -86,6 +93,35 @@ Track trackOf(const Document& d, ObjectId pat, ObjectId ch) {
 }  // namespace
 
 int main() {
+  // ---- cp15: record quantize ----
+  expect(snapRecordRow(5, 0.2f, 1, 16) == 5 && snapRecordRow(5, 0.7f, 1, 16) == 6, "record snap 1: the nearest row");
+  expect(snapRecordRow(15, 0.8f, 1, 16) == 0, "record snap 1: past the last row wraps to the first");
+  expect(snapRecordRow(5, 0.0f, 4, 16) == 4 && snapRecordRow(6, 0.1f, 4, 16) == 8 && snapRecordRow(14, 0.5f, 4, 16) == 0, "record snap 4: the nearest multiple, wrapping");
+  expect(snapRecordRow(7, 0.9f, 0, 16) == 7, "record snap off: the row playing");
+  // ---- cp15: the demo module ----
+  {
+    const Song d = makeTrackerDemo();
+    expect(d.patterns.size() == 4 && d.playlist.size() == 7, "demo module: four patterns, seven order entries");
+    bool rows64 = true, inside = true, ids = true;
+    size_t most = 0;
+    for (const Pattern& p : d.patterns) {
+      const Grid g = gridOf(d, p);
+      rows64 = rows64 && g.rows == 64;
+      most = std::max(most, p.notes.size());
+      for (const auto& [ch, v] : p.notes) {
+        ids = ids && d.channel(ch) != nullptr;
+        for (const Note& n : v) inside = inside && n.start >= 0 && n.start + n.length <= g.length() && n.length > 0;
+      }
+    }
+    expect(rows64, "demo module: 64-row patterns");
+    expect(most >= 13, "demo module: the busiest pattern plays on at least 13 tracks");
+    expect(inside && ids, "demo module: every note inside its pattern, on an instrument of the song");
+    int samplers = 0;
+    for (const Channel& c : d.channels) samplers += c.plugin.type == "gl.tracker" ? 1 : 0;
+    expect(samplers == 3 && d.channels.size() == makeDemoTrack().channels.size() + 3, "demo module: the demo's instruments and three Tracker Samplers");
+    expect(makeDemoTrack().info.title == "Gridline" && makeDemoTrack().patterns.size() == 65, "demo module: the demo song is unchanged");
+    expect(d.channels.size() > 9 && d.channels[0].name == "Kick" && d.channels[10].name == "Saw Lead", "demo module: drums first, the samplers in view");
+  }
   // ---- grid ----
   {
     Song s = makeSong();
@@ -221,21 +257,33 @@ int main() {
            "Insert: later notes move one row, a note across the row grows");
     edit(doc, kPat, kLead, [](Rows& x, const Track&, const Grid& g) { return deleteRow(x.notes, x.steps, x.props, g, 2); });
     expect(notesOf(doc, kPat, kLead) == before, "Backspace on the same row brings everything back exactly");
-    // R9-06: an insert that would push a note off the last row is refused (never kept out of sight).
+    // R10-02 (R9-06): an insert that pushes a note off the last row drops it (as the classic insert),
+    // says how many, and never keeps it out of sight past the end.
     int moved = 0;
+    Result dropRes;
+    std::vector<Note> ns2;
     for (int i = 0; i < 16; ++i) {
-      std::vector<Note> ns2 = notesOf(doc, kPat, kLead);
+      ns2 = notesOf(doc, kPat, kLead);
       std::vector<uint8_t> st2;
       std::vector<StepProps> pr2;
-      const Result r = insertRow(ns2, st2, pr2, gridOf(doc.song(), *doc.song().pattern(kPat)), 1);
-      if (!r.refused.empty()) break;
+      dropRes = insertRow(ns2, st2, pr2, gridOf(doc.song(), *doc.song().pattern(kPat)), 1);
+      if (!dropRes.refused.empty() || dropRes.dropped > 0) break;
       edit(doc, kPat, kLead, [](Rows& x, const Track&, const Grid& g) { return insertRow(x.notes, x.steps, x.props, g, 1); });
       ++moved;
     }
-    expect(moved > 0 && trackOf(doc, kPat, kLead).pastEnd == 0 && notesOf(doc, kPat, kLead).size() == 2,
-           "inserts stop at the one that would push a note past the end: nothing hidden past it");
-    for (int i = 0; i < moved; ++i) edit(doc, kPat, kLead, [](Rows& x, const Track&, const Grid& g) { return deleteRow(x.notes, x.steps, x.props, g, 1); });
-    expect(notesOf(doc, kPat, kLead) == before, "and the deletes bring everything back");
+    const Grid gd = gridOf(doc.song(), *doc.song().pattern(kPat));
+    expect(moved > 0 && dropRes.refused.empty() && dropRes.changed && dropRes.dropped == 1 && ns2.size() == 1 &&
+               std::all_of(ns2.begin(), ns2.end(), [&](const Note& n) { return n.start < gd.length(); }),
+           "the insert that pushes a note off the last row drops it (one note gone, none past the end)");
+    expect(trackOf(doc, kPat, kLead).pastEnd == 0 && notesOf(doc, kPat, kLead).size() == 2, "the inserts before it moved every note, nothing hidden past the end");
+    for (int i = 0; i < moved; ++i) edit(doc, kPat, kLead, [](Rows& x, const Track&, const Grid& g) { return deleteRow(x.notes, x.steps, x.props, g, 1); });    {
+      // R12-02: the inserts pushed the second note's OFF off the pattern (gone, as in the classic
+      // editor), so after the deletes the note is back in place and rings on to the end.
+      const auto& back = notesOf(doc, kPat, kLead);
+      expect(back.size() == 2 && back[0] == before[0] && back[1].start == before[1].start && back[1].pitch == before[1].pitch &&
+                 back[1].start + back[1].length == gd.length(),
+             "and the deletes bring the notes back (the OFF pushed off the end stays gone)");
+    }
   }
   // ---- off-grid notes stay exactly (R1, R2) ----
   {
@@ -297,6 +345,142 @@ int main() {
     int cols = 0;
     assignColumns(ns, &cols);
     expect(ns.size() == 2 && ns[0].start + ns[0].length == 8 * 24 && cols == 1, "R7-06: the pasted note cuts the one sounding before it, one column");
+  }
+  // R11-05: one voice per track, as the classic channel: after a paste, an Insert and a Backspace
+  // every note still rings on to the next one (no OFF appears that was not typed, no second column).
+  {
+    Song s = makeSong();
+    Document d(s);
+    const int rowsAt[] = {0, 3, 6, 9, 12};
+    const int pitches[] = {60, 64, 67, 60, 64};
+    for (int i = 0; i < 5; ++i) {
+      const int r = rowsAt[i], p = pitches[i];
+      edit(d, kPat, kLead, [r, p](Rows& x, const Track& t, const Grid& g) { return putNote(x.notes, t, g, r, 0, p, 100); });
+    }
+    const Grid g = gridOf(d.song(), *d.song().pattern(kPat));
+    auto tied = [&](const char* what) {
+      const auto& ns = notesOf(d, kPat, kLead);
+      bool ok = !ns.empty();
+      for (size_t i = 0; i < ns.size(); ++i) {
+        // Each note ends at the next; the last one at the end or past it (Insert moves it along).
+        const Tick e = ns[i].start + ns[i].length;
+        ok = ok && (i + 1 < ns.size() ? e == ns[i + 1].start : e >= g.length());
+      }
+      int cols = 0;
+      assignColumns(ns, &cols);
+      expect(ok && cols == 1, what);
+    };
+    tied("R11-05: typed notes ring on to the next one");
+    const std::vector<Note> block = copyRows(notesOf(d, kPat, kLead), {}, {}, g, 0, 3);
+    edit(d, kPat, kLead, [&](Rows& x, const Track&, const Grid& gg) { return pasteRows(x.notes, x.steps, gg, 8, 4, block); });
+    tied("R11-05: a pasted block's last note is cut by the next note (no overlap, one column)");
+    edit(d, kPat, kLead, [](Rows& x, const Track&, const Grid& gg) { return insertRow(x.notes, x.steps, x.props, gg, 2); });
+    tied("R11-05: after Insert every note rings on to the next");
+    edit(d, kPat, kLead, [](Rows& x, const Track&, const Grid& gg) { return deleteRow(x.notes, x.steps, x.props, gg, 4); });
+    tied("R11-05: Backspace over a note lets the one before ring on (no phantom OFF)");
+    // A typed OFF stays where it was typed.
+    edit(d, kPat, kLead, [](Rows& x, const Track& t, const Grid& gg) { return putOff(x.notes, t, gg, 1, 0); });
+    edit(d, kPat, kLead, [](Rows& x, const Track&, const Grid& gg) { return insertRow(x.notes, x.steps, x.props, gg, 3); });
+    const auto& ns = notesOf(d, kPat, kLead);
+    expect(!ns.empty() && ns[0].start == 0 && ns[0].length == 24, "R11-05: an OFF typed before the moved rows stays at its row");
+  }
+  // R12-02: Backspace on the OFF's row takes the OFF with it (the note rings on to the next), and the
+  // last note, which rang to the pattern's end, still does (no OFF on the last row).
+  {
+    Document d(makeSong());
+    for (auto [r, p] : {std::pair{0, 60}, std::pair{6, 64}, std::pair{9, 67}})
+      edit(d, kPat, kLead, [r = r, p = p](Rows& x, const Track& t, const Grid& gg) { return putNote(x.notes, t, gg, r, 0, p, 100); });
+    edit(d, kPat, kLead, [](Rows& x, const Track& t, const Grid& gg) { return putOff(x.notes, t, gg, 3, 0); });
+    edit(d, kPat, kLead, [](Rows& x, const Track&, const Grid& gg) { return deleteRow(x.notes, x.steps, x.props, gg, 3); });
+    const auto& ns = notesOf(d, kPat, kLead);
+    const Grid g = gridOf(d.song(), *d.song().pattern(kPat));
+    const Tick r = g.rowTicks;
+    expect(ns.size() == 3 && ns[0].start == 0 && ns[0].length == 5 * r && ns[1].start == 5 * r && ns[1].length == 3 * r && ns[2].start == 8 * r &&
+               ns[2].start + ns[2].length == g.length(),
+           "R12-02: the OFF's row deleted: C rings to E, G still reaches the end");
+  }
+  // R11-02: the folders Gridline makes beside a project travel with it on Save as: the files are
+  // copied and named relative to the new project; a save in place copies nothing.
+  {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path root = fs::temp_directory_path() / "gl_k106_r1102";
+    fs::remove_all(root, ec);
+    const fs::path oldDir = root / "old", newDir = root / "new";
+    fs::create_directories(oldDir / "Edited audio", ec);
+    fs::create_directories(oldDir / "song Samples", ec);
+    fs::create_directories(newDir, ec);
+    for (const fs::path& f : {oldDir / "Edited audio" / "a1-0ca4.wav", oldDir / "song Samples" / "s1.wav"}) std::ofstream(f, std::ios::binary) << "RIFF data " << f.filename().string();
+    Song s = makeSong();
+    s.channels[0].plugin.type = "gl.sampler";
+    s.channels[0].plugin.data = (oldDir / "Edited audio" / "a1-0ca4.wav").string();
+    s.channels[1].plugin.type = "gl.sampler";
+    s.channels[1].plugin.data = (oldDir / "song Samples" / "s1.wav").string();
+    const std::vector<std::pair<std::string, std::string>> folders = {{(oldDir / "Edited audio").string(), "Edited audio"},
+                                                                      {(oldDir / "song Samples").string(), "copy Samples"}};
+    std::string err;
+    const int n = adoptProjectFolders(s, folders, newDir.string(), &err);
+    expect(n == 2 && err.empty() && s.channels[0].plugin.data == "Edited audio/a1-0ca4.wav" && s.channels[1].plugin.data == "copy Samples/s1.wav",
+           "R11-02: Save as names the edited audio and the samples relative to the new project");
+    expect(fs::is_regular_file(newDir / "Edited audio" / "a1-0ca4.wav") && fs::is_regular_file(newDir / "copy Samples" / "s1.wav"),
+           "R11-02: and copies them beside it");
+    // In place: the same folder, nothing copied, the name made relative.
+    Song t = makeSong();
+    t.channels[0].plugin.type = "gl.sampler";
+    t.channels[0].plugin.data = (oldDir / "Edited audio" / "a1-0ca4.wav").string();
+    const int m = adoptProjectFolders(t, {{(oldDir / "Edited audio").string(), "Edited audio"}}, oldDir.string(), &err);
+    expect(m == 1 && t.channels[0].plugin.data == "Edited audio/a1-0ca4.wav" && !fs::exists(oldDir / "Edited audio" / "a1-0ca4 (2).wav"),
+           "R11-02: a save in place names it relative and copies nothing");
+    // Loaded again from the new place: found (resolveRelativePaths).
+    resolveRelativePaths(s, newDir.string());
+    expect(s.channels[0].plugin.data == (newDir / "Edited audio" / "a1-0ca4.wav").lexically_normal().string(), "R11-02: the copy is found beside the moved project");
+    fs::remove_all(root, ec);
+  }
+  // R12-01: a chain of Save as: B (with its edited audio and samples), then v2, then v3. The open
+  // song keeps B's absolute names all along; each save finds B's folders wherever they are and v3
+  // gets its own copies, named relative. A user's own "Drum Samples" folder is never adopted.
+  {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path root = fs::temp_directory_path() / "gl_k106_r1201";
+    fs::remove_all(root, ec);
+    const fs::path b = root / "B", v2 = root / "v2", v3 = root / "v3", lib = root / "lib" / "Drum Samples";
+    for (const fs::path& d : {b / "Edited audio", b / "song Samples", v2, v3, lib}) fs::create_directories(d, ec);
+    std::ofstream(b / "song.gridline.json") << "{}";
+    for (const fs::path& f : {b / "Edited audio" / "e1.wav", b / "song Samples" / "s1.wav", lib / "kick.wav"}) std::ofstream(f, std::ios::binary) << "RIFF " << f.filename().string();
+    Song open = makeSong();
+    Channel third;
+    third.id = 1200, third.name = "Kick";
+    open.channels.push_back(third);
+    open.channels[0].plugin.type = "gl.sampler";
+    open.channels[0].plugin.data = (b / "Edited audio" / "e1.wav").string();
+    open.channels[1].plugin.type = "gl.sampler";
+    open.channels[1].plugin.data = (b / "song Samples" / "s1.wav").string();
+    open.channels[2].plugin.type = "gl.sampler";
+    open.channels[2].plugin.data = (lib / "kick.wav").string();
+    struct Step {
+      fs::path dir;
+      const char* stem;
+      fs::path prev;
+    };
+    bool ok = true;
+    for (const Step& st : {Step{v2, "song v2", b}, Step{v3, "song v3", v2}}) {
+      Song out = open;  // the open song is not changed by a save
+      // As App::saveProject builds the list: the previous project's folders, the new one's, then
+      // the Gridline-made folders found from the song's own files.
+      std::vector<std::pair<std::string, std::string>> folders = {{(st.prev / "Edited audio").string(), "Edited audio"},
+                                                                  {(st.dir / "Edited audio").string(), "Edited audio"}};
+      for (auto& f : gridlineMadeFolders(out, st.stem)) folders.push_back(f);
+      std::string err;
+      adoptProjectFolders(out, folders, st.dir.string(), &err);
+      std::ofstream(st.dir / (std::string(st.stem) + ".gridline.json")) << "{}";
+      ok = ok && err.empty() && out.channels[0].plugin.data == "Edited audio/e1.wav" && out.channels[1].plugin.data == std::string(st.stem) + " Samples/s1.wav" &&
+           out.channels[2].plugin.data == (lib / "kick.wav").string() && fs::is_regular_file(st.dir / "Edited audio" / "e1.wav") &&
+           fs::is_regular_file(st.dir / (std::string(st.stem) + " Samples") / "s1.wav");
+    }
+    expect(ok, "R12-01: Save as twice from the same open song: v3 has its own copies, named relative");
+    expect(!fs::exists(v3 / "song v3 Samples" / "kick.wav") && !fs::exists(v3 / "Edited audio" / "kick.wav"), "R12-01: a user's sample folder stays where it is");
+    fs::remove_all(root, ec);
   }
   // ---- rack steps (R17) ----
   {
@@ -670,6 +854,34 @@ int main() {
       expect(!deleteRow(d, st, pr, g, 0).refused.empty() && !deleteRow(d, st, pr, g, 3).refused.empty() && d == notes,
              "a row deleted on or through the voice: refused");
       expect(insertRow(d, st, pr, g, 0).changed && d[0].start == 24 && d[0].tracker == bytes, "a row inserted above it moves the whole voice");    }
+  }
+  // ---- R10-01: the "<name> Samples" copies are named relative to the project, so they move with it ----
+  {
+    namespace fs = std::filesystem;
+    const fs::path tmp = fs::temp_directory_path() / ("k106_r1001_" + std::to_string(static_cast<long long>(std::hash<std::string>{}(__FILE__) % 100000)));
+    std::error_code ec;
+    fs::remove_all(tmp, ec);
+    fs::create_directories(tmp / "cache" / "mod", ec);
+    fs::create_directories(tmp / "proj", ec);
+    { std::ofstream(tmp / "cache" / "mod" / "s.wav", std::ios::binary) << "RIFF0000WAVE"; }
+    Song s;
+    Channel c;
+    c.id = 7, c.name = "S", c.plugin.type = "gl.sampler", c.plugin.data = (tmp / "cache" / "mod" / "s.wav").u8string();
+    s.channels = {c};
+    const std::string projDir = (tmp / "proj").u8string();
+    const int n = adoptCacheFiles(s, (tmp / "cache").u8string(), (tmp / "proj" / "x Samples").u8string(), nullptr, projDir);
+    expect(n > 0 && s.channels[0].plugin.data == "x Samples/s.wav", "the copy is named relative to the project");
+    // The project's folder moved: the relative name resolves beside it.
+    fs::rename(tmp / "proj", tmp / "moved", ec);
+    Song m = s;
+    resolveRelativePaths(m, (tmp / "moved").u8string());
+    expect(m.channels[0].plugin.data == (tmp / "moved" / "x Samples" / "s.wav").lexically_normal().u8string(), "moved with its project, the copy is found");
+    // A project saved with the old absolute name finds the copy beside its new place too.
+    Song old = s;
+    old.channels[0].plugin.data = (tmp / "proj" / "x Samples" / "s.wav").u8string();
+    resolveRelativePaths(old, (tmp / "moved").u8string());
+    expect(old.channels[0].plugin.data == (tmp / "moved" / "x Samples" / "s.wav").lexically_normal().u8string(), "an old absolute name is found beside the moved project");
+    fs::remove_all(tmp, ec);
   }
   return finish();
 }

@@ -23,6 +23,8 @@
 #include "ContextMenus.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "LiveLook.h"
+#include <cstring>
 
 namespace gl {
 
@@ -827,12 +829,19 @@ void projectScriptsMenuItems(App& a) {
   const bool ok = a.settings.getBool("scripts.enabled");
   const auto& list = projectScripts(a);
   std::string cat = "\x01";
+  // N50-09: in Clips, Gridline's own scripts speak of the arrangement, not Studio's playlist.
+  auto words = [&a](std::string t, bool user) {
+    if (user || !livelook::active(a)) return t;
+    for (const auto& [from, to] : {std::pair<const char*, const char*>{"Playlist", "Arrangement"}, {"playlist", "arrangement"}})
+      for (size_t at = t.find(from); at != std::string::npos; at = t.find(from, at + std::strlen(to))) t.replace(at, std::strlen(from), to);
+    return t;
+  };
   for (const auto& s : list) {
     if (s.category != cat) {
       cat = s.category;
-      ImGui::SeparatorText(cat.c_str());
+      ImGui::SeparatorText(words(cat, false).c_str());
     }
-    std::string l = s.name + (s.user ? "  (yours)" : "") + "...##" + s.path;
+    std::string l = words(s.name, s.user) + (s.user ? "  (yours)" : "") + "...##" + s.path;
     if (ImGui::MenuItem(l.c_str(), nullptr, false, ok)) openProjectScript(a, s.path);
     if (!s.description.empty()) ui::Hint(s.description);
   }

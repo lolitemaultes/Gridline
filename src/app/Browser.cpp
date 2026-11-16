@@ -200,7 +200,9 @@ std::string devSection;  // dev: the section the rows drawn belong to (K-18 "bro
 
 // K-177: white with the white text option. K-112c (round 19): Live draws the browser's glyphs in one
 // quiet ink, as every ref's browser does (211, 094, 329); the role colours stay Studio's.
-ImU32 roleCol(uint32_t r, float a = 0.9f) { return livelook::active(app()) ? theme::withAlpha(pal().textDim, a) : theme::tintRole(r, a); }
+// K-112D: the Smooth layout's browser (its shell built).
+bool lgFindLook(const App& a) { return layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic); }
+ImU32 roleCol(uint32_t r, float a = 0.9f) { return livelook::active(app()) || lgFindLook(app()) ? theme::withAlpha(pal().textDim, a) : theme::tintRole(r, a); }
 
 // K-160: browsing with the keyboard. Every row the tree draws (section headers, folders, files,
 // plugins, the project's items) is noted in drawing order; the next frame's keys move a cursor
@@ -2180,8 +2182,8 @@ void liveKindChips(App& a, float w) {
   dl->AddLine(ImVec2(o.x, y + ch + 2.5f), ImVec2(o.x + w, y + ch + 2.5f), P.line);
 }
 
+void filterRows(App& a, float w);
 void liveFilterRows(App& a, float w) {
-  const auto& P = pal();
   devFilterChips = 0;
   if (liveKindCatFor != liveCat) liveKindCat.clear(), liveKindCatFor = liveCat;
   if (liveCat == LcInstruments || liveCat == LcAudioFx || liveCat == LcNoteFx) {
@@ -2190,6 +2192,12 @@ void liveFilterRows(App& a, float w) {
   }
   const bool files = liveCat == LcSamples || liveCat == LcFolders || liveCat == LcDrums || liveCat == LcRecent || liveCat == LcStarred;
   if (!files) return;
+  filterRows(a, w);
+}
+// The chips themselves (every layout's browser): K-218 Studio and Smooth show them on the Sounds
+// tab and while a search runs, so the browser's first look is unchanged.
+void filterRows(App& a, float w) {
+  const auto& P = pal();
   const uint64_t gen = browserui::index().generation();
   static double countedAt = -100;  // recounted at most every 2 s while the index changes (a pass bumps it often)
   if (gen != filterTagsGen && (filterTags.empty() || a.now - countedAt > 2.0))
@@ -2466,6 +2474,8 @@ void drawBrowser(App& a) {
     // ref's browser search (211, 094, 329, 214, 216).
     const bool searchGlyph = !livelook::active(a);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(searchGlyph ? 28.0f : ImGui::GetStyle().FramePadding.x, ImGui::GetStyle().FramePadding.y));
+    // K-112D (audit H4): Smooth's search field is a well-rounded field, as the reference's (252, 111).
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, lgFindLook(a) ? 8.0f : ImGui::GetStyle().FrameRounding);
     ImGui::SetNextItemWidth(w);
     static bool refocus = false;  // after the clear button: typing goes on in the empty field
     if (refocus) ImGui::SetKeyboardFocusHere(), refocus = false;
@@ -2475,7 +2485,7 @@ void drawBrowser(App& a) {
     ImGui::InputTextWithHint("##filter", lgFind ? i18n::tr("Search") : i18n::tr("Search  (bpm: key: tag:)"), filterBuf, sizeof filterBuf);
     const ImGuiID filterId = ImGui::GetItemID();
     devNoteRect("brsearch");
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(2);
     ui::FocusRing();
     ui::Hint("Search plugins, presets and files \xC2\xB7 filters: type:audio|midi|preset|project|effect  tag:kick  bpm:120-130  key:Am  len:<2");
     if (searchGlyph) ui::drawIcon(ImGui::GetWindowDrawList(), ui::Icon::Search, ImVec2(p.x + 14, p.y + ImGui::GetFrameHeight() * 0.5f), 12, P.textFaint);
@@ -2496,7 +2506,10 @@ void drawBrowser(App& a) {
       browserui::togglePluginPicker();
   }
   ui::EndToolbar();
-  const bool liveLook = livelook::active(a);  // K-112c: categories in place of the tabs
+  // K-112c: categories in place of the tabs. K-112D (audit H3): Smooth too: the reference's browser
+  // is a short list of kinds of content and places beside a flat list of results (111, 252, 233), not
+  // a long folder tree.
+  const bool liveLook = livelook::active(a) || lgFindLook(a);
   const float footerH = theme::kToolbarH;
   const bool info = !selPath.empty() && tab != TabPlugins;
   // K-112c: two panes (the places beside the list) once the browser is wide enough for both.
@@ -2519,6 +2532,10 @@ void drawBrowser(App& a) {
   }
   const std::string filter = filterBuf;
   const bool searching = filter.find_first_not_of(' ') != std::string::npos;
+  if (!liveLook) {  // K-218: the loop and sound filter row, on the Sounds tab and while searching
+    devFilterChips = 0;
+    if (tab == TabSounds || searching) filterRows(a, ImGui::GetContentRegionAvail().x);
+  }
 
   // ---- tree ----
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS2, theme::kS2));

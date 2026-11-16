@@ -12,7 +12,9 @@
 // A STUN server (libjuice's own) answers on 127.0.0.1, so each agent learns its router's
 // outside address. Codes are passed with only those public candidates, as across the internet.
 // The scenarios: a reply code that comes back late, an invite that sat in a chat for minutes,
-// a router that lets nothing in (symmetric on one side), and a direct join.
+// a router that lets nothing in (symmetric on one side), and a direct join. K-312: a TURN relay
+// between two symmetric routers, a second reply code that replaces the first, and the router
+// type diagnosis (each side probes its router with two address servers; codes carry the type).
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -34,6 +36,7 @@
 #include "collab/CollabSim.h"
 #include "collab/Hub.h"
 #include "collab/Link.h"
+#include "collab/NetTest.h"
 #include "juice/juice.h"
 
 using namespace gl;
@@ -69,8 +72,6 @@ struct Router {
   enum class Kind { Open, PortRestricted, Symmetric } kind = Kind::PortRestricted;
   double filterSec = 20;   // an outgoing hole stays open this long after the last packet out
   bool remap = false;      // an idle mapping is forgotten: the next packet gets a new port
-  sockaddr_in agent{};
-  bool agentKnown = false;
   struct Inside {
     int fd;
     uint16_t port;
@@ -81,6 +82,7 @@ struct Router {
     uint16_t port;
     uint16_t dest;  // symmetric: its one destination
     double lastOut = -1;
+    sockaddr_in src{};  // the computer's socket it belongs to (K-312: an ICE agent and a router probe)
   };
   std::vector<Inside> inside;
   std::vector<Outside> outside;
@@ -96,9 +98,10 @@ struct Router {
     inside.push_back(i);
     return i.port;
   }
-  Outside& outsideFor(uint16_t dest, double now) {
+  static bool same(const sockaddr_in& a, const sockaddr_in& b) { return a.sin_port == b.sin_port && a.sin_addr.s_addr == b.sin_addr.s_addr; }
+  Outside& outsideFor(const sockaddr_in& src, uint16_t dest, double now) {
     for (auto& o : outside)
-      if (kind != Kind::Symmetric || o.dest == dest) {
+      if (same(o.src, src) && (kind != Kind::Symmetric || o.dest == dest)) {
         if (remap && o.lastOut >= 0 && now - o.lastOut > filterSec) {  // forgotten: a new port
           close(o.fd);
           o.fd = udp(&o.port);
@@ -109,6 +112,7 @@ struct Router {
     Outside o{};
     o.fd = udp(&o.port);
     o.dest = dest;
+    o.src = src;
     outside.push_back(o);
     return outside.back();
   }
@@ -117,24 +121,44 @@ struct Router {
 class Net {
  public:
   explicit Net(int routers) : routers_(static_cast<size_t>(routers)) {
+    // the address server, also a TURN relay (K-312), and a second address server: asked from
+    // one socket, the two tell a symmetric router from a cone one
+    juice_server_credentials_t cred{};
+    cred.username = "relayuser";
+    cred.password = "relaypass";
+    cred.allocations_quota = 16;
     juice_server_config_t c;
     std::memset(&c, 0, sizeof c);
     c.bind_address = "127.0.0.1";
+    c.external_address = "127.0.0.1";
     c.port = 0;
+    c.credentials = &cred;
+    c.credentials_count = 1;
+    c.max_allocations = 16;
+    c.realm = "gridline-test";
     server_ = juice_server_create(&c);
     stunPort_ = server_ ? juice_server_get_port(server_) : 0;
+    juice_server_config_t c2;
+    std::memset(&c2, 0, sizeof c2);
+    c2.bind_address = "127.0.0.1";
+    c2.port = 0;
+    server2_ = juice_server_create(&c2);
+    stun2Port_ = server2_ ? juice_server_get_port(server2_) : 0;
+    deadFd_ = udp(&deadPort_);
     thread_ = std::thread([this] { loop(); });
   }
   ~Net() {
     stop_ = true;
     thread_.join();
     if (server_) juice_server_destroy(server_);
+    if (server2_) juice_server_destroy(server2_);
+    if (deadFd_ >= 0) close(deadFd_);
     for (auto& r : routers_) {
       for (auto& i : r.inside) close(i.fd);
       for (auto& o : r.outside) close(o.fd);
     }
   }
-  bool ok() const { return server_ != nullptr; }
+  bool ok() const { return server_ != nullptr && server2_ != nullptr; }
   Router& router(int i) { return routers_[static_cast<size_t>(i)]; }
   std::mutex mu;
   // The STUN server as computer `i` sees it (through its router).
@@ -142,8 +166,16 @@ class Net {
     std::lock_guard<std::mutex> lk(mu);
     return router(i).insideFor(stunPort_);
   }
+  uint16_t deadVia(int i) {  // K-312: an address server that is down (a socket that never answers)
+    std::lock_guard<std::mutex> lk(mu);
+    return router(i).insideFor(deadPort_);
+  }
+  uint16_t stun2Via(int i) {
+    std::lock_guard<std::mutex> lk(mu);
+    return router(i).insideFor(stun2Port_);
+  }
   // Computer `from`'s description as computer `to` receives it over the internet: only its
-  // public (server-reflexive) candidates, addressed through `to`'s router.
+  // public (server-reflexive) and relayed candidates, addressed through `to`'s router.
   std::string carry(const std::string& desc, int to) {
     std::lock_guard<std::mutex> lk(mu);
     std::string out;
@@ -155,7 +187,7 @@ class Net {
       at = nl + 1;
       while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
       if (line.rfind("a=candidate:", 0) == 0) {
-        if (line.find(" typ srflx") == std::string::npos) continue;
+        if (line.find(" typ srflx") == std::string::npos && line.find(" typ relay") == std::string::npos) continue;
         std::vector<std::string> f;
         size_t p = 0;
         while (p <= line.size()) {
@@ -215,16 +247,14 @@ class Net {
         Router& R = routers_[static_cast<size_t>(refs[k].router)];
         if (refs[k].inside) {  // the agent sends out
           if (refs[k].index >= R.inside.size()) continue;
-          R.agent = from;
-          R.agentKnown = true;
           const uint16_t dest = R.inside[refs[k].index].dest;
-          Router::Outside& o = R.outsideFor(dest, now);
+          Router::Outside& o = R.outsideFor(from, dest, now);
           sockaddr_in to = loopAddr(dest);
           sendto(o.fd, buf, static_cast<size_t>(n), 0, reinterpret_cast<sockaddr*>(&to), sizeof to);
           o.lastOut = now;
           R.sent[{o.fd, dest}] = now;
         } else {  // from the internet
-          if (refs[k].index >= R.outside.size() || !R.agentKnown) continue;
+          if (refs[k].index >= R.outside.size()) continue;
           const Router::Outside& o = R.outside[refs[k].index];
           if (o.fd != fds[k].fd) continue;  // remapped meanwhile
           const uint16_t src = ntohs(from.sin_port);
@@ -235,8 +265,9 @@ class Net {
             continue;
           }
           const uint16_t in = R.insideFor(src);
+          const sockaddr_in to = o.src;
           for (auto& i : R.inside)
-            if (i.port == in) sendto(i.fd, buf, static_cast<size_t>(n), 0, reinterpret_cast<sockaddr*>(&R.agent), sizeof R.agent);
+            if (i.port == in) sendto(i.fd, buf, static_cast<size_t>(n), 0, reinterpret_cast<const sockaddr*>(&to), sizeof to);
         }
       }
     }
@@ -244,7 +275,9 @@ class Net {
 
   std::vector<Router> routers_;
   juice_server_t* server_ = nullptr;
-  uint16_t stunPort_ = 0;
+  juice_server_t* server2_ = nullptr;
+  uint16_t stunPort_ = 0, stun2Port_ = 0, deadPort_ = 0;
+  int deadFd_ = -1;
   std::atomic<bool> stop_{false};
   std::thread thread_;
 };
@@ -257,14 +290,25 @@ struct Computer {
 
 sim::Clock gClock;
 
-void make(Computer& c, Net& net, int index, const std::string& label) {
+void make(Computer& c, Net& net, int index, const std::string& label, bool turn = false, bool deadFirstStun = false) {
   c.label = label;
   c.peer.label = label;
   c.peer.id = crypto::Identity::generate();
   NetSettings s;
   s.stunHost = "127.0.0.1";
   s.stunPort = net.stunVia(index);
-  s.stunFallbackHost.clear();
+  // K-312: the second address server tells the router's type (Fabric::natType)
+  s.stunBackups = {{"127.0.0.1", net.stun2Via(index)}};
+  if (deadFirstStun) {  // K-312: the first address server is down: the backups answer
+    s.stunPort = net.deadVia(index);
+    s.stunBackups = {{"127.0.0.1", net.stunVia(index)}, {"127.0.0.1", net.stun2Via(index)}};
+  }
+  if (turn) {
+    s.turnHost = "127.0.0.1";
+    s.turnPort = net.stunVia(index);
+    s.turnUser = "relayuser";
+    s.turnPass = "relaypass";
+  }
   s.loopback = true;  // the simulated internet lives on 127.0.0.1
   s.portMapping = false;
   Profile p;
@@ -306,17 +350,49 @@ struct Scenario {
   double replyAfter = 0;  // seconds between the reply code appearing and the inviter using it; < 0: never needed
   bool fresh = true;      // K-174 fresh attempts on
   double joinWait = 15 * 60;
+  bool turnInviter = false;  // K-312: the inviter has a TURN relay set
+  bool staleReply = false;   // K-312: a reply code with dead addresses is used first, the right one later
+  bool deadStun = false;     // K-312: the inviter's first address server is down
 };
 
-// Runs one join; returns whether it connected and synced. `jv` gets the joiner's last view.
-bool runScenario(const Scenario& sc, Hub::JoinView* jv = nullptr) {
+// K-312: `desc` with every candidate's port replaced by `port` (a reply code from an earlier try)
+std::string withPort(const std::string& desc, uint16_t port) {
+  std::string out;
+  size_t at = 0;
+  while (at < desc.size()) {
+    size_t nl = desc.find('\n', at);
+    if (nl == std::string::npos) nl = desc.size();
+    std::string line = desc.substr(at, nl - at);
+    at = nl + 1;
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    if (line.rfind("a=candidate:", 0) == 0) {
+      std::vector<std::string> f;
+      size_t p = 0;
+      while (p <= line.size()) {
+        size_t sp = line.find(' ', p);
+        if (sp == std::string::npos) sp = line.size();
+        f.push_back(line.substr(p, sp - p));
+        p = sp + 1;
+      }
+      if (f.size() >= 8) f[5] = std::to_string(port);
+      line.clear();
+      for (size_t k = 0; k < f.size(); ++k) line += (k ? " " : "") + f[k];
+    }
+    if (!line.empty()) out += line + "\r\n";
+  }
+  return out;
+}
+
+// Runs one join; returns whether it connected and synced. `jv` gets the joiner's last view,
+// `path` the inviter's path to the joiner.
+bool runScenario(const Scenario& sc, Hub::JoinView* jv = nullptr, std::string* path = nullptr) {
   Net net(2);
   if (!net.ok()) return false;
   net.router(0).kind = sc.inviter;
   net.router(1).kind = sc.joiner;
   net.router(0).remap = net.router(1).remap = sc.remap;
   Computer a, b;
-  make(a, net, 0, "Alex");
+  make(a, net, 0, "Alex", sc.turnInviter, sc.deadStun);
   make(b, net, 1, "Sam");
   a.hub->freshAttempts = b.hub->freshAttempts = sc.fresh;
   b.hub->joinWaitSec = sc.joinWait;
@@ -349,6 +425,16 @@ bool runScenario(const Scenario& sc, Hub::JoinView* jv = nullptr) {
     ReplyInfo r;
     if (b.hub->joinView().status == Hub::JoinStatus::NeedReply && parseReplyCode(b.hub->joinView().reply, r)) {
       r.ice = net.carry(r.ice, 0);
+      uint16_t deadPort = 0;
+      const int dead = sc.staleReply ? udp(&deadPort) : -1;  // open, never answers
+      if (sc.staleReply) {
+        ReplyInfo stale = r;
+        stale.ice = withPort(r.ice, deadPort);
+        std::string err;
+        if (!a.hub->acceptReply(makeReplyCode(stale), &err)) std::printf("# %s: stale reply: %s\n", sc.name, err.c_str());
+        frame({&a, &b}, 8);
+      }
+      if (dead >= 0) close(dead);
       if (std::getenv("GRIDLINE_COLLAB_DEBUG")) std::printf("# reply as carried:\n%s# inviter links:\n%s", r.ice.c_str(), a.hub->describeLinks().c_str());
       std::string err;
       if (!a.hub->acceptReply(makeReplyCode(r), &err)) std::printf("# %s: %s\n", sc.name, err.c_str());
@@ -371,6 +457,10 @@ bool runScenario(const Scenario& sc, Hub::JoinView* jv = nullptr) {
       });
     }
   }
+  if (path && ok) {
+    for (const auto& lv : a.hub->links())
+      if (!lv.path.empty()) *path = lv.path;
+  }
   if (jv) {
     if (!ok && sc.joinWait < 600) until({&a, &b}, sc.joinWait + 10, [&] { return b.hub->joinView().status == Hub::JoinStatus::Failed; });
     *jv = b.hub->joinView();
@@ -379,6 +469,138 @@ bool runScenario(const Scenario& sc, Hub::JoinView* jv = nullptr) {
               net.router(0).dropped, net.router(1).dropped, b.hub->joinView().attempts);
   if (!ok && std::getenv("GRIDLINE_COLLAB_DEBUG")) std::printf("# inviter links:\n%s# joiner links:\n%s", a.hub->describeLinks().c_str(), b.hub->describeLinks().c_str());
   return ok;
+}
+
+// K-312: an inviter behind a symmetric router, a joiner behind a port-restricted one: each
+// side learns its router's type, the invite carries it, and the join says at once that a
+// direct connection can't work (instead of trying for 15 minutes).
+void runDiagnosis() {
+  Net net(2);
+  if (!net.ok()) {
+    expect(false, "the test network starts");
+    return;
+  }
+  net.router(0).kind = Router::Kind::Symmetric;
+  net.router(1).kind = Router::Kind::PortRestricted;
+  Computer a, b;
+  make(a, net, 0, "Alex");
+  make(b, net, 1, "Sam");
+  // the probe alone, through each router
+  {
+    NetSettings s0, s1;
+    s0.stunHost = s1.stunHost = "127.0.0.1";
+    s0.stunPort = net.stunVia(0);
+    s0.stunBackups = {{"127.0.0.1", net.stun2Via(0)}};
+    s1.stunPort = net.stunVia(1);
+    s1.stunBackups = {{"127.0.0.1", net.stun2Via(1)}};
+    expect(probeNatType(s0, 1500) == 's', "the router probe tells a symmetric router");
+    expect(probeNatType(s1, 1500) == 'c', "the router probe tells a cone router");
+    // a server that is down is skipped: the next two in the list answer
+    NetSettings d0 = s0;
+    d0.stunPort = net.deadVia(0);
+    d0.stunBackups = {{"127.0.0.1", net.stunVia(0)}, {"127.0.0.1", net.stun2Via(0)}};
+    expect(probeNatType(d0, 700) == 's', "with the first address server down, the router type comes from the next two");
+  }
+  a.peer.doc.reset(makeEmptySong());
+  a.peer.folder = sim::tmpDir("nat_a_diag");
+  a.peer.s = Session::create(a.peer.doc, sim::config(a.peer.folder, a.peer.id, "Alex", &gClock));
+  a.hub->setSession(a.peer.s.get());
+  const std::string id = a.hub->createInvite(60);
+  until({&a}, 30, [&] { return a.hub->invite(id) && a.hub->invite(id)->status == Hub::InviteStatus::Ready; });
+  const Hub::InviteView* iv = a.hub->invite(id);
+  InviteInfo info;
+  expect(iv && parseInviteCode(iv->code, info) && info.nat == 's', "the invite code says the inviter's router is symmetric");
+  expect(iv && !iv->natNote.empty() && !iv->natBlocked, "the inviter is warned with the code that most joiners can't reach a symmetric router");
+  info.ice = net.carry(info.ice, 1);
+  b.peer.folder = sim::tmpDir("nat_b_diag");
+  b.peer.s = Session::join(b.peer.doc, sim::config(b.peer.folder, b.peer.id, "Sam", &gClock), info.ticket());
+  b.hub->setSession(b.peer.s.get());
+  const double t0 = secs();
+  expect(b.hub->join(info), "the join starts");
+  until({&a, &b}, 40, [&] { return b.hub->joinView().status != Hub::JoinStatus::Connecting; });
+  const Hub::JoinView jv = b.hub->joinView();
+  std::printf("# symmetric_diagnosis: join status %d after %.1f s\n# %s\n# %s\n", static_cast<int>(jv.status), secs() - t0, jv.message.c_str(),
+              jv.help.c_str());
+  expect(jv.status == Hub::JoinStatus::Failed && secs() - t0 < 20, "the joiner is told within seconds, not after 15 minutes");
+  expect(jv.message == joinProblemText(JoinProblem::DirectImpossible, "Alex") && jv.help.find("TURN") != std::string::npos &&
+             jv.help.find("private network") != std::string::npos && jv.help.find("VPN") == std::string::npos && jv.help.find("forwarded") != std::string::npos,
+         "it says the two routers can't connect directly and what works instead");
+  // the inviter learns it from a reply code (a joiner on a cone router)
+  ReplyInfo r;
+  r.inviteId = iv->id;
+  r.ice = "a=candidate:1 1 UDP 1686052607 127.0.0.1 40000 typ srflx raddr 0.0.0.0 rport 0\r\n";
+  r.nat = 'c';
+  ReplyInfo back;
+  expect(parseReplyCode(makeReplyCode(r), back) && back.nat == 'c', "a reply code carries the joiner's router type");
+  expect(a.hub->acceptReply(makeReplyCode(r)) && a.hub->invite(id)->natBlocked, "the inviter sees at once that this joiner can't connect directly");
+}
+
+// K-312: the diagnosis rules without a network
+void unitChecks() {
+  const std::string srflx = "a=candidate:1 1 UDP 1686052607 198.51.100.7 40000 typ srflx raddr 0.0.0.0 rport 0\r\n";
+  const std::string mapped = "a=candidate:9 1 UDP 1694498815 198.51.100.7 40001 typ srflx raddr 0.0.0.0 rport 0\r\n";
+  const std::string relay = "a=candidate:2 1 UDP 16777215 192.0.2.10 50000 typ relay raddr 0.0.0.0 rport 0\r\n";
+  const std::string v6 = "a=candidate:3 1 UDP 2122260223 2001:db8::5 40002 typ host\r\n";
+  expect(directImpossible('s', srflx, 'c', srflx) && directImpossible('c', srflx, 's', srflx) && directImpossible('s', srflx, 's', srflx),
+         "a symmetric router against a known router, nothing open: direct can't work");
+  expect(!directImpossible('c', srflx, 'c', srflx), "two cone routers: hole punching can work");
+  expect(!directImpossible('s', srflx, 'u', srflx) && !directImpossible('u', srflx, 's', srflx), "an unknown router (an older Gridline) is never ruled out");
+  expect(!directImpossible('s', srflx, 'c', srflx + mapped) && !directImpossible('s', srflx + mapped, 'c', srflx), "a router port mapping on either side lets it in");
+  expect(!directImpossible('s', srflx + relay, 'c', srflx) && !directImpossible('s', srflx, 'c', srflx + relay), "a TURN relay on either side carries it");
+  expect(!directImpossible('s', srflx + v6, 'c', srflx + v6) && directImpossible('s', srflx + v6, 'c', srflx), "IPv6 on both sides avoids the routers");
+  InviteInfo i;
+  i.projectId = "p";
+  i.creator = 1;
+  crypto::Identity id = crypto::Identity::generate();
+  i.inviter = id.site();
+  i.inviterSign = id.signPublic;
+  i.creatorSign = id.signPublic;
+  i.inviteId = std::string(16, 'x');
+  i.nat = 's';
+  InviteInfo back;
+  expect(parseInviteCode(makeInviteCode(i), back) && back.nat == 's', "an invite code carries the inviter's router type");
+  i.nat = 'u';
+  expect(parseInviteCode(makeInviteCode(i), back) && back.nat == 'u', "an unknown router type reads back as unknown (as codes from older versions do)");
+  // K-312: the address server list
+  const auto l = parseStunList(" stun.example.org:19302, stun:other.example.net ;198.51.100.4:3479\n bad:0, ");
+  expect(l.size() == 3 && l[0].host == "stun.example.org" && l[0].port == 19302 && l[1].host == "other.example.net" && l[1].port == 3478 &&
+             l[2].port == 3479,
+         "the backup list reads host:port entries (3478 by default), drops bad ones");
+  expect(parseStunList(formatStunList(l)).size() == 3 && formatStunList(parseStunList(kDefaultStunBackups)) == kDefaultStunBackups, "and writes them back");
+  NetSettings ns;
+  ns.stunBackups = {{ns.stunHost, ns.stunPort}, {"stun.cloudflare.com", 3478}};
+  expect(stunServers(ns).size() == 2 && stunServers(ns)[0].host == ns.stunHost, "the server list starts with the address server, without repeats");
+  ns.stunHost.clear();
+  expect(stunServers(ns).size() == 2, "no main address server: the backups still answer");
+  // half-filled TURN settings
+  NetSettings t;
+  t.turnUser = "me";
+  t.turnPass = "secret";
+  expect(turnConfigProblem(t).find("TURN server missing") == 0, "a TURN user and password without a server: TURN server missing");
+  t.turnHost = "turn.example.org";
+  expect(turnConfigProblem(t).empty(), "a complete TURN setting: no warning");
+  t.turnUser.clear();
+  t.turnPass.clear();
+  expect(!turnConfigProblem(t).empty(), "a TURN server without a user name: a warning");
+  expect(turnConfigProblem(NetSettings()).empty(), "no TURN at all: no warning");
+  // what the port mapper said, per protocol
+  const std::string none = describePortMapping({"Probing PCP...", "Falling back to NAT-PMP", "Probing NAT-PMP...", "Probing gateway with SSDP"}, true);
+  expect(none.find("PCP: no answer") != std::string::npos && none.find("NAT-PMP: no answer") != std::string::npos &&
+             none.find("UPnP: no router answered") != std::string::npos && none.find("15 seconds") != std::string::npos,
+         "no answer on any protocol: each one named");
+  const std::string refused = describePortMapping({"Probing PCP...", "Falling back to NAT-PMP", "Got NAT-PMP error response, result=2", "Found UPnP-IGD device: x",
+                                                   "Got unknown UPnP error"},
+                                                  false);
+  expect(refused.find("NAT-PMP: the router refused (2)") != std::string::npos && refused.find("UPnP: the router refused") != std::string::npos,
+         "a refusal says which protocol refused");
+  // a TURN allocation against a server that is not there fails in plain words
+  NetSettings dead;
+  dead.turnHost = "127.0.0.1";
+  dead.turnPort = 9;
+  dead.turnUser = "u";
+  dead.turnPass = "p";
+  std::string why;
+  expect(!tryTurnAllocation(dead, 3000, &why) && !why.empty(), "a TURN server that does not answer: the test says so");
 }
 
 }  // namespace
@@ -390,9 +612,10 @@ bool want(const char* name) {
 }
 
 int main() {
+  unitChecks();
   if (std::getenv("GRIDLINE_SKIP_NAT_TEST")) {
     std::printf("# skipped (GRIDLINE_SKIP_NAT_TEST)\n");
-    return 0;
+    return finish();
   }
   {
     Scenario s;
@@ -437,6 +660,35 @@ int main() {
     if (want(s.name)) expect(!runScenario(s, &jv), "a symmetric router on one side and a strict one on the other can't connect directly");
     if (want(s.name)) expect(jv.status == Hub::JoinStatus::Failed && jv.message.find("Alex") != std::string::npos && jv.help.find("TURN") != std::string::npos,
            "that join ends with what happened and what to try (a relay)");
+  }
+  {
+    Scenario s;
+    s.name = "turn_relay";
+    s.inviter = Router::Kind::Symmetric;
+    s.joiner = Router::Kind::Symmetric;
+    s.turnInviter = true;
+    s.replyAfter = 5;
+    std::string path;
+    if (want(s.name)) {
+      expect(runScenario(s, nullptr, &path), "two symmetric routers connect through the inviter's TURN relay");
+      expect(path == "relay", "and the link says it is relayed");
+    }
+  }
+  {
+    Scenario s;
+    s.name = "second_reply";
+    s.replyAfter = 5;
+    s.staleReply = true;
+    if (want(s.name)) expect(runScenario(s), "a second reply code with other addresses replaces the first one and connects");
+  }
+  if (want("symmetric_diagnosis")) runDiagnosis();
+  {
+    Scenario s;
+    s.name = "stun_down";
+    s.inviter = Router::Kind::Open;
+    s.replyAfter = -1;
+    s.deadStun = true;
+    if (want(s.name)) expect(runScenario(s), "the inviter's first address server is down: the next one answers and the join connects");
   }
   return finish();
 }

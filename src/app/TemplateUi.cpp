@@ -334,7 +334,7 @@ void saveTemplateWindow(App& a) {
   ui::DialogFooter(96 * 2 + theme::kS2);
   bool cancel = ui::TextButton("Cancel", false, 96) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
-  bool ok = ui::PrimaryButton("Save", 96);
+  bool ok = ui::PrimaryButton("Save", 96) || ::gl::keys::defaultPressed();
   ImGui::End();
   if (ok && T.name[0]) {
     if (a.saveAsTemplate(T.name, T.category, T.desc)) a.showSaveTemplate = false;

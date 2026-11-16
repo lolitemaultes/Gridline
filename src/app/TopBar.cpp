@@ -5,6 +5,7 @@
 // Gridline panels. It is responsive: every group knows its width up front, and
 // when the window is too narrow the least important groups move into the "⋯"
 // overflow popup instead of overlapping or being clipped.
+#include "RecordCard.h"
 #include "../core/MenuParity.h"
 #include "../core/Timeline.h"
 #include <algorithm>
@@ -665,7 +666,7 @@ float drawTopBar(App& a) {
     if (ui::IconButton("rec", ui::Icon::Record, a.recordArmed, kBtn,
                        "Record: notes, controller moves and armed mixer inputs (right-click: what to record, punch, count-in)", P.danger,
                        theme::withAlpha(P.danger, 0.7f), true))
-      a.recordArmed = !a.recordArmed;
+      a.recordArmed = !a.recordArmed, recordcard::recordClicked(a, ImGui::GetIO().KeyShift);  // K-123: the card
     noteRect("rec");
     if (ImGui::BeginPopupContextItem("##recmenu")) {
       recordOptionsMenu(a);
@@ -1121,7 +1122,7 @@ static float drawTopBarLogic(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
     if (ui::IconButton("rec", ui::Icon::Record, a.recordArmed, kBtn, hintKey("Record (right-click: what to record, punch, count-in)", "transport.record").c_str(),
                        P.arm, theme::withAlpha(P.arm, 0.7f), true))
-      a.recordArmed = !a.recordArmed;
+      a.recordArmed = !a.recordArmed, recordcard::recordClicked(a, ImGui::GetIO().KeyShift);  // K-123: the card
     noteRect("rec");
     if (ImGui::BeginPopupContextItem("##recmenu")) {
       recordOptionsMenu(a);
@@ -1358,7 +1359,10 @@ static float drawTrackerMenuRow(App& a) {
   char cpu[16];
   std::snprintf(cpu, sizeof cpu, "%3d%%", CpuMeter::displayPercent(a.engine.cpuLoad()));
   const float labelW = std::ceil(mono->CalcTextSizeA(lf, FLT_MAX, 0, "OUT").x) + 4;
-  const float cpuW = std::ceil(mono->CalcTextSizeA(lf, FLT_MAX, 0, "CPU 100%").x);
+  // K-106 cp13: a hidden (scripted) run shows no load: its audio runs on the silent test driver beside
+  // whatever else the machine is doing, so the reading (often 100%) says nothing about Gridline.
+  const bool showCpu = !sysmenu::hiddenRun();
+  const float cpuW = showCpu ? std::ceil(mono->CalcTextSizeA(lf, FLT_MAX, 0, "CPU 100%").x) : -10.0f;
   const float meterW = 90, boxW = 6 + labelW + meterW + 10 + cpuW + 6;
   const ImVec2 b0(std::round(wp.x + W - 4 - boxW), my), b1(std::round(wp.x + W - 4), my + btnH);
   if (b0.x > x + 8) {
@@ -1370,7 +1374,7 @@ static float drawTrackerMenuRow(App& a) {
     outMeter(dl, ImVec2(b0.x + 6 + labelW, std::round(b0.y + (btnH - 9) * 0.5f)), ImVec2(meterW, 9), out);
     const float load = std::clamp(a.engine.cpuLoad(), 0.0f, 1.0f);
     std::string c = std::string("CPU ") + cpu;
-    dl->AddText(mono, lf, ImVec2(b1.x - 6 - cpuW, ty), load > 0.8f ? P.danger : P.textDim, c.c_str());
+    if (showCpu) dl->AddText(mono, lf, ImVec2(b1.x - 6 - cpuW, ty), load > 0.8f ? P.danger : P.textDim, c.c_str());
     ImGui::SetCursorScreenPos(b0);
     if (ImGui::InvisibleButton("##mon", ImVec2(b1.x - b0.x, b1.y - b0.y))) a.showPerformance = !a.showPerformance;
     ui::Hint("Master output level and audio processing load (click: Performance window)");
@@ -1705,7 +1709,7 @@ static float drawTopBarLive(App& a) {
     dl->AddRectFilled(ImVec2(mx + 9, cy + 7), ImVec2(mx + 17, cy + kH - 7), P.text, 1.0f);
     mx += 28;
     if (flat("##reclive", mx, 26, false, keyHint("Record (right-click: what to record, punch, count-in)", "transport.record").c_str(), true))
-      livelook::toggleArrangementRecord(a);
+      livelook::toggleArrangementRecord(a), recordcard::recordClicked(a, ImGui::GetIO().KeyShift);  // K-123: the card
     noteRect("rec");
     if (ImGui::BeginPopupContextItem("##recmenu")) {
       recordOptionsMenu(a);
@@ -1933,6 +1937,42 @@ void cycleToSelection(App& a) {
   a.playlist.selStart = lo, a.playlist.selEnd = hi;
 }
 
+bool locators(const App& a, Tick& l, Tick& r) {
+  const PlaylistState& pst = a.playlist;
+  const Song& s = a.doc.song();
+  if (pst.selEnd > pst.selStart) l = pst.selStart, r = pst.selEnd;
+  else if (s.cycleEnd > s.cycleStart) l = s.cycleStart, r = s.cycleEnd;
+  else return false;
+  return true;
+}
+
+void gotoLocator(App& a, bool right) {
+  Tick l = 0, r = 0;
+  if (!locators(a, l, r)) {
+    a.setHint(i18n::tr("No locators set: drag across the bar ruler to set them"));
+    return;
+  }
+  if (a.engine.mode() != PlayMode::Song) a.engine.setMode(PlayMode::Song);
+  a.engine.setPosition(right ? r : l);
+}
+
+void locatorsToSelection(App& a) {
+  if (a.playlist.selEnd > a.playlist.selStart) return cycleToSelection(a);
+  const Song& s = a.doc.song();
+  Tick lo = -1, hi = -1;
+  for (const Clip& c : s.playlist)
+    if (a.playlist.selected.count(c.id)) {
+      lo = lo < 0 ? c.start : std::min(lo, c.start);
+      hi = std::max(hi, c.start + s.clipLength(c));
+    }
+  if (lo < 0 || hi <= lo) {
+    a.setHint(i18n::tr("Select regions first: the locators then frame them"));
+    return;
+  }
+  // Transport state (R04-10): no undo step; Cycle stays off, so the area shows grey.
+  a.doc.patchSong([lo, hi](Song& x) { x.cycleStart = lo, x.cycleEnd = hi, x.cycleOn = false; });
+}
+
 void gotoMarker(App& a, int dir) {
   const Song& s = a.doc.song();
   const Tick pos = static_cast<Tick>(a.engine.position());
@@ -2106,10 +2146,7 @@ static float drawLogicControlBar(App& a) {
         {"##tb_split", ui::Icon::ToolSlice, i18n::N_("Split"), i18n::N_("Split the selected regions at the playhead"), "playlist.splitAtSongPos",
          [](App& x) { tracksSplitAtPlayhead(x); }, [](App& x) { return !x.playlist.selected.empty(); }},
         {"##tb_join", ui::Icon::CirclesMerged, i18n::N_("Join"), i18n::N_("Join the selected regions into one"), "playlist.merge",
-         [](App& x) {
-           const ObjectId nc = ops::mergeClips(x.doc, x.playlist.selected);
-           if (nc) x.playlist.selected = {nc};
-         },
+         [](App& x) { tracksJoin(x); },  // checkpoint 47: the Join tool's rules
          [](App& x) { return x.playlist.selected.size() >= 2; }},
         {"##tb_rep", ui::Icon::Clone, i18n::N_("Repeat"), i18n::N_("Repeat the selected regions after themselves"), "playlist.duplicate",
          [](App& x) { menus::editDuplicate(x); }, [](App& x) { return !x.playlist.selected.empty(); }},
@@ -2253,7 +2290,8 @@ static float drawLogicControlBar(App& a) {
   const bool showMaster = a.settings.getBool("ui.cbar.master");
   // K-112b (checkpoint 25): cycle sits in the transport after record, as 216, 125 and 150 have it.
   const bool showCycle = a.settings.getBool("ui.cbar.cycle");
-  auto transportCount = [&] { return (showNav ? 6 : 3) + (showCycle ? 1 : 0); };
+  const bool showStart = a.settings.getBool("ui.cbar.toStart");  // A3 (checkpoint 48): hidden by default
+  auto transportCount = [&] { return (showNav ? (showStart ? 6 : 5) : 3) + (showCycle ? 1 : 0); };
   {
     // Checkpoint 33: the transport and display always fit between the left groups and the right group
     // (at 150 % the right group covered the display's end): first the start, back and forward buttons
@@ -2281,9 +2319,11 @@ static float drawLogicControlBar(App& a) {
     barGroup(dl, ImVec2(cx, ty), ImVec2(cx + transportW, ty + tb));
     gGrouped = true;
     if (showNav) {
-    if (barPill("##lb_start", ImVec2(cx, ty), ImVec2(tb, tb), ui::Icon::ChevronLeft, nullptr, false, hintWithKey("Go to the start", "transport.toStart").c_str()))
-      a.engine.setPosition(0);
-    cx += tb + gi;
+    if (showStart) {
+      if (barPill("##lb_start", ImVec2(cx, ty), ImVec2(tb, tb), ui::Icon::ChevronLeft, nullptr, false, hintWithKey("Go to the start", "transport.toStart").c_str()))
+        a.engine.setPosition(0);
+      cx += tb + gi;
+    }
     if (barPill("##lb_back", ImVec2(cx, ty), ImVec2(tb, tb), ui::Icon::Left, nullptr, false, hintWithKey("Back one bar", "transport.rewindBar").c_str()))
       a.engine.setPosition(std::max<Tick>(0, songBars ? MeterMap(s).barStartAt(std::max<Tick>(0, pos - 1)) : (pos - 1) / bar * bar));
     cx += tb + gi;
@@ -2307,16 +2347,9 @@ static float drawLogicControlBar(App& a) {
     // Checkpoint 31: a white triangle at rest that turns green while playing, as 070, 216 and 150 draw it
     // (it was green at rest and a filled orange pause while playing); a click still pauses.
     if (barPill("play", ImVec2(cx, ty), ImVec2(tb, tb), ui::Icon::Play, nullptr, false,
-                playTip.empty() ? hintWithKey("Play / pause", "transport.play").c_str() : playTip.c_str(), playing ? theme::rgb(theme::role::kPlay) : 0, false))
+                playTip.empty() ? hintWithKey("Play / pause", "transport.play").c_str() : playTip.c_str(), playing ? theme::rgb(0x34C759) : 0, false))
       playing ? a.engine.pause() : (void)menuparity::playPressed(a);
-    if (playing) {
-      // Checkpoint 36: while playing, a green disc behind a light triangle, as 216 shows the running
-      // transport (the green triangle alone read faintly on the grey capsule).
-      const ImVec2 pc(std::round(cx + tb * 0.5f), std::round(ty + tb * 0.5f));
-      const ImU32 disc = theme::mix(theme::rgb(0x1F8A3C), P.text, ImGui::IsItemHovered() ? 0.08f : 0.0f);  // the deep green of 216, not the lime play role (it went olive on the capsule)
-      dl->AddCircleFilled(pc, std::round(tb * 0.5f) - 3.0f, disc, 28);
-      ui::drawIcon(dl, ui::Icon::Play, pc, 16.0f, theme::contrastText(disc));
-    }
+    // A2 (checkpoint 48): a bare green triangle while playing, no disc, as the reference's.
     noteRect("play");
     cx += tb + gi;
     if (barPill("rec", ImVec2(cx, ty), ImVec2(tb, tb), ui::Icon::Record, nullptr, false,
@@ -2417,7 +2450,7 @@ static float drawLogicControlBar(App& a) {
       const size_t c1 = posText.find(':'), c2 = c1 == std::string::npos ? c1 : posText.find(':', c1 + 1);
       const double at = a.engine.position();
       if (lcdCustom) {  // clock time over the position in bars
-        rows(l0.x, posW, ops::formatSongTime(s, at, ops::TimeFormat::MinSecCs), bars(at),
+        rows(l0.x, posW, lcdClock(s, at), bars(at),  // R07-12: the clock as the other modes write it
              P.textDim, P.text);
       } else if (lcdMode == 3) {  // R05-16: beats and time: the position in bars over the clock time
         const Lbbdt q = lcdBbdt(s, at);
@@ -2504,16 +2537,16 @@ static float drawLogicControlBar(App& a) {
         caption(l0.x + posW * 0.5f, i18n::N_("Position"));
       }
     }
-    if (lcdCustom) {  // the cycle range: its start over its end (dim without one)
-      const PlaylistState& ps = a.playlist;
-      const bool has = ps.selEnd > ps.selStart;
+    if (lcdCustom) {  // the locators: the left over the right (checkpoint 47: also with Cycle off, dimmer)
+      Tick ll = 0, lr = 0;
+      const bool has = locators(a, ll, lr), on = a.playlist.selEnd > a.playlist.selStart;
       ImGui::SetCursorScreenPos(ImVec2(l0.x + posW, l0.y));
       ImGui::InvisibleButton("##lcdloc", ImVec2(locW, lcdH));
-      ui::Hint("Cycle range: its start over its end");
+      ui::Hint("Locators: the left over the right (click one to go there)");
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && has) gotoLocator(a, ImGui::GetIO().MousePos.y > l0.y + lcdH * 0.5f);
       noteRectAt("lcd_locators", ImVec2(l0.x + posW, l0.y), ImVec2(l0.x + third, l1.y));
-      rows(l0.x + posW, locW, bars(static_cast<double>(ps.selStart)),
-           bars(static_cast<double>(has ? ps.selEnd : ps.selStart)), has ? P.text : P.textFaint,
-           has ? P.text : P.textFaint);
+      const ImU32 lc = on ? P.text : has ? P.textDim : P.textFaint;
+      rows(l0.x + posW, locW, bars(static_cast<double>(ll)), bars(static_cast<double>(has ? lr : ll)), lc, lc);
     }
     if (!lcdAlone) caption(l0.x + third + tempoW * 0.5f, i18n::N_("Tempo"));
     if (!lcdAlone) {
@@ -2550,7 +2583,9 @@ static float drawLogicControlBar(App& a) {
       ui::Hint(songTime ? "Meter at the song position (click to edit)" : "Meter of the pattern (click: the song's meter at the start)");
       const float mf = theme::kFontTitle, kf = theme::kFontCaption;  // sizes the app already uses
       const float sw = a.fontBold->CalcTextSizeA(mf, 1e9f, 0, sig).x;
-      const std::string grid = a.playlist.effGrid > 0 ? timeline::gridName(s, a.playlist.effGrid) : std::string();
+      std::string grid = a.playlist.effGrid > 0 ? timeline::gridName(s, a.playlist.effGrid) : std::string();
+      if (lcdCustom && a.playlist.effGrid > 0 && (4 * static_cast<Tick>(s.ppq)) % a.playlist.effGrid == 0)  // R07-12: the division, "/16"
+        grid = "/" + std::to_string((4 * static_cast<Tick>(s.ppq)) / a.playlist.effGrid);
       // Checkpoint 35: the key in short form under the meter ("Cmaj", "Bmin"), from the key marker's
       // root and scale, in the text colour a step under the meter's size, as 001, 216 and 158 set it
       // (it was the marker's own name, dim and small).
@@ -2760,7 +2795,8 @@ static float drawLogicControlBar(App& a) {
         const bool on = a.settings.getBool(key);
         if (ImGui::MenuItem(i18n::tr(label), nullptr, on)) a.settings.set(key, !on);
       };
-      item(i18n::N_("Go to the start, back and forward"), "ui.cbar.nav");
+      item(i18n::N_("Rewind and forward"), "ui.cbar.nav");
+      item(i18n::N_("Go to the start"), "ui.cbar.toStart");
       ImGui::Separator();
       item(i18n::N_("Cycle"), "ui.cbar.cycle");
       item(i18n::N_("Count-in"), "ui.cbar.countIn");
@@ -2772,7 +2808,7 @@ static float drawLogicControlBar(App& a) {
       lcdModeItems(a);
       ImGui::Separator();
       if (ImGui::MenuItem(i18n::tr("Show everything"))) {
-        for (const char* k : {"ui.cbar.nav", "ui.cbar.cycle", "ui.cbar.countIn", "ui.cbar.click", "ui.cbar.typing", "ui.cbar.master"}) a.settings.set(k, true);
+        for (const char* k : {"ui.cbar.nav", "ui.cbar.toStart", "ui.cbar.cycle", "ui.cbar.countIn", "ui.cbar.click", "ui.cbar.typing", "ui.cbar.master"}) a.settings.set(k, true);
         a.settings.set("ui.lcdMode", 0);
       }
       ImGui::EndPopup();

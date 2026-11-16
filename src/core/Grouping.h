@@ -45,7 +45,8 @@ bool deletePatternGroup(Document& d, int group);
 // Groups the clips (at least two); returns the group id (kNoId = none made).
 ObjectId groupClips(Document& d, const std::set<ObjectId>& clips);
 int ungroupClips(Document& d, const std::set<ObjectId>& clips);
-// The selection plus every clip that shares a group with a selected clip.
+// The selection plus every clip that shares a group with a selected clip (K-123: and
+// every take of a take group recorded as lanes, all on one track).
 std::set<ObjectId> expandClipGroups(const Song& s, const std::set<ObjectId>& clips);
 
 // ----------------------------------------------------------------- step loops ----

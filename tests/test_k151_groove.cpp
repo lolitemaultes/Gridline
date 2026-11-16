@@ -832,6 +832,68 @@ void testSwingAutomation() {
   expect(again.size() == 3 && near(again[1], 384.0 + full, 0.5) && near(again[2], 768.0 + half, 0.5), "FLP: the imported song swings as the original");
 }
 
+// K-152: the groove's accents are a song parameter too (Groove accents): automated, each pass of a
+// pattern clip plays with the accent the automation has where the pass starts; the knob's value,
+// undo and saves go through the parameter.
+void testAccentAutomation() {
+  ObjectId ch = kNoId;
+  Song s = grooveSong(96, ch);
+  s.swing = 0.5f;
+  s.groove.shape.velocity = {1.0f, 0.5f};  // the off-beat cell at half velocity at full accent
+  s.groove.accent = 1.0f;
+  s.patterns[0].steps[ch] = std::vector<uint8_t>(16, 0);
+  s.patterns[0].steps[ch][0] = 100;
+  s.patterns[0].steps[ch][1] = 100;
+  Clip second = s.playlist[0];
+  second.id = s.allocateId();
+  second.start = 384;
+  s.playlist.push_back(second);
+  AutomationClip a;
+  a.id = s.allocateId();
+  a.owner = kSongId;
+  a.index = static_cast<uint32_t>(SongParam::GrooveAccent);
+  a.points = {{0, 0.0f, 0, AutoShape::Hold}, {384, 1.0f, 0, AutoShape::Hold}};
+  s.automations.push_back(a);
+  Clip ac;
+  ac.id = s.allocateId(), ac.kind = ClipKind::Automation, ac.source = a.id, ac.start = 0, ac.length = 768, ac.track = 1;
+  s.playlist.push_back(ac);
+  auto vels = [&](const Song& song) {
+    ProgramBuilder b;
+    auto prog = b.build(song);
+    std::vector<std::pair<double, float>> out;
+    const int ci = song.channelIndex(ch);
+    if (prog && ci >= 0)
+      for (const NoteEv& e : prog->channels[static_cast<size_t>(ci)].song) out.push_back({noteOnTick(e), e.velocity});
+    std::sort(out.begin(), out.end());
+    return out;
+  };
+  const auto got = vels(s);
+  expect(got.size() == 4, "accent automation: two passes, four steps");
+  if (got.size() == 4) {
+    std::printf("# accent automation velocities: %.3f %.3f | %.3f %.3f\n", static_cast<double>(got[0].second), static_cast<double>(got[1].second),
+                static_cast<double>(got[2].second), static_cast<double>(got[3].second));
+    expect(near(got[1].second, got[0].second, 1e-6), "accent automation: at 0 the first pass plays no accents");
+    expect(got[3].second < got[2].second * 0.75f, "accent automation: at full the second pass's off-beat is quieter");
+    expect(near(got[1].first, got[3].first - 384.0, 1e-6), "accent automation: the timing is the same in both passes");
+  }
+  Song m = s;
+  m.playlist.back().muted = true;  // muted: the project's accent (full) on both passes
+  const auto plain = vels(m);
+  expect(plain.size() == 4 && near(plain[1].second, plain[3].second, 1e-6) && plain[1].second < plain[0].second,
+         "accent automation: a muted clip leaves the project's accent");
+  // The parameter: name, value, set with one undo step, saved.
+  Document d(s);
+  const ParamId pid = songParam(SongParam::GrooveAccent);
+  const auto desc = describeParam(d.song(), pid);
+  expect(desc && desc->name == "Groove accents", "accent parameter: named");
+  d.setParam(pid, 0.25, false);
+  expect(near(d.song().groove.accent, 0.25f, 1e-6), "accent parameter: sets the groove's accent");
+  d.undo();
+  expect(near(d.song().groove.accent, 1.0f, 1e-6), "accent parameter: one undo step");
+  Song back;
+  expect(songFromJson(songToJson(s), back) && back == s, "accent automation: saved and loaded losslessly");
+}
+
 int main() {
   const std::string& tmp = gl::test::hermeticTestEnv("k151");
   const std::string root = (fs::path(tmp) / "presets").string();
@@ -848,5 +910,6 @@ int main() {
   testScripts(root);
   testFreeze();
   testSwingAutomation();
+  testAccentAutomation();
   return finish();
 }

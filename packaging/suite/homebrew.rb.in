@@ -1,0 +1,30 @@
+# Homebrew cask for @SUITE_NAME@ (for a tap of Gridline's own): the plugins without the app.
+# Template: packaging/render.py fills in the version and checksum.
+cask "@SUITE_PKG@" do
+  version "@VERSION@"
+  sha256 "@SHA256:@SUITE_KEY@-macos-all.zip@"
+
+  url "https://github.com/lolitemaultes/Gridline/releases/download/v#{version}/@SUITE_FILE@-#{version}-macos-all.zip"
+  name "@SUITE_NAME@"
+  desc "@SUITE_DESC@"
+  homepage "https://github.com/lolitemaultes/Gridline"
+
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
+  depends_on macos: ">= :big_sur"
+
+  vst3_plugin "@SUITE_NAME@/VST3/Gridline Suite/@SUITE_NAME@.vst3"
+  audio_unit_plugin "@SUITE_NAME@/Components/@SUITE_NAME@.component"
+  artifact "@SUITE_NAME@/CLAP/Gridline Suite/@SUITE_NAME@.clap", target: "~/Library/Audio/Plug-Ins/CLAP/@SUITE_NAME@.clap"
+
+  caveats <<~EOS
+    @SUITE_NAME@ is signed ad hoc, not notarised. If your music program cannot open the
+    plugins, remove the download flag, then rescan plugins:
+      xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/@SUITE_NAME@.vst3 \
+        ~/Library/Audio/Plug-Ins/CLAP/@SUITE_NAME@.clap ~/Library/Audio/Plug-Ins/Components/@SUITE_NAME@.component
+    The Gridline app (cask gridline) already carries these plugins: install one or the other.
+  EOS
+end

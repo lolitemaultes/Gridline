@@ -163,6 +163,7 @@ The join window always says what happened and what to try:
 | This invite is no longer open on the inviter's computer | It was cancelled or replaced, or Gridline was restarted there. | Ask for a new invite. |
 | ... is on Gridline 0.7.x / a different build | Both of you need the same version. | Update the older one (the message says which). |
 | Couldn't reach ...'s computer | No packets got through in 15 minutes. | Check that they pressed **Use reply** with your code, turn off VPNs, allow Gridline through the firewall, then run **Test my connection** on both computers. |
+| ...'s router and this one can't connect directly | One router is a symmetric NAT (a new public port for every destination), the other lets in only answers it asked for, and neither opened a port. Gridline tells within seconds instead of trying for 15 minutes. | Run your own TURN relay ([guide](turn-relay.md)) and set it on either computer, forward a UDP port on one router (**UDP port** in Settings > Collaboration), join both computers to one private network, or have a collaborator who reaches you both invite you. |
 | This computer couldn't find its public internet address | The address servers did not answer, so only the same network works. | Check the connection; a firewall, VPN or network filter (school, office, public Wi-Fi) may block them. Try another network, or set a STUN or TURN server. |
 | The computers reached each other, but ...'s Gridline did not answer | The invite was closed while you connected. | Ask for a new invite. |
 
@@ -170,10 +171,15 @@ The join window always says what happened and what to try:
 public networks, and macOS whether to accept incoming connections. Allow both: a denied Gridline
 can still reach out, but the other computer's answers may be blocked.
 
-**Strict routers.** When **Test my connection** says *symmetric NAT* on one side and the other side
-is also strict, or both sides are on mobile or carrier networks that share one public address
-among many customers, a direct connection usually can't work. A collaborator who reaches both of
-you carries the connection, or a TURN relay set in Settings > Collaboration.
+**Strict routers.** When **Test my connection** says *symmetric NAT* on one side, a direct
+connection works only if the other side lets connections in (automatic port opening or a forwarded
+port); with most home routers it can't. The same goes for two mobile or carrier networks that share
+one public address among many customers. Each computer learns its router's type when it makes an
+invite or joins, and the codes carry it, so the join window says so at once. A collaborator who
+reaches both of you carries the connection, or a TURN relay you run yourself
+([Run your own relay](turn-relay.md)), or a UDP port forwarded on one router, or a private network
+that both computers join. Gridline runs no relay or server of its own. *Cone NAT* on your side is good news, but it can't help when the other
+side is symmetric.
 
 ### Joining a project you already have
 
@@ -597,9 +603,10 @@ Gridline connects the computers directly, in this order:
 1. **Direct, on the same network or with IPv6.** Usually just works.
 2. **Hole punching** (ICE with STUN). Both computers learn their public address from a STUN
    server and send to each other at the same moment. This works through most home routers and no
-   port has to be opened by hand. When the default STUN server does not answer (some networks
-   block it), the next attempt asks a second one (stun.cloudflare.com); it too sees only your IP
-   address. A STUN server you set yourself is used on its own.
+   port has to be opened by hand. When the STUN server does not answer (some networks block it),
+   Gridline asks the backup servers in order (by default `stun.cloudflare.com` and
+   `stun1.l.google.com`; **Backup servers** in Settings > Collaboration edits the list, **Default**
+   restores it); each sees only your IP address. Test my connection says which ones answered.
 3. **Automatic port opening.** If allowed (Settings > Collaboration, on by default), Gridline asks
    your router for a temporary port (UPnP-IGD, NAT-PMP or PCP) and removes it again when the
    project closes.
@@ -615,8 +622,10 @@ often; when **both** sides are behind carrier-grade NAT (many mobile networks) o
 NAT, rarely without a third collaborator or a TURN server. When it fails, the Collaboration panel
 says "Couldn't connect directly to Sam. Your network or theirs blocks peer-to-peer connections."
 and lists what is left. **Test my connection** (in the panel and in Settings > Collaboration)
-reports your router's behaviour, whether automatic port opening works and whether IPv6 is
-available.
+reports your router's behaviour, whether automatic port opening works (it waits up to 15 seconds,
+and when it doesn't work it says which method the router refused or ignored), whether IPv6 is
+available and, when a TURN server is set, whether it really gives a relay. A TURN user name or
+password without a server is flagged as "TURN server missing".
 
 After a restart, members find each other again by themselves when their routers kept the same
 addresses (common), or through any collaborator who is online. Otherwise, use **Reconnect with a
@@ -699,8 +708,11 @@ server (J-146).
   identity** makes new keys; you then have to be invited again to every collaborative project.
 * **Show that I am online to collaborators**: whether your collaborators' welcome screens can see
   that you are working on a project (see Presence on the welcome screen).
-* **Connection**: collaboration version status, automatic port opening, the STUN server, an
-  optional TURN relay (the password is kept in the system's secure store), **Test my connection**.
+* **Connection**: collaboration version status, automatic port opening, the STUN server and its
+  **Backup servers** (asked in order when one does not answer), **UDP port** (a fixed port, for a
+  port you forward on your router; tick "My router forwards this UDP port to this computer"), an
+  optional TURN relay you run yourself ([Run your own relay](turn-relay.md); the password is kept
+  in the system's secure store), **Test my connection**.
 
 ## Privacy and security
 
@@ -713,13 +725,14 @@ server (J-146).
   secret and by the inviter's key in the code; later connections between members by their keys.
 * Gridline contacts a **STUN server** (by default `stun.l.google.com`; you can change it or leave it
   empty for the same network only) to learn your public address. That server sees your IP address
-  and nothing else. **Test my connection** additionally asks `stun.cloudflare.com` and your router;
-  with the default server, a connection attempt that got no answer from it also asks
-  `stun.cloudflare.com` next time.
+  and nothing else. When it does not answer, the **backup servers** of the list are asked in
+  order. **Test my connection** asks the first two that answer and your router. Making an invite or
+  joining also asks the first two once (at most every 10 minutes), to learn whether your router is a
+  symmetric NAT. Gridline runs no server of its own.
   A **TURN server**, if you set one, relays the encrypted connection: it sees both IP addresses
   and how much data passes, never the content.
-* The codes you send each other contain network addresses (your local and public IP addresses) and,
-  for invites, the one-time secret. Send them only to the person they are for.
+* The codes you send each other contain network addresses (your local and public IP addresses), your
+  router's type (cone or symmetric) and, for invites, the one-time secret. Send them only to the person they are for.
 * Your profile (name, email, picture), your keys and other people's cached names and pictures stay
   in your settings folder (`collab/`), never in a project. A project's history stores only an
   author's id and the name they had at the time; never an email or a picture.

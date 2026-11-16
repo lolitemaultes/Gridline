@@ -1,9 +1,11 @@
 // Gridline: a press anywhere on a window brings it to the front (see WindowRaise.h).
 #include "WindowRaise.h"
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
+#include "Theme.h"
 #include "Widgets.h"
 
 namespace gl::ui {
@@ -21,6 +23,28 @@ void focusAndNote(ImGuiWindow* hw) {
   }
 }
 }  // namespace
+
+bool focusWindowKeepPopups(ImGuiWindow* w) {
+  ImGuiContext& g = *GImGui;
+  if (!w) return false;
+  if (g.NavWindow == w || (g.NavWindow && g.NavWindow->RootWindow == w)) return true;
+  if (g.OpenPopupStack.Size > 0 || g.BeginPopupStack.Size > 0) return false;
+  ImGui::FocusWindow(w, ImGuiFocusRequestFlags_UnlessBelowModal);
+  return true;
+}
+
+void drawKeyFocusFrame(unsigned int colour) {
+  ImGuiContext& g = *GImGui;
+  if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
+  // A focused child inside a docked part (an inspector's body, a list) frames the docked window it
+  // sits in: its RootWindow runs on to the dock host, which is no area.
+  const ImGuiWindow* area = g.NavWindow;
+  while (area && !area->DockIsActive && (area->Flags & ImGuiWindowFlags_ChildWindow) && area->ParentWindow) area = area->ParentWindow;
+  if (!area || !area->DockIsActive || area->Hidden || area->Size.x < 160 || area->Size.y < 120 || (area->Flags & ImGuiWindowFlags_NoInputs)) return;
+  const ImVec2 p0(std::round(area->Pos.x) + 0.5f, std::round(area->Pos.y) + 0.5f);
+  const ImVec2 p1(std::round(area->Pos.x + area->Size.x) - 0.5f, std::round(area->Pos.y + area->Size.y) - 0.5f);
+  ImGui::GetForegroundDrawList(area->Viewport)->AddRect(p0, p1, colour ? static_cast<ImU32>(colour) : theme::withAlpha(theme::pal().accent, 0.55f), 0.0f, 0, 1.0f);
+}
 
 void raiseOnPress() {
   ImGuiContext& g = *GImGui;

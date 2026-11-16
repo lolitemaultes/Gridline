@@ -198,7 +198,7 @@ void toolsItems(App& a) {
       const std::string p = saveLogger(a, mins);
       if (!p.empty()) a.notify("Saved " + fs::path(p).filename().string());
     }
-    if (ImGui::MenuItem(i18n::tr("Open the last minutes in Loupe"), nullptr, false, on && have > 0)) {
+    if (!livelook::active(a) && ImGui::MenuItem(i18n::tr("Open the last minutes in Loupe"), nullptr, false, on && have > 0)) {  // N50-09: Studio's editor
       const std::string p = saveLogger(a, mins);
       if (!p.empty()) {
         const ObjectId ch = a.addInstrument("gl.sampler", p);
@@ -207,12 +207,7 @@ void toolsItems(App& a) {
     }
     ImGui::EndMenu();
   }
-  if (ImGui::MenuItem(i18n::tr("Cancel recording"), nullptr, false, a.audioRecSession)) {
-    cancelPending = true;
-    a.engine.setRecording(false);
-    a.engine.stop();
-    a.notify("Recording cancelled: the takes are discarded");
-  }
+  if (ImGui::MenuItem(i18n::tr("Cancel recording"), nullptr, false, a.audioRecSession)) cancelRecording(a);
   ui::Hint("Stops the transport and throws away the audio being recorded");
 }
 
@@ -226,23 +221,75 @@ void optionsItems(App& a) {
   ui::Hint("While playing, a click in the ruler or a marker jump waits for the next beat / bar line");
 }
 
+// K-123: the record options menu, in groups (inside an open menu). Takes: lanes, silent takes,
+// disarm, names, the file format; Rolls: pre-roll and post-roll; Monitoring; Controls: when the
+// record controls open and how they show.
 void recordingOptionItems(App& a) {
-  {
-    bool b = a.settings.getBool("record.autoUnarm");
-    if (ImGui::MenuItem(i18n::tr("Disarm tracks after recording"), nullptr, &b)) a.settings.set("record.autoUnarm", b);
-    b = a.settings.getBool("record.ignoreSilent");
-    if (ImGui::MenuItem(i18n::tr("Drop silent takes"), nullptr, &b)) a.settings.set("record.ignoreSilent", b);
-    ui::Hint("Takes that never rise above -60 dBFS are not placed in the playlist");
-    b = a.settings.getBool("record.nameTracks");
-    if (ImGui::MenuItem(livelook::active(a) ? i18n::tr("Name empty tracks after the take") : i18n::tr("Name empty playlist tracks after the take"), nullptr, &b))  // N47-13
-      a.settings.set("record.nameTracks", b);
+  bool b = a.settings.getBool("record.takeLanes");
+  if (ImGui::MenuItem(i18n::tr("Loop passes as take lanes"), nullptr, &b)) a.settings.set("record.takeLanes", b);
+  ui::Hint("On: every pass of a loop lands on the track as a lane to comp from. Off: passes stack on the tracks below");
+  b = a.settings.getBool("record.ignoreSilent");
+  if (ImGui::MenuItem(i18n::tr("Drop silent takes"), nullptr, &b)) a.settings.set("record.ignoreSilent", b);
+  ui::Hint("Takes that never rise above -60 dBFS are not placed in the playlist");
+  b = a.settings.getBool("record.autoUnarm");
+  if (ImGui::MenuItem(i18n::tr("Disarm tracks after recording"), nullptr, &b)) a.settings.set("record.autoUnarm", b);
+  b = a.settings.getBool("record.nameTracks");
+  if (ImGui::MenuItem(livelook::active(a) ? i18n::tr("Name empty tracks after the take") : i18n::tr("Name empty playlist tracks after the take"), nullptr, &b))  // N47-13
+    a.settings.set("record.nameTracks", b);
+  if (!livelook::active(a) && ImGui::BeginMenu(i18n::tr("Name takes after"))) {  // N49-12: Clips names takes after their track
     const int naming = static_cast<int>(a.settings.getNumber("record.naming"));
-    if (!livelook::active(a)) {  // N49-12: Clips names takes after their track
-      ImGui::Separator();
-      if (ImGui::MenuItem(i18n::tr("Name takes after the mixer track"), nullptr, naming == 0)) a.settings.set("record.naming", 0);
-      if (ImGui::MenuItem(i18n::tr("Name takes after the audio input"), nullptr, naming == 1)) a.settings.set("record.naming", 1);
-    }
+    if (ImGui::MenuItem(i18n::tr("The mixer track"), nullptr, naming == 0)) a.settings.set("record.naming", 0);
+    if (ImGui::MenuItem(i18n::tr("The audio input"), nullptr, naming == 1)) a.settings.set("record.naming", 1);
+    ImGui::EndMenu();
   }
+}
+
+void recordingRollItems(App& a) {
+  auto rollMenu = [&](const char* title, const char* onKey, const char* beatsKey, const char* hint) {
+    if (ImGui::BeginMenu(i18n::tr(title))) {
+      const bool on = a.settings.getBool(onKey);
+      const double beats = a.settings.getNumber(beatsKey);
+      if (ImGui::MenuItem(i18n::tr("Off"), nullptr, !on)) a.settings.set(onKey, false);
+      static const double kBeats[] = {1, 2, 4, 8, 16};
+      static const char* kNames[] = {"1 beat", "2 beats", "4 beats", "8 beats", "16 beats"};
+      for (int i = 0; i < 5; ++i)
+        if (ImGui::MenuItem(i18n::tr(kNames[i]), nullptr, on && beats == kBeats[i])) {
+          a.settings.set(onKey, true);
+          a.settings.set(beatsKey, kBeats[i]);
+        }
+      ImGui::EndMenu();
+    }
+    ui::Hint(hint);
+  };
+  rollMenu("Pre-roll", "record.preRoll", "record.preRollBeats", "With a punch range, playback starts this much before the punch in (the first pass)");
+  rollMenu("Post-roll", "record.postRoll", "record.postRollBeats", "With a punch range, playback goes on this long past the punch out, then stops");
+}
+
+void recordingMonitorItems(App& a) {
+  bool b = a.settings.getBool("record.monitor.inputOnly");
+  if (ImGui::MenuItem(i18n::tr("Input only"), nullptr, &b)) a.settings.set("record.monitor.inputOnly", b);
+  ui::Hint("On: armed tracks in Auto always hear their input. Off: they hear it inside the punch range only, and the playback around it");
+  b = a.settings.getBool("record.monitor.lowLatency");
+  if (ImGui::MenuItem(i18n::tr("Low latency"), nullptr, &b)) a.settings.set("record.monitor.lowLatency", b);
+  ui::Hint("While recording, armed tracks skip their effects that add latency, so the performer hears the input sooner");
+}
+
+void recordingControlsMenu(App& a) {
+  if (!ImGui::BeginMenu(i18n::tr("Record controls"))) return;
+  ImGui::SeparatorText(i18n::tr("Open on Record"));
+  const int w = static_cast<int>(a.settings.getNumber("record.window"));
+  if (ImGui::MenuItem(i18n::tr("Every time"), nullptr, w == 0)) a.settings.set("record.window", 0);
+  if (ImGui::MenuItem(i18n::tr("First time per song"), nullptr, w == 1)) a.settings.set("record.window", 1);
+  if (ImGui::MenuItem(i18n::tr("Never"), nullptr, w == 2)) a.settings.set("record.window", 2);
+  ImGui::SeparatorText(i18n::tr("Show as"));
+  const int f = static_cast<int>(a.settings.getNumber("record.form"));
+  if (ImGui::MenuItem(i18n::tr("Card"), nullptr, f == 0)) a.settings.set("record.form", 0);
+  ui::Hint("A small card at the bottom right");
+  if (ImGui::MenuItem(i18n::tr("Strip"), nullptr, f == 1)) a.settings.set("record.form", 1);
+  ui::Hint("One row under the top bar; the views move down to make room");
+  if (ImGui::MenuItem(i18n::tr("The Record window"), nullptr, f == 2)) a.settings.set("record.form", 2);
+  ui::Hint("The card, and the Record window stays open while a take records");
+  ImGui::EndMenu();
 }
 
 // ================================================================ context menus
@@ -521,5 +568,13 @@ int incomingPitch(App& a, int pitch) {
 }
 
 bool takeCancelRequested() { return cancelPending; }
+
+void cancelRecording(App& a) {
+  if (!a.audioRecSession) return;
+  cancelPending = true;
+  a.engine.setRecording(false);
+  a.engine.stop();
+  a.notify("Recording cancelled: the takes are discarded");
+}
 
 }  // namespace gl::j31

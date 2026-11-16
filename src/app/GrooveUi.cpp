@@ -1,5 +1,6 @@
 // Gridline — K-151: swing presets in the interface (see GrooveUi.h).
 #include "GrooveUi.h"
+#include "LiveLook.h"
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -146,10 +147,12 @@ void presetMenuItems(App& a) {
     fs::create_directories(fs::u8path(gv::grooveFolder(libraryRoot(a))), ec);
     http::reveal(gv::grooveFolder(libraryRoot(a)));
   }
-  ImGui::Separator();
-  const bool notes = a.doc.song().swingNotes;
-  if (ImGui::MenuItem(i18n::tr("Swing piano roll notes"), nullptr, notes)) toggleSwingNotesLater(a);
-  devRec("menu notes");
+  if (!livelook::active(a)) {  // checkpoint 52 (N50-09): a piano roll row, Studio's
+    ImGui::Separator();
+    const bool notes = a.doc.song().swingNotes;
+    if (ImGui::MenuItem(i18n::tr("Swing piano roll notes"), nullptr, notes)) toggleSwingNotesLater(a);
+    devRec("menu notes");
+  }
 }
 
 void chip(App& a, float width) {
@@ -303,14 +306,6 @@ bool swingClip(App& a, ObjectId clip, const TempoMap& tm, double strength) {
 // ------------------------------------------------------------------ editor ----
 
 namespace {
-
-ParamDesc pdesc(const char* name, double lo, double hi, double def) {
-  ParamDesc d;
-  d.name = name;
-  d.unit = "%";
-  d.min = lo, d.max = hi, d.def = def;
-  return d;
-}
 
 // One undo step per pointer gesture (the app joins the frames of a drag).
 void editGroove(App& a, const char* label, const std::function<void(SongGroove&)>& fn) {
@@ -490,11 +485,7 @@ void drawEditor(App& a) {
     ui::Hint("How much of the groove plays (the channel rack's Swing knob)");
     ImGui::SameLine(0, 24);
     ImGui::BeginGroup();
-    double acc = s.groove.accent;
-    bool rel = false;
-    if (ui::Knob("##accent", &acc, pdesc("Accent", 0, 1, 1), 16.0f, nullptr, false, &rel))
-      editGroove(a, "groove accent", [acc](SongGroove& g) { g.accent = static_cast<float>(std::clamp(acc, 0.0, 1.0)); });
-    if (rel) a.doc.endGesture();
+    ui::ParamKnob("##accent", songParam(SongParam::GrooveAccent), 16.0f);  // K-152: automatable, like the amount
     ImGui::SameLine(0, 6);
     ImGui::BeginGroup();
     ImGui::TextColored(theme::vec(P.text), "%s", i18n::tr("Accent"));

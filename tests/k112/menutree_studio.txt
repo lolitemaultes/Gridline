@@ -50,7 +50,7 @@ File > Quit	Ctrl+Q	file.quit	e-
 Edit > Undo	Ctrl+Z	edit.undo	--
 Edit > Redo	Ctrl+Y	edit.redo	--
 Edit > Undo history	Alt+Z	edit.history	e-
-Edit > Cut			e-
+Edit > Cut	Ctrl+X	playlist.cut	e-
 Edit > Copy	Ctrl+C	playlist.copy	e-
 Edit > Paste	Ctrl+V	playlist.paste	--
 Edit > Duplicate	Ctrl+B	playlist.duplicate	e-
@@ -146,6 +146,11 @@ View > Window layout > Clips	Preview		e-
 View > Window layout > Smooth	Preview		e-
 View > Window layout > Tracker	Preview		e-
 View > Window layout > Layout settings...			e-
+View > Workspaces > New workspace			e-
+View > Workspaces > Add starter workspaces			e-
+View > Workspaces > Close workspace			--
+View > Workspaces > Arrange	Ctrl+1	view.workspace1	ec
+View > Reopen closed pane tab	Ctrl+Alt+T	view.reopenTab	e-
 View > Reset window layout	Ctrl+Shift+H	view.resetLayout	e-
 View > Dark theme			ec
 View > White text and glyphs			e-
@@ -201,20 +206,40 @@ Options > Send MIDI clock (master sync)			e-
 Options > Record notes			e-
 Options > Step record			e-
 Options > Record automation			e-
+Options > Recording options > Record window...			e-
 Options > Recording options > Audio, into the playlist as audio clips			ec
 Options > Recording options > Audio, into Loupe (armed tracks)			e-
 Options > Recording options > Notes			ec
 Options > Recording options > Automation (controller moves)			ec
 Options > Recording options > Everything			e-
 Options > Recording options > Punch in/out at the time selection			ec
+Options > Recording options > Pre-roll > Off			ec
+Options > Recording options > Pre-roll > 1 beat			e-
+Options > Recording options > Pre-roll > 2 beats			e-
+Options > Recording options > Pre-roll > 4 beats			e-
+Options > Recording options > Pre-roll > 8 beats			e-
+Options > Recording options > Pre-roll > 16 beats			e-
+Options > Recording options > Post-roll > Off			ec
+Options > Recording options > Post-roll > 1 beat			e-
+Options > Recording options > Post-roll > 2 beats			e-
+Options > Recording options > Post-roll > 4 beats			e-
+Options > Recording options > Post-roll > 8 beats			e-
+Options > Recording options > Post-roll > 16 beats			e-
+Options > Recording options > Count-in > Off			ec
+Options > Recording options > Count-in > 1 bar			e-
+Options > Recording options > Count-in > 2 bars			e-
+Options > Recording options > Count-in > 4 bars			e-
 Options > Recording options > Audio file format > 32-bit float WAV			ec
 Options > Recording options > Audio file format > 24-bit WAV			e-
 Options > Recording options > Audio file format > 16-bit WAV			e-
-Options > Recording options > Disarm tracks after recording			e-
+Options > Recording options > Loop passes as take lanes			ec
 Options > Recording options > Drop silent takes			e-
+Options > Recording options > Disarm tracks after recording			e-
 Options > Recording options > Name empty playlist tracks after the take			ec
-Options > Recording options > Name takes after the mixer track			ec
-Options > Recording options > Name takes after the audio input			e-
+Options > Recording options > Name takes after > The mixer track			ec
+Options > Recording options > Name takes after > The audio input			e-
+Options > Recording options > Input only			e-
+Options > Recording options > Low latency			e-
 Options > Recording options > Overdub (keep existing notes)			ec
 Options > Recording options > Replace (clear the channel's notes)			e-
 Options > Recording options > Quantize note starts to the snap			ec
@@ -223,10 +248,12 @@ Options > Recording options > Loop recording: new take per pass			e-
 Options > Recording options > Controller moves go to > Automatic			ec
 Options > Recording options > Controller moves go to > Pattern events			e-
 Options > Recording options > Controller moves go to > Automation clips			e-
-Options > Recording options > Count-in > Off			ec
-Options > Recording options > Count-in > 1 bar			e-
-Options > Recording options > Count-in > 2 bars			e-
-Options > Recording options > Count-in > 4 bars			e-
+Options > Recording options > Record controls > Every time			ec
+Options > Recording options > Record controls > First time per song			e-
+Options > Recording options > Record controls > Never			e-
+Options > Recording options > Record controls > Card			ec
+Options > Recording options > Record controls > Strip			e-
+Options > Recording options > Record controls > The Record window			e-
 Options > Recording options > Step record (keyboard enters notes at the step cursor)			e-
 Options > Recording options > Link to controller (Record)…			e-
 Options > Typing keyboard to piano	Ctrl+T	options.typingKeyboard	e-

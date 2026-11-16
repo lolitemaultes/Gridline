@@ -18,12 +18,18 @@ std::string inputName(int first, bool stereo);
 // Record button menu: what to record (audio into the playlist / the audio
 // editor, notes, automation), punch, file format.
 void audioRecordFilterMenu(App& a);
+// K-123: the audio file format submenu.
+void audioFormatMenu(App& a);
+// K-123: a mixer track's input peaks this frame (linear; read once a frame, shared by every view).
+void inputPeaks(App& a, ObjectId track, float& l, float& r);
 // Mixer inspector: input selector, monitoring, arm, input meter.
 void mixerInputPanel(App& a, const MixerTrack& t, float width);
 // Mixer strip: the disk-record arm button. Returns true when clicked.
 bool stripArmButton(App& a, const MixerTrack& t, ImVec2 pos);
 // Arms / disarms a track; a track without an input gets the first input pair.
 void toggleArm(App& a, ObjectId track);
+// K-123: record safe (the track cannot be armed); disarms it when turned on.
+void setRecordSafe(App& a, ObjectId track, bool on);
 // Playlist audio clip menu items and the clip properties window.
 void audioClipMenu(App& a, ObjectId clip);
 // Checkpoint 49: an audio clip's menu in the Clips layout, as the reference's: the edit block (not from a

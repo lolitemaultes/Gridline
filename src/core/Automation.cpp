@@ -164,6 +164,26 @@ double AutomationLane::valueAt(double tick) const {
   return std::clamp(c.min + v * (c.max - c.min), 0.0, 1.0);
 }
 
+bool AutomationLane::constantBetween(double a, double b) const {
+  if (inst.empty()) return true;  // valueAt is 0 everywhere
+  if (b < a) std::swap(a, b);
+  auto find = [this](double t) {
+    return std::upper_bound(inst.begin(), inst.end(), t, [](double v, const Instance& q) { return v < static_cast<double>(q.start); });
+  };
+  const auto ia = find(a), ib = find(b);
+  if (ia != ib) return false;  // an instance starts inside the range
+  if (ia == inst.begin()) return true;  // before the first instance: its start value throughout
+  const Instance& in = *(ia - 1);
+  const AutomationClip& c = *in.clip;
+  if (c.points.empty()) return true;
+  const double s = static_cast<double>(in.start), e = static_cast<double>(in.end);
+  if (a >= e) return true;  // past the clip's end: its end value
+  if (c.loop > 0) return false;
+  const double off = static_cast<double>(in.offset);
+  const double xa = off + a - s, xb = off + std::min(b, e) - s;  // content positions (valueAt clamps at the end)
+  return xb <= c.points.front().at() || xa >= c.points.back().at();
+}
+
 bool AutomationLane::sendsAt(double tick) const {
   if (inst.empty()) return false;
   auto it = std::upper_bound(inst.begin(), inst.end(), tick, [](double v, const Instance& q) { return v < static_cast<double>(q.start); });
@@ -194,13 +214,13 @@ double AutomationLane::nextEventStep(double tick) const {
     const double from = std::max(tick, s), off = static_cast<double>(in.offset);
     double cf = off + from - s;  // content position
     // First point at (or after, when strict) content position x within [0, lim).
+    // R07-06: a binary search (points are sorted): the linear scan ran once per control block over
+    // every point, so a long recorded take (thousands of points) slowed playback and bounces many times.
     auto first = [&](double x, double lim) -> double {
-      for (const AutoPoint& q : pts) {
-        const double a = q.at();
-        if (a >= lim) break;
-        if (strict ? a > x : a >= x) return a;
-      }
-      return -1.0;
+      const auto it = strict ? std::upper_bound(pts.begin(), pts.end(), x, [](double v, const AutoPoint& q) { return v < q.at(); })
+                             : std::lower_bound(pts.begin(), pts.end(), x, [](const AutoPoint& q, double v) { return q.at() < v; });
+      if (it == pts.end() || it->at() >= lim) return -1.0;
+      return it->at();
     };
     double q = -1.0;
     const Tick L = in.clip->loop;

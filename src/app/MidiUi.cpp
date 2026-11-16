@@ -20,6 +20,7 @@
 #include "ScriptUi.h"
 #include "AudioRecordUi.h"
 #include "J31Ui.h"
+#include "RecordCard.h"
 #include "LiveLook.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -448,31 +449,19 @@ void actionLinkMenuItems(App& a, RemoteAction action) {
   if (ImGui::MenuItem(t.c_str())) a.openRemoteDialog(action);
 }
 
+// K-123: one menu in quiet groups: what records, punch and count-in, audio takes, monitoring,
+// notes; then the record controls, step record and the controller link.
 void recordOptionsMenu(App& a) {
   RecordOptions& o = a.recOptions;
-  audioRecordFilterMenu(a);  // J-8: what to record (audio / audio editor / notes / automation)
-  ImGui::Separator();
-  ImGui::TextDisabled("%s", i18n::tr("Audio takes"));  // K-77: one record options menu (it was a second one in Options)
-  j31::recordingOptionItems(a);
-  ImGui::Separator();
-  ImGui::TextDisabled("%s", i18n::tr("Note recording"));  // K-77: was "Notes", the same as the switch above
-  if (ImGui::MenuItem(i18n::tr("Overdub (keep existing notes)"), nullptr, o.overdub)) o.overdub = true;
   // N48-15 (checkpoint 49): Clips names the clip, and keeps the Studio-only rows (takes per pass, the
   // controller target, step record) out of its menu.
-  const bool clipsRows = livelook::active(a);
-  if (ImGui::MenuItem(clipsRows ? i18n::tr("Replace (clear the clip's notes)") : i18n::tr("Replace (clear the channel's notes)"), nullptr, !o.overdub)) o.overdub = false;
-  ImGui::Separator();
-  ImGui::MenuItem(i18n::tr("Quantize note starts to the snap"), nullptr, &o.quantize);
-  ImGui::MenuItem(i18n::tr("Quantize note lengths"), nullptr, &o.quantizeLength);
-  if (!clipsRows) ImGui::MenuItem(i18n::tr("Loop recording: new take per pass"), nullptr, &o.takes);
-  if (!clipsRows && ImGui::BeginMenu(i18n::tr("Controller moves go to"))) {
-    for (int i = 0; i < static_cast<int>(AutoRecordTarget::Count); ++i)
-      if (ImGui::MenuItem(autoRecordTargetName(static_cast<AutoRecordTarget>(i)), nullptr, static_cast<int>(o.autoTarget) == i))
-        o.autoTarget = static_cast<AutoRecordTarget>(i);
-    ImGui::EndMenu();
-  }
-  // N48-15 (checkpoint 49): in Clips the Count-in switch is the row beside this submenu: here only its length.
   const bool clips = livelook::active(a);
+  if (ImGui::MenuItem(i18n::tr("Record window..."))) recordcard::openWindow(a);
+  audioRecordFilterMenu(a);  // J-8: what to record (audio / audio editor / notes / automation)
+  ImGui::SeparatorText(i18n::tr("Punch and count-in"));
+  ImGui::MenuItem(i18n::tr("Punch in/out at the time selection"), nullptr, &a.recPunch);
+  j31::recordingRollItems(a);
+  // N48-15 (checkpoint 49): in Clips the Count-in switch is the row beside this submenu: here only its length.
   if (ImGui::BeginMenu(clips ? i18n::tr("Count-in length") : i18n::tr("Count-in"))) {
     const int bars[] = {0, 1, 2, 4};
     for (int b : bars) {
@@ -482,9 +471,26 @@ void recordOptionsMenu(App& a) {
     }
     ImGui::EndMenu();
   }
+  ImGui::SeparatorText(i18n::tr("Audio takes"));  // K-77: one record options menu (it was a second one in Options)
+  audioFormatMenu(a);
+  j31::recordingOptionItems(a);
+  ImGui::SeparatorText(i18n::tr("Monitoring"));
+  j31::recordingMonitorItems(a);
+  ImGui::SeparatorText(i18n::tr("Notes"));
+  if (ImGui::MenuItem(i18n::tr("Overdub (keep existing notes)"), nullptr, o.overdub)) o.overdub = true;
+  if (ImGui::MenuItem(clips ? i18n::tr("Replace (clear the clip's notes)") : i18n::tr("Replace (clear the channel's notes)"), nullptr, !o.overdub)) o.overdub = false;
+  ImGui::MenuItem(i18n::tr("Quantize note starts to the snap"), nullptr, &o.quantize);
+  ImGui::MenuItem(i18n::tr("Quantize note lengths"), nullptr, &o.quantizeLength);
+  if (!clips) ImGui::MenuItem(i18n::tr("Loop recording: new take per pass"), nullptr, &o.takes);
+  if (!clips && ImGui::BeginMenu(i18n::tr("Controller moves go to"))) {
+    for (int i = 0; i < static_cast<int>(AutoRecordTarget::Count); ++i)
+      if (ImGui::MenuItem(autoRecordTargetName(static_cast<AutoRecordTarget>(i)), nullptr, static_cast<int>(o.autoTarget) == i))
+        o.autoTarget = static_cast<AutoRecordTarget>(i);
+    ImGui::EndMenu();
+  }
   ImGui::Separator();
+  j31::recordingControlsMenu(a);
   if (!clips && ImGui::MenuItem(i18n::tr("Step record (keyboard enters notes at the step cursor)"), nullptr, a.stepRecord)) a.stepRecord = !a.stepRecord;
-  if (!clips) ImGui::Separator();
   if (!clips) actionLinkMenuItems(a, RemoteAction::Record);  // N49-12: Clips maps controls from its MIDI map
 }
 
@@ -531,14 +537,14 @@ void typingKeyboardMenu(App& a) {
     a.typingKeyboard = !a.typingKeyboard;
   if (ImGui::BeginMenu(i18n::tr("Octave"))) {
     for (int o = 1; o <= 8; ++o) {
-      std::string n = clips ? typingKeyName('a') + " = " + midiNoteName(12 * (o + 1)) : typingKeyName('z') + " = " + midiNoteName(12 * o);
+      std::string n = k.aRow ? typingKeyName('a') + " = " + midiNoteName(12 * (o + 1)) : typingKeyName('z') + " = " + midiNoteName(12 * o);
       if (ImGui::MenuItem(n.c_str(), nullptr, k.octave == o)) k.octave = o;
     }
     ImGui::EndMenu();
   }
   ImGui::SetNextItemWidth(160);
   ImGui::SliderInt(i18n::tr("Velocity"), &k.velocity, 1, 127);
-  ImGui::MenuItem(i18n::tr("Chord mode"), clips ? nullptr : typingKeyName('\\').c_str(), &k.chordMode);  // (no chord key on the A row)
+  ImGui::MenuItem(i18n::tr("Chord mode"), k.aRow ? nullptr : typingKeyName('\\').c_str(), &k.chordMode);  // (no chord key on the A row)
   if (ImGui::BeginMenu(i18n::tr("Chord"))) {
     for (int i = 0; i < static_cast<int>(ChordType::Count); ++i)
       if (ImGui::MenuItem(chordTypeName(static_cast<ChordType>(i)), nullptr, static_cast<int>(k.chord) == i)) k.chord = static_cast<ChordType>(i);
@@ -549,7 +555,7 @@ void typingKeyboardMenu(App& a) {
     ImGui::EndMenu();
   }
   ImGui::Separator();
-  if (clips) {
+  if (k.aRow) {  // N48-08 (Clips), R06-15 (Smooth): the A row
     ImGui::TextDisabled(i18n::tr("%s…%s play · %s %s octave · %s %s velocity"), typingKeyName('a').c_str(), typingKeyName('\'').c_str(),
                         typingKeyName('z').c_str(), typingKeyName('x').c_str(), typingKeyName('c').c_str(), typingKeyName('v').c_str());
     return;

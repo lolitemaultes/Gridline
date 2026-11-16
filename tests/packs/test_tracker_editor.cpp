@@ -176,10 +176,15 @@ void testSettings(const std::string& dir) {
   const tp::Edit junk = tp::readEdit(before + "midi 7 99 999 -5 2\nbits 40 8\nbits x\n", 0);
   expect(junk.midi.on && junk.midi.channel == 15 && junk.midi.program == 127 && junk.midi.bend == 0 && junk.midi.mute, "text: out-of-range values are clamped");
 
-  // Mute: silent; the MIDI notes still go out.
+  // Mute: silent while the notes go to MIDI (R11-07: it is a MIDI option, as the classic "mute
+  // computer"; with Send off it does nothing).
   tp::Edit mu = e;
   mu.midi.mute = true;
+  expect(peak(play(withData(tp::writeEdit(mu)), 60, 8000, 256).L, 0, 8000) > 0.0, "mute: with Send off the instrument still sounds (R11-07)");
+  expect(!tp::midiMuted(withData(tp::writeEdit(mu))), "mute: and it is not marked muted");
+  mu.midi.on = true;
   expect(peak(play(withData(tp::writeEdit(mu)), 60, 8000, 256).L, 0, 8000) == 0.0, "mute: the instrument's own sound is silent");
+  expect(tp::midiMuted(withData(tp::writeEdit(mu))), "mute: the instrument list marks it (R11-07)");
 
   // MIDI output: a program change, the note on its channel, the note off.
   {
@@ -612,6 +617,71 @@ void testHeldRelease(const std::string& dir) {
   expect(other == 0 && guard.get(tp::NoteGuard::kStrip).held(), "held key: another editor's note stays");
 }
 
+// K-106: the Clean up box's sample parts and the Files screen's load into the selected sample.
+void testTrimAndLoad(const std::string& dir) {
+  const std::string a = writeFile(dir, "trim a.wav", sine(8000, 441.0, 0.5));
+  const std::string b = writeFile(dir, "trim b.wav", sine(4000, 882.0, 0.5));
+  const std::string c = writeFile(dir, "trim c.wav", sine(2000, 220.0, 0.5));
+  tp::Edit e = tp::readEdit("", 0);
+  tp::addSampleFiles(e, {a, b, c});
+  // Keys: slot 0 low, slot 2 high; slot 1 is on no key.
+  tp::mapKeys(e, 0, 47, 0);
+  tp::mapKeys(e, 48, 95, 2);
+  e.text.def.samples[0].loop = trk::kLoopForward;
+  e.text.def.samples[0].loopStart = 1000;
+  e.text.def.samples[0].loopLength = 3000;
+  const tp::SampleTrim none = tp::trimSamples(e, false, false, false);
+  expect(none.removed == 0 && none.trimmed == 0 && none.eightBit == 0, "trim: nothing ticked changes nothing");
+  tp::Edit t = e;
+  const tp::SampleTrim n = tp::trimSamples(t, true, true, false);
+  expect(n.removed == 1, "trim: the sample no key plays goes");
+  expect(t.text.sampleNames[0] == "trim a" && t.text.sampleNames[1] == "trim c" && !t.text.def.samples[2].present(), "trim: the samples left move up in order");
+  expect(t.text.def.keymap[10] == 0 && t.text.def.keymap[60] == 1, "trim: the key map follows the samples");
+  expect(n.trimmed == 1 && t.cuts.end[0] == 4000, "trim: the looped sample ends at its loop's end");
+  // Played the same: the loop still sounds where it did.
+  expect(tp::trimSamples(t, true, true, false).trimmed == 0, "trim: a second trim finds nothing more");
+  tp::Edit eb = e;
+  const tp::SampleTrim n8 = tp::trimSamples(eb, false, false, true);
+  expect(n8.eightBit == 3 && eb.eightBit[0] && eb.eightBit[2], "trim: every sample to 8 bits");
+  // Load into the selected sample: slot 1 takes the file, the others and the key map stay.
+  tp::Edit l = e;
+  SamplePtr sc = sampleCache().get(c);
+  expect(tp::replaceSample(l, 1, c, static_cast<int32_t>(sc->frames()), sc->sampleRate, "trim c") == 1, "load: into the selected slot");
+  expect(l.text.sampleNames[1] == "trim c" && l.text.def.samples[1].length == 2000 && l.text.def.keymap == e.text.def.keymap, "load: the slot's file, the key map kept");
+  expect(l.text.sampleNames[0] == "trim a", "load: the other samples stay");
+  tp::Edit empty = tp::readEdit("", 0);
+  expect(tp::replaceSample(empty, 3, c, 2000, 44100, "x") == 0, "load: an empty instrument takes it in its first slot");
+  // cp15 (the classic copy and exchange of samples): another instrument's slot over the selected
+  // one, keys kept; into an empty instrument every key plays it; two slots trade, keys kept.
+  {
+    tp::Edit src = e, dst = l;
+    src.text.def.samples[2].volume = 33;
+    src.eightBit[2] = true;
+    src.cuts.start[2] = 100;
+    const auto keys = dst.text.def.keymap;
+    expect(tp::copySampleInto(dst, 1, src, 2) == 1, "copy across: into the selected slot");
+    const int f = dst.text.fileOf[1];
+    expect(f >= 0 && dst.text.files[static_cast<size_t>(f)] == src.text.files[static_cast<size_t>(src.text.fileOf[2])] &&
+               dst.text.def.samples[1].volume == 33 && dst.eightBit[1] && dst.cuts.start[1] == 100 &&
+               dst.text.sampleNames[1] == src.text.sampleNames[2] && dst.text.def.keymap == keys,
+           "copy across: file, settings, cuts, bits and name; the key map stays");
+    expect(dst.text.sampleNames[0] == "trim a", "copy across: the other samples stay");
+    tp::Edit none = tp::readEdit("", 0);
+    expect(tp::copySampleInto(none, 0, src, 2) == 0 && none.text.def.keymap[0] == 0 && none.text.def.keymap[95] == 0,
+           "copy across: an empty instrument plays it on every key");
+    expect(tp::copySampleInto(dst, 1, src, 9) == -1, "copy across: an empty source slot copies nothing");
+    tp::Edit self = e;
+    expect(tp::copySampleInto(self, 1, self, 0) == 1 && self.text.fileOf[1] == self.text.fileOf[0], "copy across: within one instrument");
+    tp::Edit x = e;
+    const auto xkeys = x.text.def.keymap;
+    const std::string n0 = x.text.sampleNames[0], n2 = x.text.sampleNames[2];
+    tp::exchangeSampleData(x, 0, 2);
+    expect(x.text.sampleNames[0] == n2 && x.text.sampleNames[2] == n0 && x.text.def.keymap == xkeys, "exchange samples: the slots trade, the keys stay");
+    tp::exchangeSampleData(x, 0, 2);
+    expect(tp::writeEdit(x) == tp::writeEdit(e), "exchange samples: twice is where it started");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -624,6 +694,7 @@ int main() {
   testPreview(dir);
   testAddFiles(dir);
   testHeldRelease(dir);
+  testTrimAndLoad(dir);
   std::error_code ec;
   fs::remove_all(fs::u8path(dir), ec);
   return finish();

@@ -118,7 +118,27 @@ Get the files for your system from the [latest release](https://github.com/lolit
 | **FreeBSD, OpenBSD, NetBSD** | x86_64 | `.tar.gz`, built and tested on each system |
 | **Chromebooks** | Intel, AMD, ARM | the Linux `.deb` in the Linux development environment, see [docs/chromeos.md](docs/chromeos.md) |
 
-Every download also carries the [Gridline Suite](docs/gridline-suite.md) plugins.
+Every app download also carries the [Gridline Suite](docs/gridline-suite.md) and Gridline Suite Mini plugins.
+
+### Only the plugins
+
+For other music programs, without the app. Gridline Suite (121 instruments and effects) and Gridline Suite Mini (35 compact effects) each come three ways:
+
+| Way | macOS | Windows | Linux | FreeBSD, OpenBSD, NetBSD |
+|---|---|---|---|---|
+| **Installer**: tick the plugins and formats you want | `Gridline-Suite-<version>-macos-universal.pkg` | `Gridline-Suite-<version>-windows-setup.exe` (x64 and ARM64) | `Gridline-Suite-<version>-linux-x86_64-setup.run` (or `aarch64`) | `Gridline-Suite-<version>-<system>-x86_64-setup.run` |
+| **All plugins**: every plugin and format, no installer | `Gridline-Suite-<version>-macos-all.zip` | `...-windows-all.zip` | `...-linux-all.zip` | `...-bsd-all.zip` |
+| **Single plugins**: one plugin, every format | `Gridline-Suite-Plasma-<version>-macos.zip` | `...-windows.zip` | `...-linux.zip` | `...-bsd.zip` |
+
+Suite Mini files are named the same way with `Gridline-Suite-Mini-`. Formats: VST3 and CLAP everywhere, Audio Unit on macOS.
+
+**Which file do I want?**
+
+- You want Gridline itself: take the app download for your system. It includes every Gridline plugin.
+- You only want the plugins in another music program: take the **installer** for your system and pick the plugins and formats. Run it again to change your picks.
+- You cannot or do not want to run an installer: take the **all plugins** zip and copy the folders yourself (a README inside says where).
+- You want one plugin: take its **single plugin** zip. Each one carries the whole sound engine, so if you want several, the installer or the all plugins zip is smaller and uses less memory.
+- Not sure about the format: CLAP or VST3 work in most programs; Audio Unit is for macOS programs that only take Audio Units.
 
 <details>
 <summary><b>Install notes: checksums, unsigned builds, Wayland and betas</b></summary>
@@ -127,6 +147,9 @@ Every download also carries the [Gridline Suite](docs/gridline-suite.md) plugins
 
 - **Checksums.** Every release lists SHA-256 checksums in `Gridline-<version>-SHA256SUMS`.
 - **Unsigned builds.** The builds are not signed by Apple or Microsoft. On macOS, open the app the first time with right-click, Open. On Windows, choose "More info", then "Run anyway" in the SmartScreen prompt.
+- **Plugin installer on macOS.** The `.pkg` is not signed by Apple either. If macOS says it cannot verify it, open System Settings > Privacy & Security, scroll down and click Open Anyway, then open the installer again. Plugins copied from a zip may need the download flag removed before a music program can open them: `xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/Gridline\ Suite` (the same for the CLAP and Components folders). The installer does not need this.
+- **Plugin installer on Linux and BSD.** Run it with `sh Gridline-Suite-<version>-linux-x86_64-setup.run`. It installs for your user (`~/.vst3`, `~/.clap`) without root, or system-wide with `--system`; `--help` lists the scripted options, and `--uninstall` removes it.
+- **Plugin update check.** The plugins look for a new version at most once a day, send no personal data, show a notice with a Download button and never install anything by themselves. Turn it off in any plugin's menu or in the installer ([docs/updates.md](docs/updates.md)).
 - **Debian and Ubuntu.** Install with `sudo apt install ./Gridline-<version>-linux-amd64.deb`.
 - **Wayland.** Gridline runs natively through SDL. Hosted plugin interfaces are X11 windows and open through XWayland. Windows outside the main window need X11 or XWayland (`SDL_VIDEODRIVER=x11`). See [docs/wayland.md](docs/wayland.md).
 - **Beta versions** are published as GitHub [Pre-releases](https://github.com/lolitemaultes/Gridline/releases). The update check offers them only when **Include beta versions** is ticked in Settings > General > Updates. It never installs anything by itself ([docs/updates.md](docs/updates.md)).
@@ -525,7 +548,7 @@ build\gridline-app.exe
 | Topic | Guides |
 |---|---|
 | **Editing** | [Automation](docs/automation.md), [Piano roll](docs/piano-roll.md), [Playlist](docs/playlist.md), [Mixer](docs/mixer.md), [Stage view](docs/stage-view.md), [Layers](docs/layers.md), [Slide notes](docs/slide-notes.md), [Meter changes](docs/meter-changes.md) |
-| **Audio** | [Split stems](docs/stems.md), [Import from URL](docs/import-url.md), [Warp markers](docs/warp-markers.md), [Freeze](docs/freeze.md), [Loop files](docs/loop-files.md), [SFZ](docs/sfz.md), [Drum kits](docs/drum-kits.md) |
+| **Audio** | [Recording](docs/recording.md), [Split stems](docs/stems.md), [Import from URL](docs/import-url.md), [Warp markers](docs/warp-markers.md), [Freeze](docs/freeze.md), [Loop files](docs/loop-files.md), [SFZ](docs/sfz.md), [Drum kits](docs/drum-kits.md) |
 | **Plugins** | [Gridline Suite](docs/gridline-suite.md), [Plasma](docs/plugins/plasma.md), [Chater](docs/plugins/chater.md), [Seltmann](docs/plugins/seltmann.md), [Tideline](docs/plugins/tideline.md), [Synths pack](docs/plugins/synths.md), [Platter recording](docs/plugins/platter-recording.md), [Plugin window](docs/plugin-window.md) |
 | **Working together** | [Collaborative projects](docs/collaboration.md) |
 | **Interface** | [Themes](docs/themes.md), [Detachable windows](docs/detachable-windows.md), [Command palette](docs/command-palette.md), [Typing keyboard](docs/typing-keyboard.md) |

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Chocolatey package for @SUITE_NAME@. Template: packaging/render.py fills in the version.
+     The package runs the official plugin installer from the GitHub release. -->
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>@SUITE_PKG@</id>
+    <version>@VERSION@</version>
+    <title>@SUITE_NAME@</title>
+    <authors>Gridline</authors>
+    <owners>lolitemaultes</owners>
+    <projectUrl>https://github.com/lolitemaultes/Gridline</projectUrl>
+    <packageSourceUrl>https://github.com/lolitemaultes/Gridline/tree/main/packaging/suite</packageSourceUrl>
+    <bugTrackerUrl>https://github.com/lolitemaultes/Gridline/issues</bugTrackerUrl>
+    <docsUrl>https://github.com/lolitemaultes/Gridline/blob/main/docs/gridline-suite.md</docsUrl>
+    <releaseNotes>https://github.com/lolitemaultes/Gridline/releases/tag/v@VERSION@</releaseNotes>
+    <licenseUrl>https://github.com/lolitemaultes/Gridline/blob/main/LICENSE</licenseUrl>
+    <iconUrl>https://raw.githubusercontent.com/lolitemaultes/Gridline/main/assets/icons/gridline-app-256.png</iconUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <tags>gridline vst3 clap plugins music-production foss</tags>
+    <summary>@SUITE_DESC@</summary>
+    <description>@SUITE_LONG@
+
+This package runs the official installer silently: every plugin, VST3 and CLAP, for all users.</description>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

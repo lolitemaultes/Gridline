@@ -6,6 +6,7 @@
 #include "DialogLayout.h"
 #include "LiveTakes.h"
 #include "AudioRecordUi.h"
+#include "../engine/TakeLanes.h"
 #include "LogicPlugins.h"
 #include "AsioUi.h"
 #include "ChopUi.h"
@@ -21,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <map>
 #include "../core/Automation.h"
 #include "../core/Meter.h"
 #include "../core/PluginParams.h"
@@ -193,9 +195,10 @@ void App::processAudioRecording() {
   // button is armed and something records, before the transport rolls, so the song never wraps
   // under a recording (J-175: a wrap ends a deck pass there and starts another one); looping
   // comes back once nothing records any more (stopped, disarmed, another mode).
+  // Clips: Arrangement Record takes MIDI too, and a take ends where recording stopped (N50-06).
   // R06-01: the Tracks layout loops only inside the cycle; without one playback and recording run
   // on past the song end (a new project's one bar never wraps a take onto itself).
-  const bool pastEnd = song && !sel && ((recordArmed && ((armedTracks && recAudio) || packRecords)) || logicplug::active(*this));
+  const bool pastEnd = song && !sel && ((recordArmed && ((armedTracks && recAudio) || packRecords || livelook::active(*this))) || logicplug::active(*this));
   if (pastEnd && audioRecLoopRestore < 0) {
     engine.setLooping(false);
     audioRecLoopRestore = 1;
@@ -212,6 +215,14 @@ void App::processAudioRecording() {
       engine.setPunch(0, 0);
   };
   const bool recRolling = recordArmed && rolling;
+  // K-123: the punch range is known before Play (pre-roll starts ahead of it), and the pre / post-roll.
+  if (recordArmed && !rolling) setPunch();
+  {
+    const double beat = static_cast<double>(doc.song().ppq);
+    const double pre = settings.getBool("record.preRoll") ? beat * std::max(0.0, settings.getNumber("record.preRollBeats")) : 0.0;
+    const double post = settings.getBool("record.postRoll") ? beat * std::max(0.0, settings.getNumber("record.postRollBeats")) : 0.0;
+    engine.setRecordRoll(recordArmed && recPunch && sel && song, pre, post);
+  }
   if (recRolling && !recRollingPrev) setPunch();
   recRollingPrev = recRolling;
   if (want && !audioRecSession) {
@@ -253,6 +264,7 @@ void App::processAudioRecording() {
       o.sampleRate = engine.sampleRate();
       o.naming = settings.getNumber("record.naming") > 0.5 ? TakeCommitOptions::Naming::Input : TakeCommitOptions::Naming::Insert;
       o.nameTracks = settings.getBool("record.nameTracks");
+      o.lanes = settings.getBool("record.takeLanes");
       TakeCommitResult r;
       const bool clipsTake = livelook::audioTakePending(*this);  // checkpoint 49: the take and its move into the slot are one undo step
       if (clipsTake) doc.beginGroup("Record audio");
@@ -282,7 +294,7 @@ void App::processAudioRecording() {
 // ------------------------------------------------------------------ record filter menu
 
 void audioRecordFilterMenu(App& a) {
-  ImGui::TextDisabled("%s", i18n::tr("What to record"));
+  ImGui::SeparatorText(i18n::tr("What to record"));  // K-123: quiet group headings
   // N47-13: Clips has no playlist: its arrangement and grid take the clips.
   // R05-18: the Tracks layout words it as its tracks and regions.
   ImGui::MenuItem(livelook::active(a)    ? i18n::tr("Audio, as audio clips")
@@ -293,15 +305,6 @@ void audioRecordFilterMenu(App& a) {
   ImGui::MenuItem(i18n::tr("Notes"), nullptr, &a.recOptions.notes);
   ImGui::MenuItem(i18n::tr("Automation (controller moves)"), nullptr, &a.recOptions.automation);
   if (ImGui::MenuItem(i18n::tr("Everything"))) a.recAudio = a.recOptions.notes = a.recOptions.automation = true;
-  ImGui::Separator();
-  ImGui::MenuItem(i18n::tr("Punch in/out at the time selection"), nullptr, &a.recPunch);
-  if (ImGui::BeginMenu(i18n::tr("Audio file format"))) {
-    const int bits = static_cast<int>(a.settings.getNumber("audio.recordBits"));
-    if (ImGui::MenuItem(i18n::tr("32-bit float WAV"), nullptr, bits != 24 && bits != 16)) a.settings.set("audio.recordBits", 32);
-    if (ImGui::MenuItem(i18n::tr("24-bit WAV"), nullptr, bits == 24)) a.settings.set("audio.recordBits", 24);
-    if (ImGui::MenuItem(i18n::tr("16-bit WAV"), nullptr, bits == 16)) a.settings.set("audio.recordBits", 16);
-    ImGui::EndMenu();
-  }
   const Song& s = a.doc.song();
   int armed = 0;
   for (const auto& m : s.mixer) armed += m.armed && m.input >= 0;
@@ -311,12 +314,37 @@ void audioRecordFilterMenu(App& a) {
     ImGui::TextDisabled(i18n::tr("%d mixer track%s armed for audio"), armed, armed == 1 ? "" : "s");
 }
 
+// K-123: the audio file format submenu (Recording options > Audio takes).
+void audioFormatMenu(App& a) {
+  if (ImGui::BeginMenu(i18n::tr("Audio file format"))) {
+    const int bits = static_cast<int>(a.settings.getNumber("audio.recordBits"));
+    if (ImGui::MenuItem(i18n::tr("32-bit float WAV"), nullptr, bits != 24 && bits != 16)) a.settings.set("audio.recordBits", 32);
+    if (ImGui::MenuItem(i18n::tr("24-bit WAV"), nullptr, bits == 24)) a.settings.set("audio.recordBits", 24);
+    if (ImGui::MenuItem(i18n::tr("16-bit WAV"), nullptr, bits == 16)) a.settings.set("audio.recordBits", 16);
+    ImGui::EndMenu();
+  }
+}
+
 // ------------------------------------------------------------------ mixer
+
+// K-123: record safe on a mixer track (it disarms the track); one undo step.
+void setRecordSafe(App& a, ObjectId track, bool on) {
+  const MixerTrack* t = a.doc.song().mixerTrack(track);
+  if (!t || track == a.doc.song().masterId() || t->recordSafe == on) return;
+  a.doc.editMixerTrack(track, on ? "record safe on" : "record safe off", [on](MixerTrack& m) {
+    m.recordSafe = on;
+    if (on) m.armed = false;
+  });
+}
 
 void toggleArm(App& a, ObjectId track) {
   const MixerTrack* t = a.doc.song().mixerTrack(track);
   if (!t || track == a.doc.song().masterId()) return;
   const bool on = !t->armed;
+  if (on && t->recordSafe) {  // K-123
+    a.notify(i18n::tr("This track is record safe: turn Record safe off (right-click its record button) to arm it."));
+    return;
+  }
   const int inputs = deviceInputs(a);
   a.doc.editMixerTrack(track, on ? "arm track for recording" : "disarm track", [&](MixerTrack& m) {
     m.armed = on;
@@ -334,9 +362,20 @@ bool stripArmButton(App& a, const MixerTrack& t, ImVec2 pos) {
   ImGui::SetCursorScreenPos(pos);
   const bool clicked = ImGui::InvisibleButton("arm", ImVec2(16, 14));
   const bool hov = ImGui::IsItemHovered();
-  ui::Hint(t.armed ? "Disk record: armed (click to disarm)" : "Disk record: click to arm this track for audio recording");
-  ui::Tooltip(t.armed ? "Disarm" : "Arm for recording");
+  ui::Hint(t.recordSafe ? "Record safe: this track can't be armed (right-click to change)"
+           : t.armed    ? "Disk record: armed (click to disarm, right-click for record safe)"
+                        : "Disk record: click to arm this track for audio recording (right-click for record safe)");
+  ui::Tooltip(t.recordSafe ? "Record safe" : t.armed ? "Disarm" : "Arm for recording");
   const ImVec2 c(pos.x + 8, pos.y + 7);
+  if (ImGui::BeginPopupContextItem("armctx")) {  // K-123: record safe
+    if (ImGui::MenuItem(i18n::tr("Record safe"), nullptr, t.recordSafe)) setRecordSafe(a, t.id, !t.recordSafe);
+    ImGui::EndPopup();
+  }
+  if (t.recordSafe) {
+    ui::drawIcon(dl, ui::Icon::Lock, c, 11, hov ? P.text : P.textDim);
+    if (clicked) toggleArm(a, t.id);
+    return clicked;
+  }
   const bool rolling = a.engine.recordingOn() && t.armed;
   const ImU32 ring = t.armed ? P.danger : hov ? P.text : P.textFaint;
   ui::drawIconFitC(dl, ui::Icon::Record, c, ImVec2(10, 10),
@@ -344,6 +383,23 @@ bool stripArmButton(App& a, const MixerTrack& t, ImVec2 pos) {
   ui::drawIconFitC(dl, ui::Icon::Ring, c, ImVec2(11.2f, 11.2f), ring);
   if (clicked) toggleArm(a, t.id);
   return clicked;
+}
+
+void inputPeaks(App& a, ObjectId track, float& l, float& r) {
+  // K-123: read once a frame (the engine's peaks reset on read), so the input panel and the
+  // Recording card both see them.
+  struct Read {
+    int frame = -1;
+    float l = 0, r = 0;
+  };
+  static std::map<ObjectId, Read> cache;
+  Read& c = cache[track];
+  if (c.frame != ImGui::GetFrameCount()) {
+    c.frame = ImGui::GetFrameCount();
+    c.l = c.r = 0;
+    if (auto rt = a.builder.mixerRuntime(track)) c.l = rt->inPeakL.exchange(0), c.r = rt->inPeakR.exchange(0);
+  }
+  l = c.l, r = c.r;
 }
 
 void mixerInputPanel(App& a, const MixerTrack& t, float width) {
@@ -377,11 +433,18 @@ void mixerInputPanel(App& a, const MixerTrack& t, float width) {
   ui::Hint(devCh > 0 ? "Device input feeding this track (stereo pairs or single inputs)"
                      : "Device input feeding this track \xC2\xB7 no input device open: Settings \xE2\x86\x92 Audio");
   ImGui::SameLine(0, theme::kS1);
-  if (ui::TextButton(t.armed ? "Armed" : "Arm", t.armed, 56, "Disk record: arm this track (the record button then records its input)"))
+  if (t.recordSafe) {  // K-123
+    if (ui::TextButton("Safe", t.recordSafe, 56, "Record safe: this track can't be armed. Click to allow recording again"))
+      setRecordSafe(a, t.id, false);
+  } else if (ui::TextButton(t.armed ? "Armed" : "Arm", t.armed, 56, "Disk record: arm this track (the record button then records its input). Right-click: record safe"))
     toggleArm(a, t.id);
+  if (!t.recordSafe && ImGui::BeginPopupContextItem("armsafe")) {
+    if (ImGui::MenuItem(i18n::tr("Record safe"))) setRecordSafe(a, t.id, true);
+    ImGui::EndPopup();
+  }
   // Monitoring + input meter.
   const char* mon[] = {"Auto", "On", "Off"};
-  const char* monHints[] = {"Hear the input while the track is armed, and whenever the transport is stopped",
+  const char* monHints[] = {"Hear the input while the track is armed (around a punch range only inside it, unless Input only monitoring is on), and whenever the transport is stopped",
                             "Always hear the input through the track", "Never hear the input (it is still recorded)"};
   int m = std::clamp(static_cast<int>(t.monitor), 0, 2);
   ImGui::AlignTextToFramePadding();
@@ -389,14 +452,56 @@ void mixerInputPanel(App& a, const MixerTrack& t, float width) {
   ImGui::SameLine(0, theme::kS1);
   if (ui::Segmented("##mon", mon, 3, &m, 40, 0, monHints))
     a.doc.editMixerTrack(t.id, "input monitoring", [m](MixerTrack& x) { x.monitor = static_cast<uint8_t>(m); });
-  float pl = 0, pr = 0;
-  if (auto rt = a.builder.mixerRuntime(t.id)) {
-    pl = rt->inPeakL.exchange(0);
-    pr = rt->inPeakR.exchange(0);
+  // K-123: input trim and polarity (before the meter, the monitoring and the recording).
+  {
+    float trim = t.inputTrim;
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Trim"));
+    ImGui::SameLine(0, theme::kS1);
+    ImGui::SetNextItemWidth(std::max(60.0f, width - 110));
+    if (ImGui::DragFloat("##trim", &trim, 0.1f, kInputTrimMin, kInputTrimMax, "%+.1f dB", ImGuiSliderFlags_AlwaysClamp))
+      a.doc.editMixerTrack(t.id, "input trim", [trim](MixerTrack& x) { x.inputTrim = trim; }, (static_cast<uint64_t>(t.id) << 8) ^ 0x123A);
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && t.inputTrim != 0.0f)
+      a.doc.editMixerTrack(t.id, "input trim", [](MixerTrack& x) { x.inputTrim = 0.0f; });
+    ui::Hint("Input gain before the track's effects, -24 to +24 dB (double-click: 0 dB)");
+    ImGui::SameLine(0, theme::kS1);
+    if (ui::TextButton("\xC3\x98", t.inputInvert, 30, "Invert the input's polarity (before the effects and the recording)"))
+      a.doc.editMixerTrack(t.id, t.inputInvert ? "input polarity normal" : "invert input polarity", [](MixerTrack& x) { x.inputInvert = !x.inputInvert; });
   }
-  // Input level (horizontal meter on its own row).
-  ui::Meter(ImGui::GetID("inmeter"), t.input >= 0 ? pl : 0.f, t.input >= 0 ? pr : 0.f, ImVec2(width, 8), false);
-  ui::Hint("Input level (before the track's effects)");
+  float pl = 0, pr = 0;
+  inputPeaks(a, t.id, pl, pr);
+  if (t.input < 0) pl = pr = 0.f;
+  // Input level (horizontal meter on its own row), with K-123's peak hold and clip lamp.
+  const float lampW = 12.0f;
+  const float mw = width - lampW - 4;
+  const ImVec2 mp = ImGui::GetCursorScreenPos();
+  ui::Meter(ImGui::GetID("inmeter"), pl, pr, ImVec2(mw, 8), false);
+  ui::Hint("Input level (after the trim, before the track's effects)");
+  {
+    struct Hold {
+      float peak = 0;
+      double at = 0;
+      bool clip = false;
+    };
+    static std::map<ObjectId, Hold> holds;
+    Hold& h = holds[t.id];
+    const float lvl = std::max(pl, pr);
+    if (lvl >= h.peak || a.now - h.at > 1.5) h.peak = lvl, h.at = a.now;
+    if (lvl >= 1.0f) h.clip = true;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (h.peak > 0.001f) {  // the held peak: a tick on a -60..0 dB scale
+      const float db = 20.0f * std::log10(h.peak);
+      const float x = mp.x + mw * std::clamp((db + 60.0f) / 60.0f, 0.0f, 1.0f);
+      dl->AddLine(ImVec2(x, mp.y), ImVec2(x, mp.y + 8), h.peak >= 1.0f ? P.danger : P.text, 1.5f);
+    }
+    const ImVec2 l0(mp.x + mw + 4, mp.y), l1(mp.x + width, mp.y + 8);
+    dl->AddRectFilled(l0, l1, h.clip ? P.danger : P.field, 2.0f);
+    const ImVec2 back = ImGui::GetCursorScreenPos();
+    ImGui::SetCursorScreenPos(l0);
+    if (ImGui::InvisibleButton("##clip", ImVec2(lampW, 8))) h.clip = false;
+    ui::Hint(h.clip ? "The input clipped (it reached 0 dBFS): click to clear" : "Clip lamp: lights when the input reaches 0 dBFS");
+    ImGui::SetCursorScreenPos(back);
+  }
   ImGui::Dummy(ImVec2(0, theme::kS1));
   ImGui::PopID();
 }
@@ -426,6 +531,29 @@ void compMenu(App& a, const Clip& c) {
     a.playlist.selected.clear();
     for (const auto& k : s.playlist)
       if (k.takeGroup == c.takeGroup) a.playlist.selected.insert(k.id);
+  }
+  // K-123: take lanes.
+  const ObjectId g = c.takeGroup;
+  if (takes::spreadOverTracks(s, g)) {
+    if (ImGui::MenuItem(i18n::tr("Move the takes into lanes"))) a.doc.editSong("move takes into lanes", [&](Song& x) { takes::gatherIntoLanes(x, g); });
+    ui::Hint("Puts every take on the first take's track as lanes to comp from");
+  } else {
+    const int tr = c.track;
+    const bool shown = tr >= 0 && static_cast<size_t>(tr) < s.tracks.size() && s.tracks[static_cast<size_t>(tr)].takeLanes;
+    if (ImGui::MenuItem(i18n::tr("Show take lanes"), nullptr, shown))
+      a.doc.editPlaylistTrack(tr, shown ? "hide take lanes" : "show take lanes", [shown](PlaylistTrack& t) { t.takeLanes = !shown; });
+  }
+  if (ImGui::MenuItem(i18n::tr("Flatten the comp"))) {
+    std::string err;
+    ObjectId made = kNoId;
+    const std::string dir = recordedDir(a);
+    a.doc.editSong("flatten comp", [&](Song& x) { made = takes::flatten(x, g, dir, &err); });
+    a.notify(made != kNoId ? std::string("The comp is one clip now (undo brings the takes back)") : "Nothing to flatten: " + err);
+  }
+  if (ImGui::MenuItem(i18n::tr("Remove unused takes"))) {
+    int n = 0;
+    a.doc.editSong("remove unused takes", [&](Song& x) { n = takes::removeUnused(x, g); });
+    if (n == 0) a.notify("Every take plays somewhere: nothing removed");
   }
   ImGui::EndMenu();
 }
@@ -782,6 +910,17 @@ void audioInputSettings(App& a, float fieldW) {
     ImGui::SetNextItemWidth(110);
     if (ImGui::DragFloat("##offms", &ms, 0.1f, -200.0f, 200.0f, "%+.1f ms")) st.set("audio.inputOffsetMs", static_cast<double>(ms));
     ui::Hint("Manual offset on top of the automatic one (positive = recordings land later)");
+  }
+  // K-123: monitoring of the armed tracks.
+  label("Monitoring");
+  {
+    bool b = st.getBool("record.monitor.inputOnly");
+    if (ImGui::Checkbox(i18n::tr("Input only"), &b)) st.set("record.monitor.inputOnly", b);
+    ui::Hint("On: armed tracks in Auto always hear their input. Off: they hear it inside the punch range only, and the playback around it");
+    ImGui::SameLine(0, theme::kS3);
+    b = st.getBool("record.monitor.lowLatency");
+    if (ImGui::Checkbox(i18n::tr("Low latency"), &b)) st.set("record.monitor.lowLatency", b);
+    ui::Hint("While recording, armed tracks skip their effects that add latency, so the performer hears the input sooner");
   }
   label("Record format");
   const int bits = static_cast<int>(st.getNumber("audio.recordBits"));

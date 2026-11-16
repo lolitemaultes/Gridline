@@ -55,6 +55,13 @@ ImGuiID regionNode(const std::string& region);
 std::string stripWindowName(const std::string& region);
 // The windows a shell layout opens with (the homes' openByDefault), the others in its regions closed.
 void showShellWindows(App& a, layout::Preset p);
+// K-297 (round 7): the windows open in the layout shown, kept for the next start (with its dock
+// file): savePanes() at quit, restorePanes() once at start when that file is read. A region shell
+// is built again at start from the person's region state (the splits) with these panes open; the
+// Tracker's page in front comes back too. Studio's dock file keeps its own arrangement and only
+// its open windows come from here. Returns false when nothing was kept for that layout.
+void savePanes(App& a);
+bool restorePanes(App& a, layout::Preset p);
 // R02-05: Reset layout: the Tracks layout's remembered open windows are dropped (they came back
 // over the default set once the confirmation dialog had closed).
 void forgetLogicWindows();
@@ -74,6 +81,13 @@ void setRegionState(App& a, layout::Preset p, const layout::State& st);
 // Shows or hides a region of the active layout (its windows close with it; the dock tree is rebuilt).
 void setRegionVisible(App& a, const std::string& region, bool on, bool alone = true);  // alone: see layout::setVisible
 bool takeShellRebuild();  // main.cpp: a region was shown or hidden, rebuild the dock tree keeping the windows
+// K-237: the pane tab strips (core/PaneTabs.h). Reopens the tab closed last (in `region` when one is
+// named) where it stood; steps the tabs of the pane holding the focused window (Ctrl+PageDown and
+// Ctrl+PageUp). False when there was nothing to do.
+bool reopenClosedTab(App& a, const std::string& region = "");
+bool cyclePaneTab(App& a, int dir);
+// K-237: rebuild the dock tree next frame keeping the open windows (a workspace switch set new region state).
+void requestShellRebuild();
 // K-112c: a fixed band grows by `px` this frame and the next (the Live device band while devices'
 // whole editors show in the expanded panel above its chain). Not saved: it ends when the caller stops
 // asking, and the band never takes more than 60 % of its parent.

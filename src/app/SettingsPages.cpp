@@ -117,6 +117,32 @@ void generalSettingsPage(App& a, float fieldW) {
                      tr("Menus, dialogs, settings, hints and editor labels follow the language. To add one, copy assets/i18n/gridline.pot to <code>.po and translate it."));
   ImGui::PopTextWrapPos();
   ui::EndSection();
+
+  ui::BeginSection(tr("GAME CONTROLLER"));  // K-199: Steam Deck Game mode and any game pad
+  {
+    static const char* ids[] = {"auto", "on", "off"};
+    auto choice = [&](const char* key, const char* id, const char* const names[3], const char* hint) {
+      const std::string cur = st.getString(key);
+      int idx = 0;
+      for (int i = 0; i < 3; ++i)
+        if (cur == ids[i]) idx = i;
+      if (ui::BeginCombo(id, tr(names[idx]), fieldW)) {
+        for (int i = 0; i < 3; ++i)
+          if (ImGui::Selectable(tr(names[i]), i == idx)) st.set(key, std::string(ids[i]));
+        ImGui::EndCombo();
+      }
+      ui::Hint(hint);
+    };
+    static const char* const listen[] = {"Automatic", "On", "Off"};
+    label("Controller");
+    choice("input.gamepad", "##gamepad", listen,
+           "Automatic: in Steam Deck Game mode, and as soon as a controller button is pressed. Its buttons are listed on the Shortcuts page");
+    static const char* const dock[] = {"Automatic", "Always docked", "Floating"};
+    label("Plugin windows");
+    choice("input.dockPlugins", "##dockplugins", dock,
+           "Automatic: built-in plugin windows open as tabs beside the main view in Game mode, which shows one window");
+  }
+  ui::EndSection();
   updui::settingsSection(a);  // J-89: automatic update check, beta versions, Check now
 }
 

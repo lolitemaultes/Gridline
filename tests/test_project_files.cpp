@@ -278,11 +278,59 @@ void testFlDemos() {
 
 }  // namespace
 
+// K-112B (checkpoint 47): the Project End marker is saved only when placed, and comes back.
+void testProjectEnd() {
+  Song s;
+  const std::string plain = projectToText(s);
+  expect(plain.find("projectEnd") == std::string::npos, "project end: not written when not placed");
+  s.projectEnd = 384 * 12;
+  const std::string text = projectToText(s);
+  expect(text.find("\"projectEnd\"") != std::string::npos, "project end: written when placed");
+  Song back;
+  std::string err;
+  expect(loadProjectText(text, scratch + "/pe.gridline", back, &err), "project end: loads");
+  expect(back.projectEnd == 384 * 12, "project end: comes back");
+  Song old;
+  expect(loadProjectText(plain, scratch + "/pe0.gridline", old, &err) && old.projectEnd == 0 && projectToText(old) == plain,
+         "project end: an older project loads and saves as before");
+}
+
+// K-112B (R08-07): the sound a track keeps once its regions are gone (Smooth). Written only when
+// set, it round-trips through save and reopen; the other layouts carry it unchanged, so a switch,
+// an edit elsewhere in the project, a save and a reopen keep it; an older project saves as before.
+void testTrackSound() {
+  Song s;
+  s.tracks.resize(3);
+  const ObjectId ch = s.allocateId();
+  Channel c;
+  c.id = ch;
+  c.name = "Air Pad";
+  s.channels.push_back(c);
+  const std::string plain = projectToText(s);
+  expect(plain.find("\"sound\"") == std::string::npos, "track sound: not written when unset");
+  s.tracks[1].sound = ch;
+  const std::string text = projectToText(s);
+  expect(text.find("\"sound\"") != std::string::npos, "track sound: written when set");
+  Song back;
+  std::string err;
+  expect(loadProjectText(text, scratch + "/ts.gridline", back, &err), "track sound: loads");
+  expect(back.tracks.size() == 3 && back.tracks[1].sound == ch && back.tracks[0].sound == kNoId, "track sound: comes back on its track");
+  back.tracks[2].name = "edited elsewhere";  // an edit in another layout leaves it alone
+  Song again;
+  expect(loadProjectText(projectToText(back), scratch + "/ts2.gridline", again, &err) && again.tracks[1].sound == ch,
+         "track sound: kept through an edit, a save and a reopen");
+  expect(again.tracks[1] == back.tracks[1] && !(again.tracks[1] == s.tracks[0]), "track sound: part of the track's equality (undo, collaboration)");
+  Song old;
+  expect(loadProjectText(plain, scratch + "/ts0.gridline", old, &err) && projectToText(old) == plain, "track sound: an older project saves as before");
+}
+
 int main() {
   scratch = test::hermeticTestEnv("projfiles") + "/work";
   fs::create_directories(scratch);
   testRouting();
   testPackage();
   testFlDemos();
+  testProjectEnd();
+  testTrackSound();
   return finish();
 }

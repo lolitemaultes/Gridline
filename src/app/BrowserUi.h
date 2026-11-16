@@ -80,6 +80,10 @@ struct DropFeedback {
   bool hovering = false;
 };
 bool acceptFileDrop(App& a, browse::DropTarget target, const DropPlace& place, DropFeedback* fb);
+// K-112B (ref 068): the audio files the drag in progress carries (empty while it carries anything
+// else), the payload type to accept it with, and dropping files somewhere as a drop there would.
+std::vector<std::string> draggedAudioFiles(const char** payloadType = nullptr);
+bool dropFiles(App& a, const std::vector<std::string>& paths, browse::DropTarget target, const DropPlace& place);
 // J-97: plugins dragged from the browser / plugin picker ("GL_PLUGIN"):
 //   Rack: a channel row -> its instrument is replaced (routing, volume, pan,
 //         steps and notes stay; FL "Replace"); between rows -> a new channel

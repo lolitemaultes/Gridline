@@ -79,6 +79,13 @@ Every change is one undo step. Notes between two cell starts move in proportion,
 swung 16th pair follow it. A channel's **Swing mix** (in its settings) scales both the timing and the
 accents for that channel; truncated swing still ends swung steps on the grid.
 
+## Automating the swing and the accents
+
+The Groove editor's **Amount** and **Accent** knobs (and the channel rack's Swing knob) are song
+parameters: right-click one to make an automation clip for it, or link a controller. In song mode,
+each pass of a pattern clip plays with the amount and accent the automation has where the pass
+starts, so a verse can sit straight and a chorus swing, or the accents can come in for a section.
+
 ## Grooves from audio
 
 In the playlist, an audio clip's menu has two more items under **Warp markers**:

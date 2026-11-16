@@ -198,7 +198,11 @@ std::string homeDir() {
   return h ? h : ".";
 }
 
-std::string projectFolder(const App& a) { return a.projectPath.empty() ? homeDir() : fs::path(a.projectPath).parent_path().string(); }
+std::string projectFolder(const App& a) {
+  // R06-13: the Tracks layout bounces into the project's Bounces folder, as the reference does
+  if (logicplug::active(a) && !a.projectPath.empty()) return (fs::path(a.projectPath).parent_path() / "Bounces").string();
+  return a.projectPath.empty() ? homeDir() : fs::path(a.projectPath).parent_path().string();
+}
 
 // Rendered audio that becomes part of the project (audio clips, the audio editor).
 std::string renderedFolder(const App& a) {
@@ -427,7 +431,7 @@ void finishJob(App& a) {
       ObjectId ch = a.addInstrument("gl.sampler", file);
       if (ch) a.doc.editChannel(ch, "rename", [&](Channel& c) { c.name = chName; });
       packs::openAudioEditor(a, file, ch);
-      a.notify("Rendered into Loupe");
+      a.notify(logicplug::active(a) ? "Rendered into the audio editor" : "Rendered into Loupe");  // R06-13
       a.uiSound(uisound::Event::Export);
     } else {
       const Tick at = job.start;
@@ -587,7 +591,7 @@ void drawRenderDialog(App& a) {
   ui::BeginSection("DESTINATION", colW);
   {
     formLabel("Render to", livelook::active(a) ? 132.0f : 110.0f);  // K-112c (round 32): on the value column in Clips
-    const char* dests[] = {"Files", logicplug::active(a) ? "Audio region" : "Audio clip", "Loupe"};  // R04-13: the Tracks layout's word
+    const char* dests[] = {"Files", logicplug::active(a) ? "Audio region" : "Audio clip", logicplug::active(a) ? "Audio editor" : "Loupe"};  // (R06-13)  // R04-13: the Tracks layout's word
     ui::Segmented("dest", dests, 3, &dlg.dest, 76);
     if (!files) {
       ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("32-bit float WAV in %s"), theme::fitText(renderedFolder(a).c_str(), colW - 140));
@@ -689,8 +693,9 @@ void drawRenderDialog(App& a) {
   ui::BeginSection("MISCELLANEOUS", colW);
   {
     ImGui::BeginDisabled(!files);
-    ui::ToggleRow(i18n::tr("Split mixer tracks"), &s.splitMixer);
-    ui::Tooltip("One file per mixer insert that carries sound (stems)");
+    // R06-13: the Tracks layout's words (it has channel strips, not mixer inserts)
+    ui::ToggleRow(i18n::tr(logicplug::active(a) ? i18n::N_("A file per channel strip") : i18n::N_("Split mixer tracks")), &s.splitMixer);
+    ui::Tooltip(logicplug::active(a) ? "One file per channel strip that carries sound (stems)" : "One file per mixer insert that carries sound (stems)");
     if (s.splitMixer) {
       ImGui::Indent(18);
       ui::ToggleRow(i18n::tr("Stems through the master effects"), &s.stemsMasterFx);

@@ -99,10 +99,14 @@ struct Result {
   bool changed = false;
   std::string refused;   // "" = allowed
   int refusedCount = 0;  // transpose: notes left alone because they would leave 0..127
+  int dropped = 0;       // R10-02: insertRow: notes and steps pushed off the last row (dropped)
 };
 // The notes in the order Document::setNotes keeps them (start, then pitch), with its limits.
 void normalize(std::vector<Note>& notes);
 
+// K-106 cp15 (the classic record quantize): the row a note recorded at `row` + `frac` (0..1 through
+// it) lands on with snapping to every `snap` rows: the nearest multiple, wrapping to 0 past the end.
+int snapRecordRow(int row, float frac, int snap, int rows);
 // A note typed at (row, column): an existing note there takes the new pitch; otherwise a new note
 // starts on the row and lasts to the next note in that column (or the pattern's end), and the note
 // sounding in that column is cut where the new one starts.

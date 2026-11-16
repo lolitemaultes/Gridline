@@ -27,6 +27,8 @@
 #include "icons/IconTexture.h"
 #include "../core/I18n.h"
 #include "../core/LevelMeter.h"
+#include "../core/ParamText.h"
+#include "../core/TimeKnob.h"
 #include "../core/WheelRoute.h"
 #include "../engine/Dsp.h"
 #include "../core/Automation.h"
@@ -762,21 +764,33 @@ bool ParamResetMenuItem(ParamId pid, const ParamDesc& d, double& val) {
 }
 
 namespace {
-// Body of the type-in popups: the text field; true with `out` on Enter.
-bool typeField(const ParamDesc& d, double current, double& out) {
+// Body of the type-in popups (K-311): the parameter's name, the value with its unit in a text
+// field; Enter applies it (parsed by core/ParamText: "2.5k", "-6 dB", "1/4", "50%"; clamped to the
+// range), Escape cancels. True with `out` on Enter. `time`: a delay time knob's spec (note values).
+bool typeField(const ParamDesc& d, double current, double& out, const timeknob::Spec* time = nullptr, double tempo = 120.0) {
   static char buf[64];
+  static bool bad = false;
   if (ImGui::IsWindowAppearing()) {
-    std::snprintf(buf, sizeof buf, "%s", d.format(current).c_str());
+    std::snprintf(buf, sizeof buf, "%s", paramtext::initial(d, current, time, tempo).c_str());
     ImGui::SetKeyboardFocusHere();
+    bad = false;
   }
   ImGui::TextDisabled("%s", d.name.c_str());
   ImGui::SetNextItemWidth(150);
   bool done = false;
   if (ImGui::InputText("##v", buf, sizeof buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll)) {
     double v;
-    if (pui::parseValue(d, buf, v)) out = d.clamp(v), done = true;
-    ImGui::CloseCurrentPopup();
+    if (paramtext::parse(d, buf, v, time, tempo)) {
+      out = d.clamp(v), done = true;
+      ImGui::CloseCurrentPopup();
+    } else {
+      bad = true;  // the box stays open with its text: not a value of this parameter
+      ImGui::SetKeyboardFocusHere(-1);
+    }
   }
+  if (ImGui::IsItemEdited()) bad = false;
+  if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::CloseCurrentPopup();
+  if (bad) ImGui::TextColored(theme::vec(pal().danger), "%s", i18n::tr("Not a value for this control"));
   ImGui::TextDisabled("%s", i18n::tr("Enter to apply \xC2\xB7 Esc to cancel"));
   return done;
 }
@@ -786,8 +800,10 @@ void ParamTypePopup(ParamId pid, const ParamDesc& d) {
   if (!ImGui::BeginPopup("##type")) return;
   App& a = app();
   const auto cur = getParam(a.doc.song(), pid);
+  const std::optional<timeknob::Spec> tk = timeknob::forParam(a.doc.song(), pid);
   double v = 0;
-  if (typeField(d, cur ? *cur : d.def, v)) {
+  if (typeField(d, cur ? *cur : d.def, v, tk ? &*tk : nullptr, a.doc.song().tempo)) {
+    a.doc.endGesture();  // one undo step of its own
     a.doc.setParam(pid, v, false);
     a.doc.endGesture();
   }
@@ -922,6 +938,10 @@ double knobWheelSteps(ImGuiID id, double notches) {
 }  // namespace
 
 void SetNextKnobStep(double step) { gNextKnobStep = step > 0 ? step : 0; }
+namespace {
+KnobFaceFn gNextKnobFace = nullptr;  // K-112D
+}
+void SetNextKnobFace(KnobFaceFn fn) { gNextKnobFace = fn; }
 
 double KnobDragPos(double norm) {
   const ImGuiID id = ImGui::GetItemID();
@@ -944,6 +964,8 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
           bool* released, const std::function<void()>& extraMenu) {
   const double step = d.kind == ParamKind::Choice ? 0.0 : gNextKnobStep;
   gNextKnobStep = 0;
+  const KnobFaceFn face = gNextKnobFace;  // K-112D
+  gNextKnobFace = nullptr;
   // On the step (whole numbers when 1), inside the range.
   auto onStep = [&](double v) { return step > 0 ? d.clamp(d.min + std::round((v - d.min) / step) * step) : v; };
   const ParamId knobParam = gNextKnobParam;
@@ -1009,7 +1031,11 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   // Draw: track arc 270°, value arc, pointer dot.
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImVec2 c(p.x + w * 0.5f, p.y + radius);
-  DrawKnob(dl, c, radius, static_cast<float>(d.toNormalized(*value)), bipolar, hov, act);
+  if (face) {
+    face(dl, c, radius, static_cast<float>(d.toNormalized(*value)), bipolar, hov, act);
+  } else {
+    DrawKnob(dl, c, radius, static_cast<float>(d.toNormalized(*value)), bipolar, hov, act);
+  }
   if (label) {
     ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(labelFs, 1e9f, 0, label);
     dl->AddText(ImGui::GetFont(), labelFs, ImVec2(std::round(c.x - ts.x * 0.5f), p.y + radius * 2.0f + 2.0f), P.textDim, label);
@@ -1095,12 +1121,15 @@ static bool liveMixerValue(App& a, ParamId pid, double& v) {
   return true;
 }
 
+bool shownParamValue(ParamId pid, double& v) { return liveMixerValue(app(), pid, v); }
+
 bool ParamKnob(const char* id, ParamId pid, float radius, const char* label, bool bipolar) {
   App& a = app();
   auto d = describeParam(a.doc.song(), pid);
   auto v = getParam(a.doc.song(), pid);
   if (!d || !v) {
     ImGui::Dummy(ImVec2(radius * 2, radius * 2));
+    gNextKnobFace = nullptr;  // K-112D: never carried to another knob
     return false;
   }
   audit::bindControl(pid);  // J-92 binding audit

@@ -9476,6 +9476,8 @@ static bool IsRootOfOpenMenuSet()
 
 bool ImGui::BeginMenuEx(const char* label, const char* icon, bool enabled)
 {
+    if (GImGuiGridlineMenuLabel)  // Gridline (K-106): a layout's own words
+        label = GImGuiGridlineMenuLabel(label);
 #ifdef IMGUI_ENABLE_TEST_ENGINE
     if (GImGuiGridlineMenuWalk)  // Gridline (K-93): the command palette's menu walk
         return ImGuiGridlineHook_BeginMenu(label, enabled);
@@ -9748,6 +9750,8 @@ void ImGui::EndMenu()
 
 bool ImGui::MenuItemEx(const char* label, const char* icon, const char* shortcut, bool selected, bool enabled)
 {
+    if (GImGuiGridlineMenuLabel)  // Gridline (K-106): a layout's own words
+        label = GImGuiGridlineMenuLabel(label);
 #ifdef IMGUI_ENABLE_TEST_ENGINE
     if (GImGuiGridlineMenuWalk)  // Gridline (K-93)
         return ImGuiGridlineHook_MenuItem(label, shortcut, selected, enabled);

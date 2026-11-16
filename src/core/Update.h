@@ -92,6 +92,13 @@ std::string detectLinuxPackage(const std::string& root);
 //   other Linux    Gridline-<v>-linux-<x86_64|aarch64>.AppImage (also when the release has no package)
 //   FreeBSD etc.   Gridline-<v>-<system>-<arch>.tar.gz
 const Asset* pickAsset(const Release& r, const Target& t);
+// K-308: the plugin installer of Gridline Suite (`mini` false) or Suite Mini for `t` (nullptr: none,
+// offer the release page). Never the app's own installer, and never the other suite's:
+//   macOS          Gridline-Suite[-Mini]-<v>-macos-universal.pkg
+//   Windows        Gridline-Suite[-Mini]-<v>-windows-setup.exe (x64 and ARM64 in one)
+//   Linux          Gridline-Suite[-Mini]-<v>-linux-<x86_64|aarch64>-setup.run
+//   FreeBSD etc.   Gridline-Suite[-Mini]-<v>-<system>-<arch>-setup.run
+const Asset* pickSuiteAsset(const Release& r, const Target& t, bool mini);
 const Asset* checksumAsset(const Release& r);  // "...SHA256SUMS"
 // The hex digest listed for `fileName` in a sha256sum file ("<hex>  <name>" or "<hex> *<name>"),
 // lower case; empty when it is not listed.

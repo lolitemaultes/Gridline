@@ -37,6 +37,10 @@ Settings::Settings() {
       {"import.urlPlacement", Json::makeNumber(0)},  // J-192: 0 = clip on a new track at the playhead, 1 = browser only
       // The Open / Save dialog: pinned folders, recent folders, the last folder per dialog ("title\tfolder"
       // lines), hidden files, the sort column (0 name, 1 size, 2 kind, 3 modified) and its size (0 = default).
+      {"input.gamepad", Json::makeString("auto")},  // K-199: game controller: "auto" (Game mode or a pad pressed), "on", "off"
+      {"input.gamepadHintShown", b(false)},  // K-199: the one-time "Menu opens the command pad" note
+      {"input.dockPlugins", Json::makeString("auto")},  // K-199: built-in plugin windows docked with the main view: "auto" (Game mode), "on", "off"
+      {"speech.voice", Json::makeString("")},  // K-107: the Speech dialog's last voice and settings (SpeechUi.cpp)
       {"files.dialogFavourites", Json::makeString("")},
       {"files.dialogRecent", Json::makeString("")},
       {"files.dialogLast", Json::makeString("")},
@@ -63,6 +67,7 @@ Settings::Settings() {
       // Audio input & recording (J-8).
       {"audio.inputDevice", Json::makeString("")},     // "" = none, "*" = system default
       {"audio.inputChannels", Json::makeNumber(2)},
+      {"audio.outputChannels", Json::makeNumber(2)},    // K-101: system audio outputs (3-4, 5-6, ... are extra pairs)
       {"audio.inputOffsetMs", Json::makeNumber(0)},    // manual recording offset (+ = later)
       {"audio.recordBits", Json::makeNumber(32)},      // 32 = float, 24 / 16 = PCM
       // K-6: audio backend. "system" = SDL (WASAPI / DirectSound on Windows), "asio" = an ASIO driver (Windows).
@@ -80,6 +85,9 @@ Settings::Settings() {
       {"record.ignoreSilent", b(false)},               // takes quieter than -60 dBFS are not kept
       {"record.naming", Json::makeNumber(0)},          // clip names: 0 insert name, 1 input name
       {"record.nameTracks", b(true)},                  // name empty playlist tracks after the take
+      {"record.takeLanes", b(true)},                   // K-123: loop passes as take lanes on the track (off: tracks below)
+      {"record.window", Json::makeNumber(0)},          // K-123: the Recording card opens on Record: 0 always, 1 first time per song, 2 never
+      {"record.form", Json::makeNumber(0)},            // K-123: record controls as 0 the card, 1 a strip under the top bar, 2 the card + keep the Record window
       // K-226: the record options, kept between runs (loadRecordOptions / saveRecordOptions).
       {"record.midi.overdub", b(true)},                // notes: merge (off: replace what a pass plays over)
       {"record.midi.quantize", b(true)},               // note starts snap to the piano roll grid
@@ -89,6 +97,12 @@ Settings::Settings() {
       {"record.midi.automation", b(true)},             // what records: linked controller moves
       {"record.midi.autoTarget", Json::makeNumber(0)}, // controller moves into: 0 automatic, 1 pattern events, 2 automation clips
       {"record.countInBars", Json::makeNumber(0)},     // count-in before recording: 0 (off), 1, 2 or 4 bars
+      {"record.monitor.inputOnly", b(false)},          // K-123: armed tracks in Auto hear the input all the time (off: tape style around the punch)
+      {"record.monitor.lowLatency", b(false)},         // K-123: while recording, armed tracks skip effects that add latency
+      {"record.preRoll", b(false)},                    // K-123: play from before the punch in
+      {"record.preRollBeats", Json::makeNumber(4)},    //   by this many beats
+      {"record.postRoll", b(false)},                   // K-123: play on past the punch out, then stop
+      {"record.postRollBeats", Json::makeNumber(4)},
       {"record.punch", b(true)},                       // punch in and out at the playlist time selection
       {"record.audio", b(true)},                       // what records: audio into the playlist (armed tracks)
       {"record.audioEditor", b(false)},                // what records: audio into the audio editor
@@ -105,6 +119,7 @@ Settings::Settings() {
       {"piano.followKeyMarkers", b(true)},             // scale highlighting follows key markers
       {"piano.recentChords", Json::makeString("")},    // the chord stamp's recent chords (chord indices, most recent first)
       {"piano.laneHeight", Json::makeNumber(0)},       // K-171: the lower lane's height in px (0 = automatic)
+      {"piano.smoothLane", b(false)},                  // K-112D (audit G9): Smooth's velocity lane shown (hidden until asked for)
       {"piano.autoDrawCurve", Json::makeNumber(1)},    // K-171/K-202: curve the lane and the clip editor draw: 0 stepped, 1 linear (default), 2 smooth
       {"transport.jumpQuantize", Json::makeNumber(0)}, // ops::jumpGrid mode (0 = jump at once)
       {"transport.rememberSeek", b(true)},             // J-49: Stop returns to the last set song position
@@ -129,6 +144,7 @@ Settings::Settings() {
       {"tracker.effectMacros", Json::makeString("")},  // K-106: the ten effect macros ("P01,,...")
       {"tracker.multiRecord", b(false)},   // K-106: each recorded note goes to the next enabled track
       {"tracker.multiJazz", b(false)},     // K-106: notes only played sound on the enabled tracks in turn
+      {"tracker.recSnap", Json::makeNumber(0)},  // K-106 cp15: record quantize (0 off; 1, 2, 4, 8, 16 rows)
       {"tracker.recordKeyOff", b(false)},  // K-106: a key let go while recording writes the note's end there
       {"tracker.cutCopies", b(true)},      // K-106: a cut keeps what it took in the clipboard (off: it only deletes)
       {"tracker.insDelLength", b(false)},  // K-106, R7-15: a line inserted / deleted on every track changes the pattern length
@@ -144,7 +160,7 @@ Settings::Settings() {
       {"loupe.autoScroll", b(true)},         // Loupe follows the playhead while it plays (its own toggle sets it)
       {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
       {"ui.showHints", b(true)},
-      {"ui.cbar.nav", b(true)},     // K-112b: the Tracks layout control bar parts shown (customise menu)
+      {"ui.cbar.nav", b(true)},  {"ui.cbar.toStart", b(false)},  // checkpoint 48 (A3): go to start, off by default as the reference's     // K-112b: the Tracks layout control bar parts shown (customise menu)
       {"ui.cbar.cycle", b(true)},
       {"ui.cbar.countIn", b(true)},
       {"ui.cbar.click", b(true)},
@@ -203,6 +219,8 @@ Settings::Settings() {
       {"ui.layoutChosen", b(false)},                 // the welcome screen has offered the choice once
       {"ui.logicGlobalTracks", b(true)},             // R01-15: the Tracks layout's global tracks (the markers lane; G)
       {"ui.logicToolbar", b(false)},
+      {"ui.logicAutoAsLanes", b(true)},              // K-112B cp46: automation-only tracks show as curves on their tracks' lanes
+      {"ui.logicAutoFolderOpen", b(false)},          // K-112B cp46: the Automation folder row is open
       {"ui.logicHeaderHide", Json::makeNumber(0)},   // R04-09: the track header parts hidden (Configure track header)
       {"ui.logicDragMode", Json::makeNumber(1)},     // R01-26: the Tracks layout's drag mode (0 overlap, 1 no overlap)                 // K-112b: the Logic layout shows the tracks area toolbar (its TB switch)
       {"ui.logicMixerDetail", b(false)},             // K-112b: the Logic layout shows the detailed mixer instead of its strips
@@ -233,6 +251,16 @@ Settings::Settings() {
       {"layout.live.state", Json::makeString("")},
       {"layout.logic.state", Json::makeString("")},
       {"layout.tracker.state", Json::makeString("")},
+      // K-297 (round 7): the windows open in each layout at quit, for the next start (LayoutShellUi.h)
+      {"layout.studio.panes", Json::makeString("")},
+      {"layout.live.panes", Json::makeString("")},
+      {"layout.logic.panes", Json::makeString("")},
+      {"layout.tracker.panes", Json::makeString("")},
+      // K-237: each layout's named workspaces (core/Workspaces.h); "" = one workspace, today's arrangement.
+      {"layout.studio.workspaces", Json::makeString("")},
+      {"layout.live.workspaces", Json::makeString("")},
+      {"layout.logic.workspaces", Json::makeString("")},
+      {"layout.tracker.workspaces", Json::makeString("")},
       {"ui.layout.live.view", Json::makeString("playlist")},  // main view in front: "playlist" | "pads"
       // N45-10: the sets last saved in the Clips layout with the Arrangement in front (one path a line,
       // newest first, at most 40); any other set opens in Clips on the clip grid. Per person, never in a project.
@@ -250,7 +278,8 @@ Settings::Settings() {
       {"general.defaultTemplate", Json::makeString("")},   // "<Category>/<Name>" ("" = built-in starter kit)
       {"general.language", Json::makeString("en")},        // i18n code ("en", "pseudo", catalogue stem)
       {"keys.bindings", Json::makeString("")},             // J-55: shortcut overrides, JSON (keys::Keymap::serialize)
-      {"keys.typingLayout", Json::makeString("standard")},  // K-113: what the typing keys are called (typingLayoutFromId)
+      {"keys.typingLayout", Json::makeString("standard")},
+      {"keys.typingRows", Json::makeString("auto")},  // R06-15: "auto" (home row in the Tracks layout), "two", "home"  // K-113: what the typing keys are called (typingLayoutFromId)
       {"keys.typingAtStart", Json::makeString("last")},  // the typing keyboard when Gridline starts: "last" (as it was left) | "on" | "off"
       {"keys.typingOn", b(false)},                     // the typing keyboard was on when Gridline last closed
       {"file.scriptEditor", Json::makeString("")},         // command that opens a script ("" = system default)
@@ -312,6 +341,10 @@ Settings::Settings() {
       // J-111: collaboration (src/collab, docs/collaboration.md). The profile itself lives in <config>/gridline/collab.
       {"collab.stunHost", Json::makeString("stun.l.google.com")},  // address discovery ("" = same network only)
       {"collab.stunPort", Json::makeNumber(19302)},
+      // K-312: backup address servers, in order (collab::kDefaultStunBackups; "" = none)
+      {"collab.stunBackups", Json::makeString("stun.cloudflare.com:3478, stun1.l.google.com:19302")},
+      {"collab.udpPort", Json::makeNumber(0)},      // K-312: "Use this UDP port" (0 = any)
+      {"collab.portForwarded", b(false)},           // K-312: the router forwards that port here
       {"collab.turnHost", Json::makeString("")},    // optional relay server (password: secret store)
       {"collab.turnPort", Json::makeNumber(3478)},
       {"collab.turnUser", Json::makeString("")},

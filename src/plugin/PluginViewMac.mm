@@ -26,46 +26,23 @@
 #include "PluginCore.h"
 #include "PluginView.h"
 #include "../host/ui/NativeView.h"
+#include "../host/ui/ObjcClass.h"
 
 // NSOpenGL is deprecated (still supported); the editor uses it like SDL does.
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
-// Each plugin binary (CLAP, VST3) registers its own class name, so loading
-// both into one host never makes the Objective-C runtime pick one at random.
-#ifndef GRIDLINE_PLUGIN_VIEW_CLASS
-#define GRIDLINE_PLUGIN_VIEW_CLASS GridlinePluginGLView
-#endif
-
-// The hosted plugins' windows use classes named after the view class.
-#define GRIDLINE_CAT2(a, b) a##b
-#define GRIDLINE_CAT(a, b) GRIDLINE_CAT2(a, b)
-#define GRIDLINE_HOSTED_CONTENT_CLASS GRIDLINE_CAT(GRIDLINE_PLUGIN_VIEW_CLASS, HostedContent)
-#define GRIDLINE_HOSTED_CONTAINER_CLASS GRIDLINE_CAT(GRIDLINE_PLUGIN_VIEW_CLASS, HostedContainer)
-#define GRIDLINE_HOSTED_DELEGATE_CLASS GRIDLINE_CAT(GRIDLINE_PLUGIN_VIEW_CLASS, HostedDelegate)
-
+// The editor's views and the hosted windows' helpers are Objective-C classes
+// made at run time (host/ui/ObjcClass.h), named for this loaded copy of the
+// code: two bundles with the same binary (single-plugin downloads) or the app
+// and a bundle never share a class name in one host process.
 namespace gl::plugin {
 class MacView;
 class MacHostWindow;
-}
-
-@interface GRIDLINE_PLUGIN_VIEW_CLASS : NSView {
- @public
-  gl::plugin::MacView* owner;
-  NSTrackingArea* tracking;
-}
-@end
-
-// Content of a hosted plugin's window: top-left based (the J-29 layout's units).
-@interface GRIDLINE_HOSTED_CONTENT_CLASS : NSView
-@end
-// The view the hosted plugin's interface is attached to.
-@interface GRIDLINE_HOSTED_CONTAINER_CLASS : NSView
-@end
-@interface GRIDLINE_HOSTED_DELEGATE_CLASS : NSObject <NSWindowDelegate> {
- @public
-  gl::plugin::MacHostWindow* owner;
-}
-@end
+Class pluginViewClass();    // the editor's GL view (ivars "owner": MacView*, "tracking": NSTrackingArea*)
+Class hostedContentClass();  // a hosted plugin's window content (top-left based)
+Class hostedContainerClass();  // the view the hosted plugin's interface is attached to
+Class hostedDelegateClass();   // the window's delegate (ivar "owner": MacHostWindow*)
+}  // namespace gl::plugin
 
 namespace gl::plugin {
 
@@ -215,8 +192,8 @@ class MacView final : public View {
   bool attach(void* parent) override {
     NSView* p = static_cast<NSView*>(parent);
     if (!p || view_ || !pixelFormat()) return false;
-    GRIDLINE_PLUGIN_VIEW_CLASS* v = [[GRIDLINE_PLUGIN_VIEW_CLASS alloc] initWithFrame:NSMakeRect(0, 0, w_, h_)];
-    v->owner = this;
+    NSView* v = [[pluginViewClass() alloc] initWithFrame:NSMakeRect(0, 0, w_, h_)];
+    gl::objc::setPointer(v, "owner", this);
     [v setWantsBestResolutionOpenGLSurface:YES];
     [v setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
     [p addSubview:v];
@@ -262,7 +239,7 @@ class MacView final : public View {
       surface_->shutdown();
     }
     if (view_) {
-      view_->owner = nullptr;
+      gl::objc::setPointer(view_, "owner", nullptr);
       [view_ removeFromSuperview];
       [view_ release];
       view_ = nil;
@@ -460,7 +437,7 @@ class MacView final : public View {
   std::unique_ptr<Frame> own_;
   Surface* surface_ = nullptr;
   int minW_ = kMinViewW, minH_ = kMinViewH;
-  GRIDLINE_PLUGIN_VIEW_CLASS* view_ = nil;
+  NSView* view_ = nil;
   NSOpenGLContext* ctx_ = nil;
   NSTimer* timer_ = nil;
   int w_ = kDefaultViewW, h_ = kDefaultViewH;
@@ -520,7 +497,7 @@ class MacHostWindow final : public HostWindow {
       if (wasKey && parent && [parent isVisible]) [parent makeKeyWindow];  // the keyboard goes back to the host's window
     }
     if (delegate_) {
-      delegate_->owner = nullptr;
+      gl::objc::setPointer(delegate_, "owner", nullptr);
       [delegate_ release];
       delegate_ = nil;
     }
@@ -539,11 +516,11 @@ class MacHostWindow final : public HostWindow {
     [win_ setReleasedWhenClosed:NO];
     [win_ setTitle:[NSString stringWithUTF8String:title.c_str()]];
     [win_ setCollectionBehavior:NSWindowCollectionBehaviorFullScreenAuxiliary];
-    GRIDLINE_HOSTED_CONTENT_CLASS* content = [[GRIDLINE_HOSTED_CONTENT_CLASS alloc] initWithFrame:NSMakeRect(0, 0, L.w, L.h)];
+    NSView* content = [[hostedContentClass() alloc] initWithFrame:NSMakeRect(0, 0, L.w, L.h)];
     [win_ setContentView:content];
     [content release];
-    delegate_ = [[GRIDLINE_HOSTED_DELEGATE_CLASS alloc] init];
-    delegate_->owner = this;
+    delegate_ = [[hostedDelegateClass() alloc] init];
+    gl::objc::setPointer(delegate_, "owner", this);
     [win_ setDelegate:delegate_];
     // The host's window is a hidden check window (plugin checks, tests):
     // so is this one.
@@ -553,7 +530,7 @@ class MacHostWindow final : public HostWindow {
       offscreen_ = true;
     }
     if (!barOnly) {
-      container_ = [[GRIDLINE_HOSTED_CONTAINER_CLASS alloc] initWithFrame:NSMakeRect(L.plugin.x, L.plugin.y, L.plugin.w, L.plugin.h)];
+      container_ = [[hostedContainerClass() alloc] initWithFrame:NSMakeRect(L.plugin.x, L.plugin.y, L.plugin.w, L.plugin.h)];
       if ([container_ respondsToSelector:@selector(setClipsToBounds:)]) [container_ setClipsToBounds:YES];
       [container_ setWantsLayer:YES];
       [[container_ layer] setMasksToBounds:YES];
@@ -658,8 +635,8 @@ class MacHostWindow final : public HostWindow {
     while (container_ && host::native::popKey(container_, k)) forwardKey(k);
   }
   void forwardKey(const host::KeyEvent& k) override {
-    if (editorView_ && [editorView_ isKindOfClass:[GRIDLINE_PLUGIN_VIEW_CLASS class]]) {
-      gl::plugin::MacView* v = ((GRIDLINE_PLUGIN_VIEW_CLASS*)editorView_)->owner;
+    if (editorView_ && [editorView_ isKindOfClass:pluginViewClass()]) {
+      gl::plugin::MacView* v = gl::objc::getPointer<gl::plugin::MacView>(editorView_, "owner");
       if (v) v->hostKey(k);
     }
   }
@@ -720,7 +697,7 @@ class MacHostWindow final : public HostWindow {
   NSView* container_ = nil;
   NSView* holder_ = nil;
   NSView* editorView_ = nil;  // Gridline's editor (retained): unused plugin keys go there
-  GRIDLINE_HOSTED_DELEGATE_CLASS* delegate_ = nil;
+  id delegate_ = nil;
   int applying_ = 0;
   bool offscreen_ = false;
   bool shown_ = false;
@@ -749,123 +726,143 @@ void restoreGl(const GlBinding& g) {
 
 }  // namespace gl::plugin
 
-@implementation GRIDLINE_HOSTED_CONTENT_CLASS
-- (BOOL)isFlipped {
-  return YES;
-}
-@end
+namespace gl::plugin {
 
-@implementation GRIDLINE_HOSTED_CONTAINER_CLASS
-- (BOOL)isOpaque {
-  return NO;
-}
-// Keys the plugin's interface passed on (J-66), queued for Gridline's editor.
-- (void)keyDown:(NSEvent*)e {
-  if (!gl::host::native::containerKey(self, e, true)) [super keyDown:e];
-}
-- (void)keyUp:(NSEvent*)e {
-  if (!gl::host::native::containerKey(self, e, false)) [super keyUp:e];
-}
-- (BOOL)acceptsFirstMouse:(NSEvent*)event {
-  (void)event;
-  return YES;  // the first click goes straight to the plugin's control
-}
-@end
-
-@implementation GRIDLINE_HOSTED_DELEGATE_CLASS
-- (BOOL)windowShouldClose:(NSWindow*)sender {
-  (void)sender;
-  if (owner) owner->userClosed();  // closed on the next idle, by Gridline
-  return NO;
-}
-- (void)windowDidResize:(NSNotification*)note {
-  (void)note;
-  if (owner) owner->userResized();
-}
-@end
-
-@implementation GRIDLINE_PLUGIN_VIEW_CLASS
-- (BOOL)isFlipped {
-  return YES;
-}
-- (BOOL)acceptsFirstResponder {
-  return YES;
-}
-- (BOOL)acceptsFirstMouse:(NSEvent*)event {
-  (void)event;
-  return YES;
-}
-- (void)updateTrackingAreas {
-  if (tracking) {
-    [self removeTrackingArea:tracking];
-    [tracking release];
+namespace {
+using gl::objc::RuntimeClass;
+using gl::objc::callSuper;
+MacView* viewOwner(id self) { return gl::objc::getPointer<MacView>(self, "owner"); }
+MacHostWindow* windowOwner(id self) { return gl::objc::getPointer<MacHostWindow>(self, "owner"); }
+void dropTracking(id self) {
+  if (void** t = gl::objc::pointerIvar(self, "tracking"); t && *t) {
+    NSTrackingArea* old = static_cast<NSTrackingArea*>(*t);
+    [static_cast<NSView*>(self) removeTrackingArea:old];
+    [old release];
+    *t = nullptr;
   }
-  tracking = [[NSTrackingArea alloc] initWithRect:[self bounds]
-                                          options:NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways |
-                                                  NSTrackingInVisibleRect
-                                            owner:self
-                                         userInfo:nil];
-  [self addTrackingArea:tracking];
-  [super updateTrackingAreas];
 }
-- (void)dealloc {
-  if (tracking) {
-    [self removeTrackingArea:tracking];
-    [tracking release];
-  }
-  [super dealloc];
+}  // namespace
+
+Class hostedContentClass() {
+  static RuntimeClass rc("GridlineHostedContent", [NSView class]);
+  static Class c = rc.method(@selector(isFlipped), +[](id, SEL) -> BOOL { return YES; }).done();
+  return c;
 }
-- (void)mouseDown:(NSEvent*)e {
-  [[self window] makeFirstResponder:self];
-  if (owner) owner->mouseButton(e, 0, true);
+
+Class hostedContainerClass() {
+  static RuntimeClass rc("GridlineHostedContainer", [NSView class]);
+  static Class c = [] {
+    static Class self_ = Nil;
+    rc.method(@selector(isOpaque), +[](id, SEL) -> BOOL { return NO; })
+        // Keys the plugin's interface passed on (J-66), queued for Gridline's editor.
+        .method(@selector(keyDown:), +[](id self, SEL sel, NSEvent* e) {
+          if (!host::native::containerKey(self, e, true)) callSuper<void>(self, self_, sel, e);
+        })
+        .method(@selector(keyUp:), +[](id self, SEL sel, NSEvent* e) {
+          if (!host::native::containerKey(self, e, false)) callSuper<void>(self, self_, sel, e);
+        })
+        .method(@selector(acceptsFirstMouse:), +[](id, SEL, NSEvent*) -> BOOL { return YES; });  // the first click goes straight to the plugin's control
+    self_ = rc.done();
+    return self_;
+  }();
+  return c;
 }
-- (void)mouseUp:(NSEvent*)e {
-  if (owner) owner->mouseButton(e, 0, false);
+
+Class hostedDelegateClass() {
+  static RuntimeClass rc("GridlineHostedDelegate", [NSObject class]);
+  static Class c = rc.pointer("owner")
+                       .conforms(objc_getProtocol("NSWindowDelegate"))
+                       .method(@selector(windowShouldClose:), +[](id self, SEL, NSWindow*) -> BOOL {
+                         if (MacHostWindow* o = windowOwner(self)) o->userClosed();  // closed on the next idle, by Gridline
+                         return NO;
+                       })
+                       .method(@selector(windowDidResize:), +[](id self, SEL, NSNotification*) {
+                         if (MacHostWindow* o = windowOwner(self)) o->userResized();
+                       })
+                       .done();
+  return c;
 }
-- (void)rightMouseDown:(NSEvent*)e {
-  [[self window] makeFirstResponder:self];
-  if (owner) owner->mouseButton(e, 1, true);
+
+Class pluginViewClass() {
+  static RuntimeClass rc("GridlinePluginGLView", [NSView class]);
+  static Class c = [] {
+    static Class self_ = Nil;
+    rc.pointer("owner")
+        .pointer("tracking")
+        .method(@selector(isFlipped), +[](id, SEL) -> BOOL { return YES; })
+        .method(@selector(acceptsFirstResponder), +[](id, SEL) -> BOOL { return YES; })
+        .method(@selector(acceptsFirstMouse:), +[](id, SEL, NSEvent*) -> BOOL { return YES; })
+        .method(@selector(updateTrackingAreas), +[](id self, SEL sel) {
+          dropTracking(self);
+          NSView* v = static_cast<NSView*>(self);
+          NSTrackingArea* t = [[NSTrackingArea alloc] initWithRect:[v bounds]
+                                                           options:NSTrackingMouseMoved | NSTrackingMouseEnteredAndExited | NSTrackingActiveAlways |
+                                                                   NSTrackingInVisibleRect
+                                                             owner:v
+                                                          userInfo:nil];
+          [v addTrackingArea:t];
+          gl::objc::setPointer(self, "tracking", t);
+          callSuper<void>(self, self_, sel);
+        })
+        .method(@selector(dealloc), +[](id self, SEL sel) {
+          dropTracking(self);
+          callSuper<void>(self, self_, sel);
+        })
+        .method(@selector(mouseDown:), +[](id self, SEL, NSEvent* e) {
+          [[static_cast<NSView*>(self) window] makeFirstResponder:static_cast<NSView*>(self)];
+          if (MacView* o = viewOwner(self)) o->mouseButton(e, 0, true);
+        })
+        .method(@selector(mouseUp:), +[](id self, SEL, NSEvent* e) {
+          if (MacView* o = viewOwner(self)) o->mouseButton(e, 0, false);
+        })
+        .method(@selector(rightMouseDown:), +[](id self, SEL, NSEvent* e) {
+          [[static_cast<NSView*>(self) window] makeFirstResponder:static_cast<NSView*>(self)];
+          if (MacView* o = viewOwner(self)) o->mouseButton(e, 1, true);
+        })
+        .method(@selector(rightMouseUp:), +[](id self, SEL, NSEvent* e) {
+          if (MacView* o = viewOwner(self)) o->mouseButton(e, 1, false);
+        })
+        .method(@selector(otherMouseDown:), +[](id self, SEL, NSEvent* e) {
+          if (MacView* o = viewOwner(self)) o->mouseButton(e, 2, true);
+        })
+        .method(@selector(otherMouseUp:), +[](id self, SEL, NSEvent* e) {
+          if (MacView* o = viewOwner(self)) o->mouseButton(e, 2, false);
+        })
+        .method(@selector(mouseMoved:), +[](id self, SEL, NSEvent* e) {
+          if (MacView* o = viewOwner(self)) o->mousePos(e);
+        })
+        .method(@selector(mouseDragged:), +[](id self, SEL, NSEvent* e) {
+          if (MacView* o = viewOwner(self)) o->mousePos(e);
+        })
+        .method(@selector(rightMouseDragged:), +[](id self, SEL, NSEvent* e) {
+          if (MacView* o = viewOwner(self)) o->mousePos(e);
+        })
+        .method(@selector(otherMouseDragged:), +[](id self, SEL, NSEvent* e) {
+          if (MacView* o = viewOwner(self)) o->mousePos(e);
+        })
+        .method(@selector(mouseEntered:), +[](id self, SEL, NSEvent*) {
+          if (MacView* o = viewOwner(self)) o->mouseEntered();
+        })
+        .method(@selector(mouseExited:), +[](id self, SEL, NSEvent*) {
+          if (MacView* o = viewOwner(self)) o->mouseLeft();
+        })
+        .method(@selector(scrollWheel:), +[](id self, SEL, NSEvent* e) {
+          if (MacView* o = viewOwner(self)) o->wheel(e);
+        })
+        .method(@selector(keyDown:), +[](id self, SEL, NSEvent* e) {
+          if (MacView* o = viewOwner(self)) o->key(e, true);
+        })
+        .method(@selector(keyUp:), +[](id self, SEL, NSEvent* e) {
+          if (MacView* o = viewOwner(self)) o->key(e, false);
+        })
+        .method(@selector(flagsChanged:), +[](id self, SEL, NSEvent* e) {
+          if (MacView* o = viewOwner(self)) o->flags(e);
+        });
+    self_ = rc.done();
+    return self_;
+  }();
+  return c;
 }
-- (void)rightMouseUp:(NSEvent*)e {
-  if (owner) owner->mouseButton(e, 1, false);
-}
-- (void)otherMouseDown:(NSEvent*)e {
-  if (owner) owner->mouseButton(e, 2, true);
-}
-- (void)otherMouseUp:(NSEvent*)e {
-  if (owner) owner->mouseButton(e, 2, false);
-}
-- (void)mouseMoved:(NSEvent*)e {
-  if (owner) owner->mousePos(e);
-}
-- (void)mouseDragged:(NSEvent*)e {
-  if (owner) owner->mousePos(e);
-}
-- (void)rightMouseDragged:(NSEvent*)e {
-  if (owner) owner->mousePos(e);
-}
-- (void)otherMouseDragged:(NSEvent*)e {
-  if (owner) owner->mousePos(e);
-}
-- (void)mouseEntered:(NSEvent*)e {
-  (void)e;
-  if (owner) owner->mouseEntered();
-}
-- (void)mouseExited:(NSEvent*)e {
-  (void)e;
-  if (owner) owner->mouseLeft();
-}
-- (void)scrollWheel:(NSEvent*)e {
-  if (owner) owner->wheel(e);
-}
-- (void)keyDown:(NSEvent*)e {
-  if (owner) owner->key(e, true);
-}
-- (void)keyUp:(NSEvent*)e {
-  if (owner) owner->key(e, false);
-}
-- (void)flagsChanged:(NSEvent*)e {
-  if (owner) owner->flags(e);
-}
-@end
+
+}  // namespace gl::plugin
 #endif

@@ -163,10 +163,21 @@ void endBody(float contentH) {
   ImGui::EndChild();
 }
 
-// One channel's row of step cells (K-306: its own function; inside steps() it crashed clang-cl
-// 20.1.8's x86 instruction selection on the Windows CI).
-void stepCells(App& a, ImDrawList* dl, const Pattern* pat, ObjectId channel, const std::vector<uint8_t>* row, int nSteps, int playStep, float gx,
-               float y, float rh, float cw, float group) {
+// K-306: clang-cl 20.1.8 (Windows CI) crashed in its x86 instruction selection on steps(), and
+// again after the step cells moved into a function of their own, which it inlined back. The Steps
+// page's parts are kept out of line, and clang-cl builds them without optimisation (a page drawn
+// once a frame; every other compiler optimises them as usual).
+#if defined(__clang__) && defined(_MSC_VER)
+#define GL_STEPS_FN __attribute__((noinline, optnone))
+#elif defined(_MSC_VER)
+#define GL_STEPS_FN __declspec(noinline)
+#else
+#define GL_STEPS_FN __attribute__((noinline))
+#endif
+
+// One channel's row of step cells.
+GL_STEPS_FN void stepCells(App& a, ImDrawList* dl, const Pattern* pat, ObjectId channel, const std::vector<uint8_t>* row, int nSteps, int playStep,
+                           float gx, float y, float rh, float cw, float group) {
   const auto& P = pal();
   for (int k = 0; k < nSteps; ++k) {
     const float x = std::round(gx + static_cast<float>(k) * (cw + 1) + group * static_cast<float>(k / 4));
@@ -190,6 +201,53 @@ void stepCells(App& a, ImDrawList* dl, const Pattern* pat, ObjectId channel, con
   }
 }
 
+// One channel's row on the Steps page: its name, mute lamp, and step cells (or its notes' starts).
+GL_STEPS_FN void stepRow(App& a, const Pattern* pat, size_t ci, ImVec2 c0, float W, float nameW, float lampW, float gx, float avail, float rh,
+                         float cw, float group, int nSteps, int playStep) {
+  const auto& P = pal();
+  const Song& s = a.doc.song();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const Channel& c = s.channels[ci];
+  const float y = std::round(c0.y + 2 + static_cast<float>(ci) * rh);
+  ImGui::PushID(static_cast<int>(ci));
+  const bool sel = a.selChannel == c.id;
+  nameField(a, ImVec2(c0.x + 2, y), ImVec2(c0.x + 2 + nameW, y + rh - 1), static_cast<int>(ci) + 1, c.color, c.name, sel, c.muted);
+  ImGui::SetCursorScreenPos(ImVec2(c0.x + 2, y));
+  if (ImGui::InvisibleButton("##name", ImVec2(nameW, rh - 1))) a.selectChannel(c.id);
+  if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) a.settingsChannel = c.id;
+  ui::Hint("Click: select \xC2\xB7 double-click: its instrument");
+  if (lamp(a, "##mute", ImVec2(c0.x + 2 + nameW + kGap, y), lampW, !c.muted, P.led, "Lit: the channel plays \xC2\xB7 click: mute"))
+    a.doc.setParam(channelParam(c.id, ChannelParam::Mute), c.muted ? 0 : 1, false);
+  const std::vector<uint8_t>* row = pat && pat->steps.count(c.id) ? &pat->steps.at(c.id) : nullptr;
+  const bool hasNotes = pat && pat->notes.count(c.id) && !pat->notes.at(c.id).empty();
+  if (hasNotes && (!row || std::none_of(row->begin(), row->end(), [](uint8_t v) { return v > 0; }))) {
+    // A channel playing notes: the piano roll edits them; here a quiet line of their starts.
+    const std::vector<Note>& ns = pat->notes.at(c.id);
+    const Tick len = std::max<Tick>(1, s.patternLength(*pat));
+    dl->AddRectFilled(ImVec2(gx, y + 1), ImVec2(c0.x + W - 4, y + rh - 2), theme::withAlpha(P.surface800, 0.6f));
+    for (const Note& n : ns) {
+      const float nx0 = std::round(gx + avail * static_cast<float>(n.start % len) / static_cast<float>(len));
+      const float nx1 = std::max(nx0 + 2, std::round(gx + avail * static_cast<float>(std::min<Tick>(len, n.start % len + n.length)) / static_cast<float>(len)));
+      const float ny = std::round(y + 3 + (rh - 8) * (1.0f - static_cast<float>(n.pitch % 24) / 24.0f));
+      dl->AddRectFilled(ImVec2(nx0, ny), ImVec2(nx1, ny + 2), theme::rgb(c.color));
+    }
+    ImGui::SetCursorScreenPos(ImVec2(gx, y));
+    if (ImGui::InvisibleButton("##notes", ImVec2(std::max(1.0f, avail), rh - 1))) a.selectChannel(c.id);
+    ui::Hint("This channel plays notes: the pattern editor and the piano roll edit them");
+  } else {
+    stepCells(a, dl, pat, c.id, row, nSteps, playStep, gx, y, rh, cw, group);
+  }
+  ImGui::PopID();
+}
+
+// The Steps page's title text: the pattern's number and its length in steps.
+std::string stepsInfo(const Song& s, const Pattern* pat, int nSteps) {
+  const std::string num = pat ? trk::hex2(trk::patternNumber(s, pat->id)) : std::string("--");
+  char info[96];
+  std::snprintf(info, sizeof info, "%s %s  %d %s", i18n::tr("Pattern"), num.c_str(), nSteps, i18n::tr("steps"));
+  return info;
+}
+
 }  // namespace
 
 void pageTitle(App& a, const char* title, const std::string& info) {
@@ -200,19 +258,13 @@ void pageTitle(App& a, const char* title, const std::string& info) {
 }
 
 // ---- Steps: the channels and their steps ----
-void steps(App& a) {
+GL_STEPS_FN void steps(App& a) {
   trackerview::pumpPage(a);  // (the header band may be hidden: T-05)
-  const auto& P = pal();
   const Song& s = a.doc.song();
   const Pattern* pat = s.pattern(a.curPattern);
-  ImFont* mono = monoFont(a);
-  const float fs = ImGui::GetFontSize();
   const ImVec2 o = ImGui::GetCursorScreenPos(), av = ImGui::GetContentRegionAvail();
   const int nSteps = pat ? std::max(1, pat->stepsPerBar * pat->bars) : 16;
-  char info[96];
-  std::snprintf(info, sizeof info, "%s %s  %d %s", i18n::tr("Pattern"), pat ? trk::hex2(trk::patternNumber(s, pat->id)).c_str() : "--", nSteps,
-                i18n::tr("steps"));
-  const float th = titleBar(a, o, av.x, i18n::tr("Steps"), info);
+  const float th = titleBar(a, o, av.x, i18n::tr("Steps"), stepsInfo(s, pat, nSteps));
   const float rh = rowHeight(), y0 = o.y + th + kGap;
   const ImVec2 b0(o.x, y0), b1(o.x + av.x, o.y + std::max(av.y, th + rh * 3));
   const float contentH = static_cast<float>(s.channels.size()) * rh + 4;
@@ -226,7 +278,6 @@ void steps(App& a) {
     if (t >= 0 && st > 0) playStep = static_cast<int>((t / st) % nSteps);
   }
   if (beginBody("##steps", b0, b1, contentH)) {
-    ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 c0 = ImGui::GetCursorScreenPos();
     const float W = ImGui::GetContentRegionAvail().x;
     const float nameW = std::min(200.0f, std::round(W * 0.22f)), lampW = rh - 2;
@@ -234,41 +285,8 @@ void steps(App& a) {
     const float avail = c0.x + W - 4 - gx;
     const float group = 3;  // extra gap every 4 steps
     const float cw = std::max(8.0f, std::floor((avail - group * static_cast<float>(nSteps / 4)) / static_cast<float>(nSteps)) - 1);
-    for (size_t ci = 0; ci < s.channels.size(); ++ci) {
-      const Channel& c = s.channels[ci];
-      const float y = std::round(c0.y + 2 + static_cast<float>(ci) * rh);
-      ImGui::PushID(static_cast<int>(ci));
-      const bool sel = a.selChannel == c.id;
-      nameField(a, ImVec2(c0.x + 2, y), ImVec2(c0.x + 2 + nameW, y + rh - 1), static_cast<int>(ci) + 1, c.color, c.name, sel, c.muted);
-      ImGui::SetCursorScreenPos(ImVec2(c0.x + 2, y));
-      if (ImGui::InvisibleButton("##name", ImVec2(nameW, rh - 1))) a.selectChannel(c.id);
-      if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) a.settingsChannel = c.id;
-      ui::Hint("Click: select \xC2\xB7 double-click: its instrument");
-      if (lamp(a, "##mute", ImVec2(c0.x + 2 + nameW + kGap, y), lampW, !c.muted, P.led, "Lit: the channel plays \xC2\xB7 click: mute"))
-        a.doc.setParam(channelParam(c.id, ChannelParam::Mute), c.muted ? 0 : 1, false);
-      const std::vector<uint8_t>* row = pat && pat->steps.count(c.id) ? &pat->steps.at(c.id) : nullptr;
-      const bool hasNotes = pat && pat->notes.count(c.id) && !pat->notes.at(c.id).empty();
-      if (hasNotes && (!row || std::none_of(row->begin(), row->end(), [](uint8_t v) { return v > 0; }))) {
-        // A channel playing notes: the piano roll edits them; here a quiet line of their starts.
-        const std::vector<Note>& ns = pat->notes.at(c.id);
-        const Tick len = std::max<Tick>(1, s.patternLength(*pat));
-        dl->AddRectFilled(ImVec2(gx, y + 1), ImVec2(c0.x + W - 4, y + rh - 2), theme::withAlpha(P.surface800, 0.6f));
-        for (const Note& n : ns) {
-          const float nx0 = std::round(gx + avail * static_cast<float>(n.start % len) / static_cast<float>(len));
-          const float nx1 = std::max(nx0 + 2, std::round(gx + avail * static_cast<float>(std::min<Tick>(len, n.start % len + n.length)) / static_cast<float>(len)));
-          const float ny = std::round(y + 3 + (rh - 8) * (1.0f - static_cast<float>(n.pitch % 24) / 24.0f));
-          dl->AddRectFilled(ImVec2(nx0, ny), ImVec2(nx1, ny + 2), theme::rgb(c.color));
-        }
-        ImGui::SetCursorScreenPos(ImVec2(gx, y));
-        if (ImGui::InvisibleButton("##notes", ImVec2(std::max(1.0f, avail), rh - 1))) a.selectChannel(c.id);
-        ui::Hint("This channel plays notes: the pattern editor and the piano roll edit them");
-      } else {
-        stepCells(a, dl, pat, c.id, row, nSteps, playStep, gx, y, rh, cw, group);
-      }
-      ImGui::PopID();
-    }
-    (void)mono;
-    (void)fs;
+    for (size_t ci = 0; ci < s.channels.size(); ++ci)
+      stepRow(a, pat, ci, c0, W, nameW, lampW, gx, avail, rh, cw, group, nSteps, playStep);
     endBody(contentH);
   }
   ImGui::SetCursorScreenPos(ImVec2(o.x, b1.y));

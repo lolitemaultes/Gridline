@@ -18,14 +18,15 @@ file(WRITE "${OUT}/input.txt"
      "7 palette dump\n"
      "9 mcp call list_commands {'limit': 500}\n"
      "10 mcp call list_commands {'limit': 500, 'offset': 500}\n"
-     "11 mcp call windows {'close': 'Undo history'}\n"
-     "12 mcp call run_command {'id': 'win:Undo history'}\n"
-     "14 mcp call windows {}\n"
-     "15 mcp call patch {'path': 'channel/1', 'set': {'name': 'Probe'}}\n"
-     "16 mcp call inspect {'path': 'channel/1'}\n"
-     "17 mcp call get_settings {'prefix': 'mcp.', 'limit': 50}\n"
-     "18 mcp call run_command {'id': 'cmd:file.new'}\n"
-     "20 quit discard\n")
+     "11 mcp call list_commands {'limit': 500, 'offset': 1000}\n"
+     "12 mcp call windows {'close': 'Undo history'}\n"
+     "13 mcp call run_command {'id': 'win:Undo history'}\n"
+     "15 mcp call windows {}\n"
+     "16 mcp call patch {'path': 'channel/1', 'set': {'name': 'Probe'}}\n"
+     "17 mcp call inspect {'path': 'channel/1'}\n"
+     "18 mcp call get_settings {'prefix': 'mcp.', 'limit': 50}\n"
+     "19 mcp call run_command {'id': 'cmd:file.new'}\n"
+     "21 quit discard\n")
 configure_file("${DEMO}" "${OUT}/song.gridline.json" COPYONLY)
 execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --size 1440x900 --dev-input "${OUT}/input.txt"
                 RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 180)
@@ -51,11 +52,12 @@ string(REGEX MATCHALL "ROW\t[^\n]*" rows "${out}")
 list(LENGTH rows nrows)
 reply(list_commands 0 lc)
 reply(list_commands 1 lc2)
+reply(list_commands 2 lc3)  # (three pages: more than 1000 commands since the 0.7.7 merges)
 string(REGEX MATCH "\"total\": *([0-9]+)" m "${lc}")
-if(NOT m OR CMAKE_MATCH_1 LESS nrows OR nrows LESS 100 OR CMAKE_MATCH_1 GREATER 1000)
+if(NOT m OR CMAKE_MATCH_1 LESS nrows OR nrows LESS 100 OR CMAKE_MATCH_1 GREATER 1500)
   message(SEND_ERROR "FAIL: list_commands total (${CMAKE_MATCH_1}) against the palette's ${nrows} rows")
 endif()
-set(listed "${lc}${lc2}")
+set(listed "${lc}${lc2}${lc3}")
 set(missing 0)
 foreach(r IN LISTS rows)
   string(REGEX REPLACE "^ROW\t[^\t]*\t([^\t]*)\t.*" "\\1" id "${r}")

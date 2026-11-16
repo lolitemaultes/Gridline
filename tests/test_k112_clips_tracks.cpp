@@ -378,6 +378,159 @@ void testCollab() {
   expect(trackmodes::modeOf(b.doc.song(), 3) == TrackMode::Audio && songText(a) == songText(b), "collab: the audio track's mixer track too");
 }
 
+// Checkpoint 51: Cmd+G. Tracks 3 Audio and 1 MIDI (with an instrument on Main) of a new Clips set
+// are grouped: they move together under a group track on a mixer track of its own, which they play
+// into; the group sends to the returns; undo puts it all back; ungroup restores the routing.
+void testGroups() {
+  Song s0 = makeEmptySong();
+  s0.tracks.resize(kDefaultPlaylistTracks);
+  trackmodes::makeClipsStarterTracks(s0);
+  Document d;
+  d.reset(s0);
+  const ObjectId ch = d.addChannel("Keys", "gl.sine");
+  d.editSong("link", [&](Song& x) {
+    x.channel(ch)->mixerTrack = x.masterId();
+    x.tracks[0].mode = TrackMode::Instrument;
+    x.tracks[0].channel = ch;
+  });
+  const std::string before = jsonStringify(songToJson(d.song()), 0);
+  const ObjectId audioMixer = trackmodes::linkedMixer(d.song(), 2)->id;
+  std::string why;
+  const int g = trackmodes::groupTracks(d, {2, 0}, &why);
+  const Song& s = d.song();
+  expect(g == 0, ("the group track goes at the first track's place: " + why).c_str());
+  expect(joined(listed(s)) == "1 Group,2 MIDI,3 Audio,4 MIDI,5 Audio", ("the members moved together under it: " + joined(listed(s))).c_str());
+  expect(trackmodes::isGroupTrack(s, 0) && s.tracks[0].groupSize == 2, "a group track of two");
+  expect(trackmodes::groupTrackOf(s, 1) == 0 && trackmodes::groupTrackOf(s, 2) == 0 && trackmodes::groupTrackOf(s, 3) == -1, "its members");
+  const MixerTrack* gm = trackmodes::linkedMixer(s, 0);
+  expect(gm && gm->name == "1 Group" && trackmodes::outputOf(*gm) == s.masterId(), "the group's mixer track plays into Main");
+  const MixerTrack* am = s.mixerTrack(audioMixer);
+  expect(gm && am && trackmodes::outputOf(*am) == gm->id, "the audio member plays into the group");
+  const Channel* kc = s.channel(ch);
+  const MixerTrack* km = kc ? s.mixerTrack(kc->mixerTrack) : nullptr;
+  expect(gm && km && km->id != s.masterId() && km->id != gm->id && trackmodes::outputOf(*km) == gm->id,
+         "the instrument on Main gets a mixer track of its own, into the group");
+  int rs = 0;
+  if (gm)
+    for (const Send& sd : gm->sends) rs += sd.level == 0.0f ? 1 : 0;
+  expect(rs == 2, "the group sends to both returns at zero");
+  expect(trackmodes::groupTracks(d, {1, 3}) < 0, "tracks of different groups are not grouped together");
+  d.undo();
+  expect(jsonStringify(songToJson(d.song()), 0) == before, "one undo puts the set back");
+  d.redo();
+  expect(trackmodes::ungroupTracks(d, 0, &why), "ungroup");
+  const Song& u = d.song();
+  expect(joined(listed(u)) == "1 MIDI,2 Audio,3 MIDI,4 Audio",
+         ("the group track goes, its tracks stay: " + joined(listed(u))).c_str());
+  const MixerTrack* am2 = u.mixerTrack(audioMixer);
+  expect(am2 && trackmodes::outputOf(*am2) == u.masterId(), "the audio member plays into Main again");
+  expect(!trackmodes::isGroupTrack(u, 0) && u.tracks[0].groupSize == 0, "no group is left");
+  d.undo();
+  expect(trackmodes::isGroupTrack(d.song(), 0), "undo brings the group back");
+}
+
+// Checkpoint 52: groups inside groups (as the reference's), a member given its sound later plays
+// into its group, a new track next to a member joins the group, the group lane takes no clips.
+void testNestedGroups() {
+  Song s0 = makeEmptySong();
+  s0.tracks.resize(kDefaultPlaylistTracks);
+  trackmodes::makeClipsStarterTracks(s0);
+  Document d;
+  d.reset(s0);
+  std::string why;
+  expect(trackmodes::groupTracks(d, {0, 1, 2, 3}, &why) == 0, ("outer group: " + why).c_str());
+  const int inner = trackmodes::groupTracks(d, {2, 3}, &why);
+  const Song& s = d.song();
+  expect(inner == 2, ("a group inside the group: " + why).c_str());
+  expect(joined(listed(s)) == "1 Group,2 MIDI,3 Group,4 MIDI,5 Audio,6 Audio", ("nested order: " + joined(listed(s))).c_str());
+  expect(s.tracks[0].groupSize == 5 && s.tracks[2].groupSize == 2, "the outer group holds the inner one and its tracks");
+  expect(trackmodes::groupTrackOf(s, 3) == 2 && trackmodes::groupTrackOf(s, 2) == 0 && trackmodes::groupTrackOf(s, 1) == 0 &&
+             trackmodes::groupTrackOf(s, 5) == 0,
+         "each track's own group is the innermost");
+  const MixerTrack* om = trackmodes::linkedMixer(s, 0);
+  const MixerTrack* im = trackmodes::linkedMixer(s, 2);
+  const MixerTrack* am = trackmodes::linkedMixer(s, 4);
+  expect(om && im && am && trackmodes::outputOf(*im) == om->id && trackmodes::outputOf(*am) == im->id && trackmodes::outputOf(*om) == s.masterId(),
+         "audio track -> inner group -> outer group -> Main");
+  expect(trackmodes::groupTracks(d, {1, 3}) < 0, "tracks of different groups are not grouped together");
+  // A new track after the inner group's last track joins it (and so the outer one).
+  const int nt = trackmodes::addAudioTrack(d, 4);
+  const Song& s2 = d.song();
+  expect(nt == 5 && s2.tracks[2].groupSize == 3 && s2.tracks[0].groupSize == 6, "the new track is in both groups");
+  const MixerTrack* nm = trackmodes::linkedMixer(s2, 5);
+  const MixerTrack* im2 = trackmodes::linkedMixer(s2, 2);
+  expect(nm && im2 && trackmodes::outputOf(*nm) == im2->id, "the new audio track plays into its group");
+  // A MIDI track of the group given an instrument plays into the group.
+  const ObjectId ch = trackmodes::newInstrumentTrack(d, 1, "gl.synth", &why);
+  const Song& s3 = d.song();
+  const Channel* c = s3.channel(ch);
+  const MixerTrack* cm = c ? s3.mixerTrack(c->mixerTrack) : nullptr;
+  const MixerTrack* om3 = trackmodes::linkedMixer(s3, 0);
+  expect(cm && om3 && cm->id != om3->id && trackmodes::outputOf(*cm) == om3->id, ("the instrument added later plays into the group: " + why).c_str());
+  // Ungrouping the inner group: its tracks play into the outer group, which is a track shorter.
+  expect(trackmodes::ungroupTracks(d, 2, &why), "ungroup the inner group");
+  const Song& s4 = d.song();
+  const MixerTrack* om4 = trackmodes::linkedMixer(s4, 0);
+  const MixerTrack* am4 = trackmodes::linkedMixer(s4, 3);
+  expect(s4.tracks[0].groupSize == 5 && trackmodes::isGroupTrack(s4, 0), "the outer group keeps its tracks");
+  expect(om4 && am4 && trackmodes::outputOf(*am4) == om4->id, "the inner group's tracks play into the outer group");
+  // An automation clip on the group lane leaves it a group.
+  d.editSong("auto", [](Song& x) {
+    Clip a;
+    a.id = x.allocateId();
+    a.kind = ClipKind::Automation;
+    a.track = 0;
+    a.length = 384;
+    x.playlist.push_back(a);
+  });
+  expect(trackmodes::isGroupTrack(d.song(), 0), "an automation clip does not undo the group");
+}
+
+// Checkpoint 52 (N51-03, N51-06): Duplicate and Delete of a group bring its tracks; a track moved into
+// or out of a group plays into the group it is in (syncGroupRouting).
+void testGroupEdits() {
+  Song s0 = makeEmptySong();
+  s0.tracks.resize(kDefaultPlaylistTracks);
+  trackmodes::makeClipsStarterTracks(s0);
+  Document d;
+  d.reset(s0);
+  std::string why;
+  expect(trackmodes::groupTracks(d, {1, 2}, &why) == 1, ("group: " + why).c_str());
+  expect(joined(listed(d.song())) == "1 MIDI,2 Group,3 MIDI,4 Audio,5 Audio", ("grouped: " + joined(listed(d.song()))).c_str());
+  const size_t n0 = d.song().tracks.size();
+  const int c = trackmodes::duplicateTracks(d, {1}, &why);
+  const Song& s = d.song();
+  expect(c == 4, ("the copy goes after the group: " + why).c_str());
+  expect(joined(listed(s)) == "1 MIDI,2 Group,3 MIDI,4 Audio,5 Group,6 MIDI,7 Audio,8 Audio", ("duplicated: " + joined(listed(s))).c_str());
+  expect(trackmodes::isGroupTrack(s, 1) && s.tracks[1].groupSize == 2 && trackmodes::isGroupTrack(s, 4) && s.tracks[4].groupSize == 2,
+         "two groups of two, side by side (no overlap)");
+  const MixerTrack* g2 = trackmodes::linkedMixer(s, 4);
+  const MixerTrack* a2 = trackmodes::linkedMixer(s, 6);
+  const MixerTrack* g1 = trackmodes::linkedMixer(s, 1);
+  expect(g2 && a2 && g1 && g2->id != g1->id && trackmodes::outputOf(*a2) == g2->id && trackmodes::outputOf(*g2) == s.masterId(),
+         "the copied audio track plays into the copied group, which plays into Main");
+  int rs = 0;
+  if (g2)
+    for (const Send& sd : g2->sends) rs += sd.level == 0.0f ? 1 : 0;
+  expect(rs == 2, "the copied group sends to both returns");
+  expect(trackmodes::deleteTracks(d, {4}, &why) == 3, ("deleting a group deletes its tracks: " + why).c_str());
+  expect(joined(listed(d.song())) == "1 MIDI,2 Group,3 MIDI,4 Audio,5 Audio", ("after delete: " + joined(listed(d.song()))).c_str());
+  expect(d.song().tracks.size() == n0, "as many tracks as before the copy");
+  // 5 Audio (on Main) moved in among the group's tracks plays into the group; moved out, into Main again.
+  const ObjectId am = trackmodes::linkedMixer(d.song(), 4)->id;
+  expect(trackorder::movePlaylistTracks(d, {4}, 3), "move in");
+  trackmodes::syncGroupRouting(d);
+  const Song& s2 = d.song();
+  const MixerTrack* gm = trackmodes::linkedMixer(s2, 1);
+  expect(s2.tracks[1].groupSize == 3, "it joined the group");
+  expect(gm && s2.mixerTrack(am) && trackmodes::outputOf(*s2.mixerTrack(am)) == gm->id, "moved in: it plays into the group");
+  expect(joined(listed(s2)) == "1 MIDI,2 Group,3 MIDI,4 Audio,5 Audio" && s2.tracks[3].mixer == am, ("renumbered after the move: " + joined(listed(s2))).c_str());
+  expect(trackorder::movePlaylistTracks(d, {3}, 0), "move out");
+  trackmodes::syncGroupRouting(d);
+  const Song& s3 = d.song();
+  expect(s3.mixerTrack(am) && trackmodes::outputOf(*s3.mixerTrack(am)) == s3.masterId(), "moved out: it plays into Main again");
+}
+
 }  // namespace
 
 int main() {
@@ -392,5 +545,8 @@ int main() {
   testInsertAfter();
   testLiveArea();
   testCollab();
+  testGroups();
+  testNestedGroups();
+  testGroupEdits();
   return finish();
 }

@@ -8,6 +8,7 @@
 #include "SfzText.h"
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -633,7 +634,7 @@ bool forEachStateFileRef(PluginState& state, const std::function<void(std::strin
 
 int forEachFileRef(Song& song, const std::function<void(std::string& path)>& fn) { return visitSong(song, filesOnly(fn)); }
 
-int adoptCacheFiles(Song& song, const std::string& cacheRoot, const std::string& folder, std::string* err) {
+int adoptCacheFiles(Song& song, const std::string& cacheRoot, const std::string& folder, std::string* err, const std::string& relativeTo) {
   if (cacheRoot.empty() || folder.empty()) return 0;
   std::error_code ec;
   const fs::path root = fs::weakly_canonical(fs::u8path(cacheRoot), ec);
@@ -670,10 +671,127 @@ int adoptCacheFiles(Song& song, const std::string& cacheRoot, const std::string&
       }
       ++copied;
     }
-    done[p] = to.u8string();
-    p = to.u8string();
+    std::string named = to.u8string();
+    if (!relativeTo.empty()) {  // R10-01: "<name> Samples/x.wav", found again beside a moved project
+      const fs::path rel = to.lexically_normal().lexically_relative(fs::u8path(relativeTo).lexically_normal());
+      if (!rel.empty() && rel.is_relative() && *rel.begin() != "..") named = rel.generic_u8string();
+    }
+    done[p] = named;
+    p = named;
   });
   return static_cast<int>(done.size()) > 0 ? std::max(copied, 1) : 0;
+}
+
+int adoptProjectFolders(Song& song, const std::vector<std::pair<std::string, std::string>>& folders, const std::string& projectDir, std::string* err) {
+  if (projectDir.empty() || folders.empty()) return 0;
+  std::error_code ec;
+  const fs::path dir = fs::weakly_canonical(fs::u8path(projectDir), ec);
+  if (ec) return 0;
+  std::vector<std::pair<fs::path, fs::path>> roots;  // canonical source, name inside the project
+  for (const auto& [src, name] : folders) {
+    if (src.empty() || name.empty()) continue;
+    std::error_code e2;
+    const fs::path c = fs::weakly_canonical(fs::u8path(src), e2);
+    if (!e2) roots.emplace_back(c, fs::u8path(name));
+  }
+  // `f` inside `root`: the part below it (empty when not inside).
+  auto below = [](const fs::path& root, const fs::path& f) {
+    auto r = root.begin();
+    auto i = f.begin();
+    for (; r != root.end() && i != f.end(); ++r, ++i)
+      if (*r != *i) return fs::path();
+    if (r != root.end() || i == f.end()) return fs::path();
+    fs::path rest;
+    for (; i != f.end(); ++i) rest /= *i;
+    return rest;
+  };
+  std::map<std::string, std::string> done;
+  int changed = 0;
+  forEachFileRef(song, [&](std::string& p) {
+    if (p.empty()) return;
+    if (auto it = done.find(p); it != done.end()) {
+      if (p != it->second) p = it->second, ++changed;
+      return;
+    }
+    const fs::path src = fs::u8path(p);
+    if (!src.is_absolute()) return;  // named relative already
+    std::error_code e3;
+    const fs::path f = fs::weakly_canonical(src, e3);
+    if (e3 || !fs::is_regular_file(f, e3)) return;
+    for (const auto& [root, name] : roots) {
+      const fs::path rest = below(root, f);
+      if (rest.empty()) continue;
+      fs::path rel = name / rest;
+      std::error_code e4;
+      // A free name, or the same file or content there already (a different file of that name in
+      // the new folder is never overwritten: the copy takes a numbered name).
+      for (int k = 0;; ++k) {
+        rel = (name / rest).parent_path() / fs::u8path(numberedName(rest.filename().u8string(), k));
+        const fs::path at = dir / rel;
+        if (!fs::exists(at, e4) || fs::equivalent(at, f, e4) || sameContent(f, at)) break;
+      }
+      const fs::path to = dir / rel;
+      if (!fs::exists(to, e4)) {
+        fs::create_directories(to.parent_path(), e4);
+        if (!fs::copy_file(f, to, e4)) {
+          if (err && err->empty()) *err = "could not copy " + fileNameOf(p) + ": " + e4.message();
+          return;
+        }
+      }
+      const std::string named = rel.generic_u8string();
+      done[p] = named;
+      p = named;
+      ++changed;
+      return;
+    }
+  });
+  return changed;
+}
+
+std::vector<std::pair<std::string, std::string>> gridlineMadeFolders(Song& song, const std::string& newStem) {
+  std::vector<std::pair<std::string, std::string>> out;
+  std::set<std::string> seen;
+  auto isProject = [](const fs::path& f) {
+    const std::string n = f.filename().u8string();
+    for (const char* ext : {".gridline.json", ".gridline"}) {
+      const size_t e = std::strlen(ext);
+      if (n.size() > e && n.compare(n.size() - e, e, ext) == 0) return true;
+    }
+    return false;
+  };
+  auto anyProjectIn = [&](const fs::path& dir) {
+    std::error_code ec;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+      if (isProject(it->path())) return true;
+    return false;
+  };
+  forEachFileRef(song, [&](std::string& p) {
+    const fs::path f = fs::u8path(p);
+    if (p.empty() || !f.is_absolute()) return;
+    std::error_code ec;
+    if (!fs::is_regular_file(f, ec)) return;
+    for (fs::path d = f.parent_path(); !d.empty() && d.has_relative_path(); d = d.parent_path()) {
+      const std::string name = d.filename().u8string();
+      const std::string key = d.lexically_normal().u8string();
+      if (seen.count(key)) break;
+      const fs::path home = d.parent_path();
+      static const std::string kSamples = " Samples";
+      if (name == "Edited audio" && anyProjectIn(home)) {
+        seen.insert(key);
+        out.emplace_back(d.u8string(), "Edited audio");
+        break;
+      }
+      if (name.size() > kSamples.size() && name.compare(name.size() - kSamples.size(), kSamples.size(), kSamples) == 0) {
+        const std::string stem = name.substr(0, name.size() - kSamples.size());
+        if (fs::is_regular_file(home / fs::u8path(stem + ".gridline.json"), ec) || fs::is_regular_file(home / fs::u8path(stem + ".gridline"), ec)) {
+          seen.insert(key);
+          out.emplace_back(d.u8string(), newStem + kSamples);
+          break;
+        }
+      }
+    }
+  });
+  return out;
 }
 
 int forEachRef(Song& song, const std::function<void(std::string& path, bool folder)>& fn) {
@@ -887,8 +1005,18 @@ int resolveRelativePaths(Song& song, const std::string& baseDir) {
   if (baseDir.empty()) return 0;
   return visitSong(song, [&](std::string& p, RefKind kind) {
     const fs::path rel = pathOf(p);
-    if (rel.empty() || rel.is_absolute()) return;
+    if (rel.empty()) return;
     std::error_code ec;
+    if (rel.is_absolute()) {
+      // R10-01: a project saved before its "<name> Samples" copies were named relative to it keeps
+      // their old absolute place: moved with the project, they are found beside it again.
+      const fs::path dir = rel.parent_path().filename();
+      const std::string d = dir.u8string();
+      if (kind != RefKind::File || d.size() < 8 || d.compare(d.size() - 8, 8, " Samples") != 0 || fs::exists(rel, ec)) return;
+      const fs::path near = (pathOf(baseDir) / dir / rel.filename()).lexically_normal();
+      if (fs::is_regular_file(near, ec)) p = near.u8string();
+      return;
+    }
     const fs::path abs = (pathOf(baseDir) / rel).lexically_normal();
     if (kind == RefKind::File ? fs::is_regular_file(abs, ec) : (fs::is_directory(abs, ec) || (isFolderManifest(p) && fs::is_regular_file(abs, ec)))) p = abs.u8string();
   });

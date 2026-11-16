@@ -494,7 +494,10 @@ void editDelete(App& a) {
   const Song& s = a.doc.song();
   switch (a.editFocus) {
     case App::EditFocus::Playlist:
+      a.doc.beginGroup("delete clips");
+      logicplug::keepTrackSounds(a, a.playlist.selected);  // R08-07
       ops::removeClips(a.doc, a.playlist.selected);
+      a.doc.endGroup();
       a.playlist.selected.clear();
       break;
     case App::EditFocus::Rack:
@@ -1389,8 +1392,9 @@ void playlistTrackMenu(App& a, int track) {
     // return tracks, which go right after this track (MAP.md 2.9), in place of Studio's insert rows.
     // N48-18: only the reference's rows: edit, rename, freeze, the new tracks, the colours. Launch
     // settings live in the clip view, mute in the track's activator, the order in a drag.
-    if (ImGui::MenuItem(i18n::tr("Duplicate"), nullptr, false, n < kMaxPlaylistTracks)) a.later([&a, track] { ops::clonePlaylistTrack(a.doc, track); });
-    if (ImGui::MenuItem(i18n::tr("Delete"), nullptr, false, n > 1)) a.later([&a, track] { ops::deletePlaylistTrack(a.doc, track); });
+    // Checkpoint 52 (N51-03, N51-07): a group brings its tracks; the selected tracks together; Cmd+D, Delete.
+    if (ImGui::MenuItem(i18n::tr("Duplicate"), keys::label("playlist.duplicate"), false, n < kMaxPlaylistTracks)) livelook::duplicateTracks(a, track);
+    if (ImGui::MenuItem(i18n::tr("Delete"), keys::label("playlist.delete"), false, n > 1)) livelook::deleteTracks(a, track);
     devMenuItem("trmenu delete");
     ImGui::Separator();
     renameRow();
@@ -1398,6 +1402,11 @@ void playlistTrackMenu(App& a, int track) {
     const float beforeFreeze = ImGui::GetCursorPosY();
     freezeui::trackMenuItems(a, track, true);
     if (ImGui::GetCursorPosY() > beforeFreeze) ImGui::Separator();  // a track without a freezable unit has none
+    // Checkpoint 51: grouping, as the reference's track menu (Cmd+G, Cmd+Shift+G).
+    if (ImGui::MenuItem(i18n::tr("Group tracks"), keys::label("track.group"))) livelook::groupTracks(a, track);
+    if (trackmodes::isGroupTrack(a.doc.song(), track) || trackmodes::groupTrackOf(a.doc.song(), track) >= 0)
+      if (ImGui::MenuItem(i18n::tr("Ungroup tracks"), keys::label("track.ungroup"))) livelook::ungroupTracks(a, track);
+    ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("New audio track"), keys::label("track.newAudio"), false, n < kMaxPlaylistTracks))
       a.later([&a, track] { livelook::newTrackAfter(a, true, track); });
     if (ImGui::MenuItem(i18n::tr("New MIDI track"), keys::label("track.newMidi"), false, n < kMaxPlaylistTracks))
@@ -1697,7 +1706,10 @@ void clipContextMenu(App& a, ObjectId clip, const std::function<bool()>& clipRow
   };
   const auto deleteClips = [&]() -> bool {
     if (ImGui::MenuItem(i18n::tr("Delete"), "Del")) {
+      a.doc.beginGroup("delete clips");
+      logicplug::keepTrackSounds(a, std::set<ObjectId>(sel.begin(), sel.end()));  // R08-07
       ops::removeClips(a.doc, sel);
+      a.doc.endGroup();
       a.playlist.selected.clear();
       return true;
     }
@@ -1828,8 +1840,12 @@ void playlistOptionsMenu(App& a, int part) {
   // R01-16: join, split and chop: in Edit, or in Functions in the Tracks layout.
   const auto regionFunctions = [&]() {
     if (ImGui::MenuItem(regionWord("Merge selected clips"), keys::label("playlist.merge"), false, a.playlist.selected.size() >= 2)) {
-      ObjectId nc = ops::mergeClips(a.doc, a.playlist.selected);
-      if (nc) a.playlist.selected = {nc};
+      if (lg) {
+        tracksJoin(a);  // checkpoint 47: the Join tool's rules
+      } else {
+        ObjectId nc = ops::mergeClips(a.doc, a.playlist.selected);
+        if (nc) a.playlist.selected = {nc};
+      }
     }
     if (!lg && ImGui::MenuItem(regionWord("Mute / unmute selected clips"), keys::label("playlist.mute"), false, any)) ops::muteClips(a.doc, a.playlist.selected, 2);
     if (ImGui::BeginMenu(regionWord("Chop selected clips"), any)) {

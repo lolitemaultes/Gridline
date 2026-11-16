@@ -26,6 +26,7 @@ bool resolve(Song& s, ParamId id, Target& t) {
       case SongParam::Tempo: t.d = &s.tempo; t.desc = lin("Tempo", "BPM", 10.0, 522.0, 140.0); return true;
       case SongParam::Swing: t.f = &s.swing; t.desc = lin("Swing", "%", 0, 1, 0); return true;
       case SongParam::MasterPitch: t.f = &s.masterPitch; t.desc = lin("Master pitch", "st", -12, 12, 0); return true;
+      case SongParam::GrooveAccent: t.f = &s.groove.accent; t.desc = lin("Groove accents", "%", 0, 1, 1); return true;  // K-152
       default: return false;
     }
   }

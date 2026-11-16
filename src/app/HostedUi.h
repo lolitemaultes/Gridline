@@ -110,6 +110,12 @@ void renderHostedEditors(App& a);
 void routePluginWindows(App& a);
 // The plugin window of a target is showing (native window or Gridline panel).
 bool pluginWindowShown(App& a, const PluginTarget& t);
+// K-297 (round 9): the plugin windows open now as {owner, slot} (slot -1: a channel's instrument), in
+// the order they opened (the instrument and effect windows last), for the project (Song::pluginWindows).
+std::vector<std::pair<ObjectId, int>> openPluginWindowList(App& a);
+// A project just opened: its saved plugin windows open again (the last instrument and effect ones as
+// the instrument and effect windows; installed plugins' other windows once their plugins run).
+void reopenPluginWindowList(App& a, const std::vector<std::pair<ObjectId, int>>& list);
 // Channel button / mixer slot: shows or hides the target's plugin window.
 void togglePluginWindow(App& a, const PluginTarget& t);
 // Gridline's own panel for an installed plugin (generic parameters,

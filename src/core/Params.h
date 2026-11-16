@@ -30,7 +30,8 @@ struct ParamId {
 //                note processor params at kNoteFxBase + fx*kNoteFxStride + k
 //   mixer track  MixerParam, then slot params at kSlotBase + slot*kSlotStride + k,
 //                slot mix at kSlotBase + slot*kSlotStride + kSlotMix
-enum class SongParam : uint32_t { Tempo = 0, Swing, MasterPitch, Count };
+// GrooveAccent (K-152): how much of the groove's accents plays (SongGroove::accent), automatable like swing.
+enum class SongParam : uint32_t { Tempo = 0, Swing, MasterPitch, GrooveAccent, Count };
 // Sustain: the channel's sustain pedal (CC 64), down at 1. Recorded from a keyboard's pedal and
 // automatable: the instrument gets CC 64 when it moves, and while it is down Gridline holds the
 // channel's note-offs (Settings > MIDI > Pedals > Sustain holds notes).
