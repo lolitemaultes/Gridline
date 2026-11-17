@@ -268,6 +268,62 @@ void testSaved() {
   Song old = makeEmptySong();
   Song oldBack;
   expect(loadText(projectToText(old), oldBack, &err) && oldBack.trackReceipt.empty(), "saved: projects without it load");
+  expect(savedToJson(savedFromJson(j)) == j, "saved: reading and writing again changes nothing");
+}
+
+// K-322: keys a newer Gridline writes (top level, in a song, in a file, in the release) survive
+// an edit made here; an untouched project saves byte for byte as it was loaded.
+void testSavedUnknownKeys() {
+  const std::string newer =
+      "{\"files\":{\"/p/x.wav\":{\"hash\":\"ab12\",\"song\":\"A-B\",\"ticked\":1}},\"maps\":{\"k\":[1,2]},"
+      "\"release\":{\"title\":\"T\",\"upc\":\"0001\"},"
+      "\"songs\":{\"A-B\":{\"category\":\"B\",\"clearedBy\":\"Label\",\"share\":\"10\"},\"Only-New\":{\"clearedBy\":\"X\"}},"
+      "\"v\":2,\"writers\":[{\"name\":\"Me\"}]}";
+  Saved s = savedFromJson(newer);
+  expect(s.songs["A-B"].share == "10" && s.files["/p/x.wav"].ticked == 1 && s.release.title == "T" && !s.unknown.empty(),
+         "unknown keys: the known fields still read");
+  expect(savedToJson(s) == newer, "unknown keys: reading and writing again changes nothing, byte for byte");
+  // The user edits a share, a file and the release, and clears a song's fields.
+  s.songs["A-B"].share = "25";
+  s.songs["A-B"].category.clear();
+  s.files["/p/x.wav"].ticked = 0;
+  s.release.title = "New";
+  s.writers.push_back(Writer{"You", "producer", "", "", "50"});
+  const std::string out = savedToJson(s);
+  Json j;
+  expect(jsonParse(out, j) && j.type == Json::Type::Object, "unknown keys: the edit saves");
+  const Json* songs = j.find("songs");
+  const Json* ab = songs ? songs->find("A-B") : nullptr;
+  const Json* only = songs ? songs->find("Only-New") : nullptr;
+  const Json* files = j.find("files");
+  const Json* x = files ? files->find("/p/x.wav") : nullptr;
+  const Json* rel = j.find("release");
+  const Json* maps = j.find("maps");
+  expect(ab && ab->text("clearedBy") == "Label" && ab->text("share") == "25" && !ab->find("category"), "unknown keys: kept in a song, the edit made");
+  expect(only && only->text("clearedBy") == "X", "unknown keys: a song only a newer version knows is kept");
+  expect(x && x->text("hash") == "ab12" && x->num("ticked", -1) == 0 && x->text("song") == "A-B", "unknown keys: kept in a file, the edit made");
+  expect(rel && rel->text("upc") == "0001" && rel->text("title") == "New", "unknown keys: kept in the release, the edit made");
+  expect(maps && maps->find("k") && maps->find("k")->array.size() == 2 && j.num("v") == 2, "unknown keys: kept at the top (and the newer version number)");
+  expect(j.find("writers") && j.find("writers")->array.size() == 2, "unknown keys: writers edited as before");
+  expect(savedFromJson(out) == s, "unknown keys: the edited fields read back");
+  // Every known field cleared: the newer version's keys are still saved.
+  Saved cleared;
+  cleared.unknown = savedFromJson(newer).unknown;
+  const std::string rest = savedToJson(cleared);
+  expect(!rest.empty() && rest.find("clearedBy") != std::string::npos && rest.find("\"share\"") == std::string::npos,
+         "unknown keys: clearing every known field keeps the rest");
+  // An untouched project saves byte for byte as it was loaded, and opening the receipt without
+  // an edit leaves the fields as they were (commit compares the JSON).
+  Song song = makeEmptySong();
+  song.trackReceipt = newer;
+  const std::string text = projectToText(song);
+  Song back;
+  std::string err;
+  expect(loadText(text, back, &err) && back.trackReceipt == newer, "unknown keys: the project keeps them on load");
+  expect(projectToText(back) == text, "unknown keys: an untouched project saves byte for byte");
+  expect(savedToJson(savedFromJson(back.trackReceipt)) == back.trackReceipt, "unknown keys: opening the receipt without an edit changes nothing");
+  // A version-1 file (what this and older versions write) has nothing unknown.
+  expect(savedFromJson("{\"songs\":{\"A-B\":{\"share\":\"5\"}},\"v\":1}").unknown.empty(), "unknown keys: none in a version 1 file");
 }
 
 // Minimal XML well-formedness check: tags balance, entities valid.
@@ -391,6 +447,7 @@ int main() {
   testEstimated();
   testDerived(scratch + "/derived");
   testSaved();
+  testSavedUnknownKeys();
   const char* draft = std::getenv("GL_RECEIPT_DRAFT");
   testOutputs(draft ? draft : "");
   runProjectTests(scratch + "/projects");

@@ -212,6 +212,9 @@ Options > Recording options > Audio, into the playlist as audio clips			ec
 Options > Recording options > Audio, into Loupe (armed tracks)			e-
 Options > Recording options > Notes			ec
 Options > Recording options > Automation (controller moves)			ec
+Options > Recording options > Other messages > Pitch bend			ec
+Options > Recording options > Other messages > Pressure (aftertouch)			ec
+Options > Recording options > Other messages > Program changes			ec
 Options > Recording options > Everything			e-
 Options > Recording options > Punch in/out at the time selection			ec
 Options > Recording options > Pre-roll > Off			ec
@@ -230,6 +233,13 @@ Options > Recording options > Count-in > Off			ec
 Options > Recording options > Count-in > 1 bar			e-
 Options > Recording options > Count-in > 2 bars			e-
 Options > Recording options > Count-in > 4 bars			e-
+Options > Recording options > Quick punch			e-
+Options > Recording options > Punch crossfade > Off			e-
+Options > Recording options > Punch crossfade > 5 ms			e-
+Options > Recording options > Punch crossfade > 10 ms			ec
+Options > Recording options > Punch crossfade > 20 ms			e-
+Options > Recording options > Punch crossfade > 50 ms			e-
+Options > Recording options > Start on the first note			e-
 Options > Recording options > Audio file format > 32-bit float WAV			ec
 Options > Recording options > Audio file format > 24-bit WAV			e-
 Options > Recording options > Audio file format > 16-bit WAV			e-
@@ -239,6 +249,12 @@ Options > Recording options > Disarm tracks after recording			e-
 Options > Recording options > Name empty playlist tracks after the take			ec
 Options > Recording options > Name takes after > The mixer track			ec
 Options > Recording options > Name takes after > The audio input			e-
+Options > Recording options > Capture while armed > Off			e-
+Options > Recording options > Capture while armed > 30 seconds			e-
+Options > Recording options > Capture while armed > 1 minute			ec
+Options > Recording options > Capture while armed > 2 minutes			e-
+Options > Recording options > Capture while armed > Recover the last pass			--
+Options > Recording options > Latency check...			e-
 Options > Recording options > Input only			e-
 Options > Recording options > Low latency			e-
 Options > Recording options > Overdub (keep existing notes)			ec
@@ -246,6 +262,7 @@ Options > Recording options > Replace (clear the channel's notes)			e-
 Options > Recording options > Quantize note starts to the snap			ec
 Options > Recording options > Quantize note lengths			e-
 Options > Recording options > Loop recording: new take per pass			e-
+Options > Recording options > Recover what I just played			--
 Options > Recording options > Controller moves go to > Automatic			ec
 Options > Recording options > Controller moves go to > Pattern events			e-
 Options > Recording options > Controller moves go to > Automation clips			e-

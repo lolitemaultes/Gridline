@@ -564,6 +564,7 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.reverse) jc.object["reverse"] = boolean(true);
   if (c.takeGroup != kNoId) jc.object["takeGroup"] = num(c.takeGroup);
   if (c.take != 0) jc.object["take"] = num(c.take);
+  if (c.takeRating != 0) jc.object["takeRating"] = num(c.takeRating);  // K-123
   if (c.launched) jc.object["launched"] = boolean(true);
   if (c.launchOnce) jc.object["launchOnce"] = boolean(true);  // K-112c checkpoint 54
   if (c.group != kNoId) jc.object["group"] = num(c.group);  // J-31
@@ -620,6 +621,7 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.reverse = flag(jc, "reverse");
   c.takeGroup = jsonInt<ObjectId>(std::max(0.0, jc.num("takeGroup", 0)));
   c.take = jsonInt<int>(std::clamp(jc.num("take", 0), 0.0, 9999.0));
+  c.takeRating = static_cast<uint8_t>(std::clamp(jc.num("takeRating", 0), 0.0, 3.0));  // K-123
   c.launched = flag(jc, "launched");
   c.launchOnce = flag(jc, "launchOnce");  // K-112c checkpoint 54
   c.group = jsonInt<ObjectId>(std::max(0.0, jc.num("group", 0)));  // J-31

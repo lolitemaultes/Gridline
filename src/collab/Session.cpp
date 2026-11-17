@@ -184,6 +184,7 @@ Song restOf(const Song& c) {
   t.cycleStart = c.cycleStart, t.cycleEnd = c.cycleEnd, t.cycleOn = c.cycleOn;
   t.projectEnd = c.projectEnd;
   t.smooth.controls = c.smooth.controls;  // K-112D D6 (R12-03): Smooth's Smart Control mappings (not its Library pane)
+  t.trackReceipt = c.trackReceipt;  // K-322: the Track Receipt's typed fields (were missing: they stayed on one computer)
   return t;
 }
 
@@ -194,7 +195,7 @@ bool restEqual(const Song& a, const Song& b) {
          a.live == b.live && a.keptSends == b.keptSends && a.arrangements == b.arrangements && a.currentArrangement == b.currentArrangement &&
          a.autoCrossfades == b.autoCrossfades && a.panLaw == b.panLaw && a.stage == b.stage && a.stageRooms == b.stageRooms &&
          a.cycleStart == b.cycleStart && a.cycleEnd == b.cycleEnd && a.cycleOn == b.cycleOn && a.projectEnd == b.projectEnd &&
-         a.smooth.controls == b.smooth.controls;
+         a.smooth.controls == b.smooth.controls && a.trackReceipt == b.trackReceipt;
 }
 
 template <typename T>
@@ -1073,6 +1074,7 @@ bool Session::diffIncremental(std::vector<Op>& ops, std::string* bad) {
     shadow_.cycleStart = r.cycleStart, shadow_.cycleEnd = r.cycleEnd, shadow_.cycleOn = r.cycleOn;  // K-112B (checkpoint 52)
     shadow_.projectEnd = r.projectEnd;
     shadow_.smooth.controls = r.smooth.controls;  // K-112D D6
+    shadow_.trackReceipt = r.trackReceipt;  // K-322
   }
   for (auto& c : commit) c();
   return true;

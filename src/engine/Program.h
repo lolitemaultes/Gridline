@@ -38,6 +38,8 @@ class CaptureRing;  // recording capture (packs/edison/edison.h)
 
 namespace gl {
 
+class ArmedRing;  // K-123 (0.7.7): capture while armed (engine/ArmedRing.h)
+
 struct NoteEv {
   Tick on = 0, off = 0;
   // J-138: fractions of a tick (0 <= frac < 1) added to on / off. Swing places notes between
@@ -257,6 +259,7 @@ struct MixerRuntime {
   std::atomic<float> inPeakL{0}, inPeakR{0};
   std::vector<float> inL, inR;  // K-123: the trimmed input (kEngineMaxBlock frames, sized on the UI thread)
   std::shared_ptr<packs::edison::CaptureRing> rec;
+  std::shared_ptr<ArmedRing> armRing;  // K-123 (0.7.7): interface thread only (the Program holds its own copy)
   bool recActive = false;   // (audio thread) a take is being captured
   double recLastTick = -1;  // (audio thread) position of the last captured frame
 };
@@ -546,6 +549,9 @@ struct ProgMixer {
   uint8_t monitor = 0;
   bool armed = false;
   uint8_t recPoint = 0;  // J-31: RecordPoint (MixerTrack::recPoint)
+  // K-123 (0.7.7): capture while armed (an armed track recording its input); shared with the
+  // builder, which keeps it from build to build and makes a new one only when its length changes.
+  std::shared_ptr<ArmedRing> armRing;
   int latIn = 0;    // path latency at the track input (compensated: all inputs arrive aligned)
   int latOwn = 0;   // latency of the track's own effects
   int latOut() const { return latIn + latOwn; }
@@ -776,6 +782,14 @@ class ProgramBuilder {
   // realtime stretch plays the rest. deferredRenders(): the last build left
   // some out (the caller builds again once the edit is over).
   void setDeferRenders(bool on) { deferRenders_ = on; }
+  // K-123 (0.7.7): seconds of input every armed track keeps while not recording (capture while
+  // armed). 0 (the default, offline renders): only the short ring a punch crossfade reaches into.
+  // The rings of all armed tracks together stay within kArmedCaptureBudget bytes; tracks past it
+  // keep the short ring. A ring is made here (never on the audio thread) and kept while its length
+  // stays the same.
+  void setArmedCapture(double seconds) { armedSeconds_ = seconds; }
+  double armedCapture() const { return armedSeconds_; }
+  static constexpr double kArmedCaptureBudget = 512.0 * 1024.0 * 1024.0;
   bool deferRenders() const { return deferRenders_; }
   bool deferredRenders() const { return deferred_; }
   // J-196: the last build (an edit in progress) left some clips without the
@@ -861,6 +875,7 @@ class ProgramBuilder {
   bool pdc_ = true;
   bool asyncSamples_ = false;
   bool warmUp_ = true;
+  double armedSeconds_ = 0;  // K-123 (0.7.7)
   bool deferRenders_ = false, deferred_ = false, voicesPending_ = false;
   std::weak_ptr<const Program> last_;
   uint64_t builds_ = 0, patches_ = 0, voicesMade_ = 0, voicesReused_ = 0;

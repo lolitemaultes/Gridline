@@ -1,6 +1,7 @@
 // Gridline — dialogs (file, settings, project info, export, history, about,
 // shortcuts, unsaved changes) and global keyboard shortcuts.
 #include "RecordCard.h"
+#include "RecordMoreUi.h"
 #include "WindowRaise.h"
 #include "LayoutShellUi.h"
 #include "LiveIo.h"
@@ -1349,6 +1350,7 @@ void drawDialogs(App& a) {
   drawRemoteDialog(a);
   j31::drawWindows(a);  // J-31: chord progression editor, audio logger, MIDI scale snap
   recordcard::draw(a);  // K-123: the Recording card
+  recmore::draw(a);     // K-123 (0.7.7): the latency check
   drumkitui::draw(a);   // K-162: drum kits read on a worker, their import report
   drawProjectScriptWindow(a);  // J-57: project script settings / run
   mcpui::tick(a);                // SC-07: AI assistant server (opt-in, loopback only)

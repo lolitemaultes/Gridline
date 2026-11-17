@@ -489,6 +489,9 @@ if(Python3_Interpreter_FOUND)
   # the macOS .pkg built and taken apart, the Windows Inno script) for both suites.
   add_test(NAME k308_suite_installer COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/release/suite-installer.py --self-test
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  # K-308: the release and packaging workflows' plugin downloads (stage, build, check; tools/release/suite-release.py).
+  add_test(NAME k308_suite_release COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/release/suite-release.py --self-test
+           WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
 # J-141: welcome launcher logic (start-up plan, state machine, recents, sketches + cache, layout audit).
 add_executable(gridline_tests_launcher tests/test_launcher.cpp)
@@ -632,12 +635,24 @@ target_link_libraries(gridline_tests_k123 PRIVATE gridline_core)
 target_include_directories(gridline_tests_k123 PRIVATE tests)
 target_compile_options(gridline_tests_k123 PRIVATE ${GL_WARN})
 add_test(NAME k123_recording COMMAND gridline_tests_k123 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-123 core A (0.7.7): quick punch, capture while armed, start on the first sound, punch crossfades, loopback latency.
+add_executable(gridline_tests_k123_core_a tests/test_k123_core_a.cpp)
+target_link_libraries(gridline_tests_k123_core_a PRIVATE gridline_core)
+target_include_directories(gridline_tests_k123_core_a PRIVATE tests)
+target_compile_options(gridline_tests_k123_core_a PRIVATE ${GL_WARN})
+add_test(NAME k123_core_a COMMAND gridline_tests_k123_core_a WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # K-123 stage 3: take lanes, comping, flatten.
 add_executable(gridline_tests_k123_takes tests/test_k123_takes.cpp)
 target_link_libraries(gridline_tests_k123_takes PRIVATE gridline_core)
 target_include_directories(gridline_tests_k123_takes PRIVATE tests)
 target_compile_options(gridline_tests_k123_takes PRIVATE ${GL_WARN})
 add_test(NAME k123_takes COMMAND gridline_tests_k123_takes WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-123 core B: take ratings, solo and the takes list; the MIDI input filter; Recover what I just played; arming.
+add_executable(gridline_tests_k123_core_b tests/test_k123_core_b.cpp)
+target_link_libraries(gridline_tests_k123_core_b PRIVATE gridline_core)
+target_include_directories(gridline_tests_k123_core_b PRIVATE src tests)
+target_compile_options(gridline_tests_k123_core_b PRIVATE ${GL_WARN})
+add_test(NAME k123_core_b COMMAND gridline_tests_k123_core_b WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # K-214: Mackie Control / HUI surfaces against a simulated device; K-278: the Mackie transport template.
 add_executable(gridline_tests_k214 tests/test_k214.cpp)
 target_link_libraries(gridline_tests_k214 PRIVATE gridline_core)
@@ -3029,6 +3044,23 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/k226_record_app -P ${CMAKE_SOURCE_DIR}/tests/k226_record_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k226_record_app PROPERTIES TIMEOUT 400)
+    # K-123 core B in the app: take ratings, solo and audition; the input filter; Recover; channel arming.
+    foreach(row takes filter recover arm)
+      add_test(NAME k123_core_b_${row}_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                       -DOUT=${CMAKE_BINARY_DIR}/k123_core_b_${row}_app -DROW=${row} -P ${CMAKE_SOURCE_DIR}/tests/k123_core_b_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(k123_core_b_${row}_app PROPERTIES TIMEOUT 400)
+    endforeach()
+    # K-123 core A (0.7.7) in the app: quick punch, capture while armed, start on the first sound, the loopback
+    # latency check, and the Record window in every layout.
+    foreach(row quick recover startnote latency layouts)
+      add_test(NAME k123_core_a_${row}_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app>
+                       -DOUT=${CMAKE_BINARY_DIR}/k123_core_a_${row}_app -DROW=${row} -P ${CMAKE_SOURCE_DIR}/tests/k123_core_a_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(k123_core_a_${row}_app PROPERTIES TIMEOUT 400)
+    endforeach()
     # The typing keyboard when Gridline starts: as it was left by default, or always on or off.
     add_test(NAME typing_start_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json

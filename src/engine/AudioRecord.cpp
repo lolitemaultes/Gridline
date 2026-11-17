@@ -4,9 +4,11 @@
 #include <cmath>
 #include <filesystem>
 #include <map>
+#include <set>
 #include "../core/Automation.h"
 #include "../core/TrackModes.h"
 #include "../packs/edison/edison.h"
+#include "ArmedRing.h"
 #include "ClipOps.h"
 
 namespace fs = std::filesystem;
@@ -14,6 +16,25 @@ namespace fs = std::filesystem;
 namespace gl {
 
 using packs::edison::CaptureRing;
+
+namespace {
+
+const ArmedRing* ringFor(const ArmRings& rings, ObjectId mixer) {
+  for (const auto& [id, r] : rings) {
+    if (id == mixer) return r.get();
+  }
+  return nullptr;
+}
+
+// Ticks per frame around `frame` of the ring (0: unknown).
+double tpfAt(const ArmedRing& ring, size_t frame) {
+  double a = 0, b = 0;
+  if (frame > 0 && ring.tickAt(frame - 1, a) && ring.tickAt(frame, b) && b > a) return b - a;
+  if (ring.tickAt(frame, a) && ring.tickAt(frame + 1, b) && b > a) return b - a;
+  return 0;
+}
+
+}  // namespace
 
 // ------------------------------------------------------------------ AudioRecorder
 
@@ -55,32 +76,78 @@ void AudioRecorder::pump(AudioEngine& engine, const Rings& rings) {
     auto it = std::find_if(open_.begin(), open_.end(), [&](const Open& o) { return o.mixer == e.mixer; });
     if (it != open_.end()) {  // End (or a Start without one): close the open take here
       if (ring) readInto(*ring, *it, e.ringPos);
-      takes_[it->take].done = true;
+      RecordedTake& done = takes_[it->take];
+      done.done = true;
+      done.armEnd = e.armPos;  // K-123 (0.7.7)
+      done.punchOut = e.kind == AudioEngine::RecEvent::End && e.punch;
       open_.erase(it);
     }
     if (e.kind == AudioEngine::RecEvent::Start) {
       RecordedTake t;
       t.mixer = e.mixer;
       t.startTick = e.tick;
-      for (const auto& k : takes_) t.pass += k.mixer == e.mixer;
+      t.armStart = e.armPos;  // K-123 (0.7.7)
+      t.punchIn = e.punch;
+      if (t.punchIn) t.punchInTick = e.tick;
+      int count = 0, lastPass = -1;
+      double lastStart = -1;
+      for (const auto& k : takes_) {
+        if (k.mixer == e.mixer) ++count, lastPass = k.pass, lastStart = k.startTick;
+      }
+      // K-123 (0.7.7) quick punch: a punch further on is the same pass; one at or before the last
+      // one (the loop came round) is the next pass.
+      t.pass = quickPunch_ && lastPass >= 0 ? (e.tick > lastStart ? lastPass : lastPass + 1) : count;
       takes_.push_back(std::move(t));
       open_.push_back({e.mixer, takes_.size() - 1, e.ringPos});
     }
   }
   for (auto& o : open_)
     if (auto it = snap.find(o.mixer); it != snap.end()) readInto(*it->second.first, o, it->second.second);
+  // K-123 (0.7.7): the punch crossfades' audio, once the ring holds the frames around the punch.
+  for (RecordedTake& t : takes_) {
+    if (t.punchIn && !t.padInDone) {
+      const ArmedRing* ring = ringFor(armRings_, t.mixer);
+      if (!ring || ring->written() > t.armStart || t.done) {
+        padIn(t);
+        t.padInDone = true;
+      }
+    }
+    if (t.done && t.punchOut && !t.padOutDone) t.padOutDone = padOut(t, false);
+  }
+}
+
+ArmRings armRingsOf(const Program& p) {
+  ArmRings out;
+  for (const auto& m : p.mixer) {
+    if (m.armed && m.armRing) out.push_back({m.id, m.armRing});
+  }
+  return out;
 }
 
 AudioRecorder::Rings ringsOf(const Program& p) {
   AudioRecorder::Rings out;
-  for (const auto& m : p.mixer)
+  for (const auto& m : p.mixer) {
     if (m.armed && m.rt && m.rt->rec) out.push_back({m.id, m.rt->rec.get()});
+  }
   return out;
 }
 
-bool AudioRecorder::open() const { return !open_.empty(); }
+bool AudioRecorder::open() const {
+  if (!open_.empty()) return true;
+  for (const RecordedTake& t : takes_) {
+    if (t.done && t.punchOut && !t.padOutDone) return true;  // K-123 (0.7.7): waiting for the audio after the punch out
+  }
+  return false;
+}
 
 std::vector<RecordedTake> AudioRecorder::release() {
+  for (RecordedTake& t : takes_) {
+    if (t.punchIn && !t.padInDone) {
+      padIn(t);
+      t.padInDone = true;
+    }
+    if (t.punchOut && !t.padOutDone) t.padOutDone = padOut(t, true);
+  }
   open_.clear();
   std::vector<RecordedTake> out;
   out.swap(takes_);
@@ -133,14 +200,16 @@ TakePlacement takePlacement(const Song& song, const std::vector<RecordedTake>& t
   TakePlacement r;
   if (i >= takes.size()) return r;
   const RecordedTake& t = takes[i];
-  // Take group: the mixer track recorded in more than one pass.
-  int n = 0, firstPass = t.pass, lastPass = t.pass;
+  // Take group: the mixer track recorded in more than one pass (K-123 0.7.7: the punches of one
+  // quick punch pass are pieces of one take, not passes).
+  std::set<int> passes;
+  int firstPass = t.pass, lastPass = t.pass;
   for (const auto& k : takes) {
     if (k.frames() == 0 || k.mixer != t.mixer) continue;
-    ++n;
+    passes.insert(k.pass);
     firstPass = std::min(firstPass, k.pass), lastPass = std::max(lastPass, k.pass);
   }
-  r.grouped = n > 1;
+  r.grouped = passes.size() > 1;
   const MixerTrack* mt = song.mixerTrack(t.mixer);
   // Output taps (J-31) are always stereo; inputs follow the track's input pair.
   r.stereo = mt ? (mt->inputStereo || mt->recPoint != 0) : true;
@@ -169,6 +238,162 @@ TakeSpan takeSpan(const TempoMap& map, double startTick, int64_t frames, double 
   const double endTick = map.tickAtSeconds(t0Sec + durSec);
   r.length = std::max<Tick>(1, static_cast<Tick>(std::ceil(endTick - static_cast<double>(r.start) - 1e-6)));
   return r;
+}
+
+// ------------------------------------------------------------------ K-123 (0.7.7) punches
+
+namespace {
+
+// The crossfades of one punched take clip against the audio already on its track (see
+// TakeCommitOptions::punchFade).
+void punchCrossfade(Song& song, const TempoMap& map, ObjectId clipId, const RecordedTake& t, double fade, const std::vector<ObjectId>& fresh) {
+  Clip* c = song.clip(clipId);
+  if (!c) return;
+  const Tick ts = c->start, te = c->start + std::max<Tick>(1, c->length);
+  const int track = c->track;
+  auto secs = [&](Tick a, Tick b) { return map.secondsAt(static_cast<double>(b)) - map.secondsAt(static_cast<double>(a)); };
+  // Where the old audio stops and starts again: half the crossfade past each punch point (whole ticks).
+  Tick cutA = ts, cutB = te;
+  if (t.punchIn && t.punchInTick >= 0) {
+    cutA = static_cast<Tick>(std::ceil(map.tickAtSeconds(map.secondsAt(t.punchInTick) + fade * 0.5) - 1e-6));
+    cutA = std::clamp<Tick>(cutA, ts + 1, te);
+  }
+  if (t.punchOut && t.punchOutTick >= 0) {
+    cutB = static_cast<Tick>(std::floor(map.tickAtSeconds(map.secondsAt(t.punchOutTick) - fade * 0.5) + 1e-6));
+    cutB = std::clamp<Tick>(cutB, ts, te - 1);
+  }
+  const double inLen = t.punchIn ? secs(ts, cutA) : 0.0, outLen = t.punchOut ? secs(cutB, te) : 0.0;
+  // The old audio on the track under the take (not takes in lanes: the comp looks after those).
+  std::vector<ObjectId> old;
+  for (const Clip& o : song.playlist) {
+    if (o.track == track && o.kind == ClipKind::Audio && o.takeGroup == kNoId && o.id != clipId &&
+        std::find(fresh.begin(), fresh.end(), o.id) == fresh.end() && o.start < te && o.start + song.clipLength(o) > ts) {
+      old.push_back(o.id);
+    }
+  }
+  if (cutB > cutA) {
+    for (ObjectId id : old) {
+      ObjectId mid = id;
+      const Clip* o = song.clip(id);
+      if (!o) continue;
+      if (o->start < cutA) {
+        if (o->start + song.clipLength(*o) <= cutA) {  // ends inside the punch-in crossfade
+          if (Clip* left = song.clip(id); left && t.punchIn && left->start + song.clipLength(*left) > ts) {
+            left->fadeOut = secs(ts, left->start + song.clipLength(*left));
+            left->fadeOutManual = true;
+          }
+          continue;
+        }
+        mid = splitClipAt(song, id, cutA);
+        if (Clip* left = song.clip(id); left && t.punchIn) {
+          left->fadeOut = inLen;
+          left->fadeOutManual = true;
+          left->fadeOutShape = 0, left->fadeOutTension = 0;
+        }
+      }
+      if (mid == kNoId) continue;
+      ObjectId right = kNoId;
+      if (const Clip* m = song.clip(mid); m && m->start + song.clipLength(*m) > cutB) right = m->start >= cutB ? mid : splitClipAt(song, mid, cutB);
+      if (right != kNoId && t.punchOut) {
+        if (Clip* rc = song.clip(right)) {
+          rc->fadeIn = outLen;
+          rc->fadeInManual = true;
+          rc->fadeInShape = 0, rc->fadeInTension = 0;
+        }
+      }
+      if (right != mid) {  // the part between the cuts goes (undo brings it back)
+        song.playlist.erase(std::remove_if(song.playlist.begin(), song.playlist.end(), [&](const Clip& x) { return x.id == mid; }), song.playlist.end());
+      }
+    }
+  }
+  c = song.clip(clipId);
+  if (!c) return;
+  if (t.punchIn) {
+    c->fadeIn = inLen;
+    c->fadeInManual = true;
+  }
+  if (t.punchOut) {
+    c->fadeOut = outLen;
+    c->fadeOutManual = true;
+  }
+}
+
+}  // namespace
+
+void AudioRecorder::setPunchPads(ArmRings rings, double fadeSeconds, double sampleRate) {
+  armRings_ = std::move(rings);
+  padHalf_ = std::max(0.0, fadeSeconds) * (sampleRate > 0 ? sampleRate : 44100.0) * 0.5;
+}
+
+void AudioRecorder::padIn(RecordedTake& t) {
+  const ArmedRing* ring = ringFor(armRings_, t.mixer);
+  if (!ring || padHalf_ <= 0 || t.armStart == 0) return;
+  size_t first = 0, end = 0;
+  const double tpf = tpfAt(*ring, t.armStart - 1);
+  // The transport played on into the punch: the frames before it are of the same stretch.
+  if (tpf <= 0 || !ring->runOf(t.armStart - 1, first, end) || end <= t.armStart) return;  // (a loop wrap starts a new run)
+  const double target = std::floor(t.startTick - padHalf_ * tpf + 1e-9);  // a whole tick
+  auto want = static_cast<size_t>(std::max(0.0, std::floor((t.startTick - target) / tpf + 1e-6)));
+  want = std::min(want, t.armStart - first);
+  if (want == 0) return;
+  std::vector<float> l(want), r(want);
+  if (ring->read(t.armStart - want, want, l.data(), r.data()) != want) return;
+  double at = 0;
+  t.L.insert(t.L.begin(), l.begin(), l.end());
+  t.R.insert(t.R.begin(), r.begin(), r.end());
+  t.startTick = ring->tickAt(t.armStart - want, at) ? at : t.startTick - static_cast<double>(want) * tpf;
+  t.padBefore = static_cast<int64_t>(want);
+}
+
+bool AudioRecorder::padOut(RecordedTake& t, bool last) {
+  const ArmedRing* ring = ringFor(armRings_, t.mixer);
+  if (!ring || t.armEnd == 0) return true;
+  const size_t e0 = t.armEnd;
+  const double tpf = tpfAt(*ring, e0 - 1);
+  if (t.punchOutTick < 0) {
+    double q = 0;
+    double l = 0;
+    if (ring->tickAt(e0, q)) t.punchOutTick = q;
+    else if (ring->tickAt(e0 - 1, l) && tpf > 0) t.punchOutTick = l + tpf;
+    else if (!last) return false;  // the frame after the take is not written yet
+  }
+  if (padHalf_ <= 0 || tpf <= 0 || t.punchOutTick < 0) return true;
+  size_t first = 0, end = 0;
+  if (!ring->runOf(e0 - 1, first, end)) return true;
+  const double target = std::ceil(t.punchOutTick + padHalf_ * tpf - 1e-9);  // a whole tick
+  const auto want = static_cast<size_t>(std::max(0.0, std::floor((target - t.punchOutTick) / tpf + 1e-6)));
+  const bool runGoesOn = end >= ring->written();  // the stretch may still grow
+  if (end < e0 + want && runGoesOn && !last) return false;  // not played that far yet
+  const size_t n = std::min(want, end > e0 ? end - e0 : size_t{0});
+  if (n == 0) return true;
+  std::vector<float> l(n), r(n);
+  if (ring->read(e0, n, l.data(), r.data()) != n) return true;
+  t.L.insert(t.L.end(), l.begin(), l.end());
+  t.R.insert(t.R.end(), r.begin(), r.end());
+  t.padAfter = static_cast<int64_t>(n);
+  return true;
+}
+
+std::vector<RecordedTake> recoverLastPass(const ArmRings& rings, double sampleRate, double minSeconds) {
+  std::vector<RecordedTake> out;
+  const double sr = sampleRate > 0 ? sampleRate : 44100.0;
+  const auto minFrames = static_cast<size_t>(std::max(1.0, minSeconds * sr));
+  for (const auto& [id, ring] : rings) {
+    size_t first = 0, end = 0;
+    double tick = 0;
+    if (!ring || !ring->lastRun(minFrames, first, end) || !ring->tickAt(first, tick)) continue;
+    RecordedTake t;
+    t.mixer = id;
+    t.startTick = tick;
+    t.done = true;
+    t.L.resize(end - first);
+    t.R.resize(end - first);
+    if (ring->read(first, end - first, t.L.data(), t.R.data()) != end - first) continue;
+    t.armStart = first;
+    t.armEnd = end;
+    out.push_back(std::move(t));
+  }
+  return out;
 }
 
 TakeCommitResult commitTakes(Song& song, const std::vector<RecordedTake>& takes, const TakeCommitOptions& o) {
@@ -240,6 +465,13 @@ TakeCommitResult commitTakes(Song& song, const std::vector<RecordedTake>& takes,
     song.playlist.push_back(c);
     res.clips.push_back(c.id);
     res.takeIndex.push_back(ti);
+  }
+  // K-123 (0.7.7): punch crossfades, once every take of the session is placed.
+  if (o.punchFade > 0) {
+    for (size_t k = 0; k < res.clips.size(); ++k) {
+      const RecordedTake& t = takes[res.takeIndex[k]];
+      if (t.punchIn || t.punchOut) punchCrossfade(song, map, res.clips[k], t, o.punchFade, res.clips);
+    }
   }
   return res;
 }

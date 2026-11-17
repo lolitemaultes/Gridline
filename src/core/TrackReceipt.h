@@ -135,11 +135,19 @@ struct Saved {
   std::map<std::string, FileFields> files;  // by file path
   Release release;
   std::vector<Writer> writers;
-  bool operator==(const Saved& o) const { return songs == o.songs && files == o.files && release == o.release && writers == o.writers; }
+  // K-322: the keys this version does not know (a newer Gridline's), kept so an edit here never
+  // erases them: compact JSON of the saved object without the known keys ("" = none). The top
+  // level, each song, each file and the release keep theirs (a writer's own unknown keys are not
+  // kept: writers are a list that is edited by position).
+  std::string unknown;
+  bool operator==(const Saved& o) const {
+    return songs == o.songs && files == o.files && release == o.release && writers == o.writers && unknown == o.unknown;
+  }
   bool empty() const;
 };
 std::string savedToJson(const Saved& s);  // compact; "" when empty
 Saved savedFromJson(const std::string& json);
+// (K-322: savedToJson(savedFromJson(j)) == j for any j savedToJson wrote, unknown keys included.)
 // The fields of a file, matched by path, else by file name.
 FileFields fileFields(const Saved& s, const std::string& path);
 

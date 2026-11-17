@@ -157,6 +157,9 @@ Options > Recording and metronome > Recording options > Record window...			e-
 Options > Recording and metronome > Recording options > Audio, as audio clips			ec
 Options > Recording and metronome > Recording options > Notes			ec
 Options > Recording and metronome > Recording options > Automation (controller moves)			ec
+Options > Recording and metronome > Recording options > Other messages > Pitch bend			ec
+Options > Recording and metronome > Recording options > Other messages > Pressure (aftertouch)			ec
+Options > Recording and metronome > Recording options > Other messages > Program changes			ec
 Options > Recording and metronome > Recording options > Everything			e-
 Options > Recording and metronome > Recording options > Punch in/out at the loop brace			e-
 Options > Recording and metronome > Recording options > Pre-roll > Off			ec
@@ -174,6 +177,13 @@ Options > Recording and metronome > Recording options > Post-roll > 16 beats			e
 Options > Recording and metronome > Recording options > Count-in length > 1 bar			e-
 Options > Recording and metronome > Recording options > Count-in length > 2 bars			e-
 Options > Recording and metronome > Recording options > Count-in length > 4 bars			e-
+Options > Recording and metronome > Recording options > Quick punch			e-
+Options > Recording and metronome > Recording options > Punch crossfade > Off			e-
+Options > Recording and metronome > Recording options > Punch crossfade > 5 ms			e-
+Options > Recording and metronome > Recording options > Punch crossfade > 10 ms			ec
+Options > Recording and metronome > Recording options > Punch crossfade > 20 ms			e-
+Options > Recording and metronome > Recording options > Punch crossfade > 50 ms			e-
+Options > Recording and metronome > Recording options > Start on the first note			e-
 Options > Recording and metronome > Recording options > Audio file format > 32-bit float WAV			ec
 Options > Recording and metronome > Recording options > Audio file format > 24-bit WAV			e-
 Options > Recording and metronome > Recording options > Audio file format > 16-bit WAV			e-
@@ -181,6 +191,12 @@ Options > Recording and metronome > Recording options > Loop passes as take lane
 Options > Recording and metronome > Recording options > Drop silent takes			e-
 Options > Recording and metronome > Recording options > Disarm tracks after recording			e-
 Options > Recording and metronome > Recording options > Name empty tracks after the take			ec
+Options > Recording and metronome > Recording options > Capture while armed > Off			e-
+Options > Recording and metronome > Recording options > Capture while armed > 30 seconds			e-
+Options > Recording and metronome > Recording options > Capture while armed > 1 minute			ec
+Options > Recording and metronome > Recording options > Capture while armed > 2 minutes			e-
+Options > Recording and metronome > Recording options > Capture while armed > Recover the last pass			--
+Options > Recording and metronome > Recording options > Latency check...			e-
 Options > Recording and metronome > Recording options > Input only			e-
 Options > Recording and metronome > Recording options > Low latency			e-
 Options > Recording and metronome > Recording options > Overdub (keep existing notes)			ec

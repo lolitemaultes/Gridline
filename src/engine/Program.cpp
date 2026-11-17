@@ -2,6 +2,7 @@
 #include "../packs/Packs.h"
 #include "../core/Groove.h"
 #include "Program.h"
+#include "ArmedRing.h"
 #include "../core/StageRoomOps.h"
 #include "../core/LayerPick.h"
 #include "Freeze.h"
@@ -1028,6 +1029,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     pr.halfW = rm.halfWidth, pr.depth = rm.depth, pr.wall = rm.wall;
     prog->rooms.push_back(pr);
   }
+  double armedBytes = 0;  // K-123 (0.7.7): capture-while-armed rings so far
   for (const auto& m : song.mixer) {
     ProgMixer pm;
     pm.id = m.id;
@@ -1065,6 +1067,19 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     pm.recPoint = m.recPoint;
     if (pm.armed && m.recPoint == static_cast<uint8_t>(RecordPoint::PostEffects)) pm.hasPreSend = true;  // J-31: keeps the pre-fader copy
     if (pm.armed && !pm.rt->rec) pm.rt->rec = std::make_shared<packs::edison::CaptureRing>();
+    // K-123 (0.7.7): capture while armed, for tracks recording their input.
+    if (pm.armed && m.recPoint == static_cast<uint8_t>(RecordPoint::Input) && m.input >= 0) {
+      const double full = std::max(0.0, armedSeconds_) * std::max(1.0, sampleRate_);
+      const bool fits = armedBytes + full * 8.0 <= kArmedCaptureBudget;
+      const auto want = static_cast<size_t>(fits ? full : 0.0);
+      if (fits) armedBytes += full * 8.0;
+      if (!pm.rt->armRing || pm.rt->armRing->capacity() != ArmedRing::capacityFor(want)) {
+        pm.rt->armRing = std::make_shared<ArmedRing>(want);
+      }
+      pm.armRing = pm.rt->armRing;
+    } else {
+      pm.rt->armRing.reset();
+    }
     pm.eq.gain = m.eqGain;
     pm.eq.freq = m.eqFreq;
     pm.eq.q = m.eqQ;

@@ -9,6 +9,7 @@
 // GL_RECEIPT_SPEED_LARGE=1 also runs the medium and large projects (the demo
 // song with 8 sample channels and 40 audio clips, and with 32 and 320); GL_RECEIPT_SPEED_SAVE=<dir> saves the
 // projects there (for timing the command line and the app).
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -17,6 +18,7 @@
 #include <iomanip>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <vector>
 #include "../../src/core/Demo.h"
@@ -27,6 +29,9 @@
 #include "../../src/core/Song.h"
 #include "../../src/core/TrackReceipt.h"
 #include "../../src/core/WavWriter.h"
+#include "../../src/engine/AudioEngine.h"
+#include "../../src/engine/Program.h"
+#include "../../src/engine/SampleTap.h"
 #include "../../src/engine/TrackReceiptPass.h"
 #include "../Check.h"
 
@@ -362,6 +367,67 @@ void compare(const std::string& name, const Song& s, const std::string& saveDir)
   expect(used > 0, (name + ": something is measured").c_str());
 }
 
+
+// K-322: a live engine (the app playing) that plays the project during a measurement never marks
+// into it: one plays the same song (its plays would add to the counts), one a copy with the same
+// ids that reads other parts of the files (as the person moves clips while it measures). Both
+// passes (fast, reference) give exactly what they give on a quiet computer. The live engines'
+// own reads go to a pass of their own (two passes at once), which shows they did read.
+void liveDuringPass(const Song& s) {
+  PassOptions fast;
+  fast.sampleRate = kRate;
+  PassOptions ref = fast;
+  ref.reference = true;
+  const std::string quietFast = usesText(measure(s, fast)), quietRef = usesText(measure(s, ref));
+  Song moved = s;  // the same ids, other parts of the files
+  for (Clip& k : moved.playlist) {
+    if (k.kind == ClipKind::Audio) {
+      k.audioStart += 0.37, k.audioEnd += 0.37;
+    }
+  }
+  for (Channel& c : moved.channels) {
+    if (c.plugin.type == "gl.sampler" && !c.audioClip) {
+      c.plugin.params[static_cast<size_t>(pp::SmpStart)] = 0.71f;
+    }
+  }
+  std::vector<tap::WatchFile> watch;
+  for (const FileIn& f : scan(s, true).files) {
+    watch.push_back(tap::WatchFile{f.path, f.seconds});
+  }
+  tap::Pass livePass(watch);
+  std::atomic<bool> stop{false};
+  std::atomic<int> blocks{0};
+  auto live = [&](const Song& song) {
+    ProgramBuilder b;
+    b.setSampleRate(kRate);
+    AudioEngine eng(kRate);
+    eng.setTapPass(&livePass);
+    eng.setProgram(b.build(song));
+    eng.setThreads(2);
+    eng.setMode(PlayMode::Song);
+    eng.setLooping(true);
+    eng.play();
+    std::vector<float> L(512), R(512);
+    while (!stop.load()) {
+      eng.process(L.data(), R.data(), 512);
+      blocks.fetch_add(1);
+    }
+  };
+  std::thread same(live, std::cref(s)), other(live, std::cref(moved));
+  while (blocks.load() < 64) {
+    std::this_thread::yield();
+  }
+  const std::string busyFast = usesText(measure(s, fast)), busyRef = usesText(measure(s, ref));
+  stop.store(true);
+  same.join();
+  other.join();
+  expect(busyFast == quietFast, "live playback: the fast pass measures exactly what it measures on a quiet computer");
+  expect(busyRef == quietRef, "live playback: the reference pass measures exactly what it measures on a quiet computer");
+  if (busyFast != quietFast) {
+    std::printf("--- quiet\n%s--- while playing\n%s", quietFast.c_str(), busyFast.c_str());
+  }
+  expect(livePass.marks() > 0 && !livePass.uses().empty(), "live playback: the live engines did read (into their own pass)");
+}
 }  // namespace
 
 int main() {
@@ -387,6 +453,9 @@ int main() {
   }
   compare("patterns", patterns(media + "/patterns"), saveDir);
   compare("tempo", tempo(media + "/tempo"), saveDir);
+  if (saveDir.empty()) {
+    liveDuringPass(features(media + "/live"));
+  }
   if (std::getenv("GL_RECEIPT_SPEED_LARGE")) {  // the reference pass takes minutes on these
     compare("medium", demoPlus(media + "/medium", 8, 40), saveDir);
     compare("large", demoPlus(media + "/large", 32, 320), saveDir);

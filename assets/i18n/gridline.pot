@@ -217,7 +217,7 @@ msgstr ""
 msgid "None (system input device)"
 msgstr ""
 
-#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChannelSettings.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/HostedUi.cpp src/app/J31Ui.cpp src/app/LayoutParts.cpp src/app/LiveIo.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/McpUi.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/OscUi.cpp src/app/Playlist.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/app/StagePanel.cpp src/app/TrackerPages.cpp src/app/Widgets.cpp src/packs/chater/chater_pages_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_menus_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
+#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChannelSettings.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/HostedUi.cpp src/app/J31Ui.cpp src/app/LayoutParts.cpp src/app/LiveIo.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/McpUi.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/OscUi.cpp src/app/Playlist.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/app/RecordMoreUi.cpp src/app/StagePanel.cpp src/app/TrackerPages.cpp src/app/Widgets.cpp src/packs/chater/chater_pages_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_menus_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "Off"
 msgstr ""
 
@@ -295,6 +295,10 @@ msgstr ""
 
 #: src/app/AudioRecordUi.cpp
 msgid "%d smp (%.1f ms) auto"
+msgstr ""
+
+#: src/app/AudioRecordUi.cpp
+msgid "%d smp (%.1f ms) measured"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
@@ -658,6 +662,10 @@ msgid "The input clipped (it reached 0 dBFS): click to clear"
 msgstr ""
 
 #: src/app/AudioRecordUi.cpp
+msgid "The round trip measured with a loopback cable + plugin delay compensation: recorded audio is moved this much earlier"
+msgstr ""
+
+#: src/app/AudioRecordUi.cpp
 msgid "This track is record safe: turn Record safe off (right-click its record button) to arm it."
 msgstr ""
 
@@ -709,7 +717,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FileDialogUi.cpp src/app/FlpExportUi.cpp src/app/LayerEditor.cpp src/app/LogicNewTracks.cpp src/app/McpUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp src/app/StagePanel.cpp src/app/StageRoomsUi.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/TrackReceiptUi.cpp src/app/TrackerEditors.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FileDialogUi.cpp src/app/FlpExportUi.cpp src/app/LayerEditor.cpp src/app/LogicNewTracks.cpp src/app/McpUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/RecordCard.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp src/app/StagePanel.cpp src/app/StageRoomsUi.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/TrackReceiptUi.cpp src/app/TrackerEditors.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -2553,7 +2561,7 @@ msgstr ""
 msgid "Vel. → pan"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/MenuStyles.cpp src/app/MixerView.cpp src/app/Playlist.cpp src/app/SoundThemeUi.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/MenuStyles.cpp src/app/MixerView.cpp src/app/Playlist.cpp src/app/SoundThemeUi.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/app/TrackerView.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Volume"
 msgstr ""
 
@@ -3417,7 +3425,7 @@ msgstr ""
 msgid "Chords"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ProjectLoadUi.cpp src/app/ScriptUi.cpp src/app/SpeechUi.cpp src/app/StemsUi.cpp src/app/TrackReceiptUi.cpp src/app/UrlImportUi.cpp src/packs/chater/chater_pages_ui.cpp src/packs/edison/edison_script_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ProjectLoadUi.cpp src/app/RecordMoreUi.cpp src/app/ScriptUi.cpp src/app/SpeechUi.cpp src/app/StemsUi.cpp src/app/TrackReceiptUi.cpp src/app/UrlImportUi.cpp src/packs/chater/chater_pages_ui.cpp src/packs/edison/edison_script_ui.cpp
 msgid "Close"
 msgstr ""
 
@@ -4757,7 +4765,7 @@ msgstr ""
 msgid "PRESENCE"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/TrackerFrame.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/CollabUi.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/TrackerFrame.cpp src/app/TrackerView.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Pan"
 msgstr ""
 
@@ -6841,7 +6849,7 @@ msgstr ""
 msgid "Piano roll to steps"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/PianoRoll.cpp
+#: src/app/ContextMenus.cpp src/app/PianoRoll.cpp src/app/RecordRowsUi.cpp
 msgid "Pitch bend"
 msgstr ""
 
@@ -7285,7 +7293,7 @@ msgstr ""
 msgid "Snapped drags glide from grid cell to grid cell instead of jumping (positions still land exactly on the grid)"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/Playlist.cpp src/app/StagePanel.cpp src/app/StageView.cpp
+#: src/app/ContextMenus.cpp src/app/Playlist.cpp src/app/RecordRowsUi.cpp src/app/StagePanel.cpp src/app/StageView.cpp
 msgid "Solo"
 msgstr ""
 
@@ -7337,7 +7345,7 @@ msgstr ""
 msgid "Stereo separation"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/LoopStarterUi.cpp src/app/RecordCard.cpp src/app/SamplerRenderUi.cpp src/app/TrackerPages.cpp src/packs/edison/edison_script_ui.cpp src/packs/modulation/modulation_cvin_ui.cpp
+#: src/app/ContextMenus.cpp src/app/LoopStarterUi.cpp src/app/RecordCard.cpp src/app/RecordRowsUi.cpp src/app/SamplerRenderUi.cpp src/app/TrackerPages.cpp src/packs/edison/edison_script_ui.cpp src/packs/modulation/modulation_cvin_ui.cpp
 msgid "Stop"
 msgstr ""
 
@@ -11377,7 +11385,7 @@ msgstr ""
 msgid "Groups and the selected strip"
 msgstr ""
 
-#: src/app/LayoutParts.cpp src/core/TrackIconSet.cpp src/packs/dynamics/dist_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp
+#: src/app/LayoutParts.cpp src/app/RecordMoreUi.cpp src/core/TrackIconSet.cpp src/packs/dynamics/dist_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Input"
 msgstr ""
 
@@ -14655,6 +14663,14 @@ msgstr ""
 
 #: src/app/MeterUi.cpp
 msgid "optional"
+msgstr ""
+
+#: src/app/MidiArm.cpp
+msgid "Arm for recording notes: what you play goes to this instrument and records there · Alt+click: arm only this one"
+msgstr ""
+
+#: src/app/MidiArm.cpp
+msgid "Armed: the notes you play go to this instrument and record there · click: disarm · Alt+click: arm only this one"
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -19070,11 +19086,23 @@ msgid "about %d s left"
 msgstr ""
 
 #: src/app/RecordCard.cpp
+msgid "A cable from an output back into an input: Gridline measures the round trip, and recordings line up exactly"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "An armed track's input this loud starts it too, from the block that reached it"
+msgstr ""
+
+#: src/app/RecordCard.cpp
 msgid "Arm a track with the record dot on its mixer strip, or in the mixer's input panel."
 msgstr ""
 
 #: src/app/RecordCard.cpp
 msgid "Arms the record button and starts playback"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "At each punch in and out the take and the audio already on the track crossfade over this time, so the joins never click"
 msgstr ""
 
 #: src/app/RecordCard.cpp
@@ -19102,6 +19130,10 @@ msgid "Discard take"
 msgstr ""
 
 #: src/app/RecordCard.cpp
+msgid "Every armed track keeps this much of its input while Record is off, so the last pass can be recovered (Mode and punch)"
+msgstr ""
+
+#: src/app/RecordCard.cpp
 msgid "Folds to a small REC pill (H)"
 msgstr ""
 
@@ -19111,6 +19143,10 @@ msgstr ""
 
 #: src/app/RecordCard.cpp
 msgid "In song mode, records only inside the playlist's time selection"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "Measure with a loopback cable..."
 msgstr ""
 
 #: src/app/RecordCard.cpp
@@ -19134,7 +19170,39 @@ msgid "None yet: arm tracks on Inputs and monitoring"
 msgstr ""
 
 #: src/app/RecordCard.cpp
+msgid "Nothing yet"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "Nothing yet: armed tracks keep what they hear while the transport plays"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "Off: turn it on in Files"
+msgstr ""
+
+#: src/app/RecordCard.cpp
 msgid "Opens the Record window: mode, punch, count-in, takes, inputs, notes and files"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "Places what the armed tracks heard in the last pass the transport played, where it was played (one undo step)"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "Punch in"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "Punch out"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "Punched out"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "Quick punch: stops or starts recording while playback goes on (the record key does the same)"
 msgstr ""
 
 #: src/app/RecordCard.cpp
@@ -19147,6 +19215,14 @@ msgstr ""
 
 #: src/app/RecordCard.cpp
 msgid "Record and play"
+msgstr ""
+
+#: src/app/RecordCard.cpp src/app/RecordMoreUi.cpp
+msgid "Recover the last pass"
+msgstr ""
+
+#: src/app/RecordCard.cpp src/app/RecordRowsUi.cpp
+msgid "Recover what I just played"
 msgstr ""
 
 #: src/app/RecordCard.cpp
@@ -19162,7 +19238,15 @@ msgid "Snaps recorded notes to the piano roll's grid"
 msgstr ""
 
 #: src/app/RecordCard.cpp
+msgid "Start now"
+msgstr ""
+
+#: src/app/RecordCard.cpp
 msgid "Starts playback (nothing records until a track is armed)"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "Starts playback and recording without waiting for a note"
 msgstr ""
 
 #: src/app/RecordCard.cpp
@@ -19178,11 +19262,267 @@ msgid "Stops the transport; the take is kept"
 msgstr ""
 
 #: src/app/RecordCard.cpp
+msgid "Stops waiting (Record stays on)"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "The last phrase goes in where it was played (or at the pattern's start when the transport was stopped)"
+msgstr ""
+
+#: src/app/RecordCard.cpp
 msgid "WAV files at the audio device's rate"
 msgstr ""
 
 #: src/app/RecordCard.cpp
+msgid "Waiting for the first note"
+msgstr ""
+
+#: src/app/RecordCard.cpp
 msgid "When the record controls open as Record is switched on. Shift+click on Record, and the record key, never open them"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "estimated from the buffers"
+msgstr ""
+
+#: src/app/RecordCard.cpp
+msgid "measured"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid ", estimated from the buffers"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid ", measured"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "1. Connect an output of your audio interface to one of its inputs with a cable."
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "2. Turn the speakers down: a short burst of noise plays through the outputs."
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "3. Pick the input the cable comes back on and press Measure. Playback stops while it measures."
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Armed tracks keep this much of their input while Record is off, so a pass can be recovered"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "At each punch in and out the take and the audio already on the track crossfade over this time"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Back to the estimate"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Capture while armed"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Forgets the measurement: recordings use the estimate from the buffers again"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Latency check"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Latency check..."
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Measure"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Measure again"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Measure the round trip"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Measure..."
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Measures the round trip through a loopback cable"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Measures the round trip through a loopback cable, so recordings line up exactly"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Measuring... %d of %d"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "No input device: choose one in Settings > Audio"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Nothing came back on this input: check the cable and the input."
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Nothing to recover: play with a track armed while the transport runs"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Now in use"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Places what the armed tracks heard in the last pass the transport played, where it was played"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Plays the burst three times and listens for it on the input"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Punch crossfade"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Quick punch"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Recordings are moved earlier by this round trip (plus plugin delay compensation) while these devices, rate and buffer play"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Recordings now use the measured round trip: "
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Recover"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Recovered the last pass: "
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Round trip: %d of %d measurements agree"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Start on the first note"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "The input comes back with its polarity turned over."
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "The measurements did not agree: turn the input's monitoring off and try again."
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "Use this"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "While playing, Record punches in and out as often as you like: the punches are one take and one undo step"
+msgstr ""
+
+#: src/app/RecordMoreUi.cpp
+msgid "With Record on, Play waits until you play a note (or an armed input gets loud) and starts there"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Audition"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Audition from its start"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Hear only this take on its track; the comp stays as it is"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Hear only this take on the track; the comp stays as it is"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "No rating"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "No takes yet: loop passes of a recording land here, one row per take."
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Nothing to recover: play some notes first (while not recording)"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "One dot"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Other messages"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Plays this take alone from its start; Stop (or stopping the transport) goes back"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Plays this take alone from where it starts; stopping goes back to where the song position was"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Pressure (aftertouch)"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Program changes"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Rating"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Rating: one to three dots (click the lit last dot again: no rating). Saved with the song and shared"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Solo this take"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Takes on the tracks"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "The notes played in the last two minutes while nothing recorded: the last phrase goes in where it was played (or at the pattern's start when the transport was stopped)"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Three dots"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Turn Record off to audition a take"
+msgstr ""
+
+#: src/app/RecordRowsUi.cpp
+msgid "Two dots"
 msgstr ""
 
 #: src/app/SamplerRenderUi.cpp
@@ -21321,7 +21661,7 @@ msgstr ""
 msgid "Ticks per quarter note of the new project"
 msgstr ""
 
-#: src/app/TemplateUi.cpp
+#: src/app/TemplateUi.cpp src/app/TrackerFrame.cpp
 msgid "Untitled"
 msgstr ""
 
@@ -22138,6 +22478,10 @@ msgid "Fix DC"
 msgstr ""
 
 #: src/app/TrackerEditors.cpp
+msgid "Folds the frame to its first row; the pattern gets the height"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
 msgid "Frame"
 msgstr ""
 
@@ -22319,6 +22663,10 @@ msgstr ""
 
 #: src/app/TrackerEditors.cpp
 msgid "Short volume ramps where notes start and stop, so they do not click"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Shows the whole frame: pan, fine, output and the key range"
 msgstr ""
 
 #: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
@@ -22627,6 +22975,10 @@ msgstr ""
 
 #: src/app/TrackerEditors.cpp
 msgid "zoom to range"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "(Save uses this name when the field is empty)"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -24238,6 +24590,10 @@ msgid "No"
 msgstr ""
 
 #: src/app/TrackerPages.cpp
+msgid "No channel plays into this track"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
 msgid "No instrument is selected: pick one in the header's list."
 msgstr ""
 
@@ -24354,6 +24710,10 @@ msgid "The audio ends there: the clip plays no longer (an earlier Offset gives i
 msgstr ""
 
 #: src/app/TrackerPages.cpp
+msgid "The channels that play into this track (each one's Output, in its Channel frame)"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
 msgid "The clip's whole menu, as in the playlist: warp markers, audio tools, curves, export"
 msgstr ""
 
@@ -24462,6 +24822,10 @@ msgid " is on or off: it shows 01 whatever the digits (Delete turns it off)"
 msgstr ""
 
 #: src/app/TrackerView.cpp
+msgid "(40 centre)"
+msgstr ""
+
+#: src/app/TrackerView.cpp
 msgid "A new, empty pattern (Ins puts it in the song)"
 msgstr ""
 
@@ -24515,6 +24879,10 @@ msgstr ""
 
 #: src/app/TrackerView.cpp
 msgid "Keypad instruments"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Left: the high digit"
 msgstr ""
 
 #: src/app/TrackerView.cpp
@@ -24587,6 +24955,10 @@ msgstr ""
 
 #: src/app/TrackerView.cpp
 msgid "R is a release velocity, 00 to 7F: it stays at 7F"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Right: the low digit (each digit moves down by the edit step)"
 msgstr ""
 
 #: src/app/TrackerView.cpp
@@ -24731,6 +25103,10 @@ msgstr ""
 
 #: src/app/TrackerView.cpp
 msgid "of 40"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "of 7F"
 msgstr ""
 
 #: src/app/TrackerView.cpp

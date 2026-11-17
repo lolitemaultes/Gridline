@@ -69,6 +69,9 @@ Settings::Settings() {
       {"audio.inputChannels", Json::makeNumber(2)},
       {"audio.outputChannels", Json::makeNumber(2)},    // K-101: system audio outputs (3-4, 5-6, ... are extra pairs)
       {"audio.inputOffsetMs", Json::makeNumber(0)},    // manual recording offset (+ = later)
+      {"audio.loopbackLatency", Json::makeNumber(0)},  // K-123: measured round trip (samples; 0 = not measured)
+      {"audio.loopbackSetup", Json::makeString("")},   //   the devices, rate and buffer it was measured with
+      {"audio.loopbackInput", Json::makeNumber(0)},    //   the input channel the cable comes back on
       {"audio.recordBits", Json::makeNumber(32)},      // 32 = float, 24 / 16 = PCM
       // K-6: audio backend. "system" = SDL (WASAPI / DirectSound on Windows), "asio" = an ASIO driver (Windows).
       {"audio.backend", Json::makeString("system")},
@@ -95,6 +98,9 @@ Settings::Settings() {
       {"record.midi.takes", b(false)},                 // loop recording: a new take per pass
       {"record.midi.notes", b(true)},                  // what records: notes
       {"record.midi.automation", b(true)},             // what records: linked controller moves
+      {"record.midi.bend", b(true)},                   // K-123: what records: pitch bend (an MPE note's bend, linked bend moves)
+      {"record.midi.pressure", b(true)},               // K-123: what records: pressure (aftertouch)
+      {"record.midi.program", b(true)},                // K-123: what records: program changes (linked)
       {"record.midi.autoTarget", Json::makeNumber(0)}, // controller moves into: 0 automatic, 1 pattern events, 2 automation clips
       {"record.countInBars", Json::makeNumber(0)},     // count-in before recording: 0 (off), 1, 2 or 4 bars
       {"record.monitor.inputOnly", b(false)},          // K-123: armed tracks in Auto hear the input all the time (off: tape style around the punch)
@@ -106,6 +112,12 @@ Settings::Settings() {
       {"record.punch", b(true)},                       // punch in and out at the playlist time selection
       {"record.audio", b(true)},                       // what records: audio into the playlist (armed tracks)
       {"record.audioEditor", b(false)},                // what records: audio into the audio editor
+      // K-123 (0.7.7, core A): quick punch, capture while armed, start on the first note, punch crossfades.
+      {"record.quickPunch", b(false)},                 // while playing, Record punches in and out (one take, one undo step)
+      {"record.captureSeconds", Json::makeNumber(60)}, // input every armed track keeps while not recording (0 = off)
+      {"record.startOnNote", b(false)},                // with Record on, Play waits for the first note (or sound)
+      {"record.startLevelDb", Json::makeNumber(-30)},  //   or an armed input this loud (dBFS; 0 = notes only)
+      {"record.punchFadeMs", Json::makeNumber(10)},    // crossfade at the punch points (0 = off)
       {"logger.enabled", b(false)},                    // audio logger keeps the last minutes
       {"logger.minutes", Json::makeNumber(2)},         // 1 / 2 / 5 / 10
       {"logger.source", Json::makeNumber(0)},          // AudioLogger::Source: 0 armed inputs, 1 master
@@ -144,6 +156,7 @@ Settings::Settings() {
       {"tracker.visibleTracks", Json::makeNumber(0)},  // K-106: tracks in view at most (0: as many as fit; 4, 6, 8, 12, 16)
       {"tracker.patternZoom", Json::makeNumber(0)},    // K-106 cp17: the pattern's sideways zoom (0 as set .. 6 the narrowest tracks)
       {"tracker.patternFit", b(false)},                // K-106 cp17: the zoom follows "every track in view"
+      {"tracker.frameFold", Json::makeNumber(0)},      // K-106 cp24: the Channel frame (0 folds it in a short window, 1 folded, 2 whole)
       {"tracker.songLaneWidth", Json::makeNumber(0)},  // K-106 cp17: the Song page's lane width in px (0: the lanes share the width)
       {"tracker.timelineZoom", Json::makeNumber(1)},   // K-106 cp17: the Song timeline's zoom (1: the whole song in view)
       {"tracker.volumeMacros", Json::makeString("")},  // K-106: the ten volume macros ("20,,40,...")

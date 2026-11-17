@@ -55,6 +55,10 @@ struct CpuMeter {
   bool seeded_ = false;
 };
 
+namespace tap {
+class Pass;
+}
+
 class AudioEngine {
  public:
   static constexpr int kMaxBlock = kEngineMaxBlock;
@@ -102,6 +106,10 @@ class AudioEngine {
   // Offline render (export): hosted plugins are told (time info / process
   // mode). Set before processing starts.
   void setOffline(bool on) { offline_ = on; }
+  // K-322: the Track Receipt pass this engine's reads go to (an offline render's; set before
+  // processing starts). Every graph task binds it on the thread that runs it. The live
+  // engine has none, so playing never marks into a receipt that is measuring.
+  void setTapPass(const tap::Pass* p) { tapPass_ = p; }
   // K-277: Rest silent instruments (Options > Rest silent instruments; on by default). Realtime
   // playback leaves an instrument out of the blocks once it has been silent for a moment with
   // nothing playing it (ProgChannel::restSilent: instruments only, Channel::keepRunning opts one
@@ -395,8 +403,30 @@ class AudioEngine {
     ObjectId mixer = kNoId;
     size_t ringPos = 0;  // absolute frame index in the track's capture ring
     double tick = 0;     // Start: song position of the take's first frame
+    // K-123 (0.7.7): the same frame in the track's capture-while-armed ring (ArmedRing; 0 without
+    // one), and whether the boundary is a punch: the transport played on across it (a quick punch,
+    // a pre-roll or post-roll), or it lies on the punch range's in or out point.
+    size_t armPos = 0;
+    bool punch = false;
   };
   bool popRecEvent(RecEvent& e);
+
+  // ---- K-123 (0.7.7): start on the first sound, and the loopback latency check ----
+  // Start on the first sound: while the transport is stopped, the first block in which an armed
+  // track's input reaches `level` (linear peak) starts playback there (with the pre-roll, never a
+  // count-in) and turns recording on, so the take starts with that block. level <= 0: off. Each
+  // start counts in inputStarts(); the request ends with it (or with level 0).
+  void armStartOnInput(float level);
+  float startOnInputLevel() const { return startLevel_.load(std::memory_order_relaxed); }
+  int inputStarts() const { return inputStarts_.load(std::memory_order_relaxed); }
+  // Loopback latency check: plays `burst` (the whole output, nothing else plays meanwhile) from
+  // the next block and records input channel `channel` from the same frame for `listen` frames.
+  // UI thread; false while a check runs. latencyProbeDone(): the capture is ready to read.
+  bool startLatencyProbe(int channel, const std::vector<float>& burst, size_t listen);
+  bool latencyProbeRunning() const { int s = probeState_.load(std::memory_order_acquire); return s == 1 || s == 2; }
+  bool latencyProbeDone() const { return probeState_.load(std::memory_order_acquire) == 3; }
+  const std::vector<float>& latencyProbeCapture() const { return probeCap_; }
+  void cancelLatencyProbe();
 
   // ---- J-31 ----
   // Song position jump that waits for the next multiple of `grid` ticks while
@@ -765,6 +795,7 @@ class AudioEngine {
   // Transport (audio thread), published through atomics.
   bool tPlaying_ = false, tLoop_ = true;
   bool offline_ = false;         // offline render (see setOffline)
+  const tap::Pass* tapPass_ = nullptr;  // K-322 (see setTapPass)
   std::atomic<bool> restInstruments_{true};  // K-277
   // Fixed-block mode (setFixedBlock): rendered frames not handed out yet.
   int fixed_ = 0;
@@ -924,6 +955,20 @@ class AudioEngine {
   size_t tickHistPos_ = 0;
   size_t tickHistLat_ = 0;  // latency the history was last read with (audio thread)
   std::vector<double> recTick_;  // delayed position of each frame of this block (-1 = not recording)
+  // K-123 (0.7.7): the delayed position of every frame while the transport plays, recorded or not
+  // (capture while armed), and whether recording was on for each history entry.
+  std::vector<double> rawTick_;
+  std::vector<uint8_t> recHist_;
+  double lastRaw_ = -1;  // rawTick_ of the previous block's last frame
+  std::atomic<float> startLevel_{0};
+  std::atomic<uint32_t> startSerial_{0};
+  std::atomic<int> inputStarts_{0};
+  void startOnInput(const Program* p, int n);
+  std::vector<float> probeBurst_, probeCap_;
+  std::atomic<int> probeState_{0};  // 0 idle, 1 requested, 2 running, 3 done
+  int probeCh_ = 0;
+  int64_t probeStart_ = 0;
+  void latencyProbe(float* L, float* R, int n);
   static constexpr size_t kRecEvents = 1024;
   std::vector<RecEvent> recEvents_ = std::vector<RecEvent>(kRecEvents);
   std::atomic<size_t> reHead_{0}, reTail_{0};

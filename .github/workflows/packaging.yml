@@ -6,7 +6,9 @@ name: Packaging
 #   - the same, plus real builds (Flatpak with flatpak-builder and Flathub's linter, the AUR source
 #     package with makepkg and namcap, the COPR spec with rpmbuild, the FreeBSD port, the snap), on
 #     every push to main that touches these files, on "Run workflow", on a version tag and every
-#     Monday, so a change to the packaging is built before a release tag builds it.
+#     Monday, so a change to the packaging is built before a release tag builds it. The same runs
+#     build and check the Gridline Suite and Suite Mini plugin downloads (installers and
+#     all-plugins zips) the way release.yml does.
 # Nothing is published or submitted: the release workflow writes the filled-in files for a release
 # as the workflow artifact "packaging-<version>" and the user submits them.
 on:
@@ -353,3 +355,161 @@ jobs:
           $v = (Get-ChildItem rendered/winget/manifests/g/Gridline/Gridline | Select-Object -First 1).FullName
           $client = Get-Command ("win" + "get") -ErrorAction SilentlyContinue
           if ($client) { & $client.Source validate --manifest $v } else { Write-Output "client not on this runner: the schema check in the lint job covers the manifests" }
+
+  # K-308: the plugin downloads (Gridline Suite and Suite Mini) built exactly as release.yml builds
+  # them (tools/release/suite-release.py stage, build, check), as workflow artifacts only: the .pkg
+  # and all-plugins zip on macOS, the Windows setups (installed silently for this user and removed)
+  # and zip, the Linux .run files (one installed into a scratch folder) and zip. The BSD files need
+  # the release's BSD virtual machines; their layout is covered by the tools' self-tests.
+  plugins-macos:
+    name: Plugin downloads (macOS)
+    needs: lint
+    if: needs.lint.outputs.builds == 'true'
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install --quiet ninja || true
+      - name: Build the suites (arm64 + x86_64)
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_BUNDLED_SDL2=ON -DGRIDLINE_DEV_ASSETS=OFF \
+            "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DGRIDLINE_GUI_TESTS=OFF
+          cmake --build build -j4 --target gridline gridline_suite_gridline gridline_suite_mini
+      - name: Installers and all-plugins zips
+        run: |
+          eval "$(bash tools/release/version.sh)"
+          python3 tools/release/suite-release.py stage build suite-in --cli build/gridline
+          python3 tools/release/suite-release.py build --family macos --version "$full" --input suite-in --out suite-dist --license LICENSE --sign
+          python3 tools/release/suite-release.py check --family macos --version "$full" --dir suite-dist --catalogues suite-in
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suite-test-macos
+          path: suite-dist/Gridline-Suite-*
+          retention-days: 7
+
+  plugins-windows-build:
+    name: Plugin downloads (Windows ${{ matrix.arch }} build)
+    needs: lint
+    if: needs.lint.outputs.builds == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, msvc: amd64 }
+          - { arch: arm64, msvc: amd64_arm64 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc }}
+      - name: Build the suites
+        run: |
+          extra=""
+          if [ "${{ matrix.arch }}" = "arm64" ]; then extra="-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64"; fi
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl -DGRIDLINE_BUNDLED_SDL2=ON \
+            -DGRIDLINE_DEV_ASSETS=OFF -DGRIDLINE_GUI_TESTS=OFF $extra
+          cmake --build build -j4 --target gridline gridline_suite_gridline gridline_suite_mini
+      - name: Suite bundles
+        run: |
+          cli=()
+          if [ "${{ matrix.arch }}" = "x64" ]; then cli=(--cli build/gridline.exe); fi
+          python tools/release/suite-release.py stage build suite-in "${cli[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suite-test-bundles-windows-${{ matrix.arch }}
+          path: suite-in
+          retention-days: 1
+
+  plugins-windows:
+    name: Plugin downloads (Windows)
+    needs: plugins-windows-build
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: suite-test-bundles-windows-x64
+          path: suite-in/x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: suite-test-bundles-windows-arm64
+          path: suite-in/arm64
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          choco upgrade innosetup --no-progress -y | Select-Object -Last 2 | Write-Host
+          $iscc = Get-ChildItem -Path @(${env:ProgramFiles(x86)}, $env:ProgramFiles) -Directory -Filter "Inno Setup*" -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName "ISCC.exe") } | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $iscc) { throw "Inno Setup not found" }
+          "ISCC=$(Join-Path $iscc 'ISCC.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Setups and all-plugins zips
+        run: |
+          eval "$(bash tools/release/version.sh)"
+          python tools/release/suite-release.py build --family windows --version "$full" --input x64=suite-in/x64 --input arm64=suite-in/arm64 \
+            --out suite-dist --license LICENSE --iscc "$ISCC"
+          python tools/release/suite-release.py check --family windows --version "$full" --dir suite-dist --catalogues suite-in/x64 --install
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suite-test-windows
+          path: suite-dist/Gridline-Suite-*
+          retention-days: 7
+
+  plugins-linux-build:
+    name: Plugin downloads (Linux ${{ matrix.arch }} build)
+    needs: lint
+    if: needs.lint.outputs.builds == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, os: ubuntu-22.04 }
+          - { arch: aarch64, os: ubuntu-22.04-arm }
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo sh tools/ci/install-deps.sh apt
+      - name: Build the suites
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_DEV_ASSETS=OFF -DGRIDLINE_GUI_TESTS=OFF
+          cmake --build build -j4 --target gridline gridline_suite_gridline gridline_suite_mini
+          python3 tools/release/suite-release.py stage build suite-in --cli build/gridline --tar "suite-bundles-linux-${{ matrix.arch }}.tar"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suite-test-bundles-linux-${{ matrix.arch }}
+          path: suite-bundles-linux-${{ matrix.arch }}.tar
+          retention-days: 1
+
+  plugins-linux:
+    name: Plugin downloads (Linux)
+    needs: plugins-linux-build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: suite-test-bundles-linux-*
+          path: suite-tars
+          merge-multiple: true
+      - name: Installers and all-plugins zips
+        run: |
+          eval "$(bash tools/release/version.sh)"
+          for a in x86_64 aarch64; do mkdir -p "suite-in/$a" && tar -C "suite-in/$a" -xf "suite-tars/suite-bundles-linux-$a.tar"; done
+          python3 tools/release/suite-release.py build --family linux --version "$full" --input x86_64=suite-in/x86_64 --input aarch64=suite-in/aarch64 \
+            --out suite-dist --license LICENSE
+          python3 tools/release/suite-release.py check --family linux --version "$full" --dir suite-dist --catalogues suite-in/x86_64 --install
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suite-test-linux
+          path: suite-dist/Gridline-Suite-*
+          retention-days: 7

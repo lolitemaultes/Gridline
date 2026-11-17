@@ -82,6 +82,7 @@
 #include "../core/PatternAutoOps.h"
 #include "../core/PatternAutomation.h"
 #include "PatternAutoUi.h"
+#include "RecordRowsUi.h"
 #include "MeterUi.h"
 #include "../core/Meter.h"
 #include "../core/TrackPlus.h"
@@ -4812,9 +4813,10 @@ void drawPlaylist(App& a) {
       const ImVec2 h0(headX0 + 2 + 10, ly0 + 1), h1(headX1 - 3, ly1 - 1);
       dl->AddRectFilled(h0, h1, hov ? P.surface700 : theme::mix(P.surface800, P.ink, 0.25f), theme::kRadiusSm);
       dl->AddRectFilled(h0, ImVec2(h0.x + 3, h1.y), lit ? tc : P.lineStrong, theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
-      const std::string label = "Take " + std::to_string(k + 1);
+      const std::string label = recordrows::laneLabel(k, h1.x - h0.x);  // K-123: "Take 2", or "2" beside the controls
       const float fy = std::round((ly0 + ly1 - theme::kFontCaption) * 0.5f) - 1;
-      theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(h0.x + 10, fy), h1.x - h0.x - 30, lit ? P.text : P.textDim, label.c_str());
+      const float labelX1 = recordrows::drawLaneHeader(a, dl, tr, k, h0, h1, hov);  // K-123: rating dots, solo
+      theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(h0.x + 10, fy), labelX1 - h0.x - 10, lit ? P.text : P.textDim, label.c_str());
       if (lit) dl->AddCircleFilled(ImVec2(h1.x - 10, (ly0 + ly1) * 0.5f), 3.0f, tc, 12);
     }
   }
@@ -5839,7 +5841,7 @@ void drawPlaylist(App& a) {
   // K-123: take lanes. A press in a lane starts a swipe; on release the swiped range plays that take
   // (a click without a drag picks it for the comp section there). One undo step each. Right-click: the
   // lanes' menu. The lane headers: a click picks that take wherever it has audio.
-  static int takeMenuTrack = -1;
+  static int takeMenuTrack = -1, takeMenuTake = -1;
   auto laneLocked = [&](int tr) { return tr >= 0 && tr < nTracks && s.tracks[static_cast<size_t>(tr)].locked; };
   {
     int lt = -1, lk = -1;
@@ -5875,7 +5877,7 @@ void drawPlaylist(App& a) {
         tswipe.from = tswipe.to = std::max<Tick>(0, snapPos(std::max<Tick>(0, tickAt(m.x))));
         lClick = false;
       } else if (rClick) {
-        takeMenuTrack = lt;
+        takeMenuTrack = lt, takeMenuTake = lk;
         ImGui::OpenPopup("##takelanes");
         rClick = false;
       } else if (lClick) {
@@ -5885,12 +5887,14 @@ void drawPlaylist(App& a) {
   }
   if (takeHeadTrack >= 0) {
     a.setHint("Take " + std::to_string(takeHeadTake + 1) + ": click to play this take wherever it has audio \xC2\xB7 right-click: the lanes' menu");
-    if (lClick && !laneLocked(takeHeadTrack)) {
+    if (lClick && recordrows::laneHeaderClick(a, takeHeadTrack, takeHeadTake)) {  // K-123: a rating dot, the solo mark
+      lClick = false;
+    } else if (lClick && !laneLocked(takeHeadTrack)) {
       const int tr = takeHeadTrack, k = takeHeadTake;
       a.doc.editSong("comp take", [&](Song& x) { takes::compRange(x, tr, k, 0, std::numeric_limits<Tick>::max() / 4); });
       lClick = false;
     } else if (rClick) {
-      takeMenuTrack = takeHeadTrack;
+      takeMenuTrack = takeHeadTrack, takeMenuTake = takeHeadTake;
       ImGui::OpenPopup("##takelanes");
       rClick = false;
     }
@@ -5899,6 +5903,7 @@ void drawPlaylist(App& a) {
     const int tr = takeMenuTrack;
     const std::vector<ObjectId> groups = tr >= 0 && tr < nTracks ? takes::groupsOn(s, tr) : std::vector<ObjectId>{};
     if (groups.empty()) ImGui::CloseCurrentPopup();
+    recordrows::laneMenuItems(a, tr, takeMenuTake);  // K-123: rating, solo, audition
     if (ImGui::MenuItem(i18n::tr("Flatten the comp"), nullptr, false, !groups.empty() && !laneLocked(tr))) {
       std::string err;
       int made = 0;

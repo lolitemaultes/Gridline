@@ -17,6 +17,8 @@
 #include "J31Ui.h"
 #include "LiveLook.h"
 #include "MenuParityUi.h"
+#include "RecordRowsUi.h"
+#include "RecordMoreUi.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -59,6 +61,9 @@ int form(const App& a) { return std::clamp(static_cast<int>(a.settings.getNumber
 struct Live {
   std::vector<const MixerTrack*> armed;
   bool recording = false, punch = false, loop = false;
+  bool waiting = false;     // K-123 (0.7.7): Play waits for the first note
+  bool quick = false;       // quick punch: Record punches while the transport plays
+  bool punchedOut = false;  // quick punch, recording open, Record off
   int pass = 0;
   double minutes = 0, secs = 0;
 };
@@ -86,6 +91,10 @@ Live gather(App& a, State& S) {
   L.punch = a.recPunch && sel && a.engine.mode() == PlayMode::Song;
   L.loop = !L.punch && L.pass > 1;  // a second pass: the transport looped
   L.secs = L.recording ? a.audioRec.seconds(sr) : 0.0;
+  L.waiting = recmore::waiting();
+  L.quick = recmore::quickPunch(a);
+  L.punchedOut = L.quick && recmore::punchRolling(a) && !a.recordArmed;
+  if (recmore::punchRolling(a) && !L.recording) L.recording = a.recorder.active();  // notes only
   return L;
 }
 
@@ -190,6 +199,19 @@ void foldClose(State& S, ImDrawList* dl, float x, float y) {
 
 // The main action and the take's secondary one, in a row at the cursor (actionWidth: their width).
 void actionButtons(App& a, const Live& Lv, bool withPlay) {
+  if (Lv.waiting) {  // K-123 (0.7.7): start on the first note
+    if (ui::PrimaryButton(i18n::tr("Start now"), 0, "Starts playback and recording without waiting for a note")) recmore::startNow(a);
+    ImGui::SameLine(0, kG);
+    if (ui::TextButton(i18n::tr("Cancel"), false, 0, "Stops waiting (Record stays on)")) recmore::cancelWait(a);
+    return;
+  }
+  if (Lv.recording && Lv.quick) {  // K-123 (0.7.7): quick punch (the record key does the same)
+    if (ui::TextButton(a.recordArmed ? i18n::tr("Punch out") : i18n::tr("Punch in"), !a.recordArmed, 88,
+                       "Quick punch: stops or starts recording while playback goes on (the record key does the same)")) {
+      livelook::toggleArrangementRecord(a);
+    }
+    ImGui::SameLine(0, kG);
+  }
   if (Lv.recording) {
     if (ui::PrimaryButton(i18n::tr("Stop"), 72, "Stops the transport; the take is kept")) menuparity::stopButtonPressed(a);
     ImGui::SameLine(0, kG);
@@ -202,7 +224,8 @@ void actionButtons(App& a, const Live& Lv, bool withPlay) {
 }
 
 float actionWidth(const App& a, const Live& Lv) {
-  if (Lv.recording) return 72 + kG + ui::TextButtonWidth("Discard take");
+  if (Lv.waiting) return ui::TextButtonWidth("Start now") + kG + ui::TextButtonWidth("Cancel");
+  if (Lv.recording) return (Lv.quick ? 88 + kG : 0.0f) + 72 + kG + ui::TextButtonWidth("Discard take");
   return a.audioRecFinishing ? 0.0f : ui::TextButtonWidth("Record and play");
 }
 
@@ -212,12 +235,17 @@ void open(App&) {
   st().open = true;
   st().hidden = false;
 }
-void openWindow(App&) { st().full = true; }
+void openWindow(App&, int page) {
+  st().full = true;
+  if (page >= 0 && page < 7) st().page = page;
+}
+void showPage(int page) { st().page = page; }
 void close() { st().open = false, st().hidden = false; }
 bool isOpen() { return st().open; }
 bool isHidden() { return st().open && st().hidden; }
 
 void recordClicked(App& a, bool shift) {
+  if (recmore::punchRolling(a)) return;  // K-123 (0.7.7): a quick punch, the card stays as it is
   if (!a.recordArmed) {
     close();
     return;
@@ -385,7 +413,9 @@ void drawFull(App& a, State& S, const Live& Lv) {
   switch (S.page) {
     case kReady: {
       groupHeading(a, "Next take", true);
-      rowValue("Mode", a.recPunch && sel ? "Punch at the time selection" : "From the playhead");
+      rowValue("Mode", std::string(a.recPunch && sel ? "Punch at the time selection" : "From the playhead") +
+                           (recmore::quickPunch(a) ? ", quick punch" : ""));
+      if (a.settings.getBool("record.startOnNote")) rowValue("Start", "On the first note");  // K-123 (0.7.7)
       rowValue("Pre-roll", a.settings.getBool("record.preRoll") ? std::to_string(static_cast<int>(a.settings.getNumber("record.preRollBeats"))) + " beats" : "Off");
       rowValue("Count-in", a.countInBars ? std::to_string(a.countInBars) + (a.countInBars == 1 ? " bar" : " bars") : "Off");
       rowValue("Loop passes", a.settings.getBool("record.takeLanes") ? "Take lanes on the track" : "Tracks below");
@@ -428,9 +458,52 @@ void drawFull(App& a, State& S, const Live& Lv) {
       } else {
         rowValue("Range", i18n::tr("No time selection: drag in the playlist's ruler"), P.textFaint);
       }
+      {  // K-123 (0.7.7): quick punch
+        bool q = recmore::quickPunch(a);
+        ImGui::BeginDisabled(recording);
+        if (onOff("Quick punch", "##quick", q, "While playing, Record (the button or the record key) punches in and out as often as you like; the punches are one take and one undo step")) {
+          a.settings.set("record.quickPunch", q);
+        }
+        ImGui::EndDisabled();
+      }
       groupHeading(a, "Around the punch");
       rollRow(a, "Pre-roll", "record.preRoll", "record.preRollBeats", "Playback starts this much before the punch in (the first pass)");
       rollRow(a, "Post-roll", "record.postRoll", "record.postRollBeats", "Playback goes on this long past the punch out, then stops");
+      {  // K-123 (0.7.7): the punch crossfade
+        rowLabel("Crossfade");
+        static const char* kFade[] = {"Off", "5 ms", "10 ms", "20 ms", "50 ms"};
+        static const int kMs[] = {0, 5, 10, 20, 50};
+        const int cur = static_cast<int>(std::lround(a.settings.getNumber("record.punchFadeMs")));
+        int fi = 2;
+        for (int i = 0; i < 5; ++i) {
+          if (cur == kMs[i]) fi = i;
+        }
+        ImGui::BeginDisabled(recording);
+        if (ui::Segmented("##pfade", kFade, 5, &fi, 56)) a.settings.set("record.punchFadeMs", kMs[fi]);
+        ImGui::EndDisabled();
+        ui::Hint("At each punch in and out the take and the audio already on the track crossfade over this time, so the joins never click");
+      }
+      groupHeading(a, "Capture while armed");  // K-123 (0.7.7)
+      {
+        double held = 0;
+        int tracks = 0;
+        recmore::captureHeld(a, held, tracks);
+        rowLabel("Kept");
+        ImGui::AlignTextToFramePadding();
+        if (recmore::captureSeconds(a) <= 0) {
+          ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Off: turn it on in Files"));
+        } else if (tracks == 0) {
+          ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Nothing yet: armed tracks keep what they hear while the transport plays"));
+        } else {
+          ImGui::TextColored(theme::vec(P.text), "%s", (recinfo::clock(held) + (tracks == 1 ? std::string(" on 1 track") : " on " + std::to_string(tracks) + " tracks")).c_str());
+          ImGui::SameLine(0, 2 * kG);
+          ImGui::BeginDisabled(recording || a.audioRecFinishing);
+          if (ui::TextButton(i18n::tr("Recover the last pass"), false, 0, "Places what the armed tracks heard in the last pass the transport played, where it was played (one undo step)")) {
+            recmore::recoverAudio(a);
+          }
+          ImGui::EndDisabled();
+        }
+      }
       break;
     }
     case kStart: {
@@ -443,6 +516,23 @@ void drawFull(App& a, State& S, const Live& Lv) {
         if (a.countInBars == kBars[i]) ci = i;
       if (ui::Segmented("##count", kCount, 4, &ci, 48)) a.countInBars = kBars[ci];
       ui::Hint("Bars of click before recording starts");
+      groupHeading(a, "Start");  // K-123 (0.7.7): start on the first note
+      boolSetting(a, "On the first note", "record.startOnNote",
+                  "With Record on, Play waits until you play a note (it records at the start), then starts without a count-in. Play again starts at once");
+      {
+        rowLabel("Or a sound above");
+        static const char* kLv[] = {"Notes only", "-40 dB", "-30 dB", "-20 dB", "-12 dB"};
+        static const int kDb[] = {0, -40, -30, -20, -12};
+        const int cur = static_cast<int>(std::lround(a.settings.getNumber("record.startLevelDb")));
+        int li = 0;
+        for (int i = 0; i < 5; ++i) {
+          if (cur == kDb[i]) li = i;
+        }
+        ImGui::BeginDisabled(!a.settings.getBool("record.startOnNote"));
+        if (ui::Segmented("##slevel", kLv, 5, &li, 0)) a.settings.set("record.startLevelDb", kDb[li]);
+        ImGui::EndDisabled();
+        ui::Hint("An armed track's input this loud starts it too, from the block that reached it");
+      }
       break;
     }
     case kTakes: {
@@ -456,12 +546,29 @@ void drawFull(App& a, State& S, const Live& Lv) {
       int nm = static_cast<int>(a.settings.getNumber("record.naming")) > 0 ? 1 : 0;
       static const char* kNames[] = {"Mixer track", "Audio input"};
       if (ui::Segmented("##naming", kNames, 2, &nm, 0)) a.settings.set("record.naming", nm);
+      recordrows::takesList(a, recording);  // K-123 (2.7): every track's takes, rated, soloed, auditioned
       break;
     }
     case kInputs: {
       groupHeading(a, "Monitoring", true);
       boolSetting(a, "Input only", "record.monitor.inputOnly", "On: armed tracks in Auto always hear their input. Off: inside the punch range only, and the playback around it");
       boolSetting(a, "Low latency", "record.monitor.lowLatency", "While recording, armed tracks skip their effects that add latency");
+      {  // K-123 (0.7.7): the latency check
+        groupHeading(a, "Latency");
+        const double sr = std::max(1.0, a.engine.sampleRate());
+        const int measured = recmore::measuredRoundTrip(a);
+        const int rt = measured > 0 ? measured : a.audioInputLatency;
+        rowLabel("Round trip");
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(theme::vec(P.text), "%s", recmore::latencyText(rt, sr).c_str());
+        ImGui::SameLine(0, kG);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(theme::vec(P.textFaint), "%s", measured > 0 ? i18n::tr("measured") : i18n::tr("estimated from the buffers"));
+        rowLabel("");
+        if (ui::TextButton(i18n::tr("Measure with a loopback cable..."), false, 0, "A cable from an output back into an input: Gridline measures the round trip, and recordings line up exactly")) {
+          recmore::openLatencyCheck(a);
+        }
+      }
       int shown = 0;
       for (const auto& m : s.mixer) {
         if (m.id == s.masterId() || !(m.armed || m.input >= 0)) continue;
@@ -489,6 +596,10 @@ void drawFull(App& a, State& S, const Live& Lv) {
       groupHeading(a, "What records", true);
       onOff("Notes", "##notes", o.notes, "Notes played on a MIDI device or the typing keyboard record into the selected channel");
       onOff("Controller moves", "##ctl", o.automation, "Moves of linked controllers record as automation");
+      // K-123 (4.1): the rest of the input filter (yours: kept in this computer's settings).
+      onOff("Pitch bend", "##bend", o.bend, "Pitch bend records: an MPE note's bend with the note, a linked bend as automation");
+      onOff("Pressure", "##press", o.pressure, "Pressure (aftertouch) records: an MPE note's pressure with the note, linked pressure as automation");
+      onOff("Program changes", "##prog", o.program, "Program changes linked to a control record as automation");
       groupHeading(a, "How");
       rowLabel("Loop passes");
       int ov = o.overdub ? 0 : 1;
@@ -510,6 +621,20 @@ void drawFull(App& a, State& S, const Live& Lv) {
       if (ui::Segmented("##target", kT, 3, &t, 0)) o.autoTarget = static_cast<AutoRecordTarget>(t);
       ImGui::EndDisabled();
       ui::Hint("Automatic: pattern events in pattern mode, automation clips in song mode");
+      groupHeading(a, "Played while not recording");  // K-123 (4.2)
+      rowLabel("Kept");
+      {
+        const int kept = a.capture.size();
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(theme::vec(kept ? P.text : P.textFaint), "%s",
+                           kept ? (std::to_string(kept) + (kept == 1 ? " note" : " notes") + " from the last two minutes").c_str() : i18n::tr("Nothing yet"));
+        ImGui::SameLine(0, 2 * kG);
+        ImGui::BeginDisabled(recording || kept == 0);
+        if (ui::TextButton(i18n::tr("Recover what I just played"), false, 0, "The last phrase goes in where it was played (or at the pattern's start when the transport was stopped)")) {
+          recordrows::recoverPlayed(a);
+        }
+        ImGui::EndDisabled();
+      }
       break;
     }
     case kFiles: {
@@ -527,6 +652,23 @@ void drawFull(App& a, State& S, const Live& Lv) {
       groupHeading(a, "Where");
       rowLabel("Folder");
       ui::PathFit(recordedDir(a).c_str(), std::max(80.0f, ImGui::GetContentRegionAvail().x), P.text);
+      groupHeading(a, "Capture while armed");  // K-123 (0.7.7)
+      {
+        rowLabel("Keep");
+        static const char* kKeep[] = {"Off", "30 s", "1 min", "2 min"};
+        static const int kSec[] = {0, 30, 60, 120};
+        const int cur = static_cast<int>(std::lround(recmore::captureSeconds(a)));
+        int ki = 2;
+        for (int i = 0; i < 4; ++i) {
+          if (cur == kSec[i]) ki = i;
+        }
+        ImGui::BeginDisabled(recording);
+        if (ui::Segmented("##capture", kKeep, 4, &ki, 64)) a.settings.set("record.captureSeconds", kSec[ki]);
+        ImGui::EndDisabled();
+        ui::Hint("Every armed track keeps this much of its input while Record is off, so the last pass can be recovered (Mode and punch)");
+        const double mb = recmore::captureSeconds(a) * a.engine.sampleRate() * 8.0 / (1024.0 * 1024.0);
+        if (mb > 0) rowValue("Memory", std::to_string(static_cast<long long>(std::lround(mb))) + " MB per armed track", P.textFaint);
+      }
       break;
     }
     default: break;
@@ -610,7 +752,11 @@ float drawStrip(App& a, float top) {
   const std::string t = recinfo::clock(Lv.secs);
   dl->AddText(a.fontMonoBold, theme::kFontLcd, ImVec2(x, cy - theme::kFontLcd * 0.5f - 1), Lv.recording ? P.text : P.textFaint, t.c_str());
   x += textW(a.fontMonoBold, theme::kFontLcd, t.c_str()) + 2 * kG;
-  std::string what = Lv.recording ? takeLine(Lv) : a.audioRecFinishing ? i18n::tr("Saving the take") : i18n::tr("Ready");
+  std::string what = Lv.punchedOut ? i18n::tr("Punched out")
+                     : Lv.recording ? takeLine(Lv)
+                     : a.audioRecFinishing ? i18n::tr("Saving the take")
+                     : Lv.waiting ? i18n::tr("Waiting for the first note")
+                                  : i18n::tr("Ready");
   if (!Lv.recording && Lv.punch) what += ", punch";
   dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x, cy - theme::kFontCaption * 0.5f - 1), P.textDim, what.c_str());
   x += textW(a.fontRegular, theme::kFontCaption, what.c_str()) + 3 * kG;
@@ -659,7 +805,8 @@ float drawStrip(App& a, float top) {
 
 void draw(App& a) {
   State& S = st();
-  if (!a.recordArmed && !a.audioRecSession) S.open = false;
+  recordrows::frame(a);  // K-123: an audition ends with the transport
+  if (!a.recordArmed && !a.audioRecSession && !recmore::punchRolling(a)) S.open = false;
   const Live Lv = gather(a, S);
   const bool started = Lv.recording && !S.wasRecording;
   S.wasRecording = Lv.recording;
@@ -713,7 +860,11 @@ void draw(App& a) {
       const ImVec2 p = ImGui::GetCursorScreenPos();
       const float cy = p.y + 10;
       recDot(dl, ImVec2(p.x + 5, cy), recording);
-      const char* title = recording ? i18n::tr("Recording") : a.audioRecFinishing ? i18n::tr("Saving the take") : i18n::tr("Ready to record");
+      const char* title = Lv.punchedOut ? i18n::tr("Punched out")
+                          : recording   ? i18n::tr("Recording")
+                          : a.audioRecFinishing ? i18n::tr("Saving the take")
+                          : Lv.waiting ? i18n::tr("Waiting for the first note")
+                                       : i18n::tr("Ready to record");
       dl->AddText(a.fontBold, theme::kFontBody, ImVec2(p.x + 2 * kG, cy - theme::kFontBody * 0.5f - 1), P.text, title);
       const float tw = textW(a.fontBold, theme::kFontBody, title);
       const std::string mode = recinfo::modeLine(false, Lv.punch, Lv.loop, Lv.pass);

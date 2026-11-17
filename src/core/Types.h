@@ -201,6 +201,9 @@ struct Clip {
   // share a take group; `take` is the pass number (0 = first). kNoId = none.
   ObjectId takeGroup = kNoId;
   int take = 0;
+  // K-123 (2.3): the take's rating, 0 (none) to 3 dots; every clip of a take carries it (engine/TakeLanes
+  // setRating). Song data, written only when set.
+  uint8_t takeRating = 0;
   // Live area (J-32): the clip was playing when the project was saved (FL's
   // performance state); offline renders launch it at the song start.
   bool launched = false;
@@ -234,7 +237,7 @@ struct Clip {
            audioEnd == o.audioEnd && fadeIn == o.fadeIn && fadeOut == o.fadeOut && gain == o.gain && pitch == o.pitch &&
            speedPitch == o.speedPitch && rateFit == o.rateFit &&
            stretch == o.stretch && syncBpm == o.syncBpm && tempoLock == o.tempoLock && reverse == o.reverse && takeGroup == o.takeGroup &&
-           take == o.take && launched == o.launched && launchOnce == o.launchOnce && group == o.group && fadeInShape == o.fadeInShape &&
+           take == o.take && takeRating == o.takeRating && launched == o.launched && launchOnce == o.launchOnce && group == o.group && fadeInShape == o.fadeInShape &&
            fadeOutShape == o.fadeOutShape && fadeInTension == o.fadeInTension && fadeOutTension == o.fadeOutTension &&
            fadeInManual == o.fadeInManual && fadeOutManual == o.fadeOutManual &&
            fadeInDeclick == o.fadeInDeclick && fadeOutDeclick == o.fadeOutDeclick && warp == o.warp &&

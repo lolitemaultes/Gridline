@@ -27,6 +27,7 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include "ChannelRoute.h"
 #include "FreezeUi.h"
+#include "MidiArm.h"
 #include "App.h"
 #include "HostedUi.h"
 #include "ContextMenus.h"
@@ -788,6 +789,22 @@ void drawChannelRack(App& a) {
                   hov ? P.hot : P.textDim, buf);
       ui::Hint("Mixer track: drag up/down to change, right-click to pick (M = master)");
     }
+    // K-123 (4.5): the record dot at the name button's right end, armed (red) or on the row's hover. Its
+    // button goes first, so the name button under it does not take its clicks.
+    float armDotX = 0;  // 0: not shown
+    bool armHot = false;
+    if (midiarm::applies(a)) {
+      const bool on = midiarm::armed(a, c.id);
+      const bool rowHov = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::IsMouseHoveringRect(rp, ImVec2(rp.x + rowW, rp.y + rowH));
+      if (on || rowHov) {
+        const float mk = freezeui::hasMarker(a, freeze::channelUnit(c.id)) ? std::min(14.0f, cellH - 6) + 3 : 0.0f;
+        armDotX = std::round(rp.x + nameX + nameW - 10 - mk);
+        ImGui::SetCursorScreenPos(ImVec2(armDotX - 7, cy - 7));
+        if (ImGui::InvisibleButton("arm", ImVec2(14, 14))) midiarm::toggle(a, c.id, ImGui::GetIO().KeyAlt);
+        armHot = ImGui::IsItemHovered();
+        if (armHot) ui::Hint(midiarm::dotHint(on));
+      }
+    }
     // Name button: raised face, channel colour on the left edge.
     {
       ImVec2 np(rp.x + nameX, cy - cellH * 0.5f);
@@ -832,7 +849,7 @@ void drawChannelRack(App& a) {
       // J-211: the channel's icon before its name, when the button has room for both.
       const float iconBox = c.icon > 0 && nameW >= 96 ? trackicons::boxFor(cellH - 4, 14.0f) : 0.0f;
       const float iconW = iconBox > 0 ? iconBox + 4 : 0.0f;
-      const float nameTextW = nameW - 14 - iconW;
+      const float nameTextW = nameW - 14 - iconW - (armDotX > 0 ? 14.0f : 0.0f);  // K-123: the record dot
       const bool truncated = a.fontRegular->CalcTextSizeA(nameFont, 1e9f, 0, c.name.c_str()).x > nameTextW;
       if (truncated) {
         ++shown.truncated;
@@ -874,6 +891,7 @@ void drawChannelRack(App& a) {
                           nameTextW - (mkBox > 0 ? mkBox + 3 : 0.0f), c.muted ? P.textFaint : selected && P.dark ? P.paper : P.text, c.name.c_str());
       if (mkBox > 0)
         freezeui::drawMarker(a, dl, fu, ImVec2(std::round(np.x + nameW - 4 - mkBox * 0.5f), std::round(np.y + cellH * 0.5f)), mkBox);
+      if (armDotX > 0) midiarm::drawDot(dl, ImVec2(armDotX, std::round(cy)), 4.0f, midiarm::armed(a, c.id), armHot);  // K-123
       freezeui::drawShade(a, dl, fu, np, ImVec2(np.x + nameW, np.y + cellH));
       {  // J-111: a collaborator's change flashes; a sample still arriving shows its progress
         ImU32 fc = 0;

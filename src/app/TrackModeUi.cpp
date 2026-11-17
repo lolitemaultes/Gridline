@@ -13,6 +13,7 @@
 #include "LayoutStyleUi.h"
 #include "LiveLook.h"
 #include "LogicPlugins.h"
+#include "MidiArm.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -22,7 +23,7 @@ using theme::pal;
 
 namespace {
 
-enum Control { kNone = 0, kArm, kMonitor, kInput, kKeys };
+enum Control { kNone = 0, kArm, kMonitor, kInput, kKeys, kNoteArm };  // kNoteArm: K-123, an instrument track's record dot
 
 int inputCount(const App& a) { return a.audioInputDevice.empty() ? 0 : a.engine.inputChannels(); }
 
@@ -220,9 +221,21 @@ int drawHeader(App& a, ImDrawList* dl, int track, float x0, float x1, float line
     }
   } else {
     const Channel* c = trackmodes::linkedChannel(s, track);
-    const float ix = x0 + 2, iw = x1 - ix;
+    float x1n = x1;
+    // K-123 (4.5): the record dot at the right end (as an audio track's arm), shown on hover and while armed.
+    if (c && midiarm::applies(a) && x1 - 12 > x0 + 14) {  // (before the name: the name ellipsizes or hides)
+      const bool on = midiarm::armed(a, c->id);
+      const ImVec2 dot(x1 - 7, lineY);
+      const bool dotHot = hot(dot, 7);
+      if (on || hovHead) {
+        midiarm::drawDot(dl, dot, 4.5f, on, dotHot);
+        x1n = x1 - 16;
+      }
+      if (dotHot) over = kNoteArm;
+    }
+    const float ix = x0 + 2, iw = x1n - ix;
     if (iw > 28 && c) {
-      const bool hotK = hovHead && mouse.x >= ix && mouse.x < x1 && std::fabs(mouse.y - lineY) < 7;
+      const bool hotK = hovHead && over == kNone && mouse.x >= ix && mouse.x < x1n && std::fabs(mouse.y - lineY) < 7;
       const bool sel = a.selChannel == c->id;
       ui::drawIcon(dl, ui::Icon::Piano, ImVec2(ix + 5, lineY), 10, hotK || sel ? P.hot : P.textDim);
       theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption - 1, ImVec2(ix + 14, lineY - theme::kFontCaption * 0.5f), iw - 14,
@@ -250,6 +263,9 @@ void headerClick(App& a, int track, int control) {
     case kKeys:
       if (const Channel* c = trackmodes::linkedChannel(s, track)) a.selectChannel(c->id);
       break;
+    case kNoteArm:
+      if (const Channel* c = trackmodes::linkedChannel(s, track)) midiarm::toggle(a, c->id, ImGui::GetIO().KeyAlt);
+      break;
     default: break;
   }
 }
@@ -273,6 +289,7 @@ const char* headerHint(App& a, int track, int control) {
     case kMonitor: return "Input monitoring: auto (while armed or stopped) / always / never   (click to step)";
     case kInput: return "Audio input of the track   (click to choose)";
     case kKeys: return "Instrument track   (click: select the channel, MIDI input plays it)";
+    case kNoteArm: return midiarm::armed(a, trackmodes::linkedChannel(s, track) ? trackmodes::linkedChannel(s, track)->id : kNoId) ? midiarm::dotHint(true) : midiarm::dotHint(false);
     default: break;
   }
   const TrackMode mode = trackmodes::modeOf(s, track);

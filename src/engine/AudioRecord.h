@@ -10,6 +10,7 @@
 // the tracks below, earlier passes muted). compTakes() picks the take heard in a time range.
 #pragma once
 #include <functional>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
@@ -29,7 +30,20 @@ struct RecordedTake {
   bool done = false;       // the audio thread closed the take
   std::vector<float> L, R;
   int64_t frames() const { return static_cast<int64_t>(L.size()); }
+  // K-123 (0.7.7): punches. Whether the take starts / ends at a punch (RecEvent::punch), its frames
+  // in the track's capture-while-armed ring, the punch points' song positions, and the frames added
+  // before and after them for the crossfades (AudioRecorder::setPunchPads).
+  bool punchIn = false, punchOut = false;
+  size_t armStart = 0, armEnd = 0;
+  double punchInTick = -1, punchOutTick = -1;
+  int64_t padBefore = 0, padAfter = 0;
+  bool padInDone = false, padOutDone = false;
 };
+
+class ArmedRing;
+// K-123 (0.7.7): the capture-while-armed ring of every armed track in a program.
+using ArmRings = std::vector<std::pair<ObjectId, std::shared_ptr<ArmedRing>>>;
+ArmRings armRingsOf(const Program& p);
 
 class AudioRecorder {
  public:
@@ -44,6 +58,15 @@ class AudioRecorder {
   const std::vector<RecordedTake>& takes() const { return takes_; }
   std::vector<RecordedTake> release();  // moves every take out
   double seconds(double sampleRate) const;  // longest take
+  // K-123 (0.7.7) quick punch: punches further on in the song belong to the same pass (they are
+  // pieces of one take, not loop passes); a punch at or before the last one starts the next pass.
+  void setQuickPunch(bool on) { quickPunch_ = on; }
+  // K-123 (0.7.7) punch crossfades: a take that starts at a punch gets, as it starts, the audio from
+  // half the crossfade before the punch in (reaching back to a whole tick) out of its track's
+  // capture-while-armed ring, where the transport played on into the punch (not after a loop
+  // wrap); a take that ends at a punch gets half the crossfade after the punch out the same way
+  // (open() waits for it). The punch points' positions are kept on the take. fadeSeconds 0: none.
+  void setPunchPads(ArmRings rings, double fadeSeconds, double sampleRate);
 
  private:
   std::vector<RecordedTake> takes_;
@@ -53,6 +76,11 @@ class AudioRecorder {
     size_t pos;  // next ring frame to read
   };
   std::vector<Open> open_;
+  bool quickPunch_ = false;
+  ArmRings armRings_;
+  double padHalf_ = 0;  // frames: half the punch crossfade
+  void padIn(RecordedTake& t);
+  bool padOut(RecordedTake& t, bool last);  // true once done
   std::vector<float> bufL_, bufR_;
   std::vector<uint8_t> bufP_;
   void readInto(const packs::edison::CaptureRing& ring, Open& o, size_t until);
@@ -71,7 +99,16 @@ struct TakeCommitOptions {
   enum class Naming : uint8_t { Insert = 0, Input };
   Naming naming = Naming::Insert;
   bool nameTracks = true;  // name the playlist track after the take when it has no name
+  // K-123 (0.7.7): punch crossfade (seconds; 0 = off). A take that starts or ends at a punch
+  // (padded by padPunchTakes) replaces the audio clips already on its playlist track over its span,
+  // and at each punch the take and that audio crossfade: the take fades in where the old part fades
+  // out, over the crossfade around the punch point, on whole ticks. Clip fades set by hand.
+  double punchFade = 0;
 };
+
+// Recovery (capture while armed): the newest stretch the transport played, at least `minSeconds`
+// long, of every ring, as takes placed where they were played (one per track). Empty when none.
+std::vector<RecordedTake> recoverLastPass(const ArmRings& rings, double sampleRate, double minSeconds = 0.5);
 
 struct TakeCommitResult {
   std::vector<ObjectId> clips;      // new audio clips, in take order

@@ -338,7 +338,7 @@ bool mapThrough(const std::vector<Origin>& chain, double fileSeconds, Ranges& r)
 // ---- saved fields
 
 bool Saved::empty() const {
-  if (!(release == Release{}) || !writers.empty()) return false;
+  if (!(release == Release{}) || !writers.empty() || !unknown.empty()) return false;
   for (const auto& [k, v] : songs)
     if (!(v == SongFields{})) return false;
   for (const auto& [k, v] : files)
@@ -350,34 +350,73 @@ namespace {
 void put(Json& j, const char* k, const std::string& v) {
   if (!v.empty()) j.object[k] = Json::makeString(v);
 }
+
+// K-322: the known keys of each part of the saved object (everything else is kept as it was).
+const char* const kSongKeys[] = {"artist", "title", "category", "share", "fee", "tier", "holders"};
+const char* const kFileKeys[] = {"ticked", "song", "ranges"};
+const char* const kReleaseKeys[] = {"title", "performer", "licensee", "isrc", "date", "distributor"};
+
+// Takes the known keys out of each entry of the object `key` of `j` (an entry left empty goes,
+// and so does the object when nothing is left).
+template <size_t N>
+void dropKnownEntries(Json& j, const char* key, const char* const (&known)[N]) {
+  auto it = j.object.find(key);
+  if (it == j.object.end() || it->second.type != Json::Type::Object) {
+    return;
+  }
+  for (auto e = it->second.object.begin(); e != it->second.object.end();) {
+    if (e->second.type == Json::Type::Object) {
+      for (const char* k : known) {
+        e->second.object.erase(k);
+      }
+    }
+    if (e->second.type == Json::Type::Object && e->second.object.empty()) {
+      e = it->second.object.erase(e);
+    } else {
+      ++e;
+    }
+  }
+  if (it->second.object.empty()) {
+    j.object.erase(it);
+  }
+}
+
+// The object `key` of `j` (made an object when it is not one).
+Json& objectAt(Json& j, const std::string& key) {
+  Json& o = j.object[key];
+  if (o.type != Json::Type::Object) {
+    o = Json::makeObject();
+  }
+  return o;
+}
 }  // namespace
 
 std::string savedToJson(const Saved& s) {
   if (s.empty()) return "";
   Json j = Json::makeObject();
-  j.object["v"] = Json::makeNumber(1);
-  Json songs = Json::makeObject();
+  if (!s.unknown.empty() && (!jsonParse(s.unknown, j) || j.type != Json::Type::Object)) {
+    j = Json::makeObject();
+  }
+  if (!j.find("v")) {
+    j.object["v"] = Json::makeNumber(1);
+  }
   for (const auto& [k, f] : s.songs) {
-    if (f == SongFields{}) continue;
-    Json o = Json::makeObject();
+    if (f == SongFields{}) continue;  // (its unknown keys, if any, are in j already)
+    Json& o = objectAt(objectAt(j, "songs"), k);
     put(o, "artist", f.artist), put(o, "title", f.title), put(o, "category", f.category), put(o, "share", f.share);
     put(o, "fee", f.fee), put(o, "tier", f.tier), put(o, "holders", f.holders);
-    songs.object[k] = o;
   }
-  if (!songs.object.empty()) j.object["songs"] = songs;
-  Json files = Json::makeObject();
   for (const auto& [k, f] : s.files) {
     if (f == FileFields{}) continue;
-    Json o = Json::makeObject();
+    Json& o = objectAt(objectAt(j, "files"), k);
     if (f.ticked >= 0) o.object["ticked"] = Json::makeNumber(f.ticked);
     put(o, "song", f.song), put(o, "ranges", f.ranges);
-    files.object[k] = o;
   }
-  if (!files.object.empty()) j.object["files"] = files;
-  Json rel = Json::makeObject();
-  put(rel, "title", s.release.title), put(rel, "performer", s.release.performer), put(rel, "licensee", s.release.licensee);
-  put(rel, "isrc", s.release.isrc), put(rel, "date", s.release.date), put(rel, "distributor", s.release.distributor);
-  if (!rel.object.empty()) j.object["release"] = rel;
+  if (!(s.release == Release{})) {
+    Json& rel = objectAt(j, "release");
+    put(rel, "title", s.release.title), put(rel, "performer", s.release.performer), put(rel, "licensee", s.release.licensee);
+    put(rel, "isrc", s.release.isrc), put(rel, "date", s.release.date), put(rel, "distributor", s.release.distributor);
+  }
   if (!s.writers.empty()) {
     Json a = Json::makeArray();
     for (const Writer& w : s.writers) {
@@ -418,6 +457,27 @@ Saved savedFromJson(const std::string& json) {
       w.name = o.text("name"), w.role = o.text("role"), w.pro = o.text("pro"), w.ipi = o.text("ipi"), w.share = o.text("share");
       s.writers.push_back(w);
     }
+  // K-322: everything else is kept as it is (a newer Gridline's keys survive an edit here).
+  Json rest = j;
+  dropKnownEntries(rest, "songs", kSongKeys);
+  dropKnownEntries(rest, "files", kFileKeys);
+  if (auto r = rest.object.find("release"); r != rest.object.end() && r->second.type == Json::Type::Object) {
+    for (const char* k : kReleaseKeys) {
+      r->second.object.erase(k);
+    }
+    if (r->second.object.empty()) {
+      rest.object.erase(r);
+    }
+  }
+  if (const Json* a = rest.find("writers"); a && a->type == Json::Type::Array) {
+    rest.object.erase("writers");
+  }
+  if (const Json* v = rest.find("v"); v && v->type == Json::Type::Number && v->number == 1) {
+    rest.object.erase("v");  // what savedToJson writes when there is none
+  }
+  if (!rest.object.empty()) {
+    s.unknown = jsonCompact(rest);
+  }
   return s;
 }
 

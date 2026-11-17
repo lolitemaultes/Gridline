@@ -246,15 +246,75 @@ bool spreadOverTracks(const Song& song, ObjectId group) {
 int gatherIntoLanes(Song& song, ObjectId group) {
   if (group == kNoId) return 0;
   int first = -1;
-  for (const Clip& c : song.playlist)
+  for (const Clip& c : song.playlist) {
     if (c.takeGroup == group) first = first < 0 ? c.track : std::min(first, c.track);
+  }
   if (first < 0) return 0;
   int moved = 0;
-  for (Clip& c : song.playlist)
+  for (Clip& c : song.playlist) {
     if (c.takeGroup == group && c.track != first) c.track = first, ++moved;
+  }
   if (static_cast<int>(song.tracks.size()) <= first) song.tracks.resize(static_cast<size_t>(first) + 1);
   song.tracks[static_cast<size_t>(first)].takeLanes = true;
   return moved;
+}
+
+// ---- K-123 (2.3, 2.7): ratings, listening and the takes list ----
+
+int rating(const Song& song, int track, int take) {
+  int r = 0;
+  for (const Clip& c : song.playlist) {
+    if (onTrack(c, track) && c.take == take) r = std::max(r, static_cast<int>(c.takeRating));
+  }
+  return std::min(r, kMaxRating);
+}
+
+bool setRating(Song& song, int track, int take, int value) {
+  const auto v = static_cast<uint8_t>(std::clamp(value, 0, kMaxRating));
+  bool changed = false;
+  for (Clip& c : song.playlist) {
+    if (!onTrack(c, track) || c.take != take || c.takeRating == v) continue;
+    c.takeRating = v;
+    changed = true;
+  }
+  return changed;
+}
+
+std::vector<TakeInfo> takeList(const Song& song, int track) {
+  std::vector<TakeInfo> v(static_cast<size_t>(laneCount(song, track)));
+  for (size_t k = 0; k < v.size(); ++k) v[k].take = static_cast<int>(k);
+  for (const Clip& c : song.playlist) {
+    if (!onTrack(c, track) || c.take < 0 || static_cast<size_t>(c.take) >= v.size()) continue;
+    TakeInfo& t = v[static_cast<size_t>(c.take)];
+    const Tick e = c.start + song.clipLength(c);
+    t.start = t.clips == 0 ? c.start : std::min(t.start, c.start);
+    t.end = t.clips == 0 ? e : std::max(t.end, e);
+    ++t.clips;
+    t.rating = std::max(t.rating, std::min(static_cast<int>(c.takeRating), kMaxRating));
+    t.inComp = t.inComp || !c.muted;
+  }
+  // (a lane without clips, as a take whose pieces were all removed, is not a take any more)
+  v.erase(std::remove_if(v.begin(), v.end(), [](const TakeInfo& t) { return t.clips == 0; }), v.end());
+  return v;
+}
+
+std::vector<int> tracksWithTakes(const Song& song) {
+  std::set<int> s;
+  for (const Clip& c : song.playlist) {
+    if (c.takeGroup != kNoId && c.track >= 0) s.insert(c.track);
+  }
+  return std::vector<int>(s.begin(), s.end());
+}
+
+bool listenTo(Song& song, int track, int take) {
+  bool has = false;
+  for (const Clip& c : song.playlist) has = has || (onTrack(c, track) && c.take == take);
+  if (!has) return false;
+  const std::vector<ObjectId> groups = groupsOn(song, track);
+  for (Clip& c : song.playlist) {
+    if (c.track == track && c.takeGroup != kNoId && std::find(groups.begin(), groups.end(), c.takeGroup) != groups.end()) c.muted = c.take != take;
+  }
+  return true;
 }
 
 }  // namespace gl::takes

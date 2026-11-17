@@ -59,6 +59,8 @@ bool arrowButton(App& a, const char* id, ImVec2 p0, ImVec2 p1, bool up, const ch
 // and `view` are in the content's units (of `total`); the arrows step by `step`, a click beside
 // the thumb pages. True when `start` changed (it stays inside 0 .. total - view).
 bool scrollBar(App& a, const char* id, ImVec2 p0, ImVec2 p1, double* start, double view, double total, double step, const char* hint = nullptr);
+// cp24: the same bar standing up (the arrows at the top and the foot), for the pages' lists.
+bool vScrollBar(App& a, const char* id, ImVec2 p0, ImVec2 p1, double* start, double view, double total, double step, const char* hint = nullptr);
 // cp17 (moved from TrackerPages.cpp): a horizontal value bar (volume, pan) in a sunken box, a raised
 // knob at the value; dragging sets it (*out), a double-click the default. True while it changed.
 bool valueBar(const char* id, ImVec2 p0, ImVec2 p1, double v, double lo, double hi, bool centred, double* out, const char* hint = nullptr);

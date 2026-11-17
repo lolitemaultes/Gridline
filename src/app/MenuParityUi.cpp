@@ -5,6 +5,7 @@
 #include "../engine/KerfMarks.h"
 #include "../core/I18n.h"
 #include "MenuParityUi.h"
+#include "RecordMoreUi.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -536,6 +537,7 @@ void stopMenuItems(App& a) {
 // releases every sounding note (previews, held keys, pads, MIDI input) and
 // stops the sample preview; Stop again while stopped is the panic.
 void stopPressed(App& a) {
+  recmore::cancelWait(a);  // K-123 (0.7.7): Stop ends a wait for the first note
   if (a.engine.stopPressed()) a.notify("All sound stopped");
 }
 

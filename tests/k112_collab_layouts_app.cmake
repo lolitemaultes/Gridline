@@ -5,6 +5,7 @@
 #      receives the other's target and names it;
 #   3. "Go to what they are on" in the other layout selects that object there and keeps the layout;
 #      nothing in the song changes by it.
+#   K-123: Alex's takes and the rating of one reach Sam.
 #   Pairs: Studio with Tracker, Live with Studio, Logic with Tracker (development layouts).
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P k112_collab_layouts_app.cmake
 cmake_minimum_required(VERSION 3.16)
@@ -50,6 +51,8 @@ foreach(pair "studio;tracker" "live;studio" "logic;tracker")
 21 waitfor collab-invite-ready 30
 30 waitfor collab-connected 120
 31 waitfor collab-synced 60
+40 rectake make 3
+40 rectake rate 3 1 2
 40 collab edit AlexCh
 41 waitfor collab-channel:SamCh 90
 42 waitfor collab-synced 60
@@ -80,6 +83,7 @@ foreach(pair "studio;tracker" "live;studio" "logic;tracker")
 49 collab targets \"${D}/b-went.json\"
 50 collab report \"${D}/b-after.json\"
 51 waitfor never 4
+52 rectake list
 90 quit
 ")
   file(MAKE_DIRECTORY "${D}")
@@ -129,6 +133,11 @@ foreach(pair "studio;tracker" "live;studio" "logic;tracker")
   string(JSON sbb GET "${jbb}" song)
   if(NOT sab STREQUAL sa OR NOT sbb STREQUAL sb)
     fail("${LA}/${LB}: going to a collaborator's target changed the song")
+  endif()
+  # K-123: a take rated in one layout is rated in the other (ratings are song data).
+  file(READ "${D}/run.out" runout)
+  if(NOT runout MATCHES "rectake frame 52: track 3 take 0 rating 0 comp 0 clips 1; take 1 rating 2 comp 0 clips 1;")
+    fail("${LA}/${LB}: Sam (${LB}) did not get the take Alex rated")
   endif()
   # 2. each receives the other's target
   peerTarget("${D}/b-targets.json" TB)

@@ -52,4 +52,30 @@ int gatherIntoLanes(Song& song, ObjectId group);
 // The group's clips lie on more than one track.
 bool spreadOverTracks(const Song& song, ObjectId group);
 
+// ---- K-123 (2.3, 2.7): ratings, listening and the takes list ----
+
+constexpr int kMaxRating = 3;
+// The rating of take `take` on the track (0..3): the highest its clips carry (0: none, or no such take).
+int rating(const Song& song, int track, int take);
+// Rates every clip of take `take` on the track (clamped to 0..3). True when anything changed.
+bool setRating(Song& song, int track, int take, int value);
+
+// One row of a track's takes list.
+struct TakeInfo {
+  int take = 0;        // the take number (lane index)
+  int rating = 0;      // 0..3
+  bool inComp = false; // some part of it plays in the comp
+  int clips = 0;       // its clips (pieces) on the track
+  Tick start = 0, end = 0;  // the song range its clips cover
+};
+std::vector<TakeInfo> takeList(const Song& song, int track);
+// The tracks that hold takes, in order.
+std::vector<int> tracksWithTakes(const Song& song);
+
+// Listening (solo or audition) is never song data: the engine plays a copy of the song in which take
+// `take` plays over every take group of the track instead of the comp (its clips unmuted, the other
+// takes' muted). The song, the comp and the undo history stay as they are. Returns false (and leaves
+// `song` alone) when the track has no such take.
+bool listenTo(Song& song, int track, int take);
+
 }  // namespace gl::takes

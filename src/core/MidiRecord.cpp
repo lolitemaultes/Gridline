@@ -40,6 +40,9 @@ void loadRecordOptions(const Settings& s, RecordOptions& o, int& countInBars, bo
   o.takes = s.getBool("record.midi.takes");
   o.notes = s.getBool("record.midi.notes");
   o.automation = s.getBool("record.midi.automation");
+  o.bend = s.getBool("record.midi.bend");  // K-123
+  o.pressure = s.getBool("record.midi.pressure");
+  o.program = s.getBool("record.midi.program");
   const double t = s.getNumber("record.midi.autoTarget");
   o.autoTarget = std::isfinite(t) && t >= 0 && t < static_cast<double>(AutoRecordTarget::Count)
                      ? static_cast<AutoRecordTarget>(static_cast<int>(t))
@@ -56,9 +59,52 @@ void saveRecordOptions(Settings& s, const RecordOptions& o, int countInBars, boo
   s.set("record.midi.takes", o.takes);
   s.set("record.midi.notes", o.notes);
   s.set("record.midi.automation", o.automation);
+  s.set("record.midi.bend", o.bend);  // K-123
+  s.set("record.midi.pressure", o.pressure);
+  s.set("record.midi.program", o.program);
   s.set("record.midi.autoTarget", static_cast<int>(o.autoTarget));
   s.set("record.countInBars", countInBars);
   s.set("record.punch", punch);
+}
+
+// K-123 (4.1): the input filter.
+MidiRecordKind midiRecordKind(uint8_t status, uint8_t data1) {
+  switch (status & 0xF0) {
+    case 0x80:
+    case 0x90: return MidiRecordKind::Note;
+    case 0xB0: return data1 == 64 ? MidiRecordKind::Note : MidiRecordKind::Controller;  // the sustain pedal plays with the notes
+    case 0xE0: return MidiRecordKind::PitchBend;
+    case 0xA0:
+    case 0xD0: return MidiRecordKind::Pressure;
+    case 0xC0: return MidiRecordKind::Program;
+    default: return MidiRecordKind::Other;
+  }
+}
+
+bool recordFilterTakes(const RecordOptions& o, uint8_t status, uint8_t data1) {
+  switch (midiRecordKind(status, data1)) {
+    case MidiRecordKind::Note: return o.notes;
+    case MidiRecordKind::Controller: return o.automation;
+    case MidiRecordKind::PitchBend: return o.bend;
+    case MidiRecordKind::Pressure: return o.pressure;
+    case MidiRecordKind::Program: return o.program;
+    default: return false;
+  }
+}
+
+std::string recordFilterText(const RecordOptions& o) {
+  auto b = [](bool v) { return v ? "1" : "0"; };
+  return std::string("notes ") + b(o.notes) + " controllers " + b(o.automation) + " bend " + b(o.bend) + " pressure " + b(o.pressure) +
+         " program " + b(o.program);
+}
+
+ObjectId armedLiveChannel(const std::vector<ObjectId>& armed, ObjectId selected) {
+  if (armed.empty() || std::find(armed.begin(), armed.end(), selected) != armed.end()) return selected;
+  return armed.front();
+}
+
+bool armedRecords(const std::vector<ObjectId>& armed, ObjectId channel) {
+  return armed.empty() || std::find(armed.begin(), armed.end(), channel) != armed.end();
 }
 
 // ------------------------------------------------------------ NoteRecorder ----
@@ -288,6 +334,8 @@ void NoteRecorder::noteOff(Document& doc, ObjectId channel, int pitch, double ti
 
 void NoteRecorder::expression(ObjectId channel, int pitch, ExprDim dim, float value, double tick) {
   if (!active_) return;
+  // K-123 (4.1): the input filter: bend, pressure, and the timbre controller (CC 74) as a controller.
+  if ((dim == ExprDim::Pitch && !opt_.bend) || (dim == ExprDim::Pressure && !opt_.pressure) || (dim == ExprDim::Timbre && !opt_.automation)) return;
   auto it = held_.find({channel, pitch});
   if (it == held_.end() || !std::isfinite(value)) return;
   auto& lane = heldExpr_[{channel, pitch}][static_cast<size_t>(dim) % 3];
@@ -566,17 +614,122 @@ void StepRecorder::press(int pitch, int velocity) {
 
 // ---- K-112c: capture ----
 
-void NoteCapture::noteOn(ObjectId channel, int pitch, int velocity, double seconds) {
-  if (played_.size() >= kMax) played_.erase(played_.begin(), played_.begin() + static_cast<std::ptrdiff_t>(played_.size() - kMax + 1));
-  played_.push_back(Played{channel, pitch, std::clamp(velocity, 1, 127), seconds, -1.0});
+void NoteCapture::noteOn(ObjectId channel, int pitch, int velocity, double seconds, const CaptureTime& at) {
+  // K-123: the last two minutes (and at most kMax notes).
+  size_t old = 0;
+  while (old < played_.size() && seconds - played_[old].on > kKeepSeconds && played_[old].off >= 0) ++old;
+  if (played_.size() - old >= kMax) old = played_.size() - kMax + 1;
+  if (old > 0) played_.erase(played_.begin(), played_.begin() + static_cast<std::ptrdiff_t>(old));
+  played_.push_back(Played{channel, pitch, std::clamp(velocity, 1, 127), seconds, -1.0, at, -1.0});
 }
 
-void NoteCapture::noteOff(ObjectId channel, int pitch, double seconds) {
-  for (auto it = played_.rbegin(); it != played_.rend(); ++it)
+void NoteCapture::noteOff(ObjectId channel, int pitch, double seconds, double tick) {
+  for (auto it = played_.rbegin(); it != played_.rend(); ++it) {
     if (it->channel == channel && it->pitch == pitch && it->off < 0) {
       it->off = std::max(seconds, it->on);
+      it->offTick = tick;
       return;
     }
+  }
+}
+
+std::vector<size_t> NoteCapture::lastPhrase(double now, double gapSeconds) const {
+  const ObjectId ch = lastChannel();
+  std::vector<size_t> mine;
+  for (size_t i = 0; i < played_.size(); ++i) {
+    if (played_[i].channel == ch) mine.push_back(i);
+  }
+  if (mine.empty()) return mine;
+  auto offOf = [&](size_t i) { return played_[i].off < 0 ? std::max(now, played_[i].on) : played_[i].off; };  // still held: up to now
+  // The last phrase: back from the last note while the gap before each note is short.
+  size_t first = mine.size() - 1;
+  double reach = played_[mine[first]].on;  // the earliest start in the phrase so far
+  for (size_t k = mine.size() - 1; k-- > 0;) {
+    if (reach - offOf(mine[k]) > gapSeconds) break;
+    first = k;
+    reach = std::min(reach, played_[mine[k]].on);
+  }
+  return std::vector<size_t>(mine.begin() + static_cast<std::ptrdiff_t>(first), mine.end());
+}
+
+NoteCapture::Recovered NoteCapture::recover(Document& doc, ObjectId pattern, double bpm, const RecordOptions& o, double now, double gapSeconds) {
+  Recovered out;
+  const std::vector<size_t> phrase = lastPhrase(now, gapSeconds);
+  if (phrase.empty()) return out;
+  const Song& s0 = doc.song();
+  // Timed: every note of the phrase was played while the transport played, in one play mode (and, in
+  // pattern mode, one pattern that is still there).
+  const CaptureTime& t0 = played_[phrase.front()].at;
+  bool timed = t0.mode != CaptureTime::Stopped && s0.channel(played_[phrase.front()].channel) != nullptr;
+  for (size_t i : phrase) {
+    const CaptureTime& t = played_[i].at;
+    timed = timed && t.mode == t0.mode && t.tick >= 0 && (t0.mode != CaptureTime::Pattern || t.pattern == t0.pattern);
+  }
+  if (timed && t0.mode == CaptureTime::Pattern && !s0.pattern(t0.pattern)) timed = false;
+  if (timed && t0.mode == CaptureTime::Song && !s0.pattern(pattern)) timed = false;
+  if (!timed) {
+    out.pattern = pattern;
+    out.notes = commit(doc, pattern, bpm, o.quantize ? o.grid : 0, now, gapSeconds);
+    return out;
+  }
+  // As a recording would have had it: the notes in the order they were played and let go, each at
+  // the tick it was heard, through a NoteRecorder (merge, no takes per pass), one undo step.
+  const double ticksPerSecond = bpm > 0 ? bpm / 60.0 * static_cast<double>(s0.ppq) : 0.0;
+  struct Ev {
+    double sec, tick;
+    bool on;
+    size_t i;
+  };
+  std::vector<Ev> evs;
+  double first = 1e300, last = 0;
+  for (size_t i : phrase) {
+    const Played& p = played_[i];
+    double offTick = p.offTick;
+    if (p.off < 0 || offTick < 0) {  // still held, or let go after the transport stopped: its length as played
+      offTick = p.at.tick + std::max(1.0, ((p.off < 0 ? std::max(now, p.on) : p.off) - p.on) * ticksPerSecond);
+    }
+    evs.push_back({p.on, p.at.tick, true, i});
+    evs.push_back({p.off < 0 ? std::max(now, p.on) : p.off, offTick, false, i});
+    first = std::min(first, p.at.tick);
+    last = std::max(last, offTick);
+  }
+  std::stable_sort(evs.begin(), evs.end(), [](const Ev& a, const Ev& b) { return a.sec != b.sec ? a.sec < b.sec : (a.on && !b.on); });
+  RecordOptions ro = o;
+  ro.overdub = true;
+  ro.takes = false;
+  ro.notes = true;
+  ro.grid = std::max<Tick>(1, o.grid);
+  NoteRecorder r;
+  RecordSetup st;
+  doc.beginGroup("recover played notes");
+  if (t0.mode == CaptureTime::Pattern) {
+    const Pattern* p = s0.pattern(t0.pattern);
+    st.start = 0;
+    r.beginPattern(doc, t0.pattern, ro, std::max<Tick>(1, s0.patternContentLength(*p)), st);
+    out.pattern = t0.pattern;
+  } else {
+    st.start = std::max<Tick>(0, static_cast<Tick>(std::floor(first)));
+    r.beginSong(doc, pattern, ro, st);
+  }
+  for (const Ev& e : evs) {
+    const Played& p = played_[e.i];
+    if (e.on) {
+      r.noteOn(doc, p.channel, p.pitch, p.velocity, e.tick);
+    } else {
+      r.position(doc, e.tick);
+      r.noteOff(doc, p.channel, p.pitch, e.tick);
+    }
+  }
+  r.end(doc, last);
+  doc.endGroup();
+  out.notes = r.notesRecorded();
+  out.timed = true;
+  if (t0.mode == CaptureTime::Song) {
+    out.pattern = r.pattern();
+    out.clip = r.takeClip();
+  }
+  clear();
+  return out;
 }
 
 int NoteCapture::commit(Document& doc, ObjectId pattern, double bpm, Tick grid, double now, double gapSeconds) {
@@ -587,25 +740,16 @@ int NoteCapture::commit(Document& doc, ObjectId pattern, double bpm, Tick grid, 
     return 0;
   }
   std::vector<Played> mine;
-  for (const Played& p : played_)
-    if (p.channel == ch) mine.push_back(p);
-  for (Played& p : mine)
+  for (size_t i : lastPhrase(now, gapSeconds)) mine.push_back(played_[i]);
+  for (Played& p : mine) {
     if (p.off < 0) p.off = std::max(now, p.on);  // still held: up to now
-  // The last phrase: back from the last note while the gap before each note is short.
-  size_t first = mine.size() - 1;
-  double reach = mine[first].on;  // the earliest start in the phrase so far
-  for (size_t i = mine.size() - 1; i-- > 0;) {
-    if (reach - mine[i].off > gapSeconds) break;
-    first = i;
-    reach = std::min(reach, mine[i].on);
   }
-  const double t0 = mine[first].on;
+  const double t0 = mine.front().on;
   const double ticksPerSecond = bpm / 60.0 * static_cast<double>(s.ppq);
   std::vector<Note> notes;
   if (auto it = s.pattern(pattern)->notes.find(ch); it != s.pattern(pattern)->notes.end()) notes = it->second;
   int added = 0;
-  for (size_t i = first; i < mine.size(); ++i) {
-    const Played& p = mine[i];
+  for (const Played& p : mine) {
     Tick start = static_cast<Tick>(std::llround((p.on - t0) * ticksPerSecond));
     if (grid > 0) start = (start + grid / 2) / grid * grid;
     const Tick len = std::max<Tick>(1, static_cast<Tick>(std::llround((p.off - p.on) * ticksPerSecond)));

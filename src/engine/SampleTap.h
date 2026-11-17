@@ -1,15 +1,20 @@
 // Gridline - J-219: sample coverage tap (Track Receipt).
 //
-// While a tap Pass is active (an offline receipt render), every voice that
-// plays an audio file reports which source frames it reads. The pass keeps,
+// While a tap Pass is bound on a thread (an offline receipt render binds it on
+// every thread that renders for it: K-322), every voice that plays an audio
+// file there reports which source frames it reads. The pass keeps,
 // per watched file, an exact bitmap of the file's milliseconds that were read
 // and, per (file, owner) pair (owner = the channel or audio clip that played
 // it), the merged source ranges, how often it started and where in the song.
 //
 // Audio thread: no allocation, no locks. Everything is preallocated when the
 // Pass is built (UI / worker thread); the audio side claims pair slots with a
-// compare-and-swap and sets bits with fetch_or. When no pass is active, every
-// call is a single relaxed load and returns at once.
+// compare-and-swap and sets bits with fetch_or. When no pass is bound on the
+// thread, every call is a single thread-local load and returns at once.
+//
+// K-322: a pass is bound per thread, never process-wide. The live audio engine
+// binds none, so playing the project while a receipt measures it never marks
+// into the receipt; several passes may run at once.
 //
 // Voices use it like this (per render block):
 //   tap::Run run(sample);          // finds the slot of (sample, current owner)
@@ -37,7 +42,9 @@ struct Range {
 struct Slot;
 struct PassData;
 
-// True while a pass is active (any thread).
+class Pass;
+
+// True while a pass is bound on this thread (tap::Bind).
 bool active();
 
 // The slot of (sample's file, the current owner); nullptr when no pass is
@@ -53,13 +60,29 @@ void mark(Slot* slot, double a, double b);
 void markShare(Slot* slot, double f0, double f1);
 // Marks source frames f0..f1 (inclusive, fractional) of a sample as read.
 void markFrames(const Sample* s, double f0, double f1);
-// K-319: how many reads were marked since the active pass began (0 when none is
-// active). A receipt render's tail runs while this keeps growing.
+// K-319: how many reads the pass bound on this thread has marked (0 when none is
+// bound). A receipt render's tail runs while this keeps growing.
 uint64_t marks();
-// K-319: true while the active pass only measures (nobody hears its sound): audio clips, whose
+// K-319: true while the bound pass only measures (nobody hears its sound): audio clips, whose
 // reads are known before their sound is made, mark them and make no sound (no stretch render,
 // no stretch voice). Off unless the pass asks for it (Pass::setReadsOnly).
 bool readsOnly();
+
+// K-322: binds `pass` on this thread for the guard's life (nullptr: nothing
+// changes). Renderers bind their job's pass on the thread that renders and the
+// engine binds it around every graph task its workers run; nested guards
+// restore the outer binding.
+class Bind {
+ public:
+  explicit Bind(const Pass* pass);
+  ~Bind();
+  Bind(const Bind&) = delete;
+  Bind& operator=(const Bind&) = delete;
+
+ private:
+  PassData* prev_ = nullptr;
+  bool on_ = false;
+};
 
 // The owner (Channel::id or Clip::id) and song tick of the code running on
 // this thread. The engine sets it around each channel's processing and each
@@ -175,10 +198,10 @@ class Pass {
   Pass(const Pass&) = delete;
   Pass& operator=(const Pass&) = delete;
 
-  // Makes this the active pass (one at a time machine-wide; false when another is active).
-  bool begin();
-  void end();
+  // K-322: a pass is no longer made active machine-wide: renders bind it on their
+  // own threads (RenderJob::tap, RenderOptions::tap, AudioEngine::setTapPass, tap::Bind).
   void setReadsOnly(bool on);  // K-319 (see tap::readsOnly)
+  uint64_t marks() const;      // reads marked so far
 
   const std::vector<WatchFile>& files() const;
   // Exact union of everything read from file i (bitmap, kGrain resolution).
@@ -187,6 +210,7 @@ class Pass {
   bool pairsFull() const;
 
  private:
+  friend class Bind;
   std::unique_ptr<PassData> d_;
 };
 

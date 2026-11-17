@@ -8,6 +8,7 @@
 #include "AudioRecordUi.h"
 #include "../engine/TakeLanes.h"
 #include "LogicPlugins.h"
+#include "RecordRowsUi.h"
 #include "AsioUi.h"
 #include "ChopUi.h"
 #include "ContextMenus.h"
@@ -31,6 +32,8 @@
 #include "Theme.h"
 #include "UrlImportUi.h"
 #include "Widgets.h"
+#include "RecordMoreUi.h"
+#include "../engine/Loopback.h"
 
 namespace fs = std::filesystem;
 
@@ -162,11 +165,13 @@ std::string inputName(int first, bool stereo) {
 
 void App::processAudioRecording() {
   devDemo(*this);
+  recmore::frame(*this);  // K-123 (0.7.7): quick punch, capture while armed, start on the first note, the latency check
   const Song& s = doc.song();
-  // Latency compensation: device buffers + delay compensation + manual offset.
+  // Latency compensation: device buffers (K-123: the measured round trip when one applies) + delay
+  // compensation + manual offset.
   const double offMs = settings.getNumber("audio.inputOffsetMs");
   const int offset = static_cast<int>(std::lround(offMs * engine.sampleRate() / 1000.0));
-  engine.setRecordLatency(std::max(0, audioInputLatency + engine.outputLatency() - offset));
+  engine.setRecordLatency(loopback::recordLatency(audioInputLatency, recmore::measuredRoundTrip(*this), engine.outputLatency(), offset));
 
   const bool armedTracks = anyArmed(s);
   // Record filter "into the audio editor": arm the editors of the armed tracks
@@ -186,7 +191,10 @@ void App::processAudioRecording() {
   // launch mode, into a grid slot (livelook::audioTakesCommitted moves the take there).
   const bool sessAudio = livelook::sessionRecordAudio(*this);
   const bool rolling = engine.playing() && (engine.mode() != PlayMode::Live || sessAudio);
-  const bool want = ((recordArmed && recAudio) || sessAudio) && rolling && armedTracks;
+  // K-123 (0.7.7) quick punch: once recording, the session stays open while the transport plays, so
+  // Record punches out and in again inside one take (one undo step).
+  const bool qpOpen = recmore::quickPunch(*this) && audioRecSession && !audioRecFinishing && recAudio && !sessAudio;
+  const bool want = ((recordArmed && recAudio) || sessAudio || qpOpen) && rolling && armedTracks;
   const bool song = engine.mode() == PlayMode::Song;
   // Checkpoint 56 (N55-04): Clips loops (and punches) at its loop brace (the song's cycle range), never at
   // the time selection; the other layouts at the time selection, as before.
@@ -238,7 +246,7 @@ void App::processAudioRecording() {
   }
   // Hosted plugins see "recording" whenever the record button is armed and the
   // transport rolls; armed tracks capture while it is set.
-  engine.setRecording((recordArmed || sessAudio) && rolling && !audioRecFinishing);
+  if (!recmore::waiting()) engine.setRecording((recordArmed || sessAudio) && rolling && !audioRecFinishing);  // (K-123: waiting, the engine may start it)
   if (!audioRecSession) {
     livetake::reset();  // J-217
     return;
@@ -259,6 +267,7 @@ void App::processAudioRecording() {
     takes.erase(std::remove_if(takes.begin(), takes.end(), [](const RecordedTake& t) { return t.frames() < 64; }), takes.end());
     // J-31: cancelled sessions keep nothing; silent takes can be dropped.
     if (j31::takeCancelRequested()) takes.clear();
+    recmore::beforeCommit(*this, takes);  // K-123 (0.7.7): punched takes reach into the crossfades
     if (settings.getBool("record.ignoreSilent"))
       if (const int n = dropSilentTakes(takes, -60.0f); n > 0) notify(std::to_string(n) + " silent take" + (n == 1 ? "" : "s") + " dropped");
     if (!takes.empty()) {
@@ -270,6 +279,7 @@ void App::processAudioRecording() {
       o.naming = settings.getNumber("record.naming") > 0.5 ? TakeCommitOptions::Naming::Input : TakeCommitOptions::Naming::Insert;
       o.nameTracks = settings.getBool("record.nameTracks");
       o.lanes = settings.getBool("record.takeLanes");
+      o.punchFade = recmore::punchFadeSeconds(*this);  // (only takes still marked as punches crossfade)
       TakeCommitResult r;
       const bool clipsTake = livelook::audioTakePending(*this);  // checkpoint 49: the take and its move into the slot are one undo step
       if (clipsTake) doc.beginGroup("Record audio");
@@ -309,7 +319,10 @@ void audioRecordFilterMenu(App& a) {
   if (!livelook::active(a)) ImGui::MenuItem(i18n::tr("Audio, into Loupe (armed tracks)"), nullptr, &a.recAudioEditor);  // N49-12: Studio's editor
   ImGui::MenuItem(i18n::tr("Notes"), nullptr, &a.recOptions.notes);
   ImGui::MenuItem(i18n::tr("Automation (controller moves)"), nullptr, &a.recOptions.automation);
-  if (ImGui::MenuItem(i18n::tr("Everything"))) a.recAudio = a.recOptions.notes = a.recOptions.automation = true;
+  recordrows::filterMenuItems(a);  // K-123 (4.1): pitch bend, pressure, program changes
+  if (ImGui::MenuItem(i18n::tr("Everything"))) {
+    a.recAudio = a.recOptions.notes = a.recOptions.automation = a.recOptions.bend = a.recOptions.pressure = a.recOptions.program = true;
+  }
   const Song& s = a.doc.song();
   int armed = 0;
   for (const auto& m : s.mixer) armed += m.armed && m.input >= 0;
@@ -905,11 +918,15 @@ void audioInputSettings(App& a, float fieldW) {
   const double sr = std::max(1.0, a.engine.sampleRate());
   label("Recording offset");
   {
-    const int autoLat = a.audioInputLatency + a.engine.outputLatency();
+    // K-123 (0.7.7): a measured round trip (the latency check) replaces the estimate from the buffers.
+    const int measured = recmore::measuredRoundTrip(a);
+    const int autoLat = (measured > 0 ? measured : a.audioInputLatency) + a.engine.outputLatency();
     ImGui::PushFont(livelook::numFont(a), theme::kFontNumber + 1);
-    ImGui::Text(i18n::tr("%d smp (%.1f ms) auto"), autoLat, 1000.0 * autoLat / sr);
+    ImGui::Text(measured > 0 ? i18n::tr("%d smp (%.1f ms) measured") : i18n::tr("%d smp (%.1f ms) auto"), autoLat, 1000.0 * autoLat / sr);
     ImGui::PopFont();
-    ui::Hint("Input + output buffers and plugin delay compensation: recorded audio is moved this much earlier");
+    ui::Hint(measured > 0 ? "The round trip measured with a loopback cable + plugin delay compensation: recorded audio is moved this much earlier"
+                          : "Input + output buffers and plugin delay compensation: recorded audio is moved this much earlier");
+    recmore::latencySettingsRow(a);
     ImGui::SameLine(0, theme::kS2);
     float ms = static_cast<float>(st.getNumber("audio.inputOffsetMs"));
     ImGui::SetNextItemWidth(110);

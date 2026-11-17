@@ -21,6 +21,8 @@
 #include "AudioRecordUi.h"
 #include "J31Ui.h"
 #include "RecordCard.h"
+#include "RecordRowsUi.h"
+#include "RecordMoreUi.h"
 #include "LiveLook.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -474,9 +476,11 @@ void recordOptionsMenu(App& a) {
     }
     ImGui::EndMenu();
   }
+  recmore::punchMenuItems(a);  // K-123 (0.7.7): quick punch, punch crossfade, start on the first note
   ImGui::SeparatorText(i18n::tr("Audio takes"));  // K-77: one record options menu (it was a second one in Options)
   audioFormatMenu(a);
   j31::recordingOptionItems(a);
+  recmore::audioMenuItems(a);  // K-123 (0.7.7): capture while armed, recover, the latency check
   ImGui::SeparatorText(i18n::tr("Monitoring"));
   j31::recordingMonitorItems(a);
   ImGui::SeparatorText(i18n::tr("Notes"));
@@ -485,6 +489,7 @@ void recordOptionsMenu(App& a) {
   ImGui::MenuItem(i18n::tr("Quantize note starts to the snap"), nullptr, &o.quantize);
   ImGui::MenuItem(i18n::tr("Quantize note lengths"), nullptr, &o.quantizeLength);
   if (!clips) ImGui::MenuItem(i18n::tr("Loop recording: new take per pass"), nullptr, &o.takes);
+  if (!clips) recordrows::recoverMenuItem(a);  // K-123 (4.2) (Clips: its Capture button)
   if (!clips && ImGui::BeginMenu(i18n::tr("Controller moves go to"))) {
     for (int i = 0; i < static_cast<int>(AutoRecordTarget::Count); ++i)
       if (ImGui::MenuItem(autoRecordTargetName(static_cast<AutoRecordTarget>(i)), nullptr, static_cast<int>(o.autoTarget) == i))

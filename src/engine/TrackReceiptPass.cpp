@@ -518,11 +518,9 @@ Measurement measure(const Song& song0, const PassOptions& o) {
   // Watch every file and play the project.
   std::vector<tap::WatchFile> watch;
   for (const FileIn& f : m.files) watch.push_back(tap::WatchFile{f.path, f.seconds});
+  // K-322: the pass belongs to this measurement's renders alone (bound on their threads), so
+  // the app playing meanwhile, or another measurement, never marks into it.
   tap::Pass pass(watch);
-  if (!pass.begin()) {
-    m.warnings.push_back("Another Track Receipt is measuring right now; try again in a moment.");
-    return m;
-  }
   pass.setReadsOnly(readsOnly);
   std::vector<RenderJob> jobs;
   RenderJob base;
@@ -531,14 +529,16 @@ Measurement measure(const Song& song0, const PassOptions& o) {
   base.maxTailSeconds = 10;
   base.threads = 1;
   base.cancel = o.cancel;
+  base.tapPass = &pass;
   if (!o.reference) {
     // K-319: the mixer graph on a few cores (the same reads for any thread count: each channel,
     // clip and mixer track is one task, and a tap slot belongs to one of them). Half the cores,
     // at most 4: offline workers spin while they wait, so more only slow a busy computer down
     // (and the app keeps playing meanwhile). The tail runs while sample voices still read, not
     // while effects ring on.
-    base.threads = static_cast<int>(std::clamp(std::thread::hardware_concurrency() / 2, 1u, 4u));    base.tailBusy = [last = uint64_t{0}]() mutable {
-      const uint64_t now = tap::marks();
+    base.threads = static_cast<int>(std::clamp(std::thread::hardware_concurrency() / 2, 1u, 4u));
+    base.tailBusy = [&pass, last = uint64_t{0}]() mutable {
+      const uint64_t now = pass.marks();
       const bool busy = now != last;
       last = now;
       return busy;
@@ -577,7 +577,6 @@ Measurement measure(const Song& song0, const PassOptions& o) {
       break;
     }
   }
-  pass.end();
   if (pass.pairsFull()) m.warnings.push_back("Very many sample uses: some were not told apart (the totals are still complete).");
   // Uses measured.
   const MeterMap mm0(song0);

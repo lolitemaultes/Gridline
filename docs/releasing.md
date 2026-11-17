@@ -132,6 +132,19 @@ the release workflow uploads the workflow artifact `packaging-<version>`: the Fl
 AUR, Homebrew, winget, Scoop, Chocolatey, FreeBSD port, COPR and snap files filled in for this
 release. Submitting them is a manual step per channel.
 
+Each release also carries the plugin downloads of Gridline Suite and Suite Mini
+([gridline-suite.md](gridline-suite.md)), per suite: a pick-your-plugins installer per system
+(`Gridline-Suite[-Mini]-<version>-macos-universal.pkg`, `-windows-setup.exe` for x64 and ARM64,
+`-linux-<x86_64|aarch64>-setup.run`, `-<freebsd|openbsd|netbsd>-x86_64-setup.run`) and an
+all-plugins zip per system family (`-<macos|windows|linux|bsd>-all.zip`). The macOS job makes its
+own; `windows-plugins`, `linux-plugins` and `bsd-plugins` put together the suite bundles of each
+family's builds. All of them use `tools/release/suite-release.py` (stage, build, check): every
+bundle in a zip lists every plugin and keeps its execute bits, the .pkg shows one choice per
+plugin, the Windows setup installs for the current user and uninstalls, and one .run installs
+into a scratch folder. The Packaging workflow runs the same steps (without BSD) on its build
+runs, as workflow artifacts only. The plugin bundles are signed ad hoc on macOS; the .pkg and
+the Windows setup are not signed.
+
 ## Installer design
 
 The disk image window, the Windows setup wizard art and the setup icon are made by

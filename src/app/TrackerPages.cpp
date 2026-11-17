@@ -142,23 +142,45 @@ bool lamp(App& a, const char* id, ImVec2 p0, float size, bool lit, ImU32 colour,
 }
 
 // The scrolled body under a title bar: a sunken box and a child window clipped to it.
+// cp24: a body taller than its box scrolls with the band's own bevel bar inside the box's right edge
+// (it was ImGui's thin rounded bar, a modern element); the wheel scrolls it as before.
+struct Body {
+  ImVec2 p0, p1;
+  float sbW = 0;  // the bar's width (0: no bar)
+  ImGuiWindow* win = nullptr;
+  float scroll = 0, scrollMax = 0, viewH = 1;
+};
+Body gBody;
+float bodyBarW() { return std::round(std::max(12.0f, ImGui::GetFontSize() + 1)); }
 bool beginBody(const char* id, ImVec2 p0, ImVec2 p1, float contentH, bool noWheel = false) {
   bevelBox(ImGui::GetWindowDrawList(), p0, p1, true);
+  gBody = Body{};
+  gBody.p0 = p0, gBody.p1 = p1;
+  gBody.sbW = contentH > p1.y - p0.y ? bodyBarW() : 0.0f;
   ImGui::SetCursorScreenPos(ImVec2(p0.x + 1, p0.y + 1));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
   ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
   // (noWheel, cp17: Ctrl+wheel zooms the body sideways and Shift+wheel scrolls it, not the rows)
-  const bool open = ImGui::BeginChild(id, ImVec2(std::max(1.0f, p1.x - p0.x - 2), std::max(1.0f, p1.y - p0.y - 2)), ImGuiChildFlags_None,
-                                      (contentH > p1.y - p0.y ? ImGuiWindowFlags_None : ImGuiWindowFlags_NoScrollbar) |
-                                          (noWheel ? ImGuiWindowFlags_NoScrollWithMouse : ImGuiWindowFlags_None));
+  const float w = p1.x - p0.x - 2 - (gBody.sbW > 0 ? gBody.sbW + trackerview::space::kLine : 0.0f);
+  const bool open = ImGui::BeginChild(id, ImVec2(std::max(1.0f, w), std::max(1.0f, p1.y - p0.y - 2)), ImGuiChildFlags_None,
+                                      ImGuiWindowFlags_NoScrollbar | (noWheel ? ImGuiWindowFlags_NoScrollWithMouse : ImGuiWindowFlags_None));
   ImGui::PopStyleColor();
   ImGui::PopStyleVar();
+  gBody.win = ImGui::GetCurrentWindow();
   return open;
 }
-void endBody(float contentH) {
+void endBody(App& a, float contentH) {
   ImGui::SetCursorPos(ImVec2(0, contentH));
   ImGui::Dummy(ImVec2(1, 0));
+  gBody.scroll = ImGui::GetScrollY(), gBody.scrollMax = ImGui::GetScrollMaxY(), gBody.viewH = ImGui::GetWindowHeight();
   ImGui::EndChild();
+  if (gBody.sbW > 0 && gBody.win) {
+    double at = gBody.scroll;
+    const ImVec2 s0(gBody.p1.x - 1 - gBody.sbW, gBody.p0.y + 1), s1(gBody.p1.x - 1, gBody.p1.y - 1);
+    if (trackerview::vScrollBar(a, gBody.win->Name, s0, s1, &at, gBody.viewH, gBody.scrollMax + gBody.viewH, std::round(ImGui::GetFontSize() + 4) * 3)) {
+      ImGui::SetScrollY(gBody.win, static_cast<float>(std::clamp(at, 0.0, static_cast<double>(gBody.scrollMax))));
+    }
+  }
 }
 
 // K-306: clang-cl 20.1.8 (Windows CI) crashed in its x86 instruction selection on steps(), and
@@ -174,11 +196,13 @@ void endBody(float contentH) {
 #endif
 
 // One channel's row of step cells.
-GL_STEPS_FN void stepCells(App& a, ImDrawList* dl, const Pattern* pat, ObjectId channel, const std::vector<uint8_t>* row, int nSteps, int playStep,
+GL_STEPS_FN void stepCells(App& a, ImDrawList* dl, const Pattern* pat, ObjectId channel, const std::vector<uint8_t>* row, int first, int nSteps, int playStep,
                            float gx, float y, float rh, float cw, float group) {
   const auto& P = pal();
-  for (int k = 0; k < nSteps; ++k) {
-    const float x = std::round(gx + static_cast<float>(k) * (cw + 1) + group * static_cast<float>(k / 4));
+  // cp24: the steps first .. first + nSteps - 1 (a long pattern shows a part at a time).
+  for (int k = first; k < first + nSteps; ++k) {
+    const int i = k - first;
+    const float x = std::round(gx + static_cast<float>(i) * (cw + 1) + group * static_cast<float>(i / 4));
     const ImVec2 s0(x, y + 1), s1(x + cw, y + rh - 2);
     const uint8_t v = row && static_cast<size_t>(k) < row->size() ? (*row)[static_cast<size_t>(k)] : 0;
     ImGui::SetCursorScreenPos(s0);
@@ -200,8 +224,8 @@ GL_STEPS_FN void stepCells(App& a, ImDrawList* dl, const Pattern* pat, ObjectId 
 }
 
 // One channel's row on the Steps page: its name, mute lamp, and step cells (or its notes' starts).
-GL_STEPS_FN void stepRow(App& a, const Pattern* pat, size_t ci, ImVec2 c0, float W, float nameW, float lampW, float gx, float avail, float rh,
-                         float cw, float group, int nSteps, int playStep) {
+GL_STEPS_FN void stepRow(App& a, const Pattern* pat, size_t ci, ImVec2 c0, float nameW, float lampW, float gx, float avail, float rh,
+                         float cw, float group, int first, int view, int nSteps, int playStep) {
   const auto& P = pal();
   const Song& s = a.doc.song();
   ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -214,18 +238,26 @@ GL_STEPS_FN void stepRow(App& a, const Pattern* pat, size_t ci, ImVec2 c0, float
   if (ImGui::InvisibleButton("##name", ImVec2(nameW, rh - 1))) a.selectChannel(c.id);
   if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) a.settingsChannel = c.id;
   ui::Hint("Click: select \xC2\xB7 double-click: its instrument");
-  if (lamp(a, "##mute", ImVec2(c0.x + 2 + nameW + kGap, y), lampW, !c.muted, P.led, "Lit: the channel plays \xC2\xB7 click: mute"))
+  if (lamp(a, "##mute", ImVec2(c0.x + 2 + nameW + kGap, std::round(y + (rh - 1 - lampW) * 0.5f)), lampW, !c.muted, P.led, "Lit: the channel plays \xC2\xB7 click: mute")) {
     a.doc.setParam(channelParam(c.id, ChannelParam::Mute), c.muted ? 0 : 1, false);
+  }
   const std::vector<uint8_t>* row = pat && pat->steps.count(c.id) ? &pat->steps.at(c.id) : nullptr;
   const bool hasNotes = pat && pat->notes.count(c.id) && !pat->notes.at(c.id).empty();
   if (hasNotes && (!row || std::none_of(row->begin(), row->end(), [](uint8_t v) { return v > 0; }))) {
     // A channel playing notes: the piano roll edits them; here a quiet line of their starts.
     const std::vector<Note>& ns = pat->notes.at(c.id);
     const Tick len = std::max<Tick>(1, s.patternLength(*pat));
-    dl->AddRectFilled(ImVec2(gx, y + 1), ImVec2(c0.x + W - 2, y + rh - 2), theme::withAlpha(P.surface800, 0.6f));
+    // (cp24: the part of the pattern the steps show)
+    const Tick t0 = len * first / std::max(1, nSteps), t1 = std::max<Tick>(t0 + 1, len * (first + view) / std::max(1, nSteps));
+    const float span = static_cast<float>(t1 - t0);
+    dl->AddRectFilled(ImVec2(gx, y + 1), ImVec2(gx + avail, y + rh - 2), theme::withAlpha(P.surface800, 0.6f));  // (cp24: as wide as the cells)
     for (const Note& n : ns) {
-      const float nx0 = std::round(gx + avail * static_cast<float>(n.start % len) / static_cast<float>(len));
-      const float nx1 = std::max(nx0 + 2, std::round(gx + avail * static_cast<float>(std::min<Tick>(len, n.start % len + n.length)) / static_cast<float>(len)));
+      const Tick ns0 = n.start % len, ns1 = std::min<Tick>(len, ns0 + n.length);
+      if (ns1 <= t0 || ns0 >= t1) {
+        continue;
+      }
+      const float nx0 = std::round(gx + avail * static_cast<float>(std::max(ns0, t0) - t0) / span);
+      const float nx1 = std::max(nx0 + 2, std::round(gx + avail * static_cast<float>(std::min(ns1, t1) - t0) / span));
       const float ny = std::round(y + 3 + (rh - 8) * (1.0f - static_cast<float>(n.pitch % 24) / 24.0f));
       dl->AddRectFilled(ImVec2(nx0, ny), ImVec2(nx1, ny + 2), theme::rgb(c.color));
     }
@@ -233,7 +265,7 @@ GL_STEPS_FN void stepRow(App& a, const Pattern* pat, size_t ci, ImVec2 c0, float
     if (ImGui::InvisibleButton("##notes", ImVec2(std::max(1.0f, avail), rh - 1))) a.selectChannel(c.id);
     ui::Hint("This channel plays notes: the pattern editor and the piano roll edit them");
   } else {
-    stepCells(a, dl, pat, c.id, row, nSteps, playStep, gx, y, rh, cw, group);
+    stepCells(a, dl, pat, c.id, row, first, view, playStep, gx, y, rh, cw, group);
   }
   ImGui::PopID();
 }
@@ -498,7 +530,7 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
         }
         if (dbl && e.pattern != kNoId) trackerview::showPage(a, "Pattern editor");
       }
-      endBody(contentH);
+      endBody(a, contentH);
     }
     if (ol.empty()) {
       dl->AddText(a.fontRegular, fs, ImVec2(xO + pad + 10, l0y + 6), P.textFaint, i18n::tr("The song is empty: pick a pattern, then Ins or Append"), nullptr,
@@ -580,7 +612,7 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
         if (click) a.selectPattern(p.id);
         if (dbl) trackerview::showPage(a, "Pattern editor");
       }
-      endBody(contentH);
+      endBody(a, contentH);
     }
     const Pattern* sp = s.pattern(a.curPattern);
     const float bw = std::floor((wPat - pad * 2 - kGap * 2) / 3);
@@ -1071,8 +1103,34 @@ GL_STEPS_FN void steps(App& a) {
   const ImVec2 o = ImGui::GetCursorScreenPos(), av = ImGui::GetContentRegionAvail();
   const int nSteps = pat ? std::max(1, pat->stepsPerBar * pat->bars) : 16;
   const float th = titleBar(a, o, av.x, i18n::tr("Steps"), stepsInfo(s, pat, nSteps));
-  const float rh = rowHeight(), y0 = o.y + th + kGap;
-  const ImVec2 b0(o.x, y0), b1(o.x + av.x, o.y + std::max(av.y, th + rh * 3));
+  const float rh0 = rowHeight(), y0 = o.y + th + kGap;
+  const ImVec2 b0(o.x, y0);
+  ImVec2 b1(o.x + av.x, o.y + std::max(av.y, th + rh0 * 3));
+  // cp24 (usability): a pattern with more steps than fit at the least step width (8 px) shows a part
+  // of them, whole bars, with the band's scroll bar under the rows (before, the steps ran on past the
+  // page's edge: a 256-step pattern showed about 120 and the rest could not be reached).
+  static double stepFirst = 0;
+  const float fs = ImGui::GetFontSize();
+  const float sbH = std::max(12.0f, std::round(fs * 0.95f));
+  const float group = 3;  // extra gap every 4 steps
+  int view = nSteps;
+  {
+    const float Wg = av.x - 2 - bodyBarW() - trackerview::space::kLine;  // (as the body measures it, with room for its own bar)
+    const float nameW = std::min(200.0f, std::round(Wg * 0.22f));
+    const float availG = Wg - 4 - nameW - kGap - (rh0 - 1) - trackerview::space::kGroup;
+    const int fit = static_cast<int>(std::floor((availG + group) / (9.0f + group / 4.0f)));
+    const int bar = pat ? std::max(1, pat->stepsPerBar) : 16;
+    if (fit < nSteps) {
+      // Paged, the steps get a comfortable width (12 px), whole bars in view.
+      const int fitWide = static_cast<int>(std::floor((availG + group) / (13.0f + group / 4.0f)));
+      view = std::max(bar, fitWide / bar * bar);
+      b1.y -= sbH + kGap;
+    }
+  }
+  int first = view < nSteps ? std::clamp(static_cast<int>(std::lround(stepFirst)), 0, nSteps - view) : 0;
+  // cp24 (usability): a few channels: the rows grow (up to half again) so the page has no empty lower
+  // part, as the Mix page's.
+  const float rh = std::max(rh0, std::min(std::round(rh0 * 1.5f), std::floor((b1.y - b0.y - 4) / static_cast<float>(std::max<size_t>(1, s.channels.size())))));
   const float contentH = static_cast<float>(s.channels.size()) * rh + 4;
   // The step being played (pattern mode on this pattern, or this pattern under the song position).
   int playStep = -1;
@@ -1083,17 +1141,41 @@ GL_STEPS_FN void steps(App& a) {
     const Tick st = s.ticksPerStep(*pat);
     if (t >= 0 && st > 0) playStep = static_cast<int>((t / st) % nSteps);
   }
+  // (cp24: while it plays, the part in view follows the step played)
+  if (view < nSteps && playStep >= 0 && (playStep < first || playStep >= first + view)) {
+    first = std::min(nSteps - view, playStep / view * view);
+    stepFirst = first;
+  }
+  float stepsX = o.x;  // (cp24: where the steps start: their scroll bar starts there too)
   if (beginBody("##steps", b0, b1, contentH)) {
     const ImVec2 c0 = ImGui::GetCursorScreenPos();
     const float W = ImGui::GetContentRegionAvail().x;
-    const float nameW = std::min(200.0f, std::round(W * 0.22f)), lampW = rh - 1;  // cp23: the lamp as tall as the name field beside it (was 1 px shorter)
+    // cp23: the lamp as tall as the name field beside it; cp24: a square of the plain row height, centred
+    // in a grown row (a 23 px green block read heavy).
+    const float nameW = std::min(200.0f, std::round(W * 0.22f)), lampW = rh0 - 1;
     const float gx = c0.x + 2 + nameW + kGap + lampW + trackerview::space::kGroup;
+    stepsX = gx;
     const float avail = c0.x + W - 2 - gx;  // cp23: 2 px from the edge, as the names (was 4)
-    const float group = 3;  // extra gap every 4 steps
-    const float cw = std::max(8.0f, std::floor((avail - group * static_cast<float>(nSteps / 4)) / static_cast<float>(nSteps)) - 1);
-    for (size_t ci = 0; ci < s.channels.size(); ++ci)
-      stepRow(a, pat, ci, c0, W, nameW, lampW, gx, avail, rh, cw, group, nSteps, playStep);
-    endBody(contentH);
+    const float cw = std::max(8.0f, std::floor((avail - group * static_cast<float>(view / 4)) / static_cast<float>(view)) - 1);
+    // cp24: what the whole cells leave goes into the gaps between the beats (evenly, whole pixels), so the
+    // last step ends at the row's right edge (it ended up to 110 px short at 1440x900).
+    const int beats = std::max(1, view / 4);
+    const float spare = avail - static_cast<float>(view) * (cw + 1) + 1 - group * static_cast<float>(beats - 1);
+    const float gap = beats > 1 ? group + std::max(0.0f, std::floor(spare / static_cast<float>(beats - 1))) : group;
+    const float cellsW = static_cast<float>(view) * (cw + 1) - 1 + gap * static_cast<float>(beats - 1);
+    for (size_t ci = 0; ci < s.channels.size(); ++ci) {
+      stepRow(a, pat, ci, c0, nameW, lampW, gx, cellsW, rh, cw, gap, first, view, nSteps, playStep);
+    }
+    endBody(a, contentH);
+  }
+  if (view < nSteps) {
+    double at = first;
+    const int bar = pat ? std::max(1, pat->stepsPerBar) : 16;
+    if (scrollBar(a, "##stepsb", ImVec2(stepsX, b1.y + kGap), ImVec2(o.x + av.x, b1.y + kGap + sbH), &at, view, nSteps, bar,
+                  "The steps in view: a bar at a time (the pattern is longer than the page)")) {
+      stepFirst = std::round(at / bar) * bar;
+    }
+    b1.y += sbH + kGap;
   }
   ImGui::SetCursorScreenPos(ImVec2(o.x, b1.y));
   ImGui::Dummy(ImVec2(1, 0));
@@ -1614,7 +1696,7 @@ void song(App& a) {
       }
       ImGui::EndPopup();
     }
-    endBody(contentH);
+    endBody(a, contentH);
   }
   ui::Hint("Click: go there and pick the clip (its pattern shows; the box below edits it) \xC2\xB7 double-click an empty bar: place the pattern shown \xC2\xB7 right-click: the clip's menu");
   if (boxH > 0) clipBox(a, ImVec2(o.x, b1.y + sbH + kGap), ImVec2(o.x + av.x, b1.y + sbH + kGap + boxH));
@@ -1674,6 +1756,19 @@ void mixer(App& a) {
     const float W = ImGui::GetContentRegionAvail().x;
     const float nameW = std::min(200.0f, std::round(W * 0.22f)), lampW = rh0 - 1;  // cp23: as the Steps page
     const float volW = std::round(W * 0.28f), panW = std::round(W * 0.14f);
+    // cp24 (usability): the channels playing into each track, in a column before its meter (the page
+    // named tracks only, "Insert 3", and which instrument went where could be found only in each
+    // instrument's Channel frame). The meter keeps what is left (it ran 560 px wide at 1440x900).
+    const float fromW = std::round(W * 0.2f);
+    std::vector<std::string> from(s.mixer.size());
+    for (const Channel& ch : s.channels) {
+      for (size_t i = 0; i < s.mixer.size(); ++i) {
+        if (s.mixer[i].id == ch.mixerTrack) {
+          from[i] += (from[i].empty() ? "" : ", ") + ch.name;
+          break;
+        }
+      }
+    }
     for (size_t i = 0; i < s.mixer.size(); ++i) {
       const MixerTrack& m = s.mixer[i];
       const float y = std::round(c0.y + 2 + static_cast<float>(i) * rh);
@@ -1698,6 +1793,20 @@ void mixer(App& a) {
       if (valueBar("##pan", ImVec2(x, y), ImVec2(x + panW, y + rh - 1), m.pan, -1.0, 1.0, true, &nv, "Pan (drag; double-click: centre)"))
         a.doc.setParam(mixerParam(m.id, MixerParam::Pan), nv, true);
       x += panW + trackerview::space::kGroup;  // cp23: the parts 6 px apart (were 6, a space, 8 and 8)
+      {
+        const ImVec2 f0(x, y), f1(x + fromW, y + rh - 1);
+        bevelBox(dl, f0, f1, true);
+        const float ty = std::round(y + (rh - fs) * 0.5f);
+        if (from[i].empty()) {
+          dl->AddText(mono, fs, ImVec2(f0.x + 6, ty), P.textFaint, "--");
+        } else {
+          theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(f0.x + 6, ty), f1.x - f0.x - 10, P.textDim, from[i].c_str());
+        }
+        ImGui::SetCursorScreenPos(f0);
+        ImGui::InvisibleButton("##from", ImVec2(fromW, rh - 1));
+        ui::Hint(from[i].empty() ? "No channel plays into this track" : "The channels that play into this track (each one's Output, in its Channel frame)");
+        x += fromW + trackerview::space::kGroup;
+      }
       // A segmented level meter to the row's end.
       const float lvl = std::clamp(mixmeters::get(a, m.id).peak(), 0.0f, 1.0f);
       const float mx1 = c0.x + W - 2;  // cp23: 2 px from the body's edge, as the names at the left (was 4)
@@ -1713,7 +1822,7 @@ void mixer(App& a) {
       }
       ImGui::PopID();
     }
-    endBody(contentH);
+    endBody(a, contentH);
   }
   ImGui::SetCursorScreenPos(ImVec2(o.x, b1.y));
   ImGui::Dummy(ImVec2(1, 0));
@@ -1796,7 +1905,7 @@ void pads(App& a) {
           }
         }
       }
-      endBody(contentH);
+      endBody(a, contentH);
     }
     dl->AddText(a.fontRegular, fs, ImVec2(b0.x + 8, std::round(b1.y - noteH + (noteH - fs) * 0.5f)), P.textFaint,
                 i18n::tr("The song's patterns. Clips placed before the live area's end (Song menu, Live area) become launch pads here."), nullptr,
@@ -1873,7 +1982,7 @@ void pads(App& a) {
       a.engine.releaseClip(held);
       held = kNoId;
     }
-    endBody(contentH);
+    endBody(a, contentH);
   }
   ImGui::SetCursorScreenPos(ImVec2(o.x, b1.y));
   ImGui::Dummy(ImVec2(1, 0));

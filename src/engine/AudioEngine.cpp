@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "ArmedRing.h"
 #include "Denormals.h"
 #include <algorithm>
 #include <chrono>
@@ -50,6 +51,8 @@ AudioEngine::AudioEngine(double sampleRate) : sr_(sampleRate), queue_(kQueue) {
   silence_.assign(kMaxBlock, 0.f);
   tickHist_.assign(kTickHistory, -1.0);
   recTick_.assign(kMaxBlock, -1.0);
+  rawTick_.assign(kMaxBlock, -1.0);   // K-123 (0.7.7)
+  recHist_.assign(kTickHistory, 0);
 }
 
 // ---- audio input & recording (J-8) -------------------------------------------
@@ -223,26 +226,116 @@ void AudioEngine::captureRecording(const Program* p, int n, bool post) {
     // Output taps hear the music late by the track's delay compensation, not the input latency.
     const size_t lat = static_cast<size_t>(std::max(0, m.latOut()));
     const size_t base = tickHistPos_ - static_cast<size_t>(n);
+    // K-123 (0.7.7): the capture-while-armed ring (inputs only) and the punch marks of the boundaries.
+    ArmedRing* arm = !post ? m.armRing.get() : nullptr;
+    const size_t armBase = arm ? arm->written() : 0;
+    auto rawAt = [&](int i) { return i >= 0 ? rawTick_[static_cast<size_t>(i)] : lastRaw_; };
+    auto onwards = [&](int i) {  // the transport played on into frame i (no start, stop or jump)
+      const double a = rawAt(i - 1), b = rawAt(i);
+      return !post && a >= 0 && b >= 0 && b >= a - 1e-6 && b <= a + 4.0;
+    };
     for (int i = 0; i < n; ++i) {
-      const double t = !post ? recTick_[static_cast<size_t>(i)] : tickHist_[(base + static_cast<size_t>(i) - lat) & (kTickHistory - 1)];
+      const size_t hi = (base + static_cast<size_t>(i) - lat) & (kTickHistory - 1);
+      const double t = !post ? recTick_[static_cast<size_t>(i)] : (recHist_[hi] ? tickHist_[hi] : -1.0);
       const bool in = t >= 0 && (!punch || (t >= pa && t < pb));
       // A jump of the position (loop wrap, seek) starts a new take.
       const bool jump = in && rt->recActive && (t < rt->recLastTick - 1e-6 || t > rt->recLastTick + 4.0);
       if (rt->recActive && (!in || jump)) {
         if (runFrom >= 0 && i > runFrom) ring->write(L + runFrom, R + runFrom, i - runFrom, true);
         runFrom = -1;
-        pushRecEvent({RecEvent::End, m.id, ring->written(), 0});
+        RecEvent e{RecEvent::End, m.id, ring->written(), 0};
+        e.armPos = armBase + static_cast<size_t>(i);
+        e.punch = (!jump && onwards(i)) || (punch && rt->recLastTick + 1.0 >= pb);
+        pushRecEvent(e);
         rt->recActive = false;
       }
       if (in && !rt->recActive) {
-        pushRecEvent({RecEvent::Start, m.id, ring->written(), t});
+        RecEvent e{RecEvent::Start, m.id, ring->written(), t};
+        e.armPos = armBase + static_cast<size_t>(i);
+        e.punch = (!jump && onwards(i)) || (punch && t <= pa + 1.0);
+        pushRecEvent(e);
         rt->recActive = true;
         runFrom = i;
       }
       if (in) rt->recLastTick = t;
     }
     if (runFrom >= 0 && n > runFrom) ring->write(L + runFrom, R + runFrom, n - runFrom, true);
+    if (arm && (tPlaying_ || rawAt(n - 1) >= 0 || rawAt(0) >= 0)) arm->write(L, R, rawTick_.data(), n);
   }
+}
+
+// ---- K-123 (0.7.7): start on the first sound, the loopback latency check ----
+
+void AudioEngine::armStartOnInput(float level) {
+  if (level > 0) startSerial_.store(playSerial_.fetch_add(1, std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+  startLevel_.store(std::max(0.0f, level), std::memory_order_release);
+}
+
+void AudioEngine::startOnInput(const Program* p, int n) {
+  const float level = startLevel_.load(std::memory_order_acquire);
+  if (level <= 0 || tPlaying_) return;
+  bool loud = false;
+  for (const ProgMixer& m : p->mixer) {
+    if (!m.armed || m.inFirst < 0 || m.recPoint != static_cast<uint8_t>(RecordPoint::Input)) continue;
+    loud = loud || peakOf(inputL(m), n) >= level || peakOf(inputR(m), n) >= level;
+  }
+  if (!loud) return;
+  // As a Play request (without the count-in), from this block on, and recording from its first frame.
+  heardRun_ = startSerial_.load(std::memory_order_relaxed);
+  startTick_ = tickAt(p, anchorTick_, static_cast<double>(clock_));
+  {
+    double pa = 0, pb = 0;
+    const double pre = preRoll_.load(std::memory_order_relaxed);
+    if (pre > 0 && rollPunch(pa, pb)) startTick_ = std::max(0.0, pa - pre);
+  }
+  anchorTick_ = startTick_;
+  clock_ = 0;
+  tPlaying_ = true;
+  countInLeft_ = 0;
+  countingIn_.store(false);
+  recordOn_.store(true);
+  playing_.store(true);
+  startLevel_.store(0.0f, std::memory_order_relaxed);
+  inputStarts_.fetch_add(1, std::memory_order_relaxed);
+}
+
+bool AudioEngine::startLatencyProbe(int channel, const std::vector<float>& burst, size_t listen) {
+  const int st = probeState_.load(std::memory_order_acquire);
+  if (st == 1 || st == 2 || burst.empty() || listen < burst.size()) return false;
+  probeBurst_ = burst;  // (the audio thread does not look at these until the request below)
+  probeCap_.assign(listen, 0.f);
+  probeCh_ = std::clamp(channel, 0, kMaxInputChannels - 1);
+  probeState_.store(1, std::memory_order_release);
+  return true;
+}
+
+void AudioEngine::cancelLatencyProbe() {
+  int st = 1;
+  if (!probeState_.compare_exchange_strong(st, 0)) {
+    st = 3;
+    probeState_.compare_exchange_strong(st, 0);
+  }
+  // A running check (2) ends on its own; its result is simply not read.
+}
+
+void AudioEngine::latencyProbe(float* L, float* R, int n) {
+  int st = probeState_.load(std::memory_order_acquire);
+  if (st == 1) {
+    probeStart_ = absClock_;
+    probeState_.store(2, std::memory_order_relaxed);
+    st = 2;
+  }
+  if (st != 2) return;
+  const float* in = probeCh_ < inChannels_.load(std::memory_order_relaxed) ? inBuf_[static_cast<size_t>(probeCh_)].data() : silence_.data();
+  const size_t cap = probeCap_.size(), len = probeBurst_.size();
+  for (int i = 0; i < n; ++i) {
+    const auto k = static_cast<size_t>(absClock_ + i - probeStart_);
+    const float v = k < len ? probeBurst_[k] : 0.0f;
+    L[i] = v;  // only the burst plays while the check runs (no feedback through monitored inputs)
+    R[i] = v;
+    if (k < cap) probeCap_[k] = in[i];
+  }
+  if (static_cast<size_t>(absClock_ + n - probeStart_) >= cap) probeState_.store(3, std::memory_order_release);
 }
 
 void AudioEngine::playWithCountIn(double ticks) {
@@ -1937,6 +2030,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     publishOwn(nullptr);
     return;
   }
+  startOnInput(p, n);  // K-123 (0.7.7): start on the first sound
 
   // --- transport & sequencing ---
   const double blockTick = tickAt(p, anchorTick_, static_cast<double>(clock_));
@@ -2107,31 +2201,44 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   // (the music the performer heard when the input frame was played) ---
   const bool recOn = recordOn_.load(std::memory_order_relaxed);
   {
+    // K-123 (0.7.7): the position is followed whenever the transport plays (capture while armed);
+    // recHist_ says which frames were recording, so takes come out exactly as before.
     double* cur = recTick_.data();
+    double* raw = rawTick_.data();
     for (int i = 0; i < n; ++i) cur[i] = -1.0;
-    if (tPlaying_ && recOn)
+    if (tPlaying_) {
       for (int k = 0; k < segCount_; ++k) {
         const Segment& sg = segs_[k];
         const double t0 = tickAt(p, sg.anchor, static_cast<double>(sg.clock));
         const double t1 = tickAt(p, sg.anchor, static_cast<double>(sg.clock + sg.len));
-        for (int i = 0; i < sg.len && sg.from + i < n; ++i)
+        for (int i = 0; i < sg.len && sg.from + i < n; ++i) {
           cur[sg.from + i] = t0 + (t1 - t0) * static_cast<double>(i) / static_cast<double>(std::max(1, sg.len));
+        }
       }
+    }
     const size_t lat = static_cast<size_t>(recLatency_.load(std::memory_order_relaxed));
     const size_t mask = kTickHistory - 1;
     // A longer latency reaches further back than any frame read so far: those
     // entries are positions of an earlier (finished) pass, which would replay
     // as a ghost take. Forget them; the new latency starts from silence.
     if (lat > tickHistLat_) {
-      for (size_t i = tickHistLat_ + 1; i <= lat; ++i) tickHist_[(tickHistPos_ - i) & mask] = -1.0;
+      for (size_t i = tickHistLat_ + 1; i <= lat; ++i) {
+        tickHist_[(tickHistPos_ - i) & mask] = -1.0;
+        recHist_[(tickHistPos_ - i) & mask] = 0;
+      }
     }
     tickHistLat_ = lat;
+    const uint8_t recNow = recOn ? 1 : 0;
     for (int i = 0; i < n; ++i) {
       tickHist_[tickHistPos_ & mask] = cur[i];
-      cur[i] = tickHist_[(tickHistPos_ - lat) & mask];
+      recHist_[tickHistPos_ & mask] = recNow;
+      const size_t d = (tickHistPos_ - lat) & mask;
+      raw[i] = tickHist_[d];
+      cur[i] = recHist_[d] ? tickHist_[d] : -1.0;
       ++tickHistPos_;
     }
     captureRecording(p, n);
+    lastRaw_ = n > 0 ? raw[n - 1] : lastRaw_;
   }
   if (segCount_ == 0) segs_[segCount_++] = {0, n, 0.0, absClock_};  // stopped: free-running clock
 
@@ -3143,6 +3250,7 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
     if (p && p->meterReaders) n = untilMeterChange(p, n);  // K-193: plugins see a meter change on its sample
     blockWall_ = wall0 + static_cast<double>(done) / sr_;
     processBlock(p, L + done, R + done, n);
+    if (probeState_.load(std::memory_order_acquire) != 0) latencyProbe(L + done, R + done, n);  // K-123 (0.7.7)
     if (taps_) copyTaps(p, done, n);
     absClock_ += n;
     running_.store(nullptr);

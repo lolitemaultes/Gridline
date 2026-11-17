@@ -129,7 +129,10 @@
 #include "Widgets.h"
 #include "LogicNewTracks.h"
 #include "LogicPlugins.h"
+#include "MidiArm.h"
+#include "RecordRowsUi.h"
 #include "Windows.h"
+#include "RecordMoreUi.h"
 #include "TrackModeUi.h"
 #include "TrackPlusUi.h"
 #include "ChopUi.h"
@@ -215,6 +218,37 @@ void pushSynthInput(AudioEngine& eng, int frames) {
   }
 }
 
+// K-123 (0.7.7) dev checks: GRIDLINE_LOOPBACK_INPUT=<frames> replaces the capture device with a
+// simulated loopback cable (never a microphone): the output comes back as stereo In 1 - In 2 that
+// many frames later, pushed from the output callback. For the latency check in the app.
+std::atomic<int> gLoopbackFrames{0};
+constexpr int kLoopbackRing = 1 << 16;  // frames (fixed: the callback never allocates)
+float gLoopbackBuf[2 * kLoopbackRing] = {};
+int64_t gLoopbackPos = 0;
+void pushLoopbackInput(AudioEngine& eng, int frames) {
+  const int d = std::clamp(gLoopbackFrames.load(std::memory_order_relaxed), 0, kLoopbackRing - 4096);
+  static float chunk[2 * 1024];
+  for (int done = 0; done < frames;) {
+    const int n = std::min(frames - done, 1024);
+    for (int i = 0; i < n; ++i) {
+      const int64_t at = gLoopbackPos + done + i - d;
+      const size_t k = static_cast<size_t>(((at % kLoopbackRing) + kLoopbackRing) % kLoopbackRing);
+      chunk[2 * i] = at >= 0 ? gLoopbackBuf[2 * k] : 0.f;
+      chunk[2 * i + 1] = at >= 0 ? gLoopbackBuf[2 * k + 1] : 0.f;
+    }
+    eng.pushInput(chunk, n);
+    done += n;
+  }
+}
+void keepLoopbackOutput(const float* out, int frames, int chans) {
+  for (int i = 0; i < frames; ++i) {
+    const auto k = static_cast<size_t>((gLoopbackPos + i) % kLoopbackRing);
+    gLoopbackBuf[2 * k] = out[static_cast<size_t>(i) * static_cast<size_t>(chans)];
+    gLoopbackBuf[2 * k + 1] = out[static_cast<size_t>(i) * static_cast<size_t>(chans) + 1];
+  }
+  gLoopbackPos += frames;
+}
+
 // J-218: development / tests: GRIDLINE_TEST_INPUT=<audio file> stands in for an input device
 // (never a microphone): the file loops into the engine's device input as stereo In 1 - In 2,
 // paced by the output callback. Only when no input device is chosen.
@@ -274,11 +308,14 @@ void audioCallback(void* user, Uint8* stream, int len) {
   const int frames = len / static_cast<int>(sizeof(float) * static_cast<size_t>(chans));
   const bool stats = fstats::enabled();
   const Uint64 t0 = stats ? SDL_GetPerformanceCounter() : 0;
+  const bool loopbackSim = gLoopbackFrames.load(std::memory_order_relaxed) > 0;  // K-123 (0.7.7)
   if (gSynthInput) pushSynthInput(*eng, frames);
+  else if (loopbackSim) pushLoopbackInput(*eng, frames);
   else feedTestInput(eng, frames);
   auto* out = reinterpret_cast<float*>(stream);
   if (chans <= 2) {
     eng->processInterleaved(out, frames);
+    if (loopbackSim) keepLoopbackOutput(out, frames, 2);  // K-123: what the simulated cable carries back (the song only)
     // Interface sounds go on top of the finished output: outside the song mixer,
     // so they are never recorded, rendered or metered.
     if (gUiSounds) gUiSounds->mix(out, frames);
@@ -316,6 +353,16 @@ void openAudioInput(App& a, int rate, int outFrames) {
   a.audioInputLatency = 0;
   a.audioInputStatus.clear();
   gSynthInput = false;
+  gLoopbackFrames = 0;
+  if (const char* lb = std::getenv("GRIDLINE_LOOPBACK_INPUT"); lb && std::atoi(lb) > 0) {  // K-123 (0.7.7) dev checks
+    a.audioInputDevice = "Loopback (simulated)";
+    a.engine.setInputChannels(2);
+    a.audioInputChannels = 2;
+    a.audioInputLatency = outFrames;
+    a.audioInputStatus = "Recording from a simulated loopback cable (development).";
+    gLoopbackFrames = std::atoi(lb);
+    return;
+  }
   if (const char* synth = std::getenv("GRIDLINE_SYNTH_INPUT"); synth && *synth && *synth != '0') {  // J-217 dev checks
     a.audioInputDevice = "Synthetic input";
     a.engine.setInputChannels(2);
@@ -1284,6 +1331,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     if (pluginWindowDevCommand(app, l.cmd, l.args, frame)) continue;  // plugin windows, their channel strip
     if (packs::devCommand(app, l.cmd, l.args)) continue;  // K-15: loupe [pin <tab|below|left|right|float> | unpin]
     if (livetake::devCommand(app, l.cmd, l.args, frame)) continue;  // J-217: live recording checks
+    if (recordrows::devCommand(app, l.cmd, l.args, frame)) continue;  // K-123: takes, input filter, recover, arming
+    if (recmore::devCommand(app, l.cmd, l.args, frame)) continue;  // K-123 (0.7.7): quick punch, capture, start, latency
     // Two chains of commands: one long else-if chain goes past MSVC's nesting limit (C1061).
     bool secondHalf = false;
     if (l.cmd == "move") {
@@ -4586,7 +4635,7 @@ int main(int argc, char** argv) {
         app.engine.noteOff(chId, p);
         for (ObjectId o : also) {
           app.engine.noteOff(o, p);
-          logicplug::layerNote(app, o, p, 0, false, app.recordTick(stamp));  // R11-03
+          midiarm::layerNote(app, o, p, 0, false, app.recordTick(stamp));  // R11-03 (K-123: armed channels)
         }
         app.playedNoteOff(chId, p, stamp);
       }
@@ -4694,10 +4743,10 @@ int main(int argc, char** argv) {
           const double stamp = keyStamp(ev.key.timestamp);
           std::vector<ObjectId> also = typedTargets(app);  // K-232: every selected instrument plays
           if (!also.empty()) also.erase(also.begin());
-          const ObjectId live = logicplug::liveChannel(app);  // R10-03: Smooth's armed / monitored track
+          const ObjectId live = midiarm::liveChannel(app);  // R10-03: Smooth's armed / monitored track (K-123: an armed channel)
           if (live != app.selChannel) also.clear();
           {  // R11-03: every other armed or monitored track of Smooth plays (and records) the note too
-            const std::vector<ObjectId> lives = logicplug::liveChannels(app);
+            const std::vector<ObjectId> lives = midiarm::liveChannels(app);
             for (size_t k = 1; k < lives.size(); ++k) {
               if (std::find(also.begin(), also.end(), lives[k]) == also.end()) also.push_back(lives[k]);
             }
@@ -4706,7 +4755,7 @@ int main(int argc, char** argv) {
             app.engine.noteOn(live, p, app.typing.velocity / 127.0f);
             for (ObjectId o : also) {
               app.engine.noteOn(o, p, app.typing.velocity / 127.0f);
-              logicplug::layerNote(app, o, p, app.typing.velocity, true, app.recordTick(stamp));
+              midiarm::layerNote(app, o, p, app.typing.velocity, true, app.recordTick(stamp));
             }
             app.playedNoteOn(live, p, app.typing.velocity, stamp);
           }

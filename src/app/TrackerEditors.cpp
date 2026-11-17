@@ -124,6 +124,9 @@ struct St {
   int pianoFirst = -1;      // a short band's piano: its first octave in view (-1: not chosen yet)
   int pianoOcts = 8;        // the octaves it shows (8: all of them)
   bool insExtra = false;    // the right column shows the instrument's extra settings (MIDI out, playback)
+  // cp24: the Channel frame's fold.
+  float frameRoom = 1e9f;   // the height the header band leaves the frame (setFrameRoom)
+  float bandPad = 0;        // the band's own padding round the screen, as last measured
 };
 St& st() {
   static St s;
@@ -2381,6 +2384,13 @@ void convertModal(App& a, ObjectId ch) {
   endModalBox();
 }
 
+// cp24: the Channel frame's height: the title line (its help text at the right end) and the box of
+// three rows; folded, the title line and the box's first row.
+float frameContentH(float fs, bool folded) {
+  const int rows = folded ? 1 : 3;
+  return std::round(fs + 8) + space::kGap + 2 * space::kPad + static_cast<float>(rows) * std::round(fs + 7) + static_cast<float>(rows - 1) * 3;
+}
+
 void channelFrame(App& a, ObjectId id, ImVec2 p0, ImVec2 p1) {
   St& s = st();
   const auto& P = pal();
@@ -2402,22 +2412,51 @@ void channelFrame(App& a, ObjectId id, ImVec2 p0, ImVec2 p1) {
   }
   s.hover.clear();
   const PluginInfo* info = findPlugin(c->plugin.type);
-  const float titleH = std::round(fs + 8), rowH = std::round(fs + 7), gap = 3, statusH = std::round(fs + 6);
-  // Title: number, name, the instrument and its kind, the sampler's file.
+  const float titleH = std::round(fs + 8), rowH = std::round(fs + 7), gap = 3;
+  const bool folded = frameFolded(a);
+  // Title: number, name, the instrument and its kind, the sampler's file; at the right the help line
+  // (cp24: it was a status line under the box, a line of the band's height) and the fold button.
   {
     bevelBox(dl, p0, ImVec2(p1.x, p0.y + titleH), false);
     const float ty = std::round(p0.y + (titleH - fs) * 0.5f);
     dl->AddText(a.fontBold ? a.fontBold : a.fontRegular, fs, ImVec2(p0.x + 8, ty), P.text, i18n::tr("Channel"));
     const float x = p0.x + 16 + (a.fontBold ? a.fontBold : a.fontRegular)->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Channel")).x;
+    // The fold button: a small bevel button at the line's right end, an arrow on it (up: fold).
+    const float fb = titleH - 2 * space::kGap;
+    const ImVec2 f0(p1.x - space::kGap - std::round(fb * 1.5f), p0.y + space::kGap), f1(p1.x - space::kGap, p0.y + titleH - space::kGap);
+    if (bevelButton(a, "##cffold", "", f0, f1, false,
+                    folded ? "Shows the whole frame: pan, fine, output and the key range" : "Folds the frame to its first row; the pattern gets the height")) {
+      toggleFrameFold(a);
+    }
+    {
+      const bool held = ImGui::IsItemActive();
+      const float cx = std::round((f0.x + f1.x) * 0.5f) + (held ? 1 : 0), cy = std::round((f0.y + f1.y) * 0.5f) + (held ? 1 : 0);
+      const float r = std::max(2.0f, std::floor((f1.y - f0.y) * 0.25f));
+      const Aliased hard(dl);
+      if (!folded) {
+        dl->AddTriangleFilled(ImVec2(cx - r - 1, cy + r * 0.6f), ImVec2(cx + r + 1, cy + r * 0.6f), ImVec2(cx, cy - r * 0.8f), P.text);
+      } else {
+        dl->AddTriangleFilled(ImVec2(cx - r - 1, cy - r * 0.6f), ImVec2(cx + r + 1, cy - r * 0.6f), ImVec2(cx, cy + r * 0.8f), P.text);
+      }
+    }
     std::string t = hex2(song.channelIndex(id) + trackBase(a)) + " " + c->name + "   " + (info ? info->name : c->plugin.type);
     if (info) t += std::string("   ") + (info->category.empty() ? "" : info->category);
     if (c->plugin.type == "gl.sampler" && !c->plugin.data.empty()) t += "   " + fs::u8path(c->plugin.data).filename().u8string();
-    theme::textEllipsis(dl, mono, fs, ImVec2(x, ty), p1.x - x - 12, valueInk(), t.c_str());
+    const float tw = std::max(1.0f, std::min(mono->CalcTextSizeA(fs, FLT_MAX, 0, t.c_str()).x + 1, f0.x - space::kGroup - x));
+    theme::textEllipsis(dl, mono, fs, ImVec2(x, ty), tw, valueInk(), t.c_str());
+    // The help line in what is left, against the fold button (cut short when the line is narrow).
+    const char* help = c->plugin.type == "gl.sampler" ? i18n::tr("A Sampler: Sample (the header) opens its audio; Convert makes it a Tracker Sampler with the Sample and Instrument editors")
+                                                      : i18n::tr("The channel's controls; the instrument's own controls are in its plugin window");
+    const float hs = std::round(fs * 0.9f);
+    const float hx0 = x + tw + 4 * space::kGroup, hx1 = f0.x - space::kGroup;
+    if (hx1 - hx0 > fs * 6) {
+      const float hw = std::min(hx1 - hx0, a.fontRegular->CalcTextSizeA(hs, FLT_MAX, 0, help).x + 1);
+      theme::textEllipsis(dl, a.fontRegular, hs, ImVec2(std::round(hx1 - hw), std::round(p0.y + (titleH - hs) * 0.5f)), hw, P.textDim, help);
+    }
   }
   // cp23: the controls' box 2 px under the title, its rows 4 px inside it at the top and the bottom
-  // alike (were 1 px under the title, 2 px at the top and 5 px at the bottom), the columns 6 px apart
-  // (were 8), and the status line 2 px under the box (it stood at the band's foot, 70 px of empty
-  // band above it at 1024x640; frameNeed() sizes the band to this).
+  // alike, the columns 6 px apart. cp24: folded, the box holds its first row only; frameContentH()
+  // sizes the band to this.
   const float box0 = p0.y + titleH + space::kGap;
   const float by0 = box0 + space::kPad;
   const float avail = p1.x - p0.x - 2 * space::kPad - 3 * space::kGroup;
@@ -2426,7 +2465,7 @@ void channelFrame(App& a, ObjectId id, ImVec2 p0, ImVec2 p1) {
   const float cx0 = p0.x + space::kPad, cx1 = cx0 + cw[0] + space::kGroup, cx2 = cx1 + cw[1] + space::kGroup, cx3 = cx2 + cw[2] + space::kGroup;
   const float c3w = p1.x - space::kPad - cx3;
   auto rowY = [&](int r) { return std::round(by0 + static_cast<float>(r) * (rowH + gap)); };
-  const float box1 = rowY(2) + rowH + space::kPad;
+  const float box1 = rowY(folded ? 0 : 2) + rowH + space::kPad;
   bevelBox(dl, ImVec2(p0.x, box0), ImVec2(p1.x, box1), false);
   // Volume, pan, mute.
   {
@@ -2447,9 +2486,12 @@ void channelFrame(App& a, ObjectId id, ImVec2 p0, ImVec2 p1) {
     const int pn = static_cast<int>(std::lround(c->pan * 100));
     std::snprintf(b, sizeof b, "%s%d", pn < 0 ? "L" : pn > 0 ? "R" : "C", std::abs(pn));
     if (pn == 0) std::snprintf(b, sizeof b, "C");
-    bar(1, "##cfpan", "Pan", c->pan, -1.0, 1.0, true, ChannelParam::Pan, b);
-    if (checkRow(a, "##cfmute", "Mute", ImVec2(cx0, rowY(2)), ImVec2(cx0 + cw[0], rowY(2) + rowH), c->muted, "The channel is silent"))
-      a.doc.setParam(channelParam(id, ChannelParam::Mute), c->muted ? 0 : 1, false);
+    if (!folded) {  // (cp24: folded, the frame shows its first row only)
+      bar(1, "##cfpan", "Pan", c->pan, -1.0, 1.0, true, ChannelParam::Pan, b);
+      if (checkRow(a, "##cfmute", "Mute", ImVec2(cx0, rowY(2)), ImVec2(cx0 + cw[0], rowY(2) + rowH), c->muted, "The channel is silent")) {
+        a.doc.setParam(channelParam(id, ChannelParam::Mute), c->muted ? 0 : 1, false);
+      }
+    }
   }
   // Pitch, fine, output.
   {
@@ -2457,6 +2499,9 @@ void channelFrame(App& a, ObjectId id, ImVec2 p0, ImVec2 p1) {
     std::snprintf(b, sizeof b, "%+d", c->pitch);
     if (const int d = stepper(a, "##cfpitch", "Pitch", b, ImVec2(cx1, rowY(0)), cw[1], rowH, "Semitones (-24 to +24)", -1, true))
       a.doc.setParam(channelParam(id, ChannelParam::Pitch), std::clamp(c->pitch + d, -24, 24), false);
+  }
+  if (!folded) {
+    char b[48];
     std::snprintf(b, sizeof b, "%+d ct", c->fine);
     if (const int d = stepper(a, "##cffine", "Fine", b, ImVec2(cx1, rowY(1)), cw[1], rowH, "Cents (-200 to +200); Shift: by 10", -1, true)) {
       const int v = std::clamp(c->fine + d * (io.KeyShift ? 10 : 1), -200, 200);
@@ -2486,14 +2531,18 @@ void channelFrame(App& a, ObjectId id, ImVec2 p0, ImVec2 p1) {
       }
     };
     keyRow(0, "##cfklo", "Lowest key", true);
-    keyRow(1, "##cfkhi", "Highest key", false);
-    readout(a, "Notes in the song", fmtInt(notesOf(a, id)), ImVec2(cx2, rowY(2)), cw[2], rowH);
+    if (!folded) {
+      keyRow(1, "##cfkhi", "Highest key", false);
+      readout(a, "Notes in the song", fmtInt(notesOf(a, id)), ImVec2(cx2, rowY(2)), cw[2], rowH);
+    }
   }
   // The plugin.
   {
     if (bevelButton(a, "##cfplug", "Open plugin window", ImVec2(cx3, rowY(0)), ImVec2(cx3 + c3w, rowY(0) + rowH), false,
                     "The instrument's own editor in its own window (never restyled)"))
       openPluginWindow(a, id);
+  }
+  if (!folded) {
     const bool sampler = c->plugin.type == "gl.sampler" && !c->plugin.data.empty();
     if (!sampler) ImGui::BeginDisabled();
     if (bevelButton(a, "##cfconv", "Convert to Tracker Sampler...", ImVec2(cx3, rowY(1)), ImVec2(cx3 + c3w, rowY(1) + rowH), false,
@@ -2505,14 +2554,6 @@ void channelFrame(App& a, ObjectId id, ImVec2 p0, ImVec2 p1) {
     }
     if (!sampler) ImGui::EndDisabled();
     if (bevelButton(a, "##cfexit", "Exit", ImVec2(cx3, rowY(2)), ImVec2(cx3 + c3w, rowY(2) + rowH), false, "Back to the pattern (Esc)")) close(a);
-  }
-  // Status.
-  {
-    const ImVec2 s0(p0.x, box1 + space::kGap), s1(p1.x, box1 + space::kGap + statusH);
-    bevelBox(dl, s0, s1, true);
-    const char* t = c->plugin.type == "gl.sampler" ? i18n::tr("A Sampler: Sample (the header) opens its audio; Convert makes it a Tracker Sampler with the Sample and Instrument editors")
-                                                   : i18n::tr("The channel's controls; the instrument's own controls are in its plugin window");
-    theme::textEllipsis(dl, a.fontRegular, std::round(fs * 0.9f), ImVec2(s0.x + 6, std::round(s0.y + (statusH - fs) * 0.5f) + 1), s1.x - s0.x - 12, P.textDim, t);
   }
   convertModal(a, id);
 }
@@ -2658,6 +2699,25 @@ float need(App& a) {
   return ImGui::GetFrameCount() - s.drawnFrame <= 2 && (s.shown == Shown::Sample || s.shown == Shown::Frame || s.shown == Shown::Instrument) ? s.need : 0.0f;
 }
 
+void setFrameRoom(float room) { st().frameRoom = room; }
+
+float frameWholeNeed() { return frameContentH(ImGui::GetFontSize(), false) + st().bandPad; }
+
+bool frameFolded(App& a) {
+  const int mode = static_cast<int>(a.settings.getNumber("tracker.frameFold"));
+  if (mode == 1 || mode == 2) {
+    return mode == 1;
+  }
+  return st().frameRoom < frameWholeNeed();
+}
+
+void toggleFrameFold(App& a) {
+  // The person's choice; the one the window would make anyway goes back to "by the window".
+  const bool want = !frameFolded(a);
+  const bool byWindow = st().frameRoom < frameWholeNeed();
+  a.settings.set("tracker.frameFold", static_cast<double>(want == byWindow ? 0 : want ? 1 : 2));
+}
+
 void tend(App& a) {
   St& s = st();
   tendPreview(a);
@@ -2700,10 +2760,10 @@ bool host(App& a, ObjectId channel) {
     } else if (insEd) {
       s.need = std::max(std::round(fs * 19.0f), std::round(workH * (workH < 760 ? 0.36f : 0.43f)));
     } else {
-      // cp23: the Channel frame's own height (title, the box of three rows, the status line; channelFrame()).
-      // The band's window adds its own padding round the content (the band is sized whole).
-      s.need = std::round(fs + 8) + space::kGap + 2 * space::kPad + 3 * std::round(fs + 7) + 2 * 3 + space::kGap + std::round(fs + 6) +
-               std::max(0.0f, std::ceil(ImGui::GetWindowHeight() - av.y));
+      // cp23: the Channel frame's own height (channelFrame()). The band's window adds its own padding
+      // round the content (the band is sized whole). cp24: folded, its title and first row.
+      s.bandPad = std::max(0.0f, std::ceil(ImGui::GetWindowHeight() - av.y));
+      s.need = frameContentH(fs, frameFolded(a)) + s.bandPad;
     }
     s.hasKb = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput;
     if (sampleEd) {
@@ -3087,6 +3147,16 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
       tp::snapshotCounts(&built, &served);
       std::printf("tracker editors frame %d: columns built %lld snapshots built %lld served %lld\n", frame, s.cols.builds, built, served);
     }
+    std::fflush(stdout);
+    return;
+  }
+  if (cmd == "fold") {  // cp24: "fold" as the frame's fold button; "fold show" reports
+    if (args.size() < 3 || args[2] != "show") {
+      toggleFrameFold(a);
+    }
+    std::printf("tracker editors frame %d: fold %d setting %d room %.0f whole %.0f need %.0f\n", frame, frameFolded(a) ? 1 : 0,
+                static_cast<int>(a.settings.getNumber("tracker.frameFold")), static_cast<double>(s.frameRoom), static_cast<double>(frameWholeNeed()),
+                static_cast<double>(s.need));
     std::fflush(stdout);
     return;
   }

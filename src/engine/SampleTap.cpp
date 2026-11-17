@@ -30,13 +30,13 @@ struct PassData {
   std::vector<size_t> words;
   std::unique_ptr<Slot[]> slots;
   std::atomic<bool> full{false};
-  std::atomic<uint64_t> marks{0};
-  std::atomic<bool> readsOnly{false};  // K-319  // K-319: reads marked (the receipt render's tail follows it)
+  std::atomic<uint64_t> marks{0};       // K-319: reads marked (the receipt render's tail follows it)
+  std::atomic<bool> readsOnly{false};  // K-319
 };
 
 namespace {
 
-std::atomic<PassData*> g_pass{nullptr};
+thread_local PassData* t_pass = nullptr;  // K-322: bound per thread (tap::Bind), never process-wide
 thread_local ObjectId t_owner = kNoId;
 thread_local double t_tick = 0;
 
@@ -117,10 +117,10 @@ void addRange(Slot& s, double a, double b) {
 
 }  // namespace
 
-bool active() { return g_pass.load(std::memory_order_relaxed) != nullptr; }
+bool active() { return t_pass != nullptr; }
 
 Slot* slotFor(const Sample* s) {
-  PassData* d = g_pass.load(std::memory_order_acquire);
+  PassData* d = t_pass;
   if (!d || !s || s->path.empty()) return nullptr;
   const int f = fileOf(*d, s->path);
   if (f < 0) return nullptr;
@@ -140,7 +140,7 @@ void play(const Sample* s) {
 }
 
 void mark(Slot* slot, double a, double b) {
-  PassData* d = g_pass.load(std::memory_order_acquire);
+  PassData* d = t_pass;
   if (!slot || !d) return;
   const WatchFile& w = d->files[static_cast<size_t>(slot->file)];
   const double len = w.seconds > 0 ? w.seconds : 1e9;
@@ -169,17 +169,17 @@ void mark(Slot* slot, double a, double b) {
 }
 
 uint64_t marks() {
-  const PassData* d = g_pass.load(std::memory_order_acquire);
+  const PassData* d = t_pass;
   return d ? d->marks.load(std::memory_order_relaxed) : 0;
 }
 
 bool readsOnly() {
-  const PassData* d = g_pass.load(std::memory_order_acquire);
+  const PassData* d = t_pass;
   return d && d->readsOnly.load(std::memory_order_relaxed);
 }
 
 void markShare(Slot* slot, double f0, double f1) {
-  PassData* d = g_pass.load(std::memory_order_acquire);
+  PassData* d = t_pass;
   if (!slot || !d) return;
   const double len = d->files[static_cast<size_t>(slot->file)].seconds;
   mark(slot, f0 * len, f1 * len);
@@ -244,16 +244,22 @@ Pass::Pass(std::vector<WatchFile> files) : d_(std::make_unique<PassData>()) {
   d.slots = std::make_unique<Slot[]>(kMaxPairs);
 }
 
-Pass::~Pass() { end(); }
+Pass::~Pass() = default;
 
-bool Pass::begin() {
-  PassData* expect = nullptr;
-  return g_pass.compare_exchange_strong(expect, d_.get(), std::memory_order_acq_rel) || expect == d_.get();
+uint64_t Pass::marks() const { return d_->marks.load(std::memory_order_relaxed); }
+
+Bind::Bind(const Pass* pass) : on_(pass != nullptr) {
+  if (!on_) {
+    return;
+  }
+  prev_ = t_pass;
+  t_pass = pass->d_.get();
 }
 
-void Pass::end() {
-  PassData* expect = d_.get();
-  g_pass.compare_exchange_strong(expect, nullptr, std::memory_order_acq_rel);
+Bind::~Bind() {
+  if (on_) {
+    t_pass = prev_;
+  }
 }
 
 void Pass::setReadsOnly(bool on) { d_->readsOnly.store(on, std::memory_order_relaxed); }

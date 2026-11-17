@@ -41,6 +41,7 @@ struct RenderOptions {
   std::function<void(double)> progress;
   const std::atomic<bool>* cancel = nullptr;
   FrozenAudio frozen;  // K-87
+  const tap::Pass* tapPass = nullptr;  // K-322: the Track Receipt pass this render's reads go to (bound on its threads only)
 };
 
 // Renders the song (or one pattern) from the start, without looping.
@@ -93,6 +94,7 @@ struct RenderJob {
   // (instead of when its output is over silenceDb). The Track Receipt's pass, which renders
   // only the sample voices, runs its tail while they still read their files.
   std::function<bool()> tailBusy;
+  const tap::Pass* tapPass = nullptr;  // K-322: the Track Receipt pass this render's reads go to (bound on its threads only)
 };
 
 struct RenderResult {

@@ -564,7 +564,7 @@ int main() {
     bool snapped = false;
     for (const Note& x : doc.song().pattern(p3)->notes.at(ch)) snapped = snapped || (x.pitch == 74 && x.start == beat / 2);
     expect(snapped, "capture: starts round to the grid");
-    for (int i = 0; i < 600; ++i) cap.noteOn(ch, 60, 100, 30.0 + i * 0.01);
+    for (int i = 0; i < static_cast<int>(NoteCapture::kMax) + 88; ++i) cap.noteOn(ch, 60, 100, 30.0 + i * 0.01);
     expect(cap.size() == static_cast<int>(NoteCapture::kMax), "capture: keeps the latest notes only");
   }
 

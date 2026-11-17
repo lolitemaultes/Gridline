@@ -7,6 +7,9 @@ name: Release
 #   - with a prerelease label the release is a GitHub pre-release and never "Latest", so only
 #     people with "Include beta versions" ticked are offered it (docs/updates.md);
 #   - "Run workflow" with dry_run (the default) only uploads the files as workflow artifacts.
+# Next to the app, every release carries the plugin downloads of Gridline Suite and Suite Mini: per
+# suite a pick-your-plugins installer per system and an all-plugins zip per system family
+# (windows-plugins, linux-plugins, bsd-plugins and the macOS job; tools/release/suite-release.py).
 # The version comes only from CMakeLists.txt (tools/release/version.sh); a tag that does not match
 # it fails the run. File names, --version and the tag use the full version; macOS bundle versions,
 # Windows version numbers and the rpm Version use the numbers only. How to cut a beta and the final
@@ -237,6 +240,17 @@ jobs:
           GRIDLINE_CONFIG_HOME="$RUNNER_TEMP/cfg" /tmp/gldmg/Gridline.app/Contents/MacOS/gridline-app --hidden --size 800x600 \
             --screenshot "$RUNNER_TEMP/app.ppm" --frames 5 --no-ui-sounds && test -s "$RUNNER_TEMP/app.ppm" || echo "::warning::no window server for the app check"
           hdiutil detach /tmp/gldmg
+      - name: Plugin downloads (Gridline Suite and Suite Mini, K-308)
+        # The pick-your-plugins .pkg and the all-plugins zip of each suite (tools/release/suite-release.py;
+        # the same steps run in packaging.yml as a test). Bundles signed ad hoc; the .pkg is unsigned.
+        run: |
+          python3 tools/release/suite-release.py stage build suite-in --cli build/gridline
+          python3 tools/release/suite-release.py build --family macos --version "$VER" --input suite-in --out suite-dist --license LICENSE --sign
+          python3 tools/release/suite-release.py check --family macos --version "$VER" --dir suite-dist --catalogues suite-in
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gridline-suite-macos
+          path: suite-dist/Gridline-Suite-*
       - name: Symbol files (a crash code resolves to functions and lines, tools/crash_symbolize.py)
         run: |
           mkdir -p symbols
@@ -310,6 +324,16 @@ jobs:
           sed -e "s/@VERSION@/$VER/g" -e "s/@ARCH@/${{ matrix.arch }}/g" tools/release/README-windows.txt | sed 's/$/\r/' > "$stage/README.txt"
           echo "STAGE=$stage" >> "$GITHUB_ENV"
           echo "NAME=$name" >> "$GITHUB_ENV"
+      - name: Suite bundles for the plugin downloads (K-308, packed in the windows-plugins job)
+        run: |
+          cli=()
+          if [ "${{ matrix.arch }}" = "x64" ]; then cli=(--cli build/gridline.exe); fi  # (the ARM64 build cannot run here)
+          python tools/release/suite-release.py stage build suite-in "${cli[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suite-bundles-windows-${{ matrix.arch }}
+          path: suite-in
+          retention-days: 3
       - name: Check version resources
         shell: pwsh
         run: |
@@ -389,6 +413,47 @@ jobs:
           path: |
             dist/*.zip
             dist/*-setup.exe
+
+  windows-plugins:
+    # K-308: Gridline Suite and Suite Mini for Windows: one pick-your-plugins setup per suite for x64
+    # and ARM64 (Inno Setup; the VST3 bundle carries both processors) and the all-plugins zip, from
+    # both builds' suite bundles. The setup is installed silently for this user and removed again.
+    name: Plugin downloads (Windows)
+    needs: [version, windows]
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: suite-bundles-windows-x64
+          path: suite-in/x64
+      - uses: actions/download-artifact@v4
+        with:
+          name: suite-bundles-windows-arm64
+          path: suite-in/arm64
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          choco upgrade innosetup --no-progress -y | Select-Object -Last 2 | Write-Host
+          $iscc = Get-ChildItem -Path @(${env:ProgramFiles(x86)}, $env:ProgramFiles) -Directory -Filter "Inno Setup*" -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName "ISCC.exe") } | Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $iscc) { throw "Inno Setup not found" }
+          "ISCC=$(Join-Path $iscc 'ISCC.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Setups and all-plugins zips
+        run: |
+          python tools/release/suite-release.py build --family windows --version "$VER" --input x64=suite-in/x64 --input arm64=suite-in/arm64 \
+            --out suite-dist --license LICENSE --iscc "$ISCC"
+          python tools/release/suite-release.py check --family windows --version "$VER" --dir suite-dist --catalogues suite-in/x64 --install
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gridline-suite-windows
+          path: suite-dist/Gridline-Suite-*
 
   windows-arm64-check:
     name: Windows arm64 (run on ARM)
@@ -482,6 +547,10 @@ jobs:
           install -m 755 tools/release/install-unix.sh "stage/$name/install.sh"  # K-14: menus, icons, file type
           tar -C stage -czf "dist/$name.tar.gz" "$name"
           bash tools/ci/check-linux-icons.sh "stage/$name"  # K-14: window class, desktop entry and icons agree
+      - name: Suite bundles for the plugin downloads (K-308, packed in the linux-plugins job)
+        shell: docker exec gl-build bash -e {0}
+        run: |
+          python3 tools/release/suite-release.py stage build suite-in --cli build/gridline --tar "suite-bundles-linux-${{ matrix.arch }}.tar"
       - name: Desktop entry and AppStream metadata
         run: |
           desktop-file-validate assets/linux/gridline.desktop
@@ -592,6 +661,39 @@ jobs:
             dist/*.deb
             dist/*.rpm
             dist/*.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suite-bundles-linux-${{ matrix.arch }}
+          path: suite-bundles-linux-${{ matrix.arch }}.tar
+          retention-days: 3
+
+  linux-plugins:
+    # K-308: Gridline Suite and Suite Mini for Linux: a pick-your-plugins .run per processor and one
+    # all-plugins zip with both processors, from both builds' suite bundles (tars keep the execute
+    # bits). One .run is installed into a scratch folder and removed again.
+    name: Plugin downloads (Linux)
+    needs: [version, linux]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: suite-bundles-linux-*
+          path: suite-tars
+          merge-multiple: true
+      - name: Installers and all-plugins zips
+        run: |
+          for a in x86_64 aarch64; do mkdir -p "suite-in/$a" && tar -C "suite-in/$a" -xf "suite-tars/suite-bundles-linux-$a.tar"; done
+          python3 tools/release/suite-release.py build --family linux --version "$VER" --input x86_64=suite-in/x86_64 --input aarch64=suite-in/aarch64 \
+            --out suite-dist --license LICENSE
+          python3 tools/release/suite-release.py check --family linux --version "$VER" --dir suite-dist --catalogues suite-in/x86_64 --install
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gridline-suite-linux
+          path: suite-dist/Gridline-Suite-*
 
   bsd:
     name: ${{ matrix.name }}
@@ -638,10 +740,59 @@ jobs:
           prepare: sh tools/ci/install-deps.sh netbsd
           run: sh tools/ci/bsd-build.sh
       - run: ls -l dist && test -s dist/Gridline-*-${{ matrix.os }}-*.tar.gz
+      - name: Suite bundles for the plugin downloads (K-308, packed in the bsd-plugins job)
+        run: |
+          f="$(ls dist/Gridline-*-${{ matrix.os }}-*.tar.gz)"
+          label="$(basename "$f" .tar.gz)"; label="${label#Gridline-"$GRIDLINE_PACKAGE"-}"  # freebsd-x86_64
+          mkdir -p unpacked && tar -C unpacked -xzf "$f"
+          python3 tools/release/suite-release.py stage "unpacked/$(basename "$f" .tar.gz)" suite-in --tar "suite-bundles-$label.tar"
       - uses: actions/upload-artifact@v4
         with:
           name: gridline-${{ matrix.os }}
           path: dist/Gridline-*.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suite-bundles-bsd-${{ matrix.os }}
+          path: suite-bundles-*.tar
+          retention-days: 3
+
+  bsd-plugins:
+    # K-308: Gridline Suite and Suite Mini for FreeBSD, OpenBSD and NetBSD: a pick-your-plugins .run
+    # per system and one all-plugins zip with a folder per system. The suite bundles come from the
+    # BSD archives; the member catalogues (the same on every system) from the Linux build.
+    name: Plugin downloads (BSD)
+    needs: [version, linux, bsd]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      VER: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: suite-bundles-bsd-*
+          path: suite-tars
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: suite-bundles-linux-x86_64
+          path: suite-tars
+      - name: Installers and all-plugins zip
+        run: |
+          mkdir -p cat && tar -C cat -xf suite-tars/suite-bundles-linux-x86_64.tar catalogue-gridline.json catalogue-mini.json
+          inputs=()
+          for t in suite-tars/suite-bundles-*bsd-*.tar; do
+            label="$(basename "$t" .tar)"; label="${label#suite-bundles-}"   # freebsd-x86_64
+            mkdir -p "suite-in/$label" && tar -C "suite-in/$label" -xf "$t" && cp cat/catalogue-*.json "suite-in/$label/"
+            inputs+=(--input "$label=suite-in/$label")
+          done
+          test "${#inputs[@]}" -eq 6 || { echo "::error::expected the suite bundles of three BSD systems"; exit 1; }
+          python3 tools/release/suite-release.py build --family bsd --version "$VER" "${inputs[@]}" --out suite-dist --license LICENSE
+          python3 tools/release/suite-release.py check --family bsd --version "$VER" --dir suite-dist --catalogues cat
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gridline-suite-bsd
+          path: suite-dist/Gridline-Suite-*
 
   debian:
     # The Linux .deb and AppImage of this release, installed with apt into fresh Debian 11, 12 and 13
@@ -711,15 +862,21 @@ jobs:
 
   release:
     name: Checksums and release
-    needs: [version, media-tools, macos, windows, linux, bsd, debian, chromeos]
+    needs: [version, media-tools, macos, windows, windows-plugins, linux, linux-plugins, bsd, bsd-plugins, debian, chromeos]
     runs-on: ubuntu-latest
     env:
       VER: ${{ needs.version.outputs.version }}
       PRERELEASE: ${{ needs.version.outputs.prerelease }}
     steps:
+      # The release files (gridline-*) and the notes; not the build-only artifacts (suite bundles, media tool folders).
       - uses: actions/download-artifact@v4
         with:
+          pattern: gridline-*
           path: dl
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: dl/release-notes
       - name: Collect and checksum
         run: |
           mkdir -p files
@@ -727,6 +884,22 @@ jobs:
           cp dl/release-notes/notes.md .
           cd files
           for f in *; do case "$f" in *"$VER"*) ;; *) echo "::error::$f has no version in its name"; exit 1 ;; esac; done
+          # Gridline Suite and Suite Mini (K-308): per suite, the macOS .pkg, the Windows setup, five .run
+          # installers and four all-plugins zips.
+          for s in Gridline-Suite Gridline-Suite-Mini; do
+            for f in "$s-$VER-macos-universal.pkg" "$s-$VER-windows-setup.exe" \
+                     "$s-$VER-linux-x86_64-setup.run" "$s-$VER-linux-aarch64-setup.run" \
+                     "$s-$VER-freebsd-x86_64-setup.run" "$s-$VER-openbsd-x86_64-setup.run" "$s-$VER-netbsd-x86_64-setup.run" \
+                     "$s-$VER-macos-all.zip" "$s-$VER-windows-all.zip" "$s-$VER-linux-all.zip" "$s-$VER-bsd-all.zip"; do
+              test -s "$f" || { echo "::error::missing release file $f"; exit 1; }
+            done
+          done
+          # GitHub's limits: 2 GiB per release file, 1000 files per release.
+          n="$(find . -maxdepth 1 -type f | wc -l)"
+          if [ "$n" -gt 900 ]; then echo "::error::$n release files, near GitHub's 1000 per release"; exit 1; fi
+          big="$(find . -type f -size +1900M)"
+          if [ -n "$big" ]; then echo "::error::near GitHub's 2 GiB limit per release file: $big"; exit 1; fi
+          { echo "### Release files ($n)"; echo; echo '```'; ls -l | awk 'NR > 1 { printf "%10.1f MB  %s\n", $5 / 1e6, $9 }'; du -ch . | tail -1; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           sha256sum Gridline-* > "Gridline-$VER-SHA256SUMS"
           cat "Gridline-$VER-SHA256SUMS"
           sha256sum -c "Gridline-$VER-SHA256SUMS"

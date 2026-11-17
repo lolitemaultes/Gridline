@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
 #include <random>
 #include <string>
 #include <vector>
@@ -1624,6 +1625,47 @@ void testRenameJoinAndStop() {
   expect(t.a.s->projectName() == "Renamed mid-join" && t.c.s->projectName() == "Racing the stop", "a rename after Stop sharing does not reach the stopped copy");
 }
 
+// K-322: the Track Receipt's typed fields (Song::trackReceipt) travel like the other song fields:
+// one peer's edit reaches the others (applied incrementally), an edit goes back the other way,
+// clearing them travels too, and the projects every peer saves are the same.
+void testTrackReceiptFields() {
+  Trio t(67, "receipt");
+  settle(t.net, t.all(), t.clock);
+  const std::string fields =
+      "{\"files\":{\"/media/Artist-Title-Drums--90bpm-Am-[Clearance Required].wav\":{\"song\":\"Artist-Title\",\"ticked\":1}},"
+      "\"songs\":{\"Artist-Title\":{\"category\":\"B\",\"share\":\"10\"}},\"v\":1}";
+  t.b.doc.editSong("Track Receipt", [&](Song& x) { x.trackReceipt = fields; });
+  settle(t.net, t.all(), t.clock);
+  expect(t.a.doc.song().trackReceipt == fields && t.c.doc.song().trackReceipt == fields, "receipt: one peer's fields reach every peer");
+  expect(converged(t), "receipt: the peers converge");
+  // An edit by another peer (a typed share) goes back the other way.
+  std::string edited = fields;
+  edited.replace(edited.find("\"10\""), 4, "\"25\"");
+  t.a.doc.editSong("Track Receipt", [&](Song& x) { x.trackReceipt = edited; });
+  settle(t.net, t.all(), t.clock);
+  expect(t.b.doc.song().trackReceipt == edited && t.c.doc.song().trackReceipt == edited, "receipt: an edit travels back");
+  expect(t.a.s->corrections() == 0 && t.b.s->corrections() == 0 && t.c.s->corrections() == 0,
+         "receipt: applied incrementally, matching the whole-project result");
+  // The saves are the same on every computer.
+  std::string err;
+  std::vector<std::string> text;
+  for (Peer* p : t.all()) {
+    Song s = p->doc.song();
+    s.nextId = 0;  // local allocation counters may differ
+    const std::string path = p->folder + "/receipt_save.gridline";
+    expect(saveProject(path, s, &err), "receipt: the project saves");
+    std::ifstream in(path, std::ios::binary);
+    text.emplace_back((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  }
+  expect(text.size() == 3 && !text[0].empty() && text[0] == text[1] && text[1] == text[2] &&
+             text[0].find("\"share\": \"25\"") != std::string::npos,
+         "receipt: every peer saves the same project, with the fields");
+  // Clearing them travels too.
+  t.c.doc.editSong("Track Receipt", [&](Song& x) { x.trackReceipt.clear(); });
+  settle(t.net, t.all(), t.clock);
+  expect(t.a.doc.song().trackReceipt.empty() && t.b.doc.song().trackReceipt.empty() && converged(t), "receipt: clearing the fields travels");
+}
+
 }  // namespace
 
 int main() {
@@ -1659,5 +1701,6 @@ int main() {
   testRenameOffline();
   testRenameConflict();
   testRenameJoinAndStop();
+  testTrackReceiptFields();
   return finish();
 }

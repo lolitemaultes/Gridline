@@ -15,8 +15,11 @@ namespace gl::recordcard {
 // The record button was clicked (after it switched): opens the card when record.window says so.
 void recordClicked(App& a, bool shift);
 void open(App& a);
-// The Record window itself (Record window... in the record options menu).
-void openWindow(App& a);
+// The Record window itself (Record window... in the record options menu). `page` >= 0 opens that page
+// (0 Ready, 1 Mode and punch, 2 Count-in, 3 Takes, 4 Inputs and monitoring, 5 Notes, 6 Files).
+void openWindow(App& a, int page = -1);
+// K-123 (0.7.7) dev checks: the Record window page shown (0 ready, 1 mode, 2 start, 3 takes, 4 inputs, 5 notes, 6 files).
+void showPage(int page);
 void close();
 bool isOpen();
 bool isHidden();  // folded to the REC pill

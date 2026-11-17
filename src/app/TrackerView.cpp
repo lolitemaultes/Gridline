@@ -26,6 +26,7 @@
 #include "Keys.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
+#include "MidiArm.h"
 #include "MenuParityUi.h"
 #include "PixelGrid.h"
 #include "../packs/PacksUi.h"
@@ -1308,7 +1309,13 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
     const trk::Result r = applyEdit(a, v, ti, "volume", [&](Rows& x, const trk::Track& tr, const trk::Grid&) {
       return trk::setVolume(x.notes, x.steps, tr, row, c.column, std::min(want, 127));
     });
-    if (r.refused.empty()) advance();
+    if (r.refused.empty()) {
+      // cp24 (usability): the value as it now is, and how to reach the other digit (a first session
+      // typed "2 0" for 20 and got 24 on this row and "no note here" on the next).
+      say(std::string(i18n::tr("Volume")) + " " + trk::hex2(std::min(want, 127)) + " " + i18n::tr("of 7F") + "   " +
+          i18n::tr(c.digit == 0 ? "Right: the low digit (each digit moves down by the edit step)" : "Left: the high digit"));
+      advance();
+    }
     return true;
   }
   if (c.field == Field::Pan) {
@@ -1318,7 +1325,11 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
     const trk::Result r = applyEdit(a, v, ti, "pan", [&](Rows& x, const trk::Track& tr, const trk::Grid&) {
       return trk::setPan(x.notes, x.props, tr, row, c.column, std::min(want, 128));
     });
-    if (r.refused.empty()) advance();
+    if (r.refused.empty()) {
+      say(std::string(i18n::tr("Pan")) + " " + trk::hex2(std::min(want, 128)) + " " + i18n::tr("(40 centre)") + "   " +
+          i18n::tr(c.digit == 0 ? "Right: the low digit (each digit moves down by the edit step)" : "Left: the high digit"));
+      advance();
+    }
     return true;
   }
   return false;
@@ -2457,6 +2468,11 @@ void patternEditor(App& a) {
     // cp17: a track zoomed narrow keeps its number, name start and lamp; the column buttons go.
     const bool narrowHead = tw < cwH * 11;
     const float btnW = narrowHead ? 0.0f : std::round(cwH * 1.6f);
+    // K-123 (4.5): the record dot before the column buttons: armed (red), or on the header's hover.
+    const bool noteArmed = midiarm::armed(a, ch->id);
+    const bool armShown = midiarm::applies(a) && tw >= cwH * 8 &&
+                          (noteArmed || (ImGui::IsMouseHoveringRect(h0, h1) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)));
+    const float armW = armShown ? std::round(fs * 0.9f) + 4 : 0.0f;
     const ImU32 nameInk = muted ? P.textFaint : static_cast<int>(ti) == s.cur.track ? P.text : P.textDim;
     // cp21 (review R21-01): a narrow header (Fit, the far zoom steps) always shows the track's number
     // in the monospaced face, the name after it only while a few letters fit. Before, Fit left most
@@ -2468,12 +2484,12 @@ void patternEditor(App& a) {
     const float textY = std::round(h0.y + 3 + (headH - 4 - fs) * 0.5f);
     if (narrowHead) {
       dl->AddText(mono, numFs, ImVec2(h0.x + edge, std::round(h0.y + 3 + (headH - 4 - numFs) * 0.5f)), nameInk, number.c_str());
-      const float room = tw - edge * 2 - numTw - 4 - (lampW > 0 ? lampW + 3 : 0);
+      const float room = tw - edge * 2 - numTw - 4 - (lampW > 0 ? lampW + 3 : 0) - armW;
       if (room >= a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, "Abc").x) {
         theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(h0.x + edge + numTw + 4, textY), room, nameInk, ch->name.c_str());
       }
     } else {
-      theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(h0.x + 6, textY), tw - 12 - lampW - btnW * 2 - 8, nameInk, name.c_str());
+      theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(h0.x + 6, textY), tw - 12 - lampW - btnW * 2 - 8 - armW, nameInk, name.c_str());
     }
     const ImVec2 l0(h1.x - edge - lampW, std::round(h0.y + 3 + (headH - 4 - lampW) * 0.5f)), l1(l0.x + lampW, l0.y + lampW);
     // cp16: a lamp in a sunken bevel (lit green while it plays, dark when muted, the solo colour).
@@ -2491,6 +2507,16 @@ void patternEditor(App& a) {
     ui::Hint(soloed ? "Soloed: every other channel is muted \xC2\xB7 right-click: back to normal \xC2\xB7 click: mute"
              : muted ? "Muted \xC2\xB7 click: unmute \xC2\xB7 right-click: solo this channel"
                      : "Playing \xC2\xB7 click: mute \xC2\xB7 right-click: solo this channel");
+    if (armShown) {  // K-123: the record dot
+      const float r = std::round(fs * 0.3f);
+      const ImVec2 c(std::round(l0.x - 4 - btnW * 2 - armW * 0.5f - 1), std::round((l0.y + l1.y) * 0.5f));
+      ImGui::SetCursorScreenPos(ImVec2(c.x - armW * 0.5f, l0.y - 2));
+      if (ImGui::InvisibleButton("##notearm", ImVec2(armW, lampW + 4))) midiarm::toggle(a, ch->id, io.KeyAlt);
+      const bool armHot = ImGui::IsItemHovered();
+      midiarm::drawDot(dl, c, r, noteArmed, armHot);
+      if (armHot) hoverTrackHead = static_cast<int>(ti);
+      ui::Hint(midiarm::dotHint(noteArmed));
+    }
     // + and - note columns.
     for (int b = 0; b < (narrowHead ? 0 : 2); ++b) {
       const ImVec2 b0(l0.x - 4 - btnW * static_cast<float>(2 - b), h0.y + 3), b1(b0.x + btnW, h1.y);

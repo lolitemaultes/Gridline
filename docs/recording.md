@@ -106,6 +106,61 @@ and post-roll around the range.
 
 Set the punch range before you press Play.
 
+### Quick punch
+
+With **Quick punch** on (Record window > Mode and punch, or the record button's menu), you can punch
+in and out while the song plays: press the record key (or the record button, or the card's **Punch in**
+/ **Punch out** button) to start recording at that moment and press it again to stop, as often as you
+like. Playback goes on, and every piece you record in one pass belongs to that pass (they don't open
+take lanes). When the transport comes round to an earlier point (a loop), the next punch is the
+next pass.
+
+### Punch crossfades
+
+Where a take starts or ends at a punch (the punch range or a quick punch), it crossfades with the
+audio already on the track instead of cutting in: the old audio fades out while the take fades in,
+over a short crossfade centred on the punch point, on whole ticks. **Crossfade** on the Mode and
+punch page sets its length: Off, 5, **10** (the default), 20 or 50 ms. To have audio before the punch
+for the fade, Gridline uses what the armed track heard just before it (see Capture while armed), so
+the take reaches back half the crossfade. The old audio under the take is split and the middle part
+is removed; undo brings it back. A take that starts when you press Play, or a loop pass that starts
+at the loop start, has nothing before it and starts as it always did.
+
+## Capture while armed
+
+An armed track keeps what its input hears while the transport plays, even when Record is off, for
+the last **Keep** seconds (Record window > Files: Off, 30 s, **1 min**, 2 min; the memory it takes
+per armed track shows beside it). If you played something great without recording, **Recover the
+last pass** (Record window > Mode and punch, or **Recording options > Capture while armed**) puts the newest stretch
+the transport played on the playlist as audio clips, where it was played, latency compensated like
+any take: one undo step. The audio is kept in memory only, never in the song.
+
+## Start on the first note
+
+With **On the first note** on (Record window > Count-in), pressing Play with the record button armed
+waits: the transport starts with the first note you play on a MIDI keyboard or the typing keyboard,
+and that note is recorded at the start. **Or a sound above** also lets an armed track's input start
+it, on the audio block where the input first reaches the level (-40, -30, -20 or -12 dB; **Notes only**
+turns it off). The card says **Waiting for the first note**, with **Start now** and **Cancel**;
+Stop cancels too.
+
+## Measuring the latency with a loopback cable
+
+Recordings are moved earlier by the audio device's latency so they line up with what you heard.
+Gridline estimates it from the device buffers; to measure the real round trip, open **Settings >
+Audio > Measure...** (or the Record window's Inputs page, or the record button's menu):
+
+1. Connect an output of your interface to one of its inputs with a cable.
+2. Turn the speakers down: a short burst of noise plays through the outputs.
+3. Pick the input the cable comes back on and press **Measure**.
+
+Gridline plays the burst three times and finds it in what comes back, to the sample (an interface
+that turns the polarity over is found as well). When at least two measurements agree, **Use this**
+makes the round trip the latency for recordings (plus the song's own delay compensation and the
+manual offset, as before). The measurement belongs to the devices, sample rate and buffer size it
+was made with: change any of them and the estimate applies again until you measure again. **Back to
+the estimate** forgets it.
+
 ## Record safe
 
 A track that must not be recorded over can be made **record safe**: right-click its record button in
@@ -145,9 +200,68 @@ stack on the tracks below instead, as before. A song saved before take lanes kee
 separate tracks; **Takes > Move the takes into lanes** in a take's clip menu puts them on one track as
 lanes.
 
+### Rating, soloing and auditioning takes
+
+Each lane header has three small **rating dots** and an **S**:
+
+- Click a dot to rate the take one to three dots; click the lit last dot again for no rating. A rating
+  is one undo step, saved with the song and shared in a collaboration session, and every piece of the
+  take keeps it when you comp.
+- Click **S** to **solo** the take: only that take plays on the track, wherever it has audio, while the
+  comp stays exactly as it is. Click it again to go back to the comp. Soloing is listening only: it is
+  not saved, not undone and nobody else hears it.
+- Right-click a lane for **Rating**, **Solo this take** and **Audition from its start**, which plays the
+  take alone from where it starts; stopping the transport ends the audition and the song position goes
+  back to where it was. (Turn Record off to audition.)
+
+The **Takes** page of the Record window lists every track's takes in every layout (Clips and the
+Tracker have no lanes): each take with its range, whether it plays in the comp, its rating, and
+**Solo** and **Audition** buttons.
+
 The takes, the comp and the lanes are saved with the song exactly as they are. In a shared session
 they are part of the song: each take's audio file is shared with the others, and everyone sees and
 can change the same comp. When two people change the same part of the comp, the newest change wins.
+
+## Recording notes
+
+### Arming instruments
+
+With nothing armed, the notes you play go to the selected channel, as always. To play and record
+other instruments, **arm** them: what you play goes to every armed instrument and records there.
+
+- **Channel rack:** hover a channel and click the dot at the right end of its name. An armed channel
+  keeps a red dot.
+- **Playlist (Studio):** an instrument track shows the same dot at the right end of its lower line when
+  you hover the header, and keeps it red while armed.
+- **Tracker:** the dot sits in each track's header, before the column buttons.
+- **Smooth:** the R button of an instrument track's header arms it (the same switch).
+- **Clips** arms its MIDI tracks with their own arm buttons.
+
+Alt+click arms only that one. Arming belongs to your computer: it is not saved, and in a shared session
+everyone arms their own instruments.
+
+### What records from MIDI
+
+**Recording options > What to record** (or the Notes page of the Record window) chooses what a recording
+takes from MIDI devices and the typing keyboard: **Notes**, **Automation (controller moves)**, and under
+**Other messages**, **Pitch bend**, **Pressure (aftertouch)** and **Program changes**. Pitch bend and pressure of an MPE controller
+record with each note; bend, pressure and program changes linked to a control record as automation.
+What you play still sounds; only the recording leaves out what is off. The choice is yours: it is kept
+in this computer's settings, so in a shared session each person has their own.
+
+### Recover what I just played
+
+Gridline keeps the notes you played in the last two minutes while nothing was recording. **Recording
+options > Recover what I just played** (or the Notes page of the Record window) puts the last phrase
+back as notes, one undo step:
+
+- played while a pattern played, the notes go into that pattern where you heard them;
+- played while the song played, they go into a new take clip at the bar where you played them, on the
+  channel's instrument track (or a free track), just as if you had been recording;
+- played while the transport was stopped, they go into the selected pattern from its start, timed as
+  you played them.
+
+In Clips the **Capture** button does the same into the clip grid.
 
 ### The record options menu
 

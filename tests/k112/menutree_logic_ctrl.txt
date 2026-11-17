@@ -47,6 +47,9 @@ Gridline > Options > Recording options > Audio, into the tracks as audio regions
 Gridline > Options > Recording options > Audio, into Loupe (armed tracks)			e-
 Gridline > Options > Recording options > Notes			ec
 Gridline > Options > Recording options > Automation (controller moves)			ec
+Gridline > Options > Recording options > Other messages > Pitch bend			ec
+Gridline > Options > Recording options > Other messages > Pressure (aftertouch)			ec
+Gridline > Options > Recording options > Other messages > Program changes			ec
 Gridline > Options > Recording options > Everything			e-
 Gridline > Options > Recording options > Punch in/out at the time selection			ec
 Gridline > Options > Recording options > Pre-roll > Off			ec
@@ -65,6 +68,13 @@ Gridline > Options > Recording options > Count-in > Off			ec
 Gridline > Options > Recording options > Count-in > 1 bar			e-
 Gridline > Options > Recording options > Count-in > 2 bars			e-
 Gridline > Options > Recording options > Count-in > 4 bars			e-
+Gridline > Options > Recording options > Quick punch			e-
+Gridline > Options > Recording options > Punch crossfade > Off			e-
+Gridline > Options > Recording options > Punch crossfade > 5 ms			e-
+Gridline > Options > Recording options > Punch crossfade > 10 ms			ec
+Gridline > Options > Recording options > Punch crossfade > 20 ms			e-
+Gridline > Options > Recording options > Punch crossfade > 50 ms			e-
+Gridline > Options > Recording options > Start on the first note			e-
 Gridline > Options > Recording options > Audio file format > 32-bit float WAV			ec
 Gridline > Options > Recording options > Audio file format > 24-bit WAV			e-
 Gridline > Options > Recording options > Audio file format > 16-bit WAV			e-
@@ -74,6 +84,12 @@ Gridline > Options > Recording options > Disarm tracks after recording			e-
 Gridline > Options > Recording options > Name empty playlist tracks after the take			ec
 Gridline > Options > Recording options > Name takes after > The mixer track			ec
 Gridline > Options > Recording options > Name takes after > The audio input			e-
+Gridline > Options > Recording options > Capture while armed > Off			e-
+Gridline > Options > Recording options > Capture while armed > 30 seconds			e-
+Gridline > Options > Recording options > Capture while armed > 1 minute			ec
+Gridline > Options > Recording options > Capture while armed > 2 minutes			e-
+Gridline > Options > Recording options > Capture while armed > Recover the last pass			--
+Gridline > Options > Recording options > Latency check...			e-
 Gridline > Options > Recording options > Input only			e-
 Gridline > Options > Recording options > Low latency			e-
 Gridline > Options > Recording options > Overdub (keep existing notes)			ec
@@ -81,6 +97,7 @@ Gridline > Options > Recording options > Replace (clear the channel's notes)			e
 Gridline > Options > Recording options > Quantize note starts to the snap			ec
 Gridline > Options > Recording options > Quantize note lengths			e-
 Gridline > Options > Recording options > Loop recording: new take per pass			e-
+Gridline > Options > Recording options > Recover what I just played			--
 Gridline > Options > Recording options > Controller moves go to > Automatic			ec
 Gridline > Options > Recording options > Controller moves go to > Pattern events			e-
 Gridline > Options > Recording options > Controller moves go to > Automation clips			e-
@@ -273,6 +290,9 @@ Record > Recording options > Audio, into the tracks as audio regions			ec
 Record > Recording options > Audio, into Loupe (armed tracks)			e-
 Record > Recording options > Notes			ec
 Record > Recording options > Automation (controller moves)			ec
+Record > Recording options > Other messages > Pitch bend			ec
+Record > Recording options > Other messages > Pressure (aftertouch)			ec
+Record > Recording options > Other messages > Program changes			ec
 Record > Recording options > Everything			e-
 Record > Recording options > Punch in/out at the time selection			ec
 Record > Recording options > Pre-roll > Off			ec
@@ -291,6 +311,13 @@ Record > Recording options > Count-in > Off			ec
 Record > Recording options > Count-in > 1 bar			e-
 Record > Recording options > Count-in > 2 bars			e-
 Record > Recording options > Count-in > 4 bars			e-
+Record > Recording options > Quick punch			e-
+Record > Recording options > Punch crossfade > Off			e-
+Record > Recording options > Punch crossfade > 5 ms			e-
+Record > Recording options > Punch crossfade > 10 ms			ec
+Record > Recording options > Punch crossfade > 20 ms			e-
+Record > Recording options > Punch crossfade > 50 ms			e-
+Record > Recording options > Start on the first note			e-
 Record > Recording options > Audio file format > 32-bit float WAV			ec
 Record > Recording options > Audio file format > 24-bit WAV			e-
 Record > Recording options > Audio file format > 16-bit WAV			e-
@@ -300,6 +327,12 @@ Record > Recording options > Disarm tracks after recording			e-
 Record > Recording options > Name empty playlist tracks after the take			ec
 Record > Recording options > Name takes after > The mixer track			ec
 Record > Recording options > Name takes after > The audio input			e-
+Record > Recording options > Capture while armed > Off			e-
+Record > Recording options > Capture while armed > 30 seconds			e-
+Record > Recording options > Capture while armed > 1 minute			ec
+Record > Recording options > Capture while armed > 2 minutes			e-
+Record > Recording options > Capture while armed > Recover the last pass			--
+Record > Recording options > Latency check...			e-
 Record > Recording options > Input only			e-
 Record > Recording options > Low latency			e-
 Record > Recording options > Overdub (keep existing notes)			ec
@@ -307,6 +340,7 @@ Record > Recording options > Replace (clear the channel's notes)			e-
 Record > Recording options > Quantize note starts to the snap			ec
 Record > Recording options > Quantize note lengths			e-
 Record > Recording options > Loop recording: new take per pass			e-
+Record > Recording options > Recover what I just played			--
 Record > Recording options > Controller moves go to > Automatic			ec
 Record > Recording options > Controller moves go to > Pattern events			e-
 Record > Recording options > Controller moves go to > Automation clips			e-

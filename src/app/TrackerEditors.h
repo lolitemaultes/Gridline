@@ -66,6 +66,16 @@ bool host(App& a, ObjectId channel);
 float need(App& a);
 // Once a frame from the header band: a preview whose screen is gone ends.
 void tend(App& a);
+// cp24: the Channel frame folds to its title and first row. "tracker.frameFold" holds the person's
+// choice (0: by the window, 1: folded, 2: whole). By the window, the header band says each frame how
+// much height the frame may have while the pattern keeps eight rows under its cursor (`room`); the
+// frame folds when its whole height does not fit there.
+void setFrameRoom(float room);
+// The whole Channel frame's height, the band's padding included (once it has been drawn).
+float frameWholeNeed();
+bool frameFolded(App& a);
+// The fold button: folded <-> whole.
+void toggleFrameFold(App& a);
 
 // Keys: the screen had the keyboard on the last frame (its window focused).
 bool hasKeys();

@@ -122,7 +122,11 @@ void part(App& a, const char* window, int index, ImVec2 firstSize, F&& body) {
     const ImGuiWindow* pw = ImGui::GetCurrentWindow();
     gOwnTitle = pw->DockIsActive && pw->DockNode && (pw->DockNode->LocalFlags & ImGuiDockNodeFlags_NoTabBar) != 0;
     // K-106: the tracker parts draw edge to edge (their own frames and boxes).
-    const float padPart = std::strcmp(window, "Pattern editor") == 0 || std::strcmp(window, "Order list") == 0 ? 2.0f : theme::kS2;
+    // (cp24: the lower band too, the Device chain in the Tracker: its screens draw their own boxes; its
+    // 8 px padding left a 16 px strip of empty band round the Channel frame.)
+    const bool edge = std::strcmp(window, "Pattern editor") == 0 || std::strcmp(window, "Order list") == 0 ||
+                      (p == layout::Preset::Tracker && std::strcmp(window, "Device chain") == 0);
+    const float padPart = edge ? 2.0f : theme::kS2;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padPart, padPart));
     ImGui::BeginChild("##part", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleVar();

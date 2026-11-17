@@ -4,11 +4,13 @@
 #include <set>
 #include "LiveRender.h"
 #include "Resample.h"
+#include "SampleTap.h"
 #include "../core/MixerOps.h"
 
 namespace gl {
 
 AudioBuffer renderSong(const Song& source, const RenderOptions& opt) {
+  const tap::Bind tapBind(opt.tapPass);  // K-322: the program build and this thread's share of the graph
   // Live area (performance mode): launched clips play from the song start (J-32).
   Song song = source;
   const Tick start = opt.patternMode ? 0 : prepareOfflineLive(song);
@@ -26,6 +28,7 @@ AudioBuffer renderSong(const Song& source, const RenderOptions& opt) {
       static_cast<int64_t>(std::ceil(map.samplesBetween(static_cast<double>(start), static_cast<double>(end), opt.sampleRate))) + 1;
 
   AudioEngine eng(opt.sampleRate);
+  eng.setTapPass(opt.tapPass);  // K-322
   eng.setProgram(prog);
   eng.setLooping(false);
   eng.setOffline(true);
@@ -141,6 +144,7 @@ int64_t scopeFrames(const Song& song, const RenderJob& job, Tick start, Tick end
 }
 
 RenderResult renderAudio(const Song& source, const RenderJob& job) {
+  const tap::Bind tapBind(job.tapPass);  // K-322: the program build and this thread's share of the graph
   RenderResult res;
   res.sampleRate = job.sampleRate;
   Song song = prepareRenderSong(source, job);
@@ -185,6 +189,7 @@ RenderResult renderAudio(const Song& source, const RenderJob& job) {
   const int64_t tailCap = tails ? static_cast<int64_t>(std::max(0.0, job.maxTailSeconds) * sr) : 0;
 
   AudioEngine eng(sr);
+  eng.setTapPass(job.tapPass);  // K-322: its worker threads bind it per graph task
   eng.setProgram(prog);
   eng.setOffline(true);
   // J-30: fixed engine blocks (identical output for any job.blockSize); the

@@ -26,6 +26,12 @@ struct RecordOptions {
   bool takes = false;           // loop recording: every new loop pass records into a new pattern (a take)
   bool notes = true;            // record notes
   bool automation = true;       // record linked controller moves
+  // K-123 (4.1): the rest of the input filter (each person's own, kept in their settings): pitch bend (an
+  // MPE note's bend, linked bend moves), pressure (aftertouch: an MPE note's, linked pressure) and
+  // program changes (linked). Notes and controllers are `notes` and `automation`.
+  bool bend = true;
+  bool pressure = true;
+  bool program = true;
   AutoRecordTarget autoTarget = AutoRecordTarget::Auto;  // Auto: pattern events in pattern mode, clips in song mode
 };
 
@@ -34,6 +40,20 @@ class Settings;
 // "record.midi.*", "record.countInBars", "record.punch"). `grid` is not kept (the piano roll snap).
 void loadRecordOptions(const Settings& s, RecordOptions& o, int& countInBars, bool& punch);
 void saveRecordOptions(Settings& s, const RecordOptions& o, int countInBars, bool punch);
+
+// K-123 (4.1): what kind of MIDI message a status byte (and first data byte) is, for the input filter.
+enum class MidiRecordKind : uint8_t { Note = 0, Controller, PitchBend, Pressure, Program, Other };
+MidiRecordKind midiRecordKind(uint8_t status, uint8_t data1);
+// Whether a recording takes this message in. The sustain pedal (CC 64) records with the notes.
+bool recordFilterTakes(const RecordOptions& o, uint8_t status, uint8_t data1);
+// The filter as one line ("notes 1 controllers 1 bend 1 pressure 1 program 1"), for the dev output.
+std::string recordFilterText(const RecordOptions& o);
+
+// K-123 (4.5): channels armed for recording notes (`armed`, in rack order). What live notes play: the
+// selected channel when it is armed or nothing is armed, else the first armed one; and whether notes
+// played on `channel` record (with channels armed: only theirs).
+ObjectId armedLiveChannel(const std::vector<ObjectId>& armed, ObjectId selected);
+bool armedRecords(const std::vector<ObjectId>& armed, ObjectId channel);
 
 // Nearest grid line (grid <= 1: unchanged).
 Tick quantizeTick(Tick t, Tick grid);
@@ -200,22 +220,47 @@ class StepRecorder {
 // from its start, timed at `bpm`, note starts rounded to `grid` ticks (0: as played), added to the
 // notes there as one undo step ("capture"). Returns how many notes were written (0: nothing kept)
 // and forgets what was kept.
+// K-123 (4.2): Recover what I just played. Notes kept for two minutes; a note played while the
+// transport played (not recording) also keeps where it was heard (`CaptureTime`), so recover() puts
+// the phrase back where it was played, as a recording would have: pattern mode, into the pattern that
+// played; song mode, into a new take clip at the bar it was played in (on the channel's instrument
+// track, else a free one). A phrase played while stopped goes in as commit() puts it.
+struct CaptureTime {
+  enum Mode : uint8_t { Stopped = 0, Pattern, Song };
+  Mode mode = Stopped;
+  double tick = -1;         // the tick heard (pattern ticks in pattern mode, song ticks in song mode)
+  ObjectId pattern = kNoId;  // pattern mode: the pattern playing
+};
 class NoteCapture {
  public:
-  static constexpr size_t kMax = 512;
-  void noteOn(ObjectId channel, int pitch, int velocity, double seconds);
-  void noteOff(ObjectId channel, int pitch, double seconds);
+  static constexpr size_t kMax = 2048;
+  static constexpr double kKeepSeconds = 120.0;
+  void noteOn(ObjectId channel, int pitch, int velocity, double seconds, const CaptureTime& at = {});
+  void noteOff(ObjectId channel, int pitch, double seconds, double tick = -1);
   void clear() { played_.clear(); }
   int size() const { return static_cast<int>(played_.size()); }
   ObjectId lastChannel() const { return played_.empty() ? kNoId : played_.back().channel; }
   int commit(Document& doc, ObjectId pattern, double bpm, Tick grid, double now, double gapSeconds = 4.0);
+  struct Recovered {
+    int notes = 0;
+    bool timed = false;        // put where it was played
+    ObjectId pattern = kNoId;  // where the notes went
+    ObjectId clip = kNoId;     // song mode: the new take's clip
+  };
+  // `pattern`: the pattern a phrase played while stopped goes into (and, in song mode, the bar layout
+  // of the new take); `o`: the record options (quantize, grid). One undo step; forgets what was kept.
+  Recovered recover(Document& doc, ObjectId pattern, double bpm, const RecordOptions& o, double now, double gapSeconds = 4.0);
 
  private:
   struct Played {
     ObjectId channel;
     int pitch, velocity;
     double on, off;  // seconds; off < 0 while held
+    CaptureTime at;  // where the note started (K-123)
+    double offTick = -1;
   };
+  // The last phrase of the channel played last (indexes into played_, in order).
+  std::vector<size_t> lastPhrase(double now, double gapSeconds) const;
   std::vector<Played> played_;
 };
 

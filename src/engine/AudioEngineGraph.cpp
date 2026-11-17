@@ -181,6 +181,7 @@ void AudioEngine::claimTasks(int worker) {
 
 void AudioEngine::runTask(int task, int worker) {
   const int C = bc_.p->graph.channels;
+  const tap::Bind tapBind(tapPass_);  // K-322: this engine's receipt pass on whichever thread runs the task (none: no-op)
   const uint64_t t0 = offline_ ? 0 : nowNs();
   if (task < C)
     runChannel(static_cast<size_t>(task), worker);

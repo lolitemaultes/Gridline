@@ -16,6 +16,8 @@
 #include "LiveIo.h"
 #include "LiveLook.h"
 #include "LogicPlugins.h"
+#include "MidiArm.h"
+#include "RecordMoreUi.h"
 #include "../core/Automation.h"
 #include "../core/Meter.h"
 #include "../packs/PacksUi.h"
@@ -123,6 +125,7 @@ void App::openRemoteDialogForLink(int index) {
 
 void App::startPlayback() {
   if (engine.playing()) return;
+  if (recmore::holdPlay(*this)) return;  // K-123 (0.7.7): start on the first note
   if (recordArmed && !audioRecFinishing && engine.mode() != PlayMode::Live) {
     // Armed tracks capture from the transport's first block: the punch range and the recording flag
     // are set before Play, not a UI frame later in processAudioRecording (a slow frame there lost the
@@ -238,17 +241,32 @@ double App::recordTick(double stamp) const {
   return heard;
 }
 
+namespace {
+// K-123 (4.2): where a note played while nothing records was heard: the transport playing a pattern or
+// the song (not Clips' clip launching), else nowhere (stopped).
+CaptureTime captureTimeOf(const App& a, double stamp) {
+  CaptureTime t;
+  if (!a.engine.playing() || a.engine.countingIn() || a.engine.mode() == PlayMode::Live) return t;
+  t.mode = a.engine.mode() == PlayMode::Song ? CaptureTime::Song : CaptureTime::Pattern;
+  t.tick = std::max(0.0, a.recordTick(stamp));
+  t.pattern = a.curPattern;
+  return t;
+}
+}  // namespace
+
 void App::playedNoteOn(ObjectId channel, int pitch, int velocity, double stamp) {
   j31::chordEditorNote(*this, pitch, true);  // J-31: learn chords from MIDI input
+  recmore::noteWhileWaiting(*this, channel, pitch, velocity);  // K-123 (0.7.7): the first note starts the take
   if (stepRecord && !engine.playing()) {
     stepRecorder.press(pitch, velocity);
     return;
   }
-  if (recorder.active() && logicplug::recordsChannel(*this, channel)) {  // R11-03: with tracks armed, only theirs record
+  // K-123 (0.7.7): punched out (quick punch), notes play and are not recorded.
+  if (recorder.active() && midiarm::records(*this, channel) && (recordArmed || !recmore::quickPunch(*this))) {  // R11-03 / K-123: with tracks or channels armed, only theirs record
     recorder.noteOn(doc, channel, pitch, velocity, recordTick(stamp));
     logicplug::syncRecordSteps(*this);
   } else if (!recorder.active()) {
-    capture.noteOn(channel, pitch, velocity, now);  // K-112c: kept for Capture
+    capture.noteOn(channel, pitch, velocity, now, captureTimeOf(*this, stamp));  // K-112c: kept for Capture (K-123: and where it was heard)
   }
 }
 
@@ -264,7 +282,7 @@ void App::playedNoteOff(ObjectId channel, int pitch, double stamp) {
     recorder.noteOff(doc, channel, pitch, recordTick(stamp));
     logicplug::syncRecordSteps(*this);
   } else {
-    capture.noteOff(channel, pitch, now);
+    capture.noteOff(channel, pitch, now, captureTimeOf(*this, stamp).tick);
   }
 }
 
@@ -287,8 +305,8 @@ void App::processMidi() {
     midi->poll();
     return;
   }
-  // checkpoint 56 (N55-10): Clips' MIDI monitor; R10-03: Smooth's armed / monitored track
-  engine.setMidiTarget(logicplug::active(*this) ? logicplug::liveChannel(*this) : liveio::midiTarget(*this, selChannel));
+  // checkpoint 56 (N55-10): Clips' MIDI monitor; R10-03: Smooth's armed / monitored track; K-123: armed channels
+  engine.setMidiTarget(livelook::active(*this) && !logicplug::active(*this) ? liveio::midiTarget(*this, selChannel) : midiarm::liveChannel(*this));
 
   // ---- recording session follows the transport ----
   // K-226: from the count-in on, so notes played in its last beat (pickups) are kept.
@@ -296,7 +314,8 @@ void App::processMidi() {
   Tick sessLength = 0;
   double sessOrigin = 0;
   const bool sess = livelook::sessionRecordTarget(*this, sessPattern, sessLength, sessOrigin);
-  const bool recNow = (recordArmed && engine.playing() && engine.mode() != PlayMode::Live) || sess;
+  // K-123 (0.7.7): quick punch keeps the take open while the transport plays, punched out or in.
+  const bool recNow = ((recordArmed || (recmore::quickPunch(*this) && recorder.active())) && engine.playing() && engine.mode() != PlayMode::Live) || sess;
   if (recNow && !recorder.active()) {
     RecordOptions o = recOptions;
     Tick g = piano.effGrid > 0 ? piano.effGrid : snapTicks(doc.song(), piano.snap);
@@ -337,6 +356,10 @@ void App::processMidi() {
         st.pickup = std::max<Tick>(1, s.patternBarTicks(*p) / std::max(1, p->meterNum > 0 ? p->meterNum : s.timeSigNum));
         recorder.beginPattern(doc, curPattern, o, std::max<Tick>(1, s.patternContentLength(*p)), st);
       }
+    }
+    // K-123 (0.7.7): the note that started the take (start on the first note) records at its start.
+    for (const recmore::HeldNote& h : recmore::takeStartNotes()) {
+      if (recorder.active() && midiarm::records(*this, h.channel)) recorder.noteOn(doc, h.channel, h.pitch, h.velocity, static_cast<double>(st.start));
     }
   } else if (recorder.active() && (!recNow || recorder.songMode() != (engine.mode() == PlayMode::Song))) {
     recorder.end(doc, lastRecPos_);  // stopped, disarmed, or the play mode changed (a new take starts next frame)
@@ -499,7 +522,9 @@ void App::processMidi() {
         else
           doc.setParam(pid, value, true);
         lastCcTime_ = now;
-        if (recorder.active() && !automationRecording()) recorder.controller(pid, out, recordTick(e.time));  // else captured by the automation recorder
+        if (recorder.active() && !automationRecording() && recordFilterTakes(recorder.options(), m.status, m.d1)) {  // K-123: the input filter
+          recorder.controller(pid, out, recordTick(e.time));  // else captured by the automation recorder
+        }
       }
     }
 
@@ -588,7 +613,9 @@ void App::processMidi() {
               else
                 doc.setParam(pid, value, true);
               lastCcTime_ = now;
-              if (recorder.active() && !automationRecording()) recorder.controller(pid, out, recordTick(e.time));  // else captured by the automation recorder
+              if (recorder.active() && !automationRecording() && recordFilterTakes(recorder.options(), m.status, m.d1)) {  // K-123: the input filter
+                recorder.controller(pid, out, recordTick(e.time));  // else captured by the automation recorder
+              }
             }
           }
           handled = true;
@@ -601,7 +628,7 @@ void App::processMidi() {
     if (kind == 0x90 || kind == 0x80 || (kind == 0xB0 && m.d1 == 64)) {
       const MidiInputConfig* cfg = midi->inputConfig(e.port);
       if (cfg && !cfg->notes) continue;
-      ObjectId ch = logicplug::liveChannel(*this);  // R10-03 (Smooth: the armed / monitored track's sound)
+      ObjectId ch = midiarm::liveChannel(*this);  // R10-03 (Smooth: the armed / monitored track's sound; K-123: an armed channel)
       const MidiRouting& r = midi->routing;
       if (r.byChannel && m.channel() != r.omniChannel && r.route[m.channel()] >= 0 &&
           r.route[m.channel()] < static_cast<int>(song.channels.size()))
@@ -614,16 +641,17 @@ void App::processMidi() {
         if (r.mpe && m.channel() != 0) mpeFeed(e.time);  // K-99: the note starts with its channel's values
         // R11-03: Smooth: every other armed or monitored track plays (and records) the note too,
         // as the reference layers them (the engine plays the first one from the input itself).
-        if (logicplug::active(*this) && ch == logicplug::liveChannel(*this) && pitch >= 0 && pitch < 128) {
+        if (midiarm::layering(*this) && ch == midiarm::liveChannel(*this) && pitch >= 0 && pitch < 128) {
           std::vector<ObjectId>& lay = gMidiLayers[static_cast<size_t>(pitch)];
           for (ObjectId o : lay) {
             engine.noteOff(o, pitch);  // (a retrigger)
           }
-          const std::vector<ObjectId> lives = logicplug::liveChannels(*this);
+          const std::vector<ObjectId> lives = midiarm::liveChannels(*this);
           lay.assign(lives.begin() + 1, lives.end());
           for (ObjectId o : lay) {
             engine.noteOn(o, pitch, static_cast<float>(m.d2) / 127.0f);
-            logicplug::layerNote(*this, o, pitch, m.d2, true, recordTick(e.time));
+            // K-123 (0.7.7): punched out (quick punch), the layered notes play and are not recorded either.
+            if (recordArmed || !recmore::quickPunch(*this)) midiarm::layerNote(*this, o, pitch, m.d2, true, recordTick(e.time));
           }
         }
       } else if (!r.ignoreNoteOff) {
@@ -634,7 +662,7 @@ void App::processMidi() {
           std::vector<ObjectId>& lay = gMidiLayers[static_cast<size_t>(pitch)];
           for (ObjectId o : lay) {
             engine.noteOff(o, pitch);
-            logicplug::layerNote(*this, o, pitch, 0, false, recordTick(e.time));
+            midiarm::layerNote(*this, o, pitch, 0, false, recordTick(e.time));
           }
           lay.clear();
         }

@@ -337,6 +337,69 @@ bool scrollBar(App& a, const char* id, ImVec2 p0, ImVec2 p1, double* start, doub
   return *start != was;
 }
 
+// cp24: the same bar standing up (up and down arrows, a sunken trough, a raised thumb), for the pages'
+// lists (they scrolled with ImGui's thin rounded bar, a modern element).
+bool vScrollBar(App& a, const char* id, ImVec2 p0, ImVec2 p1, double* start, double view, double total, double step, const char* hint) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImGuiIO& io = ImGui::GetIO();
+  const double was = *start;
+  const double most = std::max(0.0, total - view);
+  ImGui::PushID(id);
+  const float w = p1.x - p0.x, ah = std::round(std::max(w, 10.0f));
+  for (int side = 0; side < 2; ++side) {
+    const ImVec2 b0(p0.x, side ? p1.y - ah : p0.y), b1(p1.x, side ? p1.y : p0.y + ah);
+    ImGui::PushItemFlag(ImGuiItemFlags_ButtonRepeat, true);
+    const bool click = bevelButton(a, side ? "##sbd" : "##sbu", "", b0, b1, false, hint);
+    ImGui::PopItemFlag();
+    const bool held = ImGui::IsItemActive();
+    const float cx = std::round((b0.x + b1.x) * 0.5f) + (held ? 1 : 0), cy = std::round((b0.y + b1.y) * 0.5f) + (held ? 1 : 0);
+    const float r = std::max(2.0f, std::floor(std::min(b1.x - b0.x, b1.y - b0.y) * 0.22f));
+    const Aliased hard(dl);
+    if (side) {
+      dl->AddTriangleFilled(ImVec2(cx - r - 1, cy - r * 0.6f), ImVec2(cx + r + 1, cy - r * 0.6f), ImVec2(cx, cy + r * 0.8f), P.text);
+    } else {
+      dl->AddTriangleFilled(ImVec2(cx - r - 1, cy + r * 0.6f), ImVec2(cx + r + 1, cy + r * 0.6f), ImVec2(cx, cy - r * 0.8f), P.text);
+    }
+    if (click) {
+      *start += side ? step : -step;
+    }
+  }
+  const float t0 = p0.y + ah + 1, t1 = p1.y - ah - 1, span = std::max(1.0f, t1 - t0);
+  bevelBox(dl, ImVec2(p0.x, t0), ImVec2(p1.x, t1), true);
+  const double tot = std::max(total, 1e-9);
+  float th0 = t0 + static_cast<float>(span * std::clamp(*start, 0.0, most) / tot);
+  float th1 = std::min(t1, th0 + std::max(static_cast<float>(span * std::min(1.0, view / tot)), w * 1.5f));
+  th0 = std::round(std::max(t0, std::min(th0, th1 - w * 1.5f))), th1 = std::round(th1);
+  ImGui::SetCursorScreenPos(ImVec2(p0.x, t0));
+  ImGui::InvisibleButton("##trough", ImVec2(std::max(1.0f, w), span));
+  static float grab = -1;
+  static ImGuiID grabId = 0;
+  const ImGuiID me = ImGui::GetItemID();
+  if (ImGui::IsItemActivated()) {
+    const float my = io.MousePos.y;
+    if (my >= th0 && my < th1) {
+      grab = my - th0, grabId = me;
+    } else {
+      grab = -1;
+      *start += my < th0 ? -view : view;
+    }
+  }
+  if (ImGui::IsItemActive() && grab >= 0 && grabId == me) {
+    *start = (io.MousePos.y - grab - t0) / span * tot;
+  }
+  if (!ImGui::IsItemActive() && grabId == me) {
+    grab = -1, grabId = 0;
+  }
+  if (hint) {
+    ui::Hint(hint);
+  }
+  bevelBox(dl, ImVec2(p0.x + 1, th0), ImVec2(p1.x - 1, th1), false);
+  ImGui::PopID();
+  *start = std::clamp(*start, 0.0, most);
+  return *start != was;
+}
+
 // One stepper row: the label, the value in a sunken field right after it, the arrows at the box's
 // right edge (down, up). `w` is the row's width, `labelW` the label column's.
 int stepper(App& a, const char* id, const char* label, const std::string& value, ImVec2 p0, float w, float h, const char* hint, float labelW, bool fill,
@@ -2342,9 +2405,17 @@ void diskScreen(App& a, ImVec2 p0, ImVec2 p1) {
   ImGui::SetCursorScreenPos(ImVec2(l0.x + 2, l0.y + 2));
   ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-  if (ImGui::BeginChild("##disklist", ImVec2(std::max(1.0f, l1.x - l0.x - 4), std::max(1.0f, l1.y - l0.y - 4)), ImGuiChildFlags_None)) {
+  // cp24: a long folder scrolls with the band's bevel bar inside the list's right edge (it had ImGui's
+  // thin rounded bar, a modern element).
+  const float lrh0 = std::round(fs + 3), listH = std::max(1.0f, l1.y - l0.y - 4);
+  const float dsbW = static_cast<float>(gDiskList.size()) * lrh0 > listH ? std::round(std::max(12.0f, fs + 1)) : 0.0f;
+  float dScroll = 0, dScrollMax = 0;
+  ImGuiWindow* dWin = nullptr;
+  if (ImGui::BeginChild("##disklist", ImVec2(std::max(1.0f, l1.x - l0.x - 4 - (dsbW > 0 ? dsbW + space::kLine : 0.0f)), listH), ImGuiChildFlags_None,
+                        ImGuiWindowFlags_NoScrollbar)) {
+    dWin = ImGui::GetCurrentWindow();
     ImDrawList* cl = ImGui::GetWindowDrawList();
-    const float lrh = std::round(fs + 3), lw = ImGui::GetContentRegionAvail().x;
+    const float lrh = lrh0, lw = ImGui::GetContentRegionAvail().x;
     if (gDiskList.empty())
       cl->AddText(a.fontRegular, fs, ImVec2(ImGui::GetCursorScreenPos().x + 4, ImGui::GetCursorScreenPos().y + 2), P.textFaint,
                   i18n::tr(gDiskRecent ? "No recent files" : all ? "This folder is empty" : "No songs or samples here (All files lists the rest)"));
@@ -2372,12 +2443,19 @@ void diskScreen(App& a, ImVec2 p0, ImVec2 p1) {
       if (dbl) open = e.dir ? (std::filesystem::path(gDiskDir) / e.name).string() : gDiskRecent ? e.name : (std::filesystem::path(gDiskDir) / e.name).string();
       if (dbl && e.dir) open = "/dir:" + open;
     }
+    dScroll = ImGui::GetScrollY(), dScrollMax = ImGui::GetScrollMaxY();
     if (open.rfind("/dir:", 0) == 0) diskGo(a, open.substr(5));
     else if (!open.empty()) diskOpen(a, open);
   }
   ImGui::EndChild();
   ImGui::PopStyleVar();
   ImGui::PopStyleColor();
+  if (dsbW > 0 && dWin) {
+    double at = dScroll;
+    if (vScrollBar(a, "##disksb", ImVec2(l1.x - 2 - dsbW, l0.y + 2), ImVec2(l1.x - 2, l1.y - 2), &at, listH, dScrollMax + listH, lrh0 * 3)) {
+      ImGui::SetScrollY(dWin, static_cast<float>(at));
+    }
+  }
   // ---- the folder shown and the name field ----
   bevelBox(dl, ImVec2(p0.x, yB + gap), p1);
   const float ty = std::round(yB + gap + 3 + (rh - fs) * 0.5f);
@@ -2406,7 +2484,17 @@ void diskScreen(App& a, ImVec2 p0, ImVec2 p1) {
     const ImVec2 f0 = ImGui::GetCursorScreenPos();
     bevelBox(dl, ImVec2(f0.x - 1, f0.y - 1), ImVec2(f0.x + fieldW + 1, f0.y + ImGui::GetFrameHeight() + 1), true);
   }
-  ImGui::InputText("##dname", gDiskName, sizeof gDiskName);
+  {
+    // cp24 (usability): the empty field shows, dimmed, the name Save then uses (the project's own, or
+    // Untitled); it read as an empty field that Save would refuse.
+    const std::string cur = a.projectFile();
+    std::string stem = cur.empty() ? std::string(i18n::tr("Untitled")) : std::filesystem::u8path(cur).stem().u8string();
+    if (stem.size() > 9 && stem.compare(stem.size() - 9, 9, ".gridline") == 0) {
+      stem.resize(stem.size() - 9);
+    }
+    const std::string hint = stem + "   " + i18n::tr("(Save uses this name when the field is empty)");
+    ImGui::InputTextWithHint("##dname", hint.c_str(), gDiskName, sizeof gDiskName);
+  }
   ImGui::PopStyleVar(2);
   ui::Hint("The name Save, Rename, New folder and Go to use");
   gDiskTyping = ImGui::IsItemActive();
@@ -3965,6 +4053,10 @@ void orderList(App& a) {
     const float editorMin = std::min(std::round(fs0 * 21.5f), editorNeed > 0 ? std::ceil(editorNeed) : std::round(fs0 * 21.5f));
     const float bandFull = fullBandH > 0 ? fullBandH : std::round(fs0 * 17.7f);
     gFolded = !extended() && instrumentShown(a) && workH - bandFull - patternMin < editorMin;
+    // cp24: the height the Channel frame may have while the pattern keeps eight rows under its cursor
+    // (fifteen rows in view, the cursor's in the middle): the frame folds to its first row when its
+    // whole height does not fit there (unless the person chose; trackereditors::frameFolded()).
+    trackereditors::setFrameRoom(workH - (extended() ? extendedStripH() : bandFull) - (fs0 * 7.0f + 16 + patRowH * 15));
     auto sizeLower = [&](float headerH) {
       if (!instrumentShown(a)) return;
       const float space = workH - headerH;  // the lower band and the pattern

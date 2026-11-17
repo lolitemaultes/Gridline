@@ -8,6 +8,7 @@
 #include "OscUi.h"
 #include "App.h"
 #include "StageView.h"
+#include "RecordRowsUi.h"
 #include "../core/ChromeOs.h"
 #include "LayoutPresets.h"
 #include "LiveLook.h"
@@ -364,6 +365,7 @@ void App::syncEngine() {
 Song App::playedSong(const Song& s) {
   Song p = freezeui::playSong(*this, s);
   stageui::listenFilter(*this, p);
+  recordrows::listenFilter(*this, p);  // K-123: a soloed or auditioned take
   return p;
 }
 
