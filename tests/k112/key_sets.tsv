@@ -63,6 +63,7 @@ studio	track.newMidi	0
 studio	track.newReturn	0	
 studio	clips.insertMidiClip	0	
 studio	view.detail	0	
+studio	view.io	0	
 studio	transport.sessionRecord	0	
 studio	playlist.delete	1	Del;Backspace;
 studio	playlist.selectAll	1	Ctrl+A;
@@ -291,7 +292,7 @@ live	view.toggleMain	0	Tab;
 live	view.editors	0	Ctrl+Alt+E;
 live	view.library	0	
 live	view.inspector	0	
-live	view.quickHelp	0	
+live	view.quickHelp	0	Shift+/;
 live	view.toolbar	0	
 live	view.lists	0	
 live	view.notes	0	
@@ -300,6 +301,7 @@ live	track.newMidi	0	Ctrl+Shift+T;
 live	track.newReturn	0	Ctrl+Alt+T;
 live	clips.insertMidiClip	0	Ctrl+Shift+M;
 live	view.detail	0	Ctrl+Alt+L;
+live	view.io	0	Ctrl+Alt+I;
 live	transport.sessionRecord	0	Shift+F9;
 live	playlist.delete	1	Del;Backspace;
 live	playlist.selectAll	1	Ctrl+A;
@@ -537,6 +539,7 @@ logic	track.newMidi	0
 logic	track.newReturn	0	
 logic	clips.insertMidiClip	0	
 logic	view.detail	0	
+logic	view.io	0	
 logic	transport.sessionRecord	0	
 logic	playlist.delete	1	Del;Backspace;
 logic	playlist.selectAll	1	Ctrl+A;
@@ -780,6 +783,7 @@ studio+cmd	track.newMidi	0
 studio+cmd	track.newReturn	0	
 studio+cmd	clips.insertMidiClip	0	
 studio+cmd	view.detail	0	
+studio+cmd	view.io	0	
 studio+cmd	transport.sessionRecord	0	
 studio+cmd	playlist.delete	1	Del;Backspace;
 studio+cmd	playlist.selectAll	1	Ctrl+A;
@@ -1008,7 +1012,7 @@ live+cmd	view.toggleMain	0	Tab;
 live+cmd	view.editors	0	Ctrl+Alt+E;
 live+cmd	view.library	0	
 live+cmd	view.inspector	0	
-live+cmd	view.quickHelp	0	
+live+cmd	view.quickHelp	0	Shift+/;
 live+cmd	view.toolbar	0	
 live+cmd	view.lists	0	
 live+cmd	view.notes	0	
@@ -1017,6 +1021,7 @@ live+cmd	track.newMidi	0	Ctrl+Shift+T;
 live+cmd	track.newReturn	0	Ctrl+Alt+T;
 live+cmd	clips.insertMidiClip	0	Ctrl+Shift+M;
 live+cmd	view.detail	0	Ctrl+Alt+L;
+live+cmd	view.io	0	Ctrl+Alt+I;
 live+cmd	transport.sessionRecord	0	Shift+F9;
 live+cmd	playlist.delete	1	Del;Backspace;
 live+cmd	playlist.selectAll	1	Ctrl+A;
@@ -1254,6 +1259,7 @@ logic+cmd	track.newMidi	0
 logic+cmd	track.newReturn	0	
 logic+cmd	clips.insertMidiClip	0	
 logic+cmd	view.detail	0	
+logic+cmd	view.io	0	
 logic+cmd	transport.sessionRecord	0	
 logic+cmd	playlist.delete	1	Del;Backspace;
 logic+cmd	playlist.selectAll	1	Cmd+A;
@@ -1618,3 +1624,27 @@ logic+cmd	playlist.nextTrack	1	Down;
 logic+cmd	playlist.nudgeLeft	1	Alt+Left;
 logic+cmd	playlist.nudgeRight	1	Alt+Right;
 logic+cmd	playlist.loopRegion	1	L;
+studio	view.sampleEditor	0	
+studio	view.zoomTracksIn	0	
+studio	view.zoomTracksOut	0	
+studio	view.zoomTracksFit	0	
+live	view.sampleEditor	0	
+live	view.zoomTracksIn	0	
+live	view.zoomTracksOut	0	
+live	view.zoomTracksFit	0	
+logic	view.sampleEditor	0	
+logic	view.zoomTracksIn	0	
+logic	view.zoomTracksOut	0	
+logic	view.zoomTracksFit	0	
+studio+cmd	view.sampleEditor	0	
+studio+cmd	view.zoomTracksIn	0	
+studio+cmd	view.zoomTracksOut	0	
+studio+cmd	view.zoomTracksFit	0	
+live+cmd	view.sampleEditor	0	
+live+cmd	view.zoomTracksIn	0	
+live+cmd	view.zoomTracksOut	0	
+live+cmd	view.zoomTracksFit	0	
+logic+cmd	view.sampleEditor	0	
+logic+cmd	view.zoomTracksIn	0	
+logic+cmd	view.zoomTracksOut	0	
+logic+cmd	view.zoomTracksFit	0	

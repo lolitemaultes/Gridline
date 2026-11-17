@@ -597,6 +597,7 @@ struct ProgLiveClip {
   ObjectId clip = kNoId;  // Clip::id
   int track = 0;
   Tick length = 1;
+  bool once = false;  // Clip::launchOnce: the track stops at its end
   struct Ev {
     int channel = 0;  // Program channel index
     NoteEv e;         // content ticks

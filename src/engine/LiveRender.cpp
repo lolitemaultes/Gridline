@@ -63,7 +63,7 @@ Tick prepareOfflineLive(Song& s, bool arrangementOnly) {
       add.push_back(k);
       t += len;
       // What plays next on the track.
-      if (follow == FollowMode::Once) break;
+      if (follow == FollowMode::Once || src.launchOnce) break;  // (K-112c: a one-shot plays once)
       if (follow == FollowMode::Loop || row.size() < 2) continue;
       if (at + 1 < row.size()) {
         ++at;

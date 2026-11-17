@@ -35,7 +35,11 @@ int main() {
   // add, names
   expect(add(s, "", arr({"Mixer"})) == 1 && s.items[1].name == "Workspace 2" && s.active == 1, "add: a free name, after the active one, made active");
   expect(add(s, "  Mix\t ", arr({"Mixer"})) == 2 && s.items[2].name == "Mix", "add cleans the name");
-  expect(add(s, "mix", today) == 3 && s.items[3].name != "mix", "a taken name (any case) becomes a free one: " + s.items[3].name);
+  // Add first, then build the message: argument order is unspecified, and MSVC/clang-cl evaluate
+  // right to left, so reading items[3] inside the same call indexed past the end (STL fast-fail).
+  const int taken = add(s, "mix", today);
+  const std::string takenName = taken == 3 && s.items.size() > 3 ? s.items[3].name : std::string();
+  expect(taken == 3 && takenName != "mix", "a taken name (any case) becomes a free one: " + takenName);
   expect(cleanName(std::string(60, 'x')).size() == static_cast<size_t>(kMaxName), "names are capped");
   expect(cleanName("\xC3\xA9" + std::string(45, 'e')).size() <= static_cast<size_t>(kMaxName), "a capped name never splits a character");
 

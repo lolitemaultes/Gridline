@@ -5,6 +5,8 @@
 #include <map>
 #include <set>
 #include "Document.h"
+#include "Arrangements.h"
+#include "Params.h"
 #include "PluginInfo.h"
 #include "PluginParams.h"
 #include "TrackOrder.h"
@@ -625,16 +627,10 @@ bool insertTrackAt(Song& s, int at) {
   s.tracks.insert(s.tracks.begin() + at, PlaylistTrack{});
   for (Clip& c : s.playlist)
     if (c.track >= at) ++c.track;
-  for (int i = at + 1; i < static_cast<int>(s.tracks.size()); ++i) {
-    std::string kind;
-    PlaylistTrack& tr = s.tracks[static_cast<size_t>(i)];
-    if (placeNumberOf(s, tr, &kind) != i) continue;
-    const std::string was = tr.name;
-    tr.name = std::to_string(i + 1) + " " + kind;
-    // N47-09: its mixer track and instrument named after it follow (they are one thing in Clips; Studio,
-    // Smooth and the routing lists show their names). Checkpoint 53: an instrument's own mixer track too.
-    followTrackName(s, i, was);
-  }
+  // N47-09: their mixer tracks and instruments named after them follow (they are one thing in Clips;
+  // Studio, Smooth and the routing lists show their names). Checkpoint 53: an instrument's own mixer
+  // track too. Checkpoint 54: by the numbers Clips shows (lanes and gaps take none).
+  renumberTrackNames(s);
   return true;
 }
 
@@ -670,6 +666,7 @@ int addNamedTrack(Document& d, bool audio, int after) {
     tr.color = kTrackCycle[(usedTrackCount(s) - 1 + kTrackCycleN) % kTrackCycleN];
     if (audio && !makeAudioTrack(s, t, kNoId, nullptr)) return t = -1, false;
     if (audio) addReturnSends(s, s.tracks[static_cast<size_t>(t)].mixer);  // checkpoint 52 (N51-05): as every track of the set
+    renumberTrackNames(s);  // checkpoint 54: its number as Clips counts (lanes and gaps take none)
     return true;
   });
   return t;
@@ -691,6 +688,7 @@ bool makeNamedAudioTrack(Song& s, int t) {
   addReturnSends(s, mix);
   // N52-02: its clips play through it (their sources were on Main): its fader, devices and sends.
   routeClipSources(s, t);
+  renumberTrackNames(s);  // checkpoint 54: its number as Clips counts (lanes and gaps take none)
   return true;
 }
 
@@ -886,15 +884,19 @@ namespace {
 // The tracks named by their place take their place's number again (after a group moved them), their
 // mixer track and instrument with them, as insertTrackAt's.
 void renumberPlaces(Song& s) {
+  // Checkpoint 54 (N53-03, N53-04): the number Clips shows the track by: lanes and empty gap tracks
+  // take none, so "3 Audio" follows "2 MIDI" whatever lies between.
+  const std::vector<int> num = trackNumbers(s, static_cast<int>(s.tracks.size()));
   for (int i = 0; i < static_cast<int>(s.tracks.size()); ++i) {
     std::string kind;
     PlaylistTrack& tr = s.tracks[static_cast<size_t>(i)];
-    const int n = placeNumberOf(s, tr, &kind);
-    if (n <= 0 || n == i + 1) continue;
+    const int n = placeNumberOf(s, tr, &kind), want = num[static_cast<size_t>(i)];
+    if (n <= 0 || want <= 0 || n == want) continue;
     const std::string was = tr.name;
-    tr.name = std::to_string(i + 1) + " " + kind;
+    tr.name = std::to_string(want) + " " + kind;
     followTrackName(s, i, was);  // N51-11: its mixer track and instrument (and the instrument's own mixer track)
   }
+  followAutomationNames(s);  // checkpoint 55 (N54-03): a copy's automation and lanes take the copy's name
 }
 }  // namespace
 
@@ -904,6 +906,7 @@ int followTrackName(Song& s, int track, const std::string& was) {
   if (!validTrack(s, track) || was.empty()) return 0;
   const PlaylistTrack& tr = s.tracks[static_cast<size_t>(track)];
   if (tr.name == was) return 0;
+  const std::string now = tr.name;
   int n = 0;
   ObjectId mix = tr.mode == TrackMode::Audio ? tr.mixer : kNoId;
   if (tr.mode == TrackMode::Instrument)
@@ -912,7 +915,80 @@ int followTrackName(Song& s, int track, const std::string& was) {
       if (c->mixerTrack != s.masterId()) mix = c->mixerTrack;
     }
   if (MixerTrack* m = s.mixerTrack(mix); m && mix != s.masterId() && m->name == was) m->name = tr.name, ++n;
+  // Checkpoint 55 (N54-03): the takes recorded on the track ("3 Audio rec", "3 Audio take 2"), named
+  // after it when they were made, take its new name when only this track's clips play them.
+  for (Channel& c : s.channels) {
+    if (c.name.size() <= was.size() || c.name.compare(0, was.size(), was) != 0) {
+      continue;
+    }
+    const std::string rest = c.name.substr(was.size());
+    if (rest != " rec" && rest.rfind(" take ", 0) != 0) {
+      continue;
+    }
+    bool here = false, elsewhere = false;
+    for (const Clip& k : s.playlist) {
+      if (k.kind == ClipKind::Audio && k.source == c.id) {
+        (k.track == track ? here : elsewhere) = true;
+      }
+    }
+    if (here && !elsewhere) {
+      c.name = now + rest;
+      ++n;
+    }
+  }
+  n += followAutomationNames(s);
   return n;
+}
+
+int followAutomationNames(Song& s) {
+  int n = 0;
+  for (AutomationClip& ac : s.automations) {
+    const std::string now = paramDisplayName(s, ParamId{ac.owner, ac.index});
+    if (now == ac.name || now == "?") {
+      continue;
+    }
+    // Only a name made from the control's ("<owner> › <control>"): the same control part, another owner.
+    const size_t kw = ac.name.find(" \xE2\x80\xBA "), kn = now.find(" \xE2\x80\xBA ");
+    if (kw == std::string::npos || kn == std::string::npos || ac.name.compare(kw, std::string::npos, now, kn, std::string::npos) != 0) {
+      continue;
+    }
+    const std::string was = ac.name;
+    ac.name = now;
+    ++n;
+    std::set<int> lanes;
+    for (const Clip& c : s.playlist) {
+      if (c.kind == ClipKind::Automation && c.source == ac.id) {
+        lanes.insert(c.track);
+      }
+    }
+    for (int t : lanes) {
+      if (validTrack(s, t) && s.tracks[static_cast<size_t>(t)].name == was && isAutomationLane(s, t)) {
+        s.tracks[static_cast<size_t>(t)].name = now;
+        ++n;
+      }
+    }
+  }
+  return n;
+}
+
+int shownNumber(const Song& s, int t) {
+  if (t < 0) {
+    return 0;
+  }
+  const std::vector<int> nums = trackNumbers(s, t + 1);
+  return t < static_cast<int>(nums.size()) && nums[static_cast<size_t>(t)] > 0 ? nums[static_cast<size_t>(t)] : t + 1;
+}
+
+std::vector<ObjectId> loopingShortSlotClips(const Song& s) {
+  std::vector<ObjectId> v;
+  const Tick beat = std::max<Tick>(1, s.beatTicks());
+  for (const Clip& c : s.playlist) {
+    if (c.kind == ClipKind::Audio && inLiveArea(s, c) && !c.launchOnce && c.syncBpm <= 0 && c.warp.empty() && !c.tempoLock && c.length > 0 &&
+        c.length < beat) {
+      v.push_back(c.id);
+    }
+  }
+  return v;
 }
 
 bool renameTrack(Document& d, int track, const std::string& name, const std::function<void(PlaylistTrack&)>& extra) {
@@ -1236,28 +1312,111 @@ std::vector<char> automationLanes(const Song& s, int count) {
   return v;
 }
 
+int controlTrack(const Song& s, ObjectId owner) {
+  if (owner == kNoId) return -1;
+  const int used = usedTrackCount(s);
+  for (int t = 0; t < used; ++t) {
+    const PlaylistTrack& tr = s.tracks[static_cast<size_t>(t)];
+    if (tr.channel == owner && tr.mode == TrackMode::Instrument) return t;
+    if (const MixerTrack* pm = playedMixer(s, t); pm && pm->id == owner && pm->id != s.masterId()) return t;
+  }
+  return -1;
+}
+
+int laneOwner(const Song& s, int lane) {
+  if (!isAutomationLane(s, lane)) return -1;
+  for (const Clip& c : s.playlist)
+    if (c.track == lane && c.kind == ClipKind::Automation)
+      if (const AutomationClip* ac = s.automation(c.source)) {
+        const int t = controlTrack(s, ac->owner);
+        if (t >= 0 && t != lane) return t;
+      }
+  return -1;
+}
+
+namespace {
+// The lanes of `t` in the block of lanes starting at `from` (lanes of other tracks there end it).
+void lanesFrom(const Song& s, int t, int from, std::set<int>& out) {
+  const int used = usedTrackCount(s);
+  for (int k = from; k < used && isAutomationLane(s, k) && laneOwner(s, k) == t; ++k) out.insert(k);
+}
+}  // namespace
+
+std::vector<int> withLanes(const Song& s, const std::vector<int>& tracks) {
+  std::set<int> out(tracks.begin(), tracks.end());
+  for (int t : tracks) {
+    if (!validTrack(s, t)) continue;
+    lanesFrom(s, t, t + 1, out);
+    if (isGroupTrack(s, t)) lanesFrom(s, t, t + s.tracks[static_cast<size_t>(t)].groupSize + 1, out);  // (a lane made before checkpoint 54)
+  }
+  return std::vector<int>(out.begin(), out.end());
+}
+
+int pastLanes(const Song& s, int before) {
+  const int used = usedTrackCount(s);
+  while (before > 0 && before < used && isAutomationLane(s, before) && laneOwner(s, before) >= 0 && laneOwner(s, before) < before) ++before;
+  return before;
+}
+
+std::vector<char> gapTracks(const Song& s, int count) {
+  const int n = std::max(0, std::min(count, static_cast<int>(s.tracks.size())));
+  std::vector<char> v(static_cast<size_t>(n), 0);
+  std::vector<char> clips(static_cast<size_t>(n), 0);
+  for (const Clip& c : s.playlist)
+    if (c.track >= 0 && c.track < n) clips[static_cast<size_t>(c.track)] = 1;
+  auto empty = [&](int t) {
+    const PlaylistTrack& tr = s.tracks[static_cast<size_t>(t)];
+    return tr.mode == TrackMode::Unassigned && tr.name.empty() && tr.groupSize <= 0 && !clips[static_cast<size_t>(t)];
+  };
+  bool later = false;  // a track in use after this one
+  for (int t = n - 1; t >= 0; --t) {
+    if (!empty(t)) later = true;
+    else if (later) v[static_cast<size_t>(t)] = 1;
+  }
+  return v;
+}
+
+std::vector<int> trackNumbers(const Song& s, int count) {
+  const int n = std::max(0, std::min(count, static_cast<int>(s.tracks.size())));
+  const std::vector<char> lanes = automationLanes(s, n), gaps = gapTracks(s, n);
+  std::vector<int> v(static_cast<size_t>(n), 0);
+  for (int t = 0, k = 0; t < n; ++t)
+    if (!lanes[static_cast<size_t>(t)] && !gaps[static_cast<size_t>(t)]) v[static_cast<size_t>(t)] = ++k;
+  return v;
+}
+
+void addReturnSendsTo(Song& s, ObjectId mixer) { addReturnSends(s, mixer); }
+
+bool missingReturnSends(const Song& s, ObjectId mixer) {
+  const MixerTrack* m = s.mixerTrack(mixer);
+  if (!m || mixer == s.masterId()) return false;
+  for (size_t r : returnTracks(s))
+    if (r < s.mixer.size() && s.mixer[r].id != mixer &&
+        std::none_of(m->sends.begin(), m->sends.end(), [&](const Send& x) { return x.to == s.mixer[r].id; }))
+      return true;
+  return false;
+}
+
 int addAutomationLane(Song& s, ObjectId owner, const std::string& name) {
   const int used = usedTrackCount(s);
-  int under = -1;  // the track the control belongs to
-  for (int t = 0; t < used && under < 0; ++t) {
-    const PlaylistTrack& tr = s.tracks[static_cast<size_t>(t)];
-    if (tr.channel == owner && tr.mode == TrackMode::Instrument) under = t;
-    else if (const MixerTrack* pm = playedMixer(s, t); pm && pm->id == owner) under = t;
-  }
+  const int under = controlTrack(s, owner);  // the track the control belongs to
   int at = used;
+  std::vector<int> grow;  // N53-03: groups ending with `under`: the lane under it joins them
   if (under >= 0) {
-    at = under + 1;
-    if (isGroupTrack(s, under)) at = under + s.tracks[static_cast<size_t>(under)].groupSize + 1;
-    while (at < used && isAutomationLane(s, at)) ++at;  // after the track's other lanes
+    at = under + 1;  // checkpoint 54: right under its track (a group's under its title, inside the group)
+    while (at < used && isAutomationLane(s, at) && laneOwner(s, at) == under) ++at;  // after the track's other lanes
+    for (int g = 0; g < under; ++g)
+      if (const int gs = s.tracks[static_cast<size_t>(g)].groupSize; gs > 0 && isGroupTrack(s, g) && at == g + gs + 1) grow.push_back(g);
   }
   if (!insertTrackAt(s, at)) return -1;
+  for (int g : grow) ++s.tracks[static_cast<size_t>(g)].groupSize;
   s.tracks[static_cast<size_t>(at)].name = name;
   if (under >= 0) s.tracks[static_cast<size_t>(at)].color = s.tracks[static_cast<size_t>(under)].color;
   return at;
 }
 
 int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
-  const std::vector<int> src = withWholeGroups(s, tracks);
+  const std::vector<int> src = withWholeGroups(s, withLanes(s, tracks));  // N53-03: a track's lanes are copied with it
   if (src.empty()) return fail(why, "Select the tracks to duplicate."), -1;
   const int first = src.front(), last = src.back(), n = static_cast<int>(src.size());
   if (last - first + 1 != n) return fail(why, "Duplicate tracks next to each other."), -1;

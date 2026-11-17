@@ -1592,6 +1592,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     lc.clip = clip.id;
     lc.track = clip.track;
     lc.length = std::max<Tick>(1, song.clipLength(clip));
+    lc.once = clip.launchOnce;
     lc.autos = std::move(liveAutos[k]);
     if (clip.kind == ClipKind::Pattern) {
       if (const ProgPattern* pp = prog->pattern(clip.pattern))

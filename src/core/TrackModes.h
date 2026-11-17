@@ -200,6 +200,38 @@ bool renameTrack(Document& d, int track, const std::string& name, const std::fun
 bool isAutomationLane(const Song& s, int track);
 std::vector<char> automationLanes(const Song& s, int count);  // the first `count` tracks' answers, in one pass
 int addAutomationLane(Song& s, ObjectId owner, const std::string& name);
+// Checkpoint 54 (N53-03): a lane belongs to the track its automation's control belongs to (the track
+// whose instrument or mixer track that is): Clips draws it right under that track with no number and
+// no activator, solo or arm, and moves and copies it with the track. addAutomationLane puts a new lane
+// right under its track (a group's: under the group's title, inside the group). The storage is as
+// before (a track holding the automation clips), so every layout reads the same project.
+int laneOwner(const Song& s, int lane);  // -1: none (or not a lane)
+// The track a control (a channel or mixer track) belongs to in Clips (-1: none).
+int controlTrack(const Song& s, ObjectId owner);
+// `tracks` with the lanes each one owns right under it (or right after its group), sorted.
+std::vector<int> withLanes(const Song& s, const std::vector<int>& tracks);
+// A drop place (before track `before`) moved past the lanes there, so nothing lands between a track
+// and its lanes.
+int pastLanes(const Song& s, int before);
+// Checkpoint 54 (N53-04): an empty, unnamed track between tracks in use (rows another layout left
+// empty, Studio's "Track 5"): Clips shows no row or column for it. The first `count` tracks' answers.
+std::vector<char> gapTracks(const Song& s, int count);
+// Checkpoint 54 (N53-08): a mixer track's zero sends to the return tracks it does not send to yet (as
+// every Clips track has); and whether it lacks one.
+void addReturnSendsTo(Song& s, ObjectId mixer);
+bool missingReturnSends(const Song& s, ObjectId mixer);
+// The numbers Clips shows its tracks by (1, 2, ... in order; lanes and gap tracks take none: 0).
+std::vector<int> trackNumbers(const Song& s, int count);
+// Checkpoint 55 (N54-04): the number Clips shows track `t` by (its place + 1 for a lane or a gap track).
+int shownNumber(const Song& s, int t);
+// Checkpoint 55 (N54-01): clip grid clips (the live area's) that loop although they are short unwarped
+// samples: audio, under one beat, not following the tempo, not one-shots. Sets saved before checkpoint 54
+// keep them looping (Clips makes new ones one-shots); Clips offers to make them play once.
+std::vector<ObjectId> loopingShortSlotClips(const Song& s);
+// Checkpoint 55 (N54-03): names made from an owner's name follow it. An automation named by its control
+// ("3 Group › Volume") takes the control's name now ("2 Group › Volume") when only the owner's part
+// differs, and the lanes showing that name with it. Returns the names changed (0: the song is unchanged).
+int followAutomationNames(Song& s);
 int deleteTracks(Song& s, const std::vector<int>& tracks, std::string* why = nullptr);
 int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why = nullptr);
 int deleteTracks(Document& d, const std::vector<int>& tracks, std::string* why = nullptr);

@@ -62,6 +62,13 @@ struct FileMeta {
 
 // Tempo from a file name: "120bpm", "120 BPM", "loop_128_", "bpm95"; 0 if none.
 double bpmFromName(const std::string& name);
+// K-112c checkpoint 55 (N54-02): the tempo a dropped file is warped at in Clips. In order: a tempo the
+// name states (bpmFromName, or a bare 60..200 number in the name whose beats at that tempo come out
+// whole: "Long 120" of 20 s is 40 beats), then a length of whole bars at the Set's tempo (that tempo),
+// then the detector's reading (`detected`, its half or double) nearest the Set's tempo, then the
+// whole-bar reading (1, 2, 4, 8 or 16 bars of 4/4 between 75 and 165 BPM) nearest the Set's tempo.
+// 0: none (a one-shot: shorter than a bar, no tempo said).
+double warpTempo(const std::string& name, double seconds, double setTempo, double detected = 0);
 // Key from a file name: "Am", "C#min", "F major", "Bb_minor", "key of D"… Tokens
 // are delimited by non-letters, so "Amen" or "Cmaj7chord" are not keys.
 bool keyFromName(const std::string& name, int& pitchClass, bool& minor);

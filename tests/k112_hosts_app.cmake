@@ -4,6 +4,7 @@
 # never show a body twice, nor a Loupe effect both as an effect editor and in the Loupe panel, and
 # the device last opened is drawn exactly once: by the chain where the layout homes it there
 # (Live, Tracker), by its own window elsewhere (Studio, Logic: the chain's chips open the window).
+# The Tracker's instrument is its lower band's own screen (K-106 cp18-cp20): no channel settings body.
 #   cmake -DAPP=<gridline-app> -DDEMO=<song> -DOUT=<dir> -P k112_hosts_app.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
@@ -95,7 +96,16 @@ foreach(lay studio live logic tracker)
 98 layout bodies
 " --frames 104)
   bodies(${lay} 34 b)
-  expect(${lay} 34 "${b}" "channel settings" ${h})
+  if(lay STREQUAL "tracker")
+    # K-106 cp18-cp20: the Tracker's lower band shows its own screen for the instrument (the
+    # Instrument editor or the Channel frame), never the channel settings body; that opens floating
+    # from the frame's "Open plugin window" (k316_tracker_editors_app, the inventory).
+    if("${b}" MATCHES "channel settings")
+      fail("${lay} frame 34: the channel settings body is drawn in the Tracker (${b})")
+    endif()
+  else()
+    expect(${lay} 34 "${b}" "channel settings" ${h})
+  endif()
   bodies(${lay} 50 b)
   expect(${lay} 50 "${b}" "effect editor" ${h})
   if(h STREQUAL "window")  # their windows: both stay open, each drawn once
@@ -104,7 +114,13 @@ foreach(lay studio live logic tracker)
   bodies(${lay} 70 b)
   expect(${lay} 70 "${b}" "effect editor" ${h})
   bodies(${lay} 84 b)
-  expect(${lay} 84 "${b}" "channel settings" ${h})
+  if(lay STREQUAL "tracker")  # (as at frame 34)
+    if("${b}" MATCHES "channel settings")
+      fail("${lay} frame 84: the channel settings body is drawn in the Tracker (${b})")
+    endif()
+  else()
+    expect(${lay} 84 "${b}" "channel settings" ${h})
+  endif()
   bodies(${lay} 98 b)
   expect(${lay} 98 "${b}" "master chain" window)
 

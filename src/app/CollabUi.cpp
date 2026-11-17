@@ -3910,6 +3910,9 @@ void devFrame(App& a) {
   if (any && s->ready()) devsig::reach("collab-connected");
   if (all && people > 1 && s->ready()) devsig::reach("collab-all-connected");
   if (synced && people > 1 && s->ready() && s->pendingBatches() == 0) devsig::reach("collab-synced");
+  if (s->ready() && s->transfers().empty()) {  // K-106 cp20: no file is arriving
+    devsig::reach("collab-files-done");
+  }
   devsig::reach("collab-members:" + std::to_string(people));
   int left = 0;  // K-B: members who left (as "collab report" counts them)
   for (const Member& m : s->members()) left += s->memberState(m.site) == MemberState::Left ? 1 : 0;

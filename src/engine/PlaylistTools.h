@@ -111,6 +111,22 @@ std::vector<ObjectId> cloneClips(Song& s, const std::set<ObjectId>& sel);
 // group among `copies`), so copies never join the originals' groups.
 void regroupCopies(Song& s, std::vector<Clip>& copies);
 
+// K-112B (R11-01): a paste that places regions as the reference's does. Each item is a copy of a
+// clip already placed (track, start set; id ignored). A pattern region gets a pattern of its own
+// (a copy of its pattern: name, colour, notes, steps), so an edit of it never changes the region
+// it was copied from; its notes and steps of `fromSound` move to `toSound` (the sound of the track
+// it lands on), so it plays that track's instrument. With `noOverlap`, the regions the pasted ones
+// land on give way (the reference's No Overlap) and the pasted ones keep their full length (R12-01):
+// one that starts earlier ends where the pasted one starts; one that starts inside it starts where
+// the pasted one ends, or is removed when the pasted one covers it; one that spans the whole paste
+// is split around it (the part after it stays as it was).
+// Automation regions only meet automation regions. Returns the new clips' ids.
+struct PasteItem {
+  Clip clip;
+  ObjectId fromSound = kNoId, toSound = kNoId;
+};
+std::vector<ObjectId> pasteOwnCopies(Song& s, const std::vector<PasteItem>& items, bool noOverlap);
+
 // J-79: stacking (J-38): on a track, a clip that starts later lies on the
 // clips it overlaps; equal starts stack in playlist order. The topmost clip
 // covering (track, t), kNoId when none.

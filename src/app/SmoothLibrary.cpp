@@ -68,10 +68,44 @@ bool installedListed(const App& a, const PluginInfo& p) {
 }
 
 int gNav = 1;  // Instruments, as a new project's Library opens
+bool gDrill = true;  // D4 (R10-05): a narrow Library shows one column at a time: false the list of kinds, true its patches
+int gNavBeforeBus = -1;  // R10-07: the view before a bus was selected (the Library showed its effects meanwhile)
 char gFilter[64] = "";
 uint64_t gEpoch = ~0ull;
 bool gShown = false;
 bool gWasActive = false;
+// D5 (R11-04): the slot each strip's Library browsing holds, as the reference's Library loads a setting
+// that replaces the one before it: the next effect clicked goes into that slot again (one undo step
+// back), so browsing never piles up inserts. Kept while the slot still holds something the Library put
+// there (an undo, or the user replacing it, ends it); this run only, forgotten with the project.
+// D6 (R12-10): every slot the Library used on the strip, the latest last: an undo that empties the
+// latest one (an Option-click add taken back) hands browsing back to the slot used before it.
+struct LibUse {
+  int slot = -1;
+  std::vector<std::string> types;  // what the Library put in it (an undo goes back to an earlier one)
+};
+struct LibSlot {
+  ObjectId strip = kNoId;
+  std::vector<LibUse> uses;
+};
+std::vector<LibSlot> gLibSlots;
+
+LibSlot* libSlotOf(ObjectId strip) {
+  for (LibSlot& l : gLibSlots)
+    if (l.strip == strip) return &l;
+  return nullptr;
+}
+// The strip's latest Library slot that still holds one of the Library's effects, else -1.
+int browsedSlot(const MixerTrack& st) {
+  const LibSlot* l = libSlotOf(st.id);
+  if (!l) return -1;
+  for (auto u = l->uses.rbegin(); u != l->uses.rend(); ++u) {
+    if (u->slot < 0 || u->slot >= kEffectSlots) continue;
+    const std::string& t = st.slots[static_cast<size_t>(u->slot)].plugin.type;
+    if (!t.empty() && std::find(u->types.begin(), u->types.end(), t) != u->types.end()) return u->slot;
+  }
+  return -1;
+}
 
 bool libraryShown(const App& a) {
   return layout::visible(layout::shell(layout::Preset::Logic), layoutui::regionState(a, layout::Preset::Logic), kRegion);
@@ -79,6 +113,11 @@ bool libraryShown(const App& a) {
 
 // The track the Library loads onto, and its sound.
 int targetTrack(const App& a) { return logicplug::focusTrack(a); }
+// R10-07: the selected track is a bus (its row shows a bus strip's automation): its strip, else kNoId.
+ObjectId busOf(const App& a, int track) {
+  const logicplug::AutoFold& af = logicplug::autoFold(a);
+  return af.isBus(track) ? af.busStrip[static_cast<size_t>(track)] : kNoId;
+}
 const Channel* targetSound(const App& a, int track) {
   const Song& s = a.doc.song();
   const Channel* c = logicplug::trackSound(s, track, nullptr);
@@ -157,25 +196,82 @@ std::vector<Item> items(const App& a, int nav, const std::string& filterIn) {
   return out;
 }
 
-bool load(App& a, const Item& it) {
+namespace {
+// The strip an effect from the Library goes onto: the selected track's (a bus's own, R10-07), else the master.
+const MixerTrack* effectStrip(const App& a) {
+  const Song& s = a.doc.song();
+  const int track = targetTrack(a);
+  const ObjectId bus = busOf(a, track);
+  const MixerTrack* st = bus != kNoId ? s.mixerTrack(bus) : track >= 0 ? logicplug::trackStrip(s, track) : nullptr;
+  if (!st && !s.mixer.empty()) st = &s.mixer[0];
+  return st;
+}
+
+// D6 (R12-05): the sound's own strip takes the patch's name as the track header does, when the strip
+// still had the old name (or none) and no other sound plays into it. A name the user gave stays.
+void stripFollows(App& a, ObjectId channel, const std::string& oldName, const std::string& name) {
+  const Song& s = a.doc.song();
+  const Channel* c = s.channel(channel);
+  const MixerTrack* m = c ? s.mixerTrack(c->mixerTrack) : nullptr;
+  if (!m || s.mixerIndex(m->id) <= 0 || m->name == name) return;
+  if (!m->name.empty() && m->name != oldName) return;
+  for (const Channel& o : s.channels) {
+    if (o.mixerTrack == m->id && o.id != channel) return;
+  }
+  a.doc.editMixerTrack(m->id, "name mixer track", [&name](MixerTrack& x) { x.name = name; });
+}
+
+// `add` (Option-click): a new insert even while browsing (the Library's slot is then that new one).
+bool loadItem(App& a, const Item& it, bool add) {
   const PluginInfo* info = findPlugin(it.type);
   if (!info) return false;
   const Song& s0 = a.doc.song();
   const int track = targetTrack(a);
-  if (it.effect) {  // into the selected track's first free slot (its strip; the master when it has none)
-    const MixerTrack* st = track >= 0 ? logicplug::trackStrip(s0, track) : nullptr;
-    if (!st && !s0.mixer.empty()) st = &s0.mixer[0];
+  const ObjectId bus = busOf(a, track);
+  if (it.effect) {
+    // D5 (R11-04): into the strip's Library slot when browsing holds one (the effect there is replaced,
+    // one undo step), else its first free slot.
+    const MixerTrack* st = effectStrip(a);
     if (!st) return false;
-    int free = -1;
-    for (int k = 0; k < kEffectSlots && free < 0; ++k)
-      if (st->slots[static_cast<size_t>(k)].plugin.type.empty()) free = k;
-    if (free < 0) {
+    int at = add ? -1 : browsedSlot(*st);
+    if (at >= 0 && st->slots[static_cast<size_t>(at)].plugin.type == it.type) {
+      a.selMixer = st->id;
+      return true;  // already there: nothing to change
+    }
+    for (int k = 0; k < kEffectSlots && at < 0; ++k)
+      if (st->slots[static_cast<size_t>(k)].plugin.type.empty()) at = k;
+    if (at < 0) {
       a.notify(i18n::tr("Every effect slot of this track is taken"));
       return false;
     }
     const ObjectId id = st->id;
     a.selMixer = id;
-    return a.doc.setSlotPlugin(id, free, it.type);
+    const bool replacing = !st->slots[static_cast<size_t>(at)].plugin.type.empty();
+    if (!a.doc.setSlotPlugin(id, at, it.type)) return false;
+    if (replacing) pui::pluginReplaced(PluginTarget{id, at});
+    LibSlot* l = libSlotOf(id);
+    if (!l) {
+      gLibSlots.push_back(LibSlot{id, {}});
+      l = &gLibSlots.back();
+    }
+    // the slot used now goes last (a new one when the slot was free: what the Library put there before is gone)
+    LibUse u{at, {}};
+    for (size_t k = 0; k < l->uses.size(); ++k) {
+      if (l->uses[k].slot != at) continue;
+      if (replacing) u = l->uses[k];
+      l->uses.erase(l->uses.begin() + static_cast<std::ptrdiff_t>(k));
+      break;
+    }
+    if (std::find(u.types.begin(), u.types.end(), it.type) == u.types.end()) u.types.push_back(it.type);
+    l->uses.push_back(std::move(u));
+    if (l->uses.size() > static_cast<size_t>(kEffectSlots)) l->uses.erase(l->uses.begin());
+    return true;
+  }
+  if (bus != kNoId) {
+    // R10-07: a bus plays no instrument. The reference's Library offers a bus channel-strip settings
+    // only; a patch is not put on a new track behind the user's back: it is refused, and said.
+    a.notify(playlistTrackName(s0, static_cast<size_t>(track)) + i18n::tr(" is a bus: select an instrument track for a patch, or pick an effect for the bus"));
+    return false;
   }
   PluginState ps = it.preset >= 0 && static_cast<size_t>(it.preset) < info->presets.size() ? presetState(*info, static_cast<size_t>(it.preset))
                                                                                           : defaultPluginState(it.type);
@@ -201,6 +297,7 @@ bool load(App& a, const Item& it) {
       if (autoName) ch.name = name;
     });
     if (autoName && trackFollows) a.doc.editPlaylistTrack(track, "name track", [&name](PlaylistTrack& x) { x.name = name; });
+    if (autoName) stripFollows(a, id, oldName, name);
     a.doc.endGroup();
     if (!sameType) pui::pluginReplaced(PluginTarget{id, -1});
     a.selectChannel(id);
@@ -236,10 +333,15 @@ bool load(App& a, const Item& it) {
     a.doc.editPlaylistTrack(t, "name track", [&name](PlaylistTrack& x) { x.name = name; });
     a.playlist.trackSel = {t};
   }
+  if (const PluginInfo* pi = findPlugin(it.type)) stripFollows(a, id, pi->name, name);
   a.doc.endGroup();
   a.selectChannel(id);
   return true;
 }
+
+}  // namespace
+
+bool load(App& a, const Item& it) { return loadItem(a, it, false); }
 
 void frame(App& a) {
   const bool on = logicplug::active(a) && layoutui::shellBuilt(a, layout::Preset::Logic);
@@ -250,6 +352,7 @@ void frame(App& a) {
   const uint64_t ep = a.doc.projectEpoch();
   const bool shown = libraryShown(a);
   if (ep != gEpoch || !gWasActive) {  // a project opened or made, or Smooth just came on: as the project says
+    if (ep != gEpoch) gLibSlots.clear();
     gEpoch = ep;
     gWasActive = true;
     const bool want = a.doc.song().smooth.library != "closed";
@@ -274,6 +377,7 @@ void header(App& a, float w) {
   const Song& s = a.doc.song();
   const int track = targetTrack(a);
   const Channel* c = targetSound(a, track);
+  const bool bus = busOf(a, track) != kNoId;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 p = ImGui::GetCursorScreenPos();
   // K-112D (audit H2): the pane's name centred on top, then the sound's picture (about 56 px) and its
@@ -287,18 +391,19 @@ void header(App& a, float w) {
     const float lw = a.fontBold->CalcTextSizeA(lfs, 1e9f, 0, lt).x;
     dl->AddText(a.fontBold, lfs, ImVec2(std::round(cx - lw * 0.5f), p.y + 2), P.textDim, lt);
   }
-  const int ic = c && c->icon > 0 ? c->icon : trackicons::guess(c ? c->name : std::string(), c ? "Synth" : "Audio");
+  const std::string busTitle = bus ? playlistTrackName(s, static_cast<size_t>(track)) : std::string();
+  const int ic = c && c->icon > 0 ? c->icon : trackicons::guess(c ? c->name : bus ? busTitle : std::string(), c ? "Synth" : bus ? "Bus" : "Audio");
   const ImVec2 b0(cx - 28, p.y + 22), b1(cx + 28, p.y + 78);
   dl->AddRectFilled(b0, b1, theme::mix(P.surface800, P.text, 0.07f), 10.0f);
   if (ic > 0) trackicons::draw(dl, ic, ImVec2(cx, p.y + 50), 38, c ? theme::mix(theme::content(c->color), P.text, 0.30f) : P.textDim);
-  const char* title = c ? c->name.c_str() : track >= 0 && track < static_cast<int>(s.tracks.size()) ? i18n::tr("No instrument") : "";
+  const char* title = c ? c->name.c_str() : bus ? busTitle.c_str() : track >= 0 && track < static_cast<int>(s.tracks.size()) ? i18n::tr("No instrument") : "";
   const float fs = theme::kFontBody - 1;  // audit X6: a name at 13 px
   const float tw = std::min(a.fontBold->CalcTextSizeA(fs, 1e9f, 0, title).x, w - 12);
   theme::textEllipsis(dl, a.fontBold, fs, ImVec2(std::round(cx - tw * 0.5f), p.y + 84), w - 12, P.text, title);
 }
 
 // A navigation row: an icon and a name, the chosen one on a rounded fill.
-bool navRow(App& a, const char* id, ui::Icon icon, const char* label, bool on, float w) {
+bool navRow(App& a, const char* id, ui::Icon icon, const char* label, bool on, float w, bool chevron = false) {
   const auto& P = pal();
   const ImVec2 p = ImGui::GetCursorScreenPos();
   const float h = 22;
@@ -309,7 +414,8 @@ bool navRow(App& a, const char* id, ui::Icon icon, const char* label, bool on, f
   const float fs = theme::kFontCaption;
   if (icon != ui::Icon::Count) ui::drawIcon(dl, icon, ImVec2(p.x + 12, p.y + h * 0.5f), 12, on ? P.text : P.textDim);
   const float tx = icon != ui::Icon::Count ? p.x + 24 : p.x + 8;
-  theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(tx, std::round(p.y + (h - fs) * 0.5f) - 1), p.x + w - tx - 4, on ? P.text : P.textDim, label);
+  if (chevron) ui::drawIcon(dl, ui::Icon::Chevron, ImVec2(p.x + w - 10, p.y + h * 0.5f), 9, P.textFaint);  // D4: opens its list (264)
+  theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(tx, std::round(p.y + (h - fs) * 0.5f) - 1), p.x + w - tx - (chevron ? 20 : 4), on ? P.text : P.textDim, label);
   ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h));
   ImGui::Dummy(ImVec2(0, 0));
   return click;
@@ -358,6 +464,12 @@ void kindBadge(ImDrawList* dl, const Item& it, ImVec2 c) {
 void draw(App& a) {
   const auto& P = pal();
   const float w = ImGui::GetContentRegionAvail().x;
+  {  // R10-07: a bus selected: the Library shows the effects it can take (the reference offers a bus's
+     // channel-strip settings); the view comes back when an instrument or audio track is selected again
+    const bool bus = busOf(a, targetTrack(a)) != kNoId;
+    if (bus && gNavBeforeBus < 0) gNavBeforeBus = gNav, gNav = 2, gDrill = true;
+    else if (!bus && gNavBeforeBus >= 0) gNav = gNavBeforeBus, gNavBeforeBus = -1;
+  }
   header(a, w);
   // The search field, full width, a rounded dark field as 111 and 252 draw it.
   ImGui::SetNextItemWidth(-1);
@@ -370,9 +482,15 @@ void draw(App& a) {
   const float avH = ImGui::GetContentRegionAvail().y;
   const float footH = 30;
   // Two columns: the navigation, then the results (111, 252); the navigation takes about a third.
-  const float navW = std::clamp(std::floor(w * 0.38f), 84.0f, 150.0f);
+  // D4 (R10-05): a narrow Library (under 230 px, as at 1440) shows one column at a time, the reference's
+  // column browser in a narrow pane (264): the kinds with a chevron, then the chosen kind's patches under
+  // a back row, so each name has the pane's whole width; a search shows its results at once.
+  const bool oneCol = w < 230.0f, search = gFilter[0] != 0;
+  const bool showNav = !oneCol || (!gDrill && !search), showList = !oneCol || gDrill || search;
+  const float navW = oneCol ? w : std::clamp(std::floor(w * 0.38f), 84.0f, 150.0f);
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddLine(ImVec2(o.x + navW + 2, o.y), ImVec2(o.x + navW + 2, o.y + avH - footH), theme::withAlpha(P.line, 0.9f));
+  if (!oneCol) dl->AddLine(ImVec2(o.x + navW + 2, o.y), ImVec2(o.x + navW + 2, o.y + avH - footH), theme::withAlpha(P.line, 0.9f));
+  if (showNav) {
   ImGui::BeginChild("##smlibnav", ImVec2(navW, avH - footH), ImGuiChildFlags_None);
   {
     const float nw = ImGui::GetContentRegionAvail().x;
@@ -384,20 +502,40 @@ void draw(App& a) {
     const Nav top[] = {{ui::Icon::ListBullets, i18n::N_("All")}, {ui::Icon::Piano, i18n::N_("Instruments")}, {ui::Icon::CatFilter, i18n::N_("Effects")}};
     for (int i = 0; i < 3; ++i) {
       ImGui::PushID(i);
-      if (navRow(a, "##nav", top[i].icon, i18n::tr(top[i].name), gNav == i, nw)) gNav = i;
+      if (navRow(a, "##nav", top[i].icon, i18n::tr(top[i].name), gNav == i, nw, oneCol)) gNav = i, gDrill = true;
       ImGui::PopID();
     }
     navLine(nw);
     navHeading(a, i18n::tr("Sounds"), nw);
     for (size_t k = 0; k < kinds().size(); ++k) {
       ImGui::PushID(static_cast<int>(10 + k));
-      if (navRow(a, "##kind", ui::Icon::Count, i18n::tr(kinds()[k].c_str()), gNav == static_cast<int>(3 + k), nw)) gNav = static_cast<int>(3 + k);
+      if (navRow(a, "##kind", ui::Icon::Count, i18n::tr(kinds()[k].c_str()), gNav == static_cast<int>(3 + k), nw, oneCol)) gNav = static_cast<int>(3 + k), gDrill = true;
       ImGui::PopID();
     }
     ImGui::PopStyleVar();
   }
   ImGui::EndChild();
-  ImGui::SetCursorScreenPos(ImVec2(o.x + navW + 5, o.y));
+  }
+  float listX = o.x + navW + 5, listW = w - navW - 5, listY = o.y;
+  if (oneCol) {
+    listX = o.x, listW = w;
+    if (showList && !search) {  // the back row: the kind shown, a click goes back to the kinds
+      static const char* const topNames[3] = {i18n::N_("All"), i18n::N_("Instruments"), i18n::N_("Effects")};
+      const char* nm = gNav < 3 ? i18n::tr(topNames[gNav]) : i18n::tr(kinds()[static_cast<size_t>(gNav - 3)].c_str());
+      ImGui::SetCursorScreenPos(ImVec2(o.x, o.y));
+      const bool back = ImGui::InvisibleButton("##smlibback", ImVec2(w, 24));
+      const bool hov = ImGui::IsItemHovered();
+      if (hov) dl->AddRectFilled(ImVec2(o.x, o.y + 1), ImVec2(o.x + w, o.y + 23), theme::mix(P.surface800, P.text, 0.05f), 5.0f);
+      ui::drawIcon(dl, ui::Icon::ChevronLeft, ImVec2(o.x + 10, o.y + 12), 10, hov ? P.text : P.textDim);
+      const float fs = theme::kFontCaption;
+      theme::textEllipsis(dl, a.fontBold, fs, ImVec2(o.x + 22, std::round(o.y + (24 - fs) * 0.5f) - 1), w - 28, P.text, nm);
+      if (hov) ui::Hint("Back to the kinds of sound");
+      if (back) gDrill = false;
+      dl->AddLine(ImVec2(o.x + 4, o.y + 24), ImVec2(o.x + w - 4, o.y + 24), theme::withAlpha(P.line, 0.9f));
+      listY = o.y + 26;
+    }
+  }
+  ImGui::SetCursorScreenPos(ImVec2(listX, listY));
   // The rows are made again only when the view or the search changes, or once a second (plugins
   // installed or allowed meanwhile): no list is built per frame.
   static std::vector<Item> rows;
@@ -411,11 +549,15 @@ void draw(App& a) {
     rowsFilter = gFilter;
     rowsFrame = fr;
   }
-  const float listW = w - navW - 5;
-  ImGui::BeginChild("##smlibrows", ImVec2(listW, std::max(40.0f, avH - footH)), ImGuiChildFlags_None);
+  if (showList) {
+  ImGui::BeginChild("##smlibrows", ImVec2(listW, std::max(40.0f, avH - footH - (listY - o.y))), ImGuiChildFlags_None);
   {
     const int track = targetTrack(a);
     const Channel* cur = targetSound(a, track);
+    // D5 (R11-04): the effect the strip's Library slot holds shows as loaded, as a patch does
+    const MixerTrack* fxStrip = effectStrip(a);
+    const int fxAt = fxStrip ? browsedSlot(*fxStrip) : -1;
+    const std::string* fxLoaded = fxAt >= 0 ? &fxStrip->slots[static_cast<size_t>(fxAt)].plugin.type : nullptr;
     const float rw = ImGui::GetContentRegionAvail().x, rh = 22;
     ImDrawList* ld = ImGui::GetWindowDrawList();
     ImGuiListClipper clip;
@@ -427,7 +569,7 @@ void draw(App& a) {
         const ImVec2 p = ImGui::GetCursorScreenPos();
         const bool click = ImGui::InvisibleButton("##row", ImVec2(rw, rh));
         const bool hov = ImGui::IsItemHovered();
-        const bool loaded = !it.effect && cur && cur->plugin.type == it.type && cur->name == it.name;
+        const bool loaded = it.effect ? fxLoaded && *fxLoaded == it.type : cur && cur->plugin.type == it.type && cur->name == it.name;
         // Alternate rows a shade apart, the loaded patch on the selection fill (111, 252).
         if (i % 2 == 1) ld->AddRectFilled(p, ImVec2(p.x + rw, p.y + rh), theme::withAlpha(P.ink, 0.10f));
         if (loaded) ld->AddRectFilled(p, ImVec2(p.x + rw, p.y + rh), theme::withAlpha(P.accent, 0.38f), 4.0f);
@@ -437,14 +579,16 @@ void draw(App& a) {
         kindBadge(ld, it, ImVec2(p.x + 13, p.y + rh * 0.5f));
         const float fs = theme::kFontCaption, tx = p.x + 26;
         theme::textEllipsis(ld, a.fontRegular, fs, ImVec2(tx, std::round(p.y + (rh - fs) * 0.5f) - 1), rw - (tx - p.x) - 6, P.text, it.name.c_str());
-        if (hov) ui::Hint(it.effect ? it.name + " \xC2\xB7 " + it.detail + "   (click: add it to the selected track)"
-                                    : it.name + " \xC2\xB7 " + it.detail + "   (click: load it onto the selected track)");
-        if (click) load(a, it);
+        if (hov)
+          ui::Hint(it.effect ? it.name + " \xC2\xB7 " + it.detail + "   (click: load it on the selected track, in place of the one the Library put there; Option-click: add another)"
+                             : it.name + " \xC2\xB7 " + it.detail + "   (click: load it onto the selected track)");
+        if (click) loadItem(a, it, it.effect && ImGui::GetIO().KeyAlt);
         ImGui::PopID();
       }
     if (rows.empty()) ImGui::TextDisabled("%s", i18n::tr("Nothing has that name"));
   }
   ImGui::EndChild();
+  }
   // The footer under the results: how many items (252, 111), then Revert and Save for the selected
   // track's patch (audit H2: the reference's footer buttons). Revert loads the patch's factory
   // settings again; Save writes the sound as a preset file.
@@ -492,15 +636,16 @@ bool devCommand(App& a, const std::vector<std::string>& args) {
   const std::string& op = args[0];
   if (op == "nav" && args.size() > 1) {
     gNav = std::clamp(std::atoi(args[1].c_str()), 0, static_cast<int>(2 + kinds().size()));
+    gDrill = true;
   } else if (op == "rows") {
     const std::vector<Item> v = items(a, gNav, gFilter);
     std::printf("smoothlib rows nav %d: %zu\n", gNav, v.size());
     for (size_t i = 0; i < v.size() && i < 400; ++i)
       std::printf("  %zu %s \"%s\" preset %d kind %s\n", i, v[i].type.c_str(), v[i].name.c_str(), v[i].preset, v[i].kind.c_str());
-  } else if (op == "load" && args.size() > 1) {
+  } else if ((op == "load" || op == "loadadd") && args.size() > 1) {  // loadadd: Option-click
     const std::vector<Item> v = items(a, gNav, gFilter);
     const int i = std::atoi(args[1].c_str());
-    const bool ok = i >= 0 && i < static_cast<int>(v.size()) && load(a, v[static_cast<size_t>(i)]);
+    const bool ok = i >= 0 && i < static_cast<int>(v.size()) && loadItem(a, v[static_cast<size_t>(i)], op == "loadadd");
     std::printf("smoothlib load %d: %s\n", i, ok ? "ok" : "no");
   } else if (op == "newtrack") {  // R09-02 test: New tracks > Instrument, as the dialog's Create does
     newtracks::createDefault(a);
@@ -515,6 +660,26 @@ bool devCommand(App& a, const std::vector<std::string>& args) {
                   static_cast<int>(trackmodes::modeOf(s, t)), c ? c->name.c_str() : "", c ? c->plugin.type.c_str() : "");
     }
     std::printf("smoothlib tracks: channels %zu\n", s.channels.size());
+  } else if (op == "selectbus") {  // R10-07 test: select the first bus track; its strip's effect count
+    const Song& s = a.doc.song();
+    int t = -1;
+    for (int k = 0; k < static_cast<int>(s.tracks.size()) && t < 0; ++k)
+      if (busOf(a, k) != kNoId) t = k;
+    if (t >= 0) a.playlist.selected.clear(), a.playlist.trackSel = {t};
+    std::printf("smoothlib selectbus: track %d\n", t);
+  } else if (op == "busfx") {
+    const Song& s = a.doc.song();
+    const ObjectId b = busOf(a, targetTrack(a));
+    int n = 0;
+    std::string types;  // D5: the strip's effects in slot order (R11-04: replaced in place, not piled up)
+    if (const MixerTrack* m = b != kNoId ? s.mixerTrack(b) : nullptr) {
+      for (const EffectSlot& e : m->slots) {
+        n += e.plugin.type.empty() ? 0 : 1;
+        if (!e.plugin.type.empty()) types += (types.empty() ? "" : ",") + e.plugin.type;
+      }
+    }
+    std::printf("smoothlib busfx: bus %d fx %d tracks %zu channels %zu slots %s\n", b != kNoId ? 1 : 0, n, s.tracks.size(), s.channels.size(),
+                types.c_str());
   } else if (op == "state") {
     const int t = targetTrack(a);
     const Channel* c = targetSound(a, t);

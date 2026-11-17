@@ -427,8 +427,21 @@ struct LiveSettings {
 // K-112D: the Smooth layout's window state, saved with the project as its reference saves its windows.
 // library: the Library pane "open" or "closed" ("" = never set from Smooth: it opens). View state: not
 // part of the comparison (no undo step), written only once set.
+// D5 (R11-06): controls: the Smart Controls the person mapped by hand (Parameter Mapping > Learn): on the
+// strip `strip`, screen control `pos` drives the parameter (owner, index) in place of the one the pane
+// picks itself. Written only when there are some. D6 (R12-02, R12-03): song data, unlike `library`: part
+// of the comparison (an undo step that marks the project modified) and shared with collaborators.
+struct SmartControlMap {
+  ObjectId strip = kNoId;
+  int pos = 0;
+  ObjectId owner = kNoId;
+  uint32_t index = 0;
+  bool operator==(const SmartControlMap& o) const { return strip == o.strip && pos == o.pos && owner == o.owner && index == o.index; }
+  bool operator!=(const SmartControlMap& o) const { return !(*this == o); }
+};
 struct SmoothView {
   std::string library;
+  std::vector<SmartControlMap> controls;
 };
 
 // --- arrangement: automation clips and song markers ---------------------------
@@ -930,7 +943,8 @@ struct Song {
            mixer == o.mixer && links == o.links && modLinks == o.modLinks && automations == o.automations &&
            markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live &&
            arrangements == o.arrangements && cycleStart == o.cycleStart && cycleEnd == o.cycleEnd && cycleOn == o.cycleOn && projectEnd == o.projectEnd &&
-           currentArrangement == o.currentArrangement && panLaw == o.panLaw && stage == o.stage && stageRooms == o.stageRooms && trackReceipt == o.trackReceipt && flExportGridline == o.flExportGridline && flOrigin == o.flOrigin;
+           currentArrangement == o.currentArrangement && panLaw == o.panLaw && stage == o.stage && stageRooms == o.stageRooms && trackReceipt == o.trackReceipt && flExportGridline == o.flExportGridline && flOrigin == o.flOrigin &&
+           smooth.controls == o.smooth.controls;  // K-112D D6: Smart Control mappings (not the Library pane: view state)
   }
   bool operator!=(const Song& o) const { return !(*this == o); }
 };

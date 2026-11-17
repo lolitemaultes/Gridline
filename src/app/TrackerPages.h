@@ -36,6 +36,11 @@ void audioEmpty(App& a, float w, float h);
 //   append <ptn> · new · clone <ptn> · bars <ptn> <+1|-1> · loop <i0> <i1> | loop off · play <i>
 // (patterns by number, entries from 0). "dump" prints the order: "order frame F: n N | ptn ptn ... | loop a-b | pos p".
 void devOrder(App& a, const std::vector<std::string>& args, int frame);
+// cp17 (user): the Song page's sideways zoom (the Lanes view: the lane width; the arranger: its
+// timeline): d > 0 in, d < 0 out, 0 fit (every lane, or the whole song). Settings, never the song.
+void zoomSong(App& a, int d);
+// Dev ("tracker songzoom in|out|fit|lanes|arranger|end|lane <n>|show"): prints the view as drawn.
+void devSongZoom(App& a, const std::vector<std::string>& args, int frame);
 // The clip picked on the Song page (its clip box edits it); view state, never saved.
 extern ObjectId gSongClip;
 

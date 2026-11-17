@@ -852,12 +852,12 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
       // import: its tempo from the file, its name, or else its length (whole 1 to 16 bars of 4/4
       // between 75 and 165 BPM, the reading nearest the set's tempo).
       const bool clipsWarp = livelook::active(a);
-      if (clipsWarp && bpm <= 0 && s->seconds() >= 0.5 && s->seconds() <= 64.0) {
-        const double songBpm = a.doc.song().tempo;
-        for (int bars : {1, 2, 4, 8, 16}) {
-          const double b = bars * 4 * 60.0 / s->seconds();
-          if (b >= 75.0 && b <= 165.0 && (bpm <= 0 || std::fabs(b - songBpm) < std::fabs(bpm - songBpm))) bpm = b;
-        }
+      // Checkpoint 55 (N54-02): in Clips, after the file's own tempo: its name's, then whole bars at the
+      // Set's tempo, then the detector's reading nearest the Set's tempo (a 20 s "Long 120" is 10 bars
+      // at 120, not 8 at 96).
+      if (clipsWarp && !ownTempo) {
+        const double detected = index().lookup(path, meta) && meta.bpm > 0 ? meta.bpm : 0.0;
+        bpm = browse::warpTempo(fname, s->seconds(), a.doc.song().tempo, detected);
       }
       a.doc.beginGroup("add audio clip");
       ObjectId ch = a.addInstrument("gl.sampler", path);
@@ -885,6 +885,9 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
         const double beats = seconds * (sync ? bpm : sg.tempo) / 60.0;
         c.length = std::max<Tick>(1, static_cast<Tick>(std::llround(beats * sg.ppq)));
         if (sync) c.syncBpm = bpm;
+        // Checkpoint 54 (N53-02): in Clips a sample it does not warp is a one-shot, as the reference's short
+        // samples (Loop off): launched, it plays once (no retriggering at its own length).
+        if (clipsWarp && !sync) c.launchOnce = true;
         if (!sg.tracks.empty()) c.track = std::min(track, static_cast<int>(sg.tracks.size()) - 1);
         c.track = trackmodes::placeAudioClip(sg, c.track, ch);  // PL-08: audio tracks route it, instrument tracks pass it on
         sg.playlist.push_back(c);
@@ -1299,6 +1302,11 @@ PlugPlan planPlugin(App& a, const std::string& type, DropTarget target, const Dr
       p.why = i18n::tr("This track is locked");
       return p;
     }
+    // R11-09: Smooth: a track is its channel strip, as the reference's: an effect goes on the strip
+    // the header shows (a bus track: its bus; a MIDI region track: the strip its sound plays into),
+    // and the refusals speak of regions.
+    const bool smooth = logicplug::active(a);
+    const logicplug::AutoFold* fold = smooth ? &logicplug::autoFold(a) : nullptr;
     if (fx) {
       const MixerTrack* m = trackmodes::linkedMixer(s, tr);
       // N52-09: in Clips an audio effect dropped past the tracks (the drop area) makes a new audio
@@ -1307,6 +1315,12 @@ PlugPlan planPlugin(App& a, const std::string& type, DropTarget target, const Dr
         p.act = PlugAct::NewAudioTrackEffect;
         p.track = tr;
         p.label = fmtS(i18n::tr("Drop to make a new audio track with %s"), info->name);
+        return p;
+      }
+      if (!m && fold && fold->isBus(tr)) m = s.mixerTrack(fold->busStrip[static_cast<size_t>(tr)]);
+      else if (!m && fold && !fold->takesNoRegions(tr)) m = logicplug::trackStrip(a, tr);
+      if (!m && fold) {
+        p.why = i18n::tr("This track has no channel strip: drop the effect on an instrument, audio or bus track");
         return p;
       }
       if (!m) {
@@ -1323,7 +1337,9 @@ PlugPlan planPlugin(App& a, const std::string& type, DropTarget target, const Dr
       p.owner = m->id;
       p.slot = k;
       p.track = tr;
-      p.label = fmtSS(i18n::tr("Drop to insert %s on %s"), info->name, tname);
+      // R12 gap 9: on a bus track the hint names the aux that takes the effect, not the track.
+      const std::string onName = fold && fold->isBus(tr) && !m->name.empty() ? m->name : tname;
+      p.label = fmtSS(i18n::tr("Drop to insert %s on %s"), info->name, onName);
       return p;
     }
     if (!gen) {
@@ -1332,6 +1348,11 @@ PlugPlan planPlugin(App& a, const std::string& type, DropTarget target, const Dr
     }
     if (mode == TrackMode::Audio && trackmodes::isGroupTrack(s, tr)) {  // checkpoint 52
       p.why = i18n::tr("A group track plays its tracks: drop the instrument on one of them");
+      return p;
+    }
+    if (fold && fold->takesNoRegions(tr)) {
+      p.why = fold->isBus(tr) ? i18n::tr("A bus track takes effects, not instruments: drop the instrument on a software instrument track")
+                              : i18n::tr("This track holds automation only: drop the instrument on a software instrument track");
       return p;
     }
     if (mode == TrackMode::Audio) {
@@ -1349,7 +1370,8 @@ PlugPlan planPlugin(App& a, const std::string& type, DropTarget target, const Dr
     }
     for (const auto& c : s.playlist)
       if (c.track == tr && c.kind != ClipKind::Pattern) {
-        p.why = i18n::tr("This track holds audio or automation clips: drop the instrument on another track");
+        p.why = smooth ? i18n::tr("This track holds audio or automation regions: drop the instrument on another track")
+                       : i18n::tr("This track holds audio or automation clips: drop the instrument on another track");
         return p;
       }
     p.act = PlugAct::NewTrackInstrument;

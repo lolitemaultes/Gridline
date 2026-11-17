@@ -870,7 +870,8 @@ const md::Menu& toolsDef() {
           .rect("toolsmenu composing"),  // K-158: scripted screenshots open it
       md::separator(),
       md::item(N_("Render channel to sampled instrument..."), [](App& a) { j59::openRenderSampler(a, a.selChannel); })  // J-59 (RN-08)
-          .when([](App& a) { return a.doc.song().channel(a.selChannel) != nullptr; }),
+          .when([](App& a) { return a.doc.song().channel(a.selChannel) != nullptr; })
+          .only(studioWindows),  // N53-05 (checkpoint 54): Studio's channel term (Clips freezes and flattens tracks)
       md::provider([](App& a) { j31::toolsItems(a); }),                 // J-31: audio logger, cancel recording
       md::provider([](App& a) { menuparity::toolsScoreLogItem(a); }),  // J-27
       md::separator(),
@@ -881,7 +882,8 @@ const md::Menu& toolsDef() {
                  std::vector<ObjectId> all;
                  for (const auto& c : a.doc.song().channels) all.push_back(c.id);
                  ops::setChannelsMuted(a.doc, all, false);
-               }),
+               })
+          .only(studioWindows),  // N53-05: Studio's rack term (Clips' tracks have their activators)
       md::item(N_("Unsolo all mixer tracks"),
                [](App& a) {
                  a.doc.editSong("unsolo all", [](Song& s) {
@@ -918,7 +920,21 @@ const md::Menu& toolsDef() {
                                    a.selChannel = u.front();
                                    a.showRack = true;
                                  }
-                               }),
+                               })
+                          .only(studioWindows),
+                      // Checkpoint 55 (N54-08): Clips' term (its instruments play from tracks; no rack opens).
+                      md::item(N_("Select unused instruments"),
+                               [](App& a) {
+                                 auto u = ops::unusedChannels(a.doc.song());
+                                 if (u.empty()) {
+                                   a.notify("Every instrument plays in a clip");
+                                 } else {
+                                   a.selChannels = std::set<ObjectId>(u.begin(), u.end());
+                                   a.selChannel = u.front();
+                                   a.notify(std::to_string(u.size()) + (u.size() == 1 ? " instrument plays in no clip" : " instruments play in no clip"));
+                                 }
+                               })
+                          .only([](App& a) { return !studioWindows(a); }),
                       md::provider([](App& a) { menuparity::toolsMacroItems(a); }),  // J-27: track locks, live area, audio clip channels, declicking
                   })
           .rect("toolsmenu macros"),  // K-158: scripted screenshots open it

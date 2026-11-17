@@ -17,6 +17,7 @@
 #include "ContextMenus.h"
 #include "LayoutParts.h"
 #include "ExportUi.h"
+#include "LiveIo.h"
 #include "LiveLook.h"
 #include "UndoUi.h"
 #include "Keys.h"
@@ -422,6 +423,11 @@ const md::Menu& clipsNavigateDef() {
       md::item(N_("Clip and device bands"), "view.detail", [](App& a) { livelook::toggleDetail(a); })
           .check([](App& a) { return bandShown(a, "live.clip") || bandShown(a, "live.device"); }),
       md::toggle(N_("Mixer"), "view.mixer", [](App& a) { return &a.showMixer; }),
+      // Checkpoint 55 (gap 2): the In/Out section on the strips and the Arrangement's headers.
+      md::item(N_("In/Out"), "view.io", [](App& a) { liveio::toggle(a); }).check([](App& a) { return liveio::shown(a); }),
+      // Checkpoint 55 (gap 9): the info corner is a toggle, as the reference's Info View (Shift+?).
+      md::item(N_("Info View"), "view.quickHelp", [](App& a) { layoutui::setRegionVisible(a, "live.info", !bandShown(a, "live.info")); })
+          .check([](App& a) { return bandShown(a, "live.info"); }),
       md::separator(),
   };
   return m;

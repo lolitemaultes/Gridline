@@ -26,6 +26,9 @@ bool typingKeyPlays(Key k);  // R09-10: false for a key the A-row typing keyboar
 // Space, the function keys, undo and the other Ctrl chords keep their commands.
 void setEditorKeys(bool on);
 bool editorTakes(const Chord& c);
+// K-106 cp18: the Tracker's Sample editor (or Channel frame) has the keyboard: its clipboard, range
+// and play keys and every plain key run no command (Space, the function keys and Ctrl+Alt keep theirs).
+void setSampleEditorKeys(bool on);
 
 // True when one of the command's chords was pressed this frame with exactly
 // its modifiers (Ctrl also matches Cmd). Never true while text is typed or

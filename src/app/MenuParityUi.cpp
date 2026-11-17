@@ -83,6 +83,26 @@ void declickItems(App& a, const std::vector<ObjectId>& chans) {
 
 void timeModeItems(App& a) {
   const auto sel = selectedClipsOfKind(a, ClipKind::Audio);
+  if (livelook::active(a)) {
+    // Checkpoint 55 (N54-08): in Clips each choice once, under whom it applies to (the separators'
+    // headings did not show in its menus, so the three modes read as listed twice).
+    for (int group = 0; group < 2; ++group) {
+      if (!ImGui::BeginMenu(group == 0 ? i18n::tr("Every audio clip") : i18n::tr("Selected audio clips"), group == 0 || !sel.empty())) {
+        continue;
+      }
+      for (const stretch::Mode mode : stretch::kChoices) {
+        ImGui::PushID(static_cast<int>(mode));
+        if (ImGui::MenuItem(i18n::tr(stretch::modeName(mode)))) {
+          report(a, ops::setAudioClipTimeMode(a.doc, group == 0 ? decltype(sel){} : sel, static_cast<int>(mode)), "Audio clips switched",
+                 "Nothing to switch");
+        }
+        ui::Tooltip(stretch::modeHint(mode));
+        ImGui::PopID();
+      }
+      ImGui::EndMenu();
+    }
+    return;
+  }
   for (int group = 0; group < 2; ++group) {
     ImGui::SeparatorText(group == 0 ? i18n::tr("Every audio clip") : i18n::tr("Selected audio clips"));
     ImGui::PushID(group);
@@ -113,10 +133,10 @@ void scoreLogItems(App& a) {
       }
     }
     ImGui::Separator();
-    ImGui::MenuItem(i18n::tr("Replace the channel's notes"), nullptr, &dumpReplaces);
+    ImGui::MenuItem(livelook::active(a) ? i18n::tr("Replace the clip's notes") : i18n::tr("Replace the channel's notes"), nullptr, &dumpReplaces);
     ImGui::EndMenu();
   }
-  if (!target) ImGui::TextDisabled("%s", i18n::tr("Select a pattern and a channel first"));
+  if (!target) ImGui::TextDisabled("%s", livelook::active(a) ? i18n::tr("Select a MIDI clip first") : i18n::tr("Select a pattern and a channel first"));
   if (ImGui::MenuItem(i18n::tr("Clear the log"), nullptr, false, !scoreLog.events.empty())) scoreLog.clear();
   ImGui::MenuItem(i18n::tr("Log MIDI input notes"), nullptr, &scoreLog.enabled);
   if (ImGui::BeginMenu(i18n::tr("Keep notes for"))) {
@@ -272,11 +292,12 @@ void toolsMacroItems(App& a) {
              : t ? std::string("Live area ready: each clip once per track at the song start") : std::string("Nothing to prepare"));
   }
   if (!livelook::active(a)) ui::Hint("Puts every different clip of each track once into a live area at the song start (the song moves right)");
-  if (ImGui::BeginMenu(i18n::tr("Audio clip channels"))) {
+  // Checkpoint 55 (N54-08): Clips' terms (its audio clips and their samples, not channels).
+  if (ImGui::BeginMenu(clips ? i18n::tr("Time mode of audio clips") : i18n::tr("Audio clip channels"))) {
     timeModeItems(a);
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu(i18n::tr("Declicking of the selected channels"))) {
+  if (ImGui::BeginMenu(clips ? i18n::tr("Declicking of the selected clips") : i18n::tr("Declicking of the selected channels"))) {
     declickItems(a, selectedChannels(a));
     ImGui::EndMenu();
   }

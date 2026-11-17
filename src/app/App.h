@@ -135,6 +135,11 @@ struct PlaylistState {
   std::set<int> selTracks;      // N48-05: Clips: the tracks a time selection drawn in the lanes covers (empty: every track)
   std::set<int> trackSel;       // GitHub #46: selected track headers (indexes; Ctrl / Shift+click), moved together
   std::vector<Clip> clipboard;
+  // K-112B (R10-03, Smooth): the R and I of the instrument tracks' headers, by the sound the track
+  // plays: record enable (a take goes on the armed track, and what is played is heard on it) and
+  // input monitoring (live notes play the track's sound while another track is selected). A
+  // session state, as the reference's MIDI arm is a performance switch: never saved.
+  std::set<ObjectId> midiArm, midiMonitor;
   // J-28: FL-style playlist controls.
   ClipKind srcKind = ClipKind::Pattern;  // current clip source (what draw / paint place);
   ObjectId srcId = kNoId;                //   patterns follow App::curPattern
@@ -186,6 +191,13 @@ struct Toast {
   std::string details;  // file path, error code, missing files … ("" = none)
   double copiedUntil = 0;  // "Copied" feedback shows until then
   uint64_t serial = 0;     // stable ImGui id
+  // K-112c checkpoint 55: buttons on the card (an offer: "Play them once"); a click runs one and
+  // closes the card. Empty: a plain message.
+  struct Action {
+    std::string label;  // English (shown translated)
+    std::function<void()> run;
+  };
+  std::vector<Action> actions;
 };
 
 class App {
@@ -388,6 +400,10 @@ class App {
   bool multilink = false;
   std::vector<ParamId> multilinkQueue;
   uint64_t multilinkSerial_ = 0;
+  // K-112D (D5, R11-06): Smooth's Smart Controls learn in place: while set, the next hardware control
+  // moved that drives nothing yet links to this control (the pane keeps it current; ImGui frame stamp).
+  ParamId smartLearn;
+  int smartLearnFrame = -100;
   // Focused plugin window (template knobs drive its first parameters).
   ObjectId focusPluginOwner = kNoId;
   int focusPluginSlot = -1;
@@ -526,6 +542,10 @@ class App {
   // A notification card; `details` (path, code) is not shown but is copied
   // with the message when the card is clicked (J-78).
   void notify(const std::string& text, bool error = false, const std::string& details = "");
+  // K-112c checkpoint 55: a notification with buttons (an offer), up for `seconds` (and while hovered).
+  void notifyAction(const std::string& text, std::vector<Toast::Action> actions, double seconds = 15.0);
+  // Dev: runs button `index` of the newest card with buttons (false: none).
+  bool runToastAction(size_t index);
   void setHint(const std::string& text) { hint = text; }
   std::string windowTitle() const;
   std::string configDir() const;

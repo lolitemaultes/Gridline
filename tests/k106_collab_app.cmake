@@ -8,11 +8,15 @@
 #   3. presence: each side gets the other's edit cursor (the tracker's cursor; the other side's
 #      as set), by channel and pattern tick;
 #   4. (cp16) the channel the other side made is a track of the Tracker joining it.
+#   5. (cp20, K-316 7.3 A/B) the Tracker makes that channel a Tracker Sampler, loads a sample, then edits the
+#      sample (reversed in the Sample editor) and the volume envelope (a point added in the Instrument editor)
+#      while the other side has the instrument's plugin window open: the other side reads the same
+#      envelope, the same sample length and the edited file, and the songs are equal.
 #   Pairs: Tracker with Studio, Clips with Tracker, Tracker with Smooth (development layouts).
 #   Each side reads its report of a round before the other starts the next round's edits (the two
 #   windows count their own frames: on a slow runner one side's report came after the other's next
-#   edit), and neither quits before the other has read the cursors.
-#   cmake -DAPP=<gridline-app> -DOUT=<dir> -P k106_collab_app.cmake
+#   edit), and neither starts round 3 (or quits) before the other has read the cursors.
+#   cmake -DAPP=<gridline-app> -DWAV=<audio file> -DOUT=<dir> -P k106_collab_app.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
@@ -40,6 +44,40 @@ set(TRK2 "70 tracker cursor Lead 4 0 0
 set(OTH2 "72 collab note Lead 200 48 72
 73 collab edit-cursor-dev Lead 96
 ")
+# cp20: the Tracker edits a sample and an envelope while the other side watches its plugin window.
+set(E "tracker editors")
+set(TRK3 "86 ${E} open sample Lead
+87 replace gl.tracker
+88 ${E} open sample Lead
+90 ${E} load \"${WAV}\"
+91 waitfor collab-synced 60
+92 waitfor never 4
+93 ${E} op reverse
+95 ${E} open instrument Lead
+96 ${E} ins env vol add 30 50
+97 ${E} ins env vol end
+98 waitfor collab-synced 60
+99 waitfor never 6
+100 ${E} ins dump
+101 ${E} dump
+102 collab report \"@D@/t-3.json\"
+103 waitfor never 30
+")
+set(OTH3 "86 waitfor never 3
+87 ${E} plugin Lead
+88 waitfor never 8
+89 waitfor collab-synced 60
+90 ${E} plugin Lead
+91 waitfor never 8
+92 waitfor collab-synced 60
+93 waitfor never 8
+94 waitfor collab-files-done 120
+95 waitfor never 2
+100 ${E} ins dump
+101 ${E} dump
+102 collab report \"@D@/o-3.json\"
+103 waitfor never 2
+")
 
 foreach(pair "tracker;studio" "live;tracker" "tracker;logic")
   list(GET pair 0 LA)
@@ -48,14 +86,20 @@ foreach(pair "tracker;studio" "live;tracker" "tracker;logic")
   if(LA STREQUAL "tracker")
     set(A1 "${TRK1}")
     set(A2 "${TRK2}")
+    set(A3 "${TRK3}")
     set(B1 "${OTH1}")
     set(B2 "${OTH2}")
+    set(B3 "${OTH3}")
   else()
     set(A1 "${OTH1}")
     set(A2 "${OTH2}")
+    set(A3 "${OTH3}")
     set(B1 "${TRK1}")
     set(B2 "${TRK2}")
+    set(B3 "${TRK3}")
   endif()
+  string(REPLACE "@D@" "${D}" A3 "${A3}")
+  string(REPLACE "@D@" "${D}" B3 "${B3}")
   set(A "5 collab profile Alex
 10 collab new \"${D}/Alex/Song\"
 20 collab invite \"${D}/invite.txt\"
@@ -76,9 +120,8 @@ ${A2}80 waitfor collab-notes:Lead:4 90
 82 waitfor never 3
 83 collab report \"${D}/a-2.json\"
 84 collab edits \"${D}/a-edits.json\"
-85 waitfor never 3
-86 waitfor \"file:${D}/b-edits.json\" 120
-90 quit
+85 waitfor \"file:${D}/b-edits.json\" 120
+${A3}110 quit
 ")
   set(B "5 collab profile Sam
 10 collab join \"${D}/invite.txt\" \"${D}/Sam/Song\"
@@ -98,9 +141,8 @@ ${B2}80 waitfor collab-notes:Lead:4 90
 82 waitfor never 3
 83 collab report \"${D}/b-2.json\"
 84 collab edits \"${D}/b-edits.json\"
-85 waitfor never 3
-86 waitfor \"file:${D}/a-edits.json\" 120
-90 quit
+85 waitfor \"file:${D}/a-edits.json\" 120
+${B3}110 quit
 ")
   file(MAKE_DIRECTORY "${D}")
   foreach(who A B)
@@ -115,7 +157,7 @@ ${B2}80 waitfor collab-notes:Lead:4 90
             "${APP}" --hidden --no-ui-sounds --layout ${LA} --dev-input "${D}/a.txt"
     COMMAND ${CMAKE_COMMAND} -E env GRIDLINE_CONFIG_HOME=${D}/cfgB HOME=${D}/homeB
             "${APP}" --hidden --no-ui-sounds --layout ${LB} --dev-input "${D}/b.txt"
-    RESULTS_VARIABLE rcs OUTPUT_FILE "${D}/run.out" ERROR_FILE "${D}/run.err" TIMEOUT 480)
+    RESULTS_VARIABLE rcs OUTPUT_FILE "${D}/run.out" ERROR_FILE "${D}/run.err" TIMEOUT 600)
   if(NOT rcs STREQUAL "0;0")
     fail("${LA}/${LB}: exit codes ${rcs}")
   endif()
@@ -186,7 +228,39 @@ ${B2}80 waitfor collab-notes:Lead:4 90
       fail("${LA}/${LB}: the other side's edit cursor arrived as '${tch}' tick ${ttk}")
     endif()
   endif()
-  message(STATUS "${LA}/${LB}: both sides '${round_2}'")
+  # 5. (cp20) the sample and the envelope the Tracker edited. The second app's dumps reach run.out (the
+  #    first app's output is piped into it); the shared song's digest in both reports covers the first.
+  file(READ "${D}/run.out" ro)
+  set(e0 "")
+  set(l0 "")
+  if(NOT ro MATCHES "tracker editors frame 100: ins shown [01] [^\n]*(vol \\[[^]]*\\])")
+    fail("${LA}/${LB}: round 3: no instrument dump from ${LB}")
+  else()
+    set(e0 "${CMAKE_MATCH_1}")
+    if(NOT e0 MATCHES "30:50")
+      fail("${LA}/${LB}: round 3: ${LB} reads the volume envelope without the added point 30:50: '${e0}'")
+    endif()
+  endif()
+  if(NOT ro MATCHES "tracker editors frame 101: shown [^\n]* tracker 1 slot 0 frames ([0-9]+) ")
+    fail("${LA}/${LB}: round 3: ${LB} has no Tracker Sampler sample on Lead")
+  else()
+    set(l0 "${CMAKE_MATCH_1}")
+    if(l0 EQUAL 0)
+      fail("${LA}/${LB}: round 3: the sample did not arrive at ${LB}")
+    endif()
+  endif()
+  if(EXISTS "${D}/t-3.json" AND EXISTS "${D}/o-3.json")
+    file(READ "${D}/t-3.json" j3t)
+    file(READ "${D}/o-3.json" j3o)
+    string(JSON s3t GET "${j3t}" song)
+    string(JSON s3o GET "${j3o}" song)
+    if(NOT s3t STREQUAL s3o)
+      fail("${LA}/${LB}: round 3: the songs differ after the sample and envelope edits")
+    endif()
+  else()
+    fail("${LA}/${LB}: round 3: no reports")
+  endif()
+  message(STATUS "${LA}/${LB}: both sides '${round_2}'; round 3 envelope '${e0}', sample ${l0} frames")
 endforeach()
 if(failures GREATER 0)
   message(FATAL_ERROR "${failures} failure(s)")

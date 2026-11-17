@@ -4,6 +4,7 @@
 #include "PixelGrid.h"
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <map>
 #include <set>
 #include <cmath>
@@ -24,6 +25,7 @@
 #include "../core/TrackModes.h"
 #include "../core/TrackOrder.h"
 #include "../engine/Chop.h"
+#include "../engine/Dsp.h"
 #include "MenuParityUi.h"
 #include "../packs/PacksUi.h"
 #include "App.h"
@@ -37,6 +39,7 @@
 #include "HostedBodies.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
+#include "LiveIo.h"
 #include "MixerMeters.h"
 #include "PluginUI.h"
 #include "Theme.h"
@@ -58,8 +61,106 @@ void leftFrame() {
 
 Tick arrangementOrigin(const App& a) { return active(a) ? std::max<Tick>(0, a.doc.song().live.areaEnd) : 0; }
 
+namespace {
+// Checkpoint 55 (gap 5): the dragged row heights, loaded from the person's settings once.
+std::map<std::string, float> gRowScales;  // "<set>\t<track key>" -> scale
+bool gRowScalesLoaded = false;
+std::string rowKey(const App& a, int t) {
+  const Song& s = a.doc.song();
+  if (t < 0 || t >= static_cast<int>(s.tracks.size())) {
+    return std::string();
+  }
+  const PlaylistTrack& tr = s.tracks[static_cast<size_t>(t)];
+  std::string k;
+  if (tr.mode == TrackMode::Audio && tr.mixer != kNoId) {
+    k = "m" + std::to_string(tr.mixer);
+  } else if (tr.mode == TrackMode::Instrument && tr.channel != kNoId) {
+    k = "c" + std::to_string(tr.channel);
+  } else {
+    k = "t" + std::to_string(t);
+  }
+  return a.projectFile() + "\t" + k;
+}
+void loadRowScales(const App& a) {
+  if (gRowScalesLoaded) {
+    return;
+  }
+  gRowScalesLoaded = true;
+  const std::string all = a.settings.getString("clips.rowHeights");
+  size_t at = 0;
+  while (at < all.size()) {
+    size_t nl = all.find('\n', at);
+    if (nl == std::string::npos) {
+      nl = all.size();
+    }
+    const std::string line = all.substr(at, nl - at);
+    at = nl + 1;
+    const size_t t2 = line.rfind('\t');
+    if (t2 == std::string::npos || t2 == 0) {
+      continue;
+    }
+    const float v = static_cast<float>(std::atol(line.c_str() + t2 + 1)) / 1000.0f;  // per mille
+    if (v >= 0.25f && v <= 4.0f) {
+      gRowScales[line.substr(0, t2)] = v;
+    }
+  }
+}
+}  // namespace
+
+float rowScale(const App& a, int track, float fallback) {
+  loadRowScales(a);
+  if (gRowScales.empty()) {
+    return fallback;
+  }
+  const auto it = gRowScales.find(rowKey(a, track));
+  return it != gRowScales.end() ? it->second : fallback;
+}
+
+void setRowScale(App& a, int track, float scale, bool done) {
+  loadRowScales(a);
+  const std::string k = rowKey(a, track);
+  if (k.empty()) {
+    return;
+  }
+  gRowScales[k] = std::clamp(scale, 0.25f, 4.0f);
+  if (!done) {
+    return;
+  }
+  std::string all;
+  int lines = 0;
+  for (const auto& [key, v] : gRowScales) {
+    if (++lines > 400) {
+      break;
+    }
+    all += (all.empty() ? "" : "\n") + key + "\t" + std::to_string(std::lround(v * 1000.0f));  // per mille
+  }
+  a.settings.set("clips.rowHeights", all);
+}
+bool arrangementClip(const App& a, const Clip& c) { return !active(a) || c.start >= a.doc.song().live.areaEnd; }
+
+void withoutGridClips(const App& a, Song& s, const std::function<void(Song&)>& fn) {
+  std::vector<std::pair<size_t, Clip>> grid;  // (index, clip), in order
+  const Tick end = active(a) ? s.live.areaEnd : 0;
+  if (end > 0)
+    for (size_t i = 0; i < s.playlist.size(); ++i)
+      if (s.playlist[i].start < end) grid.emplace_back(i, s.playlist[i]);
+  if (!grid.empty())
+    s.playlist.erase(std::remove_if(s.playlist.begin(), s.playlist.end(), [end](const Clip& c) { return c.start < end; }), s.playlist.end());
+  fn(s);
+  for (auto& [i, c] : grid) s.playlist.insert(s.playlist.begin() + static_cast<std::ptrdiff_t>(std::min(i, s.playlist.size())), std::move(c));
+}
+
 ImFont* numFont(const App& a) { return active(a) ? a.fontRegular : a.fontMono; }
 ImU32 envelopeColour() { return theme::rgb(0xEE5A50); }
+
+namespace {
+// Checkpoint 54 (N53-10): a mixer track's level in dB by the engine's fader law (dsp::faderGain, 0.8 is
+// 0 dB), as Studio's and Smooth's strips read it. (The strips read 20 log10 of the fader value before.)
+double faderDb(float v) {
+  const double db = dsp::gainToDb(dsp::faderGain(static_cast<double>(v), 0.8));
+  return std::fabs(db) < 0.005 ? 0.0 : db;  // (never "-0.0")
+}
+}  // namespace
 
 namespace {
 // C47: the clip grid's side of Session record and Capture (defined with the grid below).
@@ -121,8 +222,10 @@ ColMap colMap(const Song& s, int nCols) {
   m.group.assign(m.col.size(), 0);
   int hideTo = -1;
   const std::vector<char> lanes = trackmodes::automationLanes(s, nCols);
+  const std::vector<char> gaps = trackmodes::gapTracks(s, nCols);
   for (int t = 0; t < nCols; ++t) {
-    if (t <= hideTo || (t < static_cast<int>(lanes.size()) && lanes[static_cast<size_t>(t)])) {  // N52-10: an automation lane is the Arrangement's only
+    if (t <= hideTo || (t < static_cast<int>(lanes.size()) && lanes[static_cast<size_t>(t)]) ||  // N52-10: an automation lane is the Arrangement's only
+        (t < static_cast<int>(gaps.size()) && gaps[static_cast<size_t>(t)])) {                    // N53-04: no column for a gap track
       m.hidden[static_cast<size_t>(t)] = 1;
       m.col[static_cast<size_t>(t)] = std::max(0, m.n - 1);
       continue;
@@ -455,18 +558,26 @@ bool instrumentDropped(App& a, ObjectId channel, const std::string& name) {
     const std::vector<ObjectId> ch = trackChannels(s, t);
     if (std::find(ch.begin(), ch.end(), channel) != ch.end()) track = t;
   }
+  // N53-08: the instrument's own mixer track sends to every return (at zero), as every track of a set does.
+  if (const Channel* c = s.channel(channel); track >= 0 && c && c->mixerTrack != s.masterId() && trackmodes::missingReturnSends(s, c->mixerTrack)) {
+    const ObjectId mix = c->mixerTrack;
+    a.doc.editSong("track sends", [mix](Song& x) { trackmodes::addReturnSendsTo(x, mix); });
+  }
   if (track >= 0 && !name.empty()) {
     // N47-15: a track still named by its place (or not at all) takes the instrument's name after its
     // number ("1 Analog Synth"); a name the user gave stays. Its instrument and mixer track follow.
+    // Checkpoint 54: the number Clips shows it by (lanes and gap tracks take none).
+    const std::vector<int> nums = trackmodes::trackNumbers(s, track + 1);
+    const int number = track < static_cast<int>(nums.size()) && nums[static_cast<size_t>(track)] > 0 ? nums[static_cast<size_t>(track)] : track + 1;
     const std::string was = s.tracks[static_cast<size_t>(track)].name;
-    const std::string def1 = std::to_string(track + 1) + " MIDI", def2 = std::to_string(track + 1) + " Audio";
+    const std::string def1 = std::to_string(number) + " MIDI", def2 = std::to_string(number) + " Audio";
     // N52-11: a track named after the instrument it had ("1 Analog Synth") takes the new one's name too.
     bool instrumentNamed = false;
-    if (const std::string num = std::to_string(track + 1) + " "; was.rfind(num, 0) == 0)
+    if (const std::string num = std::to_string(number) + " "; was.rfind(num, 0) == 0)
       for (const PluginInfo& pi : pluginCatalog())
         if (pi.kind == PluginKind::Generator && was.compare(num.size(), std::string::npos, pi.name) == 0) instrumentNamed = true;
     if (was.empty() || was == def1 || was == def2 || was == name || instrumentNamed) {
-      const std::string to = std::to_string(track + 1) + " " + name;
+      const std::string to = std::to_string(number) + " " + name;
       a.doc.editSong("name track", [track, to, channel, was, name](Song& x) {
         PlaylistTrack& tr = x.tracks[static_cast<size_t>(track)];
         tr.name = to;
@@ -629,12 +740,17 @@ void writeCapture(App& a) {
     if (sg.to > sg.from) segs.push_back(sg);
   if (segs.empty()) return;
   int placed = 0;
-  a.doc.editSong("record clips into the arrangement", [&](Song& s) {
-    for (const CapSeg& sg : segs) {
-      const Clip* src = s.clip(sg.clip);
-      if (!src) continue;
-      const Clip c = *src;  // (a copy: the playlist grows below)
-      const Tick len = std::max<Tick>(1, s.clipLength(c)), d0 = capDest(sg, sg.from), d1 = capDest(sg, sg.to);
+  std::map<ObjectId, Clip> launched;  // the launched clips (grid clips: set aside during the edit)
+  for (const CapSeg& sg : segs)
+    if (const Clip* c = a.doc.song().clip(sg.clip)) launched.emplace(c->id, *c);
+  a.doc.editSong("record clips into the arrangement", [&](Song& song) { withoutGridClips(a, song, [&](Song& s) {  // N53-02
+    for (CapSeg sg : segs) {
+      const auto src = launched.find(sg.clip);
+      if (src == launched.end()) continue;
+      const Clip& c = src->second;
+      const Tick len = std::max<Tick>(1, s.clipLength(c));
+      if (c.launchOnce) sg.to = std::min(sg.to, sg.origin + len);  // N53-02: a one-shot plays (and is written) once
+      const Tick d0 = capDest(sg, sg.from), d1 = capDest(sg, sg.to);
       if (d1 <= d0) continue;
       const std::set<int> tr{sg.track};
       // The destination is cleared (clips across its edges are cut), then filled pass by pass.
@@ -651,7 +767,7 @@ void writeCapture(App& a) {
         Clip n = c;
         n.id = s.allocateId();
         n.start = capDest(sg, o);
-        n.launched = false;
+        n.launched = false, n.launchOnce = false;  // (an arrangement clip plays where it lies)
         n.takeGroup = kNoId, n.take = 0;
         n.group = kNoId;
         s.playlist.push_back(n);
@@ -663,7 +779,7 @@ void writeCapture(App& a) {
                        s.playlist.end());
       placed += static_cast<int>(inside.size());
     }
-  });
+  }); });
   std::printf("arrangement record: %d clips from %d launches\n", placed, static_cast<int>(segs.size()));
   std::fflush(stdout);
   if (placed > 0) a.notify(std::to_string(placed) + " clips recorded into the arrangement");
@@ -673,6 +789,9 @@ void captureFrame(App& a) {
   const bool want = a.recordArmed && a.engine.playing() && !a.engine.countingIn();
   const int nTracks = std::min<int>(static_cast<int>(a.doc.song().tracks.size()), kMaxPlaylistTracks);
   const Tick o = arrangementOrigin(a);
+  static bool wasPlaying = false;  // the transport ran last frame
+  const bool startedNow = !wasPlaying && a.engine.playing();
+  wasPlaying = a.engine.playing();
   if (want && !gCap.on) {
     gCap = Capture{};
     gCap.on = true;
@@ -680,6 +799,9 @@ void captureFrame(App& a) {
     gCap.lastMode = a.engine.mode();
     // From the arrangement's play position (a capture begun while the grid plays: the arrangement's start).
     gCap.arrNow = gCap.lastMode == PlayMode::Live ? static_cast<double>(o) : std::max(gCap.lastPos, static_cast<double>(o));
+    // N53-02: a transport started with the capture began its clip-launch clock at 0, a frame ago: the
+    // launches it plays are recorded from their start (not from where the first frame saw the clock).
+    if (startedNow && gCap.lastMode == PlayMode::Live) gCap.liveStart = 0;
   }
   if (!gCap.on) return;
   if (want) {
@@ -689,8 +811,11 @@ void captureFrame(App& a) {
     // A clock that changed this frame: what ends ends where the old clock stood.
     const double endPos = sameClock ? pos : gCap.lastPos;
     if (sameClock) gCap.arrNow += pos - gCap.lastPos;
+    const PlayMode wasMode = gCap.lastMode;
     gCap.lastPos = pos, gCap.lastMode = mode;
-    if (mode == PlayMode::Live && gCap.liveStart < 0) gCap.liveStart = pos;
+    // N53-02: the clip-launch clock starting (again) during the capture starts at 0: what it plays is
+    // recorded from its start. A capture begun while it already ran records from that moment on.
+    if (mode == PlayMode::Live && gCap.liveStart < 0) gCap.liveStart = !sameClock && wasMode != PlayMode::Live ? 0.0 : pos;
     const Tick beat = std::max<Tick>(1, a.doc.song().beatTicks());
     for (int t = 0; t < nTracks; ++t) {
       const ObjectId act = mode == PlayMode::Live ? a.engine.liveActive(t) : kNoId;
@@ -704,10 +829,13 @@ void captureFrame(App& a) {
       if (act != kNoId && !gCap.open.count(t)) {
         CapSeg sg;
         sg.track = t, sg.clip = act, sg.origin = org;
-        sg.from = std::max(org, static_cast<Tick>(gCap.liveStart));
         // This clock's tick 0 in the arrangement, on the beat grid (the clock restarts on a launch).
         const double off = gCap.arrNow - pos;
         sg.off = static_cast<Tick>(std::llround(off / static_cast<double>(beat))) * beat;
+        // N53-02 (checkpoint 54): a clip already playing when the capture began is written from the
+        // arrangement tick the capture began at (not from the first frame's clock, a few ticks late).
+        const Tick here = static_cast<Tick>(std::llround(gCap.arrNow)) - sg.off;
+        sg.from = std::max(org, std::min(static_cast<Tick>(gCap.liveStart), here));
         gCap.open[t] = sg;
       }
     }
@@ -838,6 +966,37 @@ int gOpenView = -1, gOpenFrames = 0;
 // N47-17: a set opened or made new (and the first one at launch) starts with its first track selected,
 // as the reference always has a track selected: the device band then shows that track.
 bool gPickFirst = true;
+bool gOfferOneShots = false;  // checkpoint 55 (N54-01): the opened set's looping short samples are looked for
+// Checkpoint 55 (N54-01): a set saved before checkpoint 54 keeps its short unwarped grid samples looping
+// (they retrigger at their own length). Nothing is changed unasked: a card offers to make them play
+// once, in one undo step; the save stays as it was unless the offer is taken. Offered once per set.
+void offerOneShots(App& a) {
+  static std::set<std::string> offered;
+  const std::vector<ObjectId> ids = trackmodes::loopingShortSlotClips(a.doc.song());
+  if (ids.empty()) {
+    return;
+  }
+  const std::string key = a.projectFile().empty() ? std::to_string(ids.front()) : a.projectFile();
+  if (!offered.insert(key).second) {
+    return;
+  }
+  const std::string n = std::to_string(ids.size());
+  a.notifyAction(n + (ids.size() == 1 ? " short sample loops; play it once?" : " short samples loop; play them once?"),
+                 {{"Play once", [&a, ids] {
+                     int done = 0;
+                     a.doc.editSong("play short samples once", [&](Song& s) {
+                       for (Clip& c : s.playlist) {
+                         if (std::find(ids.begin(), ids.end(), c.id) != ids.end() && !c.launchOnce) {
+                           c.launchOnce = true;
+                           ++done;
+                         }
+                       }
+                     });
+                     a.notify(std::to_string(done) + (done == 1 ? " sample now plays once" : " samples now play once"));
+                   }},
+                  {"Keep looping", nullptr}},
+                 20.0);
+}
 int gRenameFrames = 0;  // N47-12: frames until the clip band's Name field takes the keyboard
 std::vector<std::string> arrangementSets(const App& a) {
   std::vector<std::string> v;
@@ -870,6 +1029,7 @@ void projectOpened(App& a, const std::string& file) {
   gOpenFrames = 4;
   gPickFirst = true;
   gFocus = {};  // N52-12: a track chosen in the set before is no choice in this one
+  gOfferOneShots = true;
 }
 
 void setOpenedNew() { gPickFirst = true; }
@@ -916,8 +1076,102 @@ void projectSaved(App& a, const std::string& file) {
   a.settings.set("clips.arrangementSets", all);
 }
 
+namespace {
+// N53-05 (checkpoint 54): an instrument a collaborator added in another layout (Studio's rack) with no
+// track to play it from gets an instrument track here, as every instrument in Clips is a track, so the
+// Clips user sees and plays it (one edit, which every peer gets). Only for a collaborator's channels:
+// an opened project, undo and this computer's own edits are left as they are.
+// Checkpoint 55 (N54-09): also an instrument this computer added by a path that made no track for it (a
+// script, the collaboration's own "edit" command): one new edit step, not an undo or redo. The track is
+// named as Clips names an instrument's ("5 SamCh": its number, then the instrument's name; the
+// instrument keeps its own name), in the same undo step as the track.
+void adoptPeerChannels(App& a) {
+  static std::set<ObjectId> known;
+  static size_t knownPos = 0;
+  static uint64_t knownRev = 0, knownMove = 0;
+  static bool first = true;
+  const Song& s = a.doc.song();
+  const size_t pos = a.doc.history().position();
+  const uint64_t rev = a.doc.revision(), move = a.doc.moveSerial();
+  if (rev == knownRev && !first) {
+    return;
+  }
+  std::set<ObjectId> now;
+  for (const Channel& c : s.channels) {
+    now.insert(c.id);
+  }
+  std::vector<ObjectId> fresh;
+  const bool peer = pos == knownPos && collabui::active(a);
+  const bool own = pos == knownPos + 1 && move == knownMove;  // one new step of this computer's (no undo or redo)
+  if (!first && (peer || own)) {
+    for (ObjectId id : now) {
+      if (!known.count(id)) {
+        fresh.push_back(id);
+      }
+    }
+  }
+  first = false;
+  known = std::move(now), knownPos = pos, knownRev = rev, knownMove = move;
+  if (fresh.empty()) {
+    return;
+  }
+  std::set<ObjectId> placed;
+  const int used = trackmodes::usedTrackCount(s);
+  for (int t = 0; t < used; ++t) {
+    for (ObjectId id : trackChannels(s, t)) {
+      placed.insert(id);
+    }
+  }
+  for (const Clip& c : s.playlist) {
+    if (c.kind == ClipKind::Audio) {
+      placed.insert(c.source);  // (an audio clip's source plays from its clip's track)
+    }
+  }
+  for (ObjectId id : fresh) {
+    const Channel* c = s.channel(id);
+    const PluginInfo* pi = c ? findPlugin(c->plugin.type) : nullptr;
+    if (!c || placed.count(id) || !pi || pi->kind != PluginKind::Generator || c->isLayer()) {
+      continue;
+    }
+    if (!peer && c->plugin.type == "gl.sampler") {
+      continue;  // (this computer's samplers come with their clips: a take, a drop)
+    }
+    a.later([&a, id] {
+      const Song& x = a.doc.song();
+      if (!x.channel(id) || trackmodes::instrumentTrackOf(x, id) >= 0 || !active(a)) {
+        return;
+      }
+      const int t = trackmodes::freeTrack(x, trackmodes::usedTrackCount(x));  // a new track after the others
+      if (t < 0) {
+        return;
+      }
+      bool made = false;
+      a.doc.editSong("instrument track", [&](Song& y) {
+        if (!trackmodes::makeInstrumentTrack(y, t, id)) {
+          return;
+        }
+        made = true;
+        const Channel* ch = y.channel(id);
+        y.tracks[static_cast<size_t>(t)].name = std::to_string(trackmodes::shownNumber(y, t)) + " " + (ch ? ch->name : std::string());
+        trackmodes::addReturnSendsTo(y, ch && ch->mixerTrack != y.masterId() ? ch->mixerTrack : kNoId);  // N53-08: as a dropped instrument's
+      });
+      if (made) {
+        knownPos = a.doc.history().position();
+        knownRev = a.doc.revision();
+      }
+    });
+  }
+}
+}  // namespace
+
 void viewFrame(App& a) {
   sessionRecordFrame(a);
+  adoptPeerChannels(a);
+  liveio::drawMenus(a);  // checkpoint 55 (gap 2): the In/Out section's From and To menus
+  if (gOfferOneShots && !a.projectLoading()) {
+    gOfferOneShots = false;
+    offerOneShots(a);
+  }
   if (gPickFirst && GImGui->OpenPopupStack.Size == 0) {
     gPickFirst = false;
     setDrawMode(a, false);  // N50-03: a set opens in pointer mode (Draw mode is the person's own toggle, B)
@@ -951,9 +1205,24 @@ void viewFrame(App& a) {
     // band turns once the button is released.
     static std::set<ObjectId> lastSel;
     static std::set<int> lastTracks;  // C47: a newly selected track brings its devices to the band
+    static int pendingTrack = -1;     // N53-07: the track just selected alone, until the button is up
     if (a.playlist.trackSel != lastTracks) {
       lastTracks = a.playlist.trackSel;
       if (lastTracks.size() == 1) focusTrack(a, *lastTracks.begin());
+      pendingTrack = lastTracks.size() == 1 ? *lastTracks.begin() : -1;
+    }
+    // N53-07: a track title (a group's too) or a slot of another track selected: the band shows that
+    // track's devices and the status bar names it, as the reference's detail view follows the track; a
+    // clip selected on another track is no longer the band's. (Once the button is up, as below.)
+    if (pendingTrack >= 0 && GImGui->OpenPopupStack.Size == 0 && !ImGui::IsAnyMouseDown()) {
+      bool other = false;
+      for (ObjectId id : a.playlist.selected)
+        if (const Clip* c = a.doc.song().clip(id); !c || c->track != pendingTrack) other = true;
+      if (other && a.playlist.trackSel == std::set<int>{pendingTrack}) {
+        a.playlist.selected.clear();
+        layoutui::setRegionVisible(a, "live.device", true);
+      }
+      pendingTrack = -1;
     }
     // N46-01: not while a menu is open (the band swap closed the clip menu a right-click had just
     // opened); it happens when the menu closes.
@@ -985,6 +1254,17 @@ void viewFrame(App& a) {
     if (g.OpenPopupStack.Size > 0 && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
       ImGuiWindow* top = g.OpenPopupStack.back().Window;
       if (!top || !(top->Flags & ImGuiWindowFlags_Modal)) ImGui::ClosePopupToLevel(g.OpenPopupStack.Size - 1, true);
+    } else if (g.OpenPopupStack.Size == 0 && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+      // N53-06 (checkpoint 54): Esc closes a device's floating editor window when it is the front window
+      // (the last one opened or clicked), as the reference's plugin windows close.
+      for (int i = g.WindowsFocusOrder.Size - 1; i >= 0; --i) {
+        const ImGuiWindow* w = g.WindowsFocusOrder[i];
+        if (!w || !w->WasActive || w->Hidden || w->DockIsActive || (w->Flags & ImGuiWindowFlags_ChildWindow)) continue;
+        const char* n = w->Name ? std::strstr(w->Name, "###") : nullptr;
+        if (n && std::strcmp(n, "###channelsettings") == 0) a.settingsChannel = kNoId;
+        else if (n && std::strcmp(n, "###fxeditor") == 0) a.fxEditor = {kNoId, -1};
+        break;  // only the front window
+      }
     }
   }
   {  // C44-20: song playback starts at the arrangement's start, never inside the clip grid's storage
@@ -1138,7 +1418,7 @@ void busRow(App& a, ImDrawList* dl, size_t j, float x0, float x1, float y) {
   const ImVec2 v0(hc.act.a.x, r0.y + 2), v1(hc.act.b.x, r1.y - 2);
   dl->AddRectFilled(v0, v1, P.dark ? P.field : P.surface950, theme::kRadiusSm);
   char vb[16];
-  if (mt.volume > 1e-6f) std::snprintf(vb, sizeof vb, "%.1f", static_cast<double>(20.0f * std::log10(mt.volume)));
+  if (mt.volume > 1e-6f) std::snprintf(vb, sizeof vb, "%.1f", faderDb(mt.volume));
   else std::snprintf(vb, sizeof vb, "-\xE2\x88\x9E");  // minus infinity, as the refs write it
   const float tw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, vb).x;
   dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round(v1.x - 4 - tw), theme::textTop(a.fontRegular, theme::kFontLabel, v0.y, v1.y - v0.y)), P.text, vb);
@@ -1192,13 +1472,60 @@ float drawBusRows(App& a, ImDrawList* dl, float x0, float x1, float top, float b
   return y - top;
 }
 
+namespace {
+HeaderPart drawHeaderBody(App& a, ImDrawList* dl, const HeaderDraw& h);
+}  // namespace
+
+float headerWidth(const App& a) { return kHeaderW + (liveio::shown(a) ? liveio::kHeaderW : 0.0f); }
+
 HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h) {
+  const Song& s = a.doc.song();
+  if (h.lane || !liveio::shown(a) || h.track < 0 || h.track >= static_cast<int>(s.tracks.size())) return drawHeaderBody(a, dl, h);
+  // Checkpoint 55 (gap 2): the In/Out column at the header's left, by the lanes, as the reference's I/O
+  // section sits between the clips and the mixer controls.
+  const auto& P = pal();
+  HeaderDraw body = h;
+  body.h0.x += liveio::kHeaderW;
+  const ImVec2 i0(h.h0.x, h.h0.y), i1(body.h0.x, h.h1.y);
+  dl->AddRectFilled(i0, i1, h.selected ? P.surface700 : P.surface800);
+  dl->AddLine(ImVec2(i1.x - 0.5f, i0.y), ImVec2(i1.x - 0.5f, i1.y), P.dark ? P.ink : P.line);
+  const bool over = liveio::drawBlock(a, dl, h.track, ImVec2(i0.x + 4, i0.y + 3), ImVec2(i1.x - 5, i1.y - 3), h.hovered);
+  const HeaderPart part = drawHeaderBody(a, dl, body);
+  return over ? HeaderPart::Io : part;
+}
+
+namespace {
+HeaderPart drawHeaderBody(App& a, ImDrawList* dl, const HeaderDraw& h) {
   const auto& P = pal();
   const Song& s = a.doc.song();
   if (h.track < 0 || h.track >= static_cast<int>(s.tracks.size())) return HeaderPart::None;
   const PlaylistTrack& t = s.tracks[static_cast<size_t>(h.track)];
   const HeaderCells c = cellsOf(h);
   const ImVec2 m = h.mouse;
+  if (h.lane) {
+    // Checkpoint 54 (N53-03): an automation lane is part of its track, as the reference's: a quieter
+    // row with the parameter's name, indented under the track; no number, activator, solo or arm.
+    const ImU32 face = h.selected ? P.surface700 : h.hovered ? theme::mix(P.surface900, P.surface800, 0.5f) : P.surface900;
+    dl->AddRectFilled(h.h0, h.h1, face);
+    const ImU32 tc = theme::content(t.color);
+    dl->AddRectFilled(ImVec2(h.h0.x + 8, h.h0.y), ImVec2(h.h0.x + 11, h.h1.y), theme::withAlpha(tc, 0.85f));  // its track's colour
+    std::string label = playlistTrackName(s, static_cast<size_t>(h.track));
+    for (const Clip& k : s.playlist)  // the parameter's own name ("Volume"), whatever the track is called now
+      if (k.track == h.track && k.kind == ClipKind::Automation)
+        if (const AutomationClip* ac = s.automation(k.source)) {
+          const std::string full = paramDisplayName(s, ParamId{ac->owner, ac->index});
+          const size_t cut = full.rfind(" \xE2\x80\xBA ");
+          label = cut == std::string::npos ? full : full.substr(cut + 5);
+          break;
+        }
+    const float fs = theme::kFontCaption + 1;
+    const float ty = theme::textTop(a.fontRegular, fs, h.h0.y + 2, std::min(20.0f, h.h1.y - h.h0.y - 2));
+    dl->PushClipRect(h.h0, h.h1, true);
+    theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(h.h0.x + 18, ty), h.h1.x - h.h0.x - 26, P.textDim, label.c_str());
+    dl->PopClipRect();
+    const bool in = h.hovered && m.x >= h.h0.x && m.x < h.h1.x && m.y >= h.h0.y && m.y < h.h1.y;
+    return in ? HeaderPart::Name : HeaderPart::None;
+  }
   // The row: a raised face, lit while selected or moving.
   const ImU32 face = h.lit || h.selected ? P.surface700 : h.hovered ? theme::mix(P.surface800, P.surface700, 0.5f) : P.surface800;
   dl->AddRectFilled(h.h0, h.h1, face);
@@ -1222,7 +1549,7 @@ HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h) {
   // Activator (the track's mute, numbered), solo, arm.
   const bool on = !t.muted;
   char num[16];
-  std::snprintf(num, sizeof num, "%d", h.track + 1);
+  std::snprintf(num, sizeof num, "%d", h.number > 0 ? h.number : h.track + 1);  // N53-04: as Clips counts
   square(dl, c.act, on ? P.hot : P.surface900, h.hovered && c.act.contains(m));
   centredText(dl, a.fontRegular, theme::kFontLabel, c.act, on ? theme::contrastText(P.hot) : P.textFaint, num);
   const bool solo = soloed(s, h.track);
@@ -1252,7 +1579,7 @@ HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h) {
     char vb[16] = "-";
     if (mx) {
       const float g = mx->volume;
-      if (g > 1e-6f) std::snprintf(vb, sizeof vb, "%.1f", static_cast<double>(20.0f * std::log10(g)));
+      if (g > 1e-6f) std::snprintf(vb, sizeof vb, "%.1f", faderDb(g));
       else std::snprintf(vb, sizeof vb, "-\xE2\x88\x9E");  // minus infinity, as the refs write it
     }
     const float vw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, vb).x;
@@ -1286,9 +1613,9 @@ HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h) {
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
     } else if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
       const double dy = static_cast<double>(gVol.y0 - ImGui::GetIO().MousePos.y);
-      const double db0 = gVol.start > 1e-6 ? 20.0 * std::log10(gVol.start) : -60.0;
-      const double db = std::clamp(db0 + dy * (ImGui::GetIO().KeyShift ? 0.05 : 0.25), -60.0, 20.0 * std::log10(1.25));
-      a.doc.setParam(mixerParam(gVol.mixer, MixerParam::Volume), db <= -59.9 ? 0.0 : std::pow(10.0, db / 20.0), true);
+      const double db0 = gVol.start > 1e-6 ? faderDb(static_cast<float>(gVol.start)) : -60.0;
+      const double db = std::clamp(db0 + dy * (ImGui::GetIO().KeyShift ? 0.05 : 0.25), -60.0, faderDb(1.25f));
+      a.doc.setParam(mixerParam(gVol.mixer, MixerParam::Volume), db <= -59.9 ? 0.0 : dsp::faderValueForDb(db, 0.8), true);
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
     } else {
       a.doc.endGesture();
@@ -1314,11 +1641,14 @@ HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h) {
   if (c.name.contains(m)) return HeaderPart::Name;
   return HeaderPart::None;
 }
+}  // namespace
 
 bool clickHeader(App& a, int track, HeaderPart part, bool right) {
   const Song& s = a.doc.song();
   if (track < 0 || track >= static_cast<int>(s.tracks.size())) return false;
   switch (part) {
+    case HeaderPart::Io:
+      return true;  // checkpoint 55: the In/Out column acted on the click itself
     case HeaderPart::Fold:
       if (right) return false;
       a.doc.editPlaylistTrack(track, s.tracks[static_cast<size_t>(track)].folded ? "unfold group" : "fold group", [](PlaylistTrack& t) { t.folded = !t.folded; });
@@ -1442,14 +1772,14 @@ std::string selectedTrackName(App& a) {
   const Song& s = a.doc.song();
   if (const Clip* c = a.playlist.selected.size() == 1 ? s.clip(*a.playlist.selected.begin()) : nullptr;
       c && c->track >= 0 && c->track < static_cast<int>(s.tracks.size()))
-    return std::to_string(c->track + 1) + ". " + playlistTrackName(s, static_cast<size_t>(c->track));
+    return std::to_string(trackmodes::shownNumber(s, c->track)) + ". " + playlistTrackName(s, static_cast<size_t>(c->track));
   if (!a.playlist.trackSel.empty()) {
     const int t = *a.playlist.trackSel.begin();
-    if (t >= 0 && t < static_cast<int>(s.tracks.size())) return std::to_string(t + 1) + ". " + playlistTrackName(s, static_cast<size_t>(t));
+    if (t >= 0 && t < static_cast<int>(s.tracks.size())) return std::to_string(trackmodes::shownNumber(s, t)) + ". " + playlistTrackName(s, static_cast<size_t>(t));
   }
   if (const Channel* c = s.channel(a.selChannel)) {
     const int t = trackmodes::instrumentTrackOf(s, c->id);
-    return t >= 0 ? std::to_string(t + 1) + ". " + playlistTrackName(s, static_cast<size_t>(t)) : c->name;
+    return t >= 0 ? std::to_string(trackmodes::shownNumber(s, t)) + ". " + playlistTrackName(s, static_cast<size_t>(t)) : c->name;
   }
   return std::string();
 }
@@ -3631,6 +3961,26 @@ float sendsHeight(const Song& s) {
   return kSendsH + 8.0f * static_cast<float>(per - 2 > 0 ? per - 2 : 0) + 30.0f * static_cast<float>(rowsN - 1);
 }
 bool anySends(const Song& s) { return !returnTracks(s).empty(); }
+// Checkpoint 55 (N54-10): a strip's send knob made real (a track of an older set, which has none): the
+// send to `to` at `level`, and the track's other return sends at zero, as a new track has them, in one
+// step. A track with no output yet first sends to Main (its output; the send must not become it).
+void addStripSend(Song& x, ObjectId from, ObjectId to, float level) {
+  MixerTrack* t = x.mixerTrack(from);
+  if (!t) {
+    return;
+  }
+  if (trackmodes::outputOf(*t) == kNoId) {
+    t->sends.insert(t->sends.begin(), Send{x.masterId(), 1.0f, false});
+  }
+  bool has = false;
+  for (const Send& sd : t->sends) {
+    has = has || (sd.to == to && !sd.sidechain);
+  }
+  if (!has) {
+    t->sends.push_back({to, level, false});
+  }
+  trackmodes::addReturnSendsTo(x, from);
+}
 // A send knob for a send the track does not have yet: drawn at zero; touching it adds the send (to
 // the return, at zero) under the same widget id, so the drag goes on in the real knob next frame.
 void missingSendKnob(App& a, ObjectId from, int dest, float r) {
@@ -3640,15 +3990,10 @@ void missingSendKnob(App& a, ObjectId from, int dest, float r) {
   const bool ch = ui::Knob("##send", &v, d, r, nullptr, false, &released);
   const Song& s = a.doc.song();
   const MixerTrack* fm = s.mixerTrack(from);
-  // (A track with no output at all is left alone: the send would become its output.)
-  if (ch && fm && !fm->sends.empty() && dest >= 0 && dest < static_cast<int>(s.mixer.size()) && canRoute(s, from, s.mixer[static_cast<size_t>(dest)].id)) {
+  if (ch && fm && from != s.masterId() && dest >= 0 && dest < static_cast<int>(s.mixer.size()) && canRoute(s, from, s.mixer[static_cast<size_t>(dest)].id)) {
     const ObjectId to = s.mixer[static_cast<size_t>(dest)].id;
     const float lv = static_cast<float>(std::clamp(v, 0.0, 1.25));
-    a.doc.editMixerTrack(from, "add send", [&](MixerTrack& t) {
-      for (const Send& sd : t.sends)
-        if (sd.to == to && !sd.sidechain) return;
-      t.sends.push_back({to, lv, false});
-    });
+    a.doc.editSong("add send", [&](Song& x) { addStripSend(x, from, to, lv); });
   }
 }
 void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerTrack* mx, float x, float w, bool master, char letter = 0) {
@@ -3668,11 +4013,17 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
   // The sends row (see above), then two columns. Left, top to bottom: the peak and the volume in
   // dB, pan, then the activator, S and arm stacked. Right: the fader beside a meter with its dB
   // scale, the rest of the strip's height.
-  const float bottom = my0 + mh, top = my0 + 4 + (sendsRow ? sendsHeight(s) : 0.0f);
+  // Checkpoint 55 (gap 2): the In/Out rows across the top of every strip while shown (blank on Main and
+  // the returns, so the faders line up), when the strips are tall enough for them.
+  const float ioH = liveio::shown(a) && mh >= 220.0f ? liveio::kStripH : 0.0f;
+  if (ioH > 0 && !master && !letter && t >= 0) {
+    liveio::drawBlock(a, dl, t, ImVec2(x + 3, my0 + 4), ImVec2(x + w - 3, my0 + ioH - 4), ImGui::IsWindowHovered());
+  }
+  const float bottom = my0 + mh, top = my0 + 4 + ioH + (sendsRow ? sendsHeight(s) : 0.0f);
   const float colL = std::min(44.0f, std::floor(w * 0.48f));  // the left column's width
   const float rx = x + colL + 4;                               // the right column
   if (sendsRow && mx && !master) {
-    const float sy = my0 + 4;
+    const float sy = my0 + 4 + ioH;
     const auto sends = sendsOf(s, mx);
     if (!sends.empty()) {
       const char* lab = i18n::tr("Sends");
@@ -3730,7 +4081,7 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
     const ImVec2 v0(x + 2, volTop), v1(x + colL, volTop + 16);
     dl->AddRectFilled(v0, v1, P.dark ? P.field : P.surface950, theme::kRadiusSm);
     char vb[16];
-    if (mx->volume > 1e-6f) std::snprintf(vb, sizeof vb, "%.1f", static_cast<double>(20.0f * std::log10(mx->volume)));
+    if (mx->volume > 1e-6f) std::snprintf(vb, sizeof vb, "%.1f", faderDb(mx->volume));
     else std::snprintf(vb, sizeof vb, "-\xE2\x88\x9E");  // minus infinity, as the refs write it
     const float tw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, vb).x;
     dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round((v0.x + v1.x - tw) * 0.5f), theme::textTop(a.fontRegular, theme::kFontLabel, volTop, 16)),
@@ -3828,8 +4179,8 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
     const Cell ca{ImVec2(cxm - 10, actY), ImVec2(cxm + 10, actY + 18)};  // K-112c (round 28): square, as S is wide (143, 146, 280, 141)
     const Cell cs{ImVec2(cxm - 10, soloY), ImVec2(cxm + 10, soloY + 14)};
     const Cell cr{ImVec2(cxm - 10, armY), ImVec2(cxm + 10, armY + 14)};
-    char num[16];
-    std::snprintf(num, sizeof num, "%d", t + 1);
+    const std::string numS = std::to_string(trackmodes::shownNumber(ss, t));  // N54-04: as Clips counts (after any layout's moves)
+    const char* num = numS.c_str();
     square(dl, ca, !tr.muted ? P.hot : P.surface900, hovAny && ca.contains(m));
     centredText(dl, a.fontRegular, theme::kFontLabel, ca, !tr.muted ? theme::contrastText(P.hot) : P.textFaint, num);
     const bool so = soloed(ss, t);
@@ -4538,7 +4889,8 @@ void drawClipGrid(App& a) {
         if (groupCol(titleDrag))
           for (int u = titleDrag + 1; u <= std::min(nCols - 1, titleDrag + s.tracks[static_cast<size_t>(titleDrag)].groupSize); ++u) moved.push_back(u);
         a.doc.beginGroup("move tracks");
-        if (trackorder::movePlaylistTracks(a.doc, moved, before, &now) && !now.empty()) {
+        moved = trackmodes::withLanes(s, moved);  // N53-03: its lanes go with it (nothing lands between them)
+        if (trackorder::movePlaylistTracks(a.doc, moved, trackmodes::pastLanes(s, before), &now) && !now.empty()) {
           a.playlist.trackSel = {now.front()};
           trackmodes::syncGroupRouting(a.doc);  // N51-06: in or out of a group, the routing follows (the same undo step)
         }

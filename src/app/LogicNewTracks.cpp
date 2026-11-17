@@ -13,6 +13,7 @@
 #include "../core/TrackModes.h"
 #include "App.h"
 #include "LiveLook.h"
+#include "LogicPlugins.h"
 #include "ContextMenus.h"
 #include "Keys.h"
 #include "Theme.h"
@@ -131,6 +132,26 @@ void create(App& a) {
     // K-112c (round 39): in Clips a new track comes right after the tracks in use, so it shows at
     // once as an arrangement row and a clip grid column (appending after the empty tracks hid it).
     trackmodes::addUsedTrack(a.doc, n);  // one undo step
+  } else if (gKind == 1 && logicplug::active(a)) {
+    // R12-05: Smooth shows the tracks in use only, so a new empty track comes right after them,
+    // named as the Clips layout names one ("Track 3"), and is selected.
+    int t = -1;
+    a.doc.editSong(n > 1 ? "new tracks" : "new track", [&](Song& x) {
+      for (int i = 0; i < n; ++i) {
+        const int k = logicplug::lastUsedTrack(x) + 1;
+        if (k >= kMaxPlaylistTracks) {
+          break;
+        }
+        if (k >= static_cast<int>(x.tracks.size())) {
+          x.tracks.resize(static_cast<size_t>(k) + 1);
+        }
+        x.tracks[static_cast<size_t>(k)].name = "Track " + std::to_string(k + 1);
+        t = k;
+      }
+    });
+    if (t >= 0) {
+      a.playlist.trackSel = {t};
+    }
   } else if (gKind == 1) {
     for (int i = 0; i < n && static_cast<int>(a.doc.song().tracks.size()) < kMaxPlaylistTracks; ++i)
       ops::insertPlaylistTrack(a.doc, static_cast<int>(a.doc.song().tracks.size()));

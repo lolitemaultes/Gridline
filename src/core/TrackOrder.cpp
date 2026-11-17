@@ -268,6 +268,7 @@ bool movePlaylistTracks(Document& d, const std::vector<int>& tracks, int before,
   d.editSong(m.moved.size() > 1 ? "move playlist tracks" : "move playlist track", [&](Song& x) {
     reorderPlaylist(x, m);
     trackmodes::syncGroupRouting(x);
+    trackmodes::renumberTrackNames(x);  // N53-04: the place-named tracks take their new numbers (a move in any layout)
   });
   if (newIndexes) {
     newIndexes->clear();

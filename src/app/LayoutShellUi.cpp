@@ -32,6 +32,7 @@
 #include "LayoutPresets.h"
 #include "LayoutStyleUi.h"
 #include "Theme.h"
+#include "TrackerEditors.h"
 #include "TrackerView.h"
 #include "Widgets.h"
 #include "Windows.h"
@@ -2145,6 +2146,10 @@ bool pluginRow(App& a, const layout::Item& it, Preset p, int frame) {
       a.doc.setSlotPlugin(gInv.track, gInv.slot, it.plugin);
       a.fxEditor = {gInv.track, gInv.slot};
     }
+    // K-106 cp18-cp20: the Tracker's lower band shows its own screen for the instrument (Sample or
+    // Instrument editor, the Channel frame); the plugin's editor opens from the frame's "Open plugin
+    // window", floating, as the person opens it there.
+    if (p == Preset::Tracker && gInv.channel != kNoId) trackereditors::openPluginWindow(a, gInv.channel);
     a.syncEngine();
     gInv.step = 1;
     return false;
@@ -2156,7 +2161,7 @@ bool pluginRow(App& a, const layout::Item& it, Preset p, int frame) {
   std::string host;
   const int n = gInv.channel != kNoId ? hostbody::drawnNow(hostbody::Body::ChannelSettings, gInv.channel, -1, &host)
                                       : hostbody::drawnNow(hostbody::Body::EffectEditor, gInv.track, gInv.slot, &host);
-  const bool hosted = h.kind == HomeKind::Host;
+  const bool hosted = h.kind == HomeKind::Host && !(p == Preset::Tracker && gInv.channel != kNoId);  // (the Tracker: above)
   const bool pass = n == 1 && (hosted ? host == "Device chain" : host != "Device chain");
   std::printf("frame %d inventory %s %s home %s %s got drawn %d by %s want %s %s\n", frame, it.id, it.plugin, layout::kindName(h.kind),
               *h.region ? h.region : "-", n, host.empty() ? "-" : host.c_str(), hosted ? "the Device chain" : "its own window", pass ? "ok" : "FAIL");

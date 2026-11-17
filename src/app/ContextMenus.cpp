@@ -459,7 +459,7 @@ void editCopy(App& a) {
       a.playlist.clipboard.clear();
       for (const auto& c : s.playlist)
         if (a.playlist.selected.count(c.id)) a.playlist.clipboard.push_back(c);
-      a.notify(std::to_string(a.playlist.clipboard.size()) + " clips copied");
+      a.notify(copiedText(a.playlist.clipboard.size()));
       break;
     case App::EditFocus::Rack: {
       const Pattern* p = s.pattern(a.curPattern);
@@ -539,6 +539,10 @@ void editPaste(App& a) {
     case App::EditFocus::Playlist: {
       auto& src = a.playlist.clipboard;
       if (src.empty()) return;
+      if (logicplug::active(a)) {  // R10-08: Smooth pastes at the playhead onto the selected track
+        logicplug::pasteRegions(a);
+        break;
+      }
       Tick lo = src[0].start, hi = 0;
       for (const auto& c : src) lo = std::min(lo, c.start), hi = std::max(hi, c.start + s.clipLength(c));
       Tick bar = std::max<Tick>(1, s.barTicks());
@@ -598,7 +602,7 @@ void editSelectAll(App& a) {
     case App::EditFocus::Playlist:
       a.playlist.selected.clear();
       for (const auto& c : s.playlist)
-        if (!logicplug::active(a) || !logicplug::laneClip(s, c)) a.playlist.selected.insert(c.id);  // R04-05
+        if ((!logicplug::active(a) || !logicplug::laneClip(s, c)) && livelook::arrangementClip(a, c)) a.playlist.selected.insert(c.id);  // R04-05, N53-01
       break;
     case App::EditFocus::Rack:
       a.selChannels.clear();
@@ -700,6 +704,12 @@ const char* regionWord(const char* s) {
     for (const auto& [from, to] : k)
       if (!std::strcmp(s, from)) return i18n::tr(to);
   return i18n::tr(s);
+}
+
+std::string copiedText(size_t n) {
+  const bool regions = layoutui::active() == layout::Preset::Logic;  // R11-10: Smooth's word, and one in the singular
+  if (n == 1) return regions ? i18n::tr("1 region copied") : i18n::tr("1 clip copied");
+  return std::to_string(n) + " " + (regions ? i18n::tr("regions copied") : i18n::tr("clips copied"));
 }
 
 // Context menu caption (the object the menu acts on): a dim heading in the
@@ -2379,6 +2389,12 @@ void pianoRollMenu(App& a, int part) {
   }
   if (part == 0 || part == 3) ImGui::Separator();
   if (in(3) && open("View")) {
+    if (logicplug::active(a) && ImGui::BeginMenu(i18n::tr("Note colours"))) {  // D4 (R10 gap 7): the reference's View > note colours, per person
+      const bool region = a.settings.getString("piano.smoothNoteColour") == "region";
+      if (ImGui::MenuItem(i18n::tr("By velocity"), nullptr, !region)) a.settings.set("piano.smoothNoteColour", std::string("velocity"));
+      if (ImGui::MenuItem(i18n::tr("By region colour"), nullptr, region)) a.settings.set("piano.smoothNoteColour", std::string("region"));
+      ImGui::EndMenu();
+    }
     ImGui::MenuItem(i18n::tr("Ghost notes"), nullptr, &a.piano.ghostNotes);
     if (ImGui::BeginMenu(i18n::tr("Ghost channels"), a.piano.ghostNotes)) {
       if (ImGui::MenuItem(i18n::tr("All other channels"), nullptr, a.piano.ghostChannels.empty())) a.piano.ghostChannels.clear();

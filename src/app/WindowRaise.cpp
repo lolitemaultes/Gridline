@@ -1,5 +1,6 @@
 // Gridline: a press anywhere on a window brings it to the front (see WindowRaise.h).
 #include "WindowRaise.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -43,7 +44,70 @@ void drawKeyFocusFrame(unsigned int colour) {
   if (!area || !area->DockIsActive || area->Hidden || area->Size.x < 160 || area->Size.y < 120 || (area->Flags & ImGuiWindowFlags_NoInputs)) return;
   const ImVec2 p0(std::round(area->Pos.x) + 0.5f, std::round(area->Pos.y) + 0.5f);
   const ImVec2 p1(std::round(area->Pos.x + area->Size.x) - 0.5f, std::round(area->Pos.y + area->Size.y) - 0.5f);
-  ImGui::GetForegroundDrawList(area->Viewport)->AddRect(p0, p1, colour ? static_cast<ImU32>(colour) : theme::withAlpha(theme::pal().accent, 0.55f), 0.0f, 0, 1.0f);
+  const ImU32 col = colour ? static_cast<ImU32>(colour) : theme::withAlpha(theme::pal().accent, 0.55f);
+  // K-112c checkpoint 55 (N54-05): the frame is drawn over the area's own children (foreground), but not
+  // through a window in front of the area (a floating instrument window): its edges skip those windows.
+  const ImGuiWindow* root = area->RootWindowDockTree ? area->RootWindowDockTree : area->RootWindow;
+  ImVector<ImRect> front;
+  bool past = false;
+  for (ImGuiWindow* w : g.Windows) {
+    if (w == root) {
+      past = true;
+      continue;
+    }
+    if (!past || !w->WasActive || w->Hidden || (w->Flags & ImGuiWindowFlags_ChildWindow) || w->Viewport != area->Viewport) {
+      continue;
+    }
+    if ((w->RootWindowDockTree ? w->RootWindowDockTree : w->RootWindow) == root) {
+      continue;
+    }
+    if (w->Flags & (ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_NoBackground)) {
+      continue;  // (a tooltip or an overlay's input window hides nothing)
+    }
+    front.push_back(w->Rect());
+  }
+  ImDrawList* dl = ImGui::GetForegroundDrawList(area->Viewport);
+  // One edge from a to b (horizontal when a.y == b.y), less the parts under the front windows.
+  auto edge = [&](ImVec2 a, ImVec2 b) {
+    const bool hz = a.y == b.y;
+    const float lo = hz ? a.x : a.y, hi = hz ? b.x : b.y, at = hz ? a.y : a.x;
+    ImVector<ImVec2> cuts;  // covered spans
+    for (const ImRect& r : front) {
+      const float c0 = hz ? r.Min.y : r.Min.x, c1 = hz ? r.Max.y : r.Max.x;
+      if (at < c0 || at > c1) {
+        continue;
+      }
+      const float s0 = std::max(lo, hz ? r.Min.x : r.Min.y), s1 = std::min(hi, hz ? r.Max.x : r.Max.y);
+      if (s1 > s0) {
+        cuts.push_back(ImVec2(s0, s1));
+      }
+    }
+    float from = lo;
+    while (from < hi) {
+      float skip = from;
+      for (const ImVec2& c : cuts) {
+        if (c.x <= from && c.y > from) {
+          skip = std::max(skip, c.y);  // under a window: on past it
+        }
+      }
+      if (skip > from) {
+        from = skip;
+        continue;
+      }
+      float to = hi;
+      for (const ImVec2& c : cuts) {
+        if (c.x > from && c.x < to) {
+          to = c.x;
+        }
+      }
+      dl->AddLine(hz ? ImVec2(from, at) : ImVec2(at, from), hz ? ImVec2(to, at) : ImVec2(at, to), col, 1.0f);
+      from = to;
+    }
+  };
+  edge(p0, ImVec2(p1.x, p0.y));
+  edge(ImVec2(p0.x, p1.y), p1);
+  edge(p0, ImVec2(p0.x, p1.y));
+  edge(ImVec2(p1.x, p0.y), p1);
 }
 
 void raiseOnPress() {

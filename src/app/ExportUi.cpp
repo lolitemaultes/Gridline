@@ -227,15 +227,20 @@ int firstFreeTrack(const Song& s) {
   return 0;
 }
 
+// Checkpoint 55 (N54-06): the next render in Clips is the clip grid's (the person chose "Export the
+// Session" on the empty-Arrangement card): its launched clips, as Studio renders them.
+bool gSessionExport = false;
+constexpr const char* kEmptyArrangement = "the arrangement is empty";
+
 // Scope of the dialog → render job fields. False (with a reason) when empty.
 bool applyScope(const App& a, RenderJob& r, std::string* why) {
   const Song& s = a.doc.song();
   r.scope = RenderScope::Song;
-  r.arrangementOnly = livelook::active(a);  // N48-10: Clips exports its arrangement, never the clip grid's slots
+  r.arrangementOnly = livelook::active(a) && !gSessionExport;  // N48-10: Clips exports its arrangement, never the clip grid's slots
   if (r.arrangementOnly && dlg.scope == 0) {
     bool any = false;
     for (const Clip& c : s.playlist) any = any || (c.start >= s.live.areaEnd && !c.muted && c.kind != ClipKind::Automation);
-    if (!any) return why && (*why = "the arrangement is empty", false);
+    if (!any) return why && (*why = kEmptyArrangement, false);
   }
   switch (dlg.scope) {
     case 1:
@@ -308,6 +313,29 @@ void startJob(App& a) {
   ExportSettings s = dlg.s;
   std::string why;
   if (!applyScope(a, s.render, &why)) {
+    if (why == kEmptyArrangement && livelook::active(a)) {
+      // N54-06: Clips exports its Arrangement; an empty one says so and offers the Session's clips or a
+      // recording of them into the Arrangement first.
+      bool launched = false;
+      for (const Clip& c : a.doc.song().playlist) {
+        launched = launched || (c.start < a.doc.song().live.areaEnd && !c.muted);
+      }
+      std::vector<Toast::Action> acts;
+      if (launched) {
+        acts.push_back({"Export the Session", [&a] {
+                          gSessionExport = true;
+                          startJob(a);
+                          gSessionExport = false;
+                        }});
+      }
+      acts.push_back({"Record it first", [&a] {
+                        if (!a.recordArmed) {
+                          livelook::toggleArrangementRecord(a);
+                        }
+                      }});
+      a.notifyAction("Nothing in the Arrangement to export", std::move(acts), 20.0);
+      return;
+    }
     a.notify("Nothing to render: " + why, true);
     return;
   }

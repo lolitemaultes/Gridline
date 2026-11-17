@@ -111,6 +111,15 @@ void setFollow(bool on);
 // The editor's cursor field: true on an effect or value field (the menu words Interpolate by it).
 int cursorField();
 
+// cp17 (user): the pattern's sideways zoom, a view preference in the settings (tracker.patternZoom,
+// tracker.patternFit; never in the song). d > 0: wider tracks (fewer in view); d < 0: narrower
+// (sub-columns hidden, then smaller glyphs; their data stays); 0: every track in view (Fit, kept
+// as the window changes); 99: back to the plain view. patternZoom is the step drawn (0..6).
+void zoomPattern(App& a, int d);
+int patternZoom();
+bool patternFit();
+// The zoom keys (Ctrl+Alt+. , and /): the Song page's zoom when it is in front, else the pattern's.
+void zoomFront(App& a, int d);
 // The header band hidden (the pattern gets the room) and back.
 void setExtended(App& a, bool on);
 bool extended();
@@ -168,7 +177,7 @@ void filesLoadSample(App& a, const std::string& path);
 // cp16 (in-app CPU timers, no profiler): the wall time of the Tracker's own drawing per frame, by
 // part: the header band, the pattern editor, the other pages (Song, Steps, Mix, Pads, Roll's row).
 // "tracker perf" prints each part's mean and 95th percentile over the last 600 frames that drew it.
-enum PerfPart { PerfBand, PerfPattern, PerfPage, kPerfParts };
+enum PerfPart { PerfBand, PerfPattern, PerfPage, PerfEditor, kPerfParts };  // (cp18: PerfEditor, the lower band's Tracker screens)
 class PerfScope {
  public:
   explicit PerfScope(PerfPart p);

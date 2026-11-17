@@ -1568,6 +1568,15 @@ void drawPianoRoll(App& a) {
     st.pxPerTick = std::min(20.0f / sixteenth, std::max(8.0f / sixteenth, gridW / static_cast<float>(std::max<Tick>(1, pm.baseBar()))));
     st.zoomInit = true;
   }
+  {  // D4 (R10 visual gap 7): Smooth opens a region zoomed to it, as the reference's piano roll shows the
+     // whole region across the editor (144, 304); a 2-bar region no longer sits in a wide empty grid.
+    // The fit is asked again for a few frames: the pane settles its width after it opens.
+    static ObjectId fitPat = kNoId;
+    static int fitFrames = 0;
+    if (logicplug::active(a) && patId != fitPat) fitFrames = 8;
+    fitPat = patId;
+    if (fitFrames > 0 && gridW > 120) st.fitRequest = true, --fitFrames;
+  }
   if (st.fitRequest) {
     st.pxPerTick = static_cast<float>(timeline::fitZoom(s, std::max<Tick>(patLen, pm.baseBar()) + pm.baseBeat(), gridW));
     st.scrollX = 0;
@@ -1776,7 +1785,9 @@ void drawPianoRoll(App& a) {
   const ImU32 noteCol = theme::rgb(chan->color);
   // K-112b: the Logic layout colours notes by velocity (soft: cool, loud: warm), as all the
   // reference editors do; notes in a colour group keep the group's colour.
-  const bool velColours = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
+  // D4 (R10 gap 7): View > Note colours > By region colour (per person) draws them in the region's colour.
+  const bool velColours = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic) &&
+                          a.settings.getString("piano.smoothNoteColour") != "region";
   auto velocityColour = [](float v) {
     static const ImU32 stops[] = {theme::rgb(0x6A63E8), theme::rgb(0x3AA7D8), theme::rgb(0x3FBF6A), theme::rgb(0xD9C13A), theme::rgb(0xE07A32),
                                   theme::rgb(0xE0453A)};

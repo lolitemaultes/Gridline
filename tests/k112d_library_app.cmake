@@ -126,4 +126,106 @@ endforeach()
 if(NOT nTracks1 EQUAL 3)
   message(FATAL_ERROR "FAIL: the new track did not stay the one instrument track loaded (${tr2})")
 endif()
-message(STATUS "ok - Library open by default, a patch loads in one undo step (a new Tercet track too), its state saved with the project")
+
+# R10-07: with a bus track selected, a patch is refused (no new track made behind the user's back) and
+# an effect goes onto the bus's own strip.
+file(WRITE "${OUT}/input3.txt" "5 toasts clear
+10 parts lib selectbus
+14 parts lib busfx
+16 parts lib nav 1
+18 parts lib load 0
+22 parts lib busfx
+24 parts lib nav 2
+26 parts lib load 0
+30 parts lib busfx
+32 parts lib load 1
+36 parts lib busfx
+38 parts lib load 2
+42 parts lib busfx
+44 undo
+48 parts lib busfx
+50 parts lib loadadd 3
+54 parts lib busfx
+56 undo
+60 parts lib busfx
+62 parts lib load 4
+66 parts lib busfx
+68 quit discard
+")
+configure_file("${CMAKE_CURRENT_LIST_DIR}/../assets/demo/Gridline.gridline.json" "${OUT}/buses.gridline.json" COPYONLY)  # the demo has bus tracks
+execute_process(COMMAND "${APP}" "${OUT}/buses.gridline.json" --hidden --no-ui-sounds --layout-dev --layout logic --size 1920x1080
+                        --dev-input "${OUT}/input3.txt" --fixed-dt 16 --frames 72
+                RESULT_VARIABLE rc3 OUTPUT_VARIABLE out3 ERROR_VARIABLE err3 TIMEOUT 240)
+file(WRITE "${OUT}/run3.log" "${out3}\n---- stderr ----\n${err3}")
+if(NOT rc3 EQUAL 0)
+  message(FATAL_ERROR "FAIL: gridline-app failed on the bus run (${rc3})")
+endif()
+string(REGEX MATCH "smoothlib selectbus: track (-?[0-9]+)" sb "${out3}")
+string(REGEX MATCHALL "smoothlib busfx: bus [01] fx [0-9]+ tracks [0-9]+ channels [0-9]+ slots [^\n]*" bf "${out3}")
+list(LENGTH bf nbf)
+if(NOT sb OR CMAKE_MATCH_1 LESS 0 OR NOT nbf EQUAL 9)
+  message(FATAL_ERROR "FAIL: the bus run did not report (${sb} / ${bf})")
+endif()
+if(NOT out3 MATCHES "smoothlib load 0: no")
+  message(FATAL_ERROR "FAIL: a patch loaded with a bus track selected (R10-07)")
+endif()
+list(GET bf 0 f0)
+list(GET bf 1 f1)
+list(GET bf 2 f2)
+string(REGEX REPLACE ".*fx ([0-9]+) (tracks.*)" "\\1;\\2" p0 "${f0}")
+string(REGEX REPLACE ".*fx ([0-9]+) (tracks.*)" "\\1;\\2" p1 "${f1}")
+string(REGEX REPLACE ".*fx ([0-9]+) (tracks.*)" "\\1;\\2" p2 "${f2}")
+list(GET p0 0 fx0)
+list(GET p0 1 tc0)
+list(GET p1 1 tc1)
+list(GET p2 0 fx2)
+if(NOT f0 MATCHES "bus 1" OR NOT tc1 STREQUAL tc0)
+  message(FATAL_ERROR "FAIL: the patch click changed the tracks or channels with a bus selected (${f0} / ${f1})")
+endif()
+math(EXPR want "${fx0} + 1")
+if(NOT fx2 EQUAL want)
+  message(FATAL_ERROR "FAIL: an effect from the Library did not go onto the bus's strip (${f0} / ${f2})")
+endif()
+# R11-04: browsing effects on the bus replaces the Library's own insert (no pile-up); one undo brings
+# the previous one back; Option-click adds another.
+list(GET bf 3 f3)
+list(GET bf 4 f4)
+list(GET bf 5 f5)
+list(GET bf 6 f6)
+foreach(v f3 f4 f5)
+  string(REGEX REPLACE ".*fx ([0-9]+) .*" "\\1" n "${${v}}")
+  if(NOT n EQUAL want)
+    message(FATAL_ERROR "FAIL: browsing the Library piled up inserts on the bus (${f2} / ${f3} / ${f4} / ${f5})")
+  endif()
+endforeach()
+string(REGEX REPLACE ".* slots " "" sl2 "${f2}")
+string(REGEX REPLACE ".* slots " "" sl3 "${f3}")
+string(REGEX REPLACE ".* slots " "" sl4 "${f4}")
+string(REGEX REPLACE ".* slots " "" sl5 "${f5}")
+if(sl3 STREQUAL sl2 OR sl4 STREQUAL sl3)
+  message(FATAL_ERROR "FAIL: a second effect from the Library did not replace the first (${sl2} / ${sl3} / ${sl4})")
+endif()
+if(NOT sl5 STREQUAL sl3)
+  message(FATAL_ERROR "FAIL: one undo did not bring the previous effect back (${sl3} / ${sl5})")
+endif()
+string(REGEX REPLACE ".*fx ([0-9]+) .*" "\\1" n6 "${f6}")
+math(EXPR want2 "${fx0} + 2")
+if(NOT n6 EQUAL want2)
+  message(FATAL_ERROR "FAIL: Option-click did not add another insert (${f5} / ${f6})")
+endif()
+# D6 (R12-10): after the Option-click add is undone, the next click replaces the slot the Library used
+# before it (no new insert).
+list(GET bf 7 f7)
+list(GET bf 8 f8)
+string(REGEX REPLACE ".* slots " "" sl7 "${f7}")
+string(REGEX REPLACE ".* slots " "" sl8 "${f8}")
+string(REGEX REPLACE ".*fx ([0-9]+) .*" "\\1" n8 "${f8}")
+if(NOT sl7 STREQUAL sl5)
+  message(FATAL_ERROR "FAIL: undoing the Option-click add did not take it off (${f5} / ${f7})")
+endif()
+string(REGEX REPLACE ",[^,]*$" "" head5 "${sl5}")
+string(REGEX REPLACE ",[^,]*$" "" head8 "${sl8}")
+if(NOT n8 EQUAL want OR NOT head8 STREQUAL head5 OR sl8 STREQUAL sl5)
+  message(FATAL_ERROR "FAIL: after the undone add, a click did not replace the Library's earlier slot (${f7} / ${f8})")
+endif()
+message(STATUS "ok - Library open by default, a patch loads in one undo step (a new Tercet track too), its state saved with the project; a bus takes effects, not patches")

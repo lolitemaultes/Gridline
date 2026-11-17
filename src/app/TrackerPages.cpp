@@ -44,6 +44,8 @@ using trackerview::bevelBox;
 using trackerview::bevelButton;
 using trackerview::boxTitle;
 using trackerview::monoFont;
+using trackerview::scrollBar;
+using trackerview::valueBar;
 using trackerview::stepper;
 
 bool active(const App& a) {
@@ -66,13 +68,27 @@ namespace {
 
 constexpr float kGap = 2;
 
+// cp17 (user): the Song page's sideways views. The lanes: their width (settings
+// tracker.songLaneWidth) and scroll; the arranger's timeline: its zoom (tracker.timelineZoom, 1 =
+// the whole song) and the first tick in view. Scroll positions are view state, never saved.
+constexpr float kMinLaneW = 28, kMaxLaneW = 480;
+constexpr float kFitLaneW = 12;  // Fit: every lane in view, down to a narrow strip each (zoom back in for the names)
+float gLaneW = 70, gLaneFitW = 70;  // as last drawn
+float gLaneScroll = 0;
+float gZoomWheel = 0;               // Ctrl+wheel movement not yet a zoom step
+int gLaneReveal = -1;               // a lane to bring into view on the next frame
+int gLanesShown = 0, gLaneFirst = 0, gLaneLast = -1;
+double gTlStart = 0, gTlSpan = 0, gTlLen = 0;  // the timeline's first tick in view, ticks in view, the song's length (last drawn)
+int gTlCur = -2;                    // the entry the timeline last brought into view
+bool gTlToEnd = false;              // "tracker songzoom end": the timeline to the song's end
+
 float rowHeight() { return std::round(ImGui::GetFontSize() + 4); }
 
 // The page's title bar: a raised box with the title left, `info` right (monospaced), and at the
 // right end Exit, back to the pattern (S-03: the pages are screens swapped into the centre, as the
 // classic tracker's; each has its Exit, and the page strip switches between them. They do not
 // close or float: the centre always shows one page and nothing gets lost behind another window).
-float titleBar(App& a, ImVec2 o, float w, const char* title, const std::string& info) {
+float titleBar(App& a, ImVec2 o, float w, const char* title, const std::string& info, float reserve = 0) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float fs = ImGui::GetFontSize(), h = std::round(fs + 8);
   bevelBox(dl, o, ImVec2(o.x + w, o.y + h));
@@ -84,13 +100,13 @@ float titleBar(App& a, ImVec2 o, float w, const char* title, const std::string& 
   // the info's place for a few seconds, as the pattern bar shows it on the pattern page.
   const float tx0 = o.x + 6 + std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(title)).x) + fs * 12;
   if (const std::string* msg = trackerview::freshStatus()) {
-    const float room = std::max(1.0f, o.x + w - ew - 10 - tx0);
+    const float room = std::max(1.0f, o.x + w - ew - reserve - 10 - tx0);
     const float tw = std::min(room, a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, msg->c_str()).x);
-    theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(std::round(o.x + w - ew - 10 - tw), std::round(o.y + (h - fs) * 0.5f)), room, pal().hot, msg->c_str());
+    theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(std::round(o.x + w - ew - reserve - 10 - tw), std::round(o.y + (h - fs) * 0.5f)), room, pal().hot, msg->c_str());
   } else if (!info.empty()) {
     ImFont* mono = monoFont(a);
     const float tw = mono->CalcTextSizeA(fs, FLT_MAX, 0, info.c_str()).x;
-    dl->AddText(mono, fs, ImVec2(std::round(o.x + w - ew - 10 - tw), std::round(o.y + (h - fs) * 0.5f)), pal().textDim, info.c_str());
+    dl->AddText(mono, fs, ImVec2(std::round(o.x + w - ew - reserve - 10 - tw), std::round(o.y + (h - fs) * 0.5f)), pal().textDim, info.c_str());
   }
   return h;
 }
@@ -125,53 +141,16 @@ bool lamp(App& a, const char* id, ImVec2 p0, float size, bool lit, ImU32 colour,
   return click;
 }
 
-// A horizontal value bar (volume, pan) in a sunken box; dragging sets it. Returns true while it changed.
-bool valueBar(const char* id, ImVec2 p0, ImVec2 p1, double v, double lo, double hi, bool centred, double* out, const char* hint) {
-  const auto& P = pal();
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  ImGui::SetCursorScreenPos(p0);
-  ImGui::InvisibleButton(id, ImVec2(std::max(1.0f, p1.x - p0.x), std::max(1.0f, p1.y - p0.y)));
-  const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
-  bevelBox(dl, p0, p1, true);
-  // cp16: the classic slider: a sunken groove with a raised bevel knob at the value (before: a solid
-  // green bar, the modern look); the part up to the value (from the middle when centred) a thin line.
-  const float x0 = p0.x + 2, x1 = p1.x - 2;
-  const float k = static_cast<float>((std::clamp(v, lo, hi) - lo) / (hi - lo));
-  const float knobW = std::max(8.0f, std::round((p1.y - p0.y) * 0.6f));
-  const float at = std::round(x0 + knobW * 0.5f + (x1 - x0 - knobW) * k);
-  const float cy = std::round((p0.y + p1.y) * 0.5f);
-  const ImU32 line = act ? P.hot : theme::withAlpha(P.led, hov ? 0.9f : 0.7f);
-  if (centred) {
-    const float mid = std::round((x0 + x1) * 0.5f);
-    dl->AddRectFilled(ImVec2(mid, p0.y + 3), ImVec2(mid + 1, p1.y - 3), P.textFaint);
-    dl->AddRectFilled(ImVec2(std::min(mid, at), cy - 1), ImVec2(std::max(mid, at) + 1, cy + 1), line);
-  } else {
-    dl->AddRectFilled(ImVec2(x0 + 1, cy - 1), ImVec2(at, cy + 1), line);
-  }
-  const ImVec2 k0(at - knobW * 0.5f, p0.y + 2), k1(at + knobW * 0.5f, p1.y - 2);
-  dl->AddRectFilled(k0, k1, act ? theme::mix(P.surface600, P.hot, 0.35f) : hov ? P.surface600 : P.surface700);
-  bevelBox(dl, k0, k1, act);
-  if (hint) ui::Hint(hint);
-  if (act && (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0) || ImGui::IsItemActivated())) {
-    const float mk = std::clamp((ImGui::GetIO().MousePos.x - x0) / std::max(1.0f, x1 - x0), 0.0f, 1.0f);
-    *out = lo + (hi - lo) * mk;
-    return true;
-  }
-  if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {  // double-click: the default
-    *out = centred ? (lo + hi) * 0.5 : 0.8;
-    return true;
-  }
-  return false;
-}
-
 // The scrolled body under a title bar: a sunken box and a child window clipped to it.
-bool beginBody(const char* id, ImVec2 p0, ImVec2 p1, float contentH) {
+bool beginBody(const char* id, ImVec2 p0, ImVec2 p1, float contentH, bool noWheel = false) {
   bevelBox(ImGui::GetWindowDrawList(), p0, p1, true);
   ImGui::SetCursorScreenPos(ImVec2(p0.x + 1, p0.y + 1));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
   ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
+  // (noWheel, cp17: Ctrl+wheel zooms the body sideways and Shift+wheel scrolls it, not the rows)
   const bool open = ImGui::BeginChild(id, ImVec2(std::max(1.0f, p1.x - p0.x - 2), std::max(1.0f, p1.y - p0.y - 2)), ImGuiChildFlags_None,
-                                      contentH > p1.y - p0.y ? ImGuiWindowFlags_None : ImGuiWindowFlags_NoScrollbar);
+                                      (contentH > p1.y - p0.y ? ImGuiWindowFlags_None : ImGuiWindowFlags_NoScrollbar) |
+                                          (noWheel ? ImGuiWindowFlags_NoScrollWithMouse : ImGuiWindowFlags_None));
   ImGui::PopStyleColor();
   ImGui::PopStyleVar();
   return open;
@@ -415,7 +394,8 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
   const Tick bar = std::max<Tick>(1, s.barTicks());
   const bool playing = a.engine.playing();
   const float bh = std::round(rh + 4);                 // button height
-  const float tlH = std::round(rh * 2 + pad * 2);      // the timeline strip
+  const float tlSb = std::max(12.0f, std::round(fs * 0.95f));  // cp17: the timeline's scroll bar
+  const float tlH = std::round(rh * 2 + pad * 2) + tlSb;      // the timeline strip
   const float top = o.y + th + kGap, bottom = o.y + av.y - tlH - kGap;
   const float W = av.x;
   const float wOrder = std::floor(W * 0.44f), wPat = std::floor(W * 0.32f), wSong = W - wOrder - wPat - 2 * kGap;
@@ -698,15 +678,50 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
   }
   // ---- the timeline ----
   {
-    const float y0 = bottom + kGap, y1 = o.y + av.y;
+    // cp17 (user): the timeline zooms (Ctrl+wheel at the pointer, the zoom keys, - + Fit in the
+    // order list's title) and scrolls (the wheel, the scroll bar under it); it brings the entry
+    // picked into view, and while the song plays, the play position.
+    const float y0 = bottom + kGap, y1 = o.y + av.y - tlSb;
     bevelBox(dl, ImVec2(o.x, y0), ImVec2(o.x + W, y1), true);
     const Tick len = ol.empty() ? 0 : ol.back().end;
     const float x0 = o.x + pad, x1 = o.x + W - pad, by0 = y0 + pad, by1 = y1 - pad;
+    const double zoom = std::clamp(a.settings.getNumber("tracker.timelineZoom"), 1.0, 512.0);
+    const double span = len > 0 ? static_cast<double>(len) / zoom : 1.0;
+    gTlLen = static_cast<double>(len), gTlSpan = span;
     if (len > 0) {
-      const double k = (x1 - x0) / static_cast<double>(len);
+      auto reveal = [&](double t0, double t1) {
+        if (t0 < gTlStart) gTlStart = t0;
+        if (t1 > gTlStart + span) gTlStart = std::min(t0, t1 - span);
+      };
+      if (cur != gTlCur && cur >= 0) reveal(static_cast<double>(ol[static_cast<size_t>(cur)].start), static_cast<double>(ol[static_cast<size_t>(cur)].end));
+      gTlCur = cur;
+      if (playing) {
+        const double p = static_cast<double>(trackerview::songPosition(a));
+        if (p < gTlStart || p > gTlStart + span) gTlStart = p - span * 0.1;
+      }
+      if (gTlToEnd) gTlStart = static_cast<double>(len) - span, gTlToEnd = false;
+      ImGuiIO& io = ImGui::GetIO();
+      if (ImGui::IsMouseHoveringRect(ImVec2(o.x, y0), ImVec2(o.x + W, y1 + tlSb)) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+        if ((io.KeyCtrl || io.KeySuper) && io.MouseWheel != 0) {
+          // The tick under the pointer stays under it.
+          const float mx = std::clamp(io.MousePos.x, x0, x1);
+          const double at = gTlStart + (mx - x0) / std::max(1.0f, x1 - x0) * span;
+          const double nz = std::clamp(zoom * std::pow(1.25, static_cast<double>(io.MouseWheel)), 1.0, 512.0);
+          a.settings.set("tracker.timelineZoom", nz);
+          gTlStart = at - (mx - x0) / std::max(1.0f, x1 - x0) * (static_cast<double>(len) / nz);
+        } else if (io.MouseWheel != 0 || io.MouseWheelH != 0) {
+          gTlStart -= static_cast<double>(io.MouseWheelH != 0 ? io.MouseWheelH : io.MouseWheel) * span * 0.1;
+        }
+      }
+      gTlStart = std::clamp(gTlStart, 0.0, std::max(0.0, static_cast<double>(len) - span));
+      const double k = (x1 - x0) / span;
+      const double t0v = gTlStart;
+      dl->PushClipRect(ImVec2(x0, y0), ImVec2(x1, y1), true);
       for (size_t i = 0; i < ol.size(); ++i) {
         const trk::OrderEntry& e = ol[i];
-        const float bx0 = std::round(x0 + static_cast<float>(e.start * k)), bx1 = std::max(bx0 + 2, std::round(x0 + static_cast<float>(e.end * k)) - 1);
+        if (static_cast<double>(e.end) < t0v || static_cast<double>(e.start) > t0v + span) continue;  // (only the entries in view)
+        const float bx0 = std::round(x0 + static_cast<float>((static_cast<double>(e.start) - t0v) * k)),
+                    bx1 = std::max(bx0 + 2, std::round(x0 + static_cast<float>((static_cast<double>(e.end) - t0v) * k)) - 1);
         const Pattern* p = s.pattern(e.pattern);
         const ImU32 c = p ? theme::rgb(p->color) : P.surface600;
         dl->AddRectFilled(ImVec2(bx0, by0), ImVec2(bx1, by1), theme::withAlpha(c, static_cast<int>(i) == cur ? 0.85f : 0.45f));
@@ -716,20 +731,27 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
           dl->AddText(a.fontRegular, fs, ImVec2(bx0 + 4, std::round(by0 + (by1 - by0 - fs) * 0.5f)), P.text, p->name.c_str());
           dl->PopClipRect();
         }
-        ImGui::SetCursorScreenPos(ImVec2(bx0, by0));
+        const float cx0 = std::max(bx0, x0), cx1 = std::min(bx1, x1);  // (the part inside the strip takes the click)
+        ImGui::SetCursorScreenPos(ImVec2(cx0, by0));
         ImGui::PushID(static_cast<int>(800 + i));
-        if (ImGui::InvisibleButton("##tl", ImVec2(std::max(1.0f, bx1 - bx0), std::max(1.0f, by1 - by0)))) goEntry(a, ol, static_cast<int>(i));
+        if (ImGui::InvisibleButton("##tl", ImVec2(std::max(1.0f, cx1 - cx0), std::max(1.0f, by1 - by0)))) goEntry(a, ol, static_cast<int>(i));
         ImGui::PopID();
       }
+      auto xAt = [&](Tick t) { return std::round(x0 + static_cast<float>((static_cast<double>(t) - t0v) * k)); };
       if (lLo <= lHi) {  // the loop: a bar over its entries
-        const float lx0 = std::round(x0 + static_cast<float>(ol[static_cast<size_t>(lLo)].start * k));
-        const float lx1 = std::round(x0 + static_cast<float>(ol[static_cast<size_t>(lHi)].end * k)) - 1;
+        const float lx0 = xAt(ol[static_cast<size_t>(lLo)].start);
+        const float lx1 = xAt(ol[static_cast<size_t>(lHi)].end) - 1;
         dl->AddRectFilled(ImVec2(lx0, y0 + 1), ImVec2(lx1, y0 + 3), P.led);
         dl->AddRectFilled(ImVec2(lx0, y1 - 3), ImVec2(lx1, y1 - 1), P.led);
       }
       const Tick pos = trackerview::songPosition(a);
-      const float px = std::round(x0 + static_cast<float>(std::min(pos, len) * k));
+      const float px = xAt(std::min(pos, len));
       dl->AddLine(ImVec2(px, y0 + 1), ImVec2(px, y1 - 1), P.playhead, 2.0f);
+      dl->PopClipRect();
+      // The scroll bar (a bar's worth an arrow step; the whole song in view: the thumb fills it).
+      const double barT = static_cast<double>(bar);
+      scrollBar(a, "##tlsb", ImVec2(o.x, y1), ImVec2(o.x + W, y1 + tlSb), &gTlStart, span, static_cast<double>(len), std::max(barT, span * 0.1),
+                "The song's timeline: drag to scroll it (the wheel too) \xC2\xB7 Ctrl+wheel: zoom in or out at the pointer");
     }
   }
   // ---- keys (the page in front, no text typed) ----
@@ -1233,8 +1255,29 @@ void song(App& a) {
   std::snprintf(info, sizeof info, "%s %s  %s %s  %s %s", i18n::tr("Bars"), trk::hex2(usedBars).c_str(), i18n::tr("Tracks"), trk::hex2(usedTracks).c_str(),
                 i18n::tr("Free"), trk::hex2(std::max(0, tracks - usedTracks)).c_str());
   // The arranger's title says its keys (a keyboard musician's reminder).
+  // cp17: the sideways zoom's buttons sit before Exit (the lanes' width, or the timeline's zoom).
+  const float zh = std::round(fs + 8) - 4, pmW = std::round(zh * 1.3f);
+  const float fitBw = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Fit")).x) + 14;
+  const float zoomW = pmW * 2 + fitBw + 4 + 8;
   const float th = titleBar(a, o, av.x, i18n::tr("Song"),
-                            gSongLanes ? std::string(info) : std::string(i18n::tr("Up/Down: entry  Shift: mark  Ctrl: move  Left/Right: pattern  Ins Del  Enter: play")));
+                            gSongLanes ? std::string(info) : std::string(i18n::tr("Up/Down: entry  Shift: mark  Ctrl: move  Left/Right: pattern  Ins Del  Enter: play")),
+                            zoomW);
+  {
+    const float ew = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Exit")).x) + 24;
+    float zx = o.x + av.x - 2 - ew - 8 - fitBw;
+    const bool fitOn = gSongLanes ? a.settings.getNumber("tracker.songLaneWidth") < 0 : a.settings.getNumber("tracker.timelineZoom") <= 1.0;
+    if (bevelButton(a, "##sgfit", "Fit", ImVec2(zx, o.y + 2), ImVec2(zx + fitBw, o.y + 2 + zh), fitOn,
+                    gSongLanes ? "Every lane in view (Ctrl+Alt+/)" : "The whole song in the timeline (Ctrl+Alt+/)"))
+      zoomSong(a, 0);
+    zx -= pmW + 2;
+    if (bevelButton(a, "##sgzin", "+", ImVec2(zx, o.y + 2), ImVec2(zx + pmW, o.y + 2 + zh), false,
+                    gSongLanes ? "Wider lanes (Ctrl+Alt+. or Ctrl+wheel up)" : "The timeline zoomed in (Ctrl+Alt+. or Ctrl+wheel up over it)"))
+      zoomSong(a, 1);
+    zx -= pmW + 2;
+    if (bevelButton(a, "##sgzout", "-", ImVec2(zx, o.y + 2), ImVec2(zx + pmW, o.y + 2 + zh), false,
+                    gSongLanes ? "Narrower lanes, more in view (Ctrl+Alt+, or Ctrl+wheel down)" : "The timeline zoomed out (Ctrl+Alt+, or Ctrl+wheel down over it)"))
+      zoomSong(a, -1);
+  }
   {  // the arranger or the lanes (the clips on the song's tracks, as they lie)
     const float bh = th - 4, bx = std::round(o.x + 6 + a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Song")).x + fs * 1.5f);
     const float bw = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Arranger")).x) + 20;
@@ -1253,24 +1296,64 @@ void song(App& a) {
   const float rh = rowHeight();
   // Track headers (bevelled), then the scrolled rows.
   const float numW = std::round(mono->CalcTextSizeA(fs, FLT_MAX, 0, "000").x + 10);
-  const float colW = std::max(70.0f, std::floor((av.x - numW - 6) / static_cast<float>(tracks)) - kGap);
+  // cp17 (user): every lane is reachable: the lanes scroll sideways (a scroll bar under them,
+  // Shift+wheel) and zoom (Ctrl+wheel, the zoom keys, - + Fit in the title): the lane width is a
+  // view preference in the settings (0: the lanes share the width, at least 70 px; -1: every lane
+  // in view; else px).
+  const float fitW = std::max(kFitLaneW, std::floor((av.x - numW - 6) / static_cast<float>(tracks)) - kGap);
+  const double lw = a.settings.getNumber("tracker.songLaneWidth");
+  const float colW = lw < 0 ? fitW : lw > 0 ? std::clamp(static_cast<float>(lw), kMinLaneW, kMaxLaneW) : std::max(70.0f, fitW);
+  gLaneFitW = fitW, gLaneW = colW;
+  const float lanesW = static_cast<float>(tracks) * (colW + kGap);
+  const float laneView = std::max(1.0f, av.x - numW - 4);
+  const bool hbar = lanesW > laneView + 1;
+  const float sbH = hbar ? std::max(12.0f, std::round(fs * 0.95f)) : 0.0f;
+  double scroll = std::clamp(static_cast<double>(gLaneScroll), 0.0, std::max(0.0, static_cast<double>(lanesW - laneView)));
   const float hy = o.y + th + kGap;
   ImDrawList* wdl = ImGui::GetWindowDrawList();
+  wdl->PushClipRect(ImVec2(o.x + numW + 2, hy), ImVec2(o.x + av.x, hy + rh), true);
   for (int t = 0; t < tracks; ++t) {
-    const float x = std::round(o.x + numW + 2 + static_cast<float>(t) * (colW + kGap));
+    const float x = std::round(o.x + numW + 2 + static_cast<float>(t) * (colW + kGap) - static_cast<float>(scroll));
+    if (x + colW < o.x + numW || x > o.x + av.x) continue;  // (only the lanes in view are drawn)
     const PlaylistTrack& tr = s.tracks[static_cast<size_t>(t)];
     const std::string name = tr.name.empty() ? std::string(i18n::tr("Track")) + " " + std::to_string(t + 1) : tr.name;
     nameField(a, ImVec2(x, hy), ImVec2(x + colW, hy + rh), t + 1, tr.color, name, false, tr.muted);
   }
+  wdl->PopClipRect();
   if (!s.clip(gSongClip)) gSongClip = kNoId;
   const float boxH = gSongClip != kNoId ? clipBoxHeight() : 0.0f;  // the clip box under the rows
-  const ImVec2 b0(o.x, hy + rh + kGap), b1(o.x + av.x, o.y + std::max(av.y - (boxH > 0 ? boxH + kGap : 0.0f), th + rh * 4));
+  const ImVec2 b0(o.x, hy + rh + kGap), b1(o.x + av.x, o.y + std::max(av.y - (boxH > 0 ? boxH + kGap : 0.0f) - sbH, th + rh * 4));
+  // Ctrl+wheel over the lanes zooms (up: wider), Shift+wheel or a sideways wheel scrolls a lane a notch.
+  {
+    ImGuiIO& io = ImGui::GetIO();
+    const bool over = ImGui::IsMouseHoveringRect(ImVec2(o.x, hy), ImVec2(b1.x, b1.y + sbH)) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+    if (over && (io.KeyCtrl || io.KeySuper) && io.MouseWheel != 0) {
+      gZoomWheel += io.MouseWheel;
+      const int n = static_cast<int>(gZoomWheel);
+      if (n != 0) gZoomWheel -= static_cast<float>(n), zoomSong(a, n > 0 ? 1 : -1);
+    } else if (over && (io.MouseWheelH != 0 || (io.KeyShift && io.MouseWheel != 0))) {
+      scroll -= static_cast<double>((io.MouseWheelH != 0 ? io.MouseWheelH : io.MouseWheel) * (colW + kGap));
+    }
+  }
+  if (gLaneReveal >= 0) {  // (a lane asked for: "tracker songzoom lane <n>")
+    const double lx = static_cast<double>(gLaneReveal) * (colW + kGap);
+    if (lx < scroll) scroll = lx;
+    if (lx + colW > scroll + laneView) scroll = lx + colW - laneView;
+    gLaneReveal = -1;
+  }
+  if (hbar) scrollBar(a, "##lanesb", ImVec2(o.x + numW + 2, b1.y), ImVec2(o.x + av.x, b1.y + sbH), &scroll, laneView, lanesW, colW + kGap,
+                      "The lanes: drag to scroll them (Shift+wheel too) \xC2\xB7 Ctrl+wheel: wider or narrower lanes");
+  scroll = std::clamp(scroll, 0.0, std::max(0.0, static_cast<double>(lanesW - laneView)));
+  gLaneScroll = static_cast<float>(scroll);
+  gLanesShown = tracks;
+  gLaneFirst = std::clamp(static_cast<int>(std::ceil(scroll / (colW + kGap) - 0.01)), 0, tracks - 1);
+  gLaneLast = std::clamp(static_cast<int>(std::floor((scroll + laneView + kGap) / (colW + kGap) + 0.01)) - 1, gLaneFirst, tracks - 1);
   const float contentH = static_cast<float>(bars) * rh + 2;
   const Tick pos = a.engine.playing() && a.engine.mode() == PlayMode::Pattern ? trackerview::songPosition(a) : static_cast<Tick>(a.engine.position());
   const int playBar = static_cast<int>(pos / bar);
   (void)wdl;
   static ObjectId menuClip = kNoId;
-  if (beginBody("##song", b0, b1, contentH)) {
+  if (beginBody("##song", b0, b1, contentH, ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper || ImGui::GetIO().KeyShift)) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 c0 = ImGui::GetCursorScreenPos();
     const float W = ImGui::GetContentRegionAvail().x;
@@ -1296,8 +1379,10 @@ void song(App& a) {
       if (r == playBar && a.engine.playing()) dl->AddRectFilled(ImVec2(c0.x, y), ImVec2(c0.x + W, y + rh), theme::withAlpha(P.playhead, 0.22f));
       const std::string num = trk::hex2(r);
       if (textOk) dl->AddText(mono, fs, ImVec2(c0.x + 4, std::round(y + (rh - fs) * 0.5f)), r % 4 == 0 ? P.text : P.textDim, num.c_str());
-      for (int t = 0; t < tracks; ++t) {
-        const float x = std::round(c0.x + numW + 1 + static_cast<float>(t) * (colW + kGap));
+      dl->PushClipRect(ImVec2(c0.x + numW, std::max(c0.y, clipY0)), ImVec2(c0.x + W + 1, clipY1), true);  // (lanes scrolled under the numbers are cut there)
+      for (int t = gLaneFirst > 0 ? gLaneFirst - 1 : 0; t < tracks; ++t) {
+        const float x = std::round(c0.x + numW + 1 + static_cast<float>(t) * (colW + kGap) - static_cast<float>(scroll));
+        if (x + colW <= c0.x + numW) continue;   // scrolled away to the left
         if (x >= dl->GetClipRectMax().x) break;  // the tracks past the page's right edge
         const Tick b0t = static_cast<Tick>(r) * bar, b1t = b0t + bar;
         // R3-08, R4-05: the clip drawn in a bar is the longest of those starting in it, else the
@@ -1447,6 +1532,7 @@ void song(App& a) {
           ImGui::OpenPopup("##songclipmenu");
         }
       }
+      dl->PopClipRect();
     }
     if (ImGui::BeginPopup("##songclipmenu")) {
       if (s.clip(menuClip)) {
@@ -1464,9 +1550,38 @@ void song(App& a) {
     endBody(contentH);
   }
   ui::Hint("Click: go there and pick the clip (its pattern shows; the box below edits it) \xC2\xB7 double-click an empty bar: place the pattern shown \xC2\xB7 right-click: the clip's menu");
-  if (boxH > 0) clipBox(a, ImVec2(o.x, b1.y + kGap), ImVec2(o.x + av.x, b1.y + kGap + boxH));
-  ImGui::SetCursorScreenPos(ImVec2(o.x, b1.y + (boxH > 0 ? boxH + kGap : 0.0f)));
+  if (boxH > 0) clipBox(a, ImVec2(o.x, b1.y + sbH + kGap), ImVec2(o.x + av.x, b1.y + sbH + kGap + boxH));
+  ImGui::SetCursorScreenPos(ImVec2(o.x, b1.y + sbH + (boxH > 0 ? boxH + kGap : 0.0f)));
   ImGui::Dummy(ImVec2(1, 0));
+}
+
+void zoomSong(App& a, int d) {
+  if (gSongLanes) {
+    // The lane width: wider / narrower by a quarter from the width drawn, or every lane in view.
+    const double w = d == 0 ? -1.0 : std::clamp(static_cast<double>(gLaneW) * (d > 0 ? 1.25 : 0.8), static_cast<double>(std::min(kMinLaneW, gLaneFitW)), static_cast<double>(kMaxLaneW));
+    a.settings.set("tracker.songLaneWidth", d != 0 && std::fabs(w - static_cast<double>(gLaneFitW)) < 0.5 ? -1.0 : std::round(w));
+  } else {
+    // The timeline: half again as close / as far, or the whole song; the middle of the view stays.
+    const double z = std::clamp(a.settings.getNumber("tracker.timelineZoom"), 1.0, 512.0);
+    const double nz = d == 0 ? 1.0 : std::clamp(d > 0 ? z * 1.5 : z / 1.5, 1.0, 512.0);
+    if (gTlLen > 0) gTlStart = gTlStart + gTlSpan * 0.5 - gTlLen / nz * 0.5;
+    a.settings.set("tracker.timelineZoom", nz);
+  }
+}
+
+void devSongZoom(App& a, const std::vector<std::string>& args, int frame) {
+  const std::string w = args.size() > 2 ? args[2] : "show";
+  if (w == "in") zoomSong(a, 1);
+  else if (w == "out") zoomSong(a, -1);
+  else if (w == "fit") zoomSong(a, 0);
+  else if (w == "lanes") gSongLanes = true;
+  else if (w == "arranger") gSongLanes = false;
+  else if (w == "end") gTlToEnd = true;
+  else if (w == "lane" && args.size() > 3) gLaneReveal = std::atoi(args[3].c_str());
+  std::printf("tracker songzoom frame %d: view %s lanes %d lanew %.0f first %d last %d scroll %.0f | timeline zoom %.3f start %.0f end %.0f len %.0f\n", frame,
+              gSongLanes ? "lanes" : "arranger", gLanesShown, static_cast<double>(gLaneW), gLaneFirst, gLaneLast, static_cast<double>(gLaneScroll),
+              a.settings.getNumber("tracker.timelineZoom"), gTlStart, gTlStart + gTlSpan, gTlLen);
+  std::fflush(stdout);
 }
 
 // ---- Mix: one row per mixer track ----

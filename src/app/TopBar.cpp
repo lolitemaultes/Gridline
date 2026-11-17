@@ -403,7 +403,7 @@ struct DevRect {
   ImVec2 a, b;
   int frame = -1;
 };
-DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}, {"chroute", {}, {}}, {"chroutefree", {}, {}}, {"chroutelist", {}, {}}, {"tempoint", {}, {}}, {"tempofrac", {}, {}}, {"loupedrag", {}, {}}, {"taptempo", {}, {}}, {"tapmenu", {}, {}}, {"tapmenutap", {}, {}}, {"menutools", {}, {}}, {"bar_transport", {}, {}}, {"bar_tempo", {}, {}}, {"bar_pos", {}, {}}, {"bar_pattern", {}, {}}, {"bar_master", {}, {}}, {"bar_monitor", {}, {}}, {"bar_windows", {}, {}}, {"bar_more", {}, {}}, {"prstamp", {}, {}}, {"prstamplbl", {}, {}}, {"prstampchip", {}, {}}, {"brcollapse", {}, {}}, {"capture", {}, {}}, {"sessrec", {}, {}}, {"drawmode", {}, {}}, {"devswap", {}, {}}, {"devsave", {}, {}}, {"brchip", {}, {}}, {"devexpand", {}, {}}, {"devwindow", {}, {}}, {"ptabsrc", {}, {}}, {"ptabdst", {}, {}}};
+DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}, {"chroute", {}, {}}, {"chroutefree", {}, {}}, {"chroutelist", {}, {}}, {"tempoint", {}, {}}, {"tempofrac", {}, {}}, {"loupedrag", {}, {}}, {"taptempo", {}, {}}, {"tapmenu", {}, {}}, {"tapmenutap", {}, {}}, {"menutools", {}, {}}, {"bar_transport", {}, {}}, {"bar_tempo", {}, {}}, {"bar_pos", {}, {}}, {"bar_pattern", {}, {}}, {"bar_master", {}, {}}, {"bar_monitor", {}, {}}, {"bar_windows", {}, {}}, {"bar_more", {}, {}}, {"prstamp", {}, {}}, {"prstamplbl", {}, {}}, {"prstampchip", {}, {}}, {"brcollapse", {}, {}}, {"capture", {}, {}}, {"sessrec", {}, {}}, {"drawmode", {}, {}}, {"devswap", {}, {}}, {"devsave", {}, {}}, {"brchip", {}, {}}, {"devexpand", {}, {}}, {"devwindow", {}, {}}, {"ptabsrc", {}, {}}, {"ptabdst", {}, {}}, {"follow", {}, {}}, {"loop", {}, {}}};
 float gMetroMirror = 1.0f;
 double gMetroBeat = 0;  // (dev: the song position, in beats, the glyph's pose was drawn for)
 bool gMetroTicking = false;  // (dev: ... whether it ticked then, and from which beat)
@@ -1521,14 +1521,17 @@ static float drawTopBarLive(App& a) {
   const float posW = 80, loopW = 80, backW = std::ceil(a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, i18n::tr("Back to arrangement")).x) + 30;
   const float segGridW = 68, segArrW = std::ceil(a.fontRegular->CalcTextSizeA(theme::kFontBody - 1, 1e9f, 0, i18n::tr("Arrangement")).x) + 32;
   const float keyW = 30, scaleW = 92;  // the key and scale group
-  bool showLoop = true, showSys = true, showKey = true;
+  bool showLoop = true, showRange = true, showSys = true, showKey = true;
   auto leftW = [&]() { return 26 + 6 + 40 + 4 + 64 + 4 + 44 + 8 + 14 + 4 + 54 + (showKey ? 8 + keyW + 2 + scaleW : 0); };
   // The transport group: play, stop, record, then automation arm and overdub, then the record menu.
-  auto centreW = [&]() { return posW + 4 + 26 * 6 + 28 * 2 + 10 + 6 + 4 + backW + (showLoop ? 8 + 26 + 4 + loopW + 4 + loopW : 0); };
+  // Checkpoint 55 (gap 6): Follow after Back to arrangement; the loop switch beside punch and the range.
+  auto centreW = [&]() { return posW + 4 + 26 * 6 + 28 * 2 + 10 + 6 + 4 + backW + 30 + (showLoop ? 8 + 30 + 26 + 4 : 0) + (showLoop && showRange ? loopW + 4 + loopW : 0); };
   auto rightW = [&]() { return (showSys ? 66 + 4 + 26 + 4 + 40 + 14 : 0) + 26 + segGridW + segArrW; };
-  if (10 + leftW() + 16 + centreW() + 16 + rightW() + 8 > W) showLoop = false;
+  // Checkpoint 55 (gap 6): the range fields go first, so the loop and punch switches stay at 1440 wide.
+  if (10 + leftW() + 16 + centreW() + 16 + rightW() + 8 > W) showRange = false;
   if (10 + leftW() + 16 + centreW() + 16 + rightW() + 8 > W) showKey = false;
   if (10 + leftW() + 16 + centreW() + 16 + rightW() + 8 > W) showSys = false;
+  if (10 + leftW() + 16 + centreW() + 16 + rightW() + 8 > W) showLoop = false;
 
   // ---- left: tap, tempo, meter, metronome, launch grid ----
   float x = wp.x + 10;
@@ -1772,6 +1775,13 @@ static float drawTopBarLive(App& a) {
     dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(mx + 22, theme::textTop(a.fontRegular, theme::kFontCaption, cy, kH)), glyphCol(anyGrid),
                 i18n::tr("Back to arrangement"));
     mx += backW + 4;
+    {  // Checkpoint 55 (gap 6): Follow: the Arrangement scrolls with the play position (the person's setting)
+      const bool follow = a.settings.getBool("ui.autoScroll");
+      if (flat("##followlive", mx, 26, follow, "Follow: the Arrangement scrolls to keep the play position in view")) a.settings.set("ui.autoScroll", !follow);
+      noteRect("follow");
+      ui::drawIconFit(dl, ui::Icon::Follow, ImVec2(mx + 6, cy + 5), ImVec2(mx + 20, cy + kH - 5), glyphCol(follow));
+      mx += 26 + 4;
+    }
     if (showLoop) {
       // The loop range: the playlist's time selection (the whole song while there is none).
       const bool sel = a.playlist.selEnd > a.playlist.selStart;
@@ -1781,14 +1791,42 @@ static float drawTopBarLive(App& a) {
       const Tick org = livelook::arrangementOrigin(a);
       const Tick l0 = sel ? std::max(org, a.playlist.selStart) : org, l1 = sel ? std::max(l0, a.playlist.selEnd) : std::max(org, songEnd);
       mx += 4;
+      // Checkpoint 55 (gap 6): the loop switch: the Arrangement's loop brace on (the range last used,
+      // else the four bars from the play position) or off. The range is the view's, never the song's.
+      {
+        static Tick lastL = 0, lastR = 0;
+        if (sel) {
+          lastL = a.playlist.selStart, lastR = a.playlist.selEnd;
+        }
+        if (flat("##looplive", mx, 26, sel, "Loop: the Arrangement plays its loop brace over and over (click to switch it on or off)")) {
+          if (sel) {
+            a.playlist.selStart = a.playlist.selEnd = 0;
+          } else if (lastR > lastL) {
+            a.playlist.selStart = lastL, a.playlist.selEnd = lastR;
+          } else {
+            const MeterMap mm(s);
+            const Tick from = mm.barStartAt(std::max(org, static_cast<Tick>(a.engine.position())));
+            Tick to = from;
+            for (int k = 0; k < 4; ++k) {
+              to = mm.nextBar(to);
+            }
+            a.playlist.selStart = from, a.playlist.selEnd = to;
+          }
+        }
+        noteRect("loop");
+        ui::drawIconFit(dl, ui::Icon::LoopArrows, ImVec2(mx + 6, cy + 5), ImVec2(mx + 20, cy + kH - 5), glyphCol(sel));
+        mx += 26 + 4;
+      }
       // Punch in and out at the time selection, beside the range it uses.
       if (flat("##punchlive", mx, 26, a.recPunch, "Punch in and out: recording keeps only what falls inside the time selection")) a.recPunch = !a.recPunch;
       ui::drawIconFit(dl, ui::Icon::Trim, ImVec2(mx + 6, cy + 5), ImVec2(mx + 20, cy + kH - 5), glyphCol(a.recPunch));
       mx += 26 + 4;
-      const std::string ls = bbt(l0 - org, false), ll = bbt(std::max<Tick>(0, l1 - l0), true);
-      field("##loopstart", ls.c_str(), mx, loopW, !sel, "Loop start: the playlist's time selection (drag in the ruler to set it)");
-      mx += loopW + 4;
-      field("##looplen", ll.c_str(), mx, loopW, !sel, "Loop length: bars . beats . sixteenths of the time selection");
+      if (showRange) {
+        const std::string ls = bbt(l0 - org, false), ll = bbt(std::max<Tick>(0, l1 - l0), true);
+        field("##loopstart", ls.c_str(), mx, loopW, !sel, "Loop start: the playlist's time selection (drag in the ruler to set it)");
+        mx += loopW + 4;
+        field("##looplen", ll.c_str(), mx, loopW, !sel, "Loop length: bars . beats . sixteenths of the time selection");
+      }
     }
   }
   ImGui::End();
@@ -2388,7 +2426,8 @@ static float drawLogicControlBar(App& a) {
     const ImVec2 l0(cx, std::round(top + (barH - lcdH) * 0.5f)), l1(cx + lcdW, l0.y + lcdH);
     // K-112b: a dark display in three sections: the position large and bold (bar and beat, each
     // captioned), the tempo, then the meter over the key.
-    dl->AddRectFilled(l0, l1, theme::mix(P.field, P.ink, 0.55f), 8.0f);
+    // Checkpoint 52 (polish): a cool slate rather than near black, as 133, 146 and 101 show the display.
+    dl->AddRectFilled(l0, l1, theme::mix(theme::mix(P.field, P.ink, 0.45f), P.accent, 0.07f), 8.0f);
     // A5 (checkpoint 49): recessed, as the reference's: a soft inner shadow along the top, no stroke.
     dl->AddRectFilled(ImVec2(l0.x + 1, l0.y), ImVec2(l1.x - 1, l0.y + 3), theme::withAlpha(P.ink, 0.22f), 8.0f, ImDrawFlags_RoundCornersTop);
     // Checkpoint 30: no outline (150, 205, 001: the display is a dark field on the bar, no stroke).
@@ -3028,7 +3067,13 @@ static void drawNotifications(App& a, ImVec2 wp, float W, float fs) {
     const float wrapW = cardMaxW - padL - padR;
     const float tw = std::min(one.x, wrapW);
     const float th = one.x <= wrapW ? lineH : std::min(a.fontRegular->CalcTextSizeA(fsz, 1e9f, wrapW, shown).y, lineH * 4);
-    const float cw = tw + padL + padR, ch = std::max(34.0f, th + 18);
+    // Checkpoint 55: an offer's buttons on a row under its text, right-aligned.
+    float aw = 0;
+    for (const Toast::Action& ac : t.actions) {
+      aw += a.fontRegular->CalcTextSizeA(fsz, 1e9f, 0, i18n::tr(ac.label.c_str())).x + 20 + 6;
+    }
+    const float bodyW = std::max(tw, std::min(aw, cardMaxW - padL - 12));
+    const float cw = bodyW + padL + padR, ch = std::max(34.0f, th + 18) + (t.actions.empty() ? 0.0f : 28.0f);
     cards.push_back({&t, ImVec2(wp.x + W - theme::kS3 - cw, y - ch), ImVec2(wp.x + W - theme::kS3, y)});
     y -= ch + theme::kS1;
   }
@@ -3060,12 +3105,38 @@ static void drawNotifications(App& a, ImVec2 wp, float W, float fs) {
     const bool hov = ImGui::IsItemHovered();
     const ImVec2 xc(c.c1.x - 14, c.c0.y + 14);  // close glyph centre
     const bool overClose = hov && std::fabs(mouse.x - xc.x) <= 10 && std::fabs(mouse.y - xc.y) <= 10;
+    // Checkpoint 55: the offer's buttons (right to left from the card's right edge, on its last row).
+    struct ActRect {
+      ImVec2 p0, p1;
+    };
+    std::vector<ActRect> acts;
+    {
+      float ax = c.c1.x - 10;
+      for (size_t k = t.actions.size(); k-- > 0;) {
+        const float bw = a.fontRegular->CalcTextSizeA(fsz, 1e9f, 0, i18n::tr(t.actions[k].label.c_str())).x + 20;
+        acts.insert(acts.begin(), ActRect{ImVec2(ax - bw, c.c1.y - 30), ImVec2(ax, c.c1.y - 8)});
+        ax -= bw + 6;
+      }
+    }
+    int overAct = -1;
+    for (size_t k = 0; k < acts.size() && hov; ++k) {
+      if (mouse.x >= acts[k].p0.x && mouse.x < acts[k].p1.x && mouse.y >= acts[k].p0.y && mouse.y < acts[k].p1.y) {
+        overAct = static_cast<int>(k);
+      }
+    }
     if (hov) {
       t.until = std::max(t.until, a.now + 1.0);  // stays while the pointer is on it
       a.setHint(overClose ? i18n::tr("Dismiss this notification") : i18n::tr("Click to copy the message (with its details) to the clipboard"));
       ui::Tooltip(overClose ? "Dismiss" : "Click to copy");
     }
-    if (clicked && overClose) {
+    if (clicked && overAct >= 0) {
+      const std::function<void()> run = t.actions[static_cast<size_t>(overAct)].run;
+      t.until = 0;
+      t.actions.clear();
+      if (run) {
+        a.later(run);  // (next frame: the action may edit the song or open a window)
+      }
+    } else if (clicked && overClose) {
       t.until = 0;
     } else if (clicked) {
       ImGui::SetClipboardText(toast::clipboardText(t.english.empty() ? t.text : t.english, t.details, t.error).c_str());
@@ -3082,7 +3153,16 @@ static void drawNotifications(App& a, ImVec2 wp, float W, float fs) {
     fg->AddRect(c0, c1, theme::withAlpha(P.dark ? P.ink : P.lineStrong, 0.8f * alpha), theme::kRadiusLg);
     const ImU32 lamp = copied ? P.led : t.error ? P.danger : P.led;
     fg->AddRectFilled(ImVec2(c0.x, c0.y), ImVec2(c0.x + 3, c1.y), theme::withAlpha(lamp, alpha), theme::kRadiusLg, ImDrawFlags_RoundCornersLeft);
-    const ImVec2 lc(c0.x + 18, (c0.y + c1.y) * 0.5f);
+    for (size_t k = 0; k < acts.size() && k < t.actions.size(); ++k) {
+      const ImU32 bf = static_cast<int>(k) == overAct ? theme::mix(P.accent, P.text, 0.15f) : P.accent;
+      fg->AddRectFilled(acts[k].p0, acts[k].p1, theme::withAlpha(bf, alpha), theme::kRadius);
+      const char* bl = i18n::tr(t.actions[k].label.c_str());
+      const ImVec2 bs = a.fontRegular->CalcTextSizeA(fsz, 1e9f, 0, bl);
+      fg->AddText(a.fontRegular, fsz, ImVec2(std::round((acts[k].p0.x + acts[k].p1.x - bs.x) * 0.5f), std::round((acts[k].p0.y + acts[k].p1.y - bs.y) * 0.5f)),
+                  theme::withAlpha(theme::contrastText(P.accent), alpha), bl);
+    }
+    const float lampH = t.actions.empty() ? 0.0f : 28.0f;  // (the lamp and the text keep to the card's first rows)
+    const ImVec2 lc(c0.x + 18, (c0.y + c1.y - lampH) * 0.5f);
     if (copied) {  // a tick in place of the lamp
       ui::drawIconFit(fg, ui::Icon::Check, ImVec2(lc.x - 5.5f, lc.y - 4.5f), ImVec2(lc.x + 5.5f, lc.y + 4.5f), theme::withAlpha(P.led, alpha));
     } else {
@@ -3093,9 +3173,9 @@ static void drawNotifications(App& a, ImVec2 wp, float W, float fs) {
     const ImU32 tc = theme::withAlpha(copied ? P.text : t.error ? theme::mix(P.danger, P.text, 0.35f) : P.text, alpha);
     const float oneW = a.fontRegular->CalcTextSizeA(fsz, 1e9f, 0, shown).x;
     if (oneW <= textW + 0.5f) {
-      theme::textEllipsis(fg, a.fontRegular, fsz, ImVec2(c0.x + 30, std::round((c0.y + c1.y - fsz) * 0.5f) - 1), textW + 1, tc, shown);
+      theme::textEllipsis(fg, a.fontRegular, fsz, ImVec2(c0.x + 30, std::round((c0.y + c1.y - lampH - fsz) * 0.5f) - 1), textW + 1, tc, shown);
     } else {
-      const ImVec4 clip(c0.x, c0.y + 6, c1.x, c1.y - 6);
+      const ImVec4 clip(c0.x, c0.y + 6, c1.x, c1.y - 6 - lampH);
       fg->AddText(a.fontRegular, fsz, ImVec2(c0.x + 30, c0.y + 9), tc, shown, nullptr, textW, &clip);
     }
     // Copy glyph (hovered) and close glyph.

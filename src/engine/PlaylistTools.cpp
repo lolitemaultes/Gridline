@@ -342,6 +342,109 @@ void regroupCopies(Song& s, std::vector<Clip>& copies) {
   }
 }
 
+namespace {
+// A copy of `src` (a new id, appended) with `from`'s notes and steps moved to `to`.
+ObjectId ownPatternCopy(Song& s, const Pattern& src, ObjectId from, ObjectId to) {
+  if (static_cast<int>(s.patterns.size()) >= kMaxPatterns) return kNoId;
+  Pattern p = src;
+  p.id = s.allocateId();
+  if (from != kNoId && to != kNoId && from != to) {
+    if (auto it = p.notes.find(from); it != p.notes.end()) {
+      std::vector<Note> moved = std::move(it->second);
+      p.notes.erase(it);
+      std::vector<Note>& dst = p.notes[to];
+      dst.insert(dst.end(), moved.begin(), moved.end());
+    }
+    if (auto it = p.steps.find(from); it != p.steps.end()) {
+      std::vector<uint8_t> moved = std::move(it->second);
+      p.steps.erase(it);
+      std::vector<uint8_t>& dst = p.steps[to];
+      if (dst.size() < moved.size()) dst.resize(moved.size(), 0);
+      for (size_t i = 0; i < moved.size(); ++i) {
+        dst[i] = std::max(dst[i], moved[i]);
+      }
+    }
+    if (auto it = p.stepProps.find(from); it != p.stepProps.end()) {
+      if (!p.stepProps.count(to)) p.stepProps[to] = it->second;
+      p.stepProps.erase(from);
+    }
+    if (auto it = p.stepLoop.find(from); it != p.stepLoop.end()) {
+      if (!p.stepLoop.count(to)) p.stepLoop[to] = it->second;
+      p.stepLoop.erase(from);
+    }
+  }
+  s.patterns.push_back(std::move(p));
+  return s.patterns.back().id;
+}
+}  // namespace
+
+std::vector<ObjectId> pasteOwnCopies(Song& s, const std::vector<PasteItem>& items, bool noOverlap) {
+  std::vector<Clip> copies;
+  copies.reserve(items.size());
+  for (const PasteItem& it : items) copies.push_back(it.clip);
+  regroupCopies(s, copies);
+  std::vector<ObjectId> out;
+  for (size_t i = 0; i < copies.size(); ++i) {
+    Clip c = copies[i];
+    if (c.kind == ClipKind::Pattern) {
+      const Pattern* p = s.pattern(c.pattern);
+      if (!p) continue;
+      const Pattern src = *p;
+      if (const ObjectId np = ownPatternCopy(s, src, items[i].fromSound, items[i].toSound); np != kNoId) c.pattern = np;
+    } else if (c.kind == ClipKind::Automation ? !s.automation(c.source) : !s.channel(c.source)) {
+      continue;
+    }
+    c.id = s.allocateId();
+    c.takeGroup = kNoId;
+    s.playlist.push_back(c);
+    out.push_back(c.id);
+  }
+  if (!noOverlap || out.empty()) return out;
+  const std::set<ObjectId> placed(out.begin(), out.end());
+  // K-112B (R12-01): the pasted regions keep their full length; what lies under them gives way.
+  for (const ObjectId pid : out) {
+    const Clip* pc = s.clip(pid);
+    if (!pc) {
+      continue;
+    }
+    const int track = pc->track;
+    const bool autoKind = pc->kind == ClipKind::Automation;
+    const Tick ps = pc->start, pe = pc->start + s.clipLength(*pc);
+    std::set<ObjectId> drop;
+    // (each step re-reads the clips: a trim or a split changes the playlist)
+    for (size_t i = 0; i < s.playlist.size(); ++i) {
+      const Clip o = s.playlist[i];
+      if (placed.count(o.id) || drop.count(o.id) || o.track != track) {
+        continue;
+      }
+      if ((o.kind == ClipKind::Automation) != autoKind) {
+        continue;
+      }
+      const Tick os = o.start, oe = o.start + s.clipLength(o);
+      if (oe <= ps || os >= pe) {
+        continue;
+      }
+      if (os < ps && oe > pe) {
+        sliceClips(s, {o.id}, pe);  // it runs on past the paste: the part after the paste stays as it was
+        s.playlist = resizeEnds(s, s.playlist, {o.id}, ps - pe, false);  // ... and the part before ends where the paste starts
+      } else if (os < ps) {
+        s.playlist = resizeEnds(s, s.playlist, {o.id}, ps - oe, false);  // an earlier one ends where the pasted one starts
+      } else if (oe > pe) {
+        TempoMap tm;
+        tm.build(s);
+        s.playlist = trimStarts(s, tm, s.playlist, {o.id}, pe - os, false);  // a later one starts where the pasted one ends
+      } else {
+        drop.insert(o.id);  // wholly covered
+      }
+    }
+    if (!drop.empty()) {
+      s.playlist.erase(std::remove_if(s.playlist.begin(), s.playlist.end(), [&](const Clip& c) { return drop.count(c.id) > 0; }),
+                       s.playlist.end());
+    }
+  }
+  return out;
+}
+
 std::vector<ObjectId> cloneClips(Song& s, const std::set<ObjectId>& sel) {
   std::vector<Clip> copies;
   for (const auto& c : s.playlist)

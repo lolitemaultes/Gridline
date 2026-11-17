@@ -222,6 +222,8 @@ Navigate > Clip band			e-
 Navigate > Device band			ec
 Navigate > Clip and device bands	Ctrl+Alt+L	view.detail	ec
 Navigate > Mixer	Ctrl+Alt+M	view.mixer	e-
+Navigate > In/Out	Ctrl+Alt+I	view.io	e-
+Navigate > Info View	Shift+/	view.quickHelp	ec
 Navigate > Go to the start	Ctrl+Alt+Shift+Home	transport.toStart	e-
 Navigate > Back one bar	Ctrl+Alt+Shift+Left	transport.rewindBar	e-
 Navigate > Forward one bar	Ctrl+Alt+Shift+Right	transport.forwardBar	e-
@@ -300,7 +302,6 @@ Tools > Composing > Project scripts > Humanize arrangement selection...			e-
 Tools > Composing > Project scripts > Name tracks after their clips...			e-
 Tools > Composing > Project scripts > Rescan scripts			e-
 Tools > Composing > Project scripts > Open your scripts folder			e-
-Tools > Render channel to sampled instrument...			e-
 Tools > Audio logger > Keep the last minutes of audio			e-
 Tools > Audio logger > Armed inputs (before the effects)			ec
 Tools > Audio logger > The master output (after the effects)			e-
@@ -316,7 +317,7 @@ Tools > Score logger > Put the notes played in the last > 5 minutes			--
 Tools > Score logger > Put the notes played in the last > 10 minutes			--
 Tools > Score logger > Put the notes played in the last > 20 minutes			--
 Tools > Score logger > Put the notes played in the last > 30 minutes			--
-Tools > Score logger > Put the notes played in the last > Replace the channel's notes			--
+Tools > Score logger > Put the notes played in the last > Replace the clip's notes			--
 Tools > Score logger > Clear the log			--
 Tools > Score logger > Log MIDI input notes			ec
 Tools > Score logger > Keep notes for > 5 minutes			e-
@@ -324,23 +325,22 @@ Tools > Score logger > Keep notes for > 10 minutes			ec
 Tools > Score logger > Keep notes for > 20 minutes			e-
 Tools > Score logger > Keep notes for > 30 minutes			e-
 Tools > Score logger > Keep notes for > 60 minutes			e-
-Tools > Unmute all channels			e-
 Tools > Unsolo all tracks			e-
 Tools > Close plugin windows	Alt+F12	view.closePlugins	e-
-Tools > Macros > Select unused channels			e-
+Tools > Macros > Select unused instruments			e-
 Tools > Macros > Lock every track			e-
 Tools > Macros > Unlock every track			e-
-Tools > Macros > Audio clip channels > Stretch			e-
-Tools > Macros > Audio clip channels > Rubber Band			e-
-Tools > Macros > Audio clip channels > Resample			e-
-Tools > Macros > Audio clip channels > Stretch			--
-Tools > Macros > Audio clip channels > Rubber Band			--
-Tools > Macros > Audio clip channels > Resample			--
-Tools > Macros > Declicking of the selected channels > Off			e-
-Tools > Macros > Declicking of the selected channels > Out only			e-
-Tools > Macros > Declicking of the selected channels > Transient			e-
-Tools > Macros > Declicking of the selected channels > Generic			e-
-Tools > Macros > Declicking of the selected channels > Smooth			e-
+Tools > Macros > Time mode of audio clips > Every audio clip > Stretch			e-
+Tools > Macros > Time mode of audio clips > Every audio clip > Rubber Band			e-
+Tools > Macros > Time mode of audio clips > Every audio clip > Resample			e-
+Tools > Macros > Time mode of audio clips > Selected audio clips > Stretch			--
+Tools > Macros > Time mode of audio clips > Selected audio clips > Rubber Band			--
+Tools > Macros > Time mode of audio clips > Selected audio clips > Resample			--
+Tools > Macros > Declicking of the selected clips > Off			e-
+Tools > Macros > Declicking of the selected clips > Out only			e-
+Tools > Macros > Declicking of the selected clips > Transient			e-
+Tools > Macros > Declicking of the selected clips > Generic			e-
+Tools > Macros > Declicking of the selected clips > Smooth			e-
 Tools > Freeze > Unfreeze all			--
 Tools > Clean up > Delete unused automation clips			e-
 Tools > Clean up > Delete unused patterns			e-

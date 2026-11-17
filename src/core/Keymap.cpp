@@ -109,6 +109,12 @@ std::vector<Command> buildCommands() {
       {"view.cleanUp", G, N_("Clean up box"), {}},
       {"view.midiBox", G, N_("MIDI box"), {}},
       {"view.sampleTools", G, N_("Sample tools box"), {}},
+      // K-106 cp17: the Tracker's Sample editor (the instrument's samples in the lower band) and the
+      // sideways zoom of the page in front (the pattern's tracks, the Song page's lanes or timeline).
+      {"view.sampleEditor", G, N_("Sample editor"), {}},
+      {"view.zoomTracksIn", G, N_("Wider tracks (zoom in)"), {}},
+      {"view.zoomTracksOut", G, N_("Narrower tracks (zoom out)"), {}},
+      {"view.zoomTracksFit", G, N_("Every track in view"), {}},
       {"help.trackerKeys", G, N_("Tracker help"), {}},
       {"view.settings", G, N_("Settings (MIDI page)"), {ch(K::F10)}},
       {"view.backToPlaylist", G, N_("Back to the playlist (from an editor or plugin window)"), {ch(K::Escape)}},  // K-124
@@ -184,6 +190,7 @@ std::vector<Command> buildCommands() {
       {"track.group", G, N_("Group tracks"), {}},      // checkpoint 51: Clips only (Cmd+G)
       {"track.ungroup", G, N_("Ungroup tracks"), {}},  // checkpoint 51: Clips only (Cmd+Shift+G)
       {"view.detail", G, N_("Clip and device bands (show / hide)"), {}},
+      {"view.io", G, N_("In/Out section (show / hide)"), {}},  // checkpoint 55: Clips only (Cmd+Alt+I)
       {"transport.sessionRecord", G, N_("Session record"), {}},
       // ---- playlist ----
       {"playlist.delete", PL, N_("Delete selected clips"), {ch(K::Delete), ch(K::Backspace)}},
@@ -652,6 +659,8 @@ Rows liveRows() {
   set("track.group", {ch(K::G, C)});         // checkpoint 51
   set("track.ungroup", {ch(K::G, C | S)});
   set("view.detail", {ch(K::L, C | A)});
+  set("view.quickHelp", {ch(K::Slash, S)});  // checkpoint 55 (gap 9): Shift+?, the Info View
+  set("view.io", {ch(K::I, C | A)});         // checkpoint 55 (gap 2): Cmd+Alt+I, the In/Out section
   set("transport.sessionRecord", {ch(K::F9, S)});
   // playlist
   set("playlist.duplicate", {ch(K::D, C)});
@@ -804,6 +813,13 @@ Rows trackerRows() {
   add("view.cleanUp", {ch(K::R, C | A)});
   add("view.midiBox", {ch(K::J, C | A)});      // cp13: the MIDI box (the classic I.E.Ext)
   add("view.sampleTools", {ch(K::K, C | A)});  // cp13: the Sample tools box (the classic S.E.Ext)
+  // cp17: E, the Sample editor (K-316 5.4: free in this set; the Live set's Ctrl+Alt+E is its own).
+  add("view.sampleEditor", {ch(K::E, C | A)});
+  // cp17 (user): the sideways zoom: comma narrower, period wider (the < and > keys), slash every
+  // track in view. Free in this set (Ctrl+Alt+minus is Help, so not minus and equals).
+  add("view.zoomTracksOut", {ch(K::Comma, C | A)});
+  add("view.zoomTracksIn", {ch(K::Period, C | A)});
+  add("view.zoomTracksFit", {ch(K::Slash, C | A)});
   // N-05, N-06: X, back to the main screen (every screen closes, the pattern page in front), in place of
   // F12; F11 (Project info) goes too: in the pattern the function keys jump rows, so the menus do
   // not show keys the pattern holds back. Project info stays in the File menu.

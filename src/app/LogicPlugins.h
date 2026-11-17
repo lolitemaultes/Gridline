@@ -33,6 +33,8 @@ struct PluginState;
 struct Song;
 struct Channel;
 struct Clip;
+struct RecordOptions;
+struct RecordSetup;
 }
 
 namespace gl::logicplug {
@@ -71,11 +73,20 @@ struct AutoFold {
   // R09-01: a bus track and the automation-only tracks take no regions here (the reference's aux
   // track holds no MIDI or audio regions): only their automation.
   bool takesNoRegions(int t) const { return isBus(t) || isHidden(t) || isMember(t); }
-  // The row takes no room: a hidden track, or a folder track under the closed folder's row.
-  bool takesNoRoom(int t) const { return isHidden(t) || (isMember(t) && !open && t != head()); }
+  // K-112B (R12-05): the unused default rows after the last track in use (no regions, mode, name,
+  // links, lane, group, icon or other setting of its own) are not shown, as the reference's new
+  // project shows only the tracks that exist; track 1 always shows. The song keeps them (Studio and
+  // the other layouts still show their rows), and a track put to use shows at once. A spare row
+  // takes regions: it is an ordinary empty track once something lands on it.
+  std::vector<char> spare;
+  bool isSpare(int t) const { return on && t >= 0 && t < static_cast<int>(spare.size()) && spare[static_cast<size_t>(t)]; }
+  // The row takes no room: a hidden track, a folder track under the closed folder's row, or a spare row.
+  bool takesNoRoom(int t) const { return isHidden(t) || (isMember(t) && !open && t != head()) || isSpare(t); }
 };
 // Worked out once per document revision (and when the layout or the setting changes).
 const AutoFold& autoFold(const App& a);
+// K-112B (R12-05): the last track in use (-1: none), as AutoFold::spare counts it.
+int lastUsedTrack(const Song& s);
 void setAutoFolderOpen(App& a, bool open);
 // K-112B (checkpoint 46): the Project End marker: the end of the last region, rounded up to a bar
 // line (bar 129 in an empty project). Without a cycle, playback stops there (recording runs on).
@@ -93,7 +104,42 @@ const Channel* trackSound(const Song& s, int track, const Clip* clip);
 // track, else the mixer track its sounds play into; a kit whose sounds play into several mixer
 // tracks gets the one they all send into (its bus). Never the master (nullptr then).
 const MixerTrack* trackStrip(const Song& s, int track);
+// R10 CPU: the same two for the open song, worked out once per document revision (the headers and
+// the lanes asked for them several times a row, each a walk over every region).
+const Channel* trackSound(const App& a, int track);
+const MixerTrack* trackStrip(const App& a, int track);
 int focusTrack(const App& a);
+// R10-03: the instrument track R (record enable) and I (input monitoring) of the headers. A track
+// takes them when it plays a sound and is neither an audio track nor a bus track. `armedTrack` is
+// the first armed track (-1: none; a take then goes on the focus track); `liveChannel` is the sound
+// live notes play: the armed track's, else a monitored track's, else the selected channel.
+bool midiRecordable(const App& a, int track);
+int armedTrack(const App& a);
+// R10-08: Paste in Smooth, as the reference's: the copied regions at the playhead, the first one on the
+// selected track (else where they were copied from), keeping their spacing. Refused, with a message,
+// when a region would land on a bus track or a track that cannot take it. Returns whether it pasted.
+// R11-01: each pasted region plays the sound of the track it lands on, from a pattern of its own,
+// and in No Overlap the regions under it give way; Cmd+V again with the playhead unmoved pastes
+// right after the last copy. `pasteRegionsAt` pastes at a given track and tick (the background
+// menu; -1: the selected track / the playhead).
+bool pasteRegions(App& a);
+bool pasteRegionsAt(App& a, int track, Tick at);
+ObjectId liveChannel(const App& a);
+// R11-03: every armed instrument track (the first one `armedTrack`'s), one per sound, with its
+// sound; every sound live notes play (the armed tracks' and the monitored ones', `liveChannel`
+// first); and whether notes played on `channel` record (with tracks armed: only an armed track's).
+std::vector<std::pair<int, ObjectId>> armedTracks(const App& a);
+std::vector<ObjectId> liveChannels(const App& a);
+bool recordsChannel(const App& a, ObjectId channel);
+// R11-03: Smooth records one take per armed track: the extra takes (beyond App::recorder's) follow
+// the transport here. `layerNote` feeds a note to the take of `channel` (no take: nothing).
+void startLayerTakes(App& a, const RecordOptions& o, const RecordSetup& base, ObjectId pattern);
+void endLayerTakes(App& a, double tick);
+void followLayerTakes(App& a, double tick);
+bool layerNote(App& a, ObjectId channel, int pitch, int velocity, bool on, double tick);
+bool layerTakesActive();
+// After App::recorder edited: the takes go on in the one undo step of this recording.
+void syncRecordSteps(App& a);
 // R06-06: Delete track, as the reference's: the track, its regions, and the channel strip and the
 // sounds only it used (no other track or arrangement plays them, nothing sends into the strip),
 // with their automation. One undo step (inside the caller's group when there is one).
@@ -139,9 +185,12 @@ void viewButton(App& a, const PluginTarget& t);  // size and Controls / Editor
 void linkButton(App& a);
 
 // Smart controls (a part homed in the lower pane): the selected track's main controls as knobs,
-// grouped by plugin (a group's name opens its window), or its first EQ's own display; a Master
-// switch shows the master track's instead. Mapped automatically (no saved mapping yet).
+// grouped by plugin (a group's name opens its window), or its first EQ's own display; the second tab
+// shows the track's output bus instead. Mapped automatically; Parameter Mapping > Learn maps a control
+// by hand (Song::smooth.controls), External Assignment > Learn links the next hardware control moved.
 void smartControls(App& a);
+// Dev input (parts smart ...): focus, learn, a controller message, a parameter touch, state.
+bool smartDevCommand(App& a, const std::vector<std::string>& args);
 
 // Controls view: the plugin window lists the parameters (built-in plugins).
 bool controlsView(const App& a, const std::string& type);

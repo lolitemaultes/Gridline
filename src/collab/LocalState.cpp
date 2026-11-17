@@ -185,7 +185,12 @@ void maskSessionJson(Json& song) {
     eachIn(a, "playlist", maskClipJson);
     eachIn(a, "tracks", maskTrackJson);
   });
-  song.object.erase("smooth");  // K-112D: the Smooth layout's window state (the Library pane) stays here
+  // K-112D: the Smooth layout's window state (the Library pane) stays here; D6 (R12-03): its Smart Control
+  // mappings (`controls`) are song data and go out with the song.
+  if (auto it = song.object.find("smooth"); it != song.object.end()) {
+    if (it->second.is(Json::Type::Object)) it->second.object.erase("library");
+    if (!it->second.is(Json::Type::Object) || it->second.object.empty()) song.object.erase(it);
+  }
   maskPlugins(song, 0);
 }
 
@@ -222,7 +227,8 @@ void keepSessionState(Song& in, const Song& cur) {
     in.tracks[i].folded = cur.tracks[i].folded;
     in.tracks[i].height = cur.tracks[i].height;
   }
-  in.smooth = cur.smooth;  // K-112D: this computer's Smooth window state, whatever layout the change came from
+  in.smooth.library = cur.smooth.library;  // K-112D: this computer's Smooth window state, whatever layout the change came from
+  // (D6, R12-03: in.smooth.controls, the Smart Control mappings, are the shared song's)
 }
 
 uint64_t sessionStateHash(const Song& s) {

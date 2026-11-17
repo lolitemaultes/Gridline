@@ -56,6 +56,7 @@ struct Text {
   float baseline = 0;
   float size = 0;
   bool clipped = false;  // a glyph cut by the clip rectangle (or dropped by it)
+  float alpha = 1.0f;    // K-112B (R11-05): the run's opacity (its first glyph's)
   std::string str;
 };
 struct Frame {

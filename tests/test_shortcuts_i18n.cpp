@@ -72,12 +72,15 @@ void keymapTests() {
                                              // K-106: the Tracker's screens, keyed in its own set (Ctrl+Alt with the digits)
                                              "view.patternEditor", "view.pads", "view.channelSettings", "view.audioEditor", "view.files",
                                              "view.headerBand", "help.trackerKeys", "view.transposeBox", "view.cleanUp", "view.advancedEdit", "view.midiBox", "view.sampleTools",
+                                             // K-106 cp17: the Sample editor and the tracks' zoom (Tracker set)
+                                             "view.sampleEditor", "view.zoomTracksIn", "view.zoomTracksOut", "view.zoomTracksFit",
                                              // K-112B checkpoint 42: the Tracks set's own keys (automation, windows, markers, cycle)
                                              "view.automation", "view.globalTracks", "playlist.toolMenu", "transport.cycleSelection",
                                              "transport.prevMarker", "transport.nextMarker", "transport.goToPosition", "playlist.cut",
                                              "track.newAudio", "track.newMidi", "track.newReturn", "view.detail", "transport.sessionRecord",
                                              "clips.insertMidiClip",  // K-112c: keys in the Clips set only (N49-07)
                                              "track.group", "track.ungroup",  // K-112c checkpoint 51: Clips set only
+                                             "view.io",  // K-112c checkpoint 55: the In/Out section, Clips set only (Ctrl+Alt+I)
                                              // K-112B checkpoint 47: the Tracks set's arrow, nudge and loop keys
                                              "playlist.prevRegion", "playlist.nextRegion", "playlist.prevTrack", "playlist.nextTrack",
                                              "playlist.nudgeLeft", "playlist.nudgeRight", "playlist.loopRegion",

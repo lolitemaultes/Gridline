@@ -1,6 +1,7 @@
 // Gridline — keyboard / MIDI workflow (J-17), app side: remote control links,
 // learning and multilink, controller templates, recording (count-in, takes,
 // automation), step record, transport actions, external clock following.
+#include <array>
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -24,6 +25,9 @@ namespace gl {
 namespace fs = std::filesystem;
 
 namespace {
+
+// R11-03: per MIDI key, the other armed / monitored sounds its note plays in Smooth (they end with it).
+std::array<std::vector<ObjectId>, 128> gMidiLayers;
 
 bool learnable(const MidiMessage& m) {
   int k = m.kind();
@@ -238,8 +242,12 @@ void App::playedNoteOn(ObjectId channel, int pitch, int velocity, double stamp) 
     stepRecorder.press(pitch, velocity);
     return;
   }
-  if (recorder.active()) recorder.noteOn(doc, channel, pitch, velocity, recordTick(stamp));
-  else capture.noteOn(channel, pitch, velocity, now);  // K-112c: kept for Capture
+  if (recorder.active() && logicplug::recordsChannel(*this, channel)) {  // R11-03: with tracks armed, only theirs record
+    recorder.noteOn(doc, channel, pitch, velocity, recordTick(stamp));
+    logicplug::syncRecordSteps(*this);
+  } else if (!recorder.active()) {
+    capture.noteOn(channel, pitch, velocity, now);  // K-112c: kept for Capture
+  }
 }
 
 void App::playedNoteOff(ObjectId channel, int pitch, double stamp) {
@@ -250,8 +258,12 @@ void App::playedNoteOff(ObjectId channel, int pitch, double stamp) {
     stepRecorder.release(doc, curPattern, selChannel, pitch);
     return;
   }
-  if (recorder.active()) recorder.noteOff(doc, channel, pitch, recordTick(stamp));
-  else capture.noteOff(channel, pitch, now);
+  if (recorder.active()) {
+    recorder.noteOff(doc, channel, pitch, recordTick(stamp));
+    logicplug::syncRecordSteps(*this);
+  } else {
+    capture.noteOff(channel, pitch, now);
+  }
 }
 
 void App::processMidi() {
@@ -261,7 +273,7 @@ void App::processMidi() {
     midi->poll();
     return;
   }
-  engine.setMidiTarget(selChannel);
+  engine.setMidiTarget(logicplug::liveChannel(*this));  // R10-03: Smooth's armed / monitored track
 
   // ---- recording session follows the transport ----
   // K-226: from the count-in on, so notes played in its last beat (pickups) are kept.
@@ -297,8 +309,12 @@ void App::processMidi() {
             st.punchOut = playlist.selEnd;
           }
         }
-        if (logicplug::active(*this)) st.track = logicplug::focusTrack(*this);  // R05-02: onto the selected track
+        if (logicplug::active(*this)) {  // R05-02: onto the selected track (R10-03: the armed one first)
+          const int armed = logicplug::armedTrack(*this);
+          st.track = armed >= 0 ? armed : logicplug::focusTrack(*this);
+        }
         recorder.beginSong(doc, curPattern, o, st);
+        if (logicplug::active(*this)) logicplug::startLayerTakes(*this, o, st, curPattern);  // R11-03: a take per armed track
       } else if (const Pattern* p = s.pattern(curPattern)) {
         st.pickup = std::max<Tick>(1, s.patternBarTicks(*p) / std::max(1, p->meterNum > 0 ? p->meterNum : s.timeSigNum));
         recorder.beginPattern(doc, curPattern, o, std::max<Tick>(1, s.patternContentLength(*p)), st);
@@ -306,6 +322,7 @@ void App::processMidi() {
     }
   } else if (recorder.active() && (!recNow || recorder.songMode() != (engine.mode() == PlayMode::Song))) {
     recorder.end(doc, lastRecPos_);  // stopped, disarmed, or the play mode changed (a new take starts next frame)
+    logicplug::endLayerTakes(*this, lastRecPos_);
   }
 
   // ---- multilink: remember the controls touched in Gridline ----
@@ -468,6 +485,26 @@ void App::processMidi() {
       }
     }
 
+    // K-112D (D5, R11-06): Smooth's Smart Controls in learn mode: a control not linked yet links to
+    // the screen control in focus, without a dialog (the pane stays in learn mode for the next one).
+    if (!handled && smartLearn.owner != kNoId && ImGui::GetFrameCount() - smartLearnFrame <= 2 && learnable(m) && describeParam(doc.song(), smartLearn)) {
+      ControllerLink l;
+      sourceFrom(l, m);
+      const ParamId t = smartLearn;
+      l.owner = t.owner;
+      l.index = t.index;
+      if (l.source == RemoteSource::Note) l.button = RemoteButton::Toggle;
+      doc.editSong("link controller", [&](Song& s) {
+        s.links.erase(std::remove_if(s.links.begin(), s.links.end(),
+                                     [&](const ControllerLink& x) { return x.action == RemoteAction::None && x.owner == t.owner && x.index == t.index; }),
+                      s.links.end());
+        s.links.push_back(l);
+      });
+      remote.forget(l);
+      notify("Linked " + remoteSourceLabel(l) + " to " + paramDisplayName(doc.song(), t));
+      continue;
+    }
+
     // Multilink: a control not linked yet links to the next touched control.
     if (!handled && multilink && !multilinkQueue.empty() && learnable(m)) {
       ControllerLink l;
@@ -546,7 +583,7 @@ void App::processMidi() {
     if (kind == 0x90 || kind == 0x80 || (kind == 0xB0 && m.d1 == 64)) {
       const MidiInputConfig* cfg = midi->inputConfig(e.port);
       if (cfg && !cfg->notes) continue;
-      ObjectId ch = selChannel;
+      ObjectId ch = logicplug::liveChannel(*this);  // R10-03 (Smooth: the armed / monitored track's sound)
       const MidiRouting& r = midi->routing;
       if (r.byChannel && m.channel() != r.omniChannel && r.route[m.channel()] >= 0 &&
           r.route[m.channel()] < static_cast<int>(song.channels.size()))
@@ -554,11 +591,35 @@ void App::processMidi() {
       if (kind == 0xB0) {  // the pedal as played (the notes keep the lengths the keys were held)
         if (recorder.active()) recorder.pedal(ch, m.d2 >= 64, recordTick(e.time));
       } else if (m.noteOn()) {
-        playedNoteOn(ch, j31::incomingPitch(*this, m.d1), m.d2, e.time);  // J-31: snap incoming MIDI to the scale
+        const int pitch = j31::incomingPitch(*this, m.d1);
+        playedNoteOn(ch, pitch, m.d2, e.time);  // J-31: snap incoming MIDI to the scale
         if (r.mpe && m.channel() != 0) mpeFeed(e.time);  // K-99: the note starts with its channel's values
+        // R11-03: Smooth: every other armed or monitored track plays (and records) the note too,
+        // as the reference layers them (the engine plays the first one from the input itself).
+        if (logicplug::active(*this) && ch == logicplug::liveChannel(*this) && pitch >= 0 && pitch < 128) {
+          std::vector<ObjectId>& lay = gMidiLayers[static_cast<size_t>(pitch)];
+          for (ObjectId o : lay) {
+            engine.noteOff(o, pitch);  // (a retrigger)
+          }
+          const std::vector<ObjectId> lives = logicplug::liveChannels(*this);
+          lay.assign(lives.begin() + 1, lives.end());
+          for (ObjectId o : lay) {
+            engine.noteOn(o, pitch, static_cast<float>(m.d2) / 127.0f);
+            logicplug::layerNote(*this, o, pitch, m.d2, true, recordTick(e.time));
+          }
+        }
       } else if (!r.ignoreNoteOff) {
-        playedNoteOff(ch, j31::incomingPitch(*this, m.d1), e.time);
+        const int pitch = j31::incomingPitch(*this, m.d1);
+        playedNoteOff(ch, pitch, e.time);
         if (r.mpe && m.channel() != 0) mpeFeed(e.time);
+        if (pitch >= 0 && pitch < 128) {  // R11-03: the layered notes end with it
+          std::vector<ObjectId>& lay = gMidiLayers[static_cast<size_t>(pitch)];
+          for (ObjectId o : lay) {
+            engine.noteOff(o, pitch);
+            logicplug::layerNote(*this, o, pitch, 0, false, recordTick(e.time));
+          }
+          lay.clear();
+        }
       }
     }
   }
@@ -592,6 +653,8 @@ void App::followRecording() {
   }
   const double pos = recordTick();
   recorder.position(doc, pos);
+  logicplug::syncRecordSteps(*this);
+  if (recorder.songMode()) logicplug::followLayerTakes(*this, pos);
   lastRecPos_ = pos;
   // A new take is shown (pattern mode: it is what plays, so it stays selected; song mode: once, the
   // pattern can be changed while recording goes on).

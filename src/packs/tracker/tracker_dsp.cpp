@@ -86,6 +86,7 @@ const std::array<float, 257>& panTable() {
 struct Audition {
   std::atomic<const InstrumentAux*> inst{nullptr};
   std::atomic<int> slot{0}, pitch{-1};
+  std::atomic<int32_t> from{0}, to{0};  // K-106 cp18: the frames heard (of the played part; to 0 = its end)
   std::atomic<uint32_t> serial{0};    // the last request
   std::atomic<uint32_t> pending{0};   // a request no note has taken yet (0 = none)
   std::atomic<uint32_t> sounding{0};  // the request whose voice plays (0 = none)
@@ -94,6 +95,26 @@ Audition& audition() {
   static Audition a;
   return a;
 }
+
+// ---- K-106 cp18: the play tap (tracker.h readPlayTap) ----
+// One entry per Tracker Sampler instance (claimed when it is made, given back when it goes): at the
+// end of every block it publishes the instrument it plays and up to kTapVoices voices (slot,
+// position, note) under a sequence count, so the editors read them without a lock. Packed voice:
+// bit 63 set, note bits 48..55, slot bits 40..43, position bits 0..31.
+constexpr int kPlayTaps = 64;
+struct Tap {
+  std::atomic<bool> owned{false};
+  std::atomic<uint32_t> seq{0};
+  std::atomic<const InstrumentAux*> inst{nullptr};
+  std::atomic<int> count{0};
+  std::array<std::atomic<uint64_t>, kTapVoices> v{};
+  std::array<std::atomic<uint32_t>, kTapVoices> env{};  // cp20: volume tick + 1 (bits 0..15), panning tick + 1 (16..31); 0 = off
+};
+std::array<Tap, kPlayTaps>& taps() {
+  static std::array<Tap, kPlayTaps> t;
+  return t;
+}
+std::atomic<long long> gTapPublished{0};
 
 // ---- one playing sample (the tracker mixer's voice) ----
 
@@ -244,6 +265,7 @@ struct Voice {
   bool audition = false;     // K-129: the editor's preview of one sample (plays it once)
   uint32_t auditionId = 0;
   int midiKey = -1;          // K-129: the key sent to the MIDI output (-1 = none)
+  uint8_t lastNote = 0;      // cp18: the last note its cells played (the play tap's lit keys)
   uint8_t midiCh = 0;
 };
 
@@ -255,7 +277,21 @@ class TrackerGen final : public Generator {
     (void)panTable();
     (void)trk::emptyInstrument();
     (void)trk::periodHz(1000, true);
+    for (Tap& t : taps()) {  // cp18: a play tap of its own (none left: the editors see no lines for it)
+      bool f = false;
+      if (t.owned.compare_exchange_strong(f, true, std::memory_order_acq_rel)) {
+        tap_ = &t;
+        break;
+      }
+    }
   }
+  ~TrackerGen() override {
+    if (!tap_) return;
+    publishNone();
+    tap_->owned.store(false, std::memory_order_release);
+  }
+  TrackerGen(const TrackerGen&) = delete;
+  TrackerGen& operator=(const TrackerGen&) = delete;
   bool active() const override {
     for (const auto& v : voices_)
       if (v.used) return true;
@@ -408,6 +444,11 @@ class TrackerGen final : public Generator {
       previewDef_.fadeout = 0;
       previewDef_.mute = false;
       for (auto& sd : previewDef_.samples) sd.loop = trk::kLoopOff;
+      // cp18: a part of the sample (the Tracker's Range and View plays): from `from` to `to`.
+      trk::SampleDef& ps = previewDef_.samples[static_cast<size_t>(slot)];
+      const int32_t to = au.to.load(std::memory_order_acquire);
+      previewFrom_ = std::clamp(au.from.load(std::memory_order_acquire), 0, std::max(0, ps.length - 1));
+      if (to > previewFrom_ && to < ps.length) ps.length = to;
       v.audition = true;
       v.auditionId = want;
     } else {
@@ -510,6 +551,7 @@ class TrackerGen final : public Generator {
       done_ += m;
       pos += m;
     }
+    publish();
   }
 
  private:
@@ -584,6 +626,7 @@ class TrackerGen final : public Generator {
     const trk::SampleDef& sd = (def ? *def : inst_->text.def).samples[static_cast<size_t>(slot)];
     const float* d = inst_->data[static_cast<size_t>(slot)];
     m.active = false;
+    if (def == &previewDef_ && position == 0) position = previewFrom_;  // cp18: a preview of a part
     if (!d || sd.length < 1) return false;
     m.base = d;
     m.baseR = inst_->dataR[static_cast<size_t>(slot)];
@@ -755,6 +798,7 @@ class TrackerGen final : public Generator {
       v.endTick = r.endTick;
       v.rowEnded = r.endTick >= v.ticksInRow;
       v.cell = transposed(r.cell, v.transpose);
+      if (v.cell.note >= 1 && v.cell.note <= 96) v.lastNote = v.cell.note;
       if (!v.live) followTempo(v, trk::rowLength(r.bpm, r.speed, r.passes));
     }
     if (v.endTick >= 0 && v.endTick < v.ticksInRow && v.tick == v.endTick) {
@@ -868,7 +912,64 @@ class TrackerGen final : public Generator {
     v.audition = false;
   }
 
+  // cp20: an envelope's place for the tap: its tick + 1 (0 = off), held at the point it waits on
+  // (the sustain point while the key is down) and at its last point once it has run out.
+  static uint32_t envTap(const trk::Envelope& e, uint16_t tick, uint8_t pos) {
+    if (!e.on() || e.count <= 0) {
+      return 0;
+    }
+    int t = tick == 65535 ? 0 : tick;
+    int last = 0;
+    for (int i = 0; i < e.count && i < trk::kEnvPoints; ++i) {
+      last = std::max<int>(last, e.x[static_cast<size_t>(i)]);
+    }
+    if (pos < e.count && t > e.x[pos % trk::kEnvPoints]) {
+      t = e.x[pos % trk::kEnvPoints];
+    }
+    t = std::clamp(t, 0, std::min(last, 0xFFFE));
+    return static_cast<uint32_t>(t + 1);
+  }
+  // cp18: the voices sounding now into the play tap (end of every block; nothing allocated, no lock).
+  void publish() {
+    if (!tap_) return;
+    std::array<uint64_t, kTapVoices> pk{};
+    std::array<uint32_t, kTapVoices> ek{};
+    int n = 0;
+    for (const auto& v : voices_) {
+      if (!v.used || !v.mix.active || n >= kTapVoices) continue;
+      const int note = v.live ? v.first.note : v.lastNote;
+      const trk::InstrumentDef& in = v.ch.instrument();
+      ek[static_cast<size_t>(n)] = envTap(in.vol, v.ch.s.volEnvTick, v.ch.s.volEnvPos) | (envTap(in.pan, v.ch.s.panEnvTick, v.ch.s.panEnvPos) << 16);
+      pk[static_cast<size_t>(n++)] = (uint64_t{1} << 63) | (static_cast<uint64_t>(note & 0xFF) << 48) | (static_cast<uint64_t>(v.ch.s.smpNum & 15) << 40) |
+                                     static_cast<uint32_t>(std::max<int32_t>(0, v.mix.pos));
+    }
+    if (n == 0 && tapEmpty_ && tap_->inst.load(std::memory_order_relaxed) == inst_) return;  // (nothing new)
+    tapEmpty_ = n == 0;
+    const uint32_t s = tap_->seq.load(std::memory_order_relaxed);
+    tap_->seq.store(s + 1, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    tap_->inst.store(inst_, std::memory_order_relaxed);
+    tap_->count.store(n, std::memory_order_relaxed);
+    for (int i = 0; i < kTapVoices; ++i) {
+      tap_->v[static_cast<size_t>(i)].store(pk[static_cast<size_t>(i)], std::memory_order_relaxed);
+      tap_->env[static_cast<size_t>(i)].store(ek[static_cast<size_t>(i)], std::memory_order_relaxed);
+    }
+    tap_->seq.store(s + 2, std::memory_order_release);
+    gTapPublished.fetch_add(1, std::memory_order_relaxed);
+  }
+  void publishNone() {
+    const uint32_t s = tap_->seq.load(std::memory_order_relaxed);
+    tap_->seq.store(s + 1, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_release);
+    tap_->inst.store(nullptr, std::memory_order_relaxed);
+    tap_->count.store(0, std::memory_order_relaxed);
+    tap_->seq.store(s + 2, std::memory_order_release);
+  }
+
   std::array<Voice, kVoices> voices_{};
+  Tap* tap_ = nullptr;
+  bool tapEmpty_ = false;
+  int32_t previewFrom_ = 0;
   trk::InstrumentDef previewDef_{};
   MidiOutRing* out_ = nullptr;
   MidiSettings midi_{};
@@ -888,8 +989,15 @@ std::mutex& cacheMu() {
   static std::mutex m;
   return m;
 }
-std::map<std::string, std::weak_ptr<const InstrumentAux>>& cache() {
-  static std::map<std::string, std::weak_ptr<const InstrumentAux>> c;
+// (K-106 cp20: an instrument built while one of its files was missing - a collaborator's file still
+// arriving, a file being decoded - is built again once the sample cache has changed.)
+struct CacheEntry {
+  std::weak_ptr<const InstrumentAux> inst;
+  bool incomplete = false;
+  uint64_t gen = 0;
+};
+std::map<std::string, CacheEntry>& cache() {
+  static std::map<std::string, CacheEntry> c;
   return c;
 }
 
@@ -900,12 +1008,17 @@ std::shared_ptr<const InstrumentAux> instrumentFor(const PluginState& state) {
                         ? std::clamp(static_cast<int>(std::lround(state.params[static_cast<size_t>(trk::PSound)])), 0, kSoundCount)
                         : 0;
   const std::string key = state.data + '\x01' + static_cast<char>('0' + sound);
+  const uint64_t gen = sampleCache().generation();
   {
     std::lock_guard<std::mutex> lk(cacheMu());
     auto it = cache().find(key);
-    if (it != cache().end())
-      if (auto p = it->second.lock()) return p;
+    if (it != cache().end() && (!it->second.incomplete || it->second.gen == gen)) {
+      if (auto p = it->second.inst.lock()) {
+        return p;
+      }
+    }
   }
+  bool incomplete = false;
   auto a = std::make_shared<InstrumentAux>();
   // The instrument text; without an instrument part, a bare sample file (one sample on every key
   // at its own rate) or the built-in sound's instrument.
@@ -916,7 +1029,10 @@ std::shared_ptr<const InstrumentAux> instrumentFor(const PluginState& state) {
     const int f = t.fileOf[static_cast<size_t>(k)];
     if (f < 0 || f >= static_cast<int>(t.files.size()) || t.files[static_cast<size_t>(f)].empty()) continue;
     SamplePtr sp = sampleCache().get(t.files[static_cast<size_t>(f)]);
-    if (!sp || sp->frames() == 0) continue;
+    if (!sp || sp->frames() == 0) {
+      incomplete = true;
+      continue;
+    }
     trk::SampleDef& sd = t.def.samples[static_cast<size_t>(k)];
     const auto frames = static_cast<int32_t>(std::min<size_t>(sp->frames(), 0x3FFFFFFF));
     if (sd.length == 0) tuneForRate(sd, sp->sampleRate);  // pitch from the file's rate: C-4 plays it at that rate
@@ -968,15 +1084,21 @@ std::shared_ptr<const InstrumentAux> instrumentFor(const PluginState& state) {
       a->builtin = sound;
     }
   std::lock_guard<std::mutex> lk(cacheMu());
-  for (auto it = cache().begin(); it != cache().end();) it = it->second.expired() ? cache().erase(it) : std::next(it);
-  cache()[key] = a;
+  for (auto it = cache().begin(); it != cache().end();) {
+    it = it->second.inst.expired() ? cache().erase(it) : std::next(it);
+  }
+  cache()[key] = CacheEntry{a, incomplete, gen};
   return a;
 }
 
-uint32_t requestAudition(const InstrumentAux* inst, int slot, int pitch) {
+uint32_t requestAudition(const InstrumentAux* inst, int slot, int pitch) { return requestAudition(inst, slot, pitch, 0, 0); }
+
+uint32_t requestAudition(const InstrumentAux* inst, int slot, int pitch, int32_t from, int32_t to) {
   Audition& au = audition();
   au.inst.store(inst, std::memory_order_release);
   au.slot.store(slot, std::memory_order_release);
+  au.from.store(std::max<int32_t>(0, from), std::memory_order_release);
+  au.to.store(std::max<int32_t>(0, to), std::memory_order_release);
   au.pitch.store(pitch, std::memory_order_release);
   uint32_t id = au.serial.fetch_add(1, std::memory_order_acq_rel) + 1;
   if (id == 0) id = au.serial.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -996,6 +1118,43 @@ void cancelAudition(uint32_t serial) {
   uint32_t id = serial;
   if (id != 0) audition().pending.compare_exchange_strong(id, 0, std::memory_order_acq_rel);
 }
+
+int readPlayTap(const InstrumentAux* inst, TapVoice* out, int max) {
+  if (!inst || !out || max <= 0) return 0;
+  int n = 0;
+  for (const Tap& t : taps()) {
+    if (!t.owned.load(std::memory_order_acquire) || t.inst.load(std::memory_order_acquire) != inst) continue;
+    for (int tries = 0; tries < 4; ++tries) {
+      const uint32_t s0 = t.seq.load(std::memory_order_acquire);
+      if (s0 & 1u) continue;
+      const InstrumentAux* who = t.inst.load(std::memory_order_relaxed);
+      const int c = std::clamp(t.count.load(std::memory_order_relaxed), 0, kTapVoices);
+      std::array<uint64_t, kTapVoices> pk{};
+      std::array<uint32_t, kTapVoices> ek{};
+      for (int i = 0; i < c; ++i) {
+        pk[static_cast<size_t>(i)] = t.v[static_cast<size_t>(i)].load(std::memory_order_relaxed);
+        ek[static_cast<size_t>(i)] = t.env[static_cast<size_t>(i)].load(std::memory_order_relaxed);
+      }
+      std::atomic_thread_fence(std::memory_order_acquire);
+      if (t.seq.load(std::memory_order_relaxed) != s0) continue;
+      if (who != inst) break;
+      for (int i = 0; i < c && n < max; ++i) {
+        const uint64_t p = pk[static_cast<size_t>(i)];
+        if (!(p >> 63)) continue;
+        out[n].note = static_cast<int>((p >> 48) & 0xFF);
+        out[n].slot = static_cast<int>((p >> 40) & 15);
+        out[n].pos = static_cast<int32_t>(p & 0xFFFFFFFFu);
+        const uint32_t ev = ek[static_cast<size_t>(i)];
+        out[n].volTick = static_cast<int>(ev & 0xFFFFu) - 1;
+        out[n].panTick = static_cast<int>(ev >> 16) - 1;
+        ++n;
+      }
+      break;
+    }
+  }
+  return n;
+}
+long long playTapPublished() { return gTapPublished.load(std::memory_order_relaxed); }
 
 std::unique_ptr<Generator> createGenerator(const std::string& type) {
   if (type == trk::kInstrumentType) return std::make_unique<TrackerGen>();

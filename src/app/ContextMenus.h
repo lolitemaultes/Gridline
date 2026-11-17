@@ -15,6 +15,8 @@ class App;
 
 // R01-16: the Tracks layout's word for a clip menu row ("region"); other layouts keep the text.
 const char* regionWord(const char* english);
+// R11-10: the copy toast: "1 region copied" / "3 regions copied" (other layouts: clips).
+std::string copiedText(size_t n);
 
 namespace menus {
 

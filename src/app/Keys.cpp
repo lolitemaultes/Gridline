@@ -108,8 +108,19 @@ Key fromImGui(ImGuiKey k) {
 void setTypingKeyboard(bool on, bool aRow) { gTyping = on, gTypingARow = aRow; }
 bool typingKeyPlays(Key k) { return !gTypingARow || aRowKey(k); }
 void setEditorKeys(bool on) { gEditorKeys = on; }
+bool gSampleEditorKeys = false;  // K-106 cp18
+void setSampleEditorKeys(bool on) { gSampleEditorKeys = on; }
 
 bool editorTakes(const Chord& c) {
+  if (gSampleEditorKeys) {
+    const bool ctrl = (c.mods & (kCtrl | kCmd)) != 0, alt = (c.mods & kAlt) != 0;
+    if (ctrl && alt) return false;
+    if (ctrl) return c.key == Key::A || c.key == Key::X || c.key == Key::C || c.key == Key::V || c.key == Key::W;
+    if (alt)
+      return c.key == Key::A || c.key == Key::X || c.key == Key::C || c.key == Key::V || c.key == Key::R || c.key == Key::S || c.key == Key::Z ||
+             c.key == Key::W || c.key == Key::Q || c.key == Key::Up || c.key == Key::Down;
+    return c.key != Key::Space && !(c.key >= Key::F1 && c.key <= Key::F12);
+  }
   if (!gEditorKeys) return false;
   const bool ctrl = (c.mods & (kCtrl | kCmd)) != 0, alt = (c.mods & kAlt) != 0;
   if (ctrl && alt) return false;

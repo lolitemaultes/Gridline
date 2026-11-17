@@ -33,10 +33,13 @@ int main() {
   const std::string root = gl::test::hermeticTestEnv("k308_update_shared");
 
   // ---- where the state lives
-  expect(sh::configDir(envOf({{"GRIDLINE_CONFIG_HOME", "/x/cfg"}, {"HOME", "/h"}}), false) == fs::u8path("/x/cfg/gridline").u8string(),
+  // Compared as paths, not text: on Windows the joined folder uses the native separator
+  // ("/x/cfg\\gridline"), which is the same folder as "/x/cfg/gridline".
+  const auto samePath = [](const std::string& got, const char* want) { return !got.empty() && fs::u8path(got) == fs::u8path(want); };
+  expect(samePath(sh::configDir(envOf({{"GRIDLINE_CONFIG_HOME", "/x/cfg"}, {"HOME", "/h"}}), false), "/x/cfg/gridline"),
          "the config root override wins (as the app's settings)");
-  expect(sh::configDir(envOf({{"XDG_CONFIG_HOME", "/x"}, {"HOME", "/h"}}), false) == fs::u8path("/x/gridline").u8string(), "XDG config folder");
-  expect(sh::configDir(envOf({{"HOME", "/h"}}), false) == fs::u8path("/h/.config/gridline").u8string(), "~/.config/gridline");
+  expect(samePath(sh::configDir(envOf({{"XDG_CONFIG_HOME", "/x"}, {"HOME", "/h"}}), false), "/x/gridline"), "XDG config folder");
+  expect(samePath(sh::configDir(envOf({{"HOME", "/h"}}), false), "/h/.config/gridline"), "~/.config/gridline");
   expect(sh::configDir(envOf({{"APPDATA", "C:/Users/me/AppData/Roaming"}}), true).find("gridline") != std::string::npos, "%APPDATA%/gridline");
   expect(sh::configDir(envOf({}), false).empty(), "no home: no folder (no check)");
 

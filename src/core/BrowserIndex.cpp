@@ -242,6 +242,60 @@ double bpmFromName(const std::string& name) {
   return 0;
 }
 
+double warpTempo(const std::string& name, double seconds, double setTempo, double detected) {
+  if (!(seconds > 0)) {
+    return 0;
+  }
+  // Whole beats (within 1 % of a beat per bar, at least one bar) at `bpm`.
+  auto wholeBeats = [&](double bpm) {
+    const double beats = seconds * bpm / 60.0;
+    return beats >= 3.98 && std::fabs(beats - std::round(beats)) <= 0.01 * std::max(1.0, beats / 4.0);
+  };
+  if (const double named = bpmFromName(name); named > 0) {
+    return named;
+  }
+  {  // a bare number the length agrees with ("Long 120", "Pad_96")
+    const std::string l = lower(fs::path(name).stem().string());
+    for (const auto& s : tokens(l, false)) {
+      if (allDigits(s) && s.size() >= 2 && s.size() <= 3) {
+        const double v = platform::parseDouble(s.c_str());
+        if (v >= 60 && v <= 200 && wholeBeats(v)) {
+          return v;
+        }
+      }
+    }
+  }
+  if (setTempo > 0) {  // whole bars of 4/4 at the Set's tempo
+    const double bars = seconds * setTempo / 240.0;
+    if (bars >= 0.98 && std::fabs(bars - std::round(bars)) <= 0.01 * std::max(1.0, std::round(bars) / 4.0)) {
+      return setTempo;
+    }
+  }
+  double best = 0;
+  auto consider = [&](double b) {
+    if (b >= 60.0 && b <= 200.0 && (best <= 0 || std::fabs(b - setTempo) < std::fabs(best - setTempo))) {
+      best = b;
+    }
+  };
+  if (detected > 0) {
+    for (double f : {0.5, 1.0, 2.0}) {
+      consider(detected * f);
+    }
+    if (best > 0) {
+      return best;
+    }
+  }
+  if (seconds >= 0.5 && seconds <= 64.0) {
+    for (int bars : {1, 2, 4, 8, 16}) {
+      const double b = bars * 4 * 60.0 / seconds;
+      if (b >= 75.0 && b <= 165.0 && (best <= 0 || std::fabs(b - setTempo) < std::fabs(best - setTempo))) {
+        best = b;
+      }
+    }
+  }
+  return best;
+}
+
 bool keyFromName(const std::string& name, int& pitchClass, bool& minor) {
   const std::string stem = fs::path(name).stem().string();
   const std::vector<std::string> t = tokens(stem, true);

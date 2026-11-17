@@ -460,6 +460,34 @@ bool App::previewSoundTheme(const std::string& theme, uisound::Event e) {
   return uiSounds.preview(std::move(c));
 }
 
+void App::notifyAction(const std::string& english, std::vector<Toast::Action> actions, double seconds) {
+  notify(english);
+  if (toasts.empty()) {
+    return;
+  }
+  toasts.back().actions = std::move(actions);
+  toasts.back().until = now + seconds;
+}
+
+bool App::runToastAction(size_t index) {
+  for (auto it = toasts.rbegin(); it != toasts.rend(); ++it) {
+    if (it->actions.empty()) {
+      continue;
+    }
+    if (index >= it->actions.size()) {
+      return false;
+    }
+    const std::function<void()> run = it->actions[index].run;
+    it->until = 0;
+    it->actions.clear();
+    if (run) {
+      run();
+    }
+    return true;
+  }
+  return false;
+}
+
 void App::notify(const std::string& english, bool error, const std::string& details) {
   // J-61: notifications are shown in the interface language (the log keeps English).
   static uint64_t serial = 0;

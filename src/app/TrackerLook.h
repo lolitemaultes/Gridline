@@ -11,6 +11,12 @@ class App;
 namespace gl::trackerview {
 
 ImFont* monoFont(App& a);
+// The values' ink (the hot colour, darkened until it reads on the sunken fields).
+ImU32 valueInk();
+// cp18 (were file-local): a radio row (a small diamond, lit when on, then the label) and a check
+// row (a sunken square, ticked when on, then the label). The whole row takes the click.
+bool radioRow(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, bool on, const char* hint = nullptr);
+bool checkRow(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, bool on, const char* hint = nullptr);
 // A bevelled box: a light edge top and left, a dark one bottom and right (sunken: the other way).
 void bevelBox(ImDrawList* dl, ImVec2 p0, ImVec2 p1, bool sunken = false);
 // A bevel button: raised; pressed (inset) while held; lit when `on`; a lighter face on hover.
@@ -19,6 +25,18 @@ bool bevelButton(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1
 void boxTitle(App& a, ImVec2 p, const char* text);
 // A small arrow button (a filled triangle on a bevel face); repeats while held.
 bool arrowButton(App& a, const char* id, ImVec2 p0, ImVec2 p1, bool up, const char* hint);
+// cp17: a sideways scroll bar (bevel trough, raised thumb, an arrow button at each end). `start`
+// and `view` are in the content's units (of `total`); the arrows step by `step`, a click beside
+// the thumb pages. True when `start` changed (it stays inside 0 .. total - view).
+bool scrollBar(App& a, const char* id, ImVec2 p0, ImVec2 p1, double* start, double view, double total, double step, const char* hint = nullptr);
+// cp17 (moved from TrackerPages.cpp): a horizontal value bar (volume, pan) in a sunken box, a raised
+// knob at the value; dragging sets it (*out), a double-click the default. True while it changed.
+bool valueBar(const char* id, ImVec2 p0, ImVec2 p1, double v, double lo, double hi, bool centred, double* out, const char* hint = nullptr);
+// cp17: a modal box in the band's look (the classic centred dialog: a raised bevel frame, its title
+// in the bold face, the rest of the screen dimmed and inert). Open it with ImGui::OpenPopup(id);
+// between beginModalBox (true) and endModalBox the caller draws its rows. Esc closes it.
+bool beginModalBox(App& a, const char* id, const char* title, ImVec2 size);
+void endModalBox();
 // One stepper row of width `w`: the label, the value in a sunken field after it (at `labelW` from
 // the left; < 0: 42 percent), the up and down arrows at the right. Returns the step asked for: +1 or
 // -1 from an arrow or the wheel, more while the value is dragged (right or up: more). `fill`: the

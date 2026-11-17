@@ -1197,8 +1197,12 @@ class Song:
         """Clips checkpoint 53: every playlist track plays through one strip of its own, as a session/arrangement
         DAW's tracks do. Swells shared the Risers strip with Risers + Impacts: it gets a copy of that strip (same
         devices, fader and sends); Risers and Impacts play into an FX Bus at 0 dB, the one fader of the Risers +
-        Impacts track. The mix is unchanged. Made last, so every other id stays as it was."""
+        Impacts track. The mix is unchanged. Made last, so every other id stays as it was.
+        Checkpoint 54 (N53-10): the two strips stand before the returns, so every send level automation (which
+        names its destination by mixer position, Params.h sendParam) is moved with its destination, as the app's
+        own inserts do (core/TrackOrder.h)."""
         S, t = self.S, self.t
+        before = [m["id"] for m in S.mixer]
         sw = json.loads(json.dumps(t["fx"]))
         sw["id"] = S.nid()
         sw["name"] = "Swells"
@@ -1206,6 +1210,10 @@ class Song:
         S.mixer.remove(bus)
         at = S.mixer.index(t["impact"]) + 1
         S.mixer[at:at] = [bus, sw]  # sources, then their bus (Swells on its own)
+        now = {m["id"]: i for i, m in enumerate(S.mixer)}
+        for a in S.automations:
+            if a["owner"] in now and 200 <= a["index"] < 1000 and a["index"] - 200 < len(before):
+                a["index"] = 200 + now[before[a["index"] - 200]]
         self.c["swell"]["mixerTrack"] = sw["id"]
         for k in ("fx", "impact"):
             t[k]["sends"][0]["to"] = bus["id"]

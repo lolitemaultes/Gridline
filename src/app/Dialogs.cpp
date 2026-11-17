@@ -3,6 +3,7 @@
 #include "RecordCard.h"
 #include "WindowRaise.h"
 #include "LayoutShellUi.h"
+#include "LiveIo.h"
 #include "LiveLook.h"
 #include "ChopUi.h"
 #include "../core/ChromeOs.h"
@@ -71,6 +72,7 @@
 #include "Windows.h"
 #include "SpeechUi.h"
 #include "GrooveUi.h"
+#include "TrackerEditors.h"
 #include "Viewports.h"
 #include "../core/WheelRoute.h"
 #include "../core/Platform.h"
@@ -1613,6 +1615,11 @@ void handleGlobalShortcuts(App& a) {
     if (!chainKeys && pressed("track.group")) livelook::groupTracks(a);  // checkpoint 51
     if (!chainKeys && pressed("track.ungroup")) livelook::ungroupTracks(a);
     if (pressed("view.detail")) livelook::toggleDetail(a);
+    if (pressed("view.io")) liveio::toggle(a);  // checkpoint 55 (gap 2): Cmd+Alt+I, the In/Out section
+    if (pressed("view.quickHelp")) {  // checkpoint 55 (gap 9): Shift+?, the Info View
+      const bool on = layout::visible(layout::shell(layout::Preset::Live), layoutui::regionState(a, layout::Preset::Live), "live.info");
+      layoutui::setRegionVisible(a, "live.info", !on);
+    }
     if (!a.typingKeyboard && pressed("view.automation")) livelook::toggleAutomationLanes(a);  // N52-10: A, the automation lanes
     if (pressed("transport.sessionRecord")) livelook::toggleSessionRecord(a);
   }
@@ -1652,6 +1659,16 @@ void handleGlobalShortcuts(App& a) {
     if (typed("view.advancedEdit")) trackerview::toggleScopeTool(a, 3);
     if (typed("view.midiBox")) trackerview::toggleScopeTool(a, 4);
     if (typed("view.sampleTools")) trackerview::toggleScopeTool(a, 5);
+    if (typed("view.zoomTracksIn")) trackerview::zoomFront(a, 1);
+    if (typed("view.zoomTracksOut")) trackerview::zoomFront(a, -1);
+    if (typed("view.zoomTracksFit")) trackerview::zoomFront(a, 0);
+    if (typed("view.sampleEditor")) {  // cp17/cp18 (K-316 3.3): Ctrl+Alt+E, the current instrument's samples
+      const Channel* ch = a.doc.song().channel(a.selChannel);
+      if (ch && trackereditors::hasSampleEditor(a, ch->id)) trackereditors::toggle(a, trackereditors::Editor::Sample, true);
+      else if (ch && ch->plugin.type == "gl.sampler") trackerview::toggleAudioPage(a);  // (a Sampler's sample: the Audio page)
+      else if (ch) trackereditors::toggle(a, trackereditors::Editor::Instrument, true);  // (the Channel frame)
+    }
+    if (typed("view.channelSettings")) trackereditors::toggle(a, trackereditors::Editor::Instrument, true);  // cp18: Ctrl+Alt+I
     if (typed("view.audioEditor")) trackerview::toggleAudioPage(a);  // as the header's Audio editor button
   } else {
     if (typed("view.playlist")) {
@@ -1668,7 +1685,7 @@ void handleGlobalShortcuts(App& a) {
     if (typed("view.pads")) toggle(a.showLivePads, "Live pads");
   }
   if (typed("view.browser")) toggle(a.showBrowser, "Browser");
-  if (typed("view.channelSettings")) a.settingsChannel = a.settingsChannel != kNoId ? kNoId : a.selChannel;
+  if (typed("view.channelSettings") && layoutui::active() != layout::Preset::Tracker) a.settingsChannel = a.settingsChannel != kNoId ? kNoId : a.selChannel;
   if (typed("view.audioEditor") && layoutui::active() != layout::Preset::Tracker) {  // the Tracker's key opens its own page (above)
     if (layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic)) toggleTracksAudioEditor(a);  // R01-15
     else a.settings.set("ui.loupePinned", !a.settings.getBool("ui.loupePinned"));

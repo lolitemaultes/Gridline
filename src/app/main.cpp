@@ -147,6 +147,7 @@
 #include "LayoutStyleUi.h"
 #include "HostedBodies.h"
 #include "LayoutParts.h"
+#include "TrackerEditors.h"
 #include "TrackerView.h"
 #include "MenuTreeUi.h"
 #include "SystemMenu.h"
@@ -824,7 +825,10 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
   for (const auto& [k, h] : held)
     for (int p : app.typing.keyUp(app.typing.keyAt(static_cast<int>(k)))) {
       app.engine.noteOff(h.channel, p);
-      for (ObjectId o : h.also) app.engine.noteOff(o, p);
+      for (ObjectId o : h.also) {
+        app.engine.noteOff(o, p);
+        logicplug::layerNote(app, o, p, 0, false, app.recordTick(-1));  // R11-03
+      }
       app.playedNoteOff(h.channel, p);
     }
   for (int p : app.typing.releaseAllKeys()) {  // (keys not in `held`; K-175: every key counts as up)
@@ -1466,6 +1470,21 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       if (l.a1 == "on" || l.a1 == "off") app.settings.set(l.a0, l.a1 == "on");
       else if (!l.a1.empty()) app.settings.set(l.a0, std::strtod(l.a1.c_str(), nullptr));  // K-136: "setting <key> <number>"
     } else if (l.cmd == "toasts") app.toasts.clear();  // J-78: "toasts clear": no notification cards (control runs)
+    else if (l.cmd == "toastaction") {  // K-112c checkpoint 55: "toastaction <n>": button n of the newest offer
+      const bool ran = app.runToastAction(static_cast<size_t>(std::max(0, std::atoi(l.a0.c_str()))));
+      std::printf("toastaction %s frame %d: %s\n", l.a0.c_str(), frame, ran ? "ran" : "none");
+      std::fflush(stdout);
+    } else if (l.cmd == "toastlist") {  // checkpoint 55: the cards up now, with their buttons
+      std::printf("toastlist frame %d: %zu\n", frame, app.toasts.size());
+      for (const Toast& t : app.toasts) {
+        std::string acts;
+        for (const Toast::Action& ac : t.actions) {
+          acts += " [" + ac.label + "]";
+        }
+        std::printf("  toast \"%s\"%s\n", t.english.c_str(), acts.c_str());
+      }
+      std::fflush(stdout);
+    }
     else if (l.cmd == "mod") {
       const bool on = std::atoi(l.a1.c_str()) != 0;
       // (macOS: "ctrl" is the physical Ctrl key, "super" the Cmd key — ImGui swaps them)
@@ -1779,6 +1798,19 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       layoutui::devCommand(app, l.args, frame);
     } else if (l.cmd == "tracker") {  // K-106: the pattern editor (TrackerView.h): dump, focus, cursor, edit, step, follow, select, geometry
       trackerview::devCommand(app, l.args, frame);
+      // K-106 cp19: "tracker editors ins at ..." placed the scripted pointer over a part of the Instrument editor.
+      // As sdlat: a real SDL motion event in window pixels, so "sdldown 0" / "sdlup 0" press there.
+      if (float px = 0, py = 0; trackereditors::takeDevPointer(&px, &py)) {
+        devSdlPointer = {static_cast<int>(std::lround(px * devDragScale)), static_cast<int>(std::lround(py * devDragScale))};
+        SDL_Event e{};
+        SDL_Window* w = SDL_GL_GetCurrentWindow();
+        e.type = SDL_MOUSEMOTION;
+        e.motion.windowID = w ? SDL_GetWindowID(w) : 0;
+        e.motion.x = devSdlPointer.first;
+        e.motion.y = devSdlPointer.second;
+        SDL_PushEvent(&e);
+        pointer = ImVec2(-FLT_MAX, -FLT_MAX);
+      }
     } else if (l.cmd == "parts") {  // K-112: the layout parts (LayoutParts.h): notes set/dump/focus/blur
       layoutparts::devCommand(app, l.args);
     } else if (l.cmd == "sysmenu") {  // K-112: the system menu bar (SystemMenu.h): dump, status, choose <path>
@@ -4551,7 +4583,10 @@ int main(int argc, char** argv) {
       if (h != held.end()) also = h->second.also, held.erase(h);
       for (int p : app.typing.release(sc)) {
         app.engine.noteOff(chId, p);
-        for (ObjectId o : also) app.engine.noteOff(o, p);
+        for (ObjectId o : also) {
+          app.engine.noteOff(o, p);
+          logicplug::layerNote(app, o, p, 0, false, app.recordTick(stamp));  // R11-03
+        }
         app.playedNoteOff(chId, p, stamp);
       }
     };
@@ -4654,12 +4689,23 @@ int main(int argc, char** argv) {
           const double stamp = keyStamp(ev.key.timestamp);
           std::vector<ObjectId> also = typedTargets(app);  // K-232: every selected instrument plays
           if (!also.empty()) also.erase(also.begin());
-          for (int p : on) {
-            app.engine.noteOn(app.selChannel, p, app.typing.velocity / 127.0f);
-            for (ObjectId o : also) app.engine.noteOn(o, p, app.typing.velocity / 127.0f);
-            app.playedNoteOn(app.selChannel, p, app.typing.velocity, stamp);
+          const ObjectId live = logicplug::liveChannel(app);  // R10-03: Smooth's armed / monitored track
+          if (live != app.selChannel) also.clear();
+          {  // R11-03: every other armed or monitored track of Smooth plays (and records) the note too
+            const std::vector<ObjectId> lives = logicplug::liveChannels(app);
+            for (size_t k = 1; k < lives.size(); ++k) {
+              if (std::find(also.begin(), also.end(), lives[k]) == also.end()) also.push_back(lives[k]);
+            }
           }
-          if (!on.empty()) held[sc] = {app.selChannel, 0, 0, also};
+          for (int p : on) {
+            app.engine.noteOn(live, p, app.typing.velocity / 127.0f);
+            for (ObjectId o : also) {
+              app.engine.noteOn(o, p, app.typing.velocity / 127.0f);
+              logicplug::layerNote(app, o, p, app.typing.velocity, true, app.recordTick(stamp));
+            }
+            app.playedNoteOn(live, p, app.typing.velocity, stamp);
+          }
+          if (!on.empty()) held[sc] = {live, 0, 0, also};
 
         }
       }
@@ -4681,6 +4727,7 @@ int main(int argc, char** argv) {
     }
     keys::setTypingKeyboard(app.typingKeyboard && app.selChannel != kNoId, app.typing.aRow);
     keys::setEditorKeys(trackerview::hasKeyboard());  // K-106: the pattern editor's own keys run no command
+    keys::setSampleEditorKeys(trackereditors::hasKeys());  // K-106 cp18: the lower band's Sample editor's
     liveresize::pumpEnd();
     if (dropTiming.expired(SDL_GetTicks() / 1000.0)) {  // K-153: Wayland, the pointer did not come back
       int mx = 0, my = 0;

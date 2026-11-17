@@ -2575,7 +2575,7 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
         for (int k = 0; k < n; ++k)
           if (lt.clips[static_cast<size_t>(k)] == li) pos = k;
         int nextPos = -1;
-        switch (lt.follow) {
+        switch (p->liveClips[static_cast<size_t>(li)].once ? FollowMode::Once : lt.follow) {  // (a one-shot stops)
           case FollowMode::Loop: nextPos = pos; break;
           case FollowMode::Once: nextPos = -1; break;
           case FollowMode::Next: nextPos = (pos + 1) % n; break;

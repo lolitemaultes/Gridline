@@ -8,6 +8,7 @@
 // every edit as their own view shows it. Colours come from the theme roles and the person's track
 // and channel colours only.
 #pragma once
+#include <functional>
 #include <string>
 #include <vector>
 #include "../../third_party/imgui/imgui.h"
@@ -16,6 +17,7 @@
 namespace gl {
 class App;
 struct Song;
+struct Clip;
 }
 
 namespace gl::livelook {
@@ -78,6 +80,19 @@ void setDrawMode(App& a, bool on);
 // length, its ruler numbers and song playback all begin where the live area ends, so the grid and the
 // arrangement behave as two separate sets of clips. 0 outside Clips (or with no live area).
 Tick arrangementOrigin(const App& a);
+// Checkpoint 55 (gap 5): an Arrangement row's height in Clips, as a scale of the row height: the one the
+// person dragged it to (kept per person and set, by the track's mixer track or instrument, so it follows
+// a move), else the track's own (`fallback`). setRowScale: a drag (`done`: its end, which remembers it).
+// Never written into the song.
+float rowScale(const App& a, int track, float fallback);
+void setRowScale(App& a, int track, float scale, bool done);
+// Checkpoint 54 (N53-01): whether an arrangement edit (Select all, Delete) may reach this clip: in
+// Clips the clip grid's clips (the live area) are never part of the Arrangement's selection.
+bool arrangementClip(const App& a, const Clip& c);
+// Checkpoint 54 (N53-02): runs an arrangement edit of `s` (time ranges, recording) with the clip grid's
+// clips set aside: a grid clip longer than its scene reaches past the grid's storage end, and a cut
+// there would shorten it and leave its tail in the arrangement. They go back where they stood.
+void withoutGridClips(const App& a, Song& s, const std::function<void(Song&)>& fn);  // (outside Clips: fn(s) as it is)
 
 // ---- the main view: clip grid or arrangement (one at a time, Tab swaps) ----
 bool gridView(const App& a);
@@ -104,7 +119,10 @@ void leftFrame();
 // ---- the arrangement's track headers (right of the lanes) ----
 constexpr float kHeaderW = 216.0f;  // the header column at 100 % (wide enough for the demo song's track names)
 // What part of a header is under the pointer.
-enum class HeaderPart : int { None = 0, Name, Activator, Solo, Arm, Volume, BackToArrangement, Pan, Fold };  // Fold: checkpoint 51, a group's
+// Io: checkpoint 55, the In/Out column (it acts on its own click).
+enum class HeaderPart : int { None = 0, Name, Activator, Solo, Arm, Volume, BackToArrangement, Pan, Fold, Io };  // Fold: checkpoint 51, a group's
+// Checkpoint 55 (gap 2): the header column's width (wider by the In/Out column while it shows).
+float headerWidth(const App& a);
 struct HeaderDraw {
   int track = -1;
   ImVec2 h0, h1;          // the header's rectangle
@@ -112,6 +130,8 @@ struct HeaderDraw {
   bool selected = false;  // in the header selection
   bool lit = false;       // moving with a header drag
   ImVec2 mouse;
+  int number = 0;         // checkpoint 54: the number Clips shows it by (trackmodes::trackNumbers)
+  bool lane = false;      // checkpoint 54 (N53-03): an automation lane: its parameter's name only, no controls
 };
 // Draws one header and returns the part under the pointer (None when not hovered).
 HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h);

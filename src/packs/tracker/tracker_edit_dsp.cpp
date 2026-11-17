@@ -8,8 +8,11 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include "../../core/PluginInfo.h"
+#include "../../core/PluginParams.h"
 #include "../../engine/Sample.h"
 #include "tracker.h"
+#include "tracker_session.h"
 
 namespace gl::packs::trackerpack {
 
@@ -735,6 +738,292 @@ long long sampleBytes(const PluginState& st) {
     bytes += frames * (inst->dataR[i] ? 2 : 1) * (inst->eightBit[i] ? 1 : 2);
   }
   return bytes;
+}
+
+// ---- K-106 cp17: the editing session's pure edits (tracker_session.h). Each is the plugin
+// editor's inline edit moved here as it was, so both front ends make exactly the same change. ----
+
+int soundOf(const PluginState& st) { return soundOfState(st); }
+
+bool hasSample(const Edit& e, int k) {
+  const auto i = static_cast<size_t>(k);
+  return e.text.def.samples[i].present() || e.text.fileOf[i] >= 0;
+}
+
+int sampleCountOf(const Edit& e) {
+  int n = 0;
+  for (int k = 0; k < trk::kMaxSamples; ++k) n += (e.text.def.samples[static_cast<size_t>(k)].present() || e.text.fileOf[static_cast<size_t>(k)] >= 0) ? 1 : 0;
+  return n;
+}
+
+std::string editName(const Edit& e, int k) {
+  const std::string& nm = e.text.sampleNames[static_cast<size_t>(k)];
+  if (!nm.empty()) return nm;
+  const int f = e.text.fileOf[static_cast<size_t>(k)];
+  if (f >= 0 && f < static_cast<int>(e.text.files.size())) return fs::u8path(e.text.files[static_cast<size_t>(f)]).stem().u8string();
+  return "sample";
+}
+
+void applySampleField(Edit& e, int k, SampleField f, long v) {
+  trk::SampleDef& s = e.text.def.samples[static_cast<size_t>(k)];
+  switch (f) {
+    case SampleField::Volume: s.volume = static_cast<uint8_t>(std::clamp(v, 0L, 64L)); break;
+    case SampleField::Pan: s.pan = static_cast<uint8_t>(std::clamp(v + 128, 0L, 255L)); break;
+    case SampleField::Fine: s.finetune = static_cast<int8_t>(std::clamp(v, -128L, 127L)); break;
+    case SampleField::RelNote: s.relNote = static_cast<int8_t>(std::clamp(v, -48L, 71L)); break;
+  }
+}
+
+const char* sampleFieldLabel(SampleField f) {
+  switch (f) {
+    case SampleField::Volume: return "sample volume";
+    case SampleField::Pan: return "sample pan";
+    case SampleField::Fine: return "sample fine tune";
+    case SampleField::RelNote: return "sample transpose";
+  }
+  return "sample";
+}
+
+int sampleFieldMerge(SampleField f) { return 1 + static_cast<int>(f); }
+
+void applyLoopType(Edit& e, int k, uint8_t loop, int32_t s0, int32_t s1) {
+  trk::SampleDef& sd = e.text.def.samples[static_cast<size_t>(k)];
+  sd.loop = loop;
+  if (loop != trk::kLoopOff && sd.loopLength < 1) {
+    sd.loopStart = s0;
+    sd.loopLength = s1 - s0;
+  }
+}
+
+void applyMarker(Edit& e, int k, int marker, int32_t f, int32_t frames) {
+  trk::SampleDef& sd = e.text.def.samples[static_cast<size_t>(k)];
+  int32_t& cutA = e.cuts.start[static_cast<size_t>(k)];
+  int32_t& cutB = e.cuts.end[static_cast<size_t>(k)];
+  const int32_t s0 = std::clamp(cutA, 0, frames - 1);
+  const int32_t s1 = cutB > 0 ? std::clamp(cutB, s0 + 1, frames) : frames;
+  const int32_t ls = sd.loopStart, le = sd.loopStart + sd.loopLength;
+  switch (marker) {
+    case 0: cutA = std::clamp(f, 0, s1 - 1); break;
+    case 1: {
+      const int32_t v = std::clamp(f, s0 + 1, frames);
+      cutB = v >= frames ? 0 : v;
+      break;
+    }
+    case 2: {
+      const int32_t v = std::clamp(f, s0, le - 1);
+      sd.loopStart = v;
+      sd.loopLength = le - v;
+      break;
+    }
+    default: sd.loopLength = std::clamp(f, ls + 1, s1) - ls; break;
+  }
+}
+
+const char* markerLabel(int marker) {
+  static const char* labels[] = {"sample start", "sample end", "loop start", "loop end"};
+  return labels[std::clamp(marker, 0, 3)];
+}
+
+void applyEnvFlag(Edit& e, bool pan, uint8_t flag) {
+  trk::Envelope& env = pan ? e.text.def.pan : e.text.def.vol;
+  const bool on = (env.flags & flag) != 0;
+  env.flags = static_cast<uint8_t>(on ? env.flags & ~flag : env.flags | flag);
+  if (env.count == 0 && !on) {  // switched on with no points: a flat line to start from
+    insertEnvPoint(env, 0, pan ? 32 : 64);
+    insertEnvPoint(env, 16, pan ? 32 : 64);
+  }
+}
+
+int applyEnvAdd(Edit& e, bool pan, int x, int y) {
+  trk::Envelope& env = pan ? e.text.def.pan : e.text.def.vol;
+  const bool empty = env.count == 0;
+  if (empty) insertEnvPoint(env, 0, y);  // the first point sits at the start
+  const int i = insertEnvPoint(env, std::max(1, x), y);
+  if (i >= 0 && empty) env.flags |= trk::kEnvOn;
+  return i;
+}
+
+bool applyEnvMove(Edit& e, bool pan, int i, int x, int y) {
+  trk::Envelope& env = pan ? e.text.def.pan : e.text.def.vol;
+  if (i < 0 || i >= env.count) return false;
+  const int lo = i == 0 ? 0 : env.x[static_cast<size_t>(i - 1)] + 1;
+  const int hi = i == 0 ? 0 : i + 1 < env.count ? env.x[static_cast<size_t>(i + 1)] - 1 : 32767;
+  const int nx = std::clamp(x, lo, std::max(lo, hi));
+  const int ny = std::clamp(y, 0, 64);
+  if (nx == env.x[static_cast<size_t>(i)] && ny == env.y[static_cast<size_t>(i)]) return false;
+  env.x[static_cast<size_t>(i)] = static_cast<int16_t>(nx);
+  env.y[static_cast<size_t>(i)] = static_cast<int16_t>(ny);
+  return true;
+}
+
+bool applyEnvDelete(Edit& e, bool pan, int i) {
+  trk::Envelope& env = pan ? e.text.def.pan : e.text.def.vol;
+  if (i <= 0 || i >= env.count || env.count <= 2) return false;
+  deleteEnvPoint(env, i);
+  return true;
+}
+
+void applyEnvSustain(Edit& e, bool pan, int i) {
+  trk::Envelope& env = pan ? e.text.def.pan : e.text.def.vol;
+  env.sustain = static_cast<uint8_t>(i);
+  env.flags |= trk::kEnvSustain;
+}
+
+void applyEnvLoopStart(Edit& e, bool pan, int i) {
+  trk::Envelope& env = pan ? e.text.def.pan : e.text.def.vol;
+  env.loopStart = static_cast<uint8_t>(i);
+  if (env.loopEnd < i) env.loopEnd = static_cast<uint8_t>(i);
+  env.flags |= trk::kEnvLoop;
+}
+
+void applyEnvLoopEnd(Edit& e, bool pan, int i) {
+  trk::Envelope& env = pan ? e.text.def.pan : e.text.def.vol;
+  env.loopEnd = static_cast<uint8_t>(i);
+  if (env.loopStart > i) env.loopStart = static_cast<uint8_t>(i);
+  env.flags |= trk::kEnvLoop;
+}
+
+void applyFadeout(Edit& e, long v) { e.text.def.fadeout = static_cast<uint16_t>(std::clamp(v, 0L, 4095L)); }
+
+void applyVibrato(Edit& e, VibField f, long v) {
+  trk::InstrumentDef& d = e.text.def;
+  switch (f) {
+    case VibField::Sweep: d.vibSweep = static_cast<uint8_t>(std::clamp(v, 0L, 255L)); break;
+    case VibField::Depth: d.vibDepth = static_cast<uint8_t>(std::clamp(v, 0L, 15L)); break;
+    case VibField::Rate: d.vibRate = static_cast<uint8_t>(std::clamp(v, 0L, 63L)); break;
+  }
+}
+
+const char* vibLabel(VibField f) { return f == VibField::Sweep ? "vibrato sweep" : f == VibField::Depth ? "vibrato depth" : "vibrato rate"; }
+int vibMerge(VibField f) { return 31 + static_cast<int>(f); }
+
+void applyMidi(Edit& e, const MidiSettings& m, bool syncMute) {
+  e.midi = m;
+  if (syncMute) e.text.def.mute = m.on && m.mute;
+}
+
+bool envPointAfter(const trk::Envelope& env, bool pan, int i, int* x, int* y) {
+  if (env.count >= trk::kEnvPoints) {
+    return false;
+  }
+  if (env.count == 0) {
+    *x = 16;
+    *y = pan ? 32 : 64;
+    return true;
+  }
+  i = std::clamp(i, 0, env.count - 1);
+  const auto at = static_cast<size_t>(i);
+  if (i + 1 >= env.count) {
+    *x = env.x[at] + 16;
+    *y = env.y[at];
+    return *x <= 32767;
+  }
+  const auto nx = static_cast<size_t>(i + 1);
+  if (env.x[nx] - env.x[at] < 2) {
+    return false;
+  }
+  *x = (env.x[at] + env.x[nx]) / 2;
+  *y = (env.y[at] + env.y[nx] + 1) / 2;
+  return true;
+}
+
+bool applyKeysAway(Edit& e, int slot) {
+  if (slot < 0 || slot >= trk::kMaxSamples) {
+    return false;
+  }
+  auto& map = e.text.def.keymap;
+  auto live = [&](int n) {
+    const int s = map[static_cast<size_t>(n)];
+    return s != slot && e.text.def.samples[static_cast<size_t>(s)].present();
+  };
+  int other = -1;
+  for (int k = 0; k < trk::kMaxSamples && other < 0; ++k) {
+    if (k != slot && e.text.def.samples[static_cast<size_t>(k)].present()) {
+      other = k;
+    }
+  }
+  if (other < 0) {
+    return false;
+  }
+  std::array<uint8_t, 96> next = map;
+  bool any = false;
+  for (int n = 0; n < 96; ++n) {
+    if (map[static_cast<size_t>(n)] != slot) {
+      continue;
+    }
+    int pick = -1;
+    for (int d = 1; d < 96 && pick < 0; ++d) {
+      if (n - d >= 0 && live(n - d)) {
+        pick = map[static_cast<size_t>(n - d)];
+      } else if (n + d < 96 && live(n + d)) {
+        pick = map[static_cast<size_t>(n + d)];
+      }
+    }
+    next[static_cast<size_t>(n)] = static_cast<uint8_t>(pick < 0 ? other : pick);
+    any = true;
+  }
+  if (any) {
+    map = next;
+  }
+  return any;
+}
+
+// ---- K-106 cp18 (K-316 plan 6): a plain Sampler becomes a Tracker Sampler ----
+PluginState fromSamplerState(const PluginState& sampler, int32_t frames, double rate, const std::string& name) {
+  PluginState out = defaultPluginState(trk::kInstrumentType);
+  if (sampler.type != "gl.sampler" || sampler.data.empty() || frames < 1) return out;
+  auto par = [&](int i, float d) { return i < static_cast<int>(sampler.params.size()) ? sampler.params[static_cast<size_t>(i)] : d; };
+  Edit e = readEdit("", 0);
+  if (addSample(e, sampler.data, frames, rate, name) != 0) return out;
+  trk::InstrumentDef& d = e.text.def;
+  const auto samples = d.samples;
+  const auto keys = d.keymap;
+  d = defaultDefinition();
+  d.samples = samples;
+  d.keymap = keys;
+  e.body = true;
+  trk::SampleDef& sd = d.samples[0];
+  // The level and pan (the sampler's volume is a gain, 1 = full; the tracker's 64 is full).
+  applySampleField(e, 0, SampleField::Volume, std::lround(std::clamp(par(pp::SmpVolume, 0.8f), 0.0f, 1.0f) * 64.0f));
+  applySampleField(e, 0, SampleField::Pan, std::lround(std::clamp(par(pp::SmpPan, 0.0f), -1.0f, 1.0f) * 127.0f));
+  // The root key and fine tune (cents to 1/128 semitone), the fine tune first: the root keeps it.
+  applySampleField(e, 0, SampleField::Fine, std::lround(std::clamp(par(pp::SmpFine, 0.0f), -100.0f, 100.0f) * 1.28f));
+  setRootNote(sd, rate, std::clamp(static_cast<int>(std::lround(par(pp::SmpRoot, 60.0f))) - trk::kPitchOffset, 1, 96));
+  // Start and end (fractions of the file) become the sample's cuts; the loop its loop points.
+  const int32_t c0 = std::clamp(static_cast<int32_t>(std::lround(std::clamp(par(pp::SmpStart, 0.0f), 0.0f, 1.0f) * frames)), 0, frames - 1);
+  const float endF = std::clamp(par(pp::SmpEnd, 1.0f), 0.0f, 1.0f);
+  int32_t c1 = endF >= 1.0f ? frames : std::clamp(static_cast<int32_t>(std::lround(endF * frames)), c0 + 1, frames);
+  e.cuts.start[0] = c0;
+  e.cuts.end[0] = c1 >= frames ? 0 : c1;
+  if (par(pp::SmpLoop, 0.0f) >= 0.5f) {
+    const int32_t ls = std::clamp(static_cast<int32_t>(std::lround(std::clamp(par(pp::SmpLoopStart, 0.0f), 0.0f, 1.0f) * frames)), c0, c1 - 1);
+    const int32_t le = std::clamp(static_cast<int32_t>(std::lround(std::clamp(par(pp::SmpLoopEnd, 1.0f), 0.0f, 1.0f) * frames)), ls + 1, c1);
+    sd.loop = par(pp::SmpLoopMode, 0.0f) >= 0.5f ? trk::kLoopPingPong : trk::kLoopForward;
+    sd.loopStart = ls;
+    sd.loopLength = le - ls;
+  }
+  // The amplitude envelope as a volume envelope (ticks of 1/50 s, the classic tracker's at 125 BPM):
+  // attack up to full, decay to the sustain level (held while the key is down), release to silence.
+  auto ticks = [](float sec) { return std::clamp(static_cast<int>(std::lround(sec * 50.0f)), 0, 8000); };
+  const int at = ticks(par(pp::SmpAttack, 0.0005f)), dc = ticks(par(pp::SmpDecay, 10.0f)), rl = std::max(1, ticks(par(pp::SmpRelease, 0.02f)));
+  const int sus = std::clamp(static_cast<int>(std::lround(std::clamp(par(pp::SmpSustain, 1.0f), 0.0f, 1.0f) * 64.0f)), 0, 64);
+  trk::Envelope v;
+  int n = 0;
+  auto pt = [&](int x, int y) {
+    v.x[static_cast<size_t>(n)] = static_cast<int16_t>(x);
+    v.y[static_cast<size_t>(n)] = static_cast<int16_t>(y);
+    ++n;
+  };
+  if (at >= 1) pt(0, 0);
+  pt(at, 64);
+  if (dc >= 1 && sus < 64) pt(at + dc, sus);
+  v.sustain = static_cast<uint8_t>(n - 1);
+  pt(at + (dc >= 1 && sus < 64 ? dc : 0) + rl, 0);
+  v.count = static_cast<uint8_t>(n);
+  v.flags = trk::kEnvOn | trk::kEnvSustain;
+  d.vol = v;
+  out.data = writeEdit(e);
+  return out;
 }
 
 }  // namespace gl::packs::trackerpack

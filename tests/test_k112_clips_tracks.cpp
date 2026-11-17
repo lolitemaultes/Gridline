@@ -14,18 +14,24 @@
 //  * K-112c (round 43): a clip dropped into an empty row of the grid grows the live area
 //    (ops::extendLiveArea): the song after it moves right by as much, one undo step, and the
 //    other person gets it.
+#include <cmath>
 #include <map>
 #include <set>
 #include <string>
 #include <vector>
 #include "Check.h"
 #include "collab/CollabSim.h"
+#include "core/BrowserIndex.h"
 #include "core/Demo.h"
 #include "core/MenuOps.h"
 #include "core/MenuParity.h"
 #include "core/PluginInfo.h"
 #include "core/TrackModes.h"
 #include "core/TrackOrder.h"
+#include "core/MixerOps.h"
+#include "core/Params.h"
+#include "core/Project.h"
+#include "engine/LiveRender.h"
 
 using namespace gl;
 using namespace gl::collab;
@@ -663,11 +669,12 @@ void testCheckpoint53() {
     trackmodes::renumberTrackNames(s);
     expect(s.tracks[1].name == std::string("2 ") + findPlugin("gl.synth")->name, ("renumbered: " + s.tracks[1].name).c_str());
   }
-  // N52-10: a lane for the group's fader sits after the group's tracks; Ungroup takes the lane too.
+  // N52-10: a lane for the group's fader; Ungroup takes the lane too. (Checkpoint 54, N53-03: it sits
+  // right under the group's title, inside the group.)
   {
     Song s = d.song();
     const int lane = trackmodes::addAutomationLane(s, gid, "3 Group \xE2\x80\xBA Volume");
-    expect(lane == 5, "the lane right after the group's tracks");
+    expect(lane == 3 && s.tracks[2].groupSize == 3, "the lane right under the group's title, in the group");
     AutomationClip ac;
     ac.id = s.allocateId();
     ac.owner = gid;
@@ -679,7 +686,8 @@ void testCheckpoint53() {
     k.track = lane;
     k.length = 768;
     s.playlist.push_back(k);
-    expect(trackmodes::isAutomationLane(s, lane) && !trackmodes::isAutomationLane(s, 2) && trackmodes::automationLanes(s, 6)[5], "it is an automation lane");
+    expect(trackmodes::isAutomationLane(s, lane) && !trackmodes::isAutomationLane(s, 2) && trackmodes::automationLanes(s, 6)[3], "it is an automation lane");
+    expect(trackmodes::laneOwner(s, lane) == 2, "owned by the group");
     const size_t n = s.tracks.size();
     expect(trackmodes::ungroupTracks(s, 2, &why), "ungroup");
     expect(s.tracks.size() == n - 2, "the group and its emptied lane are gone");
@@ -705,6 +713,303 @@ void testCheckpoint53() {
   }
 }
 
+// Checkpoint 54 (K-300 round 10).
+// An automation clip of `owner`'s control `index` on track `lane`.
+void laneClip(Song& s, int lane, ObjectId owner, uint32_t index) {
+  AutomationClip ac;
+  ac.id = s.allocateId();
+  ac.owner = owner;
+  ac.index = index;
+  s.automations.push_back(ac);
+  Clip k;
+  k.id = s.allocateId();
+  k.kind = ClipKind::Automation;
+  k.source = ac.id;
+  k.track = lane;
+  k.start = 0;
+  k.length = 768;
+  s.playlist.push_back(k);
+}
+
+void testCheckpoint54() {
+  std::string why;
+  Song s0 = makeEmptySong();
+  s0.tracks.resize(kDefaultPlaylistTracks);
+  trackmodes::makeClipsStarterTracks(s0);  // 1 MIDI, 2 MIDI, 3 Audio, 4 Audio
+  // N53-03: a lane sits right under its track, takes no number, and the tracks after it keep counting on.
+  {
+    Song s = s0;
+    const ObjectId m3 = trackmodes::linkedMixer(s, 2)->id;
+    const int lane = trackmodes::addAutomationLane(s, m3, "3 Audio \xE2\x80\xBA Volume");
+    laneClip(s, lane, m3, 0);
+    expect(lane == 3 && trackmodes::laneOwner(s, 3) == 2, "the lane right under 3 Audio");
+    trackmodes::renumberTrackNames(s);
+    expect(s.tracks[4].name == "4 Audio", ("the track after the lane keeps its number: " + s.tracks[4].name).c_str());
+    const std::vector<int> nums = trackmodes::trackNumbers(s, 5);
+    expect(nums[2] == 3 && nums[3] == 0 && nums[4] == 4, "Clips' numbers: the lane has none");
+    expect(trackmodes::withLanes(s, {2}) == std::vector<int>({2, 3}), "the track brings its lane along");
+    expect(trackmodes::pastLanes(s, 3) == 4, "nothing drops between a track and its lane");
+    // A move in Clips: the lane goes with its track (and both land as one block).
+    Document d(s);
+    std::vector<int> now;
+    expect(trackorder::movePlaylistTracks(d, trackmodes::withLanes(d.song(), {2}), 0, &now), "move 3 Audio and its lane to the top");
+    const Song& m = d.song();
+    expect(trackmodes::laneOwner(m, 1) == 0 && m.tracks[0].mixer == m3, "the lane is still under its track");
+    expect(m.tracks[0].name == "1 Audio" && m.tracks[2].name == "2 MIDI",
+           ("renumbered by the move (any layout): " + m.tracks[0].name + ", " + m.tracks[2].name).c_str());
+    // Duplicate: the copy brings a lane of its own, its automation on the copy's fader.
+    Song x = d.song();
+    const int c = trackmodes::duplicateTracks(x, {0}, &why);
+    expect(c == 2, ("the copy after the track and its lane: " + why).c_str());
+    const MixerTrack* cm = trackmodes::linkedMixer(x, 2);
+    expect(cm && cm->id != m3 && trackmodes::isAutomationLane(x, 3) && trackmodes::laneOwner(x, 3) == 2, "the copy has its own lane, under it");
+    ObjectId own = kNoId;
+    for (const Clip& k : x.playlist)
+      if (k.track == 3 && k.kind == ClipKind::Automation)
+        if (const AutomationClip* ac = x.automation(k.source)) own = ac->owner;
+    expect(cm && own == cm->id, "the copy's automation moves the copy's fader");
+  }
+  // A lane of a group's last track joins the group (folding hides it with its track).
+  {
+    Song s = s0;
+    expect(trackmodes::groupTracks(s, {2, 3}, &why) == 2, ("group: " + why).c_str());
+    const ObjectId m4 = trackmodes::linkedMixer(s, 4)->id;
+    const int lane = trackmodes::addAutomationLane(s, m4, "4 Audio \xE2\x80\xBA Volume");
+    laneClip(s, lane, m4, 0);
+    expect(lane == 5 && s.tracks[2].groupSize == 3, "the last track's lane is in the group");
+  }
+  // N53-04: an empty unnamed track between tracks in use (Studio's) takes no row and no number.
+  {
+    Song s = s0;
+    Document d(s);
+    expect(trackorder::movePlaylistTracks(d, {3}, 7), "Studio: 4 Audio down to row 7");
+    const Song& m = d.song();
+    const std::vector<char> gaps = trackmodes::gapTracks(m, trackmodes::usedTrackCount(m));
+    expect(gaps.size() == 7 && gaps[3] && gaps[4] && gaps[5] && !gaps[6] && !gaps[2], "rows 4 to 6 are gaps");
+    expect(m.tracks[6].name == "4 Audio", ("numbered as Clips shows it: " + m.tracks[6].name).c_str());
+    Song e = makeEmptySong();
+    e.tracks.resize(kDefaultPlaylistTracks);
+    expect(trackmodes::gapTracks(e, trackmodes::usedTrackCount(e)) == std::vector<char>(4, 0), "a new set's empty tracks are no gaps");
+  }
+  // N53-08: an instrument track's own mixer track sends to the returns.
+  {
+    Song s = s0;
+    Document d(s);
+    const ObjectId ch = trackmodes::newInstrumentTrack(d, 0, "gl.synth", &why);
+    const ObjectId mix = d.song().channel(ch)->mixerTrack;
+    expect(trackmodes::missingReturnSends(d.song(), mix), "a new instrument's mixer track has no return sends yet");
+    Song x = d.song();
+    trackmodes::addReturnSendsTo(x, mix);
+    expect(!trackmodes::missingReturnSends(x, mix) && x.mixerTrack(mix)->sends.size() == 3, "then it sends to both returns (at zero) and Main");
+  }
+  // N53-02: a one-shot grid clip plays once: saved only when set, rendered as one pass.
+  {
+    Song s = s0;
+    Channel src;
+    src.id = s.allocateId();
+    src.name = "Tick";
+    src.plugin.type = "gl.sampler";
+    src.audioClip = true;
+    src.mixerTrack = trackmodes::linkedMixer(s, 2)->id;
+    s.channels.push_back(src);
+    Clip k;
+    k.id = s.allocateId();
+    k.kind = ClipKind::Audio;
+    k.source = src.id;
+    k.track = 2;
+    k.start = 0;
+    k.length = 19;
+    k.launched = true;
+    s.playlist.push_back(k);
+    s.live.areaEnd = 1536;
+    const std::string plain = projectToText(s);
+    expect(plain.find("launchOnce") == std::string::npos, "not written when off");
+    s.playlist.back().launchOnce = true;
+    Song back;
+    std::string err;
+    const bool loaded = loadProjectText(projectToText(s), "", back, &err);
+    bool once = false;
+    for (const Clip& c : back.playlist) once = once || (c.id == k.id && c.launchOnce);
+    expect(loaded && once, ("written and read back " + err).c_str());
+    Song r = s;
+    prepareOfflineLive(r);
+    int passes = 0;
+    for (const Clip& c : r.playlist) passes += c.kind == ClipKind::Audio ? 1 : 0;
+    expect(passes == 1, ("a launched one-shot renders once: " + std::to_string(passes)).c_str());
+    Song l = s;
+    l.playlist.back().launchOnce = false;
+    prepareOfflineLive(l);
+    passes = 0;
+    for (const Clip& c : l.playlist) passes += c.kind == ClipKind::Audio ? 1 : 0;
+    expect(passes > 10, "a looping one repeats (as before)");
+  }
+  // N53-10: send level automation keeps its destination across mixer inserts, moves and deletes (its
+  // parameter names the destination by mixer position: core/TrackOrder.h remaps it).
+  {
+    Song s = s0;
+    const std::vector<size_t> rets = trackmodes::returnTracks(s);
+    expect(rets.size() == 2, "two returns");
+    const ObjectId src = trackmodes::linkedMixer(s, 2)->id, rB = s.mixer[rets[1]].id;
+    AutomationClip ac;
+    ac.id = s.allocateId();
+    ac.owner = src;
+    ac.index = sendParam(src, static_cast<int>(rets[1])).index;
+    s.automations.push_back(ac);
+    Document d(s);
+    auto target = [&] { return static_cast<int>(d.song().automations.back().index - kSendBase); };
+    mixops::insertTracks(d, static_cast<int>(rets[0]), 2);  // two strips before the returns, as the demo's FX Bus and Swells
+    expect(d.song().mixerIndex(rB) == target(), "inserted before the returns: the send still moves B's send");
+    trackorder::moveMixerTracks(d, {rB}, 1);
+    expect(d.song().mixerIndex(rB) == target(), "moved: still B");
+    d.removeMixerTrack(d.song().mixer[2].id);
+    expect(d.song().mixerIndex(rB) == target(), "a track before it deleted: still B");
+    d.undo();
+    d.undo();
+    d.undo();
+    expect(projectToText(d.song()) == projectToText(s), "undone: the same bytes");
+  }
+}
+
+// Checkpoint 55: N54-01 (looping short grid samples found, nothing changed), N54-02 (the warp tempo of
+// a dropped file), N54-03 (names made from an owner's follow it, in the edit's own step; a song where
+// nothing changed saves the same bytes), N54-04 (the number Clips shows).
+void testCheckpoint55() {
+  std::string why;
+  Song s0 = makeEmptySong();
+  s0.tracks.resize(kDefaultPlaylistTracks);
+  trackmodes::makeClipsStarterTracks(s0);  // 1 MIDI, 2 MIDI, 3 Audio, 4 Audio
+  // N54-02: the name first, then whole bars at the Set's tempo, then the detector nearest the Set's tempo.
+  {
+    expect(std::fabs(browse::warpTempo("Long 120.wav", 20.0, 120.0) - 120.0) < 1e-9, "Long 120 (20 s): 120 from its name");
+    expect(std::fabs(browse::warpTempo("Long.wav", 20.0, 120.0) - 120.0) < 1e-9, "a 20 s file: 10 whole bars at the Set's 120");
+    expect(std::fabs(browse::warpTempo("Loop 120.wav", 4.0, 120.0) - 120.0) < 1e-9, "Loop 120 (4 s): 120");
+    expect(std::fabs(browse::warpTempo("Groove 96bpm.wav", 10.0, 120.0) - 96.0) < 1e-9, "a stated 96bpm wins over the Set's tempo");
+    expect(std::fabs(browse::warpTempo("Pad 120.wav", 7.3, 120.0) - 120.0) > 1e-3, "a bare number the length disagrees with is no tempo (7.3 s)");
+    expect(std::fabs(browse::warpTempo("Break.wav", 9.0, 120.0, 85.0) - 85.0) < 1e-9, "no name, no whole bars: the detector's 85");
+    expect(std::fabs(browse::warpTempo("Break.wav", 9.0, 120.0, 60.0) - 120.0) < 1e-9, "the detector's half-time 60 read as 120 (nearest the Set)");
+    expect(browse::warpTempo("Tick.wav", 0.1, 120.0) == 0.0, "a 0.1 s tick: no tempo (a one-shot)");
+    expect(std::fabs(browse::warpTempo("Kick 808.wav", 0.4, 120.0) - 0.0) < 1e-9, "Kick 808: 808 is no tempo");
+  }
+  // N54-01: a grid clip under a beat that loops (an older set's) is found; a one-shot, a warped clip
+  // or an arrangement clip is not; finding changes nothing.
+  {
+    Song s = s0;
+    s.live.areaEnd = 1536;
+    auto audio = [&](Tick start, Tick len, bool once, double sync) {
+      Clip c;
+      c.id = s.allocateId();
+      c.kind = ClipKind::Audio;
+      c.track = 2;
+      c.start = start;
+      c.length = len;
+      c.launchOnce = once;
+      c.syncBpm = sync;
+      s.playlist.push_back(c);
+      return c.id;
+    };
+    const ObjectId old = audio(0, 19, false, 0);
+    audio(384, 19, true, 0);       // a one-shot already
+    audio(768, 3072, false, 120);  // a warped loop
+    audio(2000, 19, false, 0);     // in the arrangement
+    const std::string before = projectToText(s);
+    const std::vector<ObjectId> found = trackmodes::loopingShortSlotClips(s);
+    expect(found == std::vector<ObjectId>({old}), "only the older set's looping short grid sample");
+    expect(projectToText(s) == before, "looking changes nothing (the save stays as it was)");
+  }
+  // N54-03: duplicate and move: the lane and its automation take the owner's new name, in the same step.
+  {
+    Song s = s0;
+    expect(trackmodes::groupTracks(s, {2, 3}, &why) == 2, ("group 3 Audio and 4 Audio: " + why).c_str());
+    const ObjectId gm = s.tracks[2].mixer;
+    const std::string gname = s.tracks[2].name;
+    const std::string label = paramDisplayName(s, ParamId{gm, 0});
+    const int lane = trackmodes::addAutomationLane(s, gm, label);
+    laneClip(s, lane, gm, 0);
+    s.automations.back().name = label;
+    Document d(s);
+    const std::string base = projectToText(d.song());
+    const int c = trackmodes::duplicateTracks(d, {2}, &why);
+    expect(c > 2, ("duplicate the group: " + why).c_str());
+    const Song& x = d.song();
+    const std::string copyName = x.tracks[static_cast<size_t>(c)].name;
+    int copyLane = -1;
+    for (int t = c + 1; t < static_cast<int>(x.tracks.size()) && copyLane < 0; ++t) {
+      if (trackmodes::isAutomationLane(x, t) && trackmodes::laneOwner(x, t) == c) {
+        copyLane = t;
+      }
+    }
+    expect(copyLane > c, "the copy has its lane");
+    std::string copyAuto;
+    for (const Clip& k : x.playlist) {
+      if (k.track == copyLane && k.kind == ClipKind::Automation) {
+        if (const AutomationClip* ac = x.automation(k.source)) {
+          copyAuto = ac->name;
+        }
+      }
+    }
+    expect(copyName != gname, ("the copy is named for its place: " + copyName).c_str());
+    expect(copyAuto.rfind(copyName + " \xE2\x80\xBA ", 0) == 0, ("the copy's automation names the copy: " + copyAuto).c_str());
+    expect(x.tracks[static_cast<size_t>(copyLane)].name == copyAuto, ("the copy's lane too: " + x.tracks[static_cast<size_t>(copyLane)].name).c_str());
+    expect(x.automations.front().name == label, "the original's automation keeps its name");
+    d.undo();
+    expect(projectToText(d.song()) == base, "one undo: the same bytes as before the duplicate");
+    // Move the group to the top: it is renumbered, its lane and automation follow.
+    std::vector<int> now;
+    expect(trackorder::movePlaylistTracks(d, trackmodes::withLanes(d.song(), {2}), 0, &now), "move the group to the top");
+    const Song& m = d.song();
+    expect(m.tracks[0].name != gname, ("renumbered: " + m.tracks[0].name).c_str());
+    std::string movedAuto;
+    for (const AutomationClip& ac : m.automations) {
+      movedAuto = ac.name;
+    }
+    expect(movedAuto.rfind(m.tracks[0].name + " \xE2\x80\xBA ", 0) == 0, ("the automation follows the move: " + movedAuto).c_str());
+    int movedLane = -1;
+    for (int t = 0; t < trackmodes::usedTrackCount(m) && movedLane < 0; ++t) {
+      if (trackmodes::isAutomationLane(m, t)) {
+        movedLane = t;
+      }
+    }
+    expect(movedLane >= 0 && m.tracks[static_cast<size_t>(movedLane)].name == movedAuto, "and its lane");
+    d.undo();
+    expect(projectToText(d.song()) == base, "one undo: the same bytes as before the move");
+    // A rename that leaves every name as it was changes nothing.
+    Song y = d.song();
+    expect(trackmodes::followAutomationNames(y) == 0 && projectToText(y) == base, "nothing to follow: the same bytes");
+  }
+  // N54-03: a take named after its track ("3 Audio rec") follows the track's rename.
+  {
+    Song s = s0;
+    const ObjectId src = s.allocateId();
+    Channel ch;
+    ch.id = src;
+    ch.name = "3 Audio rec";
+    ch.plugin.type = "gl.sampler";
+    ch.mixerTrack = s.tracks[2].mixer;
+    s.channels.push_back(ch);
+    Clip k;
+    k.id = s.allocateId();
+    k.kind = ClipKind::Audio;
+    k.source = src;
+    k.track = 2;
+    k.start = 2000;
+    k.length = 768;
+    s.playlist.push_back(k);
+    Document d(s);
+    expect(trackmodes::renameTrack(d, 2, "Vox"), "rename 3 Audio");
+    expect(d.song().channel(src)->name == "Vox rec", ("the take follows: " + d.song().channel(src)->name).c_str());
+    d.undo();
+    expect(d.song().channel(src)->name == "3 Audio rec" && d.song().tracks[2].name == "3 Audio", "one undo puts both back");
+  }
+  // N54-04: the number Clips shows a track by, after another layout left gaps.
+  {
+    Song s = s0;
+    Document d(s);
+    expect(trackorder::movePlaylistTracks(d, {3}, 7), "Studio: 4 Audio down to row 7");
+    expect(trackmodes::shownNumber(d.song(), 6) == 4, ("row 7 shows as 4: " + std::to_string(trackmodes::shownNumber(d.song(), 6))).c_str());
+    expect(trackmodes::shownNumber(d.song(), 0) == 1, "row 1 is 1");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -723,5 +1028,7 @@ int main() {
   testNestedGroups();
   testGroupEdits();
   testCheckpoint53();
+  testCheckpoint54();
+  testCheckpoint55();
   return finish();
 }

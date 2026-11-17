@@ -35,6 +35,8 @@
 #include "ChromeBanner.h"
 #include "BrowserUi.h"
 #include "ContextMenus.h"
+#include "HostedUi.h"
+#include "../core/PluginInfo.h"
 #include "Keys.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
@@ -43,6 +45,7 @@
 #include "PixelGrid.h"
 #include "../packs/PacksUi.h"
 #include "Theme.h"
+#include "TrackerEditors.h"
 #include "TrackerLook.h"
 #include "TrackerPages.h"
 #include "TrackerView.h"
@@ -132,7 +135,7 @@ void boxTitle(App& a, ImVec2 p, const char* text) {
 
 // A radio row, as the classic screens' page and subject lists (refs 164, 166): a small diamond, lit
 // when on, then the label. The whole row takes the click.
-bool radioRow(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, bool on, const char* hint = nullptr) {
+bool radioRow(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, bool on, const char* hint) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImGui::SetCursorScreenPos(p0);
@@ -154,7 +157,7 @@ bool radioRow(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, b
 
 // A check row, as the classic screens' check boxes (Trim, Advanced edit, the settings pages): a
 // small sunken square, ticked when on, then the label (none: the square alone, centred).
-bool checkRow(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, bool on, const char* hint = nullptr) {
+bool checkRow(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, bool on, const char* hint) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImGui::SetCursorScreenPos(p0);
@@ -196,6 +199,120 @@ bool arrowButton(App& a, const char* id, ImVec2 p0, ImVec2 p1, bool up, const ch
   else dl->AddTriangleFilled(ImVec2(cx - r - 1, cy - r * 0.6f), ImVec2(cx + r + 1, cy - r * 0.6f), ImVec2(cx, cy + r * 0.8f), P.text);
   (void)a;
   return click;
+}
+
+// cp17 (moved from TrackerPages.cpp, unchanged): a horizontal value bar (volume, pan) in a sunken box; dragging sets it. Returns true while it changed.
+bool valueBar(const char* id, ImVec2 p0, ImVec2 p1, double v, double lo, double hi, bool centred, double* out, const char* hint) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImGui::SetCursorScreenPos(p0);
+  ImGui::InvisibleButton(id, ImVec2(std::max(1.0f, p1.x - p0.x), std::max(1.0f, p1.y - p0.y)));
+  const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  bevelBox(dl, p0, p1, true);
+  // cp16: the classic slider: a sunken groove with a raised bevel knob at the value (before: a solid
+  // green bar, the modern look); the part up to the value (from the middle when centred) a thin line.
+  const float x0 = p0.x + 2, x1 = p1.x - 2;
+  const float k = static_cast<float>((std::clamp(v, lo, hi) - lo) / (hi - lo));
+  const float knobW = std::max(8.0f, std::round((p1.y - p0.y) * 0.6f));
+  const float at = std::round(x0 + knobW * 0.5f + (x1 - x0 - knobW) * k);
+  const float cy = std::round((p0.y + p1.y) * 0.5f);
+  const ImU32 line = act ? P.hot : theme::withAlpha(P.led, hov ? 0.9f : 0.7f);
+  if (centred) {
+    const float mid = std::round((x0 + x1) * 0.5f);
+    dl->AddRectFilled(ImVec2(mid, p0.y + 3), ImVec2(mid + 1, p1.y - 3), P.textFaint);
+    dl->AddRectFilled(ImVec2(std::min(mid, at), cy - 1), ImVec2(std::max(mid, at) + 1, cy + 1), line);
+  } else {
+    dl->AddRectFilled(ImVec2(x0 + 1, cy - 1), ImVec2(at, cy + 1), line);
+  }
+  const ImVec2 k0(at - knobW * 0.5f, p0.y + 2), k1(at + knobW * 0.5f, p1.y - 2);
+  dl->AddRectFilled(k0, k1, act ? theme::mix(P.surface600, P.hot, 0.35f) : hov ? P.surface600 : P.surface700);
+  bevelBox(dl, k0, k1, act);
+  if (hint) ui::Hint(hint);
+  if (act && (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0) || ImGui::IsItemActivated())) {
+    const float mk = std::clamp((ImGui::GetIO().MousePos.x - x0) / std::max(1.0f, x1 - x0), 0.0f, 1.0f);
+    *out = lo + (hi - lo) * mk;
+    return true;
+  }
+  if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {  // double-click: the default
+    *out = centred ? (lo + hi) * 0.5 : 0.8;
+    return true;
+  }
+  return false;
+}
+
+// cp17: the modal box (TrackerLook.h).
+bool beginModalBox(App& a, const char* id, const char* title, ImVec2 size) {
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+  ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+  const bool open = ImGui::BeginPopupModal(id, nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+  ImGui::PopStyleVar(2);
+  if (!open) return false;
+  const ImVec2 p0 = ImGui::GetWindowPos(), p1(p0.x + ImGui::GetWindowWidth(), p0.y + ImGui::GetWindowHeight());
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  bevelBox(dl, p0, p1, false);
+  bevelBox(dl, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3), true);
+  boxTitle(a, ImVec2(p0.x + 10, p0.y + 7), title);
+  ImGui::SetCursorScreenPos(ImVec2(p0.x + 10, p0.y + 12 + ImGui::GetFontSize()));
+  if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::CloseCurrentPopup();
+  return true;
+}
+void endModalBox() { ImGui::EndPopup(); }
+
+// cp17: a sideways scroll bar in the band's look: a sunken trough between two arrow buttons, the
+// raised thumb over the part in view. Dragging the thumb scrolls; a click in the trough beside it
+// pages; the arrows (held: repeating) step by `step`.
+bool scrollBar(App& a, const char* id, ImVec2 p0, ImVec2 p1, double* start, double view, double total, double step, const char* hint) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImGuiIO& io = ImGui::GetIO();
+  const double was = *start;
+  const double most = std::max(0.0, total - view);
+  ImGui::PushID(id);
+  const float h = p1.y - p0.y, aw = std::round(std::max(h, 10.0f));
+  // The arrows.
+  for (int side = 0; side < 2; ++side) {
+    const ImVec2 b0(side ? p1.x - aw : p0.x, p0.y), b1(side ? p1.x : p0.x + aw, p1.y);
+    ImGui::PushItemFlag(ImGuiItemFlags_ButtonRepeat, true);
+    const bool click = bevelButton(a, side ? "##sbr" : "##sbl", "", b0, b1, false, hint);
+    ImGui::PopItemFlag();
+    const bool held = ImGui::IsItemActive();
+    const float cx = std::round((b0.x + b1.x) * 0.5f) + (held ? 1 : 0), cy = std::round((b0.y + b1.y) * 0.5f) + (held ? 1 : 0);
+    const float r = std::max(2.0f, std::floor(std::min(b1.x - b0.x, b1.y - b0.y) * 0.22f));
+    if (side) dl->AddTriangleFilled(ImVec2(cx - r * 0.6f, cy - r - 1), ImVec2(cx - r * 0.6f, cy + r + 1), ImVec2(cx + r * 0.8f, cy), P.text);
+    else dl->AddTriangleFilled(ImVec2(cx + r * 0.6f, cy - r - 1), ImVec2(cx + r * 0.6f, cy + r + 1), ImVec2(cx - r * 0.8f, cy), P.text);
+    if (click) *start += side ? step : -step;
+  }
+  // The trough and the thumb.
+  const float t0 = p0.x + aw + 1, t1 = p1.x - aw - 1, span = std::max(1.0f, t1 - t0);
+  bevelBox(dl, ImVec2(t0, p0.y), ImVec2(t1, p1.y), true);
+  const double tot = std::max(total, 1e-9);
+  float th0 = t0 + static_cast<float>(span * std::clamp(*start, 0.0, most) / tot);
+  float th1 = std::min(t1, th0 + std::max(static_cast<float>(span * std::min(1.0, view / tot)), h * 1.5f));
+  th0 = std::round(std::min(th0, th1 - h * 1.5f)), th1 = std::round(th1);
+  ImGui::SetCursorScreenPos(ImVec2(t0, p0.y));
+  ImGui::InvisibleButton("##trough", ImVec2(span, std::max(1.0f, h)));
+  static float grab = -1;
+  static ImGuiID grabId = 0;
+  const ImGuiID me = ImGui::GetItemID();
+  if (ImGui::IsItemActivated()) {
+    const float mx = io.MousePos.x;
+    if (mx >= th0 && mx < th1) {
+      grab = mx - th0, grabId = me;
+    } else {
+      grab = -1;
+      *start += mx < th0 ? -view : view;
+    }
+  }
+  if (ImGui::IsItemActive() && grab >= 0 && grabId == me) *start = (io.MousePos.x - grab - t0) / span * tot;
+  if (!ImGui::IsItemActive() && grabId == me) grab = -1, grabId = 0;
+  if (hint) ui::Hint(hint);
+  bevelBox(dl, ImVec2(th0, p0.y + 1), ImVec2(th1, p1.y - 1), false);
+  ImGui::PopID();
+  *start = std::clamp(*start, 0.0, most);
+  return *start != was;
 }
 
 // One stepper row: the label, the value in a sunken field right after it, the arrows at the box's
@@ -356,7 +473,7 @@ void orderRows(App& a, ImVec2 p0, ImVec2 p1) {
     const bool other = std::any_of(s.playlist.begin(), s.playlist.end(), [](const Clip& c) { return c.kind != ClipKind::Pattern; });
     // Wrapped: the box is narrow.
     dl->AddText(a.fontRegular, rf, ImVec2(p0.x + 4, p0.y + 2), P.textFaint,
-                i18n::tr(other ? "No pattern clips. Automation clips are on the Song page." : "No pattern clips in the song yet"), nullptr,
+                i18n::tr(other ? "No pattern clips. Automation clips are on the Song page." : "The song is empty: type notes, or Ins puts the pattern in"), nullptr,
                 p1.x - p0.x - 8);
     return;
   }
@@ -1437,6 +1554,7 @@ void sampleTool(App& a, ImVec2 p0, ImVec2 p1) {
 // The instrument editor: the Device chain in the lower band, showing the channel's instrument (the
 // Tracker hosts Channel settings there). Shown while the chain is open or a channel's settings are asked for.
 bool instrumentShown(App& a) {
+  if (trackereditors::pluginWindowOpen(a)) return false;  // cp18: the channel settings float as the plugin window
   const bool* f = layoutui::windowOpenFlag(a, "Device chain");
   return a.settingsChannel != kNoId || (f && *f);
 }
@@ -1455,13 +1573,17 @@ float instrumentEditorNeed() {
 
 // Closed: the settings asked for and the chain itself (R5-03: back to the main screen closes it too).
 void closeInstrument(App& a) {
-  a.settingsChannel = kNoId;
-  if (bool* f = layoutui::windowOpenFlag(a, "Device chain")) *f = false;
+  if (trackereditors::pluginWindowOpen(a)) {  // the plugin window floats on its own (its title bar closes it)
+    if (bool* f = layoutui::windowOpenFlag(a, "Device chain")) *f = false;
+    return;
+  }
+  trackereditors::close(a);  // cp18: the band's screen (a preview, held notes and its keys end with it)
 }
 
 // What the whole header shows: the boxes, or a screen swapped in (Help).
 enum class Swap { None, Help, Disk, Config, About };
 Swap gSwap = Swap::None;
+bool gFolded = false;  // cp17: the header folded to its strip while an editor is open in a small window
 bool gHeaderTyping = false;  // a field of the band is being typed in (the keys stay there)
 // R4-11: the instrument being renamed in its list (its menu's Rename), and the name typed so far.
 ObjectId gRenaming = kNoId;
@@ -1671,6 +1793,10 @@ void helpScreen(App& a, ImVec2 p0, ImVec2 p1) {
                                       {"view.cleanUp", i18n::N_("The Clean up box")},
                                       {"view.midiBox", i18n::N_("The MIDI box: the instrument's MIDI out and the MIDI input")},
                                       {"view.sampleTools", i18n::N_("The Sample tools box: range edits on the instrument's sample")},
+                                      {"view.sampleEditor", i18n::N_("The Sample editor: the instrument's samples under the pattern")},
+                                      {"view.zoomTracksOut", i18n::N_("Narrower tracks, more in view (the Song page: its lanes or timeline)")},
+                                      {"view.zoomTracksIn", i18n::N_("Wider tracks, fewer in view")},
+                                      {"view.zoomTracksFit", i18n::N_("Every track in view (Ctrl+wheel zooms too)")},
                                       {"view.browser", i18n::N_("The browser")},
                                       {"view.pluginPicker", i18n::N_("The plugin picker")},
                                       {"help.shortcuts", i18n::N_("Every shortcut")}};
@@ -2708,7 +2834,7 @@ void header(App& a) {
   // A button column is as wide as its longest label needs (translated), never cut.
   float labelW = 0;
   for (const char* l : {"About Gridline", "Metronome", "New", "Clean up", "Header band", "Transpose", "MIDI", "Sample tools", "Advanced edit", "Play song",
-                        "Play pattern", "Stop", "Record song", "Record pattern", "Files", "Channel settings", "Audio editor", "Settings", "Tracker help"})
+                        "Play pattern", "Stop", "Record song", "Record pattern", "Files", "Channel settings", "Audio editor", "Instrument", "Sample", "Settings", "Tracker help"})
     labelW = std::max(labelW, a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(l)).x);
   const float colW = std::max(std::round(65 * k), std::ceil(labelW + 16)), bankW = std::round(45 * k);
   const float rest = std::max(200.0f, W - colW * 2 - bankW);
@@ -3055,14 +3181,34 @@ void header(App& a) {
       start(PlayMode::Pattern, true);
     if (b(5, "##files", "Files", "Files: save, open, recent files and the project folder (the header's left part shows them)", gSwap == Swap::Disk))
       gSwap = gSwap == Swap::Disk ? Swap::None : Swap::Disk;
-    if (b(6, "##inst", "Channel settings", "The selected channel's instrument and settings (as View > Channel settings)", instrumentShown(a))) {
-      if (instrumentShown(a)) closeInstrument(a);
-      else showPage(a, "Instrument");
+    // cp18: Instrument lights while the instrument's screen shows (a Tracker Sampler's Instrument
+    // editor, any other instrument's Channel frame); Sample while the Sample editor shows.
+    const bool instOn = trackereditors::showing(a, trackereditors::Editor::Instrument) || (instrumentShown(a) && !trackereditors::shown(a));
+    if (b(6, "##inst", "Instrument", "The current instrument's editor under the header (Ctrl+Alt+I; again: closes it)", instOn)) {
+      if (instOn) closeInstrument(a);
+      else if (a.selChannel != kNoId) trackereditors::open(a, trackereditors::Editor::Instrument, a.selChannel);
     }
     // R4-02: the button toggles the audio editor's page in place, as the classic screen buttons do:
     // shown, a click brings the pattern back (the editor stays docked behind it, never floated).
+    // cp18: a Tracker Sampler's Sample editor is in the lower band instead; a Sampler's audio is the
+    // audio editor's page; another instrument has no sample to edit.
+    const Channel* selC = s.channel(a.selChannel);
+    const bool trackerSel = trackereditors::hasSampleEditor(a, a.selChannel);
+    const bool samplerSel = selC && selC->plugin.type == "gl.sampler";
     const bool audioFront = windowFront(a, "Loupe") && !instrumentShown(a);  // under the instrument editor it is not in view
-    if (b(7, "##smp", "Audio editor", "The audio editor, in the layout (again: the pattern)", audioFront)) showPage(a, audioFront ? "Pattern editor" : "Loupe");
+    if (trackerSel) {
+      const bool on = trackereditors::showing(a, trackereditors::Editor::Sample);
+      if (b(7, "##smp", "Sample", "The Sample editor under the header (Ctrl+Alt+E; again: closes it)", on)) {
+        if (on) closeInstrument(a);
+        else trackereditors::open(a, trackereditors::Editor::Sample, a.selChannel);
+      }
+    } else {
+      if (!samplerSel && !audioFront) ImGui::BeginDisabled();
+      if (b(7, "##smp", "Sample", samplerSel ? "The Sampler's audio in the audio editor's page (again: the pattern)" : "This instrument has no sample to edit (a Tracker Sampler or a Sampler has)",
+            audioFront))
+        showPage(a, audioFront ? "Pattern editor" : "Loupe");
+      if (!samplerSel && !audioFront) ImGui::EndDisabled();
+    }
     if (b(8, "##cfg", "Settings", "The pattern editor's settings (the header shows them) and the way to every other setting", gSwap == Swap::Config))
       gSwap = gSwap == Swap::Config ? Swap::None : Swap::Config;
     if (b(9, "##help", "Tracker help", "The pattern keys, the effect letters and the screen keys (the header shows them)", gSwap == Swap::Help)) gSwap = Swap::Help;
@@ -3249,6 +3395,8 @@ void header(App& a) {
         // M-60: a click on the number marks the source sample (again: unmarked), as on the instruments.
         if (rowClick && ImGui::GetIO().MouseClickedPos[0].x < s0.x + 9 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00").x + 2)
           gSourceSlot = gSourceSlot == slot ? -1 : slot;
+        else if (rowClick && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))  // cp18: the Sample editor on this sample
+          trackereditors::open(a, trackereditors::Editor::Sample, sc->id, slot);
         else if (rowClick)
           packs::trackerpack::headerSelectSample(a, sc->id, slot);
         if (slot == gSourceSlot) dl->AddRect(ImVec2(s0.x + 1, ry), ImVec2(s1.x - 1, ry + srh), P.hot);  // the source sample mark
@@ -3259,7 +3407,46 @@ void header(App& a) {
         const float ty = std::round(ry + (srh - fs) * 0.5f);
         dl->AddText(mono, fs, ImVec2(s0.x + 9, ty), slot == hs.sel ? valueInk() : P.textDim, num);
         const float nx = s0.x + 9 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00 ").x;
-        theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(nx, ty), s1.x - nx - 4, slot == hs.sel ? P.text : P.textDim, name.c_str());
+        // cp20: the sample's marks at the row's end: loops (L forward, P ping-pong), 8 bits, its file missing.
+        const uint8_t mk = smpFirst + r < static_cast<int>(hs.marks.size()) ? hs.marks[static_cast<size_t>(smpFirst + r)] : 0;
+        float mx = s1.x - 4;
+        if (mk) {
+          namespace tpk = packs::trackerpack;
+          const float mfs = std::round(fs * 0.85f);
+          auto mark = [&](const char* t, ImU32 col) {
+            const float tw = mono->CalcTextSizeA(mfs, FLT_MAX, 0, t).x;
+            mx -= tw;
+            dl->AddText(mono, mfs, ImVec2(std::round(mx), std::round(ry + (srh - mfs) * 0.5f)), col, t);
+            mx -= 4;
+          };
+          if (mk & tpk::kMarkMissing) {
+            mark("!", P.hot);
+          }
+          if (mk & tpk::kMark8Bit) {
+            mark("8", P.textDim);
+          }
+          if (mk & tpk::kMarkPingPong) {
+            mark("P", P.textDim);
+          } else if (mk & tpk::kMarkLoop) {
+            mark("L", P.textDim);
+          }
+          if (hov) {
+            std::string why;
+            if (mk & tpk::kMarkPingPong) {
+              why += i18n::tr("loops back and forth");
+            } else if (mk & tpk::kMarkLoop) {
+              why += i18n::tr("loops");
+            }
+            if (mk & tpk::kMark8Bit) {
+              why += std::string(why.empty() ? "" : ", ") + i18n::tr("plays at 8 bits");
+            }
+            if (mk & tpk::kMarkMissing) {
+              why += std::string(why.empty() ? "" : ", ") + i18n::tr("its file is missing (or still arriving)");
+            }
+            trackerview::status(std::string(i18n::tr("Sample")) + " " + num + ": " + why);
+          }
+        }
+        theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(nx, ty), mx - nx, slot == hs.sel ? P.text : P.textDim, name.c_str());
       }
     } else if (!sample.empty()) {
       dl->AddText(mono, fs, ImVec2(s0.x + 9, sy), P.hot, "01");
@@ -3394,6 +3581,15 @@ void instrumentMenu(App& a, ObjectId id) {
   if (ImGui::MenuItem(i18n::tr("Rename")) && i >= 0) {  // R4-11: typed in place in the list
     gRenaming = id;
     std::snprintf(gRenameBuf, sizeof gRenameBuf, "%s", s.channels[static_cast<size_t>(i)].name.c_str());
+  }
+  // cp17 (K-316 3.3, the user's Q3): the instrument's editor under the header (Ctrl+Alt+E), and its
+  // plugin window only from here: an installed plugin's own window, a built-in's editor (Channel
+  // settings, in the lower band).
+  if (i >= 0) {
+    ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Edit instrument"))) trackereditors::open(a, trackereditors::Editor::Instrument, id);
+    if (trackereditors::hasSampleEditor(a, id) && ImGui::MenuItem(i18n::tr("Edit samples"), "Ctrl+Alt+E")) trackereditors::open(a, trackereditors::Editor::Sample, id);
+    if (ImGui::MenuItem(i18n::tr("Open plugin window"))) trackereditors::openPluginWindow(a, id);
   }
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Mark as the source"), nullptr, gSourceChannel == id)) gSourceChannel = gSourceChannel == id ? kNoId : id;
@@ -3539,7 +3735,13 @@ void setHeaderSwap(int which) {
 // The audio editor's key (Ctrl+Alt+8) does what its header button does: the audio editor in front
 // (the instrument editor closes: the two share the lower band, as the classic sample and instrument
 // editors), or, in front already, the pattern back.
-void toggleAudioPage(App& a) { showPage(a, windowFront(a, "Loupe") && !instrumentShown(a) ? "Pattern editor" : "Loupe"); }
+void toggleAudioPage(App& a) {
+  if (trackereditors::hasSampleEditor(a, a.selChannel)) {  // cp18: a Tracker Sampler's Sample editor
+    trackereditors::toggle(a, trackereditors::Editor::Sample, true);
+    return;
+  }
+  showPage(a, windowFront(a, "Loupe") && !instrumentShown(a) ? "Pattern editor" : "Loupe");
+}
 int headerSwap() { return gSwap == Swap::Help ? 1 : gSwap == Swap::Disk ? 2 : gSwap == Swap::Config ? 3 : gSwap == Swap::About ? 4 : 0; }
 void setConfigPage(int page) { gConfigPage = std::clamp(page, 0, 3); }
 void filesLoadSample(App& a, const std::string& path) {
@@ -3588,12 +3790,34 @@ void orderList(App& a) {
     pumpPage(a);
     syncOrder(a, frame - lastFrameSeen > 1);
     lastFrameSeen = frame;
-    if (extended()) {  // the classic Extend: the band is one strip, the pattern gets the rows
+    // K-106 cp17 (K-316 3.2, user's Q1): the lower band's editor keeps the pattern's nine rows: the
+    // band gets what is left under the header once the pattern has its header line, nine rows and
+    // its bars. In a small window (about 640 to 760 px tall) where even the editor's least height does
+    // not fit under the full header, the header folds to its compact strip while an editor is open
+    // (back when it closes). The full band's height is the one it had when last shown whole.
+    static float fullBandH = 0;
+    const float workH = ImGui::GetMainViewport()->WorkSize.y, fs0 = ImGui::GetFontSize();
+    const float patRowH = std::max(fs0, patternRowHeight());
+    const float patternMin = fs0 * 7.0f + 16 + patRowH * 9;  // (the page strip, track headers, bars and nine rows)
+    trackereditors::tend(a);  // cp18: a preview whose screen went ends
+    const float editorNeed = trackereditors::need(a) > 0 ? trackereditors::need(a) : instrumentEditorNeed();
+    const float editorMin = std::min(std::round(fs0 * 21.5f), editorNeed > 0 ? std::ceil(editorNeed) : std::round(fs0 * 21.5f));
+    const float bandFull = fullBandH > 0 ? fullBandH : std::round(fs0 * 17.7f);
+    gFolded = !extended() && instrumentShown(a) && workH - bandFull - patternMin < editorMin;
+    auto sizeLower = [&](float headerH) {
+      if (!instrumentShown(a)) return;
+      const float space = workH - headerH;  // the lower band and the pattern
+      const float most = std::floor(std::max(gFolded ? editorMin : space * 0.5f, space - patternMin));
+      layoutui::setBandSize("tracker.lower", editorNeed > 0 ? std::clamp(std::ceil(editorNeed), std::min(200.0f, most), most) : most, 0.9f);
+    };
+    if (extended() || gFolded) {  // the classic Extend: the band is one strip, the pattern gets the rows
       layoutui::setBandSize("tracker.header", extendedStripH());
+      if (gFolded) sizeLower(extendedStripH());
       extendedStrip(a);
       headerKeepsNoKeys();
       return;
     }
+    if (gSwap == Swap::None) fullBandH = ImGui::GetWindowHeight();
     // Help grows the band (about 45 percent of the window) while it shows, so its rows show at once;
     // the pattern below stays in view and editable. Settings fits the band as it is (R6-12: its
     // groups are compact, as the classic config pages).
@@ -3607,23 +3831,17 @@ void orderList(App& a) {
     {
       static ObjectId lastSel = kNoId;
       if (a.selChannel != lastSel) {
-        if (a.settingsChannel != kNoId && a.selChannel != kNoId && a.doc.song().channelIndex(a.selChannel) >= 0) a.settingsChannel = a.selChannel;
+        if (a.settingsChannel != kNoId && a.selChannel != kNoId && a.doc.song().channelIndex(a.selChannel) >= 0 && !trackereditors::pluginWindowOpen(a))
+          a.settingsChannel = a.selChannel;
         lastSel = a.selChannel;
       }
     }
     // K-106 cp13: the editor takes the height it needs and the pattern keeps the rest, at least
     // its header line and nine rows (the cursor row in the middle), so notes stay in view and
     // editable while the instrument is edited. A taller editor scrolls in its band.
-    if (instrumentShown(a)) {
-      const float workH = ImGui::GetMainViewport()->WorkSize.y, fs0 = ImGui::GetFontSize();
-      const float space = workH - ImGui::GetWindowHeight();  // the lower band and the pattern
-      const float rowH = std::max(fs0, patternRowHeight());
-      // (Under the band: the page strip, the track header line, the scroll bar and the status line
-      // besides the rows, about seven text heights in all.)
-      const float most = std::floor(std::max(space * 0.5f, space - fs0 * 7.0f - 16 - rowH * 9));
-      const float need = instrumentEditorNeed();
-      layoutui::setBandSize("tracker.lower", need > 0 ? std::clamp(std::ceil(need), std::min(200.0f, most), most) : most, 0.9f);
-    }
+    // (Under the band: the page strip, the track header line, the scroll bar and the status line
+    // besides the rows, about seven text heights in all.)
+    sizeLower(ImGui::GetWindowHeight());
     // T-21: a band too short for its ten button rows at the interface's text size (a small window)
     // draws its text smaller, down to three quarters, rather than letting it run over the edges.
     {

@@ -197,9 +197,15 @@ bool waveFixDc(Wave& w, Span r);
 bool waveMix(Wave& w, const Wave& other, double balance);  // other mixed in from the start (0 = none, 1 = only it)
 bool waveEcho(Wave& w, int count, int32_t distance, double feedback, bool extend);
 bool waveMinimise(Wave& w);                               // drops what follows the loop
+// K-106 cp20 (the Sample editor's pencil): frames from `from` take `values` on every channel (a NaN
+// value keeps that frame); clamped to the wave, each value to -1..1. False when nothing changed.
+bool waveDraw(Wave& w, int32_t from, const std::vector<float>& values);
 // Writes the wave as a new file in `dir` (named after `name` and its content) and points the slot
 // at it with the wave's points. Returns the path ("" when it could not be written).
 std::string commitWave(Edit& e, int slot, const Wave& w, const std::string& dir, const std::string& name);
+// K-106 cp18 (the Sample editor's Save range...): frames `r` of the wave (empty: all of it) written
+// as a 24-bit WAV file at `path`. False when nothing could be written.
+bool writeWaveFile(const std::string& path, const Wave& w, Span r);
 
 // ---- K-106: the Tracker layout's header tools (its scope box) on a channel's Tracker Sampler ----
 // The classic sample editor's extension (range tools) and instrument editor's extension (MIDI)
@@ -235,10 +241,14 @@ int headerLoadSample(App& a, ObjectId channel, const std::string& path);
 // K-106: the header band's sample list: each present sample's slot and name (the name it was given
 // or loaded as, never an edit's file name), the selected slot, and whether a built-in sound plays
 // while there is none. `tracker` false: not a Tracker Sampler.
+// cp20: `marks` beside `list`, one per row: kMarkLoop / kMarkPingPong (it loops), kMark8Bit (played at
+// 8 bits), kMarkMissing (its file is not there: moved, or still arriving from a collaborator).
+inline constexpr uint8_t kMarkLoop = 1, kMarkPingPong = 2, kMark8Bit = 4, kMarkMissing = 8;
 struct HeaderSamples {
   bool tracker = false;
   int sel = -1, sound = 0;
   std::vector<std::pair<int, std::string>> list;
+  std::vector<uint8_t> marks;
 };
 HeaderSamples headerSamples(App& a, ObjectId channel);
 // cp16 (CPU): the editor's sample selection for the channel, as a key that changes when it does (no
@@ -252,6 +262,13 @@ bool headerCopySample(App& a, ObjectId channel, ObjectId srcChannel, int srcSlot
 bool headerExchangeSamples(App& a, ObjectId channel, int srcSlot);
 // The name of a channel's sample slot ("" when the slot is empty or it is not a Tracker Sampler).
 std::string headerSampleName(App& a, ObjectId channel, int slot);
+
+// K-106 cp18 (K-316 plan 6, the user's Q2): a plain Sampler's state (one audio file of `frames`
+// frames at `rate`) as a Tracker Sampler's: the file as sample 01 on every key (named `name`), its
+// root key and fine tune, start and end, loop points and type, volume and pan, and its amplitude
+// envelope as a volume envelope (sustain at the decay's end). Time stretch, filter, reverse and the
+// rest have no counterpart and are not carried over. Not a Sampler (or no file): a default state.
+PluginState fromSamplerState(const PluginState& sampler, int32_t frames, double rate, const std::string& name);
 
 // K-129: the MIDI pitch of key `key` (0 = C0 .. 95 = B7) of the editor's key strip.
 inline int stripKeyPitch(int key) { return key + 1 + trk::kPitchOffset; }
@@ -328,8 +345,31 @@ uint32_t requestAudition(const InstrumentAux* inst, int slot, int pitch);
 bool auditionSounding(uint32_t serial);
 // Whether a voice plays it (not only asked for).
 bool auditionPlaying(uint32_t serial);
+// K-106 cp18: the same for a part of the sample: frames `from` .. `to` of its played part (to 0 =
+// to its end; the Tracker's Range and View plays).
+uint32_t requestAudition(const InstrumentAux* inst, int slot, int pitch, int32_t from, int32_t to);
 // Drops the request when no note has taken it yet (the note went elsewhere).
 void cancelAudition(uint32_t serial);
+
+// ---- K-106 cp18 (K-316 8.2): the play tap ----
+// Every Tracker Sampler publishes, at the end of each audio block and without a lock, up to
+// kTapVoices of its sounding voices: the slot, the position in the slot's played part (frames from
+// the sample start) and the note (tracker note 1..96, 0 unknown). The editors read the voices of the
+// instrument they show (the same InstrumentAux the engine plays) to draw position lines and light keys.
+inline constexpr int kTapVoices = 8;
+// cp20: and where its envelopes are (the tick on the envelope's own axis, -1 = that envelope is off),
+// held at the sustain point while the key is down and at the last point after it (the editor's
+// play-position line on each envelope).
+struct TapVoice {
+  int slot = -1;
+  int32_t pos = 0;
+  int note = 0;
+  int volTick = -1, panTick = -1;
+};
+// The voices of `inst` sounding as of the last block, at most `max`. UI thread.
+int readPlayTap(const InstrumentAux* inst, TapVoice* out, int max);
+// How many times a generator has published (the test's check that it does).
+long long playTapPublished();
 // The MIDI pitch that plays slot `slot` at its file's own rate.
 int auditionPitch(const Edit& e, int slot, double rate);
 

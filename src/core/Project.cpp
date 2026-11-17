@@ -565,6 +565,7 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.takeGroup != kNoId) jc.object["takeGroup"] = num(c.takeGroup);
   if (c.take != 0) jc.object["take"] = num(c.take);
   if (c.launched) jc.object["launched"] = boolean(true);
+  if (c.launchOnce) jc.object["launchOnce"] = boolean(true);  // K-112c checkpoint 54
   if (c.group != kNoId) jc.object["group"] = num(c.group);  // J-31
   // J-38: fade curves and hand-set fades (automatic crossfades are derived, not saved).
   if (c.fadeInShape != 0) jc.object["fadeInShape"] = num(c.fadeInShape);
@@ -620,6 +621,7 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.takeGroup = jsonInt<ObjectId>(std::max(0.0, jc.num("takeGroup", 0)));
   c.take = jsonInt<int>(std::clamp(jc.num("take", 0), 0.0, 9999.0));
   c.launched = flag(jc, "launched");
+  c.launchOnce = flag(jc, "launchOnce");  // K-112c checkpoint 54
   c.group = jsonInt<ObjectId>(std::max(0.0, jc.num("group", 0)));  // J-31
   // J-38
   // J-43: shapes 0 smooth / 1 straight (J-38 files: 1 linear = straight, 2 and 3 play smooth);
@@ -981,9 +983,21 @@ void songExtrasToJson(const Song& s, Json& j) {
     if (!s.live.view.empty()) jl.object["view"] = Json::makeString(s.live.view);  // N48-07 (only once saved from Clips)
     j.object["live"] = std::move(jl);
   }
-  if (!s.smooth.library.empty()) {  // K-112D: the Smooth layout's Library pane, once set there
+  if (!s.smooth.library.empty() || !s.smooth.controls.empty()) {  // K-112D: the Smooth layout's Library pane, once set there
     Json js = Json::makeObject();
-    js.object["library"] = Json::makeString(s.smooth.library);
+    if (!s.smooth.library.empty()) js.object["library"] = Json::makeString(s.smooth.library);
+    if (!s.smooth.controls.empty()) {  // D5: Smart Controls mapped by hand, [strip, position, owner, index]
+      Json jc = Json::makeArray();
+      for (const SmartControlMap& m : s.smooth.controls) {
+        Json e = Json::makeArray();
+        e.array.push_back(num(m.strip));
+        e.array.push_back(num(m.pos));
+        e.array.push_back(num(m.owner));
+        e.array.push_back(num(m.index));
+        jc.array.push_back(std::move(e));
+      }
+      js.object["controls"] = std::move(jc);
+    }
     j.object["smooth"] = std::move(js);
   }
   // Arrangements: written when there are several, or the single one was renamed.
@@ -1064,6 +1078,21 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
   if (const Json* js = j.find("smooth"); js && js->is(Json::Type::Object)) {  // K-112D
     s.smooth.library = js->text("library", "");
     if (s.smooth.library != "open" && s.smooth.library != "closed") s.smooth.library.clear();
+    s.smooth.controls.clear();
+    if (const Json* jc = js->find("controls"); jc && jc->is(Json::Type::Array)) {  // D5
+      for (const Json& e : jc->array) {
+        if (!e.is(Json::Type::Array) || e.array.size() != 4) continue;
+        bool ok = true;
+        for (const Json& v : e.array) ok = ok && v.is(Json::Type::Number) && v.number >= 0 && v.number <= 4e9;
+        if (!ok || e.array[1].number > 63) continue;
+        SmartControlMap m;
+        m.strip = static_cast<ObjectId>(e.array[0].number);
+        m.pos = static_cast<int>(e.array[1].number);
+        m.owner = static_cast<ObjectId>(e.array[2].number);
+        m.index = static_cast<uint32_t>(e.array[3].number);
+        s.smooth.controls.push_back(m);
+      }
+    }
   }
   if (const Json* jc = j.find("cycle"); jc && jc->is(Json::Type::Object)) {  // K-112b (R02-04)
     s.cycleStart = std::max<Tick>(0, jsonTick(jc->num("start", 0)));

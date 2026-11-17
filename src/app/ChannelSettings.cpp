@@ -40,6 +40,7 @@
 #include "../engine/ClipSource.h"
 #include "Viewports.h"
 #include "SmoothScrollUi.h"
+#include "../../third_party/imgui/imgui_internal.h"
 #include <map>
 
 namespace gl {
@@ -982,7 +983,10 @@ void drawChannelSettings(App& a) {
   // K-79: the performance preset docks the channel settings in its bottom panel (they scroll there).
   // K-199: a Game mode session shows one window: built-in editors dock with the main view there.
   const bool gameDock = layoutui::active() != layout::Preset::Live && zoomable && gamepadui::dockPlugins(a);
-  const bool docks = layoutui::active() == layout::Preset::Live || gameDock;
+  // N53-06 (checkpoint 54): in Clips the window docks only where it is docked; floating (the device's
+  // window button) it sizes to its editor as everywhere, capped to the work area, the rest scrolling.
+  const ImGuiWindow* was = ImGui::FindWindowByName(title.c_str());
+  const bool docks = (layoutui::active() == layout::Preset::Live && was && was->DockIsActive) || gameDock;
   if (gameDock) gamepadui::nextPluginWindowDocked(a);
   const int fitFlags =  // J-158: capped to the work area, the rest scrolls
       docks ? 0 : zoomable ? edzoomui::nextWindowSize("channelsettings") : ui::NextFloatingWindowSize(winW);

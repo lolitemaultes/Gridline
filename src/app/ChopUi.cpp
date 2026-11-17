@@ -585,12 +585,19 @@ void duplicateTime(App& a) {
   const auto tracks = regionTracks(a);
   // N52-03: in Clips a selection with no material on its tracks duplicates nothing: an empty copy would
   // overwrite (delete) what follows the selection.
-  if (livelook::active(a) && chop::clipsInRange(a.doc.song(), lo, hi, tracks).empty()) {
+  bool material = false;  // (N53-02: a clip grid clip reaching past the grid's storage is no arrangement material)
+  for (ObjectId id : chop::clipsInRange(a.doc.song(), lo, hi, tracks))
+    if (const Clip* c = a.doc.song().clip(id); c && livelook::arrangementClip(a, *c)) material = true;
+  if (livelook::active(a) && !material) {
+    // N53-09 (checkpoint 54): the selection moves on over the range a copy would take, as the reference's,
+    // so Cmd+D again keeps building forward (nothing is written).
+    a.playlist.selStart = hi, a.playlist.selEnd = hi + (hi - lo);
     a.notify(i18n::tr("Nothing to duplicate in the time selection"));
     return;
   }
   std::vector<ObjectId> out;
-  a.doc.editSong("duplicate time selection", [&](Song& s) { out = chop::duplicateRange(s, lo, hi, tracks); });
+  // N53-02: in Clips the clip grid's clips stay out of the arrangement's range edits.
+  a.doc.editSong("duplicate time selection", [&](Song& s) { livelook::withoutGridClips(a, s, [&](Song& x) { out = chop::duplicateRange(x, lo, hi, tracks); }); });
   if (out.empty()) return;
   a.playlist.selected = std::set<ObjectId>(out.begin(), out.end());
   a.playlist.selStart = hi, a.playlist.selEnd = hi + (hi - lo);  // the next duplicate follows on
@@ -602,9 +609,11 @@ void duplicateTimeInsert(App& a) {
   if (!hasTimeSel(a)) return;
   const Tick lo = a.playlist.selStart, hi = a.playlist.selEnd;
   std::vector<ObjectId> out;
-  a.doc.editSong("duplicate time", [&](Song& s) {
-    chop::insertSpace(s, hi, hi - lo, {});
-    out = chop::duplicateRange(s, lo, hi, {});
+  a.doc.editSong("duplicate time", [&](Song& song) {
+    livelook::withoutGridClips(a, song, [&](Song& s) {  // N53-02: the clip grid's clips stay as they are
+      chop::insertSpace(s, hi, hi - lo, {});
+      out = chop::duplicateRange(s, lo, hi, {});
+    });
   });
   a.playlist.selected = std::set<ObjectId>(out.begin(), out.end());
   a.playlist.selStart = hi, a.playlist.selEnd = hi + (hi - lo);  // the next one follows on
@@ -615,7 +624,7 @@ void splitAtSelection(App& a) {
   const Tick lo = a.playlist.selStart, hi = a.playlist.selEnd;
   const auto tracks = regionTracks(a);
   if (chop::clipsInRange(a.doc.song(), lo, hi, tracks).empty()) return;
-  a.doc.editSong("split clips", [&](Song& s) { chop::isolateRange(s, lo, hi, tracks); });
+  a.doc.editSong("split clips", [&](Song& s) { livelook::withoutGridClips(a, s, [&](Song& x) { chop::isolateRange(x, lo, hi, tracks); }); });
 }
 
 void insertSpace(App& a) {
@@ -623,7 +632,7 @@ void insertSpace(App& a) {
   const Tick lo = a.playlist.selStart, len = a.playlist.selEnd - a.playlist.selStart;
   // Checkpoint 52 (S12): Clips' Insert Silence / Delete Time act on every track, as the reference's.
   const auto tracks = livelook::active(a) ? std::set<int>{} : regionTracks(a);
-  a.doc.editSong("insert space", [&](Song& s) { chop::insertSpace(s, lo, len, tracks); });
+  a.doc.editSong("insert space", [&](Song& s) { livelook::withoutGridClips(a, s, [&](Song& x) { chop::insertSpace(x, lo, len, tracks); }); });
 }
 
 void deleteSpace(App& a) {
@@ -631,7 +640,7 @@ void deleteSpace(App& a) {
   const Tick lo = a.playlist.selStart, hi = a.playlist.selEnd;
   // Checkpoint 52 (S12): Clips' Insert Silence / Delete Time act on every track, as the reference's.
   const auto tracks = livelook::active(a) ? std::set<int>{} : regionTracks(a);
-  a.doc.editSong("delete space", [&](Song& s) { chop::deleteSpace(s, lo, hi, tracks); });
+  a.doc.editSong("delete space", [&](Song& s) { livelook::withoutGridClips(a, s, [&](Song& x) { chop::deleteSpace(x, lo, hi, tracks); }); });
   a.playlist.selected.clear();
 }
 

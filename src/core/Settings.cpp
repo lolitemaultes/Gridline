@@ -120,6 +120,7 @@ Settings::Settings() {
       {"piano.recentChords", Json::makeString("")},    // the chord stamp's recent chords (chord indices, most recent first)
       {"piano.laneHeight", Json::makeNumber(0)},       // K-171: the lower lane's height in px (0 = automatic)
       {"piano.smoothLane", b(false)},                  // K-112D (audit G9): Smooth's velocity lane shown (hidden until asked for)
+      {"piano.smoothNoteColour", Json::makeString("velocity")},  // K-112D D4: Smooth's notes by "velocity" or "region" colour
       {"piano.autoDrawCurve", Json::makeNumber(1)},    // K-171/K-202: curve the lane and the clip editor draw: 0 stepped, 1 linear (default), 2 smooth
       {"transport.jumpQuantize", Json::makeNumber(0)}, // ops::jumpGrid mode (0 = jump at once)
       {"transport.rememberSeek", b(true)},             // J-49: Stop returns to the last set song position
@@ -141,6 +142,10 @@ Settings::Settings() {
       {"tracker.trackBase", Json::makeNumber(1)},  // K-106, R6-04: track numbers count from 1 (2.08, refs 149 and 165; one number per track and instrument) or 0
       {"tracker.trackWidth", Json::makeNumber(0)},     // K-106 cp16: characters every track is widened by (a header edge dragged)
       {"tracker.visibleTracks", Json::makeNumber(0)},  // K-106: tracks in view at most (0: as many as fit; 4, 6, 8, 12, 16)
+      {"tracker.patternZoom", Json::makeNumber(0)},    // K-106 cp17: the pattern's sideways zoom (0 as set .. 6 the narrowest tracks)
+      {"tracker.patternFit", b(false)},                // K-106 cp17: the zoom follows "every track in view"
+      {"tracker.songLaneWidth", Json::makeNumber(0)},  // K-106 cp17: the Song page's lane width in px (0: the lanes share the width)
+      {"tracker.timelineZoom", Json::makeNumber(1)},   // K-106 cp17: the Song timeline's zoom (1: the whole song in view)
       {"tracker.volumeMacros", Json::makeString("")},  // K-106: the ten volume macros ("20,,40,...")
       {"tracker.effectMacros", Json::makeString("")},  // K-106: the ten effect macros ("P01,,...")
       {"tracker.multiRecord", b(false)},   // K-106: each recorded note goes to the next enabled track
@@ -267,6 +272,10 @@ Settings::Settings() {
       // newest first, at most 40); any other set opens in Clips on the clip grid. Per person, never in a project.
       {"clips.arrangementSets", Json::makeString("")},
       {"clips.returnTracks", b(true)},  // C47: View > Return tracks: the returns shown beside Main (Clips)
+      // Checkpoint 55 (gap 5): Clips' Arrangement row heights the person dragged, per set and track
+      // ("<set>\t<track key>\t<scale per mille>" a line, at most 400 lines). Per person, never in a project.
+      {"clips.rowHeights", Json::makeString("")},
+      {"clips.showIO", b(false)},  // checkpoint 55 (gap 2): View > In/Out, the I/O section on strips and headers (Clips)
       {"ui.menuStyle", Json::makeString("studio")},
       {"keys.profile", Json::makeString("studio")},
       {"keys.bindings.live", Json::makeString("")},  // shortcut overrides of the other shortcut sets

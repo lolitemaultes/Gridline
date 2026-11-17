@@ -106,6 +106,10 @@ class NoteRecorder {
   const RecordOptions& options() const { return opt_; }
   // Runs `fn`'s edits as part of this recording's undo step (a linked control moved meanwhile).
   void edit(Document& doc, const std::function<void()>& fn);
+  // K-112B (R11-03): recorders taking several tracks at once share one undo step: the history
+  // step this one's edits went into (0: none yet), and the step to go on with (another's).
+  uint64_t step() const { return step_; }
+  void joinStep(uint64_t serial) { step_ = serial; }
 
  private:
   struct Held {

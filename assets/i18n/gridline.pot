@@ -217,7 +217,7 @@ msgstr ""
 msgid "None (system input device)"
 msgstr ""
 
-#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChannelSettings.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/HostedUi.cpp src/app/J31Ui.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/McpUi.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/OscUi.cpp src/app/Playlist.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/app/StagePanel.cpp src/app/TrackerPages.cpp src/app/Widgets.cpp src/packs/chater/chater_pages_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_menus_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
+#: src/app/AsioUi.cpp src/app/ChannelEnvelopeUi.cpp src/app/ChannelSettings.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/HostedUi.cpp src/app/J31Ui.cpp src/app/LayoutParts.cpp src/app/LiveIo.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/McpUi.cpp src/app/MidiUi.cpp src/app/MixerView.cpp src/app/OscUi.cpp src/app/Playlist.cpp src/app/PluginEditorsEqRef.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginFoldersUi.cpp src/app/StagePanel.cpp src/app/TrackerPages.cpp src/app/Widgets.cpp src/packs/chater/chater_pages_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_menus_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp src/packs/spectral/turntable_ui.cpp
 msgid "Off"
 msgstr ""
 
@@ -309,7 +309,7 @@ msgstr ""
 msgid "(none)"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
 msgid "16-bit"
 msgstr ""
 
@@ -405,11 +405,11 @@ msgstr ""
 msgid "Consolidate selected clips to audio"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/McpUi.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/TrackerFrame.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/McpUi.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Copy"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/TrackerFrame.cpp src/core/Keymap.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/core/Keymap.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Cut"
 msgstr ""
 
@@ -417,7 +417,7 @@ msgstr ""
 msgid "Deactivate"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/Browser.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/StageRoomsUi.cpp src/app/TrackerFrame.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/Browser.cpp src/app/ChordEditorUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/StageRoomsUi.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Delete"
 msgstr ""
 
@@ -541,7 +541,7 @@ msgstr ""
 msgid "No mixer track is armed for audio"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/J31Ui.cpp src/app/MidiUi.cpp src/app/TrackIcons.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp src/packs/samplers/sfz_ui.h
+#: src/app/AudioRecordUi.cpp src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/J31Ui.cpp src/app/LogicPlugins.cpp src/app/MidiUi.cpp src/app/TrackIcons.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_form_ui.cpp src/packs/plasma/plasma_ui.cpp src/packs/samplers/sfz_ui.h
 msgid "None"
 msgstr ""
 
@@ -569,7 +569,7 @@ msgstr ""
 msgid "PITCH & TIME"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/Playlist.cpp src/app/TrackerFrame.cpp src/app/UrlImportUi.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/Playlist.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/app/UrlImportUi.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp
 msgid "Paste"
 msgstr ""
 
@@ -621,7 +621,7 @@ msgstr ""
 msgid "Render clip to audio (consolidate)"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/app/TrackerFrame.cpp src/packs/chater/chater_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/plasma/plasma_mod_ui.cpp src/packs/plasma/plasma_wted_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/ChopUi.cpp src/app/ContextMenus.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/chater/chater_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/plasma/plasma_mod_ui.cpp src/packs/plasma/plasma_wted_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Reverse"
 msgstr ""
 
@@ -709,7 +709,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FileDialogUi.cpp src/app/FlpExportUi.cpp src/app/LayerEditor.cpp src/app/LogicNewTracks.cpp src/app/McpUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp src/app/StagePanel.cpp src/app/StageRoomsUi.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/TrackReceiptUi.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FileDialogUi.cpp src/app/FlpExportUi.cpp src/app/LayerEditor.cpp src/app/LogicNewTracks.cpp src/app/McpUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp src/app/StagePanel.cpp src/app/StageRoomsUi.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/TrackReceiptUi.cpp src/app/TrackerEditors.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -993,7 +993,7 @@ msgstr ""
 msgid "Select a pattern first"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/Playlist.cpp src/app/StageView.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/Playlist.cpp src/app/StageView.cpp src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Select all"
 msgstr ""
 
@@ -1569,7 +1569,7 @@ msgstr ""
 msgid "KIT"
 msgstr ""
 
-#: src/app/Browser.cpp src/app/PluginManager.cpp src/core/TrackIconSet.cpp
+#: src/app/Browser.cpp src/app/PluginManager.cpp src/app/TrackerEditors.cpp src/core/TrackIconSet.cpp
 msgid "Keys"
 msgstr ""
 
@@ -1773,7 +1773,7 @@ msgstr ""
 msgid "Plugins that are not part of Gridline are hidden in a collaborative project."
 msgstr ""
 
-#: src/app/Browser.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/MidiUi.cpp src/app/PluginManager.cpp src/app/StageView.cpp src/packs/chater/chater_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp
+#: src/app/Browser.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/MidiUi.cpp src/app/PluginManager.cpp src/app/StageView.cpp src/app/TrackerEditors.cpp src/packs/chater/chater_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Presets"
 msgstr ""
 
@@ -2062,10 +2062,14 @@ msgid "%d slices on a new slicer channel, playing in time with the song"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
+msgid "A bus track takes effects, not instruments: drop the instrument on a software instrument track"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
 msgid "A group track plays its tracks: drop the instrument on one of them"
 msgstr ""
 
-#: src/app/BrowserDrop.cpp src/app/PluginManager.cpp src/app/SettingsKeysTheme.cpp src/app/StagePanel.cpp src/app/TrackerFrame.cpp src/core/MenuStyle.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/plasma/plasma_synth_ui.cpp
+#: src/app/BrowserDrop.cpp src/app/PluginManager.cpp src/app/SettingsKeysTheme.cpp src/app/StagePanel.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/core/MenuStyle.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/plasma/plasma_synth_ui.cpp
 msgid "Add"
 msgstr ""
 
@@ -2242,7 +2246,19 @@ msgid "This recording is still being written: drop it again in a moment"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
+msgid "This track has no channel strip: drop the effect on an instrument, audio or bus track"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
 msgid "This track holds audio or automation clips: drop the instrument on another track"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "This track holds audio or automation regions: drop the instrument on another track"
+msgstr ""
+
+#: src/app/BrowserDrop.cpp
+msgid "This track holds automation only: drop the instrument on a software instrument track"
 msgstr ""
 
 #: src/app/BrowserDrop.cpp
@@ -2461,7 +2477,7 @@ msgstr ""
 msgid "Period"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp src/packs/chater/chater_pages_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginManager.cpp src/app/TrackerEditors.cpp src/packs/chater/chater_pages_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_seq_ui.cpp
 msgid "Pitch"
 msgstr ""
 
@@ -2501,7 +2517,7 @@ msgstr ""
 msgid "Smooth timing: per-sample envelopes and LFOs. Switch FL timing on to step them once per song tick."
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/TrackerEditors.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Sustain"
 msgstr ""
 
@@ -2841,7 +2857,7 @@ msgstr ""
 msgid "How the children share the notes"
 msgstr ""
 
-#: src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/LogicNewTracks.cpp src/app/PianoRoll.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/app/TrackerPages.cpp src/packs/modulation/modulation_patcher_ui.cpp
+#: src/app/ChannelSettings.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/LogicNewTracks.cpp src/app/PianoRoll.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/app/TrackerEditors.cpp src/app/TrackerPages.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Instrument"
 msgstr ""
 
@@ -2857,7 +2873,7 @@ msgstr ""
 msgid "Layer: this channel's notes also play on the checked channels"
 msgstr ""
 
-#: src/app/ChannelSettings.cpp src/app/StagePanel.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/ChannelSettings.cpp src/app/StagePanel.cpp src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Level"
 msgstr ""
 
@@ -2941,7 +2957,7 @@ msgstr ""
 msgid "missing"
 msgstr ""
 
-#: src/app/ChannelSettings.cpp
+#: src/app/ChannelSettings.cpp src/app/TrackerEditors.cpp
 msgid "plays"
 msgstr ""
 
@@ -3413,7 +3429,7 @@ msgstr ""
 msgid "Extra notes"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/packs/plasma/plasma_patch_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/TrackerPages.cpp src/app/TrackerView.cpp src/packs/plasma/plasma_patch_ui.cpp
 msgid "Fit"
 msgstr ""
 
@@ -4529,7 +4545,7 @@ msgstr ""
 msgid "Left the project"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/LoopStarterUi.cpp src/app/Menus.cpp src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/TrackerFrame.cpp src/packs/creative/creative_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/ExportUi.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/LoopStarterUi.cpp src/app/Menus.cpp src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/PluginEditorsK3Gb.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/creative/creative_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Length"
 msgstr ""
 
@@ -4581,7 +4597,7 @@ msgstr ""
 msgid "Moved or renamed it? Choose the folder where it is now"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/StagePanel.cpp src/app/StageView.cpp src/app/TopBar.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/StagePanel.cpp src/app/StageView.cpp src/app/TopBar.cpp src/app/TrackerEditors.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Mute"
 msgstr ""
 
@@ -4693,7 +4709,7 @@ msgstr ""
 msgid "Only you, the admin, can do this."
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/LayerEditor.cpp src/app/ProjectLoadUi.cpp
+#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/LayerEditor.cpp src/app/LogicPlugins.cpp src/app/ProjectLoadUi.cpp
 msgid "Open"
 msgstr ""
 
@@ -5757,7 +5773,7 @@ msgstr ""
 msgid "Try fewer letters, or another category (Tab)"
 msgstr ""
 
-#: src/app/CommandPaletteUi.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/core/MenuStyle.cpp src/packs/modulation/modulation_patcher_ui.cpp
+#: src/app/CommandPaletteUi.cpp src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/MixerView.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/TrackerEditors.cpp src/core/MenuStyle.cpp src/packs/modulation/modulation_patcher_ui.cpp
 msgid "View"
 msgstr ""
 
@@ -5771,6 +5787,14 @@ msgstr ""
 
 #: src/app/CommandPaletteUi.cpp
 msgid "Works with the pointer over a step"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "1 clip copied"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "1 region copied"
 msgstr ""
 
 #: src/app/ContextMenus.cpp
@@ -5935,6 +5959,14 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp
 msgid "By name"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "By region colour"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "By velocity"
 msgstr ""
 
 #: src/app/ContextMenus.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_ui.cpp
@@ -6698,6 +6730,10 @@ msgid "Note LFO..."
 msgstr ""
 
 #: src/app/ContextMenus.cpp
+msgid "Note colours"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
 msgid "Note names on every key"
 msgstr ""
 
@@ -6821,7 +6857,7 @@ msgstr ""
 msgid "Place loop"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/DisplayConfirmUi.cpp src/app/LoopStarterUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/SoundThemeUi.cpp
+#: src/app/ContextMenus.cpp src/app/DisplayConfirmUi.cpp src/app/LoopStarterUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/SoundThemeUi.cpp src/app/TrackerEditors.cpp
 msgid "Play"
 msgstr ""
 
@@ -7489,7 +7525,7 @@ msgstr ""
 msgid "Zip selected"
 msgstr ""
 
-#: src/app/ContextMenus.cpp src/app/MenuStyles.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/TopBar.cpp
+#: src/app/ContextMenus.cpp src/app/MenuStyles.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/TopBar.cpp src/app/TrackerView.cpp
 msgid "Zoom"
 msgstr ""
 
@@ -7511,6 +7547,14 @@ msgstr ""
 
 #: src/app/ContextMenus.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/TrackerPages.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/seltmann/seltmann_wave_ui.cpp
 msgid "bars"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "clips copied"
+msgstr ""
+
+#: src/app/ContextMenus.cpp
+msgid "regions copied"
 msgstr ""
 
 #: src/app/CrashUi.cpp
@@ -7761,7 +7805,7 @@ msgstr ""
 msgid "Audio"
 msgstr ""
 
-#: src/app/Dialogs.cpp src/packs/seltmann/seltmann_ui.cpp
+#: src/app/Dialogs.cpp src/app/LiveIo.cpp src/packs/seltmann/seltmann_ui.cpp
 msgid "Auto"
 msgstr ""
 
@@ -8737,7 +8781,7 @@ msgstr ""
 msgid "The plugin window size set in Settings > Interface"
 msgstr ""
 
-#: src/app/EnvEditor.h src/app/PluginEditorsInstrPads.cpp src/packs/modulation/modulation_envart_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/EnvEditor.h src/app/PluginEditorsInstrPads.cpp src/app/TrackerEditors.cpp src/packs/modulation/modulation_envart_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Delete point"
 msgstr ""
 
@@ -9129,7 +9173,7 @@ msgstr ""
 msgid "Split tracks"
 msgstr ""
 
-#: src/app/ExportUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/Playlist.cpp src/app/SettingsPages.cpp src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/ExportUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/Playlist.cpp src/app/SettingsPages.cpp src/app/TrackerEditors.cpp src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Start"
 msgstr ""
 
@@ -9665,7 +9709,7 @@ msgstr ""
 msgid "Button"
 msgstr ""
 
-#: src/app/GamepadUi.cpp src/app/LayoutParts.cpp src/app/TopBar.cpp src/app/TrackerFrame.cpp src/collab/Session.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/GamepadUi.cpp src/app/LayoutParts.cpp src/app/TopBar.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/collab/Session.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Channel"
 msgstr ""
 
@@ -11181,6 +11225,10 @@ msgstr ""
 msgid "A send: click to show it in the mixer; the knob sets its level"
 msgstr ""
 
+#: src/app/LayoutParts.cpp
+msgid "A send: click to show its bus in the strip beside; the knob sets its level"
+msgstr ""
+
 #: src/app/LayoutParts.cpp src/core/Keymap.cpp
 msgid "Add a marker at the song position"
 msgstr ""
@@ -11293,7 +11341,7 @@ msgstr ""
 msgid "Every mixer track"
 msgstr ""
 
-#: src/app/LayoutParts.cpp src/app/Playlist.cpp src/app/TrackerFrame.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/LayoutParts.cpp src/app/Playlist.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Fade in"
 msgstr ""
 
@@ -11301,7 +11349,7 @@ msgstr ""
 msgid "Fade in type"
 msgstr ""
 
-#: src/app/LayoutParts.cpp src/app/Playlist.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/LayoutParts.cpp src/app/Playlist.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/spacefx/spacefx_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Fade out"
 msgstr ""
 
@@ -11361,7 +11409,7 @@ msgstr ""
 msgid "Locked"
 msgstr ""
 
-#: src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/Playlist.cpp src/app/TrackerFrame.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/Playlist.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Loop"
 msgstr ""
 
@@ -11369,7 +11417,7 @@ msgstr ""
 msgid "Marker"
 msgstr ""
 
-#: src/app/LayoutParts.cpp src/app/LogicPlugins.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp src/collab/Session.cpp src/core/TrackIconSet.cpp
+#: src/app/LayoutParts.cpp src/app/LogicPlugins.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp src/collab/Session.cpp src/core/TrackIconSet.cpp
 msgid "Master"
 msgstr ""
 
@@ -11437,7 +11485,7 @@ msgstr ""
 msgid "Nothing selected"
 msgstr ""
 
-#: src/app/LayoutParts.cpp src/core/TrackIconSet.cpp src/packs/dynamics/dist_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/LayoutParts.cpp src/app/LogicPlugins.cpp src/app/TrackerEditors.cpp src/core/TrackIconSet.cpp src/packs/dynamics/dist_ui.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Output"
 msgstr ""
 
@@ -11869,6 +11917,66 @@ msgstr ""
 msgid "When the clip ends"
 msgstr ""
 
+#: src/app/LiveIo.cpp
+msgid "All Ins"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Audio From: the device input this track records and monitors (click to choose)"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Audio To: the track plays into Main (it has no mixer track of its own yet)"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Audio To: where the track's sound goes: Main, a group or a return (click to choose)"
+msgstr ""
+
+#: src/app/LiveIo.cpp src/app/PluginManager.cpp
+msgid "In"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "MIDI From: this track plays the notes of every MIDI input while it is armed or selected"
+msgstr ""
+
+#: src/app/LiveIo.cpp src/app/LiveLook.cpp
+msgid "Main"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Monitor Auto: the input is heard while the track is armed"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Monitor In: the input is always heard through the track"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Monitor Off: the input is never heard (it still records)"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Monitor: Auto"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "No input"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "No input device open (Settings, Audio)"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "No output"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "That would play the track into itself"
+msgstr ""
+
 #: src/app/LiveLook.cpp
 msgid "A group track holds no clips: put them on one of its tracks"
 msgstr ""
@@ -11985,11 +12093,11 @@ msgstr ""
 msgid "Drop effects here"
 msgstr ""
 
-#: src/app/LiveLook.cpp
+#: src/app/LiveLook.cpp src/app/Playlist.cpp
 msgid "Drop files and instruments here"
 msgstr ""
 
-#: src/app/LiveLook.cpp src/app/Playlist.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/LiveLook.cpp src/app/Playlist.cpp src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
 msgid "End"
 msgstr ""
 
@@ -12039,10 +12147,6 @@ msgstr ""
 
 #: src/app/LiveLook.cpp
 msgid "MIDI clips go on MIDI tracks"
-msgstr ""
-
-#: src/app/LiveLook.cpp
-msgid "Main"
 msgstr ""
 
 #: src/app/LiveLook.cpp
@@ -12362,6 +12466,10 @@ msgid "Records from the audio input; added after the tracks in use"
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
+msgid "A bus track holds its automation only, no regions: select another track to paste onto"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
 msgid "Add an EQ"
 msgstr ""
 
@@ -12385,6 +12493,10 @@ msgstr ""
 msgid "Compare"
 msgstr ""
 
+#: src/app/LogicPlugins.cpp src/app/MidiUi.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp
+msgid "Controller"
+msgstr ""
+
 #: src/app/LogicPlugins.cpp src/app/SettingsKeysTheme.cpp
 msgid "Controls"
 msgstr ""
@@ -12402,11 +12514,27 @@ msgid "Editor"
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
+msgid "External Assignment"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
 msgid "Follow the selected track"
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
 msgid "Insert %d of %s is empty"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid "Instrument tracks take MIDI regions only"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp src/packs/platter/platter_ui.cpp
+msgid "Learn"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid "Learning"
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
@@ -12433,8 +12561,16 @@ msgstr ""
 msgid "Lit when this track's plugins differ from the project as saved: click to hear them as saved"
 msgstr ""
 
+#: src/app/LogicPlugins.cpp src/packs/platter/platter_ui.cpp
+msgid "Mapping"
+msgstr ""
+
 #: src/app/LogicPlugins.cpp
 msgid "No EQ on this track"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid "No control in focus"
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
@@ -12454,7 +12590,19 @@ msgid "Open this plugin's window"
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
+msgid "Parameter"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid "Parameter Mapping"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
 msgid "Paste the copied settings (the same plugin only)"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp src/core/TrackIconSet.cpp
+msgid "Plugin"
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
@@ -12463,6 +12611,10 @@ msgstr ""
 
 #: src/app/LogicPlugins.cpp
 msgid "Put an instrument or an effect on this track: its main controls show here"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp src/app/MidiUi.cpp src/app/TrackerFrame.cpp src/app/UrlImportUi.cpp
+msgid "Range"
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
@@ -12486,11 +12638,19 @@ msgid "Single: one plugin window, showing each plugin you open. Off: each plugin
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
+msgid "Smart control mapped: "
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
 msgid "The EQ is open in its window"
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
-msgid "The master track's controls"
+msgid "The controls of the track's output: "
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid "The regions would go below the last track"
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
@@ -12507,6 +12667,26 @@ msgstr ""
 
 #: src/app/LogicPlugins.cpp
 msgid "The window shows the plugin's editor or a plain list of its controls; its size"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid "This track has no output bus"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid "Value"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp src/packs/seltmann/seltmann_ui.cpp
+msgid "by hand"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid "move a control on your device"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid "move a parameter of this track"
 msgstr ""
 
 #: src/app/LoopStarterUi.cpp
@@ -13066,6 +13246,10 @@ msgid "Declicking of the selected channels"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
+msgid "Declicking of the selected clips"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
 msgid "Delete all notes"
 msgstr ""
 
@@ -13189,6 +13373,10 @@ msgstr ""
 msgid "Replace the channel's notes"
 msgstr ""
 
+#: src/app/MenuParityUi.cpp
+msgid "Replace the clip's notes"
+msgstr ""
+
 #: src/app/MenuParityUi.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Resample"
 msgstr ""
@@ -13239,6 +13427,10 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "Score logger"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Select a MIDI clip first"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -13299,6 +13491,10 @@ msgstr ""
 
 #: src/app/MenuParityUi.cpp
 msgid "The copy follows the same MIDI controls and internal controllers as this channel"
+msgstr ""
+
+#: src/app/MenuParityUi.cpp
+msgid "Time mode of audio clips"
 msgstr ""
 
 #: src/app/MenuParityUi.cpp
@@ -13503,6 +13699,14 @@ msgstr ""
 
 #: src/app/MenuStyles.cpp
 msgid "Import audio file..."
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "In/Out"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Info View"
 msgstr ""
 
 #: src/app/MenuStyles.cpp
@@ -13898,6 +14102,10 @@ msgid "Empty project"
 msgstr ""
 
 #: src/app/Menus.cpp
+msgid "Every instrument plays in a clip"
+msgstr ""
+
+#: src/app/Menus.cpp
 msgid "Export MIDI clip..."
 msgstr ""
 
@@ -14057,7 +14265,7 @@ msgstr ""
 msgid "Piano roll tools"
 msgstr ""
 
-#: src/app/Menus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp
+#: src/app/Menus.cpp src/app/PianoRoll.cpp src/app/Playlist.cpp src/app/TrackerEditors.cpp
 msgid "Playback"
 msgstr ""
 
@@ -14151,6 +14359,10 @@ msgstr ""
 
 #: src/app/Menus.cpp src/core/Keymap.cpp
 msgid "Save new version"
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "Select unused instruments"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -14433,10 +14645,6 @@ msgstr ""
 msgid "Control surfaces"
 msgstr ""
 
-#: src/app/MidiUi.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp
-msgid "Controller"
-msgstr ""
-
 #: src/app/MidiUi.cpp
 msgid "Controller moves go to"
 msgstr ""
@@ -14679,10 +14887,6 @@ msgstr ""
 
 #: src/app/MidiUi.cpp
 msgid "Quantize note starts to the snap"
-msgstr ""
-
-#: src/app/MidiUi.cpp src/app/TrackerFrame.cpp src/app/UrlImportUi.cpp
-msgid "Range"
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -16158,6 +16362,10 @@ msgid "Click: give the track an instrument, or a new pattern for its instrument 
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Click: monitor the track's input (hear what is played through it)"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Click: solo the track (mute every other track) or end the solo"
 msgstr ""
 
@@ -16438,6 +16646,10 @@ msgid "On: the clip repeats its audio to its end"
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "On: the clip repeats while it plays; off: it plays once (a one-shot)"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Overlap"
 msgstr ""
 
@@ -16521,7 +16733,7 @@ msgstr ""
 msgid "Resizing audio clips trims them"
 msgstr ""
 
-#: src/app/Playlist.cpp src/app/SamplerRenderUi.cpp src/core/TrackIconSet.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/Playlist.cpp src/app/SamplerRenderUi.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/core/TrackIconSet.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Sample"
 msgstr ""
 
@@ -16610,10 +16822,6 @@ msgid "The clip loops: dragging adds or removes repeats (back to its own length,
 msgstr ""
 
 #: src/app/Playlist.cpp
-msgid "The clip's audio as the arrangement plays it. Double-click: edit it in Loupe"
-msgstr ""
-
-#: src/app/Playlist.cpp
 msgid "The clip's fine pitch in cents (drag; Ctrl+click to type)"
 msgstr ""
 
@@ -16631,6 +16839,10 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "The clip's pitch in semitones, added to its channel's (drag)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "The clip's sample: the clip plays from S to E (the brace). Double-click: edit it in Loupe"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -16667,6 +16879,10 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "Type in value"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "Under this region:"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -16777,7 +16993,7 @@ msgstr ""
 msgid "marker loop"
 msgstr ""
 
-#: src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/packs/seltmann/seltmann_rec_ui.cpp
+#: src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/TrackerEditors.cpp src/packs/seltmann/seltmann_rec_ui.cpp
 msgid "mono"
 msgstr ""
 
@@ -16801,7 +17017,7 @@ msgstr ""
 msgid "skip"
 msgstr ""
 
-#: src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/packs/seltmann/seltmann_rec_ui.cpp src/packs/spacefx/spacefx_ui.cpp
+#: src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/TrackerEditors.cpp src/packs/seltmann/seltmann_rec_ui.cpp src/packs/spacefx/spacefx_ui.cpp
 msgid "stereo"
 msgstr ""
 
@@ -18159,10 +18375,6 @@ msgstr ""
 
 #: src/app/PluginManager.cpp
 msgid "Gridline's own plugins as VST3 / CLAP / AU builds for other applications. Gridline uses the built-in versions, so the browser does not list these."
-msgstr ""
-
-#: src/app/PluginManager.cpp
-msgid "In"
 msgstr ""
 
 #: src/app/PluginManager.cpp
@@ -19762,7 +19974,15 @@ msgid "portable: beside the program"
 msgstr ""
 
 #: src/app/SmoothLibrary.cpp
+msgid " is a bus: select an instrument track for a patch, or pick an effect for the bus"
+msgstr ""
+
+#: src/app/SmoothLibrary.cpp
 msgid "%d items"
+msgstr ""
+
+#: src/app/SmoothLibrary.cpp
+msgid "Back to the kinds of sound"
 msgstr ""
 
 #: src/app/SmoothLibrary.cpp
@@ -21233,7 +21453,7 @@ msgstr ""
 msgid "The tracks area's tool menu"
 msgstr ""
 
-#: src/app/TopBar.cpp
+#: src/app/TopBar.cpp src/app/TrackerEditors.cpp
 msgid "Tick"
 msgstr ""
 
@@ -21665,6 +21885,630 @@ msgstr ""
 msgid "used"
 msgstr ""
 
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "8-bit"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "A Sampler: Sample (the header) opens its audio; Convert makes it a Tracker Sampler with the Sample and Instrument editors"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "A collaborator's file is on its way; the edits wait for it"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "A point after the selected one, halfway to the next (Insert)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Alt+click: hear"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Alt+click: hear  ·  right-click: more"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Back to the pattern (Esc)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Back to the selected sample's values (Extra again)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "Bend"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Both ends to the gain that brings the loudest point to full scale"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Built-in sound: "
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Cents (-200 to +200); Shift: by 10"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Clear range"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Click here or Load... to pick a file for this slot; or drop an audio file here (the browser, the desktop)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Click removal"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Click to add the first points"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Click: pick an audio file for this slot (Load...)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Click: this panning envelope; right-click: keep the current one here"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Click: this volume envelope with its fadeout and vibrato; right-click: keep the current ones here"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/flex/flex_ui.cpp
+msgid "Convert"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Convert to Tracker Sampler..."
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Convert: the Sampler's file could not be read"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Converted to a Tracker Sampler (Ctrl+Z: back)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "Crop"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Cut after loop"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Echo..."
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Enter"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Esc"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Every key of the piano plays the selected sample"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Every key plays sample %s"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Every key: this one"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp
+msgid "Exit"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Extra"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/models/additive_ui.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Fine"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "Fix DC"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Frame"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Give preset %d its starting shape again"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Hear the sample"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Instrument editor"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Instrument extra"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Keep this envelope in preset %d"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Keys of sample %s go to the nearest other sample"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Keys: the instrument editor"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Keys: the pattern"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Keys: the sample editor"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Lengthen the sample to hold the repeats"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Load a sample"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Load into this slot: "
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Loop end"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Loop fade..."
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Loop length"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Loop start"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Loudest without clipping"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Mix in..."
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "Mute its own sound"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "No room for another point there (12 at most, a tick apart)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "No sample yet"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Normalise"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Not a Tracker Sampler"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Notes in the song"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Notes outside the range do not play (Shift: an octave)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Only a Sampler with one audio file converts (synths and hosted plugins have no faithful mapping)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "Open plugin window"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Panning envelope"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Plays the selected sample at its root key"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tideline/tideline_ui.cpp
+msgid "Point"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Program"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Range %d to %d   %d frames   %.1f ms"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Receiving the sample..."
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/edison/edison_form_ui.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Resample..."
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Root key"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Sample %s leaves the instrument; its keys go to the nearest sample left."
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/core/Keymap.cpp
+msgid "Sample editor"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Sample values"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Save range..."
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Save the range as"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Saved: "
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Semitones (-24 to +24)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "Semitones the pitch wheel bends its notes (0 to 36)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "Send notes to the MIDI output"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Short volume ramps where notes start and stop, so they do not click"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "Silence"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Sustain point"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "The MIDI channel its notes go out on (1 to 16)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The Sampler's file and settings into a Tracker Sampler (asks first; one undo step)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The channel is silent"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The channel's controls; the instrument's own controls are in its plugin window"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The envelope holds at its sustain point while the key is down"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The envelope repeats between its loop start and end"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "The envelope slots could not be saved"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The file could not be written"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The file has no audio to load"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The instrument's extra settings: MIDI out and playback (interpolation, pitch table, ticks, level)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The instrument's output level (0 to 200 %; Shift: steps of 1 %)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The instrument's own editor in its own window (never restyled)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The instrument's previous / next sample (Alt+Up / Alt+Down)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The key that plays the sample at its own rate (Shift: an octave)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "The loop needs sound before its start to fade into"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The loop's first point (up to its end)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The loop's last point (from its start)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The loop's length (its start stays); Shift: by 100"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The loop's start (its end stays); Shift: by 100"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The mixer track the channel plays into"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The note the play buttons play (the typing keyboard's notes set it too)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/tracker/tracker_ui.cpp
+msgid "The notes this instrument plays also go to the MIDI output, on its channel and program"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "The panning envelope moves the sound while the note plays"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "The program change sent before its notes (1 to 128)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "The sample file is missing"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "The sample plays at full resolution"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "The sample plays rounded to 256 steps, as an 8-bit sample"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The selected point goes (never the first, never below two) (Del)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The sustain point"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "The volume envelope shapes every note; off: notes stop when let go"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Ticks per row for notes without tracker cells (drawn or played notes; 1 to 31)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Ticks/row"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "Vibrato shape"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Volume envelope"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "Volume..."
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "While its notes go to MIDI, the instrument's own sound is silent (the external synth plays alone)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "Zoom to range"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "all"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "click: add a point here (12 at most)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "drag across keys: give them sample"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "drag points · double-click deletes · right-click: sustain, loop · Tab: the other envelope · drag across keys: give them"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "drag: a range (Shift: extend) · double-click: all or the loop · right-drag: draw · right-click: edits · wheel: zoom"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "drag: move · double-click: delete · right-click: sustain, loop"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "drag: the loop end (Alt: to a zero crossing)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "drag: the loop start (Alt: to a zero crossing)"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "drag: the sample's end"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "drag: the sample's start"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "fadeout"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "forward"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "frames"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "keys play the note"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "level"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/core/StageArrange.cpp src/packs/tracker/tracker_ui.cpp
+msgid "loop"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "no loop"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp
+msgid "no output is chosen: Settings, MIDI"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "nothing"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/chater/chater_pages_ui.cpp src/packs/chater/chater_ui.cpp
+msgid "of"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "pan"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
+msgid "ping-pong"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "points"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "range"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "relative"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "sample"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "samples"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "the built-in sound"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "the selected sample"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "tick"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "value"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "vibrato"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "vibrato off"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "wheel: other octaves"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "wheel: zoom"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "zoom to range"
+msgstr ""
+
 #: src/app/TrackerFrame.cpp
 msgid "A cut puts what it took in the clipboard; off, a cut only deletes"
 msgstr ""
@@ -21778,10 +22622,6 @@ msgid "Beat and bar rows lit"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
-msgid "Bend"
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
 msgid "Black keys named with flats (Db4) instead of sharps (C#4)"
 msgstr ""
 
@@ -21890,10 +22730,6 @@ msgid "Count tracks from 1"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
-msgid "Crop"
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
 msgid "Current instrument"
 msgstr ""
 
@@ -21949,12 +22785,16 @@ msgstr ""
 msgid "Each note's volume beside it"
 msgstr ""
 
-#: src/app/TrackerFrame.cpp src/packs/tracker/tracker_ui.cpp
-msgid "Echo..."
+#: src/app/TrackerFrame.cpp
+msgid "Edit instrument"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
 msgid "Edit mode on or off (off: the keys only play)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Edit samples"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -22018,19 +22858,15 @@ msgid "Every shortcut"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
-msgid "Every track of the pattern shown"
+msgid "Every track in view (Ctrl+wheel zooms too)"
 msgstr ""
 
-#: src/app/TrackerFrame.cpp src/app/TrackerPages.cpp
-msgid "Exit"
+#: src/app/TrackerFrame.cpp
+msgid "Every track of the pattern shown"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
 msgid "Expand"
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
-msgid "Fix DC"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -22242,7 +23078,7 @@ msgid "Multichannel record"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
-msgid "Mute its own sound"
+msgid "Narrower tracks, more in view (the Song page: its lanes or timeline)"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -22263,10 +23099,6 @@ msgstr ""
 
 #: src/app/TrackerFrame.cpp
 msgid "No instrument is selected"
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
-msgid "No pattern clips in the song yet"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -22295,10 +23127,6 @@ msgstr ""
 
 #: src/app/TrackerFrame.cpp
 msgid "Normal."
-msgstr ""
-
-#: src/app/TrackerFrame.cpp src/packs/tracker/tracker_ui.cpp
-msgid "Normalise"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -22389,10 +23217,6 @@ msgstr ""
 msgid "Plays the range (or the sample) backwards"
 msgstr ""
 
-#: src/app/TrackerFrame.cpp src/packs/tracker/tracker_ui.cpp
-msgid "Program"
-msgstr ""
-
 #: src/app/TrackerFrame.cpp
 msgid "Project size now"
 msgstr ""
@@ -22447,10 +23271,6 @@ msgstr ""
 
 #: src/app/TrackerFrame.cpp
 msgid "Replace "
-msgstr ""
-
-#: src/app/TrackerFrame.cpp src/packs/edison/edison_form_ui.cpp src/packs/tracker/tracker_ui.cpp
-msgid "Resample..."
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -22538,23 +23358,11 @@ msgid "Screen keys"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
-msgid "Semitones the pitch wheel bends its notes (0 to 36)"
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
-msgid "Send notes to the MIDI output"
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
 msgid "Shift+Insert and Shift+Backspace (a line on every track) change the pattern's length: a bar more when a note would be pushed off the end, a bar less when the last bar is left empty"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
 msgid "Shrink"
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
-msgid "Silence"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -22658,10 +23466,6 @@ msgid "The MIDI box: the instrument's MIDI out and the MIDI input"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
-msgid "The MIDI channel its notes go out on (1 to 16)"
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
 msgid "The MIDI input devices, the velocity curve and where the notes go"
 msgstr ""
 
@@ -22683,6 +23487,10 @@ msgstr ""
 
 #: src/app/TrackerFrame.cpp
 msgid "The Roll page"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The Sample editor: the instrument's samples under the pattern"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -22869,10 +23677,6 @@ msgstr ""
 msgid "The note keys' octave (F1 to F8)"
 msgstr ""
 
-#: src/app/TrackerFrame.cpp src/packs/tracker/tracker_ui.cpp
-msgid "The notes this instrument plays also go to the MIDI output, on its channel and program"
-msgstr ""
-
 #: src/app/TrackerFrame.cpp
 msgid "The octave"
 msgstr ""
@@ -22922,10 +23726,6 @@ msgid "The previous, the next song position"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
-msgid "The program change sent before its notes (1 to 128)"
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
 msgid "The range (or the sample) to the clipboard"
 msgstr ""
 
@@ -22955,6 +23755,10 @@ msgstr ""
 
 #: src/app/TrackerFrame.cpp
 msgid "The scopes join each channel's wave into a line (off: points, as the classic scopes)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The song is empty: type notes, or Ins puts the pattern in"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -23070,14 +23874,6 @@ msgid "Volume column"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
-msgid "Volume..."
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
-msgid "While its notes go to MIDI, the instrument's own sound is silent (the external synth plays alone)"
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
 msgid "While recording, a key let go ends its note on the row playing"
 msgstr ""
 
@@ -23087,6 +23883,10 @@ msgstr ""
 
 #: src/app/TrackerFrame.cpp
 msgid "While recording, each note goes to the next enabled track"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Wider tracks, fewer in view"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -23118,10 +23918,6 @@ msgid "Your home folder"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
-msgid "all"
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
 msgid "automation clips"
 msgstr ""
 
@@ -23138,7 +23934,19 @@ msgid "in multichannel edit"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
+msgid "its file is missing (or still arriving)"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
 msgid "left out of multichannel edit"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "loops"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "loops back and forth"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -23146,11 +23954,11 @@ msgid "mixer tracks"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
-msgid "no output is chosen: Settings, MIDI"
+msgid "only the current instrument's track (each track is one instrument)"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
-msgid "only the current instrument's track (each track is one instrument)"
+msgid "plays at 8 bits"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -23258,6 +24066,10 @@ msgid "Erase the notes clicked or dragged over"
 msgstr ""
 
 #: src/app/TrackerPages.cpp
+msgid "Every lane in view (Ctrl+Alt+/)"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
 msgid "Inserts the current entry's pattern after it (Ins); in an empty song, the pattern shown"
 msgstr ""
 
@@ -23283,6 +24095,10 @@ msgstr ""
 
 #: src/app/TrackerPages.cpp
 msgid "Moves the entry up: it trades places with the one above (Ctrl+Up)"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "Narrower lanes, more in view (Ctrl+Alt+, or Ctrl+wheel down)"
 msgstr ""
 
 #: src/app/TrackerPages.cpp
@@ -23446,6 +24262,18 @@ msgid "The song's patterns. Clips placed before the live area's end (Song menu, 
 msgstr ""
 
 #: src/app/TrackerPages.cpp
+msgid "The timeline zoomed in (Ctrl+Alt+. or Ctrl+wheel up over it)"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "The timeline zoomed out (Ctrl+Alt+, or Ctrl+wheel down over it)"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "The whole song in the timeline (Ctrl+Alt+/)"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
 msgid "This channel plays notes: the pattern editor and the piano roll edit them"
 msgstr ""
 
@@ -23455,6 +24283,10 @@ msgstr ""
 
 #: src/app/TrackerPages.cpp
 msgid "Uses"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "Wider lanes (Ctrl+Alt+. or Ctrl+wheel up)"
 msgstr ""
 
 #: src/app/TrackerPages.cpp
@@ -23514,6 +24346,10 @@ msgid "Effect macro"
 msgstr ""
 
 #: src/app/TrackerView.cpp
+msgid "Every track in view (Ctrl+Alt+/): the tracks narrow as far as they need"
+msgstr ""
+
+#: src/app/TrackerView.cpp
 msgid "Expand would push notes past the block's end: mark a block twice as long (its second half empty), or expand without a block"
 msgstr ""
 
@@ -23547,6 +24383,10 @@ msgstr ""
 
 #: src/app/TrackerView.cpp
 msgid "Module volume"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Narrower tracks, more in view (Ctrl+Alt+, or Ctrl+wheel down): first the effect and pan go, then the volume, the instrument, then smaller glyphs; zoom back in to edit them"
 msgstr ""
 
 #: src/app/TrackerView.cpp
@@ -23663,6 +24503,10 @@ msgstr ""
 
 #: src/app/TrackerView.cpp
 msgid "Volume macro"
+msgstr ""
+
+#: src/app/TrackerView.cpp
+msgid "Wider tracks, fewer in view (Ctrl+Alt+. or Ctrl+wheel up)"
 msgstr ""
 
 #: src/app/TrackerView.cpp
@@ -25286,6 +26130,10 @@ msgid "Event lane: drag sets the default value"
 msgstr ""
 
 #: src/core/Keymap.cpp
+msgid "Every track in view"
+msgstr ""
+
+#: src/core/Keymap.cpp
 msgid "Export song as MIDI file"
 msgstr ""
 
@@ -25335,6 +26183,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Import audio from a link (URL)"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "In/Out section (show / hide)"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -25447,6 +26299,10 @@ msgstr ""
 
 #: src/core/Keymap.cpp
 msgid "Narrower (stereo width)"
+msgstr ""
+
+#: src/core/Keymap.cpp
+msgid "Narrower tracks (zoom out)"
 msgstr ""
 
 #: src/core/Keymap.cpp
@@ -25818,6 +26674,10 @@ msgid "Wider (stereo width)"
 msgstr ""
 
 #: src/core/Keymap.cpp
+msgid "Wider tracks (zoom in)"
+msgstr ""
+
+#: src/core/Keymap.cpp
 msgid "Workspace 1"
 msgstr ""
 
@@ -26087,10 +26947,6 @@ msgstr ""
 
 #: src/core/StageArrange.cpp
 msgid "long, soft and wide"
-msgstr ""
-
-#: src/core/StageArrange.cpp src/packs/tracker/tracker_ui.cpp
-msgid "loop"
 msgstr ""
 
 #: src/core/StageArrange.cpp
@@ -26595,10 +27451,6 @@ msgstr ""
 
 #: src/core/TrackIconSet.cpp
 msgid "Pluck"
-msgstr ""
-
-#: src/core/TrackIconSet.cpp
-msgid "Plugin"
 msgstr ""
 
 #: src/core/TrackIconSet.cpp
@@ -27283,10 +28135,6 @@ msgstr ""
 
 #: src/packs/chater/chater_pages_ui.cpp
 msgid "into the space"
-msgstr ""
-
-#: src/packs/chater/chater_pages_ui.cpp src/packs/chater/chater_ui.cpp
-msgid "of"
 msgstr ""
 
 #: src/packs/chater/chater_pages_ui.cpp
@@ -28326,10 +29174,6 @@ msgid "This sample is empty"
 msgstr ""
 
 #: src/packs/flex/flex_ui.cpp
-msgid "Convert"
-msgstr ""
-
-#: src/packs/flex/flex_ui.cpp
 msgid "Convert to a Gridline %s?"
 msgstr ""
 
@@ -28395,10 +29239,6 @@ msgstr ""
 
 #: src/packs/mini/mini_ui.cpp
 msgid "utility"
-msgstr ""
-
-#: src/packs/models/additive_ui.cpp src/packs/tracker/tracker_ui.cpp
-msgid "Fine"
 msgstr ""
 
 #: src/packs/modulation/modulation_ctl_ui.cpp
@@ -30574,10 +31414,6 @@ msgid "LED feedback: on"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
-msgid "Learn"
-msgstr ""
-
-#: src/packs/platter/platter_ui.cpp
 msgid "Learn a control"
 msgstr ""
 
@@ -30631,10 +31467,6 @@ msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
 msgid "Map the decks and the mixer to the controller's jog wheels, buttons, faders and pads"
-msgstr ""
-
-#: src/packs/platter/platter_ui.cpp
-msgid "Mapping"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
@@ -32214,10 +33046,6 @@ msgid "at the hits"
 msgstr ""
 
 #: src/packs/seltmann/seltmann_ui.cpp
-msgid "by hand"
-msgstr ""
-
-#: src/packs/seltmann/seltmann_ui.cpp
 msgid "by section"
 msgstr ""
 
@@ -33090,10 +33918,6 @@ msgid "Own input (pick a source)"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
-msgid "Point"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
 msgid "Pump"
 msgstr ""
 
@@ -33190,10 +34014,6 @@ msgid "(the whole sample)"
 msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
-msgid "8-bit"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
 msgid "Add %d files as samples"
 msgstr ""
 
@@ -33246,15 +34066,7 @@ msgid "Clear the range"
 msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
-msgid "Click removal"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
 msgid "Click to add a point (12 at most)"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "Click to add the first points"
 msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
@@ -33359,22 +34171,6 @@ msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
 msgid "Keep this envelope in slot %d"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "Lengthen the sample to hold the repeats"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "Loop end"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "Loop start"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "Loudest without clipping"
 msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
@@ -33502,15 +34298,7 @@ msgid "Start %d   End %d   Loop %d to %d   %.2f s at %.1f kHz"
 msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
-msgid "Sustain point"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
 msgid "Sweep"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "The edited sample could not be written"
 msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
@@ -33522,39 +34310,11 @@ msgid "The envelope repeats between the loop points"
 msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
-msgid "The envelope slots could not be saved"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "The loop needs sound before its start to fade into"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
 msgid "The loop's end fades into the sound before its start"
 msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
-msgid "The panning envelope moves the sound while the note plays"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "The sample file is missing"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "The sample plays at full resolution"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "The sample plays rounded to 256 steps, as an 8-bit sample"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
 msgid "The sound the instrument plays while it has no sample of its own"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "The volume envelope shapes every note; off: notes stop when let go"
 msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
@@ -33567,10 +34327,6 @@ msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
 msgid "VOLUME ENVELOPE"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "Vibrato shape"
 msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
@@ -33587,10 +34343,6 @@ msgstr ""
 
 #: src/packs/tracker/tracker_ui.cpp
 msgid "Zoom to the range"
-msgstr ""
-
-#: src/packs/tracker/tracker_ui.cpp
-msgid "ping-pong"
 msgstr ""
 
 #: src/packs/utility/utility_bankeq_ui.cpp

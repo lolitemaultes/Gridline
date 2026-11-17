@@ -82,7 +82,9 @@ Shell live() {
   s.preset = Preset::Live;
   s.centre = "live.main";
   s.regions = {R("live.browser", "", Edge::Left, px(292, 0.25f, 200)),
-               R("live.info", "live.browser", Edge::Bottom, px(188, 0.4f, 100), true, false, TabStyle::None, true),
+               // Checkpoint 55 (gap 9): a small corner (the reference's Info View), shown or hidden by the
+               // status bar's info button, View > Info View or Shift+?.
+               R("live.info", "live.browser", Edge::Bottom, px(128, 0.3f, 80), true, false, TabStyle::None, true),
                R("live.side", "", Edge::Right, px(300, 0.3f, 200), false, false, TabStyle::Rail),  // K-237: its tools on a tab rail
                R("live.device", "", Edge::Bottom, px(188, 0.35f, 120), true, false, TabStyle::None, true),
                R("live.clip", "", Edge::Bottom, share(0.36f, 160, 0.45f), false),  // about 230 at 1440 x 900, as in the refs

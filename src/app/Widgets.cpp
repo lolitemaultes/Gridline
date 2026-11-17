@@ -1107,12 +1107,20 @@ static bool liveMixerValue(App& a, ParamId pid, double& v) {
   }
   // R06-12: stopped, a Read track's control shows its curve at the playhead (song mode).
   if (!tracks || a.engine.mode() != PlayMode::Song) return false;
-  static int frame = -1;
-  static uint64_t rev = 0;
+  // K-112D (D5, CPU): the lanes and each track's strip, worked out again only when the song changes
+  // (they were made again every frame, and every track's strip looked up per automated control).
+  static const Song* song = nullptr;
+  static uint64_t rev = ~0ull;
+  static int frame = -1000;
   static std::vector<AutomationLane> lanes;
-  if (frame != ImGui::GetFrameCount() || rev != a.doc.revision()) {
-    frame = ImGui::GetFrameCount(), rev = a.doc.revision();
+  static std::vector<ObjectId> stripOf;
+  const int fr = ImGui::GetFrameCount();
+  if (song != &s || rev != a.doc.revision() || fr < frame || fr - frame >= 30) {  // (the bus fold can change without an edit)
+    song = &s, rev = a.doc.revision(), frame = fr;
     lanes = automationLanes(s);
+    stripOf.assign(s.tracks.size(), kNoId);
+    for (int tr = 0; tr < static_cast<int>(s.tracks.size()); ++tr)
+      if (const MixerTrack* st = logicplug::trackStrip(s, tr)) stripOf[static_cast<size_t>(tr)] = st->id;
   }
   const AutomationLane* lane = nullptr;
   for (const AutomationLane& l : lanes)
@@ -1123,8 +1131,7 @@ static bool liveMixerValue(App& a, ParamId pid, double& v) {
     const PlaylistTrack& pt = s.tracks[static_cast<size_t>(tr)];
     if (pt.autoMode != 1) continue;
     if (pt.laneSet) read = pt.laneOwner == pid.owner && pt.laneIndex == pid.index;
-    if (!read)
-      if (const MixerTrack* st = logicplug::trackStrip(s, tr)) read = st->id == pid.owner;
+    if (!read && static_cast<size_t>(tr) < stripOf.size()) read = stripOf[static_cast<size_t>(tr)] == pid.owner;
   }
   if (!read) return false;
   const auto d = describeParam(s, pid);

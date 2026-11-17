@@ -31,6 +31,7 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../PacksUi.h"
 #include "tracker.h"
+#include "tracker_session.h"
 
 namespace gl::packs::trackerpack {
 
@@ -54,19 +55,12 @@ std::string keyName(int key) {
   return std::string(names[key % 12]) + std::to_string(key / 12);
 }
 
-int sampleCountOf(const Edit& e) {
-  int n = 0;
-  for (int k = 0; k < trk::kMaxSamples; ++k) n += (e.text.def.samples[static_cast<size_t>(k)].present() || e.text.fileOf[static_cast<size_t>(k)] >= 0) ? 1 : 0;
-  return n;
-}
-
-// What the editor remembers per plugin window.
+// What the editor remembers per plugin window: its widgets' state. cp17: the selection, range,
+// view and the valued edits' values are the session's Memory (tracker_session.h), shared with the
+// Tracker's own screens.
 struct Ed {
-  int sel = 0;
-  int wantSlot = -1;  // R12-04: an empty slot picked in the header list: the next load from Files goes there
-  double viewStart = 0, viewLen = 0;  // waveform view, file frames (0 = the whole file)
-  int viewSlot = -1;
-  int marker = -1;                    // waveform marker being dragged: 0 start, 1 end, 2 loop start, 3 loop end, 4 scroll
+  Memory* m = nullptr;  // (set by edFor)
+  int marker = -1;                   // waveform marker being dragged: 0 start, 1 end, 2 loop start, 3 loop end, 4 scroll
   double grab = 0;
   int envDrag[2] = {-1, -1};
   int envMenu[2] = {-1, -1};
@@ -77,20 +71,17 @@ struct Ed {
   int nameSlot = -1;
   std::string nameData;
   // K-129
-  int32_t selA = -1, selB = -1;       // the range dragged out on the waveform (file frames; -1 = none)
-  int selSlot = -1;
   bool selecting = false;
   char insName[96] = {};
   std::string insNameData;
   bool insNameSet = false;
-  int rampStart = 100, rampEnd = 100;  // volume popup (percent)
-  int resTones = 0;                    // resample popup (semitones; R12-06: 0, so an Apply by mistake changes nothing)
-  int echoCount = 4, echoMs = 120, echoFeedback = 50;
-  bool echoExtend = true;
-  int mixSlot = -1, mixBalance = 50;
-  int fadeMs = 20;                     // loop crossfade (ms)
 };
 std::map<uint64_t, Ed> gEd;
+Ed& edFor(uint64_t key) {
+  Ed& e = gEd[key];
+  e.m = &memory(key);
+  return e;
+}
 
 // ---- K-129: hearing one sample (a click in the list) ----
 struct Preview {
@@ -190,30 +181,10 @@ void tendPreview(App& a, const PluginTarget& t) {
   else gHeld.seen(NoteGuard::kPreview, frameNow());
 }
 
-// The sample clipboard of every Tracker Sampler editor.
-Wave& clipboard() {
-  static Wave w;
-  return w;
-}
+// (cp17: the clipboard, merge keys and the commit are the session's, tracker_session.h; this one
+// stays for the multi-part edits that write a whole instrument they built: adding files.)
+void commit(App& a, const PluginTarget& t, const Edit& e, const char* label, uint64_t merge = 0) { commitEdit(a, t, e, label, merge); }
 
-uint64_t mergeKey(const PluginTarget& t, int field) { return (t.key() * 2654435761ull) ^ (0x7A1C0000ull + static_cast<uint64_t>(field)); }
-
-int soundOf(const PluginState& st) {
-  return st.params.size() > static_cast<size_t>(trk::PSound) ? std::clamp(static_cast<int>(std::lround(st.params[trk::PSound])), 0, kSoundCount) : 0;
-}
-
-void commit(App& a, const PluginTarget& t, const Edit& e, const char* label, uint64_t merge = 0) {
-  const PluginState* cur = t.state(a.doc.song());
-  if (!cur) return;
-  PluginState ns = *cur;
-  ns.data = writeEdit(e);
-  if (ns.data != cur->data) setPluginState(a, t, ns, label, merge);
-}
-
-bool hasSample(const Edit& e, int k) {
-  const auto i = static_cast<size_t>(k);
-  return e.text.def.samples[i].present() || e.text.fileOf[i] >= 0;
-}
 int sampleCount(const Edit& e) {
   int n = 0;
   for (int k = 0; k < trk::kMaxSamples; ++k) n += hasSample(e, k) ? 1 : 0;
@@ -297,7 +268,7 @@ void addFileDialog(App& a, const PluginTarget& t, int sound) {
   menus::fileDialog(a, i18n::tr("Add a sample"), false, {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv", ".aif", ".aiff", ".aifc"}, "",
              [&a, tt, sound](const std::string& p) {
                const int k = addFiles(a, tt, {p}, sound);
-               if (k >= 0) gEd[tt.key()].sel = k;
+               if (k >= 0) memory(tt.key()).sel = k;
              });
 }
 
@@ -312,7 +283,7 @@ void sampleDropTarget(App& a, const PluginTarget& t, Ed& ed, ImVec2 p0, ImVec2 p
     if (x->Delivery) {
       xdragui::markConsumed();
       const int k = addFiles(a, t, files, sound);
-      if (k >= 0) ed.sel = k;
+      if (k >= 0) ed.m->sel = k;
     } else {
       ImDrawList* fg = ImGui::GetForegroundDrawList();
       fg->AddRectFilled(p0, p1, withAlpha(pal().accent, 28), 6);
@@ -361,18 +332,7 @@ const Peaks& peaksOf(const SamplePtr& sp) {
 
 // ---- K-129: sample edits ----
 
-std::string editName(const Edit& e, int k) {
-  const std::string& nm = e.text.sampleNames[static_cast<size_t>(k)];
-  if (!nm.empty()) return nm;
-  const int f = e.text.fileOf[static_cast<size_t>(k)];
-  if (f >= 0 && f < static_cast<int>(e.text.files.size())) return fs::u8path(e.text.files[static_cast<size_t>(f)]).stem().u8string();
-  return "sample";
-}
-
-Span selectionOf(const Ed& ed, int k) {
-  if (ed.selSlot != k || ed.selA < 0 || ed.selB < 0) return Span{};
-  return Span{std::min(ed.selA, ed.selB), std::max(ed.selA, ed.selB)};
-}
+Span selectionOf(const Ed& ed, int k) { return rangeOf(*ed.m, k); }
 
 // Runs one edit on slot k's audio and keeps the result (one undo step). `op` returns false when it
 // changed nothing; `after` sets the selection the edit leaves (frames of the new audio).
@@ -384,15 +344,9 @@ bool editWave(App& a, const PluginTarget& t, Ed& ed, Edit& e, const InstrumentAu
     return false;
   }
   if (!op(w)) return false;
-  const std::string path = commitWave(e, k, w, editedDir(a), editName(e, k));
-  if (path.empty()) {
-    a.notify(i18n::tr("The edited sample could not be written"), true);
-    return false;
-  }
-  (void)sampleCache().get(path);
   if (gPreview.serial && gPreview.slot == k) stopPreview(a);
-  commit(a, t, e, label);
-  if (ed.viewLen > w.frames()) ed.viewLen = 0;
+  if (!opWaveCommit(a, t, k, w, label, &e)) return false;  // (cp17: the session's op)
+  if (ed.m->viewLen > w.frames()) ed.m->viewLen = 0;
   return true;
 }
 
@@ -403,7 +357,7 @@ void editMenuItems(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
   const bool hasClip = !clipboard().L.empty();
   const trk::SampleDef& sd = e.text.def.samples[static_cast<size_t>(k)];
   const bool looped = sd.loop != trk::kLoopOff && sd.loopLength > 0;
-  auto clear = [&] { ed.selA = ed.selB = -1; };
+  auto clear = [&] { ed.m->selA = ed.m->selB = -1; };
   if (ImGui::MenuItem(i18n::tr("Cut"), nullptr, false, hasSel && sel.b - sel.a < frames)) {
     Wave w;
     if (waveOf(e, k, inst, w)) clipboard() = waveCopy(w, sel);
@@ -414,13 +368,13 @@ void editMenuItems(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
     if (waveOf(e, k, inst, w)) clipboard() = waveCopy(w, sel);
   }
   if (ImGui::MenuItem(hasSel ? i18n::tr("Paste over the range") : i18n::tr("Paste at the range start"), nullptr, false, hasClip)) {
-    const int32_t cursor = ed.selSlot == k && ed.selA >= 0 ? std::min(ed.selA, frames) : 0;
+    const int32_t cursor = ed.m->selSlot == k && ed.m->selA >= 0 ? std::min(ed.m->selA, frames) : 0;
     const Span at = hasSel ? sel : Span{cursor, cursor};
     const auto n = static_cast<int32_t>(clipboard().L.size());
     if (editWave(a, t, ed, e, inst, k, "paste into sample", [&](Wave& x) { return wavePaste(x, at, clipboard()); })) {
-      ed.selSlot = k;
-      ed.selA = at.a;
-      ed.selB = at.a + n;
+      ed.m->selSlot = k;
+      ed.m->selA = at.a;
+      ed.m->selB = at.a + n;
     }
   }
   if (ImGui::MenuItem(i18n::tr("Crop to the range"), nullptr, false, hasSel && sel.b - sel.a < frames))
@@ -451,14 +405,14 @@ void editMenuItems(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
     editWave(a, t, ed, e, inst, k, "trim sample after loop", [&](Wave& x) { return waveMinimise(x); });
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Select all"))) {
-    ed.selSlot = k;
-    ed.selA = 0;
-    ed.selB = frames;
+    ed.m->selSlot = k;
+    ed.m->selA = 0;
+    ed.m->selB = frames;
   }
   if (ImGui::MenuItem(i18n::tr("Zoom to the range"), nullptr, false, hasSel)) {
-    ed.viewStart = sel.a;
-    ed.viewLen = std::max<double>(std::min<double>(frames, 64.0), sel.b - sel.a);
-    ed.viewStart = std::clamp(ed.viewStart, 0.0, frames - ed.viewLen);
+    ed.m->viewStart = sel.a;
+    ed.m->viewLen = std::max<double>(std::min<double>(frames, 64.0), sel.b - sel.a);
+    ed.m->viewStart = std::clamp(ed.m->viewStart, 0.0, frames - ed.m->viewLen);
   }
   if (ImGui::MenuItem(i18n::tr("Clear the range"), nullptr, false, hasSel)) clear();
   if (ImGui::MenuItem(i18n::tr("Empty the clipboard"), nullptr, false, hasClip)) clipboard() = Wave{};
@@ -493,14 +447,14 @@ void editPopups(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrument
   };
   if (ImGui::BeginPopup("##trkramp")) {
     dimCaption(sel.empty() ? i18n::tr("Volume from the start to the end of the sample") : i18n::tr("Volume from the start to the end of the range"));
-    valueSlider(i18n::tr("Start"), &ed.rampStart, 0, 400, "%d%%");
-    valueSlider(i18n::tr("End"), &ed.rampEnd, 0, 400, "%d%%");
+    valueSlider(i18n::tr("Start"), &ed.m->pv.rampStart, 0, 400, "%d%%");
+    valueSlider(i18n::tr("End"), &ed.m->pv.rampEnd, 0, 400, "%d%%");
     if (ui::TextButton(i18n::tr("Loudest without clipping"), false, 0)) {
       Wave w;
-      if (waveOf(e, k, inst, w)) ed.rampStart = ed.rampEnd = std::clamp(static_cast<int>(std::floor(waveMaxScale(w, sel) * 100.0)), 0, 400);
+      if (waveOf(e, k, inst, w)) ed.m->pv.rampStart = ed.m->pv.rampEnd = std::clamp(static_cast<int>(std::floor(waveMaxScale(w, sel) * 100.0)), 0, 400);
     }
     if (apply(i18n::tr("Apply"))) {
-      const double g0 = ed.rampStart / 100.0, g1 = ed.rampEnd / 100.0;
+      const double g0 = ed.m->pv.rampStart / 100.0, g1 = ed.m->pv.rampEnd / 100.0;
       editWave(a, t, ed, e, inst, k, "sample volume ramp", [&](Wave& x) { return waveRamp(x, sel, g0, g1); });
       ImGui::CloseCurrentPopup();
     }
@@ -508,27 +462,27 @@ void editPopups(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrument
   }
   if (ImGui::BeginPopup("##trkres")) {
     dimCaption(i18n::tr("More or fewer frames for the same pitch (the transpose follows)"));
-    valueSlider(i18n::tr("Semitones"), &ed.resTones, -36, 36, "%+d");
+    valueSlider(i18n::tr("Semitones"), &ed.m->pv.resTones, -36, 36, "%+d");
     if (apply(i18n::tr("Resample"))) {
-      const int st = ed.resTones;
-      if (editWave(a, t, ed, e, inst, k, "resample sample", [&](Wave& x) { return waveResample(x, st); })) ed.selA = ed.selB = -1;
+      const int st = ed.m->pv.resTones;
+      if (editWave(a, t, ed, e, inst, k, "resample sample", [&](Wave& x) { return waveResample(x, st); })) ed.m->selA = ed.m->selB = -1;
       ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
   }
   if (ImGui::BeginPopup("##trkecho")) {
     dimCaption(i18n::tr("Repeats of the sample, each quieter than the last"));
-    valueSlider(i18n::tr("Repeats"), &ed.echoCount, 1, 32, "%d");
-    valueSlider(i18n::tr("Distance"), &ed.echoMs, 1, 2000, "%d ms");
-    valueSlider(i18n::tr("Each repeat"), &ed.echoFeedback, 0, 100, "%d%%");
-    ImGui::Checkbox(i18n::tr("Lengthen the sample to hold the repeats"), &ed.echoExtend);
+    valueSlider(i18n::tr("Repeats"), &ed.m->pv.echoCount, 1, 32, "%d");
+    valueSlider(i18n::tr("Distance"), &ed.m->pv.echoMs, 1, 2000, "%d ms");
+    valueSlider(i18n::tr("Each repeat"), &ed.m->pv.echoFeedback, 0, 100, "%d%%");
+    ImGui::Checkbox(i18n::tr("Lengthen the sample to hold the repeats"), &ed.m->pv.echoExtend);
     if (apply(i18n::tr("Apply"))) {
       Wave probe;
       const double rate = waveOf(e, k, inst, probe) ? probe.rate : 44100.0;
-      const int n = ed.echoCount;
-      const auto d = static_cast<int32_t>(std::max(1.0, std::round(ed.echoMs * rate / 1000.0)));
-      const double fb = ed.echoFeedback / 100.0;
-      const bool ext = ed.echoExtend;
+      const int n = ed.m->pv.echoCount;
+      const auto d = static_cast<int32_t>(std::max(1.0, std::round(ed.m->pv.echoMs * rate / 1000.0)));
+      const double fb = ed.m->pv.echoFeedback / 100.0;
+      const bool ext = ed.m->pv.echoExtend;
       editWave(a, t, ed, e, inst, k, "sample echo", [&](Wave& x) { return waveEcho(x, n, d, fb, ext); });
       ImGui::CloseCurrentPopup();
     }
@@ -536,28 +490,28 @@ void editPopups(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrument
   }
   if (ImGui::BeginPopup("##trkmix")) {
     dimCaption(i18n::tr("Another sample of this instrument mixed in from the start"));
-    if (ed.mixSlot == k || !hasSample(e, ed.mixSlot)) {
-      ed.mixSlot = -1;
-      for (int j = 0; j < trk::kMaxSamples && ed.mixSlot < 0; ++j)
-        if (j != k && hasSample(e, j)) ed.mixSlot = j;
+    if (ed.m->pv.mixSlot == k || !hasSample(e, ed.m->pv.mixSlot)) {
+      ed.m->pv.mixSlot = -1;
+      for (int j = 0; j < trk::kMaxSamples && ed.m->pv.mixSlot < 0; ++j)
+        if (j != k && hasSample(e, j)) ed.m->pv.mixSlot = j;
     }
     char cur[128];
-    std::snprintf(cur, sizeof cur, "%02d %s", ed.mixSlot + 1, ed.mixSlot >= 0 ? editName(e, ed.mixSlot).c_str() : "");
+    std::snprintf(cur, sizeof cur, "%02d %s", ed.m->pv.mixSlot + 1, ed.m->pv.mixSlot >= 0 ? editName(e, ed.m->pv.mixSlot).c_str() : "");
     ImGui::SetNextItemWidth(220);
     if (ImGui::BeginCombo(i18n::tr("Sample"), cur)) {
       for (int j = 0; j < trk::kMaxSamples; ++j) {
         if (j == k || !hasSample(e, j)) continue;
         char it[128];
         std::snprintf(it, sizeof it, "%02d %s##m%d", j + 1, editName(e, j).c_str(), j);
-        if (ImGui::Selectable(it, ed.mixSlot == j)) ed.mixSlot = j;
+        if (ImGui::Selectable(it, ed.m->pv.mixSlot == j)) ed.m->pv.mixSlot = j;
       }
       ImGui::EndCombo();
     }
-    valueSlider(i18n::tr("Balance"), &ed.mixBalance, 0, 100, "%d%%");
-    if (apply(i18n::tr("Mix")) && ed.mixSlot >= 0) {
+    valueSlider(i18n::tr("Balance"), &ed.m->pv.mixBalance, 0, 100, "%d%%");
+    if (apply(i18n::tr("Mix")) && ed.m->pv.mixSlot >= 0) {
       Wave other;
-      if (waveOf(e, ed.mixSlot, inst, other)) {
-        const double bal = ed.mixBalance / 100.0;
+      if (waveOf(e, ed.m->pv.mixSlot, inst, other)) {
+        const double bal = ed.m->pv.mixBalance / 100.0;
         editWave(a, t, ed, e, inst, k, "mix samples", [&](Wave& x) { return waveMix(x, other, bal); });
       }
       ImGui::CloseCurrentPopup();
@@ -566,11 +520,11 @@ void editPopups(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrument
   }
   if (ImGui::BeginPopup("##trkxfade")) {
     dimCaption(i18n::tr("The loop's end fades into the sound before its start"));
-    valueSlider(i18n::tr("Length"), &ed.fadeMs, 1, 500, "%d ms");
+    valueSlider(i18n::tr("Length"), &ed.m->pv.fadeMs, 1, 500, "%d ms");
     if (apply(i18n::tr("Apply"))) {
       Wave probe;
       const double rate = waveOf(e, k, inst, probe) ? probe.rate : 44100.0;
-      const auto f = static_cast<int32_t>(std::max(1.0, std::round(ed.fadeMs * rate / 1000.0)));
+      const auto f = static_cast<int32_t>(std::max(1.0, std::round(ed.m->pv.fadeMs * rate / 1000.0)));
       if (!editWave(a, t, ed, e, inst, k, "crossfade sample loop", [&](Wave& x) { return waveCrossfadeLoop(x, f); }))
         a.notify(i18n::tr("The loop needs sound before its start to fade into"));
       ImGui::CloseCurrentPopup();
@@ -588,7 +542,7 @@ void waveformPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
   const float inner = w - 20;
   const int n = sampleCount(e);
   sampleDropTarget(a, t, ed, ImVec2(wp.x + 1, wp.y + 1), ImVec2(wp.x + ws.x - 1, wp.y + ws.y - 1), sound, n >= trk::kMaxSamples);
-  const int k = ed.sel;
+  const int k = ed.m->sel;
   const bool have = hasSample(e, k);
   const SamplePtr sp = have ? inst.files[static_cast<size_t>(k)] : nullptr;
   if (!have || !sp) {
@@ -636,10 +590,10 @@ void waveformPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
   int32_t& cutB = e.cuts.end[static_cast<size_t>(k)];
   const int32_t s0 = std::clamp(cutA, 0, frames - 1);
   const int32_t s1 = cutB > 0 ? std::clamp(cutB, s0 + 1, frames) : frames;
-  if (ed.viewSlot != k || ed.viewLen <= 0 || ed.viewLen > frames) {
-    ed.viewSlot = k;
-    ed.viewStart = 0;
-    ed.viewLen = frames;
+  if (ed.m->viewSlot != k || ed.m->viewLen <= 0 || ed.m->viewLen > frames) {
+    ed.m->viewSlot = k;
+    ed.m->viewStart = 0;
+    ed.m->viewLen = frames;
   }
 
   // Toolbar: loop mode, bits, the edit menu, zoom.
@@ -649,22 +603,12 @@ void waveformPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
     int mode = sd.loop;
     const float right = 4 * 24 + 3 * 2 + 4;  // edit menu and zoom buttons
     const float segW = std::clamp((inner - right - 2 * 44 - 16) / 3.0f, 52.0f, 84.0f);
-    if (ui::Segmented("##loopmode", modes, 3, &mode, segW, 22)) {
-      sd.loop = static_cast<uint8_t>(mode);
-      if (mode != trk::kLoopOff && sd.loopLength < 1) {
-        sd.loopStart = s0;
-        sd.loopLength = s1 - s0;
-      }
-      commit(a, t, e, "sample loop mode");
-    }
+    if (ui::Segmented("##loopmode", modes, 3, &mode, segW, 22)) opSampleLoopType(a, t, k, static_cast<uint8_t>(mode), s0, s1, &e);
     ImGui::SameLine(0, 8);
     const char* depths[] = {i18n::tr("16-bit"), i18n::tr("8-bit")};
     const char* depthHints[] = {i18n::tr("The sample plays at full resolution"), i18n::tr("The sample plays rounded to 256 steps, as an 8-bit sample")};
     int depth = e.eightBit[static_cast<size_t>(k)] ? 1 : 0;
-    if (ui::Segmented("##bits", depths, 2, &depth, 44, 22, depthHints)) {
-      e.eightBit[static_cast<size_t>(k)] = depth == 1;
-      commit(a, t, e, "sample bit depth");
-    }
+    if (ui::Segmented("##bits", depths, 2, &depth, 44, 22, depthHints)) opSampleBits(a, t, k, depth == 1, &e);
     const float bx = wp.x + ws.x - 10 - right + 4;
     ImGui::SameLine();
     ImGui::SetCursorScreenPos(ImVec2(std::max(bx, ImGui::GetCursorScreenPos().x), ImGui::GetCursorScreenPos().y));
@@ -676,17 +620,17 @@ void waveformPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
     }
     ImGui::SameLine(0, 2);
     auto zoom = [&](double f, double centre) {
-      const double len = std::clamp(ed.viewLen * f, std::min<double>(frames, 64.0), static_cast<double>(frames));
-      ed.viewStart = std::clamp(centre - (centre - ed.viewStart) * len / ed.viewLen, 0.0, frames - len);
-      ed.viewLen = len;
+      const double len = std::clamp(ed.m->viewLen * f, std::min<double>(frames, 64.0), static_cast<double>(frames));
+      ed.m->viewStart = std::clamp(centre - (centre - ed.m->viewStart) * len / ed.m->viewLen, 0.0, frames - len);
+      ed.m->viewLen = len;
     };
-    if (ui::IconButton("##zin", ui::Icon::Plus, false, 22, i18n::tr("Zoom in"))) zoom(0.5, ed.viewStart + ed.viewLen * 0.5);
+    if (ui::IconButton("##zin", ui::Icon::Plus, false, 22, i18n::tr("Zoom in"))) zoom(0.5, ed.m->viewStart + ed.m->viewLen * 0.5);
     ImGui::SameLine(0, 2);
-    if (ui::IconButton("##zout", ui::Icon::Minus, false, 22, i18n::tr("Zoom out"))) zoom(2.0, ed.viewStart + ed.viewLen * 0.5);
+    if (ui::IconButton("##zout", ui::Icon::Minus, false, 22, i18n::tr("Zoom out"))) zoom(2.0, ed.m->viewStart + ed.m->viewLen * 0.5);
     ImGui::SameLine(0, 2);
     if (ui::IconButton("##zfit", ui::Icon::Zoom, false, 22, i18n::tr("Show the whole sample"))) {
-      ed.viewStart = 0;
-      ed.viewLen = frames;
+      ed.m->viewStart = 0;
+      ed.m->viewLen = frames;
     }
   }
 
@@ -697,8 +641,8 @@ void waveformPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
   const ImVec2 p1(p0.x + inner, p0.y + dispH);
   pui::displayFrame(dl, p0, p1);
   const float W = p1.x - p0.x;
-  auto xOf = [&](double f) { return p0.x + static_cast<float>((f - ed.viewStart) / ed.viewLen * W); };
-  auto fOf = [&](float x) { return ed.viewStart + static_cast<double>(x - p0.x) / W * ed.viewLen; };
+  auto xOf = [&](double f) { return p0.x + static_cast<float>((f - ed.m->viewStart) / ed.m->viewLen * W); };
+  auto fOf = [&](float x) { return ed.m->viewStart + static_cast<double>(x - p0.x) / W * ed.m->viewLen; };
   dl->PushClipRect(p0, p1, true);
   const float mid = (p0.y + p1.y) * 0.5f, amp = (p1.y - p0.y) * 0.5f - 4;
   dl->AddLine(ImVec2(p0.x, mid), ImVec2(p1.x, mid), withAlpha(pal().textFaint, 90));
@@ -706,8 +650,8 @@ void waveformPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
   const double lA = sd.loopStart, lB = static_cast<double>(sd.loopStart) + sd.loopLength;
   if (looping) dl->AddRectFilled(ImVec2(xOf(lA), p0.y), ImVec2(xOf(lB), p1.y), withAlpha(pal().accent, 34));
   const Span selNow = selectionOf(ed, k);
-  if (selNow.empty() && ed.selSlot == k && ed.selA >= 0) {  // the paste place
-    const float cx = std::round(xOf(ed.selA)) + 0.5f;
+  if (selNow.empty() && ed.m->selSlot == k && ed.m->selA >= 0) {  // the paste place
+    const float cx = std::round(xOf(ed.m->selA)) + 0.5f;
     if (cx >= p0.x && cx <= p1.x)
       for (float y = p0.y + 2; y < p1.y - 2; y += 6) dl->AddLine(ImVec2(cx, y), ImVec2(cx, std::min(y + 3, p1.y - 2)), withAlpha(pal().text, 160));
   }
@@ -789,13 +733,13 @@ void waveformPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
       ed.marker = hot;
     } else {  // K-129: away from the flags a drag marks out a range
       ed.selecting = true;
-      ed.selSlot = k;
-      ed.selA = ed.selB = static_cast<int32_t>(std::lround(std::clamp(fOf(mouse.x), 0.0, static_cast<double>(frames))));
+      ed.m->selSlot = k;
+      ed.m->selA = ed.m->selB = static_cast<int32_t>(std::lround(std::clamp(fOf(mouse.x), 0.0, static_cast<double>(frames))));
     }
   }
   if (ed.selecting) {
     if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-      ed.selB = static_cast<int32_t>(std::lround(std::clamp(fOf(mouse.x), 0.0, static_cast<double>(frames))));
+      ed.m->selB = static_cast<int32_t>(std::lround(std::clamp(fOf(mouse.x), 0.0, static_cast<double>(frames))));
     } else {
       ed.selecting = false;
       // A click leaves no range, only the place a paste goes.
@@ -808,24 +752,7 @@ void waveformPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
   }
   if (ImGui::IsItemActive() && ed.marker >= 0 && ed.marker < 4) {
     const auto f = static_cast<int32_t>(std::lround(std::clamp(fOf(mouse.x), 0.0, static_cast<double>(frames))));
-    const int32_t ls = sd.loopStart, le = sd.loopStart + sd.loopLength;
-    switch (ed.marker) {
-      case 0: cutA = std::clamp(f, 0, s1 - 1); break;
-      case 1: {
-        const int32_t v = std::clamp(f, s0 + 1, frames);
-        cutB = v >= frames ? 0 : v;
-        break;
-      }
-      case 2: {
-        const int32_t v = std::clamp(f, s0, le - 1);
-        sd.loopStart = v;
-        sd.loopLength = le - v;
-        break;
-      }
-      default: sd.loopLength = std::clamp(f, ls + 1, s1) - ls; break;
-    }
-    static const char* labels[] = {"sample start", "sample end", "loop start", "loop end"};
-    commit(a, t, e, labels[ed.marker], mergeKey(t, 100 + ed.marker));
+    opSampleMarker(a, t, k, ed.marker, f, frames, &e);  // (cp17: the session's op, the same clamps)
   }
   if (ImGui::IsItemDeactivated()) ed.marker = -1;
   if (hov) {
@@ -834,13 +761,13 @@ void waveformPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
     if (io.KeyShift && wx == 0) std::swap(wh, wx);
     if (wh != 0) {
       const double c = fOf(mouse.x);
-      const double len = std::clamp(ed.viewLen * (wh > 0 ? 0.8 : 1.25), std::min<double>(frames, 64.0), static_cast<double>(frames));
-      ed.viewStart = std::clamp(c - (c - ed.viewStart) * len / ed.viewLen, 0.0, frames - len);
-      ed.viewLen = len;
+      const double len = std::clamp(ed.m->viewLen * (wh > 0 ? 0.8 : 1.25), std::min<double>(frames, 64.0), static_cast<double>(frames));
+      ed.m->viewStart = std::clamp(c - (c - ed.m->viewStart) * len / ed.m->viewLen, 0.0, frames - len);
+      ed.m->viewLen = len;
       ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
     }
     if (wx != 0) {
-      ed.viewStart = std::clamp(ed.viewStart - wx * ed.viewLen * 0.1, 0.0, frames - ed.viewLen);
+      ed.m->viewStart = std::clamp(ed.m->viewStart - wx * ed.m->viewLen * 0.1, 0.0, frames - ed.m->viewLen);
       ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelX);
     }
     a.setHint(i18n::tr("Drag the flags: sample start and end (below), loop start and end (above). Drag elsewhere: a range. Right-click: edit. Wheel: zoom"));
@@ -848,7 +775,7 @@ void waveformPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
   // Scroll bar.
   const ImVec2 b0(p0.x, p1.y + 4), b1(p1.x, p1.y + 10);
   dl->AddRectFilled(b0, b1, withAlpha(pal().surface900, 255), 3);
-  const float t0 = b0.x + static_cast<float>(ed.viewStart / frames) * W, t1 = b0.x + static_cast<float>((ed.viewStart + ed.viewLen) / frames) * W;
+  const float t0 = b0.x + static_cast<float>(ed.m->viewStart / frames) * W, t1 = b0.x + static_cast<float>((ed.m->viewStart + ed.m->viewLen) / frames) * W;
   ImGui::SetCursorScreenPos(b0);
   ImGui::InvisibleButton("##wscroll", ImVec2(W, b1.y - b0.y));
   const bool sh = ImGui::IsItemHovered() || ImGui::IsItemActive();
@@ -859,7 +786,7 @@ void waveformPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
   if (ImGui::IsItemActive()) {
     const float mx = ImGui::GetIO().MousePos.x;
     const double g = ed.grab < 0 ? (t1 - t0) * 0.5 : ed.grab;
-    ed.viewStart = std::clamp((mx - g - b0.x) / W * frames, 0.0, frames - ed.viewLen);
+    ed.m->viewStart = std::clamp((mx - g - b0.x) / W * frames, 0.0, frames - ed.m->viewLen);
   }
   // Readout.
   ImGui::SetCursorScreenPos(ImVec2(p0.x, b1.y + 4));
@@ -931,11 +858,11 @@ void samplesPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrume
       if (!hasSample(e, k)) continue;
       ImGui::PushID(k);
       const ImVec2 c = ImGui::GetCursorScreenPos();
-      const bool sel = ed.sel == k;
+      const bool sel = ed.m->sel == k;
       if (ImGui::InvisibleButton("##row", ImVec2(lw, lineH))) {
         // K-129: a click selects the sample and plays it; a click on the one playing stops it.
         const bool playingThis = gPreview.serial && gPreview.key == t.key() && gPreview.slot == k;
-        ed.sel = k;
+        ed.m->sel = k;
         if (playingThis) stopPreview(a);
         else startPreview(a, t, e, inst, k);
       }
@@ -983,7 +910,7 @@ void samplesPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrume
   ImGui::EndChild();
   ImGui::PopStyleColor();
 
-  const int k = ed.sel;
+  const int k = ed.m->sel;
   const bool have = hasSample(e, k);
   // Name, order, delete.
   {
@@ -997,9 +924,8 @@ void samplesPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrume
     ImGui::SetNextItemWidth(inner - 4 * (bw + 2) - 4);
     ImGui::InputTextWithHint("##sname", i18n::tr("Sample name"), ed.name, sizeof ed.name);
     if (ImGui::IsItemDeactivatedAfterEdit() && have) {
-      e.text.sampleNames[static_cast<size_t>(k)] = ed.name;
       ed.nameData = ed.name;
-      commit(a, t, e, "rename sample");
+      opRenameSample(a, t, k, ed.name, &e);
     }
     int prev = -1, next = -1;
     for (int j = k - 1; j >= 0 && prev < 0; --j)
@@ -1012,37 +938,31 @@ void samplesPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrume
     ImGui::BeginDisabled(k == 0);
     if (ui::IconButton("##sup", ui::Icon::Up, false, bw, i18n::tr("Move up")) && k > 0) {
       const int to = prev >= 0 ? prev : k - 1;
-      swapSamples(e, k, to);
-      ed.sel = to;
-      commit(a, t, e, "move sample");
+      ed.m->sel = to;
+      opSwapSamples(a, t, k, to, &e);
     }
     ImGui::EndDisabled();
     ImGui::SameLine(0, 2);
     ImGui::BeginDisabled(k >= trk::kMaxSamples - 1);
     if (ui::IconButton("##sdown", ui::Icon::Down, false, bw, i18n::tr("Move down")) && k < trk::kMaxSamples - 1) {
       const int to = next >= 0 ? next : k + 1;
-      swapSamples(e, k, to);
-      ed.sel = to;
-      commit(a, t, e, "move sample");
+      ed.m->sel = to;
+      opSwapSamples(a, t, k, to, &e);
     }
     ImGui::EndDisabled();
     ImGui::SameLine(0, 2);
     ImGui::BeginDisabled(n >= trk::kMaxSamples);
     if (ui::IconButton("##sdup", ui::Icon::Clone, false, bw, i18n::tr("Copy the sample into a free slot")) && have) {
-      const int to = duplicateSample(e, k);
-      if (to >= 0) {
-        ed.sel = to;
-        commit(a, t, e, "copy sample");
-      }
+      const int to = opDuplicateSample(a, t, k, &e);
+      if (to >= 0) ed.m->sel = to;
     }
     ImGui::EndDisabled();
     ImGui::SameLine(0, 2);
     if (ui::IconButton("##sdel", ui::Icon::Trash, false, bw, i18n::tr("Remove the sample")) && have) {
-      removeSample(e, k);
-      commit(a, t, e, "remove sample");
+      opRemoveSample(a, t, k, &e);
       for (int j = 0; j < trk::kMaxSamples; ++j)
         if (hasSample(e, j)) {
-          ed.sel = j;
+          ed.m->sel = j;
           break;
         }
     }
@@ -1059,39 +979,24 @@ void samplesPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrume
     char b[32];
     double v = s.volume;
     std::snprintf(b, sizeof b, "%d", s.volume);
-    if (valueKnob(a, "vol", v, 0, 64, 64, i18n::tr("Volume"), b, cell)) {
-      s.volume = static_cast<uint8_t>(std::clamp(std::lround(v), 0L, 64L));
-      commit(a, t, e, "sample volume", mergeKey(t, 1));
-    }
+    if (valueKnob(a, "vol", v, 0, 64, 64, i18n::tr("Volume"), b, cell)) opSampleField(a, t, k, SampleField::Volume, std::lround(v), &e);
     ImGui::SameLine(0, 0);
     v = static_cast<int>(s.pan) - 128;
     if (s.pan == 128) std::snprintf(b, sizeof b, "C");
     else std::snprintf(b, sizeof b, "%s%d", s.pan < 128 ? "L" : "R", std::abs(static_cast<int>(s.pan) - 128));
-    if (valueKnob(a, "pan", v, -128, 127, 0, i18n::tr("Pan"), b, cell)) {
-      s.pan = static_cast<uint8_t>(std::clamp(std::lround(v) + 128, 0L, 255L));
-      commit(a, t, e, "sample pan", mergeKey(t, 2));
-    }
+    if (valueKnob(a, "pan", v, -128, 127, 0, i18n::tr("Pan"), b, cell)) opSampleField(a, t, k, SampleField::Pan, std::lround(v), &e);
     ImGui::SameLine(0, 0);
     v = s.finetune;
     std::snprintf(b, sizeof b, "%+d", s.finetune);
-    if (valueKnob(a, "fine", v, -128, 127, 0, i18n::tr("Fine"), b, cell)) {
-      s.finetune = static_cast<int8_t>(std::clamp(std::lround(v), -128L, 127L));
-      commit(a, t, e, "sample fine tune", mergeKey(t, 3));
-    }
+    if (valueKnob(a, "fine", v, -128, 127, 0, i18n::tr("Fine"), b, cell)) opSampleField(a, t, k, SampleField::Fine, std::lround(v), &e);
     ImGui::SameLine(0, 0);
     v = s.relNote;
     std::snprintf(b, sizeof b, "%+d", s.relNote);
-    if (valueKnob(a, "rel", v, -48, 71, 0, i18n::tr("Transpose"), b, cell)) {
-      s.relNote = static_cast<int8_t>(std::clamp(std::lround(v), -48L, 71L));
-      commit(a, t, e, "sample transpose", mergeKey(t, 4));
-    }
+    if (valueKnob(a, "rel", v, -48, 71, 0, i18n::tr("Transpose"), b, cell)) opSampleField(a, t, k, SampleField::RelNote, std::lround(v), &e);
     ImGui::SameLine(0, 0);
     const int root = rootNote(s, rate);
     v = root;
-    if (valueKnob(a, "root", v, 1, 96, 49, i18n::tr("Root"), keyName(root - 1), cell)) {
-      setRootNote(s, rate, static_cast<int>(std::lround(v)));
-      commit(a, t, e, "sample root", mergeKey(t, 5));
-    }
+    if (valueKnob(a, "root", v, 1, 96, 49, i18n::tr("Root"), keyName(root - 1), cell)) opSampleRoot(a, t, k, rate, static_cast<int>(std::lround(v)), &e);
     ImGui::EndDisabled();
   }
   pui::endPanel();
@@ -1099,17 +1004,7 @@ void samplesPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrume
 
 // ---- envelopes ----
 
-// K-129: the envelope slots, kept with the user's settings.
-std::string envSlotsPath(App& a) { return (fs::u8path(a.configDir()) / "tracker-envelopes.txt").u8string(); }
-EnvSlots& envSlots(App& a) {
-  static EnvSlots s;
-  static bool loaded = false;
-  if (!loaded) {
-    s = loadEnvSlots(envSlotsPath(a));
-    loaded = true;
-  }
-  return s;
-}
+// K-129: the envelope slots, kept with the user's settings (cp19: tracker_session's envSlots, shared with the Tracker's Instrument editor).
 int gSlotMenu = -1;
 
 void envelopePanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, bool pan, float w, float h) {
@@ -1118,18 +1013,10 @@ void envelopePanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, bool pan, flo
   pui::beginPanel(pan ? i18n::tr("PANNING ENVELOPE") : i18n::tr("VOLUME ENVELOPE"), w, h);
   ImGui::PushID(which);
   const float inner = w - 20;
-  const char* label = pan ? "panning envelope" : "volume envelope";
   auto toggle = [&](const char* id, const char* text, uint8_t flag, const char* hint) {
     const bool on = (env.flags & flag) != 0;
     ImGui::PushID(id);
-    if (ui::TextButton(text, on, 0, hint)) {
-      env.flags = static_cast<uint8_t>(on ? env.flags & ~flag : env.flags | flag);
-      if (env.count == 0 && !on) {  // switched on with no points: a flat line to start from
-        insertEnvPoint(env, 0, pan ? 32 : 64);
-        insertEnvPoint(env, 16, pan ? 32 : 64);
-      }
-      commit(a, t, e, label);
-    }
+    if (ui::TextButton(text, on, 0, hint)) opEnvFlag(a, t, pan, flag, &e);  // (switched on with no points: a flat line to start from)
     ImGui::PopID();
   };
   toggle("on", i18n::tr("On"), trk::kEnvOn, pan ? i18n::tr("The panning envelope moves the sound while the note plays")
@@ -1151,10 +1038,7 @@ void envelopePanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, bool pan, flo
                     pan ? i18n::tr("Slot %d: click to use its panning envelope, right-click to keep this one there")
                         : i18n::tr("Slot %d: click to use its volume envelope, fadeout and vibrato, right-click to keep these there"),
                     k + 1);
-      if (ui::TextButton(lb, false, 20, hint)) {
-        applyEnvSlot(e.text.def, pan ? slots.pan[static_cast<size_t>(k)] : slots.vol[static_cast<size_t>(k)], pan);
-        commit(a, t, e, pan ? "panning envelope slot" : "volume envelope slot");
-      }
+      if (ui::TextButton(lb, false, 20, hint)) opEnvApplySlot(a, t, pan, pan ? slots.pan[static_cast<size_t>(k)] : slots.vol[static_cast<size_t>(k)], &e);
       if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
         gSlotMenu = k;
         ImGui::OpenPopup("##envslot");
@@ -1251,33 +1135,17 @@ void envelopePanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, bool pan, flo
     if (hot >= 0) {
       ed.envDrag[which] = hot;
     } else {
-      const bool empty = env.count == 0;
-      if (empty) insertEnvPoint(env, 0, toLevel(m.y));  // the first point sits at the start
-      const int i = insertEnvPoint(env, std::max(1, toTicks(m.x)), toLevel(m.y));
-      if (i >= 0) {
-        if (empty) env.flags |= trk::kEnvOn;
-        ed.envDrag[which] = i;
-        commit(a, t, e, label, mergeKey(t, 20 + which));
-      }
+      // (cp17: the session's op; an empty envelope gets its first point at the start and turns on)
+      const int i = opEnvPointAdd(a, t, pan, toTicks(m.x), toLevel(m.y), &e);
+      if (i >= 0) ed.envDrag[which] = i;
     }
   }
-  if (ImGui::IsItemActive() && ed.envDrag[which] >= 0 && ed.envDrag[which] < env.count && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-    const int i = ed.envDrag[which];
-    const int lo = i == 0 ? 0 : env.x[static_cast<size_t>(i - 1)] + 1;
-    const int hi = i == 0 ? 0 : i + 1 < env.count ? env.x[static_cast<size_t>(i + 1)] - 1 : 32767;
-    const int nx = std::clamp(toTicks(m.x), lo, std::max(lo, hi));
-    const int ny = toLevel(m.y);
-    if (nx != env.x[static_cast<size_t>(i)] || ny != env.y[static_cast<size_t>(i)]) {
-      env.x[static_cast<size_t>(i)] = static_cast<int16_t>(nx);
-      env.y[static_cast<size_t>(i)] = static_cast<int16_t>(ny);
-      commit(a, t, e, label, mergeKey(t, 20 + which));
-    }
-  }
+  if (ImGui::IsItemActive() && ed.envDrag[which] >= 0 && ed.envDrag[which] < env.count && ImGui::IsMouseDown(ImGuiMouseButton_Left))
+    opEnvPointMove(a, t, pan, ed.envDrag[which], toTicks(m.x), toLevel(m.y), &e);  // (kept between its neighbours)
   if (!ImGui::IsItemActive()) ed.envDrag[which] = -1;
   if (hov && hot >= 0 && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && hot > 0 && env.count > 2) {
-    deleteEnvPoint(env, hot);
     ed.envDrag[which] = -1;
-    commit(a, t, e, label);
+    opEnvPointDelete(a, t, pan, hot, &e);
   }
   if (hov && hot >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
     ed.envMenu[which] = hot;
@@ -1286,28 +1154,11 @@ void envelopePanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, bool pan, flo
   if (ImGui::BeginPopup("##envpt")) {
     const int i = ed.envMenu[which];
     if (i >= 0 && i < env.count) {
-      if (ImGui::MenuItem(i18n::tr("Sustain point"), nullptr, (env.flags & trk::kEnvSustain) && env.sustain == i)) {
-        env.sustain = static_cast<uint8_t>(i);
-        env.flags |= trk::kEnvSustain;
-        commit(a, t, e, label);
-      }
-      if (ImGui::MenuItem(i18n::tr("Loop start"), nullptr, (env.flags & trk::kEnvLoop) && env.loopStart == i)) {
-        env.loopStart = static_cast<uint8_t>(i);
-        if (env.loopEnd < i) env.loopEnd = static_cast<uint8_t>(i);
-        env.flags |= trk::kEnvLoop;
-        commit(a, t, e, label);
-      }
-      if (ImGui::MenuItem(i18n::tr("Loop end"), nullptr, (env.flags & trk::kEnvLoop) && env.loopEnd == i)) {
-        env.loopEnd = static_cast<uint8_t>(i);
-        if (env.loopStart > i) env.loopStart = static_cast<uint8_t>(i);
-        env.flags |= trk::kEnvLoop;
-        commit(a, t, e, label);
-      }
+      if (ImGui::MenuItem(i18n::tr("Sustain point"), nullptr, (env.flags & trk::kEnvSustain) && env.sustain == i)) opEnvSustain(a, t, pan, i, &e);
+      if (ImGui::MenuItem(i18n::tr("Loop start"), nullptr, (env.flags & trk::kEnvLoop) && env.loopStart == i)) opEnvLoopStart(a, t, pan, i, &e);
+      if (ImGui::MenuItem(i18n::tr("Loop end"), nullptr, (env.flags & trk::kEnvLoop) && env.loopEnd == i)) opEnvLoopEnd(a, t, pan, i, &e);
       ImGui::Separator();
-      if (ImGui::MenuItem(i18n::tr("Delete point"), nullptr, false, i > 0 && env.count > 2)) {
-        deleteEnvPoint(env, i);
-        commit(a, t, e, label);
-      }
+      if (ImGui::MenuItem(i18n::tr("Delete point"), nullptr, false, i > 0 && env.count > 2)) opEnvPointDelete(a, t, pan, i, &e);
     }
     ImGui::EndPopup();
   }
@@ -1349,19 +1200,15 @@ void instrumentPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, float w) {
   ImGui::SetNextItemWidth(nameW);
   ImGui::InputTextWithHint("##insname", i18n::tr("Instrument name"), ed.insName, sizeof ed.insName);
   if (ImGui::IsItemDeactivatedAfterEdit()) {
-    e.text.name = ed.insName;
-    ed.insNameData = e.text.name;
-    commit(a, t, e, "rename instrument");
+    ed.insNameData = ed.insName;
+    opRenameInstrument(a, t, ed.insName, &e);
   }
   ImGui::EndGroup();
   ImGui::SameLine(0, 14);
   char b[32];
   double v = d.fadeout;
   std::snprintf(b, sizeof b, "%d", d.fadeout);
-  if (valueKnob(a, "fade", v, 0, 4095, 0, i18n::tr("Fadeout"), b, cell)) {
-    d.fadeout = static_cast<uint16_t>(std::clamp(std::lround(v), 0L, 4095L));
-    commit(a, t, e, "fadeout", mergeKey(t, 30));
-  }
+  if (valueKnob(a, "fade", v, 0, 4095, 0, i18n::tr("Fadeout"), b, cell)) opInsFadeout(a, t, std::lround(v), &e);
   if (ImGui::IsItemHovered()) a.setHint(i18n::tr("How fast notes fade after the key is let go (with the volume envelope on)"));
   ImGui::SameLine(0, 12);
   ImGui::BeginGroup();
@@ -1369,32 +1216,20 @@ void instrumentPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, float w) {
   const char* shapes[] = {i18n::tr("Sine"), i18n::tr("Square"), i18n::tr("Ramp up"), i18n::tr("Ramp down")};
   int shape = d.vibType;
   const float segW = std::clamp((w - 20 - nameW - cell * 4 - 50) / 4.0f, 46.0f, 72.0f);
-  if (ui::Segmented("##vibshape", shapes, 4, &shape, segW, ImGui::GetFrameHeight())) {  // the name field's height: one row
-    d.vibType = static_cast<uint8_t>(shape);
-    commit(a, t, e, "vibrato shape");
-  }
+  if (ui::Segmented("##vibshape", shapes, 4, &shape, segW, ImGui::GetFrameHeight())) opInsVibShape(a, t, shape, &e);  // the name field's height: one row
   ImGui::EndGroup();
   ImGui::SameLine(0, 10);
   v = d.vibSweep;
   std::snprintf(b, sizeof b, "%d", d.vibSweep);
-  if (valueKnob(a, "sweep", v, 0, 255, 0, i18n::tr("Sweep"), b, cell)) {
-    d.vibSweep = static_cast<uint8_t>(std::clamp(std::lround(v), 0L, 255L));
-    commit(a, t, e, "vibrato sweep", mergeKey(t, 31));
-  }
+  if (valueKnob(a, "sweep", v, 0, 255, 0, i18n::tr("Sweep"), b, cell)) opInsVibrato(a, t, VibField::Sweep, std::lround(v), &e);
   ImGui::SameLine(0, 0);
   v = d.vibDepth;
   std::snprintf(b, sizeof b, "%d", d.vibDepth);
-  if (valueKnob(a, "depth", v, 0, 15, 0, i18n::tr("Depth"), b, cell)) {
-    d.vibDepth = static_cast<uint8_t>(std::clamp(std::lround(v), 0L, 15L));
-    commit(a, t, e, "vibrato depth", mergeKey(t, 32));
-  }
+  if (valueKnob(a, "depth", v, 0, 15, 0, i18n::tr("Depth"), b, cell)) opInsVibrato(a, t, VibField::Depth, std::lround(v), &e);
   ImGui::SameLine(0, 0);
   v = d.vibRate;
   std::snprintf(b, sizeof b, "%d", d.vibRate);
-  if (valueKnob(a, "rate", v, 0, 63, 0, i18n::tr("Rate"), b, cell)) {
-    d.vibRate = static_cast<uint8_t>(std::clamp(std::lround(v), 0L, 63L));
-    commit(a, t, e, "vibrato rate", mergeKey(t, 33));
-  }
+  if (valueKnob(a, "rate", v, 0, 63, 0, i18n::tr("Rate"), b, cell)) opInsVibrato(a, t, VibField::Rate, std::lround(v), &e);
   pui::endPanel();
 }
 
@@ -1406,9 +1241,12 @@ void midiPanel(App& a, const PluginTarget& t, Edit& e, float w) {
   const float cell = 56;
   ImGui::BeginGroup();
   groupCaption(i18n::tr("Output"));
+  // (cp17: each change through the session's op; Mute keeps the instrument's own mute in step)
+  auto setMidi = [&](MidiSettings nm, const char* label, int merge, bool syncMute) { opSetMidi(a, t, nm, syncMute, label, merge, &e); };
   if (ui::TextButton(i18n::tr("Send notes"), m.on, 96, i18n::tr("The notes this instrument plays also go to the MIDI output, on its channel and program"))) {
-    m.on = !m.on;
-    commit(a, t, e, "MIDI output");
+    MidiSettings nm = m;
+    nm.on = !nm.on;
+    setMidi(nm, "MIDI output", 0, false);
   }
   ImGui::EndGroup();
   ImGui::SameLine(0, 12);
@@ -1417,32 +1255,35 @@ void midiPanel(App& a, const PluginTarget& t, Edit& e, float w) {
   double v = m.channel + 1;
   std::snprintf(b, sizeof b, "%d", m.channel + 1);
   if (valueKnob(a, "mch", v, 1, 16, 1, i18n::tr("Channel"), b, cell)) {
-    m.channel = static_cast<int>(std::clamp(std::lround(v), 1L, 16L)) - 1;
-    commit(a, t, e, "MIDI channel", mergeKey(t, 40));
+    MidiSettings nm = m;
+    nm.channel = static_cast<int>(std::clamp(std::lround(v), 1L, 16L)) - 1;
+    setMidi(nm, "MIDI channel", 40, false);
   }
   ImGui::SameLine(0, 0);
   v = m.program + 1;
   std::snprintf(b, sizeof b, "%d", m.program + 1);
   if (valueKnob(a, "mprg", v, 1, 128, 1, i18n::tr("Program"), b, cell)) {
-    m.program = static_cast<int>(std::clamp(std::lround(v), 1L, 128L)) - 1;
-    commit(a, t, e, "MIDI program", mergeKey(t, 41));
+    MidiSettings nm = m;
+    nm.program = static_cast<int>(std::clamp(std::lround(v), 1L, 128L)) - 1;
+    setMidi(nm, "MIDI program", 41, false);
   }
   ImGui::EndDisabled();
   ImGui::SameLine(0, 0);
   v = m.bend;
   std::snprintf(b, sizeof b, "%d", m.bend);
   if (valueKnob(a, "mbend", v, 0, 36, 2, i18n::tr("Bend range"), b, cell)) {
-    m.bend = static_cast<int>(std::clamp(std::lround(v), 0L, 36L));
-    commit(a, t, e, "pitch wheel range", mergeKey(t, 42));
+    MidiSettings nm = m;
+    nm.bend = static_cast<int>(std::clamp(std::lround(v), 0L, 36L));
+    setMidi(nm, "pitch wheel range", 42, false);
   }
   if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Semitones the pitch wheel bends played notes"));
   ImGui::SameLine(0, 12);
   ImGui::BeginGroup();
   groupCaption(i18n::tr("Own sound"));
   if (ui::TextButton(i18n::tr("Mute"), m.mute, 64, i18n::tr("Silences the instrument's own sound; notes sent to MIDI still go out"))) {
-    m.mute = !m.mute;
-    e.text.def.mute = m.on && m.mute;
-    commit(a, t, e, "mute instrument");
+    MidiSettings nm = m;
+    nm.mute = !nm.mute;
+    setMidi(nm, "mute instrument", 0, true);
   }
   ImGui::EndGroup();
   pui::endPanel();
@@ -1459,7 +1300,7 @@ void keyMapPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrumen
   const bool hov = ImGui::IsItemHovered();
   const ImVec2 m = ImGui::GetIO().MousePos;
   const int under = gl::toIntClamped((m.x - p0.x) / kw, 0, 95);  // no mouse: -FLT_MAX
-  const bool canMap = hasSample(e, ed.sel);
+  const bool canMap = hasSample(e, ed.m->sel);
   if (ImGui::IsItemActivated() && canMap) ed.keyFrom = ed.keyTo = under;
   // K-129: pressing a key also plays it (the strip lights it like every sounding key). Held, the key
   // under the pointer sounds, so a drag plays one key at a time (KeyGlide.h), while the strip is in
@@ -1469,8 +1310,7 @@ void keyMapPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrumen
   keyglide::devNoteStrip("tracker", p0, ImVec2(p0.x + kw * 96, p0.y + kh), stripKeyPitch(0), p0.x, kw, ed.keyHeld);
   if (ImGui::IsItemActive() && ed.keyFrom >= 0) ed.keyTo = under;
   if (ImGui::IsItemDeactivated() && ed.keyFrom >= 0) {
-    mapKeys(e, ed.keyFrom, ed.keyTo, ed.sel);
-    commit(a, t, e, "map keys");
+    opMapKeys(a, t, ed.keyFrom, ed.keyTo, ed.m->sel, &e);
     ed.keyFrom = ed.keyTo = -1;
   }
   if (!ImGui::IsItemActive() && ed.keyFrom >= 0) ed.keyFrom = ed.keyTo = -1;  // a drag the editor lost (closed mid-drag)
@@ -1481,7 +1321,7 @@ void keyMapPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrumen
     const bool black = pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10;
     const ImVec2 a0(p0.x + kw * static_cast<float>(n), p0.y), a1(p0.x + kw * static_cast<float>(n + 1) - 1, p0.y + kh);
     const bool picking = ed.keyFrom >= 0 && n >= lo && n <= hi;
-    const int slot = picking ? ed.sel : builtin ? 0 : e.text.def.keymap[static_cast<size_t>(n)] & 15;
+    const int slot = picking ? ed.m->sel : builtin ? 0 : e.text.def.keymap[static_cast<size_t>(n)] & 15;
     const bool has = builtin || hasSample(e, slot);
     ImU32 col = has ? slotColour(slot, black ? 150 : 225) : (black ? pal().surface900 : pal().surface700);
     dl->AddRectFilled(a0, a1, col);
@@ -1523,15 +1363,19 @@ void keyMapPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrumen
 bool drawEditor(App& a, const PluginTarget& t, float width) {
   const PluginState* st = t.state(a.doc.song());
   if (!st || st->type != trk::kInstrumentType) return false;
-  const auto inst = instrumentFor(*st);
-  const int sound = soundOf(*st);
-  Edit e = readEdit(st->data, sound);
-  Ed& ed = gEd[t.key()];
+  // cp17 (CPU): the parsed instrument from the session's snapshot (parsed again only when the
+  // document changed), a copy the widgets below edit in place as before.
+  const Snapshot& snap = snapshot(a, t);
+  if (!snap.ok) return false;
+  const std::shared_ptr<const InstrumentAux> inst = snap.inst;
+  const int sound = snap.sound;
+  Edit e = snap.e;
+  Ed& ed = edFor(t.key());
   tendPreview(a, t);
-  if (!hasSample(e, ed.sel))
+  if (!hasSample(e, ed.m->sel))
     for (int k = 0; k < trk::kMaxSamples; ++k)
       if (hasSample(e, k)) {
-        ed.sel = k;
+        ed.m->sel = k;
         break;
       }
   const float w = std::max(640.0f, width);
@@ -1631,13 +1475,14 @@ HeaderCtx headerCtx(App& a, ObjectId channel) {
     c.st = nullptr;
     return c;
   }
-  c.inst = instrumentFor(*c.st);
-  c.e = readEdit(c.st->data, soundOf(*c.st));
-  c.ed = &gEd[c.t.key()];
-  if (!hasSample(c.e, c.ed->sel))
+  const Snapshot& snap = snapshot(a, c.t);  // (cp17: no parse while nothing changes)
+  c.inst = snap.inst;
+  c.e = snap.e;
+  c.ed = &edFor(c.t.key());
+  if (!hasSample(c.e, c.ed->m->sel))
     for (int k = 0; k < trk::kMaxSamples; ++k)
       if (hasSample(c.e, k)) {
-        c.ed->sel = k;
+        c.ed->m->sel = k;
         break;
       }
   return c;
@@ -1652,7 +1497,7 @@ HeaderView headerView(App& a, ObjectId channel) {
   v.midi = c.e.midi;
   v.samples = sampleCountOf(c.e);
   v.clipFrames = clipboard().frames();
-  const int k = c.ed->sel;
+  const int k = c.ed->m->sel;
   if (!hasSample(c.e, k)) return v;
   v.slot = k;
   v.name = editName(c.e, k);
@@ -1669,9 +1514,9 @@ HeaderView headerView(App& a, ObjectId channel) {
 
 bool headerEdit(App& a, ObjectId channel, HeaderEdit what) {
   HeaderCtx c = headerCtx(a, channel);
-  if (!c.ok() || !hasSample(c.e, c.ed->sel)) return false;
+  if (!c.ok() || !hasSample(c.e, c.ed->m->sel)) return false;
   Ed& ed = *c.ed;
-  const int k = ed.sel;
+  const int k = ed.m->sel;
   Wave probe;
   if (!waveOf(c.e, k, *c.inst, probe)) {
     a.notify(i18n::tr("The sample file is missing"));
@@ -1680,7 +1525,7 @@ bool headerEdit(App& a, ObjectId channel, HeaderEdit what) {
   const int32_t frames = probe.frames();
   const Span sel = clampSpan(probe, selectionOf(ed, k));
   const bool part = !sel.empty() && sel.b - sel.a < frames;  // a range that leaves something
-  auto clear = [&] { ed.selA = ed.selB = -1; };
+  auto clear = [&] { ed.m->selA = ed.m->selB = -1; };
   auto run = [&](const char* label, auto op) { return editWave(a, c.t, ed, c.e, *c.inst, k, label, op); };
   switch (what) {
     case HeaderEdit::Reverse: return run("reverse sample", [&](Wave& x) { return waveReverse(x, sel); });
@@ -1697,29 +1542,29 @@ bool headerEdit(App& a, ObjectId channel, HeaderEdit what) {
     // Paste puts the clipboard back where it came from, as the classic editor does.
     case HeaderEdit::Delete:
       if (!part || !run("delete sample range", [&](Wave& x) { return waveDelete(x, sel); })) return false;
-      ed.selSlot = k, ed.selA = ed.selB = sel.a;
+      ed.m->selSlot = k, ed.m->selA = ed.m->selB = sel.a;
       return true;
     case HeaderEdit::Cut:
       if (!part) return false;
       clipboard() = waveCopy(probe, sel);
       if (!run("cut sample range", [&](Wave& x) { return waveDelete(x, sel); })) return false;
-      ed.selSlot = k, ed.selA = ed.selB = sel.a;
+      ed.m->selSlot = k, ed.m->selA = ed.m->selB = sel.a;
       return true;
     case HeaderEdit::Copy:
       clipboard() = waveCopy(probe, sel);
       return true;
     case HeaderEdit::Paste: {
       if (clipboard().L.empty()) return false;
-      const int32_t cursor = ed.selSlot == k && ed.selA >= 0 ? std::min(ed.selA, frames) : 0;
+      const int32_t cursor = ed.m->selSlot == k && ed.m->selA >= 0 ? std::min(ed.m->selA, frames) : 0;
       const Span at = sel.empty() ? Span{cursor, cursor} : sel;
       const auto n = static_cast<int32_t>(clipboard().L.size());
       if (!run("paste into sample", [&](Wave& x) { return wavePaste(x, at, clipboard()); })) return false;
-      ed.selSlot = k, ed.selA = at.a, ed.selB = at.a + n;
+      ed.m->selSlot = k, ed.m->selA = at.a, ed.m->selB = at.a + n;
       return true;
     }
     case HeaderEdit::TrimLoop: return run("trim sample after loop", [&](Wave& x) { return waveMinimise(x); });
     case HeaderEdit::SelectAll:
-      ed.selSlot = k, ed.selA = 0, ed.selB = frames;
+      ed.m->selSlot = k, ed.m->selA = 0, ed.m->selB = frames;
       return true;
     case HeaderEdit::ClearRange:
       clear();
@@ -1735,9 +1580,9 @@ void headerStepSample(App& a, ObjectId channel, int d) {
   HeaderCtx c = headerCtx(a, channel);
   if (!c.ok() || d == 0) return;
   for (int i = 1; i <= trk::kMaxSamples; ++i) {
-    const int k = ((c.ed->sel + d * i) % trk::kMaxSamples + trk::kMaxSamples) % trk::kMaxSamples;
+    const int k = ((c.ed->m->sel + d * i) % trk::kMaxSamples + trk::kMaxSamples) % trk::kMaxSamples;
     if (hasSample(c.e, k)) {
-      c.ed->sel = k;
+      c.ed->m->sel = k;
       return;
     }
   }
@@ -1751,23 +1596,22 @@ void headerOpenPopup(const char* which) {
 
 void headerPopups(App& a, ObjectId channel) {
   HeaderCtx c = headerCtx(a, channel);
-  if (!c.ok() || !hasSample(c.e, c.ed->sel)) return;
-  editPopups(a, c.t, *c.ed, c.e, *c.inst, c.ed->sel);
+  if (!c.ok() || !hasSample(c.e, c.ed->m->sel)) return;
+  editPopups(a, c.t, *c.ed, c.e, *c.inst, c.ed->m->sel);
 }
 
 void headerSetMidi(App& a, ObjectId channel, const MidiSettings& m, const char* label, int field) {
   HeaderCtx c = headerCtx(a, channel);
   if (!c.ok()) return;
-  c.e.midi = m;
-  c.e.text.def.mute = m.on && m.mute;
+  // (cp17: the session's op; the instrument's own mute follows the box's)
   // R11-10: clicks on one control's arrows, one after another with nothing edited between, are one
   // undo step (each click is a pointer gesture of its own, so the merge key alone never joined them).
   static uint64_t lastKey = 0, lastSerial = 0;
   const uint64_t key = field > 0 ? mergeKey(c.t, 40 + field) : 0;
   if (key != 0 && key == lastKey && lastSerial == a.doc.history().stateSerial())
-    a.doc.amendStep(lastSerial, [&] { commit(a, c.t, c.e, label, key); });
+    a.doc.amendStep(lastSerial, [&] { opSetMidi(a, c.t, m, true, label, field > 0 ? 40 + field : 0); });
   else
-    commit(a, c.t, c.e, label, key);
+    opSetMidi(a, c.t, m, true, label, field > 0 ? 40 + field : 0);
   lastKey = key;
   lastSerial = a.doc.history().stateSerial();
 }
@@ -1781,26 +1625,45 @@ HeaderSamples headerSamples(App& a, ObjectId channel) {
   // R12-04: once the instrument has a sample, every slot is listed (an empty one with no name), so an
   // empty slot can be picked and the next load from Files fills it.
   const bool any = sampleCount(c.e) > 0;
-  for (int k = 0; k < trk::kMaxSamples; ++k)
-    if (hasSample(c.e, k)) h.list.emplace_back(k, editName(c.e, k));
-    else if (any) h.list.emplace_back(k, std::string());
-  if (c.ed->wantSlot >= 0 && hasSample(c.e, c.ed->wantSlot)) c.ed->wantSlot = -1;
-  if (c.ed->wantSlot >= 0) h.sel = c.ed->wantSlot;
-  else if (hasSample(c.e, c.ed->sel)) h.sel = c.ed->sel;
+  for (int k = 0; k < trk::kMaxSamples; ++k) {
+    if (hasSample(c.e, k)) {
+      h.list.emplace_back(k, editName(c.e, k));
+      const trk::SampleDef& sd = c.e.text.def.samples[static_cast<size_t>(k)];
+      uint8_t m = 0;
+      if (sd.loop != trk::kLoopOff && sd.loopLength > 0) {
+        m |= sd.loop == trk::kLoopPingPong ? kMarkPingPong : kMarkLoop;
+      }
+      if (c.e.eightBit[static_cast<size_t>(k)]) {
+        m |= kMark8Bit;
+      }
+      const auto& f = c.inst ? c.inst->files[static_cast<size_t>(k)] : nullptr;
+      if (!f || f->frames() == 0) {
+        m |= kMarkMissing;
+      }
+      h.marks.push_back(m);
+    } else if (any) {
+      h.list.emplace_back(k, std::string());
+      h.marks.push_back(0);
+    }
+  }
+  if (c.ed->m->wantSlot >= 0 && hasSample(c.e, c.ed->m->wantSlot)) c.ed->m->wantSlot = -1;
+  if (c.ed->m->wantSlot >= 0) h.sel = c.ed->m->wantSlot;
+  else if (hasSample(c.e, c.ed->m->sel)) h.sel = c.ed->m->sel;
   return h;
 }
 
 uint64_t headerSampleSelKey(ObjectId channel) {
   const auto it = gEd.find(PluginTarget{channel, -1}.key());
   if (it == gEd.end()) return ~uint64_t{0};
-  return (static_cast<uint64_t>(static_cast<uint32_t>(it->second.sel)) << 32) | static_cast<uint32_t>(it->second.wantSlot);
+  const Memory& m = *it->second.m;
+  return (static_cast<uint64_t>(static_cast<uint32_t>(m.sel)) << 32) | static_cast<uint32_t>(m.wantSlot);
 }
 
 void headerSelectSample(App& a, ObjectId channel, int slot) {
   HeaderCtx c = headerCtx(a, channel);
   if (!c.st || slot < 0 || slot >= trk::kMaxSamples) return;
-  if (hasSample(c.e, slot)) c.ed->sel = slot, c.ed->wantSlot = -1;
-  else if (sampleCount(c.e) > 0) c.ed->wantSlot = slot;
+  if (hasSample(c.e, slot)) c.ed->m->sel = slot, c.ed->m->wantSlot = -1;
+  else if (sampleCount(c.e) > 0) c.ed->m->wantSlot = slot;
 }
 
 bool headerCopySample(App& a, ObjectId channel, ObjectId srcChannel, int srcSlot) {
@@ -1820,7 +1683,7 @@ bool headerCopySample(App& a, ObjectId channel, ObjectId srcChannel, int srcSlot
     a.notify(i18n::tr("Copy sample: the source sample is empty"));
     return false;
   }
-  const int dslot = hasSample(c.e, c.ed->sel) ? c.ed->sel : 0;
+  const int dslot = hasSample(c.e, c.ed->m->sel) ? c.ed->m->sel : 0;
   if (srcChannel == channel && dslot == srcSlot) {
     a.notify(i18n::tr("Copy sample: the source and the current sample are the same"));
     return false;
@@ -1833,23 +1696,23 @@ bool headerCopySample(App& a, ObjectId channel, ObjectId srcChannel, int srcSlot
   }
   if (copySampleInto(c.e, dslot, src, srcSlot) < 0) return false;
   commit(a, c.t, c.e, "copy sample");
-  c.ed->sel = dslot;
-  if (c.ed->selSlot == dslot) c.ed->selA = c.ed->selB = -1;
+  c.ed->m->sel = dslot;
+  if (c.ed->m->selSlot == dslot) c.ed->m->selA = c.ed->m->selB = -1;
   return true;
 }
 
 bool headerExchangeSamples(App& a, ObjectId channel, int srcSlot) {
   HeaderCtx c = headerCtx(a, channel);
   if (!c.ok()) return false;
-  const int k = c.ed->sel;
+  const int k = c.ed->m->sel;
   if (srcSlot < 0 || srcSlot >= trk::kMaxSamples || srcSlot == k || (!hasSample(c.e, k) && !hasSample(c.e, srcSlot))) {
     a.notify(i18n::tr("Exchange samples: mark another sample of this instrument as the source (click its number)"));
     return false;
   }
   exchangeSampleData(c.e, k, srcSlot);
   commit(a, c.t, c.e, "exchange samples");
-  if (!hasSample(c.e, k) && hasSample(c.e, srcSlot)) c.ed->sel = srcSlot;
-  c.ed->selA = c.ed->selB = -1;
+  if (!hasSample(c.e, k) && hasSample(c.e, srcSlot)) c.ed->m->sel = srcSlot;
+  c.ed->m->selA = c.ed->m->selB = -1;
   return true;
 }
 
@@ -1874,18 +1737,18 @@ int headerLoadSample(App& a, ObjectId channel, const std::string& path) {
     const int k = addFiles(a, c.t, {path}, soundOf(*c.st));
     if (k >= 0 && rename) a.doc.renameChannel(channel, fs::u8path(path).stem().u8string());
     if (rename) a.doc.endGroup(false);
-    if (k >= 0) gEd[c.t.key()].sel = k;
+    if (k >= 0) memory(c.t.key()).sel = k;
     return k;
   }
   SamplePtr sp = sampleCache().get(path);
   if (!sp || sp->frames() == 0) return -1;
-  const int slot = c.ed->wantSlot >= 0 ? c.ed->wantSlot : std::clamp(c.ed->sel, 0, trk::kMaxSamples - 1);  // R12-04
-  c.ed->wantSlot = -1;
+  const int slot = c.ed->m->wantSlot >= 0 ? c.ed->m->wantSlot : std::clamp(c.ed->m->sel, 0, trk::kMaxSamples - 1);  // R12-04
+  c.ed->m->wantSlot = -1;
   const int k = replaceSample(c.e, slot, path, static_cast<int32_t>(std::min<size_t>(sp->frames(), 0x3FFFFFFF)), sp->sampleRate,
                               fs::u8path(path).stem().u8string());
   if (k < 0) return -1;
   commit(a, c.t, c.e, "load sample");
-  c.ed->sel = k;
+  c.ed->m->sel = k;
   return k;
 }
 

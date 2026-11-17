@@ -276,6 +276,29 @@ def _fixed_time():
     return (g.tm_year, g.tm_mon, g.tm_mday, g.tm_hour, g.tm_min, g.tm_sec)
 
 
+# Where the file system keeps no Unix execute bit (Windows: os.stat reports 0o666 for any file that
+# is not .exe/.bat/.cmd/.com), the zip's mode is inferred from what the file is instead: plugin
+# binaries by name or by their place in a bundle, other programs by their magic bytes.
+_EXEC_EXTS = (".clap", ".so", ".dll", ".dylib", ".exe", ".vst3")
+_EXEC_MAGIC = (b"\x7fELF", b"MZ", b"#!", b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
+
+
+def _executable(p, st):
+    if os.name != "nt":
+        return bool(st.st_mode & 0o111)
+    if p.lower().endswith(_EXEC_EXTS):
+        return True
+    parent = os.path.basename(os.path.dirname(p))
+    if parent == "MacOS" or parent.endswith(("-win", "-linux", "-freebsd", "-netbsd", "-openbsd")):
+        return True  # a VST3 / macOS bundle's binary folder
+    try:
+        with open(p, "rb") as f:
+            head = f.read(4)
+    except OSError:
+        return False
+    return head.startswith(_EXEC_MAGIC)
+
+
 def write_zip(root, out_path):
     """Zips the folder `root` (its own name is the top entry), sorted, fixed times, Unix modes kept."""
     when = _fixed_time()
@@ -308,7 +331,7 @@ def write_zip(root, out_path):
             else:
                 zi = zipfile.ZipInfo(rel, when)
                 zi.create_system = 3
-                mode = 0o755 if st.st_mode & 0o111 else 0o644
+                mode = 0o755 if _executable(p, st) else 0o644
                 zi.external_attr = (stat.S_IFREG | mode) << 16
                 zi.compress_type = zipfile.ZIP_DEFLATED
                 with open(p, "rb") as f:

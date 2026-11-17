@@ -30,6 +30,7 @@
 #include "PixelGrid.h"
 #include "../packs/PacksUi.h"
 #include "Theme.h"
+#include "TrackerEditors.h"
 #include "TrackerLook.h"
 #include "TrackerPages.h"
 #include "WindowRaise.h"
@@ -102,6 +103,7 @@ struct State {
   float wheel = 0;          // wheel movement not yet a whole row (trackpads send small steps)
   float scrollX = 0;        // the tracks' sideways scroll (always a track's left edge)
   float wheelX = 0;         // sideways wheel movement not yet a whole track
+  float zoomWheel = 0;      // cp17: Ctrl+wheel movement not yet a zoom step
   ImVec2 hbar0, hbar1;      // the tracks' scrollbar last frame (none: both zero)
   long long scrolledFor = -1;  // the cursor track (and the tracks' sizes) the sideways scroll last brought into view
   int offLeft = 0, offRight = 0;  // tracks out of view with notes in the rows shown (last frame)
@@ -133,6 +135,26 @@ trk::Masks gMasks;        // the Advanced edit box's clipboard masks
 bool gMasking = false;    // ... turned on
 int gVisible = 0;     // tracks in view at most (0: as many as fit), the classic "maximum visible channels"
 int gTrackWidth = 0;  // cp16: characters every track is widened by (a header's edge dragged; settings)
+// cp17 (user): the pattern's sideways zoom, a view preference kept in the settings (never in the
+// song: saves stay the same in every layout). Each step narrows the tracks as a classic tracker's
+// narrower track modes do: 0 as set (the glyphs grow with the room, a hand-widened width kept);
+// 1 the interface's glyph size; 2 the effect and pan sub-columns hidden; 3 the note and instrument
+// only; 4 the note only; 5 and 6 the note in smaller glyphs. Hidden sub-columns keep their data
+// and are edited again by zooming back in. "Fit" picks the widest step that shows every track.
+constexpr int kZoomMax = 6;
+bool gShowCfg[static_cast<int>(Field::Count)] = {true, true, true, true, true};  // the settings' sub-columns
+int gZoom = 0;        // the step chosen (settings tracker.patternZoom)
+bool gZoomFit = false;  // the step follows "every track in view" (settings tracker.patternFit)
+int gZoomEff = 0;     // the step drawn (the fitted one with Fit)
+// The sub-columns step `z` shows.
+void zoomColumns(int z) {
+  for (int f = 0; f < static_cast<int>(Field::Count); ++f) gShow[f] = gShowCfg[f];
+  if (z >= 2) gShow[static_cast<int>(Field::Effect)] = gShow[static_cast<int>(Field::Pan)] = false;
+  if (z >= 3) gShow[static_cast<int>(Field::Volume)] = false;
+  if (z >= 4) gShow[static_cast<int>(Field::Instrument)] = false;
+}
+// The glyph size step `z` draws at (`fs` the interface's).
+float zoomGlyph(int z, float fs) { return z >= 6 ? std::max(7.0f, std::floor(fs * 0.66f)) : z >= 5 ? std::max(8.0f, std::floor(fs * 0.82f)) : fs; }
 void loadColumns(App& a) {
   gVisible = static_cast<int>(a.settings.getNumber("tracker.visibleTracks"));
   gTrackWidth = std::clamp(static_cast<int>(a.settings.getNumber("tracker.trackWidth")), 0, 40);
@@ -147,9 +169,13 @@ void loadColumns(App& a) {
   gBeats = a.settings.getBool("tracker.beatHighlight");
   gFrames = a.settings.getBool("tracker.trackFrames");
   gNumbers = a.settings.getBool("tracker.trackNumbers");
-  gShow[static_cast<int>(Field::Volume)] = a.settings.getBool("tracker.volumeColumn");
-  gShow[static_cast<int>(Field::Pan)] = a.settings.getBool("tracker.panColumn");
-  gShow[static_cast<int>(Field::Effect)] = a.settings.getBool("tracker.effectColumn");
+  gShowCfg[static_cast<int>(Field::Volume)] = a.settings.getBool("tracker.volumeColumn");
+  gShowCfg[static_cast<int>(Field::Pan)] = a.settings.getBool("tracker.panColumn");
+  gShowCfg[static_cast<int>(Field::Effect)] = a.settings.getBool("tracker.effectColumn");
+  gZoom = std::clamp(static_cast<int>(a.settings.getNumber("tracker.patternZoom")), 0, kZoomMax);
+  gZoomFit = a.settings.getBool("tracker.patternFit");
+  if (!gZoomFit) gZoomEff = gZoom;
+  zoomColumns(gZoomEff);
   gDots = a.settings.getBool("tracker.emptyDots");
   gFlats = a.settings.getBool("tracker.flats");
 }
@@ -1368,6 +1394,27 @@ static bool windowFrontNow(const char* window) {
   return w && w->DockIsActive && w->DockNode && w->DockNode->VisibleWindow == w;
 }
 
+void zoomPattern(App& a, int d) {
+  loadColumns(a);
+  int z = gZoomEff;
+  bool fit = false;
+  if (d == 0) fit = true;                        // every track in view (the step is found as drawn)
+  else if (d == 99) z = 0;                       // back to the plain view
+  else z = std::clamp(z - (d > 0 ? 1 : -1), 0, kZoomMax);  // wider: a step down; narrower: a step up
+  gZoom = z, gZoomFit = fit;
+  if (!fit) gZoomEff = z;
+  a.settings.set("tracker.patternZoom", static_cast<double>(z));
+  a.settings.set("tracker.patternFit", fit);
+  zoomColumns(gZoomEff);
+  st().scrolledFor = -1;  // (the cursor's track brought into view again at the new widths)
+}
+int patternZoom() { return gZoomEff; }
+bool patternFit() { return gZoomFit; }
+void zoomFront(App& a, int d) {
+  if (windowFrontNow("Playlist")) trackerpages::zoomSong(a, d);
+  else zoomPattern(a, d);
+}
+
 namespace {
 // cp16: the per-part frame timers (PerfScope): this frame's sums, and a ring of the last 600 frames'.
 constexpr int kPerfFrames = 600;
@@ -1734,6 +1781,8 @@ int cursorField() { return static_cast<int>(st().cur.field); }
 
 bool sdlKey(App& a, int scancode, int keycode, int mods, bool down, bool repeat) {
   State& s = st();
+  // cp18: the lower band's Sample editor or Channel frame with the keys takes them first.
+  if (trackereditors::sdlKey(a, scancode, keycode, mods, down, repeat)) return true;
   // Caps Lock comes as a key down when it locks and a key up when it unlocks (macOS): each is a press.
 #ifdef __APPLE__
   // (N-02: only macOS; elsewhere every press sends a down and an up, and the up is not a press.)
@@ -1785,7 +1834,7 @@ void showPage(App& a, const char* window) {
   // Another page asked for (a key, a menu): the band comes back with its page strip.
   if (gExtended && std::strcmp(window, "Pattern editor") != 0) setExtended(a, false);
   if (std::strcmp(window, "Instrument") == 0) {  // the selected channel's instrument (hosted in the layout's chain)
-    if (a.selChannel != kNoId) a.settingsChannel = a.selChannel;
+    if (a.selChannel != kNoId) trackereditors::open(a, trackereditors::Editor::Instrument, a.selChannel);
     return;
   }
   if (std::strcmp(window, "Loupe") == 0) {  // T-11: the pinned panel docks with the centre's pages: it comes to the front
@@ -1871,6 +1920,7 @@ void stepInstrument(App& a, int d) {
 }
 
 bool closePageOnCloseRequest(App& a) {
+  if (trackereditors::closeRequest(a)) return true;  // cp18: Cmd+W with the lower band's screen: it closes
   if (!(layoutui::active() == layout::Preset::Tracker && layoutui::shellBuilt(a, layout::Preset::Tracker)) || !frontPage()) return false;
   gCloseAsked = ImGui::GetFrameCount();
   return true;
@@ -1878,6 +1928,7 @@ bool closePageOnCloseRequest(App& a) {
 
 bool closeFrontPageKey(App& a) {
   ImGuiIO& io = ImGui::GetIO();
+  if (trackereditors::hasKeys()) return false;  // cp18: Esc and Cmd+W close the lower band's screen (its own keys)
   const bool asked = ImGui::GetFrameCount() - gCloseAsked <= 2;  // (asked between frames: taken on the next)
   gCloseAsked = -10;
   if (io.WantTextInput || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return false;
@@ -2090,26 +2141,43 @@ void patternEditor(App& a) {
     m.rowH = std::round(pf * (gTall ? 1.5f : 1.12f) + 2);
     return m;
   };
+  int handW = gTrackWidth;  // (cp17: a zoomed-out view drops the hand widening)
   auto tracksW = [&](const Metrics& m, size_t n) {
     float w = 0;
     for (size_t i = 0; i < n && i < v.tracks.size(); ++i)
-      w += m.pad * 2 + m.colW * static_cast<float>(v.tracks[i].columns) + m.cw * static_cast<float>(gTrackWidth) + 1;
+      w += m.pad * 2 + m.colW * static_cast<float>(v.tracks[i].columns) + m.cw * static_cast<float>(handW) + 1;
     return w;
   };
   const float areaW = a1.x - a0.x;
+  // cp17: Fit: the widest zoom step at which every track is in view (the narrowest when none is).
+  if (gZoomFit) {
+    int z = 0;
+    for (; z < kZoomMax; ++z) {
+      zoomColumns(z);
+      handW = z == 0 ? gTrackWidth : 0;
+      const Metrics m = metricsAt(zoomGlyph(z, fs));
+      if (tracksW(m, v.tracks.size()) + m.numW * 2 <= areaW) break;
+    }
+    gZoomEff = z;
+    zoomColumns(z);
+  }
+  handW = gZoomEff == 0 ? gTrackWidth : 0;
+  // A sub-column the zoom hides takes the cursor to the note (its data stays; zoom in to edit it).
+  if (!gShow[static_cast<int>(s.cur.field)]) s.cur.field = Field::Note, s.cur.digit = 0;
+  const float fz = zoomGlyph(gZoomEff, fs);  // the zoom step's glyph size
   size_t shown = v.tracks.size();
   {
-    const Metrics m0 = metricsAt(fs);
+    const Metrics m0 = metricsAt(fz);
     while (shown > 1 && tracksW(m0, shown) + m0.numW * 2 > areaW) --shown;
   }
   // Settings' "Visible tracks": at most that many share the width (wider tracks, the rest scroll).
-  if (gVisible > 0) shown = std::min(shown, static_cast<size_t>(gVisible));
+  if (gVisible > 0 && gZoomEff == 0) shown = std::min(shown, static_cast<size_t>(gVisible));
   // T-20: the classic view's 27 rows (13 each side of the edit row) before the glyphs grow; R3-09:
   // extended, about 40 (the room goes to rows, not to bigger glyphs).
   const float minRows = gExtended ? 41 : 27;
   const float pfMax = std::max(fs, std::min(std::floor(fs * 2.2f), std::floor(((a1.y - a0.y - headH) / minRows - 2) / 1.12f)));
-  float pf = fs;
-  for (float t = pfMax; t > fs && gTrackWidth == 0; t -= 1) {  // (widened by hand: the glyphs stay, so the edge follows the pointer)
+  float pf = fz;
+  for (float t = pfMax; t > fs && handW == 0 && gZoomEff == 0; t -= 1) {  // (widened by hand or zoomed: the glyphs stay, so the edge follows the pointer)
     const Metrics m = metricsAt(t);
     if (tracksW(m, shown) + m.numW * 2 <= areaW) {
       pf = t;
@@ -2122,13 +2190,13 @@ void patternEditor(App& a) {
   // What width is left goes to the shown tracks evenly (their cells centred), so the channels fill
   // the view edge to edge.
   const float viewW = std::max(40.0f, areaW - numW * 2);
-  const float extra = gTrackWidth > 0 ? 0.0f : std::max(0.0f, std::floor((viewW - tracksW(M, shown)) / static_cast<float>(std::max<size_t>(1, shown))));
+  const float extra = handW > 0 ? 0.0f : std::max(0.0f, std::floor((viewW - tracksW(M, shown)) / static_cast<float>(std::max<size_t>(1, shown))));
   std::vector<float> trackX, trackW, inset;  // each track's left edge (from the area's left, before scroll), width, cell inset
   float x = 0;
   for (const trk::Track& t : v.tracks) {
     trackX.push_back(x);
     // (cp16: widened by hand, gTrackWidth, every track by as much)
-    const float wide = extra + cw * static_cast<float>(gTrackWidth);
+    const float wide = extra + cw * static_cast<float>(handW);
     const float w = M.pad * 2 + colW * static_cast<float>(t.columns) + wide;
     trackW.push_back(w);
     inset.push_back(std::floor(M.pad + wide * 0.5f));
@@ -2236,7 +2304,14 @@ void patternEditor(App& a) {
     }
   }
   const bool wheelHov = hov || (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && io.MousePos.y >= a0.y && io.MousePos.y < a1.y);
-  const float wheelX = io.MouseWheelH != 0 ? io.MouseWheelH : io.KeyShift ? io.MouseWheel : 0.0f;  // (> 0: to the left)
+  // cp17: Ctrl+wheel (Cmd+wheel on macOS) zooms the tracks: up wider, down narrower (more in view).
+  const bool zoomWheel = io.KeyCtrl || io.KeySuper;
+  if (wheelHov && zoomWheel && io.MouseWheel != 0) {
+    s.zoomWheel += io.MouseWheel;
+    const int n = static_cast<int>(s.zoomWheel);
+    if (n != 0) s.zoomWheel -= static_cast<float>(n), zoomPattern(a, n > 0 ? 1 : -1);
+  }
+  const float wheelX = zoomWheel ? 0.0f : io.MouseWheelH != 0 ? io.MouseWheelH : io.KeyShift ? io.MouseWheel : 0.0f;  // (> 0: to the left)
   if (wheelHov && wheelX != 0) {  // a track a notch (a trackpad's small steps add up)
     s.wheelX -= wheelX;
     const int n = static_cast<int>(s.wheelX);
@@ -2270,7 +2345,7 @@ void patternEditor(App& a) {
   } else {
     s.hbar0 = s.hbar1 = ImVec2(0, 0);
   }
-  if (wheelHov && io.MouseWheel != 0 && !io.KeyShift && !(s.follow && s.playRow >= 0)) {
+  if (wheelHov && io.MouseWheel != 0 && !io.KeyShift && !zoomWheel && !(s.follow && s.playRow >= 0)) {
     s.wheel -= io.MouseWheel * 4;  // four rows a notch; a trackpad's small steps add up
     const int rows = static_cast<int>(s.wheel);
     if (rows != 0) {
@@ -2365,7 +2440,9 @@ void patternEditor(App& a) {
     dl->AddRectFilled(h0, ImVec2(h1.x, h0.y + 3), theme::rgb(ch->color, muted ? 0.35f : 1.0f));
     const std::string name = gNumbers ? std::to_string(sg.channelIndex(ch->id) + trackBase(a)) + " " + ch->name : ch->name;
     const float lampW = std::round(fs * 0.7f);
-    const float btnW = std::round(cwH * 1.6f);
+    // cp17: a track zoomed narrow keeps its number, name start and lamp; the column buttons go.
+    const bool narrowHead = tw < cwH * 11;
+    const float btnW = narrowHead ? 0.0f : std::round(cwH * 1.6f);
     theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(h0.x + 6, std::round(h0.y + 3 + (headH - 4 - fs) * 0.5f)), tw - 12 - lampW - btnW * 2 - 8,
                         muted ? P.textFaint : static_cast<int>(ti) == s.cur.track ? P.text : P.textDim, name.c_str());
     const ImVec2 l0(h1.x - 6 - lampW, std::round(h0.y + 3 + (headH - 4 - lampW) * 0.5f)), l1(l0.x + lampW, l0.y + lampW);
@@ -2383,7 +2460,7 @@ void patternEditor(App& a) {
              : muted ? "Muted \xC2\xB7 click: unmute \xC2\xB7 right-click: solo this channel"
                      : "Playing \xC2\xB7 click: mute \xC2\xB7 right-click: solo this channel");
     // + and - note columns.
-    for (int b = 0; b < 2; ++b) {
+    for (int b = 0; b < (narrowHead ? 0 : 2); ++b) {
       const ImVec2 b0(l0.x - 4 - btnW * static_cast<float>(2 - b), h0.y + 3), b1(b0.x + btnW, h1.y);
       ImGui::SetCursorScreenPos(b0);
       ImGui::PushID(b);
@@ -2406,7 +2483,10 @@ void patternEditor(App& a) {
       ImGui::SetCursorScreenPos(ImVec2(tx + tw - 3, a0.y));
       ImGui::InvisibleButton("##trwidth", ImVec2(6, std::max(1.0f, headH - 1)));
       if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-      if (ImGui::IsItemActivated()) grabX = io.MousePos.x, grabTw = tw;
+      if (ImGui::IsItemActivated()) {
+        grabX = io.MousePos.x, grabTw = tw;
+        if (gZoomEff != 0 || gZoomFit) zoomPattern(a, 99);  // (cp17: widening by hand starts from the plain zoom)
+      }
       if (ImGui::IsItemActive() && !ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         // The edge follows the pointer: the width it asks for, in characters past the cells
         // (at the plain glyph size, which a track widened by hand keeps).
@@ -2736,12 +2816,34 @@ void patternEditor(App& a) {
     const bool fresh = ImGui::GetTime() - s.statusT < 4.0 && !s.status.empty() && right == s.status;
     const float rx = fresh ? b0.x + 8 : b0.x + 8 + mono->CalcTextSizeA(fs, FLT_MAX, 0, info).x + 24;
     if (!fresh) dl->AddText(mono, fs, ImVec2(b0.x + 8, ty), P.textDim, info);
-    const float rw = b1.x - rx - 120;
+    const char* mode = s.edit ? i18n::tr("Edit mode") : i18n::tr("Play keys");
+    const float mw = a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, mode).x;
+    // cp17 (user): the tracks' zoom at the bar's right, beside the mode: narrower, wider, every
+    // track in view, and the step shown (a view preference kept in the settings).
+    float zx = b1.x - 8 - std::max(mw, a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Play keys")).x) - 12;
+    {
+      const float bh = barH - 6, by = b0.y + 2;
+      const float fitW = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Fit")).x) + 14, pmW = std::round(bh * 1.3f);
+      zx -= fitW;
+      if (bevelButton(a, "##zfit", "Fit", ImVec2(zx, by), ImVec2(zx + fitW, by + bh), gZoomFit, "Every track in view (Ctrl+Alt+/): the tracks narrow as far as they need"))
+        zoomPattern(a, 0);
+      zx -= pmW + 2;
+      if (bevelButton(a, "##zin", "+", ImVec2(zx, by), ImVec2(zx + pmW, by + bh), false, "Wider tracks, fewer in view (Ctrl+Alt+. or Ctrl+wheel up)"))
+        zoomPattern(a, 1);
+      zx -= pmW + 2;
+      if (bevelButton(a, "##zout", "-", ImVec2(zx, by), ImVec2(zx + pmW, by + bh), false,
+                      "Narrower tracks, more in view (Ctrl+Alt+, or Ctrl+wheel down): first the effect and pan go, then the volume, the instrument, then smaller glyphs; zoom back in to edit them"))
+        zoomPattern(a, -1);
+      char zt[32];
+      std::snprintf(zt, sizeof zt, "%s %d", i18n::tr("Zoom"), gZoomEff);
+      const float zw = mono->CalcTextSizeA(fs, FLT_MAX, 0, zt).x;
+      zx -= zw + 8;
+      dl->AddText(mono, fs, ImVec2(zx, ty), gZoomEff > 0 ? P.text : P.textDim, zt);
+    }
+    const float rw = zx - rx - 12;
     theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(rx, ty), rw, P.text, right.c_str());
     if (!right.empty() && a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, right.c_str()).x > rw && ImGui::IsMouseHoveringRect(ImVec2(rx, b0.y), ImVec2(rx + rw, b1.y)))
       ImGui::SetTooltip("%s", right.c_str());
-    const char* mode = s.edit ? i18n::tr("Edit mode") : i18n::tr("Play keys");
-    const float mw = a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, mode).x;
     dl->AddText(a.fontRegular, fs, ImVec2(b1.x - 8 - mw, ty), s.edit ? P.arm : P.textFaint, mode);
   }
   ImGui::SetCursorScreenPos(ImVec2(a0.x, a1.y + barH));
@@ -2872,6 +2974,25 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     for (size_t i = 0; i < v.tracks.size(); ++i) std::printf(" %s(%d)", v.channels[i]->name.c_str(), v.tracks[i].columns);
     std::printf("\n");
     std::fflush(stdout);
+  } else if (cmd == "songzoom") {  // cp17: the Song page's lanes and timeline zoom (TrackerPages)
+    std::vector<std::string> sa = {"tracker"};
+    sa.insert(sa.end(), args.begin(), args.end());
+    trackerpages::devSongZoom(a, sa, frame);
+  } else if (cmd == "editors") {  // cp18: the lower band's screens (TrackerEditors.h)
+    trackereditors::devCommand(a, args, frame);
+  } else if (cmd == "zoom") {  // cp17: "tracker zoom in|out|fit|plain|show": the pattern's sideways zoom
+    const std::string w = args.size() > 1 ? args[1] : "show";
+    if (w == "in") zoomPattern(a, 1);
+    else if (w == "out") zoomPattern(a, -1);
+    else if (w == "fit") zoomPattern(a, 0);
+    else if (w == "plain") zoomPattern(a, 99);
+    const View v = build(a);
+    // (The view as last drawn: the tracks wholly in view, the cursor's track and its field.)
+    std::printf("tracker zoom frame %d: step %d fit %d tracks %zu first %d last %d cursor %d field %d inview %d settings %d %d\n", frame, gZoomEff,
+                gZoomFit ? 1 : 0, v.tracks.size(), s.firstShown, s.lastShown, s.cur.track, static_cast<int>(s.cur.field),
+                s.cur.track >= s.firstShown && s.cur.track <= s.lastShown ? 1 : 0, static_cast<int>(a.settings.getNumber("tracker.patternZoom")),
+                a.settings.getBool("tracker.patternFit") ? 1 : 0);
+    std::fflush(stdout);
   } else if (cmd == "rack") {  // cp16: "rack move <i> <to>": the rack's own channel move (Document::moveChannel), any layout
     const auto& chs = a.doc.song().channels;
     const int i = arg(2, 0);
@@ -2879,7 +3000,7 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
   } else if (cmd == "perf") {  // cp16: the Tracker's frame timers (PerfScope), mean and 95th percentile per part
     perfRoll();
     const Perf& p = perf();
-    static const char* const names[] = {"band", "pattern", "page"};
+    static const char* const names[] = {"band", "pattern", "page", "editor"};
     std::printf("tracker perf frame %d:", frame);
     for (int k = 0; k < kPerfParts; ++k) {
       std::vector<float> v(p.ring[k], p.ring[k] + p.n[k]);

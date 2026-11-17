@@ -178,6 +178,27 @@ bool waveRamp(Wave& w, Span r, double startGain, double endGain) {
   return true;
 }
 
+bool waveDraw(Wave& w, int32_t from, const std::vector<float>& values) {
+  bool changed = false;
+  const int32_t n = w.frames();
+  for (size_t i = 0; i < values.size(); ++i) {
+    const int64_t f = static_cast<int64_t>(from) + static_cast<int64_t>(i);
+    const float v = values[i];
+    if (f < 0 || f >= n || !(v == v)) {
+      continue;
+    }
+    const float c = std::clamp(v, -1.0f, 1.0f);
+    eachChannel(w, [&](std::vector<float>& ch) {
+      float& x = ch[static_cast<size_t>(f)];
+      if (x != c) {
+        x = c;
+        changed = true;
+      }
+    });
+  }
+  return changed;
+}
+
 double waveMaxScale(const Wave& w, Span r) {
   r = orAll(w, r);
   float peak = 0;
@@ -299,6 +320,18 @@ bool waveMinimise(Wave& w) {
   eachChannel(w, [&](std::vector<float>& v) { v.resize(static_cast<size_t>(le)); });
   tidy(w);
   return true;
+}
+
+bool writeWaveFile(const std::string& path, const Wave& w, Span r) {
+  const Span s = clampSpan(w, r);
+  const int32_t a0 = s.empty() ? 0 : s.a, a1 = s.empty() ? w.frames() : s.b;
+  if (a1 <= a0 || path.empty()) return false;
+  ed::Audio a;
+  a.rate = w.rate;
+  a.channels = w.stereo ? 2 : 1;
+  a.L.assign(w.L.begin() + a0, w.L.begin() + a1);
+  a.R = w.stereo ? std::vector<float>(w.R.begin() + a0, w.R.begin() + a1) : a.L;
+  return ed::writeWavFile(path, ed::makeContent(a), 24, nullptr);
 }
 
 std::string commitWave(Edit& e, int slot, const Wave& w, const std::string& dir, const std::string& name) {

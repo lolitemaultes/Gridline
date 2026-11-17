@@ -433,6 +433,21 @@ target_include_directories(gridline_tests_k112_placed PRIVATE src tests)
 target_compile_options(gridline_tests_k112_placed PRIVATE ${GL_WARN})
 add_test(NAME k112_placed COMMAND gridline_tests_k112_placed WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(k112_placed PROPERTIES TIMEOUT 300)
+# K-112B (R11-01): Smooth's paste: the region plays the track it lands on, from a pattern of its own,
+# and the region under it gives way in No Overlap (rendered before and after the paste).
+add_executable(gridline_tests_k112b_paste tests/test_k112b_paste.cpp)
+target_link_libraries(gridline_tests_k112b_paste PRIVATE gridline_core)
+target_include_directories(gridline_tests_k112b_paste PRIVATE src tests)
+target_compile_options(gridline_tests_k112b_paste PRIVATE ${GL_WARN})
+add_test(NAME k112b_paste COMMAND gridline_tests_k112b_paste WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k112b_paste PROPERTIES TIMEOUT 300)
+# K-112B (checkpoint 52): the data only the Smooth arrange writes is additive, round-trips and syncs.
+add_executable(gridline_tests_k112b_compat tests/test_k112b_compat.cpp)
+target_link_libraries(gridline_tests_k112b_compat PRIVATE gridline_core)
+target_include_directories(gridline_tests_k112b_compat PRIVATE src tests)
+target_compile_options(gridline_tests_k112b_compat PRIVATE ${GL_WARN})
+add_test(NAME k112b_compat COMMAND gridline_tests_k112b_compat WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k112b_compat PROPERTIES TIMEOUT 300)
 # K-106: the tracker view of a pattern (rows, note columns, cells, the edits, the derived order list).
 add_executable(gridline_tests_k106_tracker_grid tests/test_k106_tracker_grid.cpp)
 target_link_libraries(gridline_tests_k106_tracker_grid PRIVATE gridline_core)
@@ -2132,7 +2147,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   # The interface (every window and editor) is compiled once and used by the
   # application and by the plugin build (PH-09). main.cpp and PluginWindow.cpp
   # (SDL windows), Viewports.cpp (J-113: detached windows) and LiveResize.cpp (J-116) belong to the application only.
-  file(GLOB GRIDLINE_APP_SRC CONFIGURE_DEPENDS src/app/*.cpp src/packs/RegistryUi.cpp src/packs/*/*_ui.cpp)
+  file(GLOB GRIDLINE_APP_SRC CONFIGURE_DEPENDS src/app/*.cpp src/packs/RegistryUi.cpp src/packs/*/*_ui.cpp src/packs/*/*_session.cpp)
   list(REMOVE_ITEM GRIDLINE_APP_SRC ${CMAKE_SOURCE_DIR}/src/app/main.cpp ${CMAKE_SOURCE_DIR}/src/app/PluginWindow.cpp
        ${CMAKE_SOURCE_DIR}/src/app/Viewports.cpp ${CMAKE_SOURCE_DIR}/src/app/LiveResize.cpp
        ${CMAKE_SOURCE_DIR}/src/app/AppIcon.cpp ${CMAKE_SOURCE_DIR}/src/app/AppIconImage.cpp  # K-14: the program only
@@ -2387,6 +2402,23 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k106_compat_app
                      -P ${CMAKE_SOURCE_DIR}/tests/k106_compat_app.cmake)
     set_tests_properties(k106_compat_app PROPERTIES TIMEOUT 600)
+    # K-106 cp17: the Tracker's sideways zoom: Fit all at 1024x640, round trips, the cursor in view, the Song timeline and lanes.
+    add_test(NAME k106_zoom_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/assets/demo/Gridline.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k106_zoom_app -P ${CMAKE_SOURCE_DIR}/tests/k106_zoom_app.cmake)
+    # K-106 cp18: the Tracker's lower-band screens: the Sample editor (zoom, range, play, keys, edits and undo), the
+    # Channel frame (its controls, Convert to Tracker Sampler... and undo), Open plugin window, byte-identical saves.
+    add_test(NAME k316_tracker_editors_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DWAV=${CMAKE_SOURCE_DIR}/assets/sounds/classic/startup.wav
+                     -DOUT=${CMAKE_BINARY_DIR}/k316_tracker_editors_app -P ${CMAKE_SOURCE_DIR}/tests/k316_tracker_editors_app.cmake)
+    set_tests_properties(k316_tracker_editors_app PROPERTIES TIMEOUT 600)
+    # K-106 cp20: a song written in the Tracker alone (samples, both editors, every track, the Song page) saves the
+    # same bytes and renders the same audio from Studio, Clips and Smooth, and reopens in the Tracker as it was.
+    add_test(NAME k316_layout_roundtrip_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DWAVS=${CMAKE_SOURCE_DIR}/assets/sounds/classic
+                     -DOUT=${CMAKE_BINARY_DIR}/k316_layout_roundtrip_app -P ${CMAKE_SOURCE_DIR}/tests/k316_layout_roundtrip_app.cmake)
+    set_tests_properties(k316_layout_roundtrip_app PROPERTIES TIMEOUT 900)
     # K-112: the menu bars as data: Studio, Live and Logic trees as committed, Tracker's is Studio's, the palette reads the tree.
     add_test(NAME k112_textfit
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -2433,6 +2465,10 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
     add_test(NAME k112d_library
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k112d_library -P ${CMAKE_SOURCE_DIR}/tests/k112d_library_app.cmake)
+    # K-112D (D5): Smart Controls learn in place (External Assignment and Parameter Mapping), saved.
+    add_test(NAME k112d_smart
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/assets/demo/Gridline.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k112d_smart -P ${CMAKE_SOURCE_DIR}/tests/k112d_smart_app.cmake)
     # K-112D: Smooth's window state and an edit made elsewhere survive Studio, a reopen, Clips and Tracker.
     add_test(NAME k112d_switch
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -2442,6 +2478,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${GRIDLINE_DEMO_JSON}
                      -DOUT=${CMAKE_BINARY_DIR}/k112b_bus_pencil -P ${CMAKE_SOURCE_DIR}/tests/k112b_bus_pencil_app.cmake)
     set_tests_properties(k112b_bus_pencil PROPERTIES TIMEOUT 300)
+    # K-112B (checkpoint 52): the Smooth arrange's fields survive Studio, Tracker and Clips saves byte
+    # for byte, and a new project saved from Smooth still opens with its default rows in Studio.
+    add_test(NAME k112b_compat_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${GRIDLINE_DEMO_JSON}
+                     -DOUT=${CMAKE_BINARY_DIR}/k112b_compat_app -P ${CMAKE_SOURCE_DIR}/tests/k112b_compat_app.cmake)
+    set_tests_properties(k112b_compat_app PROPERTIES TIMEOUT 600)
     # K-112: a run whose layout never asks for the system menu bar never starts it (no D-Bus on Linux).
     add_test(NAME k112_sysmenu_idle
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -3611,9 +3653,16 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                        -P ${CMAKE_SOURCE_DIR}/tests/k112_collab_layouts_app.cmake
                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
       set_tests_properties(k112_collab_layouts PROPERTIES TIMEOUT 1500)
+      # K-112D (D6, R12-03): a Smart Control mapped in Smooth reaches a collaborator in Studio; saves equal.
+      add_test(NAME k112d_smart_collab
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DSONG=${CMAKE_SOURCE_DIR}/assets/demo/Gridline.gridline.json
+                       -DOUT=${CMAKE_BINARY_DIR}/k112d_smart_collab -P ${CMAKE_SOURCE_DIR}/tests/k112d_smart_collab_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(k112d_smart_collab PROPERTIES TIMEOUT 1000)
       # K-106: the tracker and another layout edit one pattern at once (nothing lost) and see each other's cursors.
       add_test(NAME k106_collab
                COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k106_collab
+                       -DWAV=${CMAKE_SOURCE_DIR}/assets/sounds/classic/startup.wav
                        -P ${CMAKE_SOURCE_DIR}/tests/k106_collab_app.cmake
                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
       set_tests_properties(k106_collab PROPERTIES TIMEOUT 1600)

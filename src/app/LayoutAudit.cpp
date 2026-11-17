@@ -202,6 +202,7 @@ void scanList(const ImDrawList* dl, const std::unordered_map<uint64_t, GlyphRef>
       run.ink = align::Box{a.pos.x, a.pos.y, c.pos.x, c.pos.y};
       run.baseline = lineTop + it->second.ascent * scale;
       run.size = it->second.size * scale;
+      run.alpha = static_cast<float>((a.col >> IM_COL32_A_SHIFT) & 0xFF) / 255.0f;
     }
     penEnd = pen + g.AdvanceX * scale;
     run.r.x1 = std::max(run.r.x1, penEnd);
@@ -255,6 +256,26 @@ std::vector<align::Text> textRuns(ImGuiWindow* root) {
   }
   for (align::Text& t : out)
     if (t.str != "?") t.r.y1 = t.r.y0 + t.size;
+  // K-112B (R11-05): a drop shadow is not a second text: a translucent copy of a run (the same
+  // string at the same size) lying at most 1.5 px from an opaque copy of it, which is drawn over
+  // it, is the copy's shadow. Any other text over text still counts.
+  std::vector<char> shadow(out.size(), 0);
+  for (size_t i = 0; i < out.size(); ++i) {
+    const align::Text& t = out[i];
+    if (t.alpha > 0.6f || t.str == "?") continue;
+    for (size_t j = 0; j < out.size() && !shadow[i]; ++j) {
+      const align::Text& u = out[j];
+      if (j == i || u.alpha < t.alpha + 0.3f || u.str != t.str || std::fabs(u.size - t.size) > 0.5f) continue;
+      if (std::fabs(u.r.x0 - t.r.x0) <= 1.5f && std::fabs(u.r.y0 - t.r.y0) <= 1.5f) shadow[i] = 1;
+    }
+  }
+  size_t k = 0;
+  for (size_t i = 0; i < out.size(); ++i) {
+    if (shadow[i]) continue;
+    if (k != i) out[k] = std::move(out[i]);  // (never a self-move: it empties the string)
+    ++k;
+  }
+  out.resize(k);
   return out;
 }
 

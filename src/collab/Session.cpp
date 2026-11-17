@@ -178,6 +178,11 @@ Song restOf(const Song& c) {
   t.panLaw = c.panLaw;  // the Stage's pan law and room
   t.stage = c.stage;
   t.stageRooms = c.stageRooms;  // K-224
+  // K-112B (checkpoint 52): the cycle area and the Project End marker are song data (Smooth writes
+  // them); they were missing here, so they never reached a collaborator and a remote edit dropped them.
+  t.cycleStart = c.cycleStart, t.cycleEnd = c.cycleEnd, t.cycleOn = c.cycleOn;
+  t.projectEnd = c.projectEnd;
+  t.smooth.controls = c.smooth.controls;  // K-112D D6 (R12-03): Smooth's Smart Control mappings (not its Library pane)
   return t;
 }
 
@@ -186,7 +191,9 @@ bool restEqual(const Song& a, const Song& b) {
          a.swing == b.swing && a.swingNotes == b.swingNotes && a.groove == b.groove && a.masterPitch == b.masterPitch && a.nextId == b.nextId && a.tracks == b.tracks && a.links == b.links &&
          a.modLinks == b.modLinks && a.markers == b.markers && a.channelGroups == b.channelGroups && a.patternGroups == b.patternGroups &&
          a.live == b.live && a.arrangements == b.arrangements && a.currentArrangement == b.currentArrangement &&
-         a.autoCrossfades == b.autoCrossfades && a.panLaw == b.panLaw && a.stage == b.stage && a.stageRooms == b.stageRooms;
+         a.autoCrossfades == b.autoCrossfades && a.panLaw == b.panLaw && a.stage == b.stage && a.stageRooms == b.stageRooms &&
+         a.cycleStart == b.cycleStart && a.cycleEnd == b.cycleEnd && a.cycleOn == b.cycleOn && a.projectEnd == b.projectEnd &&
+         a.smooth.controls == b.smooth.controls;
 }
 
 template <typename T>
@@ -1061,6 +1068,9 @@ bool Session::diffIncremental(std::vector<Op>& ops, std::string* bad) {
     shadow_.panLaw = r.panLaw;
     shadow_.stage = r.stage;
     shadow_.stageRooms = r.stageRooms;  // K-224
+    shadow_.cycleStart = r.cycleStart, shadow_.cycleEnd = r.cycleEnd, shadow_.cycleOn = r.cycleOn;  // K-112B (checkpoint 52)
+    shadow_.projectEnd = r.projectEnd;
+    shadow_.smooth.controls = r.smooth.controls;  // K-112D D6
   }
   for (auto& c : commit) c();
   return true;

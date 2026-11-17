@@ -204,6 +204,10 @@ struct Clip {
   // Live area (J-32): the clip was playing when the project was saved (FL's
   // performance state); offline renders launch it at the song start.
   bool launched = false;
+  // K-112c checkpoint 54 (N53-02): a live-area clip that plays once when launched (the reference's Loop
+  // off: a one-shot): at its end the track stops, whatever its follow action. Clips sets it on short
+  // samples it does not warp. Written only when set.
+  bool launchOnce = false;
   // J-31: clip group (kNoId = none); grouped clips are selected together.
   ObjectId group = kNoId;
   // J-38: fade curves and automatic crossfades (core/Fades.h). An edge whose
@@ -230,7 +234,7 @@ struct Clip {
            audioEnd == o.audioEnd && fadeIn == o.fadeIn && fadeOut == o.fadeOut && gain == o.gain && pitch == o.pitch &&
            speedPitch == o.speedPitch && rateFit == o.rateFit &&
            stretch == o.stretch && syncBpm == o.syncBpm && tempoLock == o.tempoLock && reverse == o.reverse && takeGroup == o.takeGroup &&
-           take == o.take && launched == o.launched && group == o.group && fadeInShape == o.fadeInShape &&
+           take == o.take && launched == o.launched && launchOnce == o.launchOnce && group == o.group && fadeInShape == o.fadeInShape &&
            fadeOutShape == o.fadeOutShape && fadeInTension == o.fadeInTension && fadeOutTension == o.fadeOutTension &&
            fadeInManual == o.fadeInManual && fadeOutManual == o.fadeOutManual &&
            fadeInDeclick == o.fadeInDeclick && fadeOutDeclick == o.fadeOutDeclick && warp == o.warp &&

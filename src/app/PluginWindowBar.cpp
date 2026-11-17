@@ -14,7 +14,9 @@
 #include "ChannelRoute.h"
 #include "HostedUi.h"
 #include "HostedUiPages.h"
+#include "LayoutPresets.h"
 #include "Theme.h"
+#include "TrackerEditors.h"
 #include "Widgets.h"
 #include "../../third_party/imgui/imgui.h"
 
@@ -381,7 +383,11 @@ std::vector<std::pair<ObjectId, int>> openPluginWindowList(App& a) {
   const std::pair<ObjectId, int> chan{a.settingsChannel, -1};
   for (const PluginTarget& t : openHostedEditorTargets())  // installed plugins' own windows
     if (t.node == 0 && std::make_pair(t.owner, t.slot) != chan && std::make_pair(t.owner, t.slot) != a.fxEditor) add(t.owner, t.slot);
-  add(chan.first, -1);
+  // K-106 cp18-cp20: in the Tracker the current instrument's screen in the lower band (Sample editor,
+  // Instrument editor, Channel frame) is view state of the band, not a plugin window: it is not saved
+  // with the project (only "Open plugin window", floating, is).
+  const bool trackerBand = layoutui::active() == layout::Preset::Tracker && trackereditors::shown(a);
+  if (!trackerBand) add(chan.first, -1);
   add(a.fxEditor.first, a.fxEditor.second);
   return v;
 }
