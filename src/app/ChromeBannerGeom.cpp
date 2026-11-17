@@ -2,6 +2,7 @@
 #include "ChromeBannerGeom.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 
@@ -18,10 +19,6 @@ float dot(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 V3 norm(V3 a) {
   const float l = std::sqrt(dot(a, a));
   return l > 1e-9f ? a * (1.0f / l) : V3{0, 0, 1};
-}
-float smooth(float u) {
-  u = std::clamp(u, 0.0f, 1.0f);
-  return u * u * (3 - 2 * u);
 }
 
 // ---- cell grids: each cell empty, full, or a diagonal half (the corner named is the filled one) ----
@@ -205,28 +202,37 @@ Model build() {
   return m;
 }
 
-// The segments' eased progress through their turns.
-float spinEase(const Segment& s, float u) { return s.easeOutSpin ? 1 - (1 - u) * (1 - u) * (1 - u) : smooth(u); }
+
+// A smooth window over a segment: 0 at both ends, 1 in the middle, eased in over the first `edge`
+// of it and out over the last.
+float window(float u, float edge) { return ease(u / edge) * ease((1 - u) / edge); }
 
 }  // namespace
 
+float ease(float u) {
+  u = std::clamp(u, 0.0f, 1.0f);
+  return u * u * u * (u * (u * 6 - 15) + 10);
+}
+
 const std::vector<Segment>& segments() {
-  //                         name         s     from            to            turns sway  tilt  twist wire sprF  sprT stag  easeOut
+  // Slow and spaced out (round 2): each state holds for several seconds, each change takes three
+  // to six, and every move eases in and out.
+  //                         name          s    from              to            turns sway   tilt   twist wire sprF  sprT  stag
   static const std::vector<Segment> s = {
-      {"spin in", 2.4f, Shape::Particles, Shape::Text, 2, 0, 0, 0, 0, 28, 28, 0.35f, true},
-      {"hold", 2.0f, Shape::Text, Shape::Text, 0, 0.38f, 0.08f, 0, 0, 0, 0, 0, false},
-      {"dissolve", 1.2f, Shape::Text, Shape::Worms, 0, 0, 0.1f, 0, 0, 0, 0, 0.45f, false},
-      {"worms", 2.8f, Shape::Worms, Shape::Worms, 0, 0.3f, 0.3f, 0, 0, 0, 0, 0, false},
-      {"reform", 1.2f, Shape::Worms, Shape::Text, 0, 0, 0.1f, 0, 0, 0, 0, 0.45f, false},
-      {"hold", 1.2f, Shape::Text, Shape::Text, 0, 0.3f, 0, 0, 0, 0, 0, 0, false},
-      {"to logo", 0.5f, Shape::Text, Shape::Logo, 0, 0, 0, 0, 0, 0, 0, 0.2f, false},
-      {"logo spin", 3.0f, Shape::Logo, Shape::Logo, 2, 0, 0.18f, 0, 0, 0, 0, 0, false},
-      {"explode", 0.8f, Shape::Logo, Shape::Particles, 0, 0, 0, 0, 0, 4, 14, 0.1f, false},
-      {"drift", 1.0f, Shape::Particles, Shape::Particles, 0, 0.3f, 0, 0, 0, 14, 18, 0, false},
-      {"gather", 1.0f, Shape::Particles, Shape::Text, 0, 0, 0, 0, 0, 18, 18, 0.3f, false},
-      {"twist", 3.0f, Shape::Text, Shape::Text, 0, 0, 0, 1.3f, 0, 0, 0, 0, false},
-      {"wireframe", 2.6f, Shape::Text, Shape::Text, 1, 0, 0.25f, 0, 1, 0, 0, 0, false},
-      {"shatter", 1.0f, Shape::Text, Shape::Particles, 0, 0, 0, 0, 0, 4, 28, 0.3f, false},
+      {"spin in", 7.0f, Shape::Particles, Shape::Text, 1, 0, 0, 0, 0, 22, 22, 0.35f},
+      {"hold", 7.0f, Shape::Text, Shape::Text, 0, 0.35f, 0.06f, 0, 0, 0, 0, 0},
+      {"dissolve", 4.0f, Shape::Text, Shape::Worms, 0, 0, 0.08f, 0, 0, 0, 0, 0.45f},
+      {"worms", 7.0f, Shape::Worms, Shape::Worms, 0, 0.25f, 0.2f, 0, 0, 0, 0, 0},
+      {"reform", 4.0f, Shape::Worms, Shape::Text, 0, 0, 0.08f, 0, 0, 0, 0, 0.45f},
+      {"hold", 4.0f, Shape::Text, Shape::Text, 0, 0.25f, 0, 0, 0, 0, 0, 0},
+      {"to logo", 3.5f, Shape::Text, Shape::Logo, 0, 0, 0, 0, 0, 0, 0, 0.3f},
+      {"logo", 8.0f, Shape::Logo, Shape::Logo, 1, 0, 0.1f, 0, 0, 0, 0, 0},
+      {"explode", 3.0f, Shape::Logo, Shape::Particles, 0, 0, 0, 0, 0, 4, 14, 0.1f},
+      {"drift", 5.0f, Shape::Particles, Shape::Particles, 0, 0.3f, 0, 0, 0, 14, 16, 0},
+      {"gather", 4.0f, Shape::Particles, Shape::Text, 0, 0, 0, 0, 0, 16, 16, 0.3f},
+      {"twist", 6.0f, Shape::Text, Shape::Text, 0, 0, 0, 1.0f, 0, 0, 0, 0},
+      {"wireframe", 7.0f, Shape::Text, Shape::Text, 1, 0, 0.12f, 0, 1, 0, 0, 0},
+      {"shatter", 3.5f, Shape::Text, Shape::Particles, 0, 0, 0, 0, 0, 4, 22, 0.3f},
   };
   return s;
 }
@@ -268,7 +274,7 @@ float wireAt(double t) {
   const Where w = where(t);
   const Segment& s = segments()[static_cast<size_t>(w.segment)];
   if (s.wire <= 0) return 0;
-  return s.wire * smooth(w.u / 0.15f) * smooth((1 - w.u) / 0.15f);
+  return s.wire * window(w.u, 0.2f);
 }
 
 bool settledAt(double t) {
@@ -289,31 +295,33 @@ void shape(const Model& m, Shape s, double t, float spread, Facet* out) {
     return;
   }
   const float tf = static_cast<float>(t);
-  if (s == Shape::Worms) {
+  if (s == Shape::Worms) {  // slow sine worms, kept inside the letters' height
     constexpr int W = 10;
     for (size_t i = 0; i < K; ++i) {
       const int w = static_cast<int>(i % W);
       const float ph = static_cast<float>(w) * 1.7f;
-      const float yo = -4.2f + 8.4f * static_cast<float>(w) / (W - 1);
+      const float yo = -2.9f + 5.8f * static_cast<float>(w) / (W - 1);
       auto at = [&](float u) {
-        return V3{-18.0f + 36.0f * u, yo + 1.9f * std::sin(6.0f * u + 2.3f * tf + ph) + 0.7f * std::sin(13.0f * u - 3.1f * tf + 2 * ph),
-                  3.2f * std::cos(4.5f * u + 1.7f * tf + ph)};
+        return V3{-17.0f + 34.0f * u, yo + 1.0f * std::sin(6.0f * u + 0.9f * tf + ph) + 0.35f * std::sin(13.0f * u - 1.2f * tf + 2 * ph),
+                  3.0f * std::cos(4.5f * u + 0.7f * tf + ph)};
       };
       const float u0 = m.delay[i] * 0.96f, u1 = u0 + 0.04f;
-      const float th = 9.0f * u0 + 2.0f * tf + ph;
+      const float th = 9.0f * u0 + 0.8f * tf + ph;
       const V3 n{0, 0.26f * std::cos(th), 0.26f * std::sin(th)};
       const V3 a = at(u0), b = at(u1);
       out[i] = Facet{{a - n, b - n, b + n, a + n}};
     }
     return;
   }
-  // Particles: a small chip per facet on its own direction, turning as it flies.
+  // Particles: a small chip per facet on its own direction, turning as it flies. The cloud is a
+  // flat, wide ellipsoid (the banner is wide and low), so it fills the banner without spilling.
   for (size_t i = 0; i < K; ++i) {
     const V3 d = m.dir[i];
-    const V3 c = d * (spread * (0.55f + 0.45f * m.rnd[i]));
+    const float r = spread * (0.55f + 0.45f * m.rnd[i]);
+    const V3 c{d.x * r, d.y * r * 0.2f, d.z * r * 0.45f};
     const V3 ref = std::fabs(d.y) < 0.9f ? V3{0, 1, 0} : V3{1, 0, 0};
     V3 a = norm(cross(d, ref)), b = cross(d, a);
-    const float ang = m.rnd[i] * 6.2832f + spread * 0.35f, ca = std::cos(ang), sa = std::sin(ang);
+    const float ang = m.rnd[i] * 6.2832f + spread * 0.2f, ca = std::cos(ang), sa = std::sin(ang);
     const V3 a2 = a * ca + b * sa, b2 = b * ca - a * sa;
     const float sz = 0.32f;
     a = a2 * sz, b = b2 * sz;
@@ -324,33 +332,93 @@ void shape(const Model& m, Shape s, double t, float spread, Facet* out) {
 void evaluate(const Model& m, double t, Facet* out, Facet* scratch) {
   const Where w = where(t);
   const Segment& s = segments()[static_cast<size_t>(w.segment)];
-  const float u = w.u;
-  const float spread = s.spreadFrom + (s.spreadTo - s.spreadFrom) * u;
+  const float u = w.u, e = ease(u);
+  const float spread = s.spreadFrom + (s.spreadTo - s.spreadFrom) * e;
   const size_t K = static_cast<size_t>(m.K);
   shape(m, s.from, t, spread, out);
   if (s.to != s.from) {
     shape(m, s.to, t, spread, scratch);
     const float st = s.stagger;
     for (size_t i = 0; i < K; ++i) {
-      const float b = smooth((u - st * m.delay[i]) / (1 - st));
+      const float b = ease((u - st * m.delay[i]) / (1 - st));
       if (b <= 0) continue;
       for (int k = 0; k < 4; ++k) out[i].v[k] = out[i].v[k] + (scratch[i].v[k] - out[i].v[k]) * b;
     }
   }
-  const float tw = s.twist * std::sin(kPi * u);
-  const float ry = s.turns * 2 * kPi * spinEase(s, u) + s.sway * std::sin(2 * kPi * u);
-  const float rx = s.tilt * std::sin(kPi * u);
+  // Every amount rides the eased progress, so each starts and ends at rest (no jerk at a boundary).
+  const float tw = s.twist * std::sin(kPi * e);
+  const float ry = s.turns * 2 * kPi * e + s.sway * std::sin(2 * kPi * e);
+  const float rx = s.tilt * std::sin(kPi * e);
   const float cy = std::cos(ry), sy = std::sin(ry), cx = std::cos(rx), sx = std::sin(rx);
+  // While the letters turn, they ease back a little: the near end of the text would otherwise
+  // swell out of the banner's height side on.
+  const float dolly = s.to == Shape::Text && s.turns > 0 ? 14.0f * std::sin(kPi * e) : 0.0f;
   for (size_t i = 0; i < K; ++i)
     for (V3& v : out[i].v) {
-      if (tw != 0) {  // a wave of twist about the long axis, running left to right
-        const float a = tw * std::sin(0.32f * v.x - 4 * kPi * u);
+      if (tw != 0) {  // a slow wave of twist about the long axis, running left to right
+        const float a = tw * std::sin(0.32f * v.x - 3 * kPi * u);
         const float c = std::cos(a), sn = std::sin(a);
         v = {v.x, v.y * c - v.z * sn, v.y * sn + v.z * c};
       }
-      v = {v.x * cy + v.z * sy, v.y, -v.x * sy + v.z * cy};
+      // The lean first (in the shape's own frame), then the turn: a turn never swings the ends of
+      // the text up or down out of the banner.
       v = {v.x, v.y * cx - v.z * sx, v.y * sx + v.z * cx};
+      v = {v.x * cy + v.z * sy, v.y, -v.x * sy + v.z * cy - dolly};
     }
+}
+
+namespace {
+struct Box {
+  float x0 = 1e30f, y0 = 1e30f, x1 = -1e30f, y1 = -1e30f;
+};
+Box viewBox(const Facet* f, int K) {
+  Box b;
+  for (int i = 0; i < K; ++i)
+    for (const V3& v : f[i].v) {
+      const float d = std::max(kCamD - v.z, 1.0f), x = v.x / d, y = v.y / d;
+      b.x0 = std::min(b.x0, x), b.x1 = std::max(b.x1, x), b.y0 = std::min(b.y0, y), b.y1 = std::max(b.y1, y);
+    }
+  return b;
+}
+}  // namespace
+
+const Extent& loopExtent() {
+  static const Extent e = [] {
+    const auto t0 = std::chrono::steady_clock::now();
+    const Model& m = model();
+    std::vector<Facet> a(static_cast<size_t>(m.K)), sc(static_cast<size_t>(m.K));
+    Extent x;
+    const double L = loopSeconds(), step = 0.4;
+    for (double t = 0; t < L; t += step) {
+      evaluate(m, t, a.data(), sc.data());
+      const Box b = viewBox(a.data(), m.K);
+      x.halfW = std::max(x.halfW, (b.x1 - b.x0) * 0.5f), x.halfH = std::max(x.halfH, (b.y1 - b.y0) * 0.5f);
+    }
+    // A little head room for the moments between samples.
+    x.halfW *= 1.02f, x.halfH *= 1.02f;
+    x.ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    return x;
+  }();
+  return e;
+}
+
+float marginX(float w) { return std::round(std::max(8.0f, w * 0.03f)); }
+float marginY(float h) { return std::round(std::max(4.0f, h * 0.07f)); }
+
+ScreenMap screenMap(const Facet* world, int K, float w, float h) {
+  const Extent& e = loopExtent();
+  const float aw = std::max(1.0f, w * 0.5f - marginX(w)), ah = std::max(1.0f, h * 0.5f - marginY(h));
+  ScreenMap s;
+  s.f = std::min(aw / e.halfW, ah / e.halfH);
+  const Box b = viewBox(world, K);
+  const float hw = (b.x1 - b.x0) * 0.5f, hh = (b.y1 - b.y0) * 0.5f;
+  if (hw * s.f > aw || hh * s.f > ah) {  // wider than any sample of the loop: shrink this frame to fit
+    s.f = std::min(hw > 0 ? aw / hw : s.f, hh > 0 ? ah / hh : s.f);
+    s.clamped = true;
+  }
+  s.cx = w * 0.5f - s.f * (b.x0 + b.x1) * 0.5f;
+  s.cy = h * 0.5f + s.f * (b.y0 + b.y1) * 0.5f;
+  return s;
 }
 
 }  // namespace gl::banner

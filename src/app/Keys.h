@@ -19,7 +19,8 @@ Context focusContext();
 
 // K-175: the typing keyboard is on (set once a frame): the chords it plays (playsOnTypingKeyboard)
 // do not run their commands, except the one that switches it off.
-void setTypingKeyboard(bool on);
+void setTypingKeyboard(bool on, bool aRow = false);  // R09-10: aRow: only the A row's own keys
+bool typingKeyPlays(Key k);  // R09-10: false for a key the A-row typing keyboard leaves to its command (R, B, I ...)
 // K-106: the tracker pattern editor has the keyboard (set once a frame): the chords it uses itself
 // (note, value and navigation keys, its block keys) run no command, so one key press does one thing.
 // Space, the function keys, undo and the other Ctrl chords keep their commands.

@@ -1790,6 +1790,12 @@ HeaderSamples headerSamples(App& a, ObjectId channel) {
   return h;
 }
 
+uint64_t headerSampleSelKey(ObjectId channel) {
+  const auto it = gEd.find(PluginTarget{channel, -1}.key());
+  if (it == gEd.end()) return ~uint64_t{0};
+  return (static_cast<uint64_t>(static_cast<uint32_t>(it->second.sel)) << 32) | static_cast<uint32_t>(it->second.wantSlot);
+}
+
 void headerSelectSample(App& a, ObjectId channel, int slot) {
   HeaderCtx c = headerCtx(a, channel);
   if (!c.st || slot < 0 || slot >= trk::kMaxSamples) return;

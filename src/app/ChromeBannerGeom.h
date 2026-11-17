@@ -7,8 +7,12 @@
 // grids of cells, each full or a diagonal half, drawn by hand here (no font outlines).
 //
 // The banner loops through a fixed list of segments (spin in, hold, worms, logo, particles, twist,
-// wireframe, shatter): evaluate(t) gives every facet's corners in world space at loop time t, with
-// the segment's rotation, scale and twist applied. Pure math: no ImGui, no allocation after build.
+// wireframe, shatter), 73 s: every state holds long enough to read, and every move (morphs,
+// turns, sways, the spread of the particles) eases in and out, so nothing starts or stops with a
+// jerk and the loop point joins seamlessly. evaluate(t) gives every facet's corners in world space
+// at loop time t. screenMap() places a frame in a banner rectangle: one scale for the whole loop
+// (fitted to the widest state, with a margin), each frame centred on its own bounding box.
+// Pure math: no ImGui, no allocation after build.
 #pragma once
 #include <cstdint>
 #include <vector>
@@ -29,18 +33,20 @@ struct Segment {
   const char* name;
   float seconds;
   Shape from, to;
-  float turns;       // whole turns about the vertical axis over the segment
+  float turns;       // whole turns about the vertical axis over the segment (eased in and out)
   float sway;        // a sway about the vertical axis (radians, zero at both ends)
-  float tilt;        // a tilt about the horizontal axis (radians, zero at both ends)
+  float tilt;        // a lean back about the horizontal axis (radians, zero at both ends)
   float twist;       // a twist wave through the letters (radians at its peak)
   float wire;        // the wireframe amount at its peak
   float spreadFrom, spreadTo;  // the particles' radius over the segment
   float stagger;     // how far the morph sweeps left to right (0: every facet together)
-  bool easeOutSpin;  // the turns slow down to the end (spin in) instead of easing both ways
 };
 
 const std::vector<Segment>& segments();
 double loopSeconds();
+
+// The ease used for every move: 0 to 1 with zero speed and zero acceleration at both ends.
+float ease(float u);
 
 // Where loop time t is: the segment and how far through it (0..1).
 struct Where {
@@ -72,7 +78,30 @@ void shape(const Model& m, Shape s, double t, float spread, Facet* out);
 // `scratch` needs K facets too.
 void evaluate(const Model& m, double t, Facet* out, Facet* scratch);
 
-// The text's size in world units (the projection fits it): width and height.
+// The text's size in world units: width and height.
 constexpr float kTextW = 34.0f, kTextH = 9.0f;
+// The viewer on +z, this far from the centre (far enough that a turn barely swells the near end).
+constexpr float kCamD = 100.0f;
+
+// The largest half width and half height of any frame of the loop, each frame centred on its own
+// bounding box, in view-plane units (x / (kCamD - z)). Worked out once by sampling the loop.
+struct Extent {
+  float halfW = 0, halfH = 0;
+  double ms = 0;  // what working it out cost
+};
+const Extent& loopExtent();
+
+// Where a frame lands in a banner of w x h px: screen x = cx + f * x / (kCamD - z),
+// y = cy - f * y / (kCamD - z). f is the loop's scale (the widest state fits with a margin);
+// cx, cy put the frame's bounding box centre on the banner's centre. `clamped`: this frame
+// was wider than the loop's widest sample, so f shrank for it (a safety net; never in the loop).
+struct ScreenMap {
+  float f = 1, cx = 0, cy = 0;
+  bool clamped = false;
+};
+// The margin kept clear on each side of the banner (px).
+float marginX(float w);
+float marginY(float h);
+ScreenMap screenMap(const Facet* world, int K, float w, float h);
 
 }  // namespace gl::banner

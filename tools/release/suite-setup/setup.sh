@@ -192,9 +192,9 @@ place() {  # place <format> <target folder>
     else say "Kept the copy Gridline put in $dir ($fmt)."; return 0; fi
   fi
   mkdir -p "$dir" || die "cannot create $dir"
-  # Single-plugin downloads of this suite in the same folder would show plugins twice.
+  # Other copies of this suite's plugins in the same folder (from the all-plugins zip) would show plugins twice.
   if [ -d "$dir/Gridline Suite" ] && ls "$dir/Gridline Suite" 2>/dev/null | grep -q .; then
-    say "Note: $dir/Gridline Suite holds single-plugin downloads; remove the ones you picked here so they do not show twice."
+    say "Note: $dir/Gridline Suite holds other copies of these plugins; remove the ones you picked here so they do not show twice."
   fi
   rm -rf -- "$target"
   if [ "$fmt" = clap ]; then

@@ -17,6 +17,7 @@ float drawTopBar(App& a);      // menu + transport; returns height used
 // logical pixels; false when it is not shown. `mirror`: the metronome glyph's last horizontal scale.
 bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& y1);
 void devNoteRect(const char* name);  // the last item's rectangle as an "sdlat" target (browser: "brsearch", "brclear", "brcollapse"; channel window: "chroute", "chroutefree", "chroutelist"; piano roll: "prstamp", "prstamplbl", "prstampchip")
+void devNoteRectAt(const char* name, float x0, float y0, float x1, float y1);  // K-237: a rectangle as an "sdlat" target ("ptabsrc", "ptabdst": a pane tab drag)
 void splitClipsAtPlayhead(App& a);  // K-112b: the clips across the song position split there (Dialogs.cpp)
 void tracksNewSameSettings(App& a);
 void tracksMuteSelected(App& a);  // R04-11: M, the selected tracks (or the focused one)

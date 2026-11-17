@@ -9,6 +9,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 #include "../../third_party/imgui/imgui.h"
@@ -20,7 +21,9 @@
 #include "../core/I18n.h"
 #include "../core/LayoutHomes.h"
 #include "../core/MenuOps.h"
+#include "../core/MenuParity.h"
 #include "../core/Params.h"
+#include "../core/TrackerData.h"
 #include "../core/TrackerGrid.h"
 #include "App.h"
 #include "LayoutPresets.h"
@@ -41,6 +44,7 @@ using trackerview::bevelBox;
 using trackerview::bevelButton;
 using trackerview::boxTitle;
 using trackerview::monoFont;
+using trackerview::stepper;
 
 bool active(const App& a) {
   return layoutui::active() == layout::Preset::Tracker && layoutui::shellBuilt(a, layout::Preset::Tracker);
@@ -76,7 +80,14 @@ float titleBar(App& a, ImVec2 o, float w, const char* title, const std::string& 
   const float ew = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Exit")).x) + 24;
   if (bevelButton(a, "##pageexit", "Exit", ImVec2(o.x + w - 2 - ew, o.y + 2), ImVec2(o.x + w - 2, o.y + h - 2), false, "Back to the pattern"))
     trackerview::showPage(a, "Pattern editor");
-  if (!info.empty()) {
+  // cp16: a message just said (an edit refused, a file saved: the app's notices in the Tracker) takes
+  // the info's place for a few seconds, as the pattern bar shows it on the pattern page.
+  const float tx0 = o.x + 6 + std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(title)).x) + fs * 12;
+  if (const std::string* msg = trackerview::freshStatus()) {
+    const float room = std::max(1.0f, o.x + w - ew - 10 - tx0);
+    const float tw = std::min(room, a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, msg->c_str()).x);
+    theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(std::round(o.x + w - ew - 10 - tw), std::round(o.y + (h - fs) * 0.5f)), room, pal().hot, msg->c_str());
+  } else if (!info.empty()) {
     ImFont* mono = monoFont(a);
     const float tw = mono->CalcTextSizeA(fs, FLT_MAX, 0, info.c_str()).x;
     dl->AddText(mono, fs, ImVec2(std::round(o.x + w - ew - 10 - tw), std::round(o.y + (h - fs) * 0.5f)), pal().textDim, info.c_str());
@@ -122,16 +133,24 @@ bool valueBar(const char* id, ImVec2 p0, ImVec2 p1, double v, double lo, double 
   ImGui::InvisibleButton(id, ImVec2(std::max(1.0f, p1.x - p0.x), std::max(1.0f, p1.y - p0.y)));
   const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   bevelBox(dl, p0, p1, true);
+  // cp16: the classic slider: a sunken groove with a raised bevel knob at the value (before: a solid
+  // green bar, the modern look); the part up to the value (from the middle when centred) a thin line.
   const float x0 = p0.x + 2, x1 = p1.x - 2;
   const float k = static_cast<float>((std::clamp(v, lo, hi) - lo) / (hi - lo));
-  const ImU32 fill = act ? P.hot : hov ? theme::mix(P.led, P.text, 0.25f) : P.led;
+  const float knobW = std::max(8.0f, std::round((p1.y - p0.y) * 0.6f));
+  const float at = std::round(x0 + knobW * 0.5f + (x1 - x0 - knobW) * k);
+  const float cy = std::round((p0.y + p1.y) * 0.5f);
+  const ImU32 line = act ? P.hot : theme::withAlpha(P.led, hov ? 0.9f : 0.7f);
   if (centred) {
-    const float mid = std::round((x0 + x1) * 0.5f), at = std::round(x0 + (x1 - x0) * k);
-    dl->AddRectFilled(ImVec2(std::min(mid, at), p0.y + 3), ImVec2(std::max(mid, at) + 1, p1.y - 3), fill);
-    dl->AddRectFilled(ImVec2(mid, p0.y + 2), ImVec2(mid + 1, p1.y - 2), P.textFaint);
+    const float mid = std::round((x0 + x1) * 0.5f);
+    dl->AddRectFilled(ImVec2(mid, p0.y + 3), ImVec2(mid + 1, p1.y - 3), P.textFaint);
+    dl->AddRectFilled(ImVec2(std::min(mid, at), cy - 1), ImVec2(std::max(mid, at) + 1, cy + 1), line);
   } else {
-    dl->AddRectFilled(ImVec2(x0, p0.y + 3), ImVec2(std::round(x0 + (x1 - x0) * k), p1.y - 3), fill);
+    dl->AddRectFilled(ImVec2(x0 + 1, cy - 1), ImVec2(at, cy + 1), line);
   }
+  const ImVec2 k0(at - knobW * 0.5f, p0.y + 2), k1(at + knobW * 0.5f, p1.y - 2);
+  dl->AddRectFilled(k0, k1, act ? theme::mix(P.surface600, P.hot, 0.35f) : hov ? P.surface600 : P.surface700);
+  bevelBox(dl, k0, k1, act);
   if (hint) ui::Hint(hint);
   if (act && (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0) || ImGui::IsItemActivated())) {
     const float mk = std::clamp((ImGui::GetIO().MousePos.x - x0) / std::max(1.0f, x1 - x0), 0.0f, 1.0f);
@@ -248,6 +267,503 @@ std::string stepsInfo(const Song& s, const Pattern* pat, int nSteps) {
   return info;
 }
 
+// ---- the Song page as an arranger ----
+// The order list (the song, one entry per row), the pattern bank, the song box and a timeline strip.
+// Every edit goes through the core order-list edits, one undo step each. Songs whose entries layer
+// several patterns or audio show those entries read only; the lane view stays behind "Lanes".
+
+// The entry under the song position (-1: none), as the header's order list.
+int entryAt(App& a, const std::vector<trk::OrderEntry>& ol) {
+  const Tick pos = trackerview::songPosition(a);
+  for (size_t i = 0; i < ol.size(); ++i)
+    if (pos >= ol[i].start && pos < ol[i].end) return static_cast<int>(i);
+  return ol.empty() ? -1 : (pos >= ol.back().end ? static_cast<int>(ol.size()) - 1 : 0);
+}
+
+// A block of entries marked with Shift (Shift+Up/Down, Shift+click): its other end, -1 none. The
+// block is what Loop plays over and over (the playlist's time selection: the same loop in every layout).
+int gMark = -1;
+
+// The marked block [lo, hi] around the current entry (lo > hi: none).
+void markedBlock(int cur, int n, int* lo, int* hi) {
+  if (gMark < 0 || gMark >= n || cur < 0) {
+    *lo = 1, *hi = 0;
+    return;
+  }
+  *lo = std::min(gMark, cur), *hi = std::max(gMark, cur);
+}
+
+// The loop the engine plays (the playlist's time selection), as entries: [lo, hi], or lo > hi none.
+void loopedEntries(const App& a, const std::vector<trk::OrderEntry>& ol, int* lo, int* hi) {
+  *lo = 1, *hi = 0;
+  if (a.playlist.selEnd <= a.playlist.selStart) return;
+  for (size_t i = 0; i < ol.size(); ++i) {
+    if (ol[i].end > a.playlist.selStart && ol[i].start < a.playlist.selEnd) {
+      if (*lo > *hi) *lo = static_cast<int>(i);
+      *hi = static_cast<int>(i);
+    }
+  }
+}
+
+// Loops [from, to) of the song (to <= from: no loop): the playlist's time selection, sent to the engine.
+void setSongLoop(App& a, Tick from, Tick to) {
+  if (to <= from) from = to = 0;
+  a.playlist.selStart = from;
+  a.playlist.selEnd = to;
+  a.engine.setLoopRange(from, to);
+}
+
+void goEntry(App& a, const std::vector<trk::OrderEntry>& ol, int i) {
+  if (i < 0 || i >= static_cast<int>(ol.size())) return;
+  const trk::OrderEntry& e = ol[static_cast<size_t>(i)];
+  if (e.pattern != kNoId) a.selectPattern(e.pattern);
+  trackerview::setSongPosition(a, e.start);
+}
+
+void sayOrder(trk::OrderEdit r) {
+  if (r == trk::OrderEdit::Spans) trackerview::status(i18n::tr("That entry's clips run into the next entries: edit it in Lanes"));
+  else if (r == trk::OrderEdit::OtherClips) trackerview::status(i18n::tr("That entry holds audio or automation clips: edit it in Lanes"));
+}
+
+// Entry `i` and its neighbour `i + d` trade patterns (moving the entry up or down): one undo step.
+void moveEntry(App& a, const std::vector<trk::OrderEntry>& ol, int i, int d) {
+  const int j = i + d;
+  if (i < 0 || j < 0 || i >= static_cast<int>(ol.size()) || j >= static_cast<int>(ol.size())) return;
+  const ObjectId pi = ol[static_cast<size_t>(i)].pattern, pj = ol[static_cast<size_t>(j)].pattern;
+  if (pi == kNoId || pj == kNoId || ol[static_cast<size_t>(i)].patterns != 1 || ol[static_cast<size_t>(j)].patterns != 1) {
+    sayOrder(trk::OrderEdit::OtherClips);
+    return;
+  }
+  if (pi == pj) {
+    goEntry(a, ol, j);
+    return;
+  }
+  // The earlier entry first: its length change moves the later one, whose index stays.
+  const int lo = std::min(i, j), hi = std::max(i, j);
+  const ObjectId pLo = ol[static_cast<size_t>(lo)].pattern, pHi = ol[static_cast<size_t>(hi)].pattern;
+  a.doc.beginGroup("move order entry");
+  trk::OrderEdit r = trk::orderSetPattern(a.doc, lo, pHi);
+  if (r == trk::OrderEdit::Done) r = trk::orderSetPattern(a.doc, hi, pLo);
+  a.doc.endGroup(false);
+  if (r != trk::OrderEdit::Done) {
+    sayOrder(r);
+    return;
+  }
+  goEntry(a, trk::orderList(a.doc.song()), j);
+}
+
+void setEntryPattern(App& a, const std::vector<trk::OrderEntry>& ol, int i, ObjectId p) {
+  if (i < 0 || i >= static_cast<int>(ol.size()) || p == kNoId) return;
+  const trk::OrderEdit r = trk::orderSetPattern(a.doc, i, p);
+  sayOrder(r);
+  if (r == trk::OrderEdit::Done) goEntry(a, trk::orderList(a.doc.song()), i);
+}
+
+void stepEntryPattern(App& a, const std::vector<trk::OrderEntry>& ol, int i, int d) {
+  const Song& s = a.doc.song();
+  if (i < 0 || i >= static_cast<int>(ol.size()) || ol[static_cast<size_t>(i)].pattern == kNoId) return;
+  const int pi = s.patternIndex(ol[static_cast<size_t>(i)].pattern) + d;
+  if (pi < 0 || pi >= static_cast<int>(s.patterns.size())) return;
+  setEntryPattern(a, ol, i, s.patterns[static_cast<size_t>(pi)].id);
+}
+
+void insertEntry(App& a, const std::vector<trk::OrderEntry>& /*ol*/, int at, ObjectId p) {
+  if (p == kNoId) return;
+  gMark = -1;
+  const trk::OrderEdit r = trk::orderInsert(a.doc, at, p);
+  sayOrder(r);
+  if (r == trk::OrderEdit::Done) goEntry(a, trk::orderList(a.doc.song()), at);
+}
+
+void removeEntry(App& a, const std::vector<trk::OrderEntry>& ol, int at) {
+  if (at < 0 || at >= static_cast<int>(ol.size())) return;
+  gMark = -1;
+  const trk::OrderEdit r = trk::orderRemove(a.doc, at);
+  sayOrder(r);
+  if (r == trk::OrderEdit::Done) {
+    const auto nl = trk::orderList(a.doc.song());
+    goEntry(a, nl, std::min(at, static_cast<int>(nl.size()) - 1));
+  }
+}
+
+int loopEntry(const Song& s, const std::vector<trk::OrderEntry>& ol) {
+  for (const Marker& m : s.markers)
+    if (m.action == MarkerAction::SongLoop)
+      for (size_t i = 0; i < ol.size(); ++i)
+        if (m.pos < ol[i].end) return static_cast<int>(i);
+  return -1;
+}
+
+std::string timeText(const Song& s, Tick t) {
+  const double secs = static_cast<double>(t) / std::max(1, s.ppq) * 60.0 / std::max(1.0, s.tempo);
+  char b[32];
+  std::snprintf(b, sizeof b, "%d:%02d", static_cast<int>(secs) / 60, static_cast<int>(secs) % 60);
+  return b;
+}
+
+void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
+  const auto& P = pal();
+  const Song& s = a.doc.song();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImFont* mono = monoFont(a);
+  const float fs = ImGui::GetFontSize(), rh = rowHeight(), pad = 4;
+  const std::vector<trk::OrderEntry> ol = trk::orderList(s);
+  const int cur = entryAt(a, ol), loopAt = loopEntry(s, ol);
+  int mLo, mHi, lLo, lHi;
+  markedBlock(cur, static_cast<int>(ol.size()), &mLo, &mHi);
+  loopedEntries(a, ol, &lLo, &lHi);
+  const Tick bar = std::max<Tick>(1, s.barTicks());
+  const bool playing = a.engine.playing();
+  const float bh = std::round(rh + 4);                 // button height
+  const float tlH = std::round(rh * 2 + pad * 2);      // the timeline strip
+  const float top = o.y + th + kGap, bottom = o.y + av.y - tlH - kGap;
+  const float W = av.x;
+  const float wOrder = std::floor(W * 0.44f), wPat = std::floor(W * 0.32f), wSong = W - wOrder - wPat - 2 * kGap;
+  const float xO = o.x, xP = xO + wOrder + kGap, xS = xP + wPat + kGap;
+  const float digitW = mono->CalcTextSizeA(fs, FLT_MAX, 0, "00").x;
+  // ---- the order list ----
+  {
+    bevelBox(dl, ImVec2(xO, top), ImVec2(xO + wOrder, bottom));
+    boxTitle(a, ImVec2(xO + 6, top + 3), "Order");
+    const float hy = top + rh + 2;
+    const float cPos = xO + pad + 10, cPtn = cPos + digitW + 14, cName = cPtn + digitW + 14;
+    // Each right column as wide as its heading or its digits (a wide heading never runs off the box).
+    auto colW = [&](const char* head) { return std::max(digitW, std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(head)).x)); };
+    const float cRows = xO + wOrder - pad - colW("Rows") - 14, cBars = cRows - colW("Bars") - 14;
+    auto head = [&](float x, const char* t) { dl->AddText(a.fontRegular, fs, ImVec2(x, hy), P.textFaint, i18n::tr(t)); };
+    head(cPos, "Pos");
+    head(cPtn, "Ptn");
+    head(cName, "Name");
+    head(cBars, "Bars");
+    head(cRows, "Rows");
+    const float l0y = hy + rh, l1y = bottom - bh - pad * 2;
+    const float contentH = static_cast<float>(ol.size()) * rh + 2;
+    if (beginBody("##orderlist", ImVec2(xO + pad, l0y), ImVec2(xO + wOrder - pad, l1y), contentH)) {
+      ImDrawList* cl = ImGui::GetWindowDrawList();
+      const ImVec2 c0 = ImGui::GetCursorScreenPos();
+      const float cw = ImGui::GetContentRegionAvail().x;
+      static int lastCur = -2;
+      if (cur != lastCur && cur >= 0) {  // the current entry in view
+        const float y = static_cast<float>(cur) * rh, sy = ImGui::GetScrollY(), vh = ImGui::GetWindowHeight();
+        if (y < sy) ImGui::SetScrollY(y);
+        else if (y + rh > sy + vh) ImGui::SetScrollY(y + rh - vh);
+        lastCur = cur;
+      }
+      const float dx = c0.x - (xO + pad);  // the columns measured from the box
+      for (size_t i = 0; i < ol.size(); ++i) {
+        const trk::OrderEntry& e = ol[i];
+        const float y = std::round(c0.y + static_cast<float>(i) * rh);
+        ImGui::SetCursorScreenPos(ImVec2(c0.x, y));
+        ImGui::PushID(static_cast<int>(i));
+        const bool click = ImGui::InvisibleButton("##ent", ImVec2(std::max(1.0f, cw), rh));
+        const bool hov = ImGui::IsItemHovered();
+        const bool dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+        ImGui::PopID();
+        const int ii = static_cast<int>(i);
+        const bool marked = ii >= mLo && ii <= mHi;
+        if (ii == cur) cl->AddRectFilled(ImVec2(c0.x, y), ImVec2(c0.x + cw, y + rh), theme::withAlpha(P.surface600, 0.95f));
+        else if (marked) cl->AddRectFilled(ImVec2(c0.x, y), ImVec2(c0.x + cw, y + rh), theme::withAlpha(P.hot, 0.16f));
+        else if (hov) cl->AddRectFilled(ImVec2(c0.x, y), ImVec2(c0.x + cw, y + rh), theme::withAlpha(P.surface700, 0.6f));
+        if (i % 4 == 0 && ii != cur && !marked) cl->AddRectFilled(ImVec2(c0.x, y), ImVec2(c0.x + cw, y + rh), theme::withAlpha(P.surface800, 0.35f));
+        // The looped entries: a bar at the left edge (the song's Loop button).
+        if (ii >= lLo && ii <= lHi) cl->AddRectFilled(ImVec2(c0.x + cw - 8, y + (ii == lLo ? 2.0f : 0.0f)), ImVec2(c0.x + cw - 6, y + rh - (ii == lHi ? 2.0f : 0.0f)), P.led);
+        const float ty = std::round(y + (rh - fs) * 0.5f);
+        if (ii == loopAt) cl->AddText(mono, fs, ImVec2(c0.x + 2, ty), P.hot, "L");
+        const std::string pos = trk::hex2(static_cast<int>(i));
+        cl->AddText(mono, fs, ImVec2(cPos + dx, ty), static_cast<int>(i) == cur ? P.hot : P.textDim, pos.c_str());
+        const Pattern* p = s.pattern(e.pattern);
+        if (p) {
+          const std::string num = trk::hex2(trk::patternNumber(s, p->id));
+          cl->AddRectFilled(ImVec2(cPtn + dx - 5, y + 3), ImVec2(cPtn + dx - 2, y + rh - 3), theme::rgb(p->color));
+          cl->AddText(mono, fs, ImVec2(cPtn + dx, ty), P.text, num.c_str());
+          std::string name = p->name;
+          if (e.patterns > 1) name += " +" + std::to_string(e.patterns - 1);
+          theme::textEllipsis(cl, a.fontRegular, fs, ImVec2(cName + dx, ty), cBars - cName - 8, static_cast<int>(i) == cur ? P.text : P.textDim, name.c_str());
+          const trk::Grid g = trk::gridOf(s, *p);
+          char bars[16], rows[16];
+          std::snprintf(bars, sizeof bars, "%d", static_cast<int>((e.end - e.start + bar - 1) / bar));
+          std::snprintf(rows, sizeof rows, "%02X", std::min(255, g.rows));
+          cl->AddText(mono, fs, ImVec2(cBars + dx, ty), P.textDim, bars);
+          cl->AddText(mono, fs, ImVec2(cRows + dx, ty), P.textDim, rows);
+        } else {
+          cl->AddText(mono, fs, ImVec2(cPtn + dx, ty), P.textFaint, "AU");
+          cl->AddText(a.fontRegular, fs, ImVec2(cName + dx, ty), P.textFaint, i18n::tr("Audio part"));
+        }
+        if (playing && a.engine.mode() == PlayMode::Song && static_cast<int>(i) == cur)
+          cl->AddRectFilled(ImVec2(c0.x + cw - 4, y + 2), ImVec2(c0.x + cw - 1, y + rh - 2), P.playhead);
+        if (click) {  // Shift: the block from the current entry to this one
+          if (ImGui::GetIO().KeyShift && cur >= 0) {
+            if (gMark < 0) gMark = cur;
+          } else {
+            gMark = -1;
+          }
+          goEntry(a, ol, static_cast<int>(i));
+        }
+        if (dbl && e.pattern != kNoId) trackerview::showPage(a, "Pattern editor");
+      }
+      endBody(contentH);
+    }
+    if (ol.empty()) {
+      dl->AddText(a.fontRegular, fs, ImVec2(xO + pad + 10, l0y + 6), P.textFaint, i18n::tr("The song is empty: pick a pattern, then Ins or Append"), nullptr,
+                  wOrder - pad * 2 - 20);
+    }
+    // The order's buttons.
+    const float by = bottom - bh - pad;
+    const char* const labels[] = {i18n::N_("Ins"), i18n::N_("Del"), i18n::N_("Up"), i18n::N_("Down"), i18n::N_("Ptn -"), i18n::N_("Ptn +")};
+    const char* const hints[] = {i18n::N_("Inserts the current entry's pattern after it (Ins); in an empty song, the pattern shown"),
+                                 i18n::N_("Removes the current entry; the song after it moves up (Del)"),
+                                 i18n::N_("Moves the entry up: it trades places with the one above (Ctrl+Up)"),
+                                 i18n::N_("Moves the entry down (Ctrl+Down)"),
+                                 i18n::N_("The entry plays the previous pattern (Left)"),
+                                 i18n::N_("The entry plays the next pattern (Right)")};
+    const float bw = std::floor((wOrder - pad * 2 - kGap * 5) / 6);
+    for (int k = 0; k < 6; ++k) {
+      const float bx = xO + pad + static_cast<float>(k) * (bw + kGap), bx1 = k == 5 ? xO + wOrder - pad : bx + bw;
+      const bool need = k > 0;
+      const bool off = need && cur < 0;
+      ImGui::PushID(700 + k);
+      if (off) ImGui::BeginDisabled();
+      if (bevelButton(a, "##ordb", labels[k], ImVec2(bx, by), ImVec2(bx1, by + bh), false, hints[k])) {
+        switch (k) {
+          case 0: insertEntry(a, ol, cur < 0 ? 0 : cur + 1, cur >= 0 && ol[static_cast<size_t>(cur)].pattern != kNoId ? ol[static_cast<size_t>(cur)].pattern : a.curPattern); break;
+          case 1: removeEntry(a, ol, cur); break;
+          case 2: moveEntry(a, ol, cur, -1); break;
+          case 3: moveEntry(a, ol, cur, 1); break;
+          case 4: stepEntryPattern(a, ol, cur, -1); break;
+          default: stepEntryPattern(a, ol, cur, 1); break;
+        }
+      }
+      if (off) ImGui::EndDisabled();
+      ImGui::PopID();
+    }
+  }
+  // ---- the pattern bank ----
+  {
+    bevelBox(dl, ImVec2(xP, top), ImVec2(xP + wPat, bottom));
+    boxTitle(a, ImVec2(xP + 6, top + 3), "Patterns");
+    const float hy = top + rh + 2;
+    const float cNo = xP + pad + 10, cName = cNo + digitW + 14;
+    auto colW = [&](const char* head) { return std::max(digitW, std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(head)).x)); };
+    const float cUses = xP + wPat - pad - colW("Uses") - 14, cBars = cUses - colW("Bars") - 14;
+    dl->AddText(a.fontRegular, fs, ImVec2(cNo, hy), P.textFaint, i18n::tr("No"));
+    dl->AddText(a.fontRegular, fs, ImVec2(cName, hy), P.textFaint, i18n::tr("Name"));
+    dl->AddText(a.fontRegular, fs, ImVec2(cBars, hy), P.textFaint, i18n::tr("Bars"));
+    dl->AddText(a.fontRegular, fs, ImVec2(cUses, hy), P.textFaint, i18n::tr("Uses"));
+    const float l0y = hy + rh, l1y = bottom - bh * 2 - pad * 2 - kGap;
+    std::vector<int> uses(s.patterns.size(), 0);
+    for (const trk::OrderEntry& e : ol)
+      if (const int pi = s.patternIndex(e.pattern); pi >= 0) ++uses[static_cast<size_t>(pi)];
+    const float contentH = static_cast<float>(s.patterns.size()) * rh + 2;
+    if (beginBody("##patbank", ImVec2(xP + pad, l0y), ImVec2(xP + wPat - pad, l1y), contentH)) {
+      ImDrawList* cl = ImGui::GetWindowDrawList();
+      const ImVec2 c0 = ImGui::GetCursorScreenPos();
+      const float cw = ImGui::GetContentRegionAvail().x, dx = c0.x - (xP + pad);
+      for (size_t i = 0; i < s.patterns.size(); ++i) {
+        const Pattern& p = s.patterns[i];
+        const float y = std::round(c0.y + static_cast<float>(i) * rh);
+        ImGui::SetCursorScreenPos(ImVec2(c0.x, y));
+        ImGui::PushID(static_cast<int>(i));
+        const bool click = ImGui::InvisibleButton("##pat", ImVec2(std::max(1.0f, cw), rh));
+        const bool hov = ImGui::IsItemHovered();
+        const bool dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+        ImGui::PopID();
+        const bool sel = p.id == a.curPattern;
+        if (sel) cl->AddRectFilled(ImVec2(c0.x, y), ImVec2(c0.x + cw, y + rh), theme::withAlpha(P.surface600, 0.95f));
+        else if (hov) cl->AddRectFilled(ImVec2(c0.x, y), ImVec2(c0.x + cw, y + rh), theme::withAlpha(P.surface700, 0.6f));
+        const float ty = std::round(y + (rh - fs) * 0.5f);
+        cl->AddRectFilled(ImVec2(cNo + dx - 5, y + 3), ImVec2(cNo + dx - 2, y + rh - 3), theme::rgb(p.color));
+        const std::string num = trk::hex2(static_cast<int>(i) + 1);
+        cl->AddText(mono, fs, ImVec2(cNo + dx, ty), sel ? P.hot : P.textDim, num.c_str());
+        theme::textEllipsis(cl, a.fontRegular, fs, ImVec2(cName + dx, ty), cBars - cName - 8, sel ? P.text : P.textDim, p.name.c_str());
+        char bars[16], u[16];
+        std::snprintf(bars, sizeof bars, "%d", p.bars);
+        std::snprintf(u, sizeof u, "%d", uses[i]);
+        cl->AddText(mono, fs, ImVec2(cBars + dx, ty), P.textDim, bars);
+        cl->AddText(mono, fs, ImVec2(cUses + dx, ty), uses[i] ? P.textDim : P.textFaint, u);
+        if (click) a.selectPattern(p.id);
+        if (dbl) trackerview::showPage(a, "Pattern editor");
+      }
+      endBody(contentH);
+    }
+    const Pattern* sp = s.pattern(a.curPattern);
+    const float bw = std::floor((wPat - pad * 2 - kGap * 2) / 3);
+    const float by0 = bottom - bh * 2 - pad - kGap, by1 = bottom - bh - pad;
+    struct B {
+      const char* label;
+      const char* hint;
+      bool on;
+    };
+    const B bs[6] = {{i18n::N_("New"), i18n::N_("A new empty pattern after the last (as long as the song's bars)"), true},
+                     {i18n::N_("Clone"), i18n::N_("A copy of the picked pattern after it"), sp != nullptr},
+                     {i18n::N_("Set"), i18n::N_("The current entry plays the picked pattern"), sp != nullptr && cur >= 0},
+                     {i18n::N_("Append"), i18n::N_("Adds the picked pattern at the end of the song"), sp != nullptr},
+                     {i18n::N_("Bars -"), i18n::N_("The picked pattern a bar shorter (the song after it moves up)"), sp && sp->bars > 1},
+                     {i18n::N_("Bars +"), i18n::N_("The picked pattern a bar longer (the song after it moves down)"), sp && sp->bars < 64}};
+    for (int k = 0; k < 6; ++k) {
+      const float bx = xP + pad + static_cast<float>(k % 3) * (bw + kGap), bx1 = k % 3 == 2 ? xP + wPat - pad : bx + bw;
+      const float by = k < 3 ? by0 : by1;
+      ImGui::PushID(720 + k);
+      if (!bs[k].on) ImGui::BeginDisabled();
+      if (bevelButton(a, "##patb", bs[k].label, ImVec2(bx, by), ImVec2(bx1, by + bh), false, bs[k].hint)) {
+        switch (k) {
+          case 0: {
+            const int bars = std::max(1, s.patterns.empty() ? 4 : s.patterns.back().bars);
+            const ObjectId id = a.doc.addPattern(std::string(i18n::tr("Pattern")) + " " + std::to_string(s.patterns.size() + 1), bars,
+                                                 s.patterns.empty() ? 16 : s.patterns.back().stepsPerBar);
+            if (id) a.selectPattern(id);
+            break;
+          }
+          case 1:
+            if (const ObjectId id = a.doc.clonePattern(sp->id)) a.selectPattern(id);
+            break;
+          case 2: setEntryPattern(a, ol, cur, sp->id); break;
+          case 3: insertEntry(a, ol, static_cast<int>(ol.size()), sp->id); break;
+          case 4: trk::setPatternLengthInSong(a.doc, sp->id, sp->bars - 1, sp->stepsPerBar); break;
+          default: trk::setPatternLengthInSong(a.doc, sp->id, sp->bars + 1, sp->stepsPerBar); break;
+        }
+      }
+      if (!bs[k].on) ImGui::EndDisabled();
+      ImGui::PopID();
+    }
+  }
+  // ---- the song box ----
+  {
+    bevelBox(dl, ImVec2(xS, top), ImVec2(xS + wSong, bottom));
+    boxTitle(a, ImVec2(xS + 6, top + 3), "Song");
+    const float x = xS + pad + 4, w = wSong - pad * 2 - 8;
+    float y = top + rh + 6;
+    auto line = [&](const char* label, const std::string& v) {
+      dl->AddText(a.fontRegular, fs, ImVec2(x, y), P.textDim, i18n::tr(label));
+      const float vw = mono->CalcTextSizeA(fs, FLT_MAX, 0, v.c_str()).x;
+      dl->AddText(mono, fs, ImVec2(x + w - vw, y), P.text, v.c_str());
+      y += rh + 2;
+    };
+    const Tick len = ol.empty() ? 0 : ol.back().end;
+    line("Entries", trk::hex2(static_cast<int>(ol.size())));
+    line("Bars", std::to_string(static_cast<int>((len + bar - 1) / bar)));
+    line("Time", timeText(s, len));
+    line("Position", cur >= 0 ? trk::hex2(cur) : std::string("--"));
+    y += 4;
+    char bpm[16];
+    std::snprintf(bpm, sizeof bpm, std::fabs(s.tempo - std::round(s.tempo)) < 0.05 ? "%.0f" : "%.1f", s.tempo);
+    if (const int d = stepper(a, "sgbpm", "Tempo", bpm, ImVec2(x, y), w, rh + 2, "The song tempo in beats per minute (Shift: steps of 0.1)")) {
+      const double t = ImGui::GetIO().KeyShift ? std::round(s.tempo * 10 + d) / 10.0 : std::round(s.tempo) + d;
+      a.doc.setParam(songParam(SongParam::Tempo), std::clamp(t, 10.0, 522.0), true);
+    }
+    y += rh + 6;
+    if (const int d = stepper(a, "sgloop", "Loop to", loopAt < 0 ? std::string("--") : trk::hex2(loopAt), ImVec2(x, y), w, rh + 2,
+                              "The entry the song goes back to when it ends (none: it stops)")) {
+      const int to = loopAt + d;
+      Tick loopPos = 0;
+      for (const Marker& m : s.markers)
+        if (m.action == MarkerAction::SongLoop) loopPos = m.pos;
+      if (to < 0 && loopAt >= 0) ops::addSongLoopMarker(a.doc, loopPos);  // placed where it is: removed
+      else if (to >= 0 && to < static_cast<int>(ol.size())) ops::addSongLoopMarker(a.doc, ol[static_cast<size_t>(to)].start);
+    }
+    y += rh + 10;
+    const float hw = std::floor((w - kGap) / 2);
+    const bool songPlaying = playing && a.engine.mode() == PlayMode::Song;
+    if (bevelButton(a, "##sgplay", "Play song", ImVec2(x, y), ImVec2(x + hw, y + bh), songPlaying, "Plays the song from the current entry (Enter)")) {
+      trackerview::songMode(a);
+      if (!playing) menuparity::playPressed(a);
+    }
+    if (bevelButton(a, "##sgstop", "Stop", ImVec2(x + hw + kGap, y), ImVec2(x + w, y + bh), false, "Stops playing") && playing)
+      menuparity::stopPressed(a);
+    y += bh + kGap;
+    // Loop: the marked block (Shift+Up/Down, Shift+click), or the current entry, plays over and over;
+    // lit while a loop is set (again: off). The same loop as the playlist's time selection.
+    {
+      const bool looping = lLo <= lHi;
+      if (bevelButton(a, "##sgloopblk", looping ? "Loop off" : "Loop block", ImVec2(x, y), ImVec2(x + w, y + bh), looping,
+                      "Plays the marked entries (Shift+Up/Down) or the current one over and over; again: the whole song (Ctrl+L)") ||
+          (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput && (ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper) &&
+           ImGui::IsKeyPressed(ImGuiKey_L, false))) {
+        if (looping) {
+          setSongLoop(a, 0, 0);
+        } else if (cur >= 0) {
+          const int lo = mLo <= mHi ? mLo : cur, hi = mLo <= mHi ? mHi : cur;
+          setSongLoop(a, ol[static_cast<size_t>(lo)].start, ol[static_cast<size_t>(hi)].end);
+          if (playing && a.engine.mode() == PlayMode::Song && (trackerview::songPosition(a) < ol[static_cast<size_t>(lo)].start ||
+                                                                trackerview::songPosition(a) >= ol[static_cast<size_t>(hi)].end))
+            goEntry(a, ol, lo);
+        }
+      }
+    }
+    y += bh + 8;
+    bool layered = false;
+    for (const trk::OrderEntry& e : ol) layered = layered || e.patterns > 1 || e.pattern == kNoId;
+    if (layered && y + rh * 2 < bottom)
+      dl->AddText(a.fontRegular, fs, ImVec2(x, y), P.textDim,
+                  i18n::tr("Some entries layer several patterns or audio: the arranger shows their top pattern, and Lanes edits them."), nullptr, w);
+  }
+  // ---- the timeline ----
+  {
+    const float y0 = bottom + kGap, y1 = o.y + av.y;
+    bevelBox(dl, ImVec2(o.x, y0), ImVec2(o.x + W, y1), true);
+    const Tick len = ol.empty() ? 0 : ol.back().end;
+    const float x0 = o.x + pad, x1 = o.x + W - pad, by0 = y0 + pad, by1 = y1 - pad;
+    if (len > 0) {
+      const double k = (x1 - x0) / static_cast<double>(len);
+      for (size_t i = 0; i < ol.size(); ++i) {
+        const trk::OrderEntry& e = ol[i];
+        const float bx0 = std::round(x0 + static_cast<float>(e.start * k)), bx1 = std::max(bx0 + 2, std::round(x0 + static_cast<float>(e.end * k)) - 1);
+        const Pattern* p = s.pattern(e.pattern);
+        const ImU32 c = p ? theme::rgb(p->color) : P.surface600;
+        dl->AddRectFilled(ImVec2(bx0, by0), ImVec2(bx1, by1), theme::withAlpha(c, static_cast<int>(i) == cur ? 0.85f : 0.45f));
+        if (static_cast<int>(i) == cur) dl->AddRect(ImVec2(bx0, by0), ImVec2(bx1, by1), P.hot);
+        if (p && bx1 - bx0 > fs * 2) {
+          dl->PushClipRect(ImVec2(bx0 + 2, by0), ImVec2(bx1 - 2, by1), true);
+          dl->AddText(a.fontRegular, fs, ImVec2(bx0 + 4, std::round(by0 + (by1 - by0 - fs) * 0.5f)), P.text, p->name.c_str());
+          dl->PopClipRect();
+        }
+        ImGui::SetCursorScreenPos(ImVec2(bx0, by0));
+        ImGui::PushID(static_cast<int>(800 + i));
+        if (ImGui::InvisibleButton("##tl", ImVec2(std::max(1.0f, bx1 - bx0), std::max(1.0f, by1 - by0)))) goEntry(a, ol, static_cast<int>(i));
+        ImGui::PopID();
+      }
+      if (lLo <= lHi) {  // the loop: a bar over its entries
+        const float lx0 = std::round(x0 + static_cast<float>(ol[static_cast<size_t>(lLo)].start * k));
+        const float lx1 = std::round(x0 + static_cast<float>(ol[static_cast<size_t>(lHi)].end * k)) - 1;
+        dl->AddRectFilled(ImVec2(lx0, y0 + 1), ImVec2(lx1, y0 + 3), P.led);
+        dl->AddRectFilled(ImVec2(lx0, y1 - 3), ImVec2(lx1, y1 - 1), P.led);
+      }
+      const Tick pos = trackerview::songPosition(a);
+      const float px = std::round(x0 + static_cast<float>(std::min(pos, len) * k));
+      dl->AddLine(ImVec2(px, y0 + 1), ImVec2(px, y1 - 1), P.playhead, 2.0f);
+    }
+  }
+  // ---- keys (the page in front, no text typed) ----
+  if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput) {
+    const bool ctrl = ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper, shift = ImGui::GetIO().KeyShift;  // (Ctrl, or Cmd on macOS)
+    // Up/Down: the entry; Shift: and mark the block; Ctrl: move the entry.
+    for (int d : {-1, 1}) {
+      if (!ImGui::IsKeyPressed(d < 0 ? ImGuiKey_UpArrow : ImGuiKey_DownArrow)) continue;
+      if (ctrl) {
+        gMark = -1;
+        moveEntry(a, ol, cur, d);
+        continue;
+      }
+      if (shift && cur >= 0 && gMark < 0) gMark = cur;
+      if (!shift) gMark = -1;
+      goEntry(a, ol, std::clamp(cur + d, 0, std::max(0, static_cast<int>(ol.size()) - 1)));
+    }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) gMark = -1;
+    if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) gMark = -1, goEntry(a, ol, 0);
+    if (ImGui::IsKeyPressed(ImGuiKey_End, false)) gMark = -1, goEntry(a, ol, static_cast<int>(ol.size()) - 1);
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || ImGui::IsKeyPressed(ImGuiKey_Minus) || ImGui::IsKeyPressed(ImGuiKey_KeypadSubtract)) stepEntryPattern(a, ol, cur, -1);
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_Equal) || ImGui::IsKeyPressed(ImGuiKey_KeypadAdd)) stepEntryPattern(a, ol, cur, 1);
+    if (ImGui::IsKeyPressed(ImGuiKey_Insert, false))
+      insertEntry(a, ol, cur < 0 ? 0 : cur + 1, cur >= 0 && ol[static_cast<size_t>(cur)].pattern != kNoId ? ol[static_cast<size_t>(cur)].pattern : a.curPattern);
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete, false)) removeEntry(a, ol, cur);
+    if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) {
+      trackerview::songMode(a);
+      if (!playing) menuparity::playPressed(a);
+    }
+  }
+  ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + av.y - 1));
+  ImGui::Dummy(ImVec2(1, 1));
+}
+
 }  // namespace
 
 void pageTitle(App& a, const char* title, const std::string& info) {
@@ -257,8 +773,209 @@ void pageTitle(App& a, const char* title, const std::string& info) {
   ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + h + kGap));
 }
 
+// ---- cp16: the Roll page's tool row (the band's bevel buttons, no icons or drop-down boxes) ----
+void rollToolbar(App& a) {
+  const trackerview::PerfScope perfScope(trackerview::PerfPage);  // cp16: "tracker perf"
+  const auto& P = pal();
+  PianoRollState& st = a.piano;
+  const Song& s = a.doc.song();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImFont* mono = monoFont(a);
+  const float fs = ImGui::GetFontSize();
+  const ImVec2 o = ImGui::GetCursorScreenPos();
+  const float W = ImGui::GetContentRegionAvail().x, h = std::round(fs + 8);
+  bevelBox(dl, o, ImVec2(o.x + W, o.y + h));
+  const float y0 = o.y + 2, y1 = o.y + h - 2;
+  float x = o.x + 2;
+  auto width = [&](const char* label) { return std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(label)).x) + 16; };
+  auto btn = [&](const char* id, const char* label, bool on, const char* hint) {
+    const float w = width(label);
+    const bool c = bevelButton(a, id, label, ImVec2(x, y0), ImVec2(x + w, y1), on, hint);
+    x += w + kGap;
+    return c;
+  };
+  auto label = [&](const char* text) {
+    x += 8;
+    dl->AddText(a.fontRegular, fs, ImVec2(x, std::round(o.y + (h - fs) * 0.5f)), P.textDim, i18n::tr(text));
+    x += std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(text)).x) + 6;
+  };
+  if (btn("##trprmenu", "Menu", ImGui::IsPopupOpen("##trprmenupop"),
+          "Everything the piano roll offers: file, edit, select, quantize, chords, tools, snap and view"))
+    ImGui::OpenPopup("##trprmenupop");
+  if (ImGui::BeginPopup("##trprmenupop")) {
+    pianoRollMenu(a);
+    ImGui::EndPopup();
+  }
+  label("Tool");
+  struct T {
+    Tool tool;
+    const char* label;
+    const char* hint;
+  };
+  static const T tools[] = {{Tool::Draw, i18n::N_("Draw"), i18n::N_("Draw notes (click: a note, drag: its length)")},
+                            {Tool::Paint, i18n::N_("Paint"), i18n::N_("Paint notes along a drag")},
+                            {Tool::Select, i18n::N_("Select"), i18n::N_("Select notes with a box")},
+                            {Tool::Erase, i18n::N_("Erase"), i18n::N_("Erase the notes clicked or dragged over")},
+                            {Tool::Slice, i18n::N_("Slice"), i18n::N_("Cut notes where the drag crosses them")}};
+  for (const T& t : tools) {
+    ImGui::PushID(static_cast<int>(t.tool));
+    if (btn("##trprtool", t.label, st.tool == t.tool, t.hint)) st.tool = t.tool;
+    ImGui::PopID();
+  }
+  label("Snap");
+  struct S {
+    Snap snap;
+    const char* label;
+    const char* hint;
+  };
+  static const S snaps[] = {{Snap::Line, i18n::N_("Grid"), i18n::N_("Notes snap to the grid lines shown (they follow the zoom)")},
+                            {Snap::Step, i18n::N_("Row"), i18n::N_("Notes snap to the pattern's rows (its steps)")},
+                            {Snap::Beat, i18n::N_("Beat"), i18n::N_("Notes snap to beats")},
+                            {Snap::Bar, i18n::N_("Bar"), i18n::N_("Notes snap to bars")},
+                            {Snap::None, i18n::N_("Off"), i18n::N_("No snap: notes go where they are put")}};
+  for (const S& sn : snaps) {
+    ImGui::PushID(100 + static_cast<int>(sn.snap));
+    if (btn("##trprsnap", sn.label, st.snap == sn.snap, sn.hint)) st.snap = sn.snap;
+    ImGui::PopID();
+  }
+  // The instrument: arrows and its number and name (the notes edited are its notes).
+  const float zw = width("-") + width("+") + kGap + 8;
+  const float right = o.x + W - 2 - zw;
+  label("Instrument");
+  {
+    const float aw = std::round(h * 1.1f);
+    const int ci = s.channelIndex(a.selChannel), n = static_cast<int>(s.channels.size());
+    if (trackerview::arrowButton(a, "##trprinsprev", ImVec2(x, y0), ImVec2(x + aw, y1), true, "The previous instrument") && ci > 0)
+      a.selectChannel(s.channels[static_cast<size_t>(ci - 1)].id);
+    x += aw + kGap;
+    if (trackerview::arrowButton(a, "##trprinsnext", ImVec2(x, y0), ImVec2(x + aw, y1), false, "The next instrument") && ci >= 0 && ci + 1 < n)
+      a.selectChannel(s.channels[static_cast<size_t>(ci + 1)].id);
+    x += aw + kGap;
+    const float fx1 = std::max(x + 40, std::min(right - 6, x + fs * 16));
+    bevelBox(dl, ImVec2(x, y0), ImVec2(fx1, y1), true);
+    if (const Channel* c = s.channel(a.selChannel)) {
+      const std::string num = trk::hex2(ci + 1);
+      const float ty = std::round(o.y + (h - fs) * 0.5f);
+      dl->AddText(mono, fs, ImVec2(x + 5, ty), P.hot, num.c_str());
+      const float nx = x + 5 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00 ").x;
+      theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(nx, ty), fx1 - nx - 4, P.text, c->name.c_str());
+    }
+    x = fx1 + kGap;
+  }
+  // Zoom at the right end.
+  x = std::max(x, right + 8);
+  if (btn("##trprzout", "-", false, "Zoom out (PgDn, Ctrl+wheel)")) st.zoomRequest /= 1.5f;
+  if (btn("##trprzin", "+", false, "Zoom in (PgUp, Ctrl+wheel)")) st.zoomRequest *= 1.5f;
+  ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + h + kGap));
+  ImGui::Dummy(ImVec2(1, 0));
+}
+
+void devOrder(App& a, const std::vector<std::string>& args, int frame) {
+  const std::string c = args.size() > 1 ? args[1] : "dump";
+  auto num = [&](size_t i, int def) { return i < args.size() ? std::atoi(args[i].c_str()) : def; };
+  auto ptn = [&](size_t i) -> ObjectId {  // a pattern by its number (from 1)
+    const Song& s = a.doc.song();
+    const int n = num(i, 0);
+    return n >= 1 && n <= static_cast<int>(s.patterns.size()) ? s.patterns[static_cast<size_t>(n - 1)].id : kNoId;
+  };
+  const std::vector<trk::OrderEntry> ol = trk::orderList(a.doc.song());
+  if (c == "go") {
+    gMark = -1;
+    goEntry(a, ol, num(2, 0));
+  } else if (c == "ins") {
+    const int i = num(2, entryAt(a, ol));
+    insertEntry(a, ol, i < 0 ? 0 : i + 1, i >= 0 && i < static_cast<int>(ol.size()) && ol[static_cast<size_t>(i)].pattern != kNoId ? ol[static_cast<size_t>(i)].pattern : a.curPattern);
+  } else if (c == "del") {
+    removeEntry(a, ol, num(2, entryAt(a, ol)));
+  } else if (c == "move") {
+    moveEntry(a, ol, num(2, 0), num(3, 1) < 0 ? -1 : 1);
+  } else if (c == "set") {
+    setEntryPattern(a, ol, num(2, 0), ptn(3));
+  } else if (c == "append") {
+    insertEntry(a, ol, static_cast<int>(ol.size()), ptn(2));
+  } else if (c == "new") {
+    const Song& s = a.doc.song();
+    const int bars = std::max(1, s.patterns.empty() ? 4 : s.patterns.back().bars);
+    if (const ObjectId id = a.doc.addPattern(std::string(i18n::tr("Pattern")) + " " + std::to_string(s.patterns.size() + 1), bars,
+                                             s.patterns.empty() ? 16 : s.patterns.back().stepsPerBar))
+      a.selectPattern(id);
+  } else if (c == "clone") {
+    if (const ObjectId p = ptn(2))
+      if (const ObjectId id = a.doc.clonePattern(p)) a.selectPattern(id);
+  } else if (c == "bars") {
+    if (const Pattern* p = a.doc.song().pattern(ptn(2)))
+      trk::setPatternLengthInSong(a.doc, p->id, std::clamp(p->bars + (num(3, 1) < 0 ? -1 : 1), 1, 64), p->stepsPerBar);
+  } else if (c == "loop") {
+    if (args.size() > 2 && args[2] == "off") setSongLoop(a, 0, 0);
+    else {
+      const int i0 = std::clamp(num(2, 0), 0, std::max(0, static_cast<int>(ol.size()) - 1)), i1 = std::clamp(num(3, i0), i0, std::max(0, static_cast<int>(ol.size()) - 1));
+      if (!ol.empty()) setSongLoop(a, ol[static_cast<size_t>(i0)].start, ol[static_cast<size_t>(i1)].end);
+    }
+  } else if (c == "play") {
+    goEntry(a, ol, num(2, 0));
+    trackerview::songMode(a);
+    if (!a.engine.playing()) menuparity::playPressed(a);
+  }
+  const Song& s = a.doc.song();
+  const std::vector<trk::OrderEntry> now = trk::orderList(s);
+  std::string line;
+  for (const trk::OrderEntry& e : now) line += " " + (e.pattern != kNoId ? trk::hex2(trk::patternNumber(s, e.pattern)) : std::string("AU"));
+  int lLo, lHi;
+  loopedEntries(a, now, &lLo, &lHi);
+  std::printf("order frame %d (%s): n %zu |%s | patterns %zu | loop %d-%d | pos %d | playing %d\n", frame, c.c_str(), now.size(), line.c_str(), s.patterns.size(), lLo,
+              lHi, entryAt(a, now), a.engine.playing() ? 1 : 0);
+  std::fflush(stdout);
+}
+
+// ---- cp16: the Audio page with nothing open: what it edits and the way to a sample ----
+void audioEmpty(App& a, float w, float h) {
+  const auto& P = pal();
+  const Song& s = a.doc.song();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float fs = ImGui::GetFontSize(), rh = rowHeight();
+  const ImVec2 t0 = ImGui::GetCursorScreenPos();
+  const float th = titleBar(a, t0, w, i18n::tr("Audio"), "");
+  const ImVec2 o(t0.x, t0.y + th + kGap);
+  const ImVec2 p1(o.x + w, t0.y + std::max(h, th + rh * 6));
+  bevelBox(dl, o, p1, true);
+  const Channel* c = s.channel(a.selChannel);
+  const float x = o.x + 14, tw = std::max(40.0f, w - 28);
+  float y = o.y + 12;
+  boxTitle(a, ImVec2(x, y), "No sample open");
+  y += rh + 4;
+  std::string what;
+  bool hasFile = false;
+  if (!c) {
+    what = i18n::tr("No instrument is selected: pick one in the header's list.");
+  } else {
+    const std::string head = trk::hex2(s.channelIndex(c->id) + 1) + " " + c->name + ": ";
+    hasFile = c->plugin.type == "gl.sampler" && !c->plugin.data.empty();
+    if (hasFile) what = head + i18n::tr("its sample is ready to edit.");
+    else if (c->plugin.type == tracker::kInstrumentType) what = head + i18n::tr("a Tracker Sampler: its samples are edited in its instrument editor and the Sample tools.");
+    else what = head + i18n::tr("no sample (its sound is synthesized).");
+  }
+  dl->AddText(a.fontRegular, fs, ImVec2(x, y), P.text, what.c_str(), nullptr, tw);
+  y += a.fontRegular->CalcTextSizeA(fs, FLT_MAX, tw, what.c_str()).y + 6;
+  dl->AddText(a.fontRegular, fs, ImVec2(x, y), P.textDim, i18n::tr("The audio editor edits the current instrument's sample; Files loads one into it."), nullptr, tw);
+  y += a.fontRegular->CalcTextSizeA(fs, FLT_MAX, tw, i18n::tr("The audio editor edits the current instrument's sample; Files loads one into it.")).y + 10;
+  float bx = x;
+  const float bh = std::round(rh + 4);
+  auto btn = [&](const char* id, const char* label, const char* hint) {
+    const float bw = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(label)).x) + 28;
+    const bool clicked = bevelButton(a, id, label, ImVec2(bx, y), ImVec2(bx + bw, y + bh), false, hint);
+    bx += bw + 4;
+    return clicked;
+  };
+  if (hasFile && btn("##aued", "Edit its sample", "Opens the instrument's sample here")) trackerview::showPage(a, "Loupe");
+  if (btn("##aufiles", "Files", "The header shows the files: a double-click on an audio file loads it into the instrument")) trackerview::setHeaderSwap(2);
+  if (c && btn("##auinst", "Instrument", "The instrument's editor (Channel settings)")) trackerview::showPage(a, "Instrument");
+  ImGui::SetCursorScreenPos(o);
+  ImGui::Dummy(ImVec2(w, p1.y - o.y));
+}
+
 // ---- Steps: the channels and their steps ----
 GL_STEPS_FN void steps(App& a) {
+  const trackerview::PerfScope perfScope(trackerview::PerfPage);  // cp16: "tracker perf"
   trackerview::pumpPage(a);  // (the header band may be hidden: T-05)
   const Song& s = a.doc.song();
   const Pattern* pat = s.pattern(a.curPattern);
@@ -296,6 +1013,7 @@ GL_STEPS_FN void steps(App& a) {
 // ---- Song: the arrangement as rows of bars, a column per playlist track ----
 // The clip picked on the Song page (a click), its properties in the clip box under the rows.
 ObjectId gSongClip = kNoId;
+bool gSongLanes = false;  // the Song page shows the lanes (else the arranger); view state, never saved
 
 namespace {
 std::string clipTitle(const Song& s, const Clip& c) {
@@ -497,6 +1215,7 @@ void clipBox(App& a, ImVec2 p0, ImVec2 p1) {
 }  // namespace
 
 void song(App& a) {
+  const trackerview::PerfScope perfScope(trackerview::PerfPage);  // cp16: "tracker perf"
   trackerview::pumpPage(a);  // (the header band may be hidden: T-05)
   const auto& P = pal();
   const Song& s = a.doc.song();
@@ -513,7 +1232,24 @@ void song(App& a) {
   // T-27: the columns past the used tracks are free ones to put clips on; the count says so.
   std::snprintf(info, sizeof info, "%s %s  %s %s  %s %s", i18n::tr("Bars"), trk::hex2(usedBars).c_str(), i18n::tr("Tracks"), trk::hex2(usedTracks).c_str(),
                 i18n::tr("Free"), trk::hex2(std::max(0, tracks - usedTracks)).c_str());
-  const float th = titleBar(a, o, av.x, i18n::tr("Song"), info);
+  // The arranger's title says its keys (a keyboard musician's reminder).
+  const float th = titleBar(a, o, av.x, i18n::tr("Song"),
+                            gSongLanes ? std::string(info) : std::string(i18n::tr("Up/Down: entry  Shift: mark  Ctrl: move  Left/Right: pattern  Ins Del  Enter: play")));
+  {  // the arranger or the lanes (the clips on the song's tracks, as they lie)
+    const float bh = th - 4, bx = std::round(o.x + 6 + a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Song")).x + fs * 1.5f);
+    const float bw = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Arranger")).x) + 20;
+    if (bevelButton(a, "##sgarr", "Arranger", ImVec2(bx, o.y + 2), ImVec2(bx + bw, o.y + 2 + bh), !gSongLanes,
+                    "The song as a list of entries, one pattern each, with the pattern bank"))
+      gSongLanes = false;
+    const float lw = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Lanes")).x) + 20;
+    if (bevelButton(a, "##sglanes", "Lanes", ImVec2(bx + bw + 2, o.y + 2), ImVec2(bx + bw + 2 + lw, o.y + 2 + bh), gSongLanes,
+                    "The clips on the song's tracks as they lie (layered patterns, audio, automation)"))
+      gSongLanes = true;
+  }
+  if (!gSongLanes) {
+    arranger(a, o, av, th);
+    return;
+  }
   const float rh = rowHeight();
   // Track headers (bevelled), then the scrolled rows.
   const float numW = std::round(mono->CalcTextSizeA(fs, FLT_MAX, 0, "000").x + 10);
@@ -735,6 +1471,7 @@ void song(App& a) {
 
 // ---- Mix: one row per mixer track ----
 void mixer(App& a) {
+  const trackerview::PerfScope perfScope(trackerview::PerfPage);  // cp16: "tracker perf"
   trackerview::pumpPage(a);  // (the header band may be hidden: T-05)
   const auto& P = pal();
   const Song& s = a.doc.song();
@@ -801,6 +1538,7 @@ void mixer(App& a) {
 }
 
 void pads(App& a) {
+  const trackerview::PerfScope perfScope(trackerview::PerfPage);  // cp16: "tracker perf"
   trackerview::pumpPage(a);  // (the header band may be hidden: T-05)
   const auto& P = pal();
   const Song& s = a.doc.song();
@@ -822,8 +1560,65 @@ void pads(App& a) {
   }
   const ImVec2 b0(o.x, o.y + th + kGap), b1(o.x + av.x, o.y + std::max(av.y, th + 60));
   if (s.live.areaEnd <= 0) {
+    // cp16: no live area: the song's patterns as pads (before: an empty card). A click plays the
+    // pattern, looped (another click on a playing pad stops); a double-click edits it.
     bevelBox(dl, b0, b1, true);
-    ui::EmptyState(dl, b0, b1, "No live area", "Song page: clips placed before the live area's end become pads (Playlist menu, Live area)");
+    const float rh0 = rowHeight();
+    const float padW = std::round(std::max(fs * 9, 120.0f)), padH = std::round(rh0 * 2.6f);
+    const float inner = b1.x - b0.x - 8;
+    const int perRow = std::max(1, static_cast<int>((inner + kGap) / (padW + kGap)));
+    const float pw = std::floor((inner - kGap * static_cast<float>(perRow - 1)) / static_cast<float>(perRow));
+    const bool patPlaying = a.engine.playing() && a.engine.mode() == PlayMode::Pattern;
+    const float noteH = rh0 + 6;
+    const int rows = (static_cast<int>(s.patterns.size()) + perRow - 1) / perRow;
+    const float contentH = static_cast<float>(rows) * (padH + kGap) + 4;
+    if (beginBody("##patpads", ImVec2(b0.x, b0.y), ImVec2(b1.x, b1.y - noteH), contentH)) {
+      ImDrawList* cl = ImGui::GetWindowDrawList();
+      const ImVec2 c0 = ImGui::GetCursorScreenPos();
+      for (size_t i = 0; i < s.patterns.size(); ++i) {
+        const Pattern& p = s.patterns[i];
+        const int r = static_cast<int>(i) / perRow, k = static_cast<int>(i) % perRow;
+        const ImVec2 q(std::round(c0.x + 3 + static_cast<float>(k) * (pw + kGap)), std::round(c0.y + 3 + static_cast<float>(r) * (padH + kGap)));
+        const ImVec2 q1(q.x + pw, q.y + padH);
+        ImGui::SetCursorScreenPos(q);
+        ImGui::PushID(static_cast<int>(p.id));
+        const bool click = ImGui::InvisibleButton("##patpad", ImVec2(pw, padH));
+        const bool hov = ImGui::IsItemHovered(), dbl = ImGui::IsItemClicked(ImGuiMouseButton_Right);
+        ImGui::PopID();
+        const bool on = patPlaying && a.engine.pattern() == p.id;
+        bevelBox(cl, q, q1, on || ImGui::IsItemActive());
+        if (on) cl->AddRectFilled(ImVec2(q.x + 1, q.y + 1), ImVec2(q1.x - 1, q1.y - 1), theme::withAlpha(P.hot, 0.85f));
+        else if (p.id == a.curPattern) cl->AddRectFilled(ImVec2(q.x + 1, q.y + 1), ImVec2(q1.x - 1, q1.y - 1), theme::withAlpha(P.surface600, 0.7f));
+        else if (hov) cl->AddRectFilled(ImVec2(q.x + 1, q.y + 1), ImVec2(q1.x - 1, q1.y - 1), theme::withAlpha(P.surface600, 0.4f));
+        cl->AddRectFilled(ImVec2(q.x + 2, q.y + 2), ImVec2(q1.x - 2, q.y + 5), theme::rgb(p.color));
+        const ImU32 tc = on ? theme::contrastText(P.hot) : P.text;
+        const std::string num = trk::hex2(static_cast<int>(i) + 1);
+        cl->AddText(mono, fs, ImVec2(q.x + 6, q.y + 8), on ? tc : P.textDim, num.c_str());
+        char bars[24];
+        std::snprintf(bars, sizeof bars, "%d %s", p.bars, i18n::tr(p.bars == 1 ? "bar" : "bars"));
+        const float bw = a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, bars).x;
+        cl->AddText(a.fontRegular, fs, ImVec2(std::round(q1.x - 6 - bw), q.y + 8), on ? tc : P.textFaint, bars);
+        theme::textEllipsis(cl, a.fontRegular, fs, ImVec2(q.x + 6, std::round(q.y + 8 + fs + 3)), pw - 12, tc, p.name.c_str());
+        if (hov) ui::Hint("Click: plays the pattern, looped (again: stops) \xC2\xB7 right-click: edit it");
+        if (dbl) {
+          a.selectPattern(p.id);
+          trackerview::showPage(a, "Pattern editor");
+        } else if (click) {
+          if (on) {
+            menuparity::stopPressed(a);
+          } else {
+            a.selectPattern(p.id);
+            a.engine.setMode(PlayMode::Pattern);
+            a.engine.setPattern(p.id);
+            if (!a.engine.playing()) menuparity::playPressed(a);
+          }
+        }
+      }
+      endBody(contentH);
+    }
+    dl->AddText(a.fontRegular, fs, ImVec2(b0.x + 8, std::round(b1.y - noteH + (noteH - fs) * 0.5f)), P.textFaint,
+                i18n::tr("The song's patterns. Clips placed before the live area's end (Song menu, Live area) become launch pads here."), nullptr,
+                b1.x - b0.x - 16);
     ImGui::SetCursorScreenPos(ImVec2(o.x, b1.y));
     ImGui::Dummy(ImVec2(1, 0));
     return;

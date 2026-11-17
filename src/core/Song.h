@@ -856,6 +856,11 @@ struct Song {
     bool operator==(const OpenPluginWindow& o) const { return owner == o.owner && slot == o.slot; }
   };
   std::vector<OpenPluginWindow> pluginWindows;
+  // K-237: the person's workspaces, copied into the project when they asked for it (View > Workspaces >
+  // Keep a copy in the project): layout id -> that layout's set as JSON (core/Workspaces.h). Read when the
+  // project opens only for a layout where the person has no workspaces of their own. View state: not
+  // compared (no undo step); written only when present, so older projects read and write as before.
+  std::map<std::string, std::string> workspaceCopy;
 
   // J-111 (collaboration): object ids are partitioned between collaborators so
   // two computers never hand out the same id: with idStride > 1 every id this
@@ -984,5 +989,8 @@ std::vector<std::vector<int>> midiPortListeners(const Song& s, std::vector<std::
 // Display names.
 std::string mixerTrackName(const Song& song, size_t index);
 std::string playlistTrackName(const Song& song, size_t index);
+// R09-07: a mixer track as a send's destination (a bus): its name, except that an aux strip named
+// "Aux N" (Smooth's New bus) is bus N, "Bus N", as the reference's send slots and menus read it.
+std::string busName(const Song& song, size_t index);
 
 }  // namespace gl

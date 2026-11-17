@@ -47,6 +47,7 @@
 #include "../engine/PlaylistTools.h"
 #include "../engine/Sample.h"
 #include "FreezeUi.h"
+#include "MixerMeters.h"
 #include "App.h"
 #include "SmoothScrollUi.h"
 #include "../core/Grouping.h"
@@ -1673,6 +1674,38 @@ ImU32 smoothRegionColor(ImU32 c) {
   ImGui::ColorConvertHSVtoRGB(h, sv, vv, r, g, b);
   return IM_COL32(static_cast<int>(r * 255.0f + 0.5f), static_cast<int>(g * 255.0f + 0.5f), static_cast<int>(b * 255.0f + 0.5f), 255);
 }
+// R09-05: a Smooth track's one colour, as the reference's (the number cell, the regions and the
+// curves share it): the colour the person gave the track, else the colour of the sound it plays;
+// 0 when it has neither (its regions keep their own). Worked out once per document revision.
+const std::vector<Rgb>& smoothTrackColors(const App& a) {
+  static std::vector<Rgb> cols;
+  static uint64_t rev = ~0ull;
+  static const Song* song = nullptr;
+  const Song& s = a.doc.song();
+  if (rev == a.doc.revision() && song == &s && cols.size() == s.tracks.size()) return cols;
+  rev = a.doc.revision(), song = &s;
+  cols.assign(s.tracks.size(), 0);
+  const Rgb plain = PlaylistTrack{}.color;
+  for (size_t i = 0; i < s.tracks.size(); ++i) {
+    Rgb c = 0;
+    bool has = false;
+    if (s.tracks[i].color != plain) c = s.tracks[i].color, has = true;
+    else if (const Channel* ch = logicplug::trackSound(s, static_cast<int>(i), nullptr)) c = ch->color, has = true;
+    cols[i] = has ? std::max<Rgb>(c, 1) : 0;  // (black itself is still a colour: 0 means none)
+  }
+  return cols;
+}
+// R08-01 (checkpoint 49): the song's automation lanes for the arrange (the lane curves and the
+// header readouts), built once per document revision: automationLanes copies every curve, and the
+// arrange asked for it twice a frame while lanes were shown (bounces and playback paid for it).
+const std::vector<AutomationLane>& arrangeLanes(const App& a) {
+  static std::vector<AutomationLane> lanes;
+  static uint64_t rev = ~0ull;
+  static const Song* song = nullptr;
+  const Song& s = a.doc.song();
+  if (rev != a.doc.revision() || song != &s) rev = a.doc.revision(), song = &s, lanes = automationLanes(s);
+  return lanes;
+}
 // The name on a Smooth region: white, but near black on the yellow family (the reference's).
 bool smoothDarkName(ImU32 c) {
   float h = 0, sat = 0, v = 0;
@@ -1763,6 +1796,14 @@ void drawPlaylist(App& a) {
   if (!lg) st.mqA = st.mqB = 0;
   // K-112B (checkpoint 46): automation-only tracks as curves on their tracks' lanes (a view, see AutoFold).
   const logicplug::AutoFold& fold = logicplug::autoFold(a);
+  // R09-01: where a region may go: PL-08's track modes, and in this layout never on a bus track or an
+  // automation-only track (automation regions only there).
+  auto clipAllowed = [&](ClipKind k, int tr) {
+    return trackmodes::clipAllowed(s, k, tr) && !(lg && k != ClipKind::Automation && fold.takesNoRegions(tr));
+  };
+  auto clipRefused = [&](int tr) {
+    return lg && fold.takesNoRegions(tr) ? i18n::tr("A bus track holds its automation only, no regions") : i18n::tr("Instrument tracks take pattern clips only");
+  };
   if (lg)  // R04-05: a track's own automation is never part of the region selection (Select all, Delete, drags)
     for (auto it = st.selected.begin(); it != st.selected.end();) {
       const Clip* sc = a.doc.song().clip(*it);
@@ -1920,13 +1961,12 @@ void drawPlaylist(App& a) {
       // separate raised buttons with no chevron).
       const auto& PP = pal();
       const float padX = 9, chevS = 7, chevGap = 4;
-      float segW[3] = {}, groupW = 0;
-      for (int i = 0; i < 3; ++i) groupW += segW[i] = std::round(ImGui::CalcTextSize(i18n::tr(ms[i].name)).x + padX * 2 + chevGap + chevS);
+      float segW[3] = {};
+      for (int i = 0; i < 3; ++i) segW[i] = std::round(ImGui::CalcTextSize(i18n::tr(ms[i].name)).x + padX * 2 + chevGap + chevS);
       ImDrawList* gdl = ImGui::GetWindowDrawList();
-      const ImVec2 g0 = ImGui::GetCursorScreenPos();
       const float gr = ImGui::GetStyle().FrameRounding;
       const ImU32 groupBg = ImGui::GetColorU32(ImGuiCol_FrameBg);
-      gdl->AddRectFilled(g0, ImVec2(g0.x + groupW, g0.y + fh), groupBg, gr);
+      // B5 / K-112D note 8: plain text menus with a chevron, no box (the hover lights one).
       for (const M& mm : ms) {
         ++k;
         const std::string pid = std::string(mm.id) + "pop";
@@ -1937,10 +1977,7 @@ void drawPlaylist(App& a) {
         const bool hov = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
         if (hov) ui::Hint(mm.hint);
         if (isOpen || hov)
-          gdl->AddRectFilled(bp, ImVec2(bp.x + sw, bp.y + fh), theme::mix(groupBg, PP.text, isOpen ? 0.14f : 0.08f), gr,  // K-112b: the quiet hover
-                             k == 1 ? ImDrawFlags_RoundCornersLeft : k == 3 ? ImDrawFlags_RoundCornersRight : ImDrawFlags_RoundCornersNone);
-        if (k > 1)  // the hairline between two menus, inset from the group's top and bottom
-          gdl->AddRectFilled(ImVec2(bp.x, std::round(bp.y + fh * 0.25f)), ImVec2(bp.x + 1, std::round(bp.y + fh * 0.75f)), theme::mix(groupBg, PP.text, 0.18f));
+          gdl->AddRectFilled(bp, ImVec2(bp.x + sw, bp.y + fh), theme::mix(groupBg, PP.text, isOpen ? 0.14f : 0.08f), gr);  // K-112b: the quiet hover
         const char* nm = i18n::tr(mm.name);
         const ImVec2 ts = ImGui::CalcTextSize(nm);
         const float ty = std::round(bp.y + (fh - ts.y) * 0.5f);
@@ -2094,7 +2131,7 @@ void drawPlaylist(App& a) {
             if (ImGui::Selectable("##t", which == t.tool, 0, ImVec2(200, 0))) which = t.tool;
             if (ImGui::IsItemHovered()) ui::Hint(i18n::tr(toolDesc(t)));
             ImDrawList* pdl = ImGui::GetWindowDrawList();
-            ui::drawIcon(pdl, t.icon, ImVec2(q.x + 8, q.y + lh * 0.5f), lh - 2, theme::rgb(t.role));
+            ui::drawIcon(pdl, t.icon, ImVec2(q.x + 8, q.y + lh * 0.5f), lh - 2, lg ? (which == t.tool ? P.accent : P.textDim) : theme::rgb(t.role));  // R09-09
             pdl->AddText(ImVec2(q.x + 22, q.y), P.text, i18n::tr(toolName(t)));
             char letter[2] = {lg ? toolLetter(t.tool) : '\0', '\0'};
             const char* kk = lg ? (letter[0] ? letter : nullptr) : keys::label(t.key);
@@ -2144,10 +2181,35 @@ void drawPlaylist(App& a) {
         }
         ImGui::SameLine(0, 2);
       }
+      // B5 (checkpoint 49): Smooth's pop-ups flat, as the reference's: a subtle grey fill with 5 px
+      // corners and a small up-and-down chevron at the right (they were heavy dark fields).
+      auto calmCombo = [&](const char* id, const char* preview, float width) {
+        if (!lg) return ui::BeginCombo(id, preview, width);
+        ImDrawList* cdl = ImGui::GetWindowDrawList();
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float h = ImGui::GetFrameHeight();
+        const ImU32 face = theme::mix(P.surface700, P.text, 0.06f);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, face);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, theme::mix(face, P.text, 0.08f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, theme::mix(face, P.text, 0.14f));
+        ImGui::PushStyleColor(ImGuiCol_Border, 0);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, ImGui::GetStyle().FramePadding.y));
+        ImGui::SetNextItemWidth(width);
+        const std::string pv = theme::fitText(preview, width - 16 - 14);
+        const bool open = ImGui::BeginCombo(id, pv.c_str(), ImGuiComboFlags_NoArrowButton);
+        ImGui::PopStyleVar(3);
+        ImGui::PopStyleColor(4);
+        const float cx = std::round(p.x + width - 10), cy = std::round(p.y + h * 0.5f);
+        cdl->AddTriangleFilled(ImVec2(cx - 3, cy - 1.5f), ImVec2(cx + 3, cy - 1.5f), ImVec2(cx, cy - 5), P.textDim);
+        cdl->AddTriangleFilled(ImVec2(cx + 3, cy + 1.5f), ImVec2(cx - 3, cy + 1.5f), ImVec2(cx, cy + 5), P.textDim);
+        return open;
+      };
       // B4: in Smooth the adaptive grid reads "Smart" (the reference's word for it is its own).
       auto calmSnapName = [&](Snap sn) -> const char* { return lg && sn == Snap::Line ? i18n::tr("Smart") : snapName(sn); };
       std::string snapLabel = lg ? std::string(calmSnapName(st.snap)) : std::string(i18n::tr("Snap")) + ": " + snapName(st.snap);
-      if (ui::BeginCombo("##plcalmsnap", snapLabel.c_str(), lg ? 112 : 128)) {
+      if (calmCombo("##plcalmsnap", snapLabel.c_str(), lg ? 112 : 128)) {
         for (int i = 0; i <= static_cast<int>(Snap::Bar); ++i)
           if (ImGui::Selectable(calmSnapName(static_cast<Snap>(i)), st.snap == static_cast<Snap>(i))) {
             st.snap = static_cast<Snap>(i);
@@ -2166,7 +2228,7 @@ void drawPlaylist(App& a) {
         const int dm = std::clamp(static_cast<int>(a.settings.getNumber("ui.logicDragMode")), 0, 1);
         std::string dragLabel = std::string(i18n::tr("Drag")) + ": " + i18n::tr(kDragNames[dm]);
         ImGui::SameLine(0, 4);
-        if (ui::BeginCombo("##plcalmdrag", dragLabel.c_str(), 150)) {
+        if (calmCombo("##plcalmdrag", dragLabel.c_str(), 150)) {
           for (int i = 0; i < 2; ++i) {
             if (ImGui::Selectable(i18n::tr(kDragNames[i]), dm == i)) a.settings.set("ui.logicDragMode", i);
             if (ImGui::IsItemHovered()) ui::Hint(i18n::tr(kDragHints[i]));
@@ -2587,6 +2649,11 @@ void drawPlaylist(App& a) {
       groupDepth[static_cast<size_t>(i + k)] = groupDepth[static_cast<size_t>(i)] + 1;
     }
   }
+  if (liveLook && !livelook::automationLanesShown()) {  // N52-10: A hides Clips' automation lanes
+    const std::vector<char> lanes = trackmodes::automationLanes(s, nTracks);
+    for (size_t i = 0; i < lanes.size(); ++i)
+      if (lanes[i]) folded[i] = 1;
+  }
   const int foldHead = lg && fold.on ? fold.head() : -1;  // K-112B (checkpoint 46): the Automation folder's row
   const bool foldShut = foldHead >= 0 && !fold.open;
   const float foldHdrH = foldHead >= 0 && fold.open && foldHead < nTracks ? 24.0f : 0.0f;  // R08-10
@@ -2743,8 +2810,15 @@ void drawPlaylist(App& a) {
   auto trackAt = [&](float y) {
     float yy = y - gMin.y + st.scrollY;
     auto it = std::upper_bound(trackY.begin(), trackY.end(), yy);
-    return std::clamp(static_cast<int>(it - trackY.begin()) - 1, 0, std::max(0, nTracks - 1));
+    int tr = std::clamp(static_cast<int>(it - trackY.begin()) - 1, 0, std::max(0, nTracks - 1));
+    // N52-03: in Clips a point past the last row (the returns below) or on a folded group's hidden
+    // track is its folded group's row, never a track out of sight.
+    if (liveLook)
+      while (tr > 0 && tr < nTracks && folded[static_cast<size_t>(tr)]) --tr;
+    return tr;
   };
+  // N52-03: the point is below every track's row (Clips' return lanes, the free area).
+  auto pastRows = [&](float y) { return y - gMin.y + st.scrollY >= trackY.back(); };
   // Checkpoint 52: in Clips a group track's lane holds no clips (its tracks' clips show there folded).
   auto groupLane = [&](int tr) { return liveLook && trackmodes::isGroupTrack(a.doc.song(), tr); };
   const char* kGroupLaneHint = "A group track holds no clips: put them on one of its tracks";
@@ -3151,7 +3225,18 @@ void drawPlaylist(App& a) {
     const bool liveWaiting = liveMode && a.engine.liveQueued(c.track) == c.id;
     bool muted = c.muted || (c.track < nTracks && s.tracks[static_cast<size_t>(c.track)].muted);
     ImU32 base = theme::rgb(ccache.color[ci]);
-    if (lg) base = smoothRegionColor(base);  // checkpoint 48 (D1)
+    if (lg) {  // checkpoint 48 (D1); R09-05: in the track's colour
+      const std::vector<Rgb>& tcols = smoothTrackColors(a);
+      if (lc.track >= 0 && lc.track < static_cast<int>(tcols.size()) && tcols[static_cast<size_t>(lc.track)] != 0)
+        base = theme::rgb(tcols[static_cast<size_t>(lc.track)]);
+      base = smoothRegionColor(base);
+    }
+    // N52-13: in Clips a track playing a grid clip over the arrangement has its arrangement clips
+    // greyed (they are not heard until Back to arrangement), as the reference draws them.
+    if (liveLook && liveMode && c.start >= s.live.areaEnd && a.engine.liveActive(c.track) != kNoId) {
+      base = theme::mix(base, IM_COL32(128, 130, 134, 255), 0.82f);
+      muted = true;
+    }
     // Clip: translucent colour body (J-37: see-through, so the grid shows), a
     // more opaque title bar with the name, a crisp rim; selected clips get a lit
     // rim. Over the empty grid the composite matches the J-13 palette (body ~58 %
@@ -3262,7 +3347,9 @@ void drawPlaylist(App& a) {
                       : lg && !muted && c.kind == ClipKind::Audio
                           // Coordinator item: the Tracks layout's audio waveforms read clearly, as the reference's
                           // (a dark wave on a light region, a light one on a dark region); the pale tint was faint.
-                          ? theme::withAlpha(theme::contrastText(body), 0.88f)
+                          // D8 (checkpoint 49): a filled wave in a light tint of the region's colour, as 296 and 063.
+                          // (on the yellow family, where the name is dark, a darker shade instead).
+                          ? theme::withAlpha(smoothDarkName(base) ? theme::mix(base, IM_COL32(0, 0, 0, 255), 0.4f) : theme::mix(base, IM_COL32(255, 255, 255, 255), 0.55f), 0.92f)
                       : lg && !muted ? IM_COL32(255, 255, 255, 217)  // D3: notes 85 % white
                                      : theme::clipInk(base, muted);  // K-177: follows the theme (white text pushes it)
     // J-118: this clip's share of a crossfade blend with `p` at x (by the levels playing there).
@@ -3492,14 +3579,17 @@ void drawPlaylist(App& a) {
         }
       }
     } else if (c.kind == ClipKind::Audio) {
+      // D8: in Smooth the wave fills about 80 % of the body, centred.
+      const float wInset = lgWave ? std::floor((b1.y - b0.y) * 0.1f) : 0.0f;
+      const ImVec2 wa(b0.x, b0.y + wInset), wb(b1.x, b1.y - wInset);
       if (b1.y - b0.y > 4) {
         const Clip& wv = plwarp::shown(s, c, tempoMap, animSnap, animEpsTick);  // K-85: a dragged marker glides as a dragged clip does
         if (c.id == gainGlideClip) {  // J-79: drawn at the gliding gain
           Clip wc = wv;
           wc.gain = clipgain::fromDb(gainGlideDb);
-          drawClipWave(dl, s, *s.channel(c.source), wc, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink, xfBelow >= 0 ? &fg : nullptr);
+          drawClipWave(dl, s, *s.channel(c.source), wc, tempoMap, wa, wb, x0, st.pxPerTick, gMin.x, gMax.x, ink, xfBelow >= 0 ? &fg : nullptr);
         } else {
-          drawClipWave(dl, s, *s.channel(c.source), wv, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, ink, xfBelow >= 0 ? &fg : nullptr);
+          drawClipWave(dl, s, *s.channel(c.source), wv, tempoMap, wa, wb, x0, st.pxPerTick, gMin.x, gMax.x, ink, xfBelow >= 0 ? &fg : nullptr);
         }
         plwarp::drawMarkers(dl, s, wv, tempoMap, b0, b1, x0, st.pxPerTick, gMin.x, gMax.x, st.tool == Tool::Warp, ink);  // K-85
       }
@@ -3889,10 +3979,13 @@ void drawPlaylist(App& a) {
     const float x0 = xOf(std::max<Tick>(0, f0)), x1 = xOf(f1);
     if (f0 >= 0 && x1 > gMin.x && x0 < gMax.x) {
       dl->PushClipRect(ImVec2(gMin.x, std::max(gMin.y, fy0)), ImVec2(gMax.x, std::min(gMax.y, fy1 + 1)), true);
-      const ImU32 face = theme::mix(P.surface700, P.lineStrong, 0.35f);
-      dl->AddRectFilled(ImVec2(x0 + 1, fy0), ImVec2(x1 - 1, fy1), theme::withAlpha(face, 0.85f), 3.0f);
-      dl->AddRect(ImVec2(x0 + 1, fy0), ImVec2(x1 - 1, fy1), theme::withAlpha(P.ink, 0.5f), 3.0f);
-      const float nameH = 13.0f;
+      // D7 (checkpoint 49): the reference's folder region: one summary region in the folder's colour
+      // (its first track's, else a neutral grey) with its tracks' regions as thin bars, one row per
+      // track, under a bold white name (it was a grey band of small curves).
+      const std::vector<Rgb>& fcols = smoothTrackColors(a);
+      const Rgb fc = foldHead < static_cast<int>(fcols.size()) ? fcols[static_cast<size_t>(foldHead)] : 0;
+      const ImU32 face = fc != 0 ? smoothRegionColor(theme::rgb(fc)) : IM_COL32(104, 104, 108, 255);
+      dl->AddRectFilled(ImVec2(x0 + 1, fy0), ImVec2(x1 - 1, fy1), face, 4.0f);
       std::string title = i18n::tr("Automation");
       int named = 0;
       for (const int tr : fold.folder) {
@@ -3903,28 +3996,38 @@ void drawPlaylist(App& a) {
       }
       if (named > 3) title += ", +" + std::to_string(named - 3);
       const float tx = std::max(x0 + 5, gMin.x + 4);
-      dl->AddText(ImGui::GetFont(), theme::kFontLabel, ImVec2(tx, fy0 + 1), P.text, title.c_str());
-      // Checkpoint 47: on a short row the curves use its whole height under the title (a 5 px strip read as a stray line).
-      const ImVec2 b0(x0 + 3, fy1 - fy0 < 30 ? fy0 + 2 : fy0 + nameH), b1(x1 - 3, fy1 - 2);
-      if (b1.y - b0.y >= 4)
+      const ImU32 nameCol = smoothDarkName(face) ? IM_COL32(20, 20, 20, 235) : IM_COL32(255, 255, 255, 245);
+      const float nameH = fy1 - fy0 >= 20 ? 13.0f : 0.0f;
+      if (nameH > 0) dl->AddText(a.fontBold, theme::kFontLabel, ImVec2(tx, fy0 + 1), nameCol, title.c_str());
+      const int rows = std::max<int>(1, static_cast<int>(fold.folder.size()));
+      const float by0 = fy0 + nameH + 2, by1 = fy1 - 2, rowH = std::max(1.0f, (by1 - by0) / static_cast<float>(rows));
+      const ImU32 bar = theme::withAlpha(nameCol, 0.55f);
+      if (by1 - by0 >= 3)
         for (size_t ci = 0; ci < s.playlist.size() && ci < ccache.valid.size(); ++ci) {
           const Clip& c = s.playlist[ci];
           if (!ccache.valid[ci] || !fold.isMember(c.track)) continue;
-          const AutomationClip* ac = s.automation(c.source);
-          if (!ac) continue;
-          const float cx0 = xOf(c.start), cx1 = xOf(c.start + ccache.len[ci]);
-          const AutoGeom g = withOwnLoop(AutoGeom{ImVec2(cx0, b0.y), ImVec2(cx1, b1.y), cx0, st.pxPerTick, c.start, c.offset, ccache.len[ci]}, c);
-          AutomationClip scratch;
-          const ImU32 ink = theme::content(ccache.color[ci]);
-          drawAutomation(dl, shownCurve(*ac, c, scratch), g, std::max(gMin.x, cx0), std::min(gMax.x, cx1), theme::withAlpha(ink, 0.9f), 0, false, -1, -1, ink);
+          const auto it = std::find(fold.folder.begin(), fold.folder.end(), c.track);
+          const float r = static_cast<float>(it - fold.folder.begin());
+          const float yb = std::round(by0 + rowH * r + rowH * 0.5f - std::min(2.0f, rowH * 0.35f));
+          const float hb = std::max(1.0f, std::min(3.0f, rowH * 0.7f));
+          dl->AddRectFilled(ImVec2(std::max(xOf(c.start), x0 + 3) + 1, yb), ImVec2(std::min(xOf(c.start + ccache.len[ci]), x1 - 3) - 1, yb + hb), bar, 1.0f);
         }
-      if (fy1 - fy0 < 30) dl->AddText(ImGui::GetFont(), theme::kFontLabel, ImVec2(tx, fy0 + 1), P.text, title.c_str());  // (over the curves)
       dl->PopClipRect();
     }
   }
   // Empty arrangement: muted mark (guide §08 C).
   // K-112c (round 42): not in Clips, where a new set is its empty lanes and the drop room, as the refs.
-  if (s.playlist.empty() && livetake::views().empty() && !liveLook)  // (J-217: not under a take being recorded)
+  if (s.playlist.empty() && livetake::views().empty() && !liveLook && lg) {
+    // R09-09: Smooth's own empty state: quiet text on the grid, no Studio mark or pattern wording.
+    const char* t1 = i18n::tr("No regions yet");
+    const char* t2 = i18n::tr("Draw one with the Pencil, record, or drag audio files and patches in from the Browser");
+    const ImVec2 s1 = a.fontBold->CalcTextSizeA(theme::kFontBody, 1e9f, 0, t1), s2 = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, t2);
+    const float cx = (gMin.x + gMax.x) * 0.5f, cy = std::round((gMin.y + gMax.y) * 0.5f);
+    if (gMax.x - gMin.x > s2.x + 24 && gMax.y - gMin.y > 60) {
+      dl->AddText(a.fontBold, theme::kFontBody, ImVec2(std::round(cx - s1.x * 0.5f), cy - s1.y - 3), theme::withAlpha(P.textDim, 0.9f), t1);
+      dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round(cx - s2.x * 0.5f), cy + 3), P.textFaint, t2);
+    }
+  } else if (s.playlist.empty() && livetake::views().empty() && !liveLook)  // (J-217: not under a take being recorded)
     ui::EmptyState(dl, gMin, gMax, "Empty arrangement", "Click to place the selected pattern, or drag one in from the list");
   // K-123: take lanes. One lane per take under the track: every clip of the take, the parts in the
   // comp (playing) lit in the take's colour, the rest dimmed; a swipe in progress shows its range.
@@ -3968,8 +4071,8 @@ void drawPlaylist(App& a) {
   }
   // K-112b (b4): the automation lanes: the parameter's curve over the song, the clips that drive it
   // shaded, their points as dots; where nothing drives it, its present value as a dashed line.
-  std::vector<AutomationLane> songLanes;
-  if (!autoLanes.empty() && lg) songLanes = automationLanes(s);
+  static const std::vector<AutomationLane> kNoLanes;
+  const std::vector<AutomationLane>& songLanes = !autoLanes.empty() && lg ? arrangeLanes(a) : kNoLanes;
   // R04-08: the value's height in a row's automation area (curveTop / curveBot).
   auto laneValueY = [&](int tr, double n) {
     const float t0 = curveTop(tr) + 3, t1 = curveBot(tr) - 3;
@@ -3992,9 +4095,10 @@ void drawPlaylist(App& a) {
     for (const AutomationLane& l : songLanes)
       if (l.targets(pid.owner, pid.index)) al = &l;
     // D6 (checkpoint 48): the curve in a lighter shade of the track's own colour, as the reference's.
-    const PlaylistTrack& ltk = s.tracks[static_cast<size_t>(tr)];
-    const ImU32 curve = ltk.color != PlaylistTrack{}.color ? theme::mix(smoothRegionColor(theme::rgb(ltk.color)), IM_COL32(255, 255, 255, 255), 0.35f)
-                                                           : theme::mix(P.text, P.accent, 0.25f);
+    // R09-05: the track's one colour (its sound's when the person gave it none).
+    const Rgb ltc = tr < static_cast<int>(smoothTrackColors(a).size()) ? smoothTrackColors(a)[static_cast<size_t>(tr)] : 0;
+    const ImU32 curve = ltc != 0 ? theme::mix(smoothRegionColor(theme::rgb(ltc)), IM_COL32(255, 255, 255, 255), 0.35f)
+                                 : theme::mix(P.text, P.accent, 0.25f);
     if (!al) {
       const auto d = describeParam(s, pid);
       const auto v = getParam(s, pid);
@@ -4179,7 +4283,8 @@ void drawPlaylist(App& a) {
     // K-112b (checkpoint 24): the Tracks layout's numbers in the interface face at caption size, each
     // numbered line drawn down the whole ruler at the number's left, as 216, 125 and 146 draw them.
     ImFont* const numF = lg ? (a.fontBold ? a.fontBold : a.fontRegular) : livelook::numFont(a);  // C7: semibold numbers
-    const float numS = theme::kFontLabel, numY = lg ? std::round(rY + (tierY - rY - theme::kFontLabel) * 0.5f) - 1 : rY + 4;
+    // Gap 9: Smooth's bar numbers at 13 px in the near-white text, as 146's read (they were 11 px).
+    const float numS = lg ? theme::kFontCaption + 1 : theme::kFontLabel, numY = lg ? std::round(rY + (tierY - rY - numS) * 0.5f) : rY + 4;
     if (mm.constant()) {
       // C44-20: counted from the arrangement's start (Clips: the end of the live area).
       for (Tick t = viewO + snapDown(std::max<Tick>(0, tickAt(gMin.x) - viewO), visGrid); xOf(t) < gMax.x; t += visGrid) {
@@ -4428,8 +4533,10 @@ void drawPlaylist(App& a) {
     gDevRowsAsked = false;
     std::printf("plrows n %d\n", nTracks);
     for (int i = 0; i < nTracks; ++i)
-      std::printf("plrow %d \"%s\" %.0f %.0f\n", i, playlistTrackName(s, static_cast<size_t>(i)).c_str(), static_cast<double>(headX0 + 24),
-                  static_cast<double>((yOf(i) + yOf(i + 1)) * 0.5f));
+      std::printf("plrow %d \"%s\" %.0f %.0f top %.0f h %.0f lane %.0f bus %d grid %.0f %.0f %.0f\n", i, playlistTrackName(s, static_cast<size_t>(i)).c_str(),
+                  static_cast<double>(headX0 + 24), static_cast<double>((yOf(i) + yOf(i + 1)) * 0.5f), static_cast<double>(yOf(i)),
+                  static_cast<double>(hOf(i)), static_cast<double>(laneOf(i)), lg && fold.isBus(i) ? 1 : 0, static_cast<double>(gMin.x),
+                  static_cast<double>(gMin.y), static_cast<double>(gMax.y));  // (R09-01: the row's top, height, lane, bus and the grid)
   }
   auto headLit = [&](int tr) { return hd.active && !hd.cancelled && hd.moving.count(tr) > 0; };
   // K-12: the track "+" (View > Track + button): on the hovered header, left of the mute switch on its line.
@@ -4467,8 +4574,8 @@ void drawPlaylist(App& a) {
   const int plusMenu = trackplusui::menuTrack();
   static std::vector<float> plusFade;  // per track hover fade of the "+"
   if (plusFade.size() != static_cast<size_t>(nTracks)) plusFade.assign(static_cast<size_t>(nTracks), 0.0f);
-  std::vector<AutomationLane> headLanes;  // R05-04: the curves the lane readouts follow while playing
-  if (lg && !autoLanes.empty()) headLanes = automationLanes(s);  // (R06-12: stopped too)
+  // R05-04: the curves the lane readouts follow while playing (R06-12: stopped too)
+  const std::vector<AutomationLane>& headLanes = lg && !autoLanes.empty() ? arrangeLanes(a) : songLanes;
   trackplusui::DevGeom& tpg = trackplusui::devGeom();
   tpg.on = plusOn;
   tpg.track = -1;
@@ -4494,6 +4601,8 @@ void drawPlaylist(App& a) {
     if (hov) ImGui::SetTooltip("%s", i18n::tr("Click to close the folder"));
     dl->PopClipRect();
   }
+  bool lgAnyGroup = false;  // R09-06: the group arrow's column only when the song has groups
+  for (int i = 0; lg && i < nTracks && !lgAnyGroup; ++i) lgAnyGroup = s.tracks[static_cast<size_t>(i)].groupSize > 0 || groupDepth[static_cast<size_t>(i)] > 0;
   for (int tr = trackAt(gMin.y); tr < nTracks && yOf(tr) < gMax.y; ++tr) {
     float y = yOf(tr), th = hOf(tr) - laneOf(tr);  // R04-08: the automation line of the header follows
     if (th < 1) continue;  // inside a folded group
@@ -4546,6 +4655,10 @@ void drawPlaylist(App& a) {
     }
     if (lg) {  // Logic look: colour strip, number, name, then M S R and a pan knob on one row
       const ImVec2 r0(headX0, y), r1(gMin.x - 1, y + th);
+      // R09-05: the number cell in the colour the track's regions take (one colour per track).
+      const Rgb lgRgb = tr < static_cast<int>(smoothTrackColors(a).size()) ? smoothTrackColors(a)[static_cast<size_t>(tr)] : 0;
+      const bool lgColoured = lgRgb != 0;
+      const ImU32 lgCol = lgColoured ? smoothRegionColor(theme::rgb(lgRgb)) : P.surface700;
       bool nearEdgeL = hovered && io.MousePos.x >= headX0 && io.MousePos.x < gMin.x && std::fabs(io.MousePos.y - (y + hOf(tr))) < 3.0f && io.MousePos.y >= gMin.y;
       // K-112b (checkpoint 20): a step darker (the references' headers sit just above the dark area).
       const ImU32 restL = P.dark ? P.surface900 : P.surface800, liftL = P.dark ? P.surface800 : P.surface700;
@@ -4555,7 +4668,7 @@ void drawPlaylist(App& a) {
       dl->AddRectFilled(r0, r1, faceL);
       dl->AddLine(ImVec2(r0.x, r1.y - 0.5f), ImVec2(r1.x, r1.y - 0.5f), P.dark ? P.ink : P.line);
       {  // ref 254: the number column (the track's number, white on its colour)
-        dl->AddRectFilled(r0, ImVec2(r0.x + kHeadNumW, r1.y - 1), coloured ? theme::mix(tc, P.surface900, selHead ? 0.0f : 0.22f) : P.surface700);
+        dl->AddRectFilled(r0, ImVec2(r0.x + kHeadNumW, r1.y - 1), lgColoured ? (selHead ? theme::mix(lgCol, P.text, 0.12f) : lgCol) : P.surface700);
         char num[16];
         std::snprintf(num, sizeof num, "%d", rowNum[static_cast<size_t>(tr)]);
         const float fsz = theme::kFontLabel;
@@ -4568,12 +4681,16 @@ void drawPlaylist(App& a) {
       // K-112b (second pass): the name in the body size and regular weight, as 125, 216 and 195 set it.
       const float fs = theme::kFontLabel, fn = theme::kFontBody;
       // The row: number, (group chevron), M S R, the name; the volume slider and the pan knob at the right end.
-      const float kr = std::clamp(th * 0.22f, 6.0f, 9.0f);
+      // Gap 6: a pan knob the size of the reference's (about 18 px), light on the grey row.
+      const float kr = std::clamp(th * 0.26f, 7.0f, 10.0f);
       const ImVec2 kc(std::round(r1.x - 10 - kr), cy);
       const float bh = std::min(18.0f, th - 8.0f), bw = 20.0f, gap = 3.0f;
       float bx1 = kc.x - kr - 10;
       const MixerTrack* mt = trackmodes::linkedMixer(s, tr);
       const Channel* lc = trackmodes::linkedChannel(s, tr);
+      // R09-06: the sound the track plays when it has no channel of its own (a MIDI region track):
+      // its power button sleeps that sound, so every track with a sound has one.
+      const Channel* playCh = !lc && !mt ? logicplug::trackSound(s, tr, nullptr) : nullptr;
       std::optional<ParamId> panId;
       // R04-09: Configure track header: the parts the person hid are left out (the room stays theirs).
       const bool showIcon = trackHeaderShows(a, kHeadIcon), showPower = trackHeaderShows(a, kHeadPower), showMS = trackHeaderShows(a, kHeadMuteSolo),
@@ -4592,7 +4709,13 @@ void drawPlaylist(App& a) {
       else if (mt) volId = mixerParam(mt->id, MixerParam::Volume);
       else if (ownStrip) volId = mixerParam(ownStrip->id, MixerParam::Volume);
       if (!showVol) volId.reset();
-      const float slW = std::clamp((r1.x - r0.x) - 250.0f, 0.0f, 96.0f);
+      // R09-06: the left run (number, group arrow, icon, power, M S, R) keeps the same columns on
+      // every row, and the name keeps at least about 12 characters: the volume slider gives way
+      // first at narrow widths (1440 with the Library and the inspector open), as the reference's.
+      const float leftRun = 12 + kHeadNumW + indent + (lgAnyGroup ? 14.0f : 0.0f) + (showIcon && th >= 20 ? 32.0f : 0.0f) +
+                            (showPower ? bh + gap : 0.0f) + (showMS ? bw * 2 - 1 + gap : 0.0f) + (showRec ? bw + gap : 0.0f) + 5;
+      float slW = std::clamp((bx1 - (r0.x + leftRun)) - 8 - 96.0f, 0.0f, 96.0f);
+      if (slW < 40) slW = 0;
       if (th >= 20 && volId && slW >= 40) {
         const float sx1 = bx1, sx0 = sx1 - slW;
         // K-112b (checkpoint 24): a rounded dark pill about a third of the row tall with the knob inside
@@ -4607,8 +4730,21 @@ void drawPlaylist(App& a) {
         const float tx = std::round(sx0 + 2 + kR + (slW - 4 - kR * 2) * std::clamp(norm, 0.0f, 1.0f));
         const float kcY = (s0.y + s1.y) * 0.5f;
         dl->AddRectFilled(s0, s1, theme::mix(P.surface800, P.ink, 0.55f), ph * 0.5f);
-        // A quiet fill up to the knob (the references light it with the track's level).
+        // A quiet fill up to the knob, and (gap 6) the track's level as a green bar along it, as the
+        // reference's slider shows its meter while the song plays.
         dl->AddRectFilled(ImVec2(s0.x + 1, s0.y + 1), ImVec2(tx, s1.y - 1), theme::withAlpha(P.textDim, hot || volDrag == tr ? 0.30f : 0.16f), ph * 0.5f - 1);
+        if (const MixerTrack* lvlStrip = mt ? mt : logicplug::trackStrip(s, tr); lvlStrip && a.engine.playing()) {
+          static std::map<ObjectId, float> shown;  // the drawn level per strip (falls back gently)
+          float& lv = shown[lvlStrip->id];
+          const float pk = mixmeters::get(a, lvlStrip->id).peak();
+          const float db = pk > 1e-6f ? 20.0f * std::log10(pk) : -90.0f;
+          const float target = std::clamp((db + 60.0f) / 66.0f, 0.0f, 1.0f);  // -60 .. +6 dB across the slider
+          lv = target > lv ? target : std::max(target, lv - io.DeltaTime * 1.4f);
+          if (lv > 0.01f) {
+            const float lx = s0.x + 2 + (slW - 4) * lv;
+            dl->AddRectFilled(ImVec2(s0.x + 2, s1.y - 4), ImVec2(lx, s1.y - 2), db > -0.1f ? theme::rgb(0xE0B83A) : theme::rgb(0x3FBF5A), 1.0f);
+          }
+        }
         dl->AddCircleFilled(ImVec2(tx, kcY), kR, hot || volDrag == tr ? theme::mix(P.text, P.surface800, 0.2f) : theme::mix(P.text, P.surface800, 0.45f), 20);
         dl->AddCircle(ImVec2(tx, kcY), kR, theme::withAlpha(P.ink, 0.6f), 20, 1.0f);
         if (hot) headVol = tr, anyHot = true;
@@ -4620,7 +4756,7 @@ void drawPlaylist(App& a) {
         if (t.folded) ui::drawIconFit(dl, ui::Icon::Right, ImVec2(nx + 1, cy - 4), ImVec2(nx + 7, cy + 4), P.textDim);
         else ui::drawIconFit(dl, ui::Icon::Down, ImVec2(nx, cy - 2), ImVec2(nx + 8, cy + 3), P.textDim);
       }
-      nx += 14;
+      if (lgAnyGroup) nx += 14;  // R09-06: the arrow's column only when the song has groups
       if (th >= 20 && showIcon) {  // the track's icon, in a tint of its colour
         const float box = std::min(24.0f, std::floor(th - 12));
         // An icon not drawn before is rasterised on its first draw: a few new ones a frame, so the
@@ -4674,7 +4810,21 @@ void drawPlaylist(App& a) {
           const auto d = describeParam(s, *panId);
           const auto v = getParam(s, *panId);
           const float norm = d && v && d->max > d->min ? static_cast<float>((*v - d->min) / (d->max - d->min)) : 0.5f;
-          ui::DrawKnob(dl, kc, kr, norm, true, panHot, panDrag == tr);
+          {  // Gap 6: the reference's header pan: a light grey dial with a dark pointer and a blue arc
+             // from the centre to the value (it was the dark FL-style knob, about 14 px).
+            const bool held = panDrag == tr;
+            constexpr float kPi = 3.14159265f;
+            const float a0 = kPi * 0.75f, a1 = kPi * 2.25f, av = a0 + (a1 - a0) * std::clamp(norm, 0.0f, 1.0f), amid = kPi * 1.5f;
+            dl->PathArcTo(kc, kr + 1.5f, a0, a1, 24);
+            dl->PathStroke(theme::mix(P.surface800, P.ink, 0.45f), 0, 2.0f);
+            if (std::fabs(norm - 0.5f) > 0.004f) {
+              dl->PathArcTo(kc, kr + 1.5f, std::min(av, amid), std::max(av, amid), 16);
+              dl->PathStroke(theme::rgb(0x3A8EE6), 0, 2.0f);
+            }
+            dl->AddCircleFilled(kc, kr - 1.0f, panHot || held ? theme::mix(P.text, P.surface800, 0.25f) : theme::mix(P.text, P.surface800, 0.42f), 24);
+            dl->AddLine(ImVec2(kc.x + std::cos(av) * (kr * 0.25f), kc.y + std::sin(av) * (kr * 0.25f)),
+                        ImVec2(kc.x + std::cos(av) * (kr - 2.0f), kc.y + std::sin(av) * (kr - 2.0f)), theme::mix(P.ink, P.surface800, 0.2f), 1.6f);
+          }
           if (panHot) headPan = tr, anyHot = true;
         }
         bool rHot = false, sHot = false, mHot = false;
@@ -4682,8 +4832,9 @@ void drawPlaylist(App& a) {
         const MixerTrack* strip = logicplug::trackStrip(s, tr);
         const bool soloed = strip && strip->solo;
         // Power: the track's plugins run (off: they sleep, as Hibernate does; nothing is lost).
-        if ((lc || mt) && showPower) {
-          const bool on = lc ? !lc->hibernate : !mt->hibernate;
+        const Channel* powCh = lc ? lc : playCh;
+        if ((powCh || mt) && showPower) {
+          const bool on = powCh ? !powCh->hibernate : !mt->hibernate;
           const float pr = std::round(bh * 0.5f);
           const ImVec2 pc(nx + pr, cy);
           const bool pHot = hovHead && std::hypot(io.MousePos.x - pc.x, io.MousePos.y - pc.y) <= pr + 1;
@@ -4692,14 +4843,18 @@ void drawPlaylist(App& a) {
           ui::drawIcon(dl, ui::Icon::Power, pc, pr * 1.25f, on ? pal().paper : pHot ? P.text : P.textDim);
           if (pHot) headPower = tr, anyHot = true;
           nx += pr * 2 + gap;
+        } else if (showPower) {
+          nx += std::round(bh * 0.5f) * 2 + gap;  // R09-06: the column stays, so the names line up
         }
-        if (showMS) {
-          button("M", t.muted, P.hot, mHot, ImDrawFlags_RoundCornersLeft, false);
-          button("S", soloed, theme::rgb(theme::role::kStamp), sHot, ImDrawFlags_RoundCornersRight);
+        if (showMS) {  // C4: one pill, mute lit blue and solo lit yellow, as the reference's
+          button("M", t.muted, theme::rgb(0x3A9BE0), mHot, ImDrawFlags_RoundCornersLeft, false);
+          button("S", soloed, theme::rgb(0xE2BE3C), sHot, ImDrawFlags_RoundCornersRight);
         }
         if (mt && showRec) {
           button("R", mt->armed, P.danger, rHot);
           if (rHot) headArm = tr;
+        } else if (showRec) {
+          nx += bw + gap;  // R09-06: (the same column on tracks that record no audio)
         }
         if (sHot || mHot) headLed = tr, headLedSolo = sHot;
         nx += 5;
@@ -4720,7 +4875,7 @@ void drawPlaylist(App& a) {
         // K-112b: one header of two lines (refs 008, 170): the row's face carries on, its colour
         // strip too, and the line between them goes.
         dl->AddRectFilled(ImVec2(r0.x, ly0 - 1), ImVec2(r1.x, ly1), faceL);
-        dl->AddRectFilled(ImVec2(r0.x, ly0 - 1), ImVec2(r0.x + 4, ly1 - 1), coloured ? tc : P.lineStrong);
+        dl->AddRectFilled(ImVec2(r0.x, ly0 - 1), ImVec2(r0.x + 4, ly1 - 1), lgColoured ? lgCol : P.lineStrong);
         dl->AddLine(ImVec2(r0.x, ly1 - 0.5f), ImVec2(r1.x, ly1 - 0.5f), P.dark ? P.ink : P.line);
         const std::string pname = paramDisplayName(s, lit->second);
         const auto d = describeParam(s, lit->second);
@@ -4924,12 +5079,22 @@ void drawPlaylist(App& a) {
   dl->AddRectFilled(ImVec2(gMin.x, origin.y), ImVec2(gMax.x, rLaneY), P.dark ? P.well : P.surface950);
   if (!liveLook && hbarH > 0) dl->AddRectFilled(ImVec2(hThumbX, hb0.y + 2), ImVec2(hThumbX + hThumbW, hb1.y - 1), hBusy || overH ? P.surface600 : P.surface700, 3);
   if (lg) {  // overlay thumbs: a slim rounded bar, wider and brighter under the pointer or while dragged
-    const ImU32 calm = theme::withAlpha(P.textDim, 0.75f), lit = theme::withAlpha(P.text, 0.85f);  // readable over clips of any colour
-    if (totalH > gridH || vBusy) {
+    // D10 (checkpoint 49): as the reference's overlay scrollers, they show while the view scrolls (or
+    // the pointer is on them, or near the edge) and fade out a second after.
+    static float lastSX = -1, lastSY = -1;
+    static double movedAt = -10;
+    const double now = ImGui::GetTime();
+    if (st.scrollX != lastSX || st.scrollY != lastSY) lastSX = st.scrollX, lastSY = st.scrollY, movedAt = now;
+    const bool nearEdge = hovered && ((io.MousePos.x >= gMax.x - 24 && io.MousePos.x < gMax.x && io.MousePos.y >= gMin.y && io.MousePos.y < gMax.y) ||
+                                      (io.MousePos.y >= gMax.y - 24 && io.MousePos.y < gMax.y && io.MousePos.x >= gMin.x && io.MousePos.x < gMax.x));
+    const double idle = now - movedAt;
+    const float show = overV || overH || vBusy || hBusy || nearEdge ? 1.0f : idle < 1.0 ? 1.0f : static_cast<float>(std::max(0.0, 1.0 - (idle - 1.0) / 0.35));
+    const ImU32 calm = theme::withAlpha(P.textDim, 0.75f * show), lit = theme::withAlpha(P.text, 0.85f);  // readable over clips of any colour
+    if (show > 0.01f && (totalH > gridH || vBusy)) {
       const float inset = overV || vBusy ? 1.0f : 3.0f;
       dl->AddRectFilled(ImVec2(vb0.x + inset, vThumbY + 1), ImVec2(vb1.x - 1, vThumbY + vThumbH - 1), overV || vBusy ? lit : calm, 4);
     }
-    if (contentW > gridW || hBusy) {
+    if (show > 0.01f && (contentW > gridW || hBusy)) {
       const float inset = overH || hBusy ? 1.0f : 3.0f;
       dl->AddRectFilled(ImVec2(hThumbX + 1, hb0.y + inset), ImVec2(hThumbX + hThumbW - 1, hb1.y - 1), overH || hBusy ? lit : calm, 4);
     }
@@ -5159,7 +5324,7 @@ void drawPlaylist(App& a) {
         planned = browserui::pluginDropLabel(a, type, browse::DropTarget::Playlist, zp);
       }
       if (!planned.empty()) {
-        const ImU32 hot = theme::rgb(theme::role::kDraw);
+        const ImU32 hot = lg ? P.accent : theme::rgb(theme::role::kDraw);  // R09-09: Smooth's accent
         dl->AddRectFilled(z0, z1, theme::withAlpha(hot, 0.12f), theme::kRadiusSm);
         dl->AddRect(z0, z1, theme::withAlpha(hot, 0.95f), theme::kRadiusSm, 0, 2.0f);
         dt = planned.c_str();
@@ -5539,6 +5704,12 @@ void drawPlaylist(App& a) {
     // name bars too) works on that automation.
     if (autoTools && inGrid && laneTrack < 0)
       if (const int rt = trackAt(m.y); rt >= 0 && rt < nTracks && autoLanes.count(rt) && laneOf(rt) > 0) laneTrack = rt;
+    // R09-01: with the Pencil, the strip above the curve (where only the regions' name bars take the
+    // press) belongs to the lane too when no region is under the pointer: as the reference's, a
+    // Pencil click on a track that shows its automation adds a point, never a region.
+    if (lg && inGrid && laneTrack < 0 && hoverClip == kNoId && autoTool == Tool::Draw && m.y >= gMin.y)
+      if (const int rt = trackAt(m.y); rt >= 0 && rt < nTracks && autoLanes.count(rt) && laneOf(rt) > 0 && m.y >= yOf(rt) && m.y < yOf(rt) + hOf(rt))
+        laneTrack = rt;
     bool laneMenuClick = false;
     // R08-02: a click anywhere else in the tracks area deselects the points (as a click on empty space does).
     if (laneTrack < 0 && lClick && inGrid) gAutoSelPts.clear(), gAutoSelClip = kNoId, gAutoSelTrack = -1;
@@ -5969,6 +6140,7 @@ void drawPlaylist(App& a) {
     if (inHead && headPower >= 0 && lClick) {  // Logic look: the power button
       const Channel* pc = trackmodes::linkedChannel(s, headPower);
       const MixerTrack* pm = trackmodes::linkedMixer(s, headPower);
+      if (!pc && !pm) pc = logicplug::trackSound(s, headPower, nullptr);  // R09-06: the sound its regions play
       if (pc || pm) {
         const freeze::Unit u = pc ? freeze::channelUnit(pc->id) : freeze::mixerUnit(pm->id);
         const bool sleep = pc ? !pc->hibernate : !pm->hibernate;
@@ -6710,7 +6882,10 @@ void drawPlaylist(App& a) {
         } else if (hc->kind == ClipKind::Automation) {
           openAutomationEditor(a, hc->source, hc->id);  // J-5: automation clip editor
         }
-      } else if (liveLook && ((hc && hoverZone == clipheader::Zone::Body && !onEdge) || (!hc && cg.startTrack >= 0 && cg.startTrack < nTracks)) &&
+      } else if (liveLook && !hc && pastRows(m.y)) {
+        // N52-03: below every track's row (the return lanes, the free area) there is no track's time to
+        // select: nothing starts (a folded group's hidden last track was taken before).
+      } else if (liveLook && ((hc && hoverZone == clipheader::Zone::Body && !onEdge) || (!hc && cg.startTrack >= 0 && cg.startTrack < nTracks && !pastRows(m.y))) &&
                  !io.KeyCtrl && !io.KeyAlt && !slipDrag && (st.tool != Tool::Draw || !hc)) {
         // N50-03: in Draw mode too an empty lane takes the marker and a time selection: Draw mode never
         // paints the current pattern (another track's notes) into a lane.
@@ -6767,8 +6942,8 @@ void drawPlaylist(App& a) {
         // (Q-3: made once the pointer actually moves, so a Shift+click adds
         // nothing).
         if (cg.kind == ClipGesture::Move && shiftDrag && !trackLocked(hc->track)) cg.copyPending = true;
-      } else if (pltools::sourceValid(s, src) && !trackmodes::clipAllowed(s, pltools::makeClip(s, src, trackAt(m.y), 0).kind, trackAt(m.y))) {
-        a.notify("Instrument tracks take pattern clips only", true);  // PL-08
+      } else if (pltools::sourceValid(s, src) && !clipAllowed(pltools::makeClip(s, src, trackAt(m.y), 0).kind, trackAt(m.y))) {
+        a.notify(clipRefused(trackAt(m.y)), true);  // PL-08, R09-01
       } else if (pltools::sourceValid(s, src) && groupLane(trackAt(m.y)) && pltools::makeClip(s, src, trackAt(m.y), 0).kind != ClipKind::Automation) {
         a.notify(i18n::tr(kGroupLaneHint), true);
       } else if (pltools::sourceValid(s, src)) {
@@ -6939,13 +7114,13 @@ void drawPlaylist(App& a) {
         cg.moved = true;
         {
           std::vector<Clip> moved = pltools::moveClips(cg.base, st.selected, dt, dtr, nTracks, lockedTracks);
-          bool allowed = true;  // PL-08: instrument tracks take pattern clips only
+          int refused = -1;  // PL-08: instrument tracks take pattern clips only (R09-01: bus tracks none)
           for (const auto& c : moved)
-            if (st.selected.count(c.id) && (!trackmodes::clipAllowed(s, c.kind, c.track) || (liveLook && !livelook::clipFitsTrack(s, c.kind, c.track))))
-              allowed = false;
-          if (allowed) group("move clips"), applyClips("move clips", std::move(moved));
+            if (st.selected.count(c.id) && (!clipAllowed(c.kind, c.track) || (liveLook && !livelook::clipFitsTrack(s, c.kind, c.track))))
+              refused = c.track;
+          if (refused < 0) group("move clips"), applyClips("move clips", std::move(moved));
           else a.setHint(liveLook ? i18n::tr("MIDI clips go on MIDI tracks and audio clips on audio tracks")  // N50-02
-                                  : "Instrument tracks take pattern clips only");
+                                  : clipRefused(refused));
         }
         break;
       }
@@ -7051,7 +7226,7 @@ void drawPlaylist(App& a) {
       case ClipGesture::Paint: {
         const pltools::Source ps{cg.paintKind, cg.paintId};
         if (!pltools::sourceValid(s, ps) || cg.paintLen <= 0 || trackLocked(curTrack)) break;
-        if (!trackmodes::clipAllowed(s, pltools::makeClip(s, ps, curTrack, 0).kind, curTrack)) break;  // PL-08
+        if (!clipAllowed(pltools::makeClip(s, ps, curTrack, 0).kind, curTrack)) break;  // PL-08, R09-01
         if (groupLane(curTrack) && pltools::makeClip(s, ps, curTrack, 0).kind != ClipKind::Automation) break;  // checkpoint 52
         std::vector<Tick> todo;
         for (Tick t : pltools::paintSlots(cg.paintAnchor, curTick, cg.paintLen))
@@ -7325,8 +7500,8 @@ void drawPlaylist(App& a) {
       const pltools::Source dsrc{static_cast<ClipKind>(ps.kind), ps.id};
       const int tr = trackAt(m.y);
       const Tick at = std::max<Tick>(0, timeline::snapTick(mm, tickAt(m.x), snapG, Snap::Cell));
-      if (pltools::sourceValid(s, dsrc) && !trackLocked(tr) && !trackmodes::clipAllowed(s, pltools::makeClip(s, dsrc, tr, at).kind, tr)) {
-        a.notify("Instrument tracks take pattern clips only", true);  // PL-08
+      if (pltools::sourceValid(s, dsrc) && !trackLocked(tr) && !clipAllowed(pltools::makeClip(s, dsrc, tr, at).kind, tr)) {
+        a.notify(clipRefused(tr), true);  // PL-08, R09-01
       } else if (pltools::sourceValid(s, dsrc) && groupLane(tr) && pltools::makeClip(s, dsrc, tr, at).kind != ClipKind::Automation) {
         a.notify(i18n::tr(kGroupLaneHint), true);  // checkpoint 52
       } else if (pltools::sourceValid(s, dsrc) && !trackLocked(tr)) {
@@ -7476,7 +7651,7 @@ void drawPlaylist(App& a) {
         const float x0 = gMin.x + static_cast<float>(gt) * st.pxPerTick - st.scrollX;
         const float x1 = x0 + std::max(6.0f, static_cast<float>(sp.length) * st.pxPerTick);
         const bool audio = sp.action == browse::DropAction::AudioClip;
-        const ImU32 col = audio ? theme::rgb(theme::role::kPaint) : theme::rgb(theme::role::kDraw);
+        const ImU32 col = lg ? P.accent : audio ? theme::rgb(theme::role::kPaint) : theme::rgb(theme::role::kDraw);  // R09-09
         dl->AddRectFilled(ImVec2(x0, y0 + 1), ImVec2(x1, y0 + h - 1), theme::withAlpha(col, 0.28f), theme::kRadiusSm);
         dl->AddRect(ImVec2(x0, y0 + 1), ImVec2(x1, y0 + h - 1), theme::withAlpha(col, 0.95f), theme::kRadiusSm, 1.5f, 0);
         if (sp.item < hp->items.size() && x1 - x0 > 24)
@@ -7498,7 +7673,7 @@ void drawPlaylist(App& a) {
         devGeom.dropTrack = dropTr;
         const float y0 = std::max(yOf(dropTr), gMin.y), y1 = std::min(yOf(dropTr) + hOf(dropTr), gMax.y);
         if (y1 > y0) {
-          const ImU32 hot = theme::rgb(theme::role::kDraw);
+          const ImU32 hot = lg ? P.accent : theme::rgb(theme::role::kDraw);  // R09-09
           ImDrawList* fdl = ImGui::GetWindowDrawList();
           fdl->PushClipRect(ImVec2(rowX0, gMin.y), ImVec2(rowX1, gMax.y), true);
           fdl->AddRectFilled(ImVec2(rowX0, y0), ImVec2(rowX1, y1), theme::withAlpha(hot, 0.16f));
@@ -7592,8 +7767,8 @@ void drawPlaylist(App& a) {
       // R02-20: in the Tracks layout the icon is the track's own setting: the one it shows now stays
       // (it was guessed from the name, so a rename changed it).
       const int keepIcon = lg && renaming >= 0 && renaming < nTracks && s.tracks[static_cast<size_t>(renaming)].icon == 0 ? headIcon(renaming) : 0;
-      a.doc.editPlaylistTrack(renaming, "rename playlist track", [&](PlaylistTrack& t) {
-        t.name = n;
+      // N52-06: the track's mixer track and instrument follow when they carried its old name (every layout).
+      trackmodes::renameTrack(a.doc, renaming, n, [&](PlaylistTrack& t) {
         if (keepIcon > 0) t.icon = keepIcon, t.flIcon = trackicon::toFl(keepIcon);
       });
       ImGui::CloseCurrentPopup();
@@ -7701,7 +7876,7 @@ void drawPlaylist(App& a) {
           if (!sd.sidechain && &sd != &mt->sends.front())
             if (const int di = s.mixerIndex(sd.to); di >= 0) {
               ImGui::PushID(static_cast<int>(sd.to));
-              item(sendParam(mt->id, di), (std::string(i18n::tr("Send to")) + " " + mixerTrackName(s, static_cast<size_t>(di))).c_str());
+              item(sendParam(mt->id, di), (std::string(i18n::tr("Send to")) + " " + busName(s, static_cast<size_t>(di))).c_str());
               ImGui::PopID();
             }
         for (int k = 0; k < kEffectSlots; ++k) {
@@ -7773,7 +7948,7 @@ void drawPlaylist(App& a) {
   }
   if (ImGui::BeginPopup("##lgbgmenu")) {  // R01-01 / R01-16: the Tracks layout's background menu (021)
     const bool onTrack = lgBgTrack >= 0 && lgBgTrack < nTracks;
-    if (ImGui::MenuItem(i18n::tr("Create pattern region"), nullptr, false, onTrack && !trackLocked(lgBgTrack))) {
+    if (ImGui::MenuItem(i18n::tr("Create pattern region"), nullptr, false, onTrack && !trackLocked(lgBgTrack) && !fold.takesNoRegions(lgBgTrack))) {
       const int tr = lgBgTrack;
       const Tick at = lgBgTick;
       a.doc.beginGroup("create pattern region");
@@ -7805,7 +7980,7 @@ void drawPlaylist(App& a) {
         for (Clip c : copies) {
           c.start = at + (c.start - lo);
           c.track = std::clamp(tr + (c.track - top), 0, static_cast<int>(x.tracks.size()) - 1);
-          if (!clipValid(x, c)) continue;
+          if (!clipValid(x, c) || !clipAllowed(c.kind, c.track)) continue;  // R09-01
           c.id = x.allocateId();
           x.playlist.push_back(c);
           added.insert(c.id);

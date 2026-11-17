@@ -1580,7 +1580,7 @@ void handleGlobalShortcuts(App& a) {
     if (a.typingKeyboard && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyAlt && !ImGui::GetIO().KeySuper)
       for (const keys::Chord& c : keys::keymap().bindings(id)) {
         const bool typingKey = (c.key >= keys::Key::A && c.key <= keys::Key::D9) || (c.key >= keys::Key::Minus && c.key <= keys::Key::Grave);
-        if (typingKey && !(c.mods & (keys::kCtrl | keys::kAlt | keys::kCmd))) return false;
+        if (typingKey && keys::typingKeyPlays(c.key) && !(c.mods & (keys::kCtrl | keys::kAlt | keys::kCmd))) return false;  // R09-10
       }
     return keys::pressed(id);
   };
@@ -1613,6 +1613,7 @@ void handleGlobalShortcuts(App& a) {
     if (!chainKeys && pressed("track.group")) livelook::groupTracks(a);  // checkpoint 51
     if (!chainKeys && pressed("track.ungroup")) livelook::ungroupTracks(a);
     if (pressed("view.detail")) livelook::toggleDetail(a);
+    if (!a.typingKeyboard && pressed("view.automation")) livelook::toggleAutomationLanes(a);  // N52-10: A, the automation lanes
     if (pressed("transport.sessionRecord")) livelook::toggleSessionRecord(a);
   }
   if (pressed("options.typingKeyboard")) a.typingKeyboard = !a.typingKeyboard;

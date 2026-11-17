@@ -1,6 +1,7 @@
 // Gridline - the Tracker layout's Song, Steps and Mix pages (K-106). See TrackerPages.cpp.
 #pragma once
 #include <string>
+#include <vector>
 
 #include "../core/Types.h"
 
@@ -25,6 +26,16 @@ void pads(App& a);    // the Live pads window's body
 // A page title bar in the Tracker look (the title left, `info` right in the monospaced face) at
 // the window cursor, full width; the cursor moves below it. For the pages their own views draw (Roll).
 void pageTitle(App& a, const char* title, const std::string& info);
+// cp16: the Roll page's tool row in the band's look (in place of the piano roll's toolbar): Menu
+// (the piano roll's whole menu), the tools, the snap, the instrument, zoom. The cursor moves below it.
+void rollToolbar(App& a);
+// cp16: the Audio page with no sample open (in place of the audio editor's empty state).
+void audioEmpty(App& a, float w, float h);
+// Dev (--dev-input "tracker order ..."), the Song page's edits as its keys and buttons make them:
+//   dump · go <i> · ins [<i>] (the entry's pattern after it) · del <i> · move <i> <+1|-1> · set <i> <ptn>
+//   append <ptn> · new · clone <ptn> · bars <ptn> <+1|-1> · loop <i0> <i1> | loop off · play <i>
+// (patterns by number, entries from 0). "dump" prints the order: "order frame F: n N | ptn ptn ... | loop a-b | pos p".
+void devOrder(App& a, const std::vector<std::string>& args, int frame);
 // The clip picked on the Song page (its clip box edits it); view state, never saved.
 extern ObjectId gSongClip;
 

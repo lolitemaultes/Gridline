@@ -3,6 +3,7 @@
 #include "PluginParams.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <set>
 
@@ -342,6 +343,12 @@ const char* modCurveName(ModCurve c) {
 std::string mixerTrackName(const Song& song, size_t index) {
   if (index < song.mixer.size() && !song.mixer[index].name.empty()) return song.mixer[index].name;
   return index == 0 ? "Master" : "Insert " + std::to_string(index);
+}
+
+std::string busName(const Song& song, size_t index) {
+  const std::string n = mixerTrackName(song, index);
+  if (index > 0 && n.size() > 4 && n.compare(0, 4, "Aux ") == 0 && std::atoi(n.c_str() + 4) > 0) return "Bus " + n.substr(4);
+  return n;
 }
 
 std::string playlistTrackName(const Song& song, size_t index) {

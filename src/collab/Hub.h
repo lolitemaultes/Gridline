@@ -94,7 +94,8 @@ bool parseReplyCode(const std::string& code, ReplyInfo& out, std::string* err = 
 bool descriptionHasPublicPath(const std::string& ice);
 // K-312: two routers that can't reach each other directly: a symmetric NAT on one side and a
 // known router type on the other, with no port that lets anything in (a router port mapping
-// or a TURN relay in either description) and no IPv6 on both. Hole punching then always fails,
+// or a TURN relay in either description), no IPv6 on both and not one public address on both
+// (two computers behind the same router reach each other locally). Hole punching then always fails,
 // so the join says so at once instead of trying for 15 minutes.
 bool directImpossible(char natA, const std::string& iceA, char natB, const std::string& iceB);
 // K-174: why a join did not connect, in plain words (the join window), and what to try.

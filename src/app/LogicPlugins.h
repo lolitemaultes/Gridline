@@ -68,6 +68,9 @@ struct AutoFold {
   bool isHidden(int t) const { return on && t >= 0 && t < static_cast<int>(hidden.size()) && hidden[static_cast<size_t>(t)]; }
   bool isBus(int t) const { return on && t >= 0 && t < static_cast<int>(busStrip.size()) && busStrip[static_cast<size_t>(t)] != kNoId; }
   bool isMember(int t) const { return on && t >= 0 && t < static_cast<int>(member.size()) && member[static_cast<size_t>(t)]; }
+  // R09-01: a bus track and the automation-only tracks take no regions here (the reference's aux
+  // track holds no MIDI or audio regions): only their automation.
+  bool takesNoRegions(int t) const { return isBus(t) || isHidden(t) || isMember(t); }
   // The row takes no room: a hidden track, or a folder track under the closed folder's row.
   bool takesNoRoom(int t) const { return isHidden(t) || (isMember(t) && !open && t != head()); }
 };

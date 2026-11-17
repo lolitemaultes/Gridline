@@ -120,8 +120,9 @@ ColMap colMap(const Song& s, int nCols) {
   m.hidden.assign(m.col.size(), 0);
   m.group.assign(m.col.size(), 0);
   int hideTo = -1;
+  const std::vector<char> lanes = trackmodes::automationLanes(s, nCols);
   for (int t = 0; t < nCols; ++t) {
-    if (t <= hideTo) {
+    if (t <= hideTo || (t < static_cast<int>(lanes.size()) && lanes[static_cast<size_t>(t)])) {  // N52-10: an automation lane is the Arrangement's only
       m.hidden[static_cast<size_t>(t)] = 1;
       m.col[static_cast<size_t>(t)] = std::max(0, m.n - 1);
       continue;
@@ -459,7 +460,12 @@ bool instrumentDropped(App& a, ObjectId channel, const std::string& name) {
     // number ("1 Analog Synth"); a name the user gave stays. Its instrument and mixer track follow.
     const std::string was = s.tracks[static_cast<size_t>(track)].name;
     const std::string def1 = std::to_string(track + 1) + " MIDI", def2 = std::to_string(track + 1) + " Audio";
-    if (was.empty() || was == def1 || was == def2 || was == name) {
+    // N52-11: a track named after the instrument it had ("1 Analog Synth") takes the new one's name too.
+    bool instrumentNamed = false;
+    if (const std::string num = std::to_string(track + 1) + " "; was.rfind(num, 0) == 0)
+      for (const PluginInfo& pi : pluginCatalog())
+        if (pi.kind == PluginKind::Generator && was.compare(num.size(), std::string::npos, pi.name) == 0) instrumentNamed = true;
+    if (was.empty() || was == def1 || was == def2 || was == name || instrumentNamed) {
       const std::string to = std::to_string(track + 1) + " " + name;
       a.doc.editSong("name track", [track, to, channel, was, name](Song& x) {
         PlaylistTrack& tr = x.tracks[static_cast<size_t>(track)];
@@ -863,6 +869,7 @@ void projectOpened(App& a, const std::string& file) {
   gOpenView = grid ? 1 : 0;
   gOpenFrames = 4;
   gPickFirst = true;
+  gFocus = {};  // N52-12: a track chosen in the set before is no choice in this one
 }
 
 void setOpenedNew() { gPickFirst = true; }
@@ -890,7 +897,7 @@ void renameTrack(App& a, int track) {
   }
   menus::openPrompt("Rename track", playlistTrackName(s, static_cast<size_t>(track)), [&a, track](const std::string& n) {
     if (track < static_cast<int>(a.doc.song().tracks.size()) && !n.empty())
-      a.doc.editPlaylistTrack(track, "rename playlist track", [n](PlaylistTrack& x) { x.name = n; });
+      trackmodes::renameTrack(a.doc, track, n);  // N52-06: its mixer track follows
   });
 }
 
@@ -2394,6 +2401,24 @@ void deviceBand(App& a, BandPick& pick) {
     ch = nullptr;
     mt = trackmodes::playedMixer(s, gFocus.t);
   }
+  // N52-12: the chain is the selected track's (a clip or a title chosen), as the status bar names it:
+  // an audio or group track's inserts with no instrument (the sampler playing its clips is not one of
+  // its devices), an instrument track's instrument and inserts, whatever channel was chosen before.
+  if (pick.kind != 1 && a.settingsChannel == kNoId) {
+    int selT = -1;
+    if (a.playlist.selected.size() == 1)
+      if (const Clip* sc = s.clip(*a.playlist.selected.begin())) selT = sc->track;
+    if (selT < 0 && !a.playlist.trackSel.empty()) selT = *a.playlist.trackSel.begin();
+    if (selT >= 0 && selT < trackmodes::usedTrackCount(s)) {
+      if (trackmodes::modeOf(s, selT) == TrackMode::Audio) {
+        ch = nullptr;
+        mt = trackmodes::linkedMixer(s, selT);
+      } else if (const Channel* lc = trackmodes::linkedChannel(s, selT); lc && lc != ch) {
+        ch = lc;
+        mt = s.mixerTrack(lc->mixerTrack);
+      }
+    }
+  }
   // An effect opened on another mixer track (from the mixer): the band shows that track's inserts.
   if (pick.kind == 1 && pick.fxTrack != kNoId && (!mt || mt->id != pick.fxTrack))
     if (const MixerTrack* fxt = s.mixerTrack(pick.fxTrack)) {
@@ -2494,7 +2519,11 @@ void deviceBand(App& a, BandPick& pick) {
     layoutui::setBandBoost("live.device", u.expandH + 6);
     u.boostFrame = frameNow;
     // (The first frame the band has not grown yet: the panel shows from the next one.)
-    const float panelH = availH - u.plainH - 6;
+    // K-297 (round 09): in a short window (1024 x 640) the band cannot grow by the panel's height and
+    // the editor got ~120 px (its section headers only): the panel keeps a usable height and the
+    // chain below gives up rows of knobs for it (down to one row).
+    constexpr float kPanelMinH = 240.0f, kChainMinH = 96.0f;
+    const float panelH = std::max(availH - u.plainH - 6, std::min(kPanelMinH, availH - kChainMinH - 6));
     if (panelH >= 60) {
       // The panel's top edge drags its height (up: taller).
       const ImVec2 s0 = ImGui::GetCursorScreenPos();
@@ -3488,8 +3517,8 @@ void duplicateTracks(App& a, int track) {
 }
 void ungroupTracks(App& a, int track) {
   int t = track >= 0 ? track : !a.playlist.trackSel.empty() ? *a.playlist.trackSel.begin() : selectedTrack(a);
-  if (!trackmodes::isGroupTrack(a.doc.song(), t)) t = trackmodes::groupTrackOf(a.doc.song(), t);
-  if (t < 0) {
+  // N52-07: as the reference, Ungroup acts on a selected group track only (a member selected: nothing).
+  if (!trackmodes::isGroupTrack(a.doc.song(), t)) {
     a.notify(i18n::tr("Select a group track to ungroup"));
     return;
   }
@@ -3500,6 +3529,14 @@ void ungroupTracks(App& a, int track) {
     gSel = {};
   });
 }
+namespace {
+bool gAutoLanes = true;
+}
+void toggleAutomationLanes(App& a) {
+  gAutoLanes = !gAutoLanes;
+  a.notify(i18n::tr(gAutoLanes ? "Automation lanes shown (A hides them)" : "Automation lanes hidden (A shows them)"));
+}
+bool automationLanesShown() { return gAutoLanes; }
 void gridInsertScene(App& a) {
   const int k = gSel.k >= 0 ? gSel.k : std::max(0, static_cast<int>((a.doc.song().live.areaEnd + sceneTicks(a.doc.song()) - 1) / sceneTicks(a.doc.song())) - 1);
   a.later([&a, k] { insertScene(a, k); });
@@ -3967,7 +4004,7 @@ void drawClipGrid(App& a) {
       gRenTrackIdle = ImGui::IsItemActive() || gRenTrackFrames > 0 ? 0 : gRenTrackIdle + 1;
       if (done && !ImGui::IsKeyPressed(ImGuiKey_Escape) && name != nbuf && nbuf[0]) {
         const std::string nn = nbuf;
-        a.doc.editPlaylistTrack(t, "rename playlist track", [nn](PlaylistTrack& x) { x.name = nn; });
+        trackmodes::renameTrack(a.doc, t, nn);  // N52-06: its mixer track follows
       }
       if (done || gRenTrackIdle > 3) gRenTrack = -1;
       ImGui::SetCursorScreenPos(ImVec2(x, y0));

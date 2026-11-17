@@ -19,6 +19,7 @@
 #include "CollabUi.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
+#include "LogicNewTracks.h"
 #include "LogicPlugins.h"
 #include "PluginUI.h"
 #include "Theme.h"
@@ -79,13 +80,25 @@ bool libraryShown(const App& a) {
 // The track the Library loads onto, and its sound.
 int targetTrack(const App& a) { return logicplug::focusTrack(a); }
 const Channel* targetSound(const App& a, int track) {
-  const Channel* c = logicplug::trackSound(a.doc.song(), track, nullptr);
+  const Song& s = a.doc.song();
+  const Channel* c = logicplug::trackSound(s, track, nullptr);
   if (!c) return nullptr;
   const PluginInfo* p = findPlugin(c->plugin.type);
-  // An audio track's sound (a sample player holding the track's audio) is not an instrument to replace.
-  if (!p || p->kind != PluginKind::Generator || p->usesSample) return nullptr;
+  if (!p || p->kind != PluginKind::Generator) return nullptr;
+  // An audio track's sound (the sample player holding the track's audio regions) is not an instrument to
+  // replace. R09-02: told by the track, not by the instrument: an instrument that can also play a sample
+  // (Tercet, the New tracks default) on an instrument track is the track's instrument.
+  const TrackMode mode = trackmodes::modeOf(s, track);
+  if (mode == TrackMode::Audio) return nullptr;
+  if (mode != TrackMode::Instrument)
+    for (const Clip& k : s.playlist)
+      if (k.track == track && k.kind == ClipKind::Audio && k.source == c->id) return nullptr;
   return c;
 }
+
+// The Library lists instruments that make sound on their own: sample players are left out (a patch
+// without its sample is silent), except Tercet, whose sample oscillator is one of its sources.
+bool listedInstrument(const PluginInfo& p) { return !p.usesSample || p.type == "gl.synth"; }
 
 
 }  // namespace
@@ -103,7 +116,7 @@ std::vector<Item> items(const App& a, int nav, const std::string& filterIn) {
   const std::string onlyKind = nav >= 3 && nav - 3 < static_cast<int>(kinds().size()) ? kinds()[static_cast<size_t>(nav - 3)] : std::string();
   if (wantInst) {
     for (const PluginInfo& p : pluginCatalog()) {
-      if (p.hidden || p.kind != PluginKind::Generator || p.usesSample || !collabui::pluginAllowed(a, p.type)) continue;
+      if (p.hidden || p.kind != PluginKind::Generator || !listedInstrument(p) || !collabui::pluginAllowed(a, p.type)) continue;
       if (p.presets.empty()) {
         Item it{p.type, -1, p.name, p.name, soundKind(p, p.name), false};
         if ((onlyKind.empty() || it.kind == onlyKind) && keep(it)) out.push_back(it);
@@ -208,12 +221,15 @@ bool load(App& a, const Item& it) {
     ch.name = name;
   });
   const Song& s = a.doc.song();
-  int t = -1;
-  for (int k = 0; k < static_cast<int>(s.tracks.size()) && t < 0; ++k) {
+  auto unused = [&s](int k) {
     bool used = trackmodes::modeOf(s, k) != TrackMode::Unassigned;
     for (const Clip& c : s.playlist) used = used || c.track == k;
-    if (!used) t = k;
-  }
+    return !used;
+  };
+  // R09-02: the selected track itself when it is empty (the patch loads onto the selected track)
+  int t = track >= 0 && track < static_cast<int>(s.tracks.size()) && unused(track) ? track : -1;
+  for (int k = 0; k < static_cast<int>(s.tracks.size()) && t < 0; ++k)
+    if (unused(k)) t = k;
   if (t < 0 && ops::insertPlaylistTrack(a.doc, static_cast<int>(s.tracks.size()))) t = static_cast<int>(a.doc.song().tracks.size()) - 1;
   if (t >= 0) {
     trackmodes::makeInstrumentTrack(a.doc, t, id);
@@ -313,11 +329,28 @@ void navLine(float w) {
   ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + 6, std::round(p.y + 4)), ImVec2(p.x + w - 6, std::round(p.y + 4)), theme::withAlpha(pal().line, 0.9f));
 }
 
-// The row's badge: a small rounded square in the kind's colour with a glyph (252: green for patches).
-void badge(ImDrawList* dl, const Item& it, ImVec2 c) {
-  const ImU32 fill = it.effect ? theme::rgb(0x6B5BD6) : it.kind == "Installed" ? theme::rgb(0x3D7BD9) : theme::rgb(0x3FA35B);
-  dl->AddRectFilled(ImVec2(c.x - 7, c.y - 7), ImVec2(c.x + 7, c.y + 7), fill, 3.0f);
-  ui::drawIcon(dl, it.effect ? ui::Icon::CatFilter : ui::Icon::Piano, c, 9, theme::contrastText(fill));
+// A row's badge: a small rounded square, its colour and glyph by the kind of sound (bass, keys, pads,
+// drums ...), effects and installed plugins their own; muted tones that sit on the graphite.
+void kindBadge(ImDrawList* dl, const Item& it, ImVec2 c) {
+  struct K {
+    const char* kind;
+    uint32_t col;
+    ui::Icon icon;
+  };
+  static const K kinds[] = {{"Bass", 0xC9902E, ui::Icon::Wave},          {"Drum kit", 0x4F8FD8, ui::Icon::CatDrums},
+                            {"Drums", 0x4F8FD8, ui::Icon::CatDrums},       {"Keys", 0x3FA35B, ui::Icon::Piano},
+                            {"Plucked", 0xC9902E, ui::Icon::CatPitch},       {"Bells and mallets", 0x2FA6A0, ui::Icon::Piano},
+                            {"Pads and strings", 0x8A67D6, ui::Icon::CatModulation}, {"Leads", 0xD9644A, ui::Icon::CatSynth},
+                            {"Synth", 0x6E62D9, ui::Icon::CatSynth},       {"Textures", 0x8A67D6, ui::Icon::CatSpectral},
+                            {"Installed", 0x5C6470, ui::Icon::Plug}};
+  uint32_t col = 0x3FA35B;
+  ui::Icon icon = ui::Icon::Piano;
+  if (it.effect) col = 0x5C6470, icon = ui::Icon::CatFilter;
+  else
+    for (const K& k : kinds)
+      if (it.kind == k.kind) col = k.col, icon = k.icon;
+  dl->AddRectFilled(ImVec2(c.x - 7, c.y - 7), ImVec2(c.x + 7, c.y + 7), theme::rgb(col), 3.0f);
+  ui::drawIcon(dl, icon, c, 9, theme::contrastText(theme::rgb(col)));
 }
 
 }  // namespace
@@ -399,9 +432,11 @@ void draw(App& a) {
         if (i % 2 == 1) ld->AddRectFilled(p, ImVec2(p.x + rw, p.y + rh), theme::withAlpha(P.ink, 0.10f));
         if (loaded) ld->AddRectFilled(p, ImVec2(p.x + rw, p.y + rh), theme::withAlpha(P.accent, 0.38f), 4.0f);
         else if (hov) ld->AddRectFilled(p, ImVec2(p.x + rw, p.y + rh), theme::withAlpha(P.text, 0.06f), 4.0f);
-        badge(ld, it, ImVec2(p.x + 13, p.y + rh * 0.5f));
-        const float fs = theme::kFontCaption;
-        theme::textEllipsis(ld, a.fontRegular, fs, ImVec2(p.x + 26, std::round(p.y + (rh - fs) * 0.5f) - 1), rw - 32, P.text, it.name.c_str());
+        // R09 (visual gap 10): each row's badge by its kind of sound, as 111 tells its kinds apart by the
+        // badge's colour and glyph (every patch had the same green one).
+        kindBadge(ld, it, ImVec2(p.x + 13, p.y + rh * 0.5f));
+        const float fs = theme::kFontCaption, tx = p.x + 26;
+        theme::textEllipsis(ld, a.fontRegular, fs, ImVec2(tx, std::round(p.y + (rh - fs) * 0.5f) - 1), rw - (tx - p.x) - 6, P.text, it.name.c_str());
         if (hov) ui::Hint(it.effect ? it.name + " \xC2\xB7 " + it.detail + "   (click: add it to the selected track)"
                                     : it.name + " \xC2\xB7 " + it.detail + "   (click: load it onto the selected track)");
         if (click) load(a, it);
@@ -467,6 +502,19 @@ bool devCommand(App& a, const std::vector<std::string>& args) {
     const int i = std::atoi(args[1].c_str());
     const bool ok = i >= 0 && i < static_cast<int>(v.size()) && load(a, v[static_cast<size_t>(i)]);
     std::printf("smoothlib load %d: %s\n", i, ok ? "ok" : "no");
+  } else if (op == "newtrack") {  // R09-02 test: New tracks > Instrument, as the dialog's Create does
+    newtracks::createDefault(a);
+    const Song& s = a.doc.song();
+    std::printf("smoothlib newtrack: tracks %zu channels %zu selected %d\n", s.tracks.size(), s.channels.size(), targetTrack(a));
+  } else if (op == "tracks") {  // each used track: its mode and its sound
+    const Song& s = a.doc.song();
+    for (int t = 0; t < static_cast<int>(s.tracks.size()); ++t) {
+      const Channel* c = logicplug::trackSound(s, t, nullptr);
+      if (trackmodes::modeOf(s, t) == TrackMode::Unassigned && !c) continue;
+      std::printf("smoothlib track %d \"%s\" mode %d sound \"%s\" type %s\n", t, playlistTrackName(s, static_cast<size_t>(t)).c_str(),
+                  static_cast<int>(trackmodes::modeOf(s, t)), c ? c->name.c_str() : "", c ? c->plugin.type.c_str() : "");
+    }
+    std::printf("smoothlib tracks: channels %zu\n", s.channels.size());
   } else if (op == "state") {
     const int t = targetTrack(a);
     const Channel* c = targetSound(a, t);

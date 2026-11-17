@@ -4679,7 +4679,7 @@ int main(int argc, char** argv) {
         app.typing.aRow = aRow;
       }
     }
-    keys::setTypingKeyboard(app.typingKeyboard && app.selChannel != kNoId);
+    keys::setTypingKeyboard(app.typingKeyboard && app.selChannel != kNoId, app.typing.aRow);
     keys::setEditorKeys(trackerview::hasKeyboard());  // K-106: the pattern editor's own keys run no command
     liveresize::pumpEnd();
     if (dropTiming.expired(SDL_GetTicks() / 1000.0)) {  // K-153: Wayland, the pointer did not come back

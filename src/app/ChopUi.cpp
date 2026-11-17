@@ -583,6 +583,12 @@ void duplicateTime(App& a) {
   if (!hasTimeSel(a)) return;
   const Tick lo = a.playlist.selStart, hi = a.playlist.selEnd;
   const auto tracks = regionTracks(a);
+  // N52-03: in Clips a selection with no material on its tracks duplicates nothing: an empty copy would
+  // overwrite (delete) what follows the selection.
+  if (livelook::active(a) && chop::clipsInRange(a.doc.song(), lo, hi, tracks).empty()) {
+    a.notify(i18n::tr("Nothing to duplicate in the time selection"));
+    return;
+  }
   std::vector<ObjectId> out;
   a.doc.editSong("duplicate time selection", [&](Song& s) { out = chop::duplicateRange(s, lo, hi, tracks); });
   if (out.empty()) return;

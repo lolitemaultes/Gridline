@@ -84,6 +84,15 @@ inline ClassicFader classicFader(float px, float py, float w, float h, float nor
   return g;
 }
 
+// R09-03: where a fader's cap centre sits for a value (0..1) in the control's own rect (px, py, w, h),
+// as ui::DrawFader draws it: Classic (spec null, an 18 px cap) or a control style's (its painter's rect
+// is the control's plus 8 px each side and 4 px above and below). A dB scale beside the fader puts its
+// marks here, so a mark and the cap at that level are on one pixel row.
+inline float faderCapY(float px, float py, float w, float h, float norm, const FaderSpec* spec) {
+  if (!spec) return classicFader(px, py, w, h, norm).yc;
+  return fader(px - 8, py - 4, px + w + 8, py + h + 4, norm, *spec, false).y;
+}
+
 // A slider's centre line across its travel (the rect's middle), snapped for a track `trackW` wide.
 inline float sliderCentre(float a, float b, float trackW) { return snapCentre((a + b) * 0.5f, trackW); }
 

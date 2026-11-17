@@ -11,8 +11,8 @@ src/app/TrackerFrame.cpp	5	Tracker wordmark strip: the fixed brand orange with i
 src/app/main.cpp	1	the drawn mouse pointer: a white arrow in a black outline, readable on every face
 # Smooth layout look (K-112D/K-112B audits): its own fixed faces, drawn only while Smooth faces are on
 src/app/LayoutStyleUi.cpp	1	Smooth palette definition: the light grey playhead (audit C6)
-src/app/PianoRoll.cpp	2	Smooth keyboard: its light white keys
-src/app/Playlist.cpp	10	Smooth regions: white selection mix and rim, 85 % white notes and names, white fade handles, curve and lane sheens, track number and icon inks (D3, D6, D9)
+src/app/PianoRoll.cpp	3	Smooth keyboard: its light white keys; the region strip's light tint of the region colour on the dark faces (D3, R09 visual gap 8)
+src/app/Playlist.cpp	12	Smooth regions: white selection mix and rim, 85 % white notes and names, white fade handles, curve and lane sheens, track number and icon inks (D3, D6, D9); cp49's light region names and automation curve sheen on the dark faces
 # Opt-in control styles (Settings > Theme > Controls): fixed material designs; the default style (Slate) is built from the theme
 src/app/Look.cpp	2	shared painter: piano white keys of the control-style keyboard
 src/app/LookGraphite.cpp	28	Graphite control style: the Paper value floor and its light labels are the design

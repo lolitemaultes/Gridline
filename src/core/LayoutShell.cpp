@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include "Json.h"
+#include "LayoutHomes.h"
 
 namespace gl::layout {
 
@@ -55,7 +56,12 @@ Shell logic() {
   s.centreTabs = TabStyle::None;
   // Sizes at 1440x900 as the approved picture: Library 240, Inspector 200, right pane 300 (with the
   // quick help box along its lower edge), the lower pane half of the centre column.
-  s.regions = {R("logic.library", "", Edge::Left, px(240, 0.2f, 180), false, false, TabStyle::None),
+  // R09-06: the Library takes 14 % of the window (about 200 px at 1440, 270 at 1920), between 190 and
+  // 300 px, and a drag may widen it to 420 px, as the reference's Library is sized; the lanes keep
+  // most of a small window.
+  RegionSize lib = share(0.14f, 190, 0.22f);
+  lib.maxPx = 300, lib.dragMaxPx = 420;
+  s.regions = {R("logic.library", "", Edge::Left, lib, false, false, TabStyle::None),
                R("logic.inspector", "", Edge::Left, px(230, 0.2f, 180), true, false, TabStyle::None),  // K-112D (audit E7): 105 px strips
                // K-112b8: the pads grid beside the tracks (hidden until shown; Tab or the tracks bar's grid switch)
                R("logic.grid", "", Edge::Left, px(360, 0.3f, 220), false, false, TabStyle::None),
@@ -77,7 +83,7 @@ Shell live() {
   s.centre = "live.main";
   s.regions = {R("live.browser", "", Edge::Left, px(292, 0.25f, 200)),
                R("live.info", "live.browser", Edge::Bottom, px(188, 0.4f, 100), true, false, TabStyle::None, true),
-               R("live.side", "", Edge::Right, px(300, 0.3f, 200), false),
+               R("live.side", "", Edge::Right, px(300, 0.3f, 200), false, false, TabStyle::Rail),  // K-237: its tools on a tab rail
                R("live.device", "", Edge::Bottom, px(188, 0.35f, 120), true, false, TabStyle::None, true),
                R("live.clip", "", Edge::Bottom, share(0.36f, 160, 0.45f), false),  // about 230 at 1440 x 900, as in the refs
                R("live.mixer", "", Edge::Bottom, share(0.32f, 150, 0.5f), false)};
@@ -95,7 +101,7 @@ Shell tracker() {
   // K-106 cp14: 248 (was 232): the order list's five entries in the band's text size took the
   // height from the scope box's tools; the classic band is taller still for its window.
   s.regions = {R("tracker.header", "", Edge::Top, px(248, 0.35f, 120), true, false, TabStyle::Dock, true),
-               R("tracker.side", "", Edge::Right, px(190, 0.25f, 150), false),
+               R("tracker.side", "", Edge::Right, px(190, 0.25f, 150), false, false, TabStyle::Rail),  // K-237: its tools on a tab rail
                R("tracker.lower", "", Edge::Bottom, px(150, 0.3f, 100), false, false, TabStyle::Dock, true)};
   return s;
 }
@@ -117,6 +123,29 @@ const Region* findRegion(Preset p, const std::string& id) {
 }
 
 bool hasRegion(Preset p, const std::string& id) { return id == shell(p).centre || findRegion(p, id) != nullptr; }
+
+bool hasPaneTabs(const Region& r) { return r.tabs == TabStyle::Segmented || r.tabs == TabStyle::Rail; }
+
+std::string tabRegion(Preset p, const State& st, const std::string& window) {
+  if (auto it = st.moved.find(window); it != st.moved.end()) return it->second;
+  const Home h = windowHome(window, p);
+  return (h.kind == HomeKind::Dock || h.kind == HomeKind::Part) ? h.region : "";
+}
+
+bool canMoveTab(Preset p, const std::string& window, const std::string& to) {
+  const Home h = windowHome(window, p);
+  if ((h.kind != HomeKind::Dock && h.kind != HomeKind::Part) || !*h.region) return false;
+  const Region* from = findRegion(p, h.region);
+  const Region* dest = findRegion(p, to);
+  return from && dest && hasPaneTabs(*from) && hasPaneTabs(*dest);
+}
+
+bool moveTab(Preset p, State& st, const std::string& window, const std::string& to) {
+  if (!canMoveTab(p, window, to) || tabRegion(p, st, window) == to) return false;
+  if (to == windowHome(window, p).region) st.moved.erase(window);
+  else st.moved[window] = to;
+  return true;
+}
 
 bool visible(const Shell& sh, const State& st, const std::string& region) {
   if (region == sh.centre) return true;
@@ -178,6 +207,11 @@ std::string toJson(const State& st) {
     o.object["tabs"] = m;
   }
   if (!st.maximised.empty()) o.object["max"] = list(st.maximised);
+  if (!st.moved.empty()) {
+    Json m = Json::makeObject();
+    for (const auto& [k, v] : st.moved) m.object[k] = Json::makeString(v);
+    o.object["moved"] = m;
+  }
   return jsonCompact(o);
 }
 
@@ -208,6 +242,9 @@ State fromJson(Preset p, const std::string& text) {
   if (const Json* a = o.find("max"); a && a->is(Json::Type::Array))
     for (const Json& v : a->array)
       if (v.is(Json::Type::String) && known(v.str)) st.maximised.insert(v.str);
+  if (const Json* m = o.find("moved"); m && m->is(Json::Type::Object))  // K-237: only moves the rules allow
+    for (const auto& [k, v] : m->object)
+      if (v.is(Json::Type::String) && canMoveTab(p, k, v.str) && v.str != windowHome(k, p).region) st.moved[k] = v.str;
   return st;
 }
 
@@ -222,6 +259,7 @@ float regionExtent(const Region& r, float parent, const State& st, const std::st
   if (!member.empty())
     if (auto it = st.memberSize.find(std::string(r.id) + "|" + member); it != st.memberSize.end()) v = it->second;
   if (r.size.maxPx > 0 && !dragged) v = std::min(v, r.size.maxPx);
+  if (r.size.dragMaxPx > 0 && dragged) v = std::min(v, r.size.dragMaxPx);
   if (r.size.maxShare > 0) v = std::min(v, std::floor(parent * (dragged ? std::max(r.size.maxShare, 0.7f) : r.size.maxShare)));
   v = std::max(v, std::min(r.size.minPx, std::floor(parent * 0.5f)));
   // K-237: a maximised pane takes most of its parent (the main area keeps the rest) until restored.

@@ -233,7 +233,8 @@ jobs:
     needs: lint
     if: needs.lint.outputs.builds == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    # the rpm build alone takes 60-85 minutes and packing the 4 GB of files another 25-30
+    timeout-minutes: 180
     container: fedora:latest
     steps:
       - name: Tools

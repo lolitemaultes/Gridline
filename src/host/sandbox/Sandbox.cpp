@@ -963,8 +963,10 @@ class SandboxBackend final : public Backend {
  private:
   SandboxBackend() : silence_(kBlock, 0.0f), params_(new ParamChange[kMaxParams]), events_(new NoteEvent[kMaxEvents]), midiBuf_(new MidiOut[kMaxMidiOut]) {}
 
+#if !defined(_WIN32)
   // K-277: how long the audio thread spins for the child's answer before it sleeps on the pipe.
   static constexpr double kSpinSeconds = 50e-6;
+#endif
   // K-277 (audio thread): the "done" bytes waiting (non-blocking reads).
   void drainDone() {
 #if !defined(_WIN32)
@@ -1520,11 +1522,14 @@ int sandboxChildMain(const std::string& arg) {
 #if !defined(_WIN32)
   const int doneFd = ::fcntl(kDoneFd, F_GETFD) != -1 ? kDoneFd : -1;  // K-277
 #else
-  const int doneFd = -1;
+  const int doneFd = -1;  // Windows: the parent spins for the answer (no "done" pipe)
 #endif
   std::thread audio([child, wake, doneFd]() {
     char buf[64];
     uint32_t last = 0;
+#if defined(_WIN32)
+    (void)doneFd;
+#endif
     for (;;) {
 #if defined(_WIN32)
       DWORD got = 0;

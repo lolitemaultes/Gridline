@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -391,7 +392,7 @@ int main() {
       r.sr = sr, r.block = bs;
       render(s, in, in, r);
       bool ok = r.fired.size() == clicks.size();
-      for (size_t i = 0; ok && i < clicks.size(); ++i) ok = r.fired[i].hit && std::labs(r.fired[i].frame - clicks[i]) < static_cast<long>(sr * 0.003);
+      for (size_t i = 0; ok && i < clicks.size(); ++i) ok = r.fired[i].hit && std::llabs(static_cast<long long>(r.fired[i].frame) - clicks[i]) < static_cast<long long>(sr * 0.003);
       expect(ok, ("the onset trigger fires once on each click, within 3 ms (block " + std::to_string(bs) + ")").c_str());
     }
     // Both: grid and hits together

@@ -296,7 +296,10 @@ void put32(std::vector<uint8_t>& b, uint32_t v) {
   put16(b, v & 0xFFFF);
   put16(b, v >> 16);
 }
-void putTag(std::vector<uint8_t>& b, const char* t) { b.insert(b.end(), t, t + 4); }
+void putTag(std::vector<uint8_t>& b, const char* t) {
+  // byte by byte: GCC 12 misreads a 4-byte range insert into a fresh vector as an overflow
+  for (int i = 0; i < 4; ++i) b.push_back(static_cast<uint8_t>(t[i]));
+}
 }  // namespace
 
 Parsed parse(const std::string& text) { return sequence(text).parsed; }

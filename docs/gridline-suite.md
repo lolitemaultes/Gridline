@@ -43,9 +43,10 @@ Every release also has the suites on their own, for other music programs (names 
 | `Gridline-Suite-<version>-windows-setup.exe` | Installer for x64 and ARM64: pick formats (VST3, CLAP) and plugins, for everyone or for you only |
 | `Gridline-Suite-<version>-linux-<processor>-setup.run`, `-<bsd system>-x86_64-setup.run` | Installer in a terminal: `sh <file>`; `--help` for the scripted options |
 | `Gridline-Suite-<version>-<system>-all.zip` | Every plugin in every format, to copy yourself (README inside) |
-| `Gridline-Suite-<Plugin>-<version>-<system>.zip` | One plugin in every format (for example `Gridline-Suite-Plasma-<version>-macos.zip` with `Plasma.vst3`, `Plasma.clap` and `Plasma.component`) |
 
-Every plugin of a suite runs the same engine. A bundle shows hosts the plugins named in its member list (`gridline-members.txt`, in `Contents/Resources` or in the `-assets` folder beside a CLAP file): the app's and the all-plugins bundles list every member, a single-plugin bundle lists one, and an installer writes your picks. So an installer puts one bundle per format on disk, whatever you pick, and running it again changes the picks. Identifiers stay per plugin, so a project made with a single-plugin download opens with the whole suite and the other way round. A single-plugin download carries the whole engine; if you use several, the installer or the all-plugins zip is smaller and uses less memory. Plugin bundles carry only what the plugins read of Gridline's assets (fonts and translations; Loupe also its audio scripts).
+To get one plugin, run the installer and tick only that plugin.
+
+Every plugin of a suite runs the same engine. A bundle shows hosts the plugins named in its member list (`gridline-members.txt`, in `Contents/Resources` or in the `-assets` folder beside a CLAP file): the app's and the all-plugins bundles list every member, and an installer writes your picks. So an installer puts one bundle per format on disk, whatever you pick, and running it again changes the picks. Identifiers stay per plugin, so a project made with some of the plugins installed opens with the whole suite and the other way round. There are no separate downloads for single plugins: each would carry the whole engine and be as large as the suite. Smaller plugin files of their own are planned. Plugin bundles carry only what the plugins read of Gridline's assets (fonts and translations; Loupe also its audio scripts).
 
 ### Installing without Gridline
 

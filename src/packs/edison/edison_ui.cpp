@@ -18,6 +18,7 @@
 #include "../../app/HostedBodies.h"
 #include "../../app/LayoutShellUi.h"
 #include "../../app/Theme.h"
+#include "../../app/TrackerPages.h"
 #include "../../app/Widgets.h"
 #include "../../core/Params.h"
 #include "../../core/PluginParams.h"
@@ -1144,6 +1145,10 @@ bool pinned(App& a) { return a.settings.getBool("ui.loupePinned"); }
 void drawPanelBody(App& a, ImVec2 avail) {
   Session* s = panelSession(a);
   if (!s) {
+    if (trackerpages::active(a)) {  // K-106 cp16: the Tracker's Audio page says it in the band's look
+      trackerpages::audioEmpty(a, avail.x, avail.y);
+      return;
+    }
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     ui::EmptyState(ImGui::GetWindowDrawList(), p0, ImVec2(p0.x + avail.x, p0.y + avail.y), "Loupe",
                    "Edit a sample in Loupe, or open a Loupe effect: it shows here.");

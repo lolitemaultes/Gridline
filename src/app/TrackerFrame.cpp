@@ -1287,7 +1287,7 @@ void sampleTool(App& a, ImVec2 p0, ImVec2 p1) {
     const ObjectId srcCh = si >= 0 ? gSourceChannel : ch;
     std::string val = si >= 0 ? trk::hex2(si + 1) : std::string("--");
     val += ".";
-    char sn[8];
+    char sn[12];
     std::snprintf(sn, sizeof sn, "%02d", gSourceSlot + 1);
     val += gSourceSlot >= 0 ? std::string(sn) : std::string("--");
     const std::string smpName = gSourceSlot >= 0 ? tp::headerSampleName(a, srcCh, gSourceSlot) : std::string();
@@ -1342,7 +1342,7 @@ void sampleTool(App& a, ImVec2 p0, ImVec2 p1) {
     if (arrowButton(a, "##smpnext", ImVec2(xs + aw + gap, y), ImVec2(xs + 2 * aw + gap, y + r.rh), false, i18n::tr("The instrument's next sample"))) tp::headerStepSample(a, ch, 1);
     const ImVec2 q0(xs + 2 * aw + 2 * gap, y), q1(xm, y + r.rh);
     bevelBox(dl, q0, q1, true);
-    char num[8];
+    char num[12];
     std::snprintf(num, sizeof num, "%02d", v.slot + 1);
     const float ty = std::round(y + (r.rh - fs) * 0.5f);
     dl->PushClipRect(q0, q1, true);
@@ -3069,11 +3069,17 @@ void header(App& a) {
   }
   // ---- instrument list, sample list, song name; the bank strip ----
   {
-    const float iH = std::round(H * 126.0f / 173.0f), nameH = std::round(H * 24.0f / 173.0f);
-    const float yI1 = std::round(y0 + iH), yN = yE - nameH;
+    const float nameH = std::round(H * 24.0f / 173.0f), yN = yE - nameH;
+    // R12-04 (cp16): the samples stand beside the instruments, a column the band's height (before:
+    // a strip under them, one row high at 1440x900). A narrow band keeps them under the
+    // instruments, with at least three rows.
+    const bool smpSide = listW >= fs * 30;
+    const float smpW = smpSide ? std::floor(std::clamp(listW * 0.34f, fs * 13, fs * 20)) : 0.0f;
+    const float xIe = xK - smpW;  // the instruments' right edge
+    const float yI1 = smpSide ? yN : std::round(std::min(y0 + (yN - y0) * 0.62f, yN - 3 * std::round(fs + 1) - pad * 2 - 4));
     // Instruments.
-    bevelBox(dl, ImVec2(xI, y0), ImVec2(xK, yI1));
-    const ImVec2 l0(xI + pad, y0 + pad), l1(xK - pad, yI1 - pad);
+    bevelBox(dl, ImVec2(xI, y0), ImVec2(xIe, yI1));
+    const ImVec2 l0(xI + pad, y0 + pad), l1(xIe - pad, yI1 - pad);
     bevelBox(dl, l0, l1, true);
     const float lrh = std::max(14.0f, std::round(fs + 2));
     const int ci = s.channelIndex(a.selChannel);
@@ -3184,19 +3190,36 @@ void header(App& a) {
     }
     dl->PopClipRect();
     // Samples.
-    bevelBox(dl, ImVec2(xI, yI1), ImVec2(xK, yN));
-    const ImVec2 s0(xI + pad, yI1 + pad), s1(xK - pad, yN - pad);
+    const ImVec2 sb0 = smpSide ? ImVec2(xIe, y0) : ImVec2(xI, yI1);
+    bevelBox(dl, sb0, ImVec2(xK, yN));
+    const ImVec2 s0(sb0.x + pad, sb0.y + pad), s1(xK - pad, yN - pad);
     bevelBox(dl, s0, s1, true);
     const Channel* sc = s.channel(a.selChannel);
     // cp14 (R11-09, R11-10): a Tracker Sampler's samples as the classic sample list: each slot's
     // number and the name it was loaded as (an edit's file name never shows), the selected one lit,
     // a click selects it (the Sample tools and the editor follow), the wheel scrolls a long list.
-    const packs::trackerpack::HeaderSamples hs = sc ? packs::trackerpack::headerSamples(a, sc->id) : packs::trackerpack::HeaderSamples{};
+    // cp16 (CPU): read from the instrument (its text parsed) only when the channel, the song or the
+    // editor's sample selection changed, not every frame.
+    static packs::trackerpack::HeaderSamples hsCache;
+    static ObjectId hsChannel = kNoId;
+    static uint64_t hsRev = ~uint64_t{0}, hsSel = 0;
+    {
+      const ObjectId ch = sc ? sc->id : kNoId;
+      const uint64_t sel = sc ? packs::trackerpack::headerSampleSelKey(ch) : 0;
+      // (and twice a second anyway, for a change that reaches the instrument outside the document)
+      if (ch != hsChannel || a.doc.revision() != hsRev || sel != hsSel || ImGui::GetFrameCount() % 30 == 0) {
+        hsCache = sc ? packs::trackerpack::headerSamples(a, ch) : packs::trackerpack::HeaderSamples{};
+        hsChannel = ch, hsRev = a.doc.revision();
+        hsSel = sc ? packs::trackerpack::headerSampleSelKey(ch) : 0;  // (reading it may have picked a selection)
+      }
+    }
+    const packs::trackerpack::HeaderSamples& hs = hsCache;
     std::string sample;
     if (sc && !hs.tracker && !sc->plugin.data.empty() && sc->plugin.data.find('/') != std::string::npos)
       sample = std::filesystem::path(sc->plugin.data).filename().string();
     dl->PushClipRect(s0, s1, true);
-    const float sy = std::round(s0.y + (s1.y - s0.y - fs) * 0.5f);  // centred in the box (a short band)
+    // The first row's text line (a box under a row high: centred in it).
+    const float sy = std::round(s1.y - s0.y < (fs + 1) * 2 ? s0.y + (s1.y - s0.y - fs) * 0.5f : s0.y + 1 + 0.5f);
     if (!hs.list.empty()) {
       static int smpFirst = 0;
       const float srh = std::round(fs + 1);
@@ -3231,7 +3254,7 @@ void header(App& a) {
         if (slot == gSourceSlot) dl->AddRect(ImVec2(s0.x + 1, ry), ImVec2(s1.x - 1, ry + srh), P.hot);  // the source sample mark
         if (slot == hs.sel) dl->AddRectFilled(ImVec2(s0.x + 1, ry), ImVec2(s1.x - 1, ry + srh), theme::withAlpha(P.surface600, 0.95f));
         else if (hov) dl->AddRectFilled(ImVec2(s0.x + 1, ry), ImVec2(s1.x - 1, ry + srh), theme::withAlpha(P.surface700, 0.6f));
-        char num[8];
+        char num[12];
         std::snprintf(num, sizeof num, "%02d", slot + 1);
         const float ty = std::round(ry + (srh - fs) * 0.5f);
         dl->AddText(mono, fs, ImVec2(s0.x + 9, ty), slot == hs.sel ? valueInk() : P.textDim, num);
@@ -3246,7 +3269,7 @@ void header(App& a) {
                         : hs.tracker && hs.sound  ? i18n::tr("No sample yet: its built-in sound plays")
                         : hs.tracker              ? i18n::tr("No sample yet: load one (Files, Samples) or drop audio on it")
                                                   : i18n::tr("No sample: a synthesized sound");
-      dl->AddText(a.fontRegular, fs, ImVec2(s0.x + 9, sy), P.textFaint, why);
+      dl->AddText(a.fontRegular, fs, ImVec2(s0.x + 9, sy), P.textFaint, why, nullptr, std::max(1.0f, s1.x - s0.x - 14));
     }
     dl->PopClipRect();
     // Song name.
@@ -3529,21 +3552,29 @@ void filesLoadSample(App& a, const std::string& path) {
 void orderList(App& a) {
   if (layoutui::active() == layout::Preset::Tracker && layoutui::shellBuilt(a, layout::Preset::Tracker)) {
     trackerpages::enteringFrame();  // keeps the Tracker's frame count (see there)
-    // The Tracker starts on the pattern page, with the keys, each time it comes on screen (at the
-    // start, and back from another layout; a layout loaded from its saved state too).
+    const PerfScope perfScope(PerfBand);  // cp16: the band's frame time ("tracker perf")
+    // The Tracker starts on the pattern page, with the keys (a layout loaded from its saved state
+    // too). K-297 (cp16): back from another layout, the page that was in front comes back in front,
+    // as the classic tracker keeps the screen it was on: a song half arranged on the Song page, or a
+    // mix on the Mix page, is where the musician left it (before: always the pattern). The keys go
+    // to the pattern when that is the page.
     static int lastFrame = -10, lastFrameSeen = -10;
     const int frame = ImGui::GetFrameCount();
     // K-297 (round 8): a restart brings back the page that was in front at quit. R8-04: the audio
     // editor in front when the Tracker went off screen comes back in front, as the instrument editor
     // in the lower band does.
     static bool audioFront = false;
+    static const char* front = nullptr;  // the page in front on the Tracker's last frame
     if (frame - lastFrame > 1) {
       const std::string start = takeStartPage();
       if (const bool* sf = start.empty() ? nullptr : layoutui::windowOpenFlag(a, start); sf && *sf) showPage(a, start.c_str());
       else if (audioFront) showPage(a, "Loupe");
+      else if (front && std::strcmp(front, "Pattern editor") != 0) showPage(a, front);
       else if (const bool* f = layoutui::windowOpenFlag(a, "Pattern editor"); f && *f) showPage(a, "Pattern editor");
     } else {
       audioFront = windowFront(a, "Loupe") && !instrumentShown(a);
+      for (const Page& pg : kPages)
+        if (std::strcmp(pg.window, "Loupe") != 0 && pageOn(a, pg)) front = pg.window;
     }
     lastFrame = frame;
     // K-297: the Settings window, opened from anywhere (the menu, its key, All settings), docks with

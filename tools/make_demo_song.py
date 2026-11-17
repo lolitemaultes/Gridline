@@ -1193,6 +1193,23 @@ class Song:
     def nv(self, ty, name, v):
         return norm(self.cat, ty, name, v)
 
+    def own_strips(self):
+        """Clips checkpoint 53: every playlist track plays through one strip of its own, as a session/arrangement
+        DAW's tracks do. Swells shared the Risers strip with Risers + Impacts: it gets a copy of that strip (same
+        devices, fader and sends); Risers and Impacts play into an FX Bus at 0 dB, the one fader of the Risers +
+        Impacts track. The mix is unchanged. Made last, so every other id stays as it was."""
+        S, t = self.S, self.t
+        sw = json.loads(json.dumps(t["fx"]))
+        sw["id"] = S.nid()
+        sw["name"] = "Swells"
+        bus = S.insert("FX Bus", C_FX, icon=14)
+        S.mixer.remove(bus)
+        at = S.mixer.index(t["impact"]) + 1
+        S.mixer[at:at] = [bus, sw]  # sources, then their bus (Swells on its own)
+        self.c["swell"]["mixerTrack"] = sw["id"]
+        for k in ("fx", "impact"):
+            t[k]["sends"][0]["to"] = bus["id"]
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -1203,6 +1220,7 @@ def main():
     song.arrange()
     song.mix()
     song.automate()
+    song.own_strips()
     data = song.S.to_json()
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(data, f, sort_keys=True, separators=(",", ":"))  # compact: it is compiled into the programs

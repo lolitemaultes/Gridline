@@ -13,10 +13,21 @@ using namespace gl;
 namespace {
 void expect(bool ok, const std::string& name) { expect(ok, name.c_str()); }
 
+#ifdef _WIN32
+FILE* openPipe(const std::string& cmd) {
+  // cmd.exe drops the first and last quote of the line, so the whole line gets one more pair
+  return _popen(("\"" + cmd + "\"").c_str(), "r");
+}
+int closePipe(FILE* p) { return _pclose(p); }
+#else
+FILE* openPipe(const std::string& cmd) { return popen(cmd.c_str(), "r"); }
+int closePipe(FILE* p) { return pclose(p); }
+#endif
+
 std::vector<std::string> installerNames(const std::string& version) {
   std::vector<std::string> out;
   const std::string cmd = std::string("\"") + GRIDLINE_PYTHON + "\" -I \"" + GRIDLINE_SUITE_INSTALLER + "\" --print-names " + version;
-  FILE* p = popen(cmd.c_str(), "r");
+  FILE* p = openPipe(cmd);
   if (!p) return out;
   char line[512];
   while (std::fgets(line, sizeof line, p)) {
@@ -24,7 +35,7 @@ std::vector<std::string> installerNames(const std::string& version) {
     while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
     if (!s.empty()) out.push_back(s);
   }
-  pclose(p);
+  closePipe(p);
   return out;
 }
 }  // namespace

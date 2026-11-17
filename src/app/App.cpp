@@ -11,6 +11,7 @@
 #include "../core/ChromeOs.h"
 #include "LayoutPresets.h"
 #include "LiveLook.h"
+#include "WorkspacesUi.h"
 #include "../core/SelectionFollow.h"
 #include "../core/TrackModes.h"
 #include "../core/LayoutShell.h"
@@ -725,6 +726,7 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
     for (const auto& [owner, slot] : openPluginWindowList(*this)) wins.push_back({owner, slot});
     if (doc.song().pluginWindows != wins) doc.patchSong([&wins](Song& s) { s.pluginWindows = wins; });
   }
+  workspacesui::refreshProjectCopy(*this);  // K-237: the opt-in copy of the workspaces, as they are now
   auto saved = [this, p, format, epoch, serial]() {
     if (doc.projectEpoch() != epoch) return;
     if (collabui::active(*this)) {  // J-111: a copy; the project stays the collaborative one

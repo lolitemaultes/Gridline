@@ -2,6 +2,8 @@
 // restore, duplicate, reorder, switching with record, save and revert, starters and the JSON form.
 #include <string>
 #include "Check.h"
+#include "core/Project.h"
+#include "core/Song.h"
 #include "core/Workspaces.h"
 
 using namespace gl::workspaces;
@@ -103,5 +105,31 @@ int main() {
   expect(broken.active == 2, "the active index is clamped");
   expect(fromJson("nonsense").items.empty() && fromJson("").items.empty(), "broken text: an empty set");
   expect(settingsKey(Preset::Logic) == "layout.logic.workspaces", "settings key");
+
+  // The opt-in copy in the project (Song::workspaceCopy): written only when present, read back as it was.
+  {
+    gl::Song song;
+    const std::string plain = gl::projectToText(song);
+    expect(plain.find("\"workspaces\"") == std::string::npos, "a project without the copy writes no workspaces key");
+    gl::Song back;
+    expect(gl::loadProjectText(plain, "", back) && back.workspaceCopy.empty(), "and reads back without one");
+    song.workspaceCopy["logic"] = js;
+    song.workspaceCopy["studio"] = toJson(initial(Preset::Studio, today));
+    const std::string withCopy = gl::projectToText(song);
+    gl::Song read;
+    expect(gl::loadProjectText(withCopy, "", read) && read.workspaceCopy == song.workspaceCopy, "the copy survives a save and an open");
+    expect(fromJson(read.workspaceCopy["logic"]) == w, "each layout's set reads back whole");
+    expect(read == back && read.workspaceCopy != back.workspaceCopy, "the copy is view state: the song compares the same without it");
+    // Unknown layouts and broken values are left out.
+    std::string odd = withCopy;
+    const size_t at = odd.find("\"workspaces\"");
+    expect(at != std::string::npos, "the copy is written under \"workspaces\"");
+    if (at != std::string::npos) {
+      odd.insert(odd.find('{', at) + 1, "\"elsewhere\": \"{}\", \"tracker\": 7, ");
+      gl::Song o;
+      expect(gl::loadProjectText(odd, "", o) && o.workspaceCopy.size() == 2 && !o.workspaceCopy.count("elsewhere") && !o.workspaceCopy.count("tracker"),
+             "unknown layouts and broken values are dropped");
+    }
+  }
   return finish();
 }

@@ -139,6 +139,7 @@ Settings::Settings() {
       {"tracker.flats", b(false)},          // K-106: note names with flats (Db4) instead of sharps (C#4)
       {"tracker.multiEdit", b(false)},      // K-106: notes typed together go to the next enabled tracks, on one row
       {"tracker.trackBase", Json::makeNumber(1)},  // K-106, R6-04: track numbers count from 1 (2.08, refs 149 and 165; one number per track and instrument) or 0
+      {"tracker.trackWidth", Json::makeNumber(0)},     // K-106 cp16: characters every track is widened by (a header edge dragged)
       {"tracker.visibleTracks", Json::makeNumber(0)},  // K-106: tracks in view at most (0: as many as fit; 4, 6, 8, 12, 16)
       {"tracker.volumeMacros", Json::makeString("")},  // K-106: the ten volume macros ("20,,40,...")
       {"tracker.effectMacros", Json::makeString("")},  // K-106: the ten effect macros ("P01,,...")

@@ -654,7 +654,7 @@ void renameFocused(App& a) {
   } else if (const int tr = logicplug::active(a) ? logicplug::focusTrack(a) : -1; tr >= 0 && tr < static_cast<int>(s.tracks.size())) {
     // R02-22: the Tracks layout renames the track it is about (there is no pattern to name there).
     openPrompt("Rename track", s.tracks[static_cast<size_t>(tr)].name, [&a, tr](const std::string& n) {
-      a.doc.editPlaylistTrack(tr, "rename track", [&](PlaylistTrack& t) { t.name = n; });
+      trackmodes::renameTrack(a.doc, tr, n);  // N52-06
     });
   } else if (const Pattern* p = s.pattern(a.curPattern)) {
     ObjectId id = p->id;
@@ -1223,13 +1223,13 @@ void playlistTrackMenu(App& a, int track) {
     if (layoutui::active() == layout::Preset::Logic) {
       if (ImGui::MenuItem(i18n::tr("Rename track..."), keys::label("edit.rename")))
         openPrompt("Rename track", t.name, [&a, track](const std::string& nm) {
-          a.doc.editPlaylistTrack(track, "rename track", [&](PlaylistTrack& x) { x.name = nm; });
+          trackmodes::renameTrack(a.doc, track, nm);  // N52-06
         });
       return;
     }
     if (ImGui::BeginMenu(i18n::tr("Rename..."))) {
       renameField(t.name, [&a, track](const std::string& nm) {
-        a.doc.editPlaylistTrack(track, "rename playlist track", [&](PlaylistTrack& x) { x.name = nm; });
+        trackmodes::renameTrack(a.doc, track, nm);  // N52-06
       });
       ImGui::EndMenu();
     }
@@ -1404,7 +1404,7 @@ void playlistTrackMenu(App& a, int track) {
     if (ImGui::GetCursorPosY() > beforeFreeze) ImGui::Separator();  // a track without a freezable unit has none
     // Checkpoint 51: grouping, as the reference's track menu (Cmd+G, Cmd+Shift+G).
     if (ImGui::MenuItem(i18n::tr("Group tracks"), keys::label("track.group"))) livelook::groupTracks(a, track);
-    if (trackmodes::isGroupTrack(a.doc.song(), track) || trackmodes::groupTrackOf(a.doc.song(), track) >= 0)
+    if (trackmodes::isGroupTrack(a.doc.song(), track))  // N52-07: on the group track only, as the reference
       if (ImGui::MenuItem(i18n::tr("Ungroup tracks"), keys::label("track.ungroup"))) livelook::ungroupTracks(a, track);
     ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("New audio track"), keys::label("track.newAudio"), false, n < kMaxPlaylistTracks))

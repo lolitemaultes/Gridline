@@ -404,6 +404,7 @@ View > More windows and views > Window layout > Layout settings...			e-
 View > More windows and views > Workspaces > New workspace			e-
 View > More windows and views > Workspaces > Add starter workspaces			e-
 View > More windows and views > Workspaces > Close workspace			--
+View > More windows and views > Workspaces > Keep a copy in the project			e-
 View > More windows and views > Workspaces > Tracks			ec
 View > More windows and views > Reopen closed pane tab	Ctrl+Alt+T	view.reopenTab	e-
 View > More windows and views > Reset window layout	Ctrl+Shift+H	view.resetLayout	e-

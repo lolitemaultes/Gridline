@@ -626,6 +626,7 @@ Rows liveRows() {
     r.push_back({id, std::move(c)});
   };
   set("view.toggleMain", {ch(K::Tab)});
+  set("view.automation", {ch(K::A)});  // checkpoint 53 (N52-10): A shows or hides the automation lanes, as the reference
   set("view.browser", {ch(K::B, C | A)});
   set("view.mixer", {ch(K::M, C | A)});
   set("view.pianoRoll", {ch(K::D3, C | A)});

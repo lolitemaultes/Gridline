@@ -67,7 +67,7 @@ int main() {
   const std::string bare = writeFile(dir + "/bare.wav", speech::wavWithWords(none, {}, kSr, ""));
 
   const SamplePtr smp = sampleCache().get(marked);
-  expect(smp && smp->frames() == static_cast<int64_t>(r.samples.size()), "the speech file loads");
+  expect(smp && smp->frames() == r.samples.size(), "the speech file loads");
   const std::vector<int64_t> cuts = smp ? fileSliceFrames(*smp) : std::vector<int64_t>{};
   expect(cuts.size() + 1 == words, "a cut at every word after the first (" + std::to_string(cuts.size()) + ")");
 

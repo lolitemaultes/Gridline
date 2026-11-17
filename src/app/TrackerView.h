@@ -51,6 +51,8 @@ bool multiTrackOn(App& a, ObjectId channel);
 void toggleMultiTrack(App& a, ObjectId channel);
 // A message in the pattern editor's status line (where its own keys answer).
 void status(const std::string& text);
+// cp16: the message said in the last four seconds (nullptr: none), for the pages' title lines.
+const std::string* freshStatus();
 // The number the first track shows: 0 as the classic tracker counts channels, or 1 (Config).
 int trackBase(const App& a);
 // The editor had the keyboard on the last frame.
@@ -162,6 +164,22 @@ int headerSwap();
 void setConfigPage(int page);
 // The Files page's Samples open (a double-click on an audio file): into the current instrument.
 void filesLoadSample(App& a, const std::string& path);
+
+// cp16 (in-app CPU timers, no profiler): the wall time of the Tracker's own drawing per frame, by
+// part: the header band, the pattern editor, the other pages (Song, Steps, Mix, Pads, Roll's row).
+// "tracker perf" prints each part's mean and 95th percentile over the last 600 frames that drew it.
+enum PerfPart { PerfBand, PerfPattern, PerfPage, kPerfParts };
+class PerfScope {
+ public:
+  explicit PerfScope(PerfPart p);
+  ~PerfScope();
+  PerfScope(const PerfScope&) = delete;
+  PerfScope& operator=(const PerfScope&) = delete;
+
+ private:
+  PerfPart p_;
+  unsigned long long t0_;
+};
 
 // Dev (--dev-input "tracker ..."):
 //   tracker dump                 the shown pattern: one line per non-empty cell, the cursor and the play row

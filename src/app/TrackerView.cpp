@@ -3,6 +3,7 @@
 #include <SDL.h>
 #include <algorithm>
 #include <cfloat>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -104,6 +105,7 @@ struct State {
   ImVec2 hbar0, hbar1;      // the tracks' scrollbar last frame (none: both zero)
   long long scrolledFor = -1;  // the cursor track (and the tracks' sizes) the sideways scroll last brought into view
   int offLeft = 0, offRight = 0;  // tracks out of view with notes in the rows shown (last frame)
+  int firstShown = 0, lastShown = -1;  // cp16: the tracks in view (last frame; "tracker tracks")
   int stacked = 0;  // song mode: other patterns playing at the position (shown on the Song page, counted in the bar)
 };
 State& st() {
@@ -130,8 +132,10 @@ bool gNumbers = true;     // ... track numbers in the headers
 trk::Masks gMasks;        // the Advanced edit box's clipboard masks
 bool gMasking = false;    // ... turned on
 int gVisible = 0;     // tracks in view at most (0: as many as fit), the classic "maximum visible channels"
+int gTrackWidth = 0;  // cp16: characters every track is widened by (a header's edge dragged; settings)
 void loadColumns(App& a) {
   gVisible = static_cast<int>(a.settings.getNumber("tracker.visibleTracks"));
+  gTrackWidth = std::clamp(static_cast<int>(a.settings.getNumber("tracker.trackWidth")), 0, 40);
   gMulti = a.settings.getBool("tracker.multiEdit");
   gMultiRec = a.settings.getBool("tracker.multiRecord");
   gMultiJazz = a.settings.getBool("tracker.multiJazz");
@@ -188,20 +192,41 @@ struct View {
   std::vector<int> rowOff;
 };
 
+// cp16 (user, fixed columns): the note columns each channel needs over the whole song (the most
+// voices any pattern gives it), so a track keeps its width from pattern to pattern. Worked out
+// again only when the song changes.
+int songVoices(const Song& s, uint64_t revision, ObjectId channel) {
+  static std::map<ObjectId, int> voices;
+  static uint64_t at = ~uint64_t{0};
+  static const Song* of = nullptr;
+  if (at != revision || of != &s) {
+    voices.clear();
+    for (const Pattern& p : s.patterns) {
+      const trk::Grid g = trk::gridOf(s, p);
+      for (const auto& [ch, notes] : p.notes)
+        if (!notes.empty()) voices[ch] = std::max(voices[ch], trk::buildTrack(s, p, ch, g, 1).voices);
+      for (const auto& [ch, steps] : p.steps)
+        if (std::any_of(steps.begin(), steps.end(), [](uint8_t x) { return x > 0; }))
+          voices[ch] = std::max(voices[ch], trk::buildTrack(s, p, ch, g, 1).voices);
+    }
+    at = revision, of = &s;
+  }
+  const auto it = voices.find(channel);
+  return it == voices.end() ? 1 : std::max(1, it->second);
+}
+
 View build(App& a) {
   View v;
   const Song& s = a.doc.song();
   v.p = s.pattern(a.curPattern);
   if (!v.p) return v;
   v.g = trk::gridOf(s, *v.p);
+  // cp16 (user): every channel of the rack has its track, always, in the rack's order (as a
+  // tracker shows all its channels): none comes or goes with the pattern or its notes, and each
+  // keeps its width over the song (its most voices in any pattern, and the columns added by hand).
   for (const Channel& c : s.channels) {
-    // An audio clip's source channel is no note track (its clips are on the Song page), unless
-    // this pattern has notes for it.
-    const bool audioSource = std::any_of(s.playlist.begin(), s.playlist.end(), [&](const Clip& k) { return k.kind == ClipKind::Audio && k.source == c.id; });
-    if (audioSource && !(v.p->notes.count(c.id) && !v.p->notes.at(c.id).empty())) continue;
     const int extra = st().extraCols.count(c.id) ? st().extraCols.at(c.id) : 0;
-    trk::Track t = trk::buildTrack(s, *v.p, c.id, v.g, 1);
-    if (extra > 0) t = trk::buildTrack(s, *v.p, c.id, v.g, std::max(1, t.voices) + extra);
+    trk::Track t = trk::buildTrack(s, *v.p, c.id, v.g, songVoices(s, a.doc.revision(), c.id) + extra);
     v.tracks.push_back(std::move(t));
     v.channels.push_back(&c);
     v.src.push_back(v.p);
@@ -1343,7 +1368,52 @@ static bool windowFrontNow(const char* window) {
   return w && w->DockIsActive && w->DockNode && w->DockNode->VisibleWindow == w;
 }
 
+namespace {
+// cp16: the per-part frame timers (PerfScope): this frame's sums, and a ring of the last 600 frames'.
+constexpr int kPerfFrames = 600;
+struct Perf {
+  double acc[kPerfParts] = {};
+  bool drew[kPerfParts] = {};
+  int frame = -1;
+  float ring[kPerfParts][kPerfFrames] = {};
+  int n[kPerfParts] = {}, at[kPerfParts] = {};
+};
+Perf& perf() {
+  static Perf p;
+  return p;
+}
+void perfRoll() {  // a new frame: the last one's sums into the rings
+  Perf& p = perf();
+  const int f = ImGui::GetFrameCount();
+  if (f == p.frame) return;
+  for (int k = 0; k < kPerfParts; ++k) {
+    if (p.drew[k]) {
+      p.ring[k][p.at[k]] = static_cast<float>(p.acc[k]);
+      p.at[k] = (p.at[k] + 1) % kPerfFrames;
+      p.n[k] = std::min(kPerfFrames, p.n[k] + 1);
+    }
+    p.acc[k] = 0;
+    p.drew[k] = false;
+  }
+  p.frame = f;
+}
+}  // namespace
+
+// (std::chrono, not SDL's counter: this file is also linked into the plugin bundles, which have no SDL.)
+namespace {
+unsigned long long perfNowNs() {
+  return static_cast<unsigned long long>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+}  // namespace
+PerfScope::PerfScope(PerfPart p) : p_(p), t0_(perfNowNs()) { perfRoll(); }
+PerfScope::~PerfScope() {
+  Perf& p = perf();
+  p.acc[p_] += 1e-6 * static_cast<double>(perfNowNs() - t0_);
+  p.drew[p_] = true;
+}
+
 void status(const std::string& text) { say(text); }
+const std::string* freshStatus() { return !st().status.empty() && ImGui::GetTime() - st().statusT < 4.0 ? &st().status : nullptr; }
 int trackBase(const App& a) { return a.settings.getNumber("tracker.trackBase") >= 1 ? 1 : 0; }
 
 // R4-09, R5-07: the tracks multichannel edit leaves out, by channel, kept per project as this
@@ -1654,8 +1724,9 @@ void addColumn(App& a, int delta) {
   if (!menuView(a, &v)) return;
   const trk::Track& t = v.tracks[static_cast<size_t>(st().cur.track)];
   int& extra = st().extraCols[t.channel];
-  extra = std::clamp(extra + delta, 0, trk::kMaxColumns - std::max(1, t.voices));
-  if (delta < 0) st().cur.column = std::min(st().cur.column, std::max(1, t.voices) + extra - 1);
+  const int base = std::max(1, t.columns - extra);  // (the song's voices for the channel: songVoices)
+  extra = std::clamp(extra + delta, 0, trk::kMaxColumns - base);
+  if (delta < 0) st().cur.column = std::min(st().cur.column, base + extra - 1);
 }
 bool follow() { return st().follow; }
 void setFollow(bool on) { st().follow = on; }
@@ -1879,6 +1950,7 @@ void pumpPage(App& a) {
 }
 
 void patternEditor(App& a) {
+  const PerfScope perfScope(PerfPattern);
   State& s = st();
   // R11-10: an undo or redo (or any edit) after a message ends it, as an edit made here does.
   if (!s.status.empty()) {
@@ -2020,7 +2092,8 @@ void patternEditor(App& a) {
   };
   auto tracksW = [&](const Metrics& m, size_t n) {
     float w = 0;
-    for (size_t i = 0; i < n && i < v.tracks.size(); ++i) w += m.pad * 2 + m.colW * static_cast<float>(v.tracks[i].columns) + 1;
+    for (size_t i = 0; i < n && i < v.tracks.size(); ++i)
+      w += m.pad * 2 + m.colW * static_cast<float>(v.tracks[i].columns) + m.cw * static_cast<float>(gTrackWidth) + 1;
     return w;
   };
   const float areaW = a1.x - a0.x;
@@ -2036,7 +2109,7 @@ void patternEditor(App& a) {
   const float minRows = gExtended ? 41 : 27;
   const float pfMax = std::max(fs, std::min(std::floor(fs * 2.2f), std::floor(((a1.y - a0.y - headH) / minRows - 2) / 1.12f)));
   float pf = fs;
-  for (float t = pfMax; t > fs; t -= 1) {
+  for (float t = pfMax; t > fs && gTrackWidth == 0; t -= 1) {  // (widened by hand: the glyphs stay, so the edge follows the pointer)
     const Metrics m = metricsAt(t);
     if (tracksW(m, shown) + m.numW * 2 <= areaW) {
       pf = t;
@@ -2049,14 +2122,16 @@ void patternEditor(App& a) {
   // What width is left goes to the shown tracks evenly (their cells centred), so the channels fill
   // the view edge to edge.
   const float viewW = std::max(40.0f, areaW - numW * 2);
-  const float extra = std::max(0.0f, std::floor((viewW - tracksW(M, shown)) / static_cast<float>(std::max<size_t>(1, shown))));
+  const float extra = gTrackWidth > 0 ? 0.0f : std::max(0.0f, std::floor((viewW - tracksW(M, shown)) / static_cast<float>(std::max<size_t>(1, shown))));
   std::vector<float> trackX, trackW, inset;  // each track's left edge (from the area's left, before scroll), width, cell inset
   float x = 0;
   for (const trk::Track& t : v.tracks) {
     trackX.push_back(x);
-    const float w = M.pad * 2 + colW * static_cast<float>(t.columns) + extra;
+    // (cp16: widened by hand, gTrackWidth, every track by as much)
+    const float wide = extra + cw * static_cast<float>(gTrackWidth);
+    const float w = M.pad * 2 + colW * static_cast<float>(t.columns) + wide;
     trackW.push_back(w);
-    inset.push_back(std::floor(M.pad + extra * 0.5f));
+    inset.push_back(std::floor(M.pad + wide * 0.5f));
     x += w + 1;
   }
   const float contentW = x;
@@ -2089,14 +2164,15 @@ void patternEditor(App& a) {
   };
   scrollTo(first);
   const float gx0 = a0.x + numW, gx1 = a1.x - numW;  // the tracks' area
-  // Only whole tracks show: tracks of different widths (a chord column more) can leave a gap at the
-  // right too narrow for the next one; the gap stays empty rather than showing part of a track.
+  // The whole tracks in view (the cursor's is kept one of them).
   int lastShown = std::clamp(first, 0, std::max(0, nTracks - 1));
   while (lastShown + 1 < nTracks && trackX[static_cast<size_t>(lastShown + 1)] + trackW[static_cast<size_t>(lastShown + 1)] - scrollX <= viewW + 1) ++lastShown;
-  const float gxEnd = lastShown + 1 < nTracks ? std::min(gx1, gx0 + trackX[static_cast<size_t>(lastShown)] + trackW[static_cast<size_t>(lastShown)] - scrollX + 1) : gx1;
+  // cp16 (user): the next track shows in part at the right edge, cut by it, as the Playlist's do
+  // (no empty gap); the view still starts on a whole track, and the cursor's track is always whole.
+  const float gxEnd = gx1;
   // T-19: a scrollbar under the tracks when they do not all fit.
   const bool hbar = lastFirst > 0;
-  const float sbH = hbar ? std::max(9.0f, std::round(fs * 0.75f)) : 0.0f;
+  const float sbH = hbar ? std::max(12.0f, std::round(fs * 0.95f)) : 0.0f;  // (cp16: a bar the size of the Playlist's, easy to grab)
   const float body0 = a0.y + headH, body1 = a1.y - sbH;
   const int visRows = std::max(1, static_cast<int>((body1 - body0) / rowH));
   // The edit row stays fixed in the middle and the rows scroll past it; above the first row and
@@ -2229,8 +2305,10 @@ void patternEditor(App& a) {
     if (row < 0 || row >= v.g.rows) continue;
     const float y = body0 + static_cast<float>(i) * rowH;
     if (!gBeats) continue;
-    if (row % v.g.rowsPerBar == 0) band(y, y + rowH, a0.x, a1.x, theme::withAlpha(P.gridBar, 0.55f));
-    else if (row % v.g.rowsPerBeat == 0) band(y, y + rowH, a0.x, a1.x, theme::withAlpha(P.gridBeat, 0.45f));
+    // cp16: beat rows a step brighter, bar rows brighter still (before they were faint), so the
+    // pattern's beats read at a glance as the classic highlight rows do.
+    if (row % v.g.rowsPerBar == 0) band(y, y + rowH, a0.x, a1.x, theme::withAlpha(P.gridBar, 0.85f));
+    else if (row % v.g.rowsPerBeat == 0) band(y, y + rowH, a0.x, a1.x, theme::withAlpha(P.gridBeat, 0.7f));
   }
   // The cursor row (fixed in the middle) and the play row.
   band(centreY, centreY + rowH, a0.x, a1.x, theme::withAlpha(s.edit ? P.arm : P.accent, 0.22f));
@@ -2291,8 +2369,11 @@ void patternEditor(App& a) {
     theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(h0.x + 6, std::round(h0.y + 3 + (headH - 4 - fs) * 0.5f)), tw - 12 - lampW - btnW * 2 - 8,
                         muted ? P.textFaint : static_cast<int>(ti) == s.cur.track ? P.text : P.textDim, name.c_str());
     const ImVec2 l0(h1.x - 6 - lampW, std::round(h0.y + 3 + (headH - 4 - lampW) * 0.5f)), l1(l0.x + lampW, l0.y + lampW);
-    dl->AddRectFilled(l0, l1, soloed ? P.solo : muted ? P.surface600 : P.led);
-    dl->AddRect(l0, l1, P.line);
+    // cp16: a lamp in a sunken bevel (lit green while it plays, dark when muted, the solo colour).
+    trackerview::bevelBox(dl, ImVec2(l0.x - 1, l0.y - 1), ImVec2(l1.x + 1, l1.y + 1), true);
+    dl->AddRectFilled(ImVec2(l0.x + 1, l0.y + 1), ImVec2(l1.x - 1, l1.y - 1), soloed ? P.solo : muted ? theme::withAlpha(P.led, 0.15f) : P.led);
+    // The column buttons show while the pointer is over the header (they are rarely used).
+    const bool headHov = ImGui::IsMouseHoveringRect(h0, h1) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
     ImGui::PushID(static_cast<int>(ti));
     ImGui::SetCursorScreenPos(ImVec2(l0.x - 2, l0.y - 2));
     if (ImGui::InvisibleButton("##mute", ImVec2(lampW + 4, lampW + 4))) a.doc.setParam(channelParam(ch->id, ChannelParam::Mute), muted ? 0 : 1, false);
@@ -2309,12 +2390,36 @@ void patternEditor(App& a) {
       const bool click = ImGui::InvisibleButton("##cols", ImVec2(btnW, std::max(1.0f, b1.y - b0.y)));
       const bool bh = ImGui::IsItemHovered();
       ImGui::PopID();
-      theme::centreText(dl, mono, fs, b0, b1, bh ? P.text : P.textFaint, b == 0 ? "-" : "+");
+      if (headHov) theme::centreText(dl, mono, fs, b0, b1, bh ? P.text : P.textFaint, b == 0 ? "-" : "+");
       ui::Hint(b == 0 ? "One note column fewer (only empty columns go)" : "One more note column (for chords)");
       if (click) {
         int& extra = st().extraCols[ch->id];
-        extra = std::clamp(extra + (b == 0 ? -1 : 1), 0, trk::kMaxColumns - std::max(1, t.voices));
+        extra = std::clamp(extra + (b == 0 ? -1 : 1), 0, trk::kMaxColumns - std::max(1, t.columns - extra));
       }
+    }
+    // cp16 (user): the header's right edge drags every track wider or narrower (in characters; a
+    // double-click: back to as narrow as they go). Kept in the settings, a view preference that
+    // never touches the song (saves stay the same in every layout, and collab peers keep theirs).
+    {
+      static float grabX = 0;
+      static float grabTw = 0;
+      ImGui::SetCursorScreenPos(ImVec2(tx + tw - 3, a0.y));
+      ImGui::InvisibleButton("##trwidth", ImVec2(6, std::max(1.0f, headH - 1)));
+      if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+      if (ImGui::IsItemActivated()) grabX = io.MousePos.x, grabTw = tw;
+      if (ImGui::IsItemActive() && !ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        // The edge follows the pointer: the width it asks for, in characters past the cells
+        // (at the plain glyph size, which a track widened by hand keeps).
+        const Metrics m = metricsAt(fs);
+        const float cells = m.pad * 2 + m.colW * static_cast<float>(t.columns);
+        const int w = std::clamp(static_cast<int>(std::lround((grabTw + io.MousePos.x - grabX - cells) / std::max(1.0f, m.cw))), 0, 40);
+        if (w != gTrackWidth && std::fabs(io.MousePos.x - grabX) >= 2) gTrackWidth = w, a.settings.set("tracker.trackWidth", static_cast<double>(w));
+      }
+      if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        gTrackWidth = 0;
+        a.settings.set("tracker.trackWidth", 0.0);
+      }
+      ui::Hint("Drag: every track wider or narrower (the ones that do not fit scroll) \xC2\xB7 double-click: back to fitting the view");
     }
     ImGui::PopID();
     // A track shown from another pattern playing here: a wash in that pattern's colour.
@@ -2563,6 +2668,7 @@ void patternEditor(App& a) {
       else if (nR++ == 0) nearR = static_cast<int>(ti);
     }
     s.offLeft = nL, s.offRight = nR;
+    s.firstShown = first, s.lastShown = lastShown;
     for (int side = 0; side < 2; ++side) {
       const int n = side ? nR : nL;
       if (n == 0) continue;
@@ -2759,6 +2865,35 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     std::printf("tracker tool frame %d: %d\n", frame, scopeTool());
   } else if (cmd == "extend") {
     setExtended(a, args.size() > 1 && args[1] == "on");
+  } else if (cmd == "tracks") {  // cp16: the pattern's tracks (channel names, rack order) and those in view
+    View v = build(a);
+    std::printf("tracker tracks frame %d: n %zu rack %zu first %d last %d cursor %d width %d |", frame, v.tracks.size(), a.doc.song().channels.size(),
+                s.firstShown, s.lastShown, s.cur.track, gTrackWidth);
+    for (size_t i = 0; i < v.tracks.size(); ++i) std::printf(" %s(%d)", v.channels[i]->name.c_str(), v.tracks[i].columns);
+    std::printf("\n");
+    std::fflush(stdout);
+  } else if (cmd == "rack") {  // cp16: "rack move <i> <to>": the rack's own channel move (Document::moveChannel), any layout
+    const auto& chs = a.doc.song().channels;
+    const int i = arg(2, 0);
+    if (args.size() > 1 && args[1] == "move" && i >= 0 && i < static_cast<int>(chs.size())) a.doc.moveChannel(chs[static_cast<size_t>(i)].id, arg(3, 0));
+  } else if (cmd == "perf") {  // cp16: the Tracker's frame timers (PerfScope), mean and 95th percentile per part
+    perfRoll();
+    const Perf& p = perf();
+    static const char* const names[] = {"band", "pattern", "page"};
+    std::printf("tracker perf frame %d:", frame);
+    for (int k = 0; k < kPerfParts; ++k) {
+      std::vector<float> v(p.ring[k], p.ring[k] + p.n[k]);
+      double mean = 0;
+      for (float x : v) mean += x;
+      mean = v.empty() ? 0 : mean / static_cast<double>(v.size());
+      std::sort(v.begin(), v.end());
+      const float p95 = v.empty() ? 0.0f : v[std::min(v.size() - 1, static_cast<size_t>(static_cast<double>(v.size()) * 0.95))];
+      std::printf(" %s n %d mean %.3f p95 %.3f ms |", names[k], p.n[k], mean, static_cast<double>(p95));
+    }
+    std::printf("\n");
+    std::fflush(stdout);
+  } else if (cmd == "order") {  // cp16: the Song page's order edits (dump, ins, del, move, set, clone, bars, loop)
+    trackerpages::devOrder(a, args, frame);
   } else if (cmd == "songclip") {  // the Song page's picked clip: by its index in the playlist
     const int i = arg(1, -1);
     const auto& pl = a.doc.song().playlist;

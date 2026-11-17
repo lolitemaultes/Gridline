@@ -862,7 +862,8 @@ const md::Menu& toolsDef() {
           .only(studioWindows),  // checkpoint 52 (N50-09): in Clips these are the note editor's
       md::submenu(N_("Composing"),
                   {
-                      md::submenu(N_("Piano roll selection"), {md::provider([](App& a) { pianoSelectItems(a); })}),
+                      md::submenu(N_("Piano roll selection"), {md::provider([](App& a) { pianoSelectItems(a); })})
+                          .only(studioWindows),  // N50-09 (checkpoint 53): the note editor's own in Clips
                       md::provider([](App& a) { menuparity::toolsNoteItems(a); }),  // J-27: last piano roll script, note clipboard
                       md::submenu(N_("Project scripts"), {md::provider([](App& a) { projectScriptsMenuItems(a); })}),  // J-57 (SC-02)
                   })

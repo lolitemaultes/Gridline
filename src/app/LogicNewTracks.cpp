@@ -57,7 +57,7 @@ bool card(App& a, int k, ImVec2 size) {
   const ImU32 bg = ImGui::GetColorU32(ImGuiCol_WindowBg);
   dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), theme::mix(bg, P.text, on ? 0.10f : hov ? 0.08f : 0.05f), 16.0f);  // checkpoint 26: rounder, as 067
   // Checkpoint 36: the chosen card's ring in its own colour (067 rings the chosen kind in its disc's colour).
-  dl->AddRect(p, ImVec2(p.x + size.x, p.y + size.y), on ? theme::rgb(kKinds[k].badge) : theme::withAlpha(P.text, 0.12f), 16.0f, 0, on ? 2.0f : 1.0f);
+  dl->AddRect(p, ImVec2(p.x + size.x, p.y + size.y), on ? P.accent : theme::withAlpha(P.text, 0.12f), 16.0f, 0, on ? 2.0f : 1.0f);  // R09-09: the ring in Smooth's blue
   const float cx = std::round(p.x + size.x * 0.5f), discR = 30.0f, discY = p.y + 20 + discR;  // K-112b (checkpoint 26): a larger disc, as 067
   dl->AddCircleFilled(ImVec2(cx, discY), discR, theme::rgb(kKinds[k].badge), 40);
   ui::drawIconBox(dl, kKinds[k].icon, ImVec2(cx, discY), 28.0f, pal().paper);
@@ -260,6 +260,16 @@ void draw(App& a) {
   }
   if (!gOpen) gClosedAt = ImGui::GetFrameCount();
   ImGui::End();
+}
+
+// K-112D (D3): Create with the dialog's defaults (one Tercet instrument track, no editor opened), for tests.
+void createDefault(App& a) {
+  const int k = gKind, n = gCount;
+  const std::string t = gType;
+  const bool ed = gOpenEditor;
+  gKind = 0, gCount = 1, gType = "gl.synth", gOpenEditor = false;
+  create(a);
+  gKind = k, gCount = n, gType = t, gOpenEditor = ed;
 }
 
 }  // namespace gl::newtracks

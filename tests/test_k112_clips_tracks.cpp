@@ -1,9 +1,10 @@
 // Gridline - K-112c: the Clips layout's two views list the same tracks. The arrangement's rows
 // and the clip grid's columns are both trackmodes::usedTrackCount(song) tracks, in the song's
 // order, so the checks here are on that count and on the song's tracks after each edit:
-//  * a song with the default 32 tracks and three in use lists four: never fewer than kShownTracks,
-//    so a new set shows four empty tracks with empty slots (as the reference's new set), without
-//    making them in the song (the empty tracks after them stay in the song for Studio's playlist);
+//  * a song with the default 32 tracks and three in use lists those three (checkpoint 53, N52-05: no
+//    grey padding tracks); a song with none in use shows kShownTracks empty tracks with empty slots
+//    (as the reference's new set), without making them in the song (the empty tracks after them stay
+//    in the song for Studio's playlist);
 //  * an empty track between used ones is listed (its lane shows with no clips);
 //  * a new track (addUsedTrack) comes right after the used ones, named, and is listed at once;
 //    the list grows when every track is in use;
@@ -22,6 +23,7 @@
 #include "core/Demo.h"
 #include "core/MenuOps.h"
 #include "core/MenuParity.h"
+#include "core/PluginInfo.h"
 #include "core/TrackModes.h"
 #include "core/TrackOrder.h"
 
@@ -59,7 +61,7 @@ Song threeTracks() {
 void testCount() {
   Song s = threeTracks();
   expect(static_cast<int>(s.tracks.size()) == kDefaultPlaylistTracks, "the song keeps its 32 tracks");
-  expect(trackmodes::usedTrackCount(s) == 4, "three tracks in use, with one empty track: never fewer than four");
+  expect(trackmodes::usedTrackCount(s) == 3, "three tracks in use: the three are listed, no empty padding (N52-05)");
   Song e = makeEmptySong();
   e.tracks.resize(kDefaultPlaylistTracks);
   const std::string before = e.tracks[0].name + e.tracks[3].name;
@@ -74,7 +76,7 @@ void testCount() {
   expect(trackmodes::usedTrackCount(s) == 5, "an empty track between used ones is listed");
   s.tracks[4].name.clear();
   s.tracks[2].name.clear();
-  expect(trackmodes::usedTrackCount(s) == 4, "empty tracks after the four are not listed");
+  expect(trackmodes::usedTrackCount(s) == 1, "empty tracks after the used ones are not listed");
   Clip c;
   c.track = 6;
   s.playlist.push_back(c);
@@ -90,27 +92,27 @@ void testCount() {
 void testEdits() {
   Document d;
   d.reset(threeTracks());
-  expect(joined(listed(d.song())) == "Drums,Bass,Chords,", "the three tracks, in order, and one empty track");
+  expect(joined(listed(d.song())) == "Drums,Bass,Chords", "the three tracks, in order");
   const int t = trackmodes::addUsedTrack(d);
-  expect(t == 4 && joined(listed(d.song())) == "Drums,Bass,Chords,,Track 5", "a new track is listed at once, after the shown ones");
-  name(d, 4, "Keys");
-  expect(joined(listed(d.song())) == "Drums,Bass,Chords,,Keys", "a rename shows in the list");
+  expect(t == 3 && joined(listed(d.song())) == "Drums,Bass,Chords,Track 4", "a new track is listed at once, after the shown ones");
+  name(d, 3, "Keys");
+  expect(joined(listed(d.song())) == "Drums,Bass,Chords,Keys", "a rename shows in the list");
   ops::insertPlaylistTrack(d, 1);
-  expect(joined(listed(d.song())) == "Drums,,Bass,Chords,,Keys", "an inserted track is listed where it was put");
+  expect(joined(listed(d.song())) == "Drums,,Bass,Chords,Keys", "an inserted track is listed where it was put");
   ops::deletePlaylistTrack(d, 1);
-  expect(joined(listed(d.song())) == "Drums,Bass,Chords,,Keys", "a deleted track leaves the list");
+  expect(joined(listed(d.song())) == "Drums,Bass,Chords,Keys", "a deleted track leaves the list");
   trackorder::movePlaylistTracks(d, {0}, 2);
-  expect(joined(listed(d.song())) == "Bass,Drums,Chords,,Keys", "a moved track moves in the list");
-  ops::deletePlaylistTrack(d, 4);
-  expect(joined(listed(d.song())) == "Bass,Drums,Chords,", "deleting the last used track shortens the list");
+  expect(joined(listed(d.song())) == "Bass,Drums,Chords,Keys", "a moved track moves in the list");
+  ops::deletePlaylistTrack(d, 3);
+  expect(joined(listed(d.song())) == "Bass,Drums,Chords", "deleting the last used track shortens the list");
   d.undo();
-  expect(joined(listed(d.song())) == "Bass,Drums,Chords,,Keys", "undo brings it back");
+  expect(joined(listed(d.song())) == "Bass,Drums,Chords,Keys", "undo brings it back");
   expect(static_cast<int>(d.song().tracks.size()) >= kDefaultPlaylistTracks - 1, "the empty tracks stay in the song (Studio)");
   const size_t before = d.song().tracks.size();
-  expect(trackmodes::addUsedTrack(d, 8) == 12 && trackmodes::usedTrackCount(d.song()) == 13, "eight new tracks at once, all listed");
+  expect(trackmodes::addUsedTrack(d, 8) == 11 && trackmodes::usedTrackCount(d.song()) == 12, "eight new tracks at once, all listed");
   expect(d.song().tracks.size() == before, "made from the empty tracks after the used ones (the song keeps its count)");
   d.undo();
-  expect(joined(listed(d.song())) == "Bass,Drums,Chords,,Keys", "the eight are one undo step");
+  expect(joined(listed(d.song())) == "Bass,Drums,Chords,Keys", "the eight are one undo step");
 }
 
 // K-112c (round 43): a new project made in Clips starts with the reference's new set's tracks.
@@ -149,7 +151,7 @@ void testStarter() {
   }
   expect(static_cast<int>(s.tracks.size()) == kDefaultPlaylistTracks && trackmodes::usedTrackCount(s) == 4, "the song keeps its 32 tracks, four listed");
   Song old = threeTracks();
-  expect(trackmodes::usedTrackCount(old) == 4 && old.tracks[3].name.empty(), "an older project is not changed (four shown, the fourth unnamed)");
+  expect(trackmodes::usedTrackCount(old) == 3 && old.tracks[3].name.empty(), "an older project is not changed (its three tracks shown, none added)");
   Song used = threeTracks();
   trackmodes::makeClipsStarterTracks(used);
   expect(used.tracks[0].name == "Drums" && used.tracks[3].name == "4 Audio", "tracks already in use keep their names");
@@ -169,7 +171,7 @@ void testNewTracks() {
   expect(joined(listed(d.song())) == "Drums,Bass,Chords,4 Audio,5 MIDI", "both are listed in order");
   d.undo();
   d.undo();
-  expect(joined(listed(d.song())) == "Drums,Bass,Chords,", "two undos put the set back");
+  expect(joined(listed(d.song())) == "Drums,Bass,Chords", "two undos put the set back");
 }
 
 // K-112c (round 45): the demo, opened in Clips, has its clips in the grid (Prepare the live area);
@@ -350,19 +352,19 @@ void testCollab() {
   net.add(&b);
   net.connect(&a, &b);
   settle(net, {&a, &b}, clock);
-  expect(joined(listed(b.doc.song())) == "Drums,Bass,Chords,", "collab: the joiner lists the same tracks");
+  expect(joined(listed(b.doc.song())) == "Drums,Bass,Chords", "collab: the joiner lists the same tracks");
   trackmodes::addUsedTrack(a.doc);  // Alex adds a track (in either view)
   settle(net, {&a, &b}, clock);
-  expect(joined(listed(b.doc.song())) == "Drums,Bass,Chords,,Track 5", "collab: a new track reaches the other person");
-  name(b.doc, 4, "Vox");  // Sam renames it
+  expect(joined(listed(b.doc.song())) == "Drums,Bass,Chords,Track 4", "collab: a new track reaches the other person");
+  name(b.doc, 3, "Vox");  // Sam renames it
   settle(net, {&a, &b}, clock);
-  expect(joined(listed(a.doc.song())) == "Drums,Bass,Chords,,Vox", "collab: a rename comes back");
-  trackorder::movePlaylistTracks(b.doc, {4}, 0);  // Sam moves it to the front
+  expect(joined(listed(a.doc.song())) == "Drums,Bass,Chords,Vox", "collab: a rename comes back");
+  trackorder::movePlaylistTracks(b.doc, {3}, 0);  // Sam moves it to the front
   settle(net, {&a, &b}, clock);
   expect(joined(listed(a.doc.song())) == "Vox,Drums,Bass,Chords", "collab: a move reaches the other person");
   ops::deletePlaylistTrack(a.doc, 2);  // Alex removes Bass
   settle(net, {&a, &b}, clock);
-  expect(joined(listed(b.doc.song())) == "Vox,Drums,Chords,", "collab: a removal reaches the other person");
+  expect(joined(listed(b.doc.song())) == "Vox,Drums,Chords", "collab: a removal reaches the other person");
   expect(songText(a) == songText(b), "collab: both songs are the same");
   const Tick scene = a.doc.song().barTicks() * 4;
   ops::extendLiveArea(b.doc, 2 * scene);  // Sam drops a file into the grid's second row
@@ -531,6 +533,178 @@ void testGroupEdits() {
   expect(s3.mixerTrack(am) && trackmodes::outputOf(*s3.mixerTrack(am)) == s3.masterId(), "moved out: it plays into Main again");
 }
 
+// Checkpoint 53 (K-300 round 09): copies are independent (N52-01), Delete leaves nothing (N52-05), clips
+// of a dropped file play through their track (N52-02), renames follow (N52-06), any layout's move keeps
+// the group routing, automation lanes (N52-10), instrument-named tracks renumber (N52-11).
+ObjectId addAudioClip(Document& d, int track, ObjectId mixer, const char* name) {
+  ObjectId ch = kNoId;
+  d.editSong("audio clip", [&](Song& x) {
+    Channel c;
+    c.id = ch = x.allocateId();
+    c.name = name;
+    c.plugin.type = "gl.sampler";
+    c.audioClip = true;
+    c.mixerTrack = mixer;
+    x.channels.push_back(c);
+    Clip k;
+    k.id = x.allocateId();
+    k.kind = ClipKind::Audio;
+    k.source = ch;
+    k.track = track;
+    k.start = 0;
+    k.length = 1536;
+    x.playlist.push_back(k);
+  });
+  return ch;
+}
+
+void testCheckpoint53() {
+  Song s0 = makeEmptySong();
+  s0.tracks.resize(kDefaultPlaylistTracks);
+  trackmodes::makeClipsStarterTracks(s0);
+  Document d;
+  d.reset(s0);
+  std::string why;
+  const ObjectId m3 = trackmodes::linkedMixer(d.song(), 2)->id, m4 = trackmodes::linkedMixer(d.song(), 3)->id;
+  const ObjectId loop = addAudioClip(d, 2, m3, "Loop 120"), lng = addAudioClip(d, 3, m4, "Long 120");
+  d.editMixerTrack(m4, "fx", [](MixerTrack& m) {
+    m.slots[0].plugin.type = "gl.eq";
+    m.volume = 0.5f;
+  });
+  const ObjectId syn = trackmodes::newInstrumentTrack(d, 0, "gl.synth", &why);
+  expect(syn != kNoId, ("an instrument on 1 MIDI: " + why).c_str());
+  const ObjectId pat = d.addPattern("Notes");
+  d.editPattern(pat, "notes", [syn](Pattern& p) { p.notes[syn] = {Note{}}; });
+  d.addClip(pat, 0, 0, 768);
+  expect(trackmodes::groupTracks(d, {2, 3}, &why) == 2, ("group 3 and 4: " + why).c_str());
+  const Song before = d.song();
+  const size_t chans0 = before.channels.size(), pats0 = before.patterns.size();
+
+  // N52-01: Duplicate of the group: own mixer tracks, own clip sources, devices and fader copied.
+  const int c = trackmodes::duplicateTracks(d, {2}, &why);
+  {
+    const Song& s = d.song();
+    expect(c == 5, ("the copy after the group: " + why).c_str());
+    const MixerTrack* gc = trackmodes::linkedMixer(s, 5);
+    const MixerTrack* a3 = trackmodes::linkedMixer(s, 6);
+    const MixerTrack* a4 = trackmodes::linkedMixer(s, 7);
+    expect(gc && a3 && a4 && trackmodes::outputOf(*a3) == gc->id && trackmodes::outputOf(*a4) == gc->id, "the copies play into the copied group");
+    expect(a4 && a4->slots[0].plugin.type == "gl.eq" && a4->volume == 0.5f, "the member's device and fader are copied");
+    ObjectId src3 = kNoId, src4 = kNoId;
+    for (const Clip& k : s.playlist) {
+      if (k.track == 6 && k.kind == ClipKind::Audio) src3 = k.source;
+      if (k.track == 7 && k.kind == ClipKind::Audio) src4 = k.source;
+    }
+    const Channel* s3 = s.channel(src3);
+    const Channel* s4 = s.channel(src4);
+    expect(src3 != loop && src4 != lng && s3 && s4, "the copied clips play copies of their sources");
+    expect(s3 && s4 && a3 && a4 && s3->mixerTrack == a3->id && s4->mixerTrack == a4->id, "through the copies' own mixer tracks");
+    expect(s.channel(loop) && s.channel(loop)->mixerTrack == m3 && s.channel(lng)->mixerTrack == m4, "the originals are untouched");
+  }
+  // A copied instrument track: its own instrument and mixer track, its notes on the copy.
+  const int ci = trackmodes::duplicateTracks(d, {0}, &why);
+  {
+    const Song& s = d.song();
+    const Channel* oc = trackmodes::linkedChannel(s, 0);
+    const Channel* cc = trackmodes::linkedChannel(s, ci);
+    expect(ci == 1 && oc && cc && cc->id != oc->id && cc->plugin.type == "gl.synth", ("the copied MIDI track has an instrument of its own: " + why).c_str());
+    expect(oc && cc && cc->mixerTrack != oc->mixerTrack && cc->mixerTrack != s.masterId(), "and a mixer track of its own");
+    const Pattern* cp = nullptr;
+    for (const Clip& k : s.playlist)
+      if (k.track == ci && k.kind == ClipKind::Pattern) cp = s.pattern(k.pattern);
+    expect(cp && cp->id != pat && cc && cp->notes.count(cc->id) && !cp->notes.count(syn), "its clip is a copy, its notes on the copied instrument");
+  }
+  d.undo();
+  d.undo();
+  expect(d.song() == before, "two undos: the set as before the copies");
+
+  // N52-05: Delete of the group frees its bus, its tracks' mixer tracks and their clip sources.
+  const ObjectId gid = trackmodes::linkedMixer(d.song(), 2)->id;
+  expect(trackmodes::deleteTracks(d, {2}, &why) == 3, ("delete the group: " + why).c_str());
+  {
+    const Song& s = d.song();
+    expect(joined(listed(s)) == "1 Synth,2 MIDI" || joined(listed(s)).find("Group") == std::string::npos, ("after delete: " + joined(listed(s))).c_str());
+    expect(trackmodes::usedTrackCount(s) == 2, "two tracks shown, no grey padding tracks");
+    expect(!s.channel(loop) && !s.channel(lng) && s.channels.size() == chans0 - 2, "the clip sources went with their tracks");
+    bool into = false;
+    for (const MixerTrack& m : s.mixer)
+      for (const Send& sd : m.sends) into = into || sd.to == gid || sd.to == m3 || sd.to == m4;
+    const MixerTrack* g = s.mixerTrack(gid);
+    expect(!into && g && g->name.empty() && s.mixerTrack(m4)->slots[0].plugin.type.empty(), "the bus and the tracks' mixer tracks are free again");
+    expect(s.patterns.size() == pats0, "patterns other tracks play stay");
+  }
+  d.undo();
+  expect(d.song() == before, "one undo: the group is back");
+
+  // N52-06: a rename takes the group's mixer track along (the members' Out names it).
+  expect(trackmodes::renameTrack(d, 2, "Drums"), "rename the group");
+  expect(trackmodes::linkedMixer(d.song(), 2)->name == "Drums", "its mixer track is renamed too");
+  d.undo();
+
+  // Checkpoint 53: a move made in any layout (no Clips call after it) keeps the routing: 1 MIDI's
+  // instrument moved into the group plays into it, moved out plays into Main again.
+  {
+    const ObjectId im = d.song().channel(syn)->mixerTrack;
+    expect(trackorder::movePlaylistTracks(d, {0}, 4), "move the instrument track into the group");
+    const Song& s = d.song();
+    const MixerTrack* g = trackmodes::linkedMixer(s, 1);
+    expect(s.tracks[1].groupSize == 3 && g && trackmodes::outputOf(*s.mixerTrack(im)) == g->id, "moved in: it plays into the group");
+    expect(trackorder::movePlaylistTracks(d, {3}, 0), "move it out again");
+    expect(trackmodes::outputOf(*d.song().mixerTrack(im)) == d.song().masterId(), "moved out: into Main");
+    d.undo();
+    d.undo();
+  }
+  // N52-11: an instrument-named track takes its new place's number after a move.
+  {
+    const std::string nm = std::string("1 ") + findPlugin("gl.synth")->name;
+    d.editPlaylistTrack(0, "name", [&](PlaylistTrack& t) { t.name = nm; });
+    Song s = d.song();
+    trackorder::reorderPlaylist(s, trackorder::playlistOrderAfterMove(s, {0}, 2));
+    trackmodes::renumberTrackNames(s);
+    expect(s.tracks[1].name == std::string("2 ") + findPlugin("gl.synth")->name, ("renumbered: " + s.tracks[1].name).c_str());
+  }
+  // N52-10: a lane for the group's fader sits after the group's tracks; Ungroup takes the lane too.
+  {
+    Song s = d.song();
+    const int lane = trackmodes::addAutomationLane(s, gid, "3 Group \xE2\x80\xBA Volume");
+    expect(lane == 5, "the lane right after the group's tracks");
+    AutomationClip ac;
+    ac.id = s.allocateId();
+    ac.owner = gid;
+    s.automations.push_back(ac);
+    Clip k;
+    k.id = s.allocateId();
+    k.kind = ClipKind::Automation;
+    k.source = ac.id;
+    k.track = lane;
+    k.length = 768;
+    s.playlist.push_back(k);
+    expect(trackmodes::isAutomationLane(s, lane) && !trackmodes::isAutomationLane(s, 2) && trackmodes::automationLanes(s, 6)[5], "it is an automation lane");
+    const size_t n = s.tracks.size();
+    expect(trackmodes::ungroupTracks(s, 2, &why), "ungroup");
+    expect(s.tracks.size() == n - 2, "the group and its emptied lane are gone");
+  }
+  // N52-02 / N52-08: a file dropped on an empty MIDI track makes it an audio track named as one, its
+  // clip playing through it.
+  {
+    Song s = d.song();
+    Channel c1;
+    c1.id = s.allocateId();
+    c1.plugin.type = "gl.sampler";
+    c1.mixerTrack = s.masterId();
+    s.channels.push_back(c1);
+    Clip k;
+    k.id = s.allocateId();
+    k.kind = ClipKind::Audio;
+    k.source = c1.id;
+    k.track = 1;
+    s.playlist.push_back(k);
+    expect(trackmodes::makeNamedAudioTrack(s, 1), "the MIDI track becomes an audio track");
+    const MixerTrack* m = trackmodes::linkedMixer(s, 1);
+    expect(s.tracks[1].name == "2 Audio" && m && s.channel(c1.id)->mixerTrack == m->id, "named 2 Audio, its clip through its own strip");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -548,5 +722,6 @@ int main() {
   testGroups();
   testNestedGroups();
   testGroupEdits();
+  testCheckpoint53();
   return finish();
 }

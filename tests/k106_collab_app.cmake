@@ -6,7 +6,8 @@
 #   2. again: the tracker types on row 4, the other adds a note later on; all four notes on both
 #      sides, nothing moved or quantised;
 #   3. presence: each side gets the other's edit cursor (the tracker's cursor; the other side's
-#      as set), by channel and pattern tick.
+#      as set), by channel and pattern tick;
+#   4. (cp16) the channel the other side made is a track of the Tracker joining it.
 #   Pairs: Tracker with Studio, Clips with Tracker, Tracker with Smooth (development layouts).
 #   Each side reads its report of a round before the other starts the next round's edits (the two
 #   windows count their own frames: on a slow runner one side's report came after the other's next
@@ -86,6 +87,7 @@ ${A2}80 waitfor collab-notes:Lead:4 90
 13 waitfor collab-channel:Lead 90
 14 waitfor collab-synced 60
 15 waitfor never 3
+16 tracker tracks
 ${B1}50 waitfor collab-notes:Lead:2 90
 51 waitfor collab-synced 60
 52 waitfor never 2
@@ -126,6 +128,15 @@ ${B2}80 waitfor collab-notes:Lead:4 90
   endforeach()
   if(missing)
     continue()
+  endif()
+  # cp16: the channel the other side made (Lead) is a track of its own in the Tracker joining
+  # (every rack channel has its track, a peer's new one too).
+  if(LB STREQUAL "tracker")
+    file(READ "${D}/run.out" ro)
+    string(REGEX MATCH "tracker tracks frame [0-9]+: n ([0-9]+) rack ([0-9]+)[^\n]*" tl "${ro}")
+    if(NOT tl OR NOT CMAKE_MATCH_1 STREQUAL CMAKE_MATCH_2 OR NOT tl MATCHES " Lead\\([0-9]+\\)")
+      fail("${LA}/${LB}: the peer's channel Lead is no track of the Tracker: '${tl}'")
+    endif()
   endif()
   foreach(round 1 2)
     file(READ "${D}/a-${round}.json" ja)

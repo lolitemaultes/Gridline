@@ -660,7 +660,7 @@ pattern|Kick › Noise
 pattern|Kick › Noise decay
 pattern|Kick › Pan
 pattern|Kick › Pitch
-pattern|Kick › Send level
+pattern|Kick › Send to Master
 pattern|Kick › Start pitch
 pattern|Kick › Stereo separation
 pattern|Kick › Sub
@@ -761,7 +761,7 @@ patternsource|Kick › Noise
 patternsource|Kick › Noise decay
 patternsource|Kick › Pan
 patternsource|Kick › Pitch
-patternsource|Kick › Send level
+patternsource|Kick › Send to Master
 patternsource|Kick › Start pitch
 patternsource|Kick › Stereo separation
 patternsource|Kick › Sub
@@ -1399,7 +1399,7 @@ rack|Kick › Noise
 rack|Kick › Noise decay
 rack|Kick › Pan
 rack|Kick › Pitch
-rack|Kick › Send level
+rack|Kick › Send to Master
 rack|Kick › Start pitch
 rack|Kick › Stereo separation
 rack|Kick › Sub

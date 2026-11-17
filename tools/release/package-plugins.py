@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
-"""Gridline Suite and Suite Mini plugin downloads: single-plugin zips and the all-plugins zip.
+"""Gridline Suite and Suite Mini plugin downloads: the all-plugins zip.
 
     package-plugins.py --suite gridline|mini --family macos|windows|linux|bsd --version V
                        --catalogue members.json --input [LABEL=]DIR [--input ...]
-                       --out DIR [--license LICENSE.txt] [--sign]
+                       --out DIR [--license LICENSE.txt] [--sign] [--singles | --singles-only]
     package-plugins.py --self-test
 
 Every plugin of a suite is the same engine binary; the member list inside a bundle
 ("gridline-members.txt") says which plugins it shows to hosts. From the whole-suite bundles the
-build made (one per format, "Gridline Suite.vst3", ".clap", ".component"), this writes:
+build made (one per format, "Gridline Suite.vst3", ".clap", ".component"), this writes the
+all-plugins zip, Gridline-Suite[-Mini]-<V>-<family>-all.zip: the whole-suite bundles, a PLUGINS.txt
+list, README.txt and LICENSE.txt. People who want some of the plugins use the installers
+(suite-installer.py), which tick plugins and formats.
 
-  * one zip per plugin and system family, Gridline-Suite[-Mini]-<Plugin>-<V>-<family>.zip, whose
-    bundles are copies of the suite's renamed to the plugin (Plasma.vst3, Plasma.clap,
-    Plasma.component) with a member list naming that plugin alone;
-  * the all-plugins zip, Gridline-Suite[-Mini]-<V>-<family>-all.zip: the whole-suite bundles, a
-    PLUGINS.txt list, README.txt and LICENSE.txt.
+Single-plugin zips are not part of a release: each carries the whole engine and is as large as the
+whole suite. Lean per-plugin binaries are planned; until then --singles (or --singles-only) still
+writes them, for tests only: one zip per plugin, Gridline-Suite[-Mini]-<Plugin>-<V>-<family>.zip,
+whose bundles are copies of the suite's renamed to the plugin (Plasma.vst3, Plasma.clap,
+Plasma.component) with a member list naming that plugin alone. The release page does not place them.
 
 --catalogue is `gridline suite-info <suite> --json`. Each --input is a folder holding the suite's
 bundles for one processor; LABEL names the processor in the archive (CLAP/x64/...) and for BSD the
@@ -335,8 +338,10 @@ def _place(family, label, fmt, name):
     return ["CLAP"] + ([label] if label else []) + [vendor, name]
 
 
-def package(suite, family, version, catalogue, inputs, out_dir, license_path=None, sign=False, only=None, singles_only=False):
-    """Writes the single-plugin zips and the all-plugins zip; returns the file names written."""
+def package(suite, family, version, catalogue, inputs, out_dir, license_path=None, sign=False, only=None, singles=False,
+            singles_only=False):
+    """Writes the all-plugins zip (and, for tests only, single-plugin zips); returns the file names written."""
+    singles = singles or singles_only
     sname = SUITES[suite]["name"]
     members = catalogue
     slugs = {}
@@ -378,7 +383,7 @@ def package(suite, family, version, catalogue, inputs, out_dir, license_path=Non
 
     with tempfile.TemporaryDirectory() as tmp:
         for m in members:
-            if only and m["type"] not in only:
+            if not singles or (only and m["type"] not in only):
                 continue
             s = slugs[m["type"]]
             top = os.path.join(tmp, "single", s, m["name"])
@@ -485,11 +490,17 @@ def self_test():
             out = os.path.join(tmp, "out", family)
             lic = os.path.join(tmp, "LICENSE")
             _write(lic, "licence text\n")
-            names = package("gridline", family, "0.8.0", cat, inputs, out, lic)
-            check(len(names) == 5, family + ": four singles and one all zip")
-            for n in names:
+            release = package("gridline", family, "0.8.0", cat, inputs, os.path.join(tmp, "release", family), lic)
+            check(release == ["Gridline-Suite-0.8.0-%s-all.zip" % family], family + ": a release writes the all zip alone: %s" % release)
+            for n in release:
                 e = downloads.classify(n, "0.8.0")
                 check(e is not None and e.get("product") == "suite", family + ": the release page places " + n)
+            # Single-plugin bundles stay for tests (the Objective-C class test loads two of them).
+            names = package("gridline", family, "0.8.0", cat, inputs, out, lic, singles=True)
+            check(len(names) == 5, family + ": with --singles, four singles and one all zip")
+            for n in names:
+                if n not in release:
+                    check(downloads.classify(n, "0.8.0") is None, family + ": the release page does not place " + n)
             check("Gridline-Suite-HiHat-0.8.0-%s.zip" % family in names, family + ": single name")
             check("Gridline-Suite-0.8.0-%s-all.zip" % family in names, family + ": all name")
             with zipfile.ZipFile(os.path.join(out, "Gridline-Suite-Plasma-0.8.0-%s.zip" % family)) as z:
@@ -551,15 +562,16 @@ def self_test():
                 check(len(tags) == 2, "macos: two single plugins, two factory names")
             # reproducible
             again = os.path.join(tmp, "again", family)
-            package("gridline", family, "0.8.0", cat, inputs, again, lic)
+            package("gridline", family, "0.8.0", cat, inputs, again, lic, singles=True)
             for n in names:
                 with open(os.path.join(out, n), "rb") as f1, open(os.path.join(again, n), "rb") as f2:
                     check(f1.read() == f2.read(), family + ": the same zip twice: " + n)
         # Mini names
         check(single_name("mini", "Trim", "0.8.0", "macos") == "Gridline-Suite-Mini-Trim-0.8.0-macos.zip", "mini single name")
         check(all_name("mini", "0.8.0", "bsd") == "Gridline-Suite-Mini-0.8.0-bsd-all.zip", "mini all name")
-        e = downloads.classify("Gridline-Suite-Mini-Trim-0.8.0-macos.zip", "0.8.0")
-        check(e is not None and e.get("product") == "mini", "the release page places a Mini single zip")
+        check(downloads.classify("Gridline-Suite-Mini-Trim-0.8.0-macos.zip", "0.8.0") is None, "no Mini single zip on the release page")
+        e = downloads.classify("Gridline-Suite-Mini-0.8.0-bsd-all.zip", "0.8.0")
+        check(e is not None and e.get("product") == "mini", "the release page places the Mini all zip")
     for f in fails:
         print("FAIL", f)
     print("package-plugins self-test: %s" % ("ok" if not fails else "%d failed" % len(fails)))
@@ -579,11 +591,12 @@ def main(argv):
     ap.add_argument("--license")
     ap.add_argument("--sign", action="store_true", help="macOS: re-sign changed bundles ad hoc")
     ap.add_argument("--only", action="append", help="only these plugin types (testing)")
-    ap.add_argument("--singles-only", action="store_true", help="no all-plugins zip (testing)")
+    ap.add_argument("--singles", action="store_true", help="also single-plugin zips (tests only, never released)")
+    ap.add_argument("--singles-only", action="store_true", help="single-plugin zips and no all-plugins zip (tests only)")
     a = ap.parse_args(argv[1:])
     with open(a.catalogue, encoding="utf-8") as f:
         catalogue = json.load(f)
-    names = package(a.suite, a.family, a.version, catalogue, _parse_inputs(a.input), a.out, a.license, a.sign, set(a.only or []), a.singles_only)
+    names = package(a.suite, a.family, a.version, catalogue, _parse_inputs(a.input), a.out, a.license, a.sign, set(a.only or []), a.singles, a.singles_only)
     for n in names:
         print(n)
     return 0

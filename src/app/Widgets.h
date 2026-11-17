@@ -301,6 +301,14 @@ void setFaderTicks(const float* norms, int count);
 void setFaderLocked(bool on);
 // R05-15: while set (> 0), ParamFader reads its value in dB (the volume curve with that unity position).
 void setFaderDb(double unity);
+// R09-03: the cap's centre y for a value (0..1) of a fader drawn at p with this size, in the style in use
+// (Classic, a control style, or the pointer). A dB scale beside a fader marks its levels here.
+float FaderCapY(ImVec2 p, ImVec2 size, float norm);
+// R09-03: the normalised position of a volume fader (dB law with `unity` at 0 dB) for a level in dB.
+float FaderNormForDb(const ParamDesc& d, double db, double unity);
+// R09-04: while on (Smooth's mixer and inspector strips), Option-click (Alt-click on Linux and Windows)
+// resets a knob or fader to its default instead of typing a value; double-click still resets too.
+void setAltClickResets(bool on);
 void DrawMeter(ImDrawList* dl, ImVec2 p, ImVec2 size, float gainL, float gainR, float holdL, float holdR, bool vertical = true);
 
 // Small coloured swatch that opens a palette popup; returns true when changed.

@@ -103,6 +103,7 @@ View > Window layout > Layout settings...			e-
 View > Workspaces > New workspace			e-
 View > Workspaces > Add starter workspaces			e-
 View > Workspaces > Close workspace			--
+View > Workspaces > Keep a copy in the project			e-
 View > Workspaces > Session	Ctrl+1	view.workspace1	ec
 View > Reopen closed pane tab			e-
 View > Reset window layout	Ctrl+Shift+H	view.resetLayout	e-
@@ -290,33 +291,6 @@ Tools > Riff from progression > Twelve-bar seed  (I IV I V)			e-
 Tools > Riff from progression > Night drive  (i VI III VII)			e-
 Tools > Riff from progression > Lament  (i iv VI v)			e-
 Tools > Riff from progression > Pulse  (i VII VI VII)			e-
-Tools > Composing > Piano roll selection > Select all	Ctrl+A		e-
-Tools > Composing > Piano roll selection > Deselect	Ctrl+D		e-
-Tools > Composing > Piano roll selection > Invert selection	Shift+I	piano.invertSelection	e-
-Tools > Composing > Piano roll selection > Every other note			e-
-Tools > Composing > Piano roll selection > Same pitches as selection			--
-Tools > Composing > Piano roll selection > Overlapping notes			e-
-Tools > Composing > Piano roll selection > Random notes	Shift+R	piano.selectRandom	e-
-Tools > Composing > Piano roll selection > Muted notes			e-
-Tools > Composing > Piano roll selection > Colour group > Group 1			e-
-Tools > Composing > Piano roll selection > Colour group > Group 2			e-
-Tools > Composing > Piano roll selection > Colour group > Group 3			e-
-Tools > Composing > Piano roll selection > Colour group > Group 4			e-
-Tools > Composing > Piano roll selection > Colour group > Group 5			e-
-Tools > Composing > Piano roll selection > Colour group > Group 6			e-
-Tools > Composing > Piano roll selection > Colour group > Group 7			e-
-Tools > Composing > Piano roll selection > Colour group > Group 8			e-
-Tools > Composing > Piano roll selection > Colour group > Group 9			e-
-Tools > Composing > Piano roll selection > Colour group > Group 10			e-
-Tools > Composing > Piano roll selection > Colour group > Group 11			e-
-Tools > Composing > Piano roll selection > Colour group > Group 12			e-
-Tools > Composing > Piano roll selection > Colour group > Group 13			e-
-Tools > Composing > Piano roll selection > Colour group > Group 14			e-
-Tools > Composing > Piano roll selection > Colour group > Group 15			e-
-Tools > Composing > Piano roll selection > Colour group > Group 16			e-
-Tools > Composing > Piano roll selection > Notes in the scale			--
-Tools > Composing > Piano roll selection > Notes outside the scale			--
-Tools > Composing > Open the last piano roll script again			--
 Tools > Composing > Save the note clipboard as a MIDI file			--
 Tools > Composing > Project scripts > Section markers...			e-
 Tools > Composing > Project scripts > Tempo ramp...			e-

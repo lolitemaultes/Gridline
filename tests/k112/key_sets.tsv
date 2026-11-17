@@ -1439,10 +1439,10 @@ live+cmd	track.ungroup	0	Ctrl+Shift+G;
 logic+cmd	track.group	0	
 logic+cmd	track.ungroup	0	
 studio	view.automation	0	
-live	view.automation	0	
+live	view.automation	0	A;
 logic	view.automation	0	A;
 studio+cmd	view.automation	0	
-live+cmd	view.automation	0	
+live+cmd	view.automation	0	A;
 logic+cmd	view.automation	0	A;
 studio	view.globalTracks	0	
 live	view.globalTracks	0	

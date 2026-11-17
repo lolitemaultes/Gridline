@@ -21,10 +21,25 @@ int gInjectFrame = -10;
 bool injectedNow(const char* id) { return gInjectFrame == ImGui::GetFrameCount() && gInjected == id; }
 
 bool gTyping = false;  // K-175
+bool gTypingARow = false;  // R09-10
 bool gEditorKeys = false;  // K-106
+// R09-10: the A-row typing keyboard (Smooth, Clips) uses only its own keys, as the reference's: the
+// notes (A W S E D F T G Y H U J K O L P ; ') and Z X (octave), C V (velocity). Every other key
+// (R records, Space plays, B, I, X ...) still runs its command.
+bool aRowKey(Key k) {
+  switch (k) {
+    case Key::A: case Key::W: case Key::S: case Key::E: case Key::D: case Key::F: case Key::T: case Key::G: case Key::Y:
+    case Key::H: case Key::U: case Key::J: case Key::K: case Key::O: case Key::L: case Key::P: case Key::Semicolon:
+    case Key::Apostrophe: case Key::Z: case Key::X: case Key::C: case Key::V:
+      return true;
+    default:
+      return false;
+  }
+}
 // The typing keyboard plays this chord: its command does not run.
 bool typingTakes(const char* id, const Chord& c) {
-  return (gTyping && playsOnTypingKeyboard(c) && std::strcmp(id, "options.typingKeyboard") != 0) || editorTakes(c);
+  return (gTyping && playsOnTypingKeyboard(c) && (!gTypingARow || aRowKey(c.key)) && std::strcmp(id, "options.typingKeyboard") != 0) ||
+         editorTakes(c);
 }
 
 const ImGuiKey kMap[] = {
@@ -90,7 +105,8 @@ Key fromImGui(ImGuiKey k) {
   return Key::None;
 }
 
-void setTypingKeyboard(bool on) { gTyping = on; }
+void setTypingKeyboard(bool on, bool aRow) { gTyping = on, gTypingARow = aRow; }
+bool typingKeyPlays(Key k) { return !gTypingARow || aRowKey(k); }
 void setEditorKeys(bool on) { gEditorKeys = on; }
 
 bool editorTakes(const Chord& c) {

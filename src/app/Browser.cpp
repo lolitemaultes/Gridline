@@ -320,7 +320,9 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
     ui::drawIcon(dl, rn.open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(std::round(x - 5), q.y + gRowH * 0.5f), 8, hov ? P.text : P.textDim);
   // Icons are tinted by kind (instruments, effects, note effects, folders, audio).
   ImU32 ic = iconCol ? iconCol : P.textFaint;
-  if (!iconCol) switch (icon) {
+  if (!iconCol && lg) {  // R09-09: Smooth's list glyphs are grey, folders in its blue, as 111 and 252 draw them
+    ic = icon == ui::Icon::Folder ? theme::mix(P.accent, P.text, 0.25f) : P.textDim;
+  } else if (!iconCol) switch (icon) {
       case ui::Icon::Plug: ic = theme::tintRole(role::kDraw, 0.85f); break;
       case ui::Icon::Mixer: ic = theme::tintRole(role::kSlice, 0.85f); break;
       case ui::Icon::Piano: ic = theme::tintRole(role::kSnap, 0.85f); break;

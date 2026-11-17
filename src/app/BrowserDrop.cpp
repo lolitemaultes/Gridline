@@ -1234,7 +1234,7 @@ bool performItems(App& a, const std::vector<xdrop::Item>& items, DropTarget targ
 
 namespace {
 
-enum class PlugAct { None, ReplaceChannel, NewChannel, InsertChannel, FreeSlot, Slot, NewTrackInstrument, ReplaceTrackInstrument };
+enum class PlugAct { None, ReplaceChannel, NewChannel, InsertChannel, FreeSlot, Slot, NewTrackInstrument, ReplaceTrackInstrument, NewAudioTrackEffect };
 
 struct PlugPlan {
   PlugAct act = PlugAct::None;
@@ -1301,8 +1301,17 @@ PlugPlan planPlugin(App& a, const std::string& type, DropTarget target, const Dr
     }
     if (fx) {
       const MixerTrack* m = trackmodes::linkedMixer(s, tr);
+      // N52-09: in Clips an audio effect dropped past the tracks (the drop area) makes a new audio
+      // track with the effect on it, as the reference's.
+      if (livelook::active(a) && tr >= trackmodes::usedTrackCount(s)) {
+        p.act = PlugAct::NewAudioTrackEffect;
+        p.track = tr;
+        p.label = fmtS(i18n::tr("Drop to make a new audio track with %s"), info->name);
+        return p;
+      }
       if (!m) {
-        p.why = i18n::tr("Effects go onto instrument and audio tracks (their mixer track) or into mixer slots");
+        p.why = livelook::active(a) ? i18n::tr("Audio effects go onto audio tracks, onto a MIDI track with an instrument, or past the tracks for a new audio track")
+                                    : i18n::tr("Effects go onto instrument and audio tracks (their mixer track) or into mixer slots");
         return p;
       }
       const int k = freeSlot(*m);
@@ -1444,12 +1453,15 @@ bool performPluginDrop(App& a, const std::string& type, DropTarget target, const
     }
     case PlugAct::NewTrackInstrument: {  // J-208: one undo step (a new channel + the track's link)
       std::string why;
+      a.doc.beginGroup("new instrument track");  // N52-04: Clips' naming of the track in the same step
       const ObjectId ch = trackmodes::newInstrumentTrack(a.doc, p.track, type, &why);
+      const bool shown = ch != kNoId && livelook::instrumentDropped(a, ch, info ? info->name : type);
+      a.doc.endGroup();
       if (ch == kNoId) {
         a.notify(why.empty() ? std::string(i18n::tr("This instrument can't play on that track")) : why, true);
         return false;
       }
-      if (!livelook::instrumentDropped(a, ch, info ? info->name : type)) a.showNewInstrument(ch);
+      if (!shown) a.showNewInstrument(ch);
       return true;
     }
     case PlugAct::ReplaceTrackInstrument: {
@@ -1462,9 +1474,10 @@ bool performPluginDrop(App& a, const std::string& type, DropTarget target, const
       // Checkpoint 52: a track in a group plays into the group (as it would have at grouping).
       if (const int t = trackmodes::instrumentTrackOf(a.doc.song(), p.owner); ok && t >= 0 && trackmodes::groupTrackOf(a.doc.song(), t) >= 0)
         a.doc.editSong("group routing", [t](Song& sg) { trackmodes::routeIntoItsGroup(sg, t); });
+      const bool shown = ok && livelook::instrumentDropped(a, p.owner, info ? info->name : type);  // (its renaming in the same step)
       a.doc.endGroup();
       if (!ok) return false;
-      if (!livelook::instrumentDropped(a, p.owner, info ? info->name : type)) a.showNewInstrument(p.owner);
+      if (!shown) a.showNewInstrument(p.owner);
       return true;
     }
     case PlugAct::FreeSlot:
@@ -1472,6 +1485,18 @@ bool performPluginDrop(App& a, const std::string& type, DropTarget target, const
       if (!a.doc.setSlotPlugin(p.owner, p.slot, type)) return false;
       a.selMixer = p.owner;
       return true;
+    case PlugAct::NewAudioTrackEffect: {  // N52-09: one undo step (the track and its effect)
+      a.doc.beginGroup("new audio track");
+      const int t = trackmodes::addAudioTrack(a.doc);
+      const MixerTrack* m = t >= 0 ? trackmodes::linkedMixer(a.doc.song(), t) : nullptr;
+      const ObjectId mid = m ? m->id : kNoId;
+      const bool ok = mid != kNoId && a.doc.setSlotPlugin(mid, 0, type);
+      a.doc.endGroup();
+      if (!ok) return false;
+      a.selMixer = mid;
+      a.playlist.trackSel = {t};
+      return true;
+    }
   }
   return false;
 }

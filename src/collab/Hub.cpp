@@ -379,12 +379,39 @@ bool hasGlobalIpv6(const std::string& ice) {
     if (lineHasGlobalIpv6(l)) return true;
   return false;
 }
+// the public addresses an address server saw (the router's side of each srflx candidate)
+std::vector<std::string> publicAddresses(const std::string& ice) {
+  std::vector<std::string> out;
+  for (const auto& l : candidateLines(ice)) {
+    if (l.find(" typ srflx") == std::string::npos) continue;
+    std::vector<std::string> f;
+    size_t p = 0;
+    while (p < l.size() && f.size() < 5) {
+      const size_t sp = l.find(' ', p);
+      f.push_back(l.substr(p, sp == std::string::npos ? std::string::npos : sp - p));
+      if (sp == std::string::npos) break;
+      p = sp + 1;
+    }
+    // a loopback address is never a router's public side (only a simulated internet uses one)
+    if (f.size() == 5 && !f[4].empty() && f[4].rfind("127.", 0) != 0 && f[4] != "::1") out.push_back(f[4]);
+  }
+  return out;
+}
+// one public address on both sides: the two computers sit behind the same router, so their local
+// addresses reach each other without crossing it
+bool sameRouter(const std::string& iceA, const std::string& iceB) {
+  const std::vector<std::string> a = publicAddresses(iceA), b = publicAddresses(iceB);
+  for (const auto& x : a)
+    if (std::find(b.begin(), b.end(), x) != b.end()) return true;
+  return false;
+}
 }  // namespace
 
 bool directImpossible(char natA, const std::string& iceA, char natB, const std::string& iceB) {
   const bool sym = (natA == 's' && natB != 'u') || (natB == 's' && natA != 'u');
   if (!sym) return false;
   if (offersOpenPort(iceA) || offersOpenPort(iceB)) return false;
+  if (sameRouter(iceA, iceB)) return false;
   return !(hasGlobalIpv6(iceA) && hasGlobalIpv6(iceB));
 }
 

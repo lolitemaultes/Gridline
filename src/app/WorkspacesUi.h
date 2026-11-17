@@ -22,6 +22,13 @@ float drawStrip(App& a, ImVec2 pos, float width);
 void menu(App& a);
 // Per frame: the switch keys (view.workspace1 .. 9, next, previous).
 void frameKeys(App& a);
+// K-237: the opt-in copy of the workspaces in the project (Song::workspaceCopy). On: the project carries
+// every layout's set, refreshed at each save; opening it gives a layout the copy's set only when the
+// person has no workspaces of their own there (one, or none). Off: nothing is written.
+bool projectCopyOn(const App& a);
+void setProjectCopy(App& a, bool on);
+void refreshProjectCopy(App& a);  // before a save
+void projectOpened(App& a);       // after a project opened
 // Dev checks (--dev-input "workspace add <name>|select <n>|close <n>|starters|dump").
 void devCommand(App& a, const std::vector<std::string>& args);
 

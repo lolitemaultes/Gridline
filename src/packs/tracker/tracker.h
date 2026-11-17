@@ -241,6 +241,9 @@ struct HeaderSamples {
   std::vector<std::pair<int, std::string>> list;
 };
 HeaderSamples headerSamples(App& a, ObjectId channel);
+// cp16 (CPU): the editor's sample selection for the channel, as a key that changes when it does (no
+// parsing): the header keeps its sample list until this, the channel or the song changes.
+uint64_t headerSampleSelKey(ObjectId channel);
 void headerSelectSample(App& a, ObjectId channel, int slot);
 // K-106 (SX-13, SX-15): the source instrument's slot `srcSlot` over the current instrument's
 // selected sample (one undo step), and two of the current instrument's samples trading places

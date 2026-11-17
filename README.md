@@ -122,22 +122,20 @@ Every app download also carries the [Gridline Suite](docs/gridline-suite.md) and
 
 ### Only the plugins
 
-For other music programs, without the app. Gridline Suite (121 instruments and effects) and Gridline Suite Mini (35 compact effects) each come three ways:
+For other music programs, without the app. Gridline Suite (121 instruments and effects) and Gridline Suite Mini (35 compact effects) each come two ways:
 
 | Way | macOS | Windows | Linux | FreeBSD, OpenBSD, NetBSD |
 |---|---|---|---|---|
 | **Installer**: tick the plugins and formats you want | `Gridline-Suite-<version>-macos-universal.pkg` | `Gridline-Suite-<version>-windows-setup.exe` (x64 and ARM64) | `Gridline-Suite-<version>-linux-x86_64-setup.run` (or `aarch64`) | `Gridline-Suite-<version>-<system>-x86_64-setup.run` |
 | **All plugins**: every plugin and format, no installer | `Gridline-Suite-<version>-macos-all.zip` | `...-windows-all.zip` | `...-linux-all.zip` | `...-bsd-all.zip` |
-| **Single plugins**: one plugin, every format | `Gridline-Suite-Plasma-<version>-macos.zip` | `...-windows.zip` | `...-linux.zip` | `...-bsd.zip` |
 
 Suite Mini files are named the same way with `Gridline-Suite-Mini-`. Formats: VST3 and CLAP everywhere, Audio Unit on macOS.
 
 **Which file do I want?**
 
 - You want Gridline itself: take the app download for your system. It includes every Gridline plugin.
-- You only want the plugins in another music program: take the **installer** for your system and pick the plugins and formats. Run it again to change your picks.
+- You only want the plugins in another music program: take the **installer** for your system and tick the plugins and formats you want, even just one. Run it again to change your picks.
 - You cannot or do not want to run an installer: take the **all plugins** zip and copy the folders yourself (a README inside says where).
-- You want one plugin: take its **single plugin** zip. Each one carries the whole sound engine, so if you want several, the installer or the all plugins zip is smaller and uses less memory.
 - Not sure about the format: CLAP or VST3 work in most programs; Audio Unit is for macOS programs that only take Audio Units.
 
 <details>

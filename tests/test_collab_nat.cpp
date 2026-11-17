@@ -541,13 +541,20 @@ void unitChecks() {
   const std::string mapped = "a=candidate:9 1 UDP 1694498815 198.51.100.7 40001 typ srflx raddr 0.0.0.0 rport 0\r\n";
   const std::string relay = "a=candidate:2 1 UDP 16777215 192.0.2.10 50000 typ relay raddr 0.0.0.0 rport 0\r\n";
   const std::string v6 = "a=candidate:3 1 UDP 2122260223 2001:db8::5 40002 typ host\r\n";
-  expect(directImpossible('s', srflx, 'c', srflx) && directImpossible('c', srflx, 's', srflx) && directImpossible('s', srflx, 's', srflx),
+  // the other home's router
+  const std::string far = "a=candidate:1 1 UDP 1686052607 203.0.113.9 40000 typ srflx raddr 0.0.0.0 rport 0\r\n";
+  expect(directImpossible('s', srflx, 'c', far) && directImpossible('c', srflx, 's', far) && directImpossible('s', srflx, 's', far),
          "a symmetric router against a known router, nothing open: direct can't work");
-  expect(!directImpossible('c', srflx, 'c', srflx), "two cone routers: hole punching can work");
-  expect(!directImpossible('s', srflx, 'u', srflx) && !directImpossible('u', srflx, 's', srflx), "an unknown router (an older Gridline) is never ruled out");
-  expect(!directImpossible('s', srflx, 'c', srflx + mapped) && !directImpossible('s', srflx + mapped, 'c', srflx), "a router port mapping on either side lets it in");
-  expect(!directImpossible('s', srflx + relay, 'c', srflx) && !directImpossible('s', srflx, 'c', srflx + relay), "a TURN relay on either side carries it");
-  expect(!directImpossible('s', srflx + v6, 'c', srflx + v6) && directImpossible('s', srflx + v6, 'c', srflx), "IPv6 on both sides avoids the routers");
+  expect(!directImpossible('c', srflx, 'c', far), "two cone routers: hole punching can work");
+  expect(!directImpossible('s', srflx, 'u', far) && !directImpossible('u', srflx, 's', far), "an unknown router (an older Gridline) is never ruled out");
+  expect(!directImpossible('s', srflx, 'c', far + mapped) && !directImpossible('s', srflx + mapped, 'c', far), "a router port mapping on either side lets it in");
+  expect(!directImpossible('s', srflx + relay, 'c', far) && !directImpossible('s', srflx, 'c', far + relay), "a TURN relay on either side carries it");
+  expect(!directImpossible('s', srflx + v6, 'c', far + v6) && directImpossible('s', srflx + v6, 'c', far), "IPv6 on both sides avoids the routers");
+  // CI (a FreeBSD VM): both apps behind one symmetric NAT, each mapped to its own port
+  const std::string samePort2 = "a=candidate:1 1 UDP 1686052607 198.51.100.7 53868 typ srflx raddr 0.0.0.0 rport 0\r\n";
+  expect(!directImpossible('s', srflx, 's', samePort2), "two computers behind the same router (one public address) connect locally");
+  const std::string loop = "a=candidate:1 1 UDP 1686052607 127.0.0.1 40000 typ srflx raddr 0.0.0.0 rport 0\r\n";
+  expect(directImpossible('s', loop, 'c', loop), "a loopback address (a simulated internet) never counts as one router");
   InviteInfo i;
   i.projectId = "p";
   i.creator = 1;

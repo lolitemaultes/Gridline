@@ -243,7 +243,8 @@ void toolsScoreLogItem(App& a) {
 
 void toolsNoteItems(App& a) {
   const std::string& script = lastPianoRollScript();
-  if (ImGui::MenuItem(i18n::tr("Open the last piano roll script again"), nullptr, false, !script.empty())) openPianoRollScript(a, script);
+  // N50-09 (checkpoint 53): piano roll scripts are Studio's; Clips' note editor has none.
+  if (!livelook::active(a) && ImGui::MenuItem(i18n::tr("Open the last piano roll script again"), nullptr, false, !script.empty())) openPianoRollScript(a, script);
   if (ImGui::MenuItem(i18n::tr("Save the note clipboard as a MIDI file"), nullptr, false, !a.piano.clipboard.empty())) {
     const std::string dir = browserui::contentDir(a, "Clipboard files");
     std::string path;

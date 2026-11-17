@@ -19,6 +19,9 @@ inline double faderGain(double v, double unity) {
   return x * x;
 }
 
+// R09-03: the inverse of faderGain: the fader value for a level in dB (one law for a fader's cap and its scale).
+inline double faderValueForDb(double db, double unity) { return unity * std::sqrt(std::pow(10.0, db / 20.0)); }
+
 // Balance pan law: centre is unity on both sides.
 inline void panGains(double pan, double& l, double& r) {
   l = pan > 0 ? 1.0 - pan : 1.0;

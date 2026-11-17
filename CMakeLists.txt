@@ -398,6 +398,12 @@ target_link_libraries(gridline_tests_k112d_smooth_view PRIVATE gridline_core)
 target_include_directories(gridline_tests_k112d_smooth_view PRIVATE src tests)
 target_compile_options(gridline_tests_k112d_smooth_view PRIVATE ${GL_WARN})
 add_test(NAME k112d_smooth_view COMMAND gridline_tests_k112d_smooth_view WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# K-112D (R09-03): one fader law and geometry for a mixer fader's cap and its dB scale.
+add_executable(gridline_tests_k112d_fader_scale tests/test_k112d_fader_scale.cpp)
+target_link_libraries(gridline_tests_k112d_fader_scale PRIVATE gridline_core)
+target_include_directories(gridline_tests_k112d_fader_scale PRIVATE src tests)
+target_compile_options(gridline_tests_k112d_fader_scale PRIVATE ${GL_WARN})
+add_test(NAME k112d_fader_scale COMMAND gridline_tests_k112d_fader_scale WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(gridline_tests_clip_playback tests/test_clip_playback.cpp)
 target_link_libraries(gridline_tests_clip_playback PRIVATE gridline_core)
 target_include_directories(gridline_tests_clip_playback PRIVATE src tests)
@@ -461,7 +467,7 @@ if(Python3_Interpreter_FOUND)
   # K-308: release file names and the release page's download sections (tools/release/downloads.py).
   add_test(NAME k308_release_downloads COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/release/downloads.py --self-test
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
-  # K-308: single-plugin zips and the all-plugins zip per system (tools/release/package-plugins.py).
+  # K-308: the all-plugins zip per system (tools/release/package-plugins.py; single-plugin bundles for tests only).
   add_test(NAME k308_package_plugins COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tools/release/package-plugins.py --self-test
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   # K-308 / K-309: the pick-your-plugins installers (.run installed and removed in a scratch folder,
@@ -539,6 +545,8 @@ target_link_libraries(gridline_tests_r08_settled_automation PRIVATE gridline_cor
 target_include_directories(gridline_tests_r08_settled_automation PRIVATE src tests)
 target_compile_options(gridline_tests_r08_settled_automation PRIVATE ${GL_WARN})
 add_test(NAME r08_settled_automation COMMAND gridline_tests_r08_settled_automation WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+# it times renders against each other: alone, so the other tests do not load one render more than another
+set_tests_properties(r08_settled_automation PROPERTIES RUN_SERIAL TRUE)
 add_executable(gridline_tests_k263_midi tests/test_k263_midi.cpp)
 target_link_libraries(gridline_tests_k263_midi PRIVATE gridline_core)
 target_include_directories(gridline_tests_k263_midi PRIVATE src tests)
@@ -2359,6 +2367,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k297_layout_state -P ${CMAKE_SOURCE_DIR}/tests/k297_layout_state_app.cmake)
     set_tests_properties(k297_layout_state PROPERTIES TIMEOUT 600)
+    # K-237: a pane tab dragged to another pane and back, the side panel rail, each layout's tab state
+    # across a switch and a restart, and the workspaces copy in a project (an older project unchanged).
+    add_test(NAME k237_tabs
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k237_tabs -P ${CMAKE_SOURCE_DIR}/tests/k237_tabs_app.cmake)
+    set_tests_properties(k237_tabs PROPERTIES TIMEOUT 600)
     # K-112: every window of the homes table opens where its home says, in every layout.
     add_test(NAME k112_inventory
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -2368,6 +2382,11 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
     add_test(NAME k106_tracker_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k106_tracker_app -P ${CMAKE_SOURCE_DIR}/tests/k106_tracker_app.cmake)
+    # K-106 cp16: a song arranged in the Tracker saves the same bytes from Studio, Clips, Smooth and back; reopened, it holds.
+    add_test(NAME k106_compat_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k106_compat_app
+                     -P ${CMAKE_SOURCE_DIR}/tests/k106_compat_app.cmake)
+    set_tests_properties(k106_compat_app PROPERTIES TIMEOUT 600)
     # K-112: the menu bars as data: Studio, Live and Logic trees as committed, Tracker's is Studio's, the palette reads the tree.
     add_test(NAME k112_textfit
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -2418,6 +2437,11 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
     add_test(NAME k112d_switch
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k112d_switch -P ${CMAKE_SOURCE_DIR}/tests/k112d_switch_app.cmake)
+    # K-112B (R09-01): in Smooth a Pencil click on a bus track's row adds an automation point, never a region.
+    add_test(NAME k112b_bus_pencil
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${GRIDLINE_DEMO_JSON}
+                     -DOUT=${CMAKE_BINARY_DIR}/k112b_bus_pencil -P ${CMAKE_SOURCE_DIR}/tests/k112b_bus_pencil_app.cmake)
+    set_tests_properties(k112b_bus_pencil PROPERTIES TIMEOUT 300)
     # K-112: a run whose layout never asks for the system menu bar never starts it (no D-Bus on Linux).
     add_test(NAME k112_sysmenu_idle
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json

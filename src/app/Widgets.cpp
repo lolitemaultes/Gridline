@@ -739,6 +739,8 @@ bool ResetMenuItem(const ParamDesc& d, double value, bool selection) {
 void SetNextKnobParam(ParamId pid) { gNextKnobParam = pid; }
 bool LastKnobWasReset() { return gKnobWasReset; }
 
+static bool gAltClickResets = false;  // R09-04 (setAltClickResets)
+
 bool ParamDoubleClickReset(ParamId pid, const ParamDesc& d, double& val, double pressed) {
   ParamDoubleClick act = ParamDoubleClick::Type;
   if (!DoubleClicked(d, pressed, &act)) return false;
@@ -1048,7 +1050,17 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   // J-136: right-click menu with the reset first, then type, then the
   // caller's items; Alt+click types directly.
   if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##kmenu");
-  if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && io.KeyAlt) ImGui::OpenPopup("##type");
+  if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && io.KeyAlt) {
+    if (gAltClickResets) {  // R09-04: Option-click resets (Smooth's strips), as the reference's
+      *value = d.def;
+      KnobDragSet(d.toNormalized(d.def));
+      changed = true;
+      gKnobWasReset = true;
+      if (released) *released = true;
+    } else {
+      ImGui::OpenPopup("##type");
+    }
+  }
   bool wantType = false;
   if (ImGui::BeginPopup("##kmenu")) {
     ImGui::TextDisabled("%s", d.name.c_str());
@@ -1175,6 +1187,23 @@ void setFaderLocked(bool on) { gFaderLocked = on; }
 static double gFaderDbUnity = -1;  // R05-15: > 0: the fader's value reads in dB (its unity position)
 void setFaderDb(double unity) { gFaderDbUnity = unity; }
 
+float FaderCapY(ImVec2 p, ImVec2 size, float norm) {
+  const look::geom::FaderSpec* spec = nullptr;
+  if (!gFaderPointer && look::styled()) switch (look::current()) {
+      case ControlStyle::Graphite: spec = &look::geom::kGraphiteFader; break;
+      case ControlStyle::Hairline: spec = &look::geom::kHairlineFader; break;
+      case ControlStyle::Lumen: spec = &look::geom::kLumenFader; break;
+      default: spec = &look::geom::kSlateFader; break;
+    }
+  return look::geom::faderCapY(p.x, p.y, size.x, size.y, norm, spec);
+}
+
+float FaderNormForDb(const ParamDesc& d, double db, double unity) {
+  return static_cast<float>(d.toNormalized(d.clamp(dsp::faderValueForDb(db, unity))));
+}
+
+void setAltClickResets(bool on) { gAltClickResets = on; }
+
 void setFaderTicks(const float* norms, int count) { gFaderTicks = count > 0 ? norms : nullptr, gFaderTickCount = gFaderTicks ? count : 0; }
 
 // J-137: the drawing of ParamFader alone (norm / defNorm 0..1: the value and the default mark).
@@ -1253,6 +1282,13 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   {  // J-136: double-click resets, or types when already the default
     double cv = *v;
     if (!gFaderLocked && ParamDoubleClickReset(pid, *d, cv, pressed)) changed = true, KnobDragSet(d->toNormalized(cv));
+  }
+  if (gAltClickResets && !gFaderLocked && ImGui::IsItemClicked(ImGuiMouseButton_Left) && io.KeyAlt) {  // R09-04: Option-click resets
+    a.doc.endGesture();
+    if (!mixerResetSelected(a, pid)) a.doc.setParam(pid, d->def, false);
+    a.doc.endGesture();
+    KnobDragSet(d->toNormalized(d->def));
+    changed = true;
   }
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   bool wantType = false;

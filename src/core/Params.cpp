@@ -188,6 +188,9 @@ std::string paramDisplayName(const Song& song, ParamId id) {
       const PluginInfo* p = findPlugin(song.mixer[static_cast<size_t>(mi)].slots[slot].plugin.type);
       n += " › " + (p ? p->name : std::string("Slot ") + std::to_string(slot + 1));
     }
+    // R09-07: a send's automation names its bus ("Keys › Send to Bus 1"), as the slot and the menu do.
+    if (id.index >= kSendBase && id.index < kSlotBase && id.index - kSendBase < song.mixer.size())
+      return n + " › Send to " + busName(song, id.index - kSendBase);
     return n + " › " + d->name;
   }
   return d->name;

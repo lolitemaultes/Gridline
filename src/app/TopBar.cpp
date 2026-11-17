@@ -45,6 +45,7 @@
 #include "../core/LayoutShell.h"
 #include "../core/LayoutStyle.h"
 #include "Theme.h"
+#include "TrackerView.h"
 #include "Widgets.h"
 #include "MeterUi.h"
 #include "MixerMeters.h"
@@ -402,7 +403,7 @@ struct DevRect {
   ImVec2 a, b;
   int frame = -1;
 };
-DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}, {"chroute", {}, {}}, {"chroutefree", {}, {}}, {"chroutelist", {}, {}}, {"tempoint", {}, {}}, {"tempofrac", {}, {}}, {"loupedrag", {}, {}}, {"taptempo", {}, {}}, {"tapmenu", {}, {}}, {"tapmenutap", {}, {}}, {"menutools", {}, {}}, {"bar_transport", {}, {}}, {"bar_tempo", {}, {}}, {"bar_pos", {}, {}}, {"bar_pattern", {}, {}}, {"bar_master", {}, {}}, {"bar_monitor", {}, {}}, {"bar_windows", {}, {}}, {"bar_more", {}, {}}, {"prstamp", {}, {}}, {"prstamplbl", {}, {}}, {"prstampchip", {}, {}}, {"brcollapse", {}, {}}, {"capture", {}, {}}, {"sessrec", {}, {}}, {"drawmode", {}, {}}, {"devswap", {}, {}}, {"devsave", {}, {}}, {"brchip", {}, {}}, {"devexpand", {}, {}}, {"devwindow", {}, {}}};
+DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}, {"chroute", {}, {}}, {"chroutefree", {}, {}}, {"chroutelist", {}, {}}, {"tempoint", {}, {}}, {"tempofrac", {}, {}}, {"loupedrag", {}, {}}, {"taptempo", {}, {}}, {"tapmenu", {}, {}}, {"tapmenutap", {}, {}}, {"menutools", {}, {}}, {"bar_transport", {}, {}}, {"bar_tempo", {}, {}}, {"bar_pos", {}, {}}, {"bar_pattern", {}, {}}, {"bar_master", {}, {}}, {"bar_monitor", {}, {}}, {"bar_windows", {}, {}}, {"bar_more", {}, {}}, {"prstamp", {}, {}}, {"prstamplbl", {}, {}}, {"prstampchip", {}, {}}, {"brcollapse", {}, {}}, {"capture", {}, {}}, {"sessrec", {}, {}}, {"drawmode", {}, {}}, {"devswap", {}, {}}, {"devsave", {}, {}}, {"brchip", {}, {}}, {"devexpand", {}, {}}, {"devwindow", {}, {}}, {"ptabsrc", {}, {}}, {"ptabdst", {}, {}}};
 float gMetroMirror = 1.0f;
 double gMetroBeat = 0;  // (dev: the song position, in beats, the glyph's pose was drawn for)
 bool gMetroTicking = false;  // (dev: ... whether it ticked then, and from which beat)
@@ -416,6 +417,7 @@ void noteRect(const char* name) { noteRectAt(name, ImGui::GetItemRectMin(), ImGu
 }  // namespace
 
 void devNoteRect(const char* name) { noteRect(name); }
+void devNoteRectAt(const char* name, float x0, float y0, float x1, float y1) { noteRectAt(name, ImVec2(x0, y0), ImVec2(x1, y1)); }
 void devTopBarFitWidth(float w) { gDevFitWidth = std::max(0.0f, w); }
 bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& y1) {
   for (const DevRect& r : gDevRects)
@@ -1888,6 +1890,18 @@ bool barPill(const char* id, ImVec2 p, ImVec2 size, ui::Icon icon, const char* l
         const float kx = i ? x0 + w - 1 - r : x0 + r;
         dl->AddCircleFilled(ImVec2(kx, y0 + (hh - 1) * 0.5f), r - 1.5f, ink, 12);
       }
+    } else if (icon == ui::Icon::Plug) {
+      // A1 (checkpoint 49): the Library as a stack of media (a card with a note on two cards behind
+      // it), Gridline's own glyph; the plug read as "plugins".
+      const float w = std::round(isz * 0.86f), h = std::round(isz * 0.62f);
+      const float x0 = std::round(c.x - w * 0.5f) + 0.5f, y1 = std::round(c.y + isz * 0.5f) - 0.5f, y0 = y1 - h;
+      dl->AddLine(ImVec2(x0 + 2, y0 - 3), ImVec2(x0 + w - 2, y0 - 3), ink, 1.5f);
+      dl->AddLine(ImVec2(x0 + 4, y0 - 6), ImVec2(x0 + w - 4, y0 - 6), ink, 1.5f);
+      dl->AddRect(ImVec2(x0, y0), ImVec2(x0 + w, y1), ink, 2.0f, 0, 1.5f);
+      const ImVec2 nh(std::round(c.x - 1.5f), std::round(y1 - h * 0.32f));  // the note's head, its stem and flag
+      dl->AddCircleFilled(nh, 1.9f, ink, 10);
+      dl->AddLine(ImVec2(nh.x + 1.6f, nh.y), ImVec2(nh.x + 1.6f, y0 + 2.5f), ink, 1.3f);
+      dl->AddLine(ImVec2(nh.x + 1.6f, y0 + 2.5f), ImVec2(nh.x + 4.0f, y0 + 4.5f), ink, 1.3f);
     } else if (known || newCount < 3) {
       if (!known) drawn.insert(static_cast<int>(icon)), ++newCount;
       ui::drawIcon(dl, icon, c, isz, ink);
@@ -2111,7 +2125,7 @@ static float drawLogicControlBar(App& a) {
     // else at the row's right end (the status bar's, which this layout has not).
     std::string proj = a.projectFile().empty() ? i18n::tr("Untitled project") : fs::path(a.projectFile()).stem().string();
     if (std::string shared = collabui::projectTitle(a); !shared.empty()) proj = shared;
-    const float tfs = theme::kFontCaption, menusEnd = x + 16, rowEnd = wp.x + W - kPad;
+    const float tfs = theme::kFontLabel + 1, menusEnd = x + 16, rowEnd = wp.x + W - kPad;  // A7: 12 px, dim, centred
     const float full = a.fontRegular->CalcTextSizeA(tfs, 1e9f, 0, proj.c_str()).x;
     const float tw = std::min(full, std::max(0.0f, rowEnd - menusEnd - 12));
     if (tw > 40) {
@@ -2375,6 +2389,8 @@ static float drawLogicControlBar(App& a) {
     // K-112b: a dark display in three sections: the position large and bold (bar and beat, each
     // captioned), the tempo, then the meter over the key.
     dl->AddRectFilled(l0, l1, theme::mix(P.field, P.ink, 0.55f), 8.0f);
+    // A5 (checkpoint 49): recessed, as the reference's: a soft inner shadow along the top, no stroke.
+    dl->AddRectFilled(ImVec2(l0.x + 1, l0.y), ImVec2(l1.x - 1, l0.y + 3), theme::withAlpha(P.ink, 0.22f), 8.0f, ImDrawFlags_RoundCornersTop);
     // Checkpoint 30: no outline (150, 205, 001: the display is a dark field on the bar, no stroke).
     noteRectAt("bar_display", l0, l1);
     const float chevW = 18;  // the mode chevron at the right end
@@ -2382,7 +2398,7 @@ static float drawLogicControlBar(App& a) {
     const float tempoW = std::round(lcdW * (lcdCustom ? 0.22f : 0.28f));
     const float third = posW + locW;  // where the tempo section starts
     for (const float sx : {lcdAlone ? -1.0f : posW, locW > 0 ? third : -1.0f, lcdAlone ? -1.0f : third + tempoW, lcdW - chevW})
-      if (sx > 0) dl->AddLine(ImVec2(l0.x + sx, l0.y + 8), ImVec2(l0.x + sx, l1.y - 8), theme::withAlpha(P.line, 0.9f));
+      if (sx > 0) dl->AddLine(ImVec2(l0.x + sx, l0.y + 8), ImVec2(l0.x + sx, l1.y - 8), theme::withAlpha(P.line, 0.6f));  // A5: quieter
     // Two rows of a field (custom mode), right-aligned, each in its own colour.
     const float rowF = theme::kFontBody;
     auto bars = [&](double tick) {  // bars : beats : ticks without the bar's leading zeros ("1:01:000")
@@ -2468,6 +2484,9 @@ static float drawLogicControlBar(App& a) {
       } else if (lcdMode == 4 || lcdMode == 0) {
         // R05-16: bar, beat, division and tick, each captioned (ref 300). In beats and project the
         // bar and beat stay large (ref 289) and the division and tick follow smaller.
+        // A4 (checkpoint 49): beats and project shows the bar and the beat only, large, as the
+        // reference's default display; division and tick are for Beats (4) and Custom.
+        const bool sub = lcdMode == 4;
         const Lbbdt q = lcdBbdt(s, at);
         const std::string f1 = std::to_string(q.bar), f2 = std::to_string(q.beat), f3 = std::to_string(q.div), f4 = std::to_string(q.tick);
         const float big = fs, small = lcdMode == 4 ? fs : std::round(fs * 0.55f);
@@ -2476,7 +2495,7 @@ static float drawLogicControlBar(App& a) {
         const float dig = pf->CalcTextSizeA(big, 1e9f, 0, "0").x, sdig = pf->CalcTextSizeA(small, 1e9f, 0, "0").x;
         const float gapBig = std::round(dig * 0.45f), gapSmall = std::round(sdig * 0.6f);
         const float wBar = dig * 3, wBeat = dig * std::max<size_t>(1, f2.size()), wDiv = sdig * std::max<size_t>(1, f3.size()), wTick = sdig * 3;
-        const float total = wBar + gapBig + wBeat + gapSmall * 2 + wDiv + wTick;
+        const float total = wBar + gapBig + wBeat + (sub ? gapSmall * 2 + wDiv + wTick : 0.0f);
         float x = std::round(l0.x + (posW - total) * 0.5f);
         const float yBig = cy, ySmall = std::round(cy + big - small - big * 0.06f);
         auto field = [&](const std::string& t, float w, float size, float y, bool pad) {
@@ -2493,14 +2512,16 @@ static float drawLogicControlBar(App& a) {
         const float cBar = field(f1, wBar, big, yBig, true);
         x += gapBig;
         const float cBeat = field(f2, wBeat, big, yBig, false);
-        x += gapSmall * 2;
-        const float cDiv = field(f3, wDiv, small, ySmall, false);
-        x += gapSmall;
-        const float cTick = field(f4, wTick, small, ySmall, false);
         caption(cBar, i18n::N_("Bar"));
         caption(cBeat, i18n::N_("Beat"));
-        caption(cDiv, i18n::N_("Div"));
-        caption(cTick, i18n::N_("Tick"));
+        if (sub) {
+          x += gapSmall * 2;
+          const float cDiv = field(f3, wDiv, small, ySmall, false);
+          x += gapSmall;
+          const float cTick = field(f4, wTick, small, ySmall, false);
+          caption(cDiv, i18n::N_("Div"));
+          caption(cTick, i18n::N_("Tick"));
+        }
       } else if (barsBeats && c1 != std::string::npos && c2 != std::string::npos) {  // "19.2": bar, beat
         const std::string barS = std::to_string(std::atoi(posText.substr(0, c1).c_str()));
         const std::string beatS = std::to_string(std::atoi(posText.substr(c1 + 1, c2 - c1 - 1).c_str()));
@@ -2725,7 +2746,8 @@ static float drawLogicControlBar(App& a) {
       // Checkpoint 32: in a dark rounded field as tall as the pills (070 and 158 set the output meter in
       // one, the display's colour), the slider and its meter centred in it.
       const float vw = std::min(120.0f, masterRoom), vx = right0 - 16 - vw, fy0 = std::round(top + (barH - 28) * 0.5f), vy = fy0 + 10;
-      dl->AddRectFilled(ImVec2(vx - 8, fy0), ImVec2(vx + vw + 8, fy0 + 28), theme::mix(P.field, P.ink, 0.55f), 8.0f);
+      // A6 (checkpoint 49): no black well: the slider's grey track on the bar, its meter in it, and a
+      // light knob, as the reference's output slider reads stopped or playing.
       ImGui::SetCursorScreenPos(ImVec2(vx - 4, vy - 6));
       ImGui::InvisibleButton("##lb_mvol", ImVec2(vw + 8, 24));
       const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
@@ -2752,7 +2774,7 @@ static float drawLogicControlBar(App& a) {
           const float db = pk > 0.00001f ? 20.0f * std::log10(pk) : -60.0f;
           const float f = std::clamp((db + 60.0f) / 66.0f, 0.0f, 1.0f);
           const float my = k == 0 ? cy - 1.5f - bh : cy + 1.5f;
-          dl->AddRectFilled(ImVec2(vx, my), ImVec2(vx + vw, my + bh), theme::mix(P.field, P.ink, 0.35f), 2.0f);
+          dl->AddRectFilled(ImVec2(vx, my), ImVec2(vx + vw, my + bh), theme::mix(P.surface700, P.text, 0.10f), 2.0f);
           if (f > 0) {
             dl->AddRectFilled(ImVec2(vx, my), ImVec2(vx + vw * std::min(f, hot), my + bh), theme::rgb(theme::role::kPlay), 2.0f);
             if (f > hot) dl->AddRectFilled(ImVec2(vx + vw * hot, my), ImVec2(vx + vw * f, my + bh), theme::rgb(0xE8C33A), 2.0f);
@@ -2762,8 +2784,8 @@ static float drawLogicControlBar(App& a) {
         }
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) clipHold[0] = clipHold[1] = 0;
         const float kr = 7.0f;
-        dl->AddCircleFilled(ImVec2(tx, cy), kr, theme::withAlpha(theme::mix(P.text, P.surface700, 0.15f), hov || act ? 0.85f : 0.6f), 20);
-        dl->AddCircle(ImVec2(tx, cy), kr, theme::withAlpha(P.ink, 0.35f), 20, 1.0f);
+        dl->AddCircleFilled(ImVec2(tx, cy + 0.5f), kr + 0.5f, theme::withAlpha(P.ink, 0.35f), 20);  // a soft shadow
+        dl->AddCircleFilled(ImVec2(tx, cy), kr, hov || act ? theme::mix(P.text, P.surface700, 0.05f) : theme::mix(P.text, P.surface700, 0.16f), 20);
         if (hov || act) {
           const std::string tip = std::string(i18n::tr("Master volume")) + ": " + d->format(v.value_or(d->def));
           ui::Hint(tip.c_str());
@@ -2831,6 +2853,19 @@ void drawStatusBar(App& a) {
   }
   const auto& P = pal();
   ImGuiViewport* vp = ImGui::GetMainViewport();
+  // K-106 cp16: the Tracker has no app status bar and no cards for plain messages: they go to the
+  // line the page in front shows them in (the pattern bar, a page's title), as the classic tracker
+  // says things in its own text line. Errors keep their cards (a click copies their details).
+  if (layoutui::active() == layout::Preset::Tracker && layoutui::shellBuilt(a, layout::Preset::Tracker)) {
+    for (auto it = a.toasts.begin(); it != a.toasts.end();) {
+      if (it->error) {
+        ++it;
+        continue;
+      }
+      trackerview::status(it->text);
+      it = a.toasts.erase(it);
+    }
+  }
   if (layoutui::statusBarHeight() <= 0) {  // K-112: a layout without a status bar (Logic): only the cards
     drawNotifications(a, ImVec2(vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y), vp->WorkSize.x, theme::kFontCaption);
     return;

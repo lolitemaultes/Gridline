@@ -287,12 +287,62 @@ float drawStrip(App& a, ImVec2 pos, float width) {
   return kStripH;
 }
 
+namespace {
+// Every layout's set as the project copy keeps it (the active layout's always, with today's arrangement).
+std::map<std::string, std::string> copyNow(App& a) {
+  std::map<std::string, std::string> m;
+  const Preset now = layoutui::active();
+  for (int k = 0; k < layout::kLayoutCount; ++k) {
+    const Preset p = static_cast<Preset>(k);
+    ws::Set s = load(a, p);
+    if (p == now) {
+      if (s.items.empty()) s = ws::initial(p, capture(a, p));
+      ws::record(s, capture(a, p));
+    }
+    if (!s.items.empty()) m[layout::id(p)] = ws::toJson(s);
+  }
+  return m;
+}
+}  // namespace
+
+bool projectCopyOn(const App& a) { return !a.doc.song().workspaceCopy.empty(); }
+
+void setProjectCopy(App& a, bool on) {
+  std::map<std::string, std::string> m;
+  if (on) m = copyNow(a);
+  if (a.doc.song().workspaceCopy != m) a.doc.patchSong([&m](Song& s) { s.workspaceCopy = m; });
+}
+
+void refreshProjectCopy(App& a) {
+  if (!projectCopyOn(a)) return;
+  const std::map<std::string, std::string> m = copyNow(a);
+  if (a.doc.song().workspaceCopy != m) a.doc.patchSong([&m](Song& s) { s.workspaceCopy = m; });
+}
+
+void projectOpened(App& a) {
+  const std::map<std::string, std::string> copy = a.doc.song().workspaceCopy;
+  if (copy.empty()) return;  // an older project, or one without the copy: nothing changes
+  const Preset now = layoutui::active();
+  for (int k = 0; k < layout::kLayoutCount; ++k) {
+    const Preset p = static_cast<Preset>(k);
+    const auto it = copy.find(layout::id(p));
+    if (it == copy.end() || load(a, p).items.size() > 1) continue;  // the person's own workspaces win
+    ws::Set s = ws::fromJson(it->second);
+    if (s.items.size() <= 1) continue;
+    store(a, p, s);
+    if (p == now) apply(a, p, s.items[static_cast<size_t>(s.active)].current);
+  }
+}
+
 void menu(App& a) {
   const Preset p = layoutui::active();
   ws::Set s = current(a, p);
   if (ImGui::MenuItem(i18n::tr("New workspace"))) addNew(a, "");
   if (ImGui::MenuItem(i18n::tr("Add starter workspaces"))) addStarters(a);
   if (ImGui::MenuItem(i18n::tr("Close workspace"), nullptr, false, s.items.size() > 1)) closeIndex(a, s.active);
+  ImGui::Separator();
+  // K-237: an opt-in copy in the project, for another computer or a person without workspaces of their own.
+  if (bool on = projectCopyOn(a); ImGui::MenuItem(i18n::tr("Keep a copy in the project"), nullptr, &on)) setProjectCopy(a, on);
   ImGui::Separator();
   for (int i = 0; i < static_cast<int>(s.items.size()); ++i) {
     char id[32] = "";
@@ -329,6 +379,7 @@ void devCommand(App& a, const std::vector<std::string>& args) {
   else if (c == "close") closeIndex(a, std::atoi(arg.c_str()));
   else if (c == "undo") undoClose(a);
   else if (c == "starters") addStarters(a);
+  else if (c == "copy") setProjectCopy(a, arg == "on");  // K-237: the opt-in copy in the project
   else if (c == "rename" && args.size() > 2) {
     ws::Set s = current(a, p);
     std::string name = args[2];
@@ -338,6 +389,7 @@ void devCommand(App& a, const std::vector<std::string>& args) {
     const ws::Set s = current(a, p);
     std::printf("WORKSPACES %s active %d:", layout::id(p), s.active);
     for (const ws::Workspace& w : s.items) std::printf(" [%s%s]", w.name.c_str(), w.changed() ? " *" : "");
+    std::printf(" copy %s", projectCopyOn(a) ? "on" : "off");
     std::printf("\n");
     std::fflush(stdout);
   }

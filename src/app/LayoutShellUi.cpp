@@ -122,6 +122,7 @@ bool gRebuild = false;
 std::map<std::string, ImGuiID> gNodes;  // region -> dock node of the last build (where its windows dock)
 std::map<std::string, ImGuiID> gOuter;  // region -> its whole node (with its title strip)
 std::map<std::string, ImGuiID> gStrip;  // Segmented region -> its title strip node
+std::map<std::string, ImGuiID> gRail;   // K-237: Rail region -> its vertical tab rail node
 Preset gBuiltFor = Preset::Count;
 int gBuiltFrame = -100;  // K-297: the frame the dock tree was last built
 std::set<std::string> gClosedByGroup;  // windows an exclusive region closed (open for the person)
@@ -142,11 +143,39 @@ int gLogicRestoreUntil = -1;
 void restoreLogicWindows(App& a);
 std::vector<std::string> frontTabs(App& a, Preset p);
 void bringFronts(Preset p, const std::vector<std::string>& fronts, const std::set<std::string>* open, bool trackerPages);
+
+// K-237: windows whose tab the person dragged to another pane (State::moved) live there: their home
+// in this layout is the table's with that pane as its region. Kept in step with the region state.
+std::map<std::string, layout::Home> gMovedHome[layout::kLayoutCount];
+std::map<std::string, std::string> gMovedFrom[layout::kLayoutCount];
+void syncMoved(Preset p, const layout::State& st) {
+  const int k = static_cast<int>(p);
+  if (k < 0 || k >= layout::kLayoutCount || gMovedFrom[k] == st.moved) return;
+  gMovedFrom[k] = st.moved;
+  gMovedHome[k].clear();
+  for (const auto& [w, region] : st.moved)
+    if (const layout::Item* it = layout::findWindow(w); it && layout::findRegion(p, region)) {
+      layout::Home h = it->home[k];
+      h.region = layout::findRegion(p, region)->id;  // (the shell's own text: it lives as long as the program)
+      gMovedHome[k][w] = h;
+    }
+}
+// A window's home in layout p, with a moved tab's pane.
+const layout::Home& homeIn(const layout::Item& it, Preset p) {
+  const int k = static_cast<int>(p);
+  if (k >= 0 && k < layout::kLayoutCount && *it.window && !gMovedHome[k].empty())
+    if (const auto f = gMovedHome[k].find(it.window); f != gMovedHome[k].end()) return f->second;
+  return it.home[k];
+}
+layout::Home windowHomeIn(const std::string& window, Preset p) {
+  if (const layout::Item* it = layout::findWindow(window)) return homeIn(*it, p);
+  return layout::windowHome(window, p);
+}
 }  // namespace
 
 layout::State regionState(const App& a, Preset p) {
   const int k = static_cast<int>(p);
-  if (hasDevOverride() && gRunStateSet[k]) return gRunState[k];
+  if (hasDevOverride() && gRunStateSet[k]) return syncMoved(p, gRunState[k]), gRunState[k];
   // Read every frame: parsed only when the stored text changed.
   static std::string text[layout::kLayoutCount];
   static layout::State parsed[layout::kLayoutCount];
@@ -158,11 +187,13 @@ layout::State regionState(const App& a, Preset p) {
     text[k] = std::move(now);
     have[k] = true;
   }
+  syncMoved(p, parsed[k]);
   return parsed[k];
 }
 
 void setRegionState(App& a, Preset p, const layout::State& st) {
   const int k = static_cast<int>(p);
+  syncMoved(p, st);
   if (hasDevOverride()) {
     gRunState[k] = st;
     gRunStateSet[k] = true;
@@ -195,7 +226,7 @@ void setRegionVisible(App& a, const std::string& region, bool on, bool alone) {
   }
   // A hidden region's windows close with it; a shown one opens its default windows.
   for (const layout::Item& it : layout::items()) {
-    const layout::Home& h = it.home[static_cast<int>(p)];
+    const layout::Home& h = homeIn(it, p);
     if (!*it.window || region != h.region) continue;
     if (bool* f = windowOpenFlag(a, it.window)) {
       if (!on) *f = false;
@@ -258,6 +289,7 @@ void buildShell(App& a, Preset p, ImGuiID dockspace, ImVec2 size) {
   gNodes.clear();
   gOuter.clear();
   gStrip.clear();
+  gRail.clear();
   // The same walk as layout::solve: each region splits off what is left of its parent.
   std::map<std::string, ImGuiID> rest{{"", dockspace}};
   std::map<std::string, ImVec2> restSize{{"", size}};
@@ -290,6 +322,21 @@ void buildShell(App& a, Preset p, ImGuiID dockspace, ImVec2 size) {
       node = body;
       own.y -= layout::kPaneStripH;
       if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(node)) n->SizeRef = own;
+    } else if (r.tabs == layout::TabStyle::Rail && own.x > layout::kPaneRailW * 3) {
+      // K-237: a Rail region: a narrow vertical tab rail along its outer edge names its windows.
+      ImGuiID rail = 0, body = 0;
+      const ImGuiDir side = r.edge == layout::Edge::Left ? ImGuiDir_Left : ImGuiDir_Right;
+      ImGui::DockBuilderSplitNode(node, side, layout::kPaneRailW / own.x, &rail, &body);
+      if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(rail)) {
+        n->SizeRef = ImVec2(layout::kPaneRailW, own.y);
+        n->SetLocalFlags(n->LocalFlags | ImGuiDockNodeFlags_NoTabBar | ImGuiDockNodeFlags_NoDockingOverMe | ImGuiDockNodeFlags_NoDockingSplit |
+                         ImGuiDockNodeFlags_NoResizeX);
+      }
+      ImGui::DockBuilderDockWindow(stripWindowName(r.id).c_str(), rail);
+      gRail[r.id] = rail;
+      node = body;
+      own.x -= layout::kPaneRailW;
+      if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(node)) n->SizeRef = own;
     }
     rest[r.id] = node;
     restSize[r.id] = own;
@@ -300,7 +347,7 @@ void buildShell(App& a, Preset p, ImGuiID dockspace, ImVec2 size) {
       // A Segmented region's strip names its windows, so it draws no tab bar; in Logic, the single-window
       // panes (TabStyle::None) title themselves too. Elsewhere a None region keeps its tab bar: a window
       // brought forward (a chip opening the master chain) selects its tab there.
-      if (r.tabs == layout::TabStyle::Segmented || (r.tabs == layout::TabStyle::None && p == Preset::Logic))
+      if (layout::hasPaneTabs(r) || (r.tabs == layout::TabStyle::None && p == Preset::Logic))
         if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(rest[r.id])) n->SetLocalFlags(n->LocalFlags | ImGuiDockNodeFlags_NoTabBar);
     }
   gNodes[sh.centre] = rest[""];
@@ -312,7 +359,7 @@ void buildShell(App& a, Preset p, ImGuiID dockspace, ImVec2 size) {
   // Every homed window into its region (closed ones too: they open there later).
   for (const layout::Item& it : layout::items()) {
     if (!*it.window) continue;
-    const layout::Home& h = it.home[static_cast<int>(p)];
+    const layout::Home& h = homeIn(it, p);
     if (h.kind != HomeKind::Dock && h.kind != HomeKind::Part) continue;
     const ImGuiID node = regionNode(h.region);
     if (node) ImGui::DockBuilderDockWindow(it.window, node);
@@ -366,7 +413,7 @@ void showShellWindows(App& a, Preset p) {
     if (!*it.window) continue;
     bool* f = windowOpenFlag(a, it.window);
     if (!f) continue;
-    const layout::Home& h = it.home[static_cast<int>(p)];
+    const layout::Home& h = homeIn(it, p);
     const bool homed = (h.kind == HomeKind::Dock || h.kind == HomeKind::Part) && *h.region;
     if (!homed) continue;  // floating windows and dialogs keep their state
     *f = h.openByDefault && layout::visible(sh, st, h.region);
@@ -393,7 +440,7 @@ namespace {
 // K-297: the windows that make a layout's pane set: homed in one of its regions, or a new part (an "N"
 // row) that floats there. Dialogs and the old floating windows keep their own state across switches.
 bool paneOf(const layout::Item& it, Preset p) {
-  const layout::Home& h = it.home[static_cast<int>(p)];
+  const layout::Home& h = homeIn(it, p);
   if ((h.kind == HomeKind::Dock || h.kind == HomeKind::Part) && *h.region) return true;
   return it.id[0] == 'N' && (h.kind == HomeKind::Float || h.kind == HomeKind::Part);
 }
@@ -419,7 +466,7 @@ void leaveLayout(App& a) {
       bool parent = false, held = false, homed = false;
       for (const layout::Region& c : sh.regions) parent = parent || std::string(c.parent) == r.id;
       for (const layout::Item& it : layout::items()) {
-        const layout::Home& h = it.home[static_cast<int>(p)];
+        const layout::Home& h = homeIn(it, p);
         if (!*it.window || r.id != std::string(h.region) || (h.kind != HomeKind::Dock && h.kind != HomeKind::Part)) continue;
         homed = true;
         const bool* f = windowOpenFlag(a, it.window);
@@ -458,7 +505,7 @@ bool keepBandSizes(Preset p, layout::State& st) {
 std::string panesKey(Preset p) { return std::string("layout.") + layout::id(p) + ".panes"; }
 // The windows kept across a restart: a shell's panes; Studio's docked and floating windows.
 bool keptAcrossRuns(const App& a, const layout::Item& it, Preset p) {
-  const HomeKind k = it.home[static_cast<int>(p)].kind;
+  const HomeKind k = homeIn(it, p).kind;
   // K-297 (round 8): a shell's floating windows too (Smooth's groove editor and master chain came back closed).
   // K-297 (round 9): not the dialogs (Settings, About, Project info: modal in Studio): Smooth reopened
   // Settings after a restart, which no other layout does.
@@ -474,7 +521,7 @@ std::vector<std::string> frontTabs(App& a, Preset p) {
   std::vector<std::string> v;
   if (!shellBuilt(a, p) || gBuiltFor != p) return v;
   for (const layout::Item& it : layout::items()) {
-    const layout::Home& h = it.home[static_cast<int>(p)];
+    const layout::Home& h = homeIn(it, p);
     if (!*it.window || !*h.region || (h.kind != HomeKind::Dock && h.kind != HomeKind::Part)) continue;
     const ImGuiWindow* w = ImGui::FindWindowByName((std::string("###") + it.window).c_str());
     if (!w) w = ImGui::FindWindowByName(it.window);
@@ -490,7 +537,7 @@ void bringFronts(Preset p, const std::vector<std::string>& fronts, const std::se
   for (const std::string& front : fronts) {
     const layout::Item* it = layout::findWindow(front);
     if (!it || !*it->window || (open && !open->count(it->window))) continue;
-    if (p == Preset::Tracker && std::strcmp(it->home[static_cast<int>(p)].region, "tracker.pages") == 0) {
+    if (p == Preset::Tracker && std::strcmp(homeIn(*it, p).region, "tracker.pages") == 0) {
       if (!trackerPages) continue;
       trackerview::bringPage(it->window);
       trackerview::setStartPage(it->window);  // K-297 (round 8): the Tracker's first frame on screen shows it, not the pattern page
@@ -540,7 +587,13 @@ void enterLayout(App& a, Preset to) {
   // K-284: a layout's first visit in a run opens its designed regions; K-297: a later visit opens them
   // as they were left (its panes come back in showShellWindows).
   const auto kept = gKept.find(k);
-  setRegionState(a, to, kept != gKept.end() ? kept->second.state : layout::State{});
+  layout::State designed;
+  if (kept == gKept.end()) {  // K-237: the person's tab order, pins and moved tabs are theirs, not the arrangement's
+    const layout::State before = regionState(a, to);
+    designed.tabs = before.tabs;
+    designed.moved = before.moved;
+  }
+  setRegionState(a, to, kept != gKept.end() ? kept->second.state : designed);
   if (kept != gKept.end()) gRestorePanes.insert(k);
   if (!shellBuilt(a, to)) return;
   // K-297: another layout's new parts do not follow into this one as stray floating windows (the
@@ -600,18 +653,44 @@ panetabs::History& tabHistory() {
   return h;
 }
 std::string gTabMenu;
-bool gAudioOn = false;  // R04-13: Smooth's audio editor holds its pane (paneStrip)
 
 using TabCands = std::map<std::string, std::pair<const StripName*, bool*>>;
+
+// R04-13: in Smooth the audio editor (Loupe pinned into the lower pane) has no window flag: its tab
+// stands on this one, lit while it holds the pane, so a tab is always lit for the editor shown.
+bool gAudioOn = false;
+const StripName kAudioSeg = {"Loupe", i18n::N_("Audio"), true};
+
+// Shows a pane tab's window (the region's one-at-a-time rule closes the one shown).
+void showPaneTab(App& a, bool* f) {
+  if (f == &gAudioOn) {  // as the editors' key shows the audio editor
+    if (bool* sm = windowOpenFlag(a, "Smart controls")) *sm = false;
+    a.settings.set("ui.loupePinned", false);
+    toggleTracksAudioEditor(a);  // (the selected audio region's sound, else the focused track's)
+    return;
+  }
+  *f = true;
+  if (gAudioOn) {  // the audio editor gives the pane back (it has no flag for that rule)
+    a.settings.set("ui.loupePinned", false);
+    packs::closeAudioEditorWindows(a);
+    gAudioOn = false;
+  }
+}
+
 // Closes a pane tab: refused for a pinned tab or the last one. When it was the one shown, its
 // right-hand neighbour shows instead.
-void closeTab(App&, const std::string& region, panetabs::Strip& strip, const std::string& m, TabCands& cand) {
-  const bool wasOn = cand.count(m) && *cand[m].second;
+void closeTab(App& a, const std::string& region, panetabs::Strip& strip, const std::string& m, TabCands& cand) {
+  const bool wasOn = m == strip.active;
   if (!panetabs::close(strip, m, region, tabHistory())) return;
   tabClosed().insert(m);
   if (wasOn) {
-    *cand[m].second = false;
-    if (cand.count(strip.active)) *cand[strip.active].second = true;
+    if (cand.count(m) && cand[m].second != &gAudioOn) *cand[m].second = false;
+    else if (cand.count(m)) {
+      a.settings.set("ui.loupePinned", false);
+      packs::closeAudioEditorWindows(a);
+      gAudioOn = false;
+    }
+    if (cand.count(strip.active)) showPaneTab(a, cand[strip.active].second);
   }
 }
 
@@ -619,13 +698,10 @@ void closeTab(App&, const std::string& region, panetabs::Strip& strip, const std
 // window shown there active.
 panetabs::Strip paneStrip(App& a, Preset p, const std::string& region, const layout::State& st, TabCands& cand) {
   std::vector<std::string> members;
-  // R04-13: in Smooth the audio editor (Loupe pinned into the pane) has no window flag: its own tab
-  // ("Audio"), lit while it holds the pane, so a tab is always lit for the editor shown (the mixer's
-  // flag can stay set behind it: the audio editor is what the pane shows then).
-  static const StripName kAudioSeg = {"Loupe", i18n::N_("Audio"), true};
+  // (the mixer's flag can stay set behind the audio editor: the audio editor is what the pane shows then)
   gAudioOn = p == Preset::Logic && a.settings.getBool("ui.loupePinned") && !a.showPiano && !a.showRack;
   for (const StripName& n : kStripNames) {
-    if (region != layout::windowHome(n.window, p).region) continue;
+    if (region != windowHomeIn(n.window, p).region) continue;
     const bool audioSeg = p == Preset::Logic && std::string_view(n.window) == "Loupe";
     bool* f = audioSeg ? &gAudioOn : windowOpenFlag(a, n.window);
     if (!f || (!n.always && !*f)) continue;
@@ -658,6 +734,311 @@ void toggleMaximised(App& a, const std::string& region) {
   if (!st.maximised.erase(region)) st.maximised.insert(region);
   setRegionState(a, p, st);
   gRebuild = true;
+}
+
+// ---- K-237: tabs between panes, and the vertical rail ----
+
+// A pane's name in menus ("Move to ...").
+const char* paneName(const std::string& region) {
+  if (region == "logic.right") return i18n::tr("Right pane");
+  if (region == "logic.lower") return i18n::tr("Lower pane");
+  if (region == "live.side" || region == "tracker.side") return i18n::tr("Side panel");
+  return region.c_str();
+}
+
+// The panes of the active layout a window's tab may go to (not the one it is in).
+std::vector<std::string> moveTargets(App& a, Preset p, const std::string& window) {
+  std::vector<std::string> v;
+  if (p == Preset::Logic && window == "Loupe") return v;  // the audio editor's tab stands for the pinned Loupe (no window flag)
+  const std::string at = layout::tabRegion(p, regionState(a, p), window);
+  for (const layout::Region& r : layout::shell(p).regions)
+    if (r.id != at && layout::canMoveTab(p, window, r.id)) v.push_back(r.id);
+  return v;
+}
+
+// Moves a window's tab to pane `to`: the pane shows (with the window in front), the pane it left
+// shows its next tab when it keeps one window at a time, and the dock tree is rebuilt next frame
+// with the window in its new place. Kept per layout in the region state (State::moved).
+// The window a move into a one-at-a-time pane displaced there, which shows again when the moved tab
+// leaves (pane -> window).
+std::map<std::string, std::string> gDisplaced;
+
+bool moveTabTo(App& a, const std::string& window, const std::string& to) {
+  const Preset p = active();
+  const std::vector<std::string> targets = moveTargets(a, p, window);
+  if (std::find(targets.begin(), targets.end(), to) == targets.end()) return false;
+  layout::State st = regionState(a, p);
+  const std::string from = layout::tabRegion(p, st, window);
+  // The tab goes to the end of the pane it joins (after the tabs it shows now, in their order).
+  TabCands before;
+  panetabs::Strip into = paneStrip(a, p, to, st, before);
+  if (!layout::moveTab(p, st, window, to)) return false;
+  into.order.erase(std::remove(into.order.begin(), into.order.end(), window), into.order.end());
+  into.order.push_back(window);
+  into.active = window;
+  st.tabs[to] = panetabs::save(into);
+  setRegionState(a, p, st);
+  tabClosed().erase(window);
+  tabHistory().forget(window);
+  bool* f = windowOpenFlag(a, window);
+  const bool wasOpen = f && *f;
+  // The pane it left keeps showing something: the window the tab displaced when it came, else the
+  // strip's own pick.
+  if (const layout::Region* r = layout::findRegion(p, from); wasOpen && r && r->exclusive && gStrip.count(from)) {
+    TabCands cand;
+    panetabs::Strip left = paneStrip(a, p, from, st, cand);
+    if (const auto d = gDisplaced.find(from); d != gDisplaced.end()) {
+      if (cand.count(d->second)) left.active = d->second;
+      gDisplaced.erase(d);
+    }
+    if (cand.count(left.active) && cand[left.active].second && !*cand[left.active].second) showPaneTab(a, cand[left.active].second);
+  }
+  // A one-at-a-time pane shows the moved window alone (its flag was already set, so the pane's rule
+  // would not see it open); the one it displaces comes back when the tab leaves.
+  if (const layout::Region* r = layout::findRegion(p, to); r && r->exclusive) {
+    for (const std::string& m : into.order) {
+      if (m == window || !before.count(m) || !before[m].second) continue;
+      bool* g = before[m].second;
+      if (g == &gAudioOn ? gAudioOn : *g) {
+        if (!gDisplaced.count(to)) gDisplaced[to] = m;
+        if (g != &gAudioOn) *g = false;
+      }
+    }
+  }
+  setRegionVisible(a, to, true);
+  if (f) showPaneTab(a, f);
+  gFrontTabs[window] = 0;
+  gRebuild = true;  // (redocked where it lives now)
+  return true;
+}
+
+// A drop of a pane tab waits for the end of the frame's strips (they read the state as they draw).
+struct PendingMove {
+  std::string window, to;
+};
+std::vector<PendingMove> gPendingMoves;
+// Accepts a dragged pane tab ("<region>|<window>"): another pane's moves here, this pane's goes to
+// position `at` of `strip` (the end when -1). True when the strip's order changed.
+bool acceptPaneTab(App& a, const std::string& region, panetabs::Strip& strip, int at) {
+  const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_PANETAB");
+  if (!pl) return false;
+  const std::string txt(static_cast<const char*>(pl->Data));
+  const size_t bar = txt.find('|');
+  if (bar == std::string::npos) return false;
+  const std::string from = txt.substr(0, bar), w = txt.substr(bar + 1);
+  if (from == region) return panetabs::move(strip, w, at < 0 ? static_cast<int>(strip.order.size()) : at);
+  const auto t = moveTargets(a, active(), w);
+  if (std::find(t.begin(), t.end(), region) != t.end()) gPendingMoves.push_back({w, region});
+  return false;
+}
+void runPendingMoves(App& a) {
+  std::vector<PendingMove> v;
+  v.swap(gPendingMoves);
+  for (const PendingMove& m : v) moveTabTo(a, m.window, m.to);
+}
+
+// Dev (tests): the tab a scripted drag starts from and the pane it ends on ("layout tabtarget").
+std::string gDevTabSrc, gDevTabDst;
+
+// A window's label on the rail: its strip name, else its title as it shows (without the "##" id).
+std::string railLabel(const std::string& window) {
+  for (const StripName& n : kStripNames)
+    if (window == n.window) return i18n::tr(n.label);
+  std::string t = window;
+  if (const ImGuiWindow* w = ImGui::FindWindowByName((std::string("###") + window).c_str())) t = w->Name;
+  else if (const ImGuiWindow* w2 = ImGui::FindWindowByName(window.c_str())) t = w2->Name;
+  if (const size_t h = t.find("##"); h != std::string::npos) t = t.substr(0, h);
+  while (!t.empty() && t.back() == ' ') t.pop_back();
+  if (t.empty())
+    if (const layout::Item* it = layout::findWindow(window)) t = it->name;
+  return t;
+}
+
+// A Rail region's tabs: its open windows (closed tabs left out), in the person's order, the window in
+// front of its body active. `cand` gets each one's open flag (no strip name).
+panetabs::Strip railStrip(App& a, Preset p, const std::string& region, const layout::State& st, TabCands& cand) {
+  std::vector<std::string> members;
+  for (const layout::Item& it : layout::items()) {
+    if (!*it.window || region != homeIn(it, p).region) continue;
+    const layout::Home& h = homeIn(it, p);
+    if (h.kind != HomeKind::Dock && h.kind != HomeKind::Part) continue;
+    bool* f = windowOpenFlag(a, it.window);
+    if (!f || !*f) continue;
+    tabClosed().erase(it.window), tabHistory().forget(it.window);
+    cand[it.window] = {nullptr, f};
+    members.push_back(it.window);
+  }
+  panetabs::Strip strip = panetabs::load(st.tabs.count(region) ? st.tabs.at(region) : std::string());
+  panetabs::sync(strip, members);
+  if (const ImGuiDockNode* n = ImGui::DockBuilderGetNode(regionNode(region)); n && n->VisibleWindow)
+    if (const std::string front = ui::stableWindowName(n->VisibleWindow->Name); cand.count(front)) strip.active = front;
+  return strip;
+}
+
+// Text drawn turned a quarter clockwise (reading top to bottom), centred on `c`.
+void addTextDown(ImDrawList* dl, ImFont* font, float fs, ImVec2 c, ImU32 col, const char* text) {
+  const ImVec2 sz = font->CalcTextSizeA(fs, 1e9f, 0, text);
+  const int first = dl->VtxBuffer.Size;
+  // (drawn level first: the clip rect then covers the level text, else glyphs past the rail's width are
+  // dropped before the turn; the turned text stays inside its tab)
+  const float r = std::max(sz.x, sz.y) * 0.5f + 2;
+  dl->PushClipRect(ImVec2(c.x - r, c.y - r), ImVec2(c.x + r, c.y + r), false);
+  dl->AddText(font, fs, ImVec2(std::round(c.x - sz.x * 0.5f), std::round(c.y - sz.y * 0.5f)), col, text);
+  dl->PopClipRect();
+  for (int i = first; i < dl->VtxBuffer.Size; ++i) {
+    ImDrawVert& v = dl->VtxBuffer[i];
+    const float dx = v.pos.x - c.x, dy = v.pos.y - c.y;
+    v.pos = ImVec2(c.x - dy, c.y + dx);
+  }
+}
+
+// The vertical tab rail of each Rail region (the side panels of Clips and the Tracker): one tab per
+// open window, the one in front lit with a bar on its inner edge; click brings a window to the front,
+// middle-click closes it, right-click for its menu, drag to reorder or onto another pane's tabs.
+void drawPaneRails(App& a) {
+  const Preset p = active();
+  const auto& P = theme::pal();
+  for (const auto& [region, railNode] : gRail) {
+    if (!ImGui::DockBuilderGetNode(railNode)) continue;
+    ImGui::SetNextWindowDockID(railNode, ImGuiCond_Always);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(1, 1));
+    const bool vis = ImGui::Begin(stripWindowName(region).c_str(), nullptr,
+                                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoNav |
+                                      ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::PopStyleVar(2);
+    if (vis) {
+      const layout::Region* reg = layout::findRegion(p, region);
+      const bool onLeft = reg && reg->edge == layout::Edge::Left;
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+      dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), P.surface800);
+      const float lineX = onLeft ? wp.x + ws.x - 0.5f : wp.x + 0.5f;  // the line toward the pane's body
+      dl->AddLine(ImVec2(lineX, wp.y), ImVec2(lineX, wp.y + ws.y), P.line);
+      const float fs = ImGui::GetFontSize();
+      TabCands cand;
+      const layout::State st = regionState(a, p);
+      panetabs::Strip strip = railStrip(a, p, region, st, cand);
+      const std::string savedText = st.tabs.count(region) ? st.tabs.at(region) : std::string();
+      std::vector<std::string> labels;
+      std::vector<float> heights;
+      for (const std::string& m : strip.order) {
+        labels.push_back(railLabel(m));
+        heights.push_back(std::ceil(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, labels.back().c_str()).x) + 18);
+      }
+      const float overflowH = 26;
+      const std::vector<int> shownIdx = panetabs::fit(strip, heights, ws.y - theme::kS2 * 2, overflowH);
+      const float x0 = wp.x + 2, x1 = wp.x + ws.x - 2;
+      float y = wp.y + theme::kS2;
+      bool changed = false;
+      std::string menuFor;
+      for (int i : shownIdx) {
+        const std::string& m = strip.order[static_cast<size_t>(i)];
+        const float hgt = heights[static_cast<size_t>(i)];
+        ImGui::SetCursorScreenPos(ImVec2(x0, y));
+        ImGui::PushID(m.c_str());
+        const bool click = ImGui::InvisibleButton("##r", ImVec2(x1 - x0, hgt), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
+        const bool hov = ImGui::IsItemHovered();
+        const bool middle = click && ImGui::IsMouseReleased(ImGuiMouseButton_Middle);
+        if (m == gDevTabSrc) devNoteRect("ptabsrc");
+        if ("tab:" + m == gDevTabDst) devNoteRect("ptabdst");  // (a drop on this tab: a reorder)
+        if (hov) ImGui::SetTooltip("%s", labels[static_cast<size_t>(i)].c_str());
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) menuFor = m;
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoPreviewTooltip)) {
+          const std::string payload = region + "|" + m;
+          ImGui::SetDragDropPayload("GL_PANETAB", payload.c_str(), payload.size() + 1);
+          ImGui::EndDragDropSource();
+        }
+        if (ImGui::BeginDragDropTarget()) {
+          changed = acceptPaneTab(a, region, strip, i) || changed;
+          ImGui::EndDragDropTarget();
+        }
+        ImGui::PopID();
+        const bool on = m == strip.active;
+        if (on) dl->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + hgt), P.surface600, 4.0f);
+        else if (hov) dl->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + hgt), theme::withAlpha(P.surface600, 0.5f), 4.0f);
+        if (on) {  // the tab in front: a bar on the edge toward the body
+          const float bx = onLeft ? x1 - 1.5f : x0 + 1.5f;
+          dl->AddLine(ImVec2(bx, y + 3), ImVec2(bx, y + hgt - 3), P.accent, 2.0f);
+        }
+        if (strip.pinned.count(m)) dl->AddCircle(ImVec2((x0 + x1) * 0.5f, y + 7), 2.5f, P.accent, 8, 1.5f);  // pinned: a small ring
+        addTextDown(dl, a.fontRegular, fs, ImVec2((x0 + x1) * 0.5f, y + hgt * 0.5f + (strip.pinned.count(m) ? 3.0f : 0.0f)), on || hov ? P.text : P.textDim,
+                    labels[static_cast<size_t>(i)].c_str());
+        if (middle) {
+          const bool wasOn = on;
+          if (panetabs::close(strip, m, region, tabHistory())) {
+            tabClosed().insert(m);
+            *cand[m].second = false;
+            if (wasOn && !strip.active.empty()) gFrontTabs[strip.active] = 0;
+            changed = true;
+          }
+        } else if (click && !on) {
+          gFrontTabs[m] = 0;  // brought to the front of the pane
+          strip.active = m;
+        }
+        y += hgt + 2;
+      }
+      if (shownIdx.size() < strip.order.size()) {  // the tabs that do not fit, in a menu
+        ImGui::SetCursorScreenPos(ImVec2(x0, y));
+        if (ImGui::InvisibleButton("##more", ImVec2(x1 - x0, overflowH))) ImGui::OpenPopup("##railmore");
+        char more[16];
+        std::snprintf(more, sizeof more, "+%d", static_cast<int>(strip.order.size() - shownIdx.size()));
+        const float tw = a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, more).x;
+        dl->AddText(a.fontRegular, fs, ImVec2(std::round((x0 + x1 - tw) * 0.5f), std::round(y + (overflowH - fs) * 0.5f)),
+                    ImGui::IsItemHovered() ? P.text : P.textDim, more);
+        if (ImGui::BeginPopup("##railmore")) {
+          for (size_t i = 0; i < strip.order.size(); ++i) {
+            if (std::find(shownIdx.begin(), shownIdx.end(), static_cast<int>(i)) != shownIdx.end()) continue;
+            if (ImGui::MenuItem(railLabel(strip.order[i]).c_str())) gFrontTabs[strip.order[i]] = 0;
+          }
+          ImGui::EndPopup();
+        }
+      }
+      // The whole rail takes a tab dropped below its tabs (another pane's moves here, at the end).
+      if (region == gDevTabDst) devNoteRectAt("ptabdst", wp.x, std::min(y + 4, wp.y + ws.y - 8), wp.x + ws.x, wp.y + ws.y);
+      if (ImGui::BeginDragDropTargetCustom(ImRect(wp, ImVec2(wp.x + ws.x, wp.y + ws.y)), ImGui::GetID("##raildrop"))) {
+        changed = acceptPaneTab(a, region, strip, -1) || changed;
+        ImGui::EndDragDropTarget();
+      }
+      if (!menuFor.empty()) {
+        gTabMenu = menuFor;
+        ImGui::OpenPopup("##railtab");
+      }
+      if (ImGui::BeginPopup("##railtab")) {
+        const std::string m = gTabMenu;
+        if (cand.count(m)) {
+          const bool pinned = strip.pinned.count(m) > 0;
+          const auto it = std::find(strip.order.begin(), strip.order.end(), m);
+          const int at = static_cast<int>(it - strip.order.begin());
+          if (ImGui::MenuItem(pinned ? i18n::tr("Unpin tab") : i18n::tr("Pin tab"))) changed = panetabs::setPinned(strip, m, !pinned) || changed;
+          if (ImGui::MenuItem(i18n::tr("Move up"), nullptr, false, at > 0)) changed = panetabs::move(strip, m, at - 1) || changed;
+          if (ImGui::MenuItem(i18n::tr("Move down"), nullptr, false, at + 1 < static_cast<int>(strip.order.size())))
+            changed = panetabs::move(strip, m, at + 2) || changed;
+          for (const std::string& to : moveTargets(a, p, m)) {
+            char label[96];
+            std::snprintf(label, sizeof label, i18n::tr("Move to %s"), paneName(to));
+            if (ImGui::MenuItem(label)) gPendingMoves.push_back({m, to});
+          }
+          if (ImGui::MenuItem(i18n::tr("Close tab"), nullptr, false, !pinned && strip.order.size() > 1)) {
+            if (panetabs::close(strip, m, region, tabHistory())) tabClosed().insert(m), *cand[m].second = false, changed = true;
+          }
+        }
+        ImGui::Separator();
+        if (ImGui::MenuItem(i18n::tr("Reopen closed tab"), reopenKey(), false, hasClosedTab(region))) reopenClosedTab(a, region);
+        if (ImGui::MenuItem(i18n::tr("Close pane"))) setRegionVisible(a, region, false);
+        ImGui::EndPopup();
+      }
+      if (changed) {
+        const std::string text = panetabs::save(strip);
+        if (text != savedText) {
+          layout::State now = regionState(a, p);
+          now.tabs[region] = text;
+          setRegionState(a, p, now);
+        }
+      }
+    }
+    ImGui::End();
+  }
 }
 
 // The title strip of each Segmented region: its windows by name, the one shown lit; a click shows
@@ -700,24 +1081,33 @@ void drawPaneStrips(App& a) {
         const float overflowW = 30, mixGap = 14;
         const bool hasMix = strip.order.size() > 1 && std::find(strip.order.begin() + 1, strip.order.end(), "Mixer") != strip.order.end();
         std::vector<int> shownIdx = panetabs::fit(strip, widths, ws.x - theme::kS3 * 2 - (hasMix ? mixGap : 0), overflowW);
-        const bool overflow = !titleOnly && shownIdx.size() < strip.order.size();
         const float h = std::min(22.0f, ws.y - 6), y0 = std::round(wp.y + (ws.y - 1 - h) * 0.5f);
         if (titleOnly) {
-          for (const std::string& m : strip.order)
-            if (*cand[m].second) {
-              const char* label = i18n::tr(cand[m].first->label);
-              const float tw = a.fontBold->CalcTextSizeA(fs, 1e9f, 0, label).x;
-              dl->AddText(a.fontBold, fs, ImVec2(std::round(wp.x + (ws.x - tw) * 0.5f), std::round(y0 + (h - fs) * 0.5f)), P.text, label);
-              break;
+          if (cand.count(strip.active)) {
+            const char* label = i18n::tr(cand[strip.active].first->label);
+            const float tw = a.fontBold->CalcTextSizeA(fs, 1e9f, 0, label).x;
+            const ImVec2 t0(std::round(wp.x + (ws.x - tw) * 0.5f), std::round(y0 + (h - fs) * 0.5f));
+            dl->AddText(a.fontBold, fs, t0, P.text, label);
+            // K-237: the title is the shown window's tab: it drags to another pane.
+            ImGui::SetCursorScreenPos(ImVec2(t0.x - 6, y0));
+            ImGui::InvisibleButton("##title", ImVec2(tw + 12, h));
+            if (strip.active == gDevTabSrc) devNoteRect("ptabsrc");
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoPreviewTooltip)) {
+              const std::string payload = region + "|" + strip.active;
+              ImGui::SetDragDropPayload("GL_PANETAB", payload.c_str(), payload.size() + 1);
+              ImGui::EndDragDropSource();
             }
+          }
           shownIdx.clear();
         }
-        int mixAt = -1;  // where in shownIdx the mixer's own group starts
-        for (size_t k = 1; k < shownIdx.size(); ++k)
-          if (strip.order[static_cast<size_t>(shownIdx[k])] == "Mixer") mixAt = static_cast<int>(k);
-        const float gap = mixAt > 0 ? mixGap : 0.0f;
         float total = 0;
-        for (int i : shownIdx) total += widths[static_cast<size_t>(i)];
+        int mixAt = -1;  // position in shownIdx of the mixer's segment, when it is not the first
+        for (size_t k = 0; k < shownIdx.size(); ++k) {
+          total += widths[static_cast<size_t>(shownIdx[k])];
+          if (k > 0 && strip.order[static_cast<size_t>(shownIdx[k])] == "Mixer") mixAt = static_cast<int>(k);
+        }
+        const float gap = mixAt > 0 ? mixGap : 0.0f;
+        const bool overflow = !titleOnly && shownIdx.size() < strip.order.size();
         float sx = std::round(wp.x + (ws.x - total - gap - (overflow ? overflowW : 0)) * 0.5f);
         if (!shownIdx.empty()) {
           float split = sx + total;
@@ -748,17 +1138,15 @@ void drawPaneStrips(App& a) {
             ImGui::SetDragDropPayload("GL_PANETAB", payload.c_str(), payload.size() + 1);
             ImGui::EndDragDropSource();
           }
+          // Reordered along the strip, or a tab from another pane moves here (the main area never takes one).
           if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_PANETAB")) {
-              const std::string txt(static_cast<const char*>(pl->Data));
-              const size_t bar = txt.find('|');
-              // Only within this pane: a window keeps its home pane (the main area can never take a tab).
-              if (bar != std::string::npos && txt.substr(0, bar) == region) changed = panetabs::move(strip, txt.substr(bar + 1), i) || changed;
-            }
+            changed = acceptPaneTab(a, region, strip, i) || changed;
             ImGui::EndDragDropTarget();
           }
+          if (m == gDevTabSrc) devNoteRect("ptabsrc");
+          if ("tab:" + m == gDevTabDst) devNoteRect("ptabdst");
           ImGui::PopID();
-          const bool on = f == &gAudioOn ? gAudioOn : *f && !gAudioOn;
+          const bool on = m == strip.active;
           if (on) dl->AddRectFilled(ImVec2(sx, y0), ImVec2(sx + w, y0 + h), smoothLook ? P.accent : P.surface600, 5.0f);
           else if (hov) dl->AddRectFilled(ImVec2(sx, y0), ImVec2(sx + w, y0 + h), theme::withAlpha(P.surface600, 0.5f), 5.0f);
           if (strip.pinned.count(m)) dl->AddCircle(ImVec2(sx + 7, y0 + h * 0.5f), 2.5f, on && smoothLook ? theme::contrastText(P.accent) : P.accent, 8, 1.5f);  // pinned: a small ring
@@ -766,19 +1154,8 @@ void drawPaneStrips(App& a) {
           const float tw = a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, label).x;
           const ImU32 tc = on && smoothLook ? theme::contrastText(P.accent) : on || hov ? P.text : P.textDim;
           dl->AddText(a.fontRegular, fs, ImVec2(std::round(sx + (w - tw) * 0.5f), std::round(y0 + (h - fs) * 0.5f)), tc, label);
-          if (middle) {
-            closeTab(a, region, strip, m, cand), changed = true;
-          } else if (click && !on && f == &gAudioOn) {  // R04-13: as the editors' key shows the audio editor
-            if (bool* sm = windowOpenFlag(a, "Smart controls")) *sm = false;
-            a.settings.set("ui.loupePinned", false);
-            toggleTracksAudioEditor(a);  // (the selected audio region's sound, else the focused track's)
-          } else if (click && !on) {
-            *f = true;  // the region's one-at-a-time rule closes the one shown
-            if (gAudioOn) {  // the audio editor gives the pane back (it has no flag for that rule)
-              a.settings.set("ui.loupePinned", false);
-              packs::closeAudioEditorWindows(a);
-            }
-          }
+          if (middle) closeTab(a, region, strip, m, cand), changed = true;
+          else if (click && !on) showPaneTab(a, f);
           sx += w;
         }
         if (overflow) {  // the tabs that do not fit, in a menu
@@ -793,7 +1170,7 @@ void drawPaneStrips(App& a) {
             for (size_t i = 0; i < strip.order.size(); ++i) {
               if (std::find(shownIdx.begin(), shownIdx.end(), static_cast<int>(i)) != shownIdx.end()) continue;
               const std::string& m = strip.order[i];
-              if (ImGui::MenuItem(i18n::tr(cand[m].first->label), nullptr, *cand[m].second)) *cand[m].second = true;
+              if (ImGui::MenuItem(i18n::tr(cand[m].first->label), nullptr, *cand[m].second)) showPaneTab(a, cand[m].second);
             }
             ImGui::EndPopup();
           }
@@ -825,6 +1202,12 @@ void drawPaneStrips(App& a) {
           }
         }
         if (stripHov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !ImGui::IsAnyItemHovered()) toggleMaximised(a, region);
+        // K-237: the whole strip takes a tab dragged from another pane (it joins at the end).
+        if (region == gDevTabDst) devNoteRectAt("ptabdst", wp.x + 4, wp.y + 2, wp.x + 20, wp.y + ws.y - 2);
+        if (ImGui::BeginDragDropTargetCustom(ImRect(wp, ImVec2(wp.x + ws.x, wp.y + ws.y)), ImGui::GetID("##stripdrop"))) {
+          changed = acceptPaneTab(a, region, strip, -1) || changed;
+          ImGui::EndDragDropTarget();
+        }
         if (!menuFor.empty()) {
           gTabMenu = menuFor;
           ImGui::OpenPopup("##panetab");
@@ -839,6 +1222,11 @@ void drawPaneStrips(App& a) {
             if (ImGui::MenuItem(i18n::tr("Move left"), nullptr, false, at > 0)) changed = panetabs::move(strip, m, at - 1) || changed;
             if (ImGui::MenuItem(i18n::tr("Move right"), nullptr, false, at + 1 < static_cast<int>(strip.order.size())))
               changed = panetabs::move(strip, m, at + 2) || changed;
+            for (const std::string& to : moveTargets(a, p, m)) {  // K-237: to another pane
+              char label[96];
+              std::snprintf(label, sizeof label, i18n::tr("Move to %s"), paneName(to));
+              if (ImGui::MenuItem(label)) gPendingMoves.push_back({m, to});
+            }
             if (ImGui::MenuItem(i18n::tr("Close tab"), nullptr, false, !pinned && strip.order.size() > 1)) closeTab(a, region, strip, m, cand), changed = true;
           }
           ImGui::Separator();
@@ -860,7 +1248,7 @@ void drawPaneStrips(App& a) {
       }
       for (const StripName& n : kStripNames) {
         if (p == Preset::Logic) break;
-        const layout::Home h = layout::windowHome(n.window, p);
+        const layout::Home h = windowHomeIn(n.window, p);
         if (region != h.region) continue;
         bool* f = windowOpenFlag(a, n.window);
         if (!f || (!n.always && !*f)) continue;
@@ -886,7 +1274,7 @@ void drawPaneStrips(App& a) {
 
 bool reopenClosedTab(App& a, const std::string& region) {
   const Preset p = active();
-  if (p != Preset::Logic || !shellBuilt(a, p)) return false;
+  if (!shellBuilt(a, p)) return false;  // (the Smooth strips; K-237: the Clips and Tracker rails too)
   // The last tab closed (in `region` when one is named) leaves the history; the others stay in order.
   std::vector<panetabs::Closed> items = tabHistory().items();
   int pick = -1;
@@ -900,7 +1288,7 @@ bool reopenClosedTab(App& a, const std::string& region) {
   tabClosed().erase(c.window);
   layout::State st = regionState(a, p);
   TabCands cand;
-  panetabs::Strip strip = paneStrip(a, p, c.region, st, cand);
+  panetabs::Strip strip = gRail.count(c.region) ? railStrip(a, p, c.region, st, cand) : paneStrip(a, p, c.region, st, cand);
   panetabs::reopen(strip, c);
   const std::string text = panetabs::save(strip);
   if (!st.tabs.count(c.region) || st.tabs[c.region] != text) {
@@ -908,29 +1296,35 @@ bool reopenClosedTab(App& a, const std::string& region) {
     setRegionState(a, p, st);
   }
   if (bool* f = windowOpenFlag(a, c.window)) *f = true;  // its pane shows it (and comes back if it was closed)
+  gFrontTabs[c.window] = 0;  // (in front, where the pane holds several)
   return true;
 }
 
 bool cyclePaneTab(App& a, int dir) {
   const Preset p = active();
-  if (p != Preset::Logic || !shellBuilt(a, p) || gStrip.empty()) return false;
+  if (!shellBuilt(a, p) || (gStrip.empty() && gRail.empty())) return false;
+  // K-237: the Smooth strips and the Clips and Tracker rails.
+  std::map<std::string, ImGuiID> panes = gStrip;
+  panes.insert(gRail.begin(), gRail.end());
   // The pane that holds the focused window, else the lower pane, else the first one shown.
   std::string region;
   if (const ImGuiWindow* nav = ImGui::GetCurrentContext()->NavWindow)
     for (const ImGuiDockNode* n = nav->RootWindowDockTree ? nav->RootWindowDockTree->DockNode : nullptr; n && region.empty(); n = n->ParentNode)
-      for (const auto& [r, strip] : gStrip)
+      for (const auto& [r, strip] : panes)
         if (regionNode(r) == n->ID || outerNode(r) == n->ID) region = r;
   if (const ImGuiWindow* nav = ImGui::GetCurrentContext()->NavWindow; region.empty() && nav && nav->DockNode)
     for (const ImGuiDockNode* n = nav->DockNode; n && region.empty(); n = n->ParentNode)
-      for (const auto& [r, strip] : gStrip)
+      for (const auto& [r, strip] : panes)
         if (regionNode(r) == n->ID || outerNode(r) == n->ID) region = r;
   const layout::State st = regionState(a, p);
-  if (region.empty()) region = gStrip.count("logic.lower") && layout::visible(layout::shell(p), st, "logic.lower") ? "logic.lower" : gStrip.begin()->first;
+  if (region.empty()) region = panes.count("logic.lower") && layout::visible(layout::shell(p), st, "logic.lower") ? "logic.lower" : panes.begin()->first;
   TabCands cand;
-  const panetabs::Strip strip = paneStrip(a, p, region, st, cand);
+  const bool rail = gRail.count(region) > 0;
+  const panetabs::Strip strip = rail ? railStrip(a, p, region, st, cand) : paneStrip(a, p, region, st, cand);
   const std::string next = panetabs::cycle(strip, dir);
   if (next.empty() || next == strip.active || !cand.count(next)) return false;
-  *cand[next].second = true;  // the region's one-at-a-time rule closes the one shown
+  if (rail) gFrontTabs[next] = 0;  // the rail's windows stay open: the next comes to the front
+  else showPaneTab(a, cand[next].second);  // the region's one-at-a-time rule closes the one shown
   return true;
 }
 
@@ -965,7 +1359,7 @@ void shellFrame(App& a) {
   layout::State st = regionState(a, p);
   // A window opened while its region is hidden (View > Panels, a command) shows the region.
   for (const layout::Item& it : layout::items()) {
-    const layout::Home& h = it.home[static_cast<int>(p)];
+    const layout::Home& h = homeIn(it, p);
     if (!*it.window || (h.kind != HomeKind::Dock && h.kind != HomeKind::Part) || !*h.region) continue;
     bool* f = windowOpenFlag(a, it.window);
     // Round 45: a window opened by its own command (no flag: Loupe pinned, the automation editor, ...)
@@ -983,7 +1377,7 @@ void shellFrame(App& a) {
       // it (the default would win the pane and close this one: R01-04's Mixer and Lists).
       if (const layout::Region* r = layout::findRegion(p, h.region); p == Preset::Logic && r && r->exclusive)
         for (const layout::Item& o : layout::items())
-          if (*o.window && std::strcmp(o.window, it.window) != 0 && std::strcmp(o.home[static_cast<int>(p)].region, h.region) == 0)
+          if (*o.window && std::strcmp(o.window, it.window) != 0 && std::strcmp(homeIn(o, p).region, h.region) == 0)
             if (bool* g = windowOpenFlag(a, o.window)) *g = false;
       if (f) *f = true;
       return;  // rebuilt next frame
@@ -996,7 +1390,7 @@ void shellFrame(App& a) {
     static std::set<std::string> drawnBefore;
     std::set<std::string> drawnNow;
     for (const layout::Item& it : layout::items()) {
-      const layout::Home& h = it.home[static_cast<int>(p)];
+      const layout::Home& h = homeIn(it, p);
       if (!*it.window || (h.kind != HomeKind::Dock && h.kind != HomeKind::Part) || !*h.region) continue;
       if (windowOpenFlag(a, it.window)) continue;
       const ImGuiWindow* w = findTop(it.window);
@@ -1031,7 +1425,7 @@ void shellFrame(App& a) {
       }
       bool any = false;
       for (const layout::Item& it : layout::items()) {
-        const layout::Home& h = it.home[static_cast<int>(p)];
+        const layout::Home& h = homeIn(it, p);
         if (!*it.window || r.id != std::string(h.region)) continue;
         if (const bool* f = windowOpenFlag(a, it.window)) any = any || *f;
         else if (const ImGuiWindow* w = findTop(it.window)) any = any || w->WasActive;  // no flag: drawn last frame
@@ -1061,7 +1455,7 @@ void shellFrame(App& a) {
   wasOpenFrame = ImGui::GetFrameCount();
   std::vector<std::string> closedIn;  // shown regions a window closed in this frame
   for (const layout::Item& it : layout::items()) {
-    const layout::Home& h = it.home[static_cast<int>(p)];
+    const layout::Home& h = homeIn(it, p);
     if (!*it.window || (h.kind != HomeKind::Dock && h.kind != HomeKind::Part) || !*h.region) continue;
     bool* f = windowOpenFlag(a, it.window);
     if (!f) continue;
@@ -1083,7 +1477,7 @@ void shellFrame(App& a) {
   for (auto e = emptySince.begin(); e != emptySince.end();) {
     bool any = false;
     for (const layout::Item& it : layout::items()) {
-      const layout::Home& h = it.home[static_cast<int>(p)];
+      const layout::Home& h = homeIn(it, p);
       if (!*it.window || e->first != h.region) continue;
       // A window homed here without an open flag (a plugin's window, the agent activity) opens without
       // showing its region first: such a region stays shown.
@@ -1174,7 +1568,7 @@ void shellFrame(App& a) {
       // The members: windows homed here. One opened this frame closes the others.
       std::vector<std::pair<const char*, bool*>> members;
       for (const layout::Item& it : layout::items()) {
-        const layout::Home& h = it.home[static_cast<int>(p)];
+        const layout::Home& h = homeIn(it, p);
         if (*it.window && r.id == std::string(h.region))
           if (bool* f = windowOpenFlag(a, it.window)) members.push_back({it.window, f});
       }
@@ -1247,14 +1641,21 @@ void shellFrame(App& a) {
       n->Size.y = n->SizeRef.y = layout::kPaneStripH;
       n->WantLockSizeOnce = true;
     }
+  for (const auto& [region, rail] : gRail)  // K-237: and tab rails their width
+    if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(rail)) {
+      n->Size.x = n->SizeRef.x = layout::kPaneRailW;
+      n->WantLockSizeOnce = true;
+    }
   if (changed) setRegionState(a, p, st);
   drawPaneStrips(a);
+  drawPaneRails(a);
+  runPendingMoves(a);  // K-237: tabs dropped on another pane
 }
 
 int dockFlags(const char* windowName, int base) {
   const Preset p = active();
   if (p == Preset::Studio) return base;
-  const layout::Home h = layout::windowHome(ui::stableWindowName(windowName), p);
+  const layout::Home h = windowHomeIn(ui::stableWindowName(windowName), p);
   if ((h.kind == HomeKind::Dock || h.kind == HomeKind::Part) && *h.region) {
     // A dialog placement (SetNextWindowPos) must not take the window out of its region.
     ImGui::GetCurrentContext()->NextWindowData.PosUndock = false;
@@ -1277,7 +1678,7 @@ std::map<std::string, std::string> gFloatKey;  // the tiling each one was last p
 bool floatHome(App& a, const char* stableName, ImVec2 want, ImVec2* pos, ImVec2* size, bool* retile) {
   const Preset p = active();
   const std::string name = ui::stableWindowName(stableName);
-  if (!shellBuilt(a, p) || layout::windowHome(name, p).kind != HomeKind::Float) return false;
+  if (!shellBuilt(a, p) || windowHomeIn(name, p).kind != HomeKind::Float) return false;
   const ImGuiDockNode* n = ImGui::DockBuilderGetNode(regionNode(layout::shell(p).centre));
   if (!n || n->Size.x <= 0 || n->Size.y <= 0) return false;
   const float in = theme::kS3, top = theme::kToolbarH + ImGui::GetFrameHeight() + in;  // the centre's tab row and toolbar stay clear
@@ -1287,7 +1688,7 @@ bool floatHome(App& a, const char* stableName, ImVec2 want, ImVec2* pos, ImVec2*
   // The open floating parts of this layout, in table order: right to left along the lower edge.
   std::vector<std::string> open;
   for (const layout::Item& it : layout::items())
-    if (std::strncmp(it.id, "N", 1) == 0 && *it.window && !*it.later && it.home[static_cast<int>(p)].kind == HomeKind::Float)
+    if (std::strncmp(it.id, "N", 1) == 0 && *it.window && !*it.later && homeIn(it, p).kind == HomeKind::Float)
       if (const bool* f = windowOpenFlag(a, it.window); (f && *f) || name == it.window) open.emplace_back(it.window);
   const float gap = theme::kS2;
   const float share = std::floor((room.x - gap * static_cast<float>(open.size() - 1)) / static_cast<float>(std::max<size_t>(1, open.size())));
@@ -1467,7 +1868,7 @@ const char* revealWindow(const App& a, anchor::Kind k) {
   if (v.empty()) return nullptr;
   if (shellBuilt(a, p))
     for (const char* w : v) {
-      const layout::Home h = layout::windowHome(w, p);
+      const layout::Home h = windowHomeIn(w, p);
       if ((h.kind == HomeKind::Dock || h.kind == HomeKind::Part) && *h.region) return w;
     }
   return v[0];
@@ -1629,7 +2030,7 @@ const char* hostOf(const std::string& w) {
 // A host region with no part built yet (its host is a later row): the window floats until then.
 bool hostIsLater(Preset p, const char* region) {
   for (const layout::Item& it : layout::items()) {
-    const layout::Home& h = it.home[static_cast<int>(p)];
+    const layout::Home& h = homeIn(it, p);
     if (h.kind == HomeKind::Part && std::strcmp(h.region, region) == 0 && !*it.later) return false;
   }
   return true;
@@ -1664,7 +2065,7 @@ const char* plannedIn(const char* id, Preset p) {
 
 // A row with no window of its own: what its home means, checked where it can be.
 void staticRow(App& a, const layout::Item& it, Preset p, int frame) {
-  const layout::Home& h = it.home[static_cast<int>(p)];
+  const layout::Home& h = homeIn(it, p);
   const char* later = plannedIn(it.id, p);
   std::string want;
   bool pass = true;
@@ -1719,7 +2120,7 @@ void staticRow(App& a, const layout::Item& it, Preset p, int frame) {
 // track), its editor opened as the person would, and the body's one host checked: its own window
 // where the home is Float, the Device chain where it is Host. The channel or slot goes again.
 bool pluginRow(App& a, const layout::Item& it, Preset p, int frame) {
-  const layout::Home& h = it.home[static_cast<int>(p)];
+  const layout::Home& h = homeIn(it, p);
   const PluginInfo* info = findPlugin(it.plugin);
   if (gInv.step == 0) {
     if (!info) {
@@ -1798,7 +2199,7 @@ void inventoryFrame(App& a, int frame) {
   }
   const layout::Item& it = items[gInv.item];
   const std::string w = it.window;
-  const layout::Home& h = it.home[static_cast<int>(p)];
+  const layout::Home& h = homeIn(it, p);
   bool* f = windowOpenFlag(a, w);
   if (gInv.step == 0) {
     const bool can = f || openSpecial(a, w, true);
@@ -1920,6 +2321,26 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     ImGuiWindow* host = ImGui::FindWindowByName("##dockhost");
     walk(walk, host ? ImGui::DockBuilderGetNode(host->GetID("GridlineDock")) : nullptr, "r");
     std::printf("DOCKS BEGIN frame %d layout %s\n%sDOCKS END\n", frame, layout::id(active()), out.c_str());
+  } else if (c == "tabtarget" || c == "tabmove") {
+    // K-237: "layout tabtarget <window>|<pane>": the "ptabsrc" and "ptabdst" sdlat targets of a scripted
+    // drag (the window's tab, the pane's strip or rail); "layout tabmove <window>|<pane>": the menu's Move to.
+    const size_t bar = arg.find('|');
+    const std::string w = arg.substr(0, bar), to = bar == std::string::npos ? std::string() : arg.substr(bar + 1);
+    if (c == "tabtarget") gDevTabSrc = w, gDevTabDst = to;
+    else std::printf("frame %d tabmove %s to %s %s\n", frame, w.c_str(), to.c_str(), moveTabTo(a, w, to) ? "ok" : "refused");
+  } else if (c == "tabs") {  // K-237: each pane's tabs (order, pins, active) and the moved tabs
+    const Preset p = active();
+    const layout::State st = regionState(a, p);
+    std::map<std::string, ImGuiID> panes = gStrip;
+    panes.insert(gRail.begin(), gRail.end());
+    for (const auto& [region, node] : panes) {
+      TabCands cand;
+      const panetabs::Strip s = gRail.count(region) ? railStrip(a, p, region, st, cand) : paneStrip(a, p, region, st, cand);
+      std::printf("frame %d tabs %s %s [%s]\n", frame, region.c_str(), gRail.count(region) ? "rail" : "strip", panetabs::save(s).c_str());
+    }
+    std::string moved;
+    for (const auto& [w, r] : st.moved) moved += (moved.empty() ? "" : ",") + w + ">" + r;
+    std::printf("frame %d tabs moved [%s]\n", frame, moved.c_str());
   } else if (c == "state") {
     std::printf("frame %d %s\n", frame, stateLine(a).c_str());
   } else if (c == "bodies") {  // layout bodies: last frame's hosted body draws (one host per body)

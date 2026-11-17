@@ -4,6 +4,7 @@
 #include <cmath>
 #include "Params.h"
 #include "PluginInfo.h"
+#include "TrackModes.h"
 
 namespace gl::trackorder {
 
@@ -262,7 +263,12 @@ bool movePlaylistTracks(Document& d, const std::vector<int>& tracks, int before,
   const PlaylistMove m = playlistOrderAfterMove(d.song(), tracks, before);
   if (m.empty()) return false;
   std::set<int> asked(tracks.begin(), tracks.end());
-  d.editSong(m.moved.size() > 1 ? "move playlist tracks" : "move playlist track", [&](Song& x) { reorderPlaylist(x, m); });
+  // Checkpoint 53: a track moved into or out of a Clips group plays into its group (or out of it) in every
+  // layout, not only after a move made in Clips (a Studio or Smooth move left the routing stale).
+  d.editSong(m.moved.size() > 1 ? "move playlist tracks" : "move playlist track", [&](Song& x) {
+    reorderPlaylist(x, m);
+    trackmodes::syncGroupRouting(x);
+  });
   if (newIndexes) {
     newIndexes->clear();
     for (size_t k = 0; k < m.order.size(); ++k)

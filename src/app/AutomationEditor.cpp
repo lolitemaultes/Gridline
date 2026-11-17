@@ -29,6 +29,7 @@
 #include "../core/PatternAutomation.h"
 #include "../core/Presets.h"
 #include "../core/Timeline.h"
+#include "../core/TrackModes.h"
 #include "App.h"
 #include "PluginUI.h"
 #include "Theme.h"
@@ -1874,7 +1875,17 @@ ObjectId createAutomationClip(App& a, ParamId pid, bool newLane) {
   }
   std::string name = paramDisplayName(s, pid);
   ObjectId autoId = kNoId, clipId = kNoId;
+  // N52-10: in Clips a new lane belongs to its track: right under it in the Arrangement (never a clip
+  // grid column), its clip in the arrangement (not in a grid slot).
+  const bool clipsLane = newLane && livelook::active(a);
+  if (clipsLane && start < s.live.areaEnd) {
+    start = std::max(start, s.live.areaEnd);
+    start = mm.barStartAt(start) < start ? mm.addBars(mm.barStartAt(start), 1) : start;
+    len = mm.addBars(start, 4) - start;
+  }
   a.doc.editSong("create automation clip", [&](Song& x) {
+    if (clipsLane)
+      if (const int lane = trackmodes::addAutomationLane(x, pid.owner, name); lane >= 0) track = lane;
     AutomationClip c;
     c.id = x.allocateId();
     c.name = name;

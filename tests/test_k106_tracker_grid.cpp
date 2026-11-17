@@ -276,7 +276,10 @@ int main() {
                std::all_of(ns2.begin(), ns2.end(), [&](const Note& n) { return n.start < gd.length(); }),
            "the insert that pushes a note off the last row drops it (one note gone, none past the end)");
     expect(trackOf(doc, kPat, kLead).pastEnd == 0 && notesOf(doc, kPat, kLead).size() == 2, "the inserts before it moved every note, nothing hidden past the end");
-    for (int i = 0; i < moved; ++i) edit(doc, kPat, kLead, [](Rows& x, const Track&, const Grid& g) { return deleteRow(x.notes, x.steps, x.props, g, 1); });    {
+    for (int i = 0; i < moved; ++i) {
+      edit(doc, kPat, kLead, [](Rows& x, const Track&, const Grid& g) { return deleteRow(x.notes, x.steps, x.props, g, 1); });
+    }
+    {
       // R12-02: the inserts pushed the second note's OFF off the pattern (gone, as in the classic
       // editor), so after the deletes the note is back in place and rings on to the end.
       const auto& back = notesOf(doc, kPat, kLead);

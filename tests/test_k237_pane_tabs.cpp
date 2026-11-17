@@ -119,5 +119,38 @@ int main() {
       if (pl.id == gl::layout::shell(Preset::Logic).centre) ok = pl.rect.h >= 800 * (1 - gl::layout::kMaximisedShare) - 1 && pl.rect.w > 0;
     expect(ok, "the main area keeps its share beside a maximised pane");
   }
+
+  // K-237 remainder: tabs dragged between panes (State::moved), A to B and back.
+  {
+    using namespace gl::layout;
+    State mv;
+    expect(tabRegion(Preset::Logic, mv, "Lists") == "logic.right" && tabRegion(Preset::Logic, mv, "Mixer") == "logic.lower",
+           "a tab starts in its home pane");
+    expect(canMoveTab(Preset::Logic, "Lists", "logic.lower") && canMoveTab(Preset::Logic, "Mixer", "logic.right"), "between the two Smooth panes");
+    expect(!canMoveTab(Preset::Logic, "Lists", "logic.tracks") && !canMoveTab(Preset::Logic, "Playlist", "logic.lower"),
+           "the main area never takes a tab and its window never leaves it");
+    expect(!canMoveTab(Preset::Logic, "Lists", "logic.inspector") && !canMoveTab(Preset::Logic, "Lists", "nowhere"),
+           "only panes with tabs take one");
+    expect(!canMoveTab(Preset::Logic, "Inspector", "logic.lower"), "a window of a pane without tabs stays there");
+    expect(moveTab(Preset::Logic, mv, "Lists", "logic.lower") && tabRegion(Preset::Logic, mv, "Lists") == "logic.lower", "A to B");
+    expect(!moveTab(Preset::Logic, mv, "Lists", "logic.lower"), "a move to the pane it is in does nothing");
+    const std::string js = toJson(mv);
+    expect(fromJson(Preset::Logic, js) == mv && js.find("\"moved\"") != std::string::npos, "the move survives a restart (JSON): " + js);
+    expect(moveTab(Preset::Logic, mv, "Lists", "logic.right") && mv.moved.empty() && tabRegion(Preset::Logic, mv, "Lists") == "logic.right",
+           "and back to B: home again, nothing kept");
+    expect(toJson(mv).empty(), "back home the state is the default again");
+    const State junk = fromJson(Preset::Logic, R"({"moved":{"Lists":"logic.tracks","Playlist":"logic.lower","Nothing":"logic.lower","Mixer":"logic.lower","Notes":7}})");
+    expect(junk.moved.empty(), "moves the rules refuse, moves home and broken entries are dropped");
+    // The side panels of Clips and the Tracker have a tab rail; each layout's moves are its own.
+    const Region* side = findRegion(Preset::Live, "live.side");
+    const Region* tside = findRegion(Preset::Tracker, "tracker.side");
+    expect(side && side->tabs == TabStyle::Rail && hasPaneTabs(*side) && tside && tside->tabs == TabStyle::Rail, "Clips and Tracker side panels: a rail");
+    expect(!hasPaneTabs(*findRegion(Preset::Live, "live.clip")) && !hasPaneTabs(*findRegion(Preset::Tracker, "tracker.lower")),
+           "the bands keep their own look");
+    expect(!side->visibleByDefault && !tside->visibleByDefault, "the rails' panels are closed by default (a new set looks as before)");
+    State live;
+    expect(!moveTab(Preset::Live, live, "Lists", "logic.lower"), "another layout's pane is no target");
+    expect(fromJson(Preset::Live, js).moved.empty(), "a Smooth move means nothing in Clips");
+  }
   return finish();
 }

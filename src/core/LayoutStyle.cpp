@@ -87,7 +87,7 @@ Style tracker() {
   s.menus = MenuPlace::OwnRow;
   s.menuRowH = 22;
   s.controlBarH = 32;
-  s.statusBarH = 24;
+  s.statusBarH = 0;  // K-106 cp16: no app status bar; messages go to the pages' own lines
   s.panels = PanelShape::Square;
   s.tabs = TabKind::Pages;
   s.outerMargin = 2;

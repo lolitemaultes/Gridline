@@ -12,6 +12,7 @@
 // single undo step. Every function returns false (with a reason) and leaves
 // the song unchanged when the edit is not possible.
 #pragma once
+#include <functional>
 #include <string>
 #include <vector>
 #include "Song.h"
@@ -122,6 +123,9 @@ bool unassignChannel(Song& s, ObjectId channel);
 // (instrument tracks pass it on to the next empty track that takes it) — on
 // an audio track the channel is routed through the track's mixer track.
 int placeAudioClip(Song& s, int track, ObjectId channel);
+// Checkpoint 53 (N52-02): an audio track's clips play through its mixer track: each clip source only
+// this track's clips use is routed there. Returns the channels rerouted (0 for other tracks).
+int routeClipSources(Song& s, int track);
 // Drops links to mixer tracks / channels that no longer exist (after deletes,
 // on load).
 int dropStaleLinks(Song& s);
@@ -178,10 +182,24 @@ int syncGroupRouting(Song& s);
 int syncGroupRouting(Document& d);  // one undo step "group routing" (none when nothing changes)
 // Tracks named by their place ("3 Audio") take their place's number again (N51-11: after a move).
 void renumberTrackNames(Song& s);
+// Checkpoint 53 (N52-06): a track renamed (every layout's rename): its mixer track (an audio or group
+// track's, an instrument's own) and its instrument follow when they carried the track's old name, so
+// the mixer, the members' Out and the rack show the new one. One undo step "rename playlist track";
+// `extra` edits the track in the same step.
+int followTrackName(Song& s, int track, const std::string& was);  // the names changed
+bool renameTrack(Document& d, int track, const std::string& name, const std::function<void(PlaylistTrack&)>& extra = {});
 // Checkpoint 52 (N51-03): Clips' Delete and Duplicate of tracks: a group brings all its tracks. Delete
 // frees a group's mixer track and shortens the groups around; Duplicate puts the copies (clips too,
 // audio tracks on new mixer tracks, a group copy with its tracks routed into it) right after the
 // originals, in the originals' group. Return the count deleted (0: refused) / the first copy (-1).
+// Checkpoint 53 (N52-10): Clips' automation lanes. A lane is a track holding automation clips only (no
+// audio or instrument track, no group): the Arrangement shows it under its track, the clip grid shows
+// no column for it. addAutomationLane makes one for a control of `owner` (a mixer track or channel)
+// right under the track that control belongs to (a group's: after the group's tracks; none found:
+// after the tracks in use), named `name`. Returns the lane (-1: the list is full).
+bool isAutomationLane(const Song& s, int track);
+std::vector<char> automationLanes(const Song& s, int count);  // the first `count` tracks' answers, in one pass
+int addAutomationLane(Song& s, ObjectId owner, const std::string& name);
 int deleteTracks(Song& s, const std::vector<int>& tracks, std::string* why = nullptr);
 int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why = nullptr);
 int deleteTracks(Document& d, const std::vector<int>& tracks, std::string* why = nullptr);

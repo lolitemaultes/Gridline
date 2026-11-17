@@ -2,6 +2,7 @@
 #include "TrackModes.h"
 #include <algorithm>
 #include <functional>
+#include <map>
 #include <set>
 #include "Document.h"
 #include "PluginInfo.h"
@@ -23,7 +24,9 @@ void forEachTrackList(SongT& s, Fn fn) {
 }
 
 void addReturnSends(Song& s, ObjectId mixer);  // (checkpoint 52, below)
-void freeGroupMixer(Song& s, ObjectId gid);    // (checkpoint 52, below)
+void releaseMixer(Song& s, ObjectId gid, std::set<int>* emptied);  // (checkpoint 53, below)
+void eraseTracks(Song& s, const std::set<int>& gone);
+std::set<int> emptyLanes(const Song& s, const std::set<int>& emptied);
 
 bool fail(std::string* why, const char* text) {
   if (why) *why = text;
@@ -271,7 +274,9 @@ int usedTrackCount(const Song& s) {
     if (s.tracks[static_cast<size_t>(t)].mode != TrackMode::Unassigned || !s.tracks[static_cast<size_t>(t)].name.empty()) last = std::max(last, t);
   // K-112c (round 42): never fewer than kShownTracks (as many as the song has): a new set shows that
   // many empty tracks with empty slots in both views, as the reference's new set starts with four.
-  return std::min(std::max(last + 1, kShownTracks), static_cast<int>(s.tracks.size()));
+  // N52-05: only while no track is in use: tracks deleted down to two show two (as the reference),
+  // with no grey "Track N" columns padding the grid.
+  return std::min(last >= 0 ? last + 1 : kShownTracks, static_cast<int>(s.tracks.size()));
 }
 
 int addUsedTrack(Song& s) {
@@ -519,6 +524,22 @@ int placeAudioClip(Song& s, int track, ObjectId channel) {
   return track;
 }
 
+int routeClipSources(Song& s, int track) {
+  const MixerTrack* m = modeOf(s, track) == TrackMode::Audio ? linkedMixer(s, track) : nullptr;
+  if (!m) return 0;
+  const ObjectId mix = m->id;
+  std::set<ObjectId> mine, shared;
+  for (const Clip& c : s.playlist)
+    if (c.kind == ClipKind::Audio) (c.track == track ? mine : shared).insert(c.source);
+  int n = 0;
+  for (ObjectId id : mine)
+    if (Channel* ch = s.channel(id); ch && !shared.count(id) && ch->mixerTrack != mix) {
+      ch->mixerTrack = mix;
+      ++n;
+    }
+  return n;
+}
+
 int dropStaleLinks(Song& s) {
   int n = 0;
   forEachTrackList(s, [&](std::vector<PlaylistTrack>& v, bool) {
@@ -573,6 +594,21 @@ int placeNumber(const std::string& n, std::string* kind) {
   return std::stoi(n.substr(0, i));
 }
 
+// N52-11: the same for an instrument track named after its instrument ("1 Analog Synth"): its number.
+int placeNumberOf(const Song& s, const PlaylistTrack& t, std::string* kind) {
+  if (const int n = placeNumber(t.name, kind)) return n;
+  if (t.mode != TrackMode::Instrument) return 0;
+  const Channel* c = s.channel(t.channel);
+  const PluginInfo* info = c ? findPlugin(c->plugin.type) : nullptr;
+  if (!info) return 0;
+  const std::string& n = t.name;
+  size_t i = 0;
+  while (i < n.size() && n[i] >= '0' && n[i] <= '9') ++i;
+  if (i == 0 || i > 3 || i >= n.size() || n[i] != ' ' || n.substr(i + 1) != info->name) return 0;
+  if (kind) *kind = info->name;
+  return std::stoi(n.substr(0, i));
+}
+
 // A new empty track at `at`, the tracks from there moving down one (their clips with them, a group
 // around it growing), as the arrangement's Insert track. The tracks named by their place are renamed
 // for their new place, as the reference numbers its unnamed tracks. False when the list is full.
@@ -592,15 +628,12 @@ bool insertTrackAt(Song& s, int at) {
   for (int i = at + 1; i < static_cast<int>(s.tracks.size()); ++i) {
     std::string kind;
     PlaylistTrack& tr = s.tracks[static_cast<size_t>(i)];
-    if (placeNumber(tr.name, &kind) != i) continue;
+    if (placeNumberOf(s, tr, &kind) != i) continue;
     const std::string was = tr.name;
     tr.name = std::to_string(i + 1) + " " + kind;
     // N47-09: its mixer track and instrument named after it follow (they are one thing in Clips; Studio,
-    // Smooth and the routing lists show their names).
-    for (MixerTrack& m : s.mixer)
-      if (m.id == tr.mixer && m.name == was) m.name = tr.name;
-    for (Channel& c : s.channels)
-      if (c.id == tr.channel && c.name == was) c.name = tr.name;
+    // Smooth and the routing lists show their names). Checkpoint 53: an instrument's own mixer track too.
+    followTrackName(s, i, was);
   }
   return true;
 }
@@ -648,10 +681,16 @@ bool makeNamedAudioTrack(Song& s, int t) {
   makeRoom(s, t);
   PlaylistTrack& tr = s.tracks[static_cast<size_t>(t)];
   if (tr.mode != TrackMode::Unassigned) return false;
-  if (tr.name.empty() || tr.name == "Track " + std::to_string(t + 1)) tr.name = std::to_string(t + 1) + " Audio";
+  // N52-08: an empty MIDI track an audio file landed on is an audio track now, named as one.
+  std::string kind;
+  if (tr.name.empty() || tr.name == "Track " + std::to_string(t + 1) || (placeNumber(tr.name, &kind) > 0 && kind == "MIDI"))
+    tr.name = std::to_string(t + 1) + " Audio";
   if (tr.color == PlaylistTrack{}.color) tr.color = kTrackCycle[(usedTrackCount(s) - 1 + kTrackCycleN) % kTrackCycleN];
   if (!makeAudioTrack(s, t, kNoId, nullptr)) return false;
-  addReturnSends(s, s.tracks[static_cast<size_t>(t)].mixer);
+  const ObjectId mix = s.tracks[static_cast<size_t>(t)].mixer;
+  addReturnSends(s, mix);
+  // N52-02: its clips play through it (their sources were on Main): its fader, devices and sends.
+  routeClipSources(s, t);
   return true;
 }
 
@@ -669,11 +708,20 @@ ObjectId newInstrumentTrack(Document& d, int track, const std::string& pluginTyp
   for (const auto& c : d.song().playlist)
     if (c.track == track && c.kind != ClipKind::Pattern)
       return fail(why, "Instrument tracks take pattern clips only: move the audio and automation clips first."), kNoId;
+  {  // N52-04: a dry run first, so a failure leaves no step to take back (this may run inside a caller's step)
+    Song probe = d.song();
+    Channel c;
+    c.id = probe.allocateId();
+    c.name = info ? info->name : pluginType;
+    c.plugin.type = pluginType;
+    c.mixerTrack = probe.masterId();
+    probe.channels.push_back(c);
+    if (!makeInstrumentTrack(probe, track, c.id, why)) return kNoId;
+  }
   d.beginGroup("new instrument track");
   const ObjectId ch = d.addChannel(info ? info->name : pluginType, pluginType);
   const bool ok = ch != kNoId && makeInstrumentTrack(d, track, ch, why);
   d.endGroup();
-  if (!ok && ch != kNoId) d.undo();
   return ok ? ch : kNoId;
 }
 
@@ -841,21 +889,51 @@ void renumberPlaces(Song& s) {
   for (int i = 0; i < static_cast<int>(s.tracks.size()); ++i) {
     std::string kind;
     PlaylistTrack& tr = s.tracks[static_cast<size_t>(i)];
-    const int n = placeNumber(tr.name, &kind);
+    const int n = placeNumberOf(s, tr, &kind);
     if (n <= 0 || n == i + 1) continue;
     const std::string was = tr.name;
     tr.name = std::to_string(i + 1) + " " + kind;
-    const Channel* lc = s.channel(tr.channel);
-    const ObjectId cm = lc ? lc->mixerTrack : kNoId;  // N51-11: an instrument's own mixer track too
-    for (MixerTrack& m : s.mixer)
-      if ((m.id == tr.mixer || (m.id == cm && cm != s.masterId())) && m.name == was) m.name = tr.name;
-    for (Channel& c : s.channels)
-      if (c.id == tr.channel && c.name == was) c.name = tr.name;
+    followTrackName(s, i, was);  // N51-11: its mixer track and instrument (and the instrument's own mixer track)
   }
 }
 }  // namespace
 
 void renumberTrackNames(Song& s) { renumberPlaces(s); }
+
+int followTrackName(Song& s, int track, const std::string& was) {
+  if (!validTrack(s, track) || was.empty()) return 0;
+  const PlaylistTrack& tr = s.tracks[static_cast<size_t>(track)];
+  if (tr.name == was) return 0;
+  int n = 0;
+  ObjectId mix = tr.mode == TrackMode::Audio ? tr.mixer : kNoId;
+  if (tr.mode == TrackMode::Instrument)
+    if (Channel* c = s.channel(tr.channel)) {
+      if (c->name == was) c->name = tr.name, ++n;
+      if (c->mixerTrack != s.masterId()) mix = c->mixerTrack;
+    }
+  if (MixerTrack* m = s.mixerTrack(mix); m && mix != s.masterId() && m->name == was) m->name = tr.name, ++n;
+  return n;
+}
+
+bool renameTrack(Document& d, int track, const std::string& name, const std::function<void(PlaylistTrack&)>& extra) {
+  const Song& cur = d.song();
+  if (!validTrack(cur, track)) return false;
+  const std::string was = cur.tracks[static_cast<size_t>(track)].name;
+  Song probe = cur;
+  probe.tracks[static_cast<size_t>(track)].name = name;
+  if (followTrackName(probe, track, was) == 0)
+    return d.editPlaylistTrack(track, "rename playlist track", [&](PlaylistTrack& x) {
+      x.name = name;
+      if (extra) extra(x);
+    });
+  d.editSong("rename playlist track", [&](Song& s) {
+    PlaylistTrack& x = s.tracks[static_cast<size_t>(track)];
+    x.name = name;
+    if (extra) extra(x);
+    followTrackName(s, track, was);
+  });
+  return true;
+}
 
 int groupTracks(Song& s, std::vector<int> tracks, std::string* why) {
   std::sort(tracks.begin(), tracks.end());
@@ -911,14 +989,14 @@ bool ungroupTracks(Song& s, int group, std::string* why) {
   if (!isGroupTrack(s, group)) return fail(why, "Select a group track to ungroup.");
   // What played into the group plays where the group played; the other sends to it go; the group's
   // own automation goes with it (S07: a later track reusing the mixer track must not inherit it).
-  freeGroupMixer(s, s.tracks[static_cast<size_t>(group)].mixer);
+  // N52-10: a lane left empty by that (its "<group> › Volume" track) goes with the group.
+  std::set<int> emptied;
+  releaseMixer(s, s.tracks[static_cast<size_t>(group)].mixer, &emptied);
   clearLinks(s, group);
-  for (int g = 0; g < group; ++g)  // checkpoint 52: a group around it is one track shorter
-    if (int& gs = s.tracks[static_cast<size_t>(g)].groupSize; gs > 0 && group <= g + gs) --gs;
-  s.tracks.erase(s.tracks.begin() + group);
-  s.playlist.erase(std::remove_if(s.playlist.begin(), s.playlist.end(), [group](const Clip& c) { return c.track == group; }), s.playlist.end());
-  for (Clip& c : s.playlist)
-    if (c.track > group) --c.track;
+  s.tracks[static_cast<size_t>(group)].groupSize = 0;  // (its members stay: only the group track goes)
+  std::set<int> gone = emptyLanes(s, emptied);
+  gone.insert(group);
+  eraseTracks(s, gone);
   renumberPlaces(s);
   return true;
 }
@@ -937,8 +1015,9 @@ std::vector<int> withWholeGroups(const Song& s, const std::vector<int>& tracks) 
   return std::vector<int>(all.begin(), all.end());
 }
 
-// The group's mixer track is free again; what still played into it plays where the group played.
-void freeGroupMixer(Song& s, ObjectId gid) {
+// The mixer track is free again; what still played into it plays where it played (its output); sends to
+// it go; its own automation goes (data and clips). `emptied` gets the tracks that held that automation.
+void releaseMixer(Song& s, ObjectId gid, std::set<int>* emptied = nullptr) {
   MixerTrack* gm = s.mixerTrack(gid);
   if (!gm || gid == s.masterId()) return;
   ObjectId out = outputOf(*gm);
@@ -957,6 +1036,8 @@ void freeGroupMixer(Song& s, ObjectId gid) {
   std::set<ObjectId> autos;
   for (const AutomationClip& ac : s.automations)
     if (ac.owner == gid) autos.insert(ac.id);
+  for (const Clip& c : s.playlist)
+    if (emptied && c.kind == ClipKind::Automation && autos.count(c.source)) emptied->insert(c.track);
   s.playlist.erase(std::remove_if(s.playlist.begin(), s.playlist.end(),
                                   [&](const Clip& c) { return c.kind == ClipKind::Automation && autos.count(c.source) > 0; }),
                    s.playlist.end());
@@ -968,15 +1049,53 @@ void freeGroupMixer(Song& s, ObjectId gid) {
   fresh.sends.push_back({s.masterId(), 1.0f, false});
   *s.mixerTrack(gid) = fresh;
 }
-}  // namespace
 
-int deleteTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
-  const std::vector<int> del = withWholeGroups(s, tracks);
-  if (del.empty()) return fail(why, "Select the tracks to delete."), 0;
-  if (static_cast<int>(del.size()) >= static_cast<int>(s.tracks.size())) return fail(why, "The last track cannot be deleted."), 0;
-  for (auto it = del.rbegin(); it != del.rend(); ++it) {
+// True when a clip of an arrangement other than the current one uses the channel / pattern.
+bool usedElsewhere(const Song& s, ObjectId channel, ObjectId pattern) {
+  for (size_t i = 0; i < s.arrangements.size(); ++i) {
+    if (static_cast<int>(i) == s.currentArrangement) continue;
+    for (const Clip& c : s.arrangements[i].playlist)
+      if ((channel != kNoId && c.kind == ClipKind::Audio && c.source == channel) || (pattern != kNoId && c.kind == ClipKind::Pattern && c.pattern == pattern))
+        return true;
+  }
+  return false;
+}
+
+// N52-05: a channel goes with everything that names it (as Document::removeChannel, on the song).
+void eraseChannel(Song& s, ObjectId id) {
+  const int idx = s.channelIndex(id);
+  if (idx < 0) return;
+  s.channels.erase(s.channels.begin() + idx);
+  for (Pattern& p : s.patterns) {
+    p.steps.erase(id);
+    p.notes.erase(id);
+    p.stepProps.erase(id);
+    p.stepLoop.erase(id);
+    p.automation.erase(std::remove_if(p.automation.begin(), p.automation.end(), [id](const PatternAutomation& l) { return l.owner == id; }), p.automation.end());
+  }
+  s.modLinks.erase(std::remove_if(s.modLinks.begin(), s.modLinks.end(), [id](const ModLink& l) { return l.owner == id || (l.sourceOwner == id && l.sourceSlot < 0); }),
+                   s.modLinks.end());
+  s.links.erase(std::remove_if(s.links.begin(), s.links.end(), [id](const ControllerLink& l) { return l.owner == id && l.action == RemoteAction::None; }),
+                s.links.end());
+  for (Channel& ch : s.channels) {
+    ch.layer.erase(std::remove(ch.layer.begin(), ch.layer.end(), id), ch.layer.end());
+    ch.layerZones.erase(std::remove_if(ch.layerZones.begin(), ch.layerZones.end(), [id](const LayerZone& z) { return z.child == id; }), ch.layerZones.end());
+  }
+  std::set<ObjectId> autos;
+  for (const AutomationClip& ac : s.automations)
+    if (ac.owner == id) autos.insert(ac.id);
+  s.playlist.erase(std::remove_if(s.playlist.begin(), s.playlist.end(),
+                                  [&](const Clip& c) { return (c.kind == ClipKind::Audio && c.source == id) || (c.kind == ClipKind::Automation && autos.count(c.source) > 0); }),
+                   s.playlist.end());
+  s.automations.erase(std::remove_if(s.automations.begin(), s.automations.end(), [&](const AutomationClip& ac) { return autos.count(ac.id) > 0; }),
+                      s.automations.end());
+}
+
+// Erases tracks (indexes in the current list): their clips go, the groups around them shrink.
+void eraseTracks(Song& s, const std::set<int>& gone) {
+  for (auto it = gone.rbegin(); it != gone.rend(); ++it) {
     const int t = *it;
-    if (isGroupTrack(s, t)) freeGroupMixer(s, s.tracks[static_cast<size_t>(t)].mixer);
+    if (t < 0 || t >= static_cast<int>(s.tracks.size())) continue;
     for (int g = 0; g < t; ++g)  // the groups around it are a track shorter
       if (int& gs = s.tracks[static_cast<size_t>(g)].groupSize; gs > 0 && t <= g + gs) --gs;
     s.playlist.erase(std::remove_if(s.playlist.begin(), s.playlist.end(), [t](const Clip& c) { return c.track == t; }), s.playlist.end());
@@ -984,8 +1103,157 @@ int deleteTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
       if (c.track > t) --c.track;
     s.tracks.erase(s.tracks.begin() + t);
   }
+}
+
+// N52-10: the tracks that held only the automation just removed (a lane of a group's bus): nothing
+// else is on them and they are no group, audio or instrument track, so they go too.
+std::set<int> emptyLanes(const Song& s, const std::set<int>& emptied) {
+  std::set<int> out;
+  for (int t : emptied)
+    if (t >= 0 && t < static_cast<int>(s.tracks.size()) && s.tracks[static_cast<size_t>(t)].mode == TrackMode::Unassigned &&
+        s.tracks[static_cast<size_t>(t)].groupSize <= 0 && !trackHasClips(s, t))
+      out.insert(t);
+  return out;
+}
+}  // namespace
+
+int deleteTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
+  const std::vector<int> del = withWholeGroups(s, tracks);
+  if (del.empty()) return fail(why, "Select the tracks to delete."), 0;
+  if (static_cast<int>(del.size()) >= static_cast<int>(s.tracks.size())) return fail(why, "The last track cannot be deleted."), 0;
+  std::set<int> gone(del.begin(), del.end());
+  const ObjectId master = s.masterId();
+  // N52-05: what the tracks own goes with them, decided before any of them goes (a group is still a
+  // group while its bus is freed): their mixer tracks (a group's bus, an audio track's, an instrument's
+  // own), their instruments, and the channels and patterns only their clips play.
+  std::vector<ObjectId> mixers;
+  std::set<ObjectId> chans, pats;
+  auto takeMixer = [&](ObjectId m) {
+    if (m != kNoId && m != master && s.mixerTrack(m) && std::find(mixers.begin(), mixers.end(), m) == mixers.end()) mixers.push_back(m);
+  };
+  for (int t : del) {
+    if (modeOf(s, t) == TrackMode::Audio) takeMixer(s.tracks[static_cast<size_t>(t)].mixer);
+    if (const Channel* c = linkedChannel(s, t)) {
+      chans.insert(c->id);
+      if (!channelUsesMixer(s, c->mixerTrack, c->id) && !mixerLinked(s, c->mixerTrack)) takeMixer(c->mixerTrack);
+    }
+  }
+  for (const Clip& c : s.playlist) {
+    if (!gone.count(c.track)) continue;
+    if (c.kind == ClipKind::Audio) chans.insert(c.source);
+    if (c.kind == ClipKind::Pattern) pats.insert(c.pattern);
+  }
+  for (const Clip& c : s.playlist) {  // kept while a clip on another track plays them
+    if (gone.count(c.track)) continue;
+    if (c.kind == ClipKind::Audio) chans.erase(c.source);
+    if (c.kind == ClipKind::Pattern) {
+      pats.erase(c.pattern);
+      if (const Pattern* p = s.pattern(c.pattern)) {
+        for (const auto& kv : p->notes)
+          if (!kv.second.empty()) chans.erase(kv.first);
+        for (const auto& kv : p->steps) chans.erase(kv.first);
+      }
+    }
+  }
+  for (int t = 0; t < static_cast<int>(s.tracks.size()); ++t)
+    if (!gone.count(t) && s.tracks[static_cast<size_t>(t)].mode == TrackMode::Instrument) chans.erase(s.tracks[static_cast<size_t>(t)].channel);
+  for (auto it = chans.begin(); it != chans.end();) it = usedElsewhere(s, *it, kNoId) || !s.channel(*it) ? chans.erase(it) : std::next(it);
+  for (auto it = pats.begin(); it != pats.end();) it = usedElsewhere(s, kNoId, *it) ? pats.erase(it) : std::next(it);
+  std::set<int> emptied;
+  for (ObjectId m : mixers) releaseMixer(s, m, &emptied);
+  for (ObjectId c : chans) eraseChannel(s, c);
+  for (int t : emptyLanes(s, emptied)) gone.insert(t);
+  const int count = static_cast<int>(gone.size());
+  eraseTracks(s, gone);
+  for (ObjectId pid : pats) {
+    if (const int pi = s.patternIndex(pid); pi >= 0) s.patterns.erase(s.patterns.begin() + pi);
+    for (PatternGroup& g : s.patternGroups) g.patterns.erase(std::remove(g.patterns.begin(), g.patterns.end(), pid), g.patterns.end());
+  }
+  s.patternGroups.erase(std::remove_if(s.patternGroups.begin(), s.patternGroups.end(), [](const PatternGroup& g) { return g.patterns.empty(); }),
+                        s.patternGroups.end());
   renumberPlaces(s);
-  return static_cast<int>(del.size());
+  return count;
+}
+
+namespace {
+// N52-01: the copy's mixer track takes the original's devices, strip and sends (its name, colour and
+// id stay; it is not armed). Sends are remapped to the copies afterwards.
+void copyMixerContent(Song& s, ObjectId from, ObjectId to) {
+  const MixerTrack* f = s.mixerTrack(from);
+  MixerTrack* t = s.mixerTrack(to);
+  if (!f || !t || from == to) return;
+  MixerTrack k = *f;
+  k.id = to;
+  k.name = t->name;
+  k.color = t->color;
+  k.dock = t->dock;
+  k.armed = false;
+  k.solo = k.soloAlone = false;
+  k.freeze = FreezeRecord{};
+  k.hibernate = false;
+  *t = k;
+}
+
+// A copy of a channel right after it (a new id; its mixer track `mixer`), named `name` when given.
+ObjectId cloneChannel(Song& s, ObjectId from, ObjectId mixer, const std::string& name) {
+  const int idx = s.channelIndex(from);
+  if (idx < 0) return kNoId;
+  Channel c = s.channels[static_cast<size_t>(idx)];
+  c.id = s.allocateId();
+  c.mixerTrack = mixer;
+  c.freeze = FreezeRecord{};
+  if (!name.empty()) c.name = name;
+  s.channels.insert(s.channels.begin() + idx + 1, c);
+  return c.id;
+}
+}  // namespace
+
+bool isAutomationLane(const Song& s, int track) {
+  if (!validTrack(s, track)) return false;
+  const PlaylistTrack& t = s.tracks[static_cast<size_t>(track)];
+  if (t.mode != TrackMode::Unassigned || t.groupSize > 0) return false;
+  bool any = false;
+  for (const Clip& c : s.playlist)
+    if (c.track == track) {
+      if (c.kind != ClipKind::Automation) return false;
+      any = true;
+    }
+  return any;
+}
+
+std::vector<char> automationLanes(const Song& s, int count) {
+  const int n = std::max(0, std::min(count, static_cast<int>(s.tracks.size())));
+  std::vector<char> v(static_cast<size_t>(n), 0);  // 0 none yet, 1 automation only, 2 something else
+  for (const Clip& c : s.playlist)
+    if (c.track >= 0 && c.track < n) {
+      char& x = v[static_cast<size_t>(c.track)];
+      x = c.kind == ClipKind::Automation && x != 2 ? 1 : 2;
+    }
+  for (int t = 0; t < n; ++t) {
+    const PlaylistTrack& tr = s.tracks[static_cast<size_t>(t)];
+    v[static_cast<size_t>(t)] = v[static_cast<size_t>(t)] == 1 && tr.mode == TrackMode::Unassigned && tr.groupSize <= 0;
+  }
+  return v;
+}
+
+int addAutomationLane(Song& s, ObjectId owner, const std::string& name) {
+  const int used = usedTrackCount(s);
+  int under = -1;  // the track the control belongs to
+  for (int t = 0; t < used && under < 0; ++t) {
+    const PlaylistTrack& tr = s.tracks[static_cast<size_t>(t)];
+    if (tr.channel == owner && tr.mode == TrackMode::Instrument) under = t;
+    else if (const MixerTrack* pm = playedMixer(s, t); pm && pm->id == owner) under = t;
+  }
+  int at = used;
+  if (under >= 0) {
+    at = under + 1;
+    if (isGroupTrack(s, under)) at = under + s.tracks[static_cast<size_t>(under)].groupSize + 1;
+    while (at < used && isAutomationLane(s, at)) ++at;  // after the track's other lanes
+  }
+  if (!insertTrackAt(s, at)) return -1;
+  s.tracks[static_cast<size_t>(at)].name = name;
+  if (under >= 0) s.tracks[static_cast<size_t>(at)].color = s.tracks[static_cast<size_t>(under)].color;
+  return at;
 }
 
 int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
@@ -994,12 +1262,25 @@ int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
   const int first = src.front(), last = src.back(), n = static_cast<int>(src.size());
   if (last - first + 1 != n) return fail(why, "Duplicate tracks next to each other."), -1;
   if (static_cast<int>(s.tracks.size()) + n > kMaxPlaylistTracks) return fail(why, "There is no room for more tracks."), -1;
+  const ObjectId master = s.masterId();
   const int home = groupTrackOf(s, first);  // the group the copies go in (the originals')
+  // N52-01: the copy is a track of its own, as the reference's: its own mixer track (devices, fader,
+  // pan and sends copied), its own instrument, its own clip sources and clips; nothing plays through
+  // the original any more. Each original's mixer track and channel, and its mode:
   std::vector<PlaylistTrack> copies;
   std::vector<int> sizes;
+  std::vector<TrackMode> modes;
+  std::vector<ObjectId> origMix, origChan;
   for (int t : src) {
     PlaylistTrack k = s.tracks[static_cast<size_t>(t)];
     sizes.push_back(isGroupTrack(s, t) ? k.groupSize : 0);
+    modes.push_back(modeOf(s, t));
+    const Channel* lc = linkedChannel(s, t);
+    origChan.push_back(lc ? lc->id : kNoId);
+    ObjectId om = kNoId;
+    if (modes.back() == TrackMode::Audio) om = k.mixer;
+    else if (lc && lc->mixerTrack != master && s.mixerTrack(lc->mixerTrack) && !channelUsesMixer(s, lc->mixerTrack, lc->id)) om = lc->mixerTrack;
+    origMix.push_back(om);
     k.groupSize = 0;
     copies.push_back(k);
   }
@@ -1008,34 +1289,55 @@ int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
     if (!insertTrackAt(s, at + i)) return fail(why, "There is no room for more tracks."), -1;
     PlaylistTrack& k = s.tracks[static_cast<size_t>(at + i)];
     k = copies[static_cast<size_t>(i)];
-    const bool audio = k.mode == TrackMode::Audio;
-    k.mode = TrackMode::Unassigned;  // a mixer track or channel belongs to one track (as Studio's clone)
+    k.mode = TrackMode::Unassigned;  // linked below to mixer tracks and channels of its own
     k.mixer = k.channel = kNoId;
     k.laneShown = k.laneSet = false;
-    k.groupSize = audio ? -1 : 0;  // (marks the audio ones below)
   }
   for (int g = home; g >= 0; g = groupTrackOf(s, g))  // the copies stay in the originals' group
     if (int& gs = s.tracks[static_cast<size_t>(g)].groupSize; g + gs < at + n - 1) gs = at + n - 1 - g;
-  std::vector<char> audio(static_cast<size_t>(n), 0);
-  for (int i = 0; i < n; ++i) {
-    PlaylistTrack& k = s.tracks[static_cast<size_t>(at + i)];
-    audio[static_cast<size_t>(i)] = k.groupSize < 0;
-    k.groupSize = sizes[static_cast<size_t>(i)];
-  }
+  for (int i = 0; i < n; ++i) s.tracks[static_cast<size_t>(at + i)].groupSize = sizes[static_cast<size_t>(i)];
+  std::map<ObjectId, ObjectId> idMap;  // an original's mixer track / channel -> the copy's
+  std::vector<ObjectId> newMixers;
   // Outer tracks first, so each copy's group has its mixer track when the copy is routed into it.
   for (int i = 0; i < n; ++i) {
-    if (!audio[static_cast<size_t>(i)]) continue;
-    if (!makeAudioTrack(s, at + i, kNoId, why)) return -1;
-    if (sizes[static_cast<size_t>(i)] > 0) {
-      const ObjectId gid = s.tracks[static_cast<size_t>(at + i)].mixer;
-      if (MixerTrack* m = s.mixerTrack(gid)) {
-        const MixerTrack* om = s.mixerTrack(s.tracks[static_cast<size_t>(src[static_cast<size_t>(i)])].mixer);
-        m->color = s.tracks[static_cast<size_t>(at + i)].color;
-        if (om) m->volume = om->volume, m->pan = om->pan;
+    const size_t u = static_cast<size_t>(i);
+    const int t = at + i;
+    if (modes[u] == TrackMode::Audio) {
+      if (!makeAudioTrack(s, t, kNoId, why)) return -1;
+      const ObjectId nm = s.tracks[static_cast<size_t>(t)].mixer;
+      copyMixerContent(s, origMix[u], nm);
+      idMap[origMix[u]] = nm;
+      newMixers.push_back(nm);
+    } else if (modes[u] == TrackMode::Instrument && s.channel(origChan[u])) {
+      ObjectId nm = master;
+      if (origMix[u] != kNoId) {
+        nm = freeMixer(s);
+        if (nm == kNoId) nm = newInsert(s);
+        if (nm == kNoId) return fail(why, "There is no free mixer track for the copy."), -1;
+        if (MixerTrack* m = s.mixerTrack(nm)) m->name = s.tracks[static_cast<size_t>(t)].name, m->color = s.tracks[static_cast<size_t>(t)].color;
+        copyMixerContent(s, origMix[u], nm);
+        idMap[origMix[u]] = nm;
+        newMixers.push_back(nm);
       }
-      addReturnSends(s, gid);
+      const ObjectId nc = cloneChannel(s, origChan[u], nm, s.tracks[static_cast<size_t>(t)].name);
+      idMap[origChan[u]] = nc;
+      PlaylistTrack& k = s.tracks[static_cast<size_t>(t)];
+      k.mode = TrackMode::Instrument;
+      k.channel = nc;
+      k.mixer = kNoId;
     }
   }
+  // The copies' sends: to a copied group (or return) the copy's, else where the original's went.
+  for (ObjectId id : newMixers)
+    if (MixerTrack* m = s.mixerTrack(id)) {
+      for (Send& sd : m->sends)
+        if (auto it = idMap.find(sd.to); it != idMap.end()) sd.to = it->second;
+      m->sends.erase(std::remove_if(m->sends.begin(), m->sends.end(), [id](const Send& x) { return x.to == id; }), m->sends.end());
+      if (m->sends.empty() || outputOf(*m) == kNoId) m->sends.insert(m->sends.begin(), Send{master, 1.0f, false});
+    }
+  // The clips: an audio clip plays a copy of its source (through the copy's mixer track), a MIDI clip
+  // a copy of its pattern (the notes on the copy's instrument), automation of a copied control the copy's.
+  std::map<ObjectId, ObjectId> patMap, autoMap;
   std::vector<Clip> clips;
   for (const Clip& c : s.playlist)
     if (c.track >= first && c.track <= last) {
@@ -1044,6 +1346,56 @@ int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
       k.takeGroup = kNoId, k.take = 0;
       clips.push_back(k);
     }
+  for (Clip& k : clips) {
+    const size_t u = static_cast<size_t>(k.track - at);
+    if (k.kind == ClipKind::Audio && s.channel(k.source)) {
+      auto it = idMap.find(k.source);
+      if (it == idMap.end()) {
+        const Channel* oc = s.channel(k.source);
+        ObjectId mix = oc->mixerTrack;
+        if (modes[u] == TrackMode::Audio) mix = s.tracks[static_cast<size_t>(k.track)].mixer;  // (N52-02: also a source that played to Main)
+        else if (auto mt = idMap.find(mix); mt != idMap.end()) mix = mt->second;
+        it = idMap.emplace(k.source, cloneChannel(s, k.source, mix, "")).first;
+      }
+      if (it->second != kNoId) k.source = it->second;
+    } else if (k.kind == ClipKind::Pattern && s.pattern(k.pattern)) {
+      auto it = patMap.find(k.pattern);
+      if (it == patMap.end()) {
+        Pattern p = *s.pattern(k.pattern);
+        p.id = s.allocateId();
+        auto remap = [&](auto& mp) {
+          std::remove_reference_t<decltype(mp)> out;
+          for (auto& kv : mp) {
+            auto m = idMap.find(kv.first);
+            out[m != idMap.end() ? m->second : kv.first] = kv.second;
+          }
+          mp = std::move(out);
+        };
+        remap(p.steps);
+        remap(p.notes);
+        remap(p.stepProps);
+        remap(p.stepLoop);
+        for (PatternAutomation& pa : p.automation)
+          if (auto m = idMap.find(pa.owner); m != idMap.end()) pa.owner = m->second;
+        s.patterns.push_back(p);
+        it = patMap.emplace(k.pattern, p.id).first;
+      }
+      k.pattern = it->second;
+    } else if (k.kind == ClipKind::Automation) {
+      const AutomationClip* ac = s.automation(k.source);
+      if (ac && idMap.count(ac->owner)) {
+        auto it = autoMap.find(k.source);
+        if (it == autoMap.end()) {
+          AutomationClip na = *ac;
+          na.id = s.allocateId();
+          na.owner = idMap[ac->owner];
+          s.automations.push_back(na);
+          it = autoMap.emplace(k.source, na.id).first;
+        }
+        k.source = it->second;
+      }
+    }
+  }
   for (Clip& k : clips) {
     k.id = s.allocateId();
     s.playlist.push_back(k);

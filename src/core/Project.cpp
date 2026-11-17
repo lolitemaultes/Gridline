@@ -970,6 +970,11 @@ void songExtrasToJson(const Song& s, Json& j) {
     }
     j.object["pluginWindows"] = std::move(jw);
   }
+  if (!s.workspaceCopy.empty()) {  // K-237: the opt-in copy of the person's workspaces {layout id: set as JSON text}
+    Json jw = Json::makeObject();
+    for (const auto& [lay, text] : s.workspaceCopy) jw.object[lay] = Json::makeString(text);
+    j.object["workspaces"] = std::move(jw);
+  }
   if (s.live.areaEnd > 0 || !s.live.view.empty()) {
     Json jl = Json::makeObject();
     if (s.live.areaEnd > 0) jl.object["areaEnd"] = num(static_cast<double>(s.live.areaEnd));
@@ -1033,6 +1038,11 @@ void songExtrasToJson(const Song& s, Json& j) {
 // After patterns, channels, automation clips and the current playlist: parked
 // clips get unique ids; clips whose content is gone are dropped.
 bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const Json&, ObjectId&)>& takeId, std::string* err) {
+  // K-237: the opt-in workspaces copy; only the four layouts, each a JSON text of reasonable size.
+  if (const Json* jw = j.find("workspaces"); jw && jw->is(Json::Type::Object))
+    for (const auto& [lay, v] : jw->object)
+      if ((lay == "studio" || lay == "live" || lay == "logic" || lay == "tracker") && v.is(Json::Type::String) && !v.str.empty() && v.str.size() <= 262144)
+        s.workspaceCopy[lay] = v.str;
   // K-297 (round 9): open plugin windows; one naming nothing in the song (or twice) is left out.
   if (const Json* jw = j.find("pluginWindows"); jw && jw->is(Json::Type::Array)) {
     for (const Json& e : jw->array) {

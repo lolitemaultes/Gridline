@@ -32,6 +32,7 @@
 #include "LiveLook.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "WorkspacesUi.h"
 
 namespace gl {
 
@@ -189,6 +190,7 @@ void App::completeProjectLoad() {
   rackReveal.quietSwitch(engine.mode());  // J-77: opening a project does not count as choosing PAT
   syncEngine();
   reopenPluginWindowList(*this, pluginWins);
+  workspacesui::projectOpened(*this);  // K-237: its workspaces copy, where the person has none of their own
   home.projectOpened(now);
   if (r.fromFl) {
     importReport = ImportReport{};

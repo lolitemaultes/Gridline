@@ -7,17 +7,20 @@
 
 `list` reads every release file name (never the files' contents, except their size and the
 checksum from SHA256SUMS) and says what each one is: product (app, suite, mini, extras), kind
-(installer, all, single, app, portable, ...), system family, processor and, for a single plugin,
-its name. `body` writes the release page's four grouped sections in the approved order, each
+(installer, all, app, portable, ...), system family and processor. `body` writes the release page's four grouped sections in the approved order, each
 opened by a one-line note:
 
   1. Gridline (the app): one main download per system;
-  2. Gridline Suite: the installer, the all-plugins zip and the single-plugin zips per system;
-  3. Gridline Suite Mini: the same three ways;
+  2. Gridline Suite: the installer and the all-plugins zip per system;
+  3. Gridline Suite Mini: the same two ways;
   4. Extras: media tools, crash symbols, source and checksums;
 
 then the release notes. Names follow the plan's asset table; a name it cannot place fails the run,
 but it is still listed (under Extras) with a warning, so a file is never left off the page. Public text only: no task numbers, no other products.
+
+There are no single-plugin zips: each would carry the whole engine and be as large as the suite, so a person
+who wants one plugin ticks it in the installer. A single-plugin zip name is not placed (lean per-plugin
+files are planned).
 """
 import argparse
 import json
@@ -29,7 +32,6 @@ REPO = "https://github.com/lolitemaultes/Gridline/releases/download"
 
 FAMILIES = ("macos", "windows", "linux", "bsd")
 FAMILY_NAME = {"macos": "macOS", "windows": "Windows", "linux": "Linux", "bsd": "BSD"}
-FLAGSHIPS = ["Plasma", "Seltmann", "Platter", "Tideline", "Chater", "Loupe"]
 
 MAC_NOTE = ("The macOS files are not signed by Apple. The first time, right-click (or Control-click) the "
             "file and choose Open, or open System Settings > Privacy & Security and click Open Anyway.")
@@ -56,7 +58,6 @@ def classify(name, version):
         (r"Gridline-Suite(-Mini)?-%s-(windows)-setup\.exe" % v, "installer"),
         (r"Gridline-Suite(-Mini)?-%s-((?:linux|freebsd|openbsd|netbsd)-[a-z0-9_]+)-setup\.run" % v, "installer"),
         (r"Gridline-Suite(-Mini)?-%s-(macos|windows|linux|bsd)-all\.zip" % v, "all"),
-        (r"Gridline-Suite(-Mini)?-([A-Za-z0-9]+)-%s-(macos|windows|linux|bsd)\.zip" % v, "single"),
         # ---- extras
         (r"Gridline-%s-media-tools-([a-z0-9_-]+)\.zip" % v, "media-tools"),
         (r"Gridline-%s-symbols-([a-z0-9_-]+)\.zip" % v, "symbols"),
@@ -78,11 +79,8 @@ def classify(name, version):
         e = {"name": name, "kind": kind}
         if name.startswith("Gridline-Suite"):
             e["product"] = "mini" if g[0] else "suite"
-            if kind == "single":
-                e["plugin"], e["family"] = g[1], g[2]
-            else:
-                e["system"] = g[1]
-                e["family"] = _family_of(g[1]) or g[1]
+            e["system"] = g[1]
+            e["family"] = _family_of(g[1]) or g[1]
         elif kind in ("app", "portable"):
             e["product"] = "app"
             e["system"] = g[0]
@@ -143,12 +141,6 @@ def _app_section(version, files):
     return lines + [""]
 
 
-def _plugin_order(names):
-    flag = [n for n in FLAGSHIPS if n in names]
-    rest = sorted(n for n in names if n not in FLAGSHIPS)
-    return flag + rest
-
-
 def _suite_section(version, files, product):
     title = "Gridline Suite" if product == "suite" else "Gridline Suite Mini"
     note = ("Only the plugins, for other music programs." if product == "suite"
@@ -159,7 +151,7 @@ def _suite_section(version, files, product):
     lines = ["## " + title, "", note, ""]
     inst = [f for f in mine if f["kind"] == "installer"]
     if inst:
-        lines += ["**Installer**: one file per system; tick the plugins and the formats you want.", ""]
+        lines += ["**Installer**: one file per system; tick the plugins and the formats you want, even just one.", ""]
         for fam in FAMILIES:
             these = [f for f in inst if f["family"] == fam]
             if these:
@@ -170,18 +162,6 @@ def _suite_section(version, files, product):
         lines += ["**All plugins**: every plugin in every format, no installer (a README inside says where each folder goes).", ""]
         lines.append("- " + ", ".join(_link(version, f["name"], FAMILY_NAME[f["family"]]) for fam in FAMILIES for f in alls
                                        if f["family"] == fam))
-        lines.append("")
-    singles = [f for f in mine if f["kind"] == "single"]
-    if singles:
-        lines += ["**Single plugins**: one zip per plugin per system, with every format inside. Each is about as large as the "
-                  "whole set, so for several plugins the installer or the all-plugins zip is smaller.", "",
-                  "| Plugin | macOS | Windows | Linux | BSD |", "| --- | --- | --- | --- | --- |"]
-        by = {}
-        for f in singles:
-            by.setdefault(f["plugin"], {})[f["family"]] = f["name"]
-        for p in _plugin_order(list(by)):
-            cells = [_link(version, by[p][fam], "zip") if fam in by[p] else "" for fam in FAMILIES]
-            lines.append("| %s | %s |" % (p, " | ".join(cells)))
         lines.append("")
     return lines
 
@@ -227,9 +207,7 @@ def self_test():
         "Gridline-Suite-0.8.0-macos-universal.pkg", "Gridline-Suite-0.8.0-windows-setup.exe",
         "Gridline-Suite-0.8.0-linux-x86_64-setup.run", "Gridline-Suite-0.8.0-netbsd-x86_64-setup.run",
         "Gridline-Suite-0.8.0-macos-all.zip", "Gridline-Suite-0.8.0-bsd-all.zip",
-        "Gridline-Suite-Plasma-0.8.0-macos.zip", "Gridline-Suite-AcidBass-0.8.0-linux.zip", "Gridline-Suite-Loupe-0.8.0-windows.zip",
         "Gridline-Suite-Mini-0.8.0-windows-setup.exe", "Gridline-Suite-Mini-0.8.0-linux-all.zip",
-        "Gridline-Suite-Mini-Compressor-0.8.0-macos.zip",
         "Gridline-0.8.0-media-tools-linux-x86_64.zip", "Gridline-0.8.0-symbols-macos-universal.zip",
         "Gridline-0.8.0-source.tar.gz", "Gridline-0.8.0-SHA256SUMS",
     ]
@@ -246,9 +224,9 @@ def self_test():
     check(got["Gridline-0.8.0-linux-aarch64.tar.gz"]["format"] == "tar.gz", "tar.gz format")
     check(got["Gridline-0.8.0-freebsd-x86_64.tar.gz"]["family"] == "bsd", "freebsd is bsd")
     check(got["Gridline-0.8.0-windows-x64.zip"]["kind"] == "portable", "portable zip")
-    check(got["Gridline-Suite-Plasma-0.8.0-macos.zip"] == {"name": "Gridline-Suite-Plasma-0.8.0-macos.zip", "kind": "single",
-                                                          "product": "suite", "plugin": "Plasma", "family": "macos"}, "single plugin")
-    check(got["Gridline-Suite-Mini-Compressor-0.8.0-macos.zip"]["product"] == "mini", "a Mini single")
+    # No single-plugin zips for release (each would be as large as the suite): such a name is not placed.
+    for single in ("Gridline-Suite-Plasma-0.8.0-macos.zip", "Gridline-Suite-Mini-Compressor-0.8.0-linux.zip"):
+        check(classify(single, v) is None, "a single-plugin zip is not a release file: " + single)
     check(got["Gridline-Suite-Mini-0.8.0-linux-all.zip"]["kind"] == "all" and got["Gridline-Suite-Mini-0.8.0-linux-all.zip"]["product"] == "mini",
           "Mini all zip")
     check(got["Gridline-Suite-0.8.0-netbsd-x86_64-setup.run"]["family"] == "bsd", "BSD installer")
@@ -261,8 +239,9 @@ def self_test():
     check(sections == ["## Gridline", "## Gridline Suite", "## Gridline Suite Mini", "## Extras", "## What changed"],
           "four grouped sections in order, then the notes: %s" % sections)
     check("right-click" in body.split("## Gridline")[0], "the macOS note comes first")
-    check(body.index("| Plasma |") < body.index("| Loupe |") < body.index("| AcidBass |"), "flagships first, then by name")
-    check("Gridline-Suite-Mini-Compressor" not in body.split("## Gridline Suite Mini")[0], "Mini singles stay in their section")
+    check("single" not in body.lower(), "no single-plugin downloads on the page")
+    check("Gridline-Suite-Mini-0.8.0-windows-setup.exe" not in body.split("## Gridline Suite Mini")[0], "Mini files stay in their section")
+    check(body.count("**Installer**") == 2 and body.count("**All plugins**") == 2, "each suite: installer and all zip")
     check("portable Windows zips" in body, "portable zips listed under More")
     for line in body.splitlines():
         if line.startswith("## "):

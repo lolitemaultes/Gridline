@@ -1144,6 +1144,31 @@ void mapPlugin(const Song& s, const PluginTarget& t, int most, std::vector<Smart
 }
 }  // namespace
 
+// K-112D (D3, R09 visual gap 4): Smart Controls' knob as the reference's screen controls (173, 174),
+// in the graphite palette: a scale of ticks round a dark body with a soft rim and a light pointer line;
+// a thin blue value arc between the ticks and the body. Nothing allocated.
+namespace {
+void smartKnobFace(ImDrawList* dl, ImVec2 c, float r, float norm, bool bipolar, bool hov, bool act) {
+  const auto& P = pal();
+  constexpr float kPi = 3.14159265f, a0 = kPi * 0.75f, a1 = kPi * 2.25f;
+  for (int k = 0; k <= 10; ++k) {  // the scale
+    const float t = a0 + (a1 - a0) * static_cast<float>(k) / 10.0f, cx = std::cos(t), cy = std::sin(t);
+    dl->AddLine(ImVec2(c.x + cx * (r - 3.5f), c.y + cy * (r - 3.5f)), ImVec2(c.x + cx * r, c.y + cy * r), theme::withAlpha(P.text, 0.45f), 1.0f);
+  }
+  const float ra = r - 6.0f, an = a0 + (a1 - a0) * std::clamp(norm, 0.0f, 1.0f), from = bipolar ? (a0 + a1) * 0.5f : a0;
+  if (std::fabs(an - from) > 0.01f) {
+    dl->PathArcTo(c, ra, std::min(from, an), std::max(from, an), 32);
+    dl->PathStroke(act || hov ? theme::mix(P.accent, P.text, 0.25f) : P.accent, ImDrawFlags_None, 2.0f);
+  }
+  const float rb = std::max(4.0f, r - 9.0f);
+  dl->AddCircleFilled(ImVec2(c.x, c.y + 1.5f), rb, theme::withAlpha(P.ink, 0.5f), 40);  // a soft drop shadow
+  dl->AddCircleFilled(c, rb, act ? theme::mix(P.surface950, P.text, 0.12f) : hov ? theme::mix(P.surface950, P.text, 0.08f) : theme::mix(P.surface950, P.text, 0.04f), 40);
+  dl->AddCircle(c, rb, theme::mix(P.surface950, P.text, 0.22f), 40, 1.0f);
+  const float px = std::cos(an), py = std::sin(an);
+  dl->AddLine(ImVec2(c.x + px * rb * 0.3f, c.y + py * rb * 0.3f), ImVec2(c.x + px * (rb - 2.0f), c.y + py * (rb - 2.0f)), P.text, std::max(1.5f, r * 0.06f));
+}
+}  // namespace
+
 void smartControls(App& a) {
   const Song& s = a.doc.song();
   const auto& P = pal();
@@ -1233,7 +1258,9 @@ void smartControls(App& a) {
   // K-112b: the panel fills the pane (every reference shows it across the whole pane): a tinted
   // panel, one titled box per plugin, the knobs sized to the room, in two rows when it is tall.
   const float gap = theme::kS2, pad = 10, headH = 22;
-  dl->AddRectFilled(p0, p1, theme::mix(P.surface800, theme::rgb(0x2E5E92), 0.30f), 6.0f);
+  // K-112D (D3, R09 visual gap 4): a graphite panel, a shade under the pane's face (it was blue slate).
+  dl->AddRectFilled(p0, p1, theme::mix(P.surface900, P.ink, 0.25f), 6.0f);
+  dl->AddRect(p0, p1, theme::withAlpha(P.text, 0.06f), 6.0f);
   struct Box {
     size_t i, j;
     int cols, rows;
@@ -1272,7 +1299,9 @@ void smartControls(App& a) {
     const float bw = cellW * static_cast<float>(b.cols) + 16;
     if (x + bw > p1.x - 2 && &b != &boxes.front()) break;  // no room for another box
     const ImVec2 b0(x, y0), b1(x + bw, y0 + headH + cellH * static_cast<float>(b.rows) + 12);  // checkpoint 29: 14 px under the last knobs, as above the first names
-    dl->AddRect(ImVec2(b0.x, b0.y + headH), b1, theme::withAlpha(P.text, 0.35f), 4.0f);
+    // a plugin's box: a faint lighter face with a hairline, as the reference groups its controls
+    dl->AddRectFilled(ImVec2(b0.x, b0.y + headH), b1, theme::withAlpha(P.text, 0.03f), 6.0f);
+    dl->AddRect(ImVec2(b0.x, b0.y + headH), b1, theme::withAlpha(P.text, 0.26f), 6.0f);
     const PluginInfo* info = knobs[b.i].t.info(s);
     ImGui::PushID(static_cast<int>(b.i));
     {  // the title: the plugin's name, a click opens its window
@@ -1280,12 +1309,12 @@ void smartControls(App& a) {
       if (ImGui::InvisibleButton("##title", ImVec2(bw, headH))) togglePluginWindow(a, knobs[b.i].t);
       const bool shown = pluginWindowShown(a, knobs[b.i].t), hov = ImGui::IsItemHovered();
       if (hov) ui::Hint("Open this plugin's window");
-      std::string title = info ? info->name : std::string("?");
+      std::string title = info ? info->name : std::string("?");  // in capitals over the box, as 173 and 174 set it
       for (char& ch : title) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
       const float tf = theme::kFontTitle;
       const float tw = std::min(a.fontRegular->CalcTextSizeA(tf, 1e9f, 0, title.c_str()).x, bw - 12);
       theme::textEllipsis(dl, a.fontRegular, tf, ImVec2(std::round(b0.x + (bw - tw) * 0.5f), theme::textTop(a.fontRegular, tf, b0.y - 2, headH)), bw - 12,
-                          shown ? P.hot : hov ? P.text : theme::mix(P.text, P.textDim, 0.3f), title.c_str());
+                          shown ? P.accent : hov ? P.text : P.textDim, title.c_str());
     }
     for (size_t k = b.i; k < b.j; ++k) {
       const int idx = static_cast<int>(k - b.i), col = idx % b.cols, row = idx / b.cols;
@@ -1295,7 +1324,7 @@ void smartControls(App& a) {
       const float cy0 = std::round(b0.y + headH + 10 + cellH * static_cast<float>(row));
       // The control's name above its knob (as the references show), small capitals, centred.
       if (d) {
-        std::string label = d->name;
+        std::string label = d->name;  // small capitals, as the reference's control names
         for (char& ch : label) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
         const float lf = theme::kFontCaption;
         const float lw = std::min(a.fontRegular->CalcTextSizeA(lf, 1e9f, 0, label.c_str()).x, cellW - 8);
@@ -1303,6 +1332,7 @@ void smartControls(App& a) {
       }
       ImGui::SetCursorScreenPos(ImVec2(std::round(cx - knobR), cy0 + 18));
       ImGui::PushID(static_cast<int>(k));
+      ui::SetNextKnobFace(smartKnobFace);
       ui::ParamKnob("##sk", pid, knobR, nullptr);
       ImGui::PopID();
     }

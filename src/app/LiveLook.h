@@ -168,6 +168,10 @@ void deleteTracks(App& a, int track);
 void duplicateTracks(App& a, int track);
 void groupTracks(App& a, int track = -1);
 void ungroupTracks(App& a, int track = -1);
+// Checkpoint 53 (N52-10): A shows or hides the automation lanes in the Arrangement (the reference's
+// automation mode); shown by default.
+void toggleAutomationLanes(App& a);
+bool automationLanesShown();
 
 // ---- parts drawn the Live way (LayoutParts calls these while Live is active) ----
 // The device chain as a row of devices. `pick` is the chain's device (the one opened last: from the

@@ -149,6 +149,7 @@ View > Window layout > Layout settings...			e-
 View > Workspaces > New workspace			e-
 View > Workspaces > Add starter workspaces			e-
 View > Workspaces > Close workspace			--
+View > Workspaces > Keep a copy in the project			e-
 View > Workspaces > Arrange	Ctrl+1	view.workspace1	ec
 View > Reopen closed pane tab	Ctrl+Alt+T	view.reopenTab	e-
 View > Reset window layout	Ctrl+Shift+H	view.resetLayout	e-

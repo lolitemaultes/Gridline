@@ -35,6 +35,9 @@ enum class TabStyle : uint8_t {
   Segmented,  // a segmented control in the region's title (Logic panes)
   None,       // one window, no tabs
   Pages,      // page buttons in a strip (Tracker pages)
+  // K-237: a narrow vertical tab rail along the pane's outer edge (the side panes of Clips and the
+  // Tracker): the pane's open windows, one in front; the same tab rules as a Segmented strip.
+  Rail,
 };
 
 struct RegionSize {
@@ -43,6 +46,7 @@ struct RegionSize {
   float minPx = 0;     // never smaller than this ...
   float maxPx = 0;     // ... nor larger than this (0 = no limit) ...
   float maxShare = 0;  // ... nor this share of the parent (0 = no limit)
+  float dragMaxPx = 0; // R09-06: the most a drag may make it (0: the drag limit, 70 % of the parent)
 };
 
 struct Region {
@@ -67,11 +71,16 @@ struct Shell {
 constexpr float kPaneStripH = 26.0f;
 // K-237: the share of its parent a maximised pane takes (the main area keeps the rest, never lost).
 constexpr float kMaximisedShare = 0.82f;
+// K-237: the width of a Rail region's vertical tab rail (logical px).
+constexpr float kPaneRailW = 26.0f;
 
 const Shell& shell(Preset p);
 const Region* findRegion(Preset p, const std::string& id);
 // True for the centre region or a listed region of the layout.
 bool hasRegion(Preset p, const std::string& id);
+// K-237: a pane with tabs of its own (a Segmented strip or a Rail): its tabs can be reordered,
+// pinned, closed, and dragged to another such pane of the layout.
+bool hasPaneTabs(const Region& r);
 
 // ---- per-person state of a layout's regions ----
 struct State {
@@ -86,11 +95,22 @@ struct State {
   // the person maximised (the region takes most of its parent until restored).
   std::map<std::string, std::string> tabs;
   std::set<std::string> maximised;
+  // K-237: windows whose tab the person dragged to another pane: window -> the pane it lives in now
+  // (only while that differs from its home in core/LayoutHomes.h).
+  std::map<std::string, std::string> moved;
   bool operator==(const State& o) const {
     return hidden == o.hidden && shown == o.shown && member == o.member && memberSize == o.memberSize && regionSize == o.regionSize &&
-           tabs == o.tabs && maximised == o.maximised;
+           tabs == o.tabs && maximised == o.maximised && moved == o.moved;
   }
 };
+// K-237: the pane a window's tab lives in (State::moved, else its home region; "" when it has none).
+std::string tabRegion(Preset p, const State& st, const std::string& window);
+// K-237: whether a window's tab may go to pane `to`: the window is homed (docked, or a part) in a pane
+// with tabs of this layout, and `to` is such a pane. The main area never takes a pane tab.
+bool canMoveTab(Preset p, const std::string& window, const std::string& to);
+// Moves a window's tab to pane `to` (back to its home: the override goes). False when refused or
+// when it is already there.
+bool moveTab(Preset p, State& st, const std::string& window, const std::string& to);
 bool visible(const Shell& sh, const State& st, const std::string& region);
 // `alone` (the default): showing a region of a group hides the group's others. K-112c (checkpoint 48):
 // false shows it beside them (the Clips clip band stacked over the device band, as the reference's).
