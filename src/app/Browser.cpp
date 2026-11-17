@@ -2102,8 +2102,18 @@ void liveSidebar(App& a, bool twoPane) {
   const ImVec2 p0 = ImGui::GetCursorScreenPos();
   const float w = ImGui::GetContentRegionAvail().x, rh = 20, headH = 20;
   const float fs = theme::kFontBody - 1;
+  // Checkpoint 58 (N57-12): a narrow browser (1024 wide) keeps its places as a column of icons (their
+  // names in the hints), so the list beside them reads names in full.
+  const bool icons = twoPane && w < 60.0f;
   float y = p0.y + 4;
   for (const Row& r : rows) {
+    if (r.cat < 0 && icons) {  // a group heading: a short rule between the groups
+      if (y > p0.y + 8) {
+        dl->AddLine(ImVec2(p0.x + 8, std::round(y + 5) + 0.5f), ImVec2(p0.x + w - 8, std::round(y + 5) + 0.5f), P.line);
+        y += 10;
+      }
+      continue;
+    }
     if (r.cat < 0) {  // a group heading
       if (y > p0.y + 8) y += 6;
       // K-112c (round 28): the group's name in the rows' own size and weight, dimmed (211, 094, 329).
@@ -2117,10 +2127,18 @@ void liveSidebar(App& a, bool twoPane) {
     if (ImGui::InvisibleButton("##cat", ImVec2(w, rh))) liveCat = r.cat;
     const bool hov = ImGui::IsItemHovered();
     ImGui::PopID();
-    if (hov) ui::Hint(r.hint);
+    if (hov) {
+      ui::Hint(icons ? std::string(i18n::tr(r.label)) + ": " + i18n::tr(r.hint) : std::string(r.hint));
+    }
     const bool on = liveCat == r.cat;
     if (on || hov) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + rh), on ? P.surface700 : P.surface800);
     const float cy = q.y + rh * 0.5f;
+    if (icons) {
+      const float cx = std::round(q.x + w * 0.5f);
+      ui::drawIconFit(dl, r.icon, ImVec2(cx - 6, cy - 6), ImVec2(cx + 6, cy + 6), on ? P.text : P.textDim);
+      y += rh;
+      continue;
+    }
     ui::drawIconFit(dl, r.icon, ImVec2(q.x + 12, cy - 6), ImVec2(q.x + 24, cy + 6), on ? P.text : P.textDim);
     const ImVec4 clip(q.x, q.y, q.x + w - 4, q.y + rh);
     dl->AddText(a.fontRegular, fs, ImVec2(q.x + 31, std::round(q.y + (rh - fs) * 0.5f)), P.text, i18n::tr(r.label), nullptr, 0, &clip);
@@ -2161,11 +2179,37 @@ void liveKindChips(App& a, float w) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 o = ImGui::GetCursorScreenPos();
   const float fs = theme::kFontLabel, ch = 16, gap = 4, pad = 6;
+  std::vector<float> cws;
+  for (const std::string& t : cats) {
+    cws.push_back(std::ceil(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, t.c_str()).x) + pad * 2);
+  }
+  // Checkpoint 58 (N57-12): the chips wrap onto as few rows as the width needs, filled evenly (a last
+  // row of one chip, "Utility" alone, read as ragged): the narrowest wrap width that keeps that count.
+  auto rowsAt = [&](float ww) {
+    int n = 1;
+    float xx = 0;
+    for (float cw : cws) {
+      if (xx > 0 && xx + cw > ww) {
+        ++n, xx = 0;
+      }
+      xx += cw + gap;
+    }
+    return n;
+  };
+  const float full = w - 12;
+  const int rowsN = rowsAt(full);
+  float wrapW = full;
+  for (float ww = *std::max_element(cws.begin(), cws.end()); ww < full; ww += 4.0f) {
+    if (rowsAt(ww) <= rowsN) {
+      wrapW = ww;
+      break;
+    }
+  }
   float x = o.x + 6, y = o.y + 1;
   for (size_t i = 0; i < cats.size(); ++i) {
     const std::string& t = cats[i];
-    const float cw = std::ceil(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, t.c_str()).x) + pad * 2;
-    if (x + cw > o.x + w - 6) x = o.x + 6, y += ch + gap;
+    const float cw = cws[i];
+    if (x > o.x + 6 && x + cw > o.x + 6 + wrapW) x = o.x + 6, y += ch + gap;
     const bool on = t == liveKindCat;
     ImGui::SetCursorScreenPos(ImVec2(x, y));
     ImGui::PushID(static_cast<int>(i) + 500);
@@ -2518,7 +2562,8 @@ void drawBrowser(App& a) {
   const float paneW = ImGui::GetContentRegionAvail().x;
   const bool twoPane = liveLook && paneW >= 250;
   if (twoPane) {
-    const float sideW = std::clamp(std::floor(paneW * 0.42f), 120.0f, 190.0f);
+    // Checkpoint 58 (N57-12): under 270 px (1024 wide) the places are icons (36 px), so names read in full beside them.
+    const float sideW = paneW < 270 ? 36.0f : std::clamp(std::floor(paneW * 0.42f), 120.0f, 190.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::BeginChild("##lcside", ImVec2(sideW, -footerH - (info ? kInfoH : 0)), ImGuiChildFlags_None);
     liveSidebar(a, true);

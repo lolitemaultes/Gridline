@@ -272,7 +272,7 @@ GL_STEPS_FN void stepRow(App& a, const Pattern* pat, size_t ci, ImVec2 c0, float
 
 // The Steps page's title text: the pattern's number and its length in steps.
 std::string stepsInfo(const Song& s, const Pattern* pat, int nSteps) {
-  const std::string num = pat ? trk::hex2(trk::patternNumber(s, pat->id)) : std::string("--");
+  const std::string num = pat ? trk::hexNum(trk::patternNumber(s, pat->id)) : std::string("--");
   char info[96];
   std::snprintf(info, sizeof info, "%s %s  %d %s", i18n::tr("Pattern"), num.c_str(), nSteps, i18n::tr("steps"));
   return info;
@@ -496,11 +496,11 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
         if (ii >= lLo && ii <= lHi) cl->AddRectFilled(ImVec2(c0.x + cw - 8, y + (ii == lLo ? 2.0f : 0.0f)), ImVec2(c0.x + cw - 6, y + rh - (ii == lHi ? 2.0f : 0.0f)), P.led);
         const float ty = std::round(y + (rh - fs) * 0.5f);
         if (ii == loopAt) cl->AddText(mono, fs, ImVec2(c0.x + 2, ty), P.hot, "L");
-        const std::string pos = trk::hex2(static_cast<int>(i));
+        const std::string pos = trk::hexNum(static_cast<int>(i));
         cl->AddText(mono, fs, ImVec2(cPos + dx, ty), static_cast<int>(i) == cur ? P.hot : P.textDim, pos.c_str());
         const Pattern* p = s.pattern(e.pattern);
         if (p) {
-          const std::string num = trk::hex2(trk::patternNumber(s, p->id));
+          const std::string num = trk::hexNum(trk::patternNumber(s, p->id));
           cl->AddRectFilled(ImVec2(cPtn + dx - 5, y + 3), ImVec2(cPtn + dx - 2, y + rh - 3), theme::rgb(p->color));
           cl->AddText(mono, fs, ImVec2(cPtn + dx, ty), P.text, num.c_str());
           std::string name = p->name;
@@ -678,10 +678,10 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
     const Pattern* sp = s.pattern(a.curPattern);
     ImFont* bold = a.fontBold ? a.fontBold : a.fontRegular;
     const Tick len = ol.empty() ? 0 : ol.back().end;
-    line("Entries", trk::hex2(static_cast<int>(ol.size())));
+    line("Entries", trk::hexNum(static_cast<int>(ol.size())));
     line("Bars", countText(a, static_cast<int>((len + bar - 1) / bar)));
     line("Time", timeText(s, len));
-    line("Position", cur >= 0 ? trk::hex2(cur) : std::string("--"));
+    line("Position", cur >= 0 ? trk::hexNum(cur) : std::string("--"));
     y += tsp::kGap;
     char bpm[16];
     std::snprintf(bpm, sizeof bpm, std::fabs(s.tempo - std::round(s.tempo)) < 0.05 ? "%.0f" : "%.1f", s.tempo);
@@ -690,7 +690,7 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
       a.doc.setParam(songParam(SongParam::Tempo), std::clamp(t, 10.0, 522.0), true);
     }
     y += bh + tsp::kGap;
-    if (const int d = stepper(a, "sgloop", "Loop to", loopAt < 0 ? std::string("--") : trk::hex2(loopAt), ImVec2(x, y), w, bh,
+    if (const int d = stepper(a, "sgloop", "Loop to", loopAt < 0 ? std::string("--") : trk::hexNum(loopAt), ImVec2(x, y), w, bh,
                               "The entry the song goes back to when it ends (none: it stops)", w)) {
       const int to = loopAt + d;
       Tick loopPos = 0;
@@ -741,10 +741,10 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
     const float lineH = rh;
     if (cur >= 0 && cur < static_cast<int>(ol.size()) && y + lineH * 6 < bottom) {
       const trk::OrderEntry& e = ol[static_cast<size_t>(cur)];
-      const std::string title = std::string(i18n::tr("Entry")) + " " + trk::hex2(cur);
+      const std::string title = std::string(i18n::tr("Entry")) + " " + trk::hexNum(cur);
       section(title.c_str());
       const Pattern* ep = s.pattern(e.pattern);
-      line(i18n::N_("Pattern"), ep ? trk::hex2(trk::patternNumber(s, ep->id)) + " " + ep->name : std::string(i18n::tr("audio only")));
+      line(i18n::N_("Pattern"), ep ? trk::hexNum(trk::patternNumber(s, ep->id)) + " " + ep->name : std::string(i18n::tr("audio only")));
       line(i18n::N_("Starts"), timeText(s, e.start));
       line(i18n::N_("Bars"), countText(a, static_cast<int>((e.end - e.start + bar - 1) / bar)));
       line(i18n::N_("Rows"), ep ? countText(a, std::min(255, trk::gridOf(s, *ep).rows)) : std::string("--"));
@@ -754,7 +754,7 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
       y += tsp::kGroup;
     }
     if (sp && y + lineH * 5 < bottom) {
-      const std::string title = std::string(i18n::tr("Pattern")) + " " + trk::hex2(trk::patternNumber(s, sp->id));
+      const std::string title = std::string(i18n::tr("Pattern")) + " " + trk::hexNum(trk::patternNumber(s, sp->id));
       section(title.c_str());
       int used = 0, firstUse = -1;
       for (size_t k = 0; k < ol.size(); ++k) {
@@ -767,7 +767,7 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
       }
       line(i18n::N_("Bars"), countText(a, sp->bars));
       line(i18n::N_("Rows"), countText(a, std::min(255, trk::gridOf(s, *sp).rows)));
-      line(i18n::N_("Used"), firstUse < 0 ? std::string(i18n::tr("not in the song")) : std::to_string(used) + "x, " + i18n::tr("first at") + " " + trk::hex2(firstUse));
+      line(i18n::N_("Used"), firstUse < 0 ? std::string(i18n::tr("not in the song")) : std::to_string(used) + "x, " + i18n::tr("first at") + " " + trk::hexNum(firstUse));
       y += tsp::kGroup;
     }
     bool layered = false;
@@ -826,9 +826,10 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
         const ImU32 c = p ? theme::rgb(p->color) : P.surface600;
         dl->AddRectFilled(ImVec2(bx0, by0), ImVec2(bx1, by1), theme::withAlpha(c, static_cast<int>(i) == cur ? 0.85f : 0.45f));
         if (static_cast<int>(i) == cur) dl->AddRect(ImVec2(bx0, by0), ImVec2(bx1, by1), P.hot);
-        if (p && bx1 - bx0 > fs * 2) {
+        if (bx1 - bx0 > fs * 2) {  // (cp25: an audio part is named too, as the order list names it)
           dl->PushClipRect(ImVec2(bx0 + 2, by0), ImVec2(bx1 - 2, by1), true);
-          dl->AddText(a.fontRegular, fs, ImVec2(bx0 + 4, std::round(by0 + (by1 - by0 - fs) * 0.5f)), P.text, p->name.c_str());
+          dl->AddText(a.fontRegular, fs, ImVec2(bx0 + 4, std::round(by0 + (by1 - by0 - fs) * 0.5f)), p ? P.text : P.textDim,
+                      p ? p->name.c_str() : i18n::tr("Audio part"));
           dl->PopClipRect();
         }
         const float cx0 = std::max(bx0, x0), cx1 = std::min(bx1, x1);  // (the part inside the strip takes the click)
@@ -1040,7 +1041,7 @@ void devOrder(App& a, const std::vector<std::string>& args, int frame) {
   const Song& s = a.doc.song();
   const std::vector<trk::OrderEntry> now = trk::orderList(s);
   std::string line;
-  for (const trk::OrderEntry& e : now) line += " " + (e.pattern != kNoId ? trk::hex2(trk::patternNumber(s, e.pattern)) : std::string("AU"));
+  for (const trk::OrderEntry& e : now) line += " " + (e.pattern != kNoId ? trk::hexNum(trk::patternNumber(s, e.pattern)) : std::string("AU"));
   int lLo, lHi;
   loopedEntries(a, now, &lLo, &lHi);
   std::printf("order frame %d (%s): n %zu |%s | patterns %zu | loop %d-%d | pos %d | playing %d\n", frame, c.c_str(), now.size(), line.c_str(), s.patterns.size(), lLo,
@@ -1190,7 +1191,7 @@ namespace {
 std::string clipTitle(const Song& s, const Clip& c) {
   if (c.kind == ClipKind::Pattern) {
     const Pattern* p = s.pattern(c.pattern);
-    return p ? trk::hex2(trk::patternNumber(s, p->id)) + " " + p->name : std::string(i18n::tr("Pattern"));
+    return p ? trk::hexNum(trk::patternNumber(s, p->id)) + " " + p->name : std::string(i18n::tr("Pattern"));
   }
   if (c.kind == ClipKind::Audio) {
     const Channel* ch = s.channel(c.source);
@@ -1640,7 +1641,7 @@ void song(App& a) {
               off = "  >" + barsText(c->offset, bar, std::max<Tick>(1, s.ppq), std::max<Tick>(1, s.ppq / 4));
             }
             if (cp) {
-              const std::string label = trk::hex2(trk::patternNumber(s, cp->id));
+              const std::string label = trk::hexNum(trk::patternNumber(s, cp->id));
               dl->AddText(mono, fs, ImVec2(x + 8, ty), cp->id == a.curPattern ? P.hot : P.text, label.c_str());
               const float lx = x + 8 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00 ").x;
               theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(lx, ty), x + colW - lx - 4, P.textDim, (cp->name + off).c_str());

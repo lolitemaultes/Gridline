@@ -13,6 +13,7 @@
 #include "core/PatternAutomation.h"
 #include "core/Settings.h"
 #include "core/TrackModes.h"
+#include "engine/TakeLanes.h"
 #include "engine/AudioEngine.h"
 #include "engine/Program.h"
 
@@ -531,6 +532,77 @@ void testOptionsKept() {
   fs::remove_all(dir);
 }
 
+// ---- K-112B (R14-04): Smooth's second pass over a region makes a take folder, not a stack ----
+void testTakeFolder() {
+  auto pass = [](Rig& r, bool folder, bool overdub, Tick from, Tick to) {
+    RecordOptions o = raw();
+    o.overdub = overdub;
+    RecordSetup st;
+    st.start = from;
+    st.track = 2;
+    st.takeFolder = folder;
+    NoteRecorder rec;
+    rec.beginSong(r.doc, r.pat, o, st);
+    rec.noteOn(r.doc, r.ch, 60, 100, static_cast<double>(from + 10));
+    rec.noteOff(r.doc, r.ch, 60, static_cast<double>(from + 40));
+    rec.position(r.doc, static_cast<double>(to));
+    rec.end(r.doc, static_cast<double>(to));
+    return rec.takeClip();
+  };
+  {  // a region four bars long; a pass over its second bar
+    Rig r;
+    const ObjectId old = r.doc.addPattern("Pad Intro", 4, 16);
+    r.doc.addNote(old, r.ch, Note(30, 24, 50, 90));
+    const ObjectId oldClip = r.doc.addClip(old, 2, 0);
+    const size_t clipsBefore = r.doc.song().playlist.size();
+    const ObjectId take = pass(r, true, true, kBar, kBar + 300);
+    const Song& s = r.doc.song();
+    const Clip* tc = s.clip(take);
+    expect(tc && tc->takeGroup != kNoId && tc->take == 1 && !tc->muted && tc->track == 2, "take folder: the new take is take 2 of a folder, playing");
+    int pieces = 0, mutedUnder = 0, playingAround = 0;
+    bool inFolder = true;
+    for (const Clip& c : s.playlist) {
+      if (c.kind != ClipKind::Pattern || c.pattern != old || !tc) continue;
+      ++pieces;
+      inFolder = inFolder && c.takeGroup == tc->takeGroup && c.take == 0 && c.track == 2;
+      const bool under = c.start >= tc->start && c.start + s.clipLength(c) <= tc->start + s.clipLength(*tc);
+      mutedUnder += under && c.muted ? 1 : 0;
+      playingAround += !under && !c.muted ? 1 : 0;
+    }
+    expect(inFolder, "take folder: the region recorded over is its take 1, on the track");
+    expect(pieces == 3 && mutedUnder == 1 && playingAround == 2, "take folder: the region is split at the take; under it muted, around it playing");
+    expect(takes::lanesShown(s, 2) && takes::laneCount(s, 2) == 2, "take folder: the track shows two take lanes");
+    r.doc.undo();
+    const Clip* oc = r.doc.song().clip(oldClip);
+    expect(oc && oc->takeGroup == kNoId && !oc->muted && r.doc.song().playlist.size() == clipsBefore,
+           "take folder: one undo takes the pass and the folder away");
+    // A third pass joins the same folder as take 3.
+    const ObjectId t2 = pass(r, true, true, kBar, kBar + 300);
+    const ObjectId t3 = pass(r, true, true, 2 * kBar, 2 * kBar + 300);
+    const Clip* c2 = r.doc.song().clip(t2);
+    const Clip* c3 = r.doc.song().clip(t3);
+    expect(c2 && c3 && c2->takeGroup == c3->takeGroup && c3->take == 2, "take folder: a later pass is the folder's next take");
+  }
+  for (int k = 0; k < 2; ++k) {  // off (or replace): the take stacks on the region, as before
+    Rig r;
+    const ObjectId old = r.doc.addPattern("Pad Intro", 4, 16);
+    r.doc.addClip(old, 2, 0);
+    const ObjectId take = pass(r, k == 1, k == 0, kBar, kBar + 300);
+    const Clip* tc = r.doc.song().clip(take);
+    int grouped = 0;
+    for (const Clip& c : r.doc.song().playlist) {
+      grouped += c.takeGroup != kNoId ? 1 : 0;
+    }
+    expect(tc && grouped == 0, k == 0 ? "take folders off: the take stacks" : "replace: no take folder");
+  }
+  {  // a pass over empty space makes no folder
+    Rig r;
+    const ObjectId take = pass(r, true, true, kBar, kBar + 300);
+    const Clip* tc = r.doc.song().clip(take);
+    expect(tc && tc->takeGroup == kNoId, "take folder: a pass over nothing stays a plain region");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -545,5 +617,6 @@ int main() {
   testPunch();
   testPedal();
   testOptionsKept();
+  testTakeFolder();
   return finish();
 }

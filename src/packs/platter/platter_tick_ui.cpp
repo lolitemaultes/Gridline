@@ -392,9 +392,11 @@ void tick(App& a) {
       d.mirSeen[i] = mr.seq[i];
       // (while a pass captures, the pass holds the move: no automation as well)
       automationRecordHold() = lvA.capturing;
+      automationFromController() = true;  // N58-01: recorded below
       pui::setParamValue(a, t, k, mr.value[i], true);
+      automationFromController() = false;
       automationRecordHold() = false;
-      if (info && a.recorder.active() && !automationRecording() && !lvA.capturing)
+      if (info && a.recorder.active() && !automationCapturing(a) && !lvA.capturing)
         a.recorder.controller(t.pid(k), info->params[i].toNormalized(mr.value[i]), a.recordTick());
     }
     // cues a deck set -> the model

@@ -38,6 +38,10 @@ const char* source(const char* shown);
 // that ends before ": " or a space ("Export failed: disk full", "Saved
 // x.wav"); the rest is kept as is.
 std::string trMessage(const std::string& text);
+// Checkpoint 60 (N59-10): a sentence with a count, in the interface language: `one` when n is 1, else
+// `other` (each a whole translatable sentence holding one %d, so a catalogue words both forms);
+// translated, then the count put in. ("1 clip recorded", "3 clips recorded".)
+std::string plural(long n, const char* one, const char* other);
 
 // Marks a literal for the extractor without translating it here (arrays of
 // labels handed to widgets that translate, command tables, ...).

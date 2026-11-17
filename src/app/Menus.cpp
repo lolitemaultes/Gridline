@@ -601,8 +601,9 @@ const md::Menu& clipsFileDef() {
                         rowOf(imp, "FL Studio presets..."),
                         md::heading(N_("Audio")),
                         // N50-09: no mixer-track stems row in Clips: "Each track..." is the reference's individual tracks
-                        md::item(N_("Each track..."), [](App& a) { exportui::openRender(a, exportui::Preset::PlaylistTracks); }),
-                        md::item(N_("Each track group..."), [](App& a) { exportui::openRender(a, exportui::Preset::TrackGroups); }),
+                        // Checkpoint 59 (N58-12): the rows say they export
+                        md::item(N_("Export each track..."), [](App& a) { exportui::openRender(a, exportui::Preset::PlaylistTracks); }),
+                        md::item(N_("Export each track group..."), [](App& a) { exportui::openRender(a, exportui::Preset::TrackGroups); }),
                         md::provider([](App& a) { menuparity::exportItems(a); }),
                         md::heading(N_("MIDI")),
                         rowOf(exp, "Time selection as MIDI file..."),
@@ -610,7 +611,11 @@ const md::Menu& clipsFileDef() {
                         rowOf(exp, "Project data files..."),
                         rowOf(exp, "Project bones..."),
                         rowOf(exp, "Gridline zipped project (.gridlinez)..."),
-                        md::provider([](App& a) { freezeui::exportItems(a); }),
+                        // Checkpoint 59 (N58-12): the zipped project's switch says what it is for
+                        md::item(N_("Zipped projects leave out frozen audio"),
+                                 [](App& a) { a.settings.set("freeze.zipLeaveOut", !a.settings.getBool("freeze.zipLeaveOut")); })
+                            .check([](App& a) { return a.settings.getBool("freeze.zipLeaveOut"); })
+                            .tip(N_("Frozen units go in unfrozen (smaller; their plugins load when it opens)")),
                         rowOf(exp, "FL Studio project (.flp)..."),
                         rowOf(exp, "FL Studio zipped loop package (.zip)..."),
                         rowOf(exp, "FL Studio export report..."),
@@ -793,11 +798,14 @@ const md::Menu& optionsDef() {
       md::heading(N_("Settings")),
       md::item(N_("Audio settings..."), [](App& a) { openSettings(a, 0); }),
       md::item(N_("MIDI settings..."), "view.settings", [](App& a) { openSettings(a, 1); })
-          .keyText([](App& a) { return logicplug::active(a) ? nullptr : keys::label("view.settings"); }),  // R02-22: Cmd+, is Settings... there
+          .keyText([](App& a) { return logicplug::active(a) || livelook::active(a) ? nullptr : keys::label("view.settings"); }),  // R02-22: Cmd+, is Settings... there
       md::item(N_("Project settings..."), [](App& a) { openSettings(a, 2); }),
       md::item(N_("Backup settings..."), [](App& a) { openSettings(a, 3); }),
       md::item(N_("Interface settings..."), [](App& a) { openSettings(a, 4); }),
-      md::item(N_("General settings..."), [](App& a) { openSettings(a, 5); }),
+      // Checkpoint 59 (N58-12): in Clips Cmd+, opens the Settings window on its general page, as the Mac's
+      // Settings key does (Studio keeps F10 on MIDI settings, as its reference).
+      md::item(N_("General settings..."), [](App& a) { openSettings(a, 5); })
+          .keyText([](App& a) { return livelook::active(a) ? keys::label("view.settings") : nullptr; }),
       md::item(N_("File settings..."), [](App& a) { openSettings(a, 6); }),
       md::item(N_("Debug log and script console..."), [](App& a) { openSettings(a, 7); }),
       md::item(N_("Keyboard shortcuts..."), [](App& a) { openSettings(a, 8); }),
@@ -829,6 +837,9 @@ const md::Menu& optionsDef() {
       // Clips: these rows are once, in Options > Recording and metronome (the same rows twice before).
       md::toggle(N_("Step record"), nullptr, [](App& a) { return &a.stepRecord; }).only(studioWindows),
       md::toggle(N_("Record automation"), nullptr, [](App&) { return &automationRecording(); }),
+      md::item(N_("Re-enable automation"), [](App& a) { reenableAutomation(a); })  // N59-01: the hand overrides end
+          .when([](App&) { return automationOverrideCount() > 0; })
+          .tip(N_("Controls moved by hand while the song played follow their automation again")),
       md::submenu(N_("Recording options"), {md::provider([](App& a) { recordOptionsMenu(a); })}).only(studioWindows),  // the record button's menu (audio takes included)
       md::heading(N_("Keyboard and controllers")).only(studioWindows),
       md::toggle(N_("Typing keyboard to piano"), "options.typingKeyboard", [](App& a) { return &a.typingKeyboard; }).only(studioWindows),
@@ -994,7 +1005,8 @@ const md::Menu& helpDef() {
   static const md::Menu m = {
       md::item(N_("Keyboard shortcuts"), "help.shortcuts", [](App& a) { a.showShortcuts = true; }),
       md::item(N_("Load demo song"), [](App& a) { a.guardUnsaved([&a]() { a.newFromTemplate("demo"); }); }),
-      md::item(N_("Track Receipt..."), [](App& a) { receiptui::open(a); }),  // J-219: parts of licensed samples used
+      md::item(N_("Track Receipt..."), [](App& a) { receiptui::open(a); })  // J-219: parts of licensed samples used
+          .text([](App& a) { return std::string(livelook::active(a) ? i18n::tr("Licensed samples used (receipt)...") : i18n::tr("Track Receipt...")); }),  // N58-12
       md::item(N_("Show settings folder"), [](App& a) { a.notify("Settings, presets and templates: " + a.configDir()); }),
       md::separator(),
       md::item(N_("Check for updates..."), [](App& a) { updui::checkNow(a); })  // J-89 (R02-22: the Tracks layout has it in the app menu)
@@ -1090,7 +1102,8 @@ bool menuShortcuts(App& a) {
     trackerview::setHeaderSwap(trackerview::headerSwap() == 3 ? 0 : 3);
   } else {
     a.showSettings = !a.showSettings;
-    if (a.showSettings) a.settingsTab = 1;  // MIDI tab, like the menu entry
+    if (a.showSettings) a.settingsTab = livelook::active(a) ? 5 : 1;  // MIDI tab, like the menu entry (Clips: general, N58-12)
+    if (a.showSettings && livelook::active(a)) a.focusWindow = "Settings";
   }
   if (key("view.closeAll")) closeAll(a);
   if (key("view.closePlugins")) a.closePluginWindows();

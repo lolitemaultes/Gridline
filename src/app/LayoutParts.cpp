@@ -273,21 +273,32 @@ std::string dbText(float gain) {
   return b;
 }
 
+// D9 (R14-08): set by the inspector before its first heading: that row is the pane's header (see paneTitleY).
+bool gHeadFirst = false;
+
 // A card's foldable heading: a disclosure arrow and the bold title; a click folds or unfolds it.
 bool cardFold(const char* id, const std::string& text, bool* open) {
   App& a = app();
   const auto& P = pal();
-  const ImVec2 p = ImGui::GetCursorScreenPos();
   // Checkpoint 37: in the Tracks layout a heading is a 34 px row with its line on the row's foot and the
   // next row straight under it, as 216 and 125 stack Region and Track (22 px with gaps around: a 44 px pitch).
   const bool lg = logicplug::active(a);
-  const float w = ImGui::GetContentRegionAvail().x, h = lg ? 34.0f : 22.0f;
+  // D9 (R14-08): the first one is the pane's header, in the arrange toolbar's band: its title on the
+  // toolbar's centre line and its foot line on the toolbar's (it sat 8 px lower, below the pane's padding).
+  const bool head = lg && gHeadFirst;
+  gHeadFirst = false;
+  if (head) {
+    ImGui::SetCursorPosY(kPaneHeadTop);
+  }
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  const float w = ImGui::GetContentRegionAvail().x, h = lg ? (head ? kPaneHeadH : 34.0f) : 22.0f;
   if (ImGui::InvisibleButton(id, ImVec2(w, h))) *open = !*open;
   const bool hov = ImGui::IsItemHovered();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float cy = std::round(p.y + h * 0.5f);
   if (lg) {  // K-112b: as the reference inspectors (110, 092)
-    const float fs = ImGui::GetFontSize(), ty = std::round(p.y + (h - fs) * 0.5f);
+    // (the header: its capitals centred on the toolbar's, a pixel above the row's middle: paneTitleY)
+    const float fs = ImGui::GetFontSize(), ty = head ? paneTitleY(fs) - ImGui::GetWindowPos().y + p.y - kPaneHeadTop : std::round(p.y + (h - fs) * 0.5f);
     const size_t c = text.find(": ");
     const std::string lead = c == std::string::npos ? text : text.substr(0, c + 1), rest = c == std::string::npos ? std::string() : text.substr(c + 2);
     const float lw = a.fontBold->CalcTextSizeA(fs, 1e9f, 0, lead.c_str()).x;
@@ -632,6 +643,17 @@ std::string fitName(ImFont* f, float fs, const std::string& name, float w) {
   return fitSlotName(f, fs, name.c_str(), w, b, sizeof b);
 }
 
+// D9 (R14-11): a slot's name size in Smooth: a name a little too long for the slot steps down a pixel
+// before it is shortened (as the name plates do), so "Parametric EQ" and "Analog Synth" read whole on a
+// 74 px strip (2560 x 1440) instead of "Param EQ" and "An. Synth". Elsewhere the label size.
+float slotNameSize(App& a, const char* name, float room) {
+  const float fs = theme::kFontLabel;
+  if (!logicplug::active(a) || a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, name).x <= room) {
+    return fs;
+  }
+  return a.fontRegular->CalcTextSizeA(fs - 1, 1e9f, 0, name).x <= room ? fs - 1 : fs;
+}
+
 // D8: an empty slot's face. In Smooth a light veil over whatever is under it, so an empty slot shows the
 // same on the selected strip (a step lighter) as on the others; the old fill (the slots' grey at 40 %)
 // matched the selected strip's face and vanished there. Elsewhere the grey as before.
@@ -661,8 +683,9 @@ bool stripSlot(const char* id, const std::string& name, bool lit, bool empty, fl
   const float fs = theme::kFontLabel;
   char shortBuf[64];
   // D4 (R10-04): every named slot in Smooth (sends, outputs, groups too), not only the coloured ones
-  const char* shown = logicplug::active(a) && !empty ? fitSlotName(a.fontRegular, fs, name.c_str(), w - 10 - gFitExcess, shortBuf, sizeof shortBuf) : name.c_str();
-  theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(centredX(a.fontRegular, fs, shown, p.x + 5, w - 10), std::round(p.y + (h - fs) * 0.5f) - 1), w - 10,
+  const float nfs = empty ? fs : slotNameSize(a, name.c_str(), w - 10 - gFitExcess);  // D9 (R14-11)
+  const char* shown = logicplug::active(a) && !empty ? fitSlotName(a.fontRegular, nfs, name.c_str(), w - 10 - gFitExcess, shortBuf, sizeof shortBuf) : name.c_str();
+  theme::textEllipsis(dl, a.fontRegular, nfs, ImVec2(centredX(a.fontRegular, nfs, shown, p.x + 5, w - 10), std::round(p.y + (h - fs) * 0.5f) - 1), w - 10,
                       coloured ? pal().paper : empty ? P.textFaint : P.text, shown);
   if (hint && hov) ui::Hint(shown != name.c_str() ? name + "\n" + hint : std::string(hint));  // D4: a shortened name in full
   return click;
@@ -759,8 +782,9 @@ void fxPill(App& a, const MixerTrack& t, int k, float w) {
     tx = p.x + 16, tw = w - 30;
   }
   char shortBuf[64];  // K-112D (audit F9)
-  const char* shown = logicplug::active(a) ? fitSlotName(a.fontRegular, fs, name.c_str(), tw - gFitExcess, shortBuf, sizeof shortBuf) : name.c_str();
-  theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(centredX(a.fontRegular, fs, shown, tx, tw), std::round(p.y + (h - fs) * 0.5f) - 1), tw,
+  const float nfs = slotNameSize(a, name.c_str(), tw - gFitExcess);  // D9 (R14-11)
+  const char* shown = logicplug::active(a) ? fitSlotName(a.fontRegular, nfs, name.c_str(), tw - gFitExcess, shortBuf, sizeof shortBuf) : name.c_str();
+  theme::textEllipsis(dl, a.fontRegular, nfs, ImVec2(centredX(a.fontRegular, nfs, shown, tx, tw), std::round(p.y + (h - fs) * 0.5f) - 1), tw,
                       e.enabled ? pal().paper : P.textFaint, shown);
   if (hov)
     ui::Hint(inBypass ? (e.enabled ? "Bypass (drag across slots to set them all)" : "Turn on (drag across slots to set them all)")
@@ -1154,7 +1178,10 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
   for (const EffectSlot& e : t.slots) fxCount += e.plugin.type.empty() ? 0 : 1;
   // Checkpoint 28: a single effect row shows a lone effect itself (no free slot under it).
   const bool lone = fxRows == 1 && fxCount == 1;
-  const int fxMax = fxRows >= 0 ? (lone ? 1 : fxRows - 1) : 6;
+  // D9 (R14-11): effects that fill every row show whole, with no free slot under them (it was the last
+  // effect folded into a "+1": the same row, less said). The other strips keep their free slot.
+  const bool full = fxRows > 1 && fxCount == fxRows;
+  const int fxMax = fxRows >= 0 ? (lone || full ? fxRows : fxRows - 1) : 6;
   // K-112b (checkpoint 22): when the mixer caps its effect rows, the last row says how many more there
   // are (a click shows them in the detailed mixer) instead of leaving them out unseen.
   const bool more = fxRows >= 0 && fxCount > fxMax;
@@ -1171,10 +1198,12 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
       a.selMixer = t.id;
       a.settings.set("ui.logicMixerDetail", true);
     }
-  } else if (!lone) {
+  } else if (!lone && !full) {
     emptyPill(a, t, firstFree(t), w);
   }
-  if (!lone) gap();
+  if (!lone && !full) {
+    gap();
+  }
   // The count row stands where the free slot would: both take the row after the effects shown.
   for (int k = shown + 1; k < (fxRows >= 0 ? fxRows : padRows); ++k) {
     ImGui::Dummy(ImVec2(w, 17));
@@ -1474,7 +1503,10 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
     const bool twoBtn = index > 0;
     const float bx = mixStrip ? p.x : twoBtn ? std::round(cx - bw - 2) : std::round(cx - bw * 0.5f);
     // (Smooth's hot is its blue, as the reference's lit mute and the track headers')
-    if (btn("##m", "M", t.muted, P.hot, bx)) a.doc.setParam(mixerParam(t.id, MixerParam::Mute), t.muted ? 0 : 1, false);
+    // D8: the click mutes again (a comment from D5 had swallowed the call, so M did nothing in Smooth's strips)
+    if (btn("##m", "M", t.muted, P.hot, bx)) {
+      a.doc.setParam(mixerParam(t.id, MixerParam::Mute), t.muted ? 0 : 1, false);
+    }
     if (ImGui::IsItemHovered()) ui::Hint(t.muted ? "Track is muted: click to unmute" : "Track is on: click to mute");
     if (twoBtn) {
       if (btn("##s", "S", t.solo, logicplug::active(a) ? theme::rgb(0xE8C83A) : theme::rgb(theme::role::kStamp), mixStrip ? p.x + w - bw : bx + bw + 4))  // mixer: on the slots' right edge (D8)
@@ -1499,6 +1531,11 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
     name = fitName(a.fontRegular, nfs, name, room);
   }
   if (name != name0 && ImGui::IsMouseHoveringRect(n0, n1) && ImGui::IsWindowHovered()) ui::Hint(name0);  // D4: the name in full
+  // D9 (R14-11): a right-click on the name gives the track's settings menu (the Setting row's), which a
+  // tall mixer may fold away for its fader
+  if (mixStrip && ImGui::IsMouseHoveringRect(n0, n1) && ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+    ImGui::OpenPopup("##stripset");
+  }
   const float nw = std::min(a.fontRegular->CalcTextSizeA(nfs, 1e9f, 0, name.c_str()).x, n1.x - n0.x - 8);
   const float nameY = mixStrip ? std::round(n0.y + (n1.y - n0.y - nfs) * 0.5f) - 1 : std::round(n0.y + (plateH - nfs) * 0.5f) - 1;
   theme::textEllipsis(dl, a.fontRegular, nfs, ImVec2(std::round((n0.x + n1.x - nw) * 0.5f), nameY), n1.x - n0.x - 8,
@@ -1530,6 +1567,7 @@ void inspector(App& a) {
     }, mergeKey);
   };
   static bool regionOpen = false, trackOpen = false;  // both cards start folded: the strips below take the column
+  gHeadFirst = true;  // D9 (R14-08): the first heading is the pane's header (Smooth only: see cardFold)
   // ---- Region card ----
   if (clip) {
     const std::string head = nSel > 1 ? std::string(i18n::tr("Regions")) + ": " + std::to_string(nSel) + " " + i18n::tr("selected")
@@ -1692,6 +1730,7 @@ void inspector(App& a) {
     cardFold("##cfold", std::string(i18n::tr("Channel")) + ": " + c->name, &trackOpen);
     ch = c;
   }
+  gHeadFirst = false;  // (when no heading was drawn, none later takes the header's place)
   if (ch && !mt) mt = s.mixerTrack(ch->mixerTrack);
   if (!mt && ch && !s.mixer.empty()) mt = &s.mixer[0];  // routed to the master
   if (!clip && track < 0 && !ch && !mt) {
@@ -2306,6 +2345,46 @@ bool partListed(const char* window) {
   return std::strcmp(window, "Smart controls") != 0 || layoutui::active() == layout::Preset::Logic;
 }
 
+// D9 (R14-12): toggles (any number on) drawn as Smooth's segmented control: one dark capsule, each lit
+// segment in the selection blue, the same height, insets and text as the view switch beside them.
+// `names` and `hints` are untranslated (N_). True when a bit of *bits changed.
+bool kindToggles(const char* id, const char* const* names, const char* const* hints, int count, int* bits, float segW) {
+  const auto& P = pal();
+  const float h = ImGui::GetFrameHeight();
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  dl->AddRectFilled(p, ImVec2(p.x + segW * static_cast<float>(count) + 4, p.y + h), theme::mix(P.surface900, P.ink, 0.25f), theme::kRadius + 1);
+  const ImU32 blue = theme::rgb(0x2F7EDB);
+  bool changed = false;
+  ImGui::PushID(id);
+  for (int i = 0; i < count; ++i) {
+    ImGui::PushID(i);
+    const ImVec2 q(p.x + 2 + segW * static_cast<float>(i), p.y + 2);
+    ImGui::SetCursorScreenPos(q);
+    if (ImGui::InvisibleButton("##kind", ImVec2(segW, h - 4))) {
+      *bits ^= 1 << i;
+      changed = true;
+    }
+    const bool hov = ImGui::IsItemHovered(), on = (*bits >> i) & 1;
+    if (on) {
+      dl->AddRectFilled(q, ImVec2(q.x + segW, q.y + h - 4), hov ? theme::mix(blue, P.paper, 0.10f) : blue, std::max(1.0f, theme::kRadius - 1));
+    } else if (hov) {
+      dl->AddRectFilled(q, ImVec2(q.x + segW, q.y + h - 4), theme::withAlpha(P.surface600, 0.6f), std::max(1.0f, theme::kRadius - 1));
+    }
+    theme::centreText(dl, ImGui::GetFont(), ImGui::GetFontSize(), q, ImVec2(q.x + segW, q.y + h - 4), on ? theme::contrastText(blue) : hov ? P.text : P.textDim,
+                      i18n::tr(names[i]));
+    if (hints && hints[i]) {
+      ui::Hint(i18n::tr(hints[i]));
+      ui::Tooltip(i18n::tr(hints[i]));
+    }
+    ImGui::PopID();
+  }
+  ImGui::PopID();
+  ImGui::SetCursorScreenPos(p);
+  ImGui::Dummy(ImVec2(segW * static_cast<float>(count) + 4, h));
+  return changed;
+}
+
 }  // namespace
 
 // K-112b: the Logic layout's mixer: a legend column, then one strip per mixer track (the inspector's
@@ -2372,19 +2451,19 @@ void logicMixer(App& a) {
     const float bx = ImGui::GetWindowContentRegionMin().x;
     ImGui::SetCursorPos(ImVec2(std::max(ImGui::GetCursorPosX() + 8, bx + (ImGui::GetContentRegionMax().x - bx - segW * 3) * 0.5f), y0));
     ui::Segmented("##lgmixview", views, 3, &view, segW, 0, hints);
-    // The kinds, as one row of toggles at the right edge.
+    // The kinds at the right edge. D9 (R14-12): in the views' own style, one capsule whose segments light
+    // in the selection blue (any number of them on), not bare text beside a segmented control.
     const char* kn[] = {i18n::N_("Inst"), i18n::N_("Audio"), i18n::N_("Bus"), i18n::N_("Master")};
     const char* kh[] = {i18n::N_("Instrument strips: show or hide them"), i18n::N_("Audio strips: show or hide them"),
                         i18n::N_("Buses (strips other strips send into): show or hide them"), i18n::N_("The master strip: show or hide it")};
-    float kw = 0;
-    for (const char* k : kn) kw += ui::TextButtonWidth(i18n::tr(k)) + 2;
-    kw -= 2;  // D8: no gap after the last one, so it ends on the bar's 8 px inset
+    float kseg = 52;
+    for (const char* k : kn) {
+      kseg = std::max(kseg, std::ceil(ImGui::CalcTextSize(i18n::tr(k)).x) + 2 * ImGui::GetStyle().FramePadding.x);
+    }
+    const float kw = kseg * 4 + 4;  // D8: it ends on the bar's 8 px inset
     ImGui::SameLine();
     ImGui::SetCursorPos(ImVec2(std::max(ImGui::GetCursorPosX() + 8, ImGui::GetWindowContentRegionMax().x - kw), y0));
-    for (int k = 0; k < 4; ++k) {
-      if (k) ImGui::SameLine(0, 2);
-      if (ui::TextButton(i18n::tr(kn[k]), (kindsOn >> k) & 1, 0, i18n::tr(kh[k]))) kindsOn ^= 1 << k;
-    }
+    kindToggles("##lgmixkinds", kn, kh, 4, &kindsOn, kseg);
     ui::EndToolbar();
     // the strips start on the bar's foot line (no item gap: the strips keep the rows they had)
     ImGui::SetCursorScreenPos(ImVec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y));
@@ -2397,7 +2476,7 @@ void logicMixer(App& a) {
     int view = -1, kinds = -1;
     ObjectId sel = kNoId;
     std::vector<size_t> order;
-    int fxRows = 2, sendRows = 0;
+    int fxRows = 2, sendRows = 0, fxMost = 0;  // fxMost: the most effects any strip shown has
   };
   static OrderMemo om;
   if (om.rev != a.doc.revision() || om.song != &s || om.view != view || om.kinds != kindsOn || om.sel != a.selMixer) {
@@ -2467,11 +2546,12 @@ void logicMixer(App& a) {
         order.push_back(i);
     }
     if (kindsOn & 8) order.push_back(0);  // the master at the right end
-    om.fxRows = 2;
+    om.fxRows = 2, om.fxMost = 0;
     for (size_t i : order) {
       int n = 0;
       for (const EffectSlot& e : s.mixer[i].slots) n += e.plugin.type.empty() ? 0 : 1;
       om.fxRows = std::max(om.fxRows, std::min(n, kEffectSlots) + 1);  // D6 (R12-09): every insert when there is room
+      om.fxMost = std::max(om.fxMost, std::min(n, kEffectSlots));
     }
     // K-112D: each send its own row, as 134 lists them (the most any strip shown has, up to three), and
     // the empty Sends slot under them.
@@ -2496,10 +2576,20 @@ void logicMixer(App& a) {
   // K-112b (checkpoint 20): the strips fit the pane, as the references' mixers do at small sizes (they
   // scrolled at 1280x800). Sideways the strips narrow (84 px down to 64) before the pane scrolls;
   // downwards the optional rows go first (StripHide order), the fader keeping at least 48 px.
-  const float legendW = 84;
+  float legendW = 84;
   const ImVec2 av = ImGui::GetContentRegionAvail();
   const ImVec2 o = ImGui::GetCursorScreenPos();
-  const float stripW = std::clamp(std::floor((av.x - legendW) / static_cast<float>(order.size())), 64.0f, 90.0f);  // K-112D (audit F9): room for "Parametric EQ"
+  float stripW = std::clamp(std::floor((av.x - legendW) / static_cast<float>(order.size())), 64.0f, 90.0f);  // K-112D (audit F9): room for "Parametric EQ"
+  // D9 (R14-12): when the strips scroll, the view holds whole strips (at 1920 the last one was cut mid-strip):
+  // as many as fit at 64 px, widened to share the room, the odd pixels left to the legend (its names are
+  // right-aligned, so they stay beside the strips). The scroll then steps a strip at a time (below).
+  const bool scrolls = stripW * static_cast<float>(order.size()) > av.x - legendW;
+  if (scrolls) {
+    const float room = av.x - legendW;
+    const float fit = std::max(1.0f, std::floor(room / 64.0f));
+    stripW = std::max(64.0f, std::floor(room / fit));
+    legendW += std::max(0.0f, room - stripW * fit);
+  }
   const float sh = std::max(av.y - 14, 120.0f);
   int hide = 0;
   {
@@ -2522,6 +2612,24 @@ void logicMixer(App& a) {
     // D7 (R13-07): and short of that it still gives what it can (down to a fifth of the pane), so a tall
     // pane unfolds every insert it can before any folds into "+N" (at 2560x1440 they folded with a 260 px fader).
     // (Shorter panes keep the earlier rule: there the optional rows step out first and the fader stays.)
+    // D9 (R14-11): a tall pane (2560 x 1440) gave the fader a fifth of it (about 114 px of 660) to keep rows
+    // that were mostly empty. Now, while the fader would get less than 28 % of the pane, the quiet rows go
+    // first, none of which hides an effect or a send: the add-a-send slot folds into the first empty send
+    // row, the inserts' spare row goes (the fullest strip shows its effects whole, the others keep their
+    // free slot), then the Setting row (its menu is also on the name's right-click).
+    if (sh >= 560) {
+      const float goal = std::max(kMixFaderMin, std::round(sh * 0.28f));
+      auto shortOf = [&] { return faderT - (need(hide) - (sh - 6)) < goal; };
+      if (sendRows > 0 && shortOf()) {
+        hide |= HideSendAdd;
+      }
+      if (fxRows > std::max(2, om.fxMost) && shortOf()) {
+        --fxRows;
+      }
+      if (shortOf()) {
+        hide |= HideSetting;
+      }
+    }
     if (const float excess = need(hide) - (sh - 6); excess > 0) {
       if (faderT - excess >= std::max(kMixFaderMin, std::round(sh * 0.26f))) {
         faderT -= excess;
@@ -2617,6 +2725,25 @@ void logicMixer(App& a) {
     }
     ImGui::SetCursorScreenPos(ImVec2(x, b.y + sh));
     ImGui::Dummy(ImVec2(1, 1));
+    // D9 (R14-12): the scroll comes to rest on a strip's edge, so the view never ends mid-strip: once a
+    // wheel or trackpad scroll has stopped (a few frames still), it moves on to the strip edge in the
+    // direction it went; a scroll bar drag settles the same way when let go.
+    static float lastX = 0;
+    static int lastMove = 0, dir = 0;
+    const float sx = ImGui::GetScrollX();
+    const int frame = ImGui::GetFrameCount();
+    if (std::fabs(sx - lastX) > 0.5f) {
+      dir = sx > lastX ? 1 : -1;
+      lastMove = frame;
+      lastX = sx;
+    } else if (scrolls && dir != 0 && frame - lastMove >= 6 && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      const float steps = sx / stripW;
+      const float snap = std::min((dir > 0 ? std::ceil(steps - 0.02f) : std::floor(steps + 0.02f)) * stripW, ImGui::GetScrollMaxX());
+      dir = 0;
+      if (std::fabs(snap - sx) > 0.5f) {
+        ImGui::SetScrollX(snap);
+      }
+    }
   }
   ImGui::EndChild();
   gSendRows = sendRowsWas;
@@ -2657,6 +2784,9 @@ void logicMixer(App& a) {
     }
   }
 }
+
+// (a pixel above the row's middle: the capitals then sit on the toolbar's, 102 to 110 at 1920 x 1080)
+float paneTitleY(float fs) { return std::round(ImGui::GetWindowPos().y + kPaneHeadTop + (kPaneHeadH - fs) * 0.5f) - 1.0f; }
 
 void draw(App& a) {
   smoothlib::frame(a);  // K-112D: the Library pane as the project saved it
@@ -2723,8 +2853,13 @@ void devCommand(App& a, const std::vector<std::string>& args) {
 
 void panelsMenu(App& a, bool tracker) {
   static const char* const trackerOwn[] = {"Pattern editor", "Order list", "Track scopes", "Info box", "Files"};
+  // Checkpoint 59 (N58-07): Clips' own browser, Clip View and Info View do what these Studio panels do;
+  // there they would dock a second browser (or inspector) over Clips' own, so Clips does not list them.
+  static const char* const clipsHas[] = {"Inspector", "Library", "Lists", "Clip panel", "Files"};
+  const bool clips = livelook::active(a);
   for (const PartDef& p : kParts)
     if (tracker && std::any_of(std::begin(trackerOwn), std::end(trackerOwn), [&](const char* w) { return std::strcmp(w, p.window) == 0; })) continue;
+    else if (clips && std::any_of(std::begin(clipsHas), std::end(clipsHas), [&](const char* w) { return std::strcmp(w, p.window) == 0; })) continue;
     else if (bool* f = flag(a, p.window); f && partListed(p.window)) ImGui::MenuItem(i18n::tr(p.window), nullptr, f);
 }
 

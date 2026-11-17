@@ -1887,6 +1887,28 @@ std::shared_ptr<NoteFxRuntime> ProgramBuilder::noteFxRuntime(ObjectId channel, i
   return it == noteFx_.end() ? nullptr : it->second;
 }
 
+void ProgramBuilder::holdAutomation(ParamId pid, double normalized) {
+  std::shared_ptr<LinkRuntime>& rt = links_[pid.packed()];
+  if (!rt) rt = std::make_shared<LinkRuntime>();  // (the next build's lane takes it: compileLane)
+  rt->heldValue.store(static_cast<float>(std::clamp(normalized, 0.0, 1.0)), std::memory_order_relaxed);
+  rt->held.store(true, std::memory_order_relaxed);
+}
+
+void ProgramBuilder::releaseAutomation(ParamId pid) {
+  auto it = links_.find(pid.packed());
+  if (it != links_.end() && it->second) it->second->held.store(false, std::memory_order_relaxed);
+}
+
+void ProgramBuilder::releaseAllAutomation() {
+  for (auto& [key, rt] : links_)
+    if (rt) rt->held.store(false, std::memory_order_relaxed);
+}
+
+bool ProgramBuilder::automationHeld(ParamId pid) const {
+  auto it = links_.find(pid.packed());
+  return it != links_.end() && it->second && it->second->held.load(std::memory_order_relaxed);
+}
+
 bool ProgramBuilder::modulatedValue(ParamId id, double& value) const {
   auto it = links_.find(id.packed());
   if (it == links_.end() || !it->second->active.load(std::memory_order_relaxed)) return false;

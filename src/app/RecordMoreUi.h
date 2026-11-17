@@ -75,9 +75,11 @@ bool latencyCheckOpen();
 void frame(App& a);
 // Dialogs: the latency check window.
 void draw(App& a);
-// The record menu's rows (Punch and count-in group, after the count-in; Audio takes group).
+// The record menu's rows (K-325): quick punch and the first-note start (Punch and count-in group);
+// the punch crossfade, capture while armed and the latency check (its Advanced submenu).
 void punchMenuItems(App& a);
-void audioMenuItems(App& a);
+void startMenuItems(App& a);
+void advancedMenuItems(App& a);
 // Settings > Audio, beside the recording offset: the latency readout and Measure...
 void latencySettingsRow(App& a);
 // The record session code reads these (AudioRecordUi): before committing the takes.

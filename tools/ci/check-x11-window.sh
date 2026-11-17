@@ -10,7 +10,7 @@ CFG="${2:-$(mktemp -d)}"
 SRC="$(cd "$(dirname "$0")/../.." && pwd)"
 wmclass="$(sed -n 's/.*kDesktopId = "\([^"]*\)".*/\1/p' "$SRC/src/app/AppIconImage.h")"
 log="$(mktemp)"
-GRIDLINE_CONFIG_HOME="$CFG" GRIDLINE_NO_PLUGIN_SCAN=1 "$APP" --hidden --size 800x600 --frames 100000 --no-ui-sounds > "$log" 2>&1 &
+GRIDLINE_CONFIG_HOME="$CFG" GRIDLINE_NO_PLUGIN_SCAN=1 "$APP" --hidden --size 800x600 --no-ui-sounds > "$log" 2>&1 &
 pid=$!
 trap 'kill $pid 2> /dev/null || true' EXIT
 win=""

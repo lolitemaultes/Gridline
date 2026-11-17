@@ -401,17 +401,24 @@ bool runScenario(const Scenario& sc, Hub::JoinView* jv = nullptr, std::string* p
   a.peer.folder = sim::tmpDir(std::string("nat_a_") + sc.name);
   a.peer.s = Session::create(a.peer.doc, sim::config(a.peer.folder, a.peer.id, "Alex", &gClock));
   a.hub->setSession(a.peer.s.get());
-  const std::string id = a.hub->createInvite(60);
-  until({&a}, 30, [&] { return a.hub->invite(id) && a.hub->invite(id)->status == Hub::InviteStatus::Ready; });
-  const std::string code = a.hub->invite(id) ? a.hub->invite(id)->code : std::string();
-  if (sc.inviteAge > 0) frame({&a}, sc.inviteAge);
+  // K-326: an invite is ready once its candidates are in, or after a few seconds without them; on a
+  // loaded machine the address server's answer (through the simulated router) can miss that, and the
+  // invite then has no public candidate. As a user would, make a new invite (three at most).
+  std::string code;
   InviteInfo info;
-  if (!parseInviteCode(code, info)) return false;
-  info.ice = net.carry(info.ice, 1);
-  if (info.ice.find("typ srflx") == std::string::npos) {
-    std::printf("# %s: the invite has no public candidate\n", sc.name);
-    return false;
+  for (int tries = 0; tries < 3; ++tries) {
+    const std::string id = a.hub->createInvite(60);
+    until({&a}, 30, [&] { return a.hub->invite(id) && a.hub->invite(id)->status == Hub::InviteStatus::Ready; });
+    code = a.hub->invite(id) ? a.hub->invite(id)->code : std::string();
+    if (!parseInviteCode(code, info)) return false;
+    if (info.ice.find(" typ srflx") != std::string::npos) break;
+    std::printf("# %s: the invite has no public candidate (try %d)\n", sc.name, tries + 1);
+    a.hub->cancelInvite(id);
+    code.clear();
   }
+  if (code.empty()) return false;
+  if (sc.inviteAge > 0) frame({&a}, sc.inviteAge);
+  info.ice = net.carry(info.ice, 1);
   b.peer.folder = sim::tmpDir(std::string("nat_b_") + sc.name);
   b.peer.s = Session::join(b.peer.doc, sim::config(b.peer.folder, b.peer.id, "Sam", &gClock), info.ticket());
   b.hub->setSession(b.peer.s.get());

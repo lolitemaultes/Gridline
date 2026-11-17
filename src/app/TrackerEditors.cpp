@@ -78,6 +78,8 @@ struct St {
   int keyFrames = 0;        // frames left to settle the keys after an open
   int drawnFrame = -100;
   bool hasKb = false;
+  bool wasFocused = false;  // cp25: the band had the keys last frame
+  int pressFrame = -100;    // cp25: the last press inside the band
   Shown shown = Shown::None;
   float need = 0;
   ObjectId pluginWin = kNoId;  // "Open plugin window": the channel settings float for this channel
@@ -1063,12 +1065,16 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
   // Loop type and bits.
   if (const Col* cl = colOf(10)) {
     static const char* names[] = {"No loop", "Forward", "Ping-pong"};
-    static const char* hints[] = {"The sample plays once", "The loop repeats forwards while the note holds", "The loop runs forwards and back while the note holds"};
+    static const char* hints[] = {"The sample plays once", "The loop repeats forwards while the note holds (a marked range becomes a new loop)",
+                                  "The loop runs forwards and back while the note holds (a marked range becomes a new loop)"};
     const int cur = have ? c.snap->e.text.def.samples[static_cast<size_t>(c.k)].loop : 0;
+    // cp25 (mouse session): a loop made with a range marked is that range (it was the whole sample).
+    const tp::Span lr = rangeOf(c);
     for (int i = 0; i < 3; ++i) {
       if (!have) ImGui::BeginDisabled();
-      if (radioRow(a, names[i], names[i], ImVec2(cl->x, rowY(i)), ImVec2(cl->x + cl->w, rowY(i) + rowH), have && cur == i, hints[i]) && have && cur != i)
-        tp::opSampleLoopType(a, c.t, c.k, static_cast<uint8_t>(i), c.s0, c.s1);
+      if (radioRow(a, names[i], names[i], ImVec2(cl->x, rowY(i)), ImVec2(cl->x + cl->w, rowY(i) + rowH), have && cur == i, hints[i]) && have && cur != i) {
+        tp::opSampleLoopType(a, c.t, c.k, static_cast<uint8_t>(i), lr.empty() ? c.s0 : lr.a, lr.empty() ? c.s1 : lr.b);
+      }
       if (!have) ImGui::EndDisabled();
     }
   }
@@ -2786,8 +2792,23 @@ bool host(App& a, ObjectId channel) {
     if (s.giveKeys && s.shown != Shown::Plugin) ImGui::SetWindowFocus();
     else keysBackToPattern();
   } else if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
-    keepKeysHere();  // (the band's buttons hand the keys to the pattern; inside the editor they stay)
+    if (!s.wasFocused && frame - s.pressFrame > 2) {
+      // cp25 (keyboard session): the keys came here without a press or an editor key: a window
+      // closing over the Tracker (the plugin picker's Enter adding an instrument) hands ImGui's focus
+      // to the band, and Esc then closed the frame instead of turning edit mode on. Back to the pattern.
+      if (a.focusWindow == "###channelsettings") {
+        a.focusWindow.clear();
+      }
+      keysBackToPattern();
+    } else {
+      keepKeysHere();  // (the band's buttons hand the keys to the pattern; inside the editor they stay)
+    }
   }
+  if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+      (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle))) {
+    s.pressFrame = frame;
+  }
+  s.wasFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
   hostbody::claim(hostbody::Body::ChannelSettings, "Device chain");
   return true;
 }

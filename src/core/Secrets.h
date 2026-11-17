@@ -14,8 +14,9 @@ class Settings;
 namespace secrets {
 
 enum class Backend { Keychain, File };
-// Keychain on macOS unless GRIDLINE_SECRET_STORE=file or GRIDLINE_CONFIG_HOME is set
-// (GRIDLINE_SECRET_STORE=keychain overrides the latter); File elsewhere.
+// Keychain on macOS unless GRIDLINE_SECRET_STORE=file or GRIDLINE_CONFIG_HOME is set, or (K-327, macOS)
+// HOME names another folder than the account's home (GRIDLINE_SECRET_STORE=keychain overrides the
+// latter two); File elsewhere.
 Backend defaultBackend();
 const char* backendName(Backend b);  // "macOS Keychain" / "private file"
 
@@ -28,6 +29,20 @@ struct Store {
   bool set(const std::string& name, const std::string& value, std::string* err = nullptr) const;
   bool remove(const std::string& name) const;
 };
+
+// K-327: while a NoAccess lives (the command palette's and the menu tree's item walks, which run
+// menu and settings page code only to collect rows), no secret is read, written or removed: get /
+// set / remove fail at once without touching the Keychain, Credential Manager or secret files, and
+// migrate() does nothing. A Keychain read can wait on a macOS password prompt, and a walk must
+// never block or change anything. Nests; per thread.
+struct NoAccess {
+  NoAccess();
+  ~NoAccess();
+  NoAccess(const NoAccess&) = delete;
+  NoAccess& operator=(const NoAccess&) = delete;
+};
+bool accessBlocked();
+int blockedAttempts();  // how many calls a NoAccess turned away so far (tests)
 
 // The secret `name`, moved out of the plain setting `key` when that still
 // holds one (the setting is cleared and saved to `settingsPath`), or made

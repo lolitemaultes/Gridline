@@ -5,6 +5,7 @@
 #include "Fades.h"
 #include "Groove.h"
 #include "ProjectInterop.h"
+#include "TrackModes.h"
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -979,10 +980,19 @@ void songExtrasToJson(const Song& s, Json& j) {
     for (const auto& [lay, text] : s.workspaceCopy) jw.object[lay] = Json::makeString(text);
     j.object["workspaces"] = std::move(jw);
   }
-  if (s.live.areaEnd > 0 || !s.live.view.empty() || !s.keptSends.empty()) {
+  if (s.live.areaEnd > 0 || !s.keptSends.empty() || !s.live.scenes.empty()) {
     Json jl = Json::makeObject();
     if (s.live.areaEnd > 0) jl.object["areaEnd"] = num(static_cast<double>(s.live.areaEnd));
-    if (!s.live.view.empty()) jl.object["view"] = Json::makeString(s.live.view);  // N48-07 (only once saved from Clips)
+    if (!s.live.scenes.empty()) {  // checkpoint 59 (N58-03): [{"name", "color"}] by scene
+      Json js = Json::makeArray();
+      for (const SceneInfo& sc : s.live.scenes) {
+        Json e = Json::makeObject();
+        if (!sc.name.empty()) e.object["name"] = Json::makeString(sc.name);
+        if (sc.color != 0) e.object["color"] = num(static_cast<double>(sc.color));
+        js.array.push_back(std::move(e));
+      }
+      jl.object["scenes"] = std::move(js);
+    }
     if (!s.keptSends.empty()) {  // K-112c checkpoint 57 (N56-01): [mixer, to, level, pre-fader, index]
       Json jk = Json::makeArray();
       for (const KeptSend& k : s.keptSends) {
@@ -1087,7 +1097,21 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
   }
   if (const Json* jl = j.find("live"); jl && jl->is(Json::Type::Object)) {
     s.live.areaEnd = std::max<Tick>(0, jsonTick(jl->num("areaEnd", 0)));
-    s.live.view = jl->text("view", "");
+    s.live.view = jl->text("view", "");  // checkpoint 59: read once (0.7.7 dev saves), never written again
+    s.live.scenes.clear();
+    if (const Json* js = jl->find("scenes"); js && js->is(Json::Type::Array)) {  // checkpoint 59 (N58-03)
+      for (const Json& e : js->array) {
+        SceneInfo sc;
+        if (e.is(Json::Type::Object)) {
+          sc.name = e.text("name", "");
+          sc.color = static_cast<Rgb>(std::clamp(e.num("color", 0), 0.0, 16777215.0));
+        }
+        s.live.scenes.push_back(sc);
+      }
+      while (!s.live.scenes.empty() && s.live.scenes.back().empty()) {
+        s.live.scenes.pop_back();
+      }
+    }
     if (s.live.view != "grid" && s.live.view != "arrangement") s.live.view.clear();
     s.keptSends.clear();
     if (const Json* jk = jl->find("keptSends"); jk && jk->is(Json::Type::Array)) {  // K-112c checkpoint 57 (N56-01)
@@ -2103,6 +2127,9 @@ bool loadProjectText(const std::string& text, const std::string& path, Song& out
   // Portable projects (zipped / exported data files) refer to their files
   // relative to the project file.
   resolveRelativePaths(out, std::filesystem::path(path).parent_path().string());
+  // Checkpoint 58 (N57-01): a kept send whose track a layout without it (or an older version) routed
+  // elsewhere goes back into the track's sends. Nothing changes when no entry is stale.
+  trackmodes::restoreKeptSends(out);
   return true;
 }
 

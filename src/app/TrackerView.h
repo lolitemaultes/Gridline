@@ -175,6 +175,8 @@ void mainScreen(App& a);
 int headerSwap();
 // The settings screen's page (0 Layout, 1 Miscellaneous, 2 Audio, 3 MIDI input).
 void setConfigPage(int page);
+// cp25: the help screen's subject (0 Pattern keys, 1 Song page keys, 2 Editor keys, 3 Effect letters, 4 Screen keys, 5 Using).
+void setHelpSubject(int subject);
 // The Files page's Samples open (a double-click on an audio file): into the current instrument.
 void filesLoadSample(App& a, const std::string& path);
 

@@ -8,6 +8,9 @@
 namespace gl {
 
 class App;
+namespace ui {
+enum class Icon;
+}
 
 void generalSettingsPage(App& a, float fieldW);
 void fileSettingsPage(App& a, float fieldW);
@@ -31,5 +34,20 @@ void setDevSettingsSize(float w, float h);
 int settingsPageCount();
 const char* settingsPageNameEn(int page);
 void drawSettingsPage(App& a, int page, float fieldW);
+
+// K-325 (Dialogs.cpp): the Settings window's frame, shared with the other paged windows (the
+// Record window), so they look the same in every layout.
+enum class SettingsNav { Tabs, List, Icons };  // Studio and Tracker: tabs across the top; Clips: a list down the left; Smooth: icon tiles
+SettingsNav settingsNav(App& a);
+// The pages' navigation for the layout. A list continues on the same line (the page beside it);
+// `reserveH` is the room the list leaves under it (a footer). Labels are English (translated here).
+void settingsPageNav(App& a, const char* tabsId, const char* const* labelsEn, const ui::Icon* icons, int count, int* page,
+                     const char* const* hints = nullptr, float reserveH = 0.0f);
+// Smooth: the page's inset panel, from `barTop` (the cursor's y under the tiles) to `reserveH` above
+// the window's content bottom. Call with the window's draw list split in two (channel 1 current).
+void settingsPagePanel(float barTop, float reserveH);
+// The page form's columns and field width (Live's value column, Smooth's right-aligned labels).
+float settingsFormBegin(App& a);
+void settingsFormEnd();
 
 }  // namespace gl

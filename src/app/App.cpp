@@ -7,6 +7,7 @@
 #include "McpUi.h"
 #include "OscUi.h"
 #include "App.h"
+#include "AutomationEditor.h"
 #include "StageView.h"
 #include "RecordRowsUi.h"
 #include "../core/ChromeOs.h"
@@ -87,6 +88,7 @@ App::App() {
   loadTypingLayout(settings);  // K-113
   typingKeyboard = typingKeyboardAtStart(settings);  // on, off, or as it was left
   loadRecordOptions(settings, recOptions, countInBars, recPunch);  // K-226: as they were left
+  bindAutomationArm(&recOptions.automation);  // N58-01: one automation arm, kept with the record options
   recAudio = settings.getBool("record.audio");
   recAudioEditor = settings.getBool("record.audioEditor");
   if (const std::string sys = chromeos::describe(chromeos::current()); !sys.empty()) logging::info("app", "Running in the " + sys);
@@ -144,6 +146,7 @@ App::App() {
 }
 
 App::~App() {
+  bindAutomationArm(nullptr);
   launcherui::shutdown();        // J-141: the sketch worker
   cacheui::shutdown(*this);      // K-45: the project's unpacked copy can go
   collabui::closeSession(*this);  // J-111: the log is synced, collaborators are told

@@ -164,6 +164,9 @@ bool OptionsAsMenus();
 bool Segmented(const char* id, const char* const* labels, int count, int* index, float segWidth = 0.0f,
                float height = 0.0f, const char* const* hints = nullptr);
 
+// Checkpoint 60 (N59-01): the mark of a control whose automation is overridden by hand.
+void OverrideMark(ImDrawList* dl, ImVec2 centre, float radius = 3.5f);
+
 // Knob bound to a document parameter: drag vertically (Shift = fine), wheel,
 // double-click resets (types at the default, J-136), Alt+click types, right-click
 // menu (reset, type, links, automation). One undo step per gesture.

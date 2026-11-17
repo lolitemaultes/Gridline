@@ -14,11 +14,13 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
 #include <filesystem>
 #include "Log.h"
 #include "Settings.h"
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
+#include <pwd.h>
 #include <Security/Security.h>
 #endif
 
@@ -34,11 +36,39 @@ Backend defaultBackend() {
   // user's Keychain / Credential Manager: a fresh build reading the user's item makes macOS ask for the password.
   const char* home = std::getenv("GRIDLINE_CONFIG_HOME");
   if (home && *home && !(e && std::string(e) == "keychain")) return Backend::File;
+#if defined(__APPLE__)
+  // K-327: so does a run with HOME pointed away from the account's home (a scripted run in a scratch
+  // folder): its settings live there, so do its secrets.
+  if (!(e && std::string(e) == "keychain")) {
+    const char* h = std::getenv("HOME");
+    const struct passwd* pw = ::getpwuid(::getuid());
+    if (h && *h && pw && pw->pw_dir && *pw->pw_dir) {
+      std::error_code ec;
+      const bool same = fs::equivalent(fs::path(h), fs::path(pw->pw_dir), ec);
+      if (!same && (ec ? std::string(h) != pw->pw_dir : true)) return Backend::File;
+    }
+  }
+#endif
   return Backend::Keychain;
 #else
   return Backend::File;
 #endif
 }
+
+namespace {
+thread_local int tBlockDepth = 0;
+std::atomic<int> gBlocked{0};
+bool turnedAway() {
+  if (tBlockDepth <= 0) return false;
+  gBlocked.fetch_add(1, std::memory_order_relaxed);
+  return true;
+}
+}  // namespace
+
+NoAccess::NoAccess() { ++tBlockDepth; }
+NoAccess::~NoAccess() { --tBlockDepth; }
+bool accessBlocked() { return tBlockDepth > 0; }
+int blockedAttempts() { return gBlocked.load(std::memory_order_relaxed); }
 
 const char* backendName(Backend b) {
 #if defined(_WIN32)
@@ -93,7 +123,7 @@ std::string Store::folder() const {
 }
 
 bool Store::get(const std::string& name, std::string& value) const {
-  if (!validName(name)) return false;
+  if (!validName(name) || turnedAway()) return false;
 #ifdef __APPLE__
   if (backend == Backend::Keychain) {
     CFMutableDictionaryRef q = query(service, name);
@@ -149,6 +179,10 @@ bool Store::get(const std::string& name, std::string& value) const {
 }
 
 bool Store::set(const std::string& name, const std::string& value, std::string* err) const {
+  if (turnedAway()) {
+    if (err) *err = "no secret access while menus and settings are read";
+    return false;
+  }
   if (!validName(name)) {
     if (err) *err = "invalid secret name";
     return false;
@@ -241,7 +275,7 @@ bool Store::set(const std::string& name, const std::string& value, std::string* 
 }
 
 bool Store::remove(const std::string& name) const {
-  if (!validName(name)) return false;
+  if (!validName(name) || turnedAway()) return false;
 #ifdef __APPLE__
   if (backend == Backend::Keychain) {
     CFMutableDictionaryRef q = query(service, name);
@@ -258,6 +292,8 @@ bool Store::remove(const std::string& name) const {
 
 std::string migrate(Settings& settings, const std::string& key, const std::string& settingsPath, const Store& store,
                     const std::string& name, const std::function<std::string()>& generate, bool* stored) {
+  if (stored) *stored = false;
+  if (turnedAway()) return {};  // K-327: a walk: nothing read, made or saved
   const std::string legacy = settings.getString(key);
   std::string value;
   bool have = store.get(name, value) && !value.empty();

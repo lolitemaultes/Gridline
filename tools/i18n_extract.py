@@ -43,6 +43,10 @@ HELPERS = {
     # readouts and box titles (label, hint), and the settings screen's check rows.
     "bevelButton": [2, 6], "radioRow": [2, 6], "checkRow": [2, 6], "stepper": [2, 7], "readout": [1, 6], "boxTitle": [2],
     "checkSetting": [1, 6],
+    # K-325: the recording windows' controls in each layout's style (RecordLook.h).
+    "rlLabel": [0], "rlButton": [1, 4], "rlChoice": [6], "rlToggle": [3], "rlSection": [0],
+    # N59-10: i18n::plural(n, one, other): both forms of a counted sentence.
+    "plural": [1, 2],
 }
 # Helpers called on an object (a.notify(...)).
 MEMBER_HELPERS = {"notify"}
@@ -58,6 +62,7 @@ def source_files():
     files = glob.glob(os.path.join(ROOT, "src", "app", "*.cpp")) + glob.glob(os.path.join(ROOT, "src", "app", "*.h"))
     files += glob.glob(os.path.join(ROOT, "src", "packs", "*", "*_ui.cpp"))
     files += glob.glob(os.path.join(ROOT, "src", "packs", "*", "*_ui.h"))  # editor parts kept in headers (the SFZ view)
+    files += [os.path.join(ROOT, "src", "core", "TrackerKeys.cpp")]  # K-106 cp25: the Tracker help's key table (N_)
     files += [os.path.join(ROOT, "src", "core", "Keymap.cpp")]
     files += [os.path.join(ROOT, "src", "core", "ExternalDrop.cpp")]  # J-75: drop hints ("Drop to add 3 audio clips ...")
     files += [os.path.join(ROOT, "src", "core", "ProjectFiles.cpp")]  # J-78: open / save dialog file types (N_)
@@ -186,7 +191,7 @@ def extract():
             if re.search(r"(void|bool|float|int|auto)\s+$", pre):
                 continue  # a definition, not a call
             q = re.search(r"(\w+)::$", pre)
-            if (q and q.group(1) not in ("ui", "i18n")) or (re.search(r"(\.|->)$", pre) and name not in MEMBER_HELPERS):
+            if (q and q.group(1) not in ("ui", "i18n", "reclook")) or (re.search(r"(\.|->)$", pre) and name not in MEMBER_HELPERS):
                 continue  # another namespace's / object's function (keys::label, x.label)
             args = split_args(s, m.end())
             if not args:

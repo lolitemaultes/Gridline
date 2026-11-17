@@ -112,8 +112,9 @@ int main() {
     float deviceH2 = 0;
     for (const auto& pl : v2)
       if (pl.id == "live.device") deviceH2 = pl.rect.h;
-    // K-112c checkpoint 57 (N56-08): 236 px, the clip band's height too (one detail view).
-    expect(deviceH == 236 && deviceH2 == 236, "the Live device band keeps its fixed 236 px height at every size");
+    // K-112c checkpoint 57 (N56-08): 236 px, the clip band's height too (one detail view). Checkpoint 58
+    // (N57-05/06/15): it grows with the window, up to 320 px.
+    expect(deviceH == 236 && deviceH2 == 320, "the Live device band: 236 px at 1440 x 900, 320 px on a large screen");
   }
   {  // K-112c (round 45): a new Clips set shows one detail band (devices); clip and device bands take turns.
     const layout::Shell& sh = layout::shell(Preset::Live);
@@ -145,7 +146,7 @@ int main() {
         if (pl.id == "live.clip") clipY = pl.rect.y, clipH = pl.rect.h;
         if (pl.id == "live.device") devY = pl.rect.y, devH = pl.rect.h;
       }
-      expect(clipY >= 0 && devY > clipY && clipH == 236 && devH == 236, "stacked: the clip band sits over the device band, both full size");
+      expect(clipY >= 0 && devY > clipY && clipH >= 180 && devH >= 236, "stacked: the clip band sits over the device band, both at least their minimum");
     }
     layout::setVisible(sh, st, "live.mixer", true);
     expect(layout::visible(sh, st, "live.mixer") && layout::visible(sh, st, "live.device"), "the mixer band is not in the group");
@@ -201,7 +202,7 @@ int main() {
     st.regionSize.clear();
     for (const auto& pl : layout::solve(Preset::Live, 1432, 500, st))
       if (pl.id == "live.device") deviceH = pl.rect.h;
-    expect(deviceH == std::floor(500 * 0.35f), "the default size keeps the layout's own limit");
+    expect(deviceH == 180, "the default size on a short window: the band's minimum (checkpoint 58)");
     const layout::State member = layout::fromJson(Preset::Logic, "{\"shown\":[\"logic.lower\"],\"member\":{\"logic.lower\":\"Mixer\"},\"size\":{\"logic.lower|Mixer\":300},\"region\":{\"logic.lower\":200}}");
     float lowerH = 0;
     for (const auto& pl : layout::solve(Preset::Logic, 1432, 818, member))

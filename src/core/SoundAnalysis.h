@@ -23,6 +23,11 @@ Analysis analyse(const std::vector<float>& mono, double rate, double seconds = 0
 // The parts, exposed for tests.
 double detectTempo(const std::vector<float>& mono, double rate, double seconds, double* confidence = nullptr);
 bool detectKey(const std::vector<float>& mono, double rate, int& pitchClass, bool& minor, double* confidence = nullptr);
+// K-112c checkpoint 58 (N57-02): the beat the kicks keep: the low end's (below about 150 Hz) onsets, the
+// tempo of their usual spacing, unfolded (a kick on every beat of 70 reads 70, though the offbeat hats
+// make the onsets 140 a minute). 0 when the low end has no steady pulse (no kick, a broken pattern).
+// Settles a loop's half / double tempo (browse::warpTempo's `beat`).
+double kickTempo(const std::vector<float>& mono, double rate);
 std::string detectKind(const std::vector<float>& mono, double rate);
 
 // Whether a kind is a drum or percussion sound (no key is looked for).

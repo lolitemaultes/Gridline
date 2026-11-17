@@ -1612,6 +1612,18 @@ void smartColumn(App& a, ImVec2 c0, ImVec2 c1, const Channel* inst, const MixerT
   ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->AddRectFilled(c0, c1, P.surface900);
   dl->AddLine(ImVec2(c1.x - 1, c0.y), ImVec2(c1.x - 1, c1.y), theme::withAlpha(P.line, 0.9f));
+  // D9 (R14-13): the column scrolls when it is taller than the pane (at 1024 x 640 External Assignment sat
+  // on the window's foot and its Controller row was dropped). Its rows are laid out as before inside.
+  const float colEndY = c1.y;
+  ImGui::SetCursorScreenPos(c0);
+  const float sbW = 6;  // a slim scroll bar: the column is narrow
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, sbW);
+  ImGui::BeginChild("##smcolscroll", ImVec2(c1.x - c0.x - 1, c1.y - c0.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+  ImGui::PopStyleVar(2);
+  // (the slim bar sits in the rows' 10 px right margin: the rows keep their width)
+  c0.y = ImGui::GetCursorScreenPos().y;  // scrolled
+  dl = ImGui::GetWindowDrawList();
   const float x = c0.x + 10, w = c1.x - c0.x - 20, fs = theme::kFontCaption, rh = 24;
   float y = c0.y + 10;
   ImGui::PushID("##smcol");
@@ -1664,10 +1676,11 @@ void smartColumn(App& a, ImVec2 c0, ImVec2 c1, const Channel* inst, const MixerT
     if (ImGui::InvisibleButton(id, ImVec2(std::max(10.0f, c1.x - c0.x - buttonsW - 14), kHeadH))) *open = !*open;
     const bool hov = ImGui::IsItemHovered();
     ui::drawIcon(dl, *open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(c0.x + 14, y + kHeadH * 0.5f), 10, hov ? P.text : P.textDim);
-    dl->AddText(a.fontRegular, theme::kFontBody - 1, ImVec2(c0.x + 26, std::round(y + (kHeadH - (theme::kFontBody - 1)) * 0.5f) - 1), P.text, name);
+    // D9: the name ends before its buttons (it ran under Learn when the column narrowed for its scroll bar)
+    theme::textEllipsis(dl, a.fontRegular, theme::kFontBody - 1, ImVec2(c0.x + 26, std::round(y + (kHeadH - (theme::kFontBody - 1)) * 0.5f) - 1),
+                        c1.x - 10 - buttonsW - 4 - (c0.x + 26), P.text, name);
   };
   auto line = [&](const char* label, const std::string& value, ImU32 col = 0) {
-    if (y + 18 > c1.y - 4) return;
     dl->AddText(a.fontRegular, fs, ImVec2(c0.x + 26, y), P.textDim, label);
     const float vx = c0.x + 26 + std::min(90.0f, (c1.x - c0.x) * 0.36f);
     theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(vx, y), c1.x - 10 - vx, col ? col : P.text, value.c_str());
@@ -1731,6 +1744,10 @@ void smartColumn(App& a, ImVec2 c0, ImVec2 c1, const Channel* inst, const MixerT
     if (gLearn == 2) line(i18n::tr("Learning"), i18n::tr("move a control on your device"), P.accent);
   }
   ImGui::PopID();
+  ImGui::SetCursorScreenPos(ImVec2(c0.x, y + 6));  // the content's height, for the scroll bar
+  ImGui::Dummy(ImVec2(1, 1));
+  ImGui::EndChild();
+  ImGui::SetCursorScreenPos(ImVec2(c0.x, colEndY));
 }
 }  // namespace
 
@@ -1785,8 +1802,12 @@ void smartControls(App& a) {
     const char* views[] = {i18n::tr("Controls"), i18n::tr("EQ")};
     const char* hints[] = {i18n::tr("The track's main controls as knobs"), i18n::tr("The track's EQ, editable here")};
     const float vw = 72 * 2;
+    // D9 (R14-13): centred over the faceplate's band (right of the column), not the whole pane: at 1024 it
+    // was pushed left of the band's middle, at 1440 and 1920 it sat about 170 px left of it. The same place
+    // in both views, so it does not jump under the pointer when the view changes.
+    const float colW = column ? std::clamp(std::round(W * 0.24f), 230.0f, 330.0f) : 0.0f;
     ImGui::SameLine(0, 0);
-    ImGui::SetCursorPos(ImVec2(std::max(leftEnd + theme::kS3, std::round(x0 + (W - vw) * 0.5f)), y0 - 1));
+    ImGui::SetCursorPos(ImVec2(std::max(leftEnd + theme::kS3, std::round(x0 + colW + (W - colW - vw) * 0.5f)), y0 - 1));
     ui::Segmented("##smview", views, 2, &gSmartView, 72, 0, hints);
     const float nameX = ImGui::GetItemRectMax().x + theme::kS3, right = ImGui::GetWindowPos().x + x0 + W;
     const float fs = ImGui::GetFontSize(), room = right - nameX;

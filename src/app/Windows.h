@@ -297,6 +297,9 @@ void mixerLatencyMenu(App& a, ObjectId track);
 void renderMixerStems(App& a, const std::vector<ObjectId>& tracks);
 void knobContextMenu(App& a, ParamId pid);
 void pluginWindowMenu(App& a, ObjectId owner, int slot);  // slot < 0: channel instrument
+// Checkpoint 59 (N58-06): the same menu for a device docked in Clips' device band, in Clips' words
+// (track and device, no channel, mixer track, piano roll, editor size or window rows).
+void pluginWindowMenu(App& a, ObjectId owner, int slot, bool clipsDevice);
 // K-112c: the device title bar's save and hot-swap buttons. savePresetDialog: Save preset to file
 // for that plugin; swapDeviceItems: menu rows of the instruments (slot < 0) or effects to put in its place.
 void savePresetDialog(App& a, ObjectId owner, int slot);

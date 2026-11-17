@@ -172,8 +172,8 @@ void App::runAction(RemoteAction action, bool fromMmc) {
       break;
     case RemoteAction::Metronome: metronome = !metronome; break;
     case RemoteAction::CountIn:
-      countInBars = countInBars > 0 ? 0 : 1;
-      notify(countInBars ? "Count-in: 1 bar" : "Count-in off");
+      countInBars = countInBars > 0 ? 0 : std::max(1, countInLength);
+      notify(countInBars == 1 ? "Count-in: 1 bar" : countInBars > 1 ? "Count-in: " + std::to_string(countInBars) + " bars" : std::string("Count-in off"));
       break;
     case RemoteAction::StepRecord:
       stepRecord = !stepRecord;
@@ -349,6 +349,8 @@ void App::processMidi() {
         if (logicplug::active(*this)) {  // R05-02: onto the selected track (R10-03: the armed one first)
           const int armed = logicplug::armedTrack(*this);
           st.track = armed >= 0 ? armed : logicplug::focusTrack(*this);
+          st.takeFolder = settings.getBool("record.midi.takeFolders");  // R14-04: a pass over regions: a take folder
+          st.takeLanes = settings.getBool("record.takeLanes");
         }
         recorder.beginSong(doc, curPattern, o, st);
         if (logicplug::active(*this)) logicplug::startLayerTakes(*this, o, st, curPattern);  // R11-03: a take per armed track
@@ -517,12 +519,14 @@ void App::processMidi() {
       double out = 0;
       if (remote.process(l, m, d->toNormalized(*v), &out, stepOf(*d))) {
         const double value = d->fromNormalized(out);
+        automationFromController() = true;  // N58-01: recorded below, with the event's time
         if (recorder.active())  // K-226: part of the recording's undo step
           recorder.edit(doc, [&] { doc.setParam(pid, value, true); });
         else
           doc.setParam(pid, value, true);
+        automationFromController() = false;
         lastCcTime_ = now;
-        if (recorder.active() && !automationRecording() && recordFilterTakes(recorder.options(), m.status, m.d1)) {  // K-123: the input filter
+        if (recorder.active() && !automationCapturing(*this) && recordFilterTakes(recorder.options(), m.status, m.d1)) {  // K-123: the input filter
           recorder.controller(pid, out, recordTick(e.time));  // else captured by the automation recorder
         }
       }
@@ -608,12 +612,14 @@ void App::processMidi() {
             double out = 0;
             if (remote.process(l, m, d->toNormalized(*v), &out, stepOf(*d))) {
               const double value = d->fromNormalized(out);
+              automationFromController() = true;  // N58-01: recorded below, with the event's time
               if (recorder.active())  // K-226: part of the recording's undo step
                 recorder.edit(doc, [&] { doc.setParam(pid, value, true); });
               else
                 doc.setParam(pid, value, true);
+              automationFromController() = false;
               lastCcTime_ = now;
-              if (recorder.active() && !automationRecording() && recordFilterTakes(recorder.options(), m.status, m.d1)) {  // K-123: the input filter
+              if (recorder.active() && !automationCapturing(*this) && recordFilterTakes(recorder.options(), m.status, m.d1)) {  // K-123: the input filter
                 recorder.controller(pid, out, recordTick(e.time));  // else captured by the automation recorder
               }
             }

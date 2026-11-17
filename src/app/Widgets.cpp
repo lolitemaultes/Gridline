@@ -33,6 +33,7 @@
 #include "../engine/Dsp.h"
 #include "../core/Automation.h"
 #include "LogicPlugins.h"
+#include "AutomationEditor.h"
 
 namespace gl::ui {
 
@@ -1085,6 +1086,7 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
     if (released) *released = true;
   }
   ImGui::PopID();
+  if (knobParam.owner != kNoId && automationOverridden(knobParam)) OverrideMark(ImGui::GetWindowDrawList(), ImVec2(p.x + 4.0f, p.y + 4.0f));  // N59-01
   if (gDevKnobs) {  // K-148
     const double count = d.choices.empty() ? d.max : static_cast<double>(d.choices.size() - 1);
     const double stepNorm = d.kind == ParamKind::Choice ? 1.0 / std::max(1.0, count) : step > 0 && d.max > d.min ? step / (d.max - d.min) : 0.0;
@@ -1138,6 +1140,16 @@ static bool liveMixerValue(App& a, ParamId pid, double& v) {
   if (!d) return false;
   v = d->fromNormalized(std::clamp(lane->valueAt(a.engine.position()), 0.0, 1.0));
   return true;
+}
+
+// Checkpoint 60 (N59-01): an overridden automated control's mark (its automation paused by hand):
+// a lit ring crossed out, centred on `c`.
+void OverrideMark(ImDrawList* dl, ImVec2 c, float r) {
+  const auto& P = pal();
+  dl->AddCircleFilled(c, r + 1.0f, theme::withAlpha(P.surface950, 0.8f));
+  dl->AddCircle(c, r, P.hot, 0, 1.5f);
+  const float k = r * 0.7071f;
+  dl->AddLine(ImVec2(c.x - k, c.y + k), ImVec2(c.x + k, c.y - k), P.hot, 1.5f);
 }
 
 bool shownParamValue(ParamId pid, double& v) { return liveMixerValue(app(), pid, v); }
@@ -1314,6 +1326,7 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   double shown = *getParam(a.doc.song(), pid);
   if (double live = 0; (!act || gFaderLocked) && liveMixerValue(a, pid, live)) shown = live;  // automation playing
   DrawFader(ImGui::GetWindowDrawList(), p, size, static_cast<float>(d->toNormalized(shown)), static_cast<float>(d->toNormalized(d->def)), hov, act);
+  if (automationOverridden(pid)) OverrideMark(ImGui::GetWindowDrawList(), ImVec2(p.x + 4.0f, p.y + 4.0f));  // N59-01
   if (hov || act) {
     auto valueText = [&](double v) {
       if (gFaderDbUnity <= 0) return d->format(v);

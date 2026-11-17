@@ -22,6 +22,7 @@ set(GRIDLINE_PLUGIN_DIR ${CMAKE_BINARY_DIR}/plugins)
 
 add_library(gridline_plugin_common OBJECT src/plugin/PluginCore.cpp src/plugin/PluginSingle.cpp src/plugin/PluginFrame.cpp src/plugin/HostedWindows.cpp)
 target_link_libraries(gridline_plugin_common PRIVATE gridline_core imgui_core rtmidi gridline_sdl_headers)
+gridline_wait_for_sdl_headers(gridline_plugin_common)
 target_compile_options(gridline_plugin_common PRIVATE ${GL_WARN})
 if(GRIDLINE_DEV_ASSETS)
   target_compile_definitions(gridline_plugin_common PRIVATE GRIDLINE_SOURCE_ASSETS="${CMAKE_SOURCE_DIR}/assets")

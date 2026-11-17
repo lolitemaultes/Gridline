@@ -96,6 +96,7 @@ Settings::Settings() {
       {"record.midi.quantize", b(true)},               // note starts snap to the piano roll grid
       {"record.midi.quantizeLength", b(false)},        // note lengths snap too
       {"record.midi.takes", b(false)},                 // loop recording: a new take per pass
+      {"record.midi.takeFolders", b(true)},            // K-112B (R14-04): Smooth, merging: a pass over regions makes a take folder (off: stacks)
       {"record.midi.notes", b(true)},                  // what records: notes
       {"record.midi.automation", b(true)},             // what records: linked controller moves
       {"record.midi.bend", b(true)},                   // K-123: what records: pitch bend (an MPE note's bend, linked bend moves)

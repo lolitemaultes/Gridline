@@ -22,8 +22,17 @@ class Settings;
 
 namespace gl::collab {
 
-// The network settings from the app settings (TURN password: secret store).
+// The network settings from the app settings, without the TURN password (K-327: building them reads
+// no secret; the menus build a Controller just to list its projects).
 NetSettings netSettingsFrom(const Settings& s);
+// K-327: puts the TURN password (secret store) into `n` when a TURN server or user is set. The store
+// is read at most once per run, and only with `readStore` (a session starting, the connection test:
+// the user's own actions) outside a secrets::NoAccess; otherwise only a password already read or
+// typed this run is used. False when it is needed but not known.
+bool fillTurnPassword(NetSettings& n, bool readStore);
+// K-327: the settings page typed a new password (stored by the page): later sessions use it.
+void rememberTurnPassword(const std::string& pass);
+void forgetTurnPassword();  // tests
 // This build's version, protocol and build id.
 VersionInfo currentVersion();
 

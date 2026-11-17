@@ -8,6 +8,7 @@
 #include "../core/CommandPalette.h"
 #include "../core/I18n.h"
 #include "../core/MenuStyle.h"
+#include "../core/Secrets.h"
 #include "App.h"
 #include "CommandPaletteUi.h"
 #include "../core/Keymap.h"
@@ -139,6 +140,9 @@ struct RunWalker : imhook::MenuWalker {
 menutree::Tree build(App& a, layout::Preset style) {
   menutree::Tree t;
   t.style = layout::id(style);
+  // K-327: the menus' code runs only to list their items: no secret is read meanwhile (a Keychain
+  // read can wait on a password prompt; the macOS menu bar and the command palette walk often).
+  secrets::NoAccess noSecrets;
   const auto& menus = menustyle::menus(style);
   unseen("##menutree_walk", [&] {
     for (const menustyle::Menu& m : menus) {

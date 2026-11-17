@@ -2859,6 +2859,45 @@ void patternEditor(App& a) {
     } else if (s.cur.field == Field::Effect) {
       right = trk::effectHelp(0, 0);
     }
+    // cp25: audio and automation clips playing with this pattern's entry: the pattern cannot show them,
+    // so the bar names them (read-only; the Song page's lanes show and edit them). Worked out again
+    // only when the song or the pattern shown changes.
+    {
+      static uint64_t clipsRev = ~0ull;
+      static ObjectId clipsPat = kNoId;
+      static std::string clipsNote;
+      if (clipsRev != a.doc.revision() || clipsPat != p.id) {
+        clipsRev = a.doc.revision();
+        clipsPat = p.id;
+        clipsNote.clear();
+        int audio = 0, autos = 0;
+        for (const trk::OrderEntry& e : trk::orderList(song)) {
+          if (e.pattern != p.id) {
+            continue;
+          }
+          for (const Clip& c : song.playlist) {
+            if (c.kind == ClipKind::Pattern || c.start >= e.end || c.start + std::max<Tick>(song.clipLength(c), 1) <= e.start) {
+              continue;
+            }
+            (c.kind == ClipKind::Audio ? audio : autos) += 1;
+          }
+          break;
+        }
+        if (audio + autos > 0) {
+          clipsNote = std::string(i18n::tr("Also in this entry:")) + " ";
+          if (audio > 0) {
+            clipsNote += std::to_string(audio) + " " + (audio == 1 ? i18n::tr("audio clip") : i18n::tr("audio clips"));
+          }
+          if (autos > 0) {
+            clipsNote += std::string(audio > 0 ? ", " : "") + std::to_string(autos) + " " + (autos == 1 ? i18n::tr("automation clip") : i18n::tr("automation clips"));
+          }
+          clipsNote += std::string(" (") + i18n::tr("the Song page's lanes") + ")";
+        }
+      }
+      if (right.empty()) {
+        right = clipsNote;
+      }
+    }
     // N-09: the song plays an audio part (no pattern there): the editor keeps the pattern picked,
     // dimmed, and the bar says so.
     const Tick songPos = static_cast<Tick>(a.engine.position());
@@ -3055,6 +3094,7 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     const std::string w = args.size() > 1 ? args[1] : "none";
     setHeaderSwap(w == "help" ? 1 : w == "files" ? 2 : w == "config" ? 3 : w == "about" ? 4 : 0);
     if (w == "config" && args.size() > 2) setConfigPage(std::atoi(args[2].c_str()));
+    if (w == "help" && args.size() > 2) setHelpSubject(std::atoi(args[2].c_str()));
   } else if (cmd == "loadsample" && args.size() > 1) {  // as a double-click on the file in Files, Samples
     filesLoadSample(a, args[1]);
     const Channel* c = a.doc.song().channel(a.selChannel);

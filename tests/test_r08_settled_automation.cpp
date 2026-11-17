@@ -77,6 +77,9 @@ bool sameAudio(const AudioBuffer& a, const AudioBuffer& b) {
   return same;
 }
 
+// K-326: timed renders take turns (each render once per turn): at least kMinTurns, at most kMaxTurns.
+constexpr int kMinTurns = 3, kMaxTurns = 8;
+
 double renderMs(const Song& s, const RenderOptions& o, AudioBuffer* out) {
   const auto t0 = std::chrono::steady_clock::now();
   AudioBuffer b = renderSong(s, o);
@@ -136,9 +139,15 @@ int main() {
   // other programs running, every 64-frame block of the mixer threads waits longer for its turn;
   // the lane's own control-block stretch then costs more, but no more than its share of the
   // song rendered all in control blocks, which `held` measures under the same load.)
+  // K-326: each render's fastest time over at least three and up to eight turns, stopping once the
+  // bound holds (a busy or shared machine only ever adds time; a real regression stays over it).
+  // Unloaded, the lane costs at most half again the time without it. Loaded, the extra time is at
+  // most half the extra of rendering the whole song in control blocks (the lane's points cover
+  // 768 ticks of it): long blocks after the lane's last point are still in use.
   AudioBuffer a, b, n;
   double tNone = 1e18, tLane = 1e18, tHeld = 1e18;
-  for (int k = 0; k < 4; ++k) {
+  auto laneOk = [&] { return tLane <= tNone * 1.5 + 5.0 || tLane - tNone <= 0.5 * (tHeld - tNone); };
+  for (int k = 0; k < kMaxTurns && (k < kMinTurns || !laneOk()); ++k) {
     tNone = std::min(tNone, renderMs(base, o, k == 0 ? &n : nullptr));
     tLane = std::min(tLane, renderMs(early, o, k == 0 ? &a : nullptr));
     tHeld = std::min(tHeld, renderMs(held, o, k == 0 ? &b : nullptr));
@@ -150,10 +159,7 @@ int main() {
   for (size_t i = 0; !differs && i < std::min(a.frames, n.frames); ++i) differs = a.at(0, i) != n.at(0, i);
   expect(differs, "the lane is heard (the render differs from the song without it)");
   std::printf("render ms: none %.1f, one lane %.1f, all in control blocks %.1f\n", tNone, tLane, tHeld);
-  // Unloaded, the lane costs at most half again the time without it. Loaded, the extra time is at
-  // most half the extra of rendering the whole song in control blocks (the lane's points cover
-  // 768 ticks of it): long blocks after the lane's last point are still in use.
-  expect(tLane <= tNone * 1.5 + 5.0 || tLane - tNone <= 0.5 * (tHeld - tNone),
+  expect(laneOk(),
          "one two-point lane costs at most half again the time without it (or, on a loaded computer, half the cost of control blocks everywhere)");
 
   // ---- K-317: strip gain lanes that move render in long blocks, the same as in control blocks
@@ -173,7 +179,8 @@ int main() {
     forceControlBlocks(stageGrid);
     AudioBuffer f, fg, st, sg;
     double tFast = 1e18, tGrid = 1e18, tBase = 1e18;
-    for (int k = 0; k < 4; ++k) {
+    auto fastOk = [&] { return tFast <= tBase * 1.25 + 5.0 || tFast - tBase <= 0.25 * (tGrid - tBase); };
+    for (int k = 0; k < kMaxTurns && (k < kMinTurns || !fastOk()); ++k) {  // (K-326: as above)
       tBase = std::min(tBase, renderMs(base, o, nullptr));
       tFast = std::min(tFast, renderMs(fast, o, k == 0 ? &f : nullptr));
       tGrid = std::min(tGrid, renderMs(fastGrid, o, k == 0 ? &fg : nullptr));
@@ -188,7 +195,7 @@ int main() {
     }
     expect(heard, "the fast bus lane is heard");
     std::printf("render ms: none %.1f, fast bus lane %.1f, the same in control blocks %.1f\n", tBase, tFast, tGrid);
-    expect(tFast <= tBase * 1.25 + 5.0 || tFast - tBase <= 0.25 * (tGrid - tBase),
+    expect(fastOk(),
            "a fast bus lane costs at most a quarter again the time without it (or, loaded, a quarter of the cost of control blocks)");
   }
   return finish();

@@ -410,6 +410,7 @@ class App {
   // Recording.
   RecordOptions recOptions;
   int countInBars = 0;                         // count-in before recording starts
+  int countInLength = 1;                       // N59-10: the count-in's length while it is off (the switches turn it on at this)
   bool stepRecord = false;                     // step editing from the keyboard (stopped transport)
   NoteRecorder recorder;
   StepRecorder stepRecorder;

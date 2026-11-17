@@ -31,6 +31,7 @@
 #include "../core/BrowserIndex.h"
 #include "../core/FileOps.h"
 #include "../core/TrackerGrid.h"
+#include "../core/TrackerKeys.h"
 #include "App.h"
 #include "ChromeBanner.h"
 #include "BrowserUi.h"
@@ -281,6 +282,46 @@ bool beginModalBox(App& a, const char* id, const char* title, ImVec2 size) {
   return true;
 }
 void endModalBox() { ImGui::EndPopup(); }
+
+// K-325: the classic dialog pieces (TrackerLook.h).
+void dialogFrame() {
+  const ImVec2 p0 = ImGui::GetWindowPos(), p1(p0.x + ImGui::GetWindowWidth(), p0.y + ImGui::GetWindowHeight());
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  bevelBox(dl, p0, p1, false);
+  bevelBox(dl, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3), true);
+}
+void windowFrame() {
+  const auto& P = pal();
+  const float dpp = pixelgrid::frameScale();
+  const ImVec2 w0 = ImGui::GetWindowPos(), w1(w0.x + ImGui::GetWindowWidth(), w0.y + ImGui::GetWindowHeight());
+  const ImVec2 p0(pixelgrid::edge(w0.x, dpp), pixelgrid::edge(w0.y, dpp)), p1(pixelgrid::edge(w1.x, dpp), pixelgrid::edge(w1.y, dpp));
+  const float w = pixelgrid::whole(1.0f, dpp);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  dl->PushClipRect(p0, p1, false);
+  // The same two steps of edge as a raised bevelBox, round the window (its title bar too).
+  const ImU32 lit = theme::mix(P.surface700, P.text, 0.42f), lit2 = theme::mix(P.surface700, P.text, 0.16f);
+  const ImU32 shade = theme::mix(P.surface950, IM_COL32(0, 0, 0, 255), 0.35f), shade2 = theme::mix(P.surface700, P.surface950, 0.55f);
+  auto edges = [&](ImVec2 q0, ImVec2 q1, ImU32 tl, ImU32 br) {
+    dl->AddRectFilled(q0, ImVec2(q1.x, q0.y + w), tl);
+    dl->AddRectFilled(q0, ImVec2(q0.x + w, q1.y), tl);
+    dl->AddRectFilled(ImVec2(q0.x, q1.y - w), q1, br);
+    dl->AddRectFilled(ImVec2(q1.x - w, q0.y + w), q1, br);
+  };
+  edges(p0, p1, lit, shade);
+  edges(ImVec2(p0.x + w, p0.y + w), ImVec2(p1.x - w, p1.y - w), lit2, shade2);
+  dl->PopClipRect();
+}
+float dialogButtonHeight() { return std::round(ImGui::GetFontSize() + 10); }
+bool dialogButton(App& a, const char* label, float w, bool on, const char* hint) {
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  const float h = dialogButtonHeight();
+  ImGui::PushID(label);
+  const bool r = bevelButton(a, "##tdb", label, p, ImVec2(p.x + w, p.y + h), on, hint);
+  ImGui::PopID();
+  ImGui::SetCursorScreenPos(p);
+  ImGui::Dummy(ImVec2(w, h));
+  return r;
+}
 
 // cp17: a sideways scroll bar in the band's look: a sunken trough between two arrow buttons, the
 // raised thumb over the part in view. Dragging the thumb scrolls; a click in the trough beside it
@@ -619,7 +660,7 @@ void orderRows(App& a, ImVec2 p0, ImVec2 p1) {
     const bool audioPart = e.pattern == kNoId;
     const std::string name = entryName(e);
     char line[96];
-    std::snprintf(line, sizeof line, "%s %s%s", trk::hex2(i).c_str(), audioPart ? "AU" : trk::hex2(trk::patternNumber(s, e.pattern)).c_str(),
+    std::snprintf(line, sizeof line, "%s %s%s", trk::hexNum(i).c_str(), audioPart ? "AU" : trk::hexNum(trk::patternNumber(s, e.pattern)).c_str(),
                   e.patterns > 1 ? "+" : !audioPart && !e.audio.empty() ? "~" : " ");
     dl->AddText(mono, rf, ImVec2(p0.x + 4, std::round(y + (rowH - rf) * 0.5f)), col, line);
     bool cut = false;
@@ -647,7 +688,7 @@ void orderRows(App& a, ImVec2 p0, ImVec2 p1) {
   // The free entries after the song's end: their numbers, faint (the list keeps its rows filled).
   for (int i = static_cast<int>(ol.size()); i - first < vis; ++i) {
     const float y = top + static_cast<float>(i - first) * rowH;
-    dl->AddText(mono, rf, ImVec2(p0.x + 4, std::round(y + (rowH - rf) * 0.5f)), theme::withAlpha(P.textFaint, 0.6f), trk::hex2(i).c_str());
+    dl->AddText(mono, rf, ImVec2(p0.x + 4, std::round(y + (rowH - rf) * 0.5f)), theme::withAlpha(P.textFaint, 0.6f), trk::hexNum(i).c_str());
   }
   dl->PopClipRect();
 }
@@ -1747,57 +1788,14 @@ int listArrows(App& a, const char* id, const std::string& count, float right, fl
 int gConfigPage = 0;  // the settings screen's page: 0 layout, 1 miscellaneous, 2 audio, 3 MIDI input (shown in the classic order: audio first)
 int gCfgDevFirst = 0, gCfgMidiFirst = 0;  // the first output device and MIDI input in view on those pages
 
-struct HelpRow {
-  const char* keys;
-  const char* what;
-};
-// The pattern editor's keys in the Tracker key set (Gridline's own wording).
-const HelpRow kPatternKeys[] = {
-    {"Z S X D C ... /", i18n::N_("Notes in the octave shown (the row above: the black keys)")},
-    {"Q 2 W 3 E ... P", i18n::N_("Notes an octave up")},
-    {"F1 ... F8", i18n::N_("The octave")},
-    {"Caps Lock, < >", i18n::N_("A note off (the note above ends here)")},
-    {"Esc", i18n::N_("Edit mode on or off (off: the keys only play)")},
-    {"0 ... 9, A ... F", i18n::N_("A digit: written, then down by the edit step (effects: after the last digit)")},
-    {"`  Shift+`", i18n::N_("Edit step one more, one fewer")},
-    {"Ctrl+0 ... 9", i18n::N_("Edit step")},
-    {"Up Down PgUp PgDn", i18n::N_("Rows (16 at a time with the page keys)")},
-    {"Home End", i18n::N_("The first, the last row")},
-    {"Left Right", i18n::N_("The fields of a cell")},
-    {"Tab  Shift+Tab", i18n::N_("The next, the previous track")},
-    {"Alt+Q ... I, Alt+A ... K", i18n::N_("The first eight tracks, the next eight")},
-    {"Ctrl+Shift+Up Down", i18n::N_("The previous, the next instrument (Shift+arrows mark a block here)")},
-    {"F9 ... F12", i18n::N_("Jump rows (Shift: keep the cursor's row there, Ctrl: play the pattern from it)")},
-    {"Shift or Alt+arrows", i18n::N_("Mark a block")},
-    {"Alt+C", i18n::N_("Mark the track")},
-    {"Ctrl+C X V, Alt+F4 F3 F5", i18n::N_("Copy, cut, paste the block (masks apply; cut, paste: edit mode)")},
-    {"Shift+F3 F4 F5", i18n::N_("Cut, copy, paste the track (own clipboard; cut, paste: edit mode)")},
-    {"Ctrl+F3 F4 F5", i18n::N_("Cut, copy, paste the pattern (own clipboard; cut, paste: edit mode)")},
-    {"Delete", i18n::N_("Clears the field (the block when one is marked)")},
-    {"Shift+Delete", i18n::N_("Clears the cell")},
-    {"Ctrl+Delete  Alt+Delete", i18n::N_("Clears volume and effect, the effect")},
-    {"Ctrl+keypad + -", i18n::N_("The master volume up, down")},
-    {"Keypad 1 ... 8, Enter", i18n::N_("Instruments 1 to 8 of the keypad's group, the next group")},
-    {"Alt+1 ... 0", i18n::N_("Writes macro 1 to 10 into the volume or effect field at the cursor")},
-    {"Shift+Alt+1 ... 0", i18n::N_("Stores that field as macro 1 to 10 (volumes and effects keep a bank each)")},
-    {"Insert", i18n::N_("A row in (Shift: in every track)")},
-    {"Backspace", i18n::N_("The row above out (Shift: in every track)")},
-    {"Ctrl+Up Down", i18n::N_("The block a semitone up, down (Gridline's own)")},
-    {"Shift+F1 F2", i18n::N_("The track a semitone down, up (F7 F8 the same)")},
-    {"Ctrl+F1 F2", i18n::N_("The pattern a semitone down, up")},
-    {"Alt+F1 F2", i18n::N_("The block a semitone down, up")},
-    {"Ctrl+Left Right", i18n::N_("The previous, the next pattern (past the last: a new one)")},
-    {"Ctrl+Shift+Left Right", i18n::N_("The previous, the next song position")},
-    {"Space", i18n::N_("Play, stop")},
-    {"Enter, Right Ctrl", i18n::N_("Play the song from the current order entry")},
-    {"Ctrl+Enter, Right Alt", i18n::N_("Play the pattern (Shift+Enter: from the cursor's row)")},
-    {"Right Shift (alone)", i18n::N_("Record the pattern: the keys write on the row playing")},
-};
-
 // The help screen (ref 164): the band swaps to it, the pattern stays below. Left: a "Subjects" title,
 // the subjects as a radio list, Exit at the bottom left. Right: a sunken text pane with the subject's
 // heading in a large face and the text under it, a scrollbar at its right edge.
-const char* const kHelpSubjects[] = {i18n::N_("Pattern keys"), i18n::N_("Effect letters"), i18n::N_("Screen keys"), i18n::N_("Using the Tracker")};
+// cp25: the keys come from core/TrackerKeys (every key the Tracker's pages and editors handle, checked
+// against the shortcut set by k112_keys); the Song page's and the editors' keys have subjects too.
+enum HelpSubject { kHelpPattern, kHelpSong, kHelpEditors, kHelpEffects, kHelpScreens, kHelpUsing, kHelpCount };
+const char* const kHelpSubjects[kHelpCount] = {i18n::N_("Pattern keys"), i18n::N_("Song page keys"), i18n::N_("Editor keys"),
+                                               i18n::N_("Effect letters"), i18n::N_("Screen keys"), i18n::N_("Using the Tracker")};
 
 // "Using the Tracker": the screen, box by box, in Gridline's words.
 struct HelpPara {
@@ -1893,71 +1891,61 @@ void helpScreen(App& a, ImVec2 p0, ImVec2 p1) {
       c.y += hs + 6;
     }
     float y = c.y;
-    if (gHelpSubject == 0) {
-      float kw = 0;
-      for (const HelpRow& r : kPatternKeys) kw = std::max(kw, mono->CalcTextSizeA(fs, FLT_MAX, 0, r.keys).x);
-      kw += 16;
-      // The rows flow into columns side by side as the band is wide, so more of them show at once
-      // (two or three columns at a usual size; one, scrolling, when narrow).
-      const int n = static_cast<int>(sizeof kPatternKeys / sizeof kPatternKeys[0]);
-      const float visH = ImGui::GetContentRegionAvail().y;
-      const int perCol = std::max(1, static_cast<int>(visH / rh));
-      const int want = (n + perCol - 1) / perCol;
-      const int ncol = std::max(1, std::min(want, static_cast<int>(w / std::max(1.0f, kw + fs * 18))));
-      const int rowsPer = (n + ncol - 1) / ncol;
-      const float colW2 = std::floor(w / static_cast<float>(ncol));
-      for (int i = 0; i < n; ++i) {
-        const HelpRow& r = kPatternKeys[i];
-        const float cx = c.x + static_cast<float>(i / rowsPer) * colW2, cy = y + static_cast<float>(i % rowsPer) * rh;
-        cl->AddText(mono, fs, ImVec2(cx, cy + 2), P.hot, r.keys);
-        theme::textEllipsis(cl, a.fontRegular, fs, ImVec2(cx + kw, cy + 2), colW2 - kw - 8, P.text, i18n::tr(r.what));
+    // An area's keys (core/TrackerKeys), a bold sub-heading over each area when `heads`. The rows flow
+    // into columns side by side as the band is wide, so more of them show at once (two or three
+    // columns at a usual size; one, scrolling, when narrow).
+    auto keyRows = [&](std::initializer_list<trackerkeys::Area> areas, bool heads) {
+      for (trackerkeys::Area ar : areas) {
+        std::vector<const trackerkeys::Row*> rs;
+        for (const trackerkeys::Row& r : trackerkeys::rows())
+          if (r.area == ar) rs.push_back(&r);
+        if (heads) {
+          static const char* const kAreaHead[] = {i18n::N_("The pattern"), i18n::N_("The Song page"), i18n::N_("The Sample editor"),
+                                                  i18n::N_("The Instrument editor")};
+          cl->AddText(a.fontBold ? a.fontBold : a.fontRegular, fs, ImVec2(c.x, y + 2), P.text, i18n::tr(kAreaHead[static_cast<int>(ar)]));
+          y += rh + 2;
+        }
+        float kw = 0;
+        for (const trackerkeys::Row* r : rs) kw = std::max(kw, mono->CalcTextSizeA(fs, FLT_MAX, 0, r->keys).x);
+        kw += 16;
+        const int n = static_cast<int>(rs.size());
+        const float visH = std::max(rh, ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - y - 6);
+        const int perCol = std::max(1, static_cast<int>(visH / rh));
+        const int want = (n + perCol - 1) / perCol;
+        const int ncol = std::max(1, std::min(heads ? 2 : want, static_cast<int>(w / std::max(1.0f, kw + fs * 18))));
+        const int rowsPer = (n + ncol - 1) / ncol;
+        const float colW2 = std::floor(w / static_cast<float>(ncol));
+        for (int i = 0; i < n; ++i) {
+          const trackerkeys::Row& r = *rs[static_cast<size_t>(i)];
+          const float cx = c.x + static_cast<float>(i / rowsPer) * colW2, cy = y + static_cast<float>(i % rowsPer) * rh;
+          cl->AddText(mono, fs, ImVec2(cx, cy + 2), P.hot, r.keys);
+          theme::textEllipsis(cl, a.fontRegular, fs, ImVec2(cx + kw, cy + 2), colW2 - kw - 8, P.text, i18n::tr(r.what));
+        }
+        y += static_cast<float>(rowsPer) * rh + (heads ? 6 : 0);
       }
-      y += static_cast<float>(rowsPer) * rh;
-    } else if (gHelpSubject == 2) {
+    };
+    if (gHelpSubject == kHelpPattern) {
+      keyRows({trackerkeys::Area::Pattern}, false);
+    } else if (gHelpSubject == kHelpSong) {
+      keyRows({trackerkeys::Area::Song}, false);
+    } else if (gHelpSubject == kHelpEditors) {
+      keyRows({trackerkeys::Area::Sample, trackerkeys::Area::Instrument}, true);
+    } else if (gHelpSubject == kHelpScreens) {
       // The screens and their keys, read from the shortcut set in use (a key changed in the
       // shortcut editor shows here as it is).
       // R6-06: the Tracker's own names (the page tabs, the header's buttons), every key of each.
-      struct ScreenKey {
-        const char* id;
-        const char* what;
-      };
-      static const ScreenKey ids[] = {{"view.patternEditor", i18n::N_("The Pattern page")},
-                                      {"view.playlist", i18n::N_("The Song page")},
-                                      {"view.pianoRoll", i18n::N_("The Roll page")},
-                                      {"view.channelRack", i18n::N_("The Steps page")},
-                                      {"view.mixer", i18n::N_("The Mix page")},
-                                      {"view.pads", i18n::N_("The Pads page")},
-                                      {"view.channelSettings", i18n::N_("Channel settings: the instrument's editor under the header")},
-                                      {"view.audioEditor", i18n::N_("The audio editor")},
-                                      {"view.files", i18n::N_("The Files screen")},
-                                      {"view.settings", i18n::N_("The Settings screen")},
-                                      {"help.trackerKeys", i18n::N_("This help")},
-                                      {"view.closeAll", i18n::N_("Back to the main screen (every screen closes, the Pattern page in front)")},
-                                      {"pattern.new", i18n::N_("A new pattern (Ins puts it in the song)")},
-                                      {"view.headerBand", i18n::N_("The header as one strip, the pattern taller")},
-                                      {"view.transposeBox", i18n::N_("The Transpose box")},
-                                      {"view.advancedEdit", i18n::N_("The Advanced edit box")},
-                                      {"view.cleanUp", i18n::N_("The Clean up box")},
-                                      {"view.midiBox", i18n::N_("The MIDI box: the instrument's MIDI out and the MIDI input")},
-                                      {"view.sampleTools", i18n::N_("The Sample tools box: range edits on the instrument's sample")},
-                                      {"view.sampleEditor", i18n::N_("The Sample editor: the instrument's samples under the pattern")},
-                                      {"view.zoomTracksOut", i18n::N_("Narrower tracks, more in view (the Song page: its lanes or timeline)")},
-                                      {"view.zoomTracksIn", i18n::N_("Wider tracks, fewer in view")},
-                                      {"view.zoomTracksFit", i18n::N_("Every track in view (Ctrl+wheel zooms too)")},
-                                      {"view.browser", i18n::N_("The browser")},
-                                      {"view.pluginPicker", i18n::N_("The plugin picker")},
-                                      {"help.shortcuts", i18n::N_("Every shortcut")}};
+      const std::vector<trackerkeys::ScreenKey>& ids = trackerkeys::screenKeys();
       float kw = 0;
-      for (const ScreenKey& e : ids) kw = std::max(kw, mono->CalcTextSizeA(fs, FLT_MAX, 0, keys::labels(e.id).c_str()).x);
+      for (const trackerkeys::ScreenKey& e : ids) kw = std::max(kw, mono->CalcTextSizeA(fs, FLT_MAX, 0, keys::labels(e.id).c_str()).x);
       kw = std::min(kw, w * 0.45f) + 16;
-      for (const ScreenKey& e : ids) {
+      for (const trackerkeys::ScreenKey& e : ids) {
         if (!keys::findCommand(e.id)) continue;
         const std::string k = keys::labels(e.id);
         theme::textEllipsis(cl, mono, fs, ImVec2(c.x, y + 2), kw - 12, k.empty() ? P.textFaint : P.hot, k.empty() ? "-" : k.c_str());
         theme::textEllipsis(cl, a.fontRegular, fs, ImVec2(c.x + kw, y + 2), w - kw, P.text, i18n::tr(e.what));
         y += rh;
       }
-    } else if (gHelpSubject == 3) {
+    } else if (gHelpSubject == kHelpUsing) {
       // Sub-headings in the bold face, each paragraph wrapped under it, indented.
       ImGui::SetCursorScreenPos(ImVec2(c.x, y));
       for (const HelpPara& h : kUsing) {
@@ -2881,7 +2869,7 @@ void loopStepper(App& a, const std::vector<trk::OrderEntry>& ol, ImVec2 p, float
     if (m.action == MarkerAction::SongLoop)
       for (size_t i = 0; i < ol.size() && loopAt < 0; ++i)
         if (m.pos < ol[i].end) loopAt = static_cast<int>(i), loopPos = m.pos;
-  if (const int d = stepper(a, "xloop", label, loopAt < 0 ? std::string("--") : trk::hex2(loopAt), p, w, h, "The entry the song goes back to when it ends (none: it stops)",
+  if (const int d = stepper(a, "xloop", label, loopAt < 0 ? std::string("--") : trk::hexNum(loopAt), p, w, h, "The entry the song goes back to when it ends (none: it stops)",
                             labelW)) {
     const int to = loopAt + d;
     if (to < 0 && loopAt >= 0) ops::addSongLoopMarker(a.doc, loopPos);  // placed where it is: removed
@@ -2938,7 +2926,7 @@ void extendedStrip(App& a) {
     // Length's digits over the Loop to field's (the field against its arrows), as in the main band.
     const float sw = bw - pad * 2;  // cp23: the rows start at the Exit button's edge (were 2 px in)
     const float arrows = 2 * std::max(std::round(rh * 0.8f), std::min(std::round(rh * 1.35f), std::floor((sw - loopNeed(a, "Loop to")) / 2)));
-    readout(a, "Length", trk::hex2(static_cast<int>(ol.size())), ImVec2(x + pad, rowY(0)), std::max(1.0f, sw - arrows - 6), rh, "Entries in the song");
+    readout(a, "Length", trk::hexNum(static_cast<int>(ol.size())), ImVec2(x + pad, rowY(0)), std::max(1.0f, sw - arrows - 6), rh, "Entries in the song");
     loopStepper(a, ol, ImVec2(x + pad, rowY(1)), sw, rh, "Loop to", sw);
     if (bevelButton(a, "##xback", "Exit", ImVec2(x + pad, rowY(2)), ImVec2(x + bw - pad, std::min(yE - pad, rowY(2) + rh)), false,
                     "The header band back (Header band, Ctrl+Alt+Z; the pattern keeps its place)"))
@@ -2953,7 +2941,7 @@ void extendedStrip(App& a) {
     trk::Grid g = p ? trk::gridOf(s, *p) : trk::Grid{};
     bool fill = false;  // cp23: as the main band
     const float rw = bw - pad * 2, lw = peerFields(a, rw, rh, labelColumn(a, {"Pattern", "Rows"}, space::kGroup), &fill);
-    if (const int d = stepper(a, "xpat", "Pattern", p ? trk::hex2(trk::patternNumber(s, p->id)) : std::string("--"), ImVec2(x + pad, rowY(0)), rw, rh,
+    if (const int d = stepper(a, "xpat", "Pattern", p ? trk::hexNum(trk::patternNumber(s, p->id)) : std::string("--"), ImVec2(x + pad, rowY(0)), rw, rh,
                               "The pattern shown (past the last one: a new, empty pattern; the piano roll and steps show it too)", lw, fill))
     {
       // R11-01: a step past the last pattern adds one, and the pattern list may move: the pattern
@@ -3171,7 +3159,7 @@ void header(App& a) {
     const char* lenHint = "Entries in the song (from the playlist's pattern clips; AU: a part where only audio plays)";
     float loopX = xL + pad, loopW = orderW - pad * 2, loopY = listB + 2 + rowH;
     if (oneRow) {  // "Len 06" then the Loop stepper on the same row
-      const std::string len = trk::hex2(static_cast<int>(ol.size()));
+      const std::string len = trk::hexNum(static_cast<int>(ol.size()));
       const float lenW = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Len")).x + mono->CalcTextSizeA(fs, FLT_MAX, 0, len.c_str()).x) + 6;
       readout(a, "Len", len, ImVec2(xL + pad, listB + 2), lenW, rowH, lenHint);
       loopX += lenW + 6, loopW -= lenW + 6, loopY = listB + 2;
@@ -3180,7 +3168,7 @@ void header(App& a) {
       // box's two numbers read as one column (before: Length at the box's edge above the arrows, the
       // loop field in mid-row).
       const float arrows = 2 * std::max(std::round(rowH * 0.8f), std::min(std::round(rowH * 1.35f), std::floor((loopW - loopNeed(a, "Loop to")) / 2)));
-      readout(a, "Length", trk::hex2(static_cast<int>(ol.size())), ImVec2(xL + pad, listB + 2), std::max(1.0f, loopW - arrows - 6), rowH, lenHint);
+      readout(a, "Length", trk::hexNum(static_cast<int>(ol.size())), ImVec2(xL + pad, listB + 2), std::max(1.0f, loopW - arrows - 6), rowH, lenHint);
     }
     // Loop to: the entry the song goes back to at its end (the song loop marker, saved and shared).
     int loopAt = -1;
@@ -3189,7 +3177,7 @@ void header(App& a) {
       if (m.action == MarkerAction::SongLoop)
         for (size_t i = 0; i < ol.size() && loopAt < 0; ++i)
           if (m.pos < ol[i].end) loopAt = static_cast<int>(i), loopPos = m.pos;
-    if (const int d = stepper(a, "loop", oneRow ? "Loop" : "Loop to", loopAt < 0 ? std::string("--") : trk::hex2(loopAt), ImVec2(loopX, loopY),
+    if (const int d = stepper(a, "loop", oneRow ? "Loop" : "Loop to", loopAt < 0 ? std::string("--") : trk::hexNum(loopAt), ImVec2(loopX, loopY),
                               loopW, rowH, "The entry the song goes back to when it ends (none: it stops)", loopW)) {  // cp23: the field against its arrows, as every stepper (it filled the row at 1440x900)
       const int to = loopAt + d;
       if (to < 0 && loopAt >= 0) ops::addSongLoopMarker(a.doc, loopPos);  // placed where it is: removed
@@ -3266,7 +3254,7 @@ void header(App& a) {
     float y = by0 + pad;
     const Pattern* p = s.pattern(a.curPattern);
     trk::Grid g = p ? trk::gridOf(s, *p) : trk::Grid{};
-    if (const int d = stepper(a, "pat", "Pattern", p ? trk::hex2(trk::patternNumber(s, p->id)) : std::string("--"), ImVec2(xp + pad, y), rw, srh,
+    if (const int d = stepper(a, "pat", "Pattern", p ? trk::hexNum(trk::patternNumber(s, p->id)) : std::string("--"), ImVec2(xp + pad, y), rw, srh,
                               "The pattern shown (past the last one: a new, empty pattern; the piano roll and steps show it too)", lw, fill))
     {
       // R11-01: a step past the last pattern adds one, and the pattern list may move: the pattern
@@ -3993,6 +3981,7 @@ void toggleAudioPage(App& a) {
 }
 int headerSwap() { return gSwap == Swap::Help ? 1 : gSwap == Swap::Disk ? 2 : gSwap == Swap::Config ? 3 : gSwap == Swap::About ? 4 : 0; }
 void setConfigPage(int page) { gConfigPage = std::clamp(page, 0, 3); }
+void setHelpSubject(int subject) { gHelpSubject = std::clamp(subject, 0, static_cast<int>(kHelpCount) - 1); }
 void filesLoadSample(App& a, const std::string& path) {
   const int was = gDiskKind;
   gDiskKind = 1;  // the Samples kind: a double-click on an audio file there

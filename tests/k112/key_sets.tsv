@@ -256,7 +256,7 @@ live	transport.songMode	0
 live	transport.tapTempo	0	
 live	options.typingKeyboard	0	M;
 live	options.metronome	0	O;
-live	tools.stopSound	0	Ctrl+H;
+live	tools.stopSound	0	Ctrl+Alt+.;
 live	transport.record	0	F9;
 live	transport.toStart	0	Ctrl+Alt+Shift+Home;
 live	transport.rewindBar	0	Ctrl+Alt+Shift+Left;
@@ -976,7 +976,7 @@ live+cmd	transport.songMode	0
 live+cmd	transport.tapTempo	0	
 live+cmd	options.typingKeyboard	0	M;
 live+cmd	options.metronome	0	O;
-live+cmd	tools.stopSound	0	Ctrl+H;
+live+cmd	tools.stopSound	0	Ctrl+Alt+.;
 live+cmd	transport.record	0	F9;
 live+cmd	transport.toStart	0	Ctrl+Alt+Shift+Home;
 live+cmd	transport.rewindBar	0	Ctrl+Alt+Shift+Left;
@@ -1648,3 +1648,352 @@ logic+cmd	view.sampleEditor	0
 logic+cmd	view.zoomTracksIn	0	
 logic+cmd	view.zoomTracksOut	0	
 logic+cmd	view.zoomTracksFit	0	
+tracker	file.new	0	Ctrl+N;
+tracker	file.open	0	Ctrl+O;
+tracker	file.save	0	Ctrl+S;
+tracker	file.saveAs	0	Ctrl+Shift+S;
+tracker	file.saveNewVersion	0	Ctrl+Alt+S;
+tracker	file.render	0	Ctrl+R;
+tracker	file.renderStems	0	Ctrl+Shift+R;
+tracker	file.exportMidi	0	Ctrl+Shift+M;
+tracker	file.importUrl	0	Ctrl+Shift+U;
+tracker	file.projectInfo	0	
+tracker	file.quit	0	Ctrl+Q;
+tracker	edit.undo	0	Ctrl+Z;
+tracker	edit.redo	0	Ctrl+Y;Ctrl+Shift+Z;
+tracker	edit.history	0	
+tracker	edit.rename	0	Ctrl+Alt+F2;
+tracker	transport.play	0	Space;
+tracker	transport.songMode	0	
+tracker	transport.tapTempo	0	Ctrl+Shift+T;
+tracker	options.typingKeyboard	0	Ctrl+T;
+tracker	options.metronome	0	Ctrl+M;
+tracker	tools.stopSound	0	Ctrl+H;
+tracker	transport.record	0	Ctrl+Alt+Shift+R;
+tracker	transport.toStart	0	Ctrl+Alt+Shift+Home;
+tracker	transport.rewindBar	0	Ctrl+Alt+Shift+Left;
+tracker	transport.forwardBar	0	Ctrl+Alt+Shift+Right;
+tracker	options.countIn	0	Ctrl+Alt+Shift+K;
+tracker	typing.octave1	0	F1;
+tracker	typing.octave2	0	F2;
+tracker	typing.octave3	0	F3;
+tracker	typing.octave4	0	F4;
+tracker	typing.octave5	0	F5;
+tracker	typing.octave6	0	F6;
+tracker	typing.octave7	0	F7;
+tracker	typing.octave8	0	F8;
+tracker	pattern.new	0	Ctrl+Alt+N;
+tracker	pattern.findFirstEmpty	0	
+tracker	pattern.findNextEmpty	0	
+tracker	pattern.clone	0	Ctrl+Shift+C;
+tracker	pattern.insert	0	Ctrl+Shift+Ins;
+tracker	pattern.delete	0	Ctrl+Shift+Del;
+tracker	pattern.moveUp	0	
+tracker	pattern.moveDown	0	
+tracker	pattern.next	0	
+tracker	pattern.previous	0	
+tracker	view.playlist	0	Ctrl+Alt+2;
+tracker	view.channelRack	0	Ctrl+Alt+4;
+tracker	view.pianoRoll	0	Ctrl+Alt+3;
+tracker	view.pluginPicker	0	Ctrl+Alt+F;
+tracker	view.browser	0	Ctrl+Alt+B;
+tracker	view.mixer	0	Ctrl+Alt+5;
+tracker	view.stage	0	
+tracker	view.patternEditor	0	Ctrl+Alt+1;Ctrl+Alt+P;
+tracker	view.pads	0	Ctrl+Alt+6;
+tracker	view.channelSettings	0	Ctrl+Alt+7;Ctrl+Alt+I;
+tracker	view.audioEditor	0	Ctrl+Alt+8;
+tracker	view.files	0	Ctrl+Alt+9;Ctrl+Alt+D;
+tracker	view.headerBand	0	Ctrl+Alt+Z;
+tracker	view.transposeBox	0	Ctrl+Alt+T;
+tracker	view.advancedEdit	0	Ctrl+Alt+A;
+tracker	view.cleanUp	0	Ctrl+Alt+R;
+tracker	view.midiBox	0	Ctrl+Alt+J;
+tracker	view.sampleTools	0	Ctrl+Alt+K;
+tracker	view.sampleEditor	0	Ctrl+Alt+E;
+tracker	view.zoomTracksIn	0	Ctrl+Alt+.;
+tracker	view.zoomTracksOut	0	Ctrl+Alt+,;
+tracker	view.zoomTracksFit	0	Ctrl+Alt+/;
+tracker	help.trackerKeys	0	Ctrl+Alt+-;Ctrl+Alt+H;
+tracker	view.settings	0	Ctrl+Alt+0;Ctrl+Alt+C;
+tracker	view.backToPlaylist	0	
+tracker	view.closeAll	0	Ctrl+Alt+X;
+tracker	view.closePlugins	0	Alt+F12;
+tracker	view.hidePlugins	0	
+tracker	window.close	0	
+tracker	view.resetLayout	0	Ctrl+Shift+H;
+tracker	view.paneNextTab	0	Ctrl+PgDn;
+tracker	view.panePrevTab	0	Ctrl+PgUp;
+tracker	view.reopenTab	0	
+tracker	view.workspace1	0	
+tracker	view.workspace2	0	
+tracker	view.workspace3	0	
+tracker	view.workspace4	0	
+tracker	view.workspace5	0	
+tracker	view.workspace6	0	
+tracker	view.workspace7	0	
+tracker	view.workspace8	0	
+tracker	view.workspace9	0	
+tracker	view.workspaceNext	0	Ctrl+Alt+PgDn;
+tracker	view.workspacePrevious	0	Ctrl+Alt+PgUp;
+tracker	help.shortcuts	0	Ctrl+/;
+tracker	view.commandPalette	0	Ctrl+K;Ctrl+Shift+P;
+tracker	view.toggleMain	0	Ctrl+Alt+Shift+Tab;
+tracker	view.editors	0	Ctrl+Alt+Shift+E;
+tracker	view.library	0	
+tracker	view.inspector	0	
+tracker	view.quickHelp	0	
+tracker	view.smartControls	0	
+tracker	view.automation	0	
+tracker	view.globalTracks	0	
+tracker	playlist.toolMenu	0	
+tracker	view.toolbar	0	
+tracker	view.lists	0	
+tracker	view.notes	0	
+tracker	track.newTracks	0	
+tracker	track.duplicate	1	
+tracker	track.delete	1	
+tracker	track.mute	1	
+tracker	track.solo	1	
+tracker	transport.cycle	0	
+tracker	transport.cycleSelection	0	
+tracker	transport.prevMarker	0	
+tracker	transport.nextMarker	0	
+tracker	transport.goToPosition	0	
+tracker	playlist.prevRegion	1	
+tracker	playlist.nextRegion	1	
+tracker	playlist.prevTrack	1	
+tracker	playlist.nextTrack	1	
+tracker	playlist.nudgeLeft	1	
+tracker	playlist.nudgeRight	1	
+tracker	playlist.loopRegion	1	
+tracker	track.newAudio	0	
+tracker	track.newMidi	0	
+tracker	track.newReturn	0	
+tracker	clips.insertMidiClip	0	
+tracker	track.group	0	
+tracker	track.ungroup	0	
+tracker	view.detail	0	
+tracker	view.io	0	
+tracker	transport.sessionRecord	0	
+tracker	playlist.delete	1	Del;Backspace;
+tracker	playlist.selectAll	1	Ctrl+A;
+tracker	playlist.deselect	1	Ctrl+D;
+tracker	playlist.copy	1	Ctrl+C;
+tracker	playlist.cut	1	Ctrl+X;
+tracker	playlist.paste	1	Ctrl+V;
+tracker	playlist.duplicate	1	Ctrl+B;
+tracker	playlist.merge	1	Ctrl+G;
+tracker	playlist.mute	1	M;
+tracker	playlist.toolDraw	1	P;
+tracker	playlist.toolPaint	1	B;
+tracker	playlist.toolDelete	1	D;
+tracker	playlist.toolMute	1	T;
+tracker	playlist.toolSlip	1	S;
+tracker	playlist.toolSlice	1	C;
+tracker	playlist.toolSelect	1	E;
+tracker	playlist.toolZoom	1	Z;
+tracker	playlist.toolPlay	1	Y;
+tracker	playlist.toolWarp	1	W;
+tracker	playlist.marker	1	Alt+T;
+tracker	playlist.loopMarkers	1	Shift+T;
+tracker	playlist.meterChange	1	Alt+Shift+T;
+tracker	playlist.stretchResize	1	Shift+M;
+tracker	playlist.fades	1	Shift+F;
+tracker	playlist.zeroCross	1	Shift+X;
+tracker	playlist.picker	1	Alt+P;
+tracker	playlist.quickZoom1	1	Shift+1;
+tracker	playlist.quickZoom2	1	Shift+2;
+tracker	playlist.quickZoom3	1	Shift+3;
+tracker	playlist.zoomSelection	1	Shift+4;
+tracker	playlist.splitAtSongPos	1	Ctrl+Alt+Shift+T;
+tracker	playlist.chopWindow	1	Alt+C;
+tracker	playlist.sliceGrid	1	Shift+C;
+tracker	playlist.duplicateTime	1	Alt+B;
+tracker	playlist.insertSpace	1	Ctrl+Ins;
+tracker	playlist.deleteSpace	1	Ctrl+Del;
+tracker	playlist.consolidateTime	1	
+tracker	playlist.zoomIn	1	PgUp;
+tracker	playlist.zoomOut	1	PgDn;
+tracker	playlist.zoomFit	1	Home;
+tracker	playlist.uniqueCopy	1	Shift+V;
+tracker	playlist.cancelDrag	1	Esc;
+tracker	playlist.moveTrackUp	1	Alt+Up;
+tracker	playlist.moveTrackDown	1	Alt+Down;
+tracker	piano.delete	2	Del;Backspace;
+tracker	piano.selectAll	2	Ctrl+A;
+tracker	piano.deselect	2	Ctrl+D;
+tracker	piano.copy	2	Ctrl+C;
+tracker	piano.cut	2	Ctrl+X;
+tracker	piano.paste	2	Ctrl+V;
+tracker	piano.duplicate	2	Ctrl+B;
+tracker	piano.cancelDrag	2	Esc;
+tracker	piano.quickQuantize	2	Ctrl+Q;
+tracker	piano.transposeUp	2	Up;
+tracker	piano.transposeDown	2	Down;
+tracker	piano.octaveUp	2	Shift+Up;
+tracker	piano.octaveDown	2	Shift+Down;
+tracker	piano.moveRight	2	Right;
+tracker	piano.moveLeft	2	Left;
+tracker	piano.legato	2	Ctrl+L;
+tracker	piano.chopSteps	2	Ctrl+U;
+tracker	piano.glue	2	Ctrl+G;
+tracker	piano.quantize	2	Alt+Q;
+tracker	piano.randomize	2	Alt+R;
+tracker	piano.chop	2	Alt+U;
+tracker	piano.strum	2	Alt+S;
+tracker	piano.arpeggiate	2	Alt+A;
+tracker	piano.articulate	2	Alt+L;
+tracker	piano.limit	2	Alt+K;
+tracker	piano.lfo	2	Alt+O;
+tracker	piano.scaleLevels	2	Alt+X;
+tracker	piano.flam	2	Alt+G;
+tracker	piano.properties	2	Alt+N;
+tracker	piano.humanize	2	Alt+Shift+R;
+tracker	piano.invertSelection	2	Shift+I;
+tracker	piano.selectRandom	2	Shift+R;
+tracker	piano.toolDraw	2	P;
+tracker	piano.toolPaint	2	B;
+tracker	piano.toolDelete	2	D;
+tracker	piano.toolSelect	2	E;
+tracker	piano.toolSlice	2	C;
+tracker	piano.toolMute	2	T;
+tracker	piano.toolPlay	2	Y;
+tracker	piano.toolZoom	2	Z;
+tracker	piano.toolDetune	2	U;
+tracker	piano.toolBend	2	N;
+tracker	piano.slideMode	2	Shift+S;
+tracker	piano.chordStamp	2	Alt+C;
+tracker	piano.zoomIn	2	PgUp;
+tracker	piano.zoomOut	2	PgDn;
+tracker	piano.zoomFit	2	Home;
+tracker	rack.clone	3	Alt+C;
+tracker	rack.randomColours	3	
+tracker	rack.delete	3	Alt+Del;
+tracker	rack.moveUp	3	Alt+Up;
+tracker	rack.moveDown	3	Alt+Down;
+tracker	rack.routeFree	3	Ctrl+L;
+tracker	rack.zip	3	Alt+Z;
+tracker	rack.unzipAll	3	Alt+U;
+tracker	rack.rotateLeft	3	Ctrl+Shift+Left;
+tracker	rack.rotateRight	3	Ctrl+Shift+Right;
+tracker	rack.copy	3	Ctrl+C;
+tracker	rack.cut	3	Ctrl+X;
+tracker	rack.paste	3	Ctrl+V;
+tracker	rack.selectAll	3	Ctrl+A;
+tracker	rack.graphEditor	3	Ctrl+K;
+tracker	rack.insertStep	3	Ins;
+tracker	rack.deleteStep	3	Del;
+tracker	mixer.routeHere	4	Ctrl+L;
+tracker	mixer.routeFromHere	4	Ctrl+Shift+L;
+tracker	mixer.moveLeft	4	Alt+Left;
+tracker	mixer.moveRight	4	Alt+Right;
+tracker	mixer.solo	4	S;
+tracker	mixer.renderArmed	4	Alt+R;
+tracker	mixer.renderSelected	4	Alt+Shift+R;
+tracker	mixer.waveforms	4	Alt+W;
+tracker	mixer.selectAll	4	Ctrl+A;
+tracker	mixer.deselect	4	Ctrl+D;
+tracker	mixer.selectRoutedChannels	4	Alt+L;
+tracker	mixer.selectRoutedTo	4	Ctrl+Alt+L;
+tracker	stage.left	6	Left;
+tracker	stage.right	6	Right;
+tracker	stage.up	6	Up;
+tracker	stage.down	6	Down;
+tracker	stage.levelUp	6	Alt+Up;
+tracker	stage.levelDown	6	Alt+Down;
+tracker	stage.narrower	6	[;
+tracker	stage.wider	6	];
+tracker	stage.next	6	Tab;
+tracker	stage.previous	6	Shift+Tab;
+tracker	stage.mute	6	M;
+tracker	stage.solo	6	S;
+tracker	stage.reset	6	0;
+tracker	stage.rename	6	
+tracker	stage.selectAll	6	Ctrl+A;
+tracker	stage.deselect	6	Ctrl+D;
+tracker	stage.roomsPanel	6	\;
+tracker	auto.delete	5	Del;Backspace;
+tracker	auto.selectAll	5	Ctrl+A;
+tracker	auto.deselect	5	Ctrl+D;
+tracker	auto.invertSelection	5	Ctrl+I;
+tracker	auto.copy	5	Ctrl+C;
+tracker	auto.cut	5	Ctrl+X;
+tracker	auto.paste	5	Ctrl+V;
+tracker	auto.pasteReplace	5	Ctrl+R;
+tracker	auto.toolDraw	5	P;
+tracker	auto.toolSelect	5	E;
+tracker	auto.toolDelete	5	D;
+tracker	auto.lfo	5	L;
+tracker	auto.quantize	5	Q;
+tracker	auto.cancel	5	Esc;
+tracker.pattern	pattern.notes	pattern	Z;S;X;D;C;V;G;B;H;N;J;M;,;L;.;;;/;
+tracker.pattern	pattern.notesUp	pattern	Q;2;W;3;E;R;5;T;6;Y;7;U;I;9;O;0;P;[;=;];
+tracker.pattern	pattern.octave	pattern	F1;F2;F3;F4;F5;F6;F7;F8;
+tracker.pattern	pattern.octaveStep	pattern	Num /;Num *;
+tracker.pattern	pattern.noteOff	pattern	CapsLock;<>;1;
+tracker.pattern	pattern.editMode	pattern	Esc;
+tracker.pattern	pattern.digits	pattern	0;1;2;3;4;5;6;7;8;9;A;B;C;D;E;F;
+tracker.pattern	pattern.effects	pattern	G;P;T;X;Y;R;
+tracker.pattern	pattern.stepKey	pattern	`;Shift+`;
+tracker.pattern	pattern.step	pattern	Ctrl+0;Ctrl+1;Ctrl+2;Ctrl+3;Ctrl+4;Ctrl+5;Ctrl+6;Ctrl+7;Ctrl+8;Ctrl+9;Ctrl+-;Ctrl+=;
+tracker.pattern	pattern.rows	pattern	Up;Down;PgUp;PgDn;
+tracker.pattern	pattern.ends	pattern	Home;End;
+tracker.pattern	pattern.fields	pattern	Left;Right;
+tracker.pattern	pattern.tracks	pattern	Tab;Shift+Tab;
+tracker.pattern	pattern.trackJump	pattern	Alt+Q;Alt+W;Alt+E;Alt+R;Alt+T;Alt+Y;Alt+U;Alt+I;Alt+A;Alt+S;Alt+D;Alt+F;Alt+G;Alt+H;Alt+J;Alt+K;
+tracker.pattern	pattern.instrument	pattern	Ctrl+Shift+Up;Ctrl+Shift+Down;
+tracker.pattern	pattern.jump	pattern	F9;F10;F11;F12;Shift+F9;Shift+F10;Shift+F11;Shift+F12;Ctrl+F9;Ctrl+F10;Ctrl+F11;Ctrl+F12;
+tracker.pattern	pattern.mark	pattern	Shift+Up;Shift+Down;Shift+Left;Shift+Right;Shift+PgUp;Shift+PgDn;Shift+Home;Shift+End;Alt+Up;Alt+Down;Alt+Left;Alt+Right;
+tracker.pattern	pattern.markTrack	pattern	Alt+C;
+tracker.pattern	pattern.block	pattern	Ctrl+C;Ctrl+X;Ctrl+V;Alt+F4;Alt+F3;Alt+F5;
+tracker.pattern	pattern.trackClip	pattern	Shift+F3;Shift+F4;Shift+F5;
+tracker.pattern	pattern.patternClip	pattern	Ctrl+F3;Ctrl+F4;Ctrl+F5;
+tracker.pattern	pattern.clearField	pattern	Del;
+tracker.pattern	pattern.clearCell	pattern	Shift+Del;
+tracker.pattern	pattern.clearVolFx	pattern	Ctrl+Del;Alt+Del;
+tracker.pattern	pattern.masterVolume	pattern	Ctrl+Num +;Ctrl+Num -;
+tracker.pattern	pattern.keypadInstrument	pattern	Num 1;Num 2;Num 3;Num 4;Num 5;Num 6;Num 7;Num 8;Num Enter;
+tracker.pattern	pattern.macro	pattern	Alt+0;Alt+1;Alt+2;Alt+3;Alt+4;Alt+5;Alt+6;Alt+7;Alt+8;Alt+9;
+tracker.pattern	pattern.macroStore	pattern	Alt+Shift+0;Alt+Shift+1;Alt+Shift+2;Alt+Shift+3;Alt+Shift+4;Alt+Shift+5;Alt+Shift+6;Alt+Shift+7;Alt+Shift+8;Alt+Shift+9;
+tracker.pattern	pattern.insertRow	pattern	Ins;Shift+Ins;
+tracker.pattern	pattern.deleteRow	pattern	Backspace;Shift+Backspace;
+tracker.pattern	pattern.transposeBlock	pattern	Ctrl+Up;Ctrl+Down;
+tracker.pattern	pattern.transposeTrack	pattern	Shift+F1;Shift+F2;Shift+F7;Shift+F8;Ctrl+F7;Ctrl+F8;
+tracker.pattern	pattern.transposePattern	pattern	Ctrl+F1;Ctrl+F2;
+tracker.pattern	pattern.transposeMarked	pattern	Alt+F1;Alt+F2;Alt+F7;Alt+F8;
+tracker.pattern	pattern.patterns	pattern	Ctrl+Left;Ctrl+Right;
+tracker.pattern	pattern.positions	pattern	Ctrl+Shift+Left;Ctrl+Shift+Right;
+tracker.pattern	pattern.playStop	pattern	Space;
+tracker.pattern	pattern.playSong	pattern	Enter;Right Ctrl;
+tracker.pattern	pattern.playPattern	pattern	Ctrl+Enter;Right Alt;Shift+Enter;
+tracker.pattern	pattern.record	pattern	Right Shift;
+tracker.song	song.entries	song	Up;Down;
+tracker.song	song.mark	song	Shift+Up;Shift+Down;
+tracker.song	song.unmark	song	Esc;
+tracker.song	song.move	song	Ctrl+Up;Ctrl+Down;
+tracker.song	song.ends	song	Home;End;
+tracker.song	song.pattern	song	Left;Right;-;=;Num -;Num +;
+tracker.song	song.insert	song	Ins;
+tracker.song	song.delete	song	Del;
+tracker.song	song.play	song	Enter;Num Enter;
+tracker.song	song.loop	song	Ctrl+L;
+tracker.sample	sample.close	sample	Esc;Ctrl+W;
+tracker.sample	sample.selectAll	sample	Ctrl+A;Alt+A;
+tracker.sample	sample.clipboard	sample	Ctrl+X;Ctrl+C;Ctrl+V;Alt+X;Alt+C;Alt+V;
+tracker.sample	sample.crop	sample	Alt+R;
+tracker.sample	sample.zoom	sample	Alt+S;Alt+Z;
+tracker.sample	sample.play	sample	Alt+W;Alt+Q;
+tracker.sample	sample.slot	sample	Alt+Up;Alt+Down;
+tracker.sample	sample.delete	sample	Del;
+tracker.sample	sample.scroll	sample	Left;Right;Shift+Left;Shift+Right;
+tracker.sample	sample.notes	sample	Z;S;X;D;C;V;G;B;H;N;J;M;,;L;.;;;/;Q;2;W;3;E;R;5;T;6;Y;7;U;I;9;O;0;P;[;=;];
+tracker.instrument	instrument.close	instrument	Esc;Ctrl+W;
+tracker.instrument	instrument.slot	instrument	Alt+Up;Alt+Down;
+tracker.instrument	instrument.envelope	instrument	Tab;
+tracker.instrument	instrument.point	instrument	Left;Right;
+tracker.instrument	instrument.pointTick	instrument	Shift+Left;Shift+Right;
+tracker.instrument	instrument.pointLevel	instrument	Up;Down;Shift+Up;Shift+Down;
+tracker.instrument	instrument.add	instrument	Ins;Ctrl+Enter;
+tracker.instrument	instrument.remove	instrument	Del;Backspace;
+tracker.instrument	instrument.notes	instrument	Z;S;X;D;C;V;G;B;H;N;J;M;,;L;.;;;/;Q;2;W;3;E;R;5;T;6;Y;7;U;I;9;O;0;P;[;=;];

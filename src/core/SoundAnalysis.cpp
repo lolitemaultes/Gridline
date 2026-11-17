@@ -213,6 +213,71 @@ double detectTempo(const std::vector<float>& mono, double rate, double seconds, 
   return std::round(bpm * 100) / 100;
 }
 
+double kickTempo(const std::vector<float>& mono, double rate) {
+  double r = 0;
+  const std::vector<float> x = reduce(mono, rate, r);
+  if (x.size() < static_cast<size_t>(1.0 * r)) {
+    return 0;
+  }
+  // The low end only (two one-pole low-passes at 150 Hz): kicks, not hats or snares' noise.
+  const float a = static_cast<float>(std::exp(-2 * kPi * 150.0 / r));
+  std::vector<float> lp(x.size());
+  float y1 = 0, y2 = 0;
+  for (size_t i = 0; i < x.size(); ++i) {
+    y1 = (1 - a) * x[i] + a * y1;
+    y2 = (1 - a) * y1 + a * y2;
+    lp[i] = y2;
+  }
+  const std::vector<double> e = energies(lp);
+  if (e.size() < 8) {
+    return 0;
+  }
+  const double emax = *std::max_element(e.begin(), e.end());
+  if (emax < 1e-8) {
+    return 0;
+  }
+  const double fps = r / kHop;
+  // Onsets: a rise of the low end's level by 6 dB or more, to within 12 dB of its loudest, 0.15 s apart.
+  std::vector<double> at;
+  for (size_t k = 1; k + 1 < e.size(); ++k) {
+    const double rise = std::log10((1e-12 + e[k]) / (1e-12 + e[k - 1])) * 10.0;
+    if (rise < 6.0 || e[k + 1] < 0.06 * emax) {
+      continue;
+    }
+    if (!at.empty() && (static_cast<double>(k) - at.back()) < 0.15 * fps) {
+      continue;
+    }
+    at.push_back(static_cast<double>(k));
+  }
+  if (at.size() < 3) {
+    return 0;
+  }
+  std::vector<double> ioi;
+  for (size_t i = 1; i < at.size(); ++i) {
+    ioi.push_back((at[i] - at[i - 1]) / fps);
+  }
+  std::vector<double> sorted = ioi;
+  std::sort(sorted.begin(), sorted.end());
+  const double med = sorted[sorted.size() / 2];
+  // Steady: most gaps are the median one (or two of it: a kick left out).
+  int steady = 0;
+  double sum = 0;
+  int n = 0;
+  for (double g : ioi) {
+    const double q = g / med;
+    if (std::fabs(q - 1.0) < 0.12) {
+      ++steady, sum += g, ++n;
+    } else if (std::fabs(q - 2.0) < 0.2) {
+      ++steady;
+    }
+  }
+  if (n == 0 || steady * 10 < static_cast<int>(ioi.size()) * 7) {
+    return 0;
+  }
+  const double bpm = 60.0 / (sum / n);
+  return bpm >= 40.0 && bpm <= 260.0 ? bpm : 0.0;
+}
+
 bool detectKey(const std::vector<float>& mono, double rate, int& pitchClass, bool& minor, double* confidence) {
   if (confidence) *confidence = 0;
   double r = 0;

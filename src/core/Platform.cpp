@@ -140,12 +140,35 @@ std::string homeDir() {
   return h ? std::string(h) : std::string(".");
 }
 
-std::string defaultConfigRoot() {
-  if (std::string x = env("XDG_CONFIG_HOME"); !x.empty()) return x;
+namespace {
 #if defined(_WIN32)
-  if (std::string a = env("APPDATA"); !a.empty()) return a;
+constexpr bool kWindows = true;
+#else
+constexpr bool kWindows = false;
 #endif
-  return (fs::path(homeDir()) / ".config").string();
+// The environment as configRootFor reads it: HOME as homeEnv() resolves it (Windows fallbacks).
+std::string processEnv(const char* name) {
+  if (std::strcmp(name, "HOME") == 0) return homeDir();
+  return env(name);
+}
+}  // namespace
+
+std::string configRootFor(const std::function<std::string(const char*)>& getEnv, bool windows, const std::string& dataFolder) {
+  if (std::string g = getEnv("GRIDLINE_CONFIG_HOME"); !g.empty()) return g;
+  if (std::string x = getEnv("XDG_CONFIG_HOME"); !x.empty()) return x;
+  if (!dataFolder.empty()) return (fs::u8path(dataFolder) / "config").u8string();  // K-265
+  if (windows) {
+    if (std::string a = getEnv("APPDATA"); !a.empty()) return a;
+  }
+  std::string home = getEnv("HOME");
+  if (home.empty() && windows) home = getEnv("USERPROFILE");
+  if (home.empty()) home = ".";
+  return (fs::u8path(home) / ".config").u8string();
+}
+
+std::string defaultConfigRoot() {
+  // without GRIDLINE_CONFIG_HOME and the data folder (K-265: where the data folder pointer lives)
+  return configRootFor([](const char* n) { return std::strcmp(n, "GRIDLINE_CONFIG_HOME") == 0 ? std::string() : processEnv(n); }, kWindows);
 }
 
 const datafolder::Info& dataFolder() {  // K-265: read once per run
@@ -154,10 +177,9 @@ const datafolder::Info& dataFolder() {  // K-265: read once per run
 }
 
 std::string configRoot() {
-  if (std::string g = env("GRIDLINE_CONFIG_HOME"); !g.empty()) return g;
+  if (std::string g = env("GRIDLINE_CONFIG_HOME"); !g.empty()) return g;  // (the data folder is not looked up then)
   if (std::string x = env("XDG_CONFIG_HOME"); !x.empty()) return x;
-  if (const std::string& f = dataFolder().folder; !f.empty()) return (fs::u8path(f) / "config").u8string();  // K-265
-  return defaultConfigRoot();
+  return configRootFor(processEnv, kWindows, dataFolder().folder);
 }
 
 std::string cacheRoot() {

@@ -114,7 +114,7 @@ void generalSettingsPage(App& a, float fieldW) {
   }
   ImGui::PushTextWrapPos(0);
   ImGui::TextColored(theme::vec(pal().textFaint), "%s",
-                     tr("Menus, dialogs, settings, hints and editor labels follow the language. To add one, copy assets/i18n/gridline.pot to <code>.po and translate it."));
+                     tr("Menus, dialogs, settings, hints and editor labels follow the language. To add one, copy assets/i18n/gridline.pot to a file named after the language's code (de.po for German) and translate it."));
   ImGui::PopTextWrapPos();
   ui::EndSection();
 

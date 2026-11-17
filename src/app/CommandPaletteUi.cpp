@@ -14,6 +14,7 @@
 #include "../core/Keymap.h"
 #include "../core/MenuStyle.h"
 #include "../core/PluginInfo.h"
+#include "../core/Secrets.h"
 #include "App.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
@@ -180,6 +181,9 @@ void infoHook(ImGuiID, const char* label, int flags) {
 }
 
 void walkSettings(App& a, std::vector<SetRec>& out) {
+  // K-327: the pages are drawn unseen only to note their rows: none may read a secret (the
+  // Keychain can wait on a macOS password prompt and freeze the palette) or change anything.
+  secrets::NoAccess noSecrets;
   gSet = SettingsWalk{};
   gSet.on = true;
   gSet.out = &out;

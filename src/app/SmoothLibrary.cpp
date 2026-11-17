@@ -17,6 +17,7 @@
 #include "../host/PluginScan.h"
 #include "App.h"
 #include "CollabUi.h"
+#include "LayoutParts.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
 #include "LogicNewTracks.h"
@@ -386,10 +387,12 @@ void header(App& a, float w) {
   ImGui::Dummy(ImVec2(w, h));
   const float cx = std::round(p.x + w * 0.5f);
   {
+    // D9 (R14-08): the pane headers' one style (the inspector's: bold, the body size, the text colour) on
+    // the arrange toolbar's centre line (it was 12 px dim, 1.5 px above that line).
     const char* lt = i18n::tr("Library");
-    const float lfs = theme::kFontCaption;
+    const float lfs = ImGui::GetFontSize();
     const float lw = a.fontBold->CalcTextSizeA(lfs, 1e9f, 0, lt).x;
-    dl->AddText(a.fontBold, lfs, ImVec2(std::round(cx - lw * 0.5f), p.y + 2), P.textDim, lt);
+    dl->AddText(a.fontBold, lfs, ImVec2(std::round(cx - lw * 0.5f), layoutparts::paneTitleY(lfs)), P.text, lt);
   }
   std::string busTitle = bus ? playlistTrackName(s, static_cast<size_t>(track)) : std::string();
   // D7 (R13-04): a track that plays several sounds through a bus (a kit) is that bus here, as the
@@ -438,14 +441,17 @@ bool navRow(App& a, const char* id, ui::Icon icon, const char* label, bool on, f
 void navHeading(App& a, const char* label, float w) {
   const auto& P = pal();
   const ImVec2 p = ImGui::GetCursorScreenPos();
-  ImGui::Dummy(ImVec2(w, 20));
+  // D9 (R14-15): a row of the list's own 22 px pitch, its name centred as the rows' are (it sat at the foot
+  // of a 20 px row: 32 px from Effects, 19 to Bass, against the list's 22).
+  const float h = 22;
+  ImGui::Dummy(ImVec2(w, h));
   const float fs = theme::kFontLabel;
-  ImGui::GetWindowDrawList()->AddText(a.fontBold, fs, ImVec2(p.x + 8, std::round(p.y + 20 - fs - 3)), P.textFaint, label);
+  ImGui::GetWindowDrawList()->AddText(a.fontBold, fs, ImVec2(p.x + 8, std::round(p.y + (h - fs) * 0.5f) - 1), P.textFaint, label);
 }
 
 void navLine(float w) {
   const ImVec2 p = ImGui::GetCursorScreenPos();
-  ImGui::Dummy(ImVec2(w, 9));
+  ImGui::Dummy(ImVec2(w, 8));
   ImGui::GetWindowDrawList()->AddLine(ImVec2(p.x + 6, std::round(p.y + 4)), ImVec2(p.x + w - 6, std::round(p.y + 4)), theme::withAlpha(pal().line, 0.9f));
 }
 
@@ -618,13 +624,17 @@ void draw(App& a) {
     char b[48];
     std::snprintf(b, sizeof b, i18n::tr("%d items"), static_cast<int>(rows.size()));
     const float fs = theme::kFontLabel;
-    dl->AddText(a.fontRegular, fs, ImVec2(f.x + 8, std::round(f.y + (footH - fs) * 0.5f) - 1), P.textFaint, b);
+    // D9 (R14-15): the footer's line of text on the inspector strips' name line, the window's last line
+    // (it sat 3 px higher: 1056.5 against 1059.5 at 1920). The strips' name plates are 18 px and end 2 px
+    // above the pane's foot, their names 2 px into them; the buttons (20 px) are centred on that plate.
+    const float plateTop = f.y + footH - 20;
+    dl->AddText(a.fontRegular, fs, ImVec2(f.x + 8, plateTop + 2), P.textFaint, b);
     const int track = targetTrack(a);
     const Channel* cur = targetSound(a, track);
     const Item* factory = nullptr;
     for (const Item& it : rows)
       if (cur && !it.effect && it.preset >= 0 && it.type == cur->plugin.type && it.name == cur->name) factory = &it;
-    const float bh = 20, gap = 4, by = std::round(f.y + (footH - bh) * 0.5f);
+    const float bh = 20, gap = 4, by = plateTop - 2;
     const char* labels[2] = {i18n::tr("Revert"), i18n::tr("Save")};
     float bw[2], total = gap;
     for (int k = 0; k < 2; ++k) total += (bw[k] = std::ceil(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, labels[k]).x) + 16);

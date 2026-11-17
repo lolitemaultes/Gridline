@@ -828,6 +828,21 @@ void writeVideoFrame(FILE* f, int w, int h) {  // K-10: --video-out
   std::fflush(f);
 }
 
+// K-324: the main window's frame ends here. SDL's Wayland driver skips the swap of a hidden window
+// (the compositor would stall it), so nothing told the GL driver the frame was over: Mesa's software
+// rasterizer (llvmpipe, the Weston CI) went on collecting frame after frame into one batch, every
+// replaced vertex buffer (about 10 MB a frame in the editor audit) kept alive until the batch was
+// full. How much was held at any moment depended on timing, and the k155_audit_memory gate read
+// it as growth. A software driver's swap on X11 waits for the frame to be drawn; a hidden window
+// on Wayland now does the same.
+void endMainFrame(SDL_Window* window, bool waylandDriver) {
+  if (waylandDriver && (SDL_GetWindowFlags(window) & SDL_WINDOW_HIDDEN)) {
+    glFinish();
+    return;
+  }
+  SDL_GL_SwapWindow(window);
+}
+
 void drawVideoCursor() {  // K-10: --video-cursor, a plain arrow at the dev pointer
   const ImGuiIO& io = ImGui::GetIO();
   if (!ImGui::IsMousePosValid(&io.MousePos)) return;
@@ -1026,6 +1041,7 @@ struct DevMomentum {
   float dx = 0, dy = 0;
   int left = 0;
 } devMomentum;
+bool gDevQuitDiscard = false;  // N59-08: a scripted "quit discard" asked (later edits are dropped too)
 struct DevInputLine {
   int frame = 0;
   std::string cmd, a0, a1, a2;
@@ -1813,7 +1829,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else if (l.cmd == "groove") {  // the song's swing and the swing preset chip / menu / Groove editor geometry
       grooveui::devCommand(app, frame);
     } else if (l.cmd == "quit") {  // J-103: the window's close request (SDL_QUIT), like the user quitting Gridline
-      if (l.a0 == "discard") app.doc.markSaved();  // "quit discard": unsaved changes dropped (as "Don't save")
+      // "quit discard": unsaved changes dropped (as "Don't save"). Checkpoint 60 (N59-08): also an edit
+      // landing before the quit is handled (a dropped file's clip is placed once its audio is read, a
+      // frame or more after the drop): the quit takes it as unsaved too, instead of stopping at a Save
+      // prompt a hidden run cannot answer.
+      if (l.a0 == "discard") app.doc.markSaved(), gDevQuitDiscard = true;
       SDL_Event q{};
       q.type = SDL_QUIT;
       SDL_PushEvent(&q);
@@ -2340,6 +2360,23 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                       static_cast<unsigned>(c.index), c.name.c_str(), c.points.size());
       std::printf("  automations %zu playlist %zu\n", s.automations.size(), s.playlist.size());
       std::fflush(stdout);
+    } else if (l.cmd == "autooverride") {  // N59-01: autooverride show <owner> <index> | show pan <mixer index> | reenable
+      if (l.a0 == "reenable") {
+        reenableAutomation(app);
+      } else {
+        ParamId pid{static_cast<ObjectId>(std::atoi(l.a1.c_str())), static_cast<uint32_t>(std::atoi(l.a2.c_str()))};
+        const size_t mi = static_cast<size_t>(std::max(0, std::atoi(l.a2.c_str())));
+        if (l.a1 == "pan" && mi < app.doc.song().mixer.size()) pid = mixerParam(app.doc.song().mixer[mi].id, MixerParam::Pan);
+        double live = 0;
+        const bool driven = app.builder.modulatedValue(pid, live);
+        const auto stored = getParam(app.doc.song(), pid);
+        char lv[32] = "none";
+        if (driven) std::snprintf(lv, sizeof lv, "%.4f", std::clamp(live, -1e6, 1e6));
+        std::printf("autooverride frame %d: count %d overridden %d held %d live %s stored %.4f undo %zu playing %d\n", frame,
+                    automationOverrideCount(), automationOverridden(pid) ? 1 : 0, app.builder.automationHeld(pid) ? 1 : 0, lv,
+                    stored ? *stored : 0.0, app.doc.history().position(), app.engine.playing() ? 1 : 0);
+        std::fflush(stdout);
+      }
     } else if (l.cmd == "autolane") {  // K-112b: autolane <track>: the Tracks layout's automation lane under it
       devShowAutomationLane(std::atoi(l.a0.c_str()));
     } else if (l.cmd == "menu" && l.a0 == "open") {  // K-112b: menu open <id>: that menu opens (Windows.h devMenuOpen)
@@ -3074,11 +3111,12 @@ int main(int argc, char** argv) {
   }
   gl::opendocs::startupDone();
 
-  // Command line: [project] [--screenshot out.ppm] [--frames N] [--play] [--fx mixer slot] [--chan index]
+  // Command line: [project] [--screenshot out.ppm] [--frames N (K-327: ends the run, unsaved changes discarded)] [--play] [--fx mixer slot] [--chan index]
   //               [--plugin type] [--size WxH]
   splash(0.88f, "Opening project");
   std::string shotPath;
   int shotFrames = 45;
+  bool framesGiven = false;  // K-327: --frames was given: the run ends after that many frames (non-interactive)
   std::string videoOutPath;  // K-10: raw RGB frames
   FILE* videoOut = nullptr;
   std::pair<int, int> forcedSize{0, 0};  // --size WxH (window size for layout checks)
@@ -3128,7 +3166,7 @@ int main(int argc, char** argv) {
     if (arg == "--screenshot" && i + 1 < argc) shotPath = argv[++i];
     else if (arg == "--profile-frames" && i + 1 < argc) profilePath = argv[++i];
     else if (arg == "--profile-warmup" && i + 1 < argc) profileWarmup = std::max(0, std::atoi(argv[++i]));
-    else if (arg == "--frames" && i + 1 < argc) shotFrames = std::atoi(argv[++i]);
+    else if (arg == "--frames" && i + 1 < argc) shotFrames = std::atoi(argv[++i]), framesGiven = true;
     else if (arg == "--video-clock" && i + 1 < argc) ++i;  // K-10: read before the audio device opens
     else if (arg == "--dev-os-open" && i + 1 < argc) ++i;  // K-119: posted after SDL_Init
     else if (arg == "--video-out" && i + 1 < argc) videoOutPath = argv[++i];
@@ -3492,7 +3530,8 @@ int main(int argc, char** argv) {
   // it is resized to, and scripted pictures and pixel checks would read that.
   OffscreenTarget offscreen;
   const char* driverNow = SDL_GetCurrentVideoDriver();
-  const bool hiddenOnWayland = startHidden && driverNow && std::strcmp(driverNow, "wayland") == 0;
+  const bool onWaylandDriver = driverNow && std::strcmp(driverNow, "wayland") == 0;  // K-324: endMainFrame
+  const bool hiddenOnWayland = startHidden && onWaylandDriver;
   const bool useOffscreen = (!shotPath.empty() || !profilePath.empty() || hiddenOnWayland) && forcedSize.first > 0 &&
                             offscreen.create(static_cast<int>(static_cast<float>(forcedSize.first) * shotScale),
                                              static_cast<int>(static_cast<float>(forcedSize.second) * shotScale));
@@ -3625,6 +3664,16 @@ int main(int argc, char** argv) {
   std::map<SDL_Scancode, HeldNote> held;
   std::string lastTitle;
   bool running = true;
+  // K-327: a --frames run is non-interactive: it ends after its frames whatever the song's state, with
+  // no "save changes?" prompt and nothing saved (a note says unsaved changes were discarded). A
+  // screenshot or profile run ends on its frame as before; any other --frames run once it has drawn N
+  // frames, and a --dev-input script's run only once its last line has run too (its frame numbers
+  // count, so a script running past N still ends with its own "quit"). --dev-input-live sessions
+  // are driven from outside and never end on a frame count.
+  bool framesEnded = false;
+  int plainFrames = 0;
+  int devInputLastFrame = 0;
+  for (const DevInputLine& l : devInput) devInputLastFrame = std::max(devInputLastFrame, l.frame);
   // K-106: a hidden (development) run ends on SIGTERM at once, whatever it waits for (a script's
   // "waitfor", a save question nobody can answer); SDL's own handler would only ask to quit.
   static volatile std::sig_atomic_t termAsked = 0;
@@ -3662,6 +3711,7 @@ int main(int argc, char** argv) {
     }
     if (app.quitRequested) {
       app.quitRequested = false;
+      if (gDevQuitDiscard) app.doc.markSaved();  // N59-08 (see "quit discard")
       app.cancelProjectLoad();  // J-167: quitting while a project loads: the load stops, the open project is the one asked about
       app.guardUnsaved([&running]() { running = false; });
     }
@@ -4338,7 +4388,7 @@ int main(int argc, char** argv) {
       prof::setTrace(false);
     }
     if (browserui::thumbMode() && !browserui::thumbCapture(app, fbW, fbH)) running = false;
-    if (!profilePath.empty() && shotPath.empty() && ++frameNo >= shotFrames + profileWarmup) running = false;
+    if (!profilePath.empty() && shotPath.empty() && ++frameNo >= shotFrames + profileWarmup) running = false, framesEnded = true;
     if (!devInput.empty()) {  // J-112: for "waitfor"
       devsig::reach(app.engine.playing() ? "transport-playing" : "transport-stopped");
       // K-B: playback has moved on from where it started (the set position), for scripts that check it ran
@@ -4393,13 +4443,21 @@ int main(int argc, char** argv) {
       if (devHostedEditor && !screenshotHostedEditor(devEditorTarget, shotPath + ".editor.png"))
         std::fprintf(stderr, "no editor screenshot\n");
       running = false;
+      framesEnded = true;
+    }
+    if (framesGiven && running && shotPath.empty() && profilePath.empty() && devInputLive.empty() && !devHold) {  // K-327 (above)
+      const int counted = devInput.empty() ? ++plainFrames : frameNo;
+      if (counted >= shotFrames && (devInput.empty() || frameNo > devInputLastFrame)) {
+        running = false;
+        framesEnded = true;
+      }
     }
     if (useOffscreen) offscreen.use(false);
     if (const char* why = glrecovery::poll()) graphicsLost = why;  // K-47: seen on the main context, dealt with between frames
     fstats::since(fstats::Ui, statT);
     statT = fstats::stamp();
     viewports::renderWindows();  // J-113: the detached windows
-    SDL_GL_SwapWindow(window);
+    endMainFrame(window, onWaylandDriver);
     fstats::since(fstats::Present, statT);
     statT = fstats::stamp();
     renderHostedEditors(app);  // control bars of open plugin windows
@@ -4476,7 +4534,7 @@ int main(int argc, char** argv) {
       const bool automated = !shotPath.empty() && shown >= 5;
       if (automated) writePpm(shotPath.c_str(), fbW, fbH);
       if (useOffscreen) offscreen.use(false);
-      SDL_GL_SwapWindow(window);
+      endMainFrame(window, onWaylandDriver);
       if (automated) {
         crash::markCleanExit();
         std::fflush(nullptr);
@@ -4820,6 +4878,11 @@ int main(int argc, char** argv) {
     fstats::endFrame();
   }
   liveresize::uninstall();
+  if (framesEnded && app.doc.modified()) {  // K-327: a --frames run never asks; it saves nothing
+    std::printf("--frames run ended: unsaved changes discarded (nothing saved)\n");
+    std::fflush(stdout);
+    app.doc.markSaved();
+  }
   instance.stop();          // K-121: the next launch starts a Gridline of its own (its socket goes)
   crashui::shutdown(app);   // K-39: the user answered "save changes?"; this run's copy goes
   crash::markCleanExit();   // what follows is teardown: a failure there still gets a report

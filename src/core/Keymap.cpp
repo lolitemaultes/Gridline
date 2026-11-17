@@ -662,6 +662,7 @@ Rows liveRows() {
   set("view.quickHelp", {ch(K::Slash, S)});  // checkpoint 55 (gap 9): Shift+?, the Info View
   set("view.io", {ch(K::I, C | A)});         // checkpoint 55 (gap 2): Cmd+Alt+I, the In/Out section
   set("transport.sessionRecord", {ch(K::F9, S)});
+  set("tools.stopSound", {ch(K::Period, C | A)});  // checkpoint 59 (N58-12): Cmd+H is the Mac's Hide; Cmd+Alt+. stops all sound
   // playlist
   set("playlist.duplicate", {ch(K::D, C)});
   set("playlist.deselect", {ch(K::A, C | S)});
@@ -781,7 +782,7 @@ Rows logicRows(bool sep) {
 
 // K-112 Tracker: the function keys work as in trackers: F1 to F8 pick the typing keyboard's
 // octave and do nothing else. The window commands that had F1, F2 and F4 to F8 move to Ctrl+Alt
-// keys; F9 (mixer) and F10 (settings) stay; F11 and F12 go (Ctrl+Alt+X closes every screen). The set adds
+// keys; F9 to F12 go (they jump rows in the pattern; cp25) (Ctrl+Alt+X closes every screen). The set adds
 // no key that deletes, clears or rewrites anything: every chord it adds opens, shows or picks.
 Rows trackerRows() {
   using K = Key;
@@ -792,19 +793,20 @@ Rows trackerRows() {
   for (int i = 0; i < 8; ++i) r.push_back({octaves[i], {ch(fkeys[i])}});
   auto add = [&](const char* id, std::vector<Chord> c) { r.push_back({id, std::move(c)}); };
   add("help.shortcuts", {ch(K::Slash, C)});
-  add("edit.rename", {ch(K::Enter, S)});
+  // cp25: Ctrl+Alt+F2 (Studio's F2 with Ctrl+Alt): Shift+Enter plays the pattern from the cursor's row.
+  add("edit.rename", {ch(K::F2, C | A)});
   add("pattern.new", {ch(K::N, C | A)});
   // The screens in the header's order, Ctrl+Alt with the digits (0 is the tenth), minus for Help.
   add("view.patternEditor", {ch(K::D1, C | A), ch(K::P, C | A)});  // FT2-MAP K-69: P as the classic Pattern screen key
   add("view.playlist", {ch(K::D2, C | A)});
   add("view.pianoRoll", {ch(K::D3, C | A)});
   add("view.channelRack", {ch(K::D4, C | A)});
-  add("view.mixer", {ch(K::D5, C | A), ch(K::F9)});  // T-26: the menus show Ctrl+Alt+5 (F9 jumps rows in the pattern)
+  add("view.mixer", {ch(K::D5, C | A)});  // cp25: no F9 (it jumps rows in the pattern; T-26)
   add("view.pads", {ch(K::D6, C | A)});
   add("view.channelSettings", {ch(K::D7, C | A), ch(K::I, C | A)});  // K-66: I, the instrument
   add("view.audioEditor", {ch(K::D8, C | A)});
   add("view.files", {ch(K::D9, C | A), ch(K::D, C | A)});  // K-63: D, the disk screen
-  add("view.settings", {ch(K::D0, C | A), ch(K::C, C | A), ch(K::F10)});  // (F10 likewise; K-62: C, the config screen)
+  add("view.settings", {ch(K::D0, C | A), ch(K::C, C | A)});  // K-62: C, the config screen (cp25: no F10, a pattern jump)
   add("help.trackerKeys", {ch(K::Minus, C | A), ch(K::H, C | A)});  // K-65: H, help
   add("view.headerBand", {ch(K::Z, C | A)});  // K-73: Z, the extended pattern editor
   // K-60, K-70, K-72: the scope box's tools with the classic letters (A advanced edit, R trim, T transpose).
@@ -831,6 +833,19 @@ Rows trackerRows() {
   add("file.projectInfo", {});
   add("view.pluginPicker", {ch(K::F, C | A)});  // K-69: the picker moves to F (find), P is the Pattern screen
   add("view.browser", {ch(K::B, C | A)});
+  // cp25 (key map check, tests/test_key_sets.cpp): no key here that the Tracker's own keys
+  // (core/TrackerKeys) take, so the menus never show a key that does something else in the
+  // Tracker. Each command keeps its menu item.
+  add("transport.songMode", {});   // L: a note key (the Tracker plays the song or the pattern by its own keys)
+  add("view.backToPlaylist", {});  // Esc: edit mode in the pattern, closes the editors and screens
+  add("pattern.findFirstEmpty", {});  // Shift+F4: copies the track
+  add("pattern.findNextEmpty", {});   // Ctrl+F4: copies the pattern
+  add("pattern.next", {});            // keypad + and -: the Song page's entry pattern (Ctrl+Left / Right step patterns)
+  add("pattern.previous", {});
+  add("edit.history", {});  // Alt+Z: the Sample editor's zoom out (Ctrl+Alt+Z is the header strip)
+  const char* const workspaces[9] = {"view.workspace1", "view.workspace2", "view.workspace3", "view.workspace4", "view.workspace5",
+                                     "view.workspace6", "view.workspace7", "view.workspace8", "view.workspace9"};
+  for (const char* w : workspaces) add(w, {});  // Ctrl+1 .. 9: the edit step
   return r;
 }
 

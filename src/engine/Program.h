@@ -218,6 +218,10 @@ struct LinkRuntime {
   uint32_t rng = 0x2545F491u;     // rand() in mapping formulas
   std::atomic<float> display{0};  // live target value in plugin units (UI)
   std::atomic<bool> active{false};
+  // Checkpoint 60 (N59-01): a hand override of the target's automation (ProgramBuilder::holdAutomation):
+  // while `held`, its automation lanes play `heldValue` (normalized: the control's own value) instead.
+  std::atomic<bool> held{false};
+  std::atomic<float> heldValue{0};
 };
 
 struct EffectRuntime {
@@ -813,6 +817,14 @@ class ProgramBuilder {
   // J-131: host parameter k drives parameter k of the plugin at `firstParam`
   // (channelPluginParam(ch, 0) / slotParam(track, slot, 0)); kNoId owner = none.
   void setHostParamBank(ParamId firstParam) { bankTarget_ = firstParam; }
+  // Checkpoint 60 (N59-01): the automation override of the live builder (the app's; a render's own
+  // builder never has one, so renders and exports always follow the automation). While a parameter
+  // is held, its automation lanes play `normalized` (the control's own value) instead of their
+  // curve; no build is needed (the flag sits in the target's link runtime, read by the audio thread).
+  void holdAutomation(ParamId pid, double normalized);
+  void releaseAutomation(ParamId pid);
+  void releaseAllAutomation();
+  bool automationHeld(ParamId pid) const;
   // True when a hosted plugin's reported latency differs from the one the
   // last Program was compensated for (the caller rebuilds).
   bool latencyChanged() const;

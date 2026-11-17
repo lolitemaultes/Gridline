@@ -184,6 +184,12 @@ std::string hex2(int v) {
   return b;
 }
 
+std::string hexNum(int v) {
+  char b[8];
+  std::snprintf(b, sizeof b, "%02X", std::clamp(v, 0, 0xFFF));
+  return b;
+}
+
 std::string rowText(int row, bool hex) {
   char b[8];
   if (hex) std::snprintf(b, sizeof b, row > 0xFF ? "%03X" : "%02X", std::max(0, row));

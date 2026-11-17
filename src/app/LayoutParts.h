@@ -38,5 +38,10 @@ void panelsMenu(App& a, bool tracker = false);
 bool infoInBar(App& a);
 // Dev ("parts ..."): notes set <file> | dump <file> | focus | blur; chain instrument | fx <slot> | master.
 void devCommand(App& a, const std::vector<std::string>& args);
+// D9 (R14-08): Smooth's pane headers share the arrange toolbar's band (the pane's top 36 px, its foot line
+// on the toolbar's): the first heading row's top and height, from the current window's top, and the y of
+// a title of font size `fs` centred in that row. One title style: bold, the body size, the text colour.
+constexpr float kPaneHeadTop = 1.0f, kPaneHeadH = 35.0f;
+float paneTitleY(float fs);
 
 }  // namespace gl::layoutparts

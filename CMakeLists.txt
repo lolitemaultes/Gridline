@@ -565,6 +565,13 @@ target_compile_options(gridline_tests_r08_settled_automation PRIVATE ${GL_WARN})
 add_test(NAME r08_settled_automation COMMAND gridline_tests_r08_settled_automation WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 # it times renders against each other: alone, so the other tests do not load one render more than another
 set_tests_properties(r08_settled_automation PROPERTIES RUN_SERIAL TRUE)
+# Checkpoint 60 (N59-01): the hand override of automated controls (the live builder holds a parameter
+# at its control's value; the song, its save and its render never see it).
+add_executable(gridline_tests_n59_automation_override tests/test_n59_automation_override.cpp)
+target_link_libraries(gridline_tests_n59_automation_override PRIVATE gridline_core)
+target_include_directories(gridline_tests_n59_automation_override PRIVATE src tests)
+target_compile_options(gridline_tests_n59_automation_override PRIVATE ${GL_WARN})
+add_test(NAME n59_automation_override COMMAND gridline_tests_n59_automation_override WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 add_executable(gridline_tests_k263_midi tests/test_k263_midi.cpp)
 target_link_libraries(gridline_tests_k263_midi PRIVATE gridline_core)
 target_include_directories(gridline_tests_k263_midi PRIVATE src tests)
@@ -1341,6 +1348,13 @@ add_executable(gridline_tests_j61 tests/test_j61.cpp)
 target_link_libraries(gridline_tests_j61 PRIVATE gridline_core)
 target_compile_options(gridline_tests_j61 PRIVATE ${GL_WARN})
 add_test(NAME j61_followups COMMAND gridline_tests_j61 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+# K-327: item walks never reach the secret store (NoAccess, the TURN password read only when a
+# session starts) and the config folder follows HOME.
+add_executable(gridline_tests_k327 tests/test_k327.cpp)
+target_link_libraries(gridline_tests_k327 PRIVATE gridline_core)
+target_include_directories(gridline_tests_k327 PRIVATE src tests)
+target_compile_options(gridline_tests_k327 PRIVATE ${GL_WARN})
+add_test(NAME k327_secrets_config COMMAND gridline_tests_k327 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # J-86: the operating-system layer (folders, processes, numbers, sockets, shared objects, keys).
 add_executable(gridline_tests_portability tests/test_portability.cpp)
@@ -2001,6 +2015,18 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   else()
     target_include_directories(gridline_sdl_headers SYSTEM INTERFACE $<TARGET_PROPERTY:PkgConfig::SDL2PC,INTERFACE_INCLUDE_DIRECTORIES>)
   endif()
+  # K-326: the bundled SDL2 copies its headers into the build tree when it builds. A target that only
+  # takes gridline_sdl_headers' include paths (not SDL2 itself) waits for that copy: the plugin
+  # downloads build the suites without the application, which would otherwise have built SDL2 first.
+  function(gridline_wait_for_sdl_headers target)
+    if(GRIDLINE_BUNDLED_SDL2)
+      if(TARGET sdl_headers_copy)
+        add_dependencies(${target} sdl_headers_copy)
+      else()
+        add_dependencies(${target} SDL2-static)
+      endif()
+    endif()
+  endfunction()
   add_library(imgui STATIC third_party/imgui/imgui_impl_sdl2.cpp)
   target_link_libraries(imgui PUBLIC imgui_core)
   if(SDL2_FOUND)
@@ -2172,6 +2198,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
        ${CMAKE_SOURCE_DIR}/src/app/GamepadSdl.cpp)  # K-199: game controllers through SDL
   add_library(gridline_ui OBJECT ${GRIDLINE_APP_SRC})
   target_link_libraries(gridline_ui PRIVATE gridline_core imgui_core rtmidi gridline_sdl_headers)
+  gridline_wait_for_sdl_headers(gridline_ui)
   target_compile_options(gridline_ui PRIVATE ${GL_WARN_LOOSE})
   set_target_properties(gridline_ui PROPERTIES POSITION_INDEPENDENT_CODE ON)
   # K-14: the application icon built into the program (every window's icon, AppIcon.h).
@@ -2446,6 +2473,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k112_textfit -P ${CMAKE_SOURCE_DIR}/tests/k112_textfit_app.cmake)
     set_tests_properties(k112_textfit PROPERTIES TIMEOUT 900)
+    # K-327: --frames runs end on a modified song without asking (changes discarded, nothing saved),
+    # and the command palette's walk of the menus and settings pages touches no secret.
+    add_test(NAME k327_frames_palette_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k327_frames_palette_app -P ${CMAKE_SOURCE_DIR}/tests/k327_frames_palette_app.cmake)
+    set_tests_properties(k327_frames_palette_app PROPERTIES TIMEOUT 600)
     add_test(NAME k112_menus
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DEXPECT=${CMAKE_SOURCE_DIR}/tests/k112 -DOUT=${CMAKE_BINARY_DIR}/k112_menus -P ${CMAKE_SOURCE_DIR}/tests/k112_menus_app.cmake)
@@ -2510,6 +2543,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${GRIDLINE_DEMO_JSON}
                      -DOUT=${CMAKE_BINARY_DIR}/k112b_compat_app -P ${CMAKE_SOURCE_DIR}/tests/k112b_compat_app.cmake)
     set_tests_properties(k112b_compat_app PROPERTIES TIMEOUT 600)
+    # K-112B (R14-01): Smooth's Record button records and plays when stopped (with the Recording card)
+    # and punches in and out with quick punch while playing, as the R key and the other layouts' buttons.
+    add_test(NAME k112b_record_button_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k112b_record_button_app -P ${CMAKE_SOURCE_DIR}/tests/k112b_record_button_app.cmake)
+    set_tests_properties(k112b_record_button_app PROPERTIES TIMEOUT 300)
     # K-112: a run whose layout never asks for the system menu bar never starts it (no D-Bus on Linux).
     add_test(NAME k112_sysmenu_idle
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json

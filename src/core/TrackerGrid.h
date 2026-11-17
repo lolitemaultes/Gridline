@@ -72,6 +72,7 @@ Track buildTrack(const Song& s, const Pattern& p, ObjectId channel, const Grid& 
 // ---- text ----
 std::string noteText(int pitch, bool flats = false);  // ("Db4" with flats)    // "C-4", "C#4" (Gridline's names: 60 = C-4)
 std::string hex2(int v);            // "7F"
+std::string hexNum(int v);          // "7F", "1B8" past FF (order positions and lengths, pattern numbers: a big song is not shown as FF)
 std::string rowText(int row, bool hex);  // "1F" / "31" (3 digits past FF / 99)
 
 // ---- effect letters on native note properties ----

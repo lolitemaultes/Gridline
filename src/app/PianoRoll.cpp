@@ -581,7 +581,11 @@ static void liveToolbar(App& a, const Pattern*& pat, const Channel*& chan, const
   }
   // The channel whose notes are edited.
   ImGui::SameLine(0, 4);
-  if (ui::BeginCombo("##chanlive", chan ? chan->name.c_str() : i18n::tr("No channel"), std::clamp(W * 0.12f, 90.0f, 140.0f))) {
+  // Checkpoint 58 (N57-15): as wide as the device's name needs ("1 Analog Synth" read "1 Analog Syn..."
+  // with room to spare), within 90 px and a fifth of the bar.
+  const char* chanName = chan ? chan->name.c_str() : i18n::tr("No channel");
+  const float chanW = std::clamp(std::ceil(ImGui::CalcTextSize(chanName).x) + fh + 16.0f, 90.0f, std::max(140.0f, std::floor(W * 0.2f)));
+  if (ui::BeginCombo("##chanlive", chanName, chanW)) {
     for (const auto& c : s.channels)
       if (ImGui::Selectable((c.name + "##" + std::to_string(c.id)).c_str(), c.id == a.selChannel)) a.selectChannel(c.id);
     ImGui::EndCombo();
@@ -1490,6 +1494,27 @@ void drawPianoRoll(App& a) {
   auto layoutKeys = [&](float h) {
     for (size_t i = 0; i < keyTop.size(); ++i) keyTop[i] = static_cast<float>(i) * h;
   };
+  // Checkpoint 59 (N58-08): in Clips a clip that opens, or gets its first notes (a recording into an
+  // empty clip), shows at least 12 key rows and is centred on its notes.
+  // Checkpoint 60 (N59-05): and while nobody scrolled it since, it follows the notes' range as notes
+  // arrive (a recording's later, higher notes), so the top note stays in view; a range of up to 12
+  // semitones that the rows cannot show fits by lower rows (a short panel at 1024 x 640).
+  if (livelook::active(a) && gridH > 0) {
+    static ObjectId lastPat = kNoId;
+    static int lastLo = -1, lastHi = -1;
+    static bool scrolled = false;
+    int lo = 128, hi = -1;
+    for (const auto& n : notes) lo = std::min(lo, n.pitch), hi = std::max(hi, n.pitch);
+    if (patId != lastPat) scrolled = false;
+    if (hovered && (io.MouseWheel != 0 || io.MouseWheelH != 0 || ImGui::IsMouseDragging(ImGuiMouseButton_Middle))) scrolled = true;
+    if (patId != lastPat || (!scrolled && (lo != lastLo || hi != lastHi))) {
+      const int span = hi >= lo ? hi - lo + 1 : 0;
+      const float fit = std::floor(gridH / static_cast<float>(span > 0 && span <= 12 ? std::max(span + 1, 4) : 12));
+      if (fit < st.rowHeight) st.rowHeight = std::max(kRowHMin, fit);
+      st.centred = false;
+    }
+    lastPat = patId, lastLo = lo, lastHi = hi;
+  }
   {
     smoothzoom::Params zp;
     zp.smooth = scrollui::smoothZoom();
@@ -1542,7 +1567,9 @@ void drawPianoRoll(App& a) {
     if (!notes.empty()) {
       int lo = 127, hi = 0;
       for (const auto& n : notes) lo = std::min(lo, n.pitch), hi = std::max(hi, n.pitch);
-      st.scrollY = (127 - (lo + hi) * 0.5f) * rowH - gridH * 0.5f;
+      // N59-05: the middle of the range's rows at the middle of the grid (row p spans (127 - p) * rowH
+      // and one row more).
+      st.scrollY = ((livelook::active(a) ? 127.5f : 127.0f) - (lo + hi) * 0.5f) * rowH - gridH * 0.5f;
     }
   }
   if (st.rowGlide.anchored()) {  // K-24: the anchored point back under the pointer (the range's edges hold)

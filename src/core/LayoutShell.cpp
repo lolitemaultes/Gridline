@@ -77,7 +77,16 @@ Shell logic() {
 // K-112c (round 45): a new set opens as the reference's does: the browser, the clip grid with its
 // own mixer, and one detail band (the device band). The clip and device bands are one group: showing
 // one hides the other, so the main view keeps its room.
-constexpr float kDetailH = 236.0f;
+// Checkpoint 58 (N57-05, N57-06, N57-15): the detail view grows with the window: 236 px at 1440 x 900 (a
+// share of the height under the top bar), up to 320 px on a large screen, and at least 180 px.
+RegionSize detailSize(float maxShare) {
+  RegionSize s;
+  s.share = 0.289f;
+  s.minPx = 180.0f;
+  s.maxPx = 320.0f;
+  s.maxShare = maxShare;
+  return s;
+}
 Shell live() {
   Shell s;
   s.preset = Preset::Live;
@@ -90,8 +99,8 @@ Shell live() {
                // Checkpoint 57 (N56-08): the device band and the clip band are one detail view of one fixed
                // height (about 230 at 1440 x 900, as in the refs), so the main view keeps its place when the
                // selection moves between a clip and a device; a drag of either divider sizes both.
-               R("live.device", "", Edge::Bottom, px(kDetailH, 0.35f, 120), true, false, TabStyle::None, true),
-               R("live.clip", "", Edge::Bottom, px(kDetailH, 0.45f, 150), false, false, TabStyle::Dock, true),
+               R("live.device", "", Edge::Bottom, detailSize(0.35f), true, false, TabStyle::None, true),
+               R("live.clip", "", Edge::Bottom, detailSize(0.45f), false, false, TabStyle::Dock, true),
                R("live.mixer", "", Edge::Bottom, share(0.32f, 150, 0.5f), false)};
   for (Region& r : s.regions)
     if (std::string(r.id) == "live.device" || std::string(r.id) == "live.clip") r.group = "live.detail";

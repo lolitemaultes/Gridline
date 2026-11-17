@@ -13,6 +13,7 @@
 #include "../core/PluginInfo.h"
 #include "../core/Project.h"
 #include "../core/ProjectInterop.h"
+#include "../core/TrackModes.h"
 #include "../core/Update.h"
 #include "../engine/Sample.h"
 
@@ -2339,6 +2340,12 @@ void Session::materialize() {
   flashes_.clear();
   lastFileScan_ = -1;  // look for new files now
   localShadow_ = sessionValues(doc_.song());  // objects that came or went
+  // Checkpoint 58 (N57-01): a collaborator (or a version without kept sends) moved a track's output off
+  // the return its kept send waits for: the send goes back. After lastRev_, so the next flush shares it
+  // (every peer makes the same change from the same merged song, so they agree).
+  if (!doc_.song().keptSends.empty() && trackmodes::keptSendsStale(doc_.song())) {
+    doc_.patchSong([](Song& s) { trackmodes::restoreKeptSends(s); });
+  }
 }
 
 void Session::verifyNow() {

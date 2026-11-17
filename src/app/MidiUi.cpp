@@ -451,8 +451,9 @@ void actionLinkMenuItems(App& a, RemoteAction action) {
   if (ImGui::MenuItem(t.c_str())) a.openRemoteDialog(action);
 }
 
-// K-123: one menu in quiet groups: what records, punch and count-in, audio takes, monitoring,
-// notes; then the record controls, step record and the controller link.
+// K-123: one menu in quiet groups. K-325: the most used first (what records, punch and count-in,
+// takes, notes), the rows set once and left (the file format, the punch crossfade, capture while
+// armed, the latency check, monitoring, the record controls) under Advanced, then the controller link.
 void recordOptionsMenu(App& a) {
   RecordOptions& o = a.recOptions;
   // N48-15 (checkpoint 49): Clips names the clip, and keeps the Studio-only rows (takes per pass, the
@@ -465,30 +466,34 @@ void recordOptionsMenu(App& a) {
   if (ImGui::MenuItem(clips ? i18n::tr("Punch in/out at the loop brace") : i18n::tr("Punch in/out at the time selection"), nullptr, &a.recPunch) && clips) {
     a.settings.set("clips.punch", a.recPunch);
   }
-  j31::recordingRollItems(a);
+  recmore::punchMenuItems(a);  // K-123 (0.7.7): quick punch
   // N48-15 (checkpoint 49): in Clips the Count-in switch is the row beside this submenu: here only its length.
   if (ImGui::BeginMenu(clips ? i18n::tr("Count-in length") : i18n::tr("Count-in"))) {
     const int bars[] = {0, 1, 2, 4};
+    // Checkpoint 60 (N59-10): Clips' length is ticked whether the count-in is on or not (its switch
+    // turns it on at this length).
+    const int shown = clips && a.countInBars <= 0 ? std::max(1, a.countInLength) : a.countInBars;
     for (int b : bars) {
       if (clips && b == 0) continue;
       std::string n = b == 0 ? "Off" : std::to_string(b) + (b == 1 ? " bar" : " bars");
-      if (ImGui::MenuItem(n.c_str(), nullptr, a.countInBars == b)) a.countInBars = b;
+      if (ImGui::MenuItem(n.c_str(), nullptr, shown == b)) {
+        if (b > 0) a.countInLength = b;
+        if (!clips || a.countInBars > 0) a.countInBars = b;
+      }
     }
     ImGui::EndMenu();
   }
-  recmore::punchMenuItems(a);  // K-123 (0.7.7): quick punch, punch crossfade, start on the first note
-  ImGui::SeparatorText(i18n::tr("Audio takes"));  // K-77: one record options menu (it was a second one in Options)
-  audioFormatMenu(a);
+  j31::recordingRollItems(a);
+  recmore::startMenuItems(a);  // K-123 (0.7.7): start on the first note
+  ImGui::SeparatorText(i18n::tr("Takes"));  // K-77: one record options menu (it was a second one in Options)
   j31::recordingOptionItems(a);
-  recmore::audioMenuItems(a);  // K-123 (0.7.7): capture while armed, recover, the latency check
-  ImGui::SeparatorText(i18n::tr("Monitoring"));
-  j31::recordingMonitorItems(a);
   ImGui::SeparatorText(i18n::tr("Notes"));
   if (ImGui::MenuItem(i18n::tr("Overdub (keep existing notes)"), nullptr, o.overdub)) o.overdub = true;
   if (ImGui::MenuItem(clips ? i18n::tr("Replace (clear the clip's notes)") : i18n::tr("Replace (clear the channel's notes)"), nullptr, !o.overdub)) o.overdub = false;
   ImGui::MenuItem(i18n::tr("Quantize note starts to the snap"), nullptr, &o.quantize);
   ImGui::MenuItem(i18n::tr("Quantize note lengths"), nullptr, &o.quantizeLength);
   if (!clips) ImGui::MenuItem(i18n::tr("Loop recording: new take per pass"), nullptr, &o.takes);
+  if (!clips && ImGui::MenuItem(i18n::tr("Step record (keyboard enters notes at the step cursor)"), nullptr, a.stepRecord)) a.stepRecord = !a.stepRecord;
   if (!clips) recordrows::recoverMenuItem(a);  // K-123 (4.2) (Clips: its Capture button)
   if (!clips && ImGui::BeginMenu(i18n::tr("Controller moves go to"))) {
     for (int i = 0; i < static_cast<int>(AutoRecordTarget::Count); ++i)
@@ -497,8 +502,16 @@ void recordOptionsMenu(App& a) {
     ImGui::EndMenu();
   }
   ImGui::Separator();
-  j31::recordingControlsMenu(a);
-  if (!clips && ImGui::MenuItem(i18n::tr("Step record (keyboard enters notes at the step cursor)"), nullptr, a.stepRecord)) a.stepRecord = !a.stepRecord;
+  if (ImGui::BeginMenu(i18n::tr("Advanced"))) {  // K-325
+    audioFormatMenu(a);
+    recmore::advancedMenuItems(a);  // K-123 (0.7.7): punch crossfade, capture while armed (and recover), the latency check
+    ImGui::SeparatorText(i18n::tr("Monitoring"));
+    j31::recordingMonitorItems(a);
+    ImGui::Separator();
+    j31::recordingControlsMenu(a);
+    ImGui::EndMenu();
+  }
+  ui::Hint("The audio file format, the punch crossfade, capture while armed, the latency check, monitoring and when the record controls open");
   if (!clips) actionLinkMenuItems(a, RemoteAction::Record);  // N49-12: Clips maps controls from its MIDI map
 }
 

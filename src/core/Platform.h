@@ -23,6 +23,7 @@
 #endif
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <vector>
 #include "DataFolder.h"
@@ -38,6 +39,12 @@ std::string configRoot();
 // folder pointer lives), and the data folder this run uses (core/DataFolder.h; read once).
 std::string defaultConfigRoot();
 const datafolder::Info& dataFolder();
+// K-327: the config root for an environment, pure (configRoot() is this for the process's own
+// environment and data folder): $GRIDLINE_CONFIG_HOME, else $XDG_CONFIG_HOME, else <dataFolder>/config,
+// else (Windows) %APPDATA%, else $HOME/.config (Windows: %USERPROFILE% when HOME is unset). HOME is
+// taken from the environment, never from the account database, so a run with HOME pointed at a
+// scratch folder keeps its settings there. `env` returns "" for an unset variable.
+std::string configRootFor(const std::function<std::string(const char*)>& env, bool windows, const std::string& dataFolder = {});
 // K-64: the calling background worker runs below normal priority, so it never competes with the
 // audio thread or the interface for a core.
 void lowerThisThreadPriority();

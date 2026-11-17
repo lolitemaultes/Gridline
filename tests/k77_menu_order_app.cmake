@@ -216,7 +216,7 @@ check(patterns
 check(view
       "Playlist" "Channel rack" "Piano roll" "Mixer" "Browser" "Plugin picker" "Project picker" "Channel settings" "Master chain" "Pads" "Undo history" "Performance" "Zoom in" "Zoom out" "Close plugin windows" "Close all windows" "Bring all windows back into Gridline" "Window layout" "Reset window layout" "Dark theme" "White text and glyphs" "Theme settings..." "Interface size" "Mixer layout" "Show played chords in the hint bar")
 check(options
-      "Audio settings..." "MIDI settings..." "Theme..." "Plugin manager..." "Song mode" "Live mode" "Arrangements" "Song position jumps" "Metronome" "Plugin delay compensation" "Refreeze out-of-date freezes" "Hibernate unused plugins automatically" "Rest silent instruments" "Woken plugins sleep again after" "Send MIDI clock (master sync)" "Record notes" "Step record" "Record automation" "Recording options" "Typing keyboard to piano" "Typing keyboard options" "Multilink to controllers" "Auto scrolling" "Auto scrolling in pattern editors" "Smooth snapping")
+      "Audio settings..." "MIDI settings..." "Theme..." "Plugin manager..." "Song mode" "Live mode" "Arrangements" "Song position jumps" "Metronome" "Plugin delay compensation" "Refreeze out-of-date freezes" "Hibernate unused plugins automatically" "Rest silent instruments" "Woken plugins sleep again after" "Send MIDI clock (master sync)" "Record notes" "Step record" "Record automation" "Re-enable automation" "Recording options" "Typing keyboard to piano" "Typing keyboard options" "Multilink to controllers" "Auto scrolling" "Auto scrolling in pattern editors" "Smooth snapping")
 check(tools
       "Stop all sound" "Tempo tapper" "Last moved control" "Control moved before it" "Loop starter..." "Swing presets" "Chord progression" "Riff from progression" "Piano roll tools" "Composing" "Render channel to sampled instrument..." "Audio logger" "Cancel recording" "Score logger" "Route channels to free mixer tracks" "Unmute all channels" "Unsolo all mixer tracks" "Close plugin windows" "Macros" "Freeze and hibernate" "Clean up" "AI assistant activity")
 checkTree(tools
@@ -273,8 +273,12 @@ check(slot
 check(plugin
       "Presets" "Load preset from file..." "Save preset to file..." "Copy state" "Paste state" "Randomize" "Reset to default" "Piano roll" "Replace instrument" "Route to a free mixer track" "Clone channel" "Rename..." "Colour" "Delete channel" "Close window")
 check(record
-      # K-123: in groups (What to record, Punch and count-in, Audio takes, Monitoring, Notes)
-      "Audio, into the playlist as audio clips" "Count-in" "Drop silent takes" "Disarm tracks after recording" "Name takes after" "Overdub (keep existing notes)" "Quantize note starts to the snap")
+      # K-123: in groups (What to record, Punch and count-in, Takes, Notes); K-325: the rows set once and
+      # left (file format, punch crossfade, capture while armed, latency check, monitoring, record controls) in Advanced
+      "Audio, into the playlist as audio clips" "Count-in" "Drop silent takes" "Disarm tracks after recording" "Name takes after" "Overdub (keep existing notes)" "Quantize note starts to the snap" "Advanced")
+checkTree(record
+      "Advanced > Audio file format >" "Advanced > Punch crossfade >" "Advanced > Capture while armed >" "Advanced > Latency check..."
+      "Advanced > Input only" "Advanced > Low latency" "Advanced > Record controls >")
 check(knob
       "Copy value" "Paste value")
 # (the marker menu needs a song with markers: the fixture has none; its order is unchanged)

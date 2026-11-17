@@ -63,15 +63,34 @@ void editPatternEvents(App& a, ParamId pid);
 void automationMenuItems(App& a, ParamId pid);
 
 // ---- recording -------------------------------------------------------------------
-// Record toggle: while playing, moving a control writes automation (song mode:
-// into the clip under the playhead, or a new clip; pattern mode: the current
-// pattern's lane). Each gesture becomes one thinned undo step.
+// The automation arm (checkpoint 59, N58-01: one switch: Options > Record automation, the record
+// menu's "Automation" filter and Clips' control-bar arm). While a recording runs (the record button
+// with the transport running; in Clips Arrangement record or Session record), moving a control writes
+// automation (song mode: into the clip under the playhead, or a new clip; pattern mode: the current
+// pattern's lane; Clips: the Arrangement, or the recording clip). Each gesture becomes one thinned
+// undo step. bindAutomationArm: the arm is App::recOptions.automation (kept with the settings).
 bool& automationRecording();
+void bindAutomationArm(bool* arm);
+// N58-01: in Clips, while recording with the arm on, the automation recorder takes every move (a linked
+// controller's too: the MIDI recorder then leaves it alone). automationFromController: set around a
+// linked controller's own setParam (its code records it with the event's time).
+bool automationCapturing(const App& a);
+bool& automationFromController();
 // While true, parameter changes are not recorded as automation (an instrument records them
 // its own way, J-159).
 bool& automationRecordHold();
 // R06-11: a take is writing this parameter now (its control shows the value written, not the curve).
 bool automationTakeActive(ParamId pid);
+// Checkpoint 60 (N59-03): Clips' Arrangement takes still waiting for the launches to be written.
+bool automationTakesPending();
+// Checkpoint 60 (N59-01): the hand override. A move of an automated control while the song plays and
+// no take writes it holds the parameter at the control's value (the live engine only: renders follow
+// the automation). Per-session UI state: never an edit, never saved or shared. Clips keeps it until
+// reenableAutomation (its control-bar button, Options > Re-enable automation); Studio and Tracker end
+// it on stop too; Smooth when the control is let go. See AutomationEditor.cpp.
+bool automationOverridden(ParamId pid);
+int automationOverrideCount();
+void reenableAutomation(App& a);
 
 // ---- piano roll: pattern automation lane: AutomationLane.h (K-171) ----
 

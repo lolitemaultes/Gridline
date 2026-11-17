@@ -217,6 +217,13 @@ bool setLanguage(const std::string& code, const std::string& dir, std::string* e
 
 const std::string& language() { return st().code; }
 
+std::string plural(long n, const char* one, const char* other) {
+  const std::string form = tr(n == 1 ? one : other);
+  const size_t at = form.find("%d");
+  if (at == std::string::npos) return form;
+  return form.substr(0, at) + std::to_string(n) + form.substr(at + 2);
+}
+
 std::string trMessage(const std::string& text) {
   State& s = st();
   if (s.code == "en" || text.empty()) return text;

@@ -159,14 +159,20 @@ void ensureEnv(App& a) {
 
 // J-61: the token is kept in the Keychain (macOS) or a 0600 file in the
 // config folder; a token still in settings.json moves there on first use.
+// K-327: read only when it is needed: the server starting (the user switched it on) or a press on
+// the settings page (Show, Copy). Drawing the page never reads it, and a walk (secrets::NoAccess)
+// gets "" and caches nothing.
 std::string token(App& a) {
   if (M.token.size() < 16) {
+    if (secrets::accessBlocked()) return {};
     M.token = secrets::migrate(a.settings, "mcp.token", Settings::defaultPath(), secrets::Store{}, "mcp-token", [] { return mcp::randomToken(); },
                                &M.tokenStored);
     if (M.token.size() < 16) M.token = mcp::randomToken();
   }
   return M.token;
 }
+
+bool tokenKnown() { return M.token.size() >= 16; }
 
 void newToken(App& a) {
   const std::string t = mcp::randomToken();
@@ -235,12 +241,14 @@ std::string jsonEscaped(const std::string& text) {
   return out;
 }
 
-std::string claudeCodeCommand(App& a) {
+// K-327: `withToken` false: "<token>" in its place (the page shows the command without reading the
+// secret; its Copy button reads it).
+std::string claudeCodeCommand(App& a, bool withToken) {
   const int port = M.ep && M.ep->running() ? M.ep->port() : static_cast<int>(a.settings.getNumber("mcp.port"));
   // K-264: the address a client uses (this computer's address beyond loopback: WSL, a VM)
   const std::string host = mcp::listen::clientHost(M.policy, M.own);
   return "claude mcp add --transport http gridline http://" + host + ":" + std::to_string(port) + "/mcp --header \"Authorization: Bearer " +
-         token(a) + "\"";
+         (withToken ? token(a) : tokenKnown() ? M.token : std::string("<token>")) + "\"";
 }
 
 std::string desktopConfig() {
@@ -469,19 +477,27 @@ void settingsPage(App& a, float fieldW) {
   }
   label("Token");
   {
-    const std::string tok = token(a);
-    std::string shown = M.revealToken ? tok : std::string(tok.size(), '*').substr(0, 24);
-    ui::TextFit(shown.c_str(), std::max(80.0f, fieldW - 150), P.text, false);
+    // K-327: the page shows the token only once it was read (the server started, or Show / Copy was
+    // pressed): opening the page, hovering it or the command palette reading it never reads the
+    // Keychain, which can wait on a macOS password prompt.
+    const bool known = tokenKnown();
+    std::string shown = !known ? std::string(tr("(not read yet: Show or Copy reads it)"))
+                        : M.revealToken ? M.token
+                                        : std::string(M.token.size(), '*').substr(0, 24);
+    ui::TextFit(shown.c_str(), std::max(80.0f, fieldW - 150), known ? P.text : P.textFaint, false);
     ImGui::SameLine();
-    if (ui::TextButton(M.revealToken ? tr("Hide") : tr("Show"), false, 50)) M.revealToken = !M.revealToken;
+    if (ui::TextButton(M.revealToken ? tr("Hide") : tr("Show"), false, 50)) {
+      if (!M.revealToken) token(a);
+      M.revealToken = !M.revealToken;
+    }
     ImGui::SameLine();
-    if (ui::TextButton(tr("Copy"), false, 50, "Copy the token to the clipboard")) ImGui::SetClipboardText(tok.c_str());
+    if (ui::TextButton(tr("Copy"), false, 50, "Copy the token to the clipboard")) ImGui::SetClipboardText(token(a).c_str());
     ImGui::SameLine();
     if (ui::TextButton(tr("New"), false, 50, "Make a new token: assistants with the old one are refused")) newToken(a);
   }
   label("");
   ImGui::TextColored(theme::vec(P.textFaint), "%s %s", tr("Token kept in:"),
-                     M.tokenStored ? tr(secrets::backendName(secrets::defaultBackend())) : tr("settings.json (no secure store)"));
+                     M.tokenStored || !tokenKnown() ? tr(secrets::backendName(secrets::defaultBackend())) : tr("settings.json (no secure store)"));
   label("Export folder");
   {
     static char buf[1024];
@@ -500,10 +516,10 @@ void settingsPage(App& a, float fieldW) {
   ImGui::PushTextWrapPos(0);
   ImGui::TextColored(theme::vec(P.textDim), "%s", tr("Claude Code: run this command once (it includes the token)."));
   ImGui::PopTextWrapPos();
-  const std::string cmd = claudeCodeCommand(a);
+  const std::string cmd = claudeCodeCommand(a, false);
   ui::TextFit(cmd.c_str(), std::max(80.0f, ImGui::GetContentRegionAvail().x - 70), P.textFaint, true);
   ImGui::SameLine();
-  if (ui::TextButton(tr("Copy##cc"), false, 60)) ImGui::SetClipboardText(cmd.c_str());
+  if (ui::TextButton(tr("Copy##cc"), false, 60)) ImGui::SetClipboardText(claudeCodeCommand(a, true).c_str());
   ImGui::PushTextWrapPos(0);
   ImGui::TextColored(theme::vec(P.textDim), "%s",
                      tr("Claude Desktop: add this server to claude_desktop_config.json. It starts a bridge that connects to the running Gridline."));

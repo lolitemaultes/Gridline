@@ -273,6 +273,9 @@ class Document {
   // do not follow the tempo keep their audio (refitClipsToTempo) in the same
   // command. Returns the (applied) command to record.
   CommandPtr applyWithTempoRefit(CommandPtr cmd);
+  // Checkpoint 58 (N57-01): after `cmd` (applied), a kept send whose track no longer plays into its
+  // return goes back (trackmodes::restoreKeptSends) in the same command. `cmd` itself when none is stale.
+  CommandPtr withKeptSends(CommandPtr cmd);
   // Records a change of song.modLinks (no-op when equal).
   void setModLinks(std::vector<ModLink> after, const std::string& label);
   Song song_;

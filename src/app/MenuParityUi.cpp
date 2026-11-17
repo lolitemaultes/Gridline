@@ -293,8 +293,9 @@ void toolsMacroItems(App& a) {
              : t ? std::string("Live area ready: each clip once per track at the song start") : std::string("Nothing to prepare"));
   }
   if (!livelook::active(a)) ui::Hint("Puts every different clip of each track once into a live area at the song start (the song moves right)");
-  // Checkpoint 55 (N54-08): Clips' terms (its audio clips and their samples, not channels).
-  if (ImGui::BeginMenu(clips ? i18n::tr("Time mode of audio clips") : i18n::tr("Audio clip channels"))) {
+  // Checkpoint 59 (N58-12): Clips offers no choice of stretch engine (the user's rule: one stretch and
+  // pitch engine for every material); Studio keeps its FL-style channel time modes.
+  if (!clips && ImGui::BeginMenu(i18n::tr("Audio clip channels"))) {
     timeModeItems(a);
     ImGui::EndMenu();
   }

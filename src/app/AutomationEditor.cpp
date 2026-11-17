@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include "../core/Automation.h"
 #include "../core/AutomationEdit.h"
@@ -1368,7 +1369,7 @@ void drawToolbar(App& a, const AutomationClip& ac) {
   if (ui::TextButton("SCALE", E.scaleOpen, 0, "Scale levels: centre, multiplier, offset")) E.scaleOpen = !E.scaleOpen, E.lfoOpen = E.thinOpen = false;
   ImGui::SameLine(0, 2);
   bool& rec = automationRecording();
-  if (ui::IconButton("aerec", ui::Icon::Record, rec, fh, "Record automation: moving a control while playing writes points", P.danger)) rec = !rec;
+  if (ui::IconButton("aerec", ui::Icon::Record, rec, fh, "Record automation: moving a control while recording writes points", P.danger)) rec = !rec;
   // Right: point count / selection.
   ImGui::SameLine(0, theme::kS4);
   float room = ImGui::GetContentRegionAvail().x;
@@ -1444,12 +1445,113 @@ struct Recording {
   // (normalized; < 0 unknown). The take keeps it before the touch point and Touch returns to it.
   double base = -1;
   bool fresh = false;
+  // Checkpoint 59 (N58-01): Clips' Arrangement record: `pts` are at arrangement ticks, and the take is
+  // written into the Arrangement (on the control's lane) once the launches recorded with it are.
+  bool arrangement = false;
 };
 std::vector<Recording> recs;
+std::vector<Recording> gHeld;  // N58-01: Arrangement takes waiting for the launches' capture to be written
 std::map<uint64_t, double> gLaneBase;  // R06-03: each lane parameter's value before a take (normalized)
-bool recordOn = false;
+bool recordOn = true;
+bool* gArm = &recordOn;  // N58-01: the one automation arm (App::recOptions.automation once the app runs)
+bool gFromController = false;  // N58-01: a linked controller's move (its own code records it, with its event time)
 bool recordHold = false;
 bool observerInstalled = false;
+
+// ---- Checkpoint 60 (N59-01): the hand override of automated controls -------------------------
+// Touching a control whose parameter has automation while the song plays and no take writes it
+// overrides it: the live builder holds the parameter at the control's own value (its automation
+// lanes play that value instead of their curve) until the override ends. The hand value is an
+// ordinary edit of the control (stored, undoable, shared, as any edit of an automated control);
+// the override itself is per-session UI state: never an edit, never saved, never sent to peers, and
+// renders and exports never see it (their builders are their own). It ends:
+//   Clips  - on Re-enable automation (the control bar's button beside the arm, or Options), as the
+//            session-style reference keeps an override until it is re-enabled (stopping keeps it);
+//   Studio, Tracker - on stop (the next playback reads the automation again) or Re-enable;
+//   Smooth - when the control is let go (its Read convention: a held control follows the hand, a
+//            released one its curve) or Re-enable. Touch, Latch and Write lanes write as before.
+// A take writing the parameter ends its override; a new or opened project clears them all.
+std::vector<ParamId> gOverride;
+double gOverrideTouch = 0;   // a.now of the last overriding move (Smooth: a controller's moves hold briefly)
+uint64_t gOverrideEpoch = 0;  // the project the overrides belong to (Document::projectEpoch)
+bool gOverrideWasPlaying = false;
+
+// The parameters some automation drives (automation clips, pattern lanes), by packed id; made
+// again only when the song changes.
+bool hasAutomation(const App& a, ParamId pid) {
+  static uint64_t rev = ~0ull;
+  static const Song* song = nullptr;
+  static std::set<uint64_t> keys;
+  const Song& s = a.doc.song();
+  if (rev != a.doc.revision() || song != &s) {
+    rev = a.doc.revision(), song = &s;
+    keys.clear();
+    for (const AutomationClip& ac : s.automations)
+      if (ac.owner != kNoId && !ac.points.empty()) keys.insert(ParamId{ac.owner, ac.index}.packed());
+    for (const Pattern& p : s.patterns) {
+      for (const PatternAutomation& l : p.automation)
+        if (l.owner != kNoId && !l.points.empty()) keys.insert(ParamId{l.owner, l.index}.packed());
+    }
+  }
+  return pid.owner != kSongId && keys.count(pid.packed()) > 0;
+}
+
+bool overridden(ParamId pid) { return std::find(gOverride.begin(), gOverride.end(), pid) != gOverride.end(); }
+
+void holdOverride(App& a, ParamId pid) {
+  const Song& s = a.doc.song();
+  const auto d = describeParam(s, pid);
+  const auto v = getParam(s, pid);
+  if (d && v) a.builder.holdAutomation(pid, d->toNormalized(*v));
+}
+
+void overrideTouch(App& a, ParamId pid) {
+  if (!hasAutomation(a, pid)) return;
+  if (!overridden(pid)) gOverride.push_back(pid);
+  gOverrideTouch = a.now;
+  holdOverride(a, pid);
+}
+
+void releaseOverride(App& a, ParamId pid) {
+  const auto it = std::find(gOverride.begin(), gOverride.end(), pid);
+  if (it == gOverride.end()) return;
+  gOverride.erase(it);
+  a.builder.releaseAutomation(pid);
+}
+
+void releaseAllOverrides(App& a) {
+  for (const ParamId& pid : gOverride) a.builder.releaseAutomation(pid);
+  gOverride.clear();
+}
+
+// Each frame: the held values follow the controls' stored values (an undo, a peer's edit), and
+// the overrides end as the layout's convention says.
+void overrideTick(App& a) {
+  const bool playing = a.engine.playing();
+  const bool stopped = gOverrideWasPlaying && !playing;
+  gOverrideWasPlaying = playing;
+  if (gOverrideEpoch != a.doc.projectEpoch()) {
+    gOverrideEpoch = a.doc.projectEpoch();
+    releaseAllOverrides(a);
+  }
+  if (gOverride.empty()) return;
+  if (livelook::active(a)) {
+    // Clips: kept until re-enabled
+  } else if (logicplug::active(a)) {
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && a.now - gOverrideTouch > 0.35) releaseAllOverrides(a);
+  } else if (stopped) {
+    releaseAllOverrides(a);
+  }
+  for (size_t i = 0; i < gOverride.size();) {
+    if (!describeParam(a.doc.song(), gOverride[i]) || !hasAutomation(a, gOverride[i])) {  // its automation (or the control) is gone
+      a.builder.releaseAutomation(gOverride[i]);
+      gOverride.erase(gOverride.begin() + static_cast<long>(i));
+      continue;
+    }
+    holdOverride(a, gOverride[i]);
+    ++i;
+  }
+}
 
 // K-112B: the track whose lane shows `pid` and its automation mode (0 Off, 1 Read, 2 Touch,
 // 3 Latch, 4 Write); -1 when no lane shows it.
@@ -1490,9 +1592,22 @@ void commitRecording(App& a, Recording& r) {
       lane = l->points;
       for (auto& q : rec) q.value = static_cast<float>(paramToAutomation(*l, q.value));  // J-173: into the clip's range
     }
+    // Checkpoint 60 (N59-02): Clips' Session record: a later move of the same take keeps the curve
+    // before it as it was, up to the tick before the move (no ramp across the pause).
+    if (livelook::active(a) && !lane.empty() && lane.front().pos < from && from > 0) {
+      rec.insert(rec.begin(), AutoPoint{from - 1, static_cast<float>(ae::valueAt(lane, static_cast<double>(from - 1))), 0, AutoShape::Hold});
+      from -= 1;
+    }
     ae::mergeRecorded(lane, rec, from, to, tol);
     ParamId pid = r.pid;
     a.doc.editPattern(r.patternId, "record automation", [&](Pattern& x) { setPatternLane(x, pid.owner, pid.index, lane); });
+    return;
+  }
+  if (r.arrangement) {  // N58-01: into Clips' Arrangement, on the control's lane (never the clip grid)
+    const ParamId pid = r.pid;
+    const std::string name = paramDisplayName(s, pid);
+    ae::Points pts = r.pts;
+    a.doc.editSong("record automation", [&](Song& x) { (void)trackmodes::recordArrangementAutomation(x, pid.owner, pid.index, name, pts, tol); });
     return;
   }
   const AutomationClip* ac = r.autoId != kNoId ? s.automation(r.autoId) : nullptr;
@@ -1549,18 +1664,84 @@ void commitRecording(App& a, Recording& r) {
   });
 }
 
+// Checkpoint 59 (N58-01): whether a recording runs, and where its automation goes. Clips: Session record
+// writes into the recording clip (at its content tick), Arrangement record (F9) into the Arrangement (at
+// the arrangement tick the launches recorded with it land at); the clip grid playing without recording
+// records nothing. (The other layouts record moves with the recording's own takes: onParamSet.)
+struct RecordWhere {
+  bool on = false;
+  bool arrangement = false;
+  bool session = false;
+  ObjectId pattern = kNoId;
+  Tick tick = 0;
+};
+// `owner`: the control's owner (a channel or mixer track); Session record takes the moves of its own
+// track's controls (kNoId: any).
+RecordWhere recordWhere(const App& a, ObjectId owner = kNoId) {
+  RecordWhere w;
+  if (!a.engine.playing() || a.engine.countingIn()) return w;
+  if (livelook::active(a)) {
+    ObjectId pat = kNoId;
+    Tick len = 0;
+    double origin = 0;
+    const Clip* sc = a.doc.song().clip(livelook::sessionRecordClip(a));
+    const bool own = sc && (owner == kNoId || trackmodes::controlTrack(a.doc.song(), owner) == sc->track);
+    if (own && livelook::sessionRecordTarget(a, pat, len, origin)) {
+      const Clip* c = sc;
+      const double at = std::fmod(std::max(0.0, a.engine.position() - origin), static_cast<double>(std::max<Tick>(1, len)));
+      w.on = w.session = true;
+      w.pattern = pat;
+      w.tick = static_cast<Tick>(at) + (c ? c->offset : 0);
+      return w;
+    }
+    double t = 0;
+    if (livelook::arrangementRecordTick(a, t)) {
+      w.on = w.arrangement = true;
+      w.tick = static_cast<Tick>(std::llround(t));
+    }
+  }
+  return w;
+}
+
 void onParamSet(App& a, ParamId pid, double value) {
   if (recordHold || !a.engine.playing()) return;
   const Song& s = a.doc.song();
   int mode = 1;
   const int laneTr = laneTrackOf(s, pid, &mode);
   const bool byMode = laneTr >= 0 && mode >= 2 && a.engine.mode() != PlayMode::Pattern;  // K-112B: Touch, Latch, Write
-  if (!recordOn && !byMode) return;
   auto d = describeParam(s, pid);
   if (!d) return;
   const double n = d->toNormalized(value);
-  const bool pattern = a.engine.mode() == PlayMode::Pattern;
-  const Tick t = static_cast<Tick>(a.engine.position());
+  // Checkpoint 59 (N58-01): the automation arm records moves while a recording runs, in every layout:
+  // one switch (Clips' control-bar arm, Options > Record automation, the record menu's filter).
+  // Studio and Tracker: a move joins the recording as a linked controller's does (the recording's
+  // automation target decides where it goes). Smooth: its tracks' automation modes (above) and its
+  // linked controllers record it, as before. Clips: below.
+  // N59-01: a move no take writes overrides the control's automation; one a take writes ends it.
+  // (A linked controller's move is written by the MIDI recorder while a recording runs.)
+  const bool controllerWrites = gFromController && *gArm && a.recorder.active();
+  if (!byMode && !livelook::active(a)) {
+    if (*gArm && !gFromController && !logicplug::active(a) && a.recorder.active()) a.recorder.controller(pid, n, a.recordTick());
+    if (controllerWrites || (*gArm && !logicplug::active(a) && a.recorder.active())) releaseOverride(a, pid);
+    else overrideTouch(a, pid);
+    return;
+  }
+  const RecordWhere where = recordWhere(a, pid.owner);
+  if (!(*gArm && where.on) && !byMode) {
+    if (controllerWrites) releaseOverride(a, pid);
+    else overrideTouch(a, pid);
+    return;
+  }
+  releaseOverride(a, pid);
+  bool pattern = a.engine.mode() == PlayMode::Pattern;
+  ObjectId patternId = a.curPattern;
+  Tick t = static_cast<Tick>(a.engine.position());
+  const bool arrangement = !byMode && where.arrangement;
+  if (!byMode && where.session) {  // Clips' Session record: into the recording clip, at its content tick
+    pattern = true, patternId = where.pattern, t = where.tick;
+  } else if (arrangement) {
+    pattern = false, t = where.tick;
+  }
   Recording* r = nullptr;
   for (auto& x : recs)
     if (x.pid == pid) r = &x;
@@ -1570,17 +1751,25 @@ void onParamSet(App& a, ParamId pid, double value) {
     recs.erase(recs.begin() + (r - recs.data()));
     r = nullptr;
   }
+  if (r && (r->arrangement != arrangement || r->pattern != pattern || (pattern && r->patternId != patternId))) {  // (where it records changed)
+    Recording& rr = *r;
+    a.doc.amendStep(rr.step, [&] { commitRecording(a, rr); });
+    recs.erase(recs.begin() + (r - recs.data()));
+    r = nullptr;
+  }
   if (!r) {
     Recording nr;
     nr.pid = pid;
     nr.pattern = pattern;
-    nr.patternId = a.curPattern;
-    if (!pattern)  // the clip of this target under the playhead
+    nr.patternId = patternId;
+    nr.arrangement = arrangement;
+    if (!pattern && !arrangement) {  // the clip of this target under the playhead
       for (const auto& c : s.playlist) {
         const AutomationClip* ac = c.kind == ClipKind::Automation ? s.automation(c.source) : nullptr;
         if (!ac || ac->owner != pid.owner || ac->index != pid.index || c.muted) continue;
         if (t >= c.start && t < c.start + s.clipLength(c)) nr.autoId = ac->id, nr.placement = c.id;
       }
+    }
     if (byMode) {
       nr.laneTrack = laneTr, nr.latch = mode >= 3;
       // R06-03: the parameter's first take keeps the value it had before the touch, from the song start.
@@ -1609,6 +1798,7 @@ void recorderTick(App& a) {
     observerInstalled = true;
     a.doc.paramObserver = [&a](ParamId pid, double v) { onParamSet(a, pid, v); };
   }
+  overrideTick(a);  // N59-01
   const Song& s = a.doc.song();
   // R06-03: each lane parameter's value while no take is writing it (the value a take returns to).
   for (const PlaylistTrack& t : s.tracks) {
@@ -1650,6 +1840,12 @@ void recorderTick(App& a) {
       nr.step = a.doc.groupDepth() == 0 ? a.doc.history().stateSerial() : 0;
       recs.push_back(nr);
     }
+  // N58-01: the held Arrangement takes go in once the capture wrote the launches.
+  if (!gHeld.empty() && !livelook::arrangementCapturing(a)) {
+    std::vector<Recording> held = std::move(gHeld);
+    gHeld.clear();
+    for (Recording& r : held) a.doc.amendStep(r.step, [&] { commitRecording(a, r); });
+  }
   // R05-05: Touch writes while the control is held, moving or not (a held mouse button).
   const bool held = ImGui::IsMouseDown(ImGuiMouseButton_Left);
   for (auto& x : recs)  // Latch / Write (and a held Touch): the take holds its last value while the song plays on
@@ -1660,7 +1856,8 @@ void recorderTick(App& a) {
   for (size_t i = 0; i < recs.size();) {
     const bool laneTake = recs[i].laneTrack >= 0;
     const bool touchLet = laneTake && !recs[i].latch;  // R05-05: a Touch take ends when the control is let go
-    const bool ends = !a.engine.playing() || (touchLet ? !held : (!recs[i].latch && a.now - recs[i].last > 0.35)) || (!recordOn && !laneTake) ||
+    const bool ends = !a.engine.playing() || (touchLet ? !held : (!recs[i].latch && a.now - recs[i].last > 0.35)) ||
+                      (!laneTake && (!*gArm || !recordWhere(a, recs[i].pid.owner).on)) ||  // N58-01: the arm off, or the recording stopped
                       static_cast<Tick>(a.engine.position()) + 1 < recs[i].lastPos;  // a jump back (a cycle pass) ends the take
     if (ends) {
       if ((recs[i].latch || touchLet) && recs[i].lastPos > recs[i].pts.back().pos)  // the held value up to where the take ended
@@ -1683,6 +1880,25 @@ void recorderTick(App& a) {
       }
       Recording r = recs[i];
       recs.erase(recs.begin() + static_cast<long>(i));
+      if (r.arrangement && livelook::arrangementCapturing(a)) {
+        // N58-01: a new lane moves the tracks under it, so the take waits until the launches recorded
+        // with it are in the arrangement (when recording stops). Takes of one control join.
+        bool joined = false;
+        for (Recording& h : gHeld) {
+          if (h.pid == r.pid && !joined) {
+            // Checkpoint 60 (N59-02): a hold point, so the curve keeps the last move's value up to the
+            // next move instead of ramping across the pause between them.
+            if (!h.pts.empty() && !r.pts.empty() && r.pts.front().pos - 1 > h.pts.back().pos)
+              h.pts.push_back(AutoPoint{r.pts.front().pos - 1, h.pts.back().value, 0, AutoShape::Hold});
+            h.pts.insert(h.pts.end(), r.pts.begin(), r.pts.end());
+            h.step = r.step;
+            joined = true;
+          }
+        }
+        if (!joined) gHeld.push_back(r);
+        a.doc.endGesture();
+        continue;
+      }
       a.doc.amendStep(r.step, [&] {
         commitRecording(a, r);  // K-141: with the knob move, one undo step
         // R06-03: a lane take writes automation, not the control's own value: that goes back to
@@ -1708,8 +1924,15 @@ void recorderTick(App& a) {
 
 // =================================================================== API ====
 
-bool& automationRecording() { return recordOn; }
+bool& automationRecording() { return *gArm; }
+void bindAutomationArm(bool* arm) { gArm = arm ? arm : &recordOn; }
+bool& automationFromController() { return gFromController; }
+bool automationCapturing(const App& a) { return *gArm && livelook::active(a) && recordWhere(a).on; }
 bool& automationRecordHold() { return recordHold; }
+bool automationTakesPending() { return !gHeld.empty(); }
+bool automationOverridden(ParamId pid) { return overridden(pid); }
+int automationOverrideCount() { return static_cast<int>(gOverride.size()); }
+void reenableAutomation(App& a) { releaseAllOverrides(a); }
 bool automationTakeActive(ParamId pid) {
   for (const auto& x : recs)
     if (x.pid == pid) return true;
@@ -2028,7 +2251,8 @@ void automationMenuItems(App& a, ParamId pid) {
         if (p.pos <= at) p.value = v;
     });
   }
-  ImGui::MenuItem(i18n::tr("Record automation"), nullptr, &recordOn);
+  ImGui::MenuItem(i18n::tr("Record automation"), nullptr, gArm);
+  if (overridden(pid) && ImGui::MenuItem(i18n::tr("Re-enable automation"))) releaseOverride(a, pid);  // N59-01: this control only
 }
 
 void devAutomationEditor(App& a, int mode) {

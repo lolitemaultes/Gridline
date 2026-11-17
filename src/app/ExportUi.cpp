@@ -30,6 +30,7 @@
 #include <mutex>
 #include <thread>
 #include "../../third_party/imgui/imgui.h"
+#include "../../third_party/imgui/imgui_internal.h"  // (N58-11: the Render dialog's measuring frames)
 #include "../core/Automation.h"
 #include "../core/Log.h"
 #include "../core/flp/Flp.h"
@@ -259,12 +260,12 @@ bool applyScope(const App& a, RenderJob& r, std::string* why) {
       r.scope = RenderScope::Range;
       r.start = a.playlist.selStart;
       r.end = a.playlist.selEnd;
-      if (r.end <= r.start) return why && (*why = "no time selection in the playlist", false);
+      if (r.end <= r.start) return why && (*why = livelook::active(a) ? "no time selection in the Arrangement" : "no time selection in the playlist", false);
       break;
     case 3: {
       r.scope = RenderScope::Range;
       const auto& m = s.markers;
-      if (m.size() < 2) return why && (*why = "needs two playlist markers", false);
+      if (m.size() < 2) return why && (*why = livelook::active(a) ? "needs two markers" : "needs two playlist markers", false);
       const int A = std::clamp(dlg.markerA, 0, static_cast<int>(m.size()) - 1), B = std::clamp(dlg.markerB, 0, static_cast<int>(m.size()) - 1);
       r.start = m[static_cast<size_t>(A)].pos;
       r.end = m[static_cast<size_t>(B)].pos;
@@ -272,7 +273,7 @@ bool applyScope(const App& a, RenderJob& r, std::string* why) {
       break;
     }
     default:
-      if (s.lengthTicks() <= 0) return why && (*why = logicplug::active(a) ? "the project is empty" : "the playlist is empty", false);  // R06-13
+      if (s.lengthTicks() <= 0) return why && (*why = logicplug::active(a) ? "the project is empty" : livelook::active(a) ? "the Arrangement is empty" : "the playlist is empty", false);  // R06-13
       break;
   }
   return true;
@@ -548,9 +549,30 @@ void drawRenderDialog(App& a) {
   const auto& P = pal();
   const Song& song = a.doc.song();
   centerNext(ImVec2(780, 0));
+  // Checkpoint 59 (N58-11): the auto-sized dialog takes a few frames to measure its two columns (the
+  // left one showed clipped for about 3 frames); it stays invisible until its size and its body's hold
+  // still (at most 12 frames), so it appears whole.
+  constexpr int kShown = 12;
+  static int settle = 0, still = 0, shownFrame = -2;
+  static ImVec2 lastSize(0, 0), bodySize(0, 0), lastBody(0, 0);
+  if (shownFrame != ImGui::GetFrameCount() - 1) {  // just opened
+    settle = 0, still = 0;
+    lastSize = bodySize = lastBody = ImVec2(0, 0);
+  }
+  shownFrame = ImGui::GetFrameCount();
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
   bool vis = ImGui::Begin(i18n::tr("Render###render"), &dlg.open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
+  {
+    const ImVec2 sz = ImGui::GetWindowSize();
+    // shown from the 5th frame once both sizes have held for 2 frames, and from the 13th in any case
+    const bool same = sz.x == lastSize.x && sz.y == lastSize.y && bodySize.x == lastBody.x && bodySize.y == lastBody.y;
+    still = same && sz.x > 0 && bodySize.x > 0 ? still + 1 : 0;
+    settle = settle >= 4 && still >= 2 ? kShown : settle + 1;
+    lastSize = sz, lastBody = bodySize;
+    // ImGui's own measuring frames (the window and its body are laid out, not drawn), while not settled
+    if (ImGuiWindow* w = ImGui::GetCurrentWindow(); settle < kShown && w->HiddenFramesCannotSkipItems < 2) w->HiddenFramesCannotSkipItems = 2;  // (counted down before it is read)
+  }
   ImGui::PopStyleVar();
   if (!vis) {
     ImGui::End();
@@ -562,6 +584,8 @@ void drawRenderDialog(App& a) {
   const bool files = dlg.dest == static_cast<int>(Dest::Files);
   // J-54: on a short screen the two columns scroll; the footer stays visible.
   ui::BeginDialogBody("##renderbody");
+  bodySize = ImGui::GetWindowSize();
+  if (ImGui::GetScrollX() != 0.0f) ImGui::SetScrollX(0.0f);  // N58-11: the body only scrolls down (it could open scrolled right)
   // ---- left column
   ImGui::BeginGroup();
   ui::BeginSection("EXPORT TYPE", colW);
@@ -569,7 +593,8 @@ void drawRenderDialog(App& a) {
     formLabel("Render");
     // R05-11: in the Tracks layout the time selection is the cycle area, and its range is shown.
     const bool tracksLook = logicplug::active(a);
-    const char* scopes[] = {"Song", "Pattern", tracksLook ? "Cycle area" : "Time selection", "Marker range"};
+    // Checkpoint 58 (N57-09): Clips renders its Arrangement (its word, as the rest of the layout).
+    const char* scopes[] = {livelook::active(a) ? "Arrangement" : "Song", "Pattern", tracksLook ? "Cycle area" : "Time selection", "Marker range"};
     combo("##scope", &dlg.scope, scopes, 4, colW - 148);
     if (dlg.scope == 2 && tracksLook) {
       const PlaylistState& pst = a.playlist;
@@ -593,7 +618,7 @@ void drawRenderDialog(App& a) {
       for (const auto& n : names) items.push_back(n.c_str());
       if (items.empty()) {
         formLabel("Markers");
-        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Add two playlist markers first"));
+        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(livelook::active(a) || tracksLook ? "Add two markers first" : "Add two playlist markers first"));
       } else {
         formLabel("From marker");
         combo("##ma", &dlg.markerA, items.data(), static_cast<int>(items.size()), colW - 148);
@@ -608,7 +633,7 @@ void drawRenderDialog(App& a) {
     }
     if (dlg.scope == 2 && a.playlist.selEnd <= a.playlist.selStart) {
       formLabel("");
-      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Select a time range in the playlist ruler"));
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(livelook::active(a) ? "Select a time range in the Arrangement's ruler" : "Select a time range in the playlist ruler"));
     }
     formLabel("Tail");
     int tail = static_cast<int>(s.render.tail);
@@ -627,6 +652,10 @@ void drawRenderDialog(App& a) {
     ImGui::PushFont(livelook::numFont(a), theme::kFontNumber + 1);  // K-112c: sans in Live
     ImGui::Text("%d:%05.2f", static_cast<int>(sec / 60), std::fmod(sec, 60.0));
     ImGui::PopFont();
+    if (livelook::active(a) && dlg.scope == 0 && sec <= 0.0) {  // checkpoint 58 (N57-09): say why it is 0:00
+      ImGui::SameLine(0, 10);  // on the Length line, inside the column
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("the Arrangement is empty"));
+    }
     if (!song.mixer.empty() && song.mixer[0].muted) {
       ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("The master track is muted: the render will be silent"));
     }
@@ -636,7 +665,8 @@ void drawRenderDialog(App& a) {
   {
     formLabel("Render to", livelook::active(a) ? 132.0f : 110.0f);  // K-112c (round 32): on the value column in Clips
     const char* dests[] = {"Files", logicplug::active(a) ? "Audio region" : "Audio clip", logicplug::active(a) ? "Audio editor" : "Loupe"};  // (R06-13)  // R04-13: the Tracks layout's word
-    ui::Segmented("dest", dests, 3, &dlg.dest, 76);
+    // Checkpoint 58 (N57-09): in Clips the three segments end with the fields above (76 ran 20 px past them).
+    ui::Segmented("dest", dests, 3, &dlg.dest, livelook::active(a) ? 69 : 76);
     if (!files) {
       ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("32-bit float WAV in %s"), theme::fitText(renderedFolder(a).c_str(), colW - 140));
       if (dlg.dest == 1 && dlg.scope == 1) ImGui::Checkbox(i18n::tr("Replace the pattern's clips (render and replace)"), &dlg.replacePattern);
@@ -746,9 +776,9 @@ void drawRenderDialog(App& a) {
       ui::ToggleRow(i18n::tr("Also render the full mix"), &s.stemsIncludeMaster);
       ImGui::Unindent(18);
     }
-    const bool tracksWords = logicplug::active(a);  // R04-13: the Tracks layout names them tracks and regions
+    const bool tracksWords = logicplug::active(a) || livelook::active(a);  // R04-13: the Tracks layout names them tracks and regions (58: Clips too)
     ui::ToggleRow(tracksWords ? i18n::tr("Split tracks") : i18n::tr("Split playlist tracks"), &s.splitPlaylist);
-    ui::Tooltip(tracksWords ? "One file per track that holds regions" : "One file per playlist track that holds clips");
+    ui::Tooltip(livelook::active(a) ? "One file per track that holds clips" : tracksWords ? "One file per track that holds regions" : "One file per playlist track that holds clips");
     ui::ToggleRow(tracksWords ? i18n::tr("Split track groups") : i18n::tr("Split playlist track groups"), &s.splitPlaylistGroups);  // J-31
     ui::Tooltip(tracksWords ? "One file per track group (a group track and the tracks it holds)"
                             : "One file per playlist track group (a group track and the tracks it holds)");
@@ -757,7 +787,7 @@ void drawRenderDialog(App& a) {
     ui::ToggleRow(i18n::tr("Enable insert effects"), &s.render.insertEffects);
     ImGui::BeginDisabled(!files);
     ui::ToggleRow(i18n::tr("Save tempo information (WAV)"), &s.tempoInfo);
-    ui::ToggleRow(i18n::tr(logicplug::active(a) ? i18n::N_("Markers as WAV cue points") : i18n::N_("Playlist markers as WAV cue points")), &s.markers);  // R06-13
+    ui::ToggleRow(i18n::tr(tracksWords ? i18n::N_("Markers as WAV cue points") : i18n::N_("Playlist markers as WAV cue points")), &s.markers);  // R06-13
     ImGui::EndDisabled();
     ui::ToggleRow(i18n::tr("Normalize"), &s.normalize);
     if (s.normalize) {

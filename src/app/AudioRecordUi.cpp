@@ -1,5 +1,6 @@
 // Gridline — audio input & recording UI (J-8). See AudioRecordUi.h.
 #include "../engine/TimeStretch.h"
+#include "../../third_party/imgui/imgui_internal.h"
 #include "../core/I18n.h"
 #include "J31Ui.h"
 #include "LiveLook.h"
@@ -326,10 +327,11 @@ void audioRecordFilterMenu(App& a) {
   const Song& s = a.doc.song();
   int armed = 0;
   for (const auto& m : s.mixer) armed += m.armed && m.input >= 0;
-  if (armed == 0)
-    ImGui::TextDisabled("%s", i18n::tr("No mixer track is armed for audio"));
-  else
-    ImGui::TextDisabled(i18n::tr("%d mixer track%s armed for audio"), armed, armed == 1 ? "" : "s");
+  // K-325: a note on the rows' label column (it was loose text at the menu's left edge); not a row.
+  const std::string note = armed == 0 ? std::string(i18n::tr("No mixer track is armed for audio"))
+                                      : i18n::plural(armed, "%d mixer track armed for audio", "%d mixer tracks armed for audio");
+  if (const ImGuiWindow* w = ImGui::GetCurrentWindow()) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + w->DC.MenuColumns.OffsetLabel);
+  ImGui::TextDisabled("%s", note.c_str());
 }
 
 // K-123: the audio file format submenu (Recording options > Audio takes).
@@ -604,12 +606,15 @@ void audioClipMenu(App& a, ObjectId id) {
                                   ? stretch::choiceOf(stretch::modeOf(ch->plugin.params[pp::SmpStretchMode]))
                                   : stretch::Mode::Resample;
     // J-87 / J-153 / J-157: Stretch (pitch kept), Rubber Band or Resample, the current one checked.
-    for (const stretch::Mode m : stretch::kChoices) {
-      if (ImGui::MenuItem(i18n::tr(stretch::modeName(m)), nullptr, m == cur))
-        editSongClip(a, "stretch mode", [&](Song& x) { setClipStretchMode(x, id, clip.stretch, static_cast<int>(m)); });
-      ui::Tooltip(stretch::modeHint(m));
+    // Checkpoint 59 (N58-12): not in Clips (one stretch and pitch engine, no per-material modes).
+    if (!livelook::active(a)) {
+      for (const stretch::Mode m : stretch::kChoices) {
+        if (ImGui::MenuItem(i18n::tr(stretch::modeName(m)), nullptr, m == cur))
+          editSongClip(a, "stretch mode", [&](Song& x) { setClipStretchMode(x, id, clip.stretch, static_cast<int>(m)); });
+        ui::Tooltip(stretch::modeHint(m));
+      }
+      ImGui::Separator();
     }
-    ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("Half as long"))) editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, clip.stretch * 0.5, keep); });
     if (ImGui::MenuItem(i18n::tr("Twice as long"))) editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, clip.stretch * 2.0, keep); });
     if (ImGui::MenuItem(i18n::tr("Original length"), nullptr, false, clip.stretch != 1.0))

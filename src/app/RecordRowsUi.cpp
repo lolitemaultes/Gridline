@@ -1,6 +1,7 @@
 // Gridline - K-123 (0.7.7 recording rows). See RecordRowsUi.h.
 #include "RecordRowsUi.h"
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -14,6 +15,7 @@
 #include "LiveLook.h"
 #include "MidiArm.h"
 #include "RecordCard.h"
+#include "RecordLook.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -228,71 +230,67 @@ void takesList(App& a, bool recording) {
   const Song& s = a.doc.song();
   const std::vector<int> tracks = takes::tracksWithTakes(s);
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  ImGui::Dummy(ImVec2(0, 8));
-  {
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float w = ImGui::GetContentRegionAvail().x;
-    const char* t = i18n::tr("Takes on the tracks");
-    dl->AddText(a.fontBold, theme::kFontLabel, p, P.textFaint, t);
-    const float tw = a.fontBold->CalcTextSizeA(theme::kFontLabel, FLT_MAX, 0, t).x;
-    dl->AddLine(ImVec2(p.x + tw + 8, p.y + 7), ImVec2(p.x + w, p.y + 7), P.line);
-    ImGui::Dummy(ImVec2(0, 16));
-  }
+  reclook::rlSection("TAKES ON THE TRACKS");  // K-325: a section of the Takes page
   if (tracks.empty()) {
-    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No takes yet: loop passes of a recording land here, one row per take."));
+    reclook::rlValue(i18n::tr("No takes yet: loop passes of a recording land here, one row per take."), P.textFaint);
     return;
   }
-  const float rowH = 24;
+  // K-325: one grid for the rows: the name, the bars, then from the right Audition and Solo (one
+  // width, so nothing moves when Audition reads Stop) and the rating dots just before them.
+  const bool trk = reclook::tracker();
+  const float fs = trk ? ImGui::GetFontSize() : theme::kFontBody - 1, cs = trk ? ImGui::GetFontSize() : theme::kFontCaption;
+  const float bh = reclook::buttonHeight(), rowH = std::max(24.0f, bh + 4);
+  const float bw = std::max({reclook::buttonWidth("Audition"), reclook::buttonWidth("Stop"), reclook::buttonWidth("Solo")});
+  const float dotStep = 12.0f, dotR = 4.0f, dotsW = 2 * dotStep + 2 * dotR;
   for (int tr : tracks) {
     ImGui::PushID(tr);
     const std::vector<takes::TakeInfo> list = takes::takeList(s, tr);
     {  // the track's name
       const ImVec2 p = ImGui::GetCursorScreenPos();
-      dl->AddText(a.fontBold, theme::kFontBody - 1, ImVec2(p.x, p.y + 1), P.text, trackLabel(s, tr).c_str());
+      dl->AddText(a.fontBold, fs, ImVec2(p.x, p.y + 1), P.text, trackLabel(s, tr).c_str());
       const std::string n = std::to_string(list.size()) + (list.size() == 1 ? " take" : " takes");
-      const float nx = p.x + a.fontBold->CalcTextSizeA(theme::kFontBody - 1, FLT_MAX, 0, trackLabel(s, tr).c_str()).x + 8;
-      dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(nx, p.y + 2), P.textFaint, n.c_str());
-      ImGui::Dummy(ImVec2(0, 20));
+      const float nx = p.x + a.fontBold->CalcTextSizeA(fs, FLT_MAX, 0, trackLabel(s, tr).c_str()).x + 8;
+      dl->AddText(a.fontRegular, cs, ImVec2(nx, p.y + 1 + fs - cs), P.textFaint, n.c_str());
+      ImGui::Dummy(ImVec2(0, std::ceil(fs + 4)));
     }
     for (const takes::TakeInfo& t : list) {
       ImGui::PushID(t.take);
       const ImVec2 p = ImGui::GetCursorScreenPos();
       const float W = ImGui::GetContentRegionAvail().x;
       const bool hovRow = ImGui::IsMouseHoveringRect(p, ImVec2(p.x + W, p.y + rowH)) && ImGui::IsWindowHovered();
-      if (hovRow) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + rowH), theme::withAlpha(P.surface700, 0.5f), 4);
+      if (hovRow) dl->AddRectFilled(p, ImVec2(p.x + W, p.y + rowH), theme::withAlpha(P.surface700, 0.5f), trk ? 0.0f : 4.0f);
       const float cy = std::round(p.y + rowH * 0.5f);
       // In the comp: a lit mark at the left.
       dl->AddRectFilled(ImVec2(p.x + 2, cy - 7), ImVec2(p.x + 5, cy + 7), t.inComp ? P.accent : P.lineStrong, 1.5f);
       const std::string name = "Take " + std::to_string(t.take + 1);
-      dl->AddText(a.fontRegular, theme::kFontBody - 1, ImVec2(p.x + 14, cy - theme::kFontBody * 0.5f), t.inComp ? P.text : P.textDim, name.c_str());
+      dl->AddText(a.fontRegular, fs, ImVec2(p.x + 14, std::round(cy - fs * 0.5f - 1)), t.inComp ? P.text : P.textDim, name.c_str());
       const std::string range = "bar " + barText(s, t.start) + " to " + barText(s, t.end) + (t.inComp ? "  \xC2\xB7  in the comp" : "");
-      dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(p.x + 80, cy - theme::kFontCaption * 0.5f - 1), P.textFaint, range.c_str());
+      const float bx1 = p.x + W - 4, ax = bx1 - bw, sx = ax - 8 - bw;  // Audition, then Solo, from the right
+      const float dx = sx - 16 - dotsW;                                  // the dots' left edge
+      theme::textEllipsis(dl, a.fontRegular, cs, ImVec2(p.x + 80, std::round(cy - cs * 0.5f - 1)), std::max(20.0f, dx - 16 - (p.x + 80)), P.textFaint, range.c_str());
       // The rating dots (click: rate; the lit last dot again: none).
-      const float dx = p.x + 280;
-      const int over = ratingDots(dl, ImVec2(dx, cy), cy, t.rating, hovRow, 12.0f, 4.0f);
+      const int over = ratingDots(dl, ImVec2(dx, cy), cy, t.rating, hovRow, dotStep, dotR);
       ImGui::SetCursorScreenPos(ImVec2(dx - 4, p.y));
-      if (ImGui::InvisibleButton("##rate", ImVec2(3 * 12.0f + 4, rowH)) && over > 0) rate(a, tr, t.take, t.rating == over ? 0 : over);
+      if (ImGui::InvisibleButton("##rate", ImVec2(dotsW + 8, rowH)) && over > 0) rate(a, tr, t.take, t.rating == over ? 0 : over);
       ui::Hint("Rating: one to three dots (click the lit last dot again: no rating). Saved with the song and shared");
       // Solo and audition at the right.
-      const char* audLabel = auditioning() && soloed(tr, t.take) ? i18n::tr("Stop") : i18n::tr("Audition");
-      const float aw = ui::TextButtonWidth(audLabel), sw = ui::TextButtonWidth(i18n::tr("Solo"));
-      const float fh = ImGui::GetFrameHeight();
-      ImGui::SetCursorScreenPos(ImVec2(p.x + W - aw - 4, cy - fh * 0.5f));
+      const bool aud = auditioning() && soloed(tr, t.take);
+      const float by = std::round(cy - bh * 0.5f);
+      ImGui::SetCursorScreenPos(ImVec2(sx, by));
+      if (reclook::rlButton(a, "Solo", reclook::Kind::Normal, bw, "Hear only this take on its track; the comp stays as it is", soloed(tr, t.take) && !auditioning())) {
+        solo(a, tr, t.take);
+      }
+      ImGui::SetCursorScreenPos(ImVec2(ax, by));
       ImGui::BeginDisabled(recording || a.recordArmed);
-      if (ui::TextButton(audLabel, auditioning() && soloed(tr, t.take), 0, "Plays this take alone from its start; Stop (or stopping the transport) goes back"))
-      {
-        if (auditioning() && soloed(tr, t.take)) {
+      if (reclook::rlButton(a, aud ? "Stop" : "Audition", reclook::Kind::Normal, bw, "Plays this take alone from its start; Stop (or stopping the transport) goes back", aud)) {
+        if (aud) {
           stopListening(a);
         } else {
           audition(a, tr, t.take);
         }
       }
       ImGui::EndDisabled();
-      ImGui::SetCursorScreenPos(ImVec2(p.x + W - aw - 4 - 8 - sw, cy - fh * 0.5f));
-      if (ui::TextButton(i18n::tr("Solo"), soloed(tr, t.take) && !auditioning(), 0, "Hear only this take on its track; the comp stays as it is")) {
-        solo(a, tr, t.take);
-      }
-      ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + rowH + 2));
+      ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + rowH));
       ImGui::Dummy(ImVec2(0, 0));
       ImGui::PopID();
     }

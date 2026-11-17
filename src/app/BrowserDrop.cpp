@@ -22,6 +22,7 @@
 #include "../core/PluginParams.h"
 #include "../core/Presets.h"
 #include "../core/Platform.h"
+#include "../core/SoundAnalysis.h"
 #include "../core/SoundLibraries.h"
 #include "../core/flp/Flp.h"
 #include "../core/flp/FlpPresets.h"
@@ -857,7 +858,13 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
       // at 120, not 8 at 96).
       if (clipsWarp && !ownTempo) {
         const double detected = index().lookup(path, meta) && meta.bpm > 0 ? meta.bpm : 0.0;
-        bpm = browse::warpTempo(fname, s->seconds(), a.doc.song().tempo, detected);
+        // Checkpoint 58 (N57-02): the kicks' beat settles half or double tempo.
+        std::vector<float> mono(s->left.size());
+        const std::vector<float>& rv = s->right.vec();
+        for (size_t i = 0; i < mono.size(); ++i) {
+          mono[i] = 0.5f * (s->left[i] + (i < rv.size() ? rv[i] : s->left[i]));
+        }
+        bpm = browse::warpTempo(fname, s->seconds(), a.doc.song().tempo, detected, sound::kickTempo(mono, s->sampleRate));
       }
       a.doc.beginGroup("add audio clip");
       ObjectId ch = a.addInstrument("gl.sampler", path);

@@ -123,6 +123,18 @@ jobs:
       APP: com.lolitemaultes.Gridline
     steps:
       - uses: actions/checkout@v4
+      - name: Flatpak installations in the container's own layer
+        # K-326: on some runner images the build step's runtime update failed with "Invalid
+        # cross-device link" for every runtime and flatpak-builder then crashed (xvfb-run exit 139).
+        # Updating a runtime moves its old deployment aside (a directory rename); the image's
+        # runtimes sit in a lower overlay layer, where that rename gives EXDEV unless the storage
+        # driver redirects directories. Copied into the container's own layer, the rename works.
+        run: |
+          for d in /var/lib/flatpak "$HOME/.local/share/flatpak"; do
+            if [ ! -d "$d" ] || [ "$(stat -f -c %T "$d")" != overlayfs ]; then continue; fi
+            echo "copying $d ($(du -sh "$d" | cut -f1)) into the container layer"
+            cp -a "$d" "$d.k326" && rm -rf "$d" && mv "$d.k326" "$d"
+          done
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           manifest-path: ${{ env.MANIFEST }}

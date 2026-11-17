@@ -13,7 +13,10 @@
 #include "DevSignal.h"
 #include "LayoutPresets.h"
 #include "LiveLook.h"
+#include "DialogLayout.h"
+#include "SettingsPages.h"
 #include "RecordCard.h"
+#include "RecordLook.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -44,7 +47,6 @@ State& st() {
 }
 
 constexpr int kRuns = 3;
-constexpr float kG = 8.0f;
 
 std::string msText(int frames, double sr) { return latencyText(frames, sr); }
 
@@ -313,17 +315,19 @@ void draw(App& a) {
   if (!S.open) return;
   const auto& P = pal();
   const double sr = std::max(1.0, a.engine.sampleRate());
-  const ImGuiViewport* vp = ImGui::GetMainViewport();
-  ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-  ImGui::SetNextWindowSize(ImVec2(520, 0), ImGuiCond_Always);
+  // K-325 (round 2): laid out as Render and Settings: their padding, the steps as the dim line under
+  // the title bar, Settings' sections and form, and Render's footer (buttons from 96 wide, the main
+  // one last: Measure, or Use this once a measurement agrees).
+  ui::PlaceNextDialog(ImVec2(560, 0), ImGuiCond_Appearing);
+  ImGui::SetNextWindowSize(ImVec2(560, 0), ImGuiCond_Always);
   bool open = true;
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(3 * kG, 3 * kG));
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(kG, kG));
-  if (ImGui::Begin(i18n::tr("Latency check###latencycheck"), &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings)) {
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
+  const bool shown = ImGui::Begin(i18n::tr("Latency check###latencycheck"), &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings);
+  ui::KeepWindowInViewport();
+  if (shown) ui::SettleDialogCentred();
+  ImGui::PopStyleVar();
+  if (shown) {
     const float W = ImGui::GetContentRegionAvail().x;
-    ImGui::PushFont(a.fontBold, theme::kFontTitle);
-    ImGui::TextUnformatted(i18n::tr("Measure the round trip"));
-    ImGui::PopFont();
     ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + W);
     ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.textDim));
     ImGui::TextUnformatted(i18n::tr("1. Connect an output of your audio interface to one of its inputs with a cable."));
@@ -331,67 +335,80 @@ void draw(App& a) {
     ImGui::TextUnformatted(i18n::tr("3. Pick the input the cable comes back on and press Measure. Playback stops while it measures."));
     ImGui::PopStyleColor();
     ImGui::PopTextWrapPos();
-    ImGui::Dummy(ImVec2(0, kG));
+    ImGui::Dummy(ImVec2(0, theme::kS1));
+    const float fieldW = settingsFormBegin(a);
+    const reclook::FormScope formScope(fieldW);
+    reclook::rlSection("SETUP");
     const int inputs = a.engine.inputChannels();
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Input"));
-    ImGui::SameLine(120);
+    reclook::rlLabel("Input");
     if (inputs <= 0) {
-      ImGui::AlignTextToFramePadding();
-      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No input device: choose one in Settings > Audio"));
+      reclook::rlValue(i18n::tr("No input device: choose one in Settings > Audio"), P.textFaint);
     } else {
       static const char* kIn[] = {"In 1", "In 2", "In 3", "In 4", "In 5", "In 6", "In 7", "In 8"};
       int ch = std::clamp(S.channel, 0, inputs - 1);
       ImGui::BeginDisabled(S.phase == 1);
-      if (ui::Segmented("##lbin", kIn, std::min(inputs, 8), &ch, 52)) S.channel = ch;
+      if (reclook::rlChoice(a, "##lbin", kIn, std::min(inputs, 8), &ch, reclook::kShortW)) S.channel = ch;
       ImGui::EndDisabled();
     }
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Now in use"));
-    ImGui::SameLine(120);
-    ImGui::AlignTextToFramePadding();
     const int measured = measuredRoundTrip(a);
-    ImGui::TextUnformatted((measured > 0 ? msText(measured, sr) + i18n::tr(", measured") : msText(a.audioInputLatency, sr) + i18n::tr(", estimated from the buffers")).c_str());
-    ImGui::Dummy(ImVec2(0, kG * 0.5f));
+    reclook::rlLabel("Now in use");
+    reclook::rlValue((measured > 0 ? msText(measured, sr) + i18n::tr(", measured") : msText(a.audioInputLatency, sr) + i18n::tr(", estimated from the buffers")).c_str());
     // The result.
-    if (S.phase == 1) {
-      ImGui::TextColored(theme::vec(P.text), i18n::tr("Measuring... %d of %d"), static_cast<int>(S.runs.size()) + 1, kRuns);
-    } else if (S.phase == 2) {
-      if (S.sum.ok) {
+    if (S.phase != 0) {
+      reclook::rlSection("RESULT");
+      reclook::rlLabel("Round trip");
+      if (S.phase == 1) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(theme::vec(P.text), i18n::tr("Measuring... %d of %d"), static_cast<int>(S.runs.size()) + 1, kRuns);
+      } else if (S.sum.ok) {
+        ImGui::BeginGroup();
         ImGui::PushFont(a.fontMonoBold, theme::kFontLcd);
         ImGui::TextUnformatted(msText(S.sum.frames, sr).c_str());
         ImGui::PopFont();
-        ImGui::TextColored(theme::vec(P.textDim), i18n::tr("Round trip: %d of %d measurements agree"), S.sum.agree, S.sum.total);
+        ImGui::TextColored(theme::vec(P.textDim), i18n::tr("%d of %d measurements agree"), S.sum.agree, S.sum.total);
         if (S.inverted) ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("The input comes back with its polarity turned over."));
+        ImGui::EndGroup();
       } else if (S.level < 1e-4f) {
-        ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("Nothing came back on this input: check the cable and the input."));
+        reclook::rlValue(i18n::tr("Nothing came back on this input: check the cable and the input."), P.danger);
       } else {
-        ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("The measurements did not agree: turn the input's monitoring off and try again."));
+        reclook::rlValue(i18n::tr("The measurements did not agree: turn the input's monitoring off and try again."), P.danger);
       }
     }
-    ImGui::Dummy(ImVec2(0, kG));
-    // Actions: the main one first.
-    if (S.phase == 2 && S.sum.ok) {
-      if (ui::PrimaryButton(i18n::tr("Use this"), 0, "Recordings are moved earlier by this round trip (plus plugin delay compensation) while these devices, rate and buffer play")) {
+    reclook::rlSectionsEnd();
+    settingsFormEnd();
+    // The footer: the extra actions first, Close, the main action last.
+    const bool result = S.phase == 2 && S.sum.ok, back = measured > 0 && S.phase != 1;
+    const char* primary = S.phase == 1 ? nullptr : result ? "Use this" : "Measure";
+    const float wBack = reclook::footerButtonWidth("Back to the estimate"), wAgain = reclook::footerButtonWidth("Measure again");
+    const float wClose = reclook::footerButtonWidth("Close"), wMain = primary ? reclook::footerButtonWidth(primary) : 0.0f;
+    float bw = wClose;
+    if (back) bw += wBack + theme::kS2;
+    if (result) bw += wAgain + theme::kS2;
+    if (primary) bw += wMain + theme::kS2;
+    ui::DialogFooter(bw);
+    if (back) {
+      if (reclook::rlButton(a, "Back to the estimate", reclook::Kind::Normal, wBack, "Forgets the measurement: recordings use the estimate from the buffers again")) clearMeasured(a);
+      ImGui::SameLine(0, theme::kS2);
+    }
+    if (result) {
+      if (reclook::rlButton(a, "Measure again", reclook::Kind::Normal, wAgain)) beginMeasure(a, S);
+      ImGui::SameLine(0, theme::kS2);
+    }
+    if (reclook::rlButton(a, "Close", reclook::Kind::Normal, wClose)) open = false;
+    if (result) {
+      ImGui::SameLine(0, theme::kS2);
+      if (reclook::rlButton(a, "Use this", reclook::Kind::Primary, wMain, "Recordings are moved earlier by this round trip (plus plugin delay compensation) while these devices, rate and buffer play")) {
         useMeasured(a, S);
         open = false;
       }
-      ImGui::SameLine(0, kG);
-      if (ui::TextButton(i18n::tr("Measure again"))) beginMeasure(a, S);
-    } else if (S.phase != 1) {
+    } else if (primary) {
+      ImGui::SameLine(0, theme::kS2);
       ImGui::BeginDisabled(inputs <= 0);
-      if (ui::PrimaryButton(i18n::tr("Measure"), 0, "Plays the burst three times and listens for it on the input")) beginMeasure(a, S);
+      if (reclook::rlButton(a, "Measure", reclook::Kind::Primary, wMain, "Plays the burst three times and listens for it on the input")) beginMeasure(a, S);
       ImGui::EndDisabled();
     }
-    if (measured > 0 && S.phase != 1) {
-      ImGui::SameLine(0, kG);
-      if (ui::TextButton(i18n::tr("Back to the estimate"), false, 0, "Forgets the measurement: recordings use the estimate from the buffers again")) clearMeasured(a);
-    }
-    ImGui::SameLine(0, kG);
-    if (ui::TextButton(i18n::tr("Close"))) open = false;
   }
   ImGui::End();
-  ImGui::PopStyleVar(2);
   if (!open) {
     S.open = false;
     if (S.phase == 1) {
@@ -407,6 +424,15 @@ void punchMenuItems(App& a) {
   bool q = quickPunch(a);
   if (ImGui::MenuItem(i18n::tr("Quick punch"), nullptr, &q)) a.settings.set("record.quickPunch", q);
   ui::Hint("While playing, Record punches in and out as often as you like: the punches are one take and one undo step");
+}
+
+void startMenuItems(App& a) {
+  bool w = a.settings.getBool("record.startOnNote");
+  if (ImGui::MenuItem(i18n::tr("Start on the first note"), nullptr, &w)) a.settings.set("record.startOnNote", w);
+  ui::Hint("With Record on, Play waits until you play a note (or an armed input gets loud) and starts there");
+}
+
+void advancedMenuItems(App& a) {
   if (ImGui::BeginMenu(i18n::tr("Punch crossfade"))) {
     const int cur = static_cast<int>(std::lround(a.settings.getNumber("record.punchFadeMs")));
     static const int kMs[] = {0, 5, 10, 20, 50};
@@ -417,12 +443,6 @@ void punchMenuItems(App& a) {
     ImGui::EndMenu();
   }
   ui::Hint("At each punch in and out the take and the audio already on the track crossfade over this time");
-  bool w = a.settings.getBool("record.startOnNote");
-  if (ImGui::MenuItem(i18n::tr("Start on the first note"), nullptr, &w)) a.settings.set("record.startOnNote", w);
-  ui::Hint("With Record on, Play waits until you play a note (or an armed input gets loud) and starts there");
-}
-
-void audioMenuItems(App& a) {
   if (ImGui::BeginMenu(i18n::tr("Capture while armed"))) {
     const int cur = static_cast<int>(std::lround(captureSeconds(a)));
     static const int kS[] = {0, 30, 60, 120};
@@ -480,7 +500,10 @@ bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& 
     const auto i = static_cast<size_t>(std::max(0, std::atoi(v.c_str())));
     if (i < mx.size() && !mx[i].armed) toggleArm(a, mx[i].id);
   } else if (w == "recover") {
-    std::printf("recmore frame %d: recovered %d undo \"%s\"\n", frame, recoverAudio(a), a.doc.history().undoLabel().c_str());
+    // K-326: recover first, then read the undo label (as arguments of one call their order is
+    // unspecified: GCC read the label before the recovery made its undo step).
+    const int recovered = recoverAudio(a);
+    std::printf("recmore frame %d: recovered %d undo \"%s\"\n", frame, recovered, a.doc.history().undoLabel().c_str());
   } else if (w == "punch") {  // the record key while playing
     livelook::toggleArrangementRecord(a);
   } else if (w == "clips") {  // recmore clips [<track>]: the audio clips (on a playlist track), with their fades
@@ -501,6 +524,9 @@ bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& 
     recordcard::showPage(std::atoi(v.c_str()));
   } else if (w == "card") {  // the Recording card, as the record button opens it
     recordcard::open(a);
+  } else if (w == "cardstate") {  // R14-01: what a click on a record button left: the card, Record, the transport
+    std::printf("recmore frame %d: card %d armed %d playing %d\n", frame, recordcard::isOpen() ? 1 : 0, a.recordArmed ? 1 : 0,
+                a.engine.playing() ? 1 : 0);
   } else if (w == "layout") {  // recmore layout <id>: as --switch-layout, at a point in the script (after waits)
     layoutui::choose(a, layout::fromId(v), layout::linkedFromSettings(a.settings));
   } else if (w == "latency" && v == "open") {

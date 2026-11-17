@@ -41,7 +41,8 @@ Gridline > Options > Woken plugins sleep again after > Never			e-
 Gridline > Options > Send MIDI clock (master sync)			e-
 Gridline > Options > Record notes			e-
 Gridline > Options > Step record			e-
-Gridline > Options > Record automation			e-
+Gridline > Options > Record automation			ec
+Gridline > Options > Re-enable automation			--
 Gridline > Options > Recording options > Record window...			e-
 Gridline > Options > Recording options > Audio, into the tracks as audio regions			ec
 Gridline > Options > Recording options > Audio, into Loupe (armed tracks)			e-
@@ -52,6 +53,11 @@ Gridline > Options > Recording options > Other messages > Pressure (aftertouch)	
 Gridline > Options > Recording options > Other messages > Program changes			ec
 Gridline > Options > Recording options > Everything			e-
 Gridline > Options > Recording options > Punch in/out at the time selection			ec
+Gridline > Options > Recording options > Quick punch			e-
+Gridline > Options > Recording options > Count-in > Off			ec
+Gridline > Options > Recording options > Count-in > 1 bar			e-
+Gridline > Options > Recording options > Count-in > 2 bars			e-
+Gridline > Options > Recording options > Count-in > 4 bars			e-
 Gridline > Options > Recording options > Pre-roll > Off			ec
 Gridline > Options > Recording options > Pre-roll > 1 beat			e-
 Gridline > Options > Recording options > Pre-roll > 2 beats			e-
@@ -64,50 +70,45 @@ Gridline > Options > Recording options > Post-roll > 2 beats			e-
 Gridline > Options > Recording options > Post-roll > 4 beats			e-
 Gridline > Options > Recording options > Post-roll > 8 beats			e-
 Gridline > Options > Recording options > Post-roll > 16 beats			e-
-Gridline > Options > Recording options > Count-in > Off			ec
-Gridline > Options > Recording options > Count-in > 1 bar			e-
-Gridline > Options > Recording options > Count-in > 2 bars			e-
-Gridline > Options > Recording options > Count-in > 4 bars			e-
-Gridline > Options > Recording options > Quick punch			e-
-Gridline > Options > Recording options > Punch crossfade > Off			e-
-Gridline > Options > Recording options > Punch crossfade > 5 ms			e-
-Gridline > Options > Recording options > Punch crossfade > 10 ms			ec
-Gridline > Options > Recording options > Punch crossfade > 20 ms			e-
-Gridline > Options > Recording options > Punch crossfade > 50 ms			e-
 Gridline > Options > Recording options > Start on the first note			e-
-Gridline > Options > Recording options > Audio file format > 32-bit float WAV			ec
-Gridline > Options > Recording options > Audio file format > 24-bit WAV			e-
-Gridline > Options > Recording options > Audio file format > 16-bit WAV			e-
 Gridline > Options > Recording options > Loop passes as take lanes			ec
 Gridline > Options > Recording options > Drop silent takes			e-
 Gridline > Options > Recording options > Disarm tracks after recording			e-
 Gridline > Options > Recording options > Name empty playlist tracks after the take			ec
 Gridline > Options > Recording options > Name takes after > The mixer track			ec
 Gridline > Options > Recording options > Name takes after > The audio input			e-
-Gridline > Options > Recording options > Capture while armed > Off			e-
-Gridline > Options > Recording options > Capture while armed > 30 seconds			e-
-Gridline > Options > Recording options > Capture while armed > 1 minute			ec
-Gridline > Options > Recording options > Capture while armed > 2 minutes			e-
-Gridline > Options > Recording options > Capture while armed > Recover the last pass			--
-Gridline > Options > Recording options > Latency check...			e-
-Gridline > Options > Recording options > Input only			e-
-Gridline > Options > Recording options > Low latency			e-
 Gridline > Options > Recording options > Overdub (keep existing notes)			ec
 Gridline > Options > Recording options > Replace (clear the channel's notes)			e-
 Gridline > Options > Recording options > Quantize note starts to the snap			ec
 Gridline > Options > Recording options > Quantize note lengths			e-
 Gridline > Options > Recording options > Loop recording: new take per pass			e-
+Gridline > Options > Recording options > Step record (keyboard enters notes at the step cursor)			e-
 Gridline > Options > Recording options > Recover what I just played			--
 Gridline > Options > Recording options > Controller moves go to > Automatic			ec
 Gridline > Options > Recording options > Controller moves go to > Pattern events			e-
 Gridline > Options > Recording options > Controller moves go to > Automation clips			e-
-Gridline > Options > Recording options > Record controls > Every time			ec
-Gridline > Options > Recording options > Record controls > First time per song			e-
-Gridline > Options > Recording options > Record controls > Never			e-
-Gridline > Options > Recording options > Record controls > Card			ec
-Gridline > Options > Recording options > Record controls > Strip			e-
-Gridline > Options > Recording options > Record controls > The Record window			e-
-Gridline > Options > Recording options > Step record (keyboard enters notes at the step cursor)			e-
+Gridline > Options > Recording options > Advanced > Audio file format > 32-bit float WAV			ec
+Gridline > Options > Recording options > Advanced > Audio file format > 24-bit WAV			e-
+Gridline > Options > Recording options > Advanced > Audio file format > 16-bit WAV			e-
+Gridline > Options > Recording options > Advanced > Punch crossfade > Off			e-
+Gridline > Options > Recording options > Advanced > Punch crossfade > 5 ms			e-
+Gridline > Options > Recording options > Advanced > Punch crossfade > 10 ms			ec
+Gridline > Options > Recording options > Advanced > Punch crossfade > 20 ms			e-
+Gridline > Options > Recording options > Advanced > Punch crossfade > 50 ms			e-
+Gridline > Options > Recording options > Advanced > Capture while armed > Off			e-
+Gridline > Options > Recording options > Advanced > Capture while armed > 30 seconds			e-
+Gridline > Options > Recording options > Advanced > Capture while armed > 1 minute			ec
+Gridline > Options > Recording options > Advanced > Capture while armed > 2 minutes			e-
+Gridline > Options > Recording options > Advanced > Capture while armed > Recover the last pass			--
+Gridline > Options > Recording options > Advanced > Latency check...			e-
+Gridline > Options > Recording options > Advanced > Input only			e-
+Gridline > Options > Recording options > Advanced > Low latency			e-
+Gridline > Options > Recording options > Advanced > Record controls > Every time			ec
+Gridline > Options > Recording options > Advanced > Record controls > First time per song			e-
+Gridline > Options > Recording options > Advanced > Record controls > Never			e-
+Gridline > Options > Recording options > Advanced > Record controls > Card			ec
+Gridline > Options > Recording options > Advanced > Record controls > Strip			e-
+Gridline > Options > Recording options > Advanced > Record controls > The Record window			e-
 Gridline > Options > Recording options > Link to controller (Record)…			e-
 Gridline > Options > Typing keyboard to piano	Cmd+K	options.typingKeyboard	e-
 Gridline > Options > Typing keyboard options > Play notes from the computer keyboard	Cmd+K	options.typingKeyboard	e-
@@ -295,6 +296,11 @@ Record > Recording options > Other messages > Pressure (aftertouch)			ec
 Record > Recording options > Other messages > Program changes			ec
 Record > Recording options > Everything			e-
 Record > Recording options > Punch in/out at the time selection			ec
+Record > Recording options > Quick punch			e-
+Record > Recording options > Count-in > Off			ec
+Record > Recording options > Count-in > 1 bar			e-
+Record > Recording options > Count-in > 2 bars			e-
+Record > Recording options > Count-in > 4 bars			e-
 Record > Recording options > Pre-roll > Off			ec
 Record > Recording options > Pre-roll > 1 beat			e-
 Record > Recording options > Pre-roll > 2 beats			e-
@@ -307,50 +313,45 @@ Record > Recording options > Post-roll > 2 beats			e-
 Record > Recording options > Post-roll > 4 beats			e-
 Record > Recording options > Post-roll > 8 beats			e-
 Record > Recording options > Post-roll > 16 beats			e-
-Record > Recording options > Count-in > Off			ec
-Record > Recording options > Count-in > 1 bar			e-
-Record > Recording options > Count-in > 2 bars			e-
-Record > Recording options > Count-in > 4 bars			e-
-Record > Recording options > Quick punch			e-
-Record > Recording options > Punch crossfade > Off			e-
-Record > Recording options > Punch crossfade > 5 ms			e-
-Record > Recording options > Punch crossfade > 10 ms			ec
-Record > Recording options > Punch crossfade > 20 ms			e-
-Record > Recording options > Punch crossfade > 50 ms			e-
 Record > Recording options > Start on the first note			e-
-Record > Recording options > Audio file format > 32-bit float WAV			ec
-Record > Recording options > Audio file format > 24-bit WAV			e-
-Record > Recording options > Audio file format > 16-bit WAV			e-
 Record > Recording options > Loop passes as take lanes			ec
 Record > Recording options > Drop silent takes			e-
 Record > Recording options > Disarm tracks after recording			e-
 Record > Recording options > Name empty playlist tracks after the take			ec
 Record > Recording options > Name takes after > The mixer track			ec
 Record > Recording options > Name takes after > The audio input			e-
-Record > Recording options > Capture while armed > Off			e-
-Record > Recording options > Capture while armed > 30 seconds			e-
-Record > Recording options > Capture while armed > 1 minute			ec
-Record > Recording options > Capture while armed > 2 minutes			e-
-Record > Recording options > Capture while armed > Recover the last pass			--
-Record > Recording options > Latency check...			e-
-Record > Recording options > Input only			e-
-Record > Recording options > Low latency			e-
 Record > Recording options > Overdub (keep existing notes)			ec
 Record > Recording options > Replace (clear the channel's notes)			e-
 Record > Recording options > Quantize note starts to the snap			ec
 Record > Recording options > Quantize note lengths			e-
 Record > Recording options > Loop recording: new take per pass			e-
+Record > Recording options > Step record (keyboard enters notes at the step cursor)			e-
 Record > Recording options > Recover what I just played			--
 Record > Recording options > Controller moves go to > Automatic			ec
 Record > Recording options > Controller moves go to > Pattern events			e-
 Record > Recording options > Controller moves go to > Automation clips			e-
-Record > Recording options > Record controls > Every time			ec
-Record > Recording options > Record controls > First time per song			e-
-Record > Recording options > Record controls > Never			e-
-Record > Recording options > Record controls > Card			ec
-Record > Recording options > Record controls > Strip			e-
-Record > Recording options > Record controls > The Record window			e-
-Record > Recording options > Step record (keyboard enters notes at the step cursor)			e-
+Record > Recording options > Advanced > Audio file format > 32-bit float WAV			ec
+Record > Recording options > Advanced > Audio file format > 24-bit WAV			e-
+Record > Recording options > Advanced > Audio file format > 16-bit WAV			e-
+Record > Recording options > Advanced > Punch crossfade > Off			e-
+Record > Recording options > Advanced > Punch crossfade > 5 ms			e-
+Record > Recording options > Advanced > Punch crossfade > 10 ms			ec
+Record > Recording options > Advanced > Punch crossfade > 20 ms			e-
+Record > Recording options > Advanced > Punch crossfade > 50 ms			e-
+Record > Recording options > Advanced > Capture while armed > Off			e-
+Record > Recording options > Advanced > Capture while armed > 30 seconds			e-
+Record > Recording options > Advanced > Capture while armed > 1 minute			ec
+Record > Recording options > Advanced > Capture while armed > 2 minutes			e-
+Record > Recording options > Advanced > Capture while armed > Recover the last pass			--
+Record > Recording options > Advanced > Latency check...			e-
+Record > Recording options > Advanced > Input only			e-
+Record > Recording options > Advanced > Low latency			e-
+Record > Recording options > Advanced > Record controls > Every time			ec
+Record > Recording options > Advanced > Record controls > First time per song			e-
+Record > Recording options > Advanced > Record controls > Never			e-
+Record > Recording options > Advanced > Record controls > Card			ec
+Record > Recording options > Advanced > Record controls > Strip			e-
+Record > Recording options > Advanced > Record controls > The Record window			e-
 Record > Recording options > Link to controller (Record)…			e-
 Record > Metronome	K	options.metronome	e-
 Record > Count-in	Shift+K	options.countIn	e-

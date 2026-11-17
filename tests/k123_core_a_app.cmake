@@ -73,7 +73,10 @@ if(ROW STREQUAL "quick")
   # Two pieces of one pass, not take lanes: the first fades out at the punch out, the second in at the punch in.
   expect_match("two clips, one undo step" "recmore frame 18:[^\n]*" "clips 2 undo \"[^\"]+\": \\[t[0-9]+ [0-9]+\\+[0-9]+ in 0\\.0000 out 0\\.0[0-9]+\\] \\[t[0-9]+ [0-9]+\\+[0-9]+ in 0\\.0[0-9]+ out 0\\.0000\\]$")
 elseif(ROW STREQUAL "recover")
-  run_app("3 recmore capture 10
+  # K-326: a slow tempo (a 24 s bar), so the pass is one continuous stretch however long a slow machine
+  # takes over the wait: at the default tempo the one-bar song looped there (1.7 s), splitting the pass.
+  run_app("2 tempo 10
+3 recmore capture 30
 4 liverec arm 1
 6 recopt play
 7 waitfor never 1.5

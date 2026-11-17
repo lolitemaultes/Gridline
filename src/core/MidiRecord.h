@@ -68,6 +68,11 @@ struct RecordSetup {
   // K-112B (R05-02): song mode: the track the take goes on (the Tracks layout's selected track; its
   // earlier regions there stay, the take plays over them). -1: the note's instrument track, else a free one.
   int track = -1;
+  // K-112B (R14-04): song mode, merging: a take recorded over regions already on its track makes a take
+  // folder with them (one take group, the take a lane of its own playing over them where it was
+  // recorded), instead of stacking on them. Off: the take stacks, as before.
+  bool takeFolder = false;
+  bool takeLanes = true;  // with takeFolder: the track shows its takes as lanes
 };
 
 // Records notes (MIDI, the typing keyboard) and controller moves while the transport plays. Every
@@ -153,6 +158,7 @@ class NoteRecorder {
   void commitNote(Document& doc, const Held& h, int pitch, double endTick);
   void commitAutomation(Document& doc);
   void newPass(Document& doc);
+  void foldTakes(Document& doc);  // R14-04
   void cutHeld(Document& doc, double at);  // commits every held note, ending at `at`
   void clearReplaced(Document& doc, double upTo);
   void growTake(Document& doc, double tick);

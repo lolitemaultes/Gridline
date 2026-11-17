@@ -2,8 +2,9 @@
 # Smooth arrange writes survives the other layouts, and Smooth's hidden spare rows stay a view matter.
 #   1. The demo with every Smooth arrange field set (cycle, projectEnd, a track's lane, autoMode and
 #      sound, a region's name and playback settings) is saved once from Smooth (the baseline).
-#   2. The baseline opened and saved in Studio and in Tracker is byte-identical to it; in Clips the
-#      only difference is Clips' own "live" view key. Every field is still there.
+#   2. The baseline opened and saved in Studio, Tracker and Clips is byte-identical to it (checkpoint
+#      59: Clips keeps its view in the person's settings, not the song; also after Tab swapped it).
+#      Every field is still there.
 #   3. Each of those saves opened in Smooth again saves as the baseline.
 #   4. (R12-05) A new project in Smooth shows one track row; saved, it keeps the song's default tracks,
 #      and Studio shows them all as rows.
@@ -45,13 +46,6 @@ function(check msg)
   message(STATUS "ok - ${msg}")
 endfunction()
 
-# A save's text without Clips' own view key (Clips writes "live": {"view": ...} on every save).
-function(withoutLive file var)
-  file(READ "${file}" j)
-  string(JSON j ERROR_VARIABLE e REMOVE "${j}" live)
-  set(${var} "${j}" PARENT_SCOPE)
-endfunction()
-
 function(hasFields file)
   file(READ "${file}" j)
   string(JSON c ERROR_VARIABLE e1 GET "${j}" cycle on)
@@ -80,25 +74,27 @@ file(WRITE "${OUT}/s.gridline.json" "${d}")
 run(base logic "${OUT}/s.gridline.json" "20 save ${OUT}/base.gridline.json\n24 quit discard\n")
 hasFields("${OUT}/base.gridline.json")
 file(READ "${OUT}/base.gridline.json" base)
-withoutLive("${OUT}/base.gridline.json" baseNoLive)
 
 # ---- 2 and 3. through Studio, Tracker and Clips, then back in Smooth
 foreach(L studio tracker live)
   run(${L} ${L} "${OUT}/base.gridline.json" "20 save ${OUT}/${L}.gridline.json\n24 quit discard\n")
   hasFields("${OUT}/${L}.gridline.json")
   run(${L}_back logic "${OUT}/${L}.gridline.json" "20 save ${OUT}/${L}_back.gridline.json\n24 quit discard\n")
-  if(L STREQUAL "live")
-    withoutLive("${OUT}/${L}.gridline.json" t)
-    withoutLive("${OUT}/${L}_back.gridline.json" tb)
-    check("Clips' save is the baseline but for its own view key" t STREQUAL baseNoLive)
-    check("Clips' save back in Smooth is the baseline but for Clips' view key" tb STREQUAL baseNoLive)
-  else()
-    file(READ "${OUT}/${L}.gridline.json" t)
-    file(READ "${OUT}/${L}_back.gridline.json" tb)
-    check("${L}'s save is byte-identical to Smooth's" t STREQUAL base)
-    check("${L}'s save back in Smooth is byte-identical to the baseline" tb STREQUAL base)
+  file(READ "${OUT}/${L}.gridline.json" t)
+  file(READ "${OUT}/${L}_back.gridline.json" tb)
+  check("${L}'s save is byte-identical to Smooth's" t STREQUAL base)
+  check("${L}'s save back in Smooth is byte-identical to the baseline" tb STREQUAL base)
+  if(L STREQUAL "live")  # checkpoint 59: no "live": {"view": ...} key
+    string(FIND "${t}" "\"view\"" vk)
+    check("Clips' save has no view key" vk EQUAL -1)
   endif()
 endforeach()
+
+# ---- checkpoint 59: Tab swaps Clips' view (to the Arrangement and back to the grid, and once more);
+#      the save is still the baseline, byte for byte, and Studio opens it the same.
+run(livetab live "${OUT}/base.gridline.json" "16 key tab\n18 key tab\n20 key tab\n24 save ${OUT}/livetab.gridline.json\n28 quit discard\n")
+file(READ "${OUT}/livetab.gridline.json" lt)
+check("Clips' save after Tab is byte-identical to the baseline" lt STREQUAL base)
 
 # ---- 4. R12-05: a new project in Smooth, then in Studio
 run(blank logic "${DEMO}" "6 template -\n16 plrows\n20 save ${OUT}/new.gridline.json\n24 quit discard\n")

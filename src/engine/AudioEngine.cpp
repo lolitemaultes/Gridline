@@ -2803,6 +2803,10 @@ constexpr double kEventTickEps = 1e-6;
 
 void AudioEngine::applyAutomation(const Program* p, double blockTick, double eventTick, bool eventsOnly) {
   auto apply = [&](const ProgAutoLane& a, double t) {
+    if (a.target.rt && a.target.rt->held.load(std::memory_order_relaxed)) {  // N59-01: held by hand (the live builder's override)
+      if (!eventsOnly) applyLinkValue(p, a.target, static_cast<double>(a.target.rt->heldValue.load(std::memory_order_relaxed)));
+      return;
+    }
     if (!a.events) {
       if (!eventsOnly) applyLinkValue(p, a.target, a.lane.valueAt(t));
       return;
@@ -2933,7 +2937,8 @@ void AudioEngine::stepGains(const Program* p, double anchor, int64_t clock, int 
     const double t = tickAt(p, anchor, static_cast<double>(clock + static_cast<int64_t>(j) * kControlBlock));
     for (const ProgAutoLane& a : p->autos) {
       if (gainOnlyLane(p, a)) {
-        applyLinkValue(p, a.target, a.lane.valueAt(t));
+        const bool held = a.target.rt && a.target.rt->held.load(std::memory_order_relaxed);  // N59-01
+        applyLinkValue(p, a.target, held ? static_cast<double>(a.target.rt->heldValue.load(std::memory_order_relaxed)) : a.lane.valueAt(t));
       }
     }
     updateStripGains(p);

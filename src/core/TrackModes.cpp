@@ -1,10 +1,13 @@
 // Gridline — playlist track modes (PL-08). See TrackModes.h.
 #include "TrackModes.h"
 #include <algorithm>
+#include <cmath>
 #include <functional>
 #include <map>
 #include <set>
+#include "AutomationEdit.h"
 #include "Document.h"
+#include "Meter.h"
 #include "Arrangements.h"
 #include "Params.h"
 #include "PluginInfo.h"
@@ -256,6 +259,52 @@ bool setOutput(Song& s, ObjectId from, ObjectId to) {
     m->sends.erase(m->sends.begin() + k);
   }
   return true;
+}
+
+namespace {
+// Checkpoint 58 (N57-01): the entry no longer matches the song: its track or return is gone, or the
+// track's output is not that return any more (another layout, a collaborator or a file moved it).
+bool keptStale(const Song& s, const KeptSend& k) {
+  const MixerTrack* m = s.mixerTrack(k.mixer);
+  return !m || !s.mixerTrack(k.to) || outputOf(*m) != k.to;
+}
+}  // namespace
+
+bool keptSendsStale(const Song& s) {
+  for (const KeptSend& k : s.keptSends) {
+    if (keptStale(s, k)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool restoreKeptSends(Song& s) {
+  bool changed = false;
+  for (size_t i = 0; i < s.keptSends.size();) {
+    const KeptSend k = s.keptSends[i];
+    if (!keptStale(s, k)) {
+      ++i;
+      continue;
+    }
+    s.keptSends.erase(s.keptSends.begin() + static_cast<std::ptrdiff_t>(i));
+    changed = true;
+    MixerTrack* m = s.mixerTrack(k.mixer);
+    if (!m || k.mixer == s.masterId() || !s.mixerTrack(k.to) || outputOf(*m) == kNoId || auxSendIndex(*m, k.to) >= 0 ||
+        !canRoute(s, k.mixer, k.to)) {
+      continue;  // nothing to put back (or the track has a send there again: that one wins)
+    }
+    size_t outAt = 0;
+    while (outAt < m->sends.size() && (m->sends[outAt].sidechain || m->sends[outAt].stageRoom)) {
+      ++outAt;
+    }
+    // Back at its place, but always after the output (it is an aux send, never the output).
+    const size_t at = std::min(std::max(static_cast<size_t>(std::max(k.index, 0)), outAt + 1), m->sends.size());
+    Send sd{k.to, k.level, false};
+    sd.preFader = k.preFader;
+    m->sends.insert(m->sends.begin() + static_cast<std::ptrdiff_t>(at), sd);
+  }
+  return changed;
 }
 
 const MixerTrack* playedMixer(const Song& s, int track) {
@@ -1678,6 +1727,220 @@ int groupTracks(Document& d, const std::vector<int>& tracks, std::string* why) {
 
 bool ungroupTracks(Document& d, int group, std::string* why) {
   return runEdit(d, "ungroup tracks", [&](Song& s) { return ungroupTracks(s, group, why); });
+}
+
+ObjectId recordArrangementAutomation(Song& s, ObjectId owner, uint32_t index, const std::string& name, std::vector<AutoPoint> pts,
+                                     double tolerance) {
+  if (pts.empty()) return kNoId;
+  const Tick areaEnd = std::max<Tick>(0, s.live.areaEnd);
+  std::sort(pts.begin(), pts.end(), [](const AutoPoint& x, const AutoPoint& y) { return x.pos < y.pos; });
+  for (AutoPoint& p : pts) p.pos = std::max(p.pos, areaEnd);  // (never into the clip grid's storage)
+  const Tick from = pts.front().pos, to = pts.back().pos;
+  // The Arrangement clip of this control the take starts in: the take joins it.
+  for (const Clip& c : s.playlist) {
+    if (c.kind != ClipKind::Automation || c.muted || c.start < areaEnd) continue;
+    const AutomationClip* ac = s.automation(c.source);
+    if (!ac || ac->owner != owner || ac->index != index) continue;
+    if (from < c.start || from >= c.start + s.clipLength(c)) continue;
+    const Tick shift = c.offset - c.start;
+    const double r = ac->max - ac->min;
+    autoedit::Points rec;
+    for (AutoPoint p : pts) {
+      p.pos += shift;
+      p.value = static_cast<float>(std::fabs(r) < 1e-9 ? 0.0 : std::clamp((p.value - ac->min) / r, 0.0, 1.0));
+      rec.push_back(p);
+    }
+    const ObjectId id = ac->id, cid = c.id;
+    AutomationClip* w = s.automation(id);
+    // Checkpoint 60 (N59-02): the clip's curve before the take stays as it was up to the tick before
+    // the take's first move (a hold point), instead of ramping from its last point into the take.
+    Tick mergeFrom = from + shift;
+    if (!w->points.empty() && w->points.front().pos < mergeFrom && mergeFrom > 0) {
+      rec.insert(rec.begin(), AutoPoint{mergeFrom - 1, static_cast<float>(autoedit::valueAt(w->points, static_cast<double>(mergeFrom - 1))), 0, AutoShape::Hold});
+      mergeFrom -= 1;
+    }
+    autoedit::mergeRecorded(w->points, rec, mergeFrom, to + shift, tolerance);
+    // A take running past the clip's end makes the clip longer (up to the take's end, on a beat).
+    if (Clip* k = s.clip(cid); k && to >= k->start + s.clipLength(*k)) {
+      const MeterMap mm(s);
+      const Tick end = mm.beatStartAt(to) == to ? to + std::max<Tick>(1, s.beatTicks()) : mm.nextBeat(to);
+      k->length = std::max(s.clipLength(*k), end - k->start);
+    }
+    return id;
+  }
+  // A new clip from the beat of the take's first point, to the beat after its last.
+  const MeterMap mm(s);
+  const Tick start = std::max(areaEnd, mm.beatStartAt(from));
+  const Tick end = std::max(mm.nextBeat(start), mm.beatStartAt(to) == to ? to + std::max<Tick>(1, s.beatTicks()) : mm.nextBeat(to));
+  autoedit::Points rec;
+  for (AutoPoint p : pts) {
+    p.pos -= start;
+    rec.push_back(p);
+  }
+  autoedit::Points points;
+  autoedit::mergeRecorded(points, rec, from - start, to - start, tolerance);
+  // The control's lane: one already holding this control's automation, else a new one under its track.
+  int lane = -1;
+  for (const Clip& c : s.playlist) {
+    if (c.kind != ClipKind::Automation || c.start < areaEnd || !isAutomationLane(s, c.track)) continue;
+    if (const AutomationClip* ac = s.automation(c.source); ac && ac->owner == owner && ac->index == index) {
+      bool busy = false;
+      for (const Clip& o : s.playlist) busy = busy || (o.track == c.track && o.start < end && o.start + s.clipLength(o) > start);
+      if (!busy) {
+        lane = c.track;
+        break;
+      }
+    }
+  }
+  if (lane < 0) lane = addAutomationLane(s, owner, name);
+  if (lane < 0) return kNoId;
+  AutomationClip ac;
+  ac.id = s.allocateId();
+  ac.name = name;
+  ac.owner = owner;
+  ac.index = index;
+  ac.points = std::move(points);
+  Clip k;
+  k.id = s.allocateId();
+  k.kind = ClipKind::Automation;
+  k.source = ac.id;
+  k.track = lane;
+  k.start = start;
+  k.length = end - start;
+  const ObjectId id = ac.id;
+  s.automations.push_back(std::move(ac));
+  s.playlist.push_back(k);
+  return id;
+}
+
+namespace {
+void trimScenes(Song& s) {
+  while (!s.live.scenes.empty() && s.live.scenes.back().empty()) {
+    s.live.scenes.pop_back();
+  }
+}
+}  // namespace
+
+void insertScene(Song& s, int k, Tick len) {
+  if (k < -1 || len <= 0) {
+    return;
+  }
+  const Tick from = s.live.areaEnd, at = static_cast<Tick>(k + 1) * len;
+  const Tick newEnd = std::max(from, at) + len, shift = newEnd - from;
+  for (Clip& c : s.playlist) {
+    if (c.start >= from) {
+      c.start += shift;
+    } else if (c.start >= at) {
+      c.start += len;
+    }
+  }
+  for (Marker& m : s.markers) {
+    if (m.pos >= from) {
+      m.pos += shift;
+    }
+  }
+  s.live.areaEnd = newEnd;
+  if (static_cast<int>(s.live.scenes.size()) > k + 1) {
+    s.live.scenes.insert(s.live.scenes.begin() + (k + 1), SceneInfo{});
+  }
+  trimScenes(s);
+}
+
+bool deleteScene(Song& s, int k, Tick len) {
+  const Tick from = s.live.areaEnd, a0 = static_cast<Tick>(k) * len, a1 = a0 + len;
+  if (k < 0 || len <= 0 || a0 >= from) {
+    return false;
+  }
+  s.playlist.erase(std::remove_if(s.playlist.begin(), s.playlist.end(), [&](const Clip& c) { return c.start >= a0 && c.start < a1 && c.start < from; }),
+                   s.playlist.end());
+  const Tick newEnd = std::max<Tick>(a0, from - len), shift = from - newEnd;
+  for (Clip& c : s.playlist) {
+    if (c.start >= from) {
+      c.start -= shift;
+    } else if (c.start >= a1) {
+      c.start -= len;
+    }
+  }
+  for (Marker& m : s.markers) {
+    if (m.pos >= from) {
+      m.pos -= shift;
+    }
+  }
+  s.live.areaEnd = newEnd;
+  if (static_cast<int>(s.live.scenes.size()) > k) {
+    s.live.scenes.erase(s.live.scenes.begin() + k);
+  }
+  trimScenes(s);
+  return true;
+}
+
+bool duplicateScene(Song& s, int k, Tick len) {
+  const Tick from = s.live.areaEnd, a0 = static_cast<Tick>(k) * len, a1 = a0 + len;
+  if (k < 0 || len <= 0) {
+    return false;
+  }
+  if (a0 >= from) {
+    // Checkpoint 60 (N59-06): a scene past the stored ones holds no clips: its copy is its name and
+    // colour in a new row under it (the later rows' names move down); the clip storage stays as it is.
+    if (k >= static_cast<int>(s.live.scenes.size())) {
+      return false;  // (an unnamed empty row with nothing after it: the copy is the same empty rows)
+    }
+    const SceneInfo info = s.live.scenes[static_cast<size_t>(k)];
+    s.live.scenes.insert(s.live.scenes.begin() + (k + 1), info);
+    trimScenes(s);
+    return true;
+  }
+  std::vector<Clip> copies;
+  for (const Clip& c : s.playlist) {
+    if (c.start >= a0 && c.start < a1 && c.start < from) {
+      copies.push_back(c);
+    }
+  }
+  const SceneInfo info = k < static_cast<int>(s.live.scenes.size()) ? s.live.scenes[static_cast<size_t>(k)] : SceneInfo{};
+  insertScene(s, k, len);
+  for (Clip c : copies) {
+    c.id = s.allocateId();
+    c.start += len;
+    c.takeGroup = kNoId, c.take = 0;
+    s.playlist.push_back(c);
+  }
+  if (!info.empty()) {
+    if (static_cast<int>(s.live.scenes.size()) <= k + 1) {
+      s.live.scenes.resize(static_cast<size_t>(k) + 2);
+    }
+    s.live.scenes[static_cast<size_t>(k) + 1] = info;
+  }
+  trimScenes(s);
+  return true;
+}
+
+void setSceneName(Song& s, int k, const std::string& name) {
+  if (k < 0) {
+    return;
+  }
+  if (static_cast<int>(s.live.scenes.size()) <= k) {
+    s.live.scenes.resize(static_cast<size_t>(k) + 1);
+  }
+  s.live.scenes[static_cast<size_t>(k)].name = name;
+  trimScenes(s);
+}
+
+void setSceneColor(Song& s, int k, Rgb color) {
+  if (k < 0) {
+    return;
+  }
+  if (static_cast<int>(s.live.scenes.size()) <= k) {
+    s.live.scenes.resize(static_cast<size_t>(k) + 1);
+  }
+  s.live.scenes[static_cast<size_t>(k)].color = color & 0xFFFFFFu;
+  trimScenes(s);
+}
+
+const SceneInfo* sceneInfo(const Song& s, int k) {
+  if (k < 0 || k >= static_cast<int>(s.live.scenes.size()) || s.live.scenes[static_cast<size_t>(k)].empty()) {
+    return nullptr;
+  }
+  return &s.live.scenes[static_cast<size_t>(k)];
 }
 
 }  // namespace gl::trackmodes

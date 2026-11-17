@@ -64,7 +64,8 @@ struct FileMeta {
 double bpmFromName(const std::string& name);
 // K-112c checkpoint 55 (N54-02): the tempo a dropped file is warped at in Clips. In order: a tempo the
 // name states (bpmFromName, or a bare 60..200 number in the name whose beats at that tempo come out
-// whole: "Long 120" of 20 s is 40 beats), then a length of whole bars at the Set's tempo (that tempo),
+// whole: "Long 120" of 20 s is 40 beats), then a length of whole bars at the Set's tempo (that tempo;
+// checkpoint 59, N58-02: 1, 2, 4, 8 or 16 bars only, and only when the kicks, if heard, agree),
 // then the detector's reading (`detected`, its half or double) nearest the Set's tempo, then the
 // whole-bar reading (1, 2, 4, 8 or 16 bars of 4/4) nearest the Set's tempo. Checkpoint 56 (N55-03): that
 // last reading, from the length alone, counts only within kLengthOnlyStretch (6 %) of the Set's tempo.
@@ -74,7 +75,15 @@ double bpmFromName(const std::string& name);
 constexpr double kLengthOnlyStretch = 0.06;
 constexpr double kLengthOnlyMin = 70.0, kLengthOnlyMax = 180.0;
 constexpr double kWholeTempoSlack = 0.05;
-double warpTempo(const std::string& name, double seconds, double setTempo, double detected = 0);
+// Checkpoint 58 (N57-02): the half / double choice (between the detector's reading, its half and its
+// double, or between the whole-bar readings of the length) follows the audio: `beat` is the tempo the
+// kicks keep (sound::kickTempo, 0 = none heard), and a reading within kBeatAgree of it wins (a 70 loop
+// with offbeat hats reads 70, not 140; 2 bars at 174 read 174, not 87). Without one, a reading within
+// kLengthOnlyStretch of the Set's, then one in kAmbiguousLo..kAmbiguousHi, then the nearest the Set's.
+// The result is tidied as Clip::syncBpm stores it: whole within kWholeTempoSlack, else to 0.01.
+constexpr double kBeatAgree = 0.12;
+constexpr double kAmbiguousLo = 80.0, kAmbiguousHi = 160.0;
+double warpTempo(const std::string& name, double seconds, double setTempo, double detected = 0, double beat = 0);
 // Key from a file name: "Am", "C#min", "F major", "Bb_minor", "key of D"… Tokens
 // are delimited by non-letters, so "Amen" or "Cmaj7chord" are not keys.
 bool keyFromName(const std::string& name, int& pitchClass, bool& minor);

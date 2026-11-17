@@ -468,6 +468,9 @@ MemRow memNow(App& a, const std::string& type) {
   r.type = type;
   // K-302: memory the allocator keeps after it was freed (on Linux also what the software GL
   // driver and its threads freed) is no cost of an editor: given back first, it is not counted.
+  // K-324: the driver's frames still being drawn are finished first: a software rasterizer holds
+  // their vertex buffers and work lists until then (tens of MB that came and went with timing).
+  glFinish();
   platform::releaseFreeMemory();
   r.mb = platform::currentMemoryMb();
   r.heapMb = platform::heapInUseMb();  // K-302
@@ -611,7 +614,15 @@ void finishAudit() {
       std::fprintf(stderr, "%s MB\n", ends.c_str());
       if (z.mb - a2.mb > growth || z.windows > a2.windows || drawGrowth > 1.0) ++bad;
     }
-    if (bad) std::fprintf(stderr, "memory regression: see memory.tsv\n");
+    if (bad) {
+      // K-324: the rows themselves, as CI keeps only the test's output (not memory.tsv).
+      for (size_t i = 0; i < memRows.size(); ++i) {
+        const MemRow& r = memRows[i];
+        std::fprintf(stderr, "memory row %zu %s: memory %.1f MB, heap %.1f MB, atlas %dx%d (%d sizes), %d windows, %d textures, undo %zu\n", i + 1,
+                     r.type.c_str(), r.mb, r.heapMb, r.atlasW, r.atlasH, r.baked, r.windows, r.textures, r.undoSteps);
+      }
+      std::fprintf(stderr, "memory regression: see memory.tsv\n");
+    }
     auditIssues() += bad;
   }
   // J-128 regression gate: GRIDLINE_ALIGN_BASELINE / GRIDLINE_ALIGN_ALLOW (AlignCheck.h gate()).

@@ -18,6 +18,7 @@ namespace gl {
 class App;
 struct Song;
 struct Clip;
+enum class LaunchGrid : uint8_t;
 }
 
 namespace gl::livelook {
@@ -71,6 +72,14 @@ bool drawMode(const App& a);
 // N48-11: the Arrangement record switch (F9, the record button, the menu row). In Clips turning it on
 // starts the transport, and the clip grid's launches are recorded into the arrangement.
 void toggleArrangementRecord(App& a);
+// Checkpoint 59 (N58-01): Arrangement record (F9) is running in Clips: the arrangement tick the transport
+// is at now (the clip launches' clock mapped onto the arrangement as the launches are recorded), so
+// moves recorded with it land in the Arrangement with the clips. arrangementCapturing: the launches are
+// still being captured (they are written into the arrangement when recording stops).
+bool arrangementRecordTick(const App& a, double& tick);
+bool arrangementCapturing(const App& a);
+// Checkpoint 59 (N58-12): a launch grid in Clips' words, the control bar's ("None", "1/16" ... "1 Bar", "Clip").
+const char* gridName(LaunchGrid g);
 // N49-09: Main's title (grid, mixer band): Main selected, its chain shown.
 void selectMain(App& a);
 void setDrawMode(App& a, bool on);
@@ -140,6 +149,9 @@ void projectOpened(App& a, const std::string& file);
 void setOpenedNew();
 // N47-12: the clip menu's Rename: the clip band shows the clip and its Name field takes the typing.
 void renameClip(App& a, ObjectId clip);
+// Checkpoint 60 (N59-07): renames the scene a click on its launch cell selected (Cmd+R), when nothing
+// else was selected since; false when there is none.
+bool renameSelectedScene(App& a);
 // Checkpoint 49: true on the frame the clip band's Name field (MIDI or audio clip) takes the typing.
 bool renameFocusNow();
 // Checkpoint 49: the track menu's Rename (and Cmd+R on a selected track): in the clip grid the track's
@@ -155,7 +167,12 @@ constexpr float kHeaderW = 216.0f;  // the header column at 100 % (wide enough f
 // Io: checkpoint 55, the In/Out column (it acts on its own click).
 enum class HeaderPart : int { None = 0, Name, Activator, Solo, Arm, Volume, BackToArrangement, Pan, Fold, Io };  // Fold: checkpoint 51, a group's
 // Checkpoint 55 (gap 2): the header column's width (wider by the In/Out column while it shows).
-float headerWidth(const App& a);
+// Checkpoint 58 (N57-04, N57-07): sized to the arrangement's width `viewW`: 180 px plus a 100 px In/Out
+// column on a small window, up to 240 plus 170 on a large one (the Audio To field reads in full). The
+// call sets the widths ioWidth() and every header draw use this frame.
+float headerWidth(const App& a, float viewW);
+// The In/Out column's width as last set by headerWidth.
+float ioWidth();
 struct HeaderDraw {
   int track = -1;
   ImVec2 h0, h1;          // the header's rectangle
@@ -173,6 +190,8 @@ HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h);
 // with its name, volume and meter. Drawn from `top` down, between x0 and x1, while above `bottom`
 // (Main's row, pinned there, excluded); a click selects the mixer track. Returns their height.
 float drawBusRows(App& a, ImDrawList* dl, float x0, float x1, float top, float bottom);
+// Checkpoint 58 (N57-04): how tall the return rows are under the tracks (0 while hidden), for the scroll range.
+float busRowsHeight(const App& a);
 // Main's row, pinned at the foot of the header column (its top at `y`), over the tracks.
 void drawMainRow(App& a, ImDrawList* dl, float x0, float x1, float y);
 constexpr float kBusRowH = 22.0f;
@@ -254,6 +273,10 @@ void infoCorner(App& a);  // the hovered thing's name and what it does
 // by the width. The column is a child of the caller's window, and the caller's content stays in its
 // own window (indented, not wrapped in a child), so focus, hover and popups work as before.
 float clipColumn(App& a);
+// Checkpoint 58 (N57-06): a clip view column's width, and whether a band `bandW` wide shows the clip
+// view's two sections side by side (1440 and up) instead of one scrolling column.
+constexpr float kClipColumnW = 188.0f;
+bool clipViewTwoColumns(float bandW);
 // K-112 (dev, --menu device): the device band's menu of the first effect on the selected channel's
 // mixer track (none: of its instrument), as its title bar opens it.
 void devDeviceMenu(App& a);

@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <sstream>
 #include "../engine/LoopFile.h"
@@ -242,7 +243,7 @@ double bpmFromName(const std::string& name) {
   return 0;
 }
 
-double warpTempo(const std::string& name, double seconds, double setTempo, double detected) {
+double warpTempo(const std::string& name, double seconds, double setTempo, double detected, double beat) {
   if (!(seconds > 0)) {
     return 0;
   }
@@ -266,43 +267,105 @@ double warpTempo(const std::string& name, double seconds, double setTempo, doubl
     }
   }
   if (setTempo > 0) {  // whole bars of 4/4 at the Set's tempo
+    // Checkpoint 59 (N58-02): only a loop's usual bar counts (1, 2, 4, 8 or 16: a 4-bar 120 loop is no
+    // 3-bar loop of a 90 Set), and only when the kicks, if any are heard, keep the Set's tempo (or its
+    // half or double); otherwise the readings below decide.
     const double bars = seconds * setTempo / 240.0;
-    if (bars >= 0.98 && std::fabs(bars - std::round(bars)) <= 0.01 * std::max(1.0, std::round(bars) / 4.0)) {
+    const double n = std::round(bars);
+    const bool usual = n == 1 || n == 2 || n == 4 || n == 8 || n == 16;
+    bool kicksAgree = !(beat > 0);
+    for (double f : {0.5, 1.0, 2.0}) {
+      if (beat > 0 && std::fabs(std::log2(setTempo / (beat * f))) <= std::log2(1.0 + kBeatAgree)) {
+        kicksAgree = true;
+      }
+    }
+    if (usual && kicksAgree && bars >= 0.98 && std::fabs(bars - n) <= 0.01 * std::max(1.0, n / 4.0)) {
       return setTempo;
     }
   }
-  double best = 0;
-  auto consider = [&](double b) {
-    if (b >= 60.0 && b <= 200.0 && (best <= 0 || std::fabs(b - setTempo) < std::fabs(best - setTempo))) {
-      best = b;
+  const double ref = setTempo > 0 ? setTempo : 120.0;
+  // Checkpoint 58 (N57-02): the reading the kicks keep (`beat`, within kBeatAgree), 0 when none does.
+  auto byBeat = [&](const std::vector<double>& c) {
+    double best = 0, d = 0;
+    for (double b : c) {
+      const double e = beat > 0 ? std::fabs(std::log2(b / beat)) : 1e9;
+      if (e <= std::log2(1.0 + kBeatAgree) && (best <= 0 || e < d)) {
+        best = b, d = e;
+      }
     }
+    return best;
   };
+  // Without it: one within kLengthOnlyStretch of the Set's, else one in the usual kAmbiguousLo..kAmbiguousHi,
+  // then the one nearest the Set's tempo.
+  auto byRule = [&](const std::vector<double>& c) {
+    auto nearest = [&](const std::function<bool(double)>& ok) {
+      double n = 0;
+      for (double b : c) {
+        if (ok(b) && (n <= 0 || std::fabs(b - ref) < std::fabs(n - ref))) {
+          n = b;
+        }
+      }
+      return n;
+    };
+    double best = 0;
+    if (setTempo > 0) {
+      best = nearest([&](double b) { return std::fabs(b / setTempo - 1.0) <= kLengthOnlyStretch; });
+    }
+    if (best <= 0) {
+      best = nearest([](double b) { return b >= kAmbiguousLo && b <= kAmbiguousHi; });
+    }
+    if (best <= 0) {
+      best = nearest([](double) { return true; });
+    }
+    return best;
+  };
+  // A tempo as it is stored (Clip::syncBpm): whole when within kWholeTempoSlack, else to 0.01.
+  auto tidy = [](double b) {
+    if (std::fabs(b - std::round(b)) <= kWholeTempoSlack) {
+      return std::round(b);
+    }
+    return std::round(b * 100.0) / 100.0;
+  };
+  // The detector's reading, its half and its double.
+  std::vector<double> heard;
   if (detected > 0) {
     for (double f : {0.5, 1.0, 2.0}) {
-      consider(detected * f);
-    }
-    if (best > 0) {
-      return best;
-    }
-  }
-  if (seconds >= 0.5 && seconds <= 64.0) {
-    // Checkpoint 57 (N56-03): from the length alone, each whole-bar count (1, 2, 4, 8, 16 bars of 4/4)
-    // is read at the tempo it implies, and a reading counts when that tempo is a plausible loop tempo
-    // (kLengthOnlyMin..kLengthOnlyMax) that comes out whole (loops are made at whole tempos: 4 bars of
-    // 10.67 s are 90.00), or when it is within kLengthOnlyStretch of the Set's (checkpoint 56). Of
-    // those, the one nearest the Set's tempo. A held tone of 3.3 s reads 72.73 or 145.45: neither whole
-    // nor near 120, so no tempo (it plays at its own speed, once).
-    const double ref = setTempo > 0 ? setTempo : 120.0;
-    for (int bars : {1, 2, 4, 8, 16}) {
-      const double b = bars * 4 * 60.0 / seconds;
-      const bool whole = b >= kLengthOnlyMin && b <= kLengthOnlyMax && std::fabs(b - std::round(b)) <= kWholeTempoSlack;
-      const bool near = setTempo > 0 && b >= 60.0 && b <= 200.0 && std::fabs(b / setTempo - 1.0) <= kLengthOnlyStretch;
-      if ((whole || near) && (best <= 0 || std::fabs(b - ref) < std::fabs(best - ref))) {
-        best = b;
+      if (detected * f >= 60.0 && detected * f <= 200.0) {
+        heard.push_back(detected * f);
       }
     }
   }
-  return best;
+  // Checkpoint 57 (N56-03): from the length alone, each whole-bar count (1, 2, 4, 8, 16 bars of 4/4) is
+  // read at the tempo it implies, and a reading counts when that tempo is a plausible loop tempo
+  // (kLengthOnlyMin..kLengthOnlyMax) that comes out whole (loops are made at whole tempos: 4 bars of
+  // 10.67 s are 90.00), or when it is within kLengthOnlyStretch of the Set's (checkpoint 56). A held tone
+  // of 3.3 s reads 72.73 or 145.45: neither whole nor near 120, so no tempo (it plays at its own speed, once).
+  std::vector<double> bars;
+  if (seconds >= 0.5 && seconds <= 64.0) {
+    for (int n : {1, 2, 4, 8, 16}) {
+      const double b = n * 4 * 60.0 / seconds;
+      const bool whole = b >= kLengthOnlyMin && b <= kLengthOnlyMax && std::fabs(b - std::round(b)) <= kWholeTempoSlack;
+      const bool near = setTempo > 0 && b >= 60.0 && b <= 200.0 && std::fabs(b / setTempo - 1.0) <= kLengthOnlyStretch;
+      if (whole || near) {
+        bars.push_back(b);
+      }
+    }
+  }
+  // Checkpoint 58 (N57-02): the kicks settle half or double, the detector's reading first, then the
+  // length's (a detector that locked onto the hats is passed over); without them, the rule.
+  if (const double b = byBeat(heard); b > 0) {
+    return tidy(b);
+  }
+  if (const double b = byBeat(bars); b > 0) {
+    return tidy(b);
+  }
+  if (!heard.empty()) {
+    return tidy(byRule(heard));
+  }
+  if (!bars.empty()) {
+    return tidy(byRule(bars));
+  }
+  return 0;
 }
 
 bool keyFromName(const std::string& name, int& pitchClass, bool& minor) {

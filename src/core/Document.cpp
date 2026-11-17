@@ -1,5 +1,6 @@
 #include "Document.h"
 #include "TrackOrder.h"
+#include "TrackModes.h"
 #include "Meter.h"
 #include <type_traits>
 #include "Crash.h"
@@ -207,7 +208,69 @@ class TempoRefitCommand final : public Command {
   std::vector<Patch> patches_;
 };
 
+// Checkpoint 58 (N57-01): an edit that moved a track's output off the return its kept send waits for
+// (Studio's routing, a script, any layout), with that send put back (trackmodes::restoreKeptSends):
+// one history step. It never merges (a drag that crosses it starts a new step).
+class KeptSendsCommand final : public Command {
+ public:
+  struct Patch {
+    ObjectId id;
+    std::vector<Send> before, after;
+  };
+  KeptSendsCommand(CommandPtr inner, std::vector<Patch> patches, std::vector<KeptSend> keptBefore,
+                   std::vector<KeptSend> keptAfter)
+      : inner_(std::move(inner)), patches_(std::move(patches)), keptBefore_(std::move(keptBefore)), keptAfter_(std::move(keptAfter)) {}
+  void apply(Song& s) override {
+    inner_->apply(s);
+    for (const Patch& p : patches_) {
+      if (MixerTrack* m = s.mixerTrack(p.id)) {
+        m->sends = p.after;
+      }
+    }
+    s.keptSends = keptAfter_;
+  }
+  void revert(Song& s) override {
+    s.keptSends = keptBefore_;
+    for (const Patch& p : patches_) {
+      if (MixerTrack* m = s.mixerTrack(p.id)) {
+        m->sends = p.before;
+      }
+    }
+    inner_->revert(s);
+  }
+  std::string label() const override { return inner_->label(); }
+  bool mayMoveTempo() const override { return inner_->mayMoveTempo(); }
+  size_t approxBytes() const override { return inner_->approxBytes() + 256 + patches_.size() * 128; }
+
+ private:
+  CommandPtr inner_;
+  std::vector<Patch> patches_;
+  std::vector<KeptSend> keptBefore_, keptAfter_;
+};
+
 }  // namespace
+
+CommandPtr Document::withKeptSends(CommandPtr cmd) {
+  if (song_.keptSends.empty() || !trackmodes::keptSendsStale(song_)) {
+    return cmd;
+  }
+  std::vector<KeptSendsCommand::Patch> patches;
+  for (const KeptSend& k : song_.keptSends) {
+    const MixerTrack* m = song_.mixerTrack(k.mixer);
+    const bool seen = std::any_of(patches.begin(), patches.end(), [&](const KeptSendsCommand::Patch& p) { return p.id == k.mixer; });
+    if (m && !seen) {
+      patches.push_back({k.mixer, m->sends, {}});
+    }
+  }
+  std::vector<KeptSend> before = song_.keptSends;
+  trackmodes::restoreKeptSends(song_);
+  for (KeptSendsCommand::Patch& p : patches) {
+    if (const MixerTrack* m = song_.mixerTrack(p.id)) {
+      p.after = m->sends;
+    }
+  }
+  return std::make_unique<KeptSendsCommand>(std::move(cmd), std::move(patches), std::move(before), song_.keptSends);
+}
 
 void Document::reset(Song song) {
   song_ = std::move(song);
@@ -244,6 +307,9 @@ void Document::exec(CommandPtr cmd, bool mayJoin, bool clipLevels) {
     cmd = applyWithTempoRefit(std::move(cmd));  // (applied)
     ++revision_;
     tempoMapRev_ = revision_;
+  }
+  if (!clipLevels) {
+    cmd = withKeptSends(std::move(cmd));  // checkpoint 58 (N57-01): in the same step (sends never move the tempo map)
   }
   if (!groups_.empty()) {
     groups_.back()->add(std::move(cmd));

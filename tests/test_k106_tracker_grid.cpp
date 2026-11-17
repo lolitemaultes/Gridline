@@ -139,6 +139,7 @@ int main() {
   expect(noteText(61, true) == "Db4" && noteText(70, true) == "Bb4" && noteText(60, true) == "C-4", "note names with flats: 61 is Db4");
   expect(rowText(0x1F, true) == "1F" && rowText(31, false) == "31" && rowText(0x100, true) == "100", "row numbers in hex and decimal");
   expect(hex2(127) == "7F", "two hex digits");
+  expect(hexNum(7) == "07" && hexNum(255) == "FF" && hexNum(440) == "1B8", "order numbers: three digits past FF (cp25: a 440-entry song showed Len FF)");
 
   // ---- columns ----
   {

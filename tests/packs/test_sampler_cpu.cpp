@@ -162,13 +162,19 @@ void kernelChecks() {
     return acc == 12345.678 ? 0.0 : s;  // (acc keeps the reads)
   };
   for (double rate : {0.9187, 1.5}) {
-    double best = 0;
-    for (int tries = 0; tries < 3 && best < 2.0; ++tries) {  // a busy machine gets three tries
-      const double ref = timeReads(false, rate), fast = timeReads(true, rate);
-      best = std::max(best, ref / std::max(fast, 1e-9));
+    // K-326: each read's own fastest time over the tries (a busy or shared machine's preemptions only
+    // ever add time, so the minimum is the true cost of each); a real regression still fails, since
+    // the fast read's minimum is then no lower than the reference's. Up to seven tries, both timed
+    // back to back in each.
+    const double want = rate < 1.04 ? 2.0 : 1.3;
+    double ref = 1e9, fast = 1e9, best = 0;
+    for (int tries = 0; tries < 7 && best < want; ++tries) {
+      ref = std::min(ref, timeReads(false, rate));
+      fast = std::min(fast, timeReads(true, rate));
+      best = ref / std::max(fast, 1e-9);
     }
     std::printf("# reader: rate %.4f fast read %.1fx the reference speed\n", rate, best);
-    expect(!kTimed || best >= (rate < 1.04 ? 2.0 : 1.3), (std::string("reader: fast read at least ") + std::string(rate < 1.04 ? "2x" : "1.3x") + " the reference speed (rate " + std::to_string(rate) + ")").c_str());
+    expect(!kTimed || best >= want, (std::string("reader: fast read at least ") + std::string(rate < 1.04 ? "2x" : "1.3x") + " the reference speed (rate " + std::to_string(rate) + ")").c_str());
   }
 }
 

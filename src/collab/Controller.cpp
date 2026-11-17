@@ -2,6 +2,7 @@
 #include "Controller.h"
 #include <algorithm>
 #include <filesystem>
+#include <mutex>
 #include "../core/I18n.h"
 #include "../core/Project.h"
 #include "../core/Secrets.h"
@@ -20,16 +21,45 @@ NetSettings netSettingsFrom(const Settings& s) {
   n.turnHost = s.getString("collab.turnHost");
   n.turnPort = static_cast<uint16_t>(std::clamp(s.getNumber("collab.turnPort"), 1.0, 65535.0));
   n.turnUser = s.getString("collab.turnUser");
-  // K-312: also with only a user name, so a half-filled setting (no server) is told apart
-  if (!n.turnHost.empty() || !n.turnUser.empty()) {
-    secrets::Store st;
-    st.get("collab-turn-password", n.turnPass);
-  }
   n.portMapping = s.getBool("collab.portMapping");
   n.stunBackups = parseStunList(s.getString("collab.stunBackups"));  // K-312
   n.fixedPort = static_cast<uint16_t>(std::clamp(s.getNumber("collab.udpPort"), 0.0, 65535.0));
   n.portForwarded = n.fixedPort && s.getBool("collab.portForwarded");
   return n;
+}
+
+namespace {
+std::mutex gTurnMu;
+bool gTurnKnown = false;  // K-327: read once (or set from the settings page) this run
+std::string gTurnPass;
+}  // namespace
+
+bool fillTurnPassword(NetSettings& n, bool readStore) {
+  // K-312: also with only a user name, so a half-filled setting (no server) is told apart
+  if (n.turnHost.empty() && n.turnUser.empty()) return true;
+  if (!n.turnPass.empty()) return true;
+  std::lock_guard<std::mutex> lk(gTurnMu);
+  if (!gTurnKnown) {
+    if (!readStore || secrets::accessBlocked()) return false;
+    std::string pw;
+    secrets::Store().get("collab-turn-password", pw);
+    gTurnPass = pw;
+    gTurnKnown = true;
+  }
+  n.turnPass = gTurnPass;
+  return true;
+}
+
+void rememberTurnPassword(const std::string& pass) {
+  std::lock_guard<std::mutex> lk(gTurnMu);
+  gTurnPass = pass;
+  gTurnKnown = true;
+}
+
+void forgetTurnPassword() {
+  std::lock_guard<std::mutex> lk(gTurnMu);
+  gTurnPass.clear();
+  gTurnKnown = false;
 }
 
 VersionInfo currentVersion() {
@@ -212,7 +242,14 @@ Session::Config Controller::sessionConfig(const std::string& folder, const std::
 }
 
 void Controller::startHub() {
-  std::unique_ptr<Fabric> fabric = fabricFactory ? fabricFactory() : (net.enabled ? makeJuiceFabric(net) : nullptr);
+  std::unique_ptr<Fabric> fabric;
+  if (fabricFactory) {
+    fabric = fabricFactory();
+  } else if (net.enabled) {
+    NetSettings n = net;
+    fillTurnPassword(n, true);  // K-327: a session starts (create, open, join): the TURN password is read now
+    fabric = makeJuiceFabric(n);
+  }
   Profile p = profiles_.profile();
   p.color = profiles_.color();
   hub_ = std::make_unique<Hub>(std::move(fabric), profiles_.identity(), p, version, (fs::path(profiles_.dir()) / "projects").string());
@@ -622,7 +659,14 @@ void Controller::setShowOnline(bool on) {
 
 PresenceProber& Controller::presence() {
   if (!presence_) {
-    std::unique_ptr<Fabric> fabric = fabricFactory ? fabricFactory() : (net.enabled ? makeJuiceFabric(net) : nullptr);
+    std::unique_ptr<Fabric> fabric;
+    if (fabricFactory) {
+      fabric = fabricFactory();
+    } else if (net.enabled) {
+      NetSettings n = net;
+      fillTurnPassword(n, false);  // K-327: the welcome screen's probe never reads the store (only a password already read)
+      fabric = makeJuiceFabric(n);
+    }
     Profile p = profiles_.profile();
     p.color = profiles_.color();
     presence_ = std::make_unique<PresenceProber>(std::move(fabric), profiles_.identity(), p, version);

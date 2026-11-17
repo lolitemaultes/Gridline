@@ -43,6 +43,9 @@ void PlaceNextDialog(ImVec2 want, ImGuiCond cond = ImGuiCond_Appearing, ImVec2 m
 // body scrolls and the footer buttons stay on screen. Always pair with
 // EndDialogBody().
 void BeginDialogBody(const char* id, int footerRows = 1);
+// K-325: right after Begin of a dialog whose height follows its rows (no dialog body): keeps it
+// centred, as PlaceNextDialog placed it, while its first frames find its height.
+void SettleDialogCentred();
 void EndDialogBody();
 
 // J-91: floating windows (channel and plugin windows, dialogs) stay inside the

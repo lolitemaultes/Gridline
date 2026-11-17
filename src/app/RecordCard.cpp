@@ -14,12 +14,17 @@
 #include "../core/MidiRecord.h"
 #include "../core/RecordInfo.h"
 #include "AudioRecordUi.h"
+#include "DialogLayout.h"
 #include "J31Ui.h"
 #include "LiveLook.h"
+#include "LogicPlugins.h"
 #include "MenuParityUi.h"
+#include "RecordLook.h"
 #include "RecordRowsUi.h"
 #include "RecordMoreUi.h"
+#include "SettingsPages.h"
 #include "Theme.h"
+#include "TrackerLook.h"
 #include "Widgets.h"
 
 namespace fs = std::filesystem;
@@ -46,12 +51,10 @@ State& st() {
 }
 
 // The grid: every gap and height is a multiple of 8 (4 for hairline nudges).
-constexpr float kG = 8.0f;
+using reclook::kG;
+using reclook::Kind;
 constexpr float kCardW = 400.0f;         // the card's content width
 constexpr float kStripH = 40.0f;         // the strip under the top bar
-constexpr float kFooterH = 48.0f;        // the Record window's footer
-constexpr float kRailW = 184.0f;         // the Record window's page rail
-constexpr float kLabelW = 176.0f;        // the label column of a settings page
 constexpr float kMeterH = 4.0f;          // a slim level meter
 constexpr float kDbW = 40.0f;            // the dB readout beside a meter
 
@@ -198,35 +201,38 @@ void foldClose(State& S, ImDrawList* dl, float x, float y) {
 }
 
 // The main action and the take's secondary one, in a row at the cursor (actionWidth: their width).
+// K-325: the layout's own buttons (bevel buttons in the Tracker); the punch button as wide as Stop's pair.
+constexpr float kPunchW = 88.0f, kStopW = 72.0f;
 void actionButtons(App& a, const Live& Lv, bool withPlay) {
   if (Lv.waiting) {  // K-123 (0.7.7): start on the first note
-    if (ui::PrimaryButton(i18n::tr("Start now"), 0, "Starts playback and recording without waiting for a note")) recmore::startNow(a);
+    if (reclook::rlButton(a, "Start now", Kind::Primary, 0, "Starts playback and recording without waiting for a note")) recmore::startNow(a);
     ImGui::SameLine(0, kG);
-    if (ui::TextButton(i18n::tr("Cancel"), false, 0, "Stops waiting (Record stays on)")) recmore::cancelWait(a);
+    if (reclook::rlButton(a, "Cancel", Kind::Normal, 0, "Stops waiting (Record stays on)")) recmore::cancelWait(a);
     return;
   }
   if (Lv.recording && Lv.quick) {  // K-123 (0.7.7): quick punch (the record key does the same)
-    if (ui::TextButton(a.recordArmed ? i18n::tr("Punch out") : i18n::tr("Punch in"), !a.recordArmed, 88,
-                       "Quick punch: stops or starts recording while playback goes on (the record key does the same)")) {
+    if (reclook::rlButton(a, a.recordArmed ? "Punch out" : "Punch in", Kind::Normal, kPunchW,
+                        "Quick punch: stops or starts recording while playback goes on (the record key does the same)", !a.recordArmed)) {
       livelook::toggleArrangementRecord(a);
     }
     ImGui::SameLine(0, kG);
   }
   if (Lv.recording) {
-    if (ui::PrimaryButton(i18n::tr("Stop"), 72, "Stops the transport; the take is kept")) menuparity::stopButtonPressed(a);
+    if (reclook::rlButton(a, "Stop", Kind::Primary, kStopW, "Stops the transport; the take is kept")) menuparity::stopButtonPressed(a);
     ImGui::SameLine(0, kG);
-    if (ui::DangerButton(i18n::tr("Discard take"), false, 0, "Stops and throws away what is being recorded")) j31::cancelRecording(a);
+    if (reclook::rlButton(a, "Discard take", Kind::Danger, 0, "Stops and throws away what is being recorded")) j31::cancelRecording(a);
   } else if (!a.audioRecFinishing && withPlay) {
-    if (ui::PrimaryButton(i18n::tr("Record and play"), 0,
-                          Lv.armed.empty() ? "Starts playback (nothing records until a track is armed)" : "Starts playback; the armed tracks record (Space does the same)"))
+    if (reclook::rlButton(a, "Record and play", Kind::Primary, 0,
+                          Lv.armed.empty() ? "Starts playback (nothing records until a track is armed)" : "Starts playback; the armed tracks record (Space does the same)")) {
       menuparity::playPressed(a);
+    }
   }
 }
 
 float actionWidth(const App& a, const Live& Lv) {
-  if (Lv.waiting) return ui::TextButtonWidth("Start now") + kG + ui::TextButtonWidth("Cancel");
-  if (Lv.recording) return (Lv.quick ? 88 + kG : 0.0f) + 72 + kG + ui::TextButtonWidth("Discard take");
-  return a.audioRecFinishing ? 0.0f : ui::TextButtonWidth("Record and play");
+  if (Lv.waiting) return reclook::buttonWidth("Start now") + kG + reclook::buttonWidth("Cancel");
+  if (Lv.recording) return (Lv.quick ? kPunchW + kG : 0.0f) + kStopW + kG + reclook::buttonWidth("Discard take");
+  return a.audioRecFinishing ? 0.0f : reclook::buttonWidth("Record and play");
 }
 
 }  // namespace
@@ -273,115 +279,70 @@ const char* pageCaption(int p) {
   return p >= 0 && p < kPages ? n[p] : "";
 }
 
-// The page's heading: the title, and its caption under it.
-void pageTitle(App& a, int page, bool recording) {
-  const auto& P = pal();
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  const ImVec2 p = ImGui::GetCursorScreenPos();
-  dl->AddText(a.fontBold, theme::kFontTitle, p, P.text, pageName(page));
-  const char* cap = recording && (page == kReady || page == kMode || page == kFiles) ? "Recording now: settings that would change the take wait until it stops"
-                                                                                       : pageCaption(page);
-  dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(p.x, p.y + 22), P.textDim, i18n::tr(cap));
-  ImGui::Dummy(ImVec2(0, 5 * kG));
+// K-325 (round 2): under the tabs, as Settings: the page's caption in the dim colour (Clips' list and
+// Smooth's tiles name the page, so there it says only that a take is recording).
+void pageBlurb(bool tabs, int page, bool recording) {
+  const bool busy = recording && (page == kReady || page == kMode || page == kFiles);
+  if (!tabs && !busy) return;
+  const char* cap = busy ? "Recording now: settings that would change the take wait until it stops" : pageCaption(page);
+  ImGui::TextColored(theme::vec(pal().textDim), "%s", i18n::tr(cap));
+  ImGui::Dummy(ImVec2(0, theme::kS1));
 }
 
-// A quiet group heading inside a page (with room above it unless it is the first).
-void groupHeading(App& a, const char* text, bool first = false) {
-  const auto& P = pal();
-  if (!first) ImGui::Dummy(ImVec2(0, kG));
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  const ImVec2 p = ImGui::GetCursorScreenPos();
-  const float w = ImGui::GetContentRegionAvail().x;
-  const char* t = i18n::tr(text);
-  dl->AddText(a.fontBold, theme::kFontLabel, ImVec2(p.x, p.y), P.textFaint, t);
-  const float tw = textW(a.fontBold, theme::kFontLabel, t);
-  dl->AddLine(ImVec2(p.x + tw + kG, p.y + 7), ImVec2(p.x + w, p.y + 7), P.line);
-  ImGui::Dummy(ImVec2(0, 2 * kG));
-}
-
-// A labelled row: the label in the label column, the control after it; rows sit 8 px apart.
-void rowLabel(const char* label) {
-  const auto& P = pal();
-  ImGui::AlignTextToFramePadding();
-  ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr(label));
-  ImGui::SameLine(kLabelW);
-}
+// A labelled value row.
 void rowValue(const char* label, const std::string& v, ImU32 col = 0) {
-  rowLabel(label);
-  ImGui::AlignTextToFramePadding();
-  ImGui::TextColored(theme::vec(col ? col : pal().text), "%s", v.c_str());
+  reclook::rlLabel(label);
+  reclook::rlValue(v.c_str(), col);
 }
-
-constexpr float kOnOffW = 48.0f;
-bool onOff(const char* label, const char* id, bool& v, const char* hint) {
-  rowLabel(label);
-  int i = v ? 1 : 0;
-  static const char* kOnOff[] = {"Off", "On"};
-  const bool ch = ui::Segmented(id, kOnOff, 2, &i, kOnOffW);
-  ui::Hint(hint);
-  if (ch) v = i == 1;
-  return ch;
-}
+// A labelled switch row bound to a setting.
 void boolSetting(App& a, const char* label, const char* key, const char* hint) {
   bool b = a.settings.getBool(key);
   ImGui::PushID(key);
-  if (onOff(label, "##b", b, hint)) a.settings.set(key, b);
+  reclook::rlLabel(label);
+  if (reclook::rlToggle(a, "##b", &b, hint)) a.settings.set(key, b);
   ImGui::PopID();
+}
+// A labelled switch row bound to a flag.
+bool boolRow(App& a, const char* label, const char* id, bool& v, const char* hint) {
+  reclook::rlLabel(label);
+  return reclook::rlToggle(a, id, &v, hint);
+}
+// A unit after a control, on its baseline (beats).
+void unit(const char* text) {
+  ImGui::SameLine(0, kG);
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextColored(theme::vec(pal().textFaint), "%s", i18n::tr(text));
 }
 
 void rollRow(App& a, const char* label, const char* onKey, const char* beatsKey, const char* hint) {
   static const char* kNames[] = {"Off", "1", "2", "4", "8", "16"};
   static const double kBeats[] = {0, 1, 2, 4, 8, 16};
   int cur = 0;
-  if (a.settings.getBool(onKey))
-    for (int i = 1; i < 6; ++i)
+  if (a.settings.getBool(onKey)) {
+    for (int i = 1; i < 6; ++i) {
       if (a.settings.getNumber(beatsKey) == kBeats[i]) cur = i;
-  rowLabel(label);
+    }
+  }
+  reclook::rlLabel(label);
   ImGui::PushID(onKey);
-  if (ui::Segmented("##roll", kNames, 6, &cur, 40)) {
+  if (reclook::rlChoice(a, "##roll", kNames, 6, &cur, reclook::kShortW, hint)) {
     a.settings.set(onKey, cur > 0);
     if (cur > 0) a.settings.set(beatsKey, kBeats[cur]);
   }
-  ui::Hint(hint);
-  ImGui::SameLine(0, kG);
-  ImGui::AlignTextToFramePadding();
-  ImGui::TextColored(theme::vec(pal().textFaint), "%s", i18n::tr("beats"));
+  unit("beats");
   ImGui::PopID();
-}
-
-// The page rail: a quiet list, the open page lit with an accent mark.
-void pageRail(App& a, State& S, int armedN) {
-  const auto& P = pal();
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  ImGui::Dummy(ImVec2(0, kG));
-  for (int p = 0; p < kPages; ++p) {
-    ImGui::PushID(p);
-    const ImVec2 at = ImGui::GetCursorScreenPos();
-    const float w = ImGui::GetContentRegionAvail().x, h = 4 * kG;
-    if (ImGui::InvisibleButton("##page", ImVec2(w, h))) S.page = p;
-    const bool on = S.page == p, hov = ImGui::IsItemHovered();
-    if (on || hov) dl->AddRectFilled(at, ImVec2(at.x + w, at.y + h), on ? P.surface700 : theme::withAlpha(P.surface700, 0.5f), 4);
-    if (on) dl->AddRectFilled(ImVec2(at.x, at.y + kG), ImVec2(at.x + 2, at.y + h - kG), P.accent, 1);
-    const char* n = i18n::tr(pageName(p));
-    dl->AddText(on ? a.fontBold : a.fontRegular, theme::kFontBody - 1, ImVec2(at.x + 2 * kG, at.y + (h - theme::kFontBody) * 0.5f + 1), on ? P.text : P.textDim, n);
-    if (p == kInputs && armedN > 0) {
-      const std::string c = std::to_string(armedN);
-      const float cw = textW(a.fontMono, theme::kFontLabel, c.c_str());
-      dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(at.x + w - kG - cw, at.y + (h - theme::kFontLabel) * 0.5f), P.danger, c.c_str());
-    }
-    ImGui::PopID();
-  }
 }
 
 void drawFull(App& a, State& S, const Live& Lv) {
   const auto& P = pal();
   const Song& s = a.doc.song();
-  const ImGuiViewport* vp = ImGui::GetMainViewport();
-  ImGui::SetNextWindowSize(ImVec2(896, 640), ImGuiCond_Appearing);
-  ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+  // K-325 (round 2): the Settings window's frame in each layout (its size, padding, page navigation,
+  // Smooth's inset panel and its form), with Render's footer (DialogFooter, buttons from 96 wide).
+  ui::PlaceNextDialog(livelook::active(a) ? ImVec2(980, 600) : ImVec2(860, 560), ImGuiCond_Appearing, ImVec2(660, 360));
   bool open = true;
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-  const bool shown = ImGui::Begin(i18n::tr("Record###recordwindow"), &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
+  const bool shown = ImGui::Begin(i18n::tr("Record###recordwindow"), &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings);
+  ui::KeepWindowInViewport();
   ImGui::PopStyleVar();
   if (!shown) {
     ImGui::End();
@@ -390,29 +351,40 @@ void drawFull(App& a, State& S, const Live& Lv) {
   }
   const bool recording = Lv.recording;
   const int armedN = static_cast<int>(Lv.armed.size());
-  ImDrawList* wdl = ImGui::GetWindowDrawList();
-  // The rail, on a slightly deeper surface.
+  const float footH = ui::DialogFooterHeight();
+  const SettingsNav nav = settingsNav(a);
   {
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float h = ImGui::GetContentRegionAvail().y - kFooterH;
-    wdl->AddRectFilled(p, ImVec2(p.x + kRailW, p.y + h), P.surface900);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kG, kG));
-    ImGui::BeginChild("##pages", ImVec2(kRailW, -kFooterH), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoBackground);
-    pageRail(a, S, armedN);
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
+    using I = ui::Icon;
+    static const I kIcons[kPages] = {I::Record, I::Trim, I::Metronome, I::LoopArrows, I::InputJack, I::CatMidi, I::Folder};
+    const char* names[kPages];
+    const char* hints[kPages];
+    for (int p = 0; p < kPages; ++p) {
+      names[p] = pageName(p);
+      hints[p] = pageCaption(p);
+    }
+    settingsPageNav(a, "##recordtabs", names, kIcons, kPages, &S.page, hints, footH);
   }
-  ImGui::SameLine(0, 0);
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4 * kG, 3 * kG));
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(kG, kG));
-  ImGui::BeginChild("##page", ImVec2(0, -kFooterH), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoBackground);
-  pageTitle(a, S.page, recording);
+  const bool panel = nav == SettingsNav::Icons;
+  if (panel) {
+    ImDrawList* wdl = ImGui::GetWindowDrawList();
+    const float barTop = ImGui::GetCursorScreenPos().y;
+    wdl->ChannelsSplit(2);
+    wdl->ChannelsSetCurrent(1);
+    settingsPagePanel(barTop, footH);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS3, 0));
+  }
+  ImGui::BeginChild("##page", ImVec2(0, -(footH + (panel ? theme::kS2 : 0.0f))), panel ? ImGuiChildFlags_AlwaysUseWindowPadding : ImGuiChildFlags_None,
+                    ImGuiWindowFlags_NoBackground);
+  if (panel) ImGui::PopStyleVar();
+  pageBlurb(nav == SettingsNav::Tabs, S.page, recording);
+  const float fieldW = settingsFormBegin(a);
+  const reclook::FormScope formScope(fieldW);
   const bool sel = a.playlist.selEnd > a.playlist.selStart;
   const int bits = static_cast<int>(a.settings.getNumber("audio.recordBits"));
   const char* fmt = bits == 24 ? "24-bit WAV" : bits == 16 ? "16-bit WAV" : "32-bit float WAV";
   switch (S.page) {
     case kReady: {
-      groupHeading(a, "Next take", true);
+      reclook::rlSection("NEXT TAKE");
       rowValue("Mode", std::string(a.recPunch && sel ? "Punch at the time selection" : "From the playhead") +
                            (recmore::quickPunch(a) ? ", quick punch" : ""));
       if (a.settings.getBool("record.startOnNote")) rowValue("Start", "On the first note");  // K-123 (0.7.7)
@@ -420,34 +392,40 @@ void drawFull(App& a, State& S, const Live& Lv) {
       rowValue("Count-in", a.countInBars ? std::to_string(a.countInBars) + (a.countInBars == 1 ? " bar" : " bars") : "Off");
       rowValue("Loop passes", a.settings.getBool("record.takeLanes") ? "Take lanes on the track" : "Tracks below");
       rowValue("Armed tracks", armedN ? std::to_string(armedN) : std::string(i18n::tr("None yet: arm tracks on Inputs and monitoring")), armedN ? 0 : P.textFaint);
-      groupHeading(a, "Files");
+      reclook::rlSection("FILES");
       rowValue("Format", fmt);
-      rowLabel("Folder");
-      ui::PathFit(recordedDir(a).c_str(), std::max(80.0f, ImGui::GetContentRegionAvail().x), P.text);
+      reclook::rlLabel("Folder");
+      ui::PathFit(recordedDir(a).c_str(), std::max(80.0f, ImGui::GetContentRegionAvail().x), P.text, true);
       rowValue("Disk", recinfo::durationText(recinfo::minutesLeft(S.freeBytes, a.engine.sampleRate(), std::max(1, armedN), bits == 24 ? 3 : bits == 16 ? 2 : 4)) + " of recording left",
                Lv.minutes < 10 ? P.danger : 0);
-      groupHeading(a, "When Record is clicked");
-      rowLabel("Open");
-      int w = std::clamp(static_cast<int>(a.settings.getNumber("record.window")), 0, 2);
+      reclook::rlSection("WHEN RECORD IS CLICKED");
       static const char* kWhen[] = {"Every time", "First time per song", "Never"};
-      if (ui::Segmented("##when", kWhen, 3, &w, 0)) a.settings.set("record.window", w);
-      ui::Hint("When the record controls open as Record is switched on. Shift+click on Record, and the record key, never open them");
-      rowLabel("Show as");
-      int f = form(a);
       static const char* kForm[] = {"Card", "Strip", "This window"};
-      if (ui::Segmented("##form", kForm, 3, &f, 0)) a.settings.set("record.form", f);
-      ui::Hint("Card: a small card at the bottom right. Strip: one row under the top bar. This window: the Record window stays open while a take records");
+      const float segW = 0;  // fitted, as Settings
+      reclook::rlLabel("Open");
+      int w = std::clamp(static_cast<int>(a.settings.getNumber("record.window")), 0, 2);
+      if (reclook::rlChoice(a, "##when", kWhen, 3, &w, segW, "When the record controls open as Record is switched on. Shift+click on Record, and the record key, never open them")) {
+        a.settings.set("record.window", w);
+      }
+      reclook::rlLabel("Show as");
+      int f = form(a);
+      if (reclook::rlChoice(a, "##form", kForm, 3, &f, segW, "Card: a small card at the bottom right. Strip: one row under the top bar. This window: the Record window stays open while a take records")) {
+        a.settings.set("record.form", f);
+      }
       break;
     }
     case kMode: {
-      groupHeading(a, "Punch", true);
-      rowLabel("Punch");
+      reclook::rlSection("PUNCH");
+      reclook::rlLabel("Punch");
       int pv = a.recPunch ? 1 : 0;
       static const char* kPunch[] = {"Off", "At the time selection"};
       ImGui::BeginDisabled(recording);
-      if (ui::Segmented("##punch", kPunch, 2, &pv, 0)) a.recPunch = pv == 1;
+      if (reclook::rlChoice(a, "##punch", kPunch, 2, &pv, 0,
+                            logicplug::active(a) ? "In song mode, records only inside the tracks area's time selection"
+                                                 : "In song mode, records only inside the playlist's time selection")) {
+        a.recPunch = pv == 1;
+      }
       ImGui::EndDisabled();
-      ui::Hint("In song mode, records only inside the playlist's time selection");
       if (sel) {
         const MeterMap mm(s);
         auto pos = [&](Tick t) {
@@ -456,21 +434,24 @@ void drawFull(App& a, State& S, const Live& Lv) {
         };
         rowValue("Range", pos(a.playlist.selStart) + " to " + pos(a.playlist.selEnd));
       } else {
-        rowValue("Range", i18n::tr("No time selection: drag in the playlist's ruler"), P.textFaint);
+        // D9 (R14-14): Smooth's word for the arrangement, as its own menus and hints say it
+        rowValue("Range", logicplug::active(a) ? i18n::tr("No time selection: drag in the tracks area's ruler")
+                                               : i18n::tr("No time selection: drag in the playlist's ruler"),
+                 P.textFaint);
       }
       {  // K-123 (0.7.7): quick punch
         bool q = recmore::quickPunch(a);
         ImGui::BeginDisabled(recording);
-        if (onOff("Quick punch", "##quick", q, "While playing, Record (the button or the record key) punches in and out as often as you like; the punches are one take and one undo step")) {
+        if (boolRow(a, "Quick punch", "##quick", q, "While playing, Record (the button or the record key) punches in and out as often as you like; the punches are one take and one undo step")) {
           a.settings.set("record.quickPunch", q);
         }
         ImGui::EndDisabled();
       }
-      groupHeading(a, "Around the punch");
+      reclook::rlSection("AROUND THE PUNCH");
       rollRow(a, "Pre-roll", "record.preRoll", "record.preRollBeats", "Playback starts this much before the punch in (the first pass)");
       rollRow(a, "Post-roll", "record.postRoll", "record.postRollBeats", "Playback goes on this long past the punch out, then stops");
       {  // K-123 (0.7.7): the punch crossfade
-        rowLabel("Crossfade");
+        reclook::rlLabel("Crossfade");
         static const char* kFade[] = {"Off", "5 ms", "10 ms", "20 ms", "50 ms"};
         static const int kMs[] = {0, 5, 10, 20, 50};
         const int cur = static_cast<int>(std::lround(a.settings.getNumber("record.punchFadeMs")));
@@ -479,26 +460,28 @@ void drawFull(App& a, State& S, const Live& Lv) {
           if (cur == kMs[i]) fi = i;
         }
         ImGui::BeginDisabled(recording);
-        if (ui::Segmented("##pfade", kFade, 5, &fi, 56)) a.settings.set("record.punchFadeMs", kMs[fi]);
+        if (reclook::rlChoice(a, "##pfade", kFade, 5, &fi, reclook::kShortW,
+                               "At each punch in and out the take and the audio already on the track crossfade over this time, so the joins never click")) {
+          a.settings.set("record.punchFadeMs", kMs[fi]);
+        }
         ImGui::EndDisabled();
-        ui::Hint("At each punch in and out the take and the audio already on the track crossfade over this time, so the joins never click");
       }
-      groupHeading(a, "Capture while armed");  // K-123 (0.7.7)
+      reclook::rlSection("CAPTURE WHILE ARMED");  // K-123 (0.7.7)
       {
         double held = 0;
         int tracks = 0;
         recmore::captureHeld(a, held, tracks);
-        rowLabel("Kept");
-        ImGui::AlignTextToFramePadding();
+        reclook::rlLabel("Kept");
         if (recmore::captureSeconds(a) <= 0) {
-          ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Off: turn it on in Files"));
+          reclook::rlValue(i18n::tr("Off: turn it on in Files"), P.textFaint);
         } else if (tracks == 0) {
-          ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Nothing yet: armed tracks keep what they hear while the transport plays"));
+          reclook::rlValue(i18n::tr("Nothing yet: armed tracks keep what they hear while the transport plays"), P.textFaint);
         } else {
+          ImGui::AlignTextToFramePadding();
           ImGui::TextColored(theme::vec(P.text), "%s", (recinfo::clock(held) + (tracks == 1 ? std::string(" on 1 track") : " on " + std::to_string(tracks) + " tracks")).c_str());
           ImGui::SameLine(0, 2 * kG);
           ImGui::BeginDisabled(recording || a.audioRecFinishing);
-          if (ui::TextButton(i18n::tr("Recover the last pass"), false, 0, "Places what the armed tracks heard in the last pass the transport played, where it was played (one undo step)")) {
+          if (reclook::rlButton(a, "Recover the last pass", Kind::Normal, 0, "Places what the armed tracks heard in the last pass the transport played, where it was played (one undo step)")) {
             recmore::recoverAudio(a);
           }
           ImGui::EndDisabled();
@@ -507,20 +490,23 @@ void drawFull(App& a, State& S, const Live& Lv) {
       break;
     }
     case kStart: {
-      groupHeading(a, "Count-in", true);
-      rowLabel("Bars");
+      reclook::rlSection("COUNT-IN");
+      reclook::rlLabel("Bars");
       static const char* kCount[] = {"Off", "1", "2", "4"};
       static const int kBars[] = {0, 1, 2, 4};
       int ci = 0;
-      for (int i = 0; i < 4; ++i)
+      for (int i = 0; i < 4; ++i) {
         if (a.countInBars == kBars[i]) ci = i;
-      if (ui::Segmented("##count", kCount, 4, &ci, 48)) a.countInBars = kBars[ci];
-      ui::Hint("Bars of click before recording starts");
-      groupHeading(a, "Start");  // K-123 (0.7.7): start on the first note
+      }
+      if (reclook::rlChoice(a, "##count", kCount, 4, &ci, reclook::kShortW, "Bars of click before recording starts")) {
+        a.countInBars = kBars[ci];
+        if (kBars[ci] > 0) a.countInLength = kBars[ci];  // N59-10
+      }
+      reclook::rlSection("START");  // K-123 (0.7.7): start on the first note
       boolSetting(a, "On the first note", "record.startOnNote",
                   "With Record on, Play waits until you play a note (it records at the start), then starts without a count-in. Play again starts at once");
       {
-        rowLabel("Or a sound above");
+        reclook::rlLabel("Or a sound above");
         static const char* kLv[] = {"Notes only", "-40 dB", "-30 dB", "-20 dB", "-12 dB"};
         static const int kDb[] = {0, -40, -30, -20, -12};
         const int cur = static_cast<int>(std::lround(a.settings.getNumber("record.startLevelDb")));
@@ -529,100 +515,99 @@ void drawFull(App& a, State& S, const Live& Lv) {
           if (cur == kDb[i]) li = i;
         }
         ImGui::BeginDisabled(!a.settings.getBool("record.startOnNote"));
-        if (ui::Segmented("##slevel", kLv, 5, &li, 0)) a.settings.set("record.startLevelDb", kDb[li]);
+        if (reclook::rlChoice(a, "##slevel", kLv, 5, &li, 0, "An armed track's input this loud starts it too, from the block that reached it")) a.settings.set("record.startLevelDb", kDb[li]);
         ImGui::EndDisabled();
-        ui::Hint("An armed track's input this loud starts it too, from the block that reached it");
       }
       break;
     }
     case kTakes: {
-      groupHeading(a, "Passes", true);
+      reclook::rlSection("PASSES");
       boolSetting(a, "Take lanes", "record.takeLanes", "On: every pass of a loop lands on the track as a lane to comp from. Off: passes stack on the tracks below");
+      if (logicplug::active(a)) {  // K-112B (R14-04): Smooth's arrange
+        boolSetting(a, "Take folders", "record.midi.takeFolders",
+                    "On: notes recorded over regions on the track make a take folder with them (the new take plays, the others stay as lanes). Off: the take stacks on them");
+      }
       boolSetting(a, "Drop silent takes", "record.ignoreSilent", "Takes that never rise above -60 dBFS are not placed in the playlist");
-      groupHeading(a, "After recording");
+      reclook::rlSection("AFTER RECORDING");
       boolSetting(a, "Disarm tracks", "record.autoUnarm", "Disarms every track when recording stops");
       boolSetting(a, "Name empty tracks", "record.nameTracks", "An empty playlist track takes the name of what was recorded on it");
-      rowLabel("Name takes after");
+      reclook::rlLabel("Name takes after");
       int nm = static_cast<int>(a.settings.getNumber("record.naming")) > 0 ? 1 : 0;
       static const char* kNames[] = {"Mixer track", "Audio input"};
-      if (ui::Segmented("##naming", kNames, 2, &nm, 0)) a.settings.set("record.naming", nm);
+      if (reclook::rlChoice(a, "##naming", kNames, 2, &nm, 0)) a.settings.set("record.naming", nm);
       recordrows::takesList(a, recording);  // K-123 (2.7): every track's takes, rated, soloed, auditioned
       break;
     }
     case kInputs: {
-      groupHeading(a, "Monitoring", true);
+      reclook::rlSection("MONITORING");
       boolSetting(a, "Input only", "record.monitor.inputOnly", "On: armed tracks in Auto always hear their input. Off: inside the punch range only, and the playback around it");
       boolSetting(a, "Low latency", "record.monitor.lowLatency", "While recording, armed tracks skip their effects that add latency");
       {  // K-123 (0.7.7): the latency check
-        groupHeading(a, "Latency");
+        reclook::rlSection("LATENCY");
         const double sr = std::max(1.0, a.engine.sampleRate());
         const int measured = recmore::measuredRoundTrip(a);
         const int rt = measured > 0 ? measured : a.audioInputLatency;
-        rowLabel("Round trip");
+        reclook::rlLabel("Round trip");
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(theme::vec(P.text), "%s", recmore::latencyText(rt, sr).c_str());
         ImGui::SameLine(0, kG);
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(theme::vec(P.textFaint), "%s", measured > 0 ? i18n::tr("measured") : i18n::tr("estimated from the buffers"));
-        rowLabel("");
-        if (ui::TextButton(i18n::tr("Measure with a loopback cable..."), false, 0, "A cable from an output back into an input: Gridline measures the round trip, and recordings line up exactly")) {
+        reclook::rlLabel("");
+        if (reclook::rlButton(a, "Measure with a loopback cable...", Kind::Normal, 0, "A cable from an output back into an input: Gridline measures the round trip, and recordings line up exactly")) {
           recmore::openLatencyCheck(a);
         }
       }
+      // The tracks: the name in the label column, the track's input panel (with its meter) on the
+      // control column, so its rows line up with the switches above.
       int shown = 0;
       for (const auto& m : s.mixer) {
         if (m.id == s.masterId() || !(m.armed || m.input >= 0)) continue;
-        if (!shown++) groupHeading(a, "Tracks");
+        if (!shown++) reclook::rlSection("TRACKS");
         ImGui::PushID(static_cast<int>(m.id));
-        {  // the track's name, then its input panel (which has the meter)
-          ImDrawList* dl = ImGui::GetWindowDrawList();
-          const ImVec2 p = ImGui::GetCursorScreenPos();
-          dl->AddRectFilled(ImVec2(p.x, p.y + 3), ImVec2(p.x + 3, p.y + 15), theme::rgb(m.color), 1.5f);
-          dl->AddText(a.fontBold, theme::kFontBody - 1, ImVec2(p.x + 12, p.y + 1), P.text, trackName(s, m).c_str());
-          ImGui::Dummy(ImVec2(0, 2 * kG));
-        }
+        ui::FormLabelFit(trackName(s, m).c_str(), reclook::kColumn, P.text);  // a name: not translated
+        ImGui::BeginGroup();
         mixerInputPanel(a, m, std::min(420.0f, ImGui::GetContentRegionAvail().x));
-        ImGui::Dummy(ImVec2(0, kG));
+        ImGui::EndGroup();
         ImGui::PopID();
       }
       if (!shown) {
-        groupHeading(a, "Tracks");
-        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No mixer track has an input yet: pick one in the mixer's input panel."));
+        reclook::rlSection("TRACKS");
+        reclook::rlLabel("");
+        reclook::rlValue(i18n::tr("No mixer track has an input yet: pick one in the mixer's input panel."), P.textFaint);
       }
       break;
     }
     case kNotes: {
       RecordOptions& o = a.recOptions;
-      groupHeading(a, "What records", true);
-      onOff("Notes", "##notes", o.notes, "Notes played on a MIDI device or the typing keyboard record into the selected channel");
-      onOff("Controller moves", "##ctl", o.automation, "Moves of linked controllers record as automation");
+      reclook::rlSection("WHAT RECORDS");
+      boolRow(a, "Notes", "##notes", o.notes, "Notes played on a MIDI device or the typing keyboard record into the selected channel");
+      boolRow(a, "Controller moves", "##ctl", o.automation, "Moves of controls and linked controllers record as automation");
       // K-123 (4.1): the rest of the input filter (yours: kept in this computer's settings).
-      onOff("Pitch bend", "##bend", o.bend, "Pitch bend records: an MPE note's bend with the note, a linked bend as automation");
-      onOff("Pressure", "##press", o.pressure, "Pressure (aftertouch) records: an MPE note's pressure with the note, linked pressure as automation");
-      onOff("Program changes", "##prog", o.program, "Program changes linked to a control record as automation");
-      groupHeading(a, "How");
-      rowLabel("Loop passes");
-      int ov = o.overdub ? 0 : 1;
+      boolRow(a, "Pitch bend", "##bend", o.bend, "Pitch bend records: an MPE note's bend with the note, a linked bend as automation");
+      boolRow(a, "Pressure", "##press", o.pressure, "Pressure (aftertouch) records: an MPE note's pressure with the note, linked pressure as automation");
+      boolRow(a, "Program changes", "##prog", o.program, "Program changes linked to a control record as automation");
+      reclook::rlSection("HOW");
       static const char* kOver[] = {"Merge", "Replace"};
-      if (ui::Segmented("##over", kOver, 2, &ov, 80)) o.overdub = ov == 0;
-      ui::Hint("Merge keeps what was there. Replace clears what a pass plays over, from its first note on");
-      ImGui::BeginDisabled(recording);
-      onOff("New take per pass", "##takes", o.takes, "Every loop pass records into a new pattern (a take)");
-      ImGui::EndDisabled();
-      rowLabel("Quantize");
-      int q = !o.quantize ? 0 : o.quantizeLength ? 2 : 1;
       static const char* kQ[] = {"Off", "Starts", "Starts and lengths"};
-      if (ui::Segmented("##quant", kQ, 3, &q, 0)) o.quantize = q > 0, o.quantizeLength = q == 2;
-      ui::Hint("Snaps recorded notes to the piano roll's grid");
-      rowLabel("Controller moves into");
-      int t = static_cast<int>(o.autoTarget);
       static const char* kT[] = {"Automatic", "Pattern events", "Automation clips"};
+      const float segW = 0;  // fitted, as Settings
+      reclook::rlLabel("Loop passes");
+      int ov = o.overdub ? 0 : 1;
+      if (reclook::rlChoice(a, "##over", kOver, 2, &ov, segW, "Merge keeps what was there. Replace clears what a pass plays over, from its first note on")) o.overdub = ov == 0;
       ImGui::BeginDisabled(recording);
-      if (ui::Segmented("##target", kT, 3, &t, 0)) o.autoTarget = static_cast<AutoRecordTarget>(t);
+      boolRow(a, "New take per pass", "##takes", o.takes, "Every loop pass records into a new pattern (a take)");
       ImGui::EndDisabled();
-      ui::Hint("Automatic: pattern events in pattern mode, automation clips in song mode");
-      groupHeading(a, "Played while not recording");  // K-123 (4.2)
-      rowLabel("Kept");
+      reclook::rlLabel("Quantize");
+      int q = !o.quantize ? 0 : o.quantizeLength ? 2 : 1;
+      if (reclook::rlChoice(a, "##quant", kQ, 3, &q, segW, "Snaps recorded notes to the piano roll's grid")) o.quantize = q > 0, o.quantizeLength = q == 2;
+      reclook::rlLabel("Controller moves into");
+      int t = static_cast<int>(o.autoTarget);
+      ImGui::BeginDisabled(recording);
+      if (reclook::rlChoice(a, "##target", kT, 3, &t, segW, "Automatic: pattern events in pattern mode, automation clips in song mode")) o.autoTarget = static_cast<AutoRecordTarget>(t);
+      ImGui::EndDisabled();
+      reclook::rlSection("PLAYED WHILE NOT RECORDING");  // K-123 (4.2)
+      reclook::rlLabel("Kept");
       {
         const int kept = a.capture.size();
         ImGui::AlignTextToFramePadding();
@@ -630,7 +615,7 @@ void drawFull(App& a, State& S, const Live& Lv) {
                            kept ? (std::to_string(kept) + (kept == 1 ? " note" : " notes") + " from the last two minutes").c_str() : i18n::tr("Nothing yet"));
         ImGui::SameLine(0, 2 * kG);
         ImGui::BeginDisabled(recording || kept == 0);
-        if (ui::TextButton(i18n::tr("Recover what I just played"), false, 0, "The last phrase goes in where it was played (or at the pattern's start when the transport was stopped)")) {
+        if (reclook::rlButton(a, "Recover what I just played", Kind::Normal, 0, "The last phrase goes in where it was played (or at the pattern's start when the transport was stopped)")) {
           recordrows::recoverPlayed(a);
         }
         ImGui::EndDisabled();
@@ -638,23 +623,20 @@ void drawFull(App& a, State& S, const Live& Lv) {
       break;
     }
     case kFiles: {
-      groupHeading(a, "Format", true);
-      rowLabel("Bit depth");
+      reclook::rlSection("FORMAT");
+      reclook::rlLabel("Bit depth");
       static const char* kBits[] = {"32-bit float", "24-bit", "16-bit"};
       int bi = bits == 24 ? 1 : bits == 16 ? 2 : 0;
       ImGui::BeginDisabled(recording);
-      if (ui::Segmented("##bits", kBits, 3, &bi, 96)) a.settings.set("audio.recordBits", bi == 1 ? 24 : bi == 2 ? 16 : 32);
+      if (reclook::rlChoice(a, "##bits", kBits, 3, &bi, 0, "WAV files at the audio device's rate")) a.settings.set("audio.recordBits", bi == 1 ? 24 : bi == 2 ? 16 : 32);
       ImGui::EndDisabled();
-      ui::Hint("WAV files at the audio device's rate");
-      char rate[48];
-      std::snprintf(rate, sizeof rate, "%.0f Hz", a.engine.sampleRate());
-      rowValue("Rate", rate);
-      groupHeading(a, "Where");
-      rowLabel("Folder");
-      ui::PathFit(recordedDir(a).c_str(), std::max(80.0f, ImGui::GetContentRegionAvail().x), P.text);
-      groupHeading(a, "Capture while armed");  // K-123 (0.7.7)
+      rowValue("Rate", std::to_string(static_cast<long long>(std::lround(a.engine.sampleRate()))) + " Hz");
+      reclook::rlSection("WHERE");
+      reclook::rlLabel("Folder");
+      ui::PathFit(recordedDir(a).c_str(), std::max(80.0f, ImGui::GetContentRegionAvail().x), P.text, true);
+      reclook::rlSection("CAPTURE WHILE ARMED");  // K-123 (0.7.7)
       {
-        rowLabel("Keep");
+        reclook::rlLabel("Keep");
         static const char* kKeep[] = {"Off", "30 s", "1 min", "2 min"};
         static const int kSec[] = {0, 30, 60, 120};
         const int cur = static_cast<int>(std::lround(recmore::captureSeconds(a)));
@@ -663,9 +645,11 @@ void drawFull(App& a, State& S, const Live& Lv) {
           if (cur == kSec[i]) ki = i;
         }
         ImGui::BeginDisabled(recording);
-        if (ui::Segmented("##capture", kKeep, 4, &ki, 64)) a.settings.set("record.captureSeconds", kSec[ki]);
+        if (reclook::rlChoice(a, "##capture", kKeep, 4, &ki, reclook::kShortW,
+                               "Every armed track keeps this much of its input while Record is off, so the last pass can be recovered (Mode and punch)")) {
+          a.settings.set("record.captureSeconds", kSec[ki]);
+        }
         ImGui::EndDisabled();
-        ui::Hint("Every armed track keeps this much of its input while Record is off, so the last pass can be recovered (Mode and punch)");
         const double mb = recmore::captureSeconds(a) * a.engine.sampleRate() * 8.0 / (1024.0 * 1024.0);
         if (mb > 0) rowValue("Memory", std::to_string(static_cast<long long>(std::lround(mb))) + " MB per armed track", P.textFaint);
       }
@@ -673,31 +657,36 @@ void drawFull(App& a, State& S, const Live& Lv) {
     }
     default: break;
   }
+  reclook::rlSectionsEnd();
+  settingsFormEnd();
   ImGui::EndChild();
-  ImGui::PopStyleVar(2);
-  // Footer: the take while recording at the left; back to the card, then the main action, at the right.
+  // Footer, as Render's: a rule, then back to the card and the main action at the right; while a
+  // take records, its time and size at the left on the buttons' line.
   {
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    const float W = ImGui::GetContentRegionAvail().x;
-    wdl->AddLine(ImVec2(p.x, p.y), ImVec2(p.x + W, p.y), P.line);
-    const float fh = ImGui::GetFrameHeight(), y = p.y + (kFooterH - fh) * 0.5f, cy = p.y + kFooterH * 0.5f;
+    const char* back = form(a) == recinfo::kStrip ? "Back to the strip" : "Back to the card";
+    const float bw = reclook::footerButtonWidth(back);
+    const float aw = recording ? actionWidth(a, Lv) : (a.audioRecFinishing ? 0.0f : reclook::footerButtonWidth("Record and play"));
+    const float x0 = ImGui::GetCursorScreenPos().x;
+    ui::DialogFooter(bw + (aw > 0 ? theme::kS2 + aw : 0.0f));
+    const ImVec2 bp = ImGui::GetCursorScreenPos();
     if (recording || a.audioRecFinishing) {
-      recDot(wdl, ImVec2(p.x + 3 * kG, cy), recording);
+      ImDrawList* wdl = ImGui::GetWindowDrawList();
+      const float cy = bp.y + ImGui::GetFrameHeight() * 0.5f;
+      recDot(wdl, ImVec2(x0 + 6, cy), recording);
       const std::string t = recinfo::clock(Lv.secs);
-      wdl->AddText(a.fontMonoBold, theme::kFontLcd, ImVec2(p.x + 5 * kG, cy - theme::kFontLcd * 0.5f - 1), P.text, t.c_str());
+      wdl->AddText(a.fontMonoBold, theme::kFontLcd, ImVec2(x0 + 18, std::round(cy - theme::kFontLcd * 0.5f - 1)), P.text, t.c_str());
       const float tw = textW(a.fontMonoBold, theme::kFontLcd, t.c_str());
       const std::string l = recording ? takeLine(Lv) + "  /  " + diskLine(Lv) : std::string(i18n::tr("Saving the take"));
-      wdl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(p.x + 5 * kG + tw + 2 * kG, cy - theme::kFontCaption * 0.5f - 1), P.textDim, l.c_str());
+      const float lx = x0 + 18 + tw + theme::kS3;
+      wdl->PushClipRect(ImVec2(lx, bp.y), ImVec2(std::max(lx, bp.x - theme::kS3), bp.y + ImGui::GetFrameHeight()), true);
+      wdl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(lx, std::round(cy - theme::kFontCaption * 0.5f - 1)), P.textDim, l.c_str());
+      wdl->PopClipRect();
     }
-    const char* back = form(a) == recinfo::kStrip ? "Back to the strip" : "Back to the card";
-    const float bw = ui::TextButtonWidth(back), aw = actionWidth(a, Lv);
-    float x = p.x + W - 3 * kG - aw - (aw > 0 ? kG : 0.0f) - bw;
-    ImGui::SetCursorScreenPos(ImVec2(x, y));
-    if (ui::TextButton(i18n::tr(back), false, 0, "Closes this window; the Recording card or strip stays")) open = false;
+    if (reclook::rlButton(a, back, Kind::Normal, bw, "Closes this window; the Recording card or strip stays")) open = false;
     if (aw > 0) {
-      ImGui::SameLine(0, kG);
+      ImGui::SameLine(0, theme::kS2);
       if (!recording) {
-        if (ui::PrimaryButton(i18n::tr("Record and play"), 0, "Arms the record button and starts playback")) {
+        if (reclook::rlButton(a, "Record and play", Kind::Primary, aw, "Arms the record button and starts playback")) {
           a.recordArmed = true;
           S.open = true;
           menuparity::playPressed(a);
@@ -762,7 +751,7 @@ float drawStrip(App& a, float top) {
   x += textW(a.fontRegular, theme::kFontCaption, what.c_str()) + 3 * kG;
   // The right block, laid out from the right edge: disk, actions, Full options, fold and close.
   const float glyphs = 44, right = wp.x + W - 2 * kG - glyphs - 2 * kG;
-  const float fullW = ui::TextButtonWidth("Full options"), aw = actionWidth(a, Lv);
+  const float fullW = reclook::buttonWidth("Full options..."), aw = actionWidth(a, Lv);
   const float bx = right - fullW - (aw > 0 ? kG + aw : 0.0f);
   const std::string disk = diskLine(Lv);
   const float dw = textW(a.fontRegular, theme::kFontCaption, disk.c_str());
@@ -790,12 +779,12 @@ float drawStrip(App& a, float top) {
     dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x, cy - theme::kFontCaption * 0.5f - 1), P.textFaint, i18n::tr("No track is armed"));
   }
   if (diskX > x) dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(diskX, cy - theme::kFontCaption * 0.5f - 1), Lv.minutes < 10 ? P.danger : P.textFaint, disk.c_str());
-  ImGui::SetCursorScreenPos(ImVec2(bx, cy - ImGui::GetFrameHeight() * 0.5f));
+  ImGui::SetCursorScreenPos(ImVec2(bx, std::round(cy - reclook::buttonHeight() * 0.5f)));
   if (aw > 0) {
     actionButtons(a, Lv, true);
     ImGui::SameLine(0, kG);
   }
-  if (ui::TextButton(i18n::tr("Full options"), S.full, fullW, "Opens the Record window: mode, punch, count-in, takes, inputs, notes and files")) S.full = !S.full;
+  if (reclook::rlButton(a, "Full options...", Kind::Normal, fullW, "Opens the Record window: mode, punch, count-in, takes, inputs, notes and files", S.full)) S.full = !S.full;
   foldClose(S, dl, right + 2 * kG, cy - 10);
   ImGui::End();
   return kStripH;
@@ -830,12 +819,14 @@ void draw(App& a) {
   ImGui::SetNextWindowPos(corner, ImGuiCond_Always, ImVec2(1, 1));
   ImGui::PushStyleColor(ImGuiCol_WindowBg, theme::vec(P.surface800));
   ImGui::PushStyleColor(ImGuiCol_Border, theme::vec(P.line));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, kG);
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+  const bool trk = reclook::tracker();  // K-325: the Tracker's card is a classic square box in a bevel frame
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, trk ? 0.0f : kG);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, trk ? 0.0f : 1.0f);
   if (v.pill) {  // the REC pill
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 14.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, trk ? 0.0f : 14.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 6));
     if (ImGui::Begin("##recpill", nullptr, fl)) {
+      reclook::cardFrame();
       ImDrawList* dl = ImGui::GetWindowDrawList();
       const ImVec2 p = ImGui::GetCursorScreenPos();
       const std::string t = recording ? recinfo::clock(Lv.secs) : std::string(i18n::tr("Ready"));
@@ -854,6 +845,7 @@ void draw(App& a) {
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(2 * kG, 2 * kG));
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(kG, 0));
   if (ImGui::Begin("##reccard", nullptr, fl)) {
+    reclook::cardFrame();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     // Header: the dot, the title and the mode; fold and close at the right.
     {
@@ -909,9 +901,9 @@ void draw(App& a) {
     {
       const float y0 = ImGui::GetCursorScreenPos().y, x0 = ImGui::GetCursorScreenPos().x;
       actionButtons(a, Lv, true);
-      const float fw = ui::TextButtonWidth("Full options");
+      const float fw = reclook::buttonWidth("Full options...");
       ImGui::SetCursorScreenPos(ImVec2(x0 + kCardW - fw, y0));
-      if (ui::TextButton(i18n::tr("Full options"), S.full, fw, "Opens the Record window: mode, punch, count-in, takes, inputs, notes and files")) S.full = !S.full;
+      if (reclook::rlButton(a, "Full options...", Kind::Normal, fw, "Opens the Record window: mode, punch, count-in, takes, inputs, notes and files", S.full)) S.full = !S.full;
     }
   }
   ImGui::End();

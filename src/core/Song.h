@@ -416,12 +416,26 @@ struct PlaylistTrack {
   }
 };
 
+// Checkpoint 59 (N58-03): a Clips scene's own name and colour (scene k: the live area's k-th stretch of
+// the scene length). Empty name and colour 0: the scene shows its number only.
+struct SceneInfo {
+  std::string name;
+  Rgb color = 0;
+  bool empty() const { return name.empty() && color == 0; }
+  bool operator==(const SceneInfo& o) const { return name == o.name && color == o.color; }
+};
+
 struct LiveSettings {
   Tick areaEnd = 0;  // clips starting before this tick are launched by hand (0 = no live area)
-  // N48-07: the Clips view the project was last saved in ("grid", "arrangement"; "" = never saved
-  // from Clips, and then not written). View state: not part of the comparison (no undo step).
+  // N48-07: the Clips view a 0.7.7 development build saved into the project ("grid", "arrangement";
+  // "" = none). Checkpoint 59: the view is the person's own (kept in their settings with the Set, as the
+  // row heights are), so it is only read, once, to carry it over there; it is never written again,
+  // and a Clips save is byte for byte the other layouts'. Not part of the comparison.
   std::string view;
-  bool operator==(const LiveSettings& o) const { return areaEnd == o.areaEnd; }
+  // Checkpoint 59 (N58-03): scene k's name and colour, by scene (song data: undo, collaboration; no
+  // trailing empty entries, and none written when there are none, so older Sets save as before).
+  std::vector<SceneInfo> scenes;
+  bool operator==(const LiveSettings& o) const { return areaEnd == o.areaEnd && scenes == o.scenes; }
 };
 
 // K-112D: the Smooth layout's window state, saved with the project as its reference saves its windows.

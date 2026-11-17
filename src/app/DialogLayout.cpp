@@ -436,6 +436,8 @@ void settleCentred() {
 }
 }  // namespace
 
+void SettleDialogCentred() { settleCentred(); }  // K-325
+
 void BeginDialogBody(const char* id, int footerRows) {
   settleCentred();
   const float padY = ImGui::GetCurrentWindow()->WindowPadding.y;  // the dialog's own padding (often pushed only around Begin)

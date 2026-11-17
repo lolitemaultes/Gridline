@@ -54,6 +54,13 @@ std::vector<size_t> returnTracks(const Song& s);
 bool setOutput(Song& s, ObjectId from, ObjectId to);
 // The send `from` keeps aside while it plays into `to` (Song::keptSends), nullptr when none.
 const KeptSend* keptSend(const Song& s, ObjectId from, ObjectId to);
+// Checkpoint 58 (N57-01): a kept send whose track no longer plays into its return (Studio, the Tracker,
+// Smooth, a collaborator or a file routed the track elsewhere) goes back into the track's sends at its
+// level and place, and the entry is dropped (also when the track or the return is gone, or the track
+// has a send there again). Document runs it after every edit (in the same undo step), loading runs it,
+// and a collaboration session runs it after a merge. False (nothing changed) when no entry was stale.
+bool keptSendsStale(const Song& s);
+bool restoreKeptSends(Song& s);
 // The track's aux send to `to` (a plain send after its output), -1 when it has none.
 int auxSendIndex(const MixerTrack& m, ObjectId to);
 const Channel* linkedChannel(const Song& s, int track);
@@ -242,6 +249,25 @@ std::vector<ObjectId> loopingShortSlotClips(const Song& s);
 // ("3 Group › Volume") takes the control's name now ("2 Group › Volume") when only the owner's part
 // differs, and the lanes showing that name with it. Returns the names changed (0: the song is unchanged).
 int followAutomationNames(Song& s);
+// Checkpoint 59 (N58-01): an automation take recorded into Clips' Arrangement (F9). `pts` are at
+// arrangement ticks with parameter-normalized values (Hold points, as recorded). The take merges into the
+// Arrangement clip of that control already under it (`tolerance`: the thinning), else becomes a new clip
+// from the beat the take starts in, on the control's lane right under its track (a new lane when it has
+// none). Never before the live area's end, so it never lands in the clip grid. Returns the automation
+// clip's id (kNoId: nothing was written).
+ObjectId recordArrangementAutomation(Song& s, ObjectId owner, uint32_t index, const std::string& name, std::vector<AutoPoint> pts,
+                                     double tolerance = 0.004);
+// Checkpoint 59 (N58-03): Clips' scenes (scene k: the live area's clips starting in [k * len, (k + 1) * len),
+// `len` the scene length). insertScene: an empty scene under scene k (later scenes, the arrangement and
+// its markers move down / along). deleteScene: scene k's clips go, the later scenes move up and the
+// arrangement back. duplicateScene: a copy of scene k under it. Each keeps the scene names and colours
+// with their scenes. The scene's name and colour (an empty name and colour 0: just its number).
+void insertScene(Song& s, int k, Tick len);
+bool deleteScene(Song& s, int k, Tick len);
+bool duplicateScene(Song& s, int k, Tick len);
+void setSceneName(Song& s, int k, const std::string& name);
+void setSceneColor(Song& s, int k, Rgb color);
+const SceneInfo* sceneInfo(const Song& s, int k);  // nullptr: nothing set
 int deleteTracks(Song& s, const std::vector<int>& tracks, std::string* why = nullptr);
 int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why = nullptr);
 int deleteTracks(Document& d, const std::vector<int>& tracks, std::string* why = nullptr);

@@ -27,14 +27,14 @@ File > Other imports and exports > Audio file into a sampler...			e-
 File > Other imports and exports > Multisample instrument (.sfz, .sf2)...			e-
 File > Other imports and exports > Import from URL...	Ctrl+Shift+U	file.importUrl	e-
 File > Other imports and exports > FL Studio presets...			e-
-File > Other imports and exports > Each track...			e-
-File > Other imports and exports > Each track group...			e-
+File > Other imports and exports > Export each track...			e-
+File > Other imports and exports > Export each track group...			e-
 File > Other imports and exports > Render again with the last settings...			e-
 File > Other imports and exports > Time selection as MIDI file...			--
 File > Other imports and exports > Project data files...			e-
 File > Other imports and exports > Project bones...			e-
 File > Other imports and exports > Gridline zipped project (.gridlinez)...			e-
-File > Other imports and exports > Leave out frozen audio			e-
+File > Other imports and exports > Zipped projects leave out frozen audio			e-
 File > Other imports and exports > FL Studio project (.flp)...			e-
 File > Other imports and exports > FL Studio zipped loop package (.zip)...			e-
 File > Other imports and exports > FL Studio export report...			--
@@ -81,14 +81,9 @@ View > Info View	Shift+/	view.quickHelp	ec
 View > Browser	Ctrl+Alt+B	view.browser	ec
 View > Undo history	Ctrl+Alt+Z	edit.history	e-
 View > Performance			e-
-View > Panels > Inspector			e-
-View > Panels > Library			e-
-View > Panels > Lists			e-
 View > Panels > Device chain			ec
-View > Panels > Clip panel			e-
 View > Panels > Track scopes			e-
 View > Panels > Info box			ec
-View > Panels > Files			e-
 View > Panels > Notes			e-
 View > Zoom in	=	playlist.zoomIn	e-
 View > Zoom out	-	playlist.zoomOut	e-
@@ -125,11 +120,11 @@ View > Mixer layout > Normal strips			ec
 View > Mixer layout > Wide strips			e-
 View > Show played chords in the hint bar			e-
 Options > Audio settings...			e-
-Options > MIDI settings...	Ctrl+,	view.settings	e-
+Options > MIDI settings...			e-
 Options > Project settings...			e-
 Options > Backup settings...			e-
 Options > Interface settings...			e-
-Options > General settings...			e-
+Options > General settings...	Ctrl+,	view.settings	e-
 Options > File settings...			e-
 Options > Debug log and script console...			e-
 Options > Keyboard shortcuts...			e-
@@ -145,7 +140,8 @@ Options > Plugin delay compensation			ec
 Options > Refreeze out-of-date freezes			ec
 Options > Rest silent instruments			ec
 Options > Send MIDI clock (master sync)			e-
-Options > Record automation			e-
+Options > Record automation			ec
+Options > Re-enable automation			--
 Options > Auto scrolling			ec
 Options > Auto scrolling in the notes editor			ec
 Options > Smooth snapping			ec
@@ -162,6 +158,10 @@ Options > Recording and metronome > Recording options > Other messages > Pressur
 Options > Recording and metronome > Recording options > Other messages > Program changes			ec
 Options > Recording and metronome > Recording options > Everything			e-
 Options > Recording and metronome > Recording options > Punch in/out at the loop brace			e-
+Options > Recording and metronome > Recording options > Quick punch			e-
+Options > Recording and metronome > Recording options > Count-in length > 1 bar			ec
+Options > Recording and metronome > Recording options > Count-in length > 2 bars			e-
+Options > Recording and metronome > Recording options > Count-in length > 4 bars			e-
 Options > Recording and metronome > Recording options > Pre-roll > Off			ec
 Options > Recording and metronome > Recording options > Pre-roll > 1 beat			e-
 Options > Recording and metronome > Recording options > Pre-roll > 2 beats			e-
@@ -174,41 +174,37 @@ Options > Recording and metronome > Recording options > Post-roll > 2 beats			e-
 Options > Recording and metronome > Recording options > Post-roll > 4 beats			e-
 Options > Recording and metronome > Recording options > Post-roll > 8 beats			e-
 Options > Recording and metronome > Recording options > Post-roll > 16 beats			e-
-Options > Recording and metronome > Recording options > Count-in length > 1 bar			e-
-Options > Recording and metronome > Recording options > Count-in length > 2 bars			e-
-Options > Recording and metronome > Recording options > Count-in length > 4 bars			e-
-Options > Recording and metronome > Recording options > Quick punch			e-
-Options > Recording and metronome > Recording options > Punch crossfade > Off			e-
-Options > Recording and metronome > Recording options > Punch crossfade > 5 ms			e-
-Options > Recording and metronome > Recording options > Punch crossfade > 10 ms			ec
-Options > Recording and metronome > Recording options > Punch crossfade > 20 ms			e-
-Options > Recording and metronome > Recording options > Punch crossfade > 50 ms			e-
 Options > Recording and metronome > Recording options > Start on the first note			e-
-Options > Recording and metronome > Recording options > Audio file format > 32-bit float WAV			ec
-Options > Recording and metronome > Recording options > Audio file format > 24-bit WAV			e-
-Options > Recording and metronome > Recording options > Audio file format > 16-bit WAV			e-
 Options > Recording and metronome > Recording options > Loop passes as take lanes			ec
 Options > Recording and metronome > Recording options > Drop silent takes			e-
 Options > Recording and metronome > Recording options > Disarm tracks after recording			e-
 Options > Recording and metronome > Recording options > Name empty tracks after the take			ec
-Options > Recording and metronome > Recording options > Capture while armed > Off			e-
-Options > Recording and metronome > Recording options > Capture while armed > 30 seconds			e-
-Options > Recording and metronome > Recording options > Capture while armed > 1 minute			ec
-Options > Recording and metronome > Recording options > Capture while armed > 2 minutes			e-
-Options > Recording and metronome > Recording options > Capture while armed > Recover the last pass			--
-Options > Recording and metronome > Recording options > Latency check...			e-
-Options > Recording and metronome > Recording options > Input only			e-
-Options > Recording and metronome > Recording options > Low latency			e-
 Options > Recording and metronome > Recording options > Overdub (keep existing notes)			ec
 Options > Recording and metronome > Recording options > Replace (clear the clip's notes)			e-
 Options > Recording and metronome > Recording options > Quantize note starts to the snap			ec
 Options > Recording and metronome > Recording options > Quantize note lengths			e-
-Options > Recording and metronome > Recording options > Record controls > Every time			ec
-Options > Recording and metronome > Recording options > Record controls > First time per song			e-
-Options > Recording and metronome > Recording options > Record controls > Never			e-
-Options > Recording and metronome > Recording options > Record controls > Card			ec
-Options > Recording and metronome > Recording options > Record controls > Strip			e-
-Options > Recording and metronome > Recording options > Record controls > The Record window			e-
+Options > Recording and metronome > Recording options > Advanced > Audio file format > 32-bit float WAV			ec
+Options > Recording and metronome > Recording options > Advanced > Audio file format > 24-bit WAV			e-
+Options > Recording and metronome > Recording options > Advanced > Audio file format > 16-bit WAV			e-
+Options > Recording and metronome > Recording options > Advanced > Punch crossfade > Off			e-
+Options > Recording and metronome > Recording options > Advanced > Punch crossfade > 5 ms			e-
+Options > Recording and metronome > Recording options > Advanced > Punch crossfade > 10 ms			ec
+Options > Recording and metronome > Recording options > Advanced > Punch crossfade > 20 ms			e-
+Options > Recording and metronome > Recording options > Advanced > Punch crossfade > 50 ms			e-
+Options > Recording and metronome > Recording options > Advanced > Capture while armed > Off			e-
+Options > Recording and metronome > Recording options > Advanced > Capture while armed > 30 seconds			e-
+Options > Recording and metronome > Recording options > Advanced > Capture while armed > 1 minute			ec
+Options > Recording and metronome > Recording options > Advanced > Capture while armed > 2 minutes			e-
+Options > Recording and metronome > Recording options > Advanced > Capture while armed > Recover the last pass			--
+Options > Recording and metronome > Recording options > Advanced > Latency check...			e-
+Options > Recording and metronome > Recording options > Advanced > Input only			e-
+Options > Recording and metronome > Recording options > Advanced > Low latency			e-
+Options > Recording and metronome > Recording options > Advanced > Record controls > Every time			ec
+Options > Recording and metronome > Recording options > Advanced > Record controls > First time per song			e-
+Options > Recording and metronome > Recording options > Advanced > Record controls > Never			e-
+Options > Recording and metronome > Recording options > Advanced > Record controls > Card			ec
+Options > Recording and metronome > Recording options > Advanced > Record controls > Strip			e-
+Options > Recording and metronome > Recording options > Advanced > Record controls > The Record window			e-
 Options > Recording and metronome > Typing keyboard to piano	M	options.typingKeyboard	e-
 Options > Recording and metronome > Typing keyboard options > Octave > A = C2			e-
 Options > Recording and metronome > Typing keyboard options > Octave > A = C3			e-
@@ -251,7 +247,7 @@ Navigate > Follow the song position			ec
 Navigate > Zoom > Zoom in	=	playlist.zoomIn	e-
 Navigate > Zoom > Zoom out	-	playlist.zoomOut	e-
 Navigate > Zoom > Zoom to fit the song	Home	playlist.zoomFit	e-
-Tools > Stop all sound	Ctrl+H	tools.stopSound	e-
+Tools > Stop all sound	Ctrl+Alt+.	tools.stopSound	e-
 Tools > Loop starter...			e-
 Tools > Swing presets > Straight			e-
 Tools > Swing presets > Gentle 16ths			e-
@@ -347,12 +343,6 @@ Tools > Close plugin windows	Alt+F12	view.closePlugins	e-
 Tools > Macros > Select unused instruments			e-
 Tools > Macros > Lock every track			e-
 Tools > Macros > Unlock every track			e-
-Tools > Macros > Time mode of audio clips > Every audio clip > Stretch			e-
-Tools > Macros > Time mode of audio clips > Every audio clip > Rubber Band			e-
-Tools > Macros > Time mode of audio clips > Every audio clip > Resample			e-
-Tools > Macros > Time mode of audio clips > Selected audio clips > Stretch			--
-Tools > Macros > Time mode of audio clips > Selected audio clips > Rubber Band			--
-Tools > Macros > Time mode of audio clips > Selected audio clips > Resample			--
 Tools > Macros > Declicking of the selected clips > Off			e-
 Tools > Macros > Declicking of the selected clips > Out only			e-
 Tools > Macros > Declicking of the selected clips > Transient			e-
@@ -364,7 +354,7 @@ Tools > Clean up > Delete unused MIDI clips			e-
 Tools > AI assistant activity			e-
 Help > Keyboard shortcuts	F1	help.shortcuts	e-
 Help > Load demo song			e-
-Help > Track Receipt...			e-
+Help > Licensed samples used (receipt)...			e-
 Help > Show settings folder			e-
 Help > Check for updates...			e-
 Help > About Gridline			e-

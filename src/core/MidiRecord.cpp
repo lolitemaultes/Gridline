@@ -10,6 +10,7 @@
 #include "PatternAutomation.h"
 #include "Timeline.h"
 #include "TrackModes.h"
+#include "../engine/TakeLanes.h"
 
 namespace gl {
 
@@ -602,7 +603,70 @@ void NoteRecorder::end(Document& doc, double tick) {
   cutHeld(doc, song_ ? tick : fold(tick));
   clearReplaced(doc, song_ ? tick : fold(tick));
   commitAutomation(doc);
+  foldTakes(doc);
   active_ = false;
+}
+
+void NoteRecorder::foldTakes(Document& doc) {
+  if (!song_ || !setup_.takeFolder || !opt_.overdub || track_ < 0 || takeClips_.empty()) return;
+  const Song& s = doc.song();
+  // This recording's take(s) on its track, and the regions already there that they were recorded over.
+  std::vector<std::pair<Tick, Tick>> spans;
+  for (ObjectId id : takeClips_) {
+    if (const Clip* c = s.clip(id); c && c->track == track_) spans.emplace_back(c->start, c->start + s.clipLength(*c));
+  }
+  auto mine = [&](ObjectId id) { return std::find(takeClips_.begin(), takeClips_.end(), id) != takeClips_.end(); };
+  ObjectId group = kNoId;
+  bool under = false;
+  for (const Clip& c : s.playlist) {
+    if (c.track != track_ || mine(c.id) || c.kind == ClipKind::Automation) continue;
+    const Tick e = c.start + s.clipLength(c);
+    for (const auto& [a, b] : spans) {
+      if (c.start < b && e > a) {
+        under = true;
+        if (group == kNoId && c.takeGroup != kNoId) group = c.takeGroup;
+      }
+    }
+  }
+  if (!under) return;
+  const int track = track_;
+  const bool lanes = setup_.takeLanes;
+  const std::vector<ObjectId> ours = takeClips_;
+  edit(doc, [&] {
+    doc.editSong("take folder", [&](Song& x) {
+      ObjectId g = group;
+      int next = 0;
+      if (g == kNoId) {
+        g = x.allocateId();
+      } else {
+        for (const Clip& c : x.playlist) {
+          if (c.takeGroup == g) next = std::max(next, c.take + 1);
+        }
+      }
+      // The regions recorded over, not in a take folder yet, become its first take (one lane).
+      bool earlier = false;
+      for (Clip& c : x.playlist) {
+        if (c.track != track || c.takeGroup != kNoId || c.kind == ClipKind::Automation ||
+            std::find(ours.begin(), ours.end(), c.id) != ours.end()) {
+          continue;
+        }
+        const Tick e = c.start + x.clipLength(c);
+        for (const auto& [a, b] : spans) {
+          if (c.start < b && e > a) {
+            c.takeGroup = g, c.take = next, earlier = true;
+            break;
+          }
+        }
+      }
+      if (earlier) ++next;
+      for (Clip& c : x.playlist) {
+        if (std::find(ours.begin(), ours.end(), c.id) != ours.end() && c.track == track) c.takeGroup = g, c.take = next, c.muted = false;
+      }
+      // The new take plays where it was recorded; the earlier ones keep playing around it.
+      for (const auto& [a, b] : spans) takes::compRange(x, track, next, a, b);
+      if (lanes && track < static_cast<int>(x.tracks.size())) x.tracks[static_cast<size_t>(track)].takeLanes = true;
+    });
+  });
 }
 
 // ------------------------------------------------------------ StepRecorder ----

@@ -69,6 +69,16 @@ bool valueBar(const char* id, ImVec2 p0, ImVec2 p1, double v, double lo, double 
 // between beginModalBox (true) and endModalBox the caller draws its rows. Esc closes it.
 bool beginModalBox(App& a, const char* id, const char* title, ImVec2 size);
 void endModalBox();
+// K-325 (were Dialogs.cpp's own): the classic dialog pieces for the shared windows when they show in
+// the Tracker. dialogFrame: inside a window with no title bar (a question box, the Recording card), a
+// raised bevel frame round a sunken well over the whole window; drawn first, under its rows.
+// windowFrame: a window that keeps its title bar (the Record window, the latency check): only the
+// raised bevel edges round it (nothing filled), called last, before End(). dialogButton: a bevel button `w` wide at the cursor
+// (font height + 10 tall), the cursor moved past it as an ImGui button does; `on` lights it.
+void dialogFrame();
+void windowFrame();
+float dialogButtonHeight();
+bool dialogButton(App& a, const char* label, float w, bool on = false, const char* hint = nullptr);
 // One stepper row of width `w`: the label, the value in a sunken field after it (at `labelW` from
 // the left; < 0: 42 percent), the up and down arrows at the right. Returns the step asked for: +1 or
 // -1 from an arrow or the wheel, more while the value is dragged (right or up: more). `fill`: the

@@ -5,6 +5,7 @@
 #include "FreezeUi.h"
 #include "EditorZoomUi.h"
 #include "../core/ClipLoop.h"
+#include "../core/Secrets.h"
 #include "../core/ClipSources.h"
 #include "../core/I18n.h"
 #include "J59Ui.h"
@@ -700,6 +701,7 @@ void editDuplicate(App& a) {
 void renameFocused(App& a) {
   const Song& s = a.doc.song();
   if (livelook::active(a) && a.editFocus != App::EditFocus::Mixer) {  // checkpoint 49: as the reference's Rename (Cmd+R)
+    if (livelook::renameSelectedScene(a)) return;  // N59-07
     if (a.playlist.selected.size() == 1) return livelook::renameClip(a, *a.playlist.selected.begin());
     if (!a.playlist.trackSel.empty()) return livelook::renameTrack(a, *a.playlist.trackSel.begin());
   }
@@ -3073,7 +3075,9 @@ void swapDeviceItems(App& a, ObjectId owner, int slot) {
   }
 }
 
-void pluginWindowMenu(App& a, ObjectId owner, int slot) {
+void pluginWindowMenu(App& a, ObjectId owner, int slot) { pluginWindowMenu(a, owner, slot, false); }
+
+void pluginWindowMenu(App& a, ObjectId owner, int slot, bool clipsDevice) {
   const Song& s = a.doc.song();
   PluginTarget t{owner, slot};
   const PluginState* st = t.state(s);
@@ -3109,7 +3113,7 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot) {
     });
   }
   if (ImGui::MenuItem(i18n::tr("Save preset to file..."))) savePresetDialog(a, owner, slot);
-  if (slot < 0) {  // K-279: the channel window's header row (colour, name, instrument, mixer track)
+  if (slot < 0 && !clipsDevice) {  // K-279: the channel window's header row (colour, name, instrument, mixer track)
     const bool shown = a.settings.getBool("ui.channelHeader");
     if (ImGui::MenuItem(i18n::tr("Show channel header"), nullptr, shown)) a.settings.set("ui.channelHeader", !shown);
     ui::Hint("The row with the channel's colour, name, instrument and mixer track above the pages");
@@ -3142,7 +3146,17 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot) {
   }
   if (a.singlePlugin) return;  // J-131: the plugin alone in another host
   ImGui::Separator();
-  if (t.isChannel()) {
+  if (t.isChannel() && clipsDevice) {  // N58-06: the track's instrument
+    const Channel* c = s.channel(owner);
+    if (ImGui::BeginMenu(i18n::tr("Replace instrument"))) {
+      instrumentItems([&a, owner](const std::string& type) { replaceInstrumentPick(a, owner, type); }, info->type);
+      ImGui::EndMenu();
+    }
+    // Checkpoint 60 (N59-10): a row with an ellipsis opens its prompt (no submenu arrow as well).
+    if (ImGui::MenuItem(i18n::tr("Rename...")))
+      openPrompt("Rename instrument", c->name, [&a, owner](const std::string& n) { a.doc.renameChannel(owner, n); });
+    if (ImGui::MenuItem(i18n::tr("Delete instrument"))) a.later([&a, owner] { a.doc.removeChannel(owner); });
+  } else if (t.isChannel()) {
     const Channel* c = s.channel(owner);
     if (ImGui::MenuItem(i18n::tr("Piano roll"), keys::label("view.pianoRoll"))) a.openPianoRoll(owner);
     if (ImGui::BeginMenu(i18n::tr("Replace instrument"))) {
@@ -3172,17 +3186,19 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot) {
       }, info->type);
       ImGui::EndMenu();
     }
-    if (ImGui::MenuItem(enabled ? i18n::tr("Disable") : i18n::tr("Enable"))) ops::setSlotEnabled(a.doc, owner, slot, !enabled);
-    if (ImGui::MenuItem(i18n::tr("Move up"), nullptr, false, slot > 0)) {
+    if (ImGui::MenuItem(clipsDevice ? (enabled ? i18n::tr("Deactivate") : i18n::tr("Activate")) : enabled ? i18n::tr("Disable") : i18n::tr("Enable")))
+      ops::setSlotEnabled(a.doc, owner, slot, !enabled);
+    if (ImGui::MenuItem(clipsDevice ? i18n::tr("Move left") : i18n::tr("Move up"), nullptr, false, slot > 0)) {
       a.doc.moveSlot(owner, slot, slot - 1);
       a.fxEditor = {owner, slot - 1};
     }
-    if (ImGui::MenuItem(i18n::tr("Move down"), nullptr, false, slot + 1 < kEffectSlots)) {
+    if (ImGui::MenuItem(clipsDevice ? i18n::tr("Move right") : i18n::tr("Move down"), nullptr, false, slot + 1 < kEffectSlots)) {
       a.doc.moveSlot(owner, slot, slot + 1);
       a.fxEditor = {owner, slot + 1};
     }
-    if (ImGui::MenuItem(i18n::tr("Remove effect"))) a.doc.setSlotPlugin(owner, slot, "");
+    if (!clipsDevice && ImGui::MenuItem(i18n::tr("Remove effect"))) a.doc.setSlotPlugin(owner, slot, "");  // (Clips: Delete, above)
   }
+  if (clipsDevice) return;  // N58-06: docked in the device band: no editor size, no window to close
   ImGui::Separator();
   if (!isHostedType(info->type)) edzoomui::sizeMenu(a, info->type, t.isChannel() ? "channelsettings" : "fxeditor");  // K-19
   if (ImGui::MenuItem(i18n::tr("Close window"))) {
@@ -3243,6 +3259,7 @@ void dumpDevMenuTree(App& a, const std::string& name) {
                    ImGuiWindowFlags_NoDocking);
   ImGui::PushClipRect(ImVec2(-8, -8), ImVec2(-8, -8), false);
   TreeWalker w;
+  secrets::NoAccess noSecrets;  // K-327: a walk lists items, it reads no secret
   imhook::setMenuWalker(&w);
   drawDevMenuBody(a, name);
   imhook::setMenuWalker(nullptr);

@@ -1444,6 +1444,7 @@ void startNetTest(App& a) {
   auto job = std::make_shared<NetTestJob>();
   u.netTest = job;
   NetSettings ns = netSettingsFrom(a.settings);
+  fillTurnPassword(ns, true);  // K-327: the user pressed the test: the TURN password is read now
   std::thread([job, ns] {
     NetReport r = testConnection(ns);
     std::lock_guard<std::mutex> lk(job->mu);
@@ -4993,14 +4994,15 @@ void settingsPage(App& a, float fieldW) {
   }
   label("TURN relay");
   {
+    // K-327: the stored password is not read to fill the field: drawing the page (or the command
+    // palette reading it) must never reach the Keychain, which can wait on a macOS password prompt.
+    // The field stays empty until the user types a new password, which replaces the stored one.
     static char host[256], user[128], pass[128];
     static bool init = false;
     if (!init) {
       std::snprintf(host, sizeof host, "%s", st.getString("collab.turnHost").c_str());
       std::snprintf(user, sizeof user, "%s", st.getString("collab.turnUser").c_str());
-      std::string pw;
-      secrets::Store().get("collab-turn-password", pw);
-      std::snprintf(pass, sizeof pass, "%s", pw.c_str());
+      pass[0] = 0;
       init = true;
     }
     ImGui::SetNextItemWidth(fieldW - 90);
@@ -5016,7 +5018,11 @@ void settingsPage(App& a, float fieldW) {
     if (ImGui::InputTextWithHint("##turnuser", tr("user"), user, sizeof user)) st.set("collab.turnUser", std::string(user));
     ImGui::SameLine(0, theme::kS2);
     ImGui::SetNextItemWidth((fieldW - theme::kS2) * 0.5f);
-    if (ImGui::InputTextWithHint("##turnpass", tr("password"), pass, sizeof pass, ImGuiInputTextFlags_Password)) secrets::Store().set("collab-turn-password", pass);
+    const bool anyTurn = host[0] || user[0];
+    if (ImGui::InputTextWithHint("##turnpass", anyTurn ? tr("password: type to replace") : tr("password"), pass, sizeof pass,
+                                 ImGuiInputTextFlags_Password)) {
+      if (secrets::Store().set("collab-turn-password", pass)) rememberTurnPassword(pass);
+    }
     // K-312: a half-filled TURN setting is ignored: say so where it is filled in
     NetSettings filled;
     filled.turnHost = host;

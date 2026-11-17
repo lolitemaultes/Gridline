@@ -361,6 +361,10 @@ void patternMeterMenu(App& a, ObjectId pattern, bool submenu) {
   const Song& s = a.doc.song();
   const Pattern* p = s.pattern(pattern);
   if (submenu ? !ImGui::BeginMenu(i18n::tr("Meter"), p != nullptr) : p == nullptr) return;
+  if (!p) {  // K-106 cp25: a menu walker (the command palette) opens the disabled submenu too: no pattern, nothing in it
+    if (submenu) ImGui::EndMenu();
+    return;
+  }
   char songLabel[64];
   std::snprintf(songLabel, sizeof songLabel, i18n::tr("Song (%s)"), label(s.timeSigNum, s.timeSigDen).c_str());
   if (ImGui::MenuItem(songLabel, nullptr, !p->ownMeter())) meter::setPatternMeter(a.doc, pattern, 0, 0);

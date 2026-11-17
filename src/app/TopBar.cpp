@@ -6,6 +6,7 @@
 // when the window is too narrow the least important groups move into the "⋯"
 // overflow popup instead of overlapping or being clipped.
 #include "RecordCard.h"
+#include "AutomationEditor.h"
 #include "../core/MenuParity.h"
 #include "../core/Timeline.h"
 #include <algorithm>
@@ -1195,7 +1196,7 @@ static float drawTopBarLogic(App& a) {
     cx += kBtn + kInner;
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
     if (ui::ToggleIcon("countin", ui::Icon::LoopArrows, a.countInBars > 0, kBtn, i18n::N_("Count-in before recording")))
-      a.countInBars = a.countInBars > 0 ? 0 : 1;
+      a.countInBars = a.countInBars > 0 ? 0 : std::max(1, a.countInLength);
     cx += kBtn + theme::kS2;
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
     int mode = a.engine.mode() == PlayMode::Song ? 1 : a.engine.mode() == PlayMode::Live ? 2 : 0;
@@ -1575,10 +1576,12 @@ static float drawTopBarLive(App& a) {
   // The position | play, stop, record, overdub, automation, capture, session record | the record menu |
   // Back to arrangement, Follow | Loop, Punch, the loop start and length.
   auto centreW = [&]() {
-    return posW + kGroup + 26 * 7 + kIn * 6 + kGroup + 26 + kGroup + backW + kIn + 26 + (showLoop ? kGroup + 26 + kIn + 26 : 0) +
+    return posW + kGroup + 26 * 8 + kIn * 7 + kGroup  // N59-01: + Re-enable automation
+            + 26 + kGroup + backW + kIn + 26 + (showLoop ? kGroup + 26 + kIn + 26 : 0) +
            (showLoop && showRange ? kIn + loopW + kIn + loopW : 0);
   };
-  auto rightW = [&]() { return (showSys ? 66 + kIn + 26 + kIn + 40 + 14 : 0) + 26 + segGridW + segArrW; };
+  // Checkpoint 58 (N57-13): the system group ends a group gap before the view switch (no "Tab" between them).
+  auto rightW = [&]() { return (showSys ? 66 + kIn + 26 + kIn + 40 + kGroup : 0) + segGridW + segArrW; };
   // Checkpoint 55 (gap 6): the range fields go first, so the loop and punch switches stay at 1440 wide.
   auto fits = [&]() { return 10 + leftW() + kGroup + centreW() + kGroup + rightW() + 8 <= W; };
   if (!fits()) showRange = false;
@@ -1644,17 +1647,18 @@ static float drawTopBarLive(App& a) {
     const LaunchGrid g0 = s.tracks.empty() ? LaunchGrid::FourBeats : s.tracks[0].launch;
     bool same = true;
     for (const PlaylistTrack& t : s.tracks) same = same && t.launch == g0;
-    static const char* const kShort[] = {"None", "1/16", "1/8", "1/4", "1/2", "1 Bar", "Clip"};
-    const char* gl = same ? kShort[std::min<int>(static_cast<int>(g0), 6)] : "Mixed";
+    const char* gl = same ? livelook::gridName(g0) : "Mixed";
     if (field("##quantlive", gl, x, 54, false, "Launch quantisation: where a launched clip starts (every track; each track can have its own in the grid)"))
       ImGui::OpenPopup("##quantpop");
     ImGui::SetNextWindowPos(ImVec2(x, cy + kH + 2));
     if (ImGui::BeginPopup("##quantpop")) {
-      for (int i = 0; i < static_cast<int>(LaunchGrid::Count); ++i)
-        if (ImGui::MenuItem(launchGridName(static_cast<LaunchGrid>(i)), nullptr, same && g0 == static_cast<LaunchGrid>(i)))
+      for (int i = 0; i < static_cast<int>(LaunchGrid::Count); ++i) {
+        if (ImGui::MenuItem(livelook::gridName(static_cast<LaunchGrid>(i)), nullptr, same && g0 == static_cast<LaunchGrid>(i))) {
           a.doc.editSong("change launch grid", [i](Song& x2) {
             for (PlaylistTrack& t : x2.tracks) t.launch = static_cast<LaunchGrid>(i);
           });
+        }
+      }
       ImGui::EndPopup();
     }
     x += 54;
@@ -1698,11 +1702,11 @@ static float drawTopBarLive(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(rx, cy));
     if (ImGui::InvisibleButton("##vgrid", ImVec2(segGridW, kH)) && !grid) livelook::showView(a, true);
     const bool hg = ImGui::IsItemHovered(), pg = ImGui::IsItemActive();
-    ui::Hint("Clip grid: the tracks as columns of clip slots, scenes as rows");
+    ui::Hint("Clip grid: the tracks as columns of clip slots, scenes as rows (Tab switches the view)");
     ImGui::SetCursorScreenPos(ImVec2(rx + segGridW, cy));
     if (ImGui::InvisibleButton("##varr", ImVec2(segArrW, kH)) && grid) livelook::showView(a, false);
     const bool ha = ImGui::IsItemHovered(), pa = ImGui::IsItemActive();
-    ui::Hint("Arrangement: the tracks as lanes along the song's time");
+    ui::Hint("Arrangement: the tracks as lanes along the song's time (Tab switches the view)");
     const ImVec2 g0(rx, cy), g1(rx + segGridW, cy + kH), a1(rx + segGridW + segArrW, cy + kH);
     auto segFill = [&](bool on, bool hov, bool held) { return on ? P.hot : held ? P.surface600 : hov ? P.surface700 : P.surface800; };
     dl->AddRectFilled(g0, g1, segFill(grid, hg, pg), theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
@@ -1715,10 +1719,9 @@ static float drawTopBarLive(App& a) {
     const float ty = theme::textTop(a.fontRegular, fsb, cy, kH);
     dl->AddText(a.fontRegular, fsb, ImVec2(std::round(g0.x + (segGridW - s1) * 0.5f), ty), glyphCol(grid), tg);
     dl->AddText(a.fontRegular, fsb, ImVec2(std::round(g1.x + (segArrW - s2) * 0.5f), ty), glyphCol(!grid), ta);
-    const char* tab = "Tab";
-    const ImVec2 st = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, tab);
-    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(rx - 8 - st.x, theme::textTop(a.fontRegular, theme::kFontLabel, cy, kH)), P.textFaint, tab);
-    rx -= 26;
+    // Checkpoint 58 (N57-13): the dim "Tab" between KEY and the switch is gone (its hints say it); KEY
+    // stands a group gap from the switch.
+    rx -= kGroup;
   }
   if (showSys) {
     rx -= 40;
@@ -1740,7 +1743,10 @@ static float drawTopBarLive(App& a) {
   // ---- middle: position, transport, Back to arrangement, loop ----
   {
     const float cw = centreW();
-    float mx = std::round(wp.x + (W - cw) * 0.5f);
+    // Checkpoint 58 (N57-13): centred in the room between the left and right groups (on the window it left
+    // 238 px on one side and 316 on the other at 1920).
+    const float roomL = leftEnd + kGroup, roomR = wp.x + W - 8 - rightW() - kGroup;
+    float mx = std::round((roomL + roomR - cw) * 0.5f);
     mx = std::min(std::max(mx, leftEnd + kGroup), wp.x + W - 8 - rightW() - kGroup - cw);
     // C44-20: in the song, counted from the arrangement's start (the end of the clip grid's storage);
     // while clips play from the grid, the transport's own count.
@@ -1783,8 +1789,20 @@ static float drawTopBarLive(App& a) {
       if (flat("##overdublive", mx, 26, ro.overdub, "Overdub: recorded notes join the existing ones (off: they replace them)")) ro.overdub = !ro.overdub;
       ui::drawIconFit(dl, ui::Icon::Plus, ImVec2(mx + 8, cy + 6), ImVec2(mx + 18, cy + kH - 6), glyphCol(ro.overdub));
       mx += 26 + kIn;
-      if (flat("##autoarmlive", mx, 26, ro.automation, "Record automation: controller and knob moves are recorded while recording")) ro.automation = !ro.automation;
+      if (flat("##autoarmlive", mx, 26, ro.automation, "Automation arm: knob and controller moves are recorded while recording (into the Arrangement with F9, into the clip with Session record)")) ro.automation = !ro.automation;
       ui::drawIconFit(dl, ui::Icon::ClipAutomation, ImVec2(mx + 7, cy + 5), ImVec2(mx + 19, cy + kH - 5), glyphCol(ro.automation));
+      mx += 26 + kIn;
+      // Checkpoint 60 (N59-01): Re-enable automation, beside the arm as the reference has it: lit while
+      // a control moved by hand during playback holds its value instead of following its automation.
+      const int held = automationOverrideCount();
+      if (flat("##reenablelive", mx, 26, held > 0,
+               held > 0 ? "Re-enable automation: the controls you moved by hand (marked) follow their automation again"
+                        : "Re-enable automation: lights when you move an automated control during playback (it then holds your value)") &&
+          held > 0) {
+        reenableAutomation(a);
+      }
+      noteRect("reenable");
+      ui::drawIconFit(dl, ui::Icon::Redo, ImVec2(mx + 7, cy + 5), ImVec2(mx + 19, cy + kH - 5), held > 0 ? glyphCol(true) : P.textFaint);
       mx += 26 + kIn;
     }
     // K-112c: Capture: what was just played while nothing recorded becomes notes in the pattern.
@@ -1892,7 +1910,9 @@ void barGroup(ImDrawList* dl, ImVec2 p0, ImVec2 p1) {
   const auto& P = pal();
   const float r = std::floor((p1.y - p0.y + 6) * 0.5f);
   dl->AddRectFilled(ImVec2(p0.x - 3, p0.y - 3), ImVec2(p1.x + 3, p1.y + 3), P.surface700, r);
-  dl->AddRect(ImVec2(p0.x - 3, p0.y - 3), ImVec2(p1.x + 3, p1.y + 3), P.lineStrong, r);
+  // R14-07: the outline lies inside the capsule (centred on its edge it stood half a pixel out, so at
+  // 2x the groups measured 74 device px against the display's 72).
+  dl->AddRect(ImVec2(p0.x - 2.5f, p0.y - 2.5f), ImVec2(p1.x + 2.5f, p1.y + 2.5f), P.lineStrong, r - 0.5f);
 }
 
 bool barPill(const char* id, ImVec2 p, ImVec2 size, ui::Icon icon, const char* label, bool on, const char* hint, ImU32 iconCol = 0, bool strong = false) {
@@ -2447,33 +2467,51 @@ static float drawLogicControlBar(App& a) {
   if (modesW > 0) {
     modesW -= gi;
   }
-  // The display's right end: before the switches' capsule, itself 10 px before the right group's rim.
-  auto displayEndMax = [&] { return modesW > 0 ? rightPillsX - 2 * kRim - kGroupGap - modesW - modesGap : rightPillsX - kRim - kGroupGap; };
+  // R14-05/06: the bar's middle is one cluster (transport, display, switches) between the pane groups
+  // on the left and, on the right, the master volume's pill and the right group. Each part keeps a
+  // 10 px rim-to-rim gap; the cluster stands in the middle of the room it has, so its two outer gaps
+  // are equal (the switches used to hang off a window-centred transport and display: 157 | 59 at 1440).
+  const float leftRim = gxMin - kRim - kGroupGap;   // the pane groups' rim end
+  const float rightRim = rightPillsX - kRim;        // the right group's rim start
+  constexpr float kMasterW = 128, kMasterCompactW = 64;  // the master pill (its slider 20 px shorter)
+  float masterW = showMaster && !s.mixer.empty() ? kMasterW : 0.0f;
+  const float lcdW0 = lcdW;
+  auto clusterW = [&] {
+    const int n = transportCount();
+    const float tW = tb * static_cast<float>(n) + gi * static_cast<float>(n - 1);
+    return kRim + tW + kRim + kGroupGap + lcdW + (modesW > 0 ? kGroupGap + 2 * kRim + modesW : 0.0f);
+  };
+  auto clusterRoom = [&] { return rightRim - kGroupGap - (masterW > 0 ? masterW + 2 * kRim + kGroupGap : 0.0f) - (leftRim + kGroupGap); };
   {
-    // Checkpoint 33: the transport and display always fit between the left groups and the right group
-    // (at 150 % the right group covered the display's end): first the start, back and forward buttons
-    // go, then the display narrows (down to 220 px), then (cp54) the switches go.
-    auto need = [&] { const int n = transportCount(); return tb * static_cast<float>(n) + gi * static_cast<float>(n - 1) + kRim + kGroupGap + lcdW; };
+    // Checkpoint 33 / cp54 / R14-06: on a narrow bar, first the start, back and forward buttons go, then
+    // the master volume takes its compact pill, then the display narrows (down to 220 px), then the
+    // master volume goes, then the switches.
     auto fit = [&] {
-      if (need() > displayEndMax() - gxMin) {
-        lcdW = std::max(220.0f, std::floor(lcdW - (need() - (displayEndMax() - gxMin))));
+      lcdW = lcdW0;
+      if (clusterW() > clusterRoom()) {
+        lcdW = std::max(220.0f, std::floor(lcdW - (clusterW() - clusterRoom())));
       }
     };
-    if (need() > displayEndMax() - gxMin && showNav) {
+    if (clusterW() > clusterRoom() && showNav) {
       showNav = false;
     }
+    if (clusterW() > clusterRoom() && masterW > 0) {
+      masterW = kMasterCompactW;
+    }
     fit();
-    if (need() > displayEndMax() - gxMin) {
+    if (clusterW() > clusterRoom() && masterW > 0) {
+      masterW = 0;
+      fit();
+    }
+    if (clusterW() > clusterRoom()) {
       modesW = 0;
       fit();
     }
   }
   const int transportN = transportCount();
   const float transportW = tb * static_cast<float>(transportN) + gi * static_cast<float>(transportN - 1);
-  const float groupW = transportW + kRim + kGroupGap + lcdW;
-  float gx = std::round(wp.x + (W - groupW) * 0.5f);
-  gx = std::min(gx, std::floor(displayEndMax() - groupW));  // a narrow window: the switches after it still fit
-  gx = std::max(gx, gxMin);
+  const float spare = std::max(0.0f, clusterRoom() - clusterW());
+  float gx = std::floor(leftRim + kGroupGap + spare * 0.5f) + kRim;  // the transport's first pill
   {
     const float ty = std::round(top + (barH - tbH) * 0.5f);
     const Tick bar = std::max<Tick>(1, s.barTicks());
@@ -2518,8 +2556,19 @@ static float drawLogicControlBar(App& a) {
     noteRect("play");
     cx += tb + gi;
     if (barPill("rec", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::Record, nullptr, false,
-                hintWithKey("Record (right-click: what to record, punch, count-in)", "transport.record").c_str(), a.recordArmed ? P.arm : theme::withAlpha(P.arm, 0.8f)))
-      a.recordArmed = !a.recordArmed;
+                hintWithKey("Record (right-click: what to record, punch, count-in)", "transport.record").c_str(), a.recordArmed ? P.arm : theme::withAlpha(P.arm, 0.8f))) {
+      // R14-01: as the R key and the other layouts' buttons: stopped, it records and plays at once (and
+      // opens the Recording card when record.window says so); while playing it switches recording, which
+      // with quick punch punches out and in (the card stays as it is).
+      if (!a.recordArmed && !a.engine.playing()) {
+        a.recordArmed = true;
+        recordcard::recordClicked(a, ImGui::GetIO().KeyShift);
+        (void)menuparity::playPressed(a);
+      } else {
+        livelook::toggleArrangementRecord(a);
+        recordcard::recordClicked(a, ImGui::GetIO().KeyShift);
+      }
+    }
     if (a.recordArmed) dl->AddRect(ImVec2(cx, ty), ImVec2(cx + tb, ty + tbH), P.arm, std::floor(tbH * 0.5f), 0, 1.5f);
     noteRect("rec");
     if (ImGui::BeginPopupContextItem("##recmenu")) {
@@ -2541,9 +2590,14 @@ static float drawLogicControlBar(App& a) {
     // K-112b: a dark display in three sections: the position large and bold (bar and beat, each
     // captioned), the tempo, then the meter over the key.
     // Checkpoint 52 (polish): a cool slate rather than near black, as 133, 146 and 101 show the display.
-    dl->AddRectFilled(l0, l1, theme::mix(theme::mix(P.field, P.ink, 0.45f), P.accent, 0.07f), 8.0f);
-    // A5 (checkpoint 49): recessed, as the reference's: a soft inner shadow along the top, no stroke.
-    dl->AddRectFilled(ImVec2(l0.x + 1, l0.y), ImVec2(l1.x - 1, l0.y + 3), theme::withAlpha(P.ink, 0.22f), 8.0f, ImDrawFlags_RoundCornersTop);
+    // R14-07: a capsule as the groups are (its corners were 8 px beside their fully round 18).
+    const float lcdR = std::floor(lcdH * 0.5f);
+    dl->AddRectFilled(l0, l1, theme::mix(theme::mix(P.field, P.ink, 0.45f), P.accent, 0.07f), lcdR);
+    // A5 (checkpoint 49): recessed, as the reference's: a soft inner shadow along the top, no stroke
+    // (R14-07: it follows the capsule's curve).
+    dl->PushClipRect(l0, ImVec2(l1.x, l0.y + 5), true);
+    dl->AddRect(ImVec2(l0.x + 1.5f, l0.y + 1.5f), ImVec2(l1.x - 1.5f, l1.y - 1.5f), theme::withAlpha(P.ink, 0.26f), lcdR - 1.5f, 0, 1.5f);
+    dl->PopClipRect();
     // Checkpoint 30: no outline (150, 205, 001: the display is a dark field on the bar, no stroke).
     noteRectAt("bar_display", l0, l1);
     const float chevW = 18;  // the mode chevron at the right end
@@ -2822,7 +2876,7 @@ static float drawLogicControlBar(App& a) {
                           {"##lb_click", i18n::N_("Click"), a.metronome, "Metronome", 2, "ui.cbar.click", ui::Icon::Metronome}};
     // R01-24: where the count-in's beats do not fit, it narrows to a glyph pill before it goes.
     // cp54: as many as the plan above kept, their pills ending 10 px (rim to rim) before the right group.
-    const float modeLimit = modesW > 0 ? rightPillsX - 2 * kRim - kGroupGap : mx;
+    const float modeLimit = modesW > 0 ? mx + modesW + 0.5f : mx;  // R14-05: as many as the plan above kept
     auto modeW = [&](const Mode& m, float at) {
       if (m.icon != ui::Icon::Count) return pillW;
       return at + 40.0f > modeLimit && at + pillW <= modeLimit ? pillW : 40.0f;
@@ -2847,7 +2901,7 @@ static float drawLogicControlBar(App& a) {
       const float w = modeW(m, mx);
       if (mx + w > modeLimit) break;  // the right group stays
       if (barPill(m.id, ImVec2(mx, py), ImVec2(w, pillH), m.icon, m.icon == ui::Icon::Count && w > pillW ? m.label : nullptr, m.on, i18n::tr(m.hint))) {
-        if (m.what == 1) a.countInBars = a.countInBars > 0 ? 0 : 1;
+        if (m.what == 1) a.countInBars = a.countInBars > 0 ? 0 : std::max(1, a.countInLength);
         else a.metronome = !a.metronome;
       }
       if (m.what == 2) noteRect("metro");
@@ -2908,17 +2962,16 @@ static float drawLogicControlBar(App& a) {
     }
     gGrouped = false;
     // The master volume: a slider over the master's level meter, left of the right group.
-    // R01-24: on a narrow bar the master volume narrows (down to 56 px) before it goes.
-    const float masterRoom = std::floor(right0 - 16 - mx - 18);
-    if (showMaster && !s.mixer.empty() && masterRoom >= 56) {
+    // R14-06: in a pill of the bar's height, as every other part (it was a bare 15 px slider), 10 px
+    // (rim to rim) before the right group; on a narrow bar it takes a compact pill before it goes.
+    if (masterW > 0) {
       const ParamId pid = mixerParam(s.masterId(), MixerParam::Volume);
-      // Checkpoint 32: in a dark rounded field as tall as the pills (070 and 158 set the output meter in
-      // one, the display's colour), the slider and its meter centred in it.
-      const float vw = std::min(120.0f, masterRoom), vx = right0 - kRim - kGroupGap - vw, fy0 = std::round(top + (barH - 28) * 0.5f), vy = fy0 + 10;
-      // A6 (checkpoint 49): no black well: the slider's grey track on the bar, its meter in it, and a
-      // light knob, as the reference's output slider reads stopped or playing.
-      ImGui::SetCursorScreenPos(ImVec2(vx - 4, vy - 6));
-      ImGui::InvisibleButton("##lb_mvol", ImVec2(vw + 8, 24));
+      const float px0 = rightRim - kGroupGap - kRim - masterW;  // the pill's face (its rim 3 px outside)
+      barGroup(dl, ImVec2(px0, py), ImVec2(px0 + masterW, py + pillH));
+      const float vw = masterW - 20, vx = px0 + 10, cy = std::round(py + pillH * 0.5f);
+      // A6 (checkpoint 49): the slider's grey track, its meter in it, and a light knob.
+      ImGui::SetCursorScreenPos(ImVec2(px0, py));
+      ImGui::InvisibleButton("##lb_mvol", ImVec2(masterW, pillH));
       const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
       if (const auto d = describeParam(s, pid)) {
         const auto v = getParam(s, pid);
@@ -2931,10 +2984,9 @@ static float drawLogicControlBar(App& a) {
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && (!v || *v != d->def)) a.doc.setParam(pid, d->def, false);  // (R13-08)
         if (ImGui::IsItemDeactivated()) a.doc.endGesture();
         const float tx = std::round(vx + 5 + (vw - 10) * static_cast<float>(n));
-        // Checkpoint 36: the meter is the slider's track, as 216 and 158 draw the output: two bars centred
-        // in the field (green, yellow over -6 dB, a red tick once clipped) with a translucent knob over
-        // them (it was a slider line with a white knob above two thin bars at the field's foot).
-        const float cy = fy0 + 14.0f, bh = 4.0f;
+        // Checkpoint 36: the meter is the slider's track: two bars (green, yellow over -6 dB, a red tick
+        // once clipped) with the knob over them.
+        const float bh = 4.0f;
         const mixmeters::Reading r = mixmeters::get(a, s.masterId());
         static float clipHold[2] = {0, 0};
         const float hot = std::clamp((-6.0f + 60.0f) / 66.0f, 0.0f, 1.0f);  // where yellow starts
@@ -2942,14 +2994,16 @@ static float drawLogicControlBar(App& a) {
           const float pk = k == 0 ? r.peakL : r.peakR;
           const float db = pk > 0.00001f ? 20.0f * std::log10(pk) : -60.0f;
           const float f = std::clamp((db + 60.0f) / 66.0f, 0.0f, 1.0f);
-          const float my = k == 0 ? cy - 1.5f - bh : cy + 1.5f;
-          dl->AddRectFilled(ImVec2(vx, my), ImVec2(vx + vw, my + bh), theme::mix(P.surface700, P.text, 0.10f), 2.0f);
+          const float my = k == 0 ? cy - 1.0f - bh : cy + 1.0f;
+          dl->AddRectFilled(ImVec2(vx, my), ImVec2(vx + vw, my + bh), theme::mix(P.surface700, P.ink, 0.35f), 2.0f);
           if (f > 0) {
             dl->AddRectFilled(ImVec2(vx, my), ImVec2(vx + vw * std::min(f, hot), my + bh), theme::rgb(theme::role::kPlay), 2.0f);
-            if (f > hot) dl->AddRectFilled(ImVec2(vx + vw * hot, my), ImVec2(vx + vw * f, my + bh), theme::rgb(0xE8C33A), 2.0f);
+            if (f > hot) {
+              dl->AddRectFilled(ImVec2(vx + vw * hot, my), ImVec2(vx + vw * f, my + bh), theme::rgb(0xE8C33A), 2.0f);
+            }
           }
           if (pk >= 1.0f) clipHold[k] = 1.0f;
-          if (clipHold[k] > 0) dl->AddRectFilled(ImVec2(vx + vw + 3, my), ImVec2(vx + vw + 5, my + bh), P.danger);
+          if (clipHold[k] > 0) dl->AddRectFilled(ImVec2(vx + vw + 2, my), ImVec2(vx + vw + 4, my + bh), P.danger);
         }
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) clipHold[0] = clipHold[1] = 0;
         const float kr = 7.0f;
@@ -2960,8 +3014,8 @@ static float drawLogicControlBar(App& a) {
           ui::Hint(tip.c_str());
         }
       }
-      noteRectAt("logic_mvol", ImVec2(vx, vy - 6), ImVec2(vx + vw, vy + 18));
-      right0 = vx - 12;
+      noteRectAt("logic_mvol", ImVec2(px0 - kRim, py - kRim), ImVec2(px0 + masterW + kRim, py + pillH + kRim));
+      right0 = px0 - kRim - 12;
     }
     // Without the menu row (the system's menu bar holds the menus): the project and its save state here.
     std::string proj = a.projectFile().empty() ? i18n::tr("Untitled project") : fs::path(a.projectFile()).stem().string();
