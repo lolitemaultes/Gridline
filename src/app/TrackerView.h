@@ -29,6 +29,10 @@ struct Masks;
 
 namespace gl::trackerview {
 
+// cp21: a new pattern made in the Tracker has the classic 64 rows: 4 bars of 16 steps (a creation
+// default only; the other layouts keep their one bar, and no saved pattern changes).
+constexpr int kNewPatternBars = 4, kNewPatternSteps = 16;
+
 // The Pattern editor part's body.
 void patternEditor(App& a);
 // The Order list part's body: in the Tracker layout the classic header band (order list, song box,

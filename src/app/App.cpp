@@ -155,7 +155,8 @@ App::~App() {
   // J-77: a size / theme / language / audio change still waiting for Keep is not saved.
   dispconf::confirm().abandon();
   settings.set("keys.typingOn", typingKeyboard);  // for "as it was left" at the next start
-  saveRecordOptions(settings, recOptions, countInBars, recPunch);  // K-226
+  // K-226; checkpoint 56: Clips' Punch is its own (clips.punch), so leaving from Clips keeps record.punch as it was.
+  saveRecordOptions(settings, recOptions, countInBars, livelook::active(*this) ? settings.getBool("record.punch") : recPunch);
   settings.set("record.audio", recAudio);
   settings.set("record.audioEditor", recAudioEditor);
   settings.save(Settings::defaultPath());
@@ -537,6 +538,8 @@ void App::newProject() {
   startProject(starterSong());
 }
 
+static void trackerFirstPattern(Song& s);  // (below)
+
 Song App::starterSong() const {
   Song s = makeEmptySong();
   applyProjectDefaults(s);
@@ -548,7 +551,16 @@ Song App::starterSong() const {
     trackmodes::makeClipsStarterTracks(s);
     return s;
   }
+  trackerFirstPattern(s);
   return addStarterKit(std::move(s));  // starter kit and master limiter (core/Templates.h)
+}
+
+// K-106 cp21: a new song made in the Tracker starts with the classic 64-row pattern (4 bars of 16
+// steps) in place of the one-bar one; the other layouts' new songs are unchanged.
+static void trackerFirstPattern(Song& s) {
+  if (layoutui::active() != layout::Preset::Tracker || s.patterns.size() != 1) return;
+  Pattern& p = s.patterns.front();
+  if (p.bars == 1 && p.stepsPerBar == 16 && p.notes.empty() && p.steps.empty() && p.automation.empty()) p.bars = 4;
 }
 
 void App::applyProjectDefaults(Song& s) const {
@@ -768,6 +780,7 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
     addRecent(p);
     rememberSketch(p);  // J-141: the launcher's tile shows what was saved
     livelook::projectSaved(*this, p);  // N45-10: the view it was saved in
+    livelook::rowHeightsSaved(*this, p);  // checkpoint 56 (N55-06): the Set's row heights follow its file
   };
   // What was waiting for this save (closing, opening another project) only goes on if nothing
   // unsaved would be lost by it.
@@ -1163,6 +1176,7 @@ void App::newFromTemplate(const std::string& which) {
   if (which.empty()) {
     s = makeEmptySong();
     applyProjectDefaults(s);
+    trackerFirstPattern(s);
   } else if (which == "tracker") {
     s = makeTrackerDemo();  // K-106 cp15: the Tracker's demo module
   } else if (which == "demo") {

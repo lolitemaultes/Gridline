@@ -2413,6 +2413,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DWAV=${CMAKE_SOURCE_DIR}/assets/sounds/classic/startup.wav
                      -DOUT=${CMAKE_BINARY_DIR}/k316_tracker_editors_app -P ${CMAKE_SOURCE_DIR}/tests/k316_tracker_editors_app.cmake)
     set_tests_properties(k316_tracker_editors_app PROPERTIES TIMEOUT 600)
+    # K-106 cp22: in the Tracker no click on an instrument (the list, Instrument, Sample, a double-click,
+    # Ctrl+Alt+I/E, the Steps page) shows the shared plugin or channel settings window for even one frame.
+    add_test(NAME k106_tracker_no_window_flash_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DWAV=${CMAKE_SOURCE_DIR}/assets/sounds/classic/startup.wav
+                     -DOUT=${CMAKE_BINARY_DIR}/k106_tracker_no_window_flash_app -P ${CMAKE_SOURCE_DIR}/tests/k106_tracker_no_window_flash_app.cmake)
+    set_tests_properties(k106_tracker_no_window_flash_app PROPERTIES TIMEOUT 300)
     # K-106 cp20: a song written in the Tracker alone (samples, both editors, every track, the Song page) saves the
     # same bytes and renders the same audio from Studio, Clips and Smooth, and reopens in the Tracker as it was.
     add_test(NAME k316_layout_roundtrip_app
@@ -2469,6 +2476,10 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
     add_test(NAME k112d_smart
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/assets/demo/Gridline.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k112d_smart -P ${CMAKE_SOURCE_DIR}/tests/k112d_smart_app.cmake)
+    # K-112D (D7): a mapping follows its plugin through slot moves, moves on Learn, goes with its plugin.
+    add_test(NAME k112d_smart_remap
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/assets/demo/Gridline.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k112d_smart_remap -P ${CMAKE_SOURCE_DIR}/tests/k112d_smart_remap_app.cmake)
     # K-112D: Smooth's window state and an edit made elsewhere survive Studio, a reopen, Clips and Tracker.
     add_test(NAME k112d_switch
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
@@ -3659,6 +3670,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                        -DOUT=${CMAKE_BINARY_DIR}/k112d_smart_collab -P ${CMAKE_SOURCE_DIR}/tests/k112d_smart_collab_app.cmake
                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
       set_tests_properties(k112d_smart_collab PROPERTIES TIMEOUT 1000)
+      # K-112B (checkpoint 53, R13-02): two Smooth collaborators share the cycle area, the view running on both.
+      add_test(NAME k112b_cycle_collab
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DSONG=${CMAKE_SOURCE_DIR}/assets/demo/Gridline.gridline.json
+                       -DOUT=${CMAKE_BINARY_DIR}/k112b_cycle_collab -P ${CMAKE_SOURCE_DIR}/tests/k112b_cycle_collab_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(k112b_cycle_collab PROPERTIES TIMEOUT 1000)
       # K-106: the tracker and another layout edit one pattern at once (nothing lost) and see each other's cursors.
       add_test(NAME k106_collab
                COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k106_collab

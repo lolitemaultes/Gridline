@@ -114,3 +114,15 @@ list(LENGTH shownS nShownS)
 check("Studio shows the new project's default rows (${nShownS} of ${nTracks})" nShownS GREATER 1)
 file(READ "${OUT}/new_studio.gridline.json" ns)
 check("Studio's save of the new project is byte-identical to Smooth's" ns STREQUAL nj)
+
+# ---- 5. R13-08 (checkpoint 53): a click with no movement on a header's volume slider (the two-line
+#      header at 1440: on its knob, and a few px above it) or on its pan knob writes nothing: no undo
+#      step, the project stays unmodified. A drag still writes.
+#      (cp54: the rows stand 8 px higher, Smooth's ruler being one 26 px tier: Drums at y 178, was 186.)
+run(click logic "${OUT}/base.gridline.json"
+    "16 plrows\n20 move 685 205\n22 down 0\n24 up 0\n28 move 685 199\n30 down 0\n32 up 0\n36 move 742 205\n38 down 0\n40 up 0\n44 docstate\n46 quit discard\n")
+string(REGEX MATCH "plrow 0 \"Drums\" [0-9]+ [0-9]+ top 178 h" drumsRow "${click_log}")
+check("the Drums header is where the clicks aim (${drumsRow})" drumsRow MATCHES "Drums")
+check("a plain click on a header slider or pan knob leaves the project unmodified" click_log MATCHES "docstate modified 0")
+run(drag logic "${OUT}/base.gridline.json" "20 move 685 205\n22 down 0\n24 move 660 205\n26 up 0\n30 docstate\n32 quit discard\n")
+check("a drag on the slider still changes the volume" drag_log MATCHES "docstate modified 1")

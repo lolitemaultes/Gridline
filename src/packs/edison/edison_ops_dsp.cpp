@@ -58,6 +58,58 @@ Range rangeAfterEdit(const Content& before, const Content& after, Range edited) 
   return clampRange(after, edited);
 }
 
+int64_t mapFrame(const Content& before, const Content& after, const EditMap& m, int64_t pos) {
+  const int64_t n0 = before.frames(), n1 = after.frames();
+  pos = std::clamp<int64_t>(pos, 0, n0);
+  int64_t out = pos;
+  switch (m.kind) {
+    case EditMap::Replace: {
+      const Range r = clampRange(before, m.r);
+      const int64_t delta = n1 - n0, len = std::max<int64_t>(0, r.len() + delta);
+      if (pos <= r.a) {
+        out = pos;
+      } else if (pos >= r.b) {
+        out = pos + delta;
+      } else {
+        out = r.a + static_cast<int64_t>(std::llround(static_cast<double>(pos - r.a) * static_cast<double>(len) / static_cast<double>(r.len())));
+      }
+      break;
+    }
+    case EditMap::Crop:
+    case EditMap::TrimSilence: {
+      Range r = m.kind == EditMap::Crop ? clampRange(before, m.r) : loudRange(before.a(), m.thresholdDb);
+      if (m.kind == EditMap::TrimSilence && r.a == 0 && r.b == n0) break;  // nothing trimmed
+      out = std::clamp<int64_t>(pos - r.a, 0, std::max<int64_t>(0, r.len()));
+      break;
+    }
+    case EditMap::Scale:
+      out = n0 > 0 ? static_cast<int64_t>(std::llround(static_cast<double>(pos) * static_cast<double>(n1) / static_cast<double>(n0))) : 0;
+      break;
+    default: break;
+  }
+  return std::clamp<int64_t>(out, 0, n1);
+}
+
+Range mapSelection(const Content& before, const Content& after, const EditMap& m, Range sel) {
+  sel = clampRange(before, sel);
+  if (sel.empty()) return {};
+  const Range out{mapFrame(before, after, m, sel.a), mapFrame(before, after, m, sel.b)};
+  return out.empty() ? Range{} : out;
+}
+
+Range loudRange(const Audio& a, double thresholdDb) {
+  const float thr = static_cast<float>(dbToGain(thresholdDb));
+  int64_t s = 0, e = a.frames();
+  auto loud = [&](int64_t i) { return std::fabs(a.L[static_cast<size_t>(i)]) >= thr || std::fabs(a.R[static_cast<size_t>(i)]) >= thr; };
+  while (s < e && !loud(s)) {
+    ++s;
+  }
+  while (e > s && !loud(e - 1)) {
+    --e;
+  }
+  return {s, e};
+}
+
 void fixMono(Audio& a) {
   if (a.channels == 1) a.R = a.L;
 }
@@ -87,6 +139,7 @@ History::History(Content c) : cur_(std::move(c)) {
 void History::reset(Content c) {
   cur_ = std::move(c);
   if (!cur_.audio) cur_.audio = std::make_shared<const Audio>();
+  curSel_.reset();
   undo_.clear();
   redo_.clear();
   ++serial_;
@@ -94,17 +147,25 @@ void History::reset(Content c) {
 
 void History::push(const std::string& label, Content next) {
   if (!next.audio) next.audio = std::make_shared<const Audio>();
-  undo_.emplace_back(label, std::move(cur_));
+  undo_.push_back(Step{label, std::move(cur_), curSel_});
   if (undo_.size() > max_) undo_.erase(undo_.begin());
   cur_ = std::move(next);
+  curSel_.reset();
   redo_.clear();
   ++serial_;
 }
 
+void History::push(const std::string& label, Content next, Range selBefore, Range selAfter) {
+  curSel_ = selBefore;  // the selection the version before the edit had
+  push(label, std::move(next));
+  curSel_ = selAfter;
+}
+
 bool History::undo() {
   if (undo_.empty()) return false;
-  redo_.emplace_back(undo_.back().first, std::move(cur_));
-  cur_ = std::move(undo_.back().second);
+  redo_.push_back(Step{undo_.back().label, std::move(cur_), curSel_});
+  cur_ = std::move(undo_.back().content);
+  curSel_ = undo_.back().sel;
   undo_.pop_back();
   ++serial_;
   return true;
@@ -112,8 +173,9 @@ bool History::undo() {
 
 bool History::redo() {
   if (redo_.empty()) return false;
-  undo_.emplace_back(redo_.back().first, std::move(cur_));
-  cur_ = std::move(redo_.back().second);
+  undo_.push_back(Step{redo_.back().label, std::move(cur_), curSel_});
+  cur_ = std::move(redo_.back().content);
+  curSel_ = redo_.back().sel;
   redo_.pop_back();
   ++serial_;
   return true;
@@ -121,7 +183,7 @@ bool History::redo() {
 
 std::vector<std::string> History::labels() const {
   std::vector<std::string> v;
-  for (const auto& u : undo_) v.push_back(u.first);
+  for (const auto& u : undo_) v.push_back(u.label);
   return v;
 }
 
@@ -250,12 +312,9 @@ Content cropTo(const Content& c, Range r) {
 
 Content trimSilence(const Content& c, double thresholdDb, Range* kept) {
   const Audio& a = c.a();
-  const float thr = static_cast<float>(dbToGain(thresholdDb));
-  int64_t s = 0, e = a.frames();
-  auto loud = [&](int64_t i) { return std::fabs(a.L[static_cast<size_t>(i)]) >= thr || std::fabs(a.R[static_cast<size_t>(i)]) >= thr; };
-  while (s < e && !loud(s)) ++s;
-  while (e > s && !loud(e - 1)) --e;
-  if (kept) *kept = {s, e};
+  const Range k = loudRange(a, thresholdDb);
+  const int64_t s = k.a, e = k.b;
+  if (kept) *kept = k;
   if (s == 0 && e == a.frames()) return c;
   if (e <= s) return deleteRange(c, {0, a.frames()});
   return cropTo(c, {s, e});

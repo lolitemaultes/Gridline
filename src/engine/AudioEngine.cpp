@@ -727,7 +727,13 @@ void AudioEngine::preview(SamplePtr sample, bool own, int64_t loopFrom) {
 double AudioEngine::loopStart(const Program* p) const {
   if (tMode_ != PlayMode::Song || hostFollow_) return 0.0;
   if (loopB_ > loopA_) return loopA_;  // an explicit time selection wins over the song loop marker
-  return markerActions(p) && p->songLoopStart > 0 ? p->songLoopStart : 0.0;
+  // K-112c (N55-02): never into the clip grid's storage before the Clips Arrangement's start.
+  return std::max(markerActions(p) && p->songLoopStart > 0 ? p->songLoopStart : 0.0, arrStart_.load(std::memory_order_relaxed));
+}
+
+bool AudioEngine::stopsAtEnd() const {
+  return tMode_ == PlayMode::Song && !hostFollow_ && !offline_ && !(loopB_ > loopA_) && !pendJump_ && arrStop_.load(std::memory_order_relaxed) &&
+         arrStart_.load(std::memory_order_relaxed) > 0;
 }
 
 // J-85: marker actions on the audio thread, at the exact sample. Song mode
@@ -794,7 +800,18 @@ double AudioEngine::loopEnd(const Program* p) const {
     double pa = 0, pb = 0;
     if (postRoll_.load(std::memory_order_relaxed) > 0 && rollPunch(pa, pb)) return std::max(1e12, pb);
   }
-  if (tMode_ == PlayMode::Song) return loopB_ > loopA_ && !hostFollow_ ? loopB_ : static_cast<double>(p->songLoopEnd);
+  if (tMode_ == PlayMode::Song) {
+    if (loopB_ > loopA_ && !hostFollow_) return loopB_;
+    // K-112c (N55-02): the Clips Arrangement with nothing in it, or played from past its end, plays on
+    // (the counter keeps counting) instead of wrapping into the clip grid's storage. Checkpoint 57
+    // (N56-05): a full one too, unless asked to stop at its end: past its last clip it plays silence.
+    const double arr = arrStart_.load(std::memory_order_relaxed);
+    if (arr > 0 && !hostFollow_) {
+      const double arrEnd = arrEnd_.load(std::memory_order_relaxed);
+      return arrEnd <= arr || anchorTick_ >= arrEnd || !arrStop_.load(std::memory_order_relaxed) ? 1e12 : arrEnd;
+    }
+    return static_cast<double>(p->songLoopEnd);
+  }
   if (tMode_ == PlayMode::Live) return 1e12;  // free-running transport
   const ProgPattern* pat = p->pattern(tPattern_);
   return static_cast<double>(pat ? pat->length : p->barTicks);
@@ -1923,6 +1940,10 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
 
   // --- transport & sequencing ---
   const double blockTick = tickAt(p, anchorTick_, static_cast<double>(clock_));
+  const double blockAnchor = anchorTick_;  // K-317: a stepped block's control blocks are timed from here
+  const int64_t blockClock = clock_;
+  const bool stepped = stepNext_ && tPlaying_ && p->controlGrid() && absClock_ % kControlBlock == 0;
+  stepNext_ = false;
   segCount_ = 0;
   livePieceCount_ = 0;
   // MIDI sync output: mode changes, stops.
@@ -1960,6 +1981,12 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       bool wrap = false, jump = false;
       if (tLoop_) {
         int64_t endSample = sampleAt(p, anchorTick_, end);
+        if (endSample <= clock_ && stopsAtEnd()) {  // K-112c (N55-02): the Arrangement ended (it shrank under the playhead)
+          releaseAll(p, s, true);
+          tPlaying_ = false;
+          landAt(returnToSeek_.load(std::memory_order_relaxed) ? seekTick_.load(std::memory_order_relaxed) : arrStart_.load(std::memory_order_relaxed));
+          break;
+        }
         if (endSample <= clock_) {  // already past the end (e.g. a shorter pattern was selected)
           releaseAll(p, s);
           landAt(pendJump_ ? pendJumpTo_ : loopStart(p));
@@ -2045,6 +2072,12 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
         if (!fireMarker(p, *mev, std::min(s, n - 1))) break;
         continue;
       }
+      if (wrap && !jump && stopsAtEnd()) {  // K-112c (N55-02): the Clips Arrangement stops at its end (Loop off)
+        releaseAll(p, std::min(s, n - 1), true);
+        tPlaying_ = false;
+        landAt(returnToSeek_.load(std::memory_order_relaxed) ? seekTick_.load(std::memory_order_relaxed) : arrStart_.load(std::memory_order_relaxed));
+        break;
+      }
       if (wrap || jump) {
         releaseAll(p, std::min(s, n - 1));
         landAt(pendJump_ ? pendJumpTo_ : loopStart(p));  // a pending jump replaces the loop wrap
@@ -2114,6 +2147,9 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   if (grid && gpos == 0) {
     lastGridTick_ = tPlaying_ ? blockTick : -1;  // R08-01: a stopped transport is never treated as settled
     evaluateLinks(p, kControlBlock, blockTick, eventTick);
+    if (stepped) {
+      stepGains(p, blockAnchor, blockClock, n);  // K-317
+    }
   } else if (p->hasEventLanes) {  // J-210: a block that starts on a step of recorded events
     applyAutomation(p, blockTick, eventTick, true);
     updateStripGains(p);
@@ -2130,6 +2166,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   bc_.n = n;
   bc_.grid = grid;
   bc_.gpos = gpos;
+  bc_.steps = stepped ? std::min(kMaxGainSteps, (n + kControlBlock - 1) / kControlBlock) : 1;
   bc_.nb = std::min(p->mixer.size(), busL_.size());
   bc_.ctx.sampleRate = sr_;
   bc_.ctx.tempo = clockMap(p).bpmAt(frameTick);
@@ -2713,21 +2750,89 @@ int AudioEngine::untilEventStep(const Program* p, int n) const {
   return s >= 1 && s < n ? static_cast<int>(s) : n;
 }
 
-int AudioEngine::settledGridBlock(const Program* p, int n) const {
+bool AudioEngine::gainOnlyLane(const Program* p, const ProgAutoLane& a) {
+  if (a.events) {
+    return false;
+  }
+  switch (a.target.kind) {
+    case ProgLink::ChanVolume:
+    case ProgLink::ChanPan:
+    case ProgLink::MixVolume: return true;
+    case ProgLink::MixPan: return !p->roomOf(p->mixer[static_cast<size_t>(a.target.mixer)]).on;  // (the Stage room's reflections read the pan)
+    default: return false;
+  }
+}
+
+int AudioEngine::settledGridBlock(const Program* p, int n, bool& stepped) const {
   const int grid = kControlBlock;
+  stepped = false;
   if (!tPlaying_ || countInLeft_ > 0 || tMode_ != PlayMode::Song || lastGridTick_ < 0) return grid;
   if (!p->links.empty() || p->hasMacros || p->hasHostBank || p->hasEventLanes) return grid;
   double anchor = anchorTick_;
   int64_t clock = clock_;
   if (tLoop_ && sampleAt(p, anchor, transportEnd(p)) <= clock) return grid;  // the block starts with the loop wrap
-  const int len = n / grid * grid;
+  const int len = std::min(n, kMaxGainSteps * grid) / grid * grid;
   const double t0 = tickAt(p, anchor, static_cast<double>(clock));
   const double t1 = tickAt(p, anchor, static_cast<double>(clock + len));
   if (tLoop_ && t1 >= transportEnd(p)) return grid;  // a wrap inside: as before
   const double lo = std::min(lastGridTick_, t0), hi = std::max(t1, lastGridTick_);
-  for (const ProgAutoLane& a : p->autos)
-    if (!a.lane.constantBetween(lo, hi)) return grid;
+  bool moving = false;
+  for (const ProgAutoLane& a : p->autos) {
+    if (a.lane.constantBetween(lo, hi)) {
+      continue;
+    }
+    // K-317: a lane that moves only a strip gain is evaluated per control block inside the block.
+    if (!gainOnlyLane(p, a)) {
+      return grid;
+    }
+    moving = true;
+  }
+  if (moving) {
+    // Its control blocks' ticks follow from the block's start only while nothing jumps inside it.
+    if (pendJump_) {
+      return grid;
+    }
+    if (markerActions(p)) {
+      const ProgMarkerEvent* e = nextMarkerEvent(p, t0 - 1e-6);
+      if (e && e->tick <= t1 + 1e-6) {
+        return grid;
+      }
+    }
+    stepped = true;
+  }
   return len;
+}
+
+void AudioEngine::stepGains(const Program* p, double anchor, int64_t clock, int n) {
+  auto keep = [p](int j) {
+    for (const ProgChannel& c : p->channels) {
+      if (c.stripLinked) {
+        c.steps.l[j] = c.gainL;
+        c.steps.r[j] = c.gainR;
+      }
+    }
+    for (const ProgMixer& m : p->mixer) {
+      if (m.stripLinked) {
+        m.steps.l[j] = m.gainL;
+        m.steps.r[j] = m.gainR;
+        m.steps.xl[j] = m.xlr;
+        m.steps.xr[j] = m.xrl;
+      }
+    }
+  };
+  keep(0);  // the grid evaluation at the block's start
+  for (int j = 1; j * kControlBlock < n && j < kMaxGainSteps; ++j) {
+    // The other lanes hold their values (settledGridBlock): the gain lanes alone, as evaluateLinks would.
+    const double t = tickAt(p, anchor, static_cast<double>(clock + static_cast<int64_t>(j) * kControlBlock));
+    for (const ProgAutoLane& a : p->autos) {
+      if (gainOnlyLane(p, a)) {
+        applyLinkValue(p, a.target, a.lane.valueAt(t));
+      }
+    }
+    updateStripGains(p);
+    keep(j);
+    lastGridTick_ = t;
+  }
 }
 
 int AudioEngine::untilMeterChange(const Program* p, int n) const {
@@ -3023,7 +3128,11 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
       const int toGrid = kControlBlock - static_cast<int>(absClock_ % kControlBlock);
       // R08-01: automation that holds its value needs no 64-frame blocks (they made a bounce with
       // one short lane several times slower, more so with several processing threads).
-      n = toGrid == kControlBlock && n > kControlBlock ? settledGridBlock(p, n) : std::min(n, toGrid);
+      bool stepped = false;
+      n = toGrid == kControlBlock && n > kControlBlock ? settledGridBlock(p, n, stepped) : std::min(n, toGrid);
+      stepNext_ = stepped;
+    } else {
+      stepNext_ = false;
     }
     hits_.clear();  // J-165: filled by the commands, MIDI and sequencing below
     deliverHeld(p);  // K-87: notes that waited for an instrument to load

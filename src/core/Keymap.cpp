@@ -666,7 +666,7 @@ Rows liveRows() {
   set("playlist.duplicate", {ch(K::D, C)});
   set("playlist.deselect", {ch(K::A, C | S)});
   set("playlist.merge", {ch(K::J, C)});
-  set("playlist.loopMarkers", {ch(K::L, C)});
+  set("playlist.loopMarkers", {ch(K::L, C)});  // checkpoint 56 (N55-04): in Clips, Loop selection (the loop brace), as the reference's
   set("playlist.insertSpace", {ch(K::I, C)});
   set("playlist.deleteSpace", {ch(K::Delete, C | S)});
   set("playlist.duplicateTime", {ch(K::D, C | S)});

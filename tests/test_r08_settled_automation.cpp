@@ -4,9 +4,13 @@
 //   - AutomationLane::constantBetween: before the first point, after the last, past a clip's end,
 //     before the first clip; false across a ramp, a point, an instance start or a looping clip.
 //   - The same song renders the same with long blocks after the lane's last point as with control
-//     blocks to the end (forced by a second, looping lane that keeps the pan where it is).
+//     blocks to the end (forced by a second, looping lane that keeps the master's separation where it is).
 //   - Render time with one two-point lane stays within 1.5 times the time without it, or (on a
 //     loaded computer) within half the extra time of control blocks everywhere.
+//   - K-317: lanes that move only strip gains (mixer / channel volume and pan) render in long blocks
+//     while they move, ramping through each control block's gains: a fast bus volume lane, a fast
+//     bus pan lane under the Stage pan law (cross gains) and a fast channel pan lane render the same
+//     as in 64-frame blocks, and a fast bus lane costs little over the song without it.
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -34,6 +38,43 @@ void addLane(Song& s, ChannelParam param, std::vector<AutoPoint> pts, Tick lengt
   c.id = s.allocateId(), c.kind = ClipKind::Automation, c.source = a.id, c.start = 0, c.length = length, c.track = 0;
   c.loop = loop > 0;
   s.playlist.push_back(c);
+}
+
+void addLaneTo(Song& s, ObjectId owner, uint32_t index, std::vector<AutoPoint> pts, Tick length, Tick loop) {
+  AutomationClip a;
+  a.id = s.allocateId();
+  a.owner = owner;
+  a.index = index;
+  a.points = std::move(pts);
+  a.loop = loop;
+  s.automations.push_back(a);
+  Clip c;
+  c.id = s.allocateId(), c.kind = ClipKind::Automation, c.source = a.id, c.start = 0, c.length = length, c.track = 0;
+  c.loop = loop > 0;
+  s.playlist.push_back(c);
+}
+
+// A looping lane that holds the master's stereo separation at its centre (no change to the sound):
+// not a strip gain, so the whole song renders in 64-frame control blocks.
+void forceControlBlocks(Song& s) {
+  addLaneTo(s, s.masterId(), static_cast<uint32_t>(MixerParam::StereoSep), {{0, 0.5f}, {48, 0.5f}}, std::max<Tick>(s.lengthTicks(), 768), 96);
+}
+
+// A point every `step` ticks, alternating between two values, over the song.
+std::vector<AutoPoint> fastPoints(Tick length, Tick step) {
+  std::vector<AutoPoint> v;
+  for (Tick t = 0; t <= length; t += step) {
+    v.push_back({t, (t / step) % 2 ? 0.3f : 0.9f});
+  }
+  return v;
+}
+
+bool sameAudio(const AudioBuffer& a, const AudioBuffer& b) {
+  bool same = a.frames == b.frames && a.frames > 0;
+  for (size_t i = 0; same && i < a.frames; ++i) {
+    same = a.at(0, i) == b.at(0, i) && a.at(1, i) == b.at(1, i);
+  }
+  return same;
 }
 
 double renderMs(const Song& s, const RenderOptions& o, AudioBuffer* out) {
@@ -84,13 +125,12 @@ int main() {
     expect(false, "fixture song: " + err);
     return finish();
   }
-  base.channels.front().pan = 0.0f;  // the pan lane below holds the centre (normalized 0.5)
   RenderOptions o;
   o.threads = 4;
   Song early = base;
   addLane(early, ChannelParam::Volume, {{0, 0.64f}, {699, 0.75f}}, 768, 0);
   Song held = early;
-  addLane(held, ChannelParam::Pan, {{0, 0.5f}, {48, 0.5f}}, std::max<Tick>(base.lengthTicks(), 768), 96);
+  forceControlBlocks(held);
   expect(held.lengthTicks() == early.lengthTicks(), "the looping lane does not lengthen the song");
   // The three renders take turns, best of each: a loaded computer slows all three alike. (With
   // other programs running, every 64-frame block of the mixer threads waits longer for its turn;
@@ -115,5 +155,41 @@ int main() {
   // 768 ticks of it): long blocks after the lane's last point are still in use.
   expect(tLane <= tNone * 1.5 + 5.0 || tLane - tNone <= 0.5 * (tHeld - tNone),
          "one two-point lane costs at most half again the time without it (or, on a loaded computer, half the cost of control blocks everywhere)");
+
+  // ---- K-317: strip gain lanes that move render in long blocks, the same as in control blocks
+  {
+    const Tick len = base.lengthTicks();
+    const ObjectId bus = base.channels.front().mixerTrack;
+    expect(bus != kNoId && bus != base.masterId(), "the fixture's first channel plays through an insert");
+    Song fast = base;
+    addLaneTo(fast, bus, static_cast<uint32_t>(MixerParam::Volume), fastPoints(len, 24), len, 0);
+    Song fastGrid = fast;
+    forceControlBlocks(fastGrid);
+    Song stage = base;
+    stage.panLaw = PanLaw::Stage;
+    addLaneTo(stage, bus, static_cast<uint32_t>(MixerParam::Pan), fastPoints(len, 12), len, 0);
+    addLaneTo(stage, base.channels.front().id, static_cast<uint32_t>(ChannelParam::Pan), fastPoints(len, 36), len, 0);
+    Song stageGrid = stage;
+    forceControlBlocks(stageGrid);
+    AudioBuffer f, fg, st, sg;
+    double tFast = 1e18, tGrid = 1e18, tBase = 1e18;
+    for (int k = 0; k < 4; ++k) {
+      tBase = std::min(tBase, renderMs(base, o, nullptr));
+      tFast = std::min(tFast, renderMs(fast, o, k == 0 ? &f : nullptr));
+      tGrid = std::min(tGrid, renderMs(fastGrid, o, k == 0 ? &fg : nullptr));
+    }
+    renderMs(stage, o, &st);
+    renderMs(stageGrid, o, &sg);
+    expect(sameAudio(f, fg), "a fast bus volume lane renders the same in long blocks as in control blocks");
+    expect(sameAudio(st, sg), "fast bus and channel pan lanes (Stage pan law) render the same in long blocks as in control blocks");
+    bool heard = false;
+    for (size_t i = 0; !heard && i < std::min(f.frames, n.frames); ++i) {
+      heard = f.at(0, i) != n.at(0, i);
+    }
+    expect(heard, "the fast bus lane is heard");
+    std::printf("render ms: none %.1f, fast bus lane %.1f, the same in control blocks %.1f\n", tBase, tFast, tGrid);
+    expect(tFast <= tBase * 1.25 + 5.0 || tFast - tBase <= 0.25 * (tGrid - tBase),
+           "a fast bus lane costs at most a quarter again the time without it (or, loaded, a quarter of the cost of control blocks)");
+  }
   return finish();
 }

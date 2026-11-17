@@ -18,6 +18,7 @@ struct Geometry {
   ImVec2 framePadding, itemSpacing, titleAlign;
   float frameRounding = 0, grabRounding = 0, tabRounding = 0, windowRounding = 0, childRounding = 0, popupRounding = 0, separator = 0;
   float frameBorder = 0;
+  float scrollbarRounding = 0, popupBorder = 0;  // K-106 cp21
   float menuItemRounding = 0;  // K-112D
   float tabCloseSelected = 0;  // K-297
 };
@@ -106,6 +107,8 @@ Geometry read(const ImGuiStyle& st) {
   g.popupRounding = st.PopupRounding;
   g.separator = st.DockingSeparatorSize;
   g.frameBorder = st.FrameBorderSize;
+  g.scrollbarRounding = st.ScrollbarRounding;
+  g.popupBorder = st.PopupBorderSize;
   g.tabCloseSelected = st.TabCloseButtonMinWidthSelected;
   g.menuItemRounding = st.MenuItemRounding;
   return g;
@@ -122,6 +125,8 @@ void write(ImGuiStyle& st, const Geometry& g) {
   st.PopupRounding = g.popupRounding;
   st.DockingSeparatorSize = g.separator;
   st.FrameBorderSize = g.frameBorder;
+  st.ScrollbarRounding = g.scrollbarRounding;
+  st.PopupBorderSize = g.popupBorder;
   st.TabCloseButtonMinWidthSelected = g.tabCloseSelected;
   st.MenuItemRounding = g.menuItemRounding;
 }
@@ -159,6 +164,9 @@ void beginStyleFrame(App& a, bool welcomeScreen) {
   // K-112b (checkpoint 20): flat buttons and fields, no outline, as every reference window draws its
   // controls (a fill on the panel, no stroke). Plugin editors get the outline back (BaseStyleScope).
   if (s.preset == layout::Preset::Logic) g.frameBorder = 0;
+  // K-106 cp21 (look audit): the Tracker's scroll bars square (no rounded thumb) and its menus framed by
+  // a line, as the classic screens; plugin editors keep theirs (BaseStyleScope).
+  if (s.preset == layout::Preset::Tracker) g.scrollbarRounding = 0, g.popupBorder = 1;
   // K-112D (audit I3): the open menu's title in the menu bar is a rounded pill, not a square block.
   if (s.preset == layout::Preset::Logic) g.menuItemRounding = 5.0f;
   write(st, g);
@@ -267,7 +275,9 @@ BaseStyleScope::BaseStyleScope() {
   ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, gBase.popupRounding);
   ImGui::PushStyleVar(ImGuiStyleVar_TabRounding, gBase.tabRounding);
   ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, gBase.frameBorder);  // K-112b: the Tracks layout's flat controls stay out
-  pushed = 8;
+  ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarRounding, gBase.scrollbarRounding);  // K-106 cp21
+  ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, gBase.popupBorder);
+  pushed = 10;
   menuRight = GImGuiGridlineMenuRight;  // K-112b: the editor's own menus keep their look
   GImGuiGridlineMenuRight = false;
   flat = look::flatFaces();  // checkpoint 29: an editor's buttons keep their own faces

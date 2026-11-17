@@ -949,6 +949,10 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
   }
   ImGuiIO& io = ImGui::GetIO();
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  if (!act) {  // GitHub #60: automation and internal controllers move it (and its readout)
+    const double shown = pui::shownValue(a, pid, val);
+    if (shown != val) val = std::clamp(shown, std::min(d.min, d.max), std::max(d.min, d.max));
+  }
   const double pressed = ui::ValueAtPress(val);
   bool changed = false;
   // K-230: a delay time knob (core/TimeKnob.h) brings its own magnets and an even travel, unless
@@ -1188,7 +1192,15 @@ bool devItem(ParamId pid, DevItem& out) {
   out = it->second;
   return true;
 }
-bool paramLinked(App& a, ParamId pid) { return isLinked(a, pid); }
+bool paramLinked(App& a, ParamId pid) { return isLinked(a, pid) || isModulated(a.doc.song(), pid); }
+
+double shownValue(App& a, ParamId pid, double stored) {
+  const bool playing = a.engine.playing();
+  if (!playing && a.doc.song().modLinks.empty()) return stored;  // nothing can drive it
+  double live = 0;
+  const bool has = a.builder.modulatedValue(pid, live);
+  return showsLiveValue(a.doc.song(), pid, has, playing, false) ? live : stored;
+}
 
 float knobCellWidth(int style) { return kKnobCell[std::clamp(style, 0, 2)]; }
 float knobCellHeight(int style) { return kKnobRadius[std::clamp(style, 0, 2)] * 2 + 32; }

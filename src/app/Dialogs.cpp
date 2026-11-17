@@ -44,6 +44,7 @@
 #include "LogicPlugins.h"
 #include "LogicNewTracks.h"
 #include "LayoutPresets.h"
+#include "TrackerLook.h"
 #include "TrackerView.h"
 #include "BrowserUi.h"
 #include "../engine/PlaylistTools.h"
@@ -108,8 +109,48 @@ void alignRight(float width) {
   ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), x));
 }
 
+// K-106 cp21 (look audit): in the Tracker the two question boxes (unsaved changes, confirm) are the
+// classic centred dialog: square, a raised bevel frame round a sunken well, the title in the bold
+// face at the interface size, bevel buttons. Same popups, keys and actions; the other layouts are
+// unchanged.
+bool trackerDialogs() { return layoutui::active() == layout::Preset::Tracker; }
+struct DialogLook {
+  bool on = trackerDialogs();
+  DialogLook() {
+    if (on) {
+      ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+      ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    }
+  }
+  ~DialogLook() {
+    if (on) ImGui::PopStyleVar(2);
+  }
+  DialogLook(const DialogLook&) = delete;
+  DialogLook& operator=(const DialogLook&) = delete;
+};
+// The frame, inside the opened popup (drawn under its rows).
+void dialogFrame() {
+  if (!trackerDialogs()) return;
+  const ImVec2 p0 = ImGui::GetWindowPos(), p1(p0.x + ImGui::GetWindowWidth(), p0.y + ImGui::GetWindowHeight());
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  trackerview::bevelBox(dl, p0, p1, false);
+  trackerview::bevelBox(dl, ImVec2(p0.x + 3, p0.y + 3), ImVec2(p1.x - 3, p1.y - 3), true);
+}
+// A dialog button: the shared text or primary button, or in the Tracker a bevel button.
+bool dialogButton(App& a, const char* label, float w, bool primary) {
+  if (!trackerDialogs()) return primary ? ui::PrimaryButton(label, w) : ui::TextButton(label, false, w);
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  const float h = std::round(ImGui::GetFontSize() + 10);
+  ImGui::PushID(label);
+  const bool r = trackerview::bevelButton(a, "##tdb", label, p, ImVec2(p.x + w, p.y + h), false, nullptr);
+  ImGui::PopID();
+  ImGui::SetCursorScreenPos(p);
+  ImGui::Dummy(ImVec2(w, h));
+  return r;
+}
+
 void dialogTitle(App& a, const char* title, const char* subtitle = nullptr) {
-  ImGui::PushFont(a.fontBold, theme::kFontTitle);
+  ImGui::PushFont(a.fontBold, trackerDialogs() ? ImGui::GetFontSize() : theme::kFontTitle);  // (cp21: the Tracker's titles at its own size)
   ImGui::TextUnformatted(i18n::tr(title));
   ImGui::PopFont();
   if (subtitle) ImGui::TextColored(theme::vec(pal().textDim), "%s", i18n::tr(subtitle));
@@ -1092,24 +1133,29 @@ void unsavedPrompt(App& a) {
   }
   centerNext(ImVec2(420, 0));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS6, theme::kS6 - 4));
-  bool open = ImGui::BeginPopupModal("##unsaved", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar);
+  bool open = false;
+  {
+    const DialogLook look;
+    open = ImGui::BeginPopupModal("##unsaved", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar);
+  }
   ImGui::PopStyleVar();
   if (open) {
+    dialogFrame();
     dialogTitle(a, "Save changes to this project?", "Your changes will be lost if you don't save them.");
     ImGui::Dummy(ImVec2(372, theme::kS2));
     alignRight(110 + 90 + 100 + theme::kS2 * 2);
-    if (ui::TextButton("Don't save", false, 110)) {
+    if (dialogButton(a, i18n::N_("Don't save"), 110, false)) {
       ImGui::CloseCurrentPopup();
       if (a.afterDiscard) a.afterDiscard();
     }
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton("Cancel", false, 90) || ::gl::keys::escapePressed()) {
+    if (dialogButton(a, "Cancel", 90, false) || ::gl::keys::escapePressed()) {
       a.afterDiscard = nullptr;
       a.quitRequested = false;
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine(0, theme::kS2);
-    if (ui::PrimaryButton("Save", 100) || ::gl::keys::defaultPressed()) {
+    if (dialogButton(a, "Save", 100, true) || ::gl::keys::defaultPressed()) {
       ImGui::CloseCurrentPopup();
       auto then = a.afterDiscard;
       if (!a.projectPath.empty()) {
@@ -1133,10 +1179,15 @@ void confirmPrompt(App& a) {
   }
   centerNext(ImVec2(420, 0));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS6, theme::kS6 - 4));
-  bool open = ImGui::BeginPopupModal("##confirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar);
+  bool open = false;
+  {
+    const DialogLook look;
+    open = ImGui::BeginPopupModal("##confirm", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar);
+  }
   ImGui::PopStyleVar();
   if (!open) return;
-  ImGui::PushFont(a.fontBold, theme::kFontTitle);
+  dialogFrame();
+  ImGui::PushFont(a.fontBold, trackerDialogs() ? ImGui::GetFontSize() : theme::kFontTitle);
   ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 372);
   ImGui::TextUnformatted(c.title.c_str());
   ImGui::PopTextWrapPos();
@@ -1150,14 +1201,14 @@ void confirmPrompt(App& a) {
   const bool third = !c.noLabel.empty();
   const float okW = third ? 120.0f : 100.0f;
   alignRight(90 + okW + theme::kS2 + (third ? okW + theme::kS2 : 0.0f));
-  if (ui::TextButton("Cancel", false, 90) || ::gl::keys::escapePressed()) {
+  if (dialogButton(a, "Cancel", 90, false) || ::gl::keys::escapePressed()) {
     c.action = c.noAction = nullptr;
     c.noLabel.clear();
     ImGui::CloseCurrentPopup();
   }
   if (third) {
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton(c.noLabel.c_str(), false, okW) || ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+    if (dialogButton(a, c.noLabel.c_str(), okW, false) || ImGui::IsKeyPressed(ImGuiKey_N, false)) {
       auto run = std::move(c.noAction);
       c.action = c.noAction = nullptr;
       c.noLabel.clear();
@@ -1166,7 +1217,7 @@ void confirmPrompt(App& a) {
     }
   }
   ImGui::SameLine(0, theme::kS2);
-  if (ui::PrimaryButton(c.okLabel.empty() ? "OK" : c.okLabel.c_str(), okW) || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+  if (dialogButton(a, c.okLabel.empty() ? "OK" : c.okLabel.c_str(), okW, true) || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
       ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {
     auto run = std::move(c.action);
     c.action = c.noAction = nullptr;

@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <map>
 #include <set>
+#include <thread>
 #include <tuple>
 #include <optional>
 #include "../core/Automation.h"
@@ -295,12 +296,123 @@ bool hasNotes(const Pattern& p, ObjectId ch) {
   return nt != p.notes.end() && !nt->second.empty();
 }
 
+// K-319: the song reduced to what reads the watched files. Only sample voices (and the
+// built-ins that play a file as an effect) mark reads; nothing else changes what they read
+// unless it modulates them. So, unless they are a modulation source:
+//  - instruments that refer to no file are taken out (their channel stays: its notes, note
+//    effects and layer children play as before);
+//  - every mixer effect is switched off, unless one of them plays a file or is a modulation
+//    source (its input then matters: the mixer stays as it is);
+//  - with the mixer reduced and a steady tempo, automation that only changes sound (the mixer's
+//    levels, sends and effects; channels' volume and pan, the instrument of a channel whose
+//    instrument was taken out) is taken out as well: offline, nothing rests, so levels never
+//    change what a voice reads.
+// True when the mix's sound then matters to nothing (no effect plays a file, nothing
+// modulates): audio clips may then only mark their reads (tap::readsOnly).
+bool reduceToSampleVoices(Song& song, const std::vector<FileRef>& refs) {
+  std::set<ObjectId> reads;
+  bool mixerReads = false;
+  for (const FileRef& r : refs) {
+    if (r.hosted) {
+      continue;
+    }
+    if (r.channel) {
+      reads.insert(r.owner);
+    } else {
+      mixerReads = true;
+    }
+  }
+  std::set<ObjectId> modChannels;
+  bool modMixer = false;
+  for (const ModLink& l : song.modLinks) {
+    if (l.sourceSlot < 0) {
+      modChannels.insert(l.sourceOwner);
+    } else {
+      modMixer = true;
+    }
+  }
+  const bool modulated = !song.modLinks.empty();
+  for (Channel& c : song.channels) {
+    if (!reads.count(c.id) && !modChannels.count(c.id)) {
+      c.plugin = PluginState{};
+    }
+  }
+  if (mixerReads || modMixer) {
+    return false;
+  }
+  for (MixerTrack& t : song.mixer) {
+    for (auto& sl : t.slots) {
+      sl.plugin = PluginState{};  // (a free slot: its automation cannot switch it back on)
+    }
+  }
+  // Automation that changes only the sound. (Without it the engine may run longer blocks: no
+  // automation, no 64-frame control grid.) Not under a moving tempo: an audio clip that follows
+  // it reads where the block's ends put it (the tick within a block is interpolated), so the
+  // blocks must stay as the full mix has them.
+  TempoMap tempo;
+  tempo.build(song);
+  if (!tempo.constant()) {
+    return !modulated;
+  }
+  std::set<ObjectId> mixers;
+  for (const MixerTrack& t : song.mixer) {
+    mixers.insert(t.id);
+  }
+  const auto soundOnly = [&](const AutomationClip& a) {
+    if (mixers.count(a.owner)) {
+      return true;
+    }
+    const Channel* c = song.channel(a.owner);
+    if (!c) {
+      return false;  // the song's own (tempo, pitch) and anything else: kept
+    }
+    if (a.index == static_cast<uint32_t>(ChannelParam::Volume) || a.index == static_cast<uint32_t>(ChannelParam::Pan)) {
+      return true;
+    }
+    return c->plugin.empty() && a.index >= kChannelPluginBase && a.index < kNoteFxBase;
+  };
+  const Tick end = song.lengthTicks();
+  std::set<ObjectId> gone;
+  for (const AutomationClip& a : song.automations) {
+    if (soundOnly(a)) {
+      gone.insert(a.id);
+    }
+  }
+  song.automations.erase(std::remove_if(song.automations.begin(), song.automations.end(), [&](const AutomationClip& a) { return gone.count(a.id) > 0; }),
+                         song.automations.end());
+  song.playlist.erase(std::remove_if(song.playlist.begin(), song.playlist.end(),
+                                     [&](const Clip& c) { return c.kind == ClipKind::Automation && gone.count(c.source) > 0; }),
+                      song.playlist.end());
+  if (song.lengthTicks() < end) {  // the song still ends where it did: an empty pattern holds it
+    Pattern p;
+    p.id = song.allocateId();
+    song.patterns.push_back(p);
+    Clip k;
+    k.id = song.allocateId(), k.kind = ClipKind::Pattern, k.pattern = p.id, k.start = 0, k.length = end;
+    song.playlist.push_back(k);
+  }
+  for (Pattern& p : song.patterns) {
+    p.automation.erase(std::remove_if(p.automation.begin(), p.automation.end(), soundOnly), p.automation.end());
+  }
+  return !modulated;
+}
+
 }  // namespace
 
 Measurement scan(const Song& song, bool decode) {
   Measurement m;
   std::set<std::string> seen;
-  for (const FileRef& r : fileRefs(song)) {
+  const std::vector<FileRef> refs = fileRefs(song);
+  if (decode) {  // K-319: every file decoded at once, on several cores (the cache keeps them for the pass)
+    std::vector<std::string> paths;
+    for (const FileRef& r : refs) {
+      if (safefs::toPath(r.path).is_absolute() && safefs::isFile(r.path)) {
+        paths.push_back(r.path);
+      }
+    }
+    sampleCache().prefetch(paths);
+  }
+  for (const FileRef& r : refs) {
     if (!seen.insert(r.path).second) continue;
     FileIn f;
     f.path = r.path;
@@ -390,6 +502,7 @@ Measurement measure(const Song& song0, const PassOptions& o) {
     kept.push_back(c);
   }
   song.playlist = kept;
+  const bool readsOnly = !o.reference && reduceToSampleVoices(song, refs);
   // Which channels get notes (for uses Gridline cannot measure).
   std::set<ObjectId> playing;
   const bool patternMode = song0.playlist.empty();
@@ -410,6 +523,7 @@ Measurement measure(const Song& song0, const PassOptions& o) {
     m.warnings.push_back("Another Track Receipt is measuring right now; try again in a moment.");
     return m;
   }
+  pass.setReadsOnly(readsOnly);
   std::vector<RenderJob> jobs;
   RenderJob base;
   base.sampleRate = o.sampleRate;
@@ -417,6 +531,19 @@ Measurement measure(const Song& song0, const PassOptions& o) {
   base.maxTailSeconds = 10;
   base.threads = 1;
   base.cancel = o.cancel;
+  if (!o.reference) {
+    // K-319: the mixer graph on a few cores (the same reads for any thread count: each channel,
+    // clip and mixer track is one task, and a tap slot belongs to one of them). Half the cores,
+    // at most 4: offline workers spin while they wait, so more only slow a busy computer down
+    // (and the app keeps playing meanwhile). The tail runs while sample voices still read, not
+    // while effects ring on.
+    base.threads = static_cast<int>(std::clamp(std::thread::hardware_concurrency() / 2, 1u, 4u));    base.tailBusy = [last = uint64_t{0}]() mutable {
+      const uint64_t now = tap::marks();
+      const bool busy = now != last;
+      last = now;
+      return busy;
+    };
+  }
   if (!patternMode) {
     m.mode = "song";
     jobs.push_back(base);
@@ -431,6 +558,11 @@ Measurement measure(const Song& song0, const PassOptions& o) {
       j.pattern = p.id;
       jobs.push_back(j);
     }
+  }
+  // K-319: nothing Gridline plays refers to a file (no files, or only inside third-party
+  // plugins): there is no read to measure, so nothing is played.
+  if (!o.reference && std::none_of(refs.begin(), refs.end(), [](const FileRef& r) { return !r.hosted; })) {
+    jobs.clear();
   }
   for (size_t k = 0; k < jobs.size(); ++k) {
     RenderJob& j = jobs[k];

@@ -50,6 +50,53 @@ inline uint64_t nowNs() {
   return static_cast<uint64_t>(
       std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
+// K-317: the control blocks a block's strip gains ramp through. A stepped block (BlockCtx::steps > 1)
+// starts on the grid and has one per kControlBlock frames (the last may be shorter), each ramping to
+// its own target as a block of its own would; any other block is one piece from gpos.
+struct GainPiece {
+  int gpos, off, len;
+};
+inline GainPiece gainPiece(int j, int steps, int gpos, int n) {
+  if (steps <= 1) {
+    return {gpos, 0, n};
+  }
+  const int off = j * kControlBlock;
+  return {0, off, std::min(kControlBlock, n - off)};
+}
+// The ramp's state after one piece (as the grid ramp leaves it).
+inline void rampState(float& cur, float& from, int gpos, int len, float to) {
+  if (gpos == 0) {
+    from = cur;
+  }
+  const float k = static_cast<float>(gpos + len) / static_cast<float>(kControlBlock);
+  cur = gpos + len >= kControlBlock ? to : from + (to - from) * k;
+}
+// A strip's ramp state over a block in which nothing is heard through it (the gains move all the same).
+template <class Target>
+void idleRamp(float& curL, float& curR, float& fromL, float& fromR, bool& primed, bool grid, int steps, int gpos, int n, Target target) {
+  float tL = 0, tR = 0;
+  int j = 0;
+  if (!primed) {
+    target(0, tL, tR);
+    curL = tL, curR = tR;
+    primed = true;
+    if (steps <= 1) {
+      return;
+    }
+    j = 1;
+  }
+  if (!grid) {
+    target(0, tL, tR);
+    curL = tL, curR = tR;
+    return;
+  }
+  for (; j < std::max(1, steps); ++j) {
+    const GainPiece pc = gainPiece(j, steps, gpos, n);
+    target(j, tL, tR);
+    rampState(curL, fromL, pc.gpos, pc.len, tL);
+    rampState(curR, fromR, pc.gpos, pc.len, tR);
+  }
+}
 }  // namespace
 
 void AudioEngine::setThreads(int n) {
@@ -184,6 +231,12 @@ void AudioEngine::runChannel(size_t ci, int worker) {
   ChannelRuntime* rt = ch.rt.get();
   if (!rt || !rt->gen) return;
   tap::OwnerScope tapOwner(ch.id, bc_.ctx.tick);  // J-219: Track Receipt passes (no-op otherwise)
+  // K-317: the strip gains at each control block's start (a stepped block's own, else the one target).
+  const bool stepped = bc_.steps > 1 && ch.stripLinked;
+  auto target = [&](int j, float& l, float& r) {
+    l = stepped ? ch.steps.l[j] : ch.gainL;
+    r = stepped ? ch.steps.r[j] : ch.gainR;
+  };
   const uint64_t t0 = bc_.profile ? nowNs() : 0;
   Scratch& sc = scratch_[static_cast<size_t>(worker)];
   float* cL = sc.chL;
@@ -228,17 +281,7 @@ void AudioEngine::runChannel(size_t ci, int worker) {
     rt->sounding.store(false, std::memory_order_relaxed);
     rt->restBlocks.fetch_add(1, std::memory_order_relaxed);
     rt->restingUi.store(true, std::memory_order_relaxed);
-    if (!rt->primed) {
-      rt->curL = ch.gainL, rt->curR = ch.gainR;
-      rt->primed = true;
-    } else if (bc_.grid) {
-      if (bc_.gpos == 0) rt->fromL = rt->curL, rt->fromR = rt->curR;
-      const float k = static_cast<float>(bc_.gpos + n) / static_cast<float>(kControlBlock);
-      rt->curL = bc_.gpos + n >= kControlBlock ? ch.gainL : rt->fromL + (ch.gainL - rt->fromL) * k;
-      rt->curR = bc_.gpos + n >= kControlBlock ? ch.gainR : rt->fromR + (ch.gainR - rt->fromR) * k;
-    } else {
-      rt->curL = ch.gainL, rt->curR = ch.gainR;
-    }
+    idleRamp(rt->curL, rt->curR, rt->fromL, rt->fromR, rt->primed, bc_.grid, bc_.steps, bc_.gpos, n, target);
     rt->outZero = true;
     rt->peak.store(0.f, std::memory_order_relaxed);
     rt->tap.write(cL, cR, n);
@@ -252,17 +295,7 @@ void AudioEngine::runChannel(size_t ci, int worker) {
   if (bc_.rest && ch.restable && rt->gen->idle() && !rt->gen->wantsNoteLookahead() && !liveAudio) {
     if (!clipsNear()) {
       rt->sounding.store(false, std::memory_order_relaxed);
-      if (!rt->primed) {
-        rt->curL = ch.gainL, rt->curR = ch.gainR;
-        rt->primed = true;
-      } else if (bc_.grid) {
-        if (bc_.gpos == 0) rt->fromL = rt->curL, rt->fromR = rt->curR;
-        const float k = static_cast<float>(bc_.gpos + n) / static_cast<float>(kControlBlock);
-        rt->curL = bc_.gpos + n >= kControlBlock ? ch.gainL : rt->fromL + (ch.gainL - rt->fromL) * k;
-        rt->curR = bc_.gpos + n >= kControlBlock ? ch.gainR : rt->fromR + (ch.gainR - rt->fromR) * k;
-      } else {
-        rt->curL = ch.gainL, rt->curR = ch.gainR;
-      }
+      idleRamp(rt->curL, rt->curR, rt->fromL, rt->fromR, rt->primed, bc_.grid, bc_.steps, bc_.gpos, n, target);
       rt->outZero = true;
       rt->peak.store(0.f, std::memory_order_relaxed);
       rt->tap.write(cL, cR, n);
@@ -325,30 +358,38 @@ void AudioEngine::runChannel(size_t ci, int worker) {
     for (int q = 0; q < k; ++q) rt->ctlUi[q].store(rt->ctl[q], std::memory_order_relaxed);
   }
   if (!rt->primed) {
-    rt->curL = ch.gainL;
-    rt->curR = ch.gainR;
+    target(0, rt->curL, rt->curR);
     rt->primed = true;
   }
   float pk = 0;
   float* oL = rt->outL.data();
   float* oR = rt->outR.data();
   const int gpos = bc_.gpos;
-  if (bc_.grid) {  // ramp over the control block, positioned on the absolute grid
-    if (gpos == 0) {
-      rt->fromL = rt->curL;
-      rt->fromR = rt->curR;
+  if (bc_.grid) {  // ramp over each control block, positioned on the absolute grid
+    for (int j = 0; j < std::max(1, bc_.steps); ++j) {
+      const GainPiece pc = gainPiece(j, bc_.steps, gpos, n);
+      if (pc.gpos == 0) {
+        rt->fromL = rt->curL;
+        rt->fromR = rt->curR;
+      }
+      float tL = 0, tR = 0;
+      target(j, tL, tR);
+      const float fL = rt->fromL, fR = rt->fromR;
+      const float* xL = cL + pc.off;
+      const float* xR = cR + pc.off;
+      float* yL = oL + pc.off;
+      float* yR = oR + pc.off;
+      for (int i = 0; i < pc.len; ++i) {
+        float k = std::min(1.f, static_cast<float>(pc.gpos + i + 1) / static_cast<float>(kControlBlock));  // (R08-01: a held block may run past one control block)
+        float l = xL[i] * (fL + (tL - fL) * k), r = xR[i] * (fR + (tR - fR) * k);
+        yL[i] = l;
+        yR[i] = r;
+        pk = std::max(pk, std::max(std::fabs(l), std::fabs(r)));
+      }
+      float k = static_cast<float>(pc.gpos + pc.len) / static_cast<float>(kControlBlock);
+      rt->curL = pc.gpos + pc.len >= kControlBlock ? tL : fL + (tL - fL) * k;
+      rt->curR = pc.gpos + pc.len >= kControlBlock ? tR : fR + (tR - fR) * k;
     }
-    const float fL = rt->fromL, fR = rt->fromR, tL = ch.gainL, tR = ch.gainR;
-    for (int i = 0; i < n; ++i) {
-      float k = std::min(1.f, static_cast<float>(gpos + i + 1) / static_cast<float>(kControlBlock));  // (R08-01: a held block may run past one control block)
-      float l = cL[i] * (fL + (tL - fL) * k), r = cR[i] * (fR + (tR - fR) * k);
-      oL[i] = l;
-      oR[i] = r;
-      pk = std::max(pk, std::max(std::fabs(l), std::fabs(r)));
-    }
-    float k = static_cast<float>(gpos + n) / static_cast<float>(kControlBlock);
-    rt->curL = gpos + n >= kControlBlock ? tL : fL + (tL - fL) * k;
-    rt->curR = gpos + n >= kControlBlock ? tR : fR + (tR - fR) * k;
   } else {
     float dL = (ch.gainL - rt->curL) / static_cast<float>(n), dR = (ch.gainR - rt->curR) / static_cast<float>(n);
     float gL = rt->curL, gR = rt->curR;
@@ -466,6 +507,12 @@ void AudioEngine::runMixer(size_t idx, int worker) {
   const ProgMixer& m = p->mixer[idx];
   MixerRuntime* rt = m.rt.get();
   tap::OwnerScope tapOwner(m.id, bc_.ctx.tick);  // J-219: Track Receipt passes (effects that play files)
+  // K-317: the strip gains at each control block's start (a stepped block's own, else the one target).
+  const bool stepped = bc_.steps > 1 && m.stripLinked;
+  auto target = [&](int j, float& l, float& r) {
+    l = stepped ? m.steps.l[j] : m.gainL;
+    r = stepped ? m.steps.r[j] : m.gainR;
+  };
   const uint64_t t0 = bc_.profile ? nowNs() : 0;
   uint64_t slotNs = 0;
   Scratch& scr = scratch_[worker];
@@ -650,17 +697,7 @@ void AudioEngine::runMixer(size_t idx, int worker) {
       std::memset(preL_[idx].data(), 0, bytes);
       std::memset(preR_[idx].data(), 0, bytes);
     }
-    if (!rt->primed) {
-      rt->curL = m.gainL, rt->curR = m.gainR;
-      rt->primed = true;
-    } else if (bc_.grid) {
-      if (bc_.gpos == 0) rt->fromL = rt->curL, rt->fromR = rt->curR;
-      const float k = static_cast<float>(bc_.gpos + n) / static_cast<float>(kControlBlock);
-      rt->curL = bc_.gpos + n >= kControlBlock ? m.gainL : rt->fromL + (m.gainL - rt->fromL) * k;
-      rt->curR = bc_.gpos + n >= kControlBlock ? m.gainR : rt->fromR + (m.gainR - rt->fromR) * k;
-    } else {
-      rt->curL = m.gainL, rt->curR = m.gainR;
-    }
+    idleRamp(rt->curL, rt->curR, rt->fromL, rt->fromR, rt->primed, bc_.grid, bc_.steps, bc_.gpos, n, target);
     rt->tap.write(bL, bR, n);
     rt->sent = true;
     if (bc_.profile) rt->cpu.add(nowNs() - t0 - slotNs);
@@ -674,16 +711,13 @@ void AudioEngine::runMixer(size_t idx, int worker) {
     else rt->depthShelf.off();
   }
   if (rt && !rt->primed) {
-    rt->curL = m.gainL;
-    rt->curR = m.gainR;
-    rt->curXL = m.xlr;
-    rt->curXR = m.xrl;
+    target(0, rt->curL, rt->curR);
+    rt->curXL = stepped ? m.steps.xl[0] : m.xlr;
+    rt->curXR = stepped ? m.steps.xr[0] : m.xrl;
     rt->primed = true;
   }
   const bool grid = bc_.grid;
   const int gpos = bc_.gpos;
-  float gL = rt ? rt->curL : m.gainL, gR = rt ? rt->curR : m.gainR;
-  float dL = (m.gainL - gL) / static_cast<float>(n), dR = (m.gainR - gR) / static_cast<float>(n);
   // Stage placement (Song::panLaw): the channels are placed by the cross gains, so the side gain only
   // widens (narrowing is the placement's own half width).
   const bool cross = p->panLaw == 2;
@@ -691,54 +725,65 @@ void AudioEngine::runMixer(size_t idx, int worker) {
   float width = 1.0f + (cross ? std::max(sep, 0.0f) : sep), sign = m.invert ? -1.f : 1.f;
   const bool ms = (cross ? sep > 0 : sep != 0) || dep > 0;
   if (dep > 0) width *= static_cast<float>(depth::narrow(dep));  // far sources narrow a little
-  float xl = rt ? rt->curXL : m.xlr, xr = rt ? rt->curXR : m.xrl;
-  const float dxl = (m.xlr - xl) / static_cast<float>(n), dxr = (m.xrl - xr) / static_cast<float>(n);
   const bool gridRamp = grid && rt;
   float* preL = m.hasPreSend ? preL_[idx].data() : nullptr;
   float* preR = m.hasPreSend ? preR_[idx].data() : nullptr;
-  if (gridRamp && gpos == 0) {
-    rt->fromL = rt->curL;
-    rt->fromR = rt->curR;
+  // K-317: one piece per control block of a stepped block (each as a block of its own), else one.
+  for (int j = 0; j < std::max(1, bc_.steps); ++j) {
+    const GainPiece pc = gainPiece(j, bc_.steps, gpos, n);
+    float tL = 0, tR = 0;
+    target(j, tL, tR);
+    const float txl = stepped ? m.steps.xl[j] : m.xlr, txr = stepped ? m.steps.xr[j] : m.xrl;
+    float gL = rt ? rt->curL : tL, gR = rt ? rt->curR : tR;
+    const float dL = (tL - gL) / static_cast<float>(pc.len), dR = (tR - gR) / static_cast<float>(pc.len);
+    float xl = rt ? rt->curXL : txl, xr = rt ? rt->curXR : txr;
+    const float dxl = (txl - xl) / static_cast<float>(pc.len), dxr = (txr - xr) / static_cast<float>(pc.len);
+    if (gridRamp && pc.gpos == 0) {
+      rt->fromL = rt->curL;
+      rt->fromR = rt->curR;
+    }
+    for (int i = pc.off; i < pc.off + pc.len; ++i) {
+      float l = bL[i], r = bR[i];
+      if (ms) {
+        float mid = (l + r) * 0.5f, side = (l - r) * 0.5f * width;
+        l = mid + side;
+        r = mid - side;
+      }
+      if (m.swap) std::swap(l, r);
+      if (preL) {  // pre-fader sends: after effects, EQ and stereo processing, before volume / pan
+        preL[i] = l * sign;
+        preR[i] = r * sign;
+      }
+      if (gridRamp) {
+        float k = std::min(1.f, static_cast<float>(pc.gpos + i - pc.off + 1) / static_cast<float>(kControlBlock));  // (R08-01: a held block may run past one control block)
+        gL = rt->fromL + (tL - rt->fromL) * k;
+        gR = rt->fromR + (tR - rt->fromR) * k;
+      } else {
+        gL += dL;
+        gR += dR;
+      }
+      if (cross) {
+        xl += dxl;
+        xr += dxr;
+        bL[i] = (l * gL + r * xr) * sign;
+        bR[i] = (r * gR + l * xl) * sign;
+      } else {
+        bL[i] = l * gL * sign;
+        bR[i] = r * gR * sign;
+      }
+    }
+    if (rt) {
+      rt->curXL = txl, rt->curXR = txr;
+      if (gridRamp && pc.gpos + pc.len < kControlBlock) {
+        rt->curL = gL;
+        rt->curR = gR;
+      } else {
+        rt->curL = tL;
+        rt->curR = tR;
+      }
+    }
   }
-  for (int i = 0; i < n; ++i) {
-    float l = bL[i], r = bR[i];
-    if (ms) {
-      float mid = (l + r) * 0.5f, side = (l - r) * 0.5f * width;
-      l = mid + side;
-      r = mid - side;
-    }
-    if (m.swap) std::swap(l, r);
-    if (preL) {  // pre-fader sends: after effects, EQ and stereo processing, before volume / pan
-      preL[i] = l * sign;
-      preR[i] = r * sign;
-    }
-    if (gridRamp) {
-      float k = std::min(1.f, static_cast<float>(gpos + i + 1) / static_cast<float>(kControlBlock));  // (R08-01: a held block may run past one control block)
-      gL = rt->fromL + (m.gainL - rt->fromL) * k;
-      gR = rt->fromR + (m.gainR - rt->fromR) * k;
-    } else {
-      gL += dL;
-      gR += dR;
-    }
-    if (cross) {
-      xl += dxl;
-      xr += dxr;
-      bL[i] = (l * gL + r * xr) * sign;
-      bR[i] = (r * gR + l * xl) * sign;
-    } else {
-      bL[i] = l * gL * sign;
-      bR[i] = r * gR * sign;
-    }
-  }
-  if (rt) rt->curXL = m.xlr, rt->curXR = m.xrl;
   if (rt) {
-    if (gridRamp && gpos + n < kControlBlock) {
-      rt->curL = gL;
-      rt->curR = gR;
-    } else {
-      rt->curL = m.gainL;
-      rt->curR = m.gainR;
-    }
     storeMax(rt->peakL, peakOf(bL, n));
     storeMax(rt->peakR, peakOf(bR, n));
     storeMax(rt->rmsL, std::sqrt(sumSq(bL, n) / static_cast<float>(n)));

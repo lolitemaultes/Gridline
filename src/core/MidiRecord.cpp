@@ -624,11 +624,12 @@ bool StepRecorder::release(Document& doc, ObjectId pattern, ObjectId channel, in
   const Song& s = doc.song();
   if (!s.pattern(pattern) || !s.channel(channel)) {
     chord_.clear();
+    extra_ = 0;
     return false;
   }
   std::vector<Note> notes;
   if (auto it = s.pattern(pattern)->notes.find(channel); it != s.pattern(pattern)->notes.end()) notes = it->second;
-  const Tick len = lengthOverride > 0 ? lengthOverride : std::max<Tick>(1, step);
+  const Tick len = pendingLength();
   for (const auto& cv : chord_) {
     const int p = cv.first;
     notes.erase(std::remove_if(notes.begin(), notes.end(), [&](const Note& n) { return n.start == cursor && n.pitch == p; }),
@@ -640,8 +641,25 @@ bool StepRecorder::release(Document& doc, ObjectId pattern, ObjectId channel, in
   });
   chord_.clear();
   doc.setNotes(pattern, channel, std::move(notes), "step record");
-  cursor += std::max<Tick>(1, step);
+  cursor += std::max<Tick>(1, step) * (1 + extra_);
+  extra_ = 0;
   return true;
+}
+
+void StepRecorder::right() {
+  if (!down_.empty()) {
+    ++extra_;
+    return;
+  }
+  cursor += std::max<Tick>(1, step);
+}
+
+void StepRecorder::left() {
+  if (!down_.empty()) {
+    extra_ = std::max(0, extra_ - 1);
+    return;
+  }
+  cursor = std::max<Tick>(0, cursor - std::max<Tick>(1, step));
 }
 
 void StepRecorder::backspace(Document& doc, ObjectId pattern, ObjectId channel) {

@@ -304,6 +304,31 @@ int main() {
     for (int v : after) hi = std::max(hi, v);
     expect(before.empty() && after.size() > 8 && hi > 90, "the linked knob's CC 20 follows the envelope (it was silent unlinked)");
     std::printf("# #60 envelope -> CC 20: %zu messages unlinked, %zu linked, peak %d\n", before.size(), after.size(), hi);
+    // GitHub #60 (second follow-up): the knob and its readout show the value the envelope sets. The
+    // editor reads the engine's live value (ProgramBuilder::modulatedValue) whenever showsLiveValue.
+    ProgramBuilder b;
+    AudioEngine eng(44100);
+    eng.setProgram(b.build(d.song()));
+    eng.setMode(PlayMode::Pattern);
+    eng.setPattern(pat);
+    eng.setLooping(false);
+    double shownBefore = -1, peak = 0;
+    const bool none = !b.modulatedValue(knob, shownBefore);
+    eng.play();
+    std::vector<float> L(64), R(64);
+    for (int i = 0; i < 300; ++i) {
+      eng.process(L.data(), R.data(), 64);
+      double v = 0;
+      if (b.modulatedValue(knob, v)) peak = std::max(peak, v);
+    }
+    const double stored = getParam(d.song(), knob).value_or(-1);
+    expect(none && peak > 90 && stored == 0, "the engine has the knob's live value as the envelope moves it (the stored value stays 0)");
+    const ParamId vel = channelPluginParam(out, pp::MoVelocity);
+    expect(showsLiveValue(d.song(), knob, true, false, false) && !showsLiveValue(d.song(), knob, true, false, true) &&
+               !showsLiveValue(d.song(), vel, true, false, false) && showsLiveValue(d.song(), vel, true, true, false) &&
+               !showsLiveValue(d.song(), vel, false, true, false),
+           "a controller-driven knob shows its live value even stopped (not while dragged); automation only while playing");
+    std::printf("# #60 knob 1 shows up to %.1f (stored %.1f)\n", peak, stored);
   }
 
   // ------------------------------------------------------------ loop protection

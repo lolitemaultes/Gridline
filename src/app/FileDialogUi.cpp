@@ -28,7 +28,10 @@
 #include "AudioRecordUi.h"
 #include "Keys.h"
 #include "LayoutAudit.h"
+#include "LayoutPresets.h"
 #include "Theme.h"
+#include "TrackerLook.h"
+#include "TrackerView.h"
 #include "Widgets.h"
 
 namespace gl::filedlgui {
@@ -123,6 +126,63 @@ std::string parentOf(const std::string& d) {
 }
 
 std::string home() { return platform::homeDir(); }
+
+// K-106 cp22: in the Tracker the dialog wears the classic screens' look (as its Files screen): a
+// square raised bevel frame round a sunken well, sunken boxes for the places and the list, square
+// row highlights, the header row a raised strip, sizes and dates in the monospaced face, bevel
+// buttons. The same dialog, paths, keys and features (formats, recent, favourites, drives, the
+// path bar, sorting, preview); the other layouts are unchanged.
+bool classic() { return layoutui::active() == layout::Preset::Tracker; }
+float rowRadius() { return classic() ? 0.0f : theme::kRadiusSm; }
+ImU32 selectedFill(float alpha) { return classic() ? theme::withAlpha(pal().surface600, 0.95f) : theme::withAlpha(pal().accent, alpha); }
+ImFont* numberFont(const App& a) { return classic() && a.fontMono ? a.fontMono : a.fontRegular; }
+// A sunken box drawn under a child about to begin at the cursor (its background and border off).
+void classicWell(ImVec2 size) {
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  trackerview::bevelBox(ImGui::GetWindowDrawList(), p, ImVec2(p.x + size.x, p.y + size.y), true);
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
+  ImGui::PushStyleColor(ImGuiCol_Border, IM_COL32(0, 0, 0, 0));
+}
+// K-106 cp23: in the Tracker a one-line field (the name, the filter) sits in a sunken bevel well, as
+// the prompt's and the Files screen's (they were flat dark strips). Call it just before the field.
+void classicField(float w) {
+  if (!classic()) {
+    return;
+  }
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  trackerview::bevelBox(ImGui::GetWindowDrawList(), ImVec2(p.x - 1, p.y - 1), ImVec2(p.x + w + 1, p.y + ImGui::GetFrameHeight() + 1), true);
+}
+// The bar's icon buttons and the footer's: the shared ones, or bevel buttons in the Tracker.
+bool barButton(App& a, const char* id, ui::Icon icon, bool on, float h, const char* hint) {
+  if (!classic()) return ui::IconButton(id, icon, on, h, hint);
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  const float w = h;  // (square, as the shared buttons: the bar keeps its widths)
+  ImGui::PushID(id);
+  const bool r = trackerview::bevelButton(a, "##fb", "", p, ImVec2(p.x + w, p.y + h), false, hint);
+  if (r) {
+    trackerview::keepKeysHere();  // (the dialog keeps the keys)
+  }
+  ImGui::PopID();
+  const bool off = (ImGui::GetCurrentContext()->CurrentItemFlags & ImGuiItemFlags_Disabled) != 0;
+  ui::drawIcon(ImGui::GetWindowDrawList(), icon, ImVec2(p.x + w * 0.5f, p.y + h * 0.5f), std::round(h * 0.5f), on ? pal().hot : off ? pal().textFaint : pal().text);
+  ImGui::SetCursorScreenPos(p);
+  ImGui::Dummy(ImVec2(w, h));
+  return r;
+}
+bool footButton(App& a, const char* label, float w, bool primary) {
+  if (!classic()) return primary ? ui::PrimaryButton(label, w) : ui::TextButton(label, false, w);
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  const float h = ImGui::GetFrameHeight();
+  ImGui::PushID(label);
+  const bool r = trackerview::bevelButton(a, "##fd", label, p, ImVec2(p.x + w, p.y + h), false, nullptr);
+  if (r) {
+    trackerview::keepKeysHere();
+  }
+  ImGui::PopID();
+  ImGui::SetCursorScreenPos(p);
+  ImGui::Dummy(ImVec2(w, h));
+  return r;
+}
 
 struct SideRow {
   std::string name, path, sub;
@@ -582,7 +642,7 @@ bool sideRow(App& a, State& st, const SideRow& r, bool current, bool* remove) {
   const bool hov = ImGui::IsItemHovered();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   if (current || hov)
-    dl->AddRectFilled(q, ImVec2(q.x + w, q.y + kSideRowH), current ? theme::withAlpha(P.accent, 0.28f) : P.surface800, theme::kRadiusSm);
+    dl->AddRectFilled(q, ImVec2(q.x + w, q.y + kSideRowH), current ? selectedFill(0.28f) : classic() ? theme::withAlpha(P.surface700, 0.6f) : P.surface800, rowRadius());
   ui::drawIcon(dl, r.icon, ImVec2(q.x + 14, q.y + kSideRowH * 0.5f), 14, current ? P.text : P.textDim);
   float subW = 0;
   if (!r.sub.empty() && !(remove && hov)) {
@@ -611,7 +671,12 @@ bool sideRow(App& a, State& st, const SideRow& r, bool current, bool* remove) {
 void sidebar(App& a, State& st, ImVec2 size) {
   const auto& P = pal();
   FileDialogState& fd = a.fileDialog;
-  ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface900));
+  const bool cl = classic();
+  if (cl) {
+    classicWell(size);
+  } else {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface900));
+  }
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS1, theme::kS1));
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
   ImGui::BeginChild("##places", size, ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding);
@@ -691,7 +756,7 @@ void sidebar(App& a, State& st, ImVec2 size) {
   }
   ImGui::EndChild();
   ImGui::PopStyleVar(2);
-  ImGui::PopStyleColor();
+  ImGui::PopStyleColor(cl ? 2 : 1);
   if (!go_.empty()) {
     // Shared folders (K-75): until one is shared, say how.
     const std::string shared = chromeos::sharedFolder(chromeos::current());
@@ -720,7 +785,9 @@ std::string pathBar(App& a, State& st, float width) {
     ImGui::SetNextItemWidth(width);
     const bool enter = ImGui::InputTextWithHint("##path", i18n::tr("Type a folder or file, Tab completes"), st.pathBuf, sizeof st.pathBuf,
                                                 ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCompletion, completeCallback);
-    ui::FocusRing();
+    if (!classic()) {
+      ui::FocusRing();  // (the Tracker: no glow, as its own fields)
+    }
     if (enter) {
       st.editingPath = false;
       accept = typedPath(a, st);
@@ -852,11 +919,30 @@ void draw(App& a) {
     ui::PlaceNextDialog(want, ImGuiCond_Appearing, ImVec2(std::min(560.0f, vp->WorkSize.x - 16), std::min(380.0f, vp->WorkSize.y - 16)));
   }
   bool keep = true;
+  const bool cl = classic();
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
+  if (cl) {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  }
   const bool open = ImGui::BeginPopupModal("##filedialog", &keep, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-  ImGui::PopStyleVar();
+  ImGui::PopStyleVar(cl ? 3 : 1);
   st.shown = open;
   if (!open) return;
+  if (cl) {  // the frame (under the rows), square fields and children for the whole dialog
+    const ImVec2 w0 = ImGui::GetWindowPos(), w1(w0.x + ImGui::GetWindowWidth(), w0.y + ImGui::GetWindowHeight());
+    trackerview::bevelBox(ImGui::GetWindowDrawList(), w0, w1, false);
+    trackerview::bevelBox(ImGui::GetWindowDrawList(), ImVec2(w0.x + 3, w0.y + 3), ImVec2(w1.x - 3, w1.y - 3), true);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0.0f);
+  }
+  // (Before every EndPopup below: the classic look's two style values end inside the popup.)
+  auto endPopup = [cl]() {
+    if (cl) {
+      ImGui::PopStyleVar(2);
+    }
+    ImGui::EndPopup();
+  };
   const bool appearing = ImGui::IsWindowAppearing();
   if (!fd.devAccept.empty() && !appearing) {  // J-167 dev check: as if this file were picked and OK clicked
     const std::string chosen = std::move(fd.devAccept);
@@ -864,7 +950,7 @@ void draw(App& a) {
     auto cb = fd.onOk;
     ImGui::CloseCurrentPopup();
     if (cb) cb(chosen);
-    ImGui::EndPopup();
+    endPopup();
     return;
   }
   {
@@ -923,8 +1009,8 @@ void draw(App& a) {
   }
   st.pending.clear();
 
-  // Title.
-  ImGui::PushFont(a.fontBold, theme::kFontTitle);
+  // Title (cp22: the Tracker's at the interface size).
+  ImGui::PushFont(a.fontBold, cl ? ImGui::GetFontSize() : theme::kFontTitle);
   ImGui::TextUnformatted(i18n::tr(fd.title.c_str()));
   ImGui::PopFont();
   ImGui::Dummy(ImVec2(0, theme::kS1));
@@ -934,14 +1020,14 @@ void draw(App& a) {
   const float fh = ImGui::GetFrameHeight();
   st.lay.barMin = ImGui::GetCursorScreenPos();
   ImGui::BeginDisabled(st.back.empty());
-  if (ui::IconButton("back", ui::Icon::ChevronLeft, false, fh, "Back")) goBack(a, st);
+  if (barButton(a, "back", ui::Icon::ChevronLeft, false, fh, i18n::N_("Back"))) goBack(a, st);
   ImGui::EndDisabled();
   ImGui::SameLine(0, 2);
   ImGui::BeginDisabled(st.fwd.empty());
-  if (ui::IconButton("fwd", ui::Icon::Chevron, false, fh, "Forward")) goForward(a, st);
+  if (barButton(a, "fwd", ui::Icon::Chevron, false, fh, i18n::N_("Forward"))) goForward(a, st);
   ImGui::EndDisabled();
   ImGui::SameLine(0, 2);
-  if (ui::IconButton("up", ui::Icon::ChevronUp, false, fh, "Parent folder")) goUp(a, st);
+  if (barButton(a, "up", ui::Icon::ChevronUp, false, fh, i18n::N_("Parent folder"))) goUp(a, st);
   ImGui::SameLine(0, theme::kS2);
   const float avail = ImGui::GetContentRegionAvail().x;
   const float filterW = std::clamp(avail * 0.24f, 120.0f, 200.0f);
@@ -951,16 +1037,19 @@ void draw(App& a) {
     if (!f.empty()) chosen = f;
   }
   ImGui::SameLine(0, theme::kS2);
+  classicField(filterW);
   ImGui::SetNextItemWidth(filterW);
   ImGui::InputTextWithHint("##filter", i18n::tr("Filter"), st.filter, sizeof st.filter);
-  ui::FocusRing();
+  if (!classic()) {
+    ui::FocusRing();  // (the Tracker: no glow, as its own fields)
+  }
   if (ImGui::IsItemHovered()) ui::Tooltip(i18n::N_("Show only the names that contain this text"));
   ImGui::SameLine(0, theme::kS2);
-  if (ui::IconButton("hidden", st.hidden ? ui::Icon::Eye : ui::Icon::EyeOff, st.hidden, fh, st.hidden ? "Hide hidden files" : "Show hidden files"))
+  if (barButton(a, "hidden", st.hidden ? ui::Icon::Eye : ui::Icon::EyeOff, st.hidden, fh, st.hidden ? i18n::N_("Hide hidden files") : i18n::N_("Show hidden files")))
     setHidden(a, st, !st.hidden);
   ImGui::SameLine(0, 2);
   const bool pinned = filedlg::contains(st.favourites, normal(fd.dir));
-  if (ui::IconButton("pin", pinned ? ui::Icon::StarFilled : ui::Icon::Star, pinned, fh, pinned ? "Remove this folder from Favourites" : "Pin this folder to Favourites"))
+  if (barButton(a, "pin", pinned ? ui::Icon::StarFilled : ui::Icon::Star, pinned, fh, pinned ? i18n::N_("Remove this folder from Favourites") : i18n::N_("Pin this folder to Favourites")))
     pin(a, st, !pinned);
   st.lay.barMax = ImVec2(ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
   ImGui::Dummy(ImVec2(0, theme::kS1));
@@ -1032,10 +1121,14 @@ void draw(App& a) {
   // The list.
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS1, 0));
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
-  ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface950));
+  if (cl) {
+    classicWell(ImVec2(ImGui::GetContentRegionAvail().x, body.y));
+  } else {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface950));
+  }
   ImGui::BeginChild("##listbox", ImVec2(0, body.y), ImGuiChildFlags_Borders | ImGuiChildFlags_AlwaysUseWindowPadding,
                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-  ImGui::PopStyleColor();
+  ImGui::PopStyleColor(cl ? 2 : 1);
   {
     const ImVec2 wp = ImGui::GetWindowPos(), wsz = ImGui::GetWindowSize();
     st.lay.listMin = wp;
@@ -1051,7 +1144,11 @@ void draw(App& a) {
   {
     const ImVec2 h0 = ImGui::GetCursorScreenPos();
     const float hh = 24;
-    dl->AddLine(ImVec2(h0.x - theme::kS1, h0.y + hh - 0.5f), ImVec2(h0.x + listW + theme::kS1, h0.y + hh - 0.5f), P.line);
+    if (cl) {  // the classic list's heading: a raised strip
+      trackerview::bevelBox(dl, ImVec2(h0.x - theme::kS1 + 2, h0.y + 2), ImVec2(h0.x + listW + theme::kS1 - 2, h0.y + hh - 1), false);
+    } else {
+      dl->AddLine(ImVec2(h0.x - theme::kS1, h0.y + hh - 0.5f), ImVec2(h0.x + listW + theme::kS1, h0.y + hh - 0.5f), P.line);
+    }
     struct Col {
       const char* label;
       float x, w;
@@ -1118,7 +1215,7 @@ void draw(App& a) {
       const bool clicked = ImGui::InvisibleButton("##r", ImVec2(w, kRowH)) && !st.gestureUsed;
       const bool hov = ImGui::IsItemHovered();
       const bool dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !st.gestureUsed;
-      if (sel || hov) rl->AddRectFilled(q, ImVec2(q.x + w, q.y + kRowH), sel ? theme::withAlpha(P.accent, 0.3f) : P.surface800, theme::kRadiusSm);
+      if (sel || hov) rl->AddRectFilled(q, ImVec2(q.x + w, q.y + kRowH), sel ? selectedFill(0.3f) : classic() ? theme::withAlpha(P.surface700, 0.6f) : P.surface800, rowRadius());
       const std::string full = pathOf(a, r.name);
       const bool audio = r.kind == filedlg::FileKind::Audio;
       const bool playing = audio && st.previewing == full;
@@ -1131,15 +1228,15 @@ void draw(App& a) {
       theme::textEllipsis(rl, a.fontRegular, theme::kFontCaption + 1, ImVec2(q.x + xName + 30, q.y + 5), nameW - 36, tcol, r.name.c_str());
       if (!r.isDir && r.size >= 0) {
         const std::string s = filedlg::sizeText(r.size);
-        const float tw = textW(a, theme::kFontCaption, s.c_str());
-        theme::textEllipsis(rl, a.fontRegular, theme::kFontCaption, ImVec2(q.x + xSize + sizeW - tw - 6, q.y + 6), sizeW - 6, P.textDim, s.c_str());
+        const float tw = numberFont(a)->CalcTextSizeA(theme::kFontCaption, FLT_MAX, 0.0f, s.c_str()).x;
+        theme::textEllipsis(rl, numberFont(a), theme::kFontCaption, ImVec2(q.x + xSize + sizeW - tw - 6, q.y + 6), sizeW - 6, P.textDim, s.c_str());
       }
       if (kindW > 0)
         theme::textEllipsis(rl, a.fontRegular, theme::kFontCaption, ImVec2(q.x + xKind + 6, q.y + 6), kindW - 10, P.textDim,
                             i18n::tr(filedlg::kindLabel(r.kind, r.name)));
       if (modW > 0) {
         const std::string t = timeText(r.mtime);
-        theme::textEllipsis(rl, a.fontRegular, theme::kFontCaption, ImVec2(q.x + xMod + 6, q.y + 6), modW - 10, P.textDim, t.c_str());
+        theme::textEllipsis(rl, numberFont(a), theme::kFontCaption, ImVec2(q.x + xMod + 6, q.y + 6), modW - 10, P.textDim, t.c_str());
       }
       if (clicked) {
         if (overIcon) {
@@ -1160,8 +1257,15 @@ void draw(App& a) {
   if (st.rows.empty()) {
     const ImVec2 mn = ImGui::GetWindowPos(), sz = ImGui::GetWindowSize();
     const bool filtered = st.filter[0] != 0;
-    ui::EmptyState(ImGui::GetWindowDrawList(), mn, ImVec2(mn.x + sz.x, mn.y + sz.y), noteTitle ? noteTitle : filtered ? i18n::N_("Nothing matches the filter") : "This folder is empty",
-                   noteTitle ? noteBody : filtered ? i18n::N_("Clear the filter to see every file") : folderMode ? "Choose it, or open a sub-folder" : "No matching files here");
+    const char* title = noteTitle ? noteTitle : filtered ? i18n::N_("Nothing matches the filter") : "This folder is empty";
+    const char* body = noteTitle ? noteBody : filtered ? i18n::N_("Clear the filter to see every file") : folderMode ? "Choose it, or open a sub-folder" : "No matching files here";
+    if (cl) {  // the classic list says it in two plain lines (no plate)
+      const float fs = ImGui::GetFontSize(), my = std::round(mn.y + sz.y * 0.4f);
+      theme::centreText(ImGui::GetWindowDrawList(), a.fontRegular, fs, ImVec2(mn.x, my - fs - 2), ImVec2(mn.x + sz.x, my), P.textDim, i18n::tr(title));
+      theme::centreText(ImGui::GetWindowDrawList(), a.fontRegular, fs, ImVec2(mn.x, my + 2), ImVec2(mn.x + sz.x, my + fs + 4), P.textFaint, i18n::tr(body));
+    } else {
+      ui::EmptyState(ImGui::GetWindowDrawList(), mn, ImVec2(mn.x + sz.x, mn.y + sz.y), title, body);
+    }
   }
   ImGui::EndChild();
   ImGui::PopStyleVar();
@@ -1191,6 +1295,7 @@ void draw(App& a) {
     // text is the same as the last time the box had the focus).
     const ImGuiInputTextFlags nameFlags = ImGuiInputTextFlags_EnterReturnsTrue | (st.selectName > 0 ? ImGuiInputTextFlags_AutoSelectAll : 0);
     if (st.selectName > 0) --st.selectName;
+    classicField(ImGui::GetContentRegionAvail().x);
     ImGui::SetNextItemWidth(-1);
     nameEnter = ImGui::InputTextWithHint("##name", i18n::tr("File name"), nameBuf, sizeof nameBuf, nameFlags);
     st.boxText = nameBuf;
@@ -1212,7 +1317,9 @@ void draw(App& a) {
       fd.name = typed;
       if (ImGui::IsItemActive()) st.selected.clear();
     }
-    ui::FocusRing();
+    if (!classic()) {
+      ui::FocusRing();  // (the Tracker: no glow, as its own fields)
+    }
   } else {
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(theme::vec(P.textDim), "%s", theme::fitTextMiddle(fd.dir.c_str(), ImGui::GetContentRegionAvail().x));
@@ -1227,6 +1334,7 @@ void draw(App& a) {
   if (!fd.types.empty()) {
     fd.typeIndex = std::clamp(fd.typeIndex, 0, static_cast<int>(fd.types.size()) - 1);
     const float typeW = std::max(120.0f, std::min(360.0f, ImGui::GetContentRegionAvail().x - (96 + okW + theme::kS2 * 3)));
+    classicField(typeW);  // cp23: in the Tracker, sunk as the name field beside it
     if (ui::BeginCombo("##types", i18n::tr(fd.types[static_cast<size_t>(fd.typeIndex)].label.c_str()), typeW)) {  // J-78: translated labels
       for (size_t i = 0; i < fd.types.size(); ++i)
         if (ImGui::Selectable(i18n::tr(fd.types[i].label.c_str()), static_cast<int>(i) == fd.typeIndex)) setType(fd, static_cast<int>(i));
@@ -1250,9 +1358,9 @@ void draw(App& a) {
     const float x = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - (96 + theme::kS2 + okW);
     ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), x));
   }
-  const bool cancel = ui::TextButton("Cancel", false, 96) || (::gl::keys::escapePressed() && !st.editingPath);
+  const bool cancel = footButton(a, i18n::N_("Cancel"), 96, false) || (::gl::keys::escapePressed() && !st.editingPath);
   ImGui::SameLine(0, theme::kS2);
-  bool ok = ui::PrimaryButton(okLabel, okW) || okDev;
+  bool ok = footButton(a, okLabel, okW, true) || okDev;
   st.lay.footMax = ImGui::GetItemRectMax();
   if (!fd.confirmOverwrite.empty()) ui::Hint((fd.name + " already exists. Replace it?").c_str());
   // Enter: in the name field, or on a selected file (a selected folder opened above).
@@ -1288,7 +1396,7 @@ void draw(App& a) {
     st.previewing.clear();
     ImGui::CloseCurrentPopup();
   }
-  ImGui::EndPopup();
+  endPopup();
 }
 
 void devCommand(App& a, const std::vector<std::string>& args, int frame) {

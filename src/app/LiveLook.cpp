@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <vector>
 #include "../../third_party/imgui/imgui.h"
@@ -25,10 +26,12 @@
 #include "../core/TrackModes.h"
 #include "../core/TrackOrder.h"
 #include "../engine/Chop.h"
+#include "../engine/ClipOps.h"
 #include "../engine/Dsp.h"
 #include "MenuParityUi.h"
 #include "../packs/PacksUi.h"
 #include "App.h"
+#include "AudioRecordUi.h"
 #include "BrowserUi.h"
 #include "CollabUi.h"
 #include "ContextMenus.h"
@@ -63,8 +66,20 @@ Tick arrangementOrigin(const App& a) { return active(a) ? std::max<Tick>(0, a.do
 
 namespace {
 // Checkpoint 55 (gap 5): the dragged row heights, loaded from the person's settings once.
-std::map<std::string, float> gRowScales;  // "<set>\t<track key>" -> scale
+// Checkpoint 56 (N55-06): keyed by the Set, not only its path: an unsaved Set has a key of its own
+// ("unsaved <time>-<epoch>"), which a first save or Save As carries over to the file (as a Save As
+// from one file to another does); a Set renamed or moved outside Gridline is found again by the
+// fingerprint of its file's bytes as last saved here (clips.rowHeightFiles). Each line carries the
+// time it was last set, and the oldest lines go first past the limit. Never in the song.
+struct RowScale {
+  float v = 1.0f;
+  long long at = 0;  // seconds since 1970, when it was last set (0: from before checkpoint 56)
+};
+std::map<std::string, RowScale> gRowScales;  // "<set>\t<track key>" -> scale
 bool gRowScalesLoaded = false;
+std::string gSetKey;              // the open Set's key (its file, else its unsaved key)
+uint64_t gSetEpoch = UINT64_MAX;  // the project the key is for
+constexpr size_t kRowLinesMax = 400, kRowFilesMax = 100;
 std::string rowKey(const App& a, int t) {
   const Song& s = a.doc.song();
   if (t < 0 || t >= static_cast<int>(s.tracks.size())) {
@@ -79,33 +94,175 @@ std::string rowKey(const App& a, int t) {
   } else {
     k = "t" + std::to_string(t);
   }
-  return a.projectFile() + "\t" + k;
+  return (gSetKey.empty() ? a.projectFile() : gSetKey) + "\t" + k;
 }
-void loadRowScales(const App& a) {
-  if (gRowScalesLoaded) {
-    return;
-  }
-  gRowScalesLoaded = true;
-  const std::string all = a.settings.getString("clips.rowHeights");
+std::vector<std::string> splitLines(const std::string& all) {
+  std::vector<std::string> out;
   size_t at = 0;
   while (at < all.size()) {
     size_t nl = all.find('\n', at);
     if (nl == std::string::npos) {
       nl = all.size();
     }
-    const std::string line = all.substr(at, nl - at);
+    out.push_back(all.substr(at, nl - at));
     at = nl + 1;
-    const size_t t2 = line.rfind('\t');
-    if (t2 == std::string::npos || t2 == 0) {
+  }
+  return out;
+}
+void loadRowScales(const App& a) {
+  if (gRowScalesLoaded) {
+    return;
+  }
+  gRowScalesLoaded = true;
+  for (const std::string& line : splitLines(a.settings.getString("clips.rowHeights"))) {
+    // "<set>\t<track>\t<per mille>" (checkpoint 55) or "...\t<per mille>\t<time>" (56).
+    std::vector<size_t> tabs;
+    for (size_t k = 0; k < line.size(); ++k) {
+      if (line[k] == '\t') {
+        tabs.push_back(k);
+      }
+    }
+    if (tabs.size() < 2) {
       continue;
     }
-    const float v = static_cast<float>(std::atol(line.c_str() + t2 + 1)) / 1000.0f;  // per mille
-    if (v >= 0.25f && v <= 4.0f) {
-      gRowScales[line.substr(0, t2)] = v;
+    const bool stamped = tabs.size() >= 3;
+    const size_t vt = stamped ? tabs[tabs.size() - 2] : tabs.back();
+    RowScale r;
+    r.v = static_cast<float>(std::atol(line.c_str() + vt + 1)) / 1000.0f;  // per mille
+    r.at = stamped ? std::atoll(line.c_str() + tabs.back() + 1) : 0;
+    if (r.v >= 0.25f && r.v <= 4.0f) {
+      gRowScales[line.substr(0, vt)] = r;
     }
   }
 }
+void storeRowScales(App& a) {
+  if (gRowScales.size() > kRowLinesMax) {  // the newest stay, the oldest go first
+    std::vector<std::pair<std::string, RowScale>> v(gRowScales.begin(), gRowScales.end());
+    std::stable_sort(v.begin(), v.end(), [](const auto& x, const auto& y) { return x.second.at > y.second.at; });
+    v.resize(kRowLinesMax);
+    gRowScales = std::map<std::string, RowScale>(v.begin(), v.end());
+  }
+  std::string all;
+  for (const auto& [key, r] : gRowScales) {
+    all += (all.empty() ? "" : "\n") + key + "\t" + std::to_string(std::lround(r.v * 1000.0f)) + "\t" + std::to_string(r.at);
+  }
+  a.settings.set("clips.rowHeights", all);
+}
+// Moves every line of Set `from` to Set `to` (a Save As, a first save, a Set found again).
+bool moveRowScales(const std::string& from, const std::string& to) {
+  if (from.empty() || to.empty() || from == to) {
+    return false;
+  }
+  const std::string pre = from + "\t";
+  bool moved = false;
+  for (auto it = gRowScales.lower_bound(pre); it != gRowScales.end() && it->first.compare(0, pre.size(), pre) == 0;) {
+    gRowScales[to + "\t" + it->first.substr(pre.size())] = it->second;
+    it = gRowScales.erase(it);
+    moved = true;
+  }
+  return moved;
+}
+bool hasRowScales(const std::string& set) {
+  const std::string pre = set + "\t";
+  const auto it = gRowScales.lower_bound(pre);
+  return it != gRowScales.end() && it->first.compare(0, pre.size(), pre) == 0;
+}
 }  // namespace
+
+std::string fileFingerprint(const std::string& path) {
+  FILE* f = std::fopen(path.c_str(), "rb");
+  if (!f) {
+    return std::string();
+  }
+  uint64_t h = 1469598103934665603ull;  // FNV-1a, 64 bits
+  std::vector<unsigned char> buf(65536);
+  size_t n = 0, total = 0;
+  while ((n = std::fread(buf.data(), 1, buf.size(), f)) > 0) {
+    for (size_t k = 0; k < n; ++k) {
+      h = (h ^ buf[k]) * 1099511628211ull;
+    }
+    total += n;
+  }
+  std::fclose(f);
+  if (total == 0) {
+    return std::string();
+  }
+  static const char* hex = "0123456789abcdef";
+  std::string out(16, '0');
+  for (int k = 15; k >= 0; --k) {
+    out[static_cast<size_t>(k)] = hex[h & 15u];
+    h >>= 4;
+  }
+  return out + "-" + std::to_string(total);
+}
+
+std::string setKey(const App& a) { return gSetKey.empty() ? a.projectFile() : gSetKey; }
+
+void rowHeightsFrame(App& a) {
+  const uint64_t ep = a.doc.projectEpoch();
+  const std::string& file = a.projectFile();
+  if (ep == gSetEpoch && (gSetKey == file || (file.empty() && !gSetKey.empty()))) {
+    return;
+  }
+  loadRowScales(a);
+  if (ep == gSetEpoch) {  // the same Set, saved under a new name (a first save, Save As): its rows go along
+    if (moveRowScales(gSetKey, file)) {
+      storeRowScales(a);
+    }
+    gSetKey = file;
+    return;
+  }
+  gSetEpoch = ep;
+  if (file.empty()) {  // a new Set: a key of its own, never another unsaved Set's
+    gSetKey = "unsaved " + std::to_string(static_cast<long long>(std::time(nullptr))) + "-" + std::to_string(ep);
+    return;
+  }
+  gSetKey = file;
+  if (hasRowScales(file)) {
+    return;
+  }
+  // Renamed or moved outside Gridline: the same bytes as a file last saved here under another name.
+  const std::string fp = fileFingerprint(file);
+  if (fp.empty()) {
+    return;
+  }
+  for (const std::string& line : splitLines(a.settings.getString("clips.rowHeightFiles"))) {
+    const size_t t = line.rfind('\t');
+    if (t != std::string::npos && line.compare(t + 1, std::string::npos, fp) == 0 && line.compare(0, t, file) != 0 &&
+        hasRowScales(line.substr(0, t))) {
+      moveRowScales(line.substr(0, t), file);
+      storeRowScales(a);
+      return;
+    }
+  }
+}
+
+void rowHeightsSaved(App& a, const std::string& file) {
+  rowHeightsFrame(a);  // (a first save or Save As carries the rows over first)
+  if (file.empty() || gSetKey != file || !hasRowScales(file)) {
+    return;
+  }
+  const std::string fp = fileFingerprint(file);
+  if (fp.empty()) {
+    return;
+  }
+  std::vector<std::string> keep;
+  for (const std::string& line : splitLines(a.settings.getString("clips.rowHeightFiles"))) {
+    const size_t t = line.rfind('\t');
+    if (t != std::string::npos && line.compare(0, t, file) != 0) {
+      keep.push_back(line);
+    }
+  }
+  keep.push_back(file + "\t" + fp);  // the newest last
+  if (keep.size() > kRowFilesMax) {
+    keep.erase(keep.begin(), keep.begin() + static_cast<std::ptrdiff_t>(keep.size() - kRowFilesMax));
+  }
+  std::string all;
+  for (const std::string& l : keep) {
+    all += (all.empty() ? "" : "\n") + l;
+  }
+  a.settings.set("clips.rowHeightFiles", all);
+}
 
 float rowScale(const App& a, int track, float fallback) {
   loadRowScales(a);
@@ -113,28 +270,23 @@ float rowScale(const App& a, int track, float fallback) {
     return fallback;
   }
   const auto it = gRowScales.find(rowKey(a, track));
-  return it != gRowScales.end() ? it->second : fallback;
+  return it != gRowScales.end() ? it->second.v : fallback;
 }
 
 void setRowScale(App& a, int track, float scale, bool done) {
   loadRowScales(a);
+  rowHeightsFrame(a);
   const std::string k = rowKey(a, track);
   if (k.empty()) {
     return;
   }
-  gRowScales[k] = std::clamp(scale, 0.25f, 4.0f);
+  RowScale& r = gRowScales[k];
+  r.v = std::clamp(scale, 0.25f, 4.0f);
+  r.at = static_cast<long long>(std::time(nullptr));
   if (!done) {
     return;
   }
-  std::string all;
-  int lines = 0;
-  for (const auto& [key, v] : gRowScales) {
-    if (++lines > 400) {
-      break;
-    }
-    all += (all.empty() ? "" : "\n") + key + "\t" + std::to_string(std::lround(v * 1000.0f));  // per mille
-  }
-  a.settings.set("clips.rowHeights", all);
+  storeRowScales(a);
 }
 bool arrangementClip(const App& a, const Clip& c) { return !active(a) || c.start >= a.doc.song().live.areaEnd; }
 
@@ -970,18 +1122,114 @@ bool gOfferOneShots = false;  // checkpoint 55 (N54-01): the opened set's loopin
 // Checkpoint 55 (N54-01): a set saved before checkpoint 54 keeps its short unwarped grid samples looping
 // (they retrigger at their own length). Nothing is changed unasked: a card offers to make them play
 // once, in one undo step; the save stays as it was unless the offer is taken. Offered once per set.
+// Checkpoint 56 (N55-07): "Keep looping" is remembered per Set, outside the song (clips.oneShotAnswers, the
+// Sets' files, newest last); a Set where a sample already plays once was saved after the switch came (the
+// person chose then), so its loops are taken as meant; the card names the samples.
+bool oneShotsAnswered(const App& a, const std::string& file) {
+  if (file.empty()) {
+    return false;
+  }
+  const std::string all = a.settings.getString("clips.oneShotAnswers");
+  size_t at = 0;
+  while (at < all.size()) {
+    size_t nl = all.find('\n', at);
+    if (nl == std::string::npos) {
+      nl = all.size();
+    }
+    if (all.compare(at, nl - at, file) == 0) {
+      return true;
+    }
+    at = nl + 1;
+  }
+  return false;
+}
+void rememberOneShotsAnswer(App& a, const std::string& file) {
+  if (file.empty() || oneShotsAnswered(a, file)) {
+    return;
+  }
+  std::vector<std::string> v;
+  const std::string all = a.settings.getString("clips.oneShotAnswers");
+  size_t at = 0;
+  while (at < all.size()) {
+    size_t nl = all.find('\n', at);
+    if (nl == std::string::npos) {
+      nl = all.size();
+    }
+    if (nl > at) {
+      v.push_back(all.substr(at, nl - at));
+    }
+    at = nl + 1;
+  }
+  v.push_back(file);
+  if (v.size() > 200) {
+    v.erase(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(v.size() - 200));
+  }
+  std::string out;
+  for (const std::string& l : v) {
+    out += (out.empty() ? "" : "\n") + l;
+  }
+  a.settings.set("clips.oneShotAnswers", out);
+}
+}  // namespace
+
+std::string oneShotsCardText(const Song& s, const std::vector<ObjectId>& ids) {
+  std::vector<std::string> names;
+  for (const Clip& c : s.playlist) {
+    if (std::find(ids.begin(), ids.end(), c.id) == ids.end()) {
+      continue;
+    }
+    std::string n = c.name;
+    if (n.empty()) {
+      if (const Channel* ch = s.channel(c.source)) {
+        n = ch->name;
+      }
+    }
+    if (!n.empty() && std::find(names.begin(), names.end(), n) == names.end()) {
+      names.push_back(n);
+    }
+  }
+  std::string list;
+  const size_t shown = std::min<size_t>(names.size(), 3);
+  for (size_t k = 0; k < shown; ++k) {
+    list += (k == 0 ? "" : k + 1 == shown && names.size() <= 3 ? " and " : ", ") + names[k];
+  }
+  if (names.size() > 3) {
+    list += " and " + std::to_string(names.size() - 3) + " more";
+  }
+  const std::string n = std::to_string(ids.size());
+  std::string text = ids.size() == 1 ? "A short sample loops" : n + " short samples loop";
+  if (!list.empty()) {
+    text += " (" + list + ")";
+  }
+  return text + (ids.size() == 1 ? "; play it once?" : "; play them once?");
+}
+
+bool offerOneShotsWanted(const App& a) {
+  const Song& s = a.doc.song();
+  if (trackmodes::loopingShortSlotClips(s).empty() || oneShotsAnswered(a, a.projectFile())) {
+    return false;
+  }
+  for (const Clip& c : s.playlist) {  // saved after the switch came: the loops are the person's choice
+    if (c.kind == ClipKind::Audio && c.launchOnce && c.start < s.live.areaEnd) {
+      return false;
+    }
+  }
+  return true;
+}
+
+namespace {
 void offerOneShots(App& a) {
   static std::set<std::string> offered;
   const std::vector<ObjectId> ids = trackmodes::loopingShortSlotClips(a.doc.song());
-  if (ids.empty()) {
+  if (ids.empty() || !offerOneShotsWanted(a)) {
     return;
   }
-  const std::string key = a.projectFile().empty() ? std::to_string(ids.front()) : a.projectFile();
+  const std::string file = a.projectFile();
+  const std::string key = file.empty() ? std::to_string(ids.front()) : file;
   if (!offered.insert(key).second) {
     return;
   }
-  const std::string n = std::to_string(ids.size());
-  a.notifyAction(n + (ids.size() == 1 ? " short sample loops; play it once?" : " short samples loop; play them once?"),
+  a.notifyAction(oneShotsCardText(a.doc.song(), ids),
                  {{"Play once", [&a, ids] {
                      int done = 0;
                      a.doc.editSong("play short samples once", [&](Song& s) {
@@ -994,7 +1242,7 @@ void offerOneShots(App& a) {
                      });
                      a.notify(std::to_string(done) + (done == 1 ? " sample now plays once" : " samples now play once"));
                    }},
-                  {"Keep looping", nullptr}},
+                  {"Keep looping", [&a, file] { rememberOneShotsAnswer(a, file); }}},
                  20.0);
 }
 int gRenameFrames = 0;  // N47-12: frames until the clip band's Name field takes the keyboard
@@ -1164,6 +1412,223 @@ void adoptPeerChannels(App& a) {
 }
 }  // namespace
 
+bool loopOn(const App& a) {
+  const Song& s = a.doc.song();
+  return s.cycleOn && s.cycleEnd > s.cycleStart;
+}
+
+bool recordRange(const App& a, Tick& from, Tick& to) {
+  const Song& s = a.doc.song();
+  if (active(a)) {
+    from = s.cycleStart, to = s.cycleEnd;
+  } else {
+    from = a.playlist.selStart, to = a.playlist.selEnd;
+  }
+  return to > from;
+}
+
+void setLoopBrace(App& a, Tick from, Tick to, bool on) {
+  from = std::max<Tick>(0, from);
+  if (to <= from) return;
+  const Song& s = a.doc.song();
+  if (s.cycleStart == from && s.cycleEnd == to && s.cycleOn == on) return;
+  // As Smooth's cycle (R04-10): transport state, no undo step; saved with the Set.
+  a.doc.patchSong([from, to, on](Song& x) { x.cycleStart = from, x.cycleEnd = to, x.cycleOn = on; });
+}
+
+void toggleLoop(App& a) {
+  const Song& s = a.doc.song();
+  if (s.cycleEnd > s.cycleStart) {  // the brace stays where it is; Loop turns on or off
+    a.doc.patchSong([](Song& x) { x.cycleOn = !x.cycleOn; });
+    return;
+  }
+  // No brace yet: the time selection's, else four bars from the play position.
+  const Tick org = arrangementOrigin(a);
+  if (a.playlist.selEnd > a.playlist.selStart) {
+    setLoopBrace(a, std::max(org, a.playlist.selStart), std::max(org, a.playlist.selEnd), true);
+    return;
+  }
+  const MeterMap mm(s);
+  const Tick from = mm.barStartAt(std::max(org, static_cast<Tick>(a.engine.position())));
+  Tick to = from;
+  for (int k = 0; k < 4; ++k) {
+    to = mm.nextBar(to);
+  }
+  setLoopBrace(a, from, to, true);
+}
+
+void loopFromSelection(App& a) {
+  const Tick org = arrangementOrigin(a);
+  if (a.playlist.selEnd > a.playlist.selStart) {
+    setLoopBrace(a, std::max(org, a.playlist.selStart), std::max(org, a.playlist.selEnd), true);
+    return;
+  }
+  // No time selection: the selected clips' span, as the reference's Loop Selection.
+  const Song& s = a.doc.song();
+  Tick lo = -1, hi = -1;
+  for (const Clip& c : s.playlist) {
+    if (a.playlist.selected.count(c.id) && c.start >= org) {
+      lo = lo < 0 ? c.start : std::min(lo, c.start);
+      hi = std::max(hi, c.start + s.clipLength(c));
+    }
+  }
+  if (lo >= 0 && hi > lo) {
+    setLoopBrace(a, lo, hi, true);
+  } else {
+    a.setHint(i18n::tr("Select a time range or clips in the Arrangement first: the loop brace then frames it"));
+  }
+}
+
+std::vector<ObjectId> sessionExportClips(const App& a, std::string& label) {
+  const Song& s = a.doc.song();
+  std::vector<ObjectId> ids;
+  if (a.engine.mode() == PlayMode::Live && a.engine.playing()) {
+    for (int t = 0; t < gridColumns(s) && t < kMaxPlaylistTracks; ++t) {
+      const Clip* c = s.clip(a.engine.liveActive(t));
+      if (c && c->start < s.live.areaEnd && !c->muted) {
+        ids.push_back(c->id);
+      }
+    }
+  }
+  if (!ids.empty()) {
+    label = "the playing clips";
+    return ids;
+  }
+  const int k = std::max(0, selectedScene());
+  for (int t = 0; t < gridColumns(s); ++t) {
+    const std::vector<int> v = slotClips(s, t, k);
+    if (!v.empty()) {
+      const Clip& c = s.playlist[static_cast<size_t>(v.front())];
+      if (!c.muted) {
+        ids.push_back(c.id);
+      }
+    }
+  }
+  label = ids.empty() ? std::string() : "scene " + std::to_string(k + 1);
+  return ids;
+}
+
+void consolidate(App& a) {
+  const Song& s = a.doc.song();
+  std::map<int, std::set<ObjectId>> byTrack;
+  std::map<int, bool> audio;
+  for (const Clip& c : s.playlist) {
+    if (a.playlist.selected.count(c.id) && arrangementClip(a, c) && c.kind != ClipKind::Automation) {
+      byTrack[c.track].insert(c.id);
+      audio[c.track] = audio[c.track] || c.kind == ClipKind::Audio;
+    }
+  }
+  bool any = false;
+  for (const auto& [t, ids] : byTrack) {
+    any = any || ids.size() >= 2 || audio[t];
+  }
+  if (!any) {
+    a.notify(i18n::tr(byTrack.empty() ? "Select clips in the Arrangement to consolidate them"
+                                       : "Select two or more MIDI clips on a track, or audio clips, to consolidate them"),
+             true);
+    return;
+  }
+  const std::string dir = renderedDir(a);
+  const double sr = a.engine.sampleRate();
+  std::set<ObjectId> made;
+  a.doc.beginGroup("consolidate clips");
+  for (const auto& entry : byTrack) {
+    const int t = entry.first;
+    const std::set<ObjectId>& ids = entry.second;
+    if (!audio[t]) {
+      if (ids.size() >= 2) {
+        if (const ObjectId nc = ops::mergeClips(a.doc, ids)) {
+          made.insert(nc);
+        }
+      }
+      continue;
+    }
+    ObjectId nid = kNoId;
+    // Checkpoint 57 (N56-10): the rendered clip keeps the colour its clips had (an audio clip's sound's,
+    // else the track's), as the reference keeps the track's colour; not the render's neutral grey.
+    const Song& cur = a.doc.song();
+    Rgb keep = t < static_cast<int>(cur.tracks.size()) ? cur.tracks[static_cast<size_t>(t)].color : Rgb{};
+    for (const ObjectId id : ids) {
+      const Clip* c = cur.clip(id);
+      if (const Channel* src = c && c->kind == ClipKind::Audio ? cur.channel(c->source) : nullptr) {
+        keep = src->color;
+        break;
+      }
+    }
+    a.doc.editSong("consolidate clips", [&](Song& x) {
+      nid = consolidateClips(x, ids, dir, sr, true);
+      const Clip* nc = nid != kNoId ? x.clip(nid) : nullptr;
+      if (Channel* ch = nc ? x.channel(nc->source) : nullptr) {
+        ch->color = keep;
+      }
+    });
+    if (nid != kNoId) {
+      made.insert(nid);
+    }
+  }
+  a.doc.endGroup();
+  if (made.empty()) {
+    a.notify(i18n::tr("Nothing to render: the selected clips are silent"), true);
+    return;
+  }
+  a.playlist.selected = made;
+}
+
+void transportFrame(App& a) {
+  rowHeightsFrame(a);  // N55-06: the open Set's row-height key follows a Save As
+  const bool clips = active(a);
+  const Song& s = a.doc.song();
+  Tick la = 0, lb = 0;
+  if (clips) {
+    if (loopOn(a)) la = s.cycleStart, lb = s.cycleEnd;
+  } else if (a.playlist.selEnd > a.playlist.selStart) {
+    la = a.playlist.selStart, lb = a.playlist.selEnd;
+  }
+  static Tick sentA = -1, sentB = -1;
+  if (la != sentA || lb != sentB) {
+    a.engine.setLoopRange(la, lb);
+    sentA = la, sentB = lb;
+  }
+  {  // the Arrangement's end: its last clip's bar end (cached per edit)
+    static uint64_t serial = ~uint64_t{0}, epoch = ~uint64_t{0};
+    static Tick end = 0;
+    if (clips && (serial != a.doc.saveSerial() || epoch != a.doc.projectEpoch())) {
+      serial = a.doc.saveSerial(), epoch = a.doc.projectEpoch();
+      const Tick org = arrangementOrigin(a);
+      Tick last = 0;
+      for (const Clip& c : s.playlist) {
+        if (c.start >= org && !c.muted) {
+          last = std::max(last, c.start + s.clipLength(c));
+        }
+      }
+      const MeterMap mm(s);
+      end = last > org ? (mm.barStartAt(last) == last ? last : mm.nextBar(last)) : 0;
+    }
+    // Checkpoint 57 (N56-05): it plays on past its end in silence, as the reference does (Loop on loops
+    // the brace); never into the clip grid (the start above).
+    a.engine.setArrangement(clips ? arrangementOrigin(a) : 0, clips ? end : 0, false);
+  }
+  // N55-02: the Arrangement's song position never rests in the clip grid's storage before it (Space on an
+  // empty Arrangement, "Record it first": both start at its bar 1).
+  static int seekWait = 0;
+  if (clips && a.engine.mode() == PlayMode::Song && a.engine.position() < static_cast<double>(arrangementOrigin(a)) - 0.5) {
+    if (seekWait <= 0) {
+      a.engine.setPosition(arrangementOrigin(a));
+      seekWait = 3;  // (the audio thread takes it a block later)
+    }
+    --seekWait;
+  } else {
+    seekWait = 0;
+  }
+  // Clips' Punch is its own switch, off unless the person turns it on (clips.punch); the other layouts
+  // keep record.punch as it was.
+  static int was = -1;
+  if (was != (clips ? 1 : 0)) {
+    if (was >= 0 || clips) a.recPunch = a.settings.getBool(clips ? "clips.punch" : "record.punch");
+    was = clips ? 1 : 0;
+  }
+}
+
 void viewFrame(App& a) {
   sessionRecordFrame(a);
   adoptPeerChannels(a);
@@ -1306,6 +1771,7 @@ struct Cell {
 // arrangement) and pan (on the second row only).
 struct HeaderCells {
   Cell name, act, solo, arm, vol, pan;
+  Cell io;  // checkpoint 56: the In/Out column between the name and the mixer controls (empty: none)
   bool hasPan = false;
 };
 
@@ -1314,6 +1780,28 @@ struct HeaderCells {
 // enough, beside them otherwise, with the pan beside the volume), and a level meter runs down the
 // right edge.
 constexpr float kHeadMeterW = 10.0f;
+constexpr float kNameGlyphW = 13.0f;  // a name's mode glyph (trackui::drawNameGlyph)
+// Checkpoint 57: a header's level meter, at the right edge `right`: the slot, and the bars of `mixer`'s
+// level when it has one. Tracks, returns and Main draw the same one.
+void headMeter(App& a, ImDrawList* dl, float right, float my0, float my1, ObjectId mixer) {
+  const auto& P = pal();
+  const float mx0 = right - kHeadMeterW - 3;
+  dl->AddRectFilled(ImVec2(mx0, my0), ImVec2(mx0 + kHeadMeterW, my1), P.dark ? P.field : P.surface950, 1.0f);
+  if (mixer == kNoId) {
+    return;
+  }
+  const mixmeters::Reading r = mixmeters::get(a, mixer);
+  auto bar = [&](float x, float peak) {
+    const float db = peak > 1e-6f ? 20.0f * std::log10(peak) : -90.0f;
+    const float u = std::clamp((db + 60.0f) / 66.0f, 0.0f, 1.0f);
+    const float bw = (kHeadMeterW - 3) * 0.5f;
+    if (u > 0) {
+      dl->AddRectFilled(ImVec2(x, my1 - (my1 - my0) * u), ImVec2(x + bw, my1), db > -0.1f ? P.meterHigh : db > -12 ? P.meterMid : P.meterLow);
+    }
+  };
+  bar(mx0 + 1, r.peakL);
+  bar(mx0 + 1 + (kHeadMeterW - 2) * 0.5f, r.peakR);
+}
 HeaderCells cellsOf(const HeaderDraw& h) {
   const float th = h.h1.y - h.h0.y;
   const float ch = std::min(16.0f, std::max(10.0f, th - 6.0f));
@@ -1332,7 +1820,8 @@ HeaderCells cellsOf(const HeaderDraw& h) {
   c.hasPan = twoRows;
   if (twoRows) c.pan = {ImVec2(c.solo.a.x, y0 + ch + 4), ImVec2(c.arm.b.x, y0 + ch * 2 + 4)};
   // The name block fills its part of the row edge to edge: one line of the panel between tracks.
-  c.name = {ImVec2(h.h0.x, h.h0.y), ImVec2(std::max(h.h0.x + 30, rx0 - 6), h.h1.y)};
+  c.name = {ImVec2(h.h0.x, h.h0.y), ImVec2(std::max(h.h0.x + 30, rx0 - 6 - h.ioW), h.h1.y)};
+  c.io = {ImVec2(c.name.b.x, h.h0.y), ImVec2(std::max(c.name.b.x, rx0 - 6), h.h1.y)};
   return c;
 }
 
@@ -1364,6 +1853,11 @@ void square(ImDrawList* dl, const Cell& c, ImU32 fill, bool hot) {
 
 void centredText(ImDrawList* dl, ImFont* f, float fs, const Cell& c, ImU32 col, const char* t) {
   theme::centreText(dl, f, fs, c.a, c.b, col, t);  // by the font's ink and capital height (K-112)
+}
+// Checkpoint 57: an empty value: a short faint dash on the cell's centre line (a "-" glyph sat 3 px low).
+void emptyMark(ImDrawList* dl, const Cell& c) {
+  const float cx = std::round((c.a.x + c.b.x) * 0.5f), cy = std::round((c.a.y + c.b.y) * 0.5f);
+  dl->AddRectFilled(ImVec2(cx - 3, cy - 0.5f), ImVec2(cx + 3, cy + 0.5f), pal().textFaint);
 }
 
 // The volume (or pan) drag of a header's cell (the linked mixer track's fader or pan).
@@ -1400,8 +1894,9 @@ void busRow(App& a, ImDrawList* dl, size_t j, float x0, float x1, float y) {
   // their activator column, so the rows' columns line up (357, 280, 093).
   HeaderDraw hd;
   hd.h0 = ImVec2(x0 + 1, y), hd.h1 = ImVec2(x1, y + 60.0f);  // a two-row header's columns
+  hd.ioW = liveio::shown(a) ? liveio::kHeaderW : 0.0f;       // checkpoint 56: and their In/Out column
   const HeaderCells hc = cellsOf(hd);
-  const float meterX = r1.x - 12, nameX1 = hc.name.b.x;
+  const float nameX1 = hc.name.b.x;
   const bool hov = m.x >= r0.x && m.x < r1.x && m.y >= r0.y && m.y < r1.y && ImGui::IsWindowHovered();
   const bool sel = a.selMixer == mt.id;
   const ImU32 base = j == 0 ? mainFill() : returnFill();
@@ -1422,11 +1917,10 @@ void busRow(App& a, ImDrawList* dl, size_t j, float x0, float x1, float y) {
   else std::snprintf(vb, sizeof vb, "-\xE2\x88\x9E");  // minus infinity, as the refs write it
   const float tw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, vb).x;
   dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round(v1.x - 4 - tw), theme::textTop(a.fontRegular, theme::kFontLabel, v0.y, v1.y - v0.y)), P.text, vb);
-  const mixmeters::Reading rd = mixmeters::get(a, mt.id);
-  ImGui::SetCursorScreenPos(ImVec2(meterX, r0.y + 1));
-  ImGui::PushID(static_cast<int>(7000 + j));
-  ui::Meter(ImGui::GetID("##busmeter"), rd.peakL, rd.peakR, ImVec2(10, kBusRowH - 4));
-  ImGui::PopID();
+  if (hd.ioW > 0) {  // N55-10: a return's Audio To, Main's Master Out
+    liveio::drawMixerBlock(a, dl, mt.id, ImVec2(hc.io.a.x + 5, y + 2), ImVec2(hc.io.b.x - 3, y + kBusRowH - 4), ImGui::IsWindowHovered());
+  }
+  headMeter(a, dl, hd.h1.x, r0.y + 3, r1.y - 3, mt.id);  // checkpoint 57: as the tracks' (N56 P6-10)
   if (hov) {
     a.setHint(j == 0 ? i18n::tr("Main: the master track (click to select it in the mixer)")
                      : i18n::tr("Return track: other tracks send to it (click to select it in the mixer)"));
@@ -1481,16 +1975,22 @@ float headerWidth(const App& a) { return kHeaderW + (liveio::shown(a) ? liveio::
 HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h) {
   const Song& s = a.doc.song();
   if (h.lane || !liveio::shown(a) || h.track < 0 || h.track >= static_cast<int>(s.tracks.size())) return drawHeaderBody(a, dl, h);
-  // Checkpoint 55 (gap 2): the In/Out column at the header's left, by the lanes, as the reference's I/O
-  // section sits between the clips and the mixer controls.
+  // Checkpoint 55 (gap 2), 56 (N55-10): the In/Out column right of the track's name, before its mixer
+  // controls, as the reference's I/O section sits.
   const auto& P = pal();
   HeaderDraw body = h;
-  body.h0.x += liveio::kHeaderW;
-  const ImVec2 i0(h.h0.x, h.h0.y), i1(body.h0.x, h.h1.y);
-  dl->AddRectFilled(i0, i1, h.selected ? P.surface700 : P.surface800);
-  dl->AddLine(ImVec2(i1.x - 0.5f, i0.y), ImVec2(i1.x - 0.5f, i1.y), P.dark ? P.ink : P.line);
-  const bool over = liveio::drawBlock(a, dl, h.track, ImVec2(i0.x + 4, i0.y + 3), ImVec2(i1.x - 5, i1.y - 3), h.hovered);
+  body.ioW = liveio::kHeaderW;
   const HeaderPart part = drawHeaderBody(a, dl, body);
+  const HeaderCells c = cellsOf(body);
+  const ImVec2 i0 = c.io.a, i1 = c.io.b;
+  dl->AddRectFilled(i0, i1, h.selected ? P.surface700 : P.surface800);
+  dl->AddLine(ImVec2(i0.x + 0.5f, i0.y), ImVec2(i0.x + 0.5f, i1.y), P.dark ? P.ink : P.line);
+  const bool over = liveio::drawBlock(a, dl, h.track, ImVec2(i0.x + 5, i0.y + 3), ImVec2(i1.x - 3, i1.y - 3), h.hovered);
+  if (h.lit) {  // checkpoint 57 (N56 P6-6): the frame round the whole header, the I/O column too
+    dl->AddRect(h.h0, h.h1, theme::withAlpha(P.hot, 0.7f), 0, 0, 1.5f);
+  } else if (h.selected) {
+    dl->AddRect(h.h0, h.h1, theme::withAlpha(P.hot, 0.45f));
+  }
   return over ? HeaderPart::Io : part;
 }
 
@@ -1529,8 +2029,6 @@ HeaderPart drawHeaderBody(App& a, ImDrawList* dl, const HeaderDraw& h) {
   // The row: a raised face, lit while selected or moving.
   const ImU32 face = h.lit || h.selected ? P.surface700 : h.hovered ? theme::mix(P.surface800, P.surface700, 0.5f) : P.surface800;
   dl->AddRectFilled(h.h0, h.h1, face);
-  if (h.lit) dl->AddRect(h.h0, h.h1, theme::withAlpha(P.hot, 0.7f), 0, 1.5f, 0);
-  else if (h.selected) dl->AddRect(h.h0, h.h1, theme::withAlpha(P.hot, 0.45f));
   // Name block in the track's colour: number and name at its top, with Studio's mode glyph for linked tracks.
   const ImU32 tc = theme::content(t.color);
   const ImU32 chip = t.muted ? theme::mix(tc, P.surface800, 0.55f) : tc;
@@ -1542,7 +2040,10 @@ HeaderPart drawHeaderBody(App& a, ImDrawList* dl, const HeaderDraw& h) {
   const std::string label = playlistTrackName(s, static_cast<size_t>(h.track));
   dl->PushClipRect(c.name.a, c.name.b, true);
   float nx = c.name.a.x + 5;
-  if (trackmodes::modeOf(s, h.track) != TrackMode::Unassigned) nx += trackui::drawNameGlyph(a, dl, h.track, ImVec2(nx, ty), theme::withAlpha(ink, 0.8f));  // K-112c (round 37): the name's ink, not a faint grey on the colour
+  // K-112c (round 37): the name's ink, not a faint grey on the colour. Checkpoint 57 (N56 P6-5): every
+  // name starts at one edge: a track with no glyph keeps the glyph's room.
+  const float glyph = trackmodes::modeOf(s, h.track) != TrackMode::Unassigned ? trackui::drawNameGlyph(a, dl, h.track, ImVec2(nx, ty), theme::withAlpha(ink, 0.8f)) : 0.0f;
+  nx += glyph > 0 ? glyph : kNameGlyphW;
   const bool group = trackmodes::isGroupTrack(s, h.track);
   theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(nx, ty), c.name.b.x - nx - (group ? 22 : 4), ink, label.c_str());  // regular weight (280, 141, 142)
   dl->PopClipRect();
@@ -1576,34 +2077,34 @@ HeaderPart drawHeaderBody(App& a, ImDrawList* dl, const HeaderDraw& h) {
   } else {
     dl->AddRectFilled(c.vol.a, c.vol.b, P.dark ? P.field : P.surface950, theme::kRadiusSm);
     if (h.hovered && c.vol.contains(m) && mx) dl->AddRect(c.vol.a, c.vol.b, theme::withAlpha(P.text, 0.35f), theme::kRadiusSm);
-    char vb[16] = "-";
     if (mx) {
+      char vb[16];
       const float g = mx->volume;
       if (g > 1e-6f) std::snprintf(vb, sizeof vb, "%.1f", faderDb(g));
       else std::snprintf(vb, sizeof vb, "-\xE2\x88\x9E");  // minus infinity, as the refs write it
+      const float vw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, vb).x;
+      dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round(c.vol.b.x - 5 - vw), theme::textTop(a.fontRegular, theme::kFontLabel, c.vol.a.y, c.vol.b.y - c.vol.a.y)),
+                  P.text, vb);
+    } else {
+      emptyMark(dl, c.vol);  // checkpoint 57 (N56 P6-4): no mixer track: a dash on the field's centre line
     }
-    const float vw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, vb).x;
-    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round(c.vol.b.x - 5 - vw), theme::textTop(a.fontRegular, theme::kFontLabel, c.vol.a.y, c.vol.b.y - c.vol.a.y)),
-                mx ? P.text : P.textFaint, vb);
   }
   if (c.hasPan) {  // the pan field (the linked mixer track's pan)
     dl->AddRectFilled(c.pan.a, c.pan.b, P.dark ? P.field : P.surface950, theme::kRadiusSm);
     if (h.hovered && c.pan.contains(m) && mx) dl->AddRect(c.pan.a, c.pan.b, theme::withAlpha(P.text, 0.35f), theme::kRadiusSm);
-    centredText(dl, a.fontRegular, theme::kFontLabel, c.pan, mx ? P.text : P.textFaint, mx ? panText(mx->pan).c_str() : "-");
+    if (mx) {
+      centredText(dl, a.fontRegular, theme::kFontLabel, c.pan, P.text, panText(mx->pan).c_str());
+    } else {
+      emptyMark(dl, c.pan);
+    }
   }
-  // The level meter down the right edge (the linked mixer track's).
-  if (mx) {
-    const mixmeters::Reading r = mixmeters::get(a, mx->id);
-    const float mx0 = h.h1.x - kHeadMeterW - 3, my0 = h.h0.y + 3, my1 = h.h1.y - 3;
-    dl->AddRectFilled(ImVec2(mx0, my0), ImVec2(mx0 + kHeadMeterW, my1), P.dark ? P.field : P.surface950, 1.0f);
-    auto bar = [&](float x, float peak) {
-      const float db = peak > 1e-6f ? 20.0f * std::log10(peak) : -90.0f;
-      const float u = std::clamp((db + 60.0f) / 66.0f, 0.0f, 1.0f);
-      const float bw = (kHeadMeterW - 3) * 0.5f;
-      if (u > 0) dl->AddRectFilled(ImVec2(x, my1 - (my1 - my0) * u), ImVec2(x + bw, my1), db > -0.1f ? P.meterHigh : db > -12 ? P.meterMid : P.meterLow);
-    };
-    bar(mx0 + 1, r.peakL);
-    bar(mx0 + 1 + (kHeadMeterW - 2) * 0.5f, r.peakR);
+  // The level meter down the right edge (the linked mixer track's). Checkpoint 57 (N56 P6-10): the
+  // same slot on every row (a track with no mixer track, the returns and Main), so the edge is even.
+  headMeter(a, dl, h.h1.x, h.h0.y + 3, h.h1.y - 3, mx ? mx->id : kNoId);
+  if (h.lit) {  // checkpoint 57 (N56 P6-6): the frame round the whole header, over the name block too
+    dl->AddRect(h.h0, h.h1, theme::withAlpha(P.hot, 0.7f), 0, 0, 1.5f);
+  } else if (h.selected) {
+    dl->AddRect(h.h0, h.h1, theme::withAlpha(P.hot, 0.45f));
   }
   // The volume drag in progress (moves the mixer track's volume, one undo step per drag).
   if (gVol.mixer != kNoId) {
@@ -3143,7 +3644,10 @@ void valueBox(App& a, const char* text, float w) {
   dl->AddRect(p, q, ImGui::GetColorU32(ImGuiCol_Border), theme::kRadiusSm, 1.0f, 0);
   const float fs = ImGui::GetFontSize();
   dl->PushClipRect(p, q, true);
-  dl->AddText(ImGui::GetFont(), fs, ImVec2(p.x + ImGui::GetStyle().FramePadding.x, theme::textTop(ImGui::GetFont(), fs, p.y, h)), P.text, text);
+  // Checkpoint 57 (N56-09): centred, as the drag fields beside it (Gain, Pitch) centre theirs.
+  const float tw = ImGui::GetFont()->CalcTextSizeA(fs, 1e9f, 0, text).x;
+  const float tx = std::max(p.x + ImGui::GetStyle().FramePadding.x, std::round(p.x + (w - tw) * 0.5f));
+  dl->AddText(ImGui::GetFont(), fs, ImVec2(tx, theme::textTop(ImGui::GetFont(), fs, p.y, h)), P.text, text);
   dl->PopClipRect();
   (void)a;
 }
@@ -3159,7 +3663,8 @@ bool positionField(App& a, const char* id, Tick& v, Tick lo, Tick hi, float w, c
   const long long one = duration ? 0 : 1;
   char text[96];  // (room for three 64-bit numbers: GCC -Wformat-truncation)
   const Tick c = std::max<Tick>(0, v);
-  std::snprintf(text, sizeof text, "%lld. %lld. %lld", static_cast<long long>(c / bar) + one, static_cast<long long>(c % bar / beat) + one,
+  // Checkpoint 57 (N56-09): spaced as the transport's position ("1 . 1 . 1").
+  std::snprintf(text, sizeof text, "%lld . %lld . %lld", static_cast<long long>(c / bar) + one, static_cast<long long>(c % bar / beat) + one,
                 static_cast<long long>(c % beat / six) + one);
   const ImGuiID gid = ImGui::GetID(id);
   static ImGuiID typing = 0, picked = 0;
@@ -3935,15 +4440,23 @@ struct StripRow {
 // a new track or return included): (send index or -1 when the track has no send there yet, the
 // return's mixer index). A mixer track never sends to itself.
 constexpr int kMaxStripSends = 6;
-std::vector<std::pair<int, int>> sendsOf(const Song& s, const MixerTrack* mx) {
-  std::vector<std::pair<int, int>> v;
+// Checkpoint 56 (N55-01): a send is an aux send, never the track's output: while the track plays into a
+// return, that return's knob shows the kept aux send (or none), greyed out (`routed`). Checkpoint 57
+// (N56-01): the kept send is in Song::keptSends, not in the track's sends (it does not play); an aux send
+// that is in the sends (a hand-made song's second route there) plays, and its knob is live.
+struct StripSend {
+  int k = -1;      // the aux send's index (-1: none yet)
+  int dest = -1;   // the return's mixer index
+  bool routed = false;  // the track's output is this return: the send is off (its level kept)
+};
+std::vector<StripSend> sendsOf(const Song& s, const MixerTrack* mx) {
+  std::vector<StripSend> v;
   if (!mx) return v;
+  const ObjectId out = trackmodes::outputOf(*mx);
   for (size_t j : returnTracks(s)) {
     if (s.mixer[j].id == mx->id) continue;
-    int k = -1;
-    for (size_t i = 0; i < mx->sends.size() && k < 0; ++i)
-      if (!mx->sends[i].sidechain && !mx->sends[i].stageRoom && mx->sends[i].to == s.mixer[j].id) k = static_cast<int>(i);
-    v.emplace_back(k, static_cast<int>(j));
+    const int k = trackmodes::auxSendIndex(*mx, s.mixer[j].id);
+    v.push_back({k, static_cast<int>(j), s.mixer[j].id == out && k < 0});
     if (v.size() >= static_cast<size_t>(kMaxStripSends)) break;
   }
   return v;
@@ -3981,6 +4494,22 @@ void addStripSend(Song& x, ObjectId from, ObjectId to, float level) {
   }
   trackmodes::addReturnSendsTo(x, from);
 }
+// Checkpoint 57 (N56-02): a send that is off while the track plays into its return, drawn dimmed as the
+// reference draws it: a faint cap and rail, no value arc, a faint pointer at the kept level. Clips' strip
+// only (ui::Knob and the plugin editors are left as they are). `p` is the knob's top left.
+void offSendKnob(ImDrawList* dl, ImVec2 p, float r, float norm) {
+  const auto& P = pal();
+  const ImVec2 c(p.x + r, p.y + r);
+  const float a0 = 3.14159265f * 0.75f, a1 = 3.14159265f * 2.25f, th = 2.0f;
+  dl->AddCircleFilled(c, r - th - 1.0f, theme::withAlpha(P.surface800, 0.45f), 32);
+  dl->PathArcTo(c, r - th * 0.5f, a0, a1, 32);
+  dl->PathStroke(theme::withAlpha(P.dark ? P.field : P.line, 0.55f), 0, th);
+  const float an = a0 + std::clamp(norm, 0.0f, 1.0f) * (a1 - a0);
+  const ImVec2 dir(std::cos(an), std::sin(an));
+  dl->PathLineTo(ImVec2(c.x + dir.x * r * 0.15f, c.y + dir.y * r * 0.15f));
+  dl->PathLineTo(ImVec2(c.x + dir.x * (r - th - 3.0f), c.y + dir.y * (r - th - 3.0f)));
+  dl->PathStroke(theme::withAlpha(P.textFaint, 0.6f), 0, 2.0f);
+}
 // A send knob for a send the track does not have yet: drawn at zero; touching it adds the send (to
 // the return, at zero) under the same widget id, so the drag goes on in the real knob next frame.
 void missingSendKnob(App& a, ObjectId from, int dest, float r) {
@@ -4015,9 +4544,13 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
   // scale, the rest of the strip's height.
   // Checkpoint 55 (gap 2): the In/Out rows across the top of every strip while shown (blank on Main and
   // the returns, so the faders line up), when the strips are tall enough for them.
-  const float ioH = liveio::shown(a) && mh >= 220.0f ? liveio::kStripH : 0.0f;
+  // Checkpoint 56: the labelled rows on tall strips; the compact three rows (names in the hints) on lower ones.
+  // Checkpoint 57 (N56-07): at the default height the labelled From and To (kMidH), not the bare rows.
+  const float ioH = !liveio::shown(a) ? 0.0f : mh >= 360.0f ? liveio::kStripH : mh >= 220.0f ? liveio::kMidH + 8.0f : 0.0f;
   if (ioH > 0 && !master && !letter && t >= 0) {
     liveio::drawBlock(a, dl, t, ImVec2(x + 3, my0 + 4), ImVec2(x + w - 3, my0 + ioH - 4), ImGui::IsWindowHovered());
+  } else if (ioH > 0 && mx) {  // checkpoint 56 (N55-10): a return's Audio To, Main's Cue Out and Master Out
+    liveio::drawMixerBlock(a, dl, mx->id, ImVec2(x + 3, my0 + 4), ImVec2(x + w - 3, my0 + ioH - 4), ImGui::IsWindowHovered());
   }
   const float bottom = my0 + mh, top = my0 + 4 + ioH + (sendsRow ? sendsHeight(s) : 0.0f);
   const float colL = std::min(44.0f, std::floor(w * 0.48f));  // the left column's width
@@ -4032,14 +4565,27 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
     }
     constexpr float kR = 10.0f;
     for (size_t i = 0; i < sends.size(); ++i) {
-      const auto [k, dest] = sends[i];
+      const int k = sends[i].k, dest = sends[i].dest;
       const float col = static_cast<float>(i % 3), rowN = static_cast<float>(i / 3);
       const ImVec2 kp(x + 4 + col * (2 * kR + 6), sy + col * 8.0f + rowN * 30.0f);
       ImGui::SetCursorScreenPos(kp);
       ImGui::PushID(1000 + dest);  // by return (not by send), so a knob keeps its id when its send is made
-      if (k >= 0) ui::ParamKnob("##send", sendParam(mx->id, dest), kR, nullptr, false);
-      else missingSendKnob(a, mx->id, dest, kR);
-      if (ImGui::IsItemHovered()) a.setHint(std::string(i18n::tr("Send to")) + " " + s.mixer[static_cast<size_t>(dest)].name);
+      if (sends[i].routed) {
+        // N55-01: the track plays into this return: its send there is off, greyed, its level kept.
+        // Checkpoint 57 (N56-02): drawn dimmed, as the reference's: no value arc, faint body and pointer.
+        const KeptSend* kept = trackmodes::keptSend(s, mx->id, s.mixer[static_cast<size_t>(dest)].id);
+        offSendKnob(dl, kp, kR, kept ? kept->level / 1.25f : 0.0f);
+        ImGui::InvisibleButton("##send", ImVec2(2 * kR, 2 * kR));
+      } else if (k >= 0) {
+        ui::ParamKnob("##send", sendParam(mx->id, dest), kR, nullptr, false);
+      } else {
+        missingSendKnob(a, mx->id, dest, kR);
+      }
+      if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        a.setHint(sends[i].routed ? std::string(i18n::tr("Send to")) + " " + s.mixer[static_cast<size_t>(dest)].name + ": " +
+                                        i18n::tr("off while the track plays into it (Audio To); its level is kept")
+                                  : std::string(i18n::tr("Send to")) + " " + s.mixer[static_cast<size_t>(dest)].name);
+      }
       if (const char lt = returnLetter(s, dest)) {  // the return's letter in the knob's open foot
         const char ls[2] = {lt, 0};
         const float fz = 9.0f, lw2 = a.fontRegular->CalcTextSizeA(fz, 1e9f, 0, ls).x;
@@ -5008,7 +5554,8 @@ void drawClipGrid(App& a) {
       if (keys::pressed("playlist.paste") && !gClipboard.empty() && !groupCol(t)) a.later([&a, t, k] { placeInSlot(a, gClipboard, t, k, "paste clip"); });
       if (keys::pressed("playlist.duplicate") && !groupCol(t)) a.later([&a, t, k] { duplicateSlot(a, t, k); });
       if (keys::pressed("playlist.insertSpace")) a.later([&a, k] { insertScene(a, k); });
-      if (cmd && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_M, false) && !groupCol(t)) a.later([&a, t, k] { newMidiClip(a, t, k); });
+      // Checkpoint 56 (N55-05): Cmd+Shift+M is the global Insert MIDI clip command (clips.insertMidiClip), which
+      // takes this slot; a second handler here made the clip first and the command then said it could not.
       if (keys::pressed("playlist.mute") && !here.empty()) {
         const ObjectId id = s.playlist[static_cast<size_t>(here.front())].id;
         const bool to = !s.playlist[static_cast<size_t>(here.front())].muted;

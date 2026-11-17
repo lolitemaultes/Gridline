@@ -548,6 +548,19 @@ int main() {
            "song mode: no play line where no clip of the pattern plays");
     expect(patternPlayPos(s, kPat, false, kPat, 77.25) == 77.25 && patternPlayPos(s, kPat2, false, kPat, 77) == -1,
            "pattern mode: the engine's position while that pattern plays, none for another pattern");
+    {  // GitHub #70 (0.7.7): every place the pattern plays: a looping clip's later passes, a clip cut at its start
+      Song l = s;
+      Clip c;
+      c.id = 60, c.pattern = kPat, c.track = 3, c.start = 20 * bar, c.length = 3 * bar, c.loop = true;
+      l.playlist.push_back(c);
+      Clip o;
+      o.id = 61, o.pattern = kPat2, o.track = 3, o.start = 30 * bar, o.length = bar, o.offset = 100;
+      l.playlist.push_back(o);
+      expect(patternPlayPos(l, kPat, true, kNoId, 20.0 * bar + 50.25) == 50.25 && patternPlayPos(l, kPat, true, kNoId, 22.0 * bar + 50.25) == 50.25,
+             "song mode: a looping clip shows the play line on every pass, at the pattern's own position");
+      expect(patternPlayPos(l, kPat2, true, kNoId, 30.0 * bar + 20) == 120 && patternPlayPos(l, kPat2, true, kNoId, 31.0 * bar + 1) == -1,
+             "song mode: a clip cut at its start shows the line where its content plays, none past its end");
+    }
     // T-13: audio clips. One under the first pattern entry (counted on it, no cut); two after the
     // song's patterns overlapping (audio parts cut at their starts and ends).
     auto audio = [&](ObjectId id, int track, Tick start, Tick len) {

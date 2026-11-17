@@ -60,9 +60,15 @@ file(WRITE "${OUT}/input.txt" "5 toasts clear
 83 tracker songzoom fit
 84 tracker page Pattern
 86 save \"${OUT}/after.gridline.json\"
+88 tracker zoom fit
+89 tracker cursor 99 999 0 0
+92 tracker zoom show
+93 tracker dump
+94 tracker order new
+96 tracker dump
 ")
 execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --size 1024x640 --layout tracker --dev-input "${OUT}/input.txt"
-                        --fixed-dt 16 --frames 90 --screenshot "${OUT}/end.ppm"
+                        --fixed-dt 16 --frames 100 --screenshot "${OUT}/end.ppm"
                 RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 240)
 file(WRITE "${OUT}/run.log" "${out}\n---- stderr ----\n${err}")
 if(NOT rc EQUAL 0)
@@ -133,6 +139,25 @@ endif()
 math(EXPR lastLane "${nLanes} - 1")
 if(NOT out MATCHES "tracker songzoom frame 80: view lanes lanes ${nLanes} lanew [0-9]+ first 0 last ${lastLane} scroll 0")
   fail("Fit on the lanes does not show all ${nLanes}")
+endif()
+
+# cp21: Fit with the cursor on the last track's last row: every track still in view, the cursor's
+# track whole and the cursor on the pattern's last row (clamped there, not past it).
+math(EXPR lastTrack "${nTracks} - 1")
+if(NOT out MATCHES "tracker zoom frame 92: step [0-9]+ fit 1 tracks ${nTracks} first 0 last ${lastTrack} cursor ${lastTrack} field 0 inview 1")
+  fail("Fit with the cursor on the last track and row does not keep every track and the cursor in view")
+endif()
+if(NOT out MATCHES "tracker dump frame 93: pattern [0-9]+ rows ([0-9]+) [^\n]* cursor ${lastTrack} ([0-9]+) ")
+  fail("the dump after Fit on the last row")
+endif()
+math(EXPR lastRow "${CMAKE_MATCH_1} - 1")
+if(NOT CMAKE_MATCH_2 EQUAL lastRow)
+  fail("Fit on the last row: the cursor is on row ${CMAKE_MATCH_2}, not the last (${lastRow})")
+endif()
+
+# cp21: a pattern made in the Tracker has the classic 64 rows (the Song page's New).
+if(NOT out MATCHES "tracker dump frame 96: pattern [0-9]+ rows 64 ")
+  fail("a new pattern made in the Tracker does not have 64 rows")
 endif()
 
 # ---- the song is untouched ----

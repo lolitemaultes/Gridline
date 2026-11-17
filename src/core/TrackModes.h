@@ -46,6 +46,16 @@ ObjectId outputOf(const MixerTrack& m);
 // The return tracks, by mixer index in mixer order: the mixer tracks (not the master) that some track
 // reaches by an aux send, a send other than its output. A bus fed only by outputs is not a return.
 std::vector<size_t> returnTracks(const Song& s);
+// Checkpoint 56 (N55-01): the track's output (its first send that is no sidechain or room send) goes to
+// `to`; its other aux sends stay as they are. Checkpoint 57 (N56-01): an aux send to the new output
+// steps out of the track's sends into Song::keptSends (its level and place kept), so it never plays
+// (every send in `sends` plays, in every layout); when the output moves on, it goes back where it was.
+// False (nothing changed) when `to` is the output already or the route would loop.
+bool setOutput(Song& s, ObjectId from, ObjectId to);
+// The send `from` keeps aside while it plays into `to` (Song::keptSends), nullptr when none.
+const KeptSend* keptSend(const Song& s, ObjectId from, ObjectId to);
+// The track's aux send to `to` (a plain send after its output), -1 when it has none.
+int auxSendIndex(const MixerTrack& m, ObjectId to);
 const Channel* linkedChannel(const Song& s, int track);
 // Track of the current arrangement linked to a mixer track as an audio track
 // (-1 = none), and the instrument track of a channel.

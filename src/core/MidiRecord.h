@@ -4,6 +4,7 @@
 // recording, and the typing-keyboard layout (octave, velocity, chord mode).
 // All edits go through Document, so they are undoable.
 #pragma once
+#include <algorithm>
 #include <array>
 #include <functional>
 #include <map>
@@ -174,13 +175,23 @@ class StepRecorder {
   // Returns true when the chord was written (all keys released).
   bool release(Document& doc, ObjectId pattern, ObjectId channel, int pitch);
   void rest() { cursor += step; }  // skip a step
+  // GitHub #71: the arrow keys. Right with keys held makes the chord one step longer (it is
+  // written on release, as one undo step, and the cursor moves past it); with none held it skips
+  // a step. Left with keys held takes a step back off that length (never under the first step);
+  // with none held the cursor moves back one step (nothing deleted).
+  void right();
+  void left();
   // Moves back one step and removes the notes starting there.
   void backspace(Document& doc, ObjectId pattern, ObjectId channel);
   int held() const { return static_cast<int>(down_.size()); }
+  int extraSteps() const { return extra_; }  // steps Right added to the held chord
+  // The length the held chord gets on release (one step when nothing is held).
+  Tick pendingLength() const { return (lengthOverride > 0 ? lengthOverride : std::max<Tick>(1, step)) + extra_ * std::max<Tick>(1, step); }
 
  private:
   std::set<int> down_;
   std::map<int, int> chord_;  // pitch → velocity, collected while keys are down
+  int extra_ = 0;             // GitHub #71: steps added while the keys are held
 };
 
 // K-112c: Capture. The notes played while nothing records are kept (the latest few hundred), so

@@ -832,7 +832,9 @@ void projectScriptsMenuItems(App& a) {
   // N50-09: in Clips, Gridline's own scripts speak of the arrangement, not Studio's playlist.
   auto words = [&a](std::string t, bool user) {
     if (user || !livelook::active(a)) return t;
-    for (const auto& [from, to] : {std::pair<const char*, const char*>{"Playlist", "Arrangement"}, {"playlist", "arrangement"}})
+    // Checkpoint 56 (N55-10): Clips has MIDI clips, never patterns.
+    for (const auto& [from, to] : {std::pair<const char*, const char*>{"Playlist", "Arrangement"}, {"playlist", "arrangement"}, {"Patterns", "MIDI clips"},
+                                   {"patterns", "MIDI clips"}, {"Pattern", "MIDI clip"}, {"pattern", "MIDI clip"}})
       for (size_t at = t.find(from); at != std::string::npos; at = t.find(from, at + std::strlen(to))) t.replace(at, std::strlen(from), to);
     return t;
   };

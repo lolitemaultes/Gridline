@@ -8,6 +8,7 @@
 #include "ClipSource.h"
 #include "ChannelIns.h"
 #include "ClipOps.h"
+#include "SampleTap.h"
 #include "../packs/edison/edison.h"
 #include <algorithm>
 #include <cmath>
@@ -514,7 +515,7 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
       out.hq = stretch::findRenderedClip(rq);
       if (!out.hq && rctx->deferred) *rctx->deferred = true;
       out.hqSemis = chanSemis;
-    } else if (need) {
+    } else if (need && !tap::readsOnly()) {  // K-319: a Track Receipt pass that only measures plays no clip sound
       out.hq = stretch::renderClip(rq, rctx->async);
       out.hqSemis = chanSemis;
     }
@@ -1670,6 +1671,9 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   bool voicesPending = false;
   std::map<std::pair<ObjectId, int>, ClipVoiceSlot> voices;
   auto giveVoice = [&](ProgAudioClip& ac, const ProgChannel& pc, bool live) {
+    if (tap::readsOnly()) {  // K-319: a Track Receipt pass that only measures plays no clip sound
+      return;
+    }
     const bool rubber = ac.engine == stretch::Engine::RubberBand;
     if (!((asyncSamples_ && ac.hq && !(rubber && ac.hq->ready.load(std::memory_order_acquire))) || pc.pitchMoves ||
           (ac.hqNeeded && !ac.hq)))

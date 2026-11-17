@@ -101,6 +101,11 @@ std::string controllerOutputName(const Song& song, ObjectId owner, int slot, int
 // True when an enabled internal controller link drives the parameter (knobs
 // draw a marker and show the live value instead of the stored one).
 bool isModulated(const Song& song, ParamId id);
+// GitHub #60: whether a control shows the engine's live value of a parameter (`live`: the engine
+// has one) instead of the stored one, as every plugin knob does: never while it is being edited;
+// when an internal controller drives it always (controllers run with the transport stopped);
+// when automation drives it while the song plays.
+bool showsLiveValue(const Song& song, ParamId id, bool live, bool playing, bool editing);
 
 // Linear ramp to the latest target over a fixed number of samples, so value
 // jumps don't click. Realtime-safe (no allocation).

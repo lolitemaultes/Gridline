@@ -169,14 +169,93 @@ ObjectId outputOf(const MixerTrack& m) {
 std::vector<size_t> returnTracks(const Song& s) {
   std::set<ObjectId> aux;
   for (const MixerTrack& m : s.mixer) {
-    const ObjectId out = outputOf(m);
-    for (const Send& sd : m.sends)
-      if (!sd.sidechain && !sd.stageRoom && sd.to != out) aux.insert(sd.to);
+    // Every plain send after the output is an aux send.
+    bool pastOut = false;
+    for (const Send& sd : m.sends) {
+      if (sd.sidechain || sd.stageRoom) continue;
+      if (pastOut) aux.insert(sd.to);
+      pastOut = true;
+    }
+  }
+  // Checkpoint 57 (N56-01): a send Clips keeps aside while the track plays into that return.
+  for (const KeptSend& k : s.keptSends) {
+    if (s.mixerTrack(k.mixer)) {
+      aux.insert(k.to);
+    }
   }
   std::vector<size_t> rows;
   for (size_t j = 1; j < s.mixer.size(); ++j)
     if (aux.count(s.mixer[j].id)) rows.push_back(j);
   return rows;
+}
+
+int auxSendIndex(const MixerTrack& m, ObjectId to) {
+  bool pastOut = false;
+  for (size_t i = 0; i < m.sends.size(); ++i) {
+    const Send& sd = m.sends[i];
+    if (sd.sidechain || sd.stageRoom) continue;
+    if (pastOut && sd.to == to) return static_cast<int>(i);
+    pastOut = true;
+  }
+  return -1;
+}
+
+const KeptSend* keptSend(const Song& s, ObjectId from, ObjectId to) {
+  for (const KeptSend& k : s.keptSends) {
+    if (k.mixer == from && k.to == to) {
+      return &k;
+    }
+  }
+  return nullptr;
+}
+
+bool setOutput(Song& s, ObjectId from, ObjectId to) {
+  MixerTrack* m = s.mixerTrack(from);
+  if (!m || from == s.masterId() || from == to || !canRoute(s, from, to) || outputOf(*m) == to) return false;
+  // Checkpoint 57 (N56-01): first the send kept aside while the output played into the old return goes
+  // back where it was, with its level (unless the track has a send there again).
+  const ObjectId old = outputOf(*m);
+  for (size_t i = 0; i < s.keptSends.size(); ++i) {
+    const KeptSend k = s.keptSends[i];
+    if (k.mixer != from || k.to != old) {
+      continue;
+    }
+    s.keptSends.erase(s.keptSends.begin() + static_cast<std::ptrdiff_t>(i));
+    if (old != kNoId && auxSendIndex(*m, old) < 0 && s.mixerTrack(old)) {
+      Send sd{old, k.level, false};
+      sd.preFader = k.preFader;
+      const size_t at = std::min(static_cast<size_t>(std::max(k.index, 1)), m->sends.size());
+      m->sends.insert(m->sends.begin() + static_cast<std::ptrdiff_t>(at), sd);
+    }
+    break;
+  }
+  bool moved = false;
+  for (Send& sd : m->sends) {
+    if (!sd.sidechain && !sd.stageRoom) {
+      sd.to = to;  // the output (its level and pre/post as they were)
+      moved = true;
+      break;
+    }
+  }
+  if (!moved) {
+    m->sends.insert(m->sends.begin(), Send{to, 1.0f, false});
+  }
+  // Then an aux send to the new output steps aside: it would play the track into the return twice. Its
+  // level is kept (Song::keptSends), as the reference greys the send out.
+  if (const int k = auxSendIndex(*m, to); k >= 0) {
+    const Send sd = m->sends[static_cast<size_t>(k)];
+    KeptSend ks;
+    ks.mixer = from, ks.to = to, ks.level = sd.level, ks.preFader = sd.preFader, ks.index = k;
+    for (size_t i = 0; i < s.keptSends.size(); ++i) {
+      if (s.keptSends[i].mixer == from && s.keptSends[i].to == to) {
+        s.keptSends.erase(s.keptSends.begin() + static_cast<std::ptrdiff_t>(i));
+        break;
+      }
+    }
+    s.keptSends.push_back(ks);
+    m->sends.erase(m->sends.begin() + k);
+  }
+  return true;
 }
 
 const MixerTrack* playedMixer(const Song& s, int track) {

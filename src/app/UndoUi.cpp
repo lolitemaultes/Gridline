@@ -152,9 +152,14 @@ bool step(App& a, int dir) {
 
 }  // namespace
 
+unsigned long long gHistoryMoves = 0;
+
+unsigned long long historyMoves() { return gHistoryMoves; }
+
 void install(App& a) {
   App* ap = &a;
   a.doc.onHistoryMove = [ap](int dir, size_t index) {
+    ++gHistoryMoves;
     if (auto* n = dynamic_cast<SelectionNote*>(ap->doc.stepNote(index, NoteSlot::Ui))) restore(*ap, dir < 0 ? n->before : n->after);
     Tracker& t = tr();  // what undo / redo did is not a new step
     t.movedAt = ap->now;

@@ -132,6 +132,10 @@ class Document {
   bool setSend(ObjectId from, ObjectId to, float level);
   bool setSlotPlugin(ObjectId track, int slot, const std::string& pluginType);  // "" clears the slot
   bool moveSlot(ObjectId track, int from, int to);
+  // K-112D D7 (R13-01): removes the Smart Control mappings (Song::smooth.controls) that drive a parameter
+  // of effect slot `slot` of mixer track `owner` (slot < 0: of channel `owner`'s instrument). No step
+  // when there are none. setSlotPlugin and setChannelPlugin call it when the plugin's type changes.
+  void dropSmartControls(ObjectId owner, int slot, const std::string& label);
   // Marks an existing send as sidechain-only (feeds the destination's
   // sidechain input instead of its mix) or back to a normal send.
   bool setSendSidechain(ObjectId from, ObjectId to, bool sidechainOnly);

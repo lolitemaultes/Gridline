@@ -67,8 +67,20 @@ int main() {
     expect(eq && std::string(eq->home[static_cast<int>(Preset::Tracker)].region) == "tracker.lower",
            "an effect editor is hosted in the Tracker lower frame (DSP chain)");
     const layout::Item* syn = layout::findPlugin("gl.synth");
-    expect(syn && std::string(syn->home[static_cast<int>(Preset::Tracker)].region) == "tracker.pages",
-           "an instrument editor is hosted in the Tracker instrument page");
+    // K-106 cp23: the Tracker opens an instrument on its lower band's own screens (Sample or
+    // Instrument editor, Channel frame); the plugin's editor floats from there.
+    expect(syn && syn->home[static_cast<int>(Preset::Tracker)].kind == HomeKind::Inside &&
+               std::string(syn->home[static_cast<int>(Preset::Tracker)].region) == "tracker.lower",
+           "an instrument opens inside the Tracker's lower band");
+    bool trackerInstruments = true;
+    for (const PluginInfo& info : pluginCatalog()) {
+      const layout::Item* it = info.hidden || (info.kind != PluginKind::Generator && info.kind != PluginKind::NoteFx) ? nullptr : layout::findPlugin(info.type);
+      if (it) {
+        const layout::Home& h = it->home[static_cast<int>(Preset::Tracker)];
+        trackerInstruments &= h.kind == HomeKind::Inside && std::string(h.region) == "tracker.lower";
+      }
+    }
+    expect(trackerInstruments, "every instrument and note effect opens inside the Tracker's lower band");
   }
 
   // Studio opens the windows it opens today, and only those.

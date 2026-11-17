@@ -756,6 +756,7 @@ bool Document::setChannelPlugin(ObjectId id, const std::string& pluginType) {
                                }),
                 links.end());
     setModLinks(std::move(links), "replace channel instrument");
+    dropSmartControls(id, -1, "replace channel instrument");  // K-112D D7 (R13-01)
   }
   endGroup();
   if (ok) notePlaced(id, -1, pluginType);
@@ -1223,6 +1224,8 @@ bool Document::setSlotPlugin(ObjectId track, int slot, const std::string& plugin
     if (!p || p->kind != PluginKind::Effect) return false;
   }
   const char* label = pluginType.empty() ? "remove effect" : "insert effect";
+  const MixerTrack* before = song_.mixerTrack(track);
+  const bool typeChanged = before && before->slots[static_cast<size_t>(slot)].plugin.type != pluginType;
   beginGroup(label);
   bool ok = editMixerTrack(track, label, [&](MixerTrack& t) {
     EffectSlot& s = t.slots[static_cast<size_t>(slot)];
@@ -1240,6 +1243,11 @@ bool Document::setSlotPlugin(ObjectId track, int slot, const std::string& plugin
                                }),
                 links.end());
     setModLinks(std::move(links), label);
+    // K-112D D7 (R13-01): a Smart Control mapped to the removed or replaced plugin is dropped (the
+    // screen control goes back to the pane's own pick); it never drives the new plugin's parameter.
+    if (typeChanged) {
+      dropSmartControls(track, slot, label);
+    }
   }
   endGroup();
   if (ok) notePlaced(track, slot, pluginType);
@@ -1284,16 +1292,46 @@ bool Document::moveSlot(ObjectId track, int from, int to) {
     for (const auto& p : song_.patterns)
       for (const auto& l : p.automation) any = any || hits(l.owner, l.index);
     for (const auto& l : song_.links) any = any || hits(l.owner, l.index);
+    for (const auto& c : song_.smooth.controls) {  // K-112D D7 (R13-01)
+      any = any || hits(c.owner, c.index);
+    }
     if (any)
       editSong("move effect", [&](Song& x) {
         for (auto& c : x.automations) remap(c.owner, c.index);
         for (auto& p : x.patterns)
           for (auto& l : p.automation) remap(l.owner, l.index);
         for (auto& l : x.links) remap(l.owner, l.index);
+        for (auto& c : x.smooth.controls) {  // Smart Controls follow their plugin
+          remap(c.owner, c.index);
+        }
       });
   }
   endGroup();
   return ok;
+}
+
+void Document::dropSmartControls(ObjectId owner, int slot, const std::string& label) {
+  auto hit = [&](const SmartControlMap& c) {
+    if (c.owner != owner) {
+      return false;
+    }
+    if (slot < 0) {
+      return c.index >= kChannelPluginBase && c.index < kNoteFxBase;  // the instrument's parameters
+    }
+    uint32_t sl = 0;
+    return slotOf(c.index, sl) && sl == static_cast<uint32_t>(slot);
+  };
+  bool any = false;
+  for (const auto& c : song_.smooth.controls) {
+    any = any || hit(c);
+  }
+  if (!any) {
+    return;
+  }
+  editSong(label, [&](Song& x) {
+    auto& v = x.smooth.controls;
+    v.erase(std::remove_if(v.begin(), v.end(), hit), v.end());
+  });
 }
 
 bool Document::setSendSidechain(ObjectId from, ObjectId to, bool sidechainOnly) {

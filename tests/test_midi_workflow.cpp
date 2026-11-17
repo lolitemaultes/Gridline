@@ -498,6 +498,40 @@ int main() {
     st.backspace(doc, p2, ch);
     expect(st.cursor == 48 && doc.song().pattern(p2)->notes.at(ch).size() == 2, "step record: backspace removes the last step");
   }
+  {
+    // GitHub #71: Left moves the step cursor back; Right with keys held lengthens the chord.
+    StepRecorder st;
+    st.step = 24;  // the 1/16 grid at 96 ticks a beat
+    const ObjectId p4 = doc.addPattern("Steps 71");
+    st.right(), st.right(), st.right();
+    st.left();
+    expect(st.cursor == 48 && !doc.song().pattern(p4)->notes.count(ch), "step record: Left moves the cursor back a step, deleting nothing");
+    st.left(), st.left(), st.left();
+    expect(st.cursor == 0, "step record: Left stops at the start");
+    const size_t before = doc.history().position();
+    st.press(60, 100);
+    st.right(), st.right();  // C held, Right twice: three steps, a dotted eighth
+    expect(st.pendingLength() == 72 && st.cursor == 0, "step record: Right with a key held lengthens the note, the cursor waits");
+    st.release(doc, p4, ch, 60);
+    const auto& n1 = doc.song().pattern(p4)->notes.at(ch);
+    expect(n1.size() == 1 && n1[0].start == 0 && n1[0].length == 72 && st.cursor == 72 && st.extraSteps() == 0,
+           "step record: released, the note covers three steps and the cursor moves past it");
+    expect(doc.history().position() == before + 1, "step record: the lengthened note is one undo step");
+    st.press(64, 90);
+    st.press(67, 90);
+    st.right(), st.right(), st.left();  // a chord: two steps on, one back
+    st.release(doc, p4, ch, 64);
+    st.release(doc, p4, ch, 67);
+    const auto& n2 = doc.song().pattern(p4)->notes.at(ch);
+    expect(n2.size() == 3 && n2[1].start == 72 && n2[1].length == 48 && n2[2].start == 72 && n2[2].length == 48 && st.cursor == 120,
+           "step record: a held chord grows and shrinks as one, Left never under the first step");
+    st.press(72, 80);
+    st.left();
+    st.release(doc, p4, ch, 72);
+    expect(doc.song().pattern(p4)->notes.at(ch).back().length == 24 && st.cursor == 144, "step record: Left on a one-step chord leaves it one step");
+    doc.undo();
+    expect(doc.song().pattern(p4)->notes.at(ch).size() == 3, "step record: undo takes back one entry");
+  }
 
   // ---------------------------------------------------------------- K-112c: capture
   {

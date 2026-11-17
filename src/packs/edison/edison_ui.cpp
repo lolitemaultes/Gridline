@@ -402,7 +402,7 @@ Audio& clipboard() {
   return clip;
 }
 
-void runEdit(App& a, Session& s, const std::string& label, std::function<Content(const Content&)> op, std::optional<Range> follow) {
+void runEdit(App& a, Session& s, const std::string& label, std::function<Content(const Content&)> op, EditMap map) {
   if (s.job.active()) {
     say(s, "Busy: " + s.job.label);
     return;
@@ -411,9 +411,9 @@ void runEdit(App& a, Session& s, const std::string& label, std::function<Content
   const std::string dir = audioDir(a), name = displayName(a, s);
   Session* sp = &s;
   App* ap = &a;
-  const Range was = s.sel, cur = clampRange(c, s.sel);
-  if (follow && (cur.empty() || follow->a != cur.a || follow->b != cur.b)) follow.reset();  // only the selection follows
-  launch(a, s, label, [c, op, dir, name, sp, ap, label, follow, was]() -> std::function<void()> {
+  const Range was = s.sel;
+  const int64_t wasCursor = s.cursor;
+  launch(a, s, label, [c, op, dir, name, sp, ap, label, map, was, wasCursor]() -> std::function<void()> {
     Content next = op(c);
     if (next.audio == c.audio && next.markers.size() == c.markers.size() && next.regions.size() == c.regions.size() &&
         next.loopStart == c.loopStart && next.loopEnd == c.loopEnd) {
@@ -422,12 +422,14 @@ void runEdit(App& a, Session& s, const std::string& label, std::function<Content
       if (sameMarkers) return [sp, label]() { say(*sp, label + ": nothing to change"); };
     }
     auto saved = saveVersion(next, dir, name);
-    const std::optional<Range> after = follow ? std::optional<Range>(rangeAfterEdit(c, next, *follow)) : std::nullopt;
-    return [sp, ap, next, saved, label, after, was]() {
-      sp->hist.push(label, next);
-      const bool same = after && sp->sel.a == was.a && sp->sel.b == was.b;  // not changed while the edit ran
-      sp->sel = same ? *after : clampRange(next, sp->sel);
-      sp->cursor = std::min(sp->cursor, next.frames());
+    const Range after = mapSelection(c, next, map, was);
+    const int64_t cursorAfter = mapFrame(c, next, map, wasCursor);
+    return [sp, ap, next, saved, label, after, was, wasCursor, cursorAfter]() {
+      const bool same = sp->sel.a == was.a && sp->sel.b == was.b && sp->cursor == wasCursor;  // not changed while the edit ran
+      const Range selAfter = same ? after : clampRange(next, sp->sel);
+      sp->hist.push(label, next, clampRange(sp->hist.cur(), was), selAfter);
+      sp->sel = selAfter;
+      sp->cursor = same ? cursorAfter : std::min(sp->cursor, next.frames());
       if (sp->viewStart + sp->viewLen > static_cast<double>(next.frames()) * 1.05 || sp->viewLen <= 0) zoomAll(*sp);
       applySaved(*ap, *sp, saved.first, saved.second, "Loupe: " + label);
     };
@@ -435,7 +437,8 @@ void runEdit(App& a, Session& s, const std::string& label, std::function<Content
 }
 
 void applyNow(App& a, Session& s, const std::string& label, const Content& next) {
-  s.hist.push(label, next);
+  s.hist.push(label, next, s.sel, clampRange(next, s.sel));
+  s.sel = clampRange(next, s.sel);
   startCommit(a, s, "Loupe: " + label);
 }
 
@@ -443,7 +446,7 @@ void undo(App& a, Session& s) {
   if (s.job.active() || !s.hist.canUndo()) return;
   std::string l = s.hist.undoLabel();
   s.hist.undo();
-  s.sel = clampRange(s.cur(), s.sel);
+  s.sel = clampRange(s.cur(), s.hist.sel() ? *s.hist.sel() : s.sel);  // GitHub #69: the selection the edit started from
   startCommit(a, s, "Loupe: undo " + l);
   say(s, "Undo: " + l);
 }
@@ -452,7 +455,7 @@ void redo(App& a, Session& s) {
   if (s.job.active() || !s.hist.canRedo()) return;
   std::string l = s.hist.redoLabel();
   s.hist.redo();
-  s.sel = clampRange(s.cur(), s.sel);
+  s.sel = clampRange(s.cur(), s.hist.sel() ? *s.hist.sel() : s.sel);  // GitHub #69: the selection the edit left
   startCommit(a, s, "Loupe: redo " + l);
   say(s, "Redo: " + l);
 }

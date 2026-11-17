@@ -254,8 +254,11 @@ struct DevHeaderMix {
   int frame = -1;
 };
 DevHeaderMix& devHeaderMix();
-// True when the parameter has a MIDI controller link.
+// True when the parameter has a MIDI controller link or an internal controller link.
 bool paramLinked(App& a, ParamId pid);
+// GitHub #60: the value a control shows for a parameter it is not editing: the engine's live value
+// while automation or an internal controller drives it (showsLiveValue), else `stored`.
+double shownValue(App& a, ParamId pid, double stored);
 }  // namespace pui
 
 }  // namespace gl

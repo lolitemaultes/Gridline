@@ -21,7 +21,7 @@ using banner::kCamD;
 using Clock = std::chrono::steady_clock;
 
 constexpr int kMaxEdges = 4;         // per facet in the wireframe
-constexpr double kSkipSeconds = 1.6; // a click's glide from where the banner was to the next state
+constexpr double kSkipSeconds = 0.8; // a click's glide from where the banner was to the next state (a transition: 2x round 2)
 
 V3 sub(V3 a, V3 b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 float dot(V3 a, V3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }

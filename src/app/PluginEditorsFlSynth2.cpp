@@ -586,7 +586,9 @@ void editorMidiOutFl(App& a, const PluginTarget& t, float width) {
       std::snprintf(lbl, sizeof lbl, "%s %d", types[std::clamp(ival(st, moKnob(k, MoKnobType)), 0, 4)], ival(st, moKnob(k, MoKnobNumber)));
       if (skin::button("##cfg", F.p(x + 72, y + 4), F.sz(78, 20), K, lbl, false, lf(F, 8))) ImGui::OpenPopup("##knobcfg");
       if (ImGui::IsItemHovered()) a.setHint("Set up this controller (type, number, channel, range)");
-      std::string v = describeParam(a.doc.song(), t.pid(moKnob(k, MoKnobValue)))->format(val(st, moKnob(k, MoKnobValue)));
+      // GitHub #60: the value as automation or a linked controller sets it (the wheel follows too).
+      const ParamId vp = t.pid(moKnob(k, MoKnobValue));
+      std::string v = describeParam(a.doc.song(), vp)->format(pui::shownValue(a, vp, val(st, moKnob(k, MoKnobValue))));
       skin::text(dl, F.p(x + 74, y + 30), skin::hex(0x797F83), v.c_str(), lf(F, 8));
       if (ImGui::BeginPopup("##knobcfg")) {
         ImGui::TextDisabled(i18n::tr("Controller %d"), k + 1);
@@ -600,7 +602,8 @@ void editorMidiOutFl(App& a, const PluginTarget& t, float width) {
     } else {
       skin::wheel(a, t, MoVelocity, F.p(x, y), 70 * F.s, K, skin::WheelBigLine);
       skin::text(dl, F.p(x + 74, y + 8), K.text, "Velocity", lf(F, 8));
-      std::string v = describeParam(a.doc.song(), t.pid(MoVelocity))->format(val(st, MoVelocity));
+      const ParamId vp = t.pid(MoVelocity);
+      std::string v = describeParam(a.doc.song(), vp)->format(pui::shownValue(a, vp, val(st, MoVelocity)));
       skin::text(dl, F.p(x + 74, y + 30), skin::hex(0x797F83), v.c_str(), lf(F, 8));
     }
     ImGui::PopID();

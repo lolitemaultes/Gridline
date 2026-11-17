@@ -459,7 +459,10 @@ void recordOptionsMenu(App& a) {
   if (ImGui::MenuItem(i18n::tr("Record window..."))) recordcard::openWindow(a);
   audioRecordFilterMenu(a);  // J-8: what to record (audio / audio editor / notes / automation)
   ImGui::SeparatorText(i18n::tr("Punch and count-in"));
-  ImGui::MenuItem(i18n::tr("Punch in/out at the time selection"), nullptr, &a.recPunch);
+  // Checkpoint 56 (N55-04): Clips punches at its loop brace, and keeps its own switch (clips.punch).
+  if (ImGui::MenuItem(clips ? i18n::tr("Punch in/out at the loop brace") : i18n::tr("Punch in/out at the time selection"), nullptr, &a.recPunch) && clips) {
+    a.settings.set("clips.punch", a.recPunch);
+  }
   j31::recordingRollItems(a);
   // N48-15 (checkpoint 49): in Clips the Count-in switch is the row beside this submenu: here only its length.
   if (ImGui::BeginMenu(clips ? i18n::tr("Count-in length") : i18n::tr("Count-in"))) {

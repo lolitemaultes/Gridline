@@ -280,4 +280,8 @@ bool isModulated(const Song& song, ParamId id) {
   return l && l->enabled && isControllerSource(song, l->sourceOwner, l->sourceSlot);
 }
 
+bool showsLiveValue(const Song& song, ParamId id, bool live, bool playing, bool editing) {
+  return live && !editing && (playing || isModulated(song, id));
+}
+
 }  // namespace gl

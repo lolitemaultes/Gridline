@@ -523,6 +523,22 @@ struct Send {
   }
 };
 
+// K-112c checkpoint 57 (N56-01): an aux send the Clips layout keeps aside while the track's output (Audio
+// To) plays into that same return, as the reference greys that send out and keeps its level. It is not
+// in MixerTrack::sends, so it never plays (every send in `sends` plays and adds up, in every layout);
+// when Audio To moves on, Clips puts it back at `index` with its level. Saved in the "live" object as
+// "keptSends", only when there are some; other layouts and older versions ignore it.
+struct KeptSend {
+  ObjectId mixer = kNoId;  // the sending mixer track
+  ObjectId to = kNoId;     // the return (the track's output now)
+  float level = 1.0f;
+  bool preFader = false;
+  int index = 0;  // its place in the track's sends, to put it back where it was
+  bool operator==(const KeptSend& o) const {
+    return mixer == o.mixer && to == o.to && level == o.level && preFader == o.preFader && index == o.index;
+  }
+};
+
 inline constexpr int kEffectSlots = 10;
 // Mixer strip docking (MixerTrack::dock): left (with the master), middle, right.
 enum class MixerDock : int { Left = -1, Middle = 0, Right = 1 };
@@ -835,6 +851,7 @@ struct Song {
   // current one, named "Arrangement"); its entry at `currentArrangement` only
   // carries the name, the others keep their content (core/Arrangements.h).
   LiveSettings live;
+  std::vector<KeptSend> keptSends;  // K-112c checkpoint 57 (N56-01): Clips' sends kept aside (song-wide, not per arrangement)
   SmoothView smooth;  // K-112D (not compared)
   std::vector<Arrangement> arrangements;
   int currentArrangement = 0;
@@ -941,7 +958,7 @@ struct Song {
            timeSigDen == o.timeSigDen && swing == o.swing && swingNotes == o.swingNotes && groove == o.groove && slidesAnyColour == o.slidesAnyColour && masterPitch == o.masterPitch && nextId == o.nextId &&
            channels == o.channels && patterns == o.patterns && playlist == o.playlist && tracks == o.tracks &&
            mixer == o.mixer && links == o.links && modLinks == o.modLinks && automations == o.automations &&
-           markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live &&
+           markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live && keptSends == o.keptSends &&
            arrangements == o.arrangements && cycleStart == o.cycleStart && cycleEnd == o.cycleEnd && cycleOn == o.cycleOn && projectEnd == o.projectEnd &&
            currentArrangement == o.currentArrangement && panLaw == o.panLaw && stage == o.stage && stageRooms == o.stageRooms && trackReceipt == o.trackReceipt && flExportGridline == o.flExportGridline && flOrigin == o.flOrigin &&
            smooth.controls == o.smooth.controls;  // K-112D D6: Smart Control mappings (not the Library pane: view state)

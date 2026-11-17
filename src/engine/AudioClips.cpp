@@ -112,6 +112,7 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
                       int64_t clock, int from, int len, float* L, float* R, double pitchSemis) {
   if (clips.empty() || len <= 0) return;
   const double chanRatio = pitchSemis != 0 ? std::pow(2.0, pitchSemis / 12.0) : 1.0;
+  const bool readsOnly = tap::readsOnly();
   const stretch::SincTable& rt = stretch::sincTable(stretch::Quality::Realtime);  // built by the program builder
   const double t0 = map.tickAfterSamples(anchorTick, static_cast<double>(clock), sr);
   const double t1 = map.tickAfterSamples(anchorTick, static_cast<double>(clock + len), sr);
@@ -151,6 +152,9 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
         else
           tap::mark(slot, sa, sb);
       }
+    }
+    if (readsOnly) {  // K-319: a Track Receipt pass that only measures: no sound
+      continue;
     }
     const bool dIn = declickIn == 2 ? false : declickIn == 1 || declickIn == 3 || c.srcStart > 0;
     const bool dOut = declickOut == 2 ? false : declickOut == 1 || declickOut == 3 || c.cutEnd;

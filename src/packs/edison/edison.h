@@ -17,6 +17,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include "../../core/PluginInfo.h"
@@ -92,6 +93,30 @@ Range rangeOrAll(const Content& c, Range r);
 // or varispeed of the selection, a paste over it): it starts where it did and its end moves by the
 // change in the file's length, so a selection keeps covering what it became. Clamped to `after`.
 Range rangeAfterEdit(const Content& before, const Content& after, Range edited);
+// GitHub #69 (every tool): how an edit moved the audio, so the selection and the cursor keep
+// covering the same sound afterwards.
+//  Replace: the range `r` became audio of another length (r's length plus the change in the
+//    file's length): a stretch, varispeed or paste over it, a cut or delete (none left), an insert
+//    at a point (an empty r). Positions inside r scale with it; after it they move by the change.
+//  Crop: only `r` is kept (trim to selection).  TrimSilence: only the part louder than
+//    `thresholdDb` is kept, found in the audio before the edit (trim side silence).
+//  Scale: the whole file changed its sample rate (resample).
+//  None: positions stay where they were (clamped to the new length).
+struct EditMap {
+  enum Kind : uint8_t { None = 0, Replace, Crop, TrimSilence, Scale };
+  Kind kind = None;
+  Range r;
+  double thresholdDb = -60;
+  static EditMap replace(Range r) { return EditMap{Replace, r, -60}; }
+  static EditMap crop(Range r) { return EditMap{Crop, r, -60}; }
+  static EditMap trimSilence(double db) { return EditMap{TrimSilence, {}, db}; }
+  static EditMap scale() { return EditMap{Scale, {}, -60}; }
+};
+int64_t mapFrame(const Content& before, const Content& after, const EditMap& m, int64_t pos);
+// A selection through the edit: empty stays empty, and one whose audio the edit removed is empty.
+Range mapSelection(const Content& before, const Content& after, const EditMap& m, Range sel);
+// The part of the audio louder than thresholdDb (what trimSilence keeps); empty when all is quieter.
+Range loudRange(const Audio& a, double thresholdDb);
 
 // Undo history of an editor (snapshots; audio buffers are shared between
 // snapshots, so an edit that keeps the audio costs nothing).
@@ -102,20 +127,31 @@ class History {
   const Content& cur() const { return cur_; }
   void reset(Content c);
   void push(const std::string& label, Content next);
+  // GitHub #69: with the selections around the edit; undo brings `selBefore` back, redo `selAfter`.
+  void push(const std::string& label, Content next, Range selBefore, Range selAfter);
   bool undo();
   bool redo();
+  // The selection kept with the version shown (set by the push with selections, or undo / redo
+  // back to one); none for a version pushed without.
+  const std::optional<Range>& sel() const { return curSel_; }
   bool canUndo() const { return !undo_.empty(); }
   bool canRedo() const { return !redo_.empty(); }
-  std::string undoLabel() const { return undo_.empty() ? std::string() : undo_.back().first; }
-  std::string redoLabel() const { return redo_.empty() ? std::string() : redo_.back().first; }
+  std::string undoLabel() const { return undo_.empty() ? std::string() : undo_.back().label; }
+  std::string redoLabel() const { return redo_.empty() ? std::string() : redo_.back().label; }
   // Labels of the undo steps, oldest first.
   std::vector<std::string> labels() const;
   uint64_t serial() const { return serial_; }  // changes with every content change
   void setMaxLevels(size_t n) { max_ = n < 1 ? 1 : n; }
 
  private:
+  struct Step {
+    std::string label;
+    Content content;
+    std::optional<Range> sel;
+  };
   Content cur_;
-  std::vector<std::pair<std::string, Content>> undo_, redo_;
+  std::optional<Range> curSel_;
+  std::vector<Step> undo_, redo_;
   size_t max_ = 64;
   uint64_t serial_ = 1;
 };

@@ -2,6 +2,7 @@
 // (TrackerFrame.cpp), the pattern editor and its pages (TrackerPages.cpp): bevelled boxes and
 // buttons in the theme's roles, numbers in the monospaced face, two-digit hex numbering.
 #pragma once
+#include <initializer_list>
 #include "../../third_party/imgui/imgui.h"
 
 namespace gl {
@@ -11,6 +12,35 @@ class App;
 namespace gl::trackerview {
 
 ImFont* monoFont(App& a);
+// K-106 cp23 (polish): the band's one spacing scale, in pixels at the interface size. Every screen
+// of the Tracker spaces its parts from these (before: 1, 2, 3, 4, 6, 8 and 10 px chosen place by place).
+namespace space {
+constexpr float kLine = 1;   // between the rows of a stacked button column
+constexpr float kGap = 2;    // between peer controls (a row of buttons, a field and its arrows, two boxes)
+constexpr float kPad = 4;    // inside a box: its edge to its controls
+constexpr float kGroup = 6;  // between groups in one row or column (a label and its controls, two sets)
+}  // namespace space
+// cp23: a label column wide enough for the widest of `labels` (translated) plus `pad`, so the fields
+// of a group of rows (steppers, readouts) start at one edge.
+float labelColumn(App& a, std::initializer_list<const char*> labels, float pad = space::kGroup);
+// cp21 (look audit): hard pixel edges for the lines and shapes drawn while it lives (check ticks,
+// radio diamonds, arrows, envelopes, wave and shape glyphs), as the classic screens draw them: the
+// draw list's anti-aliasing is off in its scope and back as it was after. Text is not affected.
+class Aliased {
+ public:
+  explicit Aliased(ImDrawList* dl) : dl_(dl), flags_(dl ? dl->Flags : 0) {
+    if (dl_) dl_->Flags &= ~(ImDrawListFlags_AntiAliasedLines | ImDrawListFlags_AntiAliasedLinesUseTex | ImDrawListFlags_AntiAliasedFill);
+  }
+  ~Aliased() {
+    if (dl_) dl_->Flags = flags_;
+  }
+  Aliased(const Aliased&) = delete;
+  Aliased& operator=(const Aliased&) = delete;
+
+ private:
+  ImDrawList* dl_;
+  ImDrawListFlags flags_;
+};
 // The values' ink (the hot colour, darkened until it reads on the sunken fields).
 ImU32 valueInk();
 // cp18 (were file-local): a radio row (a small diamond, lit when on, then the label) and a check

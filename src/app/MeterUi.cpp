@@ -284,7 +284,10 @@ void drawEditor(App& a) {
   ImGui::AlignTextToFramePadding();
   ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Note"));
   ImGui::SameLine(0, theme::kS2);
-  if (ui::BeginCombo("##mden", std::to_string(den).c_str(), 64)) {
+  // cp54 (polish): the Note menu ends on the Common grid's right edge (four 46 px buttons 4 px apart), as
+  // the Done button does (it ended 11 px short of both).
+  const float gridRight = ImGui::GetWindowPos().x + labelW + 4 * 46.0f + 3 * 4.0f;
+  if (ui::BeginCombo("##mden", std::to_string(den).c_str(), std::max(48.0f, std::round(gridRight - ImGui::GetCursorScreenPos().x)))) {
     for (int d : {2, 4, 8, 16})
       if (ImGui::Selectable(std::to_string(d).c_str(), d == den)) apply(num, d);
     ImGui::EndCombo();

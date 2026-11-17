@@ -326,7 +326,7 @@ void drawToolDialogs(App& a, Session& s) {
         const Stretch m = static_cast<Stretch>(s.tMode);
         const int qq = s.tQuality;
         runEdit(a, s, s.tMode == 1 ? "Varispeed" : "Time stretch / pitch shift", [tr, f, st, m, qq](const Content& c) { return stretch(c, tr, f, st, m, qq); },
-                tr);
+                EditMap::replace(tr));
       }
       break;
     }
@@ -483,7 +483,7 @@ void drawToolDialogs(App& a, Session& s) {
       if (footer(std::lround(s.rate()) != s.rsRate)) {
         const double nr = s.rsRate;
         const int qq = s.rsQuality;
-        runEdit(a, s, "Resample", [nr, qq](const Content& c) { return resample(c, nr, qq); });
+        runEdit(a, s, "Resample", [nr, qq](const Content& c) { return resample(c, nr, qq); }, EditMap::scale());
       }
       break;
     }
@@ -609,7 +609,7 @@ void drawToolDialogs(App& a, Session& s) {
           Content base = c;
           if (c.frames() == 0 && !c.audio) base = makeContent(makeAudio(44100, 2, 0));
           return insertSilence(base, at, static_cast<int64_t>(sec * base.rate()));
-        });
+        }, EditMap::replace({at, at}));
       }
       break;
     }

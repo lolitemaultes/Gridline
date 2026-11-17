@@ -628,22 +628,23 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
     if (ImGui::MenuItem(i18n::tr("Cut"), "Ctrl+X", false, sel && !busy)) {
       clipboard() = extract(c.a(), s.sel);
       Range r = s.sel;
-      runEdit(a, s, "Cut", [r](const Content& cc) { return deleteRange(cc, r); });
+      runEdit(a, s, "Cut", [r](const Content& cc) { return deleteRange(cc, r); }, EditMap::replace(r));
     }
     if (ImGui::MenuItem(i18n::tr("Copy"), "Ctrl+C", false, has)) clipboard() = extract(c.a(), tr);
     if (ImGui::MenuItem(i18n::tr("Paste"), "Ctrl+V", false, clipboard().frames() > 0 && !busy)) {
       Audio clip = clipboard();
       Range sl = s.sel;
       int64_t at = s.cursor;
-      runEdit(a, s, "Paste", [clip, sl, at](const Content& cc) { return sl.empty() ? insertAudio(cc, at, clip) : replaceRange(cc, sl, clip); });
+      runEdit(a, s, "Paste", [clip, sl, at](const Content& cc) { return sl.empty() ? insertAudio(cc, at, clip) : replaceRange(cc, sl, clip); },
+              EditMap::replace(sl.empty() ? Range{at, at} : sl));
     }
     if (ImGui::MenuItem(i18n::tr("Delete"), "Del", false, sel && !busy)) {
       Range r = s.sel;
-      runEdit(a, s, "Delete", [r](const Content& cc) { return deleteRange(cc, r); });
+      runEdit(a, s, "Delete", [r](const Content& cc) { return deleteRange(cc, r); }, EditMap::replace(r));
     }
     if (ImGui::MenuItem(i18n::tr("Trim to selection"), "Ctrl+T", false, sel && !busy)) {
       Range r = s.sel;
-      runEdit(a, s, "Trim to selection", [r](const Content& cc) { return cropTo(cc, r); });
+      runEdit(a, s, "Trim to selection", [r](const Content& cc) { return cropTo(cc, r); }, EditMap::crop(r));
     }
     ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("Fade in"), nullptr, false, has && !busy)) runEdit(a, s, "Fade in", [tr, k = static_cast<Curve>(s.fadeCurve)](const Content& cc) { return fadeIn(cc, tr, k); });

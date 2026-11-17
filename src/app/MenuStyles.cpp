@@ -84,7 +84,14 @@ const md::Menu& navigateDef() {
       md::item(N_("Next marker"), "transport.nextMarker", [](App& a) { gotoMarker(a, 1); }).only([](App& a) { return logicplug::active(a); }),
       md::separator(),
       md::item(N_("Cycle"), "transport.cycle", [](App& a) { toggleCycle(a); })
-          .check([](App& a) { return a.playlist.selEnd > a.playlist.selStart; }),
+          .check([](App& a) { return a.playlist.selEnd > a.playlist.selStart; })
+          .only([](App& a) { return !livelook::active(a); }),
+      // K-112c checkpoint 56 (N55-04): Clips' loop brace, apart from the time selection, as the reference's.
+      md::item(N_("Loop"), "transport.cycle", [](App& a) { livelook::toggleLoop(a); })
+          .check([](App& a) { return livelook::loopOn(a); })
+          .only([](App& a) { return livelook::active(a); }),
+      md::item(N_("Loop selection"), "playlist.loopMarkers", [](App& a) { livelook::loopFromSelection(a); })
+          .only([](App& a) { return livelook::active(a); }),
       md::item(N_("Set the cycle to the selected regions"), "transport.cycleSelection", [](App& a) { cycleToSelection(a); })
           .when([](App& a) { return !a.playlist.selected.empty(); }).only([](App& a) { return logicplug::active(a); }),
       // Checkpoint 47: the locators work with Cycle off too, as the reference's (Go To and Set Locators)
@@ -423,11 +430,7 @@ const md::Menu& clipsNavigateDef() {
       md::item(N_("Clip and device bands"), "view.detail", [](App& a) { livelook::toggleDetail(a); })
           .check([](App& a) { return bandShown(a, "live.clip") || bandShown(a, "live.device"); }),
       md::toggle(N_("Mixer"), "view.mixer", [](App& a) { return &a.showMixer; }),
-      // Checkpoint 55 (gap 2): the In/Out section on the strips and the Arrangement's headers.
-      md::item(N_("In/Out"), "view.io", [](App& a) { liveio::toggle(a); }).check([](App& a) { return liveio::shown(a); }),
-      // Checkpoint 55 (gap 9): the info corner is a toggle, as the reference's Info View (Shift+?).
-      md::item(N_("Info View"), "view.quickHelp", [](App& a) { layoutui::setRegionVisible(a, "live.info", !bandShown(a, "live.info")); })
-          .check([](App& a) { return bandShown(a, "live.info"); }),
+      // Checkpoint 56 (N55-10): In/Out and Info View are in the View menu, as the reference's.
       md::separator(),
   };
   return m;

@@ -759,6 +759,19 @@ bool moveSlotTo(Document& d, ObjectId fromTrack, int fromSlot, ObjectId toTrack,
     }
     for (auto& l : x.links) remap(l.owner, l.index);
     for (auto& au : x.automations) remap(au.owner, au.index);
+    // K-112D D7 (R13-01): Smart Control mappings follow their plugin too. One whose effect leaves its
+    // strip (moved to another track) is dropped: the strip's screen control goes back to the pane's
+    // pick, and never drives what now sits in the old slot.
+    auto& sc = x.smooth.controls;
+    sc.erase(std::remove_if(sc.begin(), sc.end(),
+                            [&](const SmartControlMap& c) {
+                              int sl = 0;
+                              return !copy && fromTrack != toTrack && slotParamOf(c.owner, c.index, fromTrack, sl) && sl == fromSlot;
+                            }),
+             sc.end());
+    for (auto& c : sc) {
+      remap(c.owner, c.index);
+    }
   });
   return true;
 }

@@ -78,15 +78,38 @@ int main() {
   expect(ease(0) == 0 && ease(1) == 1 && std::fabs(ease(0.5f) - 0.5f) < 1e-6f, "the ease runs 0 to 1");
   expect(ease(0.01f) < 1e-4f && 1 - ease(0.99f) < 1e-4f, "the ease starts and ends at rest");
 
-  // Timing: the loop is the segments' sum (round 2: slow, about 72 s); where() finds each segment;
-  // next skips one; every state holds or moves for at least 3 s.
+  // Timing: the loop is the segments' sum; where() finds each segment; next skips one.
+  // Round 3: every change between shapes (a morph) takes half its round 2 time; every state (a
+  // hold, with its own sway, turn, wriggle or twist) keeps its round 2 time, so it moves at the
+  // same speed. Round 2's times, in order: 73 s in all.
   const auto& segs = segments();
-  double L = 0;
-  float shortest = 1e9f;
-  for (const Segment& s : segs) L += s.seconds, shortest = std::min(shortest, s.seconds);
-  std::printf("# loop %.1f s, %zu segments, the shortest %.1f s\n", L, segs.size(), static_cast<double>(shortest));
-  expect(std::fabs(L - loopSeconds()) < 1e-9 && L >= 60 && L <= 75, "the loop is 60 to 75 s");
-  expect(shortest >= 3.0f, "no state or change shorter than 3 s");
+  const float round2[] = {7, 7, 4, 7, 4, 4, 3.5f, 8, 3, 5, 4, 6, 7, 3.5f};
+  constexpr size_t kRound2 = sizeof(round2) / sizeof(round2[0]);
+  double L = 0, morphs = 0;
+  float shortestHold = 1e9f, shortestMorph = 1e9f;
+  bool halved = segs.size() == kRound2, same = segs.size() == kRound2;
+  for (size_t i = 0; i < segs.size(); ++i) {
+    const Segment& s = segs[i];
+    L += s.seconds;
+    const float r2 = i < kRound2 ? round2[i] : 0;
+    if (s.from != s.to) {
+      morphs += s.seconds, shortestMorph = std::min(shortestMorph, s.seconds);
+      if (std::fabs(s.seconds - r2 * 0.5f) > 1e-6f) {
+        halved = false;
+      }
+    } else {
+      shortestHold = std::min(shortestHold, s.seconds);
+      if (std::fabs(s.seconds - r2) > 1e-6f) {
+        same = false;
+      }
+    }
+  }
+  std::printf("# loop %.2f s (round 2: 73 s), %zu segments: changes %.2f s in all (the shortest %.2f s), holds %.2f s (the shortest %.2f s)\n", L,
+              segs.size(), morphs, static_cast<double>(shortestMorph), L - morphs, static_cast<double>(shortestHold));
+  expect(std::fabs(L - loopSeconds()) < 1e-9 && std::fabs(L - 58.5) < 1e-6, "the loop is 58.5 s");
+  expect(halved, "every change between shapes takes half its round 2 time");
+  expect(same, "every state holds for its round 2 time (its motion at the same speed)");
+  expect(shortestHold >= 4.0f && shortestMorph >= 1.5f, "no state shorter than 4 s, no change shorter than 1.5 s");
   expect(segs.size() >= 12, "the sequence has its steps");
   double start = 0;
   bool found = true, skips = true;
@@ -130,17 +153,36 @@ int main() {
   expect(joined, "no jumps between segments or at the loop point");
   expect(still, "no change of speed at a segment boundary or the loop point");
 
-  // Slow: at 60 frames a second no corner moves more than a world unit a frame (the text is 34 wide).
-  float fastest = 0;
-  double fastAt = 0;
+  // At 60 frames a second: while a state holds, no corner moves more than a world unit a frame (the
+  // text is 34 wide), as in round 2. The changes run twice as fast (round 3), so they may go up to
+  // twice that. Smooth: the speed itself changes gradually from frame to frame (no snap or pop, in
+  // a change as in a hold).
+  float fastestHold = 0, fastestMorph = 0, jolt = 0;
+  double fastAt = 0, joltAt = 0;
+  float prev = -1;
   for (double t = 0; t < L; t += h) {
     evaluate(m, t, a.data(), sc.data());
     evaluate(m, t + h, b.data(), sc.data());
     const float mv = maxMove(a, b);
-    if (mv > fastest) fastest = mv, fastAt = t;
+    const Segment& sg = segs[static_cast<size_t>(where(t).segment)];
+    if (sg.from != sg.to) {
+      if (mv > fastestMorph) {
+        fastestMorph = mv, fastAt = t;
+      }
+    } else {
+      fastestHold = std::max(fastestHold, mv);
+    }
+    if (prev >= 0 && std::fabs(mv - prev) > jolt) {
+      jolt = std::fabs(mv - prev), joltAt = t;
+    }
+    prev = mv;
   }
-  std::printf("# the fastest corner: %.3f units a frame at %.2f s (%s)\n", static_cast<double>(fastest), fastAt, segs[static_cast<size_t>(where(fastAt).segment)].name);
-  expect(fastest < 1.0f, "slow: no corner moves more than one unit a 60 Hz frame");
+  std::printf("# the fastest corner: %.3f units a frame in a hold, %.3f in a change (at %.2f s, %s); the largest change of speed %.4f a frame at %.2f s\n",
+              static_cast<double>(fastestHold), static_cast<double>(fastestMorph), fastAt, segs[static_cast<size_t>(where(fastAt).segment)].name,
+              static_cast<double>(jolt), joltAt);
+  expect(fastestHold < 1.0f, "a hold moves as before: no corner more than one unit a 60 Hz frame");
+  expect(fastestMorph < 2.0f, "a change at twice the speed: no corner more than two units a 60 Hz frame");
+  expect(jolt < 0.06f, "smooth: the speed changes by under 0.06 units a frame from one 60 Hz frame to the next");
 
   expect(wireAt(0) == 0 && wireAt(L - 1e-3) == 0, "the wireframe is off at the loop ends");
   float wmax = 0;

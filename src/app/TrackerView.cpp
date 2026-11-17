@@ -1900,8 +1900,8 @@ void stepPattern(App& a, int d) {
     say(i18n::tr("This is the last pattern, and it is empty: write in it first"));
     return;
   }
-  const int bars = last.bars, spb = last.stepsPerBar;  // the same length as the pattern before it
-  const ObjectId id = a.doc.addPattern("Pattern " + std::to_string(n + 1), bars, spb);
+  // cp21: the classic 64 rows (before: the length of the pattern before it).
+  const ObjectId id = a.doc.addPattern(ops::nextPatternName(song), kNewPatternBars, kNewPatternSteps);
   if (id) {
     a.selectPattern(id);
     say(i18n::tr("A new, empty pattern (Ins puts it in the song)"));
@@ -2031,24 +2031,33 @@ void patternEditor(App& a) {
     // A song of audio clips only has no pattern: the Song page shows its clips; a pattern made here
     // starts the rows (one undo step, as Pattern > New pattern).
     const bool audioOnly = !v.p && std::any_of(a.doc.song().playlist.begin(), a.doc.song().playlist.end(), [](const Clip& c) { return c.kind != ClipKind::Pattern; });
-    // The message in the space above the button row; the button under its plate (never on it).
+    // cp21 (R21-09): the classic centred message box (a raised bevel frame, its title in the bold
+    // face, the line under it, New pattern inside the box) in place of the shared empty-state plate
+    // with its large mark, the one modern panel left on the Pattern page.
+    const auto& EP = pal();
+    ImDrawList* edl = ImGui::GetWindowDrawList();
     const float fs = ImGui::GetFontSize();
-    const float bw = std::round(fs * 9), bh = std::round(fs + 10), gapB = 12;
-    const float fullH = std::max(av.y, 90.0f), msgH = !v.p ? fullH - (bh + gapB) * 2 : fullH;
-    ui::EmptyState(ImGui::GetWindowDrawList(), p0, ImVec2(p0.x + av.x, p0.y + msgH), !v.p ? "No pattern" : "No channels",
-                   !v.p ? (audioOnly ? "Audio and automation clips only (the Song page shows them). A new pattern starts rows of notes"
-                                     : "Make a pattern to write notes in rows")
-                        : "Add a track (the header's Add track) to write notes in rows");
+    const float bw = std::round(fs * 9), bh = std::round(fs + 10);
+    const char* title = i18n::tr(!v.p ? "No pattern" : "No channels");
+    const char* line = i18n::tr(!v.p ? (audioOnly ? "Audio and automation clips only (the Song page shows them). A new pattern starts rows of notes"
+                                                  : "Make a pattern to write notes in rows")
+                                     : "Add a track (the header's Add track) to write notes in rows");
+    const float boxW = std::round(std::min(std::max(120.0f, av.x - 16), fs * 34));
+    const float wrapW = boxW - 24;
+    const float lineH = a.fontRegular->CalcTextSizeA(fs, FLT_MAX, wrapW, line).y;
+    const float boxH = std::round(10 + fs + 8 + lineH + (!v.p ? 10 + bh : 0) + 12);
+    const ImVec2 q0(std::round(p0.x + (av.x - boxW) * 0.5f), std::round(p0.y + std::max(8.0f, (std::max(av.y, 90.0f) - boxH) * 0.45f)));
+    const ImVec2 q1(q0.x + boxW, q0.y + boxH);
+    bevelBox(edl, q0, q1, false);
+    edl->AddText(a.fontBold ? a.fontBold : a.fontRegular, fs, ImVec2(q0.x + 12, q0.y + 10), EP.text, title);
+    edl->AddText(a.fontRegular, fs, ImVec2(q0.x + 12, q0.y + 10 + fs + 8), EP.textDim, line, nullptr, wrapW);
     if (!v.p) {
-      // (the plate's height as ui::EmptyState lays it out: the mark when there is room, the title, the line)
-      const bool mark = msgH >= 190 && av.x >= 160;
-      const float total = (mark ? 80 + theme::kS4 : 0) + theme::kFontBody + 2 + theme::kS1 + theme::kFontCaption + 2;
-      const ImVec2 b0(std::round(p0.x + (av.x - bw) * 0.5f), std::round(p0.y + (msgH + total) * 0.5f + theme::kS2 + gapB));
-      if (trackerview::bevelButton(a, "##newpat", "New pattern", b0, ImVec2(b0.x + bw, b0.y + bh), false, "A new, empty pattern to write in")) {
+      const ImVec2 b0(std::round(q0.x + (boxW - bw) * 0.5f), std::round(q1.y - 12 - bh));
+      if (trackerview::bevelButton(a, "##newpat", "New pattern", b0, ImVec2(b0.x + bw, b0.y + bh), false, "A new, empty pattern of 64 rows to write in")) {
         // The new pattern goes in the song too when it has no pattern clips (entry 00).
         const bool first = !trk::hasPatternEntries(a.doc.song());
         a.doc.beginGroup("new pattern");
-        const ObjectId id = a.doc.addPattern(ops::nextPatternName(a.doc.song()));
+        const ObjectId id = a.doc.addPattern(ops::nextPatternName(a.doc.song()), kNewPatternBars, kNewPatternSteps);  // cp21: 64 rows
         if (id && first) a.doc.addClip(id, 0, 0);
         a.doc.endGroup(false);
         if (id) a.selectPattern(id);
@@ -2191,7 +2200,9 @@ void patternEditor(App& a) {
   // the view edge to edge.
   const float viewW = std::max(40.0f, areaW - numW * 2);
   const float extra = handW > 0 ? 0.0f : std::max(0.0f, std::floor((viewW - tracksW(M, shown)) / static_cast<float>(std::max<size_t>(1, shown))));
-  std::vector<float> trackX, trackW, inset;  // each track's left edge (from the area's left, before scroll), width, cell inset
+  // (cp21: kept between frames, so drawing allocates nothing once they have grown to the tracks)
+  static std::vector<float> trackX, trackW, inset;  // each track's left edge (from the area's left, before scroll), width, cell inset
+  trackX.clear(), trackW.clear(), inset.clear();
   float x = 0;
   for (const trk::Track& t : v.tracks) {
     trackX.push_back(x);
@@ -2400,7 +2411,9 @@ void patternEditor(App& a) {
     if (row < 0 || row >= v.g.rows) continue;
     const float y = body0 + static_cast<float>(i) * rowH + std::round((rowH - pf) * 0.5f);
     const std::string t = trk::rowText(row, hex);
-    const ImU32 col = !gBeats || row % v.g.rowsPerBeat == 0 ? P.text : P.textFaint;
+    // cp21 (R21-06): the edit row's number in the values' ink, whatever the beat (before, an off-beat
+    // edit row, the last row among them, kept the faint number and the eye lost the row).
+    const ImU32 col = row == s.cur.row ? valueInk() : !gBeats || row % v.g.rowsPerBeat == 0 ? P.text : P.textFaint;
     const float tw = mono->CalcTextSizeA(pf, FLT_MAX, 0, t.c_str()).x;
     dl->AddText(mono, pf, ImVec2(std::round(a0.x + numW - 6 - tw), y), col, t.c_str());
     dl->AddText(mono, pf, ImVec2(std::round(a1.x - numW + 6), y), col, t.c_str());
@@ -2438,17 +2451,36 @@ void patternEditor(App& a) {
     const ImVec2 h0(tx, a0.y), h1(tx + tw, a0.y + headH - 1);
     trackerview::bevelBox(dl, h0, h1, false);  // a raised header, as the band above
     dl->AddRectFilled(h0, ImVec2(h1.x, h0.y + 3), theme::rgb(ch->color, muted ? 0.35f : 1.0f));
-    const std::string name = gNumbers ? std::to_string(sg.channelIndex(ch->id) + trackBase(a)) + " " + ch->name : ch->name;
-    const float lampW = std::round(fs * 0.7f);
+    const std::string number = std::to_string(sg.channelIndex(ch->id) + trackBase(a));
+    const std::string name = gNumbers ? number + " " + ch->name : ch->name;
+    float lampW = std::round(fs * 0.7f);
     // cp17: a track zoomed narrow keeps its number, name start and lamp; the column buttons go.
     const bool narrowHead = tw < cwH * 11;
     const float btnW = narrowHead ? 0.0f : std::round(cwH * 1.6f);
-    theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(h0.x + 6, std::round(h0.y + 3 + (headH - 4 - fs) * 0.5f)), tw - 12 - lampW - btnW * 2 - 8,
-                        muted ? P.textFaint : static_cast<int>(ti) == s.cur.track ? P.text : P.textDim, name.c_str());
-    const ImVec2 l0(h1.x - 6 - lampW, std::round(h0.y + 3 + (headH - 4 - lampW) * 0.5f)), l1(l0.x + lampW, l0.y + lampW);
+    const ImU32 nameInk = muted ? P.textFaint : static_cast<int>(ti) == s.cur.track ? P.text : P.textDim;
+    // cp21 (review R21-01): a narrow header (Fit, the far zoom steps) always shows the track's number
+    // in the monospaced face, the name after it only while a few letters fit. Before, Fit left most
+    // headers with the lamp alone, and nothing told the tracks apart.
+    const float edge = narrowHead ? 3.0f : 6.0f;
+    const float numFs = narrowHead ? std::min(fs, std::max(9.0f, pf)) : fs;
+    const float numTw = mono->CalcTextSizeA(numFs, FLT_MAX, 0, number.c_str()).x;
+    if (narrowHead && tw - edge * 2 - numTw - 3 < lampW) lampW = 0;  // too narrow for both: the number wins
+    const float textY = std::round(h0.y + 3 + (headH - 4 - fs) * 0.5f);
+    if (narrowHead) {
+      dl->AddText(mono, numFs, ImVec2(h0.x + edge, std::round(h0.y + 3 + (headH - 4 - numFs) * 0.5f)), nameInk, number.c_str());
+      const float room = tw - edge * 2 - numTw - 4 - (lampW > 0 ? lampW + 3 : 0);
+      if (room >= a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, "Abc").x) {
+        theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(h0.x + edge + numTw + 4, textY), room, nameInk, ch->name.c_str());
+      }
+    } else {
+      theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(h0.x + 6, textY), tw - 12 - lampW - btnW * 2 - 8, nameInk, name.c_str());
+    }
+    const ImVec2 l0(h1.x - edge - lampW, std::round(h0.y + 3 + (headH - 4 - lampW) * 0.5f)), l1(l0.x + lampW, l0.y + lampW);
     // cp16: a lamp in a sunken bevel (lit green while it plays, dark when muted, the solo colour).
-    trackerview::bevelBox(dl, ImVec2(l0.x - 1, l0.y - 1), ImVec2(l1.x + 1, l1.y + 1), true);
-    dl->AddRectFilled(ImVec2(l0.x + 1, l0.y + 1), ImVec2(l1.x - 1, l1.y - 1), soloed ? P.solo : muted ? theme::withAlpha(P.led, 0.15f) : P.led);
+    if (lampW > 0) {
+      trackerview::bevelBox(dl, ImVec2(l0.x - 1, l0.y - 1), ImVec2(l1.x + 1, l1.y + 1), true);
+      dl->AddRectFilled(ImVec2(l0.x + 1, l0.y + 1), ImVec2(l1.x - 1, l1.y - 1), soloed ? P.solo : muted ? theme::withAlpha(P.led, 0.15f) : P.led);
+    }
     // The column buttons show while the pointer is over the header (they are rarely used).
     const bool headHov = ImGui::IsMouseHoveringRect(h0, h1) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
     ImGui::PushID(static_cast<int>(ti));
@@ -2865,16 +2897,56 @@ const char* menuWords(const char* label) {
     if (f && static_cast<size_t>(f - label) < textLen) any = true;
   }
   if (!any) return label;
-  static std::map<std::string, std::string> made;
-  auto it = made.find(label);
-  if (it != made.end()) return it->second.c_str();
-  if (made.size() > 4096) made.clear();  // labels made on the fly (file names) never pile up
+  // cp22: the labels made live in two generations, so a pointer handed out is never freed while it
+  // may still be read. Labels made on the fly (file names) never pile up: when the current
+  // generation is full it becomes the old one and the one before it is freed, at most once a frame.
+  // A label asked for again moves (its node, so its storage stays put) from the old generation to
+  // the current one; so every label returned in a frame is in the current generation for the rest
+  // of that frame and survives at least until a later frame's swap, and labels used every frame stay.
+  static std::map<std::string, std::string> gens[2];
+  static int curGen = 0, swappedFrame = -1;
+  constexpr size_t kGeneration = 2048;
+  std::map<std::string, std::string>& cur = gens[curGen];
+  if (const auto it = cur.find(label); it != cur.end()) {
+    return it->second.c_str();
+  }
+  std::map<std::string, std::string>& old = gens[curGen ^ 1];
+  if (const auto it = old.find(label); it != old.end()) {
+    return cur.insert(old.extract(it)).position->second.c_str();
+  }
   std::string text(label, textLen);
-  for (const auto& w : kWords)
-    for (size_t at = text.find(w.first); at != std::string::npos; at = text.find(w.first, at + std::strlen(w.second)))
+  for (const auto& w : kWords) {
+    for (size_t at = text.find(w.first); at != std::string::npos; at = text.find(w.first, at + std::strlen(w.second))) {
       text.replace(at, std::strlen(w.first), w.second);
-  if (idPos) text += idPos;
-  return made.emplace(label, std::move(text)).first->second.c_str();
+    }
+  }
+  if (idPos) {
+    text += idPos;
+  }
+  const int frame = ImGui::GetCurrentContext() ? ImGui::GetFrameCount() : -2;
+  if (cur.size() >= kGeneration && frame != swappedFrame) {
+    swappedFrame = frame;
+    old.clear();  // nothing returned this frame lives there (it moved to the current generation)
+    curGen ^= 1;
+  }
+  return gens[curGen].emplace(label, std::move(text)).first->second.c_str();
+}
+
+// cp22 (dev): menuWords under load (the label-invalidation fix): many labels, the right words, and
+// a label in use keeps its text.
+static bool menuWordsSelfCheck() {
+  const char* keep = menuWords("Piano roll##keep");
+  const std::string keepText = keep;
+  bool ok = keepText == "Roll##keep";
+  for (int i = 0; i < 6000 && ok; ++i) {
+    const std::string l = "Playlist " + std::to_string(i);
+    const char* m = menuWords(l.c_str());
+    ok = m && std::string(m) == "Song " + std::to_string(i);
+    if (i % 500 == 0) {
+      ok = ok && std::string(menuWords("Piano roll##keep")) == keepText;  // used now and then: kept
+    }
+  }
+  return ok;
 }
 
 void devCommand(App& a, const std::vector<std::string>& args, int frame) {
@@ -2997,6 +3069,9 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     const auto& chs = a.doc.song().channels;
     const int i = arg(2, 0);
     if (args.size() > 1 && args[1] == "move" && i >= 0 && i < static_cast<int>(chs.size())) a.doc.moveChannel(chs[static_cast<size_t>(i)].id, arg(3, 0));
+  } else if (cmd == "menuwords") {  // cp22: menuWords' label generations checked under load
+    std::printf("tracker menuwords frame %d: %s\n", frame, menuWordsSelfCheck() ? "ok" : "FAIL");
+    std::fflush(stdout);
   } else if (cmd == "perf") {  // cp16: the Tracker's frame timers (PerfScope), mean and 95th percentile per part
     perfRoll();
     const Perf& p = perf();

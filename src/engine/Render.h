@@ -89,6 +89,10 @@ struct RenderJob {
   std::function<void(double)> progress;
   const std::atomic<bool>* cancel = nullptr;
   FrozenAudio frozen;  // K-87: frozen units play their renders (the song is freeze::exportView's)
+  // K-319: Leave / Wrap tails: when set, a block counts as "loud" when this returns true after it
+  // (instead of when its output is over silenceDb). The Track Receipt's pass, which renders
+  // only the sample voices, runs its tail while they still read their files.
+  std::function<bool()> tailBusy;
 };
 
 struct RenderResult {

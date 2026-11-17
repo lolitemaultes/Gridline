@@ -369,7 +369,9 @@ void routePluginWindows(App& a) {
     else
       panelRequested().insert(Key{&a, t.key()});  // could not open: Gridline's panel stays
   };
-  if (a.settingsChannel != kNoId) route(PluginTarget{a.settingsChannel, -1});
+  // K-106 cp22: in the Tracker the settings asked for are its lower band's; an installed plugin's own
+  // window opens from "Open plugin window" only.
+  if (a.settingsChannel != kNoId && !trackereditors::ownsChannelWindow(a)) route(PluginTarget{a.settingsChannel, -1});
   if (a.fxEditor.first != kNoId) route(PluginTarget{a.fxEditor.first, a.fxEditor.second});
 }
 
@@ -380,7 +382,8 @@ std::vector<std::pair<ObjectId, int>> openPluginWindowList(App& a) {
   auto add = [&v](ObjectId owner, int slot) {
     if (owner != kNoId && std::find(v.begin(), v.end(), std::make_pair(owner, slot)) == v.end()) v.emplace_back(owner, slot);
   };
-  const std::pair<ObjectId, int> chan{a.settingsChannel, -1};
+  // K-106 cp22: the Tracker's lower band shows a channel's settings, not a plugin window (saved as none)
+  const std::pair<ObjectId, int> chan{trackereditors::ownsChannelWindow(a) ? kNoId : a.settingsChannel, -1};
   for (const PluginTarget& t : openHostedEditorTargets())  // installed plugins' own windows
     if (t.node == 0 && std::make_pair(t.owner, t.slot) != chan && std::make_pair(t.owner, t.slot) != a.fxEditor) add(t.owner, t.slot);
   // K-106 cp18-cp20: in the Tracker the current instrument's screen in the lower band (Sample editor,
@@ -411,7 +414,13 @@ void reopenPluginWindowList(App& a, const std::vector<std::pair<ObjectId, int>>&
       fx = {owner, slot};
     }
   }
-  if (chan != kNoId) a.settingsChannel = chan;
+  if (chan != kNoId) {
+    if (!trackereditors::ownsChannelWindow(a)) {
+      a.settingsChannel = chan;
+    } else if (isHostedType(s.channel(chan)->plugin.type)) {  // K-106 cp22: the Tracker reopens the plugin's own window
+      hostedui::reopenLater(PluginTarget{chan, -1});
+    }  // (a built-in's settings stay closed: the band and its window open when asked for, never from a load)
+  }
   if (fx.first != kNoId) a.fxEditor = fx;
 }
 

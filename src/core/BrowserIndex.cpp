@@ -286,9 +286,18 @@ double warpTempo(const std::string& name, double seconds, double setTempo, doubl
     }
   }
   if (seconds >= 0.5 && seconds <= 64.0) {
+    // Checkpoint 57 (N56-03): from the length alone, each whole-bar count (1, 2, 4, 8, 16 bars of 4/4)
+    // is read at the tempo it implies, and a reading counts when that tempo is a plausible loop tempo
+    // (kLengthOnlyMin..kLengthOnlyMax) that comes out whole (loops are made at whole tempos: 4 bars of
+    // 10.67 s are 90.00), or when it is within kLengthOnlyStretch of the Set's (checkpoint 56). Of
+    // those, the one nearest the Set's tempo. A held tone of 3.3 s reads 72.73 or 145.45: neither whole
+    // nor near 120, so no tempo (it plays at its own speed, once).
+    const double ref = setTempo > 0 ? setTempo : 120.0;
     for (int bars : {1, 2, 4, 8, 16}) {
       const double b = bars * 4 * 60.0 / seconds;
-      if (b >= 75.0 && b <= 165.0 && (best <= 0 || std::fabs(b - setTempo) < std::fabs(best - setTempo))) {
+      const bool whole = b >= kLengthOnlyMin && b <= kLengthOnlyMax && std::fabs(b - std::round(b)) <= kWholeTempoSlack;
+      const bool near = setTempo > 0 && b >= 60.0 && b <= 200.0 && std::fabs(b / setTempo - 1.0) <= kLengthOnlyStretch;
+      if ((whole || near) && (best <= 0 || std::fabs(b - ref) < std::fabs(best - ref))) {
         best = b;
       }
     }

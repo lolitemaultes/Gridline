@@ -13,6 +13,7 @@
 #include "ScriptUi.h"
 #include "ChordEditorUi.h"
 #include "J31Ui.h"
+#include "LiveIo.h"
 #include "LiveLook.h"
 #include "LogicPlugins.h"
 #include "../core/Automation.h"
@@ -126,9 +127,10 @@ void App::startPlayback() {
     // Armed tracks capture from the transport's first block: the punch range and the recording flag
     // are set before Play, not a UI frame later in processAudioRecording (a slow frame there lost the
     // start of the take, and a first loop pass started late).
-    const bool sel = playlist.selEnd > playlist.selStart;
+    Tick ra = 0, rb = 0;  // checkpoint 56: Clips punches at its loop brace
+    const bool sel = livelook::recordRange(*this, ra, rb);
     if (recPunch && sel && engine.mode() == PlayMode::Song)
-      engine.setPunch(static_cast<double>(playlist.selStart), static_cast<double>(playlist.selEnd));
+      engine.setPunch(static_cast<double>(ra), static_cast<double>(rb));
     else
       engine.setPunch(0, 0);
     engine.setRecording(true);
@@ -266,6 +268,18 @@ void App::playedNoteOff(ObjectId channel, int pitch, double stamp) {
   }
 }
 
+void App::stepRecordKey(int dir) {
+  const Tick g = piano.effGrid > 0 ? piano.effGrid : snapTicks(doc.song(), piano.snap);
+  stepRecorder.step = std::max<Tick>(1, g);
+  if (dir > 0) {
+    stepRecorder.right();
+  } else if (dir < 0) {
+    stepRecorder.left();
+  } else {
+    stepRecorder.backspace(doc, curPattern, selChannel);
+  }
+}
+
 void App::processMidi() {
   if (midi && midi->update()) publishMidi();  // the MIDI service answered (or stopped answering)
   if (projectLoadBlocking() && midi) {  // J-167: no input reaches the project behind the loading window
@@ -273,7 +287,8 @@ void App::processMidi() {
     midi->poll();
     return;
   }
-  engine.setMidiTarget(logicplug::liveChannel(*this));  // R10-03: Smooth's armed / monitored track
+  // checkpoint 56 (N55-10): Clips' MIDI monitor; R10-03: Smooth's armed / monitored track
+  engine.setMidiTarget(logicplug::active(*this) ? logicplug::liveChannel(*this) : liveio::midiTarget(*this, selChannel));
 
   // ---- recording session follows the transport ----
   // K-226: from the count-in on, so notes played in its last beat (pickups) are kept.
@@ -300,13 +315,16 @@ void App::processMidi() {
       st.start = std::max<Tick>(0, static_cast<Tick>(std::llround(std::max(0.0, at))));
       if (engine.mode() == PlayMode::Song) {
         st.pickup = MeterMap(s).segAt(st.start).beat;
-        const bool sel = playlist.selEnd > playlist.selStart;
+        Tick ra = 0, rb = 0;  // checkpoint 56: Clips loops at its brace while Loop is on, punches at it
+        const bool sel = livelook::recordRange(*this, ra, rb);
         if (sel) {
-          st.loopStart = playlist.selStart;
-          st.loopEnd = playlist.selEnd;
+          if (!livelook::active(*this) || livelook::loopOn(*this)) {
+            st.loopStart = ra;
+            st.loopEnd = rb;
+          }
           if (recPunch) {
-            st.punchIn = playlist.selStart;
-            st.punchOut = playlist.selEnd;
+            st.punchIn = ra;
+            st.punchOut = rb;
           }
         }
         if (logicplug::active(*this)) {  // R05-02: onto the selected track (R10-03: the armed one first)

@@ -782,6 +782,46 @@ int main() {
     expect(s3.a == sel.a && s3.len() == 1000, "a paste over the selection leaves the pasted audio selected");
     const Range s4 = rangeAfterEdit(c, makeContent(makeAudio(44100, 1, 20000)), sel);
     expect(s4.a <= s4.b && s4.b <= 20000, "the range never runs past the end of the edited file");
+    // GitHub #69 (every tool): the selection follows each edit that moves the audio.
+    const Content x4 = stretch(c, sel, 4.0, 0.0, Stretch::Elastic, 1);
+    const Range m1 = mapSelection(c, x4, EditMap::replace(sel), sel);
+    expect(m1.a == sel.a && m1.len() == x4.frames() - c.frames() + sel.len(), "stretch: the selection is the stretched audio (x4)");
+    const Range later{40000, 42000};  // a selection after the stretched part moves by the change
+    const Range m2 = mapSelection(c, x4, EditMap::replace(sel), later);
+    expect(m2.a == later.a + (x4.frames() - c.frames()) && m2.len() == later.len(), "stretch: a selection after it moves with the audio");
+    expect(mapFrame(c, x4, EditMap::replace(sel), 1000) == 1000, "stretch: the cursor before the stretched part stays");
+    const Content cut = deleteRange(c, sel);
+    expect(mapSelection(c, cut, EditMap::replace(sel), sel).empty() && mapFrame(c, cut, EditMap::replace(sel), 20000) == sel.a,
+           "cut / delete: no selection is left and the cursor is where the audio was taken out");
+    const Content crop = cropTo(c, sel);
+    const Range m3 = mapSelection(c, crop, EditMap::crop(sel), sel);
+    expect(m3.a == 0 && m3.b == sel.len() && m3.b == crop.frames(), "trim to selection: the selection is the whole file that is left");
+    Audio quiet = makeAudio(44100, 1, 3000);
+    for (int64_t i = 1000; i < 2000; ++i) {
+      quiet.L[static_cast<size_t>(i)] = 0.5f;
+    }
+    const Content q = makeContent(quiet), qt = trimSilence(q, -60);
+    const Range m4 = mapSelection(q, qt, EditMap::trimSilence(-60), Range{1200, 1500});
+    expect(qt.frames() == 1000 && m4.a == 200 && m4.b == 500, "trim side silence: the selection keeps the same sound");
+    const Content rs = resample(c, 22050, 0);
+    const Range m5 = mapSelection(c, rs, EditMap::scale(), sel);
+    expect(std::llabs(m5.a - sel.a / 2) <= 1 && std::llabs(m5.b - sel.b / 2) <= 1, "resample: the selection scales with the new rate");
+    const Content ins = insertSilence(c, 10000, 500);
+    const Range m6 = mapSelection(c, ins, EditMap::replace({10000, 10000}), sel);
+    expect(m6.a == sel.a + 500 && m6.b == sel.b + 500 && mapFrame(c, ins, EditMap::replace({10000, 10000}), 10000) == 10000,
+           "insert silence: a selection after the cursor moves past the silence, the cursor stays");
+    expect(mapSelection(c, x4, EditMap{}, Range{}).empty() && mapSelection(c, x4, EditMap{}, sel).a == sel.a, "no map: the selection stays");
+    // Undo brings back the selection the stretch started from; redo the stretched one.
+    History h(c);
+    h.push("Time stretch", x4, sel, m1);
+    h.undo();
+    expect(h.cur().frames() == c.frames() && h.sel() && h.sel()->a == sel.a && h.sel()->b == sel.b, "undo: the selection before the stretch");
+    h.redo();
+    expect(h.cur().frames() == x4.frames() && h.sel() && h.sel()->b == m1.b, "redo: the stretched selection");
+    h.push("Reverse", reverse(h.cur(), m1));
+    expect(!h.sel(), "a step pushed without selections keeps none");
+    h.undo();
+    expect(h.sel() && h.sel()->b == m1.b, "undo back to a version with one brings it");
   }
   return finish();
 }

@@ -66,6 +66,13 @@ inline constexpr int kMaxPendingNotes = 512;
 inline constexpr int kControlBlock = 64;
 inline constexpr int kAudioBuses = 8;  // named buses for bus send / return effects
 inline constexpr int kEngineMaxBlock = 1024;  // largest block the engine renders at once
+// K-317: control blocks in one engine block. Volume / pan automation renders in long blocks with the
+// strip gains of each control block kept here, ramped per control block as with 64-frame blocks.
+inline constexpr int kMaxGainSteps = kEngineMaxBlock / kControlBlock;
+struct GainSteps {
+  float l[kMaxGainSteps] = {}, r[kMaxGainSteps] = {};    // gainL / gainR at each control block's start
+  float xl[kMaxGainSteps] = {}, xr[kMaxGainSteps] = {};  // mixer tracks: xlr / xrl
+};
 // PH-09: host parameters of the plugin build that can be linked to any parameter.
 inline constexpr int kHostMacros = 16;
 // J-131: host parameters of a single-plugin build (Gridline Suite): one per parameter of
@@ -411,6 +418,7 @@ struct ProgChannel {
   bool controller = false;     // instrument has control outputs
   bool stripLinked = false;    // a link drives volume, pan or mute
   mutable float modVolume = 0.78f, modPan = 0;  // (audio thread)
+  mutable GainSteps steps;     // K-317: strip gains per control block of a stepped block (audio thread)
   mutable bool modMuted = false;
   // Note settings (see Channel).
   int polyphony = 0;
@@ -513,6 +521,7 @@ struct ProgMixer {
   bool muteLinked = false;
   bool stripLinked = false;  // a link drives volume or pan
   mutable float modVolume = 0.8f, modPan = 0;  // (audio thread)
+  mutable GainSteps steps;   // K-317: strip gains per control block of a stepped block (audio thread)
   std::vector<ProgSlot> slots;
   mutable std::vector<std::pair<int, float>> sends;  // (mixer index, level); linked levels change (audio thread, no resize)
   std::vector<std::pair<int, float>> sidechain;  // sidechain-only sends (mixer index, level)

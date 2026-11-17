@@ -4,6 +4,7 @@
 #include "Keys.h"
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -49,6 +50,7 @@ struct Job {
   std::string error;  // K-133: why the measurement stopped (guarded by mu); shown to the person
   WorkerBeat beat;    // K-133: each progress step
   StallWatch watch;
+  std::chrono::steady_clock::time_point started;  // K-319: for the time left (UI thread)
   void join() {
     if (worker.joinable()) worker.join();
   }
@@ -173,6 +175,7 @@ void startMeasure(App& a) {
   j.cancel = false;
   j.finished = false;
   j.progress = 0;
+  j.started = std::chrono::steady_clock::now();
   workerstall::start(j.watch, j.beat);
   j.running = true;
   Song song = a.doc.song();
@@ -385,7 +388,20 @@ void measuringPage(App& a) {
   ImGui::TextColored(theme::vec(P.text), "%s", i18n::tr("Playing the project through to measure what each sample voice reads..."));
   ImGui::Spacing();
   ImGui::ProgressBar(static_cast<float>(f), ImVec2(kW, 0), "");
-  ImGui::TextColored(theme::vec(P.textDim), "%d%%", static_cast<int>(f * 100));
+  // K-319: the time left, from the pace so far (once there is a pace to go by).
+  const double elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - J().started).count();
+  std::string left;
+  if (S().demoProgress < 0 && f >= 0.03 && f < 1.0 && elapsed >= 0.5) {
+    const double rest = elapsed * (1.0 - f) / f;
+    char b[96];
+    if (rest < 60) {
+      std::snprintf(b, sizeof b, i18n::tr("about %d s left"), std::max(1, static_cast<int>(std::ceil(rest))));
+    } else {
+      std::snprintf(b, sizeof b, i18n::tr("about %d min left"), static_cast<int>(std::ceil(rest / 60.0)));
+    }
+    left = std::string("  ·  ") + b;
+  }
+  ImGui::TextColored(theme::vec(P.textDim), "%d%%%s", static_cast<int>(f * 100), left.c_str());
   ImGui::Dummy(ImVec2(kW, theme::kS6));
 }
 

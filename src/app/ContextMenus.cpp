@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <map>
 #include <random>
@@ -59,6 +60,8 @@
 #include "Widgets.h"
 #include "Windows.h"
 #include "TrackModeUi.h"
+#include "LayoutPresets.h"
+#include "TrackerLook.h"
 #include "ChopUi.h"
 #include "../packs/PacksUi.h"
 #include "PatternAutoUi.h"
@@ -153,23 +156,58 @@ void drawPrompt() {
   ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.35f), ImGuiCond_Appearing,
                           ImVec2(0.5f, 0.5f));
   // J-54: dialog padding and a right-aligned footer like the other dialogs (Cancel, then the lit OK).
+  // K-106 cp22: in the Tracker the prompt is the classic centred box (as its unsaved and confirm
+  // dialogs): square, a raised bevel frame round a sunken well, the title at the interface size, a
+  // square field and bevel buttons. Same popup, keys and callback; the other layouts are unchanged.
+  const bool classic = layoutui::active() == layout::Preset::Tracker;
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS4));
+  if (classic) {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  }
   const bool open = ImGui::BeginPopupModal("##menuprompt", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar);
-  ImGui::PopStyleVar();
+  ImGui::PopStyleVar(classic ? 3 : 1);
   if (open) {
     constexpr float kFieldW = 320.0f, kButtonW = 88.0f;
-    ImGui::PushFont(app().fontBold, 0.0f);
+    if (classic) {
+      const ImVec2 w0 = ImGui::GetWindowPos(), w1(w0.x + ImGui::GetWindowWidth(), w0.y + ImGui::GetWindowHeight());
+      ImDrawList* wdl = ImGui::GetWindowDrawList();
+      trackerview::bevelBox(wdl, w0, w1, false);
+      trackerview::bevelBox(wdl, ImVec2(w0.x + 3, w0.y + 3), ImVec2(w1.x - 3, w1.y - 3), true);
+      ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+    }
+    ImGui::PushFont(app().fontBold, classic ? ImGui::GetFontSize() : 0.0f);
     ImGui::TextUnformatted(theme::fitText(i18n::tr(prompt.title.c_str()), kFieldW));
     ImGui::PopFont();
     if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    if (classic) {  // the field sunken into the well (the classic edit box; drawn first, the field fills its inside)
+      const ImVec2 f0 = ImGui::GetCursorScreenPos();
+      trackerview::bevelBox(ImGui::GetWindowDrawList(), ImVec2(f0.x - 1, f0.y - 1), ImVec2(f0.x + kFieldW + 1, f0.y + ImGui::GetFrameHeight() + 1), true);
+    }
     ImGui::SetNextItemWidth(kFieldW);
     bool enter = ImGui::InputText("##p", prompt.buf, sizeof prompt.buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-    ui::FocusRing();
+    if (classic) {
+      ImGui::PopStyleVar();  // (no focus glow)
+    } else {
+      ui::FocusRing();
+    }
     ImGui::Dummy(ImVec2(0, theme::kS1));
     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kFieldW - ui::ButtonRowWidth(2, kButtonW));
-    const bool cancel = ui::TextButton("Cancel", false, kButtonW) || ::gl::keys::escapePressed();
+    // A button: the shared text or primary one, or in the Tracker a bevel button.
+    auto button = [&](const char* label, bool primary) {
+      if (!classic) return primary ? ui::PrimaryButton(label, kButtonW) : ui::TextButton(label, false, kButtonW);
+      const ImVec2 p = ImGui::GetCursorScreenPos();
+      const float h = std::round(ImGui::GetFontSize() + 10);
+      ImGui::PushID(label);
+      const bool r = trackerview::bevelButton(app(), "##tpb", label, p, ImVec2(p.x + kButtonW, p.y + h), false, nullptr);
+      ImGui::PopID();
+      ImGui::SetCursorScreenPos(p);
+      ImGui::Dummy(ImVec2(kButtonW, h));
+      return r;
+    };
+    const bool cancel = button(i18n::N_("Cancel"), false) || ::gl::keys::escapePressed();
     ImGui::SameLine(0, theme::kS2);
-    if (ui::PrimaryButton("OK", kButtonW) || enter) {
+    if (button(i18n::N_("OK"), true) || enter) {
       if (prompt.ok) prompt.ok(prompt.buf);
       prompt.ok = nullptr;
       ImGui::CloseCurrentPopup();
@@ -426,6 +464,23 @@ std::vector<EffectSlot> fxChainClip;
 // copy it keeps it, so closing that project does not take the sound away from a later paste.
 std::vector<archive::CopyHold> fxChainHolds;
 
+// K-112D D7 (R13-01): a whole effect chain replaced (cleared, pasted, loaded) as one step; a Smart
+// Control mapped to a plugin that is gone or replaced in its slot is dropped, never retargeted.
+void replaceChain(App& a, ObjectId id, const char* label, const std::function<void(MixerTrack&)>& fn) {
+  const MixerTrack* cur = a.doc.song().mixerTrack(id);
+  if (!cur) return;
+  MixerTrack after = *cur;
+  fn(after);
+  a.doc.beginGroup(label);
+  for (int k = 0; k < kEffectSlots && k < static_cast<int>(after.slots.size()); ++k) {
+    if (cur->slots[static_cast<size_t>(k)].plugin.type != after.slots[static_cast<size_t>(k)].plugin.type) {
+      a.doc.dropSmartControls(id, k, label);
+    }
+  }
+  a.doc.editMixerTrack(id, label, fn);
+  a.doc.endGroup();
+}
+
 std::vector<archive::CopyHold> holdsForChain(const std::vector<EffectSlot>& slots) {
   Song refs;
   MixerTrack t;
@@ -507,7 +562,7 @@ void editDelete(App& a) {
       break;
     case App::EditFocus::Mixer:
       if (const MixerTrack* t = s.mixerTrack(a.selMixer))
-        a.doc.editMixerTrack(t->id, "clear effects", [](MixerTrack& m) { m.slots.assign(kEffectSlots, EffectSlot{}); });
+        replaceChain(a, t->id, "clear effects", [](MixerTrack& m) { m.slots.assign(kEffectSlots, EffectSlot{}); });
       break;
     default:
       if (pianoSelectionCount(a)) pianoEdit(a, "delete notes", [](auto& n, auto& sel) { ops::deleteNotes(n, sel); });
@@ -572,7 +627,7 @@ void editPaste(App& a) {
       break;
     case App::EditFocus::Mixer:
       if (!fxChainClip.empty() && s.mixerTrack(a.selMixer)) {
-        a.doc.editMixerTrack(a.selMixer, "paste effect chain", [](MixerTrack& m) { m.slots = fxChainClip; });
+        replaceChain(a, a.selMixer, "paste effect chain", [](MixerTrack& m) { m.slots = fxChainClip; });
         cacheui::projectUsesMore(a);  // what it refers to now stays with the open project
       }
       break;
@@ -2731,7 +2786,7 @@ void mixerTrackMenu(App& a, size_t index) {
   if (ImGui::BeginMenu(i18n::tr("Effect chain"))) {
     if (ImGui::MenuItem(i18n::tr("Copy effect chain"), keys::shownText("Ctrl+C"))) editCopy(a);
     if (ImGui::MenuItem(i18n::tr("Paste effect chain"), keys::shownText("Ctrl+V"), false, canPaste(a))) editPaste(a);
-    if (ImGui::MenuItem(i18n::tr("Clear all effects"))) a.doc.editMixerTrack(id, "clear effects", [](MixerTrack& m) { m.slots.assign(kEffectSlots, EffectSlot{}); });
+    if (ImGui::MenuItem(i18n::tr("Clear all effects"))) replaceChain(a, id, "clear effects", [](MixerTrack& m) { m.slots.assign(kEffectSlots, EffectSlot{}); });
     // Effect-chain presets from the preset library (yours and imported ones).
     if (ImGui::BeginMenu(i18n::tr("Load effect chain"))) {
       static std::vector<PresetEntry> chains;
@@ -2749,7 +2804,7 @@ void mixerTrackMenu(App& a, size_t index) {
         if (ImGui::MenuItem(e.name.c_str())) {
           ChainPreset c;
           if (loadChain(e.file, c))
-            a.doc.editMixerTrack(id, "load effect chain", [&c](MixerTrack& m) {
+            replaceChain(a, id, "load effect chain", [&c](MixerTrack& m) {
               m.slots.assign(kEffectSlots, EffectSlot{});
               for (size_t k = 0; k < c.slots.size() && k < m.slots.size(); ++k) {
                 m.slots[k].plugin = c.slots[k];

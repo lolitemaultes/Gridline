@@ -112,7 +112,8 @@ int main() {
     float deviceH2 = 0;
     for (const auto& pl : v2)
       if (pl.id == "live.device") deviceH2 = pl.rect.h;
-    expect(deviceH == 188 && deviceH2 == 188, "the Live device band keeps its fixed 188 px height at every size");
+    // K-112c checkpoint 57 (N56-08): 236 px, the clip band's height too (one detail view).
+    expect(deviceH == 236 && deviceH2 == 236, "the Live device band keeps its fixed 236 px height at every size");
   }
   {  // K-112c (round 45): a new Clips set shows one detail band (devices); clip and device bands take turns.
     const layout::Shell& sh = layout::shell(Preset::Live);
@@ -122,6 +123,17 @@ int main() {
            "Clips default: the browser and the device band, no clip band, no mixer band");
     layout::setVisible(sh, st, "live.clip", true);
     expect(layout::visible(sh, st, "live.clip") && !layout::visible(sh, st, "live.device"), "showing the clip band hides the device band");
+    {  // K-112c checkpoint 57 (N56-08): and takes its height: the main view does not jump
+      float clipH = 0, mainH = 0, mainH0 = 0;
+      for (const auto& pl : layout::solve(Preset::Live, 1432, 818, st)) {
+        if (pl.id == "live.clip") clipH = pl.rect.h;
+        if (pl.id == "live.main") mainH = pl.rect.h;
+      }
+      for (const auto& pl : layout::solve(Preset::Live, 1432, 818, {})) {
+        if (pl.id == "live.main") mainH0 = pl.rect.h;
+      }
+      expect(clipH == 236 && mainH == mainH0, "the clip band is as tall as the device band: the main view keeps its height");
+    }
     layout::setVisible(sh, st, "live.device", true);
     expect(!layout::visible(sh, st, "live.clip") && layout::visible(sh, st, "live.device"), "and the other way round");
     {  // K-112c (checkpoint 48): the band toggles stack the clip band over the device band (refs 456, 466)
@@ -133,7 +145,7 @@ int main() {
         if (pl.id == "live.clip") clipY = pl.rect.y, clipH = pl.rect.h;
         if (pl.id == "live.device") devY = pl.rect.y, devH = pl.rect.h;
       }
-      expect(clipY >= 0 && devY > clipY && clipH >= 150 && devH == 188, "stacked: the clip band sits over the device band, both full size");
+      expect(clipY >= 0 && devY > clipY && clipH == 236 && devH == 236, "stacked: the clip band sits over the device band, both full size");
     }
     layout::setVisible(sh, st, "live.mixer", true);
     expect(layout::visible(sh, st, "live.mixer") && layout::visible(sh, st, "live.device"), "the mixer band is not in the group");

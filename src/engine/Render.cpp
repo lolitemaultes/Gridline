@@ -216,8 +216,17 @@ RenderResult renderAudio(const Song& source, const RenderJob& job) {
     L.resize(static_cast<size_t>(pos + n));
     R.resize(static_cast<size_t>(pos + n));
     eng.process(L.data() + pos, R.data() + pos, static_cast<int>(n));
-    for (int64_t i = pos; i < pos + n; ++i)
-      if (std::fabs(L[static_cast<size_t>(i)]) > silent || std::fabs(R[static_cast<size_t>(i)]) > silent) lastLoud = i;
+    if (job.tailBusy) {  // K-319
+      if (job.tailBusy()) {
+        lastLoud = pos + n - 1;
+      }
+    } else {
+      for (int64_t i = pos; i < pos + n; ++i) {
+        if (std::fabs(L[static_cast<size_t>(i)]) > silent || std::fabs(R[static_cast<size_t>(i)]) > silent) {
+          lastLoud = i;
+        }
+      }
+    }
     pos += n;
     if (job.progress) job.progress(std::min(1.0, static_cast<double>(pos) / static_cast<double>(std::max<int64_t>(1, estimate))));
     return !(job.cancel && job.cancel->load());

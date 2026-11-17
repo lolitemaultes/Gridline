@@ -423,6 +423,8 @@ class App {
   // key was played (MidiManager::clockNow seconds; < 0: now).
   void playedNoteOn(ObjectId channel, int pitch, int velocity, double stamp = -1);
   void playedNoteOff(ObjectId channel, int pitch, double stamp = -1);
+  // GitHub #71: a step record key: +1 Right, -1 Left, 0 Backspace (on the piano roll's grid).
+  void stepRecordKey(int dir);
   // K-226: the tick the performer heard at `stamp` (< 0: now): what a note played then records at.
   double recordTick(double stamp = -1) const;
   void followRecording();  // per frame, after the input: the recording follows the transport

@@ -275,6 +275,12 @@ Settings::Settings() {
       // Checkpoint 55 (gap 5): Clips' Arrangement row heights the person dragged, per set and track
       // ("<set>\t<track key>\t<scale per mille>" a line, at most 400 lines). Per person, never in a project.
       {"clips.rowHeights", Json::makeString("")},
+      {"clips.punch", b(false)},   // checkpoint 56 (N55-04): Clips' Punch switch (off by default, as the reference's punch-in and -out)
+      // Checkpoint 56 (N55-06, N55-07): per Set, outside the song: the files a Set's row heights were last
+      // saved as ("<path>\t<fingerprint>" lines), and the Sets whose short looping samples were answered.
+      {"clips.rowHeightFiles", Json::makeString("")},
+      {"clips.oneShotAnswers", Json::makeString("")},
+      {"clips.midiMonitor", Json::makeString("")},  // checkpoint 56 (N55-10): MIDI tracks' Monitor In / Off ("<set>\t<instrument>\t<mode>" lines)
       {"clips.showIO", b(false)},  // checkpoint 55 (gap 2): View > In/Out, the I/O section on strips and headers (Clips)
       {"ui.menuStyle", Json::makeString("studio")},
       {"keys.profile", Json::makeString("studio")},

@@ -38,6 +38,8 @@
 #include "MeterUi.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
+#include "LiveIo.h"
+#include "../core/LayoutShell.h"
 #include "TrackerView.h"
 #include "WorkspacesUi.h"
 #include "Windows.h"
@@ -70,14 +72,23 @@ void openSettings(App& a, int tab) {
   a.focusWindow = "Settings";
 }
 
+// K-106 cp21: a pattern made in the Tracker has the classic 64 rows (4 bars of 16 steps); the other
+// layouts keep their one bar. A creation default only: no saved pattern changes length.
+int newPatternBars() { return layoutui::active() == layout::Preset::Tracker ? trackerview::kNewPatternBars : 1; }
+
 void newPattern(App& a) {
-  ObjectId id = a.doc.addPattern(ops::nextPatternName(a.doc.song()));
+  ObjectId id = a.doc.addPattern(ops::nextPatternName(a.doc.song()), newPatternBars());
   if (id) a.selectPattern(id);
 }
 
+void insertPatternBefore(App& a) {
+  a.selectPattern(a.doc.addPattern(ops::nextPatternName(a.doc.song()), newPatternBars(), 16, a.doc.song().patternIndex(a.curPattern)));
+}
+
 void findEmptyPattern(App& a, bool first, bool askName) {
-  ObjectId id = first ? ops::firstEmptyPattern(a.doc.song()) : ops::nextEmptyOrNewPattern(a.doc, a.curPattern);
-  if (!id) id = ops::nextEmptyOrNewPattern(a.doc, a.curPattern);
+  ObjectId id = first ? ops::firstEmptyPattern(a.doc.song()) : ops::nextEmptyPattern(a.doc.song(), a.curPattern);
+  if (!id) id = ops::nextEmptyPattern(a.doc.song(), a.curPattern);
+  if (!id) id = a.doc.addPattern(ops::nextPatternName(a.doc.song()), newPatternBars());
   if (!id) return;
   a.selectPattern(id);
   if (askName) {
@@ -438,8 +449,7 @@ const md::Menu& patternsDef() {
   // K-77: create, go to, properties, arrange, render, delete (the pattern context menu keeps the same order).
   static const md::Menu m = {
       md::item(N_("New pattern"), "pattern.new", [](App& a) { newPattern(a); }),
-      md::item(N_("Insert one before"), "pattern.insert",
-               [](App& a) { a.selectPattern(ops::insertPattern(a.doc, a.curPattern, ops::nextPatternName(a.doc.song()))); }),
+      md::item(N_("Insert one before"), "pattern.insert", [](App& a) { insertPatternBefore(a); }),
       md::item(N_("Clone"), "pattern.clone", [](App& a) { a.selectPattern(a.doc.clonePattern(a.curPattern)); }).when(hasPattern),
       md::item(N_("Find first empty"), "pattern.findFirstEmpty", [](App& a) { findEmptyPattern(a, true, true); }),
       md::item(N_("Find next empty"), "pattern.findNextEmpty", [](App& a) { findEmptyPattern(a, false, false); }),
@@ -630,11 +640,8 @@ const md::Menu& clipsEditDef() {
         rowOf(e, "Delete"),
         md::separator(),
         md::item(N_("Split"), "playlist.splitAtSongPos", [](App& a) { tracksSplitAtPlayhead(a); }).when(anySelected),
-        md::item(N_("Consolidate"), "playlist.merge",
-                 [](App& a) {
-                   if (const ObjectId nc = ops::mergeClips(a.doc, a.playlist.selected)) a.playlist.selected = {nc};
-                 })
-            .when([](App& a) { return a.playlist.selected.size() >= 2; }),
+        // Checkpoint 56 (N55-09): audio clips render to one clip, as the reference's (one clip is enough).
+        md::item(N_("Consolidate"), "playlist.merge", [](App& a) { livelook::consolidate(a); }).when(anySelected),
         md::item(N_("Crop clip"), [](App& a) { a.doc.setClipLength(cropTarget(a), 0); }).when([](App& a) { return cropTarget(a) != kNoId; }),
         md::separator(),
         // Checkpoint 52 (N51-11): grouping in the Edit menu as well, as the reference's.
@@ -698,6 +705,14 @@ const md::Menu& viewDef() {
       md::item(N_("Return tracks"), [](App& a) { a.settings.set("clips.returnTracks", !a.settings.getBool("clips.returnTracks")); })
           .check([](App& a) { return a.settings.getBool("clips.returnTracks"); })
           .tip(N_("Show the return tracks beside Main in the clip grid, the mixer and the arrangement"))
+          .only([](App& a) { return livelook::active(a); }),
+      // Checkpoint 55 (gap 2), 56 (N55-10: here, as the reference's View menu): the In/Out section on the
+      // strips and the Arrangement's headers; the info corner (Info View, Shift+?).
+      md::item(N_("In/Out"), "view.io", [](App& a) { liveio::toggle(a); })
+          .check([](App& a) { return liveio::shown(a); })
+          .only([](App& a) { return livelook::active(a); }),
+      md::item(N_("Info View"), "view.quickHelp", [](App& a) { layoutui::setRegionVisible(a, "live.info", !layout::visible(layout::shell(layout::Preset::Live), layoutui::regionState(a, layout::Preset::Live), "live.info")); })
+          .check([](App& a) { return layout::visible(layout::shell(layout::Preset::Live), layoutui::regionState(a, layout::Preset::Live), "live.info"); })
           .only([](App& a) { return livelook::active(a); }),
       md::toggle(N_("Browser"), "view.browser", [](App& a) { return &a.showBrowser; }),
       md::item(N_("Plugin picker"), "view.pluginPicker", [](App&) { browserui::togglePluginPicker(); }).check([](App&) { return browserui::pluginPickerOpen(); }).only(studioWindows),
@@ -957,7 +972,16 @@ const md::Menu& toolsDef() {
                                [](App& a) {
                                  int n = ops::deleteUnusedPatterns(a.doc);
                                  a.notify(n ? "Deleted " + std::to_string(n) + " unused pattern(s)" : std::string("No unused patterns"));
-                               }),
+                               })
+                          .only([](App& a) { return !livelook::active(a); }),
+                      // Checkpoint 56 (N55-10): Clips has MIDI clips, never patterns.
+                      md::item(N_("Delete unused MIDI clips"),
+                               [](App& a) {
+                                 int n = ops::deleteUnusedPatterns(a.doc);
+                                 a.notify(n ? "Deleted " + std::to_string(n) + (n == 1 ? " unused MIDI clip" : " unused MIDI clips")
+                                            : std::string("No unused MIDI clips"));
+                               })
+                          .only([](App& a) { return livelook::active(a); }),
                   })
           .rect("toolsmenu cleanup"),
       md::separator(),
@@ -1053,7 +1077,7 @@ bool menuShortcuts(App& a) {
   if (key("pattern.findFirstEmpty")) findEmptyPattern(a, true, true);
   if (key("pattern.findNextEmpty")) findEmptyPattern(a, false, false);
   if (!inPiano && key("pattern.clone")) a.selectPattern(a.doc.clonePattern(a.curPattern));
-  if (key("pattern.insert")) a.selectPattern(ops::insertPattern(a.doc, a.curPattern, ops::nextPatternName(a.doc.song())));
+  if (key("pattern.insert")) insertPatternBefore(a);
   if (key("pattern.delete")) deletePattern(a);
   if (!inPiano && !inRack && key("pattern.moveUp")) movePattern(a, -1);
   if (!inPiano && !inRack && key("pattern.moveDown")) movePattern(a, 1);
@@ -1138,7 +1162,9 @@ bool menuShortcuts(App& a) {
     }
   }
   // Playlist.
-  if (inPlaylist && a.playlist.selected.size() >= 2 && key("playlist.merge") && logicplug::active(a)) {
+  if (inPlaylist && !a.playlist.selected.empty() && key("playlist.merge") && livelook::active(a)) {
+    livelook::consolidate(a);  // checkpoint 56 (N55-09): Cmd+J renders audio clips too
+  } else if (inPlaylist && a.playlist.selected.size() >= 2 && key("playlist.merge") && logicplug::active(a)) {
     tracksJoin(a);  // checkpoint 47: the Join tool's rules
   } else if (inPlaylist && a.playlist.selected.size() >= 2 && key("playlist.merge")) {
     ObjectId nc = ops::mergeClips(a.doc, a.playlist.selected);

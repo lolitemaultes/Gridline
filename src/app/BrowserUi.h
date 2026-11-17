@@ -78,6 +78,9 @@ bool acceptFileDrop(App& a, browse::DropTarget target, const DropPlace& place);
 struct DropFeedback {
   bool highlight = true;
   bool hovering = false;
+  // R13-10: where the drop's tooltip stands (pivot: its anchor), instead of under the pointer.
+  bool tipAt = false;
+  float tipX = 0, tipY = 0, tipPivotX = 0, tipPivotY = 0;
 };
 bool acceptFileDrop(App& a, browse::DropTarget target, const DropPlace& place, DropFeedback* fb);
 // K-112B (ref 068): the audio files the drag in progress carries (empty while it carries anything

@@ -76,6 +76,8 @@ Create > Import MIDI file...			e-
 View > Command palette...	Ctrl+K	view.commandPalette	e-
 View > Mixer	Ctrl+Alt+M	view.mixer	e-
 View > Return tracks			ec
+View > In/Out	Ctrl+Alt+I	view.io	e-
+View > Info View	Shift+/	view.quickHelp	ec
 View > Browser	Ctrl+Alt+B	view.browser	ec
 View > Undo history	Ctrl+Alt+Z	edit.history	e-
 View > Performance			e-
@@ -156,7 +158,7 @@ Options > Recording and metronome > Recording options > Audio, as audio clips			
 Options > Recording and metronome > Recording options > Notes			ec
 Options > Recording and metronome > Recording options > Automation (controller moves)			ec
 Options > Recording and metronome > Recording options > Everything			e-
-Options > Recording and metronome > Recording options > Punch in/out at the time selection			ec
+Options > Recording and metronome > Recording options > Punch in/out at the loop brace			e-
 Options > Recording and metronome > Recording options > Pre-roll > Off			ec
 Options > Recording and metronome > Recording options > Pre-roll > 1 beat			e-
 Options > Recording and metronome > Recording options > Pre-roll > 2 beats			e-
@@ -222,13 +224,12 @@ Navigate > Clip band			e-
 Navigate > Device band			ec
 Navigate > Clip and device bands	Ctrl+Alt+L	view.detail	ec
 Navigate > Mixer	Ctrl+Alt+M	view.mixer	e-
-Navigate > In/Out	Ctrl+Alt+I	view.io	e-
-Navigate > Info View	Shift+/	view.quickHelp	ec
 Navigate > Go to the start	Ctrl+Alt+Shift+Home	transport.toStart	e-
 Navigate > Back one bar	Ctrl+Alt+Shift+Left	transport.rewindBar	e-
 Navigate > Forward one bar	Ctrl+Alt+Shift+Right	transport.forwardBar	e-
 Navigate > Markers > No markers			--
-Navigate > Cycle			e-
+Navigate > Loop			e-
+Navigate > Loop selection	Ctrl+L	playlist.loopMarkers	e-
 Navigate > Add marker	Alt+T	playlist.marker	e-
 Navigate > Follow the song position			ec
 Navigate > Zoom > Zoom in	=	playlist.zoomIn	e-
@@ -297,7 +298,7 @@ Tools > Composing > Save the note clipboard as a MIDI file			--
 Tools > Composing > Project scripts > Section markers...			e-
 Tools > Composing > Project scripts > Tempo ramp...			e-
 Tools > Composing > Project scripts > Route drums to a bus...			e-
-Tools > Composing > Project scripts > Build a drum pattern...			e-
+Tools > Composing > Project scripts > Build a drum MIDI clip...			e-
 Tools > Composing > Project scripts > Humanize arrangement selection...			e-
 Tools > Composing > Project scripts > Name tracks after their clips...			e-
 Tools > Composing > Project scripts > Rescan scripts			e-
@@ -343,7 +344,7 @@ Tools > Macros > Declicking of the selected clips > Generic			e-
 Tools > Macros > Declicking of the selected clips > Smooth			e-
 Tools > Freeze > Unfreeze all			--
 Tools > Clean up > Delete unused automation clips			e-
-Tools > Clean up > Delete unused patterns			e-
+Tools > Clean up > Delete unused MIDI clips			e-
 Tools > AI assistant activity			e-
 Help > Keyboard shortcuts	F1	help.shortcuts	e-
 Help > Load demo song			e-

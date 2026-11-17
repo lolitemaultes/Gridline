@@ -7,7 +7,7 @@
 // grids of cells, each full or a diagonal half, drawn by hand here (no font outlines).
 //
 // The banner loops through a fixed list of segments (spin in, hold, worms, logo, particles, twist,
-// wireframe, shatter), 73 s: every state holds long enough to read, and every move (morphs,
+// wireframe, shatter), 58.5 s: every state holds long enough to read, and every move (morphs,
 // turns, sways, the spread of the particles) eases in and out, so nothing starts or stops with a
 // jerk and the loop point joins seamlessly. evaluate(t) gives every facet's corners in world space
 // at loop time t. screenMap() places a frame in a banner rectangle: one scale for the whole loop

@@ -69,15 +69,23 @@ int stemsCliMain(int argc, char** argv);  // StemsCli.cpp (J-191)
 int suiteCliMain(int argc, char** argv);  // SuiteCli.cpp (J-131)
 
 namespace {
-// J-219: gridline track-receipt <project.gridline|.flp> [--out <dir>] [--sr N]: measures which parts
+// J-219: gridline track-receipt <project.gridline|.flp> [--out <dir>] [--sr N] [--reference]: measures which parts
 // of which original recordings the project uses and writes the receipt
 // (SpreadsheetML) and the results PDF.
 int trackReceiptMain(const std::string& project, int argc, char** argv) {
   std::string out, err;
   int sr = 44100;
-  for (int i = 3; i + 1 < argc; ++i) {
-    if (std::strcmp(argv[i], "--out") == 0 || std::strcmp(argv[i], "-o") == 0) out = argv[++i];
-    else if (std::strcmp(argv[i], "--sr") == 0) sr = std::max(8000, std::atoi(argv[++i]));
+  bool reference = false;
+  for (int i = 3; i < argc; ++i) {
+    if (std::strcmp(argv[i], "--reference") == 0) {  // K-319: the full-mix pass (comparisons)
+      reference = true;
+    } else if (i + 1 >= argc) {
+      break;
+    } else if (std::strcmp(argv[i], "--out") == 0 || std::strcmp(argv[i], "-o") == 0) {
+      out = argv[++i];
+    } else if (std::strcmp(argv[i], "--sr") == 0) {
+      sr = std::max(8000, std::atoi(argv[++i]));
+    }
   }
   gl::Song song;
   const std::string ext = std::filesystem::path(project).extension().string();
@@ -98,6 +106,7 @@ int trackReceiptMain(const std::string& project, int argc, char** argv) {
   const std::string name = std::filesystem::path(project).stem().string();
   gl::receipt::PassOptions o;
   o.sampleRate = sr;
+  o.reference = reference;
   int lastPct = -1;
   o.progress = [&lastPct](double f) {
     const int p = static_cast<int>(f * 100);

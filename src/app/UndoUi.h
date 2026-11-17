@@ -24,6 +24,10 @@ bool redo(App& a);
 // When the last undo / redo happened (App::now); a plugin's state reported within kFollowSeconds
 // of it follows what the undo restored instead of being an edit of its own.
 double lastMoveAt();
+// K-112B (checkpoint 53): how many undo / redo moves of the project's history there have been
+// (menus, shortcuts, the history panel, a shared project's undo). A view that keeps transport state
+// in the song (Smooth's cycle) tells an undo's change from a collaborator's or a load's by it.
+unsigned long long historyMoves();
 constexpr double kFollowSeconds = 1.5;
 // The history panel (View > Undo history).
 void historyWindow(App& a);

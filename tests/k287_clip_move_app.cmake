@@ -228,8 +228,23 @@ want("pencil, zoomed and scrolled: one undo step" "${du}" 1)
 if(LAYOUT STREQUAL "logic")
   # The row at the grid's foot depends on which panes the layout opens with (K-112B cp40: the lower
   # pane starts closed): clip 90 moves to that row, and the geometry is read again.
-  math(EXPR ry "${g_gy1} - 2")  # on the scroller's rail (its last pixels), clear of the gap between rows
-  math(EXPR footTrack "(${ry} - ${g_top0}) / (${g_top1} - ${g_top0})")
+  # On the scroller's rail (its last pixels), clear of the gap between rows: K-112B cp54 moved Smooth's
+  # rows 8 px up (a 26 px ruler), which put the grid's last pixels on a row boundary at 1440x900; the
+  # first of the rail's last pixels at least 3 px inside a row is used.
+  math(EXPR rowH "${g_top1} - ${g_top0}")
+  set(ry "")
+  foreach(back 2 3 4 5 6)
+    math(EXPR cand "${g_gy1} - ${back}")
+    math(EXPR into "(${cand} - ${g_top0}) % ${rowH}")
+    math(EXPR lastIn "${rowH} - 3")
+    if(ry STREQUAL "" AND NOT into LESS 3 AND NOT into GREATER lastIn)
+      set(ry ${cand})
+    endif()
+  endforeach()
+  if(ry STREQUAL "")
+    math(EXPR ry "${g_gy1} - 2")
+  endif()
+  math(EXPR footTrack "(${ry} - ${g_top0}) / ${rowH}")
   string(REPLACE "\"start\": 3072, \"track\": 8}" "\"start\": 3072, \"track\": ${footTrack}}" demo "${demo}")
   file(WRITE "${OUT}/song.gridline.json" "${demo}")
   run(geo_foot "4 typing off\n12 plgeom\n16 quit discard\n" ${pl})

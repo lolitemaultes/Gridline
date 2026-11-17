@@ -23,6 +23,7 @@
 #include "../core/WindowPlacement.h"
 #include "../core/ClipSources.h"
 #include "../core/MenuOps.h"
+#include "../core/MixerOps.h"
 #include "../core/Meter.h"
 #include "../core/TrackModes.h"
 #include "../core/Automation.h"
@@ -1102,6 +1103,35 @@ void frame(App& a) {
     if (on) keepTrack = focusTrack(a), keepRegions = a.playlist.selected, keepEpoch = a.doc.projectEpoch();
     wasOn = on;
   }
+  {  // D7 (R13-03): a project opened (or new) in Smooth selects a real track's sound, the first track's
+     // that plays one, as the reference always has a track selected; the strip follows it (selfollow).
+     // The app's default (the first channel) can be a template's spare sound no track plays (Kick),
+     // which leaked its strip into the Tracks mixer. Selection only: nothing in the song changes.
+    static uint64_t selEpoch = 0;
+    const uint64_t ep = a.doc.projectEpoch();
+    if (ep != selEpoch) {
+      selEpoch = ep;
+      const Song& s = a.doc.song();
+      const Channel* first = nullptr;
+      bool onTrack = false;
+      if (active(a)) {
+        for (int t = 0; t < static_cast<int>(s.tracks.size()); ++t) {
+          const Channel* c = trackSound(s, t, nullptr);
+          if (!c) {
+            continue;
+          }
+          if (!first) {
+            first = c;
+          }
+          onTrack = onTrack || c->id == a.selChannel;
+        }
+      }
+      if (first && !onTrack) {
+        a.selChannel = first->id;
+        a.selChannels = {first->id};
+      }
+    }
+  }
   // R04-04: the lower pane shows one editor. When the piano roll, the step sequencer or the mixer
   // takes it (a click on a MIDI region, a key), the audio editor leaves it: still pinned it went on
   // drawing as a big floating window over the tracks, and took the next W.
@@ -1397,7 +1427,7 @@ static void drawControlsIn(App& a, const PluginTarget& t, float width) {
       n = std::clamp(n + ImGui::GetIO().MouseDelta.x / barW * (ImGui::GetIO().KeyShift ? 0.15 : 1.0), 0.0, 1.0);
       a.doc.setParam(pid, d->fromNormalized(n), true);
     }
-    if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) a.doc.setParam(pid, d->def, false);
+    if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && *v != d->def) a.doc.setParam(pid, d->def, false);  // (R13-08: at the default, nothing)
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     const ImVec2 b1(b0.x + barW, b0.y + rowH - 8);
     dl->AddRectFilled(b0, b1, theme::mix(P.surface800, P.ink, 0.4f), 3.0f);
@@ -1432,18 +1462,31 @@ ParamId gFocus{};           // the control last touched here (the column shows i
 ObjectId gPendStrip = kNoId;  // D6: a Learn waiting for the mouse to be let go (strip, position, parameter)
 int gPendPos = -1;
 ParamId gPendParam{};
+int gPendFrom = -1;  // D7 (R13-05): the position a by-hand mapping moves from (-1: a new mapping)
 
 // Up to `most` of a plugin's controls (built-ins: the continuous ones, in their own order;
 // installed plugins: the first ones, which are the main ones in most plugins). A stand-in until
 // the merge with the Live branch: there, built-ins take devview::mainParams and installed plugins
 // their shown-parameter list (PluginState::shown) when it is set (decision D8).
-void mapPlugin(const Song& s, const PluginTarget& t, int most, std::vector<SmartKnob>& out) {
+// D7 (R13-06): a parameter kept only so older projects still sound the same ("... (legacy)"): never offered.
+bool legacyParam(const ParamDesc& d) {
+  return d.name.find("(legacy)") != std::string::npos || d.name.find("(Legacy)") != std::string::npos;
+}
+// D7 (R13-05): `taken` holds the parameters mapped by hand on this strip: the pane never picks one of
+// them itself as well (after a slot move one could show twice, and a focus by parameter was ambiguous).
+void mapPlugin(const Song& s, const PluginTarget& t, int most, std::vector<SmartKnob>& out, const std::vector<ParamId>& taken) {
   const PluginInfo* info = t.info(s);
   if (!info) return;
   const bool hosted = isHostedType(info->type);
   int n = 0;
   for (int k = 0; k < static_cast<int>(info->params.size()) && n < most && out.size() < 8; ++k) {
     if (!hosted && info->params[static_cast<size_t>(k)].kind != ParamKind::Continuous) continue;
+    if (!hosted && legacyParam(info->params[static_cast<size_t>(k)])) {
+      continue;  // D7 (R13-06): kept for old files only
+    }
+    if (std::find(taken.begin(), taken.end(), t.pid(k)) != taken.end()) {
+      continue;
+    }
     out.push_back({t, k, t, false});
     ++n;
   }
@@ -1474,9 +1517,15 @@ bool knobOf(const Song& s, ParamId p, SmartKnob& out) {
 // instrument's main controls, then the first effects'), with the ones mapped by hand in their place.
 std::vector<SmartKnob> smartKnobs(const Song& s, const MixerTrack& m, const Channel* inst) {
   std::vector<SmartKnob> knobs;
-  if (inst && !inst->plugin.type.empty()) mapPlugin(s, PluginTarget{inst->id, -1}, 4, knobs);
+  std::vector<ParamId> taken;
+  for (const SmartControlMap& mp : s.smooth.controls) {
+    if (mp.strip == m.id) {
+      taken.push_back(ParamId{mp.owner, mp.index});
+    }
+  }
+  if (inst && !inst->plugin.type.empty()) mapPlugin(s, PluginTarget{inst->id, -1}, 4, knobs, taken);
   for (int k = 0; k < kEffectSlots && knobs.size() < 8; ++k)
-    if (!m.slots[static_cast<size_t>(k)].plugin.type.empty()) mapPlugin(s, PluginTarget{m.id, k}, knobs.empty() ? 4 : 2, knobs);
+    if (!m.slots[static_cast<size_t>(k)].plugin.type.empty()) mapPlugin(s, PluginTarget{m.id, k}, knobs.empty() ? 4 : 2, knobs, taken);
   for (const SmartControlMap& mp : s.smooth.controls) {
     SmartKnob sk;
     if (mp.strip != m.id || mp.pos < 0 || mp.pos >= 8 || !knobOf(s, ParamId{mp.owner, mp.index}, sk)) continue;
@@ -1498,10 +1547,12 @@ bool mappedByHand(const Song& s, ObjectId strip, int pos) {
 }
 // Maps (or with an invalid param, unmaps) screen control `pos` of `strip`. D6 (R12-02, R12-03): song
 // data, as the reference keeps it: one undo step that marks the project modified, shared in collab.
-void setSmartMap(App& a, ObjectId strip, int pos, ParamId p) {
-  a.doc.editSong(p.owner != kNoId ? "map smart control" : "reset smart control", [&](Song& x) {
+// D7 (R13-05): `from` >= 0 moves the mapping from that position (it goes back to the pane's own pick).
+void setSmartMap(App& a, ObjectId strip, int pos, ParamId p, int from = -1) {
+  a.doc.editSong(p.owner == kNoId ? "reset smart control" : from >= 0 ? "move smart control" : "map smart control", [&](Song& x) {
     auto& v = x.smooth.controls;
-    v.erase(std::remove_if(v.begin(), v.end(), [&](const SmartControlMap& c) { return c.strip == strip && c.pos == pos; }), v.end());
+    v.erase(std::remove_if(v.begin(), v.end(), [&](const SmartControlMap& c) { return c.strip == strip && (c.pos == pos || (from >= 0 && c.owner == p.owner && c.index == p.index)); }),
+            v.end());
     if (p.owner != kNoId) v.push_back(SmartControlMap{strip, pos, p.owner, p.index});
   });
 }
@@ -1714,8 +1765,13 @@ void smartControls(App& a) {
     const char* thints[] = {i18n::tr("The selected track's controls"), outHint.c_str()};
     const float segW = std::clamp(std::ceil(ImGui::CalcTextSize(outName.c_str()).x) + 24.0f, 64.0f, 120.0f);
     int target = gSmartOut ? 1 : 0;
+    // D7 polish: the bar starts on the column's 10 px inset (the Track tab sat 8 px left of the fields under it).
+    // D8: the capsule's own edge on that line (it sat 2 px left of the fields), and the bar on the editors'
+    // bar line, the piano roll's and the mixer's (1 px lower).
+    const float inset = column ? 10.0f : 0.0f;
+    ImGui::SetCursorPos(ImVec2(x0 + inset, y0 - 1));
     if (ui::Segmented("##smtarget", targets, 2, &target, segW, 0, thints)) gSmartOut = target == 1 && outM;
-    float leftEnd = x0 + segW * 2;
+    float leftEnd = x0 + inset + segW * 2;
     if (m) {  // Compare after the target, for every plugin on the track
       std::vector<PluginTarget> ts;
       if (inst && !inst->plugin.type.empty()) ts.push_back(PluginTarget{inst->id, -1});
@@ -1730,7 +1786,7 @@ void smartControls(App& a) {
     const char* hints[] = {i18n::tr("The track's main controls as knobs"), i18n::tr("The track's EQ, editable here")};
     const float vw = 72 * 2;
     ImGui::SameLine(0, 0);
-    ImGui::SetCursorPos(ImVec2(std::max(leftEnd + theme::kS3, std::round(x0 + (W - vw) * 0.5f)), y0));
+    ImGui::SetCursorPos(ImVec2(std::max(leftEnd + theme::kS3, std::round(x0 + (W - vw) * 0.5f)), y0 - 1));
     ui::Segmented("##smview", views, 2, &gSmartView, 72, 0, hints);
     const float nameX = ImGui::GetItemRectMax().x + theme::kS3, right = ImGui::GetWindowPos().x + x0 + W;
     const float fs = ImGui::GetFontSize(), room = right - nameX;
@@ -1795,22 +1851,32 @@ void smartControls(App& a) {
     gLearnSerial = a.doc.touchSerial();
     const ParamId p = a.doc.lastTouchedParam();
     SmartKnob sk;
-    bool onShown = false;  // a control already on the band is focused by the touch, not mapped
-    for (const SmartKnob& k : knobs) onShown = onShown || k.t.pid(k.k) == p;
-    if (!onShown && knobOf(s, p, sk) && (sk.t.owner == m->id || (inst && sk.t.owner == inst->id))) {
+    int shownAt = -1;  // the position the parameter is already on, if any
+    for (size_t k = 0; k < knobs.size() && shownAt < 0; ++k) {
+      if (knobs[k].t.pid(knobs[k].k) == p) shownAt = static_cast<int>(k);
+    }
+    if (shownAt == fi) {
+      // the control in focus itself (turned on the band, or its parameter in the window): nothing to map
+    } else if (shownAt >= 0 && knobs[static_cast<size_t>(shownAt)].byHand) {
+      // D7 (R13-05): mapped by hand to another control: the mapping moves to the control in focus, as the
+      // reference moves a parameter's assignment (one undo step; the old control gets the pane's pick back).
+      gPendStrip = m->id, gPendPos = fi, gPendParam = p, gPendFrom = shownAt;
+    } else if (shownAt >= 0) {
+      // D7 (R13-05): one of the pane's own picks: said, not silently ignored; learning goes on.
+      a.notify(paramDisplayName(s, p) + i18n::tr(" is already on screen control ") + std::to_string(shownAt + 1) +
+               i18n::tr(": move another parameter to map it here, or click Learn to stop"));
+    } else if (knobOf(s, p, sk) && (sk.t.owner == m->id || (inst && sk.t.owner == inst->id))) {
       // D6 (R12-02): recorded once the move is over (the button let go), so the mapping is its own
       // undo step after the move's: Cmd+Z takes back the mapping first, then the move.
-      gPendStrip = m->id, gPendPos = fi, gPendParam = p;
-    } else if (onShown) {
-      gFocus = p;
+      gPendStrip = m->id, gPendPos = fi, gPendParam = p, gPendFrom = -1;
     }
   }
   if (gPendStrip != kNoId && !ImGui::IsAnyMouseDown()) {
     const ParamId p = gPendParam;
     if (gPendStrip == m->id && describeParam(a.doc.song(), p)) {
-      setSmartMap(a, gPendStrip, gPendPos, p);
+      setSmartMap(a, gPendStrip, gPendPos, p, gPendFrom);
       gFocus = p;
-      a.notify(std::string(i18n::tr("Smart control mapped: ")) + paramDisplayName(a.doc.song(), p));
+      a.notify(std::string(gPendFrom >= 0 ? i18n::tr("Smart control moved here: ") : i18n::tr("Smart control mapped: ")) + paramDisplayName(a.doc.song(), p));
       knobs = smartKnobs(a.doc.song(), *m, inst);
       findFocus();
     }
@@ -1860,10 +1926,10 @@ void smartControls(App& a) {
   }
   std::stable_sort(boxes.begin(), boxes.end(), [](const Box& x, const Box& y) { return x.t.slot < y.t.slot; });
   const float areaW = p1.x - q0.x, areaH = p1.y - q0.y;
-  const float gap = 14, inPad = 14, headH = 26, bandPad = 14;
+  const float gap = 12, inPad = 10, headH = 26, bandPad = 14, platePad = 12;
   size_t most = 0;
   for (const Box& b : boxes) most = std::max(most, b.idx.size());
-  const int rows = areaH >= headH + 2 * bandPad + 2 * 92.0f + 20 && most > 2 ? 2 : 1;  // every box the same
+  const int rows = areaH >= headH + 2 * bandPad + 2 * platePad + 2 * 92.0f + 20 && most > 2 ? 2 : 1;  // every box the same
   // D6 (R12-08): the boxes fill the band, as 050's do: full height (less a margin), and across its
   // width up to a comfortable cell; the knobs grow with the room.
   int totalCols = 0;
@@ -1874,17 +1940,31 @@ void smartControls(App& a) {
     totalCols += b.cols;
   }
   const float nb = static_cast<float>(boxes.size());
-  const float roomW = areaW - 2 * bandPad - gap * (nb - 1) - 2 * inPad * nb;
-  const float cellW = std::clamp(std::floor(roomW / static_cast<float>(std::max(1, totalCols))), 70.0f, 240.0f);
-  const float boxH = std::max(60.0f, areaH - 2 * bandPad);
-  const float cellH = std::floor((boxH - headH - 14) / static_cast<float>(rows));
-  const float knobR = std::clamp(std::floor(std::min(cellW * 0.30f, (cellH - 30) * 0.5f)), 14.0f, 46.0f);
-  const float cellTop = std::max(0.0f, std::round((cellH - (knobR * 2 + 22)) * 0.5f));  // name and knob centred in the cell
+  const float roomW = areaW - 2 * bandPad - 2 * platePad - gap * (nb - 1) - 2 * inPad * nb;
+  // D7 (R13-06): the knobs sit close, as 050's and 262's do (a cell about two knobs wide, not the band's
+  // width shared out: FILTER had two knobs across 500 px), on one faceplate centred on the band.
+  const float cellW = std::clamp(std::floor(roomW / static_cast<float>(std::max(1, totalCols))), 70.0f, 112.0f);
+  const float cellH0 = std::floor((std::max(60.0f, areaH - 2 * bandPad - 2 * platePad) - headH - 14) / static_cast<float>(rows));
+  const float knobR = std::clamp(std::floor(std::min(cellW * 0.32f, (cellH0 - 30) * 0.5f)), 14.0f, 34.0f);
+  const float cellH = std::min(cellH0, knobR * 2 + 44);
+  const float boxH = headH + 14 + cellH * static_cast<float>(rows);
+  // D8: the name (18 px) and the knob centred in the cell, and the cells centred in the frame: the knobs
+  // sat high, 17 px under the frame's top and 33 px over its foot (now 25 and 25 at 1920 x 1080).
+  const float cellTop = std::max(0.0f, std::round((cellH - (knobR * 2 + 18)) * 0.5f));
   float used = 0;
   for (const Box& b : boxes) used += cellW * static_cast<float>(b.cols) + 2 * inPad;
   used += gap * (nb - 1);
-  float x = std::round(q0.x + std::max(bandPad, (areaW - used) * 0.5f));  // the boxes centred on the band
-  const float y0 = std::round(q0.y + std::max(bandPad, (areaH - boxH) * 0.5f));
+  float x = std::round(q0.x + std::max(bandPad + platePad, (areaW - used) * 0.5f));  // the boxes centred on the band
+  const float y0 = std::round(q0.y + std::max(bandPad + platePad, (areaH - boxH) * 0.5f));
+  {  // D7 (R13-06): the faceplate under the boxes: a tinted, top-lit plate with a soft rim (050's blue, 262's red),
+     // here a cool slate so it reads in both themes; the boxes' frames sit on it.
+    const ImVec2 f0(x - platePad, y0 - platePad), f1(std::min(x + used + platePad, p1.x - 4), y0 + boxH + platePad);
+    const ImU32 tint = theme::rgb(0x3C5A82);
+    const ImU32 top = theme::mix(theme::mix(P.surface800, tint, 0.55f), P.text, 0.06f), bot = theme::mix(P.surface900, tint, 0.40f);
+    dl->AddRectFilledMultiColor(f0, f1, top, top, bot, bot);
+    dl->AddRect(f0, f1, theme::withAlpha(P.ink, 0.55f), 0.0f, 0, 1.0f);
+    dl->AddLine(ImVec2(f0.x + 1, f0.y + 1), ImVec2(f1.x - 1, f0.y + 1), theme::withAlpha(P.text, 0.16f));
+  }
   for (const Box& b : boxes) {
     const float bw = cellW * static_cast<float>(b.cols) + 2 * inPad;
     if (x + bw > p1.x - 2 && &b != &boxes.front()) break;  // no room for another box
@@ -1913,7 +1993,7 @@ void smartControls(App& a) {
       const ParamId pid = knobs[k].t.pid(knobs[k].k);
       const auto d = describeParam(s, pid);
       const float cx = std::round(b0.x + inPad + cellW * (static_cast<float>(col) + 0.5f));
-      const float cy0 = std::round(b0.y + headH + 4 + cellTop + rowOff + cellH * static_cast<float>(row));
+      const float cy0 = std::round(b0.y + headH + 10 + cellTop + rowOff + cellH * static_cast<float>(row));
       const bool focused = pid == gFocus;
       if (d) {  // the control's name above its knob, in capitals (173, 050)
         std::string label = d->name;
@@ -1944,6 +2024,7 @@ void smartControls(App& a) {
 }
 
 // D5: parts smart focus <position> | learn off|param|ext | cc <number> <value> | touch <slot> <param> | state
+// D7: | move <from> <to> | delete <slot> | replace <slot> <type> (the strip's effects)
 bool smartDevCommand(App& a, const std::vector<std::string>& args) {
   if (args.empty()) return false;
   const Song& s = a.doc.song();
@@ -1991,6 +2072,12 @@ bool smartDevCommand(App& a, const std::vector<std::string>& args) {
       if (l.action == RemoteAction::None) links += (links.empty() ? "" : ",") + std::to_string(l.cc) + ">" + std::to_string(l.owner) + ":" + std::to_string(l.index);
     std::printf("smart state: learn %d focus %u:%u out %d knobs %s mapped %zu links %s\n", gLearn, gFocus.owner, gFocus.index, gSmartOut ? 1 : 0, ks.c_str(),
                 s.smooth.controls.size(), links.c_str());
+  } else if (op == "move" && args.size() > 2 && m) {  // D7: an effect dragged to another slot of the strip (as the strip's drag)
+    mixops::moveSlotTo(a.doc, m->id, std::atoi(args[1].c_str()), m->id, std::atoi(args[2].c_str()), false);
+  } else if (op == "delete" && args.size() > 1 && m) {  // D7: an effect removed (the slot menu's Remove)
+    a.doc.setSlotPlugin(m->id, std::atoi(args[1].c_str()), "");
+  } else if (op == "replace" && args.size() > 2 && m) {  // D7: an effect replaced (the Library, the slot menu's Replace)
+    a.doc.setSlotPlugin(m->id, std::atoi(args[1].c_str()), args[2]);
   } else if (op == "out" && args.size() > 1) {
     gSmartOut = args[1] == "1";
   } else {

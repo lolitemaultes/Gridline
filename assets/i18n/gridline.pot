@@ -965,7 +965,7 @@ msgstr ""
 msgid "START"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/LayerEditor.cpp src/app/Menus.cpp src/app/SmoothLibrary.cpp src/app/StageRoomsUi.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp src/packs/chater/chater_pages_ui.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/ContextMenus.cpp src/app/LayerEditor.cpp src/app/Menus.cpp src/app/SmoothLibrary.cpp src/app/StageRoomsUi.cpp src/app/TemplateUi.cpp src/core/Keymap.cpp src/packs/chater/chater_pages_ui.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp
 msgid "Save"
 msgstr ""
 
@@ -1573,7 +1573,7 @@ msgstr ""
 msgid "Keys"
 msgstr ""
 
-#: src/app/Browser.cpp
+#: src/app/Browser.cpp src/app/TrackerPages.cpp
 msgid "Layers"
 msgstr ""
 
@@ -2465,7 +2465,7 @@ msgstr ""
 msgid "One LFO phase locked to the song for every note, instead of restarting with each note"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/TrackerEditors.cpp
 msgid "Panning"
 msgstr ""
 
@@ -2553,7 +2553,7 @@ msgstr ""
 msgid "Vel. → pan"
 msgstr ""
 
-#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/MenuStyles.cpp src/app/MixerView.cpp src/app/Playlist.cpp src/app/SoundThemeUi.cpp src/app/TrackerFrame.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/ChannelEnvelopeUi.cpp src/app/CollabUi.cpp src/app/MenuStyles.cpp src/app/MixerView.cpp src/app/Playlist.cpp src/app/SoundThemeUi.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Volume"
 msgstr ""
 
@@ -4381,7 +4381,7 @@ msgstr ""
 msgid "Freed %s."
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/OscUi.cpp
+#: src/app/CollabUi.cpp src/app/LiveIo.cpp src/app/OscUi.cpp
 msgid "From"
 msgstr ""
 
@@ -9173,7 +9173,7 @@ msgstr ""
 msgid "Split tracks"
 msgstr ""
 
-#: src/app/ExportUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/Playlist.cpp src/app/SettingsPages.cpp src/app/TrackerEditors.cpp src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/ExportUi.cpp src/app/LauncherCollab.cpp src/app/LauncherUi.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/Playlist.cpp src/app/SettingsPages.cpp src/app/TrackerEditors.cpp src/app/TrackerPages.cpp src/packs/platter/platter_deck_ui.cpp src/packs/seltmann/seltmann_parts_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Start"
 msgstr ""
 
@@ -11409,7 +11409,7 @@ msgstr ""
 msgid "Locked"
 msgstr ""
 
-#: src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/Playlist.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/Playlist.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/platter/platter_ui.cpp src/packs/seltmann/seltmann_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Loop"
 msgstr ""
 
@@ -11918,7 +11918,19 @@ msgid "When the clip ends"
 msgstr ""
 
 #: src/app/LiveIo.cpp
+msgid "All Channels"
+msgstr ""
+
+#: src/app/LiveIo.cpp
 msgid "All Ins"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Audio From"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Audio From: the audio device's inputs (the channels are below)"
 msgstr ""
 
 #: src/app/LiveIo.cpp
@@ -11926,11 +11938,35 @@ msgid "Audio From: the device input this track records and monitors (click to ch
 msgstr ""
 
 #: src/app/LiveIo.cpp
+msgid "Audio To"
+msgstr ""
+
+#: src/app/LiveIo.cpp
 msgid "Audio To: the track plays into Main (it has no mixer track of its own yet)"
 msgstr ""
 
 #: src/app/LiveIo.cpp
+msgid "Audio To: where the return's sound goes: Main or a later return (click to choose)"
+msgstr ""
+
+#: src/app/LiveIo.cpp
 msgid "Audio To: where the track's sound goes: Main, a group or a return (click to choose)"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Ch"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Cue Out"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Cue Out: the preview and the metronome play through Master Out (Gridline has no separate cue output)"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Ext. In"
 msgstr ""
 
 #: src/app/LiveIo.cpp src/app/PluginManager.cpp
@@ -11938,7 +11974,15 @@ msgid "In"
 msgstr ""
 
 #: src/app/LiveIo.cpp
-msgid "MIDI From: this track plays the notes of every MIDI input while it is armed or selected"
+msgid "MIDI From"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "MIDI From: every MIDI input (the channel is below)"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "MIDI From: the notes of every MIDI input, on all channels or on one (click to choose; your MIDI settings keep it)"
 msgstr ""
 
 #: src/app/LiveIo.cpp src/app/LiveLook.cpp
@@ -11946,7 +11990,19 @@ msgid "Main"
 msgstr ""
 
 #: src/app/LiveIo.cpp
+msgid "Master Out"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Master Out: Main plays to the audio device's first two outputs (Settings, Audio)"
+msgstr ""
+
+#: src/app/LiveIo.cpp
 msgid "Monitor Auto: the input is heard while the track is armed"
+msgstr ""
+
+#: src/app/LiveIo.cpp
+msgid "Monitor Auto: this track plays the MIDI keyboard while it is selected"
 msgstr ""
 
 #: src/app/LiveIo.cpp
@@ -11954,11 +12010,15 @@ msgid "Monitor In: the input is always heard through the track"
 msgstr ""
 
 #: src/app/LiveIo.cpp
+msgid "Monitor In: this track plays what the MIDI keyboard plays, selected or not (one track at a time: the selected one first)"
+msgstr ""
+
+#: src/app/LiveIo.cpp
 msgid "Monitor Off: the input is never heard (it still records)"
 msgstr ""
 
 #: src/app/LiveIo.cpp
-msgid "Monitor: Auto"
+msgid "Monitor Off: this track never plays the MIDI keyboard"
 msgstr ""
 
 #: src/app/LiveIo.cpp
@@ -11975,6 +12035,10 @@ msgstr ""
 
 #: src/app/LiveIo.cpp
 msgid "That would play the track into itself"
+msgstr ""
+
+#: src/app/LiveIo.cpp src/packs/tideline/tideline_ui.cpp
+msgid "To"
 msgstr ""
 
 #: src/app/LiveLook.cpp
@@ -12202,6 +12266,10 @@ msgid "Nothing to capture: play some notes first"
 msgstr ""
 
 #: src/app/LiveLook.cpp
+msgid "Nothing to render: the selected clips are silent"
+msgstr ""
+
+#: src/app/LiveLook.cpp
 msgid "Off: a launched clip starts from its start. A grid: it starts in phase with the song on that grid"
 msgstr ""
 
@@ -12278,11 +12346,23 @@ msgid "Select a slot of a MIDI track first"
 msgstr ""
 
 #: src/app/LiveLook.cpp
+msgid "Select a time range or clips in the Arrangement first: the loop brace then frames it"
+msgstr ""
+
+#: src/app/LiveLook.cpp
 msgid "Select a track to set how its clips launch"
 msgstr ""
 
 #: src/app/LiveLook.cpp
 msgid "Select a track: its instrument and the inserts of its mixer track show here"
+msgstr ""
+
+#: src/app/LiveLook.cpp
+msgid "Select clips in the Arrangement to consolidate them"
+msgstr ""
+
+#: src/app/LiveLook.cpp
+msgid "Select two or more MIDI clips on a track, or audio clips, to consolidate them"
 msgstr ""
 
 #: src/app/LiveLook.cpp
@@ -12402,6 +12482,10 @@ msgid "notes captured into a new clip"
 msgstr ""
 
 #: src/app/LiveLook.cpp
+msgid "off while the track plays into it (Audio To); its level is kept"
+msgstr ""
+
+#: src/app/LiveLook.cpp
 msgid "send"
 msgstr ""
 
@@ -12463,6 +12547,14 @@ msgstr ""
 
 #: src/app/LogicNewTracks.cpp
 msgid "Records from the audio input; added after the tracks in use"
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid " is already on screen control "
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid ": move another parameter to map it here, or click Learn to stop"
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
@@ -12639,6 +12731,10 @@ msgstr ""
 
 #: src/app/LogicPlugins.cpp
 msgid "Smart control mapped: "
+msgstr ""
+
+#: src/app/LogicPlugins.cpp
+msgid "Smart control moved here: "
 msgstr ""
 
 #: src/app/LogicPlugins.cpp
@@ -13702,14 +13798,6 @@ msgid "Import audio file..."
 msgstr ""
 
 #: src/app/MenuStyles.cpp
-msgid "In/Out"
-msgstr ""
-
-#: src/app/MenuStyles.cpp
-msgid "Info View"
-msgstr ""
-
-#: src/app/MenuStyles.cpp
 msgid "Insert row"
 msgstr ""
 
@@ -13727,6 +13815,10 @@ msgstr ""
 
 #: src/app/MenuStyles.cpp src/app/Menus.cpp src/app/TrackerPages.cpp
 msgid "Live mode"
+msgstr ""
+
+#: src/app/MenuStyles.cpp
+msgid "Loop selection"
 msgstr ""
 
 #: src/app/MenuStyles.cpp src/core/Keymap.cpp
@@ -14086,6 +14178,10 @@ msgid "Debug log and script console..."
 msgstr ""
 
 #: src/app/Menus.cpp
+msgid "Delete unused MIDI clips"
+msgstr ""
+
+#: src/app/Menus.cpp
 msgid "Each track group..."
 msgstr ""
 
@@ -14179,6 +14275,14 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Import from URL..."
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "In/Out"
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "Info View"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -14875,6 +14979,10 @@ msgstr ""
 
 #: src/app/MidiUi.cpp
 msgid "Punch and count-in"
+msgstr ""
+
+#: src/app/MidiUi.cpp
+msgid "Punch in/out at the loop brace"
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -16346,6 +16454,10 @@ msgid "Catch is on: the view follows the playhead while the song plays (click to
 msgstr ""
 
 #: src/app/Playlist.cpp
+msgid "Click or drag to move the song position (snaps to the grid, Alt = free)  ·  Ctrl+drag or right-drag: time selection  ·  the loop brace below the numbers: drag it, drag its ends, click it to switch Loop  ·  Cmd+L: loop the selection"
+msgstr ""
+
+#: src/app/Playlist.cpp
 msgid "Click to close the folder"
 msgstr ""
 
@@ -16851,6 +16963,14 @@ msgstr ""
 
 #: src/app/Playlist.cpp
 msgid "The copies are unique (new patterns)"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "The loop brace's end: drag to resize it"
+msgstr ""
+
+#: src/app/Playlist.cpp
+msgid "The loop brace: drag to move it, click to switch Loop on or off"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -18941,11 +19061,11 @@ msgstr ""
 msgid "Which project in this archive should open?"
 msgstr ""
 
-#: src/app/ProjectLoadUi.cpp
+#: src/app/ProjectLoadUi.cpp src/app/TrackReceiptUi.cpp
 msgid "about %d min left"
 msgstr ""
 
-#: src/app/ProjectLoadUi.cpp src/app/StemsUi.cpp
+#: src/app/ProjectLoadUi.cpp src/app/StemsUi.cpp src/app/TrackReceiptUi.cpp
 msgid "about %d s left"
 msgstr ""
 
@@ -19649,7 +19769,7 @@ msgstr ""
 msgid "Use it for"
 msgstr ""
 
-#: src/app/SettingsKeysTheme.cpp
+#: src/app/SettingsKeysTheme.cpp src/app/TrackerPages.cpp
 msgid "Used"
 msgstr ""
 
@@ -21226,10 +21346,6 @@ msgid "BPM"
 msgstr ""
 
 #: src/app/TopBar.cpp
-msgid "Back to arrangement"
-msgstr ""
-
-#: src/app/TopBar.cpp
 msgid "Beats and project"
 msgstr ""
 
@@ -21299,10 +21415,6 @@ msgstr ""
 
 #: src/app/TopBar.cpp
 msgid "Join the selected regions into one"
-msgstr ""
-
-#: src/app/TopBar.cpp
-msgid "KEEP"
 msgstr ""
 
 #: src/app/TopBar.cpp
@@ -22305,6 +22417,10 @@ msgstr ""
 msgid "The notes this instrument plays also go to the MIDI output, on its channel and program"
 msgstr ""
 
+#: src/app/TrackerEditors.cpp
+msgid "The panning envelope (Tab: the other one)"
+msgstr ""
+
 #: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
 msgid "The panning envelope moves the sound while the note plays"
 msgstr ""
@@ -22331,6 +22447,10 @@ msgstr ""
 
 #: src/app/TrackerEditors.cpp
 msgid "The sustain point"
+msgstr ""
+
+#: src/app/TrackerEditors.cpp
+msgid "The volume envelope (Tab: the other one)"
 msgstr ""
 
 #: src/app/TrackerEditors.cpp src/packs/tracker/tracker_ui.cpp
@@ -23281,7 +23401,7 @@ msgstr ""
 msgid "Row numbers in hexadecimal (00 to 3F), or decimal (00 to 63)"
 msgstr ""
 
-#: src/app/TrackerFrame.cpp
+#: src/app/TrackerFrame.cpp src/app/TrackerPages.cpp
 msgid "Rows"
 msgstr ""
 
@@ -23355,6 +23475,14 @@ msgstr ""
 
 #: src/app/TrackerFrame.cpp
 msgid "Screen keys"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Scrolls the text down"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "Scrolls the text up"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -23511,10 +23639,6 @@ msgstr ""
 
 #: src/app/TrackerFrame.cpp
 msgid "The Transpose box"
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
-msgid "The arrangement, a row per bar"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -23770,6 +23894,10 @@ msgid "The song's title (click to edit)"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
+msgid "The song: the order list, the patterns and the timeline"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
 msgid "The source: an instrument (click its number in the list) and a sample (click its number in the sample list)"
 msgstr ""
 
@@ -23990,7 +24118,7 @@ msgid "A copy of the picked pattern after it"
 msgstr ""
 
 #: src/app/TrackerPages.cpp
-msgid "A new empty pattern after the last (as long as the song's bars)"
+msgid "A new empty pattern of 64 rows after the last"
 msgstr ""
 
 #: src/app/TrackerPages.cpp
@@ -24055,6 +24183,10 @@ msgstr ""
 
 #: src/app/TrackerPages.cpp
 msgid "Draw notes (click: a note, drag: its length)"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "Entry"
 msgstr ""
 
 #: src/app/TrackerPages.cpp
@@ -24186,6 +24318,10 @@ msgid "Some entries layer several patterns or audio: the arranger shows their to
 msgstr ""
 
 #: src/app/TrackerPages.cpp
+msgid "Starts"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
 msgid "Stops every track at its launch grid"
 msgstr ""
 
@@ -24294,11 +24430,27 @@ msgid "a Tracker Sampler: its samples are edited in its instrument editor and th
 msgstr ""
 
 #: src/app/TrackerPages.cpp
+msgid "audio"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "audio only"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "first at"
+msgstr ""
+
+#: src/app/TrackerPages.cpp
 msgid "its sample is ready to edit."
 msgstr ""
 
 #: src/app/TrackerPages.cpp
 msgid "no sample (its sound is synthesized)."
+msgstr ""
+
+#: src/app/TrackerPages.cpp
+msgid "not in the song"
 msgstr ""
 
 #: src/app/TrackerPages.cpp
@@ -33967,10 +34119,6 @@ msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp
 msgid "Tight"
-msgstr ""
-
-#: src/packs/tideline/tideline_ui.cpp
-msgid "To"
 msgstr ""
 
 #: src/packs/tideline/tideline_ui.cpp

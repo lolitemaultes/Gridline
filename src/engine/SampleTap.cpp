@@ -10,8 +10,10 @@ struct Slot {
   std::atomic<uint64_t> key{0};  // (file + 1) << 32 | owner; 0 = free
   int file = -1;
   ObjectId owner = kNoId;
-  // Written by the thread that renders the owner (receipt passes render on
-  // one thread); read after the pass ended.
+  // Written by the thread that renders the owner: each owner (a channel, an
+  // audio clip within its channel, a mixer track) is one task of the mixer
+  // graph, so one thread at a time even when K-319 passes spread the graph
+  // over several; the block barriers order them. Read after the pass ended.
   int64_t plays = 0;
   double tick0 = 1e300, tick1 = -1e300;
   Range ranges[Pass::kMaxRanges];
@@ -28,6 +30,8 @@ struct PassData {
   std::vector<size_t> words;
   std::unique_ptr<Slot[]> slots;
   std::atomic<bool> full{false};
+  std::atomic<uint64_t> marks{0};
+  std::atomic<bool> readsOnly{false};  // K-319  // K-319: reads marked (the receipt render's tail follows it)
 };
 
 namespace {
@@ -144,6 +148,7 @@ void mark(Slot* slot, double a, double b) {
   a = std::clamp(a, 0.0, len), b = std::clamp(b, 0.0, len);
   if (b < a) std::swap(a, b);
   if (b - a <= 0) return;
+  d->marks.fetch_add(1, std::memory_order_relaxed);
   addRange(*slot, a, b);
   slot->tick0 = std::min(slot->tick0, t_tick);
   slot->tick1 = std::max(slot->tick1, t_tick);
@@ -161,6 +166,16 @@ void mark(Slot* slot, double a, double b) {
     bits[wi].fetch_or(m, std::memory_order_relaxed);
     g += n;
   }
+}
+
+uint64_t marks() {
+  const PassData* d = g_pass.load(std::memory_order_acquire);
+  return d ? d->marks.load(std::memory_order_relaxed) : 0;
+}
+
+bool readsOnly() {
+  const PassData* d = g_pass.load(std::memory_order_acquire);
+  return d && d->readsOnly.load(std::memory_order_relaxed);
 }
 
 void markShare(Slot* slot, double f0, double f1) {
@@ -240,6 +255,8 @@ void Pass::end() {
   PassData* expect = d_.get();
   g_pass.compare_exchange_strong(expect, nullptr, std::memory_order_acq_rel);
 }
+
+void Pass::setReadsOnly(bool on) { d_->readsOnly.store(on, std::memory_order_relaxed); }
 
 const std::vector<WatchFile>& Pass::files() const { return d_->files; }
 

@@ -391,12 +391,24 @@ void header(App& a, float w) {
     const float lw = a.fontBold->CalcTextSizeA(lfs, 1e9f, 0, lt).x;
     dl->AddText(a.fontBold, lfs, ImVec2(std::round(cx - lw * 0.5f), p.y + 2), P.textDim, lt);
   }
-  const std::string busTitle = bus ? playlistTrackName(s, static_cast<size_t>(track)) : std::string();
-  const int ic = c && c->icon > 0 ? c->icon : trackicons::guess(c ? c->name : bus ? busTitle : std::string(), c ? "Synth" : bus ? "Bus" : "Audio");
+  std::string busTitle = bus ? playlistTrackName(s, static_cast<size_t>(track)) : std::string();
+  // D7 (R13-04): a track that plays several sounds through a bus (a kit) is that bus here, as the
+  // inspector and Smart Controls show it, not its first sound.
+  if (c && !bus) {
+    const MixerTrack* st = logicplug::trackStrip(s, track);
+    const int si = st ? s.mixerIndex(st->id) : -1;
+    if (st && si > 0 && st->id != c->mixerTrack) {
+      busTitle = mixerTrackName(s, static_cast<size_t>(si));
+      c = nullptr;
+    }
+  }
+  const bool kit = !c && !busTitle.empty() && !bus;
+  const int ic = c && c->icon > 0 ? c->icon
+                                  : trackicons::guess(c ? c->name : busTitle, c ? "Synth" : kit ? "Drums" : bus ? "Bus" : "Audio");
   const ImVec2 b0(cx - 28, p.y + 22), b1(cx + 28, p.y + 78);
   dl->AddRectFilled(b0, b1, theme::mix(P.surface800, P.text, 0.07f), 10.0f);
   if (ic > 0) trackicons::draw(dl, ic, ImVec2(cx, p.y + 50), 38, c ? theme::mix(theme::content(c->color), P.text, 0.30f) : P.textDim);
-  const char* title = c ? c->name.c_str() : bus ? busTitle.c_str() : track >= 0 && track < static_cast<int>(s.tracks.size()) ? i18n::tr("No instrument") : "";
+  const char* title = c ? c->name.c_str() : !busTitle.empty() ? busTitle.c_str() : track >= 0 && track < static_cast<int>(s.tracks.size()) ? i18n::tr("No instrument") : "";
   const float fs = theme::kFontBody - 1;  // audit X6: a name at 13 px
   const float tw = std::min(a.fontBold->CalcTextSizeA(fs, 1e9f, 0, title).x, w - 12);
   theme::textEllipsis(dl, a.fontBold, fs, ImVec2(std::round(cx - tw * 0.5f), p.y + 84), w - 12, P.text, title);
@@ -412,8 +424,10 @@ bool navRow(App& a, const char* id, ui::Icon icon, const char* label, bool on, f
   ImDrawList* dl = ImGui::GetWindowDrawList();
   if (on || hov) dl->AddRectFilled(ImVec2(p.x, p.y + 1), ImVec2(p.x + w, p.y + h - 1), on ? theme::mix(P.surface800, P.text, 0.12f) : theme::mix(P.surface800, P.text, 0.05f), 5.0f);
   const float fs = theme::kFontCaption;
-  if (icon != ui::Icon::Count) ui::drawIcon(dl, icon, ImVec2(p.x + 12, p.y + h * 0.5f), 12, on ? P.text : P.textDim);
-  const float tx = icon != ui::Icon::Count ? p.x + 24 : p.x + 8;
+  // D7 polish: the icon's left edge on the same 8 px line as the plain rows' names and the "Sounds"
+  // heading (it sat at 6), its name 6 px after it.
+  if (icon != ui::Icon::Count) ui::drawIcon(dl, icon, ImVec2(p.x + 14, p.y + h * 0.5f), 12, on ? P.text : P.textDim);
+  const float tx = icon != ui::Icon::Count ? p.x + 26 : p.x + 8;
   if (chevron) ui::drawIcon(dl, ui::Icon::Chevron, ImVec2(p.x + w - 10, p.y + h * 0.5f), 9, P.textFaint);  // D4: opens its list (264)
   theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(tx, std::round(p.y + (h - fs) * 0.5f) - 1), p.x + w - tx - (chevron ? 20 : 4), on ? P.text : P.textDim, label);
   ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h));
@@ -551,6 +565,9 @@ void draw(App& a) {
   }
   if (showList) {
   ImGui::BeginChild("##smlibrows", ImVec2(listW, std::max(40.0f, avH - footH - (listY - o.y))), ImGuiChildFlags_None);
+  // D8: the rows on the navigation's 22 px pitch, so a patch sits level with the kind beside it (the
+  // item spacing made them 27 px, drifting a row lower every four)
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
   {
     const int track = targetTrack(a);
     const Channel* cur = targetSound(a, track);
@@ -587,6 +604,7 @@ void draw(App& a) {
       }
     if (rows.empty()) ImGui::TextDisabled("%s", i18n::tr("Nothing has that name"));
   }
+  ImGui::PopStyleVar();
   ImGui::EndChild();
   }
   // The footer under the results: how many items (252, 111), then Revert and Save for the selected
@@ -610,7 +628,7 @@ void draw(App& a) {
     const char* labels[2] = {i18n::tr("Revert"), i18n::tr("Save")};
     float bw[2], total = gap;
     for (int k = 0; k < 2; ++k) total += (bw[k] = std::ceil(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, labels[k]).x) + 16);
-    float bx = f.x + w - total - 4;
+    float bx = f.x + w - total - 1;  // D8: the last button ends on the search field's right edge, as its last pixel (it stopped 3 px short)
     for (int k = 0; k < 2; ++k) {
       const bool en = k == 0 ? factory != nullptr : cur != nullptr;
       ImGui::SetCursorScreenPos(ImVec2(bx, by));

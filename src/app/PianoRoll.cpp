@@ -102,6 +102,22 @@ bool isBlack(int pitch) {
 }
 // K-81: how opaque a piano roll note body is (dark and light themes).
 float noteBodyAlpha(bool dark) { return dark ? 0.84f : 0.82f; }
+
+// K-106 cp22: the roll's drawing style. The Tracker's Roll page draws square notes (no rounded
+// corners, no cap, no top light) and plain velocity bars (a filled bar the note's length, no
+// lollipop head), as the classic screens; every other layout keeps the default (all false).
+struct RollStyle {
+  bool squareNotes = false;
+  bool plainVelocity = false;
+};
+RollStyle rollStyle() {
+  RollStyle r;
+  if (layoutui::active() == layout::Preset::Tracker) {
+    r.squareNotes = true;
+    r.plainVelocity = true;
+  }
+  return r;
+}
 std::string noteName(int pitch) { return std::string(kNoteNames[pitch % 12]) + std::to_string(pitch / 12 - 1); }
 // K-112D (audit G5): the pitch and position under the pointer in the last frame, for Smooth's read-out
 // in the local bar (-1: the pointer is not over the notes).
@@ -847,7 +863,7 @@ void drawPianoRoll(App& a) {
         chan = s.channel(a.selChannel);
       }
     }
-    ImGui::SameLine(0, layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic) ? 6.0f : 2.0f);
+    ImGui::SameLine(0, layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic) ? 8.0f : 2.0f);  // D8: Smooth's bar: 8 between groups
     stampui::button(a, W >= 760.0f);  // the chord stamp, beside the menu (its chord's name shows on wide windows)
     ImGui::SameLine(0, 4);
     // Channel picker (colour chip + name).
@@ -988,11 +1004,11 @@ void drawPianoRoll(App& a) {
                                 : "Auto scrolling is off: the view stays where you put it while the pattern plays (click to follow the pattern position)",
                          calm ? P.accent : theme::rgb(theme::role::kView)))
         a.settings.set("ui.autoScrollPattern", !follow);
-      if (calm) {
-        ImGui::SameLine(0, 10);
+      if (calm) {  // D8: 8 px between the bar's groups (10 and 6 before), 4 inside one
+        ImGui::SameLine(0, 8);
         calmTool();
         calmToolDrawn = true;
-        ImGui::SameLine(0, 6);
+        ImGui::SameLine(0, 8);
       }
       if (calm && roomLeft() > 120 + fh) {  // K-112D (audit G5): the pitch and position under the pointer (144: "B7 1.4.1.1")
         char rb[96] = "";  // four 64-bit tick fields can take 80 characters
@@ -1013,7 +1029,8 @@ void drawPianoRoll(App& a) {
         rdl->AddRectFilled(rp, ImVec2(rp.x + rw, rp.y + fh), theme::mix(P.surface950, P.ink, 0.3f), 5.0f);
         const float rfs = theme::kFontLabel + 1;
         const float tw = a.fontRegular->CalcTextSizeA(rfs, 1e9f, 0, rb).x;
-        rdl->AddText(a.fontRegular, rfs, ImVec2(std::round(rp.x + (rw - tw) * 0.5f), std::round(rp.y + (fh - rfs) * 0.5f) - 1), P.text, rb);
+        // D8: centred as the bar's other text (it sat 1 px high)
+        rdl->AddText(a.fontRegular, rfs, ImVec2(std::round(rp.x + (rw - tw) * 0.5f), std::round(rp.y + (fh - rfs) * 0.5f)), P.text, rb);
         ui::Hint("The pitch and the position (bar, beat, division, tick) under the pointer");
         ImGui::SameLine(0, 4);
       }
@@ -1813,6 +1830,8 @@ void drawPianoRoll(App& a) {
   struct NoteLabel { size_t note; float x0, x1, y; ImU32 fill; std::string text; };
   std::vector<NoteLabel> labels;  // K-28
   const bool liveNotes = livelook::active(a);
+  const RollStyle style = rollStyle();
+  const bool squareNotes = liveNotes || style.squareNotes;  // (Live's flat bars; the Tracker's square notes)
   for (size_t i = 0; i < notes.size(); ++i) {
     const Note& n = notes[i];
     bool sel = st.selected.count(i) > 0;
@@ -1843,12 +1862,12 @@ void drawPianoRoll(App& a) {
     const pixelgrid::Span nsx = pixelgrid::block(x0, x1, dpp, 0.0f, 1.0f, 2.0f), nsy = pixelgrid::block(y, y + rowH, dpp);
     const ImVec2 n0(nsx.x0, nsy.x0), n1(nsx.x1, nsy.x1);
     // K-112c: Live's notes are flat square bars with a dark rim (no cap, no top light), as every ref.
-    const float nr = liveNotes ? 0.0f : theme::kRadiusSm;
+    const float nr = squareNotes ? 0.0f : theme::kRadiusSm;
     dl->AddRectFilled(n0, n1, body, nr);
     if (n.muted && x1 - x0 > 6) dl->AddLine(ImVec2(n0.x + 2, n1.y - 2), ImVec2(n1.x - 2, n0.y + 2), theme::withAlpha(theme::rgb(theme::role::kMute), 0.7f), 1.2f);
-    if (x1 - x0 > 10 && rowH >= 9 && !liveNotes && !velColours)
+    if (x1 - x0 > 10 && rowH >= 9 && !squareNotes && !velColours)
       dl->AddRectFilled(n0, ImVec2(std::min(n1.x, n0.x + 4), n1.y), theme::mix(body, P.ink, 0.25f), theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
-    if (!liveNotes && !velColours) dl->AddLine(ImVec2(n0.x + 1, n0.y + 0.5f), ImVec2(n1.x - 1, n0.y + 0.5f), theme::withAlpha(P.paper, 0.35f));
+    if (!squareNotes && !velColours) dl->AddLine(ImVec2(n0.x + 1, n0.y + 0.5f), ImVec2(n1.x - 1, n0.y + 0.5f), theme::withAlpha(P.paper, 0.35f));
     if (velColours && x1 - x0 > 6 && rowH >= 7) {  // K-112D (audit G1): the reference's velocity line, as long as the note is loud
       const float ly = std::round((n0.y + n1.y) * 0.5f);
       dl->AddLine(ImVec2(n0.x + 2, ly), ImVec2(n0.x + 2 + (n1.x - n0.x - 4) * vel, ly), theme::withAlpha(P.paper, 0.8f), 1.0f);
@@ -2077,13 +2096,15 @@ void drawPianoRoll(App& a) {
     float x = xOf(static_cast<Tick>(playPos));
     dl->AddLine(ImVec2(x, gridMin.y), ImVec2(x, gridMax.y), P.playhead, 1.5f);
   }
-  // Step record cursor: where the next played chord goes (Alt+click in the grid moves it).
+  // Step record cursor: where the next played chord goes (a click on the ruler or Alt+click in the
+  // grid moves it, Left / Right step it).
   if (a.stepRecord && !a.engine.playing()) {
     // Record-red cursor: the step the next chord fills is tinted, a 2 px line
-    // marks its start and a flag hangs from the top edge.
+    // marks its start and a flag hangs from the top edge. GitHub #71: a chord held while Right
+    // lengthens it tints the length it will get.
     float x = std::round(xOf(a.stepRecorder.cursor));
     const Tick stepG = std::max<Tick>(1, a.piano.effGrid > 0 ? a.piano.effGrid : snapTicks(pm, a.piano.snap));
-    const float xs = std::round(xOf(a.stepRecorder.cursor + stepG));
+    const float xs = std::round(xOf(a.stepRecorder.cursor + stepG * (1 + a.stepRecorder.extraSteps())));
     dl->AddRectFilled(ImVec2(x, gridMin.y), ImVec2(std::max(x + 2, xs), gridMax.y), theme::withAlpha(P.danger, 0.10f));
     dl->AddLine(ImVec2(x, gridMin.y), ImVec2(x, gridMax.y), theme::withAlpha(P.danger, 0.9f), 2.0f);
     dl->AddRectFilled(ImVec2(x, gridMin.y), ImVec2(x + 9, gridMin.y + 8), P.danger, 1.0f);
@@ -2526,6 +2547,15 @@ void drawPianoRoll(App& a) {
       dl->AddCircle(ImVec2(rx, ly), 3.5f, c, 12, 1.5f);
       continue;
     }
+    if (style.plainVelocity) {
+      // K-106 cp22 (the Tracker): a plain bar, the note's length (1 px short of the next), filled to its
+      // value with a solid edge at the value; no head.
+      const float bx1 = std::max(x + 3, xe - 1), top = std::round(std::min(yv, y0)), bot = std::round(std::max(yv, y0));
+      const float ey = std::clamp(std::round(yv), vMin.y, vMax.y - 1);
+      dl->AddRectFilled(ImVec2(x, top), ImVec2(bx1, std::max(top + 1, bot)), theme::withAlpha(c, lsel ? 0.75f : 0.5f));
+      dl->AddRectFilled(ImVec2(x, ey), ImVec2(bx1, ey + 1), c);
+      continue;
+    }
     if (xe - x > 4) dl->AddRectFilled(ImVec2(x + 2, std::min(yv, y0)), ImVec2(xe - 1, std::max(yv, y0)), theme::withAlpha(c, 0.12f));
     dl->AddRectFilled(ImVec2(x, std::min(yv, y0)), ImVec2(x + 2, std::max(yv, y0)), c);
     dl->AddCircleFilled(ImVec2(x + 1, yv), 3.5f, c, 12);
@@ -2645,7 +2675,8 @@ void drawPianoRoll(App& a) {
       a.setHint("Click keys to audition");
     } else if (inRuler) {
       ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-      a.setHint("Click or drag to move the playback position (snaps to the grid, Alt = free)");
+      a.setHint(a.stepRecord && !a.engine.playing() ? "Click or drag to place the step record cursor (and the playback position)"
+                                                    : "Click or drag to move the playback position (snaps to the grid, Alt = free)");
     }
   }
 
@@ -3032,6 +3063,11 @@ void drawPianoRoll(App& a) {
         if (t != g.lastScrub) {
           a.engine.setPosition(t);
           g.lastScrub = t;
+        }
+        // GitHub #71: step recording, the step cursor goes where the ruler is clicked (on the step grid).
+        if (a.stepRecord && !a.engine.playing()) {
+          const Tick sg = std::max<Tick>(1, a.piano.effGrid > 0 ? a.piano.effGrid : snapTicks(pm, a.piano.snap));
+          a.stepRecorder.cursor = snapDown(std::max<Tick>(0, tickAt(std::clamp(m.x, gridMin.x, gridMax.x))), sg);
         }
         break;
       }
@@ -3725,8 +3761,10 @@ void drawPianoRoll(App& a) {
     if (!laneKeys && keys::pressed("piano.transposeDown")) applyToSel([&](Note& n) { n.pitch -= 1; }, "transpose notes");
     if (!laneKeys && keys::pressed("piano.octaveUp")) applyToSel([&](Note& n) { n.pitch += 12; }, "transpose notes");
     if (!laneKeys && keys::pressed("piano.octaveDown")) applyToSel([&](Note& n) { n.pitch -= 12; }, "transpose notes");
-    if (!laneKeys && keys::pressed("piano.moveRight")) applyToSel([&](Note& n) { n.start += grid; }, "move notes");
-    if (!laneKeys && keys::pressed("piano.moveLeft")) applyToSel([&](Note& n) { n.start = std::max<Tick>(0, n.start - grid); }, "move notes");
+    // GitHub #71: while step recording, Left and Right move the step cursor (main.cpp), not the notes.
+    const bool stepKeys = a.stepRecord && !a.engine.playing();
+    if (!laneKeys && !stepKeys && keys::pressed("piano.moveRight")) applyToSel([&](Note& n) { n.start += grid; }, "move notes");
+    if (!laneKeys && !stepKeys && keys::pressed("piano.moveLeft")) applyToSel([&](Note& n) { n.start = std::max<Tick>(0, n.start - grid); }, "move notes");
     if (!a.typingKeyboard) {
       if (keys::pressed("piano.toolDraw")) st.tool = Tool::Draw;
       if (keys::pressed("piano.toolPaint")) st.tool = Tool::Paint;

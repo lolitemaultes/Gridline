@@ -56,6 +56,7 @@
 #include "Windows.h"
 #include "../core/MenuOps.h"
 #include "SystemMenu.h"
+#include "UndoUi.h"
 
 namespace gl {
 
@@ -66,6 +67,7 @@ namespace {
 
 // ---- geometry (design tokens) ----
 constexpr float kPad = theme::kS3;          // outer padding left/right
+constexpr float kLcdMid = 13;  // cp53: Smooth's display: the values' centre line, from its top (captions under it)
 constexpr float kPanelH = 36.0f;            // panel height (6 px margin top/bottom)
 constexpr float kPanelPad = theme::kS1;     // inner padding of a panel
 constexpr float kGap = theme::kS2;          // gap between panels
@@ -262,14 +264,12 @@ bool tempoLcd(App& a, double* v, float width, float lcdH = kBtn, bool big = fals
     const BigTempo bt = bigTempoLayout(a, *v, p, width);
     // R01-26: the tempo over its mode, as 216 shows "137" over "KEEP" (the project keeps its tempo:
     // imported audio follows it), the TEMPO caption under both.
-    const float kf = theme::kFontLabel - 2;
-    const float ty = std::round(p.y + (h - bt.size - kf) * 0.5f - h * 0.08f);
+    // cp53 (polish): the tempo on the display's values line, its caption on the captions' row (the
+    // "KEEP" line under it crowded the 36 px display, and the tempo's caption already names it).
+    const float ty = std::round(p.y + kLcdMid - bt.size * 0.55f);
     dl->AddText(a.fontBold, bt.size, ImVec2(bt.x, ty), act ? P.hot : P.text, bt.whole.c_str());
     if (!bt.frac.empty())
       dl->AddText(a.fontBold, theme::kFontCaption, ImVec2(bt.x + bt.wholeW + 1, std::round(ty + bt.size - theme::kFontCaption)), P.textDim, bt.frac.c_str());
-    const char* keep = i18n::tr("KEEP");
-    const float kw = a.fontBold->CalcTextSizeA(kf, 1e9f, 0, keep).x;
-    dl->AddText(a.fontBold, kf, ImVec2(std::round(p.x + (width - kw) * 0.5f), std::round(ty + bt.size)), P.textDim, keep);
   } else if (live) {
     const auto& P = pal();
     const ImVec2 q1(p.x + width, p.y + lcdH);
@@ -1357,23 +1357,66 @@ static float drawTrackerMenuRow(App& a) {
   static LevelMeter out;
   out.update(a.engine.takeMasterPeakL(), a.engine.takeMasterPeakR(), ImGui::GetIO().DeltaTime);
   ImFont* mono = a.fontMono ? a.fontMono : ImGui::GetFont();
-  const float lf = theme::kFontLabel;
+  // K-106 cp22: the meter at the menu's own text size (it was the small label size, faint, and a 9 px
+  // bar): "OUT", a left and a right row of lit blocks (green, then amber from -6 dB, red from 0 dB;
+  // the unlit blocks faintly drawn, so the scale reads at rest), the peak hold, the clip lamp, and the
+  // peak in dB in figures.
+  const float lf = std::round(ImGui::GetFontSize() * 0.92f);
   char cpu[16];
   std::snprintf(cpu, sizeof cpu, "%3d%%", CpuMeter::displayPercent(a.engine.cpuLoad()));
-  const float labelW = std::ceil(mono->CalcTextSizeA(lf, FLT_MAX, 0, "OUT").x) + 4;
+  const float labelW = std::ceil(mono->CalcTextSizeA(lf, FLT_MAX, 0, "OUT").x) + 6;
+  const float dbW = std::ceil(mono->CalcTextSizeA(lf, FLT_MAX, 0, "-00.0").x) + 6;
   // K-106 cp13: a hidden (scripted) run shows no load: its audio runs on the silent test driver beside
   // whatever else the machine is doing, so the reading (often 100%) says nothing about Gridline.
   const bool showCpu = !sysmenu::hiddenRun();
   const float cpuW = showCpu ? std::ceil(mono->CalcTextSizeA(lf, FLT_MAX, 0, "CPU 100%").x) : -10.0f;
-  const float meterW = 90, boxW = 6 + labelW + meterW + 10 + cpuW + 6;
+  const float meterW = 112, lampW = 6, boxW = 6 + labelW + meterW + 3 + lampW + 6 + dbW + 8 + cpuW + 6;
   const ImVec2 b0(std::round(wp.x + W - 4 - boxW), my), b1(std::round(wp.x + W - 4), my + btnH);
   if (b0.x > x + 8) {
     dl->AddRectFilled(b0, b1, P.surface950);
     dl->AddRectFilled(ImVec2(b0.x, b1.y - 1), b1, P.lineStrong);
     dl->AddRectFilled(ImVec2(b1.x - 1, b0.y), b1, P.lineStrong);
     const float ty = std::round(b0.y + (btnH - lf) * 0.5f);
-    dl->AddText(mono, lf, ImVec2(b0.x + 6, ty), P.textFaint, "OUT");
-    outMeter(dl, ImVec2(b0.x + 6 + labelW, std::round(b0.y + (btnH - 9) * 0.5f)), ImVec2(meterW, 9), out);
+    dl->AddText(mono, lf, ImVec2(b0.x + 6, ty), P.textDim, "OUT");
+    const float mx0 = b0.x + 6 + labelW, my0 = b0.y + 3, my1 = b1.y - 3;
+    const float rowH = std::floor((my1 - my0 - 1) * 0.5f);
+    constexpr float kSeg = 3.0f, kGap = 1.0f;
+    constexpr int kMaxSegs = 64;
+    const int segs = std::min(kMaxSegs, static_cast<int>((meterW + kGap) / (kSeg + kGap)));
+    // Each block's dB at its end (the meter's scale is linear in dB, LevelMeter::toPos).
+    float segDb[kMaxSegs];
+    for (int k = 0; k < segs; ++k) {
+      segDb[k] = LevelMeter::kFloorDb + (LevelMeter::kCeilDb - LevelMeter::kFloorDb) * static_cast<float>(k + 1) / static_cast<float>(segs);
+    }
+    auto segColour = [&](float db, bool lit) {
+      const ImU32 c = db >= 0.0f ? P.meterHigh : db >= -6.0f ? P.meterMid : P.meterLow;
+      return lit ? c : theme::withAlpha(c, 0.16f);
+    };
+    for (int ch = 0; ch < 2; ++ch) {
+      const float y0 = my0 + static_cast<float>(ch) * (rowH + 1), y1 = y0 + rowH;
+      const float lvPos = out.levelDb(ch) > LevelMeter::kFloorDb ? LevelMeter::toPos(out.levelDb(ch)) : -1.0f;
+      const float hdPos = out.holdDb(ch) > LevelMeter::kFloorDb ? LevelMeter::toPos(out.holdDb(ch)) : -1.0f;
+      const int holdSeg = hdPos < 0 ? -1 : std::min(segs - 1, static_cast<int>(hdPos * static_cast<float>(segs)));
+      for (int k = 0; k < segs; ++k) {
+        const float f0 = static_cast<float>(k) / static_cast<float>(segs);
+        const bool lit = lvPos > f0 || k == holdSeg;
+        const float sx = mx0 + static_cast<float>(k) * (kSeg + kGap);
+        dl->AddRectFilled(ImVec2(sx, y0), ImVec2(sx + kSeg, y1), segColour(segDb[k], lit));
+      }
+    }
+    const ImVec2 l0(mx0 + meterW + 3, my0), l1(mx0 + meterW + 3 + lampW, my1);
+    dl->AddRectFilled(l0, l1, out.clipping() ? P.danger : theme::withAlpha(P.danger, 0.16f));
+    {  // the louder side's peak hold, in dB
+      const float hd = std::max(out.holdDb(0), out.holdDb(1));
+      char db[16];
+      if (hd > LevelMeter::kFloorDb) {
+        std::snprintf(db, sizeof db, "%.1f", static_cast<double>(std::max(-99.9f, hd)));
+      } else {
+        std::snprintf(db, sizeof db, "%s", "-inf");
+      }
+      const float tw = mono->CalcTextSizeA(lf, FLT_MAX, 0, db).x;
+      dl->AddText(mono, lf, ImVec2(l1.x + 6 + dbW - 6 - tw, ty), hd > 0.0f ? P.danger : hd > LevelMeter::kFloorDb ? P.text : P.textFaint, db);
+    }
     const float load = std::clamp(a.engine.cpuLoad(), 0.0f, 1.0f);
     std::string c = std::string("CPU ") + cpu;
     if (showCpu) dl->AddText(mono, lf, ImVec2(b1.x - 6 - cpuW, ty), load > 0.8f ? P.danger : P.textDim, c.c_str());
@@ -1518,20 +1561,30 @@ static float drawTopBarLive(App& a) {
   };
 
   // Widths, and what fits.
-  const float posW = 80, loopW = 80, backW = std::ceil(a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, i18n::tr("Back to arrangement")).x) + 30;
+  // Checkpoint 57 (N56 part 6, 2): one spacing scale: kIn between the controls of a group, kGroup
+  // between groups. Back to arrangement is an icon button, as the reference's (its name in the hint), so
+  // the loop range fits at 1440 wide.
+  constexpr float kIn = 4, kGroup = 12;
+  const float posW = 80, loopW = 64, backW = 26;
   const float segGridW = 68, segArrW = std::ceil(a.fontRegular->CalcTextSizeA(theme::kFontBody - 1, 1e9f, 0, i18n::tr("Arrangement")).x) + 32;
   const float keyW = 30, scaleW = 92;  // the key and scale group
   bool showLoop = true, showRange = true, showSys = true, showKey = true;
-  auto leftW = [&]() { return 26 + 6 + 40 + 4 + 64 + 4 + 44 + 8 + 14 + 4 + 54 + (showKey ? 8 + keyW + 2 + scaleW : 0); };
+  auto leftW = [&]() { return 26 + kGroup + 40 + kIn + 64 + kIn + 44 + kIn + 14 + kIn + 54 + (showKey ? kGroup + keyW + kIn + scaleW : 0); };
   // The transport group: play, stop, record, then automation arm and overdub, then the record menu.
   // Checkpoint 55 (gap 6): Follow after Back to arrangement; the loop switch beside punch and the range.
-  auto centreW = [&]() { return posW + 4 + 26 * 6 + 28 * 2 + 10 + 6 + 4 + backW + 30 + (showLoop ? 8 + 30 + 26 + 4 : 0) + (showLoop && showRange ? loopW + 4 + loopW : 0); };
-  auto rightW = [&]() { return (showSys ? 66 + 4 + 26 + 4 + 40 + 14 : 0) + 26 + segGridW + segArrW; };
+  // The position | play, stop, record, overdub, automation, capture, session record | the record menu |
+  // Back to arrangement, Follow | Loop, Punch, the loop start and length.
+  auto centreW = [&]() {
+    return posW + kGroup + 26 * 7 + kIn * 6 + kGroup + 26 + kGroup + backW + kIn + 26 + (showLoop ? kGroup + 26 + kIn + 26 : 0) +
+           (showLoop && showRange ? kIn + loopW + kIn + loopW : 0);
+  };
+  auto rightW = [&]() { return (showSys ? 66 + kIn + 26 + kIn + 40 + 14 : 0) + 26 + segGridW + segArrW; };
   // Checkpoint 55 (gap 6): the range fields go first, so the loop and punch switches stay at 1440 wide.
-  if (10 + leftW() + 16 + centreW() + 16 + rightW() + 8 > W) showRange = false;
-  if (10 + leftW() + 16 + centreW() + 16 + rightW() + 8 > W) showKey = false;
-  if (10 + leftW() + 16 + centreW() + 16 + rightW() + 8 > W) showSys = false;
-  if (10 + leftW() + 16 + centreW() + 16 + rightW() + 8 > W) showLoop = false;
+  auto fits = [&]() { return 10 + leftW() + kGroup + centreW() + kGroup + rightW() + 8 <= W; };
+  if (!fits()) showRange = false;
+  if (!fits()) showKey = false;
+  if (!fits()) showSys = false;
+  if (!fits()) showLoop = false;
 
   // ---- left: tap, tempo, meter, metronome, launch grid ----
   float x = wp.x + 10;
@@ -1540,7 +1593,7 @@ static float drawTopBarLive(App& a) {
     if (flat("##browserlive", x, 26, a.showBrowser, keyHint("Browser: show or hide it", "view.browser").c_str())) a.showBrowser = !a.showBrowser;
     ui::drawIconFitC(dl, ui::Icon::Browser, ImVec2(x + 13, cy + kH * 0.5f), ImVec2(14, 14), glyphCol(a.showBrowser));
     noteRect("browsertoggle");
-    x += 26 + 6;
+    x += 26 + kGroup;
   }
   {
     ImGui::SetCursorScreenPos(ImVec2(x, cy));
@@ -1556,7 +1609,7 @@ static float drawTopBarLive(App& a) {
     theme::centreText(dl, a.fontRegular, fsNum, ImVec2(x, cy), ImVec2(x + 40, cy + kH), a.tapListening() ? P.hot : P.text, i18n::tr("Tap"));  // K-112c (round 28): lit while it counts
     ui::Hint(keyHint("Tap tempo: click on every beat. The tempo follows from the second tap, and a pause of over 2 seconds starts over.", "transport.tapTempo").c_str());
     noteRect("taptempo");
-    x += 44;
+    x += 40 + kIn;
     static TempoMap map;
     static uint64_t mapRev = ~0ull;
     static const Song* mapSong = nullptr;
@@ -1571,14 +1624,14 @@ static float drawTopBarLive(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(x, cy));
     if (tempoLcd(a, &tempo, 64, kH) && !(automated && tempo == shown)) a.doc.setParam(songParam(SongParam::Tempo), tempo, true);
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
-    x += 68;
+    x += 64 + kIn;
     int sigNum = s.timeSigNum, sigDen = s.timeSigDen;
     const Tick at = static_cast<Tick>(a.engine.position());
     meter::meterAt(s, at, sigNum, sigDen);
     char sig[16];
     std::snprintf(sig, sizeof sig, "%d / %d", sigNum, sigDen);
     if (field("##siglive", sig, x, 44, false, "Meter at the song position (click to edit)")) meterui::openEditor(a, meter::changeAt(s, at));
-    x += 52;
+    x += 44 + kIn;
     // Metronome: a lamp.
     ImGui::SetCursorScreenPos(ImVec2(x, cy));
     if (ImGui::InvisibleButton("##metrolive", ImVec2(14, kH))) a.metronome = !a.metronome;
@@ -1586,7 +1639,7 @@ static float drawTopBarLive(App& a) {
     ui::Hint(keyHint("Metronome", "options.metronome").c_str());
     dl->AddCircleFilled(ImVec2(x + 7, cy + kH * 0.5f), 4.0f, a.metronome ? P.led : P.surface600, 12);
     if (ImGui::IsItemHovered()) dl->AddCircle(ImVec2(x + 7, cy + kH * 0.5f), 6.0f, theme::withAlpha(P.text, 0.4f), 12);
-    x += 18;
+    x += 14 + kIn;
     // Launch grid of every track (one value when they agree).
     const LaunchGrid g0 = s.tracks.empty() ? LaunchGrid::FourBeats : s.tracks[0].launch;
     bool same = true;
@@ -1607,7 +1660,7 @@ static float drawTopBarLive(App& a) {
     x += 54;
     // The key and scale (the notes editor's scale highlighting): root, then the scale.
     if (showKey) {
-      x += 8;
+      x += kGroup;
       static const char* const kRoots[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
       const auto& sc = tools::scales();
       const bool on = a.piano.scale > 0 && a.piano.scale < static_cast<int>(sc.size());
@@ -1619,7 +1672,7 @@ static float drawTopBarLive(App& a) {
           if (ImGui::MenuItem(kRoots[k], nullptr, a.piano.scaleRoot == k)) a.piano.scaleRoot = k;
         ImGui::EndPopup();
       }
-      x += keyW + 2;
+      x += keyW + kIn;
       const std::string sn = on ? sc[static_cast<size_t>(a.piano.scale)].name : i18n::tr("No scale");
       if (field("##scalelive", sn.c_str(), x, scaleW, !on, "Scale: rows outside it are shaded in the notes editor")) ImGui::OpenPopup("##scalepop");
       ImGui::SetNextWindowPos(ImVec2(x, cy + kH + 2));
@@ -1673,12 +1726,12 @@ static float drawTopBarLive(App& a) {
     const ImVec2 ks = a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, "KEY");
     dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(std::round(rx + (40 - ks.x) * 0.5f), std::round(cy + (kH - ks.y) * 0.5f)), glyphCol(a.typingKeyboard), "KEY");
     // K-112c: Draw mode: the editors' pencil on (lit) or off (the select tool).
-    rx -= 4 + 26;
+    rx -= kIn + 26;
     const bool drawOn = livelook::drawMode(a);
     if (flat("##drawlive", rx, 26, drawOn, "Draw mode: the arrangement and the notes editor draw with the pencil (off: select)")) livelook::setDrawMode(a, !drawOn);
     noteRect("drawmode");
     ui::drawIconFit(dl, ui::Icon::ToolDraw, ImVec2(rx + 6, cy + 4), ImVec2(rx + 20, cy + kH - 4), glyphCol(drawOn));
-    rx -= 4 + 66;
+    rx -= kIn + 66;
     char cpu[24];
     std::snprintf(cpu, sizeof cpu, "CPU %d %%", CpuMeter::displayPercent(a.engine.cpuLoad()));
     if (field("##cpulive", cpu, rx, 66, false, "Audio processing load (click: the Performance panel)")) a.showPerformance = !a.showPerformance;
@@ -1688,13 +1741,13 @@ static float drawTopBarLive(App& a) {
   {
     const float cw = centreW();
     float mx = std::round(wp.x + (W - cw) * 0.5f);
-    mx = std::max(mx, leftEnd + 16);
+    mx = std::min(std::max(mx, leftEnd + kGroup), wp.x + W - 8 - rightW() - kGroup - cw);
     // C44-20: in the song, counted from the arrangement's start (the end of the clip grid's storage);
     // while clips play from the grid, the transport's own count.
     const Tick posOrigin = a.engine.mode() == PlayMode::Song ? livelook::arrangementOrigin(a) : 0;
     const std::string pos = bbt(std::max<Tick>(0, static_cast<Tick>(a.engine.position()) - posOrigin), false);
     field("##poslive", pos.c_str(), mx, posW, false, "Song position: bars . beats . sixteenths");
-    mx += posW + 4;
+    mx += posW + kGroup;
     const bool playing = a.engine.playing();
     menuparity::transportTick(a);
     const std::string playTip = menuparity::playButtonHint(a);
@@ -1704,7 +1757,7 @@ static float drawTopBarLive(App& a) {
       (void)menuparity::playPressed(a);
     noteRect("play");
     ui::drawIconFit(dl, ui::Icon::Play, ImVec2(mx + 8, cy + 6), ImVec2(mx + 18, cy + kH - 6), playing ? P.launch : glyphCol(false));
-    mx += 28;
+    mx += 26 + kIn;
     if (flat("##stoplive", mx, 26, false, "Stop (right-click: options)", true)) menuparity::stopButtonPressed(a);
     noteRect("stop");
     if (ImGui::BeginPopupContextItem("##stopmenu")) {
@@ -1712,7 +1765,7 @@ static float drawTopBarLive(App& a) {
       ImGui::EndPopup();
     }
     dl->AddRectFilled(ImVec2(mx + 9, cy + 7), ImVec2(mx + 17, cy + kH - 7), P.text, 1.0f);
-    mx += 28;
+    mx += 26 + kIn;
     if (flat("##reclive", mx, 26, false, keyHint("Record (right-click: what to record, punch, count-in)", "transport.record").c_str(), true))
       livelook::toggleArrangementRecord(a), recordcard::recordClicked(a, ImGui::GetIO().KeyShift);  // K-123: the card
     noteRect("rec");
@@ -1722,17 +1775,17 @@ static float drawTopBarLive(App& a) {
     }
     dl->AddCircleFilled(ImVec2(mx + 13, cy + kH * 0.5f), 4.5f, a.recordArmed ? P.arm : theme::withAlpha(P.arm, 0.75f), 16);
     if (a.recordArmed) dl->AddCircle(ImVec2(mx + 13, cy + kH * 0.5f), 7.0f, P.arm, 16, 1.5f);
-    mx += 28;
+    mx += 26 + kIn;
     // What a recording takes besides audio: notes on top of the existing ones (overdub), and
     // controller moves (automation). The same switches as the record menu.
     {
       RecordOptions& ro = a.recOptions;
       if (flat("##overdublive", mx, 26, ro.overdub, "Overdub: recorded notes join the existing ones (off: they replace them)")) ro.overdub = !ro.overdub;
       ui::drawIconFit(dl, ui::Icon::Plus, ImVec2(mx + 8, cy + 6), ImVec2(mx + 18, cy + kH - 6), glyphCol(ro.overdub));
-      mx += 28;
+      mx += 26 + kIn;
       if (flat("##autoarmlive", mx, 26, ro.automation, "Record automation: controller and knob moves are recorded while recording")) ro.automation = !ro.automation;
       ui::drawIconFit(dl, ui::Icon::ClipAutomation, ImVec2(mx + 7, cy + 5), ImVec2(mx + 19, cy + kH - 5), glyphCol(ro.automation));
-      mx += 28;
+      mx += 26 + kIn;
     }
     // K-112c: Capture: what was just played while nothing recorded becomes notes in the pattern.
     {
@@ -1741,7 +1794,7 @@ static float drawTopBarLive(App& a) {
         livelook::captureNow(a);
       noteRect("capture");
       ui::drawIconFit(dl, ui::Icon::Download, ImVec2(mx + 7, cy + 5), ImVec2(mx + 19, cy + kH - 5), kept ? P.text : P.textFaint);
-      mx += 28;
+      mx += 26 + kIn;
     }
     // K-112c: Session record: records into the current pattern, looping it (the record button in
     // pattern mode); lit while that runs.
@@ -1753,7 +1806,7 @@ static float drawTopBarLive(App& a) {
       const ImVec2 c(mx + 13, cy + kH * 0.5f);
       dl->AddRect(ImVec2(c.x - 6, c.y - 6), ImVec2(c.x + 6, c.y + 6), on ? glyphCol(true) : P.text, 2.0f, 1.2f, 0);
       dl->AddCircleFilled(c, 3.0f, on ? glyphCol(true) : P.arm, 12);
-      mx += 28 + 4;
+      mx += 26 + kGroup;
     }
     if (flat("##recoptlive", mx, 26, false, "Recording options: what to record, punch, count-in")) ImGui::OpenPopup("##recoptpop");
     ui::drawIconFit(dl, ui::Icon::More, ImVec2(mx + 7, cy + kH * 0.5f - 1), ImVec2(mx + 19, cy + kH * 0.5f + 2), P.text);
@@ -1762,7 +1815,7 @@ static float drawTopBarLive(App& a) {
       recordOptionsMenu(a);
       ImGui::EndPopup();
     }
-    mx += 26 + 6;
+    mx += 26 + kGroup;
     // Back to arrangement: lit while any track plays a grid clip.
     bool anyGrid = false;
     if (a.engine.mode() == PlayMode::Live)
@@ -1771,61 +1824,43 @@ static float drawTopBarLive(App& a) {
       a.engine.stopAllLive();
       a.engine.setMode(PlayMode::Song);
     }
-    ui::drawIconFit(dl, ui::Icon::Undo, ImVec2(mx + 7, cy + 6), ImVec2(mx + 17, cy + kH - 6), glyphCol(anyGrid));
-    dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(mx + 22, theme::textTop(a.fontRegular, theme::kFontCaption, cy, kH)), glyphCol(anyGrid),
-                i18n::tr("Back to arrangement"));
-    mx += backW + 4;
+    noteRect("backtoarrangement");
+    ui::drawIconFit(dl, ui::Icon::Undo, ImVec2(mx + 7, cy + 5), ImVec2(mx + 19, cy + kH - 5), glyphCol(anyGrid));
+    mx += backW + kIn;
     {  // Checkpoint 55 (gap 6): Follow: the Arrangement scrolls with the play position (the person's setting)
       const bool follow = a.settings.getBool("ui.autoScroll");
       if (flat("##followlive", mx, 26, follow, "Follow: the Arrangement scrolls to keep the play position in view")) a.settings.set("ui.autoScroll", !follow);
       noteRect("follow");
       ui::drawIconFit(dl, ui::Icon::Follow, ImVec2(mx + 6, cy + 5), ImVec2(mx + 20, cy + kH - 5), glyphCol(follow));
-      mx += 26 + 4;
+      mx += 26 + kGroup;
     }
     if (showLoop) {
-      // The loop range: the playlist's time selection (the whole song while there is none).
-      const bool sel = a.playlist.selEnd > a.playlist.selStart;
+      // Checkpoint 56 (N55-04): the loop brace is its own, as the reference's: the song's cycle range (Smooth's
+      // cycle reads the same fields), never the time selection. Cmd+L sets it from the selection.
+      const bool on = livelook::loopOn(a), brace = s.cycleEnd > s.cycleStart;
       Tick songEnd = 0;
       for (const Clip& c : s.playlist) songEnd = std::max(songEnd, c.start + s.clipLength(c));
       // C44-20: counted from the arrangement's start (the clip grid before it is not part of the song here).
       const Tick org = livelook::arrangementOrigin(a);
-      const Tick l0 = sel ? std::max(org, a.playlist.selStart) : org, l1 = sel ? std::max(l0, a.playlist.selEnd) : std::max(org, songEnd);
-      mx += 4;
-      // Checkpoint 55 (gap 6): the loop switch: the Arrangement's loop brace on (the range last used,
-      // else the four bars from the play position) or off. The range is the view's, never the song's.
-      {
-        static Tick lastL = 0, lastR = 0;
-        if (sel) {
-          lastL = a.playlist.selStart, lastR = a.playlist.selEnd;
-        }
-        if (flat("##looplive", mx, 26, sel, "Loop: the Arrangement plays its loop brace over and over (click to switch it on or off)")) {
-          if (sel) {
-            a.playlist.selStart = a.playlist.selEnd = 0;
-          } else if (lastR > lastL) {
-            a.playlist.selStart = lastL, a.playlist.selEnd = lastR;
-          } else {
-            const MeterMap mm(s);
-            const Tick from = mm.barStartAt(std::max(org, static_cast<Tick>(a.engine.position())));
-            Tick to = from;
-            for (int k = 0; k < 4; ++k) {
-              to = mm.nextBar(to);
-            }
-            a.playlist.selStart = from, a.playlist.selEnd = to;
-          }
-        }
-        noteRect("loop");
-        ui::drawIconFit(dl, ui::Icon::LoopArrows, ImVec2(mx + 6, cy + 5), ImVec2(mx + 20, cy + kH - 5), glyphCol(sel));
-        mx += 26 + 4;
+      const Tick l0 = brace ? std::max(org, s.cycleStart) : org, l1 = brace ? std::max(l0, s.cycleEnd) : std::max(org, songEnd);
+      if (flat("##looplive", mx, 26, on, "Loop: the Arrangement plays its loop brace over and over (click to switch it on or off; Cmd+L sets it from the time selection)")) {
+        livelook::toggleLoop(a);
       }
-      // Punch in and out at the time selection, beside the range it uses.
-      if (flat("##punchlive", mx, 26, a.recPunch, "Punch in and out: recording keeps only what falls inside the time selection")) a.recPunch = !a.recPunch;
+      noteRect("loop");
+      ui::drawIconFit(dl, ui::Icon::LoopArrows, ImVec2(mx + 6, cy + 5), ImVec2(mx + 20, cy + kH - 5), glyphCol(on));
+      mx += 26 + kIn;
+      // Punch in and out (off by default, as the reference's), beside the range.
+      if (flat("##punchlive", mx, 26, a.recPunch, "Punch in and out: recording keeps only what falls inside the loop brace")) {
+        a.recPunch = !a.recPunch;
+        a.settings.set("clips.punch", a.recPunch);
+      }
       ui::drawIconFit(dl, ui::Icon::Trim, ImVec2(mx + 6, cy + 5), ImVec2(mx + 20, cy + kH - 5), glyphCol(a.recPunch));
-      mx += 26 + 4;
+      mx += 26 + kIn;
       if (showRange) {
         const std::string ls = bbt(l0 - org, false), ll = bbt(std::max<Tick>(0, l1 - l0), true);
-        field("##loopstart", ls.c_str(), mx, loopW, !sel, "Loop start: the playlist's time selection (drag in the ruler to set it)");
-        mx += loopW + 4;
-        field("##looplen", ll.c_str(), mx, loopW, !sel, "Loop length: bars . beats . sixteenths of the time selection");
+        field("##loopstart", ls.c_str(), mx, loopW, !on, "Loop start: the loop brace (drag it in the ruler, or Cmd+L on a time selection)");
+        mx += loopW + kIn;
+        field("##looplen", ll.c_str(), mx, loopW, !on, "Loop length: bars . beats . sixteenths of the loop brace");
       }
     }
   }
@@ -1848,6 +1883,7 @@ bool logicRegionShown(App& a, const char* region) {
 
 // A rounded button of the control bar: an icon or a short label. While on, its glyph is lit (the
 // pane toggles and switches); a strong one fills with the accent (play while playing).
+bool gBigGlyphs = false;  // cp53: the transport's pills (16 px glyphs at any height)
 bool gGrouped = false;  // the pills sit in a shared group container (drawn by barGroup): no face of their own at rest
 
 // The rounded container a run of pills shares (the pane toggles, the transport, the switches).
@@ -1898,7 +1934,7 @@ bool barPill(const char* id, ImVec2 p, ImVec2 size, ui::Icon icon, const char* l
       default: break;
     }
     const ImVec2 c(std::round(p.x + size.x * 0.5f), std::round(p.y + size.y * 0.5f));
-    const float isz = std::round((size.y >= 32 ? 16.0f : 14.0f) * k);  // transport 16, the pane pills 14
+    const float isz = std::round((gBigGlyphs || size.y >= 32 ? 16.0f : 14.0f) * k);  // transport 16, the pane pills 14
     if (icon == ui::Icon::ChevronLeft || icon == ui::Icon::Left || icon == ui::Icon::Right) {
       // Checkpoint 35: the start, back and forward buttons as filled transport glyphs (a bar and a
       // triangle, two triangles each way), as 216 and 125 draw them, at the play triangle's height
@@ -1959,6 +1995,10 @@ std::string hintWithKey(const char* text, const char* cmd) {
 // K-112b: cycle on or off. On without a range: the range cycle last used, else four bars from the bar
 // the song position is in. Off: the range is kept for the next time.
 void toggleCycle(App& a) {
+  if (livelook::active(a)) {  // K-112c checkpoint 56 (N55-04): in Clips, its loop brace (the same song fields)
+    livelook::toggleLoop(a);
+    return;
+  }
   PlaylistState& pst = a.playlist;
   const Song& s = a.doc.song();
   if (pst.selEnd > pst.selStart) {
@@ -2058,32 +2098,72 @@ void goToPositionPrompt(App& a) {
 }
 
 // R02-04: in the Tracks layout the cycle area is the arrangement's range (PlaylistState::selStart /
-// selEnd) and is saved with the project (Song::cycleStart / cycleEnd / cycleOn). A loaded project
-// (or one undone or changed by a collaborator) brings its range in; a range the user set goes to
-// the song once the mouse is up, one edit per change.
+// selEnd) and is saved with the project (Song::cycleStart / cycleEnd / cycleOn).
+// R13-02 (checkpoint 53): the song holds the cycle and the view follows it.
+//  - The view takes the song's cycle whenever the song's changes, whatever changed it: a project
+//    loaded, a collaborator's edit, joining a shared project, a menu command, a script.
+//  - The song takes the view's only when the person here changed the view (a ruler drag, a click,
+//    C), once the mouse is up. A frame where only the song moved never writes, so a peer never
+//    sends back a cycle it was just sent, and a joining peer never writes its empty view over the host's.
+// R04-10: the cycle is transport state, as the reference's: changing it is never an undo step and
+// does not mark the project changed (it is saved with the next save). An undo or redo that brings
+// back an older cycle with the rest of its step does not move it: the cycle shown stays.
 void logicCycleSync(App& a) {
   PlaylistState& pst = a.playlist;
   const Song& s = a.doc.song();
-  static uint64_t epoch = UINT64_MAX;
-  static Tick sa = 0, sb = 0;  // the range last synced (0, 0: cycle off)
-  const Tick songA = s.cycleOn ? s.cycleStart : 0, songB = s.cycleOn ? s.cycleEnd : 0;
-  if (a.doc.projectEpoch() != epoch) {  // a project loaded: its cycle comes in
-    epoch = a.doc.projectEpoch();
-    pst.selStart = sa = songA;
-    pst.selEnd = sb = songB;
+  struct Seen {
+    Tick a = 0, b = 0;  // the view's range (0, 0: cycle off)
+    Tick songA = 0, songB = 0;  // the song's, as last synced
+    bool songOn = false;
+    uint64_t epoch = UINT64_MAX;
+    unsigned long long moves = 0;
+  };
+  static Seen seen;
+  // An undo / redo this frame (not a history the session cleared or rebuilt: a collaborator's
+  // edits arrive without one, and their cycle is followed).
+  const unsigned long long moves = undoui::historyMoves();
+  const bool historyMoved = moves != seen.moves;
+  seen.moves = moves;
+  const auto takeSong = [&] {
+    pst.selStart = seen.a = s.cycleOn ? s.cycleStart : 0;
+    pst.selEnd = seen.b = s.cycleOn ? s.cycleEnd : 0;
+    seen.songA = s.cycleStart, seen.songB = s.cycleEnd, seen.songOn = s.cycleOn;
+  };
+  // K-112c checkpoint 56 (N55-04): coming into Smooth from another layout brings the song's cycle in too
+  // (another layout's time selection is not Smooth's cycle: Clips keeps its loop brace in these fields).
+  static int lastFrame = -10;
+  const bool entered = ImGui::GetFrameCount() - lastFrame > 1;
+  lastFrame = ImGui::GetFrameCount();
+  if (a.doc.projectEpoch() != seen.epoch || entered) {  // a project loaded: its cycle comes in
+    seen.epoch = a.doc.projectEpoch();
+    takeSong();
     return;
   }
-  // R04-10: the cycle is transport state, as the reference's: changing it is never an undo step and
-  // does not mark the project changed (it is saved with the next save). An undo of an older edit
-  // that brought back an older cycle does not move it either: the cycle shown stays.
+  const bool songChanged = s.cycleStart != seen.songA || s.cycleEnd != seen.songB || s.cycleOn != seen.songOn;
   const Tick pa = pst.selEnd > pst.selStart ? pst.selStart : 0, pb = pst.selEnd > pst.selStart ? pst.selEnd : 0;
-  if (ImGui::IsAnyMouseDown() && (pa != sa || pb != sb)) return;  // (written when the drag ends)
-  sa = pa, sb = pb;
-  if (songA == pa && songB == pb) return;
-  a.doc.patchSong([&](Song& x) {
-    x.cycleOn = pb > pa;
-    if (pb > pa) x.cycleStart = pa, x.cycleEnd = pb;
-  });
+  const bool viewChanged = pa != seen.a || pb != seen.b;
+  if (viewChanged && ImGui::IsAnyMouseDown()) return;  // (written when the drag ends)
+  if (!viewChanged) {
+    if (!songChanged) return;
+    if (!historyMoved) {  // the song's cycle moved (not by this view): the view follows
+      takeSong();
+      return;
+    }
+    // An undo / redo brought back an older cycle: the song keeps the one it had (R04-10).
+    const Tick ka = seen.songA, kb = seen.songB;
+    const bool kon = seen.songOn;
+    a.doc.patchSong([&](Song& x) { x.cycleStart = ka, x.cycleEnd = kb, x.cycleOn = kon; });
+    return;
+  }
+  // The person here changed the cycle: the song takes it (off keeps the range for the next time).
+  seen.a = pa, seen.b = pb;
+  if (pb > pa ? !(s.cycleOn && s.cycleStart == pa && s.cycleEnd == pb) : s.cycleOn) {
+    a.doc.patchSong([&](Song& x) {
+      x.cycleOn = pb > pa;
+      if (pb > pa) x.cycleStart = pa, x.cycleEnd = pb;
+    });
+  }
+  seen.songA = s.cycleStart, seen.songB = s.cycleEnd, seen.songOn = s.cycleOn;
 }
 
 static float drawLogicControlBar(App& a) {
@@ -2247,7 +2327,11 @@ static float drawLogicControlBar(App& a) {
   // ---- left: the panes ----
   // Checkpoint 30: pills 34 wide on a 28 px capsule, about the spacing 126 gives its buttons (1.2 times the
   // capsule's height), each glyph about half the capsule's height.
-  const float pillH = 28, pillW = 34, gap = 6, gi = 2;  // gi: between the pills of one group
+  // cp53 (polish): every part of the bar is one height and stands on one centre line: the groups'
+  // capsules (pills + their 3 px rim) and the display are all kGroupH tall, and neighbouring parts are
+  // kGroupGap apart (rim to rim). Before, the pane groups were 34, the transport 40 and the display 50.
+  constexpr float kGroupH = 36, kGroupGap = 10, kRim = 3;
+  const float pillH = kGroupH - 2 * kRim, pillW = 34, gap = 6, gi = 2;  // gi: between the pills of one group
   const float py = std::round(top + (barH - pillH) * 0.5f);
   float x = wp.x + kPad + 3;
   {
@@ -2271,13 +2355,13 @@ static float drawLogicControlBar(App& a) {
     constexpr int kFirstGroup = 4;
     barGroup(dl, ImVec2(x, py), ImVec2(x + pillW * kFirstGroup + gi * (kFirstGroup - 1), py + pillH));
     {
-      const float x2 = x + pillW * kFirstGroup + gi * (kFirstGroup - 1) + gap + 4;
+      const float x2 = x + pillW * kFirstGroup + gi * (kFirstGroup - 1) + kGroupGap + 2 * kRim;
       barGroup(dl, ImVec2(x2, py), ImVec2(x2 + pillW * 3 + gi * 2, py + pillH));
     }
     gGrouped = true;
     int paneIndex = 0;
     for (const Pane& pn : panes) {
-      if (paneIndex++ == kFirstGroup) x += gap + 4 - gi;  // the second group's own pill
+      if (paneIndex++ == kFirstGroup) x += kGroupGap + 2 * kRim - gi;  // the second group's own capsule
 
       bool on = false;
       // K-112b (checkpoint 24): the toolbar a tray, the editors a pencil, as 126 and 216 draw them.
@@ -2335,7 +2419,7 @@ static float drawLogicControlBar(App& a) {
   // time (3), beats (4) or time (5) alone across the display, and custom (1).
   const int lcdMode = std::clamp(static_cast<int>(a.settings.getNumber("ui.lcdMode")), 0, 5);
   const bool lcdCustom = lcdMode == 1, lcdAlone = lcdMode == 4 || lcdMode == 5;
-  const float tb = 34, lcdH = 50, modesGap = 20;
+  const float tb = 34, tbH = pillH, lcdH = kGroupH, modesGap = kGroupGap + kRim;  // (cp53: one height, even gaps)
   float lcdW = lcdCustom ? std::clamp(std::round(W * 0.23f), 300.0f, 440.0f) : lcdMode == 0 || lcdMode == 3 ? 330.0f : 300.0f;
   // K-112b: the control bar's parts a right-click on the bar shows or hides (ref 070).
   bool showNav = a.settings.getBool("ui.cbar.nav");
@@ -2344,42 +2428,71 @@ static float drawLogicControlBar(App& a) {
   const bool showCycle = a.settings.getBool("ui.cbar.cycle");
   const bool showStart = a.settings.getBool("ui.cbar.toStart");  // A3 (checkpoint 48): hidden by default
   auto transportCount = [&] { return (showNav ? (showStart ? 6 : 5) : 3) + (showCycle ? 1 : 0); };
+  // cp54 (polish): on a narrow bar every part keeps the bar's 10 px rim-to-rim gap and nothing is
+  // clipped: the switches after the display (count-in, click, typing) are planned in, so they no longer
+  // vanish while the display keeps its full width (1024: the switches went and a 39 px hole stood
+  // before the right group; the pane groups stood 19 px from the transport).
+  const float rightPillsX = wp.x + W - kPad - 3 - (pillW * 3 + gi * 2);  // the right group's first pill
+  const float gxMin = leftEnd - 6 + kRim + kGroupGap;                    // the transport's first pill (leftEnd: the panes' rim + 6)
+  float modesW = 0;  // the switches' pills (count-in "1234" 40 px, click, typing)
+  if (a.settings.getBool("ui.cbar.countIn")) {
+    modesW += 40 + gi;
+  }
+  if (a.settings.getBool("ui.cbar.click")) {
+    modesW += pillW + gi;
+  }
+  if (a.settings.getBool("ui.cbar.typing")) {
+    modesW += pillW + gi;
+  }
+  if (modesW > 0) {
+    modesW -= gi;
+  }
+  // The display's right end: before the switches' capsule, itself 10 px before the right group's rim.
+  auto displayEndMax = [&] { return modesW > 0 ? rightPillsX - 2 * kRim - kGroupGap - modesW - modesGap : rightPillsX - kRim - kGroupGap; };
   {
     // Checkpoint 33: the transport and display always fit between the left groups and the right group
     // (at 150 % the right group covered the display's end): first the start, back and forward buttons
-    // go, then the display narrows (down to 220 px).
-    const float span = (wp.x + W - kPad - 3 - (pillW * 3 + gi * 2) - 12) - (leftEnd + 16);
-    auto need = [&] { const int n = transportCount(); return tb * static_cast<float>(n) + gi * static_cast<float>(n - 1) + 10 + lcdW; };
-    if (need() > span && showNav) showNav = false;
-    if (need() > span) lcdW = std::max(220.0f, std::floor(lcdW - (need() - span)));
+    // go, then the display narrows (down to 220 px), then (cp54) the switches go.
+    auto need = [&] { const int n = transportCount(); return tb * static_cast<float>(n) + gi * static_cast<float>(n - 1) + kRim + kGroupGap + lcdW; };
+    auto fit = [&] {
+      if (need() > displayEndMax() - gxMin) {
+        lcdW = std::max(220.0f, std::floor(lcdW - (need() - (displayEndMax() - gxMin))));
+      }
+    };
+    if (need() > displayEndMax() - gxMin && showNav) {
+      showNav = false;
+    }
+    fit();
+    if (need() > displayEndMax() - gxMin) {
+      modesW = 0;
+      fit();
+    }
   }
   const int transportN = transportCount();
   const float transportW = tb * static_cast<float>(transportN) + gi * static_cast<float>(transportN - 1);
-  const float groupW = transportW + 10 + lcdW;
+  const float groupW = transportW + kRim + kGroupGap + lcdW;
   float gx = std::round(wp.x + (W - groupW) * 0.5f);
-  {  // a narrow window: the group moves left so the switches after it still fit before the right group
-    const float modesW = pillW * 2 + 40 + gap * 3;  // count-in ("1234"), click, typing (checkpoint 24: icon pills)
-    gx = std::min(gx, std::round(wp.x + W - 200 - modesW - modesGap - groupW));
-  }
-  gx = std::max(gx, leftEnd + 16);
+  gx = std::min(gx, std::floor(displayEndMax() - groupW));  // a narrow window: the switches after it still fit
+  gx = std::max(gx, gxMin);
   {
-    const float ty = std::round(top + (barH - tb) * 0.5f);
+    const float ty = std::round(top + (barH - tbH) * 0.5f);
     const Tick bar = std::max<Tick>(1, s.barTicks());
     const Tick pos = static_cast<Tick>(a.engine.position());
     const bool songBars = a.engine.mode() != PlayMode::Pattern;
     float cx = gx;
-    barGroup(dl, ImVec2(cx, ty), ImVec2(cx + transportW, ty + tb));
+    barGroup(dl, ImVec2(cx, ty), ImVec2(cx + transportW, ty + tbH));
+    gBigGlyphs = true;  // (the transport's glyphs stay 16 px in the lower capsule)
     gGrouped = true;
     if (showNav) {
     if (showStart) {
-      if (barPill("##lb_start", ImVec2(cx, ty), ImVec2(tb, tb), ui::Icon::ChevronLeft, nullptr, false, hintWithKey("Go to the start", "transport.toStart").c_str()))
+      if (barPill("##lb_start", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::ChevronLeft, nullptr, false, hintWithKey("Go to the start", "transport.toStart").c_str()))
         a.engine.setPosition(0);
       cx += tb + gi;
     }
-    if (barPill("##lb_back", ImVec2(cx, ty), ImVec2(tb, tb), ui::Icon::Left, nullptr, false, hintWithKey("Back one bar", "transport.rewindBar").c_str()))
+    if (barPill("##lb_back", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::Left, nullptr, false, hintWithKey("Back one bar", "transport.rewindBar").c_str()))
       a.engine.setPosition(std::max<Tick>(0, songBars ? MeterMap(s).barStartAt(std::max<Tick>(0, pos - 1)) : (pos - 1) / bar * bar));
     cx += tb + gi;
-    if (barPill("##lb_fwd", ImVec2(cx, ty), ImVec2(tb, tb), ui::Icon::Right, nullptr, false, hintWithKey("Forward one bar", "transport.forwardBar").c_str()))
+    if (barPill("##lb_fwd", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::Right, nullptr, false, hintWithKey("Forward one bar", "transport.forwardBar").c_str()))
       a.engine.setPosition(songBars ? MeterMap(s).nextBar(pos) : (pos / bar + 1) * bar);
     cx += tb + gi;
     }
@@ -2387,7 +2500,7 @@ static float drawLogicControlBar(App& a) {
     const bool playing = a.engine.playing();
     const std::string playTip = menuparity::playButtonHint(a);
     // K-112b (checkpoint 25): stop, then play, as 216, 125 and 150 order them.
-    if (barPill("stop", ImVec2(cx, ty), ImVec2(tb, tb), ui::Icon::Stop, nullptr, false, i18n::tr("Stop (right-click: options)")))
+    if (barPill("stop", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::Stop, nullptr, false, i18n::tr("Stop (right-click: options)")))
       menuparity::stopButtonPressed(a);
     noteRect("stop");
     if (ImGui::BeginPopupContextItem("##stopmenu")) {
@@ -2398,16 +2511,16 @@ static float drawLogicControlBar(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(cx, ty));
     // Checkpoint 31: a white triangle at rest that turns green while playing, as 070, 216 and 150 draw it
     // (it was green at rest and a filled orange pause while playing); a click still pauses.
-    if (barPill("play", ImVec2(cx, ty), ImVec2(tb, tb), ui::Icon::Play, nullptr, false,
+    if (barPill("play", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::Play, nullptr, false,
                 playTip.empty() ? hintWithKey("Play / pause", "transport.play").c_str() : playTip.c_str(), playing ? theme::rgb(0x34C759) : 0, false))
       playing ? a.engine.pause() : (void)menuparity::playPressed(a);
     // A2 (checkpoint 48): a bare green triangle while playing, no disc, as the reference's.
     noteRect("play");
     cx += tb + gi;
-    if (barPill("rec", ImVec2(cx, ty), ImVec2(tb, tb), ui::Icon::Record, nullptr, false,
+    if (barPill("rec", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::Record, nullptr, false,
                 hintWithKey("Record (right-click: what to record, punch, count-in)", "transport.record").c_str(), a.recordArmed ? P.arm : theme::withAlpha(P.arm, 0.8f)))
       a.recordArmed = !a.recordArmed;
-    if (a.recordArmed) dl->AddRect(ImVec2(cx, ty), ImVec2(cx + tb, ty + tb), P.arm, 6.0f, 0, 1.5f);
+    if (a.recordArmed) dl->AddRect(ImVec2(cx, ty), ImVec2(cx + tb, ty + tbH), P.arm, std::floor(tbH * 0.5f), 0, 1.5f);
     noteRect("rec");
     if (ImGui::BeginPopupContextItem("##recmenu")) {
       recordOptionsMenu(a);
@@ -2416,12 +2529,13 @@ static float drawLogicControlBar(App& a) {
     if (showCycle) {
       cx += tb + gi;
       const bool cyc = a.playlist.selEnd > a.playlist.selStart;
-      if (barPill("##lb_cycle", ImVec2(cx, ty), ImVec2(tb, tb), ui::Icon::LoopArrows, nullptr, cyc,
+      if (barPill("##lb_cycle", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::LoopArrows, nullptr, cyc,
                   hintWithKey("Cycle: playback loops inside the time selection (off: the whole song)", nullptr).c_str()))
         toggleCycle(a);
     }
     gGrouped = false;
-    cx += tb + 10;
+    gBigGlyphs = false;
+    cx += tb + kRim + kGroupGap;
     // The display: position, tempo, metre and key.
     const ImVec2 l0(cx, std::round(top + (barH - lcdH) * 0.5f)), l1(cx + lcdW, l0.y + lcdH);
     // K-112b: a dark display in three sections: the position large and bold (bar and beat, each
@@ -2497,10 +2611,12 @@ static float drawLogicControlBar(App& a) {
         ImGui::EndPopup();
       }
       // K-112b (checkpoint 25): larger position digits, as 216, 125 and 205 set them (about 0.6 of the display).
-      const float fs = std::round(lcdH * 0.62f);
+      // cp53 (polish): the display is the bar's height (36); its values share one centre line (lcdMid)
+      // and its captions one row under them.
+      const float fs = std::round(lcdH * 0.56f);
       // Checkpoint 28: in the regular weight, as 216, 205 and 150 set the position (it was the bold face).
       ImFont* pf = a.fontRegular;
-      const float cy = std::round(l0.y + (lcdH - fs) * 0.5f - lcdH * 0.08f);
+      const float cy = std::round(l0.y + kLcdMid - fs * 0.55f);
       const bool barsBeats = static_cast<int>(a.settings.getNumber("ui.timeFormat")) == 0;
       const size_t c1 = posText.find(':'), c2 = c1 == std::string::npos ? c1 : posText.find(':', c1 + 1);
       const double at = a.engine.position();
@@ -2641,7 +2757,7 @@ static float drawLogicControlBar(App& a) {
       ImGui::SetCursorScreenPos(ImVec2(x0, l0.y));
       if (ImGui::InvisibleButton("##sig", ImVec2(w, lcdH))) meterui::openEditor(a, songTime ? meter::changeAt(s, at) : -1);
       ui::Hint(songTime ? "Meter at the song position (click to edit)" : "Meter of the pattern (click: the song's meter at the start)");
-      const float mf = theme::kFontTitle, kf = theme::kFontCaption;  // sizes the app already uses
+      const float mf = theme::kFontTitle;  // a size the app already uses
       const float sw = a.fontBold->CalcTextSizeA(mf, 1e9f, 0, sig).x;
       std::string grid = a.playlist.effGrid > 0 ? timeline::gridName(s, a.playlist.effGrid) : std::string();
       if (lcdCustom && a.playlist.effGrid > 0 && (4 * static_cast<Tick>(s.ppq)) % a.playlist.effGrid == 0)  // R07-12: the division, "/16"
@@ -2659,13 +2775,14 @@ static float drawLogicControlBar(App& a) {
       // R01-26: with no key marker the project's key is C major, shown as the reference always shows one.
       const std::string under = lcdCustom ? grid : (key ? shortKey(*key) : std::string("Cmaj"));
       const bool hasKey = !under.empty();
-      const float uf = lcdCustom ? kf : kf + 1;
-      const float my = std::round(l0.y + (lcdH - (hasKey ? mf + 2 + uf : mf)) * 0.5f);  // the pair centred as one
+      // cp53 (polish): the meter on the values' line, the key (custom: the grid) on the captions' row,
+      // a step brighter than a caption, so the display reads as two even rows.
+      const float uf = theme::kFontLabel;
+      const float my = std::round(l0.y + kLcdMid - mf * 0.55f);
       dl->AddText(a.fontBold, mf, ImVec2(std::round(x0 + (w - sw) * 0.5f), my), P.text, sig);
       if (hasKey) {
-        const float kw = std::min(w - 8, a.fontBold->CalcTextSizeA(uf, 1e9f, 0, under.c_str()).x);
-        theme::textEllipsis(dl, a.fontBold, uf, ImVec2(std::round(x0 + (w - kw) * 0.5f), std::round(my + mf + 2)), w - 8, lcdCustom ? P.textDim : P.text,
-                            under.c_str());
+        const float kw = std::min(w - 8, a.fontRegular->CalcTextSizeA(uf, 1e9f, 0, under.c_str()).x);
+        theme::textEllipsis(dl, a.fontRegular, uf, ImVec2(std::round(x0 + (w - kw) * 0.5f), std::round(l1.y - uf - 4)), w - 8, P.textDim, under.c_str());
       }
     }
     {  // the mode chevron
@@ -2677,7 +2794,9 @@ static float drawLogicControlBar(App& a) {
       ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(std::round(c0.x + chevW * 0.5f) - 1.0f, std::round(l0.y + lcdH * 0.5f)), 9, hov ? P.text : P.textDim);
       noteRectAt("lcd_mode", c0, ImVec2(l1.x, l1.y));
       if (click) ImGui::OpenPopup("##lcdmodes");
-      ImGui::SetNextWindowPos(ImVec2(l1.x - chevW, l1.y + 4));
+      // cp54 (polish): the menu hangs from the display's right edge, its right side flush with it (it began at
+      // the chevron and stood about 140 px past the display, over the switches).
+      ImGui::SetNextWindowPos(ImVec2(l1.x, l1.y + 4), ImGuiCond_Always, ImVec2(1.0f, 0.0f));
       if (ImGui::BeginPopup("##lcdmodes")) {
         lcdModeItems(a);
         ImGui::EndPopup();
@@ -2702,7 +2821,8 @@ static float drawLogicControlBar(App& a) {
     const Mode modes[] = {{"##lb_count", "1234", a.countInBars > 0, "Count-in before recording", 1, "ui.cbar.countIn", ui::Icon::Count},
                           {"##lb_click", i18n::N_("Click"), a.metronome, "Metronome", 2, "ui.cbar.click", ui::Icon::Metronome}};
     // R01-24: where the count-in's beats do not fit, it narrows to a glyph pill before it goes.
-    const float modeLimit = wp.x + W - 200;
+    // cp54: as many as the plan above kept, their pills ending 10 px (rim to rim) before the right group.
+    const float modeLimit = modesW > 0 ? rightPillsX - 2 * kRim - kGroupGap : mx;
     auto modeW = [&](const Mode& m, float at) {
       if (m.icon != ui::Icon::Count) return pillW;
       return at + 40.0f > modeLimit && at + pillW <= modeLimit ? pillW : 40.0f;
@@ -2716,7 +2836,9 @@ static float drawLogicControlBar(App& a) {
         if (mx + gw + w > modeLimit) break;
         gw += w + gi;
       }
-      if (showTyping && mx + gw + pillW <= wp.x + W - 200) gw += pillW + gi;
+      if (showTyping && mx + gw + pillW <= modeLimit) {
+        gw += pillW + gi;
+      }
       if (gw > 0) barGroup(dl, ImVec2(mx, py), ImVec2(mx + gw - gi, py + pillH));
     }
     gGrouped = true;
@@ -2729,10 +2851,18 @@ static float drawLogicControlBar(App& a) {
         else a.metronome = !a.metronome;
       }
       if (m.what == 2) noteRect("metro");
+      if (m.what == 1 && a.engine.countingIn()) {
+        // cp54 (recording UI): while the count-in runs, its pill pulses once a half second (nothing in
+        // Smooth's bar showed it: the record button was armed and the display stood still), on the
+        // pill's own rounded edge, as the Studio bar pulses its play button.
+        const float ph = static_cast<float>(std::fmod(a.now, 0.5) / 0.5), grow = std::round(ph * 3.0f);
+        dl->AddRect(ImVec2(mx - grow, py - grow), ImVec2(mx + w + grow, py + pillH + grow), theme::withAlpha(P.hot, 1.0f - ph),
+                    std::floor(pillH * 0.5f) + grow, 0, 1.5f);
+      }
       mx += w + gi;
     }
     // The typing keyboard: the computer keys play notes (its options on a right-click).
-    if (showTyping && mx + pillW <= wp.x + W - 200) {
+    if (showTyping && mx + pillW <= modeLimit) {
       if (barPill("##lb_typing", ImVec2(mx, py), ImVec2(pillW, pillH), ui::Icon::Keyboard, nullptr, a.typingKeyboard,
                   hintWithKey("Typing keyboard to piano (right-click: options)", "options.typingKeyboard").c_str()))
         a.typingKeyboard = !a.typingKeyboard;
@@ -2784,7 +2914,7 @@ static float drawLogicControlBar(App& a) {
       const ParamId pid = mixerParam(s.masterId(), MixerParam::Volume);
       // Checkpoint 32: in a dark rounded field as tall as the pills (070 and 158 set the output meter in
       // one, the display's colour), the slider and its meter centred in it.
-      const float vw = std::min(120.0f, masterRoom), vx = right0 - 16 - vw, fy0 = std::round(top + (barH - 28) * 0.5f), vy = fy0 + 10;
+      const float vw = std::min(120.0f, masterRoom), vx = right0 - kRim - kGroupGap - vw, fy0 = std::round(top + (barH - 28) * 0.5f), vy = fy0 + 10;
       // A6 (checkpoint 49): no black well: the slider's grey track on the bar, its meter in it, and a
       // light knob, as the reference's output slider reads stopped or playing.
       ImGui::SetCursorScreenPos(ImVec2(vx - 4, vy - 6));
@@ -2798,7 +2928,7 @@ static float drawLogicControlBar(App& a) {
           n = std::clamp(n + io.MouseDelta.x / (vw - 10) * (io.KeyShift ? 0.15 : 1.0), 0.0, 1.0);
           a.doc.setParam(pid, d->fromNormalized(n), true);
         }
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) a.doc.setParam(pid, d->def, false);
+        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && (!v || *v != d->def)) a.doc.setParam(pid, d->def, false);  // (R13-08)
         if (ImGui::IsItemDeactivated()) a.doc.endGesture();
         const float tx = std::round(vx + 5 + (vw - 10) * static_cast<float>(n));
         // Checkpoint 36: the meter is the slider's track, as 216 and 158 draw the output: two bars centred

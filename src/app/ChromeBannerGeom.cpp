@@ -215,24 +215,27 @@ float ease(float u) {
 }
 
 const std::vector<Segment>& segments() {
-  // Slow and spaced out (round 2): each state holds for several seconds, each change takes three
-  // to six, and every move eases in and out.
+  // Spaced out (round 2), transitions twice as fast (round 3): each state holds for several
+  // seconds at the round 2 speed (its sway, turn, wriggle and twist unchanged); each change (a
+  // morph from one shape to another) takes half its round 2 time, 1.5 to 3.5 s. Every move still
+  // eases in and out (quintic: at rest at both ends), so the shorter changes start and stop as
+  // softly as before.
   //                         name          s    from              to            turns sway   tilt   twist wire sprF  sprT  stag
   static const std::vector<Segment> s = {
-      {"spin in", 7.0f, Shape::Particles, Shape::Text, 1, 0, 0, 0, 0, 22, 22, 0.35f},
+      {"spin in", 3.5f, Shape::Particles, Shape::Text, 1, 0, 0, 0, 0, 22, 22, 0.35f},
       {"hold", 7.0f, Shape::Text, Shape::Text, 0, 0.35f, 0.06f, 0, 0, 0, 0, 0},
-      {"dissolve", 4.0f, Shape::Text, Shape::Worms, 0, 0, 0.08f, 0, 0, 0, 0, 0.45f},
+      {"dissolve", 2.0f, Shape::Text, Shape::Worms, 0, 0, 0.08f, 0, 0, 0, 0, 0.45f},
       {"worms", 7.0f, Shape::Worms, Shape::Worms, 0, 0.25f, 0.2f, 0, 0, 0, 0, 0},
-      {"reform", 4.0f, Shape::Worms, Shape::Text, 0, 0, 0.08f, 0, 0, 0, 0, 0.45f},
+      {"reform", 2.0f, Shape::Worms, Shape::Text, 0, 0, 0.08f, 0, 0, 0, 0, 0.45f},
       {"hold", 4.0f, Shape::Text, Shape::Text, 0, 0.25f, 0, 0, 0, 0, 0, 0},
-      {"to logo", 3.5f, Shape::Text, Shape::Logo, 0, 0, 0, 0, 0, 0, 0, 0.3f},
+      {"to logo", 1.75f, Shape::Text, Shape::Logo, 0, 0, 0, 0, 0, 0, 0, 0.3f},
       {"logo", 8.0f, Shape::Logo, Shape::Logo, 1, 0, 0.1f, 0, 0, 0, 0, 0},
-      {"explode", 3.0f, Shape::Logo, Shape::Particles, 0, 0, 0, 0, 0, 4, 14, 0.1f},
+      {"explode", 1.5f, Shape::Logo, Shape::Particles, 0, 0, 0, 0, 0, 4, 14, 0.1f},
       {"drift", 5.0f, Shape::Particles, Shape::Particles, 0, 0.3f, 0, 0, 0, 14, 16, 0},
-      {"gather", 4.0f, Shape::Particles, Shape::Text, 0, 0, 0, 0, 0, 16, 16, 0.3f},
+      {"gather", 2.0f, Shape::Particles, Shape::Text, 0, 0, 0, 0, 0, 16, 16, 0.3f},
       {"twist", 6.0f, Shape::Text, Shape::Text, 0, 0, 0, 1.0f, 0, 0, 0, 0},
       {"wireframe", 7.0f, Shape::Text, Shape::Text, 1, 0, 0.12f, 0, 1, 0, 0, 0},
-      {"shatter", 3.5f, Shape::Text, Shape::Particles, 0, 0, 0, 0, 0, 4, 22, 0.3f},
+      {"shatter", 1.75f, Shape::Text, Shape::Particles, 0, 0, 0, 0, 0, 4, 22, 0.3f},
   };
   return s;
 }

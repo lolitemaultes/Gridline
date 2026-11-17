@@ -130,6 +130,17 @@ class AudioEngine {
   // Song-mode time selection: playback wraps from `end` back to `start`.
   // end <= start clears it (the song loops over its full length again).
   void setLoopRange(Tick start, Tick end);
+  // K-112c checkpoint 56 (N55-02): the Clips layout's Arrangement runs from `start` (after the clip grid's
+  // storage, which never plays as song) to `end` (its last clip's bar end). In song mode with no loop
+  // range, a wrap never lands before `start`; an Arrangement with nothing in it (end <= start), or played
+  // from past its end, plays on instead of wrapping; and with `stopAtEnd` the transport stops at `end`
+  // (where Stop would leave it) instead of wrapping. (0, 0, false): as before, the other layouts. UI
+  // thread, any frame (relaxed stores).
+  void setArrangement(Tick start, Tick end, bool stopAtEnd) {
+    arrStart_.store(static_cast<double>(std::max<Tick>(0, start)), std::memory_order_relaxed);
+    arrEnd_.store(static_cast<double>(std::max<Tick>(0, end)), std::memory_order_relaxed);
+    arrStop_.store(stopAtEnd, std::memory_order_relaxed);
+  }
   void noteOn(ObjectId channel, int pitch, float velocity);
   void noteOff(ObjectId channel, int pitch);
   // K-87: the channel the last live note (noteOn / ownNoteOn, any thread) went to and how many live
@@ -577,7 +588,15 @@ class AudioEngine {
   // Program has automation: a multiple of kControlBlock when every arrangement lane holds one value
   // from the last control-grid evaluation to the block's end and nothing else needs the grid,
   // else kControlBlock. The output is the same: links would be evaluated to the same values.
-  int settledGridBlock(const Program* p, int n) const;
+  // K-317: lanes that move only strip gains (channel / mixer volume and pan) may move inside the
+  // block: `stepped` is then set, and processBlock evaluates them at each control block's start
+  // (stepGains), which the strips ramp through exactly as they would in 64-frame blocks.
+  int settledGridBlock(const Program* p, int n, bool& stepped) const;
+  // K-317: true when the lane's target is a strip gain only (nothing else in the graph reads it).
+  static bool gainOnlyLane(const Program* p, const ProgAutoLane& a);
+  // K-317: a stepped block's strip gains at the start of each of its control blocks after the
+  // first (the first is the grid evaluation's): lanes evaluated at those control blocks' ticks.
+  void stepGains(const Program* p, double anchor, int64_t clock, int n);
   // K-193: frames until the next meter change in song time or (K-203) the song loop's wrap (at most n), so that the block after it
   // starts on the change's first sample and hosted plugins see the new meter from there.
   int untilMeterChange(const Program* p, int n) const;
@@ -762,9 +781,13 @@ class AudioEngine {
   // or quantized jump): playback plays on from there to the song end, and only
   // then wraps into the selection, instead of bouncing straight back.
   bool pastLoop_ = false;
+  std::atomic<double> arrStart_{0.0}, arrEnd_{0.0};  // K-112c (N55-02): setArrangement
+  std::atomic<bool> arrStop_{false};
+  bool stopsAtEnd() const;  // (audio thread) the transport stops at the Arrangement's end now
   PlayMode tMode_ = PlayMode::Pattern;
   ObjectId tPattern_ = kNoId;
   double anchorTick_ = 0;   // tick at sample clock 0
+  bool stepNext_ = false;     // K-317: the next processBlock is a stepped block (settledGridBlock)
   double lastGridTick_ = -1;  // R08-01: song tick of the last control-grid link evaluation (-1: none yet)
   int64_t clock_ = 0;       // samples since the anchor
   uint64_t lastMapSig_ = 0;  // tempo map of the last block (re-anchor when it changes)
@@ -848,6 +871,7 @@ class AudioEngine {
     int n = 0;
     bool grid = false;
     int gpos = 0;
+    int steps = 1;  // K-317: control blocks of a stepped block (strip gains per control block), else 1
     size_t nb = 0;
     bool profile = false;
     bool rest = false;  // K-64: realtime playback: idle channels and effects are left out

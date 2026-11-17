@@ -705,7 +705,9 @@ panetabs::Strip paneStrip(App& a, Preset p, const std::string& region, const lay
     if (region != windowHomeIn(n.window, p).region) continue;
     const bool audioSeg = p == Preset::Logic && std::string_view(n.window) == "Loupe";
     bool* f = audioSeg ? &gAudioOn : windowOpenFlag(a, n.window);
-    if (!f || (!n.always && !*f)) continue;
+    // D7 (R13-09): Smooth's Smart Controls keeps its tab while closed, as the reference's control bar keeps it
+    const bool keep = n.always || (p == Preset::Logic && std::string_view(n.window) == "Smart controls");
+    if (!f || (!keep && !*f)) continue;
     if (*f) tabClosed().erase(n.window), tabHistory().forget(n.window);  // opened another way: its tab is back
     if (tabClosed().count(n.window)) continue;
     cand[n.window] = {audioSeg ? &kAudioSeg : &n, f};
@@ -1560,8 +1562,20 @@ void shellFrame(App& a) {
         atGrab[r.id] = now;
       } else if (const auto at = atGrab.find(r.id); at != atGrab.end() && now > 0 && std::fabs(now - at->second) > 1.5f && !touchedOnly.count(r.id)) {
         const std::string member = r.exclusive && st.member.count(r.id) ? st.member.at(r.id) : std::string();
-        if (!member.empty()) st.memberSize[std::string(r.id) + "|" + member] = now;
-        else st.regionSize[r.id] = now;
+        if (!member.empty()) {
+          st.memberSize[std::string(r.id) + "|" + member] = now;
+        } else {
+          st.regionSize[r.id] = now;
+          // K-112c checkpoint 57 (N56-08): a group's bands (Clips' device and clip bands) are one detail
+          // view: the drag sizes them all, so showing the other one keeps the height.
+          if (*r.group) {
+            for (const layout::Region& o : sh.regions) {
+              if (std::string(o.group) == r.group) {
+                st.regionSize[o.id] = now;
+              }
+            }
+          }
+        }
         changed = true;
       }
     }
@@ -2161,7 +2175,7 @@ bool pluginRow(App& a, const layout::Item& it, Preset p, int frame) {
   std::string host;
   const int n = gInv.channel != kNoId ? hostbody::drawnNow(hostbody::Body::ChannelSettings, gInv.channel, -1, &host)
                                       : hostbody::drawnNow(hostbody::Body::EffectEditor, gInv.track, gInv.slot, &host);
-  const bool hosted = h.kind == HomeKind::Host && !(p == Preset::Tracker && gInv.channel != kNoId);  // (the Tracker: above)
+  const bool hosted = h.kind == HomeKind::Host;  // (the Tracker's instruments: Inside its lower band, their editors float)
   const bool pass = n == 1 && (hosted ? host == "Device chain" : host != "Device chain");
   std::printf("frame %d inventory %s %s home %s %s got drawn %d by %s want %s %s\n", frame, it.id, it.plugin, layout::kindName(h.kind),
               *h.region ? h.region : "-", n, host.empty() ? "-" : host.c_str(), hosted ? "the Device chain" : "its own window", pass ? "ok" : "FAIL");

@@ -214,7 +214,7 @@ void cardEnd() {
 // A row's top line inside a card (none above the first).
 void cardRowLine(ImDrawList* dl, const ImVec2& p, float w) {
   if (!gCard.on) return;
-  if (gCard.rows++ > 0) dl->AddLine(ImVec2(p.x, std::round(p.y - ImGui::GetStyle().ItemSpacing.y * 0.5f)), ImVec2(p.x + w - 8, std::round(p.y - ImGui::GetStyle().ItemSpacing.y * 0.5f)),
+  if (gCard.rows++ > 0) dl->AddLine(ImVec2(p.x, std::round(p.y - ImGui::GetStyle().ItemSpacing.y * 0.5f)), ImVec2(p.x + w, std::round(p.y - ImGui::GetStyle().ItemSpacing.y * 0.5f)),
                                     theme::withAlpha(pal().line, 0.7f));
 }
 
@@ -224,7 +224,8 @@ bool cardRow(const char* id, const char* label, const std::string& value, const 
   const auto& P = pal();
   const float rowH = std::max(18.0f, layoutui::style().inspectorRowH);
   const ImVec2 p = ImGui::GetCursorScreenPos();
-  const float w = ImGui::GetContentRegionAvail().x;
+  // D8: in a card the row keeps the card's 8 px inset on the right too (values ended 2 px from its edge)
+  const float w = ImGui::GetContentRegionAvail().x - (gCard.on ? 8.0f : 0.0f);
   bool click = false, hov = false;
   if (clickable) {
     click = ImGui::InvisibleButton(id, ImVec2(w, rowH));
@@ -310,7 +311,7 @@ bool cardStepper(const char* id, const char* label, int* v, int lo, int hi, int 
   const auto& P = pal();
   const float rowH = std::max(18.0f, layoutui::style().inspectorRowH);
   const ImVec2 p = ImGui::GetCursorScreenPos();
-  const float w = ImGui::GetContentRegionAvail().x;
+  const float w = ImGui::GetContentRegionAvail().x - (gCard.on ? 8.0f : 0.0f);  // D8: as cardRow
   ImGui::PushID(id);
   const float arrowW = 12;
   ImGui::InvisibleButton("##v", ImVec2(w - arrowW, rowH));
@@ -627,6 +628,17 @@ std::string fitName(ImFont* f, float fs, const std::string& name, float w) {
   return fitSlotName(f, fs, name.c_str(), w, b, sizeof b);
 }
 
+// D8: an empty slot's face. In Smooth a light veil over whatever is under it, so an empty slot shows the
+// same on the selected strip (a step lighter) as on the others; the old fill (the slots' grey at 40 %)
+// matched the selected strip's face and vanished there. Elsewhere the grey as before.
+ImU32 emptyFace(bool hov) {
+  const auto& P = pal();
+  if (logicplug::active(app())) {
+    return theme::withAlpha(P.text, hov ? 0.08f : 0.035f);
+  }
+  return hov ? P.surface700 : theme::withAlpha(P.surface700, 0.4f);
+}
+
 bool stripSlot(const char* id, const std::string& name, bool lit, bool empty, float w, const char* hint, ImU32 fill = 0) {
   App& a = app();
   const auto& P = pal();
@@ -637,7 +649,7 @@ bool stripSlot(const char* id, const std::string& name, bool lit, bool empty, fl
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const bool coloured = fill != 0 && !empty;
   const ImU32 face = coloured ? (hov ? theme::mix(fill, pal().paper, 0.12f) : fill)
-                              : empty ? (hov ? P.surface700 : theme::withAlpha(P.surface700, 0.4f))
+                              : empty ? emptyFace(hov)
                               : hov ? (layoutui::active() == layout::Preset::Logic ? theme::mix(P.surface700, P.text, 0.08f) : P.surface600)  // K-112b: the quiet hover
                                     : P.surface700;
   dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), face, 4.0f);
@@ -733,7 +745,9 @@ void fxPill(App& a, const MixerTrack& t, int k, float w) {
   dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), face, 4.0f);
   if (lit) dl->AddRect(p, ImVec2(p.x + w, p.y + h), P.hot, 4.0f);
   const float fs = theme::kFontLabel;
-  float tx = p.x + 5, tw = w - 10;
+  // D7 (R13-07): the name has the pill's full width (a 2 px inset each side), so "Parametric EQ" reads
+  // whole on a 74 px strip; the hover icons take their room only while shown.
+  float tx = p.x + 2, tw = w - 4;
   if (hov) {
     const ImU32 on = pal().paper, dim = theme::withAlpha(pal().paper, 170.0f / 255.0f);
     ui::drawIcon(dl, ui::Icon::Power, ImVec2(p.x + 8, p.y + h * 0.5f), 10, e.enabled ? (inBypass ? on : dim) : (inBypass ? P.text : P.textFaint));
@@ -765,7 +779,7 @@ void emptyPill(App& a, const MixerTrack& t, int k, float w) {
     ImGui::EndPopup();
   }
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov ? P.surface700 : theme::withAlpha(P.surface700, 0.4f), 4.0f);
+  dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), emptyFace(hov), 4.0f);
   if (hov) {
     const float fs = theme::kFontLabel;
     const char* t = k >= 0 ? i18n::tr("Add an effect") : i18n::tr("No free slot");
@@ -821,7 +835,7 @@ void eqThumb(App& a, const MixerTrack& t, float w) {
   // empty slot like the others with a faint "EQ" in it (110), not a dark well.
   const bool quietEmpty = eq < 0 && logicplug::active(a);
   if (quietEmpty) {
-    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov ? P.surface700 : theme::withAlpha(P.surface700, 0.4f), 4.0f);
+    dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), emptyFace(hov), 4.0f);
   } else {
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov ? theme::mix(P.field, P.surface700, 0.5f) : P.field, 3.0f);
     dl->AddLine(ImVec2(p.x + 2, mid), ImVec2(p.x + w - 2, mid), theme::withAlpha(P.line, 0.8f));
@@ -1218,7 +1232,7 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
         }
         const ImVec2 ep = ImGui::GetCursorScreenPos();
         ImGui::Dummy(ImVec2(w, 17));
-        dl->AddRectFilled(ep, ImVec2(ep.x + w, ep.y + 17), theme::withAlpha(P.surface700, 0.4f), 4.0f);
+        dl->AddRectFilled(ep, ImVec2(ep.x + w, ep.y + 17), emptyFace(false), 4.0f);
         gap();
       }
       if (!addInRow && (stripSlot("##sends", "", false, true, w, "Sends: click to send this track to a bus") || ImGui::IsItemClicked(ImGuiMouseButton_Right)))
@@ -1271,7 +1285,9 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
         ImGui::Separator();
         if (ImGui::MenuItem(i18n::tr("Create group...")))
           menus::openPrompt("Group name", mixops::newGroupName(s), [&a, id](const std::string& n) {
-            if (!n.empty()) mixops::createGroup(a.doc, {id}, n, true);  // K-238: a new group starts linked
+            if (!n.empty()) {  // K-238: a new group starts linked
+              mixops::createGroup(a.doc, {id}, n, true);
+            }
           });
         ImGui::EndPopup();
       }
@@ -1290,7 +1306,9 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
   const bool inspStrip = fxRows < 0 && logicplug::active(a);
   const bool mixStrip = fxRows >= 0;  // K-112b: the Tracks layout's mixer (strips in columns)
   const float knobR = inspStrip ? std::clamp(std::round(size.x * 0.17f), 11.0f, 16.0f) : mixStrip && logicplug::active(a) && !(hide & HideMid) ? (hide & PanSmall ? 12.0f : 15.0f) : 11.0f, plateH = 18, msH = inspStrip ? 20.0f : 18.0f, dbH = 16;
-  const float cx = std::round(p.x + size.x * 0.5f);
+  // D8: every control centres on the slots' own column (p.x .. p.x + w); the centre was the strip's
+  // box, 3 px right of the slots (the pan knob, the icon, the fader and meter sat off their axis).
+  const float cx = std::round(p.x + w * 0.5f);
   float y = p.y + topH;
   // D6: in the shortest panes (900 px window) the icon sits left of the pan knob, on the pan's row, so
   // the fader keeps those 22 px.
@@ -1322,8 +1340,9 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
     static std::map<ObjectId, float> held;  // the peak hold per track, this run
     float& hp = held[t.id];
     hp = std::max(hp, std::max(r.peakL, r.peakR));
-    const float bw = std::floor((size.x - 12) * 0.5f), bh = dbH;
-    const ImVec2 b0(p.x + 2, y), b1(p.x + 2 + bw + 4, y);
+    // D8: the two boxes span the slots' width exactly (they sat 2 px in on the left, 1 px on the right), 4 px apart
+    const float bw = std::floor((w - 4) * 0.5f), bh = dbH;
+    const ImVec2 b0(p.x, y), b1(p.x + w - bw, y);
     // R04-03: the fader in dB by the mixer's own law (the lane and the engine read it so).
     double shownVol = t.volume;  // R07-08: in Read, the curve's value, as the fader shows it
     if (double lv = 0; ui::shownParamValue(mixerParam(t.id, MixerParam::Volume), lv)) shownVol = lv;
@@ -1421,7 +1440,7 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
   {  // mute and solo (the master has no solo)
     // K-112b: the references' inspector M and S are wider. Close-range pass: in the mixer the two fill
     // the strip's width, 4 px apart, as 043 and 134 have them (the master's one takes the left half).
-    const float bw = inspStrip ? 28.0f : mixStrip ? std::floor((size.x - 5 - 4) * 0.5f) : 22.0f, bh = msH;
+    const float bw = inspStrip ? 28.0f : mixStrip ? std::floor((w - 4) * 0.5f) : 22.0f, bh = msH;  // D8: the slots' width
     auto btn = [&](const char* bid, const char* label, bool on, ImU32 lit, float bx) {
       ImGui::SetCursorScreenPos(ImVec2(bx, y));
       const bool c = ImGui::InvisibleButton(bid, ImVec2(bw, bh));
@@ -1454,7 +1473,7 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
     if (btn("##m", "M", t.muted, P.hot, bx)) a.doc.setParam(mixerParam(t.id, MixerParam::Mute), t.muted ? 0 : 1, false);
     if (ImGui::IsItemHovered()) ui::Hint(t.muted ? "Track is muted: click to unmute" : "Track is on: click to mute");
     if (twoBtn) {
-      if (btn("##s", "S", t.solo, logicplug::active(a) ? theme::rgb(0xE8C83A) : theme::rgb(theme::role::kStamp), mixStrip ? p.x + size.x - 5 - bw : bx + bw + 4))  // mixer: 4 px from the column's edge
+      if (btn("##s", "S", t.solo, logicplug::active(a) ? theme::rgb(0xE8C83A) : theme::rgb(theme::role::kStamp), mixStrip ? p.x + w - bw : bx + bw + 4))  // mixer: on the slots' right edge (D8)
         mixops::toggleSolo(a.doc, t.id);  // K-238: a linked group solos together
       if (ImGui::IsItemHovered()) ui::Hint("Solo (keeps tracks routed to and from it)");
     }
@@ -1465,7 +1484,7 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
   // K-112b (close-range pass): in the mixer the name bar spans the strip's column edge to edge and
   // runs down to its foot, square, as 043, 134 and 133 draw it (it was an inset plate with corners).
   // The column is the strip's area plus the mixer's 4 px margin left, 2 px right and 2 px below.
-  const ImVec2 n0(mixStrip ? p.x - 4 : p.x + 1, y), n1(mixStrip ? p.x + size.x - 1 : p.x + size.x - 5, y + plateH + (mixStrip ? 2.0f : 0.0f));
+  const ImVec2 n0(mixStrip ? p.x - 4 : p.x, y), n1(mixStrip ? p.x + w + 4 : p.x + w, y + plateH + (mixStrip ? 2.0f : 0.0f));  // D8: on the slots' column
   const ImU32 plate = theme::mix(P.surface700, theme::content(t.color), 0.85f);  // the track colour, near full (as every reference mixer)
   if (!inspStrip) dl->AddRectFilled(n0, n1, plate, mixStrip ? 0.0f : 3.0f);
   float nfs = logicplug::active(a) ? theme::kFontCaption : fs;  // K-112D (D3, X6): the track's name at 12 px, as 134's plates
@@ -1701,7 +1720,9 @@ void inspector(App& a) {
       }
       const ImVec2 base = ImGui::GetCursorScreenPos();
       const float y = base.y + 6;
-      const float sw = std::floor(av.x * 0.5f);
+      // D8: the pair spans the column exactly, from the cards' left edge to their right edge, 8 px apart
+      // (the right strip ended 3 px short of the cards above it). A strip's slots are its size less 6.
+      const float cw = std::floor((av.x - 8) * 0.5f), sw = cw + 6;
       if (!logicplug::active(a)) ImGui::GetWindowDrawList()->AddLine(ImVec2(base.x, y - 4), ImVec2(base.x + av.x, y - 4), pal().line);  // the Tracks layout's heading draws it
       // K-112b (checkpoint 22): in the Tracks layout the pair keeps the same rows (the taller one's
       // effects plus the free slot), so knobs, faders and buttons line up across.
@@ -1728,7 +1749,9 @@ void inspector(App& a) {
         gSendRows = std::max(sendsOf(*mt), sendsOf(*dest));
       }
       strip(a, *mt, ch && s.mixerIndex(mt->id) != 0 ? ch : nullptr, ImVec2(base.x, y), ImVec2(sw, sh), -1, nullptr, 0, pad);
-      if (dest) strip(a, *dest, nullptr, ImVec2(base.x + sw + 3, y), ImVec2(sw, sh), -1, nullptr, 0, pad);
+      if (dest) {
+        strip(a, *dest, nullptr, ImVec2(base.x + av.x - cw, y), ImVec2(sw, sh), -1, nullptr, 0, pad);
+      }
       gSendRows = 0;
       ImGui::SetCursorScreenPos(ImVec2(base.x, y + sh - 1));
       ImGui::Dummy(ImVec2(1, 1));
@@ -2292,37 +2315,50 @@ void logicMixer(App& a) {
   // strips, 1 audio strips, 2 buses (what other strips send into), 3 the master. All on at first.
   static int kindsOn = 15;
   {  // the local bar: Edit, Options and View on the left, the view in the middle, the kinds on the right (134)
+    // D8: the editors' own bar, as the piano roll's: the same 36 px height, 8 px insets, ground and foot
+    // line, and the three menus as one group. They were loose buttons flush with the pane's top left
+    // corner, 7 px above the piano roll's and Smart Controls' bars.
+    ui::BeginToolbar("##lgmixbar");
     const float y0 = ImGui::GetCursorPosY();
-    if (ui::TextButton("Edit", false, 0, "Undo and redo the mixer's changes")) ImGui::OpenPopup("##mixedit");
-    ImGui::SameLine(0, 2);
-    if (ui::TextButton("Options", false, 0, "Groups and the selected strip")) ImGui::OpenPopup("##mixopts");
-    ImGui::SameLine(0, 2);
-    if (ui::TextButton("View", false, 0, "Which strips show, and the detailed mixer")) ImGui::OpenPopup("##mixviewm");
-    if (ImGui::BeginPopup("##mixedit")) {
-      if (ImGui::MenuItem(i18n::tr("Undo"))) a.doc.undo();
-      if (ImGui::MenuItem(i18n::tr("Redo"))) a.doc.redo();
-      ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("##mixopts")) {
-      const MixerTrack* selT = s.mixerTrack(a.selMixer);
-      const bool canGroup = selT && s.mixerIndex(selT->id) > 0;
-      if (ImGui::MenuItem(i18n::tr("Create group from the selected strip..."), nullptr, false, canGroup)) {
-        const ObjectId id = selT->id;
-        menus::openPrompt("Group name", mixops::newGroupName(s), [&a, id](const std::string& n) {
-          if (!n.empty()) mixops::createGroup(a.doc, {id}, n, true);
-        });
-      }
-      if (ImGui::MenuItem(i18n::tr("Remove the selected strip from its group"), nullptr, false, canGroup && !selT->group.empty()))
-        mixops::setGroup(a.doc, {selT->id}, "");
-      ImGui::EndPopup();
-    }
-    if (ImGui::BeginPopup("##mixviewm")) {
-      const char* vn[] = {i18n::N_("Single"), i18n::N_("Tracks"), i18n::N_("All")};
-      for (int k = 0; k < 3; ++k)
-        if (ImGui::MenuItem(i18n::tr(vn[k]), nullptr, view == k)) view = k;
-      ImGui::Separator();
-      if (ImGui::MenuItem(i18n::tr("Detailed mixer"))) a.settings.set("ui.logicMixerDetail", true);
-      ImGui::EndPopup();
+    {
+      static const char* const names[] = {i18n::N_("Edit"), i18n::N_("Options"), i18n::N_("View")};
+      static const char* const mhints[] = {i18n::N_("Undo and redo the mixer's changes"), i18n::N_("Groups and the selected strip"),
+                                           i18n::N_("Which strips show, and the detailed mixer")};
+      ui::MenuGroup("##mixmenus", names, mhints, 3, [&a, &s](int k) {
+        if (k == 1) {
+          if (ImGui::MenuItem(i18n::tr("Undo"))) {
+            a.doc.undo();
+          }
+          if (ImGui::MenuItem(i18n::tr("Redo"))) {
+            a.doc.redo();
+          }
+        } else if (k == 2) {
+          const MixerTrack* selT = s.mixerTrack(a.selMixer);
+          const bool canGroup = selT && s.mixerIndex(selT->id) > 0;
+          if (ImGui::MenuItem(i18n::tr("Create group from the selected strip..."), nullptr, false, canGroup)) {
+            const ObjectId id = selT->id;
+            menus::openPrompt("Group name", mixops::newGroupName(s), [&a, id](const std::string& n) {
+              if (!n.empty()) {
+                mixops::createGroup(a.doc, {id}, n, true);
+              }
+            });
+          }
+          if (ImGui::MenuItem(i18n::tr("Remove the selected strip from its group"), nullptr, false, canGroup && !selT->group.empty())) {
+            mixops::setGroup(a.doc, {selT->id}, "");
+          }
+        } else {
+          const char* vn[] = {i18n::N_("Single"), i18n::N_("Tracks"), i18n::N_("All")};
+          for (int k2 = 0; k2 < 3; ++k2) {
+            if (ImGui::MenuItem(i18n::tr(vn[k2]), nullptr, view == k2)) {
+              view = k2;
+            }
+          }
+          ImGui::Separator();
+          if (ImGui::MenuItem(i18n::tr("Detailed mixer"))) {
+            a.settings.set("ui.logicMixerDetail", true);
+          }
+        }
+      });
     }
     const char* views[] = {i18n::tr("Single"), i18n::tr("Tracks"), i18n::tr("All")};  // K-112D: the reference's names (134)
     const char* hints[] = {i18n::tr("The selected track and where it goes"), i18n::tr("The tracks that something plays through, and the master"),
@@ -2338,12 +2374,16 @@ void logicMixer(App& a) {
                         i18n::N_("Buses (strips other strips send into): show or hide them"), i18n::N_("The master strip: show or hide it")};
     float kw = 0;
     for (const char* k : kn) kw += ui::TextButtonWidth(i18n::tr(k)) + 2;
+    kw -= 2;  // D8: no gap after the last one, so it ends on the bar's 8 px inset
     ImGui::SameLine();
     ImGui::SetCursorPos(ImVec2(std::max(ImGui::GetCursorPosX() + 8, ImGui::GetWindowContentRegionMax().x - kw), y0));
     for (int k = 0; k < 4; ++k) {
       if (k) ImGui::SameLine(0, 2);
       if (ui::TextButton(i18n::tr(kn[k]), (kindsOn >> k) & 1, 0, i18n::tr(kh[k]))) kindsOn ^= 1 << k;
     }
+    ui::EndToolbar();
+    // the strips start on the bar's foot line (no item gap: the strips keep the rows they had)
+    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetItemRectMin().x, ImGui::GetItemRectMax().y));
   }
   // Which tracks. D5 (CPU): worked out again only when the song, the view, the kinds or the selected
   // strip change (it went through every channel and send for every strip, every frame).
@@ -2475,31 +2515,54 @@ void logicMixer(App& a) {
     // D6 (R12-09): the inserts unfold when there is room: the fader first gives up its target down to a
     // quarter of the pane (it kept a third while effects folded into "+2" and "+3"), when that is enough
     // to show every row; otherwise the rows step out as before (a short pane keeps its fader).
-    if (const float excess = need(hide) - (sh - 8); excess > 0 && faderT - excess >= std::max(kMixFaderMin, std::round(sh * 0.26f))) faderT -= excess;
-    while (sendRows > 1 && need(hide) > sh - 8) --sendRows;  // first fewer send rows (one at least)
-    while (fxRows > 4 && need(hide) > sh - 8) --fxRows;      // (the rest of the effects behind a "+N" row)
+    // D7 (R13-07): and short of that it still gives what it can (down to a fifth of the pane), so a tall
+    // pane unfolds every insert it can before any folds into "+N" (at 2560x1440 they folded with a 260 px fader).
+    // (Shorter panes keep the earlier rule: there the optional rows step out first and the fader stays.)
+    if (const float excess = need(hide) - (sh - 6); excess > 0) {
+      if (faderT - excess >= std::max(kMixFaderMin, std::round(sh * 0.26f))) {
+        faderT -= excess;
+      } else if (sh >= 560) {
+        faderT = std::max(std::max(kMixFaderMin, std::round(sh * 0.20f)), faderT - excess);
+      }
+    }
+    while (sendRows > 1 && need(hide) > sh - 6) --sendRows;  // first fewer send rows (one at least)
+    while (fxRows > 4 && need(hide) > sh - 6) --fxRows;      // (the rest of the effects behind a "+N" row)
     // K-112D (D3): the track icon row (134 keeps it) goes after the setting, group and automation and EQ rows
     for (int h : {HideSetting, HideGroupAuto, HideEq})
-      if (need(hide) > sh - 8) hide |= h;
-    while (fxRows > 3 && need(hide) > sh - 8) --fxRows;
+      if (need(hide) > sh - 6) {
+        hide |= h;
+      }
+    while (fxRows > 3 && need(hide) > sh - 6) --fxRows;
     // D5 (R11-08): then the rows close up before the fader gives way (the 900 px window's lower pane, the
     // view a laptop shows first, kept its icon row): the add-a-send slot folds into the first empty send
     // row, the icon and the pan knob take their compact sizes.
-    if (sendRows > 0 && need(hide) > sh - 8) hide |= HideSendAdd;
-    for (int h : {IconSmall, PanSmall, IconInline}) {
-      if (need(hide) > sh - 8) hide |= h;
+    if (sendRows > 0 && need(hide) > sh - 6) {
+      hide |= HideSendAdd;
     }
-    if (need(hide) > sh - 8) faderT = std::max(kMixFaderMin, faderT - (need(hide) - (sh - 8)));  // the fader gives way before the icon and sends rows
+    for (int h : {IconSmall, PanSmall, IconInline}) {
+      if (need(hide) > sh - 6) {
+        hide |= h;
+      }
+    }
+    if (need(hide) > sh - 6) {  // the fader gives way before the icon and sends rows
+      faderT = std::max(kMixFaderMin, faderT - (need(hide) - (sh - 6)));
+    }
     for (int h : {HideIcon, HideSends})
-      if (need(hide) > sh - 8) hide |= h;
+      if (need(hide) > sh - 6) {
+        hide |= h;
+      }
     // Checkpoint 22: then fewer effect rows (two at least: one effect or the count, and the free slot),
     // then the level readouts, the pan knob and a shorter fader, for the smallest panes.
-    while (fxRows > 2 && need(hide) > sh - 8) --fxRows;
+    while (fxRows > 2 && need(hide) > sh - 6) --fxRows;
     // Checkpoint 28: then one effect row (the effect, the "+N" count or the free slot), so the fader keeps
     // its height at 150 % as 134 and 043 keep theirs (it fell to 48 px there).
-    if (fxRows > 1 && need(hide) > sh - 8) --fxRows;
+    if (fxRows > 1 && need(hide) > sh - 6) {
+      --fxRows;
+    }
     for (int h : {HideMid, HideLevel, HidePan, HideShort})
-      if (need(hide) > sh - 8) hide |= h;
+      if (need(hide) > sh - 6) {
+        hide |= h;
+      }
   }
   float rows[RowCount] = {};
   const int sendRowsWas = gSendRows;
@@ -2537,7 +2600,8 @@ void logicMixer(App& a) {
       // D6 (R12-09): names fit the strip's real width (a wide strip shows them whole). The width depends
       // only on the window and the strips shown, so a name still reads the same frame to frame.
       gFitExcess = 0;
-      strip(a, m, ch, ImVec2(x + 4, b.y + 6), ImVec2(stripW - 4, sh - 8), fxRows, ry, hide);
+      // D8: the slots 4 px in from every column edge (they were 4 left, 5 right and 6 at the top)
+      strip(a, m, ch, ImVec2(x + 4, b.y + 4), ImVec2(stripW - 3, sh - 6), fxRows, ry, hide);
       gFitExcess = 0;
       if (!rowsTaken || rows[RowName] == 0)  // the legend's rows: the first strip drawn
         for (int k = 0; k < RowCount; ++k) rows[k] = ry[k];

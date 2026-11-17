@@ -66,8 +66,14 @@ double bpmFromName(const std::string& name);
 // name states (bpmFromName, or a bare 60..200 number in the name whose beats at that tempo come out
 // whole: "Long 120" of 20 s is 40 beats), then a length of whole bars at the Set's tempo (that tempo),
 // then the detector's reading (`detected`, its half or double) nearest the Set's tempo, then the
-// whole-bar reading (1, 2, 4, 8 or 16 bars of 4/4 between 75 and 165 BPM) nearest the Set's tempo.
-// 0: none (a one-shot: shorter than a bar, no tempo said).
+// whole-bar reading (1, 2, 4, 8 or 16 bars of 4/4) nearest the Set's tempo. Checkpoint 56 (N55-03): that
+// last reading, from the length alone, counts only within kLengthOnlyStretch (6 %) of the Set's tempo.
+// Checkpoint 57 (N56-03): or when its tempo is a plausible one (kLengthOnlyMin..kLengthOnlyMax) that
+// comes out whole (within kWholeTempoSlack bpm): 4 bars at 90 in a 120 Set read 90.
+// 0: none (a one-shot: no tempo said and no whole bars at a likely tempo).
+constexpr double kLengthOnlyStretch = 0.06;
+constexpr double kLengthOnlyMin = 70.0, kLengthOnlyMax = 180.0;
+constexpr double kWholeTempoSlack = 0.05;
 double warpTempo(const std::string& name, double seconds, double setTempo, double detected = 0);
 // Key from a file name: "Am", "C#min", "F major", "Bb_minor", "key of D"… Tokens
 // are delimited by non-letters, so "Amen" or "Cmaj7chord" are not keys.

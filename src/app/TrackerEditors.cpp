@@ -619,6 +619,7 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
   St& s = st();
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
+  const Aliased hard(dl);  // cp21: the wave and its marks in hard pixel lines
   ImGuiIO& io = ImGui::GetIO();
   const float fs = ImGui::GetFontSize();
   ImFont* mono = monoFont(a);
@@ -650,10 +651,12 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
     const int ci = chan ? a.doc.song().channelIndex(ch) : -1;
     std::string info = std::string(i18n::tr("Instrument")) + " " + hex2(ci + trackBase(a)) + " " + (chan ? chan->name : std::string());
     if (c.have()) {
-      char b[160];
-      std::snprintf(b, sizeof b, "   %s %s %s   %.1f kHz   %s   %s   %d %s", i18n::tr("Sample"), hex2(c.k + 1).c_str(), tp::editName(c.snap->e, c.k).c_str(),
-                    c.rate / 1000.0, c.eight ? "8-bit" : "16-bit", c.sp->mono() ? i18n::tr("mono") : i18n::tr("stereo"), c.frames, i18n::tr("frames"));
-      info += b;
+      // cp21: built as a string (a long sample name was cut by the fixed buffer before).
+      char rate[32];
+      std::snprintf(rate, sizeof rate, "%.1f kHz", c.rate / 1000.0);
+      info += std::string("   ") + i18n::tr("Sample") + " " + hex2(c.k + 1) + " " + tp::editName(c.snap->e, c.k) + "   " + rate + "   " +
+              (c.eight ? "8-bit" : "16-bit") + "   " + (c.sp->mono() ? i18n::tr("mono") : i18n::tr("stereo")) + "   " + std::to_string(c.frames) + " " +
+              i18n::tr("frames");
     } else if (c.ok() && c.snap->sound > 0) {
       info += std::string("   ") + i18n::tr("Built-in sound: ") + tp::soundName(c.snap->sound);
     }
@@ -1087,7 +1090,9 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
   }
   if (const Col* cl = colOf(13)) {
     if (!have || !c.looping) ImGui::BeginDisabled();
-    const float lw = std::round(cl->w * 0.45f);
+    // cp23: one label column for both rows (the fields started 9 px apart at 1024x640, "Loop length"
+    // pushing its field right).
+    const float lw = std::max(std::round(cl->w * 0.45f), labelColumn(a, {"Loop start", "Loop length"}, space::kPad));
     const int big = io.KeyShift ? 100 : 1;
     if (const int d = stepper(a, "##tls", "Loop start", have && c.looping ? fmtInt(c.ls) : "-", ImVec2(cl->x, rowY(0)), cl->w, rowH,
                               "The loop's start (its end stays); Shift: by 100", lw, true);
@@ -1187,6 +1192,7 @@ int keyUnder(ImVec2 p0, ImVec2 p1, ImVec2 m, KeyView kv = KeyView{}) {
 
 // A vibrato shape as a small drawn wave (0 sine, 1 square, 2 ramp up, 3 ramp down).
 void shapeGlyph(ImDrawList* dl, ImVec2 p0, ImVec2 p1, int shape, ImU32 col) {
+  const trackerview::Aliased hard(dl);  // cp21: a hard-edged shape, as the classic glyphs
   const float x0 = p0.x + 7, x1 = p1.x - 7, cy = std::round((p0.y + p1.y) * 0.5f), h = std::max(3.0f, std::round((p1.y - p0.y) * 0.26f));
   ImVec2 pts[25];
   int n = 0;
@@ -1210,7 +1216,7 @@ void shapeGlyph(ImDrawList* dl, ImVec2 p0, ImVec2 p1, int shape, ImU32 col) {
     pts[n++] = ImVec2(x0, cy - h);
     pts[n++] = ImVec2(x1, cy + h);
   }
-  dl->AddPolyline(pts, n, col, 0, 1.5f);
+  dl->AddPolyline(pts, n, col, 0, 1.0f);
 }
 
 // A sideways arrow button (a bevel face with a triangle), repeating while held.
@@ -1335,10 +1341,12 @@ void audition(App& a, ObjectId ch, int n) {
 }
 
 // One envelope box: the header row (on, presets, the count), the graph, the side column.
-void envBox(App& a, Ctx& c, bool pan, ImVec2 p0, ImVec2 p1, float sideW) {
+// cp22: `tabs`: the box is the only one shown (a short band); Volume and Panning tabs in its side column.
+void envBox(App& a, Ctx& c, bool pan, ImVec2 p0, ImVec2 p1, float sideW, bool tabs = false) {
   St& s = st();
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
+  const Aliased hard(dl);  // cp21: the envelope in hard pixel lines, as the classic editor
   ImGuiIO& io = ImGui::GetIO();
   const float fs = ImGui::GetFontSize();
   ImFont* mono = monoFont(a);
@@ -1462,7 +1470,7 @@ void envBox(App& a, Ctx& c, bool pan, ImVec2 p0, ImVec2 p1, float sideW) {
     }
   }
   for (int i = 1; i < env.count; ++i) {
-    dl->AddLine(pt(i - 1), pt(i), ink, 1.5f);
+    dl->AddLine(pt(i - 1), pt(i), ink, 1.0f);
   }
   if (env.count > 0) {
     const ImVec2 lp = pt(env.count - 1);
@@ -1585,7 +1593,10 @@ void envBox(App& a, Ctx& c, bool pan, ImVec2 p0, ImVec2 p1, float sideW) {
     const float half = std::floor((sw - 6) * 0.5f);
     const float A = sx0, B = sx0 + half + 6;
     auto rowY = [&](int r) { return std::round(p0.y + 3 + static_cast<float>(r) * (rh + 3)); };
-    const float bw = std::floor((half - 3) * 0.5f);
+    const float bw = std::floor((half - space::kGap) * 0.5f);  // cp23: Add and Delete 2 px apart, as the preset buttons (were 3)
+    // cp23: Point, Start and End share one label column: their fields and arrows line up (Start's and
+    // End's arrows were 4 px apart at 1024x640, their fields 5 px).
+    const float slw = labelColumn(a, {"Point", "Start", "End"}, space::kPad);
     const bool full = env.count >= trk::kEnvPoints;
     if (full) {
       ImGui::BeginDisabled();
@@ -1601,7 +1612,7 @@ void envBox(App& a, Ctx& c, bool pan, ImVec2 p0, ImVec2 p1, float sideW) {
     if (!canDel) {
       ImGui::BeginDisabled();
     }
-    if (bevelButton(a, "##idel", "Delete", ImVec2(A + bw + 3, rowY(0)), ImVec2(A + half, rowY(0) + rh), false,
+    if (bevelButton(a, "##idel", "Delete", ImVec2(A + bw + space::kGap, rowY(0)), ImVec2(A + half, rowY(0) + rh), false,
                     "The selected point goes (never the first, never below two) (Del)") &&
         canDel) {
       s.envFocus = w;
@@ -1618,7 +1629,7 @@ void envBox(App& a, Ctx& c, bool pan, ImVec2 p0, ImVec2 p1, float sideW) {
     if (!susOn) {
       ImGui::BeginDisabled();
     }
-    if (const int dd = stepper(a, "##isusp", "Point", susOn ? twoDigits(env.sustain + 1) : std::string("--"), ImVec2(A, rowY(2)), half, rh, "The sustain point", -1, true);
+    if (const int dd = stepper(a, "##isusp", "Point", susOn ? twoDigits(env.sustain + 1) : std::string("--"), ImVec2(A, rowY(2)), half, rh, "The sustain point", slw, true);
         dd && susOn) {
       tp::opEnvSustain(a, c.t, pan, std::clamp(env.sustain + dd, 0, env.count - 1));
     }
@@ -1632,17 +1643,30 @@ void envBox(App& a, Ctx& c, bool pan, ImVec2 p0, ImVec2 p1, float sideW) {
       ImGui::BeginDisabled();
     }
     if (const int dd = stepper(a, "##ils", "Start", loopOn ? twoDigits(env.loopStart + 1) : std::string("--"), ImVec2(B, rowY(1)), half, rh,
-                               "The loop's first point (up to its end)", -1, true);
+                               "The loop's first point (up to its end)", slw, true);
         dd && loopOn) {
       tp::opEnvLoopStart(a, c.t, pan, std::clamp(env.loopStart + dd, 0, static_cast<int>(env.loopEnd)));
     }
     if (const int dd = stepper(a, "##ile", "End", loopOn ? twoDigits(env.loopEnd + 1) : std::string("--"), ImVec2(B, rowY(2)), half, rh,
-                               "The loop's last point (from its start)", -1, true);
+                               "The loop's last point (from its start)", slw, true);
         dd && loopOn) {
       tp::opEnvLoopEnd(a, c.t, pan, std::clamp(env.loopEnd + dd, static_cast<int>(env.loopStart), env.count - 1));
     }
     if (!loopOn) {
       ImGui::EndDisabled();
+    }
+    if (tabs) {  // cp22: the envelope shown; each tab's lamp says whether that envelope is on
+      const float ty = std::max(rowY(3), p1.y - 3 - rh);
+      const char* labels[] = {i18n::N_("Volume"), i18n::N_("Panning")};
+      const char* hints[] = {i18n::N_("The volume envelope (Tab: the other one)"), i18n::N_("The panning envelope (Tab: the other one)")};
+      for (int k = 0; k < 2; ++k) {
+        const float x0 = k == 0 ? A : B, x1 = k == 0 ? A + half : B + half;
+        if (bevelButton(a, k == 0 ? "##itabv" : "##itabp", labels[k], ImVec2(x0, ty), ImVec2(x1, ty + rh), k == w, hints[k])) {
+          s.envFocus = k;
+        }
+        const bool kOn = envOf(e, k == 1).on();
+        dl->AddRectFilled(ImVec2(x1 - 8, ty + 4), ImVec2(x1 - 4, ty + 8), kOn ? P.led : P.surface950);
+      }
     }
   }
   ImGui::PopID();
@@ -1896,7 +1920,7 @@ void insColumn(App& a, Ctx& c, ImVec2 r0, ImVec2 r1) {
     const float y = rowY(8);
     dl->AddText(a.fontRegular, fs, ImVec2(rx0, mid(y)), P.textDim, i18n::tr("Vibrato shape"));
     const float exitW = std::round(fs * 4.5f);
-    const float bw = std::floor((rx1 - exitW - 8 - (rx0 + lw)) / 4.0f) - 2;
+    const float bw = std::floor((rx1 - exitW - space::kGroup - (rx0 + lw) + space::kGap) / 4.0f) - space::kGap;  // cp23: the four end 6 px before Exit
     static const char* ids[] = {"##ish0", "##ish1", "##ish2", "##ish3"};
     static const char* hints[] = {"Vibrato shape: sine", "Vibrato shape: square", "Vibrato shape: ramp up", "Vibrato shape: ramp down"};
     for (int i = 0; i < 4; ++i) {
@@ -1919,9 +1943,11 @@ void insColumn(App& a, Ctx& c, ImVec2 r0, ImVec2 r1) {
       ImGui::BeginDisabled();
     }
     const int root = have ? tp::rootNote(*sd, c.rate) : 49;
-    const float stW = std::round(fs * 10.0f);
+    // cp23: the field starts at the bars' column (the left arrows above it; it stood 34 px left of them
+    // at 1024x640), its arrows as wide as the steppers' elsewhere.
+    const float stW = lw + std::round(fs * 3.4f) + 2 * std::round(rrh * 1.35f) + space::kGap;
     if (const int dd = stepper(a, "##iroot", "Root key", have ? noteName(root) : std::string("---"), ImVec2(rx0, y), stW, rrh,
-                               "The key that plays the sample at its own rate (Shift: an octave)", -1, true);
+                               "The key that plays the sample at its own rate (Shift: an octave)", lw, true);
         dd && have) {
       tp::opSampleRoot(a, c.t, c.k, c.rate, std::clamp(root + dd * (io.KeyShift ? 12 : 1), 1, 96));
     }
@@ -1933,24 +1959,24 @@ void insColumn(App& a, Ctx& c, ImVec2 r0, ImVec2 r1) {
       const std::string hzT = "C-4 = " + std::to_string(static_cast<long>(std::lround(hz))) + " Hz";
       const float tw = mono->CalcTextSizeA(fs, FLT_MAX, 0, hzT.c_str()).x;
       std::string rel = std::string(i18n::tr("relative")) + " " + signedText(sd->relNote);
-      if (rx0 + stW + 10 + a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, rel.c_str()).x > rx1 - tw - fs) {
+      if (rx0 + stW + space::kGroup + a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, rel.c_str()).x > rx1 - tw - fs) {
         rel = signedText(sd->relNote);  // (narrow: the number alone)
       }
-      dl->AddText(a.fontRegular, fs, ImVec2(rx0 + stW + 10, mid(y)), P.textDim, rel.c_str());
+      dl->AddText(a.fontRegular, fs, ImVec2(rx0 + stW + space::kGroup, mid(y)), P.textDim, rel.c_str());
       dl->AddText(mono, fs, ImVec2(std::round(rx1 - tw), mid(y)), valueInk(), hzT.c_str());
     }
   }
   // Rows 10, 11 (compact: row 10 alone): the relative note an octave or a semitone up or down.
   {
     const int cols = compact ? 4 : 2;
-    const float half = std::floor((rx1 - rx0 - 4 * static_cast<float>(cols - 1)) / static_cast<float>(cols));
+    const float half = std::floor((rx1 - rx0 - space::kGap * static_cast<float>(cols - 1)) / static_cast<float>(cols));  // cp23: 2 px apart (were 4)
     const int rel = sd ? sd->relNote : 0;
     auto relBtn = [&](int row, int col, const char* id, const char* label, int dd, const char* hint) {
       if (compact) {
         col += (row - 10) * 2;
         row = 10;
       }
-      const float x = rx0 + static_cast<float>(col) * (half + 4);
+      const float x = rx0 + static_cast<float>(col) * (half + space::kGap);
       const bool can = have && rel + dd >= -48 && rel + dd <= 71;
       if (!can) {
         ImGui::BeginDisabled();
@@ -1972,14 +1998,14 @@ void insColumn(App& a, Ctx& c, ImVec2 r0, ImVec2 r1) {
   {
     const float y = rowY(rows - 1);
     dl->AddText(a.fontRegular, fs, ImVec2(rx0, mid(y)), P.textDim, i18n::tr("Keys"));
-    const float kx = rx0 + std::round(fs * 3.2f), half = std::floor((rx1 - kx - 4) * 0.5f);
+    const float kx = rx0 + std::round(fs * 3.2f), half = std::floor((rx1 - kx - space::kGap) * 0.5f);
     if (!have) {
       ImGui::BeginDisabled();
     }
     if (bevelButton(a, "##ievery", "Every key: this one", ImVec2(kx, y), ImVec2(kx + half, y + rrh), false, "Every key of the piano plays the selected sample") && have) {
       tp::opMapKeys(a, c.t, 0, 95, c.k);
     }
-    if (bevelButton(a, "##ihear", "Hear the sample", ImVec2(kx + half + 4, y), ImVec2(rx1, y + rrh), false, "Plays the selected sample at its root key") && have &&
+    if (bevelButton(a, "##ihear", "Hear the sample", ImVec2(kx + half + space::kGap, y), ImVec2(rx1, y + rrh), false, "Plays the selected sample at its root key") && have &&
         c.snap->inst) {
       startPreview(a, c.ch, *c.snap->inst, e, c.k, tp::rootNote(*sd, c.rate), 0, 0);
     }
@@ -2239,9 +2265,17 @@ void instrumentScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
       }
     }
   }
+  // cp22: a short band (1024 x 640) stacked the two envelopes into graphs about three rows tall. When
+  // a stacked graph would be under five rows, one envelope takes the whole height (about three times
+  // the graph) and two tabs in its side column (and Tab, as before) show the other.
   const float envMid = std::round((bodyY0 + bodyY1) * 0.5f);
-  envBox(a, c, false, ImVec2(p0.x, bodyY0), ImVec2(envX1, envMid - 1), sideW);
-  envBox(a, c, true, ImVec2(p0.x, envMid + 1), ImVec2(envX1, bodyY1), sideW);
+  const float stackedGraph = envMid - 1 - bodyY0 - std::round(fs + 7) - 10;
+  if (stackedGraph < fs * 5.0f) {
+    envBox(a, c, s.envFocus == 1, ImVec2(p0.x, bodyY0), ImVec2(envX1, bodyY1), sideW, true);
+  } else {
+    envBox(a, c, false, ImVec2(p0.x, bodyY0), ImVec2(envX1, envMid - 1), sideW);
+    envBox(a, c, true, ImVec2(p0.x, envMid + 1), ImVec2(envX1, bodyY1), sideW);
+  }
   // A short band: the right column runs down beside the piano so all its rows fit.
   const bool tall = bodyY1 - bodyY0 - 6 < 13.0f * std::round(fs + 3);
   const float colY1 = tall ? bodyY1 + 2 + pianoH : bodyY1;
@@ -2380,14 +2414,20 @@ void channelFrame(App& a, ObjectId id, ImVec2 p0, ImVec2 p1) {
     if (c->plugin.type == "gl.sampler" && !c->plugin.data.empty()) t += "   " + fs::u8path(c->plugin.data).filename().u8string();
     theme::textEllipsis(dl, mono, fs, ImVec2(x, ty), p1.x - x - 12, valueInk(), t.c_str());
   }
-  const float by0 = p0.y + titleH + 4;
-  const float avail = p1.x - p0.x - 8;
+  // cp23: the controls' box 2 px under the title, its rows 4 px inside it at the top and the bottom
+  // alike (were 1 px under the title, 2 px at the top and 5 px at the bottom), the columns 6 px apart
+  // (were 8), and the status line 2 px under the box (it stood at the band's foot, 70 px of empty
+  // band above it at 1024x640; frameNeed() sizes the band to this).
+  const float box0 = p0.y + titleH + space::kGap;
+  const float by0 = box0 + space::kPad;
+  const float avail = p1.x - p0.x - 2 * space::kPad - 3 * space::kGroup;
   // Four columns: level, pitch and output, keys, the plugin.
-  const float cw[4] = {std::floor(avail * 0.30f), std::floor(avail * 0.26f), std::floor(avail * 0.22f), 0};
-  const float cx0 = p0.x + 4, cx1 = cx0 + cw[0] + 8, cx2 = cx1 + cw[1] + 8, cx3 = cx2 + cw[2] + 8;
-  const float c3w = p1.x - 4 - cx3;
+  const float cw[4] = {std::floor(avail * 0.31f), std::floor(avail * 0.27f), std::floor(avail * 0.23f), 0};
+  const float cx0 = p0.x + space::kPad, cx1 = cx0 + cw[0] + space::kGroup, cx2 = cx1 + cw[1] + space::kGroup, cx3 = cx2 + cw[2] + space::kGroup;
+  const float c3w = p1.x - space::kPad - cx3;
   auto rowY = [&](int r) { return std::round(by0 + static_cast<float>(r) * (rowH + gap)); };
-  bevelBox(dl, ImVec2(p0.x, by0 - 2), ImVec2(p1.x, rowY(3) + 2), false);
+  const float box1 = rowY(2) + rowH + space::kPad;
+  bevelBox(dl, ImVec2(p0.x, box0), ImVec2(p1.x, box1), false);
   // Volume, pan, mute.
   {
     const float lw = std::round(fs * 4.5f), vw = std::round(fs * 4);
@@ -2468,7 +2508,7 @@ void channelFrame(App& a, ObjectId id, ImVec2 p0, ImVec2 p1) {
   }
   // Status.
   {
-    const ImVec2 s0(p0.x, std::max(rowY(3) + 6, p1.y - statusH)), s1(p1.x, std::max(rowY(3) + 6, p1.y - statusH) + statusH);
+    const ImVec2 s0(p0.x, box1 + space::kGap), s1(p1.x, box1 + space::kGap + statusH);
     bevelBox(dl, s0, s1, true);
     const char* t = c->plugin.type == "gl.sampler" ? i18n::tr("A Sampler: Sample (the header) opens its audio; Convert makes it a Tracker Sampler with the Sample and Instrument editors")
                                                    : i18n::tr("The channel's controls; the instrument's own controls are in its plugin window");
@@ -2529,11 +2569,16 @@ bool showing(App& a, Editor e) {
   return st().want == e;
 }
 
+namespace {
+void noteHostedAsked(ObjectId channel);  // (the window watch, below)
+}  // namespace
+
 void openPluginWindow(App& a, ObjectId channel) {
   const Channel* c = channelOf(a, channel);
   if (!c) return;
   a.selChannel = channel;
   if (isHostedType(c->plugin.type)) {
+    noteHostedAsked(channel);
     openHostedEditor(a, PluginTarget{channel, -1});
     return;
   }
@@ -2547,6 +2592,64 @@ bool pluginWindowOpen(App& a) {
   St& s = st();
   if (s.pluginWin != kNoId && a.settingsChannel != s.pluginWin) s.pluginWin = kNoId;
   return s.pluginWin != kNoId;
+}
+// The Tracker in front at all (not only once its shell is built: a switch into it must not flash the
+// window for the frame before the shell exists either).
+bool ownsChannelWindow(App& a) { return layoutui::active() == layout::Preset::Tracker && !pluginWindowOpen(a); }
+
+namespace {
+struct WindowWatch {
+  int frames = 0;   // frames watched in the Tracker
+  int shown = 0;    // ... a channel settings or effect editor window was up that nothing asked for
+  int hosted = 0;   // ... an installed plugin's own window for a channel was open that nothing asked for
+  int blocked = 0;  // ... the gate kept the channel settings window closed (a path that asked for it)
+  int first = -1;   // the first frame one showed
+  std::string what;
+  std::vector<ObjectId> askedHosted;  // the channels "Open plugin window" opened an installed plugin's window for
+};
+WindowWatch& watch() {
+  static WindowWatch w;
+  return w;
+}
+void noteHostedAsked(ObjectId channel) {
+  std::vector<ObjectId>& v = watch().askedHosted;
+  if (std::find(v.begin(), v.end(), channel) == v.end()) {
+    v.push_back(channel);
+  }
+}
+}  // namespace
+
+void watchWindows(App& a, bool blocked) {
+  (void)a;
+  if (layoutui::active() != layout::Preset::Tracker) {
+    return;
+  }
+  WindowWatch& w = watch();
+  ++w.frames;
+  if (blocked) {
+    ++w.blocked;
+  }
+  // (last frame's windows: this runs before the channel settings window's Begin)
+  const ImGuiWindow* cs = ImGui::FindWindowByName("###channelsettings");
+  const ImGuiWindow* fx = ImGui::FindWindowByName("###fxeditor");
+  const bool csUp = cs && cs->WasActive && !cs->Hidden && st().pluginWin == kNoId;
+  const bool fxUp = fx && fx->WasActive && !fx->Hidden;
+  bool hostedUp = false;
+  for (const PluginTarget& t : openHostedEditorTargets()) {
+    if (t.slot < 0 && std::find(w.askedHosted.begin(), w.askedHosted.end(), t.owner) == w.askedHosted.end()) {
+      hostedUp = true;
+    }
+  }
+  if (csUp || fxUp) {
+    ++w.shown;
+  }
+  if (hostedUp) {
+    ++w.hosted;
+  }
+  if ((csUp || fxUp || hostedUp) && w.first < 0) {
+    w.first = ImGui::GetFrameCount() - 1;
+    w.what = csUp ? "channel settings" : fxUp ? "effect editor" : "plugin window";
+  }
 }
 
 float need(App& a) {
@@ -2597,7 +2700,10 @@ bool host(App& a, ObjectId channel) {
     } else if (insEd) {
       s.need = std::max(std::round(fs * 19.0f), std::round(workH * (workH < 760 ? 0.36f : 0.43f)));
     } else {
-      s.need = std::round(fs * 6.6f + 3 * (fs + 10) + 18);
+      // cp23: the Channel frame's own height (title, the box of three rows, the status line; channelFrame()).
+      // The band's window adds its own padding round the content (the band is sized whole).
+      s.need = std::round(fs + 8) + space::kGap + 2 * space::kPad + 3 * std::round(fs + 7) + 2 * 3 + space::kGap + std::round(fs + 6) +
+               std::max(0.0f, std::ceil(ImGui::GetWindowHeight() - av.y));
     }
     s.hasKb = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput;
     if (sampleEd) {
@@ -2923,6 +3029,18 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
   }
   if (cmd == "close") {
     close(a);
+    return;
+  }
+  if (cmd == "windows") {  // cp22: "windows" reports, "windows reset" starts the count again
+    WindowWatch& w = watch();
+    if (args.size() > 2 && args[2] == "reset") {
+      w = WindowWatch{};
+      return;
+    }
+    std::printf("tracker windows frame %d: watched %d shown %d hosted %d blocked %d first %d %s plugin %s band %s\n", frame, w.frames, w.shown, w.hosted,
+                w.blocked, w.first, w.what.empty() ? "-" : w.what.c_str(), pluginWindowOpen(a) ? "open" : "closed",
+                shown(a) ? (s.shown == Shown::Sample ? "sample" : s.shown == Shown::Instrument ? "instrument" : "frame") : "closed");
+    std::fflush(stdout);
     return;
   }
   if (cmd == "focus") {

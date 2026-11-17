@@ -15,6 +15,7 @@
 //    (ops::extendLiveArea): the song after it moves right by as much, one undo step, and the
 //    other person gets it.
 #include <cmath>
+#include <filesystem>
 #include <map>
 #include <set>
 #include <string>
@@ -31,7 +32,10 @@
 #include "core/MixerOps.h"
 #include "core/Params.h"
 #include "core/Project.h"
+#include "core/WavWriter.h"
 #include "engine/LiveRender.h"
+#include "engine/Render.h"
+#include "engine/Sample.h"
 
 using namespace gl;
 using namespace gl::collab;
@@ -1010,6 +1014,267 @@ void testCheckpoint55() {
   }
 }
 
+// Checkpoint 56: the tester's round 12.
+void testCheckpoint56() {
+  Song s0 = makeEmptySong();
+  s0.tracks.resize(kDefaultPlaylistTracks);
+  trackmodes::makeClipsStarterTracks(s0);  // 1 MIDI, 2 MIDI, 3 Audio, 4 Audio; returns A Reverb, B Delay
+  // N55-01: a track's To set to a return keeps its send to that return (and its level); undo and a save
+  // round trip keep it too; the return stays a return.
+  {
+    Song s = s0;
+    const std::vector<size_t> rets = trackmodes::returnTracks(s);
+    expect(rets.size() == 2, "the starter Set has two returns");
+    const ObjectId A = s.mixer[rets[0]].id;
+    const ObjectId from = s.tracks[2].mixer;
+    MixerTrack* m = s.mixerTrack(from);
+    expect(m && trackmodes::outputOf(*m) == s.masterId(), "3 Audio plays into Main");
+    const int k = m ? trackmodes::auxSendIndex(*m, A) : -1;
+    expect(k >= 0, "3 Audio sends to A");
+    if (m && k >= 0) {
+      m->sends[static_cast<size_t>(k)].level = 0.4f;
+    }
+    Document d(s);
+    const std::string before = projectToText(d.song());
+    d.editSong("track output", [&](Song& x) { trackmodes::setOutput(x, from, A); });
+    const MixerTrack* m2 = d.song().mixerTrack(from);
+    expect(m2 && trackmodes::outputOf(*m2) == A, "To: A Reverb");
+    // Checkpoint 57 (N56-01): kept aside (Song::keptSends), not in the playing sends.
+    const int k2 = m2 ? trackmodes::auxSendIndex(*m2, A) : -1;
+    const KeptSend* kept = trackmodes::keptSend(d.song(), from, A);
+    expect(k2 < 0 && kept && std::fabs(kept->level - 0.4f) < 1e-6f, "the send to A and its 0.4 are kept aside, not playing");
+    int toA = 0;
+    for (const Send& sd : m2 ? m2->sends : std::vector<Send>{}) {
+      toA += sd.to == A ? 1 : 0;
+    }
+    expect(toA == 1, "one route to A: the output only");
+    expect(trackmodes::returnTracks(d.song()).size() == 2, "A is still a return");
+    expect(!trackmodes::missingReturnSends(d.song(), from), "no second send to A is added");
+    Song back;
+    std::string err;
+    const std::string saved = projectToText(d.song());
+    expect(loadProjectText(saved, "", back, &err) && projectToText(back) == saved, "the save round trip keeps the send (byte for byte)");
+    d.editSong("track output", [&](Song& x) { trackmodes::setOutput(x, from, x.masterId()); });
+    const MixerTrack* m3 = d.song().mixerTrack(from);
+    const int k3 = m3 ? trackmodes::auxSendIndex(*m3, A) : -1;
+    expect(m3 && trackmodes::outputOf(*m3) == d.song().masterId() && k3 >= 0 && std::fabs(m3->sends[static_cast<size_t>(k3)].level - 0.4f) < 1e-6f,
+           "To: Main again: the send to A plays at its 0.4 again");
+    d.undo();
+    d.undo();
+    expect(projectToText(d.song()) == before, "undo restores the Set as it was");
+  }
+  // N55-03: a file with no tempo in its name: whole bars nearest the Set's tempo, only close to it.
+  {
+    expect(browse::warpTempo("Odd.wav", 3.3, 120.0) == 0.0, "3.3 s at 120: no tempo (145.45 is no reading)");
+    const double four124 = 4 * 4 * 60.0 / 124.0;  // four bars at 124
+    expect(std::fabs(browse::warpTempo("Groove.wav", four124, 120.0) - 124.0) < 1e-6, "four bars at 124 in a 120 Set: 124");
+    expect(std::fabs(browse::warpTempo("Long.wav", 16.0, 120.0) - 120.0) < 1e-9, "16 s at 120: eight bars, 120");
+    expect(browse::warpTempo("Pad.wav", 7.3, 120.0) == 0.0, "7.3 s at 120: no tempo");
+  }
+  // N55-08: the Session export plays the chosen clips together for the longest one's length: a loop
+  // repeats, a one-shot plays once; the other slots and the Arrangement go.
+  {
+    Song s = s0;
+    s.live.areaEnd = 4 * 1536;
+    auto clip = [&](int track, Tick start, Tick len, bool once) {
+      Clip c;
+      c.id = s.allocateId();
+      c.kind = ClipKind::Audio;
+      c.track = track;
+      c.start = start;
+      c.length = len;
+      c.launchOnce = once;
+      s.playlist.push_back(c);
+      return c.id;
+    };
+    const ObjectId loop = clip(2, 0, 384, false);   // a beat that loops (scene 1)
+    const ObjectId once = clip(3, 0, 1536, true);   // a bar that plays once
+    clip(2, 1536, 1536, false);                     // scene 2: not chosen
+    clip(3, 5 * 1536, 1536, false);                 // in the Arrangement: not chosen
+    Song r = s;
+    const Tick len = prepareSessionExport(r, {loop, once});
+    expect(len == 1536, "as long as the longest chosen clip (a bar)");
+    int loops = 0, onces = 0;
+    bool placed = true;
+    for (const Clip& c : r.playlist) {
+      placed = placed && c.start >= s.live.areaEnd && c.start < s.live.areaEnd + len;
+      loops += c.track == 2 ? 1 : 0;
+      onces += c.track == 3 ? 1 : 0;
+    }
+    expect(placed && loops == 4 && onces == 1, "the beat four times, the one-shot once, from the Arrangement's start");
+    expect(r.live.areaEnd == s.live.areaEnd, "the live area stays (empty): the render starts at its end");
+    Song none = s;
+    expect(prepareSessionExport(none, {}) == 0 && projectToText(none) == projectToText(s), "nothing chosen: the song unchanged");
+  }
+  // N55-12: a Set whose automation lane carries a stale name ("<old owner> > control") opens and saves
+  // byte for byte: names are derived when drawn, never rewritten on load.
+  {
+    Song s = s0;
+    const ObjectId gm = s.tracks[2].mixer;
+    const int lane = trackmodes::addAutomationLane(s, gm, "Old name \xE2\x80\xBA Volume");
+    laneClip(s, lane, gm, 0);
+    s.automations.back().name = "Old name \xE2\x80\xBA Volume";
+    const std::string text = projectToText(s);
+    Song back;
+    std::string err;
+    expect(loadProjectText(text, "", back, &err), "the stale Set opens");
+    expect(projectToText(back) == text, "an untouched open and save is byte for byte the same");
+    expect(back.tracks[static_cast<size_t>(lane)].name == "Old name \xE2\x80\xBA Volume", "the lane keeps its stored name");
+  }
+}
+
+// Checkpoint 57: the tester's round 13.
+// A steady 0.5 sample on a sampler channel into insert 1 (output Main); insert 2 is a plain bus to Main.
+Song sendSong(const std::vector<Send>& sends) {
+  static std::string dc;
+  if (dc.empty()) {
+    AudioBuffer b(2, 44100);
+    for (size_t i = 0; i < b.frames; ++i) {
+      b.at(0, i) = b.at(1, i) = 0.5f;
+    }
+    dc = (std::filesystem::temp_directory_path() / "gl_k112c_cp57_dc.wav").string();
+    writeWav(dc, b, 44100, 16);
+    sampleCache().clear();
+  }
+  Song s = makeEmptySong();
+  Channel ch;
+  ch.id = s.allocateId();
+  ch.name = "Audio";
+  ch.plugin = defaultPluginState("gl.sampler");
+  ch.plugin.data = dc;
+  ch.mixerTrack = s.mixer[1].id;
+  s.channels.push_back(ch);
+  Clip c;
+  c.id = s.allocateId();
+  c.kind = ClipKind::Audio;
+  c.source = ch.id;
+  c.start = 0;
+  c.length = 192;
+  s.playlist.push_back(c);
+  s.mixer[1].sends = sends;
+  return s;
+}
+
+float maxDiff(const AudioBuffer& x, const AudioBuffer& y) {
+  if (x.frames != y.frames || x.data.size() != y.data.size()) {
+    return 1e9f;
+  }
+  float d = 0;
+  for (size_t i = 0; i < x.data.size(); ++i) {
+    d = std::max(d, std::fabs(x.data[i] - y.data[i]));
+  }
+  return d;
+}
+
+void testCheckpoint57() {
+  // N56-01: every send plays, as on main: two sends to one destination add up (a hand-made song, a
+  // DAWproject import); the engine no longer drops the second.
+  {
+    const Song probe = makeEmptySong();
+    const ObjectId M = probe.masterId(), R = probe.mixer[2].id;
+    RenderOptions o;
+    const AudioBuffer two = renderSong(sendSong({{M, 1.0f}, {R, 0.5f}, {R, 0.3f}}), o);
+    const AudioBuffer sum = renderSong(sendSong({{M, 1.0f}, {R, 0.8f}}), o);
+    const AudioBuffer first = renderSong(sendSong({{M, 1.0f}, {R, 0.5f}}), o);
+    expect(two.frames > 0 && two.peak() > 0.1f, "the send song sounds");
+    expect(maxDiff(two, sum) < 1e-5f, ("sends of 0.5 and 0.3 to one bus play as 0.8: " + std::to_string(maxDiff(two, sum))).c_str());
+    expect(maxDiff(two, first) > 0.05f, "the second send to the bus is heard (not dropped)");
+    const AudioBuffer outDup = renderSong(sendSong({{R, 1.0f}, {R, 0.5f}}), o);
+    const AudioBuffer outOne = renderSong(sendSong({{R, 1.0f}}), o);
+    expect(maxDiff(outDup, outOne) > 0.05f, "an output plus a plain send to the same bus: both routes play");
+  }
+  Song s0 = makeEmptySong();
+  s0.tracks.resize(kDefaultPlaylistTracks);
+  trackmodes::makeClipsStarterTracks(s0);  // returns A Reverb, B Delay
+  const std::vector<size_t> rets = trackmodes::returnTracks(s0);
+  const ObjectId A = s0.mixer[rets[0]].id, B = s0.mixer[rets[1]].id;
+  const ObjectId from = s0.tracks[2].mixer;
+  if (MixerTrack* m = s0.mixerTrack(from); m && trackmodes::auxSendIndex(*m, A) >= 0) {
+    m->sends[static_cast<size_t>(trackmodes::auxSendIndex(*m, A))].level = 0.4f;
+  }
+  // N56-01: To a return keeps the send aside (not in the playing sends); To back to Main, or on to the
+  // other return, puts it back where it was, at its level: byte for byte.
+  {
+    Document d(s0);
+    const std::string before = projectToText(d.song());
+    d.editSong("track output", [&](Song& x) { trackmodes::setOutput(x, from, A); });
+    const MixerTrack* m = d.song().mixerTrack(from);
+    expect(m && trackmodes::outputOf(*m) == A && trackmodes::auxSendIndex(*m, A) < 0, "To A: A is the output, no send to A plays");
+    expect(d.song().keptSends.size() == 1 && trackmodes::keptSend(d.song(), from, A) &&
+               std::fabs(trackmodes::keptSend(d.song(), from, A)->level - 0.4f) < 1e-6f,
+           "the send to A is kept aside at 0.4");
+    expect(projectToText(d.song()).find("\"keptSends\"") != std::string::npos, "the kept send is saved (live.keptSends)");
+    Song back;
+    std::string err;
+    const std::string saved = projectToText(d.song());
+    expect(loadProjectText(saved, "", back, &err) && back.keptSends == d.song().keptSends && projectToText(back) == saved,
+           "the kept send survives a save round trip, byte for byte");
+    d.editSong("track output", [&](Song& x) { trackmodes::setOutput(x, from, B); });
+    const MixerTrack* m2 = d.song().mixerTrack(from);
+    expect(m2 && trackmodes::outputOf(*m2) == B && trackmodes::auxSendIndex(*m2, A) >= 0 && trackmodes::keptSend(d.song(), from, B) &&
+               !trackmodes::keptSend(d.song(), from, A),
+           "To B: the send to A plays again, the send to B steps aside");
+    d.editSong("track output", [&](Song& x) { trackmodes::setOutput(x, from, x.masterId()); });
+    expect(projectToText(d.song()) == before && d.song().keptSends.empty(), "To Main: the sends are back where they were, at their levels (byte for byte)");
+    d.undo();
+    d.undo();
+    d.undo();
+    expect(projectToText(d.song()) == before, "undo restores the Set");
+  }
+  // An older Set (no keptSends) saves byte for byte, with no "keptSends" written; a song with a second
+  // route to one bus keeps it untouched.
+  {
+    Song s = sendSong({{s0.masterId(), 1.0f}, {s0.mixer[2].id, 0.5f}, {s0.mixer[2].id, 0.3f}});
+    const std::string text = projectToText(s);
+    Song back;
+    std::string err;
+    expect(loadProjectText(text, "", back, &err) && projectToText(back) == text, "an older song: open and save byte for byte");
+    expect(text.find("keptSends") == std::string::npos && back.keptSends.empty(), "nothing new is written");
+    expect(back.mixer[1].sends.size() == 3, "both sends to the bus stay");
+  }
+  // Collaboration: the kept send reaches the other person with the To change.
+  {
+    Clock clock;
+    Net net(57);
+    Peer a, b;
+    a.label = "Alex";
+    b.label = "Sam";
+    a.id = crypto::Identity::generate();
+    b.id = crypto::Identity::generate();
+    a.doc.reset(s0);
+    a.folder = tmpDir("k112c_cp57_a");
+    b.folder = tmpDir("k112c_cp57_b");
+    std::string err;
+    a.s = Session::create(a.doc, config(a.folder, a.id, a.label, &clock), &err);
+    net.add(&a);
+    b.s = Session::join(b.doc, config(b.folder, b.id, b.label, &clock), ticketOf(*a.s), &err);
+    a.s->admitMember(memberOf(b));
+    net.add(&b);
+    net.connect(&a, &b);
+    settle(net, {&a, &b}, clock);
+    a.doc.editSong("track output", [&](Song& x) { trackmodes::setOutput(x, from, A); });
+    settle(net, {&a, &b}, clock);
+    const KeptSend* kb = trackmodes::keptSend(b.doc.song(), from, A);
+    expect(kb && std::fabs(kb->level - 0.4f) < 1e-6f, "collab: the kept send reaches the other person");
+    expect(songText(a) == songText(b), "collab: both songs are the same");
+    b.doc.editSong("track output", [&](Song& x) { trackmodes::setOutput(x, from, x.masterId()); });
+    settle(net, {&a, &b}, clock);
+    const MixerTrack* ma = a.doc.song().mixerTrack(from);
+    expect(ma && trackmodes::auxSendIndex(*ma, A) >= 0 && a.doc.song().keptSends.empty() && songText(a) == songText(b),
+           "collab: To Main from the other side puts the send back on both");
+  }
+  // N56-03: from the length alone, whole bars at a likely whole tempo, the one nearest the Set's.
+  {
+    expect(std::fabs(browse::warpTempo("Beat.wav", 4 * 4 * 60.0 / 90.0, 120.0) - 90.0) < 1e-6, "Beat.wav, 4 bars at 90 in a 120 Set: 90");
+    expect(browse::warpTempo("Odd.wav", 3.3, 120.0) == 0.0, "Odd.wav, 3.3 s: still no tempo");
+    expect(std::fabs(browse::warpTempo("Two.wav", 2 * 4 * 60.0 / 100.0, 120.0) - 100.0) < 1e-6, "2 bars at 100 in a 120 Set: 100");
+    expect(std::fabs(browse::warpTempo("Fast.wav", 8 * 4 * 60.0 / 174.0, 120.0) - 87.0) < 1e-6, "8 bars at 174 in a 120 Set: 4 bars at 87, the nearer whole tempo");
+    expect(std::fabs(browse::warpTempo("Fast.wav", 8 * 4 * 60.0 / 174.0, 160.0) - 174.0) < 1e-6, "the same file in a 160 Set: 174");
+    expect(std::fabs(browse::warpTempo("Slow.wav", 4 * 4 * 60.0 / 90.0, 170.0) - 180.0) < 1e-6, "the same 4 bars at 90 in a 170 Set: 8 bars at 180, nearer");
+    expect(browse::warpTempo("Pad.wav", 7.3, 120.0) == 0.0, "7.3 s: still no tempo");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -1030,5 +1295,7 @@ int main() {
   testCheckpoint53();
   testCheckpoint54();
   testCheckpoint55();
+  testCheckpoint56();
+  testCheckpoint57();
   return finish();
 }

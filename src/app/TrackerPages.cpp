@@ -222,7 +222,7 @@ GL_STEPS_FN void stepRow(App& a, const Pattern* pat, size_t ci, ImVec2 c0, float
     // A channel playing notes: the piano roll edits them; here a quiet line of their starts.
     const std::vector<Note>& ns = pat->notes.at(c.id);
     const Tick len = std::max<Tick>(1, s.patternLength(*pat));
-    dl->AddRectFilled(ImVec2(gx, y + 1), ImVec2(c0.x + W - 4, y + rh - 2), theme::withAlpha(P.surface800, 0.6f));
+    dl->AddRectFilled(ImVec2(gx, y + 1), ImVec2(c0.x + W - 2, y + rh - 2), theme::withAlpha(P.surface800, 0.6f));
     for (const Note& n : ns) {
       const float nx0 = std::round(gx + avail * static_cast<float>(n.start % len) / static_cast<float>(len));
       const float nx1 = std::max(nx0 + 2, std::round(gx + avail * static_cast<float>(std::min<Tick>(len, n.start % len + n.length)) / static_cast<float>(len)));
@@ -373,6 +373,14 @@ int loopEntry(const Song& s, const std::vector<trk::OrderEntry>& ol) {
   return -1;
 }
 
+// cp22: the Song page's counts (rows, bars) in one number base, the Tracker's own (Settings, Layout,
+// Hexadecimal rows): two hex digits, or decimal.
+std::string countText(App& a, int v) {
+  char b[16];
+  std::snprintf(b, sizeof b, a.settings.getString("tracker.rowBase") != "dec" ? "%02X" : "%02d", std::max(0, v));
+  return b;
+}
+
 std::string timeText(const Song& s, Tick t) {
   const double secs = static_cast<double>(t) / std::max(1, s.ppq) * 60.0 / std::max(1.0, s.tempo);
   char b[32];
@@ -410,10 +418,17 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
     // Each right column as wide as its heading or its digits (a wide heading never runs off the box).
     auto colW = [&](const char* head) { return std::max(digitW, std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(head)).x)); };
     const float cRows = xO + wOrder - pad - colW("Rows") - 14, cBars = cRows - colW("Bars") - 14;
+    // cp22: the entry's start time where the box has room (the space between the name and the counts).
+    const float startW = std::max(mono->CalcTextSizeA(fs, FLT_MAX, 0, "00:00").x, a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Start")).x);
+    const bool showStart = cBars - startW - 14 - cName >= fs * 9.0f;
+    const float cStart = showStart ? cBars - startW - 14 : cBars;
     auto head = [&](float x, const char* t) { dl->AddText(a.fontRegular, fs, ImVec2(x, hy), P.textFaint, i18n::tr(t)); };
     head(cPos, "Pos");
     head(cPtn, "Ptn");
     head(cName, "Name");
+    if (showStart) {
+      head(cStart, i18n::N_("Start"));
+    }
     head(cBars, "Bars");
     head(cRows, "Rows");
     const float l0y = hy + rh, l1y = bottom - bh - pad * 2;
@@ -458,14 +473,16 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
           cl->AddText(mono, fs, ImVec2(cPtn + dx, ty), P.text, num.c_str());
           std::string name = p->name;
           if (e.patterns > 1) name += " +" + std::to_string(e.patterns - 1);
-          theme::textEllipsis(cl, a.fontRegular, fs, ImVec2(cName + dx, ty), cBars - cName - 8, static_cast<int>(i) == cur ? P.text : P.textDim, name.c_str());
+          theme::textEllipsis(cl, a.fontRegular, fs, ImVec2(cName + dx, ty), cStart - cName - 8, static_cast<int>(i) == cur ? P.text : P.textDim, name.c_str());
           const trk::Grid g = trk::gridOf(s, *p);
-          char bars[16], rows[16];
-          std::snprintf(bars, sizeof bars, "%d", static_cast<int>((e.end - e.start + bar - 1) / bar));
-          std::snprintf(rows, sizeof rows, "%02X", std::min(255, g.rows));
-          cl->AddText(mono, fs, ImVec2(cBars + dx, ty), P.textDim, bars);
-          cl->AddText(mono, fs, ImVec2(cRows + dx, ty), P.textDim, rows);
-        } else {
+          const std::string bars = countText(a, static_cast<int>((e.end - e.start + bar - 1) / bar)), rows = countText(a, std::min(255, g.rows));
+          cl->AddText(mono, fs, ImVec2(cBars + dx, ty), P.textDim, bars.c_str());
+          cl->AddText(mono, fs, ImVec2(cRows + dx, ty), P.textDim, rows.c_str());
+        }
+        if (showStart) {
+          cl->AddText(mono, fs, ImVec2(cStart + dx, ty), P.textFaint, timeText(s, e.start).c_str());
+        }
+        if (!p) {
           cl->AddText(mono, fs, ImVec2(cPtn + dx, ty), P.textFaint, "AU");
           cl->AddText(a.fontRegular, fs, ImVec2(cName + dx, ty), P.textFaint, i18n::tr("Audio part"));
         }
@@ -555,10 +572,10 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
         const std::string num = trk::hex2(static_cast<int>(i) + 1);
         cl->AddText(mono, fs, ImVec2(cNo + dx, ty), sel ? P.hot : P.textDim, num.c_str());
         theme::textEllipsis(cl, a.fontRegular, fs, ImVec2(cName + dx, ty), cBars - cName - 8, sel ? P.text : P.textDim, p.name.c_str());
-        char bars[16], u[16];
-        std::snprintf(bars, sizeof bars, "%d", p.bars);
+        char u[16];
+        const std::string bars = countText(a, p.bars);
         std::snprintf(u, sizeof u, "%d", uses[i]);
-        cl->AddText(mono, fs, ImVec2(cBars + dx, ty), P.textDim, bars);
+        cl->AddText(mono, fs, ImVec2(cBars + dx, ty), P.textDim, bars.c_str());
         cl->AddText(mono, fs, ImVec2(cUses + dx, ty), uses[i] ? P.textDim : P.textFaint, u);
         if (click) a.selectPattern(p.id);
         if (dbl) trackerview::showPage(a, "Pattern editor");
@@ -573,7 +590,7 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
       const char* hint;
       bool on;
     };
-    const B bs[6] = {{i18n::N_("New"), i18n::N_("A new empty pattern after the last (as long as the song's bars)"), true},
+    const B bs[6] = {{i18n::N_("New"), i18n::N_("A new empty pattern of 64 rows after the last"), true},
                      {i18n::N_("Clone"), i18n::N_("A copy of the picked pattern after it"), sp != nullptr},
                      {i18n::N_("Set"), i18n::N_("The current entry plays the picked pattern"), sp != nullptr && cur >= 0},
                      {i18n::N_("Append"), i18n::N_("Adds the picked pattern at the end of the song"), sp != nullptr},
@@ -587,9 +604,9 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
       if (bevelButton(a, "##patb", bs[k].label, ImVec2(bx, by), ImVec2(bx1, by + bh), false, bs[k].hint)) {
         switch (k) {
           case 0: {
-            const int bars = std::max(1, s.patterns.empty() ? 4 : s.patterns.back().bars);
-            const ObjectId id = a.doc.addPattern(std::string(i18n::tr("Pattern")) + " " + std::to_string(s.patterns.size() + 1), bars,
-                                                 s.patterns.empty() ? 16 : s.patterns.back().stepsPerBar);
+            // cp21: the classic 64 rows (before: the last pattern's length).
+            const ObjectId id = a.doc.addPattern(std::string(i18n::tr("Pattern")) + " " + std::to_string(s.patterns.size() + 1),
+                                                 trackerview::kNewPatternBars, trackerview::kNewPatternSteps);
             if (id) a.selectPattern(id);
             break;
           }
@@ -610,29 +627,39 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
   {
     bevelBox(dl, ImVec2(xS, top), ImVec2(xS + wSong, bottom));
     boxTitle(a, ImVec2(xS + 6, top + 3), "Song");
+    // cp23 (polish): the box on the band's spacing scale. Its first line on the neighbours' heading
+    // line ("Pos Ptn Name", "No Name": it stood 4 px lower), lines a row apart as the lists' rows (were a
+    // row and 2 px), the steppers as tall as the buttons under them and their fields against their
+    // arrows (were 2 px shorter, the fields 38 px left of the arrows), 2 px between peers and 6 px
+    // between groups (were 4, 6, 10, 2 and 8 px).
+    namespace tsp = trackerview::space;
     const float x = xS + pad + 4, w = wSong - pad * 2 - 8;
-    float y = top + rh + 6;
+    float y = top + rh + 2;
     auto line = [&](const char* label, const std::string& v) {
       dl->AddText(a.fontRegular, fs, ImVec2(x, y), P.textDim, i18n::tr(label));
-      const float vw = mono->CalcTextSizeA(fs, FLT_MAX, 0, v.c_str()).x;
-      dl->AddText(mono, fs, ImVec2(x + w - vw, y), P.text, v.c_str());
-      y += rh + 2;
+      // (cp22: a long value, a pattern's name, is cut before it reaches the label)
+      const float lw = a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(label)).x + 10;
+      const float vw = std::min(mono->CalcTextSizeA(fs, FLT_MAX, 0, v.c_str()).x, std::max(0.0f, w - lw));
+      theme::textEllipsis(dl, mono, fs, ImVec2(x + w - vw, y), vw + 1, P.text, v.c_str());
+      y += rh;
     };
+    const Pattern* sp = s.pattern(a.curPattern);
+    ImFont* bold = a.fontBold ? a.fontBold : a.fontRegular;
     const Tick len = ol.empty() ? 0 : ol.back().end;
     line("Entries", trk::hex2(static_cast<int>(ol.size())));
-    line("Bars", std::to_string(static_cast<int>((len + bar - 1) / bar)));
+    line("Bars", countText(a, static_cast<int>((len + bar - 1) / bar)));
     line("Time", timeText(s, len));
     line("Position", cur >= 0 ? trk::hex2(cur) : std::string("--"));
-    y += 4;
+    y += tsp::kGap;
     char bpm[16];
     std::snprintf(bpm, sizeof bpm, std::fabs(s.tempo - std::round(s.tempo)) < 0.05 ? "%.0f" : "%.1f", s.tempo);
-    if (const int d = stepper(a, "sgbpm", "Tempo", bpm, ImVec2(x, y), w, rh + 2, "The song tempo in beats per minute (Shift: steps of 0.1)")) {
+    if (const int d = stepper(a, "sgbpm", "Tempo", bpm, ImVec2(x, y), w, bh, "The song tempo in beats per minute (Shift: steps of 0.1)", w)) {
       const double t = ImGui::GetIO().KeyShift ? std::round(s.tempo * 10 + d) / 10.0 : std::round(s.tempo) + d;
       a.doc.setParam(songParam(SongParam::Tempo), std::clamp(t, 10.0, 522.0), true);
     }
-    y += rh + 6;
-    if (const int d = stepper(a, "sgloop", "Loop to", loopAt < 0 ? std::string("--") : trk::hex2(loopAt), ImVec2(x, y), w, rh + 2,
-                              "The entry the song goes back to when it ends (none: it stops)")) {
+    y += bh + tsp::kGap;
+    if (const int d = stepper(a, "sgloop", "Loop to", loopAt < 0 ? std::string("--") : trk::hex2(loopAt), ImVec2(x, y), w, bh,
+                              "The entry the song goes back to when it ends (none: it stops)", w)) {
       const int to = loopAt + d;
       Tick loopPos = 0;
       for (const Marker& m : s.markers)
@@ -640,7 +667,7 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
       if (to < 0 && loopAt >= 0) ops::addSongLoopMarker(a.doc, loopPos);  // placed where it is: removed
       else if (to >= 0 && to < static_cast<int>(ol.size())) ops::addSongLoopMarker(a.doc, ol[static_cast<size_t>(to)].start);
     }
-    y += rh + 10;
+    y += bh + tsp::kGroup;
     const float hw = std::floor((w - kGap) / 2);
     const bool songPlaying = playing && a.engine.mode() == PlayMode::Song;
     if (bevelButton(a, "##sgplay", "Play song", ImVec2(x, y), ImVec2(x + hw, y + bh), songPlaying, "Plays the song from the current entry (Enter)")) {
@@ -669,7 +696,48 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
         }
       }
     }
-    y += bh + 8;
+    y += bh + tsp::kGroup;
+    // cp22: the box's empty lower part tells about the current entry and the picked pattern (what the
+    // order and pattern lists hold in their narrow columns), section by section while they fit.
+    auto section = [&](const char* title) {
+      dl->AddRectFilled(ImVec2(x, std::round(y + rh * 0.5f)), ImVec2(x + w, std::round(y + rh * 0.5f) + 1), theme::withAlpha(P.textFaint, 0.35f));
+      const float tw = bold->CalcTextSizeA(fs, FLT_MAX, 0, title).x;
+      dl->AddRectFilled(ImVec2(x, y), ImVec2(x + tw + 8, y + rh), P.surface700);
+      dl->AddText(bold, fs, ImVec2(x, y + std::round((rh - fs) * 0.5f)), P.text, title);
+      y += rh;
+    };
+    const float lineH = rh;
+    if (cur >= 0 && cur < static_cast<int>(ol.size()) && y + lineH * 6 < bottom) {
+      const trk::OrderEntry& e = ol[static_cast<size_t>(cur)];
+      const std::string title = std::string(i18n::tr("Entry")) + " " + trk::hex2(cur);
+      section(title.c_str());
+      const Pattern* ep = s.pattern(e.pattern);
+      line(i18n::N_("Pattern"), ep ? trk::hex2(trk::patternNumber(s, ep->id)) + " " + ep->name : std::string(i18n::tr("audio only")));
+      line(i18n::N_("Starts"), timeText(s, e.start));
+      line(i18n::N_("Bars"), countText(a, static_cast<int>((e.end - e.start + bar - 1) / bar)));
+      line(i18n::N_("Rows"), ep ? countText(a, std::min(255, trk::gridOf(s, *ep).rows)) : std::string("--"));
+      if (y + lineH * 2 < bottom) {
+        line(i18n::N_("Layers"), std::to_string(std::max(1, e.patterns)) + (e.audio.empty() ? std::string() : " + " + std::to_string(e.audio.size()) + " " + i18n::tr("audio")));
+      }
+      y += tsp::kGroup;
+    }
+    if (sp && y + lineH * 5 < bottom) {
+      const std::string title = std::string(i18n::tr("Pattern")) + " " + trk::hex2(trk::patternNumber(s, sp->id));
+      section(title.c_str());
+      int used = 0, firstUse = -1;
+      for (size_t k = 0; k < ol.size(); ++k) {
+        if (ol[k].pattern == sp->id) {
+          ++used;
+          if (firstUse < 0) {
+            firstUse = static_cast<int>(k);
+          }
+        }
+      }
+      line(i18n::N_("Bars"), countText(a, sp->bars));
+      line(i18n::N_("Rows"), countText(a, std::min(255, trk::gridOf(s, *sp).rows)));
+      line(i18n::N_("Used"), firstUse < 0 ? std::string(i18n::tr("not in the song")) : std::to_string(used) + "x, " + i18n::tr("first at") + " " + trk::hex2(firstUse));
+      y += tsp::kGroup;
+    }
     bool layered = false;
     for (const trk::OrderEntry& e : ol) layered = layered || e.patterns > 1 || e.pattern == kNoId;
     if (layered && y + rh * 2 < bottom)
@@ -917,9 +985,8 @@ void devOrder(App& a, const std::vector<std::string>& args, int frame) {
     insertEntry(a, ol, static_cast<int>(ol.size()), ptn(2));
   } else if (c == "new") {
     const Song& s = a.doc.song();
-    const int bars = std::max(1, s.patterns.empty() ? 4 : s.patterns.back().bars);
-    if (const ObjectId id = a.doc.addPattern(std::string(i18n::tr("Pattern")) + " " + std::to_string(s.patterns.size() + 1), bars,
-                                             s.patterns.empty() ? 16 : s.patterns.back().stepsPerBar))
+    if (const ObjectId id = a.doc.addPattern(std::string(i18n::tr("Pattern")) + " " + std::to_string(s.patterns.size() + 1),
+                                             trackerview::kNewPatternBars, trackerview::kNewPatternSteps))
       a.selectPattern(id);
   } else if (c == "clone") {
     if (const ObjectId p = ptn(2))
@@ -1019,9 +1086,9 @@ GL_STEPS_FN void steps(App& a) {
   if (beginBody("##steps", b0, b1, contentH)) {
     const ImVec2 c0 = ImGui::GetCursorScreenPos();
     const float W = ImGui::GetContentRegionAvail().x;
-    const float nameW = std::min(200.0f, std::round(W * 0.22f)), lampW = rh - 2;
-    const float gx = c0.x + 2 + nameW + kGap + lampW + 6;
-    const float avail = c0.x + W - 4 - gx;
+    const float nameW = std::min(200.0f, std::round(W * 0.22f)), lampW = rh - 1;  // cp23: the lamp as tall as the name field beside it (was 1 px shorter)
+    const float gx = c0.x + 2 + nameW + kGap + lampW + trackerview::space::kGroup;
+    const float avail = c0.x + W - 2 - gx;  // cp23: 2 px from the edge, as the names (was 4)
     const float group = 3;  // extra gap every 4 steps
     const float cw = std::max(8.0f, std::floor((avail - group * static_cast<float>(nSteps / 4)) / static_cast<float>(nSteps)) - 1);
     for (size_t ci = 0; ci < s.channels.size(); ++ci)
@@ -1605,7 +1672,7 @@ void mixer(App& a) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 c0 = ImGui::GetCursorScreenPos();
     const float W = ImGui::GetContentRegionAvail().x;
-    const float nameW = std::min(200.0f, std::round(W * 0.22f)), lampW = rh0 - 2;
+    const float nameW = std::min(200.0f, std::round(W * 0.22f)), lampW = rh0 - 1;  // cp23: as the Steps page
     const float volW = std::round(W * 0.28f), panW = std::round(W * 0.14f);
     for (size_t i = 0; i < s.mixer.size(); ++i) {
       const MixerTrack& m = s.mixer[i];
@@ -1619,21 +1686,21 @@ void mixer(App& a) {
       x += nameW + kGap;
       if (lamp(a, "##mute", ImVec2(x, std::round(y + (rh - rh0) * 0.5f)), lampW, !m.muted, P.led, "Lit: the track plays \xC2\xB7 click: mute"))
         a.doc.setParam(mixerParam(m.id, MixerParam::Mute), m.muted ? 0 : 1, false);
-      x += lampW + 6;
+      x += lampW + trackerview::space::kGroup;
       double nv = 0;
       char txt[16];
       std::snprintf(txt, sizeof txt, "%3d", static_cast<int>(std::lround(m.volume * 100)));
       dl->AddText(mono, fs, ImVec2(x, std::round(y + (rh - fs) * 0.5f)), P.textDim, txt);
-      x += mono->CalcTextSizeA(fs, FLT_MAX, 0, "000 ").x;
+      x += std::ceil(mono->CalcTextSizeA(fs, FLT_MAX, 0, "000").x) + trackerview::space::kGroup;  // cp23: 6 px to the bar, as between the other parts
       if (valueBar("##vol", ImVec2(x, y), ImVec2(x + volW, y + rh - 1), m.volume, 0.0, 1.25, false, &nv, "Volume (drag; double-click: the default)"))
         a.doc.setParam(mixerParam(m.id, MixerParam::Volume), nv, true);
-      x += volW + 8;
+      x += volW + trackerview::space::kGroup;
       if (valueBar("##pan", ImVec2(x, y), ImVec2(x + panW, y + rh - 1), m.pan, -1.0, 1.0, true, &nv, "Pan (drag; double-click: centre)"))
         a.doc.setParam(mixerParam(m.id, MixerParam::Pan), nv, true);
-      x += panW + 8;
+      x += panW + trackerview::space::kGroup;  // cp23: the parts 6 px apart (were 6, a space, 8 and 8)
       // A segmented level meter to the row's end.
       const float lvl = std::clamp(mixmeters::get(a, m.id).peak(), 0.0f, 1.0f);
-      const float mx1 = c0.x + W - 4;
+      const float mx1 = c0.x + W - 2;  // cp23: 2 px from the body's edge, as the names at the left (was 4)
       if (mx1 - x > 20) {
         bevelBox(dl, ImVec2(x, y), ImVec2(mx1, y + rh - 1), true);
         const int segs = std::max(4, static_cast<int>((mx1 - x - 4) / 5));

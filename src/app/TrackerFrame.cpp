@@ -63,6 +63,24 @@ using theme::pal;
 
 ImFont* monoFont(App& a) { return a.fontMono ? a.fontMono : ImGui::GetFont(); }
 
+float labelColumn(App& a, std::initializer_list<const char*> labels, float pad) {
+  float w = 0;
+  for (const char* l : labels) {
+    w = std::max(w, a.fontRegular->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, i18n::tr(l)).x);
+  }
+  return std::ceil(w + pad);
+}
+
+// cp23: where a box's peer steppers put their fields, so the fields share both edges: against the
+// arrows (stepper labelW = the row's width) when the widest label leaves room for a field there, else
+// from the label column to the arrows (fill). Before, a narrow box gave each field its own left edge,
+// at its own label's end ("Pattern" 2A's field 16 px narrower than Rows' 100 at 1024x640).
+static float peerFields(App& a, float rw, float h, float col, bool* fill) {
+  const float vw = std::round(monoFont(a)->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, "000.0").x + 8);
+  *fill = rw - 2 * std::round(h * 1.35f) - 2 - vw < col;
+  return *fill ? col : rw;
+}
+
 // N-07: the values' ink: the theme's hot colour, darkened step by step until it reads on the sunken
 // fields (about 4.5:1; the light theme's orange on light grey was 2:1).
 ImU32 valueInk() {
@@ -145,6 +163,7 @@ bool radioRow(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, b
   const float r = std::max(3.0f, std::round(fs * 0.3f));
   const ImVec2 c(std::round(p0.x + 4 + r), std::round((p0.y + p1.y) * 0.5f));
   const ImVec2 q[4] = {ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r), ImVec2(c.x - r, c.y)};
+  const Aliased hard(dl);  // cp21: a hard-edged diamond
   dl->AddQuadFilled(q[0], q[1], q[2], q[3], on ? P.hot : P.surface950);
   dl->AddQuad(q[0], q[1], q[2], q[3], on ? theme::mix(P.hot, P.text, 0.3f) : theme::mix(P.surface700, P.text, 0.42f));
   if (hov && !on) dl->AddRectFilled(ImVec2(p0.x + 2 * r + 8, p0.y + 1), ImVec2(p1.x, p1.y - 1), theme::withAlpha(P.surface600, 0.5f));
@@ -173,7 +192,8 @@ bool checkRow(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, b
   if (hov && !off) dl->AddRect(ImVec2(q0.x - 1, q0.y - 1), ImVec2(q1.x + 1, q1.y + 1), theme::withAlpha(P.hot, 0.6f));
   if (on) {
     const ImU32 ink = off ? P.textFaint : P.hot;
-    const float t = std::max(1.5f, std::round(b * 0.16f));
+    const float t = std::max(2.0f, std::round(b * 0.18f));
+    const Aliased hard(dl);  // cp21: a stepped tick, no soft edge
     dl->AddLine(ImVec2(q0.x + b * 0.2f, q0.y + b * 0.52f), ImVec2(q0.x + b * 0.43f, q1.y - b * 0.22f), ink, t);
     dl->AddLine(ImVec2(q0.x + b * 0.43f, q1.y - b * 0.22f), ImVec2(q1.x - b * 0.18f, q0.y + b * 0.22f), ink, t);
   }
@@ -195,6 +215,7 @@ bool arrowButton(App& a, const char* id, ImVec2 p0, ImVec2 p1, bool up, const ch
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float cx = std::round((p0.x + p1.x) * 0.5f) + (held ? 1 : 0), cy = std::round((p0.y + p1.y) * 0.5f) + (held ? 1 : 0);
   const float r = std::max(2.0f, std::floor(std::min(p1.x - p0.x, p1.y - p0.y) * 0.22f));
+  const Aliased hard(dl);
   if (up) dl->AddTriangleFilled(ImVec2(cx - r - 1, cy + r * 0.6f), ImVec2(cx + r + 1, cy + r * 0.6f), ImVec2(cx, cy - r * 0.8f), P.text);
   else dl->AddTriangleFilled(ImVec2(cx - r - 1, cy - r * 0.6f), ImVec2(cx + r + 1, cy - r * 0.6f), ImVec2(cx, cy + r * 0.8f), P.text);
   (void)a;
@@ -281,6 +302,7 @@ bool scrollBar(App& a, const char* id, ImVec2 p0, ImVec2 p1, double* start, doub
     const bool held = ImGui::IsItemActive();
     const float cx = std::round((b0.x + b1.x) * 0.5f) + (held ? 1 : 0), cy = std::round((b0.y + b1.y) * 0.5f) + (held ? 1 : 0);
     const float r = std::max(2.0f, std::floor(std::min(b1.x - b0.x, b1.y - b0.y) * 0.22f));
+    const Aliased hard(dl);
     if (side) dl->AddTriangleFilled(ImVec2(cx - r * 0.6f, cy - r - 1), ImVec2(cx - r * 0.6f, cy + r + 1), ImVec2(cx + r * 0.8f, cy), P.text);
     else dl->AddTriangleFilled(ImVec2(cx + r * 0.6f, cy - r - 1), ImVec2(cx + r * 0.6f, cy + r + 1), ImVec2(cx - r * 0.8f, cy), P.text);
     if (click) *start += side ? step : -step;
@@ -325,12 +347,19 @@ int stepper(App& a, const char* id, const char* label, const std::string& value,
   ImFont* mono = monoFont(a);
   dl->AddText(a.fontRegular, fs, ImVec2(p0.x, std::round(p0.y + (h - fs) * 0.5f)), P.textDim, i18n::tr(label));
   // T-21: a row too narrow for its label, value and two full arrows narrows the arrows first.
-  const float need0 = a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(label)).x + mono->CalcTextSizeA(fs, FLT_MAX, 0, value.c_str()).x + 16;
+  // cp23: peer rows get equal arrows: the need counts the label column when one is given and at least
+  // three digits of value (before, "Start" and "End", or "174" and "1", got arrows 1 to 4 px apart).
+  const float need0 = std::max(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(label)).x, labelW > 0 && labelW < w * 0.6f ? labelW : 0.0f) +
+                      std::max(mono->CalcTextSizeA(fs, FLT_MAX, 0, value.c_str()).x, mono->CalcTextSizeA(fs, FLT_MAX, 0, "000").x) + 16;
   const float bw = std::max(std::round(h * 0.8f), std::min(std::round(h * 1.35f), std::floor((w - need0) / 2)));
   const float x2 = p0.x + w - bw, x1 = x2 - bw;
   float vw = std::round(mono->CalcTextSizeA(fs, FLT_MAX, 0, "000.0").x + 8);
   const float lx = labelW >= 0 ? labelW : std::round(w * 0.42f);
-  if (fill) vw = std::max(vw, x1 - 2 - (p0.x + lx));  // the field runs from the label column to the arrows
+  // The field runs from the label column to the arrows (cp23: even when that is narrower than the
+  // usual field, down to its value: peers keep one left edge in a narrow box).
+  if (fill) {
+    vw = std::max(std::round(mono->CalcTextSizeA(fs, FLT_MAX, 0, value.c_str()).x + 6), x1 - 2 - (p0.x + lx));
+  }
   float v0 = std::min(p0.x + lx, x1 - 2 - vw);
   // A narrow box: the field gives way to the label (down to its value's own width), never over it.
   const float labelEnd = std::ceil(p0.x + a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(label)).x + 4);
@@ -418,7 +447,7 @@ void readout(App& a, const char* label, const std::string& value, ImVec2 p0, flo
 // What the Loop to stepper needs besides its arrows (as stepper() measures it, for a two-digit value).
 float loopNeed(App& a, const char* label) {
   const float fs = ImGui::GetFontSize();
-  return a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(label)).x + monoFont(a)->CalcTextSizeA(fs, FLT_MAX, 0, "00").x + 16;
+  return a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(label)).x + monoFont(a)->CalcTextSizeA(fs, FLT_MAX, 0, "000").x + 16;  // (cp23: three digits at least, as stepper())
 }
 
 // The Rows arrows: the pattern a bar longer or shorter; R4-07: at most 256 rows, as Expand.
@@ -484,6 +513,37 @@ void orderRows(App& a, ImVec2 p0, ImVec2 p1) {
   if (vis > 1 && vis % 2 == 0) --vis;
   const int first = std::max(0, current) - vis / 2;
   const float top = std::round(p0.y + (p1.y - p0.y - static_cast<float>(vis) * rowH) * 0.5f);
+  // T-13: an audio part (no pattern plays there) shows "AU" and its top clip's channel.
+  auto entryName = [&](const trk::OrderEntry& e) {
+    const Pattern* pat = s.pattern(e.pattern);
+    std::string name = pat ? pat->name : std::string();
+    if (e.pattern == kNoId && !e.audio.empty()) {
+      if (const Clip* c = s.clip(e.audio.front())) {
+        if (const Channel* ch = s.channel(c->source)) {
+          name = ch->name;
+        }
+      }
+    }
+    return name;
+  };
+  // cp22: a narrow box (1024 wide) cut most names to two or three letters. The numbers keep one
+  // space between them, the names start closer, and the names in view share one size: the one the
+  // longest of them needs, down to three quarters of the text size. A name cut all the same is
+  // whole in its entry's tooltip.
+  const float lineW = mono->CalcTextSizeA(rf, FLT_MAX, 0, "00 00+").x;
+  const float nameX = p0.x + 4 + lineW + 4, room = p1.x - 3 - nameX;
+  float nameFs = rf;
+  for (int k = 0; k < vis && first + k < static_cast<int>(ol.size()); ++k) {
+    if (first + k < 0) {
+      continue;
+    }
+    const std::string name = entryName(ol[static_cast<size_t>(first + k)]);
+    const float w = name.empty() ? 0.0f : a.fontRegular->CalcTextSizeA(rf, FLT_MAX, 0, name.c_str()).x;
+    if (w > room) {
+      nameFs = std::min(nameFs, std::floor(rf * room / w));
+    }
+  }
+  nameFs = std::clamp(nameFs, std::round(rf * 0.75f), rf);
   dl->PushClipRect(p0, p1, true);
   for (int k = 0; k < vis && first + k < static_cast<int>(ol.size()); ++k) {
     const int i = first + k;
@@ -492,22 +552,18 @@ void orderRows(App& a, ImVec2 p0, ImVec2 p1) {
     const float y = top + static_cast<float>(k) * rowH;
     if (i == current) dl->AddRectFilled(ImVec2(p0.x, y), ImVec2(p1.x, y + rowH), theme::withAlpha(P.hot, 0.85f));
     const ImU32 col = i == current ? theme::contrastText(P.hot) : P.text;
-    const Pattern* pat = s.pattern(e.pattern);
-    // T-13: an audio part (no pattern plays there) shows "AU" and its top clip's channel; a pattern
-    // entry with audio under it is marked with a "~" after its number.
+    // A pattern entry with audio under it is marked with a "~" after its number.
     const bool audioPart = e.pattern == kNoId;
-    std::string name = pat ? pat->name : std::string();
-    if (audioPart && !e.audio.empty())
-      if (const Clip* c = s.clip(e.audio.front()))
-        if (const Channel* ch = s.channel(c->source)) name = ch->name;
+    const std::string name = entryName(e);
     char line[96];
-    std::snprintf(line, sizeof line, "%s  %s%s", trk::hex2(i).c_str(), audioPart ? "AU" : trk::hex2(trk::patternNumber(s, e.pattern)).c_str(),
+    std::snprintf(line, sizeof line, "%s %s%s", trk::hex2(i).c_str(), audioPart ? "AU" : trk::hex2(trk::patternNumber(s, e.pattern)).c_str(),
                   e.patterns > 1 ? "+" : !audioPart && !e.audio.empty() ? "~" : " ");
     dl->AddText(mono, rf, ImVec2(p0.x + 4, std::round(y + (rowH - rf) * 0.5f)), col, line);
-    const float lw = mono->CalcTextSizeA(rf, FLT_MAX, 0, line).x;
-    if (!name.empty())
-      theme::textEllipsis(dl, a.fontRegular, rf, ImVec2(p0.x + 4 + lw + 6, std::round(y + (rowH - rf) * 0.5f)), p1.x - (p0.x + 4 + lw + 10),
-                          i == current ? col : P.textDim, name.c_str());
+    bool cut = false;
+    if (!name.empty()) {
+      cut = a.fontRegular->CalcTextSizeA(nameFs, FLT_MAX, 0, name.c_str()).x > room;
+      theme::textEllipsis(dl, a.fontRegular, nameFs, ImVec2(nameX, std::round(y + (rowH - nameFs) * 0.5f)), room, i == current ? col : P.textDim, name.c_str());
+    }
     ImGui::SetCursorScreenPos(ImVec2(p0.x, y));
     ImGui::PushID(i);
     if (ImGui::InvisibleButton("##entry", ImVec2(std::max(1.0f, p1.x - p0.x), rowH))) {
@@ -515,10 +571,15 @@ void orderRows(App& a, ImVec2 p0, ImVec2 p1) {
       setSongPosition(a, e.start);  // R4-01: kept while a pattern plays (Stop keeps it)
     }
     ImGui::PopID();
-    ui::Hint(audioPart ? "Only audio clips play here (no pattern) \xC2\xB7 click: go there \xC2\xB7 the Song page edits them"
-             : e.patterns > 1 ? "Several patterns play here (the top track's is shown) \xC2\xB7 click: go there"
-             : !e.audio.empty() ? "A part of the song with audio clips under its pattern (~) \xC2\xB7 click: go there and show its pattern"
-                                : "A part of the song (cut where clips start and end) \xC2\xB7 click: go there and show its pattern");
+    const char* hint = audioPart ? "Only audio clips play here (no pattern) \xC2\xB7 click: go there \xC2\xB7 the Song page edits them"
+                       : e.patterns > 1 ? "Several patterns play here (the top track's is shown) \xC2\xB7 click: go there"
+                       : !e.audio.empty() ? "A part of the song with audio clips under its pattern (~) \xC2\xB7 click: go there and show its pattern"
+                                          : "A part of the song (cut where clips start and end) \xC2\xB7 click: go there and show its pattern";
+    if (cut && ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("%s\n%s", name.c_str(), i18n::tr(hint));
+    } else {
+      ui::Hint(hint);
+    }
   }
   // The free entries after the song's end: their numbers, faint (the list keeps its rows filled).
   for (int i = static_cast<int>(ol.size()); i - first < vis; ++i) {
@@ -537,7 +598,7 @@ struct Page {
 };
 const Page kPages[] = {
     {i18n::N_("Pattern"), "Pattern editor", i18n::N_("The pattern in rows (Esc: edit mode, F1 to F8: octave)")},
-    {i18n::N_("Song"), "Playlist", i18n::N_("The arrangement, a row per bar")},
+    {i18n::N_("Song"), "Playlist", i18n::N_("The song: the order list, the patterns and the timeline")},
     {i18n::N_("Roll"), "Piano roll", i18n::N_("The same notes in the piano roll")},
     {i18n::N_("Steps"), "Channel rack", i18n::N_("The channels and their steps")},
     {i18n::N_("Mix"), "Mixer", i18n::N_("The mixer")},
@@ -646,9 +707,22 @@ void scopes(App& a, ImVec2 p0, ImVec2 p1) {
   // As many scopes as stay readable (a name's few letters each); more channels: the page of them
   // holding the selected channel.
   const int all = n;
-  // Always two rows, half the tracks in each (the classic scope box: 4 tracks 2x2, 8 tracks 4x2).
-  const int rows = all > 1 ? 2 : 1;
-  const int maxCols = std::max(1, static_cast<int>(W / std::max(24.0f, fs * 3.2f)));
+  // Two rows, half the tracks in each (the classic scope box: 4 tracks 2x2, 8 tracks 4x2).
+  // cp22: every channel in view where it can be: the scopes narrow to their number's width (the
+  // name drops first), then a third and fourth row come in while each keeps a readable height (the
+  // number and a few pixels of wave); only past that the box pages, as before.
+  int rows = all > 1 ? 2 : 1;
+  const float wideW = std::max(24.0f, fs * 3.2f);
+  const float smallFs = std::round(fs * 0.8f);  // the number's size in the small scopes
+  const float numW = mono->CalcTextSizeA(smallFs, FLT_MAX, 0, "00").x + 8;
+  int maxCols = std::max(1, static_cast<int>(W / wideW));
+  if (rows * maxCols < all) {
+    maxCols = std::max(1, static_cast<int>(W / numW));
+    const int maxRows = std::max(rows, std::min(4, static_cast<int>((H + 1) / (smallFs + 6 + 1))));
+    while (rows < maxRows && rows * maxCols < all) {
+      ++rows;
+    }
+  }
   const int perPage = rows * maxCols;
   const int sel = std::max(0, s.channelIndex(a.selChannel));
   const int first = all > perPage ? (sel / perPage) * perPage : 0;
@@ -656,6 +730,7 @@ void scopes(App& a, ImVec2 p0, ImVec2 p1) {
   const int cols = std::max(1, std::min(maxCols, (shown + rows - 1) / rows));
   const float cw = std::floor((W - static_cast<float>(cols - 1)) / static_cast<float>(cols));
   const float ch = std::floor((H - static_cast<float>(rows - 1)) / static_cast<float>(rows));
+  const float lfs = cw < wideW - 0.5f || ch < fs * 2 ? smallFs : fs;  // cp22: the small scopes' numbers a size smaller
   static ops::ChannelSolo solo;
   static ObjectId gScopePress = kNoId;  // the scope a press started on (its buttons decide on release)
   static bool gScopeLeft = false, gScopeRight = false, gScopeSoloed = false;
@@ -682,11 +757,11 @@ void scopes(App& a, ImVec2 p0, ImVec2 p1) {
     const float cx = p0.x + static_cast<float>(i % cols) * (cw + 1), cy = p0.y + static_cast<float>(i / cols) * (ch + 1);
     const ImVec2 c0(cx, cy), c1(i % cols == cols - 1 ? p1.x : cx + cw, i / cols == rows - 1 ? p1.y : cy + ch);
     bevelBox(dl, c0, c1, true);
-    const float mid = std::round((c0.y + fs + 2 + c1.y) * 0.5f);
-    const float amp = std::max(1.0f, (c1.y - c0.y - fs - 8) * 0.5f);
+    const float mid = std::round((c0.y + lfs + 2 + c1.y) * 0.5f);
+    const float amp = std::max(1.0f, (c1.y - c0.y - lfs - 8) * 0.5f);
     if (c.muted) {  // a muted channel is crossed out
-      dl->AddLine(ImVec2(c0.x + 3, c0.y + fs + 4), ImVec2(c1.x - 3, c1.y - 3), theme::withAlpha(P.textDim, 0.6f));
-      dl->AddLine(ImVec2(c0.x + 3, c1.y - 3), ImVec2(c1.x - 3, c0.y + fs + 4), theme::withAlpha(P.textDim, 0.6f));
+      dl->AddLine(ImVec2(c0.x + 3, c0.y + lfs + 4), ImVec2(c1.x - 3, c1.y - 3), theme::withAlpha(P.textDim, 0.6f));
+      dl->AddLine(ImVec2(c0.x + 3, c1.y - 3), ImVec2(c1.x - 3, c0.y + lfs + 4), theme::withAlpha(P.textDim, 0.6f));
     } else {
       const float x0 = c0.x + 3, x1 = c1.x - 3;
       const int px = std::max(1, static_cast<int>(x1 - x0));
@@ -718,8 +793,8 @@ void scopes(App& a, ImVec2 p0, ImVec2 p1) {
     }
     char label[16];
     std::snprintf(label, sizeof label, "%d", first + i + trackBase(a));
-    dl->AddText(mono, fs, ImVec2(c0.x + 4, c0.y + 2), c.muted ? P.textFaint : P.text, label);
-    const float lw = mono->CalcTextSizeA(fs, FLT_MAX, 0, label).x;
+    dl->AddText(mono, lfs, ImVec2(c0.x + 4, c0.y + 2), c.muted ? P.textFaint : P.text, label);
+    const float lw = mono->CalcTextSizeA(lfs, FLT_MAX, 0, label).x;
     float nx = c0.x + 10 + lw;
     if (!c.muted && ops::channelSoloed(s, c.id, solo)) {
       dl->AddText(a.fontRegular, fs * 0.85f, ImVec2(nx, c0.y + 3), P.solo, i18n::tr("solo"));
@@ -1728,13 +1803,22 @@ void helpScreen(App& a, ImVec2 p0, ImVec2 p1) {
   }
   if (bevelButton(a, "##helpexit", "Exit", ImVec2(p0.x + 4, p1.y - 4 - bh), ImVec2(p0.x + leftW - 4, p1.y - 4), false, "Back to the header")) gSwap = Swap::None;
   // The text pane: the heading in a large face, then the text (it scrolls; the bar always shows).
+  // cp23: the bar is the band's own: bevel arrows and a raised thumb in a sunken trough, inside the
+  // pane's right edge (it was ImGui's thin rounded bar, a modern element).
   const ImVec2 t0(p0.x + leftW + 2, p0.y), t1 = p1;
   bevelBox(dl, t0, t1, true);
+  const float sbW = std::round(std::max(12.0f, fs + 1));
+  static float helpScrollTo = -1;  // an arrow's or the thumb's new scroll, given to the pane next
+  float helpScroll = 0, helpScrollMax = 0, helpViewH = 1;
   ImGui::SetCursorScreenPos(ImVec2(t0.x + 1, t0.y + 1));
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 6));
   ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
-  if (ImGui::BeginChild("##helptext", ImVec2(std::max(1.0f, t1.x - t0.x - 2), std::max(1.0f, t1.y - t0.y - 2)), ImGuiChildFlags_AlwaysUseWindowPadding,
-                        ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
+  if (ImGui::BeginChild("##helptext", ImVec2(std::max(1.0f, t1.x - t0.x - 2 - sbW - space::kLine), std::max(1.0f, t1.y - t0.y - 2)),
+                        ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar)) {
+    if (helpScrollTo >= 0) {
+      ImGui::SetScrollY(helpScrollTo);
+      helpScrollTo = -1;
+    }
     ImDrawList* cl = ImGui::GetWindowDrawList();
     const float rh = std::round(fs + 4);
     ImVec2 c = ImGui::GetCursorScreenPos();
@@ -1847,10 +1931,61 @@ void helpScreen(App& a, ImVec2 p0, ImVec2 p1) {
     }
     ImGui::SetCursorScreenPos(ImVec2(c.x, y));
     ImGui::Dummy(ImVec2(1, 1));
+    helpScroll = ImGui::GetScrollY(), helpScrollMax = ImGui::GetScrollMaxY(), helpViewH = ImGui::GetWindowHeight();
   }
   ImGui::EndChild();
   ImGui::PopStyleColor();
   ImGui::PopStyleVar();
+  {
+    const float x0 = t1.x - 1 - sbW, x1 = t1.x - 1, y0 = t0.y + 1, y1 = t1.y - 1;
+    const float step = std::round(fs + 4) * 3;
+    bool move = false;
+    float to = helpScroll;
+    for (int side = 0; side < 2; ++side) {
+      const ImVec2 b0(x0, side ? y1 - sbW : y0), b1(x1, side ? y1 : y0 + sbW);
+      ImGui::PushItemFlag(ImGuiItemFlags_ButtonRepeat, true);
+      const bool click = bevelButton(a, side ? "##helpdn" : "##helpup", "", b0, b1, false, side ? "Scrolls the text down" : "Scrolls the text up");
+      ImGui::PopItemFlag();
+      const bool held = ImGui::IsItemActive();
+      const float cx = std::round((b0.x + b1.x) * 0.5f) + (held ? 1 : 0), cy = std::round((b0.y + b1.y) * 0.5f) + (held ? 1 : 0);
+      const float r = std::max(2.0f, std::floor(sbW * 0.22f));
+      const Aliased hard(dl);
+      if (side) {
+        dl->AddTriangleFilled(ImVec2(cx - r - 1, cy - r * 0.6f), ImVec2(cx + r + 1, cy - r * 0.6f), ImVec2(cx, cy + r * 0.8f), P.text);
+      } else {
+        dl->AddTriangleFilled(ImVec2(cx - r - 1, cy + r * 0.6f), ImVec2(cx + r + 1, cy + r * 0.6f), ImVec2(cx, cy - r * 0.8f), P.text);
+      }
+      if (click) {
+        move = true, to = helpScroll + (side ? step : -step);
+      }
+    }
+    const float r0 = y0 + sbW + space::kLine, r1 = y1 - sbW - space::kLine, span = std::max(1.0f, r1 - r0);
+    bevelBox(dl, ImVec2(x0, r0), ImVec2(x1, r1), true);
+    const float total = helpScrollMax + helpViewH;
+    const float thH = std::min(span, std::max(sbW * 1.5f, span * helpViewH / std::max(1.0f, total)));
+    const float th0 = std::round(r0 + (span - thH) * (helpScrollMax > 0 ? helpScroll / helpScrollMax : 0.0f)), th1 = std::round(th0 + thH);
+    ImGui::SetCursorScreenPos(ImVec2(x0, r0));
+    ImGui::InvisibleButton("##helptrough", ImVec2(std::max(1.0f, x1 - x0), span));
+    static float grab = -1;
+    if (ImGui::IsItemActivated()) {
+      const float my = ImGui::GetIO().MousePos.y;
+      if (my >= th0 && my < th1) {
+        grab = my - th0;
+      } else {
+        grab = -1, move = true, to = helpScroll + (my < th0 ? -helpViewH : helpViewH);
+      }
+    }
+    if (ImGui::IsItemActive() && grab >= 0 && span > thH) {
+      move = true, to = (ImGui::GetIO().MousePos.y - grab - r0) / (span - thH) * helpScrollMax;
+    }
+    if (!ImGui::IsItemActive()) {
+      grab = -1;
+    }
+    bevelBox(dl, ImVec2(x0 + 1, th0), ImVec2(x1 - 1, th1), false);
+    if (move) {
+      helpScrollTo = std::clamp(to, 0.0f, helpScrollMax);
+    }
+  }
 }
 
 // Files (the header's left part, the classic Disk op. screen): Gridline's own file screen. Left to
@@ -2114,14 +2249,18 @@ void diskScreen(App& a, ImVec2 p0, ImVec2 p1) {
     whyHere = gDiskRecent ? std::string() : filesLocked(a, gDiskDir, true);
   }
   {
+    // cp23: the eight rows share the column evenly, 1 px apart, the last ending 2 px above the box's
+    // foot as the places beside it (the remainder was left empty: Exit ended 5 px above Recent at 1024x640).
     const int n = 8;
-    const float bh = std::floor((yB - p0.y - 4 - static_cast<float>(n - 1)) / static_cast<float>(n));
+    const float pitch = (yB - p0.y - 4 + space::kLine) / static_cast<float>(n);
     int i = 0;
-    auto slotY = [&](int k) { return std::round(p0.y + 2 + static_cast<float>(k) * (bh + 1)); };
+    auto slotY = [&](int k) { return std::round(p0.y + 2 + static_cast<float>(k) * pitch); };
+    auto slotY1 = [&](int k) { return k == n - 1 ? yB - 2 : std::round(p0.y + 2 + static_cast<float>(k + 1) * pitch) - space::kLine; };
     auto btn = [&](const char* id, const char* label, const char* hint, bool enabled = true) {
-      const float yy = slotY(i++);
+      const int k = i++;
+      const float yy = slotY(k);
       if (!enabled) ImGui::BeginDisabled();
-      const bool c = bevelButton(a, id, label, ImVec2(x1 + 2, yy), ImVec2(x2 - 2, yy + bh), false, hint);
+      const bool c = bevelButton(a, id, label, ImVec2(x1 + 2, yy), ImVec2(x2 - 2, slotY1(k)), false, hint);
       if (!enabled) ImGui::EndDisabled();
       return c && enabled;
     };
@@ -2157,8 +2296,9 @@ void diskScreen(App& a, ImVec2 p0, ImVec2 p1) {
       diskGo(a, p.is_absolute() ? p.string() : (std::filesystem::path(gDiskDir) / p).string());
     }
     {
-      const float yy = slotY(i++);
-      if (checkRow(a, "##dall", "All files", ImVec2(x1 + 2, yy), ImVec2(x2 - 2, yy + bh), all, "Lists every file, not only the songs or samples"))
+      const int k = i++;
+      const float yy = slotY(k);
+      if (checkRow(a, "##dall", "All files", ImVec2(x1 + 2, yy), ImVec2(x2 - 2, slotY1(k)), all, "Lists every file, not only the songs or samples"))
         a.settings.set("tracker.diskAll", !all), gDiskListed.clear();
     }
     if (btn("##dexit", "Exit", "Back to the header")) gSwap = Swap::None;
@@ -2176,13 +2316,15 @@ void diskScreen(App& a, ImVec2 p0, ImVec2 p1) {
                             {"##dhome", i18n::N_("Home"), i18n::N_("Your home folder")},
                             {"##dproj", i18n::N_("Project"), i18n::N_("The open project's folder")},
                             {"##drec", i18n::N_("Recent"), i18n::N_("The files opened or saved last")}};
-    const float bh = std::max(rh, std::floor((yB - p0.y - 4 - 4) / 5.0f));
+    // cp23: as the commands: shared evenly, the last to the foot.
+    const float pitch = (yB - p0.y - 4 + space::kLine) / 5.0f;
     for (int i = 0; i < 5; ++i) {
-      const float yy = std::round(p0.y + 2 + static_cast<float>(i) * (bh + 1));
+      const float yy = std::round(p0.y + 2 + static_cast<float>(i) * pitch);
+      const float yy1 = i == 4 ? yB - 2 : std::round(p0.y + 2 + static_cast<float>(i + 1) * pitch) - space::kLine;
       const bool on = i == 4 && gDiskRecent;
       const bool enabled = i != 3 || !a.projectPath.empty();
       if (!enabled) ImGui::BeginDisabled();
-      const bool c = bevelButton(a, places[i].id, places[i].label, ImVec2(x2 + 2, yy), ImVec2(x3 - 2, std::min(yy + bh, yB - 2)), on, places[i].hint);
+      const bool c = bevelButton(a, places[i].id, places[i].label, ImVec2(x2 + 2, yy), ImVec2(x3 - 2, yy1), on, places[i].hint);
       if (!enabled) ImGui::EndDisabled();
       if (!c || !enabled) continue;
       switch (i) {
@@ -2240,7 +2382,9 @@ void diskScreen(App& a, ImVec2 p0, ImVec2 p1) {
   bevelBox(dl, ImVec2(p0.x, yB + gap), p1);
   const float ty = std::round(yB + gap + 3 + (rh - fs) * 0.5f);
   const char* pathLabel = i18n::tr(gDiskRecent ? "Recent files" : "Folder");
-  const float plw = a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, pathLabel).x + 8;
+  // cp23: one label column for both rows: the folder and the name field start at one edge (they
+  // started 8 px apart at 1024x640, "Folder" being wider than "Name").
+  const float plw = labelColumn(a, {pathLabel, "Name"}, 8);
   dl->AddText(a.fontRegular, fs, ImVec2(p0.x + 6, ty), P.textDim, pathLabel);
   {
     // The folder, its end in view (a long path loses its start).
@@ -2251,13 +2395,19 @@ void diskScreen(App& a, ImVec2 p0, ImVec2 p1) {
   }
   const float fy = std::round(yB + gap + 3 + rh);
   const char* nameLabel = i18n::tr("Name");
-  const float nlw = a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, nameLabel).x + 8;
+  const float nlw = plw;
   dl->AddText(a.fontRegular, fs, ImVec2(p0.x + 6, std::round(fy + (rh - fs) * 0.5f)), P.textDim, nameLabel);
   ImGui::SetCursorScreenPos(ImVec2(p0.x + 6 + nlw, fy));
-  ImGui::SetNextItemWidth(std::max(40.0f, p1.x - p0.x - nlw - 14));
+  const float fieldW = std::max(40.0f, p1.x - p0.x - nlw - 14);
+  ImGui::SetNextItemWidth(fieldW);
   ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4, std::max(0.0f, std::floor((rh - fs) * 0.5f) - 1)));
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+  {  // cp23: the field sunk into a bevel well, as the prompt's (it was a flat dark strip)
+    const ImVec2 f0 = ImGui::GetCursorScreenPos();
+    bevelBox(dl, ImVec2(f0.x - 1, f0.y - 1), ImVec2(f0.x + fieldW + 1, f0.y + ImGui::GetFrameHeight() + 1), true);
+  }
   ImGui::InputText("##dname", gDiskName, sizeof gDiskName);
-  ImGui::PopStyleVar();
+  ImGui::PopStyleVar(2);
   ui::Hint("The name Save, Rename, New folder and Go to use");
   gDiskTyping = ImGui::IsItemActive();
 }
@@ -2460,8 +2610,11 @@ void configScreen(App& a, ImVec2 p0, ImVec2 p1) {
   const float pad = 6;
   const float rowH = std::round(fs + 6);
   // A group: a sunken box with its title; its rows under the title.
+  // cp23: every group runs to the page's foot, so a page's boxes share their bottom edge (before, each
+  // ended under its own rows: four bottoms up to 42 px apart on the Layout page at 1024x640).
   auto group = [&](float gx0, float gx1, const char* title, int rows) {
-    const float gy1 = std::min(t1.y - pad, t0.y + pad + fs + 6 + static_cast<float>(rows) * (rowH + 1) + 4);
+    (void)rows;
+    const float gy1 = t1.y - pad;
     bevelBox(dl, ImVec2(gx0, t0.y + pad), ImVec2(gx1, gy1), true);
     dl->AddText(a.fontBold ? a.fontBold : a.fontRegular, fs, ImVec2(gx0 + 6, t0.y + pad + 3), P.text, i18n::tr(title));
   };
@@ -2695,10 +2848,10 @@ void extendedStrip(App& a) {
     const float bw = std::round(std::max(fs * 10.0f, 128.0f));
     bevelBox(dl, ImVec2(x, o.y), ImVec2(x + bw, yE));
     // Length's digits over the Loop to field's (the field against its arrows), as in the main band.
-    const float sw = bw - pad * 2 - 4;
+    const float sw = bw - pad * 2;  // cp23: the rows start at the Exit button's edge (were 2 px in)
     const float arrows = 2 * std::max(std::round(rh * 0.8f), std::min(std::round(rh * 1.35f), std::floor((sw - loopNeed(a, "Loop to")) / 2)));
-    readout(a, "Length", trk::hex2(static_cast<int>(ol.size())), ImVec2(x + pad + 2, rowY(0)), std::max(1.0f, sw - arrows - 6), rh, "Entries in the song");
-    loopStepper(a, ol, ImVec2(x + pad + 2, rowY(1)), sw, rh, "Loop to", sw);
+    readout(a, "Length", trk::hex2(static_cast<int>(ol.size())), ImVec2(x + pad, rowY(0)), std::max(1.0f, sw - arrows - 6), rh, "Entries in the song");
+    loopStepper(a, ol, ImVec2(x + pad, rowY(1)), sw, rh, "Loop to", sw);
     if (bevelButton(a, "##xback", "Exit", ImVec2(x + pad, rowY(2)), ImVec2(x + bw - pad, std::min(yE - pad, rowY(2) + rh)), false,
                     "The header band back (Header band, Ctrl+Alt+Z; the pattern keeps its place)"))
       setExtended(a, false);
@@ -2710,9 +2863,10 @@ void extendedStrip(App& a) {
     bevelBox(dl, ImVec2(x, o.y), ImVec2(x + bw, yE));
     const Pattern* p = s.pattern(a.curPattern);
     trk::Grid g = p ? trk::gridOf(s, *p) : trk::Grid{};
-    const float rw = bw - pad * 2, lw = std::round(rw * 0.36f);
+    bool fill = false;  // cp23: as the main band
+    const float rw = bw - pad * 2, lw = peerFields(a, rw, rh, labelColumn(a, {"Pattern", "Rows"}, space::kGroup), &fill);
     if (const int d = stepper(a, "xpat", "Pattern", p ? trk::hex2(trk::patternNumber(s, p->id)) : std::string("--"), ImVec2(x + pad, rowY(0)), rw, rh,
-                              "The pattern shown (past the last one: a new, empty pattern; the piano roll and steps show it too)", lw))
+                              "The pattern shown (past the last one: a new, empty pattern; the piano roll and steps show it too)", lw, fill))
     {
       // R11-01: a step past the last pattern adds one, and the pattern list may move: the pattern
       // and its grid are looked up again before the Rows field reads them.
@@ -2721,7 +2875,7 @@ void extendedStrip(App& a) {
       g = p ? trk::gridOf(s, *p) : trk::Grid{};
     }
     if (const int d = stepper(a, "xlen", "Rows", p ? trk::rowText(trk::playedRows(a.doc.song(), *p, g), true) : std::string("--"), ImVec2(x + pad, rowY(1)), rw, rh,
-                              "The pattern's length in rows (a bar at a time)", lw))
+                              "The pattern's length in rows (a bar at a time)", lw, fill))
       stepRows(a, p, d);
     const float hw = std::floor((rw - 2) / 2), yb = rowY(2), yb1 = std::min(yE - pad, yb + rh);
     if (bevelButton(a, "##xexp", "Expand", ImVec2(x + pad, yb), ImVec2(x + pad + hw, yb1), false, "Notes twice as far apart: the block, or the whole pattern (made twice as long)"))
@@ -2859,11 +3013,13 @@ void header(App& a) {
   const float yS = y0 + topH, yC = yS + stH, yE = y0 + H;
 
   // ---- button columns: tools (A) and transport and screens (B), ten rows each ----
-  const float bh10 = std::floor((H - 4 - 9) / 10.0f);
+  // cp22 (polish): the rows share the column's height evenly (a 1 px gap each); the remainder no longer
+  // all went to the last row (Add / Remove, Tracker help stood 4 px taller than the rest at 1440).
+  const float pitch10 = (H - 4 + 1) / 10.0f;
   auto colBox = [&](float x) { bevelBox(dl, ImVec2(x, y0), ImVec2(x + colW, yE)); };
   auto slot = [&](int i, float* y0o, float* y1o) {
-    *y0o = std::round(y0 + 2 + static_cast<float>(i) * (bh10 + 1));
-    *y1o = i == 9 ? yE - 2 : *y0o + bh10;
+    *y0o = std::round(y0 + 2 + static_cast<float>(i) * pitch10);
+    *y1o = i == 9 ? yE - 2 : std::round(y0 + 2 + static_cast<float>(i + 1) * pitch10) - 1;
   };
   // Files: the header's left part (the boxes and the tool column) shows the files instead.
   if (gSwap == Swap::Disk) {
@@ -2946,7 +3102,7 @@ void header(App& a) {
         for (size_t i = 0; i < ol.size() && loopAt < 0; ++i)
           if (m.pos < ol[i].end) loopAt = static_cast<int>(i), loopPos = m.pos;
     if (const int d = stepper(a, "loop", oneRow ? "Loop" : "Loop to", loopAt < 0 ? std::string("--") : trk::hex2(loopAt), ImVec2(loopX, loopY),
-                              loopW, rowH, "The entry the song goes back to when it ends (none: it stops)", oneRow ? 0.0f : loopW)) {
+                              loopW, rowH, "The entry the song goes back to when it ends (none: it stops)", loopW)) {  // cp23: the field against its arrows, as every stepper (it filled the row at 1440x900)
       const int to = loopAt + d;
       if (to < 0 && loopAt >= 0) ops::addSongLoopMarker(a.doc, loopPos);  // placed where it is: removed
       else if (to >= 0 && to < static_cast<int>(ol.size())) ops::addSongLoopMarker(a.doc, ol[static_cast<size_t>(to)].start);
@@ -2975,14 +3131,18 @@ void header(App& a) {
   const float srh = std::max(14.0f, std::floor((bh - pad * 2 - 4) / 3));
   {
     bevelBox(dl, ImVec2(xs, by0), ImVec2(xs + songW, yS));
-    const float rw = songW - pad * 2, lw = std::round(rw * 0.30f);
+    // cp23: every stepper's field stands against its arrows at the row's right end, the label at the
+    // left (before, a field started at 30 % of the row: against its arrows in a narrow box, 50 px
+    // short of them at 1440x900, and "Tempo" pushed its field 2 px right of Step's at 1024x640).
+    bool fill = false;
+    const float rw = songW - pad * 2, lw = peerFields(a, rw, srh, labelColumn(a, {"Tempo", "Step"}, space::kGroup), &fill);
     float y = by0 + pad;
     char bpm[16];
     const bool whole = std::fabs(s.tempo - std::round(s.tempo)) < 0.05;
     std::snprintf(bpm, sizeof bpm, whole ? "%.0f" : "%.1f", s.tempo);
     double typedBpm = std::nan("");
     if (const int d = stepper(a, "bpm", "Tempo", bpm, ImVec2(xs + pad, y), rw, srh,
-                              "The song tempo in beats per minute: click it to type one (arrows: steps of 1, Shift: 0.1)", lw, false, &typedBpm)) {
+                              "The song tempo in beats per minute: click it to type one (arrows: steps of 1, Shift: 0.1)", lw, fill, &typedBpm)) {
       const double t = ImGui::GetIO().KeyShift ? std::round(s.tempo * 10 + d) / 10.0 : std::round(s.tempo) + d;
       a.doc.setParam(songParam(SongParam::Tempo), std::clamp(t, 10.0, 522.0), true);
     }
@@ -2999,26 +3159,27 @@ void header(App& a) {
     float digitsEnd;
     {
       ImFont* mono = monoFont(a);
-      const float needT = a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Tempo")).x + mono->CalcTextSizeA(fs, FLT_MAX, 0, bpm).x + 16;
+      const float needT = std::max(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Tempo")).x, lw < rw * 0.6f ? lw : 0.0f) +
+                          std::max(mono->CalcTextSizeA(fs, FLT_MAX, 0, bpm).x, mono->CalcTextSizeA(fs, FLT_MAX, 0, "000").x) + 16;  // (as stepper(), cp23)
       const float bwT = std::max(std::round(srh * 0.8f), std::min(std::round(srh * 1.35f), std::floor((rw - needT) / 2)));
       const float x1 = xs + pad + rw - 2 * bwT;
-      const float vw = std::round(mono->CalcTextSizeA(fs, FLT_MAX, 0, "000.0").x + 8);
-      digitsEnd = std::min(xs + pad + lw, x1 - 2 - vw) + vw - 4;
+      digitsEnd = x1 - 2 - 4;  // cp23: a field ends 2 px before its arrows, its digits 4 px inside it
     }
     readout(a, "Rows/beat", std::to_string(g.rowsPerBeat), ImVec2(xs + pad, y), std::max(1.0f, digitsEnd - (xs + pad)), srh, "Rows per beat: the pattern's steps per beat");
     y += srh + 2;
-    if (const int d = stepper(a, "step", "Step", std::to_string(editStep()), ImVec2(xs + pad, y), rw, srh, "Rows the cursor moves after each note (Ctrl+0 to 9)", lw))
+    if (const int d = stepper(a, "step", "Step", std::to_string(editStep()), ImVec2(xs + pad, y), rw, srh, "Rows the cursor moves after each note (Ctrl+0 to 9)", lw, fill))
       setEditStep(editStep() + d);
   }
   {
     const float xp = xs + songW;
     bevelBox(dl, ImVec2(xp, by0), ImVec2(xp + patW, yS));
-    const float rw = patW - pad * 2, lw = std::round(rw * 0.30f);
+    bool fill = false;  // cp23: as the song box
+    const float rw = patW - pad * 2, lw = peerFields(a, rw, srh, labelColumn(a, {"Pattern", "Rows"}, space::kGroup), &fill);
     float y = by0 + pad;
     const Pattern* p = s.pattern(a.curPattern);
     trk::Grid g = p ? trk::gridOf(s, *p) : trk::Grid{};
     if (const int d = stepper(a, "pat", "Pattern", p ? trk::hex2(trk::patternNumber(s, p->id)) : std::string("--"), ImVec2(xp + pad, y), rw, srh,
-                              "The pattern shown (past the last one: a new, empty pattern; the piano roll and steps show it too)", lw))
+                              "The pattern shown (past the last one: a new, empty pattern; the piano roll and steps show it too)", lw, fill))
     {
       // R11-01: a step past the last pattern adds one, and the pattern list may move: the pattern
       // and its grid are looked up again before the Rows field reads them.
@@ -3028,7 +3189,7 @@ void header(App& a) {
     }
     y += srh + 2;
     if (const int d = stepper(a, "len", "Rows", p ? trk::rowText(trk::playedRows(s, *p, g), true) : std::string("--"), ImVec2(xp + pad, y), rw, srh,
-                              "The pattern's length in rows (a bar at a time)", lw))
+                              "The pattern's length in rows (a bar at a time)", lw, fill))
       stepRows(a, p, d);
     y += srh + 2;
     const float hw = std::floor((rw - 2) / 2);
@@ -3808,7 +3969,7 @@ void orderList(App& a) {
       if (!instrumentShown(a)) return;
       const float space = workH - headerH;  // the lower band and the pattern
       const float most = std::floor(std::max(gFolded ? editorMin : space * 0.5f, space - patternMin));
-      layoutui::setBandSize("tracker.lower", editorNeed > 0 ? std::clamp(std::ceil(editorNeed), std::min(200.0f, most), most) : most, 0.9f);
+      layoutui::setBandSize("tracker.lower", editorNeed > 0 ? std::clamp(std::ceil(editorNeed), std::min({200.0f, std::ceil(editorNeed), most}), most) : most, 0.9f);
     };
     if (extended() || gFolded) {  // the classic Extend: the band is one strip, the pattern gets the rows
       layoutui::setBandSize("tracker.header", extendedStripH());

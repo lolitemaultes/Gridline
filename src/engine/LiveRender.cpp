@@ -87,4 +87,53 @@ Tick prepareOfflineLive(Song& s, bool arrangementOnly) {
   return zone;
 }
 
+Tick prepareSessionExport(Song& s, const std::vector<ObjectId>& clips) {
+  const Tick zone = s.live.areaEnd;
+  if (zone <= 0) {
+    return 0;
+  }
+  std::vector<Clip> chosen;
+  for (ObjectId id : clips) {
+    const Clip* c = s.clip(id);
+    if (!c || c->start >= zone || s.clipLength(*c) <= 0) {
+      continue;
+    }
+    bool taken = false;
+    for (const Clip& o : chosen) {
+      taken = taken || o.track == c->track;
+    }
+    if (!taken) {
+      chosen.push_back(*c);
+    }
+  }
+  if (chosen.empty()) {
+    return 0;
+  }
+  Tick len = 0;
+  for (const Clip& c : chosen) {
+    len = std::max(len, s.clipLength(c));
+  }
+  std::vector<Clip> add;
+  for (const Clip& src : chosen) {
+    const Tick l = s.clipLength(src);
+    for (Tick t = 0; t < len; t += l) {
+      Clip k = src;
+      k.start = zone + t;
+      k.length = std::min(l, len - t);
+      k.launched = false;
+      k.muted = false;
+      add.push_back(k);
+      if (src.launchOnce) {
+        break;
+      }
+    }
+  }
+  s.playlist.clear();
+  for (Clip& k : add) {
+    k.id = s.allocateId();
+    s.playlist.push_back(k);
+  }
+  return len;
+}
+
 }  // namespace gl

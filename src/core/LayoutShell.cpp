@@ -77,6 +77,7 @@ Shell logic() {
 // K-112c (round 45): a new set opens as the reference's does: the browser, the clip grid with its
 // own mixer, and one detail band (the device band). The clip and device bands are one group: showing
 // one hides the other, so the main view keeps its room.
+constexpr float kDetailH = 236.0f;
 Shell live() {
   Shell s;
   s.preset = Preset::Live;
@@ -86,8 +87,11 @@ Shell live() {
                // status bar's info button, View > Info View or Shift+?.
                R("live.info", "live.browser", Edge::Bottom, px(128, 0.3f, 80), true, false, TabStyle::None, true),
                R("live.side", "", Edge::Right, px(300, 0.3f, 200), false, false, TabStyle::Rail),  // K-237: its tools on a tab rail
-               R("live.device", "", Edge::Bottom, px(188, 0.35f, 120), true, false, TabStyle::None, true),
-               R("live.clip", "", Edge::Bottom, share(0.36f, 160, 0.45f), false),  // about 230 at 1440 x 900, as in the refs
+               // Checkpoint 57 (N56-08): the device band and the clip band are one detail view of one fixed
+               // height (about 230 at 1440 x 900, as in the refs), so the main view keeps its place when the
+               // selection moves between a clip and a device; a drag of either divider sizes both.
+               R("live.device", "", Edge::Bottom, px(kDetailH, 0.35f, 120), true, false, TabStyle::None, true),
+               R("live.clip", "", Edge::Bottom, px(kDetailH, 0.45f, 150), false, false, TabStyle::Dock, true),
                R("live.mixer", "", Edge::Bottom, share(0.32f, 150, 0.5f), false)};
   for (Region& r : s.regions)
     if (std::string(r.id) == "live.device" || std::string(r.id) == "live.clip") r.group = "live.detail";

@@ -85,6 +85,13 @@ Tick arrangementOrigin(const App& a);
 // a move), else the track's own (`fallback`). setRowScale: a drag (`done`: its end, which remembers it).
 // Never written into the song.
 float rowScale(const App& a, int track, float fallback);
+// Checkpoint 56 (N55-06): the row heights' Set key follows the open Set (every frame: a first save and Save As
+// carry them over); a save notes the file's fingerprint, so a Set renamed outside Gridline finds them again.
+void rowHeightsFrame(App& a);
+// The open Set's key for per-person notes about it (its file, or an unsaved Set's own key).
+std::string setKey(const App& a);
+void rowHeightsSaved(App& a, const std::string& file);
+std::string fileFingerprint(const std::string& path);  // FNV-1a of the bytes and their count ("" when unreadable)
 void setRowScale(App& a, int track, float scale, bool done);
 // Checkpoint 54 (N53-01): whether an arrangement edit (Select all, Delete) may reach this clip: in
 // Clips the clip grid's clips (the live area) are never part of the Arrangement's selection.
@@ -100,6 +107,32 @@ void showView(App& a, bool grid);
 // Per frame while Live is active: keeps exactly one of the two views open (a view closed from a
 // menu brings the other one back), and Tab swaps them when no text field has the keyboard.
 void viewFrame(App& a);
+// Checkpoint 56, every frame in every layout: the engine's loop range (Clips: the loop brace, the song's
+// cycle while it is on; the other layouts: the playlist's time selection, as before), the Clips
+// Arrangement's start and its stop at the end with Loop off (N55-02), and Clips' own Punch switch
+// (off by default; the other layouts keep their record.punch).
+void transportFrame(App& a);
+// N55-09: Consolidate (Cmd+J, Edit > Consolidate) in the Arrangement, as the reference's: the selected clips
+// of each track become one clip there: MIDI clips one MIDI clip, anything with audio one rendered audio
+// clip. One undo step. A message says why when nothing can be done.
+void consolidate(App& a);
+// N55-08: what "export the Session" renders: the clips playing now (one a track), else the selected
+// scene's (the first clip of each of its slots); `label` names it ("the playing clips", "scene 3").
+std::vector<ObjectId> sessionExportClips(const App& a, std::string& label);
+// N55-07: the Play once offer: whether an opened Set gets it (looping short samples, not answered
+// "Keep looping" for this Set before, no sample in it already playing once), and its card's words.
+bool offerOneShotsWanted(const App& a);
+std::string oneShotsCardText(const Song& s, const std::vector<ObjectId>& ids);
+// N55-04: Clips' loop brace (the song's cycleStart / cycleEnd, on while cycleOn). Transport state as
+// Smooth's cycle: never an undo step; saved with the Set. Loop on or off (a new brace of four bars from
+// the play position when there is none); set from the time selection (Cmd+L).
+bool loopOn(const App& a);
+// The range recording loops and punches at: Clips' loop brace (whether Loop is on or not: punch uses it
+// too, as the reference's), else the time selection. False when there is none.
+bool recordRange(const App& a, Tick& from, Tick& to);
+void toggleLoop(App& a);
+void loopFromSelection(App& a);
+void setLoopBrace(App& a, Tick from, Tick to, bool on);
 // N45-10: a set opened in Clips shows the view it was last saved in here (the Arrangement when it was
 // saved with the Arrangement in front, else the clip grid, as a new set); saving remembers which.
 void projectOpened(App& a, const std::string& file);
@@ -132,6 +165,7 @@ struct HeaderDraw {
   ImVec2 mouse;
   int number = 0;         // checkpoint 54: the number Clips shows it by (trackmodes::trackNumbers)
   bool lane = false;      // checkpoint 54 (N53-03): an automation lane: its parameter's name only, no controls
+  float ioW = 0.0f;       // checkpoint 56 (N55-10): the In/Out column's width, right of the name
 };
 // Draws one header and returns the part under the pointer (None when not hovered).
 HeaderPart drawHeader(App& a, ImDrawList* dl, const HeaderDraw& h);

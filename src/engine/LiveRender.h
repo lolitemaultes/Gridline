@@ -9,6 +9,7 @@
 // live area's length; with nothing launched either, the live area plays as an
 // ordinary arrangement so the render is not silent.
 #pragma once
+#include <vector>
 #include "../core/Song.h"
 
 namespace gl {
@@ -20,5 +21,13 @@ namespace gl {
 // N48-10 (checkpoint 49): `arrangementOnly` (the Clips layout, as the reference exports): the live area
 // never plays, launched or not; the render starts at its end (an empty arrangement renders nothing).
 Tick prepareOfflineLive(Song& s, bool arrangementOnly = false);
+
+// K-112c checkpoint 56 (N55-08): the Clips layout's "export the playing clips" / "export scene N": only
+// `clips` (live-area clips, at most one per track: the first given) play, together from the live area's
+// end, for as long as the longest of them; a looping clip repeats until then, one that plays once
+// (Clip::launchOnce) plays once. Everything else goes (the other slots, the Arrangement). The song keeps
+// its live area, empty, so a render with `arrangementOnly` starts at its end. Returns that length (0:
+// nothing to play, the song unchanged).
+Tick prepareSessionExport(Song& s, const std::vector<ObjectId>& clips);
 
 }  // namespace gl

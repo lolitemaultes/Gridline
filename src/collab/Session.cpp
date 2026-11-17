@@ -172,6 +172,7 @@ Song restOf(const Song& c) {
   t.channelGroups = c.channelGroups;
   t.patternGroups = c.patternGroups;
   t.live = c.live;
+  t.keptSends = c.keptSends;  // K-112c checkpoint 57 (N56-01): Clips' kept sends are song data
   t.arrangements = c.arrangements;
   t.currentArrangement = c.currentArrangement;
   t.autoCrossfades = c.autoCrossfades;
@@ -190,7 +191,7 @@ bool restEqual(const Song& a, const Song& b) {
   return a.info == b.info && a.ppq == b.ppq && a.tempo == b.tempo && a.timeSigNum == b.timeSigNum && a.timeSigDen == b.timeSigDen &&
          a.swing == b.swing && a.swingNotes == b.swingNotes && a.groove == b.groove && a.masterPitch == b.masterPitch && a.nextId == b.nextId && a.tracks == b.tracks && a.links == b.links &&
          a.modLinks == b.modLinks && a.markers == b.markers && a.channelGroups == b.channelGroups && a.patternGroups == b.patternGroups &&
-         a.live == b.live && a.arrangements == b.arrangements && a.currentArrangement == b.currentArrangement &&
+         a.live == b.live && a.keptSends == b.keptSends && a.arrangements == b.arrangements && a.currentArrangement == b.currentArrangement &&
          a.autoCrossfades == b.autoCrossfades && a.panLaw == b.panLaw && a.stage == b.stage && a.stageRooms == b.stageRooms &&
          a.cycleStart == b.cycleStart && a.cycleEnd == b.cycleEnd && a.cycleOn == b.cycleOn && a.projectEnd == b.projectEnd &&
          a.smooth.controls == b.smooth.controls;
@@ -1062,6 +1063,7 @@ bool Session::diffIncremental(std::vector<Op>& ops, std::string* bad) {
     shadow_.channelGroups = r.channelGroups;
     shadow_.patternGroups = r.patternGroups;
     shadow_.live = r.live;
+    shadow_.keptSends = r.keptSends;  // K-112c checkpoint 57
     shadow_.arrangements = r.arrangements;
     shadow_.currentArrangement = r.currentArrangement;
     shadow_.autoCrossfades = r.autoCrossfades;

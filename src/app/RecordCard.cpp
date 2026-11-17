@@ -15,6 +15,7 @@
 #include "../core/RecordInfo.h"
 #include "AudioRecordUi.h"
 #include "J31Ui.h"
+#include "LiveLook.h"
 #include "MenuParityUi.h"
 #include "Theme.h"
 #include "Widgets.h"
@@ -80,7 +81,8 @@ Live gather(App& a, State& S) {
   const int bits = static_cast<int>(a.settings.getNumber("audio.recordBits"));
   L.minutes = recinfo::minutesLeft(S.freeBytes, sr, std::max<int>(1, static_cast<int>(L.armed.size())), bits == 24 ? 3 : bits == 16 ? 2 : 4);
   for (const RecordedTake& t : a.audioRec.takes()) L.pass = std::max(L.pass, t.pass + 1);
-  const bool sel = a.playlist.selEnd > a.playlist.selStart;
+  Tick ra = 0, rb = 0;  // checkpoint 56: Clips punches at its loop brace
+  const bool sel = livelook::recordRange(a, ra, rb);
   L.punch = a.recPunch && sel && a.engine.mode() == PlayMode::Song;
   L.loop = !L.punch && L.pass > 1;  // a second pass: the transport looped
   L.secs = L.recording ? a.audioRec.seconds(sr) : 0.0;

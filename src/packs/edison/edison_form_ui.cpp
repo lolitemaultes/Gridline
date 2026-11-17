@@ -242,7 +242,8 @@ void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
       Audio clip = clipboard();
       Range sel = s.sel;
       int64_t at = s.cursor;
-      runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); }, sel);
+      runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); },
+                EditMap::replace(sel.empty() ? Range{at, at} : sel));
     }
     gap();
     if (tb("t_loop", ui::Icon::EdisonLoopSet, "Set loop points from the selection / right-click: crossfade the loop seam", s.cur().hasLoop(), hasAudio))
@@ -260,7 +261,7 @@ void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
       applyNow(a, s, "Remove marker", removeMarker(s.cur(), best));
     }
     if (tb("t_trim", ui::Icon::Trim, "Trim side silence / right-click: noise gate...", false, hasAudio))
-      runEdit(a, s, "Trim side silence", [](const Content& c) { return trimSilence(c, -60); });
+      runEdit(a, s, "Trim side silence", [](const Content& c) { return trimSilence(c, -60); }, EditMap::trimSilence(-60));
     if (r) openTool(s, Tool::Gate);
     if (tb("t_slice", ui::Icon::SliceWave, "Detect beats and place slice markers / right-click: slicing options...", false, hasAudio)) detectSlices(a, s, 0.5);
     if (r) openTool(s, Tool::Slice);
@@ -494,18 +495,19 @@ void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::M
         if (ImGui::MenuItem(i18n::tr("Cut"), "Ctrl+X", false, has && !s.sel.empty() && !busy)) {
           clipboard() = extract(s.cur().a(), s.sel);
           Range r = s.sel;
-          runEdit(a, s, "Cut", [r](const Content& c) { return deleteRange(c, r); });
+          runEdit(a, s, "Cut", [r](const Content& c) { return deleteRange(c, r); }, EditMap::replace(r));
         }
         if (ImGui::MenuItem(i18n::tr("Copy"), "Ctrl+C", false, has)) clipboard() = extract(s.cur().a(), tr);
         if (ImGui::MenuItem(i18n::tr("Paste"), "Ctrl+V", false, clipboard().frames() > 0 && !busy)) {
           Audio clip = clipboard();
           Range sel = s.sel;
           int64_t at = s.cursor;
-          runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); }, sel);
+          runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); },
+                EditMap::replace(sel.empty() ? Range{at, at} : sel));
         }
         if (ImGui::MenuItem(i18n::tr("Delete"), "Del", false, has && !s.sel.empty() && !busy)) {
           Range r = s.sel;
-          runEdit(a, s, "Delete", [r](const Content& c) { return deleteRange(c, r); });
+          runEdit(a, s, "Delete", [r](const Content& c) { return deleteRange(c, r); }, EditMap::replace(r));
         }
         if (ImGui::MenuItem(i18n::tr("Silence selection"), nullptr, false, has && !s.sel.empty() && !busy)) {
           Range r = s.sel;
@@ -515,9 +517,9 @@ void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::M
         ImGui::Separator();
         if (ImGui::MenuItem(i18n::tr("Trim to selection"), "Ctrl+T", false, has && !s.sel.empty() && !busy)) {
           Range r = s.sel;
-          runEdit(a, s, "Trim to selection", [r](const Content& c) { return cropTo(c, r); });
+          runEdit(a, s, "Trim to selection", [r](const Content& c) { return cropTo(c, r); }, EditMap::crop(r));
         }
-        if (ImGui::MenuItem(i18n::tr("Trim side silence"), nullptr, false, has && !busy)) runEdit(a, s, "Trim side silence", [](const Content& c) { return trimSilence(c, -60); });
+        if (ImGui::MenuItem(i18n::tr("Trim side silence"), nullptr, false, has && !busy)) runEdit(a, s, "Trim side silence", [](const Content& c) { return trimSilence(c, -60); }, EditMap::trimSilence(-60));
         break;
       case 3:  // Tools
         if (ImGui::BeginMenu(i18n::tr("Scripts"), !busy)) {  // J-57: Lua audio scripts (SC-05)
@@ -655,21 +657,22 @@ void handleKeys(App& a, Session& s) {
   if (!busy && ctrl && key(ImGuiKey_X) && !s.sel.empty()) {
     clipboard() = extract(s.cur().a(), s.sel);
     Range r = s.sel;
-    runEdit(a, s, "Cut", [r](const Content& c) { return deleteRange(c, r); });
+    runEdit(a, s, "Cut", [r](const Content& c) { return deleteRange(c, r); }, EditMap::replace(r));
   }
   if (!busy && ctrl && key(ImGuiKey_V) && clipboard().frames() > 0) {
     Audio clip = clipboard();
     Range sel = s.sel;
     int64_t at = s.cursor;
-    runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); }, sel);
+    runEdit(a, s, "Paste", [clip, sel, at](const Content& c) { return sel.empty() ? insertAudio(c, at, clip) : replaceRange(c, sel, clip); },
+                EditMap::replace(sel.empty() ? Range{at, at} : sel));
   }
   if (!busy && ctrl && key(ImGuiKey_T) && !s.sel.empty()) {
     Range r = s.sel;
-    runEdit(a, s, "Trim to selection", [r](const Content& c) { return cropTo(c, r); });
+    runEdit(a, s, "Trim to selection", [r](const Content& c) { return cropTo(c, r); }, EditMap::crop(r));
   }
   if (!busy && (key(ImGuiKey_Delete) || key(ImGuiKey_Backspace)) && !s.sel.empty()) {
     Range r = s.sel;
-    runEdit(a, s, "Delete", [r](const Content& c) { return deleteRange(c, r); });
+    runEdit(a, s, "Delete", [r](const Content& c) { return deleteRange(c, r); }, EditMap::replace(r));
   }
   if (!ctrl && key(ImGuiKey_M) && s.frames() > 0) addMarkerAtCursor(a, s);
   if (!ctrl && key(ImGuiKey_L)) setLoop(a, s, !loopOn(a, s));

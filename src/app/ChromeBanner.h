@@ -3,8 +3,9 @@
 // and scanlines, in the manner of an old demo or tracker intro. Geometry and timing in
 // ChromeBannerGeom.h.
 //
-// Slow and smooth: a 73 s loop where each state holds for several seconds and every move eases in
-// and out; it fits the banner at every moment and stays centred in it (ChromeBannerGeom.h).
+// Slow and smooth: a 58.5 s loop where each state holds for several seconds, each change between
+// shapes takes 1.5 to 3.5 s, and every move eases in and out; it fits the banner at every moment
+// and stays centred in it (ChromeBannerGeom.h).
 //
 // Cost: the shapes and the loop's fit are built once; while it runs the frame is worked out every
 // displayed frame (about 0.15 ms, so it is smooth at any display rate) into a fixed vertex cache;

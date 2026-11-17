@@ -8,6 +8,7 @@
 #include "../core/I18n.h"
 #include "Keys.h"
 #include "LiveLook.h"
+#include "../engine/LiveRender.h"
 #include "../core/TrackReceipt.h"
 #include "../core/Meter.h"
 #include "ExportUi.h"
@@ -230,14 +231,20 @@ int firstFreeTrack(const Song& s) {
 // Checkpoint 55 (N54-06): the next render in Clips is the clip grid's (the person chose "Export the
 // Session" on the empty-Arrangement card): its launched clips, as Studio renders them.
 bool gSessionExport = false;
+// Checkpoint 56 (N55-08): what that render plays: the clips playing now, else the selected scene's
+// (livelook::sessionExportClips), and the words its file name ends with.
+std::vector<ObjectId> gSessionClips;
+std::string gSessionLabel;
 constexpr const char* kEmptyArrangement = "the arrangement is empty";
 
 // Scope of the dialog → render job fields. False (with a reason) when empty.
 bool applyScope(const App& a, RenderJob& r, std::string* why) {
   const Song& s = a.doc.song();
   r.scope = RenderScope::Song;
-  r.arrangementOnly = livelook::active(a) && !gSessionExport;  // N48-10: Clips exports its arrangement, never the clip grid's slots
-  if (r.arrangementOnly && dlg.scope == 0) {
+  // N48-10: Clips exports its arrangement, never the clip grid's slots (N55-08: a Session export is first
+  // made an arrangement of the clips it plays: startJob).
+  r.arrangementOnly = livelook::active(a);
+  if (r.arrangementOnly && dlg.scope == 0 && !gSessionExport) {
     bool any = false;
     for (const Clip& c : s.playlist) any = any || (c.start >= s.live.areaEnd && !c.muted && c.kind != ClipKind::Automation);
     if (!any) return why && (*why = kEmptyArrangement, false);
@@ -316,16 +323,19 @@ void startJob(App& a) {
     if (why == kEmptyArrangement && livelook::active(a)) {
       // N54-06: Clips exports its Arrangement; an empty one says so and offers the Session's clips or a
       // recording of them into the Arrangement first.
-      bool launched = false;
-      for (const Clip& c : a.doc.song().playlist) {
-        launched = launched || (c.start < a.doc.song().live.areaEnd && !c.muted);
-      }
+      // N55-08: the clips playing now, else the selected scene's; never every scene back to back.
+      std::string label;
+      const std::vector<ObjectId> ids = livelook::sessionExportClips(a, label);
       std::vector<Toast::Action> acts;
-      if (launched) {
-        acts.push_back({"Export the Session", [&a] {
+      if (!ids.empty()) {
+        acts.push_back({"Export " + label, [&a, ids, label] {
                           gSessionExport = true;
+                          gSessionClips = ids;
+                          gSessionLabel = label;
                           startJob(a);
                           gSessionExport = false;
+                          gSessionClips.clear();
+                          gSessionLabel.clear();
                         }});
       }
       acts.push_back({"Record it first", [&a] {
@@ -355,6 +365,9 @@ void startJob(App& a) {
     }
     s.folder = dlg.folder[0] ? std::string(dlg.folder) : projectFolder(a);
     s.baseName = dlg.name[0] ? std::string(dlg.name) : projectName(a);
+    if (gSessionExport && !gSessionLabel.empty()) {
+      s.baseName += " (" + gSessionLabel + ")";  // N55-08: says what it holds
+    }
   } else {  // rendered into the project: one 32-bit float WAV, no splitting
     s.formats = {ExportFormat::Wav};
     s.wavBits = 32;
@@ -393,6 +406,9 @@ void startJob(App& a) {
     job.status = "Preparing";
   }
   Song song = a.doc.song();
+  if (gSessionExport) {
+    prepareSessionExport(song, gSessionClips);  // N55-08: the chosen clips together, for the longest one's length
+  }
   renderHolds = archive::holdCopiesOf(song);  // closing the project during the render takes nothing from it
   dlg.open = false;
   crash::crumb("export start");

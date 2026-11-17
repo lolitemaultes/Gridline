@@ -182,11 +182,12 @@ bool loopOn(App& a, const Session& s);
 void setLoop(App& a, Session& s, bool on);
 void setParam(App& a, const Session& s, int k, double v);
 
-// Edits: run `op` on the worker; its result becomes one undo step. `follow` (GitHub #69): the
-// selection the edit changed the length of (stretch, varispeed, paste over it); afterwards the
-// selection covers what it became (rangeAfterEdit), unless it was changed while the edit ran.
-// Without it the selection stays where it was (clamped to the new length).
-void runEdit(App& a, Session& s, const std::string& label, std::function<Content(const Content&)> op, std::optional<Range> follow = std::nullopt);
+// Edits: run `op` on the worker; its result becomes one undo step. `map` (GitHub #69): how the
+// edit moved the audio (a stretch, paste, cut, crop, trim, resample, insert); afterwards the
+// selection and the cursor cover what they covered before (mapSelection), unless they were
+// changed while the edit ran. Undo brings back the selection the edit started from, redo the one
+// it left. Without a map they stay where they were (clamped to the new length).
+void runEdit(App& a, Session& s, const std::string& label, std::function<Content(const Content&)> op, EditMap map = {});
 // Same, immediately on the UI thread (cheap edits: markers, loop points).
 void applyNow(App& a, Session& s, const std::string& label, const Content& next);
 void undo(App& a, Session& s);

@@ -38,6 +38,7 @@
 #include "../core/LayerRack.h"
 #include "../core/Project.h"
 #include "../engine/ClipSource.h"
+#include "TrackerEditors.h"
 #include "Viewports.h"
 #include "SmoothScrollUi.h"
 #include "../../third_party/imgui/imgui_internal.h"
@@ -936,6 +937,9 @@ void drawChannelSettingsBody(App& a, ObjectId channel, const BodyFrame& f) {
 }
 
 void drawChannelSettings(App& a) {
+  // K-106 cp22 (dev): the frames a window showed in the Tracker unasked, and the frames the gate below kept one shut
+  trackereditors::watchWindows(a, a.settingsChannel != kNoId && trackereditors::ownsChannelWindow(a) &&
+                                      !hostbody::claimed(hostbody::Body::ChannelSettings));
   routePluginWindows(a);  // installed plugins open as themselves
   // J-195: the free-track route asked for last frame (run before the window
   // takes its pointers into the song, which the route changes).
@@ -949,6 +953,11 @@ void drawChannelSettings(App& a) {
     stripDevFrame();             // (dev) "window closed"
     return;
   }
+  // K-106 cp22: in the Tracker the lower band hosts the settings; the window opens only from "Open plugin
+  // window". A click that opened them in the band (the list, Instrument, Sample, a double-click, the keys)
+  // drew this window for a frame or more before the band's Device chain claimed them (it draws first next
+  // frame, or later in this one).
+  if (trackereditors::ownsChannelWindow(a)) return;
   if (hostbody::claimed(hostbody::Body::ChannelSettings)) return;  // K-112: a layout part draws it in its own frame
   if (logicplug::hidden()) return;  // K-112b: hidden (V), still open
   const PluginInfo* info = findPlugin(c->plugin.type);

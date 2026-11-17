@@ -53,6 +53,13 @@ void mark(Slot* slot, double a, double b);
 void markShare(Slot* slot, double f0, double f1);
 // Marks source frames f0..f1 (inclusive, fractional) of a sample as read.
 void markFrames(const Sample* s, double f0, double f1);
+// K-319: how many reads were marked since the active pass began (0 when none is
+// active). A receipt render's tail runs while this keeps growing.
+uint64_t marks();
+// K-319: true while the active pass only measures (nobody hears its sound): audio clips, whose
+// reads are known before their sound is made, mark them and make no sound (no stretch render,
+// no stretch voice). Off unless the pass asks for it (Pass::setReadsOnly).
+bool readsOnly();
 
 // The owner (Channel::id or Clip::id) and song tick of the code running on
 // this thread. The engine sets it around each channel's processing and each
@@ -171,6 +178,7 @@ class Pass {
   // Makes this the active pass (one at a time machine-wide; false when another is active).
   bool begin();
   void end();
+  void setReadsOnly(bool on);  // K-319 (see tap::readsOnly)
 
   const std::vector<WatchFile>& files() const;
   // Exact union of everything read from file i (bitmap, kGrain resolution).

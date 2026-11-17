@@ -1529,8 +1529,12 @@ bool acceptPluginDrop(App& a, DropTarget target, const DropPlace& place, DropFee
   const std::string type = payloadPath(cur);
   std::string why;
   const std::string label = pluginDropLabel(a, type, target, place, &why);
+  const auto placeTip = [fb] {
+    if (fb && fb->tipAt) ImGui::SetNextWindowPos(ImVec2(fb->tipX, fb->tipY), ImGuiCond_Always, ImVec2(fb->tipPivotX, fb->tipPivotY));
+  };
   if (label.empty()) {
     if (!why.empty()) {
+      placeTip();
       ImGui::SetTooltip("%s", why.c_str());
       a.setHint(why);
       ImGui::SetMouseCursor(ImGuiMouseCursor_NotAllowed);
@@ -1545,6 +1549,7 @@ bool acceptPluginDrop(App& a, DropTarget target, const DropPlace& place, DropFee
     // such as a Platter deck inside its plugin window, wins and draws its own)
     if (pl->Preview && (!fb || fb->highlight)) drawTargetHighlight(rect);
     if (fb) fb->hovering = true;
+    placeTip();
     ImGui::SetTooltip("%s", label.c_str());
     a.setHint(label);
     ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);

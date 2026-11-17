@@ -1429,6 +1429,12 @@ bool stepPlaylistSelection(App& a, const std::vector<int>& tracks, int dir) {
 namespace {
 int gDevLane = -1;  // K-112b: a lane asked for by the dev command
 bool gEndDrag = false;  // checkpoint 47: the Project End marker is being dragged
+// cp54 (polish): Smooth's tracks toolbar, planned once a frame to fit its width (see the toolbar).
+struct ToolbarPlan {
+  bool sliders = true, dragPrefix = true, snapLabel = true;
+  float snapW = 112, dragW = 150, groupX = 0;
+};
+ToolbarPlan gTb;
 ObjectId gRegionRename = kNoId;  // R07-01: the region the Text tool renames in place
 ImVec2 gRegionRenameAt;
 float gRegionRenameW = 160;
@@ -2047,12 +2053,34 @@ void drawPlaylist(App& a) {
                            PP.accent))
           a.settings.set("ui.autoScroll", !follow);
         // B1: the tool menus, Snap and Drag sit together, right-aligned before the zoom.
+        // cp54 (polish): one plan for the whole right side, on one spacing scale (4 px inside a group,
+        // 12 between groups), so the group butts against the zoom it is aligned to (at 1920 the plan
+        // assumed the zoom sliders while the buttons were drawn: a 143 px hole) and a narrow tracks
+        // area compacts in steps instead of clipping (at 1024 the Drag menu ran off the edge and the
+        // pads and zoom buttons went): the zoom sliders give way to buttons, then Drag drops its
+        // "Drag:" prefix, then the "Snap:" label goes, then both menus narrow.
         const float rightX = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x;
-        const float zoomW = 2 * (14 + 64.0f) + 10 + fh + 8 + 12;
-        const float groupW2 = 2 * (fh + 16) + 4 + 12 + ImGui::CalcTextSize(i18n::tr("Snap:")).x + 4 + fh + 2 + 112 + 6 + 150 + 4;
-        const float gx = rightX - zoomW - groupW2;
         ImGui::SameLine(0, 12);
-        if (gx > ImGui::GetCursorScreenPos().x) ImGui::SetCursorScreenPos(ImVec2(gx, ImGui::GetCursorScreenPos().y));
+        const float startX = ImGui::GetCursorScreenPos().x;
+        const float snapLblW = ImGui::CalcTextSize(i18n::tr("Snap:")).x;
+        auto plan = [&](int level) {
+          gTb.sliders = level < 1;
+          gTb.dragPrefix = level < 2;
+          gTb.snapLabel = level < 3;
+          gTb.snapW = level < 4 ? 112.0f : 84.0f;
+          gTb.dragW = level < 2 ? 150.0f : level < 4 ? 112.0f : 96.0f;
+          const float group = 2 * (fh + 16) + 4 + 12 + (gTb.snapLabel ? snapLblW + 4 : 0.0f) + fh + 4 + gTb.snapW + 4 + gTb.dragW;
+          const float zoom = gTb.sliders ? 2 * (14 + 64.0f) + 10 : fh * 2 + 2;
+          gTb.groupX = rightX - zoom - 12 - fh - 12 - group;  // the group, the pads button, the zoom
+          return gTb.groupX >= startX;
+        };
+        int level = 0;
+        while (!plan(level) && level < 4) {  // (the last level is planned too, fitting or not)
+          ++level;
+        }
+        if (gTb.groupX > startX) {
+          ImGui::SetCursorScreenPos(ImVec2(gTb.groupX, ImGui::GetCursorScreenPos().y));
+        }
       }
     } else {
     menuButton("plmenu", "Playlist options: edit, select, snap, view, picker panel, tracks", [&a]() { playlistOptionsMenu(a); });
@@ -2209,7 +2237,7 @@ void drawPlaylist(App& a) {
       // label "Snap:", then a power switch in the accent blue, as the reference's.
       if (lg) {
         const bool snapOn = st.snap != Snap::None;
-        {
+        if (gTb.snapLabel) {  // (cp54: the first part a narrow toolbar drops)
           const char* lbl = i18n::tr("Snap:");
           const ImVec2 lp = ImGui::GetCursorScreenPos();
           ImGui::GetWindowDrawList()->AddText(ImVec2(lp.x, std::round(lp.y + (fh - ImGui::GetFontSize()) * 0.5f)), P.textDim, lbl);
@@ -2221,7 +2249,7 @@ void drawPlaylist(App& a) {
           if (snapOn) st.snap = Snap::None;
           else st.snap = st.lastSnap != Snap::None ? st.lastSnap : Snap::Line;
         }
-        ImGui::SameLine(0, 2);
+        ImGui::SameLine(0, 4);  // (cp54: 4 px inside a group; was 2)
       }
       // B5 (checkpoint 49): Smooth's pop-ups flat, as the reference's: a subtle grey fill with 5 px
       // corners and a small up-and-down chevron at the right (they were heavy dark fields).
@@ -2251,7 +2279,7 @@ void drawPlaylist(App& a) {
       // B4: in Smooth the adaptive grid reads "Smart" (the reference's word for it is its own).
       auto calmSnapName = [&](Snap sn) -> const char* { return lg && sn == Snap::Line ? i18n::tr("Smart") : snapName(sn); };
       std::string snapLabel = lg ? std::string(calmSnapName(st.snap)) : std::string(i18n::tr("Snap")) + ": " + snapName(st.snap);
-      if (calmCombo("##plcalmsnap", snapLabel.c_str(), lg ? 112 : 128)) {
+      if (calmCombo("##plcalmsnap", snapLabel.c_str(), lg ? gTb.snapW : 128)) {
         for (int i = 0; i <= static_cast<int>(Snap::Bar); ++i)
           if (ImGui::Selectable(calmSnapName(static_cast<Snap>(i)), st.snap == static_cast<Snap>(i))) {
             st.snap = static_cast<Snap>(i);
@@ -2268,9 +2296,9 @@ void drawPlaylist(App& a) {
             i18n::N_("A region dropped over another lies on it: the later one plays, and audio crossfades where they meet"),
             i18n::N_("A region dropped over another shortens the earlier one, so none overlap")};
         const int dm = std::clamp(static_cast<int>(a.settings.getNumber("ui.logicDragMode")), 0, 1);
-        std::string dragLabel = std::string(i18n::tr("Drag")) + ": " + i18n::tr(kDragNames[dm]);
+        const std::string dragLabel = gTb.dragPrefix ? std::string(i18n::tr("Drag")) + ": " + i18n::tr(kDragNames[dm]) : std::string(i18n::tr(kDragNames[dm]));
         ImGui::SameLine(0, 4);
-        if (calmCombo("##plcalmdrag", dragLabel.c_str(), 150)) {
+        if (calmCombo("##plcalmdrag", dragLabel.c_str(), gTb.dragW)) {
           for (int i = 0; i < 2; ++i) {
             if (ImGui::Selectable(i18n::tr(kDragNames[i]), dm == i)) a.settings.set("ui.logicDragMode", i);
             if (ImGui::IsItemHovered()) ui::Hint(i18n::tr(kDragHints[i]));
@@ -2303,15 +2331,15 @@ void drawPlaylist(App& a) {
       // 055), when they fit; else the zoom buttons.
       const float rightX = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x;
       const float slW = 64, slGap = 10, slidersW = 2 * (14 + slW) + slGap;
-      const bool sliders = lg && rightX - slidersW - fh - 16 > ImGui::GetCursorScreenPos().x + 8;
+      const bool sliders = lg && gTb.sliders;  // (cp54: as the toolbar's plan chose)
       const float zx = sliders ? rightX - slidersW : rightX - fh * 2 - 2;
       const float barX = ImGui::GetCursorScreenPos().x;
       auto hintWithKeyPl = [](const char* t, const char* c) {
         const char* k = keys::label(c);
         return std::string(i18n::tr(t)) + (k ? std::string(" (") + k + ")" : std::string());
       };
-      if (zx - fh - 8 > barX + 8) {  // the pads grid beside the tracks
-        ImGui::SetCursorScreenPos(ImVec2(zx - fh - 8, ImGui::GetCursorScreenPos().y));
+      if (zx - fh - 12 > barX + 8) {  // the pads grid beside the tracks
+        ImGui::SetCursorScreenPos(ImVec2(zx - fh - 12, ImGui::GetCursorScreenPos().y));
         if (ui::IconButton("##plgrid", ui::Icon::Rack, a.showLivePads, fh, hintWithKeyPl("Pads beside the tracks", "view.toggleMain").c_str()))
           layoutui::toggleMainView(a);
         ImGui::SameLine(0, 8);
@@ -2668,7 +2696,7 @@ void drawPlaylist(App& a) {
   // 010, 018): the bar numbers, the loop brace, then the locators (kLiveNumH, kLiveBraceH, the rest).
   constexpr float kLiveNumH = 14.0f, kLiveBraceH = 11.0f;
   const float markLaneH = lg && a.settings.getBool("ui.logicGlobalTracks") ? 24.0f : 0.0f;  // C8: 24 px  // R01-15: G hides it  // K-112b: the markers lane under the bar numbers (Logic)
-  const float rulerH = hbarH + (liveLook ? 40.0f : lg ? 34.0f : 26.0f) + laneH + markLaneH;  // C7: Smooth's two tiers, 34 px
+  const float rulerH = hbarH + (liveLook ? 40.0f : 26.0f) + laneH + markLaneH;  // cp54: Smooth's ruler one 26 px tier (C7's two were 34; the lower one stood empty)
   const float rLaneY = origin.y + hbarH;  // meter lane top
   const float rY = rLaneY + laneH;        // ruler top (bar numbers, markers)
   const float fullX1 = origin.x + avail.x, timeRulerH = liveLook ? livelook::kTimeRulerH : 0.0f;
@@ -2940,15 +2968,7 @@ void drawPlaylist(App& a) {
       !ImGui::IsMouseDown(ImGuiMouseButton_Middle))
     st.scrollX = ops::followScroll(st.scrollX, static_cast<float>(a.engine.position()) * st.pxPerTick, gridW);
 
-  {  // the engine loops playback inside the time selection
-    static Tick sentA = -1, sentB = -1;
-    Tick la = st.selEnd > st.selStart ? st.selStart : 0, lb = st.selEnd > st.selStart ? st.selEnd : 0;
-    if (la != sentA || lb != sentB) {
-      a.engine.setLoopRange(la, lb);
-      sentA = la;
-      sentB = lb;
-    }
-  }
+  // The engine loops playback inside the time selection (Clips: inside its loop brace): livelook::transportFrame.
   // A trackpad's Ctrl+scroll follows the fingers 1:1; wheel notches and every other zoom glide.
   scrollui::zoomEnd(st.zoomGlide, st.pxPerTick, st.scrollX, (wheelZoom && !smoothscroll::isNotch(io.MouseWheel)) || barZoom);
   if (viewO > 0) st.scrollX = std::max(st.scrollX, static_cast<float>(viewO) * st.pxPerTick);  // C44-20: never left of the arrangement's start
@@ -4005,7 +4025,9 @@ void drawPlaylist(App& a) {
   }
   // Fade handles on top of everything (J-38): squares set the length, rings the curve tension.
   if (!fadeHandles.empty() && hovered) {
-    float best = 7.0f;
+    // K-112c checkpoint 57 (round 13, part 5): in Clips only the handle itself (its 7 px square and a
+    // pixel round it) grabs it, so a click just inside a clip's body selects the clip.
+    float best = liveLook ? 4.5f : 7.0f;
     for (const auto& h : fadeHandles) {
       const float d = std::max(std::fabs(io.MousePos.x - h.pos.x), std::fabs(io.MousePos.y - h.pos.y));
       if (fadeDragClip == kNoId && gainDragClip == kNoId && d < best) best = d, fadeHoverClip = h.clip, fadeHoverKind = h.kind, fadeHoverMirror = h.mirror;
@@ -4363,32 +4385,45 @@ void drawPlaylist(App& a) {
   const float rulerBot = gMin.y - markLaneH;  // the markers lane (Logic) sits under the bar numbers
   // C7 (checkpoint 48): Smooth's ruler in two tiers, as the reference's: bar numbers with beat ticks
   // above, the cycle and locator band below.
-  const float tierY = lg ? std::round(rY + (rulerBot - rY) * 0.56f) : rY + 2;
+  // cp54 (polish): Smooth's ruler is one tier now (the lower band stood empty once the cycle moved
+  // into the number row, R13-10): the numbers on top, the ticks, playhead tab and Project End on its foot.
+  const float tierY = lg ? rulerBot : rY + 2;
   dl->PushClipRect(ImVec2(gMin.x, rY), ImVec2(gMax.x, gMin.y), true);
-  if (lg) dl->AddRectFilled(ImVec2(gMin.x, tierY), ImVec2(gMax.x, rulerBot), theme::mix(P.dark ? P.field : P.surface950, P.ink, 0.25f));
   int hoverMarker = -1;
+  float cycX0 = 1e9f, cycX1 = -1e9f;  // R13-10: the lit cycle area across the bar numbers (their ink turns dark)
   {
     // Time selection in the ruler.
-    if (st.selEnd > st.selStart && liveLook) {
-      // K-112c: the loop range as the refs draw it: an outlined brace in the ruler's lower half, its
-      // ends marked by inward triangles.
-      const float sx0 = std::round(selX0) + 0.5f, sx1 = std::round(selX1) - 0.5f, by0 = rY + kLiveNumH + 1.5f, by1 = rY + kLiveNumH + kLiveBraceH - 1.5f;
-      const ImU32 bc = theme::withAlpha(P.text, 0.55f);
-      dl->AddRectFilled(ImVec2(sx0, by0), ImVec2(sx1, by1), theme::withAlpha(P.text, 0.08f));
-      dl->AddRect(ImVec2(sx0, by0), ImVec2(sx1, by1), bc);
-      const float th = (by1 - by0) * 0.5f - 0.5f, cy = (by0 + by1) * 0.5f;  // round 20: as tall as the brace allows (280, 018)
-      if (sx1 - sx0 > 4 * th + 6) {
-        dl->AddTriangle(ImVec2(sx0 + 2, cy - th), ImVec2(sx0 + 2 + th * 1.4f, cy), ImVec2(sx0 + 2, cy + th), bc);
-        dl->AddTriangle(ImVec2(sx1 - 2, cy - th), ImVec2(sx1 - 2 - th * 1.4f, cy), ImVec2(sx1 - 2, cy + th), bc);
+    if (liveLook) {
+      // K-112c checkpoint 56 (N55-04): the time selection and the loop brace are apart, as the reference's.
+      // The time selection: a light band over the bar numbers (it never loops).
+      if (st.selEnd > st.selStart) {
+        dl->AddRectFilled(ImVec2(std::round(selX0), rY + 1), ImVec2(std::round(selX1), rY + kLiveNumH), theme::withAlpha(P.text, 0.10f));
+      }
+      // The loop brace (the song's cycle range): an outlined brace in the ruler's lower half, its ends
+      // marked by inward triangles; lit while Loop is on, faint while it is off.
+      if (s.cycleEnd > s.cycleStart) {
+        const float sx0 = std::round(xOf(s.cycleStart)) + 0.5f, sx1 = std::round(xOf(s.cycleEnd)) - 0.5f, by0 = rY + kLiveNumH + 1.5f,
+                    by1 = rY + kLiveNumH + kLiveBraceH - 1.5f;
+        const bool on = s.cycleOn;
+        const ImU32 bc = on ? theme::withAlpha(P.text, 0.75f) : theme::withAlpha(P.text, 0.30f);
+        dl->AddRectFilled(ImVec2(sx0, by0), ImVec2(sx1, by1), theme::withAlpha(on ? P.text : P.textFaint, on ? 0.16f : 0.06f));
+        dl->AddRect(ImVec2(sx0, by0), ImVec2(sx1, by1), bc);
+        const float th = (by1 - by0) * 0.5f - 0.5f, cy = (by0 + by1) * 0.5f;  // round 20: as tall as the brace allows (280, 018)
+        if (sx1 - sx0 > 4 * th + 6) {
+          dl->AddTriangle(ImVec2(sx0 + 2, cy - th), ImVec2(sx0 + 2 + th * 1.4f, cy), ImVec2(sx0 + 2, cy + th), bc);
+          dl->AddTriangle(ImVec2(sx1 - 2, cy - th), ImVec2(sx1 - 2 - th * 1.4f, cy), ImVec2(sx1 - 2, cy + th), bc);
+        }
       }
     } else if (st.selEnd > st.selStart && lg) {
       // R02-12: the cycle area as the reference draws it: a yellow band across the bar numbers
-      // (its edges a step brighter, as they are handles).
-      const float sx0 = selX0, sx1 = selX1;
+      // (its edges a step brighter, as they are handles). R13-10: it fills the bar-number row, as
+      // 153's does, the numbers over it in dark ink.
+      const float sx0 = std::round(selX0), sx1 = std::round(selX1);
       const ImU32 cyc = theme::rgb(0xD9B13A);
-      dl->AddRectFilled(ImVec2(sx0, tierY + 1), ImVec2(sx1, rulerBot - 1), theme::withAlpha(cyc, 0.75f), 2);
-      dl->AddLine(ImVec2(sx0 + 0.5f, tierY + 1), ImVec2(sx0 + 0.5f, rulerBot - 1), cyc, 2.0f);
-      dl->AddLine(ImVec2(sx1 - 0.5f, tierY + 1), ImVec2(sx1 - 0.5f, rulerBot - 1), cyc, 2.0f);
+      dl->AddRectFilled(ImVec2(sx0, rY + 1), ImVec2(sx1, tierY), theme::withAlpha(cyc, 0.82f));
+      dl->AddLine(ImVec2(sx0 + 1.0f, rY + 1), ImVec2(sx0 + 1.0f, tierY), cyc, 2.0f);
+      dl->AddLine(ImVec2(sx1 - 1.0f, rY + 1), ImVec2(sx1 - 1.0f, tierY), cyc, 2.0f);
+      cycX0 = sx0, cycX1 = sx1;
     } else if (st.selEnd > st.selStart) {
       const float sx0 = selX0, sx1 = selX1;
       dl->AddRectFilled(ImVec2(sx0, rY + 2), ImVec2(sx1, rulerBot - 1), theme::withAlpha(P.accent, 0.38f), 2);
@@ -4399,13 +4434,15 @@ void drawPlaylist(App& a) {
       // on, a drag moves or resizes it).
       const float sx0 = std::round(xOf(s.cycleStart)), sx1 = std::round(xOf(s.cycleEnd));
       const ImU32 off = P.dark ? theme::rgb(0x6A6A6A) : P.textFaint;  // (light: a theme role, K-177)
-      dl->AddRectFilled(ImVec2(sx0, tierY + 1), ImVec2(sx1, rulerBot - 1), theme::withAlpha(off, 0.45f), 2);
-      dl->AddLine(ImVec2(sx0 + 0.5f, tierY + 1), ImVec2(sx0 + 0.5f, rulerBot - 1), off, 2.0f);
-      dl->AddLine(ImVec2(sx1 - 0.5f, tierY + 1), ImVec2(sx1 - 0.5f, rulerBot - 1), off, 2.0f);
+      dl->AddRectFilled(ImVec2(sx0, rY + 1), ImVec2(sx1, tierY), theme::withAlpha(off, 0.45f));  // (R13-10: the number row)
+      dl->AddLine(ImVec2(sx0 + 1.0f, rY + 1), ImVec2(sx0 + 1.0f, tierY), off, 2.0f);
+      dl->AddLine(ImVec2(sx1 - 1.0f, rY + 1), ImVec2(sx1 - 1.0f, tierY), off, 2.0f);
     }
     // K-123: with the record button armed and punching at the selection, the pre-roll before
     // the punch in and the post-roll after the punch out, hatched in the ruler.
-    if (st.selEnd > st.selStart && a.recordArmed && a.recPunch && a.engine.mode() == PlayMode::Song) {
+    Tick pa = 0, pb = 0;  // checkpoint 56: Clips punches at its loop brace
+    if (livelook::recordRange(a, pa, pb) && a.recordArmed && a.recPunch && a.engine.mode() == PlayMode::Song) {
+      const float punchX0 = xOf(pa), punchX1 = xOf(pb);
       const double beat = static_cast<double>(s.ppq);
       const double pre = a.settings.getBool("record.preRoll") ? beat * std::max(0.0, a.settings.getNumber("record.preRollBeats")) : 0.0;
       const double post = a.settings.getBool("record.postRoll") ? beat * std::max(0.0, a.settings.getNumber("record.postRollBeats")) : 0.0;
@@ -4419,8 +4456,8 @@ void drawPlaylist(App& a) {
         for (float x = x0 - h; x < x1; x += 6) dl->AddLine(ImVec2(x, hy1), ImVec2(x + h, hy0), line);
         dl->PopClipRect();
       };
-      if (pre > 0) hatch(std::max(gMin.x, selX0 - static_cast<float>(pre) * st.pxPerTick), selX0);
-      if (post > 0) hatch(selX1, selX1 + static_cast<float>(post) * st.pxPerTick);
+      if (pre > 0) hatch(std::max(gMin.x, punchX0 - static_cast<float>(pre) * st.pxPerTick), punchX0);
+      if (post > 0) hatch(punchX1, punchX1 + static_cast<float>(post) * st.pxPerTick);
     }
     // Minor ticks on the visible grid; labels on a coarser grid that leaves room for text.
     const Tick labelGrid = timeline::visibleGrid(s, st.pxPerTick, 64.0);
@@ -4428,7 +4465,7 @@ void drawPlaylist(App& a) {
     // numbered line drawn down the whole ruler at the number's left, as 216, 125 and 146 draw them.
     ImFont* const numF = lg ? (a.fontBold ? a.fontBold : a.fontRegular) : livelook::numFont(a);  // C7: semibold numbers
     // Gap 9: Smooth's bar numbers at 13 px in the near-white text, as 146's read (they were 11 px).
-    const float numS = lg ? theme::kFontCaption + 1 : theme::kFontLabel, numY = lg ? std::round(rY + (tierY - rY - numS) * 0.5f) : rY + 4;
+    const float numS = lg ? theme::kFontCaption + 1 : theme::kFontLabel, numY = lg ? rY + 3 : rY + 4;  // (cp54: where they stood in the upper tier)
     if (mm.constant()) {
       // C44-20: counted from the arrangement's start (Clips: the end of the live area).
       for (Tick t = viewO + snapDown(std::max<Tick>(0, tickAt(gMin.x) - viewO), visGrid); xOf(t) < gMax.x; t += visGrid) {
@@ -4445,7 +4482,11 @@ void drawPlaylist(App& a) {
           vline(xOf(t), rulerBot - len, rulerBot - 1, major ? P.lineStrong : P.line);  // K-276: on the grid line's pixel
         if (major) {
           std::string lbl = timeline::rulerLabel(s, t - viewO, labelGrid);
-          dl->AddText(numF, numS, ImVec2(x + 4, numY), (t - viewO) % barT == 0 ? P.text : P.textFaint, lbl.c_str());
+          const bool onCyc = x + 3 >= cycX0 && x + 4 < cycX1;  // R13-10: dark on the yellow
+          // K-112c checkpoint 57 (N56 part 6, 3): Clips leaves out a number that would run past the lanes.
+          if (!liveLook || x + 4 + numF->CalcTextSizeA(numS, 1e9f, 0, lbl.c_str()).x <= gMax.x) {
+            dl->AddText(numF, numS, ImVec2(x + 4, numY), onCyc ? theme::rgb(0x1E1A10) : (t - viewO) % barT == 0 ? P.text : P.textFaint, lbl.c_str());
+          }
         }
       }
     } else {  // K-179: ticks and numbers of the meter map; a short bar's number is dim
@@ -4470,7 +4511,11 @@ void drawPlaylist(App& a) {
         const std::string lbl = timeline::rulerLabel(mm, t, labelGrid);
         const bool bar = timeline::lineStrength(mm, t) == timeline::kLineBar;
         const bool shortBar = bar && mm.shortBar(t);
-        dl->AddText(numF, numS, ImVec2(x + 4, numY), bar && !shortBar ? P.text : P.textFaint, lbl.c_str());
+        if (liveLook && x + 4 + numF->CalcTextSizeA(numS, 1e9f, 0, lbl.c_str()).x > gMax.x) {
+          continue;  // checkpoint 57: as above
+        }
+        const bool onCyc = x + 3 >= cycX0 && x + 4 < cycX1;  // R13-10: dark on the yellow
+        dl->AddText(numF, numS, ImVec2(x + 4, numY), onCyc ? theme::rgb(onCyc && shortBar ? 0x4A4230 : 0x1E1A10) : bar && !shortBar ? P.text : P.textFaint, lbl.c_str());
         lastRight = x + 4 + numF->CalcTextSizeA(numS, 1e9f, 0, lbl.c_str()).x + 6;
       }
     }
@@ -4540,8 +4585,9 @@ void drawPlaylist(App& a) {
     if (a.engine.mode() == PlayMode::Song) {
       float x = std::round(xOf(static_cast<Tick>(a.engine.position())));
       if (lg) {  // C6: the reference's grey rounded tab with a dark notch
-        dl->AddRectFilled(ImVec2(x - 5, rulerBot - 14), ImVec2(x + 6, rulerBot), theme::mix(P.playhead, P.surface900, 0.22f), 3.0f);
-        dl->AddRectFilled(ImVec2(x, rulerBot - 11), ImVec2(x + 1, rulerBot - 3), theme::withAlpha(P.ink, 0.75f));
+        // cp54: a 9 px tab on the ruler's foot (it was 14 px, filling the old lower tier), clear of the numbers.
+        dl->AddRectFilled(ImVec2(x - 5, rulerBot - 9), ImVec2(x + 6, rulerBot), theme::mix(P.playhead, P.surface900, 0.22f), 2.5f);
+        dl->AddRectFilled(ImVec2(x, rulerBot - 7), ImVec2(x + 1, rulerBot - 2), theme::withAlpha(P.ink, 0.75f));
       } else {
         dl->AddTriangleFilled(ImVec2(x - 5, rulerBot - 9), ImVec2(x + 5, rulerBot - 9), ImVec2(x, rulerBot - 1), P.playhead);
       }
@@ -4559,8 +4605,8 @@ void drawPlaylist(App& a) {
     const bool nearEnd = hovered && std::fabs(io.MousePos.x - (xe - 4)) <= 6 && io.MousePos.y >= yb - 12 && io.MousePos.y <= yb + 1;
     if (xe >= gMin.x - 1 && xe < gMax.x + 9) {
       dl->PushClipRect(ImVec2(gMin.x - 1, rY), ImVec2(gMax.x, rulerBot), true);
-      dl->AddTriangleFilled(ImVec2(xe, yb - 11), ImVec2(xe, yb), ImVec2(xe - 9, yb), gEndDrag || nearEnd ? P.text : P.textDim);
-      dl->AddLine(ImVec2(xe, yb - 11), ImVec2(xe, yb), P.text, 1.0f);
+      dl->AddTriangleFilled(ImVec2(xe, yb - 8), ImVec2(xe, yb), ImVec2(xe - 8, yb), gEndDrag || nearEnd ? P.text : P.textDim);
+      dl->AddLine(ImVec2(xe, yb - 8), ImVec2(xe, yb), P.text, 1.0f);
       dl->PopClipRect();
       if (nearEnd && !gEndDrag) {
         ImGui::SetTooltip("%s", i18n::tr("Project End"));
@@ -4667,7 +4713,8 @@ void drawPlaylist(App& a) {
     return trackicons::guess(what, md == TrackMode::Audio ? "Audio" : md == TrackMode::Instrument ? "Synth" : "Melody");
   };
   static int panDrag = -1;         // Logic look: the track whose pan knob is being dragged
-  static float panFrom = 0, panY = 0;
+  static double panFrom = 0;  // R13-08: the value as it was (a double: a click alone writes nothing)
+  static float panY = 0;
   int headVol = -1;                // Logic look: the volume slider under the pointer
   int laneHead = -1;               // K-112b (b4): the automation lane header (its parameter button) under the pointer
   static int laneMenu = -1;        // and the track whose parameter menu is open
@@ -4675,7 +4722,9 @@ void drawPlaylist(App& a) {
   int laneRowHead = -1;            // R03-05: the rest of the lane's header row under the pointer
   static int laneModeMenu = -1;    // and the track whose mode menu is open
   static int volDrag = -1;         // and the track whose slider is being dragged
-  static float volFrom = 0, volX = 0, volW = 1;
+  static double volFrom = 0;  // (normalized)
+  static float volX = 0, volW = 1;
+  static bool knobMoved = false;  // R13-08: the pointer has moved since the press on a header slider or knob
   int headName = -1;    // track whose name text is under the pointer (double-click renames)
   int headModeTrack = -1, headModeCtl = 0;  // PL-08: audio / instrument track control under the pointer
   static int inputTrack = -1;               // track whose input popup is open
@@ -4737,6 +4786,29 @@ void drawPlaylist(App& a) {
       const bool lit = static_cast<size_t>(k) < inComp.size() && inComp[static_cast<size_t>(k)];
       const bool hov = hovered && io.MousePos.x >= headX0 && io.MousePos.x < headX1 && io.MousePos.y >= ly0 && io.MousePos.y < ly1 && io.MousePos.y >= gMin.y;
       if (hov) takeHeadTrack = tr, takeHeadTake = k;
+      if (lg) {
+        // cp54 (polish): Smooth's take headers on the track rows' own grid: the number column carries
+        // on (its strip lit while the take is in the comp), the face reaches the rows' right edge, and
+        // "Take N" stands on the track names' column (it began 10 px into the number column).
+        bool anyGroup = false;
+        for (int i = 0; i < nTracks && !anyGroup; ++i) {
+          anyGroup = s.tracks[static_cast<size_t>(i)].groupSize > 0 || groupDepth[static_cast<size_t>(i)] > 0;
+        }
+        const float indent = 8.0f * static_cast<float>(std::min(groupDepth[static_cast<size_t>(tr)], 3));
+        const ImVec2 r0(headX0, ly0), r1(gMin.x - 1, ly1);
+        dl->AddRectFilled(r0, r1, hov ? (P.dark ? P.surface800 : P.surface700) : theme::mix(P.dark ? P.surface900 : P.surface800, P.ink, 0.2f));
+        dl->AddLine(ImVec2(r0.x, r1.y - 0.5f), ImVec2(r1.x, r1.y - 0.5f), P.dark ? P.ink : P.line);
+        dl->AddRectFilled(r0, ImVec2(r0.x + kHeadNumW, r1.y - 1), P.surface700);
+        dl->AddRectFilled(ImVec2(r0.x + kHeadNumW - 3, r0.y), ImVec2(r0.x + kHeadNumW, r1.y - 1), lit ? tc : P.lineStrong);
+        const float tx = r0.x + 12 + kHeadNumW + indent + (anyGroup ? 14.0f : 0.0f) + 32.0f;
+        const float fy = std::round((ly0 + ly1 - theme::kFontCaption) * 0.5f) - 1;
+        theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(tx, fy), r1.x - tx - 26, lit ? P.text : P.textDim,
+                            ("Take " + std::to_string(k + 1)).c_str());
+        if (lit) {  // on the pan knobs' centre line
+          dl->AddCircleFilled(ImVec2(r1.x - 10 - 7.5f, (ly0 + ly1) * 0.5f), 3.0f, tc, 12);
+        }
+        continue;
+      }
       const ImVec2 h0(headX0 + 2 + 10, ly0 + 1), h1(headX1 - 3, ly1 - 1);
       dl->AddRectFilled(h0, h1, hov ? P.surface700 : theme::mix(P.surface800, P.ink, 0.25f), theme::kRadiusSm);
       dl->AddRectFilled(h0, ImVec2(h0.x + 3, h1.y), lit ? tc : P.lineStrong, theme::kRadiusSm, ImDrawFlags_RoundCornersLeft);
@@ -4932,7 +5004,8 @@ void drawPlaylist(App& a) {
         const auto d = describeParam(s, *volId);
         const auto v = getParam(s, *volId);
         const float norm = d && v ? static_cast<float>(d->toNormalized(*v)) : 0.8f;
-        const bool hot = hovHead && io.MousePos.x >= sx0 - 4 && io.MousePos.x < sx1 + 4 && std::fabs(io.MousePos.y - cy) <= 8;
+        // (R13-08: in the two-line header the reach stays off the name line above)
+        const bool hot = hovHead && io.MousePos.x >= sx0 - 4 && io.MousePos.x < sx1 + 4 && std::fabs(io.MousePos.y - cy) <= (twoLine ? kR + 1.0f : 8.0f);
         const float tx = std::round(sx0 + 2 + kR + (slW - 4 - kR * 2) * std::clamp(norm, 0.0f, 1.0f));
         const float kcY = (s0.y + s1.y) * 0.5f;
         dl->AddRectFilled(s0, s1, theme::mix(P.surface800, P.ink, 0.55f), ph * 0.5f);
@@ -5138,7 +5211,11 @@ void drawPlaylist(App& a) {
         dl->AddText(a.fontRegular, fs, ImVec2(mx0 + 6, std::round(lcy - fs * 0.5f) - 1),
                     readEmpty ? mcol : amode == 1 ? P.paper : P.text, mname);
         ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(mx0 + mw - 8, lcy), 8, P.textDim);
-        const float bx0 = mx0 + mw + 4, vw = std::ceil(a.fontMono->CalcTextSizeA(fs, 1e9f, 0, val.c_str()).x);
+        // cp54 (polish): the readout box one width on every lane (room for "-00.0 dB", the value right
+        // aligned in it), so the parameter chips and their chevrons end on one column; it followed each
+        // value's own width (at 1024 a "-16.0 dB" lane's chip ended 12 px before its neighbours').
+        const float textW = std::ceil(a.fontMono->CalcTextSizeA(fs, 1e9f, 0, val.c_str()).x);
+        const float bx0 = mx0 + mw + 4, vw = std::max(textW, std::ceil(a.fontMono->CalcTextSizeA(fs, 1e9f, 0, "-00.0 dB").x));
         const float bx1 = std::max(bx0 + 40, r1.x - 22 - vw);
         const bool hot = hovered && io.MousePos.x >= bx0 && io.MousePos.x < bx1 && io.MousePos.y >= lcy - 9 && io.MousePos.y < lcy + 9 && io.MousePos.y >= gMin.y;
         if (hot) laneHead = tr;
@@ -5149,7 +5226,7 @@ void drawPlaylist(App& a) {
         theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(bx0 + 6, std::round(lcy - fs * 0.5f) - 1), bx1 - bx0 - 22, P.text, pname.c_str());
         ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(bx1 - 8, lcy), 8, P.textDim);
         dl->AddRectFilled(ImVec2(r1.x - 16 - vw, lcy - 9), ImVec2(r1.x - 6, lcy + 9), theme::mix(P.field, P.ink, 0.4f), 3.0f);
-        dl->AddText(a.fontMono, fs, ImVec2(r1.x - 11 - vw, std::round(lcy - fs * 0.5f) - 1), P.text, val.c_str());
+        dl->AddText(a.fontMono, fs, ImVec2(r1.x - 11 - textW, std::round(lcy - fs * 0.5f) - 1), P.text, val.c_str());
       }
       continue;
     }
@@ -5426,7 +5503,7 @@ void drawPlaylist(App& a) {
   // K-112c (Live): the column is titled "Tracks" and the cells sit on its right, in one row.
   const float cr = headX1 - 4, cl = liveLook ? cr - 5 * bw - groupGap - 2 : headX0 + 4;  // usable span
   const bool oneRow = liveLook || cr - cl >= 7 * bw + 2 * groupGap;
-  const float ry1 = lg ? std::round(rY + 17.0f) : oneRow ? std::round(rY + (gMin.y - rY) * 0.5f) : origin.y + 10.5f, ry2 = oneRow || lg ? ry1 : origin.y + 29.5f;
+  const float ry1 = lg ? std::round(rY + 13.0f)  /* cp54: centred on the 26 px ruler */ : oneRow ? std::round(rY + (gMin.y - rY) * 0.5f) : origin.y + 10.5f, ry2 = oneRow || lg ? ry1 : origin.y + 29.5f;
   const float x0 = cl + bw * 0.5f, xR = cr - bw * 0.5f;
   const float tx = oneRow ? x0 + 3 * bw + groupGap : x0;                // tracks group
   // K-112b (checkpoint 24): the Tracks layout puts the track buttons first, on faces of their own (add
@@ -5595,7 +5672,10 @@ void drawPlaylist(App& a) {
       char tb[16];
       const int isec = static_cast<int>(std::lround(sec - sec0));
       std::snprintf(tb, sizeof tb, "%d:%02d", isec / 60, isec % 60);
-      dl->AddText(livelook::numFont(a), theme::kFontLabel, ImVec2(x + 4, ry0 + 3), P.textDim, tb);
+      // K-112c checkpoint 57 (N56 part 6, 3): a label that would run past the lanes' edge is left out.
+      if (x + 4 + livelook::numFont(a)->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, tb).x <= gMax.x) {
+        dl->AddText(livelook::numFont(a), theme::kFontLabel, ImVec2(x + 4, ry0 + 3), P.textDim, tb);
+      }
     }
     dl->PopClipRect();
     const std::string zl = std::string(i18n::tr("Grid")) + "  " + (st.effGrid > 0 ? timeline::gridName(s, st.effGrid) : std::string("-"));
@@ -5682,8 +5762,10 @@ void drawPlaylist(App& a) {
     if (hoverMarker >= 0)
       a.setHint("Marker \"" + s.markers[static_cast<size_t>(hoverMarker)].name + "\": click to jump here \xC2\xB7 right-click: rename, time signature, action, loop");
     else
-      a.setHint("Click or drag to move the song position (snaps to the grid, Alt = free)  \xC2\xB7  Ctrl+drag or right-drag: "
-                "time selection (loops playback)  \xC2\xB7  double-click: clear the selection");
+      a.setHint(liveLook ? i18n::tr("Click or drag to move the song position (snaps to the grid, Alt = free)  \xC2\xB7  Ctrl+drag or right-drag: "
+                                    "time selection  \xC2\xB7  the loop brace below the numbers: drag it, drag its ends, click it to switch Loop  \xC2\xB7  Cmd+L: loop the selection")
+                         : "Click or drag to move the song position (snaps to the grid, Alt = free)  \xC2\xB7  Ctrl+drag or right-drag: "
+                           "time selection (loops playback)  \xC2\xB7  double-click: clear the selection");
   } else if (hovered && inHead) {
     const char* modeHint = trackui::headerHint(a, headModeCtl ? headModeTrack : trackAt(m.y), headModeCtl);
     if (liveHeadPart == livelook::HeaderPart::Io) {  // checkpoint 55: the In/Out column says its own
@@ -6339,9 +6421,9 @@ void drawPlaylist(App& a) {
     if (inHead && headPan >= 0 && lClick) {
       if (const auto pid = panOf(headPan)) {
         if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-          if (const auto d = describeParam(s, *pid)) a.doc.setParam(*pid, d->def, false);
+          if (const auto d = describeParam(s, *pid); d && getParam(s, *pid) != std::optional<double>(d->def)) a.doc.setParam(*pid, d->def, false);
         } else if (const auto v = getParam(s, *pid)) {
-          panDrag = headPan, panFrom = static_cast<float>(*v), panY = m.y;
+          panDrag = headPan, panFrom = *v, panY = m.y, knobMoved = false;
         }
       }
       lClick = false;
@@ -6353,8 +6435,10 @@ void drawPlaylist(App& a) {
         a.doc.endGesture();
       } else if (const auto d = describeParam(s, *pid)) {
         const double span = d->max - d->min;
+        // R13-08: a press that has not moved writes nothing (no undo step, the project stays unmodified).
+        knobMoved = knobMoved || m.y != panY;
         const double v = d->clamp(panFrom + (panY - m.y) * (io.KeyShift ? 0.001 : 0.006) * span);
-        if (const auto cur = getParam(s, *pid); cur && *cur != v) a.doc.setParam(*pid, v, true);
+        if (const auto cur = getParam(s, *pid); knobMoved && cur && *cur != v) a.doc.setParam(*pid, v, true);
       }
     }
     auto volOf = [&](int tr) -> std::optional<ParamId> {
@@ -6367,9 +6451,9 @@ void drawPlaylist(App& a) {
     if (inHead && headVol >= 0 && lClick) {
       if (const auto pid = volOf(headVol)) {
         if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-          if (const auto d = describeParam(s, *pid)) a.doc.setParam(*pid, d->def, false);
+          if (const auto d = describeParam(s, *pid); d && getParam(s, *pid) != std::optional<double>(d->def)) a.doc.setParam(*pid, d->def, false);
         } else if (const auto v = getParam(s, *pid)) {
-          if (const auto d = describeParam(s, *pid)) volDrag = headVol, volFrom = static_cast<float>(d->toNormalized(*v)), volX = m.x;
+          if (const auto d = describeParam(s, *pid)) volDrag = headVol, volFrom = d->toNormalized(*v), volX = m.x, knobMoved = false;
         }
       }
       lClick = false;
@@ -6380,9 +6464,12 @@ void drawPlaylist(App& a) {
         volDrag = -1;
         a.doc.endGesture();
       } else if (const auto d = describeParam(s, *pid)) {
+        // R13-08: a click without a drag writes nothing (the normalized round trip moved 0.8 to
+        // 0.79999995: an undo step and a modified project from a click).
+        knobMoved = knobMoved || m.x != volX;
         const double n = std::clamp(volFrom + (m.x - volX) / std::max(volW, 20.0f) * (io.KeyShift ? 0.2 : 1.0), 0.0, 1.0);
         const double v = d->clamp(d->fromNormalized(n));
-        if (const auto cur = getParam(s, *pid); cur && *cur != v) a.doc.setParam(*pid, v, true);
+        if (const auto cur = getParam(s, *pid); knobMoved && cur && *cur != v) a.doc.setParam(*pid, v, true);
       }
     }
     if (inHead && headIcon_ >= 0 && lClick) {  // R01-23: the icon picker
@@ -6879,7 +6966,61 @@ void drawPlaylist(App& a) {
   const bool inMarquee = lg && st.mqB > st.mqA && inGrid && trackAt(m.y) >= st.mqT0 && trackAt(m.y) <= st.mqT1 &&
                          tickAt(m.x) >= st.mqA && tickAt(m.x) < st.mqB;
   if (lg && lClick && inGrid && !inMarquee && st.tool != Tool::Marquee) st.mqA = st.mqB = 0;  // R01-18
-  if (lClick || rClick) {
+  // K-112c checkpoint 56 (N55-04): Clips' loop brace in the ruler's lower half, apart from the time
+  // selection: a drag on it moves it, a drag at an end resizes it (snapped), a click switches Loop.
+  // Transport state, as Smooth's cycle: no undo step (livelook::setLoopBrace).
+  static int braceMode = -1;  // 1 move, 2 left end, 3 right end
+  static Tick braceA = 0, braceB = 0, braceT0 = 0;
+  static bool braceMoved = false;
+  bool braceTook = false;
+  if (liveLook && s.cycleEnd > s.cycleStart && braceMode < 0) {
+    const float by0 = rY + kLiveNumH, by1 = rY + kLiveNumH + kLiveBraceH;
+    const float bx0 = xOf(s.cycleStart), bx1 = xOf(s.cycleEnd);
+    int over = -1;
+    if (hovered && m.y >= by0 && m.y < by1 && m.x >= gMin.x && m.x < gMax.x) {
+      if (std::fabs(m.x - bx0) <= 5) {
+        over = 2;
+      } else if (std::fabs(m.x - bx1) <= 5) {
+        over = 3;
+      } else if (m.x > bx0 && m.x < bx1) {
+        over = 1;
+      }
+    }
+    if (over >= 0) {
+      ImGui::SetMouseCursor(over == 1 ? ImGuiMouseCursor_Hand : ImGuiMouseCursor_ResizeEW);
+      a.setHint(over == 1 ? i18n::tr("The loop brace: drag to move it, click to switch Loop on or off") : i18n::tr("The loop brace's end: drag to resize it"));
+    }
+    if (lClick && over >= 0 && !io.KeyCtrl) {
+      braceMode = over, braceA = s.cycleStart, braceB = s.cycleEnd, braceT0 = tickAt(m.x), braceMoved = false;
+      braceTook = true;
+    }
+  }
+  if (braceMode >= 0) {
+    braceTook = true;
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      braceMoved = braceMoved || ImGui::IsMouseDragging(ImGuiMouseButton_Left, 3.0f);
+      if (braceMoved) {
+        const Tick step = std::max<Tick>(1, snapG), org = livelook::arrangementOrigin(a);
+        const Tick d = tickAt(m.x) - braceT0;
+        Tick na = braceA, nb = braceB;
+        if (braceMode == 1) {
+          na = std::max(org, timeline::snapTick(mm, braceA + d, snapG, Snap::Line));
+          nb = na + (braceB - braceA);
+        } else if (braceMode == 2) {
+          na = std::clamp<Tick>(timeline::snapTick(mm, braceA + d, snapG, Snap::Line), org, braceB - step);
+        } else {
+          nb = std::max<Tick>(braceA + step, timeline::snapTick(mm, braceB + d, snapG, Snap::Line));
+        }
+        livelook::setLoopBrace(a, na, nb, s.cycleOn);
+      }
+    } else {
+      if (!braceMoved) {
+        livelook::toggleLoop(a);
+      }
+      braceMode = -1;
+    }
+  }
+  if ((lClick || rClick) && !braceTook) {
     cg = ClipGesture{};
     cg.selBefore = st.selected;
     cg.start = m;
@@ -7999,6 +8140,12 @@ void drawPlaylist(App& a) {
       browserui::DropPlace pplace = place;
       if (m.y < gMin.y || nTracks == 0) pplace.track = -1;  // the ruler: a new channel, as before
       const int dropTr = pplace.track;
+      if (lg && inHead && dropTr >= 0 && dropTr < nTracks) {
+        // R13-10: over a header, the hint stands beside it in the lane, centred on the row, so it never
+        // covers the next track's name (under the pointer it hid "Weather Level").
+        fb.tipAt = true;
+        fb.tipX = headX1 + 10, fb.tipY = std::round(yOf(dropTr) + hOf(dropTr) * 0.5f), fb.tipPivotY = 0.5f;
+      }
       browserui::acceptPluginDrop(a, browse::DropTarget::Playlist, pplace, &fb);
       if (fb.hovering && dropTr >= 0 && dropTr < nTracks) {
         devGeom.dropTrack = dropTr;
@@ -8439,7 +8586,9 @@ void drawPlaylist(App& a) {
     }
     if (keys::pressed("playlist.picker")) st.pickerOpen = !st.pickerOpen;
     if (keys::pressed("playlist.meterChange")) meterui::addAndEdit(a, static_cast<Tick>(a.engine.position()));  // K-179
-    if (keys::pressed("playlist.loopMarkers")) {  // Shift+T: place loop around the selection (FL), else (J-85) a loop marker at the song position
+    if (keys::pressed("playlist.loopMarkers") && liveLook) {
+      livelook::loopFromSelection(a);  // checkpoint 56 (N55-04): Clips' Cmd+L: the loop brace from the selection
+    } else if (keys::pressed("playlist.loopMarkers")) {  // Shift+T: place loop around the selection (FL), else (J-85) a loop marker at the song position
       if (st.selEnd > st.selStart)
         ops::placeLoop(a.doc, st.selStart, st.selEnd, 0);
       else
@@ -8525,7 +8674,7 @@ void drawLiveAudioClip(App& a, ObjectId id) {
       const Tick six = std::max<Tick>(1, beat / 4);
       const long long o = position ? 1 : 0;
       char b[96];  // (room for three 64-bit numbers: GCC -Wformat-truncation)
-      std::snprintf(b, sizeof b, "%lld. %lld. %lld", static_cast<long long>(t / bar) + o, static_cast<long long>(t % bar / beat) + o,
+      std::snprintf(b, sizeof b, "%lld . %lld . %lld", static_cast<long long>(t / bar) + o, static_cast<long long>(t % bar / beat) + o,
                     static_cast<long long>(t % beat / six) + o);
       return std::string(b);
     };
@@ -8552,16 +8701,18 @@ void drawLiveAudioClip(App& a, ObjectId id) {
       valueRow(i18n::tr("Length"), mss(s1 - s0), "The clip's length (minutes: seconds. milliseconds)", 0);
     }
     (void)barsBeats;
+    // Checkpoint 57 (N56-09): Loop beside Length (the column fits the detail band's height).
+    const float loopW = livelook::columnRow(a, "", 1, 2);
     if (c->start < s.live.areaEnd) {
       // Checkpoint 54 (N53-02): a grid clip's Loop is whether it repeats while launched (off: a one-shot,
       // played once, as the reference's short samples).
       const bool loop = !c->launchOnce;
-      if (ui::TextButton(i18n::tr("Loop"), loop, ImGui::GetContentRegionAvail().x))
+      if (ui::TextButton(i18n::tr("Loop"), loop, loopW))
         a.doc.editClip(id, loop ? "clip loop off" : "clip loop on", [loop](Clip& x) { x.launchOnce = loop; });
       ui::Hint("On: the clip repeats while it plays; off: it plays once (a one-shot)");
     } else {
       const bool loop = c->loop;
-      if (ui::TextButton(i18n::tr("Loop"), loop, ImGui::GetContentRegionAvail().x)) a.doc.editClip(id, "loop clip", [loop](Clip& x) { x.loop = !loop; });
+      if (ui::TextButton(i18n::tr("Loop"), loop, loopW)) a.doc.editClip(id, "loop clip", [loop](Clip& x) { x.loop = !loop; });
       ui::Hint("On: the clip repeats its audio to its end");
     }
   }
@@ -8597,9 +8748,9 @@ void drawLiveAudioClip(App& a, ObjectId id) {
       }
       if (rel) a.doc.endGesture();
       ui::Hint("The clip's pitch in semitones, added to its channel's (drag)");
-      ImGui::SameLine(0, 4);
+      ImGui::SameLine(0, 6);  // checkpoint 57 (N56-09): the knob's margins even (the column gap is 6)
       int st = semis;
-      ImGui::SetNextItemWidth(std::max(24.0f, halfW - 2 * r - 4));
+      ImGui::SetNextItemWidth(std::max(24.0f, halfW - 2 * r - 6));
       if (ImGui::DragInt("##apitch", &st, 0.2f, -24, 24, "%d st"))
         a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = static_cast<float>(std::clamp(st, -24, 24)) * 100.0f + detune; }, key + 1);
       ui::Hint("The clip's pitch in semitones (drag; Ctrl+click to type)");
@@ -8610,6 +8761,9 @@ void drawLiveAudioClip(App& a, ObjectId id) {
     if (ImGui::DragFloat("##adetune", &ct, 0.5f, -50.0f, 50.0f, "%.0f ct"))
       a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = static_cast<float>(semis) * 100.0f + std::clamp(ct, -50.0f, 50.0f); }, key + 1);
     ui::Hint("The clip's fine pitch in cents (drag; Ctrl+click to type)");
+    // Checkpoint 57 (N56-09): Reverse beside Detune, so the whole Sample section fits the band.
+    if (ui::TextButton(i18n::tr("Reverse"), c->reverse, livelook::columnRow(a, "", 1, 2))) a.doc.editClip(id, "reverse clip", [&a](Clip& x) { toggleClipReverse(a.doc.song(), x); });
+    ui::Hint("Plays the clip backwards (keeps the same audio)");
     livelook::columnRow(a, i18n::tr("Fade in"), 0, 2);
     float fi = static_cast<float>(c->fadeIn * 1000.0), fo = static_cast<float>(c->fadeOut * 1000.0);
     ImGui::SetNextItemWidth(halfW);
@@ -8619,8 +8773,6 @@ void drawLiveAudioClip(App& a, ObjectId id) {
     ImGui::SetNextItemWidth(halfW);
     if (ImGui::DragFloat("##afo", &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
       a.doc.editClip(id, "clip fade out", [&](Clip& x) { x.fadeOut = std::max(0.0f, fo) / 1000.0, x.fadeOutManual = true; }, key + 3);
-    if (ui::TextButton(i18n::tr("Reverse"), c->reverse, ImGui::GetContentRegionAvail().x)) a.doc.editClip(id, "reverse clip", [&a](Clip& x) { toggleClipReverse(a.doc.song(), x); });
-    ui::Hint("Plays the clip backwards (keeps the same audio)");
   }
   ImGui::Dummy(ImVec2(0, 4));
   if (ui::TextButton(i18n::tr("More..."), false, ImGui::GetContentRegionAvail().x)) ImGui::OpenPopup("##aclipmore");

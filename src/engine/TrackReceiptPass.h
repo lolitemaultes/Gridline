@@ -23,6 +23,9 @@ struct PassOptions {
   int sampleRate = 44100;
   std::function<void(double)> progress;  // 0..1 (rendering thread)
   const std::atomic<bool>* cancel = nullptr;
+  // K-319: true plays the whole mix as the first versions did (every effect, one thread):
+  // the reference the fast pass is checked against in tests.
+  bool reference = false;
 };
 
 // One file reference of a plugin.

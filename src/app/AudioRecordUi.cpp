@@ -188,7 +188,12 @@ void App::processAudioRecording() {
   const bool rolling = engine.playing() && (engine.mode() != PlayMode::Live || sessAudio);
   const bool want = ((recordArmed && recAudio) || sessAudio) && rolling && armedTracks;
   const bool song = engine.mode() == PlayMode::Song;
-  const bool sel = playlist.selEnd > playlist.selStart;
+  // Checkpoint 56 (N55-04): Clips loops (and punches) at its loop brace (the song's cycle range), never at
+  // the time selection; the other layouts at the time selection, as before.
+  const bool clipsLook = livelook::active(*this);
+  Tick punchA = 0, punchB = 0;
+  const bool punchRange = livelook::recordRange(*this, punchA, punchB);
+  const bool sel = clipsLook ? livelook::loopOn(*this) : punchRange;
   // J-175: what records besides armed tracks: a deck setup's performance passes (Platter)
   const bool packRecords = recordArmed && packs::recordsWithTransport(*this);
   // Song mode without a time selection: keep recording past the song end. Set while the record
@@ -209,8 +214,8 @@ void App::processAudioRecording() {
   // Punch in / out at the time selection (song mode), for everything that records: set as
   // recording starts (J-175: deck passes too, not only audio sessions).
   auto setPunch = [&] {
-    if (recPunch && sel && song)
-      engine.setPunch(static_cast<double>(playlist.selStart), static_cast<double>(playlist.selEnd));
+    if (recPunch && punchRange && song)
+      engine.setPunch(static_cast<double>(punchA), static_cast<double>(punchB));
     else
       engine.setPunch(0, 0);
   };
@@ -221,7 +226,7 @@ void App::processAudioRecording() {
     const double beat = static_cast<double>(doc.song().ppq);
     const double pre = settings.getBool("record.preRoll") ? beat * std::max(0.0, settings.getNumber("record.preRollBeats")) : 0.0;
     const double post = settings.getBool("record.postRoll") ? beat * std::max(0.0, settings.getNumber("record.postRollBeats")) : 0.0;
-    engine.setRecordRoll(recordArmed && recPunch && sel && song, pre, post);
+    engine.setRecordRoll(recordArmed && recPunch && punchRange && song, pre, post);
   }
   if (recRolling && !recRollingPrev) setPunch();
   recRollingPrev = recRolling;

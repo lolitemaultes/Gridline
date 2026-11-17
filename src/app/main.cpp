@@ -3938,6 +3938,7 @@ int main(int argc, char** argv) {
       layoutui::shellFrame(app);  // K-112: the region shell's exclusive regions and fixed bands
       if (livelook::active(app)) livelook::viewFrame(app);  // K-112c: the clip grid or the arrangement, one at a time
       else livelook::leftFrame();
+      livelook::transportFrame(app);  // K-112c (N55-02, N55-04): the engine's loop range and the Arrangement's start and end
     }
     {
       prof::Scope ps("livepads");
@@ -4159,7 +4160,7 @@ int main(int argc, char** argv) {
                       " play from " + midiNoteName(app.typing.baseNote()) + " · " + typingKeyName('[') + " " + typingKeyName(']') + " octave · " +
                       typingKeyName('-') + " " + typingKeyName('=') + " velocity " + std::to_string(app.typing.velocity) + " · " + typingKeyName('\\') + " chord mode";
       if (app.typing.chordMode) h += std::string(" (") + chordTypeName(app.typing.chord) + ", " + typingKeyName('\'') + " next)";
-      if (app.stepRecord) h += " · step record: → rest, ⌫ back";
+      if (app.stepRecord) h += " · step record: ← → step (held keys: length), ⌫ back";
       app.setHint(h);
     }
     if (!homeShown) {
@@ -4672,18 +4673,22 @@ int main(int argc, char** argv) {
       if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && !io.WantTextInput && !app.projectLoadBlocking() &&
           trackerview::sdlKey(app, ev.key.keysym.scancode, ev.key.keysym.sym, ev.key.keysym.mod, ev.type == SDL_KEYDOWN, ev.key.repeat != 0))
         continue;
+      // GitHub #71: step record keys, with the typing keyboard on or the piano roll in front: Right and
+      // Left (Shift too) move the step cursor, or lengthen and shorten the chord held; Backspace steps
+      // back and deletes. The piano roll leaves its own Left / Right (move notes) alone meanwhile.
+      if (ev.type == SDL_KEYDOWN && !ev.key.repeat && app.stepRecord && !app.engine.playing() && !io.WantTextInput &&
+          !app.projectLoadBlocking() && !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT)) &&
+          (app.typingKeyboard || keys::focusContext() == keys::Context::PianoRoll)) {
+        const SDL_Keycode k = ev.key.keysym.sym;
+        if (k == SDLK_RIGHT || k == SDLK_LEFT || (k == SDLK_BACKSPACE && app.typingKeyboard)) {
+          app.stepRecordKey(k == SDLK_RIGHT ? 1 : k == SDLK_LEFT ? -1 : 0);
+        }
+      }
       // Typing keyboard (key events straight from SDL so key-up is never missed; key-ups above).
       // K-175: one press, one step: TypingKeyboard::press ignores repeats and keys already down.
       if (ev.type == SDL_KEYDOWN && app.typingKeyboard && !io.WantTextInput && !app.projectLoadBlocking() &&
           !(ev.key.keysym.mod & (KMOD_CTRL | KMOD_GUI | KMOD_ALT))) {
-        const SDL_Keycode k = ev.key.keysym.sym;
         const SDL_Scancode sc = ev.key.keysym.scancode;
-        if (!ev.key.repeat && app.stepRecord && !app.engine.playing() && (k == SDLK_RIGHT || k == SDLK_BACKSPACE)) {
-          if (k == SDLK_RIGHT)
-            app.stepRecorder.rest();
-          else
-            app.stepRecorder.backspace(app.doc, app.curPattern, app.selChannel);
-        }
         if (app.typing.keyAt(static_cast<int>(sc)) > 0 && app.selChannel != kNoId) {
           std::vector<int> on = app.typing.press(sc, ev.key.repeat != 0);
           const double stamp = keyStamp(ev.key.timestamp);

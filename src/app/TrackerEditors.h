@@ -51,6 +51,13 @@ bool hasSampleEditor(App& a, ObjectId channel);
 void openPluginWindow(App& a, ObjectId channel);
 // The channel settings float as the plugin window (the lower band is not showing them).
 bool pluginWindowOpen(App& a);
+// cp22: while the Tracker is in front its lower band hosts a channel's settings, so the shared
+// channel settings window (and an installed plugin's own window routed from them) opens only from
+// "Open plugin window": true while that window must stay closed (no frame of it, not even one).
+bool ownsChannelWindow(App& a);
+// cp22 (dev): once a frame, before the channel settings window: counts the frames a plugin or channel
+// window showed in the Tracker that "Open plugin window" did not ask for ("tracker editors windows").
+void watchWindows(App& a, bool blocked);
 
 // The Device chain part's body in the Tracker: draws the screen for the instrument its chain shows.
 // False when the Tracker does not show its own screen there (the caller draws the chain).

@@ -977,10 +977,23 @@ void songExtrasToJson(const Song& s, Json& j) {
     for (const auto& [lay, text] : s.workspaceCopy) jw.object[lay] = Json::makeString(text);
     j.object["workspaces"] = std::move(jw);
   }
-  if (s.live.areaEnd > 0 || !s.live.view.empty()) {
+  if (s.live.areaEnd > 0 || !s.live.view.empty() || !s.keptSends.empty()) {
     Json jl = Json::makeObject();
     if (s.live.areaEnd > 0) jl.object["areaEnd"] = num(static_cast<double>(s.live.areaEnd));
     if (!s.live.view.empty()) jl.object["view"] = Json::makeString(s.live.view);  // N48-07 (only once saved from Clips)
+    if (!s.keptSends.empty()) {  // K-112c checkpoint 57 (N56-01): [mixer, to, level, pre-fader, index]
+      Json jk = Json::makeArray();
+      for (const KeptSend& k : s.keptSends) {
+        Json e = Json::makeArray();
+        e.array.push_back(num(k.mixer));
+        e.array.push_back(num(k.to));
+        e.array.push_back(num(k.level));
+        e.array.push_back(num(k.preFader ? 1 : 0));
+        e.array.push_back(num(k.index));
+        jk.array.push_back(std::move(e));
+      }
+      jl.object["keptSends"] = std::move(jk);
+    }
     j.object["live"] = std::move(jl);
   }
   if (!s.smooth.library.empty() || !s.smooth.controls.empty()) {  // K-112D: the Smooth layout's Library pane, once set there
@@ -1074,6 +1087,28 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
     s.live.areaEnd = std::max<Tick>(0, jsonTick(jl->num("areaEnd", 0)));
     s.live.view = jl->text("view", "");
     if (s.live.view != "grid" && s.live.view != "arrangement") s.live.view.clear();
+    s.keptSends.clear();
+    if (const Json* jk = jl->find("keptSends"); jk && jk->is(Json::Type::Array)) {  // K-112c checkpoint 57 (N56-01)
+      for (const Json& e : jk->array) {
+        if (!e.is(Json::Type::Array) || e.array.size() != 5) {
+          continue;
+        }
+        bool ok = true;
+        for (const Json& v : e.array) {
+          ok = ok && v.is(Json::Type::Number) && v.number >= 0 && v.number <= 4e9;
+        }
+        if (!ok || e.array[4].number > 4096) {
+          continue;
+        }
+        KeptSend k;
+        k.mixer = static_cast<ObjectId>(e.array[0].number);
+        k.to = static_cast<ObjectId>(e.array[1].number);
+        k.level = static_cast<float>(std::clamp(e.array[2].number, 0.0, 1.25));
+        k.preFader = e.array[3].number != 0;
+        k.index = static_cast<int>(e.array[4].number);
+        s.keptSends.push_back(k);
+      }
+    }
   }
   if (const Json* js = j.find("smooth"); js && js->is(Json::Type::Object)) {  // K-112D
     s.smooth.library = js->text("library", "");

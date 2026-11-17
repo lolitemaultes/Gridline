@@ -102,6 +102,12 @@ int main() {
   ul::Info info;
   {
     std::lock_guard<std::mutex> lk(fetch->mu);
+    // A site that limits this computer right now (HTTP 429, a shared CI runner) is not a Gridline fault.
+    const std::string& e = fetch->error;
+    if (fetch->get() != ul::Phase::Done &&
+        (e.find("429") != std::string::npos || e.find("Too many requests") != std::string::npos || e.find("limiting") != std::string::npos)) {
+      return skip("the site is limiting requests: " + e);
+    }
     check(fetch->get() == ul::Phase::Done, "the link is read: " + fetch->error + " " + fetch->lead);
     info = fetch->info;
   }
