@@ -2842,8 +2842,18 @@ void aboutScreen(App& a, ImVec2 p0, ImVec2 p1) {
   const std::string version = std::string(i18n::tr("Version")) + " " + GRIDLINE_VERSION;
   centred(a.fontBold ? a.fontBold : a.fontRegular, IM_COL32(237, 237, 237, 255), version.c_str());
   centred(a.fontRegular, IM_COL32(163, 163, 163, 255), i18n::tr("A free, open, pattern-based DAW for everybody."));
-  centred(a.fontRegular, IM_COL32(112, 112, 112, 255), i18n::tr("Licences and credits: Help, About Gridline"));
   const float bh = std::round(fs + 9), bw = std::round(std::max(70.0f, fs * 5));
+  // K-329: Help > About Gridline opens this screen in the Tracker; the licences and credits are a
+  // click away, in the About window.
+  {
+    const float lw = std::round(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Licences and credits...")).x + 16);
+    const bool under = std::round(y + 2) + bh <= p1.y - 4 - bh - 4;  // under the credits, else beside Exit
+    const ImVec2 l0 = under ? ImVec2(std::round(p0.x + (p1.x - p0.x - lw) * 0.5f), std::round(y + 2)) : ImVec2(p1.x - 4 - lw, p1.y - 4 - bh);
+    if (bevelButton(a, "##aboutlic", "Licences and credits...", l0, ImVec2(l0.x + lw, l0.y + bh), false,
+                    "The licences of Gridline and its parts, and the credits")) {
+      a.showAbout = true;
+    }
+  }
   if (bevelButton(a, "##aboutexit", "Exit", ImVec2(p0.x + 4, p1.y - 4 - bh), ImVec2(p0.x + 4 + bw, p1.y - 4), false, "Back to the header")) gSwap = Swap::None;
   (void)P;
 }
@@ -3969,6 +3979,15 @@ void toggleScopeTool(App& a, int which) {
   gTool = shownNow ? ScopeTool::Scopes : t;
 }
 int scopeTool() { return static_cast<int>(gTool); }  // (the enum's order: 0 scopes, 1 Transpose ... 5 Sample tools)
+
+void openAbout(App& a) {
+  if (!(layoutui::active() == layout::Preset::Tracker && layoutui::shellBuilt(a, layout::Preset::Tracker))) {
+    a.showAbout = true;
+    return;
+  }
+  setExtended(a, false);
+  gSwap = Swap::About;
+}
 
 void setHeaderSwap(int which) {
   gSwap = which == 1 ? Swap::Help : which == 2 ? Swap::Disk : which == 3 ? Swap::Config : which == 4 ? Swap::About : which == 5 ? Swap::Collab : Swap::None;

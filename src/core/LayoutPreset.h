@@ -41,15 +41,10 @@ Preset fromId(const std::string& text);
 const char* displayName(Preset p);
 // One line describing the arrangement (chooser cards and settings).
 const char* blurb(Preset p);
-// True while the preset is a preview: its window arrangement, shortcuts and menus,
-// not yet the whole style of the app (K-112 makes each a full style, then this turns false).
-// The interface marks a preview with previewTag().
-bool isPreview(Preset p);
-const char* previewTag();
 // K-112: whether the layout may be shown: every preset (Tracker too, since 2026-11-16).
 bool available(Preset p, const Settings& s);
 // K-112: whether ui.layoutDev counts: only in a development build (GRIDLINE_DEV_LAYOUTS); a release
-// build ignores the setting.
+// build ignores the setting. It switches on developer commands only, never what people see (K-329).
 bool devSetting(const Settings& s);
 // --layout-dev for this run: counts as ui.layoutDev (development builds only).
 void setDevRun(bool on);

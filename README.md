@@ -194,7 +194,7 @@ The [release notes](https://github.com/lolitemaultes/Gridline/releases/latest) h
 ### Workflow
 
 - **Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation share the same tracks.
-- **Window layouts.** Arrange the main window as Studio, or try the Clips and Smooth previews, always in your own theme.
+- **Window layouts.** Arrange the main window as Studio, Clips, Smooth or Tracker, always in your own theme.
 - **Meter changes, MPE and slides.** A song can change meter as it goes. MPE keyboards play every built-in instrument note by note, and slide notes glide on every instrument.
 - **Layers and SFZ.** Layer channels split and stack instruments by key and velocity. The Multisampler plays SFZ instruments.
 - **Tracker modules.** Open `.xm` and `.mod` modules as projects, played by the Tracker Sampler, which also works as a sampler for your own sounds.

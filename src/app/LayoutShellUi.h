@@ -8,9 +8,8 @@
 // blank or half laid out frame.
 //
 // Studio never goes through the shell (it keeps app/Shell.cpp buildDefaultLayout), so it stays
-// exactly as it was. Live and Logic keep their K-79 arrangements for people until their phases
-// ship; the region shells of Live, Logic and Tracker are development layouts (ui.layoutDev or
-// --layout-dev), so nobody sees a rough layout.
+// exactly as it was. Live (Clips), Logic (Smooth) and Tracker are built from their region shells
+// in every build (K-329, 0.7.7).
 #pragma once
 #include <string>
 #include <vector>
@@ -34,14 +33,13 @@ struct WindowFlag {
 const std::vector<WindowFlag>& windowFlags(App& a);  // built once (the flags live as long as the App)
 bool* windowOpenFlag(App& a, const std::string& stableName);
 
-// ---- development layouts ----
-void setDevLayouts(bool on);  // --layout-dev: this run only
-bool devLayouts(const App& a);  // ui.layoutDev or --layout-dev
-// True when the layout is built from its region shell (Tracker always; Live and Logic as development layouts).
+// ---- developer tooling ----
+void setDevLayouts(bool on);  // --layout-dev: this run only (developer commands of development builds)
+// True when the layout is built from its region shell: Live, Logic and Tracker, in every build.
 bool shellBuilt(const App& a, layout::Preset p);
 
 // The dock file and its default-version settings key: a region shell keeps its own file
-// ("layout-live-shell.ini"), so a development run never touches the K-79 arrangement's file.
+// ("layout-live-shell.ini"), apart from the K-79 arrangement's file of 0.7.6 and earlier.
 std::string iniFile(const App& a, layout::Preset p);
 std::string versionKey(const App& a, layout::Preset p);
 

@@ -102,8 +102,13 @@ expectMatch(settings "${SET_settings}" "\"ui.layout\": \"live\"" "ui.layout save
 run(menu "12 quit discard\n" "${DEMO}" --menu layouts)
 string(REGEX MATCH "MENUDUMP BEGIN layouts\n([^\n]*\n)*MENUDUMP END" dump "${OUT_menu}")
 expectMatch(menu "${dump}" "Studio" "the menu lists Studio")
-expectMatch(menu "${dump}" "Clips[^\n]*Preview" "Clips (saved as live), marked as a preview")
-expectMatch(menu "${dump}" "Smooth[^\n]*Preview" "Smooth (saved as logic), marked as a preview")
+expectMatch(menu "${dump}" "Clips" "the menu lists Clips (saved as live)")
+expectMatch(menu "${dump}" "Smooth" "the menu lists Smooth (saved as logic)")
+expectMatch(menu "${dump}" "Tracker" "the menu lists Tracker")
+# K-329: every layout is complete in 0.7.7, none is marked a preview.
+if(dump MATCHES "Preview")
+  message(SEND_ERROR "FAIL: menu: a layout is still marked as a preview")
+endif()
 expectMatch(menu "${dump}" "Layout settings" "and the settings item")
 
 message(STATUS "k130_layout_chooser_app: OK")

@@ -438,7 +438,7 @@ const md::Menu& clipsNavigateDef() {
 
 const md::Menu& programDef() {
   static const md::Menu m = {
-      md::item(N_("About Gridline"), [](App& a) { a.showAbout = true; }),
+      md::item(N_("About Gridline"), [](App& a) { trackerview::openAbout(a); }),
       md::item(N_("Check for updates..."), [](App& a) { updui::checkNow(a); }).only([](App&) { return updui::started(); }),  // R02-22
       md::separator(),
       md::item(N_("Settings..."), "view.settings",

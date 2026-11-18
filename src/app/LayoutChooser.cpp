@@ -706,26 +706,11 @@ bool card(App& a, int index, ImVec2 pos, const CardGrid& g, bool focused, bool k
   dl->PopClipRect();
   dl->AddRect(ImVec2(t0.x - 0.5f, t0.y - 0.5f), ImVec2(t1.x + 0.5f, t1.y + 0.5f), theme::withAlpha(L.line, 0.9f), theme::kRadius + 1);
   if (!on && t > 0) dl->AddRectFilled(t0, t1, theme::withAlpha(P.paper, (P.dark ? 0.035f : 0.0f) * t));
-  // Name, the preview badge, one line.
+  // Name, one line. (K-329: every layout is complete in 0.7.7, no Preview badge.)
   const float cx = pos.x + kCardPad + 4, cw = g.cardW - 2 * (kCardPad + 4);
   const float ny = std::round(t1.y + kNameGap);
   const char* name = i18n::tr(layout::displayName(p));
-  const float nameW = a.fontBold ? a.fontBold->CalcTextSizeA(theme::kFontBody, FLT_MAX, 0, name).x : 0;
-  float badgeW = 0;
-  if (layout::isPreview(p)) {
-    const char* tag = i18n::tr(layout::previewTag());
-    const ImVec2 ts = a.fontRegular->CalcTextSizeA(theme::kFontLabel, FLT_MAX, 0, tag);
-    badgeW = std::round(ts.x + 12);
-    const ImVec2 b0(std::round(cx + nameW + 8), ny + 1), b1(b0.x + badgeW, ny + 17);
-    if (b1.x <= cx + cw) {
-      dl->AddRectFilled(b0, b1, theme::withAlpha(P.accent, P.dark ? 0.16f : 0.11f), 8.0f);
-      dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round(b0.x + 6), std::round(b0.y + (16 - ts.y) * 0.5f)), theme::mix(P.accent, P.text, P.dark ? 0.45f : 0.2f),
-                  tag);
-    } else {
-      badgeW = 0;
-    }
-  }
-  theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(cx, ny), cw - (badgeW > 0 ? badgeW + 8 : 0), P.text, name);
+  theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(cx, ny), cw, P.text, name);
   const char* line = i18n::tr(layout::blurb(p));
   const float ly = ny + kNameH + 4;
   dl->PushClipRect(ImVec2(cx, ly), ImVec2(cx + cw, ly + 2 * kLineH), true);
@@ -744,10 +729,7 @@ bool card(App& a, int index, ImVec2 pos, const CardGrid& g, bool focused, bool k
   }
   if (focused && keyNav) dl->AddRect(ImVec2(pos.x - 3, pos.y - 3), ImVec2(p1.x + 3, p1.y + 3), theme::withAlpha(P.accent, 0.7f), r + 3, 0, 2.0f);
   if (held) dl->AddRectFilled(pos, p1, theme::withAlpha(P.ink, P.dark ? 0.10f : 0.04f), r);
-  if (hov) {
-    if (!layout::isPreview(p)) ui::Hint(line);
-    else ui::Hint(std::string(line) + ". " + i18n::tr("Preview: the windows, shortcuts and menus are in place; more of this style comes in later updates."));
-  }
+  if (hov) ui::Hint(line);
   return clicked;
 }
 

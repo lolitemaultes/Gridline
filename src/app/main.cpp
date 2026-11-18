@@ -3174,7 +3174,7 @@ int main(int argc, char** argv) {
     else if (arg == "--menu" && i + 1 < argc) devMenu = argv[++i];
     else if (arg == "--layout" && i + 1 < argc) devLayoutPreset = argv[++i];
     else if (arg == "--system-menu") sysmenu::setDevForce(true);  // K-112: a hidden run fills the system menu bar too
-    else if (arg == "--layout-dev") layoutui::setDevLayouts(true);  // K-112: the development layouts (region shells, Tracker) this run
+    else if (arg == "--layout-dev") layoutui::setDevLayouts(true);  // K-112: developer commands this run (development builds)
     else if (arg == "--pane" && i + 1 < argc) devPanes.push_back(argv[++i]);
     else if (arg == "--switch-check") devSwitchCheck = true;  // K-79: report each layout switch's frames (stderr)
     else if (arg == "--style-report" && i + 1 < argc) devStyleReport = argv[++i];
@@ -3626,7 +3626,7 @@ int main(int argc, char** argv) {
   viewports::setVirtualMonitors(useOffscreen);
   // K-79: the layout preset (Settings > Interface > Layout) decides which layout file is read;
   // Studio keeps layout.ini. --layout shows another one for this run without saving anything.
-  layout::Preset layoutPreset = layout::shown(app.settings);  // K-112: a development layout needs ui.layoutDev
+  layout::Preset layoutPreset = layout::shown(app.settings);
   if (!devLayoutPreset.empty()) {
     layoutPreset = layout::fromId(devLayoutPreset);
     layoutui::setDevOverride(layoutPreset);
@@ -3635,6 +3635,10 @@ int main(int argc, char** argv) {
     if (devLight) theme::apply(false);
   }
   layoutui::setActive(layoutPreset);
+  if (app.showAbout) {  // K-329: --show about opens the About people get from the Help menu (the Tracker's own there)
+    app.showAbout = false;
+    trackerview::openAbout(app);
+  }
   // K-112c (round 43): the project made at start (before the layout was known) is made again in
   // Clips, so it starts with Clips' tracks; one opened or already edited stays.
   if (layoutPreset == layout::Preset::Live && !argOpened && !argProject && app.projectFile().empty() && app.doc.history().position() == 0)

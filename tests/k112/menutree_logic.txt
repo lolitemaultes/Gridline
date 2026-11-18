@@ -365,9 +365,9 @@ View > More windows and views > Close plugin windows	Alt+F12	view.closePlugins	e
 View > More windows and views > Close all windows	F12	view.closeAll	e-
 View > More windows and views > Bring all windows back into Gridline			--
 View > More windows and views > Window layout > Studio			e-
-View > More windows and views > Window layout > Clips	Preview		e-
-View > More windows and views > Window layout > Smooth	Preview		ec
-View > More windows and views > Window layout > Tracker	Preview		e-
+View > More windows and views > Window layout > Clips			e-
+View > More windows and views > Window layout > Smooth			ec
+View > More windows and views > Window layout > Tracker			e-
 View > More windows and views > Window layout > Layout settings...			e-
 View > More windows and views > Workspaces > New workspace			e-
 View > More windows and views > Workspaces > Add starter workspaces			e-

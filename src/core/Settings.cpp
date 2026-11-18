@@ -259,7 +259,7 @@ Settings::Settings() {
       {"layout.logic.panesKept", b(false)},
       {"layout.logic.lowerKept", b(false)},
       {"ui.logicQuickHelp", b(false)},  // R01-08: the Tracks layout's floating Quick help  // K-112B cp40: the editors pane kept open for someone who used the layout
-      {"ui.layoutDev", b(false)},  // K-112: development layouts (Tracker, region shells) before their phase ships
+      {"ui.layoutDev", b(false)},  // K-112: developer commands of development builds (K-329: the layouts ship to everyone)
       {"ui.systemMenuBar", b(true)},
       // K-112: installed plugins' windows in the Live layout (HostedUi.h PluginWindowPolicy).
       {"live.pluginWindowsOnLoad", b(true)},        // a plugin put on a track opens its window

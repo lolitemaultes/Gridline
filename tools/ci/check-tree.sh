@@ -72,5 +72,16 @@ for f in tests/*.cmake; do
   grep -q '^cmake_minimum_required(' "$f" || complain "$f: a cmake -P test script needs cmake_minimum_required(VERSION 3.16) (the project's policies)"
 done
 
+# K-329: the developer layout switch (GRIDLINE_DEV_LAYOUTS, ui.layoutDev, --layout-dev) reaches
+# developer commands only. Anything a person sees must look the same in a release build, so the
+# switch is read in these places alone (a new use elsewhere shipped old layouts in a release build).
+devuse=$(git grep -n -E 'GRIDLINE_DEV_LAYOUTS|devSetting\(|devLayouts\(|"ui\.layoutDev"' -- src \
+  ':!src/core/LayoutPreset.cpp' ':!src/core/LayoutPreset.h' ':!src/core/Settings.cpp' || true)
+devuse=$(printf '%s\n' "$devuse" | grep -v -E '^src/app/main\.cpp:[0-9]+: +if \(w && layout::devSetting\(app\.settings\)\)' | grep -v '^$' || true)
+if [ -n "$devuse" ]; then
+  printf '%s\n' "$devuse" >&2
+  complain "the developer layout switch is read above: what people see must not depend on it (developer commands only; see K-329)"
+fi
+
 if [ "$fail" != 0 ]; then exit 1; fi
 echo "check-tree: ${#files[@]} tracked files OK"

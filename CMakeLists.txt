@@ -117,12 +117,12 @@ endif()
 # Builds run from the build tree find assets/ in the source tree (a compiled-in fallback path);
 # release packages turn this off so no build machine path ends up in the programs.
 option(GRIDLINE_DEV_ASSETS "Fall back to the source tree's assets/ folder (development builds)" ON)
-# K-112: the development layouts (the region shells, Tracker), switched on by the ui.layoutDev setting or
-# --layout-dev. Development builds only: release packages (GRIDLINE_DEV_ASSETS=OFF) leave the switch out,
-# so no setting or flag reaches a layout before its phase ships.
-option(GRIDLINE_DEV_LAYOUTS "Allow the development layouts (ui.layoutDev, --layout-dev)" ${GRIDLINE_DEV_ASSETS})
-if(GRIDLINE_DEV_LAYOUTS)  # read by these two files only
-  set_source_files_properties(src/core/LayoutPreset.cpp src/app/LayoutShellUi.cpp PROPERTIES COMPILE_DEFINITIONS GRIDLINE_DEV_LAYOUTS=1)
+# K-112: developer commands switched on by the ui.layoutDev setting or --layout-dev (development
+# builds only; release packages, GRIDLINE_DEV_ASSETS=OFF, leave the switch out). K-329: every layout
+# people see (Studio, Clips, Smooth, Tracker) is the same in both kinds of build.
+option(GRIDLINE_DEV_LAYOUTS "Allow the developer layout commands (ui.layoutDev, --layout-dev)" ${GRIDLINE_DEV_ASSETS})
+if(GRIDLINE_DEV_LAYOUTS)  # read by this file only
+  set_source_files_properties(src/core/LayoutPreset.cpp PROPERTIES COMPILE_DEFINITIONS GRIDLINE_DEV_LAYOUTS=1)
 endif()
 # GUI tests (the off-screen app runs) need a display; headless CI runners turn them off.
 option(GRIDLINE_GUI_TESTS "Register the tests that open (hidden) application windows" ON)
@@ -2497,6 +2497,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k314_dialog_place_app -P ${CMAKE_SOURCE_DIR}/tests/k314_dialog_place_app.cmake)
     set_tests_properties(k314_dialog_place_app PROPERTIES TIMEOUT 600)
+    # K-329: Clips, Smooth and the Tracker as people get them (no --layout-dev, no ui.layoutDev):
+    # built from their region shells, the same as with the developer switch.
+    add_test(NAME k329_user_layouts_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k329_user_layouts_app -P ${CMAKE_SOURCE_DIR}/tests/k329_user_layouts_app.cmake)
+    set_tests_properties(k329_user_layouts_app PROPERTIES TIMEOUT 600)
     # K-327: --frames runs end on a modified song without asking (changes discarded, nothing saved),
     # and the command palette's walk of the menus and settings pages touches no secret.
     add_test(NAME k327_frames_palette_app

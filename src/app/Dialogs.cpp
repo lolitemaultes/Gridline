@@ -543,9 +543,9 @@ void settingsPageBody(App& a, int& page, float fieldW) {
       formLabel("");
       ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(viewports::unavailableReason().c_str()));
     }
-    // K-112: the layouts with a menu row of their own (development layouts for now) can put their
-    // menus in the system's menu bar. Studio keeps its menus in its top bar either way.
-    if (layoutui::devLayouts(a) || layout::current(st) == layout::Preset::Tracker) {  // K-106: the Tracker has its own menu row in every build
+    // K-112: the layouts with a menu row of their own (Clips, Smooth, Tracker) can put their menus
+    // in the system's menu bar. Studio keeps its menus in its top bar either way.
+    {
       bool sysMenu = st.getBool("ui.systemMenuBar");
       formLabel("Menu bar");
       if (ImGui::Checkbox(i18n::tr("Put the menus in the system menu bar"), &sysMenu)) st.set("ui.systemMenuBar", sysMenu);
@@ -553,7 +553,7 @@ void settingsPageBody(App& a, int& page, float fieldW) {
                "the desktop's global menu (Linux) where there is one. Off: they stay in the window. Studio keeps its menus in its top bar");
     }
     // K-112: installed plugins' windows in the Live layout (shown as Clips).
-    if (layoutui::devLayouts(a)) {
+    {
       formLabel("Plugin windows (Clips)");
       bool onLoad = st.getBool("live.pluginWindowsOnLoad"), several = st.getBool("live.pluginWindowsSeveral"),
            selOnly = st.getBool("live.pluginWindowsSelectedOnly");

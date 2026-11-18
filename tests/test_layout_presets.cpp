@@ -79,10 +79,6 @@ void testLayoutFiles() {
   expect(std::string(layout::displayName(Preset::Studio)) == "Studio" && std::string(layout::displayName(Preset::Live)) == "Clips" &&
              std::string(layout::displayName(Preset::Logic)) == "Smooth",
          "display names");
-  // Until each becomes a whole style (K-112), Live and Logic are shown as previews.
-  expect(!layout::isPreview(Preset::Studio) && layout::isPreview(Preset::Live) && layout::isPreview(Preset::Logic) &&
-             layout::previewTag() && *layout::previewTag(),
-         "live and logic are marked as previews");
 }
 
 void testNormalise() {
@@ -118,10 +114,9 @@ void testLayoutNames() {
     expect(name != "Live" && name != "Logic" && name != "Tracks", "no layout keeps an earlier name");
   }
   expect(listed == "Studio, Clips, Smooth, Tracker", ("the layouts in order: " + listed).c_str());
-  // The chooser cards, View > Window layout and the shortcut set list show every layout, Tracker
-  // too (a Preview, as Clips and Smooth), with no development setting.
+  // The chooser cards, View > Window layout and the shortcut set list show every layout, with no
+  // development setting (K-329: all four are complete, none is tagged a preview).
   expect(layout::kPresetCount == 4, "the chooser shows Studio, Clips, Smooth and Tracker");
-  expect(layout::isPreview(Preset::Tracker), "Tracker is tagged Preview");
   Settings plain;
   for (int i = 0; i < layout::kPresetCount; ++i)
     expect(layout::available(static_cast<Preset>(i), plain), (std::string(want[i]) + " can be chosen").c_str());

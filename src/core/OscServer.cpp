@@ -171,8 +171,16 @@ bool OscServer::allowed(uint32_t ip) const {
 
 bool OscServer::start(const OscServerConfig& cfg, std::string* err) {
   stop();
+  std::vector<Sock> refused;
+  auto closeRefused = [&] {
+    for (auto& r : refused) {
+      net::closeSock(r);
+    }
+    refused.clear();
+  };
   auto failWith = [&](const std::string& m) {
     if (err) *err = m;
+    closeRefused();
     net::closeSock(udp_);
     net::closeSock(tcp_);
     udp_ = tcp_ = kNoSock;
@@ -190,7 +198,9 @@ bool OscServer::start(const OscServerConfig& cfg, std::string* err) {
     }
   const uint32_t bindIp = cfg.network ? 0u /* INADDR_ANY */ : kLoopback;
   // Any free port (0): the system picks the UDP port and TCP takes the same number, which another
-  // program may already hold for TCP; then another UDP port is tried.
+  // program may already hold for TCP; then another UDP port is tried. The refused UDP sockets stay
+  // open until the end (refused, closed by failWith or after the loop), or the system (Windows)
+  // hands the same port back on every try.
   for (int attempt = 0;; ++attempt) {
     udp_ = udpSocket();
     if (udp_ == kNoSock) return failWith("Could not open a UDP socket: " + net::lastError());
@@ -215,13 +225,14 @@ bool OscServer::start(const OscServerConfig& cfg, std::string* err) {
     const bool used = inUse();
     const std::string why = net::lastError();
     if (cfg.port == 0 && used && attempt < 32) {
-      net::closeSock(udp_);
+      refused.push_back(udp_);
       net::closeSock(tcp_);
       udp_ = tcp_ = kNoSock;
       continue;
     }
     return failWith(used ? "TCP port " + std::to_string(port_) + " is in use by another program" : "Could not listen for TCP on port " + std::to_string(port_) + ": " + why);
   }
+  closeRefused();
   {
     std::lock_guard<std::mutex> lk(mu_);
     queue_.clear();

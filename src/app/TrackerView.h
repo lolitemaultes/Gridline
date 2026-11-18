@@ -146,6 +146,10 @@ std::string takeStartPage();
 // What the header shows: 0 its boxes, 1 Help, 2 Files (the header-left swap), 3 Settings, 4 About,
 // 5 Collaboration (K-106: the Collaboration panel as a page; it opens and closes with a.showCollab).
 void setHeaderSwap(int which);
+// K-329: About Gridline as people open it (Help menu, the command palette, --show about): in the
+// Tracker the header band's About with the chrome banner (K-315; the band comes back from Extend),
+// elsewhere the About window. Its "Licences and credits..." button opens the About window.
+void openAbout(App& a);
 // Ctrl+Alt+8, as the Audio editor button: the audio editor in front, or (in front already) the pattern.
 void toggleAudioPage(App& a);
 // K-297: Esc (when nothing else took it) or Cmd+W (Ctrl+W) on a page docked in the centre, other

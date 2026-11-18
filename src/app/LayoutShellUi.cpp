@@ -88,21 +88,12 @@ bool* windowOpenFlag(App& a, const std::string& stableName) {
 
 // ------------------------------------------------------- dev layouts ----
 
-namespace {
-bool gDevLayouts = false;
-}
-// K-112: development builds only (GRIDLINE_DEV_LAYOUTS); a release build ignores --layout-dev and ui.layoutDev.
-#ifdef GRIDLINE_DEV_LAYOUTS
-void setDevLayouts(bool on) { gDevLayouts = on, layout::setDevRun(on); }
-#else
-void setDevLayouts(bool) {}
-#endif
-bool devLayouts(const App& a) { return gDevLayouts || layout::devSetting(a.settings); }
+// K-112: --layout-dev and ui.layoutDev switch on developer tooling only (development builds,
+// see LayoutPreset.cpp); what people see never depends on them.
+void setDevLayouts(bool on) { layout::setDevRun(on); }
 
-bool shellBuilt(const App& a, Preset p) {
-  if (p == Preset::Tracker) return true;
-  return (p == Preset::Live || p == Preset::Logic) && devLayouts(a);
-}
+// K-329: the region shells of Clips, Smooth and the Tracker ship in every build (0.7.7).
+bool shellBuilt(const App&, Preset p) { return p == Preset::Live || p == Preset::Logic || p == Preset::Tracker; }
 
 std::string iniFile(const App& a, Preset p) {
   if (p == Preset::Tracker || !shellBuilt(a, p)) return layout::iniFileName(p);

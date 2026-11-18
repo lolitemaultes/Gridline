@@ -1024,7 +1024,7 @@ const md::Menu& helpDef() {
       md::separator(),
       md::item(N_("Check for updates..."), [](App& a) { updui::checkNow(a); })  // J-89 (R02-22: the Tracks layout has it in the app menu)
           .only([](App& a) { return updui::started() && !logicplug::active(a); }),
-      md::item(N_("About Gridline"), [](App& a) { a.showAbout = true; }).only(notTracks),  // R05-18: in the app menu there
+      md::item(N_("About Gridline"), [](App& a) { trackerview::openAbout(a); }).only(notTracks),  // R05-18: in the app menu there (K-329: the Tracker's own About)
   };
   return m;
 }

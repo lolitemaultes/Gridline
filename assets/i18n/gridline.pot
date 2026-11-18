@@ -1793,7 +1793,7 @@ msgstr ""
 msgid "Presets"
 msgstr ""
 
-#: src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/SoundThemeUi.cpp src/core/LayoutPreset.cpp
+#: src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/SoundThemeUi.cpp
 msgid "Preview"
 msgstr ""
 
@@ -11523,10 +11523,6 @@ msgstr ""
 
 #: src/app/LayoutChooser.cpp
 msgid "Matching shortcuts"
-msgstr ""
-
-#: src/app/LayoutChooser.cpp
-msgid "Preview: the windows, shortcuts and menus are in place; more of this style comes in later updates."
 msgstr ""
 
 #: src/app/LayoutChooser.cpp
@@ -23826,7 +23822,7 @@ msgid "Len"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
-msgid "Licences and credits: Help, About Gridline"
+msgid "Licences and credits..."
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -24391,6 +24387,10 @@ msgstr ""
 
 #: src/app/TrackerFrame.cpp
 msgid "The instrument's previous sample"
+msgstr ""
+
+#: src/app/TrackerFrame.cpp
+msgid "The licences of Gridline and its parts, and the credits"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp

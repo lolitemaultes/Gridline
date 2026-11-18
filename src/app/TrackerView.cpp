@@ -3090,6 +3090,8 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
       if (w == label) w = window;
     showPage(a, w.c_str());
     std::printf("tracker page frame %d: %s\n", frame, w.c_str());
+  } else if (cmd == "swapstate") {  // K-329: the header's swap (0 none .. 4 About, 5 Collaboration) and the About window
+    std::printf("tracker swapstate frame %d: %d about-window %d\n", frame, headerSwap(), a.showAbout ? 1 : 0);
   } else if (cmd == "swap") {  // none|help|files|config|about|collab
     const std::string w = args.size() > 1 ? args[1] : "none";
     setHeaderSwap(w == "help" ? 1 : w == "files" ? 2 : w == "config" ? 3 : w == "about" ? 4 : w == "collab" ? 5 : 0);

@@ -52,9 +52,6 @@ const char* blurb(Preset p) {
   }
 }
 
-bool isPreview(Preset p) { return p != Preset::Studio; }
-const char* previewTag() { return i18n::N_("Preview"); }
-
 #ifdef GRIDLINE_DEV_LAYOUTS
 namespace {
 bool gDevRun = false;  // --layout-dev this run

@@ -96,9 +96,9 @@ View > Close plugin windows	Alt+F12	view.closePlugins	e-
 View > Close all windows	F12	view.closeAll	e-
 View > Bring all windows back into Gridline			--
 View > Window layout > Studio			e-
-View > Window layout > Clips	Preview		ec
-View > Window layout > Smooth	Preview		e-
-View > Window layout > Tracker	Preview		e-
+View > Window layout > Clips			ec
+View > Window layout > Smooth			e-
+View > Window layout > Tracker			e-
 View > Window layout > Layout settings...			e-
 View > Workspaces > New workspace			e-
 View > Workspaces > Add starter workspaces			e-

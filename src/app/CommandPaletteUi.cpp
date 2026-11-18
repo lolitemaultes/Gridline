@@ -610,7 +610,13 @@ void perform(App& a, const Action& act) {
       S.injectWait = 8;
       break;
     }
-    case Act::Window: showWindow(a, act.flag, act.window.c_str()); break;
+    case Act::Window:
+      if (act.flag == &App::showAbout) {
+        trackerview::openAbout(a);  // K-329: the Tracker's own About there
+      } else {
+        showWindow(a, act.flag, act.window.c_str());
+      }
+      break;
     case Act::Picker:
       if (!browserui::pluginPickerOpen()) browserui::togglePluginPicker();
       break;

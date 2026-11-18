@@ -122,7 +122,7 @@ void viewLayoutMenu(App& a) {
   for (int i = 0; i < layout::kPresetCount; ++i) {
     const Preset p = static_cast<Preset>(i);
     const bool on = gActive == p;
-    if (ImGui::MenuItemEx(i18n::tr(layout::displayName(p)), room.c_str(), layout::isPreview(p) ? i18n::tr(layout::previewTag()) : nullptr, on))
+    if (ImGui::MenuItemEx(i18n::tr(layout::displayName(p)), room.c_str(), nullptr, on))
       choose(a, p, linked);
     const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
     const float x = r0.x + GImGui->CurrentWindow->DC.MenuColumns.OffsetLabel - 8.0f - glyphW * 0.5f;
