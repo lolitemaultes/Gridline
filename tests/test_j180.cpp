@@ -239,7 +239,7 @@ void testPlayback() {
   expect(pitchesRight(b, 0, "fine"), "play: each fine-pitched note plays its own chop, pitched by its fine pitch (+-1200 c too)");
   // Channel pitch and master pitch tune the chops; they never pick another key.
   Song c = s;
-  c.channels[0].pitch = 2;
+  c.channels[0].pitchCents = 200;
   expect(pitchesRight(renderPattern(c), 2, "channel +2"), "play: channel pitch tunes the chops (keys stay)");
   Song m = s;
   m.masterPitch = -1;

@@ -360,7 +360,7 @@ std::vector<ChanField> channelFields(int type, const Channel& target, int ppq) {
   if (type != kAuto) {
     add([](const Channel& c) { return c.pan; }, 219, 0, 0, Type::I32, 0, 12800);
     add([](const Channel& c) { return c.gain; }, 219, 0, 4, Type::U32, 0, 16000);
-    if (type != kAudio) add([](const Channel& c) { return c.pitch * 100.0 + c.fine; }, 219, 0, 8, Type::I32, -2600, 2600);
+    if (type != kAudio) add([](const Channel& c) { return std::round(static_cast<double>(c.pitchCents)) + c.fine; }, 219, 0, 8, Type::I32, -2600, 2600);
     add([](const Channel& c) { return c.swingMix; }, 97, 0, 0, Type::U16, 0, 128);
     add([](const Channel& c) { return c.timeShift; }, 89, 0, 0, Type::U16, 0, 1024);
     add([](const Channel& c) { return c.polyphony; }, 221, 0, 0, Type::U32, 0, 256);
@@ -943,7 +943,7 @@ void Exporter::writeChannel(int fl) {
       };
       cmp("volume", back.gain, ch.gain);
       cmp("pan", back.pan, ch.pan);
-      if (type != kAudio) cmp("pitch", back.pitch * 100.0 + back.fine, ch.pitch * 100.0 + ch.fine);
+      if (type != kAudio) cmp("pitch", std::round(static_cast<double>(back.pitchCents)) + back.fine, std::round(static_cast<double>(ch.pitchCents)) + ch.fine);
       if (s.swing != 0) cmp("swing mix", back.swingMix, ch.swingMix);
       cmp("time shift", back.timeShift, ch.timeShift);
       cmp("polyphony", back.polyphony, ch.polyphony);

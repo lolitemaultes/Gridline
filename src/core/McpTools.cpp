@@ -336,7 +336,8 @@ Json channelJson(const Song& s, size_t i) {
                  {"volume", jnum(round4(c.gain))},
                  {"pan", jnum(round4(c.pan))},
                  {"muted", jbool(c.muted)},
-                 {"pitch", jnum(c.pitch)},
+                 {"pitch", jnum(round4(static_cast<double>(c.pitchCents) / 100.0))},
+                 {"pitchCents", jnum(round4(c.pitchCents))},
                  {"mixer", jnum(std::max(0, s.mixerIndex(c.mixerTrack)))},
                  {"color", jstr(hexColor(c.color))},
                  {"notes", jnum(static_cast<double>(notes))}});
@@ -918,7 +919,8 @@ bool applyChannelEdits(Environment& env, ObjectId id, const Json& a, std::string
   }
   if (has(a, "volume")) d.setParam(channelParam(id, ChannelParam::Volume), argNum(a, "volume"), false);
   if (has(a, "pan")) d.setParam(channelParam(id, ChannelParam::Pan), argNum(a, "pan"), false);
-  if (has(a, "pitch")) d.setParam(channelParam(id, ChannelParam::Pitch), static_cast<double>(argInt(a, "pitch")), false);
+  if (has(a, "pitch")) d.setParam(channelParam(id, ChannelParam::Pitch), argNum(a, "pitch") * 100.0, false);  // semitones
+  if (has(a, "pitchCents")) d.setParam(channelParam(id, ChannelParam::Pitch), argNum(a, "pitchCents"), false);
   if (has(a, "muted")) d.setParam(channelParam(id, ChannelParam::Mute), argBool(a, "muted") ? 1.0 : 0.0, false);
   if (has(a, "mixer")) {
     const MixerTrack* m = mixerAt(d.song(), argInt(a, "mixer"), err);
@@ -1663,7 +1665,8 @@ std::vector<Tool> buildTools() {
       {"preset", strP("Preset name for the instrument (list_presets)", 256)},
       {"volume", numP("Volume 0..1.25 (0.78 = default)", 0, 1.25)},
       {"pan", numP("Pan -1 (left) .. 1 (right)", -1, 1)},
-      {"pitch", intP("Pitch in semitones", -24, 24)},
+      {"pitch", numP("Channel pitch in semitones, fractions allowed (0.5 = 50 cents)", -24, 24)},
+      {"pitchCents", numP("Channel pitch in cents (100 = a semitone; wins over pitch)", -2400, 2400)},
       {"muted", boolP("Mute")},
       {"mixer", intP("Route to this mixer track (0 = master)", 0, 999)},
       {"color", strP("Colour \"#RRGGBB\"", 7)}};

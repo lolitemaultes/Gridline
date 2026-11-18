@@ -405,6 +405,11 @@ void familyTests() {
   expect(roomops::roomCount(f.doc.song()) == 2, "stage_room: two rooms");
   f.edit("stage_room", "{\"action\": \"move_tracks\", \"room\": 2, \"tracks\": [3]}", "stage_room: move a track");
   expect(roomops::trackRoom(f.doc.song(), f.doc.song().mixer[3].id) == 1, "stage_room: the track stands in room 2");
+  // Tracks from a marker area (core/StagePick.h): listed with find_tracks; a marker that is not there is refused.
+  f.refused("stage_room", "{\"action\": \"find_tracks\", \"marker\": 999}", "stage_room: no such marker");
+  f.edit("add_marker", "{\"position\": 0, \"name\": \"Drop\"}", "stage_room: a marker to pick from");
+  r = Fixture::data(f.callJ("stage_room", "{\"action\": \"find_tracks\", \"marker\": 1}"));
+  expect(r.find("tracks") != nullptr, "stage_room: find_tracks lists the marker area's tracks");
   // arrangements
   f.edit("arrangement", "{\"action\": \"add\", \"name\": \"Edit\"}", "arrangement: add");
   r = Fixture::data(f.callJ("arrangement", "{}"));

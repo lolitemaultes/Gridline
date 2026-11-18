@@ -62,6 +62,7 @@ Settings::Settings() {
       {"rack.selectionFollows", b(true)},  // K-234: rack and mixer selections follow each other
       {"ui.channelHeader", b(true)},  // K-279: the channel window's header row (colour, name, instrument, route)
       {"playlist.pickerAudition", b(true)},  // K-235: pressing a clip source in the picker auditions it
+      {"smooth.libraryPreview", b(true)},  // Smooth's Library: a click on a patch plays a C5 note of it (the header's speaker)
       {"freeze.restSilent", b(true)},  // K-277: silent instruments rest (Options > Rest silent instruments)
       {"audio.threads", Json::makeNumber(0)},  // mixer processing threads (0 = automatic)
       // Audio input & recording (J-8).
@@ -226,6 +227,8 @@ Settings::Settings() {
       {"ui.stage.roomHinted", b(false)},           // "Pick a room to hear depth" was shown once
       {"ui.stage.roomsList", Json::makeNumber(1)},  // K-224 / K-270: the rooms panel beside the stage is open
       {"ui.stage.roomsWidth", Json::makeNumber(264)},  // K-270: the rooms column's width (px); under 150 the slim rail
+      {"ui.stage.pickBuses", b(true)},             // tracks from the playlist: the buses they send into come too
+      {"ui.stage.pickMuted", b(false)},            // ... and muted clips count
       {"ui.mix.roomFilter", Json::makeNumber(0)},   // K-224: the Mix view shows 0 every track, 1 the Stage's shown room only
       {"ui.playlistTrackHeight", Json::makeNumber(46)},  // K-24: the playlist's vertical zoom (base track height, px; 24 .. 120)
       // K-112b: whether that height is one the person chose; until then each layout's own default
@@ -289,7 +292,8 @@ Settings::Settings() {
       // Checkpoint 55 (gap 5): Clips' Arrangement row heights the person dragged, per set and track
       // ("<set>\t<track key>\t<scale per mille>" a line, at most 400 lines). Per person, never in a project.
       {"clips.rowHeights", Json::makeString("")},
-      {"clips.punch", b(false)},   // checkpoint 56 (N55-04): Clips' Punch switch (off by default, as the reference's punch-in and -out)
+      {"clips.punch", b(false)},
+      {"clips.followActions", b(true)},  // grid2-1118: the global follow action switch (per person, never in a project)   // checkpoint 56 (N55-04): Clips' Punch switch (off by default, as the reference's punch-in and -out)
       // Checkpoint 56 (N55-06, N55-07): per Set, outside the song: the files a Set's row heights were last
       // saved as ("<path>\t<fingerprint>" lines), and the Sets whose short looping samples were answered.
       {"clips.rowHeightFiles", Json::makeString("")},

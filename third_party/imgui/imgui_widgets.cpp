@@ -1253,6 +1253,11 @@ bool ImGui::ImageButton(ImTextureID user_texture_id, const ImVec2& size, const I
 float GImGuiGridlineToggleW = 0.0f;
 bool GImGuiGridlineMenuLive = false;  // GRIDLINE PATCH (K-112c round 25)
 bool GImGuiGridlineSplitterOwn = false;  // GRIDLINE PATCH (K-297)
+bool GImGuiGridlineSplitterCentre = false;  // GRIDLINE PATCH (rsz-1118)
+void (*GImGuiGridlineSplitterLimits)(ImGuiDockNode* node, float total, float* min0, float* min1) = NULL;  // GRIDLINE PATCH (rsz-1118)
+float GImGuiGridlineSplitterLine = 0.0f;  // GRIDLINE PATCH (rsz-1118)
+int GImGuiGridlineSplitterCursor = ImGuiMouseCursor_None;  // GRIDLINE PATCH (rsz-1118)
+int GImGuiGridlineSplitterFrame = -1;  // GRIDLINE PATCH (rsz-1118)
 void (*GImGuiGridlineToggleDraw)(ImDrawList* dl, const ImVec2& a, const ImVec2& b, int state, bool hovered, bool held) = NULL;
 
 bool ImGui::Checkbox(const char* label, bool* v)
@@ -1877,7 +1882,11 @@ bool ImGui::SplitterBehavior(const ImRect& bb, ImGuiID id, ImGuiAxis axis, float
         g.LastItemData.StatusFlags |= ImGuiItemStatusFlags_HoveredRect; // for IsItemHovered(), because bb_interact is larger than bb
 
     if (held || (hovered && g.HoveredIdPreviousFrame == id && g.HoveredIdTimer >= hover_visibility_delay))
+    {
         SetMouseCursor(axis == ImGuiAxis_Y ? ImGuiMouseCursor_ResizeNS : ImGuiMouseCursor_ResizeEW);
+        if (GImGuiGridlineSplitterOwn)  // GRIDLINE PATCH (rsz-1118): a dock splitter's cursor, kept to the frame's end
+            GImGuiGridlineSplitterCursor = g.MouseCursor, GImGuiGridlineSplitterFrame = g.FrameCount;
+    }
 
     ImRect bb_render = bb;
     if (held)
@@ -1906,6 +1915,21 @@ bool ImGui::SplitterBehavior(const ImRect& bb, ImGuiID id, ImGuiAxis axis, float
     if (bg_col & IM_COL32_A_MASK)
         window->DrawList->AddRectFilled(bb_render.Min, bb_render.Max, bg_col, 0.0f);
     const ImU32 col = GetColorU32(held ? ImGuiCol_SeparatorActive : (hovered && g.HoveredIdTimer >= hover_visibility_delay) ? ImGuiCol_SeparatorHovered : ImGuiCol_Separator);
+    if (GImGuiGridlineSplitterOwn && GImGuiGridlineSplitterLine > 0.0f)
+    {
+        // GRIDLINE PATCH (rsz-1118): the idle bar, and under the pointer a thin line along its middle.
+        window->DrawList->AddRectFilled(bb_render.Min, bb_render.Max, GetColorU32(ImGuiCol_Separator), 0.0f);
+        if (held || (hovered && g.HoveredIdTimer >= hover_visibility_delay))
+        {
+            const float w = ImMin(GImGuiGridlineSplitterLine, bb_render.GetSize()[axis]);
+            const float mid = ImTrunc((bb_render.Min[axis] + bb_render.Max[axis] - w) * 0.5f);
+            ImRect line = bb_render;
+            line.Min[axis] = mid;
+            line.Max[axis] = mid + w;
+            window->DrawList->AddRectFilled(line.Min, line.Max, col, 0.0f);
+        }
+        return held;
+    }
     window->DrawList->AddRectFilled(bb_render.Min, bb_render.Max, col, 0.0f);
 
     return held;

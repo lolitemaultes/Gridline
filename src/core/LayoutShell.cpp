@@ -118,6 +118,7 @@ Shell tracker() {
   s.regions = {R("tracker.header", "", Edge::Top, px(248, 0.35f, 120), true, false, TabStyle::Dock, true),
                R("tracker.side", "", Edge::Right, px(190, 0.25f, 150), false, false, TabStyle::Rail),  // K-237: its tools on a tab rail
                R("tracker.lower", "", Edge::Bottom, px(150, 0.3f, 100), false, false, TabStyle::Dock, true)};
+  s.regions[0].keep = true;  // gap-1118: the header band is the Tracker's own (its boxes, the page strip)
   return s;
 }
 
@@ -271,15 +272,40 @@ float regionExtent(const Region& r, float parent, const State& st, const std::st
   // default on small windows), up to 70 % of the parent, so a band can be pulled open to show a whole editor.
   bool dragged = false;
   if (auto it = st.regionSize.find(r.id); it != st.regionSize.end()) v = it->second, dragged = true;
-  if (!member.empty())
-    if (auto it = st.memberSize.find(std::string(r.id) + "|" + member); it != st.memberSize.end()) v = it->second;
-  if (r.size.maxPx > 0 && !dragged) v = std::min(v, r.size.maxPx);
-  if (r.size.dragMaxPx > 0 && dragged) v = std::min(v, r.size.dragMaxPx);
-  if (r.size.maxShare > 0) v = std::min(v, std::floor(parent * (dragged ? std::max(r.size.maxShare, 0.7f) : r.size.maxShare)));
-  v = std::max(v, std::min(r.size.minPx, std::floor(parent * 0.5f)));
+  // rsz-1118: a member's own size is a dragged one too (Smooth's lower pane let go above its default
+  // share came back smaller on the next rebuild).
+  if (!member.empty()) {
+    if (auto it = st.memberSize.find(std::string(r.id) + "|" + member); it != st.memberSize.end()) {
+      v = it->second, dragged = true;
+    }
+  }
+  if (dragged) {
+    float lo = 0, hi = 0;
+    dragRange(r, parent, lo, hi);
+    v = std::clamp(v, lo, hi);
+  } else {
+    if (r.size.maxPx > 0) {
+      v = std::min(v, r.size.maxPx);
+    }
+    if (r.size.maxShare > 0) {
+      v = std::min(v, std::floor(parent * r.size.maxShare));
+    }
+    v = std::max(v, std::min(r.size.minPx, std::floor(parent * 0.5f)));
+  }
   // K-237: a maximised pane takes most of its parent (the main area keeps the rest) until restored.
   if (st.maximised.count(r.id)) v = std::floor(parent * kMaximisedShare);
   return std::floor(std::clamp(v, 0.0f, std::max(0.0f, parent - 1.0f)));
+}
+
+void dragRange(const Region& r, float parent, float& lo, float& hi) {
+  hi = std::max(0.0f, parent - 1.0f);
+  if (r.size.dragMaxPx > 0) {
+    hi = std::min(hi, r.size.dragMaxPx);
+  }
+  if (r.size.maxShare > 0) {
+    hi = std::min(hi, std::floor(parent * std::max(r.size.maxShare, 0.7f)));
+  }
+  lo = std::min(std::min(r.size.minPx, std::floor(parent * 0.5f)), hi);
 }
 
 std::vector<Placed> solve(Preset p, float w, float h, const State& st) {

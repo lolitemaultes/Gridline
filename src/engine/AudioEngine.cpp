@@ -602,9 +602,10 @@ bool AudioEngine::stopPressed() {
   return false;
 }
 
-void AudioEngine::launchClip(ObjectId clip) {
+void AudioEngine::launchClip(ObjectId clip, bool legato) {
   Cmd c{Cmd::Launch};
   c.id = clip;
+  c.value = legato ? 1.0f : 0.0f;
   send(c);
   playing_ = true;
   activity_.fetch_add(1, std::memory_order_relaxed);
@@ -620,6 +621,18 @@ void AudioEngine::stopLiveTrack(int track) {
   send(c);
 }
 void AudioEngine::stopAllLive() { send({Cmd::LiveStopAll}); }
+void AudioEngine::launchScene(int scene) {
+  Cmd c{Cmd::LaunchScene};
+  c.pitch = scene;
+  send(c);
+  playing_ = true;
+  activity_.fetch_add(1, std::memory_order_relaxed);
+}
+void AudioEngine::backToArrangement(int track) {
+  Cmd c{Cmd::BackToArrangement};
+  c.pitch = track;
+  send(c);
+}
 ObjectId AudioEngine::liveActive(int track) const {
   return track >= 0 && track < kMaxPlaylistTracks ? liveActiveUi_[track].load(std::memory_order_relaxed) : kNoId;
 }
@@ -1726,6 +1739,18 @@ void AudioEngine::releaseAll(const Program* p, int offset, bool hard) {
 void AudioEngine::drain(const Program* p) {
   size_t t = qTail_.load(std::memory_order_relaxed);
   size_t h = qHead_.load(std::memory_order_acquire);
+  if (p) {  // grid2-1118: the Clips Arrangement moved (a scene inserted or deleted): the transport moves with it
+    if (p->originEpoch != 0 && p->originEpoch == originEpoch_ && p->liveOrigin != originTick_ && tMode_ == PlayMode::Song &&
+        sessionOver_.load(std::memory_order_relaxed) && !hostFollow_) {
+      shiftTransport(static_cast<double>(p->liveOrigin - originTick_));
+    }
+    originEpoch_ = p->originEpoch;
+    originTick_ = p->liveOrigin;
+    // grid2-1118: the song's tempo is the scene's now (the app wrote it): the song's map takes over.
+    if (sceneBpm_ > 0 && p->tempoMap.constant() && std::fabs(p->tempo - sceneBpm_) < 1e-9) {
+      sceneBpm_ = 0;
+    }
+  }
   if (p) {  // a new tempo map (tempo edit, tempo automation): continue from the current position
     uint64_t sig = clockMap(p).signature();
     if (sig != lastMapSig_ && lastMapSig_ != 0 && clock_ != 0) {
@@ -1793,6 +1818,8 @@ void AudioEngine::drain(const Program* p) {
         if (p) releaseAll(p, 0);
         tMode_ = c.value > 1.5f ? PlayMode::Live : c.value > 0.5f ? PlayMode::Song : PlayMode::Pattern;
         clearLive();
+        std::fill(std::begin(arrOff_), std::end(arrOff_), uint8_t{0});  // grid-1118
+        publishArrangementOff();
         anchorTick_ = 0;
         clock_ = 0;
         pastLoop_ = false;
@@ -1883,12 +1910,25 @@ void AudioEngine::drain(const Program* p) {
         ownPlay_.store(0, std::memory_order_relaxed);  // (republished after this block)
         ownStopDone_.store(static_cast<uint32_t>(c.pitch), std::memory_order_release);
         break;
+      case Cmd::BackToArrangement:  // grid-1118: launched clips stop now, the arrangement plays again
+        if (c.pitch < 0) {
+          clearLive();
+          std::fill(std::begin(arrOff_), std::end(arrOff_), uint8_t{0});
+        } else if (c.pitch < kMaxPlaylistTracks) {
+          liveTracks_[c.pitch] = LiveTrack{};
+          liveActiveUi_[c.pitch].store(kNoId, std::memory_order_relaxed);
+          liveQueuedUi_[c.pitch].store(kNoId, std::memory_order_relaxed);
+          arrOff_[c.pitch] = 0;
+        }
+        publishArrangementOff();
+        break;
       case Cmd::Launch:
       case Cmd::Release:
       case Cmd::LiveStop:
       case Cmd::LiveStopAll:
+      case Cmd::LaunchScene:
         if (p) {
-          if (c.kind == Cmd::Launch && !tPlaying_) {  // a launch starts the transport
+          if ((c.kind == Cmd::Launch || c.kind == Cmd::LaunchScene) && !tPlaying_) {  // a launch starts the transport
             startTick_ = here();
             anchorTick_ = startTick_;
             clock_ = 0;
@@ -1916,7 +1956,8 @@ void AudioEngine::dispatch(const Program* p, int from, int to) {
   const double tLo = tickAt(p, anchorTick_, static_cast<double>(c0 - 1));
   const double tHi = tickAt(p, anchorTick_, static_cast<double>(c1)) + 1.0;
   const ProgPattern* pat = tMode_ == PlayMode::Pattern ? p->pattern(tPattern_) : nullptr;
-  if (tMode_ == PlayMode::Live) dispatchLive(p, from, to);  // launched clips (note-offs below)
+  if (liveOn()) dispatchLive(p, from, to);  // launched clips (note-offs below)
+  const bool overSong = tMode_ == PlayMode::Song && sessionOver_.load(std::memory_order_relaxed);  // grid-1118
 
   // J-30: notes start in time order across all channels (then channel order),
   // and note-offs due before a start are sent before it. Handling channel by
@@ -1948,6 +1989,7 @@ void AudioEngine::dispatch(const Program* p, int from, int to) {
     for (; it != evs->end() && static_cast<double>(it->on) <= tHi; ++it) {
       int64_t s = sampleOf(noteOnTick(*it));
       if (s < c0 || s >= c1) continue;
+      if (overSong && it->track >= 0 && it->track < kMaxPlaylistTracks && arrOff_[it->track]) continue;  // grid-1118: the clip grid has the track
       if (nStarts >= kMaxBlockStarts) break;
       starts_[static_cast<size_t>(nStarts++)] = {s, static_cast<int>(ci), &*it};
     }
@@ -2564,15 +2606,25 @@ void AudioEngine::killEverything(const Program* p) {
 namespace {
 // Launch grid in ticks for a beat of `beat` ticks (0 = immediately); see launchGridTicks
 // (core/Arrangements).
-Tick liveGrid(Tick beat, LaunchGrid g, Tick clipLength) {
+Tick liveGrid(Tick beat, LaunchGrid g, Tick clipLength, Tick bar) {
   beat = std::max<Tick>(1, beat);
+  bar = std::max<Tick>(1, bar);
   switch (g) {
+    case LaunchGrid::Bar: return bar;  // grid-1118: whole bars of the meter in force
+    case LaunchGrid::TwoBars: return bar * 2;
+    case LaunchGrid::FourBars: return bar * 4;
+    case LaunchGrid::EightBars: return bar * 8;
     case LaunchGrid::Now: return 0;
     case LaunchGrid::Step: return std::max<Tick>(1, beat / 4);
     case LaunchGrid::HalfBeat: return std::max<Tick>(1, beat / 2);
     case LaunchGrid::Beat: return beat;
     case LaunchGrid::TwoBeats: return beat * 2;
     case LaunchGrid::ClipLength: return std::max<Tick>(1, clipLength);
+    case LaunchGrid::ThirtySecond: return std::max<Tick>(1, beat / 8);  // grid2-1118
+    case LaunchGrid::SixteenthT: return std::max<Tick>(1, beat / 6);
+    case LaunchGrid::EighthT: return std::max<Tick>(1, beat / 3);
+    case LaunchGrid::QuarterT: return std::max<Tick>(1, beat * 2 / 3);
+    case LaunchGrid::HalfT: return std::max<Tick>(1, beat * 4 / 3);
     default: return beat * 4;
   }
 }
@@ -2580,12 +2632,22 @@ Tick liveGrid(Tick beat, LaunchGrid g, Tick clipLength) {
 // (the song's meter map: the live transport counts song ticks from the song start). Beat grids
 // count from the start of t's meter section and never step past the next section's start (a bar
 // line, on every beat grid); a clip-length grid counts from the start.
-Tick liveGridLine(const Program* p, LaunchGrid g, Tick clipLength, Tick t, bool up) {
+// grid2-1118: a launched scene's time signature in force from `at` (bars of `bar`, beats of `beat`).
+struct MeterOv {
+  bool on = false;
+  Tick at = 0, bar = 384, beat = 96;
+};
+Tick liveGridLine(const Program* p, LaunchGrid g, Tick clipLength, Tick t, bool up, const MeterOv& ov = MeterOv{}) {
   if (g == LaunchGrid::Now) return t;
+  if (ov.on && t >= ov.at && g != LaunchGrid::ClipLength) {  // grid2-1118: the scene's meter, counted from its launch
+    const Tick q = liveGrid(ov.beat, g, clipLength, ov.bar);
+    const Tick down = ov.at + (t - ov.at) / q * q;
+    return !up || down == t ? down : down + q;
+  }
   const MeterMap& mm = p->meter;
   const size_t si = g == LaunchGrid::ClipLength ? 0 : mm.segIndex(t);
   const MeterSeg& seg = mm.segments()[si];
-  const Tick q = liveGrid(g == LaunchGrid::ClipLength ? p->beatTicks : seg.beat, g, clipLength);
+  const Tick q = liveGrid(g == LaunchGrid::ClipLength ? p->beatTicks : seg.beat, g, clipLength, seg.bar);
   const Tick t0 = g == LaunchGrid::ClipLength ? 0 : std::min(seg.start, t);
   const Tick down = t0 + (t - t0) / q * q;
   if (!up || down == t) return down;
@@ -2593,35 +2655,384 @@ Tick liveGridLine(const Program* p, LaunchGrid g, Tick clipLength, Tick t, bool 
   if (g != LaunchGrid::ClipLength && si + 1 < mm.segments().size()) next = std::min(next, mm.segments()[si + 1].start);
   return next;
 }
+LaunchGrid gridOf(const ProgLiveClip& lc, const ProgLiveTrack& lt) {
+  return lc.quant >= 0 && lc.quant < static_cast<int>(LaunchGrid::Count) ? static_cast<LaunchGrid>(lc.quant) : lt.launch;
+}
+PadMode padOf(const ProgLiveClip& lc, const ProgLiveTrack& lt) {
+  return lc.pad >= 0 && lc.pad < static_cast<int>(PadMode::Count) ? static_cast<PadMode>(lc.pad) : lt.pad;
+}
 }  // namespace
 
+void AudioEngine::publishArrangementOff() {
+  bool any = false;
+  for (int t = 0; t < kMaxPlaylistTracks; ++t) {
+    arrOffUi_[t].store(arrOff_[t], std::memory_order_relaxed);
+    any = any || arrOff_[t];
+  }
+  arrOffAny_.store(any, std::memory_order_relaxed);
+}
+
 void AudioEngine::clearLive() {
+  liveLastTick_ = -1.0;
+  sceneBpm_ = 0;  // grid2-1118: the scene's tempo and time signature end with the grid's playback
+  meterOv_ = false;
+  scenePendAt_ = -1;
+  sceneFollowAt_ = -1;
+  sceneCur_ = -1;
+  liveSceneUi_.store(-1, std::memory_order_relaxed);
+  scenePendUi_.store(-1, std::memory_order_relaxed);
   for (int t = 0; t < kMaxPlaylistTracks; ++t) {
     liveTracks_[t] = LiveTrack{};
     liveActiveUi_[t].store(kNoId, std::memory_order_relaxed);
     liveQueuedUi_[t].store(kNoId, std::memory_order_relaxed);
     liveOriginUi_[t].store(0, std::memory_order_relaxed);
+    liveStopUi_[t].store(0, std::memory_order_relaxed);
   }
+}
+
+Tick AudioEngine::barAt(const Program* p, Tick t) const {
+  if (meterOv_ && t >= meterOvAt_) {
+    return std::max<Tick>(1, meterOvBar_);
+  }
+  const MeterMap& mm = p->meter;
+  return std::max<Tick>(1, mm.segments()[mm.segIndex(std::max<Tick>(0, t))].bar);
+}
+
+Tick AudioEngine::followTick(const Program* p, const ProgLiveClip& lc, Tick at) const {
+  if (!lc.follow.on || !followOn_.load(std::memory_order_relaxed)) {
+    return -1;
+  }
+  if (lc.follow.linked) {
+    return at + std::max<Tick>(1, lc.length) * std::max(1, lc.follow.loops);
+  }
+  return at + (lc.follow.time > 0 ? lc.follow.time : barAt(p, at));
+}
+
+FollowAction AudioEngine::pickFollow(const FollowSpec& f, int* jump) {
+  const int total = static_cast<int>(f.chanceA) + static_cast<int>(f.chanceB);
+  if (total <= 0) {
+    return FollowAction::None;
+  }
+  liveRng_ = liveRng_ * 1664525u + 1013904223u;
+  const int r = static_cast<int>((liveRng_ >> 8) % static_cast<uint32_t>(total));
+  const bool a = r < static_cast<int>(f.chanceA);
+  if (jump) {
+    *jump = a ? f.jumpA : f.jumpB;
+  }
+  return a ? f.a : f.b;
+}
+
+int AudioEngine::followTarget(const Program* p, const ProgLiveTrack& lt, int li, FollowAction a, int jump) {
+  const ProgLiveClip& cur = p->liveClips[static_cast<size_t>(li)];
+  if (a == FollowAction::Jump) {
+    for (int x : lt.clips) {
+      if (p->liveClips[static_cast<size_t>(x)].scene == jump) {
+        return x;
+      }
+    }
+    return -1;
+  }
+  // The group: the run of filled slots around the clip in its column (lt.clips are in scene order).
+  int at = -1;
+  for (int k = 0; k < static_cast<int>(lt.clips.size()); ++k) {
+    if (lt.clips[static_cast<size_t>(k)] == li) {
+      at = k;
+    }
+  }
+  if (at < 0) {
+    return li;
+  }
+  int g0 = at, g1 = at;
+  auto sceneAt = [&](int k) { return p->liveClips[static_cast<size_t>(lt.clips[static_cast<size_t>(k)])].scene; };
+  while (g0 > 0 && sceneAt(g0 - 1) >= sceneAt(g0) - 1) {
+    --g0;
+  }
+  while (g1 + 1 < static_cast<int>(lt.clips.size()) && sceneAt(g1 + 1) <= sceneAt(g1) + 1) {
+    ++g1;
+  }
+  const int n = g1 - g0 + 1;
+  int pick = at;
+  switch (a) {
+    case FollowAction::Previous: pick = at == g0 ? g1 : at - 1; break;
+    case FollowAction::Next: pick = at == g1 ? g0 : at + 1; break;
+    case FollowAction::First: pick = g0; break;
+    case FollowAction::Last: pick = g1; break;
+    case FollowAction::Any:
+    case FollowAction::Other:
+      liveRng_ = liveRng_ * 1664525u + 1013904223u;
+      if (a == FollowAction::Other && n > 1) {
+        pick = g0 + static_cast<int>((liveRng_ >> 8) % static_cast<uint32_t>(n - 1));
+        if (pick >= at) {
+          ++pick;
+        }
+      } else {
+        pick = g0 + static_cast<int>((liveRng_ >> 8) % static_cast<uint32_t>(n));
+      }
+      break;
+    default: break;
+  }
+  (void)cur;
+  return lt.clips[static_cast<size_t>(pick)];
+}
+
+Tick AudioEngine::queueLaunch(const Program* p, const ProgLiveClip& lc, const ProgLiveTrack& lt, Tick now, bool legato, Tick fixed) {
+  LiveTrack& st = liveTracks_[lc.track];
+  const MeterOv ov{meterOv_, meterOvAt_, meterOvBar_, meterOvBeat_};
+  // One clip per track: the new clip replaces the playing one at the launch time.
+  Tick at = fixed >= 0 ? fixed : liveGridLine(p, gridOf(lc, lt), lc.length, now, true, ov);
+  Tick origin = at;
+  if (lt.syncStart != LaunchGrid::Now) {  // content in phase with the song position
+    origin = liveGridLine(p, lt.syncStart, lc.length, at, false, ov);
+  }
+  if ((legato || lc.legato) && st.active != kNoId && !st.stopQueued) {  // grid-1118: legato, where the playing clip is
+    if (legato) {
+      at = now;  // (a captured scene: at once)
+    }
+    if (fixed >= 0) {
+      at = fixed;
+    }
+    origin = st.origin;  // grid2-1118: a legato clip on its own grid takes over the playing position there
+  }
+  st.queued = lc.clip;
+  st.queuedAt = at;
+  st.queuedOrigin = origin;
+  st.stopQueued = false;
+  st.repeat = padOf(lc, lt) == PadMode::Repeat && fixed < 0 ? lc.clip : kNoId;
+  return at;
+}
+
+void AudioEngine::queueStopTrack(const Program* p, int track, Tick now, Tick fixed) {
+  if (track < 0 || track >= kMaxPlaylistTracks) {
+    return;
+  }
+  const bool overSong = tMode_ == PlayMode::Song && sessionOver_.load(std::memory_order_relaxed);
+  const MeterOv ov{meterOv_, meterOvAt_, meterOvBar_, meterOvBeat_};
+  const int ti = p->liveTrackIndex(track);
+  if (ti < 0) {
+    if (overSong && !arrOff_[track]) {
+      arrOff_[track] = 1;  // grid-1118: a track with no grid clips: its arrangement stops now
+      publishArrangementOff();
+    }
+    return;
+  }
+  const ProgLiveTrack& lt = p->liveTracks[static_cast<size_t>(ti)];
+  LiveTrack& st = liveTracks_[lt.track];
+  st.queued = kNoId;
+  st.repeat = kNoId;
+  if (st.active == kNoId) {
+    // grid-1118: a stop on a track playing its arrangement silences it there too (on its launch grid).
+    if (overSong && tPlaying_ && !arrOff_[lt.track]) {
+      st.stopAt = fixed >= 0 ? fixed : liveGridLine(p, lt.launch, p->barTicks, now, true, ov);
+      st.stopQueued = true;
+    }
+    return;
+  }
+  const int li = p->liveClipIndex(st.active);
+  const LaunchGrid g = li >= 0 ? gridOf(p->liveClips[static_cast<size_t>(li)], lt) : lt.launch;
+  st.stopAt = fixed >= 0 ? fixed : liveGridLine(p, g, li >= 0 ? p->liveClips[static_cast<size_t>(li)].length : 1, now, true, ov);
+  st.stopQueued = true;
+}
+
+void AudioEngine::launchSceneNow(const Program* p, int k, Tick now, Tick fixed) {
+  if (k < 0 || k >= static_cast<int>(p->scenes.size())) {
+    return;
+  }
+  const ProgScene& sc = p->scenes[static_cast<size_t>(k)];
+  Tick first = -1;
+  for (size_t t = 0; t < sc.clips.size(); ++t) {
+    const ObjectId id = sc.clips[t];
+    if (id == kNoId) {
+      if (sc.stop[t]) {
+        queueStopTrack(p, static_cast<int>(t), now, fixed);
+      }
+      continue;
+    }
+    const int li = p->liveClipIndex(id);
+    const int ti = li >= 0 ? p->liveTrackIndex(p->liveClips[static_cast<size_t>(li)].track) : -1;
+    if (ti < 0) {
+      continue;
+    }
+    const Tick at = queueLaunch(p, p->liveClips[static_cast<size_t>(li)], p->liveTracks[static_cast<size_t>(ti)], now, false, fixed);
+    first = first < 0 ? at : std::min(first, at);
+  }
+  const MeterOv ov{meterOv_, meterOvAt_, meterOvBar_, meterOvBeat_};
+  const Tick launchAt = first >= 0 ? first : fixed >= 0 ? fixed : liveGridLine(p, LaunchGrid::Bar, 1, now, true, ov);
+  if (sc.tempo > 0 || (sc.sigNum > 0 && sc.sigDen > 0)) {
+    scenePendAt_ = launchAt;
+    pendBpm_ = sc.tempo;
+    pendNum_ = sc.sigNum;
+    pendDen_ = sc.sigDen;
+    scenePendUi_.store(static_cast<double>(launchAt), std::memory_order_relaxed);
+  }
+  sceneCur_ = k;
+  liveSceneUi_.store(k, std::memory_order_relaxed);
+  sceneFollowAt_ = -1;
+  if (sc.follow.on && followOn_.load(std::memory_order_relaxed)) {
+    Tick len = sc.follow.time;
+    if (len <= 0) {  // one bar: of the scene's own time signature when it has one
+      len = sc.sigNum > 0 && sc.sigDen > 0 ? static_cast<Tick>(sc.sigNum) * (static_cast<Tick>(p->ppq) * 4 / sc.sigDen) : barAt(p, launchAt);
+    }
+    sceneFollowAt_ = launchAt + std::max<Tick>(1, len);
+  }
+}
+
+void AudioEngine::sceneStep(const Program* p) {
+  if (!tPlaying_ || countInLeft_ > 0 || tMode_ != PlayMode::Song || !liveOn()) {
+    return;
+  }
+  const double here = tickAt(p, anchorTick_, static_cast<double>(clock_));
+  if (sceneFollowAt_ >= 0 && here >= static_cast<double>(sceneFollowAt_) - 1e-6) {
+    const Tick at = sceneFollowAt_;
+    sceneFollowAt_ = -1;
+    const int k = sceneCur_;
+    // The scenes in use: up to the last one with a clip.
+    int n = 0;
+    for (int j = 0; j < static_cast<int>(p->scenes.size()); ++j) {
+      for (ObjectId id : p->scenes[static_cast<size_t>(j)].clips) {
+        if (id != kNoId) {
+          n = j + 1;
+        }
+      }
+    }
+    if (k >= 0 && k < static_cast<int>(p->scenes.size()) && n > 0) {
+      int jump = 0;
+      const FollowAction act = pickFollow(p->scenes[static_cast<size_t>(k)].follow, &jump);
+      int to = -2;
+      switch (act) {
+        case FollowAction::None: break;
+        case FollowAction::Stop: to = -1; break;
+        case FollowAction::PlayAgain: to = k; break;
+        case FollowAction::Previous: to = k <= 0 ? n - 1 : k - 1; break;
+        case FollowAction::Next: to = k + 1 >= n ? 0 : k + 1; break;
+        case FollowAction::First: to = 0; break;
+        case FollowAction::Last: to = n - 1; break;
+        case FollowAction::Any:
+        case FollowAction::Other:
+          liveRng_ = liveRng_ * 1664525u + 1013904223u;
+          if (act == FollowAction::Other && n > 1) {
+            to = static_cast<int>((liveRng_ >> 8) % static_cast<uint32_t>(n - 1));
+            if (to >= k) {
+              ++to;
+            }
+          } else {
+            to = static_cast<int>((liveRng_ >> 8) % static_cast<uint32_t>(n));
+          }
+          break;
+        case FollowAction::Jump: to = std::clamp(jump, 0, static_cast<int>(p->scenes.size()) - 1); break;
+        default: break;
+      }
+      if (to == -1) {
+        for (const ProgLiveTrack& lt : p->liveTracks) {
+          queueStopTrack(p, lt.track, at, at);
+        }
+      } else if (to >= 0) {
+        launchSceneNow(p, to, at, at);
+      }
+    }
+  }
+  if (scenePendAt_ >= 0 && here >= static_cast<double>(scenePendAt_) - 1e-6) {
+    const Tick at = scenePendAt_;
+    scenePendAt_ = -1;
+    scenePendUi_.store(-1, std::memory_order_relaxed);
+    if (pendBpm_ > 0 && !hostTempo()) {  // the scene's tempo from here on (the clock counts again from here)
+      anchorTick_ = here;
+      clock_ = 0;
+      sceneBpm_ = pendBpm_;
+      sceneMap_.setConstant(sceneBpm_, p->ppq);
+      lastMapSig_ = clockMap(p).signature();
+    }
+    if (pendNum_ > 0 && pendDen_ > 0) {  // its time signature: launch grids count its bars from here
+      meterOv_ = true;
+      meterOvAt_ = at;
+      meterOvBeat_ = std::max<Tick>(1, static_cast<Tick>(p->ppq) * 4 / pendDen_);
+      meterOvBar_ = meterOvBeat_ * pendNum_;
+    }
+    sceneBpmUi_.store(pendBpm_, std::memory_order_relaxed);
+    sceneNumUi_.store(pendNum_, std::memory_order_relaxed);
+    sceneDenUi_.store(pendDen_, std::memory_order_relaxed);
+    sceneSerialUi_.fetch_add(1, std::memory_order_release);
+  }
+}
+
+int AudioEngine::untilSceneEvent(const Program* p, int n) const {
+  if (!tPlaying_ || countInLeft_ > 0 || tMode_ != PlayMode::Song || !liveOn() || (scenePendAt_ < 0 && sceneFollowAt_ < 0)) {
+    return n;
+  }
+  const double here = tickAt(p, anchorTick_, static_cast<double>(clock_));
+  double next = std::numeric_limits<double>::infinity();
+  for (const Tick t : {scenePendAt_, sceneFollowAt_}) {
+    if (t >= 0 && static_cast<double>(t) > here + 1e-6) {
+      next = std::min(next, static_cast<double>(t));
+    }
+  }
+  if (!std::isfinite(next)) {
+    return n;
+  }
+  const int64_t s = sampleAt(p, anchorTick_, next) - clock_;
+  return s >= 1 && s < n ? static_cast<int>(s) : n;
+}
+
+// The launched clips' times (and the scene's pending events) move by d ticks with the song position.
+void AudioEngine::shiftLive(Tick d) {
+  for (LiveTrack& st : liveTracks_) {
+    st.origin += d, st.queuedAt += d, st.queuedOrigin += d, st.stopAt += d;
+    if (st.followAt >= 0) {  // grid2-1118
+      st.followAt += d;
+    }
+  }
+  if (scenePendAt_ >= 0) {  // grid2-1118: the scene's events and meter move with it
+    scenePendAt_ += d;
+  }
+  if (sceneFollowAt_ >= 0) {
+    sceneFollowAt_ += d;
+  }
+  if (meterOv_) {
+    meterOvAt_ += d;
+  }
+}
+
+void AudioEngine::shiftTransport(double d) {
+  if (d == 0) {
+    return;
+  }
+  // fix-1119: the launched clips move with it now, and the next block does not take the shift for a jump of
+  // the position (a launch handled in this drain, after the shift, already counts from the moved position:
+  // it was moved a second time, a captured scene's copies queued a scene late instead of taking over at once).
+  if (liveLastTick_ >= 0.0) {
+    shiftLive(static_cast<Tick>(std::llround(d)));
+    liveLastTick_ = std::max(0.0, liveLastTick_ + d);
+  }
+  anchorTick_ = std::max(0.0, anchorTick_ + d);
+  curTick_ = std::max(0.0, curTick_ + d);
+  startTick_ = std::max(0.0, startTick_ + d);
+  if (pendJump_) {
+    pendJumpTo_ = std::max(0.0, pendJumpTo_ + d);
+  }
+  if (loopB_ > loopA_) {
+    loopA_ = std::max(0.0, loopA_ + d), loopB_ = std::max(0.0, loopB_ + d);
+  }
+  const double seek = seekTick_.load(std::memory_order_relaxed);
+  if (seek > 0) {
+    seekTick_.store(std::max(0.0, seek + d), std::memory_order_relaxed);
+  }
+  posTick_.store(curTick_);
 }
 
 void AudioEngine::liveCommand(const Program* p, const Cmd& c) {
   const double here = tPlaying_ ? tickAt(p, anchorTick_, static_cast<double>(clock_)) : anchorTick_;
   const Tick now = std::max<Tick>(0, static_cast<Tick>(std::ceil(here - 1e-6)));
-  auto queueStop = [&](const ProgLiveTrack& lt) {
-    LiveTrack& st = liveTracks_[lt.track];
-    st.queued = kNoId;
-    if (st.active == kNoId) return;
-    int li = p->liveClipIndex(st.active);
-    st.stopAt = liveGridLine(p, lt.launch, li >= 0 ? p->liveClips[static_cast<size_t>(li)].length : 1, now, true);
-    st.stopQueued = true;
-  };
+  if (c.kind == Cmd::LaunchScene) {  // grid2-1118
+    launchSceneNow(p, c.pitch, now, -1);
+    return;
+  }
   if (c.kind == Cmd::LiveStopAll) {
-    for (const auto& lt : p->liveTracks) queueStop(lt);
+    for (const auto& lt : p->liveTracks) {
+      queueStopTrack(p, lt.track, now, -1);
+    }
     return;
   }
   if (c.kind == Cmd::LiveStop) {
-    int ti = p->liveTrackIndex(c.pitch);
-    if (ti >= 0) queueStop(p->liveTracks[static_cast<size_t>(ti)]);
+    queueStopTrack(p, c.pitch, now, -1);
     return;
   }
   const int li = p->liveClipIndex(c.id);
@@ -2631,29 +3042,28 @@ void AudioEngine::liveCommand(const Program* p, const Cmd& c) {
   if (ti < 0 || lc.track < 0 || lc.track >= kMaxPlaylistTracks) return;
   const ProgLiveTrack& lt = p->liveTracks[static_cast<size_t>(ti)];
   LiveTrack& st = liveTracks_[lc.track];
+  const PadMode pad = padOf(lc, lt);  // grid2-1118: the clip's own launch mode over the track's
   if (c.kind == Cmd::Release) {  // gate pads stop when released
-    if (lt.pad == PadMode::Gate && (st.active == lc.clip || st.queued == lc.clip)) queueStop(lt);
+    if (pad == PadMode::Gate && (st.active == lc.clip || st.queued == lc.clip)) {
+      queueStopTrack(p, lc.track, now, -1);
+    }
+    if (pad == PadMode::Repeat && st.repeat == lc.clip) {  // grid-1118: Repeat stops repeating; the clip plays on
+      st.repeat = kNoId;
+      if (st.queued == lc.clip && st.active == lc.clip) st.queued = kNoId;
+    }
     return;
   }
-  if (lt.pad == PadMode::Toggle) {
+  if (pad == PadMode::Toggle) {
     if (st.queued == lc.clip) {  // second press before it started: cancel
       st.queued = kNoId;
       return;
     }
     if (st.active == lc.clip && !st.stopQueued) {
-      queueStop(lt);
+      queueStopTrack(p, lc.track, now, -1);
       return;
     }
   }
-  // One clip per track: the new clip replaces the playing one at the launch time.
-  const Tick at = liveGridLine(p, lt.launch, lc.length, now, true);
-  Tick origin = at;
-  if (lt.syncStart != LaunchGrid::Now)  // content in phase with the song position
-    origin = liveGridLine(p, lt.syncStart, lc.length, at, false);
-  st.queued = lc.clip;
-  st.queuedAt = at;
-  st.queuedOrigin = origin;
-  st.stopQueued = false;
+  queueLaunch(p, lc, lt, now, c.value > 0.5f, -1);
 }
 
 void AudioEngine::dispatchLive(const Program* p, int from, int to) {
@@ -2662,6 +3072,13 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
   const int64_t c0 = clock_, c1 = clock_ + len;
   const double t0 = tickAt(p, anchorTick_, static_cast<double>(c0));
   const double t1 = tickAt(p, anchorTick_, static_cast<double>(c1));
+  // grid-1118: the song position jumped (a loop wrap, a seek) while launched clips play over the arrangement:
+  // their times move with it, so they play on in their own phase.
+  if (tMode_ == PlayMode::Song && liveLastTick_ >= 0.0 && std::fabs(t0 - liveLastTick_) > 0.5) {
+    shiftLive(static_cast<Tick>(std::llround(t0 - liveLastTick_)));
+  }
+  liveLastTick_ = t1;
+  bool offChanged = false;
   const double spt = sr_ * 60.0 / (flatBpm(p) * p->ppq);
   auto sampleOf = [&](double tick) { return sampleAt(p, anchorTick_, tick); };
   // Plays content ticks of one clip between transport ticks [a, b).
@@ -2689,12 +3106,16 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
     if (lt.track < 0 || lt.track >= kMaxPlaylistTracks || lt.clips.empty()) continue;
     LiveTrack& st = liveTracks_[lt.track];
     double cur = t0;
-    for (int guard = 0; guard < 64 && (st.active != kNoId || st.queued != kNoId); ++guard) {
+    for (int guard = 0; guard < 64 && (st.active != kNoId || st.queued != kNoId || st.stopQueued); ++guard) {
       int li = st.active != kNoId ? p->liveClipIndex(st.active) : -1;
       if (st.active != kNoId && li < 0) st.active = kNoId;  // the clip was deleted
       double next = t1;
       if (st.queued != kNoId) next = std::min(next, std::max(cur, static_cast<double>(st.queuedAt)));
       if (st.stopQueued) next = std::min(next, std::max(cur, static_cast<double>(st.stopAt)));
+      const bool follows = li >= 0 && st.followAt >= 0;  // grid2-1118: the clip's follow action
+      if (follows) {
+        next = std::min(next, std::max(cur, static_cast<double>(st.followAt)));
+      }
       Tick endT = 0;
       if (li >= 0) {
         endT = st.origin + p->liveClips[static_cast<size_t>(li)].length;
@@ -2707,19 +3128,76 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
       if (st.stopQueued && static_cast<double>(st.stopAt) <= cur + 1e-9) {
         st.active = kNoId;
         st.stopQueued = false;
+        st.followAt = -1;
+        if (tMode_ == PlayMode::Song && !arrOff_[lt.track]) arrOff_[lt.track] = 1, offChanged = true;  // grid-1118: silent until Back to arrangement
       }
       if (st.queued != kNoId && static_cast<double>(st.queuedAt) <= cur + 1e-9) {
         st.active = st.queued;
         st.origin = st.queuedOrigin;
         st.queued = kNoId;
+        {  // grid2-1118: its follow action time counts from now; a legato clip past its end goes on in its loop
+          const int ni = p->liveClipIndex(st.active);
+          st.followAt = ni >= 0 ? followTick(p, p->liveClips[static_cast<size_t>(ni)], static_cast<Tick>(std::llround(cur))) : -1;
+          if (ni >= 0) {
+            const Tick len = std::max<Tick>(1, p->liveClips[static_cast<size_t>(ni)].length);
+            const Tick behind = static_cast<Tick>(std::floor(cur)) - st.origin;
+            if (behind >= len && !p->liveClips[static_cast<size_t>(ni)].once) {
+              st.origin += behind / len * len;
+            }
+          }
+        }
+        if (!arrOff_[lt.track]) arrOff_[lt.track] = 1, offChanged = true;  // grid-1118: the clip grid has the track now
+        if (st.repeat != kNoId && st.repeat == st.active) {  // grid-1118: Repeat held: again on the next grid line
+          const int ri = p->liveClipIndex(st.repeat);
+          const Tick len = ri >= 0 ? p->liveClips[static_cast<size_t>(ri)].length : 1;
+          const LaunchGrid g0 = ri >= 0 ? gridOf(p->liveClips[static_cast<size_t>(ri)], lt) : lt.launch;  // grid2-1118: the clip's own
+          const LaunchGrid g = g0 == LaunchGrid::Now ? LaunchGrid::Step : g0;
+          st.queued = st.repeat;
+          st.queuedAt = liveGridLine(p, g, len, st.queuedAt + 1, true);
+          st.queuedOrigin = st.queuedAt;
+        }
+      } else if (follows && st.active == p->liveClips[static_cast<size_t>(li)].clip && cur >= static_cast<double>(st.followAt) - 1e-9) {
+        // grid2-1118: the clip's follow action, A or B by their chances (at its time: no launch grid).
+        const Tick at = st.followAt;
+        st.followAt = -1;
+        int jump = 0;
+        const FollowAction act = pickFollow(p->liveClips[static_cast<size_t>(li)].follow, &jump);
+        int to = -2;
+        if (act == FollowAction::Stop) {
+          to = -1;
+        } else if (act == FollowAction::PlayAgain) {
+          to = li;
+        } else if (act != FollowAction::None) {
+          to = followTarget(p, lt, li, act, jump);
+        }
+        if (to == -1) {
+          st.active = kNoId;
+          if (tMode_ == PlayMode::Song && !arrOff_[lt.track]) {
+            arrOff_[lt.track] = 1, offChanged = true;
+          }
+        } else if (to >= 0) {
+          const ProgLiveClip& nc = p->liveClips[static_cast<size_t>(to)];
+          st.active = nc.clip;
+          if (!nc.legato || to == li) {  // (a legato clip takes over the play position)
+            st.origin = at;
+          }
+          const Tick nlen = std::max<Tick>(1, nc.length);
+          if (at - st.origin >= nlen) {  // (past its end: on in its loop)
+            st.origin += (at - st.origin) / nlen * nlen;
+          }
+          st.followAt = followTick(p, nc, at);
+        }
       } else if (li >= 0 && st.active == p->liveClips[static_cast<size_t>(li)].clip && cur >= static_cast<double>(endT) - 1e-9) {
-        // Follow action at the clip end.
+        // Follow action at the clip end (grid2-1118: a clip with its own follow actions loops on to them).
         const int n = static_cast<int>(lt.clips.size());
         int pos = 0;
         for (int k = 0; k < n; ++k)
           if (lt.clips[static_cast<size_t>(k)] == li) pos = k;
         int nextPos = -1;
-        switch (p->liveClips[static_cast<size_t>(li)].once ? FollowMode::Once : lt.follow) {  // (a one-shot stops)
+        const FollowMode fm = p->liveClips[static_cast<size_t>(li)].once ? FollowMode::Once
+                              : p->liveClips[static_cast<size_t>(li)].follow.on && followOn_.load(std::memory_order_relaxed) ? FollowMode::Loop
+                                                                                                                              : lt.follow;
+        switch (fm) {  // (a one-shot stops)
           case FollowMode::Loop: nextPos = pos; break;
           case FollowMode::Once: nextPos = -1; break;
           case FollowMode::Next: nextPos = (pos + 1) % n; break;
@@ -2735,9 +3213,14 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
         }
         if (nextPos < 0) {
           st.active = kNoId;
+          st.followAt = -1;
         } else {
-          st.active = p->liveClips[static_cast<size_t>(lt.clips[static_cast<size_t>(nextPos)])].clip;
+          const int ni = lt.clips[static_cast<size_t>(nextPos)];
+          st.active = p->liveClips[static_cast<size_t>(ni)].clip;
           st.origin = endT;
+          if (ni != li) {  // grid2-1118
+            st.followAt = followTick(p, p->liveClips[static_cast<size_t>(ni)], endT);
+          }
         }
       }
     }
@@ -2747,7 +3230,9 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
       liveOriginUi_[lt.track].store(liveTracks_[lt.track].origin, std::memory_order_relaxed);
       liveActiveUi_[lt.track].store(liveTracks_[lt.track].active, std::memory_order_relaxed);
       liveQueuedUi_[lt.track].store(liveTracks_[lt.track].queued, std::memory_order_relaxed);
+      liveStopUi_[lt.track].store(liveTracks_[lt.track].stopQueued ? 1 : 0, std::memory_order_relaxed);
     }
+  if (offChanged) publishArrangementOff();
 }
 
 void AudioEngine::evaluateLinks(const Program* p, int n, double blockTick, double eventTick) {
@@ -2823,7 +3308,8 @@ void AudioEngine::applyAutomation(const Program* p, double blockTick, double eve
   if (tMode_ == PlayMode::Pattern) {
     if (const ProgPattern* pat = p->pattern(tPattern_))
       for (const ProgAutoLane& a : pat->autos) apply(a, blockTick);
-  } else if (tMode_ == PlayMode::Live && tPlaying_) {
+  }
+  if (liveOn() && tPlaying_) {  // grid-1118: under the clip grid in song mode too
     for (const ProgLiveTrack& lt : p->liveTracks) {
       const LiveTrack& st = liveTracks_[lt.track];
       if (st.active == kNoId) continue;
@@ -2991,6 +3477,24 @@ void AudioEngine::updateStripGains(const Program* p) {
   }
 }
 
+// The channel pitch: each instrument is told when its channel's pitch moves (the knob, its
+// automation and links, the fine tune, the master pitch), at the start of a block and before that
+// block's notes, which add the same value (ProgChannel::pitchOffset). Held notes follow it.
+void AudioEngine::syncChannelPitch(const Program* p) {
+  if (!p) return;
+  for (const ProgChannel& ch : p->channels) {
+    if (!ch.rt || !ch.rt->gen) continue;
+    Generator& g = *ch.rt->gen;
+    g.setChannelBendRange(ch.bendRange);
+    // A new Program starts at the knob's own value; while automation or a link moves the pitch
+    // during playback, the instrument keeps the moving value until they set it in this Program.
+    float target = ch.pitchTarget;
+    if (ch.pitchMoves && !ch.pitchLinked && tPlaying_) target = static_cast<float>(g.channelPitchSent());
+    ch.pitchOffset = target;
+    if (static_cast<double>(target) != g.channelPitchSent()) g.channelPitch(target, kChannelPitchGlide, 0);
+  }
+}
+
 // Writes a link / automation value (normalized) into the program's live state.
 void AudioEngine::applyLinkValue(const Program* p, const ProgLink& l, double normalized) {
   {
@@ -3017,9 +3521,10 @@ void AudioEngine::applyLinkValue(const Program* p, const ProgLink& l, double nor
       case ProgLink::ChanSustain: p->channels[static_cast<size_t>(l.chan)].sustainLive = v >= 0.5; break;
       case ProgLink::ChanPitch: {
         const ProgChannel& c = p->channels[static_cast<size_t>(l.chan)];
-        // K-132: an FL channel's pitch knob moves in cents and its automation replaces the knob's
-        // share of the fine tune; Gridline's own channels keep whole semitones.
-        c.pitchOffset = c.pitchSmooth ? static_cast<float>(v) - c.knobFine + c.masterPitch : static_cast<float>(std::lround(v)) + c.masterPitch;
+        // The knob in cents (smooth, no whole-semitone steps); the instrument follows it from the
+        // next block on (syncChannelPitch).
+        c.pitchTarget = static_cast<float>(v / 100.0) + c.masterPitch;
+        c.pitchLinked = true;
         break;
       }
       case ProgLink::MixVolume: p->mixer[static_cast<size_t>(l.mixer)].modVolume = fv; break;
@@ -3247,10 +3752,15 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
       stepNext_ = false;
     }
     hits_.clear();  // J-165: filled by the commands, MIDI and sequencing below
+    syncChannelPitch(p);  // before any note of this block: notes include the pitch the instrument has
     deliverHeld(p);  // K-87: notes that waited for an instrument to load
     drain(p);
     drainMidi(p);
     if (done == 0 && hostNew_) followHost(p);
+    if (p) {  // grid2-1118: a scene follow action or a scene's tempo due now; the block ends at the next one
+      sceneStep(p);
+      n = untilSceneEvent(p, n);
+    }
     if (p && p->hasEventLanes) n = untilEventStep(p, n);  // J-210: recorded events step on their samples
     if (p && p->meterReaders) n = untilMeterChange(p, n);  // K-193: plugins see a meter change on its sample
     blockWall_ = wall0 + static_cast<double>(done) / sr_;

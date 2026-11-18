@@ -8,6 +8,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include "../core/Types.h"
 
 namespace gl {
 class App;
@@ -38,6 +39,13 @@ void devCommand(App& a, int frame, const std::vector<std::string>& args = {});
 // K-270: soloed rooms (each room's headphones): mutes, in the song the engine plays, every track not in a
 // soloed room or downstream of one. Only this computer; the project is untouched.
 void listenFilter(App& a, Song& s);
+// Tracks from the playlist (docs/stage-view.md): the playlist's own menus add "Show on Stage" and "Move to
+// Stage room" for the selected clips (or `clip` when it is not selected), the selected playlist tracks (or
+// `track`), a marker's area (to the next marker) and a time range. Each draws a separator first.
+void playlistClipItems(App& a, ObjectId clip);
+void playlistTrackItems(App& a, int track);
+void playlistMarkerItems(App& a, int marker);
+void playlistRangeItems(App& a, Tick start, Tick end);
 // K-224: the room the Stage shows (core/StageRoomOps.h index; the Mix view's room filter follows it).
 int currentRoom(App& a);
 // K-224: a room template on the room shown, or a new room from it (shown, its name being edited).

@@ -55,6 +55,15 @@ Tick loopFirstPass(const Song& song, const Clip& clip, const TempoMap& map);
 // length (loopFirstPass) or shorter stops it looping, per clip of `sel` in
 // `clips` (withClipLoop off). Returns how many stopped.
 int unloopWithinFirstPass(const Song& song, std::vector<Clip>& clips, const std::set<ObjectId>& sel, const TempoMap& map);
+// PL-1118: the Smooth layout's region Loop switch (its inspector, region menu and key), as the
+// reference's: on, each listed clip loops (withClipLoop) and, if it does not repeat yet, runs on in
+// repeats up to the next clip on its track (its last repeat cut where that one starts), or with none
+// after it to the song's end: the Project End marker if placed, else the end of the song's last clip,
+// on a bar line (down to the bar before; up when that leaves a region no whole repeat; one end for
+// all of those, where each repeats once at least); off, it stops looping and its repeats go (back to
+// its first pass).
+// False when nothing changed.
+bool loopClipsToNext(Song& song, const std::set<ObjectId>& clips, bool on);
 
 // Splits an audio (or pattern) clip at song tick `at` (start < at < end).
 // Returns the id of the right part (kNoId when not split).

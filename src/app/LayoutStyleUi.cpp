@@ -144,8 +144,17 @@ void beginStyleFrame(App& a, bool welcomeScreen) {
   const layout::Style& s = *gStyle;
   // K-106: the Tracker's menus use its own words (Song, Roll, Steps) for the shared items.
   GImGuiGridlineMenuLabel = !welcomeScreen && s.preset == layout::Preset::Tracker ? &trackerview::menuWords : nullptr;
+  // rsz-1118: dock splitters of a region shell: a band beside the main view keeps its size while the main
+  // view takes the drag, the regions' own limits stop it, and the hover / held line is the layout's own.
+  GImGuiGridlineSplitterCentre = false;
+  GImGuiGridlineSplitterLimits = nullptr;
+  GImGuiGridlineSplitterLine = 0.0f;
   if (welcomeScreen || layout::isStudio(s)) return;  // Studio and the welcome screen: nothing changes
   ImGuiStyle& st = ImGui::GetStyle();
+  if (shellBuilt(a, active())) {
+    GImGuiGridlineSplitterCentre = true;
+    GImGuiGridlineSplitterLimits = &splitterLimits;
+  }
   gBase = read(st);
   Geometry g = gBase;
   g.framePadding = ImVec2(s.fieldPadX, s.fieldPadY);
@@ -175,6 +184,17 @@ void beginStyleFrame(App& a, bool welcomeScreen) {
   // K-112c (round 19): in Live a floating window's caption is the body's own colour, the focused one
   // a step lifted, as the refs' device and plugin windows (192, 194, 196, 424).
   if (s.preset == layout::Preset::Live) {
+    // rsz-1118: Clips' 6 px gaps between its inset panels stay as they are under the pointer; a 2 px line
+    // along the middle shows the divider, in the accent (soft on hover, full while held). Studio fills
+    // the whole gap orange.
+    gSep[0] = st.Colors[ImGuiCol_SeparatorHovered], gSep[1] = st.Colors[ImGuiCol_SeparatorActive];
+    ImVec4 acc = ImGui::ColorConvertU32ToFloat4(theme::pal().accent);
+    acc.w = 1.0f;
+    st.Colors[ImGuiCol_SeparatorActive] = acc;
+    acc.w = 0.55f;
+    st.Colors[ImGuiCol_SeparatorHovered] = acc;
+    gSepSet = true;
+    GImGuiGridlineSplitterLine = 2.0f;
     const ImGuiCol ids[3] = {ImGuiCol_TitleBg, ImGuiCol_TitleBgActive, ImGuiCol_TitleBgCollapsed};
     for (int i = 0; i < 3; ++i) gTitle[i] = st.Colors[ids[i]];
     const ImVec4 body = st.Colors[ImGuiCol_WindowBg], lift = st.Colors[ImGuiCol_Text];
@@ -199,7 +219,8 @@ void beginStyleFrame(App& a, bool welcomeScreen) {
     const ImVec4 line = st.Colors[ImGuiCol_Separator], text = st.Colors[ImGuiCol_Text];
     auto toward = [&](float t) { return ImVec4(line.x + (text.x - line.x) * t, line.y + (text.y - line.y) * t, line.z + (text.z - line.z) * t, 1.0f); };
     st.Colors[ImGuiCol_SeparatorHovered] = toward(0.25f);
-    st.Colors[ImGuiCol_SeparatorActive] = toward(0.45f);
+    // rsz-1118: held, the hairline takes Smooth's blue (the divider being moved reads as picked).
+    st.Colors[ImGuiCol_SeparatorActive] = theme::vec(theme::rgb(kSmoothBlue));
     gSepSet = true;
     // Checkpoint 38: a ticked box is filled with the layout's blue and ticked in white, as every reference
     // window draws its check boxes (023, 100, 132); it was an orange tick on a faintly tinted field.
@@ -214,6 +235,11 @@ void beginStyleFrame(App& a, bool welcomeScreen) {
 }
 
 void endStyleFrame() {
+  // rsz-1118: a dock divider under the pointer or held keeps its resize cursor whatever a window drawn
+  // after the dock space asked for (the pointer outruns the edge into a panel during a fast drag).
+  if (GImGuiGridlineSplitterFrame == ImGui::GetFrameCount()) {
+    ImGui::SetMouseCursor(GImGuiGridlineSplitterCursor);
+  }
   GImGuiGridlineToggleW = 0.0f;  // never carried into the next frame (a group left open by an early return)
   GImGuiGridlineMenuLive = false;
   if (gStyled) write(ImGui::GetStyle(), gBase);

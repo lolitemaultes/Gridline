@@ -298,6 +298,20 @@ class Generator {
   }
   // K-144: the channel's expression setting (Channel::expr). Audio thread, before process().
   void setExpression(const ExprSettings& s) { exprSet_ = s; }
+  // The channel pitch (the knob in the channel strip, its fine tune and the master pitch), in
+  // semitones, from the event's offset on. Notes started after it already include it in their
+  // pitch; notes held then move by the change: instruments that glide follow it over `seconds`
+  // (onChannelPitch; hosted plugins without per-note tuning send it as pitch bend). Audio thread.
+  void channelPitch(double semis, double seconds, int offset) {
+    chanPitchSent_ = semis;
+    Ev e = Ev::make(Ev::ChanPitch, 0, semis, 0, offset);
+    e.time = seconds;
+    push(e);
+  }
+  // The channel pitch last given to channelPitch() (audio thread).
+  double channelPitchSent() const { return chanPitchSent_; }
+  // Semitones a full MIDI pitch bend means to this instrument (Channel::bendRange; audio thread).
+  void setChannelBendRange(int semis) { chanBendRange_ = std::clamp(semis, 1, 48); }
   // K-144: an expression value of a held note, as last received (Pitch: semitones; for a note
   // without any: 0, or 0.5 for timbre). Instruments read it per voice; audio thread.
   float noteExpr(uint32_t id, ExprDim dim) const;
@@ -324,6 +338,7 @@ class Generator {
   }
   // Silences immediately (stop / panic).
   void kill() {
+    takeDroppedPitch();
     count_ = 0;
     for (auto& x : exprNotes_) x.on = false;  // K-144
     onKill();
@@ -338,7 +353,10 @@ class Generator {
   // K-277 (audio thread): events wait for the next block.
   bool hasEvents() const { return count_ > 0; }
   // K-277 (audio thread): drops the events waiting (a muted channel at rest never hears them).
-  void dropEvents() { count_ = 0; }
+  void dropEvents() {
+    takeDroppedPitch();
+    count_ = 0;
+  }
   // K-277 (audio thread): a raw MIDI message waits (a controller, pitch bend, program change:
   // state the instrument keeps, so a muted channel at rest still takes it).
   bool hasMidi() const {
@@ -466,6 +484,12 @@ class Generator {
     (void)d1;
     (void)d2;
   }
+  // The channel pitch moved by `delta` semitones to `semis` (Generator::channelPitch). The default
+  // glides every held note by the change over `seconds` (instruments that glide).
+  virtual void onChannelPitch(double semis, double delta, double seconds);
+  // The channel pitch now (semitones, as the last channelPitch event set it).
+  double channelPitchNow() const { return chanPitch_; }
+  int channelBendRange() const { return chanBendRange_; }
   // K-144: the expression dimensions the instrument answers per voice itself (bits 1 << ExprDim);
   // those reach onExpr when the channel leaves them to the instrument. The others get the base
   // class's response: pitch through onGlide (instruments that glide), pressure on the level and
@@ -520,7 +544,7 @@ class Generator {
  private:
   int evOffset_ = 0;
   struct Ev {
-    enum Kind { On, Off, AllOff, Glide, Cut, Midi, Expr };
+    enum Kind { On, Off, AllOff, Glide, Cut, Midi, Expr, ChanPitch };
     Kind kind = On;
     ExprDim dim = ExprDim::Pitch;  // Expr: the dimension (value in pitch)
     uint32_t id = 0;
@@ -542,6 +566,12 @@ class Generator {
   };
   void push(const Ev& e) {
     if (count_ < events_.size()) events_[count_++] = e;
+    else if (e.kind == Ev::ChanPitch) chanPitch_ = e.pitch;  // (a full queue: notes after it include it)
+  }
+  // Events dropped unplayed: the channel pitch they carried is still the one later notes include.
+  void takeDroppedPitch() {
+    for (size_t i = 0; i < count_; ++i)
+      if (events_[i].kind == Ev::ChanPitch) chanPitch_ = events_[i].pitch;
   }
   void fire(const Ev& e);
   std::array<Ev, 512> events_{};
@@ -573,6 +603,9 @@ class Generator {
   float levelTarget_ = 0, levelCur_ = 0;    // 0..1 of +6 dB
   float brightTarget_ = 0, brightCur_ = 0;  // -1..1 of +-9 dB
   float shelfL_ = 0, shelfR_ = 0;           // the shelf's low-pass state
+  double chanPitch_ = 0;      // the channel pitch the held notes include (semitones)
+  double chanPitchSent_ = 0;  // the last channelPitch() value (pushed, maybe not fired yet)
+  int chanBendRange_ = 2;     // Channel::bendRange
 };
 
 // Instance for a catalogue type ("gl.synth", …); nullptr for unknown types.

@@ -57,6 +57,9 @@ struct NoteEv {
   std::shared_ptr<const std::vector<BendPoint>> pressure, timbre;
   // K-76: the note's tracker cells (null = none); props.tracker points into them.
   std::shared_ptr<const std::vector<uint8_t>> tracker;
+  // grid-1118: the playlist track of the arrangement clip it came from (song events only; -1: none). A
+  // track whose clip grid clip overrides the arrangement skips it (AudioEngine::setSessionOverArrangement).
+  int16_t track = -1;
 };
 inline constexpr uint8_t kNoteSlide = 1;  // glides sounding notes instead of starting one
 inline constexpr uint8_t kNotePorta = 2;  // starts at the previous note's pitch and glides
@@ -352,6 +355,7 @@ struct ProgAudioClip {
   double warpBase = 0;
   uint64_t warpKey = 0;             // identifies `warp` (voice reuse)
   ObjectId clip = kNoId;            // J-196: Clip::id
+  int track = -1;                   // grid-1118: the clip's playlist track (arrangement clips; -1: none)
   // K-114: a looping clip plays as one ProgAudioClip per pass (engine/ClipOps.h,
   // audioLoopPasses): the pass number, and whether the pass holds the clip's
   // own start / end (its fades are there only).
@@ -388,8 +392,10 @@ struct ProgAudioClip {
 // end of the block plus audioClipLookahead() seconds?
 bool audioClipsNear(const std::vector<ProgAudioClip>& clips, double t0, double tA);
 double audioClipLookahead();
+// grid-1118: `skipTrack` (null: none): per playlist track, nonzero skips that track's clips (a clip grid clip
+// overrides the arrangement there).
 void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& map, double sampleRate, double anchorTick,
-                      int64_t clock, int from, int len, float* L, float* R, double pitchSemis = 0);
+                      int64_t clock, int from, int len, float* L, float* R, double pitchSemis = 0, const uint8_t* skipTrack = nullptr);
 
 struct ProgChannel {
   ObjectId id = kNoId;
@@ -409,12 +415,16 @@ struct ProgChannel {
   PluginState plugin;
   ChannelAux aux;
   mutable float gainL = 0, gainR = 0;  // target strip gains (taper, pan, mute applied)
-  mutable float pitchOffset = 0;       // channel pitch + master pitch (semitones)
+  // Channel pitch (knob + fine tune) + master pitch, semitones: what notes started in this block add
+  // (audio thread: changes only where the engine tells the instrument, AudioEngine::syncChannelPitch).
+  mutable float pitchOffset = 0;
+  // The pitch automation and links ask for (semitones, as pitchOffset); taken at the next block.
+  mutable float pitchTarget = 0;
+  mutable bool pitchLinked = false;    // automation / a link has set pitchTarget in this Program
   bool pitchMoves = false;             // J-153: automation / a link moves the channel pitch
-  bool pitchSmooth = false;            // K-132: Channel::pitchSmooth (automation in cents, no rounding)
-  float knobFine = 0;                  // K-132: Channel::knobFine in semitones (the automation replaces it)
   float volume = 0.78f, pan = 0, masterPitch = 0;  // unlinked strip values (masterPitch includes the channel fine tune)
-  int pitch = 0;
+  float pitchCents = 0;                // Channel::pitchCents
+  int bendRange = 2;                   // Channel::bendRange
   bool muted = false;
   int mixer = 0;               // index into Program::mixer
   std::vector<int> auxMixer;   // multi-output instruments: mixer index per extra output (-1 = unused)
@@ -617,6 +627,12 @@ struct ProgLiveClip {
   int track = 0;
   Tick length = 1;
   bool once = false;  // Clip::launchOnce: the track stops at its end
+  // grid2-1118: the clip's own launch settings (Clip::launchSet: -1 = its track's) and its scene.
+  int pad = -1;
+  int quant = -1;
+  bool legato = false;
+  FollowSpec follow;
+  int scene = -1;
   struct Ev {
     int channel = 0;  // Program channel index
     NoteEv e;         // content ticks
@@ -634,6 +650,16 @@ struct ProgLiveTrack {
   FollowMode follow = FollowMode::Loop;
   LaunchGrid syncStart = LaunchGrid::Now;
   std::vector<int> clips;  // indices into Program::liveClips, by playlist position
+};
+// grid2-1118: a scene of the Clips grid, launched as one (AudioEngine::launchScene): per playlist track the
+// clip of its slot (kNoId: an empty slot) and whether an empty slot has its stop button; the scene's tempo
+// and time signature (0: none) and follow actions.
+struct ProgScene {
+  std::vector<ObjectId> clips;
+  std::vector<uint8_t> stop;
+  double tempo = 0;
+  int sigNum = 0, sigDen = 0;
+  FollowSpec follow;
 };
 
 // Task graph of one block: channels (generators) feed mixer tracks, tracks
@@ -732,6 +758,13 @@ struct Program {
   // Live mode: the live area's clips and the tracks they sit on.
   std::vector<ProgLiveClip> liveClips;
   std::vector<ProgLiveTrack> liveTracks;
+  // grid2-1118: the Clips grid's scenes (every scene up to the last one with a clip or settings), the live
+  // area's end (where the Clips Arrangement starts) and the project it was built for (ProgramBuilder::
+  // setOriginEpoch; 0: a render). A new program of the same project whose live area ends elsewhere moved
+  // the Arrangement (a scene inserted or deleted): the engine moves the transport with it.
+  std::vector<ProgScene> scenes;
+  Tick liveOrigin = 0;
+  uint64_t originEpoch = 0;
   int liveTrackIndex(int track) const {
     for (size_t i = 0; i < liveTracks.size(); ++i)
       if (liveTracks[i].track == track) return static_cast<int>(i);
@@ -765,6 +798,8 @@ void warmUpBuiltin(Effect& fx, const std::string& type, const PluginState& state
 class ProgramBuilder {
  public:
   std::shared_ptr<const Program> build(const Song& song);
+  // grid2-1118: the project the next builds are for (Document::projectEpoch; 0: none, as renders).
+  void setOriginEpoch(uint64_t e) { originEpoch_ = e; }
   // Sample rate the program will run at (hosted plugins prepare for it).
   void setSampleRate(double sr) { sampleRate_ = sr; }
   double sampleRate() const { return sampleRate_; }
@@ -884,6 +919,7 @@ class ProgramBuilder {
   std::map<ObjectId, SamplePtr> frozenChannels_, frozenMixers_;  // K-87
   std::set<ObjectId> unloadedChannels_, asleepChannels_;          // K-87
   double sampleRate_ = 44100.0;
+  uint64_t originEpoch_ = 0;  // grid2-1118 (setOriginEpoch)
   bool pdc_ = true;
   bool asyncSamples_ = false;
   bool warmUp_ = true;

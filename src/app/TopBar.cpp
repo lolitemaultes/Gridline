@@ -1652,12 +1652,11 @@ static float drawTopBarLive(App& a) {
       ImGui::OpenPopup("##quantpop");
     ImGui::SetNextWindowPos(ImVec2(x, cy + kH + 2));
     if (ImGui::BeginPopup("##quantpop")) {
-      for (int i = 0; i < static_cast<int>(LaunchGrid::Count); ++i) {
-        if (ImGui::MenuItem(livelook::gridName(static_cast<LaunchGrid>(i)), nullptr, same && g0 == static_cast<LaunchGrid>(i))) {
-          a.doc.editSong("change launch grid", [i](Song& x2) {
-            for (PlaylistTrack& t : x2.tracks) t.launch = static_cast<LaunchGrid>(i);
-          });
-        }
+      LaunchGrid g = g0;
+      if (livelook::gridItems(same ? g0 : LaunchGrid::Count, g, false)) {  // grid-1118: None, 8 Bars ... 1/16
+        a.doc.editSong("change launch grid", [g](Song& x2) {
+          for (PlaylistTrack& t : x2.tracks) t.launch = g;
+        });
       }
       ImGui::EndPopup();
     }
@@ -1835,12 +1834,12 @@ static float drawTopBarLive(App& a) {
     }
     mx += 26 + kGroup;
     // Back to arrangement: lit while any track plays a grid clip.
-    bool anyGrid = false;
-    if (a.engine.mode() == PlayMode::Live)
-      for (int t = 0; t < static_cast<int>(s.tracks.size()) && !anyGrid; ++t) anyGrid = a.engine.liveActive(t) != kNoId;
+    // grid-1118: lit while the clip grid has taken a track from the arrangement (a clip launched there, even
+    // one stopped since): every track plays its arrangement clips again, now.
+    const bool anyGrid = a.engine.anyArrangementOverridden();
     if (flat("##backlive", mx, backW, anyGrid, "Back to arrangement: every track stops its grid clip and the arrangement plays again")) {
-      a.engine.stopAllLive();
-      a.engine.setMode(PlayMode::Song);
+      a.engine.backToArrangement();
+      if (a.engine.mode() != PlayMode::Song) a.engine.setMode(PlayMode::Song);
     }
     noteRect("backtoarrangement");
     ui::drawIconFit(dl, ui::Icon::Undo, ImVec2(mx + 7, cy + 5), ImVec2(mx + 19, cy + kH - 5), glyphCol(anyGrid));

@@ -17,6 +17,7 @@
 #include "../core/Crash.h"
 #include "../core/I18n.h"
 #include "../core/MenuOps.h"
+#include "../core/RemoteFs.h"
 #include "../core/TrackModes.h"
 #include "../engine/Sample.h"
 #include "../host/HostedPlugins.h"
@@ -60,6 +61,7 @@ struct Job {
   uint64_t epoch = 0;
   ~Job() {
     cancel = true;
+    crash::InsideScope inside("waiting for a freeze render to stop");
     if (worker.joinable()) worker.join();
   }
 };
@@ -549,8 +551,15 @@ Song playSong(App& a, const Song& s) {
   // A render plays once it is decoded (in the background); until then, and when its file is
   // missing or at another rate than its record says, the unit plays live.
   auto file = [&](const FreezeRecord& r) -> SamplePtr {
-    std::error_code ec;
-    if (!fs::is_regular_file(fs::u8path(r.render.data), ec)) return nullptr;
+    // FRZ-1118: this runs before every build, on the interface thread: a render in the project's
+    // folder on a network drive is not asked about there (a missing one fails to decode, in the
+    // background, and the unit plays live).
+    if (!remotefs::isRemote(r.render.data)) {
+      std::error_code ec;
+      if (!fs::is_regular_file(fs::u8path(r.render.data), ec)) {
+        return nullptr;
+      }
+    }
     return sampleCache().request(r.render.data);
   };
   std::map<ObjectId, SamplePtr> chans, mixers;

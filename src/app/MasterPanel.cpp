@@ -13,6 +13,7 @@
 #include "App.h"
 #include "HostedBodies.h"
 #include "HostedUi.h"
+#include "LayoutShellUi.h"
 #include "LiveLook.h"
 #include "PluginUI.h"
 #include "Theme.h"
@@ -247,6 +248,9 @@ void drawMasterPanel(App& a) {
                               ImGuiCond_Always);
     }
   }
+  // gap-1118: in a region shell it goes to its home region (the Clips device band) as it opens, and the
+  // placement above does not take it out of it (it floated on its first open there).
+  layoutui::dockFlags(ui::windowTitle("Master chain").c_str(), 0);
   if (!ui::BeginDockWindow("Master chain", &a.showMaster, ImVec2(820, 300))) {
     ui::EndDockWindow();
     return;

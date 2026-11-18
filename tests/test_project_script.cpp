@@ -118,7 +118,9 @@ void testChannels() {
   expect(f.run("project.channels.setPan(2, -0.25)").empty() && std::fabs(s.channels[1].pan + 0.25f) < 1e-6, "channels: setPan");
   expect(f.run("project.channels.setMuted(2, true)").empty() && s.channels[1].muted, "channels: setMuted");
   expect(f.eval("project.channels.muted(2)") == "true", "channels: muted read");
-  expect(f.run("project.channels.setPitch(2, 7)").empty() && s.channels[1].pitch == 7, "channels: setPitch");
+  expect(f.run("project.channels.setPitch(2, 7)").empty() && s.channels[1].pitchCents == 700.0f, "channels: setPitch (semitones)");
+  expect(f.run("project.channels.setPitchCents(2, 150)").empty() && s.channels[1].pitchCents == 150.0f && f.eval("project.channels.pitch(2)") == "1.5",
+         "channels: setPitchCents, pitch reads semitones");
   expect(f.eval("project.channels.plugin(1)") == "gl.kick", "channels: plugin type");
   expect(!f.eval("project.channels.pluginName(1)").empty(), "channels: plugin name");
   expect(f.eval("project.channels.route(3)") == "1", "channels: route read");
@@ -420,7 +422,7 @@ void testSandbox() {
         {"song", {"tempo", "setTempo", "ppq", "timeSignature", "setTimeSignature", "swing", "setSwing", "masterPitch", "setMasterPitch", "bar",
                   "beat", "length", "info", "setInfo"}},
         {"channels", {"count", "id", "index", "find", "name", "setName", "color", "setColor", "volume", "setVolume", "pan", "setPan", "muted",
-                      "setMuted", "pitch", "setPitch", "plugin", "pluginName", "setPlugin", "sample", "route", "setRoute", "add", "remove",
+                      "setMuted", "pitch", "setPitch", "pitchCents", "setPitchCents", "plugin", "pluginName", "setPlugin", "sample", "route", "setRoute", "add", "remove",
                       "clone", "move", "paramCount", "paramName", "paramRange", "paramText", "param", "setParam"}},
         {"patterns", {"count", "id", "index", "find", "name", "setName", "color", "setColor", "add", "remove", "clone", "length", "bars",
                       "setBars", "steps", "setSteps", "notes", "setNotes", "addNote", "channels"}},

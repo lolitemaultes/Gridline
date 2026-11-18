@@ -84,14 +84,23 @@ void keymapTests() {
                                              // K-112B checkpoint 47: the Tracks set's arrow, nudge and loop keys
                                              "playlist.prevRegion", "playlist.nextRegion", "playlist.prevTrack", "playlist.nextTrack",
                                              "playlist.nudgeLeft", "playlist.nudgeRight", "playlist.loopRegion",
-                                             "stage.rename"};  // K-297 (round 9): F2 (edit.rename) renames on the Stage; Enter no longer does
+                                             "stage.rename",  // K-297 (round 9): F2 (edit.rename) renames on the Stage; Enter no longer does
+                                             "stage.fromSelection", "stage.fromMarkers",
+                                             // the clip grid: keys in the Clips set only (scene capture, edit grid, launch quantisation)
+                                             "clips.captureScene", "clips.backToArrangement", "clips.gridNarrower", "clips.gridWider",
+                                             "clips.gridTriplet", "clips.gridSnap", "clips.gridFixed", "clips.quant16", "clips.quant8",
+                                             "clips.quant4", "clips.quantBar", "clips.quantNone"};  // tracks from the playlist: the palette and menus open them
   for (const auto& c : keys::commands()) {
     unique &= ids.insert(c.id).second;
     // The Stage opens from the View menu; the typing octave commands have keys only in the
     // Tracker key set (F1..F8), the pane commands only in the Logic set. Bind a key to any if wanted.
-    labelled &= c.label && *c.label &&
-                (!c.defaults.empty() || std::string(c.id) == "view.stage" || std::string(c.id).rfind("typing.octave", 0) == 0 ||
-                 tracksPanes.count(c.id) != 0);
+    const bool ok = c.label && *c.label &&
+                    (!c.defaults.empty() || std::string(c.id) == "view.stage" || std::string(c.id).rfind("typing.octave", 0) == 0 ||
+                     tracksPanes.count(c.id) != 0);
+    if (!ok) {
+      std::printf("# no label or default chord: %s\n", c.id);
+    }
+    labelled &= ok;
   }
   expect(unique, "command ids are unique");
   expect(labelled, "every command has a label and a default chord");

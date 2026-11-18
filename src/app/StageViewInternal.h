@@ -145,6 +145,14 @@ void openBring(App& a, int room);
 // Moves tracks to another room (one step; inside a drag it joins the drag's step) and says so.
 void moveToRoom(App& a, const std::vector<ObjectId>& ids, int room);
 
+// ---- StagePickUi.cpp: tracks from the playlist (core/StagePick.h) ----
+void pickMenu(App& a);                 // "From playlist": the two sources, their tracks and the actions
+void openPickPanel(App& a, int source);  // the "Tracks from the playlist" panel (0 the selection, 1 a marker area)
+void pickPopups(App& a);               // each frame in the body: the panel, the palette's commands
+bool pickPanelOpen();
+bool takeMenuRequest();  // dev: open the toolbar's From playlist menu
+void devPick(App& a, const std::vector<std::string>& args);  // "stage pick ..." (dev input)
+
 // ---- StagePanel.cpp ----
 void drawPanel(App& a);
 void presetsMenu(App& a);

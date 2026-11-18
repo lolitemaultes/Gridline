@@ -1684,6 +1684,9 @@ void handleGlobalShortcuts(App& a) {
   if (livelook::active(a)) {  // N47-11: the Clips set's return track, detail bands and Session record keys
     if (pressed("track.newReturn")) livelook::newReturnTrack(a);
     if (pressed("clips.insertMidiClip")) livelook::gridInsertMidiClip(a);  // N49-07
+    if (pressed("clips.captureScene")) livelook::gridCaptureScene(a);   // grid-1118
+    if (pressed("clips.backToArrangement")) livelook::backToArrangement(a);
+    livelook::gridKeys(a);  // grid2-1118: Cmd+1 .. 5 the edit grid, Cmd+6 .. 0 the global quantisation
     // Checkpoint 52 (S10): not while the device chain has the keyboard (the reference groups devices there).
     const ImGuiWindow* nw = GImGui->NavWindow;
     const bool chainKeys = nw && (std::strstr(nw->Name, "##chain") || std::strstr(nw->Name, "##expanded") || std::strstr(nw->Name, "##body"));

@@ -66,7 +66,7 @@ Song sourceSong(const Song& song, ObjectId channel) {
     x.noteFx.clear();
     x.echo = ChannelEcho{};
     x.gain = 0.78f;  // unity on the fader law
-    x.pan = 0, x.muted = false, x.pitch = 0, x.fine = 0;
+    x.pan = 0, x.muted = false, x.pitchCents = 0, x.fine = 0;
     x.mixerTrack = s.masterId();
     x.porta = false;
     x.timeShift = 0, x.swingMix = 0;
@@ -313,7 +313,8 @@ ObjectId applyToProject(Document& d, ObjectId channel, const PluginState& st, bo
     c.color = copy.color;
     c.gain = copy.gain;
     c.pan = copy.pan;
-    c.pitch = copy.pitch;
+    c.pitchCents = copy.pitchCents;
+    c.bendRange = copy.bendRange;
     c.fine = copy.fine;
     c.mixerTrack = copy.mixerTrack;
     c.group = copy.group;

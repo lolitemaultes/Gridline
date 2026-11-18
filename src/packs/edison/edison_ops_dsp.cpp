@@ -677,6 +677,8 @@ SamplePtr sampleFor(const std::string& path) {
   SamplePtr s = loadSample(path);
   if (s) {
     publishSample(path, s);
+  } else if (mustNotReadNow(path)) {
+    // FRZ-1118: on a network drive, asked for in the background: not a failure, a later build has it
   } else {
     std::lock_guard<std::mutex> lk(r.mu);
     r.failed.push_back(path);

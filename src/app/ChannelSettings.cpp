@@ -280,6 +280,13 @@ static void drawNoteSettings(App& a, ObjectId id) {
   ui::SetNextKnobStep(1);
   knob("fine", c->fine, desc("Fine", "ct", -200, 200, 0), true, [](Channel& ch, double v) { ch.fine = static_cast<int>(std::lround(v)); });
   ImGui::SameLine(0, 0);
+  std::snprintf(buf, sizeof buf, "%d st", c->bendRange);
+  ui::SetNextKnobStep(1);
+  knob("bendrange", c->bendRange, desc("Bend range", "st", 1, kChannelBendRangeMax, 2), false,
+       [](Channel& ch, double v) { ch.bendRange = std::clamp(static_cast<int>(std::lround(v)), 1, kChannelBendRangeMax); }, buf);
+  ui::Hint("Semitones a full pitch bend means to this instrument (the usual synth default is 2). Plugins without their "
+           "own note tuning get the channel pitch and bend lines as pitch bend over this range: set the plugin to the same");
+  ImGui::SameLine(0, 0);
   std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(std::lround(c->swingMix * 100)));
   knob("swing", c->swingMix, desc("Swing", "", 0, 1, 1), false, [](Channel& ch, double v) { ch.swingMix = static_cast<float>(v); }, buf);
   ImGui::SameLine(0, 0);
@@ -305,7 +312,11 @@ static void drawNoteSettings(App& a, ObjectId id) {
   ImGui::EndGroup();
   ImGui::EndGroup();
   ImGui::SameLine(0, theme::kS4);
-  // Cut groups.
+  // Cut groups. fix-1119: on the next line when the row has no room for them (pitch-1118's Bend range
+  // knob widened the row past the window's 600 px: Cut by was drawn under its right edge, out of reach).
+  if (ImGui::GetContentRegionAvail().x < 2 * cell) {
+    ImGui::NewLine();
+  }
   ImGui::BeginGroup();
   ui::Label("CUT GROUP");
   std::snprintf(buf, sizeof buf, "%s", c->cutGroup ? std::to_string(c->cutGroup).c_str() : "off");
@@ -478,7 +489,11 @@ static void drawStripContent(App& a, ObjectId id, StripDev& sd) {
   ImGui::SameLine(0, theme::kS4);
   ui::ParamKnob("pan", channelParam(id, ChannelParam::Pan), 16.0f, "Pan", true);
   ImGui::SameLine(0, theme::kS4);
+  ui::SetNextKnobStep(1);  // whole cents (Shift: fine drag; double-click: 0, then type a value)
   ui::ParamKnob("pitch", channelParam(id, ChannelParam::Pitch), 16.0f, "Pitch", true);
+  ui::Hint("Channel pitch in cents (100 = a semitone). Shift-drag for fine steps, double-click to reset or type a value. "
+           "Plugins without their own note tuning follow it through pitch bend: set their bend range to the channel's "
+           "Bend range (2 semitones unless changed)");
   ImGui::EndGroup();
   ImGui::SameLine(0, theme::kS6);
   ImGui::BeginGroup();

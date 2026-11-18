@@ -35,7 +35,9 @@ jobs:
     name: Linux ${{ matrix.name }}
     runs-on: ubuntu-latest
     container: ${{ matrix.image }}
-    timeout-minutes: 150
+    # The GUI job runs every window test under Xvfb on top of the rest: on a slow runner it has
+    # needed more than 150 minutes.
+    timeout-minutes: ${{ matrix.gui == 'ON' && 240 || 150 }}
     strategy:
       fail-fast: false
       matrix:

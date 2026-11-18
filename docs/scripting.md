@@ -126,7 +126,8 @@ clamped to the parameter ranges.
 | `volume(i)`, `setVolume(i, v)` | linear level 0..1.25 |
 | `pan(i)`, `setPan(i, v)` | -1 (left) .. 1 (right) |
 | `muted(i)`, `setMuted(i, b)` | mute |
-| `pitch(i)`, `setPitch(i, semitones)` | channel pitch |
+| `pitch(i)`, `setPitch(i, semitones)` | channel pitch in semitones (fractions allowed: `0.5` is 50 cents) |
+| `pitchCents(i)`, `setPitchCents(i, cents)` | channel pitch in cents, -2400..2400 (the knob's unit; `param(i, "pitch")` reads cents too) |
 | `plugin(i)`, `pluginName(i)` | instrument type id (`gl.synth`) and display name (`Tercet`); scripts should test the type id, which never changes, not the display name |
 | `setPlugin(i, type)` | replaces the instrument (instrument types only) |
 | `sample(i)` | file name of the channel's sample, or nil (no folders are exposed) |

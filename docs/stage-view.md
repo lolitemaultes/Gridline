@@ -258,6 +258,54 @@ Collaborators see rooms, their names and settings, and tracks moving between roo
 chooses which room they look at and listen to. A project with one room is saved exactly as before;
 a project with two or more rooms needs this version of Gridline or later to open.
 
+## Tracks from the playlist
+
+You can pick tracks for the Stage by what plays in the playlist instead of finding them one by one.
+**From playlist** in the Stage's toolbar (also in the floor's right-click menu as **Tracks from
+playlist**, and in the mixer menu under Stage when the mixer is narrow) has two sources:
+
+- **From the playlist selection**: the mixer tracks the selected clips play through. An audio clip
+  counts its channel's mixer track; a pattern clip counts the mixer track of every channel with notes
+  or steps in it. With no clips selected, the selected playlist tracks count instead: their clips, and
+  the mixer track an audio track records through or the instrument an instrument track plays.
+- **From a marker area**: every clip that plays inside part of the song. The list has the time
+  selection (when there is one) and each marker, from it to the next marker (the last one runs to the
+  end of the song). **Between two markers...** picks any two. A clip that runs over the edge of the
+  area counts; a clip that only ends where the area starts does not.
+
+Muted clips and clips on muted playlist tracks do not play, so they are left out; **Include muted
+clips** counts them. **Include the buses they play into** (on at first) brings the buses and groups
+the tracks send into, such as a drum bus. The master and a room's space track never count.
+
+Each source opens a list that says what it found before anything changes: how many tracks and their
+names (a bus is marked), how many clips they came from, muted clips left out, clips whose channels
+play straight into the master, and how many of the tracks are in another room or not on the stage
+yet. Then:
+
+| Action | Does |
+| --- | --- |
+| Select them on the Stage | Selects them, so they light up. If none is in the room shown, the room holding most of them is shown. Drag any of them and they all move together |
+| Add to the stage | The ones this stage does not show yet (in another room, or not in use) come into this room and stand in free places across the front, from the centre outward, never on top of another track. The number says how many |
+| Move to room | Moves them all to a room, keeping their places, as dragging them onto it does. **New room "Verse"** makes a room named after the marker; **New room...** asks for a name |
+| Move together | Spread left to right, Bring forward, Push back, Line up at the front, Gather around the centre, Move left, Move right. They move as a group: a shift stops at the edge of the stage so their spacing stays the same |
+
+Every action is one undo step, and collaborators see it as the same moves made by hand.
+
+**Tracks from the playlist...** in the menu (and **Tracks from the playlist selection...** or **Tracks
+from a marker area...** in the command palette) opens the same thing as a panel: choose the source, the
+first marker and the last one (or the time selection), see what it finds, and act.
+
+In the playlist the same tracks are a right-click away:
+
+- on a clip (with a selection: every selected clip): **Show on Stage** and **Move to Stage room**;
+- on a playlist track's name (with several selected: all of them): the same;
+- on a marker: **Show this part on Stage** and **Move to Stage room**, with a new room named after the
+  marker;
+- on the ruler inside the time selection: **Show the time selection on Stage** and **Move to Stage room**.
+
+Pointing at **Show on Stage** lists the tracks it would show. This works in every layout: the Stage is
+the mixer's second view in Studio, Clips, Smooth and the Tracker.
+
 ## Focus
 
 Focus is how dry and upfront a track is. Present lifts its presence a little and sends less of it

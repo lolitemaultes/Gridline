@@ -4,6 +4,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -175,6 +176,8 @@ class SampleCache {
   // decode finishes), before main() returns: none runs into static destruction. get()
   // still decodes on the calling thread; request() queues nothing any more. Idempotent.
   void shutdown();
+  // FRZ-1118: something a background reader made is ready: generation() changes (a rebuild).
+  void bumpGeneration() { gen_.fetch_add(1, std::memory_order_acq_rel); }
   // J-111: a file that failed to load (not there yet) has arrived: the next
   // get() / request() tries again, and generation() changes so the app rebuilds.
   void forget(const std::string& path);
@@ -213,5 +216,23 @@ class SampleCache {
 };
 
 SampleCache& sampleCache();
+
+// FRZ-1118: the calling thread must not read `path` now: it is the interface thread, or a program
+// build on it (SampleCache::NonBlocking), and the file is on a web or network drive (RemoteFs.h),
+// where a mount that stops answering holds the reader in the kernel for as long as it likes (the
+// interface froze that way, a project on an SMB share). Such code asks for the file instead:
+// loadSample() then is sampleCache().request(), and other readers use readInBackground. Cheap: no
+// file system call (the mount table is cached).
+bool mustNotReadNow(const std::string& path);
+// The first half of that: this thread asks for files rather than reading them when they are remote
+// (the interface thread, a program build on it). Something built here without a file it asked
+// for is incomplete: not to be kept as if it were whole.
+bool readsDeferredHere();
+// Runs `job` on a background thread, one at a time per `key` (a second call while one runs does
+// nothing); when it ends, sampleCache().generation() changes, so the app builds its program again
+// and picks up what the job made. For readers of files mustNotReadNow keeps off the interface.
+void readInBackground(const std::string& key, std::function<void()> job);
+// How many readInBackground jobs are running (tests).
+int backgroundReadsRunning();
 
 }  // namespace gl

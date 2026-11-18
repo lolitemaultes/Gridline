@@ -7,6 +7,7 @@
 //   - fixed bands keep their pixel size; hiding a region gives its space back to its parent;
 //   - the per-person region state round-trips through its settings text, drops unknown regions,
 //     survives broken text, and is empty for the default state (nothing written).
+#include <algorithm>
 #include <cmath>
 #include <set>
 #include <string>
@@ -208,6 +209,34 @@ int main() {
     for (const auto& pl : layout::solve(Preset::Logic, 1432, 818, member))
       if (pl.id == "logic.lower") lowerH = pl.rect.h;
     expect(lowerH == 300, "an exclusive region's member size wins over a region size");
+  }
+  // rsz-1118: the range a divider drag may give a region is the one a dragged size is kept to, so a band let go
+  // at a limit stays exactly there (an exclusive region's member size counts as dragged too).
+  {
+    const layout::Region* lower = layout::findRegion(Preset::Logic, "logic.lower");
+    const layout::Region* lib = layout::findRegion(Preset::Logic, "logic.library");
+    const layout::Region* device = layout::findRegion(Preset::Live, "live.device");
+    expect(lower && lib && device, "the regions exist");
+    if (lower && lib && device) {
+      float lo = 0, hi = 0;
+      layout::dragRange(*lower, 818, lo, hi);
+      expect(lo == 160 && hi == std::floor(818 * 0.7f), "the lower pane drags between its minimum and 70 % of the parent");
+      layout::dragRange(*lib, 1432, lo, hi);
+      expect(lo == 190 && hi == 420, "the Library drags up to its drag limit (R09-06)");
+      layout::dragRange(*device, 300, lo, hi);
+      expect(lo == 150 && hi == 210, "on a small parent the minimum is at most half of it");
+      for (float v : {lo - 30, lo, 200.0f, hi, hi + 50}) {
+        layout::State st;
+        st.regionSize["live.device"] = v;
+        float lo2 = 0, hi2 = 0;
+        layout::dragRange(*device, 300, lo2, hi2);
+        expect(layout::regionExtent(*device, 300, st) == std::clamp(v, lo2, hi2), "a dragged size is kept to the drag range");
+      }
+      layout::State st;
+      st.member["logic.lower"] = "Mixer";
+      st.memberSize["logic.lower|Mixer"] = 540;  // above the default share's limit (62 %), within the drag range
+      expect(layout::regionExtent(*lower, 818, st, "Mixer") == 540, "a member's dragged size is not cut to the default limit");
+    }
   }
   return finish();
 }

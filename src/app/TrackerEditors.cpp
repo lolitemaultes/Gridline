@@ -2502,9 +2502,13 @@ void channelFrame(App& a, ObjectId id, ImVec2 p0, ImVec2 p1) {
   // Pitch, fine, output.
   {
     char b[48];
-    std::snprintf(b, sizeof b, "%+d", c->pitch);
-    if (const int d = stepper(a, "##cfpitch", "Pitch", b, ImVec2(cx1, rowY(0)), cw[1], rowH, "Semitones (-24 to +24)", -1, true))
-      a.doc.setParam(channelParam(id, ChannelParam::Pitch), std::clamp(c->pitch + d, -24, 24), false);
+    // The channel pitch in cents: a step is a semitone (from the nearest one), the readout shows cents.
+    const long cents = std::lround(c->pitchCents);
+    if (cents % 100 == 0) std::snprintf(b, sizeof b, "%+ld", cents / 100);
+    else std::snprintf(b, sizeof b, "%+ld ct", cents);
+    if (const int d = stepper(a, "##cfpitch", "Pitch", b, ImVec2(cx1, rowY(0)), cw[1], rowH, "Semitones (-24 to +24); the channel strip's knob sets cents", -1, true))
+      a.doc.setParam(channelParam(id, ChannelParam::Pitch),
+                     std::clamp(std::round(c->pitchCents / 100.0) * 100.0 + d * 100.0, -kChannelPitchMaxCents, kChannelPitchMaxCents), false);
   }
   if (!folded) {
     char b[48];
@@ -2786,6 +2790,14 @@ bool host(App& a, ObjectId channel) {
       ImGui::GetWindowDrawList()->AddRect(p0, p1, theme::withAlpha(pal().hot, 0.8f));
     }
   }
+  // A press in the band, noted before the focus check below: the press itself brings the keys here
+  // (TRK-1118: noted after it, the first click on a button in the band, "Open plugin window" among
+  // them, sent the keys back to the pattern, whose focus next frame took the press from the button,
+  // so its release never clicked it).
+  if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+      (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle))) {
+    s.pressFrame = frame;
+  }
   // The keys after an open: with the screen when its key opened it, else back with the pattern.
   if (s.keyFrames > 0) {
     --s.keyFrames;
@@ -2803,10 +2815,6 @@ bool host(App& a, ObjectId channel) {
     } else {
       keepKeysHere();  // (the band's buttons hand the keys to the pattern; inside the editor they stay)
     }
-  }
-  if (ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
-      (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle))) {
-    s.pressFrame = frame;
   }
   s.wasFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
   hostbody::claim(hostbody::Body::ChannelSettings, "Device chain");
@@ -3160,8 +3168,8 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
                 c.m ? c.m->playNote : 0, s.serial != 0 && tp::auditionSounding(s.serial) ? 1 : 0, lines, hasKeys() ? 1 : 0, static_cast<double>(need(a)),
                 pluginWindowOpen(a) ? 1 : 0, static_cast<int>(s.modal), s.modalBegun, a.doc.history().position(), a.doc.history().canUndo() ? a.doc.history().undoLabel().c_str() : "");
     if (chan && !isTrackerSampler(chan))
-      std::printf("tracker editors frame %d: channel gain %.3f pan %.3f pitch %d fine %d mute %d out %llu keys %d %d type %s\n", frame,
-                  static_cast<double>(chan->gain), static_cast<double>(chan->pan), chan->pitch, chan->fine, chan->muted ? 1 : 0,
+      std::printf("tracker editors frame %d: channel gain %.3f pan %.3f pitch %.0f fine %d mute %d out %llu keys %d %d type %s\n", frame,
+                  static_cast<double>(chan->gain), static_cast<double>(chan->pan), static_cast<double>(chan->pitchCents), chan->fine, chan->muted ? 1 : 0,
                   static_cast<unsigned long long>(chan->mixerTrack), chan->keyLo, chan->keyHi, chan->plugin.type.c_str());
     if (cmd == "geometry" || frame < 0) {
       long long built = 0, served = 0;

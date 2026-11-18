@@ -29,6 +29,9 @@ set(cid 47)
 set(base 1536)
 if(LAYOUT STREQUAL "live")  # a live area of two scenes (the session grid's slots): bars 1 to 8; saved in the Arrangement view (N48-07)
   string(REGEX REPLACE "\"playlist\": \\[" "\"live\": {\"areaEnd\": 3072, \"view\": \"arrangement\"}, \"playlist\": [{\"id\": 91, \"length\": 768, \"pattern\": 29, \"start\": 6144, \"track\": 1}, " demo "${demo}")
+  # grid2-1118: read as a version 10 file (one written by Studio, whose grid slots may hold several clips): an
+  # older version moves a slot's further clips into scenes of their own when it loads (test_grid2_1118).
+  string(REGEX REPLACE "\"version\": *[0-9]+" "\"version\": 10" demo "${demo}")
   set(cid 91)
   set(base 6144)
 endif()

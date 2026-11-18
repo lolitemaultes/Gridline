@@ -290,7 +290,7 @@ int main() {
     Song s;
     flp::Report rep;
     const bool ok = load(project(0, path, st), s, rep) && !s.channels.empty();
-    const int cents = ok ? s.channels[0].pitch * 100 + s.channels[0].fine : 0;
+    const int cents = ok ? static_cast<int>(std::lround(s.channels[0].pitchCents)) + s.channels[0].fine : 0;
     const int want = static_cast<int>(std::lround(-1200 * std::log2(kFit)));
     expect(ok && std::abs(cents - want) <= 1 && param(s, pp::SmpStretchMode) == 0.0f,
            "sampler, resample: the time lowers the pitch (" + std::to_string(cents) + " cents)");

@@ -57,6 +57,25 @@ void Generator::fire(const Ev& e) {
       onMidi(static_cast<uint8_t>(e.id & 0xFF), static_cast<uint8_t>((e.id >> 8) & 0xFF), static_cast<uint8_t>((e.id >> 16) & 0xFF));
       break;
     case Ev::Expr: exprEvent(e); break;
+    case Ev::ChanPitch: {
+      const double delta = e.pitch - chanPitch_;
+      chanPitch_ = e.pitch;
+      if (delta != 0 && std::isfinite(delta)) onChannelPitch(e.pitch, delta, e.time);
+      break;
+    }
+  }
+}
+
+// The held notes move with the channel pitch: their base pitch (the glide target porta and slides
+// left them at) by the change, plus their own expression bend, as one short glide.
+void Generator::onChannelPitch(double semis, double delta, double seconds) {
+  (void)semis;
+  for (auto& x : exprNotes_) {
+    if (!x.on) continue;
+    x.pitch += delta;
+    if (!supportsGlide()) continue;
+    const bool bent = exprSet_.pitch && !(ownExpression() & 1u);
+    onGlide(x.id, x.pitch + (bent ? static_cast<double>(x.bend) : 0.0), seconds);
   }
 }
 

@@ -61,6 +61,27 @@ class BusyScope {
  private:
   int64_t previous_ = 0;
 };
+// What the UI thread is inside right now: a call into a plugin, a file on a drive, a wait for the
+// audio thread. A freeze report names the innermost few, with how long each has lasted, so a hang
+// inside a plugin or on a network drive says so even when the stack is not readable. Cheap (two
+// fixed copies of short text); only the UI thread records, other threads pass through. `detail`:
+// a plugin's or a file's name, never a folder.
+class InsideScope {
+ public:
+  explicit InsideScope(const char* what, const char* detail = nullptr) noexcept;
+  InsideScope(const char* what, const std::string& detail) noexcept : InsideScope(what, detail.c_str()) {}
+  ~InsideScope();
+  InsideScope(const InsideScope&) = delete;
+  InsideScope& operator=(const InsideScope&) = delete;
+
+ private:
+  int slot_ = -1;
+};
+// The caller is the thread that runs the interface (the one that installed the crash handlers);
+// false before install. Cheap.
+bool onUiThread() noexcept;
+// The text a freeze report gives for the scopes alive now ("" when none). Tests.
+std::string insideNow();
 // K-132: how many BusyScopes have started in this process, and whether one is alive now (tests).
 uint64_t busyScopesStarted() noexcept;
 bool busyNow() noexcept;
@@ -194,5 +215,8 @@ int64_t ownPid();
 void forceForTest(const std::string& kind);
 bool audioCrashRequested() noexcept;
 [[noreturn]] void crashNowForTest();
+// The calling thread stops answering the signal the watchdog's look at a stack uses (POSIX; a no-op
+// on Windows): a thread stuck where signals cannot reach it, for the probe's tests.
+void ignoreStackLookForTest();
 
 }  // namespace gl::crash

@@ -1,5 +1,6 @@
 // Gridline — FL origin capture and object fingerprints (see FlpOrigin.h).
 #include "FlpOrigin.h"
+#include <cmath>
 #include <cstring>
 #include "../Arrangements.h"
 #include "../TrackIconSet.h"
@@ -61,7 +62,14 @@ uint64_t fingerprintPlugin(const PluginState& p) {
 
 uint64_t fingerprintChannel(const Channel& c, const IndexMap& m) {
   Fp h;
-  h.tag("channel").s(c.name).i(c.color).f(c.gain).f(c.pan).i(c.muted).i(c.pitch).i(m.ins(c.mixerTrack));
+  h.tag("channel").s(c.name).i(c.color).f(c.gain).f(c.pan).i(c.muted);
+  // The pitch: whole semitones hash as they did before the knob held cents (older fingerprints match).
+  if (std::fmod(static_cast<double>(c.pitchCents), 100.0) == 0.0) {
+    h.i(static_cast<int>(c.pitchCents / 100.0f));
+  } else {
+    h.f(c.pitchCents);
+  }
+  h.i(m.ins(c.mixerTrack));
   h.i(trackicon::exportFl(c.icon, c.flIcon));  // J-39, J-211: the FL number it exports as (older fingerprints hashed flIcon)
   // A plugin channel's instrument has its own origin entry; a sampler's
   // settings are channel events.

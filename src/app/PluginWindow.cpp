@@ -36,6 +36,7 @@
 #include <set>
 #include <thread>
 #include <vector>
+#include "../core/Crash.h"
 #include "../core/I18n.h"
 #include "../core/Log.h"
 #include "../core/UiScale.h"
@@ -934,6 +935,7 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
     return false;
   }
   std::unique_ptr<host::Editor> editor;
+  crash::InsideScope inside("a plugin opening its window:", cls.name);
   try {
     editor = b->createEditor();
   } catch (...) {  // a bridged plugin whose other process is gone; the next pump reports the crash
@@ -1234,6 +1236,7 @@ void hostedui::pluginWindowsIdle(App& a) {
       const int pwq = w.pendingW.exchange(0), phq = w.pendingH.exchange(0);
       if (pwq > 0 && phq > 0) w.pluginResize(pwq, phq);
       try {
+        crash::InsideScope inside("a plugin window's idle:", w.name);
         if (w.notifySize) {
           w.notifySize = false;
           w.editor->setSize(w.pw, w.ph);

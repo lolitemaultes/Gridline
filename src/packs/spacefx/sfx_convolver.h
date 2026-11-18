@@ -662,15 +662,67 @@ inline bool preDelayExtraFrame(const IrBuf& ir, long pd) {
 
 // K-62: an impulse file's first region or cue point: FL plays that part of the file (a cue point
 // alone runs to the end). False when the file has none. Runs on the build thread.
-inline bool firstRegion(const std::string& path, size_t frames, size_t& from, size_t& to) {
+inline bool readFirstRegion(const std::string& path, int64_t& start, int64_t& length) {
   std::ifstream f(std::filesystem::u8path(path), std::ios::binary);
-  if (!f) return false;
+  if (!f) {
+    return false;
+  }
   const std::vector<uint8_t> b((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
   const slicex::WavRegions w = slicex::readWavRegions(b.data(), b.size());
-  if (!w.riff || w.regions.empty()) return false;
-  const slicex::Region& r = w.regions.front();
-  from = std::min<size_t>(static_cast<size_t>(std::max<int64_t>(r.start, 0)), frames);
-  to = r.length > 0 ? std::min<size_t>(from + static_cast<size_t>(r.length), frames) : frames;
+  if (!w.riff || w.regions.empty()) {
+    return false;
+  }
+  start = w.regions.front().start;
+  length = w.regions.front().length;
+  return true;
+}
+// FRZ-1118: an impulse on a web or network drive has its regions read on a background thread (the
+// builds run on the interface thread); until then the entry is built as "no file yet" and again.
+struct RegionRead {
+  bool done = false, has = false;
+  int64_t start = 0, length = 0;
+};
+inline std::mutex& regionReadMu() {
+  static std::mutex& m = *new std::mutex;
+  return m;
+}
+inline std::map<std::string, RegionRead>& regionReads() {
+  static auto& m = *new std::map<std::string, RegionRead>;
+  return m;
+}
+inline bool& regionDeferred() {
+  thread_local bool deferred = false;
+  return deferred;
+}
+inline bool firstRegion(const std::string& path, size_t frames, size_t& from, size_t& to) {
+  int64_t start = 0, length = 0;
+  if (mustNotReadNow(path)) {
+    std::lock_guard<std::mutex> lk(regionReadMu());
+    auto it = regionReads().find(path);
+    if (it == regionReads().end()) {
+      regionReads()[path] = RegionRead{};
+      readInBackground("impulse regions\n" + path, [path] {
+        RegionRead r;
+        r.has = readFirstRegion(path, r.start, r.length);
+        r.done = true;
+        std::lock_guard<std::mutex> lk2(regionReadMu());
+        regionReads()[path] = r;
+      });
+    }
+    if (it == regionReads().end() || !it->second.done) {
+      regionDeferred() = true;
+      return false;
+    }
+    if (!it->second.has) {
+      return false;
+    }
+    start = it->second.start;
+    length = it->second.length;
+  } else if (!readFirstRegion(path, start, length)) {
+    return false;
+  }
+  from = std::min<size_t>(static_cast<size_t>(std::max<int64_t>(start, 0)), frames);
+  to = length > 0 ? std::min<size_t>(from + static_cast<size_t>(length), frames) : frames;
   return to > from;
 }
 
@@ -986,7 +1038,11 @@ inline IrCacheEntry* irEntry(const PluginState& s) {
   }
   if (raw.len() > 0) {
     e.view.rawSeconds = static_cast<double>(raw.len()) / raw.rate;
+    ref::regionDeferred() = false;
     editIr(raw, s, kMaxIrSeconds);
+    if (ref::regionDeferred()) {
+      e.noFileYet = true;  // FRZ-1118: its regions are being read: built again next time
+    }
     auto disp = std::make_shared<Sample>();
     disp->path = "IR";
     disp->sampleRate = raw.rate;

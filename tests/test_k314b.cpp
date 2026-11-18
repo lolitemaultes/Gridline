@@ -374,7 +374,13 @@ void testEveryRestFieldTravels() {
     g.patterns.push_back(x.patterns[0].id);
     x.patternGroups.push_back(g);
     x.live.areaEnd = 4 * 384;
-    x.live.scenes.push_back(SceneInfo{"Verse", 0xFF0000});
+    {
+      SceneInfo sc;
+      sc.name = "Verse", sc.color = 0xFF0000;
+      sc.tempo = 128, sc.sigNum = 3, sc.sigDen = 4;  // grid2-1118: a scene's own settings travel too
+      sc.follow.on = true;
+      x.live.scenes.push_back(sc);
+    }
     x.autoCrossfades = false;
     x.panLaw = PanLaw::ConstantPower;
     x.stage.depthStrength = 0.8f;

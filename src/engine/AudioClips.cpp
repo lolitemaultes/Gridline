@@ -109,8 +109,9 @@ bool audioClipsNear(const std::vector<ProgAudioClip>& clips, double t0, double t
 }
 
 void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& map, double sr, double anchorTick,
-                      int64_t clock, int from, int len, float* L, float* R, double pitchSemis) {
+                      int64_t clock, int from, int len, float* L, float* R, double pitchSemis, const uint8_t* skipTrack) {
   if (clips.empty() || len <= 0) return;
+  auto skipped = [&](const ProgAudioClip& c) { return skipTrack && c.track >= 0 && c.track < kMaxPlaylistTracks && skipTrack[c.track] != 0; };
   const double chanRatio = pitchSemis != 0 ? std::pow(2.0, pitchSemis / 12.0) : 1.0;
   const bool readsOnly = tap::readsOnly();
   const stretch::SincTable& rt = stretch::sincTable(stretch::Quality::Realtime);  // built by the program builder
@@ -123,7 +124,7 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
   auto tickAt = [&](int64_t i) { return t0 + (t1 - t0) * static_cast<double>(i) / static_cast<double>(len); };
   for (const ProgAudioClip& c : clips) {
     if (static_cast<double>(c.start) > t1 + 1.0) break;  // sorted by start
-    if (static_cast<double>(c.end) < t0 - 1.0 || !c.sample) continue;
+    if (static_cast<double>(c.end) < t0 - 1.0 || !c.sample || skipped(c)) continue;
     int64_t a = std::clamp<int64_t>(sampleOf(static_cast<double>(c.start)), 0, len);
     int64_t b = std::clamp<int64_t>(sampleOf(static_cast<double>(c.end)), 0, len);
     if (b <= a) continue;

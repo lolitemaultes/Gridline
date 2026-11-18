@@ -150,7 +150,7 @@ gridline mcp --attach [--endpoint FILE]
 * Channels, patterns, playlist tracks, markers, effect slots and automation clips are numbered
   from 1, as on screen. Mixer track 0 is the master, 1 and up are the inserts.
 * Playlist clips are named by their id (`get_playlist`); ids stay valid while the clip exists.
-* Parameters are named the way the scripting API names them: `volume`, `pan`, `mute`, `pitch`
+* Parameters are named the way the scripting API names them: `volume`, `pan`, `mute`, `pitch` (cents)
   for channels; `volume`, `pan`, `stereo`, `mute`, `eqLowGain` and so on for mixer tracks; `mix`
   and `enabled` for effect slots; `tempo`, `swing`, `masterPitch` for the song. Plugin
   parameters are numbered from 1 or named by their display name. `get_parameters` lists them

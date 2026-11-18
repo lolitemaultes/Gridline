@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <set>
 #include <mutex>
 #include "../../core/SfzMap.h"
 #include "../../engine/Dsp.h"
@@ -731,6 +732,29 @@ std::shared_ptr<const Sf2File> loadSf2(const std::string& path, std::string* err
     std::lock_guard<std::mutex> lk(gSfMu);
     auto it = gSf2.find(path);
     if (it != gSf2.end()) return it->second;
+  }
+  if (mustNotReadNow(path)) {  // FRZ-1118: read on a background thread; the rebuild after it finds it above
+    static std::mutex& failedMu = *new std::mutex;
+    static std::set<std::string>& failed = *new std::set<std::string>;
+    {
+      std::lock_guard<std::mutex> lk(failedMu);
+      if (failed.count(path)) {
+        if (err) {
+          *err = "cannot open " + path;
+        }
+        return nullptr;
+      }
+    }
+    readInBackground("sf2\n" + path, [path] {
+      if (!loadSf2(path, nullptr)) {
+        std::lock_guard<std::mutex> lk(failedMu);
+        failed.insert(path);
+      }
+    });
+    if (err) {
+      *err = "not read yet (a web or network drive)";
+    }
+    return nullptr;
   }
   std::ifstream in(path, std::ios::binary);
   if (!in) {

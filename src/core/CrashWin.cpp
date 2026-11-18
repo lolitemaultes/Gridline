@@ -287,6 +287,8 @@ void sampleUiStack(ReportInfo& out) {
   if (got) walkFrom(ctx, out);
 }
 
+void ignoreStackLookForTest() {}  // (the look stops the thread from outside: nothing to ignore)
+
 void currentStack(ReportInfo& out) {
   CONTEXT ctx;
   RtlCaptureContext(&ctx);

@@ -167,6 +167,21 @@ void stepInstrument(App& a, int d);
 // The previous / next pattern (Ctrl+Left / Right, the pattern box's arrows); past the last one, a
 // new empty pattern when the last holds something (R10-03).
 void stepPattern(App& a, int d);
+// TRK-1118: the pattern shown duplicated into a new pattern after it (Studio's Clone, named with the
+// next number) and shown; `intoSong` also puts the copy in the song as a new entry after the current
+// one. One undo step either way. Returns the new pattern (kNoId: none).
+ObjectId duplicatePattern(App& a, bool intoSong);
+// TRK-1118: the pattern controls' right-click menu items (Duplicate pattern, Duplicate into the song,
+// New pattern), drawn inside a popup the caller has begun.
+void patternMenuItems(App& a);
+// TRK-1118 (dev): the instrument picker's pick: `type` added at the list's end, or (replace >= 0) in
+// place of that instrument (by its index), its editor shown as the picker shows it.
+void devPickInstrument(App& a, const std::string& type, int replace);
+// TRK-1118: a note from a MIDI input (App::playedNoteOn / Off) for the pattern editor: with edit mode
+// on, or recording, it is entered as a note key would be (at the cursor, the cursor moving on by the
+// edit step; recording: on the row playing), its velocity in the volume column. True when the pattern
+// editor took it (the caller then does not also record it); false when the Tracker is not in front.
+bool midiNote(App& a, int pitch, int velocity, bool down);
 // R10-04: the previous / next song position (Ctrl+Shift+Left / Right, the order list's arrows): its
 // pattern shows, as a click on the entry.
 void stepSongPosition(App& a, int d);

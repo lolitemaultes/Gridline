@@ -146,6 +146,15 @@ Tick launchGridTicks(const Song& s, LaunchGrid g, Tick clipLength) {
     case LaunchGrid::TwoBeats: return beat * 2;
     case LaunchGrid::FourBeats: return beat * 4;
     case LaunchGrid::ClipLength: return std::max<Tick>(1, clipLength);
+    case LaunchGrid::Bar: return std::max<Tick>(1, s.barTicks());  // grid-1118
+    case LaunchGrid::TwoBars: return std::max<Tick>(1, s.barTicks()) * 2;
+    case LaunchGrid::FourBars: return std::max<Tick>(1, s.barTicks()) * 4;
+    case LaunchGrid::EightBars: return std::max<Tick>(1, s.barTicks()) * 8;
+    case LaunchGrid::ThirtySecond: return std::max<Tick>(1, beat / 8);  // grid2-1118
+    case LaunchGrid::SixteenthT: return std::max<Tick>(1, beat / 6);
+    case LaunchGrid::EighthT: return std::max<Tick>(1, beat / 3);
+    case LaunchGrid::QuarterT: return std::max<Tick>(1, beat * 2 / 3);
+    case LaunchGrid::HalfT: return std::max<Tick>(1, beat * 4 / 3);
     default: return beat * 4;
   }
 }
@@ -159,6 +168,15 @@ const char* launchGridName(LaunchGrid g) {
     case LaunchGrid::TwoBeats: return "Next 2 beats";
     case LaunchGrid::FourBeats: return "Next 4 beats";
     case LaunchGrid::ClipLength: return "Next clip length";
+    case LaunchGrid::Bar: return "Next bar";
+    case LaunchGrid::TwoBars: return "Next 2 bars";
+    case LaunchGrid::FourBars: return "Next 4 bars";
+    case LaunchGrid::EightBars: return "Next 8 bars";
+    case LaunchGrid::ThirtySecond: return "Next 1/32";  // grid2-1118
+    case LaunchGrid::SixteenthT: return "Next 1/16 triplet";
+    case LaunchGrid::EighthT: return "Next 1/8 triplet";
+    case LaunchGrid::QuarterT: return "Next 1/4 triplet";
+    case LaunchGrid::HalfT: return "Next 1/2 triplet";
     default: return "?";
   }
 }
@@ -168,6 +186,7 @@ const char* padModeName(PadMode m) {
     case PadMode::Trigger: return "Trigger";
     case PadMode::Gate: return "Gate (while held)";
     case PadMode::Toggle: return "Toggle";
+    case PadMode::Repeat: return "Repeat (while held)";
     default: return "?";
   }
 }

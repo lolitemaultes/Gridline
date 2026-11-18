@@ -247,7 +247,7 @@ void AudioEngine::runChannel(size_t ci, int worker) {
   // K-64: a sampler channel with no voice, no event and no clip near this block makes silence:
   // nothing to run. (Most channels of a large arrangement, most of the time.)
   rt->outZero = false;
-  const bool liveAudio = livePieceCount_ > 0 && tMode_ == PlayMode::Live;
+  const bool liveAudio = livePieceCount_ > 0 && liveOn();  // grid-1118: song mode under the clip grid too
   auto clipsNear = [&] {
     bool near = false;
     if (!ch.audio.empty() && tPlaying_ && tMode_ == PlayMode::Song)
@@ -319,7 +319,8 @@ void AudioEngine::runChannel(size_t ci, int worker) {
       add(p->autos, 0);
     } else if (tMode_ == PlayMode::Pattern) {
       if (const ProgPattern* pat = p->pattern(tPattern_)) add(pat->autos, 0);
-    } else if (tMode_ == PlayMode::Live) {
+    }
+    if (liveOn()) {  // grid-1118: under the clip grid in song mode too
       for (const ProgLiveTrack& lt : p->liveTracks) {
         const LiveTrack& st = liveTracks_[lt.track];
         if (st.active == kNoId) continue;
@@ -339,7 +340,7 @@ void AudioEngine::runChannel(size_t ci, int worker) {
     rt->gen->process(ch.modded ? ch.live : ch.plugin, ch.aux, bc_.ctx, cL, cR, n);
   }
   rt->sounding.store(rt->gen->active(), std::memory_order_relaxed);
-  if (livePieceCount_ > 0 && tMode_ == PlayMode::Live) {  // live mode: launched audio clips on this channel
+  if (livePieceCount_ > 0 && liveOn()) {  // live mode: launched audio clips on this channel
     for (int k = 0; k < livePieceCount_; ++k) {
       const LivePiece& lp = livePieces_[k];
       const ProgLiveClip& lc = p->liveClips[static_cast<size_t>(lp.clip)];
@@ -350,7 +351,7 @@ void AudioEngine::runChannel(size_t ci, int worker) {
   if (!ch.audio.empty() && tPlaying_ && tMode_ == PlayMode::Song)  // arrangement: audio clips on this channel
     for (int sgi = 0; sgi < segCount_; ++sgi)
       renderAudioClips(ch.audio, songMap(p), sr_, segs_[sgi].anchor, segs_[sgi].clock, segs_[sgi].from, segs_[sgi].len, cL, cR,
-                       ch.pitchOffset);
+                       ch.pitchOffset, sessionOver_.load(std::memory_order_relaxed) ? arrOff_ : nullptr);  // grid-1118
   if (ch.frozen && tPlaying_ && tMode_ == PlayMode::Song)  // K-87: a frozen unit's render
     for (int sgi = 0; sgi < segCount_; ++sgi)
       addFrozen(*ch.frozen, songMap(p), sr_, segs_[sgi].anchor, segs_[sgi].clock, ch.frozenDelay, segs_[sgi].from, segs_[sgi].len, cL, cR);

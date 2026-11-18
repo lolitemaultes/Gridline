@@ -30,6 +30,7 @@
 #include "MenuDef.h"
 #include "imgui_hooks/ImGuiItemHook.h"
 #include "MidiUi.h"
+#include "TrackerEditors.h"
 #include "TrackerView.h"
 #include "Windows.h"
 #include "AudioRecordUi.h"
@@ -390,6 +391,8 @@ const md::Menu& clipsCreateDef() {
       md::separator(),
       md::item(N_("Insert scene"), [](App& a) { livelook::gridInsertScene(a); })
           .tip(N_("An empty row of slots under the selected slot's scene")),
+      md::item(N_("Capture and insert scene"), "clips.captureScene", [](App& a) { livelook::gridCaptureScene(a); })
+          .tip(N_("A new scene under the selected one with the clips playing now, which play on from it")),
       md::item(N_("Insert MIDI clip"), "clips.insertMidiClip", [](App& a) { livelook::gridInsertMidiClip(a); })
           .tip(N_("A new one-bar MIDI clip in the selected slot of a MIDI track")),
       addRow(md::Kind::Provider),
@@ -468,6 +471,10 @@ const md::Menu& pagesDef() {
       md::separator(),
       md::item(N_("Channel settings"), "view.channelSettings", [](App& a) { a.settingsChannel = a.settingsChannel != kNoId ? kNoId : a.selChannel; })
           .check([](App& a) { return a.settingsChannel != kNoId; }),
+      // TRK-1118: the selected instrument's own editor in a window (an installed plugin's window, a built-in's
+      // editor floating), as the instrument list's menu and the Channel frame's button open it.
+      md::item(N_("Open plugin window"), [](App& a) { trackereditors::openPluginWindow(a, a.selChannel); })
+          .when([](App& a) { return a.doc.song().channel(a.selChannel) != nullptr; }),
       md::item(N_("Audio editor"), "view.audioEditor", [](App& a) { a.settings.set("ui.loupePinned", !a.settings.getBool("ui.loupePinned")); })
           .check([](App& a) { return a.settings.getBool("ui.loupePinned"); }),
       md::item(N_("Files"), "view.files", [](App&) { trackerview::setHeaderSwap(trackerview::headerSwap() == 2 ? 0 : 2); })
@@ -893,7 +900,18 @@ void trackerFilter(menustyle::Block b, const md::Menu& in, md::Menu& out) {
       x.children.clear();
       trackerFilter(b, e.children, x.children);
     }
+    // TRK-1118: Clone is the Tracker's Duplicate pattern (shown at once, one undo step), with a second
+    // row that also puts the copy in the song after the current entry.
+    const bool clone = b == menustyle::Block::Patterns && x.kind == md::Kind::Item && x.key && std::string(x.key) == "pattern.clone";
+    if (clone) {
+      x.label = N_("Duplicate pattern");
+      x.run = [](App& a) { trackerview::duplicatePattern(a, false); };
+    }
     out.push_back(std::move(x));
+    if (clone) {
+      out.push_back(md::item(N_("Duplicate into the song"), [](App& a) { trackerview::duplicatePattern(a, true); })
+                         .when([](App& a) { return a.doc.song().pattern(a.curPattern) != nullptr; }));
+    }
   }
 }
 const md::Menu* trackerBlock(menustyle::Block b, const md::Menu* def) {

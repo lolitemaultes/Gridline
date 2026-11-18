@@ -33,6 +33,8 @@
 namespace gl {
 
 namespace {
+Json followToJson(const FollowSpec& f);  // grid2-1118 (below)
+FollowSpec followFromJson(const Json* j);
 
 // J-46: tick values read from a project stay within ±2^42 (≈ 4.4e12 ticks,
 // far past any song) so that start + length sums can never overflow int64
@@ -262,11 +264,18 @@ FreezeRecord freezeFromJson(const Json* j) {
 // Every field is written only when it differs from its default, so projects
 // that do not use them are unchanged and older readers ignore the extra keys
 // (no schema bump needed).
+// The channel pitch in cents: "pitchCents" (0.7.7 on), else "pitch" in whole semitones (older
+// projects, older collaborators) times 100.
+float channelPitchFromJson(const Json& jc) {
+  double cents = jc.find("pitchCents") ? jc.num("pitchCents", 0) : std::clamp(jc.num("pitch", 0), -24.0, 24.0) * 100.0;
+  if (!std::isfinite(cents)) cents = 0;
+  return static_cast<float>(std::clamp(cents, -kChannelPitchMaxCents, kChannelPitchMaxCents));
+}
+
 void channelExtrasToJson(const Channel& c, Json& jc) {
   const Channel d;
   if (c.fine != d.fine) jc.object["fine"] = num(c.fine);
-  if (c.pitchSmooth) jc.object["pitchSmooth"] = boolean(true);  // K-132
-  if (c.knobFine != d.knobFine) jc.object["knobFine"] = num(c.knobFine);
+  if (c.bendRange != d.bendRange) jc.object["bendRange"] = num(c.bendRange);
   if (c.swingMix != d.swingMix) jc.object["swingMix"] = num(c.swingMix);
   if (c.timeShift != d.timeShift) jc.object["timeShift"] = num(c.timeShift);
   if (c.polyphony != d.polyphony) jc.object["polyphony"] = num(c.polyphony);
@@ -351,8 +360,15 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
 
 void channelExtrasFromJson(const Json& jc, Channel& c) {
   c.fine = jsonInt<int>(std::clamp(jc.num("fine", 0), -200.0, 200.0));
-  c.pitchSmooth = flag(jc, "pitchSmooth");  // K-132
-  c.knobFine = jsonInt<int>(std::clamp(jc.num("knobFine", 0), -10000.0, 10000.0));
+  c.bendRange = jsonInt<int>(std::clamp(jc.num("bendRange", 2), 1.0, static_cast<double>(kChannelBendRangeMax)));
+  // K-132 projects (FL import before 0.7.7): an automated pitch knob kept whole semitones in "pitch"
+  // and its cents beyond them in "knobFine", also counted in "fine". The knob now holds cents: its
+  // cents move from the fine tune to the pitch (the same sound, and automation still replaces it).
+  if (!jc.find("pitchCents") && flag(jc, "pitchSmooth")) {
+    const int knobFine = jsonInt<int>(std::clamp(jc.num("knobFine", 0), -10000.0, 10000.0));
+    c.pitchCents = static_cast<float>(std::clamp(static_cast<double>(c.pitchCents) + knobFine, -kChannelPitchMaxCents, kChannelPitchMaxCents));
+    c.fine = std::clamp(c.fine - knobFine, -200, 200);
+  }
   c.swingMix = static_cast<float>(std::clamp(jc.num("swingMix", 1), 0.0, 1.0));
   c.timeShift = static_cast<float>(std::clamp(jc.num("timeShift", 0), 0.0, 1.0));
   c.polyphony = jsonInt<int>(std::clamp(jc.num("polyphony", 0), 0.0, 256.0));
@@ -568,6 +584,22 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.takeRating != 0) jc.object["takeRating"] = num(c.takeRating);  // K-123
   if (c.launched) jc.object["launched"] = boolean(true);
   if (c.launchOnce) jc.object["launchOnce"] = boolean(true);  // K-112c checkpoint 54
+  if (!c.launchSet.isDefault()) {  // grid2-1118: the clip's own launch settings and follow actions
+    Json jl = Json::makeObject();
+    if (c.launchSet.mode >= 0) {
+      jl.object["mode"] = num(c.launchSet.mode);
+    }
+    if (c.launchSet.quant >= 0) {
+      jl.object["quant"] = num(c.launchSet.quant);
+    }
+    if (c.launchSet.legato) {
+      jl.object["legato"] = boolean(true);
+    }
+    if (!c.launchSet.follow.isDefault()) {
+      jl.object["follow"] = followToJson(c.launchSet.follow);
+    }
+    jc.object["launchSet"] = std::move(jl);
+  }
   if (c.group != kNoId) jc.object["group"] = num(c.group);  // J-31
   // J-38: fade curves and hand-set fades (automatic crossfades are derived, not saved).
   if (c.fadeInShape != 0) jc.object["fadeInShape"] = num(c.fadeInShape);
@@ -625,6 +657,13 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.takeRating = static_cast<uint8_t>(std::clamp(jc.num("takeRating", 0), 0.0, 3.0));  // K-123
   c.launched = flag(jc, "launched");
   c.launchOnce = flag(jc, "launchOnce");  // K-112c checkpoint 54
+  c.launchSet = ClipLaunch{};
+  if (const Json* jl = jc.find("launchSet"); jl && jl->is(Json::Type::Object)) {  // grid2-1118
+    c.launchSet.mode = static_cast<int8_t>(jsonInt<int>(std::clamp(jl->num("mode", -1), -1.0, static_cast<double>(static_cast<int>(PadMode::Count) - 1))));
+    c.launchSet.quant = static_cast<int8_t>(jsonInt<int>(std::clamp(jl->num("quant", -1), -1.0, static_cast<double>(static_cast<int>(LaunchGrid::Count) - 1))));
+    c.launchSet.legato = flag(*jl, "legato");
+    c.launchSet.follow = followFromJson(jl->find("follow"));
+  }
   c.group = jsonInt<ObjectId>(std::max(0.0, jc.num("group", 0)));  // J-31
   // J-38
   // J-43: shapes 0 smooth / 1 straight (J-38 files: 1 linear = straight, 2 and 3 play smooth);
@@ -921,6 +960,13 @@ void trackExtrasToJson(const PlaylistTrack& t, Json& jt) {
   }
   if (t.autoMode != 1) jt.object["autoMode"] = num(t.autoMode);  // K-112B: Read is the default
   if (t.sound != kNoId) jt.object["sound"] = num(t.sound);         // K-112B (R08-07)
+  if (!t.noStop.empty()) {  // grid2-1118: the scenes whose empty slot has no stop button
+    Json jn = Json::makeArray();
+    for (int k : t.noStop) {
+      jn.array.push_back(num(k));
+    }
+    jt.object["noStop"] = std::move(jn);
+  }
 }
 
 void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
@@ -948,6 +994,16 @@ void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
   }
   t.autoMode = static_cast<uint8_t>(e("autoMode", 1, 5));  // K-112B: Off, Read, Touch, Latch, Write
   t.sound = jsonInt<ObjectId>(std::max(0.0, jt.num("sound", 0)));  // K-112B (R08-07)
+  t.noStop.clear();
+  if (const Json* jn = jt.find("noStop"); jn && jn->is(Json::Type::Array)) {  // grid2-1118
+    for (const Json& v : jn->array) {
+      if (v.is(Json::Type::Number) && v.number >= 0 && v.number < 1e6) {
+        t.noStop.push_back(jsonInt<int>(v.number));
+      }
+    }
+    std::sort(t.noStop.begin(), t.noStop.end());
+    t.noStop.erase(std::unique(t.noStop.begin(), t.noStop.end()), t.noStop.end());
+  }
 }
 
 // Checkpoint 59 (N58-03): Clips' scene names and colours, [{"name", "color"}] by scene. K-314 (A-02):
@@ -961,6 +1017,16 @@ Json scenesToJson(const std::vector<SceneInfo>& scenes) {
     }
     if (sc.color != 0) {
       e.object["color"] = num(static_cast<double>(sc.color));
+    }
+    if (sc.tempo > 0) {  // grid2-1118: the scene's tempo, time signature and follow actions
+      e.object["tempo"] = num(sc.tempo);
+    }
+    if (sc.sigNum > 0 && sc.sigDen > 0) {
+      e.object["sigNum"] = num(sc.sigNum);
+      e.object["sigDen"] = num(sc.sigDen);
+    }
+    if (!sc.follow.isDefault()) {
+      e.object["follow"] = followToJson(sc.follow);
     }
     js.array.push_back(std::move(e));
   }
@@ -977,6 +1043,16 @@ std::vector<SceneInfo> scenesFromJson(const Json* js) {
     if (e.is(Json::Type::Object)) {
       sc.name = e.text("name", "");
       sc.color = static_cast<Rgb>(std::clamp(e.num("color", 0), 0.0, 16777215.0));
+      sc.tempo = std::clamp(e.num("tempo", 0), 0.0, 999.0);  // grid2-1118
+      if (sc.tempo > 0 && sc.tempo < 10) {
+        sc.tempo = 10;
+      }
+      sc.sigNum = jsonInt<int>(std::clamp(e.num("sigNum", 0), 0.0, 32.0));
+      sc.sigDen = jsonInt<int>(std::clamp(e.num("sigDen", 0), 0.0, 32.0));
+      if (sc.sigNum <= 0 || (sc.sigDen != 1 && sc.sigDen != 2 && sc.sigDen != 4 && sc.sigDen != 8 && sc.sigDen != 16 && sc.sigDen != 32)) {
+        sc.sigNum = sc.sigDen = 0;
+      }
+      sc.follow = followFromJson(e.find("follow"));
     }
     out.push_back(sc);
   }
@@ -984,6 +1060,62 @@ std::vector<SceneInfo> scenesFromJson(const Json* js) {
     out.pop_back();
   }
   return out;
+}
+
+// grid2-1118: follow actions and a clip's own launch settings (written only when not the defaults).
+Json followToJson(const FollowSpec& f) {
+  Json j = Json::makeObject();
+  const FollowSpec d;
+  if (f.on) {
+    j.object["on"] = boolean(true);
+  }
+  if (f.a != d.a) {
+    j.object["a"] = num(static_cast<int>(f.a));
+  }
+  if (f.b != d.b) {
+    j.object["b"] = num(static_cast<int>(f.b));
+  }
+  if (f.chanceA != d.chanceA) {
+    j.object["chanceA"] = num(f.chanceA);
+  }
+  if (f.chanceB != d.chanceB) {
+    j.object["chanceB"] = num(f.chanceB);
+  }
+  if (f.jumpA != 0) {
+    j.object["jumpA"] = num(f.jumpA);
+  }
+  if (f.jumpB != 0) {
+    j.object["jumpB"] = num(f.jumpB);
+  }
+  if (f.time != 0) {
+    j.object["time"] = num(static_cast<double>(f.time));
+  }
+  if (f.linked) {
+    j.object["linked"] = boolean(true);
+  }
+  if (f.loops != 1) {
+    j.object["loops"] = num(f.loops);
+  }
+  return j;
+}
+
+FollowSpec followFromJson(const Json* j) {
+  FollowSpec f;
+  if (!j || !j->is(Json::Type::Object)) {
+    return f;
+  }
+  const double last = static_cast<double>(static_cast<int>(FollowAction::Count) - 1);
+  f.on = flag(*j, "on");
+  f.a = static_cast<FollowAction>(jsonInt<int>(std::clamp(j->num("a", static_cast<double>(f.a)), 0.0, last)));
+  f.b = static_cast<FollowAction>(jsonInt<int>(std::clamp(j->num("b", static_cast<double>(f.b)), 0.0, last)));
+  f.chanceA = static_cast<uint8_t>(jsonInt<int>(std::clamp(j->num("chanceA", 100), 0.0, 100.0)));
+  f.chanceB = static_cast<uint8_t>(jsonInt<int>(std::clamp(j->num("chanceB", 0), 0.0, 100.0)));
+  f.jumpA = jsonInt<int>(std::clamp(j->num("jumpA", 0), 0.0, 99999.0));
+  f.jumpB = jsonInt<int>(std::clamp(j->num("jumpB", 0), 0.0, 99999.0));
+  f.time = std::max<Tick>(0, jsonTick(j->num("time", 0)));
+  f.linked = flag(*j, "linked");
+  f.loops = jsonInt<int>(std::clamp(j->num("loops", 1), 1.0, 999.0));
+  return f;
 }
 
 Json clipToJson(const Clip& c) {
@@ -1021,9 +1153,12 @@ void songExtrasToJson(const Song& s, Json& j) {
     for (const auto& [lay, text] : s.workspaceCopy) jw.object[lay] = Json::makeString(text);
     j.object["workspaces"] = std::move(jw);
   }
-  if (s.live.areaEnd > 0 || !s.keptSends.empty() || !s.live.scenes.empty()) {
+  if (s.live.areaEnd > 0 || !s.keptSends.empty() || !s.live.scenes.empty() || s.live.sceneLen > 0) {
     Json jl = Json::makeObject();
     if (s.live.areaEnd > 0) jl.object["areaEnd"] = num(static_cast<double>(s.live.areaEnd));
+    if (s.live.sceneLen > 0) {  // grid2-1118
+      jl.object["sceneLen"] = num(static_cast<double>(s.live.sceneLen));
+    }
     if (!s.live.scenes.empty()) {  // checkpoint 59 (N58-03): [{"name", "color"}] by scene
       jl.object["scenes"] = scenesToJson(s.live.scenes);
     }
@@ -1104,6 +1239,9 @@ void songExtrasToJson(const Song& s, Json& j) {
         if (!a.live.scenes.empty()) {  // K-314 (A-02): a parked arrangement's scene names and colours
           ja.object["liveScenes"] = scenesToJson(a.live.scenes);
         }
+        if (a.live.sceneLen > 0) {  // grid2-1118
+          ja.object["liveSceneLen"] = num(static_cast<double>(a.live.sceneLen));
+        }
       }
       arr.array.push_back(std::move(ja));
     }
@@ -1135,6 +1273,7 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
   }
   if (const Json* jl = j.find("live"); jl && jl->is(Json::Type::Object)) {
     s.live.areaEnd = std::max<Tick>(0, jsonTick(jl->num("areaEnd", 0)));
+    s.live.sceneLen = std::max<Tick>(0, jsonTick(jl->num("sceneLen", 0)));  // grid2-1118
     s.live.view = jl->text("view", "");  // checkpoint 59: read once (0.7.7 dev saves), never written again
     s.live.scenes = scenesFromJson(jl->find("scenes"));  // checkpoint 59 (N58-03)
     if (s.live.view != "grid" && s.live.view != "arrangement") s.live.view.clear();
@@ -1240,6 +1379,7 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
       std::stable_sort(a.markers.begin(), a.markers.end(), [](const Marker& x, const Marker& y) { return x.pos < y.pos; });
       a.live.areaEnd = std::max<Tick>(0, jsonTick(ja.num("liveAreaEnd", 0)));
       a.live.scenes = scenesFromJson(ja.find("liveScenes"));  // K-314 (A-02)
+      a.live.sceneLen = std::max<Tick>(0, jsonTick(ja.num("liveSceneLen", 0)));  // grid2-1118
     }
     s.arrangements.push_back(std::move(a));
   }
@@ -1408,7 +1548,10 @@ Json channelToJson(const Channel& c) {
   jc.object["gain"] = num(c.gain);
   jc.object["pan"] = num(c.pan);
   jc.object["muted"] = boolean(c.muted);
-  jc.object["pitch"] = num(c.pitch);
+  // The channel pitch: whole semitones under "pitch" (what builds before 0.7.7 read) and the exact
+  // value in cents under "pitchCents" when it is not 0 (pitchCents wins when both are there).
+  jc.object["pitch"] = num(std::clamp(std::round(static_cast<double>(c.pitchCents) / 100.0), -24.0, 24.0));
+  if (c.pitchCents != 0.0f) jc.object["pitchCents"] = num(c.pitchCents);
   if (c.sustainPedal) jc.object["sustainPedal"] = boolean(true);
   jc.object["mixerTrack"] = num(c.mixerTrack);
   if (!c.auxOuts.empty()) {
@@ -1431,7 +1574,9 @@ Json songToJson(const Song& s, bool withFlOrigin) {
   Json j = Json::makeObject();
   j.object["format"] = str(kProjectFormatTag);
   // K-224: version 9 adds Stage rooms; a project with one room stays version 8 (older builds open it).
-  j.object["version"] = num(s.stageRooms.empty() ? 8 : kProjectSchemaVersion);
+  // grid2-1118: version 10: the clip grid holds one clip a slot, and clips and scenes carry launch settings,
+  // follow actions, tempo and time signature: a project with a clip grid (a live area) or any of them.
+  j.object["version"] = num(trackmodes::usesGridV10(s) ? kProjectSchemaVersion : s.stageRooms.empty() ? 8 : 9);
   Json info = Json::makeObject();
   info.object["title"] = str(s.info.title);
   info.object["author"] = str(s.info.author);
@@ -1657,6 +1802,9 @@ bool migrateProjectJson(Json& j, std::string* err) {
   if (v == 6) j.object["version"] = num(7), v = 7;  // v7: see bitsLawV7 (applied to the loaded song)
   if (v == 7) j.object["version"] = num(8), v = 8;  // v8: see rateLawV8 (applied to the loaded song)
   if (v == 8) j.object["version"] = num(9), v = 9;  // v9 adds optional "stageRooms" and mixer "roomId"
+  if (v == 9) {  // v10: grid2-1118 (songFromJson: splitSharedSlots)
+    j.object["version"] = num(10), v = 10;
+  }
   return true;
 }
 
@@ -1789,7 +1937,7 @@ void channelFromJson(const Json& jc, Channel& c, const Song& s) {
   c.gain = static_cast<float>(std::clamp(jc.num("gain", 0.78), 0.0, 1.25));
   c.pan = static_cast<float>(std::clamp(jc.num("pan", 0.0), -1.0, 1.0));
   c.muted = flag(jc, "muted");
-  c.pitch = jsonInt<int>(std::clamp(jc.num("pitch", 0), -24.0, 24.0));
+  c.pitchCents = channelPitchFromJson(jc);
   c.sustainPedal = flag(jc, "sustainPedal");
   c.mixerTrack = jsonInt<ObjectId>(jc.num("mixerTrack", 0));
   if (!s.mixerTrack(c.mixerTrack)) c.mixerTrack = s.masterId();
@@ -2139,6 +2287,12 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
   // K-114: before clips looped one by one, a pattern's loop mode (or an automation
   // curve's loop length) looped every clip of it: each clip keeps the loop it played with.
   if (const Json* cl = j.find("clipLoops"); !cl || !cl->is(Json::Type::Bool)) adoptOldClipLoops(s);
+  // grid2-1118: before version 10 a slot of the clip grid (a scene's stretch of the live area on a track)
+  // could hold several clips, of which only the first launched: each further one moves to a scene of its
+  // own, inserted under it (nothing is lost; the later scenes and the arrangement move down).
+  if (srcVersion < 10) {
+    trackmodes::splitSharedSlots(s);
+  }
   out = std::move(s);
   return true;
 }

@@ -311,11 +311,11 @@ void importChannels(Context& c) {
     {
       long total = std::lround(std::isfinite(cents) ? std::clamp(cents, -1e6, 1e6) : 0.0);  // corrupt values: no overflow
       long semis = std::clamp<long>((total >= 0 ? total + 50 : total - 50) / 100, -24, 24);
-      ch.pitch = static_cast<int>(semis);
+      ch.pitchCents = static_cast<float>(semis * 100);
       ch.fine = static_cast<int>(std::clamp<long>(total - semis * 100, -200, 200));
     }
     // Audio-clip channels: the pitch knob moves each clip (arrangement importer).
-    if (type == 4) ch.pitch = 0, ch.fine = 0;
+    if (type == 4) ch.pitchCents = 0, ch.fine = 0;
     // --- Time: swing mix (0..128 → 0..1), fine time shift (0..1024 = up to one step).
     if (const Event* e = find(evs, 97)) ch.swingMix = static_cast<float>(std::clamp(e->value() / 128.0, 0.0, 1.0));
     if (const Event* e = find(evs, 89); e && e->value() > 0) {

@@ -155,6 +155,7 @@
 #include "MenuTreeUi.h"
 #include "SystemMenu.h"
 #include "LookChrome.h"
+#include "SmoothLibrary.h"
 #include "SmoothScrollUi.h"
 #include "ExternalDragUi.h"
 #include "SuiteUi.h"
@@ -185,8 +186,25 @@ SDL_AudioDeviceID gDevice = 0;
 SDL_AudioDeviceID gInDevice = 0;  // capture (J-8)
 uisound::Player* gUiSounds = nullptr;  // J-48: interface sounds, mixed after the master
 
-void initMidi(App& a) {
-  a.midi = std::make_unique<MidiManager>(a.engine);
+// MIDI-1118: hidden and scripted runs (--hidden, --dev-input, --screenshot: tests and tools) open
+// no system MIDI ports, so the user's keyboard or stray device traffic never reaches a test; tests
+// inject MIDI through the dev commands instead. GRIDLINE_TEST_MIDI (any value: 1 opens the real
+// devices, fail / hang simulate a broken service) brings the system MIDI service back.
+bool systemMidiPorts(int argc, char** argv) {
+  if (const char* t = std::getenv("GRIDLINE_TEST_MIDI"); t && *t) {
+    return true;
+  }
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--hidden" || arg == "--dev-input" || arg == "--screenshot") {
+      return false;
+    }
+  }
+  return true;
+}
+
+void initMidi(App& a, bool systemPorts) {
+  a.midi = std::make_unique<MidiManager>(a.engine, systemPorts);
   a.midi->load((fs::path(a.configDir()) / "midi.json").string());
   // The system MIDI service is asked on a background thread: it can hang or refuse, and then
   // Gridline starts without MIDI devices and keeps trying (Settings > MIDI says so). A working
@@ -1771,6 +1789,12 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                     midiOpenStateName(app.midi->serviceState()), app.midi->serviceAttempts(), app.midi->inputs.size(),
                     app.midi->outputs.size(), app.midi->serviceRetryIn(), app.midi->serviceAge(), app.midi->serviceError().c_str());
       std::fflush(stdout);
+    } else if (l.cmd == "midiports") {  // MIDI-1118: system MIDI ports open (hidden / scripted runs: none)
+      if (app.midi) {
+        std::printf("midiports frame %d: system %d inputs %d output %d device-outputs %d\n", frame, app.midi->systemPorts() ? 1 : 0,
+                    app.midi->openInputs(), app.midi->outputOpen() ? 1 : 0, app.midi->openDeviceOutputs());
+      }
+      std::fflush(stdout);
     } else if (l.cmd == "midiretry") {  // the Retry button in Settings > MIDI
       if (app.midi) app.midi->retry();
     } else if (l.cmd == "forget") {
@@ -1888,6 +1912,15 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       livelook::devCentreAsk();
     } else if (l.cmd == "livegrid") {  // K-287 (dev): the Live clip grid's slots (LiveLook.h)
       livelook::devGridAsk();
+    } else if (l.cmd == "livestate") {  // grid-1118 (dev): the launched clips per track, and which tracks the grid took
+      std::printf("livestate frame %d: mode %d playing %d pos %.0f back %d\n", frame, static_cast<int>(app.engine.mode()), app.engine.playing() ? 1 : 0,
+                  app.engine.position(), app.engine.anyArrangementOverridden() ? 1 : 0);
+      for (int t = 0; t < static_cast<int>(app.doc.song().tracks.size()) && t < kMaxPlaylistTracks; ++t)
+        std::printf("  live %d active %u queued %u off %d\n", t, static_cast<unsigned>(app.engine.liveActive(t)),
+                    static_cast<unsigned>(app.engine.liveQueued(t)), app.engine.arrangementOverridden(t) ? 1 : 0);
+      std::fflush(stdout);
+    } else if (l.cmd == "grid2state") {  // grid2-1118 (dev): scenes, launch settings, stop buttons, the edit grid, the selection
+      livelook::devGrid2State(app, frame);
     } else if (l.cmd == "plrows") {  // K-112c (dev): the playlist's rows as drawn (Windows.h)
       devPlaylistRowsAsk();
     } else if (l.cmd == "pltool") {  // K-287 (dev): pltool draw|select: the playlist's tool, as its tool menu picks it
@@ -3069,7 +3102,7 @@ int main(int argc, char** argv) {
   app.assetsDir = assets;
   openAudio(app);
   splash(0.58f, "Scanning MIDI devices");
-  initMidi(app);
+  initMidi(app, systemMidiPorts(argc, argv));
   splash(0.70f, "Loading the plugin list");
   host::initHosting(app.configDir());
   splash(0.74f, "Preparing instruments and effects");
@@ -3911,6 +3944,7 @@ int main(int argc, char** argv) {
     // J-141: the welcome launcher replaces the project view while it shows (the project stays
     // open behind it); dialogs, settings and notifications still draw over it.
     const bool homeShown = app.home.visible();
+    layoutui::regionsFrameStart(app);  // gap-1118: windows closed after last frame's layout pass close now
     if (homeShown) {
       prof::Scope ps("launcher");
       launcherui::draw(app);
@@ -3949,6 +3983,7 @@ int main(int argc, char** argv) {
     // Dev layout options (--show mixer / playlist, --hide) ask for the default layout they adjust,
     // whatever layout.ini holds (it is read since J-113).
     static bool devLayout = devMixerOnly || devPlaylistOnly || !devHide.empty();
+    layoutui::collapseRegions(app);  // gap-1118: an emptied region collapses (an opened window shows its own) this frame
     if (layoutui::takeShellRebuild()) layoutRebuild = layoutRebuildKeep = true;  // K-112: a region was shown or hidden
     if (firstRun || migrate || app.resetLayout || devLayout || layoutRebuild || !ImGui::DockBuilderGetNode(dockId)) {
       prof::Scope ps("dockbuild");
@@ -4016,6 +4051,7 @@ int main(int argc, char** argv) {
         fitDockTree(ImGui::DockBuilderGetNode(dockId), ImVec2(avail.x / lastDock.x, avail.y / lastDock.y), avail);
       lastDock = avail;
     }
+    layoutui::pinBands(app);  // rsz-1118: before the layout pass, so a resized frame draws the bands at their size
     {
       prof::Scope ps("dockspace");
       viewports::beginDockSpace(dockId);  // J-114: tab bars get the pop-out / dock-back button
@@ -4910,6 +4946,7 @@ int main(int argc, char** argv) {
   stemsui::shutdown();         // J-191: a running stem split / model download likewise
   receiptui::shutdown();       // J-219: a running Track Receipt measurement likewise
   j59::shutdownRenderSampler();
+  smoothlib::shutdown();       // a Library preview render in progress likewise
   browserui::shutdownIndex();  // J-46: no worker left running into static teardown
   updui::shutdown();           // J-89: a running installer download is cancelled
   urlimportui::shutdown();     // J-192: running downloads / conversions are stopped

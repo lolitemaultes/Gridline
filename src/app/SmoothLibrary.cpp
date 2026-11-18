@@ -1,22 +1,34 @@
 #include "SmoothLibrary.h"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
+#include <map>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 #include "../../third_party/imgui/imgui.h"
+#include "../../third_party/imgui/imgui_internal.h"
+#include "../core/Crash.h"
 #include "../core/I18n.h"
 #include "../core/LayoutShell.h"
 #include "../core/MenuOps.h"
 #include "../core/PluginInfo.h"
 #include "../core/TrackModes.h"
+#include "../engine/Render.h"
+#include "../engine/Sample.h"
+#include "../host/HostedPlugins.h"
 #include "../host/PluginGroups.h"
 #include "../host/PluginPrefs.h"
 #include "../host/PluginScan.h"
 #include "App.h"
 #include "CollabUi.h"
+#include "Keys.h"
 #include "LayoutParts.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
@@ -90,6 +102,20 @@ struct LibSlot {
   std::vector<LibUse> uses;
 };
 std::vector<LibSlot> gLibSlots;
+
+// A row's identity across rebuilds of the list (the selection and the loaded mark).
+std::string itemKey(const Item& it) { return (it.effect ? "fx|" : "in|") + it.type + "|" + std::to_string(it.preset) + "|" + it.name; }
+// The selected row (a click or Up / Down; empty: none). The list scrolls to it once after a key moves it.
+std::string gSel;
+bool gScrollToSel = false;
+// The row each sound was last loaded from, with the settings it got: the row shows as the track's sound
+// while the sound still has them, even when the sound's name is the user's own (it then does not follow
+// the patch's name).
+struct Loaded {
+  std::string key, type;
+  std::vector<float> params;
+};
+std::map<ObjectId, Loaded> gLoaded;
 
 LibSlot* libSlotOf(ObjectId strip) {
   for (LibSlot& l : gLibSlots)
@@ -302,6 +328,7 @@ bool loadItem(App& a, const Item& it, bool add) {
     a.doc.endGroup();
     if (!sameType) pui::pluginReplaced(PluginTarget{id, -1});
     a.selectChannel(id);
+    if (const Channel* nc = a.doc.song().channel(id)) gLoaded[id] = Loaded{itemKey(it), nc->plugin.type, nc->plugin.params};
     return true;
   }
   // No instrument on the selected track: a new instrument track for the patch, as the reference does
@@ -337,14 +364,252 @@ bool loadItem(App& a, const Item& it, bool add) {
   if (const PluginInfo* pi = findPlugin(it.type)) stripFollows(a, id, pi->name, name);
   a.doc.endGroup();
   a.selectChannel(id);
+  if (const Channel* nc = a.doc.song().channel(id)) gLoaded[id] = Loaded{itemKey(it), nc->plugin.type, nc->plugin.params};
   return true;
+}
+
+// Whether row `it` is what the sound `c` plays now (the loaded mark).
+bool isLoaded(const Channel* c, const Item& it) {
+  if (!c || it.effect || c->plugin.type != it.type) return false;
+  const auto l = gLoaded.find(c->id);
+  if (l != gLoaded.end() && l->second.type == c->plugin.type && l->second.params == c->plugin.params) return l->second.key == itemKey(it);
+  return c->name == it.name;
 }
 
 }  // namespace
 
 bool load(App& a, const Item& it) { return loadItem(a, it, false); }
 
+// ------------------------------------------------------------------------ preview ----
+//
+// A click on a patch plays one C5 note of it, so a sound can be heard while browsing without touching
+// the song. The note is rendered by a separate instance of the patch (a one-note song through the
+// offline engine, so a patch sounds as it will on a track) on a worker thread, then played on the
+// engine's preview output (straight to the speakers, as the browser's sample preview: not recorded,
+// not in the song, no undo step, nothing sent to collaborators). Each preview cuts the one before. One
+// worker at a time: a click while one renders cancels it and queues the newest; a render that ends
+// after the selection moved on is not played. Built-in patches are kept (a few) so a row clicked
+// again plays at once; a hosted plugin is loaded each time (its calls that must run on the interface
+// thread are served there each frame, so the window stays alive) and its row says Loading meanwhile.
+
+namespace {
+
+constexpr int kPreviewPitch = 60;      // C5 (MIDI 60)
+constexpr int kPreviewVelocity = 100;  // of 127, the piano roll's default
+constexpr size_t kPreviewCacheSize = 12;
+
+struct PreviewRequest {
+  uint64_t serial = 0;
+  std::string key;  // the row (itemKey)
+  PluginState state;
+  int sampleRate = 44100;
+};
+
+struct PreviewJob {
+  std::thread worker;
+  std::atomic<bool> running{false}, finished{false}, cancel{false};
+  std::mutex mu;
+  PreviewRequest req;  // what the worker renders (written before it starts, read-only meanwhile)
+  SamplePtr result;    // under mu
+};
+PreviewJob gPv;
+bool gPvQueued = false;
+PreviewRequest gPvNext;
+uint64_t gPvSerial = 0;  // the latest request: only its render is played
+int gPvSince = 0;        // frame the latest request was made (the Loading mark waits a moment)
+struct CachedPreview {
+  std::string key;
+  int sampleRate = 0;
+  std::vector<float> params;
+  std::string data;
+  SamplePtr sample;
+};
+std::vector<CachedPreview> gPvCache;
+// Dev / tests: previews played, the last one's row and sound.
+int gPvPlayed = 0;
+std::string gPvLastKey;
+SamplePtr gPvLast;
+
+bool previewOn(const App& a) { return a.settings.getBool("smooth.libraryPreview"); }
+
+// The one-note song: the patch on a channel into the master, one C5 note half a second long, then
+// a second and a half for its release. The silence after the sound is cut off; a short fade ends it.
+SamplePtr renderPreview(const PreviewRequest& r, const std::atomic<bool>* cancel) {
+  Song s = makeEmptySong();
+  s.tempo = 120;
+  Channel c;
+  c.id = s.allocateId();
+  c.name = "Preview";
+  c.plugin = r.state;
+  c.mixerTrack = s.masterId();
+  s.channels.push_back(c);
+  Pattern& p = s.patterns[0];
+  p.bars = 1;
+  Note n;
+  n.start = 0;
+  n.length = s.ppq;  // a beat: half a second at 120
+  n.pitch = kPreviewPitch;
+  n.velocity = kPreviewVelocity;
+  p.notes[c.id] = {n};
+  Clip k;
+  k.id = s.allocateId();
+  k.pattern = p.id;
+  k.length = s.ppq;
+  s.playlist.push_back(k);
+  RenderOptions o;
+  o.sampleRate = r.sampleRate;
+  o.tail = s.ppq * 3;
+  o.cancel = cancel;
+  const AudioBuffer b = renderSong(s, o);
+  if (cancel && cancel->load()) return nullptr;
+  size_t len = b.frames;
+  const float* L = b.channels > 0 ? b.plane(0) : nullptr;
+  const float* R = b.channels > 1 ? b.plane(1) : L;
+  if (!L || len == 0) return nullptr;
+  while (len > 0 && std::fabs(L[len - 1]) < 1e-4f && std::fabs(R[len - 1]) < 1e-4f) --len;
+  if (len == 0) return nullptr;
+  auto out = std::make_shared<Sample>();
+  out->path = "library-preview";
+  out->sampleRate = r.sampleRate;
+  out->left.assign(L, L + len);
+  out->right.assign(R, R + len);
+  const size_t fade = std::min(len, static_cast<size_t>(r.sampleRate / 20));  // 50 ms
+  for (size_t i = 0; i < fade; ++i) {
+    const float g = static_cast<float>(i) / static_cast<float>(fade);
+    out->left[len - 1 - i] *= g;
+    out->right[len - 1 - i] *= g;
+  }
+  return out;
+}
+
+void startWorker(const PreviewRequest& r) {
+  gPv.req = r;
+  gPv.cancel = false;
+  gPv.finished = false;
+  gPv.running = true;
+  gPv.worker = std::thread([]() {
+    host::UiThreadRenderScope scope;  // a hosted plugin's interface-thread calls are served there
+    SamplePtr smp;
+    try {  // an exception must not leave this thread
+      smp = renderPreview(gPv.req, &gPv.cancel);
+    } catch (...) {
+      crash::reportCurrentException("Previewing a Library sound");
+      smp = nullptr;
+    }
+    {
+      std::lock_guard<std::mutex> lk(gPv.mu);
+      gPv.result = std::move(smp);
+    }
+    gPv.finished = true;
+    gPv.running = false;
+  });
+}
+
+void play(App& a, const std::string& key, SamplePtr smp) {
+  a.engine.preview(smp);
+  ++gPvPlayed;
+  gPvLastKey = key;
+  gPvLast = std::move(smp);
+}
+
+// Once a frame: a finished render is played when it is still the latest request; the queued one starts.
+void pollPreview(App& a) {
+  if (gPv.running) {
+    host::runUiThreadTasks();
+  }
+  if (gPv.finished.exchange(false)) {
+    if (gPv.worker.joinable()) {
+      gPv.worker.join();
+    }
+    SamplePtr smp;
+    {
+      std::lock_guard<std::mutex> lk(gPv.mu);
+      smp = std::move(gPv.result);
+    }
+    const PreviewRequest& r = gPv.req;
+    if (smp && !isHostedType(r.state.type)) {
+      gPvCache.push_back(CachedPreview{r.key, r.sampleRate, r.state.params, r.state.data, smp});
+      if (gPvCache.size() > kPreviewCacheSize) {
+        gPvCache.erase(gPvCache.begin());
+      }
+    }
+    if (smp && r.serial == gPvSerial && !gPvQueued && previewOn(a)) {
+      play(a, r.key, smp);
+    }
+  }
+  if (gPvQueued && !gPv.running && !gPv.worker.joinable()) {
+    gPvQueued = false;
+    startWorker(gPvNext);
+  }
+}
+
+// Whether the row's preview is still on its way (its Loading mark).
+bool previewPending(const std::string& key) {
+  const bool queued = gPvQueued && gPvNext.key == key && gPvNext.serial == gPvSerial;
+  const bool rendering = gPv.running && gPv.req.key == key && gPv.req.serial == gPvSerial;
+  return queued || rendering;
+}
+
+void requestPreview(App& a, const Item& it) {
+  if (it.effect || !previewOn(a)) {
+    return;
+  }
+  const PluginInfo* info = findPlugin(it.type);
+  if (!info || info->kind != PluginKind::Generator) {
+    return;
+  }
+  PreviewRequest r;
+  r.serial = ++gPvSerial;
+  r.key = itemKey(it);
+  r.state = it.preset >= 0 && static_cast<size_t>(it.preset) < info->presets.size() ? presetState(*info, static_cast<size_t>(it.preset))
+                                                                                  : defaultPluginState(it.type);
+  r.sampleRate = std::max(8000, static_cast<int>(std::lround(a.engine.sampleRate())));
+  a.stopPreview();  // the note before stops now, whatever comes next
+  gPvQueued = false;
+  if (gPv.running) {
+    gPv.cancel = true;  // its result would not be played
+  }
+  for (const CachedPreview& c : gPvCache) {
+    if (c.key == r.key && c.sampleRate == r.sampleRate && c.params == r.state.params && c.data == r.state.data) {
+      play(a, r.key, c.sample);
+      return;
+    }
+  }
+  gPvNext = std::move(r);
+  gPvQueued = true;
+  gPvSince = ImGui::GetFrameCount();
+  pollPreview(a);  // starts at once when no render runs
+}
+
+// The selection moves to `it` (a click, Up / Down): a patch is heard, nothing else changes.
+void selectItem(App& a, const Item& it) {
+  gSel = itemKey(it);
+  requestPreview(a, it);
+}
+
+// A double-click or Enter: the row is loaded (a patch replaces the selected track's sound).
+void openItem(App& a, const Item& it, bool add) {
+  gSel = itemKey(it);
+  loadItem(a, it, add);
+}
+
+}  // namespace
+
+void select(App& a, const Item& it) { selectItem(a, it); }
+
+void shutdown() {
+  gPvQueued = false;
+  gPv.cancel = true;
+  host::serveUiThreadTasksWhile(gPv.running);
+  if (gPv.worker.joinable()) {
+    gPv.worker.join();
+  }
+  gPvCache.clear();
+  gPvLast = nullptr;
+}
+
 void frame(App& a) {
+  pollPreview(a);  // (any layout: a render finishing after a switch is still collected)
   const bool on = logicplug::active(a) && layoutui::shellBuilt(a, layout::Preset::Logic);
   if (!on) {
     gWasActive = false;
@@ -353,7 +618,11 @@ void frame(App& a) {
   const uint64_t ep = a.doc.projectEpoch();
   const bool shown = libraryShown(a);
   if (ep != gEpoch || !gWasActive) {  // a project opened or made, or Smooth just came on: as the project says
-    if (ep != gEpoch) gLibSlots.clear();
+    if (ep != gEpoch) {
+      gLibSlots.clear();
+      gLoaded.clear();
+      gSel.clear();
+    }
     gEpoch = ep;
     gWasActive = true;
     const bool want = a.doc.song().smooth.library != "closed";
@@ -393,6 +662,28 @@ void header(App& a, float w) {
     const float lfs = ImGui::GetFontSize();
     const float lw = a.fontBold->CalcTextSizeA(lfs, 1e9f, 0, lt).x;
     dl->AddText(a.fontBold, lfs, ImVec2(std::round(cx - lw * 0.5f), layoutparts::paneTitleY(lfs)), P.text, lt);
+    // The preview speaker at the right of the title line: on, a click on a patch plays it; off, a click
+    // only selects. A plain glyph on the pane, lit when on, as the header's other marks.
+    const bool on = previewOn(a);
+    const float bs = 20, bx = std::round(p.x + w - bs - 2), by = std::round(layoutparts::paneTitleY(lfs) + lfs * 0.5f - bs * 0.5f);
+    ImGui::SetCursorScreenPos(ImVec2(bx, by));
+    const bool click = ImGui::InvisibleButton("##smlibpreview", ImVec2(bs, bs));
+    const bool hov = ImGui::IsItemHovered();
+    if (hov) {
+      dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bs, by + bs), theme::mix(P.surface800, P.text, 0.08f), 5.0f);
+      ui::Hint(on ? "Preview on: a click on a patch plays a C5 note of it (double-click loads it). Click to turn the preview off"
+                  : "Preview off: a click on a patch only selects it (double-click loads it). Click to turn the preview on");
+    }
+    ui::drawIcon(dl, on ? ui::Icon::SpeakerSmall : ui::Icon::SpeakerSmallOff, ImVec2(bx + bs * 0.5f, by + bs * 0.5f), 13,
+                 on ? (hov ? P.text : P.textDim) : P.textFaint);
+    if (click) {
+      a.settings.set("smooth.libraryPreview", !on);
+      if (on) {
+        a.stopPreview();
+      }
+    }
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h));
+    ImGui::Dummy(ImVec2(0, 0));
   }
   std::string busTitle = bus ? playlistTrackName(s, static_cast<size_t>(track)) : std::string();
   // D7 (R13-04): a track that plays several sounds through a bus (a kit) is that bus here, as the
@@ -569,6 +860,51 @@ void draw(App& a) {
     rowsFilter = gFilter;
     rowsFrame = fr;
   }
+  // Up / Down move the selection (a patch is heard), Enter loads it, while the Library has the focus
+  // and no field takes the typing. A key the Library uses is locked for the frame, so no shortcut also
+  // acts on it.
+  int keyMove = 0;
+  bool keyOpen = false;
+  {
+    ImGuiIO& io = ImGui::GetIO();
+    const bool focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    if (focused && !rows.empty() && !io.WantTextInput && !io.KeyCtrl && !io.KeyAlt && !io.KeySuper && !io.KeyShift && !keys::capturing() &&
+        ImGui::GetActiveID() == 0 && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+      const ImGuiID owner = ImGui::GetID("##smlibkeys");
+      auto hit = [owner](ImGuiKey k) {
+        if (!ImGui::IsKeyPressed(k, true)) {
+          return false;
+        }
+        ImGui::SetKeyOwner(k, owner, ImGuiInputFlags_LockThisFrame);
+        return true;
+      };
+      if (hit(ImGuiKey_DownArrow)) {
+        keyMove = 1;
+      } else if (hit(ImGuiKey_UpArrow)) {
+        keyMove = -1;
+      } else if (hit(ImGuiKey_Enter) || hit(ImGuiKey_KeypadEnter)) {
+        keyOpen = true;
+      }
+    }
+  }
+  int selRow = -1;
+  for (size_t i = 0; i < rows.size() && selRow < 0 && !gSel.empty(); ++i) {
+    if (itemKey(rows[i]) == gSel) {
+      selRow = static_cast<int>(i);
+    }
+  }
+  int doSelect = -1, doOpen = -1;
+  bool openAdd = false;
+  if (keyMove != 0) {
+    doSelect = selRow < 0 ? 0 : std::clamp(selRow + keyMove, 0, static_cast<int>(rows.size()) - 1);
+    if (doSelect == selRow) {
+      doSelect = -1;  // at an end: nothing new to hear
+    }
+    gScrollToSel = true;
+  }
+  if (keyOpen && selRow >= 0) {
+    doOpen = selRow;
+  }
   if (showList) {
   ImGui::BeginChild("##smlibrows", ImVec2(listW, std::max(40.0f, avH - footH - (listY - o.y))), ImGuiChildFlags_None);
   // D8: the rows on the navigation's 22 px pitch, so a patch sits level with the kind beside it (the
@@ -583,6 +919,17 @@ void draw(App& a) {
     const std::string* fxLoaded = fxAt >= 0 ? &fxStrip->slots[static_cast<size_t>(fxAt)].plugin.type : nullptr;
     const float rw = ImGui::GetContentRegionAvail().x, rh = 22;
     ImDrawList* ld = ImGui::GetWindowDrawList();
+    // A key moved the selection: the list scrolls just enough to show it.
+    const int showRow = doSelect >= 0 ? doSelect : selRow;
+    if (gScrollToSel && showRow >= 0) {
+      const float y0 = static_cast<float>(showRow) * rh, y1 = y0 + rh, top = ImGui::GetScrollY(), viewH = ImGui::GetWindowHeight();
+      if (y0 < top) {
+        ImGui::SetScrollY(y0);
+      } else if (y1 > top + viewH) {
+        ImGui::SetScrollY(y1 - viewH);
+      }
+    }
+    gScrollToSel = false;
     ImGuiListClipper clip;
     clip.Begin(static_cast<int>(rows.size()), rh);
     while (clip.Step())
@@ -590,28 +937,57 @@ void draw(App& a) {
         const Item& it = rows[static_cast<size_t>(i)];
         ImGui::PushID(i);
         const ImVec2 p = ImGui::GetCursorScreenPos();
-        const bool click = ImGui::InvisibleButton("##row", ImVec2(rw, rh));
+        ImGui::InvisibleButton("##row", ImVec2(rw, rh));
         const bool hov = ImGui::IsItemHovered();
-        const bool loaded = it.effect ? fxLoaded && *fxLoaded == it.type : cur && cur->plugin.type == it.type && cur->name == it.name;
-        // Alternate rows a shade apart, the loaded patch on the selection fill (111, 252).
+        // A press selects (and previews a patch); the second press of a double-click loads the row.
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+          if (ImGui::GetIO().MouseClickedCount[ImGuiMouseButton_Left] >= 2) {
+            doOpen = i, openAdd = it.effect && ImGui::GetIO().KeyAlt;
+          } else {
+            doSelect = i;
+          }
+        }
+        const bool loaded = it.effect ? fxLoaded && *fxLoaded == it.type : isLoaded(cur, it);
+        const bool sel = i == (doSelect >= 0 ? doSelect : selRow);
+        // Alternate rows a shade apart, the loaded patch on the selection fill (111, 252); the selected
+        // row (the one heard) outlined, on a lighter fill when it is not the loaded one.
         if (i % 2 == 1) ld->AddRectFilled(p, ImVec2(p.x + rw, p.y + rh), theme::withAlpha(P.ink, 0.10f));
         if (loaded) ld->AddRectFilled(p, ImVec2(p.x + rw, p.y + rh), theme::withAlpha(P.accent, 0.38f), 4.0f);
+        else if (sel) ld->AddRectFilled(p, ImVec2(p.x + rw, p.y + rh), theme::withAlpha(P.accent, 0.16f), 4.0f);
         else if (hov) ld->AddRectFilled(p, ImVec2(p.x + rw, p.y + rh), theme::withAlpha(P.text, 0.06f), 4.0f);
+        if (sel) {
+          ld->AddRect(ImVec2(p.x + 0.5f, p.y + 0.5f), ImVec2(p.x + rw - 0.5f, p.y + rh - 0.5f), theme::withAlpha(P.accent, 0.70f), 4.0f);
+        }
         // R09 (visual gap 10): each row's badge by its kind of sound, as 111 tells its kinds apart by the
         // badge's colour and glyph (every patch had the same green one).
         kindBadge(ld, it, ImVec2(p.x + 13, p.y + rh * 0.5f));
         const float fs = theme::kFontCaption, tx = p.x + 26;
-        theme::textEllipsis(ld, a.fontRegular, fs, ImVec2(tx, std::round(p.y + (rh - fs) * 0.5f) - 1), rw - (tx - p.x) - 6, P.text, it.name.c_str());
+        // A preview on its way (a hosted plugin loading, or a long render): "Loading" at the right.
+        float nameW = rw - (tx - p.x) - 6;
+        if (sel && previewPending(itemKey(it)) && (isHostedType(it.type) || ImGui::GetFrameCount() - gPvSince > 12)) {
+          const char* lt = i18n::tr("Loading...");
+          const float lw = a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, lt).x;
+          ld->AddText(a.fontRegular, fs, ImVec2(std::round(p.x + rw - 6 - lw), std::round(p.y + (rh - fs) * 0.5f) - 1), P.textFaint, lt);
+          nameW -= lw + 8;
+        }
+        theme::textEllipsis(ld, a.fontRegular, fs, ImVec2(tx, std::round(p.y + (rh - fs) * 0.5f) - 1), nameW, P.text, it.name.c_str());
         if (hov)
-          ui::Hint(it.effect ? it.name + " \xC2\xB7 " + it.detail + "   (click: load it on the selected track, in place of the one the Library put there; Option-click: add another)"
-                             : it.name + " \xC2\xB7 " + it.detail + "   (click: load it onto the selected track)");
-        if (click) loadItem(a, it, it.effect && ImGui::GetIO().KeyAlt);
+          ui::Hint(it.effect ? it.name + " \xC2\xB7 " + it.detail + "   (double-click: load it on the selected track, in place of the one the Library put there; Option-double-click: add another)"
+                             : it.name + " \xC2\xB7 " + it.detail + "   (click: hear it; double-click or Enter: load it onto the selected track)");
         ImGui::PopID();
       }
     if (rows.empty()) ImGui::TextDisabled("%s", i18n::tr("Nothing has that name"));
   }
   ImGui::PopStyleVar();
   ImGui::EndChild();
+  }
+  // What the rows asked for, after they are drawn (a load changes the song the rows read).
+  if (doOpen >= 0 && doOpen < static_cast<int>(rows.size())) {
+    const Item it = rows[static_cast<size_t>(doOpen)];
+    openItem(a, it, openAdd);
+  } else if (doSelect >= 0 && doSelect < static_cast<int>(rows.size())) {
+    const Item it = rows[static_cast<size_t>(doSelect)];
+    selectItem(a, it);
   }
   // The footer under the results: how many items (252, 111), then Revert and Save for the selected
   // track's patch (audit H2: the reference's footer buttons). Revert loads the patch's factory
@@ -675,6 +1051,87 @@ bool devCommand(App& a, const std::vector<std::string>& args) {
     const int i = std::atoi(args[1].c_str());
     const bool ok = i >= 0 && i < static_cast<int>(v.size()) && loadItem(a, v[static_cast<size_t>(i)], op == "loadadd");
     std::printf("smoothlib load %d: %s\n", i, ok ? "ok" : "no");
+  } else if ((op == "select" || op == "open") && args.size() > 1) {  // a click / a double-click on row <n>
+    const std::vector<Item> v = items(a, gNav, gFilter);
+    const int i = std::atoi(args[1].c_str());
+    if (i >= 0 && i < static_cast<int>(v.size())) {
+      if (op == "select") {
+        selectItem(a, v[static_cast<size_t>(i)]);
+      } else {
+        openItem(a, v[static_cast<size_t>(i)], false);
+      }
+    }
+    std::printf("smoothlib %s %d: \"%s\"\n", op.c_str(), i, i >= 0 && i < static_cast<int>(v.size()) ? v[static_cast<size_t>(i)].name.c_str() : "");
+  } else if ((op == "move" && args.size() > 1) || op == "enter") {  // Up / Down (move -1 / 1), Enter
+    const std::vector<Item> v = items(a, gNav, gFilter);
+    int cur = -1;
+    for (size_t i = 0; i < v.size() && cur < 0; ++i) {
+      if (itemKey(v[i]) == gSel) {
+        cur = static_cast<int>(i);
+      }
+    }
+    if (op == "enter") {
+      if (cur >= 0) {
+        openItem(a, v[static_cast<size_t>(cur)], false);
+      }
+    } else if (!v.empty()) {
+      const int next = cur < 0 ? 0 : std::clamp(cur + std::atoi(args[1].c_str()), 0, static_cast<int>(v.size()) - 1);
+      if (next != cur) {
+        selectItem(a, v[static_cast<size_t>(next)]);
+      }
+    }
+    std::printf("smoothlib %s: selected \"%s\"\n", op.c_str(), gSel.c_str());
+  } else if (op == "wait") {  // until the preview on its way has been rendered (and played), at most 30 s
+    for (int k = 0; k < 6000 && (gPvQueued || gPv.running || gPv.finished); ++k) {
+      pollPreview(a);
+      if (gPvQueued || gPv.running) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+      }
+    }
+    pollPreview(a);
+  } else if (op == "previewon" && args.size() > 1) {
+    a.settings.set("smooth.libraryPreview", std::atoi(args[1].c_str()) != 0);
+  } else if (op == "preview") {
+    // The previews played so far, the latest one's row and sound: its length, its peak and its pitch
+    // (autocorrelation over 80 ms from 50 ms in), whether the engine still plays it; and the song's
+    // revision and undo history, which a preview must not touch.
+    double hz = 0, secs = 0;
+    float peak = 0;
+    if (gPvLast && gPvLast->frames() > 0) {
+      const Sample& sm = *gPvLast;
+      secs = sm.seconds();
+      for (float x : sm.left) {
+        peak = std::max(peak, std::fabs(x));
+      }
+      const size_t sr = static_cast<size_t>(sm.sampleRate), at = sr / 20, win = sr * 8 / 100;
+      const size_t lo = sr / 2000, hi = sr / 40;
+      if (sm.frames() > at + win + hi) {
+        const float* x = sm.left.data() + at;
+        std::vector<double> r(hi + 1, 0.0);
+        double best = 0;
+        for (size_t lag = lo; lag <= hi; ++lag) {
+          double c = 0, e0 = 0, e1 = 0;
+          for (size_t i = 0; i < win; ++i) {
+            c += static_cast<double>(x[i]) * x[i + lag];
+            e0 += static_cast<double>(x[i]) * x[i];
+            e1 += static_cast<double>(x[i + lag]) * x[i + lag];
+          }
+          r[lag] = e0 > 0 && e1 > 0 ? c / std::sqrt(e0 * e1) : 0;
+          best = std::max(best, r[lag]);
+        }
+        // the first lag (a local peak) within 90% of the best: the period, not a multiple of it
+        for (size_t lag = lo + 1; lag < hi && hz == 0; ++lag) {
+          if (r[lag] >= 0.9 * best && r[lag] >= r[lag - 1] && r[lag] >= r[lag + 1]) {
+            hz = static_cast<double>(sr) / static_cast<double>(lag);
+          }
+        }
+      }
+    }
+    std::printf("smoothlib preview: on %d played %d pending %d last \"%s\" seconds %.2f peak %.3f hz %.1f playing %d notes 1 pitch %d velocity %d "
+                "revision %llu undo %zu\n",
+                previewOn(a) ? 1 : 0, gPvPlayed, gPvQueued || gPv.running ? 1 : 0, gPvLastKey.c_str(), secs, static_cast<double>(peak), hz,
+                a.engine.previewing() ? 1 : 0, kPreviewPitch, kPreviewVelocity, static_cast<unsigned long long>(a.doc.revision()),
+                a.doc.history().position());
   } else if (op == "newtrack") {  // R09-02 test: New tracks > Instrument, as the dialog's Create does
     newtracks::createDefault(a);
     const Song& s = a.doc.song();
@@ -711,8 +1168,15 @@ bool devCommand(App& a, const std::vector<std::string>& args) {
   } else if (op == "state") {
     const int t = targetTrack(a);
     const Channel* c = targetSound(a, t);
-    std::printf("smoothlib state: shown %d saved \"%s\" nav %d track %d sound \"%s\" type %s\n", libraryShown(a) ? 1 : 0,
-                a.doc.song().smooth.library.c_str(), gNav, t, c ? c->name.c_str() : "", c ? c->plugin.type.c_str() : "");
+    std::string marked;  // the row the list marks as the track's sound
+    for (const Item& it : items(a, gNav, gFilter)) {
+      if (marked.empty() && isLoaded(c, it)) {
+        marked = it.name;
+      }
+    }
+    std::printf("smoothlib state: shown %d saved \"%s\" nav %d track %d sound \"%s\" type %s channels %zu marked \"%s\" selected \"%s\"\n",
+                libraryShown(a) ? 1 : 0, a.doc.song().smooth.library.c_str(), gNav, t, c ? c->name.c_str() : "", c ? c->plugin.type.c_str() : "",
+                a.doc.song().channels.size(), marked.c_str(), gSel.c_str());
   } else {
     return false;
   }

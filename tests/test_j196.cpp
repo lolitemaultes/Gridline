@@ -258,7 +258,7 @@ void pitchDragDefers(const std::string& wav) {
   b2.setDeferRenders(true);
   uint64_t made = 0;
   for (int k : {1, 2, 0, -1, 0, 2, 3}) {
-    d2.editChannel(g.chan, "pitch", [k](Channel& x) { x.pitch = k; }, 6);
+    d2.editChannel(g.chan, "pitch", [k](Channel& x) { x.pitchCents = static_cast<float>(k * 100); }, 6);
     prog = b2.build(d2.song());
     if (k == 1) made = b2.voicesMade();
   }

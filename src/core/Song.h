@@ -110,19 +110,20 @@ struct Channel {
   float gain = 0.78f;           // linear 0..1.25   (ChannelParam::Volume)
   float pan = 0.0f;             // -1..1            (ChannelParam::Pan)
   bool muted = false;           //                  (ChannelParam::Mute)
-  int pitch = 0;                // semitones -24..24 (ChannelParam::Pitch)
+  // Channel pitch in cents, -2400..2400 (ChannelParam::Pitch; the knob in the channel strip).
+  // Projects before 0.7.7 stored whole semitones ("pitch"); they load as value * 100.
+  float pitchCents = 0;
+  // Semitones a full MIDI pitch bend means to this channel's instrument (1..48, default 2, the
+  // usual synth default). Hosted plugins without per-note tuning follow the channel pitch and the
+  // note bend lines through MIDI pitch bend scaled by it: the plugin's own bend range should match.
+  int bendRange = 2;
   bool sustainPedal = false;    // the sustain pedal is down (ChannelParam::Sustain; automation moves it)
   ObjectId mixerTrack = kNoId;  // MixerTrack::id; kNoId = master
   // Note processors run on this channel's notes before the instrument
   // (arpeggiator, chords, key mapping, …), in order. PluginKind::NoteFx types.
   std::vector<PluginState> noteFx;
   // --- Channel note settings (defaults keep the previous behaviour) ---
-  int fine = 0;              // fine tune, cents -200..200 (added to `pitch`)
-  // K-132 (FL import): automation of the pitch (ChannelParam::Pitch) moves it in cents, as FL's
-  // pitch knob does, instead of whole semitones, and replaces the knob's share of `fine`
-  // (`knobFine` cents) with it. Off for Gridline's own channels: they sound as they always did.
-  bool pitchSmooth = false;
-  int knobFine = 0;
+  int fine = 0;              // fine tune, cents -200..200 (added to `pitchCents`)
   float swingMix = 1.0f;     // share of the song swing applied to this channel's steps, 0..1
   float timeShift = 0;       // every note starts this many beats later, 0..1
   int polyphony = 0;         // maximum sounding notes (0 = unlimited); the oldest is cut
@@ -187,8 +188,8 @@ struct Channel {
   bool isLayer() const { return !layer.empty(); }
   bool operator==(const Channel& o) const {
     return id == o.id && name == o.name && color == o.color && plugin == o.plugin && gain == o.gain &&
-           pan == o.pan && muted == o.muted && pitch == o.pitch && sustainPedal == o.sustainPedal && mixerTrack == o.mixerTrack && noteFx == o.noteFx &&
-           fine == o.fine && pitchSmooth == o.pitchSmooth && knobFine == o.knobFine && swingMix == o.swingMix && timeShift == o.timeShift && polyphony == o.polyphony &&
+           pan == o.pan && muted == o.muted && pitchCents == o.pitchCents && bendRange == o.bendRange && sustainPedal == o.sustainPedal && mixerTrack == o.mixerTrack && noteFx == o.noteFx &&
+           fine == o.fine && swingMix == o.swingMix && timeShift == o.timeShift && polyphony == o.polyphony &&
            mono == o.mono && porta == o.porta && portaTime == o.portaTime && expr == o.expr && cutGroup == o.cutGroup &&
            cutBy == o.cutBy && echo == o.echo && layer == o.layer && layerMode == o.layerMode && layerZones == o.layerZones &&
            macros == o.macros && group == o.group &&
@@ -339,13 +340,26 @@ enum class LaunchGrid : uint8_t {
   TwoBeats,    // next 2 beats
   FourBeats,   // next 4 beats
   ClipLength,  // next multiple of the launched clip's length
+  Bar,         // grid-1118: next bar line (of the meter in force)
+  TwoBars,     // next 2 bars
+  FourBars,    // next 4 bars
+  EightBars,   // next 8 bars
+  // grid2-1118: the finer and the triplet grids (Clips' per-clip launch quantisation, Cmd+6 .. 0)
+  ThirtySecond,  // next 1/32 (an eighth of a beat)
+  SixteenthT,    // next 1/16 triplet (a sixth of a beat)
+  EighthT,       // next 1/8 triplet (a third of a beat)
+  QuarterT,      // next 1/4 triplet (two thirds of a beat)
+  HalfT,         // next 1/2 triplet (four thirds of a beat)
   Count
 };
+// grid2-1118: the grids before the finer ones (Studio's menus list these).
+inline constexpr int kLaunchGridsBasic = static_cast<int>(LaunchGrid::EightBars) + 1;
 // What a pad press does.
 enum class PadMode : uint8_t {
   Trigger = 0,  // press starts the clip (again, from its start)
   Gate,         // plays while held, stops on release
   Toggle,       // press starts, the next press stops
+  Repeat,       // grid-1118: starts again on every launch grid line while held; plays on once released
   Count
 };
 // What happens when a launched clip reaches its end.
@@ -381,6 +395,9 @@ struct PlaylistTrack {
   bool folded = false;    // group collapsed in the playlist
   bool gridFolded = false;  // K-112c (checkpoint 52, S01): the group collapsed in Clips' clip grid (each view folds on its own; K-314: each person's own)
   bool locked = false;    // J-11: clips on the track cannot be edited
+  // grid2-1118: the Clips grid's scenes (indices from 0, sorted) whose empty slot on this track has no stop
+  // button (Cmd+E): launching the scene leaves the track alone there. Song data; written only when set.
+  std::vector<int> noStop;
   // K-123: the track shows its recorded takes as lanes under it (engine/TakeLanes.h). K-314: view state, each
   // person's own in a collaboration (as folding).
   bool takeLanes = false;
@@ -416,7 +433,7 @@ struct PlaylistTrack {
            pad == o.pad && follow == o.follow && syncStart == o.syncStart && groupSize == o.groupSize && folded == o.folded && gridFolded == o.gridFolded &&
            locked == o.locked && takeLanes == o.takeLanes && flIcon == o.flIcon && icon == o.icon && mode == o.mode && mixer == o.mixer && channel == o.channel &&
            laneShown == o.laneShown && laneSet == o.laneSet && laneOwner == o.laneOwner && laneIndex == o.laneIndex &&
-           autoMode == o.autoMode && sound == o.sound && shownHere == o.shownHere;
+           autoMode == o.autoMode && sound == o.sound && shownHere == o.shownHere && noStop == o.noStop;
   }
   bool liveDefaults() const {
     return launch == LaunchGrid::FourBeats && pad == PadMode::Trigger && follow == FollowMode::Loop && syncStart == LaunchGrid::Now;
@@ -425,11 +442,18 @@ struct PlaylistTrack {
 
 // Checkpoint 59 (N58-03): a Clips scene's own name and colour (scene k: the live area's k-th stretch of
 // the scene length). Empty name and colour 0: the scene shows its number only.
+// grid2-1118: and its own tempo and time signature (0: none; applied when the scene launches, at its launch
+// point) and its follow actions (the next scene, the previous one ... after `follow.time`).
 struct SceneInfo {
   std::string name;
   Rgb color = 0;
-  bool empty() const { return name.empty() && color == 0; }
-  bool operator==(const SceneInfo& o) const { return name == o.name && color == o.color; }
+  double tempo = 0;  // BPM (0: the scene leaves the tempo alone; a name such as "Verse 120 BPM" says it too)
+  int sigNum = 0, sigDen = 0;  // time signature (0: none; a name such as "Bridge 3/4" says it too)
+  FollowSpec follow;
+  bool empty() const { return name.empty() && color == 0 && tempo <= 0 && sigNum <= 0 && follow.isDefault(); }
+  bool operator==(const SceneInfo& o) const {
+    return name == o.name && color == o.color && tempo == o.tempo && sigNum == o.sigNum && sigDen == o.sigDen && follow == o.follow;
+  }
 };
 
 struct LiveSettings {
@@ -442,7 +466,10 @@ struct LiveSettings {
   // Checkpoint 59 (N58-03): scene k's name and colour, by scene (song data: undo, collaboration; no
   // trailing empty entries, and none written when there are none, so older Sets save as before).
   std::vector<SceneInfo> scenes;
-  bool operator==(const LiveSettings& o) const { return areaEnd == o.areaEnd && scenes == o.scenes; }
+  // grid2-1118: a scene's length in the live area (0: four bars of the meter at the start, as before). Set
+  // when a scene's time signature changes the song's meter, so the grid's rows stay where they are.
+  Tick sceneLen = 0;
+  bool operator==(const LiveSettings& o) const { return areaEnd == o.areaEnd && scenes == o.scenes && sceneLen == o.sceneLen; }
 };
 
 // K-112D: the Smooth layout's window state, saved with the project as its reference saves its windows.

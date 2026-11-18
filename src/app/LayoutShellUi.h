@@ -18,6 +18,8 @@
 #include "../core/LayoutShell.h"
 #include "../core/SemanticAnchor.h"
 
+struct ImGuiDockNode;
+
 namespace gl {
 class App;
 }
@@ -73,6 +75,22 @@ void enterLayout(App& a, layout::Preset to);
 // Per frame, before the windows draw: exclusive regions show one window at a time, each with its
 // own size; fixed bands keep their pixel size; region state changes are saved.
 void shellFrame(App& a);
+// gap-1118: a region whose last window closes collapses (its neighbours take the room back) and a window
+// opened into a hidden region shows it, both before the dock space lays out, so the frame it happens in
+// is drawn with the regions as they now are. Regions the layout keeps (layout::Region::keep) stay.
+// regionsFrameStart: at the start of each frame (before the top bar): the windows closed after the last
+// frame's layout pass, and the panes closed from their own strip or rail, close now.
+// collapseRegions: each frame after the top bar and before the dock tree is (re)built.
+void regionsFrameStart(App& a);
+void collapseRegions(App& a);
+// Closes a pane at the start of the next frame (from its own strip or rail, drawn after the layout pass).
+void closePaneLater(const std::string& region);
+// Each frame before the dock space lays out: fixed bands, and bands the person dragged, keep their pixel
+// size (after a window resize, a rebuild, a layout switch).
+void pinBands(App& a);
+// rsz-1118 (GImGuiGridlineSplitterLimits): a held dock divider of the shell stops softly at the region's
+// own limits (layout::dragRange): raises the minimum sizes of the divider's two sides.
+void splitterLimits(ImGuiDockNode* node, float total, float* min0, float* min1);
 // The per-person region state of a layout (from settings, or this run's under --layout).
 layout::State regionState(const App& a, layout::Preset p);
 void setRegionState(App& a, layout::Preset p, const layout::State& st);

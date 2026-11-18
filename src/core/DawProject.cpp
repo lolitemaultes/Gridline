@@ -335,7 +335,7 @@ struct Exporter {
       mute.setFlag("value", c.muted);
       param(ch, "Pan", c.id, static_cast<uint32_t>(ChannelParam::Pan), (c.pan + 1.0) / 2.0, 0, 1, "normalized");
       param(ch, "Volume", c.id, static_cast<uint32_t>(ChannelParam::Volume), c.gain, 0, 2, "linear");
-      if (c.pitch != 0 || c.fine != 0) loss.add("channels' pitch and fine tuning left out");
+      if (c.pitchCents != 0 || c.fine != 0) loss.add("channels' pitch and fine tuning left out");
       if (!c.auxOuts.empty()) loss.add("channels' extra outputs left out");
     }
     if (master) {

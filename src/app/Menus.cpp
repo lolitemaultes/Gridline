@@ -1101,7 +1101,13 @@ bool menuShortcuts(App& a) {
   if (key("edit.rename")) renameFocused(a);
   if (key("pattern.findFirstEmpty")) findEmptyPattern(a, true, true);
   if (key("pattern.findNextEmpty")) findEmptyPattern(a, false, false);
-  if (!inPiano && key("pattern.clone")) a.selectPattern(a.doc.clonePattern(a.curPattern));
+  if (!inPiano && key("pattern.clone")) {
+    if (layoutui::active() == layout::Preset::Tracker) {
+      trackerview::duplicatePattern(a, false);  // TRK-1118: shown, with its new number in the status line
+    } else {
+      a.selectPattern(a.doc.clonePattern(a.curPattern));
+    }
+  }
   if (key("pattern.insert")) insertPatternBefore(a);
   if (key("pattern.delete")) deletePattern(a);
   if (!inPiano && !inRack && key("pattern.moveUp")) movePattern(a, -1);

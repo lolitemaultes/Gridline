@@ -2,6 +2,7 @@
 #include "TrackModes.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <functional>
 #include <map>
 #include <set>
@@ -1852,7 +1853,228 @@ void trimScenes(Song& s) {
     s.live.scenes.pop_back();
   }
 }
+// grid2-1118: the song-time marks after the live area move with the arrangement (the loop brace and the
+// Project End), so the arrangement keeps its loop when a scene is inserted or deleted.
+void shiftAfterArea(Song& s, Tick from, Tick shift) {
+  if (shift == 0) {
+    return;
+  }
+  if (s.cycleEnd > s.cycleStart && s.cycleStart >= from) {
+    s.cycleStart = std::max<Tick>(0, s.cycleStart + shift);
+    s.cycleEnd = std::max<Tick>(0, s.cycleEnd + shift);
+  }
+  if (s.projectEnd > 0 && s.projectEnd >= from) {
+    s.projectEnd = std::max<Tick>(0, s.projectEnd + shift);
+  }
+}
+// grid2-1118: the tracks' removed stop buttons stay with their scenes: from scene `k` on they move by `d`
+// (a deleted scene's go with it).
+void shiftNoStop(Song& s, int k, int d, int erase = -1) {
+  for (PlaylistTrack& t : s.tracks) {
+    std::vector<int> v;
+    for (int x : t.noStop) {
+      if (x == erase) {
+        continue;
+      }
+      v.push_back(x >= k ? x + d : x);
+    }
+    std::sort(v.begin(), v.end());
+    v.erase(std::unique(v.begin(), v.end()), v.end());
+    t.noStop = std::move(v);
+  }
+}
 }  // namespace
+
+Tick sceneTicksOf(const Song& s) {
+  if (s.live.sceneLen > 0) {
+    return s.live.sceneLen;
+  }
+  return std::max<Tick>(1, s.barTicks()) * kSceneBars;
+}
+
+int sceneOf(const Song& s, Tick start) { return start < 0 ? -1 : static_cast<int>(start / sceneTicksOf(s)); }
+
+int sceneCount(const Song& s) {
+  const Tick st = sceneTicksOf(s);
+  return s.live.areaEnd > 0 ? static_cast<int>((s.live.areaEnd + st - 1) / st) : 0;
+}
+
+bool usesGridV10(const Song& s) {
+  auto uses = [](const std::vector<Clip>& pl, const std::vector<PlaylistTrack>& tr, const LiveSettings& lv) {
+    if (lv.areaEnd > 0 || lv.sceneLen > 0) {
+      return true;
+    }
+    for (const SceneInfo& sc : lv.scenes) {
+      if (sc.tempo > 0 || sc.sigNum > 0 || !sc.follow.isDefault()) {
+        return true;
+      }
+    }
+    for (const PlaylistTrack& t : tr) {
+      if (!t.noStop.empty() || static_cast<int>(t.launch) >= kLaunchGridsBasic || static_cast<int>(t.syncStart) >= kLaunchGridsBasic) {
+        return true;
+      }
+    }
+    for (const Clip& c : pl) {
+      if (!c.launchSet.isDefault()) {
+        return true;
+      }
+    }
+    return false;
+  };
+  if (uses(s.playlist, s.tracks, s.live)) {
+    return true;
+  }
+  for (const Arrangement& a : s.arrangements) {
+    if (uses(a.playlist, a.tracks, a.live)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+int splitSharedSlots(Song& s) {
+  if (s.live.areaEnd <= 0 || s.playlist.empty()) {
+    return 0;
+  }
+  const Tick st = sceneTicksOf(s);
+  int moved = 0;
+  for (int k = 0; static_cast<Tick>(k) * st < s.live.areaEnd; ++k) {
+    const Tick a0 = static_cast<Tick>(k) * st, a1 = a0 + st;
+    // Per track, the clips starting in this scene (playlist indices), in time order (the first launched).
+    std::map<int, std::vector<size_t>> per;
+    for (size_t i = 0; i < s.playlist.size(); ++i) {
+      const Clip& c = s.playlist[i];
+      if (c.start >= a0 && c.start < a1 && c.start < s.live.areaEnd) {
+        per[c.track].push_back(i);
+      }
+    }
+    size_t extra = 0;
+    for (auto& [t, v] : per) {
+      std::stable_sort(v.begin(), v.end(), [&](size_t x, size_t y) {
+        const Clip& cx = s.playlist[x];
+        const Clip& cy = s.playlist[y];
+        return cx.start != cy.start ? cx.start < cy.start : cx.id < cy.id;
+      });
+      extra = std::max(extra, v.size() - 1);
+    }
+    if (extra == 0) {
+      continue;
+    }
+    std::vector<std::pair<ObjectId, int>> moves;  // (clip, rows down)
+    for (const auto& [t, v] : per) {
+      for (size_t j = 1; j < v.size(); ++j) {
+        moves.emplace_back(s.playlist[v[j]].id, static_cast<int>(j));
+      }
+    }
+    for (size_t j = 0; j < extra; ++j) {
+      insertScene(s, k, st);  // an empty scene under scene k (each further one goes under it)
+    }
+    for (const auto& [id, rows] : moves) {
+      if (Clip* c = s.clip(id)) {
+        c->start += static_cast<Tick>(rows) * st;  // into its own slot, at the same place in the scene
+        ++moved;
+      }
+    }
+    k += static_cast<int>(extra);
+  }
+  return moved;
+}
+
+bool hasStopButton(const Song& s, int track, int scene) {
+  if (track < 0 || track >= static_cast<int>(s.tracks.size())) {
+    return true;
+  }
+  const std::vector<int>& v = s.tracks[static_cast<size_t>(track)].noStop;
+  return !std::binary_search(v.begin(), v.end(), scene);
+}
+
+void setStopButton(Song& s, int track, int scene, bool on) {
+  if (track < 0 || track >= static_cast<int>(s.tracks.size()) || scene < 0) {
+    return;
+  }
+  std::vector<int>& v = s.tracks[static_cast<size_t>(track)].noStop;
+  const auto it = std::lower_bound(v.begin(), v.end(), scene);
+  const bool has = it != v.end() && *it == scene;
+  if (on && has) {
+    v.erase(it);
+  } else if (!on && !has) {
+    v.insert(it, scene);
+  }
+}
+
+namespace {
+// The number before " BPM" / "BPM" in a scene name (0: none).
+double tempoInName(const std::string& n) {
+  std::string low;
+  for (char c : n) {
+    low += static_cast<char>(c >= 'A' && c <= 'Z' ? c - 'A' + 'a' : c);
+  }
+  for (size_t p = low.find("bpm"); p != std::string::npos; p = low.find("bpm", p + 1)) {
+    size_t e = p;
+    while (e > 0 && low[e - 1] == ' ') {
+      --e;
+    }
+    size_t b = e;
+    while (b > 0 && ((low[b - 1] >= '0' && low[b - 1] <= '9') || low[b - 1] == '.')) {
+      --b;
+    }
+    if (b == e) {
+      continue;
+    }
+    const double v = std::atof(low.substr(b, e - b).c_str());
+    if (v >= 10 && v <= 999) {
+      return v;
+    }
+  }
+  return 0;
+}
+// "3/4" in a scene name (a numerator 1..32 and a power-of-two denominator), as a word of its own.
+bool signatureInName(const std::string& n, int& num, int& den) {
+  for (size_t p = n.find('/'); p != std::string::npos; p = n.find('/', p + 1)) {
+    size_t b = p, e = p + 1;
+    while (b > 0 && n[b - 1] >= '0' && n[b - 1] <= '9') {
+      --b;
+    }
+    while (e < n.size() && n[e] >= '0' && n[e] <= '9') {
+      ++e;
+    }
+    if (b == p || e == p + 1 || (b > 0 && n[b - 1] != ' ') || (e < n.size() && n[e] != ' ')) {
+      continue;
+    }
+    const int a = std::atoi(n.substr(b, p - b).c_str()), d = std::atoi(n.substr(p + 1, e - p - 1).c_str());
+    if (a >= 1 && a <= 32 && (d == 1 || d == 2 || d == 4 || d == 8 || d == 16 || d == 32)) {
+      num = a, den = d;
+      return true;
+    }
+  }
+  return false;
+}
+}  // namespace
+
+double sceneTempo(const SceneInfo& sc) { return sc.tempo > 0 ? sc.tempo : tempoInName(sc.name); }
+
+bool sceneSignature(const SceneInfo& sc, int& num, int& den) {
+  if (sc.sigNum > 0 && sc.sigDen > 0) {
+    num = sc.sigNum, den = sc.sigDen;
+    return true;
+  }
+  return signatureInName(sc.name, num, den);
+}
+
+void setSceneSettings(Song& s, int k, const SceneInfo& info) {
+  if (k < 0) {
+    return;
+  }
+  if (static_cast<int>(s.live.scenes.size()) <= k) {
+    s.live.scenes.resize(static_cast<size_t>(k) + 1);
+  }
+  SceneInfo& sc = s.live.scenes[static_cast<size_t>(k)];
+  sc.tempo = info.tempo;
+  sc.sigNum = info.sigNum;
+  sc.sigDen = info.sigDen;
+  sc.follow = info.follow;
+  trimScenes(s);
+}
 
 void insertScene(Song& s, int k, Tick len) {
   if (k < -1 || len <= 0) {
@@ -1872,6 +2094,8 @@ void insertScene(Song& s, int k, Tick len) {
       m.pos += shift;
     }
   }
+  shiftAfterArea(s, from, shift);  // grid2-1118
+  shiftNoStop(s, k + 1, 1);
   s.live.areaEnd = newEnd;
   if (static_cast<int>(s.live.scenes.size()) > k + 1) {
     s.live.scenes.insert(s.live.scenes.begin() + (k + 1), SceneInfo{});
@@ -1899,6 +2123,8 @@ bool deleteScene(Song& s, int k, Tick len) {
       m.pos -= shift;
     }
   }
+  shiftAfterArea(s, from, -shift);  // grid2-1118
+  shiftNoStop(s, k + 1, -1, k);
   s.live.areaEnd = newEnd;
   if (static_cast<int>(s.live.scenes.size()) > k) {
     s.live.scenes.erase(s.live.scenes.begin() + k);
@@ -1931,6 +2157,11 @@ bool duplicateScene(Song& s, int k, Tick len) {
   }
   const SceneInfo info = k < static_cast<int>(s.live.scenes.size()) ? s.live.scenes[static_cast<size_t>(k)] : SceneInfo{};
   insertScene(s, k, len);
+  for (int t = 0; t < static_cast<int>(s.tracks.size()); ++t) {  // grid2-1118: the copy's stop buttons as the scene's
+    if (!hasStopButton(s, t, k)) {
+      setStopButton(s, t, k + 1, false);
+    }
+  }
   for (Clip c : copies) {
     c.id = s.allocateId();
     c.start += len;

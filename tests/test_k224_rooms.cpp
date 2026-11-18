@@ -315,7 +315,7 @@ void testSaveLoad() {
   expect(back.nextId > ro::roomIdAt(back, r), "room ids are never handed out again");
   // A newer file refuses; a file with a track in a room that is gone puts it in the first room.
   Json k = j;
-  k.object["version"] = Json::makeNumber(10);
+  k.object["version"] = Json::makeNumber(kProjectSchemaVersion + 1);
   expect(!songFromJson(k, back), "a newer schema is refused");
   Json g = j;
   g.object.erase("stageRooms");

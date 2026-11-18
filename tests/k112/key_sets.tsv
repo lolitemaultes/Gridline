@@ -62,6 +62,18 @@ studio	track.newAudio	0
 studio	track.newMidi	0	
 studio	track.newReturn	0	
 studio	clips.insertMidiClip	0	
+studio	clips.captureScene	0	
+studio	clips.backToArrangement	0	
+studio	clips.gridNarrower	0	
+studio	clips.gridWider	0	
+studio	clips.gridTriplet	0	
+studio	clips.gridSnap	0	
+studio	clips.gridFixed	0	
+studio	clips.quant16	0	
+studio	clips.quant8	0	
+studio	clips.quant4	0	
+studio	clips.quantBar	0	
+studio	clips.quantNone	0	
 studio	view.detail	0	
 studio	view.io	0	
 studio	transport.sessionRecord	0	
@@ -202,6 +214,8 @@ studio	stage.mute	6	M;
 studio	stage.solo	6	S;
 studio	stage.reset	6	0;
 studio	stage.rename	6	
+studio	stage.fromSelection	6	
+studio	stage.fromMarkers	6	
 studio	stage.selectAll	6	Ctrl+A;
 studio	stage.roomsPanel	6	\;
 studio	stage.deselect	6	Ctrl+D;
@@ -300,6 +314,18 @@ live	track.newAudio	0	Ctrl+T;
 live	track.newMidi	0	Ctrl+Shift+T;
 live	track.newReturn	0	Ctrl+Alt+T;
 live	clips.insertMidiClip	0	Ctrl+Shift+M;
+live	clips.captureScene	0	Ctrl+Shift+I;
+live	clips.backToArrangement	0	F10;
+live	clips.gridNarrower	0	Ctrl+1;
+live	clips.gridWider	0	Ctrl+2;
+live	clips.gridTriplet	0	Ctrl+3;
+live	clips.gridSnap	0	Ctrl+4;
+live	clips.gridFixed	0	Ctrl+5;
+live	clips.quant16	0	Ctrl+6;
+live	clips.quant8	0	Ctrl+7;
+live	clips.quant4	0	Ctrl+8;
+live	clips.quantBar	0	Ctrl+9;
+live	clips.quantNone	0	Ctrl+0;
 live	view.detail	0	Ctrl+Alt+L;
 live	view.io	0	Ctrl+Alt+I;
 live	transport.sessionRecord	0	Shift+F9;
@@ -440,6 +466,8 @@ live	stage.mute	6
 live	stage.solo	6	S;
 live	stage.reset	6	0;
 live	stage.rename	6	
+live	stage.fromSelection	6	
+live	stage.fromMarkers	6	
 live	stage.selectAll	6	Ctrl+A;
 live	stage.roomsPanel	6	\;
 live	stage.deselect	6	Ctrl+D;
@@ -538,6 +566,18 @@ logic	track.newAudio	0
 logic	track.newMidi	0	
 logic	track.newReturn	0	
 logic	clips.insertMidiClip	0	
+logic	clips.captureScene	0	
+logic	clips.backToArrangement	0	
+logic	clips.gridNarrower	0	
+logic	clips.gridWider	0	
+logic	clips.gridTriplet	0	
+logic	clips.gridSnap	0	
+logic	clips.gridFixed	0	
+logic	clips.quant16	0	
+logic	clips.quant8	0	
+logic	clips.quant4	0	
+logic	clips.quantBar	0	
+logic	clips.quantNone	0	
 logic	view.detail	0	
 logic	view.io	0	
 logic	transport.sessionRecord	0	
@@ -684,6 +724,8 @@ logic	stage.mute	6	M;
 logic	stage.solo	6	S;
 logic	stage.reset	6	0;
 logic	stage.rename	6	
+logic	stage.fromSelection	6	
+logic	stage.fromMarkers	6	
 logic	stage.selectAll	6	Ctrl+A;
 logic	stage.roomsPanel	6	\;
 logic	stage.deselect	6	Ctrl+D;
@@ -782,6 +824,18 @@ studio+cmd	track.newAudio	0
 studio+cmd	track.newMidi	0	
 studio+cmd	track.newReturn	0	
 studio+cmd	clips.insertMidiClip	0	
+studio+cmd	clips.captureScene	0	
+studio+cmd	clips.backToArrangement	0	
+studio+cmd	clips.gridNarrower	0	
+studio+cmd	clips.gridWider	0	
+studio+cmd	clips.gridTriplet	0	
+studio+cmd	clips.gridSnap	0	
+studio+cmd	clips.gridFixed	0	
+studio+cmd	clips.quant16	0	
+studio+cmd	clips.quant8	0	
+studio+cmd	clips.quant4	0	
+studio+cmd	clips.quantBar	0	
+studio+cmd	clips.quantNone	0	
 studio+cmd	view.detail	0	
 studio+cmd	view.io	0	
 studio+cmd	transport.sessionRecord	0	
@@ -922,6 +976,8 @@ studio+cmd	stage.mute	6	M;
 studio+cmd	stage.solo	6	S;
 studio+cmd	stage.reset	6	0;
 studio+cmd	stage.rename	6	
+studio+cmd	stage.fromSelection	6	
+studio+cmd	stage.fromMarkers	6	
 studio+cmd	stage.selectAll	6	Ctrl+A;
 studio+cmd	stage.roomsPanel	6	\;
 studio+cmd	stage.deselect	6	Ctrl+D;
@@ -1020,6 +1076,18 @@ live+cmd	track.newAudio	0	Ctrl+T;
 live+cmd	track.newMidi	0	Ctrl+Shift+T;
 live+cmd	track.newReturn	0	Ctrl+Alt+T;
 live+cmd	clips.insertMidiClip	0	Ctrl+Shift+M;
+live+cmd	clips.captureScene	0	Ctrl+Shift+I;
+live+cmd	clips.backToArrangement	0	F10;
+live+cmd	clips.gridNarrower	0	Ctrl+1;
+live+cmd	clips.gridWider	0	Ctrl+2;
+live+cmd	clips.gridTriplet	0	Ctrl+3;
+live+cmd	clips.gridSnap	0	Ctrl+4;
+live+cmd	clips.gridFixed	0	Ctrl+5;
+live+cmd	clips.quant16	0	Ctrl+6;
+live+cmd	clips.quant8	0	Ctrl+7;
+live+cmd	clips.quant4	0	Ctrl+8;
+live+cmd	clips.quantBar	0	Ctrl+9;
+live+cmd	clips.quantNone	0	Ctrl+0;
 live+cmd	view.detail	0	Ctrl+Alt+L;
 live+cmd	view.io	0	Ctrl+Alt+I;
 live+cmd	transport.sessionRecord	0	Shift+F9;
@@ -1160,6 +1228,8 @@ live+cmd	stage.mute	6
 live+cmd	stage.solo	6	S;
 live+cmd	stage.reset	6	0;
 live+cmd	stage.rename	6	
+live+cmd	stage.fromSelection	6	
+live+cmd	stage.fromMarkers	6	
 live+cmd	stage.selectAll	6	Ctrl+A;
 live+cmd	stage.roomsPanel	6	\;
 live+cmd	stage.deselect	6	Ctrl+D;
@@ -1258,6 +1328,18 @@ logic+cmd	track.newAudio	0
 logic+cmd	track.newMidi	0	
 logic+cmd	track.newReturn	0	
 logic+cmd	clips.insertMidiClip	0	
+logic+cmd	clips.captureScene	0	
+logic+cmd	clips.backToArrangement	0	
+logic+cmd	clips.gridNarrower	0	
+logic+cmd	clips.gridWider	0	
+logic+cmd	clips.gridTriplet	0	
+logic+cmd	clips.gridSnap	0	
+logic+cmd	clips.gridFixed	0	
+logic+cmd	clips.quant16	0	
+logic+cmd	clips.quant8	0	
+logic+cmd	clips.quant4	0	
+logic+cmd	clips.quantBar	0	
+logic+cmd	clips.quantNone	0	
 logic+cmd	view.detail	0	
 logic+cmd	view.io	0	
 logic+cmd	transport.sessionRecord	0	
@@ -1398,6 +1480,8 @@ logic+cmd	stage.mute	6	M;
 logic+cmd	stage.solo	6	S;
 logic+cmd	stage.reset	6	0;
 logic+cmd	stage.rename	6	
+logic+cmd	stage.fromSelection	6	
+logic+cmd	stage.fromMarkers	6	
 logic+cmd	stage.selectAll	6	Cmd+A;
 logic+cmd	stage.roomsPanel	6	\;
 logic+cmd	stage.deselect	6	Cmd+D;
@@ -1503,15 +1587,15 @@ studio	view.workspacePrevious	0	Ctrl+Alt+PgUp;
 live	view.paneNextTab	0	Ctrl+PgDn;
 live	view.panePrevTab	0	Ctrl+PgUp;
 live	view.reopenTab	0	
-live	view.workspace1	0	Ctrl+1;
-live	view.workspace2	0	Ctrl+2;
-live	view.workspace3	0	Ctrl+3;
-live	view.workspace4	0	Ctrl+4;
-live	view.workspace5	0	Ctrl+5;
-live	view.workspace6	0	Ctrl+6;
-live	view.workspace7	0	Ctrl+7;
-live	view.workspace8	0	Ctrl+8;
-live	view.workspace9	0	Ctrl+9;
+live	view.workspace1	0	Alt+1;
+live	view.workspace2	0	Alt+2;
+live	view.workspace3	0	Alt+3;
+live	view.workspace4	0	Alt+4;
+live	view.workspace5	0	Alt+5;
+live	view.workspace6	0	Alt+6;
+live	view.workspace7	0	Alt+7;
+live	view.workspace8	0	Alt+8;
+live	view.workspace9	0	Alt+9;
 live	view.workspaceNext	0	Ctrl+Alt+PgDn;
 live	view.workspacePrevious	0	Ctrl+Alt+PgUp;
 logic	view.paneNextTab	0	Ctrl+PgDn;
@@ -1545,15 +1629,15 @@ studio+cmd	view.workspacePrevious	0	Ctrl+Alt+PgUp;
 live+cmd	view.paneNextTab	0	Ctrl+PgDn;
 live+cmd	view.panePrevTab	0	Ctrl+PgUp;
 live+cmd	view.reopenTab	0	
-live+cmd	view.workspace1	0	Ctrl+1;
-live+cmd	view.workspace2	0	Ctrl+2;
-live+cmd	view.workspace3	0	Ctrl+3;
-live+cmd	view.workspace4	0	Ctrl+4;
-live+cmd	view.workspace5	0	Ctrl+5;
-live+cmd	view.workspace6	0	Ctrl+6;
-live+cmd	view.workspace7	0	Ctrl+7;
-live+cmd	view.workspace8	0	Ctrl+8;
-live+cmd	view.workspace9	0	Ctrl+9;
+live+cmd	view.workspace1	0	Alt+1;
+live+cmd	view.workspace2	0	Alt+2;
+live+cmd	view.workspace3	0	Alt+3;
+live+cmd	view.workspace4	0	Alt+4;
+live+cmd	view.workspace5	0	Alt+5;
+live+cmd	view.workspace6	0	Alt+6;
+live+cmd	view.workspace7	0	Alt+7;
+live+cmd	view.workspace8	0	Alt+8;
+live+cmd	view.workspace9	0	Alt+9;
 live+cmd	view.workspaceNext	0	Ctrl+Alt+PgDn;
 live+cmd	view.workspacePrevious	0	Ctrl+Alt+PgUp;
 logic+cmd	view.paneNextTab	0	Cmd+PgDn;
@@ -1685,7 +1769,7 @@ tracker	typing.octave8	0	F8;
 tracker	pattern.new	0	Ctrl+Alt+N;
 tracker	pattern.findFirstEmpty	0	
 tracker	pattern.findNextEmpty	0	
-tracker	pattern.clone	0	Ctrl+Shift+C;
+tracker	pattern.clone	0	Ctrl+Alt+U;
 tracker	pattern.insert	0	Ctrl+Shift+Ins;
 tracker	pattern.delete	0	Ctrl+Shift+Del;
 tracker	pattern.moveUp	0	
@@ -1771,6 +1855,18 @@ tracker	track.newAudio	0
 tracker	track.newMidi	0	
 tracker	track.newReturn	0	
 tracker	clips.insertMidiClip	0	
+tracker	clips.captureScene	0	
+tracker	clips.backToArrangement	0	
+tracker	clips.gridNarrower	0	
+tracker	clips.gridWider	0	
+tracker	clips.gridTriplet	0	
+tracker	clips.gridSnap	0	
+tracker	clips.gridFixed	0	
+tracker	clips.quant16	0	
+tracker	clips.quant8	0	
+tracker	clips.quant4	0	
+tracker	clips.quantBar	0	
+tracker	clips.quantNone	0	
 tracker	track.group	0	
 tracker	track.ungroup	0	
 tracker	view.detail	0	
@@ -1910,6 +2006,8 @@ tracker	stage.mute	6	M;
 tracker	stage.solo	6	S;
 tracker	stage.reset	6	0;
 tracker	stage.rename	6	
+tracker	stage.fromSelection	6	
+tracker	stage.fromMarkers	6	
 tracker	stage.selectAll	6	Ctrl+A;
 tracker	stage.deselect	6	Ctrl+D;
 tracker	stage.roomsPanel	6	\;

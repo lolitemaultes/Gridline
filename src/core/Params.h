@@ -36,6 +36,10 @@ enum class SongParam : uint32_t { Tempo = 0, Swing, MasterPitch, GrooveAccent, C
 // automatable: the instrument gets CC 64 when it moves, and while it is down Gridline holds the
 // channel's note-offs (Settings > MIDI > Pedals > Sustain holds notes).
 enum class ChannelParam : uint32_t { Volume = 0, Pan, Mute, Pitch, Sustain, Count };
+// ChannelParam::Pitch is in cents (Channel::pitchCents), -2400..2400: the same span as the
+// whole-semitone knob before 0.7.7 (-24..24), so automation saved then means the same pitch.
+inline constexpr double kChannelPitchMaxCents = 2400.0;
+inline constexpr int kChannelBendRangeMax = 48;
 enum class MixerParam : uint32_t {
   Volume = 0, Pan, StereoSep, Mute,
   // Strip EQ (MixerTrack::eqGain / eqFreq / eqQ), bands low · mid · high.

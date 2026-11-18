@@ -49,6 +49,7 @@
 #include "../core/TrackIconSet.h"
 #include "ChannelRoute.h"
 #include "App.h"
+#include "StageView.h"
 #include "EditTools.h"
 #include "ScriptUi.h"
 #include "../core/NoteTools.h"
@@ -2263,6 +2264,9 @@ void rulerMenu(App& a, Tick pos) {
     if (a.engine.mode() != PlayMode::Song) a.engine.setMode(PlayMode::Song);
     j31::songJump(a, pos);
   }
+  if (a.playlist.selEnd > a.playlist.selStart && pos >= a.playlist.selStart && pos < a.playlist.selEnd) {
+    stageui::playlistRangeItems(a, a.playlist.selStart, a.playlist.selEnd);  // the time selection's tracks on the Stage
+  }
 }
 
 // Right-click on a marker in the playlist ruler.
@@ -2323,6 +2327,7 @@ void markerMenu(App& a, int index) {
     const Tick pos = static_cast<Tick>(a.engine.position());
     ops::editMarker(a.doc, index, "move marker", [pos](Marker& k) { k.pos = pos; });
   }
+  stageui::playlistMarkerItems(a, index);  // its area's tracks on the Stage (StagePickUi.cpp)
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Delete"))) ops::removeMarker(a.doc, index);
 }

@@ -146,6 +146,7 @@ struct ReportInfo {
   const char* typeName = nullptr;  // exception: its type
   const char* message = nullptr;   // scrubbed
   const char* note = nullptr;
+  const char* inside = nullptr;    // freeze: what the UI thread is inside (InsideScope), lines
   uintptr_t pcs[kMaxFrames] = {};
   bool scanned[kMaxFrames] = {};   // found by scanning the stack, not by the frame chain
   int frames = 0;
@@ -180,6 +181,7 @@ void currentStack(ReportInfo& out);
 void currentThreadName(char* out, size_t cap);
 const char* threadRole() noexcept;
 void noteAudioThread() noexcept;
+void ignoreStackLookForTest();
 void* mapFile(const std::string& path, size_t size, bool create);
 void unmapFile(void* mem, size_t size);
 // New file, whole text or nothing visible under the final name (signal context).

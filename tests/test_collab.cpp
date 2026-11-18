@@ -292,7 +292,7 @@ void testJoinSync() {
   settle(t.net, t.all(), t.clock);
   {
     const Channel* k = t.c.doc.song().channel(t.a.doc.song().channels[0].id);
-    expect(k && k->name == "A19" && std::abs(k->pan - 19 / 40.0f) < 1e-6f && t.a.doc.song().channel(lead)->pitch == 7 && converged(t),
+    expect(k && k->name == "A19" && std::abs(k->pan - 19 / 40.0f) < 1e-6f && t.a.doc.song().channel(lead)->pitchCents == 7.0f && converged(t),
            "concurrent edits of different properties all survive (no lost edits)");
   }
   // ids made concurrently never collide

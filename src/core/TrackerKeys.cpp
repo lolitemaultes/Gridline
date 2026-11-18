@@ -149,6 +149,7 @@ const std::vector<ScreenKey>& screenKeys() {
       {"help.trackerKeys", N_("This help")},
       {"view.closeAll", N_("Back to the main screen (every screen closes, the Pattern page in front)")},
       {"pattern.new", N_("A new pattern (Ins puts it in the song)")},
+      {"pattern.clone", N_("Duplicate pattern: a copy of the pattern after it, shown (the Pattern menu also puts one in the song)")},
       {"view.headerBand", N_("The header as one strip, the pattern taller")},
       {"view.transposeBox", N_("The Transpose box")},
       {"view.advancedEdit", N_("The Advanced edit box")},

@@ -218,7 +218,7 @@ std::vector<std::string> compareSongs(const Song& a0, const Song& b0, bool ignor
     c.f(p + ".gain", x.gain, y.gain);
     c.f(p + ".pan", x.pan, y.pan);
     c.v(p + ".muted", x.muted, y.muted);
-    c.v(p + ".pitch", x.pitch, y.pitch);
+    c.f(p + ".pitch", x.pitchCents, y.pitchCents);
     c.v(p + ".fine", x.fine, y.fine);
     c.v(p + ".mixerTrack", x.mixerTrack, y.mixerTrack);
     c.v(p + ".noteFx.size", x.noteFx.size(), y.noteFx.size());

@@ -2,7 +2,9 @@
 #include <thread>
 #include <set>
 #include <atomic>
+#include "../core/Crash.h"
 #include "../core/PluginParams.h"
+#include "../core/RemoteFs.h"
 #include "Generators.h"
 #include <algorithm>
 #include <cctype>
@@ -145,7 +147,55 @@ DecodeCancelScope::DecodeCancelScope(const std::atomic<bool>* flag) : prev_(tCan
 DecodeCancelScope::~DecodeCancelScope() { tCancel = prev_; }
 bool decodeCancelled() { return tCancel && tCancel->load(std::memory_order_relaxed); }
 
+bool mustNotReadNow(const std::string& path) {
+  if (path.empty() || path.rfind("builtin:", 0) == 0) {
+    return false;
+  }
+  return readsDeferredHere() && remotefs::isRemote(path);
+}
+
+bool readsDeferredHere() { return SampleCache::NonBlocking::active() || crash::onUiThread(); }
+
+namespace {
+std::mutex& gBackgroundMu = *new std::mutex;  // never destroyed: a reader may end during exit
+std::set<std::string>& gBackgroundKeys = *new std::set<std::string>;
+}  // namespace
+
+void readInBackground(const std::string& key, std::function<void()> job) {
+  {
+    std::lock_guard<std::mutex> lk(gBackgroundMu);
+    if (!gBackgroundKeys.insert(key).second) {
+      return;
+    }
+  }
+  // Detached: a reader stuck on a drive that stopped answering must keep nobody waiting, not
+  // even the app on its way out.
+  std::thread([key, job = std::move(job)] {
+    try {
+      job();
+    } catch (...) {  // a file too big or unreadable: what it would have made stays missing
+    }
+    {
+      std::lock_guard<std::mutex> lk(gBackgroundMu);
+      gBackgroundKeys.erase(key);
+    }
+    sampleCache().bumpGeneration();
+  }).detach();
+}
+
+int backgroundReadsRunning() {
+  std::lock_guard<std::mutex> lk(gBackgroundMu);
+  return static_cast<int>(gBackgroundKeys.size());
+}
+
 SamplePtr loadSample(const std::string& path, std::string* err) {
+  if (mustNotReadNow(path)) {  // FRZ-1118: a background decoder reads it; a rebuild picks it up
+    SamplePtr s = sampleCache().request(path);
+    if (!s && err) {
+      *err = "not read yet (a web or network drive)";
+    }
+    return s;
+  }
   // Formats are recognised by content first (FL Studio content often stores
   // Ogg Vorbis under a .wav name, or inside a RIFF wrapper), then by extension.
   const bool cancellable = tCancel != nullptr;
@@ -374,6 +424,23 @@ SamplePtr SampleCache::get(const std::string& path) {
     return s;
   }
   if (tNonBlocking) return request(path);
+  // The interface never reads or waits for a file on a web or network drive (RemoteFs.h): a mount
+  // that stops answering holds the reading thread in the kernel, for minutes. There get() is a
+  // request(): the editor draws the sample once a background decoder has it.
+  if (crash::onUiThread()) {
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      if (auto it = cache_.find(path); it != cache_.end()) {
+        return it->second;
+      }
+      if (failed_.count(path)) {
+        return nullptr;
+      }
+    }
+    if (remotefs::isRemote(path)) {
+      return request(path);
+    }
+  }
   std::unique_lock<std::mutex> lk(mu_);
   // A background decode of this file is running: wait for it instead of decoding twice.
   done_.wait(lk, [&] { return !inflight_.count(path); });

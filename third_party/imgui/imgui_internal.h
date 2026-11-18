@@ -4428,6 +4428,21 @@ extern bool         GImGuiGridlineMenuLive;
 // splitter is submitted before the docked windows' widgets, so with a 1 px gap a widget at a panel's
 // edge took the pointer and the divider could be grabbed from one side only.
 extern bool         GImGuiGridlineSplitterOwn;
+// Gridline (rsz-1118): dock splitters as a region shell drags them.
+//  - GImGuiGridlineSplitterCentre: a band touching the dragged divider keeps its size when the node behind
+//    it holds the central node (the centre takes the change), as a title strip / tab rail (NoResizeX/Y)
+//    always keeps its size. Applied inside the splitter, so the frame the windows draw is already right.
+//  - GImGuiGridlineSplitterLimits(node, total, &min0, &min1): may raise the minimum sizes of the two sides
+//    of the held divider (a region's own min / max), so the drag stops softly there.
+//  - GImGuiGridlineSplitterLine > 0: hover / held draw a centred line that thick in SeparatorHovered /
+//    SeparatorActive over the idle bar (0: the whole bar takes the colour, as before).
+//  - GImGuiGridlineSplitterCursor / Frame: the resize cursor a dock splitter asked for, and the frame it did
+//    (the app sets it again at the end of the frame, after windows drawn later that may change it).
+extern bool         GImGuiGridlineSplitterCentre;
+extern void       (*GImGuiGridlineSplitterLimits)(ImGuiDockNode* node, float total, float* min0, float* min1);
+extern float        GImGuiGridlineSplitterLine;
+extern int          GImGuiGridlineSplitterCursor;
+extern int          GImGuiGridlineSplitterFrame;
 extern void       (*GImGuiGridlineToggleDraw)(ImDrawList* dl, const ImVec2& a, const ImVec2& b, int state, bool hovered, bool held);
 
 // In IMGUI_VERSION_NUM >= 18934: changed IMGUI_TEST_ENGINE_ITEM_ADD(bb,id) to IMGUI_TEST_ENGINE_ITEM_ADD(id,bb,item_data);

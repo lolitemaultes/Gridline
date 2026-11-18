@@ -59,6 +59,9 @@ struct Region {
   TabStyle tabs = TabStyle::Dock;
   bool fixed = false;      // keeps its pixel size when the window is resized (bands)
   const char* group = "";  // K-112c: regions of one group show one at a time (showing one hides the others)
+  // gap-1118: part of the layout's fixed design (the Tracker's header band): it stays when its last window
+  // closes. Every other region collapses then, and its neighbours take the room back (app/LayoutShellUi.cpp).
+  bool keep = false;
 };
 
 struct Shell {
@@ -132,5 +135,8 @@ struct Placed {
 std::vector<Placed> solve(Preset p, float w, float h, const State& st);
 // The size a region takes from its parent's extent `parent` along its split axis (px).
 float regionExtent(const Region& r, float parent, const State& st, const std::string& member = "");
+// rsz-1118: the extents a divider drag may give the region in a parent that size [lo, hi] (px): the same
+// limits regionExtent keeps a dragged size to, so a band let go at a limit stays exactly there.
+void dragRange(const Region& r, float parent, float& lo, float& hi);
 
 }  // namespace gl::layout

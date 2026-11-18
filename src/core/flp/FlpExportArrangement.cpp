@@ -380,7 +380,8 @@ void Exporter::writeArrangements() {
         const uint32_t oldPad = getU32(r, 26);
         static const PadMode kPadBack[4] = {PadMode::Trigger, PadMode::Gate, PadMode::Gate, PadMode::Toggle};
         if (!(oldPad <= 3 && kPadBack[oldPad] == pt.pad)) putU32(r, 26, static_cast<uint32_t>(kPad[static_cast<int>(pt.pad) % 3]));
-        putU32(r, 30, static_cast<uint32_t>(pt.launch));
+        // (grid-1118: the bar grids FL has no number for go out as its 4 beats)
+        putU32(r, 30, static_cast<uint32_t>(pt.launch > LaunchGrid::ClipLength ? LaunchGrid::FourBeats : pt.launch));
         putU32(r, 42, static_cast<uint32_t>(pt.syncStart));
         putU8(r, 46, grouped[static_cast<size_t>(t)] ? 1 : 0);
       }

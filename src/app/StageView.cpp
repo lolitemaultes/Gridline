@@ -1361,6 +1361,10 @@ void floorMenu(App& a) {
   }
   if (ImGui::MenuItem(i18n::tr("Spread out"))) startPreview(a, PreviewKind::Spread);
   if (ImGui::MenuItem(i18n::tr("Arrange by sound..."))) startPreview(a, PreviewKind::Sound);
+  if (ImGui::BeginMenu(i18n::tr("Tracks from playlist"))) {  // the toolbar's From playlist menu
+    pickMenu(a);
+    ImGui::EndMenu();
+  }
   ImGui::Separator();
   viewItems(a);
   ImGui::Separator();
@@ -1378,6 +1382,10 @@ void stageMenu(App& a) {
   ImGui::Separator();
   if (ImGui::BeginMenu(i18n::tr("Presets"))) {  // also on the toolbar when the mixer is wide
     presetsMenu(a);
+    ImGui::EndMenu();
+  }
+  if (ImGui::BeginMenu(i18n::tr("Tracks from playlist"))) {  // also on the toolbar when the mixer is wide
+    pickMenu(a);
     ImGui::EndMenu();
   }
   const Song& s = song(a);
@@ -1781,6 +1789,23 @@ void toolbar(App& a) {
     roomPopover(a);
     ImGui::EndPopup();
   }
+  // Tracks from the playlist (StagePickUi.cpp): the selection's or a marker area's tracks, and what to do with them.
+  float usedX2 = usedX;
+  if (!narrow) {
+    ImGui::SameLine(0, 10);
+    pp = ImGui::GetCursorScreenPos();
+    if (toolButton(a, "##pickbtn", ui::Icon::Playlist, true, -1, i18n::tr("From playlist"), nullptr, true, ImGui::IsPopupOpen("##stagepickmenu"),
+                   i18n::N_("Tracks from the playlist selection or a marker area: select them, add them to the stage, move them to a room or arrange them")) ||
+        takeMenuRequest()) {
+      ImGui::OpenPopup("##stagepickmenu");
+    }
+    usedX2 = ImGui::GetItemRectMax().x;
+    ImGui::SetNextWindowPos(ImVec2(std::max(ImGui::GetWindowPos().x, pp.x - 20), pp.y + ImGui::GetFrameHeight() + 4));
+    if (ImGui::BeginPopup("##stagepickmenu")) {
+      pickMenu(a);
+      ImGui::EndPopup();
+    }
+  }
   // Right: the solo chip, Routing.
   const Song& s = song(a);
   std::vector<ObjectId> solos;
@@ -1800,7 +1825,7 @@ void toolbar(App& a) {
   }
   const float chipW = chip.empty() ? 0 : ImGui::CalcTextSize(chip.c_str()).x + 46;
   float x = right - routeW - (chip.empty() ? 0 : chipW + 6);
-  if (x > usedX + 12) {
+  if (x > usedX2 + 12) {
     ImGui::SameLine(0, 0);
     ImGui::SetCursorScreenPos(ImVec2(x, ImGui::GetCursorScreenPos().y));
     if (!chip.empty()) {
@@ -1935,6 +1960,7 @@ void drawBody(App& a) {
     v.panel0.x += rw;
   }
   roomPopups(a);
+  pickPopups(a);
   const std::vector<size_t> shown = shownTracks(a);
   // While a track is dragged the stage keeps the size it had when the drag began (it never jumps
   // under the pointer).
@@ -2066,6 +2092,8 @@ void devCommand(App& a, int frame, const std::vector<std::string>& args) {
       if (k >= 0 && static_cast<size_t>(k) < f.size()) roomops::applyTemplate(a.doc, std::atoi(a1.c_str()), f[static_cast<size_t>(k)]);
     } else if (c == "bring") {
       openBring(a, shownRoom(a));
+    } else if (c == "pick") {  // tracks from the playlist (StagePickUi.cpp devPick)
+      devPick(a, args);
     } else if (c == "listen" || c == "roomsolo") {  // "roomsolo <room> [only]": its headphones (click, right-click); "listen off": none
       if (a1 == "off" || a1.empty()) {
         v.soloRooms.clear();

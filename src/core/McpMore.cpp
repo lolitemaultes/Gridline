@@ -23,6 +23,7 @@
 #include "PluginBrand.h"
 #include "Project.h"
 #include "Settings.h"
+#include "StagePick.h"
 #include "StageRoomOps.h"
 
 namespace gl::mcp::detail {
@@ -81,8 +82,7 @@ const std::vector<Kind>& kinds() {
         {"mono", "one note at a time"},
         {"porta", "glide between notes"},
         {"portaTime", "glide time, seconds 0..2"},
-        {"pitchSmooth", "pitch automation moves in cents"},
-        {"knobFine", "cents of fine tune the pitch knob holds"},
+        {"bendRange", "semitones a full pitch bend means to the instrument 1..48 (plugins without note tuning)"},
         {"expression", "per-note expression (MPE): pitch, pressure, timbre amounts"},
         {"cutGroup", "notes cut channels whose cutBy equals this (0 none)"},
         {"cutBy", "cut by notes of this group (0 none)"},
@@ -1247,16 +1247,49 @@ ToolResult tStageRoom(Environment& env, const Json& a) {
     if (!roomops::moveRoom(d, room, static_cast<int>(argInt(a, "to", 1)) - 1)) return fail("could not move the room");
   } else if (action == "delete") {
     if (!roomops::deleteRoom(d, room)) return fail("only an empty room can be deleted, and never the last one: move its tracks to another room first (action move_tracks)");
-  } else if (action == "move_tracks") {
+  } else if (action == "move_tracks" || action == "find_tracks") {
     std::vector<ObjectId> ids;
     std::string err;
-    if (const Json* t = a.find("tracks"))
+    if (const Json* t = a.find("tracks")) {
       for (const auto& n : t->array) {
         const MixerTrack* m = mixerAt(d.song(), std::llround(n.number), err);
-        if (!m) return fail(err);
+        if (!m) {
+          return fail(err);
+        }
         ids.push_back(m->id);
       }
-    if (ids.empty()) return fail("give tracks (mixer track numbers) to move into the room");
+    }
+    // Tracks from a marker area (core/StagePick.h): every clip playing from marker N to the next (or to marker_to).
+    if (has(a, "marker")) {
+      const int mk = static_cast<int>(argInt(a, "marker", 1)) - 1;
+      if (mk < 0 || mk >= static_cast<int>(d.song().markers.size())) {
+        return fail("no marker " + std::to_string(mk + 1) + " (the song has " + std::to_string(d.song().markers.size()) + ")");
+      }
+      const stagepick::Area ar = stagepick::betweenMarkers(d.song(), mk, has(a, "markerTo") ? static_cast<int>(argInt(a, "markerTo", 0)) - 1 : -1);
+      stagepick::Options o;
+      o.buses = !has(a, "buses") || argBool(a, "buses");
+      o.muted = argBool(a, "muted");
+      for (ObjectId id : stagepick::fromRange(d.song(), ar.start, ar.end, o).tracks) {
+        if (std::find(ids.begin(), ids.end(), id) == ids.end()) {
+          ids.push_back(id);
+        }
+      }
+      if (action == "move_tracks" && !has(a, "room")) {  // no room given: a new one named after the marker
+        int to = -1;
+        const int moved = stagepick::moveToRoom(d, ids, -1, stagepick::areaName(d.song(), ar), 0, &to);
+        return ok(jobj({{"moved", jnum(moved)}, {"room", jnum(to + 1)}}), "moved " + std::to_string(moved) + " tracks to a new room " + std::to_string(to + 1));
+      }
+    }
+    if (action == "find_tracks") {
+      Json list = Json::makeArray();
+      for (ObjectId id : ids) {
+        const int i = d.song().mixerIndex(id);
+        list.array.push_back(jobj({{"mixer", jnum(i)}, {"name", jstr(mixerTrackName(d.song(), static_cast<size_t>(i)))},
+                                   {"room", jnum(roomops::trackRoom(d.song(), id) + 1)}}));
+      }
+      return ok(jobj({{"tracks", list}}), "found " + std::to_string(ids.size()) + " tracks");
+    }
+    if (ids.empty()) return fail("give tracks (mixer track numbers) or a marker whose area's tracks move into the room");
     const int moved = roomops::moveTracksToRoom(d, ids, room, argBool(a, "feeders"));
     return ok(jobj({{"moved", jnum(moved)}}), "moved " + std::to_string(moved) + " tracks to room " + std::to_string(room + 1));
   } else if (action == "set_space") {
@@ -1474,7 +1507,8 @@ const std::vector<std::pair<const char*, std::vector<const char*>>>& examples() 
       {"set_send", {"{\"mixer\": 1, \"to\": 5, \"level\": 0.6}", "{\"mixer\": 2, \"to\": 3, \"level\": 1, \"sidechain\": true}", "{\"mixer\": 1, \"to\": 5, \"level\": 0}"}},
       {"list_commands", {"{\"query\": \"metronome\"}", "{\"kind\": \"window\"}"}},
       {"run_command", {"{\"id\": \"cmd:options.metronome\"}"}},
-      {"stage_room", {"{\"action\": \"add\", \"name\": \"Strings hall\"}", "{\"action\": \"move_tracks\", \"room\": 2, \"tracks\": [4, 5]}"}},
+      {"stage_room", {"{\"action\": \"add\", \"name\": \"Strings hall\"}", "{\"action\": \"move_tracks\", \"room\": 2, \"tracks\": [4, 5]}",
+                      "{\"action\": \"move_tracks\", \"marker\": 2}"}},
       {"arrangement", {"{\"action\": \"add\", \"name\": \"Radio edit\", \"copyCurrent\": true}", "{\"action\": \"select\", \"arrangement\": 2}"}},
       {"transport", {"{\"action\": \"play\", \"position\": 16}", "{\"action\": \"stop\"}"}},
       {"get_settings", {"{\"prefix\": \"ui.stage.\"}"}},
@@ -1746,14 +1780,20 @@ void addMoreTools(std::vector<Tool>& v) {
       false, tSetSend);
   add("stage_room", "Stage rooms",
       "Stage view rooms: add (name, color), rename, color, move (to), delete (an empty room), move_tracks (mixer track numbers, "
-      "feeders), set_space (space number, 0 = no room). Room settings are patch paths room/N. One undo step." + ex("stage_room"),
-      objSchema({{"action", enumP("What to do", {"add", "rename", "color", "move", "delete", "move_tracks", "set_space"})},
+      "feeders; or marker: the tracks of every clip playing from that marker to the next or to markerTo, into room, else a new room "
+      "named after the marker), find_tracks (the same tracks, listed), set_space (space number, 0 = no room). Room settings are patch "
+      "paths room/N. One undo step." + ex("stage_room"),
+      objSchema({{"action", enumP("What to do", {"add", "rename", "color", "move", "delete", "move_tracks", "find_tracks", "set_space"})},
                  {"room", intP("Room (1 = first)", 1, 999)},
                  {"name", strP("Name")},
                  {"color", strP("Colour \"#RRGGBB\"", 7)},
                  {"to", intP("move: new position", 1, 999)},
                  {"tracks", arrP("move_tracks: mixer track numbers", intP("mixer track", 1, 999), 999)},
                  {"feeders", boolP("move_tracks: the tracks sending into them come too")},
+                 {"marker", intP("move_tracks / find_tracks: the tracks of the clips playing from this marker (1 = first) to the next", 1, 100000)},
+                 {"markerTo", intP("with marker: up to this marker instead of the next", 1, 100000)},
+                 {"buses", boolP("with marker: the buses they send into come too (default true)")},
+                 {"muted", boolP("with marker: muted clips count too")},
                  {"space", intP("set_space: the room's space (0 = no room)", 0, 64)}},
                 {"action"}),
       false, tStageRoom);

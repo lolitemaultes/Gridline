@@ -62,7 +62,11 @@ struct MidiRouting {
 
 class MidiManager {
  public:
-  explicit MidiManager(AudioEngine& engine);
+  // `systemPorts` false (MIDI-1118: hidden / scripted test runs): the system MIDI service is never
+  // asked and no device port is ever opened (no inputs, no outputs, no controller LED outputs), so
+  // a connected keyboard or stray device traffic cannot reach a test. The service then reads as
+  // answered with no devices; dev MIDI injection (onMessage) still works.
+  explicit MidiManager(AudioEngine& engine, bool systemPorts = true);
   ~MidiManager();
 
   // Refreshes the port lists (keeps the settings of known devices). The system MIDI service
@@ -121,6 +125,9 @@ class MidiManager {
 
   std::string status;
   int openInputs() const { return static_cast<int>(ins_.size()); }
+  bool outputOpen();  // the selected output port is open
+  int openDeviceOutputs();  // sendTo ports open (controller LEDs)
+  bool systemPorts() const { return systemPorts_; }
   double lastActivity() const { return lastActivity_.load(); }
 
   // RtMidi callback trampoline (driver thread).
@@ -138,6 +145,7 @@ class MidiManager {
   std::atomic<bool> ignoreOff_{false};
   std::atomic<int> syncSrc_{0};  // SyncSource for the driver threads
   AudioEngine& engine_;
+  bool systemPorts_ = true;
   std::vector<std::unique_ptr<Port>> ins_;
   std::unique_ptr<RtMidiOut> out_;
   std::vector<std::pair<std::string, std::unique_ptr<RtMidiOut>>> devOuts_;  // sendTo (under outMu_)

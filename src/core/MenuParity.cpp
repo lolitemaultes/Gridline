@@ -907,6 +907,12 @@ bool extendLiveArea(Document& d, Tick end) {
       if (c.start >= from) c.start += shift;
     for (auto& m : x.markers)
       if (m.pos >= from) m.pos += shift;
+    if (x.cycleEnd > x.cycleStart && x.cycleStart >= from) {  // grid2-1118: the loop brace with the arrangement
+      x.cycleStart += shift, x.cycleEnd += shift;
+    }
+    if (x.projectEnd > 0 && x.projectEnd >= from) {
+      x.projectEnd += shift;
+    }
     x.live.areaEnd = end;
   });
   return true;

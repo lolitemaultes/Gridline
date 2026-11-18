@@ -442,6 +442,24 @@ bool vScrollBar(App& a, const char* id, ImVec2 p0, ImVec2 p1, double* start, dou
   return *start != was;
 }
 
+// TRK-1118: a right-click on the pattern box's Pattern row: its menu (Duplicate pattern, Duplicate
+// into the song, New pattern). True when an item changed the song (the caller looks the pattern up again).
+namespace {
+bool patternRowMenu(App& a, const char* id, ImVec2 p0, ImVec2 p1) {
+  if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) && ImGui::IsMouseHoveringRect(p0, p1) &&
+      ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+    ImGui::OpenPopup(id);
+  }
+  if (!ImGui::BeginPopup(id)) {
+    return false;
+  }
+  const auto rev = a.doc.revision();
+  patternMenuItems(a);
+  ImGui::EndPopup();
+  return a.doc.revision() != rev;
+}
+}  // namespace
+
 // One stepper row: the label, the value in a sunken field right after it, the arrows at the box's
 // right edge (down, up). `w` is the row's width, `labelW` the label column's.
 int stepper(App& a, const char* id, const char* label, const std::string& value, ImVec2 p0, float w, float h, const char* hint, float labelW, bool fill,
@@ -2506,6 +2524,63 @@ bool diskParent(App& a) {
   return true;
 }
 
+// TRK-1118: Duplicate pattern (Studio's Clone: Document::clonePattern, the copy after it, named with
+// the next number), shown at once. Into the song: the copy also becomes a new entry right after the
+// current one, the song after it moving along (trk::orderInsert); one undo step for both.
+ObjectId duplicatePattern(App& a, bool intoSong) {
+  const Song& s = a.doc.song();
+  if (!s.pattern(a.curPattern)) {
+    status(i18n::tr("No pattern to duplicate"));
+    return kNoId;
+  }
+  const std::vector<trk::OrderEntry> ol = trk::orderList(s);
+  const int cur = currentEntry(a, ol);
+  a.doc.beginGroup(intoSong ? "duplicate pattern into the song" : "duplicate pattern");
+  const ObjectId id = a.doc.clonePattern(a.curPattern);
+  trk::OrderEdit placed = trk::OrderEdit::Nothing;
+  if (id != kNoId && intoSong) {
+    placed = trk::orderInsert(a.doc, cur < 0 ? static_cast<int>(ol.size()) : cur + 1, id);
+  }
+  a.doc.endGroup(false);
+  if (id == kNoId) {
+    return kNoId;
+  }
+  a.selectPattern(id);
+  if (intoSong) {
+    const std::vector<trk::OrderEntry> nl = trk::orderList(a.doc.song());
+    for (const trk::OrderEntry& e : nl) {
+      if (e.pattern == id) {
+        setSongPosition(a, e.start);
+        break;
+      }
+    }
+  }
+  const Pattern* p = a.doc.song().pattern(id);
+  std::string msg = std::string(i18n::tr("Duplicated as")) + " " + trk::hexNum(trk::patternNumber(a.doc.song(), id)) + " " + (p ? p->name : std::string());
+  if (intoSong && placed != trk::OrderEdit::Done) {
+    msg += std::string(" (") + i18n::tr("not put in the song: edit the order on the Song page") + ")";
+  }
+  status(msg);
+  return id;
+}
+
+void patternMenuItems(App& a) {
+  const bool has = a.doc.song().pattern(a.curPattern) != nullptr;
+  if (ImGui::MenuItem(i18n::tr("Duplicate pattern"), keys::label("pattern.clone"), false, has)) {
+    duplicatePattern(a, false);
+  }
+  if (ImGui::MenuItem(i18n::tr("Duplicate into the song"), nullptr, false, has)) {
+    duplicatePattern(a, true);
+  }
+  ImGui::Separator();
+  if (ImGui::MenuItem(i18n::tr("New pattern"), keys::label("pattern.new"))) {
+    const ObjectId id = a.doc.addPattern(ops::nextPatternName(a.doc.song()), kNewPatternBars, kNewPatternSteps);
+    if (id != kNoId) {
+      a.selectPattern(id);
+    }
+  }
+}
+
 namespace {
 // cp14: the Audio page (the classic config's audio page, as Gridline's audio settings): the output
 // device list (the wheel scrolls it), the sample rate and buffer size as radios, the latency. A
@@ -2955,11 +3030,15 @@ void extendedStrip(App& a) {
     bool fill = false;  // cp23: as the main band
     const float rw = bw - pad * 2, lw = peerFields(a, rw, rh, labelColumn(a, {"Pattern", "Rows"}, space::kGroup), &fill);
     if (const int d = stepper(a, "xpat", "Pattern", p ? trk::hexNum(trk::patternNumber(s, p->id)) : std::string("--"), ImVec2(x + pad, rowY(0)), rw, rh,
-                              "The pattern shown (past the last one: a new, empty pattern; the piano roll and steps show it too)", lw, fill))
+                              "The pattern shown (past the last one: a new, empty pattern; the piano roll and steps show it too) \xC2\xB7 right-click: duplicate it", lw, fill))
     {
       // R11-01: a step past the last pattern adds one, and the pattern list may move: the pattern
       // and its grid are looked up again before the Rows field reads them.
       stepPattern(a, d);  // R10-03
+      p = s.pattern(a.curPattern);
+      g = p ? trk::gridOf(s, *p) : trk::Grid{};
+    }
+    if (patternRowMenu(a, "##xpatctx", ImVec2(x + pad, rowY(0)), ImVec2(x + pad + rw, rowY(0) + rh))) {
       p = s.pattern(a.curPattern);
       g = p ? trk::gridOf(s, *p) : trk::Grid{};
     }
@@ -3048,6 +3127,7 @@ void extendedStrip(App& a) {
 void pageStrip(App& a, ImVec2 o, float W, float py0, float stripH);
 extern ObjectId gSourceChannel;
 void instrumentMenu(App& a, ObjectId id);
+void addInstrumentItems(App& a);  // TRK-1118: the instrument picker's rows
 
 void header(App& a) {
   const auto& P = pal();
@@ -3269,11 +3349,15 @@ void header(App& a) {
     const Pattern* p = s.pattern(a.curPattern);
     trk::Grid g = p ? trk::gridOf(s, *p) : trk::Grid{};
     if (const int d = stepper(a, "pat", "Pattern", p ? trk::hexNum(trk::patternNumber(s, p->id)) : std::string("--"), ImVec2(xp + pad, y), rw, srh,
-                              "The pattern shown (past the last one: a new, empty pattern; the piano roll and steps show it too)", lw, fill))
+                              "The pattern shown (past the last one: a new, empty pattern; the piano roll and steps show it too) \xC2\xB7 right-click: duplicate it", lw, fill))
     {
       // R11-01: a step past the last pattern adds one, and the pattern list may move: the pattern
       // and its grid are looked up again before the Rows field reads them.
       stepPattern(a, d);  // R10-03
+      p = s.pattern(a.curPattern);
+      g = p ? trk::gridOf(s, *p) : trk::Grid{};
+    }
+    if (patternRowMenu(a, "##patctx", ImVec2(xp + pad, y), ImVec2(xp + pad + rw, y + srh))) {
       p = s.pattern(a.curPattern);
       g = p ? trk::gridOf(s, *p) : trk::Grid{};
     }
@@ -3486,6 +3570,7 @@ void header(App& a) {
     const float colWi = std::floor((l1.x - l0.x) / static_cast<float>(cols));
     const int vis = rowsVis * cols;
     static int bank = 0;
+    bool addMenuAsked = false;  // TRK-1118: the instrument picker asked for (an empty slot)
     const int banks = std::max(1, (static_cast<int>(s.channels.size()) + vis - 1) / vis);
     // The page follows the selection when the selection changes (a page picked by hand stays).
     static int lastCi = -2;
@@ -3502,14 +3587,28 @@ void header(App& a) {
         // R10-07: an empty slot can be picked, as in the classic list: the click makes the next
         // instrument there (a Tracker Sampler, as Add does; one undo step), selected, so a sample
         // loaded next fills it instead of replacing the current instrument.
+        // TRK-1118: the first empty slot reads "Add instrument...": its click opens the instrument
+        // picker (a Tracker Sampler first, then every built-in and installed instrument); a
+        // right-click on any empty slot opens the same picker.
+        const bool firstFree = i == static_cast<int>(s.channels.size());
         ImGui::SetCursorScreenPos(ImVec2(cx0, y));
         ImGui::PushID(1000 + i);
-        const bool pick = ImGui::InvisibleButton("##insfree", ImVec2(std::max(1.0f, cx1 - cx0), lrh));
+        bool pick = ImGui::InvisibleButton("##insfree", ImVec2(std::max(1.0f, cx1 - cx0), lrh));
         const bool hovFree = ImGui::IsItemHovered();
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right) || (pick && firstFree)) {
+          addMenuAsked = true;
+          pick = false;
+        }
         ImGui::PopID();
-        ui::Hint("An empty slot: click to make an instrument here (a Tracker Sampler), then load a sample into it");
+        ui::Hint(firstFree ? "Add an instrument: a Tracker Sampler, a built-in instrument or an installed plugin"
+                           : "An empty slot: click to make an instrument here (a Tracker Sampler), then load a sample into it \xC2\xB7 right-click: pick an instrument");
         if (hovFree) dl->AddRectFilled(ImVec2(cx0 + 1, y), ImVec2(cx1 - 1, y + lrh), theme::withAlpha(P.surface700, 0.6f));
         dl->AddText(mono, fs, ImVec2(cx0 + 9, y + 1), theme::withAlpha(P.textFaint, 0.6f), num.c_str());
+        if (firstFree) {
+          const float ax = cx0 + 9 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00 ").x;
+          theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(ax, std::round(y + (lrh - fs) * 0.5f)), cx1 - 4 - ax, hovFree ? P.text : P.textDim,
+                              i18n::tr("Add instrument..."));
+        }
         if (pick) {
           a.doc.beginGroup("add instrument");
           const ObjectId id = a.addInstrument("gl.tracker");
@@ -3586,6 +3685,13 @@ void header(App& a) {
       }
     }
     dl->PopClipRect();
+    if (addMenuAsked) {
+      ImGui::OpenPopup("##insaddmenu");
+    }
+    if (ImGui::BeginPopup("##insaddmenu")) {
+      addInstrumentItems(a);
+      ImGui::EndPopup();
+    }
     // Samples.
     const ImVec2 sb0 = smpSide ? ImVec2(xIe, y0) : ImVec2(xI, yI1);
     bevelBox(dl, sb0, ImVec2(xK, yN));
@@ -3822,6 +3928,48 @@ bool copyInstrumentSound(App& a, ObjectId dst, ObjectId src, bool exchange) {
   return true;
 }
 
+// TRK-1118: after an instrument was added or replaced from the picker: its own editor (an installed
+// plugin's window, a built-in's editor floating), as "Open plugin window"; a Tracker Sampler waits for
+// its sample instead (as the Add button and an empty slot's click leave it).
+void showPickedInstrument(App& a, ObjectId id) {
+  const Channel* c = a.doc.song().channel(id);
+  if (!c) {
+    return;
+  }
+  a.selectChannel(id);
+  cursorToChannel(a, id);
+  if (c->plugin.type != "gl.tracker") {
+    trackereditors::openPluginWindow(a, id);
+  }
+}
+
+// TRK-1118: a picked instrument at the end of the list (one undo step), as the classic list fills.
+void addTrackerInstrument(App& a, const std::string& type) {
+  a.doc.beginGroup("add instrument");
+  const ObjectId id = a.addInstrument(type);
+  if (id != kNoId) {
+    a.doc.moveChannel(id, static_cast<int>(a.doc.song().channels.size()) - 1);
+  }
+  a.doc.endGroup(false);
+  showPickedInstrument(a, id);
+}
+
+void replaceTrackerInstrument(App& a, ObjectId id, const std::string& type) {
+  if (menus::replaceInstrumentPick(a, id, type)) {
+    showPickedInstrument(a, id);
+  }
+}
+
+// The picker's rows: a Tracker Sampler first (the classic empty instrument), then every built-in and
+// installed instrument by category (Studio's picker, its search and favourites included).
+void addInstrumentItems(App& a) {
+  if (ImGui::MenuItem(i18n::tr("Tracker Sampler"), nullptr, false, true)) {
+    a.later([&a] { addTrackerInstrument(a, "gl.tracker"); });
+  }
+  ImGui::Separator();
+  menus::instrumentItems([&a](const std::string& t) { a.later([&a, t] { addTrackerInstrument(a, t); }); });
+}
+
 void instrumentMenu(App& a, ObjectId id) {
   if (!ImGui::BeginPopup("##insmenu")) return;
   const Song& s = a.doc.song();
@@ -3841,6 +3989,16 @@ void instrumentMenu(App& a, ObjectId id) {
     if (ImGui::MenuItem(i18n::tr("Edit instrument"))) trackereditors::open(a, trackereditors::Editor::Instrument, id);
     if (trackereditors::hasSampleEditor(a, id) && ImGui::MenuItem(i18n::tr("Edit samples"), "Ctrl+Alt+E")) trackereditors::open(a, trackereditors::Editor::Sample, id);
     if (ImGui::MenuItem(i18n::tr("Open plugin window"))) trackereditors::openPluginWindow(a, id);
+    // TRK-1118: another instrument in this one's place (its notes stay), or a new one at the list's end.
+    if (ImGui::BeginMenu(i18n::tr("Replace with"))) {
+      menus::instrumentItems([&a, id](const std::string& t) { a.later([&a, id, t] { replaceTrackerInstrument(a, id, t); }); },
+                             s.channels[static_cast<size_t>(i)].plugin.type);
+      ImGui::EndMenu();
+    }
+  }
+  if (ImGui::BeginMenu(i18n::tr("Add instrument"))) {
+    addInstrumentItems(a);
+    ImGui::EndMenu();
   }
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Mark as the source"), nullptr, gSourceChannel == id)) gSourceChannel = gSourceChannel == id ? kNoId : id;
@@ -4153,6 +4311,15 @@ void orderList(App& a) {
   orderRows(a, o, ImVec2(o.x + av.x, o.y + std::max(av.y, 60.0f)));
   ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + std::max(av.y, 60.0f)));
   ImGui::Dummy(ImVec2(1, 0));
+}
+
+void devPickInstrument(App& a, const std::string& type, int replace) {
+  const Song& s = a.doc.song();
+  if (replace >= 0 && replace < static_cast<int>(s.channels.size())) {
+    replaceTrackerInstrument(a, s.channels[static_cast<size_t>(replace)].id, type);
+  } else {
+    addTrackerInstrument(a, type);
+  }
 }
 
 }  // namespace gl::trackerview

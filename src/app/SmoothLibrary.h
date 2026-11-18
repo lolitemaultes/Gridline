@@ -5,10 +5,15 @@
 //   Search      over every patch and effect
 //   Navigation  All, Instruments, Effects, then the kinds of sound (Bass, Drum kit, Keys, ...)
 //   Results     one row per patch (a built-in instrument's preset, or an instrument as it starts),
-//               or per effect. A click loads it: a patch replaces the selected track's sound (its
-//               instrument and settings, in one undo step; a track named after its old patch takes
-//               the new name), on an audio or empty track a new instrument track is made for it; an
-//               effect goes into the selected track's first free slot.
+//               or per effect. A click (or Up / Down) selects a row and, for a patch, previews it:
+//               one C5 note from a separate instance of the patch, rendered off the interface
+//               thread and played on the preview output (the song, its undo history and the
+//               collaboration are untouched; a new preview cuts the one before). The speaker in the
+//               header turns the preview off (setting smooth.libraryPreview). A double-click (or
+//               Enter) loads the row: a patch replaces the selected track's sound (its instrument
+//               and settings, in one undo step; a track named after its old patch takes the new
+//               name), on an audio or empty track (or with no track) a new instrument track is made
+//               for it; an effect goes into the selected track's first free slot.
 //   Footer      how many items the list holds
 //
 // The pane is open on a new project and the demo song, as the reference opens a new project with
@@ -43,10 +48,15 @@ struct Item {
 std::vector<Item> items(const App& a, int nav, const std::string& filter);
 // The kinds of sound in navigation order.
 const std::vector<std::string>& kinds();
-// Loads a row as a click does. Returns false when nothing changed.
+// Loads a row as a double-click does. Returns false when nothing changed.
 bool load(App& a, const Item& it);
+// Selects a row as a click does (a patch is previewed; nothing in the song changes).
+void select(App& a, const Item& it);
+// Stops a preview render in progress (at exit, before static teardown).
+void shutdown();
 
-// Dev ("smoothlib ..."): nav <n> | rows | load <row> | state.
+// Dev ("smoothlib ..."): nav <n> | rows | load <row> | select <row> | open <row> | move <+-n> | enter |
+// preview | state.
 bool devCommand(App& a, const std::vector<std::string>& args);
 
 }  // namespace gl::smoothlib

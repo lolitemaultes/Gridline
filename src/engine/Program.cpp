@@ -22,6 +22,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include "../core/Arrangements.h"
+#include "../core/TrackModes.h"
 #include "../core/ClipGain.h"
 #include "../core/ClipLoop.h"
 #include "../core/StageRooms.h"
@@ -447,7 +448,7 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
   // The channel's own pitch (knob + fine + master pitch) is part of it; when
   // it moves at run time (automation), the realtime grains take over.
   if (rctx && out.end > out.start && out.srcEnd > out.srcStart) {
-    const double chanSemis = static_cast<double>(ch.pitch) + static_cast<double>(ch.fine) / 100.0 + song.masterPitch;
+    const double chanSemis = (static_cast<double>(ch.pitchCents) + static_cast<double>(ch.fine)) / 100.0 + song.masterPitch;
     const double chanRatio = std::pow(2.0, chanSemis / 12.0);
     // J-153: every stored stretch mode is the one stretch (J-157: or Rubber Band)
     stretch::Mode mode = stretchMode ? keepMode : stretch::Mode::Resample;
@@ -644,7 +645,7 @@ void addLayerNotes(const Song& song, const Pattern& p, const Channel& target, in
     if (pos == l.layer.end()) continue;
     std::vector<NoteEv> src = compileChannelNotes(song, p, l);
     addLayerNotes(song, p, l, depth + 1, src);
-    const float shift = static_cast<float>(l.pitch) + static_cast<float>(l.fine) / 100.0f;
+    const float shift = (l.pitchCents + static_cast<float>(l.fine)) / 100.0f;
     const size_t self = static_cast<size_t>(pos - l.layer.begin());
     if (l.layerRack()) {  // K-169: zones, fades, transpose, layer solo, cycle / no-repeat modes
       addRackNotes(song, l, self, shift, src, out);
@@ -1271,11 +1272,10 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     pc.volume = pc.modVolume = c.gain;
     pc.pan = pc.modPan = c.pan;
     pc.muted = pc.modMuted = c.muted;
-    pc.pitch = c.pitch;
+    pc.pitchCents = c.pitchCents;
+    pc.bendRange = c.bendRange;
     pc.masterPitch = song.masterPitch + static_cast<float>(c.fine) / 100.0f;
-    pc.pitchOffset = static_cast<float>(c.pitch) + static_cast<float>(c.fine) / 100.0f + song.masterPitch;
-    pc.pitchSmooth = c.pitchSmooth;
-    pc.knobFine = static_cast<float>(c.knobFine) / 100.0f;
+    pc.pitchOffset = pc.pitchTarget = (c.pitchCents + static_cast<float>(c.fine)) / 100.0f + song.masterPitch;
     int mi = song.mixerIndex(c.mixerTrack);
     pc.mixer = mi >= 0 ? mi : prog->master;
     for (ObjectId t : c.auxOuts) pc.auxMixer.push_back(t == kNoId ? -1 : song.mixerIndex(t));
@@ -1332,10 +1332,9 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       // K-87: the render holds the instrument, its notes and the channel pitch; the strip stays live.
       pc.frozen = fz->second;
       pc.restable = false;
-      pc.pitchOffset = 0;
-      pc.pitch = 0;
+      pc.pitchOffset = pc.pitchTarget = 0;
+      pc.pitchCents = 0;
       pc.masterPitch = 0;
-      pc.knobFine = 0;
       pc.pitchMoves = false;
       if (pc.rt->gen) pc.rt->gen->setClipOnly(true);
     }
@@ -1559,6 +1558,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       for (size_t k = 0; k < passes.size(); ++k) {
         ProgAudioClip ac;
         ac.pass = static_cast<int>(k), ac.head = k == 0, ac.tail = k + 1 == passes.size();
+        ac.track = clip.track;  // grid-1118
         if (compileAudioClip(song, song.channels[static_cast<size_t>(ci)], passes[k], prog->tempoMap, ac, &clipFades[clipIdx], &rctx))
           prog->channels[static_cast<size_t>(ci)].audio.push_back(std::move(ac));
       }
@@ -1597,6 +1597,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
           x.off = clip.start + ps.at + (e.off - ps.content);
           if (play) clipplay::apply(clip, clip.start, x.on, x.off, x.onFrac, x.offFrac, x.pitch, x.velocity);  // K-112b3
           if (noteOffTick(x) > static_cast<double>(clip.start + len)) x.off = clip.start + len, x.offFrac = 0;
+          x.track = static_cast<int16_t>(clip.track);  // grid-1118
           prog->channels[ci].song.push_back(x);
         }
     }
@@ -1609,6 +1610,11 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     lc.track = clip.track;
     lc.length = std::max<Tick>(1, song.clipLength(clip));
     lc.once = clip.launchOnce;
+    lc.pad = clip.launchSet.mode;  // grid2-1118: the clip's own launch settings
+    lc.quant = clip.launchSet.quant;
+    lc.legato = clip.launchSet.legato;
+    lc.follow = clip.launchSet.follow;
+    lc.scene = trackmodes::sceneOf(song, clip.start);
     lc.autos = std::move(liveAutos[k]);
     if (clip.kind == ClipKind::Pattern) {
       if (const ProgPattern* pp = prog->pattern(clip.pattern))
@@ -1662,6 +1668,43 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     std::stable_sort(lt.clips.begin(), lt.clips.end(), [&](int a, int b) {
       return song.clip(prog->liveClips[static_cast<size_t>(a)].clip)->start < song.clip(prog->liveClips[static_cast<size_t>(b)].clip)->start;
     });
+  // grid2-1118: the Clips grid's scenes: each track's slot (its first clip; a deactivated one is no clip),
+  // its stop button, and the scene's own tempo, time signature and follow actions.
+  prog->liveOrigin = song.live.areaEnd;
+  prog->originEpoch = originEpoch_;
+  if (song.live.areaEnd > 0) {
+    const int nTracks = static_cast<int>(std::min<size_t>(song.tracks.size(), static_cast<size_t>(kMaxPlaylistTracks)));
+    const int nScenes = std::max(trackmodes::sceneCount(song), static_cast<int>(song.live.scenes.size()));
+    prog->scenes.assign(static_cast<size_t>(std::max(0, nScenes)), ProgScene{});
+    for (int k = 0; k < nScenes; ++k) {
+      ProgScene& sc = prog->scenes[static_cast<size_t>(k)];
+      sc.clips.assign(static_cast<size_t>(nTracks), kNoId);
+      sc.stop.assign(static_cast<size_t>(nTracks), 1);
+      for (int t = 0; t < nTracks; ++t) {
+        sc.stop[static_cast<size_t>(t)] = trackmodes::hasStopButton(song, t, k) ? 1 : 0;
+      }
+      if (const SceneInfo* info = trackmodes::sceneInfo(song, k)) {
+        sc.tempo = trackmodes::sceneTempo(*info);
+        int n = 0, d = 0;
+        if (trackmodes::sceneSignature(*info, n, d)) {
+          sc.sigNum = n, sc.sigDen = d;
+        }
+        sc.follow = info->follow;
+      }
+    }
+    for (const ProgLiveTrack& lt : prog->liveTracks) {
+      for (int li : lt.clips) {
+        const ProgLiveClip& lc = prog->liveClips[static_cast<size_t>(li)];
+        if (lc.scene < 0 || lc.scene >= nScenes || lc.track < 0 || lc.track >= nTracks) {
+          continue;
+        }
+        ObjectId& slot = prog->scenes[static_cast<size_t>(lc.scene)].clips[static_cast<size_t>(lc.track)];
+        if (slot == kNoId) {  // (the first one in time: the one the slot shows)
+          slot = lc.clip;
+        }
+      }
+    }
+  }
   for (auto& pc : prog->channels) {
     std::stable_sort(pc.song.begin(), pc.song.end(), [](const NoteEv& a, const NoteEv& b) { return noteOnTick(a) < noteOnTick(b); });
     std::stable_sort(pc.audio.begin(), pc.audio.end(), [](const ProgAudioClip& a, const ProgAudioClip& b) { return a.start < b.start; });

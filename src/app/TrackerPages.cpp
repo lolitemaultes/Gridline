@@ -26,6 +26,9 @@
 #include "../core/TrackerData.h"
 #include "../core/TrackerGrid.h"
 #include "App.h"
+#include "ContextMenus.h"
+#include "PluginUI.h"
+#include "TrackerEditors.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
 #include "MenuParityUi.h"
@@ -638,7 +641,7 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
       bool on;
     };
     const B bs[6] = {{i18n::N_("New"), i18n::N_("A new empty pattern of 64 rows after the last"), true},
-                     {i18n::N_("Clone"), i18n::N_("A copy of the picked pattern after it"), sp != nullptr},
+                     {i18n::N_("Duplicate"), i18n::N_("A copy of the picked pattern after it, shown (one undo step)"), sp != nullptr},
                      {i18n::N_("Set"), i18n::N_("The current entry plays the picked pattern"), sp != nullptr && cur >= 0},
                      {i18n::N_("Append"), i18n::N_("Adds the picked pattern at the end of the song"), sp != nullptr},
                      {i18n::N_("Bars -"), i18n::N_("The picked pattern a bar shorter (the song after it moves up)"), sp && sp->bars > 1},
@@ -1750,6 +1753,146 @@ void devSongZoom(App& a, const std::vector<std::string>& args, int frame) {
 }
 
 // ---- Mix: one row per mixer track ----
+namespace {
+// TRK-1118: a mixer track's effects on the Mix page: the effect slots' names in a sunken field, and
+// its menu (a click or right-click on the field): each effect's editor, replace, bypass and remove,
+// and Add effect (the first free slot; Studio's effect picker, built-in and installed). An editor
+// opens where the Tracker homes it: a built-in's in the lower band, an installed plugin's own window.
+std::string effectNames(const MixerTrack& m) {
+  std::string out;
+  for (const EffectSlot& sl : m.slots) {
+    if (sl.plugin.empty()) {
+      continue;
+    }
+    const PluginInfo* fx = findPlugin(sl.plugin.type);
+    out += (out.empty() ? "" : ", ") + (fx ? fx->name : sl.plugin.type);
+  }
+  return out;
+}
+
+void openEffect(App& a, ObjectId track, int slot) {
+  a.selMixer = track;
+  a.fxEditor = {track, slot};
+}
+
+// An effect in the track's first free slot, its editor open (false: no free slot).
+bool addEffect(App& a, ObjectId track, const std::string& type) {
+  const MixerTrack* mt = a.doc.song().mixerTrack(track);
+  for (int k = 0; mt && k < kEffectSlots; ++k) {
+    if (mt->slots[static_cast<size_t>(k)].plugin.empty()) {
+      if (!a.doc.setSlotPlugin(track, k, type)) {
+        return false;
+      }
+      openEffect(a, track, k);
+      return true;
+    }
+  }
+  return false;
+}
+
+void replaceEffect(App& a, ObjectId track, int slot, const std::string& type) {
+  if (a.doc.setSlotPlugin(track, slot, type)) {
+    pui::pluginReplaced(PluginTarget{track, slot});
+    openEffect(a, track, slot);
+  }
+}
+
+void removeEffect(App& a, ObjectId track, int slot) {
+  if (a.fxEditor.first == track && a.fxEditor.second == slot) {
+    a.fxEditor = {kNoId, -1};
+  }
+  a.doc.setSlotPlugin(track, slot, "");
+}
+
+void effectMenu(App& a, ObjectId track) {
+  const MixerTrack* m = a.doc.song().mixerTrack(track);
+  if (!m) {
+    return;
+  }
+  int used = 0;
+  for (int k = 0; k < kEffectSlots; ++k) {
+    const EffectSlot& sl = m->slots[static_cast<size_t>(k)];
+    if (sl.plugin.empty()) {
+      continue;
+    }
+    ++used;
+    const PluginInfo* fx = findPlugin(sl.plugin.type);
+    const std::string label = std::to_string(k + 1) + "  " + (fx ? fx->name : sl.plugin.type) + (sl.enabled ? "" : std::string("  (") + i18n::tr("bypassed") + ")") +
+                              "##fxslot" + std::to_string(k);
+    if (ImGui::BeginMenu(label.c_str())) {
+      if (ImGui::MenuItem(i18n::tr("Open editor"))) {
+        openEffect(a, track, k);
+      }
+      if (ImGui::BeginMenu(i18n::tr("Replace with"))) {
+        const std::string cur = sl.plugin.type;
+        menus::effectItems([&a, track, k](const std::string& t) { a.later([&a, track, k, t] { replaceEffect(a, track, k, t); }); }, cur);
+        ImGui::EndMenu();
+      }
+      if (ImGui::MenuItem(i18n::tr("Bypass"), nullptr, !sl.enabled)) {
+        const bool on = !sl.enabled;
+        a.later([&a, track, k, on] { ops::setSlotEnabled(a.doc, track, k, on); });
+      }
+      if (ImGui::MenuItem(i18n::tr("Remove"))) {
+        a.later([&a, track, k] { removeEffect(a, track, k); });
+      }
+      ImGui::EndMenu();
+    }
+  }
+  if (used > 0) {
+    ImGui::Separator();
+  }
+  if (used >= kEffectSlots) {
+    ImGui::BeginDisabled();
+  }
+  if (ImGui::BeginMenu(i18n::tr("Add effect"))) {
+    menus::effectItems([&a, track](const std::string& t) {
+      a.later([&a, track, t] {
+        if (!addEffect(a, track, t)) {
+          a.notify(i18n::tr("No free effect slot on this track"), true);
+        }
+      });
+    });
+    ImGui::EndMenu();
+  }
+  if (used >= kEffectSlots) {
+    ImGui::EndDisabled();
+  }
+}
+}  // namespace
+
+void devEffect(App& a, const std::vector<std::string>& args, int frame) {
+  const Song& s = a.doc.song();
+  const std::string op = args.size() > 1 ? args[1] : "dump";
+  const int ti = args.size() > 2 ? std::atoi(args[2].c_str()) : 0;
+  const MixerTrack* m = ti >= 0 && ti < static_cast<int>(s.mixer.size()) ? &s.mixer[static_cast<size_t>(ti)] : nullptr;
+  const int slot = args.size() > 3 ? std::atoi(args[3].c_str()) : 0;
+  const bool slotOk = slot >= 0 && slot < kEffectSlots;
+  if (m && op == "add" && args.size() > 3) {
+    addEffect(a, m->id, args[3]);
+  } else if (m && op == "replace" && args.size() > 4 && slotOk) {
+    replaceEffect(a, m->id, slot, args[4]);
+  } else if (m && op == "bypass" && slotOk) {
+    ops::setSlotEnabled(a.doc, m->id, slot, !m->slots[static_cast<size_t>(slot)].enabled);
+  } else if (m && op == "remove" && slotOk) {
+    removeEffect(a, m->id, slot);
+  } else if (m && op == "open" && slotOk) {
+    openEffect(a, m->id, slot);
+  }
+  const Song& now = a.doc.song();
+  const MixerTrack* t = ti >= 0 && ti < static_cast<int>(now.mixer.size()) ? &now.mixer[static_cast<size_t>(ti)] : nullptr;
+  std::string slots;
+  for (int k = 0; t && k < kEffectSlots; ++k) {
+    const EffectSlot& sl = t->slots[static_cast<size_t>(k)];
+    if (!sl.plugin.empty()) {
+      slots += " " + std::to_string(k) + ":" + sl.plugin.type + (sl.enabled ? "" : "(off)");
+    }
+  }
+  const int fxTrack = a.fxEditor.first != kNoId ? now.mixerIndex(a.fxEditor.first) : -1;
+  std::printf("tracker fx frame %d (%s): track %d slots%s | editor %d %d | undo %zu \"%s\"\n", frame, op.c_str(), ti, slots.empty() ? " -" : slots.c_str(), fxTrack,
+              a.fxEditor.second, a.doc.history().position(), a.doc.history().canUndo() ? a.doc.history().undoLabel().c_str() : "");
+  std::fflush(stdout);
+}
+
 void mixer(App& a) {
   const trackerview::PerfScope perfScope(trackerview::PerfPage);  // cp16: "tracker perf"
   trackerview::pumpPage(a);  // (the header band may be hidden: T-05)
@@ -1771,11 +1914,12 @@ void mixer(App& a) {
     const ImVec2 c0 = ImGui::GetCursorScreenPos();
     const float W = ImGui::GetContentRegionAvail().x;
     const float nameW = std::min(200.0f, std::round(W * 0.22f)), lampW = rh0 - 1;  // cp23: as the Steps page
-    const float volW = std::round(W * 0.28f), panW = std::round(W * 0.14f);
+    const float volW = std::round(W * 0.24f), panW = std::round(W * 0.14f);
     // cp24 (usability): the channels playing into each track, in a column before its meter (the page
     // named tracks only, "Insert 3", and which instrument went where could be found only in each
     // instrument's Channel frame). The meter keeps what is left (it ran 560 px wide at 1440x900).
-    const float fromW = std::round(W * 0.2f);
+    const float fromW = std::round(W * 0.16f);
+    const float fxW = std::round(W * 0.17f);  // TRK-1118: the track's effects
     std::vector<std::string> from(s.mixer.size());
     for (const Channel& ch : s.channels) {
       for (size_t i = 0; i < s.mixer.size(); ++i) {
@@ -1822,6 +1966,30 @@ void mixer(App& a) {
         ImGui::InvisibleButton("##from", ImVec2(fromW, rh - 1));
         ui::Hint(from[i].empty() ? "No channel plays into this track" : "The channels that play into this track (each one's Output, in its Channel frame)");
         x += fromW + trackerview::space::kGroup;
+      }
+      {  // TRK-1118: the track's effects; a click opens their menu (add, open, replace, bypass, remove)
+        const ImVec2 f0(x, y), f1(x + fxW, y + rh - 1);
+        ImGui::SetCursorScreenPos(f0);
+        const bool click = ImGui::InvisibleButton("##fx", ImVec2(fxW, rh - 1));
+        const bool hov = ImGui::IsItemHovered();
+        if (click || ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+          a.selMixer = m.id;
+          ImGui::OpenPopup("##fxmenu");
+        }
+        bevelBox(dl, f0, f1, true);
+        if (hov) {
+          dl->AddRectFilled(ImVec2(f0.x + 1, f0.y + 1), ImVec2(f1.x - 1, f1.y - 1), theme::withAlpha(P.surface600, 0.5f));
+        }
+        const std::string names = effectNames(m);
+        const float ty = std::round(y + (rh - fs) * 0.5f);
+        theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(f0.x + 6, ty), f1.x - f0.x - 10, names.empty() ? (hov ? P.textDim : P.textFaint) : P.textDim,
+                            names.empty() ? i18n::tr("+ Add effect") : names.c_str());
+        ui::Hint("The track's effects: click to add one, or to open, replace, bypass or remove one");
+        if (ImGui::BeginPopup("##fxmenu")) {
+          effectMenu(a, m.id);
+          ImGui::EndPopup();
+        }
+        x += fxW + trackerview::space::kGroup;
       }
       // A segmented level meter to the row's end.
       const float lvl = std::clamp(mixmeters::get(a, m.id).peak(), 0.0f, 1.0f);

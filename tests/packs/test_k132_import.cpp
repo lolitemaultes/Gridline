@@ -211,8 +211,9 @@ double frequency(const std::vector<float>& x, double a, double b) {
   return n > 1 ? (n - 1) * kSr / (last - first) : 0;
 }
 
-// A Gridline song: a sampler channel holding a note for 3 s, its pitch automated to `semis`.
-Song pitchSong(const std::string& path, double semis, bool smooth, int pitch, int fine, int knobFine) {
+// A Gridline song: a sampler channel holding a note for 3 s, its pitch automated to `semis`
+// (the knob is in cents since 0.7.7: every channel's automation is smooth).
+Song pitchSong(const std::string& path, double semis, float pitchCents, int fine) {
   Song s = makeEmptySong();
   s.tempo = 120;
   Channel ch;
@@ -220,8 +221,7 @@ Song pitchSong(const std::string& path, double semis, bool smooth, int pitch, in
   ch.plugin = defaultPluginState("gl.sampler");
   ch.plugin.data = path;
   ch.mixerTrack = s.masterId();
-  ch.pitch = pitch, ch.fine = fine;
-  ch.pitchSmooth = smooth, ch.knobFine = knobFine;
+  ch.pitchCents = pitchCents, ch.fine = fine;
   s.channels.push_back(ch);
   Pattern p;
   p.id = s.allocateId();
@@ -237,7 +237,7 @@ Song pitchSong(const std::string& path, double semis, bool smooth, int pitch, in
   const auto d = describeParam(s, id);
   AutomationClip a;
   a.id = s.allocateId(), a.owner = id.owner, a.index = id.index;
-  const float v = d ? static_cast<float>(d->toNormalized(semis)) : 0.5f;
+  const float v = d ? static_cast<float>(d->toNormalized(semis * 100.0)) : 0.5f;
   a.points.push_back(AutoPoint{0, v});
   a.points.push_back(AutoPoint{2 * s.barTicks(), v});
   s.automations.push_back(a);
@@ -324,11 +324,12 @@ int main() {
     expect(load(B, s), "imports a channel with pitch automation");
     const Channel* a = s.channels.size() > 1 ? &s.channels[0] : nullptr;
     const Channel* b = s.channels.size() > 1 ? &s.channels[1] : nullptr;
-    expect(a && a->pitchSmooth && a->pitch == 2 && a->fine == -30 && a->knobFine == -50, "automated pitch knob: smooth, the knob's cents kept apart");
-    expect(b && !b->pitchSmooth && b->knobFine == 0 && b->pitch == 2 && b->fine == -30, "no automation: as before");
+    expect(a && a->pitchCents == 150.0f && a->fine == 20, "automated pitch knob: the knob's cents on the channel pitch, the fine tune apart");
+    expect(b && b->pitchCents == 200.0f && b->fine == -30, "no automation: as before (whole semitones and the rest as fine tune)");
     Song back;
     std::string err;
-    expect(a && songFromJson(songToJson(s), back, &err) && back.channels[0].pitchSmooth && back.channels[0].knobFine == -50, "the smooth pitch survives a save");
+    expect(a && songFromJson(songToJson(s), back, &err) && back.channels[0].pitchCents == 150.0f && back.channels[0].fine == 20,
+           "the knob's cents survive a save");
   }
   {
     // An audio clip channel: the knob stays on the channel (the automation replaces it).
@@ -347,20 +348,18 @@ int main() {
       if (c.kind == ClipKind::Audio) (c.track == 0 ? ca : cb) = &c;
     const Channel* ka = ca ? s.channel(ca->source) : nullptr;
     const Channel* kb = cb ? s.channel(cb->source) : nullptr;
-    expect(ka && ka->pitchSmooth && ka->pitch == 2 && ka->fine == -50 && ka->knobFine == -50, "automated: the knob is the channel's pitch");
+    expect(ka && ka->pitchCents == 150.0f && ka->fine == 0, "automated: the knob is the channel's pitch");
     expect(ca && near(ca->pitch, 0.0, 1e-3) && near(ca->speedPitch, 150.0, 1e-3), "automated: the clip leaves the knob to the channel, its speed keeps it");
-    expect(kb && !kb->pitchSmooth && kb->pitch == 0 && kb->fine == 0, "not automated: the channel stays at zero");
+    expect(kb && kb->pitchCents == 0.0f && kb->fine == 0, "not automated: the channel stays at zero");
     expect(cb && near(cb->pitch, 150.0, 1e-3) && near(cb->speedPitch, 150.0, 1e-3), "not automated: the knob moves the clip as before");
   }
   {
     // What plays: automation at +0.25 semitones.
     const double base = 441.0;
-    const double rounded = renderedFrequency(pitchSong(fourSec, 0.25, false, 0, 0, 0));
-    const double smooth = renderedFrequency(pitchSong(fourSec, 0.25, true, 0, 0, 0));
-    const double knob = renderedFrequency(pitchSong(fourSec, 0.25, true, 2, -30, -50));
-    std::printf("# frequencies: rounded %.2f smooth %.2f knob %.2f\n", rounded, smooth, knob);
-    expect(near(rounded, base, 1.5), "Gridline's own channel: pitch automation keeps whole semitones");
-    expect(near(smooth, base * std::pow(2.0, 0.25 / 12.0), 1.5), "imported channel: pitch automation plays smooth values");
+    const double smooth = renderedFrequency(pitchSong(fourSec, 0.25, 0, 0));
+    const double knob = renderedFrequency(pitchSong(fourSec, 0.25, 150, 20));
+    std::printf("# frequencies: smooth %.2f knob %.2f\n", smooth, knob);
+    expect(near(smooth, base * std::pow(2.0, 0.25 / 12.0), 1.5), "pitch automation plays smooth values (cents)");
     expect(near(knob, base * std::pow(2.0, 0.45 / 12.0), 1.5), "imported channel: the automation replaces the knob, the fine tune stays on top");
   }
   return finish();

@@ -142,6 +142,46 @@ enum class ClipKind : uint8_t {
   Automation = 2,  // an automation curve (Clip::source = AutomationClip::id)
 };
 
+// grid2-1118: what a clip (or a scene) of the Clips grid does once its follow action time has passed.
+// Previous / Next (both wrap), First, Last, Any and Other count in the clip's group: the run of filled
+// slots around it in its track's column (a scene: every scene up to the last stored one). Jump goes to
+// the slot (scene) `jumpA` / `jumpB`. The values are saved by number: new ones go at the end.
+enum class FollowAction : uint8_t { None = 0, Stop, PlayAgain, Previous, Next, First, Last, Any, Other, Jump, Count };
+
+// grid2-1118: a clip's or a scene's follow actions. Off by default. Once `time` has passed since the
+// launch (0: one bar of the meter at the start; a clip `linked`: `loops` times its length), action A or
+// B runs, picked by their chances (weights 0..100; both 0: nothing happens).
+struct FollowSpec {
+  bool on = false;
+  FollowAction a = FollowAction::Next;
+  FollowAction b = FollowAction::None;
+  uint8_t chanceA = 100;
+  uint8_t chanceB = 0;
+  int jumpA = 0;  // Jump: the slot (scene index from 0)
+  int jumpB = 0;
+  Tick time = 0;        // ticks after the launch (0 = one bar)
+  bool linked = false;  // clips: at the clip's end, after `loops` passes
+  int loops = 1;
+  bool isDefault() const { return *this == FollowSpec{}; }
+  bool operator==(const FollowSpec& o) const {
+    return on == o.on && a == o.a && b == o.b && chanceA == o.chanceA && chanceB == o.chanceB && jumpA == o.jumpA && jumpB == o.jumpB &&
+           time == o.time && linked == o.linked && loops == o.loops;
+  }
+};
+
+// grid2-1118: a Clips grid clip's own launch settings, over its track's (PlaylistTrack launch / pad):
+// mode -1 is the track's launch mode (else a PadMode), quant -1 "Global" (the track's launch grid,
+// which the control bar's global quantisation sets on every track; else a LaunchGrid), legato takes over
+// the play position of the clip playing on the track. Written only when not the defaults.
+struct ClipLaunch {
+  int8_t mode = -1;
+  int8_t quant = -1;
+  bool legato = false;
+  FollowSpec follow;
+  bool isDefault() const { return *this == ClipLaunch{}; }
+  bool operator==(const ClipLaunch& o) const { return mode == o.mode && quant == o.quant && legato == o.legato && follow == o.follow; }
+};
+
 // One arrangement clip: a pattern, audio or automation clip placed on a playlist track.
 struct Clip {
   ObjectId id = kNoId;
@@ -211,6 +251,8 @@ struct Clip {
   // off: a one-shot): at its end the track stops, whatever its follow action. Clips sets it on short
   // samples it does not warp. Written only when set.
   bool launchOnce = false;
+  // grid2-1118: the clip's own launch settings and follow actions (Clips grid clips; ClipLaunch).
+  ClipLaunch launchSet;
   // J-31: clip group (kNoId = none); grouped clips are selected together.
   ObjectId group = kNoId;
   // J-38: fade curves and automatic crossfades (core/Fades.h). An edge whose
@@ -237,7 +279,7 @@ struct Clip {
            audioEnd == o.audioEnd && fadeIn == o.fadeIn && fadeOut == o.fadeOut && gain == o.gain && pitch == o.pitch &&
            speedPitch == o.speedPitch && rateFit == o.rateFit &&
            stretch == o.stretch && syncBpm == o.syncBpm && tempoLock == o.tempoLock && reverse == o.reverse && takeGroup == o.takeGroup &&
-           take == o.take && takeRating == o.takeRating && launched == o.launched && launchOnce == o.launchOnce && group == o.group && fadeInShape == o.fadeInShape &&
+           take == o.take && takeRating == o.takeRating && launched == o.launched && launchOnce == o.launchOnce && launchSet == o.launchSet && group == o.group && fadeInShape == o.fadeInShape &&
            fadeOutShape == o.fadeOutShape && fadeInTension == o.fadeInTension && fadeOutTension == o.fadeOutTension &&
            fadeInManual == o.fadeInManual && fadeOutManual == o.fadeOutManual &&
            fadeInDeclick == o.fadeInDeclick && fadeOutDeclick == o.fadeOutDeclick && warp == o.warp &&

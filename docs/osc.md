@@ -94,7 +94,7 @@ Address patterns work as OSC 1.0 describes them: `/mixer/[1-4]/mute 1` mutes ins
 |---|---|---|
 | `/channel/<n>/volume` | 0..1 | |
 | `/channel/<n>/pan` | 0..1 | 0.5 is the centre. |
-| `/channel/<n>/pitch` | 0..1 | 0.5 is no change (the range is two octaves either way). |
+| `/channel/<n>/pitch` | 0..1 | 0.5 is no change (the range is two octaves either way, smooth: -2400..+2400 cents). |
 | `/channel/<n>/mute` | 1 or 0; none toggles | |
 | `/channel/<n>/mute/toggle` | press | |
 | `/channel/<n>/note` | pitch, velocity | Plays a note: pitch 0..127 (60 is C5); velocity 1..127 as an integer, or 0..1 as a float; 0 releases it. Without a velocity, 100. |

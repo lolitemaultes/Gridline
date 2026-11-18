@@ -266,6 +266,9 @@ void writeReportFor(const SessionBlock* s, const CrumbRing& r, const ReportInfo&
   if (info.typeName) w.str("type: ").str(info.typeName).ch('\n');
   if (info.message && *info.message) w.str("message: ").str(info.message).ch('\n');
   if (info.thread) w.str("thread: ").str(info.thread).ch('\n');
+  if (info.inside && *info.inside) {
+    w.str(info.inside);
+  }
   const int64_t now = plat::unixTime();
   w.str("time: ");
   writeUtc(w, now);
@@ -469,6 +472,87 @@ std::atomic<int> gBusyAlive{0};
 uint64_t busyScopesStarted() noexcept { return gBusyStarted.load(std::memory_order_relaxed); }
 bool busyNow() noexcept { return gBusyAlive.load(std::memory_order_relaxed) > 0; }
 
+// ---- InsideScope: what the UI thread is inside ----
+namespace {
+struct InsideSlot {
+  std::atomic<int64_t> since{0};  // steady ms; 0 while the slot is written
+  char what[48];
+  char detail[72];
+};
+constexpr int kInsideSlots = 6;
+InsideSlot gInside[kInsideSlots];
+std::atomic<int> gInsideDepth{0};  // scopes alive (deeper ones than kInsideSlots are not kept)
+
+void copyShort(char* out, size_t cap, const char* in) noexcept {
+  size_t n = 0;
+  for (; in && in[n] && n + 1 < cap; ++n) {
+    out[n] = in[n];
+  }
+  out[n] = 0;
+}
+
+// "inside: <what> <detail> (<seconds> s)" lines, outermost first.
+size_t formatInside(char* out, size_t cap) noexcept {
+  size_t n = 0;
+  auto put = [&](const char* t) {
+    for (; t && *t && n + 1 < cap; ++t) {
+      out[n++] = *t;
+    }
+  };
+  const int depth = std::min(gInsideDepth.load(std::memory_order_acquire), kInsideSlots);
+  const int64_t now = steadyMs();
+  for (int i = 0; i < depth; ++i) {
+    const int64_t since = gInside[i].since.load(std::memory_order_acquire);
+    if (since == 0) {
+      continue;
+    }
+    put("inside: ");
+    put(gInside[i].what);
+    if (gInside[i].detail[0]) {
+      put(" ");
+      put(gInside[i].detail);
+    }
+    char t[40];
+    std::snprintf(t, sizeof t, " (%lld s)\n", static_cast<long long>((now - since) / 1000));
+    put(t);
+  }
+  out[n] = 0;
+  return n;
+}
+char gInsideText[kInsideSlots * 160];  // the watchdog's copy for a report
+}  // namespace
+
+InsideScope::InsideScope(const char* what, const char* detail) noexcept {
+  if (std::strcmp(plat::threadRole(), "ui") != 0) {
+    return;
+  }
+  const int d = gInsideDepth.fetch_add(1, std::memory_order_acq_rel);
+  slot_ = d;
+  if (d >= kInsideSlots) {
+    return;
+  }
+  InsideSlot& s = gInside[d];
+  s.since.store(0, std::memory_order_release);
+  copyShort(s.what, sizeof s.what, what);
+  copyShort(s.detail, sizeof s.detail, detail);
+  s.since.store(std::max<int64_t>(1, steadyMs()), std::memory_order_release);
+}
+InsideScope::~InsideScope() {
+  if (slot_ < 0) {
+    return;
+  }
+  if (slot_ < kInsideSlots) {
+    gInside[slot_].since.store(0, std::memory_order_release);
+  }
+  gInsideDepth.fetch_sub(1, std::memory_order_acq_rel);
+}
+bool onUiThread() noexcept { return std::strcmp(plat::threadRole(), "ui") == 0; }
+std::string insideNow() {
+  char buf[kInsideSlots * 160];
+  formatInside(buf, sizeof buf);
+  return buf;
+}
+
 BusyScope::BusyScope(const char* what, int maxSeconds) noexcept {
   gBusyStarted.fetch_add(1, std::memory_order_relaxed);
   gBusyAlive.fetch_add(1, std::memory_order_relaxed);
@@ -550,6 +634,9 @@ void watchdogLoop(Watchdog* w) {
       info.kind = "freeze";
       info.cause = "the interface stopped answering";
       info.thread = "ui";
+      if (formatInside(gInsideText, sizeof gInsideText) > 0) {
+        info.inside = gInsideText;
+      }
       plat::sampleUiStack(info);
       char name[128];
       if (writeReportToDisk(info, name, sizeof name)) {
@@ -1075,6 +1162,8 @@ void forceForTest(const std::string& kind) {
   if (kind == "exception") throw std::runtime_error("forced failure in /Users/someone/Secret Songs/my song.flp: test");
   plat::forceCrash(kind);
 }
+
+void ignoreStackLookForTest() { plat::ignoreStackLookForTest(); }
 
 void crashNowForTest() {
   plat::forceCrash("segv");

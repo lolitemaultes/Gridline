@@ -116,3 +116,8 @@ meantime, so you can go on working.
 Developers can simulate both cases with the environment variable `GRIDLINE_TEST_MIDI`: `fail`
 makes the service refuse, `hang` makes it never answer. The real MIDI service is not asked in
 either case.
+
+Hidden and scripted runs (`--hidden`, `--dev-input`, `--screenshot`: tests and tools) open no
+MIDI devices at all, inputs or outputs, so a connected keyboard never reaches a test; tests send
+MIDI through the dev commands (`tracker midi on|off <pitch>`). Setting `GRIDLINE_TEST_MIDI`
+(`1` for the real devices) asks the system MIDI service again in such a run.

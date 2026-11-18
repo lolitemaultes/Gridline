@@ -187,6 +187,20 @@ std::vector<Command> buildCommands() {
       // N47-11: the Clips set's return track, detail bands and Session record keys (no key elsewhere).
       {"track.newReturn", G, N_("New return track"), {}},
       {"clips.insertMidiClip", G, N_("Insert MIDI clip"), {}},  // N49-07: Clips only (Cmd+Shift+M)
+      {"clips.captureScene", G, N_("Capture and insert scene"), {}},  // grid-1118: Clips only (Cmd+Shift+I)
+      {"clips.backToArrangement", G, N_("Back to arrangement"), {}},  // grid-1118: Clips only (F10)
+      // grid2-1118: Clips only (Cmd+1 .. 5): the Arrangement's and the clip editor's grid, and (Cmd+6 .. 0)
+      // the global launch quantisation.
+      {"clips.gridNarrower", G, N_("Narrow the grid"), {}},
+      {"clips.gridWider", G, N_("Widen the grid"), {}},
+      {"clips.gridTriplet", G, N_("Triplet grid"), {}},
+      {"clips.gridSnap", G, N_("Snap to grid"), {}},
+      {"clips.gridFixed", G, N_("Fixed grid"), {}},
+      {"clips.quant16", G, N_("Global quantisation 1/16"), {}},
+      {"clips.quant8", G, N_("Global quantisation 1/8"), {}},
+      {"clips.quant4", G, N_("Global quantisation 1/4"), {}},
+      {"clips.quantBar", G, N_("Global quantisation 1 bar"), {}},
+      {"clips.quantNone", G, N_("Global quantisation off"), {}},
       {"track.group", G, N_("Group tracks"), {}},      // checkpoint 51: Clips only (Cmd+G)
       {"track.ungroup", G, N_("Ungroup tracks"), {}},  // checkpoint 51: Clips only (Cmd+Shift+G)
       {"view.detail", G, N_("Clip and device bands (show / hide)"), {}},
@@ -338,6 +352,9 @@ std::vector<Command> buildCommands() {
       {"stage.selectAll", ST, N_("Select every track shown"), {ch(K::A, C)}},
       {"stage.deselect", ST, N_("Deselect tracks (keeps the focused one)"), {ch(K::D, C)}},
       {"stage.roomsPanel", ST, N_("Open or close the rooms column"), {ch(K::Backslash)}},
+      // Tracks from the playlist (app/StagePickUi.cpp): the panel that finds them and acts on them. No keys.
+      {"stage.fromSelection", ST, N_("Tracks from the playlist selection..."), {}},
+      {"stage.fromMarkers", ST, N_("Tracks from a marker area..."), {}},
       // ---- automation clip editor ----
       {"auto.delete", AU, N_("Delete selected points"), {ch(K::Delete), ch(K::Backspace)}},
       {"auto.selectAll", AU, N_("Select all points"), {ch(K::A, C)}},
@@ -656,6 +673,28 @@ Rows liveRows() {
   set("track.newMidi", {ch(K::T, C | S)});
   set("track.newReturn", {ch(K::T, C | A)});  // N47-11
   set("clips.insertMidiClip", {ch(K::M, C | S)});  // N49-07
+  set("clips.captureScene", {ch(K::I, C | S)});    // grid-1118
+  set("clips.backToArrangement", {ch(K::F10)});
+  // grid2-1118: Cmd+1 .. 5 the edit grid and Cmd+6 .. 0 the global quantisation, as the reference's; the
+  // workspaces move to Alt (Option)+1 .. 9, which no command of the set takes.
+  set("clips.gridNarrower", {ch(K::D1, C)});
+  set("clips.gridWider", {ch(K::D2, C)});
+  set("clips.gridTriplet", {ch(K::D3, C)});
+  set("clips.gridSnap", {ch(K::D4, C)});
+  set("clips.gridFixed", {ch(K::D5, C)});
+  set("clips.quant16", {ch(K::D6, C)});
+  set("clips.quant8", {ch(K::D7, C)});
+  set("clips.quant4", {ch(K::D8, C)});
+  set("clips.quantBar", {ch(K::D9, C)});
+  set("clips.quantNone", {ch(K::D0, C)});
+  {
+    const K digits[9] = {K::D1, K::D2, K::D3, K::D4, K::D5, K::D6, K::D7, K::D8, K::D9};
+    const char* const ws[9] = {"view.workspace1", "view.workspace2", "view.workspace3", "view.workspace4", "view.workspace5",
+                               "view.workspace6", "view.workspace7", "view.workspace8", "view.workspace9"};
+    for (int i = 0; i < 9; ++i) {
+      set(ws[i], {ch(digits[i], A)});
+    }
+  }
   set("track.group", {ch(K::G, C)});         // checkpoint 51
   set("track.ungroup", {ch(K::G, C | S)});
   set("view.detail", {ch(K::L, C | A)});
@@ -797,6 +836,7 @@ Rows trackerRows() {
   // cp25: Ctrl+Alt+F2 (Studio's F2 with Ctrl+Alt): Shift+Enter plays the pattern from the cursor's row.
   add("edit.rename", {ch(K::F2, C | A)});
   add("pattern.new", {ch(K::N, C | A)});
+  add("pattern.clone", {ch(K::U, C | A)});  // TRK-1118: Duplicate pattern (U: dUplicate; Ctrl+Shift+C is the pattern's block copy here)
   // The screens in the header's order, Ctrl+Alt with the digits (0 is the tenth), minus for Help.
   add("view.patternEditor", {ch(K::D1, C | A), ch(K::P, C | A)});  // FT2-MAP K-69: P as the classic Pattern screen key
   add("view.playlist", {ch(K::D2, C | A)});

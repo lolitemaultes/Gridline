@@ -39,6 +39,7 @@ Live settings >
 Live settings > Trigger
 Live settings > Gate (while held)
 Live settings > Toggle
+Live settings > Repeat (while held)
 Live settings > Loop
 Live settings > Play once
 Live settings > Next clip

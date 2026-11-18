@@ -112,7 +112,7 @@ void liveTrackMenu(App& a, int track) {
     if (ImGui::MenuItem(followModeName(static_cast<FollowMode>(i)), nullptr, t.follow == static_cast<FollowMode>(i)))
       edit("change clip end action", [i](PlaylistTrack& x) { x.follow = static_cast<FollowMode>(i); });
   if (ImGui::BeginMenu(i18n::tr("Launch on"))) {
-    for (int i = 0; i < static_cast<int>(LaunchGrid::Count); ++i)
+    for (int i = 0; i < kLaunchGridsBasic; ++i)
       if (ImGui::MenuItem(launchGridName(static_cast<LaunchGrid>(i)), nullptr, t.launch == static_cast<LaunchGrid>(i)))
         edit("change launch grid", [i](PlaylistTrack& x) { x.launch = static_cast<LaunchGrid>(i); });
     ImGui::EndMenu();
@@ -120,7 +120,7 @@ void liveTrackMenu(App& a, int track) {
   if (ImGui::BeginMenu(i18n::tr("Keep in phase"))) {
     if (ImGui::MenuItem(i18n::tr("Off (start from the clip start)"), nullptr, t.syncStart == LaunchGrid::Now))
       edit("change phase", [](PlaylistTrack& x) { x.syncStart = LaunchGrid::Now; });
-    for (int i = 1; i < static_cast<int>(LaunchGrid::Count); ++i) {
+    for (int i = 1; i < kLaunchGridsBasic; ++i) {
       std::string label = std::string("With ") + launchGridName(static_cast<LaunchGrid>(i)) + " grid";
       if (ImGui::MenuItem(label.c_str(), nullptr, t.syncStart == static_cast<LaunchGrid>(i)))
         edit("change phase", [i](PlaylistTrack& x) { x.syncStart = static_cast<LaunchGrid>(i); });

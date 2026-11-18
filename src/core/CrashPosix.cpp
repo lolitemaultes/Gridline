@@ -32,12 +32,17 @@
 #include <typeinfo>
 #include <vector>
 #if defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/thread_act.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <sys/sysctl.h>
 #else
 #include <link.h>
+#endif
+#if defined(__linux__)
+#include <sys/syscall.h>
 #endif
 
 extern char** environ;
@@ -50,9 +55,16 @@ const int kFatal[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT, SIGTRAP, SIGSYS}
 const int kSampleSignal = SIGUSR2;
 
 pthread_t gUiThread;
+#if defined(__APPLE__)
+mach_port_t gUiMachThread = MACH_PORT_NULL;  // the same thread for thread_suspend / thread_get_state
+#elif defined(__linux__)
+long gUiTid = 0;                             // the same thread in /proc/self/task
+#endif
+char gLookNote[256];                         // what the look at the UI thread found out
 std::atomic<pthread_t> gAudioThread{};
 std::atomic<bool> gAudioSeen{false};
 int gProbe[2] = {-1, -1};     // a pipe: write() tells whether memory can be read, without a fault
+int gLookProbe[2] = {-1, -1}; // the same for the watchdog's look at the UI thread
 int gReservedFd = -1;         // given back when the process ran out of descriptors
 int gSentinelLink = -1;
 char gStack[1024 * 1024];     // the spare stack (untouched until a fault; serialising the rescue copy runs on it too)
@@ -65,16 +77,18 @@ ReportInfo gFatalInfo;        // static: a report must fit on any stack
 char gThreadText[64];
 
 // ---- safe reads ----
-bool safeRead(uintptr_t addr, void* out, size_t n) noexcept {
-  const ssize_t w = ::write(gProbe[1], reinterpret_cast<const void*>(addr), n);
+// `pipe`: gProbe, or the watchdog's own (it reads another thread's stack while that thread may be
+// stopped anywhere, even inside its own safeRead).
+bool safeRead(uintptr_t addr, void* out, size_t n, const int* pipe = gProbe) noexcept {
+  const ssize_t w = ::write(pipe[1], reinterpret_cast<const void*>(addr), n);
   if (w != static_cast<ssize_t>(n)) {
     if (w > 0) {
       char t[64];
-      (void)!::read(gProbe[0], t, sizeof t);
+      (void)!::read(pipe[0], t, sizeof t);
     }
     return false;
   }
-  return ::read(gProbe[0], out, n) == static_cast<ssize_t>(n);
+  return ::read(pipe[0], out, n) == static_cast<ssize_t>(n);
 }
 
 uintptr_t stripPointer(uintptr_t v) noexcept {
@@ -137,7 +151,7 @@ Regs regsOf(void* ctx) noexcept {
 }
 
 // ---- walking: the frame chain, then a scan of the stack where the chain is short ----
-void walk(const Regs& r, ReportInfo& info) noexcept {
+void walk(const Regs& r, ReportInfo& info, const int* pipe = gProbe) noexcept {
   int n = 0;
   auto add = [&](uintptr_t pc, bool scanned) {
     if (n < kMaxFrames) {
@@ -152,7 +166,9 @@ void walk(const Regs& r, ReportInfo& info) noexcept {
   bool complete = false;  // the chain ran to its proper end
   while (n < kMaxFrames && fp && (fp & (sizeof(uintptr_t) - 1)) == 0) {
     uintptr_t pair[2];
-    if (!safeRead(fp, pair, sizeof pair)) break;
+    if (!safeRead(fp, pair, sizeof pair, pipe)) {
+      break;
+    }
     const uintptr_t next = pair[0], ret = stripPointer(pair[1]);
     if (ret == 0) {
       complete = true;
@@ -168,7 +184,9 @@ void walk(const Regs& r, ReportInfo& info) noexcept {
     uintptr_t words[512];
     uintptr_t at = r.sp & ~(sizeof(uintptr_t) - 1);
     for (int page = 0; page < 16 && n < 32; ++page, at += sizeof words) {
-      if (!safeRead(at, words, sizeof words)) break;
+      if (!safeRead(at, words, sizeof words, pipe)) {
+        break;
+      }
       for (size_t i = 0; i < sizeof words / sizeof *words && n < 32; ++i) {
         const uintptr_t v = stripPointer(words[i]);
         const Module* m = findModule(v);
@@ -467,10 +485,17 @@ void refreshModules() {
 
 void installHandlers(bool devBacktrace) {
   gUiThread = pthread_self();
-  if (::pipe(gProbe) == 0) {
-    for (int fd : gProbe) {
-      ::fcntl(fd, F_SETFD, FD_CLOEXEC);
-      ::fcntl(fd, F_SETFL, O_NONBLOCK);
+#if defined(__APPLE__)
+  gUiMachThread = pthread_mach_thread_np(gUiThread);
+#elif defined(__linux__)
+  gUiTid = static_cast<long>(::syscall(SYS_gettid));
+#endif
+  for (int* p : {gProbe, gLookProbe}) {
+    if (::pipe(p) == 0) {
+      for (int k = 0; k < 2; ++k) {
+        ::fcntl(p[k], F_SETFD, FD_CLOEXEC);
+        ::fcntl(p[k], F_SETFL, O_NONBLOCK);
+      }
     }
   }
   gReservedFd = ::open("/dev/null", O_RDONLY | O_CLOEXEC);
@@ -509,19 +534,185 @@ void installHandlers(bool devBacktrace) {
 #endif
 }
 
+namespace {
+
+void appendNote(const char* t) noexcept {
+  size_t n = std::strlen(gLookNote);
+  for (; t && *t && n + 1 < sizeof gLookNote; ++t) {
+    gLookNote[n++] = *t;
+  }
+  gLookNote[n] = 0;
+}
+
+#if defined(__APPLE__)
+// The UI thread stopped from outside (thread_suspend), its registers read (thread_get_state) and its
+// frames walked while it stands still, then let go. This works wherever the thread is stuck: in a
+// lock, in the kernel on a network drive that stopped answering, with signals blocked; a signal it
+// would have to answer itself cannot do that. Nothing here allocates or locks while it is stopped
+// (it may hold the allocator's lock): the walk reads memory through the watchdog's own pipe.
+bool lookBySuspending(ReportInfo& out) noexcept {
+  if (gUiMachThread == MACH_PORT_NULL) {
+    return false;
+  }
+  thread_basic_info_data_t bi;
+  mach_msg_type_number_t biCount = THREAD_BASIC_INFO_COUNT;
+  const bool haveInfo = thread_info(gUiMachThread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&bi), &biCount) == KERN_SUCCESS;
+  if (thread_suspend(gUiMachThread) != KERN_SUCCESS) {
+    return false;
+  }
+  Regs r;
+  bool got = false;
+#if defined(__x86_64__)
+  x86_thread_state64_t st;
+  mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
+  if (thread_get_state(gUiMachThread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&st), &count) == KERN_SUCCESS) {
+    r.pc = static_cast<uintptr_t>(st.__rip);
+    r.fp = static_cast<uintptr_t>(st.__rbp);
+    r.sp = static_cast<uintptr_t>(st.__rsp);
+    got = true;
+  }
+#elif defined(__aarch64__)
+  arm_thread_state64_t st;
+  mach_msg_type_number_t count = ARM_THREAD_STATE64_COUNT;
+  if (thread_get_state(gUiMachThread, ARM_THREAD_STATE64, reinterpret_cast<thread_state_t>(&st), &count) == KERN_SUCCESS) {
+    r.pc = static_cast<uintptr_t>(__darwin_arm_thread_state64_get_pc(st));
+    r.fp = static_cast<uintptr_t>(__darwin_arm_thread_state64_get_fp(st));
+    r.sp = static_cast<uintptr_t>(__darwin_arm_thread_state64_get_sp(st));
+    r.lr = static_cast<uintptr_t>(__darwin_arm_thread_state64_get_lr(st));
+    got = true;
+  }
+#endif
+  if (got) {
+    walk(r, out, gLookProbe);
+  }
+  thread_resume(gUiMachThread);
+  if (!got) {
+    return false;
+  }
+  gLookNote[0] = 0;
+  appendNote("stack read with the thread stopped");
+  if (haveInfo) {
+    switch (bi.run_state) {
+      case TH_STATE_RUNNING: appendNote("; it was running (a loop, or work that never ends)"); break;
+      case TH_STATE_WAITING: appendNote("; it was waiting (a lock, a reply, a file)"); break;
+      case TH_STATE_UNINTERRUPTIBLE: appendNote("; it was in an uninterruptible wait in the system (a disk or network drive that stopped answering?)"); break;
+      default: break;
+    }
+  }
+  out.note = gLookNote;
+  return true;
+}
+#endif
+
+#if defined(__linux__)
+// A thread the signal cannot reach (blocked signals, or a wait the kernel does not interrupt): what
+// /proc knows about it. "syscall" gives the system call it is in, with its stack and code pointers
+// (the stack is then scanned for return addresses); "wchan" the kernel function it waits in; "stat"
+// its state (D: uninterruptible, typically a drive that stopped answering).
+size_t readProc(const char* leaf, char* buf, size_t cap) noexcept {
+  char path[96];
+  std::snprintf(path, sizeof path, "/proc/self/task/%ld/%s", gUiTid, leaf);
+  const int fd = ::open(path, O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
+    return 0;
+  }
+  const ssize_t n = ::read(fd, buf, cap - 1);
+  ::close(fd);
+  const size_t got = n > 0 ? static_cast<size_t>(n) : 0;
+  buf[got] = 0;
+  if (got > 0 && buf[got - 1] == '\n') {
+    buf[got - 1] = 0;
+  }
+  return got;
+}
+
+void lookThroughProc(ReportInfo& out) noexcept {
+  if (gUiTid <= 0) {
+    return;
+  }
+  char sys[256], wchan[96], stat[512];
+  const size_t ns = readProc("syscall", sys, sizeof sys);
+  readProc("wchan", wchan, sizeof wchan);
+  readProc("stat", stat, sizeof stat);
+  appendNote("; /proc:");
+  if (ns > 0) {
+    // "<nr> <6 args> <sp> <pc>", "-1 <sp> <pc>" or "running"
+    const char* last[2] = {nullptr, nullptr};
+    char* p = sys;
+    while (*p) {
+      while (*p == ' ') {
+        ++p;
+      }
+      if (!*p) {
+        break;
+      }
+      last[0] = last[1];
+      last[1] = p;
+      while (*p && *p != ' ' && *p != '\n') {
+        ++p;
+      }
+      if (*p) {
+        *p++ = 0;
+      }
+    }
+    appendNote(" system call ");
+    appendNote(sys);
+    if (last[0] && last[1] && std::strncmp(last[0], "0x", 2) == 0 && std::strncmp(last[1], "0x", 2) == 0) {
+      Regs r;
+      r.sp = static_cast<uintptr_t>(std::strtoull(last[0], nullptr, 16));
+      r.pc = static_cast<uintptr_t>(std::strtoull(last[1], nullptr, 16));
+      walk(r, out, gLookProbe);
+    }
+  }
+  if (wchan[0] && std::strcmp(wchan, "0") != 0) {
+    appendNote(", waiting in ");
+    appendNote(wchan);
+  }
+  if (const char* close = std::strrchr(stat, ')'); close && close[1] == ' ' && close[2]) {
+    const char state[2] = {close[2], 0};
+    appendNote(", state ");
+    appendNote(state);
+    if (close[2] == 'D') {
+      appendNote(" (uninterruptible: a disk or network drive that stopped answering?)");
+    }
+  }
+}
+#endif
+
+}  // namespace
+
 void sampleUiStack(ReportInfo& out) {
+#if defined(__APPLE__)
+  if (lookBySuspending(out)) {
+    return;
+  }
+#endif
   gSample = ReportInfo{};
   gSampleState.store(1);
   if (pthread_kill(gUiThread, kSampleSignal) == 0) {
-    for (int i = 0; i < 40 && gSampleState.load() != 2; ++i) sleepMs(25);
+    for (int i = 0; i < 40 && gSampleState.load() != 2; ++i) {
+      sleepMs(25);
+    }
   }
   if (gSampleState.exchange(0) == 2) {
     std::memcpy(out.pcs, gSample.pcs, sizeof out.pcs);
     std::memcpy(out.scanned, gSample.scanned, sizeof out.scanned);
     out.frames = gSample.frames;
-  } else {
-    out.note = "the thread did not answer the look at its stack";
+    return;
   }
+  gLookNote[0] = 0;
+  appendNote("the thread did not answer the look at its stack");
+#if defined(__linux__)
+  lookThroughProc(out);
+#endif
+  out.note = gLookNote;
+}
+
+void ignoreStackLookForTest() {
+  sigset_t set;
+  sigemptyset(&set);
+  sigaddset(&set, kSampleSignal);
+  pthread_sigmask(SIG_BLOCK, &set, nullptr);
 }
 
 void currentStack(ReportInfo& out) {

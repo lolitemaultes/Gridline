@@ -2,6 +2,7 @@
 // information without paying for a debug build of the whole app, and the false-alarm tests need
 // precise control of the "interface" thread.
 //   crash_probe <config folder> fault | busy <seconds> | quiet <seconds> | beat <seconds> | unarmed <seconds>
+//               | stuck <seconds>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -34,6 +35,20 @@ void probeCaller() {
 
 void waitSeconds(int s) { std::this_thread::sleep_for(std::chrono::seconds(s)); }
 
+// A UI thread stuck where a signal cannot reach it, inside a "plugin call": the freeze report must
+// still hold its stack (this function in it) and say what it was inside.
+#if defined(_MSC_VER)
+__declspec(noinline)
+#else
+__attribute__((noinline))
+#endif
+void probeStuckHere(int seconds) {
+  crash::InsideScope inside("a plugin call", "Stuck Probe: get state");  // probeStuckHere
+  waitSeconds(seconds);
+  std::fflush(nullptr);
+  std::_Exit(0);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -60,6 +75,9 @@ int main(int argc, char** argv) {
       crash::uiHeartbeat();
       waitSeconds(1);
     }
+  } else if (cmd == "stuck") {  // silent and unable to answer a signal: the report still has the stack
+    crash::ignoreStackLookForTest();
+    probeStuckHere(seconds);
   } else if (cmd == "quiet") {  // really silent, and still silent at the end: the report stays
     waitSeconds(seconds);
     std::fflush(nullptr);

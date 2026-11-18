@@ -764,7 +764,33 @@ int noteNumber(const std::string& v) {
 }
 }  // namespace
 
+namespace {
+// FRZ-1118: instruments on a web or network drive, read on a background thread (by path; for the run).
+std::mutex& gRemoteSfzMu = *new std::mutex;
+std::map<std::string, std::vector<Zone>>& gRemoteSfz = *new std::map<std::string, std::vector<Zone>>;
+}  // namespace
+
 bool parseSfz(const std::string& path, std::vector<Zone>& zones, std::string* err, int* skipped) {
+  if (mustNotReadNow(path)) {  // the interface never reads there: a background reader does, then a rebuild
+    {
+      std::lock_guard<std::mutex> lk(gRemoteSfzMu);
+      if (auto it = gRemoteSfz.find(path); it != gRemoteSfz.end()) {
+        zones.insert(zones.end(), it->second.begin(), it->second.end());
+        return !it->second.empty();
+      }
+    }
+    readInBackground("plasma sfz\n" + path, [path] {
+      std::vector<Zone> z;
+      int sk = 0;
+      parseSfz(path, z, nullptr, &sk);
+      std::lock_guard<std::mutex> lk(gRemoteSfzMu);
+      gRemoteSfz[path] = std::move(z);
+    });
+    if (err) {
+      *err = "not read yet (a web or network drive)";
+    }
+    return false;
+  }
   sfz::Expanded expanded;  // comments gone, #include and #define applied
   if (!sfz::expand(path, expanded)) {
     if (err) *err = "cannot open " + path;

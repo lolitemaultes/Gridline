@@ -71,6 +71,7 @@ Create > New instrument track > Audio file as sampler...			e-
 Create > New instrument track > Speech...			e-
 Create > New return track	Ctrl+Alt+T	track.newReturn	e-
 Create > Insert scene			e-
+Create > Capture and insert scene	Ctrl+Shift+I	clips.captureScene	e-
 Create > Insert MIDI clip	Ctrl+Shift+M	clips.insertMidiClip	e-
 Create > Automation clip for the last moved control			--
 Create > Add marker at the song position			e-
@@ -104,7 +105,7 @@ View > Workspaces > New workspace			e-
 View > Workspaces > Add starter workspaces			e-
 View > Workspaces > Close workspace			--
 View > Workspaces > Keep a copy in the project			e-
-View > Workspaces > Session	Ctrl+1	view.workspace1	ec
+View > Workspaces > Session	Alt+1	view.workspace1	ec
 View > Reopen closed pane tab			e-
 View > Reset window layout	Ctrl+Shift+H	view.resetLayout	e-
 View > Dark theme			ec

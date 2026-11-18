@@ -484,8 +484,18 @@ int c_setMuted(lua_State* L) {
   setParamValue(L, channelParam(chId(L, 1), ChannelParam::Mute), flag(L, 2) ? 1.0 : 0.0);
   return 0;
 }
-int c_pitch(lua_State* L) { return pushParam(L, channelParam(chId(L, 1), ChannelParam::Pitch)); }
+// The channel pitch: pitch / setPitch in semitones (fractions allowed), pitchCents / setPitchCents
+// in cents (the knob's own unit, as param(i, "pitch") reads it).
+int c_pitch(lua_State* L) {
+  lua_pushnumber(L, static_cast<lua_Number>(song(L).channels[chIdx(L, 1)].pitchCents) / 100.0);
+  return 1;
+}
 int c_setPitch(lua_State* L) {
+  setParamValue(L, channelParam(chId(L, 1), ChannelParam::Pitch), num(L, 2) * 100.0);
+  return 0;
+}
+int c_pitchCents(lua_State* L) { return pushParam(L, channelParam(chId(L, 1), ChannelParam::Pitch)); }
+int c_setPitchCents(lua_State* L) {
   setParamValue(L, channelParam(chId(L, 1), ChannelParam::Pitch), num(L, 2));
   return 0;
 }
@@ -1722,6 +1732,8 @@ void openProjectApi(Vm& vm, ProjectHost& h) {
                                    {"muted", c_muted},
                                    {"setMuted", c_setMuted},
                                    {"pitch", c_pitch},
+                                   {"pitchCents", c_pitchCents},
+                                   {"setPitchCents", c_setPitchCents},
                                    {"setPitch", c_setPitch},
                                    {"plugin", c_plugin},
                                    {"pluginName", c_pluginName},

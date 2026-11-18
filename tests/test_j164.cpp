@@ -301,7 +301,7 @@ int main() {
   // ---------------------------------------------------------------- render and realtime agree on the channel pitch
   {
     Song s = clipSong(path, 0);
-    s.channels[0].pitch = 3;  // channel pitch knob, semitones, on top of a resampled stretch
+    s.channels[0].pitchCents = 300;  // channel pitch knob (cents), on top of a resampled stretch
     Clip& c = s.playlist[0];
     c.stretch = 2.0;
     c.length *= 2;

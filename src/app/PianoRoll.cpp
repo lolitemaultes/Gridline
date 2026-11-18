@@ -1651,10 +1651,11 @@ void drawPianoRoll(App& a) {
       !ImGui::IsMouseDown(ImGuiMouseButton_Middle))
     st.scrollX = ops::followScroll(st.scrollX, static_cast<float>(playPos) * st.pxPerTick, gridW);
   // ---- snapping: the visible grid (Line/Cell) or a fixed size; Alt inverts ----
-  const Tick visGrid = timeline::visibleGrid(pm, st.pxPerTick);
+  Tick visGrid = timeline::visibleGrid(pm, st.pxPerTick);
   st.effGrid = timeline::snapGrid(pm, st.snap, st.pxPerTick, false);
+  Tick snapG = timeline::snapGrid(pm, st.snap, st.pxPerTick, io.KeyAlt);
+  livelook::editGrid(a, 1, st.snap, st.pxPerTick, visGrid, snapG, st.effGrid);  // grid2-1118: Clips' Cmd+1 .. 5
   const Tick grid = std::max<Tick>(1, st.effGrid);  // keyboard nudges / quantize
-  const Tick snapG = timeline::snapGrid(pm, st.snap, st.pxPerTick, io.KeyAlt);
   // R02-17: the Tracks layout starts as the reference does (a 16th note at velocity 80) until a
   // note is touched; then new notes copy the last edited one.
   const bool tracksDefaults = !st.lastSet && logicplug::active(a);

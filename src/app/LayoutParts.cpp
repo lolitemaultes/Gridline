@@ -28,6 +28,7 @@
 #include "../core/PluginParams.h"
 #include "../core/Project.h"
 #include "../core/TrackModes.h"
+#include "../engine/ClipOps.h"
 #include "../engine/Dsp.h"
 #include "../engine/EqDesign.h"
 #include "../packs/PacksUi.h"
@@ -1587,8 +1588,11 @@ void inspector(App& a) {
         editSel(to ? "mute clip" : "unmute clip", [to](Clip& k) { k.muted = to; });
       }
       if (cardRow("##rloop", "Loop", clip->loop ? i18n::tr("on") : i18n::tr("off"), "Click: the region repeats its content past its end, or plays it once", true)) {
+        // PL-1118: the regions loop on to the next region, as the reference's Loop (it only set the
+        // flag: nothing repeated, and an audio region's loop window was left unset).
         const bool to = !clip->loop;
-        editSel("loop clip", [to](Clip& k) { k.loop = to; });
+        const std::set<ObjectId> lsel(selIds.begin(), selIds.end());
+        a.doc.editSong(to ? "loop clip" : "stop looping clip", [&](Song& x) { loopClipsToNext(x, lsel, to); });
       }
       if (clip->kind == ClipKind::Pattern) {
         // Playback settings: the pattern stays as written, the region plays it changed.

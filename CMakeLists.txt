@@ -467,6 +467,20 @@ target_include_directories(gridline_tests_k112_clips_tracks PRIVATE src tests)
 target_compile_options(gridline_tests_k112_clips_tracks PRIVATE ${GL_WARN})
 add_test(NAME k112_clips_tracks COMMAND gridline_tests_k112_clips_tracks WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(k112_clips_tracks PROPERTIES TIMEOUT 300)
+# grid-1118: the Clips clip grid over the arrangement (launch quantisation, taking and giving back tracks,
+# Repeat, legato, phase across a jump), rendered through the engine.
+add_executable(gridline_tests_grid1118_session tests/test_grid1118_session.cpp)
+target_link_libraries(gridline_tests_grid1118_session PRIVATE gridline_core)
+target_include_directories(gridline_tests_grid1118_session PRIVATE src tests)
+target_compile_options(gridline_tests_grid1118_session PRIVATE ${GL_WARN})
+add_test(NAME launcher_grid1118_session COMMAND gridline_tests_grid1118_session WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# grid2-1118: clip / scene launch settings, follow actions, scene tempo and time signature, the transport
+# moving with the Arrangement, and the version 10 format (one clip a grid slot, the migration).
+add_executable(gridline_tests_grid2_1118 tests/test_grid2_1118.cpp)
+target_link_libraries(gridline_tests_grid2_1118 PRIVATE gridline_core)
+target_include_directories(gridline_tests_grid2_1118 PRIVATE src tests)
+target_compile_options(gridline_tests_grid2_1118 PRIVATE ${GL_WARN})
+add_test(NAME launcher_grid2_1118 COMMAND gridline_tests_grid2_1118 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 add_executable(gridline_tests_semantic_anchor tests/test_semantic_anchor.cpp)
 target_link_libraries(gridline_tests_semantic_anchor PRIVATE gridline_core)
 target_include_directories(gridline_tests_semantic_anchor PRIVATE src tests)
@@ -979,6 +993,14 @@ target_include_directories(gridline_tests_k224_rooms PRIVATE tests)
 target_compile_options(gridline_tests_k224_rooms PRIVATE ${GL_WARN})
 add_test(NAME k224_rooms COMMAND gridline_tests_k224_rooms WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(k224_rooms PROPERTIES TIMEOUT 600)
+# Tracks from the playlist on the Stage: the selection and a marker area resolved to mixer tracks, the
+# marker areas, free places at the front, the arrange presets, and the edits (one undo step each).
+add_executable(gridline_tests_stage_pick tests/test_stage_pick.cpp)
+target_link_libraries(gridline_tests_stage_pick PRIVATE gridline_core)
+target_include_directories(gridline_tests_stage_pick PRIVATE tests)
+target_compile_options(gridline_tests_stage_pick PRIVATE ${GL_WARN})
+add_test(NAME stage_pick COMMAND gridline_tests_stage_pick WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(stage_pick PROPERTIES TIMEOUT 300)
 # K-288: Stage room edits on a big room while the engine plays (audio thread safety).
 add_executable(gridline_tests_k288_room_race tests/test_k288_room_race.cpp)
 target_link_libraries(gridline_tests_k288_room_race PRIVATE gridline_core)
@@ -1149,6 +1171,15 @@ target_compile_definitions(gridline_tests_hosting PRIVATE GRIDLINE_CLAP_TESTPLUG
                            GRIDLINE_CLI_EXE="$<TARGET_FILE:gridline>")
 add_dependencies(gridline_tests_hosting gridline_clap_testplug gridline_vst2_testplug gridline_vst3_testplug gridline)
 add_test(NAME plugin_hosting COMMAND gridline_tests_hosting WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# The channel pitch knob in cents on every instrument kind (built-in and hosted), rendered and measured.
+add_executable(gridline_tests_channel_pitch tests/test_channel_pitch.cpp)
+target_link_libraries(gridline_tests_channel_pitch PRIVATE gridline_core)
+target_include_directories(gridline_tests_channel_pitch PRIVATE tests src)
+target_compile_options(gridline_tests_channel_pitch PRIVATE ${GL_WARN})
+target_compile_definitions(gridline_tests_channel_pitch PRIVATE GRIDLINE_CLAP_TESTPLUG="${GRIDLINE_CLAP_TESTPLUG}"
+                           GRIDLINE_VST2_TESTPLUG="${GRIDLINE_VST2_TESTPLUG}" GRIDLINE_TESTPLUG_BUNDLE="${GRIDLINE_TESTPLUG_BUNDLE}")
+add_dependencies(gridline_tests_channel_pitch gridline_clap_testplug gridline_vst2_testplug gridline_vst3_testplug)
+add_test(NAME channel_pitch_cents COMMAND gridline_tests_channel_pitch WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # K-211: strict instruments (no input, three stereo outputs, main output not always on bus 0,
 # latency, a boot delay, MIDI-only notes) that report every hosting call out of order. Their own
 # folders, so the other tests' folder scans do not see them.
@@ -1931,6 +1962,12 @@ target_link_libraries(gridline_tests_k140 PRIVATE gridline_core)
 target_include_directories(gridline_tests_k140 PRIVATE tests)
 target_compile_options(gridline_tests_k140 PRIVATE ${GL_WARN})
 add_test(NAME k140_cut_loops COMMAND gridline_tests_k140 WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+# PL-1118: the Smooth layout's region Loop runs regions on in repeats to the next region (and back).
+add_executable(gridline_tests_pl1118_loop tests/test_pl1118_loop_regions.cpp)
+target_link_libraries(gridline_tests_pl1118_loop PRIVATE gridline_core)
+target_include_directories(gridline_tests_pl1118_loop PRIVATE tests)
+target_compile_options(gridline_tests_pl1118_loop PRIVATE ${GL_WARN})
+add_test(NAME pl1118_loop_regions COMMAND gridline_tests_pl1118_loop WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 # K-85: sampler start / end handles trim audio clips; warp markers.
 add_executable(gridline_tests_k85 tests/test_k85.cpp)
 target_link_libraries(gridline_tests_k85 PRIVATE gridline_core)
@@ -2442,6 +2479,21 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k297_layout_state -P ${CMAKE_SOURCE_DIR}/tests/k297_layout_state_app.cmake)
     set_tests_properties(k297_layout_state PROPERTIES TIMEOUT 600)
+    # rsz-1118: every divider of Clips and Smooth dragged: the edge follows the pointer each frame, stops at
+    # its limits, bands beside the main view keep their size, the size is kept across a restart.
+    if(Python3_Interpreter_FOUND)
+      add_test(NAME k297_splitter_drag
+               COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tests/k297_splitter_drag_app.py $<TARGET_FILE:gridline-app>
+                       ${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json ${CMAKE_BINARY_DIR}/k297_splitter_drag)
+      set_tests_properties(k297_splitter_drag PROPERTIES TIMEOUT 900)
+      # gap-1118: every window docked into a region of Clips, Smooth and the Tracker opened and closed: its
+      # region collapses in the frame its last window closes (no empty node, the neighbours take the room
+      # back), comes back at its size, stays while another window holds it.
+      add_test(NAME k297_region_collapse
+               COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tests/k297_region_collapse_app.py $<TARGET_FILE:gridline-app>
+                       ${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json ${CMAKE_BINARY_DIR}/k297_region_collapse)
+      set_tests_properties(k297_region_collapse PROPERTIES TIMEOUT 900)
+    endif()
     # K-237: a pane tab dragged to another pane and back, the side panel rail, each layout's tab state
     # across a switch and a restart, and the workspaces copy in a project (an older project unchanged).
     add_test(NAME k237_tabs
@@ -2473,6 +2525,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DWAV=${CMAKE_SOURCE_DIR}/assets/sounds/classic/startup.wav
                      -DOUT=${CMAKE_BINARY_DIR}/k316_tracker_editors_app -P ${CMAKE_SOURCE_DIR}/tests/k316_tracker_editors_app.cmake)
     set_tests_properties(k316_tracker_editors_app PROPERTIES TIMEOUT 600)
+    # TRK-1118 (the 0.7.7 candidate's Tracker): Open plugin window opens on its first click (the Channel
+    # frame's button, the list's menu, View), Duplicate pattern (menu, Ctrl+Alt+U, into the song), the
+    # instrument picker and the Mix page's effects, and MIDI notes entered as note keys are.
+    add_test(NAME trk1118_tracker_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/trk1118_tracker_app -P ${CMAKE_SOURCE_DIR}/tests/trk1118_tracker_app.cmake)
+    set_tests_properties(trk1118_tracker_app PROPERTIES TIMEOUT 600)
     # K-106 cp22: in the Tracker no click on an instrument (the list, Instrument, Sample, a double-click,
     # Ctrl+Alt+I/E, the Steps page) shows the shared plugin or channel settings window for even one frame.
     add_test(NAME k106_tracker_no_window_flash_app
@@ -2550,6 +2609,11 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
     add_test(NAME k112d_library
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k112d_library -P ${CMAKE_SOURCE_DIR}/tests/k112d_library_app.cmake)
+    # lib-1118: Smooth's Library: a click previews one C5 note (the song untouched), a double-click or
+    # Enter replaces the selected track's instrument in one undo step; stopped and while playing.
+    add_test(NAME k112d_library_preview
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k112d_library_preview -P ${CMAKE_SOURCE_DIR}/tests/k112d_library_preview_app.cmake)
     # K-112D (D5): Smart Controls learn in place (External Assignment and Parameter Mapping), saved.
     add_test(NAME k112d_smart
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/assets/demo/Gridline.gridline.json
@@ -2613,6 +2677,18 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k112_clips_tracks_app -P ${CMAKE_SOURCE_DIR}/tests/k112_clips_tracks_app.cmake)
     set_tests_properties(k112_clips_tracks_app PROPERTIES TIMEOUT 600)
+    # grid-1118: the clip grid as a session grid (over the arrangement, Back to arrangement, Alt+drag copy, a
+    # drag onto a full slot, Capture and insert scene, the scene keys, Cmd+Enter).
+    # grid2-1118: the clip grid's stop buttons (Cmd+E), range / rubber-band selection and edits, the global
+    # quantisation and edit grid keys, a scene's tempo and time signature, a drag onto the Arrangement.
+    add_test(NAME launcher_grid2_1118_clips_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/grid2_1118_clips_app -P ${CMAKE_SOURCE_DIR}/tests/grid2_1118_clips_app.cmake)
+    set_tests_properties(launcher_grid2_1118_clips_app PROPERTIES TIMEOUT 600)
+    add_test(NAME launcher_grid1118_clips_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/grid1118_clips_app -P ${CMAKE_SOURCE_DIR}/tests/grid1118_clips_app.cmake)
+    set_tests_properties(launcher_grid1118_clips_app PROPERTIES TIMEOUT 600)
     # K-112c (checkpoint 48): Session record into a grid slot (clips play on) and Capture into a new clip.
     add_test(NAME k112_clips_record_app
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/k112_clips_record_app
@@ -2643,6 +2719,15 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(k224_rooms_app PROPERTIES TIMEOUT 300)
 
+    # Tracks from the playlist on the Stage: a marker area and the selection resolved to mixer tracks, Spread /
+    # Push back / Bring forward, Move to a new room named after the marker, Add to the stage (one undo step
+    # each), the panel from the palette in every layout.
+    add_test(NAME stage_pick_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/stage_pick_app -P ${CMAKE_SOURCE_DIR}/tests/stage_pick_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(stage_pick_app PROPERTIES TIMEOUT 600)
+
     # A system MIDI service that refuses or hangs: the app starts, plays and says so in Settings > MIDI.
     foreach(mode fail hang)
       add_test(NAME midi_unavailable_${mode}_app
@@ -2651,6 +2736,13 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
       set_tests_properties(midi_unavailable_${mode}_app PROPERTIES TIMEOUT 180)
     endforeach()
+
+    # MIDI-1118: hidden / scripted runs open no system MIDI ports (GRIDLINE_TEST_MIDI asks the service again).
+    add_test(NAME midi1118_hidden_ports_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/midi1118_hidden_ports_app -P ${CMAKE_SOURCE_DIR}/tests/midi1118_hidden_ports_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(midi1118_hidden_ports_app PROPERTIES TIMEOUT 300)
 
     # J-84: channel rack with long patterns / narrow racks: knobs drawn, steps scroll, Q-15 wheel routing.
     add_test(NAME j84_rack_scroll
@@ -2723,6 +2815,27 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                        -DOUT=${CMAKE_BINARY_DIR}/k287_clip_move_${k287_layout} -DLAYOUT=${k287_layout} -P ${CMAKE_SOURCE_DIR}/tests/k287_clip_move_app.cmake
                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
       set_tests_properties(k287_clip_move_${k287_layout}_app PROPERTIES TIMEOUT 600)
+    endforeach()
+    # PL-1118: in Smooth and Clips a drag of one of several selected clips moves them all (drawn together
+    # mid-drag, one undo step, the selection kept); the Smooth loop zone; fade shades without seams.
+    foreach(pl1118_layout logic live)
+      add_test(NAME pl1118_multi_drag_${pl1118_layout}_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                       -DOUT=${CMAKE_BINARY_DIR}/pl1118_multi_drag_${pl1118_layout} -DLAYOUT=${pl1118_layout} -P ${CMAKE_SOURCE_DIR}/tests/pl1118_multi_drag_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(pl1118_multi_drag_${pl1118_layout}_app PROPERTIES TIMEOUT 600)
+    endforeach()
+    add_test(NAME pl1118_loop_zone_logic_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/pl1118_loop_zone_logic -P ${CMAKE_SOURCE_DIR}/tests/pl1118_loop_zone_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(pl1118_loop_zone_logic_app PROPERTIES TIMEOUT 600)
+    foreach(pl1118_layout studio logic live)
+      add_test(NAME pl1118_fade_shade_${pl1118_layout}_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                       -DOUT=${CMAKE_BINARY_DIR}/pl1118_fade_shade_${pl1118_layout} -DLAYOUT=${pl1118_layout} -P ${CMAKE_SOURCE_DIR}/tests/pl1118_fade_shade_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(pl1118_fade_shade_${pl1118_layout}_app PROPERTIES TIMEOUT 600)
     endforeach()
 
     # J-98: Tideline's Split slider keeps its handle under the pointer at 100 / 150 / 200 % (SDL drags).
@@ -3149,6 +3262,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                      -DOUT=${CMAKE_BINARY_DIR}/drag_keeps_offset_app -P ${CMAKE_SOURCE_DIR}/tests/drag_keeps_offset_app.cmake
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(drag_keeps_offset_app PROPERTIES TIMEOUT 240)
+
+    # FRZ-1118: a project on a network drive that stops answering (a named pipe for its instrument):
+    # edits build the program without the interface ever waiting for the drive.
+    add_test(NAME frz1118_remote_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/frz1118_remote_app -P ${CMAKE_SOURCE_DIR}/tests/frz1118_remote_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(frz1118_remote_app PROPERTIES TIMEOUT 180)
 
     # K-114 / K-82: a plain edge drag extends a clip, Ctrl (Cmd) + drag loops it (read live); a clip
     # dragged past the song's start lands on the beat.

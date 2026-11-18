@@ -2,6 +2,7 @@
 #include "TrackerView.h"
 #include <SDL.h>
 #include <algorithm>
+#include <array>
 #include <cfloat>
 #include <chrono>
 #include <cmath>
@@ -62,7 +63,10 @@ struct Selection {
 struct KeyEv {
   int sc = 0, kc = 0, mods = 0;
   bool repeat = false;
+  int midi = -1;     // TRK-1118: a MIDI input note (its pitch; sc is kMidiKey + pitch, kc its velocity)
+  bool up = false;   // ... let go
 };
+constexpr int kMidiKey = 0x10000;  // TRK-1118: a MIDI note's place among the held keys (past every scancode)
 struct Held {
   ObjectId channel = kNoId;
   int pitch = 0;
@@ -436,7 +440,11 @@ bool otherNoteHeld(int sc) {
 }
 
 void releaseAll(App& a) {
-  for (const auto& [sc, h] : st().held) a.engine.noteOff(h.channel, h.pitch);
+  for (const auto& [sc, h] : st().held) {
+    if (h.channel != kNoId) {  // (a MIDI note's sound is the input's own)
+      a.engine.noteOff(h.channel, h.pitch);
+    }
+  }
   st().held.clear();
 }
 
@@ -991,6 +999,21 @@ int trackerKey(App& a, const View& v, const KeyEv& k) {
 bool handleKey(App& a, const View& v, const KeyEv& k) {
   State& s = st();
   Cursor& c = s.cur;
+  if (k.midi >= 0 && k.up) {  // TRK-1118: a MIDI note let go: as a note key let go (record key-off)
+    const auto it = s.held.find(k.sc);
+    if (it == s.held.end()) {
+      return false;
+    }
+    const Held h = it->second;
+    s.held.erase(it);
+    if (gRecOff && h.track >= 0 && a.recordArmed && a.engine.playing() && v.p && h.track < static_cast<int>(v.tracks.size()) && s.playRow >= 0 &&
+        s.playRow < v.g.rows) {
+      const int row = s.playRow, col = h.column;
+      applyEdit(a, v, h.track, "record key-off", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) { return trk::putOff(x.notes, tr, g, row, col); });
+      return true;
+    }
+    return false;
+  }
   if (k.sc < 0) {  // a note key let go while recording (record key-off): its note ends on the row playing
     const int ti = -1 - k.sc;
     if (!v.p || ti >= static_cast<int>(v.tracks.size()) || s.playRow < 0 || s.playRow >= v.g.rows) return false;
@@ -998,7 +1021,7 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
     applyEdit(a, v, ti, "record key-off", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) { return trk::putOff(x.notes, tr, g, row, col); });
     return true;
   }
-  if (!v.tracks.empty() && v.p)
+  if (!v.tracks.empty() && v.p && k.midi < 0)
     if (const int r = trackerKey(a, v, k); r >= 0) return r == 1;
   const bool ctrl = (k.mods & (KMOD_CTRL | KMOD_GUI)) != 0, shift = (k.mods & KMOD_SHIFT) != 0, alt = (k.mods & KMOD_ALT) != 0;
   if (v.tracks.empty() || !v.p) return false;
@@ -1121,8 +1144,12 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
     default: break;
   }
   // ---- entry ----
-  if (c.field == Field::Note) {
-    const int pitch = notePitch(a, k.sc);
+  // TRK-1118: a MIDI note enters as a note key does, in the cursor's note column whatever field the
+  // cursor is on, with the velocity played (a note key's is the typing keyboard's).
+  const bool midi = k.midi >= 0;
+  if (c.field == Field::Note || midi) {
+    const int pitch = midi ? k.midi : notePitch(a, k.sc);
+    const int vel = midi ? std::clamp(k.kc, 1, 127) : a.typing.velocity;
     if (pitch >= 0) {
       // A held key repeats only in edit mode (the note goes on down the rows by the edit step), as
       // the classic editor's key repeat; playing or recording, a held key is one note.
@@ -1130,16 +1157,20 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
       // Multichannel key jazz (Settings): notes only played go to the enabled tracks in turn, so
       // a chord sounds on several instruments.
       ObjectId playOn = ch->id;
-      if (!canEdit && gMultiJazz && v.tracks.size() > 1) {
+      if (!canEdit && gMultiJazz && v.tracks.size() > 1 && !midi) {
         static int jazz = -1;
         jazz = nextMultiTrack(a, v.tracks, jazz < 0 || jazz >= static_cast<int>(v.tracks.size()) ? ti : jazz);
         playOn = v.tracks[static_cast<size_t>(jazz)].channel;
       }
-      if (!k.repeat) audition(a, k.sc, playOn, pitch, a.typing.velocity);
+      if (midi) {
+        s.held[k.sc] = {kNoId, pitch};  // (the input plays the note itself; held: a chord, record key-off)
+      } else if (!k.repeat) {
+        audition(a, k.sc, playOn, pitch, a.typing.velocity);
+      }
       // Record pattern / Record song: the note lands on the row playing (edit mode or not).
       if (rec) {
         applyEdit(a, v, ti, "record note", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) {
-          return trk::putNote(x.notes, tr, g, row, c.column, pitch, a.typing.velocity);
+          return trk::putNote(x.notes, tr, g, row, c.column, pitch, vel);
         });
         if (auto it = s.held.find(k.sc); it != s.held.end()) it->second.track = ti, it->second.column = c.column;  // record key-off
         // Multichannel record: the next note goes to the next enabled track.
@@ -1164,7 +1195,7 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
       }
       if (first) a.doc.beginGroup("type note");
       applyEdit(a, v, ti, "type note", [&](Rows& x, const trk::Track& tr, const trk::Grid& g) {
-        return trk::putNote(x.notes, tr, g, at, c.column, pitch, a.typing.velocity);
+        return trk::putNote(x.notes, tr, g, at, c.column, pitch, vel);
       });
       if (first) {
         a.doc.addClip(a.curPattern, 0, 0);
@@ -1838,6 +1869,39 @@ bool sdlKey(App& a, int scancode, int keycode, int mods, bool down, bool repeat)
   }
   if (alt && !ctrl && !(scancode == SDL_SCANCODE_F3 || scancode == SDL_SCANCODE_F4 || scancode == SDL_SCANCODE_F5)) return false;
   s.keys.push_back({scancode, keycode, mods, repeat});
+  return true;
+}
+
+// TRK-1118: MIDI input notes for the pattern editor (App::playedNoteOn / Off): queued with the keys
+// and entered as note keys are (handleKey). Taken only while the pattern editor shows and edit mode
+// is on or a record mode runs; otherwise the note only plays (and Capture keeps it), as before.
+bool midiNote(App& a, int pitch, int velocity, bool down) {
+  static std::array<bool, 128> taken{};
+  if (pitch < 0 || pitch > 127) {
+    return false;
+  }
+  State& s = st();
+  const size_t p = static_cast<size_t>(pitch);
+  if (!down) {
+    if (!taken[p]) {
+      return false;
+    }
+    taken[p] = false;
+    KeyEv k;
+    k.sc = kMidiKey + pitch, k.midi = pitch, k.up = true;
+    s.keys.push_back(k);
+    return true;
+  }
+  if (layoutui::active() != layout::Preset::Tracker || !shown()) {
+    return false;
+  }
+  if (!s.edit && !(a.recordArmed && a.engine.playing())) {
+    return false;
+  }
+  taken[p] = true;
+  KeyEv k;
+  k.sc = kMidiKey + pitch, k.kc = velocity, k.midi = pitch;
+  s.keys.push_back(k);
   return true;
 }
 
@@ -3062,6 +3126,21 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
       s.sel.on = false;
     }
     std::printf("tracker busiest frame %d: %s (%zu notes and steps)\n", frame, best ? best->name.c_str() : "none", most);
+  } else if (cmd == "midi" && args.size() > 2) {
+    // TRK-1118 (dev): "tracker midi on|off <pitch> [velocity]": a note from a MIDI input, as a device sends it
+    // (through the MIDI input's queue, the app's own MIDI handling and App::playedNoteOn / Off).
+    const int pitch = std::clamp(std::atoi(args[2].c_str()), 0, 127);
+    const int vel = args.size() > 3 ? std::clamp(std::atoi(args[3].c_str()), 0, 127) : 100;
+    const bool on = args[1] == "on";
+    const std::vector<unsigned char> msg = {static_cast<unsigned char>(on ? 0x90 : 0x80), static_cast<unsigned char>(pitch),
+                                            static_cast<unsigned char>(on ? vel : 0)};
+    if (a.midi) {
+      a.midi->onMessage("dev", 0, msg);
+    } else if (on) {
+      a.playedNoteOn(a.selChannel, pitch, vel);
+    } else {
+      a.playedNoteOff(a.selChannel, pitch);
+    }
   } else if (cmd == "mididevs") {
     // K-106 (dev): N stand-in MIDI input devices listed (nothing is opened), for the MIDI boxes'
     // long lists in hidden runs.
@@ -3156,6 +3235,12 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     }
     std::printf("\n");
     std::fflush(stdout);
+  } else if (cmd == "fx") {  // TRK-1118: the Mix page's effect menu (TrackerPages.h)
+    trackerpages::devEffect(a, args, frame);
+  } else if (cmd == "pickins" && args.size() > 1) {  // TRK-1118: "pickins <type> [<index to replace>]": the instrument picker's pick
+    devPickInstrument(a, args[1], args.size() > 2 ? std::atoi(args[2].c_str()) : -1);
+  } else if (cmd == "duplicate") {  // TRK-1118: "duplicate [song]": Duplicate pattern (into the song)
+    duplicatePattern(a, args.size() > 1 && args[1] == "song");
   } else if (cmd == "order") {  // cp16: the Song page's order edits (dump, ins, del, move, set, clone, bars, loop)
     trackerpages::devOrder(a, args, frame);
   } else if (cmd == "songclip") {  // the Song page's picked clip: by its index in the playlist

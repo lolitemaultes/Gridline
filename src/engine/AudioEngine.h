@@ -233,10 +233,48 @@ class AudioEngine {
   // Live mode: launch / release (gate pads) a live-area clip, stop a track or
   // every track. Launches start on the track's launch grid; a launch while
   // stopped starts the transport.
-  void launchClip(ObjectId clip);
+  // grid-1118: `legato`: the clip takes over the playing clip's position on its track at once (no launch
+  // grid), as a captured scene goes on without a break; with nothing playing there it launches as usual.
+  void launchClip(ObjectId clip, bool legato = false);
   void releaseClip(ObjectId clip);
   void stopLiveTrack(int track);
   void stopAllLive();
+  // grid2-1118: launches scene k of the Clips grid (Program::scenes) as one: each track's clip on its own
+  // launch grid, its empty slots with a stop button stop their tracks (the others are left alone); the
+  // scene's tempo and time signature apply at its launch point (the first of its clips' start, else the
+  // next bar line) and its follow actions run from there.
+  void launchScene(int scene);
+  // grid2-1118: the global follow action switch (off: no clip or scene follow action runs). UI thread.
+  void setFollowActions(bool on) { followOn_.store(on, std::memory_order_relaxed); }
+  bool followActions() const { return followOn_.load(std::memory_order_relaxed); }
+  // grid2-1118 (UI thread): the scene launched last (-1: none), and the tempo / time signature the last
+  // launched scene set (bumped serial each time one applied; 0 BPM / 0 numerator: it left that alone).
+  int liveScene() const { return liveSceneUi_.load(std::memory_order_relaxed); }
+  uint32_t sceneChangeSerial() const { return sceneSerialUi_.load(std::memory_order_acquire); }
+  double sceneTempoSet() const { return sceneBpmUi_.load(std::memory_order_relaxed); }
+  int sceneSigNumSet() const { return sceneNumUi_.load(std::memory_order_relaxed); }
+  int sceneSigDenSet() const { return sceneDenUi_.load(std::memory_order_relaxed); }
+  // grid2-1118: the transport tick a scene's tempo change waits for (-1: none), and the tick of the follow
+  // action of the scene launched last (-1: none). UI thread (tests).
+  double scenePendingAt() const { return scenePendUi_.load(std::memory_order_relaxed); }
+  // grid-1118 (Clips): the clip grid plays over the arrangement, as the reference's Session view. While on,
+  // song mode launches clips too (on the song position's launch grid, the arrangement playing on), and a
+  // track whose launched clip has started stops playing its arrangement clips until backToArrangement()
+  // (a track stopped from the grid stays silent until then). A loop or seek of the song position keeps the
+  // launched clips in their own phase. Off (the other layouts): song mode plays no launched clips.
+  void setSessionOverArrangement(bool on) { sessionOver_.store(on, std::memory_order_relaxed); }
+  // Stops every launched clip at once and gives every track back to the arrangement (`track` >= 0: that
+  // track only).
+  void backToArrangement(int track = -1);
+  // The track's arrangement clips are silenced by the clip grid (UI thread).
+  bool arrangementOverridden(int track) const {
+    return track >= 0 && track < kMaxPlaylistTracks && arrOffUi_[track].load(std::memory_order_relaxed) != 0;
+  }
+  bool anyArrangementOverridden() const { return arrOffAny_.load(std::memory_order_relaxed); }
+  // A stop of the track waits for its launch grid line (UI thread).
+  bool liveStopping(int track) const {
+    return track >= 0 && track < kMaxPlaylistTracks && liveStopUi_[track].load(std::memory_order_relaxed) != 0;
+  }
   // Clip playing / waiting to start on a playlist track (kNoId = none).
   ObjectId liveActive(int track) const;
   ObjectId liveQueued(int track) const;
@@ -506,7 +544,7 @@ class AudioEngine {
  private:
   struct Cmd {
     enum Kind { Play, Stop, Pause, Mode, Pattern, Position, NoteOn, NoteOff, Panic, Loop, Preview, LoopRange,
-                Launch, Release, LiveStop, LiveStopAll, Jump, ReleaseAll, ReleaseLive, StopOwn } kind;
+                Launch, Release, LiveStop, LiveStopAll, Jump, ReleaseAll, ReleaseLive, StopOwn, BackToArrangement, LaunchScene } kind;
     ObjectId id = kNoId;
     int pitch = 0;
     float value = 0;
@@ -579,6 +617,9 @@ class AudioEngine {
   void holdNote(const HeldNote& n);
   void releaseHeld(ObjectId ch, uint32_t id);
   void deliverHeld(const Program* p);
+  // The channel pitch to each instrument, before a block's notes (held notes follow it).
+  void syncChannelPitch(const Program* p);
+  static constexpr double kChannelPitchGlide = 0.005;  // seconds: a held note's glide to a new channel pitch
 
  public:
   // K-87 (tests): notes that waited for an unloaded instrument and were played once it loaded.
@@ -634,17 +675,39 @@ class AudioEngine {
   void dispatchLive(const Program* p, int from, int to);
   void liveCommand(const Program* p, const Cmd& c);
   void clearLive();
+  // grid2-1118 (audio thread): a clip queued on its track (its own launch settings over the track's; `at`
+  // >= 0: exactly then, as a follow action); a track's stop; a scene launched; the follow action tick of
+  // a clip starting at `at`; one of a follow spec's actions picked by chance; the clip a follow action
+  // goes to (-1: none, the track stops); what is due at the start of a block (a scene follow action, a
+  // scene's tempo / time signature) and the samples to the next of them; the transport moved with the
+  // Clips Arrangement (a scene inserted or deleted while it plays).
+  Tick queueLaunch(const Program* p, const ProgLiveClip& lc, const ProgLiveTrack& lt, Tick now, bool legato, Tick at);
+  void queueStopTrack(const Program* p, int track, Tick now, Tick at);
+  void launchSceneNow(const Program* p, int k, Tick now, Tick at);
+  Tick followTick(const Program* p, const ProgLiveClip& lc, Tick at) const;
+  FollowAction pickFollow(const FollowSpec& f, int* jump);
+  int followTarget(const Program* p, const ProgLiveTrack& lt, int li, FollowAction a, int jump);
+  void sceneStep(const Program* p);
+  int untilSceneEvent(const Program* p, int n) const;
+  void shiftTransport(double d);
+  void shiftLive(Tick d);
+  Tick barAt(const Program* p, Tick t) const;
+  // grid-1118: launched clips play in this block (live mode, or song mode under the clip grid).
+  bool liveOn() const { return tMode_ == PlayMode::Live || (tMode_ == PlayMode::Song && sessionOver_.load(std::memory_order_relaxed)); }
+  void publishArrangementOff();
   void applyLinkValue(const Program* p, const ProgLink& l, double normalized);
   // Transport clock through the tempo map (song mode: tempo automation;
   // pattern mode: constant). `clk` samples after the tick `anchor`.
   // Following a host (PH-09): its tempo, constant.
   const TempoMap& clockMap(const Program* p) const {
-    return hostTempo() ? hostMap_ : tMode_ == PlayMode::Song ? p->tempoMap : p->flatMap;
+    return hostTempo() ? hostMap_ : sceneTempo() ? sceneMap_ : tMode_ == PlayMode::Song ? p->tempoMap : p->flatMap;
   }
   bool hostTempo() const { return hostFollow_ && hostBpm_ > 0; }
-  const TempoMap& songMap(const Program* p) const { return hostTempo() ? hostMap_ : p->tempoMap; }
-  const TempoMap& flatMap(const Program* p) const { return hostTempo() ? hostMap_ : p->flatMap; }
-  double flatBpm(const Program* p) const { return hostTempo() ? hostBpm_ : p->tempo; }
+  // grid2-1118: a launched scene's tempo is in force (song mode under the clip grid).
+  bool sceneTempo() const { return sceneBpm_ > 0 && tMode_ == PlayMode::Song; }
+  const TempoMap& songMap(const Program* p) const { return hostTempo() ? hostMap_ : sceneTempo() ? sceneMap_ : p->tempoMap; }
+  const TempoMap& flatMap(const Program* p) const { return hostTempo() ? hostMap_ : sceneTempo() ? sceneMap_ : p->flatMap; }
+  double flatBpm(const Program* p) const { return hostTempo() ? hostBpm_ : sceneTempo() ? sceneBpm_ : p->tempo; }
   void followHost(const Program* p);  // applies hostIn_ (start of a process() call)
   double tickAt(const Program* p, double anchor, double clk) const { return clockMap(p).tickAfterSamples(anchor, clk, sr_); }
   // First sample (counted from the anchor) at or after `tick`. A position within a millionth of a
@@ -858,14 +921,25 @@ class AudioEngine {
   // clip / stop waiting for its launch grid. Clips are kept by id so program
   // rebuilds do not disturb them.
   struct LiveTrack {
+    Tick followAt = -1;  // grid2-1118: the active clip's follow action runs at this tick (-1: none)
     ObjectId active = kNoId;
     Tick origin = 0;  // transport tick of the active clip's content tick 0
     ObjectId queued = kNoId;
     Tick queuedAt = 0, queuedOrigin = 0;
     bool stopQueued = false;
     Tick stopAt = 0;
+    ObjectId repeat = kNoId;  // grid-1118: a Repeat clip held down: it starts again on every launch grid line
   };
   LiveTrack liveTracks_[kMaxPlaylistTracks];
+  // grid-1118: the clip grid over the arrangement (setSessionOverArrangement): per track, its arrangement
+  // clips are silenced (a launched clip started there); the song tick the last live dispatch ended at
+  // (a jump of the song position moves the launched clips' times by as much).
+  std::atomic<bool> sessionOver_{false};
+  uint8_t arrOff_[kMaxPlaylistTracks] = {};
+  std::atomic<uint8_t> arrOffUi_[kMaxPlaylistTracks] = {};
+  std::atomic<bool> arrOffAny_{false};
+  std::atomic<uint8_t> liveStopUi_[kMaxPlaylistTracks] = {};
+  double liveLastTick_ = -1.0;
   std::atomic<ObjectId> liveActiveUi_[kMaxPlaylistTracks] = {};
   std::atomic<ObjectId> liveQueuedUi_[kMaxPlaylistTracks] = {};
   std::atomic<Tick> liveOriginUi_[kMaxPlaylistTracks] = {};
@@ -991,6 +1065,27 @@ class AudioEngine {
   bool hostNew_ = false, hostFollow_ = false;
   double hostBpm_ = 0;
   TempoMap hostMap_;
+  // grid2-1118 (audio thread): the scene tempo in force (0: the song's; sceneMap_ is it as a tempo map) and
+  // the scene time signature in force from meterOvAt_ (launch grids count its bars from there), a scene's
+  // tempo / time signature waiting for its launch point, the scene follow action due, the last program's
+  // live area end and project, and their copies for the interface.
+  double sceneBpm_ = 0;
+  TempoMap sceneMap_;
+  bool meterOv_ = false;
+  Tick meterOvAt_ = 0, meterOvBar_ = 384, meterOvBeat_ = 96;
+  Tick scenePendAt_ = -1;
+  double pendBpm_ = 0;
+  int pendNum_ = 0, pendDen_ = 0;
+  Tick sceneFollowAt_ = -1;
+  int sceneCur_ = -1;
+  Tick originTick_ = 0;
+  uint64_t originEpoch_ = 0;
+  std::atomic<bool> followOn_{true};
+  std::atomic<int> liveSceneUi_{-1};
+  std::atomic<uint32_t> sceneSerialUi_{0};
+  std::atomic<double> sceneBpmUi_{0};
+  std::atomic<int> sceneNumUi_{0}, sceneDenUi_{0};
+  std::atomic<double> scenePendUi_{-1};
   std::atomic<bool> hostFollowUi_{false};
   std::atomic<float> macro_[kHostMacros];
   // J-131: host parameter bank.

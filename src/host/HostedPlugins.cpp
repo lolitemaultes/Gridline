@@ -425,6 +425,7 @@ class Core final : public HostedInstance {
     prepareHostSafe(st, sr);
   }
   void prepareHostSafe(const PluginState& st, double sr) {
+    crash::InsideScope inside("a plugin taking its state:", cls_->name);
     try {
       prepareHostNow(st, sr);
     } catch (...) {
@@ -492,6 +493,7 @@ class Core final : public HostedInstance {
   }
 
   void pumpUi(UiUpdate& u) override {
+    crash::InsideScope inside("a plugin's frame (idle, edits, values):", cls_->name);
     try {
       pumpUiNow(u);
     } catch (...) {
@@ -596,6 +598,7 @@ class Core final : public HostedInstance {
   }
 
   bool captureState(std::string& data) override {
+    crash::InsideScope inside("a plugin giving its state:", cls_->name);
     try {
       if (uiBlocked() || !b_->getState(data)) return false;
     } catch (...) {
@@ -609,6 +612,7 @@ class Core final : public HostedInstance {
 
   std::string paramText(int index, float value) override {
     if (uiBlocked() || index < 0 || static_cast<size_t>(index) >= ids_.size() || !mapped_[static_cast<size_t>(index)]) return {};
+    crash::InsideScope inside("a plugin's parameter text:", cls_->name);
     try {
       return b_->paramText(ids_[static_cast<size_t>(index)], cls_->toNormalized(static_cast<size_t>(index), value));
     } catch (...) {
@@ -638,6 +642,7 @@ class Core final : public HostedInstance {
   }
   bool selectProgram(int i) override {
     if (uiBlocked()) return false;
+    crash::InsideScope inside("a plugin selecting a program:", cls_->name);
     suspend();
     bool ok = false;
     try {
@@ -667,6 +672,7 @@ class Core final : public HostedInstance {
   }
   bool loadLibraryPreset(size_t i) override {
     if (uiBlocked() || i >= libraryPresets().size()) return false;
+    crash::InsideScope inside("a plugin loading a preset:", cls_->name);
     suspend();
     bool ok = false;
     try {
@@ -1012,7 +1018,13 @@ class Core final : public HostedInstance {
   }
   void suspend() {
     suspended_.store(true);
-    while (busy_.load()) std::this_thread::yield();
+    if (!busy_.load()) {
+      return;
+    }
+    crash::InsideScope inside("waiting for the audio thread to leave", cls_->name);
+    while (busy_.load()) {
+      std::this_thread::yield();
+    }
   }
   void resume() { suspended_.store(false); }
 
@@ -1095,7 +1107,9 @@ class HostedGenerator final : public Generator {
     }
   }
   bool mpe() const { return core_->options().notePitch == HostOptions::PitchMpe; }
-  float noteBendRange() const override { return mpe() ? static_cast<float>(core_->options().mpeBendRange) : 2.0f; }
+  float noteBendRange() const override {
+    return mpe() ? static_cast<float>(core_->options().mpeBendRange) : static_cast<float>(channelBendRange());
+  }
   void prepareHost(const PluginState& state, double sampleRate) override { core_->prepareHost(state, sampleRate); }
   int latencySamples() const override { return core_->totalLatency(); }
   bool stale() const override { return core_->stale(); }
@@ -1162,6 +1176,12 @@ class HostedGenerator final : public Generator {
     queue(e, eventOffset());
   }
   void onMidi(uint8_t s, uint8_t a, uint8_t b) override {
+    if ((s & 0xF0) == 0xE0 && bendMerge()) {  // the wheel / a bend line: added to the channel pitch's share
+      const int raw = ((b & 0x7F) << 7) | (a & 0x7F);
+      extBend_[s & 15] = static_cast<double>(raw - 8192) / 8192.0 * static_cast<double>(channelBendRange());
+      sendMergedBend(s & 15);
+      return;
+    }
     NoteEvent e;
     e.type = NoteEvent::Midi;
     e.midi[0] = s;
@@ -1177,12 +1197,22 @@ class HostedGenerator final : public Generator {
     for (auto& n : notes_)
       if (n.used) stopNote(n.id, 0.5f);
     channelMessages(false);
+    forgetBends();
   }
   // Panic: the same plus All Sound Off (CC 120): tails end too.
   void onKill() override {
     for (auto& n : notes_)
       if (n.used) stopNote(n.id, 0.0f);
     channelMessages(true);
+    forgetBends();
+  }
+  // The channel pitch moved: notes the plugin tunes itself glide (the base class); otherwise the
+  // MIDI channels the notes play on get it as pitch bend.
+  void onChannelPitch(double semis, double delta, double seconds) override {
+    Generator::onChannelPitch(semis, delta, seconds);
+    if (!bendMerge()) return;
+    for (int c = 0; c < 16; ++c)
+      if (lastNote_[c].on) sendMergedBend(c);
   }
   void configure(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx) override {
     (void)aux;
@@ -1292,6 +1322,12 @@ class HostedGenerator final : public Generator {
     e.channel = slot->channel;
     e.velocity = std::clamp(velocity, 0.0f, 1.0f);
     e.tuning = pitch - key;
+    if (bendMerge()) {  // no per-note tuning: the pitch off its key (fine pitch, channel pitch) as the channel's bend
+      LastNote& ln = lastNote_[channel & 15];
+      ln.on = true, ln.base = pitch, ln.key = key, ln.chan = channelPitchNow();
+      sendMergedBend(channel & 15);
+      e.tuning = 0;  // (a plugin that could also tune the note would add it twice)
+    }
     if (mpe()) {  // the note's pitch off its key as its channel's bend, before it starts
       sendBend(slot->channel, e.tuning);
       e.tuning = 0;
@@ -1321,7 +1357,7 @@ class HostedGenerator final : public Generator {
     e.key = n->key;
     e.channel = n->channel;
     e.velocity = velocity;
-    e.tuning = n->base - n->key;
+    e.tuning = bendMerge() ? 0.0 : n->base - n->key;
     queue(e, eventOffset());
     n->used = false;
   }
@@ -1414,6 +1450,43 @@ class HostedGenerator final : public Generator {
     for (int c = 1; c < 16; ++c) rpn(c, 0, range);
     for (auto& b : lastBend_) b = 8192;
   }
+  // Hosted plugins without per-note tuning (the per-note pitch option "channel pitch bend", or a
+  // plugin that has none, as most VST2, AU, LV2 and many VST3 instruments): a MIDI channel's
+  // pitch bend carries the newest note's pitch beyond its key (its fine pitch and the channel pitch,
+  // which moves held notes when it changes) plus the bend the engine or a keyboard sends for it
+  // (bend lines, the wheel), together, over the channel's bend range (Channel::bendRange). The
+  // whole semitones of the channel pitch are in the keys the notes start on.
+  bool bendMerge() const { return !supportsGlide() && core_->backend()->hasEventInput(); }
+  struct LastNote {
+    bool on = false;
+    double base = 60, chan = 0;  // its pitch, the channel pitch then (semitones)
+    int key = 60;
+  };
+  void sendMergedBend(int c, int offset = -1) {
+    c &= 15;
+    const LastNote& ln = lastNote_[c];
+    const double off = ln.on ? ln.base + (channelPitchNow() - ln.chan) - ln.key : 0.0;
+    const double range = static_cast<double>(channelBendRange());
+    const int v = std::clamp(8192 + static_cast<int>(std::lround((off + extBend_[c]) / range * 8192.0)), 0, 16383);
+    if (v == sentBend_[c]) return;
+    sentBend_[c] = v;
+    NoteEvent e;
+    e.type = NoteEvent::Midi;
+    e.channel = static_cast<int8_t>(c);
+    e.midi[0] = static_cast<uint8_t>(0xE0 | c);
+    e.midi[1] = static_cast<uint8_t>(v & 0x7F);
+    e.midi[2] = static_cast<uint8_t>(v >> 7);
+    queue(e, offset < 0 ? eventOffset() : offset);
+  }
+  // After all notes off or a panic the plugin may reset its controllers: a bend that was not centred
+  // is sent again with the next note.
+  void forgetBends() {
+    for (int& v : sentBend_)
+      if (v != 8192) v = -1;
+  }
+  LastNote lastNote_[16];
+  double extBend_[16] = {};
+  int sentBend_[16] = {8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192, 8192};
   bool mpeAnnounced_ = false;
   int64_t chanAt_[16] = {};
   int64_t chanClock_ = 0;

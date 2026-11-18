@@ -20652,36 +20652,74 @@ void ImGui::DockNodeTreeUpdateSplitter(ImGuiDockNode* node)
             resize_limits[1] = node->ChildNodes[1]->Pos[axis] + node->ChildNodes[1]->Size[axis] - min_size;
 
             ImGuiID splitter_id = GetID("##Splitter");
+            // GRIDLINE PATCH (K-297, rsz-1118): which node takes the change for a touching node. ImGui keeps
+            // the far node of each same-axis split on the way up and shrinks the touching one. Two cases keep
+            // the near one instead (it moves with the divider, the far one shrinks):
+            //  - a title strip / tab rail (NoResizeX/Y, shorter than the minimum window size): without this its
+            //    own limit sat above the splitter and the pane under it could never shrink;
+            //  - (GImGuiGridlineSplitterCentre) a band whose far side holds the central node: dragging the
+            //    divider of a band stacked beside another (Clips' detail band over its mixer band, Smooth's
+            //    Library beside the Inspector) shrank the neighbour band instead of the main view. The app
+            //    corrected it afterwards, so every frame of the drag drew the neighbour a step off first.
+            // The limit then comes from the node that takes the change.
+            auto keep_near = [&](ImGuiDockNode* near_n, ImGuiDockNode* far_n) -> bool {
+                if (!near_n->IsVisible || !far_n->IsVisible)
+                    return false;
+                if ((near_n->LocalFlags | near_n->MergedFlags) & no_resize_axis_flag)
+                    return true;
+                if (!GImGuiGridlineSplitterCentre)
+                    return false;
+                const bool far_centre = far_n->IsCentralNode() || far_n->HasCentralNodeChild;
+                const bool near_centre = near_n->IsCentralNode() || near_n->HasCentralNodeChild;
+                return far_centre && !near_centre;
+            };
             if (g.ActiveId == splitter_id) // Only process when splitter is active
             {
                 DockNodeTreeUpdateSplitterFindTouchingNode(child_0, axis, 1, &touching_nodes[0]);
                 DockNodeTreeUpdateSplitterFindTouchingNode(child_1, axis, 0, &touching_nodes[1]);
-                // GRIDLINE PATCH (K-297): a touching node that cannot be resized along the axis (a title strip
-                // with NoResizeX/Y, shorter than the minimum window size) moves with the splitter and keeps
-                // its size: its sibling behind it is what shrinks, so the limit comes from that sibling. Without
-                // this the strip's own limit sat above the splitter and the pane under it could never shrink.
-                auto fixed_sibling = [&](ImGuiDockNode* t) -> ImGuiDockNode* {
-                    ImGuiDockNode* p = t->ParentNode;
-                    if (!p || p == node || p->SplitAxis != axis || !((t->LocalFlags | t->MergedFlags) & no_resize_axis_flag)) return NULL;
-                    return p->ChildNodes[0] == t ? p->ChildNodes[1] : p->ChildNodes[0];
+                auto absorber = [&](ImGuiDockNode* t) -> ImGuiDockNode* {
+                    ImGuiDockNode* a = t;
+                    for (ImGuiDockNode* c = t; c->ParentNode && c->ParentNode != node; c = c->ParentNode)
+                    {
+                        ImGuiDockNode* p = c->ParentNode;
+                        if (p->SplitAxis != axis)
+                            continue;
+                        ImGuiDockNode* far_n = p->ChildNodes[0] == c ? p->ChildNodes[1] : p->ChildNodes[0];
+                        if (far_n && keep_near(c, far_n))
+                            a = far_n;  // the split nearest the divider wins (walked last)
+                    }
+                    return a;
                 };
+                // The least the node taking the change can be: the minimum size when it is a band; when it holds
+                // the central node (GImGuiGridlineSplitterCentre), the central node's minimum plus the bands
+                // beside it at their size (they keep it: the Library's divider squeezed Smooth's right pane).
+                auto absorb_min = [&](auto&& self, ImGuiDockNode* n) -> float {
+                    if (n->IsLeafNode())
+                        return n->IsCentralNode() ? min_size : n->Size[axis];
+                    ImGuiDockNode* c0 = n->ChildNodes[0];
+                    ImGuiDockNode* c1 = n->ChildNodes[1];
+                    if (!c0->IsVisible || !c1->IsVisible)
+                        return self(self, c0->IsVisible ? c0 : c1);
+                    if (n->SplitAxis != axis && (c0->HasCentralNodeChild || c1->HasCentralNodeChild))
+                        return self(self, c0->HasCentralNodeChild ? c0 : c1);  // a band across the axis follows the centre
+                    const float m0 = self(self, c0), m1 = self(self, c1);
+                    return n->SplitAxis == axis ? m0 + m1 + g.Style.DockingSeparatorSize : ImMax(m0, m1);
+                };
+                auto min_of = [&](ImGuiDockNode* a) -> float {
+                    if (!GImGuiGridlineSplitterCentre || a->IsLeafNode() || !a->HasCentralNodeChild)
+                        return min_size;
+                    return ImMax(min_size, absorb_min(absorb_min, a));
+                };
+                const float split_edge = child_0->Pos[axis] + child_0->Size[axis];
                 for (int touching_node_n = 0; touching_node_n < touching_nodes[0].Size; touching_node_n++)
                 {
-                    ImGuiDockNode* t = touching_nodes[0][touching_node_n];
-                    ImGuiDockNode* sib = fixed_sibling(t);
-                    if (sib && sib->Pos[axis] < t->Pos[axis])
-                        resize_limits[0] = ImMax(resize_limits[0], sib->Rect().Min[axis] + min_size + (t->Rect().Max[axis] - sib->Rect().Max[axis]));
-                    else
-                        resize_limits[0] = ImMax(resize_limits[0], t->Rect().Min[axis] + min_size);
+                    ImGuiDockNode* a = absorber(touching_nodes[0][touching_node_n]);
+                    resize_limits[0] = ImMax(resize_limits[0], a->Pos[axis] + min_of(a) + (split_edge - (a->Pos[axis] + a->Size[axis])));
                 }
                 for (int touching_node_n = 0; touching_node_n < touching_nodes[1].Size; touching_node_n++)
                 {
-                    ImGuiDockNode* t = touching_nodes[1][touching_node_n];
-                    ImGuiDockNode* sib = fixed_sibling(t);
-                    if (sib && sib->Pos[axis] > t->Pos[axis])
-                        resize_limits[1] = ImMin(resize_limits[1], sib->Rect().Max[axis] - min_size - (sib->Pos[axis] - t->Pos[axis]));
-                    else
-                        resize_limits[1] = ImMin(resize_limits[1], t->Rect().Max[axis] - min_size);
+                    ImGuiDockNode* a = absorber(touching_nodes[1][touching_node_n]);
+                    resize_limits[1] = ImMin(resize_limits[1], a->Pos[axis] + a->Size[axis] - min_of(a) - (a->Pos[axis] - child_1->Pos[axis]));
                 }
 
                 // [DEBUG] Render touching nodes & limits
@@ -20704,12 +20742,27 @@ void ImGui::DockNodeTreeUpdateSplitter(ImGuiDockNode* node)
             float cur_size_1 = child_1->Size[axis];
             float min_size_0 = resize_limits[0] - child_0->Pos[axis];
             float min_size_1 = child_1->Pos[axis] + child_1->Size[axis] - resize_limits[1];
+            if (g.ActiveId == splitter_id)
+            {
+                // GRIDLINE PATCH (rsz-1118): the app's own limits for the two sides (a region's min / max), and
+                // never a minimum above the size a side has now: SplitterBehavior() would jump it there on
+                // the first move (and the other side would not give the same amount back).
+                if (GImGuiGridlineSplitterLimits != NULL)
+                    GImGuiGridlineSplitterLimits(node, cur_size_0 + cur_size_1, &min_size_0, &min_size_1);
+                min_size_0 = ImMin(min_size_0, cur_size_0);
+                min_size_1 = ImMin(min_size_1, cur_size_1);
+            }
+            const float split_total = cur_size_0 + cur_size_1;
             ImU32 bg_col = GetColorU32(ImGuiCol_WindowBg);
             GImGuiGridlineSplitterOwn = true;  // GRIDLINE PATCH (K-297): the docked panels' widgets never take a divider's pointer
             const bool split_moved = SplitterBehavior(bb, GetID("##Splitter"), axis, &cur_size_0, &cur_size_1, min_size_0, min_size_1, g.WindowsBorderHoverPadding, WINDOWS_RESIZE_FROM_EDGES_FEEDBACK_TIMER, bg_col);
             GImGuiGridlineSplitterOwn = false;
             if (split_moved)
             {
+                // GRIDLINE PATCH (rsz-1118): whole pixels, the two sides adding up to what they had (a fraction
+                // here was floored when the size was kept, so the band moved a pixel when the divider was let go).
+                cur_size_0 = ImTrunc(cur_size_0 + 0.5f);
+                cur_size_1 = split_total - cur_size_0;
                 if (touching_nodes[0].Size > 0 && touching_nodes[1].Size > 0)
                 {
                     child_0->Size[axis] = child_0->SizeRef[axis] = cur_size_0;
@@ -20730,6 +20783,10 @@ void ImGui::DockNodeTreeUpdateSplitter(ImGuiDockNode* node)
                                 {
                                     // Mark other node so its size will be preserved during the upcoming call to DockNodeTreeUpdatePosSize().
                                     ImGuiDockNode* node_to_preserve = touching_node->ParentNode->ChildNodes[side_n];
+                                    // GRIDLINE PATCH (rsz-1118): or the near one (keep_near above).
+                                    ImGuiDockNode* far_n = touching_node->ParentNode->ChildNodes[0] == touching_node ? touching_node->ParentNode->ChildNodes[1] : touching_node->ParentNode->ChildNodes[0];
+                                    if (far_n && keep_near(touching_node, far_n))
+                                        node_to_preserve = touching_node;
                                     node_to_preserve->WantLockSizeOnce = true;
                                     //draw_list->AddRect(touching_node->Pos, touching_node->Rect().Max, IM_COL32(255, 0, 0, 255));
                                     //draw_list->AddRectFilled(node_to_preserve->Pos, node_to_preserve->Rect().Max, IM_COL32(0, 255, 0, 100));

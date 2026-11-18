@@ -112,6 +112,7 @@ class Importer {
   std::map<int, ObjectId> automations_;    // FL channel → AutomationClip
   std::map<int, std::string> autoNames_;
   std::map<ObjectId, int> channelCents_;   // audio clip channel → pitch knob (cents), applied per clip
+  std::set<ObjectId> pitchAutomated_;      // K-132: channels whose pitch knob automation or a link moves
   // K-49: an audio clip channel stretched to a time: the sample spans that many beats at
   // whatever the tempo is, so its clips follow the tempo when the channel keeps the pitch.
   // A channel that resamples holds the rate its time means at the tempo where the clip starts.
@@ -306,9 +307,9 @@ static bool missingHosted(const Song& s, ParamId id) {
   return p && isHostedType(p->type) && !findPlugin(p->type);
 }
 
-// K-132: FL's automation (or a link) on the channel pitch knob replaces the knob with a smooth value
-// (no whole-semitone steps). Only imported channels get this, so saved Gridline projects keep rounding.
-// The channel keeps the knob's cents (knobFine) so the fine tune and any resample offset stay on top.
+// K-132: FL's automation (or a link) on the channel pitch knob replaces the knob's value (in cents).
+// The knob's cents move from the fine tune (where the import put what is beyond whole semitones)
+// to the channel pitch, so the fine tune and any resample offset stay on top of the automation.
 // An audio clip channel then keeps its knob on the channel (not baked into every clip): the
 // automation replaces it instead of adding to it. Runs before the clips are read.
 void Importer::markPitchAutomated(uint32_t target) {
@@ -316,16 +317,17 @@ void Importer::markPitchAutomated(uint32_t target) {
   const int fl = static_cast<int>(target >> 16);
   Channel* ch = s_.channel(channelId(fl));
   auto evs = c_.sec.channels.find(fl);
-  if (!ch || ch->pitchSmooth || evs == c_.sec.channels.end()) return;
+  if (!ch || pitchAutomated_.count(ch->id) || evs == c_.sec.channels.end()) return;
   long knob = 0;
-  if (const Event* e = find(evs->second, 219); e && e->size >= 12) knob = std::clamp<long>(e->i32(8), -4800, 4800);
+  if (const Event* e = find(evs->second, 219); e && e->size >= 12) knob = std::clamp<long>(e->i32(8), -2400, 2400);
   const auto ty = c_.channelTypes.find(fl);
   if (ty != c_.channelTypes.end() && ty->second == 4) {
-    ch->pitch = static_cast<int>(std::clamp<long>((knob >= 0 ? knob + 50 : knob - 50) / 100, -24, 24));
-    ch->fine = static_cast<int>(std::clamp<long>(knob - ch->pitch * 100L, -200, 200));
+    ch->fine = 0;  // an audio clip channel's knob was on its clips (none of it in the fine tune)
+  } else {
+    ch->fine = static_cast<int>(std::clamp<long>(std::lround(ch->pitchCents) + ch->fine - knob, -200, 200));
   }
-  ch->pitchSmooth = true;
-  ch->knobFine = static_cast<int>(knob - ch->pitch * 100L);
+  ch->pitchCents = static_cast<float>(knob);
+  pitchAutomated_.insert(ch->id);
   c_.report.counts["channel pitch automation (smooth)"]++;
 }
 
@@ -372,11 +374,11 @@ bool Importer::resolveTarget(uint32_t target, Target& t) {
     switch (lo) {
       case 0x00: case 0x11: t.id = channelParam(ch, ChannelParam::Volume), t.max = 0.8f; return true;  // FL 0..1 → gain 0..1 (of 1.25)
       case 0x01: case 0x10: t.id = channelParam(ch, ChannelParam::Pan); return true;
-      case 0x04: {  // pitch knob, ±2 semitones
+      case 0x04: {  // pitch knob, ±2 semitones (the knob is in cents)
         t.id = channelParam(ch, ChannelParam::Pitch);
         auto d = describeParam(s_, t.id);
-        t.min = static_cast<float>(d->toNormalized(-2.0));
-        t.max = static_cast<float>(d->toNormalized(2.0));
+        t.min = static_cast<float>(d->toNormalized(-200.0));
+        t.max = static_cast<float>(d->toNormalized(200.0));
         return true;
       }
       default: t.what += " setting 0x" + [&] { char b[8]; std::snprintf(b, sizeof b, "%x", lo); return std::string(b); }(); return false;
@@ -769,7 +771,7 @@ void Importer::importTracksAndClips() {
           // K-132: an automated pitch knob stays on the channel (the automation replaces it); the
           // clip's speed still follows the knob as saved.
           const Channel* kc = s_.channel(ch->second);
-          const bool knobOnChannel = kc && kc->pitchSmooth;
+          const bool knobOnChannel = kc && pitchAutomated_.count(kc->id) > 0;
           const float knobCents = [&] { auto cc = channelCents_.find(ch->second); return cc == channelCents_.end() ? 0.0f : static_cast<float>(cc->second); }();
           if (!knobOnChannel) cl.pitch += knobCents;
           // J-164: FL resamples the whole pitch (channel pitch shift + clip):

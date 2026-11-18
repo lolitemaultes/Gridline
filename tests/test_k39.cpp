@@ -3,6 +3,8 @@
 // (The crashes themselves: tests/k39_crash_app.cmake and tests/k39_crash_probe.cmake.)
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <memory>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -16,6 +18,9 @@
 #include "core/Document.h"
 #include "engine/ExportJob.h"
 #include "core/CrashInternal.h"
+#include "core/RemoteFs.h"
+#include "engine/Export.h"
+#include "engine/Sample.h"
 
 using namespace gl;
 namespace fs = std::filesystem;
@@ -314,6 +319,97 @@ void testDisk(const fs::path& dir) {
   expect(true, "clean exit: twice is fine");
 }
 
+// FRZ-1118: what the interface thread is inside, for a freeze report.
+void testInside() {
+  expect(crash::onUiThread(), "inside: the thread that installed is the interface");
+  expect(crash::insideNow().empty(), "inside: nothing at first");
+  {
+    crash::InsideScope outer("a plugin giving its state:", "Big Synth");
+    {
+      crash::InsideScope inner("waiting for the audio thread to leave", std::string("Big Synth"));
+      const std::string now = crash::insideNow();
+      expect(now.find("inside: a plugin giving its state: Big Synth (0 s)\n") != std::string::npos, "inside: the outer scope");
+      expect(now.find("inside: waiting for the audio thread to leave Big Synth (0 s)\n") != std::string::npos, "inside: the inner scope");
+      expect(now.find("a plugin giving") < now.find("waiting for"), "inside: outermost first");
+    }
+    expect(crash::insideNow().find("waiting") == std::string::npos, "inside: the inner scope ended");
+  }
+  expect(crash::insideNow().empty(), "inside: all ended");
+  bool workerUi = true;
+  std::string workerSaw;
+  std::thread([&] {
+    workerUi = crash::onUiThread();
+    crash::InsideScope s("a worker's call", "Other");
+    workerSaw = crash::insideNow();
+  }).join();
+  expect(!workerUi && workerSaw.empty(), "inside: other threads are not recorded");
+  {  // deeper than the slots kept: no harm, the kept ones still show
+    std::vector<std::unique_ptr<crash::InsideScope>> deep;
+    for (int i = 0; i < 10; ++i) {
+      deep.push_back(std::make_unique<crash::InsideScope>("level", std::to_string(i)));
+    }
+    expect(crash::insideNow().find("level 0 ") != std::string::npos && crash::insideNow().find("level 9 ") == std::string::npos, "inside: deep nesting keeps the outer ones");
+  }
+  expect(crash::insideNow().empty(), "inside: deep nesting unwound");
+}
+
+// FRZ-1118: a project on a network drive: the interface thread never reads a file there itself (a
+// mount that stops answering held it in the kernel); it asks, and a background decoder reads.
+void testRemoteReads(const fs::path& dir) {
+  std::error_code ec;
+  const fs::path remote = dir / "share";
+  fs::create_directories(remote, ec);
+  AudioBuffer buf;
+  buf.resize(2, 4800);
+  for (size_t i = 0; i < 4800; ++i) {
+    buf.at(0, i) = buf.at(1, i) = 0.25f * static_cast<float>(std::sin(static_cast<double>(i) * 0.05));
+  }
+  const std::string a = (remote / "a.wav").u8string(), b = (remote / "b.wav").u8string(), local = (dir / "local.wav").u8string();
+  expect(writeWavFile(a, buf, 48000, 16) && writeWavFile(b, buf, 48000, 16) && writeWavFile(local, buf, 48000, 16), "remote: files written");
+  remotefs::setTestPrefixes({remote.u8string()});
+  expect(mustNotReadNow(a) && !mustNotReadNow(local), "remote: the interface does not read there, only there");
+  // The first ask returns at once with nothing: the interface never decodes it itself.
+  expect(sampleCache().get(a) == nullptr, "remote: get on the interface thread does not read");
+  expect(loadSample(b) == nullptr, "remote: loadSample on the interface thread does not read");
+  sampleCache().waitIdle();
+  SamplePtr sa = sampleCache().get(a), sb = loadSample(b);
+  expect(sa && sa->frames() == 4800 && sb && sb->frames() == 4800, "remote: read by the background decoder, then there");
+  expect(sampleCache().get(local) != nullptr, "remote: a local file is read at once, as before");
+  bool workerRead = false, workerMust = true;
+  std::thread([&] {
+    workerMust = mustNotReadNow(a);
+    workerRead = loadSample(a) != nullptr;
+  }).join();
+  expect(!workerMust && workerRead, "remote: other threads read as before");
+  {  // a program build (non-blocking) on any thread asks too
+    bool built = true;
+    std::thread([&] {
+      SampleCache::NonBlocking nb;
+      built = loadSample((remote / "missing.wav").u8string()) != nullptr || !mustNotReadNow(a);
+    }).join();
+    expect(!built, "remote: a non-blocking build asks instead of reading");
+  }
+  // Background readers: one per key at a time, and the generation moves when one ends.
+  sampleCache().waitIdle();
+  const uint64_t g0 = sampleCache().generation();
+  std::atomic<int> runs{0};
+  std::atomic<bool> release{false};
+  readInBackground("k39 test", [&] {
+    ++runs;
+    while (!release.load()) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+  });
+  readInBackground("k39 test", [&] { ++runs; });  // still running: not started again
+  release = true;
+  for (int i = 0; i < 2000 && backgroundReadsRunning() > 0; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  expect(backgroundReadsRunning() == 0 && runs.load() == 1, "background read: once per key at a time");
+  expect(sampleCache().generation() != g0, "background read: the generation moves (a rebuild)");
+  remotefs::setTestPrefixes({});
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -322,6 +418,8 @@ int main(int argc, char** argv) {
   testCrumbs();
   testCode();
   testDisk(fs::u8path(argc > 1 ? argv[1] : "k39_config"));
+  testInside();
+  testRemoteReads(fs::u8path(argc > 1 ? argv[1] : "k39_config") / "frz1118");
   {  // The heartbeat and crumb cost nothing to speak of: a crumb is one per user action, and a slow virtual machine's clock takes 13 us.
     const auto t0 = std::chrono::steady_clock::now();
     for (int i = 0; i < 1000000; ++i) crash::uiHeartbeat();

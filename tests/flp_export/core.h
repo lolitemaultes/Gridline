@@ -72,7 +72,7 @@ inline gl::Song featureSong() {
   kick.plugin.data = "/tmp/kick.wav";
   kick.gain = 0.7f;
   kick.pan = 0.25f;
-  kick.pitch = 2;
+  kick.pitchCents = 200;
   kick.mixerTrack = s.mixer[1].id;
   kick.swingMix = 0.5f;
   kick.polyphony = 1;

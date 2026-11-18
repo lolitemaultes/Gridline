@@ -8,6 +8,7 @@
 #include <atomic>
 #include <filesystem>
 #include <fstream>
+#include "../../core/RemoteFs.h"
 #include "../../core/SfzMap.h"
 #include "sfz_fx.h"
 #include "../../engine/RegionActivity.h"
@@ -66,7 +67,12 @@ struct RecentCache {
 // K-144: the file time of an .sfz, so an instrument edited on disk loads again. Its size and (up to
 // 256 KB) a hash of its text too: a file system that keeps times to the second (or two) shows two
 // writes within that time as one, and the second edit would play the instrument as it was.
+// FRZ-1118: never on a web or network drive (each build would stat and read the file there, on
+// the interface thread): such an instrument loads once per run.
 std::string sfzStamp(const std::string& path) {
+  if (gl::remotefs::isRemote(path)) {
+    return "remote";
+  }
   std::error_code ec;
   const std::filesystem::path fp = std::filesystem::u8path(path);
   const auto t = std::filesystem::last_write_time(fp, ec);
@@ -95,15 +101,29 @@ std::shared_ptr<const MsRuntime> buildMsRuntime(const std::string& data, int set
     if (const ZoneMap probe = parseZoneMap(data, set); !probe.sfzPath.empty()) key += "\n" + sfzStamp(probe.sfzPath);
   std::lock_guard<std::mutex> lk(cache.mu);
   if (auto r = cache.find(key)) return r;
+  // FRZ-1118: one built without a file it asked for is kept only for this sample generation: the
+  // rebuild after the file arrives builds it again (kept all the same: never freed on the audio thread).
+  const std::string partKey = key + "\n(incomplete " + std::to_string(sampleCache().generation()) + ")";
+  if (auto r = cache.find(partKey)) {
+    return r;
+  }
   auto rt = std::make_shared<MsRuntime>();
   rt->path = kMsTag;
   ZoneMap m = parseZoneMap(data, set);
   if (!m.sfzPath.empty()) {
     rt->sfz = sfzDataFor(m.sfzPath);
     rt->sfzCc = m.sfzCc;
+    if (!rt->sfz && mustNotReadNow(m.sfzPath)) {  // read in the background
+      cache.put(partKey, rt);
+      return rt;
+    }
   }
+  bool incomplete = false;
   for (const auto& z : m.zones) {
     SamplePtr s = resolveSample(z.path);
+    if (!s && readsDeferredHere()) {
+      incomplete = true;  // FRZ-1118: asked for (decoding, or on a network drive): built again once there
+    }
     if (!s || s->frames() < 2) continue;
     ZoneRt r;
     r.z = z;
@@ -120,7 +140,7 @@ std::shared_ptr<const MsRuntime> buildMsRuntime(const std::string& data, int set
     r.panR = std::min(1.f, 1.f + z.pan);
     rt->zones.push_back(std::move(r));
   }
-  cache.put(key, rt);
+  cache.put(incomplete ? partKey : key, rt);
   return rt;
 }
 
@@ -247,9 +267,45 @@ namespace {
 
 // Loaded SFZ instruments by path and file time, so a controller edit (a new zone text) keeps the
 // same data and the samples load once.
+// FRZ-1118: one on a web or network drive is read on a background thread when the interface asks for
+// it; until then there is none, and the rebuild after the read finds it here.
+RecentCache<sfzp::SfzData>& sfzCache() {
+  static auto* cache = new RecentCache<sfzp::SfzData>;  // never destroyed: a background read may end during exit
+  return *cache;
+}
+std::mutex& gSfzFailedMu = *new std::mutex;
+std::set<std::string>& gSfzFailed = *new std::set<std::string>;  // keys a background read could not load
+
 std::shared_ptr<const sfzp::SfzData> sfzDataFor(const std::string& path) {
-  static RecentCache<sfzp::SfzData> cache;
+  RecentCache<sfzp::SfzData>& cache = sfzCache();
   const std::string key = path + "\n" + sfzStamp(path);
+  if (mustNotReadNow(path)) {
+    {
+      std::lock_guard<std::mutex> lk(cache.mu);
+      if (auto r = cache.find(key)) {
+        return r;
+      }
+    }
+    {
+      std::lock_guard<std::mutex> lk(gSfzFailedMu);
+      if (gSfzFailed.count(key)) {
+        return nullptr;
+      }
+    }
+    readInBackground("sfz\n" + key, [key, path] {
+      std::shared_ptr<const sfzp::SfzData> d = sfzp::buildSfz(path);
+      if (!d) {
+        std::lock_guard<std::mutex> lk(gSfzFailedMu);
+        gSfzFailed.insert(key);
+        return;
+      }
+      std::lock_guard<std::mutex> lk(sfzCache().mu);
+      if (!sfzCache().find(key)) {
+        sfzCache().put(key, d);
+      }
+    });
+    return nullptr;
+  }
   std::lock_guard<std::mutex> lk(cache.mu);
   if (auto r = cache.find(key)) return r;
   std::shared_ptr<const sfzp::SfzData> d = sfzp::buildSfz(path);

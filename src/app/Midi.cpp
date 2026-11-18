@@ -35,10 +35,18 @@ double nowSec() {
 
 double MidiManager::clockNow() { return nowSec(); }
 
-MidiManager::MidiManager(AudioEngine& engine) : engine_(engine) {
+MidiManager::MidiManager(AudioEngine& engine, bool systemPorts) : engine_(engine), systemPorts_(systemPorts) {
   packs::platter::hub::setTapped(true);  // J-150: DJ decks read every input from the hub
   sender_ = std::thread([this] { senderLoop(); });
-  opener_ = std::make_unique<MidiOpener>(probeMidiService);
+  if (systemPorts_) {
+    opener_ = std::make_unique<MidiOpener>(probeMidiService);
+  } else {  // MIDI-1118: no MIDI client is created; the "service" answers at once with no devices
+    opener_ = std::make_unique<MidiOpener>([] {
+      MidiProbeResult r;
+      r.ok = true;
+      return r;
+    });
+  }
 }
 
 MidiManager::~MidiManager() {
@@ -126,7 +134,13 @@ void MidiManager::retry() {
 
 void MidiManager::apply() {
   // Never on a service that has not answered: creating a MIDI client could hang this thread.
-  if (!serviceAvailable()) return;
+  if (!serviceAvailable()) {
+    return;
+  }
+  if (!systemPorts_) {  // MIDI-1118: test runs open no device ports (stand-in devices listed by dev checks included)
+    status = "MIDI devices are not opened in test runs";
+    return;
+  }
   for (auto& p : ins_)
     if (p->in) p->in->closePort();
   ins_.clear();
@@ -375,7 +389,9 @@ void MidiManager::sendRaw(const std::vector<unsigned char>& m) {
 }
 
 void MidiManager::sendTo(const std::string& device, const std::vector<unsigned char>& m) {
-  if (device.empty() || m.empty() || !serviceAvailable()) return;
+  if (device.empty() || m.empty() || !serviceAvailable() || !systemPorts_) {
+    return;
+  }
   std::lock_guard<std::mutex> lk(outMu_);
   RtMidiOut* o = nullptr;
   for (auto& d : devOuts_)
@@ -405,6 +421,22 @@ void MidiManager::sendTo(const std::string& device, const std::vector<unsigned c
     o->sendMessage(&m);
   } catch (...) {
   }
+}
+
+bool MidiManager::outputOpen() {
+  std::lock_guard<std::mutex> lk(outMu_);
+  return out_ && out_->isPortOpen();
+}
+
+int MidiManager::openDeviceOutputs() {
+  std::lock_guard<std::mutex> lk(outMu_);
+  int n = 0;
+  for (const auto& d : devOuts_) {
+    if (d.second && d.second->isPortOpen()) {
+      ++n;
+    }
+  }
+  return n;
 }
 
 // Sends the engine's sync messages when they are heard: the engine stamps them

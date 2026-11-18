@@ -96,6 +96,31 @@ if(NOT found)
 endif()
 message(STATUS "quiet: real silence gives a report")
 
+# ---- a UI thread that cannot answer a signal (a lock, a network drive in the kernel) ----
+# The look at its stack stops it from outside (macOS, Windows) or asks /proc (Linux): the report has
+# its frames and says what it was inside.
+probe(stuck stuck 5)
+reports(stuck freeze found)
+list(LENGTH found n)
+if(NOT n EQUAL 1)
+  message(FATAL_ERROR "stuck: ${n} freeze reports")
+endif()
+file(READ "${found}" stuckText)
+if(NOT stuckText MATCHES "\ninside: a plugin call Stuck Probe: get state \\([0-9]+ s\\)\n")
+  message(FATAL_ERROR "stuck: the report does not say what the thread was inside:\n${stuckText}")
+endif()
+if(stuckText MATCHES "\\(not available\\)")
+  message(FATAL_ERROR "stuck: no stack:\n${stuckText}")
+endif()
+if(APPLE OR WIN32)
+  execute_process(COMMAND "${PYTHON}" "${TOOL}" "${found}" --symbols "${OUT}/symbols"
+                  RESULT_VARIABLE trc OUTPUT_VARIABLE stuckResolved ERROR_VARIABLE sterr)
+  if(NOT sterr MATCHES "no tool for" AND NOT stuckResolved MATCHES "probeStuckHere")
+    message(FATAL_ERROR "stuck: the stack does not resolve to the stuck function:\n${stuckResolved}\n${sterr}\n${stuckText}")
+  endif()
+endif()
+message(STATUS "stuck: the report has the stack and what the thread was inside")
+
 # ---- a suspended process (stopped and continued, as closest to a sleeping machine that a test can do) ----
 if(UNIX)
   file(WRITE "${OUT}/stop.sh" "\"$1\" \"$2\" beat 2 &\nsleep 0\nwait $!\n\"$1\" \"$2\" busy 14 &\npid=$!\nsleep 1\nkill -STOP $pid\nsleep 6\nkill -CONT $pid\nsleep 1\nkill -STOP $pid\nsleep 6\nkill -CONT $pid\nwait $pid\n")

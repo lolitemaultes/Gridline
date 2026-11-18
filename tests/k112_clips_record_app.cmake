@@ -1,8 +1,8 @@
 # Gridline - K-112c (checkpoint 48): Session record and Capture in the Clips layout's clip grid, in the
 # real app (a new set, hidden, isolated config, fixed frame time, the typing keyboard on):
 #   1. the selected MIDI track is armed: a click on an empty slot's record button records a new clip
-#      there while the transport runs in the clip launch mode (never the pattern mode, so the other
-#      clips would play on); the notes typed go into it, and it grows by whole bars;
+#      there while the transport runs in song mode under the grid (never the pattern mode, so the other
+#      clips play on); the notes typed go into it, and it grows by whole bars;
 #   2. a click on the recording clip's button stops the recording: the clip keeps its notes and whole
 #      bars and plays on;
 #   3. Capture with nothing playing on the track: the notes just played become a new clip in the
@@ -51,9 +51,10 @@ math(EXPR y2 "${y0} + 40")   # the third slot (rows 20 apart)
 # 1 and 2. Select the first slot (its track is armed), record into the third slot, type, stop.
 # N48-08 (checkpoint 49): Clips plays the A-row note keys (A = C, D = E, G = G; Z X C V set the octave and velocity).
 run(rec "10 move ${cx} ${y0}\n11 down 0\n12 up 0\n20 move ${bx} ${y2}\n21 down 0\n22 up 0\n60 transport\n80 sdlkey a down\n90 sdlkey a up\n130 sdlkey d down\n140 sdlkey d up\n200 dump\n201 transport\n240 move ${bx} ${y2}\n241 down 0\n242 up 0\n270 dump\n271 notes\n272 playstate\n273 transport\n280 quit discard\n" 290)
-string(REGEX MATCH "transport frame 60: pos [0-9]+ playing 1 seek [0-9]+ mode 2" m "${rec_log}")
+# grid-1118: the clip grid plays over the arrangement, on the song transport (mode 1), as the reference's.
+string(REGEX MATCH "transport frame 60: pos [0-9]+ playing 1 seek [0-9]+ mode 1" m "${rec_log}")
 if(NOT m)
-  message(FATAL_ERROR "FAIL: the recording should run with the transport in the clip launch mode (mode 2)\n${rec_log}")
+  message(FATAL_ERROR "FAIL: the recording should run with the song transport the grid plays over (mode 1)\n${rec_log}")
 endif()
 string(REGEX MATCH "dump frame 270: 1 clips[^\n]*\n  clip [0-9]+ kind 0 track 0 start ([0-9]+) len ([0-9]+)" m "${rec_log}")
 if(NOT m)

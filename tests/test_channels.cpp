@@ -534,7 +534,7 @@ int main() {
     const Channel& hat = s.channels[0];
     const Channel& keys = s.channels[1];
     const Channel& lay = s.channels[2];
-    expect(std::fabs(hat.pan - 1.0f) < 1e-4f && std::fabs(hat.gain - 0.5f) < 1e-4f && hat.pitch == 1 && hat.fine == 30,
+    expect(std::fabs(hat.pan - 1.0f) < 1e-4f && std::fabs(hat.gain - 0.5f) < 1e-4f && hat.pitchCents == 100.0f && hat.fine == 30,
            "levels: pan, volume, pitch + fine tune (cents split into semitones and fine)");
     expect(hat.cutGroup == 1 && hat.cutBy == 2 && keys.cutGroup == 0 && keys.cutBy == 0, "cut groups (plugin self-cut ignored)");
     expect(hat.echo.count == 3 && std::fabs(hat.echo.feedback - 0.5f) < 1e-4f && std::fabs(hat.echo.time - 0.5f) < 1e-4f &&

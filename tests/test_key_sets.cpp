@@ -171,7 +171,8 @@ int main(int argc, char** argv) {
     for (const Chord& ch : tracker.bindings(c.id)) {
       if (std::find(sb.begin(), sb.end(), ch) != sb.end()) continue;
       const std::string id = c.id;
-      const bool safe = startsWith(id, "view.") || startsWith(id, "help.") || startsWith(id, "typing.") || id == "edit.rename" || id == "pattern.new";
+      const bool safe = startsWith(id, "view.") || startsWith(id, "help.") || startsWith(id, "typing.") || id == "edit.rename" || id == "pattern.new" ||
+                        id == "pattern.clone";  // TRK-1118: Duplicate pattern adds a pattern, as New pattern
       expect(safe, ("Tracker adds " + format(ch) + " to " + id + ": not an open / show / pick command").c_str());
     }
   }

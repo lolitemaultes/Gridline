@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 #include "../../third_party/imgui/imgui.h"
+#include "../core/Timeline.h"
 #include "../core/Types.h"
 
 namespace gl {
@@ -80,6 +81,9 @@ bool arrangementRecordTick(const App& a, double& tick);
 bool arrangementCapturing(const App& a);
 // Checkpoint 59 (N58-12): a launch grid in Clips' words, the control bar's ("None", "1/16" ... "1 Bar", "Clip").
 const char* gridName(LaunchGrid g);
+// grid-1118: Clips' launch grid choices (None, 8 Bars ... 1/16) as menu items (`combo`: selectables); true
+// with `picked` set when one was picked.
+bool gridItems(LaunchGrid cur, LaunchGrid& picked, bool combo);
 // N49-09: Main's title (grid, mixer band): Main selected, its chain shown.
 void selectMain(App& a);
 void setDrawMode(App& a, bool on);
@@ -113,6 +117,29 @@ void withoutGridClips(const App& a, Song& s, const std::function<void(Song&)>& f
 // ---- the main view: clip grid or arrangement (one at a time, Tab swaps) ----
 bool gridView(const App& a);
 void showView(App& a, bool grid);
+// grid2-1118: Clips' edit grid keys (Cmd+1 narrower, Cmd+2 wider, Cmd+3 triplet, Cmd+4 snap, Cmd+5 fixed /
+// adaptive) on the Arrangement or, while it has the keyboard, the clip editor (`which` 0 / 1), and the
+// global launch quantisation keys (Cmd+6 .. 0: 1/16, 1/8, 1/4, 1 Bar, None). editGrid: the editor's grid
+// lines and snap (inside Clips, once a key changed them; else they stay), called where the editor works
+// them out; a pick in its snap menu gives the grid back to that menu. gridLabel: the grid as shown.
+void gridKeys(App& a);
+// grid2-1118 (dev input "grid2state"): prints the scene the engine launched last and its tempo, the song's
+// tempo and meter, the edit grids, the selected slots, each track's launch grid and removed stop buttons,
+// and every clip with launch settings of its own.
+void devGrid2State(App& a, int frame);
+void editGrid(const App& a, int which, Snap snap, double pxPerTick, Tick& visGrid, Tick& snapG, Tick& effGrid);
+std::string gridLabel(const App& a, int which);
+// grid2-1118: a grid clip's launch settings box in the clip view (its launch mode, quantisation, legato and
+// follow actions; `heading`: under a Launch title bar of its own, as the audio clip view's). False (and
+// nothing drawn) for a clip that is not in the clip grid. followFields: the follow action fields of a
+// clip's or a scene's FollowSpec (true when changed); followActionName: an action in the interface's words.
+bool clipLaunchBox(App& a, ObjectId clip, bool heading);
+bool followFields(App& a, FollowSpec& f, bool clip, Tick clipLen);
+const char* followActionName(FollowAction f);
+// grid2-1118: inside the Arrangement's drop target: grid clips dragged from the clip grid (GL_GRIDCLIPS)
+// land at `at` (no earlier than the Arrangement's start) on `track` and the tracks after it, one undo
+// step. True when that drag is the one over it (the caller takes no other payload then).
+bool dropGridClips(App& a, int track, Tick at);
 // Per frame while Live is active: keeps exactly one of the two views open (a view closed from a
 // menu brings the other one back), and Tab swaps them when no text field has the keyboard.
 void viewFrame(App& a);
@@ -220,6 +247,11 @@ void devGridAsk();
 // a one-bar MIDI clip in the selected slot (else the selected track's first empty one). Run next frame.
 void gridInsertScene(App& a);
 void gridInsertMidiClip(App& a);
+// grid-1118: Capture and insert scene (Cmd+Shift+I): a new scene under the selected one with a copy of
+// every clip playing now, which takes over from them without a break (one undo step). Back to
+// arrangement (F10, the control bar's button): every track plays its arrangement clips again.
+void gridCaptureScene(App& a);
+void backToArrangement(App& a);
 // N45-08: the track a new track goes after: the selected title or header, else the selected slot's
 // track, else a selected clip's track; -1 when nothing is selected (it then goes after the tracks in
 // use). newTrack makes an audio or MIDI track there and selects it (title and slot).

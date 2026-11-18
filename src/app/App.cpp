@@ -341,6 +341,7 @@ void App::syncEngine() {
   builder.setPdc(pdc);
   builder.setAsyncSamples(true);
   builder.setDeferRenders(editing);
+  builder.setOriginEpoch(doc.projectEpoch() + 1);  // grid2-1118: the transport moves with the Clips Arrangement
   builtSampleGen_ = sampleGen;
   builtRevision_ = doc.revision();
   const Song& s = doc.song();

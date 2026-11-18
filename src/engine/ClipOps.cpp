@@ -4,13 +4,16 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <map>
 #include "../core/ClipLoop.h"
 #include "../core/ClipRate.h"
+#include "../core/Meter.h"
 #include "../core/PluginParams.h"
 #include "../core/TrackReceipt.h"
 #include "../packs/edison/edison.h"
 #include "ClipSource.h"
 #include "LoopFile.h"
+#include "PlaylistTools.h"
 #include "Render.h"
 #include "Sample.h"
 #include "TimeStretch.h"
@@ -247,6 +250,74 @@ int unloopWithinFirstPass(const Song& song, std::vector<Clip>& clips, const std:
     ++n;
   }
   return n;
+}
+
+bool loopClipsToNext(Song& song, const std::set<ObjectId>& clips, bool on) {
+  TempoMap map;
+  map.build(song);
+  std::map<ObjectId, Tick> firstPass;  // off: each looping clip's own length (its first pass)
+  if (!on) {
+    for (const Clip& c : song.playlist) {
+      if (clips.count(c.id) && c.loop) {
+        firstPass[c.id] = loopFirstPass(song, c, map);
+      }
+    }
+  }
+  bool changed = setClipsLoop(song, clips, on);
+  map.build(song);
+  // The end the regions with nothing after them run to: the song's end (the Project End marker where
+  // the user put it), or further, so each of them repeats once at least (one end for them all, as the
+  // reference's loops run to the project's end). loop2-1118: that end is on a bar line: a song end
+  // between bars is taken down to the bar before it (up, when that would leave a region no whole
+  // repeat), so the loops never stop at an odd spot.
+  Tick songEnd = song.projectEnd > 0 ? song.projectEnd : 0, oneRepeat = 0;
+  for (const Clip& c : song.playlist) {
+    if (song.projectEnd <= 0) {
+      songEnd = std::max(songEnd, c.start + song.clipLength(c));
+    }
+    if (on && clips.count(c.id)) {
+      oneRepeat = std::max(oneRepeat, c.start + 2 * loopFirstPass(song, c, map));
+    }
+  }
+  if (on) {
+    const MeterMap mm(song);
+    const Tick want = std::max(songEnd, oneRepeat);
+    const Tick down = mm.barStartAt(want);
+    songEnd = down == want ? want : down >= oneRepeat ? down : mm.nextBar(want);
+  }
+  std::vector<Clip> v = song.playlist;
+  for (const Clip& c : song.playlist) {
+    if (!clips.count(c.id)) {
+      continue;
+    }
+    const Tick len = song.clipLength(c), end = c.start + len;
+    Tick to = end;
+    if (on) {
+      const Tick pass = loopFirstPass(song, c, map);
+      if (pass <= 0 || len > pass) {
+        continue;  // no content to repeat, or it repeats already
+      }
+      Tick next = -1;
+      for (const Clip& o : song.playlist) {
+        if (o.id != c.id && o.track == c.track && o.kind != ClipKind::Automation && o.start >= end && (next < 0 || o.start < next)) {
+          next = o.start;
+        }
+      }
+      to = next >= 0 ? next : songEnd;
+    } else {
+      const auto it = firstPass.find(c.id);
+      if (it == firstPass.end() || it->second <= 0 || len <= it->second) {
+        continue;
+      }
+      to = c.start + it->second;
+    }
+    if (to != end) {
+      v = pltools::resizeEnds(song, v, {c.id}, to - end, false, &map);
+      changed = true;
+    }
+  }
+  song.playlist = std::move(v);
+  return changed;
 }
 
 ObjectId splitClipAt(Song& song, ObjectId id, Tick at) {

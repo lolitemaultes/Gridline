@@ -270,6 +270,26 @@ bool duplicateScene(Song& s, int k, Tick len);
 void setSceneName(Song& s, int k, const std::string& name);
 void setSceneColor(Song& s, int k, Rgb color);
 const SceneInfo* sceneInfo(const Song& s, int k);  // nullptr: nothing set
+// grid2-1118: a scene's length (LiveSettings::sceneLen, else kSceneBars bars of the meter at the start), the
+// scene a live-area tick lies in, and the scenes the live area holds.
+inline constexpr int kSceneBars = 4;
+Tick sceneTicksOf(const Song& s);
+int sceneOf(const Song& s, Tick start);
+int sceneCount(const Song& s);
+// grid2-1118: the song needs project version 10 (a clip grid, or clip / scene launch settings, follow actions,
+// tempo, time signature, removed stop buttons or the finer launch grids).
+bool usesGridV10(const Song& s);
+// grid2-1118 (projects before version 10): every slot holds one clip. A slot's further clips each move to an
+// empty scene inserted under it, in their time order (the first stays); returns how many moved.
+int splitSharedSlots(Song& s);
+// grid2-1118: the empty slot (track, scene) shows its stop button (Cmd+E removes it; PlaylistTrack::noStop).
+bool hasStopButton(const Song& s, int track, int scene);
+void setStopButton(Song& s, int track, int scene, bool on);
+// grid2-1118: a scene's tempo and time signature (its own, else one its name gives: "120 BPM", "3/4").
+double sceneTempo(const SceneInfo& sc);
+bool sceneSignature(const SceneInfo& sc, int& num, int& den);
+// grid2-1118: scene k's tempo, time signature and follow actions (its name and colour stay).
+void setSceneSettings(Song& s, int k, const SceneInfo& info);
 int deleteTracks(Song& s, const std::vector<int>& tracks, std::string* why = nullptr);
 int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why = nullptr);
 int deleteTracks(Document& d, const std::vector<int>& tracks, std::string* why = nullptr);

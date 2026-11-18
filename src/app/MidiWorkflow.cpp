@@ -22,6 +22,7 @@
 #include "../core/Meter.h"
 #include "../packs/PacksUi.h"
 #include "MackieUi.h"
+#include "TrackerView.h"
 
 namespace gl {
 
@@ -257,6 +258,10 @@ CaptureTime captureTimeOf(const App& a, double stamp) {
 void App::playedNoteOn(ObjectId channel, int pitch, int velocity, double stamp) {
   j31::chordEditorNote(*this, pitch, true);  // J-31: learn chords from MIDI input
   recmore::noteWhileWaiting(*this, channel, pitch, velocity);  // K-123 (0.7.7): the first note starts the take
+  // TRK-1118: the Tracker's pattern editor in edit mode (or recording) enters the note as a note key.
+  if (trackerview::midiNote(*this, pitch, velocity, true)) {
+    return;
+  }
   if (stepRecord && !engine.playing()) {
     stepRecorder.press(pitch, velocity);
     return;
@@ -272,6 +277,9 @@ void App::playedNoteOn(ObjectId channel, int pitch, int velocity, double stamp) 
 
 void App::playedNoteOff(ObjectId channel, int pitch, double stamp) {
   j31::chordEditorNote(*this, pitch, false);
+  if (trackerview::midiNote(*this, pitch, 0, false)) {  // TRK-1118
+    return;
+  }
   if (stepRecord && !engine.playing()) {
     Tick g = piano.effGrid > 0 ? piano.effGrid : snapTicks(doc.song(), piano.snap);
     stepRecorder.step = std::max<Tick>(1, g);
@@ -363,7 +371,8 @@ void App::processMidi() {
     for (const recmore::HeldNote& h : recmore::takeStartNotes()) {
       if (recorder.active() && midiarm::records(*this, h.channel)) recorder.noteOn(doc, h.channel, h.pitch, h.velocity, static_cast<double>(st.start));
     }
-  } else if (recorder.active() && (!recNow || recorder.songMode() != (engine.mode() == PlayMode::Song))) {
+  } else if (recorder.active() && (!recNow || recorder.songMode() != (engine.mode() == PlayMode::Song && !sess))) {
+    // (grid-1118: Session record runs on the song transport the grid plays over; its take is a clip's)
     recorder.end(doc, lastRecPos_);  // stopped, disarmed, or the play mode changed (a new take starts next frame)
     logicplug::endLayerTakes(*this, lastRecPos_);
   }
