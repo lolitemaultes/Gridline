@@ -453,7 +453,8 @@ class Session {
   void noteForeign(const Op& op, SiteId site, const Json& before);
   bool foreignSince(const CollabStep::Group& g, int dir) const;
   bool blockedBy(const std::string& key, const Json& expected, const Stamp& mine) const;
-  bool usedByOthers(const Path& p, const Stamp& mine, const Json& expected, std::set<SiteId>& who) const;
+  bool usedByOthers(const Path& p, const Stamp& mine, const Json& expected, std::set<SiteId>& who,
+                    const std::set<std::string>* undoing = nullptr) const;
   void seedForeignFromReplica();
   void pruneForeign();
   void refreshStepMarks();

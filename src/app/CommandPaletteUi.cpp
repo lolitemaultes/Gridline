@@ -344,6 +344,7 @@ void build(App& a) {
   std::set<std::string> usedCmds;
   std::vector<int> winRow(kWindowCount, -1);
   std::map<std::string, int> sameName;  // items of one menu that read the same ("Empty project" twice: a template of that name)
+  std::vector<std::pair<size_t, std::string>> winCmds;  // window rows whose menu item runs a keymap command
 
   // 1. The menus, as drawn.
   std::vector<MenuRec> recs;
@@ -384,6 +385,9 @@ void build(App& a) {
       }
       if (w.cmd) usedCmds.insert(w.cmd);
       if (r.cmd) usedCmds.insert(r.cmd);
+      if (!w.cmd && r.cmd) {
+        winCmds.push_back({static_cast<size_t>(winRow[static_cast<size_t>(win)]), r.cmd});
+      }
       r.rowId = id;
       continue;
     }
@@ -424,6 +428,15 @@ void build(App& a) {
     act.occ = r.occ;
     at[id] = rows.size();
     addRow(rows, acts, std::move(e), std::move(act));
+  }
+
+  // CI-1118: a window's own item that runs a keymap command no other item runs (Smooth's and the
+  // Tracker's Settings... on Cmd+,, where MIDI settings shows no key): the window row is the command's.
+  std::set<std::string> winCmdTaken;
+  for (const auto& [row, cmd] : winCmds) {
+    if (!at.count("cmd:" + cmd) && rows[row].commandId.empty() && winCmdTaken.insert(cmd).second) {
+      rows[row].commandId = cmd;
+    }
   }
 
   // 2. The windows no menu item opened.

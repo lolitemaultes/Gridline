@@ -1,7 +1,8 @@
 # Gridline: K-124 to K-127, hidden app runs (isolated config and home):
 #   K-124: Esc in the piano roll, channel rack or mixer brings the playlist to the front (also in the
-#          Live and Logic layouts); Esc that closes a prompt (a popup with a text field) leaves the
-#          focus where it was; Esc on the playlist changes nothing.
+#          Logic layout, Smooth); Esc that closes a prompt (a popup with a text field) leaves the
+#          focus where it was; Esc on the playlist changes nothing. In the Live layout (Clips) Esc
+#          never changes the main view (N45-01): the piano roll keeps the focus.
 #   K-125: an instrument added from the rack's add menu, "insert below", "replace", a drop on the
 #          rack or the playlist and the plugin picker opens its editor, focused; undo / redo, a
 #          project load and a collaborator's new channel open nothing.
@@ -109,11 +110,16 @@ foreach(layout live logic)
 26 key escape
 32 instview
 " "${OUT}/fixture.gridline.json" --layout ${layout} --pane piano)  # the Logic layout starts with its bottom pane closed
+  if(layout STREQUAL "live")
+    set(want "Piano roll")  # N45-01: Clips' Esc leaves the main view (and the focus) as it is
+  else()
+    set(want "Playlist")
+  endif()
   expectFocus(esc_${layout} 16 "Piano roll")
-  expectFocus(esc_${layout} 24 "Playlist")
-  expectFocus(esc_${layout} 32 "Playlist")
+  expectFocus(esc_${layout} 24 "${want}")
+  expectFocus(esc_${layout} 32 "${want}")
 endforeach()
-message(STATUS "k124: Live and Logic layouts: Esc from the piano roll focuses the playlist")
+message(STATUS "k124: Logic layout: Esc from the piano roll focuses the playlist; Live (Clips) keeps the piano roll")
 
 # ---------------------------------------------------------------- K-125 ----
 run(add 150 "5 toasts clear

@@ -1586,7 +1586,10 @@ void adoptPeerChannels(App& a) {
     if (c->plugin.type == "gl.sampler") {
       continue;  // (this computer's samplers come with their clips: a take, a drop)
     }
-    a.later([&a, id] {
+    // CI-1118: the track joins the step that added the instrument, so one Undo takes both back
+    // (in a collaboration the first Undo used to take back only the track, the instrument stayed).
+    const uint64_t serial = a.doc.history().stateSerial();
+    a.later([&a, id, serial] {
       const Song& x = a.doc.song();
       if (!x.channel(id) || trackmodes::instrumentTrackOf(x, id) >= 0 || !active(a)) {
         return;
@@ -1596,14 +1599,16 @@ void adoptPeerChannels(App& a) {
         return;
       }
       bool made = false;
-      a.doc.editSong("instrument track", [&](Song& y) {
-        if (!trackmodes::makeInstrumentTrack(y, t, id)) {
-          return;
-        }
-        made = true;
-        const Channel* ch = y.channel(id);
-        y.tracks[static_cast<size_t>(t)].name = std::to_string(trackmodes::shownNumber(y, t)) + " " + (ch ? ch->name : std::string());
-        trackmodes::addReturnSendsTo(y, ch && ch->mixerTrack != y.masterId() ? ch->mixerTrack : kNoId);  // N53-08: as a dropped instrument's
+      a.doc.amendStep(serial, [&] {
+        a.doc.editSong("instrument track", [&](Song& y) {
+          if (!trackmodes::makeInstrumentTrack(y, t, id)) {
+            return;
+          }
+          made = true;
+          const Channel* ch = y.channel(id);
+          y.tracks[static_cast<size_t>(t)].name = std::to_string(trackmodes::shownNumber(y, t)) + " " + (ch ? ch->name : std::string());
+          trackmodes::addReturnSendsTo(y, ch && ch->mixerTrack != y.masterId() ? ch->mixerTrack : kNoId);  // N53-08: as a dropped instrument's
+        });
       });
       if (made) {
         knownPos = a.doc.history().position();

@@ -1522,8 +1522,11 @@ bool Session::foreignSince(const CollabStep::Group& g, int dir) const {
 
 // True when someone else has, after `mine`, written inside `p` or (an object of the five lists)
 // made something of theirs refer to it: a clip of a pattern, notes for a channel, a route or a
-// send to an insert, a link to a controller.
-bool Session::usedByOthers(const Path& p, const Stamp& mine, const Json& expected, std::set<SiteId>& who) const {
+// send to an insert, a link to a controller. A referrer the same undo / redo takes back (`undoing`:
+// the registers and objects it rewrites or removes) does not count: its reference goes with it
+// (CI-1118: Clips' instrument track, renumbered by a collaborator, kept the instrument it was made with).
+bool Session::usedByOthers(const Path& p, const Stamp& mine, const Json& expected, std::set<SiteId>& who,
+                           const std::set<std::string>* undoing) const {
   bool used = false;
   if (auto it = foreignIn_.find(joinPath(p)); it != foreignIn_.end() && it->second > mine &&
       (expected.is(Json::Type::Null) || !sameJson(replica_.materialize(p), expected))) {  // changed and not put back
@@ -1540,14 +1543,26 @@ bool Session::usedByOthers(const Path& p, const Stamp& mine, const Json& expecte
       used = true;
     }
   };
+  auto goesToo = [&](const Path& q) {  // q or an object holding it is taken back by this step
+    if (!undoing) {
+      return false;
+    }
+    for (size_t len = q.size(); len >= 2; --len) {
+      if (undoing->count(joinPath(Path(q.begin(), q.begin() + static_cast<std::ptrdiff_t>(len))))) {
+        return true;
+      }
+    }
+    return false;
+  };
   Path path = {"song"};
   std::function<void(const Node&, const std::string&)> walk = [&](const Node& n, const std::string& key) {
     if (path.size() >= 2 && path[1] == p[1] && path.size() >= 3 && path[2] == p[2]) return;  // the object itself
     for (const auto& [k, c] : visibleKids(n, Stamp{})) {
       path.push_back(*k);
       if (c->kind == Node::Kind::Value) {
-        if (isRefField(*k) && c->val.is(Json::Type::Number) && std::to_string(static_cast<long long>(c->val.number)) == id)
+        if (isRefField(*k) && c->val.is(Json::Type::Number) && std::to_string(static_cast<long long>(c->val.number)) == id && !goesToo(path)) {
           foreignAtPath(Path(path.begin(), path.end() - 1));
+        }
       } else {
         if (isChannelMap(key) && *k == id) foreignAtPath(path);
         walk(*c, *k);
@@ -1701,6 +1716,17 @@ bool Session::stepOnce(int dir, StepOutcome& out) {
     }
   for (size_t k = 0; k < n; ++k)
     if (!st->groups[k].unit.empty() && !unitOk[st->groups[k].unit]) ok[k] = 0;
+  // what this undo / redo takes back: the values it writes again, the objects it removes
+  std::set<std::string> undoing;
+  for (size_t k = 0; k < n; ++k) {
+    const CollabStep::Group& g = st->groups[k];
+    if (!ok[k]) {
+      continue;
+    }
+    if ((g.cls == 0 && !sameJson(g.backVal, g.fwdVal)) || (g.cls == 2 && g.kids.empty() && !(dir < 0 ? g.backPres : g.fwdPres))) {
+      undoing.insert(joinPath(g.path));
+    }
+  }
   // 3. the inverse (undo) or the step again (redo), as new edits of ours
   std::vector<Op> ops;
   std::vector<std::pair<size_t, size_t>> owner;  // op index -> group
@@ -1743,7 +1769,7 @@ bool Session::stepOnce(int dir, StepOutcome& out) {
       if (!target) {  // the object goes (undo of a create, redo of a delete)
         if (!node || !replica_.visible(g.path)) continue;
         std::set<SiteId> who;
-        if (usedByOthers(g.path, g.mine, dir < 0 ? g.fwdVal : g.backContent, who)) {
+        if (usedByOthers(g.path, g.mine, dir < 0 ? g.fwdVal : g.backContent, who, &undoing)) {
           out.keptFor.insert(who.begin(), who.end());
           ++out.kept;
           if (isTopObject(g.path) || node->kind != Node::Kind::List) {  // D3: kept, with a message
