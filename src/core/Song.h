@@ -379,9 +379,10 @@ struct PlaylistTrack {
   // Folding: a track can hold the tracks below it as a group.
   int groupSize = 0;      // number of following tracks in this track's group (0 = not a group)
   bool folded = false;    // group collapsed in the playlist
-  bool gridFolded = false;  // K-112c (checkpoint 52, S01): the group collapsed in Clips' clip grid (each view folds on its own)
+  bool gridFolded = false;  // K-112c (checkpoint 52, S01): the group collapsed in Clips' clip grid (each view folds on its own; K-314: each person's own)
   bool locked = false;    // J-11: clips on the track cannot be edited
-  // K-123: the track shows its recorded takes as lanes under it (engine/TakeLanes.h).
+  // K-123: the track shows its recorded takes as lanes under it (engine/TakeLanes.h). K-314: view state, each
+  // person's own in a collaboration (as folding).
   bool takeLanes = false;
   int flIcon = 0;         // J-39 (FL interop): FL's icon number (0 = none), kept for export
   int icon = 0;           // J-211: Gridline track icon (core/TrackIconSet.h, 0 = none)
@@ -391,7 +392,8 @@ struct PlaylistTrack {
   ObjectId channel = kNoId;  // Instrument: the linked rack channel
   // K-112b (R02-01): the automation lane under the track in the Tracks layout. It is part of the
   // track, so it moves with it and is saved with the project. laneSet: a parameter was chosen
-  // (laneOwner / laneIndex, a ParamId); laneShown: the lane is open.
+  // (laneOwner / laneIndex, a ParamId); laneShown: the lane is open (K-314: view state, each person's own in a
+  // collaboration; saved with or without a chosen parameter).
   bool laneShown = false;
   bool laneSet = false;
   ObjectId laneOwner = kNoId;
@@ -404,12 +406,17 @@ struct PlaylistTrack {
   // (the reference's track keeps its channel strip and automation without regions). Only a track
   // with no instrument or audio link of its own; other layouts ignore it (kNoId = none).
   ObjectId sound = kNoId;
+  // K-314 B-03: a track the Clips layout shows on this computer only, for a collaborator's instrument
+  // that has no track of its own (a view of that channel, not song data): never saved and never shared
+  // (written as an empty track), kept here when a collaborator's change comes in, dropped when its
+  // channel goes or a shared track takes its place (collab/LocalState.cpp keepSessionState).
+  bool shownHere = false;
   bool operator==(const PlaylistTrack& o) const {
     return name == o.name && color == o.color && muted == o.muted && height == o.height && launch == o.launch &&
            pad == o.pad && follow == o.follow && syncStart == o.syncStart && groupSize == o.groupSize && folded == o.folded && gridFolded == o.gridFolded &&
            locked == o.locked && takeLanes == o.takeLanes && flIcon == o.flIcon && icon == o.icon && mode == o.mode && mixer == o.mixer && channel == o.channel &&
            laneShown == o.laneShown && laneSet == o.laneSet && laneOwner == o.laneOwner && laneIndex == o.laneIndex &&
-           autoMode == o.autoMode && sound == o.sound;
+           autoMode == o.autoMode && sound == o.sound && shownHere == o.shownHere;
   }
   bool liveDefaults() const {
     return launch == LaunchGrid::FourBeats && pad == PadMode::Trigger && follow == FollowMode::Loop && syncStart == LaunchGrid::Now;
@@ -645,7 +652,7 @@ struct MixerTrack {
            swapLR == o.swapLR && slots == o.slots && sends == o.sends && eqGain == o.eqGain && eqFreq == o.eqFreq &&
            eqQ == o.eqQ && icon == o.icon && disabled == o.disabled && dock == o.dock &&
            latencyOffset == o.latencyOffset && threaded == o.threaded && group == o.group && groupLink == o.groupLink && input == o.input &&
-           inputStereo == o.inputStereo && monitor == o.monitor && armed == o.armed && recPoint == o.recPoint &&
+           inputStereo == o.inputStereo && monitor == o.monitor && armed == o.armed && recordSafe == o.recordSafe && recPoint == o.recPoint &&
            inputTrim == o.inputTrim && inputInvert == o.inputInvert &&
            soloAlone == o.soloAlone && separator == o.separator && locked == o.locked && flIcon == o.flIcon &&
            freeze == o.freeze && hibernate == o.hibernate && room == o.room;
@@ -974,7 +981,7 @@ struct Song {
            mixer == o.mixer && links == o.links && modLinks == o.modLinks && automations == o.automations &&
            markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live && keptSends == o.keptSends &&
            arrangements == o.arrangements && cycleStart == o.cycleStart && cycleEnd == o.cycleEnd && cycleOn == o.cycleOn && projectEnd == o.projectEnd &&
-           currentArrangement == o.currentArrangement && panLaw == o.panLaw && stage == o.stage && stageRooms == o.stageRooms && trackReceipt == o.trackReceipt && flExportGridline == o.flExportGridline && flOrigin == o.flOrigin &&
+           currentArrangement == o.currentArrangement && autoCrossfades == o.autoCrossfades && panLaw == o.panLaw && stage == o.stage && stageRooms == o.stageRooms && trackReceipt == o.trackReceipt && flExportGridline == o.flExportGridline && flOrigin == o.flOrigin &&
            smooth.controls == o.smooth.controls;  // K-112D D6: Smart Control mappings (not the Library pane: view state)
   }
   bool operator!=(const Song& o) const { return !(*this == o); }

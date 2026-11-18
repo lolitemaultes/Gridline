@@ -199,6 +199,8 @@ int syncGroupRouting(Song& s);
 int syncGroupRouting(Document& d);  // one undo step "group routing" (none when nothing changes)
 // Tracks named by their place ("3 Audio") take their place's number again (N51-11: after a move).
 void renumberTrackNames(Song& s);
+// K-314 B-06: a track named by its place shows another place's number (renumberTrackNames would change it).
+bool trackNumbersStale(const Song& s);
 // Checkpoint 53 (N52-06): a track renamed (every layout's rename): its mixer track (an audio or group
 // track's, an instrument's own) and its instrument follow when they carried the track's old name, so
 // the mixer, the members' Out and the rack show the new one. One undo step "rename playlist track";

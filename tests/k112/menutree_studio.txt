@@ -491,7 +491,7 @@ Tools > Score logger > Keep notes for > 10 minutes			ec
 Tools > Score logger > Keep notes for > 20 minutes			e-
 Tools > Score logger > Keep notes for > 30 minutes			e-
 Tools > Score logger > Keep notes for > 60 minutes			e-
-Tools > Route channels to free mixer tracks	Ctrl+L	rack.routeFree	e-
+Tools > Route channels to free mixer tracks		rack.routeFree	e-
 Tools > Unmute all channels			e-
 Tools > Unsolo all mixer tracks			e-
 Tools > Close plugin windows	Alt+F12	view.closePlugins	e-

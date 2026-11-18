@@ -377,20 +377,54 @@ void routePluginWindows(App& a) {
 
 bool pluginWindowShown(App& a, const PluginTarget& t) { return hostedEditorOpen(t) || panelShowing(a, t); }
 
+namespace {
+// K-314 (A-01): the instrument window the other layouts had open (App::settingsChannel) while the
+// Tracker's lower band uses that field for its own screen: saved with the project from the Tracker and
+// open again once the Tracker is left, so a visit there changes neither.
+struct ParkedChannel {
+  int wasTracker = -1;  // (-1: not yet seen)
+  ObjectId channel = kNoId;
+  uint64_t epoch = 0;
+};
+ParkedChannel gParked;
+
+ObjectId parkedChannel(const App& a) { return gParked.epoch == a.doc.projectEpoch() ? gParked.channel : kNoId; }
+}  // namespace
+
+void trackerChannelFrame(App& a) {
+  const bool tracker = layoutui::active() == layout::Preset::Tracker;
+  // (-1: a launch, its project loaded before the Tracker was in front: what it opened is kept, unless
+  // reopenPluginWindowList kept it already)
+  const bool keptOnLoad = gParked.wasTracker < 0 && gParked.channel != kNoId && gParked.epoch == a.doc.projectEpoch();
+  if (gParked.wasTracker != 1 && tracker && !keptOnLoad) {
+    gParked.channel = a.settingsChannel, gParked.epoch = a.doc.projectEpoch();
+  } else if (gParked.wasTracker == 1 && !tracker && !trackereditors::pluginWindowOpen(a)) {
+    const ObjectId ch = parkedChannel(a);  // ("Open plugin window" in the Tracker: that window stays)
+    a.settingsChannel = ch != kNoId && a.doc.song().channel(ch) ? ch : kNoId;
+  }
+  if (!tracker) {
+    gParked.channel = kNoId;
+  }
+  gParked.wasTracker = tracker ? 1 : 0;
+}
+
 std::vector<std::pair<ObjectId, int>> openPluginWindowList(App& a) {
   std::vector<std::pair<ObjectId, int>> v;
   auto add = [&v](ObjectId owner, int slot) {
     if (owner != kNoId && std::find(v.begin(), v.end(), std::make_pair(owner, slot)) == v.end()) v.emplace_back(owner, slot);
   };
-  // K-106 cp22: the Tracker's lower band shows a channel's settings, not a plugin window (saved as none)
-  const std::pair<ObjectId, int> chan{trackereditors::ownsChannelWindow(a) ? kNoId : a.settingsChannel, -1};
+  // K-106 cp18-cp22: in the Tracker the lower band's screen (Sample editor, Instrument editor, Channel
+  // frame) is view state of the band, not a plugin window: it is not saved with the project (only "Open
+  // plugin window", floating, is). K-314 (A-01): the instrument window the other layouts had open is.
+  ObjectId chanId = a.settingsChannel;
+  if (trackereditors::ownsChannelWindow(a)) {
+    const ObjectId ch = parkedChannel(a);
+    chanId = ch != kNoId && a.doc.song().channel(ch) ? ch : kNoId;
+  }
+  const std::pair<ObjectId, int> chan{chanId, -1};
   for (const PluginTarget& t : openHostedEditorTargets())  // installed plugins' own windows
     if (t.node == 0 && std::make_pair(t.owner, t.slot) != chan && std::make_pair(t.owner, t.slot) != a.fxEditor) add(t.owner, t.slot);
-  // K-106 cp18-cp20: in the Tracker the current instrument's screen in the lower band (Sample editor,
-  // Instrument editor, Channel frame) is view state of the band, not a plugin window: it is not saved
-  // with the project (only "Open plugin window", floating, is).
-  const bool trackerBand = layoutui::active() == layout::Preset::Tracker && trackereditors::shown(a);
-  if (!trackerBand) add(chan.first, -1);
+  add(chan.first, -1);
   add(a.fxEditor.first, a.fxEditor.second);
   return v;
 }
@@ -413,6 +447,9 @@ void reopenPluginWindowList(App& a, const std::vector<std::pair<ObjectId, int>>&
       }
       fx = {owner, slot};
     }
+  }
+  if (trackereditors::ownsChannelWindow(a)) {  // K-314 (A-01): opened in the Tracker: kept for the other layouts
+    gParked.channel = chan, gParked.epoch = a.doc.projectEpoch();
   }
   if (chan != kNoId) {
     if (!trackereditors::ownsChannelWindow(a)) {

@@ -3,7 +3,8 @@
 //   1. additive: a song that never used it saves without its key (older files and the other layouts'
 //      saves stay byte for byte as before);
 //   2. it survives a save and a load, and a second save is byte-identical to the first;
-//   3. it travels to a collaborating peer (and back), and both peers' songs converge.
+//   3. it travels to a collaborating peer (and back), and both peers' songs converge. K-314 B-04: whether
+//      the lane is shown is each person's own view (the chosen parameter travels; laneShown stays here).
 // The fields: the cycle area ("cycle"), the Project End marker ("projectEnd"), a track's automation
 // lane ("lane"), automation mode ("autoMode") and kept sound ("sound"), a region's own name ("name")
 // and its playback settings (playTranspose, playVelocity, playDelay, playQuantize).
@@ -13,6 +14,7 @@
 #include <vector>
 #include "Check.h"
 #include "collab/CollabSim.h"
+#include "collab/LocalState.h"
 #include "core/Project.h"
 
 using namespace gl;
@@ -54,13 +56,22 @@ void setSmoothFields(Song& s, ObjectId owner) {
   c.playTranspose = -5, c.playVelocity = 12, c.playDelay = 7, c.playQuantize = s.ppq / 4;
 }
 
-bool sameSmoothFields(const Song& a, const Song& b) {
+bool sameSmoothFields(const Song& a, const Song& b, bool view = true) {
   const PlaylistTrack &x = a.tracks[0], &y = b.tracks[0];
   const Clip &c = a.playlist[0], &d = b.playlist[0];
   return a.cycleStart == b.cycleStart && a.cycleEnd == b.cycleEnd && a.cycleOn == b.cycleOn && a.projectEnd == b.projectEnd &&
-         x.laneSet == y.laneSet && x.laneShown == y.laneShown && x.laneOwner == y.laneOwner && x.laneIndex == y.laneIndex &&
+         x.laneSet == y.laneSet && (!view || x.laneShown == y.laneShown) && x.laneOwner == y.laneOwner && x.laneIndex == y.laneIndex &&
          x.autoMode == y.autoMode && a.tracks[1].sound == b.tracks[1].sound && c.name == d.name && c.playTranspose == d.playTranspose &&
          c.playVelocity == d.playVelocity && c.playDelay == d.playDelay && c.playQuantize == d.playQuantize;
+}
+
+// K-314: the shared project (each person's view state masked), as it is the same on every computer.
+std::string sharedText(const Peer& p) {
+  Song s = p.doc.song();
+  s.nextId = 0;
+  Json j = songToJson(s);
+  gl::collab::maskSessionJson(j);
+  return jsonStringify(j, 0);
 }
 
 Song baseSong(ObjectId* owner) {
@@ -148,9 +159,10 @@ int main() {
       expect(b.s && b.s->ready(), "Sam joins");
       a.doc.editSong("smooth fields", [&](Song& x) { setSmoothFields(x, owner); });
       settle(net, {&a, &b}, clock);
-      expect(sameSmoothFields(a.doc.song(), b.doc.song()) && b.doc.song().playlist[0].name == "Hook", "every Smooth field reaches Sam");
-      expect(songText(a) == songText(b), "both peers' songs are the same");
-      if (songText(a) != songText(b)) {
+      expect(sameSmoothFields(a.doc.song(), b.doc.song(), false) && b.doc.song().playlist[0].name == "Hook", "every Smooth field reaches Sam");
+      expect(a.doc.song().tracks[0].laneShown && !b.doc.song().tracks[0].laneShown, "the lane shown stays Alex's own view (K-314 B-04)");
+      expect(sharedText(a) == sharedText(b), "both peers' songs are the same");
+      if (sharedText(a) != sharedText(b)) {
         std::ofstream("k112b_compat_alex.json") << songText(a);
         std::ofstream("k112b_compat_sam.json") << songText(b);
       }
@@ -165,7 +177,8 @@ int main() {
       const Tick bar = a.doc.song().barTicks();
       expect(a.doc.song().cycleEnd == 8 * bar && a.doc.song().projectEnd == 40 * bar && a.doc.song().tracks[1].sound == owner,
              "Sam's edit keeps the fields it did not touch on Alex's side");
-      expect(songText(a) == songText(b), "the peers converge");
+      expect(a.doc.song().tracks[0].laneShown, "Sam's edit keeps Alex's lane shown");
+      expect(sharedText(a) == sharedText(b), "the peers converge");
     }
   }
   return finish();

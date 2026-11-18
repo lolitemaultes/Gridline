@@ -42,8 +42,8 @@ namespace {
 // Locking: libplum calls plumCallback from its own thread while holding its
 // internal lock, and plum_cleanup() joins that thread (which reports every
 // remaining mapping as destroyed through the callback). So no lock of ours may
-// be held while calling into libplum: gMapsMu guards only the id -> state map
-// and is never held across a plum_* call. gLifeMu orders init / cleanup; the
+// be held while calling into libplum: mapsMu guards only the id -> state map
+// and is never held across a plum_* call. lifeMu orders init / cleanup; the
 // cleanup itself (it asks the router to remove mappings, which can take
 // seconds) runs on a background thread so closing a link never blocks the
 // interface, and the next init waits for it.
@@ -55,31 +55,50 @@ struct MapState {
   uint16_t port = 0;
 };
 
-std::mutex gLifeMu;  // gPlumUsers, gCleanup, plum_init / plum_cleanup
-int gPlumUsers = 0;
-std::thread* gCleanup = nullptr;  // never destroyed: may still run at exit
-std::mutex gMapsMu;  // gMaps, gEarly
-std::map<int, std::weak_ptr<MapState>> gMaps;
 struct Early {
   plum_state_t state;
   std::string host;
   uint16_t port;
 };
-std::map<int, Early> gEarly;  // results that arrived before mapPort registered the id
 
-// K-312: libplum's own lines while Test my connection runs (which protocol answered, and why one
-// failed). The log level is fixed when libplum starts, so it always reports and we keep only
-// what a capture asks for.
-std::mutex gPlumLogMu;
-bool gPlumCapture = false;
-std::vector<std::string> gPlumLog;
+// K-328: everything libplum's threads reach through the callbacks below. The cleanup thread is
+// never joined at quit (it may wait seconds on the router) and libplum logs from it, so it can
+// still run while the quitting process destroys its statics: plain statics here were destroyed
+// under it ("mutex lock failed: Invalid argument", abort, exit code 134 now and then for a peer
+// quitting a collaboration). Allocated once and never destroyed, so it outlives every thread.
+struct PlumGlue {
+  std::mutex lifeMu;  // users, cleanup, plum_init / plum_cleanup
+  int users = 0;
+  std::thread* cleanup = nullptr;  // never destroyed: may still run at exit
+  std::mutex mapsMu;  // maps, early
+  std::map<int, std::weak_ptr<MapState>> maps;
+  std::map<int, Early> early;  // results that arrived before mapPort registered the id
+  // K-312: libplum's own lines while Test my connection runs (which protocol answered, and why
+  // one failed). The log level is fixed when libplum starts, so it always reports and we keep
+  // only what a capture asks for.
+  std::mutex logMu;  // capture, log
+  bool capture = false;
+  std::vector<std::string> log;
+};
+PlumGlue& glue() {
+  static PlumGlue* const g = new PlumGlue;  // intentionally never deleted (see above)
+  return *g;
+}
+
 void plumLog(plum_log_level_t, const char* message) {
-  if (!message) return;
-  {
-    std::lock_guard<std::mutex> lk(gPlumLogMu);
-    if (gPlumCapture && gPlumLog.size() < 400) gPlumLog.emplace_back(message);
+  if (!message) {
+    return;
   }
-  if (debugOn()) debugf("libplum: %s", message);
+  PlumGlue& g = glue();
+  {
+    std::lock_guard<std::mutex> lk(g.logMu);
+    if (g.capture && g.log.size() < 400) {
+      g.log.emplace_back(message);
+    }
+  }
+  if (debugOn()) {
+    debugf("libplum: %s", message);
+  }
 }
 
 void applyResult(MapState& st, plum_state_t state, const std::string& host, uint16_t port) {
@@ -96,27 +115,34 @@ void plumCallback(int id, plum_state_t state, const plum_mapping_t* mapping) {
   const std::string host = state == PLUM_STATE_SUCCESS && mapping ? mapping->external_host : "";
   const uint16_t port = state == PLUM_STATE_SUCCESS && mapping ? mapping->external_port : 0;
   std::shared_ptr<MapState> st;
+  PlumGlue& g = glue();
   {
-    std::lock_guard<std::mutex> lk(gMapsMu);
-    auto it = gMaps.find(id);
-    if (it == gMaps.end()) {
-      if (state == PLUM_STATE_DESTROYED) gEarly.erase(id);
-      else gEarly[id] = Early{state, host, port};
+    std::lock_guard<std::mutex> lk(g.mapsMu);
+    auto it = g.maps.find(id);
+    if (it == g.maps.end()) {
+      if (state == PLUM_STATE_DESTROYED) {
+        g.early.erase(id);
+      } else {
+        g.early[id] = Early{state, host, port};
+      }
       return;
     }
     st = it->second.lock();
-    if (state == PLUM_STATE_DESTROYED) gMaps.erase(it);
+    if (state == PLUM_STATE_DESTROYED) {
+      g.maps.erase(it);
+    }
   }
   if (st) applyResult(*st, state, host, port);
 }
 
 void plumAcquire() {
-  std::lock_guard<std::mutex> lk(gLifeMu);
-  if (gPlumUsers++ == 0) {
-    if (gCleanup) {  // the previous instance is still being shut down
-      gCleanup->join();
-      delete gCleanup;
-      gCleanup = nullptr;
+  PlumGlue& g = glue();
+  std::lock_guard<std::mutex> lk(g.lifeMu);
+  if (g.users++ == 0) {
+    if (g.cleanup) {  // the previous instance is still being shut down
+      g.cleanup->join();
+      delete g.cleanup;
+      g.cleanup = nullptr;
     }
     plum_config_t cfg;
     std::memset(&cfg, 0, sizeof cfg);
@@ -129,14 +155,15 @@ void plumAcquire() {
 }
 
 void plumRelease() {
-  std::lock_guard<std::mutex> lk(gLifeMu);
-  if (--gPlumUsers == 0) {
+  PlumGlue& g = glue();
+  std::lock_guard<std::mutex> lk(g.lifeMu);
+  if (--g.users == 0) {
     {
-      std::lock_guard<std::mutex> mk(gMapsMu);
-      gMaps.clear();
-      gEarly.clear();
+      std::lock_guard<std::mutex> mk(g.mapsMu);
+      g.maps.clear();
+      g.early.clear();
     }
-    gCleanup = new std::thread([] { plum_cleanup(); });  // removes the remaining mappings from the router
+    g.cleanup = new std::thread([] { plum_cleanup(); });  // removes the remaining mappings from the router
   }
 }
 
@@ -154,14 +181,15 @@ std::shared_ptr<MapState> mapPort(uint16_t port) {
   st->id = id;
   bool early = false;
   Early e{};
+  PlumGlue& g = glue();
   {
-    std::lock_guard<std::mutex> lk(gMapsMu);
-    gMaps[id] = st;
-    auto it = gEarly.find(id);
-    if (it != gEarly.end()) {
+    std::lock_guard<std::mutex> lk(g.mapsMu);
+    g.maps[id] = st;
+    auto it = g.early.find(id);
+    if (it != g.early.end()) {
       early = true;
       e = it->second;
-      gEarly.erase(it);
+      g.early.erase(it);
     }
   }
   if (early) applyResult(*st, e.state, e.host, e.port);
@@ -597,14 +625,18 @@ std::unique_ptr<Fabric> makeJuiceFabric(const NetSettings& s) { return std::make
 void portMapperAcquire() { plumAcquire(); }
 void portMapperRelease() { plumRelease(); }
 void portMapperCapture(bool on) {
-  std::lock_guard<std::mutex> lk(gPlumLogMu);
-  gPlumCapture = on;
-  if (on) gPlumLog.clear();
+  PlumGlue& g = glue();
+  std::lock_guard<std::mutex> lk(g.logMu);
+  g.capture = on;
+  if (on) {
+    g.log.clear();
+  }
 }
 std::vector<std::string> portMapperLog() {
-  std::lock_guard<std::mutex> lk(gPlumLogMu);
+  PlumGlue& g = glue();
+  std::lock_guard<std::mutex> lk(g.logMu);
   std::vector<std::string> out;
-  out.swap(gPlumLog);
+  out.swap(g.log);
   return out;
 }
 

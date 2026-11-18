@@ -43,6 +43,7 @@ struct Entry {
   Flag flag = nullptr;          // Toggle: the flag it flips
   Text dynLabel = nullptr;      // when set, the label (instead of `label`)
   Shortcut dynKey = nullptr;    // when set, the shortcut text (instead of `key`'s chord)
+  bool keyHidden = false;       // K-314: no shortcut shown, the item still runs (and is) `key`'s command
   const char* hint = nullptr;   // the item's description (English)
   const char* devRect = nullptr;   // Submenu: its header as a scripted target (devRackItem)
   const char* devNote = nullptr;   // Submenu: its header as an "sdlat" target (devNoteRect)
@@ -54,6 +55,11 @@ struct Entry {
   Entry tip(const char* h) && { hint = h; return std::move(*this); }
   Entry text(Text t) && { dynLabel = t; return std::move(*this); }
   Entry keyText(Shortcut s) && { dynKey = s; return std::move(*this); }
+  Entry hideKey() && {
+    dynKey = [](App&) -> const char* { return nullptr; };
+    keyHidden = true;
+    return std::move(*this);
+  }
   Entry rect(const char* id) && { devRect = id; return std::move(*this); }
   Entry note(const char* id) && { devNote = id; return std::move(*this); }
 };

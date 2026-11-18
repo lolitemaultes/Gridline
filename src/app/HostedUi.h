@@ -116,6 +116,9 @@ std::vector<std::pair<ObjectId, int>> openPluginWindowList(App& a);
 // A project just opened: its saved plugin windows open again (the last instrument and effect ones as
 // the instrument and effect windows; installed plugins' other windows once their plugins run).
 void reopenPluginWindowList(App& a, const std::vector<std::pair<ObjectId, int>>& list);
+// K-314 (A-01): each frame; the instrument window open outside the Tracker is kept while the Tracker's
+// lower band uses App::settingsChannel, saved from there, and open again once the Tracker is left.
+void trackerChannelFrame(App& a);
 // Channel button / mixer slot: shows or hides the target's plugin window.
 void togglePluginWindow(App& a, const PluginTarget& t);
 // Gridline's own panel for an installed plugin (generic parameters,

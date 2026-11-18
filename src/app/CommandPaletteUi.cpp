@@ -367,6 +367,9 @@ void build(App& a) {
         if (w.cmd) {
           e.commandId = w.cmd;
           if (const char* l = keys::label(w.cmd)) e.shortcut = l;
+        } else if (w.flag == &App::showSettings) {  // K-314 (C-09): the key its menu item shows, else the Settings key
+          const char* l = keys::label("view.settings");
+          e.shortcut = !r.shortcut.empty() ? r.shortcut : l ? l : "";
         }
         e.alias = r.labelShown;
         e.aliasEn = r.labelEn;
@@ -444,6 +447,11 @@ void build(App& a) {
       e.commandId = w.cmd;
       usedCmds.insert(w.cmd);
       if (const char* l = keys::label(w.cmd)) e.shortcut = l;
+    } else if (w.flag == &App::showSettings) {
+      // K-314 (C-09): the Settings key shows on its row (the key's own row stays the command's)
+      if (const char* l = keys::label("view.settings")) {
+        e.shortcut = l;
+      }
     }
     Action act;
     act.act = w.flag ? Act::Window : Act::Picker;

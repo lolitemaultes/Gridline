@@ -918,6 +918,14 @@ target_include_directories(gridline_tests_collab_join PRIVATE tests)
 target_compile_options(gridline_tests_collab_join PRIVATE ${GL_WARN})
 add_test(NAME k174_collab_join COMMAND gridline_tests_collab_join WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(k174_collab_join PROPERTIES TIMEOUT 600)
+# K-328: quitting while the router port mapper's threads still run (libplum's cleanup is never
+# joined): its state outlives static teardown, so the process ends cleanly (was: abort, exit 134).
+add_executable(gridline_tests_collab_quit tests/test_collab_quit.cpp)
+target_link_libraries(gridline_tests_collab_quit PRIVATE gridline_core)
+target_include_directories(gridline_tests_collab_quit PRIVATE tests)
+target_compile_options(gridline_tests_collab_quit PRIVATE ${GL_WARN})
+add_test(NAME k328_collab_quit COMMAND gridline_tests_collab_quit WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k328_collab_quit PROPERTIES TIMEOUT 120)
 # K-174: the real ICE agents behind simulated home routers on 127.0.0.1 (no special rights):
 # a late reply code, an old invite behind a router that forgets idle ports, a symmetric router.
 # Runs in real time (about 8 minutes).
@@ -946,6 +954,16 @@ target_include_directories(gridline_tests_collab_undo PRIVATE tests)
 target_compile_options(gridline_tests_collab_undo PRIVATE ${GL_WARN})
 add_test(NAME k141_collab_undo COMMAND gridline_tests_collab_undo WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 set_tests_properties(k141_collab_undo PROPERTIES TIMEOUT 900)
+# K-314 B: every song field compared by its operator== and carried by collaboration (source checks), every
+# shared song setting reaching a collaborator, older projects keeping theirs, record safe, view state per
+# person, tracks the Clips layout shows on one computer only.
+add_executable(gridline_tests_k314b tests/test_k314b.cpp)
+target_link_libraries(gridline_tests_k314b PRIVATE gridline_core)
+target_include_directories(gridline_tests_k314b PRIVATE tests)
+target_compile_options(gridline_tests_k314b PRIVATE ${GL_WARN})
+target_compile_definitions(gridline_tests_k314b PRIVATE GRIDLINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")  # reads core/Song.h, core/Types.h, collab/Session.cpp
+add_test(NAME k314b_collab_fields COMMAND gridline_tests_k314b WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+set_tests_properties(k314b_collab_fields PROPERTIES TIMEOUT 600)
 # The Stage: geometry, grouping and label rules, Arrange by sound, Distance and Focus, pan laws, the room, bit-exact old projects, undo, collaborators, FL export.
 add_executable(gridline_tests_k188_stage tests/test_k188_stage.cpp)
 target_link_libraries(gridline_tests_k188_stage PRIVATE gridline_core)
@@ -2473,6 +2491,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/k112_textfit -P ${CMAKE_SOURCE_DIR}/tests/k112_textfit_app.cmake)
     set_tests_properties(k112_textfit PROPERTIES TIMEOUT 900)
+    # K-314 (C-01, C-03): About, Project info and Undo history open centred where they float; the
+    # Collaboration panel stacks its form in a narrow side panel (every layout, 1024x640).
+    add_test(NAME k314_dialog_place_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/k314_dialog_place_app -P ${CMAKE_SOURCE_DIR}/tests/k314_dialog_place_app.cmake)
+    set_tests_properties(k314_dialog_place_app PROPERTIES TIMEOUT 600)
     # K-327: --frames runs end on a modified song without asking (changes discarded, nothing saved),
     # and the command palette's walk of the menus and settings pages touches no secret.
     add_test(NAME k327_frames_palette_app
@@ -3754,6 +3778,12 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                        -P ${CMAKE_SOURCE_DIR}/tests/k106_collab_app.cmake
                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
       set_tests_properties(k106_collab PROPERTIES TIMEOUT 1600)
+      # K-106: the Tracker's Collaboration page: opens from the menu, fits at 1024x640, its actions work (two windows).
+      add_test(NAME k106_collab_page_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                       -DOUT=${CMAKE_BINARY_DIR}/k106_collab_page_app -P ${CMAKE_SOURCE_DIR}/tests/k106_collab_page_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(k106_collab_page_app PROPERTIES TIMEOUT 900)
       # J-111e: an admin removes someone whose project is open; private copy; leave > keep / delete.
       add_test(NAME j111e_collab_remove_app
                COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/j111e_collab_remove_app

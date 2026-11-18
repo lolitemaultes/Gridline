@@ -14,6 +14,7 @@
 #include "../core/Project.h"
 #include "../core/ProjectInterop.h"
 #include "../core/TrackModes.h"
+#include "../core/TrackOrder.h"
 #include "../core/Update.h"
 #include "../engine/Sample.h"
 
@@ -153,9 +154,12 @@ Json listJsonOf(const Song& cur, const std::string& kind, int only) {
   return l ? *l : Json();  // Null: the key is not written (an empty optional list)
 }
 
-// Everything but the five lists and flOrigin (small: compared and diffed whole).
-Song restOf(const Song& c) {
-  Song t;
+// Everything but the five lists and flOrigin (small: compared and diffed whole). One list of fields
+// for restOf, restEqual and the shadow copy in diffIncremental (K-314 B-01: three hand-kept copies of
+// it drifted apart, so slidesAnyColour, flExportGridline and workspaceCopy never reached a
+// collaborator and a remote change wrote their defaults over them). tests/test_k314b.cpp checks that
+// every saved Song field is either copied here or named as one of the exceptions it lists.
+void copyRest(Song& t, const Song& c) {
   t.info = c.info;
   t.ppq = c.ppq;
   t.tempo = c.tempo;
@@ -164,6 +168,7 @@ Song restOf(const Song& c) {
   t.swing = c.swing;
   t.swingNotes = c.swingNotes;  // K-151: was missing, so "Swing piano roll notes" never reached collaborators
   t.groove = c.groove;          // K-151: the swing preset / groove
+  t.slidesAnyColour = c.slidesAnyColour;  // K-314 B-01: older projects' slides (saved "slidesByColour")
   t.masterPitch = c.masterPitch;
   t.nextId = c.nextId;
   t.tracks = c.tracks;
@@ -186,17 +191,21 @@ Song restOf(const Song& c) {
   t.projectEnd = c.projectEnd;
   t.smooth.controls = c.smooth.controls;  // K-112D D6 (R12-03): Smooth's Smart Control mappings (not its Library pane)
   t.trackReceipt = c.trackReceipt;  // K-322: the Track Receipt's typed fields (were missing: they stayed on one computer)
+  t.flExportGridline = c.flExportGridline;  // K-314 B-01: how Gridline plugins go into FL exports
+  t.workspaceCopy = c.workspaceCopy;        // K-314 B-01: View > Workspaces > Keep a copy in the project
+}
+
+Song restOf(const Song& c) {
+  Song t;
+  copyRest(t, c);
   return t;
 }
 
+// The rest of two songs is the same (Song::operator== leaves workspaceCopy out: view state with no
+// undo step, but it is saved with the project and so shared).
 bool restEqual(const Song& a, const Song& b) {
-  return a.info == b.info && a.ppq == b.ppq && a.tempo == b.tempo && a.timeSigNum == b.timeSigNum && a.timeSigDen == b.timeSigDen &&
-         a.swing == b.swing && a.swingNotes == b.swingNotes && a.groove == b.groove && a.masterPitch == b.masterPitch && a.nextId == b.nextId && a.tracks == b.tracks && a.links == b.links &&
-         a.modLinks == b.modLinks && a.markers == b.markers && a.channelGroups == b.channelGroups && a.patternGroups == b.patternGroups &&
-         a.live == b.live && a.keptSends == b.keptSends && a.arrangements == b.arrangements && a.currentArrangement == b.currentArrangement &&
-         a.autoCrossfades == b.autoCrossfades && a.panLaw == b.panLaw && a.stage == b.stage && a.stageRooms == b.stageRooms &&
-         a.cycleStart == b.cycleStart && a.cycleEnd == b.cycleEnd && a.cycleOn == b.cycleOn && a.projectEnd == b.projectEnd &&
-         a.smooth.controls == b.smooth.controls && a.trackReceipt == b.trackReceipt;
+  const Song ra = restOf(a), rb = restOf(b);
+  return ra == rb && ra.workspaceCopy == rb.workspaceCopy;
 }
 
 template <typename T>
@@ -229,6 +238,122 @@ void keepLocal(MixerTrack& e, const MixerTrack& o) { keepMixerSession(e, o); }
 void keepLocal(Clip& e, const Clip& o) { keepClipSession(e, o); }
 void keepLocal(Pattern&, const Pattern&) {}
 void keepLocal(AutomationClip&, const AutomationClip&) {}
+
+// K-314 B-03: tracks the Clips layout shows on this computer only (PlaylistTrack::shownHere) become the
+// project's once this person uses them: clips on one, or an edit of one's own fields in their own step.
+// One whose channel went (or that another track now plays) is cleared; one a track of this person's
+// now follows moves after the shared tracks (they stay last, so every peer numbers the shared alike).
+void settleTracksShownHere(Document& doc, const Song* shadow, bool ownStep) {
+  const Song& s = doc.song();
+  bool any = false;
+  for (const PlaylistTrack& t : s.tracks) {
+    any = any || t.shownHere;
+  }
+  if (!any) {
+    return;
+  }
+  auto same = [](PlaylistTrack a, PlaylistTrack b) {
+    for (PlaylistTrack* t : {&a, &b}) {
+      t->folded = t->gridFolded = t->takeLanes = t->laneShown = false;
+      t->height = 1.0f;
+    }
+    return a == b;
+  };
+  enum Change { Share, Clear, Move };
+  std::vector<std::pair<size_t, Change>> change;
+  int lastShared = -1;
+  for (size_t i = 0; i < s.tracks.size(); ++i) {
+    const PlaylistTrack& t = s.tracks[i];
+    if (!t.shownHere && (t.mode != TrackMode::Unassigned || !t.name.empty())) {
+      lastShared = static_cast<int>(i);
+    }
+  }
+  for (const Clip& c : s.playlist) {
+    if (c.track >= 0 && static_cast<size_t>(c.track) < s.tracks.size() && !s.tracks[static_cast<size_t>(c.track)].shownHere) {
+      lastShared = std::max(lastShared, c.track);
+    }
+  }
+  for (size_t i = 0; i < s.tracks.size(); ++i) {
+    const PlaylistTrack& t = s.tracks[i];
+    if (!t.shownHere) {
+      continue;
+    }
+    bool other = false, clips = false;
+    for (size_t k = 0; k < s.tracks.size(); ++k) {
+      other = other || (k != i && s.tracks[k].mode == TrackMode::Instrument && s.tracks[k].channel == t.channel);
+    }
+    for (const Clip& c : s.playlist) {
+      clips = clips || c.track == static_cast<int>(i);
+    }
+    if (!s.channel(t.channel) || other) {
+      change.push_back({i, Clear});
+    } else if (clips || (ownStep && shadow && i < shadow->tracks.size() && shadow->tracks[i].shownHere && !same(shadow->tracks[i], t))) {
+      change.push_back({i, Share});
+    } else if (static_cast<int>(i) < lastShared) {
+      change.push_back({i, Move});
+    }
+  }
+  if (change.empty()) {
+    return;
+  }
+  doc.patchSong([&](Song& x) {
+    std::set<int> moving;
+    for (const auto& [i, what] : change) {
+      if (what == Share) {
+        x.tracks[i].shownHere = false;
+      } else if (what == Clear) {
+        x.tracks[i] = PlaylistTrack{};
+      } else {
+        moving.insert(static_cast<int>(i));
+      }
+    }
+    if (moving.empty()) {
+      return;
+    }
+    // The shared tracks close up (each with its clips) and the ones shown here follow them, so a track
+    // this person just made takes the place of the first one shown here: no empty tracks left between.
+    trackorder::PlaylistMove m;
+    const int n = static_cast<int>(x.tracks.size());
+    for (int i = 0; i <= lastShared && i < n; ++i) {
+      if (!moving.count(i)) {
+        m.order.push_back(i);
+      }
+    }
+    std::vector<size_t> placed;
+    for (int i : moving) {
+      placed.push_back(m.order.size());
+      m.order.push_back(i);
+    }
+    for (int i = lastShared + 1; i < n; ++i) {
+      m.order.push_back(i);
+    }
+    m.moved = moving;
+    if (!trackorder::reorderPlaylist(x, m)) {
+      return;
+    }
+    // its number in its new place, when it is named "<number> <channel>" as Clips names it
+    const std::vector<int> num = trackmodes::trackNumbers(x, static_cast<int>(x.tracks.size()));
+    for (size_t k : placed) {
+      PlaylistTrack& t = x.tracks[k];
+      const Channel* c = x.channel(t.channel);
+      const size_t sp = t.name.find(' ');
+      if (c && sp != std::string::npos && sp > 0 && t.name.substr(sp + 1) == c->name &&
+          t.name.find_first_not_of("0123456789") == sp && k < num.size() && num[k] > 0) {
+        t.name = std::to_string(num[k]) + " " + c->name;
+      }
+    }
+  });
+}
+
+// K-314 B-06: what a merge may move: each track's place, link and name.
+std::vector<std::string> trackShape(const Song& s) {
+  std::vector<std::string> v;
+  v.reserve(s.tracks.size());
+  for (const PlaylistTrack& t : s.tracks) {
+    v.push_back(std::to_string(static_cast<int>(t.mode)) + ":" + std::to_string(t.channel) + ":" + std::to_string(t.mixer) + ":" + t.name);
+  }
+  return v;
+}
 
 Song withoutOrigin(const Song& s) {
   Song c = s;
@@ -1047,35 +1172,7 @@ bool Session::diffIncremental(std::vector<Op>& ops, std::string* bad) {
           ops.push_back(std::move(op));
         }
     for (const auto& [k, v] : rest.object) replica_.diff({"song", k}, v, me_, next, ops);
-    Song r = restOf(cur);
-    shadow_.info = r.info;
-    shadow_.ppq = r.ppq;
-    shadow_.tempo = r.tempo;
-    shadow_.timeSigNum = r.timeSigNum;
-    shadow_.timeSigDen = r.timeSigDen;
-    shadow_.swing = r.swing;
-    shadow_.swingNotes = r.swingNotes;
-    shadow_.groove = r.groove;
-    shadow_.masterPitch = r.masterPitch;
-    shadow_.nextId = r.nextId;
-    shadow_.tracks = r.tracks;
-    shadow_.links = r.links;
-    shadow_.modLinks = r.modLinks;
-    shadow_.markers = r.markers;
-    shadow_.channelGroups = r.channelGroups;
-    shadow_.patternGroups = r.patternGroups;
-    shadow_.live = r.live;
-    shadow_.keptSends = r.keptSends;  // K-112c checkpoint 57
-    shadow_.arrangements = r.arrangements;
-    shadow_.currentArrangement = r.currentArrangement;
-    shadow_.autoCrossfades = r.autoCrossfades;
-    shadow_.panLaw = r.panLaw;
-    shadow_.stage = r.stage;
-    shadow_.stageRooms = r.stageRooms;  // K-224
-    shadow_.cycleStart = r.cycleStart, shadow_.cycleEnd = r.cycleEnd, shadow_.cycleOn = r.cycleOn;  // K-112B (checkpoint 52)
-    shadow_.projectEnd = r.projectEnd;
-    shadow_.smooth.controls = r.smooth.controls;  // K-112D D6
-    shadow_.trackReceipt = r.trackReceipt;  // K-322
+    copyRest(shadow_, cur);  // K-314 B-01: the same fields as restOf
   }
   for (auto& c : commit) c();
   return true;
@@ -1154,6 +1251,8 @@ void Session::flushLocal() {
     return;
   }
   const auto t0 = std::chrono::steady_clock::now();
+  settleTracksShownHere(doc_, shadowValid_ ? &shadow_ : nullptr,
+                        doc_.pushCount() != lastPush_ || doc_.history().stateSerial() != lastSerial_);  // K-314 B-03
   std::vector<Op> ops;
   std::string bad;
   auto next = [this] { return hlc_.tick(); };
@@ -2313,6 +2412,7 @@ void Session::materialize() {
   if (previewing_ || !ready_) return;
   if (doc_.revision() != lastRev_) flushLocal();
   const auto t0 = std::chrono::steady_clock::now();
+  const std::vector<std::string> shapeBefore = trackShape(doc_.song());  // K-314 B-06
   if (applyIncremental()) {
     ++incApplies_;
     if (verifyAt_ < 0) verifyAt_ = now_ + 1.0;  // a whole-project check once things are quiet
@@ -2345,6 +2445,12 @@ void Session::materialize() {
   // (every peer makes the same change from the same merged song, so they agree).
   if (!doc_.song().keptSends.empty() && trackmodes::keptSendsStale(doc_.song())) {
     doc_.patchSong([](Song& s) { trackmodes::restoreKeptSends(s); });
+  }
+  // K-314 B-06: tracks came, went or moved (a collaborator's edit, an undo or redo here): the tracks named
+  // by their place ("3 Audio", "19 A1") take their numbers again, as after a move in any layout, so two
+  // never show the same number. Every peer makes the same change from the same merged song.
+  if (trackShape(doc_.song()) != shapeBefore && trackmodes::trackNumbersStale(doc_.song())) {
+    doc_.patchSong([](Song& s) { trackmodes::renumberTrackNames(s); });
   }
 }
 

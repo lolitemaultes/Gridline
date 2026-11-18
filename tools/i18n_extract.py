@@ -43,6 +43,8 @@ HELPERS = {
     # readouts and box titles (label, hint), and the settings screen's check rows.
     "bevelButton": [2, 6], "radioRow": [2, 6], "checkRow": [2, 6], "stepper": [2, 7], "readout": [1, 6], "boxTitle": [2],
     "checkSetting": [1, 6],
+    # K-106: the Tracker's Collaboration page (CollabUiTracker.inc): buttons, check rows, labels, box titles.
+    "tButton": [2, 6], "tButtonRight": [3, 4], "tCheck": [3, 5], "tLabel": [1], "tBox": [5],
     # K-325: the recording windows' controls in each layout's style (RecordLook.h).
     "rlLabel": [0], "rlButton": [1, 4], "rlChoice": [6], "rlToggle": [3], "rlSection": [0],
     # N59-10: i18n::plural(n, one, other): both forms of a counted sentence.
@@ -60,6 +62,7 @@ LEAD = re.compile(r"^\s*(?:std::string\(\s*)?(" + STR + r")\s*\)?\s*\+")
 
 def source_files():
     files = glob.glob(os.path.join(ROOT, "src", "app", "*.cpp")) + glob.glob(os.path.join(ROOT, "src", "app", "*.h"))
+    files += glob.glob(os.path.join(ROOT, "src", "app", "*.inc"))  # K-106: code included by a .cpp (CollabUiTracker.inc)
     files += glob.glob(os.path.join(ROOT, "src", "packs", "*", "*_ui.cpp"))
     files += glob.glob(os.path.join(ROOT, "src", "packs", "*", "*_ui.h"))  # editor parts kept in headers (the SFZ view)
     files += [os.path.join(ROOT, "src", "core", "TrackerKeys.cpp")]  # K-106 cp25: the Tracker help's key table (N_)

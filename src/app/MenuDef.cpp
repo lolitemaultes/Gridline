@@ -133,6 +133,9 @@ void emit(App& a, const Menu& m, imhook::MenuWalker* w) {
     switch (e.kind) {
       case Kind::Item: {
         const char* sc = e.dynKey ? e.dynKey(a) : e.key ? keys::label(e.key) : nullptr;
+        if (w && e.key && !sc && e.keyHidden) {
+          w->nextCommand(e.key);  // K-314: a hidden shortcut keeps the item's command (one palette row)
+        }
         if (glyphs) sc = macGlyphs(sc);
         const bool chk = e.checked && e.checked(a);
         const bool en = !e.enabled || e.enabled(a);
@@ -143,6 +146,9 @@ void emit(App& a, const Menu& m, imhook::MenuWalker* w) {
       }
       case Kind::Toggle: {
         const char* sc = e.dynKey ? e.dynKey(a) : e.key ? keys::label(e.key) : nullptr;
+        if (w && e.key && !sc && e.keyHidden) {
+          w->nextCommand(e.key);
+        }
         if (glyphs) sc = macGlyphs(sc);
         bool* f = e.flag(a);
         // K-297 (round 6): a window open as a tab hidden behind another comes forward (it closed)

@@ -19,7 +19,9 @@
 //  - mixer track solo and "solo alone" (a listening aid), record arm, input
 //    monitoring, the audio input channel(s) and the record point;
 //  - a playlist clip's "launched" flag (a live-mode clip playing right now);
-//  - playlist track folding and height (view);
+//  - playlist track view state: folding (playlist and Clips' clip grid), height, the automation lane
+//    shown (not the parameter chosen for it), take lanes shown (K-314 B-04, B-05); and the tracks the
+//    Clips layout shows here only for a collaborator's instrument (PlaylistTrack::shownHere, B-03);
 //  - the Smooth layout's window state (Song::smooth.library: whether its Library pane shows; its Smart
 //    Control mappings, Song::smooth.controls, are song data and shared);
 //  - plugin parameters that are performance gestures or listening aids, not
@@ -64,7 +66,7 @@ uint64_t sessionStateHash(const Song& s);
 // changed is kept as these values before and after, and undone / redone where the objects still
 // are (never by replaying the step's command on a song it was not made on).
 struct SessionKey {
-  enum Kind : uint8_t { ChannelPlugin, ChannelNoteFx, MixerSlot, MixerField, ClipLaunched, TrackFolded, TrackHeight };
+  enum Kind : uint8_t { ChannelPlugin, ChannelNoteFx, MixerSlot, MixerField, ClipLaunched, TrackFolded, TrackHeight, TrackGridFolded, TrackTakeLanes, TrackLaneShown };
   uint8_t kind = 0;
   uint64_t id = 0;    // object id (track index for the track fields)
   int32_t a = 0;      // note FX / slot index, or the mixer field

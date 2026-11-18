@@ -24,6 +24,7 @@ void closeChordEditor(App& a);  // K-112 (dev): keeps the changes, as its close 
 void patternsItems(App& a);  // Patterns: pattern groups
 void toolsItems(App& a);     // Tools: audio logger, cancel recording
 void optionsItems(App& a);   // Options: quantized jumps
+void recordingNamingItems(App& a);   // K-314: the "Name takes after" submenu (inside an open menu)
 void recordingOptionItems(App& a);   // K-123: the record options menu's groups (inside an open menu): audio takes
 void recordingRollItems(App& a);     // pre-roll and post-roll
 void recordingMonitorItems(App& a);  // monitoring of the armed tracks

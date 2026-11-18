@@ -3090,9 +3090,9 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
       if (w == label) w = window;
     showPage(a, w.c_str());
     std::printf("tracker page frame %d: %s\n", frame, w.c_str());
-  } else if (cmd == "swap") {  // none|help|files|config|about
+  } else if (cmd == "swap") {  // none|help|files|config|about|collab
     const std::string w = args.size() > 1 ? args[1] : "none";
-    setHeaderSwap(w == "help" ? 1 : w == "files" ? 2 : w == "config" ? 3 : w == "about" ? 4 : 0);
+    setHeaderSwap(w == "help" ? 1 : w == "files" ? 2 : w == "config" ? 3 : w == "about" ? 4 : w == "collab" ? 5 : 0);
     if (w == "config" && args.size() > 2) setConfigPage(std::atoi(args[2].c_str()));
     if (w == "help" && args.size() > 2) setHelpSubject(std::atoi(args[2].c_str()));
   } else if (cmd == "loadsample" && args.size() > 1) {  // as a double-click on the file in Files, Samples

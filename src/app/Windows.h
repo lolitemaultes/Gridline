@@ -39,6 +39,12 @@ void configureTrackHeaderItems(App& a);  // the parts as checked menu items
 void tracksSplitAtPlayhead(App& a);
 void tracksAddMarker(App& a);  // at the nearest bar
 void toggleCycle(App& a);
+// K-314 (A-05): the range playback loops over: outside Clips the time selection (Studio's selection,
+// Smooth's cycle, the Tracker's Loop block), else the song's saved loop while on (Clips: that only).
+// False when none.
+bool playLoop(const App& a, Tick& from, Tick& to);
+// K-314 (A-06): each frame; gives the time selection Smooth borrowed for its cycle back once it is left.
+void cycleLayoutFrame(App& a);
 // R02-13: the cycle area over the selected regions (Cmd+U), Cycle on. Nothing selected: no change.
 void cycleToSelection(App& a);
 // Checkpoint 47: the Tracks layout's Join, for the tool, the menus, the key and the toolbar (Playlist.cpp).

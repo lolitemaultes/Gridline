@@ -131,12 +131,14 @@ void testUndoSaveShare() {
   std::string err;
   expect(songFromJson(songToJson(doc.song()), back, &err), "save and load");
   expect(back.playlist == doc.song().playlist && back.tracks[static_cast<size_t>(tr)].takeLanes, "takes, comp and lanes saved losslessly");
-  // Shared: what a collaborator receives keeps them too (they are song data, not this computer's).
+  // Shared: what a collaborator receives keeps the takes and the comp (song data). K-314 B: showing the
+  // take lanes is view state, each person's own (as folding), so it is not sent.
   Json j = songToJson(doc.song(), false);
   collab::maskSessionJson(j);
   Song peer;
   expect(songFromJson(j, peer, &err), "collab copy loads");
-  expect(peer.playlist == doc.song().playlist && peer.tracks[static_cast<size_t>(tr)].takeLanes, "collab: takes, comp and lanes are shared");
+  expect(peer.playlist == doc.song().playlist, "collab: takes and comp are shared");
+  expect(!peer.tracks[static_cast<size_t>(tr)].takeLanes, "collab: the take lanes shown stay this person's own");
 }
 
 void testRemoveUnusedAndGather() {

@@ -57,6 +57,9 @@ struct TreeWalker : imhook::MenuWalker {
   bool pendingSeparator = false;
   menutree::Node* last = nullptr;  // the item just walked (for its hint)
   ImGuiID lastId = 0;
+  std::string nextCmd;  // K-314: the next item's command, its shortcut not shown
+
+  void nextCommand(const char* c) override { nextCmd = c ? c : ""; }
 
   menutree::Node& add(menutree::Node n) {
     n.separatorBefore = pendingSeparator;
@@ -91,7 +94,12 @@ struct TreeWalker : imhook::MenuWalker {
     names(n, label);
     if (n.shown.empty()) return false;
     n.shortcut = shortcut ? shortcut : "";
-    if (const char* c = commandOf(shortcut)) n.command = c;
+    if (const char* c = commandOf(shortcut)) {
+      n.command = c;
+    } else if (!nextCmd.empty()) {
+      n.command = nextCmd;
+    }
+    nextCmd.clear();
     n.checked = selected;
     n.paletteSkip = cmdpalette::skippingRows();
     n.enabled = enabled && stack.back()->enabled;

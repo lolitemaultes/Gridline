@@ -655,6 +655,10 @@ void drawRenderDialog(App& a) {
     if (livelook::active(a) && dlg.scope == 0 && sec <= 0.0) {  // checkpoint 58 (N57-09): say why it is 0:00
       ImGui::SameLine(0, 10);  // on the Length line, inside the column
       ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("the Arrangement is empty"));
+    } else if (livelook::active(a) && dlg.scope == 0 && song.live.areaEnd > 0 && !gSessionExport) {
+      // K-314 (A-08): what it renders, as the other layouts' Song render takes the live area too.
+      formLabel("");
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("The Arrangement only, not the Session's clips"));
     }
     if (!song.mixer.empty() && song.mixer[0].muted) {
       ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("The master track is muted: the render will be silent"));

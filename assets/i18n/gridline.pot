@@ -221,7 +221,7 @@ msgstr ""
 msgid "Off"
 msgstr ""
 
-#: src/app/AsioUi.cpp
+#: src/app/AsioUi.cpp src/app/CollabUiTracker.inc
 msgid "Reconnect"
 msgstr ""
 
@@ -401,7 +401,7 @@ msgstr ""
 msgid "Clip properties..."
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/StageRoomsUi.cpp src/app/StageView.cpp
+#: src/app/AudioRecordUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/StageRoomsUi.cpp src/app/StageView.cpp
 msgid "Colour"
 msgstr ""
 
@@ -413,7 +413,7 @@ msgstr ""
 msgid "Consolidate selected clips to audio"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/McpUi.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AudioRecordUi.cpp src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/LogicPlugins.cpp src/app/McpUi.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/core/Keymap.cpp src/packs/creative/creative_ui.cpp src/packs/edison/edison_form_ui.cpp src/packs/edison/edison_wave_ui.cpp src/packs/samplers/samplers_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Copy"
 msgstr ""
 
@@ -617,7 +617,7 @@ msgstr ""
 msgid "Remove unused takes"
 msgstr ""
 
-#: src/app/AudioRecordUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/StageRoomsUi.cpp src/app/TrackerFrame.cpp src/app/WorkspacesUi.cpp
+#: src/app/AudioRecordUi.cpp src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/ContextMenus.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/StageRoomsUi.cpp src/app/TrackerFrame.cpp src/app/WorkspacesUi.cpp
 msgid "Rename"
 msgstr ""
 
@@ -721,7 +721,7 @@ msgstr ""
 msgid "Automation clip for"
 msgstr ""
 
-#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FileDialogUi.cpp src/app/FlpExportUi.cpp src/app/LayerEditor.cpp src/app/LogicNewTracks.cpp src/app/McpUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/RecordCard.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp src/app/StagePanel.cpp src/app/StageRoomsUi.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/TrackReceiptUi.cpp src/app/TrackerEditors.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/AutomationEditor.cpp src/app/AutomationLane.cpp src/app/Browser.cpp src/app/ChopUi.cpp src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/ContextMenus.cpp src/app/Dialogs.cpp src/app/EditTools.cpp src/app/ExportUi.cpp src/app/FileDialogUi.cpp src/app/FlpExportUi.cpp src/app/LayerEditor.cpp src/app/LogicNewTracks.cpp src/app/McpUi.cpp src/app/MidiUi.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/ProjectLoadUi.cpp src/app/RecordCard.cpp src/app/SamplerRenderUi.cpp src/app/ScriptUi.cpp src/app/SettingsKeysTheme.cpp src/app/SettingsPages.cpp src/app/StagePanel.cpp src/app/StageRoomsUi.cpp src/app/StemsUi.cpp src/app/TemplateUi.cpp src/app/TrackReceiptUi.cpp src/app/TrackerEditors.cpp src/app/UpdateUi.cpp src/app/UrlImportUi.cpp src/packs/edison/edison_script_ui.cpp src/packs/edison/edison_tools_ui.cpp src/packs/flex/flex_ui.cpp src/packs/platter/platter_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Cancel"
 msgstr ""
 
@@ -1653,7 +1653,7 @@ msgstr ""
 msgid "Multisample instruments"
 msgstr ""
 
-#: src/app/Browser.cpp src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/FileDialogUi.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/Playlist.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/app/TrackReceiptUi.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/plasma/plasma_seq_ui.cpp src/packs/plasma/plasma_wted_ui.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/Browser.cpp src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/ContextMenus.cpp src/app/FileDialogUi.cpp src/app/LayoutParts.cpp src/app/LiveLook.cpp src/app/Playlist.cpp src/app/PluginManager.cpp src/app/SamplerRenderUi.cpp src/app/TrackReceiptUi.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp src/packs/modulation/modulation_patcher_ui.cpp src/packs/plasma/plasma_browser_ui.cpp src/packs/plasma/plasma_seq_ui.cpp src/packs/plasma/plasma_wted_ui.cpp src/packs/tracker/tracker_ui.cpp
 msgid "Name"
 msgstr ""
 
@@ -1801,7 +1801,7 @@ msgstr ""
 msgid "Project folder"
 msgstr ""
 
-#: src/app/Browser.cpp
+#: src/app/Browser.cpp src/app/CollabUiTracker.inc
 msgid "Projects"
 msgstr ""
 
@@ -3433,7 +3433,7 @@ msgstr ""
 msgid "Chords"
 msgstr ""
 
-#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ProjectLoadUi.cpp src/app/RecordMoreUi.cpp src/app/ScriptUi.cpp src/app/SpeechUi.cpp src/app/StemsUi.cpp src/app/TrackReceiptUi.cpp src/app/UrlImportUi.cpp src/packs/chater/chater_pages_ui.cpp src/packs/edison/edison_script_ui.cpp
+#: src/app/ChordEditorUi.cpp src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/Dialogs.cpp src/app/FlpExportUi.cpp src/app/LoopStarterUi.cpp src/app/ProjectLoadUi.cpp src/app/RecordMoreUi.cpp src/app/ScriptUi.cpp src/app/SpeechUi.cpp src/app/StemsUi.cpp src/app/TrackReceiptUi.cpp src/app/UrlImportUi.cpp src/packs/chater/chater_pages_ui.cpp src/packs/edison/edison_script_ui.cpp
 msgid "Close"
 msgstr ""
 
@@ -3877,11 +3877,11 @@ msgstr ""
 msgid "%d selected clips: each moves by the same amount"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "%d changes awaiting the admin's review"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "%d changes need your review"
 msgstr ""
 
@@ -3901,7 +3901,7 @@ msgstr ""
 msgid "%d min ago"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "%d of %d online"
 msgstr ""
 
@@ -3917,7 +3917,7 @@ msgstr ""
 msgid "%d versions"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "%s in all"
 msgstr ""
 
@@ -3937,11 +3937,11 @@ msgstr ""
 msgid "%s is offline: they find out the next time they connect to anyone in the project."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "%s joined"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "%s removed you, %s"
 msgstr ""
 
@@ -3953,7 +3953,7 @@ msgstr ""
 msgid "%s stopped sharing %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "%s stopped sharing it, %s"
 msgstr ""
 
@@ -3973,39 +3973,39 @@ msgstr ""
 msgid "(deleted)"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/packs/tracker/tracker_ui.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/packs/tracker/tracker_ui.cpp
 msgid "(no name)"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "0: any port. Set one (for example 50000) to forward it on your router: then a collaborator can always reach this computer"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "1 change awaiting the admin's review"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "1 change needs your review"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "1 hour"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "15 minutes"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "24 hours"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "A PNG or JPEG; it is cropped to a square and made small (256 px). You can also drop a picture here"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "A code works once, for one person."
 msgstr ""
 
@@ -4017,7 +4017,7 @@ msgstr ""
 msgid "A collaborator online with you both relays changes. A TURN server (Settings > Collaboration) or a reconnect code can also help."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "A name is needed before you can host or join."
 msgstr ""
 
@@ -4025,7 +4025,7 @@ msgstr ""
 msgid "A new empty project; the folder stays as it is"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "A new folder: the project and every audio file it uses are copied into it. Your project file stays as it is."
 msgstr ""
 
@@ -4049,7 +4049,7 @@ msgstr ""
 msgid "A one-time invite that lets them back in (only an admin's invite does)"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/collab/Session.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/collab/Session.cpp
 msgid "A project needs a name."
 msgstr ""
 
@@ -4057,15 +4057,15 @@ msgstr ""
 msgid "Admin: %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Also rename the project folder on this computer"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Another computer might not have them, and their settings can't be merged. Replace or remove them, then try again."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Asks two STUN servers for your public address, tries the router's automatic port opening and looks for IPv6"
 msgstr ""
 
@@ -4073,7 +4073,7 @@ msgstr ""
 msgid "Audio files in the project folder that nothing uses any more."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Audio files nothing in the project, its history, undo or Sync review uses"
 msgstr ""
 
@@ -4085,7 +4085,7 @@ msgstr ""
 msgid "Automation '%s'"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Backup servers"
 msgstr ""
 
@@ -4105,7 +4105,7 @@ msgstr ""
 msgid "CONNECTION"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Cancel invite"
 msgstr ""
 
@@ -4125,11 +4125,11 @@ msgstr ""
 msgid "Channel '%s'"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/UpdateUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/UpdateUi.cpp
 msgid "Checking for updates..."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Choose a display name first: collaborators see it."
 msgstr ""
 
@@ -4137,11 +4137,11 @@ msgstr ""
 msgid "Choose a display name in Settings > Collaboration first."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Choose picture..."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Choose the project's folder (the one with the .gridline-collab folder)"
 msgstr ""
 
@@ -4149,11 +4149,11 @@ msgstr ""
 msgid "Choose where the new folder goes"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Choose..."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Clean up unused audio..."
 msgstr ""
 
@@ -4177,7 +4177,7 @@ msgstr ""
 msgid "Close project leaves the folder %s as it is. It stays in your collaborative projects until you forget it."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Close the collaborative project first."
 msgstr ""
 
@@ -4209,11 +4209,11 @@ msgstr ""
 msgid "Compare it with %s by phone or chat. If it matches, nobody is in between."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Compare it with them by phone or chat. If it matches, nobody is in between."
 msgstr ""
 
-#: src/app/CollabUi.cpp src/packs/modulation/modulation_patcher_ui.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/packs/modulation/modulation_patcher_ui.cpp
 msgid "Connect"
 msgstr ""
 
@@ -4221,7 +4221,7 @@ msgstr ""
 msgid "Connected to %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Connecting to the inviter..."
 msgstr ""
 
@@ -4233,11 +4233,11 @@ msgstr ""
 msgid "Connection: %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Contact email"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Copies the project into the folder and shares it from there"
 msgstr ""
 
@@ -4245,11 +4245,11 @@ msgstr ""
 msgid "Copy fingerprint"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Copy the fingerprint, to compare with a collaborator by phone or chat"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Copy the invite code"
 msgstr ""
 
@@ -4261,7 +4261,7 @@ msgstr ""
 msgid "Could not open the collaborative project"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Couldn't check for updates"
 msgstr ""
 
@@ -4269,11 +4269,11 @@ msgstr ""
 msgid "Couldn't connect directly"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Couldn't connect directly to %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Create invite"
 msgstr ""
 
@@ -4281,7 +4281,7 @@ msgstr ""
 msgid "Cursors"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/PluginEditorsK3Gb.cpp src/app/PluginUI.cpp src/app/SettingsKeysTheme.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/PluginEditorsK3Gb.cpp src/app/PluginUI.cpp src/app/SettingsKeysTheme.cpp
 msgid "Default"
 msgstr ""
 
@@ -4293,11 +4293,11 @@ msgstr ""
 msgid "Deleted: the shared history and the other members' names and pictures (%s)."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Display name"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Drop a PNG or JPEG here to use it as your picture"
 msgstr ""
 
@@ -4325,11 +4325,11 @@ msgstr ""
 msgid "Every computer keeps the whole project, so you can always keep working"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Everyone sees the new name: now if they are online, or the next time you are online together."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Everyone you invite sees this name. The folder is named after it."
 msgstr ""
 
@@ -4345,19 +4345,19 @@ msgstr ""
 msgid "FOLDERS"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/LayoutShellUi.cpp src/app/MenuStyles.cpp src/core/Keymap.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/Dialogs.cpp src/app/LayoutShellUi.cpp src/app/MenuStyles.cpp src/core/Keymap.cpp
 msgid "Files"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Finding this computer's network addresses."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Fingerprint"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ExportUi.cpp src/app/RecordCard.cpp src/app/SamplerRenderUi.cpp src/app/TrackerFrame.cpp src/core/TrackIconSet.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/ExportUi.cpp src/app/RecordCard.cpp src/app/SamplerRenderUi.cpp src/app/TrackerFrame.cpp src/core/TrackIconSet.cpp
 msgid "Folder"
 msgstr ""
 
@@ -4369,7 +4369,7 @@ msgstr ""
 msgid "Follow their playhead"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "For %s only: they come back as the same member."
 msgstr ""
 
@@ -4381,7 +4381,7 @@ msgstr ""
 msgid "For everyone: nothing syncs any more, and nobody can join."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "For everyone: nothing syncs any more; each person keeps their copy"
 msgstr ""
 
@@ -4417,7 +4417,7 @@ msgstr ""
 msgid "Hear and see this side for a moment (not saved, not sent)"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "How collaborators see you. Kept on this computer, not in any project."
 msgstr ""
 
@@ -4453,7 +4453,7 @@ msgstr ""
 msgid "Invite from %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Invite someone else"
 msgstr ""
 
@@ -4477,7 +4477,7 @@ msgstr ""
 msgid "JOIN"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/Menus.cpp src/app/Playlist.cpp src/app/TopBar.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/ContextMenus.cpp src/app/Menus.cpp src/app/Playlist.cpp src/app/TopBar.cpp
 msgid "Join"
 msgstr ""
 
@@ -4549,15 +4549,15 @@ msgstr ""
 msgid "Leave now and nobody gets them. Wait for sync goes on as soon as a collaborator has them."
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/LauncherCollab.cpp
 msgid "Leave project..."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Left (%d)"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Left the project"
 msgstr ""
 
@@ -4565,7 +4565,7 @@ msgstr ""
 msgid "Length"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Let Gridline ask my router to open a port automatically"
 msgstr ""
 
@@ -4577,7 +4577,7 @@ msgstr ""
 msgid "Make admin"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Make collaborative"
 msgstr ""
 
@@ -4589,11 +4589,11 @@ msgstr ""
 msgid "Make this a private copy"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Makes a one-time code for one person"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/PluginFoldersUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/PluginFoldersUi.cpp
 msgid "Missing"
 msgstr ""
 
@@ -4617,7 +4617,7 @@ msgstr ""
 msgid "Mute"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "My router forwards this UDP port to this computer"
 msgstr ""
 
@@ -4629,7 +4629,7 @@ msgstr ""
 msgid "NOTE TO THEM (OPTIONAL)"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Names are at most %d characters: the rest is left out."
 msgstr ""
 
@@ -4637,11 +4637,11 @@ msgstr ""
 msgid "New collaborative project..."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "New keys make you a new person to your collaborators."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "New keys: collaborators have to invite you again to every project"
 msgstr ""
 
@@ -4653,7 +4653,7 @@ msgstr ""
 msgid "Nobody else is in the project any more."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Nobody has synced with you for %d days."
 msgstr ""
 
@@ -4665,7 +4665,7 @@ msgstr ""
 msgid "Nobody is online. They need to open the project."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "None on this computer yet. Projects you share or join appear here."
 msgstr ""
 
@@ -4673,11 +4673,11 @@ msgstr ""
 msgid "Not found at %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Not shared any more"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Nothing is deleted by itself. Keep it shared, or make it a normal project on this computer."
 msgstr ""
 
@@ -4693,11 +4693,11 @@ msgstr ""
 msgid "Nothing to clean up: every audio file is used by the project, its history, undo or Sync review."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Nothing to review"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Off: nobody sees it. On: sent only to collaborators, encrypted; never written into project files or logs"
 msgstr ""
 
@@ -4705,7 +4705,7 @@ msgstr ""
 msgid "Offline"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "On: the members of a project see on their welcome screen when you have it open (asked over the encrypted member link). Off: nobody is told, and your welcome screen does not ask about others either"
 msgstr ""
 
@@ -4713,11 +4713,11 @@ msgstr ""
 msgid "Online"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Only if they can't connect directly: they then get a reply code to send you. It still works if it takes a few minutes to arrive."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Only on this computer"
 msgstr ""
 
@@ -4729,7 +4729,7 @@ msgstr ""
 msgid "Open"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Open collaborative project..."
 msgstr ""
 
@@ -4753,7 +4753,7 @@ msgstr ""
 msgid "Opens the step-by-step guide to a TURN relay of your own (docs/turn-relay.md)"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Optional"
 msgstr ""
 
@@ -4785,7 +4785,7 @@ msgstr ""
 msgid "Pattern '%s'"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Peer to peer, no server: changes travel while two computers are online together."
 msgstr ""
 
@@ -4793,7 +4793,7 @@ msgstr ""
 msgid "People who are no longer in the project. Their earlier changes stay."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Picture"
 msgstr ""
 
@@ -4805,11 +4805,11 @@ msgstr ""
 msgid "Position"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ExportUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/ExportUi.cpp
 msgid "Preparing"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Preparing the invite"
 msgstr ""
 
@@ -4825,15 +4825,15 @@ msgstr ""
 msgid "Private copy saved in %s."
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/Dialogs.cpp src/app/Menus.cpp src/app/TrackerFrame.cpp src/packs/platter/platter_mixer_ui.cpp src/packs/seltmann/seltmann_ui.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/Dialogs.cpp src/app/Menus.cpp src/app/TrackerFrame.cpp src/packs/platter/platter_mixer_ui.cpp src/packs/seltmann/seltmann_ui.cpp
 msgid "Project"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Project name"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Public address servers asked when the one above gives no answer, in this order. Each sees your IP address, nothing else"
 msgstr ""
 
@@ -4873,7 +4873,7 @@ msgstr ""
 msgid "Reconnects when they open the project."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Relays the encrypted connection when both networks block direct connections. Only needed for strict networks"
 msgstr ""
 
@@ -4893,23 +4893,23 @@ msgstr ""
 msgid "Remove from project..."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Remove picture"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Removed"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Removed (%d)"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Removed by %s, %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Removed or left (%d)"
 msgstr ""
 
@@ -4917,39 +4917,39 @@ msgstr ""
 msgid "Removes them for everyone"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/StageView.cpp src/packs/edison/edison_wave_ui.cpp src/packs/plasma/plasma_ui.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/ContextMenus.cpp src/app/LiveLook.cpp src/app/MenuStyles.cpp src/app/Menus.cpp src/app/PatternAutoUi.cpp src/app/Playlist.cpp src/app/PluginEditorsInstrSlicer.cpp src/app/StageView.cpp src/packs/edison/edison_wave_ui.cpp src/packs/plasma/plasma_ui.cpp
 msgid "Rename..."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Renames the project for everyone"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Renames the project for everyone in it"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Reply code"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Reply code used: connecting to them now."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Reply code used: reaching them"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Required to host or join"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Reset identity"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Reset identity..."
 msgstr ""
 
@@ -4977,11 +4977,11 @@ msgstr ""
 msgid "SHARE THIS PROJECT"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "STUN server"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Save as file..."
 msgstr ""
 
@@ -4997,7 +4997,7 @@ msgstr ""
 msgid "Send %s this reply code. They paste it under their invite and press Use reply. Keep this window open: it keeps trying for 15 minutes, so the code can take a while to arrive."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Send %s your code and paste theirs. Codes only carry network addresses; your keys check the connection."
 msgstr ""
 
@@ -5005,11 +5005,11 @@ msgstr ""
 msgid "Send level"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Send this code to the person you are inviting. It works once."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Share my email with collaborators"
 msgstr ""
 
@@ -5025,11 +5025,11 @@ msgstr ""
 msgid "Sharing"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Show collaborators' cursors"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Show that I am online to collaborators"
 msgstr ""
 
@@ -5041,11 +5041,11 @@ msgstr ""
 msgid "Some changes made while you were apart touch the same things. Review them in Sync review."
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/LauncherCollab.cpp
 msgid "Someone"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Someone is connecting..."
 msgstr ""
 
@@ -5057,7 +5057,7 @@ msgstr ""
 msgid "Stays: the project and its audio (%s) in %s, as a normal project."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Still not connected: a router or firewall on one side probably blocks direct connections. Turn off VPNs, allow Gridline through the firewall, and run Test my connection in Settings > Collaboration on both computers."
 msgstr ""
 
@@ -5069,7 +5069,7 @@ msgstr ""
 msgid "Stop sharing %s?"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/LauncherCollab.cpp
 msgid "Stop sharing..."
 msgstr ""
 
@@ -5089,7 +5089,7 @@ msgstr ""
 msgid "THIS PROJECT"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "TURN relay"
 msgstr ""
 
@@ -5101,11 +5101,11 @@ msgstr ""
 msgid "Take it off this list; the folder stays as a normal project"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Telling your collaborators"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Tells this computer its public address. The server sees your IP address, nothing else"
 msgstr ""
 
@@ -5125,11 +5125,11 @@ msgstr ""
 msgid "That didn't work."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "That file could not be read."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "That folder already exists: the project is added to what is in it."
 msgstr ""
 
@@ -5137,7 +5137,7 @@ msgstr ""
 msgid "That folder already holds a collaborative project."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "That folder already holds a collaborative project: choose another place or name."
 msgstr ""
 
@@ -5149,7 +5149,7 @@ msgstr ""
 msgid "That folder is not a collaborative project (it has no .gridline-collab folder)."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "That is not an email address."
 msgstr ""
 
@@ -5157,7 +5157,7 @@ msgstr ""
 msgid "That is not an invite code."
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/LauncherCollab.cpp
 msgid "The admin"
 msgstr ""
 
@@ -5165,7 +5165,7 @@ msgstr ""
 msgid "The admin chooses what to keep. Until then the newest change is in place."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "The colour of your cursor on your collaborators' screens"
 msgstr ""
 
@@ -5189,7 +5189,7 @@ msgstr ""
 msgid "The folder becomes \"%s\". Only your copy: collaborators' folders stay as they are. Gridline reopens the project and reconnects."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "The last invite expired. Make a new one."
 msgstr ""
 
@@ -5233,11 +5233,11 @@ msgstr ""
 msgid "Their changes so far stay, and Sync review still shows they made them. Anything they change from now on is dropped."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Their clock differs from this computer's: times are approximate."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Their code"
 msgstr ""
 
@@ -5245,7 +5245,7 @@ msgstr ""
 msgid "Their copy on their own computer stays theirs: Gridline can't take back what they already have."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Their reply code has no public internet address: their computer couldn't reach the address servers, so it can only connect on the same network. On their computer, check the connection, a VPN or firewall, and run Test my connection in Settings > Collaboration."
 msgstr ""
 
@@ -5265,19 +5265,19 @@ msgstr ""
 msgid "They are on Gridline %s and you are on %s: you both need the same version."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "They have to invite you again to every collaborative project."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "This build of Gridline has no collaboration networking."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "This computer couldn't find its public internet address, so this code only works on the same network. Check the connection, a VPN or firewall, or the STUN server in Settings > Collaboration."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "This computer's network address changed, so the code was renewed. If they have not joined yet, send them this new code."
 msgstr ""
 
@@ -5333,35 +5333,35 @@ msgstr ""
 msgid "Trying for %s, attempt %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Trying for %s, attempt %s. Their Join window keeps trying too, so leave both open."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "UDP blocked"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "UDP port"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "UPnP-IGD, NAT-PMP or PCP: a temporary mapping while a collaborative project is open, removed when it closes"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Undo starts fresh from here: each person then undoes only their own edits."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Up to date for collaboration"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Update"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Update required (%s)"
 msgstr ""
 
@@ -5369,11 +5369,11 @@ msgstr ""
 msgid "Update to Gridline %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Update to Gridline %s to collaborate"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Update to Gridline %s to use collaborative features."
 msgstr ""
 
@@ -5381,7 +5381,7 @@ msgstr ""
 msgid "Use an invite code you were sent"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Use reply"
 msgstr ""
 
@@ -5389,11 +5389,11 @@ msgstr ""
 msgid "Use this folder instead"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Valid for"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/TrackerFrame.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/TrackerFrame.cpp
 msgid "Version"
 msgstr ""
 
@@ -5421,15 +5421,15 @@ msgstr ""
 msgid "Waiting for a collaborator to receive them"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Waiting for the inviter: send them the reply code (Join window)."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Waiting for them to join"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Where the project's folder is made"
 msgstr ""
 
@@ -5465,7 +5465,7 @@ msgstr ""
 msgid "You are the admin: this stops sharing for everyone. They keep their copies."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "You are the admin: you resolve conflicting changes."
 msgstr ""
 
@@ -5477,7 +5477,7 @@ msgstr ""
 msgid "You left %s. Its folder is in the Trash."
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "You stop syncing; keep your copy as a normal project or delete it"
 msgstr ""
 
@@ -5485,7 +5485,7 @@ msgstr ""
 msgid "You were removed from %s by %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "Your code"
 msgstr ""
 
@@ -5505,7 +5505,7 @@ msgstr ""
 msgid "added it"
 msgstr ""
 
-#: src/app/CollabUi.cpp src/app/LauncherCollab.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc src/app/LauncherCollab.cpp
 msgid "admin"
 msgstr ""
 
@@ -5521,7 +5521,7 @@ msgstr ""
 msgid "and %s more"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "audio %s"
 msgstr ""
 
@@ -5537,7 +5537,7 @@ msgstr ""
 msgid "collab demo"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "cone NAT (direct works unless the other side is symmetric)"
 msgstr ""
 
@@ -5553,15 +5553,15 @@ msgstr ""
 msgid "expired: ask for a new code"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "expires in %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "failed"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "host:port, host:port"
 msgstr ""
 
@@ -5593,19 +5593,19 @@ msgstr ""
 msgid "newest"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "no"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "no NAT"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "none (same network only)"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "not with anyone yet"
 msgstr ""
 
@@ -5629,15 +5629,15 @@ msgstr ""
 msgid "online through %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "optional: turn.example.org"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "password"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "password: type to replace"
 msgstr ""
 
@@ -5657,15 +5657,15 @@ msgstr ""
 msgid "restored it"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "shared history %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "symmetric NAT"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "the admin"
 msgstr ""
 
@@ -5681,24 +5681,304 @@ msgstr ""
 msgid "this project"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "unknown"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "user"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "with a collaborator %s"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "works"
 msgstr ""
 
-#: src/app/CollabUi.cpp
+#: src/app/CollabUi.cpp src/app/CollabUiTracker.inc
 msgid "you"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "%d to review"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "A collaborator online with you both relays changes. A TURN server (Connection page) or a reconnect code can also help."
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "A relay is only needed when both networks block direct connections."
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Address servers, a relay, the router and a connection test"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Any colour (a colour picker)"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc src/app/TrackerFrame.cpp
+msgid "Back to the header"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Collaborative projects on this computer"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Connecting"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Connection"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Connects to them with their reply code"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Connects with their code"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Copy your reconnect code"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Done with reconnecting"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Everyone in the project, online or not, and what you can do with each"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp
+msgid "Exit"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "How collaborators see you: your name, colour and picture; your identity"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Identity"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Invite"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Invite code copied"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Invite codes, reply codes and reconnect codes"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Invite someone"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Invites can be made once the project is ready here."
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Join..."
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Login"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Make it a normal project..."
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Make this project collaborative, or join one with an invite code"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Members"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Not shared"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Only your copy: collaborators' folders stay as they are. Gridline reopens the project and reconnects."
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Other..."
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "PNG or JPEG, or drop one on the picture"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Paste an invite code you were sent. Join then asks where the project goes on this computer."
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Profile"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc src/app/LayoutShellUi.cpp
+msgid "Review"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Review..."
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Safety code"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Servers"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Session"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Set a port first (0 is any port)"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Share"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Share this project"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Shared"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Shared: changes sync while you are online together"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "State"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "The Join window, with this code: it checks the code, then asks where the project goes"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "The Sync review: conflicting changes, side by side"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "The TURN relay's user and password (the password is kept in the system's keychain)"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "The admin resolves conflicting changes"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "The built-in backup servers"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "The code in a text file, to send"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "The code stops working"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "The collaborative projects on this computer: open, locate, keep a copy, forget"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "The colour your identity gives you"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "The invite code (Paste with Cmd+V or Ctrl+V)"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "The project's folder in the file manager"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "The shared project: its name, admin, folder, files, and leaving it"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Their pointers and edit cursors over your windows"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "This computer"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "This project uses plugins that are not part of Gridline:"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "To reconnect with someone offline, pick them on the Members page and press Reconnect. You then swap codes by chat or email."
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Update Gridline to collaborate"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "You are the admin. Make someone else admin first (the Members page), then leave."
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Your display name and the rest of your profile (the Profile page)"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Your fingerprint: compare it with a collaborator by phone or chat."
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "Your profile"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "any port"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc src/packs/platter/platter_ui.cpp
+msgid "left"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "member"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "removed"
+msgstr ""
+
+#: src/app/CollabUiTracker.inc
+msgid "this port only"
 msgstr ""
 
 #: src/app/CommandPaletteUi.cpp
@@ -9234,6 +9514,10 @@ msgid "Tempo (and tempo changes as automation)"
 msgstr ""
 
 #: src/app/ExportUi.cpp
+msgid "The Arrangement only, not the Session's clips"
+msgstr ""
+
+#: src/app/ExportUi.cpp
 msgid "The MIDI file has no notes"
 msgstr ""
 
@@ -11839,10 +12123,6 @@ msgstr ""
 
 #: src/app/LayoutShellUi.cpp
 msgid "Restore pane size"
-msgstr ""
-
-#: src/app/LayoutShellUi.cpp
-msgid "Review"
 msgstr ""
 
 #: src/app/LayoutShellUi.cpp
@@ -14502,11 +14782,19 @@ msgid "Render clip to audio..."
 msgstr ""
 
 #: src/app/Menus.cpp
+msgid "Render clip to file..."
+msgstr ""
+
+#: src/app/Menus.cpp
 msgid "Render pattern to file..."
 msgstr ""
 
 #: src/app/Menus.cpp
 msgid "Render to file (WAV, FLAC, MP3, Ogg)..."
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "Render track's instrument to a sampled instrument..."
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -14583,6 +14871,10 @@ msgstr ""
 
 #: src/app/Menus.cpp
 msgid "The selected MIDI clip rendered to an audio clip"
+msgstr ""
+
+#: src/app/Menus.cpp
+msgid "The selected MIDI clip rendered to an audio file"
 msgstr ""
 
 #: src/app/Menus.cpp
@@ -15179,6 +15471,10 @@ msgstr ""
 
 #: src/app/MidiUi.cpp
 msgid "Takeover"
+msgstr ""
+
+#: src/app/MidiUi.cpp
+msgid "Takes and notes"
 msgstr ""
 
 #: src/app/MidiUi.cpp
@@ -22629,10 +22925,6 @@ msgstr ""
 msgid "Every key: this one"
 msgstr ""
 
-#: src/app/TrackerEditors.cpp src/app/TrackerFrame.cpp src/app/TrackerPages.cpp
-msgid "Exit"
-msgstr ""
-
 #: src/app/TrackerEditors.cpp
 msgid "Extra"
 msgstr ""
@@ -23231,10 +23523,6 @@ msgstr ""
 
 #: src/app/TrackerFrame.cpp
 msgid "Automation clips the song never plays"
-msgstr ""
-
-#: src/app/TrackerFrame.cpp
-msgid "Back to the header"
 msgstr ""
 
 #: src/app/TrackerFrame.cpp
@@ -32519,10 +32807,6 @@ msgstr ""
 
 #: src/packs/platter/platter_ui.cpp
 msgid "While Gridline records, an armed setup records what you play: both decks, scratches, cuts, cues and the mixer. A pattern that already holds a pass of this setup is kept: the new pass goes into a new pattern."
-msgstr ""
-
-#: src/packs/platter/platter_ui.cpp
-msgid "left"
 msgstr ""
 
 #: src/packs/platter/platter_ui.cpp

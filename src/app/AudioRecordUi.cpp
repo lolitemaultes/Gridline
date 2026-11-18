@@ -309,6 +309,8 @@ void App::processAudioRecording() {
 
 // ------------------------------------------------------------------ record filter menu
 
+void audioEditorRecordItem(App& a) { ImGui::MenuItem(i18n::tr("Audio, into Loupe (armed tracks)"), nullptr, &a.recAudioEditor); }
+
 void audioRecordFilterMenu(App& a) {
   ImGui::SeparatorText(i18n::tr("What to record"));  // K-123: quiet group headings
   // N47-13: Clips has no playlist: its arrangement and grid take the clips.
@@ -317,7 +319,9 @@ void audioRecordFilterMenu(App& a) {
                   : logicplug::active(a) ? i18n::tr("Audio, into the tracks as audio regions")
                                          : i18n::tr("Audio, into the playlist as audio clips"),
                   nullptr, &a.recAudio);
-  if (!livelook::active(a)) ImGui::MenuItem(i18n::tr("Audio, into Loupe (armed tracks)"), nullptr, &a.recAudioEditor);  // N49-12: Studio's editor
+  if (!livelook::active(a)) {
+    audioEditorRecordItem(a);  // N49-12: Studio's editor (K-314: Clips has it under Advanced)
+  }
   ImGui::MenuItem(i18n::tr("Notes"), nullptr, &a.recOptions.notes);
   ImGui::MenuItem(i18n::tr("Automation (controller moves)"), nullptr, &a.recOptions.automation);
   recordrows::filterMenuItems(a);  // K-123 (4.1): pitch bend, pressure, program changes

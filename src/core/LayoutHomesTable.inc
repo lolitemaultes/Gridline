@@ -79,7 +79,7 @@
 {"D24", "Track Receipt", "###trackreceipt", "", "", {{HomeKind::Float, "", false}, {HomeKind::Dock, "live.side", false}, {HomeKind::Float, "", false}, {HomeKind::Modal, "", false}}},
 {"D25", "Plugin manager", "Plugin manager", "", "", {{HomeKind::Float, "", false}, {HomeKind::Modal, "", false}, {HomeKind::Float, "", false}, {HomeKind::Modal, "", false}}},
 {"D26", "Remote control settings", "Remote control settings", "", "", {{HomeKind::Modal, "", false}, {HomeKind::Float, "", false}, {HomeKind::Float, "", false}, {HomeKind::Modal, "", false}}},
-{"D27", "Collaboration panel", "Collaboration", "", "", {{HomeKind::Float, "", false}, {HomeKind::Dock, "live.side", false}, {HomeKind::Dock, "logic.right", false}, {HomeKind::Dock, "tracker.side", false}}},
+{"D27", "Collaboration panel", "Collaboration", "", "", {{HomeKind::Float, "", false}, {HomeKind::Dock, "live.side", false}, {HomeKind::Dock, "logic.right", false}, {HomeKind::Host, "tracker.header", false}}},
 {"D28", "Join collaborative project", "", "", "", {{HomeKind::Modal, "", false}, {HomeKind::Modal, "", false}, {HomeKind::Modal, "", false}, {HomeKind::Modal, "", false}}},
 {"D29", "Sync review", "Sync review", "", "", {{HomeKind::Float, "", false}, {HomeKind::Dock, "live.side", false}, {HomeKind::Dock, "logic.right", false}, {HomeKind::Dock, "tracker.side", false}}},
 {"D30", "Collaboration modals", "", "", "", {{HomeKind::Modal, "", false}, {HomeKind::Modal, "", false}, {HomeKind::Modal, "", false}, {HomeKind::Modal, "", false}}},

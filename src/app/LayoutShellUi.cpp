@@ -2039,6 +2039,7 @@ bool openSpecial(App& a, const std::string& w, bool on) {
 const char* hostOf(const std::string& w) {
   if (w == "###channelsettings") return hostbody::claimed(hostbody::Body::ChannelSettings) ? hostbody::claimedBy(hostbody::Body::ChannelSettings) : nullptr;
   if (w == "###fxeditor") return hostbody::claimed(hostbody::Body::EffectEditor) ? hostbody::claimedBy(hostbody::Body::EffectEditor) : nullptr;
+  if (w == "Collaboration") return collabui::trackerPageShown() ? "Order list" : nullptr;  // K-106: the Tracker's header band page
   return nullptr;
 }
 

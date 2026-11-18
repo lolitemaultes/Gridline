@@ -595,6 +595,7 @@ const md::Menu& clipsFileDef() {
                     {
                         md::heading(N_("Import")),
                         rowOf(imp, "MIDI file..."),
+                        rowOf(imp, "DAWproject file..."),  // K-314 (C-02): as in the other layouts
                         rowOf(imp, "Audio file into a sampler..."),
                         rowOf(imp, "Multisample instrument (.sfz, .sf2)..."),
                         rowOf(imp, "Import from URL..."),
@@ -611,6 +612,7 @@ const md::Menu& clipsFileDef() {
                         rowOf(exp, "Project data files..."),
                         rowOf(exp, "Project bones..."),
                         rowOf(exp, "Gridline zipped project (.gridlinez)..."),
+                        rowOf(exp, "DAWproject (.dawproject)..."),  // K-314 (C-02)
                         // Checkpoint 59 (N58-12): the zipped project's switch says what it is for
                         md::item(N_("Zipped projects leave out frozen audio"),
                                  [](App& a) { a.settings.set("freeze.zipLeaveOut", !a.settings.getBool("freeze.zipLeaveOut")); })
@@ -683,6 +685,9 @@ const md::Menu& clipsEditDef() {
         md::item(N_("Render clip in place..."), [](App& a) { exportui::openRender(a, exportui::Preset::PatternReplace); })
             .when(hasPattern)
             .tip(N_("The selected MIDI clip rendered to audio, in its place")),
+        md::item(N_("Render clip to file..."), [](App& a) { exportui::openRender(a, exportui::Preset::PatternFile); })  // K-314 (C-02)
+            .when(hasPattern)
+            .tip(N_("The selected MIDI clip rendered to an audio file")),
     };
     return out;
   }();
@@ -820,7 +825,9 @@ const md::Menu& optionsDef() {
       md::item(N_("Live mode"), [](App& a) { a.engine.setMode(a.engine.mode() == PlayMode::Live ? PlayMode::Song : PlayMode::Live); })
           .check([](App& a) { return a.engine.mode() == PlayMode::Live; })
           .only(studioNotTracks),
-      md::submenu(N_("Arrangements"), {md::provider([](App& a) { arrangementMenu(a); })}).only(studioWindows),  // N49-12: one Arrangement per Set
+      // N49-12: Clips works on one arrangement at a time; K-314 (C-02): a project with several still picks
+      // and makes them here in every layout
+      md::submenu(N_("Arrangements"), {md::provider([](App& a) { arrangementMenu(a); })}),
       md::provider([](App& a) { j31::optionsItems(a); }),  // J-31: song position jumps
       md::toggle(N_("Metronome"), "options.metronome", [](App& a) { return &a.metronome; }).only(studioWindows),  // N48-15: Clips: in Recording and metronome
       md::item(N_("Plugin delay compensation"),
@@ -840,7 +847,9 @@ const md::Menu& optionsDef() {
       md::item(N_("Re-enable automation"), [](App& a) { reenableAutomation(a); })  // N59-01: the hand overrides end
           .when([](App&) { return automationOverrideCount() > 0; })
           .tip(N_("Controls moved by hand while the song played follow their automation again")),
-      md::submenu(N_("Recording options"), {md::provider([](App& a) { recordOptionsMenu(a); })}).only(studioWindows),  // the record button's menu (audio takes included)
+      // K-314 (C-05): once per menu bar: Smooth has it in Record, the Tracker in Options > Recording and metronome
+      md::submenu(N_("Recording options"), {md::provider([](App& a) { recordOptionsMenu(a); })})
+          .only([](App& a) { return studioWindows(a) && layoutui::menuStyle(a) == layout::Preset::Studio; }),  // the record button's menu (audio takes included)
       md::heading(N_("Keyboard and controllers")).only(studioWindows),
       md::toggle(N_("Typing keyboard to piano"), "options.typingKeyboard", [](App& a) { return &a.typingKeyboard; }).only(studioWindows),
       md::submenu(N_("Typing keyboard options"), {md::provider([](App& a) { typingKeyboardMenu(a); })}).only(studioWindows),
@@ -898,10 +907,14 @@ const md::Menu& toolsDef() {
       md::item(N_("Render channel to sampled instrument..."), [](App& a) { j59::openRenderSampler(a, a.selChannel); })  // J-59 (RN-08)
           .when([](App& a) { return a.doc.song().channel(a.selChannel) != nullptr; })
           .only(studioWindows),  // N53-05 (checkpoint 54): Studio's channel term (Clips freezes and flattens tracks)
+      md::item(N_("Render track's instrument to a sampled instrument..."), [](App& a) { j59::openRenderSampler(a, a.selChannel); })  // K-314 (C-02)
+          .when([](App& a) { return a.doc.song().channel(a.selChannel) != nullptr; })
+          .only([](App& a) { return livelook::active(a); }),
       md::provider([](App& a) { j31::toolsItems(a); }),                 // J-31: audio logger, cancel recording
       md::provider([](App& a) { menuparity::toolsScoreLogItem(a); }),  // J-27
       md::separator(),
       md::item(N_("Route channels to free mixer tracks"), "rack.routeFree", [](App& a) { chanroute::routeToFree(a, selectedChannels(a)); })
+          .hideKey()  // K-314 (C-08): Ctrl+L is shown on Quick legato (the key works in the rack)
           .only(studioWindows),  // N50-09: Studio's rack and mixer terms (Clips' tracks are their own strips)
       md::item(N_("Unmute all channels"),
                [](App& a) {

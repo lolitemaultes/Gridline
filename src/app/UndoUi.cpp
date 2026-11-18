@@ -11,9 +11,11 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../collab/Session.h"
 #include "../core/I18n.h"
+#include "../core/LayoutHomes.h"
 #include "App.h"
 #include "CollabUi.h"
 #include "Keys.h"
+#include "LayoutPresets.h"
 #include "LiveLook.h"
 #include "LogicPlugins.h"
 #include "Theme.h"
@@ -226,6 +228,10 @@ void historyWindow(App& a) {
   wasShown = true;
   if (opened) ImGui::SetNextWindowFocus();
   ImGui::SetNextWindowSize(ImVec2(300, 420), ImGuiCond_FirstUseEver);
+  // K-314 (C-03): where it floats (Smooth), it opens centred as the other dialogs do, not at the corner.
+  if (layoutui::active() != layout::Preset::Studio && layout::windowHome("Undo history", layoutui::active()).kind == layout::HomeKind::Float) {
+    ui::PlaceNextDialog(ImVec2(0, 0), ImGuiCond_Appearing);
+  }
   // K-112b: the Tracks layout lists the steps as a table: a header (step number, action), striped
   // rows edge to edge with the number right-aligned in its column, and Undo / Redo at the bottom right.
   const bool table = logicplug::active(a);

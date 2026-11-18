@@ -4037,6 +4037,8 @@ int main(int argc, char** argv) {
       layoutui::shellFrame(app);  // K-112: the region shell's exclusive regions and fixed bands
       if (livelook::active(app)) livelook::viewFrame(app);  // K-112c: the clip grid or the arrangement, one at a time
       else livelook::leftFrame();
+      trackerChannelFrame(app);  // K-314 (A-01): the instrument window open outside the Tracker, kept through a visit there
+      cycleLayoutFrame(app);  // K-314 (A-06): Studio's time selection or the Tracker's Loop block back after Smooth
       livelook::transportFrame(app);  // K-112c (N55-02, N55-04): the engine's loop range and the Arrangement's start and end
     }
     {

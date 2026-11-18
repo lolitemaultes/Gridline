@@ -1,6 +1,8 @@
 // Gridline - J-111: collaboration in the app. See CollabUi.h.
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
+#include "TrackerLook.h"
+#include "TrackerPages.h"
 #include "CollabUi.h"
 #include "Keys.h"
 #include "GlEpoch.h"
@@ -9,6 +11,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cfloat>
+#include <cstring>
 #include <chrono>
 #include <cctype>
 #include <cmath>
@@ -44,6 +48,7 @@
 #include "App.h"
 #include "CursorAnchor.h"
 #include "DevSignal.h"
+#include "CommandPaletteUi.h"
 #include "DialogLayout.h"
 #include "GridlineVersion.h"
 #include "HostedUi.h"
@@ -65,6 +70,13 @@ namespace {
 
 constexpr float kPanelW = 520.0f;     // Collaboration / Join windows: default width
 constexpr float kPanelMinW = 440.0f;  // ... and the narrowest they get (Sync review too)
+// K-314 (C-01): docked in a side panel (Clips, Smooth, Tracker) the Collaboration panel may be far
+// narrower than a floating one; under this width its form stacks each label over its field and
+// puts buttons under the line they belong to, so nothing wraps a letter at a time.
+constexpr float kNarrowW = 400.0f;
+bool gNarrow = false;  // the window being drawn is narrower than kNarrowW
+float gPanelW = 0;     // the Collaboration panel's width on its last frame (dev: collab panel)
+bool gPanelNarrow = false;
 constexpr double kFlashSec = 1.2;
 constexpr float kCursorHoldSec = 0.28f;  // J-111g: a collaborator's cursor hidden for less than this: no fade (gaps, title bars, edges)
 
@@ -260,12 +272,34 @@ struct Ui {
     double offset = 0;  // the setup ran ahead of the app's clock by this much
   };
   std::unique_ptr<LauncherDemo> ldemo;
+  // K-106: the connection fields of Settings > Collaboration, shared with the Tracker's page (both
+  // edit the same settings; filled in once from them)
+  char stunBuf[256] = {}, stunBk[512] = {}, turnHost[256] = {}, turnUser[128] = {}, turnPass[128] = {};
+  bool netInit = false;
+  // K-106: the Tracker's Collaboration page (CollabUiTracker.inc)
+  struct TrackerPage {
+    int page = -1;              // the page shown (TPage); -1: the first one for the state
+    int shownFrame = -10;       // the frame it last drew on
+    char joinBuf[16384] = {};   // the invite code pasted on the Share page
+    SiteId member = 0;          // the member picked on the Members page
+    std::string project;        // the project picked on the Projects page (its folder)
+    double memberFirst = 0, projectFirst = 0;  // the first row in view of those lists
+    bool colourOpen = false;    // the custom colour picker is open
+    std::string press;          // dev: a button to press by its id ("collab press <id>")
+    std::vector<std::string> buttons;  // dev: the buttons drawn on its last frame
+    std::vector<std::string> buttonsNow;
+    bool overflow = false, overflowNow = false;  // dev: a row ran past its box's foot
+    std::string overflowWhat, overflowWhatNow;
+  } trk;
 };
 
 Ui& U() {
   static Ui u;
   return u;
 }
+
+// K-106: the Tracker's Collaboration page's dev command (CollabUiTracker.inc, at the end of this file).
+void trackerPageDev(App& a, const std::vector<std::string>& args, int frame);
 
 std::string fmt1(const char* f, const std::string& a) {
   char buf[512];
@@ -311,7 +345,19 @@ uint64_t wallMs() {
 
 ImU32 colorOf(uint32_t rgb) { return theme::rgb(rgb ? rgb : 0x8FA0B5); }
 
-void label(const char* text, float x = 168.0f) { ui::FormLabelFit(tr(text), x, pal().textDim); }
+void label(const char* text, float x = 168.0f) {
+  if (!gNarrow) {
+    ui::FormLabelFit(tr(text), x, pal().textDim);
+    return;
+  }
+  if (!text || !text[0]) {
+    return;  // a caption row: the caption takes the whole line
+  }
+  if (cmdpalette::noting()) {
+    cmdpalette::noteFormLabel(tr(text));
+  }
+  ui::TextFit(tr(text), std::max(40.0f, ImGui::GetContentRegionAvail().x), pal().textDim, true);
+}
 
 void dim(const std::string& t, ImU32 col = 0) {
   ImGui::PushTextWrapPos(0);
@@ -359,7 +405,13 @@ void header(App& a, const std::string& title, const std::string& sub, const std:
     projectTitle(a, title, tw);
   } else {
     ImGui::PushFont(a.fontBold, theme::kFontTitle);
-    ui::TextFit(title.c_str(), tw, P.text);
+    if (gNarrow && right.empty()) {
+      ImGui::PushTextWrapPos(0);
+      ImGui::TextColored(theme::vec(P.text), "%s", title.c_str());
+      ImGui::PopTextWrapPos();
+    } else {
+      ui::TextFit(title.c_str(), tw, P.text);
+    }
     ImGui::PopFont();
   }
   if (!right.empty()) {
@@ -380,19 +432,23 @@ bool noticeBar(const char* id, const std::string& text, ImU32 tone, const char* 
   const auto& P = pal();
   ImGui::PushID(id);
   const ImVec2 p = ImGui::GetCursorScreenPos();
-  const float w = ImGui::GetContentRegionAvail().x, h = ImGui::GetFrameHeight() + 2 * theme::kS1;
+  const float w = ImGui::GetContentRegionAvail().x;
+  const float bw = button ? ui::TextButtonWidth(button) : 0.0f;
+  // K-314 (C-01): a narrow window puts the button on a second row, under the text
+  const bool twoRows = button && gNarrow && ImGui::CalcTextSize(text.c_str()).x + bw + 2 * theme::kS3 + 14 + theme::kS2 > w;
+  const float h = ImGui::GetFrameHeight() * (twoRows ? 2.0f : 1.0f) + (twoRows ? theme::kS1 : 0.0f) + 2 * theme::kS1;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), theme::mix(P.surface800, tone, P.dark ? 0.14f : 0.10f), theme::kRadiusLg);
   dl->AddRect(p, ImVec2(p.x + w, p.y + h), theme::withAlpha(tone, 0.45f), theme::kRadiusLg);
-  const float bw = button ? ui::TextButtonWidth(button) : 0.0f;
   ImGui::SetCursorScreenPos(ImVec2(p.x + theme::kS3, p.y + theme::kS1));
   ImGui::AlignTextToFramePadding();
   ui::StatusDot(tone);
-  ui::TextFit(text.c_str(), std::max(40.0f, w - 2 * theme::kS3 - 14 - (button ? bw + theme::kS2 : 0.0f)), P.text);
+  ui::TextFit(text.c_str(), std::max(40.0f, w - 2 * theme::kS3 - 14 - (button && !twoRows ? bw + theme::kS2 : 0.0f)), P.text);
   bool clicked = false;
   if (button) {
     ImGui::SameLine();
-    ImGui::SetCursorScreenPos(ImVec2(p.x + w - theme::kS1 - bw, p.y + theme::kS1));
+    const float by = p.y + theme::kS1 + (twoRows ? ImGui::GetFrameHeight() + theme::kS1 : 0.0f);
+    ImGui::SetCursorScreenPos(ImVec2(p.x + w - theme::kS1 - bw, by));
     clicked = primary ? ui::PrimaryButton(button, bw) : ui::TextButton(button, false, bw);  // K-172
   }
   ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + h));
@@ -1236,13 +1292,19 @@ void drawMember(App& a, Session& s, Hub* hub, const Member& m, float w) {
   float badgesW = 0;
   if (me) badgesW += a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, youT).x + 10 + theme::kS1;
   if (isAdmin) badgesW += a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, adminT).x + 10 + theme::kS1;
-  const float nameMax = std::max(30.0f, textW - badgesW);
+  // K-314 (C-01): too narrow for the badges (a side panel): the name alone (the header says who is admin)
+  const bool badges = textW - badgesW >= 30.0f;
+  const float nameMax = badges ? textW - badgesW : std::max(30.0f, textW);
   const float y1 = p.y + 5, x1 = p.x + textX;
   theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(x1, y1), nameMax, P.text, name.c_str());
   float bx = x1 + std::min(nameMax, a.fontBold->CalcTextSizeA(theme::kFontBody, 1e9f, 0, name.c_str()).x) + theme::kS2;
   const float by = y1 + 1;
-  if (me) bx += badge(a, dl, ImVec2(bx, by), youT, P.textDim, P.surface700) + theme::kS1;
-  if (isAdmin) badge(a, dl, ImVec2(bx, by), adminT, theme::lit(P.hot), theme::mix(P.surface800, P.hot, P.dark ? 0.22f : 0.16f));
+  if (me && badges) {
+    bx += badge(a, dl, ImVec2(bx, by), youT, P.textDim, P.surface700) + theme::kS1;
+  }
+  if (isAdmin && badges) {
+    badge(a, dl, ImVec2(bx, by), adminT, theme::lit(P.hot), theme::mix(P.surface800, P.hot, P.dark ? 0.22f : 0.16f));
+  }
   // the link: lamp and words
   const float y2 = p.y + 25, lh = theme::kFontCaption;
   ImU32 dot = st.dot;
@@ -1300,7 +1362,9 @@ void drawInvite(App& a, Session& s, Hub& hub) {
         if (ImGui::Selectable(tr(kLabels[i]), i == sel)) u.inviteMinutes = kMinutes[i];
       ImGui::EndCombo();
     }
-    ImGui::SameLine(0, theme::kS2);
+    if (!gNarrow) {  // K-314 (C-01): a narrow panel has the button under the choice
+      ImGui::SameLine(0, theme::kS2);
+    }
     alignRight(ui::TextButtonWidth("Create invite"));
     if (ui::PrimaryButton("Create invite", 0, "Makes a one-time code for one person")) {
       u.inviteId = hub.createInvite(u.inviteMinutes);
@@ -1678,7 +1742,11 @@ void recentProjects(App& a) {
     }
   }
   hairline(theme::kS2, theme::kS2);
-  if (ui::TextButton("Open collaborative project...", false, 0, "Choose the project's folder (the one with the .gridline-collab folder)")) openCollabFolder(a);
+  // K-314 (C-01): fitted to a narrow side panel
+  const float ow = std::min(ui::TextButtonWidth("Open collaborative project..."), ImGui::GetContentRegionAvail().x);
+  if (ui::TextButton("Open collaborative project...", false, ow, "Choose the project's folder (the one with the .gridline-collab folder)")) {
+    openCollabFolder(a);
+  }
   ui::EndSection();
 }
 
@@ -1708,8 +1776,10 @@ void shareSection(App& a, bool gateOk) {
   const std::string target = shareTarget(name);
   label("Folder", x);
   const float cw = ui::TextButtonWidth("Choose...##share");
-  ui::PathFit(target.c_str(), std::max(60.0f, ImGui::GetContentRegionAvail().x - cw - theme::kS3), P.text, true);
-  ImGui::SameLine(0, theme::kS3);
+  ui::PathFit(target.c_str(), std::max(60.0f, ImGui::GetContentRegionAvail().x - (gNarrow ? 0.0f : cw + theme::kS3)), P.text, true);
+  if (!gNarrow) {
+    ImGui::SameLine(0, theme::kS3);
+  }
   alignRight(cw);
   if (ui::TextButton("Choose...##share", false, 0, "Where the project's folder is made"))
     chooseFolder(a, "Choose where the project folder goes", u.shareParent, [](const std::string& dir) { U().shareParent = dir; });
@@ -1736,7 +1806,7 @@ void shareSection(App& a, bool gateOk) {
   }
   if (!u.makeErr.empty()) statusLine(u.makeErr, P.danger, theme::lit(P.danger));
   hairline(theme::kS2, theme::kS2);
-  const float bw = std::max(120.0f, ui::TextButtonWidth("Make collaborative"));
+  const float bw = std::min(std::max(120.0f, ui::TextButtonWidth("Make collaborative")), ImGui::GetContentRegionAvail().x);
   alignRight(bw);
   ImGui::BeginDisabled(!can || name.empty() || u.shareTaken);
   if (ui::PrimaryButton("Make collaborative", bw, "Copies the project into the folder and shares it from there") || (enter && can && !name.empty() && !u.shareTaken))
@@ -1769,9 +1839,18 @@ void panelStart(App& a) {
   {
     ImGui::BeginDisabled(!gateOk || !networkBuiltIn());
     const float bw = ui::TextButtonWidth("Join collaborative project...");
-    if (ui::TextButton("Join collaborative project...", false, bw)) openJoin(a);
-    ImGui::SameLine(0, theme::kS3);
-    ui::TextFit(tr("Use an invite code you were sent"), std::max(40.0f, ImGui::GetContentRegionAvail().x), P.textFaint, true);
+    if (gNarrow) {  // K-314 (C-01): the caption first, the button under it
+      note(tr("Use an invite code you were sent"));
+      if (ui::TextButton("Join collaborative project...", false, std::min(bw, ImGui::GetContentRegionAvail().x))) {
+        openJoin(a);
+      }
+    } else {
+      if (ui::TextButton("Join collaborative project...", false, bw)) {
+        openJoin(a);
+      }
+      ImGui::SameLine(0, theme::kS3);
+      ui::TextFit(tr("Use an invite code you were sent"), std::max(40.0f, ImGui::GetContentRegionAvail().x), P.textFaint, true);
+    }
     ImGui::EndDisabled();
   }
   ui::EndSection();
@@ -1781,6 +1860,9 @@ void panelStart(App& a) {
 
 void panelWindow(App& a) {
   if (!a.showCollab) return;
+  if (trackerpages::active(a)) {
+    return;  // K-106: the Tracker shows it as a page of its header band (trackerPage)
+  }
   Ui& u = U();
   const auto& P = pal();
   ui::PlaceNextDialog(ImVec2(kPanelW, 640), ImGuiCond_Appearing, ImVec2(kPanelMinW, 320));
@@ -1792,6 +1874,12 @@ void panelWindow(App& a) {
     return;
   }
   ui::KeepWindowInViewport();
+  gNarrow = ImGui::GetContentRegionAvail().x < kNarrowW;
+  gPanelW = ImGui::GetContentRegionAvail().x;
+  gPanelNarrow = gNarrow;
+  struct NarrowReset {
+    ~NarrowReset() { gNarrow = false; }
+  } narrowReset;
   Controller& c = ctlOf(a);
   Session* s = c.session();
   if (!s) {
@@ -1883,8 +1971,10 @@ void panelWindow(App& a) {
     label("Folder", x);
     {
       const float rw = ui::TextButtonWidth(revealLabel());
-      ui::PathFit(folder.c_str(), std::max(40.0f, ImGui::GetContentRegionAvail().x - rw - theme::kS2), P.text, true);  // the whole path on hover
-      ImGui::SameLine(0, theme::kS2);
+      ui::PathFit(folder.c_str(), std::max(40.0f, ImGui::GetContentRegionAvail().x - (gNarrow ? 0.0f : rw + theme::kS2)), P.text, true);  // the whole path on hover
+      if (!gNarrow) {
+        ImGui::SameLine(0, theme::kS2);
+      }
       alignRight(rw);
       if (ui::TextButton(revealLabel())) revealFolder(folder);
     }
@@ -2368,6 +2458,10 @@ void reviewWindow(App& a) {
     return;
   }
   ui::KeepWindowInViewport();
+  gNarrow = ImGui::GetContentRegionAvail().x < kNarrowW;
+  struct NarrowReset {
+    ~NarrowReset() { gNarrow = false; }
+  } narrowReset;
   const ConflictTracker& ct = s->conflicts();
   const auto openList = ct.open();
   const auto settled = ct.settled();
@@ -3470,7 +3564,15 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame, ImVec2*
   const std::string cmd = args.empty() ? std::string() : args[0];
   auto arg = [&](size_t i) { return i < args.size() ? args[i] : std::string(); };
   Controller& c = ctlOf(a);
-  if (cmd == "profile") {  // collab profile <name>
+  if (cmd == "panel") {  // collab panel: the Collaboration panel's form (K-314: stacked when narrow)
+    if (trackerpages::active(a)) {  // K-106: the Tracker's page in place of the panel
+      std::printf("collab frame %d panel open %d tracker-page %d\n", frame, a.showCollab ? 1 : 0, ImGui::GetFrameCount() - u.trk.shownFrame <= 2 ? 1 : 0);
+    } else {
+      std::printf("collab frame %d panel open %d width %.0f stacked %d\n", frame, a.showCollab ? 1 : 0, static_cast<double>(gPanelW), gPanelNarrow ? 1 : 0);
+    }
+  } else if (cmd == "page" || cmd == "press") {  // K-106: the Tracker's Collaboration page (CollabUiTracker.inc)
+    trackerPageDev(a, args, frame);
+  } else if (cmd == "profile") {  // collab profile <name>
     Profile p = c.profiles().profile();
     p.name = arg(1);
     c.setProfile(p);
@@ -4760,6 +4862,23 @@ std::string projectTitle(const App& a) {
   return s && s->ready() && !s->stopped() ? s->projectName() : std::string();
 }
 
+namespace {
+// K-106: the connection fields' text, from the settings, once (Settings > Collaboration and the
+// Tracker's page edit the same buffers). K-327: the TURN password is never read back into a field.
+void netFieldsInit(Settings& st) {
+  Ui& u = U();
+  if (u.netInit) {
+    return;
+  }
+  u.netInit = true;
+  std::snprintf(u.stunBuf, sizeof u.stunBuf, "%s", st.getString("collab.stunHost").c_str());
+  std::snprintf(u.stunBk, sizeof u.stunBk, "%s", st.getString("collab.stunBackups").c_str());
+  std::snprintf(u.turnHost, sizeof u.turnHost, "%s", st.getString("collab.turnHost").c_str());
+  std::snprintf(u.turnUser, sizeof u.turnUser, "%s", st.getString("collab.turnUser").c_str());
+  u.turnPass[0] = 0;
+}
+}  // namespace
+
 void settingsPage(App& a, float fieldW) {
   Ui& u = U();
   const auto& P = pal();
@@ -4948,13 +5067,12 @@ void settingsPage(App& a, float fieldW) {
     if (ImGui::Checkbox(tr("Let Gridline ask my router to open a port automatically"), &pm)) st.set("collab.portMapping", pm);
     ui::Hint("UPnP-IGD, NAT-PMP or PCP: a temporary mapping while a collaborative project is open, removed when it closes");
   }
+  netFieldsInit(st);
   label("STUN server");
   {
-    static char buf[256];
-    static bool init = false;
-    if (!init) std::snprintf(buf, sizeof buf, "%s", st.getString("collab.stunHost").c_str()), init = true;
+    char* buf = u.stunBuf;
     ImGui::SetNextItemWidth(fieldW - 90);
-    if (ImGui::InputTextWithHint("##stun", tr("none (same network only)"), buf, sizeof buf)) st.set("collab.stunHost", std::string(buf));
+    if (ImGui::InputTextWithHint("##stun", tr("none (same network only)"), buf, sizeof u.stunBuf)) st.set("collab.stunHost", std::string(buf));
     ui::FocusRing();
     ImGui::SameLine();
     int port = static_cast<int>(st.getNumber("collab.stunPort"));
@@ -4966,16 +5084,14 @@ void settingsPage(App& a, float fieldW) {
   // check uses the first two that answer)
   label("Backup servers");
   {
-    static char bk[512];
-    static bool init = false;
-    if (!init) std::snprintf(bk, sizeof bk, "%s", st.getString("collab.stunBackups").c_str()), init = true;
+    char* bk = u.stunBk;
     ImGui::SetNextItemWidth(fieldW - 90);
-    if (ImGui::InputTextWithHint("##stunbk", tr("host:port, host:port"), bk, sizeof bk)) st.set("collab.stunBackups", std::string(bk));
+    if (ImGui::InputTextWithHint("##stunbk", tr("host:port, host:port"), bk, sizeof u.stunBk)) st.set("collab.stunBackups", std::string(bk));
     ui::FocusRing();
     ui::Hint("Public address servers asked when the one above gives no answer, in this order. Each sees your IP address, nothing else");
     ImGui::SameLine();
     if (ui::TextButton("Default##stunbk")) {
-      std::snprintf(bk, sizeof bk, "%s", kDefaultStunBackups);
+      std::snprintf(bk, sizeof u.stunBk, "%s", kDefaultStunBackups);
       st.set("collab.stunBackups", std::string(bk));
     }
   }
@@ -4997,16 +5113,9 @@ void settingsPage(App& a, float fieldW) {
     // K-327: the stored password is not read to fill the field: drawing the page (or the command
     // palette reading it) must never reach the Keychain, which can wait on a macOS password prompt.
     // The field stays empty until the user types a new password, which replaces the stored one.
-    static char host[256], user[128], pass[128];
-    static bool init = false;
-    if (!init) {
-      std::snprintf(host, sizeof host, "%s", st.getString("collab.turnHost").c_str());
-      std::snprintf(user, sizeof user, "%s", st.getString("collab.turnUser").c_str());
-      pass[0] = 0;
-      init = true;
-    }
+    char *host = u.turnHost, *user = u.turnUser, *pass = u.turnPass;
     ImGui::SetNextItemWidth(fieldW - 90);
-    if (ImGui::InputTextWithHint("##turn", tr("optional: turn.example.org"), host, sizeof host)) st.set("collab.turnHost", std::string(host));
+    if (ImGui::InputTextWithHint("##turn", tr("optional: turn.example.org"), host, sizeof u.turnHost)) st.set("collab.turnHost", std::string(host));
     ui::FocusRing();
     ImGui::SameLine();
     int port = static_cast<int>(st.getNumber("collab.turnPort"));
@@ -5015,11 +5124,11 @@ void settingsPage(App& a, float fieldW) {
     ui::Hint("Relays the encrypted connection when both networks block direct connections. Only needed for strict networks");
     label("");
     ImGui::SetNextItemWidth((fieldW - theme::kS2) * 0.5f);
-    if (ImGui::InputTextWithHint("##turnuser", tr("user"), user, sizeof user)) st.set("collab.turnUser", std::string(user));
+    if (ImGui::InputTextWithHint("##turnuser", tr("user"), user, sizeof u.turnUser)) st.set("collab.turnUser", std::string(user));
     ImGui::SameLine(0, theme::kS2);
     ImGui::SetNextItemWidth((fieldW - theme::kS2) * 0.5f);
     const bool anyTurn = host[0] || user[0];
-    if (ImGui::InputTextWithHint("##turnpass", anyTurn ? tr("password: type to replace") : tr("password"), pass, sizeof pass,
+    if (ImGui::InputTextWithHint("##turnpass", anyTurn ? tr("password: type to replace") : tr("password"), pass, sizeof u.turnPass,
                                  ImGuiInputTextFlags_Password)) {
       if (secrets::Store().set("collab-turn-password", pass)) rememberTurnPassword(pass);
     }
@@ -5232,5 +5341,8 @@ void startLauncherDemo(App& a, const std::string& folder) {
   u.ldemo = std::move(d);
   devsig::reach("launcher-collab-demo");
 }
+
+// K-106: the Tracker's Collaboration page (drawn with this file's state and actions).
+#include "CollabUiTracker.inc"
 
 }  // namespace gl::collabui

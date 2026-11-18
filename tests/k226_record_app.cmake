@@ -133,3 +133,39 @@ if(NOT n2 EQUAL n0)
   message(FATAL_ERROR "FAIL: one undo should remove the whole take (${n1} -> ${n2}, before ${n0})\n${undone}")
 endif()
 message(STATUS "ok - one undo removes the take")
+
+# 3. K-314 (A-03): Punch as set in Studio is still so after a visit to Clips, whose Punch is its own, and
+#    Clips' own is still so after a visit to Studio (neither only written at the quit).
+file(MAKE_DIRECTORY "${OUT}/cfg3/gridline")
+file(WRITE "${OUT}/cfg3/gridline/settings.json"
+     "{\"format\": \"gridline-settings\", \"values\": {\"ui.layoutChosen\": true, \"ui.layoutDev\": true, \"ui.layout\": \"studio\"}}\n")
+set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg3")
+set(ENV{HOME} "${OUT}/cfg3")
+file(WRITE "${OUT}/run_punch.txt" "10 recopt punch 0
+14 recopt show
+50 recopt show
+52 recopt punch 1
+56 recopt show
+90 recopt show
+130 recopt show
+134 quit discard
+")
+execute_process(COMMAND "${APP}" "${DEMO}" --hidden --layout-dev --no-ui-sounds --fixed-dt 16 --size 1440x900 --layout studio
+                        --dev-input "${OUT}/run_punch.txt" --frames 160 --switch-layout live@30 --switch-layout studio@70
+                        --switch-layout live@110
+                RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 150)
+file(WRITE "${OUT}/run_punch.log" "${out}\n---- stderr ----\n${err}")
+if(NOT rc EQUAL 0)
+  message(FATAL_ERROR "gridline-app failed in the Punch run (${rc}): ${err}")
+endif()
+string(REGEX MATCHALL "recopt overdub [^\n]* punch [01]" shows "${out}")
+set(punches "")
+foreach(l IN LISTS shows)
+  string(REGEX MATCH "punch ([01])$" m "${l}")
+  list(APPEND punches "${CMAKE_MATCH_1}")
+endforeach()
+# Studio off; Clips (its own, off); Clips turned on; Studio off again; Clips on again.
+if(NOT punches STREQUAL "0;0;1;0;1")
+  message(FATAL_ERROR "FAIL: Punch across Studio, Clips, Studio, Clips: '${punches}', wanted '0;0;1;0;1'\n${out}")
+endif()
+message(STATUS "ok - Punch: Studio's and Clips' own each kept across a visit to the other")

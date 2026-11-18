@@ -397,9 +397,19 @@ void shortcutReference(App& a) {
   }
   ImGui::Dummy(ImVec2(0, theme::kS1));
   const float keyCol = std::min(200.0f, ImGui::GetContentRegionAvail().x * 0.42f);
+  // K-314 (C-06): docked in a narrow side panel each row is two lines, what it does over its keys,
+  // so neither is cut to a few letters.
+  const bool narrow = ImGui::GetContentRegionAvail().x < 340.0f;
   auto row = [&](const char* keysText, const char* what) {
     ImVec2 q = ImGui::GetCursorScreenPos();
     ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (narrow) {
+      const float w = ImGui::GetContentRegionAvail().x;
+      theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(q.x, q.y + 2), w, P.textDim, what);
+      keyChip(a, dl, ImVec2(q.x, q.y + 20), theme::fitText(keysText, w - 16), P.line);
+      ImGui::Dummy(ImVec2(w, 44));
+      return;
+    }
     const char* fitted = theme::fitText(keysText, keyCol - 16);
     keyChip(a, dl, q, fitted, P.line);
     theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(q.x + keyCol, q.y + 3), ImGui::GetContentRegionAvail().x - keyCol, P.textDim,

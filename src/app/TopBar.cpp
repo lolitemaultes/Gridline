@@ -2117,6 +2117,40 @@ void goToPositionPrompt(App& a) {
   });
 }
 
+namespace {
+// K-314 (A-06): Smooth shows the song's cycle in the playlist's time selection, which is Studio's time
+// selection and the Tracker's Loop block in their layouts; kept on entering Smooth, given back on leaving.
+struct SmoothStash {
+  bool held = false;
+  Tick a = 0, b = 0;
+  uint64_t epoch = 0;
+  int frame = -10;  // the last frame Smooth synced its cycle
+};
+SmoothStash gSmoothStash;
+}  // namespace
+
+void cycleLayoutFrame(App& a) {
+  if (!gSmoothStash.held || ImGui::GetFrameCount() - gSmoothStash.frame <= 1) {  // (Smooth drew its control bar this frame or the last)
+    return;
+  }
+  if (gSmoothStash.epoch == a.doc.projectEpoch()) {  // (another project opened meanwhile: its own range stands)
+    a.playlist.selStart = gSmoothStash.a, a.playlist.selEnd = gSmoothStash.b;
+  }
+  gSmoothStash.held = false;
+}
+
+bool playLoop(const App& a, Tick& from, Tick& to) {
+  const Song& s = a.doc.song();
+  const bool songLoop = s.cycleOn && s.cycleEnd > s.cycleStart;
+  from = to = 0;
+  if (!livelook::active(a) && a.playlist.selEnd > a.playlist.selStart) {
+    from = a.playlist.selStart, to = a.playlist.selEnd;
+  } else if (songLoop) {
+    from = s.cycleStart, to = s.cycleEnd;
+  }
+  return to > from;
+}
+
 // R02-04: in the Tracks layout the cycle area is the arrangement's range (PlaylistState::selStart /
 // selEnd) and is saved with the project (Song::cycleStart / cycleEnd / cycleOn).
 // R13-02 (checkpoint 53): the song holds the cycle and the view follows it.
@@ -2154,6 +2188,10 @@ void logicCycleSync(App& a) {
   static int lastFrame = -10;
   const bool entered = ImGui::GetFrameCount() - lastFrame > 1;
   lastFrame = ImGui::GetFrameCount();
+  if (entered && !gSmoothStash.held) {  // K-314 (A-06): the other layout's time selection, back when Smooth is left
+    gSmoothStash = {true, pst.selStart, pst.selEnd, a.doc.projectEpoch(), lastFrame};
+  }
+  gSmoothStash.frame = lastFrame;
   if (a.doc.projectEpoch() != seen.epoch || entered) {  // a project loaded: its cycle comes in
     seen.epoch = a.doc.projectEpoch();
     takeSong();
@@ -3278,8 +3316,30 @@ static void drawNotifications(App& a, ImVec2 wp, float W, float fs) {
                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
                    ImGuiWindowFlags_NoScrollWithMouse);
   ImGui::PopStyleVar(3);
-  ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
-  ImDrawList* fg = ImGui::GetForegroundDrawList(vp);
+  ImGuiWindow* self = ImGui::GetCurrentWindow();
+  ImGui::BringWindowToDisplayFront(self);
+  // K-314 (C-06): in front of the panels, but behind a dialog the cards would cover (on a small
+  // window the Render and Record windows' buttons sit where the cards are): the dialog wins.
+  ImGuiWindow* under = nullptr;
+  for (ImGuiWindow* w : GImGui->Windows) {  // display order, back to front: the lowest such dialog
+    if (w == self || !w->WasActive || w->Hidden || w->ParentWindow || w->DockNodeAsHost || w->DockIsActive) {
+      continue;
+    }
+    if ((w->Flags & (ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_ChildWindow)) || ((w->Flags & ImGuiWindowFlags_NoTitleBar) && !(w->Flags & ImGuiWindowFlags_Modal))) {
+      continue;  // bars, overlays and menus keep the cards over them
+    }
+    if (w->Pos.x < bb1.x && w->Pos.x + w->Size.x > bb0.x && w->Pos.y < bb1.y && w->Pos.y + w->Size.y > bb0.y) {
+      under = w;
+      break;
+    }
+  }
+  if (under) {
+    ImGui::BringWindowToDisplayBehind(self, under);
+  }
+  ImDrawList* fg = under ? ImGui::GetWindowDrawList() : ImGui::GetForegroundDrawList(vp);
+  if (under) {
+    fg->PushClipRect(ImVec2(bb0.x - 4, bb0.y - 4), ImVec2(bb1.x + 4, bb1.y + 6), false);  // (the cards' shadow)
+  }
   const ImVec2 mouse = ImGui::GetIO().MousePos;
   for (const auto& c : cards) {
     Toast& t = *c.t;
@@ -3366,6 +3426,9 @@ static void drawNotifications(App& a, ImVec2 wp, float W, float fs) {
     const ImU32 glyph = theme::withAlpha(P.textDim, alpha * (hov ? 1.0f : 0.55f));
     if (hov && !copied) ui::drawIcon(fg, ui::Icon::Clone, ImVec2(c1.x - 34, xc.y), 11, glyph);
     ui::drawIcon(fg, ui::Icon::Close, xc, 10, overClose ? theme::withAlpha(P.text, alpha) : glyph);
+  }
+  if (under) {
+    fg->PopClipRect();
   }
   ImGui::End();
 }

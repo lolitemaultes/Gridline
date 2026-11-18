@@ -1372,7 +1372,7 @@ void projectOpened(App& a, const std::string& file) {
   // On a launch with a file the shell is not built yet: the view waits for Clips' first frames
   // (viewFrame runs only in Clips, so another layout never sees it).
   const bool now = layoutui::active() == layout::Preset::Live;
-  if (!now && a.settings.getString("ui.layout") != "live") return;
+  const bool clips = now || a.settings.getString("ui.layout") == "live";
   const std::vector<std::string> v = arrangementSets(a);
   bool grid = file.empty() || std::find(v.begin(), v.end(), file) == v.end();
   // Checkpoint 59: a 0.7.7 development save kept the view in the project (N48-07): it is read once,
@@ -1389,6 +1389,9 @@ void projectOpened(App& a, const std::string& file) {
     a.settings.set("clips.arrangementSets", all);
   }
   if (!pv.empty()) a.doc.patchSong([](Song& x) { x.live.view.clear(); });
+  if (!clips) {  // K-314 (A-07): another layout; the view above is carried over all the same
+    return;
+  }
   if (now) showView(a, grid);
   gOpenView = grid ? 1 : 0;
   gOpenFrames = 4;
@@ -1427,10 +1430,24 @@ void renameTrack(App& a, int track) {
 }
 
 void projectSaved(App& a, const std::string& file) {
-  if (!active(a) || file.empty()) return;
+  if (file.empty()) {
+    return;
+  }
   std::vector<std::string> v = arrangementSets(a);
+  bool arrangement = false;
+  if (active(a)) {
+    arrangement = !gridView(a);
+  } else {  // K-314 (A-07): outside Clips its view is not changed: a Save As keeps the one the Set had
+    const std::string was = a.projectFile();
+    if (was.empty() || was == file) {
+      return;
+    }
+    arrangement = std::find(v.begin(), v.end(), was) != v.end();
+  }
   v.erase(std::remove(v.begin(), v.end(), file), v.end());
-  if (!gridView(a)) v.insert(v.begin(), file);
+  if (arrangement) {
+    v.insert(v.begin(), file);
+  }
   if (v.size() > kArrangementSetsMax) v.resize(kArrangementSetsMax);
   std::string all;
   for (const std::string& f : v) all += (all.empty() ? "" : "\n") + f;
@@ -1439,15 +1456,64 @@ void projectSaved(App& a, const std::string& file) {
 
 namespace {
 // N53-05 (checkpoint 54): an instrument a collaborator added in another layout (Studio's rack) with no
-// track to play it from gets an instrument track here, as every instrument in Clips is a track, so the
-// Clips user sees and plays it (one edit, which every peer gets). Only for a collaborator's channels:
-// an opened project, undo and this computer's own edits are left as they are.
-// Checkpoint 55 (N54-09): also an instrument this computer added by a path that made no track for it (a
-// script, the collaboration's own "edit" command): one new edit step, not an undo or redo. The track is
-// named as Clips names an instrument's ("5 SamCh": its number, then the instrument's name; the
-// instrument keeps its own name), in the same undo step as the track.
+// track to play it from gets a track here, as every instrument in Clips is a track, so the Clips user sees
+// and plays it. K-314 B-03: a track shown on this computer only (PlaylistTrack::shownHere): no undo step
+// of this person's, nothing written into the collaborator's channel, no track or mixer track for anyone
+// else; the collaborator's own Undo still takes the channel away. It becomes the project's once this
+// person uses it (clips on it, an edit of it: collab/Session.cpp), and comes back after the shared tracks
+// when a collaborator's track takes its place. An opened project, undo and this computer's own edits are
+// left as they are.
+// Checkpoint 55 (N54-09): an instrument this computer added by a path that made no track for it (a
+// script, the collaboration's own "edit" command) gets a real track: one new edit step, not an undo or
+// redo. Both are named as Clips names an instrument's ("5 SamCh": its number, then the instrument's name;
+// the instrument keeps its own name).
+bool playsSomewhere(const Song& s, ObjectId id) {
+  if (trackmodes::instrumentTrackOf(s, id) >= 0) {
+    return true;
+  }
+  const int used = trackmodes::usedTrackCount(s);
+  for (int t = 0; t < used; ++t) {
+    for (ObjectId c : trackChannels(s, t)) {
+      if (c == id) {
+        return true;
+      }
+    }
+  }
+  for (const Clip& c : s.playlist) {
+    if (c.kind == ClipKind::Audio && c.source == id) {
+      return true;  // (an audio clip's source plays from its clip's track)
+    }
+  }
+  return false;
+}
+
+void showHere(App& a, ObjectId id) {
+  const Song& x = a.doc.song();
+  const Channel* ch = x.channel(id);
+  if (!ch || playsSomewhere(x, id)) {
+    return;
+  }
+  const int t = trackmodes::freeTrack(x, trackmodes::usedTrackCount(x));  // after the others
+  if (t < 0 || t >= kMaxPlaylistTracks) {
+    return;
+  }
+  a.doc.patchSong([&](Song& y) {
+    if (t >= static_cast<int>(y.tracks.size())) {
+      y.tracks.resize(static_cast<size_t>(t) + 1);
+    }
+    const Channel* c = y.channel(id);
+    PlaylistTrack& tr = y.tracks[static_cast<size_t>(t)];
+    tr = PlaylistTrack{};
+    tr.mode = TrackMode::Instrument;
+    tr.channel = id;
+    tr.color = c ? c->color : tr.color;
+    tr.shownHere = true;
+    tr.name = std::to_string(trackmodes::shownNumber(y, t)) + " " + (c ? c->name : std::string());
+  });
+}
+
 void adoptPeerChannels(App& a) {
-  static std::set<ObjectId> known;
+  static std::set<ObjectId> known, shown;  // shown: collaborators' instruments given a track here only
   static size_t knownPos = 0;
   static uint64_t knownRev = 0, knownMove = 0;
   static bool first = true;
@@ -1473,28 +1539,51 @@ void adoptPeerChannels(App& a) {
   }
   first = false;
   known = std::move(now), knownPos = pos, knownRev = rev, knownMove = move;
+  // K-314 B-03: a track shown here that a collaborator's track displaced (or that became the project's)
+  std::vector<ObjectId> again;
+  for (auto it = shown.begin(); it != shown.end();) {
+    const ObjectId id = *it;
+    bool here = false, real = false;
+    for (const PlaylistTrack& t : s.tracks) {
+      if (t.mode == TrackMode::Instrument && t.channel == id) {
+        (t.shownHere ? here : real) = true;
+      }
+    }
+    if (!s.channel(id) || real || !collabui::active(a)) {
+      it = shown.erase(it);
+      continue;
+    }
+    if (!here && !playsSomewhere(s, id)) {
+      again.push_back(id);
+    }
+    ++it;
+  }
+  for (ObjectId id : again) {
+    a.later([&a, id] {
+      if (active(a) && collabui::active(a)) {
+        showHere(a, id);
+      }
+    });
+  }
   if (fresh.empty()) {
     return;
-  }
-  std::set<ObjectId> placed;
-  const int used = trackmodes::usedTrackCount(s);
-  for (int t = 0; t < used; ++t) {
-    for (ObjectId id : trackChannels(s, t)) {
-      placed.insert(id);
-    }
-  }
-  for (const Clip& c : s.playlist) {
-    if (c.kind == ClipKind::Audio) {
-      placed.insert(c.source);  // (an audio clip's source plays from its clip's track)
-    }
   }
   for (ObjectId id : fresh) {
     const Channel* c = s.channel(id);
     const PluginInfo* pi = c ? findPlugin(c->plugin.type) : nullptr;
-    if (!c || placed.count(id) || !pi || pi->kind != PluginKind::Generator || c->isLayer()) {
+    if (!c || playsSomewhere(s, id) || !pi || pi->kind != PluginKind::Generator || c->isLayer()) {
       continue;
     }
-    if (!peer && c->plugin.type == "gl.sampler") {
+    if (peer) {
+      shown.insert(id);
+      a.later([&a, id] {
+        if (active(a)) {
+          showHere(a, id);
+        }
+      });
+      continue;
+    }
+    if (c->plugin.type == "gl.sampler") {
       continue;  // (this computer's samplers come with their clips: a take, a drop)
     }
     a.later([&a, id] {
@@ -1696,6 +1785,8 @@ void transportFrame(App& a) {
     if (loopOn(a)) la = s.cycleStart, lb = s.cycleEnd;
   } else if (a.playlist.selEnd > a.playlist.selStart) {
     la = a.playlist.selStart, lb = a.playlist.selEnd;
+  } else if (loopOn(a)) {  // K-314 (A-05): no time selection: the song's saved loop, in every layout (playLoop)
+    la = s.cycleStart, lb = s.cycleEnd;
   }
   static Tick sentA = -1, sentB = -1;
   if (la != sentA || lb != sentB) {
@@ -1734,9 +1825,13 @@ void transportFrame(App& a) {
     seekWait = 0;
   }
   // Clips' Punch is its own switch, off unless the person turns it on (clips.punch); the other layouts
-  // keep record.punch as it was.
+  // keep record.punch as it was. K-314 (A-03): entering Clips first keeps their switch as it is now in
+  // record.punch (otherwise written only at exit), so leaving Clips restores it, not the value at start.
   static int was = -1;
   if (was != (clips ? 1 : 0)) {
+    if (was >= 0) {  // (and leaving it keeps Clips' own, however it was set)
+      a.settings.set(clips ? "record.punch" : "clips.punch", a.recPunch);
+    }
     if (was >= 0 || clips) a.recPunch = a.settings.getBool(clips ? "clips.punch" : "record.punch");
     was = clips ? 1 : 0;
   }

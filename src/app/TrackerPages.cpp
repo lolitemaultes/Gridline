@@ -304,12 +304,16 @@ void markedBlock(int cur, int n, int* lo, int* hi) {
   *lo = std::min(gMark, cur), *hi = std::max(gMark, cur);
 }
 
-// The loop the engine plays (the playlist's time selection), as entries: [lo, hi], or lo > hi none.
+// The loop the engine plays (the playlist's time selection, else the song's saved loop: playLoop), as
+// entries: [lo, hi], or lo > hi none.
 void loopedEntries(const App& a, const std::vector<trk::OrderEntry>& ol, int* lo, int* hi) {
   *lo = 1, *hi = 0;
-  if (a.playlist.selEnd <= a.playlist.selStart) return;
+  Tick from = 0, to = 0;
+  if (!playLoop(a, from, to)) {
+    return;
+  }
   for (size_t i = 0; i < ol.size(); ++i) {
-    if (ol[i].end > a.playlist.selStart && ol[i].start < a.playlist.selEnd) {
+    if (ol[i].end > from && ol[i].start < to) {
       if (*lo > *hi) *lo = static_cast<int>(i);
       *hi = static_cast<int>(i);
     }
@@ -317,11 +321,22 @@ void loopedEntries(const App& a, const std::vector<trk::OrderEntry>& ol, int* lo
 }
 
 // Loops [from, to) of the song (to <= from: no loop): the playlist's time selection, sent to the engine.
+// K-314 (A-06): it is the song's saved loop too (Song::cycleStart / cycleEnd / cycleOn, as Smooth's cycle
+// and Clips' loop brace), so it is saved and loops in every layout; off keeps the range, as theirs do.
 void setSongLoop(App& a, Tick from, Tick to) {
   if (to <= from) from = to = 0;
   a.playlist.selStart = from;
   a.playlist.selEnd = to;
   a.engine.setLoopRange(from, to);
+  const Song& s = a.doc.song();
+  if (to > from ? !(s.cycleOn && s.cycleStart == from && s.cycleEnd == to) : s.cycleOn) {
+    a.doc.patchSong([from, to](Song& x) {
+      x.cycleOn = to > from;
+      if (to > from) {
+        x.cycleStart = from, x.cycleEnd = to;
+      }
+    });
+  }
 }
 
 void goEntry(App& a, const std::vector<trk::OrderEntry>& ol, int i) {

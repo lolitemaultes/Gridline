@@ -18,6 +18,7 @@ std::string inputName(int first, bool stereo);
 // Record button menu: what to record (audio into the playlist / the audio
 // editor, notes, automation), punch, file format.
 void audioRecordFilterMenu(App& a);
+void audioEditorRecordItem(App& a);  // K-314: the "Audio, into Loupe" switch (a menu row)
 // K-123: the audio file format submenu.
 void audioFormatMenu(App& a);
 // K-123: a mixer track's input peaks this frame (linear; read once a frame, shared by every view).

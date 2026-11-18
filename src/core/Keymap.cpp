@@ -670,6 +670,7 @@ Rows liveRows() {
   set("playlist.loopMarkers", {ch(K::L, C)});  // checkpoint 56 (N55-04): in Clips, Loop selection (the loop brace), as the reference's
   set("playlist.insertSpace", {ch(K::I, C)});
   set("playlist.deleteSpace", {ch(K::Delete, C | S)});
+  set("pattern.delete", {ch(K::Backspace, C | S)});  // K-314 (C-08): its own chord (Cmd+Shift+Delete deletes time in the arrangement)
   set("playlist.duplicateTime", {ch(K::D, C | S)});
   set("playlist.mute", {ch(K::D0)});
   set("playlist.toolDraw", {ch(K::B)});

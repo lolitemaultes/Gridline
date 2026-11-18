@@ -315,7 +315,12 @@ void setProjectCopy(App& a, bool on) {
 
 void refreshProjectCopy(App& a) {
   if (!projectCopyOn(a)) return;
-  const std::map<std::string, std::string> m = copyNow(a);
+  // K-314 B-01: a layout this person has no workspaces in keeps the copy's set (a collaborator's, or the
+  // one the project came with), so one person's save never drops another's.
+  std::map<std::string, std::string> m = a.doc.song().workspaceCopy;
+  for (const auto& [lay, text] : copyNow(a)) {
+    m[lay] = text;
+  }
   if (a.doc.song().workspaceCopy != m) a.doc.patchSong([&m](Song& s) { s.workspaceCopy = m; });
 }
 

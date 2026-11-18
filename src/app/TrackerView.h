@@ -143,7 +143,8 @@ void pumpPage(App& a);
 // over once ("" when none).
 void setStartPage(const std::string& window);
 std::string takeStartPage();
-// What the header shows: 0 its boxes, 1 Help, 2 Files (the header-left swap).
+// What the header shows: 0 its boxes, 1 Help, 2 Files (the header-left swap), 3 Settings, 4 About,
+// 5 Collaboration (K-106: the Collaboration panel as a page; it opens and closes with a.showCollab).
 void setHeaderSwap(int which);
 // Ctrl+Alt+8, as the Audio editor button: the audio editor in front, or (in front already) the pattern.
 void toggleAudioPage(App& a);

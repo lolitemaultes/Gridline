@@ -63,6 +63,13 @@ void projectNameRow(App& a, float labelX);
 std::string projectTitle(const App& a);
 // File menu entries.
 void fileMenu(App& a);
+// K-106: in the Tracker the Collaboration panel is a page of the header band (TrackerFrame.cpp swaps
+// the band to it while a.showCollab is on), drawn in the band's look over [p0, p1): the pages at the
+// left (Share, Projects or Session, Members, Invite; Profile, Connection), Exit at the foot. The
+// panel's window is not drawn there (CollabUiTracker.inc).
+void trackerPage(App& a, ImVec2 p0, ImVec2 p1);
+// The page drew on this frame or the one before (the layout inventory: the panel is hosted there).
+bool trackerPageShown();
 
 // J-111e: how "Show in Finder / Files" opens a folder (main.cpp: SDL_OpenURL with a file:// URL).
 void setOpenUrl(std::function<bool(const std::string&)> f);

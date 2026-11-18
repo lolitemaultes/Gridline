@@ -1534,8 +1534,16 @@ void overrideTick(App& a) {
     gOverrideEpoch = a.doc.projectEpoch();
     releaseAllOverrides(a);
   }
+  // K-314 (A-04): Clips' overrides last until re-enabled; leaving Clips ends them, as the layout taken
+  // ends its own at stop (or on release, Smooth) and would otherwise keep Clips' for a whole playback.
+  static bool wasClips = false;
+  const bool clipsNow = livelook::active(a);
+  if (wasClips && !clipsNow) {
+    releaseAllOverrides(a);
+  }
+  wasClips = clipsNow;
   if (gOverride.empty()) return;
-  if (livelook::active(a)) {
+  if (clipsNow) {
     // Clips: kept until re-enabled
   } else if (logicplug::active(a)) {
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && a.now - gOverrideTouch > 0.35) releaseAllOverrides(a);

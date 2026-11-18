@@ -111,10 +111,17 @@ void maskClipJson(Json& c) {
   if (c.is(Json::Type::Object)) c.object.erase("launched");
 }
 
+// Playlist track view state, each person's own (K-314 B-04, B-05): folding in the playlist and in
+// Clips' clip grid, the height, the automation lane shown (Smooth; the parameter chosen for it is song
+// data) and the take lanes shown.
 void maskTrackJson(Json& t) {
   if (!t.is(Json::Type::Object)) return;
-  t.object.erase("folded");
-  t.object.erase("height");
+  for (const char* k : {"folded", "height", "gridFolded", "takeLanes", "laneShown"}) {
+    t.object.erase(k);
+  }
+  if (auto it = t.object.find("lane"); it != t.object.end() && it->second.is(Json::Type::Object)) {
+    it->second.object.erase("shown");
+  }
 }
 
 void eachIn(Json& j, const char* key, const std::function<void(Json&)>& fn) {
@@ -216,6 +223,63 @@ void keepMixerSession(MixerTrack& in, const MixerTrack& cur) {
 
 void keepClipSession(Clip& in, const Clip& cur) { in.launched = cur.launched; }
 
+namespace {
+
+void keepTrackViews(std::vector<PlaylistTrack>& in, const std::vector<PlaylistTrack>& cur) {
+  for (size_t i = 0; i < in.size() && i < cur.size(); ++i) {
+    in[i].folded = cur[i].folded;
+    in[i].height = cur[i].height;
+    in[i].gridFolded = cur[i].gridFolded;  // K-314 B-05
+    in[i].takeLanes = cur[i].takeLanes;
+    in[i].laneShown = cur[i].laneShown;    // K-314 B-04
+  }
+}
+
+// K-314 B-03: the tracks shown on this computer only (PlaylistTrack::shownHere) stay where they are while
+// their channel is there with no other track and no shared track took their place.
+void keepTracksShownHere(Song& in, const Song& cur) {
+  int lastShared = -1;  // they stay after the shared tracks in use (so every peer numbers those alike)
+  for (size_t i = 0; i < in.tracks.size(); ++i) {
+    if (in.tracks[i].mode != TrackMode::Unassigned || !in.tracks[i].name.empty()) {
+      lastShared = static_cast<int>(i);
+    }
+  }
+  for (const Clip& c : in.playlist) {
+    lastShared = std::max(lastShared, c.track);
+  }
+  for (size_t i = 0; i < cur.tracks.size(); ++i) {
+    const PlaylistTrack& o = cur.tracks[i];
+    if (!o.shownHere || !in.channel(o.channel)) {
+      continue;
+    }
+    bool linked = false, clips = false;
+    for (const PlaylistTrack& t : in.tracks) {
+      linked = linked || (t.mode == TrackMode::Instrument && t.channel == o.channel);
+    }
+    for (const Clip& c : in.playlist) {
+      clips = clips || c.track == static_cast<int>(i);
+    }
+    if (linked || clips || static_cast<int>(i) <= lastShared) {
+      continue;
+    }
+    if (i < in.tracks.size()) {
+      const PlaylistTrack& t = in.tracks[i];
+      if (t.mode != TrackMode::Unassigned || !t.name.empty() || t.channel != kNoId || t.mixer != kNoId || t.groupSize > 0 || t.sound != kNoId) {
+        continue;  // a collaborator's track is there now
+      }
+    } else if (in.tracks.size() < static_cast<size_t>(kMaxPlaylistTracks)) {
+      in.tracks.resize(i + 1);  // (only tracks shown here were past the shared ones)
+    } else {
+      continue;
+    }
+    PlaylistTrack keep = o;
+    keep.folded = in.tracks[i].folded, keep.height = in.tracks[i].height;
+    in.tracks[i] = keep;
+  }
+}
+
+}  // namespace
+
 void keepSessionState(Song& in, const Song& cur) {
   for (auto& c : in.channels)
     if (const Channel* o = cur.channel(c.id)) keepChannelSession(c, *o);
@@ -223,10 +287,11 @@ void keepSessionState(Song& in, const Song& cur) {
     if (const MixerTrack* o = cur.mixerTrack(m.id)) keepMixerSession(m, *o);
   for (auto& c : in.playlist)
     if (const Clip* o = cur.clip(c.id)) keepClipSession(c, *o);
-  for (size_t i = 0; i < in.tracks.size() && i < cur.tracks.size(); ++i) {
-    in.tracks[i].folded = cur.tracks[i].folded;
-    in.tracks[i].height = cur.tracks[i].height;
+  keepTrackViews(in.tracks, cur.tracks);
+  for (size_t k = 0; k < in.arrangements.size() && k < cur.arrangements.size(); ++k) {
+    keepTrackViews(in.arrangements[k].tracks, cur.arrangements[k].tracks);
   }
+  keepTracksShownHere(in, cur);
   in.smooth.library = cur.smooth.library;  // K-112D: this computer's Smooth window state, whatever layout the change came from
   // (D6, R12-03: in.smooth.controls, the Smart Control mappings, are the shared song's)
 }
@@ -274,6 +339,7 @@ uint64_t sessionStateHash(const Song& s) {
     uint32_t bits = 0;
     std::memcpy(&bits, &t.height, sizeof bits);
     mix(bits ^ (t.folded ? 0x80000000u : 0u));
+    mix((t.gridFolded ? 1u : 0u) | (t.takeLanes ? 2u : 0u) | (t.laneShown ? 4u : 0u));  // K-314 B-04, B-05
   }
   return h;
 }
@@ -359,6 +425,12 @@ SessionValues sessionValues(const Song& s) {
     out.push_back({k, s.tracks[i].folded ? 1.0 : 0.0});
     k.kind = SessionKey::TrackHeight;
     out.push_back({k, static_cast<double>(s.tracks[i].height)});
+    k.kind = SessionKey::TrackGridFolded;  // K-314 B-05
+    out.push_back({k, s.tracks[i].gridFolded ? 1.0 : 0.0});
+    k.kind = SessionKey::TrackTakeLanes;
+    out.push_back({k, s.tracks[i].takeLanes ? 1.0 : 0.0});
+    k.kind = SessionKey::TrackLaneShown;  // K-314 B-04
+    out.push_back({k, s.tracks[i].laneShown ? 1.0 : 0.0});
   }
   std::sort(out.begin(), out.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
   return out;
@@ -419,10 +491,24 @@ bool applySessionValue(Song& s, const SessionKey& key, double v) {
       return false;
     case SessionKey::TrackFolded:
     case SessionKey::TrackHeight:
+    case SessionKey::TrackGridFolded:
+    case SessionKey::TrackTakeLanes:
+    case SessionKey::TrackLaneShown: {
       if (key.id >= s.tracks.size()) return false;
-      if (key.kind == SessionKey::TrackFolded) s.tracks[key.id].folded = v != 0;
-      else s.tracks[key.id].height = static_cast<float>(v);
+      PlaylistTrack& t = s.tracks[key.id];
+      if (key.kind == SessionKey::TrackFolded) {
+        t.folded = v != 0;
+      } else if (key.kind == SessionKey::TrackHeight) {
+        t.height = static_cast<float>(v);
+      } else if (key.kind == SessionKey::TrackGridFolded) {
+        t.gridFolded = v != 0;
+      } else if (key.kind == SessionKey::TrackTakeLanes) {
+        t.takeLanes = v != 0;
+      } else {
+        t.laneShown = v != 0;
+      }
       return true;
+    }
   }
   return false;
 }

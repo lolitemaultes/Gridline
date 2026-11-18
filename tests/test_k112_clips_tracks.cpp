@@ -23,6 +23,7 @@
 #include <vector>
 #include "Check.h"
 #include "collab/CollabSim.h"
+#include "core/Arrangements.h"
 #include "core/BrowserIndex.h"
 #include "core/Demo.h"
 #include "core/MenuOps.h"
@@ -1620,6 +1621,23 @@ void testCheckpoint59() {
     std::string err;
     expect(loadProjectText(projectToText(s), "scenes.gridline", back, &err), ("N58-03: the Set saves and loads " + err).c_str());
     expect(back.live.scenes == s.live.scenes && back.live.scenes.size() == 4, "N58-03: names and colours are read back");
+    {  // K-314 (A-02): an arrangement switched away from (parked) keeps its live area and scenes through a save
+      Song p = s;
+      const LiveSettings mainLive = p.live;
+      expect(addArrangement(p, "Alt", false) == 1 && selectArrangement(p, 1), "A-02: a second arrangement in front");
+      p.live.areaEnd = 2 * st;
+      trackmodes::setSceneName(p, 1, "Alt verse");
+      trackmodes::setSceneColor(p, 0, 0x22AA44);
+      const LiveSettings altLive = p.live;
+      const std::string text = projectToText(p);
+      Song q;
+      expect(loadProjectText(text, "parked.gridline", q, &err), ("A-02: saves and loads " + err).c_str());
+      expect(q.currentArrangement == 1 && q.live == altLive, "A-02: the arrangement in front keeps its live area and scenes");
+      expect(q.arrangements.size() == 2 && q.arrangements[0].live == mainLive && q.arrangements[0].live.scenes.size() == 4,
+             "A-02: the parked one keeps its scene names and colours");
+      expect(selectArrangement(q, 0) && q.live == mainLive, "A-02: switched back, its scenes are there");
+      expect(projectToText(q).size() > 0 && selectArrangement(q, 1) && q.live == altLive, "A-02: and the other's");
+    }
     // Clearing every name and colour drops the key again.
     for (int k = 0; k < 4; ++k) {
       trackmodes::setSceneName(s, k, "");

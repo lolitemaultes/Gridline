@@ -734,9 +734,20 @@ int placeNumberOf(const Song& s, const PlaylistTrack& t, std::string* kind) {
   const std::string& n = t.name;
   size_t i = 0;
   while (i < n.size() && n[i] >= '0' && n[i] <= '9') ++i;
-  if (i == 0 || i > 3 || i >= n.size() || n[i] != ' ' || n.substr(i + 1) != info->name) return 0;
-  if (kind) *kind = info->name;
-  return std::stoi(n.substr(0, i));
+  if (i == 0 || i > 3 || i >= n.size() || n[i] != ' ') {
+    return 0;
+  }
+  // K-314 B-06: or after the channel ("19 A1"), as Clips names a track it makes for an instrument that came
+  // without one (a collaborator's, or this computer's added by a path that made no track)
+  const std::string rest = n.substr(i + 1);
+  const int num = std::stoi(n.substr(0, i));
+  if (rest != info->name && (rest != c->name || num > static_cast<int>(s.tracks.size()))) {
+    return 0;  // ("808 Kick" is a name)
+  }
+  if (kind) {
+    *kind = rest;
+  }
+  return num;
 }
 
 // A new empty track at `at`, the tracks from there moving down one (their clips with them, a group
@@ -1029,6 +1040,17 @@ void renumberPlaces(Song& s) {
 }  // namespace
 
 void renumberTrackNames(Song& s) { renumberPlaces(s); }
+
+bool trackNumbersStale(const Song& s) {
+  const std::vector<int> num = trackNumbers(s, static_cast<int>(s.tracks.size()));
+  for (int i = 0; i < static_cast<int>(s.tracks.size()); ++i) {
+    const int n = placeNumberOf(s, s.tracks[static_cast<size_t>(i)], nullptr), want = num[static_cast<size_t>(i)];
+    if (n > 0 && want > 0 && n != want) {
+      return true;
+    }
+  }
+  return false;
+}
 
 int followTrackName(Song& s, int track, const std::string& was) {
   if (!validTrack(s, track) || was.empty()) return 0;
@@ -1508,8 +1530,19 @@ std::vector<int> trackNumbers(const Song& s, int count) {
   const int n = std::max(0, std::min(count, static_cast<int>(s.tracks.size())));
   const std::vector<char> lanes = automationLanes(s, n), gaps = gapTracks(s, n);
   std::vector<int> v(static_cast<size_t>(n), 0);
-  for (int t = 0, k = 0; t < n; ++t)
-    if (!lanes[static_cast<size_t>(t)] && !gaps[static_cast<size_t>(t)]) v[static_cast<size_t>(t)] = ++k;
+  int k = 0;
+  // K-314 B-03: a track shown on this computer only is numbered after the shared ones, so every
+  // collaborator numbers the shared tracks alike.
+  for (int pass = 0; pass < 2; ++pass) {
+    for (int t = 0; t < n; ++t) {
+      if (s.tracks[static_cast<size_t>(t)].shownHere != (pass == 1)) {
+        continue;
+      }
+      if (!lanes[static_cast<size_t>(t)] && !gaps[static_cast<size_t>(t)]) {
+        v[static_cast<size_t>(t)] = ++k;
+      }
+    }
+  }
   return v;
 }
 

@@ -34,6 +34,7 @@
 #include "../core/TrackerKeys.h"
 #include "App.h"
 #include "ChromeBanner.h"
+#include "CollabUi.h"
 #include "BrowserUi.h"
 #include "ContextMenus.h"
 #include "HostedUi.h"
@@ -1760,7 +1761,9 @@ void closeInstrument(App& a) {
 }
 
 // What the whole header shows: the boxes, or a screen swapped in (Help).
-enum class Swap { None, Help, Disk, Config, About };
+// K-106: Collab is the Collaboration panel as a page of the band (collabui::trackerPage), on while
+// a.showCollab is (every way the panel opens: the File menu, the palette, New collaborative project...).
+enum class Swap { None, Help, Disk, Config, About, Collab };
 Swap gSwap = Swap::None;
 bool gFolded = false;  // cp17: the header folded to its strip while an editor is open in a small window
 bool gHeaderTyping = false;  // a field of the band is being typed in (the keys stay there)
@@ -3038,12 +3041,13 @@ void instrumentMenu(App& a, ObjectId id);
 
 void header(App& a) {
   const auto& P = pal();
-  if (gSwap == Swap::Help || gSwap == Swap::Config || gSwap == Swap::About) {
+  if (gSwap == Swap::Help || gSwap == Swap::Config || gSwap == Swap::About || gSwap == Swap::Collab) {
     const ImVec2 o = ImGui::GetCursorScreenPos(), av = ImGui::GetContentRegionAvail();
     const float stripH = std::round(ImGui::GetFontSize() + 9);
     const float H = std::max(120.0f, std::floor(av.y - stripH - 2));
     if (gSwap == Swap::Help) helpScreen(a, o, ImVec2(o.x + av.x, o.y + H));
     else if (gSwap == Swap::About) aboutScreen(a, o, ImVec2(o.x + av.x, o.y + H));
+    else if (gSwap == Swap::Collab) collabui::trackerPage(a, o, ImVec2(o.x + av.x, o.y + H));
     else configScreen(a, o, ImVec2(o.x + av.x, o.y + H));
     pageStrip(a, o, av.x, o.y + H + 2, stripH);
     ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + av.y));
@@ -3967,7 +3971,7 @@ void toggleScopeTool(App& a, int which) {
 int scopeTool() { return static_cast<int>(gTool); }  // (the enum's order: 0 scopes, 1 Transpose ... 5 Sample tools)
 
 void setHeaderSwap(int which) {
-  gSwap = which == 1 ? Swap::Help : which == 2 ? Swap::Disk : which == 3 ? Swap::Config : which == 4 ? Swap::About : Swap::None;
+  gSwap = which == 1 ? Swap::Help : which == 2 ? Swap::Disk : which == 3 ? Swap::Config : which == 4 ? Swap::About : which == 5 ? Swap::Collab : Swap::None;
 }
 // The audio editor's key (Ctrl+Alt+8) does what its header button does: the audio editor in front
 // (the instrument editor closes: the two share the lower band, as the classic sample and instrument
@@ -3979,7 +3983,9 @@ void toggleAudioPage(App& a) {
   }
   showPage(a, windowFront(a, "Loupe") && !instrumentShown(a) ? "Pattern editor" : "Loupe");
 }
-int headerSwap() { return gSwap == Swap::Help ? 1 : gSwap == Swap::Disk ? 2 : gSwap == Swap::Config ? 3 : gSwap == Swap::About ? 4 : 0; }
+int headerSwap() {
+  return gSwap == Swap::Help ? 1 : gSwap == Swap::Disk ? 2 : gSwap == Swap::Config ? 3 : gSwap == Swap::About ? 4 : gSwap == Swap::Collab ? 5 : 0;
+}
 void setConfigPage(int page) { gConfigPage = std::clamp(page, 0, 3); }
 void setHelpSubject(int subject) { gHelpSubject = std::clamp(subject, 0, static_cast<int>(kHelpCount) - 1); }
 void filesLoadSample(App& a, const std::string& path) {
@@ -4025,6 +4031,27 @@ void orderList(App& a) {
       if (a.showSettings && !settingsWas) bringPage("Settings");
       settingsWas = a.showSettings;
     }
+    // K-106: the Collaboration panel is the band's Collab page here: opened from anywhere (the File
+    // menu, the palette, New collaborative project..., a welcome-screen action) the band swaps to it
+    // (out of the extended strip); another screen swapped in, or its Exit, closes the panel; and the
+    // page opened from the band (setHeaderSwap) opens the panel.
+    {
+      static bool collabWas = false;
+      if (a.showCollab != collabWas) {
+        if (a.showCollab) {
+          gSwap = Swap::Collab;
+          setExtended(a, false);
+        } else if (gSwap == Swap::Collab) {
+          gSwap = Swap::None;
+        }
+      } else if (a.showCollab && gSwap != Swap::Collab) {
+        a.showCollab = false;
+      } else if (!a.showCollab && gSwap == Swap::Collab) {
+        a.showCollab = true;
+        setExtended(a, false);
+      }
+      collabWas = a.showCollab;
+    }
     pumpPage(a);
     syncOrder(a, frame - lastFrameSeen > 1);
     lastFrameSeen = frame;
@@ -4041,7 +4068,7 @@ void orderList(App& a) {
     const float editorNeed = trackereditors::need(a) > 0 ? trackereditors::need(a) : instrumentEditorNeed();
     const float editorMin = std::min(std::round(fs0 * 21.5f), editorNeed > 0 ? std::ceil(editorNeed) : std::round(fs0 * 21.5f));
     const float bandFull = fullBandH > 0 ? fullBandH : std::round(fs0 * 17.7f);
-    gFolded = !extended() && instrumentShown(a) && workH - bandFull - patternMin < editorMin;
+    gFolded = gSwap != Swap::Collab && !extended() && instrumentShown(a) && workH - bandFull - patternMin < editorMin;
     // cp24: the height the Channel frame may have while the pattern keeps eight rows under its cursor
     // (fifteen rows in view, the cursor's in the middle): the frame folds to its first row when its
     // whole height does not fit there (unless the person chose; trackereditors::frameFolded()).
@@ -4065,6 +4092,12 @@ void orderList(App& a) {
     // groups are compact, as the classic config pages).
     if (gSwap == Swap::Help)
       layoutui::setBandSize("tracker.header", std::max(ImGui::GetWindowHeight(), std::floor(ImGui::GetMainViewport()->WorkSize.y * 0.45f)));
+    // K-106: the Collaboration page grows the band as Help does, to the rows its pages need (a list
+    // of members, an invite code, the connection test's findings), not past 45 percent of the window.
+    if (gSwap == Swap::Collab) {
+      const float want = std::min(std::floor(ImGui::GetMainViewport()->WorkSize.y * 0.45f), std::round(ImGui::GetFontSize() * 24.0f));
+      layoutui::setBandSize("tracker.header", std::max(ImGui::GetWindowHeight(), want));
+    }
     // The instrument's editor (Channel settings) takes the whole lower band, as the classic
     // instrument editor replaces the pattern there (ref 145; R6-05): everything under the header but
     // the page tabs and one track-header line, so the editor shows whole. Never restyled.

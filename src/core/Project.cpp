@@ -892,6 +892,8 @@ void patternExtrasFromJson(const Json& jp, Pattern& p, const Song& s) {
   }
 }
 
+const PlaylistTrack kEmptyTrack{};  // K-314 B-03: what a track shown on this computer only is saved as
+
 void trackExtrasToJson(const PlaylistTrack& t, Json& jt) {
   if (t.launch != LaunchGrid::FourBeats) jt.object["launch"] = num(static_cast<int>(t.launch));
   if (t.pad != PadMode::Trigger) jt.object["pad"] = num(static_cast<int>(t.pad));
@@ -914,6 +916,8 @@ void trackExtrasToJson(const PlaylistTrack& t, Json& jt) {
     jl.object["index"] = num(t.laneIndex);
     if (t.laneShown) jl.object["shown"] = boolean(true);
     jt.object["lane"] = std::move(jl);
+  } else if (t.laneShown) {  // K-314 B-04: the lane open on its default parameter (Show automation) is saved too
+    jt.object["laneShown"] = boolean(true);
   }
   if (t.autoMode != 1) jt.object["autoMode"] = num(t.autoMode);  // K-112B: Read is the default
   if (t.sound != kNoId) jt.object["sound"] = num(t.sound);         // K-112B (R08-07)
@@ -935,6 +939,7 @@ void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
   t.mode = static_cast<TrackMode>(e("mode", 0, static_cast<int>(TrackMode::Count)));  // PL-08 (stale links dropped after load)
   t.mixer = jsonInt<ObjectId>(std::max(0.0, jt.num("mixer", 0)));
   t.channel = jsonInt<ObjectId>(std::max(0.0, jt.num("channel", 0)));
+  t.laneShown = flag(jt, "laneShown");  // K-314 B-04 (no parameter chosen)
   if (const Json* jl = jt.find("lane"); jl && jl->is(Json::Type::Object)) {  // K-112b (R02-01)
     t.laneSet = true;
     t.laneOwner = jsonInt<ObjectId>(std::max(0.0, jl->num("owner", 0)));
@@ -943,6 +948,42 @@ void trackExtrasFromJson(const Json& jt, PlaylistTrack& t) {
   }
   t.autoMode = static_cast<uint8_t>(e("autoMode", 1, 5));  // K-112B: Off, Read, Touch, Latch, Write
   t.sound = jsonInt<ObjectId>(std::max(0.0, jt.num("sound", 0)));  // K-112B (R08-07)
+}
+
+// Checkpoint 59 (N58-03): Clips' scene names and colours, [{"name", "color"}] by scene. K-314 (A-02):
+// shared by the current arrangement ("live.scenes") and the parked ones ("liveScenes").
+Json scenesToJson(const std::vector<SceneInfo>& scenes) {
+  Json js = Json::makeArray();
+  for (const SceneInfo& sc : scenes) {
+    Json e = Json::makeObject();
+    if (!sc.name.empty()) {
+      e.object["name"] = Json::makeString(sc.name);
+    }
+    if (sc.color != 0) {
+      e.object["color"] = num(static_cast<double>(sc.color));
+    }
+    js.array.push_back(std::move(e));
+  }
+  return js;
+}
+
+std::vector<SceneInfo> scenesFromJson(const Json* js) {
+  std::vector<SceneInfo> out;
+  if (!js || !js->is(Json::Type::Array)) {
+    return out;
+  }
+  for (const Json& e : js->array) {
+    SceneInfo sc;
+    if (e.is(Json::Type::Object)) {
+      sc.name = e.text("name", "");
+      sc.color = static_cast<Rgb>(std::clamp(e.num("color", 0), 0.0, 16777215.0));
+    }
+    out.push_back(sc);
+  }
+  while (!out.empty() && out.back().empty()) {
+    out.pop_back();
+  }
+  return out;
 }
 
 Json clipToJson(const Clip& c) {
@@ -984,14 +1025,7 @@ void songExtrasToJson(const Song& s, Json& j) {
     Json jl = Json::makeObject();
     if (s.live.areaEnd > 0) jl.object["areaEnd"] = num(static_cast<double>(s.live.areaEnd));
     if (!s.live.scenes.empty()) {  // checkpoint 59 (N58-03): [{"name", "color"}] by scene
-      Json js = Json::makeArray();
-      for (const SceneInfo& sc : s.live.scenes) {
-        Json e = Json::makeObject();
-        if (!sc.name.empty()) e.object["name"] = Json::makeString(sc.name);
-        if (sc.color != 0) e.object["color"] = num(static_cast<double>(sc.color));
-        js.array.push_back(std::move(e));
-      }
-      jl.object["scenes"] = std::move(js);
+      jl.object["scenes"] = scenesToJson(s.live.scenes);
     }
     if (!s.keptSends.empty()) {  // K-112c checkpoint 57 (N56-01): [mixer, to, level, pre-fader, index]
       Json jk = Json::makeArray();
@@ -1037,7 +1071,8 @@ void songExtrasToJson(const Song& s, Json& j) {
         for (const auto& c : a.playlist) clips.array.push_back(clipToJson(c));
         ja.object["playlist"] = std::move(clips);
         Json tracks = Json::makeArray();
-        for (const auto& t : a.tracks) {
+        for (const auto& at : a.tracks) {
+          const PlaylistTrack& t = at.shownHere ? kEmptyTrack : at;  // K-314 B-03
           Json jt = Json::makeObject();
           jt.object["name"] = str(t.name);
           jt.object["color"] = num(t.color);
@@ -1066,6 +1101,9 @@ void songExtrasToJson(const Song& s, Json& j) {
         }
         ja.object["markers"] = std::move(marks);
         if (a.live.areaEnd > 0) ja.object["liveAreaEnd"] = num(static_cast<double>(a.live.areaEnd));
+        if (!a.live.scenes.empty()) {  // K-314 (A-02): a parked arrangement's scene names and colours
+          ja.object["liveScenes"] = scenesToJson(a.live.scenes);
+        }
       }
       arr.array.push_back(std::move(ja));
     }
@@ -1098,20 +1136,7 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
   if (const Json* jl = j.find("live"); jl && jl->is(Json::Type::Object)) {
     s.live.areaEnd = std::max<Tick>(0, jsonTick(jl->num("areaEnd", 0)));
     s.live.view = jl->text("view", "");  // checkpoint 59: read once (0.7.7 dev saves), never written again
-    s.live.scenes.clear();
-    if (const Json* js = jl->find("scenes"); js && js->is(Json::Type::Array)) {  // checkpoint 59 (N58-03)
-      for (const Json& e : js->array) {
-        SceneInfo sc;
-        if (e.is(Json::Type::Object)) {
-          sc.name = e.text("name", "");
-          sc.color = static_cast<Rgb>(std::clamp(e.num("color", 0), 0.0, 16777215.0));
-        }
-        s.live.scenes.push_back(sc);
-      }
-      while (!s.live.scenes.empty() && s.live.scenes.back().empty()) {
-        s.live.scenes.pop_back();
-      }
-    }
+    s.live.scenes = scenesFromJson(jl->find("scenes"));  // checkpoint 59 (N58-03)
     if (s.live.view != "grid" && s.live.view != "arrangement") s.live.view.clear();
     s.keptSends.clear();
     if (const Json* jk = jl->find("keptSends"); jk && jk->is(Json::Type::Array)) {  // K-112c checkpoint 57 (N56-01)
@@ -1214,6 +1239,7 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
         }
       std::stable_sort(a.markers.begin(), a.markers.end(), [](const Marker& x, const Marker& y) { return x.pos < y.pos; });
       a.live.areaEnd = std::max<Tick>(0, jsonTick(ja.num("liveAreaEnd", 0)));
+      a.live.scenes = scenesFromJson(ja.find("liveScenes"));  // K-314 (A-02)
     }
     s.arrangements.push_back(std::move(a));
   }
@@ -1502,7 +1528,13 @@ Json songToJson(const Song& s, bool withFlOrigin) {
   j.object["playlist"] = std::move(clips);
 
   Json tracks = Json::makeArray();
-  for (const auto& t : s.tracks) {
+  // K-314 B-03: tracks shown on this computer only are written as empty tracks, the ones at the end not at all.
+  size_t trackCount = s.tracks.size();
+  while (trackCount > 0 && s.tracks[trackCount - 1].shownHere) {
+    --trackCount;
+  }
+  for (size_t ti = 0; ti < trackCount; ++ti) {
+    const PlaylistTrack& t = s.tracks[ti].shownHere ? kEmptyTrack : s.tracks[ti];
     Json jt = Json::makeObject();
     jt.object["name"] = str(t.name);
     jt.object["color"] = num(t.color);

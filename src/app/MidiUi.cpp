@@ -492,17 +492,35 @@ void recordOptionsMenu(App& a) {
   if (ImGui::MenuItem(clips ? i18n::tr("Replace (clear the clip's notes)") : i18n::tr("Replace (clear the channel's notes)"), nullptr, !o.overdub)) o.overdub = false;
   ImGui::MenuItem(i18n::tr("Quantize note starts to the snap"), nullptr, &o.quantize);
   ImGui::MenuItem(i18n::tr("Quantize note lengths"), nullptr, &o.quantizeLength);
-  if (!clips) ImGui::MenuItem(i18n::tr("Loop recording: new take per pass"), nullptr, &o.takes);
-  if (!clips && ImGui::MenuItem(i18n::tr("Step record (keyboard enters notes at the step cursor)"), nullptr, a.stepRecord)) a.stepRecord = !a.stepRecord;
-  if (!clips) recordrows::recoverMenuItem(a);  // K-123 (4.2) (Clips: its Capture button)
-  if (!clips && ImGui::BeginMenu(i18n::tr("Controller moves go to"))) {
-    for (int i = 0; i < static_cast<int>(AutoRecordTarget::Count); ++i)
-      if (ImGui::MenuItem(autoRecordTargetName(static_cast<AutoRecordTarget>(i)), nullptr, static_cast<int>(o.autoTarget) == i))
-        o.autoTarget = static_cast<AutoRecordTarget>(i);
-    ImGui::EndMenu();
+  // The rows Clips keeps out of its main list (K-314, C-02: still reachable there, under Advanced).
+  auto studioRows = [&a, &o] {
+    ImGui::MenuItem(i18n::tr("Loop recording: new take per pass"), nullptr, &o.takes);
+    if (ImGui::MenuItem(i18n::tr("Step record (keyboard enters notes at the step cursor)"), nullptr, a.stepRecord)) {
+      a.stepRecord = !a.stepRecord;
+    }
+    recordrows::recoverMenuItem(a);  // K-123 (4.2) (Clips: also its Capture button)
+    if (ImGui::BeginMenu(i18n::tr("Controller moves go to"))) {
+      for (int i = 0; i < static_cast<int>(AutoRecordTarget::Count); ++i) {
+        if (ImGui::MenuItem(autoRecordTargetName(static_cast<AutoRecordTarget>(i)), nullptr, static_cast<int>(o.autoTarget) == i)) {
+          o.autoTarget = static_cast<AutoRecordTarget>(i);
+        }
+      }
+      ImGui::EndMenu();
+    }
+  };
+  if (!clips) {
+    studioRows();
   }
   ImGui::Separator();
   if (ImGui::BeginMenu(i18n::tr("Advanced"))) {  // K-325
+    if (clips) {  // K-314 (C-02)
+      ImGui::SeparatorText(i18n::tr("Takes and notes"));
+      j31::recordingNamingItems(a);
+      audioEditorRecordItem(a);
+      studioRows();
+      actionLinkMenuItems(a, RemoteAction::Record);
+      ImGui::Separator();
+    }
     audioFormatMenu(a);
     recmore::advancedMenuItems(a);  // K-123 (0.7.7): punch crossfade, capture while armed (and recover), the latency check
     ImGui::SeparatorText(i18n::tr("Monitoring"));

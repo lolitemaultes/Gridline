@@ -863,15 +863,16 @@ const menudef::Menu& menudef::gathered(int which) {
 namespace {
 // The Tracker bar shows each command once (K-106, one control each): the shared blocks lose the
 // rows another Tracker menu already has (Song mode: Song; Metronome and the typing keyboard:
-// Options' Recording and metronome; New pattern: Pattern; Length: the header's Rows).
+// Options' Recording and metronome; New pattern: Pattern; Length: the header's Rows). K-314 (C-04): the
+// Metronome stays in Recording and metronome (the header's button is its other control).
 bool trackerDrops(menustyle::Block b, const md::Entry& e) {
   using B = menustyle::Block;
   const std::string key = e.key ? e.key : "", label = e.label ? e.label : "";
   if (b == B::Options) return key == "transport.songMode" || label == "Song mode" || key == "options.metronome" || key == "options.typingKeyboard" || label == "Typing keyboard options";
   if (b == B::Add) return key == "pattern.new";
   if (b == B::Patterns) return e.kind == md::Kind::Submenu && label == "Length";  // T-26: the header's Rows is the one control
-  if (b == B::Record)  // its options submenu has the same switch; N-06: the header's Metronome button is the metronome's control
-    return e.kind != md::Kind::Submenu && (key == "options.typingKeyboard" || key == "options.metronome");
+  if (b == B::Record)  // its options submenu has the same switch
+    return e.kind != md::Kind::Submenu && key == "options.typingKeyboard";
   return false;
 }
 // T-26: the shortcuts the Tracker's menus do not show: the playlist's zoom keys (PgUp, PgDn and

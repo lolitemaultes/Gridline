@@ -4478,6 +4478,12 @@ void drawPlaylist(App& a) {
       dl->AddRectFilled(ImVec2(sx0, rY + 1), ImVec2(sx1, tierY), theme::withAlpha(off, 0.45f));  // (R13-10: the number row)
       dl->AddLine(ImVec2(sx0 + 1.0f, rY + 1), ImVec2(sx0 + 1.0f, tierY), off, 2.0f);
       dl->AddLine(ImVec2(sx1 - 1.0f, rY + 1), ImVec2(sx1 - 1.0f, tierY), off, 2.0f);
+    } else if (s.cycleOn && s.cycleEnd > s.cycleStart) {
+      // K-314 (A-05): no time selection: the song's saved loop plays over and over here too, outlined
+      // in the ruler (a double-click in the ruler turns it off).
+      const float sx0 = xOf(s.cycleStart), sx1 = xOf(s.cycleEnd);
+      dl->AddRectFilled(ImVec2(sx0, rY + 2), ImVec2(sx1, rulerBot - 1), theme::withAlpha(P.accent, 0.14f), 2);
+      dl->AddRect(ImVec2(sx0, rY + 2), ImVec2(sx1, rulerBot - 1), theme::withAlpha(P.accent, 0.70f), 2);
     }
     // K-123: with the record button armed and punching at the selection, the pre-roll before
     // the punch in and the post-roll after the punch out, hatched in the ruler.
@@ -7096,6 +7102,9 @@ void drawPlaylist(App& a) {
       cg.marker = hoverMarker;
       cg.markerTo = s.markers[static_cast<size_t>(hoverMarker)].pos;
     } else if (inRuler && lClick && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+      if (st.selEnd <= st.selStart && !lg && !liveLook && s.cycleOn) {  // K-314 (A-05): none: the song's loop turns off
+        a.doc.patchSong([](Song& x) { x.cycleOn = false; });
+      }
       st.selStart = st.selEnd = 0;  // double-click clears the time selection
     } else if (lg && inRuler && lClick && m.y < rulerBot && !io.KeyCtrl && io.KeyShift &&
                (st.selEnd > st.selStart || s.cycleEnd > s.cycleStart)) {

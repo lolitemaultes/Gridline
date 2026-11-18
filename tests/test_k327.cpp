@@ -153,6 +153,7 @@ void testProcessFollowsHome(const fs::path& scratchHome) {
   platform::setEnv("HOME", scratchHome.u8string().c_str());
   platform::unsetEnv("GRIDLINE_CONFIG_HOME");
   platform::unsetEnv("XDG_CONFIG_HOME");
+  platform::unsetEnv("APPDATA");  // Windows: without APPDATA the config root follows HOME too
   const fs::path want = (scratchHome / ".config").lexically_normal();
   expect(norm(platform::configRoot()) == want, "config: this process's config root follows HOME");
   expect(norm(Settings::defaultPath()) == (want / "gridline" / "settings.json").lexically_normal(), "config: settings.json under HOME");

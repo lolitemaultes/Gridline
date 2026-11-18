@@ -236,10 +236,20 @@ void recordingOptionItems(App& a) {
   b = a.settings.getBool("record.nameTracks");
   if (ImGui::MenuItem(livelook::active(a) ? i18n::tr("Name empty tracks after the take") : i18n::tr("Name empty playlist tracks after the take"), nullptr, &b))  // N47-13
     a.settings.set("record.nameTracks", b);
-  if (!livelook::active(a) && ImGui::BeginMenu(i18n::tr("Name takes after"))) {  // N49-12: Clips names takes after their track
+  if (!livelook::active(a)) {
+    recordingNamingItems(a);  // N49-12: Clips names takes after their track (K-314: its Advanced has it)
+  }
+}
+
+void recordingNamingItems(App& a) {
+  if (ImGui::BeginMenu(i18n::tr("Name takes after"))) {
     const int naming = static_cast<int>(a.settings.getNumber("record.naming"));
-    if (ImGui::MenuItem(i18n::tr("The mixer track"), nullptr, naming == 0)) a.settings.set("record.naming", 0);
-    if (ImGui::MenuItem(i18n::tr("The audio input"), nullptr, naming == 1)) a.settings.set("record.naming", 1);
+    if (ImGui::MenuItem(i18n::tr("The mixer track"), nullptr, naming == 0)) {
+      a.settings.set("record.naming", 0);
+    }
+    if (ImGui::MenuItem(i18n::tr("The audio input"), nullptr, naming == 1)) {
+      a.settings.set("record.naming", 1);
+    }
     ImGui::EndMenu();
   }
 }

@@ -171,7 +171,10 @@ void TrackWindowInViewport() {
   if (!found) gTracked.push_back({w->ID, g.FrameCount});
   // The frame a window appears its size is new: placed at once (one frame
   // of content offset at most, never while the user drags it).
-  if (ImGui::IsWindowAppearing() && !beingDragged(w)) {
+  // K-314 (C-03): not while a pivot placement waits for the window's size (an auto-sizing dialog
+  // centred by PlaceNextDialog): moving it now would cancel the centring and leave it at ImGui's
+  // default corner. It is checked again once placed.
+  if (ImGui::IsWindowAppearing() && !beingDragged(w) && w->SetWindowPosVal.x == FLT_MAX) {
     if (viewportsOn() && outsideMain(w)) {
       keepOnMonitors(w, true);
       return;

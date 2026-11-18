@@ -6,9 +6,10 @@
 #      changed, and arranged 1 2 1 2; saved and rendered. (cp24: also the panning envelope, a synth set in the
 #      Channel frame (pitch, fine, key range, output, volume, pan; the frame folded), its notes, the value
 #      columns typed (volume and pan digits, the G, T and R effects) and a song loop.)
-#   2. That file opened in Studio, Clips and Smooth and saved: byte for byte the Tracker's (Clips adds only
-#      its own view key), and each layout's render is the Tracker's, sample for sample.
-#   3. Opened in the Tracker again and saved: the same bytes; its Instrument editor reads the same values.
+#   2. That file opened in Studio, Clips and Smooth and saved: byte for byte the Tracker's, and each layout's
+#      render is the Tracker's, sample for sample.
+#   3. Opened in the Tracker again and saved: the same bytes; its Instrument editor reads the same values and
+#      the Song page's Loop block is the one set (K-314 A-06: it is the song's saved loop).
 #   cmake -DAPP=<gridline-app> -DWAVS=<dir of .wav files> -DOUT=<dir> -P k316_layout_roundtrip_app.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
@@ -238,10 +239,9 @@ foreach(lay studio live logic)
     fail("${lay}: nothing saved")
     continue()
   endif()
+  # (checkpoint 59: Clips keeps its view in the person's settings, never in the song, so its save is the
+  # same bytes too; a 0.7.7 development build's "live.view" key is read once and never written)
   file(READ "${OUT}/${lay}.gridline.json" h)
-  if(lay STREQUAL "live")  # (Clips keeps its own view in the song, N48-07: the one key it adds)
-    string(REGEX REPLACE "\n  \"live\": {\n    \"view\": \"[a-z]+\"\n  }," "" h "${h}")
-  endif()
   if(NOT h STREQUAL tText)
     fail("${lay}: the save differs from the Tracker's (diff ${OUT}/tracker.gridline.json ${OUT}/${lay}.gridline.json)")
   endif()
@@ -263,7 +263,7 @@ endforeach()
 
 # ---- 3: the Tracker again ----
 run(back tracker "${OUT}/tracker.gridline.json" 80
-    "20 ${E} open instrument 4\n30 ${E} ins dump\n40 save \"${OUT}/back.gridline.json\"\n50 quit discard\n")
+    "20 ${E} open instrument 4\n30 ${E} ins dump\n40 save \"${OUT}/back.gridline.json\"\n44 tracker page Song\n48 tracker order dump\n54 quit discard\n")
 file(SHA256 "${OUT}/back.gridline.json" hb)
 file(SHA256 "${OUT}/tracker.gridline.json" ht)
 if(NOT hb STREQUAL ht)
@@ -272,6 +272,10 @@ endif()
 string(REGEX MATCH "ins shown 1 [^\n]* fade 600 vib [0-9]+ [0-9]+ 4 10 " ins "${out}")
 if(NOT ins)
   fail("reopened, the Instrument editor does not read fadeout 600 and the vibrato 4 / 10: ${out}")
+endif()
+string(REGEX MATCH "order frame [0-9]+ \\(dump\\): n [0-9]+ [^\n]*loop 1-3" lp "${out}")
+if(NOT lp)
+  fail("reopened, the Song page's Loop block is not entries 1-3 (K-314 A-06): ${out}")
 endif()
 
 if(failures GREATER 0)

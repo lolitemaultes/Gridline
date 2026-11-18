@@ -32,6 +32,8 @@ struct MenuWalker {
   virtual bool menuItem(const char* label, const char* shortcut, bool selected, bool enabled) = 0;
   // K-112: a separator between items (`text` for a titled one, else nullptr); drawn unseen as before.
   virtual void separator(const char*) {}
+  // K-314: the keymap command of the next item when its shortcut is not shown (the item still runs it).
+  virtual void nextCommand(const char*) {}
 };
 void setMenuWalker(MenuWalker* w);
 MenuWalker* menuWalker();
