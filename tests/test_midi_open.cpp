@@ -213,5 +213,60 @@ int main() {
     expect(o.update(0.3) && o.state() == MidiOpenState::Ready, "the one probe answers");
   }
 
+  {  // MIDIHP-1119: quiet background rescans (devices plugged in or out while the app runs)
+    std::atomic<int> calls{0};
+    auto gate = std::make_shared<Gate>();
+    std::atomic<bool> hold{false}, refuse{false};
+    MidiOpener o(
+        [&calls, gate, &hold, &refuse] {
+          const int n = ++calls;
+          if (hold.load()) {
+            std::unique_lock<std::mutex> lk(gate->mu);
+            gate->cv.wait(lk, [&] { return gate->open; });
+          }
+          if (refuse.load()) {
+            MidiProbeResult r;
+            r.error = "gone";
+            return r;
+          }
+          MidiProbeResult r = okResult();
+          if (n >= 2) {
+            r.inputs.push_back("Pads In");  // plugged in after the first answer
+          }
+          return r;
+        },
+        3.0, {5.0});
+    o.rescan(0.0);
+    expect(calls.load() == 0 && o.state() == MidiOpenState::Idle && o.rescans() == 0, "no quiet rescan before the service answered");
+    o.start(0.0);
+    o.waitFor(5.0);
+    o.update(0.1);
+    o.takeResult();
+    o.rescan(1.0);
+    expect(o.state() == MidiOpenState::Ready && o.rescans() == 1 && o.attempts() == 1, "a quiet rescan keeps the state ready, not counted as a try");
+    o.rescan(1.1);
+    expect(o.rescans() == 1, "no second rescan while one is out");
+    o.waitFor(5.0);
+    expect(o.update(1.2) && o.state() == MidiOpenState::Ready, "its answer is taken");
+    const MidiProbeResult r = o.takeResult();
+    expect(r.inputs.size() == 2 && r.inputs[1] == "Pads In", "with the device plugged in since");
+    hold = true;  // the service hangs during a rescan
+    o.rescan(2.0);
+    expect(!o.update(4.0) && o.state() == MidiOpenState::Ready, "a slow rescan within the timeout stays ready");
+    expect(!o.update(5.0) && o.state() == MidiOpenState::NotResponding, "a rescan past the timeout: not responding");
+    hold = false;
+    gate->release();
+    o.waitFor(5.0);
+    expect(o.update(5.5) && o.state() == MidiOpenState::Ready, "its late answer recovers");
+    o.takeResult();
+    refuse = true;
+    o.rescan(6.0);
+    o.waitFor(5.0);
+    expect(o.update(6.1) && o.state() == MidiOpenState::Failed && o.error() == "gone", "a refused rescan fails as usual");
+    expect(o.nextRetryIn(6.1) > 4.99, "and retries on its own");
+    o.rescan(6.2);
+    expect(o.rescans() == 3, "no quiet rescan while failed");
+  }
+
   return finish();
 }

@@ -2,10 +2,25 @@
 // API and the sndio classes below take its place behind RtMidiIn / RtMidiOut.
 #include "MidiBackend.h"
 #include "../../third_party/rtmidi/RtMidi.h"
+#include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <exception>
+#include <mutex>
 #include <thread>
+#include <vector>
+#if defined(__linux__) && defined(__LINUX_ALSA__)
+#include <dirent.h>
+#include <set>
+#endif
+#if defined(__MACOSX_CORE__) && !defined(GRIDLINE_MIDI_SNDIO)
+#include <CoreFoundation/CoreFoundation.h>
+#include <CoreMIDI/CoreMIDI.h>
+// RtMidi (CoreMIDI): every RtMidiIn / RtMidiOut shares one MIDI client; this sets it.
+void RtMidi_setCoreMidiClientSingleton(MIDIClientRef client);
+#endif
 
 #if defined(GRIDLINE_MIDI_SNDIO)
 #include <poll.h>
@@ -270,17 +285,214 @@ std::string midiBackendName() {
 
 #endif
 
+namespace {
+
+struct FakePorts {
+  std::mutex mu;
+  std::vector<std::string> ins, outs;
+};
+FakePorts& fakePorts() {
+  static FakePorts f;
+  return f;
+}
+
+std::string testMode() {
+  const char* test = std::getenv("GRIDLINE_TEST_MIDI");
+  return test ? test : "";
+}
+
+#if defined(__MACOSX_CORE__) && !defined(GRIDLINE_MIDI_SNDIO)
+// MIDIHP-1119: the CoreMIDI client every RtMidi object shares is made on a thread of its own
+// that keeps running its run loop. CoreMIDI brings a client its news of devices coming and
+// going through the run loop of the thread that made it; RtMidi made it on the first probe's
+// thread, which ends, so the client never heard of a device plugged in later. Here the news
+// keeps coming, and each "setup changed" notification also asks Gridline to compare its
+// device lists at once.
+struct CoreWatch {
+  std::mutex mu;
+  std::condition_variable cv;
+  bool done = false, ok = false;
+  std::atomic<uint64_t> changes{0};
+};
+CoreWatch& coreWatch() {
+  static CoreWatch* w = new CoreWatch;  // never freed: the watcher thread lives until the process ends
+  return *w;
+}
+void coreNotify(const MIDINotification* n, void*) {
+  if (n && (n->messageID == kMIDIMsgSetupChanged || n->messageID == kMIDIMsgObjectAdded || n->messageID == kMIDIMsgObjectRemoved)) {
+    coreWatch().changes.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+void keepAlive(CFRunLoopTimerRef, void*) {}
+// Starts the watcher once and waits for its client (a hung MIDI server hangs this probe, which
+// MidiOpener times out; the watcher then makes the client whenever the server answers).
+void ensureCoreWatch() {
+  static std::once_flag once;
+  std::call_once(once, [] {
+    std::thread([] {
+      CoreWatch& w = coreWatch();
+      MIDIClientRef client = 0;
+      const OSStatus st = MIDIClientCreate(CFSTR("Gridline"), coreNotify, nullptr, &client);
+      const bool ok = st == noErr && client != 0;
+      {
+        std::lock_guard<std::mutex> lk(w.mu);
+        w.done = true;
+        w.ok = ok;
+        if (ok) {
+          RtMidi_setCoreMidiClientSingleton(client);
+        }
+      }
+      w.cv.notify_all();
+      if (!ok) {
+        return;  // RtMidi makes its own client, as before
+      }
+      // The run loop needs a source to keep running: a timer that never matters.
+      CFRunLoopTimerRef t = CFRunLoopTimerCreate(nullptr, CFAbsoluteTimeGetCurrent() + 3600.0, 3600.0, 0, 0, keepAlive, nullptr);
+      CFRunLoopAddTimer(CFRunLoopGetCurrent(), t, kCFRunLoopDefaultMode);
+      for (;;) {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 3600.0, false);
+      }
+    }).detach();
+  });
+  CoreWatch& w = coreWatch();
+  std::unique_lock<std::mutex> lk(w.mu);
+  w.cv.wait(lk, [&] { return w.done; });
+}
+#endif
+
+#if defined(__linux__) && defined(__LINUX_ALSA__)
+// MIDIHP-1119: a MIDI device plugged in or out adds or removes its nodes in /dev/snd (a USB
+// keyboard: controlC2, midiC2D0). A thread of its own compares that folder's names every
+// second (no MIDI client: every probe makes a sequencer client, which other programs see come
+// and go), and a change asks Gridline to compare its device lists at once.
+struct NodeWatch {
+  std::atomic<uint64_t> changes{0};
+  std::atomic<bool> ok{false};
+};
+NodeWatch& nodeWatch() {
+  static NodeWatch* w = new NodeWatch;  // never freed: the watcher thread lives until the process ends
+  return *w;
+}
+bool sndNodes(std::set<std::string>& out) {
+  out.clear();
+  DIR* d = opendir("/dev/snd");
+  if (!d) {
+    return false;
+  }
+  while (const dirent* e = readdir(d)) {
+    const std::string n = e->d_name;
+    if (n.rfind("midiC", 0) == 0 || n.rfind("controlC", 0) == 0) {
+      out.insert(n);
+    }
+  }
+  closedir(d);
+  return true;
+}
+void ensureNodeWatch() {
+  static std::once_flag once;
+  std::call_once(once, [] {
+    std::set<std::string> first;
+    if (!sndNodes(first)) {
+      return;  // no /dev/snd: the timer's rescans alone
+    }
+    nodeWatch().ok = true;
+    try {
+      std::thread([seen = std::move(first)]() mutable {
+        std::set<std::string> now;
+        for (;;) {
+          std::this_thread::sleep_for(std::chrono::seconds(1));
+          if (sndNodes(now) && now != seen) {
+            seen.swap(now);
+            nodeWatch().changes.fetch_add(1, std::memory_order_relaxed);
+          }
+        }
+      }).detach();
+    } catch (...) {
+      nodeWatch().ok = false;
+    }
+  });
+}
+#endif
+
+}  // namespace
+
+uint64_t midiSetupChanges() {
+#if defined(__MACOSX_CORE__) && !defined(GRIDLINE_MIDI_SNDIO)
+  return coreWatch().changes.load(std::memory_order_relaxed);
+#elif defined(__linux__) && defined(__LINUX_ALSA__)
+  return nodeWatch().changes.load(std::memory_order_relaxed);
+#else
+  return 0;
+#endif
+}
+
+bool midiSetupWatched() {
+#if defined(__MACOSX_CORE__) && !defined(GRIDLINE_MIDI_SNDIO)
+  CoreWatch& w = coreWatch();
+  std::lock_guard<std::mutex> lk(w.mu);
+  return w.done && w.ok;
+#elif defined(__linux__) && defined(__LINUX_ALSA__)
+  return nodeWatch().ok.load();
+#else
+  return false;
+#endif
+}
+
+bool midiHotplugSupported() {
+#if defined(GRIDLINE_MIDI_SNDIO)
+  return false;  // listing sndio devices opens them: a rescan would see the ones Gridline holds open as gone
+#else
+  return true;
+#endif
+}
+
+bool midiFakeMode() { return testMode() == "fake"; }
+
+void midiFakeSetPort(bool output, const std::string& name, bool present) {
+  FakePorts& f = fakePorts();
+  std::lock_guard<std::mutex> lk(f.mu);
+  auto& v = output ? f.outs : f.ins;
+  auto it = std::find(v.begin(), v.end(), name);
+  if (present && it == v.end()) {
+    v.push_back(name);
+  } else if (!present && it != v.end()) {
+    v.erase(it);
+  }
+}
+
+bool midiFakePresent(bool output, const std::string& name) {
+  FakePorts& f = fakePorts();
+  std::lock_guard<std::mutex> lk(f.mu);
+  const auto& v = output ? f.outs : f.ins;
+  return std::find(v.begin(), v.end(), name) != v.end();
+}
+
 MidiProbeResult probeMidiService() {
   MidiProbeResult r;
-  const char* test = std::getenv("GRIDLINE_TEST_MIDI");
-  const std::string mode = test ? test : "";
+  const std::string mode = testMode();
   if (mode == "fail") {
     r.error = "error creating the MIDI client (simulated for testing)";
     return r;
   }
-  if (mode == "hang")  // a service that never answers
-    for (;;) std::this_thread::sleep_for(std::chrono::seconds(60));
+  if (mode == "hang") {  // a service that never answers
+    for (;;) {
+      std::this_thread::sleep_for(std::chrono::seconds(60));
+    }
+  }
+  if (mode == "fake") {  // MIDIHP-1119: stand-in devices, the system is never asked
+    FakePorts& f = fakePorts();
+    std::lock_guard<std::mutex> lk(f.mu);
+    r.inputs = f.ins;
+    r.outputs = f.outs;
+    r.ok = true;
+    return r;
+  }
   try {
+#if defined(__MACOSX_CORE__) && !defined(GRIDLINE_MIDI_SNDIO)
+    ensureCoreWatch();
+#elif defined(__linux__) && defined(__LINUX_ALSA__)
+    ensureNodeWatch();
+#endif
     auto in = makeMidiIn();
     for (unsigned i = 0, n = in->getPortCount(); i < n; ++i) r.inputs.push_back(in->getPortName(i));
     auto out = makeMidiOut();

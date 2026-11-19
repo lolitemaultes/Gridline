@@ -130,6 +130,7 @@
 #include "LogicNewTracks.h"
 #include "LogicPlugins.h"
 #include "MidiArm.h"
+#include "MidiBackend.h"
 #include "RecordRowsUi.h"
 #include "Windows.h"
 #include "RecordMoreUi.h"
@@ -189,7 +190,8 @@ uisound::Player* gUiSounds = nullptr;  // J-48: interface sounds, mixed after th
 // MIDI-1118: hidden and scripted runs (--hidden, --dev-input, --screenshot: tests and tools) open
 // no system MIDI ports, so the user's keyboard or stray device traffic never reaches a test; tests
 // inject MIDI through the dev commands instead. GRIDLINE_TEST_MIDI (any value: 1 opens the real
-// devices, fail / hang simulate a broken service) brings the system MIDI service back.
+// devices, fail / hang simulate a broken service, fake lists stand-in devices that a dev command
+// plugs in and out: MIDIHP-1119) brings the system MIDI service back.
 bool systemMidiPorts(int argc, char** argv) {
   if (const char* t = std::getenv("GRIDLINE_TEST_MIDI"); t && *t) {
     return true;
@@ -1065,6 +1067,59 @@ struct DevInputLine {
   std::string cmd, a0, a1, a2;
   std::vector<std::string> args;  // every argument (quotes group words)
 };
+// The MIDI dev commands (one branch in the command chain: MSVC limits how deeply it nests).
+//   midiretry: the Retry button in Settings > MIDI
+//   midirescan: MIDIHP-1119: the Rescan devices button in Settings > MIDI
+//   midifake in|out add|remove "<name>": MIDIHP-1119 (GRIDLINE_TEST_MIDI=fake): a stand-in device
+//     plugged in or out while the app runs · midifake send "<input>" <status> <data1> <data2>:
+//     a message as if that open input sent it
+//   midiopen: the open inputs (their port numbers, the notes each holds), the selected output, the note-offs sent
+//     for inputs that closed, the listed inputs, the background rescans started
+bool devMidiCommand(App& app, const DevInputLine& l, int frame) {
+  if (l.cmd == "midiretry") {
+    if (app.midi) {
+      app.midi->retry();
+    }
+  } else if (l.cmd == "midirescan") {
+    if (app.midi) {
+      app.midi->scan();
+      app.midi->apply();
+    }
+  } else if (l.cmd == "midifake") {
+    if (l.args.size() >= 3 && (l.args[0] == "in" || l.args[0] == "out")) {
+      midiFakeSetPort(l.args[0] == "out", l.args[2], l.args[1] == "add");
+      std::printf("midifake frame %d: %s %s \"%s\"\n", frame, l.args[0].c_str(), l.args[1].c_str(), l.args[2].c_str());
+    } else if (l.args.size() >= 3 && l.args[0] == "send" && app.midi) {
+      std::vector<unsigned char> msg;
+      for (size_t i = 2; i < l.args.size(); ++i) {
+        msg.push_back(static_cast<unsigned char>(std::strtol(l.args[i].c_str(), nullptr, 0)));
+      }
+      const bool sent = app.midi->deviceMessage(l.args[1], msg);
+      std::printf("midifake frame %d: send \"%s\" %s\n", frame, l.args[1].c_str(), sent ? "delivered" : "not-open");
+    }
+    std::fflush(stdout);
+  } else if (l.cmd == "midiopen") {
+    if (app.midi) {
+      std::string names, ports, held, listed;
+      for (const auto& n : app.midi->openInputNames()) {
+        const MidiInputConfig* c = app.midi->inputConfig(n);
+        names += (names.empty() ? "" : "|") + n;
+        ports += (ports.empty() ? "" : ",") + std::to_string(c ? c->port : -1);
+        held += (held.empty() ? "" : ",") + std::to_string(app.midi->heldNotes(n));
+      }
+      for (const auto& n : app.midi->inputs) {
+        listed += (listed.empty() ? "" : "|") + n;
+      }
+      std::printf("midiopen frame %d: inputs \"%s\" ports \"%s\" held \"%s\" output %d released %d listed \"%s\" outputs %zu rescans %d\n",
+                  frame, names.c_str(), ports.c_str(), held.c_str(), app.midi->outputOpen() ? 1 : 0, app.midi->releasedNotes(), listed.c_str(),
+                  app.midi->outputs.size(), app.midi->rescans());
+    }
+    std::fflush(stdout);
+  } else {
+    return false;
+  }
+  return true;
+}
 std::pair<int, int> devSdlPointer{0, 0};  // J-91: last "sdlmove" position (window pixels)
 float devDragScale = 1.0f;  // this frame's interface scale (drag commands post window coordinates)
 
@@ -1799,8 +1854,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                     app.midi->openInputs(), app.midi->outputOpen() ? 1 : 0, app.midi->openDeviceOutputs());
       }
       std::fflush(stdout);
-    } else if (l.cmd == "midiretry") {  // the Retry button in Settings > MIDI
-      if (app.midi) app.midi->retry();
+    } else if (devMidiCommand(app, l, frame)) {  // midiretry, midirescan, midifake, midiopen
     } else {
       middle = true;  // the next part of the commands, in a chain of its own
     }
@@ -4493,6 +4547,14 @@ int main(int argc, char** argv) {
       if (!host::scanStatus().running) devsig::reach("scan-idle");  // K-71
       // K-192: no probe of the MIDI service out (answered, refused or never asked; "waitfor" before a Retry)
       if (app.midi && app.midi->serviceState() != MidiOpenState::Opening) devsig::reach("midi-settled");
+      if (app.midi) {  // MIDIHP-1119: "midi-open:<open inputs, | between>", "midi-output:<0|1>"
+        std::string open;
+        for (const auto& n : app.midi->openInputNames()) {
+          open += (open.empty() ? "" : "|") + n;
+        }
+        devsig::reach("midi-open:" + open);
+        devsig::reach(std::string("midi-output:") + (app.midi->outputOpen() ? "1" : "0"));
+      }
       const double frameMs = 1e3 * static_cast<double>(SDL_GetPerformanceCounter() - frameStart) / static_cast<double>(SDL_GetPerformanceFrequency());
       if (frameMs > devLongestFrameMs) devSecondFrameMs = devLongestFrameMs, devLongestFrameMs = frameMs;
       else devSecondFrameMs = std::max(devSecondFrameMs, frameMs);

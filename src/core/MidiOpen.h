@@ -41,6 +41,12 @@ class MidiOpener {
 
   // Starts a probe now (a rescan): no-op while one is out.
   void start(double now);
+  // MIDIHP-1119: a quiet background rescan of a service that answered (devices plugged in or
+  // out while the app runs): the state stays Ready while it is out, so nothing reads as
+  // "looking for devices"; its answer is taken like any other (update() returns true). A
+  // refusal or a pass of the timeout counts as usual (Failed / NotResponding, retries). No-op
+  // unless the state is Ready and no probe is out. Not counted in attempts().
+  void rescan(double now);
   // The Retry button: a probe now, or keep waiting on the one still out. Resets the backoff.
   void retryNow(double now);
   // Call regularly (every frame). True when a probe's answer was taken in this call: the
@@ -52,7 +58,8 @@ class MidiOpener {
 
   MidiOpenState state() const { return state_; }
   const std::string& error() const { return error_; }
-  int attempts() const { return attempts_; }        // probes started
+  int attempts() const { return attempts_; }        // probes started (quiet rescans not counted)
+  int rescans() const { return rescans_; }          // quiet rescans started
   bool probeRunning() const;                        // a probe (maybe hung) is still out
   double nextRetryIn(double now) const;             // seconds; < 0 when none is scheduled
   MidiProbeResult takeResult();
@@ -60,6 +67,7 @@ class MidiOpener {
  private:
   struct Shared;
   void launch(double now);
+  void spawn(std::shared_ptr<Shared> sh, double now);
   void schedule(double now);
   Probe probe_;
   double timeout_;
@@ -68,7 +76,8 @@ class MidiOpener {
   MidiOpenState state_ = MidiOpenState::Idle;
   std::string error_;
   MidiProbeResult result_;
-  int attempts_ = 0, failures_ = 0;
+  int attempts_ = 0, failures_ = 0, rescans_ = 0;
+  bool quiet_ = false;  // the probe out is a quiet rescan
   double startedAt_ = 0, retryAt_ = -1;
 };
 

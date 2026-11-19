@@ -2773,6 +2773,14 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
     set_tests_properties(midi1118_hidden_ports_app PROPERTIES TIMEOUT 300)
 
+    # MIDIHP-1119: MIDI devices plugged in or out while the app runs open and close on their own
+    # (stand-in devices, GRIDLINE_TEST_MIDI=fake); held notes are released; a hidden run never rescans.
+    add_test(NAME midihp1119_hotplug_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
+                     -DOUT=${CMAKE_BINARY_DIR}/midihp1119_hotplug_app -P ${CMAKE_SOURCE_DIR}/tests/midihp1119_hotplug_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(midihp1119_hotplug_app PROPERTIES TIMEOUT 300)
+
     # J-84: channel rack with long patterns / narrow racks: knobs drawn, steps scroll, Q-15 wheel routing.
     add_test(NAME j84_rack_scroll
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json

@@ -42,6 +42,22 @@ void MidiOpener::launch(double now) {
   startedAt_ = now;
   retryAt_ = -1;
   state_ = MidiOpenState::Opening;
+  quiet_ = false;
+  spawn(sh, now);
+}
+
+void MidiOpener::rescan(double now) {
+  if (cur_ || state_ != MidiOpenState::Ready) {
+    return;
+  }
+  auto sh = std::make_shared<Shared>();
+  ++rescans_;
+  startedAt_ = now;
+  quiet_ = true;
+  spawn(sh, now);
+}
+
+void MidiOpener::spawn(std::shared_ptr<Shared> sh, double now) {
   try {
     std::thread([sh, probe = probe_] {
       MidiProbeResult r;
@@ -63,6 +79,10 @@ void MidiOpener::launch(double now) {
     cur_ = std::move(sh);
   } catch (const std::exception& e) {  // no thread could be started
     cur_.reset();
+    if (quiet_) {  // a quiet rescan: the service still answered last time, try again later
+      quiet_ = false;
+      return;
+    }
     state_ = MidiOpenState::Failed;
     error_ = e.what();
     schedule(now);
@@ -108,6 +128,7 @@ bool MidiOpener::update(double now) {
     }
     if (done) {
       cur_.reset();
+      quiet_ = false;
       if (r.ok) {
         state_ = MidiOpenState::Ready;
         error_.clear();
@@ -121,8 +142,9 @@ bool MidiOpener::update(double now) {
       result_ = std::move(r);
       return true;
     }
-    if (state_ == MidiOpenState::Opening && now - startedAt_ >= timeout_) {
+    if ((state_ == MidiOpenState::Opening || (quiet_ && state_ == MidiOpenState::Ready)) && now - startedAt_ >= timeout_) {
       state_ = MidiOpenState::NotResponding;
+      quiet_ = false;
       schedule(now);
     }
   }

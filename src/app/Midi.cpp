@@ -1,5 +1,7 @@
 #include "Midi.h"
 #include <algorithm>
+#include <atomic>
+#include <bitset>
 #include <chrono>
 #include <exception>
 #include <fstream>
@@ -16,18 +18,56 @@ namespace gl {
 
 struct MidiManager::Port {
   std::unique_ptr<RtMidiIn> in;
+  bool fakeOpen = false;  // GRIDLINE_TEST_MIDI=fake: a stand-in device, no RtMidi port
   std::string name;
   int number = 0;
   bool notes = true;
   bool clockSource = false;
   MidiManager* owner = nullptr;
+  // MIDIHP-1119: notes held down (bit per note, 16 channels x 128) and sustain pedals down (bit
+  // per channel), written by the driver thread, so a device unplugged mid-note leaves none stuck.
+  std::atomic<uint64_t> held[32] = {};
+  std::atomic<uint32_t> pedal{0};
+  bool open() const { return fakeOpen || (in && in->isPortOpen()); }
 };
 
 namespace {
+void trackHeld(MidiManager::Port& p, const std::vector<unsigned char>& m) {
+  if (m.size() < 2) {
+    return;
+  }
+  const int kind = m[0] & 0xF0, ch = m[0] & 0x0F;
+  const uint8_t d2 = m.size() > 2 ? m[2] : 0;
+  if (kind == 0x90 || kind == 0x80) {
+    const int key = ch * 128 + (m[1] & 0x7F);
+    const uint64_t bit = uint64_t{1} << (key % 64);
+    if (kind == 0x90 && d2 > 0) {
+      p.held[key / 64].fetch_or(bit, std::memory_order_relaxed);
+    } else {
+      p.held[key / 64].fetch_and(~bit, std::memory_order_relaxed);
+    }
+  } else if (kind == 0xB0 && m[1] == 64) {
+    if (d2 >= 64) {
+      p.pedal.fetch_or(1u << ch, std::memory_order_relaxed);
+    } else {
+      p.pedal.fetch_and(~(1u << ch), std::memory_order_relaxed);
+    }
+  } else if (kind == 0xB0 && (m[1] == 123 || m[1] == 120)) {  // all notes / sound off
+    p.held[ch * 2].store(0, std::memory_order_relaxed);
+    p.held[ch * 2 + 1].store(0, std::memory_order_relaxed);
+  }
+}
+void deliver(MidiManager::Port* p, const std::vector<unsigned char>& msg) {
+  trackHeld(*p, msg);
+  p->owner->onMessage(p->name, p->notes ? p->number : -(p->number + 2), msg, p->clockSource);
+}
 void callback(double, std::vector<unsigned char>* msg, void* user) {
   auto* p = static_cast<MidiManager::Port*>(user);
-  if (msg && p && p->owner) p->owner->onMessage(p->name, p->notes ? p->number : -(p->number + 2), *msg, p->clockSource);
+  if (msg && p && p->owner) {
+    deliver(p, *msg);
+  }
 }
+bool listed(const std::vector<std::string>& v, const std::string& n) { return std::find(v.begin(), v.end(), n) != v.end(); }
 double nowSec() {
   return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
@@ -35,7 +75,8 @@ double nowSec() {
 
 double MidiManager::clockNow() { return nowSec(); }
 
-MidiManager::MidiManager(AudioEngine& engine, bool systemPorts) : engine_(engine), systemPorts_(systemPorts) {
+MidiManager::MidiManager(AudioEngine& engine, bool systemPorts)
+    : engine_(engine), systemPorts_(systemPorts), fake_(systemPorts && midiFakeMode()) {
   packs::platter::hub::setTapped(true);  // J-150: DJ decks read every input from the hub
   sender_ = std::thread([this] { senderLoop(); });
   if (systemPorts_) {
@@ -74,6 +115,7 @@ const MidiInputConfig* MidiManager::inputConfig(const std::string& name) const {
 }
 
 void MidiManager::scan() {
+  answered_ = false;  // its answer is taken in full: a device that would not open is tried again
   opener_->start(clockNow());
   if (opener_->state() == MidiOpenState::Opening) status = "Looking for MIDI devices (" + midiBackendName() + ")";
 }
@@ -99,27 +141,205 @@ void MidiManager::adopt(MidiProbeResult r) {
 
 bool MidiManager::update() {
   bool changed = false;
-  if (opener_->update(clockNow())) {
+  const double now = clockNow();
+  if (opener_->update(now)) {
     MidiProbeResult r = opener_->takeResult();
     if (r.ok) {
-      adopt(std::move(r));
-      apply();
+      const bool full = !answered_;
+      if (full || r.inputs != inputs || r.outputs != outputs) {  // a background rescan that found nothing new changes nothing
+        const std::vector<std::string> prevIns = inputs, prevOuts = outputs;
+        adopt(std::move(r));
+        reconcile(prevIns, prevOuts, full);
+        changed = true;
+      }
+      answered_ = true;
+      nextRescan_ = now + (midiSetupWatched() ? 10.0 : 1.5);
     } else {  // the ports already open stay as they are: the service is not asked again until it answers
       inputs.clear();
       outputs.clear();
       status = "MIDI unavailable: " + r.error;
+      answered_ = false;
+      changed = true;
     }
-    changed = true;
   }
   const MidiOpenState st = opener_->state();
   if (st == MidiOpenState::NotResponding && lastState_ != st) {
     inputs.clear();
     outputs.clear();
     status = "MIDI unavailable: the system MIDI service is not responding";
+    answered_ = false;
     changed = true;
   }
   lastState_ = st;
+  // MIDIHP-1119: devices plugged in or out. Never in hidden / scripted runs (no system ports).
+  if (systemPorts_ && midiHotplugSupported() && st == MidiOpenState::Ready && !opener_->probeRunning()) {
+    const uint64_t ch = midiSetupChanges();
+    if (ch != seenChanges_ || now >= nextRescan_) {
+      seenChanges_ = ch;
+      nextRescan_ = now + (midiSetupWatched() ? 10.0 : 1.5);
+      opener_->rescan(now);
+    }
+  }
   return changed;
+}
+
+std::vector<std::string> MidiManager::openInputNames() const {
+  std::vector<std::string> v;
+  for (const auto& p : ins_) {
+    v.push_back(p->name);
+  }
+  return v;
+}
+
+bool MidiManager::openInput(const std::string& name) {
+  const MidiInputConfig* cfg = inputConfig(name);
+  if (!cfg || !cfg->enabled) {
+    return false;
+  }
+  for (const auto& p : ins_) {
+    if (p->name == name) {
+      return true;  // already open
+    }
+  }
+  auto port = std::make_unique<Port>();
+  port->name = name;
+  port->number = cfg->port;
+  port->notes = cfg->notes;
+  port->clockSource = clockInDevice.empty() || clockInDevice == name;
+  port->owner = this;
+  if (fake_) {
+    port->fakeOpen = midiFakePresent(false, name);
+  } else {
+    try {
+      port->in = makeMidiIn();
+      // Port indices can shift between scans: look the name up again.
+      for (unsigned k = 0; k < port->in->getPortCount(); ++k) {
+        if (port->in->getPortName(k) == name) {
+          port->in->openPort(k, "Gridline In");
+          break;
+        }
+      }
+      if (port->in->isPortOpen()) {
+        // Sysex for MMC; timing only when following an external clock.
+        port->in->ignoreTypes(false, !(syncSource != SyncSource::Internal && port->clockSource), true);
+        port->in->setCallback(callback, port.get());
+      }
+    } catch (const RtMidiError& e) {
+      status = "MIDI error: " + e.getMessage();
+      return false;
+    } catch (const std::exception& e) {
+      status = std::string("MIDI error: ") + e.what();
+      return false;
+    } catch (...) {
+      status = "MIDI error";
+      return false;
+    }
+  }
+  if (!port->open()) {
+    return false;
+  }
+  ins_.push_back(std::move(port));
+  return true;
+}
+
+void MidiManager::closeInput(Port& p) {
+  try {
+    if (p.in) {
+      p.in->closePort();
+    }
+  } catch (...) {  // a driver error while closing (the device is gone) never ends the process
+  }
+  p.fakeOpen = false;
+  // The driver delivers no more: the notes it held down end as if released on the device.
+  for (int w = 0; w < 32; ++w) {
+    uint64_t bits = p.held[w].exchange(0, std::memory_order_relaxed);
+    for (int b = 0; bits != 0; ++b, bits >>= 1) {
+      if (bits & 1) {
+        const int key = w * 64 + b;
+        onMessage(p.name, p.notes ? p.number : -(p.number + 2),
+                  {static_cast<unsigned char>(0x80 | (key / 128)), static_cast<unsigned char>(key % 128), 0}, p.clockSource);
+        ++releasedNotes_;
+      }
+    }
+  }
+  const uint32_t pedals = p.pedal.exchange(0, std::memory_order_relaxed);
+  for (int ch = 0; ch < 16; ++ch) {
+    if (pedals & (1u << ch)) {
+      onMessage(p.name, p.notes ? p.number : -(p.number + 2), {static_cast<unsigned char>(0xB0 | ch), 64, 0}, p.clockSource);
+    }
+  }
+}
+
+bool MidiManager::openOutput() {
+  if (fake_) {
+    fakeOut_ = !output.empty() && midiFakePresent(true, output);
+    return fakeOut_;
+  }
+  out_ = makeMidiOut();
+  for (unsigned k = 0; k < out_->getPortCount(); ++k) {
+    if (out_->getPortName(k) == output) {
+      out_->openPort(k, "Gridline Out");
+      break;
+    }
+  }
+  return out_->isPortOpen();
+}
+
+void MidiManager::reconcile(const std::vector<std::string>& prevIns, const std::vector<std::string>& prevOuts, bool full) {
+  // Never on a service that has not answered: creating a MIDI client could hang this thread.
+  if (!serviceAvailable()) {
+    return;
+  }
+  if (!systemPorts_) {  // MIDI-1118: test runs open no device ports
+    status = "MIDI devices are not opened in test runs";
+    return;
+  }
+  // Unplugged (or no longer listed): closed, the notes they held released.
+  for (auto it = ins_.begin(); it != ins_.end();) {
+    if (!listed(inputs, (*it)->name)) {
+      closeInput(**it);
+      it = ins_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  // Plugged in (or back): opened as at startup. A device that stayed listed and would not open
+  // is not tried again on every rescan (Rescan, or plugging it in again, does).
+  for (const auto& name : inputs) {
+    if (full || !listed(prevIns, name)) {
+      openInput(name);  // (no-op when it is open already)
+    }
+  }
+  try {
+    std::lock_guard<std::mutex> lk(outMu_);
+    const bool isOpen = fake_ ? fakeOut_ : (out_ && out_->isPortOpen());
+    if (isOpen && !listed(outputs, output)) {  // the selected output was unplugged
+      if (out_) {
+        out_->closePort();
+      }
+      out_.reset();
+      fakeOut_ = false;
+    } else if (!isOpen && !output.empty() && listed(outputs, output) && (full || !listed(prevOuts, output))) {
+      openOutput();
+    }
+    // Controller LED outputs: any change of the outputs and they are looked up again on their
+    // next message (one unplugged is closed, one plugged in is found).
+    if (full || outputs != prevOuts) {
+      for (auto& d : devOuts_) {
+        if (d.second) {
+          d.second->closePort();
+        }
+      }
+      devOuts_.clear();
+    }
+  } catch (const RtMidiError& e) {
+    status = "MIDI error: " + e.getMessage();
+    return;
+  } catch (...) {
+    status = "MIDI error";
+    return;
+  }
+  status = std::to_string(ins_.size()) + " input(s) open" + (outputOpen() ? ", output open" : "");
 }
 
 void MidiManager::waitForService(double seconds) {
@@ -141,44 +361,24 @@ void MidiManager::apply() {
     status = "MIDI devices are not opened in test runs";
     return;
   }
-  for (auto& p : ins_)
-    if (p->in) p->in->closePort();
+  for (auto& p : ins_) {
+    closeInput(*p);  // (the notes it held are released)
+  }
   ins_.clear();
   try {
     for (const auto& name : inputs) {
-      const MidiInputConfig* cfg = inputConfig(name);
-      if (!cfg || !cfg->enabled) continue;
-      auto port = std::make_unique<Port>();
-      port->in = makeMidiIn();
-      port->name = name;
-      port->number = cfg->port;
-      port->notes = cfg->notes;
-      port->clockSource = clockInDevice.empty() || clockInDevice == name;
-      port->owner = this;
-      // Port indices can shift between scans: look the name up again.
-      for (unsigned k = 0; k < port->in->getPortCount(); ++k)
-        if (port->in->getPortName(k) == name) {
-          port->in->openPort(k, "Gridline In");
-          break;
-        }
-      if (!port->in->isPortOpen()) continue;
-      // Sysex for MMC; timing only when following an external clock.
-      port->in->ignoreTypes(false, !(syncSource != SyncSource::Internal && port->clockSource), true);
-      port->in->setCallback(callback, port.get());
-      ins_.push_back(std::move(port));
+      openInput(name);
     }
     std::lock_guard<std::mutex> lk(outMu_);
-    if (out_) out_->closePort();
-    out_.reset();
-    if (!output.empty()) {
-      out_ = makeMidiOut();
-      for (unsigned k = 0; k < out_->getPortCount(); ++k)
-        if (out_->getPortName(k) == output) {
-          out_->openPort(k, "Gridline Out");
-          break;
-        }
+    if (out_) {
+      out_->closePort();
     }
-    status = std::to_string(ins_.size()) + " input(s) open" + (out_ && out_->isPortOpen() ? ", output open" : "");
+    out_.reset();
+    fakeOut_ = false;
+    if (!output.empty()) {
+      openOutput();
+    }
+    status = std::to_string(ins_.size()) + " input(s) open" + ((out_ && out_->isPortOpen()) || fakeOut_ ? ", output open" : "");
   } catch (const RtMidiError& e) {
     status = "MIDI error: " + e.getMessage();
   } catch (const std::exception& e) {
@@ -389,7 +589,7 @@ void MidiManager::sendRaw(const std::vector<unsigned char>& m) {
 }
 
 void MidiManager::sendTo(const std::string& device, const std::vector<unsigned char>& m) {
-  if (device.empty() || m.empty() || !serviceAvailable() || !systemPorts_) {
+  if (device.empty() || m.empty() || !serviceAvailable() || !systemPorts_ || fake_) {
     return;
   }
   std::lock_guard<std::mutex> lk(outMu_);
@@ -425,7 +625,31 @@ void MidiManager::sendTo(const std::string& device, const std::vector<unsigned c
 
 bool MidiManager::outputOpen() {
   std::lock_guard<std::mutex> lk(outMu_);
-  return out_ && out_->isPortOpen();
+  return fakeOut_ || (out_ && out_->isPortOpen());
+}
+
+bool MidiManager::deviceMessage(const std::string& device, const std::vector<unsigned char>& msg) {
+  for (auto& p : ins_) {
+    if (p->name == device && p->open()) {
+      if (!msg.empty()) {
+        deliver(p.get(), msg);
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
+int MidiManager::heldNotes(const std::string& device) const {
+  int n = 0;
+  for (const auto& p : ins_) {
+    if (p->name == device) {
+      for (const auto& w : p->held) {
+        n += static_cast<int>(std::bitset<64>(w.load(std::memory_order_relaxed)).count());
+      }
+    }
+  }
+  return n;
 }
 
 int MidiManager::openDeviceOutputs() {

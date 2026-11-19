@@ -74,6 +74,10 @@ class MidiManager {
   void scan();
   // Every frame (UI thread): takes the service's answer, opens the ports once it is
   // available, retries on its own while it is not. True when the port lists changed.
+  // MIDIHP-1119: while the service answers, the device lists are compared again in the
+  // background (at once when the system reports a change, else on a timer): a device plugged
+  // in opens as at startup (per its settings; a new one enabled), one unplugged is closed and
+  // the notes it held are released; plugged in again, it opens again.
   bool update();
   // Startup: gives a working service up to `seconds` to answer, then takes its answer.
   void waitForService(double seconds);
@@ -125,6 +129,13 @@ class MidiManager {
 
   std::string status;
   int openInputs() const { return static_cast<int>(ins_.size()); }
+  std::vector<std::string> openInputNames() const;  // in the order they opened
+  int rescans() const { return opener_->rescans(); }  // background comparisons of the device lists
+  // Dev checks (GRIDLINE_TEST_MIDI=fake): a message as if the open input `device` sent it (its
+  // driver callback). False when no such input is open.
+  bool deviceMessage(const std::string& device, const std::vector<unsigned char>& msg);
+  int heldNotes(const std::string& device) const;  // notes the open input holds down now
+  int releasedNotes() const { return releasedNotes_; }  // note-offs sent for inputs that closed
   bool outputOpen();  // the selected output port is open
   int openDeviceOutputs();  // sendTo ports open (controller LEDs)
   bool systemPorts() const { return systemPorts_; }
@@ -165,6 +176,17 @@ class MidiManager {
   MidiOpenState lastState_ = MidiOpenState::Idle;
   double createdAt_ = clockNow();
   void adopt(MidiProbeResult r);
+  // MIDIHP-1119: opens / closes ports to match the device lists (only what changed).
+  void reconcile(const std::vector<std::string>& prevIns, const std::vector<std::string>& prevOuts, bool full);
+  bool openInput(const std::string& name);  // pushed on ins_ when it opened
+  void closeInput(Port& p);                 // closes it, then releases the notes it held
+  bool openOutput();                        // the selected output (under outMu_)
+  bool fake_ = false;     // GRIDLINE_TEST_MIDI=fake: stand-in devices, no MIDI client
+  bool fakeOut_ = false;  // the stand-in selected output is open (under outMu_)
+  bool answered_ = false;  // a probe answered since the last failure: later answers change only what changed
+  double nextRescan_ = 0;
+  uint64_t seenChanges_ = 0;
+  int releasedNotes_ = 0;
 };
 
 }  // namespace gl
