@@ -155,6 +155,11 @@ void keepTrackSounds(App& a, const std::set<ObjectId>& clips);
 // audio track gets a free mixer track. `withContent` also copies its regions. One undo step.
 // Returns the new track (-1 when none was made).
 int newTrackSameSettings(App& a, int track, bool withContent);
+// smoothinst-1119: a copy of channel `src` (its instrument and settings, no notes) as `track`'s
+// instrument, on a mixer insert of its own carrying the same plugins, volume and pan (Cmd+D's channel
+// strip, and an empty track given a region whose sound another track plays). Returns the copy, kNoId
+// when the track did not take it. Inside the caller's undo group.
+ObjectId linkSoundCopy(App& a, int track, ObjectId src);
 
 // Link: 0 off, 1 single, 2 follow the selected strip.
 int link(const App& a);

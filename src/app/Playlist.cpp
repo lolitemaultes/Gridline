@@ -8272,6 +8272,91 @@ void drawPlaylist(App& a) {
       // (a region belongs to its track, as a pasted one does: R11-01); it kept playing its own channel.
       // The track's sound: its link, else its earliest region that did not just move, else the one it kept.
       const Song& ns = a.doc.song();
+      // smoothinst-1119: an empty track with no instrument (no link, no region of its own, no sound it
+      // kept) that regions land on takes the instrument of the earliest of them: it becomes that sound's
+      // instrument track, so its header, the Library, the inspector and the mixer show it and later
+      // regions there play it. The sound itself when no other track plays it, else a copy on a channel
+      // strip of its own (a sound is one track's instrument; the track it came from keeps its own).
+      // The other regions there then take it below (R2-3). Part of the move's undo step.
+      {
+        const int nt = static_cast<int>(ns.tracks.size());
+        auto baseOf = [&](ObjectId id) -> const Clip* {
+          for (const Clip& b : cg.base) {
+            if (b.id == id) {
+              return &b;
+            }
+          }
+          return nullptr;
+        };
+        std::map<int, std::pair<Tick, ObjectId>> first;  // empty track -> earliest region landed there
+        for (const Clip& c : ns.playlist) {
+          if (!st.selected.count(c.id) || c.kind != ClipKind::Pattern || c.track < 0 || c.track >= nt) {
+            continue;
+          }
+          const Clip* was = baseOf(c.id);
+          if (!was || was->track == c.track) {
+            continue;
+          }
+          auto it = first.find(c.track);
+          if (it == first.end() || std::make_pair(c.start, c.id) < it->second) {
+            first[c.track] = {c.start, c.id};
+          }
+        }
+        std::vector<std::pair<int, ObjectId>> give;  // track -> the sound it takes
+        for (const auto& [tr, f] : first) {
+          const PlaylistTrack& pt = ns.tracks[static_cast<size_t>(tr)];
+          if (trackmodes::modeOf(ns, tr) != TrackMode::Unassigned || pt.groupSize > 0 || ns.channel(pt.sound)) {
+            continue;
+          }
+          bool empty = true;  // no region of its own that plays something
+          for (const Clip& k : ns.playlist) {
+            if (!empty || k.track != tr || st.selected.count(k.id) || k.kind == ClipKind::Automation) {
+              continue;
+            }
+            const Pattern* p = k.kind == ClipKind::Pattern ? ns.pattern(k.pattern) : nullptr;
+            bool sounds = k.kind != ClipKind::Pattern;
+            for (const Channel& ch : ns.channels) {
+              sounds = sounds || (p && (p->notes.count(ch.id) || p->steps.count(ch.id)));
+            }
+            empty = !sounds;
+          }
+          const Clip* c = ns.clip(f.second);
+          const Clip* was = c ? baseOf(c->id) : nullptr;
+          const Channel* snd = was ? logicplug::trackSound(ns, was->track, was) : nullptr;
+          if (empty && snd) {
+            give.push_back({tr, snd->id});
+          }
+        }
+        for (const auto& [tr, id] : give) {
+          const Song& cs = a.doc.song();
+          // Played anywhere but this track: by a link, a kept sound or a region on another track.
+          bool elsewhere = trackmodes::channelLinked(cs, id, tr);
+          for (int t = 0; t < static_cast<int>(cs.tracks.size()) && !elsewhere; ++t) {
+            elsewhere = t != tr && cs.tracks[static_cast<size_t>(t)].sound == id;
+          }
+          for (const Clip& k : cs.playlist) {
+            if (elsewhere || k.track == tr || k.kind == ClipKind::Automation) {
+              continue;
+            }
+            const Pattern* p = k.kind == ClipKind::Pattern ? cs.pattern(k.pattern) : nullptr;
+            elsewhere = (k.kind == ClipKind::Audio && k.source == id) || (p && (p->notes.count(id) || p->steps.count(id)));
+          }
+          if (!elsewhere) {
+            Song probe = cs;
+            if (trackmodes::makeInstrumentTrack(probe, tr, id)) {
+              trackmodes::makeInstrumentTrack(a.doc, tr, id);
+            }
+            continue;
+          }
+          Song probe = cs;  // a dry run first, so a sound no track can take leaves nothing behind
+          Channel copy = *cs.channel(id);
+          copy.id = probe.allocateId();
+          probe.channels.push_back(copy);
+          if (trackmodes::makeInstrumentTrack(probe, tr, copy.id)) {
+            logicplug::linkSoundCopy(a, tr, id);
+          }
+        }
+      }
       auto soundOf = [&](int tr) -> ObjectId {
         if (const Channel* lc = trackmodes::linkedChannel(ns, tr)) {
           return lc->id;

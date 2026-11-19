@@ -9,6 +9,18 @@
 #   retarget   a second instrument track added, a region with notes on it dragged onto the first track: it plays
 #              that track's instrument (the notes are its channel's), one undo step puts them back. It kept
 #              playing the instrument of the track it came from. The open editor shows its notes all along.
+#   emptytrack smoothinst-1119: a region with notes (and an Alt-copy of it) on the first track, the region dragged
+#              onto the spare row below (an empty track with no instrument): that track becomes an instrument
+#              track of its own (a copy of the sound on a channel strip of its own: the first track keeps its
+#              instrument), its header and the Library name the instrument and the region's notes are its
+#              channel's (what plays them); the copy dragged there next plays that instrument too (R2-3); one
+#              undo step each, the last one leaving the track empty and the sound gone. The track gained the
+#              sound only through its regions: header and Library said "No instrument".
+#   emptymulti smoothinst-1119: two regions of a free track, one playing Synth and one Snare, dragged together
+#              onto the empty track below: that track takes the earlier one's sound (Synth, which no other track
+#              plays) and the later region plays it too; one undo step puts both back. The same drag with Alt
+#              (copies): the first track keeps both its regions as they were, the empty track gets a copy of
+#              Synth on a channel strip of its own and both copies play it.
 #   fold       the demo song, a region dragged to another track: the rows shown stay as they were (the Music
 #              Filter automation row folded away, as the bus it automates was heard on one more track).
 #   cards      Settings > Interface: every layout card's description shows whole (the Tracker card's last line
@@ -223,6 +235,169 @@ def check_retarget():
         print("ok - retarget: a region moved onto another instrument's track plays that instrument, one undo step")
 
 
+def song_region(path, track, start):
+    """(each track's linked channel, the channels with notes in the region at track / start, channel count)."""
+    d = json.load(open(path))
+    ch = [t.get("channel") for t in d.get("tracks", [])]
+    for c in d.get("playlist", []):
+        if c.get("track") == track and c.get("start") == start and "pattern" in c:
+            for p in d.get("patterns", []):
+                if p.get("id") == c["pattern"]:
+                    return ch, sorted(k for k, v in p.get("notes", {}).items() if v), len(d.get("channels", []))
+    return ch, None, len(d.get("channels", []))
+
+
+def check_emptytrack():
+    sc = Script()
+    load_sound(sc)
+    pick_tool(sc, TOOL_PENCIL)
+    sc.click(bar_x(1) + 4, TRACK1_Y, settle=8)
+    pick_tool(sc, TOOL_POINTER)
+    sc.dclick(bar_x(1) + 30, TRACK1_Y, settle=20)
+    sc.click(*PIANO_TOOL_MENU, settle=6)
+    sc.click(*PIANO_DRAW, settle=4)
+    sc.click(700, 790)
+    sc.click(840, 790)
+    sc.click(1300, 450, settle=4)
+    sc.at("mod alt 1")  # an Alt-copy of the region at bar 5, on the same track
+    sc.drag(bar_x(1) + 30, TRACK1_Y, bar_x(5) + 30, TRACK1_Y)
+    sc.at("mod alt 0", 3)
+    paths = {k: os.path.join(OUT, "emptytrack_%s.gridline.json" % k) for k in ("before", "moved", "second", "undo1", "undo2")}
+    sc.at('save "%s"' % paths["before"], 4)
+    sc.drag(bar_x(1) + 30, TRACK1_Y, bar_x(1) + 30, TRACK2_Y)  # onto the spare row below: track 2
+    sc.at('save "%s"' % paths["moved"], 4)
+    sc.at("parts lib tracks", 2)
+    sc.click(bar_x(1) + 30, TRACK2_Y, settle=6)  # the moved region selected: its track is the Library's
+    sc.at("parts lib state", 2)
+    sc.drag(bar_x(5) + 30, TRACK1_Y, bar_x(5) + 30, TRACK2_Y)  # the copy onto that track next
+    sc.at('save "%s"' % paths["second"], 4)
+    sc.cmd_key("z")
+    sc.at('save "%s"' % paths["undo1"], 4)
+    sc.cmd_key("z")
+    sc.at('save "%s"' % paths["undo2"], 4)
+    sc.at("parts lib tracks", 2)
+    out = run("emptytrack", sc)
+    try:
+        ch0, a0, n0 = song_region(paths["before"], 0, 0)
+        _, b0, _ = song_region(paths["before"], 0, 1536)
+        ch1, a1, n1 = song_region(paths["moved"], 1, 0)
+        _, b1, _ = song_region(paths["moved"], 0, 1536)
+        ch2, b2, _ = song_region(paths["second"], 1, 1536)
+        ch3, b3, _ = song_region(paths["undo1"], 0, 1536)
+        _, a3, _ = song_region(paths["undo1"], 1, 0)
+        ch4, a4, n4 = song_region(paths["undo2"], 0, 0)
+    except (OSError, ValueError) as e:
+        return fail("emptytrack: the saved projects: %s" % e)
+    c1 = ch0[0] if ch0 else None
+    if c1 is None or a0 != [str(c1)] or b0 != [str(c1)] or (len(ch0) > 1 and ch0[1] is not None):
+        return fail("emptytrack: a region with notes and its Alt-copy on the first track, the track below empty: %s %s %s" % (ch0, a0, b0))
+    c2 = ch1[1] if len(ch1) > 1 else None
+    if c2 is None or c2 == c1 or ch1[0] != c1 or n1 != n0 + 1:
+        fail("emptytrack: the empty track becomes an instrument track of its own (a copy of the sound), the first "
+             "keeps its instrument: tracks %s, channels %d then %d" % (ch1, n0, n1))
+    elif a1 != [str(c2)] or b1 != [str(c1)]:
+        fail("emptytrack: the moved region's notes are on the track's instrument (%s): %s; the copy left behind keeps "
+             "the first track's (%s): %s" % (c2, a1, c1, b1))
+    m = re.findall(r'smoothlib track (\d+) "([^"]*)" mode (\d+) sound "([^"]*)"', out)
+    rows = {int(t): (nm, int(md), snd) for t, nm, md, snd in m[:2]} if len(m) >= 2 else {}
+    if not rows.get(1) or rows[1][1] != 2 or not rows[1][2] or rows[1][2] != rows.get(0, ("", 0, ""))[2] or rows[1][0] != rows[1][2]:
+        fail("emptytrack: the track is an instrument track and its header names the instrument: %s" % m[:2])
+    st = re.search(r'smoothlib state: shown \d+ saved "[^"]*" nav \d+ track (\d+) sound "([^"]*)"', out)
+    if not st or st.group(1) != "1" or not st.group(2) or st.group(2) == "No instrument" or (rows.get(1) and st.group(2) != rows[1][2]):
+        fail("emptytrack: the Library names the selected track's instrument: %s" % (st.group(0) if st else out[-400:]))
+    if ch2[1] != c2 or b2 != [str(c2)]:
+        fail("emptytrack: a second region moved there plays the track's instrument (%s): %s, tracks %s" % (c2, b2, ch2))
+    if b3 != [str(c1)] or a3 != [str(c2)] or ch3[1] != c2:
+        fail("emptytrack: one undo step takes the second region back with its sound: %s %s %s" % (b3, a3, ch3))
+    if a4 != [str(c1)] or (len(ch4) > 1 and ch4[1] is not None) or n4 != n0 or ch4[0] != c1:
+        fail("emptytrack: one more undo step: the region back with its sound, the track empty, no extra channel: %s %s %d" % (a4, ch4, n4))
+    tail = m[2:]
+    if any(t == "1" for t, _, _, _ in tail):
+        fail("emptytrack: after undo the track has no instrument: %s" % tail)
+    if not [f for f in failures if f.startswith("emptytrack")]:
+        print("ok - emptytrack: an empty track takes the instrument of a region moved onto it, one undo step")
+
+
+def check_emptymulti():
+    fresh = os.path.join(OUT, "emptymulti_fresh.gridline.json")
+    sc = Script()
+    sc.at('save "%s"' % fresh, 4)
+    run("emptymulti_fresh", sc)
+    d = json.load(open(fresh))
+    ids = {c["name"]: c["id"] for c in d.get("channels", [])}
+    if "Synth" not in ids or "Snare" not in ids or not d.get("patterns"):
+        return fail("emptymulti: a new project's Synth and Snare channels and its pattern: %s" % sorted(ids))
+    synth, snare = ids["Synth"], ids["Snare"]
+    p0 = dict(d["patterns"][0])
+    pa = dict(p0, id=150, name="A", notes={str(synth): [dict(length=24, pitch=60, start=0, velocity=100)]}, steps={})
+    pb = dict(p0, id=151, name="B", notes={str(snare): [dict(length=24, pitch=60, start=0, velocity=100)]}, steps={})
+    d["patterns"] = d["patterns"] + [pa, pb]
+    d["playlist"] = [dict(id=91, length=384, pattern=150, start=0, track=0), dict(id=92, length=384, pattern=151, start=768, track=0)]
+    d["nextId"] = 200
+    song = os.path.join(OUT, "emptymulti.gridline.json")
+    json.dump(d, open(song, "w"), indent=1)
+    sc = Script()
+    sc.wait(10)
+    sc.at("plgeom", 2)
+    sc.at("dump", 2)
+    out = run("emptymulti_geo", sc, song=song)
+    rect = {int(m.group(1)): [float(m.group(k)) for k in range(2, 6)]
+            for m in re.finditer(r"\n  clip (\d+) x ([-0-9.]+) ([-0-9.]+) y ([-0-9.]+) ([-0-9.]+)", out)}
+    if 91 not in rect or 92 not in rect:
+        return fail("emptymulti: the two regions are drawn: %s" % rect)
+    centre = lambda r: ((r[0] + r[1]) / 2, (r[2] + r[3]) / 2)
+    (ax, ay), (bx, by) = centre(rect[91]), centre(rect[92])
+    row = rect[91][3] - rect[91][2] + 2
+    results = {}
+    for tag, copy in (("move", False), ("copy", True)):
+        after = os.path.join(OUT, "emptymulti_%s_after.gridline.json" % tag)
+        undone = os.path.join(OUT, "emptymulti_%s_undone.gridline.json" % tag)
+        sc = Script()
+        sc.wait(10)
+        sc.click(ax, ay, settle=4)
+        sc.at("mod shift 1")
+        sc.click(bx, by, settle=4)
+        sc.at("mod shift 0", 3)
+        if copy:
+            sc.at("mod alt 1")
+        sc.drag(ax, ay, ax, ay + row)
+        if copy:
+            sc.at("mod alt 0", 3)
+        sc.at('save "%s"' % after, 4)
+        sc.cmd_key("z")
+        sc.at('save "%s"' % undone, 4)
+        run("emptymulti_" + tag, sc, song=song)
+        results[tag] = (after, undone)
+    try:
+        ch, a1, n1 = song_region(results["move"][0], 1, 0)
+        _, b1, _ = song_region(results["move"][0], 1, 768)
+        chu, au, nu = song_region(results["move"][1], 0, 0)
+        _, bu, _ = song_region(results["move"][1], 0, 768)
+        chc, ac, nc = song_region(results["copy"][0], 1, 0)
+        _, bc, _ = song_region(results["copy"][0], 1, 768)
+        _, ao, _ = song_region(results["copy"][0], 0, 0)
+        _, bo, _ = song_region(results["copy"][0], 0, 768)
+        chcu, _, ncu = song_region(results["copy"][1], 1, 0)
+    except (OSError, ValueError) as e:
+        return fail("emptymulti: the saved projects: %s" % e)
+    n0 = len(d["channels"])
+    if len(ch) < 2 or ch[1] != synth or a1 != [str(synth)] or b1 != [str(synth)] or n1 != n0:
+        fail("emptymulti: the empty track takes the earlier region's sound (Synth %d) and both play it: tracks %s, %s %s, "
+             "channels %d" % (synth, ch[:2], a1, b1, n1))
+    if (len(chu) > 1 and chu[1] is not None) or au != [str(synth)] or bu != [str(snare)] or nu != n0:
+        fail("emptymulti: one undo step: both back with their sounds, the track empty: %s %s %s" % (chu[:2], au, bu))
+    cp = chc[1] if len(chc) > 1 else None
+    if cp is None or cp in (synth, snare) or chc[0] is not None or nc != n0 + 1:
+        fail("emptymulti: Alt-copies onto the empty track: a copy of Synth of its own, the first track as it was: %s, "
+             "channels %d" % (chc[:2], nc))
+    elif ac != [str(cp)] or bc != [str(cp)] or ao != [str(synth)] or bo != [str(snare)]:
+        fail("emptymulti: both copies play the track's sound (%s), the originals theirs: %s %s / %s %s" % (cp, ac, bc, ao, bo))
+    if (len(chcu) > 1 and chcu[1] is not None) or ncu != n0:
+        fail("emptymulti: one undo step takes the copies and the track's sound back: %s, channels %d" % (chcu[:2], ncu))
+    if not [f for f in failures if f.startswith("emptymulti")]:
+        print("ok - emptymulti: several regions onto an empty track: the earliest one's sound for all, Alt-copies too")
+
+
 def check_fold():
     sc = Script()
     sc.wait(10)
@@ -323,7 +498,7 @@ def check_pencil():
 if os.path.isdir(OUT):
     shutil.rmtree(OUT)
 os.makedirs(OUT)
-for name, fn in [("samestart", check_samestart), ("retarget", check_retarget), ("fold", check_fold), ("cards", check_cards),
+for name, fn in [("samestart", check_samestart), ("retarget", check_retarget), ("emptytrack", check_emptytrack), ("emptymulti", check_emptymulti), ("fold", check_fold), ("cards", check_cards),
                  ("emptyhelp", check_emptyhelp), ("pencil", check_pencil)]:
     if not ONLY or ONLY == name:
         try:

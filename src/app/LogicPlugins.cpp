@@ -476,6 +476,43 @@ bool recordsChannel(const App& a, ObjectId channel) {
   return false;
 }
 
+ObjectId linkSoundCopy(App& a, int track, ObjectId src) {
+  const Channel* sc = a.doc.song().channel(src);
+  if (!sc) {
+    return kNoId;
+  }
+  const Channel copy = *sc;
+  const ObjectId srcMixer = copy.mixerTrack;
+  const int at = a.doc.song().channelIndex(src);
+  const ObjectId nid = a.doc.addChannel(copy.name, copy.plugin.type, at + 1);
+  if (nid == kNoId) {
+    return kNoId;
+  }
+  a.doc.editChannel(nid, "new track with the same settings", [&](Channel& c) {
+    const ObjectId keep = c.id;
+    c = copy;
+    c.id = keep;
+  });
+  std::string why;
+  if (!trackmodes::makeInstrumentTrack(a.doc, track, nid, &why)) {
+    return kNoId;
+  }
+  // Its own insert (makeInstrumentTrack moved it off a shared one) gets the same plugins.
+  const Song& s = a.doc.song();
+  const Channel* nc = s.channel(nid);
+  const MixerTrack* from = s.mixerTrack(srcMixer);
+  if (nc && from && nc->mixerTrack != srcMixer && s.mixerTrack(nc->mixerTrack) && !s.mixer.empty() && srcMixer != s.mixer[0].id) {
+    const auto slots = from->slots;
+    const float vol = from->volume, pan = from->pan;
+    a.doc.editMixerTrack(nc->mixerTrack, "new track with the same settings", [&](MixerTrack& m) {
+      m.slots = slots;
+      m.volume = vol;
+      m.pan = pan;
+    });
+  }
+  return nid;
+}
+
 int newTrackSameSettings(App& a, int track, bool withContent) {
   const Song& s0 = a.doc.song();
   if (track < 0 || track >= static_cast<int>(s0.tracks.size()) || static_cast<int>(s0.tracks.size()) >= kMaxPlaylistTracks) return -1;
@@ -493,33 +530,7 @@ int newTrackSameSettings(App& a, int track, bool withContent) {
   a.doc.beginGroup("new track with the same settings");
   const bool ok = ops::clonePlaylistTrack(a.doc, track, withContent);
   if (ok && srcId != kNoId && !audioTrack) {
-    const Channel copy = *a.doc.song().channel(srcId);
-    const ObjectId srcMixer = copy.mixerTrack;
-    const int at = a.doc.song().channelIndex(srcId);
-    const ObjectId nid = a.doc.addChannel(copy.name, copy.plugin.type, at + 1);
-    if (nid != kNoId) {
-      a.doc.editChannel(nid, "new track with the same settings", [&](Channel& c) {
-        const ObjectId keep = c.id;
-        c = copy;
-        c.id = keep;
-      });
-      std::string why;
-      if (trackmodes::makeInstrumentTrack(a.doc, track + 1, nid, &why)) {
-        // Its own insert (makeInstrumentTrack moved it off a shared one) gets the same plugins.
-        const Song& s = a.doc.song();
-        const Channel* nc = s.channel(nid);
-        const MixerTrack* from = s.mixerTrack(srcMixer);
-        if (nc && from && nc->mixerTrack != srcMixer && s.mixerTrack(nc->mixerTrack) && !s.mixer.empty() && srcMixer != s.mixer[0].id) {
-          const auto slots = from->slots;
-          const float vol = from->volume, pan = from->pan;
-          a.doc.editMixerTrack(nc->mixerTrack, "new track with the same settings", [&](MixerTrack& m) {
-            m.slots = slots;
-            m.volume = vol;
-            m.pan = pan;
-          });
-        }
-      }
-    }
+    linkSoundCopy(a, track + 1, srcId);
   }
   a.doc.endGroup();
   if (!ok) return -1;
