@@ -913,7 +913,7 @@ jobs:
       - name: Downloads list and the release page's download sections
         run: |
           # Gridline-<v>-downloads.json (every file: product, kind, system, plugin, size, SHA-256) and
-          # the release body: the app, Gridline Suite, Suite Mini and Extras, then the notes.
+          # the release body: the notes, then Downloads with the app, Gridline Suite, Suite Mini and Extras.
           python3 -I src/tools/release/downloads.py list files --version "$VER" --sums "files/Gridline-$VER-SHA256SUMS" \
             --out "files/Gridline-$VER-downloads.json"
           python3 -I src/tools/release/downloads.py body "files/Gridline-$VER-downloads.json" --notes notes.md --out notes-body.md

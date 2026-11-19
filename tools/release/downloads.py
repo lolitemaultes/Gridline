@@ -7,15 +7,15 @@
 
 `list` reads every release file name (never the files' contents, except their size and the
 checksum from SHA256SUMS) and says what each one is: product (app, suite, mini, extras), kind
-(installer, all, app, portable, ...), system family and processor. `body` writes the release page's four grouped sections in the approved order, each
-opened by a one-line note:
+(installer, all, app, portable, ...), system family and processor. `body` writes the release page: the release notes first, then a Downloads heading with
+the four grouped sections in the approved order, each opened by a one-line note:
 
   1. Gridline (the app): one main download per system;
   2. Gridline Suite: the installer and the all-plugins zip per system;
   3. Gridline Suite Mini: the same two ways;
   4. Extras: media tools, crash symbols, source and checksums;
 
-then the release notes. Names follow the plan's asset table; a name it cannot place fails the run,
+Names follow the plan's asset table; a name it cannot place fails the run,
 but it is still listed (under Extras) with a warning, so a file is never left off the page. Public text only: no task numbers, no other products.
 
 There are no single-plugin zips: each would carry the whole engine and be as large as the suite, so a person
@@ -133,7 +133,7 @@ def _app_section(version, files):
         main = [f for f in apps if f["family"] == fam and f["kind"] == "app"]
         if main:
             rows.append("| %s | %s |" % (label, ", ".join(_link(version, f["name"]) for f in main)))
-    lines = ["## Gridline", "", "Gridline itself, with every Gridline plugin included.", "", "| System | Download |", "| --- | --- |"]
+    lines = ["### Gridline", "", "Gridline itself, with every Gridline plugin included.", "", "| System | Download |", "| --- | --- |"]
     lines += rows
     portable = [f for f in apps if f["kind"] == "portable"]
     if portable:
@@ -148,7 +148,7 @@ def _suite_section(version, files, product):
     mine = [f for f in files if f["product"] == product]
     if not mine:
         return []
-    lines = ["## " + title, "", note, ""]
+    lines = ["### " + title, "", note, ""]
     inst = [f for f in mine if f["kind"] == "installer"]
     if inst:
         lines += ["**Installer**: one file per system; tick the plugins and the formats you want, even just one.", ""]
@@ -172,7 +172,7 @@ def _extras_section(version, files):
         return []
     labels = {"media-tools": "Media tools", "symbols": "Crash symbol files", "source": "Source code",
               "checksums": "Checksums", "list": "List of every file (for scripts and package channels)", "other": "Other files"}
-    lines = ["## Extras", "", "Not needed to make music.", ""]
+    lines = ["### Extras", "", "Not needed to make music.", ""]
     for kind in ("media-tools", "symbols", "source", "checksums", "list", "other"):
         these = [f for f in ex if f["kind"] == kind]
         if these:
@@ -182,15 +182,17 @@ def _extras_section(version, files):
 
 def render_body(data, notes=""):
     version, files = data["version"], data["files"]
-    lines = ["# Gridline %s" % version, ""]
+    # The page opens on the release notes (their banner and summary), as every release page has;
+    # the grouped download sections follow under Downloads (user 2026-11-20, after 0.7.7 opened on
+    # the tables).
+    lines = [notes.strip(), ""] if notes.strip() else ["# Gridline %s" % version, ""]
+    lines += ["## Downloads", ""]
     if any(f.get("family") == "macos" for f in files):
         lines += [MAC_NOTE, ""]
     lines += _app_section(version, files)
     lines += _suite_section(version, files, "suite")
     lines += _suite_section(version, files, "mini")
     lines += _extras_section(version, files)
-    if notes.strip():
-        lines += ["## What changed", "", notes.strip(), ""]
     text = "\n".join(lines)
     for bad in ("—", "–"):
         if bad in text:
@@ -235,16 +237,18 @@ def self_test():
     check(classify("notes.md", v) is None, "a stray file is not placed")
     data = {"version": v, "files": [dict(got[n], size=1) for n in names]}
     body = render_body(data, "- Something new.")
-    sections = [l for l in body.splitlines() if l.startswith("## ")]
-    check(sections == ["## Gridline", "## Gridline Suite", "## Gridline Suite Mini", "## Extras", "## What changed"],
-          "four grouped sections in order, then the notes: %s" % sections)
-    check("right-click" in body.split("## Gridline")[0], "the macOS note comes first")
+    check(body.startswith("- Something new."), "the page opens on the release notes")
+    check([l for l in body.splitlines() if l.startswith("## ")] == ["## Downloads"], "one Downloads heading after the notes")
+    sections = [l for l in body.splitlines() if l.startswith("### ")]
+    check(sections == ["### Gridline", "### Gridline Suite", "### Gridline Suite Mini", "### Extras"],
+          "four grouped sections in order: %s" % sections)
+    check("right-click" in body.split("### Gridline")[0].split("## Downloads")[1], "the macOS note opens Downloads")
     check("single" not in body.lower(), "no single-plugin downloads on the page")
-    check("Gridline-Suite-Mini-0.8.0-windows-setup.exe" not in body.split("## Gridline Suite Mini")[0], "Mini files stay in their section")
+    check("Gridline-Suite-Mini-0.8.0-windows-setup.exe" not in body.split("### Gridline Suite Mini")[0], "Mini files stay in their section")
     check(body.count("**Installer**") == 2 and body.count("**All plugins**") == 2, "each suite: installer and all zip")
     check("portable Windows zips" in body, "portable zips listed under More")
     for line in body.splitlines():
-        if line.startswith("## "):
+        if line.startswith("### "):
             nxt = body.splitlines()[body.splitlines().index(line) + 2]
             check(nxt and not nxt.startswith("|"), "a one-line note opens " + line)
     if fails:
