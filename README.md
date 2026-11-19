@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 0.7.6" src="https://img.shields.io/badge/version-0.7.6-0B0B0B?style=flat-square&labelColor=1F1F1F">
+  <img alt="Version 0.7.7" src="https://img.shields.io/badge/version-0.7.7-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="License: GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-0B0B0B?style=flat-square&labelColor=1F1F1F">
   <img alt="Plugins: VST3, CLAP, VST2, AU, LV2" src="https://img.shields.io/badge/plugins-VST3%20%7C%20CLAP%20%7C%20VST2%20%7C%20AU%20%7C%20LV2-0B0B0B?style=flat-square&labelColor=1F1F1F">
@@ -194,8 +194,8 @@ The [release notes](https://github.com/lolitemaultes/Gridline/releases/latest) h
 ### Workflow
 
 - **Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation share the same tracks.
-- **Window layouts.** Arrange the main window as Studio, Clips, Smooth or Tracker, always in your own theme.
-- **Meter changes, MPE and slides.** A song can change meter as it goes. MPE keyboards play every built-in instrument note by note, and slide notes glide on every instrument.
+- **Four window layouts.** Arrange the main window as Studio, Clips (a launch grid and a device band), Smooth (the tracks in the centre and one shared pane below) or Tracker (a pattern editor typed from the keyboard), always in your own theme. All four show the same project, so you can switch at any time.
+- **Meter changes, MPE and slides.** A song can change meter as it goes. MPE keyboards play every built-in instrument note by note, and each note's pressure and timbre record, edit and play back. Slide notes glide on every instrument.
 - **Layers and SFZ.** Layer channels split and stack instruments by key and velocity. The Multisampler plays SFZ instruments.
 - **Tracker modules.** Open `.xm` and `.mod` modules as projects, played by the Tracker Sampler, which also works as a sampler for your own sounds.
 - **Welcome screen.** Recent projects, favourites, templates and the demo song. Big projects load in a window that counts every sample and plugin, and Cancel takes you back.
@@ -204,11 +204,12 @@ The [release notes](https://github.com/lolitemaultes/Gridline/releases/latest) h
 
 ### Recording, editing and mixing
 
-- **Recording.** Audio input with latency compensation, takes drawn live as they record, comping and MIDI learn on every control.
+- **Recording.** Audio input with latency compensation and input monitoring, take lanes you comp by dragging, quick punch, a Record window with every setting, and MIDI learn on every control.
 - **Clip editing.** Several selected audio clips change together. Stretched clips follow the project tempo; clips you never stretched keep their audio when the tempo changes.
 - **Stretch and pitch.** One continuous engine, from half speed to four times and an octave either way. Pick Stretch, Resample or, for clips and the sampler, Rubber Band.
 - **Mixer.** Smooth swing, plugin delay compensation, parallel processing on several cores, sends, sidechains, groups, stems and a per-track EQ.
 - **Stage view.** Place tracks on a stage: left and right, near and far, how wide. Split a big project into rooms. See [docs/stage-view.md](docs/stage-view.md).
+- **Hardware.** Mackie Control and HUI surfaces, Hardware Insert for outboard gear with its round trip measured, MIDI Out to other channels, and MIDI devices picked up when you plug them in. See [docs/midi-devices.md](docs/midi-devices.md).
 - **Split stems and Import from URL.** Separate a clip into four or six stems on your own computer ([docs/stems.md](docs/stems.md)), or bring a web page's audio in as a lossless WAV clip ([docs/import-url.md](docs/import-url.md)).
 - **Track Receipt.** Help > Track Receipt... measures which parts of which original recordings a project plays and writes a spreadsheet and a PDF for sample licensing. A helper, not legal advice.
 
@@ -429,7 +430,7 @@ cmake --build build --target install-plugins               # copy the bundles in
 
 - **Demo song.** File > New from template > Demo song opens "Gridline", a 4:25 liquid drum & bass track at 174 BPM made only with the built-in instruments, effects and automation: no samples.
 - **Project files** are versioned JSON, saved as `.gridline` (or `.gridlinez`, zipped with their samples). Older files are upgraded on load.
-- **Import and export.** MIDI files, audio export (WAV, FLAC, MP3, OGG, M4A) and stems.
+- **Import and export.** MIDI files, DAWproject files, audio export (WAV, FLAC, MP3, OGG, M4A) and stems.
 - **Scripting and remote control.** Sandboxed Lua scripts, an optional, off by default MCP server for AI assistants, and OSC in and out.
 
 <details>
@@ -546,12 +547,12 @@ build\gridline-app.exe
 | Topic | Guides |
 |---|---|
 | **Editing** | [Automation](docs/automation.md), [Piano roll](docs/piano-roll.md), [Playlist](docs/playlist.md), [Mixer](docs/mixer.md), [Stage view](docs/stage-view.md), [Layers](docs/layers.md), [Slide notes](docs/slide-notes.md), [Meter changes](docs/meter-changes.md) |
-| **Audio** | [Recording](docs/recording.md), [Split stems](docs/stems.md), [Import from URL](docs/import-url.md), [Warp markers](docs/warp-markers.md), [Freeze](docs/freeze.md), [Loop files](docs/loop-files.md), [SFZ](docs/sfz.md), [Drum kits](docs/drum-kits.md) |
+| **Audio** | [Recording](docs/recording.md), [Split stems](docs/stems.md), [Import from URL](docs/import-url.md), [Warp markers](docs/warp-markers.md), [Freeze](docs/freeze.md), [Loop files](docs/loop-files.md), [SFZ](docs/sfz.md), [Drum kits](docs/drum-kits.md), [Sound library](docs/sound-library.md), [Speech](docs/speech.md) |
 | **Plugins** | [Gridline Suite](docs/gridline-suite.md), [Plasma](docs/plugins/plasma.md), [Chater](docs/plugins/chater.md), [Seltmann](docs/plugins/seltmann.md), [Tideline](docs/plugins/tideline.md), [Synths pack](docs/plugins/synths.md), [Platter recording](docs/plugins/platter-recording.md), [Plugin window](docs/plugin-window.md) |
 | **Working together** | [Collaborative projects](docs/collaboration.md) |
-| **Interface** | [Themes](docs/themes.md), [Detachable windows](docs/detachable-windows.md), [Command palette](docs/command-palette.md), [Typing keyboard](docs/typing-keyboard.md) |
-| **Hardware** | [MIDI devices](docs/midi-devices.md), [MPE](docs/mpe.md), [CV and gate](docs/cv-gate.md), [ASIO on Windows](docs/asio.md) |
-| **Systems** | [Debian and Ubuntu](docs/debian.md), [Chromebooks](docs/chromeos.md), [Wayland](docs/wayland.md), [Opening files](docs/opening-files.md), [Updates](docs/updates.md) |
+| **Interface** | [Themes](docs/themes.md), [Detachable windows](docs/detachable-windows.md), [Command palette](docs/command-palette.md), [Workspaces](docs/workspaces.md), [Typing keyboard](docs/typing-keyboard.md) |
+| **Hardware** | [MIDI devices](docs/midi-devices.md), [MPE](docs/mpe.md), [CV and gate](docs/cv-gate.md), [ASIO on Windows](docs/asio.md), [Game controller](docs/game-controller.md) |
+| **Systems** | [Debian and Ubuntu](docs/debian.md), [Chromebooks](docs/chromeos.md), [Wayland](docs/wayland.md), [Opening files](docs/opening-files.md), [DAWproject](docs/dawproject.md), [Updates](docs/updates.md) |
 | **Automation and scripting** | [Lua scripting](docs/scripting.md), [AI assistants (MCP)](docs/mcp.md), [OSC](docs/osc.md) |
 
 [CHANGELOG.md](CHANGELOG.md) lists what changed in each version.

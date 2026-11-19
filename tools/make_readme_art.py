@@ -501,21 +501,21 @@ VIEWS += [
 ]
 
 # The release banner and screenshots of this version.
-RELEASE = "0.7.6"
+RELEASE = "0.7.7"
 # The banner: version as set, headline, subline; a prerelease adds its tag and label.
-RELEASE_BANNER = ("0.7.6", "Put your mix on a stage",
-                  "A Stage view with rooms for the mixer, Chater, automation modes, OSC and a new file dialog")
+RELEASE_BANNER = ("0.7.7", "Choose how you work",
+                  "Clips, Smooth and Tracker join Studio, with take lanes, control surfaces and full MPE")
 RELEASE_BANNER_OPTS = {}
 # Plugin editors on one sheet (none in this release).
 RELEASE_EDITORS = []
-# Release screenshots from captures at UI scale 2 (3200x2000 unless noted), cropped to the part that shows the feature.
+# Release screenshots from 1600x1000 captures of the demo song (take lanes: a short song of four sung takes), cropped to the part that shows the feature.
 RELEASE_VIEWS = [
-    ("r_stage.png", "stage-rooms.png", None),  # the mixer in its Stage view, three rooms
-    ("r_rail.png", "stage-rail.png", None),  # ... with the rooms column as the slim rail
-    ("r_patch.png", "plasma-patch.png", (328, 365, 2872, 1955)),  # a 3200x2200 capture
-    ("r_chater.png", "chater.png", (602, 216, 2272, 1397)),  # a 2880x1800 capture
-    ("r_curve.png", "automation-modes.png", (324, 288, 2558, 1560)),  # a 2880x1800 capture
-    ("r_dialog.png", "file-dialog.png", (480, 302, 2400, 1540)),  # a 2880x1800 capture
+    ("r_clips.png", "clips.png", None),  # Clips: the arrangement, track headers and the device band, playing
+    ("r_smooth.png", "smooth.png", None),  # Smooth: Library, inspector, tracks and the mixer in the lower pane
+    ("r_tracker.png", "tracker.png", None),  # Tracker: the header band and the pattern editor, playing the song
+    ("r_takes.png", "take-lanes.png", (0, 50, 1600, 330)),  # four takes comped across their lanes
+    ("r_record.png", "record-window.png", (371, 234, 1221, 790)),  # the Record window's Inputs and monitoring page
+    ("r_speech.png", "speech.png", (492, 208, 1108, 793)),  # the Speech dialog with a pitched line and its preview
 ]
 
 if __name__ == "__main__":
