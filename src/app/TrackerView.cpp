@@ -1825,6 +1825,16 @@ bool sdlKey(App& a, int scancode, int keycode, int mods, bool down, bool repeat)
   State& s = st();
   // cp18: the lower band's Sample editor or Channel frame with the keys takes them first.
   if (trackereditors::sdlKey(a, scancode, keycode, mods, down, repeat)) return true;
+  // HUNT2-1119: Esc closes a screen swapped into the header (About, Help, Files, Settings,
+  // Collaboration), as its Exit button does, before it is the pattern's edit-mode key: those
+  // screens had no key to leave them. Not while a field is typed in or a menu or prompt is open
+  // (Esc is theirs then); with no screen shown, Esc toggles edit mode as before.
+  if (down && !repeat && scancode == SDL_SCANCODE_ESCAPE && (mods & (KMOD_CTRL | KMOD_GUI | KMOD_ALT | KMOD_SHIFT)) == 0 && headerSwap() != 0 &&
+      !ImGui::GetIO().WantTextInput && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) &&
+      closeHeaderSwap()) {
+    keys::claimEscape();
+    return true;
+  }
   // Caps Lock comes as a key down when it locks and a key up when it unlocks (macOS): each is a press.
 #ifdef __APPLE__
   // (N-02: only macOS; elsewhere every press sends a down and an up, and the up is not a press.)
@@ -1975,10 +1985,11 @@ void stepPattern(App& a, int d) {
     say(i18n::tr("This is the last pattern, and it is empty: write in it first"));
     return;
   }
-  // cp21: the classic 64 rows (before: the length of the pattern before it).
-  const ObjectId id = a.doc.addPattern(ops::nextPatternName(song), kNewPatternBars, kNewPatternSteps);
+  // HUNT2-1119: as long as the current pattern (cp21 gave it 64 rows whatever the song's were).
+  const NewPatternSize ns = newPatternSize(a);
+  const ObjectId id = a.doc.addPattern(ops::nextPatternName(song), ns.bars, ns.steps);
   if (id) {
-    a.selectPattern(id);
+    showNewPattern(a, id);
     say(i18n::tr("A new, empty pattern (Ins puts it in the song)"));
   }
 }
@@ -2023,7 +2034,35 @@ bool closeFrontPageKey(App& a) {
   return true;
 }
 
+NewPatternSize newPatternSize(const App& a) {
+  NewPatternSize n;
+  if (const Pattern* p = a.doc.song().pattern(a.curPattern)) {
+    n.bars = std::max(1, p->bars);
+    n.steps = std::max(1, p->stepsPerBar);
+  }
+  return n;
+}
+
+void showNewPattern(App& a, ObjectId id) {
+  if (id == kNoId) {
+    return;
+  }
+  a.selectPattern(id);
+  if (layoutui::active() == layout::Preset::Tracker) {
+    showPage(a, "Pattern editor");
+  }
+}
+
 void bringPage(const char* window, bool takeKeys) {
+  // HUNT-1119: a layout rebuild keeps the page that was in front, but a page the person asked for
+  // that has not come forward yet (the Audio page asked for while the Channel frame closes, which
+  // rebuilds the layout the next frame) is the one to bring: before, the rebuild sent the pattern
+  // page back to the front and the Audio page never showed. (Its wait starts again: the pages dock
+  // again first.)
+  if (!takeKeys && !st().pendingPage.empty() && !st().pendingQuiet) {
+    st().pendingFrames = st().pendingWait = st().pendingHold = 0;
+    return;
+  }
   st().pendingPage = window;
   st().pendingQuiet = !takeKeys;
   st().pendingFrames = st().pendingWait = st().pendingHold = 0;
@@ -2100,7 +2139,16 @@ void patternEditor(App& a) {
     s.wantFocus = false;
   }
   View v = build(a);
-  if (s.pattern != a.curPattern) s.pattern = a.curPattern, s.sel.on = false;
+  if (s.pattern != a.curPattern) {
+    // HUNT2-1119: another pattern shown (made, picked in the header or the order list, stepped to
+    // with a key) takes the keys back from the Channel frame or a header screen, so the next note
+    // typed goes in it. Not over a menu or prompt, nor from a field being typed in.
+    const bool first = s.pattern == kNoId;
+    s.pattern = a.curPattern, s.sel.on = false;
+    if (!first && !s.hasKb && !io.WantTextInput && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+      keysBackToPattern();
+    }
+  }
   if (!v.p || v.tracks.empty()) {  // no pattern, or no channel to give the pattern a track
     const ImVec2 p0 = ImGui::GetCursorScreenPos(), av = ImGui::GetContentRegionAvail();
     // A song of audio clips only has no pattern: the Song page shows its clips; a pattern made here
@@ -2132,7 +2180,8 @@ void patternEditor(App& a) {
         // The new pattern goes in the song too when it has no pattern clips (entry 00).
         const bool first = !trk::hasPatternEntries(a.doc.song());
         a.doc.beginGroup("new pattern");
-        const ObjectId id = a.doc.addPattern(ops::nextPatternName(a.doc.song()), kNewPatternBars, kNewPatternSteps);  // cp21: 64 rows
+        const NewPatternSize ns = newPatternSize(a);  // (no pattern is current here: the classic 64 rows)
+        const ObjectId id = a.doc.addPattern(ops::nextPatternName(a.doc.song()), ns.bars, ns.steps);
         if (id && first) a.doc.addClip(id, 0, 0);
         a.doc.endGroup(false);
         if (id) a.selectPattern(id);
@@ -2258,7 +2307,10 @@ void patternEditor(App& a) {
   if (gVisible > 0 && gZoomEff == 0) shown = std::min(shown, static_cast<size_t>(gVisible));
   // T-20: the classic view's 27 rows (13 each side of the edit row) before the glyphs grow; R3-09:
   // extended, about 40 (the room goes to rows, not to bigger glyphs).
-  const float minRows = gExtended ? 41 : 27;
+  // HUNT-1119: while the band changes (hidden asked for, or the strip still drawn) the pattern takes
+  // the extended rows: the frames the header went or came back the pattern has the hidden header's
+  // height before it had the classic count, and drew its glyphs a size too big for a frame.
+  const float minRows = gExtended || extendedDrawn() ? 41 : 27;
   const float pfMax = std::max(fs, std::min(std::floor(fs * 2.2f), std::floor(((a1.y - a0.y - headH) / minRows - 2) / 1.12f)));
   float pf = fz;
   for (float t = pfMax; t > fs && handW == 0 && gZoomEff == 0; t -= 1) {  // (widened by hand or zoomed: the glyphs stay, so the edge follows the pointer)
@@ -3180,6 +3232,10 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     filesLoadSample(a, args[1]);
     const Channel* c = a.doc.song().channel(a.selChannel);
     std::printf("tracker loadsample frame %d: %s\n", frame, c ? c->plugin.type.c_str() : "none");
+  } else if (cmd == "band") {  // HUNT-1119: the header band as last drawn
+    std::printf("tracker band frame %d: %s\n", frame, bandState().c_str());
+  } else if (cmd == "samplelist") {  // HUNT-1119: the sample list's rows as drawn
+    std::printf("tracker samplelist frame %d: %s\n", frame, sampleListDrawn().c_str());
   } else if (cmd == "tool" && args.size() > 1) {  // the scope box's tool (0 scopes .. 5 sample tools)
     const int t = std::atoi(args[1].c_str());
     if (scopeTool() != t) toggleScopeTool(a, t);

@@ -53,6 +53,7 @@ void drawGlyph(ImDrawList* dl, ImVec2 centre, float size, layout::Preset preset,
 struct CardGrid {
   int cols = 1;
   float cardW = 0, cardH = 0, thumbH = 0, gap = 0;
+  float blurbH = 32;  // hunt-1119: room for the description, as many lines as the longest one wraps to
   float height(int count) const;
   float width(int count) const;
 };

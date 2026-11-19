@@ -132,6 +132,7 @@ struct Gesture {
   int muteTo = -1;          // mute tool: state applied to every touched note
   std::vector<int> playing; // play tool: pitches sounding
   Tick lastScrub = -1;  // last position sent while scrubbing
+  Tick scrubOrigin = -1;  // hunt-1119 (Smooth): the song tick of the shown region's start (-1: pattern mode scrub)
   ImVec2 start;
   Tick startTick = 0;
   int startPitch = 0;
@@ -293,7 +294,34 @@ void commit(App& a, ObjectId pat, ObjectId ch, std::vector<Note> notes, std::vec
   }
   sel.resize(notes.size(), false);
   sortWithSelection(notes, sel);
+  // hunt-1119: Smooth has no patterns apart from its regions. Notes drawn in the editor where no region
+  // plays them (the editor opened from the toolbar on a new project's empty track) went into a pattern
+  // nothing in the arrangement played: the first of them makes its region, on the track the layout is
+  // about, at the playhead's bar, in the same undo step.
+  bool placed = !logicplug::active(a) || notes.empty() || !a.doc.song().pattern(pat);
+  for (const Clip& c : a.doc.song().playlist) {
+    if (placed) {
+      break;
+    }
+    placed = c.kind == ClipKind::Pattern && c.pattern == pat;
+  }
+  if (!placed) {
+    a.doc.beginGroup(label);
+  }
   stepnotes::write(a.doc, pat, ch, notes, label, key);  // K-22: the first edit moves rack steps in
+  if (!placed) {
+    const Song& s = a.doc.song();
+    int tr = logicplug::focusTrack(a);
+    if (tr < 0 || tr >= static_cast<int>(s.tracks.size()) || logicplug::autoFold(a).takesNoRegions(tr)) {
+      tr = 0;
+    }
+    const MeterMap mm(s);
+    const Tick at = mm.barStartAt(std::max<Tick>(0, static_cast<Tick>(a.engine.position())));
+    if (const ObjectId id = a.doc.addClip(pat, tr, at); id != kNoId) {
+      a.playlist.selected = {id};
+    }
+    a.doc.endGroup();
+  }
   a.piano.selected.clear();
   for (size_t i = 0; i < sel.size(); ++i)
     if (sel[i]) a.piano.selected.insert(i);
@@ -1411,7 +1439,9 @@ void drawPianoRoll(App& a) {
     }
     if (showVel) section(nullptr);  // K-112b (second pass): the velocity row is its own heading (144), not "Velocity" twice
     if (showVel) {
-      int vel = st.lastVelocity;
+      // hunt-1119: with nothing selected it shows the velocity new notes really get (80 in Smooth until a note
+      // is touched, R02-17); it read 100 while drawn notes came out at 80.
+      int vel = !st.lastSet && logicplug::active(a) ? 80 : st.lastVelocity;
       if (!st.selected.empty()) {
         int sum = 0;
         for (size_t i : st.selected) sum += notes[i].velocity;
@@ -1507,6 +1537,11 @@ void drawPianoRoll(App& a) {
     for (const auto& n : notes) lo = std::min(lo, n.pitch), hi = std::max(hi, n.pitch);
     if (patId != lastPat) scrolled = false;
     if (hovered && (io.MouseWheel != 0 || io.MouseWheelH != 0 || ImGui::IsMouseDragging(ImGuiMouseButton_Middle))) scrolled = true;
+    // hunt-clips4-1119: a press in the editor (drawing, moving or erasing notes by hand) stops the
+    // following too: the rows must stay under the pointer, or the next note lands a key off.
+    if (hovered && (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
+      scrolled = true;
+    }
     if (patId != lastPat || (!scrolled && (lo != lastLo || hi != lastHi))) {
       const int span = hi >= lo ? hi - lo + 1 : 0;
       const float fit = std::floor(gridH / static_cast<float>(span > 0 && span <= 12 ? std::max(span + 1, 4) : 12));
@@ -2805,7 +2840,30 @@ void drawPianoRoll(App& a) {
       g.kind = Gesture::Keys;  // K-21: a glissando while held: the key under the pointer sounds, one at a time
       previewOn(a, chId, pitchAt(m.y), 100);
     } else if (inRuler && lClick && !braceTook) {
-      if (a.engine.mode() != PlayMode::Pattern) {  // J-49 (J-77: scrubbing here keeps the rack where it is)
+      g.scrubOrigin = -1;
+      if (logicplug::active(a)) {
+        // hunt-1119: Smooth has no pattern mode (nothing shows it or leaves it): a click on the editor's
+        // ruler puts the song's playhead there in the region shown (the selected one, else the first that
+        // plays the pattern). It switched to pattern mode, and Space then played the pattern alone.
+        const Song& s = a.doc.song();
+        const Clip* shown = nullptr;
+        for (const Clip& c : s.playlist) {
+          if (c.kind != ClipKind::Pattern || c.pattern != patId) {
+            continue;
+          }
+          if (a.playlist.selected.count(c.id)) {
+            shown = &c;
+            break;
+          }
+          if (!shown || c.start < shown->start) {
+            shown = &c;
+          }
+        }
+        g.scrubOrigin = shown ? shown->start : 0;
+        if (a.engine.mode() != PlayMode::Song) {
+          a.engine.setMode(PlayMode::Song);
+        }
+      } else if (a.engine.mode() != PlayMode::Pattern) {  // J-49 (J-77: scrubbing here keeps the rack where it is)
         a.engine.setMode(PlayMode::Pattern);
         a.rackReveal.quietSwitch(PlayMode::Pattern);
       }
@@ -3089,7 +3147,7 @@ void drawPianoRoll(App& a) {
         // Smooth: follows the pointer every frame, landing on the snap grid (Alt = free).
         Tick t = std::max<Tick>(0, timeline::snapTick(std::max<Tick>(0, tickAt(std::clamp(m.x, gridMin.x, gridMax.x))), snapG, Snap::Line));
         if (t != g.lastScrub) {
-          a.engine.setPosition(t);
+          a.engine.setPosition(g.scrubOrigin >= 0 ? g.scrubOrigin + t : t);
           g.lastScrub = t;
         }
         // GitHub #71: step recording, the step cursor goes where the ruler is clicked (on the step grid).
@@ -3203,12 +3261,12 @@ void drawPianoRoll(App& a) {
           pn.start = t;
           pn.length = defLen;
           pn.pitch = curPitch;
-          pn.velocity = st.lastVelocity;
+          pn.velocity = defVel;  // hunt-1119: as a drawn note (it took 100 where a click drew 80 in Smooth)
           pn.color = newColor;
           pn.slide = newSlide;
           for (const Note& x : notesToAdd(st, pn)) ns.push_back(x);
           commit(a, patId, chId, ns, std::vector<bool>(ns.size(), false), "paint notes", g.key);
-          previewOn(a, chId, curPitch, st.lastVelocity);
+          previewOn(a, chId, curPitch, defVel);
         }
         break;
       }

@@ -150,14 +150,16 @@ endif()
 if(NOT out MATCHES "tracker dump frame 93: pattern [0-9]+ rows ([0-9]+) [^\n]* cursor ${lastTrack} ([0-9]+) ")
   fail("the dump after Fit on the last row")
 endif()
+set(curRows "${CMAKE_MATCH_1}")
 math(EXPR lastRow "${CMAKE_MATCH_1} - 1")
 if(NOT CMAKE_MATCH_2 EQUAL lastRow)
   fail("Fit on the last row: the cursor is on row ${CMAKE_MATCH_2}, not the last (${lastRow})")
 endif()
 
-# cp21: a pattern made in the Tracker has the classic 64 rows (the Song page's New).
-if(NOT out MATCHES "tracker dump frame 96: pattern [0-9]+ rows 64 ")
-  fail("a new pattern made in the Tracker does not have 64 rows")
+# cp21, HUNT2-1119: a pattern made in the Tracker (the Song page's New) is as long as the current
+# one (before HUNT2-1119: always the classic 64 rows).
+if(NOT out MATCHES "tracker dump frame 96: pattern [0-9]+ rows ${curRows} ")
+  fail("a new pattern made in the Tracker is not as long as the current one")
 endif()
 
 # ---- the song is untouched ----

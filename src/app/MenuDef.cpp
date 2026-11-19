@@ -95,8 +95,9 @@ const char* macGlyphs(const char* sc) {
   std::string key = r;
   for (const auto& [name, glyph] : kKeys)
     if (key == name) key = glyph;
-  // a key name with a space or a comma left (two shortcuts, "Num +", a gesture): the text as it was
-  const bool plain = (ctrl || alt || shift || cmd || key != r) && key.find_first_of(" ,") == std::string::npos;
+  // a key name with a space or a comma left (two shortcuts, "Num +", a gesture): the text as it was.
+  // hunt-1119: the comma key itself is a key ("Cmd+," is Settings...: it showed as "Cmd+," among glyphs).
+  const bool plain = (ctrl || alt || shift || cmd || key != r) && (key == "," || key.find_first_of(" ,") == std::string::npos);
   std::string out;
   if (plain) {
     if (ctrl) out += "\xE2\x8C\x83";

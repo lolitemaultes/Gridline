@@ -113,6 +113,8 @@ constexpr float kThumbMinV = 18.0f, kThumbMinH = 24.0f;
 struct ClipGesture {
   enum Kind { None, Move, Resize, Trim, Select, Paint, Erase, Scrub, TimeSel, AutoPoint, AutoTension, Mute, Slip, Play, Zoom, SliceLine, MarkerDrag, Warp, Marquee } kind = None;
   Tick insertMarker = -1;  // N47-08: Clips: a click in a clip's body put the insert marker here
+  bool bodyPress = false;   // hunt-clips-1119: Clips: a Move pressed on a clip's body (a click alone: the insert marker)
+  bool altTime = false;     // hunt-clips-1119: Clips: a time selection Alt+dragged in a clip's body (Alt does not free the snap)
   // J-85: a marker dragged in the ruler (moved on release; a click jumps to it),
   // and a right-click in the ruler that did not drag (opens the ruler menu).
   int marker = -1;
@@ -1721,6 +1723,9 @@ bool automationLanesShown(const App& a) {  // R04-08: Show Automation is for eve
 }
 namespace {
 bool gDevRowsAsked = false;
+// hunt-clips3-1119: Clips: track titles were chosen (a click, Shift- or Cmd-click on them) since the last press
+// in the lanes: Delete deletes those tracks. A lane or clip press clears it, so Delete there never deletes one.
+bool gTitlesChosen = false;
 // Checkpoint 48 (audit D1): Smooth's regions in the reference's saturated colours: the track colour's
 // hue at 70 % saturation and about 52 % lightness (greys stay grey), so names read white on them.
 ImU32 smoothRegionColor(ImU32 c) {
@@ -3022,7 +3027,8 @@ void drawPlaylist(App& a) {
   // ---- snapping: the visible grid (Line/Cell) or a fixed size; Alt inverts ----
   Tick visGrid = timeline::visibleGrid(s, st.pxPerTick);
   // R01-03: in the Tracks layout Alt (Option) copies a dragged region and the grid still holds.
-  Tick snapG = timeline::snapGrid(s, st.snap, st.pxPerTick, io.KeyAlt && !lg);
+  // hunt-clips-1119: Alt there selects time inside a clip in Clips; that selection keeps to the grid.
+  Tick snapG = timeline::snapGrid(s, st.snap, st.pxPerTick, io.KeyAlt && !lg && !(cg.kind == ClipGesture::TimeSel && cg.altTime));
   st.effGrid = timeline::snapGrid(s, st.snap, st.pxPerTick, false);
   livelook::editGrid(a, 0, st.snap, st.pxPerTick, visGrid, snapG, st.effGrid);  // grid2-1118: Clips' Cmd+1 .. 5
   const MeterMap mm(s);  // K-179: song time follows the meter changes
@@ -5920,9 +5926,14 @@ void drawPlaylist(App& a) {
     // N47-07: in Clips' arrangement the bar the ruler shows (counted from the arrangement's start, after
     // the live area), not the stored one.
     const Tick whereT = std::max<Tick>(0, tickAt(m.x)), whereO = liveLook ? livelook::arrangementOrigin(a) : 0;
+    // hunt-1119: in Smooth the space below the last row names no track (it named the last one there).
+    const int whereTr = trackAt(m.y);
+    const bool onRow = !lg || (whereTr >= 0 && whereTr < nTracks && m.y < yOf(whereTr) + hOf(whereTr));
     std::string where = std::string(i18n::tr("Bar")) + " " +
-                        std::to_string(whereT >= whereO ? mm.barIndex(whereT) - mm.barIndex(whereO) + 1 : mm.barIndex(whereT) + 1) + " · " +
-                        playlistTrackName(s, static_cast<size_t>(trackAt(m.y)));
+                        std::to_string(whereT >= whereO ? mm.barIndex(whereT) - mm.barIndex(whereO) + 1 : mm.barIndex(whereT) + 1);
+    if (onRow) {
+      where += " · " + playlistTrackName(s, static_cast<size_t>(whereTr));
+    }
     if (lg && hc) where += " \xC2\xB7 " + clipName(s, *hc);  // R03-07: Quick help names the region under the pointer
     if (liveMode && !liveLook && hc && inLiveArea(s, *hc))
       a.setHint(where + "   (live: click to launch on the track's launch grid \xC2\xB7 right-click to stop the track)");
@@ -5943,7 +5954,7 @@ void drawPlaylist(App& a) {
       a.setHint(where + "   " + (livelook::active(a) ? i18n::tr("(right-click: clip menu)")  // N46-07
                                                        : i18n::tr("(right-click the name: clip menu \xC2\xB7 right-click elsewhere on the clip: delete)")));
     else if (hc && liveLook && hoverZone == clipheader::Zone::Body && !onEdge && st.tool != Tool::Draw)  // N47-08
-      a.setHint(where + "   " + i18n::tr("(click: insert marker here \xC2\xB7 drag: select time \xC2\xB7 drag the title bar: move \xC2\xB7 edges: resize \xC2\xB7 right-click: clip menu)"));
+      a.setHint(where + "   " + i18n::tr("(click: insert marker here \xC2\xB7 drag: move \xC2\xB7 Shift+drag: copy \xC2\xB7 Alt+drag: select time \xC2\xB7 edges: resize \xC2\xB7 right-click: clip menu)"));
     else if (hc && liveLook && clipTool == Tool::Draw && !onEdge)  // N47-08: the title bar
       a.setHint(where + "   " + i18n::tr("(drag: move \xC2\xB7 Shift+drag: copy \xC2\xB7 edges: resize \xC2\xB7 double-click: open in the clip band \xC2\xB7 right-click: clip menu)"));
     else if (hc && clipTool == Tool::Draw && onEdge)  // K-114
@@ -5964,6 +5975,9 @@ void drawPlaylist(App& a) {
                                     "time selection  \xC2\xB7  the loop brace below the numbers: drag it, drag its ends, click it to switch Loop  \xC2\xB7  Cmd+L: loop the selection")
                          : "Click or drag to move the song position (snaps to the grid, Alt = free)  \xC2\xB7  Ctrl+drag or right-drag: "
                            "time selection (loops playback)  \xC2\xB7  double-click: clear the selection");
+  } else if (hovered && inHead && liveLook && !headModeCtl && pastRows(m.y)) {
+    // hunt-clips-1119: under the last track (the return rows, Main pinned at the foot) there is no track's
+    // header: those rows say their own (an unused track's "Audio track" hint showed over Main).
   } else if (hovered && inHead) {
     const char* modeHint = trackui::headerHint(a, headModeCtl ? headModeTrack : trackAt(m.y), headModeCtl);
     if (liveHeadPart == livelook::HeaderPart::Io) {  // checkpoint 55: the In/Out column says its own
@@ -6765,6 +6779,9 @@ void drawPlaylist(App& a) {
     if (lClick) logicplug::setAutoFolderOpen(a, true);
     lClick = rClick = false;
   }
+  if (liveLook && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !inHead) {
+    gTitlesChosen = false;  // (hunt-clips3-1119: a press in the lanes)
+  }
   // Group fold arrow in the track header.
   if (lClick && inHead) {
     int tr = trackAt(m.y);
@@ -6788,6 +6805,9 @@ void drawPlaylist(App& a) {
     } else if (!st.trackSel.count(tr)) {
       st.trackSel = {tr};
       selAnchor = tr;
+    }
+    if (liveLook) {
+      gTitlesChosen = !st.trackSel.empty();  // hunt-clips3-1119
     }
     hd = HeadDrag{};
     hd.track = tr, hd.at = m;
@@ -7501,14 +7521,46 @@ void drawPlaylist(App& a) {
       } else if (liveLook && !hc && pastRows(m.y)) {
         // N52-03: below every track's row (the return lanes, the free area) there is no track's time to
         // select: nothing starts (a folded group's hidden last track was taken before).
-      } else if (liveLook && ((hc && hoverZone == clipheader::Zone::Body && !onEdge) || (!hc && cg.startTrack >= 0 && cg.startTrack < nTracks && !pastRows(m.y))) &&
-                 !io.KeyCtrl && !io.KeyAlt && !slipDrag && (st.tool != Tool::Draw || !hc)) {
+      } else if (liveLook && hc && hoverZone == clipheader::Zone::Body && !onEdge && !io.KeyCtrl && !io.KeyAlt && !slipDrag && st.tool != Tool::Draw) {
+        // hunt-clips-1119: in Clips' arrangement a press on a clip's body moves the clip (with the clips
+        // selected with it) as its title bar does: a person grabs a clip anywhere on it. A click that does
+        // not drag still selects it alone and puts the insert marker there (N47-08: Cmd+E splits at it);
+        // Shift adds it to the selection (a Shift+drag copies the selection). Alt+drag in the body selects
+        // time inside the clip (what a plain body drag did); Alt let go once pressed snaps it again.
+        if (io.KeyShift) {
+          st.selected.insert(hoverClip);
+          st.selected = ops::expandClipGroups(s, st.selected);
+        } else if (!st.selected.count(hoverClip)) {
+          st.selected = ops::expandClipGroups(s, {hoverClip});
+        }
+        // (PL-1118: every selected clip's track is selected too, or the clip band's N53-07 rule drops a
+        // selection over several tracks once the button is up)
+        st.trackSel = {cg.startTrack};
+        for (const Clip& sc : s.playlist) {
+          if (st.selected.count(sc.id) && sc.track >= 0 && sc.track < nTracks) {
+            st.trackSel.insert(sc.track);
+          }
+        }
+        setSourceFromClip(a, *hc);
+        if (hc->kind == ClipKind::Pattern) {
+          if (const ObjectId nc = patternNoteChannel(a, s, *hc); nc != kNoId && nc != a.selChannel) {
+            a.selectChannel(nc);
+          }
+        }
+        cg.kind = ClipGesture::Move;
+        cg.bodyPress = true;
+        cg.insertMarker = std::max<Tick>(0, timeline::snapTick(mm, std::max<Tick>(0, tickAt(m.x)), snapG, Snap::Line));
+        if (io.KeyShift && !trackLocked(hc->track)) {
+          cg.copyPending = true;
+        }
+      } else if (liveLook && ((hc && hoverZone == clipheader::Zone::Body && !onEdge && io.KeyAlt) ||
+                              (!hc && cg.startTrack >= 0 && cg.startTrack < nTracks && !pastRows(m.y) && !io.KeyAlt)) &&
+                 !io.KeyCtrl && !slipDrag && (st.tool != Tool::Draw || !hc)) {
         // N50-03: in Draw mode too an empty lane takes the marker and a time selection: Draw mode never
         // paints the current pattern (another track's notes) into a lane.
-        // N47-08: in Clips' arrangement a click in a clip's body selects it and puts the insert marker
-        // there (Cmd+E splits at it); a drag from there draws a time selection. The clip moves by its
-        // title bar, as the reference's. N49-07: a click in an empty lane does the same without a clip
-        // (the track is selected: Insert MIDI clip goes there).
+        // N47-08: in Clips' arrangement a click in an empty lane selects the track and puts the insert
+        // marker there (Insert MIDI clip goes there); a drag from there draws a time selection, as an
+        // Alt+drag in a clip's body does (hunt-clips-1119).
         if (hc) {
           if (!io.KeyShift) st.selected = {hoverClip};
           else st.selected.insert(hoverClip);
@@ -7532,6 +7584,7 @@ void drawPlaylist(App& a) {
         cg.kind = ClipGesture::TimeSel;
         cg.startTick = tickAt(m.x);
         cg.insertMarker = at;
+        cg.altTime = hc != nullptr;
         st.selTracks.clear();
       } else if ((ctlK || clipTool == Tool::Select) && !loopEdgeGrab) {  // (K-114: Ctrl on an edge loops it)
         cg.kind = ClipGesture::Select;
@@ -7607,7 +7660,10 @@ void drawPlaylist(App& a) {
           st.trackSel = {tr};
           cg.base = a.doc.song().playlist;
           cg.anchor = id;
-          cg.startTick = at;
+          // hunt-1119: the drag counts from the pointer, not the cell start: a placed region moves at once
+          // (cg.placed) by the snapped distance from startTick, and Smooth's snap rounds, so a click past
+          // the middle of a beat put the region a beat later than the cell under the pointer.
+          cg.startTick = lg ? std::max<Tick>(0, tickAt(m.x)) : at;
           cg.kind = ClipGesture::Move;
           cg.placed = true;
         }
@@ -7632,7 +7688,10 @@ void drawPlaylist(App& a) {
           st.selected = {id};
           cg.base = a.doc.song().playlist;
           cg.anchor = id;
-          cg.startTick = at;
+          // hunt-1119: the drag counts from the pointer, not the cell start: a placed region moves at once
+          // (cg.placed) by the snapped distance from startTick, and Smooth's snap rounds, so a click past
+          // the middle of a beat put the region a beat later than the cell under the pointer.
+          cg.startTick = lg ? std::max<Tick>(0, tickAt(m.x)) : at;
           cg.kind = ClipGesture::Move;
           cg.placed = true;
         }
@@ -7655,9 +7714,31 @@ void drawPlaylist(App& a) {
       const float edge = 24.0f;
       if (m.x > gMax.x - edge) st.scrollX += (m.x - (gMax.x - edge)) * 0.35f;
       if (m.x < gMin.x + edge) st.scrollX = std::max(static_cast<float>(viewO) * st.pxPerTick, st.scrollX - ((gMin.x + edge) - m.x) * 0.35f);
+      // hunt-1119: in Smooth a region dragged past the top or bottom edge scrolls the tracks too (a row past the
+      // range, so the spare row it goes onto comes into view). It went onto tracks far below the window, out
+      // of sight, and was dropped there unseen. Only a drag heading that way (half a row down or up from the
+      // press): a region on the bottom row, under the scroller, dragged sideways leaves the view put (K-287).
+      const float dy = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left, 0.0f).y;
+      if (lg && cg.kind == ClipGesture::Move) {
+        if (m.y > gMax.y - edge && dy > 0.5f * trackH) {
+          st.scrollY = std::min(maxScrollY + trackH, st.scrollY + (m.y - (gMax.y - edge)) * 0.35f);
+        } else if (m.y < gMin.y + edge && dy < -0.5f * trackH) {
+          st.scrollY = std::max(0.0f, st.scrollY - ((gMin.y + edge) - m.y) * 0.35f);
+        }
+      }
     }
     Tick curTick = std::max<Tick>(0, tickAt(std::clamp(m.x, gMin.x, gMax.x)));
     int curTrack = trackAt(m.y);
+    // drag-1119: in Smooth a region dragged below the last row goes onto the spare tracks there (they take
+    // no room until used: R12-05), one row height each, as the reference makes a new track below the last.
+    // It stopped on the last row: in a new project (one track) a region could not go down at all.
+    if (lg && cg.kind == ClipGesture::Move && curTrack >= 0 && curTrack + 1 < nTracks) {
+      const float rowsEnd = trackY[static_cast<size_t>(curTrack) + 1];
+      const float yy = m.y - gMin.y + st.scrollY;
+      if (yy >= rowsEnd && trackH > 1.0f) {
+        curTrack = std::min(nTracks - 1, curTrack + 1 + static_cast<int>((yy - rowsEnd) / trackH));
+      }
+    }
     auto baseClip = [&]() -> const Clip* {
       for (const auto& c : cg.base)
         if (c.id == cg.anchor) return &c;
@@ -7782,14 +7863,38 @@ void drawPlaylist(App& a) {
         }
         cg.moved = true;
         {
+          // PL-08: instrument tracks take pattern clips only (R09-01: bus tracks none). drag-1119: a track that
+          // does not take the clips (in Clips a MIDI clip over the audio tracks) leaves them on the nearest
+          // rows toward the pointer that do, still following the pointer in time; the whole move stopped
+          // there (the clip stuck on its row and in time: in a new Clips set, two MIDI tracks over two
+          // audio tracks, a clip hardly moved).
+          auto refusedAt = [&](const std::vector<Clip>& cs) {
+            int r = -1;
+            for (const auto& c : cs) {
+              if (st.selected.count(c.id) && (!clipAllowed(c.kind, c.track) || (liveLook && !livelook::clipFitsTrack(s, c.kind, c.track)))) {
+                r = c.track;
+              }
+            }
+            return r;
+          };
           std::vector<Clip> moved = pltools::moveClips(cg.base, st.selected, dt, dtr, nTracks, lockedTracks);
-          int refused = -1;  // PL-08: instrument tracks take pattern clips only (R09-01: bus tracks none)
-          for (const auto& c : moved)
-            if (st.selected.count(c.id) && (!clipAllowed(c.kind, c.track) || (liveLook && !livelook::clipFitsTrack(s, c.kind, c.track))))
-              refused = c.track;
-          if (refused < 0) group("move clips"), applyClips("move clips", std::move(moved));
-          else a.setHint(liveLook ? i18n::tr("MIDI clips go on MIDI tracks and audio clips on audio tracks")  // N50-02
-                                  : clipRefused(refused));
+          const int refused = refusedAt(moved);
+          for (int d = dtr; refused >= 0 && d != 0;) {
+            d += d > 0 ? -1 : 1;
+            std::vector<Clip> near = pltools::moveClips(cg.base, st.selected, dt, d, nTracks, lockedTracks);
+            if (refusedAt(near) < 0) {
+              moved = std::move(near);
+              break;
+            }
+          }
+          if (refusedAt(moved) < 0) {
+            group("move clips");
+            applyClips("move clips", std::move(moved));
+          }
+          if (refused >= 0) {
+            a.setHint(liveLook ? i18n::tr("MIDI clips go on MIDI tracks and audio clips on audio tracks")  // N50-02
+                               : clipRefused(refused));
+          }
         }
         break;
       }
@@ -8100,6 +8205,31 @@ void drawPlaylist(App& a) {
     }
     if (cg.kind == ClipGesture::Move && !cg.moved && cg.anchor != kNoId && !io.KeyShift)
       st.selected = ops::expandClipGroups(a.doc.song(), {cg.anchor});  // the clicked clip and its group (J-31)
+    if (cg.kind == ClipGesture::Move && cg.bodyPress && !cg.moved && cg.insertMarker >= 0) {
+      // hunt-clips-1119: a click in a clip's body that did not drag: the insert marker goes there and
+      // the time selection goes (N47-08), the clicked clip's track the selected one.
+      st.selStart = st.selEnd = 0;
+      if (!io.KeyShift) {
+        st.trackSel = {cg.startTrack};
+      }
+      if (a.engine.mode() == PlayMode::Pattern) {
+        a.engine.setMode(PlayMode::Song);
+      }
+      a.engine.setPosition(cg.insertMarker);
+    }
+    if (liveLook && cg.kind == ClipGesture::Move && cg.moved && !st.selected.empty()) {
+      // hunt-clips-1119: the tracks the moved clips landed on are the selected ones: the track pressed
+      // alone made the clip band's N53-07 rule drop a clip moved onto another track from the selection.
+      std::set<int> landed;
+      for (const Clip& mc : a.doc.song().playlist) {
+        if (st.selected.count(mc.id) && mc.track >= 0 && mc.track < nTracks) {
+          landed.insert(mc.track);
+        }
+      }
+      if (!landed.empty()) {
+        st.trackSel = landed;
+      }
+    }
     if (cg.kind == ClipGesture::MarkerDrag && cg.marker >= 0 && cg.marker < static_cast<int>(s.markers.size())) {
       const Tick from = s.markers[static_cast<size_t>(cg.marker)].pos;
       if (cg.moved) {
@@ -8137,6 +8267,76 @@ void drawPlaylist(App& a) {
       }
     }
     if (cg.kind == ClipGesture::Warp) plwarp::end();
+    if (lg && cg.kind == ClipGesture::Move && cg.moved && !st.selected.empty()) {
+      // hunt-1119: a pattern region moved onto another instrument's track plays that track's instrument
+      // (a region belongs to its track, as a pasted one does: R11-01); it kept playing its own channel.
+      // The track's sound: its link, else its earliest region that did not just move, else the one it kept.
+      const Song& ns = a.doc.song();
+      auto soundOf = [&](int tr) -> ObjectId {
+        if (const Channel* lc = trackmodes::linkedChannel(ns, tr)) {
+          return lc->id;
+        }
+        const Clip* first = nullptr;
+        for (const Clip& k : ns.playlist) {
+          if (k.track == tr && k.kind != ClipKind::Automation && !st.selected.count(k.id) && (!first || k.start < first->start) &&
+              logicplug::trackSound(ns, tr, &k)) {
+            first = &k;
+          }
+        }
+        if (first) {
+          return logicplug::trackSound(ns, tr, first)->id;
+        }
+        const ObjectId kept = ns.tracks[static_cast<size_t>(tr)].sound;
+        return ns.channel(kept) ? kept : kNoId;
+      };
+      struct RegionMove {
+        ObjectId clip, from, to;
+      };
+      std::vector<RegionMove> moves;
+      for (const Clip& c : ns.playlist) {
+        if (!st.selected.count(c.id) || c.kind != ClipKind::Pattern || c.track < 0 || c.track >= static_cast<int>(ns.tracks.size())) {
+          continue;
+        }
+        const Clip* was = nullptr;
+        for (const Clip& b : cg.base) {
+          if (b.id == c.id) {
+            was = &b;
+          }
+        }
+        if (!was || was->track == c.track) {
+          continue;
+        }
+        const Channel* from = logicplug::trackSound(ns, was->track, was);
+        const ObjectId to = soundOf(c.track);
+        if (from && to != kNoId && from->id != to) {
+          moves.push_back({c.id, from->id, to});
+        }
+      }
+      if (!moves.empty()) {
+        const ObjectId shownPat = a.curPattern;
+        a.doc.editSong("move regions", [&](Song& x) {
+          for (const RegionMove& mv : moves) {
+            pltools::retargetPatternClip(x, mv.clip, mv.from, mv.to);
+          }
+        });
+        // The editor showing one of them follows its notes to the new instrument (it showed the region
+        // empty: its notes were on a channel no longer shown).
+        for (const RegionMove& mv : moves) {
+          const Clip* c = a.doc.song().clip(mv.clip);
+          const Clip* was = nullptr;
+          for (const Clip& b : cg.base) {
+            if (b.id == mv.clip) {
+              was = &b;
+            }
+          }
+          if (c && was && (was->pattern == shownPat || c->pattern == shownPat) && a.selChannel == mv.from) {
+            a.selectPattern(c->pattern);
+            a.selectChannel(mv.to);
+            break;
+          }
+        }
+      }
+    }
     if (lg && cg.kind == ClipGesture::Move && cg.moved && !st.selected.empty() && static_cast<int>(a.settings.getNumber("ui.logicDragMode")) == 1) {
       // R01-21 / R03-01: the Tracks layout drags with No Overlap, the reference's default drag mode:
       // where two regions overlap, the EARLIER one is shortened (guide: "the overlapped area of the
@@ -8151,9 +8351,12 @@ void drawPlaylist(App& a) {
         return nullptr;
       };
       bool any = false;
+      std::set<ObjectId> covered;
       for (const ObjectId mid : st.selected) {
         for (size_t i = 0; i < v.size(); ++i) {
-          if (st.selected.count(v[i].id)) continue;
+          if (st.selected.count(v[i].id) || covered.count(v[i].id)) {
+            continue;
+          }
           const Clip* mc = at(mid);
           if (!mc || mc->track != v[i].track) continue;
           if ((mc->kind == ClipKind::Automation) != (v[i].kind == ClipKind::Automation)) continue;  // R02-03: a region never trims the track's curve
@@ -8162,11 +8365,27 @@ void drawPlaylist(App& a) {
           if (oe <= ms || os >= me) continue;
           if (os < ms) v = pltools::resizeEnds(ns, v, {v[i].id}, ms - oe, false);  // the other is earlier: it ends where the dropped one starts
           else if (os > ms) v = pltools::resizeEnds(ns, v, {mid}, os - me, false);  // the dropped one is earlier: it ends where the other starts
-          else continue;  // same start: neither is earlier (both stay)
+          else if (oe > me) {  // hunt-1119: same start: the dropped one wins, the other starts where it ends
+            TempoMap tm;
+            tm.build(ns);
+            v = pltools::trimStarts(ns, tm, v, {v[i].id}, me - os, false);
+          } else {  // ... or, wholly covered, goes (they were left overlapping)
+            covered.insert(v[i].id);
+            continue;
+          }
           any = true;
         }
       }
-      if (any) a.doc.editClips("no overlap", [&v](std::vector<Clip>& cs) { cs = v; });
+      if (any || !covered.empty()) {
+        a.doc.beginGroup("no overlap");
+        if (any) {
+          a.doc.editClips("no overlap", [&v](std::vector<Clip>& cs) { cs = v; });
+        }
+        for (const ObjectId id : covered) {
+          a.doc.removeClip(id);
+        }
+        a.doc.endGroup();
+      }
     }
     if (liveLook && cg.kind == ClipGesture::Move && cg.moved && cg.grouped) {  // C44-02: the moved clips overwrite what they land on
       const std::set<ObjectId> placed = st.selected;
@@ -8741,6 +8960,10 @@ void drawPlaylist(App& a) {
         });
       st.selected.clear();
       st.mqA = st.mqB = 0;
+    } else if (liveLook && gTitlesChosen && keys::pressed("playlist.delete") && !st.trackSel.empty() && !inMeterLane) {
+      // hunt-clips3-1119: the chosen track titles: Delete deletes those tracks (one undo step), as the clip grid's.
+      livelook::deleteTracks(a, -1);
+      gTitlesChosen = false;
     } else if (keys::pressed("playlist.delete") && !st.selected.empty() && !inMeterLane) {
       a.doc.beginGroup("delete clips");
       logicplug::keepTrackSounds(a, st.selected);  // R08-07

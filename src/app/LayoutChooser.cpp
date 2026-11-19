@@ -605,6 +605,7 @@ void noteDrawn(int i, ImVec2 p0, ImVec2 p1) {
 }
 
 constexpr float kCardPad = 8, kNameGap = 12, kNameH = 18, kLineH = 16, kCardBottom = 14;
+ImFont* gBlurbFont = nullptr;  // hunt-1119: the descriptions' font (set by cards), to size their room
 
 }  // namespace
 
@@ -669,7 +670,17 @@ CardGrid cardGrid(float width, int count, float maxCardW, float minCardW) {
   g.cardW = std::floor(std::min(maxCardW, (width - g.gap * static_cast<float>(g.cols - 1)) / static_cast<float>(g.cols)));
   g.cardW = std::max(g.cardW, 96.0f);
   g.thumbH = std::round((g.cardW - 2 * kCardPad) * 0.625f);  // the window's own 16:10
-  g.cardH = kCardPad + g.thumbH + kNameGap + kNameH + 4 + 2 * kLineH + kCardBottom;
+  // hunt-1119: every card's description shows whole (the Tracker one lost its last word to a two-line
+  // clip at the Settings window's card width): the room is the longest one's wrapped height.
+  g.blurbH = 2 * kLineH;
+  if (gBlurbFont) {
+    const float cw = g.cardW - 2 * (kCardPad + 4);
+    for (int i = 0; i < layout::kPresetCount; ++i) {
+      const char* line = i18n::tr(layout::blurb(static_cast<Preset>(i)));
+      g.blurbH = std::max(g.blurbH, std::ceil(gBlurbFont->CalcTextSizeA(theme::kFontCaption, FLT_MAX, cw, line).y) + 2);
+    }
+  }
+  g.cardH = kCardPad + g.thumbH + kNameGap + kNameH + 4 + g.blurbH + kCardBottom;
   return g;
 }
 
@@ -713,7 +724,7 @@ bool card(App& a, int index, ImVec2 pos, const CardGrid& g, bool focused, bool k
   theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(cx, ny), cw, P.text, name);
   const char* line = i18n::tr(layout::blurb(p));
   const float ly = ny + kNameH + 4;
-  dl->PushClipRect(ImVec2(cx, ly), ImVec2(cx + cw, ly + 2 * kLineH), true);
+  dl->PushClipRect(ImVec2(cx, ly), ImVec2(cx + cw, ly + g.blurbH), true);
   dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(cx, ly), P.textDim, line, nullptr, cw);
   dl->PopClipRect();
   // Outline: quiet; hover stronger; the layout in use an accent ring with a check badge.
@@ -734,6 +745,7 @@ bool card(App& a, int index, ImVec2 pos, const CardGrid& g, bool focused, bool k
 }
 
 int cards(App& a, float width, float maxCardW, int focus, bool keyNav) {
+  gBlurbFont = a.fontRegular;
   const CardGrid g = cardGrid(width, layout::kPresetCount, maxCardW, 150.0f);
   const ImVec2 o = ImGui::GetCursorScreenPos();
   int picked = -1;

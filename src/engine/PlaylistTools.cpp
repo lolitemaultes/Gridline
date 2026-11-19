@@ -378,6 +378,45 @@ ObjectId ownPatternCopy(Song& s, const Pattern& src, ObjectId from, ObjectId to)
 }
 }  // namespace
 
+bool retargetPatternClip(Song& s, ObjectId clip, ObjectId from, ObjectId to) {
+  const Clip* c = s.clip(clip);
+  if (!c || c->kind != ClipKind::Pattern || from == kNoId || to == kNoId || from == to) {
+    return false;
+  }
+  const Pattern* p = s.pattern(c->pattern);
+  if (!p || (!p->notes.count(from) && !p->steps.count(from))) {
+    return false;
+  }
+  const ObjectId pid = c->pattern;
+  bool shared = false;
+  for (const Clip& k : s.playlist) {
+    shared = shared || (k.id != clip && k.kind == ClipKind::Pattern && k.pattern == pid);
+  }
+  const Pattern src = *p;
+  const ObjectId np = ownPatternCopy(s, src, from, to);
+  if (np == kNoId) {
+    return false;
+  }
+  if (shared) {
+    for (Clip& k : s.playlist) {
+      if (k.id == clip) {
+        k.pattern = np;
+      }
+    }
+    return true;
+  }
+  Pattern moved = std::move(s.patterns.back());  // the only region's own pattern: changed in place
+  s.patterns.pop_back();
+  moved.id = pid;
+  for (Pattern& q : s.patterns) {
+    if (q.id == pid) {
+      q = std::move(moved);
+      break;
+    }
+  }
+  return true;
+}
+
 std::vector<ObjectId> pasteOwnCopies(Song& s, const std::vector<PasteItem>& items, bool noOverlap) {
   std::vector<Clip> copies;
   copies.reserve(items.size());

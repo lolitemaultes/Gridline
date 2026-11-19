@@ -73,7 +73,9 @@ void drawPerformance(App& a) {
     ImGui::TextColored(theme::vec(P.textDim), "%s", label);
     ImGui::SameLine(150);
     ImGui::PushFont(a.fontMono, theme::kFontNumber);
+    ImGui::PushTextWrapPos(0);  // hunt-clips-1119: a narrow panel (Clips' side column) wraps it, never cuts it off
     ImGui::TextColored(theme::vec(col), "%s", value.c_str());
+    ImGui::PopTextWrapPos();
     ImGui::PopFont();
   };
   char buf[96];
@@ -123,7 +125,9 @@ void drawPerformance(App& a) {
 
   // ---- top consumers ----
   ui::BeginSection("TOP CONSUMERS");
+  ImGui::PushTextWrapPos(0);  // (hunt-clips-1119: wrapped in a narrow panel)
   ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Share of one core's real time over the last half second."));
+  ImGui::PopTextWrapPos();
   struct Row {
     App::PerfStats::Key key;
     float load;

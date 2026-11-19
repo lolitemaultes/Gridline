@@ -261,6 +261,13 @@ static void drawNoteSettings(App& a, ObjectId id) {
     ImGui::PopFont();
     ImGui::PushFont(nullptr, 11.0f);
     ts = ImGui::CalcTextSize(d.name.c_str());
+    // hunt-1119: a name wider than its cell ("Mod X per echo") ran into the next cell's name; it is set a
+    // little smaller to fit, on the same line.
+    if (ts.x > cell - 4) {
+      ImGui::PopFont();
+      ImGui::PushFont(nullptr, std::max(8.0f, 11.0f * (cell - 4) / ts.x));
+      ts = ImGui::CalcTextSize(d.name.c_str());
+    }
     ImGui::SetCursorPosX(x + std::max(0.0f, (cell - ts.x) * 0.5f));
     ImGui::TextColored(theme::vec(P.textDim), "%s", d.name.c_str());
     ImGui::PopFont();
@@ -393,6 +400,11 @@ static void drawNoteSettings(App& a, ObjectId id) {
          [](Channel& ch) { ch.echo.pingPong = !ch.echo.pingPong; });
   ImGui::EndGroup();
   ImGui::SameLine(0, theme::kS4);
+  // hunt-1119: on the next line when the row has no room for its 150 px lists (the echo row filled the
+  // window's width: Layer and Display group were cut off at its right edge, out of reach).
+  if (ImGui::GetContentRegionAvail().x < 150) {
+    ImGui::NewLine();
+  }
   // Layer + display group.
   ImGui::BeginGroup();
   ui::Label("LAYER");

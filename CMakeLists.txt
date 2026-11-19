@@ -2493,6 +2493,23 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tests/k297_region_collapse_app.py $<TARGET_FILE:gridline-app>
                        ${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json ${CMAKE_BINARY_DIR}/k297_region_collapse)
       set_tests_properties(k297_region_collapse PROPERTIES TIMEOUT 900)
+      # flick-1119: every layout's top bar, frame after frame, stopped and playing with frames that finish no
+      # audio buffer: nothing alternates (Smooth's master volume pill flashed empty on those frames).
+      add_test(NAME topbar_flicker_app
+               COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tests/topbar_flicker_app.py $<TARGET_FILE:gridline-app>
+                       ${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json ${CMAKE_BINARY_DIR}/topbar_flicker_app)
+      set_tests_properties(topbar_flicker_app PROPERTIES TIMEOUT 600)
+      # hunt-1119: Smooth used as a person uses it from a fresh start (a new project, the pointer and keys
+      # over many frames): Space plays the song, notes drawn with no region get one, a reopened project's
+      # piano roll shows its region, the piano roll's ruler moves the song's playhead.
+      add_test(NAME hunt1119_smooth_app
+               COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tests/hunt1119_smooth_app.py $<TARGET_FILE:gridline-app>
+                       ${CMAKE_BINARY_DIR}/hunt1119_smooth_app)
+      set_tests_properties(hunt1119_smooth_app PROPERTIES TIMEOUT 900)
+      add_test(NAME hunt1119b_smooth_app
+               COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tests/hunt1119b_smooth_app.py $<TARGET_FILE:gridline-app>
+                       ${CMAKE_SOURCE_DIR}/assets/demo/Gridline.gridline.json ${CMAKE_BINARY_DIR}/hunt1119b_smooth_app)
+      set_tests_properties(hunt1119b_smooth_app PROPERTIES TIMEOUT 900)
     endif()
     # K-237: a pane tab dragged to another pane and back, the side panel rail, each layout's tab state
     # across a switch and a restart, and the workspaces copy in a project (an older project unchanged).
@@ -2532,6 +2549,18 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
              COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DDEMO=${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json
                      -DOUT=${CMAKE_BINARY_DIR}/trk1118_tracker_app -P ${CMAKE_SOURCE_DIR}/tests/trk1118_tracker_app.cmake)
     set_tests_properties(trk1118_tracker_app PROPERTIES TIMEOUT 600)
+    # HUNT-1119 (a new song played in the Tracker): the Channel frame's key names and Pitch arrows, the
+    # sample list's hex numbers, the Audio page while the Channel frame shows, Ctrl+Alt+Z frame by frame.
+    add_test(NAME hunt1119_tracker_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DWAV=${CMAKE_SOURCE_DIR}/assets/sounds/classic/export.wav
+                     -DOUT=${CMAKE_BINARY_DIR}/hunt1119_tracker_app -P ${CMAKE_SOURCE_DIR}/tests/hunt1119_tracker_app.cmake)
+    set_tests_properties(hunt1119_tracker_app PROPERTIES TIMEOUT 600)
+    # HUNT2-1119: Ctrl+Alt+N gives the new pattern the keys (from the Channel frame, from another page)
+    # and the current pattern's length; Esc closes the header's screens (About, Settings, Help).
+    add_test(NAME hunt2_1119_tracker_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/hunt2_1119_tracker_app
+                     -P ${CMAKE_SOURCE_DIR}/tests/hunt2_1119_tracker_app.cmake)
+    set_tests_properties(hunt2_1119_tracker_app PROPERTIES TIMEOUT 600)
     # K-106 cp22: in the Tracker no click on an instrument (the list, Instrument, Sample, a double-click,
     # Ctrl+Alt+I/E, the Steps page) shows the shared plugin or channel settings window for even one frame.
     add_test(NAME k106_tracker_no_window_flash_app
@@ -2816,6 +2845,43 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
                WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
       set_tests_properties(k287_clip_move_${k287_layout}_app PROPERTIES TIMEOUT 600)
     endforeach()
+    # drag-1119: a clip of a new set dragged in one go across three tracks in each layout (Smooth's spare
+    # rows below the last track, Clips' audio tracks under its MIDI tracks, a dock rebuild mid-drag).
+    foreach(drag1119_layout studio logic live)
+      add_test(NAME drag1119_new_set_drag_${drag1119_layout}_app
+               COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app>
+                       -DOUT=${CMAKE_BINARY_DIR}/drag1119_new_set_drag_${drag1119_layout} -DLAYOUT=${drag1119_layout} -P ${CMAKE_SOURCE_DIR}/tests/drag1119_new_set_drag_app.cmake
+               WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+      set_tests_properties(drag1119_new_set_drag_${drag1119_layout}_app PROPERTIES TIMEOUT 600)
+    endforeach()
+    # hunt-clips4-1119: effects double-clicked onto Main and the returns (the band shows their chain), effects
+    # dropped on the strips, an instrument double-clicked onto the chosen MIDI track, notes drawn row by row.
+    add_test(NAME hunt1119d_clips_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/hunt1119d_clips -DSRC=${CMAKE_SOURCE_DIR}
+                     -P ${CMAKE_SOURCE_DIR}/tests/hunt1119d_clips_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(hunt1119d_clips_app PROPERTIES TIMEOUT 600)
+    # hunt-clips3-1119: Delete on the Arrangement's chosen track titles deletes those tracks (never after a lane press).
+    add_test(NAME hunt1119c_clips_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/hunt1119c_clips -DSRC=${CMAKE_SOURCE_DIR}
+                     -P ${CMAKE_SOURCE_DIR}/tests/hunt1119c_clips_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(hunt1119c_clips_app PROPERTIES TIMEOUT 600)
+    # hunt-clips2-1119: a file dropped in a slot selects it, a fresh set's Main unchosen, Cmd+Shift+M clears the
+    # time selection, the grid's rows after a 3/4 scene, the browser's list at the least layout size.
+    add_test(NAME hunt1119b_clips_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/hunt1119b_clips -DSRC=${CMAKE_SOURCE_DIR}
+                     -P ${CMAKE_SOURCE_DIR}/tests/hunt1119b_clips_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(hunt1119b_clips_app PROPERTIES TIMEOUT 600)
+    # hunt-clips-1119: a new Clips set used by pointer and keys: clips moved by their body, the insert marker,
+    # Alt+drag time selection and Cmd+E, the clip band's Loop, grid slots by kind, Tab during a slot drag, the
+    # device band's browser drop, the Main row.
+    add_test(NAME hunt1119_clips_app
+             COMMAND ${CMAKE_COMMAND} -DAPP=$<TARGET_FILE:gridline-app> -DOUT=${CMAKE_BINARY_DIR}/hunt1119_clips -DSRC=${CMAKE_SOURCE_DIR}
+                     -P ${CMAKE_SOURCE_DIR}/tests/hunt1119_clips_app.cmake
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(hunt1119_clips_app PROPERTIES TIMEOUT 600)
     # PL-1118: in Smooth and Clips a drag of one of several selected clips moves them all (drawn together
     # mid-drag, one undo step, the selection kept); the Smooth loop zone; fade shades without seams.
     foreach(pl1118_layout logic live)

@@ -1707,9 +1707,15 @@ void handleGlobalShortcuts(App& a) {
     a.engine.setMode(a.engine.mode() == PlayMode::Song ? PlayMode::Pattern : PlayMode::Song);
   if (pressed("help.shortcuts")) a.showShortcuts = !a.showShortcuts;
   if (pressed("pattern.new")) {
-    // K-106 cp25: in the Tracker, the same 64-row pattern as its other ways to make one (the menu, Ctrl+Right)
-    ObjectId id = a.doc.addPattern("Pattern " + std::to_string(a.doc.song().patterns.size() + 1), trackerDialogs() ? trackerview::kNewPatternBars : 1);
-    if (id) a.selectPattern(id);
+    // K-106 cp25: in the Tracker, the same pattern as its other ways to make one (the menu, Ctrl+Right);
+    // HUNT2-1119: as long as the current pattern.
+    const trackerview::NewPatternSize ns = trackerDialogs() ? trackerview::newPatternSize(a) : trackerview::NewPatternSize{1, 16};
+    const ObjectId id = a.doc.addPattern("Pattern " + std::to_string(a.doc.song().patterns.size() + 1), ns.bars, ns.steps);
+    if (trackerDialogs()) {
+      trackerview::showNewPattern(a, id);
+    } else if (id) {
+      a.selectPattern(id);
+    }
   }
   auto toggle = [&](bool& f, const char* name) {
     // K-297 (round 6): the key of a window open as a tab behind another one of its region brings it
@@ -1815,7 +1821,9 @@ void handleGlobalShortcuts(App& a) {
   if (typed("options.countIn")) a.countInBars = a.countInBars > 0 ? 0 : std::max(1, a.countInLength);
   for (int o = 1; o <= 8; ++o)  // K-112: the typing keyboard's octave picked directly (the Tracker set: F1 to F8)
     if (typed(("typing.octave" + std::to_string(o)).c_str())) a.typing.octave = o;
-  if (typed("view.toggleMain")) layoutui::toggleMainView(a);
+  if (typed("view.toggleMain") && !(livelook::active(a) && livelook::slotDragHeld())) {  // (hunt-clips-1119)
+    layoutui::toggleMainView(a);
+  }
   if (typed("view.editors")) {
     if (layoutui::active() == layout::Preset::Studio) toggle(a.showPiano, "Piano roll");
     else layoutui::toggleEditors(a);

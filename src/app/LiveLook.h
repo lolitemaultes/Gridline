@@ -69,6 +69,14 @@ bool clipPlayhead(const App& a, ObjectId pattern, double& tick);
 // N47-03 / N47-15: an instrument dropped in Clips: its track takes its name (when still the default),
 // is selected, and the device band shows it (no editor window for built-in devices). False outside Clips.
 bool instrumentDropped(App& a, ObjectId channel, const std::string& name);
+// hunt-clips4-1119: Main or a return when it is the chosen track (its title or row clicked, no track or
+// clip chosen since), else null.
+const MixerTrack* chosenBus(const App& a);
+// A return's title or row clicked: it is the chosen track (as selectMain for Main).
+void selectReturn(App& a, ObjectId mixer);
+// An effect put on Main or a return (a drop on its strip, a double-click in the browser while it is
+// chosen): it stays chosen and the device band shows its chain, the new effect in it.
+void busEffectAdded(App& a, ObjectId mixer);
 bool drawMode(const App& a);
 // N48-11: the Arrangement record switch (F9, the record button, the menu row). In Clips turning it on
 // starts the transport, and the clip grid's launches are recorded into the arrangement.
@@ -117,6 +125,9 @@ void withoutGridClips(const App& a, Song& s, const std::function<void(Song&)>& f
 // ---- the main view: clip grid or arrangement (one at a time, Tab swaps) ----
 bool gridView(const App& a);
 void showView(App& a, bool grid);
+// hunt-clips-1119: a slot pressed in the clip grid or its clips carried to the Arrangement: Tab belongs
+// to that drag (it carries the clips over), not to the view swap (it swapped straight back).
+bool slotDragHeld();
 // grid2-1118: Clips' edit grid keys (Cmd+1 narrower, Cmd+2 wider, Cmd+3 triplet, Cmd+4 snap, Cmd+5 fixed /
 // adaptive) on the Arrangement or, while it has the keyboard, the clip editor (`which` 0 / 1), and the
 // global launch quantisation keys (Cmd+6 .. 0: 1/16, 1/8, 1/4, 1 Bar, None). editGrid: the editor's grid

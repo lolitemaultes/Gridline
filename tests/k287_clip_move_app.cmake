@@ -194,7 +194,13 @@ want("pointer: Shift+drag (Tracks: Alt+drag) copies (the copy two bars later)" "
 clipAt(50 ${cid})
 want("pointer: the original stays" "${c_track}/${c_start}" "1/${base}")
 math(EXPR dn "${n} - ${n0}")
-want("pointer: one clip more" "${dn}" 1)
+# hunt-1119: Smooth drags with No overlap: the copy lands on the start of the region two bars later (the
+# same length) and takes its place, as a dropped region wins its start there; the other layouts add one.
+set(moreClips 1)
+if(LAYOUT STREQUAL "logic")
+  set(moreClips 0)
+endif()
+want("pointer: one clip more (Smooth: in place of the one it covers)" "${dn}" ${moreClips})
 math(EXPR du "${undo} - ${u0}")
 want("pointer: the copy is one undo step" "${du}" 1)
 

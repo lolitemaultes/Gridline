@@ -74,21 +74,33 @@ void openSettings(App& a, int tab) {
 
 // K-106 cp21: a pattern made in the Tracker has the classic 64 rows (4 bars of 16 steps); the other
 // layouts keep their one bar. A creation default only: no saved pattern changes length.
-int newPatternBars() { return layoutui::active() == layout::Preset::Tracker ? trackerview::kNewPatternBars : 1; }
+// HUNT2-1119: in the Tracker, as long as the current pattern (64 rows when there is none).
+trackerview::NewPatternSize newPatternSize(const App& a) {
+  return layoutui::active() == layout::Preset::Tracker ? trackerview::newPatternSize(a) : trackerview::NewPatternSize{1, 16};
+}
 
 void newPattern(App& a) {
-  ObjectId id = a.doc.addPattern(ops::nextPatternName(a.doc.song()), newPatternBars());
-  if (id) a.selectPattern(id);
+  const trackerview::NewPatternSize ns = newPatternSize(a);
+  const ObjectId id = a.doc.addPattern(ops::nextPatternName(a.doc.song()), ns.bars, ns.steps);
+  if (layoutui::active() == layout::Preset::Tracker) {
+    trackerview::showNewPattern(a, id);
+  } else if (id) {
+    a.selectPattern(id);
+  }
 }
 
 void insertPatternBefore(App& a) {
-  a.selectPattern(a.doc.addPattern(ops::nextPatternName(a.doc.song()), newPatternBars(), 16, a.doc.song().patternIndex(a.curPattern)));
+  const trackerview::NewPatternSize ns = newPatternSize(a);
+  a.selectPattern(a.doc.addPattern(ops::nextPatternName(a.doc.song()), ns.bars, ns.steps, a.doc.song().patternIndex(a.curPattern)));
 }
 
 void findEmptyPattern(App& a, bool first, bool askName) {
   ObjectId id = first ? ops::firstEmptyPattern(a.doc.song()) : ops::nextEmptyPattern(a.doc.song(), a.curPattern);
   if (!id) id = ops::nextEmptyPattern(a.doc.song(), a.curPattern);
-  if (!id) id = a.doc.addPattern(ops::nextPatternName(a.doc.song()), newPatternBars());
+  if (!id) {
+    const trackerview::NewPatternSize ns = newPatternSize(a);
+    id = a.doc.addPattern(ops::nextPatternName(a.doc.song()), ns.bars, ns.steps);
+  }
   if (!id) return;
   a.selectPattern(id);
   if (askName) {
@@ -711,6 +723,9 @@ const md::Menu& viewDef() {
       md::toggle(N_("Channel rack"), "view.channelRack", [](App& a) { return &a.showRack; }).only(studioNotTracks),
       md::toggle(N_("Piano roll"), "view.pianoRoll", [](App& a) { return &a.showPiano; }).only(studioWindows),
       md::toggle(N_("Mixer"), "view.mixer", [](App& a) { return &a.showMixer; }),  // K-77: with the other main editors
+      // hunt-clips4-1119: Clips has no Mix menu, so its Stage sits here beside the Mixer (it was reached
+      // only through the command palette). The other layouts keep theirs further down.
+      md::toggle(N_("Stage"), "view.stage", [](App& a) { return &a.showStage; }).only([](App& a) { return livelook::active(a); }),
       // C47: the return tracks' strips and rows shown or folded away, as the reference's mixer controls.
       md::item(N_("Return tracks"), [](App& a) { a.settings.set("clips.returnTracks", !a.settings.getBool("clips.returnTracks")); })
           .check([](App& a) { return a.settings.getBool("clips.returnTracks"); })

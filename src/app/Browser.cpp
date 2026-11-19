@@ -58,6 +58,7 @@
 #include "../core/Platform.h"
 #include "../packs/PacksUi.h"
 #include "../core/SafeFs.h"
+#include "../core/TrackModes.h"
 
 namespace gl {
 
@@ -1194,8 +1195,39 @@ void pluginRow(App& a, const PluginInfo& p, float indent, const char* detail, bo
   ImGui::PopID();
   ObjectId target = a.settingsChannel != kNoId ? a.settingsChannel : a.selChannel;
   if (dbl) {
-    if (p.kind == PluginKind::Generator) {
+    if (p.kind == PluginKind::Generator && livelook::active(a)) {
+      // hunt-clips4-1119: in Clips an instrument goes onto the selected MIDI track (replacing its
+      // instrument), as a drop on it does; with an audio or group track (or none) selected, onto a
+      // new MIDI track. It made a channel of its own, shown as a new track, with its editor open.
+      const Song& s = a.doc.song();
+      const int used = trackmodes::usedTrackCount(s);
+      int t = livelook::selectedTrack(a);
+      if (t < 0 || t >= used || trackmodes::modeOf(s, t) == TrackMode::Audio) {
+        t = used;
+      }
+      browserui::DropPlace place;
+      place.track = t;
+      browserui::performPluginDrop(a, p.type, browse::DropTarget::Playlist, place);
+    } else if (p.kind == PluginKind::Generator) {
       a.showNewInstrument(a.addInstrument(p.type));
+    } else if (p.kind == PluginKind::Effect && livelook::active(a)) {
+      // hunt-clips4-1119: in Clips an effect goes onto the selected track (as a drop on its title), or
+      // Main or a return when that is chosen, and shows in the device band. Opening it as the effect
+      // window pinned the band to that mixer track whatever was selected next.
+      const Song& s = a.doc.song();
+      const int t = livelook::selectedTrack(a);
+      const MixerTrack* bus = livelook::chosenBus(a);
+      browserui::DropPlace place;
+      if (!bus && t >= 0 && t < trackmodes::usedTrackCount(s)) {
+        place.track = t;
+        browserui::performPluginDrop(a, p.type, browse::DropTarget::Playlist, place);
+      } else {
+        const ObjectId to = bus ? bus->id : a.selMixer;
+        place.mixer = to;
+        if (browserui::performPluginDrop(a, p.type, browse::DropTarget::MixerTrack, place) && bus) {
+          livelook::busEffectAdded(a, to);
+        }
+      }
     } else if (p.kind == PluginKind::Effect) {
       if (const MixerTrack* t = a.doc.song().mixerTrack(a.selMixer))
         for (int k = 0; k < kEffectSlots; ++k)
@@ -1210,7 +1242,8 @@ void pluginRow(App& a, const PluginInfo& p, float indent, const char* detail, bo
     }
   }
   ui::Hint(p.name + " \xC2\xB7 " + p.category + "   " +
-           (p.kind == PluginKind::Generator ? "(double-click or drag onto the channel rack to add \xC2\xB7 star: favourite)"
+           (p.kind == PluginKind::Generator && livelook::active(a) ? "(double-click: onto the selected MIDI track, or a new one \xC2\xB7 drag onto a track \xC2\xB7 star: favourite)"
+            : p.kind == PluginKind::Generator ? "(double-click or drag onto the channel rack to add \xC2\xB7 star: favourite)"
             : p.kind == PluginKind::Effect  ? "(double-click to insert on the selected mixer track, or drag onto a strip or slot)"
                                             : "(double-click to add to the selected channel's note effects)"));
 }
@@ -2560,7 +2593,9 @@ void drawBrowser(App& a) {
   const bool info = !selPath.empty() && tab != TabPlugins;
   // K-112c: two panes (the places beside the list) once the browser is wide enough for both.
   const float paneW = ImGui::GetContentRegionAvail().x;
-  const bool twoPane = liveLook && paneW >= 250;
+  // hunt-clips2-1119: in Clips down to the narrowest browser (236 px at the 960 x 600 least layout, as at 2x
+  // on a 1920 x 1200 screen): one pane put the places over the list, which they pushed out of sight.
+  const bool twoPane = liveLook && paneW >= (livelook::active(a) ? 160.0f : 250.0f);
   if (twoPane) {
     // Checkpoint 58 (N57-12): under 270 px (1024 wide) the places are icons (36 px), so names read in full beside them.
     const float sideW = paneW < 270 ? 36.0f : std::clamp(std::floor(paneW * 0.42f), 120.0f, 190.0f);

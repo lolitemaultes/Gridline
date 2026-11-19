@@ -961,6 +961,46 @@ const AutoFold& autoFold(const App& a) {
     for (size_t ci = 0; ci < s.playlist.size(); ++ci)  // (a folder track's curves stay its own)
       if (const int tr = s.playlist[ci].track; tr >= 0 && static_cast<size_t>(tr) < f.member.size() && f.member[static_cast<size_t>(tr)])
         f.clipTarget[ci] = -1;
+    // hunt-1119: the rows shown change only when the automation does. Where an automation-only track's
+    // curves show is worked out from the tracks that play its parameters' owners, so moving a region
+    // (a sound heard on one more track, or one less) folded a row away or unfolded one (the demo's
+    // Music Filter row vanished when a Mallet region went onto Drums). While the automation-only tracks
+    // and their regions are the same (same project, tracks, folder state), the view stays as it was.
+    std::string sig = std::to_string(a.doc.projectEpoch()) + ":" + std::to_string(key) + ":" + std::to_string(s.tracks.size());
+    for (int tr = 0; tr < static_cast<int>(s.tracks.size()); ++tr) {
+      if (!automationOnly(s, tr, kinds)) {
+        continue;
+      }
+      sig += "|" + std::to_string(tr);
+      for (const Clip& c : s.playlist) {
+        if (c.track == tr) {
+          sig += "," + std::to_string(c.id) + "/" + std::to_string(c.source);
+        }
+      }
+    }
+    static struct {
+      std::string sig;
+      std::vector<char> hidden, member;
+      std::vector<int> folder;
+      std::vector<ObjectId> busStrip;
+      std::map<ObjectId, int> target;  // automation region -> the track its curve shows on
+    } kept;
+    if (sig == kept.sig && kept.hidden.size() == f.hidden.size()) {
+      f.hidden = kept.hidden, f.member = kept.member, f.folder = kept.folder, f.busStrip = kept.busStrip;
+      for (size_t ci = 0; ci < s.playlist.size(); ++ci) {
+        const auto it = kept.target.find(s.playlist[ci].id);
+        f.clipTarget[ci] = it != kept.target.end() ? it->second : -1;
+      }
+    } else {
+      kept.sig = std::move(sig);
+      kept.hidden = f.hidden, kept.member = f.member, kept.folder = f.folder, kept.busStrip = f.busStrip;
+      kept.target.clear();
+      for (size_t ci = 0; ci < s.playlist.size(); ++ci) {
+        if (f.clipTarget[ci] >= 0) {
+          kept.target[s.playlist[ci].id] = f.clipTarget[ci];
+        }
+      }
+    }
     f.spare.assign(s.tracks.size(), 0);
     for (size_t tr = static_cast<size_t>(std::max(0, lastUsedTrack(s) + 1)); tr < s.tracks.size(); ++tr) {
       f.spare[tr] = tr > 0 ? 1 : 0;
@@ -1211,11 +1251,80 @@ void frame(App& a) {
   }
   {  // R03-06: a new or opened project closes the old one's render window, as the reference closes its windows
     static uint64_t epoch = 0;
-    if (active(a) && a.doc.projectEpoch() != epoch && epoch != 0) {
-      a.showExport = false;
-      // R05-08: the Tracks layout has no pattern mode; a new or opened project plays its timeline
-      if (a.engine.mode() == PlayMode::Pattern) a.engine.setMode(PlayMode::Song);
+    static bool wasActive = false;
+    const bool newProject = a.doc.projectEpoch() != epoch;
+    // hunt-1119: a region's notes moved to another instrument (the region moved onto its track, or that
+    // undone or redone): the editor showing it follows them, as a region plays one instrument here. It
+    // showed the region empty (its notes were on a channel no longer shown). Only when an edit took the
+    // notes from the shown channel, the only one with any, to one other: a channel picked in the editor
+    // is left as picked, and a pattern of several instruments is never switched between them.
+    {
+      static uint64_t seenRev = 0;
+      static ObjectId seenPat = kNoId;
+      static std::vector<ObjectId> seenWith;  // the shown pattern's channels with notes or steps
+      std::vector<ObjectId> with;
+      if (const Pattern* p = a.doc.song().pattern(a.curPattern)) {
+        for (const Channel& c : a.doc.song().channels) {
+          const auto n = p->notes.find(c.id);
+          const auto st = p->steps.find(c.id);
+          if ((n != p->notes.end() && !n->second.empty()) ||
+              (st != p->steps.end() && std::any_of(st->second.begin(), st->second.end(), [](uint8_t v) { return v != 0; }))) {
+            with.push_back(c.id);
+          }
+        }
+      }
+      if (active(a) && a.doc.revision() != seenRev && a.curPattern == seenPat && seenWith.size() == 1 && seenWith[0] == a.selChannel &&
+          with.size() == 1 && with[0] != a.selChannel) {
+        a.selectChannel(with[0]);
+      }
+      seenRev = a.doc.revision(), seenPat = a.curPattern, seenWith = std::move(with);
     }
+    if (active(a) && newProject && epoch != 0) {
+      a.showExport = false;
+    }
+    // hunt-1119: an opened project's editor shows a region's notes. The current pattern was the song's
+    // first, often one no region plays (a new project's empty first pattern): the reopened project's
+    // piano roll showed that, empty, under a name the arrangement never shows.
+    if (active(a) && newProject) {
+      const Song& s = a.doc.song();
+      const Clip* first = nullptr;
+      bool shown = false;
+      for (const Clip& c : s.playlist) {
+        if (c.kind != ClipKind::Pattern || !s.pattern(c.pattern)) {
+          continue;
+        }
+        shown = shown || c.pattern == a.curPattern;
+        if (!first || c.track < first->track || (c.track == first->track && c.start < first->start)) {
+          first = &c;
+        }
+      }
+      if (first && !shown) {
+        const ObjectId pat = first->pattern;
+        ObjectId ch = kNoId;
+        if (const Channel* lc = trackmodes::linkedChannel(s, first->track)) {
+          ch = lc->id;
+        }
+        if (const Pattern* pt = s.pattern(pat); pt && (ch == kNoId || !pt->notes.count(ch))) {
+          for (const auto& [cid, ns] : pt->notes) {
+            if (!ns.empty()) {
+              ch = cid;
+              break;
+            }
+          }
+        }
+        a.selectPattern(pat);
+        if (ch != kNoId && ch != a.selChannel) {
+          a.selectChannel(ch);
+        }
+      }
+    }
+    // R05-08: the Tracks layout has no pattern mode; a new or opened project plays its timeline.
+    // hunt-1119: so does the project the app starts with (a new project after a fresh start played its
+    // one pattern from the top, wherever its region was), and one this layout is switched to.
+    if (active(a) && (newProject || !wasActive) && a.engine.mode() == PlayMode::Pattern) {
+      a.engine.setMode(PlayMode::Song);
+    }
+    wasActive = active(a);
     epoch = a.doc.projectEpoch();
   }
   if (!active(a)) {  // another layout: nothing of this runs (hidden windows come back)

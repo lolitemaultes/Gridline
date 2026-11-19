@@ -640,7 +640,7 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
       const char* hint;
       bool on;
     };
-    const B bs[6] = {{i18n::N_("New"), i18n::N_("A new empty pattern of 64 rows after the last"), true},
+    const B bs[6] = {{i18n::N_("New"), i18n::N_("A new empty pattern after the last, as long as the current one"), true},
                      {i18n::N_("Duplicate"), i18n::N_("A copy of the picked pattern after it, shown (one undo step)"), sp != nullptr},
                      {i18n::N_("Set"), i18n::N_("The current entry plays the picked pattern"), sp != nullptr && cur >= 0},
                      {i18n::N_("Append"), i18n::N_("Adds the picked pattern at the end of the song"), sp != nullptr},
@@ -654,9 +654,9 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
       if (bevelButton(a, "##patb", bs[k].label, ImVec2(bx, by), ImVec2(bx1, by + bh), false, bs[k].hint)) {
         switch (k) {
           case 0: {
-            // cp21: the classic 64 rows (before: the last pattern's length).
-            const ObjectId id = a.doc.addPattern(std::string(i18n::tr("Pattern")) + " " + std::to_string(s.patterns.size() + 1),
-                                                 trackerview::kNewPatternBars, trackerview::kNewPatternSteps);
+            // HUNT2-1119: as long as the current pattern (cp21: always 64 rows).
+            const trackerview::NewPatternSize ns = trackerview::newPatternSize(a);
+            const ObjectId id = a.doc.addPattern(std::string(i18n::tr("Pattern")) + " " + std::to_string(s.patterns.size() + 1), ns.bars, ns.steps);
             if (id) a.selectPattern(id);
             break;
           }
@@ -1036,9 +1036,10 @@ void devOrder(App& a, const std::vector<std::string>& args, int frame) {
     insertEntry(a, ol, static_cast<int>(ol.size()), ptn(2));
   } else if (c == "new") {
     const Song& s = a.doc.song();
-    if (const ObjectId id = a.doc.addPattern(std::string(i18n::tr("Pattern")) + " " + std::to_string(s.patterns.size() + 1),
-                                             trackerview::kNewPatternBars, trackerview::kNewPatternSteps))
+    const trackerview::NewPatternSize ns = trackerview::newPatternSize(a);  // HUNT2-1119: as long as the current pattern
+    if (const ObjectId id = a.doc.addPattern(std::string(i18n::tr("Pattern")) + " " + std::to_string(s.patterns.size() + 1), ns.bars, ns.steps)) {
       a.selectPattern(id);
+    }
   } else if (c == "clone") {
     if (const ObjectId p = ptn(2))
       if (const ObjectId id = a.doc.clonePattern(p)) a.selectPattern(id);

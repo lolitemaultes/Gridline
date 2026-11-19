@@ -79,6 +79,7 @@ Create > Import audio file...			e-
 Create > Import MIDI file...			e-
 View > Command palette...	Ctrl+K	view.commandPalette	e-
 View > Mixer	Ctrl+Alt+M	view.mixer	e-
+View > Stage			e-
 View > Return tracks			ec
 View > In/Out	Ctrl+Alt+I	view.io	e-
 View > Info View	Shift+/	view.quickHelp	ec

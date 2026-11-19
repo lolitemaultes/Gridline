@@ -32,6 +32,18 @@ namespace gl::trackerview {
 // cp21: a new pattern made in the Tracker has the classic 64 rows: 4 bars of 16 steps (a creation
 // default only; the other layouts keep their one bar, and no saved pattern changes).
 constexpr int kNewPatternBars = 4, kNewPatternSteps = 16;
+// HUNT2-1119: the size a pattern made in the Tracker gets: the current pattern's (its bars and rows
+// per bar), so a new song's 16-row pattern is followed by 16-row ones; the classic 64 rows when no
+// pattern is current.
+struct NewPatternSize {
+  int bars = kNewPatternBars, steps = kNewPatternSteps;
+};
+NewPatternSize newPatternSize(const App& a);
+// HUNT2-1119: a pattern just made by a key or menu (Ctrl+Alt+N, New pattern, Ctrl+Right past the
+// last) is the one shown: it is selected, the pattern page comes to the front and takes the keys,
+// so the next note typed goes in it (before: the keys stayed with the Channel frame or the page in
+// front, and the notes went nowhere).
+void showNewPattern(App& a, ObjectId id);
 
 // The Pattern editor part's body.
 void patternEditor(App& a);
@@ -127,6 +139,9 @@ void zoomFront(App& a, int d);
 // The header band hidden (the pattern gets the room) and back.
 void setExtended(App& a, bool on);
 bool extended();
+// HUNT-1119: the band draws the hidden header's strip (it follows extended() once the band has its
+// new height).
+bool extendedDrawn();
 // The pattern's row height as last drawn (0 before the first frame).
 float patternRowHeight();
 // The centre page shown in the Tracker layout (a window homed in tracker.pages, or the instrument
@@ -193,12 +208,21 @@ int scopeTool();
 // tools close, the band comes back from Extend, the pattern page comes to the front.
 void mainScreen(App& a);
 int headerSwap();
+// HUNT2-1119: the screen swapped into the header (Help, Files, Settings, About, Collaboration)
+// closes, its Exit button's way, and the keys go back to the pattern; false when none shows.
+bool closeHeaderSwap();
 // The settings screen's page (0 Layout, 1 Miscellaneous, 2 Audio, 3 MIDI input).
 void setConfigPage(int page);
 // cp25: the help screen's subject (0 Pattern keys, 1 Song page keys, 2 Editor keys, 3 Effect letters, 4 Screen keys, 5 Using).
 void setHelpSubject(int subject);
 // The Files page's Samples open (a double-click on an audio file): into the current instrument.
 void filesLoadSample(App& a, const std::string& path);
+// HUNT-1119 (dev, "tracker samplelist"): the sample list's rows as last drawn, "<number> <name>"
+// each, "|" between (the number as it reads on screen).
+std::string sampleListDrawn();
+// HUNT-1119 (dev, "tracker band"): what the header band drew last frame (the strip or the whole
+// header), its window's height and the strip's height.
+std::string bandState();
 
 // cp16 (in-app CPU timers, no profiler): the wall time of the Tracker's own drawing per frame, by
 // part: the header band, the pattern editor, the other pages (Song, Steps, Mix, Pads, Roll's row).

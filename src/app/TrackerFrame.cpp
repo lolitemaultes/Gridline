@@ -218,8 +218,15 @@ bool arrowButton(App& a, const char* id, ImVec2 p0, ImVec2 p1, bool up, const ch
   const float cx = std::round((p0.x + p1.x) * 0.5f) + (held ? 1 : 0), cy = std::round((p0.y + p1.y) * 0.5f) + (held ? 1 : 0);
   const float r = std::max(2.0f, std::floor(std::min(p1.x - p0.x, p1.y - p0.y) * 0.22f));
   const Aliased hard(dl);
-  if (up) dl->AddTriangleFilled(ImVec2(cx - r - 1, cy + r * 0.6f), ImVec2(cx + r + 1, cy + r * 0.6f), ImVec2(cx, cy - r * 0.8f), P.text);
-  else dl->AddTriangleFilled(ImVec2(cx - r - 1, cy - r * 0.6f), ImVec2(cx + r + 1, cy - r * 0.6f), ImVec2(cx, cy + r * 0.8f), P.text);
+  // HUNT-1119: a disabled arrow draws faint, as a disabled button's label does (before: as bright
+  // as a working one, so the MIDI box's Channel and Program looked live with its output off).
+  const bool off = (ImGui::GetCurrentContext()->CurrentItemFlags & ImGuiItemFlags_Disabled) != 0;
+  const ImU32 ink = off ? P.textFaint : P.text;
+  if (up) {
+    dl->AddTriangleFilled(ImVec2(cx - r - 1, cy + r * 0.6f), ImVec2(cx + r + 1, cy + r * 0.6f), ImVec2(cx, cy - r * 0.8f), ink);
+  } else {
+    dl->AddTriangleFilled(ImVec2(cx - r - 1, cy - r * 0.6f), ImVec2(cx + r + 1, cy - r * 0.6f), ImVec2(cx, cy + r * 0.8f), ink);
+  }
   (void)a;
   return click;
 }
@@ -468,7 +475,9 @@ int stepper(App& a, const char* id, const char* label, const std::string& value,
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float fs = ImGui::GetFontSize();
   ImFont* mono = monoFont(a);
-  dl->AddText(a.fontRegular, fs, ImVec2(p0.x, std::round(p0.y + (h - fs) * 0.5f)), P.textDim, i18n::tr(label));
+  // HUNT-1119: a disabled stepper (BeginDisabled around it) draws its label, value and arrows faint.
+  const bool off = (ImGui::GetCurrentContext()->CurrentItemFlags & ImGuiItemFlags_Disabled) != 0;
+  dl->AddText(a.fontRegular, fs, ImVec2(p0.x, std::round(p0.y + (h - fs) * 0.5f)), off ? P.textFaint : P.textDim, i18n::tr(label));
   // T-21: a row too narrow for its label, value and two full arrows narrows the arrows first.
   // cp23: peer rows get equal arrows: the need counts the label column when one is given and at least
   // three digits of value (before, "Start" and "End", or "174" and "1", got arrows 1 to 4 px apart).
@@ -494,7 +503,7 @@ int stepper(App& a, const char* id, const char* label, const std::string& value,
   ImGui::PushID(id);
   bevelBox(dl, ImVec2(v0, p0.y), ImVec2(v0 + vw, p0.y + h), true);
   const float tw = mono->CalcTextSizeA(fs, FLT_MAX, 0, value.c_str()).x;
-  dl->AddText(mono, fs, ImVec2(std::round(v0 + vw - 4 - tw), std::round(p0.y + (h - fs) * 0.5f)), valueInk(), value.c_str());
+  dl->AddText(mono, fs, ImVec2(std::round(v0 + vw - 4 - tw), std::round(p0.y + (h - fs) * 0.5f)), off ? P.textFaint : valueInk(), value.c_str());
   static ImGuiID editing = 0;
   static char ebuf[24] = {};
   const ImGuiID vid = ImGui::GetID("##val");
@@ -1074,6 +1083,7 @@ void transposeTool(App& a, ImVec2 p0, ImVec2 p1) {
 
 extern ObjectId gSourceChannel;
 extern int gSourceSlot;
+std::string gSmpDrawn;  // HUNT-1119 (dev): the sample list's rows as last drawn (sampleListDrawn)
 bool copyInstrumentSound(App& a, ObjectId dst, ObjectId src, bool exchange);
 
 // ---- Clean up (the classic Trim box): what to remove at the left, the size estimate and the two
@@ -1602,9 +1612,7 @@ void sampleTool(App& a, ImVec2 p0, ImVec2 p1) {
     const ObjectId srcCh = si >= 0 ? gSourceChannel : ch;
     std::string val = si >= 0 ? trk::hex2(si + 1) : std::string("--");
     val += ".";
-    char sn[12];
-    std::snprintf(sn, sizeof sn, "%02d", gSourceSlot + 1);
-    val += gSourceSlot >= 0 ? std::string(sn) : std::string("--");
+    val += gSourceSlot >= 0 ? trk::hex2(gSourceSlot + 1) : std::string("--");  // HUNT-1119: hex, as the Sample editor numbers samples
     const std::string smpName = gSourceSlot >= 0 ? tp::headerSampleName(a, srcCh, gSourceSlot) : std::string();
     std::string hint = i18n::tr("The source: an instrument (click its number in the list) and a sample (click its number in the sample list)");
     if (!smpName.empty()) hint += std::string(" \xC2\xB7 ") + i18n::tr("source sample:") + " " + smpName;
@@ -1657,12 +1665,11 @@ void sampleTool(App& a, ImVec2 p0, ImVec2 p1) {
     if (arrowButton(a, "##smpnext", ImVec2(xs + aw + gap, y), ImVec2(xs + 2 * aw + gap, y + r.rh), false, i18n::tr("The instrument's next sample"))) tp::headerStepSample(a, ch, 1);
     const ImVec2 q0(xs + 2 * aw + 2 * gap, y), q1(xm, y + r.rh);
     bevelBox(dl, q0, q1, true);
-    char num[12];
-    std::snprintf(num, sizeof num, "%02d", v.slot + 1);
+    const std::string num = trk::hex2(v.slot + 1);  // HUNT-1119: hex, as the Sample editor (decimal before: 10 here was 0A there)
     const float ty = std::round(y + (r.rh - fs) * 0.5f);
     dl->PushClipRect(q0, q1, true);
     if (v.slot >= 0) {
-      dl->AddText(mono, fs, ImVec2(q0.x + 4, ty), valueInk(), num);
+      dl->AddText(mono, fs, ImVec2(q0.x + 4, ty), valueInk(), num.c_str());
       const float nx = q0.x + 8 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00").x;
       char len[48];
       std::snprintf(len, sizeof len, "%d frames  %.0f Hz", static_cast<int>(v.frames), v.rate);
@@ -2574,10 +2581,8 @@ void patternMenuItems(App& a) {
   }
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("New pattern"), keys::label("pattern.new"))) {
-    const ObjectId id = a.doc.addPattern(ops::nextPatternName(a.doc.song()), kNewPatternBars, kNewPatternSteps);
-    if (id != kNoId) {
-      a.selectPattern(id);
-    }
+    const NewPatternSize ns = newPatternSize(a);  // HUNT2-1119: as long as the current pattern
+    showNewPattern(a, a.doc.addPattern(ops::nextPatternName(a.doc.song()), ns.bars, ns.steps));
   }
 }
 
@@ -3723,6 +3728,7 @@ void header(App& a) {
     dl->PushClipRect(s0, s1, true);
     // The first row's text line (a box under a row high: centred in it).
     const float sy = std::round(s1.y - s0.y < (fs + 1) * 2 ? s0.y + (s1.y - s0.y - fs) * 0.5f : s0.y + 1 + 0.5f);
+    gSmpDrawn.clear();
     if (!hs.list.empty()) {
       static int smpFirst = 0;
       const float srh = std::round(fs + 1);
@@ -3759,10 +3765,12 @@ void header(App& a) {
         if (slot == gSourceSlot) dl->AddRect(ImVec2(s0.x + 1, ry), ImVec2(s1.x - 1, ry + srh), P.hot);  // the source sample mark
         if (slot == hs.sel) dl->AddRectFilled(ImVec2(s0.x + 1, ry), ImVec2(s1.x - 1, ry + srh), theme::withAlpha(P.surface600, 0.95f));
         else if (hov) dl->AddRectFilled(ImVec2(s0.x + 1, ry), ImVec2(s1.x - 1, ry + srh), theme::withAlpha(P.surface700, 0.6f));
-        char num[12];
-        std::snprintf(num, sizeof num, "%02d", slot + 1);
+        // HUNT-1119: the slot's number in hex, as the instruments beside it and the Sample editor
+        // ("Sample 0A / 10"): before, decimal, so the eleventh sample read 11 here and 0B there.
+        const std::string num = trk::hex2(slot + 1);
+        gSmpDrawn += (gSmpDrawn.empty() ? "" : "|") + num + " " + name;
         const float ty = std::round(ry + (srh - fs) * 0.5f);
-        dl->AddText(mono, fs, ImVec2(s0.x + 9, ty), slot == hs.sel ? valueInk() : P.textDim, num);
+        dl->AddText(mono, fs, ImVec2(s0.x + 9, ty), slot == hs.sel ? valueInk() : P.textDim, num.c_str());
         const float nx = s0.x + 9 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00 ").x;
         // cp20: the sample's marks at the row's end: loops (L forward, P ping-pong), 8 bits, its file missing.
         const uint8_t mk = smpFirst + r < static_cast<int>(hs.marks.size()) ? hs.marks[static_cast<size_t>(smpFirst + r)] : 0;
@@ -3949,6 +3957,10 @@ void addTrackerInstrument(App& a, const std::string& type) {
   const ObjectId id = a.addInstrument(type);
   if (id != kNoId) {
     a.doc.moveChannel(id, static_cast<int>(a.doc.song().channels.size()) - 1);
+    // HUNT2-1119: its own free insert, named after it, as the new song's instruments each have
+    // (the Mix page's row for it is then its own; before, it played through the master, so an
+    // effect added on the Mix page's next free row did not reach it).
+    ops::routeToFreeMixerTrack(a.doc, id);
   }
   a.doc.endGroup(false);
   showPickedInstrument(a, id);
@@ -4160,11 +4172,20 @@ void toggleAudioPage(App& a) {
   }
   showPage(a, windowFront(a, "Loupe") && !instrumentShown(a) ? "Pattern editor" : "Loupe");
 }
+bool closeHeaderSwap() {
+  if (gSwap == Swap::None) {
+    return false;
+  }
+  gSwap = Swap::None;
+  keysBackToPattern();
+  return true;
+}
 int headerSwap() {
   return gSwap == Swap::Help ? 1 : gSwap == Swap::Disk ? 2 : gSwap == Swap::Config ? 3 : gSwap == Swap::About ? 4 : gSwap == Swap::Collab ? 5 : 0;
 }
 void setConfigPage(int page) { gConfigPage = std::clamp(page, 0, 3); }
 void setHelpSubject(int subject) { gHelpSubject = std::clamp(subject, 0, static_cast<int>(kHelpCount) - 1); }
+std::string sampleListDrawn() { return gSmpDrawn; }
 void filesLoadSample(App& a, const std::string& path) {
   const int was = gDiskKind;
   gDiskKind = 1;  // the Samples kind: a double-click on an audio file there
@@ -4172,6 +4193,19 @@ void filesLoadSample(App& a, const std::string& path) {
   gDiskKind = was;
 }
 
+namespace {
+bool gStripDrawn = false;  // HUNT-1119 (dev, "tracker band"): the band drew the strip last frame
+float gBandH = 0;          // ... in a window this tall
+int gBandFrame = -1;
+bool gStripForExtend = false;  // ... for the hidden header (not the small window's fold)
+}  // namespace
+bool extendedDrawn() { return gStripDrawn && gStripForExtend; }
+std::string bandState() {
+  char b[128];
+  std::snprintf(b, sizeof b, "drawn %s height %.0f strip %.0f frame %d rowh %.0f", gStripDrawn ? "strip" : "header", static_cast<double>(gBandH),
+                static_cast<double>(extendedStripH()), gBandFrame, static_cast<double>(patternRowHeight()));
+  return b;
+}
 void orderList(App& a) {
   if (layoutui::active() == layout::Preset::Tracker && layoutui::shellBuilt(a, layout::Preset::Tracker)) {
     trackerpages::enteringFrame();  // keeps the Tracker's frame count (see there)
@@ -4256,10 +4290,42 @@ void orderList(App& a) {
       const float most = std::floor(std::max(gFolded ? editorMin : space * 0.5f, space - patternMin));
       layoutui::setBandSize("tracker.lower", editorNeed > 0 ? std::clamp(std::ceil(editorNeed), std::min({200.0f, std::ceil(editorNeed), most}), most) : most, 0.9f);
     };
-    if (extended() || gFolded) {  // the classic Extend: the band is one strip, the pattern gets the rows
+    // HUNT-1119: the band switches between the strip and the whole header once its window has the
+    // new height (the layout applies a size a frame after it is asked for). Before, the frame the
+    // switch was asked on drew the strip stretched over the whole band's height (the page tabs
+    // gone) or the whole header squeezed into the strip's: one frame of a broken band each time
+    // Ctrl+Alt+Z (or the strip's button) was pressed. (At most a few frames: a size the layout
+    // never gives does not hold the switch.)
+    const bool wantStrip = extended() || gFolded;
+    static bool stripDrawn = false;
+    static int switchWait = 0;
+    if (wantStrip != stripDrawn) {
+      const float h = ImGui::GetWindowHeight(), stripH = extendedStripH();
+      const bool fits = wantStrip ? h <= stripH + 2 : h > stripH + 2;
+      if (fits || ++switchWait > 3) {
+        stripDrawn = wantStrip;
+        gStripForExtend = wantStrip && extended();
+        switchWait = 0;
+      }
+    } else {
+      switchWait = 0;
+    }
+    gStripDrawn = stripDrawn;
+    gBandH = ImGui::GetWindowHeight();
+    gBandFrame = ImGui::GetFrameCount();
+    if (wantStrip) {  // the classic Extend: the band is one strip, the pattern gets the rows
       layoutui::setBandSize("tracker.header", extendedStripH());
-      if (gFolded) sizeLower(extendedStripH());
+      if (gFolded) {
+        sizeLower(extendedStripH());
+      }
+    }
+    if (stripDrawn) {
       extendedStrip(a);
+      headerKeepsNoKeys();
+      return;
+    }
+    if (wantStrip) {  // (the band still has the whole header's height: the header this frame)
+      header(a);
       headerKeepsNoKeys();
       return;
     }

@@ -1215,6 +1215,8 @@ int devKeyMods(const std::string& m) {
   return r;
 }
 
+static std::string gDevLastHint;  // hunt-1119: the hint the last frame showed (the dev input runs after it is cleared)
+
 void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   ImGuiIO& io = ImGui::GetIO();
   // The scripted pointer stays put between commands (the backend would
@@ -1612,6 +1614,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::string typed;
       for (size_t i = 0; i < l.args.size(); ++i) typed += (i ? " " : "") + l.args[i];
       io.AddInputCharactersUTF8(typed.c_str());
+    } else if (l.cmd == "hint") {  // hunt-1119: the hint (status line, Quick help) the last frame showed
+      std::printf("hint frame %d: %s\n", frame, gDevLastHint.c_str());
     } else if (l.cmd == "notes") {  // Q-3: the piano roll's notes (current pattern, selected channel) and selection
       const Song& s = app.doc.song();
       const Pattern* p = s.pattern(app.curPattern);
@@ -2430,6 +2434,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
                   static_cast<double>(g.gridY1), static_cast<double>(g.vThumb0), static_cast<double>(g.vThumb1), static_cast<double>(g.vBarX),
                   static_cast<double>(g.hThumb0), static_cast<double>(g.hThumb1), static_cast<double>(g.hBarY));  // K-24
       std::printf("  head settings %u renaming %d\n", static_cast<unsigned>(app.settingsChannel), g.renaming);  // header double-clicks
+      std::printf("  timesel %lld %lld tracks %zu\n", static_cast<long long>(app.playlist.selStart), static_cast<long long>(app.playlist.selEnd),
+                  app.playlist.selTracks.size());  // hunt-clips2-1119: the time selection
       {  // GitHub #46: the header column, a header drag's drop point and the selected headers
         std::string sel;
         for (int k : app.playlist.trackSel) sel += (sel.empty() ? "" : ",") + std::to_string(k);
@@ -3780,6 +3786,7 @@ int main(int argc, char** argv) {
     }
     app.engine.setMetronome(app.metronome);
     app.engine.setReturnToSeek(app.settings.getBool("transport.rememberSeek"));  // J-49
+    gDevLastHint = app.hint;
     app.hint.clear();
     statT = fstats::stamp();
     // Interface scale: the UI is laid out in logical pixels on a virtual display
@@ -3985,8 +3992,22 @@ int main(int argc, char** argv) {
     static bool devLayout = devMixerOnly || devPlaylistOnly || !devHide.empty();
     layoutui::collapseRegions(app);  // gap-1118: an emptied region collapses (an opened window shows its own) this frame
     if (layoutui::takeShellRebuild()) layoutRebuild = layoutRebuildKeep = true;  // K-112: a region was shown or hidden
+    // drag-1119: the item pressed when the dock tree is rebuilt (a region shown or hidden while a clip is
+    // dragged) stays the pressed item. The windows docked by the rebuild are focused in turn, and focusing
+    // another window let go of the pressed item: the drag stopped on the track it had reached. (Kept alive
+    // too, for a window that skips a frame of drawing as it is redocked.)
+    static ImGuiID rebuildHeldId = 0;
+    static int rebuildHeldFrames = 0;
+    static ImGuiWindow* rebuildHeldWindow = nullptr;
     if (firstRun || migrate || app.resetLayout || devLayout || layoutRebuild || !ImGui::DockBuilderGetNode(dockId)) {
       prof::Scope ps("dockbuild");
+      if (ImGui::GetActiveID() != 0 && ImGui::IsAnyMouseDown()) {
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+        rebuildHeldId = g.ActiveId;
+        rebuildHeldWindow = g.ActiveIdWindow ? g.ActiveIdWindow->RootWindow : nullptr;
+        rebuildHeldFrames = 3;
+        g.ActiveIdNoClearOnFocusLoss = true;  // (the redocked windows are focused in turn as they dock)
+      }
       devLayout = false;
       layoutRebuild = false;
       const ImVec2 inner(dsize.x - 2 * dockPad, dsize.y - 2 * dockPad);  // dock host padding
@@ -4050,6 +4071,24 @@ int main(int argc, char** argv) {
       if (lastDock.x > 0 && (std::fabs(avail.x - lastDock.x) > 0.5f || std::fabs(avail.y - lastDock.y) > 0.5f))
         fitDockTree(ImGui::DockBuilderGetNode(dockId), ImVec2(avail.x / lastDock.x, avail.y / lastDock.y), avail);
       lastDock = avail;
+    }
+    if (rebuildHeldFrames > 0) {
+      --rebuildHeldFrames;
+      ImGuiContext& g = *ImGui::GetCurrentContext();
+      if (g.ActiveId == rebuildHeldId && ImGui::IsAnyMouseDown()) {
+        ImGui::KeepAliveID(rebuildHeldId);  // (alive this frame; drawn again, the item keeps itself alive)
+        g.ActiveIdNoClearOnFocusLoss = true;
+        // The keys go back to the dragged window (a window docked by the rebuild was focused).
+        if (rebuildHeldFrames == 0 && rebuildHeldWindow && g.ActiveIdWindow && g.ActiveIdWindow->RootWindow == rebuildHeldWindow &&
+            (!g.NavWindow || g.NavWindow->RootWindow != rebuildHeldWindow)) {
+          ImGui::FocusWindow(rebuildHeldWindow);
+        }
+      } else {
+        rebuildHeldFrames = 0;
+      }
+      if (rebuildHeldFrames == 0) {
+        rebuildHeldWindow = nullptr;
+      }
     }
     layoutui::pinBands(app);  // rsz-1118: before the layout pass, so a resized frame draws the bands at their size
     {

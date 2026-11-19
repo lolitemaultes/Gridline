@@ -1734,9 +1734,23 @@ static float drawTopBarLive(App& a) {
     noteRect("drawmode");
     ui::drawIconFit(dl, ui::Icon::ToolDraw, ImVec2(rx + 6, cy + 4), ImVec2(rx + 20, cy + kH - 4), glyphCol(drawOn));
     rx -= kIn + 66;
-    char cpu[24];
-    std::snprintf(cpu, sizeof cpu, "CPU %d %%", CpuMeter::displayPercent(a.engine.cpuLoad()));
-    if (field("##cpulive", cpu, rx, 66, false, "Audio processing load (click: the Performance panel)")) a.showPerformance = !a.showPerformance;
+    // hunt-clips2-1119: the readout keeps its place whatever the number: laid out for the widest one
+    // ("CPU 100 %"), the number right-aligned in its slot (centred, "CPU 9 %" to "CPU 11 %" moved every part).
+    char num[8];
+    std::snprintf(num, sizeof num, "%d", CpuMeter::displayPercent(a.engine.cpuLoad()));
+    if (field("##cpulive", "", rx, 66, false, "Audio processing load (click: the Performance panel)")) {
+      a.showPerformance = !a.showPerformance;
+    }
+    {
+      ImFont* f = a.fontRegular;
+      const float wHead = f->CalcTextSizeA(fsNum, FLT_MAX, 0, "CPU ").x, wNum = f->CalcTextSizeA(fsNum, FLT_MAX, 0, "100").x;
+      const float wAll = wHead + wNum + f->CalcTextSizeA(fsNum, FLT_MAX, 0, " %").x;
+      const float x0 = std::round(rx + (66 - wAll) * 0.5f), ty = theme::textTop(f, fsNum, cy, kH);
+      const float numR = x0 + wHead + wNum;
+      dl->AddText(f, fsNum, ImVec2(x0, ty), P.text, "CPU");
+      dl->AddText(f, fsNum, ImVec2(std::round(numR - f->CalcTextSizeA(fsNum, FLT_MAX, 0, num).x), ty), P.text, num);
+      dl->AddText(f, fsNum, ImVec2(numR, ty), P.text, " %");
+    }
   }
 
   // ---- middle: position, transport, Back to arrangement, loop ----
@@ -3024,13 +3038,18 @@ static float drawLogicControlBar(App& a) {
         // Checkpoint 36: the meter is the slider's track: two bars (green, yellow over -6 dB, a red tick
         // once clipped) with the knob over them.
         const float bh = 4.0f;
+        // flick-1119: the bars follow the shared meter ballistics (LevelMeter: instant rise, a timed
+        // fall), as Smooth's strip meters and the other layouts' output meters do. They drew the raw
+        // peak taken since the last frame, so every frame no audio buffer finished in (a large buffer,
+        // a 120 Hz display) drew them empty: the pill flashed on and off while the song played.
         const mixmeters::Reading r = mixmeters::get(a, s.masterId());
+        static LevelMeter meter;
+        meter.update(r.peakL, r.peakR, ImGui::GetIO().DeltaTime);
         static float clipHold[2] = {0, 0};
-        const float hot = std::clamp((-6.0f + 60.0f) / 66.0f, 0.0f, 1.0f);  // where yellow starts
+        const float hot = LevelMeter::toPos(-6.0f);  // where yellow starts
         for (int k = 0; k < 2; ++k) {
           const float pk = k == 0 ? r.peakL : r.peakR;
-          const float db = pk > 0.00001f ? 20.0f * std::log10(pk) : -60.0f;
-          const float f = std::clamp((db + 60.0f) / 66.0f, 0.0f, 1.0f);
+          const float f = LevelMeter::toPos(meter.levelDb(k));
           const float my = k == 0 ? cy - 1.0f - bh : cy + 1.0f;
           dl->AddRectFilled(ImVec2(vx, my), ImVec2(vx + vw, my + bh), theme::mix(P.surface700, P.ink, 0.35f), 2.0f);
           if (f > 0) {

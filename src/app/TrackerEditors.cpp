@@ -29,6 +29,7 @@
 #include "../core/I18n.h"
 #include "../core/Params.h"
 #include "../core/PluginInfo.h"
+#include "../core/TrackerGrid.h"
 #include "../engine/Sample.h"
 #include "../packs/tracker/tracker.h"
 #include "../packs/tracker/tracker_peaks.h"
@@ -2323,11 +2324,9 @@ int notesOf(App& a, ObjectId ch) {
   return n;
 }
 
-std::string midiNote(int n) {
-  static const char* names[] = {"C-", "C#", "D-", "D#", "E-", "F-", "F#", "G-", "G#", "A-", "A#", "B-"};
-  n = std::clamp(n, 0, 127);
-  return std::string(names[n % 12]) + std::to_string(n / 12);  // (Gridline's naming: 60 = C-5)
-}
+// HUNT-1119: a key's name as the pattern shows its notes (60 = C-4, flats as Settings has them):
+// before, 60 read C-5 here (Highest key G-10), an octave off the pattern's names.
+std::string midiNote(const App& a, int n) { return gl::trk::noteText(std::clamp(n, 0, 127), a.settings.getBool("tracker.flats")); }
 
 void convertModal(App& a, ObjectId ch) {
   St& s = st();
@@ -2506,9 +2505,13 @@ void channelFrame(App& a, ObjectId id, ImVec2 p0, ImVec2 p1) {
     const long cents = std::lround(c->pitchCents);
     if (cents % 100 == 0) std::snprintf(b, sizeof b, "%+ld", cents / 100);
     else std::snprintf(b, sizeof b, "%+ld ct", cents);
-    if (const int d = stepper(a, "##cfpitch", "Pitch", b, ImVec2(cx1, rowY(0)), cw[1], rowH, "Semitones (-24 to +24); the channel strip's knob sets cents", -1, true))
-      a.doc.setParam(channelParam(id, ChannelParam::Pitch),
-                     std::clamp(std::round(c->pitchCents / 100.0) * 100.0 + d * 100.0, -kChannelPitchMaxCents, kChannelPitchMaxCents), false);
+    if (const int d = stepper(a, "##cfpitch", "Pitch", b, ImVec2(cx1, rowY(0)), cw[1], rowH, "Semitones (-24 to +24); the channel strip's knob sets cents", -1, true)) {
+      // HUNT-1119: a pitch between semitones steps to the next whole semitone the way the arrow
+      // points (+192 ct: up +2, down +1). Before, it went from the nearest one, so up from +192 ct
+      // gave +3 and +2 was skipped.
+      const long st = d > 0 ? (cents >= 0 ? cents / 100 : -((-cents + 99) / 100)) : (cents >= 0 ? (cents + 99) / 100 : -(-cents / 100));
+      a.doc.setParam(channelParam(id, ChannelParam::Pitch), std::clamp(static_cast<double>((st + d) * 100), -kChannelPitchMaxCents, kChannelPitchMaxCents), false);
+    }
   }
   if (!folded) {
     char b[48];
@@ -2532,7 +2535,7 @@ void channelFrame(App& a, ObjectId id, ImVec2 p0, ImVec2 p1) {
   {
     auto keyRow = [&](int row, const char* id2, const char* label, bool lo) {
       const int v = lo ? c->keyLo : c->keyHi;
-      if (const int d = stepper(a, id2, label, midiNote(v), ImVec2(cx2, rowY(row)), cw[2], rowH, "Notes outside the range do not play (Shift: an octave)", -1, true)) {
+      if (const int d = stepper(a, id2, label, midiNote(a, v), ImVec2(cx2, rowY(row)), cw[2], rowH, "Notes outside the range do not play (Shift: an octave)", -1, true)) {
         const int nv = std::clamp(v + d * (io.KeyShift ? 12 : 1), 0, 127);
         a.doc.editChannel(id, "change channel key range", [nv, lo](Channel& ch) {
           if (lo) ch.keyLo = std::min(nv, ch.keyHi);
@@ -3168,9 +3171,10 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
                 c.m ? c.m->playNote : 0, s.serial != 0 && tp::auditionSounding(s.serial) ? 1 : 0, lines, hasKeys() ? 1 : 0, static_cast<double>(need(a)),
                 pluginWindowOpen(a) ? 1 : 0, static_cast<int>(s.modal), s.modalBegun, a.doc.history().position(), a.doc.history().canUndo() ? a.doc.history().undoLabel().c_str() : "");
     if (chan && !isTrackerSampler(chan))
-      std::printf("tracker editors frame %d: channel gain %.3f pan %.3f pitch %.0f fine %d mute %d out %llu keys %d %d type %s\n", frame,
+      std::printf("tracker editors frame %d: channel gain %.3f pan %.3f pitch %.0f fine %d mute %d out %llu keys %d %d type %s names %s %s\n", frame,
                   static_cast<double>(chan->gain), static_cast<double>(chan->pan), static_cast<double>(chan->pitchCents), chan->fine, chan->muted ? 1 : 0,
-                  static_cast<unsigned long long>(chan->mixerTrack), chan->keyLo, chan->keyHi, chan->plugin.type.c_str());
+                  static_cast<unsigned long long>(chan->mixerTrack), chan->keyLo, chan->keyHi, chan->plugin.type.c_str(), midiNote(a, chan->keyLo).c_str(),
+                  midiNote(a, chan->keyHi).c_str());
     if (cmd == "geometry" || frame < 0) {
       long long built = 0, served = 0;
       tp::snapshotCounts(&built, &served);

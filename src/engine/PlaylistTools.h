@@ -126,6 +126,10 @@ struct PasteItem {
   ObjectId fromSound = kNoId, toSound = kNoId;
 };
 std::vector<ObjectId> pasteOwnCopies(Song& s, const std::vector<PasteItem>& items, bool noOverlap);
+// hunt-1119: a pattern region moved onto another track plays that track's sound: `from`'s notes and
+// steps go to `to` in the region's pattern when no other region uses it, else in a copy of its own
+// for this region. False when nothing changed.
+bool retargetPatternClip(Song& s, ObjectId clip, ObjectId from, ObjectId to);
 
 // J-79: stacking (J-38): on a track, a clip that starts later lies on the
 // clips it overlaps; equal starts stack in playlist order. The topmost clip

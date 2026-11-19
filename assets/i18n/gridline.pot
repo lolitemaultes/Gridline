@@ -12442,6 +12442,10 @@ msgid "Add stop button"
 msgstr ""
 
 #: src/app/LiveLook.cpp
+msgid "All follow actions"
+msgstr ""
+
+#: src/app/LiveLook.cpp
 msgid "Any"
 msgstr ""
 
@@ -12598,7 +12602,7 @@ msgid "Follow action"
 msgstr ""
 
 #: src/app/LiveLook.cpp
-msgid "Follow actions on (every clip and scene)"
+msgid "Follow actions on for every clip and scene (off: none of them runs)"
 msgstr ""
 
 #: src/app/LiveLook.cpp
@@ -16922,7 +16926,7 @@ msgid "(automation in this pattern · double-click: edit it in the automation ed
 msgstr ""
 
 #: src/app/Playlist.cpp
-msgid "(click: insert marker here · drag: select time · drag the title bar: move · edges: resize · right-click: clip menu)"
+msgid "(click: insert marker here · drag: move · Shift+drag: copy · Alt+drag: select time · edges: resize · right-click: clip menu)"
 msgstr ""
 
 #: src/app/Playlist.cpp
@@ -25302,7 +25306,7 @@ msgid "A copy of the picked pattern after it, shown (one undo step)"
 msgstr ""
 
 #: src/app/TrackerPages.cpp
-msgid "A new empty pattern of 64 rows after the last"
+msgid "A new empty pattern after the last, as long as the current one"
 msgstr ""
 
 #: src/app/TrackerPages.cpp
