@@ -62,7 +62,17 @@ case "${1:?platform}" in
     brew install --quiet sdl2 ninja || true
     ;;
   freebsd)
-    pkg install -y cmake ninja pkgconf git sdl2 libX11 mesa-libs sndio xorg-vfbserver xauth bash python3
+    # The VM's network can fail to reach the package mirror for a while ("No route to host"): more
+    # tries, a little apart, over IPv4.
+    n=1
+    until pkg install -y cmake ninja pkgconf git sdl2 libX11 mesa-libs sndio xorg-vfbserver xauth bash python3; do
+      [ "$n" -ge 4 ] && exit 1
+      echo "install-deps: pkg install failed; trying again in $((n * 30)) s" >&2
+      sleep $((n * 30))
+      n=$((n + 1))
+      pkg -4 update -f || true
+      export IP_VERSION=4
+    done
     ;;
   openbsd)
     # X11 (Xlib, Mesa's libGL, Xvfb) and sndio are part of the base system.

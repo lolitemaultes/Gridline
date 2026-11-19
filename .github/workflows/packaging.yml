@@ -302,7 +302,15 @@ jobs:
               branch=main
             fi
             echo "ports branch: $branch"
-            git clone --depth 1 -b "$branch" https://git.FreeBSD.org/ports.git /usr/ports
+            # The VM's network can fail to reach a host for a while: more tries over IPv4, then
+            # the FreeBSD project's GitHub mirror of the same tree.
+            got=""
+            for src in https://git.FreeBSD.org/ports.git https://git.FreeBSD.org/ports.git https://github.com/freebsd/freebsd-ports.git; do
+              rm -rf /usr/ports
+              if git clone --ipv4 --depth 1 -b "$branch" "$src" /usr/ports; then got=1; break; fi
+              echo "ports clone from $src failed; trying again in 20 s"; sleep 20
+            done
+            [ -n "$got" ]
             cp -R rendered/freebsd/audio/gridline /usr/ports/audio/gridline
             git -C /usr/ports add audio/gridline  # (portlint -C wants the port's files in git)
             mkdir -p /usr/ports/distfiles && cp dist/Gridline-*-source.tar.gz /usr/ports/distfiles/

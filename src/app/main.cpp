@@ -1369,8 +1369,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     if (livetake::devCommand(app, l.cmd, l.args, frame)) continue;  // J-217: live recording checks
     if (recordrows::devCommand(app, l.cmd, l.args, frame)) continue;  // K-123: takes, input filter, recover, arming
     if (recmore::devCommand(app, l.cmd, l.args, frame)) continue;  // K-123 (0.7.7): quick punch, capture, start, latency
-    // Two chains of commands: one long else-if chain goes past MSVC's nesting limit (C1061).
-    bool secondHalf = false;
+    // Three chains of commands: one long else-if chain goes past MSVC's nesting limit (C1061).
+    bool middle = false, secondHalf = false;
     if (l.cmd == "move") {
       pointer = ImVec2(std::strtof(l.a0.c_str(), nullptr), std::strtof(l.a1.c_str(), nullptr));
       io.AddMousePosEvent(pointer.x, pointer.y);
@@ -1801,7 +1801,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::fflush(stdout);
     } else if (l.cmd == "midiretry") {  // the Retry button in Settings > MIDI
       if (app.midi) app.midi->retry();
-    } else if (l.cmd == "forget") {
+    } else {
+      middle = true;  // the next part of the commands, in a chain of its own
+    }
+    if (middle) {
+    if (l.cmd == "forget") {
       devsig::forget(l.args.empty() ? l.a0 : l.args[0]);  // (a quoted name may hold spaces)
     } else if (l.cmd == "epoch") {
       std::printf("epoch frame %d: %u playing %d\n", frame, app.engine.stopEpoch(), app.engine.playing() ? 1 : 0);
@@ -2107,6 +2111,7 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     } else {
       secondHalf = true;  // the rest of the commands, in a chain of their own
     }
+    }  // (end of the middle part)
     if (secondHalf) {
     if (l.cmd == "rackzip") {  // K-136: rackzip <index> [off]: the rack row zipped (a thin strip) or unzipped
       const auto& chs = app.doc.song().channels;

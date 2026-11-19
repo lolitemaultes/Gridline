@@ -9,6 +9,13 @@
 #      follows the pointer for the whole selection, not the clip pressed alone).
 #   cmake -DAPP=<gridline-app> -DDEMO=<test_song.gridline.json> -DOUT=<dir> -DLAYOUT=logic|live -P pl1118_multi_drag_app.cmake
 cmake_minimum_required(VERSION 3.16)
+# The Cmd key: "super" on macOS (the dev input's "ctrl" is the physical Ctrl key there, a right-click),
+# Ctrl elsewhere (Super is the system's key on Linux and Windows).
+if(CMAKE_HOST_APPLE)
+  set(cmd super)
+else()
+  set(cmd ctrl)
+endif()
 file(REMOVE_RECURSE "${OUT}")
 file(MAKE_DIRECTORY "${OUT}")
 set(ENV{SDL_AUDIODRIVER} "dummy")
@@ -184,7 +191,7 @@ endfunction()
 if(LAYOUT STREQUAL "live")
   # Clips: Shift+drag on a title bar copies; Cmd+click adds a clip to the selection, and so does a
   # Shift+click on a body (N47-08: it dropped the selection once the button was up).
-  multi(title ${by} super)  # (the Cmd key: "ctrl" is the physical Ctrl key, a right-click there)
+  multi(title ${by} ${cmd})  # (the Cmd key)
   multi(body ${byBody} shift)
 else()
   multi(title ${by} shift)

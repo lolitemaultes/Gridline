@@ -20,7 +20,7 @@
 #   edge       a region dragged down the window and held past its bottom edge: the tracks scroll with it and
 #              the dropped region is in view. It went onto spare rows far below the window, out of sight.
 #   menukey    the app menu (macOS glyph shortcuts): Settings... shows its key as glyphs, as the other rows do.
-#              It showed "Cmd+," (the comma read as two shortcuts).
+#              It showed "Cmd+," (the comma read as two shortcuts). Elsewhere (text shortcuts): its key shows.
 #   velocity   the piano roll Velocity slider, nothing selected, shows what a drawn note gets (it read 100,
 #              notes came out at 80).
 #   python3 hunt1119_smooth_app.py <gridline-app> <out dir> [check]
@@ -364,7 +364,13 @@ def check_menukey():
     x0, x1, y0, y1 = SETTINGS_KEY_ROW
     xs = [x for y in range(y0, y1) for x in range(x0, x1) if sum(px[(y * w + x) * 3:(y * w + x) * 3 + 3]) > 3 * 75]
     span = (max(xs) - min(xs) + 1) if xs else 0
-    if not xs or span > 20:
+    if sys.platform != "darwin":
+        # Glyph shortcuts are macOS only: elsewhere every row writes its key as text ("Ctrl+,").
+        if not xs:
+            fail("menukey: Settings... shows its shortcut")
+        else:
+            print("ok - menukey: Settings... shows its shortcut as text, as the other rows do (%d px wide)" % span)
+    elif not xs or span > 20:
         fail("menukey: Settings... shows its shortcut as glyphs, as the other rows do (%d px wide)" % span)
     else:
         print("ok - menukey: Settings... shows its shortcut as glyphs")

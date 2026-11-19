@@ -98,7 +98,8 @@ message(STATUS "quiet: real silence gives a report")
 
 # ---- a UI thread that cannot answer a signal (a lock, a network drive in the kernel) ----
 # The look at its stack stops it from outside (macOS, Windows) or asks /proc (Linux): the report has
-# its frames and says what it was inside.
+# its frames and says what it was inside. The BSDs have neither (no /proc task files): their report
+# says what it was inside and that the thread did not answer.
 probe(stuck stuck 5)
 reports(stuck freeze found)
 list(LENGTH found n)
@@ -109,7 +110,11 @@ file(READ "${found}" stuckText)
 if(NOT stuckText MATCHES "\ninside: a plugin call Stuck Probe: get state \\([0-9]+ s\\)\n")
   message(FATAL_ERROR "stuck: the report does not say what the thread was inside:\n${stuckText}")
 endif()
-if(stuckText MATCHES "\\(not available\\)")
+if(CMAKE_HOST_SYSTEM_NAME MATCHES "BSD")
+  if(NOT stuckText MATCHES "note: the thread did not answer the look at its stack")
+    message(FATAL_ERROR "stuck: the report does not say the thread did not answer:\n${stuckText}")
+  endif()
+elseif(stuckText MATCHES "\\(not available\\)")
   message(FATAL_ERROR "stuck: no stack:\n${stuckText}")
 endif()
 if(APPLE OR WIN32)

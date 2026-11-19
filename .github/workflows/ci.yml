@@ -178,7 +178,9 @@ jobs:
       matrix:
         include:
           - { name: x64 MSVC, arch: amd64, cc: cl, werror: "ON", test: true }
-          - { name: x64 clang-cl, arch: amd64, cc: clang-cl, werror: "OFF", test: true }
+          # The runner's MSVC STL can want a newer clang than the image's clang-cl (STL1000):
+          # its headers work with the older one, so the version check is waived for this job only.
+          - { name: x64 clang-cl, arch: amd64, cc: clang-cl, werror: "OFF", test: true, cxxflags: "-D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH" }
           - { name: ARM64 MSVC (cross), arch: amd64_arm64, cc: cl, werror: "ON", test: false }
     defaults:
       run:
@@ -189,6 +191,8 @@ jobs:
         with:
           arch: ${{ matrix.arch }}
       - name: Configure
+        env:
+          CXXFLAGS: ${{ matrix.cxxflags }}  # read by CMake at the first configure, before its own defaults
         run: |
           extra=""
           if [ "${{ matrix.arch }}" = "amd64_arm64" ]; then extra="-DCMAKE_SYSTEM_NAME=Windows -DCMAKE_SYSTEM_PROCESSOR=ARM64"; fi
