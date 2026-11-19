@@ -88,6 +88,8 @@ def stage(src, out, cli=None, tar=None):
                     shutil.copytree(p, dst, symlinks=True)
                 else:
                     shutil.copy2(p, dst)
+                    if suffix == ".clap":  # a CLAP is one shared object; an installed tree may carry it as 644
+                        os.chmod(dst, os.stat(dst).st_mode | 0o755)
                 found.append(sname + suffix)
         for sub in (os.path.join(sname + ".vst3", "Contents", "Resources", "assets"),
                     os.path.join(sname + ".clap", "Contents", "Resources", "assets"),

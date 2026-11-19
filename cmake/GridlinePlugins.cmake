@@ -235,7 +235,7 @@ function(gridline_suite id name bundleId)
   else()
     install(DIRECTORY "${GRIDLINE_PLUGIN_DIR}/${name}.vst3" DESTINATION lib/vst3 COMPONENT suite USE_SOURCE_PERMISSIONS
             PATTERN "sounds/src" EXCLUDE)
-    install(FILES "${GRIDLINE_PLUGIN_DIR}/${name}.clap" DESTINATION lib/clap COMPONENT suite)
+    install(PROGRAMS "${GRIDLINE_PLUGIN_DIR}/${name}.clap" DESTINATION lib/clap COMPONENT suite)  # a shared object: executable, as hosts and the plugin downloads expect
     install(DIRECTORY "${GRIDLINE_PLUGIN_DIR}/${name}-assets" DESTINATION lib/clap COMPONENT suite PATTERN "sounds/src" EXCLUDE)
   endif()
   set(GRIDLINE_SUITE_TARGETS ${GRIDLINE_SUITE_TARGETS} ${targets} PARENT_SCOPE)
@@ -299,7 +299,7 @@ elseif(WIN32)
 else()
   set(GRIDLINE_USER_CLAP "$ENV{HOME}/.clap")
   set(GRIDLINE_USER_VST3 "$ENV{HOME}/.vst3")
-  install(FILES ${GRIDLINE_CLAP_BUNDLE} DESTINATION lib/clap COMPONENT plugins ${GL_PLUGINS_EXCLUDE})
+  install(PROGRAMS ${GRIDLINE_CLAP_BUNDLE} DESTINATION lib/clap COMPONENT plugins ${GL_PLUGINS_EXCLUDE})
   install(DIRECTORY ${GRIDLINE_PLUGIN_DIR}/Gridline-assets DESTINATION lib/clap COMPONENT plugins ${GL_PLUGINS_EXCLUDE})
   install(DIRECTORY ${GRIDLINE_VST3_BUNDLE} DESTINATION lib/vst3 COMPONENT plugins ${GL_PLUGINS_EXCLUDE} USE_SOURCE_PERMISSIONS)
   add_custom_target(install-plugins
