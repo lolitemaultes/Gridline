@@ -27,6 +27,7 @@
 <p align="center">
   <a href="#highlights">Highlights</a> &middot;
   <a href="#download">Download</a> &middot;
+  <a href="#layouts">Layouts</a> &middot;
   <a href="#screenshots">Screenshots</a> &middot;
   <a href="#features">Features</a> &middot;
   <a href="#building-from-source">Build</a> &middot;
@@ -156,6 +157,62 @@ The [release notes](https://github.com/lolitemaultes/Gridline/releases/latest) h
 
 </details>
 
+## Layouts
+
+**One project, four ways to work.** Arrange the main window as Studio, Clips, Smooth or Tracker. All four are views of the same project, with the same channels, clips, mixer and undo history, so you can start a song in one layout and finish it in another. The layout is your own setting, never part of the project: in a shared session each collaborator works in the layout they like, and every layout keeps your theme.
+
+### Studio
+
+<p align="center">
+  <img src="docs/images/layouts/studio.png" alt="The Studio layout playing the demo song: the browser, the pattern list, the playlist arrangement and the mixer with its insert slots" width="100%">
+</p>
+
+*The pattern workflow Gridline grew up with. For beat makers who build loops first and arrange them after.*
+
+- **Channel rack and playlist.** Build loops as patterns in the step sequencer and piano roll, then arrange them as clips beside audio and automation.
+- **Mixer beside it** with insert slots, sends and the Stage view a click away.
+- **Panels that pop out** onto another monitor, and windows that keep their place.
+
+### Clips
+
+<p align="center">
+  <img src="docs/images/layouts/clips.png" alt="The Clips layout playing the demo song: the browser, the arrangement with its track headers on the right, and the device band with the Kick, an EQ curve and a limiter along the bottom" width="100%">
+</p>
+
+*Built around the launch grid and the arrangement. For jamming, performing live and shaping sounds one track at a time.*
+
+- **Grid or arrangement.** One switch shows the launch grid, with scenes and compact mixer strips under it, or the arrangement, with its track headers on the right.
+- **The device band** along the bottom shows the track's instrument and effects side by side, each with a picture of what it does (an EQ curve, a compressor's curve, a reverb's decay) that you drag to set it.
+- **A compact control bar** with the key and scale, punch in and out, Capture to keep the notes you just played without recording, and Draw mode.
+
+### Smooth
+
+<p align="center">
+  <img src="docs/images/layouts/smooth.png" alt="The Smooth layout playing the demo song: the Library on the left, the inspector with two channel strips, the tracks and regions in the centre and the mixer in the lower pane" width="100%">
+</p>
+
+*The tracks in the centre and everything else one click away. For recording, writing and arranging along one timeline.*
+
+- **The Library** lists every sound and effect by kind: click to hear it, double-click to put it on the track.
+- **The inspector** shows the selected track's channel strip and its output side by side.
+- **One shared lower pane** holds the piano roll, the steps, the audio editor, the mixer and the track's main controls.
+
+### Tracker
+
+<p align="center">
+  <img src="docs/images/layouts/tracker.png" alt="The Tracker layout playing the demo song: the header band with the order list, scopes and instruments, and the pattern editor with the drum notes of a chorus" width="100%">
+</p>
+
+*The song as rows of notes, one column per channel, typed from the computer keyboard. For keyboard-first writers and module fans.*
+
+- **The pattern editor** takes notes from two rows of the computer keyboard, with instrument, volume and effect columns.
+- **The header band** holds the order list, a live scope for each channel, the instrument list and the buttons, with pages for the song, piano roll, steps, mixer, pads and audio below it.
+- **Every edit is an ordinary edit** of the project, so the piano roll and the other layouts see the same notes. `.xm` and `.mod` modules open as projects.
+
+### Switching layouts
+
+Pick a layout in **View > Window layout**, from **Layout** on the welcome screen or in **Settings > Interface**. The window switches at once. Each layout can bring its own shortcuts and menus; turn off **Matching shortcuts** or **Matching menus** to keep yours. Each layout remembers your changes to it, and **View > Reset window layout** brings back its default arrangement. See [docs/workspaces.md](docs/workspaces.md) for pane tabs and workspaces.
+
 ## Screenshots
 
 <table>
@@ -194,7 +251,7 @@ The [release notes](https://github.com/lolitemaultes/Gridline/releases/latest) h
 ### Workflow
 
 - **Pattern workflow.** Build loops in the channel rack, arrange them as clips in the playlist and mix them on inserts. Patterns, audio and automation share the same tracks.
-- **Four window layouts.** Arrange the main window as Studio, Clips (a launch grid and a device band), Smooth (the tracks in the centre and one shared pane below) or Tracker (a pattern editor typed from the keyboard), always in your own theme. All four show the same project, so you can switch at any time.
+- **Four window layouts.** Studio, Clips, Smooth and Tracker, each a different way into the same project. See [Layouts](#layouts).
 - **Meter changes, MPE and slides.** A song can change meter as it goes. MPE keyboards play every built-in instrument note by note, and each note's pressure and timbre record, edit and play back. Slide notes glide on every instrument.
 - **Layers and SFZ.** Layer channels split and stack instruments by key and velocity. The Multisampler plays SFZ instruments.
 - **Tracker modules.** Open `.xm` and `.mod` modules as projects, played by the Tracker Sampler, which also works as a sampler for your own sounds.
