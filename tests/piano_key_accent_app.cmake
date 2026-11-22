@@ -65,10 +65,12 @@ math(EXPR xb "${x0} - 50")                # on the black key
 foreach(c "2ea8ff" "e0409a")
   foreach(t dark light)
     set(ex "")
+    set(hoverY ${yw})
     if(t STREQUAL "light")
       set(ex "--light")
+      set(hoverY ${ys})  # hovering the white strip must light the whole white key
     endif()
-    run(w_${c}_${t} "#${c}" "${ex}" "5 move ${xr} ${yw}\n")
+    run(w_${c}_${t} "#${c}" "${ex}" "5 move ${xr} ${hoverY}\n")
     pixel("${OUT}/w_${c}_${t}.ppm" ${xr} ${yw} p)
     want("${p}" "${c}" "${t} #${c}: white key, right")
     pixel("${OUT}/w_${c}_${t}.ppm" ${xl} ${yw} p)

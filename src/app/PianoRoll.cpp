@@ -2196,6 +2196,20 @@ void drawPianoRoll(App& a) {
   dl->PopClipRect();
 
   // ---------------- keyboard ----------------
+  const bool liveKeys = livelook::active(a);
+  const float nameW = liveKeys ? 34.0f : 0.0f;
+  const float kx0 = keysX0 + nameW, kx1 = gridMin.x - 1;
+  const float blackW = liveKeys ? kx1 - kx0 : std::round((kx1 - kx0) * 0.6f);
+  const float blackRight = kx0 + blackW;
+  auto keyPitchAt = [&](ImVec2 m) {
+    const int pitch = pitchAt(m.y);
+    // The strip past a short black key belongs to the white keys above and below it.
+    if (!liveKeys && !fold && m.x >= blackRight && m.x < gridMin.x && isBlack(pitch) && !keyLabel(pitch))
+      return pitch + (m.y < yOf(pitch) + rowH * 0.5f ? 1 : -1);
+    return pitch;
+  };
+  const ImVec2 m = io.MousePos;
+  const bool inKeys = m.x >= keysX0 && m.x < gridMin.x && m.y >= gridMin.y && m.y < gridMax.y;
   {
     dl->PushClipRect(ImVec2(keysX0, gridMin.y), ImVec2(gridMin.x, gridMax.y), true);
     // K-112D (audit G2): Smooth's keyboard as the reference's: near-white keys with grey hairline
@@ -2204,8 +2218,6 @@ void drawPianoRoll(App& a) {
     const ImU32 whiteEdge = lgKeys ? theme::rgb(0x9A9A9A) : theme::mix(P.keyWhite, P.ink, 0.28f);
     const ImU32 black = lgKeys ? theme::rgb(0x1A1A1A) : P.keyBlack;
     // K-112 (Live): a column of octave names (C1, C2, ...) left of a narrow keyboard.
-    const bool liveKeys = livelook::active(a);
-    const float nameW = liveKeys ? 34.0f : 0.0f;
     if (liveKeys) {
       dl->AddRectFilled(ImVec2(keysX0, gridMin.y), ImVec2(keysX0 + nameW, gridMax.y), P.surface800);
       dl->AddLine(ImVec2(keysX0 + nameW - 1, gridMin.y), ImVec2(keysX0 + nameW - 1, gridMax.y), P.line);
@@ -2220,12 +2232,8 @@ void drawPianoRoll(App& a) {
         if (!fold || rowH >= fs) dl->AddText(a.fontRegular, fs, ImVec2(keysX0 + 5, ty), P.textDim, noteName(p).c_str());
       }
     }
-    // K-112c: Live's keys are plates a row tall: black keys run the keyboard's whole width (every ref).
-    const float kx0 = keysX0 + nameW, kx1 = gridMin.x - 1, blackW = liveKeys ? kx1 - kx0 : std::round((kx1 - kx0) * 0.6f);
     const bool gliss = g.kind == Gesture::Keys;  // K-21
-    const int hoverPitch = !gliss && hovered && io.MousePos.x >= keysX0 && io.MousePos.x < gridMin.x && io.MousePos.y >= gridMin.y && io.MousePos.y < gridMax.y
-                               ? pitchAt(io.MousePos.y)
-                               : -1;
+    const int hoverPitch = !gliss && hovered && inKeys ? keyPitchAt(m) : -1;
     // White keys: light face shading to a darker tip (left), like a keyboard seen from above.
     if (fold) dl->AddRectFilled(ImVec2(kx0, gridMin.y), ImVec2(kx1, gridMax.y), P.surface800);  // below the last folded row
     else if (liveKeys)
@@ -2252,7 +2260,7 @@ void drawPianoRoll(App& a) {
     auto fillWhiteKey = [&](int p, float y, ImU32 face, ImU32 tip) {
       const ImU32 stripTip = theme::mix(tip, face, blackW / std::max(1.0f, kx1 - kx0));
       dl->AddRectFilledMultiColor(ImVec2(kx0, y), ImVec2(kx1, y + rowH), tip, face, face, tip);
-      auto strip = [&](float y0, float y1) { dl->AddRectFilledMultiColor(ImVec2(kx0 + blackW, y0), ImVec2(kx1, y1), stripTip, face, face, stripTip); };
+      auto strip = [&](float y0, float y1) { dl->AddRectFilledMultiColor(ImVec2(blackRight, y0), ImVec2(kx1, y1), stripTip, face, face, stripTip); };
       if (p < 127 && isBlack(p + 1)) strip(y - rowH * 0.5f, y);         // lower half of the black row above
       if (p > 0 && isBlack(p - 1)) strip(y + rowH, y + rowH * 1.5f);    // upper half of the black row below
     };
@@ -2290,18 +2298,18 @@ void drawPianoRoll(App& a) {
         if (p % 12 == 0 || p % 12 == 5) dl->AddLine(ImVec2(kx0, std::round(y + rowH)), ImVec2(kx1, std::round(y + rowH)), whiteEdge);
       } else {
         // The white-key seam continues to the right of the black key.
-        dl->AddLine(ImVec2(kx0 + blackW, std::round(y + rowH * 0.5f)), ImVec2(kx1, std::round(y + rowH * 0.5f)), whiteEdge);
+        dl->AddLine(ImVec2(blackRight, std::round(y + rowH * 0.5f)), ImVec2(kx1, std::round(y + rowH * 0.5f)), whiteEdge);
         if (lgKeys) {  // K-112D: a shadow under the key, then the key, lighter toward its front edge
           const float by0 = std::round(y) + 0.5f, by1 = std::round(y + rowH) - 0.5f;
-          dl->AddRectFilled(ImVec2(kx0, by0 + 1), ImVec2(kx0 + blackW + 1, by1 + 1), theme::withAlpha(P.ink, 0.25f), 2.0f, ImDrawFlags_RoundCornersRight);
-          if (tint) dl->AddRectFilled(ImVec2(kx0, by0), ImVec2(kx0 + blackW, by1), tint, 2.0f, ImDrawFlags_RoundCornersRight);
-          else dl->AddRectFilledMultiColor(ImVec2(kx0, by0), ImVec2(kx0 + blackW, by1), black, theme::rgb(0x343434), theme::rgb(0x343434), black);
-          if (!tint && rowH >= 6) dl->AddRectFilled(ImVec2(kx0 + blackW - 5, by0 + 1), ImVec2(kx0 + blackW - 1, by1 - 1), theme::withAlpha(P.paper, 0.10f), 1.0f);
+          dl->AddRectFilled(ImVec2(kx0, by0 + 1), ImVec2(blackRight + 1, by1 + 1), theme::withAlpha(P.ink, 0.25f), 2.0f, ImDrawFlags_RoundCornersRight);
+          if (tint) dl->AddRectFilled(ImVec2(kx0, by0), ImVec2(blackRight, by1), tint, 2.0f, ImDrawFlags_RoundCornersRight);
+          else dl->AddRectFilledMultiColor(ImVec2(kx0, by0), ImVec2(blackRight, by1), black, theme::rgb(0x343434), theme::rgb(0x343434), black);
+          if (!tint && rowH >= 6) dl->AddRectFilled(ImVec2(blackRight - 5, by0 + 1), ImVec2(blackRight - 1, by1 - 1), theme::withAlpha(P.paper, 0.10f), 1.0f);
         } else {
-          dl->AddRectFilled(ImVec2(kx0, y), ImVec2(kx0 + blackW, y + rowH), tint ? tint : black, liveKeys ? 0.0f : 2.0f, ImDrawFlags_RoundCornersRight);
+          dl->AddRectFilled(ImVec2(kx0, y), ImVec2(blackRight, y + rowH), tint ? tint : black, liveKeys ? 0.0f : 2.0f, ImDrawFlags_RoundCornersRight);
         }
         if (!tint && rowH >= 6 && !liveKeys && !lgKeys)  // highlight along the black key's top face
-          dl->AddRectFilled(ImVec2(kx0 + 2, y + 1.5f), ImVec2(kx0 + blackW - 3, y + 3), theme::withAlpha(P.paper, 0.14f), 1.0f);
+          dl->AddRectFilled(ImVec2(kx0 + 2, y + 1.5f), ImVec2(blackRight - 3, y + 3), theme::withAlpha(P.paper, 0.14f), 1.0f);
       }
       if (((p % 12 == 0 && !liveKeys) || st.keyNames) && rowH >= 9 && !keyLabel(p)) {
         float fs = std::min(theme::kFontLabel, rowH - 1);
@@ -2643,12 +2651,10 @@ void drawPianoRoll(App& a) {
   if (laneHidden) dl->PopClipRect();
 
   // ---------------- interaction ----------------
-  const ImVec2 m = io.MousePos;
   const bool overGrid = m.x >= gridMin.x && m.x < gridMax.x && m.y >= gridMin.y && m.y < gridMax.y;
   gReadPitch = hovered && overGrid ? pitchAt(m.y) : -1;  // K-112D
   if (gReadPitch >= 0) gReadTick = std::max<Tick>(0, tickAt(m.x));
   const bool inGrid = overGrid && !liveEnvelope;  // K-112 (Live): the envelope over the notes takes the grid
-  const bool inKeys = m.x >= keysX0 && m.x < gridMin.x && m.y >= gridMin.y && m.y < gridMax.y;
   const bool inRuler = m.y >= rulerTop && m.y < gridMin.y && m.x >= gridMin.x;
   const bool inVel = m.y >= gridMax.y && m.x >= gridMin.x;
   const bool inLaneLabel = m.y >= gridMax.y && m.x >= origin.x && m.x < gridMin.x && !liveEnvelope;
@@ -2838,7 +2844,7 @@ void drawPianoRoll(App& a) {
     g.anchor = hoverNote;
     if (inKeys && lClick) {
       g.kind = Gesture::Keys;  // K-21: a glissando while held: the key under the pointer sounds, one at a time
-      previewOn(a, chId, pitchAt(m.y), 100);
+      previewOn(a, chId, keyPitchAt(m), 100);
     } else if (inRuler && lClick && !braceTook) {
       g.scrubOrigin = -1;
       if (logicplug::active(a)) {
@@ -3141,7 +3147,7 @@ void drawPianoRoll(App& a) {
     const int curPitch = pitchAt(m.y);
     switch (g.kind) {
       case Gesture::Keys:  // K-21: the previous key stops as the pointer reaches the next
-        previewOn(a, chId, curPitch, 100);
+        previewOn(a, chId, keyPitchAt(m), 100);
         break;
       case Gesture::Scrub: {
         // Smooth: follows the pointer every frame, landing on the snap grid (Alt = free).
