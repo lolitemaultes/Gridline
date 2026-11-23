@@ -50,10 +50,19 @@ void* operator new[](std::size_t n) {
   if (void* p = std::malloc(n ? n : 1)) return p;
   throw std::bad_alloc();
 }
+// GCC 11 and later warn on these frees once they are inlined next to the library's calls to
+// operator new; the replaced operator new above uses malloc, so they do match.
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-new-delete"
+#endif
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete[](void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
+#pragma GCC diagnostic pop
+#endif
 
 using namespace gl;
 

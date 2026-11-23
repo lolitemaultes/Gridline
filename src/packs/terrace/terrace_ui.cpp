@@ -839,7 +839,7 @@ void stepMenu(Ctx& c, int b, int li, int pat, int lo, int hi) {
   // repeats
   rowLabel(rowNames[0]);
   for (int n = 1; n <= 4; ++n) {
-    char t[8];
+    char t[16];
     std::snprintf(t, sizeof t, "%d", n);
     ImGui::PushID(n);
     if (n > 1) ImGui::SameLine(0, 3);
@@ -1007,7 +1007,7 @@ void laneWell(Ctx& c, int b, float x, float y, float w, float h, int pat) {
     for (int bt = 0; bt < spanBeats - 1e-6; ++bt) {
       const float bx = beatX(bt);
       if (bt % 4 == 0) {
-        char t[8];
+        char t[16];
         std::snprintf(t, sizeof t, "%d", bt / 4 + 1);
         c.dl->AddLine(c.p(bx, ry), c.p(bx, ry + rh), theme::withAlpha(L.text, 0.35f), std::max(1.0f, c.s(1)));
         text(c, fMono(), 8.5f, bx + 3, ry + 0.5f, L.faint, t);
@@ -1203,7 +1203,7 @@ void bandRow(Ctx& c, int b, float y, float h, int pat) {
   textB(c, fBold(), 10, 840, capBase, L.faint, tr("SIZE"), 1.0f);
   {
     const int k = laneParam(b, li, LpSteps);
-    char t[8];
+    char t[16];
     std::snprintf(t, sizeof t, "%d", ival(c, k) + 1);
     ImGui::PushID(k);
     if (comboFace(c, "##steps", 756, y + 19, 76, 22, t)) ImGui::OpenPopup("##stepsp");

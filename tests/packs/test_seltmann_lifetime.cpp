@@ -303,8 +303,11 @@ void testStress() {
   std::vector<std::pair<std::unique_ptr<Prog>, uint64_t>> retired;
   std::unique_ptr<Prog> live = std::move(first);
   int swaps = 0;
-  const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(6);
-  while (std::chrono::steady_clock::now() < end) {
+  // Six seconds, longer if needed for 60 switches (a busy shared machine prepares slower), at
+  // most 40 seconds.
+  const auto begin = std::chrono::steady_clock::now();
+  const auto end = begin + std::chrono::seconds(6), cap = begin + std::chrono::seconds(40);
+  for (auto now = begin; (now < end || swaps < 60) && now < cap; now = std::chrono::steady_clock::now()) {
     auto nx = std::make_unique<Prog>();
     nx->st = states[rng() % states.size()];
     packs::prepareAux(nx->st, nx->aux);

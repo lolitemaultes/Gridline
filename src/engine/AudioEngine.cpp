@@ -1351,8 +1351,8 @@ int takeBendSlot(ChannelRuntime& rt, uint32_t id, const BendPoint* pts, int coun
     for (int i = 0; i < rt.pendingCount && s.id != 0 && !owned; ++i) owned = rt.pending[i].bendSlot == k && rt.pending[i].id == s.id;
     if (owned) continue;
     s.id = id;
-    s.count = std::clamp(count, 0, bend::kMaxPoints);
-    std::copy(pts, pts + s.count, s.pts);
+    s.count = pts ? std::clamp(count, 0, bend::kMaxPoints) : 0;
+    if (s.count > 0) std::copy(pts, pts + s.count, s.pts);
     s.sent = 0;
     s.vib = NoteVibrato{};
     s.len = 0;

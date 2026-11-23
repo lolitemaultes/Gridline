@@ -149,7 +149,7 @@ std::vector<ThreadTime> sampleThreads() {
     ThreadTime t;
     t.id = std::strtoull(e->d_name, nullptr, 10);
     char path[96];
-    std::snprintf(path, sizeof path, "/proc/self/task/%s/stat", e->d_name);
+    std::snprintf(path, sizeof path, "/proc/self/task/%llu/stat", static_cast<unsigned long long>(t.id));
     FILE* f = std::fopen(path, "r");
     if (!f) continue;
     char buf[1024] = {};

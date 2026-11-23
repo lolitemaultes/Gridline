@@ -7,7 +7,7 @@
 #include <vector>
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
-#if !defined(_WIN32)
+#if defined(GL_HAVE_BACKTRACE)
 #include <dlfcn.h>
 #include <execinfo.h>
 #endif
@@ -27,7 +27,7 @@ void activeHook(ImGuiID oldId, ImGuiID newId, ImGuiWindow* window) {
   ImGuiContext& g = *GImGui;
   std::fprintf(gFile, "frame %d ACTIVE %08X (%s) -> %08X (%s) mouse down %d %d\n", g.FrameCount, oldId, nameOf(g.ActiveIdWindow), newId, nameOf(window),
                g.IO.MouseDown[0] ? 1 : 0, g.IO.MouseDown[1] ? 1 : 0);
-#if !defined(_WIN32)
+#if defined(GL_HAVE_BACKTRACE)
   void* frames[24];
   const int n = backtrace(frames, 24);
   for (int i = 1; i < n; ++i) {

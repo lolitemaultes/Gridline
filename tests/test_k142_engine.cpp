@@ -23,6 +23,12 @@
 #include <memory>
 #include <string>
 #include <vector>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 #include "../src/core/Demo.h"
 #include "../src/core/PluginInfo.h"
 #include "../src/core/PluginParams.h"
@@ -44,9 +50,16 @@ constexpr int kSr = 44100;
 constexpr int kHost = 256;  // the app's default device block
 
 double threadSeconds() {
+#if defined(_WIN32)
+  FILETIME c, e, k, u;
+  if (!GetThreadTimes(GetCurrentThread(), &c, &e, &k, &u)) return 0;
+  const auto ticks = [](const FILETIME& f) { return (static_cast<uint64_t>(f.dwHighDateTime) << 32) | f.dwLowDateTime; };
+  return static_cast<double>(ticks(k) + ticks(u)) * 1e-7;  // (100 ns units)
+#else
   timespec ts{};
   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
   return static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1e-9;
+#endif
 }
 
 struct Nodes {
@@ -177,7 +190,7 @@ void report() {
     const Bench b = bench(*r.s, r.playing, r.playing ? 2.0 : 12.0, 10.0, r.threads);
     std::printf("cost: %-16s %d thr %7.3f %% of a core, %llu engine blocks, tracks left out %.0f %%, %d nodes ran DSP (%llu calls) %s\n", r.name,
                 r.threads, b.cpuPercent,
-                static_cast<unsigned long long>(b.blocks), b.tracks * b.blocks ? 100.0 * static_cast<double>(b.hushed) / static_cast<double>(b.tracks * b.blocks) : 0.0,
+                static_cast<unsigned long long>(b.blocks), b.tracks > 0 && b.blocks > 0 ? 100.0 * static_cast<double>(b.hushed) / static_cast<double>(b.tracks * b.blocks) : 0.0,
                 b.nodes.running, static_cast<unsigned long long>(b.nodes.calls),
                 b.nodes.names.c_str());
   }

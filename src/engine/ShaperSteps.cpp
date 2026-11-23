@@ -75,7 +75,7 @@ void parse(const char* text, Bank& b) {
 
 std::string write(const Bank& b) {
   std::string out;
-  char buf[24];
+  char buf[48];
   auto row = [&](char kind, int p, int l, int from, auto get, auto isDefault) {
     int last = -1;
     for (int k = from; k < kSteps; ++k)

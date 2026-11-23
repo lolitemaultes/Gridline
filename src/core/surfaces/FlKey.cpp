@@ -407,10 +407,13 @@ int Surface::padOf(int note) const {
 int Surface::padNote(int pad) const { return pad < 8 ? wire_.padTop + pad : wire_.padBottom + pad - 8; }
 
 void Surface::sendSysex(std::initializer_list<uint8_t> body, const std::string& text) {
-  std::vector<uint8_t> b = {0xF0, 0x00, 0x20, 0x29, 0x02, wire_.sysexId};
-  b.insert(b.end(), body.begin(), body.end());
-  for (char c : text) b.push_back(static_cast<uint8_t>(c));
-  b.push_back(0xF7);
+  // Sized once and filled in place (growing it in steps trips GCC's bounds checks on the copies).
+  const uint8_t head[] = {0xF0, 0x00, 0x20, 0x29, 0x02, wire_.sysexId};
+  std::vector<uint8_t> b(sizeof head + body.size() + text.size() + 1);
+  auto at = std::copy(std::begin(head), std::end(head), b.begin());
+  at = std::copy(body.begin(), body.end(), at);
+  for (char c : text) *at++ = static_cast<uint8_t>(c);
+  *at = 0xF7;
   out_(b);
 }
 

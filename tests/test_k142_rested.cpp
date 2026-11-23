@@ -68,7 +68,7 @@ Run play(const PluginState& st, bool rest) {
     if (at == off1) e.noteOff(c.id, 60);
     if (at == on2) e.noteOn(c.id, 67, 0.8f);
     if (at == off2) e.noteOff(c.id, 67);
-    e.process(r.L.data() + at, r.R.data() + at, kBlock);
+    e.process(r.L.data() + at, r.R.data() + at, std::min(kBlock, frames - at));  // (the last block: what is left)
   }
   if (auto rt = b.channelRuntime(c.id)) r.restBlocks = rt->restBlocks.load();
   return r;

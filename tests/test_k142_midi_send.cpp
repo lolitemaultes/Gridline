@@ -201,8 +201,11 @@ void timing(SyncOut mode, const char* name, size_t expectAtLeast) {
   std::snprintf(label, sizeof label, "%s, after, no real-time", name);
   print(label, coarse);
   expect(coarse.sent.size() == before.sent.size() && coarse.ordered, "no real-time policy: every message, in order");
-  expect(coarse.p99 <= std::max(before.p99, 0.5) + 0.5 && coarse.early >= -0.5, "no real-time policy: about as close to due as before");
-  expect(static_cast<double>(coarse.wakeups) < static_cast<double>(before.wakeups) / 2.0, "no real-time policy: still far fewer wakeups");
+  expect(coarse.p99 <= std::max(before.p99, 0.5) + 0.5 + 0.2 * tickMs && coarse.early >= -0.5, "no real-time policy: about as close to due as before");
+  if (!tickBound)
+    expect(static_cast<double>(coarse.wakeups) < static_cast<double>(before.wakeups) / 2.0, "no real-time policy: still far fewer wakeups");
+  else  // (its waits end late: it looks on every tick while a message waits, as the poller did)
+    expect(coarse.wakeups <= before.wakeups + 2 * coarse.sent.size(), "no real-time policy: no more wakeups than before besides those for pushed messages");
 #endif
 }
 

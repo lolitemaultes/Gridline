@@ -274,7 +274,11 @@ void testImageAndCab(const fs::path& root) {
   AudioBuffer b(2, 64);
   writeWavFile((share / "cabs" / "B cab.wav").u8string(), b, 44100, 16);
   writeWavFile((share / "cabs" / "A cab.wav").u8string(), b, 44100, 16);
+#if defined(_WIN32)
+  _putenv_s("GRIDLINE_DEV_SLOW_LIST_MS", "600");
+#else
   setenv("GRIDLINE_DEV_SLOW_LIST_MS", "600", 1);
+#endif
   const std::string cabs = (share / "cabs").u8string();
   {
     SampleCache::NonBlocking ui;
@@ -284,7 +288,11 @@ void testImageAndCab(const fs::path& root) {
     ex(got.empty() && ms < kFrameMs, fmt("amp rack: a slow cabinet folder is not listed by the interface (%.1f ms)", ms));
   }
   waitBackground();
+#if defined(_WIN32)
+  _putenv_s("GRIDLINE_DEV_SLOW_LIST_MS", "");
+#else
   unsetenv("GRIDLINE_DEV_SLOW_LIST_MS");
+#endif
   {
     SampleCache::NonBlocking ui;
     const std::string got = packs::dynamics::cab::boardFile(cabs, 1);

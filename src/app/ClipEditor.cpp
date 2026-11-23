@@ -1843,7 +1843,7 @@ void auditionKeys(App& a, const Channel& ch, float width, float kh) {
     const ImVec2 k0(p.x + kw * static_cast<float>(i), p.y), k1(k0.x + kw - 1, p.y + kh);
     dl->AddRectFilled(k0, k1, fillOf(hit == note ? theme::mix(P.keyWhite, P.paper, 0.6f) : P.keyWhite, note), 3, ImDrawFlags_RoundCornersBottom);
     if (i % 7 == 0) {
-      char lbl[8];
+      char lbl[16];
       std::snprintf(lbl, sizeof lbl, "C%d", note / 12 - 1);
       const ImVec2 ts = a.fontMono->CalcTextSizeA(theme::kFontLabel - 1, 1e9f, 0, lbl);
       dl->AddText(a.fontMono, theme::kFontLabel - 1, ImVec2(std::round(k0.x + (kw - 1 - ts.x) * 0.5f), k1.y - ts.y - 3), theme::mix(P.keyWhite, P.keyBlack, 0.45f), lbl);
@@ -2554,7 +2554,7 @@ Mod clipModule(App& a, const Clip& c, const Channel& ch) {
     if (button(x, 1, 1, 1, "Loop", c.loop, "Loop the clip: it repeats its audio to its end")) setField(a, c.id, Field::Loop, c.loop ? 0 : 1, false);
     if (!x.compact) {  // where the first pass starts (bar.beat.step)
       const Tick bar = std::max<Tick>(1, s2.barTicks()), beat = std::max<Tick>(1, s2.beatTicks()), six = std::max<Tick>(1, beat / 4);
-      char b[48];
+      char b[72];
       std::snprintf(b, sizeof b, "%lld.%lld.%lld", static_cast<long long>(c.offset / bar + 1), static_cast<long long>(c.offset % bar / beat + 1),
                     static_cast<long long>(c.offset % beat / six + 1));
       int sixteenths = static_cast<int>(c.offset / six);

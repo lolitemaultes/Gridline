@@ -1591,8 +1591,8 @@ bool Document::editModLink(ParamId target, const std::string& label, const std::
 namespace {
 void clampLfo(SongLfo& l) {
   l.colour = std::clamp(l.colour, 0, kLfoColours - 1);
-  if (static_cast<int>(l.shape) < 0 || l.shape >= LfoShape::Count) l.shape = LfoShape::Sine;
-  if (static_cast<int>(l.restart) < 0 || l.restart >= LfoRestart::Count) l.restart = LfoRestart::OnPlay;
+  if (static_cast<unsigned>(l.shape) >= static_cast<unsigned>(LfoShape::Count)) l.shape = LfoShape::Sine;
+  if (static_cast<unsigned>(l.restart) >= static_cast<unsigned>(LfoRestart::Count)) l.restart = LfoRestart::OnPlay;
   l.pulseWidth = std::clamp(l.pulseWidth, 0.02f, 0.98f);
   l.randomSteps = std::clamp(l.randomSteps, 1, 16);
   if (l.points.size() > static_cast<size_t>(kLfoMaxPoints)) l.points.resize(static_cast<size_t>(kLfoMaxPoints));
@@ -1611,10 +1611,10 @@ void clampLfo(SongLfo& l) {
   l.fadeIn = std::clamp(l.fadeIn, 0.0f, 8.0f);
   if (l.name.size() > 32) l.name.resize(32);
   // 0.7.8: Chaos and Random.
-  if (static_cast<int>(l.kind) < 0 || l.kind >= LfoKind::Count) l.kind = LfoKind::Lfo;
+  if (static_cast<unsigned>(l.kind) >= static_cast<unsigned>(LfoKind::Count)) l.kind = LfoKind::Lfo;
   if (l.restart == LfoRestart::EachBar && l.kind != LfoKind::Chaos) l.restart = LfoRestart::OnPlay;
   l.character = std::clamp(l.character, 0.0f, 1.0f);
-  if (static_cast<int>(l.trigger) < 0 || l.trigger >= RandomTrigger::Count) l.trigger = RandomTrigger::Tempo;
+  if (static_cast<unsigned>(l.trigger) >= static_cast<unsigned>(RandomTrigger::Count)) l.trigger = RandomTrigger::Tempo;
   l.quantise = l.quantise < 2 ? 0 : std::min(l.quantise, 16);
   if (l.kind == LfoKind::Random) l.tempoSync = l.trigger != RandomTrigger::Hz;  // (its rate follows the trigger)
 }

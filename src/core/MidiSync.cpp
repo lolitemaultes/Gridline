@@ -110,6 +110,11 @@ void prepareSyncSender(SyncSenderHooks& h) {
 
 void runSyncSender(MidiEventRing& ring, WakeSignal& wake, const std::atomic<bool>& quit, const SyncSenderHooks& h) {
   MidiOutEvent e;
+  // Coarse timers: the system may stretch a wait by up to half its length. Once four waits in a
+  // row end later than twice their length and a millisecond (a system that ends them only on its
+  // clock ticks, as some virtual machines do), it waits as on tick timers from then on.
+  bool ticks = h.tickTimers;
+  int stretched = 0;
   while (!quit.load()) {
     double wait = -1;  // < 0: until something is pushed
     while (ring.peek(e)) {
@@ -123,8 +128,15 @@ void runSyncSender(MidiEventRing& ring, WakeSignal& wake, const std::atomic<bool
     }
     if (quit.load()) break;
     if (wait < 0) ring.sleepUntilPushed(wake);
-    else if (h.tickTimers) wake.waitFor(std::min(wait, 0.0005));
-    else wake.waitFor(h.coarseTimers && wait > 0.001 ? wait / 3.0 : wait);
+    else if (ticks) wake.waitFor(std::min(wait, 0.0005));
+    else if (!h.coarseTimers) wake.waitFor(wait);
+    else {
+      const double step = wait > 0.001 ? wait / 3.0 : wait, t0 = h.now();
+      if (!wake.waitFor(step)) {
+        stretched = h.now() - t0 > 2.0 * step + 0.001 ? stretched + 1 : 0;
+        ticks = stretched >= 4;
+      }
+    }
     if (h.woke) h.woke();
   }
 }

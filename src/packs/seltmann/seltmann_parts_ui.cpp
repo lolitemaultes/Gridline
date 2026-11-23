@@ -215,7 +215,7 @@ float regionChips(ImDrawList* dl, App& a, ImVec2 p0, float maxW, float h, const 
   float x = p0.x;
   for (size_t i = 0; i < regions.size(); ++i) {
     if (x + cw > p0.x + maxW - (i + 1 < regions.size() ? 18 : 0)) {
-      char more[16];
+      char more[24];
       std::snprintf(more, sizeof more, "+%zu", regions.size() - i);
       dl->AddText(a.fontMono, theme::kFontLabel - 1, ImVec2(x + 1, p0.y + (h - theme::kFontLabel) * 0.5f), P.textFaint, more);
       x += 18;

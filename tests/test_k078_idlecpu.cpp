@@ -256,7 +256,7 @@ void effectRests() {
     for (int at = 0; at < frames; at += kHost) {
       if (at == o.liveAt) e.noteOn(ch2, 69, 0.8f);
       if (at == o.liveAt + kSr / 2 / kHost * kHost) e.noteOff(ch2, 69);
-      e.process(r.L.data() + at, r.R.data() + at, kHost);
+      e.process(r.L.data() + at, r.R.data() + at, std::min(kHost, frames - at));  // (the last block: what is left)
     }
     if (auto rt = bl.effectRuntime(s2.mixer[1].id, 0)) r.rested = rt->restBlocks.load();
     return r;

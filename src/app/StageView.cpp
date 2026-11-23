@@ -858,7 +858,7 @@ void drawCompactGroup(App& a, ImDrawList* dl, size_t gi, bool target) {
   if (v.trk) trackerBevel(dl, mn, mx);
   else dl->AddRect(mn, mx, theme::withAlpha(P.lineStrong, 0.9f), rad, 0, 1.0f);
   if (L.hoverChip == static_cast<int>(gi) || target) dl->AddRectFilled(mn, mx, IM_COL32(255, 255, 255, 18), rad);
-  char b[16];
+  char b[24];
   std::snprintf(b, sizeof b, "%zu", gr.toks.size());
   const float fs = std::round(side * 0.36f);
   const ImVec2 ts = a.fontBold->CalcTextSizeA(fs, 1e9f, 0, b);

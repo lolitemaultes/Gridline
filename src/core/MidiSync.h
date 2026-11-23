@@ -99,7 +99,8 @@ struct SyncSenderHooks {
   std::function<void()> woke;
   // The system stretches timed waits (macOS timer coalescing: up to half the wait on a thread
   // without a real-time policy; FreeBSD: up to 5 % of it): wait in shorter steps as the message nears, so it is never late
-  // by more than a fraction of a millisecond.
+  // by more than a fraction of a millisecond. Waits that keep ending far later than that (four in
+  // a row over twice their length and a millisecond) switch it to the tick timers' way below.
   bool coarseTimers = false;
   // The system ends timed waits only on its clock ticks (OpenBSD and NetBSD: 10 ms): sleeping
   // until a message is due wakes up to a tick or two late, so while one waits it looks every

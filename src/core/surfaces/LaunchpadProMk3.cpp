@@ -12,9 +12,11 @@ namespace gl::surfaces::lpp3 {
 // ---------------------------------------------------------------- protocol ----
 
 Bytes sysex(std::initializer_list<uint8_t> body) {
-  Bytes b(std::begin(kHeader), std::end(kHeader));
-  b.insert(b.end(), body.begin(), body.end());
-  b.push_back(0xF7);
+  // Sized once and filled in place (growing it in steps trips GCC's bounds checks on the copies).
+  Bytes b(sizeof kHeader + body.size() + 1);
+  auto at = std::copy(std::begin(kHeader), std::end(kHeader), b.begin());
+  at = std::copy(body.begin(), body.end(), at);
+  *at = 0xF7;
   return b;
 }
 
