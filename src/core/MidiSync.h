@@ -20,7 +20,8 @@ struct MidiOutEvent {
 
 // K-142 (0.7.8): a wakeup one thread waits on and another gives without ever blocking (a counting
 // semaphore: dispatch semaphore on macOS, POSIX semaphore on Linux and the BSDs, a Windows
-// semaphore). post() is safe on the audio thread.
+// semaphore, there with a high-resolution waitable timer for waitFor). post() is safe on the audio
+// thread; one thread waits.
 class WakeSignal {
  public:
   WakeSignal();
@@ -33,6 +34,9 @@ class WakeSignal {
 
  private:
   void* h_ = nullptr;
+#if defined(_WIN32)
+  void* timer_ = nullptr;  // (the precise timer of waitFor, made on its first use)
+#endif
 };
 
 // Single-producer / single-consumer ring of MidiOutEvents (audio → MIDI thread).

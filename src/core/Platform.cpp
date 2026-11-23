@@ -10,6 +10,7 @@
 #include <cstring>
 #include <filesystem>
 #include <thread>
+#include <type_traits>
 #if defined(__linux__)
 #include <sys/resource.h>
 #include <sys/syscall.h>
@@ -249,12 +250,30 @@ bool backgroundThisThread() {
 #if defined(__APPLE__)
   return pthread_set_qos_class_self_np(QOS_CLASS_BACKGROUND, 0) == 0;
 #elif defined(_WIN32)
-  if (SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN)) return true;
   return SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST) != 0;
 #elif defined(__linux__)
   return setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), 19) == 0;  // (per thread on Linux)
 #else
   return false;
+#endif
+}
+
+ThreadLift::ThreadLift(std::thread& t) {
+  if (!t.joinable()) return;
+#if defined(__APPLE__)
+  // (the override keeps its own reference to the thread: ending it after the join is safe)
+  override_ = pthread_override_qos_class_start_np(t.native_handle(), QOS_CLASS_USER_INITIATED, 0);
+  lifted_ = override_ != nullptr;
+#elif defined(_WIN32)
+  // (the system's own threads: a HANDLE; a pthreads layer's handle is left alone)
+  if constexpr (std::is_pointer_v<std::thread::native_handle_type>)
+    lifted_ = SetThreadPriority(static_cast<HANDLE>(t.native_handle()), THREAD_PRIORITY_NORMAL) != 0;
+#endif
+}
+
+ThreadLift::~ThreadLift() {
+#if defined(__APPLE__)
+  if (override_) pthread_override_qos_class_end_np(static_cast<pthread_override_t>(override_));
 #endif
 }
 

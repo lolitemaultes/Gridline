@@ -1018,7 +1018,12 @@ void Index::stop() {
     cancel_ = true;
   }
   wake_.notify_all();
-  if (worker_.joinable()) worker_.join();
+  if (worker_.joinable()) {
+    // The worker runs as a background job: on a busy machine it may not get a core again for
+    // seconds (Windows: about 4 s), so it is lifted to normal scheduling until it has ended.
+    platform::ThreadLift lift(worker_);
+    worker_.join();
+  }
   busy_ = false;
 }
 

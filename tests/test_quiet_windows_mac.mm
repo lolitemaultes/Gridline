@@ -66,6 +66,19 @@ double serverAlpha(NSWindow* w) {
   if (list) CFRelease(list);
   return a;
 }
+// The same once the window server lists the window: ordering a window in reaches the server
+// asynchronously, so a slow (shared) machine may list it only some time after the call returns.
+// Waits for the listing (up to `seconds`), then reads it: the first alpha the server shows.
+double serverAlphaListed(NSWindow* w, double seconds = 10.0) {
+  NSDate* until = [NSDate dateWithTimeIntervalSinceNow:seconds];
+  double a = serverAlpha(w);
+  while (a < 0 && [until timeIntervalSinceNow] > 0) {
+    pump(0.02);
+    a = serverAlpha(w);
+  }
+  if (a != 0.0) std::printf("# window \"%s\": the window server's alpha %.2f (-1: not listed)\n", [[w title] UTF8String], a);
+  return a;
+}
 NSWindow* makeWindow(NSRect r, const char* title) {
   NSWindow* w = [[NSWindow alloc] initWithContentRect:r
                                             styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
@@ -118,7 +131,7 @@ int main() {
     [a makeKeyAndOrderFront:nil];
     pump(0.3);
     expect([a isVisible], "a window is ordered in");
-    expect(serverAlpha(a) == 0.0, "the window server shows it fully transparent");
+    expect(serverAlphaListed(a) == 0.0, "the window server shows it fully transparent");
     expect([a alphaValue] == 1.0 && ![a ignoresMouseEvents], "the code still reads the alpha and mouse setting it asked for");
     expect([a isKeyWindow] && [NSApp keyWindow] == a && watch.became == 1, "it is the key window inside the app (delegate told)");
     [a setAlphaValue:0.5];
@@ -127,7 +140,7 @@ int main() {
     NSWindow* b = makeWindow(NSMakeRect(260, 260, 320, 200), "quiet B");
     [b orderFront:nil];
     pump(0.1);
-    expect(serverAlpha(b) == 0.0 && ![b isKeyWindow] && [a isKeyWindow], "ordered front without the keys: the keys stay");
+    expect(serverAlphaListed(b) == 0.0 && ![b isKeyWindow] && [a isKeyWindow], "ordered front without the keys: the keys stay");
     [b makeKeyWindow];
     expect([b isKeyWindow] && ![a isKeyWindow] && watch.resigned == 1, "the keys move to another window (the first told)");
     [b close];
@@ -140,7 +153,7 @@ int main() {
     NSWindow* c = makeWindow(NSMakeRect(300, 300, 200, 120), "quiet child");
     [a addChildWindow:c ordered:NSWindowAbove];
     pump(0.1);
-    expect([c parentWindow] == a && [c isVisible] && serverAlpha(c) == 0.0, "a child window is ordered in, clear");
+    expect([c parentWindow] == a && [c isVisible] && serverAlphaListed(c) == 0.0, "a child window is ordered in, clear");
     expect(NSEqualRects([c frame], [c frameRectForContentRect:NSMakeRect(300, 300, 200, 120)]), "where the code put it");
 
     [NSApp activateIgnoringOtherApps:YES];

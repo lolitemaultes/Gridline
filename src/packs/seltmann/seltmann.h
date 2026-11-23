@@ -164,15 +164,18 @@ int warpFamiliesForTest();
 // every file; the defaults are 128 MB and 512 MB), and what the warp service did: the bytes of the
 // renders it holds now and the most it held, the renders made (all, and those while the tempo moved),
 // those skipped for the cap, the worker's time spent stretching, and the wakeups a moving tempo's
-// render waited out (the rate limit).
+// render waited out (the rate limit). worstLateSeconds: the most a render made while the tempo moved
+// came later than the worker planned for (its wakeup ending late, plus its stretch taking longer than
+// the estimate it aimed with: the machine's delays, which the render's aim cannot know).
 struct WarpStats {
   int64_t bytes = 0, peakBytes = 0;
   int renders = 0, moving = 0, skipped = 0, throttled = 0;
   double workSeconds = 0;
+  double worstLateSeconds = 0;
 };
 void setWarpCapsForTest(int64_t fileBytes, int64_t totalBytes);
 WarpStats warpStatsForTest();
-void resetWarpPeakForTest();
+void resetWarpPeakForTest();  // (and worstLateSeconds)
 // J-190: changes every time a job finishes (done or failed), so the app can rebuild what
 // was prepared on a provisional grid (Kerf's beat-grid slices).
 uint64_t analysisGeneration();

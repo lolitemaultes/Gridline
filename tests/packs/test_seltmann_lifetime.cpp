@@ -404,8 +404,15 @@ void testDrag() {
   expect(finite, "drag: the sound stays finite and in range");
   expect(w1.moving - w0.moving >= 10, "drag: the worker makes renders while the tempo moves");
   // 0.7.8: rate limited, the worker never stretches back to back for a dragged tempo (before: over
-  // 80% of the time here)
-  expect(w1.throttled > w0.throttled, "drag: the renders made while the tempo moves are rate limited");
+  // 80% of the time here). The limit lets a moving tempo's renders take 40% of the time (kMovingDuty,
+  // after a short free burst): a machine whose renders are slow enough to want more is held to it
+  // (wakeups rate limited); one fast enough to make every render it wants within that share never
+  // meets it (a fast CI runner: 25% of the time, none limited). Either way, never more than the
+  // share and the burst without the limit stepping in.
+  constexpr double kMovingDuty = 0.4, kMovingBudgetSecs = 0.3;  // (as in the instrument)
+  const double work = w1.workSeconds - w0.workSeconds;
+  expect(w1.throttled > w0.throttled || work <= kMovingDuty * secs + kMovingBudgetSecs,
+         "drag: the renders made while the tempo moves are rate limited (or within the limit's share)");
   expect(w1.workSeconds - w0.workSeconds <= 0.7 * secs, "drag: ... so the worker stretches well under all of the time");
   if (!appCaps) {
     expect(std::max(worstHeld, w1.peakBytes) <= cap + 2 * spanBytes, "drag: the renders held stay within the cap (and a render's room)");

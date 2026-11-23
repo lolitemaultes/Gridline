@@ -33,13 +33,41 @@ bool WakeSignal::waitFor(double seconds) {
   return dispatch_semaphore_wait(static_cast<dispatch_semaphore_t>(h_), dispatch_time(DISPATCH_TIME_NOW, ns)) == 0;
 }
 #elif defined(_WIN32)
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
+namespace {
+// Windows 10 1803 and later: a timer that ends on time (to a fraction of a millisecond) without
+// changing the whole system's timer resolution. Null before that.
+HANDLE preciseTimer() { return CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS); }
+}  // namespace
 WakeSignal::WakeSignal() : h_(CreateSemaphoreW(nullptr, 0, 0x7fffffff, nullptr)) {}
-WakeSignal::~WakeSignal() { CloseHandle(static_cast<HANDLE>(h_)); }
+WakeSignal::~WakeSignal() {
+  CloseHandle(static_cast<HANDLE>(h_));
+  if (timer_) CloseHandle(static_cast<HANDLE>(timer_));
+}
 void WakeSignal::post() noexcept { ReleaseSemaphore(static_cast<HANDLE>(h_), 1, nullptr); }
 void WakeSignal::wait() { WaitForSingleObject(static_cast<HANDLE>(h_), INFINITE); }
 bool WakeSignal::waitFor(double seconds) {
-  const DWORD ms = seconds <= 0 ? 0 : static_cast<DWORD>(std::ceil(seconds * 1000.0));
-  return WaitForSingleObject(static_cast<HANDLE>(h_), ms) == WAIT_OBJECT_0;
+  HANDLE sem = static_cast<HANDLE>(h_);
+  if (seconds <= 0) return WaitForSingleObject(sem, 0) == WAIT_OBJECT_0;
+  // A plain timed wait ends on the system's clock tick (about 15.6 ms unless a program asked for
+  // finer): the precise timer ends it on time, the semaphore still wakes it at once.
+  if (!timer_) timer_ = preciseTimer();
+  if (timer_) {
+    LARGE_INTEGER due;
+    due.QuadPart = -std::max<LONGLONG>(1, static_cast<LONGLONG>(seconds * 1e7));  // (relative, in 100 ns)
+    if (SetWaitableTimer(static_cast<HANDLE>(timer_), &due, 0, nullptr, nullptr, FALSE)) {
+      HANDLE both[2] = {sem, static_cast<HANDLE>(timer_)};
+      if (WaitForMultipleObjects(2, both, FALSE, INFINITE) == WAIT_OBJECT_0) {  // (posted: when both are, it reports the first)
+        CancelWaitableTimer(static_cast<HANDLE>(timer_));
+        return true;
+      }
+      return false;
+    }
+  }
+  const DWORD ms = static_cast<DWORD>(std::ceil(seconds * 1000.0));
+  return WaitForSingleObject(sem, ms) == WAIT_OBJECT_0;
 }
 #else
 WakeSignal::WakeSignal() : h_(new sem_t) { sem_init(static_cast<sem_t*>(h_), 0, 0); }
@@ -99,6 +127,12 @@ bool makeSyncSenderRealtime() {
 void prepareSyncSender(SyncSenderHooks& h) {
 #if defined(__APPLE__)
   h.coarseTimers = !makeSyncSenderRealtime();  // its timed waits end on time
+#elif defined(_WIN32)
+  // Its timed waits end on time with the precise timer (see WakeSignal::waitFor); without it
+  // (before Windows 10 1803) on the system's clock tick: shorter steps, then the tick timers' way
+  // once they keep ending late.
+  if (HANDLE t = preciseTimer()) CloseHandle(t);
+  else h.coarseTimers = true;
 #elif defined(__FreeBSD__)
   h.coarseTimers = true;  // a timed wait may end up to 5 % late (kern.timecounter.alloweddeviation)
 #elif defined(__OpenBSD__) || defined(__NetBSD__)

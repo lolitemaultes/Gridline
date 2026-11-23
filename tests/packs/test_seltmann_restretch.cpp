@@ -502,30 +502,36 @@ void rampCase(const Sample& src, int bars, double from, double to, bool stepped 
               name, bars, ex1.size(), worstEx, offEx, worstRt, offRt, worstLevel);
   std::printf("# %s: realtime: %d of the first two slices after a tempo change off by over 10 cents, worst %.1f cents after them\n", name,
               fallback, worstRtLate);
-  std::printf("# %s: realtime: %d wakeups rate limited\n", name, w1.throttled - w0.throttled);
   std::printf("# %s: realtime: the worker made %d renders (%d while the tempo moved), stretching for %.2f s of the %.2f s (%.0f%%); renders held: %.1f MB at most (with those of the cases before, still in their grace period)\n",
               name, w1.renders - w0.renders, w1.moving - w0.moving, w1.workSeconds - w0.workSeconds, rtSecs,
               100 * (w1.workSeconds - w0.workSeconds) / std::max(1e-3, rtSecs), static_cast<double>(w1.peakBytes) / (1 << 20));
-  // The 10 cents hold while the worker keeps up. While the tempo moves it may stretch for at most
-  // a set share of the time (kRampDuty in the instrument: the rate limit, by design, so a moving
-  // tempo never takes a whole core); a machine whose renders are too slow for this ramp within that
-  // share hits the limit (wakeups rate limited) and its slices drift further by design. On a shared
-  // test machine (CI set) that did, the bound is what the limit allows: the tempo may move on for a
-  // render's time at that share plus a render and a worker wakeup (a clock tick system ends the
-  // 30 ms wait up to two 10 ms ticks late) past kLiveCents. Anywhere else, and on a CI machine that
-  // was never rate limited, the 10 cents.
+  // The 10 cents hold while the worker keeps up: it aims each render where the tempo will be once
+  // the render is ready (its last render time plus a wakeup), kLiveCents further on, so a slice is
+  // at most about kLiveCents off. What the aim cannot know is the machine's own delays: a wakeup
+  // that ends late, a stretch that takes longer than the ones before (another program, a shared
+  // virtual machine's other guests). The worker measures the worst of them (worstLateSeconds);
+  // the tempo moves on for that long past kLiveCents. While the tempo moves it may also stretch for
+  // at most a set share of the time (kRampDuty: the rate limit, by design, so a moving tempo never
+  // takes a whole core); a machine too slow for this ramp within that share hits the limit and its
+  // slices drift by the tempo's motion over a render at that share, a render and a wakeup.
+  // On a shared test machine (CI set) the bound is what these allow, never under the 10 cents;
+  // anywhere else the 10 cents. (A render aimed wrong, or made too seldom, is off by more than the
+  // machine's delays allow on any machine.)
   const double songSecs = static_cast<double>(frames) / kRate;
   const int limited = w1.throttled - w0.throttled;
+  constexpr double kLiveCents = 8, kRampDuty = 0.7, kWake = 0.05;  // (as in the instrument)
+  double rate = 0;  // the fastest the tempo moves (cents a second) within a stretch of one tempo's renders
+  for (size_t k = 0; k + 1 < ex1.size(); ++k)
+    if ((k + 1) % seg != 0) rate = std::max(rate, std::fabs(1200 * std::log2(ex1[k + 1].tempo / ex1[k].tempo)) / (15.0 / ex1[k].tempo));
+  const double render = (w1.workSeconds - w0.workSeconds) / std::max(1, w1.renders - w0.renders);
+  // (2 cents: the pitch measured over a slice's zero crossings, and the slice's tempo within it)
+  double achievable = kLiveCents + rate * w1.worstLateSeconds + 2;
+  if (limited > 0) achievable = std::max(achievable, kLiveCents + rate * (render / kRampDuty + render + kWake));
   double bound = 10;
-  if (from != to && limited > 0 && std::getenv("CI")) {
-    constexpr double kLiveCents = 8, kRampDuty = 0.7, kWake = 0.05;  // (as in the instrument)
-    double rate = 0;  // the fastest the tempo moves (cents a second)
-    for (size_t k = 0; k + 1 < ex1.size(); ++k)
-      rate = std::max(rate, std::fabs(1200 * std::log2(ex1[k + 1].tempo / ex1[k].tempo)) / (15.0 / ex1[k].tempo));
-    const double render = (w1.workSeconds - w0.workSeconds) / std::max(1, w1.renders - w0.renders);
-    bound = std::max(bound, kLiveCents + rate * (render / kRampDuty + render + kWake));
-    std::printf("# %s: a shared machine too slow for this tempo change: rate limited %d times, %.3f s a render, the tempo moving up to %.0f cents a second: within %.1f cents\n",
-                name, limited, render, rate, bound);
+  if (from != to) {
+    std::printf("# %s: realtime: the machine's delays: a render came up to %.3f s later than planned (%.3f s a render), %d wakeups rate limited, the tempo moving up to %.0f cents a second: %.1f cents achievable\n",
+                name, w1.worstLateSeconds, render, limited, rate, achievable);
+    if (std::getenv("CI")) bound = std::max(bound, achievable);
   }
   std::printf("# %s: realtime: the song took %.2f s of real time for %.2f s\n", name, songTook, songSecs);
   if (from != to) expect(worstRtLate <= bound, (std::string(name) + ": real time plays every slice within 10 cents once its tempo's render is there").c_str());

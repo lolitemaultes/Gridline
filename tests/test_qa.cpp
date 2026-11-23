@@ -4,6 +4,7 @@
 //
 //   gridline_tests_qa [project.json...]   extra projects get the undo stress too
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -40,6 +41,7 @@
 #include "core/Params.h"
 #include "core/PianoRollScript.h"
 #include "core/PluginInfo.h"
+#include "core/Platform.h"
 #include "core/Project.h"
 #include "core/flp/Flp.h"
 #include "core/flp/FlpExport.h"
@@ -1188,17 +1190,76 @@ void j46IndexStopsMidPass() {
   AudioBuffer buf(2, 44100);
   for (size_t i = 0; i < buf.data.size(); ++i) buf.data[i] = static_cast<float>(std::sin(static_cast<double>(i) * 0.01) * 0.3);
   for (int i = 0; i < 400; ++i) writeWav(dir + "/kick loop " + std::to_string(i) + ".wav", buf, 44100, 16);
-  browse::Index ix;
-  ix.setCacheFile(dir + "/index.json");
-  ix.setRoots({{dir, true}});
-  ix.start();
-  for (int k = 0; k < 200 && ix.done() < 3; ++k) std::this_thread::sleep_for(std::chrono::milliseconds(5));
-  const bool wasBusy = ix.busy();
-  const auto t0 = std::chrono::steady_clock::now();
-  ix.stop();
-  const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
-  std::printf("# index: stopped after %zu of 400 files in %.3f s\n", ix.done(), s);
-  expect(wasBusy && !ix.busy() && ix.done() < 400 && s < 2.0, "browser index: stop() ends an analysing pass promptly (shutdown before teardown)");
+  {
+    browse::Index ix;
+    ix.setCacheFile(dir + "/index.json");
+    ix.setRoots({{dir, true}});
+    ix.start();
+    for (int k = 0; k < 200 && ix.done() < 3; ++k) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    const bool wasBusy = ix.busy();
+    const size_t before = ix.done();
+    const auto t0 = std::chrono::steady_clock::now();
+    ix.stop();
+    const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    std::printf("# index: stopped after %zu of 400 files (%zu when stop was called, busy %d, background %d) in %.3f s\n", ix.done(),
+                before, wasBusy ? 1 : 0, ix.lowPriority() ? 1 : 0, s);
+    expect(wasBusy && !ix.busy() && ix.done() < 400 && s < 2.0, "browser index: stop() ends an analysing pass promptly (shutdown before teardown)");
+  }
+  // The worker runs as a background job. With every core busy (a loaded machine, a parallel test
+  // run) a background thread may not run again for seconds (Windows: about 4 s) after the cancel:
+  // stop() lifts it for the wait, so it still ends promptly. (Linux / BSD have no lift: a nice 19
+  // thread gets a small share of a core spun flat out by every other thread, so its stop there is
+  // as quick as the file it is analysing at that share.)
+#if defined(_MSC_VER) || defined(__APPLE__)
+  {
+    std::filesystem::remove(dir + "/index.json");
+    std::atomic<bool> spin{true};
+    std::vector<std::thread> load;
+    const unsigned n = std::max(2u, std::thread::hardware_concurrency());
+    for (unsigned i = 0; i < n; ++i)
+      load.emplace_back([&spin] {
+        volatile uint64_t x = 0;
+        while (spin.load(std::memory_order_relaxed)) x = x + 1;
+      });
+    browse::Index ix;
+    ix.setCacheFile(dir + "/index-load.json");
+    ix.setRoots({{dir, true}});
+    ix.start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    const bool wasBusy = ix.busy();
+    const size_t before = ix.done();
+    const auto t0 = std::chrono::steady_clock::now();
+    ix.stop();
+    const double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    spin = false;
+    for (auto& t : load) t.join();
+    std::printf("# index under load (%u busy threads): stopped after %zu of 400 files (%zu when stop was called, busy %d) in %.3f s\n", n,
+                ix.done(), before, wasBusy ? 1 : 0, s);
+    expect(wasBusy && !ix.busy() && s < 2.0, "browser index: stop() ends a pass promptly with every core busy (the background worker is lifted)");
+  }
+#endif
+  // The lift itself, where the system has one (Windows, macOS).
+  {
+    std::atomic<bool> go{false}, end{false};
+    std::thread t([&] {
+      platform::backgroundThisThread();
+      go = true;
+      while (!end) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    });
+    while (!go) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    bool lifted = false;
+    {
+      platform::ThreadLift lift(t);
+      lifted = lift.lifted();
+      end = true;
+      t.join();
+    }
+#if defined(_MSC_VER) || defined(__APPLE__)
+    expect(lifted, "platform: a background thread can be lifted from another thread (for a stop that waits for it)");
+#else
+    (void)lifted;
+#endif
+  }
   std::filesystem::remove_all(dir);
 }
 

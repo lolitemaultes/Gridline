@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <thread>
 #include <vector>
 #include "DataFolder.h"
 
@@ -54,9 +55,27 @@ void lowerThisThreadPriority();
 // lowerThisThreadPriority (Windows below normal, Linux nice 10 for this thread).
 void lowerThisThreadPriorityOnTime();
 // GitHub #66: the calling thread as a background job (work nobody waits for, such as indexing):
-// macOS background QoS (its CPU and disk use throttled), Linux nice 19 for this thread, Windows
-// background mode (lowest CPU, disk and memory priority). True when the system took it.
+// macOS background QoS (its CPU and disk use throttled), Linux nice 19 for this thread, Windows the
+// lowest priority of the normal class (Windows background mode is left out: only the thread itself
+// can end it, so a stop could not lift it; see ThreadLift). True when the system took it.
 bool backgroundThisThread();
+// A stop that waits for a background job (cancels, then joins it) lifts the job's thread to normal
+// scheduling for the wait: on a busy machine a background thread may otherwise not run again for
+// seconds (Windows runs a starved low priority thread only after about 4 s), so it could not see the
+// cancel. Make one before the join; the lift ends with it (after the join). Linux / BSD: nothing (a
+// nice 19 thread still gets its share of a busy core; raising it back needs a privilege).
+class ThreadLift {
+ public:
+  explicit ThreadLift(std::thread& t);
+  ~ThreadLift();
+  ThreadLift(const ThreadLift&) = delete;
+  ThreadLift& operator=(const ThreadLift&) = delete;
+  bool lifted() const { return lifted_; }  // the system took it (tests)
+
+ private:
+  void* override_ = nullptr;  // macOS: the QoS override
+  bool lifted_ = false;
+};
 std::string cacheRoot();
 std::string dataRoot();
 

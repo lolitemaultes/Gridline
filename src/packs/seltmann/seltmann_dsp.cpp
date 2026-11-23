@@ -84,6 +84,9 @@ using Clock = std::chrono::steady_clock;
 std::atomic<int64_t> gWarpBytes{0}, gWarpPeak{0}, gWarpWorkNs{0};
 std::atomic<int64_t> gWarpEvicted{0};  // (of them, those evicted for the memory cap, still in their grace period)
 std::atomic<int> gWarpRenders{0}, gWarpMoving{0}, gWarpSkipped{0}, gWarpThrottled{0};
+// (tests: the most a moving tempo's render came later than the worker planned for, from its wakeup
+// ending late and its stretch taking longer than the estimate it aimed with)
+std::atomic<int64_t> gWarpLateNs{0};
 
 struct WarpSlot;
 
@@ -472,8 +475,10 @@ class WarpService {
     platform::lowerThisThreadPriorityOnTime();
     std::unique_lock<std::mutex> lk(mu_);
     while (!stop_) {
+      const auto slept = Clock::now();
       cv_.wait_for(lk, std::chrono::milliseconds(30));
       if (stop_) break;
+      const double wokeLate = std::max(0.0, std::chrono::duration<double>(Clock::now() - slept).count() - 0.03);
       gl::threads::woke();  // K-142: CPU report
       std::vector<std::shared_ptr<WarpSlot>> live;
       for (auto it = slots_.begin(); it != slots_.end();) {
@@ -590,8 +595,12 @@ class WarpService {
           continue;
         }
         const auto t0 = Clock::now();
+        const double planned = s->renderSecs;
         auto r = timed([&] { return makeRender(s->src, s->grid, s->region(), target); }, &s->renderSecs);
-        f.movingBudget -= std::chrono::duration<double>(Clock::now() - t0).count();
+        const double took = std::chrono::duration<double>(Clock::now() - t0).count();
+        f.movingBudget -= took;
+        const auto lateNs = static_cast<int64_t>((wokeLate + std::max(0.0, took - planned)) * 1e9);
+        if (lateNs > gWarpLateNs.load(std::memory_order_relaxed)) gWarpLateNs.store(lateNs, std::memory_order_relaxed);
         // (a steady ramp: aimed about as far ahead as the render before, the same way)
         const bool steady = ahead * f.movingAhead > 0 && std::fabs(ahead) <= 2 * std::fabs(f.movingAhead) && std::fabs(f.movingAhead) <= 2 * std::fabs(ahead);
         f.movingDuty = steady ? kRampDuty : kMovingDuty;
@@ -1538,9 +1547,13 @@ WarpStats warpStatsForTest() {
   s.skipped = gWarpSkipped.load();
   s.throttled = gWarpThrottled.load();
   s.workSeconds = static_cast<double>(gWarpWorkNs.load()) * 1e-9;
+  s.worstLateSeconds = static_cast<double>(gWarpLateNs.load()) * 1e-9;
   return s;
 }
-void resetWarpPeakForTest() { gWarpPeak.store(gWarpBytes.load()); }
+void resetWarpPeakForTest() {
+  gWarpPeak.store(gWarpBytes.load());
+  gWarpLateNs.store(0);
+}
 
 // ================================================================== pack entry points
 
