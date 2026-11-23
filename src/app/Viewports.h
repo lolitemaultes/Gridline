@@ -49,6 +49,28 @@ bool available();
 std::string unavailableReason();
 // Detaching is on this frame (available and allowed).
 bool enabled();
+
+// 0.7.8 (user report: plugin windows covered Gridline's menus and notices). The app's other OS
+// windows above the main window this frame (the plugin windows), OS units: a menu, popup, combo
+// list, tooltip, modal dialog or notification card over one of them (or over a detached Gridline
+// window it does not belong to) is drawn in a top-most OS window of its own while it is there.
+void setCovers(const std::vector<SDL_Rect>& osRects);
+// An overlay of the last frame over one of them, OS units; `lifted`: in its own top-most window.
+// One that could not be lifted (windows outside the main one switched off, Wayland) is covered:
+// the plugin windows under it step aside while it is open.
+struct OverlayRect {
+  int x = 0, y = 0, w = 0, h = 0;
+  std::string name;
+  bool lifted = false;
+};
+const std::vector<OverlayRect>& overlaysOverCovers();
+// Before Begin() of a window that is an overlay without being a popup (the notification cards):
+// it is lifted like one. windowLifted(): inside Begin / End, the window is in an OS window of its
+// own now (it draws into its own draw list, not the main window's foreground).
+void nextWindowIsOverlay();
+// The rectangle (ImGui coordinates of the main window) is over one of them, and windows can be lifted.
+bool overCovers(ImVec2 p0, ImVec2 p1);
+bool windowLifted();
 // Per frame, before ImGui_ImplSDL2_NewFrame(): the "Allow windows outside the main window"
 // setting. Turning it off brings every window back first (exactly as before J-113 after that).
 void setAllowed(bool allowed);

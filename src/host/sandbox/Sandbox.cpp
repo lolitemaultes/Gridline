@@ -1,4 +1,5 @@
 #include "Sandbox.h"
+#include "../../core/ThreadName.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -697,6 +698,18 @@ class SandboxBackend final : public Backend {
   // Polls the child: its host events, processor output values, editor state.
   void idle() override {
     if (crashed_.load()) return;
+    // K-142: with no interface open, a plugin whose processor ran no block since the last poll
+    // (it rests, or nothing plays) and that was asked nothing meanwhile has nothing new for the
+    // host but what its own threads did: it is polled once a second instead of every frame, so a
+    // resting sandboxed plugin costs no calls. A block, any other call or an open interface makes
+    // the next frame poll again.
+    const uint32_t sent = stSent_.load(std::memory_order_relaxed);
+    const auto now = std::chrono::steady_clock::now();
+    if (!editor_ && !editorOpen_ && !idleDue_.load(std::memory_order_relaxed) && sent == idleSeq_ && now - idleAt_ < kIdleQuiet) return;
+    idleSeq_ = sent;
+    idleAt_ = now;
+    idleDue_.store(false, std::memory_order_relaxed);
+    stIdle_.fetch_add(1, std::memory_order_relaxed);
     Wr w;
     w.u8(OpIdle);
     std::string reply;
@@ -737,6 +750,7 @@ class SandboxBackend final : public Backend {
     }
     const int askedW = r.i32(), askedH = r.i32();  // the interface asked for a new size
     if (r.ok && askedW > 0 && askedH > 0) askedW_ = askedW, askedH_ = askedH;
+    if (changed || nk > 0 || askedW > 0) idleDue_.store(true, std::memory_order_relaxed);  // K-142: it had something: ask again next frame
     if (changed) {
       values_.clear();
       texts_.clear();
@@ -748,8 +762,9 @@ class SandboxBackend final : public Backend {
     return reason_;
   }
   std::string diagnostics() const override {
-    char b[320];
-    std::snprintf(b, sizeof b, "sandbox: blocks sent %u, answered %u, budget missed %u, in flight %d, last wait %.2f ms of %.2f ms (%s), crashed %d",
+    char b[400];
+    std::snprintf(b, sizeof b, "sandbox: calls %u, idle polls %u, blocks sent %u, answered %u, budget missed %u, in flight %d, last wait %.2f ms of %.2f ms (%s), crashed %d",
+                  stCalls_.load(std::memory_order_relaxed), stIdle_.load(std::memory_order_relaxed),
                   stSent_.load(std::memory_order_relaxed), shm_ ? shm_->done.load(std::memory_order_relaxed) : 0u,
                   stMissed_.load(std::memory_order_relaxed), stInflight_.load(std::memory_order_relaxed) ? 1 : 0,
                   stWaitUs_.load(std::memory_order_relaxed) / 1000.0, stBudgetUs_.load(std::memory_order_relaxed) / 1000.0,
@@ -943,18 +958,21 @@ class SandboxBackend final : public Backend {
           stInflight_.store(true, std::memory_order_relaxed);
           return false;
         }
-#if !defined(_WIN32)
-        // K-277: past a short spin, sleep until the child's "done" byte (or the budget) instead of
-        // spinning for the whole time the plugin computes: that doubled a sandboxed plugin's cost.
-        // (Whole milliseconds only: with less than one left it goes on spinning to the budget.)
+        // K-277: past a short spin, sleep until the child's "done" byte (Windows: its "done" event)
+        // or the budget instead of spinning for the whole time the plugin computes: that doubled a
+        // sandboxed plugin's cost. (Whole milliseconds only: with less than one left it goes on
+        // spinning to the budget.)
         const int leftMs = static_cast<int>((budget - waited) * 1000.0);
-        if (waited > kSpinSeconds && leftMs >= 1 && done_.r >= 0) {
+        if (waited > kSpinSeconds && leftMs >= 1 && done_.r != -1) {
+#if defined(_WIN32)
+          WaitForSingleObject(handleOf(done_.r), static_cast<DWORD>(leftMs));
+#else
           pollfd pf{static_cast<int>(done_.r), POLLIN, 0};
           ::poll(&pf, 1, leftMs);
           drainDone();
+#endif
           continue;
         }
-#endif
         std::this_thread::yield();
       }
     }
@@ -963,13 +981,14 @@ class SandboxBackend final : public Backend {
  private:
   SandboxBackend() : silence_(kBlock, 0.0f), params_(new ParamChange[kMaxParams]), events_(new NoteEvent[kMaxEvents]), midiBuf_(new MidiOut[kMaxMidiOut]) {}
 
-#if !defined(_WIN32)
-  // K-277: how long the audio thread spins for the child's answer before it sleeps on the pipe.
+  // K-277: how long the audio thread spins for the child's answer before it sleeps on the pipe
+  // (Windows: on the "done" event).
   static constexpr double kSpinSeconds = 50e-6;
-#endif
-  // K-277 (audio thread): the "done" bytes waiting (non-blocking reads).
+  // K-277 (audio thread): the "done" bytes waiting (non-blocking reads); Windows: the event reset.
   void drainDone() {
-#if !defined(_WIN32)
+#if defined(_WIN32)
+    if (done_.r != -1) ResetEvent(handleOf(done_.r));
+#else
     if (done_.r < 0) return;
     char buf[64];
     while (::read(static_cast<int>(done_.r), buf, sizeof buf) > 0) {
@@ -1004,8 +1023,12 @@ class SandboxBackend final : public Backend {
     // Three anonymous pipes (requests, replies, wake-ups); the child's ends are passed on its
     // command line with the block's name, and only they are inherited.
     HANDLE toChildR = nullptr, toChildW = nullptr, fromChildR = nullptr, fromChildW = nullptr, wakeR = nullptr, wakeW = nullptr;
-    if (!CreatePipe(&toChildR, &toChildW, nullptr, 1 << 16) || !CreatePipe(&fromChildR, &fromChildW, nullptr, 1 << 16) ||
+    // The child sets the "done" event after each block, so the audio thread can sleep on it rather
+    // than spin while the plugin computes (an auto-reset event; the start reflects only this block).
+    HANDLE doneEv = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    if (!doneEv || !CreatePipe(&toChildR, &toChildW, nullptr, 1 << 16) || !CreatePipe(&fromChildR, &fromChildW, nullptr, 1 << 16) ||
         !CreatePipe(&wakeR, &wakeW, nullptr, 4096)) {
+      if (doneEv) CloseHandle(doneEv);
       if (err) *err = "cannot create the sandbox channels";
       return false;
     }
@@ -1015,9 +1038,10 @@ class SandboxBackend final : public Backend {
     wake_ = Chan{-1, reinterpret_cast<std::intptr_t>(wakeW)};
     childRpc = Chan{reinterpret_cast<std::intptr_t>(toChildR), reinterpret_cast<std::intptr_t>(fromChildW)};
     childWake = Chan{reinterpret_cast<std::intptr_t>(wakeR), -1};
-    inherit = {childRpc.r, childRpc.w, childWake.r};
+    done_ = Chan{reinterpret_cast<std::intptr_t>(doneEv), -1};  // (the child gets the same event)
+    inherit = {childRpc.r, childRpc.w, childWake.r, done_.r};
     args[2] += "|" + std::to_string(childRpc.r) + "|" + std::to_string(childRpc.w) + "|" + std::to_string(childWake.r) + "|" +
-               std::to_string(platform::processId());
+               std::to_string(platform::processId()) + "|" + std::to_string(done_.r);
     // K-154: a job: whatever the plugin starts (a bridge's host process) ends with the sandbox.
     const unsigned flags = platform::Process::kInheritStderr | platform::Process::kTree;
 #else
@@ -1059,7 +1083,7 @@ class SandboxBackend final : public Backend {
       return false;
     }
     // The child opens the block first thing; unlink it once it has.
-    watcher_ = std::thread([this]() {
+    watcher_ = std::thread([this]() { gl::threads::setName("gl-sandbox-wait");
       proc_.wait();
       proc_.killTree();  // K-154: helpers the plugin left running
       exited_.store(true);
@@ -1073,6 +1097,8 @@ class SandboxBackend final : public Backend {
   // One request/response on the socket (UI thread).
   bool call(const std::string& req, std::string& reply, int timeoutMs) {
     if (crashed_.load() || !rpc_.valid()) return false;
+    if (req.empty() || static_cast<uint8_t>(req[0]) != OpIdle) idleDue_.store(true, std::memory_order_relaxed);  // K-142: what it answers to may leave host events
+    stCalls_.fetch_add(1, std::memory_order_relaxed);
     if (!sendMsg(rpc_, req) || !recvMsg(rpc_, reply, timeoutMs)) {
       if (!crashed_.load()) hang();
       return false;
@@ -1126,7 +1152,7 @@ class SandboxBackend final : public Backend {
   bool unlinked_ = false;
   Shm* shm_ = nullptr;
   ShmMap map_;
-  Chan rpc_, wake_, done_;  // (done_: POSIX only, K-277)
+  Chan rpc_, wake_, done_;  // (done_: the child's "done" pipe, Windows: its "done" event, K-277)
   platform::Process proc_;
   std::thread watcher_;
   std::atomic<bool> exited_{false}, crashed_{false};
@@ -1138,6 +1164,12 @@ class SandboxBackend final : public Backend {
   std::vector<OutputValue> outVals_;
   HostEventQueue pending_;
   bool editorOpen_ = false;
+  // K-142: the idle poll's pace (UI thread; idleDue_ is set by a call from any thread).
+  static constexpr std::chrono::milliseconds kIdleQuiet{1000};
+  uint32_t idleSeq_ = 0;  // blocks sent at the last poll
+  std::chrono::steady_clock::time_point idleAt_{};
+  std::atomic<bool> idleDue_{true};
+  std::atomic<uint32_t> stIdle_{0}, stCalls_{0};  // idle polls, calls of any kind (diagnostics)
   // audio thread
   std::vector<float> silence_;
   bool silentOut_ = true;
@@ -1497,7 +1529,7 @@ std::unique_ptr<Backend> createSandboxBackend(const std::string& exe, const std:
 int sandboxChildMain(const std::string& arg) {
   std::string shmName = arg;
 #if defined(_WIN32)
-  // "<block name>|<request pipe>|<reply pipe>|<wake pipe>|<parent pid>" (see spawn()).
+  // "<block name>|<request pipe>|<reply pipe>|<wake pipe>|<parent pid>|<done event>" (see spawn()).
   std::vector<std::string> parts;
   for (size_t a = 0;;) {
     const size_t b = arg.find('|', a);
@@ -1509,6 +1541,7 @@ int sandboxChildMain(const std::string& arg) {
   shmName = parts[0];
   const Chan rpc{static_cast<std::intptr_t>(std::stoll(parts[1])), static_cast<std::intptr_t>(std::stoll(parts[2]))};
   const Chan wake{static_cast<std::intptr_t>(std::stoll(parts[3])), -1};
+  const std::intptr_t doneEv = parts.size() >= 6 ? static_cast<std::intptr_t>(std::stoll(parts[5])) : -1;
 #else
   ::signal(SIGPIPE, SIG_IGN);
   const Chan rpc{kRpcFd, kRpcFd};
@@ -1522,14 +1555,11 @@ int sandboxChildMain(const std::string& arg) {
 #if !defined(_WIN32)
   const int doneFd = ::fcntl(kDoneFd, F_GETFD) != -1 ? kDoneFd : -1;  // K-277
 #else
-  const int doneFd = -1;  // Windows: the parent spins for the answer (no "done" pipe)
+  const std::intptr_t doneFd = doneEv;  // Windows: the "done" event
 #endif
-  std::thread audio([child, wake, doneFd]() {
+  std::thread audio([child, wake, doneFd]() { gl::threads::setName("gl-sandbox-aud");
     char buf[64];
     uint32_t last = 0;
-#if defined(_WIN32)
-    (void)doneFd;
-#endif
     for (;;) {
 #if defined(_WIN32)
       DWORD got = 0;
@@ -1544,7 +1574,9 @@ int sandboxChildMain(const std::string& arg) {
       last = seq;
       child->run();
       child->shm->done.store(seq, std::memory_order_release);
-#if !defined(_WIN32)
+#if defined(_WIN32)
+      if (doneFd != -1) SetEvent(handleOf(doneFd));  // wakes the parent waiting on it
+#else
       if (doneFd >= 0) {  // K-277: wakes the parent (non-blocking: a full pipe means it is awake anyway)
         const char one = 1;
         (void)!::write(doneFd, &one, 1);
@@ -1563,7 +1595,13 @@ int sandboxChildMain(const std::string& arg) {
     } else
 #endif
     {
-      ready = waitReadable(rpc, 50);
+#if defined(_WIN32)
+      ready = waitReadable(rpc, 50);  // (the plugin's posted work is pumped below between waits)
+#else
+      // K-142: no interface open: nothing runs on this thread but the parent's calls, so it sleeps
+      // until one comes (the parent leaving closes the socket, which wakes it to exit).
+      ready = waitReadable(rpc, -1);
+#endif
     }
     if (ready) {
       std::string msg;

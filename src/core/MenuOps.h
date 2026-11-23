@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include "Document.h"
+#include "Timeline.h"
 
 namespace gl::ops {
 
@@ -47,15 +48,21 @@ bool setChannelsColor(Document& d, const std::vector<ObjectId>& channels, Rgb co
 // Blends colours from the first to the last channel's colour (rack order).
 bool gradientColor(Document& d, const std::vector<ObjectId>& channels);
 bool setChannelsMuted(Document& d, const std::vector<ObjectId>& channels, bool muted);
+// GitHub #58: hides the channels from the channel rack (or shows them again), one undo step;
+// channels already so are left alone. Returns true when one changed.
+bool setChannelsRackHidden(Document& d, const std::vector<ObjectId>& channels, bool hidden);
+// The channels hidden from the rack, in rack order.
+std::vector<ObjectId> rackHiddenChannels(const Song& s);
 // Transposes the channels' notes in one pattern.
 bool transposeChannels(Document& d, ObjectId pattern, const std::vector<ObjectId>& channels, int semitones);
 enum class ChannelSort { Name, Color, MixerTrack, Instrument };
 bool sortChannels(Document& d, ChannelSort by);
 // Moves several channels one row up (dir < 0) or down (dir > 0) keeping their order.
 bool moveChannels(Document& d, const std::vector<ObjectId>& channels, int dir);
-std::vector<ObjectId> cloneChannels(Document& d, const std::vector<ObjectId>& channels);
+std::vector<ObjectId> cloneChannels(Document& d, const std::vector<ObjectId>& channels,
+                                    Document::CloneNotes what = Document::CloneNotes::All, ObjectId pattern = kNoId);
 bool removeChannels(Document& d, const std::vector<ObjectId>& channels);
-// Channels without steps or notes in any pattern.
+// Channels without steps or notes in any pattern that no playlist audio clip plays from.
 std::vector<ObjectId> unusedChannels(const Song& s);
 // Insert tracks nothing uses yet: no channel output (main or extra), no
 // effects, no incoming sends, no playlist track link, not armed or given an
@@ -145,6 +152,8 @@ using NoteSel = std::vector<bool>;
 void sortNotes(std::vector<Note>& notes, NoteSel& sel);
 // Moves starts (and optionally ends) to the nearest grid line.
 void quantize(std::vector<Note>& notes, NoteSel& sel, Tick grid, bool ends);
+// The same on a grid that may be a fraction of a tick (quintuplets, septuplets): GitHub #58.
+void quantize(std::vector<Note>& notes, NoteSel& sel, const SnapGrid& grid, bool ends);
 // Stretches each note to the start of the next note (same channel, any pitch).
 void legato(std::vector<Note>& notes, NoteSel& sel);
 // Cuts notes into pieces of `len` ticks.

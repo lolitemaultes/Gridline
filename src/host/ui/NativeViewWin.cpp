@@ -130,6 +130,70 @@ void setContainerFrame(const Window&, void* container, const layout::Rect& r) {
   if (container) SetWindowPos(hwndOf(container), nullptr, r.x, r.y, std::max(1, r.w), std::max(1, r.h), SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+// 0.7.8: docked interfaces. The container sits in a clipping child window of its own, moved and
+// sized to the part shown; holes are cut with a window region.
+namespace {
+std::map<void*, HWND>& dockedWin() {
+  static std::map<void*, HWND> m;
+  return m;
+}
+}  // namespace
+
+void* createDockedContainer(const Window& w, const layout::Rect& full) {
+  if (!w.handle || !registerClass()) return nullptr;
+  HWND clip = CreateWindowExW(0, kContainerClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, full.x, full.y, std::max(1, full.w),
+                              std::max(1, full.h), hwndOf(w.handle), nullptr, moduleInstance(), nullptr);
+  if (!clip) return nullptr;
+  HWND c = CreateWindowExW(0, kContainerClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, std::max(1, full.w), std::max(1, full.h),
+                           clip, nullptr, moduleInstance(), nullptr);
+  if (!c) {
+    DestroyWindow(clip);
+    return nullptr;
+  }
+  SetWindowPos(clip, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+  dockedWin()[c] = clip;
+  watchKeys(c);
+  return c;
+}
+
+void setDockedFrame(const Window&, void* container, const layout::Rect& full, const layout::Rect& visible, const std::vector<layout::Rect>& holes) {
+  auto it = dockedWin().find(container);
+  if (it == dockedWin().end()) return;
+  HWND clip = it->second;
+  if (visible.empty()) {
+    ShowWindow(clip, SW_HIDE);
+    return;
+  }
+  SetWindowPos(clip, nullptr, visible.x, visible.y, std::max(1, visible.w), std::max(1, visible.h), SWP_NOZORDER | SWP_NOACTIVATE);
+  SetWindowPos(hwndOf(container), nullptr, full.x - visible.x, full.y - visible.y, std::max(1, full.w), std::max(1, full.h), SWP_NOZORDER | SWP_NOACTIVATE);
+  if (holes.empty()) {
+    SetWindowRgn(clip, nullptr, TRUE);
+  } else {
+    HRGN rgn = CreateRectRgn(0, 0, visible.w, visible.h);
+    for (const layout::Rect& h : holes) {
+      HRGN cut = CreateRectRgn(h.x - visible.x, h.y - visible.y, h.right() - visible.x, h.bottom() - visible.y);
+      CombineRgn(rgn, rgn, cut, RGN_DIFF);
+      DeleteObject(cut);
+    }
+    SetWindowRgn(clip, rgn, TRUE);  // the window owns the region now
+  }
+  ShowWindow(clip, SW_SHOWNA);
+}
+
+void destroyDockedContainer(const Window&, void* container) {
+  auto it = dockedWin().find(container);
+  if (it == dockedWin().end()) return;
+  HWND clip = it->second;
+  dockedWin().erase(it);
+  unwatchKeys(container);
+  DestroyWindow(hwndOf(container));
+  DestroyWindow(clip);
+}
+
+bool dockedHolesCut() { return true; }
+bool takeDockedPress(void*) { return false; }
+void releaseKeyFocus(void*) {}
+
 void containerMoved(const Window&, void*) {}
 
 void destroyContainer(const Window&, void* container) {
@@ -160,6 +224,8 @@ PointerSize pointerSize(const Window&) {
   return r;
 }
 bool captureWindow(const Window&, const std::string&, const unsigned char*, int, int) { return false; }
+bool captureStack(const Window&, const unsigned char*, int, int, const std::string&) { return false; }
+long windowLevel(const Window&) { return 0; }
 
 void watchKeys(void* container) {
   if (!container) return;
@@ -228,6 +294,12 @@ bool frameClockStart(const Window&) { return false; }  // vsync swap (SDL)
 void frameClockFollow(const Window&) {}
 void frameClockWait() {}
 void frameClockStop() {}
+void frameClockIdle(bool) {}
+bool frameClockSleep(double) { return false; }
+void frameClockWake() {}
+bool windowOnScreen(const Window&) { return true; }
+void watchOnScreen(const Window&) {}
+int onScreenChanges() { return 0; }
 void keepAwake(bool) {}
 
 void startDrawStats(void*) {}
@@ -235,6 +307,7 @@ DrawStats takeDrawStats() { return {}; }
 void devDrag(const Window&, void*, int, int, double) {}
 void devPostMouse(const Window&, int, double, double) {}
 void orderAbove(const Window&, const Window&) {}
+void setTakesNoKeys(const Window&, bool) {}
 void raiseChild(const Window&, const Window&) {}  // an activated owned window comes to the top of its owner's windows
 void devLiveResize(const Window&, double, double, int) {}
 void devPerformClose(const Window&) {}

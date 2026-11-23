@@ -8,6 +8,7 @@
 // A meter change always starts a new bar. When one sits inside a bar, that bar ends early at the
 // change (a "short bar") and keeps its number; the next bar starts at the change.
 #pragma once
+#include <algorithm>
 #include <cstdint>
 #include <vector>
 #include "Song.h"
@@ -50,8 +51,22 @@ class MeterMap {
   static MeterMap forPattern(const Song& s, const Pattern* p) {
     MeterMap m;
     m.setConstant(p ? s.patternMeterNum(*p) : s.timeSigNum, p ? s.patternMeterDen(*p) : s.timeSigDen, s.ppq);
+    if (p && s.ticksPerStep(*p) > 0) m.setStep(s.ticksPerStep(*p));  // the grid's Step is the pattern's own step
     return m;
   }
+  // K-255: the same for editing one channel's row: a row on its own grid (5 a bar) gives the
+  // Row grid snap its step, bar / grid (a fraction of a tick where the bar does not divide).
+  static MeterMap forPattern(const Song& s, const Pattern* p, ObjectId channel) {
+    MeterMap m = forPattern(s, p);
+    if (p)
+      if (auto it = p->lanes.find(channel); it != p->lanes.end() && it->second.grid > 0 && it->second.grid != p->stepsPerBar)
+        m.setRowGrid(s.patternBarTicks(*p), it->second.grid);
+    return m;
+  }
+  // K-255: the Row grid snap's size, num / den ticks (num 0: none, the snap is a step).
+  void setRowGrid(Tick num, Tick den) { rowNum_ = num > 0 && den > 0 ? num : 0, rowDen_ = den > 0 ? den : 1; }
+  Tick rowGridNum() const { return rowNum_; }
+  Tick rowGridDen() const { return rowDen_; }
 
   const std::vector<MeterSeg>& segments() const { return segs_; }
   size_t segIndex(Tick t) const;           // the section that holds t (t < 0: the first)
@@ -62,6 +77,9 @@ class MeterMap {
   // The song's base meter's bar and beat (the sizes Song::barTicks/beatTicks return).
   Tick baseBar() const { return baseBar_; }
   Tick baseBeat() const { return baseBeat_; }
+  // The grid's step: a sixteenth note, or a pattern's own step (12 or 24 steps a bar ...).
+  Tick stepTicks() const { return step_ > 0 ? step_ : std::max<Tick>(1, ppq_ / 4); }
+  void setStep(Tick t) { step_ = t > 0 ? t : 0; }
   // Changes in the song, cheap to compare: equal maps give equal signatures.
   uint64_t signature() const;
 
@@ -108,6 +126,8 @@ class MeterMap {
   std::vector<MeterSeg> segs_;
   int ppq_ = kDefaultPpq;
   Tick baseBar_ = 384, baseBeat_ = 96;
+  Tick step_ = 0;  // 0: a sixteenth note
+  Tick rowNum_ = 0, rowDen_ = 1;  // K-255: the Row grid snap (0: none)
 };
 
 }  // namespace gl

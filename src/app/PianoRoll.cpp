@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <unordered_map>
+#include "ClipEditor.h"
 #include "../core/MenuOpsExtra.h"
 #include "PixelGrid.h"
 #include "Viewports.h"
@@ -27,22 +28,28 @@
 #include "../core/MenuParity.h"
 #include "../core/MeterEdit.h"
 #include "../core/NoteBend.h"
+#include "../core/NoteVibrato.h"
 #include "../core/NoteExprEdit.h"
 #include "../core/NoteLaneEdit.h"
 #include "../core/NoteTools.h"
 #include "../core/SmoothSnap.h"
 #include "../core/StepNotes.h"
+#include "../core/Lanes.h"
+#include "LaneUi.h"
 #include "../core/TrackerGrid.h"
 #include "Theme.h"
 #include "TrackIcons.h"
 #include "TrackerPages.h"
 #include "LiveLook.h"
 #include "Widgets.h"
+#include "SnapMenu.h"
 #include "Windows.h"
 #include "BrowserUi.h"
 #include "ChordStampUi.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
+#include "PianoVibrato.h"
+#include "DragLog.h"
 
 namespace gl {
 
@@ -89,8 +96,16 @@ float zoomSlider(const char* id, bool horizontal, float t, float h, const char* 
   dl->AddCircleFilled(ImVec2(tx, cy + 0.5f), 5.5f, theme::withAlpha(P.ink, 0.35f), 16);
   dl->AddCircleFilled(ImVec2(tx, cy), 5.0f, act ? theme::mix(P.text, P.accent, 0.3f) : hov ? P.paper : P.text, 16);
   if (hov) ui::Hint(hint);
+  if (horizontal) zoomSliderGeometry(1) = {x0, x1, cy, ImGui::GetFrameCount()};
+  // 0.7.8: a press on the knob keeps its offset from the knob's centre (the value stays put until the
+  // pointer moves); a press on the line beside it jumps there.
+  // The time zoom's drag is finer than the line (zoomSliderFine): relative to the press, the knob following the zoom.
+  static float grab = 0;
+  const float mx = ImGui::GetIO().MousePos.x, knobX = x0 + (x1 - x0) * tc;
+  if (horizontal) return zoomSliderFine(t, x0, x1 - x0, knobX);
+  if (ImGui::IsItemActivated()) grab = std::fabs(mx - knobX) <= 7.0f ? knobX - mx : 0.0f;
   if (act && (ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f) || ImGui::IsItemActivated()))
-    return std::clamp((ImGui::GetIO().MousePos.x - x0) / std::max(1.0f, x1 - x0), 0.0f, 1.0f);
+    return std::clamp((mx + grab - x0) / std::max(1.0f, x1 - x0), 0.0f, 1.0f);
   return -1.0f;
 }
 constexpr double kRowZoomStep = 1.1;
@@ -125,7 +140,7 @@ int gReadPitch = -1;
 Tick gReadTick = 0;
 
 struct Gesture {
-  enum Kind { None, Move, Resize, Select, Paint, Erase, Velocity, Slice, Scrub, Mute, Play, Zoom, Detune, Keys, Bend, BendCurve } kind = None;
+  enum Kind { None, Move, Resize, Select, Paint, Erase, Velocity, Slice, Scrub, Mute, Play, Zoom, Detune, Keys, Bend, BendCurve, Vibrato } kind = None;
   int bendPt = -1;  // K-25: the bend point dragged (index in the note's line at gesture start), -1 = a new one
                     // (BendCurve, K-28: the point ending the segment whose curve handle is dragged)
   double bendT = 0, bendV = 0;  // K-25: where it is now (ticks from the note start, semitones)
@@ -137,6 +152,7 @@ struct Gesture {
   Tick startTick = 0;
   int startPitch = 0;
   std::vector<Note> base;   // notes at gesture start (sorted)
+  pianovib::Drag vib;       // K-262: a vibrato drag (its handle, the notes it edits)
   std::vector<bool> sel;    // selection at gesture start
   int anchor = -1;          // note index the gesture started on
   uint64_t key = 0;
@@ -460,6 +476,21 @@ struct BendClick {
 };
 BendClick bendClick;
 int bendFrontNote = -1;  // K-28: the note whose line was hovered last frame (drawn on top)
+pianovib::Hit vibHover;      // K-262: the vibrato part under the pointer (Vibrato tool)
+int vibMenuNote = -1;        // K-262: the note whose vibrato menu is open
+int vibWheelNote = -1;       // K-262: last frame's hovered vibrato note (the wheel sets its rate)
+// Studio's tool row: the Vibrato tool's icon gives way to the zoom buttons in a cramped toolbar (it
+// shows again once the toolbar has room for both). The tool stays on V and in the Tool menu.
+bool vibIconOff = false;
+int devVibIcon = -1, devZoomBtns = -1;  // dev ("pianobar"): last frame's icon and zoom buttons drawn
+// Studio's tool row folds the tools that do not fit into one "..." button (dev: what last frame drew).
+int devFoldShown = -1;                // tools in the row (-1: no Studio tool row)
+std::string devFoldHidden;            // the folded tools, as listed
+ImVec4 devFoldMore(-1, -1, -1, -1);   // the "..." button
+ImVec4 devFoldRow0(-1, -1, -1, -1);   // its list's first row (while open)
+float devFoldRowH = 0;                // the list's row pitch
+std::string vibReadout;      // K-262: the drag's readout by the pointer
+uint64_t vibStripGen = 1;    // K-262: the toolbar strip's undo step (one per press)
 int bendMenuNote = -1, bendMenuPoint = -1;  // K-28: the point whose curve menu is open (-1 = none)
 uint64_t bendMenuKey = 0;                   // K-28: undo key of the menu's curve amount drag
 
@@ -535,6 +566,19 @@ bool curveMenuItem(const char* id, const char* label, uint8_t curve, float tensi
 }  // namespace
 
 const PianoLaneGeometry& pianoLaneGeometry() { return laneGeo; }
+void pianoToolbarState(int& vibIcon, int& zoomButtons) { vibIcon = devVibIcon, zoomButtons = devZoomBtns; }
+std::string pianoToolbarFold() {
+  char b[256];
+  if (devFoldShown < 0 || devFoldHidden.empty()) {
+    std::snprintf(b, sizeof b, "row %d more 0", devFoldShown);
+    return b;
+  }
+  std::snprintf(b, sizeof b, "row %d more 1 at %.0f %.0f %.0f %.0f list %.0f %.0f %.0f %.0f pitch %.0f hidden ", devFoldShown,
+                static_cast<double>(devFoldMore.x), static_cast<double>(devFoldMore.y), static_cast<double>(devFoldMore.z),
+                static_cast<double>(devFoldMore.w), static_cast<double>(devFoldRow0.x), static_cast<double>(devFoldRow0.y),
+                static_cast<double>(devFoldRow0.z), static_cast<double>(devFoldRow0.w), static_cast<double>(devFoldRowH));
+  return b + devFoldHidden;
+}
 
 // Notes added by Draw / Paint: one note, or a chord when a stamp is chosen; on
 // the scale when snapping to it.
@@ -558,6 +602,46 @@ std::vector<Note> notesToAdd(const PianoRollState& st, Note n) {
 // (Notes: velocity, Envelopes: the pattern's automation, MPE: each note's own expression and the
 // pitch bend tool); right: More (follow, quantize, ghost notes, slide, note colour, meter, zoom)
 // and the grid. Nothing the full toolbar offers is lost; Studio keeps the full toolbar.
+// K-262: the Vibrato tool's strip (preset, depth, rate, Sync): the defaults for new vibrato, and
+// the selected notes' vibrato. One undo step per press.
+static void vibratoStrip(App& a, const Pattern* pat, const Channel* chan) {
+  std::vector<Note> ns = pat && chan ? rollNotes(a, pat->id, chan->id) : std::vector<Note>{};
+  std::vector<size_t> sel;
+  if (pat && chan && a.piano.selPattern == pat->id && a.piano.selChannel == chan->id) sel.assign(a.piano.selected.begin(), a.piano.selected.end());
+  const char* label = "note vibrato";
+  if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) ++vibStripGen;
+  if (pianovib::toolbarStrip(a, pat && chan ? &ns : nullptr, sel, label) && pat && chan)
+    commit(a, pat->id, chan->id, ns, selVector(a, ns.size()), label, 0x5649420000000000ull ^ vibStripGen);
+}
+
+// K-262: the strip where the toolbar has room for it (about 15 rows of height); otherwise a
+// "Vibrato" button that opens it in a popup, so a narrow piano roll still reaches the defaults.
+static void vibratoStripOrButton(App& a, const Pattern* pat, const Channel* chan, float room) {
+  const float fh = ImGui::GetFrameHeight();
+  if (room > fh * 15.5f) {
+    vibratoStrip(a, pat, chan);
+    return;
+  }
+  const char* hint = "The vibrato a note gets with the Vibrato tool: preset, depth and rate";
+  if (room >= fh * 3.5f) {
+    if (ui::TextButton(i18n::tr("Vibrato"), ImGui::IsPopupOpen("##vibstrippop"), 0.0f, hint)) ImGui::OpenPopup("##vibstrippop");
+  } else if (room >= fh) {  // a crowded toolbar: the tool's own icon, in its colour
+    if (ui::IconButton("##vibstripbtn", ui::Icon::Sine, ImGui::IsPopupOpen("##vibstrippop"), fh, hint, pianovib::kViolet, pianovib::kViolet))
+      ImGui::OpenPopup("##vibstrippop");
+  } else {
+    return;
+  }
+  if (ImGui::BeginPopup("##vibstrippop")) {
+    vibratoStrip(a, pat, chan);
+    ImGui::EndPopup();
+  }
+}
+
+void pianoVibratoStrip(App& a) {
+  const Song& s = a.doc.song();
+  vibratoStrip(a, s.pattern(a.curPattern), s.channel(a.selChannel));
+}
+
 static void liveToolbar(App& a, const Pattern*& pat, const Channel*& chan, const MeterMap& pm) {
   const auto& P = pal();
   const Song& s = a.doc.song();
@@ -576,6 +660,7 @@ static void liveToolbar(App& a, const Pattern*& pat, const Channel*& chan, const
   struct T { ui::Icon icon; Tool tool; const char* name; const char* key; uint32_t role; };
   static const T tools[] = {{ui::Icon::ToolDraw, Tool::Draw, i18n::N_("Draw"), "piano.toolDraw", theme::role::kDraw},
                             {ui::Icon::ToolBend, Tool::Bend, i18n::N_("Pitch bend"), "piano.toolBend", theme::role::kGraph},
+                            {ui::Icon::Sine, Tool::Vibrato, i18n::N_("Vibrato"), "piano.toolVibrato", theme::role::kGraph},
                             {ui::Icon::ToolPaint, Tool::Paint, i18n::N_("Paint"), "piano.toolPaint", theme::role::kPaint},
                             {ui::Icon::ToolDelete, Tool::Erase, i18n::N_("Delete"), "piano.toolDelete", theme::role::kDelete},
                             {ui::Icon::ToolSelect, Tool::Select, i18n::N_("Select"), "piano.toolSelect", theme::role::kSelect},
@@ -646,6 +731,14 @@ static void liveToolbar(App& a, const Pattern*& pat, const Channel*& chan, const
     }
     ui::Hint("The clip's scale: its key and scale (rows outside it can be shaded, drawn notes can snap to it)");
   }
+  if (st.tool == Tool::Vibrato) {  // K-262: the lane tabs, More and the grid on the right keep their room
+    const float keep = std::clamp(W * 0.1f, 84.0f, 120.0f) + fh * 2 + 8 + (56.0f * 3 + 4 + 24);
+    const float room = x0 + W - keep - ImGui::GetItemRectMax().x - 12;
+    if (room > fh * 4) {
+      ui::ToolbarDivider();
+      vibratoStripOrButton(a, pat, chan, room);
+    }
+  }
   const float leftEnd = ImGui::GetItemRectMax().x;
   // Right: More, then the grid.
   // K-112c (round 24): the pop-out button at the far right (the clip band shows no tab bar).
@@ -655,7 +748,7 @@ static void liveToolbar(App& a, const Pattern*& pat, const Channel*& chan, const
   // Middle: the lane tabs, centred in the toolbar when they fit, else after the left group.
   static const char* const tabs[] = {i18n::N_("Notes"), i18n::N_("Envelopes"), i18n::N_("MPE")};
   const bool autoLane = pianoAutomationLane().owner != kNoId;
-  int tab = autoLane ? 1 : lane != Lane::Velocity || st.tool == Tool::Bend ? 2 : 0;
+  int tab = autoLane ? 1 : lane != Lane::Velocity || st.tool == Tool::Bend || st.tool == Tool::Vibrato ? 2 : 0;
   float segW = 76.0f;
   // Highlight scale sits after the scale when the row has room for it and the tabs.
   const float hlW = ImGui::CalcTextSize(i18n::tr("Highlight scale")).x + fh + 8;
@@ -681,7 +774,7 @@ static void liveToolbar(App& a, const Pattern*& pat, const Channel*& chan, const
       if (tab == 0) {
         lane = Lane::Velocity;
         pianoAutomationLane() = ParamId{};
-        if (st.tool == Tool::Bend) st.tool = Tool::Draw;
+        if (st.tool == Tool::Bend || st.tool == Tool::Vibrato) st.tool = Tool::Draw;
       } else if (tab == 1) {
         ImGui::OpenPopup("##envlive");
       } else {
@@ -700,6 +793,7 @@ static void liveToolbar(App& a, const Pattern*& pat, const Channel*& chan, const
         if (ImGui::MenuItem(i18n::tr(kLaneNames[k]), nullptr, !autoLane && static_cast<int>(lane) == k)) lane = static_cast<Lane>(k), pianoAutomationLane() = ParamId{};
       ImGui::Separator();
       if (ImGui::MenuItem(i18n::tr("Pitch bend tool"), keys::label("piano.toolBend"), st.tool == Tool::Bend)) st.tool = Tool::Bend;
+      if (ImGui::MenuItem(i18n::tr("Vibrato"), keys::label("piano.toolVibrato"), st.tool == Tool::Vibrato)) st.tool = Tool::Vibrato;  // K-262
       ImGui::EndPopup();
     }
   }
@@ -714,7 +808,7 @@ static void liveToolbar(App& a, const Pattern*& pat, const Channel*& chan, const
     if (ImGui::MenuItem(i18n::tr("Follow the pattern position"), nullptr, follow)) a.settings.set("ui.autoScrollPattern", !follow);
     if (ImGui::MenuItem(i18n::tr("Quantize"), keys::shownText("Ctrl+Q"), false, pat && chan)) {
       if (std::vector<Note> ns = rollNotes(a, pat->id, chan->id); !ns.empty()) {
-        const Tick gsz = st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap);
+        const SnapGrid gsz = st.effGrid > 1 ? st.effGrid : snapSize(pm, st.snap);
         auto sel = selVector(a, ns.size());
         const bool any = !st.selected.empty();
         for (size_t i = 0; i < ns.size(); ++i)
@@ -759,15 +853,14 @@ static void liveToolbar(App& a, const Pattern*& pat, const Channel*& chan, const
   }
   // The grid: the snap and its value.
   ImGui::SameLine(0, 4);
-  std::string snapLabel = snapName(st.snap);
-  if ((st.snap == Snap::Line || st.snap == Snap::Cell) && st.effGrid > 0) {
+  std::string snapLabel = snapmenu::label(st.snap);
+  if (adaptiveSnap(st.snap) && st.effGrid > 0 && !st.effGrid.fractional()) {
     // As a note value (1/16) when it is one, as the refs show the grid; else its name (bar, step...).
-    const Tick whole = static_cast<Tick>(s.ppq) * 4;
-    snapLabel = st.effGrid <= whole && whole % st.effGrid == 0 ? "1/" + std::to_string(whole / st.effGrid) : timeline::gridName(pm, st.effGrid);
+    const Tick whole = static_cast<Tick>(s.ppq) * 4, eg = st.effGrid;
+    snapLabel = eg <= whole && whole % eg == 0 ? "1/" + std::to_string(whole / eg) : timeline::gridName(pm, eg);
   }
   if (ui::BeginCombo("##snaplive", snapLabel.c_str(), gridW)) {
-    for (int i = 0; i <= static_cast<int>(Snap::Bar); ++i)
-      if (ImGui::Selectable(snapName(static_cast<Snap>(i)), st.snap == static_cast<Snap>(i))) st.snap = static_cast<Snap>(i);
+    snapmenu::items(st.snap, true, false);
     ImGui::EndCombo();
   }
   ui::Hint("The grid: notes snap to it (Line and Cell follow the zoom); hold Alt while dragging to bypass");
@@ -798,7 +891,7 @@ void drawPianoRoll(App& a) {
   // K-112 (Live): an audio clip selected: the band shows that clip (its sample), not the notes.
   if (livelook::active(a))
     if (const ObjectId ac = livelook::focusedAudioClip(a); ac != kNoId) {
-      drawLiveAudioClip(a, ac);
+      clipeditor::drawBody(a, ac, ImGui::GetContentRegionAvail(), clipeditor::Host::Clips);  // K-249: the audio clip editor
       ui::EndDockWindow();
       return;
     }
@@ -827,14 +920,25 @@ void drawPianoRoll(App& a) {
   const Song& s = a.doc.song();
   PianoRollState& st = a.piano;
   const Pattern* pat = s.pattern(a.curPattern);
-  // K-179: pattern time follows the pattern's own meter (grid, bars, ruler, snap).
-  const MeterMap pm = MeterMap::forPattern(s, pat);
+  // K-179: pattern time follows the pattern's own meter (grid, bars, ruler, snap). K-255: a row on
+  // its own grid gives the Row grid snap its step, and the snap menus offer it.
+  const MeterMap pm = MeterMap::forPattern(s, pat, a.selChannel);
+  struct RowGridOffer {
+    RowGridOffer(const Song& so, const Pattern* p, ObjectId ch) {
+      if (p && lanes::ownGrid(*p, ch))
+        snapmenu::offerRowGrid(std::string(i18n::tr("Row grid")) + ": " + laneui::gridText(so, *p, lanes::grid(*p, ch)) + " (" + i18n::tr("the channel's") + ")");
+    }
+    ~RowGridOffer() { snapmenu::offerRowGrid(""); }
+  } rowGridOffer(s, pat, a.selChannel);
   const Channel* chan = s.channel(a.selChannel);
   // J-159: an instrument that names its keys (a deck setup's performance keys) shows the names
   const PluginInfo* chanInfo = chan ? findPlugin(chan->plugin.type) : nullptr;
+  // 0.7.8: an instrument whose key names follow the instance (Seltmann's regions) names them per channel
+  const std::vector<std::string> instNames = chanInfo && chanInfo->instanceKeyNames ? chanInfo->instanceKeyNames(chan->plugin) : std::vector<std::string>{};
+  const std::vector<std::string>* namedKeys = !instNames.empty() ? &instNames : chanInfo ? &chanInfo->keyNames : nullptr;
   auto keyLabel = [&](int p) -> const std::string* {
-    if (!chanInfo || p < 0 || p >= static_cast<int>(chanInfo->keyNames.size())) return nullptr;
-    const std::string& n = chanInfo->keyNames[static_cast<size_t>(p)];
+    if (!namedKeys || p < 0 || p >= static_cast<int>(namedKeys->size())) return nullptr;
+    const std::string& n = (*namedKeys)[static_cast<size_t>(p)];
     return n.empty() ? nullptr : &n;
   };
   if (st.selPattern != a.curPattern || st.selChannel != a.selChannel) {
@@ -957,11 +1061,24 @@ void drawPianoRoll(App& a) {
     ui::ToolbarDivider();
     // Q-12: the shared tool family; tooltips "Name (key): what it does" from the keymap.
     struct T { ui::Icon icon; Tool tool; const char* name; const char* desc; const char* key; uint32_t role; };
+    // k078: Smooth's and Clips' left tool is a pointer: on a note it moves and resizes, as the tracks area's does.
+    const bool pointerTool = logicplug::active(a) || livelook::active(a);
+#ifdef __APPLE__
+    static const char* const kPointerToolTip =
+        i18n::N_("drag a note to move it, its right end to resize it, Cmd+drag to copy it; drag on an empty spot to select with a box, Shift adds");
+#else
+    static const char* const kPointerToolTip =
+        i18n::N_("drag a note to move it, its right end to resize it, Ctrl+drag to copy it; drag on an empty spot to select with a box, Shift adds");
+#endif
     const T tools[] = {{ui::Icon::ToolDraw, Tool::Draw, i18n::N_("Draw"), i18n::N_("click to add, Shift+click and drag to set the new note's length, drag to move, drag the end to resize, right-click deletes"), "piano.toolDraw", theme::role::kDraw},
                        {ui::Icon::ToolBend, Tool::Bend, i18n::N_("Pitch bend"), i18n::N_("drag anywhere on a note to bend its pitch like an automation line (semitone steps, Alt: free); right-click a point: its curve menu, Shift+click: its next curve; double-click a point to remove it, a curve to straighten it, the note to reset its line"), "piano.toolBend", theme::role::kGraph},
+                       {ui::Icon::Sine, Tool::Vibrato, i18n::N_("Vibrato"), i18n::N_("drag up on a note: vibrato depth; sideways or the wheel: its rate; the round handles: fade in and out (up or down: their curve); right-click: shape, sync, presets, copy and paste"), "piano.toolVibrato", theme::role::kGraph},
                        {ui::Icon::ToolPaint, Tool::Paint, i18n::N_("Paint"), i18n::N_("paint notes while dragging"), "piano.toolPaint", theme::role::kPaint},
                        {ui::Icon::ToolDelete, Tool::Erase, i18n::N_("Delete"), i18n::N_("click or drag over notes to delete them"), "piano.toolDelete", theme::role::kDelete},
-                       {ui::Icon::ToolSelect, Tool::Select, i18n::N_("Select"), i18n::N_("drag a box; Ctrl+drag selects with any tool"), "piano.toolSelect", theme::role::kSelect},
+                       {ui::Icon::ToolSelect, Tool::Select, pointerTool ? i18n::N_("Pointer") : i18n::N_("Select"),
+                        pointerTool ? kPointerToolTip
+                                    : i18n::N_("drag a box; Ctrl+drag selects with any tool"),
+                        "piano.toolSelect", theme::role::kSelect},
                        {ui::Icon::ToolSlice, Tool::Slice, i18n::N_("Slice"), i18n::N_("drag across notes to cut them"), "piano.toolSlice", theme::role::kSlice},
                        {ui::Icon::ToolMute, Tool::Mute, i18n::N_("Mute"), i18n::N_("click or drag over notes to mute / unmute them"), "piano.toolMute", theme::role::kMute},
                        {ui::Icon::ToolPlay, Tool::Play, i18n::N_("Playback"), i18n::N_("hold and move to hear the notes under the pointer"), "piano.toolPlay", theme::role::kPlay},
@@ -1009,17 +1126,98 @@ void drawPianoRoll(App& a) {
         ImGui::EndPopup();
       }
     };
-    for (size_t i = 0; i < sizeof tools / sizeof tools[0] && !calm; ++i) {
+    // Studio: the zoom buttons always show. When the whole tool row leaves no room for them, the
+    // tools at the row's end fold into one "..." button that lists them (the Tool menu's order, the
+    // tool in use picked). A wide toolbar shows the whole row as before. Clips keeps its own rule
+    // (the Vibrato icon steps out).
+    constexpr size_t nTools = sizeof tools / sizeof tools[0];
+    const bool foldBar = !calm && layoutui::active() == layout::Preset::Studio;
+    size_t rowTools = nTools;
+    if (foldBar) {
+      const float x0 = ImGui::GetCursorScreenPos().x;
+      const float right = ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x;
+      constexpr float kZoomNeed = 76.0f;  // the zoom group's room (divider, - and +), as drawn below
+      auto rowEnd = [&](size_t k, bool more) {
+        const float icons = static_cast<float>(k) * fh + static_cast<float>(k > 0 ? k - 1 : 0) * 2.0f;
+        return x0 + icons + (more ? (k > 0 ? 2.0f : 0.0f) + fh : 0.0f);
+      };
+      if (right - rowEnd(nTools, false) <= kZoomNeed) {
+        rowTools = 0;
+        while (rowTools + 1 < nTools && right - rowEnd(rowTools + 1, true) > kZoomNeed) ++rowTools;
+      }
+    }
+    devFoldShown = foldBar ? static_cast<int>(rowTools) : -1;
+    devFoldHidden.clear();
+    devVibIcon = calm ? -1 : foldBar ? 1 : vibIconOff ? 0 : 1;
+    for (size_t i = 0; i < nTools && !calm; ++i) {
+      if (foldBar && i >= rowTools) {
+        if (tools[i].tool == Tool::Vibrato) devVibIcon = 0;
+        continue;
+      }
+      if (!foldBar && tools[i].tool == Tool::Vibrato && vibIconOff) continue;
       if (i) ImGui::SameLine(0, 2);
       if (ui::ToolButton(tools[i].key, tools[i].icon, st.tool == tools[i].tool, fh, tools[i].name, tools[i].desc, tools[i].key,
                          theme::rgb(tools[i].role)))
         st.tool = tools[i].tool;
       if (st.tool == tools[i].tool) ui::noteActiveTool("piano", static_cast<int>(tools[i].tool), tools[i].name, tools[i].key);
     }
+    if (foldBar && rowTools < nTools) {
+      // The folded tools, in the Tool menu's order.
+      static const Tool kMenuOrder[] = {Tool::Draw, Tool::Paint, Tool::Erase, Tool::Select, Tool::Slice, Tool::Mute,
+                                        Tool::Play, Tool::Zoom, Tool::Detune, Tool::Bend, Tool::Vibrato};
+      std::vector<const T*> folded;
+      for (Tool t : kMenuOrder)
+        for (size_t i = rowTools; i < nTools; ++i)
+          if (tools[i].tool == t) folded.push_back(&tools[i]);
+      bool curFolded = false;
+      std::string tipNames;
+      for (const T* t : folded) {
+        curFolded = curFolded || st.tool == t->tool;
+        tipNames += std::string(tipNames.empty() ? "" : ", ") + i18n::tr(t->name);
+        devFoldHidden += std::string(devFoldHidden.empty() ? "" : ",") + t->name;
+      }
+      if (rowTools > 0) ImGui::SameLine(0, 2);
+      const ImVec2 mp = ImGui::GetCursorScreenPos();
+      const bool popOpen = ImGui::IsPopupOpen("##prtoolmore");
+      if (ui::IconButton("prtoolmore", ui::Icon::More, curFolded || popOpen, fh,
+                         (std::string(i18n::tr("More tools")) + ": " + tipNames).c_str()))
+        ImGui::OpenPopup("##prtoolmore");
+      devFoldMore = ImVec4(mp.x, mp.y, mp.x + fh, mp.y + fh);
+      for (const T* t : folded)
+        if (st.tool == t->tool) ui::noteActiveTool("piano", static_cast<int>(t->tool), t->name, t->key);
+      ImGui::SetNextWindowPos(ImVec2(mp.x, mp.y + fh + 2));
+      devFoldRow0 = ImVec4(-1, -1, -1, -1);
+      if (ImGui::BeginPopup("##prtoolmore")) {
+        const float lh = ImGui::GetTextLineHeight();
+        float nameW = 0, keyW = 0;
+        for (const T* t : folded) {
+          nameW = std::max(nameW, ImGui::CalcTextSize(i18n::tr(t->name)).x);
+          if (const char* kk = keys::label(t->key)) keyW = std::max(keyW, ImGui::CalcTextSize(kk).x);
+        }
+        const float iconW = lh + 8, rowW = std::ceil(iconW + nameW + (keyW > 0 ? lh * 1.5f + keyW : 0.0f) + 4);
+        for (size_t i = 0; i < folded.size(); ++i) {
+          const T& t = *folded[i];
+          ImGui::PushID(static_cast<int>(t.tool));
+          const ImVec2 q = ImGui::GetCursorScreenPos();
+          const bool cur = st.tool == t.tool;
+          if (ImGui::Selectable("##t", cur, 0, ImVec2(rowW, 0))) st.tool = t.tool;
+          if (i == 0) devFoldRow0 = ImVec4(q.x, q.y, q.x + rowW, q.y + lh);
+          ImDrawList* pdl = ImGui::GetWindowDrawList();
+          ui::drawIcon(pdl, t.icon, ImVec2(q.x + lh * 0.5f + 2, q.y + lh * 0.5f), lh - 2, cur ? theme::lit(theme::rgb(t.role)) : P.textDim);
+          pdl->AddText(ImVec2(q.x + iconW, q.y), cur ? P.hot : P.text, i18n::tr(t.name));
+          if (const char* kk = keys::label(t.key)) pdl->AddText(ImVec2(q.x + rowW - ImGui::CalcTextSize(kk).x, q.y), P.textDim, kk);
+          ImGui::PopID();
+        }
+        devFoldRowH = ImGui::GetTextLineHeightWithSpacing();
+        ImGui::EndPopup();
+      }
+    }
     // Groups to the right of the tools appear only when they fit (no clipping).
     auto roomLeft = []() { return ImGui::GetWindowPos().x + ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - ImGui::GetItemRectMax().x; };
     bool calmToolDrawn = false;
-    if (roomLeft() > fh + 6) {  // K-4: auto scrolling, the pattern editors' switch (beside the tools, as in the playlist)
+    // Studio: the zoom buttons keep their place, so a group beside the tools shows only with room for them after it.
+    const float zoomKeep = calm ? 0.0f : 76.0f;
+    if (roomLeft() - zoomKeep > fh + 6) {  // K-4: auto scrolling, the pattern editors' switch (beside the tools, as in the playlist)
       ImGui::SameLine(0, 4);
       if (calm) {  // K-112D (audit G9): the lane under the notes shows on request, as the reference's MIDI Draw (144)
         const bool laneOn = a.settings.getBool("piano.smoothLane");
@@ -1090,32 +1288,26 @@ void drawPianoRoll(App& a) {
         else st.snap = lastSnap != Snap::None ? lastSnap : Snap::Line;
       }
       ImGui::SameLine(0, 2);
-      auto calmSnapName = [](Snap sn) -> const char* { return sn == Snap::Line ? i18n::tr("Smart") : snapName(sn); };
-      if (ui::BeginCombo("##prcalmsnap", calmSnapName(st.snap), 96)) {
-        for (int i = 0; i <= static_cast<int>(Snap::Bar); ++i)
-          if (ImGui::Selectable(calmSnapName(static_cast<Snap>(i)), st.snap == static_cast<Snap>(i))) {
-            st.snap = static_cast<Snap>(i);
-            if (st.snap != Snap::None) lastSnap = st.snap;
-          }
+      if (ui::BeginCombo("##prcalmsnap", snapmenu::label(st.snap, true), 112)) {
+        if (snapmenu::items(st.snap, true, false, true) && st.snap != Snap::None) lastSnap = st.snap;
         ImGui::EndCombo();
       }
       ui::Hint("Snap: where notes land while drawing and dragging (Smart follows the zoom; hold Alt while dragging to bypass it)");
-    } else if (!calm && roomLeft() > fh + 2 + 128 + 18) {
+    } else if (!calm && roomLeft() - zoomKeep > fh + 2 + 128 + 18) {
       ui::ToolbarDivider();
       ui::ToolButton("snapicon", ui::Icon::ToolSnap, st.snap != Snap::None, fh, i18n::N_("Snap"),
                      i18n::N_("snap to the grid chosen beside it (hold Alt while dragging to bypass)"), nullptr, theme::rgb(theme::role::kSnap));
       ImGui::SameLine(0, 2);
-      std::string snapLabel = snapName(st.snap);
-      if ((st.snap == Snap::Line || st.snap == Snap::Cell) && st.effGrid > 0)
+      std::string snapLabel = snapmenu::label(st.snap);
+      if ((adaptiveSnap(st.snap) || st.snap == Snap::Main) && st.effGrid > 0)
         snapLabel += " \xC2\xB7 " + timeline::gridName(pm, st.effGrid);
       if (ui::BeginCombo("##snap", snapLabel.c_str(), 128)) {
-        for (int i = 0; i <= static_cast<int>(Snap::Bar); ++i)
-          if (ImGui::Selectable(snapName(static_cast<Snap>(i)), st.snap == static_cast<Snap>(i))) st.snap = static_cast<Snap>(i);
+        snapmenu::items(st.snap, true, false);
         ImGui::EndCombo();
       }
       ui::Hint("Snap: Line and Cell follow the zoom (free at the deepest zoom); hold Alt while dragging to invert snapping");
     }
-    if (pat && !calm && roomLeft() > 56 + 8) {  // K-193: the pattern's meter, and whether it matches where it plays
+    if (pat && !calm && roomLeft() - zoomKeep > 56 + 8) {  // K-193: the pattern's meter, and whether it matches where it plays
       ImGui::SameLine(0, 6);
       const int pn = s.patternMeterNum(*pat), pd = s.patternMeterDen(*pat);
       // The pattern's first clip in the playlist, and the meter of the section it starts in.
@@ -1145,18 +1337,18 @@ void drawPianoRoll(App& a) {
         ImGui::EndPopup();
       }
     }
-    float room = roomLeft();
+    float room = roomLeft() - zoomKeep;
     if (!calm && room > 120 + 60) {  // K-112D (D3): Smooth quantizes from its local inspector (Q), as 144
       ui::ToolbarDivider();
-      const bool quantize = ui::TextButton("Quantize", false, 0, "Quantize note starts to the snap grid (Ctrl+Q)") && pat && chan;
+      const bool quantize = ui::TextButton("Quantize", false, 0, keys::withKeys(i18n::N_("Quantize note starts to the snap grid (%s)"), {keys::cmdKey("piano.quickQuantize", "Ctrl+Q")})) && pat && chan;
       if (quantize && multiSel(a)) {  // K-198 follow-up: the selection over every edited channel
-        const Tick gsz = st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap);
-        multiApply(a, pat->id, chan->id, [&](Note& n) { n.start = gsz > 1 ? std::max<Tick>(0, ((n.start + gsz / 2) / gsz) * gsz) : n.start; },
+        const SnapGrid gsz = st.effGrid > 1 ? st.effGrid : snapSize(pm, st.snap);
+        multiApply(a, pat->id, chan->id, [&](Note& n) { n.start = gsz > 1 ? std::max<Tick>(0, snapNearest(n.start, gsz)) : n.start; },
                    "quantize notes");
         pat = s.pattern(a.curPattern), chan = s.channel(a.selChannel);
       } else if (quantize && !st.editChannels.empty() && st.selected.empty()) {
         // K-198: nothing selected and other channels edited here: every edited channel, one undo step.
-        const Tick gsz = st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap);
+        const SnapGrid gsz = st.effGrid > 1 ? st.effGrid : snapSize(pm, st.snap);
         std::vector<ObjectId> chans{chan->id};
         for (ObjectId c : st.editChannels)
           if (c != chan->id && s.channel(c)) chans.push_back(c);
@@ -1164,7 +1356,8 @@ void drawPianoRoll(App& a) {
         for (ObjectId c : chans) {
           std::vector<Note> ns = rollNotes(a, pat->id, c);
           if (ns.empty()) continue;
-          ops::quantizeStarts(ns, gsz);
+          if (gsz > 1)
+            for (Note& n : ns) n.start = std::max<Tick>(0, snapNearest(n.start, gsz));
           std::sort(ns.begin(), ns.end(), [](const Note& x, const Note& y) { return x.start != y.start ? x.start < y.start : x.pitch < y.pitch; });
           stepnotes::write(a.doc, pat->id, c, ns, "quantize notes", 0);
         }
@@ -1172,7 +1365,7 @@ void drawPianoRoll(App& a) {
         pat = s.pattern(a.curPattern), chan = s.channel(a.selChannel);
       } else if (quantize) {
         if (std::vector<Note> ns = rollNotes(a, pat->id, chan->id); !ns.empty()) {
-          Tick gsz = st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap);
+          const SnapGrid gsz = st.effGrid > 1 ? st.effGrid : snapSize(pm, st.snap);
           auto sel = selVector(a, ns.size());
           bool any = !st.selected.empty();
           for (size_t i = 0; i < ns.size(); ++i)
@@ -1185,7 +1378,7 @@ void drawPianoRoll(App& a) {
                          theme::rgb(theme::role::kGhost)))
         st.ghostNotes = !st.ghostNotes;
     }
-    if (!calm && roomLeft() > 120 + 30) {  // J-11: scale helper (the chord stamp has its own button beside the menu)
+    if (!calm && roomLeft() - zoomKeep > 120 + 30) {  // J-11: scale helper (the chord stamp has its own button beside the menu)
       ui::ToolbarDivider();
       static const char* const keys[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
       const auto& sc = tools::scales();
@@ -1209,7 +1402,7 @@ void drawPianoRoll(App& a) {
     }
     // Slide button and note colour: shown when both fit (divider, button, swatch).
     const float slideNeed = 2 * theme::kS2 + 1 + ImGui::CalcTextSize(i18n::tr("Slide")).x + 2 * ImGui::GetStyle().FramePadding.x + 4 + fh + 2;
-    if (!calm && roomLeft() > slideNeed) {
+    if (!calm && roomLeft() - zoomKeep > slideNeed) {
       ui::ToolbarDivider();
       if (ui::TextButton("Slide", newSlide, 0, "Slide mode: new notes glide the channel's sounding notes to their pitch instead of starting a note. Instruments that cannot glide bend their sounding notes instead"))
         newSlide = !newSlide;
@@ -1246,6 +1439,15 @@ void drawPianoRoll(App& a) {
         ImGui::EndPopup();
       }
     }
+    // K-262: the vibrato defaults (or a button for them); Studio puts it before the zoom buttons, Smooth keeps its zoom sliders
+    const float vibKeep = calm ? 2 * (kZoomSliderW + 22) + 28 : 0.0f;
+    if (st.tool == Tool::Vibrato && roomLeft() - vibKeep > fh * 1.6f) {
+      if (calm) ImGui::SameLine(0, 10);
+      else ui::ToolbarDivider();
+      const float r = roomLeft() - vibKeep;
+      vibratoStripOrButton(a, pat, chan, r - fh * 4 >= fh * 15.5f ? r - fh * 4 : std::min(r - 8, fh * 3.4f));  // the zoom controls keep room after the whole strip
+    }
+    bool zoomShown = false;
     if (calm && roomLeft() > 2 * (kZoomSliderW + 22) + 18) {
       // K-112D (D3, G5): the reference's two zoom sliders (144: key height, then time) in place of - and +.
       ImGui::SameLine(0, 10);
@@ -1254,14 +1456,27 @@ void drawPianoRoll(App& a) {
       const float nv = zoomSlider("##przv", false, vt, fh, "Key height: drag to zoom the rows (Alt+wheel over the notes)");
       if (nv >= 0) st.rowHeight = std::round(kRowHMin + nv * (kRowHMax - kRowHMin));
       ImGui::SameLine(0, 8);
-      const float ht = static_cast<float>(std::log(st.pxPerTick / zmin) / std::log(zmax / zmin));
+      // 0.7.8: the knob shows where the zoom is going (a glide's end); a drag asks for an absolute zoom
+      // (applied with the zooms below), no longer a ratio of the gliding zoom drawn this frame.
+      const double zNow = st.zoomGlide.active() ? st.zoomGlide.targetZoom() : static_cast<double>(st.pxPerTick);
+      const float ht = static_cast<float>(std::log(zNow / zmin) / std::log(zmax / zmin));
       const float nh = zoomSlider("##przh", true, ht, fh, "Time zoom: drag to zoom (Ctrl+wheel over the notes, PgUp / PgDn)");
-      if (nh >= 0) st.zoomRequest = static_cast<float>(zmin * std::pow(zmax / zmin, static_cast<double>(nh)) / st.pxPerTick);
+      if (nh >= 0) st.zoomSliderSet = static_cast<float>(zmin * std::pow(zmax / zmin, static_cast<double>(nh)));
     } else if (!calm && roomLeft() > 76) {
       ui::ToolbarDivider();
       if (ui::IconButton("zout", ui::Icon::Minus, false, fh, "Zoom out (PgDn, Ctrl+wheel)")) st.zoomRequest /= 1.5f;
       ImGui::SameLine(0, 2);
       if (ui::IconButton("zin", ui::Icon::Plus, false, fh, "Zoom in (PgUp, Ctrl+wheel)")) st.zoomRequest *= 1.5f;
+      zoomShown = true;
+    }
+    // The zoom buttons keep their place: without them the Vibrato icon goes (next frame); it comes
+    // back when the room left after them holds it (it sits in the tool row, before them).
+    if (foldBar) {
+      devZoomBtns = zoomShown ? 1 : 0;
+    } else if (!calm) {
+      if (!vibIconOff && !zoomShown) vibIconOff = true;
+      else if (vibIconOff && zoomShown && roomLeft() > fh + 2 + 6) vibIconOff = false;
+      devZoomBtns = zoomShown ? 1 : 0;
     }
   }
   ui::EndToolbar();
@@ -1388,7 +1603,7 @@ void drawPianoRoll(App& a) {
       }
       ui::Hint("The grid the notes are quantized to");
       ImGui::SameLine(0, 4);
-      quantNow = ui::TextButton("Q##prq", false, qw, "Quantize the selected notes (none selected: every note) to the grid beside it (Ctrl+Q)");
+      quantNow = ui::TextButton("Q##prq", false, qw, keys::withKeys(i18n::N_("Quantize the selected notes (none selected: every note) to the grid beside it (%s)"), {keys::cmdKey("piano.quickQuantize", "Ctrl+Q")}));
     }
     if (showQuant) valueSlider("##prqstr", "Strength", &strength, 0, 100, "How far the notes move toward the grid, in percent");
     if (showQuant) valueSlider("##prqswing", "Swing", &swing, 0, 100, "50: straight; higher: every second grid position later, lower: earlier");
@@ -1396,14 +1611,15 @@ void drawPianoRoll(App& a) {
       quantNow = ui::TextButton("Quantize notes", false, ImGui::GetContentRegionAvail().x, "Quantize the selected notes (none selected: every note) to the snap grid");
     if (quantNow) {
       std::vector<Note> ns = notes;
-      Tick gsz = std::max<Tick>(1, st.effGrid > 1 ? st.effGrid : snapTicks(pm, st.snap == Snap::None ? Snap::Line : st.snap));
-      if (lgQ && qValue > 0) gsz = std::max<Tick>(1, static_cast<Tick>(s.ppq) / kQ[qValue].perQuarter);
+      SnapGrid gsz = st.effGrid > 1 ? st.effGrid : snapSize(pm, st.snap == Snap::None ? Snap::Line : st.snap);
+      if (lgQ && qValue > 0) gsz = SnapGrid(std::max<Tick>(1, static_cast<Tick>(s.ppq) / kQ[qValue].perQuarter));
       auto sel = selVector(a, ns.size());
       const bool any = !st.selected.empty();
       for (size_t i = 0; i < ns.size(); ++i) {
         if (any && !sel[i]) continue;
         Tick target = snapNearest(ns[i].start, gsz);
-        if ((target / gsz) % 2 == 1) target += static_cast<Tick>(std::lround(static_cast<double>(swing - 50) / 100.0 * static_cast<double>(gsz)));
+        if (gsz.indexDown(target) % 2 != 0)
+          target += static_cast<Tick>(std::lround(static_cast<double>(swing - 50) / 100.0 * static_cast<double>(gsz.num) / static_cast<double>(gsz.den)));
         ns[i].start += static_cast<Tick>(std::lround(static_cast<double>(target - ns[i].start) * strength / 100.0));
       }
       commit(a, patId, chId, ns, sel, "quantize notes", 0);
@@ -1462,6 +1678,17 @@ void drawPianoRoll(App& a) {
         }
       }
       if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+    }
+    // K-262: with the Vibrato tool, its defaults (the toolbar has no room for them beside the zoom sliders).
+    if (st.tool == Tool::Vibrato && ImGui::GetContentRegionAvail().y >= 10 + lh + 2 * sp + ImGui::GetFrameHeight()) {
+      section("Vibrato");
+      if (ui::TextButton(i18n::tr("Preset, depth and rate..."), ImGui::IsPopupOpen("##prvibinsp"), ImGui::GetContentRegionAvail().x,
+                         "The vibrato a note gets with the Vibrato tool (and the selected notes' vibrato)"))
+        ImGui::OpenPopup("##prvibinsp");
+      if (ImGui::BeginPopup("##prvibinsp")) {
+        vibratoStrip(a, pat, chan);
+        ImGui::EndPopup();
+      }
     }
     ImGui::EndChild();
     ImGui::SameLine(0, 0);
@@ -1666,6 +1893,21 @@ void drawPianoRoll(App& a) {
     timeline::zoomAt(s, st.pxPerTick, st.scrollX, st.zoomRequest, anchor);
     st.zoomRequest = 1.0f;
   }
+  // 0.7.8: the time zoom slider's drag: the zoom it shows, the middle of the notes held where it was at
+  // the press, from the press's tick (never compounding).
+  if (st.zoomSliderSet > 0) {
+    const int fr = ImGui::GetFrameCount();
+    if (st.zoomSliderFrame != fr - 1) {
+      st.zoomSliderPx = gridW * 0.5f;
+      st.zoomSliderTick = (static_cast<double>(st.zoomSliderPx) + static_cast<double>(st.scrollX)) / static_cast<double>(st.pxPerTick);
+    }
+    st.zoomSliderFrame = fr;
+    const double z = timeline::clampZoom(s, st.zoomSliderSet);
+    st.pxPerTick = static_cast<float>(z);
+    // (inside the view's range: past the notes' end the right edge holds, as a scroll there would)
+    st.scrollX = std::clamp(static_cast<float>(st.zoomSliderTick * z - static_cast<double>(st.zoomSliderPx)), 0.0f, maxScrollAt(st.pxPerTick));
+    st.zoomSliderSet = 0;
+  }
   const bool wheelZoom = hovered && io.MouseWheel != 0 && io.KeyCtrl;
   if (wheelZoom) timeline::zoomAt(s, st.pxPerTick, st.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gridMin.x);
   // An end of the horizontal scroller dragged: the thumb's length sets the zoom, the opposite edge's tick stays put (1:1).
@@ -1678,7 +1920,14 @@ void drawPianoRoll(App& a) {
   }
   st.pxPerTick = static_cast<float>(timeline::clampZoom(s, st.pxPerTick));
   // A trackpad's Ctrl+scroll and a scroller end follow the pointer 1:1; wheel notches and every other zoom glide.
-  scrollui::zoomEnd(st.zoomGlide, st.pxPerTick, st.scrollX, (wheelZoom && !smoothscroll::isNotch(io.MouseWheel)) || barZoom);
+  // 0.7.8: the zoom slider's drag (and wheel over it) is there at once: a glide behind a fine drag felt springy.
+  scrollui::zoomEnd(st.zoomGlide, st.pxPerTick, st.scrollX,
+                    (wheelZoom && !smoothscroll::isNotch(io.MouseWheel)) || barZoom || st.zoomSliderFrame == ImGui::GetFrameCount());
+  if (draglog::on() && (ImGui::IsMouseDown(ImGuiMouseButton_Left) || st.zoomGlide.active()))  // 0.7.8: the drawn time zoom, each frame of a drag or glide
+    draglog::note("przoom px %.7f scroll %.3f keyanchor %.2f tick %.4f target %.7f glide %d", static_cast<double>(st.pxPerTick),
+                  static_cast<double>(st.scrollX), static_cast<double>(gridW * 0.5f),
+                  (static_cast<double>(gridW * 0.5f) + static_cast<double>(st.scrollX)) / static_cast<double>(st.pxPerTick),
+                  st.zoomGlide.active() ? st.zoomGlide.targetZoom() : static_cast<double>(st.pxPerTick), st.zoomGlide.active() ? 1 : 0);
   // K-4: auto scrolling: page along with the pattern position while this pattern plays
   // (not while the user drags or scrolls the view; off: the view stays where it is).
   const double playPos = a.engine.playing() ? rollPlayPos(a, patId) : -1.0;  // #70: song mode too
@@ -1688,9 +1937,10 @@ void drawPianoRoll(App& a) {
   // ---- snapping: the visible grid (Line/Cell) or a fixed size; Alt inverts ----
   Tick visGrid = timeline::visibleGrid(pm, st.pxPerTick);
   st.effGrid = timeline::snapGrid(pm, st.snap, st.pxPerTick, false);
-  Tick snapG = timeline::snapGrid(pm, st.snap, st.pxPerTick, io.KeyAlt);
+  SnapGrid snapG = timeline::snapGrid(pm, st.snap, st.pxPerTick, io.KeyAlt);
   livelook::editGrid(a, 1, st.snap, st.pxPerTick, visGrid, snapG, st.effGrid);  // grid2-1118: Clips' Cmd+1 .. 5
-  const Tick grid = std::max<Tick>(1, st.effGrid);  // keyboard nudges / quantize
+  const Tick grid = std::max<Tick>(1, st.effGrid);  // keyboard nudges
+  const SnapGrid qgrid = st.effGrid > 1 ? st.effGrid : SnapGrid(1);  // quantize: exact, a tuplet too
   // R02-17: the Tracks layout starts as the reference does (a 16th note at velocity 80) until a
   // note is touched; then new notes copy the last edited one.
   const bool tracksDefaults = !st.lastSet && logicplug::active(a);
@@ -1706,7 +1956,8 @@ void drawPianoRoll(App& a) {
   float wheelX = 0, wheelY = 0;
   bool notchX = false, notchY = false;
   const bool overTime = hovered && io.MousePos.x >= gridMin.x && io.MousePos.x < gridMax.x && io.MousePos.y >= origin.y && io.MousePos.y < gridMin.y;
-  if (hovered && io.MouseWheel != 0) {
+  const bool vibWheel = st.tool == Tool::Vibrato && vibWheelNote >= 0 && !io.KeyCtrl && !io.KeyAlt && !io.KeyShift;  // K-262: the rate
+  if (hovered && io.MouseWheel != 0 && !vibWheel) {
     if (io.KeyCtrl) {
       // zoomed above (J-188)
     } else if (io.KeyAlt) {
@@ -1758,10 +2009,33 @@ void drawPianoRoll(App& a) {
   const bool lgDark = P.dark && layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
   const ImU32 well = lgDark ? P.surface950 : P.well;
   // K-112c (round 28): Live's black-key rows read as clearly as the refs' bands (058, 112, 198, 044).
-  const ImU32 blackRow = lgDark ? theme::mix(well, P.ink, 0.5f)
-                         : theme::withAlpha(P.ink, livelook::active(a) ? (P.dark ? 0.30f : 0.09f) : (P.dark ? 0.16f : 0.05f));
-  const ImU32 lineBar = lgDark ? theme::mix(well, P.text, 0.15f) : P.gridBar, lineBeat = lgDark ? theme::mix(well, P.text, 0.08f) : P.gridBeat,
-              lineStep = lgDark ? theme::mix(well, P.text, 0.04f) : P.gridStep;
+  // The grid a little firmer against the well than the palette's lines (the step lines all but
+  // vanished on dark slate), in every theme and brightness, and the Contrast setting moves it. Each
+  // line keeps its direction from the well and moves further away from it, at least a few levels
+  // for the step and beat lines, never the full panel contrast.
+  const float firmK = std::max(0.0f, st.gridFirm * (1.0f + 0.6f * std::clamp(theme::tweaks().contrast, -1.0f, 1.0f)));
+  auto firm = [&](ImU32 line, float more, float minLevels) -> ImU32 {
+    if (firmK <= 0.0f) return line;
+    auto ch = [](ImU32 c, int sh) { return static_cast<float>((c >> sh) & 0xFF); };
+    const int sh[3] = {IM_COL32_R_SHIFT, IM_COL32_G_SHIFT, IM_COL32_B_SHIFT};
+    float d = 0;
+    for (int k : sh) d = std::max(d, std::fabs(ch(line, k) - ch(well, k)));
+    float f = 1.0f + more * firmK;
+    if (d > 0.5f && d * f < minLevels * firmK) f = minLevels * firmK / d;
+    f = std::min(f, 4.0f);
+    ImU32 out = line & IM_COL32_A_MASK;
+    for (int k : sh) {
+      const float w = ch(well, k), v = w + (ch(line, k) - w) * f;
+      out |= static_cast<ImU32>(std::clamp(v, 0.0f, 255.0f) + 0.5f) << k;
+    }
+    return out;
+  };
+  const float rowA = 1.0f + 0.25f * firmK;
+  const ImU32 blackRow = lgDark ? theme::mix(well, P.ink, std::min(0.62f, 0.5f * (1.0f + 0.12f * firmK)))
+                         : theme::withAlpha(P.ink, rowA * (livelook::active(a) ? (P.dark ? 0.30f : 0.09f) : (P.dark ? 0.16f : 0.05f)));
+  const ImU32 lineBar = lgDark ? theme::mix(well, P.text, 0.15f * (1.0f + 0.2f * firmK)) : firm(P.gridBar, P.dark ? 0.3f : 0.15f, 0.0f),
+              lineBeat = lgDark ? theme::mix(well, P.text, 0.08f * (1.0f + 0.35f * firmK)) : firm(P.gridBeat, P.dark ? 0.55f : 0.35f, P.dark ? 12.0f : 9.0f),
+              lineStep = lgDark ? theme::mix(well, P.text, 0.04f * (1.0f + 0.6f * firmK)) : firm(P.gridStep, 0.8f, P.dark ? 8.0f : 5.0f);
   dl->AddRectFilled(gridMin, gridMax, well);
   {
     const Tick bar = std::max<Tick>(1, pm.baseBar());
@@ -1771,6 +2045,7 @@ void drawPianoRoll(App& a) {
       if ((t / bar) % 2 == 1)
         dl->AddRectFilled(ImVec2(snapX(t), gridMin.y), ImVec2(snapX(t + bar), gridMax.y), theme::withAlpha(P.paper, barA));
   }
+  const ImU32 rowOctave = firm(P.gridBar, P.dark ? 0.3f : 0.15f, 0.0f), rowLine = firm(P.gridStep, 0.8f, P.dark ? 8.0f : 5.0f);
   for (int p = 0; p < 128; ++p) {
     float y = yOf(p);
     if (y > gridMax.y || y + rowH < gridMin.y) continue;
@@ -1784,19 +2059,32 @@ void drawPianoRoll(App& a) {
     }
     const pixelgrid::Span ly = pixelgrid::line(y + rowH, dpp);
     if (p % 12 == 0)
-      dl->AddRectFilled(ImVec2(gridMin.x, ly.x0), ImVec2(gridMax.x, ly.x1), P.gridBar);
+      dl->AddRectFilled(ImVec2(gridMin.x, ly.x0), ImVec2(gridMax.x, ly.x1), rowOctave);
     else if (rowH >= 10)
-      dl->AddRectFilled(ImVec2(gridMin.x, ly.x0), ImVec2(gridMax.x, ly.x1), P.gridStep);
+      dl->AddRectFilled(ImVec2(gridMin.x, ly.x0), ImVec2(gridMax.x, ly.x1), rowLine);
   }
   {
-    Tick step = std::max<Tick>(1, s.ppq / 4), beat = pm.baseBeat(), bar = pm.baseBar();
+    Tick step = pm.stepTicks(), beat = pm.baseBeat(), bar = pm.baseBar();
     // Lines at the visible grid (finer as you zoom in, down to single ticks).
     const ImU32 fine = theme::withAlpha(lineStep, 0.55f);
-    Tick t0 = snapDown(tickAt(gridMin.x), visGrid);
-    for (Tick t = std::max<Tick>(0, t0); xOf(t) < gridMax.x; t += visGrid) {
+    // GitHub #58: a fixed snap finer than a beat (triplets, dotted values, quintuplets, a 12-step
+    // pattern's steps) draws its own lines below the beat, so what notes snap to can be seen.
+    const bool ownLines = timeline::drawsSnapLines(pm, st.snap, st.pxPerTick);
+    const Tick lineGrid = ownLines ? std::max(visGrid, beat) : visGrid;
+    Tick t0 = snapDown(tickAt(gridMin.x), lineGrid);
+    for (Tick t = std::max<Tick>(0, t0); xOf(t) < gridMax.x; t += lineGrid) {
       ImU32 c = t % bar == 0 ? lineBar : t % beat == 0 ? lineBeat : t % step == 0 ? lineStep : fine;
       const pixelgrid::Span l = pixelgrid::line(xOf(t), dpp);
       dl->AddRectFilled(ImVec2(l.x0, gridMin.y), ImVec2(l.x1, gridMax.y), c);
+    }
+    if (ownLines) {
+      const SnapGrid sg = snapSize(pm, st.snap);
+      int64_t k = sg.indexDown(std::max<Tick>(0, tickAt(gridMin.x)));
+      for (Tick t = sg.at(k); xOf(t) < gridMax.x; t = sg.at(++k)) {
+        if (t < 0 || t % lineGrid == 0) continue;  // the beat lines are drawn above
+        const pixelgrid::Span l = pixelgrid::line(xOf(t), dpp);
+        dl->AddRectFilled(ImVec2(l.x0, gridMin.y), ImVec2(l.x1, gridMax.y), lineStep);
+      }
     }
     // Pattern end shading (N48-12: in Clips, outside the clip's Start and End).
     float xe = snapX(regClip != kNoId ? regB : patLen);
@@ -1834,14 +2122,21 @@ void drawPianoRoll(App& a) {
     for (const auto& [cid, ns] : pat->notes) ghostChans.push_back(cid);
     for (ObjectId cid : st.editChannels)
       if (!pat->notes.count(cid)) ghostChans.push_back(cid);
+    // K-255: in a pattern with lanes of their own, the other rows' steps show too (where two
+    // rhythms cross).
+    const bool laneGhosts = lanes::any(*pat);
+    if (laneGhosts)
+      for (const auto& [cid, row] : pat->steps)
+        if (!pat->notes.count(cid) && !st.editChannels.count(cid) && stepnotes::hasSteps(s, *pat, cid)) ghostChans.push_back(cid);
     for (ObjectId cid : ghostChans) {
       const bool edited = st.editChannels.count(cid) > 0;
       if (cid == chId || (!edited && (smoothGhostsOff || !st.ghostNotes || (!st.ghostChannels.empty() && !st.ghostChannels.count(cid))))) continue;
       const Channel* oc = s.channel(cid);
       if (edited && !oc) continue;
       const ImU32 gcol = oc ? theme::rgb(oc->color) : P.text;
-      const std::vector<Note> viewNs = edited ? rollNotes(a, patId, cid) : std::vector<Note>{};
-      const std::vector<Note>& ns = edited ? viewNs : pat->notes.at(cid);
+      const bool stepGhost = !edited && !pat->notes.count(cid);  // K-255: a row of steps
+      const std::vector<Note> viewNs = edited ? rollNotes(a, patId, cid) : stepGhost ? stepnotes::fromSteps(s, *pat, cid) : std::vector<Note>{};
+      const std::vector<Note>& ns = edited || stepGhost ? viewNs : pat->notes.at(cid);
       const auto selIt = st.editSel.find(cid);
       for (size_t i = 0; i < ns.size(); ++i) {
         const Note& n = ns[i];
@@ -2148,6 +2443,50 @@ void drawPianoRoll(App& a) {
         if (bendTool) drawPoints(k);
       }
   }
+  // K-262: note vibrato. With the Vibrato tool every vibrato shows its envelope and handles and the
+  // pointer finds the part under it; otherwise notes with vibrato show their wave, dimmed.
+  const bool vibTool = st.tool == Tool::Vibrato;
+  const pianovib::Time vibTime{60.0 / (std::max(1.0, s.tempo) * std::max(1, s.ppq)), 60.0 / std::max(1.0, s.tempo)};
+  auto vibBox = [&](size_t i) {
+    const NoteBox& bx = noteBoxes[std::min(i, noteBoxes.size() - 1)];
+    return pianovib::Box{bx.x0, bx.x1, bx.y + rowH * 0.5f, rowH};
+  };
+  vibHover = pianovib::Hit{};
+  if (vibTool && hovered && g.kind != Gesture::Vibrato && io.MousePos.x >= gridMin.x && io.MousePos.x < gridMax.x && io.MousePos.y >= gridMin.y &&
+      io.MousePos.y < gridMax.y)
+    for (size_t i = notes.size(); i-- > 0;) {  // the note drawn last (on top) first; handles before bodies
+      if (notes[i].slide) continue;
+      const pianovib::Hit::Kind k = pianovib::hitTest(notes[i], vibBox(i), io.MousePos);
+      if (k == pianovib::Hit::None) continue;
+      if (vibHover.kind == pianovib::Hit::None || (vibHover.kind == pianovib::Hit::Body && k != pianovib::Hit::Body)) vibHover = {k, static_cast<int>(i)};
+      if (k != pianovib::Hit::Body) break;
+    }
+  vibWheelNote = vibHover.note >= 0 && notes[static_cast<size_t>(vibHover.note)].vib.active() ? vibHover.note : -1;
+  for (size_t i = 0; i < notes.size(); ++i) {
+    if (!notes[i].vib.active() || notes[i].slide) continue;
+    const NoteBox& bx = noteBoxes[i];
+    if (bx.x1 < gridMin.x || bx.x0 > gridMax.x || bx.y + rowH * 4 < gridMin.y || bx.y - rowH * 3 > gridMax.y) continue;
+    const pianovib::Hit::Kind hot = g.kind == Gesture::Vibrato && g.anchor == static_cast<int>(i) ? g.vib.hit.kind
+                                    : vibHover.note == static_cast<int>(i)                         ? vibHover.kind
+                                                                                                    : pianovib::Hit::None;
+    pianovib::drawNote(dl, notes[i], vibBox(i), vibTime, vibTool, hot, st.selected.count(i) > 0);
+  }
+  if (vibTool && hovered && vibWheelNote >= 0 && io.MouseWheel != 0 && !io.KeyCtrl && !io.KeyAlt && !io.KeyShift) {
+    const size_t ni = static_cast<size_t>(vibWheelNote);
+    std::vector<size_t> tg{ni};
+    if (st.selected.count(ni))
+      for (size_t j : st.selected)
+        if (j != ni && j < notes.size()) tg.push_back(j);
+    std::vector<Note> ns = notes;
+    pianovib::wheelRate(ns, tg, io.MouseWheel);
+    static uint64_t wheelKey = 0;
+    static double wheelAt = -10;
+    if (ImGui::GetTime() - wheelAt > 0.6) wheelKey = 0x5657000000000000ull ^ (gestureCounter++ << 8);  // after a pause: a new undo step
+    wheelAt = ImGui::GetTime();
+    if (ns != notes) commit(a, patId, chId, ns, selVector(a, ns.size()), "vibrato rate", wheelKey);
+    a.setHint(pianovib::describe(ns[ni].vib));
+  }
+  if (g.kind == Gesture::Vibrato && g.moved && !vibReadout.empty()) pianovib::readoutTip(vibReadout);
   // Playhead (#70: song mode too). N47-06: in Clips also a launched clip's place in its notes (the clip launch mode).
   double liveTick = 0;
   const bool livePh = a.engine.playing() && a.engine.mode() == PlayMode::Live && livelook::clipPlayhead(a, patId, liveTick);
@@ -2322,7 +2661,7 @@ void drawPianoRoll(App& a) {
       }
     }
     // J-159: named keys are flat name plates over the keyboard (a drum-map look)
-    if (chanInfo && !chanInfo->keyNames.empty())
+    if (namedKeys && !namedKeys->empty())
       for (int p = 0; p < 128; ++p) {
         const std::string* kn = keyLabel(p);
         const float y = yOf(p);
@@ -2439,6 +2778,37 @@ void drawPianoRoll(App& a) {
                                              : "The pattern's loop: its length is set in the clip column"));
     } else {
       dl->AddTriangleFilled(ImVec2(xe - 5, r1.y - 9), ImVec2(xe + 5, r1.y - 9), ImVec2(xe, r1.y - 2), P.textFaint);
+    }
+    if (lanes::ownGrid(*pat, chId)) {
+      // K-255: the row's own grid over the ruler's foot: a bracket over each beat (or bar) with the
+      // count of the row's steps in it, as tuplets are written.
+      const int g = lanes::grid(*pat, chId);
+      const Tick bar = std::max<Tick>(1, s.patternBarTicks(*pat)), beat = std::max<Tick>(1, s.patternBeatTicks(*pat));
+      const int beats = bar % beat == 0 ? static_cast<int>(bar / beat) : 0;
+      const bool perBeat = beats > 1 && g % beats == 0;
+      const Tick span = perBeat ? beat : bar;
+      const int count = perBeat ? g / beats : g;
+      const ImU32 bc = theme::withAlpha(P.hot, 0.9f);
+      char cnt[8];
+      std::snprintf(cnt, sizeof cnt, "%d", count);
+      const ImVec2 ts = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, cnt);
+      const float by = r1.y - 6;
+      const Tick end = std::max<Tick>(patLen, bar);
+      for (Tick t = std::max<Tick>(0, (tickAt(r0.x) / span) * span); t < end && xOf(t) < r1.x; t += span) {
+        const float x0 = std::round(xOf(t)) + 3, x1 = std::round(xOf(t + span)) - 3;
+        if (x1 - x0 < 10) continue;
+        const float mx = std::round((x0 + x1) * 0.5f);
+        const float gap = ts.x * 0.5f + 3;
+        dl->AddLine(ImVec2(x0, by - 3), ImVec2(x0, by), bc);
+        dl->AddLine(ImVec2(x1, by - 3), ImVec2(x1, by), bc);
+        if (x1 - x0 > ts.x + 12) {
+          dl->AddLine(ImVec2(x0, by), ImVec2(mx - gap, by), bc);
+          dl->AddLine(ImVec2(mx + gap, by), ImVec2(x1, by), bc);
+          dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(mx - ts.x * 0.5f, by - ts.y * 0.5f - 1), bc, cnt);
+        } else {
+          dl->AddLine(ImVec2(x0, by), ImVec2(x1, by), bc);
+        }
+      }
     }
     dl->PopClipRect();
     // Corner above the keyboard: pattern name.
@@ -2696,11 +3066,21 @@ void drawPianoRoll(App& a) {
   }
   if (hovered && hOver == Part::None && vOver == Part::None) {
     if (inGrid) {
-      if (hoverNote >= 0 && st.tool == Tool::Draw)
+      if (hoverNote >= 0 && (st.tool == Tool::Draw || (st.tool == Tool::Select && (logicplug::active(a) || livelook::active(a)) && !io.KeyCtrl)))
         ImGui::SetMouseCursor(hoverEdge ? ImGuiMouseCursor_ResizeEW : ImGuiMouseCursor_ResizeAll);
       char buf[96];
       std::snprintf(buf, sizeof buf, "%s  ·  bar %lld", noteName(pitchAt(m.y)).c_str(),
                     static_cast<long long>(tickAt(m.x) / std::max<Tick>(1, pm.baseBar()) + 1));
+      if (st.tool == Tool::Vibrato && g.kind != Gesture::Vibrato) {  // K-262
+        if (vibHover.kind == pianovib::Hit::Depth) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        else if (vibHover.kind == pianovib::Hit::FadeIn || vibHover.kind == pianovib::Hit::FadeOut || vibHover.kind == pianovib::Hit::Delay)
+          ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        else if (vibHover.kind == pianovib::Hit::Body) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+        std::string h = pianovib::toolHint(a, chId);
+        if (vibHover.note >= 0 && static_cast<size_t>(vibHover.note) < notes.size() && notes[static_cast<size_t>(vibHover.note)].vib.active())
+          h = pianovib::describe(notes[static_cast<size_t>(vibHover.note)].vib) + "   (" + h + ")";
+        a.setHint(h);
+      }
       if (st.tool == Tool::Bend) {  // K-25
         if (bendHover.kind == BendHit::Point) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
         else if (bendHover.kind > BendHit::None) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
@@ -2727,6 +3107,12 @@ void drawPianoRoll(App& a) {
         }
       } else if (hoverNote >= 0 && st.tool == Tool::Draw)
         a.setHint(std::string(buf) + "   " + i18n::tr("(drag: move · edge: resize · Shift+drag: copy · Esc / right-click while dragging: cancel · Alt: no snap)"));
+      else if (hoverNote >= 0 && st.tool == Tool::Select && (logicplug::active(a) || livelook::active(a)))  // k078: the pointer
+#ifdef __APPLE__
+        a.setHint(std::string(buf) + "   " + i18n::tr("(drag: move · Cmd+drag: copy · right end: resize · Shift+click: add to the selection · Esc / right-click while dragging: cancel · Alt: no snap)"));
+#else
+        a.setHint(std::string(buf) + "   " + i18n::tr("(drag: move · Ctrl+drag: copy · right end: resize · Shift+click: add to the selection · Esc / right-click while dragging: cancel · Alt: no snap)"));
+#endif
       else if (st.tool == Tool::Draw)  // K-20
         a.setHint(std::string(buf) + "   " + i18n::tr("(click: draw · Shift+click: draw and drag its length · wheel: scroll · Ctrl+wheel: zoom · Alt: no snap)"));
       else
@@ -2888,6 +3274,12 @@ void drawPianoRoll(App& a) {
       }
     } else if (inGrid && rClick && st.tool == Tool::Zoom) {
       st.zoomRequest /= 1.5f;  // zoom tool: right-click zooms out
+    } else if (inGrid && rClick && st.tool == Tool::Vibrato) {
+      // K-262: right-click a note: its vibrato menu (never deletes: this tool edits vibrato).
+      if (vibHover.note >= 0) {
+        vibMenuNote = vibHover.note;
+        ImGui::OpenPopup("##vibmenu");
+      }
     } else if (inGrid && rClick && st.tool == Tool::Bend) {
       // K-25 / K-28: right-click a point or a curve handle: the curve menu of the segment that ends
       // at that point (Alt+right-click a point removes it at once). Never a note: this tool edits lines.
@@ -2906,7 +3298,30 @@ void drawPianoRoll(App& a) {
       g.kind = Gesture::Erase;
     } else if (inGrid && lClick) {
       bool ctrl = io.KeyCtrl;
-      if (st.tool == Tool::Bend && !ctrl) {
+      // k078: Smooth's and Clips' left tool is a pointer (their default): a press on a note moves it (its
+      // right end resizes it), as the Draw tool's does, and only a press on an empty spot draws a box. It
+      // drew a box from the note, so a note could only be nudged a step at a time with the arrow keys.
+      const bool pointerMoves = logicplug::active(a) || livelook::active(a);
+      // Cmd+drag (Ctrl on Windows and Linux) on a note with that Pointer copies it: the originals stay, the
+      // copies move, one undo step (the Draw tool's Shift+drag copy). Alt stays the snap bypass. Studio's
+      // Select tool keeps Ctrl+drag for a box.
+      const bool pointerCopy = pointerMoves && st.tool == Tool::Select && ctrl && !io.KeyShift && hoverNote >= 0 && !hoverEdge;
+      if (st.tool == Tool::Vibrato && !ctrl) {
+        // K-262: a press on a note (or a handle of its vibrato) starts a vibrato drag; the selected
+        // notes follow a selected note. An empty spot does nothing (Ctrl+drag still selects).
+        if (vibHover.note >= 0 && static_cast<size_t>(vibHover.note) < notes.size()) {
+          const size_t ni = static_cast<size_t>(vibHover.note);
+          g.kind = Gesture::Vibrato;
+          g.anchor = vibHover.note;
+          g.vib = pianovib::Drag{};
+          g.vib.hit = vibHover;
+          g.vib.start = m;
+          g.vib.base = notes;
+          g.vib.targets = {ni};
+          for (size_t j : bendTargets(ni)) g.vib.targets.push_back(j);
+          vibReadout.clear();
+        }
+      } else if (st.tool == Tool::Bend && !ctrl) {
         // K-25: the bend tool edits lines only (an empty spot does nothing; Ctrl+drag still selects).
         BendClick first = bendClick;
         const uint64_t now = a.doc.history().stateSerial();
@@ -3034,7 +3449,7 @@ void drawPianoRoll(App& a) {
       } else if (dbl && hoverNote >= 0) {
         propsNote = hoverNote;
         ImGui::OpenPopup("##noteprops");
-      } else if (ctrl || st.tool == Tool::Select) {
+      } else if ((ctrl && !pointerCopy) || (st.tool == Tool::Select && !(pointerMoves && hoverNote >= 0 && !io.KeyShift))) {
         g.kind = Gesture::Select;
         if (!io.KeyShift) st.selected.clear(), st.editSel.clear();
       } else if (st.tool == Tool::Erase) {
@@ -3062,7 +3477,7 @@ void drawPianoRoll(App& a) {
         if (hoverNote >= 0) {
           // Q-3: Shift+drag on a note copies the selection (or just that
           // note when it is not selected), like FL; the copies follow the pointer.
-          const bool shiftCopy = io.KeyShift && !io.KeyCtrl && !hoverEdge;
+          const bool shiftCopy = (io.KeyShift && !io.KeyCtrl && !hoverEdge) || pointerCopy;
           if (!st.selected.count(static_cast<size_t>(hoverNote))) {
             if (!io.KeyShift || shiftCopy) st.selected.clear(), st.editSel.clear();
             st.selected.insert(static_cast<size_t>(hoverNote));
@@ -3136,6 +3551,11 @@ void drawPianoRoll(App& a) {
     // J-188: whatever the setting (no lag while it is off), so switching it on mid-drag applies at once.
     if (g.kind == Gesture::Move || g.kind == Gesture::Resize) noteAnim.seed(0, {0, 0, 0}, ImGui::GetTime());
   }
+  if (draglog::on() && (g.kind != Gesture::None || lClick || rClick || active))
+    draglog::note("piano roll: gesture %d active %d hovered %d click %d moved %d anchor %d multi %d at %lld/%d now %lld/%d pointer %.1f %.1f notes %zu",
+                  static_cast<int>(g.kind), active ? 1 : 0, hovered ? 1 : 0, lClick ? 1 : 0, g.moved ? 1 : 0, g.anchor, g.multi ? 1 : 0,
+                  static_cast<long long>(g.startTick), g.startPitch, static_cast<long long>(tickAt(m.x)), pitchAt(m.y), static_cast<double>(m.x),
+                  static_cast<double>(m.y), notes.size());
   if (active && g.kind != Gesture::None) {
     // Dragging past the left/right edge scrolls the view.
     if (g.kind != Gesture::Select && g.kind != Gesture::Velocity && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) {
@@ -3217,16 +3637,20 @@ void drawPianoRoll(App& a) {
         const Note& an = g.base[static_cast<size_t>(g.anchor)];
         Tick end = timeline::snapTick(curTick, snapG, Snap::Line);
         Tick dl2 = std::max<Tick>(end, an.start + std::max<Tick>(1, snapG)) - (an.start + an.length);
+        // GitHub #74: every selected note takes the same change; a shorter one stops at one grid
+        // cell (or its own length, if it was shorter still) instead of shrinking to a sliver.
+        const Tick cell = std::max<Tick>(1, snapG);
+        auto resized = [dl2, cell](Tick len) { return std::max<Tick>(std::min(len, cell), len + dl2); };
         if (g.multi) {  // K-198 follow-up: every selected note of every edited channel takes the same change
           st.lastLength = std::max<Tick>(1, an.length + dl2);
           noteAnimT.d = {0.0, 0.0, static_cast<double>(dl2)};
-          splitSel(a, chId, multinote::transform(a.doc, patId, g.mbase, g.msel, [&](Note& n) { n.length = std::max<Tick>(1, n.length + dl2); },
+          splitSel(a, chId, multinote::transform(a.doc, patId, g.mbase, g.msel, [&](Note& n) { n.length = resized(n.length); },
                                                  false, "resize notes", g.key));
           break;
         }
         std::vector<Note> ns = g.base;
         for (size_t i = 0; i < ns.size(); ++i)
-          if (g.sel[i]) ns[i].length = std::max<Tick>(1, ns[i].length + dl2);
+          if (g.sel[i]) ns[i].length = resized(ns[i].length);
         st.lastLength = std::max<Tick>(1, an.length + dl2);
         st.lastSet = true;
         noteAnimT.d = {0.0, 0.0, static_cast<double>(dl2)};
@@ -3315,6 +3739,16 @@ void drawPianoRoll(App& a) {
         break;
       }
       case Gesture::Zoom: break;  // drawn below, applied on release
+      case Gesture::Vibrato: {  // K-262: depth, rate, fades or delay follow the pointer (Ctrl: fine, Alt: 25 cent steps)
+        if (g.anchor < 0 || static_cast<size_t>(g.anchor) >= notes.size()) break;
+        std::vector<Note> ns;
+        std::string ro;
+        if (!pianovib::dragTo(g.vib, m, vibBox(static_cast<size_t>(g.anchor)), io.KeyCtrl, io.KeyAlt, ns, ro)) break;
+        g.moved = true;
+        vibReadout = ro;
+        if (ns != notes) commit(a, patId, chId, ns, g.sel, "note vibrato", g.key);
+        break;
+      }
       case Gesture::Bend: {  // K-25: the point follows the pointer (the snap grid and semitone steps; Alt inverts)
         if (g.anchor < 0 || static_cast<size_t>(g.anchor) >= g.base.size() || g.bendPt < 0) break;
         if (!g.moved && !ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) break;  // a click alone changes nothing
@@ -3518,6 +3952,7 @@ void drawPianoRoll(App& a) {
     }
   }
   if (ImGui::IsItemDeactivated()) {
+    if (draglog::on()) draglog::note("piano roll: canvas let go (gesture %d moved %d), mouse down %d", static_cast<int>(g.kind), g.moved ? 1 : 0, ImGui::IsMouseDown(ImGuiMouseButton_Left) ? 1 : 0);
     if (g.kind == Gesture::Play)
       for (int p : g.playing) a.engine.noteOff(chId, p);
     if (g.kind == Gesture::Zoom) {
@@ -3543,7 +3978,7 @@ void drawPianoRoll(App& a) {
           left.length = cut - n.start;
           right.start = cut;
           right.length = n.start + n.length - cut;
-          if (!n.bend.empty()) bend::split(n, cut - n.start, left, right);  // K-25: each part keeps its piece of the line
+          if (!n.bend.empty() || n.vib.active()) bend::split(n, cut - n.start, left, right);  // K-25, K-262: each part keeps its piece
           ns.push_back(left);
           ns.push_back(right);
           changed = true;
@@ -3575,6 +4010,25 @@ void drawPianoRoll(App& a) {
     for (int k = 0; k < static_cast<int>(Lane::Count); ++k)
       if (ImGui::Selectable(kLaneNames[k], !autoLane && static_cast<int>(lane) == k)) lane = static_cast<Lane>(k), pianoAutomationLane() = ParamId{};
     patternLaneMenu(a, patId, chId);
+    ImGui::EndPopup();
+  }
+
+  // K-262: a note's vibrato menu (right-click with the Vibrato tool): its shape, sync, centre, rate
+  // sweep, presets, copy and paste, variation, remove. Each choice is one undo step, on the clicked
+  // note and (a selected note) every selected note.
+  if (ImGui::BeginPopup("##vibmenu")) {
+    std::vector<Note> ns = rollNotes(a, patId, chId);
+    if (vibMenuNote >= 0 && static_cast<size_t>(vibMenuNote) < ns.size()) {
+      const size_t ni = static_cast<size_t>(vibMenuNote);
+      std::vector<size_t> tg{ni};
+      if (st.selected.count(ni))
+        for (size_t j : st.selected)
+          if (j != ni && j < ns.size() && !ns[j].slide) tg.push_back(j);
+      const char* label = "note vibrato";
+      if (pianovib::menuBody(a, ns, tg, label)) commit(a, patId, chId, ns, selVector(a, ns.size()), label, 0);
+    } else {
+      ImGui::CloseCurrentPopup();
+    }
     ImGui::EndPopup();
   }
 
@@ -3694,6 +4148,42 @@ void drawPianoRoll(App& a) {
       ImGui::SameLine();
       ImGui::Checkbox(i18n::tr("Porta"), &porta);
       ui::Hint("Starts at the previous note's pitch and glides to its own (channel porta time)");
+      {  // K-262: the note's vibrato (the Vibrato tool draws and drags it)
+        ImGui::SeparatorText(i18n::tr("Vibrato"));
+        NoteVibrato& v = n.vib;
+        bool on = v.active();
+        if (ImGui::Checkbox("##vibon", &on)) {
+          if (on) {
+            const float c = v.centre;
+            v = pianovib::defaults();
+            v.centre = c;
+          } else {
+            v = NoteVibrato{};
+          }
+        }
+        ui::Hint("The note's vibrato (the Vibrato tool shows it on the note)");
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!on);
+        const float w = ImGui::GetFontSize() * 4.6f;
+        ImGui::SetNextItemWidth(w);
+        ImGui::DragFloat("##vibdepth", &v.depth, 1.0f, 1.0f, vib::kMaxDepth, "%.0f ct", ImGuiSliderFlags_AlwaysClamp);
+        ui::Hint("Depth in cents (100 = a semitone each way)");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(w);
+        if (v.sync) ImGui::DragFloat("##vibrate", &v.rate, 0.005f, vib::kMinRateBeats, vib::kMaxRateBeats, "%.3f beats", ImGuiSliderFlags_AlwaysClamp);
+        else ImGui::DragFloat("##vibrate", &v.rate, 0.05f, vib::kMinRateHz, vib::kMaxRateHz, "%.1f Hz", ImGuiSliderFlags_AlwaysClamp);
+        ui::Hint(v.sync ? "One cycle's length in beats" : "Rate in cycles a second");
+        ImGui::SameLine();
+        bool sync = v.sync;
+        if (ImGui::Checkbox(i18n::tr("Sync"), &sync)) v.sync = sync, v.rate = sync ? 0.25f : 5.5f, v.rateEnd = 0;
+        float pct[3] = {v.delay * 100.0f, v.fadeIn * 100.0f, v.fadeOut * 100.0f};
+        ImGui::SetNextItemWidth(w * 3 + ImGui::GetStyle().ItemSpacing.x * 2);
+        if (ImGui::DragFloat3("##vibtimes", pct, 0.5f, 0.0f, 100.0f, "%.0f%%", ImGuiSliderFlags_AlwaysClamp))
+          v.delay = pct[0] / 100.0f, v.fadeIn = pct[1] / 100.0f, v.fadeOut = pct[2] / 100.0f;
+        ui::Hint("Delay, fade in and fade out, each as a share of the note's length");
+        ImGui::EndDisabled();
+        if (on) vib::clamp(v);
+      }
       n.pitch = pitch;
       n.velocity = vel;
       n.start = std::max<long long>(0, start);
@@ -3843,10 +4333,10 @@ void drawPianoRoll(App& a) {
       commit(a, patId, chId, ns, nsel, "paste notes", 0);
     }
     if (!laneKeys && keys::pressed("piano.quickQuantize") && multi) {
-      multiApply(a, patId, chId, [&](Note& n) { n.start = snapNearest(n.start, grid); }, "quantize notes");
+      multiApply(a, patId, chId, [&](Note& n) { n.start = snapNearest(n.start, qgrid); }, "quantize notes");
     } else if (!laneKeys && keys::pressed("piano.quickQuantize")) {
       for (size_t i = 0; i < ns.size(); ++i)
-        if (!anySel || sel[i]) ns[i].start = snapNearest(ns[i].start, grid);
+        if (!anySel || sel[i]) ns[i].start = snapNearest(ns[i].start, qgrid);
       commit(a, patId, chId, ns, sel, "quantize notes", 0);
     }
     if (!laneKeys && keys::pressed("piano.transposeUp")) applyToSel([&](Note& n) { n.pitch += 1; }, "transpose notes");
@@ -3868,6 +4358,7 @@ void drawPianoRoll(App& a) {
       if (keys::pressed("piano.toolZoom")) st.tool = Tool::Zoom;
       if (keys::pressed("piano.toolDetune")) st.tool = Tool::Detune;
       if (keys::pressed("piano.toolBend")) st.tool = Tool::Bend;  // K-25
+      if (keys::pressed("piano.toolVibrato")) st.tool = Tool::Vibrato;  // K-262
       if (keys::pressed("piano.slideMode")) newSlide = !newSlide;
     }
   }

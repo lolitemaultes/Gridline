@@ -4,6 +4,7 @@
 // Deleting an audio clip source removes its channel from the project; the
 // sample file on disk is never touched. Tested in tests/test_clip_sources.cpp.
 #pragma once
+#include <set>
 #include <vector>
 #include "Document.h"
 
@@ -12,6 +13,10 @@ namespace gl::ops {
 // A channel listed as an audio clip source: a sampler with a sample (FL's
 // audio clip channels import as such).
 bool isAudioClipSource(const Channel& ch);
+
+// The channel rack's audio clip channels: the channels playlist audio clips play from (every
+// arrangement), and channels marked as audio clip channels (Channel::audioClip) with no clip left.
+std::set<ObjectId> audioClipChannels(const Song& s);
 
 // Steps or notes of the channel in any pattern (a sampler that also plays
 // as an instrument).

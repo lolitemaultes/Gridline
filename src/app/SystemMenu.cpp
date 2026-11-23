@@ -6,12 +6,14 @@
 #include <string>
 #include <vector>
 #include "../../third_party/imgui/imgui.h"
+#include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Keymap.h"
 #include "../core/LayoutStyle.h"
 #include "../core/MenuTree.h"
 #include "../core/Settings.h"
 #include "../host/ui/NativeMenu.h"
 #include "App.h"
+#include "FocusGuard.h"
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
 #include "LayoutStyleUi.h"
@@ -123,6 +125,20 @@ uint64_t stateSignature(App& a, layout::Preset style) {
   return h;
 }
 
+int gDeferred = 0;  // 0.7.8: walks put off while the pointer held something (dev: sysmenu status)
+int gWalks = 0;     // walks of the menus' code so far
+
+// A mouse button is down, or an item the mouse took is still active.
+// (Tests: GRIDLINE_SYSMENU_WALK_IN_DRAG=1 walks during drags too, as before, to check the walk alone
+// leaves the drag alone.)
+bool pointerBusy() {
+  static const bool walkInDrag = std::getenv("GRIDLINE_SYSMENU_WALK_IN_DRAG") != nullptr;
+  if (walkInDrag) return false;
+  if (ImGui::IsAnyMouseDown()) return true;
+  const ImGuiContext& g = *ImGui::GetCurrentContext();
+  return g.ActiveId != 0 && g.ActiveIdSource == ImGuiInputSource_Mouse;
+}
+
 bool wanted(App& a) {
   if (gHidden && !gForce) return false;  // test runs keep the in-window row
   if (a.home.visible()) return false;
@@ -207,8 +223,16 @@ void frame(App& a) {
   const layout::Preset style = layoutui::menuStyle(a);
   const uint64_t sig = stateSignature(a, style);
   if (nm::installed() && style == gStyle && sig == gSeen && f - gLastWalk < 240) return;
+  // 0.7.8: not while the pointer holds something (a note, a clip, a knob being dragged): every edit
+  // of a drag changes the signature, so the menus' code ran on each step of it. The walk leaves the
+  // focus alone (MenuTreeUi.cpp), and the menus catch up once the button is let go.
+  if (nm::installed() && style == gStyle && pointerBusy()) {
+    ++gDeferred;
+    return;
+  }
   gSeen = sig;
   gLastWalk = f;
+  ++gWalks;
   gStyle = style;
   std::vector<nm::Item> app, menus;
   walk(a, style, app, menus);
@@ -248,8 +272,8 @@ bool devCommand(App&, const std::vector<std::string>& args, int frame) {
     std::printf("SYSMENU BEGIN frame %d\n%sSYSMENU END\n", frame, dump().c_str());
   } else if (args[0] == "status") {
     // Read only (asking available() would start the Linux bus worker).
-    std::printf("frame %d sysmenu status installed %d bus %d (%s)\n", frame, nm::installed() ? 1 : 0, nm::busStarted() ? 1 : 0,
-                nm::status().c_str());
+    std::printf("frame %d sysmenu status installed %d bus %d (%s) walks %d deferred %d focus kept %d\n", frame, nm::installed() ? 1 : 0,
+                nm::busStarted() ? 1 : 0, nm::status().c_str(), gWalks, gDeferred, focusguard::Keep::kept());
   } else if (args[0] == "choose" && args.size() > 1) {
     std::string path = args[1];
     for (size_t i = 2; i < args.size(); ++i) path += " " + args[i];

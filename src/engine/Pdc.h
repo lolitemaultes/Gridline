@@ -27,6 +27,7 @@ class PdcDelay {
     mask_ = c - 1;
     cur_ = next_ = std::clamp(initial, 0, static_cast<int>(mask_));
     filled_ = static_cast<int64_t>(c);  // silence counts as history
+    quiet_ = filled_;
   }
   // Largest delay this line can hold.
   int maxDelay() const { return static_cast<int>(mask_); }
@@ -37,6 +38,11 @@ class PdcDelay {
   // `target` samples (crossfading from the previous delay) to acc.
   void run(int target, const float* inL, const float* inR, float level, float* accL, float* accR, int n) {
     target = std::clamp(target, 0, static_cast<int>(mask_));
+    // K-142 (0.7.8): silence going into a line whose whole history is silence, at a settled delay,
+    // adds exact zeros and leaves the line as it was (relative to its write position): skip it.
+    const int64_t cap = static_cast<int64_t>(mask_) + 1;
+    if (!inL && quiet_ >= cap && fade_ == 0 && target == cur_ && filled_ >= cap) return;
+    quiet_ = inL ? 0 : std::min(cap, quiet_ + n);
     for (int i = 0; i < n; ++i) {
       const size_t w = static_cast<size_t>(w_) & mask_;
       l_[w] = inL ? inL[i] * level : 0.f;
@@ -78,16 +84,23 @@ class PdcDelay {
     next_ = cur_;
     fade_ = 0;
     filled_ = std::min<int64_t>(old.filled_, keep);
+    quiet_ = 0;  // (K-142: what it took over is looked at as sound)
     adopted_.store(true, std::memory_order_release);
   }
   // True once adopt() ran (the builder then drops the old line).
   bool adopted() const { return adopted_.load(std::memory_order_acquire); }
+  // K-142 (0.7.8): run(target) with silence in would add nothing and change nothing (see run).
+  bool settledSilent(int target) const {
+    const int64_t cap = static_cast<int64_t>(mask_) + 1;
+    return quiet_ >= cap && fade_ == 0 && std::clamp(target, 0, static_cast<int>(mask_)) == cur_ && filled_ >= cap;
+  }
 
  private:
   std::vector<float> l_, r_;
   size_t mask_ = 0;
   int64_t w_ = 0;       // samples written
   int64_t filled_ = 0;  // samples of valid history (capped at the capacity)
+  int64_t quiet_ = 0;   // K-142: samples of silence (null input) written in a row, capped at the capacity
   int cur_ = 0, next_ = 0, fade_ = 0;
   std::atomic<bool> adopted_{false};
 };
@@ -112,6 +125,8 @@ struct PdcTap {
     if (adoptFrom && !line->adopted()) line->adopt(*adoptFrom);
     line->run(delay, inL, inR, level, accL, accR, n);
   }
+  // K-142 (0.7.8): run() with silence in would add nothing and change nothing.
+  bool idle() const { return !line || ((!adoptFrom || line->adopted()) && line->settledSilent(delay)); }
 };
 
 }  // namespace gl

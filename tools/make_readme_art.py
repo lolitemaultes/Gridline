@@ -501,21 +501,23 @@ VIEWS += [
 ]
 
 # The release banner and screenshots of this version.
-RELEASE = "0.7.7"
+RELEASE = "0.7.8"
 # The banner: version as set, headline, subline; a prerelease adds its tag and label.
-RELEASE_BANNER = ("0.7.7", "Choose how you work",
-                  "Clips, Smooth and Tracker join Studio, with take lanes, control surfaces and full MPE")
+RELEASE_BANNER = ("0.7.8", "Set every knob in motion",
+                  "The LFO board with Chaos and Random, one Audio clip window, a new Seltmann and Terrace")
 RELEASE_BANNER_OPTS = {}
 # Plugin editors on one sheet (none in this release).
 RELEASE_EDITORS = []
-# Release screenshots from 1600x1000 captures of the demo song (take lanes: a short song of four sung takes), cropped to the part that shows the feature.
+# Release screenshots from 1600x1000 captures at UI scale 2 (3200x2000; Terrace 1440x900, 2880x1800) of the demo
+# song (the Audio clip window and the Tracker: with a sampler channel playing two bars of its break, rendered from
+# the song), cropped to the window that shows the feature.
 RELEASE_VIEWS = [
-    ("r_clips.png", "clips.png", None),  # Clips: the arrangement, track headers and the device band, playing
-    ("r_smooth.png", "smooth.png", None),  # Smooth: Library, inspector, tracks and the mixer in the lower pane
-    ("r_tracker.png", "tracker.png", None),  # Tracker: the header band and the pattern editor, playing the song
-    ("r_takes.png", "take-lanes.png", (0, 50, 1600, 330)),  # four takes comped across their lanes
-    ("r_record.png", "record-window.png", (371, 234, 1221, 790)),  # the Record window's Inputs and monitoring page
-    ("r_speech.png", "speech.png", (492, 208, 1108, 793)),  # the Speech dialog with a pitched line and its preview
+    ("r_acw.png", "audio-clip-window.png", (261, 241, 2939, 1758)),  # the Audio clip window on its Main page
+    ("r_lfo.png", "lfo-board.png", (242, 141, 2958, 970)),  # the LFO board popped out: Chaos, Random and an LFO, playing
+    ("r_seltmann.png", "seltmann.png", (746, 445, 2453, 1353)),  # Seltmann's new editor, Full, a chopped break
+    ("r_terrace.png", "terrace.png", (347, 98, 2533, 1705)),  # Terrace with the Four floors preset, playing
+    ("r_tsample.png", "tracker-sample-editor.png", None),  # the Tracker playing, a Sampler in its Sample editor
+    ("r_loupe.png", "loupe-deverb.png", (759, 233, 2438, 1564)),  # Loupe's Deverb dialog over its demo audio
 ]
 
 if __name__ == "__main__":

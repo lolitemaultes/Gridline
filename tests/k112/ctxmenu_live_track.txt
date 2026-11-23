@@ -1,4 +1,6 @@
 Duplicate ( Ctrl+D )
+Duplicate without notes
+Copy to a new pattern
 Delete ( Del )
 --------------------------------
 Rename ( Ctrl+R )
@@ -12,6 +14,8 @@ New return track ( Ctrl+Alt+T )
 
 ==== tree ====
 Duplicate
+Duplicate without notes
+Copy to a new pattern
 Delete
 Rename
 Group tracks

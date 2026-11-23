@@ -5,6 +5,7 @@
 // the library at once on the next start; a rescan replaces it when files
 // change.
 #include <algorithm>
+#include "../../core/ThreadName.h"
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -188,7 +189,7 @@ void libraryRefresh(const std::string& cacheFile, bool force) {
       l.snap = s;
     }
   }
-  l.worker = std::thread([cacheFile] {
+  l.worker = std::thread([cacheFile] { gl::threads::setName("gl-plasma-lib");
     Library& lb = lib();
     std::vector<std::string> roots = defaultSerumRoots();
     std::vector<LibraryPreset> presets = scanLibrary(roots, &lb.cancel);

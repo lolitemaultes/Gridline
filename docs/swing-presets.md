@@ -82,9 +82,14 @@ accents for that channel; truncated swing still ends swung steps on the grid.
 ## Automating the swing and the accents
 
 The Groove editor's **Amount** and **Accent** knobs (and the channel rack's Swing knob) are song
-parameters: right-click one to make an automation clip for it, or link a controller. In song mode,
-each pass of a pattern clip plays with the amount and accent the automation has where the pass
-starts, so a verse can sit straight and a chorus swing, or the accents can come in for a section.
+parameters: right-click one to make an automation clip for it, or link a controller. In song mode
+the automation moves the swing step by step: each step (each cell of the groove) plays with the
+amount and accent the automation has where that step starts. A verse can sit straight and a chorus
+swing, a ramp can loosen or tighten the feel over a few bars inside one pattern clip, or the
+accents can come in for a section. Playback and exports place every note the same way, to the
+sample, and while the song plays the knobs follow their automation. A linked controller moves the
+project's own swing, which is heard at once and undone like any other change. Songs without swing
+automation play exactly as before.
 
 ## Grooves from audio
 

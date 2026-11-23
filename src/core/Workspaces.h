@@ -21,15 +21,28 @@ namespace gl::workspaces {
 struct Arrangement {
   std::set<std::string> open;  // the pane windows open (stable names)
   std::string regionState;     // the layout's region state (layout::toJson text, "" = as designed)
-  bool operator==(const Arrangement& o) const { return open == o.open && regionState == o.regionState; }
+  std::string dock;            // Studio: its dock plan (dockplan::toJson text, "" = the default build)
+  bool operator==(const Arrangement& o) const { return open == o.open && regionState == o.regionState && dock == o.dock; }
 };
 
 struct Workspace {
   std::string name;
   Arrangement saved;      // what "Revert to saved" goes back to
   Arrangement current;    // as the person left it (equal to saved while auto-save is on)
-  bool operator==(const Workspace& o) const { return name == o.name && saved == o.saved && current == o.current; }
+  // What a switch to it brings back (the card's "This workspace keeps").
+  bool keepWindows = true;  // the open windows and where they sit
+  bool keepPanes = true;    // the pane sizes and pane tabs (region state, Studio's dock plan)
+  // A workspace's own control bar and pinned commands (toolbar::barJson / pinsJson text); "" = it uses
+  // its layout's. An own pin list may be empty ("[]").
+  std::string ownBar;
+  std::string ownPins;
+  bool operator==(const Workspace& o) const {
+    return name == o.name && saved == o.saved && current == o.current && keepWindows == o.keepWindows && keepPanes == o.keepPanes &&
+           ownBar == o.ownBar && ownPins == o.ownPins;
+  }
   bool changed() const { return !(saved == current); }
+  bool hasOwnBar() const { return !ownBar.empty(); }
+  bool hasOwnPins() const { return !ownPins.empty(); }
 };
 
 struct Set {
@@ -77,6 +90,10 @@ const Arrangement* select(Set& s, int i, const Arrangement& now);
 // "Save current arrangement" and "Revert to saved" for the active workspace.
 void save(Set& s);
 const Arrangement* revert(Set& s);
+
+// The active workspace (nullptr when the set is empty).
+const Workspace* activeWorkspace(const Set& s);
+Workspace* activeWorkspace(Set& s);
 
 // JSON text for settings.json and back. Broken text gives an empty set (the app then makes the
 // initial one); names are cleaned, duplicates renamed, the list capped, the active index clamped.

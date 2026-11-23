@@ -7,6 +7,7 @@
 #include <filesystem>
 #include "../../app/App.h"
 #include "metal_widgets.h"
+#include "../../core/I18n.h"
 
 namespace gl::packs::models::metal {
 
@@ -59,19 +60,30 @@ void drawGrainScan(App& a, const PluginTarget& t, float width) {
   flk::wheel(c, GsHold, 89, 28, 50, "Hold");
   flk::wheel(c, GsGrainSpace, 155, 28, 50, "Gr. spacing");
   flk::wheel(c, GsWaveSpace, 224, 28, 50, "Wave spacing", skin::WheelBigLine | skin::WheelCentered);
-  {  // grain shape: attack / hold / release over two grain periods
+  {  // the grains of one window: each grain's attack / hold / release shape at its real spacing
+     // (grain spacing), and the read head across them (wave spacing: rising forwards, flat
+     // when frozen, falling backwards), with the playback speed they give
     const ImVec2 g0 = F.p(305, 27), g1 = F.p(376, 93);
     skin::graphWell(dl, g0, g1, K);
-    const float att = prmf(st, GsAttack, 204) / 500.0f, hold = prmf(st, GsHold, 50) / 500.0f;
-    const float total = std::max(0.05f, 2 * att + hold);
-    const float wpx = (g1.x - g0.x - 8), hpx = (g1.y - g0.y - 10);
-    auto px = [&](float tt) { return g0.x + 4 + tt / (2 * total) * wpx; };
-    for (int rep = 0; rep < 2; ++rep) {
-      const float o = rep * total * 0.5f;
-      const ImVec2 pts[4] = {ImVec2(px(o), g1.y - 5), ImVec2(px(o + att), g1.y - 5 - hpx), ImVec2(px(o + att + hold), g1.y - 5 - hpx),
-                             ImVec2(px(o + 2 * att + hold), g1.y - 5)};
-      dl->AddPolyline(pts, 4, rep ? K.accent2C() : K.graphCurve, ImDrawFlags_None, 2.0f);
+    const GsTiming tm = gsTiming(prmf(st, GsAttack, 204), prmf(st, GsHold, 50), prmf(st, GsGrainSpace, 611), prmf(st, GsWaveSpace, 611), 44100.0);
+    const GsPreview pv = gsPreview(tm);
+    const float wpx = (g1.x - g0.x - 8), hpx = (g1.y - g0.y - 14);
+    const float base = g1.y - 5, top = base - hpx;
+    auto px = [&](float f) { return g0.x + 4 + f * wpx; };
+    dl->PushClipRect(g0, g1, true);
+    for (int k = 0; k < pv.count; ++k) {
+      const ImVec2 pts[4] = {ImVec2(px(pv.x0[k]), base), ImVec2(px(pv.x1[k]), top), ImVec2(px(pv.x2[k]), top), ImVec2(px(pv.x3[k]), base)};
+      dl->AddPolyline(pts, 4, (k & 1) ? K.accent2C() : K.graphCurve, ImDrawFlags_None, 1.6f);
     }
+    const float headH = std::max(4.0f, hpx - F.font(7.5f) - 4.0f);  // (the read head keeps under the speed text)
+    for (int k = 0; k + 1 < pv.count; ++k)
+      dl->AddLine(ImVec2(px(pv.x0[k]), base - pv.head[k] * headH), ImVec2(px(pv.x0[k + 1]), base - pv.head[k + 1] * headH), theme::withAlpha(K.text, 0.55f), 1.0f);
+    for (int k = 0; k < pv.count; ++k) dl->AddCircleFilled(ImVec2(px(pv.x0[k]), base - pv.head[k] * headH), 1.8f * F.s, theme::withAlpha(K.text, 0.8f), 8);
+    char spd[24];
+    if (std::fabs(pv.speed) < 0.005) std::snprintf(spd, sizeof spd, "%s", i18n::tr("held"));
+    else std::snprintf(spd, sizeof spd, "%s%.2fx", pv.speed < 0 ? "-" : "", std::fabs(pv.speed));
+    skin::text(dl, ImVec2(g0.x + 4, g0.y + 4), K.textDim, spd, F.font(7.5f));  // (the well's inset: 3 px at least)
+    dl->PopClipRect();
   }
   // ---- effects
   flk::section(c, 6, 112, 380, 99, "Effects");

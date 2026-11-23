@@ -10,6 +10,7 @@
 #include "DialogLayout.h"
 #include "Keys.h"
 #include "AutomationEditor.h"
+#include "SnapMenu.h"
 #include "LayoutShellUi.h"
 #include "LogicPlugins.h"
 #include "LiveLook.h"
@@ -27,6 +28,7 @@
 #include "../core/Automation.h"
 #include "../core/AutomationEdit.h"
 #include "../core/ClipLoop.h"
+#include "../core/Lfo.h"
 #include "../core/PatternAutomation.h"
 #include "../core/Presets.h"
 #include "../core/Timeline.h"
@@ -779,6 +781,37 @@ void drawLfoTool(App& a) {
   }
   ImGui::SameLine();
   if (ImGui::Button(i18n::tr("Cancel"), ImVec2(90, 0))) E.lfoOpen = false, E.preview.reset();
+  // A song LFO with this shape and rate moving the clip's parameter live, instead of points.
+  const bool canLive = lfo::canTarget(s, pid) && static_cast<int>(s.lfos.size()) < kMaxSongLfos;
+  ImGui::BeginDisabled(!canLive);
+  const bool makeLive = ui::TextButton("Make a live LFO instead", false, 0,
+                                       "A song LFO with this shape and speed moves the parameter as it plays (the LFO board); the clip is left as it is");
+  ImGui::EndDisabled();
+  if (makeLive) {
+    SongLfo l = lfo::makeDefault(s);
+    static const ::gl::LfoShape kShapes[] = {::gl::LfoShape::Sine, ::gl::LfoShape::Triangle, ::gl::LfoShape::Square, ::gl::LfoShape::SawUp,
+                                             ::gl::LfoShape::SawDown};
+    l.shape = kShapes[std::clamp(static_cast<int>(E.lfo.shape), 0, 4)];
+    l.pulseWidth = static_cast<float>(E.lfo.pulseWidth);
+    l.phase = static_cast<float>(std::fmod(E.lfo.phase, 1.0) * 360.0);
+    l.tempoSync = E.lfoSync;
+    if (E.lfoSync) {
+      const double beats = kDivs[std::clamp(static_cast<int>(std::lround(E.lfoDivStart)), 0, kDivCount - 1)].bars * s.barTicks() / std::max(1, s.ppq);
+      for (int kind : {0, 2})
+        for (int n = 0; n < lfo::kRateCount; ++n)
+          if (std::abs(lfo::rateBeats(n, kind) - beats) < 1e-6) l.rateNote = n, l.rateKind = kind;
+    } else {
+      l.rateHz = static_cast<float>(std::clamp(E.lfoHzStart, 0.01, 40.0));
+    }
+    const float lo = static_cast<float>(std::clamp(E.lfo.centreStart - E.lfo.amountStart, 0.0, 1.0));
+    const float hi = static_cast<float>(std::clamp(E.lfo.centreStart + E.lfo.amountStart, 0.0, 1.0));
+    a.doc.beginGroup("make a live LFO");
+    if (const ObjectId id = a.doc.addLfo(l); id != kNoId && lfo::link(a.doc, id, pid))
+      a.doc.editLfoLink(id, pid, "make a live LFO", [lo, hi](ModLink& m) { m.mode = kModAbsolute, m.min = lo, m.max = hi; });
+    a.doc.endGroup(false);
+    a.showLfoBoard = true;
+    E.lfoOpen = false, E.preview.reset();
+  }
   ImGui::End();
   if (!open) E.lfoOpen = false, E.preview.reset();
 }
@@ -924,7 +957,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
       std::max(static_cast<float>(vis1 + 8 * std::max<Tick>(1, s.barTicks())) * E.pxPerTick, std::max(0.0f, E.scrollX) + gridW), E.scrollX,
       scrollbarui::kThumbMinH);
   const scrollbarui::Part hOver = hovered && (E.g == Editor::None || !active) ? scrollbarui::hit(hBar, io.MousePos) : scrollbarui::Part::None;
-  const Tick snapG = timeline::snapGrid(s, E.snap, E.pxPerTick, io.KeyAlt);
+  const SnapGrid snapG = timeline::snapGrid(s, E.snap, E.pxPerTick, io.KeyAlt);
   const MeterMap mm = editorMeter(s);  // K-193: song time follows the meter changes
   auto snapContent = [&](Tick c) { return timeline::snapTick(mm, base + c, snapG, E.snap) - base; };
 
@@ -1350,10 +1383,9 @@ void drawToolbar(App& a, const AutomationClip& ac) {
   ui::ToolButton("aesnap", ui::Icon::ToolSnap, E.snap != Snap::None, fh, i18n::N_("Snap"),
                  i18n::N_("snap to the grid chosen beside it (hold Alt while dragging to bypass)"), nullptr, theme::rgb(theme::role::kSnap));
   ImGui::SameLine(0, 2);
-  std::string snapLabel = snapName(E.snap);
+  std::string snapLabel = snapmenu::label(E.snap);
   if (ui::BeginCombo("##aesnapc", snapLabel.c_str(), 110)) {
-    for (int i = 0; i <= static_cast<int>(Snap::Bar); ++i)
-      if (ImGui::Selectable(snapName(static_cast<Snap>(i)), E.snap == static_cast<Snap>(i))) E.snap = static_cast<Snap>(i);
+    snapmenu::items(E.snap, true, false);
     ImGui::EndCombo();
   }
   ui::ToolbarDivider();

@@ -1470,7 +1470,8 @@ def main():
     ctx.work.mkdir(exist_ok=True)
     cfg = ctx.work / "config"
     cfg.mkdir(exist_ok=True)
-    ctx.env = dict(os.environ, GRIDLINE_CONFIG_HOME=str(cfg), XDG_CONFIG_HOME=str(cfg), GRIDLINE_NO_UPDATE_CHECK="1", SDL_AUDIODRIVER="dummy", GRIDLINE_NO_GSETTINGS="1")
+    ctx.env = dict(os.environ, GRIDLINE_CONFIG_HOME=str(cfg), XDG_CONFIG_HOME=str(cfg), GRIDLINE_NO_UPDATE_CHECK="1", SDL_AUDIODRIVER="dummy", GRIDLINE_NO_GSETTINGS="1",
+                   GRIDLINE_PLUGIN_WINDOWS="own")  # interfaces in windows of their own, as these checks were measured
     os.environ.update(ctx.env)
     ctx.prefix = os.environ.get("WINEPREFIX", str(Path.home() / ".wine"))
     ctx.probe = Probe(ctx.prefix, out / "probe-log.txt")

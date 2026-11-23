@@ -2584,9 +2584,11 @@ struct ImGuiContext
     int                     ViewportCreatedCount;               // Unique sequential creation counter (mostly for testing/debugging)
     int                     PlatformWindowsCreatedCount;        // Unique sequential creation counter (mostly for testing/debugging)
     bool                  (*ViewportLateCreateFilter)(ImGuiWindow* window); // GRIDLINE PATCH (J-113): when set, a window that stops fitting its host viewport gets its own only if this returns true
+    bool                  (*ViewportOverlayFilter)(ImGuiWindow* window); // GRIDLINE PATCH (0.7.8): when set and true for a window, it gets a viewport of its own (a top-most OS window), even where it fits its host, and is never merged back while it stays true
     bool                  (*CloseRequestFilter)(ImGuiWindow* window); // GRIDLINE PATCH (J-116): when set, a close button (title bar, dock tab, dock node) does not close the window if this returns true
     bool                  (*GlyphHook)(ImDrawList* draw_list, int glyph, ImVec2 ink_min, ImVec2 ink_max, ImU32 col); // GRIDLINE PATCH (SVG icons): when set, draws the arrows (glyph = ImGuiDir), check mark (4), close cross (5) and step minus / plus (6 / 7) inside the given ink bounds instead of ImGui's own shapes; returns false to fall back
     void                  (*WindowsMovedHook)(ImGuiContext* ctx);     // GRIDLINE PATCH (J-117): when set, called in NewFrame() once the window dragged with the mouse was moved and before floating dock nodes are laid out (the app keeps windows in bounds there)
+    void                  (*ActiveIdHook)(ImGuiID old_id, ImGuiID new_id, ImGuiWindow* window); // GRIDLINE PATCH (0.7.8 drag log): when set, called by SetActiveID() whenever the active item changes (diagnostics)
     ImGuiID               CloseWindowRequest;                         // GRIDLINE PATCH (K-297): when set to a window's ID, its next Begin() with a p_open closes it as its close button does (CloseRequestFilter applies)
     int                     ViewportFocusedStampCount;          // Every time the front-most window changes, we stamp its viewport with an incrementing counter
 

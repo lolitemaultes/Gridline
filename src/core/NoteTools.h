@@ -162,6 +162,23 @@ const std::vector<ArticulatePreset>& articulatePresets();
 ArticulateOpts articulatePresetOpts(int index, int ppq);
 void articulate(std::vector<Note>& notes, NoteSel& sel, const ArticulateOpts& o);
 
+// --------------------------------------------------------------------- lengths ----
+// GitHub #74: every selected note (none selected: every note) resized at once: scaled by `factor`,
+// set to `length` ticks, or made `delta` ticks longer (shorter when negative: a note keeps at least
+// that amount, so a short one stays as it is). A note never gets shorter than `minLength` ticks. With `snapEnds`, the new ends land on the grid
+// of `grid` ticks (a note keeps at least one grid cell).
+struct LengthOpts {
+  enum Mode { Scale = 0, Set = 1, Add = 2 };
+  int mode = Scale;
+  double factor = 1.0;  // Scale: 0.05..8
+  Tick length = 24;     // Set
+  Tick delta = 0;       // Add
+  Tick minLength = 1;
+  bool snapEnds = false;
+  Tick grid = 1;
+};
+void setLengths(std::vector<Note>& notes, NoteSel& sel, const LengthOpts& o);
+
 // -------------------------------------------------------------------- randomize ----
 struct RandomOpts {
   int root = 0;             // 0..11
@@ -294,8 +311,22 @@ bool editStepRow(Document& d, ObjectId pattern, ObjectId channel, const std::str
 // Moves (or copies) the channel's steps into piano-roll notes and back.
 bool convertStepsToNotes(Document& d, ObjectId pattern, ObjectId channel);
 bool convertNotesToSteps(Document& d, ObjectId pattern, ObjectId channel);
-// A new pattern holding the channels' data from `pattern` (moved when `move`). Returns its id.
+// A new pattern holding the channels' data from `pattern` (moved when `move`): their steps, step
+// parameters, notes and step loops, in a pattern of the same length, steps, meter and loop mode
+// right after it. One undo step. Returns its id.
 ObjectId channelsToNewPattern(Document& d, ObjectId pattern, const std::vector<ObjectId>& channels, bool move);
+// Clips' and Smooth's track menu "Copy to a new pattern": channelsToNewPattern(clip's pattern, {channel}),
+// and a clip of the new pattern on the clip's track at its place (a copy of `clip` with all its settings:
+// start, length, offset, loop, launch settings). `replace`: the original clip gives way to it; else the
+// original stays where it was and the copy lies on it (the track menus, user 2026-11-21). `ownSlot`
+// (Clips, not with `replace`): a clip of the clip grid gets the slot under the original's instead (a
+// slot holds one clip), with an empty scene put in under it when that slot is taken or past the last
+// scene, as Duplicate does. One undo step. Returns the new pattern (kNoId: none) and, through
+// `placed`, the new clip.
+ObjectId channelToNewPatternClip(Document& d, ObjectId clip, ObjectId channel, bool replace, ObjectId* placed = nullptr,
+                                 bool ownSlot = false);
+// GitHub #58: true when the channel has a lit step or a note in the pattern (a sequence to move).
+bool channelHasSequence(const Pattern& p, ObjectId channel);
 bool renameChannelGroup(Document& d, int group, const std::string& name);
 // Copies (or moves) notes of one channel to another in the same pattern. `notes` + `keep` are the
 // piano roll's list (K-22: its rack steps as step notes among them): a move leaves `from` with

@@ -19,6 +19,7 @@
 #include "../core/StageRoomOps.h"
 #include "../core/StageSelect.h"
 #include "../core/StageRooms.h"
+#include "../core/TrackerGrid.h"
 #include "App.h"
 #include "CollabUi.h"
 #include "ContextMenus.h"
@@ -27,6 +28,9 @@
 #include "StageViewInternal.h"
 #include "Theme.h"
 #include "TrackIcons.h"
+#include "TrackerLook.h"
+#include "TrackerPages.h"
+#include "TrackerView.h"
 #include "Widgets.h"
 #include "Windows.h"
 
@@ -136,7 +140,7 @@ void drawFace(App& a, ImDrawList* dl, const Tok& t, ImVec2 mn, float side, float
   const View& v = gView;
   const MixerTrack& m = a.doc.song().mixer[t.index];
   const ImVec2 mx(mn.x + side, mn.y + side), c(mn.x + side * 0.5f, mn.y + side * 0.5f);
-  const float rad = side * 0.25f;
+  const float rad = corner(side * 0.25f);
   const float back = static_cast<float>(std::clamp(t.depth, 0.0, 1.0));
   if (t.muted) {
     dl->AddRect(mn, mx, theme::withAlpha(P.textFaint, alpha), rad, 0, 1.5f);
@@ -144,6 +148,7 @@ void drawFace(App& a, ImDrawList* dl, const Tok& t, ImVec2 mn, float side, float
     ImU32 f = faceOf(m, t.depth, v.stage);
     if (t.dim) f = theme::mix(f, v.stage, 0.62f);
     dl->AddRectFilled(mn, mx, theme::withAlpha(f, alpha), rad);
+    if (v.trk && alpha > 0.5f) trackerBevel(dl, mn, mx);  // the Tracker look: a raised tile, as its buttons
   }
   float ia = (1.0f - 0.25f * back) * alpha;
   if (t.dim) ia *= 0.4f;
@@ -187,6 +192,10 @@ struct Drag {
   std::vector<std::string> obsName;  // a token's track name, "" for a tray
   std::vector<int> obsCount;         // tracks behind the obstacle
   std::vector<st::Rect> obsRing;     // a tray's ring (to light up)
+  std::vector<ObjectId> obsMember;   // compact groups: a member of the group behind the obstacle (kNoId: a token)
+  std::vector<char> obsOpen;         // a group's obstacle is its open tray (else, compact groups, its chip)
+  int chipGroup = -1;  // compact groups: the press was on this group's chip (a click opens it, a drag moves them all)
+  bool lifted = false;  // the drag's first move frame was handled (compact groups: the tray it left)
   bool toggleOnRelease = false;
   ObjectId widthTrack = kNoId;
   // K-224: a box on the empty stage (Band): the choice before it, how it combines, the tracks it holds now.
@@ -214,8 +223,26 @@ struct Local {
   bool openPresets = false, openRoom = false;  // dev: open a toolbar popover
   int escFrame = -1;  // K-224: Esc ended a drag or a box this frame (it does not also clear the selection)
   double roomHintUntil = 0;  // "Pick a room to hear depth" under the Room button until then
+  // Compact groups (core/StageCompact.h).
+  st::GroupFocus focus;
+  ObjectId dragOver = kNoId;  // a member of the group under a moving drag (its chip, or its tray when open)
+  ObjectId liftFrom = kNoId;  // a tile was just lifted out of this member's tray (consumed by the next update)
+  float freezeAnim = -1;      // dev: the open group's animation held at this value (screenshots), -1 off
+  int hoverChip = -1;         // the closed group whose chip is under the pointer
+  int peekChip = -1;
+  double peekSince = 0;       // when the pointer came to rest on that chip (its peek after a moment)
+  bool menuAll = false;       // the "+N" list shows every member (a chip's right-click)
 };
 Local L;
+
+// Compact groups (the setting ui.stage.compactGroups, on by default); GRIDLINE_STAGE_COMPACT=0 or 1 overrides it.
+bool compactOn(App& a) {
+  static const int env = [] {
+    const char* e = std::getenv("GRIDLINE_STAGE_COMPACT");
+    return e && *e ? (*e == '0' ? 0 : 1) : -1;
+  }();
+  return env >= 0 ? env == 1 : a.settings.getBool("ui.stage.compactGroups");
+}
 
 const Song& song(App& a) { return a.doc.song(); }
 
@@ -389,7 +416,7 @@ bool traysCrowdListener() {
   const st::Geo& g = v.g;
   const st::Rect l = listenerRect(g).grown(4.0f * g.scale);
   for (const Grp& gr : v.groups)
-    if (gr.tray.box.y1 > g.frontY + st::kBulge * g.scale * 0.5f || st::overlapArea(gr.tray.box, l) > 0) return true;
+    if (gr.open > 0 && (gr.tray.box.y1 > g.frontY + st::kBulge * g.scale * 0.5f || st::overlapArea(gr.tray.box, l) > 0)) return true;
   return false;
 }
 
@@ -436,6 +463,7 @@ void buildGroups(App& a) {
     gr.tray = st::trayLayout(g, gr.ring, static_cast<int>(members.size()), stageMinX(g, g.backY) + 4, stageMaxX(g, g.backY) - 4, v.body0.y + 4,
                              trayMaxY());
     clearTray(gr.tray, gr.ring, members, stageMinX(g, g.backY) + 4, stageMaxX(g, g.backY) - 4, v.body0.y + 4, trayMaxY());
+    if (v.compact) gr.chip = st::chipLayout(g, gr.spot.pan, gr.spot.depth, static_cast<int>(members.size()));
     const int gi = static_cast<int>(v.groups.size());
     for (size_t k = 0; k < members.size(); ++k) {
       Tok& t = v.toks[members[k]];
@@ -446,16 +474,22 @@ void buildGroups(App& a) {
         const float ts = gr.tray.token, cx = (c.x0 + c.x1) * 0.5f, y0 = c.y0 + 6.0f * g.scale;
         t.r = {std::round(cx - ts * 0.5f), std::round(y0), std::round(cx - ts * 0.5f) + ts, std::round(y0) + ts};
       }
+      t.cellR = t.r;
       v.prevGroup[t.id] = v.toks[members.front()].id;
     }
     v.groups.push_back(std::move(gr));
   }
-  // Tracks on their own: their tokens, kept apart on screen when their places are close.
+  // Tracks on their own: their tokens, kept apart on screen when their places are close. Compact groups'
+  // chips take part as tokens do, so a chip never covers a track beside it.
   std::vector<size_t> singles;
   std::vector<st::Rect> rects;
   for (size_t i = 0; i < v.toks.size(); ++i)
     if (v.toks[i].group < 0) singles.push_back(i), rects.push_back(v.g.token(v.toks[i].pan, v.toks[i].depth));
+  if (v.compact)
+    for (const Grp& gr : v.groups) rects.push_back(gr.chip.hit);
   const std::vector<float> off = st::separate(rects, st::kGap * v.g.scale);
+  if (v.compact)
+    for (size_t k = 0; k < v.groups.size(); ++k) v.groups[k].chip = st::shifted(v.groups[k].chip, std::round(off[singles.size() + k]), 0);
   const double t = now();
   for (size_t k = 0; k < singles.size(); ++k) {
     Tok& tk = v.toks[singles[k]];
@@ -468,6 +502,40 @@ void buildGroups(App& a) {
       if (f >= 1.0) L.ease.erase(e);
     }
     tk.r = {std::round(r.x0 + dx), std::round(r.y0 + dy), std::round(r.x1 + dx), std::round(r.y1 + dy)};
+  }
+}
+
+// Compact groups: which group is open this frame (core/StageCompact.h). Once per frame, after the groups.
+void updateFocus(App& a) {
+  View& v = gView;
+  if (!v.compact) return;
+  st::FocusIn in;
+  for (const Grp& gr : v.groups) {
+    std::vector<ObjectId> m;
+    for (size_t k : gr.toks) m.push_back(v.toks[k].id);
+    in.groups.push_back(std::move(m));
+  }
+  for (ObjectId id : selection(a))
+    if (tokOf(id)) in.selection.push_back(id);
+  const Drag& d = L.drag;
+  in.dragging = d.mode == Drag::Move && d.moved;
+  in.dragOver = in.dragging ? L.dragOver : kNoId;
+  in.dragFrom = L.liftFrom;
+  L.liftFrom = kNoId;
+  in.dt = ImGui::GetIO().DeltaTime;
+  L.focus.update(in);
+}
+
+// ... and how far each group is open: a closed group's tracks answer the pointer (and a box) at its chip.
+void applyOpen() {
+  View& v = gView;
+  if (!v.compact) return;
+  for (size_t gi = 0; gi < v.groups.size(); ++gi) {
+    Grp& gr = v.groups[gi];
+    gr.open = L.focus.openness(gi);
+    if (L.freezeAnim >= 0 && static_cast<int>(gi) == L.focus.open()) gr.open = L.freezeAnim;
+    if (gr.open < 0.5f)
+      for (size_t k : gr.toks) v.toks[k].r = gr.chip.face;
   }
 }
 
@@ -577,9 +645,9 @@ void drawTile(App& a, ImDrawList* dl, const Tok& t, const st::Rect& r, bool hove
   const float side = r.w();
   const ImVec2 mn(r.x0, r.y0), mx(r.x1, r.y1);
   drawFace(a, dl, t, mn, side, 1.0f);
-  const float rad = side * 0.25f;
+  const float rad = corner(side * 0.25f);
   if (hovered && !t.muted) dl->AddRectFilled(mn, mx, IM_COL32(255, 255, 255, 18), rad);
-  if (t.selected) dl->AddRect(ImVec2(mn.x - 3, mn.y - 3), ImVec2(mx.x + 3, mx.y + 3), theme::withAlpha(P.hot, focused || !t.dim ? 1.0f : 0.8f), rad + 3, 0, 2.0f);
+  if (t.selected) dl->AddRect(ImVec2(mn.x - 3, mn.y - 3), ImVec2(mx.x + 3, mx.y + 3), theme::withAlpha(P.hot, focused || !t.dim ? 1.0f : 0.8f), corner(rad + 3), 0, 2.0f);
   if (t.solo) {
     const ImVec2 c(mx.x - 1, mn.y + 1);
     dl->AddCircleFilled(c, 7.5f, P.solo, 16);
@@ -590,7 +658,7 @@ void drawTile(App& a, ImDrawList* dl, const Tok& t, const st::Rect& r, bool hove
   if (t.live) dl->AddCircleFilled(ImVec2(mn.x + 4, mn.y + 4), 2.5f, P.accent, 10);  // automation plays it
   if (m.locked) ui::drawIcon(dl, ui::Icon::Lock, ImVec2(mn.x + 7, mx.y - 7), 9, P.textDim);
   if (ImU32 fc = 0; const float fl = collabui::flash(a, "mixer/#" + std::to_string(m.id), &fc))  // a collaborator's change
-    dl->AddRect(ImVec2(mn.x - 4, mn.y - 4), ImVec2(mx.x + 4, mx.y + 4), theme::withAlpha(fc, fl), rad + 4, 0, 2.0f);
+    dl->AddRect(ImVec2(mn.x - 4, mn.y - 4), ImVec2(mx.x + 4, mx.y + 4), theme::withAlpha(fc, fl), corner(rad + 4), 0, 2.0f);
   canchor::publishRect(canchor::StageTrack, m.id, 0, mn, mx);  // collaborators' pointers over the stage
 }
 
@@ -603,8 +671,8 @@ void drawChip(App& a, ImDrawList* dl, const std::string& name, float cx, float y
   float x = std::round(cx - w * 0.5f);
   x = std::clamp(x, minX, std::max(minX, maxX - w));
   const ImVec2 mn(x, std::round(y - 2)), mx(x + w, std::round(y - 2) + h);
-  dl->AddRectFilled(mn, mx, v.bg, 3);
-  dl->AddRect(mn, mx, P.lineStrong, 3);
+  dl->AddRectFilled(mn, mx, v.bg, corner(3));
+  dl->AddRect(mn, mx, P.lineStrong, corner(3));
   dl->AddText(a.fontBold, fs, ImVec2(mn.x + 6, mn.y + 2), P.text, name.c_str());
 }
 
@@ -626,12 +694,13 @@ void drawSingles(App& a, ImDrawList* dl) {
     const Foot f = footOf(t);
     const ImU32 col = t.muted ? theme::withAlpha(P.textFaint, 0.07f)
                               : theme::withAlpha(theme::content(song(a).mixer[t.index].color), (P.dark ? 0.20f : 0.24f) * (t.dim ? 0.5f : 1.0f));
-    dl->AddEllipseFilled(ImVec2(f.cx, f.y), ImVec2(f.rx, g.footRy(f.depth)), col);
+    if (v.trk) trackerFoot(dl, ImVec2(f.cx, f.y), f.rx, g.footRy(f.depth), col);  // the Tracker look: a flat diamond
+    else dl->AddEllipseFilled(ImVec2(f.cx, f.y), ImVec2(f.rx, g.footRy(f.depth)), col);
   }
   for (size_t i : order) {
     const Tok& t = v.toks[i];
     if (dragging(t.id) && d.moved) {  // "was here"
-      dl->AddRect(ImVec2(t.r.x0, t.r.y0), ImVec2(t.r.x1, t.r.y1), P.lineStrong, t.r.w() * 0.25f, 0, 1.5f);
+      dl->AddRect(ImVec2(t.r.x0, t.r.y0), ImVec2(t.r.x1, t.r.y1), P.lineStrong, corner(t.r.w() * 0.25f), 0, 1.5f);
       const char* w = i18n::tr("was here");
       const ImVec2 ts = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, w);
       dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round((t.r.x0 + t.r.x1 - ts.x) * 0.5f), t.r.y1 + 7), P.textFaint, w);
@@ -645,6 +714,10 @@ void drawSingles(App& a, ImDrawList* dl) {
       const Foot f = footOf(*t);
       for (float sx : {-1.0f, 1.0f}) {
         const bool hot = L.hoverHandle == (sx < 0 ? 1 : 2) || (d.mode == Drag::Width);
+        if (v.trk) {  // the Tracker look: a small square (the same place and reach)
+          trackerHandle(dl, ImVec2(f.cx + sx * f.rx, f.y), (kHandleR + (hot ? 1.0f : 0.0f)) * g.scale, P.hot, v.stage);
+          continue;
+        }
         dl->AddCircleFilled(ImVec2(f.cx + sx * f.rx, f.y), kHandleR * g.scale + 2, v.stage, 16);
         dl->AddCircleFilled(ImVec2(f.cx + sx * f.rx, f.y), (kHandleR + (hot ? 1.0f : 0.0f)) * g.scale, P.hot, 16);
       }
@@ -675,6 +748,23 @@ void drawLabels(App& a, ImDrawList* dl) {
     in.push_back(l);
     who.push_back(i);
   }
+  // Compact groups: a closed chip's label is its first track's name and how many more stand there.
+  const size_t nTok = in.size();
+  std::vector<size_t> chipOf;
+  if (v.compact)
+    for (size_t gi = 0; gi < v.groups.size(); ++gi) {
+      const Grp& gr = v.groups[gi];
+      if (gr.open > 0) continue;
+      st::LabelIn l;
+      l.name = v.toks[gr.toks.front()].name + " +" + std::to_string(gr.toks.size() - 1);
+      l.cx = (gr.chip.face.x0 + gr.chip.face.x1) * 0.5f;
+      l.y = gr.chip.face.y1 + 7.0f * g.scale;
+      l.token = gr.chip.face.w();
+      l.minX = stageMinX(g, l.y) + 8, l.maxX = stageMaxX(g, l.y) - 8;
+      in.push_back(l);
+      who.push_back(gr.toks.front());
+      chipOf.push_back(gi);
+    }
   const float fs = 12.0f;
   auto measure = [&](const std::string& s) { return a.fontBold->CalcTextSizeA(fs, 1e9f, 0, s.c_str()).x; };
   const std::vector<st::LabelOut> out = st::layoutLabels(in, measure, g.scale);
@@ -683,6 +773,23 @@ void drawLabels(App& a, ImDrawList* dl) {
     const float lfs = labelSize(t.depth);
     if (in[k].chip) continue;  // drawn after, over the others
     if (!out[k].visible) continue;
+    if (k >= nTok) {  // a closed group's chip: the name, then the count fainter
+      const Grp& gr = v.groups[chipOf[k - nTok]];
+      const std::string& text = out[k].text;
+      const std::string tail = " +" + std::to_string(gr.toks.size() - 1);
+      bool any = false;
+      for (size_t m : gr.toks) any = any || v.toks[m].selected;
+      const ImU32 col = any ? P.hot : P.text;
+      if (text.size() > tail.size() && text.compare(text.size() - tail.size(), tail.size(), tail) == 0) {
+        const std::string head = text.substr(0, text.size() - tail.size());
+        dl->AddText(a.fontBold, lfs, ImVec2(out[k].x, out[k].y), col, head.c_str());
+        const float hw = a.fontBold->CalcTextSizeA(lfs, 1e9f, 0, head.c_str()).x;
+        dl->AddText(a.fontBold, lfs, ImVec2(out[k].x + hw, out[k].y), P.textDim, tail.c_str());
+      } else {
+        dl->AddText(a.fontBold, lfs, ImVec2(out[k].x, out[k].y), col, text.c_str());
+      }
+      continue;
+    }
     const ImU32 col = t.muted || (t.dim && !t.selected) ? P.textFaint : P.text;
     const std::string& text = out[k].text;
     const std::string suffix = " " + std::to_string(t.index);
@@ -699,7 +806,137 @@ void drawLabels(App& a, ImDrawList* dl) {
     if (in[k].chip) drawChip(a, dl, v.toks[who[k]].name, in[k].cx, in[k].y, labelSize(v.toks[who[k]].depth), in[k].minX - 8, in[k].maxX + 8);
 }
 
-void drawTrays(App& a, ImDrawList* dl) {
+// Compact groups: a closed group's chip (cards stacked behind a face with the count and a strip of the
+// members' colours), or the tray opening out of it (0 < open < 1): the box grows from the chip and the
+// tiles fan out to their cells.
+void drawCompactGroup(App& a, ImDrawList* dl, size_t gi, bool target) {
+  const auto& P = pal();
+  View& v = gView;
+  const Grp& gr = v.groups[gi];
+  const Song& sg = song(a);
+  const float s = v.g.scale;
+  const st::Chip& c = gr.chip;
+  const float e = st::openEase(gr.open);
+  if (e > 0) {
+    const st::Rect b = st::lerpRect(c.hit, gr.tray.box, e);
+    const float rad = corner(c.face.w() * 0.25f + (14 * s - c.face.w() * 0.25f) * e);
+    dl->AddRectFilled(ImVec2(b.x0, b.y0), ImVec2(b.x1, b.y1), v.tray, rad);
+    if (v.trk) trackerBevel(dl, ImVec2(b.x0, b.y0), ImVec2(b.x1, b.y1));
+    else dl->AddRect(ImVec2(b.x0, b.y0), ImVec2(b.x1, b.y1), theme::withAlpha(P.lineStrong, 0.4f + 0.6f * e), rad);
+    for (size_t k : gr.toks) {
+      const Tok& t = v.toks[k];
+      if (t.cell < 0) continue;
+      const st::Rect r = st::lerpRect(c.face, t.cellR, e);
+      drawFace(a, dl, t, ImVec2(std::round(r.x0), std::round(r.y0)), std::round(r.w()), std::clamp(0.35f + e, 0.0f, 1.0f));
+    }
+    return;
+  }
+  const st::Rect& f = c.face;
+  const float side = f.w(), rad = corner(side * 0.25f);
+  if (dragging(v.toks[gr.toks.front()].id) && L.drag.moved) {  // the whole group is being moved: where it was
+    dashedRect(dl, ImVec2(c.hit.x0, c.hit.y0), ImVec2(c.hit.x1, c.hit.y1), P.textFaint, 1.2f);
+    return;
+  }
+  // The cards behind: the next members' colours, each a step up and to the right, parted by a hairline.
+  for (int k = c.cards; k >= 1; --k) {
+    const float o = st::kStackStep * s * static_cast<float>(k);
+    const Tok& m = v.toks[gr.toks[std::min(static_cast<size_t>(k), gr.toks.size() - 1)]];
+    const ImU32 col = theme::mix(faceOf(sg.mixer[m.index], gr.spot.depth, v.stage), v.stage, 0.08f * static_cast<float>(k));
+    const ImVec2 mn(f.x0 + o, f.y0 - o), mx(f.x1 + o, f.y1 - o);
+    dl->AddRectFilled(mn, mx, col, rad);
+    dl->AddRect(mn, mx, v.stage, rad, 0, 1.5f);
+  }
+  // The face: the count, and a strip of up to six members' colours along its foot.
+  const ImVec2 mn(f.x0, f.y0), mx(f.x1, f.y1);
+  bool anySel = false, live = false, allMuted = true, anySolo = false;
+  for (size_t k : gr.toks) {
+    const Tok& t = v.toks[k];
+    anySel = anySel || t.selected, live = live || t.live, allMuted = allMuted && t.muted, anySolo = anySolo || t.solo;
+  }
+  const ImU32 face = theme::mix(v.tray, P.text, P.dark ? 0.13f : 0.10f);
+  dl->AddRectFilled(mn, mx, face, rad);
+  if (v.trk) trackerBevel(dl, mn, mx);
+  else dl->AddRect(mn, mx, theme::withAlpha(P.lineStrong, 0.9f), rad, 0, 1.0f);
+  if (L.hoverChip == static_cast<int>(gi) || target) dl->AddRectFilled(mn, mx, IM_COL32(255, 255, 255, 18), rad);
+  char b[16];
+  std::snprintf(b, sizeof b, "%zu", gr.toks.size());
+  const float fs = std::round(side * 0.36f);
+  const ImVec2 ts = a.fontBold->CalcTextSizeA(fs, 1e9f, 0, b);
+  const float stripH = std::max(4.0f, std::round(side * 0.11f)), inset = std::round(side * 0.18f);
+  const float cy = (f.y0 + f.y1 - stripH - 4 * s) * 0.5f;
+  dl->AddText(a.fontBold, fs, ImVec2(std::round((f.x0 + f.x1 - ts.x) * 0.5f), std::round(cy - ts.y * 0.5f)), allMuted ? P.textFaint : P.text, b);
+  const size_t n = std::min<size_t>(gr.toks.size(), 6);
+  const float sx0 = f.x0 + inset, sx1 = f.x1 - inset, sy1 = std::round(f.y1 - side * 0.16f), sy0 = sy1 - stripH;
+  const float seg = (sx1 - sx0) / static_cast<float>(n);
+  for (size_t k = 0; k < n; ++k) {
+    const bool more = k + 1 == n && gr.toks.size() > n;
+    const Tok& t = v.toks[gr.toks[k]];
+    const ImU32 col = more ? P.textFaint : t.muted ? theme::withAlpha(P.textFaint, 0.6f) : theme::content(sg.mixer[t.index].color);
+    const ImDrawFlags fl = k == 0 && n == 1 ? ImDrawFlags_RoundCornersAll : k == 0 ? ImDrawFlags_RoundCornersLeft : k + 1 == n ? ImDrawFlags_RoundCornersRight : ImDrawFlags_RoundCornersNone;
+    dl->AddRectFilled(ImVec2(std::round(sx0 + seg * static_cast<float>(k)), sy0), ImVec2(std::round(sx0 + seg * static_cast<float>(k + 1)) - (k + 1 < n ? 1.0f : 0.0f), sy1), col,
+                      corner(stripH * 0.5f), fl);
+  }
+  if (live) dl->AddCircleFilled(ImVec2(mn.x + 4, mn.y + 4), 2.5f, P.accent, 10);  // automation plays a member
+  if (anySolo) {
+    const ImVec2 sc(mx.x - 1, mn.y + 1);
+    dl->AddCircleFilled(sc, 7.5f, P.solo, 16);
+    const ImVec2 t2 = a.fontBold->CalcTextSizeA(9.0f, 1e9f, 0, "S");
+    dl->AddText(a.fontBold, 9.0f, ImVec2(std::round(sc.x - t2.x * 0.5f), std::round(sc.y - t2.y * 0.5f)), theme::contrastText(P.solo), "S");
+  }
+  if (anySel || target) {
+    const float g3 = 3.0f;
+    dl->AddRect(ImVec2(c.hit.x0 - g3, c.hit.y0 - g3), ImVec2(c.hit.x1 + g3, c.hit.y1 + g3), P.hot, corner(rad + g3), 0, 2.0f);
+  }
+}
+
+// The peek over a closed group's chip: who is there, and that a click opens it.
+void drawPeek(App& a, size_t gi) {
+  const auto& P = pal();
+  const View& v = gView;
+  const Grp& gr = v.groups[gi];
+  ImDrawList* dl = ImGui::GetForegroundDrawList();
+  const float fs = theme::kFontCaption, pad = 10, row = fs + 7, sw = 9;
+  char title[64];
+  std::snprintf(title, sizeof title, i18n::tr("%zu tracks at this spot"), gr.toks.size());
+  const char* foot = i18n::tr("Click to open \xC2\xB7 drag to move them all");
+  const size_t cap = gr.toks.size() > 8 ? 7 : gr.toks.size();
+  float w = std::max(a.fontBold->CalcTextSizeA(fs, 1e9f, 0, title).x, a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, foot).x);
+  for (size_t k = 0; k < cap; ++k) w = std::max(w, sw + 7 + a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, v.toks[gr.toks[k]].name.c_str()).x);
+  w = std::round(w + pad * 2);
+  const size_t rows = cap + (gr.toks.size() > cap ? 1 : 0);
+  const float h = std::round(pad + row + 4 + static_cast<float>(rows) * row + 6 + row + pad - 6);
+  ImVec2 mn(std::round(gr.chip.hit.x1 + 12), std::round(gr.chip.hit.y0 - 4));
+  const ImVec2 vp = ImGui::GetMainViewport()->Pos, vs = ImGui::GetMainViewport()->Size;
+  if (mn.x + w > vp.x + vs.x - 4) mn.x = std::round(gr.chip.hit.x0 - 12 - w);
+  if (mn.y + h > vp.y + vs.y - 4) mn.y = std::round(vp.y + vs.y - 4 - h);
+  mn.y = std::max(mn.y, vp.y + 4);
+  dl->AddRectFilled(mn, ImVec2(mn.x + w, mn.y + h), theme::popupBg(P), 6);
+  dl->AddRect(mn, ImVec2(mn.x + w, mn.y + h), P.lineStrong, 6);
+  float y = mn.y + pad - 2;
+  dl->AddText(a.fontBold, fs, ImVec2(mn.x + pad, y), P.text, title);
+  y += row + 4;
+  for (size_t k = 0; k < cap; ++k) {
+    const Tok& t = v.toks[gr.toks[k]];
+    const ImU32 col = theme::content(song(a).mixer[t.index].color);
+    const float cy = std::round(y + fs * 0.5f + 1);
+    dl->AddRectFilled(ImVec2(mn.x + pad, cy - sw * 0.5f), ImVec2(mn.x + pad + sw, cy + sw * 0.5f), t.muted ? P.textFaint : col, 2.5f);
+    dl->AddText(a.fontRegular, fs, ImVec2(mn.x + pad + sw + 7, y), t.muted ? P.textFaint : P.text, t.name.c_str());
+    y += row;
+  }
+  if (gr.toks.size() > cap) {
+    char b[48];
+    std::snprintf(b, sizeof b, i18n::tr("and %zu more"), gr.toks.size() - cap);
+    dl->AddText(a.fontRegular, fs, ImVec2(mn.x + pad + sw + 7, y), P.textDim, b);
+    y += row;
+  }
+  y += 2;
+  dl->AddLine(ImVec2(mn.x + 1, std::round(y) + 0.5f), ImVec2(mn.x + w - 1, std::round(y) + 0.5f), P.line);
+  dl->AddText(a.fontRegular, fs, ImVec2(mn.x + pad, y + 5), P.textDim, foot);
+}
+
+// The groups: `closedOnly` (compact groups, before the names, so a name behind a chip stays readable)
+// the closed chips; else every other group (every group without compact groups).
+void drawTrays(App& a, ImDrawList* dl, bool closedOnly) {
   const auto& P = pal();
   View& v = gView;
   const st::Geo& g = v.g;
@@ -709,10 +946,13 @@ void drawTrays(App& a, ImDrawList* dl) {
   std::vector<size_t> order(v.groups.size());
   for (size_t i = 0; i < order.size(); ++i) order[i] = i;
   std::stable_sort(order.begin(), order.end(), [&](size_t x, size_t y) { return v.groups[x].ring.y < v.groups[y].ring.y; });
+  if (v.compact)  // closed chips first (far to near), an opening or open tray over them all
+    std::stable_sort(order.begin(), order.end(), [&](size_t x, size_t y) { return v.groups[x].open < v.groups[y].open; });
   auto measure = [&](const std::string& t) { return a.fontBold->CalcTextSizeA(12.0f, 1e9f, 0, t.c_str()).x; };
   for (size_t gi : order) {
     const Grp& gr = v.groups[gi];
     const st::Tray& tr = gr.tray;
+    if (closedOnly != (v.compact && gr.open <= 0)) continue;
     // The footprint at the real spot: the selected member's, else the first one's.
     const Tok* shown = &v.toks[gr.toks.front()];
     for (size_t k : gr.toks)
@@ -723,12 +963,25 @@ void drawTrays(App& a, ImDrawList* dl) {
     {
       const Foot f = footOf(*shown);
       const ImU32 col = theme::withAlpha(theme::content(song(a).mixer[shown->index].color), P.dark ? 0.20f : 0.24f);
-      dl->AddEllipseFilled(ImVec2(f.cx, f.y), ImVec2(f.rx, g.footRy(f.depth)), col);
+      if (v.trk) trackerFoot(dl, ImVec2(f.cx, f.y), f.rx, g.footRy(f.depth), col);
+      else dl->AddEllipseFilled(ImVec2(f.cx, f.y), ImVec2(f.rx, g.footRy(f.depth)), col);
       if (one && shown->id == a.selMixer && d.mode != Drag::Move)
         for (float sx : {-1.0f, 1.0f}) {
+          if (v.trk) {
+            trackerHandle(dl, ImVec2(f.cx + sx * f.rx, f.y), kHandleR * s, P.hot, v.stage);
+            continue;
+          }
           dl->AddCircleFilled(ImVec2(f.cx + sx * f.rx, f.y), kHandleR * s + 2, v.stage, 16);
           dl->AddCircleFilled(ImVec2(f.cx + sx * f.rx, f.y), kHandleR * s, P.hot, 16);
         }
+    }
+    if (v.compact && gr.open < 1.0f) {
+      bool target = false;
+      if (d.mode == Drag::Move && d.target >= 0 && static_cast<size_t>(d.target) < d.obsMember.size())
+        if (const ObjectId om = d.obsMember[static_cast<size_t>(d.target)]; om != kNoId)
+          for (size_t k : gr.toks) target = target || v.toks[k].id == om;
+      drawCompactGroup(a, dl, gi, target);
+      continue;
     }
     // The ring with its dot: the only thing at the true place.
     const ImVec2 rc(gr.ring.x, gr.ring.y);
@@ -737,9 +990,10 @@ void drawTrays(App& a, ImDrawList* dl) {
     // The tray and its stem.
     const ImVec2 b0(tr.box.x0, tr.box.y0), b1(tr.box.x1, tr.box.y1);
     const float sx = std::clamp(gr.ring.x, b0.x + 20 * s, b1.x - 20 * s);
-    const float rad = 14 * s;
+    const float rad = corner(14 * s);
     dl->AddRectFilled(b0, b1, v.tray, rad);
-    dl->AddRect(b0, b1, P.lineStrong, rad);
+    if (v.trk) trackerBevel(dl, b0, b1);
+    else dl->AddRect(b0, b1, P.lineStrong, rad);
     if (tr.above) {
       dl->AddTriangleFilled(ImVec2(sx - 7 * s, b1.y - 1), ImVec2(sx + 7 * s, b1.y - 1), ImVec2(sx, b1.y + 8 * s), v.tray);
       dl->AddLine(ImVec2(sx - 7 * s, b1.y), ImVec2(sx, b1.y + 8 * s), P.lineStrong);
@@ -784,7 +1038,7 @@ void drawTrays(App& a, ImDrawList* dl) {
       const st::Rect& c = tr.cells.back();
       const float ts = tr.token, cx = (c.x0 + c.x1) * 0.5f;
       const ImVec2 mn(std::round(cx - ts * 0.5f), std::round(c.y0 + 6 * s));
-      dl->AddRectFilled(mn, ImVec2(mn.x + ts, mn.y + ts), L.menuGroup == static_cast<int>(gi) ? P.surface600 : P.surface700, ts * 0.25f);
+      dl->AddRectFilled(mn, ImVec2(mn.x + ts, mn.y + ts), L.menuGroup == static_cast<int>(gi) ? P.surface600 : P.surface700, corner(ts * 0.25f));
       char b[16];
       std::snprintf(b, sizeof b, "+%d", tr.more);
       const ImVec2 tsz = a.fontBold->CalcTextSizeA(13.0f, 1e9f, 0, b);
@@ -795,7 +1049,7 @@ void drawTrays(App& a, ImDrawList* dl) {
     std::snprintf(b, sizeof b, "%zu", gr.toks.size());
     const ImVec2 tsz = a.fontRegular->CalcTextSizeA(10.0f, 1e9f, 0, b);
     const float cw = std::max(16.0f, tsz.x + 9), cx = b1.x - 22 * s;
-    dl->AddRectFilled(ImVec2(cx - cw * 0.5f, b0.y - 8), ImVec2(cx + cw * 0.5f, b0.y + 8), P.surface700, 8);
+    dl->AddRectFilled(ImVec2(cx - cw * 0.5f, b0.y - 8), ImVec2(cx + cw * 0.5f, b0.y + 8), P.surface700, corner(8));
     dl->AddText(a.fontRegular, 10.0f, ImVec2(std::round(cx - tsz.x * 0.5f), std::round(b0.y - tsz.y * 0.5f)), P.textDim, b);
   }
 }
@@ -848,26 +1102,35 @@ void drawDrag(App& a, ImDrawList* dl) {
   // The join target.
   if (d.target >= 0) {
     const st::Obstacle& o = d.obs[static_cast<size_t>(d.target)];
-    if (d.obsName[static_cast<size_t>(d.target)].empty()) {  // a tray
-      dl->AddRect(ImVec2(o.r.x0, o.r.y0), ImVec2(o.r.x1, o.r.y1), P.hot, 14 * s, 0, 1.5f);
+    if (d.obsName[static_cast<size_t>(d.target)].empty() && !d.obsOpen[static_cast<size_t>(d.target)]) {
+      // compact groups: a closed chip lights up itself (drawCompactGroup)
+    } else if (d.obsName[static_cast<size_t>(d.target)].empty()) {  // a tray
+      st::Rect hl = o.r;  // compact groups: the open tray itself (its obstacle also takes in the chip under it)
+      if (v.compact)
+        for (const Grp& gr : v.groups)
+          for (size_t t : gr.toks)
+            if (v.toks[t].id == d.obsMember[static_cast<size_t>(d.target)]) hl = gr.tray.box;
+      dl->AddRect(ImVec2(hl.x0, hl.y0), ImVec2(hl.x1, hl.y1), P.hot, 14 * s, 0, 1.5f);
       {  // its count chip lights up too
         char b[16];
         std::snprintf(b, sizeof b, "%d", d.obsCount[static_cast<size_t>(d.target)]);
         const ImVec2 tsz = a.fontBold->CalcTextSizeA(10.0f, 1e9f, 0, b);
-        const float cw = std::max(16.0f, tsz.x + 9), cx = o.r.x1 - 22 * s;
-        dl->AddRectFilled(ImVec2(cx - cw * 0.5f, o.r.y0 - 8), ImVec2(cx + cw * 0.5f, o.r.y0 + 8), P.hot, 8);
-        dl->AddText(a.fontBold, 10.0f, ImVec2(std::round(cx - tsz.x * 0.5f), std::round(o.r.y0 - tsz.y * 0.5f)), P.surface950, b);
+        const float cw = std::max(16.0f, tsz.x + 9), cx = hl.x1 - 22 * s;
+        dl->AddRectFilled(ImVec2(cx - cw * 0.5f, hl.y0 - 8), ImVec2(cx + cw * 0.5f, hl.y0 + 8), P.hot, 8);
+        dl->AddText(a.fontBold, 10.0f, ImVec2(std::round(cx - tsz.x * 0.5f), std::round(hl.y0 - tsz.y * 0.5f)), P.surface950, b);
       }
       const st::Rect& rg = d.obsRing[static_cast<size_t>(d.target)];
       dl->AddEllipse(ImVec2((rg.x0 + rg.x1) * 0.5f, (rg.y0 + rg.y1) * 0.5f), ImVec2(16 * s, 5 * s), P.hot, 0, 24, 1.5f);
-      const st::Pt ring{(rg.x0 + rg.x1) * 0.5f, (rg.y0 + rg.y1) * 0.5f};
-      const int n = d.obsCount[static_cast<size_t>(d.target)];
-      const st::Tray nt = st::trayLayout(g, ring, n + 1, stageMinX(g, g.backY) + 4, stageMaxX(g, g.backY) - 4, v.body0.y + 4, trayMaxY());
-      const st::Rect& c = nt.cells[std::min(static_cast<size_t>(n), nt.cells.size() - 1)];
-      const float ts = nt.token, cx = (c.x0 + c.x1) * 0.5f;
-      dashedRect(dl, ImVec2(cx - ts * 0.5f, c.y0 + 6 * s), ImVec2(cx + ts * 0.5f, c.y0 + 6 * s + ts), P.hot, 1.5f);
+      if (!v.compact) {  // the cell it will take (compact groups: only the lit tray, no placeholder)
+        const st::Pt ring{(rg.x0 + rg.x1) * 0.5f, (rg.y0 + rg.y1) * 0.5f};
+        const int n = d.obsCount[static_cast<size_t>(d.target)];
+        const st::Tray nt = st::trayLayout(g, ring, n + 1, stageMinX(g, g.backY) + 4, stageMaxX(g, g.backY) - 4, v.body0.y + 4, trayMaxY());
+        const st::Rect& c = nt.cells[std::min(static_cast<size_t>(n), nt.cells.size() - 1)];
+        const float ts = nt.token, cx = (c.x0 + c.x1) * 0.5f;
+        dashedRect(dl, ImVec2(cx - ts * 0.5f, c.y0 + 6 * s), ImVec2(cx + ts * 0.5f, c.y0 + 6 * s + ts), P.hot, 1.5f);
+      }
     } else {
-      dl->AddRect(ImVec2(o.r.x0 - 3, o.r.y0 - 3), ImVec2(o.r.x1 + 3, o.r.y1 + 3), P.hot, o.r.w() * 0.25f + 3, 0, 2.0f);
+      dl->AddRect(ImVec2(o.r.x0 - 3, o.r.y0 - 3), ImVec2(o.r.x1 + 3, o.r.y1 + 3), P.hot, corner(o.r.w() * 0.25f + 3), 0, 2.0f);
     }
   } else if (!d.outside) {  // the place it will take, and how wide it is
     if (const Tok* t = tokOf(d.anchor)) {
@@ -875,7 +1138,8 @@ void drawDrag(App& a, ImDrawList* dl) {
       const st::Rect r = g.token(d.pan, d.depth);
       f.r = r, f.group = -1, f.depth = d.depth;
       const Foot ft = footOf(f);
-      const int n = 40;
+      const int n = v.trk ? 0 : 40;  // the Tracker look: the diamond's outline, dashed
+      if (v.trk) trackerFootDashed(dl, ImVec2(ft.cx, ft.y), ft.rx, g.footRy(d.depth), theme::withAlpha(P.text, 0.45f));
       for (int k = 0; k < n; k += 2) {
         const float a0 = 6.2831853f * static_cast<float>(k) / n, a1 = 6.2831853f * static_cast<float>(k + 1) / n;
         dl->AddLine(ImVec2(ft.cx + ft.rx * std::cos(a0), ft.y + g.footRy(d.depth) * std::sin(a0)),
@@ -923,7 +1187,8 @@ void drawDrag(App& a, ImDrawList* dl) {
     if (d.obsName[k].empty()) {
       std::snprintf(b, sizeof b, i18n::tr("Join the group: %s"), placeWords(o.pan, o.depth).c_str());
       l1 = b;
-      std::snprintf(b, sizeof b, i18n::tr("Same spot as the other %d. Drop to join."), d.obsCount[k]);
+      if (d.obsOpen[k]) std::snprintf(b, sizeof b, i18n::tr("Same spot as the other %d. Drop to join."), d.obsCount[k]);
+      else std::snprintf(b, sizeof b, i18n::tr("Same spot as the other %d. Drop to join, or hold to open it."), d.obsCount[k]);
       l2 = b;
     } else {
       std::snprintf(b, sizeof b, i18n::tr("Join %s: %s"), d.obsName[k].c_str(), placeWords(o.pan, o.depth).c_str());
@@ -1016,7 +1281,7 @@ void buildObstacles(App& a) {
   Drag& d = L.drag;
   View& v = gView;
   const st::Geo& g = v.g;
-  d.obs.clear(), d.obsName.clear(), d.obsCount.clear(), d.obsRing.clear();
+  d.obs.clear(), d.obsName.clear(), d.obsCount.clear(), d.obsRing.clear(), d.obsMember.clear(), d.obsOpen.clear();
   std::vector<st::Pos> pts;
   std::vector<size_t> who;
   for (size_t i = 0; i < v.toks.size(); ++i)
@@ -1028,9 +1293,11 @@ void buildObstacles(App& a) {
     const st::Tray tr = st::trayLayout(g, ring, static_cast<int>(mem.size()), stageMinX(g, g.backY) + 4, stageMaxX(g, g.backY) - 4, v.body0.y + 4,
                                        trayMaxY());
     st::Obstacle o;
-    o.r = tr.box;
+    o.r = v.compact ? st::chipLayout(g, sp.pan, sp.depth, static_cast<int>(mem.size())).hit : tr.box;  // compact: moveFrame keeps it current
     o.pan = sp.pan, o.depth = sp.depth, o.key = static_cast<int>(d.obs.size());
     d.obs.push_back(o);
+    d.obsMember.push_back(pts[mem.front()].id);
+    d.obsOpen.push_back(v.compact ? 0 : 1);
     d.obsName.push_back("");
     d.obsCount.push_back(static_cast<int>(mem.size()));
     d.obsRing.push_back({ring.x - 16 * g.scale, ring.y - 5 * g.scale, ring.x + 16 * g.scale, ring.y + 5 * g.scale});
@@ -1043,6 +1310,8 @@ void buildObstacles(App& a) {
     o.r = g.token(t.pan, t.depth);
     o.pan = t.pan, o.depth = t.depth, o.key = static_cast<int>(d.obs.size());
     d.obs.push_back(o);
+    d.obsMember.push_back(kNoId);
+    d.obsOpen.push_back(0);
     d.obsName.push_back(t.name);
     d.obsCount.push_back(1);
     d.obsRing.push_back({});
@@ -1089,6 +1358,10 @@ void moveFrame(App& a) {
     d.moved = true;
     buildObstacles(a);
   }
+  if (v.compact && !d.lifted) {  // the tray a tile was lifted out of stays open a moment
+    d.lifted = true;
+    if (d.fromTray) L.liftFrom = d.anchor;
+  }
   // The token's centre: where it was grabbed plus the pointer's (fine) travel.
   const ImVec2 c((d.from.x0 + d.from.x1) * 0.5f + d.virt.x, (d.from.y0 + d.from.y1) * 0.5f + d.virt.y);
   const ImVec2 cc = d.fromTray ? ImVec2(io.MousePos.x, io.MousePos.y) : c;
@@ -1099,6 +1372,26 @@ void moveFrame(App& a) {
   if (snap) pan = st::snapPan(pan, 0.03);
   d.pan = pan, d.depth = dep;
   const ImVec2 m = io.MousePos;
+  // Compact groups: a group answers the drag at its chip while closed, at its whole tray while open; the
+  // group under the pointer opens after a moment (core/StageCompact.h).
+  if (v.compact) {
+    L.dragOver = kNoId;
+    for (size_t k = 0; k < d.obs.size(); ++k) {
+      if (d.obsMember[k] == kNoId) continue;
+      for (const Grp& gr : v.groups) {
+        bool has = false;
+        for (size_t t : gr.toks) has = has || v.toks[t].id == d.obsMember[k];
+        if (!has) continue;
+        // Open: the tray, its chip and the stem between them (the pointer resting on the chip keeps it open).
+        const st::Rect& tb = gr.tray.box;
+        const st::Rect& ch = gr.chip.hit;
+        d.obs[k].r = gr.open >= 0.5f ? st::Rect{std::min(tb.x0, ch.x0), std::min(tb.y0, ch.y0), std::max(tb.x1, ch.x1), std::max(tb.y1, ch.y1)} : ch;
+        d.obsOpen[k] = gr.open >= 0.5f ? 1 : 0;
+        break;
+      }
+      if (d.obs[k].r.contains(m.x, m.y)) L.dragOver = d.obsMember[k];
+    }
+  }
   bool overTray = false;
   for (size_t k = 0; k < d.obs.size(); ++k) overTray = overTray || (d.obsName[k].empty() && d.obs[k].r.contains(m.x, m.y));
   d.outside = !g.inside(m.x, m.y) && !overTray;
@@ -1347,6 +1640,8 @@ void viewItems(App& a) {
   };
   toggleSetting(i18n::N_("Snap"), "ui.stage.snap", "Drags land on five distances and stick to the centre (hold Ctrl to place freely)");
   toggleSetting(i18n::N_("Names"), "ui.stage.labels", "Track names under the tokens");
+  toggleSetting(i18n::N_("Compact groups"), "ui.stage.compactGroups",
+                "On: tracks sharing a spot rest as a small chip that opens when you click it. Off: their trays are always open");
   const bool all = a.settings.getNumber("ui.stage.tracks") >= 0.5;
   if (ImGui::MenuItem(i18n::tr("Every insert track"), nullptr, all)) a.settings.set("ui.stage.tracks", all ? 0 : 1);
   ui::Hint("Off: only tracks in use (with a channel, effects, an input, a name or a place)");
@@ -1463,7 +1758,7 @@ void stageInput(App& a) {
   ObjectId hit = kNoId;
   st::Rect hitRect;
   bool hitTray = false;
-  int handle = 0, moreGroup = -1, trayHover = -1;
+  int handle = 0, moreGroup = -1, trayHover = -1, chipHover = -1;
   if (hov && (d.mode == Drag::None || d.mode == Drag::Press)) {
     if (onlyOneSelected(a))
       if (const Tok* t = tokOf(a.selMixer)) {
@@ -1476,7 +1771,7 @@ void stageInput(App& a) {
     if (!handle)
       for (size_t gi = v.groups.size(); gi-- > 0;) {
         const Grp& gr = v.groups[gi];
-        if (!gr.tray.box.contains(m.x, m.y)) continue;
+        if (gr.open < 0.5f || !gr.tray.box.contains(m.x, m.y)) continue;  // compact groups: only an open tray
         trayHover = static_cast<int>(gi);
         const int c = st::trayCellAt(gr.tray, m.x, m.y);
         if (c >= 0 && c == gr.tray.shown && gr.tray.more > 0) moreGroup = static_cast<int>(gi);
@@ -1486,25 +1781,42 @@ void stageInput(App& a) {
         break;
       }
     if (!handle && trayHover < 0) {
-      std::vector<size_t> order;
+      // The tokens on their own and (compact groups) the closed groups' chips, the nearest first: a point
+      // beside a chip is the stage's.
+      std::vector<std::pair<double, int>> order;  // (distance, token index; ~group index for a chip)
       for (size_t i = 0; i < v.toks.size(); ++i)
-        if (v.toks[i].group < 0) order.push_back(i);
-      std::stable_sort(order.begin(), order.end(), [&](size_t x, size_t y) { return v.toks[x].depth < v.toks[y].depth; });  // near first
-      for (size_t i : order)
-        if (v.toks[i].r.grown(2).contains(m.x, m.y)) {
-          hit = v.toks[i].id, hitRect = v.toks[i].r;
+        if (v.toks[i].group < 0) order.push_back({v.toks[i].depth, static_cast<int>(i)});
+      if (v.compact)
+        for (size_t gi = 0; gi < v.groups.size(); ++gi)
+          if (v.groups[gi].open < 0.5f) order.push_back({v.groups[gi].spot.depth, ~static_cast<int>(gi)});
+      std::stable_sort(order.begin(), order.end(), [](const auto& x, const auto& y) { return x.first < y.first; });  // near first
+      for (const auto& [dep, k] : order) {
+        (void)dep;
+        if (k < 0) {
+          if (v.groups[static_cast<size_t>(~k)].chip.hit.grown(2).contains(m.x, m.y)) {
+            chipHover = ~k;
+            break;
+          }
+        } else if (v.toks[static_cast<size_t>(k)].r.grown(2).contains(m.x, m.y)) {
+          hit = v.toks[static_cast<size_t>(k)].id, hitRect = v.toks[static_cast<size_t>(k)].r;
           break;
         }
+      }
     }
   }
   L.hoverHandle = handle;
   L.hoverGroup = trayHover;
+  // Compact groups: the chip under the pointer, and its peek once the pointer rests there a moment.
+  if (chipHover != L.peekChip) L.peekChip = chipHover, L.peekSince = L.focus.clock();
+  L.hoverChip = d.mode == Drag::None || d.mode == Drag::Press ? chipHover : -1;
+  if (chipHover >= 0 && d.mode == Drag::None && L.focus.clock() - L.peekSince >= 0.35) drawPeek(a, static_cast<size_t>(chipHover));
   v.hovered = d.mode == Drag::Move ? d.anchor : hit;
   // The listener.
   if (hov && hit == kNoId && std::hypot(m.x - g.cx, m.y - g.listenerY) < 20 * g.scale) ui::Tooltip(i18n::N_("You: you hear the stage from here"));
   if (hov && d.mode == Drag::None) {
     if (handle) ui::Hint("Drag: stereo width (both sides move) \xC2\xB7 double-click: reset the width");
     else if (moreGroup >= 0) ui::Hint("The rest of the tracks at this spot");
+    else if (chipHover >= 0) ui::Hint("Click: open the group \xC2\xB7 drag: move them all \xC2\xB7 right-click: its tracks");
     else if (hit != kNoId)
       ui::Hint("Drag: move it (onto another track: share its spot) \xC2\xB7 Shift: fine \xC2\xB7 Alt: exact \xC2\xB7 wheel: level \xC2\xB7 double-click: its effects");
     else ui::Hint("Click a track to select it \xC2\xB7 drag on the floor to select several \xC2\xB7 right-click: stage menu");
@@ -1529,8 +1841,21 @@ void stageInput(App& a) {
       }
     } else if (moreGroup >= 0) {
       L.menuGroup = moreGroup;
+      L.menuAll = false;
       ImGui::OpenPopup("##stagemore");
       d = Drag{};
+    } else if (chipHover >= 0) {  // compact groups: a click opens it (on release), a drag moves the whole group
+      const Grp& gr = v.groups[static_cast<size_t>(chipHover)];
+      const ObjectId first = v.toks[gr.toks.front()].id;
+      beginPress(a, first, m, gr.chip.face, false);
+      d.ids.clear(), d.pan0.clear(), d.depth0.clear(), d.sep0.clear();
+      for (size_t k : gr.toks) {
+        const ObjectId id = v.toks[k].id;
+        const MixerTrack* t = song(a).mixerTrack(id);
+        if (!t || t->locked) continue;
+        d.ids.push_back(id), d.pan0.push_back(t->pan), d.depth0.push_back(t->depth), d.sep0.push_back(t->stereoSep);
+      }
+      d.chipGroup = chipHover;
     } else if (hit != kNoId) {
       if (dbl) {  // its effects, staying on the stage (Ctrl/Cmd: its strip in the mix)
         selectOnly(a, hit);
@@ -1570,7 +1895,8 @@ void stageInput(App& a) {
       std::vector<ObjectId> caught;
       const st::Rect band{box.x0, box.y0, box.x1, box.y1};
       for (const Tok& t : v.toks)
-        if ((t.group < 0 || t.cell >= 0) && st::overlapArea(band, t.r) > 0) caught.push_back(t.id);
+        if ((t.group < 0 || t.cell >= 0 || (v.compact && v.groups[static_cast<size_t>(t.group)].open < 0.5f)) && st::overlapArea(band, t.r) > 0)
+          caught.push_back(t.id);  // compact groups: a box over a closed chip takes the whole group
       setChoice(a, stagesel::applyBand(d.bandBefore, caught, d.bandMode));
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
@@ -1584,6 +1910,7 @@ void stageInput(App& a) {
       if (!d.bandLive && d.bandMode == stagesel::BandMode::Replace) {  // a click on the floor: nothing chosen (the panel shows the room)
         a.mixerView.sel.clear();
         a.selMixer = song(a).masterId();
+        L.focus.close();  // compact groups: an open group closes up
       }
       a.editFocus = App::EditFocus::Mixer;
     } else if (d.mode == Drag::Move) {
@@ -1591,6 +1918,8 @@ void stageInput(App& a) {
       const std::vector<ObjectId> ids = d.ids;
       finishMove(a, false);  // over the rooms list: every track back where it was
       if (to >= 0 && to != shownRoom(a)) moveToRoom(a, ids, to);  // joins the drag's undo step
+    } else if (d.mode == Drag::Press && d.chipGroup >= 0) {
+      L.focus.pin(d.anchor);  // compact groups: the chip clicked opens its group
     } else if (d.mode == Drag::Press && d.toggleOnRelease) {
       selectOnly(a, d.anchor);
     }
@@ -1598,7 +1927,11 @@ void stageInput(App& a) {
   }
   // Right-click: the token's menu or the floor's.
   if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && d.mode == Drag::None) {
-    if (hit != kNoId) {
+    if (chipHover >= 0) {  // compact groups: its tracks, and Arrange
+      L.menuGroup = chipHover;
+      L.menuAll = true;
+      ImGui::OpenPopup("##stagemore");
+    } else if (hit != kNoId) {
       L.menuTrack = hit;
       if (!isSelected(a, hit)) selectOnly(a, hit);
       a.selMixer = hit;
@@ -1620,10 +1953,11 @@ void stageInput(App& a) {
       const Grp& gr = v.groups[static_cast<size_t>(L.menuGroup)];
       for (size_t k : gr.toks) {
         const Tok& t = v.toks[k];
-        if (t.cell >= 0) continue;
+        if (t.cell >= 0 && !L.menuAll) continue;
         if (ImGui::MenuItem(t.name.c_str(), nullptr, t.selected)) selectOnly(a, t.id);
       }
       ImGui::Separator();
+      if (L.menuAll && ImGui::MenuItem(i18n::tr("Open the group"))) L.focus.pin(v.toks[gr.toks.front()].id);
       if (ImGui::MenuItem(i18n::tr("Arrange by sound..."))) startPreview(a, PreviewKind::Sound);
       if (ImGui::MenuItem(i18n::tr("Spread out"))) startPreview(a, PreviewKind::Spread);
     }
@@ -1684,8 +2018,10 @@ void keyboard(App& a) {
     if (!v.toks.empty() && !a.mixerView.sel.count(a.selMixer)) a.selMixer = v.toks.front().id;
   }
   if (keys::pressed("stage.deselect")) mixerDeselect(a);
-  if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && L.drag.mode == Drag::None && L.escFrame != ImGui::GetFrameCount() && !a.mixerView.sel.empty())
-    setChoice(a, {});  // K-224
+  if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && L.drag.mode == Drag::None && L.escFrame != ImGui::GetFrameCount()) {
+    L.focus.close();  // compact groups: an open group closes up
+    if (!a.mixerView.sel.empty()) setChoice(a, {});  // K-224
+  }
   if (!any && !keys::keyDown("stage.left") && !keys::keyDown("stage.right") && !keys::keyDown("stage.up") && !keys::keyDown("stage.down") &&
       !keys::keyDown("stage.narrower") && !keys::keyDown("stage.wider") && !keys::keyDown("stage.levelUp") && !keys::keyDown("stage.levelDown"))
     L.keySerial = 0;
@@ -1853,7 +2189,78 @@ void toolbar(App& a) {
   ui::EndToolbar();
 }
 
+// ---------------------------------------------------------------- the Tracker look's title
+// The Tracker layout's Stage page (StageTrackerUi.cpp draws the rest): the page's title bar (Stage, the
+// room and its track count in the monospaced face, Exit). The stage's buttons are in the console column
+// at the right; the popovers they open come out of its left edge, beside the stage.
+void trackerToolbar(App& a) {
+  View& v = gView;
+  {
+    char info[160];
+    const std::vector<size_t> shown = shownTracks(a);
+    std::snprintf(info, sizeof info, "%s %s  %s %s  %s %s", i18n::tr("Room"), trk::hex2(shownRoom(a) + 1).c_str(), i18n::tr("Tracks"),
+                  trk::hex2(static_cast<int>(shown.size())).c_str(), i18n::tr("Space"),
+                  shownStage(a).hasRoom() ? i18n::tr(mixops::roomTypeName(shownStage(a).roomType)) : i18n::tr("none"));
+    trackerpages::pageTitle(a, i18n::tr("Stage"), info);
+  }
+  if (L.openPresets) ImGui::OpenPopup("##stagepresets"), L.openPresets = false;
+  if (L.openRoom) ImGui::OpenPopup("##stageroom"), L.openRoom = false;
+  if (takeMenuRequest()) ImGui::OpenPopup("##stagepickmenu");
+  // (last frame's column: the popovers open at its left edge, their right side against it)
+  const ImVec2 at(v.side0.x - trackerview::space::kGap, v.side0.y), pivot(1, 0);
+  ImGui::SetNextWindowPos(at, ImGuiCond_Always, pivot);
+  if (ImGui::BeginPopup("##stagepresets")) {
+    presetsMenu(a);
+    ImGui::EndPopup();
+  }
+  ImGui::SetNextWindowPos(at, ImGuiCond_Always, pivot);
+  v.roomOpen = false;
+  if (ImGui::BeginPopup("##stageroom")) {
+    v.roomOpen = true;
+    roomPopover(a);
+    ImGui::EndPopup();
+  }
+  ImGui::SetNextWindowPos(at, ImGuiCond_Always, pivot);
+  if (ImGui::BeginPopup("##stagepickmenu")) {
+    pickMenu(a);
+    ImGui::EndPopup();
+  }
+  ImGui::SetNextWindowPos(at, ImGuiCond_Always, pivot);
+  if (ImGui::BeginPopup("##stagetrkmenu")) {
+    stageMenu(a);
+    ImGui::Separator();
+    mixerOptionsMenu(a);
+    ImGui::EndPopup();
+  }
+  // Just after a track was sent deeper with no space picked: the hint under the space button.
+  if (L.roomHintUntil > now()) {
+    const MixerTrack* room = mixops::stageRoom(song(a), shownRoom(a));
+    if (ImGui::IsPopupOpen("##stageroom") || (shownStage(a).hasRoom() && room && !room->muted)) L.roomHintUntil = 0;
+    else if (v.spaceAt.x > 0)
+      floatTip(a, ImVec2(v.spaceAt.x, v.spaceAt.y + 6), i18n::tr("Pick a space to hear depth"), i18n::tr("Distance is kept, but with no space it changes nothing yet"));
+  }
+}
+
 }  // namespace
+
+// ---------------------------------------------------------------- shared with the Tracker look
+namespace detail {
+void nudgeParam(App& a, const std::vector<ObjectId>& ids, int p, double delta, double lo, double hi, const char* label) {
+  if (ids.empty()) return;
+  if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || !ImGui::IsMouseDown(ImGuiMouseButton_Left)) L.keySerial = 0;  // a click or the wheel: its own step
+  nudge(a, ids, static_cast<MixerParam>(p), [&](double x) { return std::clamp(x + delta, lo, hi); }, label);
+}
+void stepLevel(App& a, const std::vector<ObjectId>& ids, double notches) {
+  if (ids.empty()) return;
+  if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || !ImGui::IsMouseDown(ImGuiMouseButton_Left)) L.keySerial = 0;
+  levelStep(a, ids, notches);
+}
+void muteTracks(App& a, const std::vector<ObjectId>& ids) { toggleMute(a, ids); }
+void soloTracks(App& a, const std::vector<ObjectId>& ids) { toggleSolo(a, ids); }
+void openPresetsPopover() { L.openPresets = true; }
+void openRoomPopover() { L.openRoom = true; }
+void stageMenuItems(App& a) { stageMenu(a); }
+}  // namespace detail
 
 // ---------------------------------------------------------------- public
 bool active(App& a) { return a.showMixer && a.showStage; }
@@ -1890,6 +2297,7 @@ void sync(App& a) {
     if (a.showStage) {
       a.showMixer = true;
       a.focusWindow = "Mixer";
+      if (trackerpages::active(a)) trackerview::showPage(a, "Mixer");  // the Tracker: its Stage page comes to the front
     } else {
       cancelPreview();
     }
@@ -1935,29 +2343,49 @@ void drawBody(App& a) {
   v.open = true;
   v.frame = ImGui::GetFrameCount();
   v.dragId = kNoId;
+  v.compact = compactOn(a);
   const Song& s = song(a);
   if (!s.mixerTrack(a.selMixer) && !s.mixer.empty()) a.selMixer = s.masterId();
   L.focused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-  toolbar(a);
+  // The Tracker layout's Stage page: the same stage in the Tracker's look (StageTrackerUi.cpp).
+  v.trk = trackerLook(a);
+  if (v.trk) trackerToolbar(a);  // (its popovers open beside last frame's column)
+  else toolbar(a);
+  v.side0 = v.side1 = ImVec2(0, 0);
   const ImVec2 c0 = ImGui::GetCursorScreenPos(), avail = ImGui::GetContentRegionAvail();
   v.body0 = c0;
   v.body1 = ImVec2(c0.x + avail.x, c0.y + std::max(1.0f, avail.y));
-  const bool panel = avail.y >= 380;
-  const float gut = theme::kS4;
-  v.panel1 = ImVec2(v.body1.x - gut, v.body1.y - gut);
-  v.panel0 = panel ? ImVec2(v.body0.x + gut, v.panel1.y - 136.0f) : ImVec2(v.body0.x + gut, v.body1.y);
-  v.bg = ImGui::GetColorU32(ImGuiCol_WindowBg);
-  // The floor: a little lighter than the window, in dark themes toward the text, in light ones toward white.
-  v.stage = P.dark ? theme::mix(v.bg, P.text, 0.045f) : theme::mix(v.bg, P.paper, 0.6f);
-  v.tray = theme::mix(v.stage, P.text, 0.05f);
+  bool panel = avail.y >= 380;
+  const float bottom = v.body1.y;
+  if (v.trk) {
+    // The console column at the right (a quarter of the width at most), 2 px from the stage's well as
+    // the band's boxes; no panel under the stage (its boxes are in the column).
+    const float fs = ImGui::GetFontSize(), W = avail.x;
+    const float sw = std::round(std::max(std::min(W * 0.25f, 22.0f * fs), std::min(13.0f * fs, W * 0.4f)));
+    v.side0 = ImVec2(v.body1.x - sw, v.body0.y), v.side1 = ImVec2(v.body1.x, bottom);
+    v.body1.x -= sw + trackerview::space::kGap;
+    panel = false;
+    v.panel1 = ImVec2(v.body1.x, bottom);
+    v.panel0 = ImVec2(v.body0.x, bottom + 1);
+    trackerColours();
+  } else {
+    const float gut = theme::kS4;
+    v.panel1 = ImVec2(v.body1.x - gut, v.body1.y - gut);
+    v.panel0 = panel ? ImVec2(v.body0.x + gut, v.panel1.y - 136.0f) : ImVec2(v.body0.x + gut, v.body1.y);
+    v.bg = ImGui::GetColorU32(ImGuiCol_WindowBg);
+    // The floor: a little lighter than the window, in dark themes toward the text, in light ones toward white.
+    v.stage = P.dark ? theme::mix(v.bg, P.text, 0.045f) : theme::mix(v.bg, P.paper, 0.6f);
+    v.tray = theme::mix(v.stage, P.text, 0.05f);
+  }
   // K-224: the rooms list down the left side; the stage and its panel take the rest.
   v.fullW = v.body1.x - v.body0.x, v.fullH = v.body1.y - v.body0.y, v.fullX = v.body0.x;
   if (L.drag.mode != Drag::Move) v.dropRoom = -1;
   // K-270: closed it keeps a thin edge with its tab, half way down the stage (clear of the panel under it).
   if (const float rw = railWidth(a); rw > 0) {
-    drawRail(a, v.body0, ImVec2(v.body0.x + rw, v.body1.y), std::round((v.body0.y + (panel ? v.panel0.y : v.body1.y)) * 0.5f));
-    v.body0.x += rw;
-    v.panel0.x += rw;
+    drawRail(a, v.body0, ImVec2(v.body0.x + rw, bottom), std::round((v.body0.y + (panel ? v.panel0.y : bottom)) * 0.5f));
+    const float gap = v.trk ? trackerview::space::kGap : 0.0f;
+    v.body0.x += rw + gap;
+    v.panel0.x += rw + gap;
   }
   roomPopups(a);
   pickPopups(a);
@@ -1966,8 +2394,10 @@ void drawBody(App& a) {
   // under the pointer).
   const bool held = L.drag.mode != Drag::None;
   if (!held) v.trayOnFloor = false;
-  const float stageY1 = panel ? v.panel0.y - 12 : v.body1.y - 8;
-  v.g = st::layout(v.body0.x, v.body0.y, v.body1.x, stageY1, held ? v.g.scale : 1.0f, static_cast<int>(shown.size()));
+  // The Tracker look: the stage stands in a sunken well (its edge 2 px from the panel), the floor inside it.
+  const float wellY1 = v.trk ? (panel ? v.panel0.y - trackerview::space::kGap : bottom) : 0.0f;
+  const float stageY1 = v.trk ? wellY1 - 6 : panel ? v.panel0.y - 12 : v.body1.y - 8;
+  v.g = st::layout(v.body0.x, v.body0.y + (v.trk ? 4.0f : 0.0f), v.body1.x, stageY1, held ? v.g.scale : 1.0f, static_cast<int>(shown.size()));
   buildToks(a, shown);
   feedAnalysis(a);
   buildGroups(a);
@@ -1975,8 +2405,19 @@ void drawBody(App& a) {
   // front edge onto the listener, above it covers the next row's tiles and names. Each step tries the
   // trays kept on the floor, then lays the stage out a little smaller (down to 55 %), until nothing
   // overlaps; a stage with room for its trays (1920x1080) is never touched.
+  if (v.compact) {
+    // Compact groups: at rest no tray covers the stage, so it is never laid out smaller for them. An open
+    // tray floats over the stage; only the listener stays clear (the tray kept above the front edge).
+    updateFocus(a);
+    applyOpen();
+    if (!held && traysCrowdListener()) {
+      v.trayOnFloor = true;
+      buildGroups(a);
+      applyOpen();
+    }
+  }
   auto crowded = [] { return traysCrowdListener() || traysCoverTiles(); };
-  for (float sc = 1.0f; !held && crowded();) {
+  for (float sc = 1.0f; !v.compact && !held && crowded();) {
     if (!v.trayOnFloor) {
       v.trayOnFloor = true;  // first: the trays on the floor, above its front edge
       buildGroups(a);
@@ -1985,36 +2426,45 @@ void drawBody(App& a) {
     if (sc * 0.9f < 0.55f) break;
     sc *= 0.9f;
     v.trayOnFloor = false;
-    v.g = st::layout(v.body0.x, v.body0.y, v.body1.x, stageY1, sc, static_cast<int>(shown.size()));
+    v.g = st::layout(v.body0.x, v.body0.y + (v.trk ? 4.0f : 0.0f), v.body1.x, stageY1, sc, static_cast<int>(shown.size()));
     buildToks(a, shown);
     buildGroups(a);
   }
-  if (!held && traysCrowdListener() && !v.trayOnFloor) {  // never over the listener, whatever else
+  if (!v.compact && !held && traysCrowdListener() && !v.trayOnFloor) {  // never over the listener, whatever else
     v.trayOnFloor = true;
     buildGroups(a);
   }
   // Hover and gestures first (the drawing shows this frame's state), then the picture.
   stageInput(a);
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->PushClipRect(v.body0, ImVec2(v.body1.x, v.panel0.y - 1), true);
-  drawFloor(a, dl);
+  if (v.trk) {
+    trackerview::bevelBox(dl, v.body0, ImVec2(v.body1.x, wellY1), true);
+    dl->PushClipRect(ImVec2(v.body0.x + 1, v.body0.y + 1), ImVec2(v.body1.x - 1, wellY1 - 1), true);
+    trackerFloor(a, dl);
+  } else {
+    dl->PushClipRect(v.body0, ImVec2(v.body1.x, v.panel0.y - 1), true);
+    drawFloor(a, dl);
+  }
   if (v.preview.active()) {
     drawPreview(a, dl, v.preview, false);
   } else {
     drawSingles(a, dl);
+    drawTrays(a, dl, true);
     drawLabels(a, dl);
-    drawTrays(a, dl);
+    drawTrays(a, dl, false);
     if (v.hoverPreview.active() && v.hoverPresetFrame >= ImGui::GetFrameCount() - 1) drawPreview(a, dl, v.hoverPreview, true);
     drawDrag(a, dl);
     drawBand(a, dl);
   }
-  drawListener(a, dl);
+  if (v.trk) trackerListener(dl);
+  else drawListener(a, dl);
   if (v.toks.empty())
     ui::EmptyState(dl, ImVec2(v.body0.x, v.body0.y + 40), ImVec2(v.body1.x, v.g.frontY - 40), i18n::tr("No tracks on the stage yet"),
                    i18n::tr("Route a channel to a mixer track, or show every insert track from the stage menu."));
   dl->PopClipRect();
   drawRailTab(a);
   if (panel) drawPanel(a);
+  if (v.trk) trackerSide(a);
   if (!v.preview.active() && !a.settings.getBool("ui.stage.welcomed") && !v.toks.empty()) firstRunCard(a);
   else v.cardOpen = false;
   if (v.wantFx) {
@@ -2142,6 +2592,36 @@ void devCommand(App& a, int frame, const std::vector<std::string>& args) {
       roomops::moveTracksToRoom(a.doc, {all.begin() + 12, all.end()}, r2);
       a.doc.endGesture();
       a.settings.set("ui.stage.welcomed", true);
+    } else if (c == "compactdemo") {  // screenshots of compact groups: 15 named tracks, three groups, one track right behind a group
+      static const char* names[] = {"Kick", "Snare", "Hats", "Clap", "Perc", "Vocal", "Pad", "Strings", "Choir", "Keys", "Guitar", "Bass", "Lead", "Brass", "FX"};
+      static const Rgb cols[] = {0xD9695F, 0xE0A458, 0xD8C25A, 0xCFA15B, 0x9AA5B1, 0xE07FA2, 0x8E7DD6, 0xA3B565, 0x6DBBA6, 0x5FA8D3, 0xD08C60, 0x7FB069, 0xC77DBA, 0xCFA15B, 0x7A9CC6};
+      static const float pans[] = {0, 0, 0, 0, 0, 0, -0.55f, -0.55f, -0.55f, 0.5f, 0.5f, -0.32f, 0.3f, 0.78f, -0.8f};
+      static const float deps[] = {0, 0, 0, 0, 0, 0.25f, 0.75f, 0.75f, 0.75f, 0.5f, 0.5f, 0, 0.25f, 0.25f, 1.0f};
+      a.doc.beginGroup("demo");
+      std::vector<ObjectId> all;
+      for (size_t k = 0; k < 15 && k + 1 < s.mixer.size(); ++k) {
+        const ObjectId id = a.doc.song().mixer[k + 1].id;
+        all.push_back(id);
+        a.doc.editMixerTrack(id, "demo", [k](MixerTrack& m) {
+          m.name = names[k];
+          m.color = cols[k];
+        });
+        a.doc.setParam(mixerParam(id, MixerParam::Pan), pans[k], false);
+        a.doc.setParam(mixerParam(id, MixerParam::Depth), deps[k], false);
+      }
+      a.doc.endGroup();
+      mixops::setRoomType(a.doc, rooms::kStudio, all, 0);
+      a.doc.endGesture();
+      a.settings.set("ui.stage.welcomed", true);
+    } else if (c == "compact") {  // compact groups: "compact open <mixer index>" (as a click on its chip), "close", "anim <0..1|off>"
+      if (a1 == "open" && args.size() > 2) {
+        const int i = std::atoi(args[2].c_str());
+        if (i > 0 && static_cast<size_t>(i) < s.mixer.size()) L.focus.pin(s.mixer[static_cast<size_t>(i)].id);
+      } else if (a1 == "close") {
+        L.focus.close();
+      } else if (a1 == "anim" && args.size() > 2) {
+        L.freezeAnim = args[2] == "off" ? -1.0f : static_cast<float>(std::atof(args[2].c_str()));
+      }
     } else if (c == "open") {
       if (a1 == "presets") L.openPresets = true;
       else if (a1 == "room") L.openRoom = true;
@@ -2166,9 +2646,14 @@ void devCommand(App& a, int frame, const std::vector<std::string>& args) {
   }
   for (size_t gi = 0; gi < v.groups.size(); ++gi) {
     const Grp& gr = v.groups[gi];
-    std::printf("  group %zu count %zu box %.1f %.1f %.1f %.1f ring %.1f %.1f more %d\n", gi, gr.toks.size(), static_cast<double>(gr.tray.box.x0),
-                static_cast<double>(gr.tray.box.y0), static_cast<double>(gr.tray.box.x1), static_cast<double>(gr.tray.box.y1),
-                static_cast<double>(gr.ring.x), static_cast<double>(gr.ring.y), gr.tray.more);
+    // box: what is on screen (a closed compact group: its chip); tray: where its tray stands when open.
+    const st::Rect& box = v.compact && gr.open < 0.5f ? gr.chip.hit : gr.tray.box;
+    std::printf("  group %zu count %zu box %.1f %.1f %.1f %.1f ring %.1f %.1f more %d open %.2f chip %.1f %.1f %.1f %.1f tray %.1f %.1f %.1f %.1f\n", gi,
+                gr.toks.size(), static_cast<double>(box.x0), static_cast<double>(box.y0), static_cast<double>(box.x1), static_cast<double>(box.y1),
+                static_cast<double>(gr.ring.x), static_cast<double>(gr.ring.y), gr.tray.more, static_cast<double>(gr.open),
+                static_cast<double>(gr.chip.hit.x0), static_cast<double>(gr.chip.hit.y0), static_cast<double>(gr.chip.hit.x1),
+                static_cast<double>(gr.chip.hit.y1), static_cast<double>(gr.tray.box.x0), static_cast<double>(gr.tray.box.y0),
+                static_cast<double>(gr.tray.box.x1), static_cast<double>(gr.tray.box.y1));
   }
   const st::Rect tab = railTab();
   std::printf("  rooms %d shown %d listen %zu drop %d band %d rail %d menu %d slim %d width %.0f tab %.0f %.0f anim %.2f\n", roomops::roomCount(s), shownRoom(a),
@@ -2178,6 +2663,15 @@ void devCommand(App& a, int frame, const std::vector<std::string>& args) {
   const st::Rect lis = listenerRect(v.g);
   std::printf("  listener %.0f %.0f %.0f %.0f scale %.2f front %.0f\n", static_cast<double>(lis.x0), static_cast<double>(lis.y0), static_cast<double>(lis.x1),
               static_cast<double>(lis.y1), static_cast<double>(v.g.scale), static_cast<double>(v.g.frontY));
+  {  // The Tracker look (StageTrackerUi.cpp): on or off, the well's colour, the stage and its column on screen,
+     // the column's boxes folded (a bit each: Arrange, Track, Place, Level) and the group rows it has room for.
+    const ImVec4 bg = ImGui::ColorConvertU32ToFloat4(v.bg), fl = ImGui::ColorConvertU32ToFloat4(v.stage);
+    std::printf("  look tracker %d bg %.3f %.3f %.3f floor %.3f %.3f %.3f body %.0f %.0f %.0f %.0f side %.0f %.0f %.0f %.0f folded %d grouprows %d\n",
+                v.trk ? 1 : 0, static_cast<double>(bg.x), static_cast<double>(bg.y), static_cast<double>(bg.z), static_cast<double>(fl.x),
+                static_cast<double>(fl.y), static_cast<double>(fl.z), static_cast<double>(v.body0.x), static_cast<double>(v.body0.y),
+                static_cast<double>(v.body1.x), static_cast<double>(v.body1.y), static_cast<double>(v.side0.x), static_cast<double>(v.side0.y),
+                static_cast<double>(v.side1.x), static_cast<double>(v.side1.y), v.folded, v.groupRowsFit);
+  }
   for (int r = 0; r < roomops::roomCount(s); ++r) {
     std::string ids;
     for (ObjectId id : roomops::roomTracks(s, r)) ids += (ids.empty() ? "" : ",") + std::to_string(s.mixerIndex(id));

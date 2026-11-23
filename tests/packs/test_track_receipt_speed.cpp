@@ -326,12 +326,34 @@ std::string usesText(const Measurement& m) {
   return t.str();
 }
 
+// K-321: the tap's own figures of every pair: play seconds and pitch (any blocks); with `blocks`,
+// the jumps and the segments too (they follow the engine's blocks, which are the same in both
+// passes unless the fast pass took automation out).
+std::string tapText(const std::vector<tap::Use>& uses, bool blocks) {
+  std::ostringstream t;
+  t << std::setprecision(17);
+  for (const tap::Use& u : uses) {
+    t << "pair " << u.file << " " << u.owner << " play " << u.outSeconds << " pitch " << u.pitched << " " << u.semisMin << " " << u.semisMax
+      << " " << u.ratioMin << " " << u.ratioMax;
+    if (blocks) {
+      t << " jumps " << u.jumps << " |";
+      for (const tap::Segment& g : u.segments) {
+        t << " " << g.outA << "," << g.outB << ">" << g.srcA << "," << g.srcB;
+      }
+    }
+    t << "\n";
+  }
+  return t.str();
+}
+
 double seconds(std::chrono::steady_clock::time_point t0) {
   return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
 }
 
-// Both passes on `s`: the measurement and both outputs must be the same.
-void compare(const std::string& name, const Song& s, const std::string& saveDir) {
+// Both passes on `s`: the measurement and both outputs must be the same. K-321: so must the tap's
+// play seconds and pitch, and with `blocks` (no automation the fast pass takes out) its jumps and
+// segments.
+void compare(const std::string& name, const Song& s, const std::string& saveDir, bool blocks = false) {
   if (!saveDir.empty()) {
     std::string err;
     saveProject((fs::path(saveDir) / (name + ".gridline")).generic_string(), s, &err);
@@ -344,6 +366,9 @@ void compare(const std::string& name, const Song& s, const std::string& saveDir)
   ref.reference = true;
   PassOptions fast;
   fast.sampleRate = kRate;
+  std::vector<tap::Use> tapRef, tapFast;
+  ref.tapUses = &tapRef;
+  fast.tapUses = &tapFast;
   auto t0 = std::chrono::steady_clock::now();
   const Measurement mf = measure(s, fast);
   const double tf = seconds(t0);
@@ -356,6 +381,11 @@ void compare(const std::string& name, const Song& s, const std::string& saveDir)
   expect(ur == uf, (name + ": the fast pass measures exactly what the full mix measures").c_str());
   if (ur != uf) {
     std::printf("--- reference\n%s--- fast\n%s", ur.c_str(), uf.c_str());
+  }
+  const std::string tr2 = tapText(tapRef, blocks), tf2 = tapText(tapFast, blocks);
+  expect(!tapRef.empty() && tr2 == tf2, (name + (blocks ? ": the same play seconds, pitch, jumps and segments" : ": the same play seconds and pitch")).c_str());
+  if (tr2 != tf2) {
+    std::printf("--- reference tap\n%s--- fast tap\n%s", tr2.c_str(), tf2.c_str());
   }
   const Report rr = build(mr, {}, name), rf = build(mf, {}, name);
   expect(spreadsheetXml(rr) == spreadsheetXml(rf), (name + ": the same spreadsheet, byte for byte").c_str());
@@ -451,8 +481,8 @@ int main() {
     }
     compare("modulated", s, saveDir);
   }
-  compare("patterns", patterns(media + "/patterns"), saveDir);
-  compare("tempo", tempo(media + "/tempo"), saveDir);
+  compare("patterns", patterns(media + "/patterns"), saveDir, true);
+  compare("tempo", tempo(media + "/tempo"), saveDir, true);
   if (saveDir.empty()) {
     liveDuringPass(features(media + "/live"));
   }

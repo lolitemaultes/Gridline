@@ -31,6 +31,7 @@
 #include "../../core/flp/Flp.h"
 #include "../Packs.h"
 #include "pocket.h"
+#include "../rest_render.h"
 
 namespace gl::packs::synths {
 
@@ -505,6 +506,9 @@ class PocketSynthGen final : public Generator {
 
   double lfoBlockPhase_(int n) { return lfoBlock(n, phPhase_, PkPhaserRate); }
 
+  // K-142: at rest its idle render runs on unheard (packs/rest_render.h), so the next note
+  // finds every free-running part where it would have been.
+  void rested(int n) override { packs::restRender(n, [this](float* l, float* r, int m) { render(l, r, m); }); }
   void render(float* L, float* R, int n) override {
     for (auto& v : v_)
       if (v.on) exprVoice(v.vx, v.id);  // K-193

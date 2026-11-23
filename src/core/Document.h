@@ -3,6 +3,7 @@
 #pragma once
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include "Automation.h"
 #include "Params.h"
@@ -20,7 +21,7 @@ bool channelNameIsAutomatic(const Channel& c);
 class Document {
  public:
   Document() = default;
-  explicit Document(Song song) : song_(std::move(song)) {}
+  explicit Document(Song song) : song_(std::move(song)) { tagSlots(); }
 
   const Song& song() const { return song_; }
   // K-224: the Stage room new mixer tracks stand in (the room this computer shows). Session state:
@@ -56,6 +57,23 @@ class Document {
   // (fileops::FileMoveCommand). Never joined with a pointer gesture.
   void execute(CommandPtr cmd) { exec(std::move(cmd), false); }
 
+  // GitHub #74: the colour new channels and patterns take. Varied (the default): the next colour of
+  // a palette, so neighbours differ. One colour: every new one takes `channel` (`pattern`). Channel:
+  // a new pattern takes `channelHint`, the selected channel's colour (the app keeps it current).
+  // A preference of the person editing (it changes what their new items get, never existing ones).
+  struct NewColors {
+    enum Mode { Varied = 0, One = 1, Channel = 2 };
+    int channels = Varied;  // Varied or One
+    int patterns = Varied;  // Varied, One or Channel
+    Rgb channel = 0x5A8FD8, pattern = 0x6E9F4B;
+    Rgb channelHint = 0;
+    bool hasHint = false;
+  };
+  void setNewColors(const NewColors& c) { newColors_ = c; }
+  const NewColors& newColors() const { return newColors_; }
+  Rgb newChannelColor() const;
+  Rgb newPatternColor() const;
+
   // --- channels -----------------------------------------------------------
   ObjectId addChannel(const std::string& name, const std::string& pluginType, int index = -1);
   bool removeChannel(ObjectId id);
@@ -65,7 +83,11 @@ class Document {
   // automatic (channelNameIsAutomatic) takes the new instrument's name in the
   // same undo step; a name the user typed stays.
   bool setChannelPlugin(ObjectId id, const std::string& pluginType);
-  ObjectId cloneChannel(ObjectId id);  // copy placed after the original, with its pattern data
+  // GitHub #74: what a clone takes from the original's patterns: its steps and notes in every
+  // pattern (as before), in one pattern only, or none (the sound and its settings alone).
+  enum class CloneNotes { All, OnePattern, None };
+  // Copy placed after the original, with its pattern data (`what`; `pattern` for OnePattern).
+  ObjectId cloneChannel(ObjectId id, CloneNotes what = CloneNotes::All, ObjectId pattern = kNoId);
   bool routeChannel(ObjectId id, ObjectId mixerTrack);
 
   // --- parameters (AU-01) ---------------------------------------------------
@@ -148,6 +170,27 @@ class Document {
   // Edits the link driving `target` (mapping, range, smoothing…); mergeable.
   bool editModLink(ParamId target, const std::string& label, const std::function<void(ModLink&)>& fn,
                    uint64_t mergeKey = 0);
+  // (K-247: setModLink with an LFO link adds or replaces that LFO's link to the target and keeps the
+  // target's other links; it refuses a link that would make a loop. removeModLink and editModLink
+  // act on the target's one link that is not an LFO's.)
+
+  // --- the LFO board (K-247, Song::lfos) -------------------------------------
+  // Adds an LFO (its id from the song; at most kMaxSongLfos) at `index` (-1: the end). Returns its id
+  // (kNoId when full). One undo step.
+  ObjectId addLfo(SongLfo lfo, int index = -1, const std::string& label = "add LFO");
+  // Removes an LFO and every link from it in one step.
+  bool removeLfo(ObjectId id);
+  // Edits an LFO's settings (clamped); a run with the same non-zero merge key is one step (a knob drag).
+  bool editLfo(ObjectId id, const std::string& label, const std::function<void(SongLfo&)>& fn, uint64_t mergeKey = 0);
+  // Moves an LFO on the board.
+  bool moveLfo(ObjectId id, int to);
+  // Removes the link from LFO `lfo` to `target`.
+  bool removeLfoLink(ObjectId lfo, ParamId target);
+  // Edits the link from LFO `lfo` to `target` (amount, mode, direction...); mergeable.
+  bool editLfoLink(ObjectId lfo, ParamId target, const std::string& label, const std::function<void(ModLink&)>& fn,
+                   uint64_t mergeKey = 0);
+  // The message of the last setModLink refused for a loop (empty: none).
+  const std::string& lastLinkRefusal() const { return linkRefusal_; }
 
   // --- channel note processors (Channel::noteFx) -----------------------------
   // Inserts a PluginKind::NoteFx plugin at `index` (-1 = end); false when full.
@@ -278,7 +321,14 @@ class Document {
   CommandPtr withKeptSends(CommandPtr cmd);
   // Records a change of song.modLinks (no-op when equal).
   void setModLinks(std::vector<ModLink> after, const std::string& label);
+  // K-247: records a change of song.lfos and song.modLinks (and nextId) as one step.
+  void setLfoBoard(std::vector<SongLfo> lfos, std::vector<ModLink> links, ObjectId nextId, const std::string& label, uint64_t mergeKey);
   Song song_;
+  std::string linkRefusal_;  // K-247
+  // 0.7.8: every effect slot gets a uid of its own after each change: new ones a fresh one, and of two
+  // with the same uid (a copy) the one where it was before keeps it (slotAt_).
+  void tagSlots();
+  std::unordered_map<uint64_t, std::pair<ObjectId, int>> slotAt_;
   UndoStack undo_;
   std::vector<std::unique_ptr<GroupCommand>> groups_;
   // K-112: plugins put on a track in the open group (onPluginPlaced), told when it ends.
@@ -292,6 +342,7 @@ class Document {
   int quietPlacements_ = 0;
   void notePlaced(ObjectId owner, int slot, const std::string& type);
   void flushPlaced();
+  NewColors newColors_;
   uint64_t savedSerial_ = 0;
   uint64_t revision_ = 0;
   uint64_t tempoMapBuilds_ = 0;

@@ -3,7 +3,9 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include "../../third_party/imgui/imgui_internal.h"
+#include "../core/KeyCaps.h"
 
 namespace gl::keys {
 
@@ -78,18 +80,37 @@ uint8_t mouseMods() {
 }
 
 struct LabelCache {
-  uint32_t version = 0;
+  uint32_t version = 0, caps = 0;
   std::unordered_map<std::string, std::string> text;
   std::unordered_map<std::string, std::string> mod;  // modLabel()
 };
 LabelCache& labelCache() {
   static LabelCache c;
-  if (c.version != keymap().version()) {
+  if (c.version != keymap().version() || c.caps != keycaps::version()) {  // GitHub #79: and when the keys' names change
     c.text.clear();
     c.mod.clear();
     c.version = keymap().version();
+    c.caps = keycaps::version();
   }
   return c;
+}
+
+// GitHub #79: fixed chord texts as the keys say (a pointer that stays valid while the names do).
+const char* cachedText(const char* text, const std::string& want) {
+  if (want == text) return text;
+  static std::unordered_set<std::string> cache;  // (by the text shown: elements never move)
+  static uint32_t caps = 0;
+  if (caps != keycaps::version()) cache.clear(), caps = keycaps::version();
+  return cache.insert(want).first->c_str();
+}
+
+bool foldCmd(const std::string& s) {
+#ifdef __APPLE__
+  return keymap().profile() == Profile::Live && !keymap().separateCmd() && s.compare(0, 5, "Ctrl+") == 0;
+#else
+  (void)s;
+  return false;
+#endif
 }
 
 }  // namespace
@@ -107,6 +128,10 @@ Key fromImGui(ImGuiKey k) {
 
 void setTypingKeyboard(bool on, bool aRow) { gTyping = on, gTypingARow = aRow; }
 bool typingKeyPlays(Key k) { return !gTypingARow || aRowKey(k); }
+bool typingKeyboardTakes(ImGuiKey k) {
+  const Key key = fromImGui(k);
+  return gTyping && key != Key::None && playsOnTypingKeyboard(Chord{key, 0}) && typingKeyPlays(key);
+}
 void setEditorKeys(bool on) { gEditorKeys = on; }
 bool gSampleEditorKeys = false;  // K-106 cp18
 void setSampleEditorKeys(bool on) { gSampleEditorKeys = on; }
@@ -265,24 +290,21 @@ bool modifierIncludes(const char* id) {
 }
 
 std::string shown(const Chord& c) {
-  std::string s = format(c);
-#ifdef __APPLE__
-  if (keymap().profile() == Profile::Live && !keymap().separateCmd() && s.compare(0, 5, "Ctrl+") == 0) s.replace(0, 4, "Cmd");
-#endif
+  std::string s = keycaps::format(c);
+  if (foldCmd(s)) s.replace(0, 4, "Cmd");
   return s;
 }
 
 const char* shownText(const char* text) {
-#ifdef __APPLE__
-  if (text && keymap().profile() == Profile::Live && !keymap().separateCmd() && std::strncmp(text, "Ctrl+", 5) == 0) {
-    static std::unordered_map<std::string, std::string> cache;
-    auto it = cache.find(text);
-    if (it == cache.end()) it = cache.emplace(text, std::string("Cmd") + (text + 4)).first;
-    return it->second.c_str();
-  }
-#endif
-  return text;
+  if (!text) return text;
+  std::string s = keycaps::formatText(text);
+  if (foldCmd(s)) s.replace(0, 4, "Cmd");
+  return cachedText(text, s);
 }
+
+std::string named(const Chord& c) { return keycaps::format(c); }
+
+const char* namedText(const char* text) { return text ? cachedText(text, keycaps::formatText(text)) : text; }
 
 const char* label(const char* id) {
   LabelCache& lc = labelCache();
@@ -301,8 +323,8 @@ const char* modLabel(const char* id) {
     const auto& b = keymap().bindings(id);
     std::string t;
     for (const Chord& c : b)
-      if (t.empty() && c.mods != 0) t = format(c);
-    if (t.empty() && !b.empty()) t = format(b.front());
+      if (t.empty() && c.mods != 0) t = keycaps::format(c);
+    if (t.empty() && !b.empty()) t = keycaps::format(b.front());
     it = lc.mod.emplace(id, t).first;
   }
   return it->second.empty() ? nullptr : it->second.c_str();

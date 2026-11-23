@@ -454,6 +454,14 @@ int main() {
     expect((v.flags & trk::kEnvOn) && (v.flags & trk::kEnvSustain) && v.count == 4, "convert: a volume envelope with a sustain point");
     expect(v.count == 4 && v.x[1] == 5 && v.y[1] == 64 && v.x[2] == 15 && v.y[2] == 32 && v.sustain == 2 && v.x[3] == 30 && v.y[3] == 0,
            "convert: attack, decay to the sustain level, release to silence");
+    // 0.7.8: the Sampler's reverse becomes the sample's Backwards option (off stays off: no text line).
+    expect(!sd.reverse && ts.data.find("\nrev ") == std::string::npos, "convert: a Sampler playing forwards gives a forward sample");
+    smp.params[pp::SmpReverse] = 1;
+    const PluginState tr = tp::fromSamplerState(smp, n, 48000.0, "pad");
+    const tp::Edit er = tp::readEdit(tr.data, 0);
+    expect(er.text.def.samples[0].reverse && tr.data.find("\nrev 0\n") != std::string::npos, "convert: a reversed Sampler plays Backwards");
+    expect(er.text.def.samples[0].loop == trk::kLoopPingPong && er.text.def.samples[0].loopStart == 12000 && er.cuts.start[0] == 4800,
+           "convert: reversed, the loop and cuts as before");
     const PluginState none = tp::fromSamplerState(defaultPluginState("gl.trio"), n, 48000.0, "x");
     expect(none.data.empty() || tp::sampleCountOf(tp::readEdit(none.data, 0)) == 0, "convert: only a Sampler with a file converts");
   }

@@ -1,6 +1,7 @@
 // Gridline - J-89: HTTPS requests for the update check (see Http.h).
 // Windows: WinHTTP. Linux / BSD: the curl or wget program. macOS: HttpMac.mm.
 #include "Http.h"
+#include "../../core/ThreadName.h"
 #include "GridlineVersion.h"
 #include <cstdio>
 #include <algorithm>
@@ -421,7 +422,7 @@ bool reveal(const std::string& path) {
   const std::string opener = findTool("xdg-open");
   if (opener.empty()) return false;
   const std::string folder = fs::path(path).parent_path().string();
-  std::thread([opener, folder] {  // waited for, so no zombie is left behind
+  std::thread([opener, folder] { gl::threads::setName("gl-http-open");  // waited for, so no zombie is left behind
     platform::Process p;
     if (p.start(opener, {"xdg-open", folder})) p.wait(60);
   }).detach();

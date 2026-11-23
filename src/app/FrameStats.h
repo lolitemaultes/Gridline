@@ -41,6 +41,10 @@ class Timer {
 };
 // Closes a frame; prints the last second's summary when one has passed.
 void endFrame();
+// GitHub #66: the engine's running totals of blocks run on one thread / shared out over the
+// worker threads and the times a worker woke, given before endFrame (the summary prints the last
+// second's counts).
+void engineBlocks(uint64_t serial, uint64_t parallel, uint64_t wakeups);
 // Audio thread (lock-free): one output block took `busy` seconds of a
 // `period`-second budget; late blocks (busy > period) are counted as dropouts.
 void audioBlock(double busy, double period);

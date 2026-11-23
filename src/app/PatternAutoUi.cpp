@@ -4,6 +4,7 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#include "../core/Macros.h"
 #include "../core/Automation.h"
 #include "../core/I18n.h"
 #include "../core/MenuParity.h"
@@ -82,12 +83,19 @@ void addMenu(App& a, ObjectId pattern) {
     if (ImGui::MenuItem(paramDisplayName(s, pid).c_str(), nullptr, has)) pick = pid;
   };
   const std::vector<ParamId> params = listParams(s);
+  // K-246: every assigned macro of the project, first (a macro moves what it drives, so one clip
+  // automates them all)
+  if (const std::vector<ParamId> ms = macro::assignedMacros(s); !ms.empty()) {
+    ImGui::TextDisabled("%s", i18n::tr("Macros"));
+    for (ParamId pid : ms) add(pid);
+    ImGui::Separator();
+  }
   const Channel* ch = s.channel(a.selChannel);
   if (ch) {
     ImGui::TextDisabled("%s", ch->name.c_str());
     int shown = 0;
     for (ParamId pid : params)
-      if (pid.owner == ch->id && ++shown < 120) add(pid);
+      if (pid.owner == ch->id && !macro::isMacroParam(pid) && ++shown < 120) add(pid);
     ImGui::Separator();
   }
   ImGui::TextDisabled("%s", i18n::tr("Song"));
@@ -98,7 +106,7 @@ void addMenu(App& a, ObjectId pattern) {
     ImGui::TextDisabled("%s", i18n::tr("Mixer track"));
     int n = 0;
     for (ParamId pid : params)
-      if (pid.owner == ch->mixerTrack && ++n < 60) add(pid);
+      if (pid.owner == ch->mixerTrack && !macro::isMacroParam(pid) && ++n < 60) add(pid);
   }
   if (pick.owner != kNoId) createPatternAutomationClip(a, pick, pattern);
 }

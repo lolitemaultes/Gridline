@@ -13,6 +13,22 @@ double echoSamples(const PluginState& s, const ProcessContext& c, double sr) {
 
 // ---- Echo: tempo-synced feedback delay with ping-pong, tone and ducking --------
 class Echo final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override {
+    return zeroRun_ >= static_cast<int64_t>(d_[0].b.size()) && tone_[0].lp.z == 0 && tone_[0].hp.z == 0 && tone_[1].lp.z == 0 && tone_[1].hp.z == 0;
+  }
+  void clocks(const PluginState& s, const ProcessContext& c, int n) override {
+    const double tT = std::clamp(echoSamples(s, c, sr_), 1.0, d_[0].maxDelay()), mT = pv(s, echo::Mix);
+    duck_.set(sr_, 5.0, 250.0);
+    for (int i = 0; i < n; ++i) {
+      t_.next(tT), mix_.next(mT);
+      duck_.process(0.0);
+    }
+    d_[0].w += static_cast<size_t>(n), d_[1].w += static_cast<size_t>(n);
+  }
+  int64_t zeroRun_ = 0;  // frames in a row both lines took exact zeros
+ private:
   Ring d_[2];
   Tilt tone_[2];
   Follower duck_;
@@ -52,6 +68,7 @@ class Echo final : public MiniFx {
         d_[0].push(flush(static_cast<float>(tone_[0].process(xl + fb * yl))));
         d_[1].push(flush(static_cast<float>(tone_[1].process(xr + fb * yr))));
       }
+      zeroRun_ = d_[0].at(1) == 0.f && d_[1].at(1) == 0.f ? zeroRun_ + 1 : 0;  // K-142 (0.7.8)
       const double env = duck_.process(std::max(std::fabs(xl), std::fabs(xr)));
       const double wg = wet * (1.0 - duck * std::clamp(env * 4.0, 0.0, 1.0));
       L[i] = static_cast<float>(xl * (1.0 - wet) + yl * wg);
@@ -62,6 +79,20 @@ class Echo final : public MiniFx {
 
 // ---- Volley: two delays (left time, right time x ratio) with cross feedback ----
 class Volley final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override {
+    return zeroRun_ >= static_cast<int64_t>(d_[0].b.size()) && tone_[0].lp.z == 0 && tone_[0].hp.z == 0 && tone_[1].lp.z == 0 && tone_[1].hp.z == 0;
+  }
+  void clocks(const PluginState& s, const ProcessContext&, int n) override {
+    const double tl = pv(s, volley::Time) * 0.001 * sr_, tr = tl * pv(s, volley::Ratio);
+    const double target[2] = {std::clamp(tl, 1.0, d_[0].maxDelay()), std::clamp(tr, 1.0, d_[1].maxDelay())};
+    const double mT = pv(s, volley::Mix);
+    mix_.advance(mT, n), t_[0].advance(target[0], n), t_[1].advance(target[1], n);  // K-142 (0.7.8 close): O(1) once settled
+    d_[0].w += static_cast<size_t>(n), d_[1].w += static_cast<size_t>(n);
+  }
+  int64_t zeroRun_ = 0;  // frames in a row both lines took exact zeros
+ private:
   Ring d_[2];
   Tilt tone_[2];
   Smooth t_[2], mix_;
@@ -94,6 +125,7 @@ class Volley final : public MiniFx {
       const double xl = L[i], xr = R[i];
       d_[0].push(flush(static_cast<float>(tone_[0].process(xl + fb * ((1.0 - cross) * yl + cross * yr)))));
       d_[1].push(flush(static_cast<float>(tone_[1].process(xr + fb * ((1.0 - cross) * yr + cross * yl)))));
+      zeroRun_ = d_[0].at(1) == 0.f && d_[1].at(1) == 0.f ? zeroRun_ + 1 : 0;  // K-142 (0.7.8)
       L[i] = static_cast<float>(xl * (1.0 - wet) + yl * wet);
       R[i] = static_cast<float>(xr * (1.0 - wet) + yr * wet);
     }
@@ -102,6 +134,21 @@ class Volley final : public MiniFx {
 
 // ---- Vault: eight-line feedback delay network reverb ---------------------------
 class Vault final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override {
+    for (const auto& d : damp_)
+      if (d.z != 0) return false;
+    return zeroRun_ >= static_cast<int64_t>(line_[0].b.size()) && silentIn_ >= static_cast<int64_t>(pre_[0].b.size());
+  }
+  void clocks(const PluginState& s, const ProcessContext&, int n) override {
+    const double mT = pv(s, vault::Mix);
+    mix_.advance(mT, n);  // K-142 (0.7.8 close): O(1) once settled
+    for (auto& l : line_) l.w += static_cast<size_t>(n);
+    for (auto& p : pre_) p.w += static_cast<size_t>(n);
+  }
+  int64_t zeroRun_ = 0;  // frames in a row every line took exact zeros
+ private:
   static constexpr int kLines = 8;
   static constexpr double kBase[kLines] = {1051, 1213, 1399, 1559, 1747, 1913, 2087, 2269};  // samples at 48 kHz
   static constexpr double kEarlyMs[6] = {7, 13, 19, 29, 37, 47};
@@ -155,6 +202,11 @@ class Vault final : public MiniFx {
         line_[k].push(flush(static_cast<float>(v)));
         ((k & 1) ? wr : wl) += o[k] * ((k & 4) ? -1.0 : 1.0);
       }
+      {  // K-142 (0.7.8)
+        bool z = true;
+        for (const auto& l : line_) z = z && l.at(1) == 0.f;
+        zeroRun_ = z ? zeroRun_ + 1 : 0;
+      }
       double el = 0, erR = 0;
       for (int j = 0; j < 6; ++j) {
         const double gj = 0.5 / (1.0 + j);
@@ -171,10 +223,36 @@ class Vault final : public MiniFx {
 
 // ---- Rewind: plays each segment of the input backwards -------------------------
 class Rewind final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override { return silentIn_ >= static_cast<int64_t>(d_[0].b.size()); }  // (its lines hold only its input)
+  // It plays input from up to two segments back, so a quiet stretch in its output is not the end of its sound.
+  int faintGap() const override { return gap_; }
+  void clocks(const PluginState& s, const ProcessContext& c, int n) override {
+    const bool sync = pb(s, rewind::Sync);
+    const double beats = kRewindBeats[std::clamp(pi(s, rewind::Steps), 0, 4)];
+    const double maxLen = d_[0].maxDelay() * 0.5 - 4.0;
+    const double len = std::clamp(sync ? beatsToSamples(beats, tempoOf(c), sr_) : pv(s, rewind::Length) * 0.001 * sr_, 16.0, maxLen);
+    const double mT = pv(s, rewind::Mix);
+    for (int i = 0; i < n; ++i) {
+      mix_.next(mT);
+      if (sync) {
+        const double b = clock_.at(c, i) / beats;
+        pos_ = (b - std::floor(b)) * len;
+      } else {
+        pos_ += 1.0;
+        if (pos_ >= len) pos_ -= len;
+      }
+      clock_.advance(c);
+    }
+    d_[0].w += static_cast<size_t>(n), d_[1].w += static_cast<size_t>(n);
+  }
+ private:
   Ring d_[2];
   BeatClock clock_;
   double pos_ = 0;
   Smooth mix_;
+  int gap_ = 0;
 
  public:
   Rewind() {
@@ -197,6 +275,7 @@ class Rewind final : public MiniFx {
     const double len = std::clamp(sync ? beatsToSamples(beats, tempoOf(c), sr_) : pv(s, rewind::Length) * 0.001 * sr_, 16.0, maxLen);
     const double fade = std::clamp(static_cast<double>(pv(s, rewind::Fade)), 0.0, 0.5) * len;
     const double mT = pv(s, rewind::Mix);
+    gap_ = static_cast<int>(2.0 * len) + 8;
     for (int i = 0; i < n; ++i) {
       const double wet = mix_.next(mT);
       if (sync) {
@@ -222,6 +301,10 @@ class Rewind final : public MiniFx {
 
 // ---- Halt: tape stop and spin-up ---------------------------------------------
 class Halt final : public MiniFx {
+ public:
+  // K-142: it replays what it captured: it rests once all of that is silence.
+  bool restsWhenFaint() const override { return silentIn_ >= static_cast<int64_t>(d_[0].b.size()); }
+ private:
   enum Mode { Running, Stopping, Stopped, Starting, Catching };
   Ring d_[2];
   Mode mode_ = Running;
@@ -302,6 +385,10 @@ class Halt final : public MiniFx {
 
 // ---- Pulse: 16-step volume gate ----------------------------------------------
 class Pulse final : public MiniFx {
+  // K-142 (0.7.8): its gate clock and envelope move on at rest: it holds no signal, so its idle
+  // render is all of it (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+ private:
   BeatClock clock_;
   double env_ = 1;
   bool init_ = false;

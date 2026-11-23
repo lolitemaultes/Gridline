@@ -13,6 +13,8 @@
 #include "../../src/core/PdfWriter.h"
 #include "../../src/core/Project.h"
 #include "../../src/core/TrackReceipt.h"
+#include "../../src/core/Json.h"
+#include "../../src/core/ReceiptOrigin.h"
 #include "../Check.h"
 #include "track_receipt_projects.h"
 
@@ -246,6 +248,32 @@ void testDerived(const std::string& dir) {
   Report rep2 = build(m2, Saved{}, "p");
   expect(rep2.songs.size() == 1 && rep2.songs[0].timelines.size() == 1 && rep2.songs[0].timelines[0].part == -1 && near(rep2.songs[0].seconds, 5),
          "origin: range unknown counts on its own (safe side)");
+  // K-321: the same edit as a version 2 map (and a v1 slice of it): the same receipt, now
+  // through the trail; 0.7.7 reads the edit's v1 view (the same part).
+  {
+    OriginV2 v;
+    v.version = 2, v.v1.kind = "edit", v.length = 10;
+    SourceMap mp;
+    mp.source = orig, mp.segs = {{0, 10, 20, 30}};
+    v.maps = {mp};
+    const std::string edit2 = dir + "/edit2.wav", slice2 = dir + "/edit2_slice.wav";
+    expect(writeOriginV2(edit2, v), "origin v2: written");
+    Origin view;
+    expect(readOrigin(edit2, view) && view.rangeKnown && view.start == 20 && view.end == 30 && view.source == orig, "origin v2: its v1 view is the part");
+    Origin o4 = o2;
+    o4.source = edit2;
+    writeOrigin(slice2, o4);
+    FileIn fi{slice2, 2, true, true, originChain(slice2)};
+    for (const auto& [f, o] : trailOf(slice2, sidecarLookup())) fi.trail[f] = jsonCompact(originToJson(o));
+    Measurement m3;
+    m3.files = {fi, {orig, 180, true, false, {}}};
+    m3.uses.push_back(use(slice2, "Channel 1 (Sampler)", {{0, 1}}));
+    m3.uses.push_back(use(orig, "Playlist track 1, audio clip", {{23.5, 25}}));
+    Report rep3 = build(m3, Saved{}, "p");
+    expect(fi.trail.size() == 2 && rep3.songs.size() == 1 && rep.songs.size() == 1 && rep3.songs[0].seconds == rep.songs[0].seconds &&
+               rep3.songs[0].timelines == rep.songs[0].timelines,
+           "origin v2: a map gives the receipt the v1 chain gives");
+  }
 }
 
 void testSaved() {

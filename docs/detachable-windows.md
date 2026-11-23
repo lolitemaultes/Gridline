@@ -74,8 +74,11 @@ viewport instead. Its last place outside (`[Out:]`) is kept: the pop-out button 
 there. The X of a popped-out plugin window docks it back like a panel's (J-116); closing it
 otherwise (View > Close plugin windows, for example) closes it. While it stays open
 it stays where it is, also when it switches to another channel or slot (the same window). Panels are unchanged: a panel
-left detached comes back detached. Installed plugins' own interfaces always open in OS windows
-of their own (`PluginWindow.cpp`, below) and have no pop-out button, so this does not apply.
+left detached comes back detached. An installed plugin's interface inside Gridline (0.7.8, the
+default) is part of its channel or effect window and pops out and docks back with it: it opens again
+in the window its pane is now in (`docs/plugin-window.md`, "Installed plugins inside Gridline").
+Installed plugins in OS windows of their own (`PluginWindow.cpp`, below) have no pop-out button, so
+this does not apply to them.
 - Docked panels use ImGui's dock-node window-menu slot (`style.WindowMenuButtonPosition` is set
   to Right only while the dock nodes update, so nothing else changes): Gridline replaces the
   menu (`ImGuiContext::DockNodeWindowMenuHandler`) by the toggle and draws its icon over the slot.

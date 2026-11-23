@@ -26,6 +26,13 @@ int reopenHostedEditorsAfterGraphicsReset(App& a);
 // Running hosted plugin behind a channel instrument / mixer slot (nullptr when
 // not hosted, not instantiated or missing).
 host::HostedInstance* hostedInstanceFor(App& a, const PluginTarget& t);
+// 0.7.8: the target holds an installed plugin whose instance is on its way (put there by an edit the
+// engine takes after this frame): shown as loading, never as "could not be loaded".
+bool hostedLoading(App& a, const PluginTarget& t);
+// Dev (tests): while on, what each drawn hosted plugin panel showed ("<frame> loading|failed|crashed|ready")
+// is kept; devTakeHostedDraws returns it and starts again.
+void devRecordHostedDraws(bool on);
+std::vector<std::string> devTakeHostedDraws();
 
 // Once per frame: edits made in plugin editors become song edits, plugin
 // state changes are captured into the song (throttled), editor windows that
@@ -59,7 +66,9 @@ bool openHostedEditor(App& a, const PluginTarget& t);  // false (with a toast) w
 // its last reason is cleared. Reasons are bits, so the person's "hide all" and a layout's own rule
 // (only the selected track's windows) do not undo each other. Sandboxed interfaces (shown in the
 // sandbox's own window) are never set aside. False: no such window, or a sandboxed one.
-enum HostedEditorHide : unsigned { kHideAll = 1u, kHideTrack = 2u, kHideAny = ~0u };
+// 0.7.8: kHideCovered: a Gridline dialog (or, where overlays cannot get windows of their own, a menu,
+// popup, tooltip or notice) is open over the window: it steps aside until that closes (PluginWindow.cpp).
+enum HostedEditorHide : unsigned { kHideAll = 1u, kHideTrack = 2u, kHideCovered = 4u, kHideAny = ~0u };
 bool setHostedEditorHidden(const PluginTarget& t, bool hidden, unsigned reasons = kHideAny);
 bool hostedEditorHidden(const PluginTarget& t);
 std::vector<PluginTarget> openHostedEditorTargets();  // every open plugin window, shown or set aside
@@ -80,6 +89,10 @@ struct PluginWindowPolicy {
 void setPluginWindowPolicy(const PluginWindowPolicy& p);
 bool pluginWindowPolicyManaged();  // a layout called setPluginWindowPolicy last frame
 bool hostedEditorOpen(const PluginTarget& t);
+// GitHub #66: the plugin's own window is open and may be played or changed right now: the
+// pointer is over it, it has the keyboard, or Gridline cannot tell (a sandbox's own window, a
+// window of its own on Wayland). Set aside, or open behind other windows untouched: false.
+bool hostedEditorEngaged(const PluginTarget& t);
 // J-111g: the plugin window the mouse pointer is over (collaborators' cursors):
 // its plugin and the pointer's fraction of the window. False when none.
 bool hostedEditorUnderMouse(PluginTarget& t, float& fx, float& fy);
@@ -89,6 +102,8 @@ void devPrintPluginWindows(int frame);
 // Dev (GitHub issue 7): a drag inside the first open plugin window's interface (container point x, y,
 // up and down for `seconds`), as the mouse does it (macOS). False when there is none or no support.
 bool devDragHostedEditor(int x, int y, double seconds);
+// 0.7.8 (tests): the first plugin window moved to (x, y) of the main window's client area, OS units.
+bool devMoveHostedEditor(int x, int y);
 void closeAllHostedEditors(App& a);
 // K-37: at quit, before the system windows go: interfaces still closing are given a last, bounded
 // wait and their windows are destroyed now (later, the plugin instance going away would do that
@@ -139,6 +154,54 @@ void setPluginWindowDevAction(const std::string& action);
 void setPluginWindowDrawStats(bool on);
 // Dev check (J-66): Space typed into the first plugin window's interface.
 void setPluginWindowDevKeys(bool on);
+
+// 0.7.8: installed plugins' interfaces inside Gridline. By default (Settings > Interface, "Open
+// installed plugins": Inside Gridline) an installed plugin's own interface sits in its plugin window
+// inside the main window, under Gridline's header, like a built-in editor: it moves, scrolls,
+// clips, closes, pops out and docks back with that window. A plugin can be put in a window of its
+// own instead (its window menu), and back inside (its own window's bar); the choice is kept per
+// plugin (HostOptions::window). Sandboxed interfaces on macOS (shown by the sandbox process) and
+// Gridline on Wayland keep windows of their own.
+namespace hostedui {
+// Where the target's interface opens now: inside Gridline (true) or in a window of its own.
+bool opensInside(App& a, const PluginTarget& t);
+// The target's pane shows its own interface inside Gridline now (not Gridline's panel).
+bool showsInterfaceInside(App& a, const PluginTarget& t);
+// Shows the target's pane (its channel window or effect window; the Tracker's plugin window), with
+// the interface in it.
+void showInside(App& a, const PluginTarget& t);
+// The person put this plugin inside Gridline (or in a window of its own): kept for the plugin, and
+// its open interface moves there now.
+void putInterfaceInside(App& a, const PluginTarget& t, bool inside);
+// Inside the pane's body: the interface at its own size (opened on the first call, placed each frame).
+void drawDockedInterface(App& a, const PluginTarget& t, float width);
+// The width the pane's body needs for the target's interface (ImGui units), at least `fallback`.
+float dockedWidth(App& a, const PluginTarget& t, float fallback);
+// After ImGui::Render(): every docked interface is moved, clipped and holed for this frame (hidden
+// when its pane did not draw it).
+void placeDockedInterfaces();
+// A key, text or mouse event of one of Gridline's windows that holds a docked interface: true when
+// the interface has the keyboard and the event is its own (the main loop drops it: keys the
+// interface does not use come back to Gridline as before). A click on Gridline's part of the window
+// takes the keyboard back for Gridline (false: the click goes on).
+bool dockedKeyEvent(const SDL_Event& ev);
+// Dev (tests): in the first interface inside Gridline, a view like a plugin's takes the keyboard
+// (native::devTestKeyView kinds: 0 passes keys on, 1 uses every key, 2 a text field, 3 a text field
+// that takes the keyboard without a click); with `space`
+// Space is then typed into it as the window system delivers it. False when there is none.
+bool devDockedKey(int kind, bool space);
+// Dev (screenshots, macOS): the main window as the window server shows it (interfaces inside it
+// included), when it is on screen (GRIDLINE_DEV_SHOW_MAIN shows it in a hidden run).
+bool devCaptureMainWindow(const std::string& pngPath);
+// Dev (tests): a tooltip over the middle of the interfaces inside Gridline for that many frames.
+void devCoverDocked(int frames);
+// k078-collabplug: in a collaborative project, a plugin's state is written to the project only from
+// the computer where it was touched (an edit in its interface, a preset, the pointer in it). A
+// collaborator connected: the states touched here are written now, so they arrive with the project.
+void collabFlushStates(App& a);
+// Something here changed the plugin (a preset loaded through Gridline): its new state is written.
+void collabTouch(App& a, const PluginTarget& t);
+}  // namespace hostedui
 
 // Plugin window body for hosted types: editor button, plugin info and the
 // generic, searchable parameter list.

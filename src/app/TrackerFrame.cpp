@@ -24,6 +24,7 @@
 #include "../core/I18n.h"
 #include "../core/LayoutHomes.h"
 #include "../core/MenuOps.h"
+#include "../core/NoteTools.h"
 #include "../core/MenuParity.h"
 #include "../core/Params.h"
 #include "../core/Project.h"
@@ -37,6 +38,8 @@
 #include "CollabUi.h"
 #include "BrowserUi.h"
 #include "ContextMenus.h"
+#include "ExternalDragUi.h"
+#include "../core/ExternalDrop.h"
 #include "HostedUi.h"
 #include "../core/PluginInfo.h"
 #include "Keys.h"
@@ -48,16 +51,25 @@
 #include "../packs/PacksUi.h"
 #include "Theme.h"
 #include "TrackerEditors.h"
+#include "ClipEditor.h"
 #include "TrackerLook.h"
 #include "TrackerPages.h"
+#include "TrackerOrder.h"
 #include "TrackerView.h"
 #include "Widgets.h"
+#include "StageView.h"
+#include "WindowRaise.h"
 #include "Windows.h"
 #include "GridlineVersion.h"
 #include "DisplayConfirmUi.h"
 #include "Midi.h"
 #include "../core/Remote.h"
+#include "../packs/samplers/patchplayer.h"
+#include "../packs/seltmann/seltmann_tracker.h"
 #include "../packs/tracker/tracker.h"
+#include "RenderSheetUi.h"
+#include "ToolbarUi.h"
+#include "../core/Toolbar.h"
 
 namespace gl::trackerview {
 
@@ -123,11 +135,80 @@ void bevelBox(ImDrawList* dl, ImVec2 p0, ImVec2 p1, bool sunken) {
   }
 }
 
+// 0.7.8 (dev, "tracker labels"): each labelled button, radio and check row drawn while the watch is
+// on, with its label's width and the room it has, so a test can list the labels that are cut short.
+namespace {
+struct LabelFit {
+  std::string label;
+  float need = 0, room = 0;
+  int frame = -1;
+  const char* kind = "";
+};
+bool gLabelWatch = false;
+int gLabelFrame = -1;
+std::unordered_map<ImGuiID, LabelFit> gLabelFits;
+
+void noteLabelFit(App& a, const char* kind, const char* label, float room) {
+  if (!gLabelWatch || !label || !*label) return;
+  const char* shown = i18n::tr(label);
+  const int frame = ImGui::GetFrameCount();
+  // The part of the row in view: a row past its window's edge (or its clip) shows less than its room.
+  const ImRect clip = ImGui::GetCurrentWindowRead()->ClipRect, item = ImGui::GetCurrentContext()->LastItemData.Rect;
+  const float hidden = std::max(0.0f, item.Max.x - clip.Max.x) + std::max(0.0f, clip.Min.x - item.Min.x);
+  room -= hidden;
+  gLabelFrame = std::max(gLabelFrame, frame);
+  gLabelFits[ImGui::GetItemID()] = LabelFit{shown, a.fontRegular->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, shown).x, room, frame, kind};
+}
+}  // namespace
+
+void watchLabel(const char* kind, const char* shown, float need, float room) {
+  if (!gLabelWatch || !shown || !*shown) return;
+  const ImRect clip = ImGui::GetCurrentWindowRead()->ClipRect, item = ImGui::GetCurrentContext()->LastItemData.Rect;
+  room -= std::max(0.0f, item.Max.x - clip.Max.x) + std::max(0.0f, clip.Min.x - item.Min.x);
+  const int frame = ImGui::GetFrameCount();
+  gLabelFrame = std::max(gLabelFrame, frame);
+  gLabelFits[ImGui::GetItemID()] = LabelFit{shown, need, room, frame, kind};
+}
+
+void watchLabels(bool on) {
+  gLabelWatch = on;
+  gLabelFits.clear();
+  gLabelFrame = -1;
+}
+
+std::string labelReport(int* drawn, int* clipped, int* tight) {
+  *drawn = *clipped = *tight = 0;
+  std::vector<std::string> cut;
+  for (const auto& [id, f] : gLabelFits) {
+    if (f.frame != gLabelFrame) continue;  // only the last frame drawn (a screen left behind keeps its old rows)
+    ++*drawn;
+    char b[256];
+    if (f.need > f.room) {
+      ++*clipped;
+      std::snprintf(b, sizeof b, " clip %s \"%s\" %.0f>%.0f", f.kind, f.label.c_str(), static_cast<double>(f.need), static_cast<double>(f.room));
+      cut.push_back(b);
+    } else if (f.need + 2 * space::kPad > f.room + 2) {
+      ++*tight;
+      std::snprintf(b, sizeof b, " tight %s \"%s\" %.0f/%.0f", f.kind, f.label.c_str(), static_cast<double>(f.need), static_cast<double>(f.room));
+      cut.push_back(b);
+    }
+  }
+  std::sort(cut.begin(), cut.end());
+  std::string out;
+  for (const std::string& c : cut) out += c;
+  return out;
+}
+
 bool bevelButton(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, bool on, const char* hint) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImGui::SetCursorScreenPos(p0);
   const bool click = ImGui::InvisibleButton(id, ImVec2(std::max(1.0f, p1.x - p0.x), std::max(1.0f, p1.y - p0.y)));
+  {  // the button's English label for the item hooks (the dev "atitem" finds it by name; the id is often bare "##...")
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    IMGUI_TEST_ENGINE_ITEM_INFO(g.LastItemData.ID, label, g.LastItemData.StatusFlags);
+  }
+  noteLabelFit(a, "button", label, p1.x - p0.x - 2);  // (centreText's room)
   const bool hov = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
   const bool off = (ImGui::GetCurrentContext()->CurrentItemFlags & ImGuiItemFlags_Disabled) != 0;  // still to come, or nothing to act on
   bevelBox(dl, p0, p1, held || on);
@@ -163,14 +244,16 @@ bool radioRow(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, b
   const bool hov = ImGui::IsItemHovered();
   const float fs = ImGui::GetFontSize();
   const float r = std::max(3.0f, std::round(fs * 0.3f));
+  noteLabelFit(a, "radio", label, p1.x - p0.x - 2 * r - 12);
   const ImVec2 c(std::round(p0.x + 4 + r), std::round((p0.y + p1.y) * 0.5f));
   const ImVec2 q[4] = {ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r), ImVec2(c.x - r, c.y)};
+  const bool off = (ImGui::GetCurrentContext()->CurrentItemFlags & ImGuiItemFlags_Disabled) != 0;  // K-391: greyed as the buttons are
   const Aliased hard(dl);  // cp21: a hard-edged diamond
   dl->AddQuadFilled(q[0], q[1], q[2], q[3], on ? P.hot : P.surface950);
-  dl->AddQuad(q[0], q[1], q[2], q[3], on ? theme::mix(P.hot, P.text, 0.3f) : theme::mix(P.surface700, P.text, 0.42f));
-  if (hov && !on) dl->AddRectFilled(ImVec2(p0.x + 2 * r + 8, p0.y + 1), ImVec2(p1.x, p1.y - 1), theme::withAlpha(P.surface600, 0.5f));
+  dl->AddQuad(q[0], q[1], q[2], q[3], on ? theme::mix(P.hot, P.text, 0.3f) : theme::mix(P.surface700, off ? P.textFaint : P.text, 0.42f));
+  if (hov && !on && !off) dl->AddRectFilled(ImVec2(p0.x + 2 * r + 8, p0.y + 1), ImVec2(p1.x, p1.y - 1), theme::withAlpha(P.surface600, 0.5f));
   theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(p0.x + 2 * r + 10, std::round((p0.y + p1.y - fs) * 0.5f)), p1.x - p0.x - 2 * r - 12,
-                      on ? P.text : P.textDim, i18n::tr(label));
+                      on ? P.text : off ? P.textFaint : P.textDim, i18n::tr(label));
   if (hint) ui::Hint(hint);
   if (click) trackerview::keysBackToPattern();
   return click;
@@ -190,6 +273,7 @@ bool checkRow(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, b
   const bool bare = !label || !*label;
   const float bx = bare ? std::round((p0.x + p1.x - b) * 0.5f) : std::round(p0.x + 3);
   const ImVec2 q0(bx, std::round((p0.y + p1.y - b) * 0.5f)), q1(q0.x + b, q0.y + b);
+  if (!bare) noteLabelFit(a, "check", label, p1.x - q1.x - 8);
   bevelBox(dl, q0, q1, true);
   if (hov && !off) dl->AddRect(ImVec2(q0.x - 1, q0.y - 1), ImVec2(q1.x + 1, q1.y + 1), theme::withAlpha(P.hot, 0.6f));
   if (on) {
@@ -629,7 +713,8 @@ void orderRows(App& a, ImVec2 p0, ImVec2 p1) {
     const float r5 = std::floor((p1.y - p0.y - 2) / 5);
     if (r5 >= std::round(fs * 0.78f) + 1) rowH = r5, rf = std::min(fs, std::max(std::round(fs * 0.9f), r5 - 1));
   }
-  const std::vector<trk::OrderEntry> ol = trk::orderList(s);
+  const trackerorder::List olHeld = trackerorder::of(a, s);  // K-142: cached per song change
+  const std::vector<trk::OrderEntry>& ol = *olHeld;
   if (ol.empty()) {
     const bool other = std::any_of(s.playlist.begin(), s.playlist.end(), [](const Clip& c) { return c.kind != ClipKind::Pattern; });
     // Wrapped: the box is narrow.
@@ -727,16 +812,26 @@ struct Page {
   const char* label;
   const char* window;
   const char* hint;
+  const char* command = nullptr;  // GitHub #79: the command whose key the hint names (%s), as written
+  const char* key = nullptr;
+  // The mixer window's two views (stageui): -1 any page; 0 Mix (its strips), 1 Stage. Both are the
+  // Mixer window, so the tab is lit by the view it shows, and a click picks the view too.
+  int mixerView = -1;
 };
 const Page kPages[] = {
     {i18n::N_("Pattern"), "Pattern editor", i18n::N_("The pattern in rows (Esc: edit mode, F1 to F8: octave)")},
     {i18n::N_("Song"), "Playlist", i18n::N_("The song: the order list, the patterns and the timeline")},
     {i18n::N_("Roll"), "Piano roll", i18n::N_("The same notes in the piano roll")},
     {i18n::N_("Steps"), "Channel rack", i18n::N_("The channels and their steps")},
-    {i18n::N_("Mix"), "Mixer", i18n::N_("The mixer")},
+    {i18n::N_("Mix"), "Mixer", i18n::N_("The mixer"), nullptr, nullptr, 0},
+    // The Stage view of the same mixer: the tracks placed left and right, near and far.
+    {i18n::N_("Stage"), "Mixer", i18n::N_("The stage: place the tracks left and right, near and far (%s)"), "view.stage", "Ctrl+Alt+G", 1},
+    {i18n::N_("LFO"), "LFO board", i18n::N_("The LFO board: the song's LFOs and the knobs they move (%s)"), "view.lfoBoard", "Alt+F9"},  // K-247
     {i18n::N_("Pads"), "Live pads", i18n::N_("Clips launched by hand")},
     // T-11: the audio editor docked in the centre is a page too, lit while it is in front.
     {i18n::N_("Audio"), "Loupe", i18n::N_("The audio editor: the selected channel's sample")},
+    // K-347: Seltmann on one page (its tab shows while the project has a Seltmann).
+    {i18n::N_("Chop"), "Chop", i18n::N_("Seltmann on one page: the layouts, the waveform and the sequence, the values, the key map, takes and loops")},
 };
 
 bool windowFront(App& a, const char* window) {
@@ -748,7 +843,7 @@ bool windowFront(App& a, const char* window) {
   return !w || !w->DockIsActive || !w->DockNode || w->DockNode->VisibleWindow == w;
 }
 
-bool pageOn(App& a, const Page& pg) { return windowFront(a, pg.window); }
+bool pageOn(App& a, const Page& pg) { return windowFront(a, pg.window) && (pg.mixerView < 0 || a.showStage == (pg.mixerView == 1)); }
 
 // The header's wordmark, a band filling the slot [p0, p1]: the whole slot in the fixed Gridline
 // brand orange (255, 181, 71; never the chosen accent or theme), lit by a one pixel line along the
@@ -1084,7 +1179,99 @@ void transposeTool(App& a, ImVec2 p0, ImVec2 p1) {
 extern ObjectId gSourceChannel;
 extern int gSourceSlot;
 std::string gSmpDrawn;  // HUNT-1119 (dev): the sample list's rows as last drawn (sampleListDrawn)
+std::string gSmpMarks;  // 0.7.8 (dev): the rows' marks as last drawn (sampleListDrawn's " marks" part)
 bool copyInstrumentSound(App& a, ObjectId dst, ObjectId src, bool exchange);
+
+// ---- 0.7.8: the sample entries' menu, drops and renaming (the header's sample list) ----
+bool insMenuItem(const char* label, const char* shortcut, bool selected, bool enabled);
+int gEntryMenu = -1;               // the entry the right-click menu is for
+int gEntryRenaming = -1;            // the entry renamed in place (-1: none)
+ObjectId gEntryRenameCh = kNoId;
+char gEntryRenameBuf[128] = {};
+
+const char* const kAudioExts[] = {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv", ".aif", ".aiff", ".aifc"};
+
+void loadEntryDialog(App& a, ObjectId ch, int slot) {
+  menus::fileDialog(a, i18n::tr("Load a sample into the entry"), false, std::vector<std::string>(std::begin(kAudioExts), std::end(kAudioExts)), "",
+                    [&a, ch, slot](const std::string& p) {
+                      if (packs::trackerpack::headerLoadSampleInto(a, ch, p, slot) < 0) a.notify(i18n::tr("That file holds no audio Gridline can read"), true);
+                    });
+}
+
+// An audio file dragged from the Browser or the desktop, dropped on an entry's row, loads into that entry.
+void entryDropTarget(App& a, ObjectId ch, int slot, ImVec2 p0, ImVec2 p1) {
+  const ImGuiPayload* pl = ImGui::GetDragDropPayload();
+  if (!pl) return;
+  std::string file;
+  if (pl->IsDataType("GL_FILES") || xdragui::ownsPayload(pl))
+    for (const xdrop::Item& it : xdragui::items())
+      if (file.empty() && !it.dir && !it.pending && !it.path.empty() && browse::kindOf(it.path) == browse::Kind::Audio) file = it.path;
+  if (file.empty()) file = browserui::draggedAudioFile(a, pl);
+  if (file.empty()) return;
+  if (!ImGui::BeginDragDropTargetCustom(ImRect(p0, p1), ImGui::GetID("##entrydrop"))) return;
+  if (const ImGuiPayload* x = ImGui::AcceptDragDropPayload(pl->DataType, ImGuiDragDropFlags_AcceptNoDrawDefaultRect | ImGuiDragDropFlags_AcceptBeforeDelivery)) {
+    if (x->Delivery) {
+      xdragui::markConsumed();
+      if (packs::trackerpack::headerLoadSampleInto(a, ch, file, slot) < 0) a.notify(i18n::tr("That file holds no audio Gridline can read"), true);
+    } else {
+      ImGui::GetForegroundDrawList()->AddRect(p0, p1, theme::pal().hot, 0, 0, 2.0f);
+    }
+  }
+  ImGui::EndDragDropTarget();
+}
+
+// The entries as a submenu's rows ("Entry 0A  name"), each but `skip`; the one picked, -1 for none.
+int entryPick(const packs::trackerpack::HeaderSamples& hs, int skip, bool usedOnly) {
+  int pick = -1;
+  for (const auto& [slot, name] : hs.list) {
+    if (slot == skip || (usedOnly && name.empty())) continue;
+    const std::string label = std::string(i18n::tr("Entry")) + " " + trk::hex2(slot + 1) + (name.empty() ? std::string() : "  " + name);
+    ImGui::PushID(slot);
+    if (ImGui::MenuItem(label.c_str())) pick = slot;
+    ImGui::PopID();
+  }
+  return pick;
+}
+
+// The right-click menu of an entry in the sample list.
+void entryMenu(App& a, ObjectId ch, const packs::trackerpack::HeaderSamples& hs) {
+  namespace tpk = packs::trackerpack;
+  if (!ImGui::BeginPopup("##entrymenu")) return;
+  const int slot = gEntryMenu;
+  std::string name;
+  for (const auto& [k, n] : hs.list)
+    if (k == slot) name = n;
+  const bool used = !name.empty();
+  int free = -1;
+  for (const auto& [k, n] : hs.list)
+    if (free < 0 && n.empty()) free = k;
+  ImGui::TextDisabled("%s %s%s%s", i18n::tr("Entry"), trk::hex2(slot + 1).c_str(), used ? "  " : "", name.c_str());
+  ImGui::Separator();
+  auto item = [](const char* label, bool enabled = true) { return insMenuItem(label, nullptr, false, enabled); };
+  if (item("Load into entry...")) loadEntryDialog(a, ch, slot);
+  if (item("Edit in the Sample editor")) trackereditors::open(a, trackereditors::Editor::Sample, ch, slot);
+  ImGui::Separator();
+  if (item("Clear entry", used)) {
+    if (tpk::headerEntryOp(a, ch, tpk::EntryOp::Clear, slot)) status(keys::fillKeys(i18n::N_("Entry cleared (%s brings it back)"), {keys::cmdKey("edit.undo", "Ctrl+Z")}));
+  }
+  if (item("Duplicate to next free", used && free >= 0)) tpk::headerEntryOp(a, ch, tpk::EntryOp::Duplicate, slot);
+  if (ImGui::BeginMenu(i18n::tr("Copy to entry"), used)) {
+    if (const int to = entryPick(hs, slot, false); to >= 0) tpk::headerEntryOp(a, ch, tpk::EntryOp::CopyTo, slot, to);
+    ImGui::EndMenu();
+  }
+  if (ImGui::BeginMenu(i18n::tr("Exchange with entry"))) {
+    if (const int to = entryPick(hs, slot, false); to >= 0) tpk::headerEntryOp(a, ch, tpk::EntryOp::Exchange, slot, to);
+    ImGui::EndMenu();
+  }
+  if (item("Rename", used)) {
+    gEntryRenaming = slot;
+    gEntryRenameCh = ch;
+    std::snprintf(gEntryRenameBuf, sizeof gEntryRenameBuf, "%s", name.c_str());
+  }
+  ImGui::Separator();
+  if (item("Map all keys to this entry", used)) tpk::headerEntryOp(a, ch, tpk::EntryOp::MapAllKeys, slot);
+  ImGui::EndPopup();
+}
 
 // ---- Clean up (the classic Trim box): what to remove at the left, the size estimate and the two
 // buttons at the right. Calculate works the clean-up out on a copy of the song and shows the
@@ -1925,16 +2112,18 @@ void helpScreen(App& a, ImVec2 p0, ImVec2 p1) {
     auto keyRows = [&](std::initializer_list<trackerkeys::Area> areas, bool heads) {
       for (trackerkeys::Area ar : areas) {
         std::vector<const trackerkeys::Row*> rs;
+        std::vector<std::string> named;  // GitHub #79: the key column as "My keys say" names the keys
         for (const trackerkeys::Row& r : trackerkeys::rows())
-          if (r.area == ar) rs.push_back(&r);
+          if (r.area == ar) rs.push_back(&r), named.push_back(trackerkeys::namedKeys(r));
         if (heads) {
           static const char* const kAreaHead[] = {i18n::N_("The pattern"), i18n::N_("The Song page"), i18n::N_("The Sample editor"),
-                                                  i18n::N_("The Instrument editor")};
+                                                  i18n::N_("The Instrument editor"), i18n::N_("Seltmann's Chop screen"),
+                                                  i18n::N_("Seltmann's Instrument screen"), i18n::N_("The Audio page")};
           cl->AddText(a.fontBold ? a.fontBold : a.fontRegular, fs, ImVec2(c.x, y + 2), P.text, i18n::tr(kAreaHead[static_cast<int>(ar)]));
           y += rh + 2;
         }
         float kw = 0;
-        for (const trackerkeys::Row* r : rs) kw = std::max(kw, mono->CalcTextSizeA(fs, FLT_MAX, 0, r->keys).x);
+        for (const std::string& k : named) kw = std::max(kw, mono->CalcTextSizeA(fs, FLT_MAX, 0, k.c_str()).x);
         kw += 16;
         const int n = static_cast<int>(rs.size());
         const float visH = std::max(rh, ImGui::GetWindowPos().y + ImGui::GetWindowHeight() - y - 6);
@@ -1946,7 +2135,7 @@ void helpScreen(App& a, ImVec2 p0, ImVec2 p1) {
         for (int i = 0; i < n; ++i) {
           const trackerkeys::Row& r = *rs[static_cast<size_t>(i)];
           const float cx = c.x + static_cast<float>(i / rowsPer) * colW2, cy = y + static_cast<float>(i % rowsPer) * rh;
-          cl->AddText(mono, fs, ImVec2(cx, cy + 2), P.hot, r.keys);
+          cl->AddText(mono, fs, ImVec2(cx, cy + 2), P.hot, named[static_cast<size_t>(i)].c_str());
           theme::textEllipsis(cl, a.fontRegular, fs, ImVec2(cx + kw, cy + 2), colW2 - kw - 8, P.text, i18n::tr(r.what));
         }
         y += static_cast<float>(rowsPer) * rh + (heads ? 6 : 0);
@@ -1957,7 +2146,9 @@ void helpScreen(App& a, ImVec2 p0, ImVec2 p1) {
     } else if (gHelpSubject == kHelpSong) {
       keyRows({trackerkeys::Area::Song}, false);
     } else if (gHelpSubject == kHelpEditors) {
-      keyRows({trackerkeys::Area::Sample, trackerkeys::Area::Instrument}, true);
+      keyRows({trackerkeys::Area::Sample, trackerkeys::Area::Instrument, trackerkeys::Area::Chop, trackerkeys::Area::Seltmann,
+               trackerkeys::Area::Audio},
+              true);
     } else if (gHelpSubject == kHelpScreens) {
       // The screens and their keys, read from the shortcut set in use (a key changed in the
       // shortcut editor shows here as it is).
@@ -1994,7 +2185,8 @@ void helpScreen(App& a, ImVec2 p0, ImVec2 p1) {
       cl->AddText(a.fontRegular, fs, ImVec2(c.x, y + 2), P.textDim,
                   i18n::tr("The effect field shows a note's own properties as a letter and two hex digits:"));
       y += rh + 4;
-      const int typical[] = {0, 0, 0x0A, 0x80, 0x80, 0x40};
+      const int typical[] = {0x05, 0, 0, 0x0A, 0x80, 0x80, 0x40};  // (kEffectLetters order: I first)
+      static_assert(sizeof typical / sizeof typical[0] == 7, "one typical value per effect letter");
       for (int i = 0; trk::kEffectLetters[i]; ++i) {
         const std::string h = trk::effectHelp(trk::kEffectLetters[i], typical[i]);
         // R7-10: G and P are on or off (written 01); the others take any two digits.
@@ -2195,7 +2387,7 @@ void diskOpen(App& a, const std::string& path) {
     if (ch && ch->plugin.type == tracker::kInstrumentType) {
       const int k = packs::trackerpack::headerLoadSample(a, a.selChannel, path);
       if (k < 0) a.notify(i18n::tr("That file holds no audio Gridline can read"), true);
-      else a.notify(std::string(i18n::tr("Loaded into sample")) + " " + std::to_string(k + 1));
+      else a.notify(std::string(i18n::tr("Loaded into entry")) + " " + trk::hex2(k + 1));
       return;
     }
     browserui::loadChannelSample(a, a.selChannel, path);
@@ -2291,6 +2483,7 @@ void diskScreen(App& a, ImVec2 p0, ImVec2 p1) {
     ImGui::PushID(i);
     if (radioRow(a, "##dkind", kinds[i], ImVec2(p0.x + 3, y), ImVec2(x1 - 3, y + rh), gDiskKind == i, kindHints[i])) gDiskKind = i, gDiskListed.clear();
     ImGui::PopID();
+    trackereditors::devMenuRow((std::string("files ") + kinds[i]).c_str(), p0.x + 3, y, x1 - 3, y + rh);  // 0.7.8 (dev): "menu at files Samples"
   }
   y += std::round(rh * 0.5f);
   dl->AddText(bold, fs, ImVec2(p0.x + 6, std::round(y + (rh - fs) * 0.5f)), gDiskKind == 0 ? P.text : P.textFaint, i18n::tr("Save as"));
@@ -2443,6 +2636,7 @@ void diskScreen(App& a, ImVec2 p0, ImVec2 p1) {
       const bool click = ImGui::InvisibleButton("##dl", ImVec2(std::max(1.0f, lw), lrh));
       const bool hov = ImGui::IsItemHovered(), dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
       ImGui::PopID();
+      trackereditors::devMenuRow(("file " + e.name).c_str(), q.x, q.y, q.x + lw, q.y + lrh);  // 0.7.8 (dev): "tracker editors menu at file <name>"
       const bool sel = e.name == gDiskSel;
       if (sel) cl->AddRectFilled(q, ImVec2(q.x + lw, q.y + lrh), theme::withAlpha(P.surface600, 0.95f));
       else if (hov) cl->AddRectFilled(q, ImVec2(q.x + lw, q.y + lrh), theme::withAlpha(P.surface700, 0.6f));
@@ -2540,7 +2734,8 @@ ObjectId duplicatePattern(App& a, bool intoSong) {
     status(i18n::tr("No pattern to duplicate"));
     return kNoId;
   }
-  const std::vector<trk::OrderEntry> ol = trk::orderList(s);
+  const trackerorder::List olHeld = trackerorder::of(a, s);  // K-142: cached per song change
+  const std::vector<trk::OrderEntry>& ol = *olHeld;
   const int cur = currentEntry(a, ol);
   a.doc.beginGroup(intoSong ? "duplicate pattern into the song" : "duplicate pattern");
   const ObjectId id = a.doc.clonePattern(a.curPattern);
@@ -2554,7 +2749,8 @@ ObjectId duplicatePattern(App& a, bool intoSong) {
   }
   a.selectPattern(id);
   if (intoSong) {
-    const std::vector<trk::OrderEntry> nl = trk::orderList(a.doc.song());
+    const trackerorder::List nlHeld = trackerorder::of(a, a.doc.song());  // K-142: cached per song change
+    const std::vector<trk::OrderEntry>& nl = *nlHeld;
     for (const trk::OrderEntry& e : nl) {
       if (e.pattern == id) {
         setSongPosition(a, e.start);
@@ -2947,7 +3143,8 @@ float extendedStripH() { return std::round(ImGui::GetFontSize() + 4) * 4 + 4 * 3
 
 // The order list's edits from the band and the strip (one undo step each; refused with a reason).
 void orderEdit(App& a, bool insert) {
-  const std::vector<trk::OrderEntry> ol = trk::orderList(a.doc.song());
+  const trackerorder::List olHeld = trackerorder::of(a, a.doc.song());  // K-142: cached per song change
+  const std::vector<trk::OrderEntry>& ol = *olHeld;
   const int cur = currentEntry(a, ol);
   const trk::OrderEdit r = insert ? trk::orderInsert(a.doc, cur < 0 ? static_cast<int>(ol.size()) : cur, a.curPattern) : trk::orderRemove(a.doc, cur);
   if (r == trk::OrderEdit::Spans) a.notify(i18n::tr("Its clips run into the next entries: change them on the Song page"));
@@ -2981,7 +3178,8 @@ void extendedStrip(App& a) {
   const float pad = 4, rh = std::round(fs + 4), y0 = o.y + pad;
   const float stH = rh + 4, yE = o.y + H - stH;  // the boxes, then the status row
   auto rowY = [&](int r) { return std::round(y0 + static_cast<float>(r) * (rh + 4)); };
-  const std::vector<trk::OrderEntry> ol = trk::orderList(s);
+  const trackerorder::List olHeld = trackerorder::of(a, s);  // K-142: cached per song change
+  const std::vector<trk::OrderEntry>& ol = *olHeld;
   const int cur = currentEntry(a, ol);
   float x = o.x;
   // Order box: three entries, the arrows that step the song position, Ins and Del.
@@ -3022,7 +3220,7 @@ void extendedStrip(App& a) {
     readout(a, "Length", trk::hexNum(static_cast<int>(ol.size())), ImVec2(x + pad, rowY(0)), std::max(1.0f, sw - arrows - 6), rh, "Entries in the song");
     loopStepper(a, ol, ImVec2(x + pad, rowY(1)), sw, rh, "Loop to", sw);
     if (bevelButton(a, "##xback", "Exit", ImVec2(x + pad, rowY(2)), ImVec2(x + bw - pad, std::min(yE - pad, rowY(2) + rh)), false,
-                    "The header band back (Header band, Ctrl+Alt+Z; the pattern keeps its place)"))
+                    keys::withKeys(i18n::N_("The header band back (Header band, %s; the pattern keeps its place)"), {keys::cmdKey("view.headerBand", "Ctrl+Alt+Z")})))
       setExtended(a, false);
     x += bw;
   }
@@ -3171,8 +3369,11 @@ void header(App& a) {
   // T-22: a wide window gives the boxes at most three quarters more than their classic width (wider, their
   // labels, values and arrows drift apart); the instrument list takes the rest, in columns.
   const float leftW = std::floor(std::min({rest * 0.64f, 291 * k + extra * 0.5f, 291 * k * 1.75f}));
-  const float listW = std::floor(W - leftW - colW * 2 - bankW);
-  const float xL = o.x, xA = o.x + leftW, xB = xA + colW, xI = xB + colW, xK = xI + listW;
+  // K-256: the pinned commands take a third button column of their own (none pinned: no column).
+  const std::vector<toolbar::Pin> tPins = toolbarui::barPins(a);
+  const float pinColW = tPins.empty() ? 0.0f : colW;
+  const float listW = std::floor(W - leftW - colW * 2 - pinColW - bankW);
+  const float xL = o.x, xA = o.x + leftW, xB = xA + colW, xP = xB + colW, xI = xP + pinColW, xK = xI + listW;
   const float y0 = o.y;
   const float stH = std::max(std::round(15 * k), std::round(fs + 4));  // the strip never shorter than its text
   const float pad = std::round(4 * k);
@@ -3224,7 +3425,8 @@ void header(App& a) {
     }
     // Insert the shown pattern at the current entry, or remove the current entry (playlist edits).
     const float bx = lx1 + 2, bh = std::floor((listB - y0 - pad - 4) / 3);
-    const std::vector<trk::OrderEntry> ol = trk::orderList(s);
+    const trackerorder::List olHeld = trackerorder::of(a, s);  // K-142: cached per song change
+    const std::vector<trk::OrderEntry>& ol = *olHeld;
     const int cur = currentEntry(a, ol);
     auto told = [&](trk::OrderEdit r) {
       if (r == trk::OrderEdit::Spans) a.notify(i18n::tr("Its clips run into the next entries: change them on the Song page"));
@@ -3453,18 +3655,18 @@ void header(App& a) {
     if (b(0, "##about", "About Gridline", "The version and the credits (the header shows them)", gSwap == Swap::About)) gSwap = Swap::About;
     if (b(1, "##metro", "Metronome", "The click while playing and recording", a.metronome)) a.metronome = !a.metronome;
     if (b(2, "##new", "New", "A new, empty project (asks to save first)")) a.guardUnsaved([&a]() { a.newProject(); });
-    if (b(3, "##clean", "Clean up", "Removes unused patterns, tracks, mixer tracks and automation clips; works out the size saved (the scope box shows it; Ctrl+Alt+R)",
+    if (b(3, "##clean", "Clean up", keys::withKeys(i18n::N_("Removes unused patterns, tracks, mixer tracks and automation clips; works out the size saved (the scope box shows it; %s)"), {keys::cmdKey("view.cleanUp", "Ctrl+Alt+R")}),
           gTool == ScopeTool::Trim))
       gTool = gTool == ScopeTool::Trim ? ScopeTool::Scopes : ScopeTool::Trim;
     if (b(4, "##ext", "Header band", "The pattern gets the room: this band becomes a strip and about 40 rows show (its Exit brings the band back)")) setExtended(a, true);
-    if (b(5, "##trans", "Transpose", "Transpose tools in the scope box (Ctrl+Alt+T)", gTool == ScopeTool::Transpose))
+    if (b(5, "##trans", "Transpose", keys::withKeys(i18n::N_("Transpose tools in the scope box (%s)"), {keys::cmdKey("view.transposeBox", "Ctrl+Alt+T")}), gTool == ScopeTool::Transpose))
       gTool = gTool == ScopeTool::Transpose ? ScopeTool::Scopes : ScopeTool::Transpose;
     // The classic editors' extensions: the instrument's MIDI and the sample range tools.
-    if (b(6, "##iext", "MIDI", "The current instrument's MIDI out and the MIDI input in the scope box (Ctrl+Alt+J)", gTool == ScopeTool::Midi))
+    if (b(6, "##iext", "MIDI", keys::withKeys(i18n::N_("The current instrument's MIDI out and the MIDI input in the scope box (%s)"), {keys::cmdKey("view.midiBox", "Ctrl+Alt+J")}), gTool == ScopeTool::Midi))
       gTool = gTool == ScopeTool::Midi ? ScopeTool::Scopes : ScopeTool::Midi;
-    if (b(7, "##sext", "Sample tools", "Range edits on the current instrument's sample in the scope box (Ctrl+Alt+K)", gTool == ScopeTool::Sample))
+    if (b(7, "##sext", "Sample tools", keys::withKeys(i18n::N_("Range edits on the current instrument's sample in the scope box (%s)"), {keys::cmdKey("view.sampleTools", "Ctrl+Alt+K")}), gTool == ScopeTool::Sample))
       gTool = gTool == ScopeTool::Sample ? ScopeTool::Scopes : ScopeTool::Sample;
-    if (b(8, "##adv", "Advanced edit", "Instrument remap and the clipboard masks in the scope box (Ctrl+Alt+A)", gTool == ScopeTool::AdvEdit))
+    if (b(8, "##adv", "Advanced edit", keys::withKeys(i18n::N_("Instrument remap and the clipboard masks in the scope box (%s)"), {keys::cmdKey("view.advancedEdit", "Ctrl+Alt+A")}), gTool == ScopeTool::AdvEdit))
       gTool = gTool == ScopeTool::AdvEdit ? ScopeTool::Scopes : ScopeTool::AdvEdit;
     // The last row: Add and Remove side by side (the classic Add / Sub, the track count).
     float t0, t1;
@@ -3524,7 +3726,7 @@ void header(App& a) {
     // cp18: Instrument lights while the instrument's screen shows (a Tracker Sampler's Instrument
     // editor, any other instrument's Channel frame); Sample while the Sample editor shows.
     const bool instOn = trackereditors::showing(a, trackereditors::Editor::Instrument) || (instrumentShown(a) && !trackereditors::shown(a));
-    if (b(6, "##inst", "Instrument", "The current instrument's editor under the header (Ctrl+Alt+I; again: closes it)", instOn)) {
+    if (b(6, "##inst", "Instrument", keys::withKeys(i18n::N_("The current instrument's editor under the header (%s; again: closes it)"), {keys::cmdKey("view.channelSettings", "Ctrl+Alt+I")}), instOn)) {
       if (instOn) closeInstrument(a);
       else if (a.selChannel != kNoId) trackereditors::open(a, trackereditors::Editor::Instrument, a.selChannel);
     }
@@ -3538,10 +3740,16 @@ void header(App& a) {
     const bool audioFront = windowFront(a, "Loupe") && !instrumentShown(a);  // under the instrument editor it is not in view
     if (trackerSel) {
       const bool on = trackereditors::showing(a, trackereditors::Editor::Sample);
-      if (b(7, "##smp", "Sample", "The Sample editor under the header (Ctrl+Alt+E; again: closes it)", on)) {
+      const bool selt = selC && selC->plugin.type == "gl.seltmann";  // K-347: Seltmann's Chop screen sits where the Sample editor does
+      if (b(7, "##smp", selt ? i18n::N_("Chop") : "Sample",
+            selt ? keys::withKeys(i18n::N_("Seltmann's Chop screen under the header: the regions, the sequence, the chop (%s; again: closes it)"), {keys::cmdKey("view.sampleEditor", "Ctrl+Alt+E")})
+                 : keys::withKeys(i18n::N_("The Sample editor under the header (%s; again: closes it)"), {keys::cmdKey("view.sampleEditor", "Ctrl+Alt+E")}),
+            on)) {
         if (on) closeInstrument(a);
         else trackereditors::open(a, trackereditors::Editor::Sample, a.selChannel);
       }
+      // (dev: "tracker editors menu at Sample button" points at it)
+      trackereditors::devMenuRow("Sample button", ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
     } else {
       if (!samplerSel && !audioFront) ImGui::BeginDisabled();
       if (b(7, "##smp", "Sample", samplerSel ? "The Sampler's audio in the audio editor's page (again: the pattern)" : "This instrument has no sample to edit (a Tracker Sampler or a Sampler has)",
@@ -3552,6 +3760,22 @@ void header(App& a) {
     if (b(8, "##cfg", "Settings", "The pattern editor's settings (the header shows them) and the way to every other setting", gSwap == Swap::Config))
       gSwap = gSwap == Swap::Config ? Swap::None : Swap::Config;
     if (b(9, "##help", "Tracker help", "The pattern keys, the effect letters and the screen keys (the header shows them)", gSwap == Swap::Help)) gSwap = Swap::Help;
+  }
+  if (!tPins.empty()) {  // K-256: the pinned commands, a button each (at most ten here; the rest in the palette)
+    colBox(xP);
+    for (int i = 0; i < static_cast<int>(tPins.size()) && i < 10; ++i) {
+      float t0, t1;
+      slot(i, &t0, &t1);
+      const toolbar::Pin& pn = tPins[static_cast<size_t>(i)];
+      const std::string label = toolbarui::pinLabel(pn);
+      ImGui::PushID(i);
+      if (bevelButton(a, "##pin", label.c_str(), ImVec2(xP + 2, t0), ImVec2(xP + colW - 2, t1), false, label.c_str())) toolbarui::runPin(a, pn);
+      if (ImGui::BeginPopupContextItem("##pinmenu")) {
+        toolbarui::pinMenu(a, pn);
+        ImGui::EndPopup();
+      }
+      ImGui::PopID();
+    }
   }
   // ---- instrument list, sample list, song name; the bank strip ----
   {
@@ -3641,7 +3865,7 @@ void header(App& a) {
       // it (`c` would point at the old storage): the list is drawn again next frame.
       if (a.doc.revision() != revBefore) break;
       ui::Hint(packs::trackerpack::midiMuted(c.plugin)
-                   ? i18n::N_("MIDI: its notes go to the MIDI output and its own sound is muted (the MIDI box, Ctrl+Alt+J) \xC2\xB7 click: select \xC2\xB7 double-click: its instrument")
+                   ? keys::withKeys(i18n::N_("MIDI: its notes go to the MIDI output and its own sound is muted (the MIDI box, %s) \xC2\xB7 click: select \xC2\xB7 double-click: its instrument"), {keys::cmdKey("view.midiBox", "Ctrl+Alt+J")})
                    : i18n::N_("Click: select (new notes use it) \xC2\xB7 click its number: mark it as the source \xC2\xB7 double-click: its instrument \xC2\xB7 right-click: move, clone, rename, mark, exchange"));
       // M-57: a click on the number marks the instrument as the source (again: unmarked), as the
       // classic list's number column; a click on the name selects it.
@@ -3723,12 +3947,17 @@ void header(App& a) {
     }
     const packs::trackerpack::HeaderSamples& hs = hsCache;
     std::string sample;
-    if (sc && !hs.tracker && !sc->plugin.data.empty() && sc->plugin.data.find('/') != std::string::npos)
-      sample = std::filesystem::path(sc->plugin.data).filename().string();
+    if (sc && sc->plugin.type == packs::samplers::kPatchPlayerType) {  // K-333: the patch, then its file
+      const packs::samplers::PatchRef r = packs::samplers::parsePatchRef(sc->plugin.data);
+      if (!r.path.empty()) sample = (r.name.empty() ? std::string() : r.name + "  ") + std::filesystem::path(r.path).filename().string();
+    } else if (sc && !hs.tracker && !sc->plugin.data.empty() && sc->plugin.data.find('/') != std::string::npos) {
+      sample = std::filesystem::path(sc->plugin.data.substr(0, sc->plugin.data.find('\n'))).filename().string();
+    }
     dl->PushClipRect(s0, s1, true);
     // The first row's text line (a box under a row high: centred in it).
     const float sy = std::round(s1.y - s0.y < (fs + 1) * 2 ? s0.y + (s1.y - s0.y - fs) * 0.5f : s0.y + 1 + 0.5f);
     gSmpDrawn.clear();
+    gSmpMarks.clear();
     if (!hs.list.empty()) {
       static int smpFirst = 0;
       const float srh = std::round(fs + 1);
@@ -3746,6 +3975,7 @@ void header(App& a) {
       if (ImGui::IsMouseHoveringRect(s0, s1) && ImGui::GetIO().MouseWheel != 0) smpFirst += ImGui::GetIO().MouseWheel > 0 ? -1 : 1;
       smpFirst = std::clamp(smpFirst, 0, std::max(0, total - fit));
       const float y0s = s0.y + 1;
+      bool entryMenuAsked = false;
       for (int r = 0; r < fit && smpFirst + r < total; ++r) {
         const auto& [slot, name] = hs.list[static_cast<size_t>(smpFirst + r)];
         const float ry = std::round(y0s + static_cast<float>(r) * srh);
@@ -3753,10 +3983,20 @@ void header(App& a) {
         ImGui::PushID(5000 + slot);
         const bool rowClick = ImGui::InvisibleButton("##smprow", ImVec2(std::max(1.0f, s1.x - s0.x), srh));
         const bool hov = ImGui::IsItemHovered();
+        const bool empty = name.empty();
+        // 0.7.8: a right-click opens the entry's menu; an audio file dropped on the row loads into it.
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+          gEntryMenu = slot;
+          entryMenuAsked = true;
+        }
+        entryDropTarget(a, sc->id, slot, ImVec2(s0.x, ry), ImVec2(s1.x, ry + srh));
         ImGui::PopID();
-        ui::Hint("Click: this sample is the one the Sample tools and the editor work on \xC2\xB7 click its number: mark it as the source sample (the wheel scrolls the list)");
+        ui::Hint(empty ? "An empty entry: click to pick it, then load a sound into it (Files, the Browser, a drop on the row or the Sample editor) \xC2\xB7 right-click: its menu"
+                       : "Click: this sample is the one the Sample tools and the editor work on \xC2\xB7 click its number: mark it as the source sample \xC2\xB7 double-click: "
+                         "the Sample editor \xC2\xB7 right-click: load, clear, copy, rename, keys (the wheel scrolls the list)");
+        trackereditors::devMenuRow(("entry " + trk::hex2(slot + 1)).c_str(), s0.x, ry, s1.x, ry + srh);
         // M-60: a click on the number marks the source sample (again: unmarked), as on the instruments.
-        if (rowClick && ImGui::GetIO().MouseClickedPos[0].x < s0.x + 9 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00").x + 2)
+        if (rowClick && !empty && ImGui::GetIO().MouseClickedPos[0].x < s0.x + 9 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00").x + 2)
           gSourceSlot = gSourceSlot == slot ? -1 : slot;
         else if (rowClick && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))  // cp18: the Sample editor on this sample
           trackereditors::open(a, trackereditors::Editor::Sample, sc->id, slot);
@@ -3770,10 +4010,16 @@ void header(App& a) {
         const std::string num = trk::hex2(slot + 1);
         gSmpDrawn += (gSmpDrawn.empty() ? "" : "|") + num + " " + name;
         const float ty = std::round(ry + (srh - fs) * 0.5f);
-        dl->AddText(mono, fs, ImVec2(s0.x + 9, ty), slot == hs.sel ? valueInk() : P.textDim, num.c_str());
+        dl->AddText(mono, fs, ImVec2(s0.x + 9, ty), slot == hs.sel ? valueInk() : empty ? theme::withAlpha(P.textFaint, 0.7f) : P.textDim, num.c_str());
         const float nx = s0.x + 9 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00 ").x;
         // cp20: the sample's marks at the row's end: loops (L forward, P ping-pong), 8 bits, its file missing.
+        // 0.7.8: B, played backwards.
         const uint8_t mk = smpFirst + r < static_cast<int>(hs.marks.size()) ? hs.marks[static_cast<size_t>(smpFirst + r)] : 0;
+        if (mk) {  // (dev: the marks as drawn, "01:LB8!")
+          namespace tpk = packs::trackerpack;
+          gSmpMarks += (gSmpMarks.empty() ? "" : " ") + num + ":" + ((mk & tpk::kMarkPingPong) ? "P" : (mk & tpk::kMarkLoop) ? "L" : "") +
+                       ((mk & tpk::kMarkBackwards) ? "B" : "") + ((mk & tpk::kMark8Bit) ? "8" : "") + ((mk & tpk::kMarkMissing) ? "!" : "");
+        }
         float mx = s1.x - 4;
         if (mk) {
           namespace tpk = packs::trackerpack;
@@ -3790,6 +4036,9 @@ void header(App& a) {
           if (mk & tpk::kMark8Bit) {
             mark("8", P.textDim);
           }
+          if (mk & tpk::kMarkBackwards) {  // 0.7.8: played backwards (its loop letter before it)
+            mark("B", P.textDim);
+          }
           if (mk & tpk::kMarkPingPong) {
             mark("P", P.textDim);
           } else if (mk & tpk::kMarkLoop) {
@@ -3802,6 +4051,9 @@ void header(App& a) {
             } else if (mk & tpk::kMarkLoop) {
               why += i18n::tr("loops");
             }
+            if (mk & tpk::kMarkBackwards) {
+              why += std::string(why.empty() ? "" : ", ") + i18n::tr("plays backwards");
+            }
             if (mk & tpk::kMark8Bit) {
               why += std::string(why.empty() ? "" : ", ") + i18n::tr("plays at 8 bits");
             }
@@ -3811,8 +4063,31 @@ void header(App& a) {
             trackerview::status(std::string(i18n::tr("Sample")) + " " + num + ": " + why);
           }
         }
-        theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(nx, ty), mx - nx, slot == hs.sel ? P.text : P.textDim, name.c_str());
+        if (gEntryRenaming == slot && gEntryRenameCh == sc->id) {
+          // 0.7.8: renamed in place, as the instruments: Enter or a click elsewhere keeps it (one undo step), Esc does not.
+          dl->PopClipRect();
+          ImGui::SetCursorScreenPos(ImVec2(nx - 2, ty - ImGui::GetStyle().FramePadding.y));
+          ImGui::SetNextItemWidth(std::max(24.0f, s1.x - nx - 2));
+          ImGui::PushID(6000 + slot);
+          static int focusFrame = -1;
+          if (focusFrame != ImGui::GetFrameCount() - 1 && !ImGui::IsAnyItemActive()) ImGui::SetKeyboardFocusHere();
+          focusFrame = ImGui::GetFrameCount();
+          const bool enter = ImGui::InputText("##entryname", gEntryRenameBuf, sizeof gEntryRenameBuf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+          if (enter || ImGui::IsItemDeactivated()) {
+            const std::string t = gEntryRenameBuf;
+            if (!ImGui::IsKeyPressed(ImGuiKey_Escape) && !t.empty() && t != name)
+              packs::trackerpack::headerEntryOp(a, sc->id, packs::trackerpack::EntryOp::Rename, slot, -1, t);
+            gEntryRenaming = -1;
+            focusFrame = -1;
+          }
+          ImGui::PopID();
+          dl->PushClipRect(s0, s1, true);
+        } else {
+          theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(nx, ty), mx - nx, slot == hs.sel ? P.text : P.textDim, name.c_str());
+        }
       }
+      if (entryMenuAsked) ImGui::OpenPopup("##entrymenu");
+      entryMenu(a, sc->id, hs);
     } else if (!sample.empty()) {
       dl->AddText(mono, fs, ImVec2(s0.x + 9, sy), P.hot, "01");
       dl->AddText(a.fontRegular, fs, ImVec2(s0.x + 9 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00 ").x, sy), P.text, sample.c_str());
@@ -3858,7 +4133,8 @@ void header(App& a) {
       ui::Hint("The song's title (click to edit)");
     }
     if (gRenaming != kNoId && !s.channel(gRenaming)) gRenaming = kNoId;
-    gHeaderTyping = editing || gRenaming != kNoId || (gSwap == Swap::Disk && gDiskTyping);
+    if (gEntryRenaming >= 0 && gEntryRenameCh != a.selChannel) gEntryRenaming = -1;
+    gHeaderTyping = editing || gRenaming != kNoId || gEntryRenaming >= 0 || (gSwap == Swap::Disk && gDiskTyping);
     // Bank strip: eight pages of the instrument list, the column filled; pages past the last
     // channel are there but off (like the list's numbers past the last channel).
     // More than eight pages: the strip shows the eight around the page in front (the wheel over
@@ -3982,14 +4258,32 @@ void addInstrumentItems(App& a) {
   menus::instrumentItems([&a](const std::string& t) { a.later([&a, t] { addTrackerInstrument(a, t); }); });
 }
 
+// TRK-1118 (dev): an instrument menu row, its place noted by its English label (TrackerEditors.h devMenuRow).
+bool insMenuItem(const char* label, const char* shortcut = nullptr, bool selected = false, bool enabled = true) {
+  const bool hit = ImGui::MenuItem(i18n::tr(label), shortcut, selected, enabled);
+  const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+  trackereditors::devMenuRow(label, r0.x, r0.y, r1.x, r1.y);
+  return hit;
+}
+
 void instrumentMenu(App& a, ObjectId id) {
   if (!ImGui::BeginPopup("##insmenu")) return;
   const Song& s = a.doc.song();
   const int i = s.channelIndex(id), n = static_cast<int>(s.channels.size()), src = s.channelIndex(gSourceChannel);
-  if (ImGui::MenuItem(i18n::tr("Move up"), nullptr, false, i > 0)) a.doc.moveChannel(id, i - 1);
-  if (ImGui::MenuItem(i18n::tr("Move down"), nullptr, false, i >= 0 && i + 1 < n)) a.doc.moveChannel(id, i + 1);
-  if (ImGui::MenuItem(i18n::tr("Clone (after it)"))) a.doc.cloneChannel(id);
-  if (ImGui::MenuItem(i18n::tr("Rename")) && i >= 0) {  // R4-11: typed in place in the list
+  if (insMenuItem("Move up", nullptr, false, i > 0)) a.doc.moveChannel(id, i - 1);
+  if (insMenuItem("Move down", nullptr, false, i >= 0 && i + 1 < n)) a.doc.moveChannel(id, i + 1);
+  if (insMenuItem("Clone (after it)")) a.doc.cloneChannel(id);
+  // GitHub #74: the sound and its settings only (no notes in any pattern).
+  if (insMenuItem("Clone without notes")) a.doc.cloneChannel(id, Document::CloneNotes::None);
+  // GitHub #58: this instrument's notes in the current pattern, on their own in a new pattern.
+  if (const Pattern* cp = s.pattern(a.curPattern)) {
+    const bool seq = ops::channelHasSequence(*cp, id);
+    if (insMenuItem("Copy its notes to a new pattern", nullptr, false, seq))
+      a.later([&a, pid = cp->id, id] {
+        if (const ObjectId np = ops::channelsToNewPattern(a.doc, pid, {id}, false); np != kNoId) a.selectPattern(np);
+      });
+  }
+  if (insMenuItem("Rename") && i >= 0) {  // R4-11: typed in place in the list
     gRenaming = id;
     std::snprintf(gRenameBuf, sizeof gRenameBuf, "%s", s.channels[static_cast<size_t>(i)].name.c_str());
   }
@@ -3998,9 +4292,12 @@ void instrumentMenu(App& a, ObjectId id) {
   // settings, in the lower band).
   if (i >= 0) {
     ImGui::Separator();
-    if (ImGui::MenuItem(i18n::tr("Edit instrument"))) trackereditors::open(a, trackereditors::Editor::Instrument, id);
-    if (trackereditors::hasSampleEditor(a, id) && ImGui::MenuItem(i18n::tr("Edit samples"), "Ctrl+Alt+E")) trackereditors::open(a, trackereditors::Editor::Sample, id);
-    if (ImGui::MenuItem(i18n::tr("Open plugin window"))) trackereditors::openPluginWindow(a, id);
+    if (insMenuItem("Edit instrument")) trackereditors::open(a, trackereditors::Editor::Instrument, id);
+    if (trackereditors::hasSampleEditor(a, id) && insMenuItem(packs::seltmann::tracker::isSeltmann(a, id) ? i18n::N_("Chop") : "Edit samples", keys::namedText("Ctrl+Alt+E"))) trackereditors::open(a, trackereditors::Editor::Sample, id);
+    if (insMenuItem("Open plugin window")) trackereditors::openPluginWindow(a, id);
+    // K-391: the Channel frame's Convert, here now that a Sampler's settings float
+    if (const Channel* sc = s.channel(id); sc && sc->plugin.type == "gl.sampler" && !sc->plugin.data.empty() && insMenuItem("Convert to Tracker Sampler..."))
+      trackereditors::askConvert(a, id);
     // TRK-1118: another instrument in this one's place (its notes stay), or a new one at the list's end.
     if (ImGui::BeginMenu(i18n::tr("Replace with"))) {
       menus::instrumentItems([&a, id](const std::string& t) { a.later([&a, id, t] { replaceTrackerInstrument(a, id, t); }); },
@@ -4012,8 +4309,12 @@ void instrumentMenu(App& a, ObjectId id) {
     addInstrumentItems(a);
     ImGui::EndMenu();
   }
+  if (i >= 0 && renderui::channelMenu(a, id)) {  // K-254: its notes in this pattern to a sample
+    ImGui::EndPopup();
+    return;
+  }
   ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Mark as the source"), nullptr, gSourceChannel == id)) gSourceChannel = gSourceChannel == id ? kNoId : id;
+  if (insMenuItem("Mark as the source", nullptr, gSourceChannel == id)) gSourceChannel = gSourceChannel == id ? kNoId : id;
   const std::string srcNum = src >= 0 ? " " + trk::hex2(src + 1) : std::string();
   const bool other = src >= 0 && src != i && i >= 0;
   // cp15: the sound (the classic copy and exchange: names and notes stay) and the places.
@@ -4031,15 +4332,34 @@ void instrumentMenu(App& a, ObjectId id) {
   ImGui::EndPopup();
 }
 
+// Dev ("tracker pagestrip"): the page strip's tabs as last drawn, in order: label, left, right, lit.
+std::string gPageStrip;
+
 void pageStrip(App& a, ImVec2 o, float W, float py0, float stripH) {
   const float fs = ImGui::GetFontSize(), py1 = py0 + stripH;
   float px = o.x;
+  gPageStrip.clear();
+  const bool chop = packs::seltmann::tracker::projectHasSeltmann(a);
   for (const Page& pg : kPages) {
+    if (!chop && std::strcmp(pg.window, "Chop") == 0) continue;
     const char* label = i18n::tr(pg.label);
     const float w = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, label).x) + 24;
     if (px + w > o.x + W) break;
-    ImGui::PushID(pg.window);
-    if (bevelButton(a, "##page", pg.label, ImVec2(px, py0), ImVec2(px + w, py1), pageOn(a, pg), pg.hint)) showPage(a, pg.window);
+    ImGui::PushID(pg.label);  // (by its label: Mix and Stage are both the Mixer window)
+    if (bevelButton(a, "##page", pg.label, ImVec2(px, py0), ImVec2(px + w, py1), pageOn(a, pg),
+                    pg.command ? keys::withKeys(pg.hint, {keys::cmdKey(pg.command, pg.key)}) : pg.hint)) {
+      if (pg.mixerView >= 0) stageui::setView(a, pg.mixerView == 1);  // Mix or Stage: the mixer's view first
+      // 0.7.8: the Audio page with a clip or a sampler put in the Audio clip window: the Sample editor
+      // page shows it (the window's home in the Tracker); else Loupe, as before.
+      if (std::strcmp(pg.window, "Loupe") != 0 || !clipeditor::trackerpage::reopen(a)) showPage(a, pg.window);
+    }
+    trackereditors::devMenuRow((std::string("Page ") + pg.label).c_str(), px, py0, px + w, py1);  // (dev: "menu at Page Chop")
+    {
+      char b[96];
+      std::snprintf(b, sizeof b, " \"%s\" %.0f %.0f %.0f %.0f %d", pg.label, static_cast<double>(px), static_cast<double>(px + w), static_cast<double>(py0),
+                    static_cast<double>(py1), pageOn(a, pg) ? 1 : 0);
+      gPageStrip += b;
+    }
     ImGui::PopID();
     px += w + 2;
   }
@@ -4060,7 +4380,8 @@ void setSongPosition(App& a, Tick t) {
 }
 
 void stepSongPosition(App& a, int d) {
-  const std::vector<trk::OrderEntry> ol = trk::orderList(a.doc.song());
+  const trackerorder::List olHeld = trackerorder::of(a, a.doc.song());  // K-142: cached per song change
+  const std::vector<trk::OrderEntry>& ol = *olHeld;
   if (ol.empty() || d == 0) return;
   const int cur = currentEntry(a, ol);
   const int i = std::clamp(cur < 0 ? 0 : cur + d, 0, static_cast<int>(ol.size()) - 1);
@@ -4109,7 +4430,8 @@ void syncOrder(App& a, bool entering) {
   last = a.curPattern;
   if (!changed || (playing && !patternMode) || a.curPattern == kNoId) return;
   if (trk::patternTickAt(s, a.curPattern, songPosition(a)) >= 0) return;
-  for (const trk::OrderEntry& e : trk::orderList(s))
+  const trackerorder::List olHeld = trackerorder::of(a, s);  // K-142: cached per song change
+  for (const trk::OrderEntry& e : *olHeld)
     if (e.pattern == a.curPattern) {
       setSongPosition(a, e.start);
       return;
@@ -4127,6 +4449,20 @@ void headerKeepsNoKeys() {
   for (int b = 0; b < ImGuiMouseButton_COUNT; ++b)
     if (ImGui::IsMouseDown(b)) return;
   keysBackToPattern();
+}
+
+// K-376: the band only borrows the keys while a click on it lasts (headerKeepsNoKeys hands them back
+// to the pattern once the button is up): the key focus frame stays on the pattern meanwhile. Not
+// while one of its fields is typed in, nor when another page is in front (the keys stay in the band).
+bool bandBorrowsKeys(const ImGuiWindow* area) {
+  if (!area || layoutui::active() != layout::Preset::Tracker || gHeaderTyping || ImGui::GetIO().WantTextInput) return false;
+  if (std::strcmp(ui::stableWindowName(area->Name), "Order list") != 0) return false;
+  const ImGuiWindow* pe = ImGui::FindWindowByName("###Pattern editor");
+  return pe && pe->DockIsActive && pe->DockNode && pe->DockNode->VisibleWindow == pe;
+}
+bool keysBorrowedFromPattern() {
+  const ImGuiWindow* nav = GImGui ? GImGui->NavWindow : nullptr;
+  return nav && bandBorrowsKeys(nav->RootWindow);
 }
 
 void mainScreen(App& a) {
@@ -4166,6 +4502,8 @@ void setHeaderSwap(int which) {
 // (the instrument editor closes: the two share the lower band, as the classic sample and instrument
 // editors), or, in front already, the pattern back.
 void toggleAudioPage(App& a) {
+  // 0.7.8: a clip or a sampler put in the Audio clip window: its Sample editor page.
+  if (!trackereditors::showsClipForm(a) && clipeditor::trackerpage::reopen(a)) return;
   if (trackereditors::hasSampleEditor(a, a.selChannel)) {  // cp18: a Tracker Sampler's Sample editor
     trackereditors::toggle(a, trackereditors::Editor::Sample, true);
     return;
@@ -4185,7 +4523,7 @@ int headerSwap() {
 }
 void setConfigPage(int page) { gConfigPage = std::clamp(page, 0, 3); }
 void setHelpSubject(int subject) { gHelpSubject = std::clamp(subject, 0, static_cast<int>(kHelpCount) - 1); }
-std::string sampleListDrawn() { return gSmpDrawn; }
+std::string sampleListDrawn() { return gSmpMarks.empty() ? gSmpDrawn : gSmpDrawn + "  marks " + gSmpMarks; }
 void filesLoadSample(App& a, const std::string& path) {
   const int was = gDiskKind;
   gDiskKind = 1;  // the Samples kind: a double-click on an audio file there
@@ -4200,6 +4538,7 @@ int gBandFrame = -1;
 bool gStripForExtend = false;  // ... for the hidden header (not the small window's fold)
 }  // namespace
 bool extendedDrawn() { return gStripDrawn && gStripForExtend; }
+std::string pageStripState() { return gPageStrip; }
 std::string bandState() {
   char b[128];
   std::snprintf(b, sizeof b, "drawn %s height %.0f strip %.0f frame %d rowh %.0f", gStripDrawn ? "strip" : "header", static_cast<double>(gBandH),
@@ -4209,6 +4548,7 @@ std::string bandState() {
 void orderList(App& a) {
   if (layoutui::active() == layout::Preset::Tracker && layoutui::shellBuilt(a, layout::Preset::Tracker)) {
     trackerpages::enteringFrame();  // keeps the Tracker's frame count (see there)
+    ui::setKeyFocusBorrower(&bandBorrowsKeys);  // K-376 (the function checks the layout itself)
     const PerfScope perfScope(PerfBand);  // cp16: the band's frame time ("tracker perf")
     // The Tracker starts on the pattern page, with the keys (a layout loaded from its saved state
     // too). K-297 (cp16): back from another layout, the page that was in front comes back in front,
@@ -4349,8 +4689,10 @@ void orderList(App& a) {
     {
       static ObjectId lastSel = kNoId;
       if (a.selChannel != lastSel) {
-        if (a.settingsChannel != kNoId && a.selChannel != kNoId && a.doc.song().channelIndex(a.selChannel) >= 0 && !trackereditors::pluginWindowOpen(a))
-          a.settingsChannel = a.selChannel;
+        // K-391: the band's screen follows (the same screen for it, else the band closes); a
+        // floating plugin window stays as it is.
+        if (a.settingsChannel != kNoId && a.selChannel != kNoId && a.doc.song().channelIndex(a.selChannel) >= 0 && trackereditors::bandHolds(a))
+          trackereditors::follow(a, a.selChannel);
         lastSel = a.selChannel;
       }
     }

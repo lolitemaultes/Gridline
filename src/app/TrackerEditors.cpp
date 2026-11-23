@@ -25,17 +25,21 @@
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/BrowserIndex.h"
+#include "../core/ClipWindow.h"
 #include "../core/ExternalDrop.h"
 #include "../core/I18n.h"
 #include "../core/Params.h"
 #include "../core/PluginInfo.h"
 #include "../core/TrackerGrid.h"
+#include "../engine/ClipAudioEdit.h"
 #include "../engine/Sample.h"
+#include "../packs/seltmann/seltmann_tracker.h"
 #include "../packs/tracker/tracker.h"
 #include "../packs/tracker/tracker_peaks.h"
 #include "../packs/tracker/tracker_session.h"
 #include "App.h"
 #include "BrowserUi.h"
+#include "ClipEditor.h"
 #include "CollabUi.h"
 #include "ContextMenus.h"
 #include "ExternalDragUi.h"
@@ -70,8 +74,9 @@ struct Held {
   ObjectId channel = kNoId;
   int pitch = -1;
 };
-enum class Modal { None, Volume, Resample, Echo, Mix, LoopFade, Remove, Convert };
-enum class Shown { None, Sample, Plugin, Frame, Instrument };
+enum class Modal { None, Volume, Resample, Echo, Mix, LoopFade, Remove, Convert, ReplaceEntry };
+enum class Shown { None, Sample, Plugin, Frame, Instrument, Chop, SeltInst, Clip };  // (Chop, SeltInst: Seltmann's screens, K-347; Clip: a Sampler's, 0.7.8)
+namespace seltt = packs::seltmann::tracker;
 struct St {
   Editor want = Editor::Instrument;
   int openedFrame = -100;   // open() asked on this frame (the screen is the one asked for)
@@ -83,12 +88,17 @@ struct St {
   int pressFrame = -100;    // cp25: the last press inside the band
   Shown shown = Shown::None;
   float need = 0;
-  ObjectId pluginWin = kNoId;  // "Open plugin window": the channel settings float for this channel
+  // K-391: the channel whose Tracker screen the band was asked for (open()). Any other way the
+  // channel settings open (a double-click, View > Channel settings, Open plugin window, a menu) they
+  // float in their window, as in Studio; the band shows only the Tracker's own screens.
+  ObjectId bandCh = kNoId;
+  bool devFrame = false;    // (dev "open frame") the Channel frame in the band
   // The well.
   int drag = 0;             // 1 a range, 2 a pin or handle, 3 the pencil (right-drag)
   std::vector<std::pair<double, float>> pencil;  // cp20: the pencil's stroke so far (file frame, value)
-  int marker = -1;
+  int marker = -1;            // (4: the whole loop, 0.7.8)
   int32_t anchor = 0;
+  int32_t loopGrab = 0;       // 0.7.8: the whole loop's drag: the pointer's frame from the loop start at the press
   tp::ColumnCache cols;
   // Keys.
   std::vector<KeyEv> keys;
@@ -96,8 +106,13 @@ struct St {
   // Modals.
   Modal modal = Modal::None;
   bool modalOpen = false;
+  int toEntry = -1;         // 0.7.8: the used entry To entry asks to replace
+  ObjectId convertCh = kNoId;  // K-391: the Sampler Convert to Tracker Sampler asks about
+  std::vector<std::pair<float, int32_t>> tapLines;  // 0.7.8 (dev): the play lines drawn last frame (x, file frame)
+  float well[4] = {0, 0, 0, 0};                     // 0.7.8 (dev): the waveform's area as last drawn
   // Preview.
   uint32_t serial = 0;
+  SamplePtr pvSample;       // K-391: a Sampler's preview (the part played, at the play note) on the sample preview
   ObjectId pvChannel = kNoId;
   int pvPitch = -1;
   double pvStarted = 0;
@@ -130,6 +145,17 @@ struct St {
   // cp24: the Channel frame's fold.
   float frameRoom = 1e9f;   // the height the header band leaves the frame (setFrameRoom)
   float bandPad = 0;        // the band's own padding round the screen, as last measured
+  // 0.7.8: a Sampler's Sample editor (the Audio clip window's parts in the band).
+  bool clipWave = false;    // the Waveform page (else the settings page of the window's tab)
+  int clipTabSeen = -1;     // the window's tab last shown (another, asked from anywhere: its page, from its start)
+  std::string clipPreset;   // the preset the arrows stepped to last
+  struct Part {
+    std::string id;
+    ImVec2 a, b;
+  };
+  std::vector<Part> clipParts;  // (dev "clip dump") the parts as last drawn
+  ImVec2 clipBand0, clipBand1;  // (dev) the screen's area as last drawn
+  int clipFrame = -100;         // (dev) the frame it was drawn
 };
 St& st() {
   static St s;
@@ -140,6 +166,26 @@ bool trackerOn(App& a) { return layoutui::active() == layout::Preset::Tracker &&
 
 const Channel* channelOf(App& a, ObjectId id) { return id == kNoId ? nullptr : a.doc.song().channel(id); }
 bool isTrackerSampler(const Channel* c) { return c && c->plugin.type == trk::kInstrumentType; }
+// 0.7.8: a Sampler: its Sample editor is the Audio clip window's (core/ClipWindow.h).
+bool isSampler(const Channel* c) { return c && clipwin::ownsType(c->plugin.type); }
+// K-391: a Sampler's Sample page shows the classic Sample editor (its file as a one-sample Tracker
+// Sampler, tracker_session.h editState) or the advanced one (the Audio clip window's parts). The
+// choice is an app setting ("tracker.sampleView": classic, advanced), never saved in a project.
+bool advancedView(App& a) { return a.settings.getString("tracker.sampleView") == "advanced"; }
+// While the classic Sample editor works on a Sampler, the header's sample ops take it too.
+struct Bridge {
+  bool prev;
+  explicit Bridge(bool on) : prev(tp::samplerBridge()) {
+    if (on) tp::setSamplerBridge(true);
+  }
+  ~Bridge() { tp::setSamplerBridge(prev); }
+  Bridge(const Bridge&) = delete;
+  Bridge& operator=(const Bridge&) = delete;
+};
+bool classicSampler(App& a, ObjectId ch) {
+  const Channel* c = ch == kNoId ? nullptr : a.doc.song().channel(ch);
+  return c && clipwin::ownsType(c->plugin.type) && !advancedView(a);
+}
 
 // Tracker note names (C-4, C#4); 1..96, 49 = C-4.
 std::string noteName(int n) {
@@ -157,15 +203,53 @@ std::string fmtInt(long long v) { return std::to_string(v); }
 // ---- the preview (one sample, or a part of it, through the channel) ----
 void stopPreview(App& a) {
   St& s = st();
+  if (s.pvSample) {  // K-391: a Sampler's
+    if (a.engine.previewingSample(s.pvSample.get())) a.engine.preview(nullptr);
+    s.pvSample.reset();
+  }
   if (s.serial == 0) return;
   tp::cancelAudition(s.serial);
   if (s.pvChannel != kNoId && s.pvPitch >= 0) a.engine.noteOff(s.pvChannel, s.pvPitch);
   s.serial = 0, s.pvChannel = kNoId, s.pvPitch = -1;
 }
+bool previewSounding(App& a) {
+  const St& s = st();
+  return (s.serial != 0 && tp::auditionSounding(s.serial)) || (s.pvSample && a.engine.previewingSample(s.pvSample.get()));
+}
+// K-391: a Sampler's sample in the classic editor plays its part on the sample preview, at the play
+// note (its root key plays the file at its own rate) and backwards when it is set to.
+void samplerPreview(App& a, const tp::InstrumentAux& inst, const tp::Edit& e, int k, int note, int32_t from, int32_t to) {
+  const SamplePtr src = inst.files[static_cast<size_t>(k)];
+  if (!src || src->frames() == 0) return;
+  const auto frames = static_cast<int32_t>(std::min<size_t>(src->frames(), 0x3FFFFFFF));
+  const int32_t c0 = std::clamp(e.cuts.start[static_cast<size_t>(k)], 0, frames - 1);
+  const int32_t c1 = e.cuts.end[static_cast<size_t>(k)] > 0 ? std::clamp(e.cuts.end[static_cast<size_t>(k)], c0 + 1, frames) : frames;
+  const int32_t f0 = std::clamp(std::max(from, c0), 0, frames), f1 = std::clamp(to > 0 ? to : c1, f0, frames);
+  if (f1 <= f0) return;
+  auto pv = std::make_shared<Sample>();
+  const trk::SampleDef& sd = e.text.def.samples[static_cast<size_t>(k)];
+  const double rate = src->sampleRate > 0 ? src->sampleRate : 44100.0;
+  pv->sampleRate = rate * std::pow(2.0, (note - tp::rootNote(sd, rate)) / 12.0);
+  pv->left.assign(src->left.begin() + f0, src->left.begin() + f1);
+  if (src->mono()) pv->setMono();
+  else pv->right.assign(src->right.begin() + f0, src->right.begin() + f1);
+  if (sd.reverse) {
+    std::reverse(pv->left.begin(), pv->left.end());
+    if (!pv->mono()) std::reverse(pv->right.mut().begin(), pv->right.mut().end());
+  }
+  St& s = st();
+  s.pvSample = pv;
+  s.pvStarted = ImGui::GetTime();
+  a.engine.preview(pv, true);
+}
 // Slot k at the play note: frames [from, to) of the file (to 0: to the sample's end).
 void startPreview(App& a, ObjectId ch, const tp::InstrumentAux& inst, const tp::Edit& e, int k, int note, int32_t from, int32_t to) {
   stopPreview(a);
   if (k < 0 || k >= trk::kMaxSamples || !inst.data[static_cast<size_t>(k)]) return;
+  if (isSampler(channelOf(a, ch))) {
+    samplerPreview(a, inst, e, k, note, from, to);
+    return;
+  }
   // The played part starts at the sample's start: the request counts from there.
   const int32_t c0 = std::max(0, e.cuts.start[static_cast<size_t>(k)]);
   const int32_t len = inst.text.def.samples[static_cast<size_t>(k)].length;
@@ -180,6 +264,7 @@ void startPreview(App& a, ObjectId ch, const tp::InstrumentAux& inst, const tp::
 }
 void tendPreview(App& a) {
   St& s = st();
+  if (s.pvSample && !a.engine.previewingSample(s.pvSample.get())) s.pvSample.reset();
   if (s.serial == 0) return;
   const bool sounding = tp::auditionSounding(s.serial);
   const bool stuck = sounding && ImGui::GetTime() - s.pvStarted > 0.75 && !tp::auditionPlaying(s.serial);
@@ -199,7 +284,8 @@ struct Ctx {
   PluginTarget t;
   const tp::Snapshot* snap = nullptr;
   tp::Memory* m = nullptr;
-  int k = -1;                 // the selected slot (-1: the instrument has no sample)
+  int k = -1;                 // the selected slot (-1: the instrument has no sample, or an empty entry is picked)
+  int entry = -1;             // 0.7.8: the entry picked in the list (k when it holds a sample; else the empty one)
   SamplePtr sp;
   int32_t frames = 0;         // the file's
   int32_t s0 = 0, s1 = 0;     // the played part
@@ -207,6 +293,8 @@ struct Ctx {
   bool looping = false;
   int32_t ls = 0, le = 0;
   bool eight = false;
+  bool rev = false;           // 0.7.8: the sample plays backwards
+  bool sampler = false;       // K-391: a Sampler seen as a one-sample Tracker Sampler (one entry, full resolution)
   bool ok() const { return snap && snap->ok; }
   bool have() const { return k >= 0 && sp && frames > 0; }
 };
@@ -217,14 +305,21 @@ Ctx context(App& a, ObjectId ch) {
   const tp::Snapshot& sn = tp::snapshot(a, c.t);
   if (!sn.ok) return c;
   c.snap = &sn;
+  c.sampler = sn.sampler;
   c.m = &tp::memory(c.t.key());
   const tp::Edit& e = sn.e;
+  // 0.7.8: an empty entry picked in the list (or by Ctrl+Alt+Up / Down) shows as itself, empty.
+  if (c.m->wantSlot >= 0 && c.m->wantSlot < trk::kMaxSamples && !tp::hasSample(e, c.m->wantSlot)) {
+    c.entry = c.m->wantSlot;
+    return c;
+  }
   if (!tp::hasSample(e, c.m->sel))
     for (int k = 0; k < trk::kMaxSamples; ++k)
       if (tp::hasSample(e, k)) {
         c.m->sel = k;
         break;
       }
+  c.entry = std::clamp(c.m->sel, 0, trk::kMaxSamples - 1);
   if (!tp::hasSample(e, c.m->sel)) return c;
   c.k = c.m->sel;
   const auto i = static_cast<size_t>(c.k);
@@ -238,6 +333,7 @@ Ctx context(App& a, ObjectId ch) {
   c.looping = sd.loop != trk::kLoopOff && sd.loopLength > 0;
   c.ls = sd.loopStart, c.le = sd.loopStart + sd.loopLength;
   c.eight = e.eightBit[i];
+  c.rev = sd.reverse;
   if (c.m->viewSlot != c.k || c.m->viewLen <= 0 || c.m->viewLen > c.frames) {
     c.m->viewSlot = c.k;
     c.m->viewStart = 0;
@@ -335,11 +431,66 @@ bool canPart(const Ctx& c) {
   const tp::Span r = rangeOf(c);
   return c.have() && !r.empty() && r.b - r.a < c.frames;
 }
-bool minimisable(const Ctx& c) { return c.have() && c.looping && c.le < c.frames; }
+// 0.7.8: a sample played backwards loses what precedes its loop instead (the part it never reaches).
+bool minimisable(const Ctx& c) { return c.have() && c.looping && (c.rev ? c.ls > 0 : c.le < c.frames); }
 
 void openModal(Modal m) {
   st().modal = m;
   st().modalOpen = true;
+}
+
+// 0.7.8 (To entry): the range of the selected sample into entry `to` (-1: the next free one), one undo
+// step; the new entry is selected and the status line says where it went.
+void regionTo(App& a, Ctx& c, int to) {
+  if (!c.have()) return;
+  stopPreview(a);
+  const int k = c.k;
+  const int slot = tp::headerRegionToEntry(a, c.ch, to);
+  if (slot < 0) return;
+  status(std::string(i18n::tr("The range of entry")) + " " + hex2(k + 1) + " " + i18n::tr("is now entry") + " " + hex2(slot + 1) + " (" + keys::fillKeys(i18n::N_("%s: back"), {keys::cmdKey("edit.undo", "Ctrl+Z")}) + ")");
+}
+
+// The To entry drop-down: the next free entry, then each entry (a used one asks before it is replaced).
+// It opens from its button (b0..b1), as the classic screen's drop-downs do: above it, its left edge on
+// the button's, so it never covers the button column it came from; with no room above, beside the
+// column at its right, its foot on the button's.
+void toEntryMenu(App& a, Ctx& c, ImVec2 b0, ImVec2 b1) {
+  if (ImGui::IsPopupOpen("##ttoentrymenu")) {
+    const ImGuiStyle& st = ImGui::GetStyle();
+    const float h = (trk::kMaxSamples + 1) * (ImGui::GetFontSize() + st.ItemSpacing.y) + st.ItemSpacing.y + 2 * st.WindowPadding.y + 2;
+    const float top = ImGui::GetMainViewport()->WorkPos.y;
+    if (b0.y - space::kGap - h >= top)
+      ImGui::SetNextWindowPos(ImVec2(b0.x, b0.y - space::kGap), ImGuiCond_Always, ImVec2(0, 1));
+    else
+      ImGui::SetNextWindowPos(ImVec2(b1.x + space::kGap, b1.y), ImGuiCond_Always, ImVec2(0, 1));
+  }
+  if (!ImGui::BeginPopup("##ttoentrymenu")) return;
+  if (!c.have()) {
+    ImGui::EndPopup();
+    return;
+  }
+  const tp::Edit& e = c.snap->e;
+  const int free = tp::firstFreeEntry(e);
+  const std::string next = free >= 0 ? std::string(i18n::tr("Next free entry")) + " (" + hex2(free + 1) + ")" : std::string(i18n::tr("Next free entry (all 16 used)"));
+  if (ImGui::MenuItem(next.c_str(), nullptr, false, free >= 0)) regionTo(a, c, -1);
+  devMenuRow("Next free entry", ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
+  ImGui::Separator();
+  for (int k = 0; k < trk::kMaxSamples; ++k) {
+    const bool used = tp::hasSample(e, k);
+    const std::string label = std::string(i18n::tr("Entry")) + " " + hex2(k + 1) + (used ? "  " + tp::editName(e, k) : std::string());
+    ImGui::PushID(k);
+    if (ImGui::MenuItem(label.c_str(), nullptr, false, true)) {
+      if (used) {
+        st().toEntry = k;
+        openModal(Modal::ReplaceEntry);
+      } else {
+        regionTo(a, c, k);
+      }
+    }
+    devMenuRow(("Entry " + hex2(k + 1)).c_str(), ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
+    ImGui::PopID();
+  }
+  ImGui::EndPopup();
 }
 
 // The valued edits' and the confirmations' boxes (the classic centred request, in the band's look).
@@ -360,6 +511,7 @@ void modals(App& a, Ctx& c) {
     case Modal::Mix: title = "Mix in a sample", rows = 3; break;
     case Modal::LoopFade: title = "Loop fade", rows = 2; break;
     case Modal::Remove: title = "Remove the sample", rows = 2; break;
+    case Modal::ReplaceEntry: title = "Replace the entry", rows = 2; break;
     default: break;
   }
   const float h = std::round(fs * 2.6f + rows * (rh + 3) + rh + 16);
@@ -444,11 +596,24 @@ void modals(App& a, Ctx& c) {
       caption("Undo brings it back.");
       break;
     }
+    case Modal::ReplaceEntry: {
+      const std::string old = c.ok() && s.toEntry >= 0 ? tp::editName(c.snap->e, s.toEntry) : std::string();
+      char b[200];
+      std::snprintf(b, sizeof b, i18n::tr("Entry %s (%s) becomes the range of entry %s."), hex2(s.toEntry + 1).c_str(), old.c_str(), hex2(c.k + 1).c_str());
+      theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(x0, y), x1 - x0, P.text, b);
+      y += fs + 6;
+      caption("Its keys stay. Undo brings it back.");
+      break;
+    }
     default: break;
   }
   // Apply / Cancel (Enter / Esc).
   const float bw = std::round(fs * 7), by = std::round(o.y + h - rh - 28 - fs);
-  const char* go = s.modal == Modal::Remove ? "Remove" : s.modal == Modal::Mix ? "Mix" : s.modal == Modal::Resample ? "Resample" : "Apply";
+  const char* go = s.modal == Modal::Remove         ? "Remove"
+                   : s.modal == Modal::ReplaceEntry ? "Replace"
+                   : s.modal == Modal::Mix          ? "Mix"
+                   : s.modal == Modal::Resample     ? "Resample"
+                                                    : "Apply";
   if (bevelButton(a, "##mgo", go, ImVec2(x1 - 2 * bw - 6, by), ImVec2(x1 - bw - 6, by + rh), false, "Enter")) apply = true;
   if (bevelButton(a, "##mno", "Cancel", ImVec2(x1 - bw, by), ImVec2(x1, by + rh), false, "Esc")) ImGui::CloseCurrentPopup(), s.modal = Modal::None;
   if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) apply = true;
@@ -493,6 +658,10 @@ void modals(App& a, Ctx& c) {
         tp::opRemoveSample(a, c.t, c.k);
         c.m->selA = c.m->selB = -1;
         break;
+      case Modal::ReplaceEntry:
+        regionTo(a, c, s.toEntry);
+        s.toEntry = -1;
+        break;
       default: break;
     }
     ImGui::CloseCurrentPopup();
@@ -506,10 +675,10 @@ void editMenuItems(App& a, Ctx& c, bool all) {
   const bool part = canPart(c), hasClip = !tp::clipboard().L.empty();
   const tp::Span r = rangeOf(c);
   if (all) {
-    if (ImGui::MenuItem(i18n::tr("Cut"), "Alt+X", false, part)) edit(a, c, tp::HeaderEdit::Cut);
-    if (ImGui::MenuItem(i18n::tr("Copy"), "Alt+C", false, c.have())) edit(a, c, tp::HeaderEdit::Copy);
-    if (ImGui::MenuItem(i18n::tr("Paste"), "Alt+V", false, c.have() && hasClip)) edit(a, c, tp::HeaderEdit::Paste);
-    if (ImGui::MenuItem(i18n::tr("Crop"), "Alt+R", false, part)) edit(a, c, tp::HeaderEdit::Crop);
+    if (ImGui::MenuItem(i18n::tr("Cut"), keys::namedText("Alt+X"), false, part)) edit(a, c, tp::HeaderEdit::Cut);
+    if (ImGui::MenuItem(i18n::tr("Copy"), keys::namedText("Alt+C"), false, c.have())) edit(a, c, tp::HeaderEdit::Copy);
+    if (ImGui::MenuItem(i18n::tr("Paste"), keys::namedText("Alt+V"), false, c.have() && hasClip)) edit(a, c, tp::HeaderEdit::Paste);
+    if (ImGui::MenuItem(i18n::tr("Crop"), keys::namedText("Alt+R"), false, part)) edit(a, c, tp::HeaderEdit::Crop);
     if (ImGui::MenuItem(i18n::tr("Delete"), "Del", false, part)) edit(a, c, tp::HeaderEdit::Delete);
     if (ImGui::MenuItem(i18n::tr("Silence"), nullptr, false, c.have() && !r.empty())) edit(a, c, tp::HeaderEdit::Silence);
     ImGui::Separator();
@@ -528,8 +697,8 @@ void editMenuItems(App& a, Ctx& c, bool all) {
   if (ImGui::MenuItem(i18n::tr("Cut after loop"), nullptr, false, minimisable(c))) edit(a, c, tp::HeaderEdit::TrimLoop);
   if (all) {
     ImGui::Separator();
-    if (ImGui::MenuItem(i18n::tr("Select all"), "Alt+A", false, c.have())) edit(a, c, tp::HeaderEdit::SelectAll);
-    if (ImGui::MenuItem(i18n::tr("Zoom to range"), "Alt+S", false, c.have() && !r.empty())) zoomToRange(c);
+    if (ImGui::MenuItem(i18n::tr("Select all"), keys::namedText("Alt+A"), false, c.have())) edit(a, c, tp::HeaderEdit::SelectAll);
+    if (ImGui::MenuItem(i18n::tr("Zoom to range"), keys::namedText("Alt+S"), false, c.have() && !r.empty())) zoomToRange(c);
     if (ImGui::MenuItem(i18n::tr("Clear range"), nullptr, false, c.have() && c.m->selA >= 0)) edit(a, c, tp::HeaderEdit::ClearRange);
   }
 }
@@ -562,7 +731,7 @@ void runKey(App& a, Ctx& c, const KeyEv& k) {
     else if (alt && kc == 'r') edit(a, c, tp::HeaderEdit::Crop);
     else if (alt && kc == 's' && c.have()) zoomToRange(c);
     else if (alt && kc == 'z' && c.have()) zoomAbout(c, 2.0, c.m->viewStart + c.m->viewLen * 0.5);
-    else if (alt && kc == 'w' && c.have()) startPreview(a, c.ch, *c.snap->inst, c.snap->e, c.k, c.m->playNote, 0, 0);
+    else if (alt && kc == 'p' && c.have()) startPreview(a, c.ch, *c.snap->inst, c.snap->e, c.k, c.m->playNote, 0, 0);  // (Alt+W is warp mode)
     else if (alt && kc == 'q') stopPreview(a), releaseHeld(a);
     else if (alt && (k.sc == SDL_SCANCODE_UP || k.sc == SDL_SCANCODE_DOWN)) tp::headerStepSample(a, c.ch, k.sc == SDL_SCANCODE_UP ? -1 : 1);
     return;
@@ -589,6 +758,7 @@ void readout(App& a, const char* label, const std::string& value, ImVec2 p0, flo
 // Load...: an audio file picked into the selected slot (one undo step).
 void loadDialog(App& a, ObjectId ch) {
   menus::fileDialog(a, i18n::tr("Load a sample"), false, {".wav", ".wave", ".flac", ".mp3", ".ogg", ".wv", ".aif", ".aiff", ".aifc"}, "", [&a, ch](const std::string& p) {
+    const Bridge br(classicSampler(a, ch));
     if (packs::trackerpack::headerLoadSample(a, ch, p) < 0) {
       a.notify(i18n::tr("The file has no audio to load"));
     }
@@ -621,6 +791,68 @@ void dropTarget(App& a, Ctx& c, ImVec2 p0, ImVec2 p1) {
   ImGui::EndDragDropTarget();
 }
 
+// ---- K-391: a Sampler's two Sample editor views ----
+// "Sample editor" (the classic one) | "Advanced" (the Audio clip window's parts): a pair of the band's
+// buttons where the title stands, the shown one lit. One click switches; the instrument, its sample
+// and the selection stay (the range in the classic one is the advanced page's time selection on the
+// clip, and back). The choice is remembered (the app setting "tracker.sampleView").
+void switchView(App& a, ObjectId ch, bool advanced) {
+  if (advancedView(a) == advanced) return;
+  stopPreview(a);
+  releaseHeld(a);
+  namespace tpg = clipeditor::trackerpage;
+  const Song& song = a.doc.song();
+  tp::Memory& m = tp::memory(PluginTarget{ch, -1}.key());
+  tpg::take(a, ch);
+  double t0 = 0, t1 = 0;
+  const ObjectId clip = tpg::selection(&t0, &t1);
+  const Clip* cl = clip != kNoId ? song.clip(clip) : nullptr;
+  if (cl && advanced) {
+    if (m.selSlot == 0 && m.selA >= 0 && m.selB >= 0 && m.selA != m.selB) {
+      // The tick where the clip reaches file frame f (the clip's warp is monotonic): a bisection.
+      const double c0 = static_cast<double>(cl->start), c1 = static_cast<double>(cl->start + song.clipLength(*cl));
+      auto tickOf = [&](int64_t f) {
+        double lo = c0, hi = c1;
+        for (int i = 0; i < 48 && hi - lo > 0.01; ++i) {
+          const double mid = (lo + hi) * 0.5;
+          int64_t fa = 0, fb = 0;
+          if (clipedit::clipRangeFrames(song, clip, c0, mid, fa, fb) && fb >= f) hi = mid;
+          else lo = mid;
+        }
+        return hi;
+      };
+      const double a0 = tickOf(std::min(m.selA, m.selB)), a1 = tickOf(std::max(m.selA, m.selB));
+      if (a1 > a0) tpg::setSelection(a0, a1);
+    }
+  } else if (cl && t1 > t0) {
+    int64_t fa = 0, fb = 0;
+    if (clipedit::clipRangeFrames(song, clip, t0, t1, fa, fb) && fb > fa) {
+      m.sel = 0, m.selSlot = 0;
+      m.selA = static_cast<int32_t>(std::min<int64_t>(fa, 0x3FFFFFFF)), m.selB = static_cast<int32_t>(std::min<int64_t>(fb, 0x3FFFFFFF));
+    }
+  }
+  a.settings.set("tracker.sampleView", advanced ? std::string("advanced") : std::string("classic"));
+}
+// The pair at the left of the title row [p0, p0 + titleH): the x where the title's text goes on.
+float viewTabs(App& a, ObjectId ch, ImVec2 p0, float titleH) {
+  const float fs = ImGui::GetFontSize();
+  const bool adv = advancedView(a);
+  const char* names[2] = {i18n::N_("Sample editor"), i18n::N_("Advanced")};
+  const char* hints[2] = {i18n::N_("The classic sample editor: the waveform, its range and loop, the edits and the play buttons"),
+                          i18n::N_("The advanced sample editor: the sample's and the channel's settings in pages of modules, as the Audio clip window has them")};
+  float x = p0.x + 3;
+  for (int i = 0; i < 2; ++i) {
+    const float w = std::round(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(names[i])).x + 2 * space::kGroup);
+    ImGui::PushID(i);
+    if (bevelButton(a, "##tview", names[i], ImVec2(x, p0.y + 2), ImVec2(x + w, p0.y + titleH - 2), adv == (i == 1), hints[i]))
+      a.later([&a, ch, i] { switchView(a, ch, i == 1); });
+    devMenuRow(i ? "View Advanced" : "View Sample editor", x, p0.y + 2, x + w, p0.y + titleH - 2);
+    ImGui::PopID();
+    x += w + 2;
+  }
+  return std::round(x + space::kGroup);
+}
+
 void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
   St& s = st();
   const auto& P = pal();
@@ -631,6 +863,7 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
   ImFont* mono = monoFont(a);
   Ctx c = context(a, ch);
   s.hover.clear();
+  s.tapLines.clear();
   // Keys queued since the last frame.
   if (!s.keys.empty()) {
     std::vector<KeyEv> ks;
@@ -652,8 +885,13 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
   {
     bevelBox(dl, p0, ImVec2(p1.x, p0.y + titleH), false);
     const float ty = std::round(p0.y + (titleH - fs) * 0.5f);
-    dl->AddText(a.fontBold ? a.fontBold : a.fontRegular, fs, ImVec2(p0.x + 8, ty), P.text, i18n::tr("Sample editor"));
-    float x = p0.x + 16 + (a.fontBold ? a.fontBold : a.fontRegular)->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Sample editor")).x;
+    float x = 0;
+    if (isSampler(chan)) {  // K-391: a Sampler's: the pair of views where the title stands
+      x = viewTabs(a, ch, p0, titleH);
+    } else {
+      dl->AddText(a.fontBold ? a.fontBold : a.fontRegular, fs, ImVec2(p0.x + 8, ty), P.text, i18n::tr("Sample editor"));
+      x = p0.x + 16 + (a.fontBold ? a.fontBold : a.fontRegular)->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Sample editor")).x;
+    }
     const int ci = chan ? a.doc.song().channelIndex(ch) : -1;
     std::string info = std::string(i18n::tr("Instrument")) + " " + hex2(ci + trackBase(a)) + " " + (chan ? chan->name : std::string());
     if (c.have()) {
@@ -663,6 +901,9 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
       info += std::string("   ") + i18n::tr("Sample") + " " + hex2(c.k + 1) + " " + tp::editName(c.snap->e, c.k) + "   " + rate + "   " +
               (c.eight ? "8-bit" : "16-bit") + "   " + (c.sp->mono() ? i18n::tr("mono") : i18n::tr("stereo")) + "   " + std::to_string(c.frames) + " " +
               i18n::tr("frames");
+    } else if (c.ok() && c.entry >= 0 && c.k < 0) {
+      info += std::string("   ") + i18n::tr("Entry") + " " + hex2(c.entry + 1) + "   " + i18n::tr("empty");
+      if (c.snap->sound > 0 && tp::sampleCountOf(c.snap->e) == 0) info += std::string("   ") + i18n::tr("Built-in sound: ") + tp::soundName(c.snap->sound);
     } else if (c.ok() && c.snap->sound > 0) {
       info += std::string("   ") + i18n::tr("Built-in sound: ") + tp::soundName(c.snap->sound);
     }
@@ -675,7 +916,7 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
       int idx = 0;
       for (int k = 0; k <= c.k && k < trk::kMaxSamples; ++k) idx += tp::hasSample(c.snap->e, k) ? 1 : 0;
       char b[32];
-      std::snprintf(b, sizeof b, "%02X / %02X", c.have() ? c.k + 1 : 0, n);
+      std::snprintf(b, sizeof b, "%02X / %02X", c.have() ? c.k + 1 : c.entry >= 0 && c.k < 0 ? c.entry + 1 : 0, n);
       (void)idx;
       if (const int d = stepper(a, "##tsmp", "Sample", b, ImVec2(sx, p0.y + 2), stW, titleH - 4, "The instrument's previous / next sample (Alt+Up / Alt+Down)",
                                 std::round(fs * 4), true))
@@ -687,11 +928,20 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
   bevelBox(dl, w0, w1, true);
   const float x0 = w0.x + 2, x1 = w1.x - 2, y0 = w0.y + 2, y1 = w1.y - 2;
   const float Wd = std::max(1.0f, x1 - x0);
+  s.well[0] = x0, s.well[1] = y0, s.well[2] = x1, s.well[3] = y1;  // (dev: the dump prints it)
   const float mid = std::round((y0 + y1) * 0.5f), amp = (y1 - y0) * 0.5f - 3;
   if (c.ok()) dropTarget(a, c, w0, w1);
   if (!c.have()) {
     const char* t1 = !c.ok() ? i18n::tr("Not a Tracker Sampler") : c.k >= 0 ? i18n::tr("The sample file is missing") : i18n::tr("No sample yet");
     const char* t2 = i18n::tr("Click here or Load... to pick a file for this slot; or drop an audio file here (the browser, the desktop)");
+    // 0.7.8: an empty entry picked in the list says which, and how a sound gets into it.
+    std::string emptyTitle;
+    const bool emptyEntry = c.ok() && c.k < 0 && c.entry >= 0;
+    if (emptyEntry) {
+      emptyTitle = std::string(i18n::tr("Entry")) + " " + hex2(c.entry + 1) + " " + i18n::tr("is empty");
+      t1 = emptyTitle.c_str();
+      t2 = i18n::tr("Load a sound into it: Load sample..., the Files page, a double-click in the Browser, or drop an audio file here");
+    }
     // cp20 (K-316 7.2): a file a collaborator sent that is still arriving: how far it is (edits wait for it).
     std::string recv;
     if (c.ok() && c.k >= 0) {
@@ -708,6 +958,11 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
     theme::centreText(dl, a.fontRegular, fs, ImVec2(x0, mid + 2), ImVec2(x1, mid + fs + 2), P.textDim, t2);
     // cp20 (usability pass): a click on the empty well picks the file, as Load... does (not while one is arriving).
     if (c.ok() && recv.empty()) {
+      // 0.7.8: a plain button under the text (submitted first, so it takes the hover over the well's).
+      const float bw = std::round(fs * 10), bh = std::round(fs + 8), bx = std::round((x0 + x1 - bw) * 0.5f), by = std::round(mid + fs + 10);
+      if (by + bh < y1 - 2 && bevelButton(a, "##twellbtn", "Load sample...", ImVec2(bx, by), ImVec2(bx + bw, by + bh), false, "Pick an audio file for this entry")) {
+        loadDialog(a, ch);
+      }
       ImGui::SetCursorScreenPos(ImVec2(x0, y0));
       if (ImGui::InvisibleButton("##twellload", ImVec2(std::max(1.0f, x1 - x0), std::max(1.0f, y1 - y0)))) {
         loadDialog(a, ch);
@@ -772,14 +1027,17 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
     if (c.s1 < c.frames) dl->AddRectFilled(ImVec2(std::min(x1, xOf(c.s1)), y0), ImVec2(x1, y1), shade);
     // The play position of every voice playing this sample (the play tap).
     int lines = 0;
+    s.tapLines.clear();
     if (c.snap->inst) {
       tp::TapVoice v[tp::kTapVoices];
       const int n = tp::readPlayTap(c.snap->inst.get(), v, tp::kTapVoices);
       for (int i = 0; i < n; ++i) {
         if (v[i].slot != c.k) continue;
+        // (0.7.8: the tap gives the frame the voice reads: on a ping-pong loop's way back the line walks back)
         const float x = std::round(xOf(c.s0 + v[i].pos)) + 0.5f;
         if (x < x0 || x > x1) continue;
         dl->AddLine(ImVec2(x, y0), ImVec2(x, y1), P.led, 2.0f);
+        s.tapLines.emplace_back(x, c.s0 + v[i].pos);
         ++lines;
       }
     }
@@ -795,9 +1053,15 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
       else if (c.looping && near(c.le) && mouse.y >= y1 - pin * 2 - 2) hot = 3;
       else if (near(c.s0) && std::abs(mouse.y - mid) <= pin + 2) hot = 0;
       else if (near(c.s1) && std::abs(mouse.y - mid) <= pin + 2) hot = 1;
+      // 0.7.8 (user report: the loop markers and the ping-pong area could not be dragged): a loop
+      // line is taken anywhere along it, not only by its pin, and the loop's strip at the top or the
+      // bottom of the well, between its lines, moves the whole loop (its length kept).
+      else if (c.looping && near(c.ls)) hot = 2;
+      else if (c.looping && near(c.le)) hot = 3;
+      else if (c.looping && mouse.x > xOf(c.ls) && mouse.x < xOf(c.le) && (mouse.y <= y0 + pin * 2 + 2 || mouse.y >= y1 - pin * 2 - 2)) hot = 4;
     }
     auto handle = [&](int mk) {
-      const bool on = hot == mk || (s.drag == 2 && s.marker == mk);
+      const bool on = hot == mk || (s.drag == 2 && s.marker == mk) || (mk >= 2 && (hot == 4 || (s.drag == 2 && s.marker == 4)));
       if (mk >= 2) {
         if (!c.looping) return;
         const float x = std::round(xOf(mk == 2 ? c.ls : c.le)) + 0.5f;
@@ -827,7 +1091,8 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
     ImGui::SetCursorScreenPos(ImVec2(x0, y0));
     ImGui::InvisibleButton("##twell", ImVec2(Wd, std::max(1.0f, y1 - y0)), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     const bool hov = ImGui::IsItemHovered();
-    if (hot >= 0 || s.drag == 2) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    if (hot == 4 || (s.drag == 2 && s.marker == 4)) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+    else if (hot >= 0 || s.drag == 2) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
     if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
       const int32_t f = frameAt(mouse.x);
       if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {  // the loop (on it) or the whole sample
@@ -837,6 +1102,7 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
         s.drag = 0;
       } else if (hot >= 0) {
         s.drag = 2, s.marker = hot;
+        s.loopGrab = f - c.ls;
       } else {
         s.drag = 1;
         const tp::Span cur = rangeOf(c);
@@ -860,7 +1126,7 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
     }
     if (s.drag == 2) {
       if (ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        int32_t f = frameAt(mouse.x);
+        int32_t f = frameAt(mouse.x) - (s.marker == 4 ? s.loopGrab : 0);
         if (io.KeyAlt) f = zeroCrossing(c, f);
         tp::opSampleMarker(a, c.t, c.k, s.marker, f, c.frames);
       } else {
@@ -944,48 +1210,134 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
   bevelBox(dl, ImVec2(p0.x, py0), ImVec2(p1.x, py0 + panelH), false);
   const float ry0 = py0 + 4;
   auto rowY = [&](int r) { return std::round(ry0 + static_cast<float>(r) * (rowH + gap)); };
-  // The columns (in text widths), narrow windows fold the process columns into one menu button and
-  // the readouts into one column.
+  // The columns. Each has a least width, from its own labels (a label never cut short), and a share
+  // of the rest (in text widths). As the classic screen re-flows to its room: a window short of width
+  // folds the process columns into one menu button and the readouts into one column (narrow); shorter
+  // still, the range and view columns into one (Select all, Zoom..., Clear range) and the clipboard
+  // columns into one (Copy, Paste, Edit...), the folded buttons in the menus (tight); shortest, those
+  // two into one (Select all, Zoom..., Edit...).
   struct Col {
     int id;
     float units;
+    float least = 0;
     float x = 0, w = 0;
   };
-  const bool narrow = W < fs * 96;
-  std::vector<Col> cols;
-  auto add = [&](int id, float u) { cols.push_back(Col{id, u}); };
-  add(0, 7.5f);   // play note, stop
-  add(1, 4.6f);   // wave, range, view
-  add(2, 7.2f);   // select all, zoom to range, clear range
-  add(3, 6.8f);   // zoom in, zoom out, whole sample
-  add(4, 4.0f);   // cut, copy, paste
-  add(5, 4.6f);   // crop, delete, silence
-  if (narrow) {
-    add(20, 6.2f);  // process..., volume..., normalise
-  } else {
-    add(6, 5.6f);   // volume..., fade in, fade out
-    add(7, 5.4f);   // normalise, reverse, fix dc
-    add(8, 6.4f);   // resample..., echo..., mix in...
-    add(9, 7.6f);   // loop fade..., cut after loop, save range...
-  }
-  add(10, 6.6f);  // loop type
-  add(11, 5.2f);  // 16-bit, 8-bit, load...
-  if (!narrow) add(12, 7.6f);  // length, start, end
-  add(13, 11.0f);  // loop start, loop length, view
-  add(14, 5.2f);  // exit, remove, minimise
+  auto textW = [&](const char* l) { return a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(l)).x; };
+  auto buttonsW = [&](std::initializer_list<const char*> ls) {
+    float w = 0;
+    for (const char* l : ls) w = std::max(w, textW(l));
+    return std::ceil(w + 2 * space::kPad + 2);
+  };
+  const float radioPad = 2 * std::max(3.0f, std::round(fs * 0.3f)) + 12 + space::kPad;  // (radioRow's diamond and gaps)
+  auto radiosW = [&](std::initializer_list<const char*> ls) {
+    float w = 0;
+    for (const char* l : ls) w = std::max(w, textW(l));
+    return std::ceil(w + radioPad);
+  };
+  const float arrowsW = 2 * std::round(rowH * 0.8f) + 2;  // (a stepper's two arrows at their least)
+  auto monoW = [&](const char* t) { return mono->CalcTextSizeA(fs, FLT_MAX, 0, t).x; };
+  // The loop steppers' values: as many digits as the sample's length has (at least three).
+  const std::string digits(std::max<size_t>(3, std::to_string(std::max(0, c.have() ? c.frames : 0)).size()), '0');
+  auto leastOf = [&](int id, bool narrowCols) -> float {
+    switch (id) {
+      case 0:
+        return std::max(std::round(fs * 2.6f) + monoW("C#4") + 6 + arrowsW, buttonsW({"Stop"}));
+      case 1: return buttonsW({"Wave", "Range", "View"});
+      case 2: return buttonsW({"Select all", "Zoom to range", "Clear range"});
+      case 3: return buttonsW({"Zoom in", "Zoom out", "Whole sample"});
+      case 4: return buttonsW({"Cut", "Copy", "Paste"});
+      case 5: return buttonsW({"Crop", "Delete", "Silence"});
+      case 6: return buttonsW({"Volume...", "Fade in", "Fade out"});
+      case 7: return buttonsW({"Normalise", "Reverse", "Fix DC"});
+      case 8: return buttonsW({"Resample...", "Echo...", "Mix in..."});
+      case 9: return buttonsW({"Loop fade...", "Cut after loop", "Save range..."});
+      case 10: return radiosW({"No loop", "Forward", "Ping-pong"});
+      case 16: return std::ceil(textW("Backwards") + std::max(8.0f, std::round(fs * 0.8f)) + 11 + 2 * space::kPad);  // 0.7.8 (checkRow's box and gaps)
+      case 11: return std::max(radiosW({"16-bit", "8-bit"}), buttonsW({"Load..."}));
+      case 12: return labelColumn(a, {"Length", "Start", "End"}, space::kGroup) + monoW("00000000") + 6;
+      case 13:
+        return std::max(labelColumn(a, {"Loop start", "Loop length"}, space::kPad) + monoW(digits.c_str()) + 8 + arrowsW,
+                        labelColumn(a, {narrowCols ? "Length" : "View"}, space::kGroup) + monoW(narrowCols ? "00000000" : "0 - 00000000") + 6);
+      case 14: return buttonsW({"Exit", "Remove", "Minimise"});
+      case 15: return buttonsW({"To entry", "Duplicate", "All keys"});
+      case 20: return buttonsW({"Process...", "Volume...", "Normalise"});
+      case 21: return buttonsW({"Copy", "Paste", "Edit..."});
+      case 22: return buttonsW({"Select all", "Zoom...", "Clear range"});
+      case 23: return buttonsW({"Select all", "Zoom...", "Edit..."});
+      default: return 0;
+    }
+  };
+  // 0 wide, 1 narrow, 2 tight, 3 shortest: the first that fits (the shortest when none does).
+  auto build = [&](int fold) {
+    std::vector<Col> v;
+    auto add = [&](int id, float u) { v.push_back(Col{id, u, leastOf(id, fold >= 1)}); };
+    add(0, 7.5f);  // play note, stop
+    add(1, 4.6f);  // wave, range, view
+    if (fold >= 3) {
+      add(23, 6.0f);  // select all, zoom..., edit...
+    } else if (fold >= 2) {
+      add(22, 6.0f);  // select all, zoom..., clear range
+      add(21, 4.4f);  // copy, paste, edit...
+    } else {
+      add(2, 7.2f);  // select all, zoom to range, clear range
+      add(3, 6.8f);  // zoom in, zoom out, whole sample
+      add(4, 4.0f);  // cut, copy, paste
+      add(5, 4.6f);  // crop, delete, silence
+    }
+    add(15, 5.2f);  // 0.7.8: to entry, duplicate, all keys
+    if (fold >= 1) {
+      add(20, 6.2f);  // process..., volume..., normalise
+    } else {
+      add(6, 5.6f);  // volume..., fade in, fade out
+      add(7, 5.4f);  // normalise, reverse, fix dc
+      add(8, 6.4f);  // resample..., echo..., mix in...
+      add(9, 7.6f);  // loop fade..., cut after loop, save range...
+    }
+    add(10, 6.6f);  // loop type
+    if (fold < 2) add(16, 5.4f);  // 0.7.8: backwards (tight: in the Process... menu)
+    add(11, 5.2f);  // 16-bit, 8-bit, load...
+    if (fold == 0) add(12, 7.6f);  // length, start, end
+    add(13, 11.0f);  // loop start, loop length, view
+    add(14, 5.2f);   // exit, remove, minimise
+    return v;
+  };
+  const float avail0 = W - 8;
+  int fold = W < fs * 96 ? 1 : 0;  // (as before: the process columns fold below 96 text widths)
+  std::vector<Col> cols = build(fold);
+  auto leastSum = [&](const std::vector<Col>& v) {
+    float t = static_cast<float>(v.size() - 1) * 3;
+    for (const Col& cl : v) t += cl.least;
+    return t;
+  };
+  while (fold < 3 && leastSum(cols) > avail0) cols = build(++fold);
+  const bool narrow = fold >= 1;
   {
-    float units = 0;
-    for (const Col& cl : cols) units += cl.units;
-    const float avail = W - 8 - static_cast<float>(cols.size() - 1) * 3;
-    float k = avail / (units * fs);
-    // Wide windows: the steppers' column stops at 250 px; the rest spreads over the others.
-    float stepW = 0;
-    for (Col& cl : cols)
-      if (cl.id == 13 && cl.units * fs * k > 250) stepW = 250;
-    if (stepW > 0) k = (avail - stepW) / ((units - 11.0f) * fs);
+    // The room shared by the text widths, no column under its least and the steppers' column at most
+    // 250 px: the columns held at a bound take it, the rest share what is left (a few passes settle it).
+    const float avail = avail0 - static_cast<float>(cols.size() - 1) * 3;
+    std::vector<int> held(cols.size(), 0);  // 0 free, 1 at its least, 2 at the cap
+    float k = 0;
+    for (int pass = 0; pass < 8; ++pass) {
+      float room = avail, units = 0;
+      for (size_t i = 0; i < cols.size(); ++i) {
+        if (held[i] == 1) room -= cols[i].least;
+        else if (held[i] == 2) room -= 250;
+        else units += cols[i].units;
+      }
+      k = units > 0 ? room / (units * fs) : 0;
+      bool changed = false;
+      for (size_t i = 0; i < cols.size(); ++i) {
+        if (held[i]) continue;
+        const float w = cols[i].units * fs * k;
+        if (w < cols[i].least) held[i] = 1, changed = true;
+        else if (cols[i].id == 13 && w > 250 && cols[i].least <= 250) held[i] = 2, changed = true;
+      }
+      if (!changed) break;
+    }
     float x = p0.x + 4;
-    for (Col& cl : cols) {
-      cl.w = std::floor(cl.id == 13 && stepW > 0 ? stepW : cl.units * fs * k);
+    for (size_t i = 0; i < cols.size(); ++i) {
+      Col& cl = cols[i];
+      cl.w = std::floor(held[i] == 1 ? cl.least : held[i] == 2 ? 250.0f : std::max(cl.least, cl.units * fs * k));
       cl.x = x;
       x += cl.w + 3;
     }
@@ -1007,16 +1359,17 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
   const tp::Span r = rangeOf(c);
   const bool part = canPart(c);
   const bool hasClip = !tp::clipboard().L.empty();
-  const bool previewing = s.serial != 0 && tp::auditionSounding(s.serial);
+  const bool previewing = previewSounding(a);
   // Play.
   if (const Col* cl = colOf(0)) {
     const int d = stepper(a, "##tpn", "Play", noteName(c.m ? c.m->playNote : 49), ImVec2(cl->x, rowY(0)), cl->w, rowH,
                           "The note the play buttons play (the typing keyboard's notes set it too)", std::round(fs * 2.6f), true);
     if (d && c.m) c.m->playNote = std::clamp(c.m->playNote + d * (io.KeyShift ? 12 : 1), 1, 96);
-    if (btn(0, 1, "##tstop", "Stop", true, false, "Stops the sample playing (Alt+Q)")) stopPreview(a), releaseHeld(a);
-    dl->AddText(a.fontRegular, std::round(fs * 0.85f), ImVec2(cl->x + 2, rowY(2) + std::round((rowH - fs * 0.85f) * 0.5f)), P.textFaint, i18n::tr("keys play the note"));
+    if (btn(0, 1, "##tstop", "Stop", true, false, keys::withKeys(i18n::N_("Stops the sample playing (%s)"), {keys::fixedKey("Alt+Q")}))) stopPreview(a), releaseHeld(a);
+    theme::textEllipsis(dl, a.fontRegular, std::round(fs * 0.85f), ImVec2(cl->x + 2, rowY(2) + std::round((rowH - fs * 0.85f) * 0.5f)), cl->w - 4, P.textFaint,
+                        i18n::tr("keys play the note"));  // (inside its column, never under the next)
   }
-  if (btn(1, 0, "##twave", "Wave", have, previewing, "Plays the whole sample at the play note (Alt+W)"))
+  if (btn(1, 0, "##twave", "Wave", have, previewing, keys::withKeys(i18n::N_("Plays the whole sample at the play note (%s)"), {keys::fixedKey("Alt+P")})))
     startPreview(a, ch, *c.snap->inst, c.snap->e, c.k, c.m->playNote, 0, 0);
   if (btn(1, 1, "##trange", "Range", have && !r.empty(), false, "Plays the range"))
     startPreview(a, ch, *c.snap->inst, c.snap->e, c.k, c.m->playNote, r.a, r.b);
@@ -1024,26 +1377,88 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
     startPreview(a, ch, *c.snap->inst, c.snap->e, c.k, c.m->playNote, static_cast<int32_t>(c.m->viewStart),
                  static_cast<int32_t>(std::ceil(c.m->viewStart + c.m->viewLen)));
   // Range and view.
-  if (btn(2, 0, "##tall", "Select all", have, false, "The whole sample as the range (Alt+A)")) edit(a, c, tp::HeaderEdit::SelectAll);
-  if (btn(2, 1, "##tzr", "Zoom to range", have && !r.empty(), false, "The range fills the view (Alt+S)")) zoomToRange(c);
+  if (fold >= 2) {  // tight: one column, the zooms in a menu
+    const int rc = fold >= 3 ? 23 : 22;
+    if (btn(rc, 0, "##tall", "Select all", have, false, keys::withKeys(i18n::N_("The whole sample as the range (%s)"), {keys::fixedKey("Alt+A")}))) edit(a, c, tp::HeaderEdit::SelectAll);
+    if (btn(rc, 1, "##tzoom", "Zoom...", have, false, "Zoom to range, zoom in or out, the whole sample")) ImGui::OpenPopup("##tzoommenu");
+    if (btn(22, 2, "##tclr", "Clear range", have && c.m && c.m->selA >= 0, false, "No range: the edits take the whole sample")) edit(a, c, tp::HeaderEdit::ClearRange);
+    if (ImGui::BeginPopup("##tzoommenu")) {
+      if (ImGui::MenuItem(i18n::tr("Zoom to range"), keys::namedText("Alt+S"), false, have && !r.empty())) zoomToRange(c);
+      if (ImGui::MenuItem(i18n::tr("Zoom in"), nullptr, false, have)) zoomAbout(c, 0.5, c.m->viewStart + c.m->viewLen * 0.5);
+      if (ImGui::MenuItem(i18n::tr("Zoom out"), keys::namedText("Alt+Z"), false, have)) zoomAbout(c, 2.0, c.m->viewStart + c.m->viewLen * 0.5);
+      if (ImGui::MenuItem(i18n::tr("Whole sample"), nullptr, false, have)) wholeView(c);
+      ImGui::EndPopup();
+    }
+    // Clipboard: copy and paste at hand, the rest in a menu.
+    if (btn(21, 0, "##tcopy", "Copy", have, false, keys::withKeys(i18n::N_("The range (or the whole sample) to the clipboard (%s)"), {keys::fixedKey("Alt+C")}))) edit(a, c, tp::HeaderEdit::Copy);
+    if (btn(21, 1, "##tpaste", "Paste", have && hasClip, false, keys::withKeys(i18n::N_("The clipboard over the range, or in at the cursor (%s)"), {keys::fixedKey("Alt+V")}))) edit(a, c, tp::HeaderEdit::Paste);
+    if (btn(21, 2, "##tedit", "Edit...", have, false, "Cut, crop, delete, silence")) ImGui::OpenPopup("##teditmenu");
+    if (btn(23, 2, "##tedit", "Edit...", have, false, "Cut, copy, paste, crop, delete, silence, clear range")) ImGui::OpenPopup("##teditmenu");
+    if (colOf(21) || colOf(23)) devMenuRow("Edit button", ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
+    if (ImGui::BeginPopup("##teditmenu")) {
+      if (ImGui::MenuItem(i18n::tr("Cut"), keys::namedText("Alt+X"), false, part)) edit(a, c, tp::HeaderEdit::Cut);
+      if (ImGui::MenuItem(i18n::tr("Copy"), keys::namedText("Alt+C"), false, have)) edit(a, c, tp::HeaderEdit::Copy);
+      if (ImGui::MenuItem(i18n::tr("Paste"), keys::namedText("Alt+V"), false, have && hasClip)) edit(a, c, tp::HeaderEdit::Paste);
+      if (ImGui::MenuItem(i18n::tr("Crop"), keys::namedText("Alt+R"), false, part)) edit(a, c, tp::HeaderEdit::Crop);
+      devMenuRow("Edit Crop", ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
+      if (ImGui::MenuItem(i18n::tr("Delete"), "Del", false, part)) edit(a, c, tp::HeaderEdit::Delete);
+      if (ImGui::MenuItem(i18n::tr("Silence"), nullptr, false, have && !r.empty())) edit(a, c, tp::HeaderEdit::Silence);
+      if (fold >= 3) {
+        ImGui::Separator();
+        if (ImGui::MenuItem(i18n::tr("Clear range"), nullptr, false, have && c.m && c.m->selA >= 0)) edit(a, c, tp::HeaderEdit::ClearRange);
+      }
+      ImGui::EndPopup();
+    }
+  }
+  if (btn(2, 0, "##tall", "Select all", have, false, keys::withKeys(i18n::N_("The whole sample as the range (%s)"), {keys::fixedKey("Alt+A")}))) edit(a, c, tp::HeaderEdit::SelectAll);
+  if (btn(2, 1, "##tzr", "Zoom to range", have && !r.empty(), false, keys::withKeys(i18n::N_("The range fills the view (%s)"), {keys::fixedKey("Alt+S")}))) zoomToRange(c);
   if (btn(2, 2, "##tclr", "Clear range", have && c.m && c.m->selA >= 0, false, "No range: the edits take the whole sample")) edit(a, c, tp::HeaderEdit::ClearRange);
   if (btn(3, 0, "##tzin", "Zoom in", have, false, "Twice as close, about the middle (the wheel zooms at the pointer)"))
     zoomAbout(c, 0.5, c.m->viewStart + c.m->viewLen * 0.5);
-  if (btn(3, 1, "##tzout", "Zoom out", have, false, "Twice as far, about the middle (Alt+Z)")) zoomAbout(c, 2.0, c.m->viewStart + c.m->viewLen * 0.5);
+  if (btn(3, 1, "##tzout", "Zoom out", have, false, keys::withKeys(i18n::N_("Twice as far, about the middle (%s)"), {keys::fixedKey("Alt+Z")}))) zoomAbout(c, 2.0, c.m->viewStart + c.m->viewLen * 0.5);
   if (btn(3, 2, "##tzall", "Whole sample", have, false, "The whole sample in view")) wholeView(c);
   // Clipboard.
-  if (btn(4, 0, "##tcut", "Cut", part, false, "The range to the clipboard, out of the sample (Alt+X)")) edit(a, c, tp::HeaderEdit::Cut);
-  if (btn(4, 1, "##tcopy", "Copy", have, false, "The range (or the whole sample) to the clipboard (Alt+C)")) edit(a, c, tp::HeaderEdit::Copy);
-  if (btn(4, 2, "##tpaste", "Paste", have && hasClip, false, "The clipboard over the range, or in at the cursor (Alt+V)")) edit(a, c, tp::HeaderEdit::Paste);
-  if (btn(5, 0, "##tcrop", "Crop", part, false, "Only the range stays (Alt+R)")) edit(a, c, tp::HeaderEdit::Crop);
+  if (btn(4, 0, "##tcut", "Cut", part, false, keys::withKeys(i18n::N_("The range to the clipboard, out of the sample (%s)"), {keys::fixedKey("Alt+X")}))) edit(a, c, tp::HeaderEdit::Cut);
+  if (btn(4, 1, "##tcopy", "Copy", have, false, keys::withKeys(i18n::N_("The range (or the whole sample) to the clipboard (%s)"), {keys::fixedKey("Alt+C")}))) edit(a, c, tp::HeaderEdit::Copy);
+  if (btn(4, 2, "##tpaste", "Paste", have && hasClip, false, keys::withKeys(i18n::N_("The clipboard over the range, or in at the cursor (%s)"), {keys::fixedKey("Alt+V")}))) edit(a, c, tp::HeaderEdit::Paste);
+  if (btn(5, 0, "##tcrop", "Crop", part, false, keys::withKeys(i18n::N_("Only the range stays (%s)"), {keys::fixedKey("Alt+R")}))) edit(a, c, tp::HeaderEdit::Crop);
   if (btn(5, 1, "##tdel", "Delete", part, false, "The range goes, nothing to the clipboard (Del)")) edit(a, c, tp::HeaderEdit::Delete);
   if (btn(5, 2, "##tsil", "Silence", have && !r.empty(), false, "The range becomes silence")) edit(a, c, tp::HeaderEdit::Silence);
+  // 0.7.8: entries. To entry: the range as a sample entry of its own (the same file, played from the
+  // range's start to its end; nothing written), in the next free entry or one picked.
+  if (colOf(15)) {
+    const bool ranged = have && !r.empty() && !c.sampler;  // (K-391: a Sampler holds one sample)
+    if (btn(15, 0, "##ttoentry", "To entry", ranged, false, "The range as an entry of its own: the next free one or one you pick (the same file, nothing written)"))
+      ImGui::OpenPopup("##ttoentrymenu");
+    const ImVec2 tb0 = ImGui::GetItemRectMin(), tb1 = ImGui::GetItemRectMax();
+    devMenuRow("To entry button", tb0.x, tb0.y, tb1.x, tb1.y);
+    if (c.sampler && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      s.hover = i18n::tr("A Sampler plays one sample: convert it to a Tracker Sampler for more entries");
+    } else if (!ranged && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+      s.hover = i18n::tr("To entry: drag a range on the waveform first");
+      ImGui::SetTooltip("%s", i18n::tr("Drag a range on the waveform first"));
+    }
+    toEntryMenu(a, c, tb0, tb1);
+    if (btn(15, 1, "##tdup", "Duplicate", have && !c.sampler, false, "The sample into the next free entry (its keys stay with this one)")) {
+      stopPreview(a);
+      tp::headerEntryOp(a, ch, tp::EntryOp::Duplicate, c.k);
+    }
+    if (btn(15, 2, "##tallkeys", "All keys", have && !c.sampler, false, "Every key plays this entry (the Instrument editor's key map shows them)"))
+      tp::headerEntryOp(a, ch, tp::EntryOp::MapAllKeys, c.k);
+  }
   // Level, rate and time.
   if (narrow) {
     if (btn(20, 0, "##tproc", "Process...", have, false, "Fades, reverse, DC, resample, echo, mix, loop fade")) ImGui::OpenPopup("##tedproc");
+    devMenuRow("Process button", ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
     if (btn(20, 1, "##tvol", "Volume...", have, false, "The range's volume from a start to an end level")) openModal(Modal::Volume);
     if (btn(20, 2, "##tnorm", "Normalise", have, false, "The loudest point to full scale")) edit(a, c, tp::HeaderEdit::Normalise);
     if (ImGui::BeginPopup("##tedproc")) {
+      if (!colOf(16)) {  // 0.7.8: short of width, the Backwards box lives here
+        const bool rev = have && c.snap->e.text.def.samples[static_cast<size_t>(c.k)].reverse;
+        if (ImGui::MenuItem(i18n::tr("Backwards"), nullptr, rev, have)) tp::opSampleReverse(a, c.t, c.k, !rev);
+        devMenuRow("Process Backwards", ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
+        ImGui::Separator();
+      }
       editMenuItems(a, c, false);
       if (ImGui::MenuItem(i18n::tr("Save range..."), nullptr, false, have)) saveRange(a, c);
       ImGui::EndPopup();
@@ -1060,7 +1475,10 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
     if (btn(8, 2, "##tmix", "Mix in...", c.ok() && have && tp::sampleCountOf(c.snap->e) > 1, false, "Another sample of the instrument mixed in"))
       openModal(Modal::Mix);
     if (btn(9, 0, "##tlf", "Loop fade...", have && c.looping, false, "The loop's end fades into the sound before its start")) openModal(Modal::LoopFade);
-    if (btn(9, 1, "##tcal", "Cut after loop", minimisable(c), false, "What follows the loop's end goes")) edit(a, c, tp::HeaderEdit::TrimLoop);
+    const bool cal = btn(9, 1, "##tcal", "Cut after loop", minimisable(c), false,
+                         c.rev ? "Played backwards: what comes before the loop's start goes (it is never heard)" : "What follows the loop's end goes");
+    if (colOf(9)) devMenuRow("Cut after loop button", ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
+    if (cal) edit(a, c, tp::HeaderEdit::TrimLoop);
     if (btn(9, 2, "##tsave", "Save range...", have, false, "The range (or the whole sample) as a WAV file")) saveRange(a, c);
   }
   // Loop type and bits.
@@ -1079,14 +1497,29 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
       if (!have) ImGui::EndDisabled();
     }
   }
+  // 0.7.8: the play direction beside the loop type: backwards plays the sample (or its loop) from its
+  // end; the audio stays as it is (the Reverse edit is the one that turns it round).
+  if (const Col* cl = colOf(16)) {
+    const bool rev = have && c.snap->e.text.def.samples[static_cast<size_t>(c.k)].reverse;
+    if (!have) ImGui::BeginDisabled();
+    if (checkRow(a, "##tbackw", "Backwards", ImVec2(cl->x, rowY(0)), ImVec2(cl->x + cl->w, rowY(0) + rowH), rev,
+                 "Plays the sample, or its loop, from end to start (the audio is not changed)") &&
+        have)
+      tp::opSampleReverse(a, c.t, c.k, !rev);
+    devMenuRow("Backwards box", ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
+    if (!have) ImGui::EndDisabled();
+  }
   if (const Col* cl = colOf(11)) {
     for (int i = 0; i < 2; ++i) {
-      if (!have) ImGui::BeginDisabled();
+      const bool can = have && !(c.sampler && i == 1);  // (K-391: a Sampler plays at full resolution)
+      if (!can) ImGui::BeginDisabled();
+      const char* eightHint = c.sampler ? i18n::N_("A Sampler plays at full resolution: convert it to a Tracker Sampler for 8-bit")
+                                        : i18n::N_("The sample plays rounded to 256 steps, as an 8-bit sample");
       if (radioRow(a, i ? "##t8" : "##t16", i ? "8-bit" : "16-bit", ImVec2(cl->x, rowY(i)), ImVec2(cl->x + cl->w, rowY(i) + rowH), have && c.eight == (i == 1),
-                   i ? "The sample plays rounded to 256 steps, as an 8-bit sample" : "The sample plays at full resolution") &&
-          have && c.eight != (i == 1))
+                   i ? eightHint : "The sample plays at full resolution") &&
+          can && c.eight != (i == 1))
         tp::opSampleBits(a, c.t, c.k, i == 1);
-      if (!have) ImGui::EndDisabled();
+      if (!can) ImGui::EndDisabled();
     }
     if (btn(11, 2, "##tload", "Load...", c.ok(), false, "An audio file into this slot")) {
       loadDialog(a, ch);
@@ -1122,9 +1555,13 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
   }
   // Exit, Remove, Minimise.
   if (btn(14, 0, "##texit", "Exit", true, false, "Back to the pattern (Esc)")) close(a);
-  if (btn(14, 1, "##trem", "Remove", have, false, "Takes the sample out of the instrument (asks first)")) openModal(Modal::Remove);
-  if (btn(14, 2, "##tmin", "Minimise", minimisable(c), false, "What follows the loop's end goes (the sample ends with its loop)"))
-    edit(a, c, tp::HeaderEdit::TrimLoop);
+  if (btn(14, 1, "##trem", "Remove", have && !c.sampler, false, c.sampler ? i18n::N_("A Sampler keeps its sample: load another file to replace it") : "Takes the sample out of the instrument (asks first)"))
+    openModal(Modal::Remove);
+  const bool minimise = btn(14, 2, "##tmin", "Minimise", minimisable(c), false,
+                            c.rev ? "Played backwards: what comes before the loop's start goes (the sample starts with its loop)"
+                                  : "What follows the loop's end goes (the sample ends with its loop)");
+  if (colOf(14)) devMenuRow("Minimise button", ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
+  if (minimise) edit(a, c, tp::HeaderEdit::TrimLoop);
   // ---- the status line ----
   {
     const ImVec2 s0(p0.x, p1.y - statusH), s1(p1.x, p1.y);
@@ -1135,9 +1572,11 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
       std::string loop = c.looping ? (std::string(c.snap->e.text.def.samples[static_cast<size_t>(c.k)].loop == trk::kLoopPingPong ? i18n::tr("ping-pong") : i18n::tr("forward")) +
                                       " " + fmtInt(c.ls) + "+" + fmtInt(c.le - c.ls))
                                    : std::string(i18n::tr("no loop"));
-      std::snprintf(b, sizeof b, "%s %s %s  ·  %s %s  ·  %s %s  ·  Alt+A %s  ·  Alt+S %s  ·  %s", i18n::tr("Sample"), hex2(c.k + 1).c_str(),
+      if (c.snap->e.text.def.samples[static_cast<size_t>(c.k)].reverse) loop += std::string(" ") + i18n::tr("backwards");
+      std::snprintf(b, sizeof b, "%s %s %s  ·  %s %s  ·  %s %s  ·  %s %s  ·  %s %s  ·  %s", i18n::tr("Sample"), hex2(c.k + 1).c_str(),
                     tp::editName(c.snap->e, c.k).c_str(), i18n::tr("range"), r.empty() ? "-" : (fmtInt(r.a) + "-" + fmtInt(r.b)).c_str(), i18n::tr("loop"),
-                    loop.c_str(), i18n::tr("all"), i18n::tr("zoom to range"), i18n::tr("wheel: zoom"));
+                    loop.c_str(), keys::fixedKey("Alt+A").c_str(), i18n::tr("all"), keys::fixedKey("Alt+S").c_str(), i18n::tr("zoom to range"),
+                    i18n::tr("wheel: zoom"));
       text = b;
     }
     const char* keys = s.hasKb ? i18n::tr("Keys: the sample editor") : i18n::tr("Keys: the pattern");
@@ -2352,9 +2791,9 @@ void convertModal(App& a, ObjectId ch) {
   };
   line("The Sampler becomes a Tracker Sampler with its file as sample 01 on every key.", P.text);
   line("Carried over: the file, the root key and fine tune, the start and end,", P.textDim);
-  line("the loop points and loop type, the volume and pan, and the volume envelope", P.textDim);
-  line("(from the attack, decay, sustain and release).", P.textDim);
-  line("Not carried over: time stretch, the filter, reverse, the LFO and the", P.textDim);
+  line("the loop points and loop type, reverse (as Backwards), the volume and pan,", P.textDim);
+  line("and the volume envelope (from the attack, decay, sustain and release).", P.textDim);
+  line("Not carried over: time stretch, the filter, the LFO and the", P.textDim);
   line("sampler's other settings; automation of its own knobs is dropped.", P.textDim);
   line("The notes, name, colour, mixer track and channel controls stay. One undo step.", P.textDim);
   const float x1 = o.x + w - 20, bw = std::round(fs * 7), by = std::round(o.y + h - rh - 28 - fs);
@@ -2381,8 +2820,8 @@ void convertModal(App& a, ObjectId ch) {
           x.name = name;  // (the name stays, typed or not)
         });
         a.doc.endGroup(false);
-        st().want = Editor::Sample;
-        status(i18n::tr("Converted to a Tracker Sampler (Ctrl+Z: back)"));
+        open(a, Editor::Sample, ch);  // (K-391: its Sample editor, wherever the convert was asked)
+        status(keys::fillKeys(i18n::N_("Converted to a Tracker Sampler (%s: back)"), {keys::cmdKey("edit.undo", "Ctrl+Z")}));
       }
     }
   }  // (closed by Esc: the box's next frame finds it closed and the modal ends there)
@@ -2562,35 +3001,273 @@ void channelFrame(App& a, ObjectId id, ImVec2 p0, ImVec2 p1) {
                     sampler ? "The Sampler's file and settings into a Tracker Sampler (asks first; one undo step)"
                             : "Only a Sampler with one audio file converts (synths and hosted plugins have no faithful mapping)") &&
         sampler) {
-      st().modal = Modal::Convert;
+      st().modal = Modal::Convert, st().convertCh = id;
       st().modalOpen = true;
     }
     if (!sampler) ImGui::EndDisabled();
     if (bevelButton(a, "##cfexit", "Exit", ImVec2(cx3, rowY(2)), ImVec2(cx3 + c3w, rowY(2) + rowH), false, "Back to the pattern (Esc)")) close(a);
   }
-  convertModal(a, id);
 }
 
 }  // namespace
 
+
+// ---- 0.7.8: a Sampler's Sample editor (the Audio clip window's parts in the band's frame) ----
+//
+// One Sample editor page for a Sampler and its audio clips: every way into the Audio clip window
+// opens it here (ClipEditor.h, trackerpage). The title row (the clip or channel, its file, the
+// presets and the window's menu), the page list at the left (the waveform and the window's tabs,
+// Exit), the tools row (tools, views, snap, preview, the live analysis, Edit audio...), then the
+// waveform, or the tab's modules in a sideways row with Output pinned at the right and the SAMPLE
+// strip above them. Every control is the window's own (the same action, undo step, automation and
+// link menus, collaboration ops); this frame only places them, in the band's look.
+
+namespace {
+void devMenuRowAt(const char* label, ImVec2 a, ImVec2 b) { devMenuRow(label, a.x, a.y, b.x, b.y); }
+// (dev) a part as drawn: "clip dump" lists it, "menu at clip <id>" points at it.
+void clipPart(const char* id, ImVec2 a, ImVec2 b) {
+  st().clipParts.push_back(St::Part{id, a, b});
+  devMenuRowAt((std::string("clip ") + id).c_str(), a, b);
+}
+}  // namespace
+
+void clipScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
+  St& s = st();
+  namespace tpg = clipeditor::trackerpage;
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float fs = ImGui::GetFontSize();
+  ImFont* mono = monoFont(a);
+  s.clipParts.clear();
+  s.hover.clear();
+  s.clipBand0 = p0, s.clipBand1 = p1, s.clipFrame = ImGui::GetFrameCount();
+  if (!tpg::take(a, ch)) return;
+  const tpg::Info in = tpg::info(a);
+  if (!in.ok || !tpg::begin(a)) return;
+  const float titleH = std::round(fs + 8), rowH = std::round(fs + 7), gap = space::kGap;
+  // ---- the title: the clip (or channel), its file; right: the presets, the window's menu ----
+  {
+    const ImVec2 t1(p1.x, p0.y + titleH);
+    bevelBox(dl, p0, t1, false);
+    clipPart("title", p0, t1);
+    const float ty = std::round(p0.y + (titleH - fs) * 0.5f);
+    float x = viewTabs(a, ch, p0, titleH);  // K-391: the pair of views where the title stood
+    const float sw = std::round(fs * 0.85f);
+    tpg::colour(a, ImVec2(x, std::round(p0.y + (titleH - sw) * 0.5f)), sw);
+    x += sw + space::kGroup;
+    // Right: Menu, then the preset stepper.
+    const float menuW = std::round(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Menu...")).x + 24);
+    const float mx = p1.x - 4 - menuW;
+    ImGui::PushID("cpmenu");
+    const bool menuClick = bevelButton(a, "##cpmenu", "Menu...", ImVec2(mx, p0.y + 2), ImVec2(p1.x - 4, t1.y - 2), ImGui::IsPopupOpen("##cemenupop"),
+                                       "The channel's menu: presets, state, rename, clone, colour, replace or delete it; with a clip, its sample and Audio tools");
+    if (menuClick || tpg::takeMenuAsk()) ImGui::OpenPopup("##cemenupop");
+    ImGui::SetNextWindowPos(ImVec2(p1.x - 4, t1.y), ImGuiCond_Appearing, ImVec2(1, 0));
+    if (ImGui::BeginPopup("##cemenupop")) {
+      tpg::menuItems(a);
+      ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    clipPart("menu", ImVec2(mx, p0.y + 2), ImVec2(p1.x - 4, t1.y - 2));
+    const float stW = std::round(fs * 13);
+    const float sx = mx - space::kGroup - stW;
+    const std::string pv = s.clipPreset.empty() ? std::string("--") : s.clipPreset;
+    if (const int d = stepper(a, "##cpreset", "Preset", pv, ImVec2(sx, p0.y + 2), stW, titleH - 4, "The sampler's previous / next preset", std::round(fs * 4), true)) {
+      s.clipPreset = tpg::presetStep(a, d > 0 ? 1 : -1);
+    }
+    clipPart("presets", ImVec2(sx, p0.y + 2), ImVec2(sx + stW, t1.y - 2));
+    // Before the presets: the mixer track the channel plays through (the box and the free track's
+    // button, as a plugin window's header has them), when the title row has the room.
+    float infoEnd = sx - space::kGroup;
+    {
+      const float bh = titleH - 4, rw = std::round(fs * 12);
+      const float rx = sx - space::kGroup - rw - 2 - bh;
+      if (rx - x >= std::round(fs * 16) || tpg::reachAll()) {
+        tpg::route(a, ImVec2(rx, p0.y + 2), rw, bh);
+        clipPart("route", ImVec2(rx, p0.y + 2), ImVec2(rx + rw + 2 + bh, t1.y - 2));
+        infoEnd = rx - space::kGroup;
+      }
+    }
+    // Left, after the swatch: what it shows, in the monospaced face.
+    const int ci = a.doc.song().channelIndex(ch);
+    std::string info = std::string(i18n::tr("Instrument")) + " " + hex2(ci + trackBase(a)) + " " + in.channelName;
+    if (in.clip != kNoId) info += std::string("   ") + i18n::tr("Clip") + " " + in.name;
+    info += "   " + (in.file.empty() ? std::string(i18n::tr("No sample")) : in.file);
+    if (!in.meta.empty()) info += "   " + in.meta;
+    if (in.warpMarkers > 0) info += std::string("   ") + std::to_string(in.warpMarkers) + " " + i18n::tr("warp markers");
+    if (in.shared > 1) {
+      char b[64];
+      std::snprintf(b, sizeof b, i18n::tr("shared by %d clips"), in.shared);
+      info += std::string("   ") + b;
+    }
+    if (in.moreSelected > 0) {
+      char b[64];
+      std::snprintf(b, sizeof b, i18n::tr("and %d more selected"), in.moreSelected);
+      info += std::string("   ") + b;
+    }
+    theme::textEllipsis(dl, mono, fs, ImVec2(x, ty), std::max(0.0f, infoEnd - x), valueInk(), info.c_str());
+  }
+  // ---- the page list: the waveform, the window's tabs (those with modules), Exit ----
+  const std::vector<tpg::Module> mods = tpg::modules(a);
+  std::vector<int> tabs;
+  for (size_t i = 0; i + 1 < mods.size(); ++i)
+    if (std::find(tabs.begin(), tabs.end(), mods[i].tab) == tabs.end()) tabs.push_back(mods[i].tab);
+  std::sort(tabs.begin(), tabs.end());
+  int tab = tpg::tab();
+  if (tab != s.clipTabSeen) {  // a tab asked for (a way in, the dev commands): its page, from its start
+    s.clipTabSeen = tab;
+    s.clipWave = std::find(tabs.begin(), tabs.end(), tab) == tabs.end();  // (Edit audio, Analysis: the tools row, by the waveform)
+  }
+  const float top = p0.y + titleH + gap;
+  float colW = labelColumn(a, {i18n::N_("Waveform"), i18n::N_("Clip"), i18n::N_("Warp"), i18n::N_("Sample"), i18n::N_("Playback"), i18n::N_("Envelope"),
+                               i18n::N_("Filter"), i18n::N_("Sample FX"), i18n::N_("Channel"), i18n::N_("Note effects"), i18n::N_("MIDI and macros"),
+                               i18n::N_("Edit audio...")},
+                           fs + 2 * space::kGroup + 2 * space::kPad);
+  colW = std::max(colW, std::round(fs * 8));
+  {
+    const ImVec2 c0(p0.x, top), c1(p0.x + colW, p1.y);
+    bevelBox(dl, c0, c1, false);
+    clipPart("pages", c0, c1);
+    float y = c0.y + space::kPad;
+    const float rx0 = c0.x + space::kPad, rx1 = c1.x - space::kPad;
+    // Every row in the column at once: Waveform, the tabs, Play and Edit audio..., Exit; tighter rows
+    // (never under the text's height) when the band is short.
+    const int rows = 2 + static_cast<int>(tabs.size()) + (s.clipWave ? 0 : in.clip != kNoId ? 2 : 1);
+    const float avail = c1.y - c0.y - 2 * space::kPad - space::kGroup;
+    const float rh = std::max(std::round(fs + 3), std::min(rowH, std::floor(avail / static_cast<float>(rows)) - space::kLine));
+    const float grp = rh < rowH ? space::kGap : space::kGroup;
+    if (radioRow(a, "##cpwave", "Waveform", ImVec2(rx0, y), ImVec2(rx1, y + rh), s.clipWave, "The clip's waveform: trim, fades, the volume line, warp markers, the selection")) {
+      s.clipWave = true;
+    }
+    clipPart("page Waveform", ImVec2(rx0, y), ImVec2(rx1, y + rh));
+    y += rh + space::kLine;
+    for (int t : tabs) {
+      ImGui::PushID(t);
+      const char* name = clipwin::tabName(t);
+      char hint[128];
+      std::snprintf(hint, sizeof hint, i18n::tr("The %s settings"), i18n::tr(name));
+      if (radioRow(a, "##cptab", name, ImVec2(rx0, y), ImVec2(rx1, y + rh), !s.clipWave && t == tab, hint)) {
+        tpg::setTab(t);
+        s.clipTabSeen = tab = t;
+        s.clipWave = false;
+      }
+      ImGui::PopID();
+      clipPart((std::string("page ") + name).c_str(), ImVec2(rx0, y), ImVec2(rx1, y + rh));
+      y += rh + space::kLine;
+    }
+    // The settings pages leave the tools row to the waveform (the band's height goes to the modules):
+    // the preview and Edit audio... sit here, as the classic screen's play buttons by its pages.
+    y += grp;
+    if (!s.clipWave) {
+      if (in.clip != kNoId) {
+        if (bevelButton(a, "##cpplay", a.engine.previewing() ? "Stop" : "Play", ImVec2(rx0, y), ImVec2(rx1, y + rh), a.engine.previewing(),
+                        "Preview: the clip alone (its channel and effects), from its start (Alt+P)"))
+          tpg::preview(a);
+        clipPart("play", ImVec2(rx0, y), ImVec2(rx1, y + rh));
+        y += rh + space::kLine;
+      }
+      const bool editAsk = bevelButton(a, "##cpedit", "Edit audio...", ImVec2(rx0, y), ImVec2(rx1, y + rh), false,
+                                       in.clip != kNoId ? "The audio operations (Loupe's, on this clip's sample)" : "The audio operations (Loupe's, on the sample)");
+      tpg::editAudioMenu(a, editAsk, ImVec2(rx1, y));
+      clipPart("edit audio", ImVec2(rx0, y), ImVec2(rx1, y + rh));
+      y += rh + space::kLine;
+    }
+    // Exit, at the foot.
+    const float ey = c1.y - space::kPad - rh;
+    if (ey > y + space::kGap) {
+      if (bevelButton(a, "##cpexit", "Exit", ImVec2(rx0, ey), ImVec2(rx1, ey + rh), false, "Closes the Sample editor (Esc)")) a.later([&a] { close(a); });
+      clipPart("exit", ImVec2(rx0, ey), ImVec2(rx1, ey + rh));
+    }
+  }
+  const float rx0 = p0.x + colW + gap, rx1 = p1.x, rw = rx1 - rx0;
+  if (s.clipWave) {
+    // ---- the tools row, then the waveform (with the SAMPLE strip under it) in a sunken well ----
+    const float toolH = std::round(rowH + 8);
+    tpg::tools(a, ImVec2(rx0, top), rw, toolH);
+    clipPart("tools", ImVec2(rx0, top), ImVec2(rx1, top + toolH));
+    const float body = top + toolH + gap;
+    const ImVec2 w0(rx0, body), w1(rx1, p1.y);
+    bevelBox(dl, w0, w1, true);
+    tpg::wave(a, ImVec2(w0.x + 2, w0.y + 2), ImVec2(w1.x - 2, w1.y - 2), std::round(std::clamp((w1.y - w0.y) * 0.16f, 22.0f, 32.0f)));
+    clipPart("wave", w0, w1);
+  } else {
+    // ---- the tab's modules (Output pinned at the right) as the window lays them, in a raised panel;
+    // the SAMPLE strip above when the band has the room; compact modules in a short band ----
+    const float body = top;
+    const float pad = space::kPad;
+    const float fullH = tpg::tabHeight(a, rw - 2 * pad, false);
+    const float bodyH = p1.y - body;
+    const bool compact = fullH < 0 || fullH + 2 * pad > bodyH;
+    const float panelH = std::min(bodyH, (compact ? std::max(0.0f, tpg::tabHeight(a, rw - 2 * pad, true)) : fullH) + 2 * pad);
+    const float modY = p1.y - std::max(panelH, std::min(bodyH, tpg::moduleHeight(compact) + 2 * pad));
+    if (modY - gap - body >= 20) {
+      tpg::overview(a, ImVec2(rx0, body), ImVec2(rx1, modY - gap));
+      clipPart("overview", ImVec2(rx0, body), ImVec2(rx1, modY - gap));
+    }
+    const float panelTop = modY - gap - body >= 20 ? modY : body;
+    bevelBox(dl, ImVec2(rx0, panelTop), ImVec2(rx1, p1.y), false);
+    clipPart("modules", ImVec2(rx0, panelTop), ImVec2(rx1, p1.y));
+    for (const tpg::Laid& m : tpg::tabPanel(a, ImVec2(rx0 + pad, panelTop + pad), rw - 2 * pad, p1.y - panelTop - 2 * pad, compact))
+      clipPart((std::string("module ") + m.id).c_str(), ImVec2(std::max(m.a.x, rx0), std::max(m.a.y, panelTop)), ImVec2(std::min(m.b.x, rx1), std::min(m.b.y, p1.y)));
+  }
+  tpg::end(a);
+  (void)P;
+}
+
 // ---- navigation ----
 
-bool hasSampleEditor(App& a, ObjectId channel) { return isTrackerSampler(channelOf(a, channel)); }
+bool hasSampleEditor(App& a, ObjectId channel) {
+  const Channel* c = channelOf(a, channel);
+  return isTrackerSampler(c) || isSampler(c) || seltt::isSeltmann(a, channel);
+}
+
+bool showsClipForm(App& a) { return shown(a) && isSampler(channelOf(a, a.settingsChannel)) && st().want == Editor::Sample; }
+
+// K-391: the Tracker's own screen for `e` exists for this channel: the Sample editor (a Tracker
+// Sampler, a Sampler, Seltmann's Chop) or the Instrument screen (a Tracker Sampler's, Seltmann's).
+bool bandScreen(App& a, Editor e, ObjectId channel) {
+  const Channel* c = channelOf(a, channel);
+  if (!c) return false;
+  if (e == Editor::Sample) return hasSampleEditor(a, channel);
+  return isTrackerSampler(c) || seltt::isSeltmann(a, channel) || st().devFrame;
+}
 
 void open(App& a, Editor e, ObjectId channel, int slot, bool keys) {
   const Channel* c = channelOf(a, channel);
   if (!c) return;
   St& s = st();
+  // K-391: no screen of the Tracker's own for it (another instrument's Instrument): its editor
+  // floats in its window, as in Studio; nothing of a plugin is drawn in the band.
+  if (!bandScreen(a, e, channel)) {
+    openPluginWindow(a, channel);
+    return;
+  }
   s.want = e;
   s.openedFrame = ImGui::GetFrameCount();
   s.giveKeys = keys;
   s.keyFrames = 3;
-  s.pluginWin = kNoId;
+  if (a.settingsChannel != kNoId && a.settingsChannel != channel) seltt::leave(a, a.settingsChannel);  // (its auditions stop)
   a.selChannel = channel;
   a.settingsChannel = channel;
+  s.bandCh = channel;
+  if (bool* f = layoutui::windowOpenFlag(a, "Device chain")) *f = true;  // (the band shows)
   if (slot >= 0 && isTrackerSampler(c)) tp::headerSelectSample(a, channel, slot);
   if (trackerview::extended()) trackerview::setExtended(a, false);
 }
+
+void follow(App& a, ObjectId channel) {
+  St& s = st();
+  if (!bandHolds(a) || channel == kNoId || channel == a.settingsChannel) return;
+  if (!bandScreen(a, s.want, channel)) {  // (another kind of instrument: no such screen; nothing pops up)
+    close(a);
+    return;
+  }
+  if (a.settingsChannel != kNoId) seltt::leave(a, a.settingsChannel);
+  a.settingsChannel = channel;
+  s.bandCh = channel;
+}
+
+bool bandHolds(App& a) { return a.settingsChannel != kNoId && st().bandCh == a.settingsChannel; }
 
 void toggle(App& a, Editor e, bool keys) {
   if (showing(a, e)) {
@@ -2606,7 +3283,10 @@ void close(App& a) {
   releaseHeld(a);
   s.keys.clear();
   s.drag = 0;
+  if (a.settingsChannel != kNoId) seltt::leave(a, a.settingsChannel);
   a.settingsChannel = kNoId;
+  s.bandCh = kNoId;
+  s.devFrame = false;
   if (bool* f = layoutui::windowOpenFlag(a, "Device chain")) *f = false;
   s.shown = Shown::None;
   s.hasKb = false;
@@ -2619,7 +3299,7 @@ Editor wanted() { return st().want; }
 bool showing(App& a, Editor e) {
   if (!shown(a)) return false;
   const Channel* c = channelOf(a, a.settingsChannel);
-  if (!isTrackerSampler(c)) return e == Editor::Instrument;  // (the Channel frame stands for the instrument's editor)
+  if (!isTrackerSampler(c) && !isSampler(c) && !seltt::isSeltmann(a, a.settingsChannel)) return e == Editor::Instrument;  // (the Channel frame stands for the instrument's editor)
   return st().want == e;
 }
 
@@ -2631,21 +3311,32 @@ void openPluginWindow(App& a, ObjectId channel) {
   const Channel* c = channelOf(a, channel);
   if (!c) return;
   a.selChannel = channel;
-  if (isHostedType(c->plugin.type)) {
+  if (isHostedType(c->plugin.type) && !hostedui::opensInside(a, PluginTarget{channel, -1})) {  // (0.7.8: inside Gridline it is the channel window's)
     noteHostedAsked(channel);
-    openHostedEditor(a, PluginTarget{channel, -1});
-    return;
+    if (openHostedEditor(a, PluginTarget{channel, -1})) return;
+    // (K-391: not loaded, or no interface of its own: its channel settings window, floating, shows
+    // the stand-in or the parameters)
   }
-  // A built-in's editor: the channel settings window, floating (the lower band leaves it alone).
+  // The channel settings window, floating as in Studio (a Sampler's: its Audio clip window); the
+  // lower band closes if it showed this channel's screen.
+  St& s = st();
   stopPreview(a);
-  st().pluginWin = channel;
+  if (bandHolds(a)) {
+    releaseHeld(a);
+    s.keys.clear(), s.drag = 0, s.shown = Shown::None, s.hasKb = false;
+    if (bool* f = layoutui::windowOpenFlag(a, "Device chain")) *f = false;
+    keysBackToPattern();
+  }
+  s.bandCh = kNoId;
+  s.devFrame = false;
   a.settingsChannel = channel;
-  a.focusWindow = "###channelsettings";
+  a.focusWindow = isSampler(c) ? "Audio clip" : "###channelsettings";
 }
+// K-391: in the Tracker the channel settings float unless the band holds them for its own screen.
 bool pluginWindowOpen(App& a) {
   St& s = st();
-  if (s.pluginWin != kNoId && a.settingsChannel != s.pluginWin) s.pluginWin = kNoId;
-  return s.pluginWin != kNoId;
+  if (s.bandCh != kNoId && a.settingsChannel != s.bandCh) s.bandCh = kNoId, s.devFrame = false;
+  return layoutui::active() == layout::Preset::Tracker && a.settingsChannel != kNoId && s.bandCh == kNoId;
 }
 // The Tracker in front at all (not only once its shell is built: a switch into it must not flash the
 // window for the frame before the shell exists either).
@@ -2660,6 +3351,9 @@ struct WindowWatch {
   int first = -1;   // the first frame one showed
   std::string what;
   std::vector<ObjectId> askedHosted;  // the channels "Open plugin window" opened an installed plugin's window for
+  bool bandLast = false;              // K-391: the band held the channel settings on the last frame
+  int bandRun = 0;                    // K-391: frames in a row the lower band was up with none of the Tracker's screens
+  int bandForeign = 0;                // ... frames of such runs past their first (the band drew something not ours)
 };
 WindowWatch& watch() {
   static WindowWatch w;
@@ -2686,8 +3380,20 @@ void watchWindows(App& a, bool blocked) {
   // (last frame's windows: this runs before the channel settings window's Begin)
   const ImGuiWindow* cs = ImGui::FindWindowByName("###channelsettings");
   const ImGuiWindow* fx = ImGui::FindWindowByName("###fxeditor");
-  const bool csUp = cs && cs->WasActive && !cs->Hidden && st().pluginWin == kNoId;
-  const bool fxUp = fx && fx->WasActive && !fx->Hidden;
+  // K-391: the windows float when asked for (the channel settings, an effect's editor); counted is a
+  // window that was up while the band held its channel for the Tracker's own screen.
+  const bool csUp = cs && cs->WasActive && !cs->Hidden && w.bandLast;
+  const bool fxUp = false;
+  (void)fx;
+  w.bandLast = bandHolds(a);
+  // K-391: the lower band up without one of our screens: a plugin drawn there (its first frame is the
+  // one it closes on)
+  const ImGuiWindow* dc = ImGui::FindWindowByName("###Device chain");
+  if (dc && dc->WasActive && !dc->Hidden && !shown(a)) {
+    if (++w.bandRun > 1) ++w.bandForeign;
+  } else {
+    w.bandRun = 0;
+  }
   bool hostedUp = false;
   for (const PluginTarget& t : openHostedEditorTargets()) {
     if (t.slot < 0 && std::find(w.askedHosted.begin(), w.askedHosted.end(), t.owner) == w.askedHosted.end()) {
@@ -2709,7 +3415,10 @@ void watchWindows(App& a, bool blocked) {
 float need(App& a) {
   (void)a;
   const St& s = st();
-  return ImGui::GetFrameCount() - s.drawnFrame <= 2 && (s.shown == Shown::Sample || s.shown == Shown::Frame || s.shown == Shown::Instrument) ? s.need : 0.0f;
+  return ImGui::GetFrameCount() - s.drawnFrame <= 2 &&
+                 (s.shown == Shown::Sample || s.shown == Shown::Frame || s.shown == Shown::Instrument || s.shown == Shown::Chop || s.shown == Shown::SeltInst || s.shown == Shown::Clip)
+             ? s.need
+             : 0.0f;
 }
 
 void setFrameRoom(float room) { st().frameRoom = room; }
@@ -2736,10 +3445,19 @@ void tend(App& a) {
   tendPreview(a);
   const bool gone = ImGui::GetFrameCount() - s.drawnFrame > 2;
   if (gone) {
-    if (s.serial) stopPreview(a);
+    if (s.serial || s.pvSample) stopPreview(a);
     if (!s.held.empty()) releaseHeld(a);
     s.hasKb = false;
   }
+  // K-391: Convert to Tracker Sampler's confirm (the instrument list's menu, the dev Channel frame)
+  if (s.modal == Modal::Convert && s.convertCh != kNoId) convertModal(a, s.convertCh);
+}
+
+void askConvert(App& a, ObjectId channel) {
+  const Channel* c = channelOf(a, channel);
+  if (!c || c->plugin.type != "gl.sampler" || c->plugin.data.empty()) return;
+  St& s = st();
+  s.modal = Modal::Convert, s.modalOpen = true, s.convertCh = channel;
 }
 
 bool host(App& a, ObjectId channel) {
@@ -2755,23 +3473,43 @@ bool host(App& a, ObjectId channel) {
     close(a);
     return true;
   }
-  // Opened another way (the list's double-click, View > Channel settings, Ctrl+Alt+I): the instrument's editor.
-  if (frame - s.drawnFrame > 2 && frame - s.openedFrame > 2) s.want = Editor::Instrument, s.giveKeys = false, s.keyFrames = 3;
+  // K-391: the band open with no screen asked for (a layout restored with it open, View > Device
+  // chain): the current instrument's own screen when it has one, else the band closes (its plugin's
+  // editor floats only when asked for).
+  if (s.bandCh != channel || a.settingsChannel != channel) {
+    const Editor e = isSampler(c) ? Editor::Sample : Editor::Instrument;
+    if (!bandScreen(a, e, channel)) {
+      if (bool* f = layoutui::windowOpenFlag(a, "Device chain")) *f = false;
+      return true;
+    }
+    open(a, e, channel);
+  }
   const float fs = ImGui::GetFontSize();
   const ImVec2 p0 = ImGui::GetCursorScreenPos(), av = ImGui::GetContentRegionAvail();
   const ImVec2 p1(p0.x + av.x, p0.y + std::max(av.y, 40.0f));
-  const bool sampleEd = isTrackerSampler(c) && s.want == Editor::Sample;
+  // K-391: a Sampler's Sample page: the classic Sample editor (its file as a one-sample Tracker Sampler) or the advanced one.
+  const bool bridged = isSampler(c) && s.want == Editor::Sample && !advancedView(a);
+  const bool sampleEd = (isTrackerSampler(c) && s.want == Editor::Sample) || bridged;
   const bool insEd = isTrackerSampler(c) && s.want == Editor::Instrument;  // cp19: the Tracker's own Instrument editor (was the plugin's editor)
+  const bool clipEd = isSampler(c) && s.want == Editor::Sample && advancedView(a);  // 0.7.8: a Sampler's Sample editor (the Audio clip window's parts)
+  // K-347: a Seltmann's own screens (Chop where the Sample editor sits, its Instrument screen).
+  const bool selt = seltt::isSeltmann(a, channel);
+  const bool chopEd = selt && s.want == Editor::Sample, seltIns = selt && s.want == Editor::Instrument;
   s.drawnFrame = frame;
   {
     const PerfScope perf(PerfEditor);
-    s.shown = sampleEd ? Shown::Sample : insEd ? Shown::Instrument : Shown::Frame;
+    s.shown = sampleEd ? Shown::Sample : insEd ? Shown::Instrument : chopEd ? Shown::Chop : seltIns ? Shown::SeltInst : clipEd ? Shown::Clip : Shown::Frame;
     const float workH = ImGui::GetMainViewport()->WorkSize.y;
     // (a small window: a shorter well, so the pattern keeps its nine rows under the folded header)
     if (sampleEd) {
       s.need = std::max(std::round(fs * 16.5f), std::round(workH * (workH < 760 ? 0.36f : 0.43f)));
     } else if (insEd) {
       s.need = std::max(std::round(fs * 19.0f), std::round(workH * (workH < 760 ? 0.36f : 0.43f)));
+    } else if (chopEd || seltIns) {
+      s.need = seltt::need(chopEd ? seltt::ScreenChop : seltt::ScreenInstrument, fs, workH);
+    } else if (clipEd) {
+      // (the most the band gives: the window's modules want their full height; the pattern keeps its rows)
+      s.need = std::max(std::round(fs * 21.5f), std::round(workH * 0.62f));
     } else {
       // cp23: the Channel frame's own height (channelFrame()). The band's window adds its own padding
       // round the content (the band is sized whole). cp24: folded, its title and first row.
@@ -2780,9 +3518,16 @@ bool host(App& a, ObjectId channel) {
     }
     s.hasKb = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput;
     if (sampleEd) {
+      const Bridge br(bridged);
       sampleScreen(a, channel, p0, p1);
     } else if (insEd) {
       instrumentScreen(a, channel, p0, p1);
+    } else if (chopEd) {
+      seltt::chopScreen(a, channel, p0, p1, s.hasKb);
+    } else if (seltIns) {
+      seltt::instrumentScreen(a, channel, p0, p1, s.hasKb);
+    } else if (clipEd) {
+      clipScreen(a, channel, p0, p1);
     } else {
       channelFrame(a, channel, p0, p1);
     }
@@ -2828,7 +3573,8 @@ bool host(App& a, ObjectId channel) {
 
 bool hasKeys() {
   const St& s = st();
-  return s.hasKb && ImGui::GetFrameCount() - s.drawnFrame <= 1 && (s.shown == Shown::Sample || s.shown == Shown::Frame || s.shown == Shown::Instrument);
+  return s.hasKb && ImGui::GetFrameCount() - s.drawnFrame <= 1 &&
+         (s.shown == Shown::Sample || s.shown == Shown::Frame || s.shown == Shown::Instrument || s.shown == Shown::Chop || s.shown == Shown::SeltInst || s.shown == Shown::Clip);
 }
 
 bool sdlKey(App& a, int sc, int kc, int mods, bool down, bool repeat) {
@@ -2842,9 +3588,72 @@ bool sdlKey(App& a, int sc, int kc, int mods, bool down, bool repeat) {
   }
   if (!hasKeys()) return false;
   const bool ctrl = (mods & (KMOD_CTRL | KMOD_GUI)) != 0, alt = (mods & KMOD_ALT) != 0;
-  if (ctrl && alt) return false;
+  if (ctrl && alt) {
+    // 0.7.8: the previous / next sample entry, empty ones too (the pattern's keys for it as well).
+    if (!(mods & KMOD_SHIFT) && (sc == SDL_SCANCODE_UP || sc == SDL_SCANCODE_DOWN) && (s.shown == Shown::Sample || s.shown == Shown::Instrument)) {
+      stopPreview(a);
+      tp::headerStepEntry(a, a.selChannel, sc == SDL_SCANCODE_UP ? -1 : 1);
+      return true;
+    }
+    return false;
+  }
   if (sc == SDL_SCANCODE_SPACE || (sc >= SDL_SCANCODE_F1 && sc <= SDL_SCANCODE_F12)) return false;
   if (sc >= SDL_SCANCODE_LCTRL && sc <= SDL_SCANCODE_RGUI) return false;
+  // K-347: Seltmann's screens. Esc and Cmd/Ctrl+W close an open box, else the screen; the screen's own
+  // keys (tracker.chop, tracker.seltmann) queue for its next draw; the note keys play the regions.
+  if (s.shown == Shown::Chop || s.shown == Shown::SeltInst) {
+    const int scr = s.shown == Shown::Chop ? seltt::ScreenChop : seltt::ScreenInstrument;
+    if (sc == SDL_SCANCODE_ESCAPE || (ctrl && kc == 'w')) {
+      if (sc == SDL_SCANCODE_ESCAPE) keys::claimEscape();
+      if (repeat) return true;
+      if (!seltt::closeInner(a, a.settingsChannel)) close(a);
+      return true;
+    }
+    if (ctrl) return false;
+    if (seltt::takesKey(scr, sc, kc, mods)) {
+      seltt::queueKey(sc, kc, mods);
+      return true;
+    }
+    if (alt) return false;
+    const int key = TypingKeyboard::keyAtPosition(sc);
+    const int off = key > 0 ? TypingKeyboard::keyOffset(key) : -1;
+    if (off >= 0) {
+      if (repeat || s.held.count(sc)) return true;
+      const int pitch = a.typing.baseNote() + off;
+      const ObjectId ch = a.settingsChannel;
+      if (ch != kNoId && pitch >= 0 && pitch <= 127) {
+        a.engine.noteOn(ch, pitch, std::clamp(a.typing.velocity, 1, 127) / 127.0f);
+        s.held[sc] = {ch, pitch};
+      }
+      return true;
+    }
+    return true;  // (the screen's keys: no single-key command runs while it has them)
+  }
+  // 0.7.8: a Sampler's Sample editor (the Audio clip window's parts): Esc and Cmd/Ctrl+W close it;
+  // its own keys (Alt+P the preview, Alt+W warp, Shift+W the spectrum) reach it through ImGui; the note
+  // keys play the channel; the other commands (undo, the transport) stay the app's.
+  if (s.shown == Shown::Clip) {
+    if (sc == SDL_SCANCODE_ESCAPE || (ctrl && kc == 'w')) {
+      if (sc == SDL_SCANCODE_ESCAPE) keys::claimEscape();
+      if (!repeat) close(a);
+      return true;
+    }
+    if (ctrl) return false;
+    if (alt) return kc == 'p' || kc == 'w';
+    const int key = TypingKeyboard::keyAtPosition(sc);
+    const int off = key > 0 && !(mods & KMOD_SHIFT) ? TypingKeyboard::keyOffset(key) : -1;
+    if (off >= 0) {
+      if (repeat || s.held.count(sc)) return true;
+      const int pitch = a.typing.baseNote() + off;
+      const ObjectId ch = a.settingsChannel;
+      if (ch != kNoId && pitch >= 0 && pitch <= 127) {
+        a.engine.noteOn(ch, pitch, std::clamp(a.typing.velocity, 1, 127) / 127.0f);
+        s.held[sc] = {ch, pitch};
+      }
+      return true;
+    }
+    return true;
+  }
   // cp19: the Instrument editor's keys (K-316 4.3): Tab the other envelope, Left / Right the point,
   // Up / Down its level, Shift+Left / Right its tick, Insert or Ctrl+Enter adds, Delete deletes,
   // Alt+Up / Down the sample, Esc and Cmd/Ctrl+W close; the note keys play the instrument.
@@ -2884,7 +3693,7 @@ bool sdlKey(App& a, int sc, int kc, int mods, bool down, bool repeat) {
     return false;
   }
   if (alt) {
-    if (kc == 'a' || kc == 'x' || kc == 'c' || kc == 'v' || kc == 'r' || kc == 's' || kc == 'z' || kc == 'w' || kc == 'q' || sc == SDL_SCANCODE_UP ||
+    if (kc == 'a' || kc == 'x' || kc == 'c' || kc == 'v' || kc == 'r' || kc == 's' || kc == 'z' || kc == 'p' || kc == 'q' || sc == SDL_SCANCODE_UP ||
         sc == SDL_SCANCODE_DOWN) {
       s.keys.push_back({sc, kc, mods});
       return true;
@@ -2932,6 +3741,7 @@ bool closeRequest(App& a) {
 namespace {
 ImVec2 gDevPointer;
 bool gDevPointerSet = false;
+std::map<std::string, std::pair<ImVec2, ImVec2>> gDevMenuRows;  // TRK-1118: the instrument menu's rows, by label
 
 std::string envText(const trk::Envelope& v) {
   std::string t = "f" + std::to_string(v.flags) + " n" + std::to_string(v.count) + " s" + std::to_string(v.sustain) + " l" + std::to_string(v.loopStart) + "-" +
@@ -3087,7 +3897,10 @@ void insDev(App& a, Ctx& c, const std::vector<std::string>& args, int frame) {
 
 // ---- dev ----
 
+void devMenuRow(const char* label, float x0, float y0, float x1, float y1) { gDevMenuRows[label] = {ImVec2(x0, y0), ImVec2(x1, y1)}; }
+
 bool takeDevPointer(float* x, float* y) {
+  if (seltt::takeDevPointer(x, y)) return true;  // K-347: "tracker editors selt at <control>"
   if (!gDevPointerSet) {
     return false;
   }
@@ -3099,6 +3912,7 @@ bool takeDevPointer(float* x, float* y) {
 
 void devCommand(App& a, const std::vector<std::string>& args, int frame) {
   St& s = st();
+  const Bridge br(bandHolds(a) && s.want == Editor::Sample && classicSampler(a, a.settingsChannel));  // (K-391: the classic editor on a Sampler)
   auto arg = [&](size_t i, long long d) { return args.size() > i ? std::atoll(args[i].c_str()) : d; };
   const std::string cmd = args.size() > 1 ? args[1] : "dump";
   const Song& song = a.doc.song();
@@ -3116,11 +3930,43 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
   };
   if (cmd == "open") {
     const std::string w = args.size() > 2 ? args[2] : "sample";
+    s.devFrame = w == "frame";  // (K-391: the Channel frame only from here; an instrument's editor floats)
     open(a, w == "instrument" || w == "frame" ? Editor::Instrument : Editor::Sample, chanAt(3), static_cast<int>(arg(4, -1)), true);
     return;
   }
   if (cmd == "close") {
     close(a);
+    return;
+  }
+  // 0.7.8: a Sampler's Sample editor: "clip page wave|<tab>" (the page list's rows), "clip dump" (its parts as drawn).
+  if (cmd == "clip") {
+    const std::string what = args.size() > 2 ? args[2] : "dump";
+    if (what == "page" && args.size() > 3) {
+      if (args[3] == "wave") {
+        s.clipWave = true;
+      } else {
+        clipeditor::trackerpage::setTab(std::atoi(args[3].c_str()));
+        s.clipTabSeen = clipeditor::trackerpage::tab();
+        s.clipWave = false;
+      }
+      return;
+    }
+    std::string parts;
+    char b[200];
+    for (const St::Part& q : s.clipParts) {
+      std::snprintf(b, sizeof b, " | %s %.0f %.0f %.0f %.0f", q.id.c_str(), static_cast<double>(q.a.x), static_cast<double>(q.a.y), static_cast<double>(q.b.x),
+                    static_cast<double>(q.b.y));
+      parts += b;
+    }
+    std::printf("tracker editors clip frame %d: shown %d drawn %d wave %d tab %d channel %llu band %.0f %.0f %.0f %.0f parts %d%s\n", frame, showsClipForm(a) ? 1 : 0,
+                frame - s.clipFrame <= 2 ? 1 : 0, s.clipWave ? 1 : 0, clipeditor::trackerpage::tab(), static_cast<unsigned long long>(a.settingsChannel),
+                static_cast<double>(s.clipBand0.x), static_cast<double>(s.clipBand0.y), static_cast<double>(s.clipBand1.x), static_cast<double>(s.clipBand1.y),
+                static_cast<int>(s.clipParts.size()), parts.c_str());
+    std::fflush(stdout);
+    return;
+  }
+  if (cmd == "selt") {  // K-347: Seltmann's screens (seltmann_tracker.h)
+    seltt::devCommand(a, args, frame);
     return;
   }
   if (cmd == "windows") {  // cp22: "windows" reports, "windows reset" starts the count again
@@ -3131,12 +3977,38 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     }
     std::printf("tracker windows frame %d: watched %d shown %d hosted %d blocked %d first %d %s plugin %s band %s\n", frame, w.frames, w.shown, w.hosted,
                 w.blocked, w.first, w.what.empty() ? "-" : w.what.c_str(), pluginWindowOpen(a) ? "open" : "closed",
-                shown(a) ? (s.shown == Shown::Sample ? "sample" : s.shown == Shown::Instrument ? "instrument" : "frame") : "closed");
+                shown(a) ? (s.shown == Shown::Sample ? "sample" : s.shown == Shown::Instrument ? "instrument" : s.shown == Shown::Chop ? "chop" : s.shown == Shown::SeltInst ? "seltinst" : s.shown == Shown::Clip ? "clip" : "frame") : "closed");
+    std::fflush(stdout);
+    return;
+  }
+  if (cmd == "float") {  // K-391: each editor window up (floating or docked), the lower band, frames it drew a plugin
+    auto win = [](const char* name) {
+      const ImGuiWindow* w = ImGui::FindWindowByName(name);
+      return !w || !w->WasActive || w->Hidden ? "down" : w->DockIsActive ? "docked" : "floating";
+    };
+    std::printf("tracker float frame %d: settings %s fx %s clip %s master %s hosted %d band %s foreign %d\n", frame, win("###channelsettings"),
+                win("###fxeditor"), win("###Audio clip"), win("###Master chain"), static_cast<int>(openHostedEditorTargets().size()),
+                shown(a) ? "ours" : "closed", watch().bandForeign);
     std::fflush(stdout);
     return;
   }
   if (cmd == "focus") {
     if (ImGuiWindow* w = ImGui::FindWindowByName("###Device chain")) ImGui::FocusWindow(w);
+    return;
+  }
+  if (cmd == "menu" && args.size() > 3 && args[2] == "at") {  // TRK-1118: menu at <label> (the words may be quoted)
+    std::string label;
+    for (size_t i = 3; i < args.size(); ++i) label += (i > 3 ? " " : "") + args[i];
+    const auto it = gDevMenuRows.find(label);
+    if (it == gDevMenuRows.end()) {
+      std::printf("tracker editors frame %d: menu row \"%s\" none\n", frame, label.c_str());
+    } else {
+      gDevPointer = ImVec2((it->second.first.x + it->second.second.x) * 0.5f, (it->second.first.y + it->second.second.y) * 0.5f);
+      gDevPointerSet = true;
+      std::printf("tracker editors frame %d: menu row \"%s\" at %.0f %.0f\n", frame, label.c_str(), static_cast<double>(gDevPointer.x),
+                  static_cast<double>(gDevPointer.y));
+    }
+    std::fflush(stdout);
     return;
   }
   if (cmd == "plugin") {
@@ -3168,8 +4040,23 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
                 frame, shown(a) ? 1 : 0, static_cast<int>(s.shown), static_cast<int>(s.want), song.channelIndex(ch), isTrackerSampler(chan) ? 1 : 0, c.k,
                 c.frames, c.s0, c.s1, r.empty() ? -1 : r.a, r.empty() ? -1 : r.b, c.m ? c.m->viewStart : 0.0, c.m ? c.m->viewLen : 0.0,
                 c.have() ? c.snap->e.text.def.samples[static_cast<size_t>(c.k)].loop : -1, c.ls, c.le - c.ls, c.eight ? 8 : 16, tp::clipboard().frames(),
-                c.m ? c.m->playNote : 0, s.serial != 0 && tp::auditionSounding(s.serial) ? 1 : 0, lines, hasKeys() ? 1 : 0, static_cast<double>(need(a)),
+                c.m ? c.m->playNote : 0, previewSounding(a) ? 1 : 0, lines, hasKeys() ? 1 : 0, static_cast<double>(need(a)),
                 pluginWindowOpen(a) ? 1 : 0, static_cast<int>(s.modal), s.modalBegun, a.doc.history().position(), a.doc.history().canUndo() ? a.doc.history().undoLabel().c_str() : "");
+    {  // 0.7.8: the entry picked, the entries used, the cut and keys of each, and the play lines drawn
+      std::string ent, lx;
+      if (c.ok())
+        for (int k = 0; k < trk::kMaxSamples; ++k) {
+          if (!tp::hasSample(c.snap->e, k)) continue;
+          int keys = 0;
+          for (uint8_t m : c.snap->e.text.def.keymap) keys += m == k ? 1 : 0;
+          char b[96];
+          std::snprintf(b, sizeof b, " %02X:%d-%d/%d", k + 1, c.snap->e.cuts.start[static_cast<size_t>(k)], c.snap->e.cuts.end[static_cast<size_t>(k)], keys);
+          ent += b;
+        }
+      for (const auto& [x, f] : s.tapLines) lx += " " + std::to_string(static_cast<int>(x)) + "@" + std::to_string(f);
+      std::printf("tracker editors frame %d: entry %d well %.0f %.0f %.0f %.0f used%s lines%s\n", frame, c.entry, static_cast<double>(s.well[0]),
+                  static_cast<double>(s.well[1]), static_cast<double>(s.well[2]), static_cast<double>(s.well[3]), ent.c_str(), lx.c_str());
+    }
     if (chan && !isTrackerSampler(chan))
       std::printf("tracker editors frame %d: channel gain %.3f pan %.3f pitch %.0f fine %d mute %d out %llu keys %d %d type %s names %s %s\n", frame,
                   static_cast<double>(chan->gain), static_cast<double>(chan->pan), static_cast<double>(chan->pitchCents), chan->fine, chan->muted ? 1 : 0,
@@ -3219,7 +4106,7 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     return;
   }
   if (cmd == "convert") {  // the confirm's Convert
-    s.modal = Modal::Convert;
+    s.modal = Modal::Convert, s.convertCh = a.settingsChannel != kNoId ? a.settingsChannel : a.selChannel;
     s.modalOpen = true;
     // (pressed on the next frame the modal draws: the dev "key enter")
     return;
@@ -3254,6 +4141,8 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
   } else if (cmd == "loop" && c.have()) {
     const std::string w = args.size() > 2 ? args[2] : "off";
     tp::opSampleLoopType(a, c.t, c.k, static_cast<uint8_t>(w == "forward" ? trk::kLoopForward : w == "pingpong" ? trk::kLoopPingPong : trk::kLoopOff), c.s0, c.s1);
+  } else if (cmd == "backwards" && c.have()) {  // 0.7.8: backwards on | off
+    tp::opSampleReverse(a, c.t, c.k, !(args.size() > 2 && args[2] == "off"));
   } else if (cmd == "bits" && c.have()) {
     tp::opSampleBits(a, c.t, c.k, arg(2, 16) == 8);
   } else if (cmd == "note") {

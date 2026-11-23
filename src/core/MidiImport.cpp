@@ -275,6 +275,28 @@ MidiImportResult importMidiIntoSong(Song& song, const MidiFileData& midiIn, cons
     else if (tr.program >= 0 && tr.program < 8 && o.instrument == "gl.synth") type = pluginOr("gl.keys", o.instrument);
     ch.plugin = defaultPluginState(pluginOr(type, "gl.synth"));
     ch.mixerTrack = song.masterId();
+    if (o.setUpChannel) {  // K-333: e.g. the Patch Player's patch for the track
+      int bank = 0;
+      for (const auto& c : tr.ctls)
+        if (c.controller == 0 && c.channel == mch) {
+          bank = c.value;
+          break;
+        }
+      const int prog = tr.program >= 0 ? tr.program : (mch >= 0 && mch < 16 ? tr.channelProgram[mch] : -1);
+      o.setUpChannel(ch, mch, bank, prog);
+    }
+    // Program changes after the first: a lane on the parameter that switches the patch.
+    if (const int pp = o.programParam ? o.programParam(ch) : -1; pp >= 0) {
+      std::vector<std::pair<Tick, double>> progs;
+      for (const auto& c : tr.programs) {
+        if (!o.midiChannels.empty() && !o.midiChannels.count(c.channel)) continue;
+        if (mch >= 0 && c.channel != mch) continue;
+        progs.push_back({T(c.tick), c.value + 1.0});
+      }
+      bool changes = false;
+      for (const auto& pr : progs) changes = changes || pr.second != progs.front().second;
+      if (changes) lanes[channelPluginParam(ch.id, pp).index] = std::move(progs);
+    }
     song.channels.push_back(ch);
     res.channels.push_back(ch.id);
     ++n;

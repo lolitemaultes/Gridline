@@ -10,7 +10,9 @@
 #include "LowLifterRef.h"
 #include "../core/PluginParams.h"
 #include "Dsp.h"
+#include "EffectRest.h"
 #include "Effects.h"
+#include "ShaperSteps.h"
 
 namespace gl {
 
@@ -123,6 +125,8 @@ class DistFx final : public Effect {
 // converter filters, fractional bits with TPDF dither (core in Bitcrush.h).
 class BitcrushFx final : public Effect {
  public:
+  // K-142 (0.7.8): at rest its sample-and-hold clock and glides move on: its idle render runs unheard.
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, int n) override { restRenderFx(*this, s, aux, ctx, n); }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
     const double sr = ctx.sampleRate;
@@ -387,6 +391,9 @@ inline double lfoShape(int shape, double ph) {
 
 class ShaperFx final : public Effect {
  public:
+  // K-142 (0.7.8): at rest its LFO and step clock move on: its idle render runs unheard.
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, int n) override { restRenderFx(*this, s, aux, ctx, n); }
+  ShaperFx() : bank_(std::make_unique<shsteps::Bank>()) { shsteps::clear(*bank_); }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
     const double sr = ctx.sampleRate;
@@ -405,6 +412,64 @@ class ShaperFx final : public Effect {
     int lfoSh = iparam(s, ShLfoShape);
     double inG = dbToGain(param(s, ShInput)), outG = dbToGain(param(s, ShOutput));
     double spb = 60.0 / std::max(1.0, ctx.tempo) * sr;
+    // K-257: each lane's own step count, and the band split.
+    const int volN = std::clamp(iparam(s, ShVolSteps, kShaperPoints - 1) + 1, 1, kShaperMaxSteps);
+    const int cutN = std::clamp(iparam(s, ShCutSteps, kShaperPoints - 1) + 1, 1, kShaperMaxSteps);
+    const int panN = std::clamp(iparam(s, ShPanSteps, kShaperPoints - 1) + 1, 1, kShaperMaxSteps);
+    const int band = std::clamp(iparam(s, ShBand), 0, 2);
+    if (band > 0) {
+      const double bf = param(s, ShBandFreq, 250);
+      if (bf != bandHz_ || sr != bandSr_) {
+        bandHz_ = bf, bandSr_ = sr;
+        for (int k = 0; k < 2; ++k)  // two in a row each: a 24 dB crossover whose bands add up to the full level
+          for (int c = 0; c < 2; ++c) split_[k][c].set(Biquad::LowPass, sr, bf, 0.70710678, 0), splitHi_[k][c].set(Biquad::HighPass, sr, bf, 0.70710678, 0);
+      }
+    }
+    const double stepLen = len / kShaperPoints;
+    // K-257 phase 2: the step bank (patterns, steps past 16, chance, repeats, chain), parsed when the
+    // text changes; each lane's step size and swing; which pattern plays.
+    if (s.data.empty() != bankEmpty_ || (!s.data.empty() && std::hash<std::string>{}(s.data) != dataHash_)) {
+      bankEmpty_ = s.data.empty();
+      dataHash_ = bankEmpty_ ? 0 : std::hash<std::string>{}(s.data);
+      shsteps::parse(s.data.c_str(), *bank_);
+    }
+    const shsteps::Bank& bank = *bank_;
+    struct LaneSet {
+      int li, steps;
+      double stepBeats, swing;
+      bool legacy;  // Auto step size, no swing: the position exactly as before phase 2
+    };
+    auto laneSet = [&](int li, int steps, int rateP, int swingP) {
+      const int r = std::clamp(iparam(s, rateP), 0, kShaperRates - 1);
+      const double sw = std::clamp(static_cast<double>(param(s, swingP)), 0.0, 1.0);
+      return LaneSet{li, steps, r == 0 ? stepLen : kShaperRateBeats[r], sw, r == 0 && sw <= 0};
+    };
+    const LaneSet sets[3] = {laneSet(0, volN, ShVolRate, ShVolSwing), laneSet(1, cutN, ShCutRate, ShCutSwing), laneSet(2, panN, ShPanRate, ShPanSwing)};
+    const int patParam = std::clamp(iparam(s, ShPattern), 0, shsteps::kPatterns - 1);
+    if (patParam != lastPatParam_) lastPatParam_ = patParam, latched_ = -1;  // a pattern picked by hand or automation wins
+    if (ctx.playing && ctx.jumped) latched_ = -1;                              // play, seek, loop wrap: start from the pattern again
+    const bool chain = bparam(s, ShChain) && bank.chainLen > 0;
+    // Notes that pick a pattern in this block: the first note and the seven above it.
+    struct NoteAt {
+      int off, pat;
+    };
+    NoteAt notes[32];
+    int noteN = 0;
+    const int noteSrc = std::clamp(iparam(s, ShNoteSrc), 0, 2);
+    if (noteSrc > 0 && ctx.hits) {
+      const int port = iparam(s, ShNotePort, -1), lo = std::clamp(iparam(s, ShNoteBase, 48), 0, 127);
+      for (int k = 0; k < ctx.hits->count && noteN < 32; ++k) {
+        const NoteHitBus::Hit& h = ctx.hits->hits[static_cast<size_t>(k)];
+        const bool ok = noteSrc == 1 ? h.kind == NoteHitBus::Note && h.port >= 0 && (port < 0 || h.port == port) : h.kind == NoteHitBus::Input;
+        if (ok && h.note >= lo && h.note < lo + shsteps::kPatterns) {
+          NoteAt e{h.offset, h.note - lo};
+          int at = noteN++;
+          for (; at > 0 && notes[at - 1].off > e.off; --at) notes[at] = notes[at - 1];  // in block order
+          notes[at] = e;
+        }
+      }
+    }
+    int nextNote = 0;
     for (int i = 0; i < n; ++i) {
       double beat;
       if (ctx.playing) {
@@ -414,21 +479,48 @@ class ShaperFx final : public Effect {
         if (free_ > 1e6) free_ = 0;
         beat = free_;
       }
+      while (nextNote < noteN && notes[nextNote].off <= i) latched_ = notes[nextNote++].pat;
+      int pat = patParam;
+      if (latched_ >= 0) {
+        pat = latched_;
+      } else if (chain) {
+        const int64_t slot = static_cast<int64_t>(std::floor(beat / len));
+        const int c = bank.chain[static_cast<size_t>(((slot % bank.chainLen) + bank.chainLen) % bank.chainLen)];
+        if (c >= 0) pat = c;  // an empty slot plays the chosen pattern
+      }
       double ph = std::fmod(beat, len) / len;
-      double f = ph * kShaperPoints;
-      int k = std::min(kShaperPoints - 1, static_cast<int>(f));
-      auto lane = [&](int base, float dflt) {
-        double a = param(s, base + k, dflt);
-        if (std::fabs(tension) < 1e-4) return a;  // steps
-        double b = param(s, base + (k + 1) % kShaperPoints, dflt);
-        double fr = f - k, kk = std::pow(2.0, -tension * 3.0);
-        return a + (b - a) * std::pow(fr, kk);
+      const double f16 = ph * kShaperPoints;
+      // A lane of n steps loops every n steps (n = 16: the whole pattern, exactly as before).
+      auto lane = [&](const LaneSet& c) {
+        const int steps = c.steps, li = c.li;
+        const shsteps::LaneRef ref{bank.chance[pat][li], bank.hits[pat][li], bank.anyChance[pat][li], bank.anyHits[pat][li], li, pat,
+                                   shsteps::laneRest(li)};
+        int k;
+        double fr;
+        int64_t abs = 0;  // the step's number on the lane's grid since the song start (the dice's seed)
+        if (c.legacy) {
+          double f = steps == kShaperPoints ? f16 : std::fmod(beat, stepLen * steps) / stepLen;
+          k = std::clamp(static_cast<int>(f), 0, steps - 1);
+          fr = f - k;
+          if (ref.anyChance) abs = static_cast<int64_t>(std::floor(beat / stepLen));
+        } else {
+          abs = shsteps::laneStep(beat, c.stepBeats, c.swing, steps, k, fr);
+        }
+        // K-257c: the lane engine Terrace plays as well (engine/ShaperSteps.h)
+        return shsteps::laneValue(ref, k, fr, abs, steps, tension, [&](int kk) { return static_cast<double>(shsteps::level(s, bank, pat, li, kk)); });
       };
-      double vol = lane(ShVol, 1), cut = lane(ShCut, 1), pan = lane(ShPan, 0);
+      double vol = lane(sets[0]), cut = lane(sets[1]), pan = lane(sets[2]);
       vol_ = vol + (vol_ - vol) * sm;
       cut_ = cut + (cut_ - cut) * sm;
       pan_ = pan + (pan_ - pan) * sm;
       double l = L[i] * inG, r = R[i] * inG;
+      double restL = 0, restR = 0;  // K-257: the band left untouched (it adds back in after the shaping)
+      if (band > 0) {
+        const double lowL = split_[1][0].process(split_[0][0].process(l)), lowR = split_[1][1].process(split_[0][1].process(r));
+        const double highL = splitHi_[1][0].process(splitHi_[0][0].process(l)), highR = splitHi_[1][1].process(splitHi_[0][1].process(r));
+        if (band == 1) restL = highL, restR = highR, l = lowL, r = lowR;
+        else restL = lowL, restR = lowR, l = highL, r = highR;
+      }
       double a = std::max(std::fabs(l), std::fabs(r));
       fol_ = a > fol_ ? a + (fol_ - a) * fAtt : a + (fol_ - a) * fRel;
       if (filt > 0) {
@@ -475,12 +567,16 @@ class ShaperFx final : public Effect {
       double pl, pr;
       panGains(pan_, pl, pr);
       l *= vol_ * pl * outG, r *= vol_ * pr * outG;
+      if (band > 0) l += restL, r += restR;  // the untouched band (after the input gain, like the rest)
       L[i] = static_cast<float>(L[i] * (1 - mix) + l * mix);
       R[i] = static_cast<float>(R[i] * (1 - mix) + r * mix);
     }
   }
   void reset() override {
+    for (int k = 0; k < 2; ++k)
+      for (int c = 0; c < 2; ++c) split_[k][c].clear(), splitHi_[k][c].clear();
     free_ = 0, vol_ = cut_ = 1, pan_ = 0, fol_ = 0;
+    latched_ = -1;
     for (auto& st : svf_)
       for (auto& sv : st) sv.reset();
     for (auto& st : bq_)
@@ -491,7 +587,13 @@ class ShaperFx final : public Effect {
   double free_ = 0, vol_ = 1, cut_ = 1, pan_ = 0, fol_ = 0;
   Svf svf_[3][2];
   Biquad bq_[3][2];
+  Biquad split_[2][2], splitHi_[2][2];  // K-257: the band split's two low-pass and two high-pass stages, per side
+  double bandHz_ = -1, bandSr_ = 0;
   uint32_t ctr_ = 0;
+  std::unique_ptr<shsteps::Bank> bank_;  // K-257 phase 2: sized once, refilled when the state text changes
+  size_t dataHash_ = 0;
+  bool bankEmpty_ = true;
+  int lastPatParam_ = -1, latched_ = -1;  // the pattern a note picked (-1: none)
 };
 
 // ======================================================================= Low Lifter
@@ -567,6 +669,8 @@ class LowLiftFx final : public Effect {
   int latencyFor(const PluginState& s, double sr) const override {
     return iparam(s, pp::LlModel) == 1 ? llref::Engine::latency(lowLiftRefSettings(s), sr) : 0;
   }
+  // K-142 (0.7.8): its state is its signal (filters, look-ahead): it rests by the hosted rule.
+  bool restsWhenFaint() const override { return true; }
   void reset() override {
     if (ref_) ref_->reset();
     for (auto* f : {&lp_, &hp_})

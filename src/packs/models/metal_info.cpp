@@ -199,7 +199,7 @@ PluginInfo grainScanInfo() {
   q[GsEnvSustain] = lin("Env sustain", "", 0, 1, 1);
   q[GsEnvRelease] = lin("Env release", "s", 0, 10, 0.05);
   q[GsVolume] = lin("Volume", "", 0, 1, 0.8);
-  q[GsRoot] = lin("Root note", "", 0, 127, 60);
+  q[GsRoot] = lin("Root note", "note", 0, 127, 60);
   p.presets = {
       {"Half Speed", V{{GsWaveSpace, 411}}},
       {"Reverse Cloud", V{{GsWaveSpace, -611}, {GsRandom, 90}, {GsStereo, 40}}},

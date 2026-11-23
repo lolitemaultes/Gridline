@@ -1,6 +1,7 @@
 // Gridline - J-111 collaboration: ICE endpoints (libjuice) and router port
 // mapping (libplum). See Link.h. Compiled to stubs without GRIDLINE_COLLAB_NET.
 #include "Link.h"
+#include "../core/ThreadName.h"
 #include "Debug.h"
 #include "NetTest.h"
 #include "../core/I18n.h"
@@ -163,7 +164,7 @@ void plumRelease() {
       g.maps.clear();
       g.early.clear();
     }
-    g.cleanup = new std::thread([] { plum_cleanup(); });  // removes the remaining mappings from the router
+    g.cleanup = new std::thread([] { gl::threads::setName("gl-plum-clean"); plum_cleanup(); });  // removes the remaining mappings from the router
   }
 }
 
@@ -593,7 +594,7 @@ class JuiceFabric : public Fabric {
     nat_->running = true;
     auto st = nat_;
     const NetSettings s = s_;
-    std::thread([st, s] {
+    std::thread([st, s] { gl::threads::setName("gl-nat-probe");
       const char r = probeNatType(s, 1500);
       std::lock_guard<std::mutex> lk2(st->mu);
       st->result = r;

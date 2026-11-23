@@ -1,4 +1,5 @@
 #include "EditorClose.h"
+#include "../core/ThreadName.h"
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
@@ -14,7 +15,7 @@ struct EditorClose::Shared {
 };
 
 EditorClose::EditorClose(Editor* e) : s_(std::make_shared<Shared>()) {
-  std::thread([s = s_, e]() {
+  std::thread([s = s_, e]() { gl::threads::setName("gl-editor-close");
     bool threw = false;
     try {
       e->detachOffThread();

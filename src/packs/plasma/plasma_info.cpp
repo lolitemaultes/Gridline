@@ -1030,8 +1030,8 @@ void appendInfos(std::vector<PluginInfo>& v) {
     O(O_MDecay, lin(n + "Sample Env Decay", "%", 0, 1, 0.5));
     O(O_MSustain, lin(n + "Sample Env Sustain", "%", 0, 1, 1));
     O(O_MRelease, lin(n + "Sample Env Release", "%", 0, 1, 0.3));
-    O(O_KeyMin, lin(n + "Key Min", "", 0, 127, 0));
-    O(O_KeyMax, lin(n + "Key Max", "", 0, 127, 127));
+    O(O_KeyMin, lin(n + "Key Min", "note", 0, 127, 0));
+    O(O_KeyMax, lin(n + "Key Max", "note", 0, 127, 127));
     O(O_VelMin, lin(n + "Vel Min", "", 0, 127, 0));
     O(O_VelMax, lin(n + "Vel Max", "", 0, 127, 127));
     O(O_MapFold, tog(n + "Key Fold", 0));
@@ -1118,8 +1118,8 @@ void appendInfos(std::vector<PluginInfo>& v) {
   // J-215: the noise oscillator's key range: outside it the noise is left out of the note, or with
   // FOLD the key wraps into the range (its width in keys at a time), the noise then following the
   // wrapped key when it tracks the key.
-  set(tailP(T_NKeyMin), lin("Noise Key Min", "", 0, 127, 0));
-  set(tailP(T_NKeyMax), lin("Noise Key Max", "", 0, 127, 127));
+  set(tailP(T_NKeyMin), lin("Noise Key Min", "note", 0, 127, 0));
+  set(tailP(T_NKeyMax), lin("Noise Key Max", "note", 0, 127, 127));
   set(tailP(T_NKeyFold), tog("Noise Key Fold", 0));
   // Noise pitch law. Classic: a noise file plays at its own sample rate and Pitch is in semitones.
   // Imported: noise files play their frames at 44.1 kHz, and a noise that does not follow the keys

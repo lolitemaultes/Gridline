@@ -29,6 +29,7 @@ inline double timeCoef(double seconds, double sr) { return seconds <= 0 ? 0.0 : 
 // Effect with parameter access that tolerates short / old parameter vectors.
 class DynFx : public Effect {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible): its state is its signal
   explicit DynFx(const std::string& type) {
     PluginState d = defaultPluginState(type);
     defaults_ = d.params;

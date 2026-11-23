@@ -8,6 +8,7 @@
 //   gridline seltmann-analyse [--json] [--beats] [-j N] [--list <file>] [--presets] <files...>
 // (--beats: the JSON also lists the beat times in seconds, for scoring the beat grid)
 #include <algorithm>
+#include "../../core/ThreadName.h"
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -239,7 +240,7 @@ int cliMain(int argc, char** argv) {
   std::mutex mu;
   std::vector<std::thread> ts;
   for (int k = 0; k < jobs; ++k)
-    ts.emplace_back([&] {
+    ts.emplace_back([&] { gl::threads::setName("gl-seltmann-cli");
       for (size_t i; (i = next++) < files.size();) {
         bool ok = false;
         std::string l = analyseOne(files[i], json, presets, ok);

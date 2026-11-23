@@ -28,6 +28,20 @@ bool isAudioClipSource(const Channel& ch) {
   return ch.plugin.type == "gl.sampler" && !ch.plugin.data.empty();
 }
 
+std::set<ObjectId> audioClipChannels(const Song& s) {
+  std::set<ObjectId> out;
+  auto take = [&](const std::vector<Clip>& v) {
+    for (const auto& c : v)
+      if (c.kind == ClipKind::Audio && s.channel(c.source)) out.insert(c.source);
+  };
+  take(s.playlist);
+  for (int i = 0; i < static_cast<int>(s.arrangements.size()); ++i)
+    if (i != s.currentArrangement) take(s.arrangements[static_cast<size_t>(i)].playlist);  // the current one is `playlist`
+  for (const auto& ch : s.channels)
+    if (ch.audioClip) out.insert(ch.id);
+  return out;
+}
+
 int clipSourceUses(const Song& s, ClipKind kind, ObjectId source) {
   int n = 0;
   for (const auto& c : s.playlist) n += clipOf(c, kind, source) ? 1 : 0;

@@ -574,8 +574,19 @@ void drawEmptyNoteFxRow(App& a, ObjectId channel, float width) {
     ImGui::EndCombo();
   }
   ImGui::SameLine(0, theme::kS3);
+  // The kinds there are, as many as fit (a shorter list where the row is narrow, the full one in its tooltip).
   const float room = ImGui::GetContentRegionAvail().x;
-  if (room > 60) small(i18n::tr("Arpeggiator, chords, step sequencer, key mapping..."), room);
+  const char* const kinds[] = {i18n::N_("Arpeggiator, chords, step sequencer, key mapping..."), i18n::N_("Arpeggiator, chords, step sequencer..."),
+                               i18n::N_("Arpeggiator, chords..."), i18n::N_("Arpeggiator...")};
+  ImGui::PushFont(a.fontMono, kSmall);
+  int fits = -1;
+  for (int k = 0; k < 4 && fits < 0; ++k)
+    if (ImGui::CalcTextSize(i18n::tr(kinds[k])).x <= room) fits = k;
+  ImGui::PopFont();
+  if (fits >= 0) {
+    small(i18n::tr(kinds[fits]), room);
+    if (fits > 0) ui::Tooltip(kinds[0]);
+  }
   ImGui::EndChild();
   ImGui::PopStyleVar(3);
   ImGui::PopStyleColor(2);

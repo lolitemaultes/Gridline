@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include "../core/ClipLoop.h"
 #include "../core/ClipRate.h"
@@ -17,6 +18,7 @@
 #include "Render.h"
 #include "Sample.h"
 #include "TimeStretch.h"
+#include "WarpOps.h"
 
 namespace fs = std::filesystem;
 
@@ -179,6 +181,35 @@ std::vector<Clip> audioLoopPasses(const Song& song, const Clip& c, const TempoMa
     out.push_back(x);
   }
   return out;
+}
+
+std::vector<AudibleSpan> clipAudibleSpans(const Song& song, const Clip& c, const TempoMap& map) {
+  std::vector<AudibleSpan> out;
+  if (c.kind != ClipKind::Audio) return out;
+  SamplePtr smp;
+  double a = 0, b = 0;
+  if (!sourceWindow(song, c, smp, a, b)) return out;
+  for (const Clip& p : audioLoopPasses(song, c, map)) {
+    const double t0 = static_cast<double>(p.start), passEnd = static_cast<double>(p.start + song.clipLength(p));
+    double s0 = 0, sb = 0;
+    if (!clipWindow(song, p, nullptr, s0, sb)) continue;  // (a pass that starts at its window's end: silent)
+    const double tb = clipTickOfSource(song, p, map, sb);  // where its audio runs out
+    const double t1 = std::isfinite(tb) ? std::min(passEnd, tb) : passEnd;
+    if (!(t1 > t0)) continue;
+    AudibleSpan sp;
+    sp.t0 = t0, sp.t1 = t1;
+    sp.s0 = s0;
+    sp.s1 = t1 < passEnd ? sb : std::min(sb, clipSourceAt(song, p, map, t1));
+    sp.pass = p;
+    out.push_back(sp);
+  }
+  return out;
+}
+
+double clipHeardSourceAt(const std::vector<AudibleSpan>& spans, const Song& song, const TempoMap& map, double tick) {
+  for (const AudibleSpan& sp : spans)
+    if (tick >= sp.t0 && tick < sp.t1) return std::clamp(clipSourceAt(song, sp.pass, map, tick), sp.s0, sp.s1);
+  return std::numeric_limits<double>::quiet_NaN();
 }
 
 Clip withClipLoop(const Song& song, const TempoMap& map, Clip c, bool on) {

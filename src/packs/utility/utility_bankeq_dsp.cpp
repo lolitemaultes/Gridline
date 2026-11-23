@@ -130,6 +130,8 @@ class Halfband2x {
 
 class BankEqFx final : public UtilityFx {
  public:
+  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible) while nobody watches it.
+  bool restsWhenFaint() const override { return unwatched(); }
   BankEqFx() { reset(); }
   void reset() override {
     std::memset(z1_, 0, sizeof z1_);
@@ -146,7 +148,7 @@ class BankEqFx final : public UtilityFx {
   int latencyFor(const PluginState& s, double) const override {
     return s.params.size() > static_cast<size_t>(BqOversample) && s.params[BqOversample] >= 0.5f ? Halfband2x::kLatency : 0;
   }
-  BandTelemetry* bandTelemetry() override { return &tel_; }
+  BandTelemetry* bandTelemetryOf() override { return &tel_; }
 
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     float* sL = sendL_;

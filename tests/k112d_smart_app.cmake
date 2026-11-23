@@ -30,7 +30,7 @@ file(WRITE "${OUT}/input.txt" "5 toasts clear
 50 parts smart touch 1 6
 56 parts smart state
 57 parts smart learn off
-58 save ${OUT}/before-undo.gridline.json
+58 save \"${OUT}/before-undo.gridline.json\"
 59 mod super 1
 60 key z
 61 mod super 0
@@ -43,8 +43,8 @@ file(WRITE "${OUT}/input.txt" "5 toasts clear
 70 mod super 0
 73 parts smart state
 74 docstate
-76 save ${OUT}/smart.gridline.json
-80 open ${OUT}/smart.gridline.json
+76 save \"${OUT}/smart.gridline.json\"
+80 open \"${OUT}/smart.gridline.json\"
 92 parts smart state
 94 quit discard
 ")

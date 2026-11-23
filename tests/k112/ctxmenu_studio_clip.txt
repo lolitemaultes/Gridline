@@ -11,6 +11,10 @@ Split by channel
 Merge selected clips ( Ctrl+G )
 Fit length to pattern
 --------------------------------
+Render clip to audio
+Render clip to file...
+Render to audio >
+--------------------------------
 Rename pattern... >
 Pattern colour >
 Select all clips of this pattern
@@ -41,6 +45,16 @@ Chop > Chop and stutter...
 Split by channel
 Merge selected clips
 Fit length to pattern
+Render clip to audio
+Render clip to file...
+Render to audio >
+Render to audio > As an audio clip
+Render to audio > Into a slicer channel
+Render to audio > As a one-shot sampler channel
+Render to audio > Onto the next free drum pad
+Render to audio > Open in Loupe
+Render to audio > Save to the library
+Render to audio > Render options...
 Rename pattern... >
 Pattern colour >
 Select all clips of this pattern

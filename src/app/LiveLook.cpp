@@ -25,8 +25,11 @@
 #include "../core/PluginInfo.h"
 #include "../core/RemoteFs.h"
 #include "../core/Arrangements.h"
+#include "../core/ClipsMeter.h"
 #include "../core/ClipLoop.h"
+#include "../core/ClipWindow.h"
 #include "../core/TrackModes.h"
+#include "../core/MixerHide.h"
 #include "../core/TrackOrder.h"
 #include "../engine/Chop.h"
 #include "../engine/ClipOps.h"
@@ -36,6 +39,7 @@
 #include "App.h"
 #include "AudioRecordUi.h"
 #include "BrowserUi.h"
+#include "ClipEditor.h"
 #include "CollabUi.h"
 #include "ContextMenus.h"
 #include "CursorAnchor.h"
@@ -50,8 +54,10 @@
 #include "PluginUI.h"
 #include "Theme.h"
 #include "TrackModeUi.h"
+#include "MixerHideUi.h"
 #include "Widgets.h"
 #include "Windows.h"
+#include "RenderSheetUi.h"
 
 namespace gl::livelook {
 namespace {
@@ -801,6 +807,7 @@ void selectReturn(App& a, ObjectId mixer) {
   a.selMixer = mixer;
   a.playlist.trackSel.clear();  // as Main (N50-10): the return is the chosen track now
   a.playlist.selected.clear();
+  trackChosen();  // 0.7.8: its chain in the detail spot
 }
 
 void busEffectAdded(App& a, ObjectId mixer) {
@@ -1199,6 +1206,7 @@ void selectMain(App& a) {
   a.playlist.trackSel.clear();  // N50-10: Main is the selected track now (no track title stays outlined)
   a.playlist.selected.clear();
   a.focusWindow = "Master chain";
+  trackChosen();  // 0.7.8: the detail spot shows the device view (Main's chain docks there)
 }
 
 void toggleArrangementRecord(App& a) {
@@ -1432,9 +1440,18 @@ void offerOneShots(App& a) {
                  20.0);
 }
 int gRenameFrames = 0;  // N47-12: frames until the clip band's Name field takes the keyboard
-std::vector<std::string> arrangementSets(const App& a) {
+// 0.7.8: the detail view (the clip view or the device view in one spot). gDetailWant: a clip (1) or a
+// track (2) chosen by a click, applied once the button is up and no menu is open (the click that
+// selects also starts a drag, and the swap rebuilds the dock); gDetailFocus: the keys go with it.
+// gLastClip: the view shown last (the spot brought back shows it). gOpenDetail: an opened Set's view.
+int gDetailWant = 0;
+bool gDetailFocus = false, gLastClip = false;
+int gOpenDetail = 0, gOpenDetailFrames = 0;
+int gDetailFocusFrames = 0;  // frames left for the shown view's window to take the keys
+int gDetailKeysFrame = -100;  // the frame they were handed over (the grid does not take them back just after)
+std::vector<std::string> setList(const App& a, const char* key) {
   std::vector<std::string> v;
-  const std::string all = a.settings.getString("clips.arrangementSets");
+  const std::string all = a.settings.getString(key);
   size_t p = 0;
   while (p < all.size()) {
     const size_t e = all.find('\n', p);
@@ -1445,7 +1462,43 @@ std::vector<std::string> arrangementSets(const App& a) {
   }
   return v;
 }
+std::vector<std::string> arrangementSets(const App& a) { return setList(a, "clips.arrangementSets"); }
+// 0.7.8: the Sets last saved with the clip view / the device view in the detail spot (newest first); a
+// Set in neither opens with the spot as the layout last had it.
+constexpr const char* kClipViewSets = "clips.clipViewSets";
+constexpr const char* kDeviceViewSets = "clips.deviceViewSets";
+void putSetList(App& a, const char* key, std::vector<std::string> v, const std::string& file, bool in) {
+  v.erase(std::remove(v.begin(), v.end(), file), v.end());
+  if (in) v.insert(v.begin(), file);
+  if (v.size() > kArrangementSetsMax) v.resize(kArrangementSetsMax);
+  std::string all;
+  for (const std::string& f : v) all += (all.empty() ? "" : "\n") + f;
+  a.settings.set(key, all);
+}
 }  // namespace
+
+bool detailShown(const App& a) {
+  const layout::Shell& sh = layout::shell(layout::Preset::Live);
+  const layout::State st = layoutui::regionState(a, layout::Preset::Live);
+  return layout::visible(sh, st, "live.clip") || layout::visible(sh, st, "live.device");
+}
+bool clipViewShown(const App& a) {
+  return layout::visible(layout::shell(layout::Preset::Live), layoutui::regionState(a, layout::Preset::Live), "live.clip");
+}
+void showDetailView(App& a, bool clip, bool focus) {
+  layoutui::setRegionVisible(a, clip ? "live.clip" : "live.device", true);  // (the other one goes: one spot)
+  layoutui::setRegionVisible(a, clip ? "live.device" : "live.clip", false);  // (also when this one was shown already: a 0.7.7 stack)
+  // A view with nothing open in it opens its main part: the notes editor, the device chain.
+  if (bool* f = layoutui::windowOpenFlag(a, clip ? "Piano roll" : "Device chain")) *f = true;
+  gLastClip = clip;
+  if (focus) gDetailFocusFrames = 30;  // (the region is built on the next frames: viewFrame hands the keys over)
+}
+void swapDetailView(App& a) {
+  const bool clip = detailShown(a) ? clipViewShown(a) : gLastClip;
+  showDetailView(a, !clip, true);
+}
+void trackChosen() { gDetailWant = 2, gDetailFocus = false; }
+void clipChosen(bool focus) { gDetailWant = 1, gDetailFocus = gDetailFocus || focus; }
 
 void projectOpened(App& a, const std::string& file) {
   // On a launch with a file the shell is not built yet: the view waits for Clips' first frames
@@ -1474,6 +1527,11 @@ void projectOpened(App& a, const std::string& file) {
   if (now) showView(a, grid);
   gOpenView = grid ? 1 : 0;
   gOpenFrames = 4;
+  {  // 0.7.8: and the detail spot shows the view it was saved with here (a Set never saved here: as it was)
+    const std::vector<std::string> cv = setList(a, kClipViewSets), dv = setList(a, kDeviceViewSets);
+    gOpenDetail = file.empty() ? 0 : std::find(cv.begin(), cv.end(), file) != cv.end() ? 1 : std::find(dv.begin(), dv.end(), file) != dv.end() ? 2 : 0;
+    gOpenDetailFrames = 4;
+  }
   gPickFirst = true;
   gFocus = {};  // N52-12: a track chosen in the set before is no choice in this one
   gOfferOneShots = true;
@@ -1513,16 +1571,23 @@ void projectSaved(App& a, const std::string& file) {
     return;
   }
   std::vector<std::string> v = arrangementSets(a);
-  bool arrangement = false;
+  const std::vector<std::string> cv = setList(a, kClipViewSets), dv = setList(a, kDeviceViewSets);
+  bool arrangement = false, clipView = false, known = true;
   if (active(a)) {
     arrangement = !gridView(a);
+    clipView = clipViewShown(a);  // 0.7.8: the detail spot's view (hidden: the one shown last)
+    if (!detailShown(a)) clipView = gLastClip;
   } else {  // K-314 (A-07): outside Clips its view is not changed: a Save As keeps the one the Set had
     const std::string was = a.projectFile();
     if (was.empty() || was == file) {
       return;
     }
     arrangement = std::find(v.begin(), v.end(), was) != v.end();
+    clipView = std::find(cv.begin(), cv.end(), was) != cv.end();
+    known = clipView || std::find(dv.begin(), dv.end(), was) != dv.end();
   }
+  putSetList(a, kClipViewSets, cv, file, known && clipView);
+  putSetList(a, kDeviceViewSets, dv, file, known && !clipView);
   v.erase(std::remove(v.begin(), v.end(), file), v.end());
   if (arrangement) {
     v.insert(v.begin(), file);
@@ -2027,17 +2092,54 @@ void viewFrame(App& a) {
           selectClipChannel(a, *c);
         }
     }
+    // 0.7.8: a click on a track (its title, header, mixer strip) or a clip turns the detail spot to that
+    // track's devices or that clip, also when the selection did not change (a click on the selected
+    // clip after the device view was shown brings the clip view back).
+    if (gDetailWant != 0 && GImGui->OpenPopupStack.Size == 0 && !ImGui::IsAnyMouseDown()) {
+      const bool clip = gDetailWant == 1;
+      if (!clip || !a.playlist.selected.empty()) showDetailView(a, clip, gDetailFocus);
+      gDetailWant = 0;
+      gDetailFocus = false;
+    }
+  }
+  {  // 0.7.8: the detail spot, one view at a time
+    const layout::Shell& sh = layout::shell(layout::Preset::Live);
+    const layout::State st = layoutui::regionState(a, layout::Preset::Live);
+    const bool clip = layout::visible(sh, st, "live.clip"), dev = layout::visible(sh, st, "live.device");
+    // A layout saved while the two could stack (0.7.7) shows both: the one the selection asks for stays.
+    if (clip && dev) showDetailView(a, !a.playlist.selected.empty(), false);
+    else if (clip || dev) gLastClip = clip;
+    if (gOpenDetailFrames > 0 && gOpenDetail > 0 && !a.projectLoading()) {  // an opened Set's view (the spot hidden: it stays hidden)
+      --gOpenDetailFrames;
+      if ((clip || dev) && clip != (gOpenDetail == 1)) showDetailView(a, gOpenDetail == 1, false);
+      gLastClip = gOpenDetail == 1;
+    }
+    // The keys go to the view shown (Shift+Tab, its button, a double-click on a clip) once it is drawn
+    // in the spot: the window in front there (the notes editor, the device chain, another tab).
+    if (gDetailFocusFrames > 0) {
+      --gDetailFocusFrames;
+      const char* region = gLastClip ? "live.clip" : "live.device";
+      const ImGuiDockNode* n = layout::visible(sh, st, region) ? ImGui::DockBuilderGetNode(layoutui::regionNode(region)) : nullptr;
+      const ImGuiWindow* w = n ? n->VisibleWindow : nullptr;
+      if (w && w->WasActive && !w->Hidden) {
+        a.focusWindow = w->Name;
+        gDetailFocusFrames = 0;
+        gDetailKeysFrame = ImGui::GetFrameCount();
+      } else if (gDetailFocusFrames == 0) {
+        a.focusWindow = gLastClip ? "Piano roll" : "Device chain";
+      }
+    }
   }
   {  // C44-03: Tab is the view swap. Dear ImGui's own tabbing (always on) moved the keyboard into the
      // next text field of the focused window (the mixer band's volume fields), after which every Tab
      // went to that field; in Clips it only runs while a text field already has the keyboard.
     const ImGuiIO& io = ImGui::GetIO();
     GImGui->ConfigNavEnableTabbing = io.WantTextInput;
-    // C44-17: Shift+Tab swaps the clip band and the device band (one detail band at a time).
+    // C44-17: Shift+Tab swaps the clip view and the device view in the detail spot (one at a time;
+    // 0.7.8: the keys go with it; the spot hidden comes back with the other view than last time).
     if (!io.WantTextInput && io.KeyShift && !io.KeyCtrl && !io.KeyAlt && !io.KeySuper && !a.showStage && GImGui->OpenPopupStack.Size == 0 &&
         ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
-      const bool clipShown = layout::visible(layout::shell(layout::Preset::Live), layoutui::regionState(a, layout::Preset::Live), "live.clip");
-      layoutui::setRegionVisible(a, clipShown ? "live.device" : "live.clip", true);
+      swapDetailView(a);
     }
   }
   {  // C44-08: Esc closes the open menu or context menu (the top one; a dialog keeps its own Esc)
@@ -2107,8 +2209,81 @@ struct HeaderCells {
 // right edge.
 constexpr float kHeadMeterW = 10.0f;
 constexpr float kNameGlyphW = 13.0f;  // a name's mode glyph (trackui::drawNameGlyph)
+// K-383: Clips' track meters (core/ClipsMeter.h): each mixer track's post-fader peak on a top weighted
+// 0 to -60 dB scale, green to -6 dB, yellow to 0 dB, red at and over 0 dBFS, with the Clips ballistics
+// (instant rise, a 20 dB/s fall, a short held peak line). The strips, the headers and the device
+// chain's Out draw this one. One state per key, run once a frame whoever draws it.
+struct ClipsMeterState {
+  LevelMeter m = clipsmeter::makeMeter();
+  int frame = -1;
+};
+struct ClipsMeterDev {  // the last frame's drawn meters (dev-input "clipsmeters")
+  std::string what;
+  float levelDb[2], holdDb[2], pos[2], oldPos[2];
+};
+std::vector<ClipsMeterDev> gClipsMeterDev;
+int gClipsMeterDevFrame = -1;
+
+const LevelMeter& clipsMeterRun(uint64_t key, float peakL, float peakR) {
+  static std::map<uint64_t, ClipsMeterState> states;
+  if (states.size() > 4096) states.clear();  // deleted tracks never pile up
+  ClipsMeterState& st = states[key];
+  const int frame = ImGui::GetFrameCount();
+  if (st.frame != frame) {
+    st.m.update(peakL, peakR, ImGui::GetIO().DeltaTime);
+    st.frame = frame;
+  }
+  return st.m;
+}
+
+void clipsMeterDraw(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const LevelMeter& m, float gap, const char* what) {
+  const auto& P = pal();
+  const float y6 = clipsmeter::pos(clipsmeter::kYellowDb);
+  const float bw = std::max(1.0f, std::floor((p1.x - p0.x - gap) * 0.5f));
+  const float h = p1.y - p0.y;
+  auto yAt = [&](float f) { return std::round(p1.y - f * h); };
+  ClipsMeterDev dev{what ? what : "", {}, {}, {}, {}};
+  for (int c = 0; c < 2; ++c) {
+    const float x0 = p0.x + static_cast<float>(c) * (bw + gap), x1 = x0 + bw;
+    const float db = m.levelDb(c);
+    const float v = db > LevelMeter::kFloorDb ? clipsmeter::pos(db) : 0.0f;
+    if (v > 0.0f) {
+      const float top = yAt(v);
+      if (db > 0.0f) {  // an over: the whole bar red
+        dl->AddRectFilled(ImVec2(x0, top), ImVec2(x1, p1.y), P.meterHigh);
+      } else {
+        dl->AddRectFilled(ImVec2(x0, std::max(top, yAt(y6))), ImVec2(x1, p1.y), P.meterLow);
+        if (v > y6) dl->AddRectFilled(ImVec2(x0, top), ImVec2(x1, yAt(y6)), P.meterMid);
+      }
+    }
+    const float hd = m.holdDb(c);
+    if (hd > LevelMeter::kFloorDb) {
+      const float hy = std::min(yAt(clipsmeter::pos(hd)), p1.y - 1.0f);
+      dl->AddLine(ImVec2(x0, hy + 0.5f), ImVec2(x1, hy + 0.5f), hd > 0.0f ? P.meterHigh : hd > clipsmeter::kYellowDb ? P.meterMid : P.meterLow, 1.0f);
+    }
+    dev.levelDb[c] = db, dev.holdDb[c] = hd, dev.pos[c] = v;
+    dev.oldPos[c] = db > LevelMeter::kFloorDb ? LevelMeter::toPos(db) : 0.0f;  // the shared -60..+6 dB scale it used
+  }
+  if (what) {
+    const int frame = ImGui::GetFrameCount();
+    if (gClipsMeterDevFrame != frame) gClipsMeterDevFrame = frame, gClipsMeterDev.clear();
+    if (gClipsMeterDev.size() < 512) gClipsMeterDev.push_back(dev);
+  }
+}
+
+// The meter in an item of its own at the cursor (the strips and the device chain's Out).
+void clipsMeterItem(uint64_t key, float peakL, float peakR, ImVec2 size, const char* what) {
+  const LevelMeter& m = clipsMeterRun(key, peakL, peakR);
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  ImGui::Dummy(size);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), pal().dark ? pal().field : pal().surface950, 1.0f);
+  clipsMeterDraw(dl, p, ImVec2(p.x + size.x, p.y + size.y), m, 1.0f, what);
+}
+
 // Checkpoint 57: a header's level meter, at the right edge `right`: the slot, and the bars of `mixer`'s
-// level when it has one. Tracks, returns and Main draw the same one.
+// level when it has one. Tracks, returns and Main draw the same one (K-383: the Clips meter and its
+// ballistics; it drew each frame's raw peak, which flickered).
 void headMeter(App& a, ImDrawList* dl, float right, float my0, float my1, ObjectId mixer) {
   const auto& P = pal();
   const float mx0 = right - kHeadMeterW - 3;
@@ -2117,16 +2292,9 @@ void headMeter(App& a, ImDrawList* dl, float right, float my0, float my1, Object
     return;
   }
   const mixmeters::Reading r = mixmeters::get(a, mixer);
-  auto bar = [&](float x, float peak) {
-    const float db = peak > 1e-6f ? 20.0f * std::log10(peak) : -90.0f;
-    const float u = std::clamp((db + 60.0f) / 66.0f, 0.0f, 1.0f);
-    const float bw = (kHeadMeterW - 3) * 0.5f;
-    if (u > 0) {
-      dl->AddRectFilled(ImVec2(x, my1 - (my1 - my0) * u), ImVec2(x + bw, my1), db > -0.1f ? P.meterHigh : db > -12 ? P.meterMid : P.meterLow);
-    }
-  };
-  bar(mx0 + 1, r.peakL);
-  bar(mx0 + 1 + (kHeadMeterW - 2) * 0.5f, r.peakR);
+  const LevelMeter& m = clipsMeterRun((uint64_t{1} << 62) | mixer, r.peakL, r.peakR);
+  const std::string what = "head " + std::to_string(mixer);
+  clipsMeterDraw(dl, ImVec2(mx0 + 1, my0), ImVec2(mx0 + kHeadMeterW - 1, my1), m, 1.0f, what.c_str());
 }
 // HDR-1118: one grid at every height. The controls column (activator, S, arm; the volume under the
 // activator and the pan under S and arm) sits at the same x on every row, so the columns line up down
@@ -2294,6 +2462,15 @@ namespace {
 // Returns: mixer tracks an aux send reaches (not the master, not a bus fed by outputs), in mixer order.
 // K-112c (C47): a bus (the demo's Drum Bus) is where its members' outputs go, not a return.
 std::vector<size_t> returnTracks(const Song& s) { return trackmodes::returnTracks(s); }
+// GitHub #58: the returns the session view shows a column and a strip for (hidden ones left out;
+// each keeps its letter, so the send knobs still name it).
+std::vector<size_t> shownReturns(const Song& s) {
+  std::vector<size_t> out;
+  for (size_t r : trackmodes::returnTracks(s))
+    if (!mixhide::trackHidden(s, r)) out.push_back(r);
+  return out;
+}
+
 // C47: View > Return tracks off folds their strips, titles and rows away (the sends stay on the tracks).
 bool returnsShown(const App& a) { return a.settings.getBool("clips.returnTracks"); }
 // A return's letter (A, B, ... by its place among the returns), or 0.
@@ -2310,14 +2487,39 @@ float busRowsHeight(const App& a) {
   if (s.mixer.empty() || !returnsShown(a)) {
     return 0.0f;
   }
-  return 6.0f + kBusRowH * static_cast<float>(returnTracks(s).size());
+  return 6.0f + kBusRowH * static_cast<float>(shownReturns(s).size());
+}
+
+// GitHub #58: "N hidden" at the right end of Main's title while some mixer strips are hidden; a click
+// lists them (and Show all). Drawn after the title, whose button lets it take the hover.
+static void hiddenChip(App& a, ImDrawList* dl, float x0, float x1, float y0, float h) {
+  const std::string hl = mixhideui::hiddenLabel(a.doc.song());
+  if (hl.empty()) return;
+  const auto& P = pal();
+  const float fs = theme::kFontLabel;
+  const float tw = std::ceil(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, hl.c_str()).x);
+  const float cw = tw + 10, cx1 = x1 - 3, cx0 = std::max(x0 + 2, cx1 - cw);
+  const ImVec2 q0(cx0, y0 + 2), q1(cx1, y0 + h - 2);
+  ImGui::SetCursorScreenPos(q0);
+  const bool click = ImGui::InvisibleButton("##hiddenchip", ImVec2(std::max(1.0f, q1.x - q0.x), std::max(1.0f, q1.y - q0.y)));
+  const bool hov = ImGui::IsItemHovered();
+  devMenuItem("mixer hidden"), devNoteRect("mixhidden");
+  dl->AddRectFilled(q0, q1, hov ? theme::withAlpha(P.ink, 0.45f) : theme::withAlpha(P.ink, 0.28f), 0.0f);
+  theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(q0.x + 5, theme::textTop(a.fontRegular, fs, q0.y, q1.y - q0.y)), q1.x - q0.x - 8,
+                      theme::contrastText(mainFill()), hl.c_str());
+  ui::Hint("Tracks hidden from the mixer (they still play): click to show them");
+  if (click) ImGui::OpenPopup("##clipshidden");
+  if (ImGui::BeginPopup("##clipshidden")) {
+    mixhideui::hiddenMenu(a);
+    ImGui::EndPopup();
+  }
 }
 
 float drawBusRows(App& a, ImDrawList* dl, float x0, float x1, float top, float bottom) {
   const Song& s = a.doc.song();
   if (s.mixer.empty()) return 0;
   if (!returnsShown(a)) return 0;
-  const std::vector<size_t> rows = returnTracks(s);
+  const std::vector<size_t> rows = shownReturns(s);
   float y = top + 6;  // a gap after the last track
   // hunt-clips3-1119: a row only partly in room is drawn cut at the foot (at 960 x 600 the returns were
   // left out until the arrangement was scrolled).
@@ -2712,8 +2914,8 @@ void drawStatusBar(App& a) {
   // K-297: the mixer band has its toggle here too, in the corner (as the refs keep it); before, it could
   // only be shown or hidden from the View menu.
   const Tg tg[] = {{"##sb_mix", i18n::N_("Mixer"), "live.mixer", i18n::N_("Mixer band: the tracks' levels, pans and sends under the main view"), "Mixer"},
-                   {"##sb_dev", i18n::N_("Devices"), "live.device", i18n::N_("Device band: the selected track's instrument and the inserts of its mixer track"), "Device chain"},
-                   {"##sb_clip", i18n::N_("Clip"), "live.clip", i18n::N_("Clip band: the selected clip's properties and editors"), "Piano roll"}};
+                   {"##sb_dev", i18n::N_("Devices"), "live.device", i18n::N_("Device band: the selected track's instrument and the inserts of its mixer track, in the same place as the clip band (Shift+Tab switches)"), "Device chain"},
+                   {"##sb_clip", i18n::N_("Clip"), "live.clip", i18n::N_("Clip band: the selected clip's properties and editors, in the same place as the device band (Shift+Tab switches)"), "Piano roll"}};
   for (const Tg& t : tg) {
     const ImGuiDockNode* node = ImGui::DockBuilderGetNode(layoutui::regionNode(t.region));
     const bool on = layout::visible(sh, st, t.region) && node && node->Windows.Size > 0;  // shown, with something in it
@@ -2727,14 +2929,17 @@ void drawStatusBar(App& a) {
     dl->AddRectFilled(bp, ImVec2(bp.x + tw, bp.y + h - 7), on ? P.hot : hov ? P.surface700 : P.surface800, theme::kRadiusSm);
     dl->AddText(a.fontRegular, fs, ImVec2(bp.x + 9, ty), on ? theme::contrastText(P.hot) : P.textDim, text);
     ui::Hint(t.hint);
+    devNoteRect(t.id + 2);  // (sdlat targets "sb_mix", "sb_dev", "sb_clip")
     if (click) {
+      const bool detail = t.region != std::string("live.mixer");
       if (on) {
         layoutui::setRegionVisible(a, t.region, false);
+      } else if (detail) {
+        // 0.7.8: Clip and Devices switch the one detail spot (as Shift+Tab does) and give it the keys.
+        showDetailView(a, t.region == std::string("live.clip"), true);
       } else {
-        // Checkpoint 48: the toggles are independent, as the reference's: turning one on with the other
-        // shown stacks them, the clip band over the device band (refs 456, 466; Shift+Tab swaps).
         layoutui::setRegionVisible(a, t.region, true, false);
-        // A band with nothing open in it opens its main part: the notes editor, the device chain, the mixer.
+        // A band with nothing open in it opens its main part (the mixer).
         if (bool* f = layoutui::windowOpenFlag(a, t.part)) *f = true;
       }
     }
@@ -2896,6 +3101,10 @@ struct Device {
   float visW = 0;       // the compact view's width (DeviceViews), 0 without one
   bool hosted = false;  // an installed plugin: its own window, never redrawn here
   bool above = false;   // the picture spans the card's top, one row of knobs under it
+  // 0.7.8: a sampler channel: its card holds the Audio clip window's band form (the chip row, or the
+  // tab bar when the band is tall enough), as the window shows it everywhere else; no knobs.
+  bool form = false;
+  float formW = 0;  // the card's width (from the chain's)
   std::vector<devview::Main> mains;  // its main controls (DeviceViews); empty: its first parameters
   // The k-th knob's parameter and label.
   int param(int k) const { return mains.empty() ? k : mains[static_cast<size_t>(k)].param; }
@@ -2909,6 +3118,9 @@ struct Device {
 // Checkpoint 58 (N57-10): 72 px knob cells (60 cut 5 of an instrument's 15 labels: "Unison voi..."), and a
 // narrower Out box (its note is a hint now).
 constexpr float kCardTitleH = 20.0f, kCardPad = 8.0f, kKnobCellW = 72.0f, kFoldedW = 22.0f, kOutW = 168.0f;
+// 0.7.8: the frame the sampler's band form had the keys (the band's own keys leave them to it).
+int gFormKeys = -100;
+int gFoldNoted = -1;  // the frame the first card's fold arrow was noted (dev "sdlat devfold")
 // Checkpoint 60 (N59-09): the knob cells' width this frame: kKnobCellW, wider when the band has room to
 // spare (at 1920 the chain left 775 px empty while long names were cut).
 float gKnobCellW = kKnobCellW;
@@ -2920,16 +3132,11 @@ constexpr int kAllParamsMax = 64;  // an installed plugin with more starts with 
 struct BandUi {
   uint64_t selected = 0;        // the selected device (Delete removes it, P switches its A/B)
   std::set<uint64_t> folded;    // shown as a narrow strip
-  std::set<uint64_t> expanded;  // its whole editor shows in the panel above the chain
   std::set<uint64_t> shut;      // an installed plugin's parameter panel is folded away
   std::set<uint64_t> configuring;
   std::map<uint64_t, int> seen;  // Configure: the last touched parameter when it was last looked at
   uint64_t rowSel = 0;           // Configure: the selected panel entry (target key) ...
   int rowSelParam = -1;          // ... and its parameter (Delete removes it)
-  float expandH = 0;             // the panel's height (0: 45 % of the window)
-  std::map<uint64_t, float> edSize;  // an expanded editor's width: a factor of its own width, or -1 (fill the panel)
-  float plainH = 0;              // the band's height without the panel
-  int boostFrame = -100;         // the last frame the band asked to grow (it stays grown a frame or two after)
 };
 BandUi& bandUi() {
   static BandUi u;
@@ -2950,7 +3157,7 @@ void followMove(ObjectId owner, int from, int to) {
       if (PluginTarget{owner, sl}.key() == k) return PluginTarget{owner, moved(sl)}.key();
     return k;
   };
-  for (std::set<uint64_t>* s : {&u.folded, &u.expanded, &u.shut, &u.configuring}) {
+  for (std::set<uint64_t>* s : {&u.folded, &u.shut, &u.configuring}) {
     std::set<uint64_t> n;
     for (uint64_t k : *s) n.insert(remap(k));
     *s = std::move(n);
@@ -3066,35 +3273,35 @@ void setShown(App& a, const PluginTarget& t, const std::vector<int>& v) {
 float cardWidth(const Device& d) {
   const BandUi& u = bandUi();
   if (u.folded.count(d.target.key())) return kFoldedW;
+  if (d.form) return d.formW;
   if (d.hosted) return u.shut.count(d.target.key()) ? kHostedShutW : kHostedRowsW;
   const float cell = gKnobCellW;
   if (d.above && d.visW > 0) return kCardPad * 2 + std::max(d.visW + 40, static_cast<float>(std::max(2, d.cols)) * cell);
   return kCardPad * 2 + (d.visW > 0 ? d.visW + 8 : 0.0f) + static_cast<float>(std::max(d.visW > 0 ? 1 : 3, d.cols)) * cell;
 }
 
-// The device's window is the floating one (Studio's), asked for from its title bar or menu.
+// The device's window: the floating one, as in Studio (the instrument and effect editors open there
+// in Clips). A sampler's settings show in its card (the Audio clip window's band form) unless asked
+// for in a window (`insWindow`).
 bool inWindow(App& a, const BandPick& pick, const Device& d) {
   if (d.hosted) return pluginWindowShown(a, d.target);
-  if (d.target.isChannel()) return pick.insWindow && a.settingsChannel == d.target.owner;
-  return pick.fxWindow && a.fxEditor.first == d.target.owner && a.fxEditor.second == d.target.slot;
+  if (d.target.isChannel()) return (!d.form || pick.insWindow) && a.settingsChannel == d.target.owner;
+  return a.fxEditor.first == d.target.owner && a.fxEditor.second == d.target.slot;
 }
 void toggleWindow(App& a, BandPick& pick, const Device& d) {
   if (d.hosted) {
     togglePluginWindow(a, d.target);
     return;
   }
-  BandUi& u = bandUi();
   const bool shown = inWindow(a, pick, d);
   if (d.target.isChannel()) {
-    pick.insWindow = !shown;
+    if (d.form) pick.insWindow = !shown;
     a.settingsChannel = shown ? kNoId : d.target.owner;
-    if (!shown) a.focusWindow = "###channelsettings";
+    if (!shown) a.focusWindow = d.form ? "Audio clip" : "###channelsettings";
   } else {
-    pick.fxWindow = !shown;
     a.fxEditor = shown ? std::pair<ObjectId, int>{kNoId, -1} : std::pair<ObjectId, int>{d.target.owner, d.target.slot};
     if (!shown) a.focusWindow = "###fxeditor";
   }
-  if (!shown) u.expanded.erase(d.target.key());  // one place at a time: the window or the panel
 }
 
 // A small glyph button of a device's title bar.
@@ -3237,12 +3444,6 @@ void deviceMenu(App& a, BandPick& pick, const Device& d) {
     if (folded) u.folded.erase(key);
     else u.folded.insert(key);
   }
-  if (!d.hosted && ImGui::MenuItem(i18n::tr("Show its whole editor above"), nullptr, u.expanded.count(key) > 0)) {
-    if (!u.expanded.erase(key)) {
-      u.expanded.insert(key);
-      if (inWindow(a, pick, d)) toggleWindow(a, pick, d);
-    }
-  }
   if (ImGui::MenuItem(d.hosted ? i18n::tr("Plugin window") : i18n::tr("Open in a window"), nullptr, inWindow(a, pick, d))) toggleWindow(a, pick, d);
   if (d.hosted && ImGui::MenuItem(i18n::tr("Configure"), nullptr, u.configuring.count(key) > 0)) {
     if (!u.configuring.erase(key)) {
@@ -3255,6 +3456,10 @@ void deviceMenu(App& a, BandPick& pick, const Device& d) {
   if (ImGui::MenuItem(i18n::tr("Compare: copy to the other side"))) pui::compareStore(a, d.target);
   ImGui::Separator();
   pluginWindowMenu(a, d.target.owner, d.target.slot, true);
+  if (d.target.isChannel()) {  // K-254: the instrument's notes in the current clip to audio
+    ImGui::Separator();
+    renderui::channelMenu(a, d.target.owner);
+  }
 }
 
 }  // namespace
@@ -3293,8 +3498,7 @@ void presetPopup(App& a, const Device& d) {
   if (d.info->presets.empty()) ImGui::TextDisabled("%s", i18n::tr("No presets"));
   for (size_t i = 0; i < d.info->presets.size(); ++i)
     if (ImGui::MenuItem(d.info->presets[i].name.c_str())) {
-      PluginState ns = presetState(*d.info, i);
-      ns.data = st->data;
+      PluginState ns = presetStateKeepingData(*d.info, i, st->data);
       ns.shown = st->shown;
       setPluginState(a, d.target, ns, "load preset");
       pui::presetLoaded(d.target, d.info->type, d.info->presets[i].name);
@@ -3406,7 +3610,7 @@ void drawCard(App& a, ImDrawList* dl, BandPick& pick, const Device& d, ImVec2 p,
   const uint64_t key = d.target.key();
   const float w = cardWidth(d);
   const ImVec2 p1(p.x + w, p.y + h);
-  const bool selected = u.selected == key, folded = u.folded.count(key) > 0, expanded = u.expanded.count(key) > 0;
+  const bool selected = u.selected == key, folded = u.folded.count(key) > 0;
   const bool canBypass = !d.target.isChannel();
   dl->AddRectFilled(p, p1, P.surface800, theme::kRadiusLg);
   if (folded) {  // a strip: lamp, then the name reading upwards; a double-click (or click) unfolds it
@@ -3416,8 +3620,12 @@ void drawCard(App& a, ImDrawList* dl, BandPick& pick, const Device& d, ImVec2 p,
       a.doc.setParam(slotEnableParam(d.target.owner, d.target.slot), d.enabled ? 0.0 : 1.0, false);
     ui::Hint(canBypass ? "Turn the effect on or off (the mixer slot's switch)" : "The track's instrument");
     deviceLamp(dl, ImVec2(p.x + w * 0.5f, p.y + 10), d.enabled);
-    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 20));
-    ImGui::InvisibleButton("##strip", ImVec2(w, std::max(10.0f, h - 20)));
+    // K-379: the fold arrow under the lamp, where the open card has it: a click unfolds it in place
+    if (titleIcon(dl, "##fold", ui::Icon::Right, ImVec2(p.x + (w - 16) * 0.5f, p.y + 20), 16, false, "Unfold the device"))
+      u.folded.erase(key);
+    if (gFoldNoted != ImGui::GetFrameCount()) devNoteRect("devfold"), gFoldNoted = ImGui::GetFrameCount();  // (the first card's: an sdlat target)
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 38));
+    ImGui::InvisibleButton("##strip", ImVec2(w, std::max(10.0f, h - 38)));
     if (ImGui::IsItemClicked()) u.selected = key;
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) u.folded.erase(key);
     ui::Hint("Double-click to unfold the device");
@@ -3427,16 +3635,18 @@ void drawCard(App& a, ImDrawList* dl, BandPick& pick, const Device& d, ImVec2 p,
     }
     if (!d.target.isChannel()) dropOnInsert(a, d.target.owner, d.target.slot);
     const float fs = theme::kFontCaption;
-    const std::string nm = fitText(a.fontBold, fs, d.name, h - 32);
+    const std::string nm = fitText(a.fontBold, fs, d.name, h - 50);
     upwardText(dl, a.fontBold, fs, ImVec2(std::round(p.x + (w - fs) * 0.5f), p1.y - 8), d.enabled ? P.text : P.textDim, nm);
     if (selected) dl->AddRect(p, p1, P.hot, theme::kRadiusLg, 1.5f, 0);
     return;
   }
   dl->AddRectFilled(p, ImVec2(p1.x, p.y + kCardTitleH), selected ? theme::mix(P.surface700, P.surface600, 0.6f) : P.surface700, theme::kRadiusLg,
                     ImDrawFlags_RoundCornersTop);
-  // Title bar, left to right: the activator, the expand arrow (a built-in: its whole editor above the
-  // band) or the panel triangle (an installed plugin: its parameter panel), the name; at the right
-  // the window button, Configure (installed plugins) or presets (built-ins), and the menu.
+  // Title bar, left to right: the activator, the fold arrow (a built-in: the card folds to a strip in
+  // place, as a double-click on its name does) or the panel triangle (an installed plugin: its
+  // parameter panel folds away in place), the name; at the right the window button (the device's own
+  // editor in its window, as everywhere else in Gridline), Configure (installed plugins) or presets
+  // (built-ins), and the menu. K-379: the arrow opened a half-screen copy of the editor above the band.
   const float ty0 = p.y + 2;
   ImGui::SetCursorScreenPos(ImVec2(p.x + 2, ty0));
   if (ImGui::InvisibleButton("##lamp", ImVec2(14, kCardTitleH - 4)) && canBypass)
@@ -3451,13 +3661,9 @@ void drawCard(App& a, ImDrawList* dl, BandPick& pick, const Device& d, ImVec2 p,
       else u.shut.erase(key);
     }
   } else {
-    const bool hit = titleIcon(dl, "##expand", expanded ? ui::Icon::ChevronDown : ui::Icon::Right, ImVec2(p.x + 16, ty0), 14, expanded,
-                               expanded ? "Close the whole editor above the band" : "Show the device's whole editor above the band");
-    devNoteRect("devexpand");
-    if (hit && !u.expanded.erase(key)) {
-      u.expanded.insert(key);
-      if (inWindow(a, pick, d)) toggleWindow(a, pick, d);
-    }
+    if (titleIcon(dl, "##fold", ui::Icon::ChevronDown, ImVec2(p.x + 16, ty0), 14, false, "Fold the device to a narrow strip"))
+      u.folded.insert(key);
+    if (gFoldNoted != ImGui::GetFrameCount()) devNoteRect("devfold"), gFoldNoted = ImGui::GetFrameCount();  // (the first card's: an sdlat target)
   }
   // Right end: menu, then (to its left) the window button and Configure / presets. K-112: an installed
   // plugin's window button sits left of its name, after the panel triangle, and Configure is a word
@@ -3545,10 +3751,21 @@ void drawCard(App& a, ImDrawList* dl, BandPick& pick, const Device& d, ImVec2 p,
   const float fs = theme::kFontCaption + 1;
   const float ty = theme::textTop(a.fontBold, fs, p.y, kCardTitleH);
   dl->PushClipRect(ImVec2(nameX, p.y), ImVec2(nameX + nameW, p.y + kCardTitleH), true);
-  dl->AddText(a.fontBold, fs, ImVec2(nameX + 1, ty), d.enabled ? P.text : P.textDim, d.name.c_str());
+  // (a long name ends in an ellipsis clear of the buttons after it, not cut through a letter)
+  dl->AddText(a.fontBold, fs, ImVec2(nameX + 1, ty), d.enabled ? P.text : P.textDim, fitText(a.fontBold, fs, d.name, nameW - 6).c_str());
   dl->PopClipRect();
   if (selected) dl->AddRect(p, p1, P.hot, theme::kRadiusLg, 1.5f, 0);
   const ImVec2 b0(p.x + kCardPad, p.y + kCardTitleH + 4);
+  if (d.form) {  // a sampler: the Audio clip window's band form fills the card under its title
+    const ImVec2 f0(p.x + 1, p.y + kCardTitleH), f1(p1.x - 1, p1.y - 2);
+    if (f1.y - f0.y < 40 || f1.x - f0.x < 100) return;
+    ImGui::SetCursorScreenPos(f0);
+    ImGui::BeginChild("##smpform", ImVec2(f1.x - f0.x, f1.y - f0.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    clipeditor::drawDeviceBand(a, d.target.owner, ImGui::GetContentRegionAvail());
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)) gFormKeys = ImGui::GetFrameCount();
+    ImGui::EndChild();
+    return;
+  }
   if (d.hosted) {
     if (!u.shut.count(key)) hostedRows(a, d, b0, ImVec2(p1.x - kCardPad, p1.y - 6));
     else dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(b0.x, b0.y + 2), P.textFaint, d.sub.c_str());
@@ -3559,18 +3776,12 @@ void drawCard(App& a, ImDrawList* dl, BandPick& pick, const Device& d, ImVec2 p,
   float ky = b0.y;
   if (d.above && d.visW > 0) {  // the picture across the card's top, the knobs in a row under it
     const ImVec2 v0(b0.x, b0.y + 2), v1(p1.x - kCardPad, std::max(b0.y + 24, p1.y - 6 - cellH));
-    if (devview::draw(a, d.target, v0, v1)) {
-      u.expanded.insert(key);
-      if (inWindow(a, pick, d)) toggleWindow(a, pick, d);
-    }
+    if (devview::draw(a, d.target, v0, v1) && !inWindow(a, pick, d)) toggleWindow(a, pick, d);  // its editor, in its window
     ky = v1.y + 4;
     kx = b0.x + std::max(0.0f, (p1.x - kCardPad - b0.x - static_cast<float>(d.cols) * cell) * 0.5f);
   } else if (d.visW > 0) {  // the device's picture, then its main knobs beside it
     const ImVec2 v0(b0.x, b0.y + 2), v1(b0.x + d.visW, p1.y - 8);
-    if (devview::draw(a, d.target, v0, v1)) {  // double-clicked where no handle took it
-      u.expanded.insert(key);
-      if (inWindow(a, pick, d)) toggleWindow(a, pick, d);
-    }
+    if (devview::draw(a, d.target, v0, v1) && !inWindow(a, pick, d)) toggleWindow(a, pick, d);  // double-clicked where no handle took it
     kx += d.visW + 8;
   }
   for (int k = 0; k < d.knobs; ++k) {
@@ -3584,6 +3795,10 @@ void drawCard(App& a, ImDrawList* dl, BandPick& pick, const Device& d, ImVec2 p,
 // Which knobs a device shows: its main controls (DeviceViews), else its first parameters (the main
 // ones come first in most plugins), as many as fit.
 void pickKnobs(App& a, Device& d, float bandH) {
+  if (d.form) {  // (the band form has the sampler's controls)
+    d.knobs = d.cols = 0;
+    return;
+  }
   if (!d.hosted) d.mains = devview::mainParams(a, d.target);
   const int n = !d.mains.empty() ? static_cast<int>(d.mains.size()) : d.info ? static_cast<int>(d.info->params.size()) : 0;
   const float cellH = bandKnobH() + 2;
@@ -3596,91 +3811,37 @@ void pickKnobs(App& a, Device& d, float bandH) {
 
 std::string slotLabel(int slot) { return std::string(i18n::tr("Insert")) + " " + std::to_string(slot + 1); }
 
-// The whole editors of the expanded devices, side by side in the panel above the chain.
-void expandedPanel(App& a, const std::vector<Device>& devs, ImVec2 size) {
-  const auto& P = pal();
-  BandUi& u = bandUi();
-  ImGui::BeginChild("##expanded", size, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  const float h = ImGui::GetContentRegionAvail().y;
-  const float panelW = ImGui::GetContentRegionAvail().x;
-  // One editor open fills the panel's width (the main view above has made room for it); several
-  // sit side by side at their own widths. The size menu overrides either.
-  int open = 0;
-  for (const Device& d : devs) open += !d.hosted && u.expanded.count(d.target.key()) ? 1 : 0;
-  const float byDefault = open == 1 ? -1.0f : 1.0f;
-  bool first = true;
-  for (const Device& d : devs) {
-    if (d.hosted || !u.expanded.count(d.target.key())) continue;
-    if (!first) ImGui::SameLine(0, 8);
-    first = false;
-    ImGui::PushID(static_cast<int>(d.target.key() & 0x7fffffff));
-    // Its width: its own (the editor's design width) times the size chosen in its size menu, or the
-    // panel's whole width; never narrower than 360 px.
-    const float own = std::max(360.0f, d.info && d.info->editorWidth > 0 ? d.info->editorWidth : 600.0f);
-    const auto sz = u.edSize.find(d.target.key());
-    const float factor = sz != u.edSize.end() ? sz->second : byDefault;
-    const float room = std::max(360.0f, panelW - 8);
-    const float w = factor < 0 ? room : factor == 1.0f ? std::min(own, room) : std::max(360.0f, own * factor);
-    ImGui::BeginGroup();
-    const ImVec2 t0 = ImGui::GetCursorScreenPos();
-    // K-112c: the editor's frame as the refs draw an expanded device: square, a title strip in
-    // regular weight flush on the body, the whole framed by a dark 1 px rim.
-    const float edH = std::max(40.0f, h - kCardTitleH - 4) + kCardTitleH;
-    dl->AddRectFilled(t0, ImVec2(t0.x + w, t0.y + kCardTitleH), P.surface700, 0.0f);
-    dl->AddLine(ImVec2(t0.x, t0.y + kCardTitleH - 0.5f), ImVec2(t0.x + w, t0.y + kCardTitleH - 0.5f), IM_COL32(16, 18, 22, 170));
-    deviceLamp(dl, ImVec2(t0.x + 9, t0.y + kCardTitleH * 0.5f), d.enabled);
-    dl->AddText(a.fontRegular, theme::kFontCaption + 1, ImVec2(t0.x + 18, theme::textTop(a.fontRegular, theme::kFontCaption + 1, t0.y, kCardTitleH)), P.text, d.name.c_str());
-    if (titleIcon(dl, "##close", ui::Icon::Close, ImVec2(t0.x + w - 20, t0.y + 2), 16, false, "Close the whole editor (the device stays in the chain)"))
-      u.expanded.erase(d.target.key());
-    if (titleIcon(dl, "##size", ui::Icon::Zoom, ImVec2(t0.x + w - 38, t0.y + 2), 16, factor != byDefault, "Editor size: how wide the editor is above the band"))
-      ImGui::OpenPopup("##sizemenu");
-    if (ImGui::BeginPopup("##sizemenu")) {
-      ImGui::TextDisabled("%s", i18n::tr("Editor size"));
-      constexpr float kSizes[] = {0.75f, 1.0f, 1.25f, 1.5f, 2.0f};
-      for (float f : kSizes) {
-        char lbl[32];
-        std::snprintf(lbl, sizeof lbl, "%d %%", static_cast<int>(std::lround(f * 100)));
-        if (ImGui::MenuItem(lbl, nullptr, factor == f)) {
-          if (f == byDefault) u.edSize.erase(d.target.key());
-          else u.edSize[d.target.key()] = f;
-        }
-      }
-      if (ImGui::MenuItem(i18n::tr("The panel's whole width"), nullptr, factor < 0)) {
-        if (byDefault < 0) u.edSize.erase(d.target.key());
-        else u.edSize[d.target.key()] = -1.0f;
-      }
-      ImGui::EndPopup();
-    }
-    ImGui::SetCursorScreenPos(ImVec2(t0.x, t0.y + kCardTitleH));
-    ImGui::BeginChild("##body", ImVec2(w, edH - kCardTitleH), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
-    if (d.target.isChannel()) {
-      drawChannelSettingsBody(a, d.target.owner, BodyFrame{w - 8, false, "Device chain"});
-    } else if (packs::showInLoupePanel(a, d.target)) {  // the pinned Loupe panel's session: the band draws the panel's body
-      drawLoupeBody(a, w - 8, std::max(ImGui::GetContentRegionAvail().y, 120.0f));
-      hostbody::claim(hostbody::Body::Loupe, "Device chain");
-    } else {
-      drawEffectEditorBody(a, d.target.owner, d.target.slot, BodyFrame{w - 8, false, "Device chain"});
-    }
-    ImGui::EndChild();
-    ImGui::EndGroup();
-    dl->AddRect(ImVec2(t0.x + 0.5f, t0.y + 0.5f), ImVec2(t0.x + w - 0.5f, t0.y + edH - 0.5f), IM_COL32(16, 18, 22, 200));
-    ImGui::PopID();
-  }
-  if (first) ImGui::Dummy(ImVec2(1, 1));
-  if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && ImGui::GetIO().KeyShift && ImGui::GetIO().MouseWheel != 0)
-    ImGui::SetScrollX(ImGui::GetScrollX() - ImGui::GetIO().MouseWheel * 60.0f);
-  ImGui::EndChild();
-}
-
 }  // namespace
+
+namespace {
+int gBandAsked = -1;  // dev "liveband" (devBandAsk): the script frame it was asked at
+}  // namespace
+void devBandAsk(int frame) { gBandAsked = frame; }
+
+void devDetailReport(App& a, int frame) {
+  const layout::Shell& sh = layout::shell(layout::Preset::Live);
+  const layout::State st = layoutui::regionState(a, layout::Preset::Live);
+  auto node = [](const char* region) { return ImGui::DockBuilderGetNode(layoutui::regionNode(region)); };
+  auto shown = [&](const char* region) { return layout::visible(sh, st, region); };
+  auto lit = [&](const char* region) {  // as the status bar lights its button
+    const ImGuiDockNode* n = node(region);
+    return shown(region) && n && n->Windows.Size > 0;
+  };
+  const bool clip = shown("live.clip"), dev = shown("live.device");
+  const ImGuiDockNode* n = clip ? node("live.clip") : dev ? node("live.device") : nullptr;
+  const ImGuiWindow* nav = GImGui->NavWindow ? GImGui->NavWindow->RootWindow : nullptr;
+  std::printf("livedetail frame %d: clip %d device %d rect %.0f %.0f %.0f %.0f lit clip %d device %d grid %d focus \"%s\"\n", frame, clip ? 1 : 0,
+              dev ? 1 : 0, n ? static_cast<double>(n->Pos.x) : 0.0, n ? static_cast<double>(n->Pos.y) : 0.0, n ? static_cast<double>(n->Size.x) : 0.0,
+              n ? static_cast<double>(n->Size.y) : 0.0, lit("live.clip") ? 1 : 0, lit("live.device") ? 1 : 0, gridView(a) ? 1 : 0,
+              nav ? nav->Name : "-");
+  std::fflush(stdout);
+}
 
 void deviceBand(App& a, BandPick& pick) {
   const auto& P = pal();
   const Song& s = a.doc.song();
   BandUi& u = bandUi();
-  // A floating editor closed from its own window: the band hosts the device again.
-  if (pick.fxWindow && a.fxEditor.first == kNoId) pick.fxWindow = false;
+  // A sampler's settings window closed: its card shows them again.
   if (pick.insWindow && a.settingsChannel == kNoId) pick.insWindow = false;
   const ObjectId chId = a.settingsChannel != kNoId ? a.settingsChannel : a.selChannel;
   const Channel* ch = s.channel(chId);
@@ -3738,18 +3899,19 @@ void deviceBand(App& a, BandPick& pick) {
     ImGui::Dummy(ImVec2(av.x, std::max(av.y, 60.0f)));
     return;
   }
-  // A device opened elsewhere (the mixer, the rack, View) is selected and shows its whole editor
-  // above the band, unless it was asked for in a window.
+  // A device opened elsewhere (the mixer, the rack, View) is selected and unfolded; its editor opens in
+  // its floating window, as in Studio. A sampler's settings show in its card (the band form), on the
+  // tab they were asked for.
   if (pick.open && pick.kind != 0 && pick.kind != 1) pick.open = false;  // the master chain has its own window
   if (pick.open) {
     pick.open = false;
     const PluginTarget t = pick.kind == 0 && ch ? PluginTarget{ch->id, -1} : PluginTarget{pick.fxTrack, pick.slot};
-    const bool floating = t.isChannel() ? pick.insWindow : pick.fxWindow;
     const PluginState* st = t.state(s);
     if (st && !isHostedType(st->type)) {
       u.selected = t.key();
       u.folded.erase(t.key());
-      if (!floating) u.expanded.insert(t.key());
+      if (t.isChannel() && clipeditor::takesChannel(a, t.owner))
+        clipeditor::deviceBandTab(a.channelTab == 1 ? clipwin::TabChannel : clipwin::entryTab(clipwin::Entry::ChannelSettings));
     }
   }
   // What the chain is (the track, then where the inserts live): the bracket label's hint.
@@ -3770,7 +3932,8 @@ void deviceBand(App& a, BandPick& pick) {
     d.hosted = isHostedType(ch->plugin.type);
     d.name = d.info ? d.info->name : ch->name;
     d.sub = i18n::tr("instrument");
-    d.visW = d.hosted ? 0.0f : devview::width(a, d.target);
+    d.form = !d.hosted && clipeditor::takesChannel(a, ch->id);
+    d.visW = d.hosted || d.form ? 0.0f : devview::width(a, d.target);
     devs.push_back(d);
   }
   int firstFree = -1;
@@ -3793,49 +3956,23 @@ void deviceBand(App& a, BandPick& pick) {
       d.visW = hosted ? 0.0f : devview::width(a, d.target);
       devs.push_back(d);
     }
-  // Forget devices that are gone (or the panel would open for nothing).
+  // Forget a selected device that is gone.
   {
     std::set<uint64_t> live;
     for (const Device& d : devs) live.insert(d.target.key());
-    for (auto it = u.expanded.begin(); it != u.expanded.end();) it = live.count(*it) ? std::next(it) : u.expanded.erase(it);
     if (!live.count(u.selected)) u.selected = 0;
   }
-  bool anyExpanded = false;
-  for (const Device& d : devs) anyExpanded = anyExpanded || (!d.hosted && u.expanded.count(d.target.key()));
-
-  // The panel above the chain: the band's region grows by its height while something is expanded.
-  const float availH = ImGui::GetContentRegionAvail().y;
-  const float vpH = ImGui::GetMainViewport()->Size.y;
-  // The plain height is measured only once the band has shrunk back (a growth lasts a frame or two
-  // after the last ask), so a device opened just after another closed still finds its room.
-  const int frameNow = ImGui::GetFrameCount();
-  if (u.plainH <= 0 || (!anyExpanded && frameNow - u.boostFrame > 3)) u.plainH = std::max(80.0f, availH);
-  if (u.expandH <= 0) u.expandH = std::floor(vpH * 0.45f);
-  u.expandH = std::clamp(u.expandH, 120.0f, std::max(120.0f, vpH * 0.6f - u.plainH));
-  float chainH = availH;
-  if (anyExpanded) {
-    layoutui::setBandBoost("live.device", u.expandH + 6);
-    u.boostFrame = frameNow;
-    // (The first frame the band has not grown yet: the panel shows from the next one.)
-    // K-297 (round 09): in a short window (1024 x 640) the band cannot grow by the panel's height and
-    // the editor got ~120 px (its section headers only): the panel keeps a usable height and the
-    // chain below gives up rows of knobs for it (down to one row).
-    constexpr float kPanelMinH = 240.0f, kChainMinH = 96.0f;
-    const float panelH = std::max(availH - u.plainH - 6, std::min(kPanelMinH, availH - kChainMinH - 6));
-    if (panelH >= 60) {
-      // The panel's top edge drags its height (up: taller).
-      const ImVec2 s0 = ImGui::GetCursorScreenPos();
-      ImGui::InvisibleButton("##panelsize", ImVec2(ImGui::GetContentRegionAvail().x, 5));
-      if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-      if (ImGui::IsItemActive()) u.expandH -= ImGui::GetIO().MouseDelta.y;
-      ui::Hint("Drag to make the editors above the band taller or shorter");
-      ImGui::GetWindowDrawList()->AddLine(ImVec2(s0.x, s0.y + 2), ImVec2(s0.x + ImGui::GetContentRegionAvail().x, s0.y + 2),
-                                          ImGui::IsItemActive() ? P.hot : P.line);
-      expandedPanel(a, devs, ImVec2(0, panelH - 5));
-      chainH = ImGui::GetContentRegionAvail().y;
+  if (gBandAsked >= 0) {  // K-379 (dev "liveband"): each card as the band shows it
+    const int asked = std::exchange(gBandAsked, -1);
+    std::printf("liveband frame %d: devices %zu\n", asked, devs.size());
+    for (const Device& d : devs) {
+      const uint64_t k = d.target.key();
+      std::printf("  liveband \"%s\" %s folded %d window %d shut %d width %.0f\n", d.name.c_str(), d.hosted ? "hosted" : d.form ? "sampler" : "builtin",
+                  u.folded.count(k) ? 1 : 0, inWindow(a, pick, d) ? 1 : 0, u.shut.count(k) ? 1 : 0, static_cast<double>(cardWidth(d)));
     }
+    std::fflush(stdout);
   }
-  const float bandH = std::max(80.0f, chainH - 2);
+  const float bandH = std::max(80.0f, ImGui::GetContentRegionAvail().y - 2);
   // The knobs fit the shortest card: the inserts' (under their bracket label).
   const float knobH = bandH - 16.0f;
   for (Device& d : devs) pickKnobs(a, d, knobH);
@@ -3849,13 +3986,16 @@ void deviceBand(App& a, BandPick& pick) {
   ImVec2 p = ImGui::GetCursorScreenPos();
   const float x0 = p.x;
   float bracket0 = -1;
+  // 0.7.8: a sampler's band form takes about 60 % of the chain (the inserts and Out after it).
+  for (Device& d : devs)
+    if (d.form) d.formW = std::floor(std::clamp(chainW * 0.6f, 640.0f, 900.0f));
   {  // N59-09: the room the chain leaves (at the plain cell width) widens the knob cells, up to kKnobCellMaxW
     gKnobCellW = kKnobCellW;
     float used = 12.0f + 120.0f + 6.0f + 12.0f + kOutW + 14.0f + 8.0f;  // the bracket, the smallest drop zone, Out
     int cols = 0;
     for (const Device& d : devs) {
       used += cardWidth(d) + 12.0f;
-      if (!d.hosted && !bandUi().folded.count(d.target.key())) cols += std::max(d.visW > 0 ? 1 : 3, d.cols);
+      if (!d.hosted && !d.form && !bandUi().folded.count(d.target.key())) cols += std::max(d.visW > 0 ? 1 : 3, d.cols);
     }
     if (cols > 0 && chainW > used) gKnobCellW = std::min(kKnobCellMaxW, kKnobCellW + std::floor((chainW - used) / static_cast<float>(cols)));
   }
@@ -3948,7 +4088,7 @@ void deviceBand(App& a, BandPick& pick) {
   if (mt) {
     const mixmeters::Reading r = mixmeters::get(a, mt->id);
     ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 4));
-    ui::Meter(ImGui::GetID("##outmeter"), r.peakL, r.peakR, ImVec2(6, h - 12));
+    clipsMeterItem((uint64_t{2} << 62) | mt->id, r.peakL, r.peakR, ImVec2(6, h - 12), nullptr);  // K-383
     ui::Hint("The chain's output level (the mixer track's meter)");
     p.x += 12;
     const float ow = kOutW;
@@ -3978,7 +4118,8 @@ void deviceBand(App& a, BandPick& pick) {
   ImGui::Dummy(ImVec2(p.x - x0 + 4, h - 4));
   // Keys while the band has focus: Delete removes the selected insert (or, in Configure, the
   // selected panel entry); P switches the selected device's A/B compare.
-  if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive()) {
+  if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive() &&
+      gFormKeys < ImGui::GetFrameCount() - 1) {  // (a sampler's band form with the keys keeps them)
     const ImGuiIO& io = ImGui::GetIO();
     const bool plain = !io.KeyCtrl && !io.KeyAlt && !io.KeySuper && !io.KeyShift;
     const Device* sel = nullptr;
@@ -4510,7 +4651,7 @@ constexpr int kFixedSizes = 9;
 int editorOf() { return keys::focusContext() == keys::Context::PianoRoll ? 1 : 0; }
 }  // namespace
 
-void editGrid(const App& a, int which, Snap snap, double pxPerTick, Tick& visGrid, Tick& snapG, Tick& effGrid) {
+void editGrid(const App& a, int which, Snap snap, double pxPerTick, Tick& visGrid, SnapGrid& snapG, SnapGrid& effGrid) {
   EditGridState& e = gEdit[std::clamp(which, 0, 1)];
   if (!active(a) || !e.on) {
     e.shown = effGrid;
@@ -4542,9 +4683,9 @@ void editGrid(const App& a, int which, Snap snap, double pxPerTick, Tick& visGri
     g = std::max<Tick>(1, g * 2 / 3);
   }
   visGrid = g;
-  effGrid = g;
+  effGrid = SnapGrid(g);
   const bool alt = ImGui::GetIO().KeyAlt;  // Alt inverts snapping, as before
-  snapG = e.snap != alt ? g : 1;
+  snapG = SnapGrid(e.snap != alt ? g : 1);
   e.shown = g;
 }
 
@@ -4766,11 +4907,20 @@ bool clipLaunchBox(App& a, ObjectId id, bool heading) {
   if (heading && !columnSection(a, i18n::tr("Launch"), 0, "##foldalaunch")) {
     return true;
   }
+  return clipLaunchParts(a, id, kLaunchPartLaunch | kLaunchPartFollow);
+}
+
+bool clipLaunchParts(App& a, ObjectId id, int parts) {
+  const Song& s = a.doc.song();
+  const Clip* c = s.clip(id);
+  if (!c || c->start >= s.live.areaEnd) {
+    return false;
+  }
   const ClipLaunch cur = c->launchSet;
   ClipLaunch to = cur;
   const PlaylistTrack* tr = c->track >= 0 && c->track < static_cast<int>(s.tracks.size()) ? &s.tracks[static_cast<size_t>(c->track)] : nullptr;
   ImGui::PushID(static_cast<int>(id) + 0x6C00000);
-  {
+  if (parts & kLaunchPartLaunch) {
     const float wm = columnField(a, i18n::tr("Launch mode"), 0, 2);
     const std::string trackMode = std::string(i18n::tr("Track's")) + (tr ? std::string(" (") + i18n::tr(padModeName(tr->pad)) + ")" : std::string());
     if (ui::BeginCombo("##cmode", to.mode < 0 ? trackMode.c_str() : i18n::tr(padModeName(static_cast<PadMode>(to.mode))), wm)) {
@@ -4797,17 +4947,17 @@ bool clipLaunchBox(App& a, ObjectId id, bool heading) {
       ImGui::EndCombo();
     }
     ui::Hint("The grid this clip waits for when launched (Global: its track's, set for every track in the control bar)");
+    bool legato = to.legato;
+    if (ImGui::Checkbox(i18n::tr("Legato"), &legato)) {
+      to.legato = legato;
+    }
+    ui::Hint("Legato: launched while another clip of its track plays, it takes over at that clip's play position");
   }
-  bool legato = to.legato;
-  if (ImGui::Checkbox(i18n::tr("Legato"), &legato)) {
-    to.legato = legato;
-  }
-  ui::Hint("Legato: launched while another clip of its track plays, it takes over at that clip's play position");
   FollowSpec f = to.follow;
-  if (followFields(a, f, true, s.clipLength(*c))) {
+  if ((parts & kLaunchPartFollow) && followFields(a, f, true, s.clipLength(*c))) {
     to.follow = f;
   }
-  {
+  if (parts & kLaunchPartFollow) {
     bool all = a.engine.followActions();
     // hunt-clips2-1119: a label that fits the Launch column (it was cut off mid-word); the hint says the rest.
     if (ImGui::Checkbox(i18n::tr("All follow actions"), &all)) {
@@ -4824,6 +4974,34 @@ bool clipLaunchBox(App& a, ObjectId id, bool heading) {
   return true;
 }
 
+std::string clipLaunchSummary(const App& a, ObjectId id, bool follow) {
+  const Song& s = a.doc.song();
+  const Clip* c = s.clip(id);
+  if (!c) {
+    return std::string();
+  }
+  const ClipLaunch& l = c->launchSet;
+  if (follow) {
+    const FollowSpec& f = l.follow;
+    if (!f.on) {
+      return i18n::tr("off");
+    }
+    std::string out = followActionName(f.a);
+    if (f.b != FollowAction::None && f.chanceB > 0) {
+      out += std::string(" / ") + followActionName(f.b);
+    }
+    if (f.linked) {
+      out += ", " + std::to_string(f.loops) + "x";
+    }
+    return out;
+  }
+  const PlaylistTrack* tr = c->track >= 0 && c->track < static_cast<int>(s.tracks.size()) ? &s.tracks[static_cast<size_t>(c->track)] : nullptr;
+  const char* mode = l.mode >= 0 ? padModeName(static_cast<PadMode>(l.mode)) : tr ? padModeName(tr->pad) : "";
+  std::string out = i18n::tr(mode);
+  out += ", ";
+  out += l.quant < 0 ? i18n::tr("Global") : gridName(static_cast<LaunchGrid>(l.quant));
+  return out;
+}
 
 // -------------------------------------------------------------- clip grid ----
 
@@ -4966,10 +5144,12 @@ void selectSlot(App& a, int t, int k) {
   const std::vector<int> in = slotClips(s, t, k);
   if (in.empty()) {
     a.playlist.selected.clear();  // an empty slot: the clip band empties (C44-26)
+    trackChosen();                // 0.7.8: and the detail spot shows the track's devices
     return;
   }
   const Clip& c = s.playlist[static_cast<size_t>(in.front())];
   a.playlist.selected = {c.id};  // the clip band shows the clip (its notes, or an audio clip's sample)
+  clipChosen();                  // 0.7.8: in the detail spot, also when it was the clip selected already
   if (c.kind == ClipKind::Pattern) a.selectPattern(c.pattern);
   selectClipChannel(a, c);
 }
@@ -5746,6 +5926,15 @@ bool dropGridClips(App& a, int track, Tick at) {
   return true;
 }
 
+void devClipsMeters(App& a, int frame) {
+  std::printf("clipsmeters frame %d: drawn %d playing %d meters %zu\n", frame, gClipsMeterDevFrame, a.engine.playing() ? 1 : 0, gClipsMeterDev.size());
+  for (const ClipsMeterDev& d : gClipsMeterDev)
+    std::printf("  meter %s levelDb %.1f %.1f holdDb %.1f %.1f pos %.3f %.3f oldpos %.3f %.3f\n", d.what.c_str(), static_cast<double>(d.levelDb[0]),
+                static_cast<double>(d.levelDb[1]), static_cast<double>(d.holdDb[0]), static_cast<double>(d.holdDb[1]), static_cast<double>(d.pos[0]),
+                static_cast<double>(d.pos[1]), static_cast<double>(d.oldPos[0]), static_cast<double>(d.oldPos[1]));
+  std::fflush(stdout);
+}
+
 void devGrid2State(App& a, int frame) {
   const Song& s = a.doc.song();
   std::printf("grid2 frame %d: scene %d tempo %.2f sig %d/%d songTempo %.2f songSig %d/%d sceneLen %lld follow %d sel %zu view %s\n", frame,
@@ -5829,10 +6018,10 @@ void toggleDetail(App& a) {
   const layout::State st = layoutui::regionState(a, layout::Preset::Live);
   const bool clip = layout::visible(sh, st, "live.clip"), dev = layout::visible(sh, st, "live.device");
   if (clip || dev) {
-    layoutui::setRegionVisible(a, "live.clip", false, false);
-    layoutui::setRegionVisible(a, "live.device", false, false);
+    layoutui::setRegionVisible(a, "live.clip", false);
+    layoutui::setRegionVisible(a, "live.device", false);
   } else {
-    layoutui::setRegionVisible(a, "live.clip", true, false);
+    showDetailView(a, gLastClip, false);  // 0.7.8: the spot comes back with the view it last showed
   }
 }
 
@@ -5884,11 +6073,11 @@ void deleteTracks(App& a, int track) {
     gSel = {};
   });
 }
-void duplicateTracks(App& a, int track) {
+void duplicateTracks(App& a, int track, bool withContent) {
   const std::vector<int> sel = tracksFor(a, track);
-  a.later([&a, sel] {
+  a.later([&a, sel, withContent] {
     std::string why;
-    const int t = trackmodes::duplicateTracks(a.doc, sel, &why);
+    const int t = trackmodes::duplicateTracks(a.doc, sel, &why, withContent);
     if (t < 0) return a.notify(i18n::tr(why.empty() ? "Select the tracks to duplicate" : why.c_str()));
     a.playlist.trackSel = {t};
     gSel = {};
@@ -6097,6 +6286,48 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
     if (ImU32 fc = 0; const float fl = collabui::flash(a, "mixer/#" + std::to_string(mx->id), &fc))
       dl->AddRect(ImVec2(x + 1, my0 + 1), ImVec2(x + w - 1, my0 + mh - 1), theme::withAlpha(fc, fl), 0.0f, 0, 2.0f);
   }
+  // GitHub #58: the track's mixer strip hidden (or in a collapsed group): a quiet stand-in in its
+  // column (the clip grid keeps its columns), a click shows it; narrow: the meter, the activator
+  // and S only.
+  const int mxIndex = mx ? s.mixerIndex(mx->id) : -1;
+  const bool slim = mx && !master && mxIndex > 0 && mx->narrow;
+  auto stripMenu = [&] {  // a right-click on the strip's free space: the mixer track's menu
+    if (!mx || master || mxIndex <= 0) return;
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(ImVec2(x, my0), ImVec2(x + w, my0 + mh)) && !ImGui::IsAnyItemHovered() &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+      ImGui::OpenPopup("##clipsmixmenu");
+    if (ImGui::BeginPopup("##clipsmixmenu")) {
+      if (const int mi = a.doc.song().mixerIndex(mx->id); mi > 0) mixerTrackMenu(a, static_cast<size_t>(mi));
+      ImGui::EndPopup();
+    }
+  };
+  if (mx && !master && mxIndex > 0 && mixhide::trackHidden(s, static_cast<size_t>(mxIndex))) {
+    const bool byGroup = !mx->hidden;
+    const ImVec2 c(std::round(x + w * 0.5f), std::round(my0 + mh * 0.42f));
+    ImGui::SetCursorScreenPos(ImVec2(x, my0));
+    const bool click = ImGui::InvisibleButton("##hiddenstrip", ImVec2(std::max(1.0f, w), std::max(1.0f, mh)));
+    devNoteRect("clipshiddenstrip");  // (tests: the stand-in keeps the track's column)
+    const bool hov = ImGui::IsItemHovered();
+    if (hov) dl->AddRectFilled(ImVec2(x + 2, my0 + 2), ImVec2(x + w - 2, my0 + mh - 2), theme::withAlpha(P.surface700, 0.5f));
+    ui::drawIcon(dl, ui::Icon::EyeOff, c, 14, hov ? P.text : P.textFaint);
+    const char* lab = byGroup ? i18n::tr("In a collapsed group") : i18n::tr("Hidden");
+    theme::centreText(dl, a.fontRegular, theme::kFontLabel, ImVec2(x + 2, c.y + 12), ImVec2(x + w - 2, c.y + 28), hov ? P.text : P.textDim, lab);
+    if (byGroup) ui::Hint("This track's mixer strip is in a collapsed group (it still plays): click to expand the group");
+    else ui::Hint("This track's mixer strip is hidden (it still plays): click to show it");
+    if (click) {
+      if (byGroup) mixhide::setGroupFolded(a.doc, mx->group, false);
+      else mixhide::setHidden(a.doc, {mx->id}, false);
+    }
+    const bool trk = t >= 0 && t < static_cast<int>(s.tracks.size());
+    dl->AddRectFilled(ImVec2(x, std::round(my0 + mh - 3.0f)), ImVec2(x + w, std::round(my0 + mh)), trk ? theme::content(s.tracks[static_cast<size_t>(t)].color) : theme::content(mx->color));
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##clipsmixmenu");
+    if (ImGui::BeginPopup("##clipsmixmenu")) {
+      if (const int mi = a.doc.song().mixerIndex(mx->id); mi > 0) mixerTrackMenu(a, static_cast<size_t>(mi));
+      ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return;
+  }
   // The sends row (see above), then two columns. Left, top to bottom: the peak and the volume in
   // dB, pan, then the activator, S and arm stacked. Right: the fader beside a meter with its dB
   // scale, the rest of the strip's height.
@@ -6113,7 +6344,7 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
   const float bottom = my0 + mh, top = my0 + 4 + ioH + (sendsRow ? sendsHeight(s) : 0.0f);
   const float colL = std::min(44.0f, std::floor(w * 0.48f));  // the left column's width
   const float rx = x + colL + 4;                               // the right column
-  if (sendsRow && mx && !master) {
+  if (sendsRow && mx && !master && !slim) {
     const float sy = my0 + 4 + ioH;
     const auto sends = sendsOf(s, mx);
     if (!sends.empty()) {
@@ -6163,7 +6394,7 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
   // Volume (dB). K-112c (round 44): a track with no mixer track yet has none (empty02, 069: an empty
   // MIDI track's strip is bare but for its meter and buttons).
   const float volTop = compact ? top : top + 18;
-  if (mx) {
+  if (mx && !slim) {
     const ImVec2 v0(x + 2, volTop), v1(x + colL, volTop + 16);
     dl->AddRectFilled(v0, v1, P.dark ? P.field : P.surface950, theme::kRadiusSm);
     char vb[16];
@@ -6194,11 +6425,11 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
   // three fit, a size smaller when the full knob does not (Pan is a first-class control).
   if (compact && nb == 3) panY = actY - 27;
   if (panY < minY && actY - 21 >= minY) panY = actY - 21, panR = 9.0f;
-  const bool showPan = nb == 3 && panY >= minY, fitSolo = nb >= 2, fitArm = nb >= 3 && !trackmodes::isGroupTrack(a.doc.song(), t);  // checkpoint 51: a group records nothing
+  const bool showPan = !slim && nb == 3 && panY >= minY, fitSolo = nb >= 2, fitArm = nb >= 3 && !trackmodes::isGroupTrack(a.doc.song(), t);  // checkpoint 51: a group records nothing
   // Checkpoint 60 (N59-04): when Pan finds no room above the buttons (1024 x 640 with In/Out shown), it
   // takes the peak field's row instead, as a small knob: Pan is used far more than the peak readout.
-  const bool panInPeak = mx && !compact && !showPan;
-  if (mx && !compact && !panInPeak) {
+  const bool panInPeak = mx && !compact && !showPan && !slim;
+  if (mx && !compact && !panInPeak && !slim) {
     static std::map<ObjectId, float> held;  // per mixer track, linear
     float& pk = held[mx->id];
     pk = std::max(pk, mixmeters::get(a, mx->id).peak());
@@ -6221,21 +6452,27 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
   // Fader and meter of the mixer track, with the scale on the right.
   const float fy = top, fh = std::max(24.0f, bottom - kFootH - kFootGap - 1 - top);
   if (mx) {
-    ImGui::SetCursorScreenPos(ImVec2(rx, fy));
-    ui::setFaderPointer(true);  // K-112c: a pointer beside the meter, as the refs' strips
-    ui::ParamFader("##fader", mixerParam(mx->id, MixerParam::Volume), ImVec2(14, fh));
-    ui::setFaderPointer(false);
+    if (!slim) {  // GitHub #58: a narrow strip keeps only its meter
+      ImGui::SetCursorScreenPos(ImVec2(rx, fy));
+      ui::setFaderPointer(true);  // K-112c: a pointer beside the meter, as the refs' strips
+      ui::ParamFader("##fader", mixerParam(mx->id, MixerParam::Volume), ImVec2(14, fh));
+      ui::setFaderPointer(false);
+    }
     const mixmeters::Reading r = mixmeters::get(a, mx->id);
     ImGui::SetCursorScreenPos(ImVec2(rx + 16, fy));
-    ui::Meter(ImGui::GetID("meter"), r.peakL, r.peakR, ImVec2(10, fh));
-    // The meter's dB scale (its range is -60 to +6 dB): a tick and a number every 12 dB, the
-    // numbers only where there is room for them.
+    const std::string what = "strip " + std::to_string(mx->id);
+    clipsMeterItem(mx->id, r.peakL, r.peakR, ImVec2(10, fh), what.c_str());
+    // The meter's dB scale (K-383: 0 dB at the top, -60 dB at the bottom, top weighted, as the meter
+    // draws it: clipsmeter::pos): a tick and a number every 12 dB, the numbers only where there is room
+    // for them (and never two numbers on top of each other).
     const float fsz = 9.0f, sx = rx + 28;
-    const int step = fh >= 90 ? 12 : 24;
-    for (int db = 0; db >= -60; db -= step) {
-      const float ty = std::round(fy + fh - (static_cast<float>(db) + 60.0f) / 66.0f * fh) + 0.5f;
+    const int step = fh >= 90 ? clipsmeter::kTickStepDb : 2 * clipsmeter::kTickStepDb;
+    float lastLabel = -1e9f;
+    for (int db = 0; db >= static_cast<int>(clipsmeter::kFloorDb); db -= step) {
+      const float ty = std::round(fy + fh - clipsmeter::pos(static_cast<float>(db)) * fh) + 0.5f;
       dl->AddLine(ImVec2(sx, ty), ImVec2(sx + 3, ty), P.textFaint);
-      if (fh >= 48 && sx + 4 + 10 <= x + w + 2) {
+      if (fh >= 48 && sx + 4 + 10 <= x + w + 2 && ty - lastLabel >= fsz) {
+        lastLabel = ty;
         const std::string n = std::to_string(-db);
         dl->AddText(a.fontRegular, fsz, ImVec2(sx + 4, std::round(ty - fsz * 0.5f)), P.textFaint, n.c_str());
       }
@@ -6268,7 +6505,7 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
         pl = std::max(pl, r.peakL), pr = std::max(pr, r.peakR);
       }
       ImGui::SetCursorScreenPos(ImVec2(mx0, fy));
-      ui::Meter(ImGui::GetID("meter"), pl, pr, ImVec2(10, fh));
+      clipsMeterItem((uint64_t{3} << 62) | static_cast<uint64_t>(t + 1), pl, pr, ImVec2(10, fh), "strip outs");
     }
     ImGui::SetCursorScreenPos(ImVec2(rx, fy));
     ImGui::InvisibleButton("##nomixer", ImVec2(std::max(1.0f, x + w - rx), std::max(1.0f, fh)));
@@ -6350,6 +6587,7 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
     }
     ImGui::EndDragDropTarget();
   }
+  stripMenu();  // GitHub #58
   ImGui::PopID();
 }
 
@@ -6359,6 +6597,8 @@ void drawClipGrid(App& a) {
   const auto& P = pal();
   const Song& s = a.doc.song();
   ImGui::BeginChild("##clipgrid", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar);
+  if (gDetailFocusFrames > 0 || (gDetailWant == 1 && gDetailFocus) || ImGui::GetFrameCount() - gDetailKeysFrame < 8)
+    gSelFocus = 0;  // 0.7.8: a double-click gives the keys to the clip view
   if (gSelFocus > 0) {  // C44-12: the keys stay on the grid while the clip band opens for the selected clip
     --gSelFocus;
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) ImGui::SetWindowFocus();
@@ -6443,7 +6683,7 @@ void drawClipGrid(App& a) {
   float retShift = 0.0f;
   int nFit = 0;
   {
-    const std::vector<size_t> rets = returnTracks(s);
+    const std::vector<size_t> rets = shownReturns(s);
     nFit = returnsShown(a) ? std::min<int>(static_cast<int>(rets.size()), 26) : 0;
     if (nFit > 0) retShift = livegrid::snap(mainX - column(nCols + nFit), dpp);
   }
@@ -6536,6 +6776,7 @@ void drawClipGrid(App& a) {
         }
         gSel = {};  // checkpoint 52 (N51-07): the title has the keys (Delete, Cmd+D), not a slot
         focusTrack(a, t);
+        trackChosen();  // 0.7.8: the detail spot shows the track's devices
       }
     }
     if (ImGui::BeginPopupContextItem("##trlive")) {
@@ -6708,7 +6949,7 @@ void drawClipGrid(App& a) {
         ui::Hint(onButton && recording ? "Recording: click to stop recording (the clip plays on)"
                  : onButton            ? "Launch: plays the clip at the track's launch grid (Enter launches the selected slot)"
                                        : "Clip: click selects it, drag moves it, double-click shows it in the clip band, right-click: its menu");
-        if (hov && !onButton && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) layoutui::setRegionVisible(a, "live.clip", true);
+        if (hov && !onButton && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) clipChosen(true);  // 0.7.8: shown with the keys (once the button is up)
       } else {
         // An empty slot's stop square stops the track; the rest of it selects the slot (a
         // double-click there makes a MIDI clip on a MIDI track, C44-13).
@@ -6757,8 +6998,8 @@ void drawClipGrid(App& a) {
           dl->AddRectFilled(ImVec2(q0.x + 6, cyy - 3), ImVec2(q0.x + 12, cyy + 3), hov && onButton ? P.text : hov ? P.textDim : P.textFaint);
         }
         ui::Hint(onButton && recButton ? "Record: records a new clip here (the track is armed)"
-                 : onButton && !stopButton ? "No stop button: launching this slot or its scene leaves the track playing (Cmd+E adds it back)"
-                 : onButton            ? "Stop: stops the track's clip (Cmd+E removes the button)"
+                 : onButton && !stopButton ? keys::withKeys(i18n::N_("No stop button: launching this slot or its scene leaves the track playing (%s adds it back)"), {keys::fixedKey("Cmd+E")})
+                 : onButton            ? keys::withKeys(i18n::N_("Stop: stops the track's clip (%s removes the button)"), {keys::fixedKey("Cmd+E")})
                                        : "Empty slot: click selects it, double-click makes a MIDI clip, right-click: paste or insert");
       }
       ImGui::PopID();
@@ -6774,6 +7015,7 @@ void drawClipGrid(App& a) {
     dl->AddText(a.fontRegular, fs, ImVec2(x + 6, theme::textTop(a.fontRegular, fs, y0, titleH)), theme::contrastText(mainFill()), i18n::tr("Main"));
     {  // N49-09: a click (or right-click) on Main's title selects it: its chain opens
       ImGui::SetCursorScreenPos(ImVec2(x, y0));
+      ImGui::SetNextItemAllowOverlap();  // GitHub #58: the hidden count sits on it
       ImGui::InvisibleButton("##maintitle", ImVec2(w, std::max(1.0f, titleH)), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
       if (ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)) selectMain(a);
       ui::Hint("Main: click to show its devices");
@@ -6782,6 +7024,7 @@ void drawClipGrid(App& a) {
         dl->AddRect(ImVec2(x + in, y0 + in), ImVec2(x + w - in, yT1 - in), P.hot, 0.0f, 0, 1.5f);
       }
     }
+    hiddenChip(a, dl, x, x + w, y0, titleH);  // GitHub #58: the mixer's hidden strips
     ImGui::PushClipRect(ImVec2(x, slotsY0), ImVec2(x + w, std::max(slotsY0, slotsY1)), true);  // N45-04
     for (int k = 0; k < rows; ++k) {
       const pixelgrid::Span rs = livegrid::row(o.y, k, dpp);
@@ -6851,7 +7094,7 @@ void drawClipGrid(App& a) {
         const float in = pixelgrid::strokeIn(1.5f);
         dl->AddRect(ImVec2(q0.x + in, q0.y + in), ImVec2(q1.x - in, q1.y - in), P.hot, 0.0f, 0, 1.5f);
       }
-      ui::Hint("Scene: launches every track's clip in this row (tracks with an empty slot stop) and selects it (Cmd+R renames it); right-click to rename, colour, insert, duplicate or delete it");
+      ui::Hint(keys::withKeys(i18n::N_("Scene: launches every track's clip in this row (tracks with an empty slot stop) and selects it (%s renames it); right-click to rename, colour, insert, duplicate or delete it"), {keys::cmdKey("edit.rename", "Cmd+R")}));
       ImGui::PopID();
     }
     ImGui::PopClipRect();
@@ -7240,13 +7483,13 @@ void drawClipGrid(App& a) {
   // (Where they stand: retShift / nFit above.)
   int nRet = 0;
   {
-    const std::vector<size_t> rets = returnTracks(s);
+    const std::vector<size_t> rets = shownReturns(s);
     for (size_t i = 0; i < rets.size() && i < 26; ++i) {
       const pixelgrid::Span cs = retColumn(static_cast<int>(i));  // K-276: as a track's title
       const float x = cs.x0;
       if (static_cast<int>(i) >= nFit) break;  // only the returns that fit before Main
       const MixerTrack& rt = s.mixer[rets[i]];
-      const char lt = static_cast<char>('A' + i);
+      const char lt = returnLetter(s, static_cast<int>(rets[i]));
       dl->AddRectFilled(ImVec2(x, y0), ImVec2(cs.x1, yT1), returnFill(), 0.0f);
       const std::string nm = std::string(1, lt) + " " + rt.name;
       theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(x + 6, theme::textTop(a.fontRegular, fs, y0, titleH)), cs.w() - 10, theme::contrastText(returnFill()), nm.c_str());
@@ -7476,6 +7719,7 @@ void drawMixerBand(App& a) {
                         theme::contrastText(fill), name.c_str());
     ImGui::SetCursorScreenPos(ImVec2(x0, y0));
     ImGui::PushID(id);
+    ImGui::SetNextItemAllowOverlap();  // GitHub #58: the hidden count sits on Main's
     ImGui::InvisibleButton("##mtitle", ImVec2(x1 - x0, titleH), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     if ((ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)) && mx) {
       if (!s.mixer.empty() && mx->id == s.mixer[0].id) {
@@ -7488,7 +7732,7 @@ void drawMixerBand(App& a) {
     if (mx) ui::Hint("Click to select this mixer track");
   };
   // The returns, right-aligned against Main (as the clip grid, round 36).
-  const std::vector<size_t> rets = returnTracks(s);
+  const std::vector<size_t> rets = shownReturns(s);
   const int nFit = returnsShown(a) ? std::min<int>(static_cast<int>(rets.size()), 26) : 0;
   const float retShift = nFit > 0 ? livegrid::snap(mainX - column(nCols + nFit).x0, dpp) : 0.0f;
   const float pinX0 = nFit > 0 ? livegrid::column(o.x + retShift, cm.n, dpp).x0 : mainX;
@@ -7516,7 +7760,7 @@ void drawMixerBand(App& a) {
   for (int i = 0; i < nFit; ++i) {
     const pixelgrid::Span cs = livegrid::column(o.x + retShift, cm.n + i, dpp);
     const MixerTrack& rt = s.mixer[rets[static_cast<size_t>(i)]];
-    const char lt = static_cast<char>('A' + i);
+    const char lt = returnLetter(s, static_cast<int>(rets[i]));
     title(cs.x0, cs.x1, returnFill(), std::string(1, lt) + " " + rt.name, &rt, 3500 + i);
     sessionStrip(a, dl, srow, -1, &rt, cs.x0, colW - 4, false, lt);
   }
@@ -7531,6 +7775,8 @@ void drawMixerBand(App& a) {
   if (!s.mixer.empty()) {
     const pixelgrid::Span ms{mainX, livegrid::snap(mainX + kMainW - 8, dpp)};
     title(ms.x0, ms.x1, mainFill(), i18n::tr("Main"), &s.mixer[0], 3999);
+    if (!underGrid) hiddenChip(a, dl, ms.x0, ms.x1, y0, titleH);
+
     sessionStrip(a, dl, srow, -1, &s.mixer[0], mainX, kMainW - 8, true);
   }
   ImGui::SetCursorScreenPos(o);
@@ -7564,5 +7810,28 @@ void devCentreFrame(App& a) {
   std::printf("CENTRE END\n");
   std::fflush(stdout);
 }
+
+namespace surface {
+std::vector<int> columns(const App& a) {
+  const Song& s = a.doc.song();
+  const int n = gridColumns(s);
+  const ColMap m = colMap(s, n);
+  std::vector<int> out;
+  for (int t = 0; t < n; ++t)
+    if (!m.hidden[static_cast<size_t>(t)]) out.push_back(t);
+  return out;
+}
+int scenes(const App& a) { return trackmodes::sceneCount(a.doc.song()); }
+ObjectId slotClip(const App& a, int t, int k) {
+  const Song& s = a.doc.song();
+  const std::vector<int> in = slotClips(s, t, k);
+  return in.empty() ? kNoId : s.playlist[static_cast<size_t>(in.front())].id;
+}
+void launchClip(App& a, ObjectId clip) { launch(a, clip); }
+void launchScene(App& a, int k) { launchSceneRow(a, k, scenes(a)); }
+void selectSlot(App& a, int t, int k) { livelook::selectSlot(a, t, k); }
+bool deleteSlot(App& a, int t, int k) { return livelook::deleteSlot(a, t, k); }
+void duplicateSlot(App& a, int t, int k) { livelook::duplicateSlot(a, t, k); }
+}  // namespace surface
 
 }  // namespace gl::livelook

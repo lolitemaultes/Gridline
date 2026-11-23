@@ -1,8 +1,9 @@
 # Gridline - TRK-1118: four things a user of the 0.7.7 release candidate found in the Tracker, each
 # clicked with the real mouse or keys in the real app (hidden, an isolated config folder and HOME,
 # SDL's dummy audio driver):
-#   1. "Open plugin window" opens the instrument's editor: the Channel frame's button (before: its
-#      first click sent the keys back to the pattern, whose focus took the press from the button, so
+#   1. "Open plugin window" opens the instrument's editor: a double-click on the instrument (its
+#      window floats, as in Studio), the Channel frame's button (a dev screen now; before: its first
+#      click sent the keys back to the pattern, whose focus took the press from the button, so
 #      nothing opened), the instrument list's menu and the View menu's item;
 #   2. Duplicate pattern: the pattern box's right-click menu, Ctrl+Alt+U and "into the song" (a new
 #      order entry after the current one), each one undo step;
@@ -49,8 +50,8 @@ endfunction()
 set(E "tracker editors")
 
 # ---- 1. Open plugin window ----
-# Plasma (a built-in synth) in the first slot; a double-click on it shows its Channel frame in the
-# lower band, whose "Open plugin window" button (at its right, 1440x900) floats Plasma's editor.
+# Plasma (a built-in synth) in the first slot; a double-click on it floats Plasma's editor (nothing in
+# the lower band); the dev Channel frame's "Open plugin window" button (at its right, 1440x900) too.
 run(plugwin 120 "5 toasts clear
 8 replace gl.plasma
 12 ${E} close
@@ -60,18 +61,20 @@ run(plugwin 120 "5 toasts clear
 24 down 0
 25 up 0
 34 ${E} windows
+36 plugwin close
+38 ${E} open frame 0
 40 move 1297 834
 42 down 0
 43 up 0
 50 ${E} windows
-52 ${E} close
+52 plugwin close
 56 ${E} windows
 60 move 930 57
 62 down 1
 63 up 1
-70 move 1010 162
-72 down 0
-73 up 0
+70 ${E} menu at \"Open plugin window\"
+72 sdldown 0
+73 sdlup 0
 80 ${E} windows
 82 ${E} dump
 84 ${E} close
@@ -79,9 +82,10 @@ run(plugwin 120 "5 toasts clear
 96 ${E} windows
 110 quit discard
 ")
-must("tracker windows frame 34: [^\n]* plugin closed band frame" "a double-click on the instrument shows its Channel frame")
+must("tracker windows frame 34: watched [0-9]+ shown 0 hosted 0 [^\n]* plugin open band closed" "a double-click on the instrument floats its editor, nothing in the band")
 must("tracker windows frame 50: watched [0-9]+ shown 0 hosted 0 [^\n]* plugin open band closed" "the Channel frame's Open plugin window opens the editor on its first click")
 must("tracker windows frame 56: [^\n]* plugin closed" "closed again")
+must("tracker editors frame 70: menu row \"Open plugin window\" at [0-9]+ [0-9]+" "the instrument list's menu has an Open plugin window row (found by its label)")
 must("tracker windows frame 80: [^\n]* plugin open band closed" "the instrument list's Open plugin window opens the editor")
 must("tracker editors frame 82: [^\n]* channel 1 tracker 0" "... of the instrument right-clicked (Clap)")
 must("tracker windows frame 96: [^\n]* plugin open band closed" "View > Open plugin window (run from the command palette) opens the selected instrument's editor")

@@ -23,6 +23,8 @@
 #include "StageView.h"
 #include "StageViewInternal.h"
 #include "Theme.h"
+#include "TrackerLook.h"
+#include "TrackerView.h"
 #include "Widgets.h"
 #include "Windows.h"
 
@@ -639,15 +641,21 @@ void drawRows(App& a, ImVec2 p0, ImVec2 p1) {
   const int n = roomops::roomCount(s), cur = shownRoom(a);
   ImDrawList* dl = ImGui::GetWindowDrawList();
   // The heading: Rooms, how many, and "+".
-  dl->AddText(a.fontBold, theme::kFontBody, ImVec2(p0.x + 16, p0.y + 12), P.text, i18n::tr("Rooms"));
+  const bool trk = v.trk != 0;  // the Tracker look: its box title, a hex count, bevel buttons (StageTrackerUi.cpp)
+  const float hfs = trk ? ImGui::GetFontSize() : theme::kFontBody;
+  if (trk) trackerview::boxTitle(a, ImVec2(p0.x + 10, p0.y + 12), "Rooms");
+  else dl->AddText(a.fontBold, theme::kFontBody, ImVec2(p0.x + 16, p0.y + 12), P.text, i18n::tr("Rooms"));
   {
-    const float tw = a.fontBold->CalcTextSizeA(theme::kFontBody, 1e9f, 0, i18n::tr("Rooms")).x;
+    const float tw = a.fontBold->CalcTextSizeA(hfs, 1e9f, 0, i18n::tr("Rooms")).x;
     char c[16];
-    std::snprintf(c, sizeof c, "%d", n);
-    dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(p0.x + 24 + tw, p0.y + 14), P.textFaint, c);
+    std::snprintf(c, sizeof c, trk ? "%02X" : "%d", n);
+    if (trk) dl->AddText(trackerview::monoFont(a), hfs, ImVec2(p0.x + 18 + tw, p0.y + 12), trackerview::valueInk(), c);
+    else dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(p0.x + 24 + tw, p0.y + 14), P.textFaint, c);
   }
   ImGui::SetCursorScreenPos(ImVec2(p1.x - 40, p0.y + 8));
-  if (ui::IconButton("##roomnew", ui::Icon::Plus, ImGui::IsPopupOpen("##roomnewmenu"), 24.0f, "New room: from this room's settings or a template")) {
+  if (trk ? trackerview::bevelButton(a, "##roomnew", "+", ImVec2(p1.x - 40, p0.y + 8), ImVec2(p1.x - 14, p0.y + 8 + std::round(ImGui::GetFontSize() + 6)),
+                                     ImGui::IsPopupOpen("##roomnewmenu"), "New room: from this room's settings or a template")
+          : ui::IconButton("##roomnew", ui::Icon::Plus, ImGui::IsPopupOpen("##roomnewmenu"), 24.0f, "New room: from this room's settings or a template")) {
     refreshMine(a);
     ImGui::OpenPopup("##roomnewmenu");
   }
@@ -698,12 +706,17 @@ void drawRows(App& a, ImVec2 p0, ImVec2 p1) {
     if (hov && R.renaming < 0 && !ImGui::GetIO().WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) requestDeleteRoom(a, i);
     const bool active = i == cur, drop = v.dropRoom == i && i != cur;
     const ImU32 rc = theme::content(roomops::roomColor(s, i));
-    if (drop) rl->AddRectFilled(r0, r1, theme::mix(P.surface800, P.accent, 0.22f), theme::kRadiusLg);
-    else if (active) rl->AddRectFilled(r0, r1, v.stage, theme::kRadiusLg);
-    else if (hov) rl->AddRectFilled(r0, r1, theme::withAlpha(P.surface700, 0.6f), theme::kRadiusLg);
-    else rl->AddRectFilled(r0, r1, theme::withAlpha(P.surface800, 0.35f), theme::kRadiusLg);
+    if (drop) rl->AddRectFilled(r0, r1, theme::mix(P.surface800, P.accent, 0.22f), corner(theme::kRadiusLg));
+    else if (active) rl->AddRectFilled(r0, r1, v.stage, corner(theme::kRadiusLg));
+    else if (hov) rl->AddRectFilled(r0, r1, theme::withAlpha(P.surface700, 0.6f), corner(theme::kRadiusLg));
+    else rl->AddRectFilled(r0, r1, theme::withAlpha(P.surface800, 0.35f), corner(theme::kRadiusLg));
+    if (trk) {  // the Tracker look: each row a sunken field, the shown one lit as a list's current row
+      trackerview::bevelBox(rl, r0, r1, true);
+      if (active) rl->AddRectFilled(ImVec2(r0.x + 1, r0.y + 1), ImVec2(r1.x - 1, r1.y - 1), theme::withAlpha(P.surface600, 0.9f));
+      else if (hov || drop) rl->AddRectFilled(ImVec2(r0.x + 1, r0.y + 1), ImVec2(r1.x - 1, r1.y - 1), theme::withAlpha(drop ? P.accent : P.surface600, drop ? 0.25f : 0.5f));
+    }
     if (active || drop) rl->AddRectFilled(r0, ImVec2(r0.x + 3, r1.y), rc, 1.0f);
-    if (drop) rl->AddRect(ImVec2(r0.x + 1, r0.y + 1), ImVec2(r1.x - 1, r1.y - 1), P.accent, theme::kRadiusLg, 0, 1.5f);
+    if (drop) rl->AddRect(ImVec2(r0.x + 1, r0.y + 1), ImVec2(r1.x - 1, r1.y - 1), P.accent, corner(theme::kRadiusLg), 0, 1.5f);
     thumbnail(a, rl, i, ImVec2(r0.x + 12, std::round(r0.y + (kRowH - 40) * 0.5f)), ImVec2(56, 40), active);
     // K-270: the room's headphones (two rooms or more): solo rooms, several at once, as in the channel rack.
     const bool phones = n > 1;
@@ -742,9 +755,17 @@ void drawRows(App& a, ImVec2 p0, ImVec2 p1) {
   // The foot: templates, bring tracks in (each room's headphones took "Hear this room only"'s place).
   float y = p1.y - footH + 10;
   const float bw = p1.x - p0.x - 16 - kRowPad - kWallGrip;
-  dl->AddLine(ImVec2(p0.x + kRowPad, y - 5), ImVec2(p1.x - kWallGrip, y - 5), P.line);
+  if (!trk) dl->AddLine(ImVec2(p0.x + kRowPad, y - 5), ImVec2(p1.x - kWallGrip, y - 5), P.line);
   ImGui::SetCursorScreenPos(ImVec2(p0.x + kRowPad + 4, y));
-  if (ui::TextButton(i18n::tr("Templates"), ImGui::IsPopupOpen("##roomtemplates"), bw, "Apply a room template, or save this room's settings as one")) {
+  const float bh = trk ? std::round(ImGui::GetFontSize() + 6) : 0.0f;
+  auto trkButton = [&](const char* id, const char* label, bool on, const char* hint) {
+    const ImVec2 q = ImGui::GetCursorScreenPos();
+    const bool c = trackerview::bevelButton(a, id, label, q, ImVec2(q.x + bw, q.y + bh), on, hint);
+    if (c) trackerview::keepKeysHere();
+    return c;
+  };
+  if (trk ? trkButton("##roomtpl", "Templates", ImGui::IsPopupOpen("##roomtemplates"), "Apply a room template, or save this room's settings as one")
+          : ui::TextButton(i18n::tr("Templates"), ImGui::IsPopupOpen("##roomtemplates"), bw, "Apply a room template, or save this room's settings as one")) {
     refreshMine(a);
     ImGui::OpenPopup("##roomtemplates");
   }
@@ -754,7 +775,9 @@ void drawRows(App& a, ImVec2 p0, ImVec2 p1) {
   }
   y += ImGui::GetFrameHeight() + 6;
   ImGui::SetCursorScreenPos(ImVec2(p0.x + kRowPad + 4, y));
-  if (ui::PrimaryButton(i18n::tr("Bring tracks in..."), bw, "Move tracks from other rooms into this one: by arrangement, pattern, colour or name")) openBring(a, cur);
+  if (trk ? trkButton("##roombring", "Bring tracks in...", false, "Move tracks from other rooms into this one: by arrangement, pattern, colour or name")
+          : ui::PrimaryButton(i18n::tr("Bring tracks in..."), bw, "Move tracks from other rooms into this one: by arrangement, pattern, colour or name"))
+    openBring(a, cur);
 }
 
 // The slim rail: each room as its little floor in its colour, lit headphones on soloed rooms, and "+".
@@ -807,9 +830,9 @@ void drawSlim(App& a, ImVec2 p0, ImVec2 p1) {
     }
     const bool active = i == cur, drop = v.dropRoom == i && i != cur;
     const ImU32 rc = theme::content(roomops::roomColor(s, i));
-    if (drop) rl->AddRectFilled(r0, r1, theme::mix(P.surface800, P.accent, 0.22f), theme::kRadiusLg);
-    else if (active) rl->AddRectFilled(r0, r1, v.stage, theme::kRadiusLg);
-    else if (hov) rl->AddRectFilled(r0, r1, theme::withAlpha(P.surface700, 0.6f), theme::kRadiusLg);
+    if (drop) rl->AddRectFilled(r0, r1, theme::mix(P.surface800, P.accent, 0.22f), corner(theme::kRadiusLg));
+    else if (active) rl->AddRectFilled(r0, r1, v.stage, corner(theme::kRadiusLg));
+    else if (hov) rl->AddRectFilled(r0, r1, theme::withAlpha(P.surface700, 0.6f), corner(theme::kRadiusLg));
     if (active || drop) rl->AddRectFilled(r0, ImVec2(r0.x + 3, r1.y), rc, 1.0f);
     const float cx = std::round((r0.x + r1.x) * 0.5f + 1), fw = 32, fh = 24;
     thumbnail(a, rl, i, ImVec2(cx - fw * 0.5f, r0.y + 6), ImVec2(fw, fh), active);
@@ -931,7 +954,8 @@ void drawRail(App& a, ImVec2 p0, ImVec2 p1, float tabY) {
   const float t = R.anim, full = openWidth(a);
   const bool open = roomsPanelOpen(a);
   R.menuShown = -1;
-  dl->AddRectFilled(p0, p1, theme::mix(v.bg, P.surface950, 0.35f));
+  if (v.trk) trackerview::bevelBox(dl, p0, p1);  // the Tracker look: a raised box beside the stage's well
+  else dl->AddRectFilled(p0, p1, theme::mix(v.bg, P.surface950, 0.35f));
   // The tab first: over the wall, and over the stage beside it.
   const float tx0 = p1.x - 1, ty0 = std::round(tabY - kTabH * 0.5f);
   R.tab = st::Rect{tx0, ty0, tx0 + kTabW, ty0 + kTabH};
@@ -988,7 +1012,7 @@ void drawRail(App& a, ImVec2 p0, ImVec2 p1, float tabY) {
     R.resizing = false;
   }
   const bool lit = wallHot || (t <= 0.001f && R.tabHot);
-  dl->AddLine(ImVec2(p1.x - 0.5f, p0.y), ImVec2(p1.x - 0.5f, p1.y), lit ? theme::withAlpha(P.accent, 0.8f) : P.line, lit ? 2.0f : 1.0f);
+  if (!v.trk || lit) dl->AddLine(ImVec2(p1.x - 0.5f, p0.y), ImVec2(p1.x - 0.5f, p1.y), lit ? theme::withAlpha(P.accent, 0.8f) : P.line, lit ? 2.0f : 1.0f);
 }
 
 // The tab on the column's wall: an arrow out (closed) or back (open), turned with the slide; drawn after the
@@ -1001,13 +1025,18 @@ void drawRailTab(App& a) {
   const float x0 = R.tab.x0, y0 = R.tab.y0, x1 = R.tab.x1, y1 = R.tab.y1, r = 6.0f;
   const ImU32 base = theme::mix(v.bg, P.surface950, 0.35f);
   const ImU32 fill = R.tabDown ? theme::mix(base, P.text, 0.14f) : R.tabHot ? theme::mix(base, P.text, 0.08f) : base;
-  dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), fill, r, ImDrawFlags_RoundCornersRight);
-  // Its outline on three sides: the fourth is the column it belongs to.
-  dl->PathLineTo(ImVec2(x0 + 0.5f, y0 + 0.5f));
-  dl->PathArcTo(ImVec2(x1 - r - 0.5f, y0 + r + 0.5f), r, -kPi * 0.5f, 0.0f, 6);
-  dl->PathArcTo(ImVec2(x1 - r - 0.5f, y1 - r - 0.5f), r, 0.0f, kPi * 0.5f, 6);
-  dl->PathLineTo(ImVec2(x0 + 0.5f, y1 - 0.5f));
-  dl->PathStroke(R.tabHot ? theme::withAlpha(P.accent, 0.8f) : P.line, ImDrawFlags_None, 1.0f);
+  if (v.trk) {  // the Tracker look: a small bevel button
+    trackerview::bevelBox(dl, ImVec2(x0, y0), ImVec2(x1, y1), R.tabDown);
+    if (R.tabHot && !R.tabDown) dl->AddRectFilled(ImVec2(x0 + 2, y0 + 2), ImVec2(x1 - 2, y1 - 2), theme::withAlpha(P.surface600, 0.6f));
+  } else {
+    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), fill, r, ImDrawFlags_RoundCornersRight);
+    // Its outline on three sides: the fourth is the column it belongs to.
+    dl->PathLineTo(ImVec2(x0 + 0.5f, y0 + 0.5f));
+    dl->PathArcTo(ImVec2(x1 - r - 0.5f, y0 + r + 0.5f), r, -kPi * 0.5f, 0.0f, 6);
+    dl->PathArcTo(ImVec2(x1 - r - 0.5f, y1 - r - 0.5f), r, 0.0f, kPi * 0.5f, 6);
+    dl->PathLineTo(ImVec2(x0 + 0.5f, y1 - 0.5f));
+    dl->PathStroke(R.tabHot ? theme::withAlpha(P.accent, 0.8f) : P.line, ImDrawFlags_None, 1.0f);
+  }
   // The arrow: "›" closed, "‹" open, turned through the slide.
   const float d = std::cos(kPi * easeOut(std::clamp(R.anim, 0.0f, 1.0f)));
   const float cx = std::round((x0 + x1) * 0.5f) + 0.5f, cy = std::round((y0 + y1) * 0.5f) + 0.5f;

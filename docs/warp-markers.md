@@ -58,6 +58,39 @@ Markers are saved with the clip in the project file. Each drag is one undo step.
 project each marker is merged on its own, so two people can add or move different markers of a
 clip at the same time.
 
+## Warp mode in every waveform
+
+The same teal **Warp** button sits in every view that shows a sample's waveform: the Audio clip
+window (its waveform and its **Sample warp** module) and Kerf. In Smooth it is called **Flex**.
+The key toggles it while the pointer is over the waveform: **W** in Studio, **Alt+W** in Clips,
+Smooth and Tracker. Both can be changed in Settings > Keys, under Waveform.
+
+- **Audio clip window.** The Warp tool edits the clip's own markers on the window's waveform, with
+  the same clicks, drags and keys as the playlist's Warp tool.
+- **Sampler.** With warp mode on, markers on the **Sample warp** module's waveform stretch the
+  sample around them, and every note plays the warped sample. Turn warp mode off to hear the
+  sample as it is; the markers are kept. The right click menu's **Warp** submenu has Add at
+  transients, Quantize to the grid (on the loop's beats), its strength, **New markers snap to
+  transients**, **Set the loop's BPM** (type it or Detect it) and Clear markers.
+- **Kerf.** The markers sit in a slim lane under the wave, so they never collide with the slice
+  flags. Kerf slices the warped audio, so the slices fall on the warped beats, and **Slice at warp
+  markers** (in the Regions menu, and in the lane's Warp menu) cuts a slice at every marker.
+  Clicks in the lane only touch the markers: they never select, add or remove a region.
+
+- **Loupe.** Warp is an edit there: the markers sit in a lane at the bottom of the waveform, and
+  **Apply warp to a new file** in the lane's right click menu writes the warped audio, as one step of
+  Loupe's undo. Adding, moving and removing a marker are each one step of Loupe's undo too, while
+  they are the last thing you did. Markers you have not applied yet are saved with the project, on
+  the channel whose sample Loupe edits (or the Loupe effect in a mixer track): they are there when you
+  open the project again, the song's undo takes them back as well, and in a collaboration session the
+  others see them. A file opened in Loupe on its own keeps its markers until Loupe closes.
+
+The warped sample is made once when the markers change, never while notes play, and each computer
+of a collaboration session makes its own from the markers. Each drag is one undo step.
+
+Loupe's spectrogram moved from W to **Shift+W**, and the Tracker sample editor's Wave preview from
+Alt+W to **Alt+P**.
+
 ## FL Studio projects
 
 FL Studio has no warp markers for playlist audio clips. When you export an FL Studio project, a

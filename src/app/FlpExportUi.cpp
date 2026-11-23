@@ -1,5 +1,6 @@
 // Gridline — J-80: FL Studio export job, progress and report windows (see FlpExportUi.h).
 #include "FlpExportUi.h"
+#include "../core/ThreadName.h"
 #include "Keys.h"
 #include "../core/Crash.h"
 #include "../core/Platform.h"
@@ -22,6 +23,7 @@
 #include "App.h"
 #include "DialogLayout.h"
 #include "HostedUi.h"
+#include "ProgressUi.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -218,20 +220,22 @@ void finish(App& a) {
 }
 
 void progressWindow() {
-  if (!job.running) return;
+  const progui::Fake* fk = progui::fake("flpexport");  // (tests: a stand-in export)
+  if (!job.running && !fk) return;
   ui::PlaceNextDialog(ImVec2(440, 0), ImGuiCond_Always);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
   const std::string title = std::string(i18n::tr("Exporting FL Studio project")) + "###flpexportjob";
   ImGui::OpenPopup(title.c_str());
   if (ImGui::BeginPopupModal(title.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+    progui::note("flpexport");
+    // 0.7.8: every row exactly w wide (the file name and the step cut to it), the percent on the bar.
     const float w = 400, bw = 96;
-    ui::TextFit(fs::path(job.path).filename().string().c_str(), w, theme::pal().textDim);
-    ImGui::TextUnformatted(i18n::tr("Rendering Gridline instruments to samples"));
-    char pr[64];
-    std::snprintf(pr, sizeof pr, i18n::tr("%.0f%%"), job.progress.load() * 100.0);
-    ImGui::ProgressBar(static_cast<float>(job.progress.load()), ImVec2(w - bw - theme::kS2, 0), pr);
+    const double f = fk ? fk->frac : job.progress.load();
+    progui::Line(fk ? (fk->text + ".flp").c_str() : fs::path(job.path).filename().string().c_str(), w, theme::pal().textDim);
+    progui::Line(i18n::tr("Rendering Gridline instruments to samples"), w, ImGui::GetColorU32(ImGuiCol_Text));
+    ImGui::ProgressBar(static_cast<float>(f), ImVec2(w - bw - theme::kS2, 0), progui::PercentText(f).c_str());
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton("Cancel", false, bw, "Stop the export") || ::gl::keys::escapePressed()) job.cancel = true;
+    if ((ui::TextButton("Cancel", false, bw, "Stop the export") || ::gl::keys::escapePressed()) && !fk) job.cancel = true;
     ImGui::EndPopup();
   }
   ImGui::PopStyleVar();
@@ -385,7 +389,10 @@ bool startWith(App& a, const std::string& path, bool zip, std::function<void(boo
     job.finished = true;
     job.running = false;
   };
-  job.worker = std::thread(std::move(work));
+  job.worker = std::thread([work = std::move(work)]() mutable {
+    gl::threads::setName("gl-flp-export");
+    work();
+  });
   return true;
 }
 

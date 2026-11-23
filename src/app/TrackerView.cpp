@@ -1,5 +1,7 @@
 // Gridline - the tracker pattern editor (K-106). See TrackerView.h.
+#include "TrackerOrder.h"
 #include "TrackerView.h"
+#include "../core/Lanes.h"
 #include <SDL.h>
 #include <algorithm>
 #include <array>
@@ -31,6 +33,8 @@
 #include "MenuParityUi.h"
 #include "PixelGrid.h"
 #include "../packs/PacksUi.h"
+#include "../packs/seltmann/seltmann_tracker.h"
+#include "../packs/tracker/tracker.h"
 #include "Theme.h"
 #include "TrackerEditors.h"
 #include "TrackerLook.h"
@@ -419,7 +423,7 @@ int notePitch(App& a, int scancode) {
   const int key = TypingKeyboard::keyAtPosition(scancode);
   const int off = key > 0 ? TypingKeyboard::keyOffset(key) : -1;
   if (off < 0) return -1;
-  return 12 * (a.typing.octave + 1) + off;
+  return 12 * (a.typing.octave + 1) + off;  // (as the typing keyboard plays in the Tracker: TypingKeyboard::trackerOctaves)
 }
 
 bool isOffKey(int sc) { return sc == SDL_SCANCODE_NONUSBACKSLASH || sc == SDL_SCANCODE_GRAVE || sc == SDL_SCANCODE_1; }
@@ -487,9 +491,9 @@ void pasteBlock(const View& v, App& a, Buf which = Buf::Block) {
   const State& s = st();
   const trk::Block& src = buffer(which);
   if (src.empty()) {
-    say(i18n::tr(which == Buf::Track ? "No track copied yet: Shift+F4 copies the cursor's track"
-                 : which == Buf::Pattern ? "No pattern copied yet: Ctrl+F4 copies the pattern"
-                                         : "Nothing copied yet: mark a block (Alt or Shift and the arrows), then Alt+F4 or Ctrl+C"));
+    say(which == Buf::Track     ? std::string(i18n::tr("No track copied yet: Shift+F4 copies the cursor's track"))
+        : which == Buf::Pattern ? std::string(i18n::tr("No pattern copied yet: Ctrl+F4 copies the pattern"))
+                                : keys::fillKeys(i18n::N_("Nothing copied yet: mark a block (Alt or Shift and the arrows), then Alt+F4 or %s"), {keys::fixedKey("Ctrl+C")}));
     return;
   }
   trk::Block b = src;
@@ -669,6 +673,8 @@ bool trackerTakes(int sc, int mods) {
   // Shift+Enter the pattern from the cursor's row.
   if (sc == SDL_SCANCODE_RCTRL || sc == SDL_SCANCODE_RALT) return !shift;
   if (sc == SDL_SCANCODE_RETURN && !alt) return true;
+  if (ctrl && alt && !shift && sc == SDL_SCANCODE_L) return true;  // K-255: the track loop at the cursor row
+  if (ctrl && alt && !shift && (sc == SDL_SCANCODE_UP || sc == SDL_SCANCODE_DOWN)) return true;  // 0.7.8: the sample entry
   if (ctrl && alt) return false;
   if (sc >= SDL_SCANCODE_F9 && sc <= SDL_SCANCODE_F12 && !alt) return true;  // jump rows (Shift: store, Ctrl: play from); Alt+F12 closes the plugin windows
   const bool mod = shift || ctrl || alt;
@@ -798,7 +804,8 @@ int trackerKey(App& a, const View& v, const KeyEv& k) {
       if (k.repeat) return 0;
       const Tick pos = songPosition(a);
       Tick from = 0;
-      for (const trk::OrderEntry& e : trk::orderList(a.doc.song()))
+      const trackerorder::List olHeld = trackerorder::of(a, a.doc.song());  // K-142: cached per song change
+      for (const trk::OrderEntry& e : *olHeld)
         if (pos >= e.start && pos < e.end) from = e.start;
       a.engine.setMode(PlayMode::Song);
       setSongPosition(a, from);
@@ -822,6 +829,17 @@ int trackerKey(App& a, const View& v, const KeyEv& k) {
     }
   }
   const char* noEdit = "Edit mode is off: Esc turns it on (the keys only play)";
+  if (ctrl && alt && !shift && k.sc == SDL_SCANCODE_L) {  // K-255: the track loop at the cursor row (one undo step)
+    if (k.repeat) return 0;
+    if (!s.edit) return say(i18n::tr(noEdit)), 0;
+    trackLoopAtCursor(a);
+    return 0;
+  }
+  // 0.7.8: the current instrument's previous / next sample entry (empty ones too), as the list's click.
+  if (ctrl && alt && !shift && (k.sc == SDL_SCANCODE_UP || k.sc == SDL_SCANCODE_DOWN)) {
+    packs::trackerpack::headerStepEntry(a, a.selChannel, k.sc == SDL_SCANCODE_UP ? -1 : 1);
+    return 0;
+  }
   // F9 to F12: jump rows.
   if (k.sc >= SDL_SCANCODE_F9 && k.sc <= SDL_SCANCODE_F12) {
     const int j = k.sc - SDL_SCANCODE_F9;
@@ -1275,7 +1293,12 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
     // The letter's own value as the note has it (its default when the note has none).
     auto valueOf = [note](char l) {
       const Note probe = note ? *note : Note{};
-      return l == 'G' || l == 'P' ? 1 : l == 'X' ? probe.modX : l == 'Y' ? probe.modY : l == 'R' ? probe.release : probe.fine & 0xFF;
+      return l == 'G' || l == 'P' ? 1
+             : l == 'X'           ? probe.modX
+             : l == 'Y'           ? probe.modY
+             : l == 'R'           ? probe.release
+             : l == 'I'           ? std::max(0, probe.program)  // K-348: program 00 when the note has none
+                                  : probe.fine & 0xFF;
     };
     if (c.digit == 0) {
       const int up = k.kc >= 'a' && k.kc <= 'z' ? k.kc - 'a' + 'A' : k.kc;
@@ -1289,15 +1312,15 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
         // R6-01: a letter typed at its default value (T00, X80 ...) changes nothing in the note, so it
         // waits on the note ("T.."): the digits then set it.
         const char held = pendingEffect(a, v.p->id, t.channel, note);
-        if (!held) return say(i18n::tr("Type the effect letter first: G P T X Y R")), false;
+        if (!held) return say(i18n::tr("Type the effect letter first: I G P T X Y R")), false;
         letter = held;
         value = valueOf(held);
       }
       value = setNibble(value, c.digit - 1, nib);
       // R7-10: G and P are on or off: a digit that is neither 0 nor 1 (or a high digit past 0) says so.
       if ((letter == 'G' || letter == 'P') && (c.digit == 1 ? nib != 0 : nib > 1)) offDigit = letter;
-      if (letter == 'R' && c.digit == 1) rHigh = nib > 7;
-      if (letter == 'R' && (value > 0x7F || (c.digit == 2 && rHigh))) offDigit = 'R';
+      if ((letter == 'R' || letter == 'I') && c.digit == 1) rHigh = nib > 7;  // K-348: I stops at 7F too
+      if ((letter == 'R' || letter == 'I') && (value > 0x7F || (c.digit == 2 && rHigh))) offDigit = letter;
     }
     const Tick nStart = note ? note->start : 0;  // (the edit may move the notes: kept by value)
     const int nPitch = note ? note->pitch : 0;
@@ -1313,6 +1336,8 @@ bool handleKey(App& a, const View& v, const KeyEv& k) {
       if (note && letter && trk::effectsOf(probe).empty()) gPendFx = {v.p->id, t.channel, nStart, nPitch, letter, a.doc.revision()};
       if (offDigit == 'R')  // (round 08) the release velocity stops at 7F
         say(i18n::tr("R is a release velocity, 00 to 7F: it stays at 7F"));
+      else if (offDigit == 'I')  // K-348
+        say(i18n::tr("I is a program, 00 to 7F: it stays at 7F"));
       else if (offDigit)
         say(std::string(1, offDigit) + i18n::tr(" is on or off: it shows 01 whatever the digits (Delete turns it off)"));
       else
@@ -1455,6 +1480,34 @@ bool patternFit() { return gZoomFit; }
 void zoomFront(App& a, int d) {
   if (windowFrontNow("Playlist")) trackerpages::zoomSong(a, d);
   else zoomPattern(a, d);
+}
+
+void trackLoopAtCursor(App& a) {
+  const View v = build(a);
+  if (!v.p || v.tracks.empty()) return;
+  clampCursor(v);
+  const Cursor& c = st().cur;
+  const trk::Track& t = v.tracks[static_cast<size_t>(c.track)];
+  const Channel* ch = a.doc.song().channel(t.channel);
+  if (!ch) return;
+  int steps = trk::loopStepsAtRow(a.doc.song(), *v.p, t.channel, v.g, c.row);
+  if (t.loop > 0 && t.loop == c.row) steps = 0;  // its loop already ends here: no loop
+  if (steps <= 0 && t.loop == 0) {
+    say(i18n::tr("A track loop needs a row after the first: put the cursor where the loop ends"));
+    return;
+  }
+  // A new loop runs on through the song (a lane given a length of its own); one that had a mode keeps it.
+  const bool fresh = lanes::length(*v.p, t.channel) == 0 && !v.p->lanes.count(t.channel);
+  const LaneMode on = LaneMode::RunOn;
+  if (!lanes::setLength(a.doc, v.p->id, {t.channel}, steps, fresh && steps > 0 ? &on : nullptr)) return;
+  if (steps <= 0) {
+    say(ch->name + ": " + i18n::tr("no track loop"));
+    return;
+  }
+  const Pattern* np = a.doc.song().pattern(v.p->id);
+  const bool runs = np && lanes::runsOn(*np, t.channel);
+  say(ch->name + ": " + i18n::tr("loops every") + " " + trk::hexNum(c.row) + " " + i18n::tr("rows") + " (" +
+      (runs ? i18n::tr("runs on through the song") : i18n::tr("starts again with the pattern")) + ")");
 }
 
 namespace {
@@ -2023,15 +2076,18 @@ bool closeFrontPageKey(App& a) {
   if (!esc && !cmdW) return false;
   ImGuiWindow* w = frontPage();
   if (!w) return false;
-  const char* id = ui::stableWindowName(w->Name);
-  static const char* const kStrip[] = {"Playlist", "Piano roll", "Channel rack", "Mixer", "Live pads", "Loupe"};
-  bool strip = false;
-  for (const char* n : kStrip) strip = strip || std::strcmp(id, n) == 0;
-  if (!strip)
-    if (bool* f = layoutui::windowOpenFlag(a, id)) *f = false;  // closed, not left behind as a hidden tab
   if (esc) keys::claimEscape();
-  showPage(a, "Pattern editor");
+  exitPage(a, ui::stableWindowName(w->Name));
   return true;
+}
+
+void exitPage(App& a, const char* window) {
+  static const char* const kStrip[] = {"Playlist", "Piano roll", "Channel rack", "Mixer", "Live pads", "Loupe", "Chop"};
+  bool strip = false;
+  for (const char* n : kStrip) strip = strip || std::strcmp(window, n) == 0;
+  if (!strip && std::strcmp(window, "Pattern editor") != 0)
+    if (bool* f = layoutui::windowOpenFlag(a, window)) *f = false;  // closed, not left behind as a hidden tab
+  showPage(a, "Pattern editor");
 }
 
 NewPatternSize newPatternSize(const App& a) {
@@ -2633,6 +2689,15 @@ void patternEditor(App& a) {
       if (armHot) hoverTrackHead = static_cast<int>(ti);
       ui::Hint(midiarm::dotHint(noteArmed));
     }
+    if (t.loop > 0 && !narrowHead && !headHov) {  // K-255: the track's loop (its lane length) in rows
+      std::string lt = std::string(i18n::tr("loop")) + " " + trk::hexNum(t.loop);
+      float lw = mono->CalcTextSizeA(numFs, FLT_MAX, 0, lt.c_str()).x;
+      if (lw + 8 > btnW * 2 + 6) lt = trk::hexNum(t.loop), lw = mono->CalcTextSizeA(numFs, FLT_MAX, 0, lt.c_str()).x;  // the name keeps its room
+      const float lx1 = l0.x - 4 - (armShown ? armW + 2 : 0.0f), lx0 = lx1 - lw - 8;
+      const float ly0 = std::round(h0.y + 3 + (headH - 4 - numFs) * 0.5f) - 1;
+      dl->AddRectFilled(ImVec2(lx0, ly0), ImVec2(lx1, ly0 + numFs + 2), theme::withAlpha(P.hot, 0.22f), 2.0f);
+      dl->AddText(mono, numFs, ImVec2(lx0 + 4, ly0 + 1), P.hot, lt.c_str());
+    }
     // + and - note columns.
     for (int b = 0; b < (narrowHead ? 0 : 2); ++b) {
       const ImVec2 b0(l0.x - 4 - btnW * static_cast<float>(2 - b), h0.y + 3), b1(b0.x + btnW, h1.y);
@@ -2679,6 +2744,18 @@ void patternEditor(App& a) {
     // A track shown from another pattern playing here: a wash in that pattern's colour.
     if (v.src[ti] != v.p) dl->AddRectFilled(ImVec2(tx, body0), ImVec2(tx + tw, body1), theme::withAlpha(theme::rgb(v.src[ti]->color), 0.08f));
     // Cells.
+    // K-347: a Seltmann track names the region each note plays after the note (A, B, ..., P and +1 .. +11
+    // for the pattern octave), small in the gap before the instrument field.
+    const bool seltTrack = ch && ch->plugin.type == "gl.seltmann";
+    auto regionMark = [&](float cx, float y, int pitch, bool dim) {
+      if (!seltTrack || !fieldShown(Field::Note)) return;
+      const std::string lab = packs::seltmann::tracker::noteLabel(a, ch->id, pitch);
+      if (lab.empty()) return;
+      const float w1 = mono->CalcTextSizeA(pf, FLT_MAX, 0, lab.c_str()).x;
+      const float sz = std::max(7.0f, std::floor(pf * std::min(0.82f, cw * 1.05f / std::max(1.0f, w1))));
+      const ImU32 col = theme::mix(fieldColour(Field::Note), P.led, 0.6f);
+      dl->AddText(mono, sz, ImVec2(cx + cw * 3, y + std::round(pf - sz)), dim ? theme::withAlpha(col, 0.45f) : col, lab.c_str());
+    };
     const std::vector<Note>& tNotes = notesRef(*v.src[ti], t.channel);
     const std::vector<uint8_t>& tSteps = stepsRef(*v.src[ti], t.channel);
     const std::vector<StepProps>& tProps = propsRef(*v.src[ti], t.channel);
@@ -2714,9 +2791,12 @@ void patternEditor(App& a) {
       const float y = body0 + static_cast<float>(i) * rowH + std::round((rowH - pf) * 0.5f);
       for (int c = 0; c < t.columns; ++c) {
         const float cx = std::round(tx + inset[ti] + colW * static_cast<float>(c) + 3);
-        const Cell& ce = t.at(row + v.rowOff[ti], c);
+        // K-255: past the track's loop a row shows the row the loop plays there, dim.
+        const int lr = row + v.rowOff[ti];
+        const bool loopDim = t.loop > 0 && lr >= t.loop;
+        const Cell& ce = t.at(loopDim ? lr % t.loop : lr, c);
         const Note* n = ce.kind == Cell::On || ce.kind == Cell::Off ? &tNotes[static_cast<size_t>(ce.note)] : nullptr;
-        const bool dimmed = muted || (n && n->muted);
+        const bool dimmed = muted || (n && n->muted) || loopDim;
         const ImU32 faint = theme::withAlpha(P.textFaint, 0.55f);
         auto put = [&](Field f, const std::string& text, ImU32 col) {
           if (!fieldShown(f)) return;
@@ -2760,6 +2840,7 @@ void patternEditor(App& a) {
             break;
           case Cell::On: {
             put(Field::Note, trk::noteText(n->pitch, gFlats), fieldColour(Field::Note));
+            if (!ce.offGrid) regionMark(cx, y, n->pitch, dimmed);
             put(Field::Instrument, trk::hex2(sg.channelIndex(ch->id) + 1), fieldColour(Field::Instrument));
             const std::string mvt = mc ? trk::moduleVolText(mc->vol) : std::string(), met = mc ? trk::moduleEffectText(mc->efx, mc->param) : std::string();
             if (mc) put(Field::Volume, mvt.empty() ? std::string("\xC2\xB7\xC2\xB7") : mvt, mvt.empty() ? faint : fieldColour(Field::Volume));
@@ -2768,6 +2849,7 @@ void patternEditor(App& a) {
             const std::vector<trk::Effect> fx = trk::effectsOf(*n);
             if (!met.empty()) put(Field::Effect, met, fieldColour(Field::Effect));  // the module's effect on its own row
             else if (const char held = fx.empty() ? pendingEffect(a, v.src[ti]->id, t.channel, n) : 0) put(Field::Effect, std::string(1, held) + "..", fieldColour(Field::Effect));
+            else if (fx.empty() && n->vib.active()) put(Field::Effect, "~\xC2\xB7\xC2\xB7", fieldColour(Field::Effect));  // K-262: a vibrato note
             else if (fx.empty()) put(Field::Effect, "\xC2\xB7\xC2\xB7\xC2\xB7", faint);
             else put(Field::Effect, std::string(1, fx[0].letter) + (fx[0].exact ? trk::hex2(fx[0].value) : std::string("!!")), fieldColour(Field::Effect));
             // Marks in the gaps: off the row grid (~), more letters (+), expression or a curved bend (e).
@@ -2784,6 +2866,7 @@ void patternEditor(App& a) {
             const size_t si = static_cast<size_t>(ce.step);
             const int pitch = si < tProps.size() && tProps[si].pitch >= 0 ? tProps[si].pitch : 60;
             put(Field::Note, trk::noteText(pitch, gFlats), theme::mix(fieldColour(Field::Note), P.led, 0.35f));
+            if (!ce.offGrid) regionMark(cx, y, pitch, dimmed);
             put(Field::Instrument, trk::hex2(sg.channelIndex(ch->id) + 1), fieldColour(Field::Instrument));
             put(Field::Volume, trk::hex2(si < tSteps.size() ? tSteps[si] : 0), fieldColour(Field::Volume));
             const int pan = si < tProps.size() ? tProps[si].pan : 0;
@@ -2804,6 +2887,16 @@ void patternEditor(App& a) {
       }
     }
     if (t.voices > trk::kMaxColumns - 1) dl->AddText(a.fontRegular, fs * 0.85f, ImVec2(tx + 6, a0.y + headH), P.hot, "+");
+    if (t.loop > 0 && v.rowOff[ti] == 0) {  // K-255: a line under the loop's last row and each repeat's
+      const ImU32 lc = theme::withAlpha(P.hot, 0.85f), rc = theme::withAlpha(P.hot, 0.35f);
+      for (int r = t.loop; r < v.g.rows; r += t.loop) {
+        const int i = r - firstRow;
+        if (i < 0) continue;
+        if (i > visRows) break;
+        const float ly = std::round(body0 + static_cast<float>(i) * rowH) - 1;
+        dl->AddRectFilled(ImVec2(tx + 1, ly - (r == t.loop ? 1.0f : 0.0f)), ImVec2(tx + tw - 1, ly + 1), r == t.loop ? lc : rc);
+      }
+    }
   }
   // Selection.
   if (s.sel.on) {
@@ -2877,7 +2970,7 @@ void patternEditor(App& a) {
     s.cell0 = c0, s.cell1 = c1;
     const float in = pixelgrid::strokeIn(1.0f);
     dl->AddRectFilled(c0, c1, theme::withAlpha(s.edit ? P.arm : P.accent, 0.30f));
-    dl->AddRect(ImVec2(c0.x + in, c0.y + in), ImVec2(c1.x - in, c1.y - in), s.hasKb ? P.text : P.textDim);
+    dl->AddRect(ImVec2(c0.x + in, c0.y + in), ImVec2(c1.x - in, c1.y - in), s.hasKb || keysBorrowedFromPattern() ? P.text : P.textDim);
   }
   dl->PopClipRect();
   // Edit mode: a frame round the pattern in the record role. Keyboard focus: corner marks.
@@ -2885,7 +2978,7 @@ void patternEditor(App& a) {
     const float t = pixelgrid::whole(2.0f, dpp);
     const float in = pixelgrid::strokeIn(t);
     dl->AddRect(ImVec2(a0.x + in, a0.y + in), ImVec2(a1.x - in, a1.y - in), P.arm, 0, 0, t);
-  } else if (s.hasKb) {
+  } else if (s.hasKb || keysBorrowedFromPattern()) {  // K-376: (a click on the band only borrows them)
     const float L = 10;
     const ImU32 col = P.accent;
     dl->AddLine(a0, ImVec2(a0.x + L, a0.y), col, 2), dl->AddLine(a0, ImVec2(a0.x, a0.y + L), col, 2);
@@ -2987,7 +3080,8 @@ void patternEditor(App& a) {
         clipsPat = p.id;
         clipsNote.clear();
         int audio = 0, autos = 0;
-        for (const trk::OrderEntry& e : trk::orderList(song)) {
+        const trackerorder::List olHeld = trackerorder::of(a, song);  // K-142: cached per song change
+        for (const trk::OrderEntry& e : *olHeld) {
           if (e.pattern != p.id) {
             continue;
           }
@@ -3038,14 +3132,14 @@ void patternEditor(App& a) {
       const float bh = barH - 6, by = b0.y + 2;
       const float fitW = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Fit")).x) + 14, pmW = std::round(bh * 1.3f);
       zx -= fitW;
-      if (bevelButton(a, "##zfit", "Fit", ImVec2(zx, by), ImVec2(zx + fitW, by + bh), gZoomFit, "Every track in view (Ctrl+Alt+/): the tracks narrow as far as they need"))
+      if (bevelButton(a, "##zfit", "Fit", ImVec2(zx, by), ImVec2(zx + fitW, by + bh), gZoomFit, keys::withKeys(i18n::N_("Every track in view (%s): the tracks narrow as far as they need"), {keys::cmdKey("view.zoomTracksFit", "Ctrl+Alt+/")})))
         zoomPattern(a, 0);
       zx -= pmW + 2;
-      if (bevelButton(a, "##zin", "+", ImVec2(zx, by), ImVec2(zx + pmW, by + bh), false, "Wider tracks, fewer in view (Ctrl+Alt+. or Ctrl+wheel up)"))
+      if (bevelButton(a, "##zin", "+", ImVec2(zx, by), ImVec2(zx + pmW, by + bh), false, keys::withKeys(i18n::N_("Wider tracks, fewer in view (%s or Ctrl+wheel up)"), {keys::cmdKey("view.zoomTracksIn", "Ctrl+Alt+.")})))
         zoomPattern(a, 1);
       zx -= pmW + 2;
       if (bevelButton(a, "##zout", "-", ImVec2(zx, by), ImVec2(zx + pmW, by + bh), false,
-                      "Narrower tracks, more in view (Ctrl+Alt+, or Ctrl+wheel down): first the effect and pan go, then the volume, the instrument, then smaller glyphs; zoom back in to edit them"))
+                      keys::withKeys(i18n::N_("Narrower tracks, more in view (%s or Ctrl+wheel down): first the effect and pan go, then the volume, the instrument, then smaller glyphs; zoom back in to edit them"), {keys::cmdKey("view.zoomTracksOut", "Ctrl+Alt+,")})))
         zoomPattern(a, -1);
       char zt[32];
       std::snprintf(zt, sizeof zt, "%s %d", i18n::tr("Zoom"), gZoomEff);
@@ -3158,7 +3252,8 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     const Pattern* best = nullptr;
     Tick at = 0;
     size_t most = 0, bestTracks = 0;
-    for (const trk::OrderEntry& e : trk::orderList(song)) {
+    const trackerorder::List olHeld = trackerorder::of(a, song);  // K-142: cached per song change
+    for (const trk::OrderEntry& e : *olHeld) {
       const Pattern* p = song.pattern(e.pattern);
       if (!p) continue;
       size_t n = 0, tracks = 0;
@@ -3221,6 +3316,20 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
       if (w == label) w = window;
     showPage(a, w.c_str());
     std::printf("tracker page frame %d: %s\n", frame, w.c_str());
+  } else if (cmd == "keyframe") {  // K-376: "keyframe [reset]": the key focus frame's record (WindowRaise.h)
+    ui::KeyFocusFrameStats& k = ui::keyFocusFrameStats();
+    if (args.size() > 1 && args[1] == "reset") k = ui::KeyFocusFrameStats{};
+    std::printf("tracker keyframe frame %d: drawn %d missed %d popups %d moves %d area %s borrowed %d\n", frame, k.drawn, k.missed, k.popups, k.moves,
+                k.area.empty() ? "-" : k.area.c_str(), keysBorrowedFromPattern() ? 1 : 0);
+  } else if (cmd == "labels") {  // 0.7.8: "labels on|off" watches the buttons' labels; "labels" lists those cut short
+    if (args.size() > 1) {
+      watchLabels(args[1] == "on");
+    } else {
+      int drawn = 0, clipped = 0, tight = 0;
+      const std::string list = labelReport(&drawn, &clipped, &tight);
+      std::printf("tracker labels frame %d: drawn %d clipped %d tight %d%s\n", frame, drawn, clipped, tight, list.c_str());
+      std::fflush(stdout);
+    }
   } else if (cmd == "swapstate") {  // K-329: the header's swap (0 none .. 4 About, 5 Collaboration) and the About window
     std::printf("tracker swapstate frame %d: %d about-window %d\n", frame, headerSwap(), a.showAbout ? 1 : 0);
   } else if (cmd == "swap") {  // none|help|files|config|about|collab
@@ -3234,6 +3343,8 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     std::printf("tracker loadsample frame %d: %s\n", frame, c ? c->plugin.type.c_str() : "none");
   } else if (cmd == "band") {  // HUNT-1119: the header band as last drawn
     std::printf("tracker band frame %d: %s\n", frame, bandState().c_str());
+  } else if (cmd == "pagestrip") {  // the page strip's tabs as last drawn: "label" x0 x1 y0 y1 lit, in order
+    std::printf("tracker pagestrip frame %d:%s\n", frame, pageStripState().c_str());
   } else if (cmd == "samplelist") {  // HUNT-1119: the sample list's rows as drawn
     std::printf("tracker samplelist frame %d: %s\n", frame, sampleListDrawn().c_str());
   } else if (cmd == "tool" && args.size() > 1) {  // the scope box's tool (0 scopes .. 5 sample tools)

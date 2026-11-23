@@ -27,8 +27,10 @@
 #include "../packs/modulation/junction.h"
 #include "../packs/modulation/modulation_ui.h"
 #include "App.h"
+#include "LfoUi.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
+#include "CollabUi.h"
 #include "EditorZoomUi.h"
 #include "LayoutAudit.h"
 #include "LayoutPresets.h"
@@ -351,6 +353,59 @@ bool pluginHeaderTwoRows(App& a) {
          !a.settings.getBool("ui.logicPluginHeaderCompact");
 }
 
+// The header's preset list: the factory presets (`factory` of them), then the preset library.
+static std::vector<std::string> headerPresetNames(App& a, const PluginInfo& info, size_t& factory) {
+  std::vector<std::string> names;
+  for (const auto& p : info.presets) names.push_back(p.name);
+  factory = names.size();
+  for (const auto& e : cachedPresets(a, info.type, false)) names.push_back(e.folder.empty() ? e.name : e.folder + "/" + e.name);
+  return names;
+}
+
+// Loads entry `idx` of that list, as the header's preset arrows and menu do (one undo step).
+static bool applyHeaderPreset(App& a, const PluginTarget& t, HeaderState& h, int idx) {
+  const Song& s = a.doc.song();
+  const PluginState* st = t.state(s);
+  const PluginInfo* info = t.info(s);
+  if (!st || !info) return false;
+  size_t factoryCount = 0;
+  const std::vector<std::string> names = headerPresetNames(a, *info, factoryCount);
+  const auto& lib = cachedPresets(a, info->type, false);
+  if (idx < 0 || idx >= static_cast<int>(names.size())) return false;
+  if (static_cast<size_t>(idx) < factoryCount && isHostedType(info->type)) {  // hosted: the plugin's own programs
+    if (!selectHostedProgram(a, t, idx)) return false;
+    h.presetIndex = idx;
+    h.presetName = names[static_cast<size_t>(idx)];
+    return true;
+  }
+  PluginState ns;
+  if (static_cast<size_t>(idx) < factoryCount) {
+    ns = presetStateKeepingData(*info, static_cast<size_t>(idx), st->data);  // factory presets keep the loaded sample
+  } else {
+    if (!loadPreset(lib[static_cast<size_t>(idx) - factoryCount].file, info->type, ns)) return false;
+    if (ns.data.empty()) ns.data = st->data;  // presets without their own data keep the current one
+  }
+  setPluginState(a, t, ns, "load preset");
+  h.presetIndex = idx;
+  h.presetName = static_cast<size_t>(idx) < factoryCount ? names[static_cast<size_t>(idx)] : lib[static_cast<size_t>(idx) - factoryCount].name;
+  return true;
+}
+
+std::string stepPluginPreset(App& a, const PluginTarget& t, int by) {
+  const Song& s = a.doc.song();
+  const PluginState* st = t.state(s);
+  const PluginInfo* info = t.info(s);
+  if (!st || !info || by == 0) return {};
+  HeaderState& h = headerFor(t, st->type, st);
+  size_t factoryCount = 0;
+  const int n = static_cast<int>(headerPresetNames(a, *info, factoryCount).size());
+  if (n == 0) return {};
+  // As the header's arrows: previous from the first (or none) wraps to the last, next wraps to the first.
+  const int idx = by < 0 ? (h.presetIndex <= 0 ? n - 1 : h.presetIndex - 1) : (h.presetIndex + 1 >= n ? 0 : h.presetIndex + 1);
+  if (!applyHeaderPreset(a, t, h, idx)) return {};
+  return h.presetName.empty() ? std::string("Default") : h.presetName;
+}
+
 void drawPluginHeader(App& a, const PluginTarget& t, bool rule) {
   const Song& s = a.doc.song();
   const PluginState* st = t.state(s);
@@ -363,32 +418,11 @@ void drawPluginHeader(App& a, const PluginTarget& t, bool rule) {
 
   // Combined preset list: factory, then the preset library (your presets at
   // the top level, then folders such as "FL Studio/<plugin>/…").
-  std::vector<std::string> names;
-  for (const auto& p : info->presets) names.push_back(p.name);
-  const size_t factoryCount = names.size();
-  const bool menuOpening = ImGui::IsPopupOpen("##preset");
+  size_t factoryCount = 0;
+  const std::vector<std::string> names = headerPresetNames(a, *info, factoryCount);
   const auto& lib = cachedPresets(a, info->type, false);
-  for (const auto& e : lib) names.push_back(e.folder.empty() ? e.name : e.folder + "/" + e.name);
-  auto apply = [&](int idx) {
-    if (idx < 0 || idx >= static_cast<int>(names.size())) return;
-    if (static_cast<size_t>(idx) < factoryCount && isHostedType(info->type)) {  // hosted: the plugin's own programs
-      if (!selectHostedProgram(a, t, idx)) return;
-      h.presetIndex = idx;
-      h.presetName = names[static_cast<size_t>(idx)];
-      return;
-    }
-    PluginState ns;
-    if (static_cast<size_t>(idx) < factoryCount) {
-      ns = presetState(*info, static_cast<size_t>(idx));
-      ns.data = st->data;  // factory presets keep the loaded sample
-    } else {
-      if (!loadPreset(lib[static_cast<size_t>(idx) - factoryCount].file, info->type, ns)) return;
-      if (ns.data.empty()) ns.data = st->data;  // presets without their own data keep the current one
-    }
-    setPluginState(a, t, ns, "load preset");
-    h.presetIndex = idx;
-    h.presetName = static_cast<size_t>(idx) < factoryCount ? names[static_cast<size_t>(idx)] : lib[static_cast<size_t>(idx) - factoryCount].name;
-  };
+  const bool menuOpening = ImGui::IsPopupOpen("##preset");
+  auto apply = [&](int idx) { applyHeaderPreset(a, t, h, idx); };
   (void)menuOpening;
   if (h.devPick >= 0) apply(std::exchange(h.devPick, -1));
 
@@ -899,7 +933,8 @@ void paramMenu(App& a, ParamId pid, const ParamDesc& d, bool* wantType) {
   ImGui::Separator();
   automationMenuItems(a, pid);  // J-5: create / edit automation, edit events, record
   ImGui::Separator();
-  packs::modulation::drawLinkMenu(a, pid);  // GitHub #60: internal controllers, as on every other knob
+  // GitHub #60: internal controllers, as on every other knob (0.7.8: the Modulate submenu, every source)
+  if (packs::modulation::drawLinkMenu(a, pid)) ImGui::Separator();
   remoteLinkMenuItems(a, pid);  // MIDI remote control (MidiUi.cpp)
 }
 
@@ -949,6 +984,7 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
   }
   ImGuiIO& io = ImGui::GetIO();
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  lfoui::controlOverlay(a, pid, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), act);  // K-247: LFO swing, drop, Alt-drag
   if (!act) {  // GitHub #60: automation and internal controllers move it (and its readout)
     const double shown = pui::shownValue(a, pid, val);
     if (shown != val) val = std::clamp(shown, std::min(d.min, d.max), std::max(d.min, d.max));
@@ -1005,7 +1041,7 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
         changed = true;
       }
     }
-  } else if (act && !(io.KeyCtrl || io.KeySuper)) {
+  } else if (act && !(io.KeyCtrl || io.KeySuper) && !(io.KeyAlt && lfoui::altOwned(a, pid))) {  // K-247: Alt-drag is the LFO amount
     float delta = horizontal ? io.MouseDelta.x : -io.MouseDelta.y;
     double& acc = accum[id];
     if (!mags.empty() && io.KeyShift != fineDrag) {  // K-147: Shift toggled mid-drag: carry on from the shown value, no jump
@@ -1733,6 +1769,11 @@ static void drawPluginBodyIn(App& a, const PluginTarget& t, float width) {
   if (!info) return;
   skin::resetFrames();  // Q-7: panels of this editor only
   if (isHostedType(info->type)) {  // third-party plugin: editor button + parameter list
+    if (hostedui::showsInterfaceInside(a, t)) {  // 0.7.8: its own interface, inside Gridline
+      collabui::pluginStrip(a, t, width);  // k078-collabplug: who lacks it, who is in it
+      hostedui::drawDockedInterface(a, t, width);
+      return;
+    }
     drawHostedEditor(a, t, width);
     return;
   }

@@ -155,7 +155,7 @@ stagerep(5)
 check("two undos: where they started (${s_undo})" s_undo EQUAL U0 AND s_depth${v0} STREQUAL dep0)
 
 # ---- 3. a new room named after the marker ----
-run(room studio 60 "${MARK}10 stage\n12 stage pick move new area 2\n16 stage\n17 stage pick find area 2\n18 shot ${SHOTS}/stage-pick-new-room.ppm\n20 undo\n24 stage\n28 quit discard\n")
+run(room studio 60 "${MARK}10 stage\n12 stage pick move new area 2\n16 stage\n17 stage pick find area 2\n18 shot \"${SHOTS}/stage-pick-new-room.ppm\"\n20 undo\n24 stage\n28 quit discard\n")
 stagerep(0)
 set(U0 "${s_undo}")
 set(R0 "${r_count}")
@@ -174,7 +174,7 @@ stagerep(2)
 check("undo: the room is gone again (${r_count})" s_undo EQUAL U0 AND r_count EQUAL R0)
 
 # ---- 4. Add to the stage: from another room into the room shown ----
-run(add studio 70 "${MARK}10 stage roomnew Other\n12 stage pick move 1 area 1\n14 stage roomshow 0\n16 stage pick find area 2\n18 stage\n20 stage pick add area 2\n24 stage\n25 stage pick find area 2\n26 shot ${SHOTS}/stage-pick-added.ppm\n28 undo\n32 stage\n34 quit discard\n")
+run(add studio 70 "${MARK}10 stage roomnew Other\n12 stage pick move 1 area 1\n14 stage roomshow 0\n16 stage pick find area 2\n18 stage\n20 stage pick add area 2\n24 stage\n25 stage pick find area 2\n26 shot \"${SHOTS}/stage-pick-added.ppm\"\n28 undo\n32 stage\n34 quit discard\n")
 pick(0)
 set(other "${p_other}")
 check("before: the Verse's tracks are in the other room (${p_other})" p_other EQUAL nVerse)
@@ -200,8 +200,8 @@ check("undo: back in the other room (${s_undo})" s_undo EQUAL U0)
 
 # ---- 5. the panel in every layout ----
 foreach(lay studio live logic tracker)
-  run(panel_${lay} ${lay} 50 "${MARK}10 clipsel 47\n12 palette run cmd:stage.fromMarkers\n30 stage pick find area 1\n32 shot ${SHOTS}/stage-pick-panel-${lay}.ppm\n34 quit discard\n")
+  run(panel_${lay} ${lay} 50 "${MARK}10 clipsel 47\n12 palette run cmd:stage.fromMarkers\n30 stage pick find area 1\n32 shot \"${SHOTS}/stage-pick-panel-${lay}.ppm\"\n34 quit discard\n")
   pick(0)
   check("${lay}: the palette's command opens the panel on the Stage (${p_panel})" p_panel EQUAL 1)
 endforeach()
-run(menu studio 50 "${MARK}10 clipsel 47\n12 stage pick menu\n20 shot ${SHOTS}/stage-pick-menu.ppm\n24 quit discard\n")
+run(menu studio 50 "${MARK}10 clipsel 47\n12 stage pick menu\n20 shot \"${SHOTS}/stage-pick-menu.ppm\"\n24 quit discard\n")

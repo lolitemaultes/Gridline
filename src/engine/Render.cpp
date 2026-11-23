@@ -1,70 +1,102 @@
 #include "Render.h"
 #include <algorithm>
 #include <cmath>
+#include <exception>
+#include <memory>
 #include <set>
 #include "LiveRender.h"
 #include "Resample.h"
 #include "SampleTap.h"
 #include "../core/MixerOps.h"
 
+// What throws while an offline render runs (the caller's progress callback, an allocation for a
+// very long render) never unwinds through the frame that owns the render's engine: that frame
+// catches it, lets the engine and its worker threads shut down the ordinary way, and returns; a
+// small outer function throws it again to the caller. The engine lives on the heap (about 330 KB:
+// a stack frame that big is a hazard of its own on a secondary thread). Linux arm64 aborted an
+// export whose progress callback threw from inside the step loop (the unwinder could not get past
+// the render's frame there), while every other system passed the same test.
+#if defined(_MSC_VER)
+#define GL_RENDER_NOINLINE __declspec(noinline)
+#else
+#define GL_RENDER_NOINLINE __attribute__((noinline))
+#endif
+
 namespace gl {
 
-AudioBuffer renderSong(const Song& source, const RenderOptions& opt) {
-  const tap::Bind tapBind(opt.tapPass);  // K-322: the program build and this thread's share of the graph
-  // Live area (performance mode): launched clips play from the song start (J-32).
-  Song song = source;
-  const Tick start = opt.patternMode ? 0 : prepareOfflineLive(song);
-  ProgramBuilder builder;
-  builder.setSampleRate(opt.sampleRate);
-  builder.setPdc(opt.pdc);
-  builder.setFrozenAudio(opt.frozen.channels, opt.frozen.mixers);
-  auto prog = builder.build(song);
-  Tick end = opt.patternMode ? (prog->pattern(opt.pattern) ? prog->pattern(opt.pattern)->length : 0) : prog->songEnd;
-  if (end <= start) return AudioBuffer(static_cast<size_t>(opt.channels), 0);
-  end += opt.tail;
-  // Song mode follows the tempo map (tempo automation); patterns play at the song tempo.
-  const TempoMap& map = opt.patternMode ? prog->flatMap : prog->tempoMap;
-  const int64_t total =
-      static_cast<int64_t>(std::ceil(map.samplesBetween(static_cast<double>(start), static_cast<double>(end), opt.sampleRate))) + 1;
+namespace {
 
-  AudioEngine eng(opt.sampleRate);
-  eng.setTapPass(opt.tapPass);  // K-322
-  eng.setProgram(prog);
-  eng.setLooping(false);
-  eng.setOffline(true);
-  eng.setFixedBlock(AudioEngine::kOfflineBlock);  // J-30: identical output for any opt.blockSize
-  if (opt.patternMode) {
-    eng.setMode(PlayMode::Pattern);
-    eng.setPattern(opt.pattern);
-  } else {
-    eng.setMode(PlayMode::Song);
-    if (start > 0) eng.setPosition(start);
-  }
-  eng.play();
+GL_RENDER_NOINLINE AudioBuffer renderSongCaught(const Song& source, const RenderOptions& opt, std::exception_ptr& failed) {
+  try {
+    const tap::Bind tapBind(opt.tapPass);  // K-322: the program build and this thread's share of the graph
+    // Live area (performance mode): launched clips play from the song start (J-32).
+    Song song = source;
+    const Tick start = opt.patternMode ? 0 : prepareOfflineLive(song);
+    ProgramBuilder builder;
+    builder.setSampleRate(opt.sampleRate);
+    builder.setPdc(opt.pdc);
+    builder.setFrozenAudio(opt.frozen.channels, opt.frozen.mixers);
+    auto prog = builder.build(song);
+    Tick end = opt.patternMode ? (prog->pattern(opt.pattern) ? prog->pattern(opt.pattern)->length : 0) : prog->songEnd;
+    if (end <= start) return AudioBuffer(static_cast<size_t>(opt.channels), 0);
+    end += opt.tail;
+    // Song mode follows the tempo map (tempo automation); patterns play at the song tempo.
+    const TempoMap& map = opt.patternMode ? prog->flatMap : prog->tempoMap;
+    const int64_t total =
+        static_cast<int64_t>(std::ceil(map.samplesBetween(static_cast<double>(start), static_cast<double>(end), opt.sampleRate))) + 1;
 
-  eng.setThreads(opt.threads);
-
-  // Plugin delay compensation: the master output lags the transport by the
-  // program's output latency; render that much longer and drop the start so
-  // the file begins on time (sample-aligned with a latency-free render).
-  const int64_t lat = std::max(0, prog->outputLatency);
-  const int64_t span = total + lat;
-  AudioBuffer out(static_cast<size_t>(opt.channels), static_cast<size_t>(total));
-  std::vector<float> L(static_cast<size_t>(span)), R(static_cast<size_t>(span));
-  int bs = std::clamp(opt.blockSize, 1, AudioEngine::kMaxBlock);
-  int64_t reported = 0;
-  for (int64_t pos = 0; pos < span; pos += bs) {
-    if (opt.cancel && opt.cancel->load(std::memory_order_relaxed)) break;
-    int n = static_cast<int>(std::min<int64_t>(bs, span - pos));
-    eng.process(L.data() + pos, R.data() + pos, n);
-    if (opt.progress && pos - reported >= opt.sampleRate / 4) {  // four times per second of audio
-      reported = pos;
-      opt.progress(static_cast<double>(pos) / static_cast<double>(span));
+    const auto engine = std::make_unique<AudioEngine>(opt.sampleRate);
+    AudioEngine& eng = *engine;
+    eng.setTapPass(opt.tapPass);  // K-322
+    eng.setProgram(prog);
+    eng.setLooping(false);
+    eng.setOffline(true);
+    eng.setFixedBlock(AudioEngine::kOfflineBlock);  // J-30: identical output for any opt.blockSize
+    if (opt.patternMode) {
+      eng.setMode(PlayMode::Pattern);
+      eng.setPattern(opt.pattern);
+    } else {
+      eng.setMode(PlayMode::Song);
+      if (start > 0) eng.setPosition(start);
     }
+    eng.play();
+
+    eng.setThreads(opt.threads);
+
+    // Plugin delay compensation: the master output lags the transport by the
+    // program's output latency; render that much longer and drop the start so
+    // the file begins on time (sample-aligned with a latency-free render).
+    const int64_t lat = std::max(0, prog->outputLatency);
+    const int64_t span = total + lat;
+    AudioBuffer out(static_cast<size_t>(opt.channels), static_cast<size_t>(total));
+    std::vector<float> L(static_cast<size_t>(span)), R(static_cast<size_t>(span));
+    int bs = std::clamp(opt.blockSize, 1, AudioEngine::kMaxBlock);
+    int64_t reported = 0;
+    for (int64_t pos = 0; pos < span; pos += bs) {
+      if (opt.cancel && opt.cancel->load(std::memory_order_relaxed)) break;
+      int n = static_cast<int>(std::min<int64_t>(bs, span - pos));
+      eng.process(L.data() + pos, R.data() + pos, n);
+      if (opt.progress && pos - reported >= opt.sampleRate / 4) {  // four times per second of audio
+        reported = pos;
+        opt.progress(static_cast<double>(pos) / static_cast<double>(span));
+      }
+    }
+    if (opt.progress) opt.progress(1.0);
+    std::copy(L.begin() + lat, L.end(), out.plane(0));
+    if (opt.channels > 1) std::copy(R.begin() + lat, R.end(), out.plane(1));
+    return out;
+  } catch (...) {
+    failed = std::current_exception();
+    return AudioBuffer{};
   }
-  if (opt.progress) opt.progress(1.0);
-  std::copy(L.begin() + lat, L.end(), out.plane(0));
-  if (opt.channels > 1) std::copy(R.begin() + lat, R.end(), out.plane(1));
+}
+
+}  // namespace
+
+AudioBuffer renderSong(const Song& source, const RenderOptions& opt) {
+  std::exception_ptr failed;
+  AudioBuffer out = renderSongCaught(source, opt, failed);
+  if (failed) std::rethrow_exception(failed);
   return out;
 }
 
@@ -143,142 +175,161 @@ int64_t scopeFrames(const Song& song, const RenderJob& job, Tick start, Tick end
   return static_cast<int64_t>(std::ceil(map.samplesBetween(static_cast<double>(start), static_cast<double>(end), sampleRate) - 1e-9));
 }
 
-RenderResult renderAudio(const Song& source, const RenderJob& job) {
-  const tap::Bind tapBind(job.tapPass);  // K-322: the program build and this thread's share of the graph
-  RenderResult res;
-  res.sampleRate = job.sampleRate;
-  Song song = prepareRenderSong(source, job);
-  // Live area (performance mode): launched clips play from the song start (J-32).
-  const Tick liveStart = job.scope == RenderScope::Song ? prepareOfflineLive(song, job.arrangementOnly) : 0;
-  const int os = job.oversample >= 4 ? 4 : job.oversample >= 2 ? 2 : 1;
-  const int sr = job.sampleRate * os;
-  if (job.sampleRate < 8000 || job.sampleRate > 384000) {
-    res.error = "unsupported sample rate";
-    return res;
-  }
-  ProgramBuilder builder;
-  builder.setSampleRate(sr);
-  builder.setPdc(job.pdc);
-  builder.setFrozenAudio(job.frozen.channels, job.frozen.mixers);
-  auto prog = builder.build(song);
-  Tick A = 0, B = 0;
-  if (job.scope == RenderScope::Pattern) {
-    const ProgPattern* pp = prog->pattern(job.pattern);
-    B = pp ? pp->length : 0;
-  } else if (job.scope == RenderScope::Range) {
-    A = std::max<Tick>(0, job.start);
-    B = job.end;
-  } else {
-    A = liveStart;
-    B = prog->songEnd;
-  }
-  res.start = A;
-  res.end = B;
-  if (B <= A) {
-    res.error = job.scope == RenderScope::Pattern ? "the pattern is empty" : job.scope == RenderScope::Range ? "the range is empty" : "the playlist is empty";
-    return res;
-  }
-  const TempoMap& map = job.scope == RenderScope::Pattern ? prog->flatMap : prog->tempoMap;
-  // The engine's own wrap point: the first sample at or after B.
-  const int64_t pass = static_cast<int64_t>(std::ceil(map.samplesBetween(static_cast<double>(A), static_cast<double>(B), sr) - 1e-9));
-  const int loops = std::clamp(job.loops, 1, 64);
-  const int64_t body = pass * loops;
-  const int64_t lat = std::max(0, prog->outputLatency);
-  for (const auto& m : prog->mixer) res.trackLatency[m.id] = m.latOwn;  // K-87
-  const bool tails = job.tail != TailMode::Cut;
-  const int64_t tailCap = tails ? static_cast<int64_t>(std::max(0.0, job.maxTailSeconds) * sr) : 0;
+namespace {
 
-  AudioEngine eng(sr);
-  eng.setTapPass(job.tapPass);  // K-322: its worker threads bind it per graph task
-  eng.setProgram(prog);
-  eng.setOffline(true);
-  // J-30: fixed engine blocks (identical output for any job.blockSize); the
-  // stop at the end of the body lands exactly on its sample.
-  eng.setFixedBlock(AudioEngine::kOfflineBlock);
-  eng.addBlockBarrier(body);
-  eng.setInterpolation(static_cast<int>(job.interp));
-  eng.setThreads(job.threads);
-  if (job.scope == RenderScope::Pattern) {
-    eng.setMode(PlayMode::Pattern);
-    eng.setPattern(job.pattern);
-  } else {
-    eng.setMode(PlayMode::Song);
-    eng.setLoopRange(A, B);
-    eng.setPosition(A);
-  }
-  eng.setLooping(true);  // passes wrap at B exactly; the transport stops after the last one
-  eng.play();
-
-  std::vector<float> L, R;
-  L.reserve(static_cast<size_t>(body + lat + tailCap));
-  R.reserve(static_cast<size_t>(body + lat + tailCap));
-  const int bs = std::clamp(job.blockSize, 1, AudioEngine::kMaxBlock);
-  const float silent = static_cast<float>(std::pow(10.0, job.silenceDb / 20.0));
-  const int64_t hold = sr;  // a tail ends after one second below the silence level
-  int64_t pos = 0, lastLoud = -1;
-  const int64_t estimate = body + lat + (tails ? std::min<int64_t>(tailCap, 4 * sr) : 0);
-  auto step = [&](int64_t n) {
-    L.resize(static_cast<size_t>(pos + n));
-    R.resize(static_cast<size_t>(pos + n));
-    eng.process(L.data() + pos, R.data() + pos, static_cast<int>(n));
-    if (job.tailBusy) {  // K-319
-      if (job.tailBusy()) {
-        lastLoud = pos + n - 1;
-      }
+GL_RENDER_NOINLINE RenderResult renderAudioCaught(const Song& source, const RenderJob& job, std::exception_ptr& failed) {
+  try {
+    const tap::Bind tapBind(job.tapPass);  // K-322: the program build and this thread's share of the graph
+    RenderResult res;
+    res.sampleRate = job.sampleRate;
+    Song song = prepareRenderSong(source, job);
+    // Live area (performance mode): launched clips play from the song start (J-32).
+    const Tick liveStart = job.scope == RenderScope::Song ? prepareOfflineLive(song, job.arrangementOnly) : 0;
+    const int os = job.oversample >= 4 ? 4 : job.oversample >= 2 ? 2 : 1;
+    const int sr = job.sampleRate * os;
+    if (job.sampleRate < 8000 || job.sampleRate > 384000) {
+      res.error = "unsupported sample rate";
+      return res;
+    }
+    ProgramBuilder builder;
+    builder.setSampleRate(sr);
+    builder.setPdc(job.pdc);
+    builder.setFrozenAudio(job.frozen.channels, job.frozen.mixers);
+    auto prog = builder.build(song);
+    Tick A = 0, B = 0;
+    if (job.scope == RenderScope::Pattern) {
+      const ProgPattern* pp = prog->pattern(job.pattern);
+      B = pp ? pp->length : 0;
+    } else if (job.scope == RenderScope::Range) {
+      A = std::max<Tick>(0, job.start);
+      B = job.end;
     } else {
-      for (int64_t i = pos; i < pos + n; ++i) {
-        if (std::fabs(L[static_cast<size_t>(i)]) > silent || std::fabs(R[static_cast<size_t>(i)]) > silent) {
-          lastLoud = i;
+      A = liveStart;
+      B = prog->songEnd;
+    }
+    res.start = A;
+    res.end = B;
+    if (B <= A) {
+      res.error = job.scope == RenderScope::Pattern ? "the pattern is empty" : job.scope == RenderScope::Range ? "the range is empty" : "the playlist is empty";
+      return res;
+    }
+    const TempoMap& map = job.scope == RenderScope::Pattern ? prog->flatMap : prog->tempoMap;
+    // The engine's own wrap point: the first sample at or after B.
+    const int64_t pass = static_cast<int64_t>(std::ceil(map.samplesBetween(static_cast<double>(A), static_cast<double>(B), sr) - 1e-9));
+    const int loops = std::clamp(job.loops, 1, 64);
+    const int64_t body = pass * loops;
+    const int64_t lat = std::max(0, prog->outputLatency);
+    for (const auto& m : prog->mixer) res.trackLatency[m.id] = m.latOwn;  // K-87
+    const bool tails = job.tail != TailMode::Cut;
+    const int64_t tailCap = tails ? static_cast<int64_t>(std::max(0.0, job.maxTailSeconds) * sr) : 0;
+
+    const auto engine = std::make_unique<AudioEngine>(sr);
+    AudioEngine& eng = *engine;
+    eng.setTapPass(job.tapPass);  // K-322: its worker threads bind it per graph task
+    eng.setProgram(prog);
+    eng.setOffline(true);
+    // J-30: fixed engine blocks (identical output for any job.blockSize); the
+    // stop at the end of the body lands exactly on its sample.
+    eng.setFixedBlock(AudioEngine::kOfflineBlock);
+    eng.addBlockBarrier(body);
+    eng.setInterpolation(static_cast<int>(job.interp));
+    eng.setThreads(job.threads);
+    if (job.scope == RenderScope::Pattern) {
+      eng.setMode(PlayMode::Pattern);
+      eng.setPattern(job.pattern);
+    } else {
+      eng.setMode(PlayMode::Song);
+      eng.setLoopRange(A, B);
+      eng.setPosition(A);
+    }
+    eng.setLooping(true);  // passes wrap at B exactly; the transport stops after the last one
+    eng.play();
+
+    std::vector<float> L, R;
+    L.reserve(static_cast<size_t>(body + lat + tailCap));
+    R.reserve(static_cast<size_t>(body + lat + tailCap));
+    const int bs = std::clamp(job.blockSize, 1, AudioEngine::kMaxBlock);
+    const float silent = static_cast<float>(std::pow(10.0, job.silenceDb / 20.0));
+    const int64_t hold = sr;  // a tail ends after one second below the silence level
+    int64_t pos = 0, lastLoud = -1;
+    const int64_t estimate = body + lat + (tails ? std::min<int64_t>(tailCap, 4 * sr) : 0);
+    auto step = [&](int64_t n) {
+      L.resize(static_cast<size_t>(pos + n));
+      R.resize(static_cast<size_t>(pos + n));
+      eng.process(L.data() + pos, R.data() + pos, static_cast<int>(n));
+      if (job.tailBusy) {  // K-319
+        if (job.tailBusy()) {
+          lastLoud = pos + n - 1;
+        }
+      } else {
+        for (int64_t i = pos; i < pos + n; ++i) {
+          if (std::fabs(L[static_cast<size_t>(i)]) > silent || std::fabs(R[static_cast<size_t>(i)]) > silent) {
+            lastLoud = i;
+          }
         }
       }
+      pos += n;
+      if (job.progress) job.progress(std::min(1.0, static_cast<double>(pos) / static_cast<double>(std::max<int64_t>(1, estimate))));
+      return !(job.cancel && job.cancel->load());
+    };
+    bool ok = true;
+    while (ok && pos < body) ok = step(std::min<int64_t>(bs, body - pos));
+    eng.stopToStart();  // releases every note at the scope end; effects ring on
+    while (ok && pos < body + lat) ok = step(std::min<int64_t>(bs, body + lat - pos));
+    if (tails) {
+      while (ok && pos < body + lat + tailCap && (lastLoud < 0 ? false : pos - 1 - lastLoud < hold)) ok = step(bs);
+      res.tailCapped = ok && pos >= body + lat + tailCap && lastLoud >= 0 && pos - 1 - lastLoud < hold && lastLoud >= body + lat;  // K-321
     }
-    pos += n;
-    if (job.progress) job.progress(std::min(1.0, static_cast<double>(pos) / static_cast<double>(std::max<int64_t>(1, estimate))));
-    return !(job.cancel && job.cancel->load());
-  };
-  bool ok = true;
-  while (ok && pos < body) ok = step(std::min<int64_t>(bs, body - pos));
-  eng.stopToStart();  // releases every note at the scope end; effects ring on
-  while (ok && pos < body + lat) ok = step(std::min<int64_t>(bs, body + lat - pos));
-  if (tails)
-    while (ok && pos < body + lat + tailCap && (lastLoud < 0 ? false : pos - 1 - lastLoud < hold)) ok = step(bs);
-  if (!ok) {
-    res.cancelled = true;
+    if (!ok) {
+      res.cancelled = true;
+      return res;
+    }
+    // Output frames (after dropping the PDC latency).
+    int64_t frames = body;
+    if (job.tail == TailMode::Leave) frames = std::max(body, std::min(pos - lat, lastLoud + 1 - lat));
+    std::vector<float> oL(static_cast<size_t>(frames)), oR(static_cast<size_t>(frames));
+    for (int64_t i = 0; i < frames; ++i) {
+      oL[static_cast<size_t>(i)] = L[static_cast<size_t>(i + lat)];
+      oR[static_cast<size_t>(i)] = R[static_cast<size_t>(i + lat)];
+    }
+    if (job.tail == TailMode::Wrap && body > 0) {
+      const int64_t end = std::min(pos - lat, lastLoud + 1 - lat);
+      for (int64_t i = body; i < end; ++i) {
+        oL[static_cast<size_t>(i % body)] += L[static_cast<size_t>(i + lat)];
+        oR[static_cast<size_t>(i % body)] += R[static_cast<size_t>(i + lat)];
+      }
+    }
+    if (os > 1) {  // decimate to the output rate (the body stays sample-exact)
+      const int64_t basePass = static_cast<int64_t>(std::ceil(map.samplesBetween(static_cast<double>(A), static_cast<double>(B), job.sampleRate) - 1e-9));
+      const int64_t baseBody = basePass * loops;
+      std::vector<float> dL = resampleChannel(oL.data(), oL.size(), sr, job.sampleRate, 48);
+      std::vector<float> dR = resampleChannel(oR.data(), oR.size(), sr, job.sampleRate, 48);
+      const int64_t want = job.tail == TailMode::Leave ? std::max<int64_t>(baseBody, static_cast<int64_t>(dL.size())) : baseBody;
+      dL.resize(static_cast<size_t>(want), 0.0f);
+      dR.resize(static_cast<size_t>(want), 0.0f);
+      oL.swap(dL);
+      oR.swap(dR);
+      res.bodyFrames = baseBody;
+    } else {
+      res.bodyFrames = body;
+    }
+    res.audio.resize(2, oL.size());
+    std::copy(oL.begin(), oL.end(), res.audio.plane(0));
+    std::copy(oR.begin(), oR.end(), res.audio.plane(1));
+    if (job.progress) job.progress(1.0);
     return res;
+  } catch (...) {
+    failed = std::current_exception();
+    return RenderResult{};
   }
-  // Output frames (after dropping the PDC latency).
-  int64_t frames = body;
-  if (job.tail == TailMode::Leave) frames = std::max(body, std::min(pos - lat, lastLoud + 1 - lat));
-  std::vector<float> oL(static_cast<size_t>(frames)), oR(static_cast<size_t>(frames));
-  for (int64_t i = 0; i < frames; ++i) {
-    oL[static_cast<size_t>(i)] = L[static_cast<size_t>(i + lat)];
-    oR[static_cast<size_t>(i)] = R[static_cast<size_t>(i + lat)];
-  }
-  if (job.tail == TailMode::Wrap && body > 0) {
-    const int64_t end = std::min(pos - lat, lastLoud + 1 - lat);
-    for (int64_t i = body; i < end; ++i) {
-      oL[static_cast<size_t>(i % body)] += L[static_cast<size_t>(i + lat)];
-      oR[static_cast<size_t>(i % body)] += R[static_cast<size_t>(i + lat)];
-    }
-  }
-  if (os > 1) {  // decimate to the output rate (the body stays sample-exact)
-    const int64_t basePass = static_cast<int64_t>(std::ceil(map.samplesBetween(static_cast<double>(A), static_cast<double>(B), job.sampleRate) - 1e-9));
-    const int64_t baseBody = basePass * loops;
-    std::vector<float> dL = resampleChannel(oL.data(), oL.size(), sr, job.sampleRate, 48);
-    std::vector<float> dR = resampleChannel(oR.data(), oR.size(), sr, job.sampleRate, 48);
-    const int64_t want = job.tail == TailMode::Leave ? std::max<int64_t>(baseBody, static_cast<int64_t>(dL.size())) : baseBody;
-    dL.resize(static_cast<size_t>(want), 0.0f);
-    dR.resize(static_cast<size_t>(want), 0.0f);
-    oL.swap(dL);
-    oR.swap(dR);
-    res.bodyFrames = baseBody;
-  } else {
-    res.bodyFrames = body;
-  }
-  res.audio.resize(2, oL.size());
-  std::copy(oL.begin(), oL.end(), res.audio.plane(0));
-  std::copy(oR.begin(), oR.end(), res.audio.plane(1));
-  if (job.progress) job.progress(1.0);
+}
+
+}  // namespace
+
+RenderResult renderAudio(const Song& source, const RenderJob& job) {
+  std::exception_ptr failed;
+  RenderResult res = renderAudioCaught(source, job, failed);
+  if (failed) std::rethrow_exception(failed);
   return res;
 }
 

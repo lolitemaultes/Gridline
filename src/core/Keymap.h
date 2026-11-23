@@ -61,7 +61,8 @@ std::string format(const Chord& c);
 // Accepts any modifier order and case ("shift+ctrl+s", "Ctrl+Num +"). Invalid -> Key::None.
 Chord parse(const std::string& text);
 
-enum class Context : uint8_t { Global, Playlist, PianoRoll, ChannelRack, Mixer, Automation, Stage, Count };
+// Waveform (K-248): the views that edit a sample's waveform (the audio clip editor, the sampler, Kerf, pads, Loupe).
+enum class Context : uint8_t { Global, Playlist, PianoRoll, ChannelRack, Mixer, Automation, Stage, Waveform, Count };
 const char* contextName(Context c);  // English, for the shortcut editor ("Piano roll", ...)
 
 struct Command {

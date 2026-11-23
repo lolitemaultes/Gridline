@@ -9,6 +9,7 @@
 #include <array>
 #include <cmath>
 #include "models_rt.h"
+#include "../rest_render.h"
 
 namespace gl::packs::models {
 
@@ -596,6 +597,9 @@ class AdditiveGen final : public Generator {
     compTail_ = loud ? static_cast<int>(sr_ * 0.2) : std::max(0, compTail_ - n);
   }
 
+  // K-142: at rest its idle render runs on unheard (packs/rest_render.h), so the next note
+  // finds every free-running part where it would have been.
+  void rested(int n) override { packs::restRender(n, [this](float* l, float* r, int m) { render(l, r, m); }); }
   void render(float* L, float* R, int n) override {
     for (int i = 0; i < kVoices; ++i)  // K-193: each sounding note's own response, once per block
       if (voices_[i].on) exprVoice(voices_[i].vx, voices_[i].id);

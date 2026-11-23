@@ -1,4 +1,5 @@
 #include "MidiUi.h"
+#include "../core/ThreadName.h"
 #include "DisplayConfirm.h"
 #include "../core/Platform.h"
 #include "../core/DawProject.h"
@@ -7,6 +8,8 @@
 #include "McpUi.h"
 #include "OscUi.h"
 #include "App.h"
+#include "FlkeyUi.h"
+#include "Surfaces.h"
 #include "AutomationEditor.h"
 #include "StageView.h"
 #include "RecordRowsUi.h"
@@ -151,6 +154,8 @@ App::~App() {
   cacheui::shutdown(*this);      // K-45: the project's unpacked copy can go
   collabui::closeSession(*this);  // J-111: the log is synced, collaborators are told
   shutdownControllerScripts();  // onDeinit while the app still exists
+  flkeyShutdown();               // k078-flkey: FLkey keyboards back to standalone
+  surfaceui::shutdown(*this);    // pad controllers (Launchpad Pro [MK3]) back to standalone
   mcpui::shutdown();             // SC-07: stop the assistant server, remove its endpoint file
   oscui::shutdown();             // OSC server, notes it holds
   presetImport.cancel = true;
@@ -280,17 +285,30 @@ int App::processingThreads() const {
 void App::syncEngine() {
   if (const int th = processingThreads(); th != engine.threads()) engine.setThreads(th);
   engine.setRestInstruments(settings.getBool("freeze.restSilent"));  // K-277
-  {  // K-277: an instrument whose own editor is open never rests (the editor may play notes itself)
+  {  // K-277: an instrument whose own editor is in use never rests (the editor may play notes
+     // itself). GitHub #66: in use, not only open: an open window the pointer is not over and that
+     // has not the keyboard lets it rest (hostedEditorEngaged); a hosted effect likewise.
     static std::set<ObjectId> was;
+    static std::set<std::pair<ObjectId, int>> wasFx;
     std::set<ObjectId> open;
-    for (const PluginTarget& t : openHostedEditorTargets())
+    std::set<std::pair<ObjectId, int>> openFx;
+    for (const PluginTarget& t : openHostedEditorTargets()) {
+      if (!hostedEditorEngaged(t)) continue;
       if (t.isChannel()) open.insert(t.owner);
+      else if (t.node == 0) openFx.insert({t.owner, t.slot});
+    }
     for (ObjectId id : was)
       if (!open.count(id))
         if (auto rt = builder.channelRuntime(id)) rt->editorOpen.store(false, std::memory_order_relaxed);
     for (ObjectId id : open)  // (every frame: a rebuild may have made a new runtime)
       if (auto rt = builder.channelRuntime(id)) rt->editorOpen.store(true, std::memory_order_relaxed);
+    for (const auto& k : wasFx)
+      if (!openFx.count(k))
+        if (auto rt = builder.effectRuntime(k.first, k.second)) rt->editorOpen.store(false, std::memory_order_relaxed);
+    for (const auto& k : openFx)
+      if (auto rt = builder.effectRuntime(k.first, k.second)) rt->editorOpen.store(true, std::memory_order_relaxed);
     was = std::move(open);
+    wasFx = std::move(openFx);
   }
   stretch::setRenderFocus(engine.position());  // K-64: the renders about to play first
   // Hosted plugins prepare for the engine's sample rate: rebuild when it
@@ -454,7 +472,7 @@ void App::loadSoundTheme(double deviceRate, bool sync) {
     uiSounds.install(uisound::loadTheme(dir, uiSoundTheme, deviceRate));
     return;
   }
-  soundThemeLoad_ = std::async(std::launch::async, [dir, theme = uiSoundTheme, deviceRate] {
+  soundThemeLoad_ = std::async(std::launch::async, [dir, theme = uiSoundTheme, deviceRate] { gl::threads::setName("gl-ui-sounds");
     return uisound::loadTheme(dir, theme, deviceRate);
   });
 }
@@ -719,7 +737,7 @@ void App::startPresetImport() {
   presetImport.total = 0;
   presetImport.running = true;
   const std::string data = settings.getString("import.flData"), root = presetRoot(configDir());
-  presetImport.worker = std::thread([this, data, root]() {
+  presetImport.worker = std::thread([this, data, root]() { gl::threads::setName("gl-preset-imp");
     auto rep = flp::importPresetLibrary(data, root, [this](size_t done, size_t total, const std::string&) {
       presetImport.done = done;
       presetImport.total = total;
@@ -1264,13 +1282,13 @@ void App::closeAllWindows() {
   // R02-06: in the Tracks layout the tracks area is the main window and the panes are part of it;
   // closing all windows closes the floating ones only (dialogs, tool windows, plugin windows).
   if (layoutui::active() == layout::Preset::Logic) {
-    showSettings = showInfo = showHistory = showAbout = showExport = showShortcuts = showPluginManager = showPerformance = showGroove = false;
+    showSettings = showInfo = showHistory = showAbout = showExport = showShortcuts = showPluginManager = showPerformance = showGroove = showLfoDetail = false;
     showMaster = false;
     closePluginWindows();
     return;
   }
   showBrowser = showRack = showPiano = showPlaylist = showMixer = false;
-  showSettings = showInfo = showHistory = showAbout = showExport = showShortcuts = showPluginManager = showPerformance = showGroove = false;
+  showSettings = showInfo = showHistory = showAbout = showExport = showShortcuts = showPluginManager = showPerformance = showGroove = showLfoDetail = false;
   closePluginWindows();
 }
 

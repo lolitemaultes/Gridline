@@ -1,4 +1,5 @@
 #include "MenuOps.h"
+#include "Lanes.h"
 #include "ClipLoop.h"
 #include "ClipSources.h"
 #include "NoteBend.h"
@@ -26,7 +27,7 @@ void eraseIf(std::vector<T>& v, const std::function<bool(const T&)>& pred) {
 std::vector<uint8_t> stepRow(const Pattern& p, ObjectId ch) {
   std::vector<uint8_t> row;
   if (auto it = p.steps.find(ch); it != p.steps.end()) row = it->second;
-  row.resize(static_cast<size_t>(std::max(0, p.bars * p.stepsPerBar)), 0);
+  row.resize(static_cast<size_t>(std::max(0, lanes::steps(p, ch))), 0);  // K-255: the row's own steps
   return row;
 }
 
@@ -295,6 +296,25 @@ bool setChannelsMuted(Document& d, const std::vector<ObjectId>& channels, bool m
   return ok;
 }
 
+bool setChannelsRackHidden(Document& d, const std::vector<ObjectId>& channels, bool hidden) {
+  bool ok = false;
+  d.beginGroup(hidden ? "hide channels" : "show hidden channels");
+  for (ObjectId c : channels) {
+    const Channel* ch = d.song().channel(c);
+    if (!ch || ch->rackHidden == hidden) continue;
+    ok |= d.editChannel(c, hidden ? "hide channel" : "show channel", [&](Channel& x) { x.rackHidden = hidden; });
+  }
+  d.endGroup();
+  return ok;
+}
+
+std::vector<ObjectId> rackHiddenChannels(const Song& s) {
+  std::vector<ObjectId> out;
+  for (const Channel& c : s.channels)
+    if (c.rackHidden) out.push_back(c.id);
+  return out;
+}
+
 bool transposeChannels(Document& d, ObjectId pattern, const std::vector<ObjectId>& channels, int semitones) {
   const Pattern* p = d.song().pattern(pattern);
   if (!p) return false;
@@ -362,11 +382,11 @@ bool moveChannels(Document& d, const std::vector<ObjectId>& channels, int dir) {
   return true;
 }
 
-std::vector<ObjectId> cloneChannels(Document& d, const std::vector<ObjectId>& channels) {
+std::vector<ObjectId> cloneChannels(Document& d, const std::vector<ObjectId>& channels, Document::CloneNotes what, ObjectId pattern) {
   std::vector<ObjectId> out;
-  d.beginGroup("clone channels");
+  d.beginGroup(what == Document::CloneNotes::All ? "clone channels" : "clone channels without their notes");
   for (ObjectId c : channels)
-    if (ObjectId n = d.cloneChannel(c); n != kNoId) out.push_back(n);
+    if (ObjectId n = d.cloneChannel(c, what, pattern); n != kNoId) out.push_back(n);
   d.endGroup();
   return out;
 }
@@ -382,7 +402,7 @@ bool removeChannels(Document& d, const std::vector<ObjectId>& channels) {
 std::vector<ObjectId> unusedChannels(const Song& s) {
   std::vector<ObjectId> out;
   for (const auto& c : s.channels) {
-    bool used = false;
+    bool used = clipSourceUses(s, ClipKind::Audio, c.id) > 0;  // playlist audio clips play from it
     for (const auto& p : s.patterns) used = used || hasData(p, c.id);
     if (!used) out.push_back(c.id);
   }
@@ -892,6 +912,19 @@ void quantize(std::vector<Note>& notes, NoteSel& sel, Tick grid, bool ends) {
       Tick e = roundTo(end, grid);
       n.length = std::max<Tick>(std::max<Tick>(1, grid), e - n.start);
     }
+  }
+  sortNotes(notes, sel);
+}
+
+void quantize(std::vector<Note>& notes, NoteSel& sel, const SnapGrid& grid, bool ends) {
+  if (!grid.fractional()) return quantize(notes, sel, grid.num, ends);
+  auto t = targets(notes, sel);
+  for (size_t i = 0; i < notes.size(); ++i) {
+    if (!t[i]) continue;
+    Note& n = notes[i];
+    const Tick end = n.start + n.length;
+    n.start = std::max<Tick>(0, snapNearest(n.start, grid));
+    if (ends) n.length = std::max<Tick>(static_cast<Tick>(grid), snapNearest(end, grid) - n.start);
   }
   sortNotes(notes, sel);
 }

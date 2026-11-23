@@ -4,6 +4,7 @@
 // the bottom bar with view options and level / pitch readouts. J-207: every
 // size from edison_style.h (one row of equal-height controls in the bar).
 #include "../../app/GlEpoch.h"
+#include "../../core/ThreadName.h"
 #include <SDL_opengl.h>
 #include <algorithm>
 #include <cmath>
@@ -13,10 +14,14 @@
 #include "../../core/I18n.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
+#include "edison_repair_ui.h"
 #include "edison_style.h"
 #include "edison_ui.h"
 #include "../../app/SmoothScrollUi.h"
 #include "../../app/LiveWaveUi.h"
+#include "../../app/WarpWave.h"
+#include "../../app/Keys.h"
+#include "../../engine/SampleWarpRender.h"
 #include "../../engine/Dsp.h"
 
 namespace gl::packs::edison {
@@ -31,7 +36,7 @@ struct Geo {
   float xOf(double f) const { return p0.x + static_cast<float>((f - start) / len) * W(); }
 };
 
-constexpr double kMinHz = 30.0;
+constexpr double kMinHz = kSpecMinHz;
 
 double hzAtY(const Session& s, float y, float y0, float y1) {
   const double ny = s.rate() * 0.5;
@@ -64,65 +69,6 @@ int64_t snapFrame(App& a, const Session& s, const Geo& g, double f) {
   }
 }
 
-// Spectrogram colour map: dark slate → green → amber → white.
-ImU32 heat(uint8_t v) {
-  const float t = std::clamp((v / 255.f - 0.3f) / 0.7f, 0.f, 1.f);  // -84 dB and below = background
-  const float stops[5][4] = {{0.f, 0x1C, 0x21, 0x24}, {0.45f, 0x23, 0x4D, 0x3A}, {0.7f, 0x8F, 0xD3, 0xA0}, {0.88f, 0xE8, 0xC4, 0x6A}, {1.f, 0xFF, 0xFF, 0xFF}};
-  for (int k = 1; k < 5; ++k)
-    if (t <= stops[k][0]) {
-      float u = (t - stops[k - 1][0]) / (stops[k][0] - stops[k - 1][0]);
-      auto lerp = [&](int c) { return static_cast<int>(stops[k - 1][c] + (stops[k][c] - stops[k - 1][c]) * u); };
-      return IM_COL32(lerp(1), lerp(2), lerp(3), 255);
-    }
-  return IM_COL32(255, 255, 255, 255);
-}
-
-void updateSpectrogram(Session& s) {
-  if (s.tex && s.texEpoch != glepoch::current()) {  // K-47: a driver reset took it
-    s.tex = 0;
-    s.texDirty = true;
-  }
-  const uint64_t serial = s.hist.serial();
-  if (s.specJob.valid() && s.specJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-    s.spec = s.specJob.get();
-    s.texDirty = true;
-  }
-  if (s.specSerial != serial && !s.specJob.valid()) {
-    s.specSerial = serial;
-    AudioPtr a = s.cur().audio;
-    s.specJob = std::async(std::launch::async, [a]() { return a ? computeSpectrogram(*a, 2048, 4096) : Spectrogram{}; });
-  }
-  if (!s.texDirty || s.spec.cols == 0) return;
-  s.texDirty = false;
-  // Rows on a log-frequency axis (bottom = 30 Hz, top = Nyquist).
-  const int H = 256, W = s.spec.cols;
-  std::vector<uint32_t> px(static_cast<size_t>(W) * H);
-  const double ny = s.spec.rate * 0.5;
-  for (int r = 0; r < H; ++r) {
-    const double hz = kMinHz * std::pow(ny / kMinHz, static_cast<double>(H - 1 - r) / (H - 1));
-    const int bin = std::clamp(static_cast<int>(hz / ny * s.spec.bins), 0, s.spec.bins - 1);
-    for (int c = 0; c < W; ++c) px[static_cast<size_t>(r) * W + c] = heat(s.spec.at(c, bin));
-  }
-  GLint last = 0;
-  glGetIntegerv(GL_TEXTURE_BINDING_2D, &last);
-  if (!s.tex) {
-    GLuint t = 0;
-    glGenTextures(1, &t);
-    s.tex = t;
-    s.texEpoch = glepoch::current();
-  }
-  glBindTexture(GL_TEXTURE_2D, s.tex);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, W, H, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-  glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(last));
-  s.texW = W;
-  s.texH = H;
-}
-
 void updateLevels(Session& s) {
   if (s.levelsJob.valid() && s.levelsJob.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
     auto r = s.levelsJob.get();
@@ -134,7 +80,7 @@ void updateLevels(Session& s) {
   if (key == s.levelsKey || s.dragging || s.levelsJob.valid() || s.frames() == 0) return;
   s.levelsKey = key;
   AudioPtr a = s.cur().audio;
-  s.levelsJob = std::async(std::launch::async, [a, r]() {
+  s.levelsJob = std::async(std::launch::async, [a, r]() { gl::threads::setName("gl-loupe-levels");
     Levels L = measure(*a, r);
     Range pr{r.a, std::min(r.b, r.a + static_cast<int64_t>(a->rate * 2))};
     return std::make_pair(L, detectPitch(*a, pr));
@@ -228,24 +174,35 @@ void drawLiveLanes(Session& s, ImDrawList* dl, const Geo& g, float scale) {
   }
 }
 
-void drawSpectral(Session& s, ImDrawList* dl, const Geo& g, ImFont* fm, float fs) {
-  updateSpectrogram(s);
-  if (s.tex && s.spec.cols > 0) {
-    const double total = static_cast<double>(s.spec.cols) * static_cast<double>(s.spec.hop);
-    const double u0 = (g.start + s.spec.hop * 0.5) / total, u1 = (g.start + g.len + s.spec.hop * 0.5) / total;
-    dl->AddImage(ImTextureRef(static_cast<ImTextureID>(s.tex)), g.p0, g.p1, ImVec2(static_cast<float>(u0), 0), ImVec2(static_cast<float>(u1), 1));
-  } else if (s.frames() > 0) {
+void drawSpectral(App& a, Session& s, ImDrawList* dl, const Geo& g, ImFont* fm, float fs, float scale) {
+  drawSpecView(a, s, dl, g.p0, g.p1, g.start, g.len);
+  if (s.specView.tex == 0 && s.specBase.tex == 0 && s.frames() > 0)
     sty::textAt(dl, fm, fs, (g.p0.x + g.p1.x) * 0.5f, (g.p0.y + g.p1.y) * 0.5f, C(col::TextDim), i18n::tr("Computing the spectrogram..."), 1);
-  }
-  // Frequency labels (a tick and the value on its line).
-  for (double hz : {100.0, 1000.0, 10000.0}) {
-    if (hz >= s.rate() * 0.5) continue;
-    const float y = std::round(yOfHz(s, hz, g.p0.y, g.p1.y)) + 0.5f;
-    dl->AddLine(ImVec2(g.p0.x, y), ImVec2(g.p0.x + 8, y), C(col::Text, 0.6f));
-    char b[16];
-    std::snprintf(b, sizeof b, hz >= 1000 ? "%.0fk" : "%.0f", hz >= 1000 ? hz / 1000 : hz);
-    sty::textAt(dl, fm, fs, g.p0.x + 11, y, C(col::Text, 0.7f), b, 0);
-  }
+  // Frequency grid: a faint line at 1, 2 and 5 of each decade (labelled, on a dark backing so
+  // the text reads over any colour), small ticks at the other steps.
+  const double ny = s.rate() * 0.5;
+  const float tick = std::round(std::max(4.f, 6.f * scale)), lineW = 1.f;
+  for (double dec = 10.0; dec < ny; dec *= 10.0)
+    for (int m = 1; m <= 9; ++m) {
+      const double hz = dec * m;
+      if (hz < kMinHz * 1.05 || hz >= ny * 0.97) continue;
+      const float y = std::round(yOfHz(s, hz, g.p0.y, g.p1.y)) + 0.5f;
+      const bool major = m == 1 || m == 2 || m == 5;
+      if (!major) {
+        dl->AddLine(ImVec2(g.p0.x, y), ImVec2(g.p0.x + tick * 0.6f, y), C(col::Text, 0.35f), lineW);
+        continue;
+      }
+      dl->AddLine(ImVec2(g.p0.x, y), ImVec2(g.p1.x, y), C(col::Text, m == 1 ? 0.10f : 0.06f), lineW);
+      dl->AddLine(ImVec2(g.p0.x, y), ImVec2(g.p0.x + tick, y), C(col::Text, 0.7f), lineW);
+      char b[16];
+      if (hz >= 1000)
+        std::snprintf(b, sizeof b, "%.0fk", hz / 1000);
+      else
+        std::snprintf(b, sizeof b, "%.0f", hz);
+      const float tx = g.p0.x + tick + std::round(3 * scale), tw = sty::textW(fm, fs, b), th = std::round(fs * 0.62f);
+      dl->AddRectFilled(ImVec2(tx - std::round(2 * scale), y - th), ImVec2(tx + tw + std::round(2 * scale), y + th), C(col::WaveBg, 0.72f), std::round(2 * scale));
+      sty::textAt(dl, fm, fs, tx, y, C(col::Text, 0.85f), b, 0);
+    }
   // Brush strokes.
   for (const auto& q : s.brush) {
     ImVec2 a(g.xOf(static_cast<double>(q.f0)), yOfHz(s, q.hz1, g.p0.y, g.p1.y)), b(g.xOf(static_cast<double>(q.f1)), yOfHz(s, q.hz0, g.p0.y, g.p1.y));
@@ -355,12 +312,13 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
   if (live) {
     drawLiveLanes(s, dl, g, M.s);  // (the spectrogram comes back with the finished take)
   } else if (s.spectral) {
-    drawSpectral(s, dl, g, fm, fs);
+    drawSpectral(a, s, dl, g, fm, fs, M.s);
     if (!s.sel.empty())
       dl->AddRectFilled(ImVec2(g.xOf(static_cast<double>(s.sel.a)), g.p0.y), ImVec2(g.xOf(static_cast<double>(s.sel.b)), g.p1.y), C(col::SelEdge, 0.18f));
   } else {
     drawLanes(a, s, dl, g, M.s);
   }
+  if (!live) drawRepairMarks(s, dl, g.p0, g.p1, g.start, g.len);  // an open repair dialog's marks (clipped regions, hits)
   if (s.frames() == 0 && !s.job.active() && !live) {
     // Empty state: what Loupe is waiting for, centred in the lanes.
     const char* head = s.slot ? i18n::tr("No audio yet") : i18n::tr("This sample is empty");
@@ -483,9 +441,63 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
     ImGui::EndPopup();
   }
 
+  // ---- K-248: warp as an edit. The teal button at the lanes' top right; in warp mode the markers
+  // live in a lane at the bottom of the lanes (the selection keeps the rest), and Apply writes the
+  // warped audio as one step of Loupe's undo.
+  const float warpLaneH = s.warpOn ? P(14) : 0.0f;
+  {
+    const float bh = P(18);
+    const float bw = std::round(bh * 0.9f + ImGui::CalcTextSize(i18n::tr(warpwave::modeWord())).x + 10.0f);
+    ImGui::SetCursorScreenPos(ImVec2(g.p1.x - bw - P(8), g.p0.y + P(4)));
+    if (warpwave::modeButton("##loupewarp", s.warpOn, warpwave::modeWord(), bh,
+                             "Warp mode: markers stretch the audio around them; Apply warp writes it (W)"))
+      s.warpOn = !s.warpOn;
+    const bool overWarpBtn = ImGui::IsItemHovered();
+    const double rate = std::max(1.0, s.rate()), fileSec = n / rate;
+    if (s.warpOn || !s.warp.empty()) {
+      warpwave::Map m;
+      m.xOf = [&](double sec) { return g.xOf(sec * rate); };
+      m.wOf = [&](float x) { return g.frameAt(x) / rate; };
+      m.fileSec = fileSec;
+      const ImVec2 e0(g.p0.x, g.p1.y - std::max(warpLaneH, 1.0f));
+      if (s.warpOn) {
+        dl->AddRectFilled(e0, g.p1, theme::withAlpha(theme::rgb(theme::role::kWarp), 0.10f));
+        dl->AddLine(e0, ImVec2(g.p1.x, e0.y), theme::withAlpha(theme::rgb(theme::role::kWarp), 0.55f));
+      }
+      // The markers are file seconds of the audio as it is now (warped time = file time until moved).
+      // Each gesture is one step of Loupe's undo (an add that drags on: one step).
+      const std::vector<WarpMarker> before = s.warp;
+      const warpwave::EditResult er =
+          warpwave::edit("##loupewarpedit", s.warp, m, s.warpOn ? e0 : g.p0, g.p1, s.warpOn && !overWarpBtn, theme::rgb(theme::role::kWarp));
+      if (er.changed && !s.warpGesture) s.warpGesture = true, s.warpBefore = before, s.warpLabel = er.label;
+      if (er.released && s.warpGesture) {
+        s.warpGesture = false;
+        pushWarpStep(a, s, s.warpLabel, s.warpBefore);
+      }
+      if (s.warpOn && er.menuClick && !overWarpBtn) ImGui::OpenPopup("##loupewarpmenu");  // (not after a right-click that removed a marker)
+    }
+    if (ImGui::BeginPopup("##loupewarpmenu")) {
+      SampleWarp w;
+      w.on = s.warpOn;
+      w.markers = s.warp;
+      bool apply = false;
+      warpwave::MenuOpts mo;
+      mo.applyRow = true;
+      mo.apply = &apply;
+      SamplePtr smp = toSample(s.cur().a(), "");
+      if (warpwave::sampleMenu(a, w, smp.get(), mo)) {
+        const std::vector<WarpMarker> before = s.warp;
+        s.warpOn = w.on, s.warp = w.markers;
+        pushWarpStep(a, s, "warp markers", before);
+      }
+      if (apply) applyWarp(a, s);
+      ImGui::EndPopup();
+    }
+  }
+
   // ---- interaction: lanes
   ImGui::SetCursorScreenPos(g.p0);
-  ImGui::InvisibleButton("lanes", ImVec2(std::max(1.f, g.W()), std::max(1.f, g.p1.y - g.p0.y)),
+  ImGui::InvisibleButton("lanes", ImVec2(std::max(1.f, g.W()), std::max(1.f, g.p1.y - g.p0.y - warpLaneH)),
                          ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
   // J-97: an audio file dragged from the browser (or another application) onto the
   // waveform loads into Loupe, like "Load audio file..." (one step of Loupe's undo).
@@ -608,9 +620,20 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
     }
     if (io.MouseWheelH != 0) wheelFrames += io.MouseWheelH * s.viewLen * 0.1, wheelNotch = smoothscroll::isNotch(io.MouseWheelH);
     char b[256];
-    if (s.spectral)
-      std::snprintf(b, sizeof b, "%s  %.0f Hz%s", timeText(a, s, static_cast<int64_t>(fm0)).c_str(), hzAtY(s, mouse.y, g.p0.y, g.p1.y),
+    if (s.spectral) {
+      // Time, frequency (and its note), and the level shown there.
+      const double hz = hzAtY(s, mouse.y, g.p0.y, g.p1.y);
+      char f[24], lv[24] = "";
+      if (hz >= 1000)
+        std::snprintf(f, sizeof f, "%.2f kHz", hz / 1000);
+      else
+        std::snprintf(f, sizeof f, "%.0f Hz", hz);
+      float db = 0;
+      if (specLevelAt(s, fm0, hz, db)) std::snprintf(lv, sizeof lv, "  %.0f dB", static_cast<double>(std::max(-200.f, db)));
+      const int note = static_cast<int>(std::lround(69 + 12 * std::log2(hz / 440.0)));
+      std::snprintf(b, sizeof b, "%s  %s  %s%s%s", timeText(a, s, static_cast<int64_t>(fm0)).c_str(), f, noteName(note).c_str(), lv,
                     s.brushMode ? "  - brush: paint the area to edit, Tools > Effects > Apply spectral brush" : "");
+    }
     else if (s.scrubMode)
       std::snprintf(b, sizeof b, i18n::tr("%s  - scrub: drag to hear the audio at the speed you move; the play position stays where you let go"),
                     timeText(a, s, static_cast<int64_t>(fm0)).c_str());

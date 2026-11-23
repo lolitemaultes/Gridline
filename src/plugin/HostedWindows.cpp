@@ -316,8 +316,10 @@ void setPluginWindowDevKeys(bool) {}
 void setPluginWindowDevResize(int, int) {}
 void devPrintPluginWindows(int) {}
 bool devDragHostedEditor(int, int, double) { return false; }
+bool devMoveHostedEditor(int, int) { return false; }
 
 bool hostedEditorOpen(const PluginTarget& t) { return windowFor(&app(), t) != nullptr; }
+bool hostedEditorEngaged(const PluginTarget& t) { return hostedEditorOpen(t); }  // GitHub #66: the host plays it, not idle here
 bool hostedEditorUnderMouse(PluginTarget&, float&, float&) { return false; }  // J-111g: no collaboration inside a plugin build
 // K-112: inside a plugin build the windows show and hide with Gridline's editor; none is set aside.
 bool setHostedEditorHidden(const PluginTarget&, bool, unsigned) { return false; }
@@ -485,6 +487,17 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
 bool hostedEditorEvent(App&, const SDL_Event&) { return false; }
 void renderHostedEditors(App&) {}
 
+// 0.7.8: inside the plugin build installed plugins keep the windows the host gives them.
+bool hostedui::opensInside(App&, const PluginTarget&) { return false; }
+void hostedui::putInterfaceInside(App&, const PluginTarget&, bool) {}
+void hostedui::drawDockedInterface(App&, const PluginTarget&, float) {}
+float hostedui::dockedWidth(App&, const PluginTarget&, float fallback) { return fallback; }
+void hostedui::placeDockedInterfaces() {}
+bool hostedui::dockedKeyEvent(const SDL_Event&) { return false; }
+bool hostedui::devDockedKey(int, bool) { return false; }
+bool hostedui::devCaptureMainWindow(const std::string&) { return false; }
+void hostedui::devCoverDocked(int) {}
+
 bool screenshotHostedEditor(const PluginTarget& t, const std::string& pngPath) {
   NestedWindow* w = windowFor(&app(), t);
   return w && w->win && w->win->capture(pngPath);
@@ -599,4 +612,8 @@ int detachedCount() { return 0; }
 void openAttached(const char*) {}
 void togglePopOut(const char*) {}
 bool poppable() { return false; }
+// 0.7.8: inside a plugin build Gridline has one window: nothing is lifted over others.
+bool overCovers(ImVec2, ImVec2) { return false; }
+void nextWindowIsOverlay() {}
+bool windowLifted() { return false; }
 }  // namespace gl::viewports

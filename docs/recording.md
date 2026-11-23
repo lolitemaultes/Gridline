@@ -161,6 +161,17 @@ manual offset, as before). The measurement belongs to the devices, sample rate a
 was made with: change any of them and the estimate applies again until you measure again. **Back to
 the estimate** forgets it.
 
+## Recording from other apps on Linux
+
+On Linux, Gridline can record what another app plays. In **Settings > Audio**, set **Input device**
+to **System default** (with **None**, the default, Gridline opens no recording stream). Gridline's
+recording stream then appears in your audio system as **Gridline** with the stream name
+**Recording** (its output is **Playback**). Connect the other app's output to it with a PipeWire
+patchbay, then give an audio track the input **In 1 - In 2** and arm it as above. The stream goes
+through the same input buffer as any audio device, so measure or set the recording offset if the
+other app adds its own delay. A dedicated JACK / PipeWire driver with named inputs
+for each track is planned.
+
 ## Record safe
 
 A track that must not be recorded over can be made **record safe**: right-click its record button in

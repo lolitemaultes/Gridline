@@ -218,8 +218,13 @@ void testDecoders() {
   for (char ch : std::string("/sounds/Grand Piano.sf2")) sf.push_back(static_cast<uint8_t>(ch)), sf.push_back(0);
   sf.push_back(0), sf.push_back(0), sf.push_back(7);
   Decoded sfp = decode("Soundfont Player", &sf);
-  expect(sfp.ok && sfp.m.glType == "gl.multisampler" && sfp.m.state.data.find("sf2 0 0 - | /sounds/Grand Piano.sf2") != std::string::npos,
-         "Soundfont Player → Multisampler with the SoundFont");
+  expect(sfp.ok && sfp.m.glType == "gl.patchplayer" && sfp.m.state.data == "/sounds/Grand Piano.sf2",
+         "Soundfont Player → Patch Player on the file");
+  // K-348: the state's bank and patch have no known layout: the first patch, and the report says so.
+  bool saysFirst = false;
+  for (const auto& w : sfp.rep.warnings) saysFirst = saysFirst || w.find("first patch") != std::string::npos;
+  expect(sfp.m.state.data.find("patch") == std::string::npos && !sfp.m.exact && saysFirst,
+         "Soundfont Player: bank and patch not guessed; the report says the first patch plays");
   std::vector<uint8_t> nosf = {1, 2, 3, 4};
   Decoded sfn = decode("Soundfont Player", &nosf);
   expect(sfn.ok && sfn.m.state.data.empty() && !sfn.rep.warnings.empty(), "Soundfont Player without a file: warning");

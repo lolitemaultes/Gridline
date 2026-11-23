@@ -17,32 +17,103 @@ It is in the plugin picker under Sampler. Search for "chop", "chopper", "flip", 
    **Open in Seltmann** for a new Seltmann channel with it.
 2. **It analyses on its own.** A progress bar shows the steps. Short loops take a moment; songs
    of 5 to 10 minutes take a second or two and the window stays usable. Results are cached.
-3. **Pick a layout.** Click a card: the layout is applied and starts playing at once.
-4. **Play it and take it out.** Play the slices from the pads or your keyboard, drag the **LOOP**
+3. **Pick a layout.** Hold the mouse on a card to hear it on your chop; click it to keep it.
+4. **Play it and take it out.** Play the regions from the keys or your keyboard, drag the **LOOP**
    or **MIDI** handle into the project, click **Make loops** or **Send to project**.
 
-## The main view
+## The editor
 
-- **Top line**: what Seltmann heard (Break, Loop, Song, One-shot or Ambient), the file name, the
-  number of bars, the length, the key and how it is chopped. **Load...** opens another file;
-  **Edit** opens the drawer with the advanced controls.
-- **Waveform**: the bars being chopped, with the bar numbers and the slices coloured by their
-  letter. Click a slice to hear it. For songs, a slim strip above it shows the whole song with its
-  sections: drag the box to pick other bars, drag its edges to resize it, or double-click a section
-  to take it. The eye button hides the strip.
-- **Key controls**:
-  - **BPM** with a confidence line. **/2** and **x2** fix a tempo that was read at half or double
-    speed. Double-click the number to type a tempo.
-  - **Chop**: Auto, 1 bar, 1/2, 1/4, 1/8 or 1/16. Auto picks the size for the material: breaks are
-    cut on their hits in sixteenths (one bar), eighths (up to four bars) or beats; melodic loops in
-    beats, half bars or bars; songs in bars; one-shots at their transients; ambient textures in
-    eight equal parts.
-  - **Tempo**: Project follows the project tempo, Original plays at the sample's own tempo.
-  - **Play**, the **LOOP** and **MIDI** drag handles, **Make loops** and **Send to project**.
-- **Layouts**: big cards in six tabs (Flip, Phrase, Breaks, Micro, Creative, Mine) with a search
-  field. Each card shows its steps as coloured letters or slice numbers and says what it does.
-- **Pads**: one per slice, coloured by the letter that plays it. Click to hear it; drag the grip
-  of the selected pad to take the slice out as audio, or drag a pad onto a step.
+The waveform and the sequence share one line: the blocks under the waveform are the steps of the
+sequence, in playing order, each under the bars it plays. Everything else opens as a card next to
+what you clicked and closes with Esc, its close button or a click outside.
+
+- **Header**: what Seltmann heard (Break, Loop, Song, One-shot or Ambient), the file name, the
+  number of bars, the length, the regions, how it is chopped and the key. On the right: the
+  **BPM** with **/2** and **x2** to fix a tempo read at half or double speed (double-click the
+  number to type one) and **Tap**; **Follow**; the **Sound**, **Grid** and **Loops** cards;
+  **Load...**; **Record take**; and the height.
+- **Follow** sets how the project tempo is followed: **Stretch** keeps the pitch, **Resample**
+  changes speed and pitch together like a record, **Off** plays at the sample's own tempo.
+  With Stretch, a tempo ramp or a tempo you drag keeps every slice in tune as it plays (and in an
+  export); right after a jump to a new tempo the first slice can play sped up or slowed down for a
+  moment while the new tempo is prepared.
+- **Waveform**: the bars being chopped with their numbers and the regions. For songs, a strip
+  above it shows the whole song with its sections: drag the box to pick other bars, drag its edges
+  to resize it, double-click a section to take it, or click a section button under the sequence.
+  The eye button hides the strip.
+- **Sequence**: one block per step. Click a block for its step card, drag it to move it, drag its
+  end to make it longer or shorter, drop a region key on it to change what it plays. **Steps**
+  opens the step card for the whole sequence and **Reset** puts the regions back in order.
+- **Blank steps**: right-click a block and choose **Remove from the sequence** to leave a blank in
+  its place: the blank is silent and keeps the step's length, so the sequence keeps its length and
+  the later steps stay where they are. A blank shows as an empty tile with a dashed edge and a
+  plus. Right-click it and pick a region under **Fill with**, drag a region's pad onto it, or click
+  it and pick one under **Plays** in its card. **Delete step** in the same menu takes a step out
+  instead, and the later steps move up. Each is one undo step.
+- **Action row**: **Play**; **Chop** (Auto, 1 bar, 1/2, 1/4, 1/8, 1/16, Hits) with **More...**
+  for every chop mode; the **Tool**; the **LOOP** and **MIDI** drag handles, **Make loops** and
+  **Send to project**.
+- **Hint line**: what the tool does, and the editor's own keys.
+
+### Tools
+
+What a click in the waveform does:
+
+- **Play**: click a region to hear it and open its card. The wheel changes its pitch, and dragging
+  a cut resizes the regions on both sides.
+- **Cut**: double-click to add a cut, drag a cut to move it, right-click a cut to remove it.
+- **Grid**: drag the bar-1 flag to move the grid, or Alt+drag a bar line to stretch it.
+
+### Heights
+
+The editor fits the room it has. **Auto** picks the height from the room: in its own window it is
+Full; in a layout's pane or band it is Compact below about 330 px, Standard below about 460 px
+and Full above. You can also choose a height; it is remembered for you, not saved in the project.
+
+- **Compact**: one row (play, the file, the tempo, a short chop choice, the layout, the drag
+  handles and a menu with everything else), the waveform and the sequence.
+- **Standard**: the header, the waveform and sequence, the action row, the hint line and a strip
+  of layout cards.
+- **Full**: the layout library on the left, and the region keys under the action row.
+
+### Cards
+
+- **Region**: the clicked region's pitch, gain, fade in and out, start, length, choke group,
+  reverse, a drag handle (WAV), **Split** into 2, 3, 4 or 8, **Join** with the one before and
+  **Start here**.
+- **Step**: one step's pitch, gain, start, length and stutter, what it plays, reverse, longer,
+  shorter, copy and delete. **Region / This step** switches between the region and the step.
+- **Sound**: what the keys play, the pattern speed, lock to song, mono, the base note, and swing,
+  gate, velocity, pitch, attack, decay, sustain, release, declick, cutoff, resonance, pan, volume
+  and reverse for every region.
+- **Grid**: tap tempo, nudge the grid by 1 or 10 ms, the meter (3/4, 4/4, 6/8), the key, how sure
+  the analysis is about the tempo, bar 1 and the meter, and **Analyse again**.
+- **Loops**: the pattern, the best phrases and every section, each with a play button and a drag
+  handle.
+- **Chop** (More...): every chop mode (Grid with 8 bars down to 1/64 and triplets, Hits with a
+  sensitivity, Sections, Equal, Grains, Manual), snapping (grid, hits, zero crossings) and
+  zero-crossing cuts.
+- **Steps**: the step length and the number of steps, **Reset order**, and the sequence as text:
+  `A`..`Z` are letters, numbers are regions, `.` rests, `~` holds the previous step; options follow
+  a colon: `r` reverse, `p+7` pitch, `g-6` gain dB, `l50` length %, `x4` stutter, `o25` start %.
+  Example: `A B:r A C:x4`. The letters are resolved to regions when you apply it.
+- **Takes**: the takes recorded into this instance; pick one to use it.
+
+### Keys
+
+These keys work while the editor has the focus, and only where no key set uses them:
+
+| Key | Does |
+|---|---|
+| Left, Right | The previous or next region (and hear it) |
+| S | Split the region in two |
+| J | Join the region with the one before |
+| 1 to 6 | Chop: Auto, 1 bar, 1/2, 1/4, 1/8, 1/16 |
+
+Playing the region, playing the pattern, playing a step backwards and going back to the Play tool
+are under **Region and keys** in the region menu (right-click a region) and in Compact's menu, because their keys
+belong to other commands.
+When the computer keyboard plays notes, the keys it plays are left to it.
 
 ## How the analysis reads your audio
 
@@ -86,31 +157,20 @@ Generated layouts (Key Scatter, Shuffle Deck, Micro Melody, Micro Arp, Grain Clo
 Record) roll a new take when you click their card again. Under **Mine**, name and save the
 current chop and pattern as your own layout.
 
-## The Edit drawer
+At Standard height the layouts are a strip of cards under the editor; at Full height they are a
+list on the left, grouped by tab with a search field; at Compact height they are a menu.
 
-**Edit** opens the advanced controls (closed by default):
-
-- **Slice**: the selected slice's pitch, gain, fade in and out, start, length, choke group and
-  reverse, its letter, and a drag handle (WAV).
-- **Chop**: every chop mode (Grid with 8 bars down to 1/64 and triplets, Hits with a sensitivity,
-  Sections, Equal, Grains, Manual), snapping (grid, hits, zero crossings) and zero-crossing cuts.
-  While this tab is open you can cut by hand in the waveform: double-click to add a cut, drag a cut
-  to move it, right-click a cut to remove it.
-- **Steps**: the pattern's steps (wheel: another letter; right-click: reverse, stutter, pitch,
-  gain, length, start, ties, rests; drop a pad on a step) and the step length. The **STEPS** field
-  is the pattern as text: `A`..`Z` are letters, numbers are slices, `.` rests, `~` holds the
-  previous step; options follow a colon: `r` reverse, `p+7` pitch, `g-6` gain dB, `l50` length %,
-  `x4` stutter, `o25` start %. Example: `A B:r A C:x4`.
-- **Grid**: tap tempo, nudge the grid by 1 or 10 ms, the meter (3/4, 4/4, 6/8), the key, how sure
-  the analysis is about the tempo, bar 1 and the meter, and **Analyse again**. With this tab open,
-  drag the bar-1 flag in the waveform to move the grid, or Alt+drag a bar line to stretch it.
-- **Sound**: how the project tempo is followed (Stretch keeps the pitch, Resample changes speed
-  and pitch like a record), the stretch type (Auto, Drums, Mono), what the keys play (slices or
-  letters), pattern speed, lock to song, mono, the base note, and swing, gate, velocity, pitch,
-  attack, decay, sustain, release, declick, cutoff, resonance, pan, volume and reverse for every
-  slice.
-- **Loops**: the pattern, the best phrases and every section, each with a play button and a drag
-  handle.
+- **Hear before you keep**: hold the mouse on a card (or the play button of a row) and the layout
+  plays on your chop as a loop; let go and your sequence is back as it was. Nothing changes until
+  you click. Right-click the layouts and choose **Play on hover** to hear them while the pointer
+  rests on a card instead.
+- **Starred** and **Recent**: click the star of a layout to keep it under Starred. The last three
+  you used are under Recent. Both are remembered for you, not saved in the project.
+- **Custom (yours)**: when you pick a layout after changing the sequence by hand, your sequence is
+  kept under Recent as Custom (yours), so you can go back to it.
+- Applying a layout is one undo step.
+- Picking a layout while the sequence plays changes it at its next step, in time and at the right
+  pitch from the first note, also with **Follow: Stretch** at a tempo other than the loop's.
 
 ## Playing it
 
@@ -124,11 +184,65 @@ the song position.
 - **Make loops** renders the pattern, the best phrases and the sections as WAV loops at the
   project tempo into a "Seltmann loops" folder next to the project (shown in the browser). Loops
   are cut at whole bars with continuous seams.
-- Drag **LOOP** (the pattern as audio), **MIDI** (its notes), a pad's grip or a row in the Loops
-  tab onto the playlist (audio clip), the channel rack (sampler channel), a channel row or the
-  piano roll.
+- Drag **LOOP** (the pattern as audio), **MIDI** (its notes), a region's **WAV** handle or a row
+  in the Loops card onto the playlist (audio clip), the channel rack (sampler channel), a channel
+  row or the piano roll.
 - **Send to project** adds a pattern with the steps as notes on this channel and places it in the
-  playlist.
+  playlist. The pattern stays linked: when you change the sequence, the chop or the tempo, its
+  notes follow, in the same undo step. Once you edit its notes in the piano roll it stops
+  following and the editor shows **edited** with **Relink**, which makes it follow again (your
+  edits go). In the piano roll the keys of a Seltmann channel are named after its regions.
+
+## Record a take
+
+**Record take** in the header records from your audio input into this Seltmann, and an empty
+Seltmann offers it next to Load. Into a loaded instance a take can **Keep the chop** (the regions
+and the sequence stay, at the same tempo) or be **analysed fresh**. Each take is kept in the
+project's Recorded folder and listed in the **Takes** card, so you can go back to an earlier one.
+
+## In the layouts
+
+- **Studio**: the editor is the instrument window, at Full height.
+- **Clips**: opening the channel opens the editor in the instrument window, as in Studio; its card in the device band keeps its main knobs, and the card's window button opens or closes the window.
+- **Smooth**: Seltmann has a tab in the lower pane. Opening a Seltmann channel shows it there; with
+  several Seltmann channels, the chips at the top pick which one it shows.
+- **Tracker**: Seltmann has screens of its own in the lower band, drawn like the rest of the
+  Tracker. See [In the Tracker](#in-the-tracker). The editor above still opens from the
+  instrument's **Open plugin window**.
+
+### In the Tracker
+
+With a Seltmann as the current instrument, the header's **Sample** button reads **Chop**.
+
+- **Chop** (the header's Chop button, or **Ctrl+Alt+E**) shows the waveform with its lettered
+  regions, each with the key that plays it. The sequence sits beside it as rows (step, region,
+  reverse, pitch, length, options). Under them are the band's buttons: Stop and Pattern, the chop
+  sizes, the Play, Cut and Grid tools, Split, Join, Duplicate, Delete, Start here, Reset order, the
+  region's or the step's values, the LOOP and MIDI drags, Send to project, Make loops, Load,
+  Record take, the tempo with /2, x2 and Tap, Follow, and the way out. A short band shows two rows
+  of buttons and keeps the rest under **More...**, which also opens every value, the chop modes,
+  the steps, loops, grid and takes in a box.
+- **Instrument** (**Ctrl+Alt+I**) shows Sound (follow, speed, keys, lock, mono, reverse and every
+  knob as a stepper), the Layouts list with its groups (Apply, Hear while held, Star, New take,
+  Save as..., Delete), Grid (tempo, /2, x2, Tap, nudge, meter, key, how sure, Analyse again,
+  Bar 1 here, the takes) and the key map on a piano along the bottom.
+- The **Chop** page, beside the Tracker's other pages while the project has a Seltmann, has
+  everything on one page: the layout library, the waveform with the sequence on the same time
+  line, the region's values and edits, the band's buttons, the key map, the sequence rows, the
+  takes and the loops to drag out.
+
+Every edit there is the same edit as in the editor above: one undo step, the same saved project
+and the same for everyone in a collaboration session. Pattern cells of a Seltmann track show the
+region each note plays after the note (P and +1 to +11 for the pattern octave).
+
+Keys of the Chop screen: Left and Right pick the region (heard), Up and Down the step, Shift+Up
+and Down move the step, Tab switches the values between the region and the step, Enter hears it,
+Shift+Enter or Alt+P plays the sequence, Alt+Q stops, Insert splits, Backspace joins, Delete
+deletes the step, Alt+1 to Alt+7 set the chop size, Alt+E picks the next tool, Alt+R reverses,
+Alt+D duplicates the step and Alt+Up and Down change the pitch. Keys of the Instrument screen: Up
+and Down pick a layout, Left, Right and Tab the group, Enter applies it, Alt+P hears it, Alt+F
+stars it and Alt+Up and Down move the base note. On both, Esc closes an open box and then the
+screen, and the note keys play the regions. The Tracker help lists them under **Editor keys**.
 
 ## Saving and exporting
 

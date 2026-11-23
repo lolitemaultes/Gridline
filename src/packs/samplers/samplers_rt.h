@@ -3,6 +3,7 @@
 // samples[0] is a pack-private Sample subclass tagged by its path.
 #pragma once
 #include "samplers.h"
+#include "patchplayer.h"
 #include "../../engine/SampleTap.h"
 #include "../../engine/pitch/Kernel.h"
 #include <atomic>
@@ -1032,6 +1033,7 @@ std::unique_ptr<Generator> createGenerator(const std::string& type) {
   if (type == "gl.waveprogram") return makeWaveProgram();
   if (type == "gl.multisampler") return std::make_unique<MultiSamplerGen>();
   if (type == "gl.scratch") return std::make_unique<ScratchGen>();
+  if (type == kPatchPlayerType) return makePatchPlayer();
   return nullptr;
 }
 
@@ -1042,6 +1044,7 @@ std::unique_ptr<Effect> createEffect(const std::string& type) {
 
 bool prepareAux(const PluginState& state, ChannelAux& aux) {
   if (prepareWaveProgramAux(state, aux)) return true;
+  if (preparePatchPlayerAux(state, aux)) return true;
   if (state.type == "gl.multisampler") {
     int set = static_cast<int>(prm(state, MsFactorySet) + 0.5f);
     aux.samples = {buildMsRuntime(state.data, set)};

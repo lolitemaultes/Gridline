@@ -15,6 +15,7 @@
 #pragma once
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -318,6 +319,34 @@ struct Spectrogram {
 };
 Spectrogram computeSpectrogram(const Audio& a, int fftSize, int maxCols);
 
+// The editor's spectrogram, made for the pixels it is shown on: one column per screen pixel
+// over frames [from, to) and one row per pixel on a log-frequency axis (row 0 = maxHz at the
+// top, the last row = minHz). Multi-resolution: four Blackman-Harris windows (0.8 s, 150 ms,
+// 37.5 ms, 9.4 ms at "balanced"); low rows take the long windows (low bands from a decimated
+// copy of the audio), high rows the short ones, and each row keeps the lower of two adjacent
+// resolutions, so tones stay sharp in frequency and hits sharp in time. Both channels count
+// (power mean, nothing cancels). Rows wider than a bin keep the loudest bin; narrower rows
+// interpolate between bins. Levels in dBFS: a full-scale sine reads 0 dB.
+struct SpecViewRequest {
+  int64_t from = 0, to = 0;
+  int cols = 0, rows = 0;
+  double minHz = 30, maxHz = 0;  // maxHz 0: Nyquist
+  int resolution = 1;            // 0 sharper in time, 1 balanced, 2 sharper in frequency
+  bool operator==(const SpecViewRequest& o) const {
+    return from == o.from && to == o.to && cols == o.cols && rows == o.rows && minHz == o.minHz && maxHz == o.maxHz && resolution == o.resolution;
+  }
+  bool operator!=(const SpecViewRequest& o) const { return !(*this == o); }
+};
+struct SpecView {
+  SpecViewRequest req;
+  double rate = 44100;
+  std::vector<float> db;  // rows x cols, row-major
+  bool empty() const { return db.empty(); }
+  float at(int col, int row) const { return db[static_cast<size_t>(row) * static_cast<size_t>(req.cols) + static_cast<size_t>(col)]; }
+};
+// `cancel` (optional) stops the work early (the result is then empty). threads 0: automatic.
+SpecView analyseSpecView(const Audio& a, const SpecViewRequest& r, const std::atomic<bool>* cancel = nullptr, int threads = 0);
+
 // ---- files --------------------------------------------------------------------------
 enum class FileFormat { Wav = 0, Flac };
 // WAV: 16 / 24-bit PCM or 32-bit float, with cue / label chunks for markers and
@@ -443,6 +472,13 @@ class EdisonFx : public Effect {
   void stopSound() override;
   // J-112: the editor's Play sounding in the slot is plugin playback.
   bool ownPlayback() const override { return playing_.load(std::memory_order_relaxed); }
+  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible) while it plays
+  // nothing, nothing waits for it and no editor drains its capture (a recording takes every frame).
+  bool restsWhenFaint() const override {
+    return !playing_.load(std::memory_order_relaxed) && !scrubbing_.load(std::memory_order_relaxed) && !startReq_.load(std::memory_order_relaxed) &&
+           !stopReq_.load(std::memory_order_relaxed) && !rangeReq_.load(std::memory_order_relaxed) &&
+           nowMs() - watchedMs_.load(std::memory_order_relaxed) > 1000;
+  }
   float meter() const override { return 0.0f; }
 
   // ---- UI thread -------------------------------------------------------------
@@ -459,7 +495,10 @@ class EdisonFx : public Effect {
   double position() const { return pos_.load(); }  // playback frame
   float inputPeak() { return inPeak_.exchange(0.f); }
   float outputPeak() { return outPeak_.exchange(0.f); }
-  const CaptureRing& capture() const { return ring_; }
+  const CaptureRing& capture() const {
+    watchedMs_.store(nowMs(), std::memory_order_relaxed);  // K-142: an editor drains it
+    return ring_;
+  }
   // Frames of audio the playback source holds (0 = none).
   int64_t sourceFrames() const { return srcFrames_.load(); }
   // Start and range requests the audio thread has carried out so far (the editor waits for one).
@@ -478,6 +517,10 @@ class EdisonFx : public Effect {
   bool hostWasPlaying_ = false;  // audio thread
   double rpos_ = 0, scrubVel_ = 0;  // audio thread
   bool rplaying_ = false;
+  static int64_t nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  }
+  mutable std::atomic<int64_t> watchedMs_{-(int64_t{1} << 40)};  // K-142: when an editor last read the capture
 };
 
 // ---- sample registry for the effect (path → decoded sample) ----------------------------

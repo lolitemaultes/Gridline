@@ -59,6 +59,51 @@ The right-click menu of a track, and the mixer's own menu, have **Reset selected
 - **Everything but name, effects and routing** also clears mute, solo, polarity, swap, disable,
   latency and threading.
 
+## The master zone, the strips and the inspector
+
+In the normal, wide mixer the master and the tracks docked to the left form the master zone. With
+the tracks in two or more rows (the **1 2 3 4** buttons in the toolbar), the strips of the master
+zone run the full height of every row, so their faders are longer and nothing is left empty under
+them.
+
+The strips keep to their own width. When there are only a few tracks, the inspector on the right
+takes the rest of the window instead of leaving a gap between the last strip and the inspector.
+Drag the line between the strips and the inspector to give the inspector a width of your own: the
+strips then scroll sideways when they do not fit. Double-click the line to go back to the
+automatic width. The width is kept for the next start.
+
+## Hiding tracks, narrow strips and collapsed groups
+
+Right-click a track's name (in the Clips, Smooth and Tracker mixers too) for:
+
+- **Hide track** (or **Hide selected tracks**): the track's strip leaves the mixer. The track
+  still plays and keeps all its routing and sends.
+- **Narrow strip**: a slim strip with only the name, the meter, mute and solo. Double-click its
+  number for the full strip again, or untick **Narrow strip**.
+- **Group > Collapse group**: the whole group shows as one slim strip at its first track, with
+  the group's name and size, the loudest track's meter, and mute and solo for every track in it.
+  Click its arrow (or double-click it) to expand the group; right-click it for the group's menu,
+  which also lists its tracks.
+
+While any track is hidden or in a collapsed group, the toolbar shows how many (**3 hidden**). Click
+it for the list: pick one to show it, or choose **Show all**.
+
+These choices are saved with the project, each one is one undo step, and in a collaboration
+session everyone sees the same mixer. The master always shows.
+
+In each layout:
+
+- **Clips**: the session mixer keeps a column for every track, so a hidden track's strip shows a
+  quiet stand-in (click it to show the strip again). A hidden return has no column. The count
+  sits at the right of Main's title.
+- **Smooth**: hidden tracks have no strip, narrow tracks and collapsed groups are slim columns,
+  and the count sits in the mixer's bar.
+- **Tracker**: on the Mix page a hidden track has no row, a narrow one a short row (name, mute
+  lamp and meter) and a collapsed group one row; the count is a button in the title bar.
+
+A Mackie Control surface skips hidden tracks and the tracks of a collapsed group: its eight
+faders go to the tracks the mixer shows, and banking moves through those only.
+
 ## Scrolling with the wheel
 
 In the normal, wide mixer:

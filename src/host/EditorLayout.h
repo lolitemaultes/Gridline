@@ -20,6 +20,7 @@
 // the same units plugin editors report their size in.
 #pragma once
 #include <cstdint>
+#include <vector>
 
 namespace gl::host::layout {
 
@@ -52,6 +53,7 @@ enum BarItem : int {
   kBarRoute,     // J-195: route the instrument's channel to a free mixer track (channels only)
   kBarCpu,       // CPU and latency readout (dropped first when narrow)
   kBarSettings,  // unfold the settings panel
+  kBarDock,      // 0.7.8: put the interface inside Gridline (the application's own windows only)
   kBarItemCount
 };
 
@@ -69,9 +71,11 @@ struct BarLayout {
 // row when everything fits, otherwise presets + settings on the first row and
 // the switches (and the readout, when it fits) on the second. The route button
 // takes its room from the preset box on one row (never from the row's width);
-// `route`: the bar has it (an instrument's window, not an effect's). Item rects
-// are relative to the bar's top-left corner.
-BarLayout layoutBar(int width, bool route = false);
+// `route`: the bar has it (an instrument's window, not an effect's). `dock`: the bar has the button
+// that puts the interface inside Gridline; like the route button it takes its room from the preset
+// box on one row, and goes on the second row with the switches. Item rects are relative to the
+// bar's top-left corner.
+BarLayout layoutBar(int width, bool route = false, bool dock = false);
 // Narrowest width that keeps the bar on one row.
 int oneRowBarWidth();
 
@@ -107,5 +111,30 @@ enum class EditorMode {
   Generic,  // Gridline's parameter list: plugins without an interface, or the user asked for it
 };
 EditorMode chooseEditorMode(bool pluginHasInterface, bool userChoseGeneric);
+
+// 0.7.8: where an installed plugin's own interface opens: inside Gridline (in its plugin window
+// inside the main window, with Gridline's header above it, like a built-in editor) or in a window
+// of its own (the bar under it). `settingInside`: Settings > Interface, "Open installed plugins";
+// `pluginChoice`: the plugin's own choice (kChoiceSetting: none, follow the setting); `canEmbed`:
+// the interface can sit inside one of Gridline's windows on this system (not a sandboxed interface
+// shown by the sandbox process on macOS, not Gridline on Wayland).
+enum class InterfacePlace { Inside, OwnWindow };
+inline constexpr int kChoiceSetting = 0, kChoiceInside = 1, kChoiceOwnWindow = 2;
+InterfacePlace chooseInterfacePlace(bool settingInside, int pluginChoice, bool canEmbed);
+// The choice kept for a plugin the person put inside (or in its own window): none when the setting
+// does that anyway, so the plugin follows the setting again if it changes.
+int interfaceChoiceFor(bool settingInside, bool inside);
+
+// 0.7.8: an interface docked inside one of Gridline's windows, in that window's units. `full`: its
+// rectangle; `clip`: what its pane shows (scrolled, cut by the pane's and the window's edges);
+// `covers`: Gridline's windows, menus, tooltips and notices in front of it. A cover across a whole
+// edge of what shows trims it; the others become holes cut out of it. Where the window system
+// cannot cut holes (`holesCut` false) an interface with anything else in front of it hides.
+struct DockedShow {
+  Rect visible;              // the part shown (empty: hidden)
+  std::vector<Rect> holes;   // cut out of it (inside `visible`)
+};
+DockedShow dockedShow(const Rect& full, const Rect& clip, const std::vector<Rect>& covers, bool holesCut);
+Rect intersect(const Rect& a, const Rect& b);
 
 }  // namespace gl::host::layout

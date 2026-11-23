@@ -116,7 +116,9 @@ bool parse(const ParamDesc& d, const std::string& text, double& out, const timek
     if (s == "on" || s == "yes" || s == "true") return done(1);
     if (s == "off" || s == "no" || s == "false") return done(0);
   }
-  if (d.unit == "note") {  // "c4", "a#3", "db2"
+  const bool noteUnit = d.unit == "note" || d.unit.rfind("note-", 0) == 0;
+  if (noteUnit && d.unit.size() > 5 && (s == "any" || s == "auto" || s == "off" || s == "none")) return done(-1);  // 0.7.8: the word below 0
+  if (noteUnit) {  // "c4", "a#3", "db2"
     static const char* names[] = {"c", "c#", "d", "d#", "e", "f", "f#", "g", "g#", "a", "a#", "b"};
     static const char* flats[] = {"c", "db", "d", "eb", "e", "f", "gb", "g", "ab", "a", "bb", "b"};
     for (int k = 11; k >= 0; --k)
@@ -159,6 +161,8 @@ bool parse(const ParamDesc& d, const std::string& text, double& out, const timek
         case timeknob::Unit::Steps: return done(ticks * 4.0 / timeknob::kPpq);
         case timeknob::Unit::Ms: return tempo > 0 && done(ticks / timeknob::kPpq * 60000.0 / tempo);
         case timeknob::Unit::Seconds: return tempo > 0 && done(ticks / timeknob::kPpq * 60.0 / tempo);
+        case timeknob::Unit::Beats: return done(ticks / timeknob::kPpq);                                  // K-240
+        case timeknob::Unit::Hz: return tempo > 0 && ticks > 0 && done(tempo / 60.0 * timeknob::kPpq / ticks);  // one cycle per note
       }
     }
   }
@@ -228,7 +232,7 @@ bool parse(const ParamDesc& d, const std::string& text, double& out, const timek
     }
     return false;
   }
-  if (u.empty() || u == "note") return rest.empty() && done(v);
+  if (u.empty() || noteUnit) return rest.empty() && done(v);
   // Another unit: the number, with that unit or none.
   return (rest.empty() || rest == squeeze(u)) && done(v);
 }

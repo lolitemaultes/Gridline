@@ -17,6 +17,7 @@ int gFrames = 0;
 double gMaxFrame = 0;
 uint64_t gLastFrame = 0, gWindowStart = 0;
 double gCpu0 = 0;
+uint64_t gSerial = 0, gParallel = 0, gSerial0 = 0, gParallel0 = 0, gWakeups = 0, gWakeups0 = 0;  // GitHub #66
 
 uint64_t nowNs() {
   return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
@@ -63,6 +64,12 @@ Timer::~Timer() {
   if (gOn) add(p_, static_cast<double>(nowNs() - t0_) * 1e-6);
 }
 
+void engineBlocks(uint64_t serial, uint64_t parallel, uint64_t wakeups) {
+  gSerial = serial;
+  gParallel = parallel;
+  gWakeups = wakeups;
+}
+
 void endFrame() {
   if (!gOn) return;
   const uint64_t t = nowNs();
@@ -85,7 +92,12 @@ void endFrame() {
   std::fprintf(stderr, " | cpu %.0f%% | plugin ui/s: views %.0f layers %.0f gl %.0f metal %.0f | runloop %.0f/s", (cpu - gCpu0) / span * 100.0,
                static_cast<double>(d.views) / span, static_cast<double>(d.layers) / span, static_cast<double>(d.gl) / span, static_cast<double>(d.metal) / span,
                static_cast<double>(d.runLoopTurns) / span);
-  std::fprintf(stderr, " | audio blocks %d late %d peak %.0f%%\n", gAudioBlocks.exchange(0), gAudioLate.exchange(0), gAudioPeak.exchange(0) / 10.0);
+  std::fprintf(stderr, " | audio blocks %d late %d peak %.0f%% | graph serial %llu parallel %llu worker wakeups %llu\n", gAudioBlocks.exchange(0),
+               gAudioLate.exchange(0), gAudioPeak.exchange(0) / 10.0, static_cast<unsigned long long>(gSerial - gSerial0),
+               static_cast<unsigned long long>(gParallel - gParallel0), static_cast<unsigned long long>(gWakeups - gWakeups0));
+  gSerial0 = gSerial;
+  gParallel0 = gParallel;
+  gWakeups0 = gWakeups;
   gCpu0 = cpu;
   gWindowStart = t;
   gFrames = 0;

@@ -1,5 +1,6 @@
 // Gridline — "samplers" pack: catalogue entries.
 #include "../Packs.h"
+#include "patchplayer.h"
 #include "samplers.h"
 
 namespace gl::packs::samplers {
@@ -115,6 +116,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   v.push_back(multisampler());
   v.push_back(waveProgramInfo());
   v.push_back(scratch());
+  v.push_back(patchPlayerInfo());
 }
 
 }  // namespace gl::packs::samplers

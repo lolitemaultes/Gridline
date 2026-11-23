@@ -217,5 +217,38 @@ int main() {
     expect(!k.anyHeld(), "session: no note left held once every key is up");
     expect(maxNotes <= 34, "session: never more notes held than keys");
   }
+
+  // ---------------------------------------------------------------- GitHub #42: the octave's counting
+  // One octave for every layout and channel. The Tracker counts it as its pattern editor does (octave 4
+  // starts at C-4, 60), wherever the keyboard is; the A row's A is 60 too; Studio's Z is 48.
+  {
+    TypingKeyboard k;
+    expect(k.baseNote() == 48 && k.press(kZ) == std::vector<int>{48}, "counting: Studio, octave 4, Z plays 48");
+    k.release(kZ);
+    k.trackerOctaves = true;
+    expect(k.octave == 4 && k.baseNote() == 60 && k.press(kZ) == std::vector<int>{60}, "counting: the Tracker, octave 4, Z plays C-4 (60)");
+    k.release(kZ);
+    expect(k.press(kQ) == std::vector<int>{72}, "counting: the Tracker's upper row is an octave higher");
+    k.release(kQ);
+    for (int o = 0; o <= 9; ++o)
+      expect(k.baseNoteAt(o) == 12 * (o + 1), "counting: the Tracker's octave o starts at 12 * (o + 1), as its pattern editor types");
+    k.aRow = true;
+    expect(k.baseNote() == 60, "counting: the A row in the Tracker is not a second octave up");
+    k.trackerOctaves = false;
+    expect(k.baseNote() == 60 && k.press(kA) == std::vector<int>{60}, "counting: the A row's A is 60 at octave 4");
+    k.release(kA);
+    k.aRow = false;
+    // Switching the counting (a layout switch) and everything else but the octave keys leaves the octave.
+    Rng rng{42};
+    int wrong = 0;
+    for (int i = 0; i < 2000; ++i) {
+      k.trackerOctaves = rng.next(2) != 0;
+      const int p = kZ + static_cast<int>(rng.next(8));
+      k.press(p);
+      k.release(p);
+      if (k.octave != 4) ++wrong;
+    }
+    expect(wrong == 0, "counting: the octave stays put while the counting switches back and forth");
+  }
   return finish();
 }

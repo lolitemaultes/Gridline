@@ -37,7 +37,6 @@ void audioClipMenu(App& a, ObjectId clip);
 // grid slot, which has its own), Rename, Colour, Deactivate, freeze, Consolidate, Split, Reverse, stems.
 void clipsAudioClipMenu(App& a, ObjectId clip);
 void audioClipTempoItems(App& a, ObjectId clip);  // K-158: fit to tempo, normalize (the clip menu's Audio submenu)
-void drawClipProperties(App& a);
 // Settings → Audio: input device, channels, recording offset and format.
 void audioInputSettings(App& a, float fieldW);
 

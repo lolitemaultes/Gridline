@@ -66,7 +66,7 @@ const std::set<std::string> kNeedsMaterial = {"gl.sampler",      "gl.slicer",   
 const std::set<std::string> kSilentFx = {"gl.mute", "gl.vocoder", "gl.minirewind"};
 // Effects whose DSP reads the sidechain (SideIo::scL or a sidechain input parameter).
 const std::set<std::string> kSidechainFx = {"gl.comp", "gl.limiter", "gl.vocoder", "gl.scduck",
-                                            "gl.hall", "gl.tideline", "gl.transplit", "gl.hitloop",
+                                            "gl.hall", "gl.tideline", "gl.terrace", "gl.transplit", "gl.hitloop",
                                             "gl.minipress", "gl.minilatch", "gl.miniclang"};
 // Members played in a quick run (besides each suite's first).
 const std::set<std::string> kQuickPlay = {"gl.comp", "gl.scduck", "gl.reverb", "gl.fm", "gl.minipress", "gl.miniecho"};

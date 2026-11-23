@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <functional>
 #include <memory>
+#include "../../engine/EffectRest.h"
 #include "sfx_common.h"
 #include "sfx_flcurves.h"
 #include "sfx_mbd.h"
@@ -20,6 +21,10 @@ namespace gl::packs::spacefx::detail {
 // MdModel = 1 runs the J-1 reference model (processRef below).
 class MultiDelayFx final : public Effect {
  public:
+  // K-142 (0.7.8): rests by the hosted rule (stopped, fed silence, its output inaudible); while
+  // it rests, its modulation and echoes move on: its idle render runs unheard (EffectRest.h).
+  bool restsWhenFaint() const override { return true; }
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& c, int n) override { restRenderFx(*this, s, aux, c, n); }
   MultiDelayFx() {
     for (auto& t : taps_)
       for (auto& a : t.ap) a.init(4096);  // the delay lines: see prepareHost
@@ -526,6 +531,7 @@ constexpr int kBdFrames = 1024;  // frame history (2.7 s at 96 kHz, 5.9 s at 44.
 
 class BandDelayFx final : public Effect {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible): its echoes have faded
   BandDelayFx() {
     fft_.init(kBdFft);
     win_.resize(kBdFft);

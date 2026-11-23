@@ -5,8 +5,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
+#include "../core/SerialWorker.h"
 #include "Crdt.h"
 #include "Crypto.h"
 
@@ -58,18 +60,25 @@ class OpLog {
   size_t records() const { return records_; }
   int generation() const { return gen_; }
   const std::string& dir() const { return dir_; }
-  bool isOpen() const { return f_ != nullptr; }
+  bool isOpen() const { return open_; }
   int64_t truncatedBytes() const { return truncated_; }  // tail dropped at open (tests)
+  // FRZ-1118 (0.7.8): a folder on a web or network drive: after open(), appends, syncs, compactions and the
+  // close run on this worker, in order, so the caller (the interface thread) never waits for the
+  // drive. close() then waits for them at most SerialWorker::kLeaveWaitMs. The counts above are
+  // the caller's (what has been handed over).
+  void setWorker(std::shared_ptr<SerialWorker> w) { worker_ = std::move(w); }
+  bool async() const { return worker_ != nullptr; }
+
+  struct Disk;  // the file side (the worker's alone in async mode)
 
  private:
-  std::string logPath(int gen) const;
-  bool openLog(int gen, bool truncateAt, uint64_t at);
+  std::shared_ptr<Disk> d_;
+  std::shared_ptr<SerialWorker> worker_;
   std::string dir_;
-  std::FILE* f_ = nullptr;
+  bool open_ = false;
   int gen_ = 0;
   uint64_t bytes_ = 0;
   size_t records_ = 0;
-  bool dirty_ = false;
   int64_t truncated_ = 0;
 };
 

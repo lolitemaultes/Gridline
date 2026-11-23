@@ -247,6 +247,8 @@ void KnobDragSet(double norm);
 // Development check (dev command "knobs"): every Knob and plugin editor
 // parameter control drawn in the last frame, its window, id, value and centre.
 void devKnobsEnable(bool on);
+// On for a run driven by a dev-input script (--dev-input turns the knob records on).
+bool devKnobsEnabled();
 std::string devKnobReport();
 // A plugin editor control (PluginUI dragParam) for the report.
 void devKnobRecord(const char* kind, const std::string& id, const ParamDesc& d, double value, ImVec2 min, ImVec2 max, double stepNorm = 0);
@@ -409,6 +411,8 @@ bool TabStrip(const char* id, const char* const* labels, int count, int* index, 
 void DragPreview(Icon icon, const char* text, ImU32 tint = 0);
 // Round LED (mute/enable lamps). `level` 0..1 brightens it.
 void Led(ImDrawList* dl, ImVec2 center, float radius, bool on, float level = 0.0f);
+// 0.7.8: a small turning arc (something loading), `radius` px around `center`.
+void Spinner(ImDrawList* dl, ImVec2 center, float radius, ImU32 col);
 // Step button (channel rack): rounded pad with a top bevel; `alt` = the
 // alternate 4-step group tint; `on` lights it (tinted by `tint`), `vel` 0..1.
 void StepPad(ImDrawList* dl, ImVec2 a, ImVec2 b, bool on, bool alt, bool hovered, ImU32 tint, float vel);

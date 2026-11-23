@@ -5,6 +5,7 @@
 // into the drop folder (URLDownloadToFile) once dropped.
 #if defined(_WIN32)
 #include <windows.h>
+#include "../../core/ThreadName.h"
 #include <ole2.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -204,7 +205,7 @@ bool install(void* nativeWindow) {
 void poll() {}
 
 void download(uint64_t token, size_t index, const std::string& url) {
-  std::thread([token, index, url] {
+  std::thread([token, index, url] { gl::threads::setName("gl-drop-fetch");
     const std::string dest = uniquePath(dropFolder(), fileNameForUrl(url));
     Event e;
     e.token = token;

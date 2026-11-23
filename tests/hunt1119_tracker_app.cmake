@@ -71,11 +71,12 @@ endfunction()
 set(E "tracker editors")
 
 # ---- 1 and 3. The Channel frame's key names; its Pitch arrows from +192 ct ----
-# Ctrl+Alt+7 shows the Kick's Channel frame (the lower band, 1440x900); its "Open plugin window"
-# floats the instrument's window, whose eye shows the channel strip; the strip's Pitch knob dragged
-# up to +192 ct. Back in the frame (Ctrl+Alt+7 again), its Pitch up arrow, then its down arrow.
-ctrlalt(17 7 k1)
-ctrlalt(113 7 k2)
+# The Kick's Channel frame (the lower band, 1440x900; a dev screen since plugins float in the Tracker:
+# Ctrl+Alt+7 floats the Kick's window) and its "Open plugin window" float the instrument's window,
+# whose eye shows the channel strip; the strip's Pitch knob dragged up to +192 ct. Back in the frame,
+# its Pitch up arrow, then its down arrow.
+set(k1 "17 ${E} open frame 0\n")
+set(k2 "113 ${E} open frame 0\n")
 run(pitch 170 "5 toasts clear
 ${k1}30 ${E} dump
 36 move 1297 834
@@ -132,17 +133,19 @@ must("tracker tracks frame 47: n 6 [^\n]* Tracker Sampler[(]1[)]" "a Tracker Sam
 must("tracker samplelist frame 70: 01 [^|]+[|]02 [|]03 [|]04 [|]05 [|]06 [|]07 [|]08 [|]09 [|]0A [|]0B" "the sample list numbers its slots in hex (09, 0A, 0B), as the Sample editor does")
 
 # ---- 4. The Audio page while the Channel frame shows ----
-ctrlalt(17 7 k1)
-ctrlalt(48 7 k2)
+set(k1 "17 ${E} open frame 0\n")
+set(k2 "48 ${E} open frame 0\n")
 ctrlalt(57 8 k3)
+# (the page strip's Audio tab found by its label: a page added to the strip moves it)
 run(audio 90 "5 toasts clear
-${k1}26 move 357 259
+${k1}26 atitem \"Audio\"
 28 down 0
 29 up 0
 42 layout dump
 ${k2}${k3}70 layout dump
 80 quit discard
 ")
+mustnot("atitem frame [0-9]+: [^\n]* not shown" "the page strip has an Audio tab")
 string(REGEX MATCHALL "region tracker.pages [^\n]*" pages "${out}")
 list(LENGTH pages n)
 if(NOT n EQUAL 2)

@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include "../../engine/Dsp.h"
+#include "../../engine/EffectRest.h"
 #include "../../engine/Effects.h"
 #include "../../engine/pitch/Kernel.h"
 #include "mini.h"
@@ -51,6 +52,15 @@ struct Smooth {
     if (!init) snap(target);
     v = target + (v - target) * a;
     return v;
+  }
+  // K-142 (0.7.8 close): n calls of next(target), exactly; a step that leaves v as it was is its fixed
+  // point (every later step leaves it too), so a settled smoother costs one step, not n.
+  void advance(double target, int n) {
+    for (int i = 0; i < n; ++i) {
+      const double was = v;
+      next(target);
+      if (v == was) return;
+    }
   }
 };
 
@@ -116,12 +126,28 @@ struct Tilt {
 // Base of every Mini effect: tracks the sample rate, keeps the side buffers and meters.
 class MiniFx : public Effect {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible): its state is its signal
   void process(const PluginState& s, const ProcessContext& c, float* L, float* R, int n) final {
     if (c.sampleRate != sr_) {
       sr_ = c.sampleRate > 0 ? c.sampleRate : 48000.0;
       clear();
     }
+    silentIn_ = exactSilence(L, R, n) ? silentIn_ + n : 0;  // K-142 (only read by the effects that capture)
+    rest_.woke();
     run(s, c, L, R, n);
+  }
+  // K-142 (0.7.8): left out by the engine. An effect whose state is all its signal stays as it is
+  // (movesAtRest() false). Any other runs its idle render unheard until settled() says its signal
+  // state holds exact zeros, then only steps clocks() the way n frames of silence through run() would.
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& c, int n) final {
+    if (!movesAtRest()) return;
+    if (c.sampleRate != sr_ || sr_ <= 0) return restRenderFx(*this, s, aux, c, n);
+    rest_.run(
+        n, [&](int m) { restRenderFx(*this, s, aux, c, m); }, [&] { return settled(); },
+        [&](int m) {
+          silentIn_ += m;
+          clocks(s, c, m);
+        });
   }
   void reset() override { clear(); }
   void setSideIo(const SideIo& io) override { io_ = io; }
@@ -131,6 +157,25 @@ class MiniFx : public Effect {
  protected:
   virtual void run(const PluginState& s, const ProcessContext& c, float* L, float* R, int n) = 0;
   virtual void clear() = 0;
+  // K-142 (0.7.8), see rested(): something in it moves on by itself (an LFO, a clock, a smoother, a
+  // tail it holds); its signal state holds exact zeros (false: never known, the idle render runs on);
+  // what n frames of silence through run() change once settled (the same operations in order).
+  virtual bool movesAtRest() const { return false; }
+  virtual bool settled() const { return false; }
+  virtual void clocks(const PluginState& s, const ProcessContext& c, int n) {
+    (void)s;
+    (void)c;
+    (void)n;
+  }
+  RestSettle rest_;
+  static bool exactSilence(const float* L, const float* R, int n) {
+    for (int i = 0; i < n; ++i)
+      if (L[i] != 0.f || R[i] != 0.f) return false;
+    return true;
+  }
+  // K-142: frames in a row the input was exact silence: an effect replaying what it captured
+  // rests only once its whole capture holds silence (resting then changes nothing it holds).
+  int64_t silentIn_ = 0;
   double sr_ = 0;
   SideIo io_;
   float meter_ = 0, input_ = -120;

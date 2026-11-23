@@ -2,7 +2,9 @@
 # With the button held, a drag across the keys plays one key at a time, the key under the pointer (the
 # key left behind stops before the next one starts), and the release stops it. No key is left
 # sounding when Escape is pressed, the pointer leaves the window, the app loses the focus or the
-# editor is closed while a key is held.
+# editor is closed while a key is held. A focus loss with the button held silences the key until
+# the button is let go (the drag itself goes on); should the release never come (let go over another
+# application), the press ends when the keys come back.
 #
 # Runs the app hidden (isolated config and HOME, the engine run from the frame loop: no audio device) with each editor open
 # on a new channel. The app reports each keyboard it drew (`keybeds`): its rectangle, the key it sounds
@@ -147,6 +149,25 @@ foreach(entry "gl.matrixfm|iskin|-|1600x1100" "gl.twinva|iskin|-|1600x1100" "gl.
   step("down 0" ${pn})
   list(APPEND ons ${pn})
   step("focuslost" -1)
+  # (the button still held: the drag goes on, the keys stay silent until it is let go)
+  list(GET xs 5 px)
+  list(GET ys 5 py)
+  step("move ${px} ${py}" -1)
+  step("up 0" -1)
+  # 4b. the focus is lost with a key held, the button let go over the other application (no release
+  #     ever comes) and the keys come back: the press ends then, so the next press plays again
+  at(4)
+  step("down 0" ${pn})
+  list(APPEND ons ${pn})
+  step("focuslost" -1)
+  math(EXPR frame "${frame} + 2")
+  string(APPEND script "${frame} lostup 0\n${frame} focusgained\n")
+  list(GET xs 5 px)
+  list(GET ys 5 py)
+  step("move ${px} ${py}" -1)
+  at(6)
+  step("down 0" ${pn})
+  list(APPEND ons ${pn})
   step("up 0" -1)
   # 5. the editor is closed while a key is held
   at(5)

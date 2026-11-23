@@ -233,12 +233,36 @@ int entryScore(const Entry& e, const std::string& query, std::vector<int>* label
   return score;
 }
 
-std::vector<Ranked> rank(const std::vector<Entry>& entries, const std::string& query, const std::vector<std::string>& recent, int kind) {
+bool pinnableRow(const Entry& e) {
+  if (e.id.empty() || e.kind == Kind::Setting || e.kind == Kind::Plugin) return false;
+  if (e.id.compare(0, 4, "win:") == 0) return e.id.compare(0, 9, "win:chan:") != 0 && e.id.compare(0, 7, "win:fx:") != 0;
+  return e.id.compare(0, 4, "cmd:") == 0 || e.id.compare(0, 5, "menu:") == 0;
+}
+
+std::vector<Ranked> rank(const std::vector<Entry>& entries, const std::string& query, const std::vector<std::string>& recentIn, int kind,
+                         const std::vector<std::string>& pinned) {
   std::vector<Ranked> out;
+  std::unordered_map<std::string, int> pinnedAt;
+  for (size_t i = 0; i < pinned.size(); ++i) pinnedAt.emplace(pinned[i], static_cast<int>(i));
+  std::vector<std::string> recent;  // (a pinned row is listed with the pins, not again as recent)
+  for (const std::string& r : recentIn)
+    if (!pinnedAt.count(r)) recent.push_back(r);
   std::unordered_map<std::string, int> recentAt;
   for (size_t i = 0; i < recent.size(); ++i) recentAt.emplace(recent[i], static_cast<int>(i));
   auto wanted = [kind](const Entry& e) { return kind < 0 || static_cast<int>(e.kind) == kind; };
   if (splitWords(query).empty()) {
+    std::vector<Ranked> pin(pinned.size());
+    std::vector<bool> havePin(pinned.size(), false);
+    for (size_t i = 0; i < entries.size(); ++i) {
+      if (!wanted(entries[i])) continue;
+      auto it = pinnedAt.find(entries[i].id);
+      if (it != pinnedAt.end() && !havePin[static_cast<size_t>(it->second)]) {
+        havePin[static_cast<size_t>(it->second)] = true;
+        pin[static_cast<size_t>(it->second)] = Ranked{static_cast<int>(i), 0, false, true, {}};
+      }
+    }
+    for (size_t k = 0; k < pin.size(); ++k)
+      if (havePin[k]) out.push_back(pin[k]);
     std::vector<Ranked> rec(recent.size());
     std::vector<bool> have(recent.size(), false);
     for (size_t i = 0; i < entries.size(); ++i) {
@@ -246,13 +270,13 @@ std::vector<Ranked> rank(const std::vector<Entry>& entries, const std::string& q
       auto it = recentAt.find(entries[i].id);
       if (it != recentAt.end() && !have[static_cast<size_t>(it->second)]) {
         have[static_cast<size_t>(it->second)] = true;
-        rec[static_cast<size_t>(it->second)] = Ranked{static_cast<int>(i), 0, true, {}};
+        rec[static_cast<size_t>(it->second)] = Ranked{static_cast<int>(i), 0, true, false, {}};
       }
     }
     for (size_t k = 0; k < rec.size(); ++k)
       if (have[k]) out.push_back(rec[k]);
     for (size_t i = 0; i < entries.size(); ++i)
-      if (wanted(entries[i]) && !recentAt.count(entries[i].id)) out.push_back(Ranked{static_cast<int>(i), 0, false, {}});
+      if (wanted(entries[i]) && !recentAt.count(entries[i].id) && !pinnedAt.count(entries[i].id)) out.push_back(Ranked{static_cast<int>(i), 0, false, false, {}});
     return out;
   }
   for (size_t i = 0; i < entries.size(); ++i) {
@@ -267,6 +291,7 @@ std::vector<Ranked> rank(const std::vector<Entry>& entries, const std::string& q
       r.score += 30 - 2 * it->second;
     }
     if (!e.enabled) r.score -= 20;
+    r.pinned = pinnedAt.count(e.id) > 0;
     out.push_back(std::move(r));
   }
   std::stable_sort(out.begin(), out.end(), [&](const Ranked& x, const Ranked& y) {

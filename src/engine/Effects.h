@@ -44,6 +44,28 @@ class Effect {
   // the transport stopped calls stopSound() instead of starting the song.
   // Audio thread, after a block.
   virtual bool ownPlayback() const { return false; }
+  // GitHub #66: may the engine leave this effect out while it is fed silence, the transport is
+  // stopped and its output has stayed inaudible (hosted plugins that take no notes)? Audio thread.
+  virtual bool restsWhenFaint() const { return false; }
+  // K-142 (0.7.8): the engine left this effect out of a block of n frames (it rests: K-64 on exact
+  // silence, GitHub #66 by the faint rule, or its whole track at rest). Move on whatever runs by
+  // itself (LFOs, clocks, pitch engines, smoothers, a faint tail) exactly as n frames of silence
+  // through processAux() with these arguments would have, so it sounds after the rest as if it had
+  // never rested (see EffectRest.h). Audio thread, realtime only (renders never leave an effect
+  // out). The default: nothing moves by itself (its whole state is its signal).
+  virtual void rested(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx, int n) {
+    (void)state;
+    (void)aux;
+    (void)ctx;
+    (void)n;
+  }
+  // K-142 (0.7.8 close): whether rested() now moves only its clocks (its signal state has settled to
+  // zero), not an unheard render. For the tests; false where an effect has no such stage.
+  virtual bool restSettled() const { return false; }
+  // K-142 (0.7.8): frames its output may stay inaudible and still sound again with nothing coming in
+  // (the longest echo of a delay at its current time): the faint rule holds at least this long
+  // before it rests, and sound after such a gap is not counted as sound of its own. Audio thread.
+  virtual int faintGap() const { return 0; }
   // Gain reduction etc. for the UI (dB, <= 0); 0 when not applicable.
   virtual float meter() const { return 0.0f; }
   // Additional per-band meters (e.g. multiband gain reduction); returns count written.

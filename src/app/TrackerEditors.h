@@ -29,10 +29,20 @@ namespace gl::trackereditors {
 
 enum class Editor { Instrument = 0, Sample = 1 };
 
-// Opens the screen for `channel` (it becomes the current instrument). A channel that is not a
-// Tracker Sampler shows the Channel frame whichever is asked. `slot` >= 0: that sample selected.
+// Opens the screen for `channel` (it becomes the current instrument). K-391: only the Tracker's own
+// screens show in the band (a Tracker Sampler's Sample and Instrument editors, a Sampler's Sample
+// editor, Seltmann's Chop and Instrument screens); for any other `e` the instrument's editor floats
+// in its window instead (openPluginWindow), as in Studio. `slot` >= 0: that sample selected.
 // `keys`: the screen takes the keyboard (opened by its key); a click leaves the keys where they were.
 void open(App& a, Editor e, ObjectId channel, int slot = -1, bool keys = false);
+// K-391: the band shows a Tracker screen for the channel settings' channel (they do not float).
+bool bandHolds(App& a);
+// K-391: another instrument picked while the band shows a screen: the same screen for it when it has
+// one, else the band closes (nothing floats up from a pick).
+void follow(App& a, ObjectId channel);
+// K-391: Convert to Tracker Sampler... for a Sampler with a file (the instrument list's menu): its
+// confirm, then the new Tracker Sampler's Sample editor. One undo step.
+void askConvert(App& a, ObjectId channel);
 // The screen asked for again while it shows: closed; otherwise opened (the current instrument).
 void toggle(App& a, Editor e, bool keys = false);
 // Closed (Exit, Esc, Cmd/Ctrl+W, the lit button, Ctrl+Alt+X): the keys go back to the pattern.
@@ -43,17 +53,22 @@ bool shown(App& a);
 Editor wanted();
 // The header's buttons light: `e` shows now for the current instrument.
 bool showing(App& a, Editor e);
-// The Sample button and Ctrl+Alt+E reach a Sample editor for this channel (a Tracker Sampler).
+// The Sample button and Ctrl+Alt+E reach a Sample editor for this channel (a Tracker Sampler; 0.7.8:
+// a Sampler too, whose Sample editor holds the Audio clip window: ClipEditor.h, trackerpage).
 bool hasSampleEditor(App& a, ObjectId channel);
+// 0.7.8: the band shows a Sampler's Sample editor (the Audio clip window's page) now.
+bool showsClipForm(App& a);
 
-// "Open plugin window" (the instrument menu, the Channel frame): the plugin's own editor in its own
-// window, never restyled (an installed plugin's own interface; a built-in's channel settings window).
+// "Open plugin window" (the instrument menu, a double-click, Channel settings, the Instrument button
+// for an instrument with no Tracker screen): the plugin's own editor in its own floating window,
+// never restyled (an installed plugin's own interface; a built-in's channel settings window; a
+// Sampler's Audio clip window), as in Studio.
 void openPluginWindow(App& a, ObjectId channel);
-// The channel settings float as the plugin window (the lower band is not showing them).
+// K-391: in the Tracker the channel settings float (they are open and the band is not holding them).
 bool pluginWindowOpen(App& a);
-// cp22: while the Tracker is in front its lower band hosts a channel's settings, so the shared
-// channel settings window (and an installed plugin's own window routed from them) opens only from
-// "Open plugin window": true while that window must stay closed (no frame of it, not even one).
+// cp22: true while the Tracker's band holds the channel settings' channel for its own screen (or
+// none is open): the shared channel settings window (and an installed plugin's own window routed
+// from them) stays closed then (no frame of it, not even one).
 bool ownsChannelWindow(App& a);
 // cp22 (dev): once a frame, before the channel settings window: counts the frames a plugin or channel
 // window showed in the Tracker that "Open plugin window" did not ask for ("tracker editors windows").
@@ -102,5 +117,9 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame);
 // cp19: the pointer a dev command asked for ("ins at ..."), taken once by main's scripted input
 // (which keeps its own pointer between commands). False: none asked.
 bool takeDevPointer(float* x, float* y);
+// TRK-1118 (dev): the instrument list's right-click menu notes each row's place by its English label as it
+// draws it; "tracker editors menu at <label>" puts the pointer on that row (then "sdldown 0" / "sdlup 0"),
+// so a script finds a row by what it says, not where it was.
+void devMenuRow(const char* label, float x0, float y0, float x1, float y1);
 
 }  // namespace gl::trackereditors

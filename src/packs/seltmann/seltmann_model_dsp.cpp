@@ -757,6 +757,38 @@ bool moveStep(Model& m, int from, int to) {
   return true;
 }
 
+// 0.7.8: blank steps. A blank is a rest that keeps the step's place and length in the sequence.
+bool clearStep(Model& m, int step) {
+  if (step < 0 || step >= static_cast<int>(m.pattern.steps.size())) return false;
+  Step& s = m.pattern.steps[static_cast<size_t>(step)];
+  if (s.src == kRest) return false;
+  Step b;  // the step's length stays (its ties or its own length); what it played goes
+  b.src = kRest;
+  b.ties = s.ties;
+  b.beats = s.beats;
+  s = b;
+  if (m.preset.empty() && m.pattern.name == "Straight") m.pattern.name = kEditedName;
+  return true;
+}
+
+bool fillStep(Model& m, int step, int region) {
+  if (step < 0 || step >= static_cast<int>(m.pattern.steps.size()) || region < 0 || region >= static_cast<int>(m.slices.size())) return false;
+  Step& s = m.pattern.steps[static_cast<size_t>(step)];
+  if (!s.slot && s.src == region) return false;
+  s.slot = false;
+  s.src = region;
+  if (m.preset.empty() && m.pattern.name == "Straight") m.pattern.name = kEditedName;
+  return true;
+}
+
+bool deleteStep(Model& m, int step) {
+  const int n = static_cast<int>(m.pattern.steps.size());
+  if (step < 0 || step >= n || n <= 1) return false;
+  m.pattern.steps.erase(m.pattern.steps.begin() + step);
+  if (m.preset.empty() && m.pattern.name == "Straight") m.pattern.name = kEditedName;
+  return true;
+}
+
 void naturalPattern(Model& m) {
   if (m.chop.mode != ChopManual) {
     straightPattern(m);

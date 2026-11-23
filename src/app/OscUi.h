@@ -10,6 +10,10 @@ namespace oscui {
 
 // Per frame: starts, restarts or stops the server, applies what arrived, sends feedback.
 void tick(App& a);
+// K-142 (0.7.8 follow-up): whether OSC needs the interface to keep taking turns while nothing is on
+// screen: starting (or trying again), bundles timed for later, a controller gesture to close. A
+// message wakes the sleeping interface itself (OscServer::onQueued).
+bool needsTurns(const App& a);
 // Stops the server and releases notes it holds (app shutdown).
 void shutdown();
 // Settings > MIDI: the OSC section.

@@ -13,6 +13,7 @@
 #include <random>
 #include <sstream>
 #include "Settings.h"
+#include "ThreadName.h"
 
 namespace gl::mcp {
 
@@ -121,11 +122,124 @@ bool HttpServer::start(int port, std::string* err, const listen::Policy& policy)
 }
 
 void HttpServer::stop() {
+  stopWatch();
   for (auto& c : conns_) net::closeSock(c.fd);
   conns_.clear();
   if (fd_ >= 0) net::closeSock(fd_);
   fd_ = -1;
   port_ = 0;
+}
+
+namespace {
+// K-142 (follow-up): two connected loopback sockets (a byte written to `w` makes `r` readable), as
+// a pipe that pollSocks takes on every system.
+bool loopPair(net::Sock& r, net::Sock& w) {
+  r = w = net::kNoSock;
+  const net::Sock l = net::tcpSocket();
+  if (l == net::kNoSock) return false;
+  sockaddr_in a{};
+  a.sin_family = AF_INET;
+  a.sin_addr.s_addr = htonl(0x7F000001u);
+  a.sin_port = 0;
+  net::SockLen len = sizeof a;
+  bool ok = ::bind(l, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0 && ::listen(l, 1) == 0 &&
+            getsockname(l, reinterpret_cast<sockaddr*>(&a), &len) == 0;
+  if (ok) {
+    w = net::tcpSocket();
+    ok = w != net::kNoSock && ::connect(w, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0;
+  }
+  if (ok) {
+    r = static_cast<net::Sock>(::accept(l, nullptr, nullptr));
+    ok = r != net::kNoSock;
+  }
+  net::closeSock(l);
+  if (!ok) {
+    if (w != net::kNoSock) net::closeSock(w);
+    if (r != net::kNoSock) net::closeSock(r);
+    r = w = net::kNoSock;
+    return false;
+  }
+  net::setNoInherit(r);
+  net::setNoInherit(w);
+  net::setNoSigPipe(w);
+  net::setNonBlocking(r);
+  return true;
+}
+}  // namespace
+
+bool HttpServer::watch(std::function<void()> knock) {
+  if (fd_ < 0 || watch_.joinable() || !knock) return false;
+  net::Sock r = net::kNoSock, w = net::kNoSock;
+  if (!loopPair(r, w)) return false;
+  wakeR_ = r;
+  wakeW_ = w;
+  watchStop_ = false;
+  {
+    std::lock_guard<std::mutex> lk(watchMu_);
+    polls_ = 0;
+    watchWaiting_ = false;
+  }
+  const net::Sock listenFd = static_cast<net::Sock>(fd_);
+  watchConns_.clear();
+  for (const Conn& c : conns_) watchConns_.push_back({c.fd, watchEvents(c)});
+  watch_ = std::thread([this, listenFd, r, knock = std::move(knock)] {
+    gl::threads::setName("gl-mcp-watch");
+    std::vector<net::PollFd> fds;
+    while (!watchStop_.load()) {
+      fds.clear();
+      fds.push_back(net::pollEntry(listenFd, POLLIN));
+      fds.push_back(net::pollEntry(r, POLLIN));
+      uint64_t at = 0;
+      {
+        std::lock_guard<std::mutex> lk(watchMu_);
+        at = polls_;
+        for (const auto& [fd, ev] : watchConns_) fds.push_back(net::pollEntry(static_cast<net::Sock>(fd), ev));
+      }
+      const int got = net::pollSocks(fds.data(), fds.size(), -1);
+      gl::threads::woke();  // K-142: CPU report
+      if (watchStop_.load()) break;
+      if (got < 0) {  // (interrupted): look again a moment later
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        continue;
+      }
+      if (fds[1].revents != 0) {  // stop, or the connections changed: look again
+        char buf[64];
+        while (net::recvSome(r, buf, sizeof buf) > 0) {
+        }
+        continue;
+      }
+      bool ready = (fds[0].revents & (POLLIN | POLLERR | POLLHUP)) != 0;
+      for (size_t i = 2; i < fds.size() && !ready; ++i) ready = fds[i].revents != 0;
+      if (!ready) continue;
+      std::unique_lock<std::mutex> lk(watchMu_);
+      if (polls_ != at) continue;  // (polled meanwhile: look at the connections it left)
+      lk.unlock();
+      knocks_.fetch_add(1, std::memory_order_relaxed);
+      knock();
+      // The poll takes it; until then the socket stays ready. (A poll held back, an editor's undo
+      // group open, is looked at again after a second.)
+      lk.lock();
+      watchWaiting_ = true;
+      watchCv_.wait_for(lk, std::chrono::seconds(1), [&] { return watchStop_.load() || polls_ != at; });
+      watchWaiting_ = false;
+    }
+  });
+  return true;
+}
+
+void HttpServer::stopWatch() {
+  if (!watch_.joinable()) return;
+  {
+    std::lock_guard<std::mutex> lk(watchMu_);
+    watchStop_ = true;
+  }
+  watchCv_.notify_all();
+  const char b = 1;
+  net::sendSome(static_cast<net::Sock>(wakeW_), &b, 1);
+  watch_.join();
+  net::closeSock(static_cast<net::Sock>(wakeR_));
+  net::closeSock(static_cast<net::Sock>(wakeW_));
+  wakeR_ = wakeW_ = -1;
 }
 
 std::string HttpServer::boundAddress() const {
@@ -138,7 +252,13 @@ std::string HttpServer::boundAddress() const {
   return buf;
 }
 
+short HttpServer::watchEvents(const Conn& c) {
+  if (c.out.size() > c.sent) return POLLOUT;
+  return c.pump ? short(0) : short(POLLIN);  // (a streamed reply's progress comes in the poller's turns)
+}
+
 void HttpServer::closeConn(size_t i) {
+  ++connGen_;
   net::closeSock(conns_[i].fd);
   conns_.erase(conns_.begin() + static_cast<long>(i));
 }
@@ -163,6 +283,27 @@ HttpServer::Response simple(int status, const std::string& msg) {
 
 void HttpServer::poll(const Handler& handler, int timeoutMs) {
   if (fd_ < 0) return;
+  struct Polled {  // K-142 (follow-up): the watcher looks again, at the connections as this poll leaves them
+    HttpServer& s;
+    ~Polled() {
+      if (!s.watch_.joinable()) return;
+      std::lock_guard<std::mutex> lk(s.watchMu_);
+      ++s.polls_;
+      bool same = s.watchGen_ == s.connGen_ && s.watchConns_.size() == s.conns_.size();
+      for (size_t i = 0; same && i < s.conns_.size(); ++i)
+        same = s.watchConns_[i].first == s.conns_[i].fd && s.watchConns_[i].second == s.watchEvents(s.conns_[i]);
+      if (!same) {
+        s.watchGen_ = s.connGen_;
+        s.watchConns_.clear();
+        for (const Conn& c : s.conns_) s.watchConns_.push_back({c.fd, s.watchEvents(c)});
+      }
+      if (s.watchWaiting_) s.watchCv_.notify_one();
+      else if (!same) {  // (asleep in its poll on the old set)
+        const char b = 1;
+        net::sendSome(static_cast<net::Sock>(s.wakeW_), &b, 1);
+      }
+    }
+  } polled{*this};
   std::vector<net::PollFd> fds;
   fds.push_back(net::pollEntry(fd_, POLLIN));
   // Streamed replies: collect what is ready before waiting.
@@ -175,6 +316,7 @@ void HttpServer::poll(const Handler& handler, int timeoutMs) {
   }
   if (streaming) timeoutMs = std::min(timeoutMs, 20);
   if (net::pollSocks(fds.data(), fds.size(), timeoutMs) < 0) return;
+  const size_t known = conns_.size();
   // New connections (loopback peers, or the peers the listen policy allows: K-264).
   if (fds[0].revents & POLLIN)
     for (int k = 0; k < 8; ++k) {
@@ -195,11 +337,13 @@ void HttpServer::poll(const Handler& handler, int timeoutMs) {
       n.peer = from;
       n.opened = monoNow();
       conns_.push_back(std::move(n));
+      ++connGen_;
     }
   const double now = monoNow();
   for (size_t i = conns_.size(); i-- > 0;) {
     Conn& c = conns_[i];
-    const short rev = i + 1 < fds.size() && net::sockOf(fds[i + 1]) == c.fd ? fds[i + 1].revents : 0;
+    // (K-142 follow-up: one accepted just now is read at once: its request usually came with it)
+    const short rev = i + 1 < fds.size() && net::sockOf(fds[i + 1]) == c.fd ? fds[i + 1].revents : i >= known ? short(POLLIN) : short(0);
     if (c.pump) {  // J-61: a streamed / deferred reply
       if (c.out.size() > c.sent && (rev & (POLLOUT | POLLERR | POLLHUP))) {
         const long n = net::sendSome(c.fd, c.out.data() + c.sent, c.out.size() - c.sent);

@@ -1,5 +1,6 @@
 // Gridline: the crash pop-up and the project's recovery copies (see core/Crash.h).
 #include "CrashUi.h"
+#include "../core/ThreadName.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -358,7 +359,7 @@ void frame(App& a) {
   gCopy.copiedRev = a.doc.revision();
   gCopy.haveCopy = true;
   gCopy.writing.store(true);
-  gCopy.writer = std::thread([text = std::move(text), file = copyPath(), original = !a.projectPath.empty() ? a.projectPath : a.openedFrom] {
+  gCopy.writer = std::thread([text = std::move(text), file = copyPath(), original = !a.projectPath.empty() ? a.projectPath : a.openedFrom] { gl::threads::setName("gl-crash-copy");
     const std::string tmp = file + ".writing";
     {
       std::ofstream f(fs::u8path(tmp), std::ios::binary | std::ios::trunc);

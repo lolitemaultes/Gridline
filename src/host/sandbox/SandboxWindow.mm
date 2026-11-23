@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include "../ui/NativeView.h"
+#include "../ui/QuietWindows.h"
 #include "Sandbox.h"
 
 namespace {
@@ -18,6 +19,7 @@ void ensureApp() {
   static bool started = false;
   if (started) return;
   started = true;
+  gl::quiet::install();  // a quiet (test) run: the window never shows or activates (no-op otherwise)
   [NSApplication sharedApplication];
   [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
   [NSApp finishLaunching];
@@ -176,6 +178,7 @@ void* offscreenEditorParent(int w, int h) {
   static bool started = false;
   if (!started) {
     started = true;
+    gl::quiet::install();  // a quiet (test) run: an interface that opens a window of its own stays off the screen too
     [NSApplication sharedApplication];
     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     [NSApp finishLaunching];

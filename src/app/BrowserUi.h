@@ -36,6 +36,13 @@ void ensureIndex(App& a);
 void refreshIndex(App& a);
 // Per frame: re-walks the roots every few minutes while idle (file watching).
 void tickIndex(App& a);
+// GitHub #66: the roots the index walks (Gridline's own content folders and the folders the user
+// added; never another program's content unless added) and its pace (background, throttled).
+std::vector<std::pair<std::string, bool>> indexRoots(App& a);
+browse::Index::Pace indexPace();
+// Per frame (the main loop, browser shown or not): holds the indexing while the song plays or a
+// mouse button is down.
+void holdIndexWhileBusy(App& a);
 // Stops the indexing worker (main, before teardown). J-46: on a first run the
 // worker is still analysing the shipped packs when a short run quits; left to
 // the index's static destructor it kept running while the function-local

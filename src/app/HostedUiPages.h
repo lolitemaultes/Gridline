@@ -11,6 +11,9 @@ class HostedInstance;
 }
 
 std::string hostedTargetName(App& a, const PluginTarget& t);
+// 0.7.8: the slot or channel whose running plugin has this backend now (an effect moved to
+// another slot takes its instance along: its window follows it). False when none has.
+bool hostedTargetOf(App& a, const void* backend, PluginTarget& out);
 
 namespace hostedui {
 
@@ -34,6 +37,8 @@ void pluginWindowsIdle(App& a);
 // Opens the plugin's window again once its new instance runs (sandbox or
 // structural option switched).
 void reopenLater(const PluginTarget& t);
+// 0.7.8: the target's channel window or effect window closes (its interface was inside it).
+void hidePane(App& a, const PluginTarget& t);
 
 }  // namespace hostedui
 }  // namespace gl

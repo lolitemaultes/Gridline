@@ -20,7 +20,7 @@ class HostedInstance;
 
 namespace pluginbar {
 
-enum class Action { None, Generic, Sandbox, Close, ChannelPanel };
+enum class Action { None, Generic, Sandbox, Close, ChannelPanel, Dock };
 inline constexpr int kNoPanelChange = -2;
 
 struct Bar {
@@ -29,6 +29,7 @@ struct Bar {
   std::string type;
   host::layout::WindowLayout L;
   int panelPage = -1;               // -1: folded
+  bool dock = false;                // 0.7.8: the bar has the button that puts the interface inside Gridline
   int wantPanel = kNoPanelChange;   // fold / unfold asked for by the bar (the window applies it)
   Action action = Action::None;     // button pressed (the window runs it after drawing)
 };
@@ -44,6 +45,10 @@ void runAction(App& a, const PluginTarget& t, const std::string& type, Action ac
 // The list of windows to show again once their new instance runs (sandbox
 // or options switched): opens the ones that are ready.
 void reopenPending(App& a);
+
+// Dev (tests): the bar button with that name (prev, preset, next, bypass, sandbox, generic, routefree,
+// dockin, settings) is pressed the next time a bar draws it.
+void devPress(const std::string& name);
 
 }  // namespace pluginbar
 }  // namespace gl

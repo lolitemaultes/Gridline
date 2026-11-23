@@ -7,6 +7,7 @@
 #include <iterator>
 #include <map>
 #include "Automation.h"
+#include "Lanes.h"
 #include "NoteBend.h"
 #include "Params.h"
 #include "PatternAutomation.h"
@@ -175,6 +176,7 @@ bool parseMidi(const std::vector<uint8_t>& d, MidiFileData& out, std::string* er
       } else if (hi == 0xC0) {
         if (track.program < 0) track.program = a;
         if (track.channelProgram[ch] < 0) track.channelProgram[ch] = a;
+        track.programs.push_back({tick, kMidiProgram, a, ch});
       }
     }
     for (auto& [key, v] : open)  // unterminated notes end at the track end
@@ -183,6 +185,7 @@ bool parseMidi(const std::vector<uint8_t>& d, MidiFileData& out, std::string* er
       return x.start != y.start ? x.start < y.start : x.pitch < y.pitch;
     });
     std::stable_sort(track.ctls.begin(), track.ctls.end(), [](const MidiCtl& x, const MidiCtl& y) { return x.tick < y.tick; });
+    std::stable_sort(track.programs.begin(), track.programs.end(), [](const MidiCtl& x, const MidiCtl& y) { return x.tick < y.tick; });
     if (!track.notes.empty() || !track.ctls.empty()) out.tracks.push_back(std::move(track));
     r.p = end;
   }
@@ -244,6 +247,8 @@ void splitTracksByChannel(MidiFileData& m) {
         if (n.channel == ch) t.notes.push_back(n);
       for (const auto& c : tr.ctls)
         if (c.channel == ch) t.ctls.push_back(c);
+      for (const auto& c : tr.programs)
+        if (c.channel == ch) t.programs.push_back(c);
       if (!t.notes.empty() || !t.ctls.empty()) out.push_back(std::move(t));
     }
   }
@@ -284,7 +289,11 @@ std::vector<uint8_t> encodeMidi(const MidiFileData& data, int format) {
     std::vector<Ev> evs;
     if (!tr.name.empty()) evs.push_back({0, -1, meta(0x03, tr.name)});
     const uint8_t tch = static_cast<uint8_t>(std::clamp(tr.channel >= 0 ? tr.channel : (tr.notes.empty() ? 0 : tr.notes[0].channel), 0, 15));
-    if (tr.program >= 0) evs.push_back({0, 0, {uint8_t(0xC0 | tch), uint8_t(std::clamp(tr.program, 0, 127))}});
+    if (!tr.programs.empty()) {
+      for (const auto& c : tr.programs) evs.push_back({c.tick, 0, {uint8_t(0xC0 | (c.channel & 0x0F)), uint8_t(std::clamp(c.value, 0, 127))}});
+    } else if (tr.program >= 0) {
+      evs.push_back({0, 0, {uint8_t(0xC0 | tch), uint8_t(std::clamp(tr.program, 0, 127))}});
+    }
     for (const auto& c : tr.ctls) {
       const uint8_t ch = static_cast<uint8_t>(c.channel & 0x0F);
       if (c.controller == kMidiPitchBend) {
@@ -380,8 +389,11 @@ struct Collector {
     double widest = 2.0;
     for (const auto& p : s.patterns)
       if (auto it = p.notes.find(ch); it != p.notes.end())
-        for (const auto& n : it->second)
-          for (const auto& b : n.bend) widest = std::max(widest, std::fabs(static_cast<double>(b.semis)));
+        for (const auto& n : it->second) {
+          double line = 0;
+          for (const auto& b : n.bend) line = std::max(line, std::fabs(static_cast<double>(b.semis)));
+          widest = std::max(widest, line + static_cast<double>(n.vib.depth) / 100.0);  // K-262: the vibrato swings on top
+        }
     return bendRange[ch] = std::clamp(static_cast<int>(std::ceil(widest - 1e-6)), 2, 127);
   }
   // A bent note's line as pitch bend messages: sampled every 1/96 beat along it (MIDI has no
@@ -401,7 +413,8 @@ struct Collector {
     std::sort(ticks.begin(), ticks.end());
     int last = -1;
     for (double t : ticks) {
-      const int v = std::clamp(8192 + static_cast<int>(std::lround(bend::value(n.bend, t) / range * 8192.0)), 0, 16383);
+      // K-262: the line plus the note's vibrato
+      const int v = std::clamp(8192 + static_cast<int>(std::lround(bend::pitchAt(n, t, s.ppq, s.tempo) / range * 8192.0)), 0, 16383);
       if (v == last) continue;
       last = v;
       tr.ctls.push_back({at + static_cast<Tick>(t), kMidiPitchBend, v, 0});
@@ -435,7 +448,7 @@ struct Collector {
       if (busy[c] < busy[mc]) mc = c;  // free the longest (or, all held, the one ending first)
     busy[mc] = at + len;
     auto bendOf = [&](double t) {
-      return std::clamp(8192 + static_cast<int>(std::lround(bend::value(n.bend, t) / kMpeBendRange * 8192.0)), 0, 16383);
+      return std::clamp(8192 + static_cast<int>(std::lround(bend::pitchAt(n, t, s.ppq, s.tempo) / kMpeBendRange * 8192.0)), 0, 16383);  // K-262
     };
     auto pressOf = [&](double t) { return std::clamp(static_cast<int>(std::lround(bend::value(n.pressure, t) * 127.0)), 0, 127); };
     auto timbreOf = [&](double t) { return std::clamp(static_cast<int>(std::lround((bend::value(n.timbre, t) + 0.5) * 127.0)), 0, 127); };
@@ -447,7 +460,7 @@ struct Collector {
     const Tick fine = std::max<Tick>(1, s.ppq / 96);
     for (Tick t = fine; t < len; t += fine) {
       const double dt = static_cast<double>(t);
-      if (!n.bend.empty())
+      if (!n.bend.empty() || n.vib.active())
         if (const int v = bendOf(dt); v != lb) tr.ctls.push_back({at + t, kMidiPitchBend, lb = v, mc});
       if (!n.pressure.empty())
         if (const int v = pressOf(dt); v != lp) tr.ctls.push_back({at + t, kMidiChannelPressure, lp = v, mc});
@@ -483,8 +496,9 @@ struct Collector {
               if (!n.slide) addMpeNote(tr, c.id, n, offset + n.start - from, len);
               continue;
             }
+            if (n.program >= 0) tr.programs.push_back({offset + n.start - from, kMidiProgram, n.program, 0});  // K-348
             tr.notes.push_back({offset + n.start - from, len, n.pitch, n.velocity, 0});
-            if (!n.bend.empty() && !n.slide) addBend(tr, c.id, n, offset + n.start - from, len);
+            if ((!n.bend.empty() || n.vib.active()) && !n.slide) addBend(tr, c.id, n, offset + n.start - from, len);  // K-262: vibrato too
           }
       }
       if (!o.automation) continue;
@@ -555,6 +569,8 @@ struct Collector {
       tr.channel = ch;
       for (auto& n : tr.notes) n.channel = ch;
       for (auto& x : tr.ctls) x.channel = ch;
+      for (auto& x : tr.programs) x.channel = ch;  // K-348
+      std::stable_sort(tr.programs.begin(), tr.programs.end(), [](const MidiCtl& x, const MidiCtl& y) { return x.tick < y.tick; });
       std::stable_sort(tr.notes.begin(), tr.notes.end(), [](const MidiNote& x, const MidiNote& y) {
         return x.start != y.start ? x.start < y.start : x.pitch < y.pitch;
       });
@@ -596,10 +612,16 @@ struct Collector {
 
 }  // namespace
 
-MidiFileData patternToMidi(const Song& song, ObjectId pattern, const MidiExportOptions& o) {
+MidiFileData patternToMidi(const Song& song0, ObjectId pattern, const MidiExportOptions& o) {
+  // K-255: MIDI has no lanes: rows on their own grid or with a length are written out as they play.
+  const Tick len0 = song0.pattern(pattern) ? song0.patternContentLength(*song0.pattern(pattern)) : 0;
+  Song burnt;
+  const bool burn = lanes::needsBurn(song0);
+  if (burn) burnt = song0, lanes::burnSong(burnt);
+  const Song& song = burn ? burnt : song0;
   Collector c{song, o, {}, {}, {}, {}};
   const Pattern* p = song.pattern(pattern);
-  if (p) c.addPattern(*p, 0, 0, song.patternContentLength(*p));
+  if (p) c.addPattern(*p, 0, 0, len0);  // (one pass: a lane that runs on is written out over many)
   MidiFileData d = c.finish(-1, 0);
   if (p) {  // K-179: the pattern's own meter
     d.timeSigNum = song.patternMeterNum(*p);
@@ -608,7 +630,11 @@ MidiFileData patternToMidi(const Song& song, ObjectId pattern, const MidiExportO
   return d;
 }
 
-MidiFileData songRangeToMidi(const Song& song, Tick start, Tick end, const MidiExportOptions& o) {
+MidiFileData songRangeToMidi(const Song& song0, Tick start, Tick end, const MidiExportOptions& o) {
+  Song burnt;  // K-255: as patternToMidi
+  const bool burn = lanes::needsBurn(song0);
+  if (burn) burnt = song0, lanes::burnSong(burnt);
+  const Song& song = burn ? burnt : song0;
   Collector col{song, o, {}, {}, {}, {}};
   for (const auto& c : song.playlist) {
     if (c.kind != ClipKind::Pattern || c.muted || c.start < song.live.areaEnd) continue;

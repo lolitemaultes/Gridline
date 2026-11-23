@@ -124,6 +124,34 @@ int main() {
     expect(top(tie, "zoom in", -1, {"b"}) == "b", "a recent row wins a tie");
   }
 
+  // ---- K-256: pinned commands ----
+  {
+    std::vector<Entry> p = {row("cmd:file.save", "Save", "File"), row("menu:Tools/Quantize", "Quantize", "Tools"),
+                            row("win:Mixer", "Mixer", "View", cmdpal::Kind::Window), row("set:Audio/Output device", "Output device", "Settings > Audio", cmdpal::Kind::Setting),
+                            row("plug:gl.trio", "Trio Synth", "Instruments", cmdpal::Kind::Plugin), row("", "No id"), row("win:chan:3", "Lead", "Channels", cmdpal::Kind::Window),
+                            row("cmd:edit.undo", "Undo", "Edit")};
+    for (size_t i = 0; i < p.size(); ++i) p[i].order = static_cast<int>(i);
+    expect(cmdpal::pinnableRow(p[0]) && cmdpal::pinnableRow(p[1]) && cmdpal::pinnableRow(p[2]), "pin: commands, menu items and windows can be pinned");
+    expect(!cmdpal::pinnableRow(p[3]) && !cmdpal::pinnableRow(p[4]), "pin: settings and plugins cannot");
+    expect(!cmdpal::pinnableRow(p[5]), "pin: a row with no id is refused");
+    expect(!cmdpal::pinnableRow(p[6]), "pin: a project's own channel window is refused");
+    const std::vector<std::string> pinned = {"cmd:edit.undo", "menu:Tools/Quantize"};
+    const auto r = cmdpal::rank(p, "", {"cmd:file.save", "cmd:edit.undo"}, -1, pinned);
+    expect(r.size() == p.size(), "pin: the empty query still lists every row once");
+    expect(p[static_cast<size_t>(r[0].index)].id == "cmd:edit.undo" && r[0].pinned && p[static_cast<size_t>(r[1].index)].id == "menu:Tools/Quantize" && r[1].pinned,
+           "pin: with an empty field the pinned commands come first, in their order");
+    expect(p[static_cast<size_t>(r[2].index)].id == "cmd:file.save" && r[2].recent && !r[2].pinned, "pin: then the recent rows (a pinned one not twice)");
+    expect(!r[3].pinned && !r[3].recent, "pin: then everything else");
+    const auto q = cmdpal::rank(p, "quant", {}, -1, pinned);
+    expect(!q.empty() && q[0].pinned, "pin: a query marks the pinned rows it finds");
+    const auto none = cmdpal::rank(p, "", {}, -1, {"cmd:gone"});
+    expect(none.size() == p.size() && !none[0].pinned, "pin: a pin whose row is gone is skipped");
+    const auto plugs = cmdpal::rank(p, "", {}, static_cast<int>(cmdpal::Kind::Plugin), pinned);
+    expect(plugs.size() == 1 && !plugs[0].pinned, "pin: a category lists only its own pinned rows");
+    const auto unpinned = cmdpal::rank(p, "", {"cmd:file.save"}, -1, {});
+    expect(p[static_cast<size_t>(unpinned[0].index)].id == "cmd:file.save" && unpinned[0].recent, "pin: unpinned, the recent rows lead again");
+  }
+
   // ---- the recent list ----
   {
     std::vector<std::string> r;

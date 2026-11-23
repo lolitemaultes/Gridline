@@ -5,6 +5,8 @@
 //   - The hold lives in the builder (session state): the song, its saved text and its render are
 //     the same with a hold as without one (renders and exports build their own program).
 //   - A hold set before the build that first compiles the lane is taken by that build.
+//   - Stopped and at rest (K-142, 0.7.8: links that would change nothing are left out), a hold, a
+//     release and a new position still reach the parameter.
 #include <cmath>
 #include <string>
 #include <vector>
@@ -102,6 +104,31 @@ int main() {
     b.holdAutomation(pid, 0.5);
     b.releaseAllAutomation();
     expect(!b.automationHeld(pid), "releaseAllAutomation ends every hold");
+  }
+
+  // ---- K-142 (0.7.8 close): stopped and at rest (a stopped block whose links would change nothing
+  // leaves them out), a hold, a release and a move of the position still reach the parameter
+  {
+    ProgramBuilder b;
+    AudioEngine e(44100);
+    b.setSampleRate(44100);
+    e.setThreads(1);
+    e.setProgram(b.build(s));
+    e.setMode(PlayMode::Song);
+    run(e, 12 * 44100);  // twelve seconds stopped: every tail is over, the graph sleeps
+    double v = 0;
+    expect(b.modulatedValue(pid, v) && std::fabs(v - d->fromNormalized(0.2)) < 1e-4, "stopped at the start: the curve's first value");
+    b.holdAutomation(pid, 0.9);
+    run(e, 4096);
+    expect(b.modulatedValue(pid, v) && std::fabs(v - d->fromNormalized(0.9)) < 1e-4, "stopped, at rest: a hold plays at once (" + std::to_string(v) + ")");
+    run(e, 5 * 44100);
+    b.releaseAutomation(pid);
+    run(e, 4096);
+    expect(b.modulatedValue(pid, v) && std::fabs(v - d->fromNormalized(0.2)) < 1e-4, "stopped, at rest: released, the curve again (" + std::to_string(v) + ")");
+    run(e, 5 * 44100);
+    e.setPosition(384);
+    run(e, 4096);
+    expect(b.modulatedValue(pid, v) && std::fabs(v - d->fromNormalized(0.5)) < 0.02, "stopped, at rest: the position moved, the curve there (" + std::to_string(v) + ")");
   }
 
   // ---- a hold set before the lane's first build is taken by that build

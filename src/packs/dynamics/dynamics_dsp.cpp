@@ -2,7 +2,10 @@
 // master_dsp.cpp, dist_dsp.cpp and rack_dsp.cpp).
 #include "../../core/ProjectInterop.h"
 #include "../Packs.h"
+#include <chrono>
+#include <cstdlib>
 #include <filesystem>
+#include <thread>
 #include <map>
 #include <mutex>
 #include "../../engine/Resample.h"
@@ -26,22 +29,55 @@ std::unique_ptr<Effect> createEffect(const std::string& type) {
   return nullptr;
 }
 
+namespace {
+
+// The pedal board's cabinet files, in their order: the folder's .wav files by name (a shared
+// project's folder: its files under their content names). Full paths.
+std::vector<std::string> boardFiles(const std::string& dir) {
+  std::vector<std::pair<std::string, std::string>> wavs;  // (name, path)
+  if (isFolderManifest(dir)) {
+    for (auto& f : folderRefFiles(dir))
+      if (std::filesystem::u8path(f.second).extension() == ".wav") wavs.emplace_back(f.second, f.first);
+  } else {
+    std::error_code ec;
+    for (const auto& e : std::filesystem::directory_iterator(std::filesystem::u8path(dir), ec))
+      if (e.path().extension() == ".wav") wavs.emplace_back(e.path().filename().u8string(), dir + "/" + e.path().filename().u8string());
+  }
+  std::sort(wavs.begin(), wavs.end());
+  std::vector<std::string> out;
+  for (auto& w : wavs) out.push_back(std::move(w.second));
+  return out;
+}
+
+}  // namespace
+
 std::string cab::boardFile(const std::string& dir, int n) {
   if (n < 1) return {};
-  std::vector<std::string> names;
-  std::error_code ec;
-  if (isFolderManifest(dir)) {  // a shared project: the folder's files under their content names
-    auto files = folderRefFiles(dir);
-    std::vector<std::pair<std::string, std::string>> wavs;
-    for (auto& f : files)
-      if (std::filesystem::u8path(f.second).extension() == ".wav") wavs.emplace_back(f.second, f.first);
-    std::sort(wavs.begin(), wavs.end());
-    return n <= static_cast<int>(wavs.size()) ? wavs[static_cast<size_t>(n - 1)].second : std::string();
+  std::vector<std::string> files;
+  if (mustNotReadNow(dir)) {
+    // FRZ-1118 (0.7.8): a folder on a web or network drive is listed in the background, never by a build on
+    // the interface thread (a mount that stops answering held it in the kernel); the build after
+    // the listing has it.
+    static std::mutex mu;
+    static auto& listed = *new std::map<std::string, std::vector<std::string>>;  // (never destroyed: a reader may end during exit)
+    bool have = false;
+    {
+      std::lock_guard<std::mutex> lk(mu);
+      if (auto it = listed.find(dir); it != listed.end()) files = it->second, have = true;
+    }
+    if (!have) {
+      readInBackground("cab folder\n" + dir, [dir] {
+        if (const char* d = std::getenv("GRIDLINE_DEV_SLOW_LIST_MS")) std::this_thread::sleep_for(std::chrono::milliseconds(std::atoi(d)));  // tests
+        std::vector<std::string> found = boardFiles(dir);
+        std::lock_guard<std::mutex> lk(mu);
+        listed[dir] = std::move(found);
+      });
+      return {};
+    }
+  } else {
+    files = boardFiles(dir);
   }
-  for (const auto& e : std::filesystem::directory_iterator(dir, ec))
-    if (e.path().extension() == ".wav") names.push_back(e.path().filename().string());
-  std::sort(names.begin(), names.end());
-  return n <= static_cast<int>(names.size()) ? dir + "/" + names[static_cast<size_t>(n - 1)] : std::string();
+  return n <= static_cast<int>(files.size()) ? files[static_cast<size_t>(n - 1)] : std::string();
 }
 
 std::atomic<double>& cabRate() {

@@ -1,7 +1,8 @@
 # The Stage view
 
 The mixer window has two views: **Mix**, the strips you know, and **Stage**. Switch between them
-with **Mix | Stage** at the left of the mixer's toolbar, **View > Stage**, or the command palette.
+with **Mix | Stage** at the left of the mixer's toolbar, **View > Stage**, or the command palette
+(in the Tracker: the **Stage** page tab, see [In the Tracker](#in-the-tracker)).
 Both views edit the same tracks, so the strips, undo, automation and the people you share a
 project with all see the same change. The view you used last comes back next time.
 
@@ -24,6 +25,7 @@ Only track names appear on the stage. The values are in the panel under it.
 | Ctrl (Cmd on a Mac) while dragging | Place it freely, without the snap |
 | Shift while dragging | Move finely |
 | Drag onto another track or a group | Share that spot (see Groups) |
+| Click a group's stack | Open the group (see Groups) |
 | Alt while dragging | Drop exactly where you let go (joins a track it still covers) |
 | Esc while dragging | Put it back |
 | Let go off the stage | Put it back |
@@ -38,7 +40,7 @@ Only track names appear on the stage. The values are in the panel under it.
 | Click the empty floor, or Esc | Select nothing: the panel shows the room |
 | Drag selected tracks onto a room in the rooms list | Move them all to that room (see Rooms) |
 | Right-click a track | Its menu: effects, rename, colour, icon, mute, solo, send to the space, move to room, reset, the mixer track menu |
-| Right-click the floor | Presets, Spread out, Arrange by sound, snap, names |
+| Right-click the floor | Presets, Spread out, Arrange by sound, snap, names, compact groups |
 
 While you drag, the tooltip says what the move does ("Further back: quieter, more room"), a
 dashed oval shows where the track will stand, and an outline marks where it was.
@@ -71,17 +73,36 @@ Tracks that share one spot (the same distance, and a pan within 3 %) form a **gr
 only a picture of positions: nothing extra is saved, so undo, automation and collaboration work
 through the tracks' own pan and distance.
 
-- The spot is marked on the floor by a small ring with a dot. Above it a **tray** holds the
-  tracks in a tidy grid of same-size tiles, with a count on its corner.
+A group at rest is **closed**: a small stack of tiles on its spot, the size of one track's tile, so
+the stage around it and behind it stays free. You can click, drop, drag and draw a selection box
+right next to it, and a track can stand directly behind it.
+
+- The closed stack shows how many tracks are there, with a strip of up to six of their colours
+  along its foot, and a name such as **Kick +4** under it. Rest the pointer on it for a moment to
+  see every track at that spot.
+- **Click it** to open it. The **tray** grows out of the stack: the tracks in a tidy grid of
+  same-size tiles, a count on its corner, and a stem down to a small ring that marks the spot.
+- A group also opens when you choose tracks that are all in it: a click on a tile, Tab onto one of
+  its tracks, or picking it in the Mix view.
+- It closes again when you click the empty floor, choose a track outside it, or press Esc.
+- Only one group is open at a time.
+- **Drag the closed stack** to move the whole group. Right-click it for its tracks, Open the group,
+  Arrange by sound and Spread out. A selection box that touches it takes the whole group.
 - Trays have 4, 6, 8 or 10 columns and at most three rows. A bigger group shows **+N** in its last
   cell: click it for the rest, and for Arrange.
 - A new or imported project puts every track at the default spot (centre, front), so it opens as
   one group. Drag tracks out to place them, or use Spread out or Arrange.
-- **Drag a tile out** of the tray to move only that track. Its cell stays as a dashed outline
-  until you let go; then the tray closes up. A group of one becomes a plain token again.
-- Drop a track onto a tray to join the group.
+- **Drag a tile out** of the open tray to move only that track. Its cell stays as a dashed outline
+  until you let go. A moment after the pointer leaves, the tray closes up, so you can put the track
+  down right behind its own group. A group of one becomes a plain tile again.
+- **Drag a track onto a group to join it.** Dropped straight onto the closed stack, it joins at
+  once. Hold it there a moment and the tray opens, outlined in orange, and you can drop it in. The
+  tray stays open while the pointer is over it and closes a moment after it leaves.
 - Automation that moves tracks makes groups form and part as it plays, without flicker: a group
   holds together until a member is 6 % away.
+- Open or closed is only how this computer shows the stage; nothing about it is saved or shared.
+- **Compact groups** in the floor's right-click menu turns this off: every group then keeps its
+  tray open above its spot, as in earlier versions.
 
 ## The panel
 
@@ -317,6 +338,38 @@ New projects use **Stage placement**: a stereo track moved to the side keeps bot
 (its image moves as a whole) instead of losing one. Older projects keep **Balance**, the law they
 were made with, so they sound exactly as before. Change it in the mixer menu under Stage > Pan law
 (Balance, Constant power, Stage placement).
+
+## In the Tracker
+
+The Tracker has the Stage as a page of its own: the **Stage** tab right after **Mix** in the page
+tabs, **Ctrl+Alt+G**, **View > Stage** or the command palette. Mix and Stage are the two views of the
+same mixer, so **View > Mixer** (Ctrl+Alt+5) goes back to the strips. The page you used last comes
+back next time.
+
+It is the same stage, with the same drags, keys, groups, rooms, controller and MIDI mappings and
+collaboration as in the other layouts, drawn the way the Tracker draws everything: square bevelled
+boxes and buttons, the stage in a sunken well, numbers in the monospaced face and track numbers in
+two-digit hex. A track stands on a flat diamond (its stereo width) and its width handles are small
+squares.
+
+Instead of the toolbar and the panel under the stage, a column at the right holds:
+
+- **Arrange**: Presets, the space (Studio, Hall and so on), Spread out, By sound (Arrange by
+  sound), Playlist (tracks from the playlist), Rooms (the rooms column), Menu and Routing. The
+  popovers they open come out of the column's left edge, beside the stage.
+- **Track** (or **Tracks**, or **Room** with nothing selected): the name, Mute, Solo and Effects.
+- **Place**: Left / right, Distance, Width and Focus as value bars (several tracks: arrows that move
+  them all; the room: its space size, depth and width).
+- **Level**: the fader, the send into the space and the meter.
+- **Groups**: each spot two or more tracks share, with where it stands. Click one to select its
+  tracks.
+
+The **-** button on a box folds it to its title row, which then shows its value in short; **+**
+opens it again. On a small window the column folds Arrange first, then Level, Track and Place,
+until the groups have room for six rows. A box you fold or open yourself stays that way. The
+column takes a quarter of the width at most.
+
+The Stage in the other layouts is unchanged.
 
 ## Keys
 

@@ -6,6 +6,7 @@
 #pragma once
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -160,12 +161,31 @@ struct BandTelemetry {
 
 // Base of every utility effect: lets the editors reach the live data of the
 // instance in a mixer slot (EffectRuntime::fx) with a dynamic_cast.
+// K-142: reading that data (UI thread) marks the instance as watched for a second; an effect that
+// rests by the hosted rule (restsWhenFaint) never rests while watched, so what an editor or a panel
+// shows stays live, and one nobody looks at leaves the audio thread alone once it is fed silence.
 class UtilityFx : public Effect {
  public:
-  virtual const StereoRing* ring() const { return nullptr; }
-  virtual LevelState* levels() { return nullptr; }
-  virtual const TransportState* transport() const { return nullptr; }
-  virtual BandTelemetry* bandTelemetry() { return nullptr; }
+  const StereoRing* ring() const { return watched(), ringOf(); }
+  LevelState* levels() { return watched(), levelsOf(); }
+  const TransportState* transport() const { return watched(), transportOf(); }
+  BandTelemetry* bandTelemetry() { return watched(), bandTelemetryOf(); }
+
+ protected:
+  virtual const StereoRing* ringOf() const { return nullptr; }
+  virtual LevelState* levelsOf() { return nullptr; }
+  virtual const TransportState* transportOf() const { return nullptr; }
+  virtual BandTelemetry* bandTelemetryOf() { return nullptr; }
+  // Audio thread: nobody read the data in the last second.
+  bool unwatched() const { return nowMs() - watchedMs_.load(std::memory_order_relaxed) > kWatchMs; }
+
+ private:
+  static constexpr int64_t kWatchMs = 1000;
+  static int64_t nowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  }
+  void watched() const { watchedMs_.store(nowMs(), std::memory_order_relaxed); }
+  mutable std::atomic<int64_t> watchedMs_{-(int64_t{1} << 40)};
 };
 
 // Morph EQ runtime (utility_bankeq_dsp.cpp).

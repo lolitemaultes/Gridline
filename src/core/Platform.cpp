@@ -237,6 +237,27 @@ void lowerThisThreadPriority() {
 #endif
 }
 
+void lowerThisThreadPriorityOnTime() {
+#if defined(__APPLE__)
+  pthread_set_qos_class_self_np(QOS_CLASS_DEFAULT, QOS_MIN_RELATIVE_PRIORITY);
+#else
+  lowerThisThreadPriority();
+#endif
+}
+
+bool backgroundThisThread() {
+#if defined(__APPLE__)
+  return pthread_set_qos_class_self_np(QOS_CLASS_BACKGROUND, 0) == 0;
+#elif defined(_WIN32)
+  if (SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN)) return true;
+  return SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST) != 0;
+#elif defined(__linux__)
+  return setpriority(PRIO_PROCESS, static_cast<id_t>(syscall(SYS_gettid)), 19) == 0;  // (per thread on Linux)
+#else
+  return false;
+#endif
+}
+
 void* zeroedPages(std::size_t bytes) {
 #if defined(_WIN32)
   return VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);

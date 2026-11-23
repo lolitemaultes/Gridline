@@ -34,16 +34,68 @@ bool focusWindowKeepPopups(ImGuiWindow* w) {
   return true;
 }
 
+namespace {
+bool (*gKeyBorrower)(const ImGuiWindow* area) = nullptr;
+ImGuiID gFrameArea = 0;  // K-376: the area the frame was last drawn round
+KeyFocusFrameStats gFrameStats;
+
+// The docked area a window with the keys belongs to: a focused child inside a docked part (an
+// inspector's body, a list) frames the docked window it sits in (its RootWindow runs on to the dock
+// host, which is no area).
+const ImGuiWindow* dockedAreaOf(const ImGuiWindow* w) {
+  while (w && !w->DockIsActive && (w->Flags & ImGuiWindowFlags_ChildWindow) && w->ParentWindow) w = w->ParentWindow;
+  return w;
+}
+
+// Whether the area can carry the frame. K-376: a page just brought to the front of its dock node is
+// hidden for its first frames (ImGui measures it) while the node it fills is on screen: it counts.
+bool frameable(const ImGuiWindow* area) {
+  if (!area || !area->DockIsActive || area->Size.x < 160 || area->Size.y < 120 || (area->Flags & ImGuiWindowFlags_NoInputs)) return false;
+  if (!area->Hidden) return true;
+  const ImGuiDockNode* n = area->DockNode;
+  return n && n->IsVisible && n->Size.x >= 160 && n->Size.y >= 120;
+}
+
+void noteFrame(const ImGuiWindow* area) {
+  if (!area) {
+    ++gFrameStats.missed;
+    gFrameStats.area.clear();
+    return;
+  }
+  ++gFrameStats.drawn;
+  if (gFrameArea != 0 && gFrameArea != area->ID) ++gFrameStats.moves;
+  gFrameArea = area->ID;
+  gFrameStats.area = stableWindowName(area->Name);
+}
+}  // namespace
+
+void setKeyFocusBorrower(bool (*borrows)(const ImGuiWindow* area)) { gKeyBorrower = borrows; }
+KeyFocusFrameStats& keyFocusFrameStats() { return gFrameStats; }
+
 void drawKeyFocusFrame(unsigned int colour) {
   ImGuiContext& g = *GImGui;
-  if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return;
-  // A focused child inside a docked part (an inspector's body, a list) frames the docked window it
-  // sits in: its RootWindow runs on to the dock host, which is no area.
-  const ImGuiWindow* area = g.NavWindow;
-  while (area && !area->DockIsActive && (area->Flags & ImGuiWindowFlags_ChildWindow) && area->ParentWindow) area = area->ParentWindow;
-  if (!area || !area->DockIsActive || area->Hidden || area->Size.x < 160 || area->Size.y < 120 || (area->Flags & ImGuiWindowFlags_NoInputs)) return;
-  const ImVec2 p0(std::round(area->Pos.x) + 0.5f, std::round(area->Pos.y) + 0.5f);
-  const ImVec2 p1(std::round(area->Pos.x + area->Size.x) - 0.5f, std::round(area->Pos.y + area->Size.y) - 0.5f);
+  if (ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) {
+    ++gFrameStats.popups;  // (a menu or pop-up open: no frame, by design)
+    return;
+  }
+  const ImGuiWindow* area = dockedAreaOf(g.NavWindow);
+  // K-376: an area that only borrows the keys (the Tracker's header band, which hands them back to
+  // the pattern once a click on it is over) leaves the frame where it was. Before, every click on a
+  // band button moved the frame up to the band for the click's frames and back: it flickered.
+  if (area && gKeyBorrower && gKeyBorrower(area)) {
+    const ImGuiWindow* before = gFrameArea ? ImGui::FindWindowByID(gFrameArea) : nullptr;
+    if (before && before != area && before->WasActive && frameable(before)) area = before;
+  }
+  if (!frameable(area)) {
+    noteFrame(nullptr);
+    return;
+  }
+  noteFrame(area);
+  // (A hidden page on its first frames: its dock node's rectangle, the one it fills.)
+  const bool byNode = area->Hidden && area->DockNode;
+  const ImVec2 pos = byNode ? area->DockNode->Pos : area->Pos, size = byNode ? area->DockNode->Size : area->Size;
+  const ImVec2 p0(std::round(pos.x) + 0.5f, std::round(pos.y) + 0.5f);
+  const ImVec2 p1(std::round(pos.x + size.x) - 0.5f, std::round(pos.y + size.y) - 0.5f);
   const ImU32 col = colour ? static_cast<ImU32>(colour) : theme::withAlpha(theme::pal().accent, 0.55f);
   // K-112c checkpoint 55 (N54-05): the frame is drawn over the area's own children (foreground), but not
   // through a window in front of the area (a floating instrument window): its edges skip those windows.

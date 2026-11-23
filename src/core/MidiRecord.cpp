@@ -988,18 +988,22 @@ std::string TypingKeyboard::keyLabel(int key, int typed) {
 }
 
 namespace {
-// K-113: each layout's characters where they differ from US QWERTY, by USB usage (the typing keys only).
+// K-113: each layout's characters where they differ from US QWERTY, by USB usage (the typing keys; GitHub #79:
+// and the other letter, digit and punctuation keys, for the names of shortcuts).
 constexpr KeyPosition kQwertz[] = {{29, 'y'}, {28, 'z'}, {51, 0xF6}, {52, 0xE4}, {47, 0xFC}, {48, '+'},
-                                   {45, 0xDF}, {46, 0xB4}, {49, '#'}, {50, '#'}, {56, '-'}};
+                                   {45, 0xDF}, {46, 0xB4}, {49, '#'}, {50, '#'}, {56, '-'}, {53, '^'}};
 constexpr KeyPosition kAzerty[] = {{20, 'a'}, {26, 'z'}, {29, 'w'}, {16, ','}, {54, ';'}, {55, ':'}, {56, '!'}, {51, 'm'},
                                    {52, 0xF9}, {47, '^'}, {48, '$'}, {45, ')'}, {46, '='}, {49, '*'}, {50, '*'}, {31, 0xE9},
-                                   {32, '"'}, {34, '('}, {35, '-'}, {36, 0xE8}, {38, 0xE7}, {39, 0xE0}};
+                                   {32, '"'}, {34, '('}, {35, '-'}, {36, 0xE8}, {38, 0xE7}, {39, 0xE0},
+                                   {4, 'q'}, {30, '&'}, {33, '\''}, {37, '_'}, {53, 0xB2}};
 constexpr KeyPosition kDvorak[] = {{29, ';'}, {22, 'o'}, {27, 'q'}, {7, 'e'},  {6, 'j'},  {25, 'k'}, {10, 'i'}, {5, 'x'},
                                    {11, 'd'}, {17, 'b'}, {13, 'h'}, {54, 'w'}, {15, 'n'}, {55, 'v'}, {51, 's'}, {56, 'z'},
                                    {20, '\''}, {26, ','}, {8, '.'},  {21, 'p'}, {23, 'y'}, {28, 'f'}, {24, 'g'}, {12, 'c'},
-                                   {18, 'r'}, {19, 'l'}, {47, '/'}, {48, '='}, {45, '['}, {46, ']'}, {52, '-'}};
+                                   {18, 'r'}, {19, 'l'}, {47, '/'}, {48, '='}, {45, '['}, {46, ']'}, {52, '-'},
+                                   {9, 'u'},  {14, 't'}};
 constexpr KeyPosition kColemak[] = {{22, 'r'}, {7, 's'},  {10, 'd'}, {11, 'h'}, {17, 'k'}, {13, 'n'}, {15, 'i'}, {51, 'o'},
-                                    {8, 'f'},  {21, 'p'}, {23, 'g'}, {28, 'j'}, {24, 'l'}, {12, 'u'}, {18, 'y'}, {19, ';'}};
+                                    {8, 'f'},  {21, 'p'}, {23, 'g'}, {28, 'j'}, {24, 'l'}, {12, 'u'}, {18, 'y'}, {19, ';'},
+                                    {9, 't'},  {14, 'e'}};
 
 template <size_t N>
 int lookUp(const KeyPosition (&table)[N], int position) {
@@ -1019,7 +1023,29 @@ int TypingKeyboard::layoutChar(TypingLayout layout, int position) {
     case TypingLayout::Colemak: c = lookUp(kColemak, position); break;
     default: return 0;  // Computer (the system's layout) or unknown
   }
-  return c ? c : keyAtPosition(position);
+  if (c) return c;
+  if (const int k = keyAtPosition(position)) return k;
+  return usChar(position);  // GitHub #79: the rest of the letter, digit and punctuation keys (shortcut names)
+}
+
+int TypingKeyboard::usChar(int position) {
+  if (position >= 4 && position <= 29) return 'a' + (position - 4);
+  if (position >= 30 && position <= 38) return '1' + (position - 30);
+  if (position == 39) return '0';
+  switch (position) {
+    case 45: return '-';
+    case 46: return '=';
+    case 47: return '[';
+    case 48: return ']';
+    case 49: return '\\';
+    case 51: return ';';
+    case 52: return '\'';
+    case 53: return '`';
+    case 54: return ',';
+    case 55: return '.';
+    case 56: return '/';
+    default: return 0;
+  }
 }
 
 namespace {
@@ -1082,7 +1108,7 @@ std::vector<int> TypingKeyboard::keyDown(int key) {
   const int off = aRow ? aRowOffset(key) : keyOffset(key);
   if (off < 0 || held_.count(key)) return {};
   std::vector<int> notes;
-  const int root = baseNote() + off + (aRow ? 12 : 0);  // (the A row's A is middle C, 60, as the reference's)
+  const int root = baseNote() + off;  // (the A row's A is middle C, 60, as the reference's)
   if (chordMode) {
     for (int iv : chordIntervals(chord))
       if (root + iv >= 0 && root + iv <= 127) notes.push_back(root + iv);

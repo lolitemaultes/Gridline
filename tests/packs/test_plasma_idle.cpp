@@ -383,7 +383,10 @@ void longDelayTailKept() {
 
 // In the engine (live, transport stopped): after a chord, the Plasma channel goes to sleep and its
 // exact silence lets the reverb on its mixer track rest too (a tail at -150 dB kept it running).
-void engineLetsInsertsRest() {
+// Without Rest silent instruments the reverb rests by exact silence in and out (K-64); with it (the
+// default) a built-in effect may doze sooner, fed silence while stopped (GitHub #66): either way it
+// is left out of the last 6 s.
+void engineLetsInsertsRest(bool restInstruments) {
   constexpr int kEsr = 48000;
   Song s = makeEmptySong();
   Channel ch;
@@ -398,6 +401,7 @@ void engineLetsInsertsRest() {
   s.channels.push_back(ch);
   ProgramBuilder b;
   AudioEngine eng(kEsr);
+  eng.setRestInstruments(restInstruments);
   b.setSampleRate(kEsr);
   eng.setProgram(b.build(s));
   auto rt = b.channelRuntime(ch.id);
@@ -415,11 +419,16 @@ void engineLetsInsertsRest() {
     if (i < blocksFor(1)) peak = std::max(peak, std::fabs(L[0]));
   }
   auto rv = b.effectRuntime(track, 0);
-  std::printf("# engine: Plasma asleep %d, reverb insert quiet for %.1f s\n", pl::asleep(rt->gen.get()) ? 1 : 0,
-              rv ? static_cast<double>(rv->quiet) / kEsr : -1.0);
+  const double dozed = rv ? static_cast<double>(rv->restBlocks.load()) * 512 / kEsr : -1.0;
+  std::printf("# engine (rest instruments %d): Plasma asleep %d, reverb insert quiet for %.1f s, dozing for %.1f s\n", restInstruments ? 1 : 0,
+              pl::asleep(rt->gen.get()) ? 1 : 0, rv ? static_cast<double>(rv->quiet) / kEsr : -1.0, dozed);
   expect(peak > 1e-3f, "the chord plays through the engine");
   expect(pl::asleep(rt->gen.get()), "the idle Plasma channel sleeps in the engine");
-  expect(rv && rv->quiet >= 6 * kEsr - 1024, "the reverb on its track rests behind it (6 s of exact silence in)");
+  if (!restInstruments)
+    expect(rv && rv->quiet >= 6 * kEsr - 1024, "the reverb on its track rests behind it (6 s of exact silence in)");
+  else
+    expect(rv && (rv->quiet >= 6 * kEsr - 1024 || dozed >= 6.0 - 1024.0 / kEsr),
+           "with Rest silent instruments: the reverb on its track rests behind it (6 s left out)");
 }
 
 // In the engine with Rest silent instruments: the silent gap before a 1.6 s echo is not taken for
@@ -552,7 +561,8 @@ int main(int argc, char** argv) {
   complexWakeSameSound();
   parameterWakes();
   longDelayTailKept();
-  engineLetsInsertsRest();
+  engineLetsInsertsRest(false);
+  engineLetsInsertsRest(true);
   engineRestKeepsEchoes();
   return finish();
 }

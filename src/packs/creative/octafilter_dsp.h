@@ -179,6 +179,7 @@ inline double runStage(const StageCoef& c, StageState& st, double x) {
 
 class OctaFilterFx final : public Effect {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible)
   OctaFilterFx();
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override;
   void reset() override;

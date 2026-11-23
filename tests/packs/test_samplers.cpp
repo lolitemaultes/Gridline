@@ -18,6 +18,8 @@
 #include "engine/Generators.h"
 #include "packs/Packs.h"
 #include "packs/samplers/samplers.h"
+#include "sf2_bank.h"
+#include "sf2_legacy.h"
 
 using namespace gl;
 using namespace gl::packs::samplers;
@@ -197,6 +199,44 @@ std::vector<uint8_t> makeSf2() {
   body.append(list("pdta", {chunk("phdr", phdr), chunk("pbag", pbag), chunk("pmod", pmod), chunk("pgen", pgen), chunk("inst", inst),
                             chunk("ibag", ibag), chunk("imod", imod), chunk("igen", igen), chunk("shdr", shdr)}));
   return chunk("RIFF", body).b;
+}
+
+// A bank using every generator the Multisampler reads: global zones on both levels, preset offsets,
+// address offsets (fine and coarse), loops, tuning, scale tuning, attenuation, pan, filter, envelope,
+// exclusive class. Its zones and samples must match the reader as it was before it moved
+// (sf2_legacy.h), and the Multisampler must play them the same.
+std::vector<uint8_t> goldenBank() {
+  using namespace sf2t;
+  Bank b;
+  b.name = "Golden";
+  sf2t::Sample s0{"SineA", sine(4000, 40), {}, {}, 32000, 57, 3, 1000, 3000, 1, 0};
+  sf2t::Sample s1{"SineB", sine(3000, 25, 9000), {}, {}, 44100, 69, -7, 500, 2500, 1, 0};
+  b.samples = {s0, s1};
+  Inst i0;
+  i0.name = "Keys";
+  i0.zones.push_back(sf2t::Zone{}.g(Attenuation, 30).g(Pan, -120).g(ReleaseVolEnv, -2400).g(FilterFc, 9000));
+  i0.zones.push_back(sf2t::Zone{}.range(KeyRange, 0, 63).range(VelRange, 0, 100).g(StartOfs, 12).g(EndOfs, -20).g(LoopStartOfs, 4).g(LoopEndOfs, -6)
+                         .g(SampleModes, 1).g(CoarseTune, 2).g(FineTune, 13).g(ScaleTuning, 50).g(AttackVolEnv, -3600).g(HoldVolEnv, -5000)
+                         .g(DecayVolEnv, 1200).g(SustainVolEnv, 240).g(DelayVolEnv, -6000).g(Exclusive, 3).g(SampleId, 0));
+  i0.zones.push_back(sf2t::Zone{}.range(KeyRange, 64, 127).g(RootKey, 70).g(SampleModes, 3).g(Pan, 250).g(Attenuation, 0).g(FilterFc, 13500)
+                         .g(LoopStartCoarse, 0).g(LoopEndCoarse, 0).g(StartCoarse, 0).g(SampleId, 1));
+  b.insts = {i0};
+  Preset p0;
+  p0.name = "Golden Keys";
+  p0.program = 7;
+  p0.zones.push_back(sf2t::Zone{}.g(Attenuation, 20).g(CoarseTune, -1));
+  p0.zones.push_back(sf2t::Zone{}.range(KeyRange, 10, 120).g(FineTune, 5).g(Pan, 40).g(ReleaseVolEnv, 600).g(FilterFc, -2000).g(Instrument, 0));
+  Preset p1;
+  p1.name = "Plain";
+  p1.program = 8;
+  p1.zones.push_back(sf2t::Zone{}.g(Instrument, 0));
+  b.presets = {p0, p1};
+  return b.build();
+}
+uint64_t fnv(const void* p, size_t n, uint64_t h = 1469598103934665603ull) {
+  const auto* c = static_cast<const uint8_t*>(p);
+  for (size_t i = 0; i < n; ++i) h = (h ^ c[i]) * 1099511628211ull;
+  return h;
 }
 
 }  // namespace
@@ -474,6 +514,50 @@ int main() {
     std::vector<float> L2, R2;
     r.run(L2, R2, 2000);
     expect(peak(L2, 0, 150) > 0.05f && peak(L2, 400) == 0.f, "unlooped soundfont zone ends");
+  }
+
+  // ---------------------------------------------------------------- SoundFont golden (shared reader)
+  {
+    auto bytes = goldenBank();
+    std::string path = (tmpDir() / "golden.sf2").string();
+    sf2t::writeFile(path, bytes);
+    auto f = parseSf2(bytes.data(), bytes.size());
+    auto old = sf2legacy::parseSf2(bytes.data(), bytes.size(), nullptr);
+    expect(f && old && f->presets.size() == 2 && old->presets.size() == 2, "golden bank parses");
+    if (f && old) {
+      bool sameZones = true, sameSamples = true;
+      for (size_t p = 0; p < f->presets.size(); ++p) {
+        const std::string now = zoneText(sf2PresetZones(*f, "mem.sf2", p)), was = zoneText(sf2legacy::sf2PresetZones(*old, "mem.sf2", p));
+        if (now != was) {
+          sameZones = false;
+          std::printf("zones now:\n%s\nzones before:\n%s\n", now.c_str(), was.c_str());
+        }
+      }
+      for (size_t s = 0; s < f->samples.size(); ++s) {
+        SamplePtr a = sf2MakeSample(*f, s), b = sf2legacy::sf2MakeSample(*old, s);
+        if (!a || !b ? a != b : a->left != b->left || a->right != b->right || a->sampleRate != b->sampleRate) sameSamples = false;
+      }
+      expect(sameZones, "Multisampler zones from a SoundFont unchanged by the shared reader");
+      expect(sameSamples, "Multisampler samples from a SoundFont unchanged by the shared reader");
+      // And they play: the render of a map made now equals the render of the map made before.
+      auto render = [&](const std::string& text) {
+        Rig r("gl.multisampler", text);
+        std::vector<float> L, R;
+        int id = 1;
+        for (int key : {30, 50, 80, 100}) r.gen->noteOn(static_cast<uint32_t>(id++), key, 0.8f, 0);
+        r.run(L, R, 6000);
+        for (int k = 1; k < id; ++k) r.gen->noteOff(static_cast<uint32_t>(k), 0);
+        r.run(L, R, 6000);
+        return fnv(L.data(), L.size() * sizeof(float), fnv(R.data(), R.size() * sizeof(float)));
+      };
+      for (size_t p = 0; p < f->presets.size(); ++p) {
+        ZoneMap was;
+        was.zones = sf2legacy::sf2PresetZones(*old, path, p);
+        ZoneMap now = sf2PresetMap(path, p);
+        now.sf2Path.clear();
+        expect(render(serializeZoneMap(now)) == render(serializeZoneMap(was)) && !now.zones.empty(), "Multisampler render from a SoundFont unchanged");
+      }
+    }
   }
 
   // ---------------------------------------------------------------- extremes + block size

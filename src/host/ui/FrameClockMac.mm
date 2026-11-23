@@ -19,6 +19,7 @@
 // every supported macOS version); without them a 60 Hz timer paces frames.
 #import <AppKit/AppKit.h>
 #include <dlfcn.h>
+#include <objc/runtime.h>
 #include <atomic>
 #include "NativeView.h"
 
@@ -62,6 +63,8 @@ struct Clock {
   CFRunLoopRef mainLoop = nullptr;
   uint32_t display = 0;
   uint64_t seen = 0;           // refresh count when the last frame was presented
+  bool paused = false;         // K-142: the link stopped while the interface idles (frameClockIdle)
+  id sdlCtx = nil;  // K-142 (0.7.8 close): the context whose own display link is held stopped (retained)
   double fallbackNext = 0;     // timer pacing without a display link
 };
 Clock* gClock = nullptr;
@@ -75,6 +78,39 @@ int32_t onRefresh(LinkRef, const void*, const void*, uint64_t, uint64_t*, void* 
 }
 
 void noop(void*) {}
+
+// K-142 (0.7.8 close): SDL's OpenGL context on macOS runs a display link of its own from the moment
+// it is made, to pace swaps when vsync is on (it signals a condition each refresh). Gridline presents
+// without vsync whenever this frame clock runs (swap interval 0, main.cpp), so that link only wakes a
+// thread 60 times a second for nothing; it is stopped while the interface idles, with this clock's
+// own, and started again with it. Found by its instance variable (SDLOpenGLContext's `displayLink`);
+// a context without one (another SDL version) is left alone.
+LinkRef sdlLinkOf(id ctx) {  // (an NSOpenGLContext, named by id: the class is deprecated)
+  if (!ctx) return nullptr;
+  Ivar iv = class_getInstanceVariable([ctx class], "displayLink");
+  if (!iv) return nullptr;
+  const char* enc = ivar_getTypeEncoding(iv);
+  if (!enc || enc[0] != '^') return nullptr;
+  return *reinterpret_cast<LinkRef*>(reinterpret_cast<char*>(ctx) + ivar_getOffset(iv));
+}
+
+// Stops (hold true) the current context's own link, or starts again the one it stopped. The context
+// is retained meanwhile, so a context deleted while idle (a graphics reset) is still there to look at;
+// SDL's cleanup clears its link, and a link that is gone or changed is not started.
+void holdSdlLink(Clock& c, bool hold) {
+  const CoreVideo& cv = coreVideo();
+  if (hold) {
+    if (c.sdlCtx) return;
+    id ctx = [NSClassFromString(@"NSOpenGLContext") currentContext];
+    LinkRef l = sdlLinkOf(ctx);
+    if (!l || cv.stop(l) != 0) return;
+    c.sdlCtx = [ctx retain];
+  } else if (c.sdlCtx) {
+    if (LinkRef l = sdlLinkOf(c.sdlCtx)) cv.start(l);
+    [c.sdlCtx release];
+    c.sdlCtx = nil;
+  }
+}
 
 uint32_t displayOf(const Window& w) {
   if (!w.handle) return 0;
@@ -147,6 +183,7 @@ void frameClockStop() {
   Clock* c = gClock;
   if (!c) return;
   gClock = nullptr;
+  if (coreVideo().ok) holdSdlLink(*c, false);
   if (c->link) {
     coreVideo().stop(c->link);  // returns once no callback is running
     coreVideo().release(c->link);
@@ -155,6 +192,63 @@ void frameClockStop() {
   CFRelease(c->wake);
   delete c;
 }
+
+// K-142 (0.7.8): while the interface idles the display link stops, so nothing wakes the main
+// thread every refresh; the loop sleeps in the run loop until input, a wake or its own deadline.
+void frameClockIdle(bool idle) {
+  Clock* c = gClock;
+  if (!c || !c->link || c->paused == idle) return;
+  if (idle) {
+    coreVideo().stop(c->link);  // returns once no callback is running
+  } else if (coreVideo().start(c->link) != 0) {
+    return;  // (stays paused; frameClockWait's deadline paces the frames meanwhile)
+  }
+  holdSdlLink(*c, idle);  // K-142 (0.7.8 close): SDL's own link rests with it
+  c->paused = idle;
+}
+
+bool frameClockSleep(double seconds) {
+  if (seconds <= 0) return false;
+  // Returns when a source of the run loop fired (an input event from the window server, a wake
+  // from another thread, a notification) or the time is up. Timers (plugin interfaces) run meanwhile.
+  const CFRunLoopRunResult r = CFRunLoopRunInMode(kCFRunLoopDefaultMode, seconds, true);
+  if (r == kCFRunLoopRunFinished) {  // nothing to wait on in the mode (should not happen): sleep plainly
+    [NSThread sleepForTimeInterval:seconds];
+    return false;
+  }
+  return r == kCFRunLoopRunHandledSource || r == kCFRunLoopRunStopped;
+}
+
+void frameClockWake() {
+  Clock* c = gClock;
+  if (!c) return;
+  CFRunLoopSourceSignal(c->wake);
+  CFRunLoopWakeUp(c->mainLoop);
+}
+
+namespace {
+std::atomic<int> gOnScreenChanges{0};
+id gOcclusionObserver = nil;
+}  // namespace
+
+bool windowOnScreen(const Window& w) {
+  if (!w.handle) return true;
+  return ([(NSWindow*)w.handle occlusionState] & NSWindowOcclusionStateVisible) != 0;
+}
+
+void watchOnScreen(const Window& w) {
+  if (!w.handle || gOcclusionObserver) return;
+  gOcclusionObserver = [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidChangeOcclusionStateNotification
+                                                                         object:(NSWindow*)w.handle
+                                                                          queue:nil
+                                                                     usingBlock:^(NSNotification*) {
+                                                                       gOnScreenChanges.fetch_add(1);
+                                                                       frameClockWake();
+                                                                     }];
+  [gOcclusionObserver retain];
+}
+
+int onScreenChanges() { return gOnScreenChanges.load(); }
 
 namespace {
 id<NSObject> gAwake = nil;

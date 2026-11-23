@@ -20,6 +20,7 @@
 #include "models_rt.h"
 #include "strings.h"
 #include "strings_laws.h"
+#include "../rest_render.h"
 
 namespace gl::packs::models {
 
@@ -211,6 +212,9 @@ class StepBassGen final : public Generator {
     curSlide_ = s.slide[step_];
   }
 
+  // K-142: at rest its idle render runs on unheard (packs/rest_render.h), so the next note
+  // finds every free-running part where it would have been.
+  void rested(int n) override { packs::restRender(n, [this](float* l, float* r, int m) { render(l, r, m); }); }
   void render(float* L, float* R, int n) override {
     const double wave = p(SbWave), reso = p(SbReso), envMod = p(SbEnvMod), accAmt = p(SbAccent), keyF = p(SbKeyFollow);
     const double cutBase = law::sbCutoffHz(p(SbCutoff));

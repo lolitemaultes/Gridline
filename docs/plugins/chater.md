@@ -7,7 +7,7 @@ and Wash those breaks blur into the space instead of cutting. Around them it spr
 grains, a shimmer tail, ringing crystal resonators and a lifted halo on the highs, then hazes,
 damps and wobbles the sound like an old tape and sends it into a long, soft hall. Turn the Glitch
 tile up (or pick a Glitch preset) and the breaks come back sharp, fast and digital. It is in the
-plugin picker under Delay & reverb, next to Cloister (search for "glitch", "dreamy", "tape",
+plugin picker under Multi FX, next to Pocket FX (search for "glitch", "dreamy", "tape",
 "shimmer" or "sparkle").
 
 Chater is an effect: it does not sequence and it does not play from notes. Breaks fire by chance

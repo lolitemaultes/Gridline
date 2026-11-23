@@ -9,6 +9,7 @@
 #include <functional>
 #include <map>
 #include <set>
+#include "MacroUi.h"
 #include "LayoutStyleUi.h"
 #include "EditorZoomUi.h"
 #include "../packs/PacksUi.h"
@@ -46,6 +47,8 @@
 #include "LogicPlugins.h"
 #include "../core/LevelMeter.h"
 #include "../core/MixerOps.h"
+#include "../core/MixerHide.h"
+#include "MixerHideUi.h"
 #include "../core/TrackOrder.h"
 #include "../core/WindowPlacement.h"
 #include "../core/PluginStandIn.h"
@@ -228,15 +231,13 @@ void effectList(App& a, ObjectId track, int slot, const std::string& current) {
       if (favui::pickerRow(*p, p->type == current)) pick(p->type);
     ImGui::PopID();
   }
-  std::string cat;
-  for (const auto& p : pluginCatalog()) {
-    if (p.kind != PluginKind::Effect || p.hidden) continue;
-    if (p.category != cat) {
-      cat = p.category;
-      ImGui::Spacing();
-      ui::Label(cat.c_str());
-    }
-    if (favui::pickerRow(p, p.type == current)) pick(p.type);
+  // Each category once (catalogGroups): walking the catalogue and starting a heading whenever the
+  // category changed showed a second heading for the pack effects that come after the core ones.
+  for (const CatalogGroup& g : catalogGroups(PluginKind::Effect)) {
+    ImGui::Spacing();
+    ui::Label(g.category.c_str());
+    for (const PluginInfo* p : g.items)
+      if (favui::pickerRow(*p, p->type == current)) pick(p->type);
   }
   const auto inst = favui::installedOfKind(PluginKind::Effect);
   if (!inst.empty()) {
@@ -248,6 +249,112 @@ void effectList(App& a, ObjectId track, int slot, const std::string& current) {
       if (favui::pickerRow(*p, p->type == current, f ? f->label : nullptr)) pick(p->type);
     }
   }
+}
+
+// The width the effect list needs so nothing in it is cut off: the longest row (name, format
+// label, star), the group headings and the search field, plus the window padding and room for its
+// scrollbar. Measured with the current font (the popup's).
+float effectListWidth(App& a) {
+  const ImGuiStyle& st = ImGui::GetStyle();
+  const float starW = std::round(ImGui::GetTextLineHeight() + theme::kS2);
+  float w = 220.0f;  // the search field's own minimum (favui::searchField)
+  auto row = [&](const PluginInfo& p, const char* detail) {
+    float r = ImGui::CalcTextSize(p.name.c_str()).x + starW + theme::kS2;
+    if (detail && *detail) r += a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, detail).x + theme::kS4;
+    w = std::max(w, r);
+  };
+  auto heading = [&](const char* t) {
+    w = std::max(w, a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, t).x);
+    w = std::max(w, ImGui::CalcTextSize(ui::SectionHeading(t).c_str()).x);  // (Smooth's forms draw headings in sentence case)
+  };
+  heading(i18n::tr("Favourites"));
+  for (const PluginInfo* p : favui::favouritesOfKind(PluginKind::Effect)) row(*p, nullptr);
+  for (const CatalogGroup& g : catalogGroups(PluginKind::Effect)) {
+    heading(g.category.c_str());
+    for (const PluginInfo* p : g.items) row(*p, nullptr);
+  }
+  heading(i18n::tr("Installed"));
+  for (const PluginInfo* p : favui::installedOfKind(PluginKind::Effect)) {
+    std::string fmt, uid;
+    const host::Format* f = host::splitType(p->type, fmt, uid) ? host::findFormat(fmt) : nullptr;
+    row(*p, f ? f->label : nullptr);
+  }
+  return std::ceil(w + 2 * st.WindowPadding.x + st.ScrollbarSize + 2 * st.WindowBorderSize);
+}
+
+namespace {
+// Dev ("slotpick"): the effect picker popup drawn last.
+struct SlotPickDev {
+  int frame = -1;
+  ImVec2 anchor0{}, anchor1{}, pos{}, size{}, bound0{}, bound1{}, bar0{}, bar1{};
+  float need = 0, scrollY = 0, scrollMax = 0;
+  bool bar = false, up = false, left = false;
+} gSlotPickDev;
+}  // namespace
+
+// A slot's effect picker (user 0.7.8: on a narrow strip or a thin mixer the list took the slot's
+// width, so its right side and scrollbar were cut off). The popup has its own width (the list's
+// widest row, never the slot's), opens below the slot (above it when there is more room there),
+// right-aligned to the slot when it would run past the window's right edge, and never leaves the
+// window: taller lists scroll inside it with a whole scrollbar.
+void pickerPopup(App& a, const char* id, ImVec2 a0, ImVec2 a1, ObjectId track, int slot, const std::string& current) {
+  if (!ImGui::IsPopupOpen(id)) return;
+  ImGuiViewport* vp = ImGui::GetWindowViewport();
+  const float m = theme::kS1;
+  const ImVec2 b0(vp->WorkPos.x + m, vp->WorkPos.y + m), b1(vp->WorkPos.x + vp->WorkSize.x - m, vp->WorkPos.y + vp->WorkSize.y - m);
+  const float need = effectListWidth(a);
+  const float w = std::max(1.0f, std::min(std::max(need, a1.x - a0.x), b1.x - b0.x));  // never narrower than a wide slot
+  // Its height when last laid out (the list's whole height while it fits), for the side it opens on.
+  float h = 460.0f;
+  const ImGuiID pid = ImGui::GetID(id);
+  for (const ImGuiPopupData& pd : GImGui->OpenPopupStack)
+    if (pd.PopupId == pid && pd.Window && pd.Window->WasActive) h = std::min(h, pd.Window->ContentSizeIdeal.y + 2 * ImGui::GetStyle().WindowPadding.y);
+  const float below = b1.y - a1.y, above = a0.y - b0.y;
+  // The side is chosen when it opens and kept while it stays open (typing a search shortens the list:
+  // it must not jump to the other side of the slot).
+  static struct {
+    ImGuiID id = 0;
+    int frame = -1;
+    bool up = false;
+  } side;
+  const int now = ImGui::GetFrameCount();
+  if (side.id != pid || side.frame < now - 1) side.up = below < h && above > below;
+  side.id = pid, side.frame = now;
+  const bool up = side.up;
+  const float maxH = std::max(80.0f, std::min(460.0f, up ? above : below));
+  float x = a0.x;
+  const bool left = x + w > b1.x;
+  if (left) x = a1.x - w;  // flipped: its right edge on the slot's
+  x = std::clamp(x, b0.x, std::max(b0.x, b1.x - w));
+  ImGui::SetNextWindowPos(ImVec2(std::round(x), std::round(up ? a0.y : a1.y)), ImGuiCond_Always, ImVec2(0.0f, up ? 1.0f : 0.0f));
+  ImGui::SetNextWindowSizeConstraints(ImVec2(w, 0), ImVec2(w, maxH));
+  if (!ImGui::BeginPopup(id)) return;
+  effectList(a, track, slot, current);
+  ImGuiWindow* win = ImGui::GetCurrentWindow();
+  SlotPickDev& d = gSlotPickDev;
+  d.frame = ImGui::GetFrameCount();
+  d.anchor0 = a0, d.anchor1 = a1, d.pos = win->Pos, d.size = win->Size, d.bound0 = b0, d.bound1 = b1;
+  d.need = need, d.up = up, d.left = left;
+  d.bar = win->ScrollbarY;
+  const ImRect sb = d.bar ? ImGui::GetWindowScrollbarRect(win, ImGuiAxis_Y) : ImRect();
+  d.bar0 = sb.Min, d.bar1 = sb.Max;
+  d.scrollY = win->Scroll.y, d.scrollMax = win->ScrollMax.y;
+  ImGui::EndPopup();
+}
+
+std::string slotPickReport() {
+  const SlotPickDev& d = gSlotPickDev;
+  int effects = 0;  // effects in every slot of the song (a pick adds one)
+  for (const MixerTrack& t : app().doc.song().mixer)
+    for (const EffectSlot& e : t.slots) effects += e.plugin.type.empty() ? 0 : 1;
+  char b[480];
+  std::snprintf(b, sizeof b,
+                "slotpick frame %d anchor %.0f %.0f %.0f %.0f popup %.0f %.0f %.0f %.0f need %.0f bounds %.0f %.0f %.0f %.0f bar %d %.0f %.0f %.0f %.0f "
+                "scroll %.0f of %.0f up %d left %d open %d effects %d\n",
+                d.frame, d.anchor0.x, d.anchor0.y, d.anchor1.x, d.anchor1.y, d.pos.x, d.pos.y, d.pos.x + d.size.x, d.pos.y + d.size.y, d.need, d.bound0.x,
+                d.bound0.y, d.bound1.x, d.bound1.y, d.bar ? 1 : 0, d.bar0.x, d.bar0.y, d.bar1.x, d.bar1.y, d.scrollY, d.scrollMax, d.up ? 1 : 0,
+                d.left ? 1 : 0, d.frame >= ImGui::GetFrameCount() - 1 ? 1 : 0, effects);
+  return b;
 }
 
 // Compiled mixer track (latencies) of the running program, or nullptr.
@@ -506,8 +613,12 @@ void stripSlots(App& a, const MixerTrack& t, ImVec2 p, float w) {
       ImGui::EndDragDropTarget();
     }
     dl->AddCircleFilled(ImVec2(p.x + 5, y + kExtSlotRowH * 0.5f), 2.0f, info ? (es.enabled ? P.led : P.surface600) : P.surface800, 6);
-    if (info)
-      theme::textEllipsis(dl, a.fontRegular, 10.0f, ImVec2(p.x + 10, y + 1), nameW - 11, es.enabled ? P.text : P.textFaint, info->name.c_str());
+    if (info) {  // 0.7.8: an installed plugin on its way: dimmed, with a small spinner
+      const bool loading = isHostedType(info->type) && hostedLoading(a, PluginTarget{t.id, k});
+      if (loading) ui::Spinner(dl, ImVec2(p.x + nameW - 5, y + kExtSlotRowH * 0.5f), 3.0f, P.textFaint);
+      theme::textEllipsis(dl, a.fontRegular, 10.0f, ImVec2(p.x + 10, y + 1), nameW - 11 - (loading ? 10 : 0), es.enabled && !loading ? P.text : P.textFaint,
+                          info->name.c_str());
+    }
     if (info && knobs) {
       ImGui::SetCursorScreenPos(ImVec2(p.x + w - 14, y));
       ui::ParamKnob("xm", slotMixParam(t.id, k), 5.5f);
@@ -833,6 +944,148 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
   ImGui::PopID();
 }
 
+// GitHub #58: a slim strip, for a narrow track (its name, meter, mute and solo) or a folded group
+// (the group's name and how many tracks it holds, their loudest level, mute and solo for all of
+// them, and the arrow that expands it). Drawn in the strips' own look.
+void drawSlimStrip(App& a, const mixhide::Entry& e, ImVec2 p, float stripW, float stripH) {
+  const auto& P = pal();
+  const Song& s = a.doc.song();
+  const MixerTrack& t = s.mixer[e.index];
+  const MixerViewState& v = a.mixerView;
+  const bool group = e.show == mixhide::Show::Group;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImGui::PushID(group ? static_cast<int>(ImGui::GetID(e.group.c_str())) : static_cast<int>(t.id));
+  ImGui::PushID(group ? "grp" : "slim");
+  if (!group) canchor::publishRect(canchor::MixerStrip, t.id, 0, p, ImVec2(p.x + stripW, p.y + stripH));
+  bool inSel = false, isSel = false;
+  if (group) {
+    for (const MixerTrack& m : s.mixer)
+      if (m.group == e.group) inSel = inSel || v.sel.count(m.id) || m.id == a.selMixer, isSel = isSel || m.id == a.selMixer;
+  } else {
+    isSel = t.id == a.selMixer;
+    inSel = isSel || v.sel.count(t.id);
+  }
+  const ImU32 tc = theme::content(t.color);
+  const ImU32 bodyC = inSel ? theme::mix(P.surface700, P.paper, 0.04f) : P.surface800;
+  if (group) {  // a folded group: a second edge behind it, as a stack of strips
+    dl->AddRectFilled(ImVec2(p.x + 3, p.y + 3), ImVec2(p.x + stripW, p.y + stripH), theme::mix(bodyC, P.ink, 0.5f), theme::kRadius);
+    dl->AddRectFilled(p, ImVec2(p.x + stripW - 3, p.y + stripH - 3), theme::mix(bodyC, P.ink, 0.35f), theme::kRadius);
+    dl->AddRectFilled(p, ImVec2(p.x + stripW - 3, p.y + stripH - 4), bodyC, theme::kRadius);
+  } else {
+    dl->AddRectFilled(p, ImVec2(p.x + stripW, p.y + stripH), theme::mix(bodyC, P.ink, 0.35f), theme::kRadius);
+    dl->AddRectFilled(p, ImVec2(p.x + stripW, p.y + stripH - 1), bodyC, theme::kRadius);
+  }
+  const float bw = group ? stripW - 3 : stripW;  // the face's width
+  if (isSel || inSel)
+    dl->AddRect(ImVec2(p.x + 0.5f, p.y + 0.5f), ImVec2(p.x + bw - 0.5f, p.y + stripH - (group ? 3.5f : 0.5f)), theme::withAlpha(P.hot, isSel ? 0.55f : 0.3f),
+                theme::kRadius);
+  if (ImU32 fc = 0; !group)
+    if (const float fl = collabui::flash(a, "mixer/#" + std::to_string(t.id), &fc))
+      dl->AddRect(ImVec2(p.x + 1, p.y + 1), ImVec2(p.x + bw - 1, p.y + stripH - 1), theme::withAlpha(fc, fl), theme::kRadius, 0, 2.0f);
+  // The plate: the colour along its top, the number (a group: its arrow, which expands it).
+  const float plateH = 22.0f;
+  dl->AddRectFilled(ImVec2(p.x + 2, p.y + 2), ImVec2(p.x + bw - 2, p.y + plateH), theme::mix(P.field, tc, 0.22f), theme::kRadiusSm);
+  dl->AddRectFilled(ImVec2(p.x + 2, p.y + 2), ImVec2(p.x + bw - 2, p.y + 4), tc, theme::kRadiusSm, ImDrawFlags_RoundCornersTop);
+  ImGui::SetCursorScreenPos(p);
+  gStripRects.push_back({e.index, p, ImVec2(p.x + stripW, p.y + stripH)});
+  const bool plateClick = ImGui::InvisibleButton("hdr", ImVec2(bw, plateH));
+  const bool plateHov = ImGui::IsItemHovered();
+  devMenuItem((group ? "group " + e.group : "strip " + std::to_string(e.index)));
+  const float bcx = std::round(p.x + bw * 0.5f);
+  if (group) {
+    ui::drawIcon(dl, ui::Icon::Chevron, ImVec2(bcx, std::round(p.y + 2 + (plateH - 2) * 0.5f)), 10, plateHov ? P.text : P.hot);
+    if (plateClick || (plateHov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))) mixhide::setGroupFolded(a.doc, e.group, false);
+    if (plateHov) a.setHint(std::string(i18n::tr("Collapsed group")) + " " + e.group + ": " + std::to_string(e.members) + " " + i18n::tr("tracks") + "   (" +
+                            i18n::tr("click: expand \xC2\xB7 right-click: group menu") + ")");
+  } else {
+    if (plateClick && !gStripDrag.active) selectTrack(a, t.id);
+    if (ImGui::IsItemActivated() && gStripDrag.pressed == kNoId) {  // a drag moves it, as a full strip
+      gStripDrag = StripDrag{};
+      gStripDrag.pressed = t.id;
+      gStripDrag.at = ImGui::GetIO().MouseClickedPos[0];
+    }
+    if (plateHov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) mixhide::setNarrow(a.doc, {t.id}, false);
+    const std::string num = std::to_string(e.index);
+    const ImVec2 ns = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, num.c_str());
+    dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(std::round(bcx - ns.x * 0.5f), p.y + 7), isSel ? P.hot : P.textFaint, num.c_str());
+    if (plateHov)
+      a.setHint(mixerTrackName(s, e.index) + "   (" + i18n::tr("narrow strip: click to select \xC2\xB7 double-click: full strip \xC2\xB7 drag: move \xC2\xB7 right-click: track menu") + ")");
+  }
+  if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+    if (!group) {
+      if (!v.sel.count(t.id)) a.mixerView.sel = {t.id};
+      a.selMixer = t.id;
+    }
+    ImGui::OpenPopup("##slimmenu");
+  }
+  // Mute lamp, then S.
+  const bool muted = group ? mixhide::groupMuted(s, e.group) : t.muted;
+  const bool soloed = group ? mixhide::groupSoloed(s, e.group) : t.solo;
+  float pl = 0, pr = 0;
+  if (group) {
+    for (const MixerTrack& m : s.mixer)
+      if (m.group == e.group) {
+        const mixmeters::Reading r = mixmeters::get(a, m.id);
+        pl = std::max(pl, r.peakL), pr = std::max(pr, r.peakR);
+      }
+  } else {
+    const mixmeters::Reading r = mixmeters::get(a, t.id);
+    pl = r.peakL, pr = r.peakR;
+  }
+  const float lampY = p.y + plateH + 11;
+  ImGui::SetCursorScreenPos(ImVec2(bcx - 9, lampY - 8));
+  if (ImGui::InvisibleButton("m", ImVec2(18, 16))) {
+    if (group) mixhide::setGroupMute(a.doc, e.group, !muted);
+    else a.doc.setParam(mixerParam(t.id, MixerParam::Mute), t.muted ? 0 : 1, false);
+  }
+  if (group) ui::Hint(muted ? "Every track in the group is muted: click to unmute them" : "Click to mute every track in the group");
+  else ui::Hint(muted ? "Track is muted: click to unmute" : "Track is on: click to mute");
+  ui::Led(dl, ImVec2(bcx, lampY), 4.5f, !muted, std::min(1.0f, std::max(pl, pr) * 2));
+  const ImVec2 bs(std::min(20.0f, bw - 8), 14);
+  ImGui::SetCursorScreenPos(ImVec2(std::round(bcx - bs.x * 0.5f), lampY + 9));
+  if (stripToggle("s", "S", soloed, P.hot, bs, group ? i18n::N_("Solo every track in the group") : i18n::N_("Solo (keeps tracks routed to and from it)"))) {
+    if (group) mixhide::setGroupSolo(a.doc, e.group, !soloed);
+    else mixops::toggleSolo(a.doc, t.id);
+  }
+  // The meter along the foot, the name reading upwards above it.
+  const float meterH = std::round(std::clamp(stripH * 0.36f, 40.0f, 150.0f));
+  const float my1 = p.y + stripH - (group ? 12.0f : 9.0f), my0 = my1 - meterH;
+  dl->AddRectFilled(ImVec2(bcx - 7, my0 - 3), ImVec2(bcx + 7, my1 + 3), P.dark ? P.field : theme::mix(P.surface600, P.lineStrong, 0.4f), theme::kRadiusSm);
+  ImGui::SetCursorScreenPos(ImVec2(bcx - 5, my0));
+  ui::Meter(ImGui::GetID("meter"), pl, pr, ImVec2(10, meterH));
+  const float nameTop = lampY + 9 + bs.y + 8, nameBottom = my0 - 9;
+  if (nameBottom - nameTop > 16) {
+    const float fs = theme::kFontCaption;
+    std::string name = group ? e.group : mixerTrackName(s, e.index);
+    if (group) name += "  \xC2\xB7  " + std::to_string(e.members);
+    mixhideui::upwardText(dl, group ? a.fontBold : a.fontRegular, fs, ImVec2(std::round(bcx - fs * 0.5f - 1), nameBottom), isSel && P.dark ? P.paper : P.text,
+                          name, nameBottom - nameTop);
+    ImGui::SetCursorScreenPos(ImVec2(p.x, nameTop));
+    ImGui::InvisibleButton("name", ImVec2(bw, nameBottom - nameTop));
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+      if (!group) {
+        if (!v.sel.count(t.id)) a.mixerView.sel = {t.id};
+        a.selMixer = t.id;
+      }
+      ImGui::OpenPopup("##slimmenu");
+    }
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && !group) selectTrack(a, t.id);
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+      if (group) mixhide::setGroupFolded(a.doc, e.group, false);
+      else mixhide::setNarrow(a.doc, {t.id}, false);
+    }
+    ui::Hint(group ? std::string(i18n::tr("Collapsed group")) + " " + e.group + "   (" + i18n::tr("double-click: expand \xC2\xB7 right-click: group menu") + ")"
+                   : mixerTrackName(s, e.index) + "   (" + i18n::tr("double-click: full strip \xC2\xB7 right-click: track menu") + ")");
+  }
+  if (ImGui::BeginPopup("##slimmenu")) {
+    if (group) mixhideui::groupMenu(a, e.group);
+    else mixerTrackMenu(a, e.index);
+    ImGui::EndPopup();
+  }
+  ImGui::PopID();
+  ImGui::PopID();
+}
+
 // Minimum strip height for the current view options.
 float minStripHeight(const MixerViewState& v) {
   return 176.0f + (v.extended ? kExtSlotRowH * kEffectSlots + 6 : 0.0f) + (v.waveforms ? kWaveH + 4 : 0.0f);
@@ -958,6 +1211,8 @@ static std::vector<ObjectId> armedTracks(const Song& s) {
 void mixerSelectAll(App& a) {
   const Song& s = a.doc.song();
   std::set<ObjectId> all = mixops::allInserts(s);
+  for (size_t i = 1; i < s.mixer.size(); ++i)  // GitHub #58: never tracks the mixer hides
+    if (mixhide::trackHidden(s, i)) all.erase(s.mixer[i].id);
   if (all.empty()) return;
   if (!all.count(a.selMixer)) a.selMixer = mixops::inMixerOrder(s, all).front();
   a.mixerView.sel = std::move(all);
@@ -1373,7 +1628,7 @@ static void mixerToolbar(App& a) {
   }
   if (ui::TextButton("Slots", v.extended, 0, "Show every effect slot (name and mix) on the strips")) v.extended = !v.extended;
   ImGui::SameLine(0, 4);
-  if (ui::ToggleIcon("wave", ui::Icon::Wave, v.waveforms, ImGui::GetFrameHeight(), "Waveforms on the strips (Alt+W)")) v.waveforms = !v.waveforms;
+  if (ui::ToggleIcon("wave", ui::Icon::Wave, v.waveforms, ImGui::GetFrameHeight(), keys::withKeys(i18n::N_("Waveforms on the strips (%s)"), {keys::cmdKey("mixer.waveforms", "Alt+W")}))) v.waveforms = !v.waveforms;
   static const char* meters[] = {i18n::N_("Peak"), i18n::N_("RMS"), i18n::N_("Both")};
   const ImGuiStyle& sty = ImGui::GetStyle();
   float meterSegW = 0;
@@ -1400,8 +1655,26 @@ static void mixerToolbar(App& a) {
     ImGui::SameLine(0, 6);
     if (ui::TextButton("Routing", v.showRouting, 0, "Routing overview: every route between the tracks")) v.showRouting = !v.showRouting;
   }
+  // GitHub #58: how many tracks have no strip of their own; the button lists them (a click shows one)
+  // with Show all at the end.
+  if (const std::string hl = mixhideui::hiddenLabel(a.doc.song()); !hl.empty()) {
+    ImGui::SameLine(0, 6);
+    if (!column || room() >= ImGui::CalcTextSize(hl.c_str()).x + 16) {
+      if (ui::TextButton(hl.c_str(), false, 0, "Tracks hidden from the mixer (they still play): click to show them")) ImGui::OpenPopup("##mixhidden");
+      devMenuItem("mixer hidden"), devNoteRect("mixhidden");
+    } else {  // a thin column: the eye alone (its hint has the count)
+      const std::string hint = hl + ": " + i18n::tr("Tracks hidden from the mixer (they still play): click to show them");
+      if (ui::IconButton("##mixhiddenicon", ui::Icon::EyeOff, false, 22.0f, hint.c_str())) ImGui::OpenPopup("##mixhidden");
+      devMenuItem("mixer hidden"), devNoteRect("mixhidden");
+    }
+    if (ImGui::BeginPopup("##mixhidden")) {
+      mixhideui::hiddenMenu(a);
+      ImGui::EndPopup();
+    }
+  }
   const auto selIds = mixerSelection(a);
   // Status texts after the buttons: dropped in a thin column when they would clip.
+
   auto status = [&](ImU32 col, const std::string& t) {
     ImGui::SameLine(0, 10);
     if (column && room() < ImGui::CalcTextSize(t.c_str()).x) return;
@@ -1586,13 +1859,29 @@ void drawMixer(App& a) {
   // below when there is room for it.
   const bool column = W < mixlayout::kColumnBelow;
   const bool groups = !mixops::groupNames(s).empty();
-  const std::vector<size_t> order = visibleOrder(a);  // K-224: with the room filter applied
+  // K-224: with the room filter applied. GitHub #58: hidden tracks left out, a folded group as one
+  // slim strip where its first member stands, narrow tracks slim.
+  const std::vector<mixhide::Entry> entries = mixhide::arrange(s, visibleOrder(a));
+  std::vector<size_t> order;
+  std::map<size_t, mixhide::Entry> slim;  // mixer index -> its slim strip
+  for (const mixhide::Entry& e : entries) {
+    order.push_back(e.index);
+    if (e.show != mixhide::Show::Strip) slim[e.index] = e;
+  }
+  auto widthOf = [&slim](size_t i, float normal) { return slim.count(i) ? mixhideui::kSlimW : normal; };
   const bool rooms = roomops::roomCount(s) > 1;
+  // The thin mixer's flow: the left dock first (the master leads), then the others.
+  std::vector<size_t> flow;
+  for (size_t i : order)
+    if (i == 0 || std::clamp(s.mixer[i].dock, -1, 1) < 0) flow.push_back(i);
+  for (size_t i : order)
+    if (i != 0 && std::clamp(s.mixer[i].dock, -1, 1) >= 0) flow.push_back(i);
   mixlayout::Layout ml;
   if (column) {
     mixlayout::Input in;
     in.width = W, in.height = Hm;
     in.strips = static_cast<int>(order.size());
+    for (size_t i : flow) in.widths.push_back(slim.count(i) ? mixhideui::kSlimW : 0.0f);
     in.masterScaleW = v.masterScale ? 16.0f : 0.0f;
     in.masterExtra = 8.0f + in.masterScaleW;
     in.minStripH = minStripHeight(v);
@@ -1607,7 +1896,27 @@ void drawMixer(App& a) {
   gMixerWheelScrolls = wheelScrolls;
   ui::WheelPolicyScope wheelScope(wheelScrolls);
   const bool showInspector = !column || ml.showInspector;
-  const float inspectorW = std::clamp(W * 0.27f, 240.0f, 320.0f);
+  // K-338: side by side, the strips zone keeps to its content and the inspector takes the rest;
+  // the line between them drags to give the inspector a width of its own (0: automatic).
+  float inspectorW = 0;
+  if (!column) {
+    mixlayout::WideInput wi;
+    wi.left = wi.middle = wi.right = 0;
+    wi.stripW = stripDims(v.layout).w;
+    for (size_t i : order) {
+      const int dock = i == 0 ? -1 : std::clamp(s.mixer[i].dock, -1, 1);
+      ++(dock < 0 ? wi.left : dock > 0 ? wi.right : wi.middle);
+      const float saved = wi.stripW - widthOf(i, wi.stripW);  // GitHub #58: slim strips
+      if (dock < 0) wi.leftSaved += saved;
+      else if (dock > 0) wi.rightSaved += saved;
+      else wi.middleW.push_back(widthOf(i, wi.stripW));
+    }
+    wi.rows = v.rows;
+    wi.masterW = wi.stripW + 8 + (v.masterScale ? 16.0f : 0.0f);
+    wi.dividerW = theme::kS3;
+    wi.padding = theme::kS2;
+    inspectorW = mixlayout::wideInspectorW(W, mixlayout::wideContentW(wi), static_cast<float>(a.settings.getNumber("ui.mixerInspectorW")));
+  }
   const float inspectorH = column ? ml.inspectorH : 0.0f;
 
   // ---------------- strips ----------------
@@ -1629,13 +1938,13 @@ void drawMixer(App& a) {
     const float stripW = ctx.dims.w, masterW = stripW + 8 + (v.masterScale ? 16.0f : 0.0f), gap = 2.0f;
     const float bandH = groups ? 14.0f : 0.0f;
     const int rows = std::clamp(v.rows, 1, 4);
+    // GitHub #58: a slim strip for a narrow track or a folded group, else the full strip.
+    auto drawAny = [&](size_t i, ImVec2 p, float w, float h) {
+      if (const auto it = slim.find(i); it != slim.end()) drawSlimStrip(a, it->second, p, w, h);
+      else drawStrip(a, i, p, w, h, ctx);
+    };
     if (column) {  // J-38: flowed rows (see above)
       const ImVec2 o = ImGui::GetCursorScreenPos();
-      std::vector<size_t> flow;
-      for (size_t i : order)
-        if (i == 0 || std::clamp(s.mixer[i].dock, -1, 1) < 0) flow.push_back(i);  // left dock first (master leads)
-      for (size_t i : order)
-        if (i != 0 && std::clamp(s.mixer[i].dock, -1, 1) >= 0) flow.push_back(i);
       const bool cull = !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !ImGui::GetDragDropPayload();
       ImDrawList* dl = ImGui::GetWindowDrawList();
       for (size_t k = 0; k < flow.size() && k < ml.cells.size(); ++k) {
@@ -1654,7 +1963,7 @@ void drawMixer(App& a) {
             dl->PopClipRect();
           }
         }
-        if (!cull || ImGui::IsRectVisible(p, ImVec2(p.x + c.w, p.y + ml.rowH))) drawStrip(a, flow[k], p, c.w, ml.rowH, ctx);
+        if (!cull || ImGui::IsRectVisible(p, ImVec2(p.x + c.w, p.y + ml.rowH))) drawAny(flow[k], p, c.w, ml.rowH);
         if (rooms && flow[k] != 0) roomLine(a, flow[k], p, c.w, ml.rowH);
       }
       ImGui::SetCursorScreenPos(ImVec2(o.x + ml.addX + 4, o.y + static_cast<float>(ml.addRow) * ml.rowPitch + bandH));
@@ -1684,26 +1993,34 @@ void drawMixer(App& a) {
       float w;
     };
     std::vector<Placed> placed;
+    // K-338: the master zone (the left dock) spans every row, so nothing is left empty under it.
+    const float zoneH = mixlayout::masterZoneH(rows, rowH, bandH, 6.0f);
     float x = o.x;
     for (size_t k = 0; k < left.size(); ++k) {
       const size_t i = left[k];
-      const float w = i == 0 ? masterW : stripW;
+      const float w = i == 0 ? masterW : widthOf(i, stripW);
       placed.push_back({i, ImVec2(x, o.y + bandH), w});
       x += w + gap;
     }
     if (!left.empty()) {  // divider after the left dock
       x += theme::kS3 - gap;
-      dl->AddLine(ImVec2(x - theme::kS3 * 0.5f - 0.5f, o.y + bandH + 8), ImVec2(x - theme::kS3 * 0.5f - 0.5f, o.y + bandH + rowH - 8), P.line);
+      dl->AddLine(ImVec2(x - theme::kS3 * 0.5f - 0.5f, o.y + bandH + 8), ImVec2(x - theme::kS3 * 0.5f - 0.5f, o.y + bandH + zoneH - 8), P.line);
     }
+    const size_t leftCount = placed.size();
     const size_t perRow = (middle.size() + static_cast<size_t>(rows) - 1) / static_cast<size_t>(rows);
     const float midX = x;
     float midEnd = midX;
+    float rowX = midX;
     for (size_t k = 0; k < middle.size(); ++k) {
       const size_t row = perRow ? k / perRow : 0, col = perRow ? k % perRow : 0;
-      ImVec2 p(midX + static_cast<float>(col) * (stripW + gap), o.y + static_cast<float>(row) * (rowH + bandH + 6.0f) + bandH);
-      placed.push_back({middle[k], p, stripW});
-      midEnd = std::max(midEnd, p.x + stripW);
+      if (col == 0) rowX = midX;
+      const float w = widthOf(middle[k], stripW);  // GitHub #58: slim strips
+      ImVec2 p(rowX, o.y + static_cast<float>(row) * (rowH + bandH + 6.0f) + bandH);
+      placed.push_back({middle[k], p, w});
+      rowX += w + gap;
+      midEnd = std::max(midEnd, p.x + w);
     }
+
     x = midEnd + gap;
     // Add-track button after the middle section.
     ImGui::SetCursorScreenPos(ImVec2(x + theme::kS1, o.y + bandH));
@@ -1716,8 +2033,9 @@ void drawMixer(App& a) {
     if (!right.empty()) {
       dl->AddLine(ImVec2(x - 6.5f, o.y + bandH + 8), ImVec2(x - 6.5f, o.y + bandH + rowH - 8), P.line);
       for (size_t i : right) {
-        placed.push_back({i, ImVec2(x, o.y + bandH), stripW});
-        x += stripW + gap;
+        const float w = widthOf(i, stripW);  // GitHub #58: slim strips
+        placed.push_back({i, ImVec2(x, o.y + bandH), w});
+        x += w + gap;
       }
     }
     // Group bands above the strips: one label per run of neighbours.
@@ -1730,19 +2048,29 @@ void drawMixer(App& a) {
         const ImU32 gc = theme::mix(P.textDim, theme::rgb(t.color), 0.5f);
         dl->AddRectFilled(ImVec2(p.x, p.y + 9), ImVec2(p.x + placed[k].w + gap, p.y + 11), gc);
         if (startRun) {
+          // GitHub #58: the label kept to its run (a folded group's run is one slim strip)
+          float runW = placed[k].w;
+          for (size_t j = k + 1; j < placed.size() && s.mixer[placed[j].i].group == t.group && placed[j].p.y == placed[k].p.y; ++j)
+            runW = placed[j].p.x + placed[j].w - placed[k].p.x;
           ImVec2 ts = a.fontMono->CalcTextSizeA(9.0f, 1e9f, 0, t.group.c_str());
-          dl->AddRectFilled(ImVec2(p.x, p.y), ImVec2(p.x + ts.x + 8, p.y + 11), P.surface800, 2);
+          dl->AddRectFilled(ImVec2(p.x, p.y), ImVec2(p.x + std::min(ts.x + 8, runW), p.y + 11), P.surface800, 2);
+          dl->PushClipRect(ImVec2(p.x, p.y), ImVec2(p.x + runW, p.y + bandH), true);
           dl->AddText(a.fontMono, 9.0f, ImVec2(p.x + 4, p.y), t.groupLink ? P.hot : P.text, t.group.c_str());  // K-238: lit when linked
+          dl->PopClipRect();
         }
       }
     // Strips scrolled out of view are skipped (hundreds of inserts: J-25) unless
     // a menu is open (it may belong to one of them) or a drag is under way.
     const bool cull = !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && !ImGui::GetDragDropPayload();
-    for (const auto& pl : placed)
-      if (!cull || ImGui::IsRectVisible(pl.p, ImVec2(pl.p.x + pl.w, pl.p.y + rowH))) {
-        drawStrip(a, pl.i, pl.p, pl.w, rowH, ctx);
-        if (rooms && pl.i != 0) roomLine(a, pl.i, pl.p, pl.w, rowH);
+    for (size_t k = 0; k < placed.size(); ++k) {
+      const auto& pl = placed[k];
+      const float h = k < leftCount ? zoneH : rowH;
+      if (!cull || ImGui::IsRectVisible(pl.p, ImVec2(pl.p.x + pl.w, pl.p.y + h))) {
+        drawAny(pl.i, pl.p, pl.w, h);
+
+        if (rooms && pl.i != 0) roomLine(a, pl.i, pl.p, pl.w, h);
       }
+    }
     ImGui::SetCursorScreenPos(o);
     ImGui::Dummy(ImVec2(x - o.x + 8, static_cast<float>(rows) * (rowH + bandH + 6.0f) - 6.0f));
     }
@@ -1756,15 +2084,35 @@ void drawMixer(App& a) {
   if (showInspector) {
     if (!column) ImGui::SameLine(0, 0);
     ImVec2 ip = ImGui::GetCursorScreenPos();
-    if (column)
+    if (column) {
       ImGui::GetWindowDrawList()->AddLine(ip, ImVec2(ip.x + ImGui::GetContentRegionAvail().x, ip.y), P.line);
-    else
+    } else {
       ImGui::GetWindowDrawList()->AddLine(ip, ImVec2(ip.x, ip.y + ImGui::GetContentRegionAvail().y), P.line);
+    }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS3, theme::kS3));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(theme::kS1, theme::kS1));
     ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface900));
     ImGui::BeginChild("##inspector", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
     ImGui::PopStyleColor();
+    if (!column) {
+      // K-338: the inspector's left edge drags (inside the inspector, which sits over the mixer
+      // window); a double-click goes back to the automatic width.
+      // Read by hand rather than as an item, so the inspector's scroll range stays its own.
+      static bool dragging = false;
+      const ImVec2 wp = ImGui::GetWindowPos(), m = ImGui::GetIO().MousePos;
+      const float wh = ImGui::GetWindowHeight(), right = wp.x + ImGui::GetWindowWidth();
+      devNoteRectAt("mixsplit", wp.x, wp.y, wp.x + 6, wp.y + wh);
+      const bool hov = ImGui::IsWindowHovered() && !ImGui::IsAnyItemActive() && m.x >= wp.x && m.x < wp.x + 6 && m.y >= wp.y && m.y < wp.y + wh;
+      if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) dragging = true;
+      if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) dragging = false;
+      if (hov || dragging) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+      if (hov && !dragging) a.setHint(i18n::tr("Drag to resize the inspector (double-click: automatic)"));
+      if (dragging && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f))
+        a.settings.set("ui.mixerInspectorW", static_cast<double>(std::round(std::clamp(right - m.x, mixlayout::kInspectorMinW,
+                                                                                        std::max(mixlayout::kInspectorMinW, W - mixlayout::kStripsMinW)))));
+      if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) a.settings.set("ui.mixerInspectorW", 0), dragging = false;
+      if (hov || dragging) ImGui::GetWindowDrawList()->AddLine(ImVec2(wp.x + 1, wp.y), ImVec2(wp.x + 1, wp.y + wh), P.hot, 2.0f);
+    }
     if (sel) {
       ImDrawList* dl = ImGui::GetWindowDrawList();
       size_t si = static_cast<size_t>(s.mixerIndex(sel->id));
@@ -1855,6 +2203,10 @@ void drawMixer(App& a) {
         ImVec2 b0(q.x + 32, q.y + 1);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton("slot", ImVec2(bw, rowH - 2));
+        if (static int noted = -1; !info && noted != ImGui::GetFrameCount()) {
+          noted = ImGui::GetFrameCount();
+          devNoteRect("fxslotempty");  // (dev: an "sdlat" target, the inspector's first free slot)
+        }
         bool hov = ImGui::IsItemHovered(), open = ImGui::IsPopupOpen("##fxlist");
         const ui::WheelGate wg = ui::wheelGate(thinWheel || keys::modifierExact("mixer.slotWheelMove"));
         if (wg.scale > 0) {
@@ -1879,9 +2231,13 @@ void drawMixer(App& a) {
         }
         // J-132: a stand-in for a plugin that is not installed carries a lit marker before the chevron.
         const bool standIn = info && !es.plugin.original.empty();
-        const float markW = standIn ? 10.0f : 0.0f;
+        // 0.7.8 (user report: "couldn't load" showed while a plugin loaded): an installed plugin on its
+        // way is dimmed with a small spinner; it never reads as failed.
+        const bool loading = info && isHostedType(info->type) && hostedLoading(a, PluginTarget{sel->id, k});
+        const float markW = standIn ? 10.0f : loading ? 16.0f : 0.0f;
         theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(b0.x + 8, std::round(b0.y + (rowH - 2 - 13) * 0.5f) - 1), bw - 26 - latW - markW,
-                            info ? (es.enabled ? P.text : P.textFaint) : P.textFaint, info ? info->name.c_str() : i18n::tr("Empty slot"));
+                            info && !loading ? (es.enabled ? P.text : P.textFaint) : P.textFaint, info ? info->name.c_str() : i18n::tr("Empty slot"));
+        if (loading) ui::Spinner(dl, ImVec2(std::round(b0.x + bw - 26 - latW), std::round(b0.y + (rowH - 2) * 0.5f)), 4.0f, P.textDim);
         if (standIn) {
           const ImVec2 c(std::round(b0.x + bw - 20 - latW - 2), std::round(b0.y + (rowH - 2) * 0.5f));
           dl->AddCircle(c, 3.5f, P.hot, 12, 1.5f);
@@ -1893,11 +2249,7 @@ void drawMixer(App& a) {
         ui::Hint(info ? "Click to replace \xC2\xB7 double-click to open \xC2\xB7 right-click for options \xC2\xB7 wheel moves it up / down \xC2\xB7 drag to reorder or onto another track (Ctrl copies)"
                       : "Click to insert an effect (or drop one from the browser)");
         if (standIn && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", standin::describe(es.plugin).c_str());  // what plays instead
-        ImGui::SetNextWindowSizeConstraints(ImVec2(bw, 0), ImVec2(320, 460));
-        if (ImGui::BeginPopup("##fxlist")) {
-          effectList(a, sel->id, k, es.plugin.type);
-          ImGui::EndPopup();
-        }
+        pickerPopup(a, "##fxlist", b0, ImVec2(b0.x + bw, b0.y + rowH - 2), sel->id, k, es.plugin.type);
         if (ImGui::BeginPopupContextItem("##slotmenu")) {
           mixerSlotMenu(a, sel->id, k);
           ImGui::EndPopup();
@@ -2038,6 +2390,10 @@ void mixerLatencyMenu(App& a, ObjectId id) {
 // K-112 (R3): one effect slot's menu, header and editor, drawn by the effect editor window or by
 // a layout part's own frame (a device chain, a lower frame).
 void effectPickerList(App& a, ObjectId track, int slot, const std::string& current) { effectList(a, track, slot, current); }
+void effectPickerPopup(App& a, const char* id, ImVec2 slotMin, ImVec2 slotMax, ObjectId track, int slot, const std::string& current) {
+  pickerPopup(a, id, slotMin, slotMax, track, slot, current);
+}
+std::string devSlotPickReport() { return slotPickReport(); }
 
 void drawEffectEditorBody(App& a, ObjectId mixerTrack, int slot, const BodyFrame& f) {
   const layoutui::BaseBorderScope border;  // K-112b: plugin windows keep their outlined controls
@@ -2054,13 +2410,17 @@ void drawEffectEditorBody(App& a, ObjectId mixerTrack, int slot, const BodyFrame
   menuButton("fxmenu", "Effect menu: presets, state, slot", [&a, target]() { pluginWindowMenu(a, target.owner, target.slot); });
   ImGui::SameLine(0, 8);
   drawPluginHeader(a, target);
+  // K-245: the track's macro knobs under the editor, in the effect windows (not in a layout's device chain)
+  const bool macros = f.host == nullptr || f.host[0] == 0;
   if (logicplug::controlsView(a, t->slots[static_cast<size_t>(slot)].plugin.type)) {  // K-112b: the plain controls list
     logicplug::drawControls(a, target, std::floor(f.width));
+    if (macros) macroui::drawEffectStrip(a, t->id, std::floor(f.width));
     return;
   }
   if (f.zoom) edzoomui::begin(a, f.zoomKey);  // K-210b: only the editor zooms, its header row keeps the interface size
   drawPluginBody(a, target, std::floor(f.width));
   if (f.zoom) edzoomui::end(a, f.zoomKey);
+  if (macros) macroui::drawEffectStrip(a, t->id, std::floor(f.width));
 }
 
 void drawEffectEditor(App& a) {
@@ -2091,6 +2451,7 @@ void drawEffectEditor(App& a) {
                                            : info->name + "  \u00b7  " + mixerTrackName(s, static_cast<size_t>(s.mixerIndex(t->id))) + "  \u00b7  slot " +
                                                  std::to_string(k + 1) + "###fxeditor";
   float width = info->editorWidth > 0 ? info->editorWidth : (info->type == "gl.eq" ? 780.0f : 600.0f);
+  if (isHostedType(info->type)) width = hostedui::dockedWidth(a, target, width);  // 0.7.8: its own interface inside
   if (info->editorMinWidth > 0) {  // J-158: reflowing editors narrow to fit the main window first
     const ImVec2 area = ui::EditorArea();
     width = std::floor(place::fitEditor(width, info->editorMinWidth, 24.0f + ImGui::GetStyle().ScrollbarSize, area.x, area.y).content);

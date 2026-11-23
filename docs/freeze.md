@@ -75,19 +75,35 @@ sound.
 - **When it rests.** An instrument rests once it has been silent for a moment (half a second, or
   two seconds for a third-party plugin, whose tail only its sound can tell) with no note held and
   nothing sent to it. Its tail always ends first, so nothing is cut short and nothing clicks.
-- **When it wakes.** A note, a MIDI message, the transport starting, stopping or jumping, or opening
-  the instrument's own editor wakes it, on the same sample the note starts on.
+- **Plugins that are never quite silent.** Some third-party instruments keep a faint sound of their
+  own while nothing plays them: an emulation of a hardware chip, an analogue model with its own
+  noise, a little offset. Such an instrument rests once its sound has stayed below -90 dBFS (far
+  below anything you can hear, under the noise of a 16-bit recording) for four seconds. What it
+  leaves out is only that faint sound of its own.
+- **When it wakes.** A note, a MIDI message, the transport starting, stopping or jumping, or using
+  the instrument's own window (the pointer over it, or the keyboard in it) wakes it, on the same
+  sample the note starts on. An open window you are not using lets it rest; as you move the pointer
+  onto the window it is running again before you click.
 - **Muted channels.** A muted channel rests half a second after its sound has faded, even while
   its notes go on. When you unmute it, it plays from its next note.
-- **What never rests.** Effects on mixer tracks (they have their own rules for silence), and
-  instruments that make sound without notes: an audio input, a turntable deck, a module player, an
-  instrument running its own pattern, an instrument whose parameters automation or a controller
-  link moves, or one whose MIDI output plays other channels. An instrument that is heard starting
-  to sound with nothing sent to it is left running from then on.
+- **Effects.** An effect on a mixer track rests while the transport is stopped, nothing comes into
+  it and what it puts out has stayed below -90 dBFS for four seconds; sound coming in, Play or using
+  its window wakes it in that moment. This covers third-party effects and Gridline's own (reverbs,
+  delays, modulation, dynamics, distortion, filters and the like; a modulated reverb's movement
+  simply stands still while it rests). Gridline's own effects also rest during playback once exact
+  silence has gone through them for a while. Effects that take notes, play sound of their own,
+  sends, returns and effects with a side input keep running.
+- **Processing threads.** While a project is idle or light, the audio thread does all its work on
+  its own and the other processing threads sleep, using nothing; they join in again as soon as
+  the work grows.
+- **What never rests.** Instruments that make sound without notes: an audio input, a turntable
+  deck, a module player, an instrument running its own pattern, an instrument whose parameters
+  automation or a controller link moves, or one whose MIDI output plays other channels. An
+  instrument that is heard starting to sound with nothing sent to it is left running from then on.
 - **Keep running when silent.** If a third-party instrument makes sound by itself (a drone, its own
   sequencer that follows the song) and goes quiet after a while, turn on **Keep running when
   silent** in the channel's menu (**Instrument and routing**). The choice is saved with the project.
-- **Options > Rest silent instruments** turns resting off everywhere (on by default).
+- **Options > Rest silent instruments** turns resting off everywhere, effects included (on by default).
 
 Exports and renders never leave anything out: they sound exactly as playback does.
 
@@ -96,7 +112,8 @@ Exports and renders never leave anything out: they sound exactly as playback doe
 While you work, Gridline draws its windows at the display's refresh rate. When nothing has moved
 for a second (no input, nothing playing, no sound, no edit), it draws about ten frames a second
 until something happens again; a key, a click, a MIDI message or sound brings the full rate back
-at once.
+at once. On Linux a plugin's own window keeps the full rate while you use it (the pointer over it,
+or the keyboard in it); left open and untouched it no longer does.
 
 ## Zipped projects
 
@@ -107,4 +124,6 @@ frozen audio**: frozen units then go in unfrozen, and their plugins load when it
 
 A freeze is part of the project: collaborators receive the render and play it too. Only the
 computer that froze a unit renders it again by itself when it gets out of date; on the others it
-plays live until then.
+plays live until then. This is how a channel with an installed plugin that a collaborator doesn't
+have reaches their ears: whoever has the plugin freezes it, and the collaborator plays the render
+(silent again while the freeze is out of date).

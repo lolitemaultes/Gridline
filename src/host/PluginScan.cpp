@@ -14,6 +14,7 @@
 #include <unordered_set>
 #include "../core/Project.h"
 #include "sandbox/Sandbox.h"
+#include "ui/QuietWindows.h"
 #include "../core/Platform.h"
 
 namespace fs = std::filesystem;
@@ -472,6 +473,9 @@ int childMain(int argc, char** argv) {
   }
   // K-13: the parent's plugin folders (read only), so a child searches what the parent does.
   if (!prefsFile.empty() && (!sandbox.empty() || !entry.empty())) loadPluginPrefsFile(prefsFile);
+  // A quiet (test) run's children are quiet too: their windows (a sandboxed plugin's interface)
+  // never show on the screen or activate (ui/QuietWindows.h; nothing happens in a normal run).
+  if (!sandbox.empty() || !entry.empty()) quiet::install();
   if (!sandbox.empty()) {
     platform::quietCrashDialogs();
     platform::initPluginThread();  // K-267: the plugin's thread, as Gridline's own interface thread

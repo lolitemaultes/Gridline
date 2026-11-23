@@ -23,6 +23,7 @@ int barItemWidth(BarItem item) {
     case kBarCpu:
       return 104;
     case kBarSettings:
+    case kBarDock:
       return 26;
     default:
       return 0;
@@ -37,12 +38,12 @@ int rowY(int row) { return row * kBarRowH + (kBarRowH - kItemH) / 2; }
 int oneRowBarWidth() {
   int w = 2 * kBarPad;
   for (int i = 0; i < kBarItemCount; ++i)
-    if (i != kBarRoute) w += barItemWidth(static_cast<BarItem>(i));  // the route button shares the preset box's room
+    if (i != kBarRoute && i != kBarDock) w += barItemWidth(static_cast<BarItem>(i));  // the route and dock buttons share the preset box's room
   // gaps between items, plus a wider separator before the switches and before the readout
-  return w + (kBarItemCount - 2) * kGap + 2 * kGap;
+  return w + (kBarItemCount - 3) * kGap + 2 * kGap;
 }
 
-BarLayout layoutBar(int width, bool route) {
+BarLayout layoutBar(int width, bool route, bool dock) {
   width = std::max(width, kMinWindowW);
   BarLayout L;
   auto put = [&](BarItem it, int x, int row, int w) {
@@ -54,8 +55,8 @@ BarLayout layoutBar(int width, bool route) {
     // < preset > | ON SANDBOX GENERIC ROUTE | ... CPU  [gear]   (preset stretches)
     const int extra = std::min(width - one, kPresetMaxW - kPresetMinW);
     const int spare = width - one - extra;  // room left over in the middle
-    const int routeRoom = route ? barItemWidth(kBarRoute) + kGap : 0;
-    const int pw = kPresetMinW + extra - std::max(0, routeRoom - spare);
+    const int routeRoom = (route ? barItemWidth(kBarRoute) + kGap : 0) + (dock ? barItemWidth(kBarDock) + kGap : 0);
+    const int pw = std::max(24, kPresetMinW + extra - std::max(0, routeRoom - spare));
     int x = kBarPad;
     put(kBarPrev, x, 0, barItemWidth(kBarPrev));
     x += barItemWidth(kBarPrev) + kGap;
@@ -63,8 +64,8 @@ BarLayout layoutBar(int width, bool route) {
     x += pw + kGap;
     put(kBarNext, x, 0, barItemWidth(kBarNext));
     x += barItemWidth(kBarNext) + 2 * kGap;
-    for (BarItem it : {kBarBypass, kBarSandbox, kBarGeneric, kBarRoute}) {
-      if (it == kBarRoute && !route) continue;
+    for (BarItem it : {kBarBypass, kBarSandbox, kBarGeneric, kBarRoute, kBarDock}) {
+      if ((it == kBarRoute && !route) || (it == kBarDock && !dock)) continue;
       put(it, x, 0, barItemWidth(it));
       x += barItemWidth(it) + kGap;
     }
@@ -91,8 +92,8 @@ BarLayout layoutBar(int width, bool route) {
   // Row 1: ON SANDBOX GENERIC ROUTE ... CPU (when it fits).
   {
     int x = kBarPad;
-    for (BarItem it : {kBarBypass, kBarSandbox, kBarGeneric, kBarRoute}) {
-      if (it == kBarRoute && !route) continue;
+    for (BarItem it : {kBarBypass, kBarSandbox, kBarGeneric, kBarRoute, kBarDock}) {
+      if ((it == kBarRoute && !route) || (it == kBarDock && !dock)) continue;
       put(it, x, 1, barItemWidth(it));
       x += barItemWidth(it) + kGap;
     }
@@ -174,6 +175,71 @@ Rect placeWindow(int w, int h, const Rect& work, bool remembered, int rx, int ry
 
 EditorMode chooseEditorMode(bool pluginHasInterface, bool userChoseGeneric) {
   return pluginHasInterface && !userChoseGeneric ? EditorMode::Native : EditorMode::Generic;
+}
+
+InterfacePlace chooseInterfacePlace(bool settingInside, int pluginChoice, bool canEmbed) {
+  if (!canEmbed) return InterfacePlace::OwnWindow;
+  if (pluginChoice == kChoiceInside) return InterfacePlace::Inside;
+  if (pluginChoice == kChoiceOwnWindow) return InterfacePlace::OwnWindow;
+  return settingInside ? InterfacePlace::Inside : InterfacePlace::OwnWindow;
+}
+
+int interfaceChoiceFor(bool settingInside, bool inside) {
+  if (inside == settingInside) return kChoiceSetting;
+  return inside ? kChoiceInside : kChoiceOwnWindow;
+}
+
+Rect intersect(const Rect& a, const Rect& b) {
+  const int x0 = std::max(a.x, b.x), y0 = std::max(a.y, b.y), x1 = std::min(a.right(), b.right()), y1 = std::min(a.bottom(), b.bottom());
+  if (x1 <= x0 || y1 <= y0) return Rect{};
+  return Rect{x0, y0, x1 - x0, y1 - y0};
+}
+
+DockedShow dockedShow(const Rect& full, const Rect& clip, const std::vector<Rect>& covers, bool holesCut) {
+  DockedShow d;
+  d.visible = intersect(full, clip);
+  if (d.visible.empty()) {
+    d.visible = Rect{};
+    return d;
+  }
+  // Covers across a whole edge trim what shows (no hole needed: every system can do that).
+  for (bool trimmed = true; trimmed && !d.visible.empty();) {
+    trimmed = false;
+    for (const Rect& c : covers) {
+      Rect& v = d.visible;
+      const Rect o = intersect(c, v);
+      if (o.empty()) continue;
+      const bool wide = o.x == v.x && o.w == v.w, tall = o.y == v.y && o.h == v.h;
+      if (wide && tall) {
+        v = Rect{};
+      } else if (wide && o.y == v.y) {
+        v = Rect{v.x, o.bottom(), v.w, v.bottom() - o.bottom()};
+      } else if (wide && o.bottom() == v.bottom()) {
+        v.h = o.y - v.y;
+      } else if (tall && o.x == v.x) {
+        v = Rect{o.right(), v.y, v.right() - o.right(), v.h};
+      } else if (tall && o.right() == v.right()) {
+        v.w = o.x - v.x;
+      } else {
+        continue;
+      }
+      trimmed = true;
+      break;
+    }
+  }
+  if (d.visible.empty()) {
+    d.visible = Rect{};
+    return d;
+  }
+  for (const Rect& c : covers) {
+    const Rect o = intersect(c, d.visible);
+    if (!o.empty()) d.holes.push_back(o);
+  }
+  if (!d.holes.empty() && !holesCut) {
+    d.visible = Rect{};
+    d.holes.clear();
+  }
+  return d;
 }
 
 }  // namespace gl::host::layout

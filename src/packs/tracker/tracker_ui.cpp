@@ -251,7 +251,7 @@ std::vector<std::string> droppedAudio(App& a, const ImGuiPayload* pl) {
 // Adds the files as samples (as many as there are free slots); one undo step. Returns the first
 // new slot, -1 when none was added.
 int addFiles(App& a, const PluginTarget& t, const std::vector<std::string>& paths, int sound) {
-  const PluginState* st = t.state(a.doc.song());
+  const PluginState* st = samplerBridge() ? editState(a, t) : t.state(a.doc.song());
   if (!st) return -1;
   Edit e = readEdit(st->data, sound);
   int added = 0;
@@ -401,7 +401,8 @@ void editMenuItems(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
   if (ImGui::MenuItem(i18n::tr("Echo..."))) openPopup = "##trkecho";
   if (ImGui::MenuItem(i18n::tr("Mix in a sample..."), nullptr, false, sampleCountOf(e) > 1)) openPopup = "##trkmix";
   if (ImGui::MenuItem(i18n::tr("Crossfade the loop..."), nullptr, false, looped)) openPopup = "##trkxfade";
-  if (ImGui::MenuItem(i18n::tr("Trim after the loop"), nullptr, false, looped && sd.loopStart + sd.loopLength < frames))
+  // 0.7.8: played backwards, the trim takes what precedes the loop (the part never heard).
+  if (ImGui::MenuItem(i18n::tr("Trim after the loop"), nullptr, false, looped && (sd.reverse ? sd.loopStart > 0 : sd.loopStart + sd.loopLength < frames)))
     editWave(a, t, ed, e, inst, k, "trim sample after loop", [&](Wave& x) { return waveMinimise(x); });
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Select all"))) {
@@ -602,8 +603,19 @@ void waveformPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrum
     const char* modes[] = {i18n::tr("No loop"), i18n::tr("Forward"), i18n::tr("Ping-pong")};
     int mode = sd.loop;
     const float right = 4 * 24 + 3 * 2 + 4;  // edit menu and zoom buttons
-    const float segW = std::clamp((inner - right - 2 * 44 - 16) / 3.0f, 52.0f, 84.0f);
+    // 0.7.8: the play direction beside the loop type (a toggle; the audio stays as it is).
+    const char* backLabel = i18n::tr("Backwards");
+    const float backW = std::ceil(ImGui::CalcTextSize(backLabel).x + 2 * ImGui::GetStyle().FramePadding.x + 2);
+    const float segW = std::clamp((inner - right - 2 * 44 - backW - 24) / 3.0f, 52.0f, 84.0f);
     if (ui::Segmented("##loopmode", modes, 3, &mode, segW, 22)) opSampleLoopType(a, t, k, static_cast<uint8_t>(mode), s0, s1, &e);
+    ImGui::SameLine(0, 8);
+    {
+      const bool rev = sd.reverse;
+      ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, std::max(0.0f, (22.0f - ImGui::GetFontSize()) * 0.5f)));
+      if (ui::TextButton(backLabel, rev, backW, i18n::tr("Plays the sample, or its loop, from end to start (the audio is not changed)")))
+        opSampleReverse(a, t, k, !rev, &e);
+      ImGui::PopStyleVar();
+    }
     ImGui::SameLine(0, 8);
     const char* depths[] = {i18n::tr("16-bit"), i18n::tr("8-bit")};
     const char* depthHints[] = {i18n::tr("The sample plays at full resolution"), i18n::tr("The sample plays rounded to 256 steps, as an 8-bit sample")};
@@ -880,16 +892,18 @@ void samplesPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrume
       const std::string& nm = e.text.sampleNames[static_cast<size_t>(k)];
       const trk::SampleDef& s = e.text.def.samples[static_cast<size_t>(k)];
       const bool missing = !inst.files[static_cast<size_t>(k)];
-      char info[48];
-      if (missing) std::snprintf(info, sizeof info, "%s", i18n::tr("missing"));
-      else std::snprintf(info, sizeof info, "%s", s.loop == trk::kLoopPingPong ? i18n::tr("ping-pong") : s.loop == trk::kLoopForward ? i18n::tr("loop") : "");
-      const float iw = ImGui::CalcTextSize(info).x;
+      std::string info;
+      if (missing) info = i18n::tr("missing");
+      else info = s.loop == trk::kLoopPingPong ? i18n::tr("ping-pong") : s.loop == trk::kLoopForward ? i18n::tr("loop") : "";
+      // 0.7.8: a sample played backwards says so beside its loop type.
+      if (!missing && s.reverse) info += std::string(info.empty() ? "" : ", ") + i18n::tr("backwards");
+      const float iw = ImGui::CalcTextSize(info.c_str()).x;
       const float nx = c.x + 42, nmax = c.x + lw - 10 - iw - (iw > 0 ? 8 : 0);
       const float ny = c.y + (lineH - ImGui::GetTextLineHeight()) * 0.5f;
       dl->PushClipRect(ImVec2(nx, c.y), ImVec2(std::max(nx, nmax), c.y + lineH), true);
       dl->AddText(ImVec2(nx, ny), missing ? pal().danger : pal().text, nm.empty() ? i18n::tr("(no name)") : nm.c_str());
       dl->PopClipRect();
-      if (iw > 0) dl->AddText(ImVec2(c.x + lw - 10 - iw, ny), missing ? pal().danger : pal().textFaint, info);
+      if (iw > 0) dl->AddText(ImVec2(c.x + lw - 10 - iw, ny), missing ? pal().danger : pal().textFaint, info.c_str());
       if (playingRow) ui::drawIconBox(dl, ui::Icon::Play, ImVec2(c.x + 32, c.y + lineH * 0.5f), 9, pal().hot);
       if (hv && !playingRow) a.setHint(i18n::tr("Click to select the sample and hear it; click again to stop"));
       if (hv) {
@@ -1472,8 +1486,8 @@ HeaderCtx headerCtx(App& a, ObjectId channel) {
   c.t = PluginTarget{channel, -1};
   c.st = c.t.state(a.doc.song());
   if (!c.st || c.st->type != trk::kInstrumentType) {
-    c.st = nullptr;
-    return c;
+    c.st = samplerBridge() ? editState(a, c.t) : nullptr;  // (0.7.8: the classic Sample editor on a Sampler)
+    if (!c.st) return c;
   }
   const Snapshot& snap = snapshot(a, c.t);  // (cp17: no parse while nothing changes)
   c.inst = snap.inst;
@@ -1622,9 +1636,8 @@ HeaderSamples headerSamples(App& a, ObjectId channel) {
   if (!c.st) return h;
   h.tracker = true;
   h.sound = soundOf(*c.st);
-  // R12-04: once the instrument has a sample, every slot is listed (an empty one with no name), so an
-  // empty slot can be picked and the next load from Files fills it.
-  const bool any = sampleCount(c.e) > 0;
+  // R12-04: every slot is listed (an empty one with no name), so an empty slot can be picked and the
+  // next load fills it. 0.7.8: an instrument with no sample yet lists its 16 empty entries too.
   for (int k = 0; k < trk::kMaxSamples; ++k) {
     if (hasSample(c.e, k)) {
       h.list.emplace_back(k, editName(c.e, k));
@@ -1636,12 +1649,15 @@ HeaderSamples headerSamples(App& a, ObjectId channel) {
       if (c.e.eightBit[static_cast<size_t>(k)]) {
         m |= kMark8Bit;
       }
+      if (sd.reverse) {  // 0.7.8
+        m |= kMarkBackwards;
+      }
       const auto& f = c.inst ? c.inst->files[static_cast<size_t>(k)] : nullptr;
       if (!f || f->frames() == 0) {
         m |= kMarkMissing;
       }
       h.marks.push_back(m);
-    } else if (any) {
+    } else {
       h.list.emplace_back(k, std::string());
       h.marks.push_back(0);
     }
@@ -1663,7 +1679,7 @@ void headerSelectSample(App& a, ObjectId channel, int slot) {
   HeaderCtx c = headerCtx(a, channel);
   if (!c.st || slot < 0 || slot >= trk::kMaxSamples) return;
   if (hasSample(c.e, slot)) c.ed->m->sel = slot, c.ed->m->wantSlot = -1;
-  else if (sampleCount(c.e) > 0) c.ed->m->wantSlot = slot;
+  else c.ed->m->wantSlot = slot;  // 0.7.8: in an instrument with no sample yet too
 }
 
 bool headerCopySample(App& a, ObjectId channel, ObjectId srcChannel, int srcSlot) {
@@ -1729,19 +1745,31 @@ int headerLoadSample(App& a, ObjectId channel, const std::string& path) {
   if (!c.st) return -1;
   bool any = false;
   for (int k = 0; k < trk::kMaxSamples; ++k) any = any || hasSample(c.e, k);
-  if (!any) {  // a new instrument's first sample: as a drop adds it
+  SamplePtr sp = sampleCache().get(path);
+  if (!sp || sp->frames() == 0) return -1;
+  if (!any) {  // a new instrument's first sample: as a drop adds it (every key plays it)
+    // 0.7.8: into the entry picked in the list (before: always the first), as the classic list loads.
+    const int want = c.ed->m->wantSlot >= 0 ? c.ed->m->wantSlot : 0;
+    c.ed->m->wantSlot = -1;
+    Edit e = c.e;
+    if (!e.body) {  // a plain envelope, not the built-in sound's vibrato and shape (as addSampleFiles)
+      const auto samples = e.text.def.samples;
+      e.text.def = defaultDefinition();
+      e.text.def.samples = samples;
+    }
+    const int k = replaceSample(e, want, path, static_cast<int32_t>(std::min<size_t>(sp->frames(), 0x3FFFFFFF)), sp->sampleRate,
+                                fs::u8path(path).stem().u8string());
+    if (k < 0) return -1;
     // R12-06: an instrument still called by its type takes the sample's name (one undo step with it).
     const Channel* ch = a.doc.song().channel(channel);
     const bool rename = ch && ch->name == "Tracker Sampler";
     if (rename) a.doc.beginGroup("load sample");
-    const int k = addFiles(a, c.t, {path}, soundOf(*c.st));
-    if (k >= 0 && rename) a.doc.renameChannel(channel, fs::u8path(path).stem().u8string());
+    commit(a, c.t, e, "add sample");
+    if (rename) a.doc.renameChannel(channel, fs::u8path(path).stem().u8string());
     if (rename) a.doc.endGroup(false);
-    if (k >= 0) memory(c.t.key()).sel = k;
+    memory(c.t.key()).sel = k;
     return k;
   }
-  SamplePtr sp = sampleCache().get(path);
-  if (!sp || sp->frames() == 0) return -1;
   const int slot = c.ed->m->wantSlot >= 0 ? c.ed->m->wantSlot : std::clamp(c.ed->m->sel, 0, trk::kMaxSamples - 1);  // R12-04
   c.ed->m->wantSlot = -1;
   const int k = replaceSample(c.e, slot, path, static_cast<int32_t>(std::min<size_t>(sp->frames(), 0x3FFFFFFF)), sp->sampleRate,
@@ -1750,6 +1778,87 @@ int headerLoadSample(App& a, ObjectId channel, const std::string& path) {
   commit(a, c.t, c.e, "load sample");
   c.ed->m->sel = k;
   return k;
+}
+
+// ---- 0.7.8: the sample entries (the classic sample list: 01 .. 10 of the current instrument) ----
+
+int headerEntry(App& a, ObjectId channel) {
+  HeaderCtx c = headerCtx(a, channel);
+  if (!c.st) return -1;
+  if (c.ed->m->wantSlot >= 0 && c.ed->m->wantSlot < trk::kMaxSamples && !hasSample(c.e, c.ed->m->wantSlot)) return c.ed->m->wantSlot;
+  return std::clamp(c.ed->m->sel, 0, trk::kMaxSamples - 1);
+}
+
+void headerStepEntry(App& a, ObjectId channel, int d) {
+  const int cur = headerEntry(a, channel);
+  if (cur < 0 || d == 0) return;
+  headerSelectSample(a, channel, std::clamp(cur + d, 0, trk::kMaxSamples - 1));
+}
+
+int headerLoadSampleInto(App& a, ObjectId channel, const std::string& path, int slot) {
+  if (slot < 0 || slot >= trk::kMaxSamples) return -1;
+  headerSelectSample(a, channel, slot);
+  return headerLoadSample(a, channel, path);
+}
+
+bool headerEntryOp(App& a, ObjectId channel, EntryOp op, int slot, int other, const std::string& name) {
+  HeaderCtx c = headerCtx(a, channel);
+  if (!c.st || slot < 0 || slot >= trk::kMaxSamples) return false;
+  Memory& m = *c.ed->m;
+  switch (op) {
+    case EntryOp::Clear:
+      if (!hasSample(c.e, slot) || !opRemoveSample(a, c.t, slot)) return false;
+      if (m.selSlot == slot) m.selA = m.selB = -1;
+      m.wantSlot = slot;  // the entry stays picked, now empty
+      return true;
+    case EntryOp::Duplicate: {
+      const int to = opDuplicateSample(a, c.t, slot);
+      if (to < 0) {
+        a.notify(hasSample(c.e, slot) ? i18n::tr("All 16 sample entries are used") : i18n::tr("The entry is empty"));
+        return false;
+      }
+      m.sel = to, m.wantSlot = -1;
+      return true;
+    }
+    case EntryOp::CopyTo:
+      if (other < 0 || other >= trk::kMaxSamples || !opCopyEntry(a, c.t, slot, other)) return false;
+      m.sel = other, m.wantSlot = -1;
+      if (m.selSlot == other) m.selA = m.selB = -1;
+      return true;
+    case EntryOp::Exchange:
+      if (!opExchangeEntries(a, c.t, slot, other)) return false;
+      if (m.selSlot == slot || m.selSlot == other) m.selA = m.selB = -1;
+      return true;
+    case EntryOp::Rename: return hasSample(c.e, slot) && opRenameSample(a, c.t, slot, name);
+    case EntryOp::MapAllKeys: return hasSample(c.e, slot) && opMapKeys(a, c.t, 0, 95, slot);
+  }
+  return false;
+}
+
+int headerRegionToEntry(App& a, ObjectId channel, int to) {
+  HeaderCtx c = headerCtx(a, channel);
+  if (!c.ok()) return -1;
+  const int k = c.ed->m->sel;
+  if (!hasSample(c.e, k)) return -1;
+  const auto& f = c.inst->files[static_cast<size_t>(k)];
+  if (!f || f->frames() == 0) {
+    a.notify(i18n::tr("The sample file is missing"));
+    return -1;
+  }
+  const auto frames = static_cast<int32_t>(std::min<size_t>(f->frames(), 0x3FFFFFFF));
+  Span r = rangeOf(*c.ed->m, k);
+  r.a = std::clamp(r.a, 0, frames), r.b = std::clamp(r.b, 0, frames);
+  if (r.empty()) {
+    a.notify(i18n::tr("Drag a range on the waveform first"));
+    return -1;
+  }
+  if (to < 0 && firstFreeEntry(c.e) < 0) {
+    a.notify(i18n::tr("All 16 sample entries are used"));
+    return -1;
+  }
+  const int slot = opRegionToEntry(a, c.t, k, r, to);
+  if (slot >= 0) c.ed->m->sel = slot, c.ed->m->wantSlot = -1;
+  return slot;
 }
 
 }  // namespace gl::packs::trackerpack

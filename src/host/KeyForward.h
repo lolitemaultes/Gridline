@@ -43,6 +43,11 @@ uint32_t modsOfX11State(unsigned state);
 // Ctrl / Alt chords (save, undo, ...). Letters, digits and the rest stay
 // with the plugin (its computer-keyboard notes, typing in its fields).
 bool forwardsToHost(int usage, uint32_t mods);
+// User 2026-11-21: in the Smooth layout the arrow keys (with or without modifiers) a plugin's window
+// passes on stay with the open instrument instead of reaching the arrangement, where they would select
+// another region or track (and the typing keyboard would follow it to another instrument). True: the
+// key (a HID usage) is not handed to the main window. `smooth`: the Smooth layout is on screen.
+bool keepInPluginWindow(bool smooth, int usage);
 // X11: whether Gridline watches the keys of a window of a plugin's interface,
 // from the event masks other X clients selected on it (XWindowAttributes
 // all_event_masks without Gridline's own): only when one of them takes key

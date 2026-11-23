@@ -80,6 +80,7 @@ void save(const Store& s) {
     x.object["genericEditor"] = jbool(o.genericEditor);
     if (o.notePitch != HostOptions::PitchAuto) x.object["notePitch"] = Json::makeNumber(o.notePitch);
     if (o.mpeBendRange != 48) x.object["mpeBendRange"] = Json::makeNumber(o.mpeBendRange);
+    if (o.window != 0) x.object["window"] = Json::makeNumber(o.window);
     opts.object[k] = std::move(x);
   }
   j.object["options"] = std::move(opts);
@@ -127,6 +128,7 @@ void readFile(Store& s, const std::string& file) {
           h.genericEditor = readBool(v, "genericEditor", h.genericEditor);
           h.notePitch = jsonInt<int>(std::clamp(v.num("notePitch", h.notePitch), 0.0, 3.0));
           h.mpeBendRange = jsonInt<int>(std::clamp(v.num("mpeBendRange", h.mpeBendRange), 1.0, 96.0));
+          h.window = jsonInt<int>(std::clamp(v.num("window", h.window), 0.0, 2.0));
           s.prefs.options[k] = h;
         }
       s.prefs.preferredFormat = j.text("preferredFormat");

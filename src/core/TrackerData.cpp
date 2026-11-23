@@ -77,6 +77,12 @@ std::string encodeInstrument(const InstrumentText& t) {
          std::to_string(s.loopLength) + " " + std::to_string(s.loop) + " " + std::to_string(s.volume) + " " + std::to_string(s.finetune) + " " +
          std::to_string(s.pan) + " " + std::to_string(s.relNote) + (sn.empty() ? "" : " " + sn) + "\n";
   }
+  // 0.7.8: samples played backwards, one line each after the sample lines (written only when set, so
+  // texts without them read and write the same as before).
+  for (int k = 0; k < kMaxSamples; ++k) {
+    const SampleDef& s = d.samples[static_cast<size_t>(k)];
+    if (s.reverse && (s.present() || t.fileOf[static_cast<size_t>(k)] >= 0)) o += "rev " + std::to_string(k) + "\n";
+  }
   return o;
 }
 
@@ -150,6 +156,9 @@ bool decodeInstrument(const std::string& data, InstrumentText& out) {
       d.samples[static_cast<size_t>(k)] = s;
       out.fileOf[static_cast<size_t>(k)] = f < static_cast<int>(out.files.size()) ? f : -1;
       out.sampleNames[static_cast<size_t>(k)] = rest;
+    } else if (key == "rev") {  // 0.7.8: after its sample's line
+      const long k = num(in, -1, kMaxSamples - 1, -1);
+      if (k >= 0) d.samples[static_cast<size_t>(k)].reverse = true;
     }
   }
   return body;

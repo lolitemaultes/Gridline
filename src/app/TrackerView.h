@@ -20,6 +20,7 @@
 
 #include "../core/Types.h"
 
+struct ImGuiWindow;
 namespace gl {
 class App;
 }
@@ -76,6 +77,10 @@ bool hasKeyboard();
 // A header button was clicked: the keyboard goes back to the pattern editor when its page is the
 // one shown (the classic tracker's buttons never take the keys from the pattern).
 void keysBackToPattern();
+// K-376: the header band holds the keys only for a click (headerKeepsNoKeys hands them back): the
+// key focus frame (ui::setKeyFocusBorrower) and the pattern's focus marks stay on the pattern meanwhile.
+bool bandBorrowsKeys(const ImGuiWindow* area);
+bool keysBorrowedFromPattern();
 // R11-04: a button that opens a popup in the band keeps the keys there (focusing the pattern would
 // close the popup it just opened): cancels this frame's keysBackToPattern.
 void keepKeysHere();
@@ -136,6 +141,10 @@ int patternZoom();
 bool patternFit();
 // The zoom keys (Ctrl+Alt+. , and /): the Song page's zoom when it is in front, else the pattern's.
 void zoomFront(App& a, int d);
+// K-255 (Ctrl+Alt+L): the cursor's track loops at the cursor's row (the rows above it repeat; the
+// channel's lane length, so every layout plays it the same). On the row it already loops at, or
+// on the first row: the loop goes. One undo step.
+void trackLoopAtCursor(App& a);
 // The header band hidden (the pattern gets the room) and back.
 void setExtended(App& a, bool on);
 bool extended();
@@ -172,6 +181,10 @@ void toggleAudioPage(App& a);
 // other window docked there (Settings, the browser) closes, and the pattern comes to the front.
 // True when it acted (the key is used).
 bool closeFrontPageKey(App& a);
+// A centre page's Exit (and Esc, Cmd+W): a page of the page strip stays open behind the pattern;
+// any other window docked there (the LFO board, Settings, the browser) closes, so its open flag
+// does not linger. Then the pattern comes to the front. `window` is the page's stable name.
+void exitPage(App& a, const char* window);
 // K-297 on macOS: Cmd+W is the window menu's Close, which reaches Gridline as the main window's
 // close request (with Cmd held). When a Tracker page other than the pattern is in front, the
 // request closes that page on the next frame instead (true); otherwise it is the window's (false).
@@ -223,6 +236,8 @@ std::string sampleListDrawn();
 // HUNT-1119 (dev, "tracker band"): what the header band drew last frame (the strip or the whole
 // header), its window's height and the strip's height.
 std::string bandState();
+// Dev ("tracker pagestrip"): the page strip's tabs as last drawn, in order: "label" x0 x1 y0 y1 lit.
+std::string pageStripState();
 
 // cp16 (in-app CPU timers, no profiler): the wall time of the Tracker's own drawing per frame, by
 // part: the header band, the pattern editor, the other pages (Song, Steps, Mix, Pads, Roll's row).

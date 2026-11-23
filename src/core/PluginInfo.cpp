@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -111,9 +112,11 @@ std::string ParamDesc::format(double v) const {
     std::snprintf(buf, sizeof buf, "x%.2f", v);
   } else if (unit == "x") {
     std::snprintf(buf, sizeof buf, "%.1f:1", v);
-  } else if (unit == "note") {
+  } else if (unit == "note" || unit.rfind("note-", 0) == 0) {
+    // 0.7.8: "note-any" / "note-auto" / "note-off": a key, or (below 0) the word
+    if (v < -0.5 && unit.size() > 5) return unit == "note-any" ? "Any" : unit == "note-auto" ? "Auto" : "Off";
     static const char* names[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
-    int n = static_cast<int>(v + 0.5);
+    int n = std::max(0, static_cast<int>(v + 0.5));
     std::snprintf(buf, sizeof buf, "%s%d", names[((n % 12) + 12) % 12], n / 12 - 1);
   } else if (unit.empty()) {
     bool integral = max - min >= 4 && std::floor(def) == def && std::floor(min) == min;
@@ -417,7 +420,7 @@ GL_NOINLINE void addInfo8(std::vector<PluginInfo>& v) {
     p.params[padP(k, PadPan)] = lin((n + " pan").c_str(), "pan", -1, 1, 0);
     p.params[padP(k, PadCut)] = ch((n + " cut group").c_str(), groups, k == 3 || k == 4 ? 1 : 0);
     p.params[padP(k, PadReverse)] = tog((n + " reverse").c_str(), 0);
-    p.params[padE(k, PadNote)] = lin((n + " note").c_str(), "", -1, 127, -1);
+    p.params[padE(k, PadNote)] = lin((n + " note").c_str(), "note-auto", -1, 127, -1);
     p.params[padE(k, PadCutBy)] = ch((n + " cut by").c_str(), groups, 0);
     p.params[padE(k, PadMute)] = tog((n + " mute").c_str(), 0);
     p.params[padE(k, PadSolo)] = tog((n + " solo").c_str(), 0);
@@ -573,7 +576,7 @@ GL_NOINLINE void addInfo12(std::vector<PluginInfo>& v) {
   using namespace pp;
   PluginInfo p{"gl.slicer", "Kerf", "Sampler", PluginKind::Generator, {}, true, {}};
   p.params.resize(SlCount);
-  p.params[SlMode] = ch("Slicing", {"Transients", "4", "8", "16", "32", "Manual", "Beat grid"}, 0);
+  p.params[SlMode] = ch("Slicing", {"Transients", "4", "8", "16", "32", "Manual", "Beat grid", "Warp markers"}, 0);
   p.params[SlSensitivity] = lin("Sensitivity", "%", 0, 1, 0.5);
   p.params[SlBaseNote] = lin("Base note", "note", 0, 120, 60);
   p.params[SlPitch] = lin("Pitch", "st", -24, 24, 0);
@@ -590,6 +593,7 @@ GL_NOINLINE void addInfo12(std::vector<PluginInfo>& v) {
   p.params[SlDeclick] = tog("Declick", 1);
   p.params[SlFitTempo] = tog("Fit to tempo", 0);
   p.params[SlLoopBeats] = lin("Loop length", "beats", 1, 64, 4);
+  p.params[SlFitKeepPitch] = tog("Keep pitch", 1);  // K-239: fitted through the stretch, the pitch kept (K-351: on for new instances)
   p.params[SlFilterType] = ch("Filter", {"Off", "Low pass", "High pass", "Band pass"}, 0);
   p.params[SlCutoff] = lg("Cutoff", "Hz", 20, 20000, 20000);
   p.params[SlReso] = lin("Resonance", "%", 0, 1, 0);
@@ -611,7 +615,7 @@ GL_NOINLINE void addInfo12(std::vector<PluginInfo>& v) {
     p.params[slParam2(k, SliceReso)] = lin((n + " resonance").c_str(), "%", -1, 1, 0);
     p.params[slParam2(k, SliceDelay)] = lin((n + " delay").c_str(), "s", 0, 1, 0);
     p.params[slParam2(k, SliceCut)] = lin((n + " cut group").c_str(), "", 0, 99, 0);
-    p.params[slParam2(k, SliceKey)] = lin((n + " key").c_str(), "", -1, 127, -1);
+    p.params[slParam2(k, SliceKey)] = lin((n + " key").c_str(), "note-auto", -1, 127, -1);
   }
   p.params[SlModX] = lin("Modulation X", "%", 0, 1, 0.5);
   p.params[SlModY] = lin("Modulation Y", "%", 0, 1, 0.5);
@@ -681,7 +685,7 @@ GL_NOINLINE void addInfo12(std::vector<PluginInfo>& v) {
   p.params[SlLfoCut] = lin("LFO to cutoff", "oct", 0, 4, 0);
   // K-217: slice layers; layer B's per-slice parameters copy layer A's (pp::layerPid).
   p.params[SlLayer] = ch("Slice layer", {"A", "B"}, 0);
-  p.params[SlLayerKey] = lin("Layer switch key", "", -1, 126, -1);
+  p.params[SlLayerKey] = lin("Layer switch key", "note-off", -1, 126, -1);
   auto layerB = [&](int pid) {
     ParamDesc b = p.params[static_cast<size_t>(pid)];
     std::string n = b.name;
@@ -691,9 +695,10 @@ GL_NOINLINE void addInfo12(std::vector<PluginInfo>& v) {
   };
   for (int pid = SlMarkers; pid < SlModX; ++pid) layerB(pid);
   for (int pid = Slice3Base; pid < Slice3Base + kMaxSlices * SliceFields3; ++pid) layerB(pid);
-  p.presets = {{"Transients", {}}, {"Even 16ths, mono", {{SlMode, 3.f}, {SlMono, 1.f}}}, {"Fit to tempo", {{SlFitTempo, 1.f}, {SlMono, 1.f}}},
+  p.presets = {{"Transients", {}}, {"Even 16ths, mono", {{SlMode, 3.f}, {SlMono, 1.f}}}, {"Fit to tempo", {{SlFitTempo, 1.f}, {SlFitKeepPitch, 1.f}, {SlMono, 1.f}}},
                {"On the beat, 8ths", {{SlMode, static_cast<float>(SlModeGrid)}, {SlGridDiv, 3.f}, {SlMono, 1.f}}},
                {"Lo-fi", {{SlFilterType, 1.f}, {SlCutoff, 3000.f}, {SlPitch, -2.f}}}};
+  p.legacyDefaults.push_back({SlFitKeepPitch, 0.f});  // K-351: states saved before Keep pitch keep the pitch following the tempo
   p.editorWidth = 714;
   v.push_back(p);
 }
@@ -723,6 +728,8 @@ GL_NOINLINE void addInfo13(std::vector<PluginInfo>& v) {
   p.params[GrJitter] = lin("Time jitter", "%", 0, 1, 0);
   p.params[GrTransientHold] = lin("Step hold", "s", 0, 2, 0.25);
   p.params[GrPitch] = lin("Pitch", "st", -24, 24, 0);
+  p.params[GrLevel] = ch("Level", {"Classic", "Balanced"}, 1);
+  p.legacyModelParam = GrLevel;  // K-341: songs saved before keep their level
   p.editorWidth = 600;  // channel settings window width
   p.presets = {{"Cloud", {}}, {"Glitch", {{GrSize, 0.02f}, {GrDensity, 60.f}, {GrSpread, 0.5f}}},
                {"Pad", {{GrSize, 0.25f}, {GrDensity, 12.f}, {GrAttack, 1.2f}, {GrRelease, 3.f}}},
@@ -1464,6 +1471,29 @@ GL_NOINLINE void addInfo35(std::vector<PluginInfo>& v) {
   p.params[ShLfoShape] = ch("LFO shape", {"Sine", "Triangle", "Saw", "Square"}, 0);
   p.params[ShInput] = lin("Input", "dB", -24, 12, 0);
   p.params[ShOutput] = lin("Output", "dB", -24, 6, 0);
+  {  // K-257: each lane's own length, and the band split
+    std::vector<std::string> steps;
+    for (int k = 1; k <= kShaperMaxSteps; ++k) steps.push_back(std::to_string(k));  // phase 2: up to 64
+    p.params[ShVolSteps] = ch("Volume steps", steps, kShaperPoints - 1);
+    p.params[ShCutSteps] = ch("Cutoff steps", steps, kShaperPoints - 1);
+    p.params[ShPanSteps] = ch("Pan steps", steps, kShaperPoints - 1);
+  }
+  p.params[ShBand] = ch("Band", {"Full", "Lows", "Highs"}, 0);
+  p.params[ShBandFreq] = lg("Band split", "Hz", 40, 8000, 250);
+  {  // K-257 phase 2: each lane's step size and swing, the patterns and what picks them
+    const std::vector<std::string> rates = {"Auto", "1/32", "1/32T", "1/16", "1/16T", "1/8", "1/8T", "1/4", "1/4T", "1/2", "1/2T", "1 bar"};
+    p.params[ShVolRate] = ch("Volume step size", rates, 0);
+    p.params[ShCutRate] = ch("Cutoff step size", rates, 0);
+    p.params[ShPanRate] = ch("Pan step size", rates, 0);
+    p.params[ShVolSwing] = lin("Volume swing", "%", 0, 1, 0);
+    p.params[ShCutSwing] = lin("Cutoff swing", "%", 0, 1, 0);
+    p.params[ShPanSwing] = lin("Pan swing", "%", 0, 1, 0);
+    p.params[ShPattern] = ch("Pattern", {"1", "2", "3", "4", "5", "6", "7", "8"}, 0);
+    p.params[ShChain] = tog("Pattern chain", 0);
+    p.params[ShNoteSrc] = ch("Pattern notes", {"Off", "MIDI Out ports", "MIDI input"}, 0);
+    p.params[ShNotePort] = lin("Pattern notes port", "", -1, 255, -1);
+    p.params[ShNoteBase] = lin("Pattern notes from", "note", 0, 120, 48);
+  }
   p.editorWidth = 860;
   std::vector<std::pair<int, float>> pump, gate8;
   for (int k = 0; k < kShaperPoints; ++k) {
@@ -1471,7 +1501,13 @@ GL_NOINLINE void addInfo35(std::vector<PluginInfo>& v) {
     pump.push_back({ShVol + k, std::min(1.0f, 0.1f + ph * 1.4f)});
     gate8.push_back({ShVol + k, k % 2 ? 0.f : 1.f});
   }
-  p.presets = {{"Off", {}}, {"Sidechain pump", pump}, {"Gate 1/8", gate8}};
+  // K-257: a 3-step volume lane against the 16-step cutoff lane, gating the highs only.
+  std::vector<std::pair<int, float>> poly = {{ShFilter, 1.f}, {ShCutDepth, 1.f}, {ShVolSteps, 2.f}, {ShCutSteps, 3.f}, {ShBand, 2.f}, {ShBandFreq, 300.f}, {ShTension, 0.3f}};
+  for (int k = 0; k < kShaperPoints; ++k) {
+    poly.push_back({ShVol + k, k % 3 == 0 ? 1.f : k % 3 == 1 ? 0.15f : 0.5f});
+    poly.push_back({ShCut + k, 0.25f + 0.75f * static_cast<float>(k) / (kShaperPoints - 1)});
+  }
+  p.presets = {{"Off", {}}, {"Sidechain pump", pump}, {"Gate 1/8", gate8}, {"Three against four, highs", poly}};
   v.push_back(p);
 }
 
@@ -1755,6 +1791,21 @@ const std::vector<PluginInfo>& pluginCatalog() {
   return cat;
 }
 
+const std::vector<CatalogGroup>& catalogGroups(PluginKind kind) {
+  static const std::array<std::vector<CatalogGroup>, 3> groups = [] {
+    std::array<std::vector<CatalogGroup>, 3> g;
+    for (const auto& p : pluginCatalog()) {
+      if (p.hidden) continue;
+      auto& list = g[static_cast<size_t>(p.kind)];
+      auto it = std::find_if(list.begin(), list.end(), [&p](const CatalogGroup& x) { return x.category == p.category; });
+      if (it == list.end()) it = list.insert(list.end(), CatalogGroup{p.category, {}});
+      it->items.push_back(&p);
+    }
+    return g;
+  }();
+  return groups[static_cast<size_t>(kind)];
+}
+
 namespace {
 // Append-only table of runtime-registered plugins. Writers serialize on the
 // mutex; readers only load the published count and the immutable entries.
@@ -1774,6 +1825,39 @@ DynamicTable& dynamicTable() {
 bool isHostedType(const std::string& type) {
   return type.compare(0, 5, "vst3:") == 0 || type.compare(0, 5, "clap:") == 0 || type.compare(0, 5, "vst2:") == 0 ||
          type.compare(0, 3, "au:") == 0 || type.compare(0, 4, "lv2:") == 0;
+}
+
+namespace {
+struct RemoteData {
+  std::mutex mu;
+  std::deque<std::pair<size_t, size_t>> keys;  // (size, hash), oldest first
+};
+RemoteData& remoteData() {
+  static RemoteData& r = *new RemoteData;  // (never destroyed: plugin threads may ask while statics go)
+  return r;
+}
+std::pair<size_t, size_t> remoteKey(const std::string& d) { return {d.size(), std::hash<std::string>()(d)}; }
+}  // namespace
+
+void noteRemotePluginData(const std::string& data) {
+  if (data.empty() || isPendingPluginData(data)) return;
+  RemoteData& r = remoteData();
+  const auto k = remoteKey(data);
+  std::lock_guard<std::mutex> lock(r.mu);
+  if (std::find(r.keys.begin(), r.keys.end(), k) != r.keys.end()) return;
+  r.keys.push_back(k);
+  while (r.keys.size() > 256) r.keys.pop_front();
+}
+
+bool takeRemotePluginData(const std::string& data) {
+  if (data.empty()) return false;
+  RemoteData& r = remoteData();
+  const auto k = remoteKey(data);
+  std::lock_guard<std::mutex> lock(r.mu);
+  auto it = std::find(r.keys.begin(), r.keys.end(), k);
+  if (it == r.keys.end()) return false;
+  r.keys.erase(it);
+  return true;
 }
 
 void registerDynamicPlugin(PluginInfo info) {
@@ -1837,6 +1921,13 @@ PluginState presetState(const PluginInfo& info, size_t preset) {
   if (preset < info.presets.size())
     for (const auto& [k, v] : info.presets[preset].values)
       if (k >= 0 && static_cast<size_t>(k) < s.params.size()) s.params[static_cast<size_t>(k)] = static_cast<float>(info.params[static_cast<size_t>(k)].clamp(v));
+  if (preset < info.presets.size() && !info.presets[preset].data.empty()) s.data = info.presets[preset].data;
+  return s;
+}
+
+PluginState presetStateKeepingData(const PluginInfo& info, size_t preset, const std::string& currentData) {
+  PluginState s = presetState(info, preset);
+  if (preset >= info.presets.size() || info.presets[preset].data.empty()) s.data = currentData;
   return s;
 }
 
@@ -1951,6 +2042,11 @@ void normalizePluginState(PluginState& s) {
     // J-153 / J-157: every older stretch mode (2..6, also out-of-range values) is the stretch; 7 is Rubber Band.
     float& m = s.params[static_cast<size_t>(pp::SmpStretchMode)];
     if (m == m && m >= 1.5f && std::lround(m) != 7) m = 1.0f;
+  }
+  if (s.type == "gl.seltmann" && s.params.size() > 5) {
+    // 0.7.8: Seltmann follows the project with one stretch (Follow: Stretch / Resample / Off). Its old
+    // stretch modes (Auto, Transient, Mono, Rubber Band; parameter 5) all load as the stretch.
+    s.params[5] = 0.0f;
   }
   for (size_t i = 0; i < p->params.size(); ++i) s.params[i] = static_cast<float>(p->params[i].clamp(s.params[i]));
 }

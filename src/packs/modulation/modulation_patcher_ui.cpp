@@ -21,6 +21,7 @@
 #include "../../host/HostedPlugins.h"
 #include "../../host/PluginScan.h"
 #include "junction.h"
+#include "junction_minimap.h"
 #include "modulation.h"
 #include "modulation_dsp.h"
 #include "modulation_skin.h"
@@ -91,6 +92,8 @@ struct View {
   ImVec2 dragStart{0, 0};
   uint32_t cableNode = 0;
   JPort cablePort;
+  MiniDrag mini;                    // a minimap drag keeps the mapping it started with
+  ImVec2 miniA{0, 0}, miniB{0, 0};  // and the minimap's frame, relative to the canvas
   // Popups.
   uint32_t menuNode = 0;
   int menuLink = -1;
@@ -117,6 +120,8 @@ struct View {
   uint32_t devLastAdded = 0;
   std::map<int, ImVec2> devKnobs;  // the inspector's knobs on screen (dump)
   ImVec2 origin{0, 0};
+  MiniMapping miniNow;  // the minimap as last drawn (dump)
+  ImVec2 miniNowA{0, 0}, miniNowB{0, 0};
 };
 
 View* gLastView = nullptr;
@@ -637,26 +642,38 @@ void drawMap(EditTarget& e, View& v, const skin::Skin& K, float W, float H) {
   }
   // ---- minimap
   ImVec2 mm0(0, 0), mm1(0, 0);
-  float mmz = 1, mmx = 0, mmy = 0;
+  MiniMapping mmap;
   if (v.minimap && v.items.size() > 2) {
-    const float size = v.miniSize == 0 ? 90.0f : v.miniSize == 1 ? 136.0f : 190.0f;
-    float x0, y0, x1, y1;
-    bounds(v, x0, y0, x1, y1);
-    const float vw0 = -v.panX / v.zoom, vh0 = -v.panY / v.zoom, vw1 = vw0 + W / v.zoom, vh1 = vh0 + H / v.zoom;
-    x0 = std::min(x0, vw0), y0 = std::min(y0, vh0), x1 = std::max(x1, vw1), y1 = std::max(y1, vh1);
-    mmz = size / std::max(1.0f, std::max(x1 - x0, (y1 - y0) * 1.4f));
-    const float mw = (x1 - x0) * mmz + 8, mh = (y1 - y0) * mmz + 8;
-    const float mx = v.miniCorner == 0 || v.miniCorner == 3 ? p0.x + 8 : p1.x - mw - 8;
-    const float my = v.miniCorner < 2 ? p0.y + 8 : p1.y - mh - 8;
-    mm0 = ImVec2(mx, my), mm1 = ImVec2(mx + mw, my + mh);
-    mmx = mx + 4 - x0 * mmz, mmy = my + 4 - y0 * mmz;
+    float vw0, vh0, vw1, vh1;
+    miniViewRect(v.panX, v.panY, v.zoom, W, H, vw0, vh0, vw1, vh1);
+    if (v.drag == Drag::Mini) {
+      // Frozen while dragged: the frame and its scale stay where the press found them.
+      mmap = v.mini.map;
+      mmap.ox += p0.x, mmap.oy += p0.y;
+      mm0 = ImVec2(p0.x + v.miniA.x, p0.y + v.miniA.y), mm1 = ImVec2(p0.x + v.miniB.x, p0.y + v.miniB.y);
+    } else {
+      const float size = v.miniSize == 0 ? 90.0f : v.miniSize == 1 ? 136.0f : 190.0f;
+      float x0, y0, x1, y1;
+      bounds(v, x0, y0, x1, y1);
+      x0 = std::min(x0, vw0), y0 = std::min(y0, vh0), x1 = std::max(x1, vw1), y1 = std::max(y1, vh1);
+      float mw, mh;
+      mmap = miniFit(size, x0, y0, x1, y1, mw, mh);
+      const float mx = v.miniCorner == 0 || v.miniCorner == 3 ? p0.x + 8 : p1.x - mw - 8;
+      const float my = v.miniCorner < 2 ? p0.y + 8 : p1.y - mh - 8;
+      mm0 = ImVec2(mx, my), mm1 = ImVec2(mx + mw, my + mh);
+      mmap.ox += mx, mmap.oy += my;
+    }
+    const float mmz = mmap.z, mmx = mmap.ox, mmy = mmap.oy;
     dl->AddRectFilled(mm0, mm1, theme::withAlpha(skin::darken(K.graphBg, 0.3f), 0.92f), 4);
     dl->AddRect(mm0, mm1, theme::withAlpha(K.textDim, 0.35f), 4);
+    dl->PushClipRect(mm0, mm1, true);
     for (const Item& it : v.items)
       dl->AddRectFilled(ImVec2(mmx + it.x * mmz, mmy + it.y * mmz), ImVec2(mmx + (it.x + it.w) * mmz, mmy + (it.y + it.h) * mmz),
                         v.sel.count(it.id) ? K.select : theme::withAlpha(it.tint, 0.8f), 1);
     dl->AddRect(ImVec2(mmx + vw0 * mmz, mmy + vh0 * mmz), ImVec2(mmx + vw1 * mmz, mmy + vh1 * mmz), theme::withAlpha(K.text, 0.8f), 1);
+    dl->PopClipRect();
   }
+  v.miniNow = mmap, v.miniNowA = mm0, v.miniNowB = mm1;
   const bool overMini = v.minimap && v.items.size() > 2 && m.x >= mm0.x && m.x < mm1.x && m.y >= mm0.y && m.y < mm1.y;
   // ---- hint
   if (hovered) {
@@ -681,6 +698,10 @@ void drawMap(EditTarget& e, View& v, const skin::Skin& K, float W, float H) {
     if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
       if (overMini) {
         v.drag = Drag::Mini;
+        MiniMapping rel = mmap;  // kept relative to the canvas, in case the window moves
+        rel.ox -= p0.x, rel.oy -= p0.y;
+        v.mini = miniBegin(rel, m.x - p0.x, m.y - p0.y, v.panX, v.panY, v.zoom, W, H);
+        v.miniA = ImVec2(mm0.x - p0.x, mm0.y - p0.y), v.miniB = ImVec2(mm1.x - p0.x, mm1.y - p0.y);
       } else if (panKey) {
         v.drag = Drag::Pan;
       } else if (hoverPort) {
@@ -711,9 +732,9 @@ void drawMap(EditTarget& e, View& v, const skin::Skin& K, float W, float H) {
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Middle) && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) v.drag = Drag::None;
   } else if (v.drag == Drag::Mini) {
     if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-      const float cx = (m.x - mmx) / mmz, cy = (m.y - mmy) / mmz;
-      v.panX = W * 0.5f - cx * v.zoom;
-      v.panY = H * 0.5f - cy * v.zoom;
+      // One minimap pixel moves the view box one pixel, at any patch size and zoom.
+      const float mx = std::clamp(m.x - p0.x, v.miniA.x, v.miniB.x), my = std::clamp(m.y - p0.y, v.miniA.y, v.miniB.y);
+      miniPan(v.mini, mx, my, v.zoom, W, H, v.panX, v.panY);
     } else {
       v.drag = Drag::None;
     }
@@ -1592,6 +1613,10 @@ bool junctionDevCommand(App& a, const std::string& cmd, const std::vector<std::s
     const Xf X{v->origin, v->panX, v->panY, v->zoom};
     std::printf("junction modules %zu links %zu controls %zu snaps %zu selected %zu zoom %.3f page %d v3 %d\n", v->g.nodes.size(), v->g.links.size(), v->g.controls.size(),
                 v->g.snaps.size(), v->sel.size(), static_cast<double>(v->zoom), v->page, isJunction3(v->cached) ? 1 : 0);
+    float vx0, vy0, vx1, vy1;
+    miniViewRect(v->panX, v->panY, v->zoom, 0, 0, vx0, vy0, vx1, vy1);
+    std::printf("junction minimap %.1f %.1f %.1f %.1f scale %.5f view %.1f %.1f\n", static_cast<double>(v->miniNowA.x), static_cast<double>(v->miniNowA.y),
+                static_cast<double>(v->miniNowB.x), static_cast<double>(v->miniNowB.y), static_cast<double>(v->miniNow.z), static_cast<double>(vx0), static_cast<double>(vy0));
     for (const auto& kv : v->devKnobs) std::printf("  knob %d at %.0f %.0f\n", kv.first, static_cast<double>(kv.second.x), static_cast<double>(kv.second.y));
     for (const Item& it : v->items) {
       const ImVec2 a = X.pt(it.x, it.y), b = X.pt(it.x + it.w, it.y + it.h);

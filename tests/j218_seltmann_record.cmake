@@ -7,7 +7,7 @@
 #      file is in the Recorded folder of the unsaved project (the config's), its length is the take's;
 #   3. a take recorded straight through: the detected tempo is near the loop's 96 BPM;
 #   4. Clear and record again; 5. Back with a finished take asks first, Discard returns to the
-#      start screen with nothing loaded.
+#      start screen with nothing loaded; 6. a take into a loaded instance keeps its chop.
 # Screenshots of each recorder state (idle, recording, paused, finished) at 100 % and 200 % in <OUT>.
 #   cmake -DAPP=<gridline-app> -DTESTBIN=<gridline_test_seltmann> -DRECBIN=<gridline_test_seltmann_rec> -DOUT=<dir> -P j218_seltmann_record.cmake
 cmake_minimum_required(VERSION 3.16)
@@ -179,6 +179,40 @@ run(backidle 40 "${clickEntry}${_click}" 1)
 string(REGEX MATCH "seltmann: rec open[^\n]*\n(.*)$" _ "${last_out}")
 check("Back without a take returns straight away" CMAKE_MATCH_1 MATCHES "seltmann: state empty")
 
-foreach(f start idle recording paused finished start_200 idle_200 recording_200 paused_200 finished_200 load)
+# ---- 6. 0.7.8: a take into a loaded instance (Record take in the header): Keep the chop is on, the
+# take replaces the file and the regions and the sequence stay; the Takes card lists it (the take
+# outlasts the 5 s loop, so every region lies inside it)
+execute_process(COMMAND "${TESTBIN}" writeloop "${OUT}/Loaded 96.wav")
+set(ENV{GRIDLINE_SELTMANN_DEMO} "${OUT}/Loaded 96.wav")
+run(loaded 40 "5 waitfor seltmann-ready 120\n" 1)
+string(REGEX MATCHALL "seltmann: state ready[^\n]*" rl "${last_out}")
+list(GET rl -1 r0)
+string(REGEX MATCH "slices ([0-9]+)" _ "${r0}")
+set(slices0 "${CMAKE_MATCH_1}")
+string(REGEX MATCH "order \"([^\"]*)\"" _ "${r0}")
+set(order0 "${CMAKE_MATCH_1}")
+pos(rectake "btn rectake" "${last_out}")
+set(openTake "5 waitfor seltmann-ready 120\n10 move ${rectake_x} ${rectake_y}\n12 down 0\n13 up 0\n14 waitfor seltmann-rec-open 10\n")
+run(takeidle 30 "${openTake}" 1)
+last_rec(st "${last_out}")
+check("Record take opens the recorder over a loaded instance, keeping the chop" st MATCHES "state idle input 1 stereo ask 0 keep 1")
+pos(trec "recbtn record" "${last_out}")
+pos(tfin "recbtn finish" "${last_out}")
+pos(tuse "recbtn load" "${last_out}")
+check("... with Keep the chop beside Use the take" last_out MATCHES "recbtn keepchop [0-9]+ [0-9]+")
+click(trec 20)
+set(r1 "${_click}")
+click(tfin 40)
+set(f1 "${_click}")
+click(tuse 50)
+set(u1 "${_click}")
+run(takeuse 120 "${openTake}${r1}26 waitfor seltmann-take-6 20\n${f1}${u1}60 waitfor seltmann-ready 120\n" 1)
+check("Use the take: the take goes into this instance, the chop kept (takes 1)" last_out MATCHES "seltmann: take \"[^\"]+Recorded/[^\"]+\" keep 1 takes 1")
+string(REGEX MATCHALL "seltmann: state ready[^\n]*" rl "${last_out}")
+list(GET rl -1 r1)
+check("... the regions and the sequence stay (${slices0}: ${order0})" r1 MATCHES "slices ${slices0} " AND r1 MATCHES "order \"${order0}\"")
+unset(ENV{GRIDLINE_SELTMANN_DEMO})
+
+foreach(f start idle recording paused finished start_200 idle_200 recording_200 paused_200 finished_200 load takeidle takeuse)
   check("screenshot ${f}.ppm written" EXISTS "${OUT}/${f}.ppm")
 endforeach()

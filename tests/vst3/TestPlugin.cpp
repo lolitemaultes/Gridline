@@ -10,8 +10,13 @@
 //                          fixed 360 x 220 NSView).
 //   "Gridline Test Gain"   effect, single component (processor = controller),
 //                          sidechain bus, 32 samples reported latency.
+// GRIDLINE_TEST_CHIP="<floor dBFS>:<busy microseconds per 256 frames>" makes the synth behave like a chip-level
+// emulation (GitHub #66): a faint noise floor and a fixed cost in every block whatever it plays,
+// and an infinite tail; "<floor>:<busy>:fx" does the same to the gain effect instead.
 #include <atomic>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
 #if defined(__APPLE__)
 #include <CoreFoundation/CoreFoundation.h>
 #endif
@@ -65,6 +70,39 @@ DEF_CLASS_IID(IUnitInfo)
 namespace {
 
 GridlineVst3Probe gProbe;
+
+// GitHub #66: a chip emulator's idle behaviour (see the header). Read when an instance is made.
+struct Chip {
+  bool on = false;
+  float floor = 0;    // peak of the noise floor (linear)
+  double busyUs = 0;  // processor time each block costs
+  uint32_t rng = 0x1234567u;
+  explicit Chip(bool forEffect) {
+    const char* e = std::getenv("GRIDLINE_TEST_CHIP");
+    double db = 0, us = 0;
+    char kind[8] = {};
+    if (!e) return;
+    const int got = std::sscanf(e, "%lf:%lf:%7s", &db, &us, kind);
+    if (got < 2 || (got == 3 && std::strcmp(kind, "fx") == 0) != forEffect) return;
+    on = true;
+    floor = db <= -400 ? 0.f : static_cast<float>(std::pow(10.0, db / 20.0));
+    busyUs = us;
+  }
+  // Adds the floor (an offset with noise on it, never above `floor`) and spends the block's cost.
+  void block(float* L, float* R, int32 n) {
+    for (int32 i = 0; i < n; ++i) {
+      rng = rng * 1664525u + 1013904223u;
+      const float x = floor * (0.5f + 0.5f * static_cast<float>(rng >> 8) / 16777216.0f);
+      L[i] += x;
+      R[i] -= x;
+    }
+    if (busyUs <= 0 || n <= 0) return;  // (busyUs per 256 frames: an emulation costs by the sample)
+    const auto until = std::chrono::steady_clock::now() + std::chrono::nanoseconds(static_cast<int64_t>(busyUs * 1000.0 * n / 256.0));
+    volatile double sink = 0;
+    while (std::chrono::steady_clock::now() < until) sink = sink + 1.0;
+  }
+};
+
 void noteContext(const ProcessData& d) {
   gProbe.hadContext = d.processContext != nullptr;
   if (d.processContext) gProbe.context = *d.processContext;
@@ -284,7 +322,7 @@ class SynthProcessor final : public RefCounted, public IComponent, public IAudio
     return kResultOk;
   }
   tresult PLUGIN_API setProcessing(TBool) override { return kResultOk; }
-  uint32 PLUGIN_API getTailSamples() override { return 0; }
+  uint32 PLUGIN_API getTailSamples() override { return chip_.on ? kInfiniteTail : 0; }
   tresult PLUGIN_API process(ProcessData& d) override {
     noteContext(d);
     if (IParameterChanges* pc = d.inputParameterChanges)
@@ -341,6 +379,7 @@ class SynthProcessor final : public RefCounted, public IComponent, public IAudio
       L[i] = R[i] = s;
       if (SL) SL[i] = SR[i] = sub;
     }
+    if (chip_.on) chip_.block(L, R, d.numSamples);
     gProbe.notes.frames += d.numSamples;
     return kResultOk;
   }
@@ -378,6 +417,7 @@ class SynthProcessor final : public RefCounted, public IComponent, public IAudio
   int32 notesPlayed_ = 0;
   int32 noteId_ = -1;
   double pitch_ = 60, bend_ = 0, midiBend_ = 0, amp_ = 0, phase_ = 0, subPhase_ = 0;
+  Chip chip_{false};
 };
 
 // --------------------------------------------------------------- synth controller
@@ -689,6 +729,7 @@ class GainEffect final : public RefCounted, public IComponent, public IAudioProc
         d.outputs[0].channelBuffers32[c][i] = bypass_ ? x : static_cast<float>(x * gain_ * 2.0 + sc * side_);
       }
     }
+    if (chip_.on) chip_.block(d.outputs[0].channelBuffers32[0], d.outputs[0].channelBuffers32[1], d.numSamples);
     return kResultOk;
   }
   // IEditController
@@ -728,6 +769,7 @@ class GainEffect final : public RefCounted, public IComponent, public IAudioProc
  private:
   double gain_ = 0.5, side_ = 0;
   bool bypass_ = false, scActive_ = false;
+  Chip chip_{true};
 };
 
 // --------------------------------------------------------------- factory

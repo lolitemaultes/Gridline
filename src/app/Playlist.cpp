@@ -29,7 +29,9 @@
 #include "../core/ClipMultiEdit.h"
 #include "../core/ClipRate.h"
 #include "ClipHeaderHit.h"
+#include "ClipEditor.h"
 #include "ClipMultiUi.h"
+#include "ClipRenderUi.h"
 #include "../core/Fades.h"
 #include "../core/ClipPlayback.h"
 #include "../core/TrackIconSet.h"
@@ -42,6 +44,7 @@
 #include "../core/PluginInfo.h"
 #include "../core/PluginParams.h"
 #include "../core/SmoothSnap.h"
+#include "../engine/ClipGestures.h"
 #include "../engine/ClipOps.h"
 #include "../engine/ClipSource.h"
 #include "../engine/PlaylistTools.h"
@@ -49,6 +52,7 @@
 #include "FreezeUi.h"
 #include "MixerMeters.h"
 #include "App.h"
+#include "SnapMenu.h"
 #include "StageView.h"
 #include "SmoothScrollUi.h"
 #include "../core/Grouping.h"
@@ -88,6 +92,7 @@
 #include "../core/Meter.h"
 #include "../core/TrackPlus.h"
 #include "TrackPlusUi.h"
+#include "DragLog.h"
 
 namespace gl {
 
@@ -533,6 +538,21 @@ struct AudioMap {
   }
 };
 
+// Dev checks (the clip editor's "clipeditor geom"): the pixel columns the waveform drew, as runs
+// [x0, x1), while recording is on.
+namespace {
+bool gWaveRunsOn = false;
+std::vector<std::pair<float, float>> gWaveRuns;
+void noteWaveColumn(float x) {
+  if (!gWaveRunsOn) return;
+  if (!gWaveRuns.empty() && std::fabs(gWaveRuns.back().second - x) < 0.5f) gWaveRuns.back().second = x + 1.0f;
+  else gWaveRuns.emplace_back(x, x + 1.0f);
+}
+// The clip window's waveform drawn taller than the playlist's (its sample's peak fills the height):
+// the scale the next waveforms are drawn at (1: the playlist's own).
+float gWaveScale = 1.0f;
+}  // namespace
+
 // J-118: with `xf`, each column's opacity follows the clip's crossfade level
 // there (a waveform fading out under, or into, its crossfade partner).
 // J-217: drawn from a summary of `frames` frames at `rate` (a decoded sample,
@@ -568,8 +588,9 @@ void drawWaveformFrom(ImDrawList* dl, const Song& s, const Channel& ch, const Cl
     b1 = std::clamp<long>(std::max(b1, b0 + 1), 1, static_cast<long>(pk.bins()));
     float lo = 0, hi = 0;
     pk.range(static_cast<size_t>(b0), static_cast<size_t>(b1), lo, hi);
-    const float g = c.gain;  // J-79: the waveform follows the clip's gain (louder clips draw taller, clipped at the body)
+    const float g = c.gain * gWaveScale;  // J-79: the waveform follows the clip's gain (louder clips draw taller, clipped at the body)
     const ImU32 cc = xf ? theme::withAlpha(col, 0.1f + 0.9f * xf->xfGain(x + 0.5f)) : col;
+    noteWaveColumn(x);
     dl->AddLine(ImVec2(x + 0.5f, mid - std::clamp(hi * g, -1.f, 1.f) * half), ImVec2(x + 0.5f, mid - std::clamp(lo * g, -1.f, 1.f) * half + 1), cc);
   }
 }
@@ -982,15 +1003,9 @@ void arrangementClipMenu(App& a, ObjectId id) {
       }
       ImGui::EndMenu();
     }
-    if (const Channel* ch = s.channel(c->source); ch && ImGui::MenuItem(i18n::tr("Edit in Loupe"), nullptr, false, !ch->plugin.data.empty()))
-    {
-      if (logicplug::active(a)) {  // R01-12: the Tracks layout edits audio in the lower pane (in place of the piano roll it opens with)
-        a.settings.set("ui.loupePinned", true), layoutui::setRegionVisible(a, "logic.lower", true);
-        a.showPiano = a.showRack = false;
-      }
-      packs::openAudioEditor(a, ch->plugin.data, ch->id);  // J-7
-    }
-    if (ImGui::MenuItem(i18n::tr("Export clip as WAV..."))) exportui::exportClipAudio(a, id);  // J-20
+    // K-252: Send to Loupe (J-7; R01-12: the Tracks layout edits audio in its lower pane). The clip's
+    // render rows (K-250, K-251: to audio in place, to a file) are with the audio tools below.
+    if (cliprenderui::sendToLoupeItem(a, id)) return;
     static uint64_t key = 0x41430000;
     // J-79: FL's clip gain range (-96 .. +36 dB, the bottom is silence), same value as the volume line.
     float gainDb = static_cast<float>(std::max(clipgain::kMinDb, clipgain::toDb(c->gain)));
@@ -1358,6 +1373,35 @@ void overwriteCovered(Song& x, const std::set<ObjectId>& placed, Tick origin) {
 }  // namespace
 
 const PlaylistGeometry& playlistGeometry() { return devGeom; }
+ZoomSliderGeometry& zoomSliderGeometry(int which) {
+  static ZoomSliderGeometry g[2];
+  return g[which == 1 ? 1 : 0];
+}
+float zoomSliderFine(float f, float x0, float span, float knobX) {
+  // (one slider is held at a time, so one state serves them all)
+  static float value = 0, lastX = 0;
+  const ImGuiIO& io = ImGui::GetIO();
+  const float fc = std::clamp(f, 0.0f, 1.0f), mx = io.MousePos.x;
+  const bool valid = ImGui::IsMousePosValid();
+  if (ImGui::IsItemActivated()) {
+    value = valid && std::fabs(mx - knobX) > 7.0f ? std::clamp((mx - x0) / std::max(1.0f, span), 0.0f, 1.0f) : fc;
+    lastX = mx;
+    return value;
+  }
+  if (ImGui::IsItemActive()) {
+    if (valid) {
+      const float dx = mx - lastX;
+      lastX = mx;
+      value = std::clamp(value + dx * (io.KeyShift ? 0.25f : 1.0f) / kZoomSliderTravel, 0.0f, 1.0f);
+    }
+    return value;
+  }
+  if (ImGui::IsItemHovered()) {
+    const float w = io.MouseWheel != 0 ? io.MouseWheel : io.MouseWheelH;
+    if (w != 0) return std::clamp(fc + w * (io.KeyShift ? 0.25f : 1.0f) * (4.0f / kZoomSliderTravel), 0.0f, 1.0f);
+  }
+  return -1.0f;
+}
 void notePatternMenuClone(float x, float y) { devGeom.cloneX = x, devGeom.cloneY = y; }
 
 // J-82: deleting clip sources (picker menus, Delete in the picker). Sources
@@ -1706,15 +1750,16 @@ void toggleTracksAudioEditor(App& a) {
   }
   const Song& s = a.doc.song();
   const Channel* ach = nullptr;
+  ObjectId aclip = kNoId;
   for (const Clip& c : s.playlist)
-    if (!ach && c.kind == ClipKind::Audio && a.playlist.selected.count(c.id)) ach = s.channel(c.source);
+    if (!ach && c.kind == ClipKind::Audio && a.playlist.selected.count(c.id)) ach = s.channel(c.source), aclip = c.id;
   const int ft = logicplug::focusTrack(a);
   for (const Clip& c : s.playlist)
-    if (!ach && c.kind == ClipKind::Audio && c.track == ft) ach = s.channel(c.source);
+    if (!ach && c.kind == ClipKind::Audio && c.track == ft) ach = s.channel(c.source), aclip = c.id;
   layoutui::setRegionVisible(a, "logic.lower", true);
   a.showPiano = a.showRack = a.showMixer = false;  // the audio editor takes the pane, not the piano roll
   a.settings.set("ui.loupePinned", true);
-  if (ach && !ach->plugin.data.empty()) packs::openAudioEditor(a, ach->plugin.data, ach->id);
+  if (ach && !ach->plugin.data.empty() && !clipeditor::followInPane(aclip)) packs::openAudioEditor(a, ach->plugin.data, ach->id);
 }
 bool automationLanesShown(const App& a) {  // R04-08: Show Automation is for every track
   for (const PlaylistTrack& t : a.doc.song().tracks)
@@ -2013,7 +2058,7 @@ void drawPlaylist(App& a) {
         if (const Channel* ach = s.channel(c->source); ach && !ach->plugin.data.empty()) {
           a.showPiano = a.showRack = false;
           a.settings.set("ui.loupePinned", true);
-          packs::openAudioEditor(a, ach->plugin.data, ach->id);
+          if (!clipeditor::followInPane(c->id)) packs::openAudioEditor(a, ach->plugin.data, ach->id);
         }
       }
     }
@@ -2146,15 +2191,9 @@ void drawPlaylist(App& a) {
     }
     if (ImGui::BeginPopup("##snapmenu")) {
       ImGui::TextDisabled("%s", i18n::tr("Snap to"));
-      for (int i = 0; i <= static_cast<int>(Snap::Bar); ++i) {
-        std::string l = snapName(static_cast<Snap>(i));
-        if ((static_cast<Snap>(i) == Snap::Line || static_cast<Snap>(i) == Snap::Cell) && st.effGrid > 0 && st.snap == static_cast<Snap>(i))
-          l += "  (" + timeline::gridName(s, st.effGrid) + ")";
-        if (ImGui::MenuItem(l.c_str(), nullptr, st.snap == static_cast<Snap>(i))) {
-          st.snap = static_cast<Snap>(i);
-          if (st.snap != Snap::None) st.lastSnap = st.snap;
-        }
-      }
+      if (adaptiveSnap(st.snap) && st.effGrid > 0)
+        ImGui::TextDisabled("%s", (std::string(i18n::tr("Now")) + ": " + timeline::gridName(s, static_cast<Tick>(st.effGrid))).c_str());
+      if (snapmenu::items(st.snap, false, true) && st.snap != Snap::None) st.lastSnap = st.snap;
       ImGui::EndPopup();
     }
     ImGui::SameLine(0, 4);
@@ -2327,14 +2366,9 @@ void drawPlaylist(App& a) {
         return open;
       };
       // B4: in Smooth the adaptive grid reads "Smart" (the reference's word for it is its own).
-      auto calmSnapName = [&](Snap sn) -> const char* { return lg && sn == Snap::Line ? i18n::tr("Smart") : snapName(sn); };
-      std::string snapLabel = lg ? std::string(calmSnapName(st.snap)) : std::string(i18n::tr("Snap")) + ": " + snapName(st.snap);
+      std::string snapLabel = lg ? std::string(snapmenu::label(st.snap, true)) : std::string(i18n::tr("Snap")) + ": " + snapmenu::label(st.snap);
       if (calmCombo("##plcalmsnap", snapLabel.c_str(), lg ? gTb.snapW : 128)) {
-        for (int i = 0; i <= static_cast<int>(Snap::Bar); ++i)
-          if (ImGui::Selectable(calmSnapName(static_cast<Snap>(i)), st.snap == static_cast<Snap>(i))) {
-            st.snap = static_cast<Snap>(i);
-            if (st.snap != Snap::None) st.lastSnap = st.snap;
-          }
+        if (snapmenu::items(st.snap, false, false, lg) && st.snap != Snap::None) st.lastSnap = st.snap;
         ImGui::EndCombo();
       }
       ui::Hint("Snap: where clips land while dragging (hold Alt while dragging to bypass it)");
@@ -2415,13 +2449,24 @@ void drawPlaylist(App& a) {
           ImGui::SetCursorScreenPos(t0);
           ImGui::InvisibleButton(id, ImVec2(slW - 2, fh));
           const bool act = ImGui::IsItemActive(), hov = ImGui::IsItemHovered();
+          // 0.7.8: a press on the knob keeps its offset from the knob's centre (the value stays put until
+          // the pointer moves); a press on the line beside it jumps there.
+          // The time zoom's drag is finer than the line (zoomSliderFine): relative to the press, the knob following the zoom.
+          static float grab = 0;
+          const float span = std::max(1.0f, slW - 14), knobX = t0.x + 6 + span * std::clamp(f, 0.0f, 1.0f);
           float out = -1;
-          if (act) out = std::clamp((io.MousePos.x - t0.x - 6) / std::max(1.0f, slW - 14), 0.0f, 1.0f);
+          if (!vertical) {
+            out = zoomSliderFine(f, t0.x + 6, span, knobX);
+          } else {
+            if (ImGui::IsItemActivated()) grab = std::fabs(io.MousePos.x - knobX) <= 7.0f ? knobX - io.MousePos.x : 0.0f;
+            if (act) out = std::clamp((io.MousePos.x + grab - t0.x - 6) / span, 0.0f, 1.0f);
+          }
           const float shown = out >= 0 ? out : std::clamp(f, 0.0f, 1.0f);
           const float tx = std::round(t0.x + 6 + (slW - 14) * shown);
           zdl->AddRectFilled(ImVec2(t0.x, cy - 2), ImVec2(t0.x + slW - 2, cy + 2), theme::mix(P.surface800, P.ink, 0.45f), 2.0f);
           zdl->AddRectFilled(ImVec2(t0.x, cy - 2), ImVec2(tx, cy + 2), P.hot, 2.0f);
           zdl->AddCircleFilled(ImVec2(tx, cy), 6.0f, hov || act ? P.text : theme::mix(P.text, P.surface800, 0.15f), 16);
+          if (!vertical) zoomSliderGeometry(0) = {t0.x + 6, t0.x + 6 + (slW - 14), cy, ImGui::GetFrameCount()};
           if (hov || act) ui::Hint(hint);
           return out;
         };
@@ -2431,11 +2476,13 @@ void drawPlaylist(App& a) {
         ImGui::SameLine(0, slGap);
         const double zmin = timeline::clampZoom(s, 1e-12), zmax = timeline::clampZoom(s, 1e12);
         const double lz = std::log(std::max(1e-12, zmax / zmin));
-        const float zf = lz > 0 ? static_cast<float>(std::log(std::max(zmin, static_cast<double>(st.pxPerTick)) / zmin) / lz) : 0.5f;
-        if (const float v = zslider("##plzh", false, zf, hintWithKeyPl("Zoom", "playlist.zoomIn").c_str()); v >= 0 && lz > 0) {
-          const double want = zmin * std::exp(lz * static_cast<double>(v));
-          st.zoomRequest = static_cast<float>(want / std::max(1e-12, static_cast<double>(st.pxPerTick)));
-        }
+        // 0.7.8: the knob shows where the zoom is going (a glide's end), and a drag asks for an absolute
+        // zoom (applied with the zooms below). It was a ratio of the zoom drawn this frame put onto the
+        // glide's end: each frame added the glide's lag again, so the zoom ran past the pointer and swung back.
+        const double zNow = st.zoomGlide.active() ? st.zoomGlide.targetZoom() : static_cast<double>(st.pxPerTick);
+        const float zf = lz > 0 ? static_cast<float>(std::log(std::max(zmin, zNow) / zmin) / lz) : 0.5f;
+        if (const float v = zslider("##plzh", false, zf, hintWithKeyPl("Zoom", "playlist.zoomIn").c_str()); v >= 0 && lz > 0)
+          st.zoomSliderSet = static_cast<float>(zmin * std::exp(lz * static_cast<double>(v)));
       } else if (zx > barX + 8) {
         ImGui::SetCursorScreenPos(ImVec2(zx, ImGui::GetCursorScreenPos().y));
         if (ui::IconButton("##plzout", ui::Icon::Minus, false, fh, hintWithKeyPl("Zoom out", "playlist.zoomOut").c_str())) st.zoomRequest /= 1.5f;
@@ -2929,7 +2976,7 @@ void drawPlaylist(App& a) {
     return lg && tr >= 0 && tr < nTracks && laneOf(tr) > 0 && py >= curveTop(tr) && py < curveBot(tr) + 2;
   };
   devGeom.x0 = gMin.x - st.scrollX, devGeom.pxPerTick = st.pxPerTick, devGeom.valid = true;
-  devGeom.trackTop.clear(), devGeom.trackH.clear(), devGeom.clips.clear(), devGeom.curves.clear();
+  devGeom.trackTop.clear(), devGeom.trackH.clear(), devGeom.clips.clear(), devGeom.curves.clear(), devGeom.divots.clear();
   devGeom.dropTrack = -1;
   devGeom.renaming = -1;
   devGeom.dragBefore = -1;
@@ -2999,6 +3046,20 @@ void drawPlaylist(App& a) {
     timeline::zoomAt(s, st.pxPerTick, st.scrollX, st.zoomRequest, keyAnchor);
     st.zoomRequest = 1.0f;
   }
+  // 0.7.8: the time zoom slider's drag: the zoom it shows, the song position held where it was at the
+  // press (the middle of the view when it is out of sight), from the press's tick (never compounding).
+  if (st.zoomSliderSet > 0) {
+    const int fr = ImGui::GetFrameCount();
+    if (st.zoomSliderFrame != fr - 1) {
+      st.zoomSliderPx = playX >= 0 && playX <= gridW ? playX : gridW * 0.5f;
+      st.zoomSliderTick = (static_cast<double>(st.zoomSliderPx) + static_cast<double>(st.scrollX)) / static_cast<double>(st.pxPerTick);
+    }
+    st.zoomSliderFrame = fr;
+    const double z = timeline::clampZoom(s, st.zoomSliderSet);
+    st.pxPerTick = static_cast<float>(z);
+    st.scrollX = static_cast<float>(std::max(0.0, st.zoomSliderTick * z - static_cast<double>(st.zoomSliderPx)));
+    st.zoomSliderSet = 0;
+  }
   // K-24: over the track headers the zoom holds the grid's left edge (not a point left of it).
   const bool wheelZoom = hovered && io.MouseWheel != 0 && io.KeyCtrl;
   if (wheelZoom)
@@ -3022,13 +3083,21 @@ void drawPlaylist(App& a) {
 
   // The engine loops playback inside the time selection (Clips: inside its loop brace): livelook::transportFrame.
   // A trackpad's Ctrl+scroll follows the fingers 1:1; wheel notches and every other zoom glide.
-  scrollui::zoomEnd(st.zoomGlide, st.pxPerTick, st.scrollX, (wheelZoom && !smoothscroll::isNotch(io.MouseWheel)) || barZoom);
+  // 0.7.8: the zoom slider's drag (and wheel over it) is there at once: a glide behind a fine drag felt springy.
+  scrollui::zoomEnd(st.zoomGlide, st.pxPerTick, st.scrollX,
+                    (wheelZoom && !smoothscroll::isNotch(io.MouseWheel)) || barZoom || st.zoomSliderFrame == ImGui::GetFrameCount());
+  if (draglog::on() && (ImGui::IsMouseDown(ImGuiMouseButton_Left) || st.zoomGlide.active()))  // 0.7.8: the drawn time zoom, each frame of a drag or glide
+    draglog::note("plzoom px %.7f scroll %.3f keyanchor %.2f tick %.4f target %.7f glide %d", static_cast<double>(st.pxPerTick),
+                  static_cast<double>(st.scrollX), static_cast<double>(st.zoomSliderFrame == ImGui::GetFrameCount() ? st.zoomSliderPx : keyAnchor),
+                  (static_cast<double>(st.zoomSliderFrame == ImGui::GetFrameCount() ? st.zoomSliderPx : keyAnchor) + static_cast<double>(st.scrollX)) /
+                      static_cast<double>(st.pxPerTick),
+                  st.zoomGlide.active() ? st.zoomGlide.targetZoom() : static_cast<double>(st.pxPerTick), st.zoomGlide.active() ? 1 : 0);
   if (viewO > 0) st.scrollX = std::max(st.scrollX, static_cast<float>(viewO) * st.pxPerTick);  // C44-20: never left of the arrangement's start
   // ---- snapping: the visible grid (Line/Cell) or a fixed size; Alt inverts ----
   Tick visGrid = timeline::visibleGrid(s, st.pxPerTick);
   // R01-03: in the Tracks layout Alt (Option) copies a dragged region and the grid still holds.
   // hunt-clips-1119: Alt there selects time inside a clip in Clips; that selection keeps to the grid.
-  Tick snapG = timeline::snapGrid(s, st.snap, st.pxPerTick, io.KeyAlt && !lg && !(cg.kind == ClipGesture::TimeSel && cg.altTime));
+  SnapGrid snapG = timeline::snapGrid(s, st.snap, st.pxPerTick, io.KeyAlt && !lg && !(cg.kind == ClipGesture::TimeSel && cg.altTime));
   st.effGrid = timeline::snapGrid(s, st.snap, st.pxPerTick, false);
   livelook::editGrid(a, 0, st.snap, st.pxPerTick, visGrid, snapG, st.effGrid);  // grid2-1118: Clips' Cmd+1 .. 5
   const MeterMap mm(s);  // K-179: song time follows the meter changes
@@ -3115,18 +3184,26 @@ void drawPlaylist(App& a) {
   {
     // Lines at the visible grid: bars strongest, then beats, then finer subdivisions.
     const ImU32 fine = theme::withAlpha(lineBeat, 0.45f);
+    // GitHub #58: a fixed snap finer than a beat (triplets, dotted values, tuplets) draws its own
+    // lines below the beat, so what clips snap to can be seen.
+    const bool ownLines = timeline::drawsSnapLines(mm, st.snap, st.pxPerTick);
+    const Tick lineGrid = ownLines ? std::max(visGrid, beatT) : visGrid;
     if (mm.constant()) {
-      for (Tick t = snapDown(std::max<Tick>(0, tickAt(gMin.x)), visGrid); xOf(t) < gMax.x; t += visGrid) {
+      for (Tick t = snapDown(std::max<Tick>(0, tickAt(gMin.x)), lineGrid); xOf(t) < gMax.x; t += lineGrid) {
         ImU32 c = t % barT == 0 ? lineBar : t % beatT == 0 ? lineBeat : fine;
         vline(xOf(t), gMin.y, gMax.y, c);
       }
     } else {  // K-179: lines of the meter map; compound groups (the 4th eighth in 6/8) between bar and beat
       const ImU32 group = theme::mix(lineBeat, lineBar, 0.45f);
-      timeline::forEachLine(mm, std::max<Tick>(0, tickAt(gMin.x)), tickAt(gMax.x) + 1, visGrid, [&](Tick t, int k) {
+      timeline::forEachLine(mm, std::max<Tick>(0, tickAt(gMin.x)), tickAt(gMax.x) + 1, lineGrid, [&](Tick t, int k) {
         const ImU32 c = k == timeline::kLineBar ? lineBar : k == timeline::kLineGroup ? group : k == timeline::kLineBeat ? lineBeat : fine;
         vline(xOf(t), gMin.y, gMax.y, c);
       });
     }
+    if (ownLines)
+      timeline::forEachLine(mm, std::max<Tick>(0, tickAt(gMin.x)), tickAt(gMax.x) + 1, snapSize(mm, st.snap), [&](Tick t, int k) {
+        if (k == timeline::kLineFine) vline(xOf(t), gMin.y, gMax.y, fine);
+      });
   }
   // Markers: faint full-height lines (labels in the ruler).
   for (const auto& mk : s.markers) {
@@ -3621,6 +3698,10 @@ void drawPlaylist(App& a) {
     const bool repeats = loopRepeatsWithin(c.offset, len, loopLen, loopFrom);
     const bool loopGlyph = repeats && headH >= 9 && a1.x - std::max(a0.x, gMin.x) > 30;
     if (loopGlyph) titleR -= 17;
+    // K-388: Smooth's divots (LoopNotch.h smoothGeom); headTextX1: where the header's text (name, meter
+    // badge, playback tag, "+N") ends, so no top divot cuts into it.
+    const loopnotch::SmoothGeom sdiv = lg && repeats ? loopnotch::smoothGeom(st.pxPerTick * static_cast<float>(loopLen), a1.y - a0.y) : loopnotch::SmoothGeom{};
+    float headTextX1 = titleL;
     // R11-10: regions lying wholly under this one's start (a take over a region, a paste in Overlap)
     // have their names hidden: a small "+N" on the top one's name strip says they are there.
     const int underN = lg && !gliding && ci < ccache.under.size() ? ccache.under[ci] : 0;
@@ -3671,15 +3752,21 @@ void drawPlaylist(App& a) {
     if (zone == clipheader::Zone::Name && hg.hasName)  // the name box under the pointer (its hit area)
       dl->AddRectFilled(ImVec2(hg.nameX0, a0.y + 1.5f), ImVec2(hg.nameX1, a0.y + headH - 0.5f), theme::withAlpha(theme::contrastText(headSolid), 0.16f),
                         theme::kRadiusSm);
-    if (nameShown && lg && !muted) {  // D1: white names (near black on yellow) with a soft shadow; D2: no "…" stubs
-      const bool darkName = smoothDarkName(base);
-      ImFont* nf = clipTitleFont(a);
-      if (nameMaxW >= std::min(28.0f, nf->CalcTextSizeA(nameSize, FLT_MAX, 0.0f, title).x)) {
-        if (!darkName) theme::textEllipsis(dl, nf, nameSize, ImVec2(namePos.x, namePos.y + 1), nameMaxW, IM_COL32(0, 0, 0, 102), title);
-        theme::textEllipsis(dl, nf, nameSize, namePos, nameMaxW, darkName ? IM_COL32(28, 28, 28, 255) : IM_COL32(255, 255, 255, 250), title);
-      }
-    } else if (nameShown)
-      theme::textEllipsis(dl, clipTitleFont(a), nameSize, namePos, nameMaxW, theme::contrastText(headSolid), title);
+    // K-388: a function, so a Smooth region's name is drawn again over its repeats' wash (it stays crisp).
+    auto drawName = [&]() {
+      if (nameShown && lg && !muted) {  // D1: white names (near black on yellow) with a soft shadow; D2: no "…" stubs
+        const bool darkName = smoothDarkName(base);
+        ImFont* nf = clipTitleFont(a);
+        if (nameMaxW >= std::min(28.0f, nf->CalcTextSizeA(nameSize, FLT_MAX, 0.0f, title).x)) {
+          if (!darkName) theme::textEllipsis(dl, nf, nameSize, ImVec2(namePos.x, namePos.y + 1), nameMaxW, IM_COL32(0, 0, 0, 102), title);
+          theme::textEllipsis(dl, nf, nameSize, namePos, nameMaxW, darkName ? IM_COL32(28, 28, 28, 255) : IM_COL32(255, 255, 255, 250), title);
+        }
+      } else if (nameShown)
+        theme::textEllipsis(dl, clipTitleFont(a), nameSize, namePos, nameMaxW, theme::contrastText(headSolid), title);
+    };
+    drawName();
+    if (hg.hasName) headTextX1 = std::max(headTextX1, hg.nameX1);
+    if (underX1 > underX0) headTextX1 = std::max(headTextX1, underX1);
     if (underX1 > underX0) {  // R11-10: the "+N" of the regions under this one
       const float uy0 = a0.y + 2, uy1 = a0.y + std::max(10.0f, headH - 1);
       dl->AddRectFilled(ImVec2(underX0, uy0), ImVec2(underX1, uy1), IM_COL32(0, 0, 0, 110), 3.0f);
@@ -3710,8 +3797,10 @@ void drawPlaylist(App& a) {
           const float nw = std::min(nameMaxW, nf->CalcTextSizeA(nameSize, FLT_MAX, 0.0f, title).x);
           const float bw = a.fontMono->CalcTextSizeA(nameSize, FLT_MAX, 0.0f, badge).x;
           const float bx = namePos.x + nw + 6;
-          if (bx + bw + 4 < titleR)
+          if (bx + bw + 4 < titleR) {
             dl->AddText(a.fontMono, nameSize, ImVec2(bx, namePos.y), theme::withAlpha(theme::contrastText(headSolid), 0.6f), badge);
+            headTextX1 = std::max(headTextX1, bx + bw);
+          }
         }
       }
     }
@@ -3721,9 +3810,11 @@ void drawPlaylist(App& a) {
       ImFont* nf = clipTitleFont(a);
       const float nw = std::min(nameMaxW, nf->CalcTextSizeA(nameSize, FLT_MAX, 0.0f, title).x);
       const float tx = namePos.x + nw + 6;
-      if (titleR - tx > 24)
+      if (titleR - tx > 24) {
         theme::textEllipsis(dl, a.fontRegular, nameSize, ImVec2(tx, namePos.y), titleR - tx - 4, theme::withAlpha(theme::contrastText(headSolid), 0.7f),
                             tg.c_str());
+        if (sdiv.show) headTextX1 = std::max(headTextX1, std::min(titleR - 4, tx + a.fontRegular->CalcTextSizeA(nameSize, FLT_MAX, 0.0f, tg.c_str()).x));
+      }
     }
     // R01-14: in the Tracks layout an audio region's waveform fills the region under its name, as
     // the reference draws it (063, 216); the inset rows left it a few pixels tall at the usual height.
@@ -3873,34 +3964,68 @@ void drawPlaylist(App& a) {
     }
     if (repeats && lg) {
       // PL-1118 / loop2-1118: Smooth draws a region's repeats as the reference's looped regions: each
-      // one a lighter copy of the first pass (its content washed with it, title strip included), cut
-      // from the one before by a thin full-height line on the grid line of the loop point, with no
-      // notches; the region's outer ends alone are rounded, a cut last repeat ends where the region
-      // does. Passes too narrow to tell apart (zoomed far out) are one wash with no lines.
-      const std::vector<ClipPass> passes = loopPasses(c.offset, len, loopLen, loopFrom);
+      // one a lighter copy of the first pass (its content washed with it, title strip included); the
+      // region's outer ends alone are rounded, a cut last repeat ends where the region does.
+      // K-388: each repeat start is a divot, a small V cut into the region's top and bottom edges in the
+      // colour of the ground behind, joined by a thin seam on the loop point's own grid line (one device
+      // pixel, snapped as the grid lines are, so it sits on the line at every zoom and scale). Narrow
+      // repeats thin the divots out (every 2nd, 4th or 8th; LoopNotch.h smoothGeom), and none show past
+      // that: the repeats are then one wash. Only the visible loop points are visited, no allocation.
       const float one = 1.0f / dpp;
-      const bool lines = st.pxPerTick * static_cast<float>(loopLen) >= 6.0f;
       const ImU32 wash = theme::withAlpha(P.paper, P.dark ? 0.22f : 0.34f);
-      const ImU32 seam = theme::mix(body, IM_COL32(0, 0, 0, 255), P.dark ? 0.42f : 0.28f);
-      for (size_t k = 1; k < passes.size(); ++k) {
-        const float px0 = pixelgrid::edge(clipTickX(passes[k].at), dpp);
-        if (px0 >= std::min(a1.x, gMax.x)) {
-          break;
+      // The seam: a soft line in a deeper shade of the region's own colour (the divots carry the boundary).
+      const ImU32 seam = theme::withAlpha(theme::mix(body, IM_COL32(0, 0, 0, 255), P.dark ? 0.4f : 0.35f), P.dark ? 0.55f : 0.32f);
+      const Tick first = loopnotch::firstLoopPoint(c.offset, loopLen, loopFrom);
+      float washX0 = pixelgrid::edge(clipTickX(first), dpp);
+      // A first pass narrower than a divot spacing (a region entered just before a loop point) is not a
+      // block of its own: it is washed with the repeats (a dark sliver at the region's start read as a stray).
+      const bool sliver = washX0 - a0.x < std::max(loopnotch::kSmoothMinGap, sdiv.width * 3.0f);
+      if (sliver) washX0 = a0.x;
+      if (washX0 < std::min(a1.x, gMax.x)) {
+        dl->AddRectFilled(ImVec2(sliver ? a0.x : std::max(washX0, gMin.x - clipR - 1), a0.y), a1, wash, clipR,
+                          sliver ? ImDrawFlags_RoundCornersAll : ImDrawFlags_RoundCornersRight);
+        // The name runs on over the wash at full strength (it is the region's, not a repeat's).
+        if (headTextX1 > washX0) {
+          dl->PushClipRect(ImVec2(washX0, a0.y), ImVec2(headTextX1 + 2, a0.y + headH), true);
+          drawName();
+          dl->PopClipRect();
         }
-        const bool last = k + 1 == passes.size() || !lines;
-        const float px1 = last ? a1.x : std::min(pixelgrid::edge(clipTickX(passes[k + 1].at), dpp), a1.x);
-        if (px1 > gMin.x && px1 > px0) {
-          const float wx0 = lines ? px0 + one : px0;
-          if (px1 > wx0) {
-            dl->AddRectFilled(ImVec2(wx0, a0.y), ImVec2(px1, a1.y), wash, last ? clipR : 0.0f, last ? ImDrawFlags_RoundCornersRight : ImDrawFlags_RoundCornersNone);
+      }
+      if (sdiv.show) {
+        const float hw = sdiv.width * 0.5f, depth = sdiv.depth;
+        // The ground the divot shows: the empty grid as drawn above (its overlays included: the live
+        // area, the time selection, past the song end).
+        auto groundAt = [&](float x) {
+          ImU32 g = well;
+          if (viewO == 0 && s.live.areaEnd > 0 && x >= xOf(0) && x < xOf(s.live.areaEnd)) g = theme::mix(g, P.paper, liveMode ? 0.05f : 0.03f);
+          if (st.selEnd > st.selStart && !liveLook && x >= selX0 && x < selX1) g = theme::mix(g, P.accent, 0.07f);
+          if (songLen > 0 && x >= xOf(songLen)) g = theme::mix(g, P.surface950, 0.35f);
+          return g;
+        };
+        // The loop glyph's box at the region's end (no top divot under it).
+        const float glyphX0 = loopGlyph ? std::round(std::min(a1.x, gMax.x) - 10) - 8 : FLT_MAX;
+        const double tpp = 1.0 / static_cast<double>(st.pxPerTick);
+        const double vis0 = static_cast<double>(std::max(gMin.x, a0.x) - timeX0 - hw) * tpp;
+        const double vis1 = static_cast<double>(std::min(gMax.x, a1.x) - timeX0 + hw) * tpp;
+        loopnotch::forEachLoopPoint(c.offset, len, loopLen, loopFrom, sdiv.stride, vis0, vis1, [&](Tick at, int) {
+          const float x = pixelgrid::edge(clipTickX(at), dpp), cx = x + one * 0.5f;
+          // Clear of the rounded ends (a divot there would bite the corner off).
+          if (x - a0.x < sdiv.width + clipR * 0.5f || a1.x - x < sdiv.width + clipR * 0.5f) return;
+          const bool top = !(cx + hw > titleL - 2 && cx - hw < headTextX1 + 3) && cx + hw < glyphX0;
+          const ImU32 g = groundAt(cx);
+          dl->AddRectFilled(ImVec2(x, top ? a0.y + depth - 1 : a0.y + headH), ImVec2(x + one, a1.y - depth + 1), seam);  // (under the name: from the body down)
+          if (top) dl->AddTriangleFilled(ImVec2(cx - hw, a0.y - 1), ImVec2(cx + hw, a0.y - 1), ImVec2(cx, a0.y + depth), g);
+          dl->AddTriangleFilled(ImVec2(cx - hw, a1.y + 1), ImVec2(cx, a1.y - depth), ImVec2(cx + hw, a1.y + 1), g);
+          if (sel) {  // the selected region's light inner line follows the divots
+            if (top) {
+              dl->AddLine(ImVec2(cx - hw - 0.5f, a0.y + 0.5f), ImVec2(cx, a0.y + depth + 1.0f), rim, 1.0f);
+              dl->AddLine(ImVec2(cx, a0.y + depth + 1.0f), ImVec2(cx + hw + 0.5f, a0.y + 0.5f), rim, 1.0f);
+            }
+            dl->AddLine(ImVec2(cx - hw - 0.5f, a1.y - 0.5f), ImVec2(cx, a1.y - depth - 1.0f), rim, 1.0f);
+            dl->AddLine(ImVec2(cx, a1.y - depth - 1.0f), ImVec2(cx + hw + 0.5f, a1.y - 0.5f), rim, 1.0f);
           }
-          if (lines) {
-            dl->AddRectFilled(ImVec2(px0, a0.y), ImVec2(px0 + one, a1.y), seam);
-          }
-        }
-        if (last) {
-          break;
-        }
+          devGeom.divots.push_back({static_cast<unsigned>(c.id), x, cx, static_cast<long long>(at), top});
+        });
       }
     } else if (repeats) {  // K-114: the loop points of every looping clip kind
       // K-11: each loop point is a small V cut into the clip's top and bottom
@@ -5716,7 +5841,7 @@ void drawPlaylist(App& a) {
       {2, ImVec2(lg ? xR : x0 + 2 * bw, ry1), st.zeroCross,
        i18n::N_("audio clip edges, slips and slices land on the nearest zero crossing (no clicks)"), true, i18n::N_("Zero crossings"),
        "playlist.zeroCross"},
-      {3, ImVec2(oneRow ? xR - bw : xR, ry1), st.pickerOpen, "Clip source picker panel (Alt+P)", roomR && !lg},
+      {3, ImVec2(oneRow ? xR - bw : xR, ry1), st.pickerOpen, keys::withKeys(i18n::N_("Clip source picker panel (%s)"), {keys::cmdKey("playlist.picker", "Alt+P")}), roomR && !lg},
       {4, ImVec2(lg ? x0 + 2 : tx, ry2), false, "Add tracks", true},
       {5, ImVec2(lg ? x0 + 2 + bw + lgGap : tx + bw, ry2), false,
        lg ? "New track with the same settings as the selected one (C9: the reference's duplicate button)" : "Clear the selection (clips and time)", true},
@@ -5971,8 +6096,9 @@ void drawPlaylist(App& a) {
     if (hoverMarker >= 0)
       a.setHint("Marker \"" + s.markers[static_cast<size_t>(hoverMarker)].name + "\": click to jump here \xC2\xB7 right-click: rename, time signature, action, loop");
     else
-      a.setHint(liveLook ? i18n::tr("Click or drag to move the song position (snaps to the grid, Alt = free)  \xC2\xB7  Ctrl+drag or right-drag: "
-                                    "time selection  \xC2\xB7  the loop brace below the numbers: drag it, drag its ends, click it to switch Loop  \xC2\xB7  Cmd+L: loop the selection")
+      a.setHint(liveLook ? keys::withKeys(i18n::N_("Click or drag to move the song position (snaps to the grid, Alt = free)  \xC2\xB7  Ctrl+drag or right-drag: "
+                                                   "time selection  \xC2\xB7  the loop brace below the numbers: drag it, drag its ends, click it to switch Loop  \xC2\xB7  %s: loop the selection"),
+                                          {keys::cmdKey("playlist.loopMarkers", "Cmd+L")})
                          : "Click or drag to move the song position (snaps to the grid, Alt = free)  \xC2\xB7  Ctrl+drag or right-drag: "
                            "time selection (loops playback)  \xC2\xB7  double-click: clear the selection");
   } else if (hovered && inHead && liveLook && !headModeCtl && pastRows(m.y)) {
@@ -6808,6 +6934,7 @@ void drawPlaylist(App& a) {
     }
     if (liveLook) {
       gTitlesChosen = !st.trackSel.empty();  // hunt-clips3-1119
+      livelook::trackChosen();              // 0.7.8: the detail spot shows the track's devices
     }
     hd = HeadDrag{};
     hd.track = tr, hd.at = m;
@@ -6870,7 +6997,7 @@ void drawPlaylist(App& a) {
         const double sec0 = tempoMap.secondsAt(static_cast<double>(fc->start));
         const double dur = tempoMap.secondsAt(static_cast<double>(fc->start + s.clipLength(*fc))) - sec0;
         const double at = std::clamp(tempoMap.secondsAt(static_cast<double>(std::max<Tick>(0, tickAt(m.x)))) - sec0, 0.0, dur);
-        double v = std::max(0.0, kind == 1 ? std::min(at, dur - fd.out.len) : std::min(dur - at, dur - fd.in.len));
+        double v = clipgest::fadeLength(kind, at, dur, kind == 1 ? fd.out.len : fd.in.len);  // K-249: the clip editor's fade handles too
         if (fadeToolT0 >= 0) {  // R07-04: the Fade tool: as long as the span dragged over the region's start or end
           // R08-11: only the part of the drag inside the region counts (a drag past its edge adds nothing).
           const Tick r0 = fc->start, r1 = fc->start + s.clipLength(*fc);
@@ -6894,9 +7021,8 @@ void drawPlaylist(App& a) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
         // J-43: drag up = louder (FL's positive tension); the handle moves on FL's
         // logarithmic tension scale, with a detent at the plain curve.
-        const float t = std::clamp(fadeDragT0 - (m.y - fadeDragY0) / 70.0f, -1.0f, 1.0f);
-        const float uq = std::fabs(t) < 0.03f ? 0.0f : t;
-        const float tq = fadeTensionFromUi(uq);
+        const float uq = clipgest::fadeCurveUi(fadeDragT0, m.y - fadeDragY0);  // K-249: shared with the clip editor
+        const float tq = clipgest::fadeCurve(fadeDragT0, m.y - fadeDragY0);
         a.doc.editClips("fade curve", [&](std::vector<Clip>& v) {
           for (Clip& x : v) {
             if (x.id == id) (kind == 3 ? x.fadeInTension : x.fadeOutTension) = tq;
@@ -7478,12 +7604,18 @@ void drawPlaylist(App& a) {
       if (hoverClip != kNoId && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
         if (hc->kind == ClipKind::Pattern && hoverCurve.owner != kNoId) {
           openPatternAutomation(a, hc->pattern, hoverCurve);  // J-173: the curve's clip in the automation editor
+        } else if (hc->kind == ClipKind::Audio) {
+          // K-249: an audio clip opens in the audio clip editor in every layout (Studio: its window;
+          // Clips: the clip band; Smooth: the lower pane; Tracker: the Audio page), or what the
+          // setting "Double-click an audio clip opens" asks for.
+          clipeditor::openFromDoubleClick(a, hc->id);
         } else if (livelook::active(a) && hc->kind != ClipKind::Automation) {
           // Clips: a double-click shows the clip in the clip band (the selection already chose its
           // notes or sample), as the reference; Studio's channel rack is not part of this layout.
           // (Before K-278's piano roll: the clip band is the Clips layout's clip editor.)
           if (hc->kind == ClipKind::Pattern) a.selectPattern(hc->pattern);
           layoutui::setRegionVisible(a, "live.clip", true);
+          livelook::clipChosen(true);  // 0.7.8: and the keys go to it (once the button is up)
         } else if (hc->kind == ClipKind::Pattern) {
           // R01-11: a region with notes opens the piano roll in the lower pane (the reference's MIDI
           // region); a steps-only region (drums) opens the step sequencer (its pattern region).
@@ -7504,17 +7636,6 @@ void drawPlaylist(App& a) {
             a.showRack = true;
             a.focusWindow = "Channel rack";
           }
-        } else if (hc->kind == ClipKind::Audio && lg) {
-          // R01-12: the audio editor (Loupe) in the lower pane, as the reference's double-click opens
-          // its audio track editor there; no floating channel window.
-          if (const Channel* ach = s.channel(hc->source); ach && !ach->plugin.data.empty()) {
-            layoutui::setRegionVisible(a, "logic.lower", true);
-            a.showPiano = a.showRack = a.showMixer = false;  // the pane opens with the piano roll: the audio editor takes its place
-            a.settings.set("ui.loupePinned", true);
-            packs::openAudioEditor(a, ach->plugin.data, ach->id);
-          }
-        } else if (hc->kind == ClipKind::Audio) {
-          a.settingsChannel = hc->source;  // the channel that plays the clip (its sample, stretch, ...)
         } else if (hc->kind == ClipKind::Automation) {
           openAutomationEditor(a, hc->source, hc->id);  // J-5: automation clip editor
         }
@@ -7533,6 +7654,7 @@ void drawPlaylist(App& a) {
         } else if (!st.selected.count(hoverClip)) {
           st.selected = ops::expandClipGroups(s, {hoverClip});
         }
+        livelook::clipChosen();  // 0.7.8: the detail spot shows the clip (also one selected already)
         // (PL-1118: every selected clip's track is selected too, or the clip band's N53-07 rule drops a
         // selection over several tracks once the button is up)
         st.trackSel = {cg.startTrack};
@@ -7564,8 +7686,10 @@ void drawPlaylist(App& a) {
         if (hc) {
           if (!io.KeyShift) st.selected = {hoverClip};
           else st.selected.insert(hoverClip);
+          livelook::clipChosen();  // 0.7.8: the detail spot shows the clip
         } else if (!io.KeyShift) {
           st.selected.clear();
+          livelook::trackChosen();  // 0.7.8: an empty lane: the track's devices
         }
         st.trackSel = {cg.startTrack};
         // PL-1118: a Shift+click adding a clip on another track selects every selected clip's track: one
@@ -7708,6 +7832,10 @@ void drawPlaylist(App& a) {
     for (const auto& c : ns.playlist)
       if (cg.kind == ClipGesture::Slip && !st.selected.count(cg.anchor) ? c.id == cg.anchor : st.selected.count(c.id) > 0) clipAnim.seed(c.id, clipAnimValues(c, ns.clipLength(c)), now);
   }
+  if (draglog::on() && (cg.kind != ClipGesture::None || lClick || rClick || active))
+    draglog::note("tracks area: gesture %d active %d hovered %d click %d moved %d anchor %llu at %lld/%d pointer %.1f %.1f selected %zu", static_cast<int>(cg.kind),
+                  active ? 1 : 0, hovered ? 1 : 0, lClick ? 1 : 0, cg.moved ? 1 : 0, static_cast<unsigned long long>(cg.anchor),
+                  static_cast<long long>(cg.startTick), cg.startTrack, static_cast<double>(m.x), static_cast<double>(m.y), st.selected.size());
   if (active && cg.kind != ClipGesture::None) {
     // Dragging past the left/right edge scrolls the view (scrub, time selection, clips).
     if (cg.kind != ClipGesture::Select && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f) + ImGui::IsMouseDragging(ImGuiMouseButton_Right, 2.0f)) {
@@ -8125,6 +8253,9 @@ void drawPlaylist(App& a) {
       default: break;
     }
   }
+  if (draglog::on() && cg.kind != ClipGesture::None && !active)
+    draglog::note("tracks area: gesture %d not active, last item %08X (canvas %08X) deactivated %d, mouse down %d", static_cast<int>(cg.kind), ImGui::GetItemID(), arrId,
+                  ImGui::IsItemDeactivated() ? 1 : 0, ImGui::IsMouseDown(ImGuiMouseButton_Left) ? 1 : 0);
   if (ImGui::IsItemDeactivated()) {
     if (cg.kind == ClipGesture::Play) a.engine.pause();  // the play tool plays while held
     if (cg.soloHeld && cg.grouped) {  // R05-17: the Solo tool's solo goes with the button, leaving no undo step
@@ -9164,320 +9295,24 @@ void drawPlaylist(App& a) {
     }
   }
   ui::EndDockWindow();
-  drawClipProperties(a);  // J-8: audio clip properties window
   chopui::draw(a);         // PL-13: chop and stutter window
 }
 
 void devArrangementClipMenu(App& a, ObjectId clip) { arrangementClipMenu(a, clip); }  // K-158: --menu arrclip
 
-// K-112 (Live): the clip band's audio clip view. Left, the clip column: the clip's title bar in its
-// colour (its name, position, length and loop), then its sample (gain, pitch, fades, reverse) and
-// the clip's whole menu under More. Right, the file's details, a ruler in the clip's bars, the loop
-// brace and the clip's waveform as the arrangement plays it (a double-click opens it in Loupe).
-namespace {
-int audioViewFrame = -100;  // dev: the frame the audio clip view last drew
-}  // namespace
-bool devLiveAudioClipShown() { return ImGui::GetFrameCount() - audioViewFrame <= 1; }
-
-void drawLiveAudioClip(App& a, ObjectId id) {
-  const auto& P = pal();
-  audioViewFrame = ImGui::GetFrameCount();
-  const Song& s = a.doc.song();
-  const Clip* c = s.clip(id);
-  const Channel* ch = c ? s.channel(c->source) : nullptr;
-  if (!c || !ch) return;
-  constexpr float kW = 188.0f;
-  const ImVec2 p0 = ImGui::GetCursorScreenPos(), av = ImGui::GetContentRegionAvail();
-  const ImU32 clipCol = theme::content(ch->color);
-  const Tick bar = std::max<Tick>(1, s.barTicks()), beat = std::max<Tick>(1, s.beatTicks());
-  const Tick len = std::max<Tick>(1, s.clipLength(*c));
-  ImGui::PushID(static_cast<int>(id));
-  // ---- the column ----
-  // Checkpoint 58 (N57-06): on a wide band (1440 and up) the Clip and Sample sections stand side by side,
-  // so nothing scrolls; a narrow band keeps the one scrolling column.
-  const bool twoCols = livelook::clipViewTwoColumns(av.x);
-  const float colsW = twoCols ? 2 * kW : kW;
-  auto beginColumn = [&](const char* cid) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface900));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8, 6));  // round 22: 8 px in from the panel, as the device band's cards below
-    ImGui::BeginChild(cid, ImVec2(kW - 2, av.y), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
-  };
-  beginColumn("##audiocol");
-  // K-112c (round 21): labels above their fields, two to a row where they pair, and Loop and
-  // Reverse as toggle buttons, as the refs' clip view (037, 038, 041).
-  auto barsBeats = [&](Tick t, bool position) {
-    char b[48];
-    std::snprintf(b, sizeof b, "%lld.%lld", static_cast<long long>(t / bar + (position ? 1 : 0)),
-                  static_cast<long long>((t % bar) / beat + (position ? 1 : 0)));
-    return std::string(b);
-  };
-  auto valueRow = [&](const char* label, const std::string& v, const char* hint, int col) {
-    livelook::valueBox(a, v.c_str(), livelook::columnRow(a, label, col, 2));  // K-112c (round 23): boxed, as the refs
-    ui::Hint(hint);
-  };
-  if (livelook::columnSection(a, ch->name.c_str(), clipCol, "##foldaclip")) {
-    const float nameW = livelook::columnRow(a, i18n::tr("Name"), 0, 1);
-    static ObjectId nameFor = kNoId;
-    static char name[128] = {};
-    if (nameFor != ch->id || ImGui::GetActiveID() != ImGui::GetID("##aname")) {  // follows the clip unless being typed in
-      std::snprintf(name, sizeof name, "%s", ch->name.c_str());
-      nameFor = ch->id;
-    }
-    ImGui::SetNextItemWidth(nameW);
-    if (livelook::renameFocusNow()) ImGui::SetKeyboardFocusHere();  // checkpoint 49: the audio clip menu's Rename
-    ImGui::InputText("##aname", name, sizeof name, ImGuiInputTextFlags_AutoSelectAll);
-    if (ImGui::IsItemDeactivatedAfterEdit() && ch->name != name) a.doc.renameChannel(ch->id, name);
-    ui::Hint("The clip's name (its channel's, as the playlist shows it)");
-    // N48-14: Start and End are places in the sample (from its start, at the song's tempo), as the
-    // reference's clip view: no arrangement or grid storage position.
-    auto bbs = [&](Tick t, bool position) {
-      const Tick six = std::max<Tick>(1, beat / 4);
-      const long long o = position ? 1 : 0;
-      char b[96];  // (room for three 64-bit numbers: GCC -Wformat-truncation)
-      std::snprintf(b, sizeof b, "%lld . %lld . %lld", static_cast<long long>(t / bar) + o, static_cast<long long>(t % bar / beat) + o,
-                    static_cast<long long>(t % beat / six) + o);
-      return std::string(b);
-    };
-    const double tps = s.tempo / 60.0 * static_cast<double>(s.ppq) * std::max(1e-6, c->stretch);
-    const Tick inSample = std::max<Tick>(0, static_cast<Tick>(std::llround(std::max(0.0, c->audioStart) * tps)));
-    if (c->syncBpm > 0) {
-      valueRow(i18n::tr("Start"), bbs(inSample, true), "Where the clip starts in its sample (bars. beats. sixteenths)", 0);
-      valueRow(i18n::tr("End"), bbs(inSample + len, true), "Where the clip ends in its sample (bars. beats. sixteenths)", 1);
-      valueRow(i18n::tr("Length"), bbs(len, false), "The clip's length (bars. beats. sixteenths)", 0);
-    } else {
-      // Checkpoint 54 (N53-02): a clip that does not follow the tempo (a one-shot) is timed in seconds, as
-      // the reference's unwarped clips: a 0.1 s tick reads 0:00.100, not "0. 0. 0".
-      auto mss = [](double sec) {
-        const long long ms = std::llround(std::max(0.0, sec) * 1000.0);
-        char b[48];
-        std::snprintf(b, sizeof b, "%lld:%02lld.%03lld", ms / 60000, ms / 1000 % 60, ms % 1000);
-        return std::string(b);
-      };
-      const double s0 = std::max(0.0, c->audioStart);
-      double s1 = s0 + static_cast<double>(len) / tps;
-      if (const ClipSource cs = clipSourceIfReady(*ch); cs.sample && !c->loop) s1 = std::min(s1, c->audioEnd > s0 ? c->audioEnd : cs.sample->seconds());
-      valueRow(i18n::tr("Start"), mss(s0), "Where the clip starts in its sample (minutes: seconds. milliseconds)", 0);
-      valueRow(i18n::tr("End"), mss(s1), "Where the clip ends in its sample (minutes: seconds. milliseconds)", 1);
-      valueRow(i18n::tr("Length"), mss(s1 - s0), "The clip's length (minutes: seconds. milliseconds)", 0);
-    }
-    (void)barsBeats;
-    // Checkpoint 57 (N56-09): Loop beside Length (the column fits the detail band's height).
-    const float loopW = livelook::columnRow(a, "", 1, 2);
-    if (c->start < s.live.areaEnd) {
-      // Checkpoint 54 (N53-02): a grid clip's Loop is whether it repeats while launched (off: a one-shot,
-      // played once, as the reference's short samples).
-      const bool loop = !c->launchOnce;
-      if (ui::TextButton(i18n::tr("Loop"), loop, loopW))
-        a.doc.editClip(id, loop ? "clip loop off" : "clip loop on", [loop](Clip& x) { x.launchOnce = loop; });
-      ui::Hint("On: the clip repeats while it plays; off: it plays once (a one-shot)");
-    } else {
-      const bool loop = c->loop;
-      if (ui::TextButton(i18n::tr("Loop"), loop, loopW)) a.doc.editClip(id, "loop clip", [loop](Clip& x) { x.loop = !loop; });
-      ui::Hint("On: the clip repeats its audio to its end");
-    }
-  }
-  if (twoCols) {
-    livelook::columnScrollEdges();
-    ImGui::EndChild();
-    ImGui::GetWindowDrawList()->AddLine(ImVec2(p0.x + kW - 1.5f, p0.y), ImVec2(p0.x + kW - 1.5f, p0.y + av.y), P.line);
-    ImGui::SetCursorScreenPos(ImVec2(p0.x + kW, p0.y));
-    beginColumn("##audiocol2");
-  } else {
-    ImGui::Dummy(ImVec2(0, 4));
-  }
-  if (livelook::columnSection(a, i18n::tr("Sample"), 0, "##foldasample")) {
-    static uint64_t key = 0x4C410000;
-    using clipmulti::Param;
-    const float halfW = livelook::columnRow(a, i18n::tr("Gain"), 0, 2);
-    float gainDb = static_cast<float>(std::max(clipgain::kMinDb, clipgain::toDb(c->gain)));
-    ImGui::SetNextItemWidth(halfW);
-    if (ImGui::DragFloat("##again", &gainDb, 0.1f, static_cast<float>(clipgain::kMinDb), static_cast<float>(clipgain::kMaxDb), "%.1f dB"))
-      a.doc.editClip(id, "clip gain", [&](Clip& x) { x.gain = clipgain::fromDb(gainDb <= clipgain::kMinDb ? clipgain::kMinDb - 0.1 : gainDb); }, key);
-    ui::Hint("The clip's gain (drag; Ctrl+click to type)");
-    livelook::columnRow(a, i18n::tr("Pitch"), 1, 2);
-    // K-112c (round 29): a semitone knob with its value beside it, and the cents under it, as the refs'
-    // clip view (037, 244). The clip keeps one pitch in cents (semitones x 100 plus the detune).
-    const int semis = static_cast<int>(std::lround(c->pitch / 100.0f));
-    const float detune = c->pitch - static_cast<float>(semis) * 100.0f;
-    {
-      // Checkpoint 58 (N57-08): a field as wide as Gain's beside it (the knob made it 24 px narrower).
-      int st = semis;
-      ImGui::SetNextItemWidth(halfW);
-      if (ImGui::DragInt("##apitch", &st, 0.2f, -24, 24, "%d st"))
-        a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = static_cast<float>(std::clamp(st, -24, 24)) * 100.0f + detune; }, key + 1);
-      ui::Hint("The clip's pitch in semitones, added to its channel's (drag; Ctrl+click to type)");
-    }
-    livelook::columnRow(a, i18n::tr("Detune"), 0, 2);
-    float ct = detune;
-    ImGui::SetNextItemWidth(halfW);
-    if (ImGui::DragFloat("##adetune", &ct, 0.5f, -50.0f, 50.0f, "%.0f ct"))
-      a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = static_cast<float>(semis) * 100.0f + std::clamp(ct, -50.0f, 50.0f); }, key + 1);
-    ui::Hint("The clip's fine pitch in cents (drag; Ctrl+click to type)");
-    // Checkpoint 57 (N56-09): Reverse beside Detune, so the whole Sample section fits the band.
-    if (ui::TextButton(i18n::tr("Reverse"), c->reverse, livelook::columnRow(a, "", 1, 2))) a.doc.editClip(id, "reverse clip", [&a](Clip& x) { toggleClipReverse(a.doc.song(), x); });
-    ui::Hint("Plays the clip backwards (keeps the same audio)");
-    livelook::columnRow(a, i18n::tr("Fade in"), 0, 2);
-    float fi = static_cast<float>(c->fadeIn * 1000.0), fo = static_cast<float>(c->fadeOut * 1000.0);
-    ImGui::SetNextItemWidth(halfW);
-    if (ImGui::DragFloat("##afi", &fi, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
-      a.doc.editClip(id, "clip fade in", [&](Clip& x) { x.fadeIn = std::max(0.0f, fi) / 1000.0, x.fadeInManual = true; }, key + 2);
-    livelook::columnRow(a, i18n::tr("Fade out"), 1, 2);
-    ImGui::SetNextItemWidth(halfW);
-    if (ImGui::DragFloat("##afo", &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
-      a.doc.editClip(id, "clip fade out", [&](Clip& x) { x.fadeOut = std::max(0.0f, fo) / 1000.0, x.fadeOutManual = true; }, key + 3);
-  }
-  ImGui::Dummy(ImVec2(0, 4));
-  if (ui::TextButton(i18n::tr("More..."), false, ImGui::GetContentRegionAvail().x)) ImGui::OpenPopup("##aclipmore");
-  ui::Hint("The clip's whole menu: warp markers, the audio tools, export, Loupe, the channel's settings");
-  if (ImGui::BeginPopup("##aclipmore")) {
-    arrangementClipMenu(a, id);
-    ImGui::EndPopup();
-  }
-  livelook::clipLaunchBox(a, id, true);  // grid2-1118: the grid clip's launch settings
-  livelook::columnScrollEdges();
-  ImGui::EndChild();
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddLine(ImVec2(p0.x + colsW - 1.5f, p0.y), ImVec2(p0.x + colsW - 1.5f, p0.y + av.y), P.line);
-  c = s.clip(id);  // (an edit above may have moved the clip list)
-  if (!c) {
-    ImGui::PopID();
-    return;
-  }
-  // ---- the editor ----
-  const float ex0 = p0.x + colsW + 6, ex1 = p0.x + av.x - 4, ey1 = p0.y + av.y;
-  if (ex1 - ex0 < 80) {
-    ImGui::PopID();
-    return;
-  }
-  // The file: its name, rate, channels and length (the refs' line over the waveform).
-  const float barH = 28.0f;
-  {
-    const ClipSource src = clipSourceIfReady(*ch);
-    std::string info = ch->plugin.data.empty() ? std::string(i18n::tr("No sample")) : ch->plugin.data;
-    if (const size_t k = info.find_last_of("/\\"); k != std::string::npos) info = info.substr(k + 1);
-    if (src.sample) {
-      char b[96];
-      std::snprintf(b, sizeof b, "   %.1f kHz \xC2\xB7 %s \xC2\xB7 %.2f s", src.sample->sampleRate / 1000.0,
-                    src.sample->mono() ? i18n::tr("mono") : i18n::tr("stereo"), src.sample->seconds());
-      info += b;
-    }
-    dl->AddRectFilled(ImVec2(ex0 - 6, p0.y), ImVec2(p0.x + av.x, p0.y + barH), P.surface900);
-    ImFont* f = ImGui::GetFont();
-    const float fs = ImGui::GetFontSize();
-    theme::textEllipsis(dl, f, fs, ImVec2(ex0 + 4, theme::textTop(f, fs, p0.y, barH)), ex1 - ex0 - 8, P.textDim, info.c_str());
-  }
-  // Checkpoint 55 (N54-07): the whole sample, as the reference's sample display: the ruler in the
-  // sample's own bars (1 at its start), the clip's region on it (Start and End markers, the loop
-  // brace from Start to End) with the rest of the sample dimmed, then the waveform.
-  const float rulerY0 = p0.y + barH, rulerH = 22.0f, braceH = 12.0f;
-  const float wy0 = rulerY0 + rulerH + braceH, wy1 = ey1 - 4;
-  const ClipSource wsrc = clipSourceIfReady(*ch);
-  const double sampleSec = wsrc.sample ? wsrc.sample->seconds() : 0.0;
-  const ClipRate rate = clipRate(*ch, *c);
-  // Song ticks per second of the sample as the clip plays it (warped: at its own tempo).
-  const double tpsSample = c->syncBpm > 0 ? c->syncBpm / 60.0 * static_cast<double>(s.ppq) * rate.timeFactor
-                                          : s.tempo / 60.0 * static_cast<double>(s.ppq) / std::max(1e-6, rate.speed);
-  const Tick regionAt = std::max<Tick>(0, static_cast<Tick>(std::llround(std::max(0.0, c->audioStart) * tpsSample)));
-  const Tick sampleLen = sampleSec > 0 ? std::max<Tick>(1, static_cast<Tick>(std::llround(sampleSec * tpsSample))) : regionAt + len;
-  const Tick regionEnd = c->loop ? std::min(sampleLen, c->audioEnd > c->audioStart ? static_cast<Tick>(std::llround(c->audioEnd * tpsSample)) : sampleLen)
-                                 : std::min(sampleLen, regionAt + len);
-  const Tick viewLen = std::max<Tick>(1, std::max(sampleLen, regionEnd));
-  const float pxPerTick = (ex1 - ex0) / static_cast<float>(viewLen);
-  auto xOf = [&](Tick t) { return ex0 + static_cast<float>(t) * pxPerTick; };
-  dl->AddRectFilled(ImVec2(ex0 - 6, rulerY0), ImVec2(p0.x + av.x, rulerY0 + rulerH + braceH), P.dark ? P.field : P.surface950);
-  dl->AddRectFilled(ImVec2(ex0 - 6, wy0), ImVec2(p0.x + av.x, ey1), P.dark ? P.surface950 : P.paper);
-  dl->PushClipRect(ImVec2(ex0, rulerY0), ImVec2(ex1, ey1), true);
-  Tick step = pxPerTick * static_cast<float>(beat) >= 10.0f ? beat : bar;
-  while (pxPerTick * static_cast<float>(step) < 10.0f && step < viewLen) {
-    step *= 2;
-  }
-  const Tick labelEvery = std::max<Tick>(1, static_cast<Tick>(std::ceil(28.0 / std::max(1e-6, static_cast<double>(pxPerTick) * static_cast<double>(bar)))));
-  for (Tick t = 0; t <= viewLen; t += step) {
-    const float x = std::round(xOf(t));
-    const bool isBar = t % bar == 0;
-    dl->AddLine(ImVec2(x, rulerY0 + rulerH - (isBar ? 10.0f : 5.0f)), ImVec2(x, rulerY0 + rulerH - 1), isBar ? P.lineStrong : P.line);
-    if (isBar) {
-      if ((t / bar) % 2 == 1 && x < ex1) {
-        dl->AddRectFilled(ImVec2(x, wy0), ImVec2(std::round(xOf(std::min(viewLen, t + bar))), wy1), theme::withAlpha(P.text, 0.03f));
-      }
-      dl->AddLine(ImVec2(x, wy0), ImVec2(x, wy1), P.gridBar);
-      if ((t / bar) % labelEvery == 0) {
-        const std::string lbl = std::to_string(t / bar + 1);
-        dl->AddText(livelook::numFont(a), theme::kFontLabel, ImVec2(x + 4, theme::textTop(livelook::numFont(a), theme::kFontLabel, rulerY0, rulerH - 6)), P.text,
-                    lbl.c_str());
-      }
-    } else {
-      dl->AddLine(ImVec2(x, wy0), ImVec2(x, wy1), P.gridBeat);
-    }
-  }
-  const float xs = std::round(xOf(regionAt)), xe = std::round(xOf(std::max(regionAt + 1, regionEnd)));
-  {  // the loop brace: the clip's region of the sample, in its colour
-    const float by0 = rulerY0 + rulerH + 2, by1 = by0 + braceH - 5;
-    dl->AddRectFilled(ImVec2(xs, by0), ImVec2(xe, by1), theme::withAlpha(clipCol, 0.85f));
-    dl->AddTriangleFilled(ImVec2(xs, by0), ImVec2(xs + 5, (by0 + by1) * 0.5f), ImVec2(xs, by1), theme::contrastText(clipCol));
-    dl->AddTriangleFilled(ImVec2(xe, by0), ImVec2(xe - 5, (by0 + by1) * 0.5f), ImVec2(xe, by1), theme::contrastText(clipCol));
-  }
-  dl->AddLine(ImVec2(ex0, (wy0 + wy1) * 0.5f), ImVec2(ex1, (wy0 + wy1) * 0.5f), theme::withAlpha(P.text, 0.12f));
-  static TempoMap tm;
-  tm.build(s);
-  const ImU32 waveCol = P.dark ? theme::mix(clipCol, P.text, 0.35f) : theme::mix(clipCol, P.ink, 0.35f);
-  {  // the whole sample, as one pass from its start (the clip's own gain and rate)
-    Clip whole = *c;
-    whole.start = 0;
-    whole.audioStart = 0;
-    whole.audioEnd = 0;
-    whole.loop = false;
-    whole.warp.clear();
-    whole.length = sampleLen;
-    whole.fadeIn = whole.fadeOut = 0;
-    static TempoMap flat;  // (one tempo: the sample's length as the clip plays it)
-    static Song one;
-    one.tempo = s.tempo;
-    one.ppq = s.ppq;
-    flat.build(one);
-    drawClipWave(dl, one, *ch, whole, flat, ImVec2(ex0, wy0 + 4), ImVec2(xOf(sampleLen), wy1 - 4), ex0, pxPerTick, ex0, ex1, waveCol);
-  }
-  // Outside the region: dimmed; the Start and End markers at its edges, as the reference's flags.
-  const ImU32 dim = theme::withAlpha(P.dark ? P.surface950 : P.paper, 0.62f);
-  if (xs > ex0) {
-    dl->AddRectFilled(ImVec2(ex0, wy0), ImVec2(xs, wy1), dim);
-  }
-  if (xe < ex1) {
-    dl->AddRectFilled(ImVec2(xe, wy0), ImVec2(ex1, wy1), dim);
-  }
-  auto marker = [&](float x, bool start, const char* label) {
-    const ImU32 mc = theme::mix(clipCol, P.text, 0.2f);
-    dl->AddLine(ImVec2(x + (start ? 0.5f : -0.5f), wy0), ImVec2(x + (start ? 0.5f : -0.5f), wy1), mc, 1.0f);
-    const float fh = 12.0f, fw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, label).x + 8;
-    const ImVec2 f0(start ? x : x - fw, wy0), f1(start ? x + fw : x, wy0 + fh);
-    dl->AddRectFilled(f0, f1, mc);
-    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(f0.x + 4, f0.y + std::round((fh - theme::kFontLabel) * 0.5f) - 1), theme::contrastText(mc), label);
-  };
-  marker(xs, true, i18n::tr("S"));
-  marker(xe, false, i18n::tr("E"));
-  if (a.engine.mode() == PlayMode::Song) {  // the song's position inside the clip, on the sample
-    const double pos = a.engine.position();
-    if (pos >= static_cast<double>(c->start) && pos < static_cast<double>(c->start + len)) {
-      double in = pos - static_cast<double>(c->start);
-      const double reg = static_cast<double>(std::max<Tick>(1, regionEnd - regionAt));
-      if (c->loop && in >= reg) {
-        in = std::fmod(in, reg);
-      }
-      const float x = std::round(xOf(regionAt) + static_cast<float>(in) * pxPerTick);
-      dl->AddLine(ImVec2(x, rulerY0), ImVec2(x, wy1), P.playhead);
-    }
-  }
-  dl->PopClipRect();
-  ImGui::SetCursorScreenPos(ImVec2(ex0, wy0));
-  ImGui::InvisibleButton("##awave", ImVec2(ex1 - ex0, std::max(1.0f, wy1 - wy0)));
-  if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !ch->plugin.data.empty())
-    packs::openAudioEditor(a, ch->plugin.data, ch->id);
-  ui::Hint("The clip's sample: the clip plays from S to E (the brace). Double-click: edit it in Loupe");
-  ImGui::SetCursorScreenPos(p0);
-  ImGui::Dummy(av);
-  ImGui::PopID();
+// K-249: the playlist's audio clip waveform for the audio clip editor (the same drawing, so the clip
+// looks as it plays: warped, looped, at its gain).
+void waveRunsRecord(bool on) {
+  gWaveRunsOn = on;
+  if (on) gWaveRuns.clear();
 }
+const std::vector<std::pair<float, float>>& waveRuns() { return gWaveRuns; }
+void waveScale(float k) { gWaveScale = k > 0 ? k : 1.0f; }
+
+void drawAudioClipWave(ImDrawList* dl, const Song& s, const Channel& ch, const Clip& c, const TempoMap& tm, ImVec2 a, ImVec2 b, float clipX0,
+                       float pxPerTick, float visX0, float visX1, ImU32 col) {
+  drawClipWave(dl, s, ch, c, tm, a, b, clipX0, pxPerTick, visX0, visX1, col);
+}
+
 
 }  // namespace gl

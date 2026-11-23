@@ -16,6 +16,10 @@ void generalSettingsPage(App& a, float fieldW);
 void fileSettingsPage(App& a, float fieldW);
 void debugSettingsPage(App& a, float fieldW);
 void projectDefaultsPanel(App& a);
+// GitHub #74: Settings > Project: the colour new channels and patterns take; and, once a frame, that
+// choice (with the selected channel's colour) handed to the document.
+void newColorsPanel(App& a, float fieldW);
+void publishNewColors(App& a);
 void backupRestorePanel(App& a, float fieldW);
 void hintSettingsPanel(App& a, float fieldW);
 // J-55 (SettingsKeysTheme.cpp): keyboard shortcut editor, theme page, and the
@@ -34,6 +38,12 @@ void setDevSettingsSize(float w, float h);
 int settingsPageCount();
 const char* settingsPageNameEn(int page);
 void drawSettingsPage(App& a, int page, float fieldW);
+// K-256: the Layouts page (LayoutSettingsUi.cpp): each layout's control bar, panels, workspaces, pinned
+// commands and switching; Studio's zone keys (K-340).
+constexpr int kLayoutsSettingsTab = 13;
+void layoutsSettingsPage(App& a, float fieldW);
+// The layout the page shows next time (View > Window layout > Layout settings, the bar list's More).
+void showLayoutsPageFor(int layout);
 
 // K-325 (Dialogs.cpp): the Settings window's frame, shared with the other paged windows (the
 // Record window), so they look the same in every layout.

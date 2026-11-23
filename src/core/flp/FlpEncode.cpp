@@ -1,5 +1,6 @@
 // Gridline — FLP export: plugin encoder engine (see FlpEncode.h).
 #include "FlpEncode.h"
+#include "../ThreadName.h"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -292,7 +293,7 @@ class ProbePool {
     const unsigned hw = std::thread::hardware_concurrency();
     workers_ = hw > 1 ? std::min(hw, 8u) - 1 : 0;
     if (const char* e = std::getenv("GRIDLINE_FLP_SOLVER_THREADS")) workers_ = static_cast<unsigned>(std::clamp(std::atoi(e), 1, 64)) - 1;
-    for (unsigned i = 0; i < workers_; ++i) std::thread([this] { loop(); }).detach();
+    for (unsigned i = 0; i < workers_; ++i) std::thread([this] { gl::threads::setName("gl-flp-encode"); loop(); }).detach();
   }
   void work(const std::function<void(size_t)>& fn, size_t n) {
     for (size_t i; (i = next_.fetch_add(1)) < n;) fn(i);

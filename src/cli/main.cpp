@@ -43,6 +43,7 @@
 #include "host/PluginCheck.h"
 #include "host/Smoke.h"
 #include "host/vst3/Vst3Scan.h"
+#include "host/ui/QuietWindows.h"
 #include "packs/seltmann/seltmann.h"
 #include "../core/SafeFs.h"
 #include <filesystem>
@@ -205,6 +206,7 @@ int main(int argc, char** argv) {
   // Child processes: plugin scanner (--scan-plugin / --scan-vst3) and the
   // plugin sandbox (--plugin-sandbox).
   if (int rc = gl::host::childMain(argc, argv); rc >= 0) return rc;
+  gl::quiet::install();  // a quiet (test) run: plugin checks open interfaces off the screen, never activating (host/ui/QuietWindows.h)
   gl::platform::initPluginThread();  // K-267: plugins load on this thread (renders, checks): OLE first (Windows)
   if (argc >= 2 && (std::strcmp(argv[1], "--version") == 0 || std::strcmp(argv[1], "version") == 0)) {
     std::printf("Gridline " GRIDLINE_VERSION "\n");

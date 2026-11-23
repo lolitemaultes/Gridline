@@ -144,14 +144,20 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
       tap::OwnerScope own(c.clip, t0);
       tap::Slot* slot = tap::slotFor(&s);
       const int64_t firstAt = sampleOf(static_cast<double>(c.start));
-      if (firstAt >= 0 && firstAt < len) tap::play(slot);
       const double sa = srcAt(uOf(a), tickAt(a)), sb = std::min(srcAt(uOf(b), tickAt(b)), c.srcEnd);
-      if (sb > sa) {
+      if (firstAt >= 0 && firstAt < len) {
+        tap::play(slot);
+        // K-321: the speed (source seconds per playback second, over this block) and the pitch heard.
+        const double secRate = (sb - sa) * sr / static_cast<double>(b - a);
+        const double heard = pitchOf(c, secRate) * chanRatio;
+        if (heard > 0) tap::pitch(slot, 12.0 * std::log2(heard), secRate);
+      }
+      if (sb > sa) {  // K-321: with the block's output frames (play time, segments)
         const double total = s.seconds();
         if (c.reverse)
-          tap::mark(slot, total - sb, total - sa);
+          tap::mark(slot, total - sb, total - sa, from + static_cast<int>(a), from + static_cast<int>(b), true);
         else
-          tap::mark(slot, sa, sb);
+          tap::mark(slot, sa, sb, from + static_cast<int>(a), from + static_cast<int>(b));
       }
     }
     if (readsOnly) {  // K-319: a Track Receipt pass that only measures: no sound

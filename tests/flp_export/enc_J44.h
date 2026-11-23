@@ -57,13 +57,21 @@ inline void testEncJ44() {
   // ---- SoundFont Player without the origin: FL's database preset with the
   // instance's SoundFont in it.
   if (flInstalled()) {
-    gl::PluginState g = gl::defaultPluginState("gl.multisampler");
-    g.data = "#gl-zones 1\nsf2 0 0 - | /j44/banks/strings.sf2\n";
+    // K-333: imports make a Patch Player; the file goes back into the player's state.
+    gl::PluginState g = gl::defaultPluginState("gl.patchplayer");
+    g.data = "/j44/banks/strings.sf2";
     enc::Result r = enc::encode(g, "Soundfont Player", nullptr, ctx());
     gl::flp::PluginMapping m;
     const bool ok = r.hasState && enc::decodeState("Soundfont Player", r.state, m, ctx());
     if (!(ok && m.state.data == g.data)) std::printf("# sf2: ok %d q %s [%s] mism %zu\n", ok, enc::qualityName(r.quality), m.state.data.c_str(), r.mismatched.size());
-    expect(ok && m.state.data == g.data, "J-44 SoundFont Player: path written without origin");
+    expect(ok && m.state.data == g.data && m.state.type == "gl.patchplayer", "J-44 SoundFont Player: path written without origin");
+    // A project imported before (a Multisampler with the file) still writes its file.
+    gl::PluginState old = gl::defaultPluginState("gl.multisampler");
+    old.data = "#gl-zones 1\nsf2 0 0 - | /j44/banks/strings.sf2\n";
+    enc::Result r2 = enc::encode(old, "Soundfont Player", nullptr, ctx());
+    gl::flp::PluginMapping m2;
+    expect(r2.hasState && enc::decodeState("Soundfont Player", r2.state, m2, ctx()) && m2.state.data == g.data,
+           "J-44 SoundFont Player: a Multisampler imported before writes its file too");
   }
 
   // ---- Ogun / Autogun: states before version 10 (articulators 11 / 12 and,

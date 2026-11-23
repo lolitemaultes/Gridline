@@ -50,7 +50,7 @@ V link(int slot, int src, int target, float depth) {
 }  // namespace
 
 void appendInfos(std::vector<PluginInfo>& v) {
-  PluginInfo p{kType, "Chater", "Delay & reverb", PluginKind::Effect, {}, false, {}};
+  PluginInfo p{kType, "Chater", "Multi FX", PluginKind::Effect, {}, false, {}};
   p.params.resize(PCount);
   for (int i = 0; i < PCount; ++i) p.params[static_cast<size_t>(i)] = spare(i);
   const std::vector<std::string> grids = {"1/2", "1/4", "1/8", "1/16", "1/32", "1/8T", "1/16T"};

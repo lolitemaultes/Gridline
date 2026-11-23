@@ -83,7 +83,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 
 ## Members
 
-121 plugins: 52 instruments and 69 effects. The CLAP id is `org.gridline.suite.` followed by the type without `gl.`; the VST3 class id ends in the hash shown; the Audio Unit is `aumu` (instruments), `aufx` or `aumf` (effects that take MIDI) with the subtype shown and manufacturer `GrLn`. Effects also have Mix and Bypass besides the parameters counted here.
+123 plugins: 53 instruments and 70 effects. The CLAP id is `org.gridline.suite.` followed by the type without `gl.`; the VST3 class id ends in the hash shown; the Audio Unit is `aumu` (instruments), `aufx` or `aumf` (effects that take MIDI) with the subtype shown and manufacturer `GrLn`. Effects also have Mix and Bypass besides the parameters counted here.
 
 ### Instruments
 
@@ -166,7 +166,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 | Graphic EQ | `gl.geq` | Filter | `6B84CEF3` | `ndtb` | 11 | 4 |  |
 | Waveshaper | `gl.waveshaper` | Distortion | `9FB72D10` | `yij8` | 29 | 5 |  |
 | Auto Pan | `gl.autopan` | Modulation | `41A9A4E6` | `qpof` | 13 | 5 |  |
-| Shaper | `gl.shaper` | Filter | `ABFDD055` | `bwp0` | 69 | 3 |  |
+| Shaper | `gl.shaper` | Filter | `ABFDD055` | `bwp0` | 74 | 4 |  |
 | Shuttle | `gl.timegate` | Modulation | `BA72D1CE` | `ckvy` | 40 | 6 |  |
 | Maximizer | `gl.maximizer` | Dynamics | `99C93FC8` | `cpa8` | 40 | 4 |  |
 | Freq Shifter | `gl.freqshift` | Modulation | `BEA0D5E2` | `syyr` | 18 | 4 |  |
@@ -215,6 +215,7 @@ Identifiers come from the plugin type `gl.<name>` alone, never from the suite, s
 | Octa Filter | `gl.octafilter` | Filter | `E5FD1DB3` | `lui5` | 481 | 6 |  |
 | Loupe | `gl.edison` | Misc | `A9077CCC` | `c3t1` | 9 | 5 |  |
 | Tideline | `gl.tideline` | Dynamics | `84DEDC4E` | `wyfy` | 40 | 11 | sidechain, MIDI in |
+| Terrace | `gl.terrace` | Dynamics | `D023C5C6` | `w6wy` | 160 | 6 | sidechain |
 
 ## Not in the suite
 

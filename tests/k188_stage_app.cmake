@@ -1,7 +1,7 @@
 # Gridline: the Stage in the real app (hidden, isolated config, scripted input, 1440x900, the mixer
 # window in its Stage view with --show mixer --show stage). Places come from a first run's "stage" report, so the
 # checks follow the layout:
-#   1. an untouched project: every track at the default spot, together in one group (a tray);
+#   1. an untouched project: every track at the default spot, together in one group (a tray, Compact groups off);
 #   2. dragging a member out of the tray moves only that track, as one undo step; undo puts it back;
 #   3. dropping it back onto the tray joins the group (the exact spot again);
 #   4. a near miss next to another track never leaves the two overlapping;
@@ -15,6 +15,9 @@ file(MAKE_DIRECTORY "${OUT}/cfg")
 set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg")
 set(ENV{SDL_AUDIODRIVER} "dummy")
 set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
+# Sections 1 to 7 test the always-open trays (the Stage's Compact groups setting off); compact groups,
+# the default, have the same gestures in stage_compact_app.cmake. The layout audit (8) runs with the default.
+set(ENV{GRIDLINE_STAGE_COMPACT} "0")
 file(READ "${DEMO}" demo)  # a copy: the demo song is never opened (or saved over) in place
 file(WRITE "${OUT}/fixture.gridline.json" "${demo}")
 
@@ -215,6 +218,7 @@ sdump(both 1)
 check("the Stage draws while playing" s_open EQUAL 1)
 
 # ---- 8. layout audit: scale 1 and 2 in the default, pitch-black and light themes ----
+unset(ENV{GRIDLINE_STAGE_COMPACT})  # the default: compact groups
 # The placed band (a preset) with one track selected: no text of the mixer window may overlap other
 # text or be cut by its clip.
 foreach(theme default black light)

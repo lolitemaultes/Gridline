@@ -34,6 +34,16 @@ struct WindowFlag {
 // Every window of the app with an open flag (App's show flags and the new parts').
 const std::vector<WindowFlag>& windowFlags(App& a);  // built once (the flags live as long as the App)
 bool* windowOpenFlag(App& a, const std::string& stableName);
+// Opens a window that is a tab of a layout pane as a click on its tab would: in Smooth the audio
+// editor holding the lower pane (Loupe pinned there, an Audio clip shown on it) gives the pane back.
+void showPaneWindow(App& a, const std::string& stableName);
+// Smooth's pane views (the control bar's pane buttons and their keys: view.editors, view.smartControls,
+// view.mixer, view.lists, view.notes, view.browser, view.files). Shown: the view is what its pane shows now
+// (the button is lit). Toggle: a shown view closes its pane; another opens in its pane (an open pane
+// switches to it, a closed one comes back with it alone). False when the command is not one of them or
+// the Smooth shell is not built.
+bool smoothViewShown(App& a, const char* cmd);
+bool smoothViewToggle(App& a, const char* cmd);
 
 // ---- developer tooling ----
 void setDevLayouts(bool on);  // --layout-dev: this run only (developer commands of development builds)
@@ -104,10 +114,6 @@ bool reopenClosedTab(App& a, const std::string& region = "");
 bool cyclePaneTab(App& a, int dir);
 // K-237: rebuild the dock tree next frame keeping the open windows (a workspace switch set new region state).
 void requestShellRebuild();
-// K-112c: a fixed band grows by `px` this frame and the next (the Live device band while devices'
-// whole editors show in the expanded panel above its chain). Not saved: it ends when the caller stops
-// asking, and the band never takes more than 60 % of its parent.
-void setBandBoost(const std::string& region, float px);
 // K-106: a fixed band is exactly `px` this frame and the next (the Tracker's header: a strip while
 // the pattern is extended, taller while its help shows), at most 60 % of its parent. Not saved.
 // `maxShare`: the most of its parent the band may take (K-106 R6-05: the Tracker's instrument editor

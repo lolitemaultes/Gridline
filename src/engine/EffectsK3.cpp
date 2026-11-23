@@ -11,6 +11,7 @@
 #include <vector>
 #include "../core/PluginParams.h"
 #include "Dsp.h"
+#include "EffectRest.h"
 #include "Effects.h"
 #include "EffectsK3.h"
 #include "GrossBeatRef.h"
@@ -87,6 +88,7 @@ class TimeGateK3 final : public Effect {
       g.hold = bparam(s, TgHold), g.dc = bparam(s, TgDcRemove), g.comp = bparam(s, TgCompensate), g.hq = bparam(s, TgHq, true);
       g.declick = std::clamp(iparam(s, TgDeclick, 1), 0, 2);
       ref_.process(g, *bank_, ctx, L, R, n);
+      dryStopped_ = !ctx.playing;  // K-142 (0.7.8)
       return;
     }
     const int mode = iparam(s, TgMode);
@@ -109,6 +111,7 @@ class TimeGateK3 final : public Effect {
     // Volume tension curve (exponential, ratio 1001 at full tension).
     const double tC = std::fabs(tens) * std::log(1001.0), tB = tC > 1e-9 ? 1.0 / (std::exp(tC) - 1.0) : 0;
     const bool running = ctx.playing || freeRun;
+    dryStopped_ = !running;  // K-142 (0.7.8)
     if (!running) {
       // Stopped: dry output, declicked from the last output over the block.
       for (int i = 0; i < n; ++i) {
@@ -280,6 +283,11 @@ class TimeGateK3 final : public Effect {
       for (int i = 0; i < n && !ownSound_; ++i) ownSound_ = std::fabs(L[i]) > 1e-4f || std::fabs(R[i]) > 1e-4f;
   }
   bool ownPlayback() const override { return ownSound_; }
+  // K-142 (0.7.8): stopped (and not free-running) it passes its input dry: it rests by the hosted
+  // rule. What it still does then (fill its history with the silence, finish a declick fade) is its
+  // idle render, which runs unheard, so a Play after the rest replays the same history.
+  bool restsWhenFaint() const override { return dryStopped_; }
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, int n) override { restRenderFx(*this, s, aux, ctx, n); }
 
   // J-110: Stop. Stopped, a synced Shuttle is dry already (and drops its
   // slot / hold state); free-running it would keep repeating the bar it holds
@@ -389,6 +397,7 @@ class TimeGateK3 final : public Effect {
   double sr_ = 0, gate_ = 1, v1_ = 1, v2_ = 1, xfRp_ = 0, xfLeft_ = 0, lastRp_ = 0, free_ = 0, holdT0_ = 0, forceNextAt_ = -1;
   bool haveRp_ = false, holdOn_ = false, forceHold_ = false, fadeDone_ = false;
   bool freeRun_ = false;  // J-110: free-running (plays on while the transport is stopped)
+  bool dryStopped_ = false;  // K-142 (0.7.8): the last block passed its input dry (stopped)
   bool ownSound_ = false;  // J-112: the last block repeated a held bar that sounds, transport stopped
   float lastL_ = 0, lastR_ = 0, phase_ = -1, vphase_ = -1;
   BankState bs_[2];

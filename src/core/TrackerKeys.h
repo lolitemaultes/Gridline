@@ -1,7 +1,8 @@
 // Gridline - K-106 cp25: the Tracker's own keys as data.
 //
 // The keys the Tracker's pages and editors handle themselves (not through the shortcut set): the
-// pattern editor, the Song page's order list, the Sample editor and the Instrument editor. The
+// pattern editor, the Song page's order list, the Sample editor, the Instrument editor and the
+// Audio page's audio clip editor. The
 // Tracker help lists them from here (its "Pattern keys", "Song page keys" and "Editor keys"
 // subjects), and tests/k112/key_sets.tsv holds them (rows "tracker.<area>"), so a key added to a
 // handler without a line here, or a line here with no golden row, fails k112_keys. The test also
@@ -18,8 +19,10 @@
 
 namespace gl::trackerkeys {
 
-enum class Area { Pattern, Song, Sample, Instrument, Count };
-const char* areaId(Area a);  // "pattern", "song", "sample", "instrument"
+// Chop, Seltmann (K-347): a Seltmann's own screens in the lower band (its Chop screen where the
+// Sample editor sits, its Instrument screen).
+enum class Area { Pattern, Song, Sample, Instrument, Chop, Seltmann, Audio, Count };
+const char* areaId(Area a);  // "pattern", "song", "sample", "instrument", "chop", "seltmann", "audio"
 
 struct Row {
   Area area;
@@ -32,6 +35,9 @@ struct Row {
 };
 
 const std::vector<Row>& rows();
+// GitHub #79: the row's key column as "My keys say" names the keys (keycaps::keyList; the note rows
+// by where the keys sit, as the typing keyboard names them). As written at the default.
+std::string namedKeys(const Row& r);
 
 // The screens and their keys as the help's "Screen keys" subject lists them: shortcut-set commands
 // with the Tracker's own names. Every command the Tracker set gives a key to is here or in rows().

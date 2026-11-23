@@ -50,7 +50,9 @@ struct Input {
   float stepMax = kStepMax;  // widest step (a layout whose steps fill the pane passes more)
   float nameNeed = 0;        // K-295: name button width the widest channel name needs (0: unknown)
   int group = 4;             // K-236: steps per group (one beat of the pattern's meter, stepGroup)
+  float laneW = 0;           // K-255: the lane column (each row's grid chip) between the light and the steps (0: none)
 };
+inline constexpr float kLaneW = 34;  // K-255: the lane column when shown
 
 // K-236: steps in one beat of a pattern's meter, the rack's step group (its gap and its colour
 // band): 4 in 4/4 and 3/4 at 16 / 12 steps a bar, 2 in 7/8 at 14, 6 in 6/8 (a dotted quarter
@@ -68,6 +70,8 @@ struct Layout {
   float contentW = 0;       // all steps side by side
   float scrollMax = 0;      // > 0: the step area scrolls horizontally
   float lampX = 0;          // light cell left edge (row-relative), right of the name button
+  float laneX = 0;          // K-255: the lane column's left edge (laneW wide; 0 wide when not shown)
+  float laneW = 0;
   float rowW = 0;           // whole row (left section + lamp + view)
 
   // Left edge of step k inside the step content (scroll 0).

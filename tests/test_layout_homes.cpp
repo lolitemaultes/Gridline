@@ -60,27 +60,44 @@ int main() {
   }
   expect(missing.empty(), ("every built-in plugin editor has a home row" + missing).c_str());
   {
+    // K-379 part 2 (user 2026-11-22, k078-clipsnopanel): the panel above the Clips device band is
+    // gone and every effect and instrument editor opened in Clips floats, as in Studio; only a
+    // Sampler's settings stay in its card in the device band.
     const layout::Item* eq = layout::findPlugin("gl.eq");
-    expect(eq && eq->home[static_cast<int>(Preset::Live)].kind == HomeKind::Host &&
-               std::string(eq->home[static_cast<int>(Preset::Live)].region) == "live.device",
-           "an effect editor is hosted in the Live device band");
-    expect(eq && std::string(eq->home[static_cast<int>(Preset::Tracker)].region) == "tracker.lower",
-           "an effect editor is hosted in the Tracker lower frame (DSP chain)");
+    expect(eq && eq->home[static_cast<int>(Preset::Live)].kind == HomeKind::Float &&
+               !*eq->home[static_cast<int>(Preset::Live)].region,
+           "an effect editor opened in Clips floats (no panel above the device band)");
+    const layout::Item* smp = layout::findPlugin("gl.sampler");
+    expect(smp && smp->home[static_cast<int>(Preset::Live)].kind == HomeKind::Host &&
+               std::string(smp->home[static_cast<int>(Preset::Live)].region) == "live.device",
+           "a Sampler's settings stay in its card in the Clips device band");
+    // K-391 (user 2026-11-22 on rc9, k078-trackerfloat): in the Tracker every plugin editor floats
+    // in-app like the other layouts and never opens in the lower band; the band keeps only the
+    // Tracker's own screens (Sample/Instrument editors, Seltmann's Chop and Instrument screens).
+    expect(eq && eq->home[static_cast<int>(Preset::Tracker)].kind == HomeKind::Float &&
+               !*eq->home[static_cast<int>(Preset::Tracker)].region,
+           "an effect editor opened in the Tracker floats (never in the lower frame)");
     const layout::Item* syn = layout::findPlugin("gl.synth");
-    // K-106 cp23: the Tracker opens an instrument on its lower band's own screens (Sample or
-    // Instrument editor, Channel frame); the plugin's editor floats from there.
-    expect(syn && syn->home[static_cast<int>(Preset::Tracker)].kind == HomeKind::Inside &&
-               std::string(syn->home[static_cast<int>(Preset::Tracker)].region) == "tracker.lower",
-           "an instrument opens inside the Tracker's lower band");
-    bool trackerInstruments = true;
+    expect(syn && syn->home[static_cast<int>(Preset::Tracker)].kind == HomeKind::Float &&
+               !*syn->home[static_cast<int>(Preset::Tracker)].region,
+           "an instrument's editor opened in the Tracker floats (never in the lower band)");
+    bool trackerFloat = true;
+    std::string inBand;
     for (const PluginInfo& info : pluginCatalog()) {
-      const layout::Item* it = info.hidden || (info.kind != PluginKind::Generator && info.kind != PluginKind::NoteFx) ? nullptr : layout::findPlugin(info.type);
+      if (info.hidden) continue;
+      const layout::Item* it = layout::findPlugin(info.type);
       if (it) {
         const layout::Home& h = it->home[static_cast<int>(Preset::Tracker)];
-        trackerInstruments &= h.kind == HomeKind::Inside && std::string(h.region) == "tracker.lower";
+        const bool ok = h.kind == HomeKind::Float && !*h.region;
+        trackerFloat &= ok;
+        if (!ok) inBand += " " + info.type;
       }
     }
-    expect(trackerInstruments, "every instrument and note effect opens inside the Tracker's lower band");
+    expect(trackerFloat, ("every plugin editor floats in the Tracker, none in the lower band" + inBand).c_str());
+    const layout::Item* tsEd = layout::findItem("C26");
+    expect(tsEd && tsEd->home[static_cast<int>(Preset::Tracker)].kind == HomeKind::Inside &&
+               std::string(tsEd->home[static_cast<int>(Preset::Tracker)].region) == "tracker.lower",
+           "the Tracker Sampler editor (a Tracker-native screen) stays inside the lower band");
   }
 
   // Studio opens the windows it opens today, and only those.

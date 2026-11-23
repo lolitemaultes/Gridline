@@ -63,3 +63,8 @@ with `--appimage-extract-and-run`. The `.tar.gz` needs SDL2 and ALSA from the sy
 
 * Start Gridline from a terminal with `gridline-app` to see its messages. The first lines say
   which window system (`[video]`) and graphics (`[graphics]`) it uses.
+* Gridline does not show up as a recording destination in a PipeWire patchbay: set **Settings >
+  Audio > Input device** to **System default**; Gridline then opens a stream named Recording that
+  other apps can be connected to. See
+  [docs/recording.md](recording.md#recording-from-other-apps-on-linux). A dedicated JACK / PipeWire
+  driver with named inputs is planned.

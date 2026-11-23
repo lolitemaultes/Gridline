@@ -138,6 +138,12 @@ class Hub {
   // in-memory test fabric it runs inside poll, deterministically, on `nowSec`.
   void poll(double nowSec);
   bool threaded() const { return threaded_; }
+  // K-142 (0.7.8 follow-up): called on the network thread when something arrived for poll (a
+  // message, a handshake to accept, a link opened or closed): the app wakes its interface, which
+  // takes it at once, also while it draws nothing. One for every hub; set once by the app.
+  static void setUiWake(void (*wake)()) { uiWakeHook().store(wake); }
+  // (tests) times the network thread called it
+  uint64_t uiWakes() const { return uiWakes_.load(std::memory_order_relaxed); }
   // Wall clock (seconds), replaceable for tests.
   std::function<int64_t()> wallSec;
   const VersionInfo& version() const { return version_; }
@@ -310,6 +316,9 @@ class Hub {
   static const char* kindName(int kind);
   double clockSec() const;
   void startThread();
+  // K-142 (0.7.8): how long the network thread may sleep now (ms, under mu_): 10 while a link
+  // has something under way, up to a second while every link is idle.
+  int quietMs() const;
   void stopThread();
   void transportStep(double t);
   LinkRec* newLink(LinkRec::Kind kind, bool initiator, const EndpointConfig& ec, SecureLink::Hs hs);
@@ -364,6 +373,13 @@ class Hub {
   std::thread thread_;
   std::atomic<bool> stop_{false};
   bool threaded_ = false;
+  std::atomic<int> sleepMs_{10};  // K-142: the network thread's current wait (ms)
+  static std::atomic<void (*)()>& uiWakeHook() {
+    static std::atomic<void (*)()> h{nullptr};
+    return h;
+  }
+  std::atomic<uint64_t> uiWakes_{0};
+  bool uiWork() const;  // (mu_ held) something waits for poll
   std::chrono::steady_clock::time_point born_ = std::chrono::steady_clock::now();
 };
 

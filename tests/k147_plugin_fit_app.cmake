@@ -2,7 +2,8 @@
 # off-screen, isolated configs, SDL's dummy audio driver).
 #
 # The app opens every built-in instrument, effect and note processor in turn ("fitall": effects
-# in an effect slot window, instruments and note processors in the channel window) and reports,
+# in an effect slot window, instruments and note processors in the channel window; the sampler's
+# settings are the Audio clip window, not a plugin window, and it is left out) and reports,
 # for each, what the editor drew against its window ("edfit"): how far anything runs past the
 # window's edges (clipped) and how much room is left inside the padding (spare). For every
 # plugin, at the default plugin window size (75 %), 100 % and 150 %, at interface scale 1

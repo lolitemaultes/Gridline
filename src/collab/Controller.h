@@ -147,6 +147,9 @@ class Controller {
   std::function<void(const Hub::Refusal&)> onVersionRefusal;
   std::function<void(const std::vector<Flash>&)> onRemoteChange;
   std::function<void(const std::string& before, const std::string& after, SiteId by)> onRenamed;  // J-111f
+  // k078-collabplug: handed to every session (Session::pluginInstalledFn, Session::onPeerConnected).
+  std::function<bool(const std::string& type, std::string& version)> pluginInstalledFn;
+  std::function<void(SiteId)> onPeerConnected;
 
  private:
   Session::Config sessionConfig(const std::string& folder, const std::string& name) const;

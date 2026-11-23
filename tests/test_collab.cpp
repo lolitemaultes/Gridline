@@ -17,6 +17,7 @@
 #include "collab/Profile.h"
 #include "collab/Session.h"
 #include "core/Png.h"
+#include "core/Lfo.h"
 #include "core/Project.h"
 #include "packs/dynamics/cabinet_ir.h"
 #include "packs/plasma/plasma_dsp.h"
@@ -799,17 +800,16 @@ void testPolicy() {
          "every external plugin is listed with where it is");
   Trio t(17, "policy", false);
   settle(t.net, {&t.a, &t.b}, t.clock);
-  std::string notice;
-  t.a.s->onNotice = [&](const std::string& n, bool) { notice = n; };
+  // k078-collabplug: installed plugins are shared too (needed on every computer to hear them)
   const auto mixId = t.a.doc.song().mixer[1].id;
   t.a.doc.editMixerTrack(mixId, "load plugin", [](MixerTrack& m) { m.slots[0].plugin.type = "vst3:0123456789ABCDEF"; });
   run(t.net, {&t.a, &t.b}, t.clock, 0.2);
-  expect(t.a.doc.song().mixer[1].slots[0].plugin.empty() && t.b.doc.song().mixer[1].slots[0].plugin.empty() &&
-             notice.find("External plugins") != std::string::npos,
-         "an external plugin added to a collaborative project is refused and never synced");
+  expect(t.a.doc.song().mixer[1].slots[0].plugin.type == "vst3:0123456789ABCDEF" &&
+             t.b.doc.song().mixer[1].slots[0].plugin.type == "vst3:0123456789ABCDEF",
+         "an installed plugin added to a collaborative project is shared");
   t.a.doc.editSong("script", [](Song& x) { x.channels[0].plugin.type = "au:aufx:dely:appl"; });
   run(t.net, {&t.a, &t.b}, t.clock, 0.2);
-  expect(t.a.doc.song().channels[0].plugin.type == "gl.kick", "scripts and other edit paths are refused too");
+  expect(t.b.doc.song().channels[0].plugin.type == "au:aufx:dely:appl", "and by scripts and other edit paths too");
 }
 
 void testRelay() {
@@ -1666,6 +1666,41 @@ void testTrackReceiptFields() {
   expect(t.a.doc.song().trackReceipt.empty() && t.b.doc.song().trackReceipt.empty() && converged(t), "receipt: clearing the fields travels");
 }
 
+// 0.7.8: the LFO board's Chaos and Random sources sync as the LFOs do: their kind, seed and settings,
+// a Roll press, their links; undo is each peer's own; every peer then plays the same values.
+void testChaosRandomSync() {
+  Trio t(71, "chaosrand");
+  settle(t.net, t.all(), t.clock);
+  const ObjectId lead = t.b.doc.song().channels[1].id;
+  const ParamId vol = channelParam(lead, ChannelParam::Volume);
+  const ObjectId chaos = lfo::newForKnob(t.b.doc, vol, nullptr, LfoKind::Chaos);
+  t.b.doc.editLfo(chaos, "set", [](SongLfo& x) { x.character = 0.9f, x.seed = 4242, x.restart = LfoRestart::EachBar; });
+  const ObjectId rnd = lfo::newForKnob(t.b.doc, channelParam(lead, ChannelParam::Pan), nullptr, LfoKind::Random);
+  t.b.doc.editLfo(rnd, "set", [](SongLfo& x) { x.trigger = RandomTrigger::Roll, x.quantise = 4, x.centred = true; });
+  settle(t.net, t.all(), t.clock);
+  const SongLfo* ca = t.a.doc.song().lfo(chaos);
+  const SongLfo* ra = t.c.doc.song().lfo(rnd);
+  expect(ca && ca->kind == LfoKind::Chaos && ca->seed == 4242 && ca->character == 0.9f && ca->restart == LfoRestart::EachBar,
+         "chaos: its kind, seed and settings reach the others");
+  expect(ra && ra->kind == LfoKind::Random && ra->trigger == RandomTrigger::Roll && ra->quantise == 4 && ra->centred,
+         "random: its trigger and settings reach the others");
+  expect(findLfoLink(t.a.doc.song(), chaos, vol.owner, vol.index) && findLfoLink(t.c.doc.song(), chaos, vol.owner, vol.index),
+         "chaos: its link reaches the others");
+  // A Roll on one computer is the same new value on every computer (a song edit, no local randomness).
+  lfo::roll(t.a.doc, rnd);
+  settle(t.net, t.all(), t.clock);
+  expect(t.b.doc.song().lfo(rnd)->roll == 1 && t.c.doc.song().lfo(rnd)->roll == 1, "random: a Roll reaches every peer");
+  expect(converged(t), "chaos and random: the peers converge");
+  // Undo is the peer's own: Alex's roll goes back everywhere, Sam's sources stay.
+  t.a.doc.undo();
+  settle(t.net, t.all(), t.clock);
+  expect(t.b.doc.song().lfo(rnd) && t.b.doc.song().lfo(rnd)->roll == 0 && t.b.doc.song().lfo(chaos), "random: undoing the roll travels; the sources stay");
+  // Removing all of a knob's modulation on one peer.
+  t.c.doc.removeLfoLink(chaos, vol);
+  settle(t.net, t.all(), t.clock);
+  expect(!findLfoLink(t.a.doc.song(), chaos, vol.owner, vol.index) && converged(t), "chaos: removing its link travels");
+}
+
 }  // namespace
 
 int main() {
@@ -1679,6 +1714,7 @@ int main() {
   if (const char* more = std::getenv("GRIDLINE_COLLAB_SEEDS"))
     for (uint32_t k = 1; k <= static_cast<uint32_t>(std::atoi(more)); ++k) testFuzz(1000u + k * 7919u);
   testUndoLocality();
+  testChaosRandomSync();
   testPluginUndo();
   testOpLog();
   testReopen();

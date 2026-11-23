@@ -83,7 +83,7 @@ const Exclusion kExcluded[] = {
 // has a side input route (PluginInfo::sideInParam). tests/test_suite.cpp
 // checks the list against sideInParam.
 const char* const kSidechain[] = {
-    "gl.comp", "gl.limiter", "gl.vocoder", "gl.scduck", "gl.hall", "gl.tideline", "gl.transplit", "gl.hitloop",
+    "gl.comp", "gl.limiter", "gl.vocoder", "gl.scduck", "gl.hall", "gl.tideline", "gl.terrace", "gl.transplit", "gl.hitloop",
     "gl.minipress", "gl.minilatch", "gl.miniclang",
 };
 

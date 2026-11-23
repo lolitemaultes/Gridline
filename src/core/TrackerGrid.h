@@ -61,6 +61,11 @@ struct Track {
   int pastEnd = 0;               // notes starting at or after the pattern's end (kept, marked)
   bool hasSteps = false;         // the channel has rack steps in this pattern
   int rows = 0;
+  // K-255: the channel's lane length as rows (0: the track does not loop): rows from here on play
+  // the rows before it again (the editor shows them dim). `ownGrid`: the lane has a grid of its own;
+  // its steps sit at the nearest row, marked off the grid.
+  int loop = 0;
+  bool ownGrid = false;
   const Cell& at(int row, int column) const;
 };
 // Columns for a channel's notes (first free column, in start order): col[i] for notes[i]. `count`: columns used.
@@ -68,6 +73,12 @@ std::vector<int> assignColumns(const std::vector<Note>& notes, int* count = null
 // The tracker track of a channel in a pattern, at least `minColumns` note columns (at most kMaxColumns).
 constexpr int kMaxColumns = 16;
 Track buildTrack(const Song& s, const Pattern& p, ObjectId channel, const Grid& g, int minColumns = 1);
+// K-255: the track loop (the lane length) that ends at `row` (rows before it loop), in the lane's
+// own steps: `row` itself on the pattern's grid, the nearest lane step on a grid of its own. 0:
+// `row` is 0 or past the row's end (no loop).
+int loopStepsAtRow(const Song& s, const Pattern& p, ObjectId channel, const Grid& g, int row);
+// The lane length as rows (0: no loop).
+int loopRows(const Song& s, const Pattern& p, ObjectId channel, const Grid& g);
 
 // ---- text ----
 std::string noteText(int pitch, bool flats = false);  // ("Db4" with flats)    // "C-4", "C#4" (Gridline's names: 60 = C-4)
@@ -76,9 +87,11 @@ std::string hexNum(int v);          // "7F", "1B8" past FF (order positions and 
 std::string rowText(int row, bool hex);  // "1F" / "31" (3 digits past FF / 99)
 
 // ---- effect letters on native note properties ----
-// Letters, in the order an effect column shows them: G slide, P portamento, T fine tune (signed
-// cents, two's complement), X mod X, Y mod Y, R release velocity.
-constexpr const char* kEffectLetters = "GPTXYR";
+// Letters, in the order an effect column shows them: I program change (00 to 7F, K-348: the
+// instrument switches to that program, in its bank, as the note starts; first, so a note's program
+// change is the letter its effect field shows), G slide, P portamento, T fine tune (signed cents,
+// two's complement), X mod X, Y mod Y, R release velocity.
+constexpr const char* kEffectLetters = "IGPTXYR";
 struct Effect {
   char letter = 0;  // 0 = none
   int value = 0;    // 0..255 as shown

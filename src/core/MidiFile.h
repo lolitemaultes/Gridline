@@ -24,6 +24,8 @@ struct MidiNote {
 inline constexpr int kMidiPitchBend = 128;
 // K-99: channel pressure (value 0..127).
 inline constexpr int kMidiChannelPressure = 129;
+// A program change (value 0..127), in MidiTrack::programs.
+inline constexpr int kMidiProgram = 130;
 struct MidiCtl {
   int64_t tick = 0;
   int controller = 0;
@@ -41,6 +43,9 @@ struct MidiTrack {
   int channelProgram[16] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};  // first program per MIDI channel
   int channel = -1;   // MIDI channel of the track's first channel event (-1 = none)
   std::vector<MidiCtl> ctls;  // controllers and pitch bend, by tick
+  // Every program change, by tick (controller kMidiProgram, value the program); `program` and
+  // `channelProgram` keep the first ones. Written back as they are (else `program` at the start).
+  std::vector<MidiCtl> programs;
 };
 
 struct MidiTempo {

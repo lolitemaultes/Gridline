@@ -48,7 +48,7 @@ class Controller;
 // move a clip's content inside it), Play (audition / scrub while held), Zoom
 // (drag a range, click in, right-click out) and Detune (drag notes' fine pitch).
 enum class Tool { Draw, Paint, Erase, Select, Slice, Mute, Slip, Play, Zoom, Detune, Bend, Warp, Fade, Marquee,
-                  Text, Glue, Solo, AutoSelect, AutoCurve };  // R05-17: the Tracks layout's own tools  // K-25: Bend = the piano roll's pitch bend tool; K-85: Warp = the playlist's warp markers
+                  Text, Glue, Solo, AutoSelect, AutoCurve, Vibrato };  // K-262: Vibrato = the piano roll's vibrato tool; R05-17: the Tracks layout's own tools  // K-25: Bend = the piano roll's pitch bend tool; K-85: Warp = the playlist's warp markers
 
 struct PianoRollState {
   float pxPerTick = 0.25f;
@@ -60,8 +60,15 @@ struct PianoRollState {
   smoothzoom::RowGlide rowGlide;    // K-24: Alt+wheel row height, anchored at the pointer
   Tool tool = Tool::Draw;
   Snap snap = Snap::Line;
-  Tick effGrid = 0;          // grid the last frame snapped to (for the snap chip)
+  SnapGrid effGrid;          // grid the last frame snapped to (for the snap chip; may be a fraction of a tick)
+  float gridFirm = 1.0f;     // how much firmer the grid lines are drawn (dev input pianogridfirm: 0 = as before, for comparisons)
   float zoomRequest = 1.0f;  // zoom buttons/keys: applied once the canvas size is known
+  // 0.7.8: a drag of the time zoom slider asks for this zoom (px per tick) this frame (0: none). It is
+  // applied to the logical view, never as a ratio of the drawn (gliding) zoom, around the point held
+  // since the press: tick zoomSliderTick at zoomSliderPx px; zoomSliderFrame: the frame it last applied.
+  float zoomSliderSet = 0, zoomSliderPx = 0;
+  double zoomSliderTick = 0;
+  int zoomSliderFrame = -1;
   bool fitRequest = false;   // zoom to fit the pattern
   bool zoomInit = false;     // first frame: default zoom (16th notes ~20 px wide at any PPQ)
   std::set<size_t> selected;  // note indices in the current (pattern, channel) list
@@ -122,8 +129,14 @@ struct PlaylistState {
   smoothzoom::RowGlide rowGlide;
   Tool tool = Tool::Draw;
   Snap snap = Snap::Line;
-  Tick effGrid = 0;              // grid the last frame snapped to (for the snap chip)
+  SnapGrid effGrid;              // grid the last frame snapped to (for the snap chip; may be a fraction of a tick)
   float zoomRequest = 1.0f;      // toolbar zoom buttons: applied once the canvas size is known
+  // 0.7.8: a drag of the time zoom slider asks for this zoom (px per tick) this frame (0: none). It is
+  // applied to the logical view, never as a ratio of the drawn (gliding) zoom, around the point held
+  // since the press: tick zoomSliderTick at zoomSliderPx px; zoomSliderFrame: the frame it last applied.
+  float zoomSliderSet = 0, zoomSliderPx = 0;
+  double zoomSliderTick = 0;
+  int zoomSliderFrame = -1;
   bool fitRequest = false;       // zoom to fit the song
   Tick selStart = 0, selEnd = 0; // time selection (selEnd <= selStart: none)
   // R01-18 (Tracks layout): the tool held Cmd gives (the reference's Command-click tool), and the
@@ -235,6 +248,9 @@ class App {
   void syncEngine();  // rebuild the engine program after edits
   Song playedSong(const Song& s);  // K-87 frozen units, K-270 soloed Stage rooms
   void forceRebuild() { builtRevision_ = ~0ull; }  // the next syncEngine() rebuilds (PH-09: macro links)
+  // 0.7.8: an edit is waiting for the engine (syncEngine runs after the frame is drawn): a plugin just
+  // put on a track has no instance yet, and loads before the next frame. Not a failed load.
+  bool enginePending() const { return doc.revision() != builtRevision_; }
   void tick(double now);  // per-frame housekeeping (backups, toasts, GC)
 
   // ---- selection ----
@@ -268,6 +284,8 @@ class App {
   bool showLivePads = false;    // live mode pads window
   bool showPerformance = false;  // "Performance" window (CPU per channel / insert / effect)
   bool showGroove = false;       // K-151: the Groove editor (swing presets, app/GrooveUi.h)
+  bool showLfoBoard = false;     // K-247: the LFO board (app/LfoUi.h)
+  bool showLfoDetail = false;    // K-247: the selected LFO in a window of its own
   bool showStage = false;        // the mixer window shows the Stage view (app/StageView.h, setting ui.mixerView)
   bool showMaster = false;       // RN-09 "Master chain" quick panel
   // CPU use per channel, insert and effect slot, sampled from the engine's
@@ -372,7 +390,6 @@ class App {
   int audioRecLoopRestore = -1;  // looping to restore once nothing records past the song end (-1 = unchanged)
   bool recRollingPrev = false;   // last frame: the record button armed and the transport rolling (J-175)
   bool audioRecArmedPrev = false;
-  ObjectId clipProps = kNoId;    // audio clip properties window
   void processAudioRecording();  // per frame (AudioRecordUi.cpp)
 
   // MIDI.

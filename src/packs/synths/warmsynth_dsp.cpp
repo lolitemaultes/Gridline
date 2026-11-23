@@ -38,6 +38,7 @@
 #include "../../engine/Dsp.h"
 #include "dco.h"
 #include "synths_common.h"
+#include "../rest_render.h"
 
 namespace gl::packs::synths {
 
@@ -314,6 +315,9 @@ class WarmGen final : public Generator {
     }
   }
 
+  // K-142: at rest its idle render runs on unheard (packs/rest_render.h), so the next note
+  // finds every free-running part where it would have been.
+  void rested(int n) override { packs::restRender(n, [this](float* l, float* r, int m) { render(l, r, m); }); }
   void render(float* L, float* R, int n) override {
     const double lfoInc = 1.0 / (2.0 * lfoHalf_);
     for (auto& v : voices_)

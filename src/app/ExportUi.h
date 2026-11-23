@@ -4,6 +4,7 @@
 // samples window, and "export as WAV" for samples and audio clips.
 #pragma once
 #include <functional>
+#include <set>
 #include <vector>
 #include <string>
 #include "../core/ProjectInterop.h"
@@ -49,7 +50,10 @@ std::string devState();
 void draw(App& a);
 // Body of a progress window (status line, bar, Cancel): the render progress
 // window and assistant renders (J-61) share it. True when Cancel was pressed.
-bool progressBody(const std::string& status, double progress, bool escapeCancels = true);
+// 0.7.8: every row is kProgressW wide whatever the status and the percent; `stalled` (when given)
+// is the row of a stalled job's warning, kept (empty) while the job moves on.
+inline constexpr float kProgressW = 440.0f;
+bool progressBody(const std::string& status, double progress, bool escapeCancels = true, const std::string* stalled = nullptr);
 
 // MIDI.
 void importMidiFile(App& a, const std::string& path);        // options dialog, then a new pattern + channels
@@ -104,6 +108,10 @@ void importAudioAsClip(App& a, const std::string& path);
 // Samples / clips as WAV.
 void exportChannelSample(App& a, ObjectId channel);
 void exportClipAudio(App& a, ObjectId clip);
+// K-251: every clip of `clips` (automation clips left out) rendered on its own, each to its own
+// WAV file in a folder the user picks (exportClipsEachTo: in `dir`); one background job.
+void exportClipsEach(App& a, const std::set<ObjectId>& clips);
+void exportClipsEachTo(App& a, const std::set<ObjectId>& clips, const std::string& dir);
 
 }  // namespace exportui
 }  // namespace gl

@@ -10,6 +10,7 @@
 #include "Widgets.h"
 #include "SmoothScrollUi.h"
 #include "Theme.h"
+#include "WarpWave.h"
 
 namespace gl::plwarp {
 
@@ -34,8 +35,6 @@ struct Drag {
 };
 Drag dragging;
 
-constexpr float kGrab = 4.0f;  // px either side of a marker
-
 }  // namespace
 
 void drawMarkers(ImDrawList* dl, const Song& s, const Clip& c, const TempoMap& tm, ImVec2 b0, ImVec2 b1, float clipX0, float pxPerTick,
@@ -43,47 +42,13 @@ void drawMarkers(ImDrawList* dl, const Song& s, const Clip& c, const TempoMap& t
   if (c.kind != ClipKind::Audio || c.warp.empty() || b1.y - b0.y < 4) return;
   const std::vector<WarpMarkerView> v = warpMarkerViews(s, c, tm);
   if (v.empty()) return;
-  const theme::Palette& P = theme::pal();
-  const ImU32 warpCol = theme::rgb(theme::role::kWarp);
-  const ImVec2 mouse = ImGui::GetIO().MousePos;
-  const bool inBody = mouse.y >= b0.y && mouse.y <= b1.y;
-  uint32_t hot = 0;
-  float hotDist = kGrab + 1;
-  auto xOf = [&](double tick) { return clipX0 + static_cast<float>((tick - static_cast<double>(c.start)) * pxPerTick); };
-  if (tool) {
-    // The sections that play faster or slower: a faint tint and their speed.
-    for (size_t i = 0; i + 1 < v.size(); ++i) {
-      if (std::fabs(v[i].speed - 1.0) < 1e-3) continue;
-      const float xa = std::max(xOf(v[i].tick), visX0), xb = std::min(xOf(v[i + 1].tick), visX1);
-      if (xb <= xa) continue;
-      dl->AddRectFilled(ImVec2(xa, b0.y), ImVec2(xb, b1.y), theme::withAlpha(warpCol, P.dark ? 0.07f : 0.10f));
-      char lab[24];
-      std::snprintf(lab, sizeof lab, "%.0f%%", 100.0 / std::max(1e-6, v[i].speed));  // (100%: the clip's own length)
-      const ImVec2 ts = ImGui::CalcTextSize(lab);
-      if (xb - xa > ts.x + 10 && b1.y - b0.y > ts.y + 6)
-        dl->AddText(ImVec2(xa + 4, b1.y - ts.y - 2), theme::withAlpha(P.dark ? P.paper : P.ink, 0.6f), lab);
-    }
-  }
-  for (const WarpMarkerView& k : v) {
-    const float x = std::floor(xOf(k.tick)) + 0.5f;
-    if (x < visX0 - kGrab || x > visX1 + kGrab) continue;
-    if (tool && inBody && std::fabs(mouse.x - x) < hotDist) hotDist = std::fabs(mouse.x - x), hot = k.id;
-  }
-  for (const WarpMarkerView& k : v) {
-    const float x = std::floor(xOf(k.tick)) + 0.5f;
-    if (x < visX0 - kGrab || x > visX1 + kGrab) continue;
-    if (!tool) {  // every other tool: a faint line, so warped audio is recognisable
-      dl->AddLine(ImVec2(x, b0.y + 1), ImVec2(x, b1.y - 1), theme::withAlpha(ink, 0.30f));
-      dl->AddTriangleFilled(ImVec2(x - 2.5f, b0.y), ImVec2(x + 2.5f, b0.y), ImVec2(x, b0.y + 3.0f), theme::withAlpha(ink, 0.55f));
-      continue;
-    }
-    const bool on = k.id == hot || (dragging.clip == c.id && dragging.id == k.id);
-    const ImU32 col = on ? warpCol : theme::withAlpha(warpCol, 0.8f);
-    dl->AddLine(ImVec2(x, b0.y), ImVec2(x, b1.y), theme::withAlpha(P.dark ? P.surface950 : P.paper, 0.5f), on ? 3.5f : 2.5f);
-    dl->AddLine(ImVec2(x, b0.y), ImVec2(x, b1.y), col, on ? 2.0f : 1.0f);
-    const float w = on ? 4.5f : 3.5f;  // a tab at the top of the body
-    dl->AddTriangleFilled(ImVec2(x - w, b0.y), ImVec2(x + w, b0.y), ImVec2(x, b0.y + w * 1.3f), col);
-  }
+  // K-248: drawn by the shared ui::WarpWave (the clip editor, the sampler, Kerf and Loupe draw theirs the same way).
+  std::vector<warpwave::Mark> marks;
+  marks.reserve(v.size());
+  for (const WarpMarkerView& k : v)
+    marks.push_back({k.id, clipX0 + static_cast<float>((k.tick - static_cast<double>(c.start)) * pxPerTick), k.speed});
+  const uint32_t held = dragging.clip == c.id ? dragging.id : 0;
+  const uint32_t hot = warpwave::draw(dl, marks, b0, b1, visX0, visX1, tool, ink, held);
   if (tool && hot) hover = {c.id, hot, ImGui::GetFrameCount()};
 }
 

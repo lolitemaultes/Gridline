@@ -43,5 +43,8 @@ void devCommand(App& a, const std::vector<std::string>& args);
 // a title of font size `fs` centred in that row. One title style: bold, the body size, the text colour.
 constexpr float kPaneHeadTop = 1.0f, kPaneHeadH = 35.0f;
 float paneTitleY(float fs);
+// Smooth: the inspector's Region card opens (an audio region opened in the audio editor: its own
+// settings are the card's rows).
+void openRegionCard();
 
 }  // namespace gl::layoutparts

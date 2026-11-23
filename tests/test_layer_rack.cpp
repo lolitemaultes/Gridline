@@ -325,7 +325,7 @@ void testMacros() {
   Document d(r.s);
   const ObjectId L = r.layer;
   expect(describeParam(d.song(), layerMacroParam(L, 2)).has_value(), "a layer's macro is a parameter");
-  expect(isControllerSource(d.song(), L, kLayerMacroSlot) && !isControllerSource(d.song(), kid, kLayerMacroSlot), "a layer is a macro source");
+  expect(isControllerSource(d.song(), L, kLayerMacroSlot) && isControllerSource(d.song(), kid, kLayerMacroSlot), "a layer is a macro source (K-245: so is every channel)");
   const int pk = 0;
   const auto targets = layer::macroTargets(d.song(), L);
   const ParamId tBuilt = channelPluginParam(kid, pk), tHosted = channelPluginParam(hosted, 0), tSlot = slotParam(m.id, 0, 0);

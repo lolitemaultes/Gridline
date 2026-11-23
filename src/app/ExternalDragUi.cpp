@@ -1,5 +1,6 @@
 // Gridline — J-75: drags from other applications inside the interface (ExternalDragUi.h).
 #include "ExternalDragUi.h"
+#include "../core/ThreadName.h"
 #include "Keys.h"
 #include "LiveLook.h"
 #include "../core/RemoteFs.h"
@@ -485,7 +486,7 @@ void devDrop(float x, float y, bool here) {
     const std::string src = e.items[i].url;
     e.items[i].url.clear();
     const uint64_t token = e.token;
-    std::thread([src, folder, token, i] {
+    std::thread([src, folder, token, i] { gl::threads::setName("gl-drag-out");
       std::this_thread::sleep_for(std::chrono::milliseconds(120));
       xdrop::Event r;
       r.token = token;

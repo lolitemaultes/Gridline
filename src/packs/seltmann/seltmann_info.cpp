@@ -1,6 +1,7 @@
 // Gridline — "seltmann" pack: catalogue entry for Seltmann (gl.seltmann).
 #include "../Packs.h"
 #include "seltmann.h"
+#include "seltmann_editor.h"
 
 namespace gl::packs::seltmann {
 
@@ -44,7 +45,11 @@ void appendInfos(std::vector<PluginInfo>& v) {
   p.params[SmSpeed] = ch("Pattern speed", {"Half", "Normal", "Double"}, SpeedNormal);
   p.params[SmCutoff] = lg("Cutoff", "Hz", 20, 20000, 20000);
   p.params[SmReso] = lin("Resonance", "%", 0, 1, 0);
-  p.editorWidth = 1120;
+  // 0.7.8: the Ribbon editor (seltmann_ui.cpp) wants 1280 px; it reflows down to 1120.
+  p.editorWidth = 1120;  // 0.7.8: Full fits a 1440 px screen unscaled (the library sits beside the waveform)
+  p.editorMinWidth = 1120;
+  // 0.7.8: the piano roll names a Seltmann channel's keys by its regions (and the pattern octave).
+  p.instanceKeyNames = &instanceKeyNames;
 
   // Factory sounds (original). Chop layouts live in the editor's layout browser.
   p.presets.push_back({"Clean Chops", {}});

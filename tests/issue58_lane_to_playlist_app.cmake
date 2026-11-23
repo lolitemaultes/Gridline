@@ -17,12 +17,12 @@ set(ENV{GRIDLINE_HIDE_PLUGINS} "all")
 configure_file("${DEMO}" "${OUT}/song.gridline.json" COPYONLY)  # a copy: never the fixture itself
 
 # At 1440x900: the first mixer insert's pan knob (item 46eb0dbe); its menu's "Create automation clip
-# in pattern" sits 33 px right and 197 px down from the knob centre. The automation editor that opens
-# closes with its x (1263, 152); the new clip's rack row name is at (450, 573) and its menu's "Move
-# to the playlist" at (538, 696).
+# in pattern" row and the rack row menu's "Move to the playlist" are picked by their labels (atitem),
+# so a row added to either menu does not move the click. The automation editor that opens closes
+# with its x (1263, 152); the new clip's rack row name is at (450, 573).
 file(WRITE "${OUT}/click.txt"
-  "18 knobs\n19 atknob 46eb0dbe\n20 down 1\n21 up 1\n24 atknob 46eb0dbe 33 197\n25 down 0\n26 up 0\n"
-  "29 move 1263 152\n30 down 0\n31 up 0\n34 move 450 573\n35 down 1\n36 up 1\n39 move 538 696\n40 down 0\n41 up 0\n"
+  "18 knobs\n19 atknob 46eb0dbe\n20 down 1\n21 up 1\n24 atitem \"Create automation clip in pattern*\"\n25 down 0\n26 up 0\n"
+  "29 move 1263 152\n30 down 0\n31 up 0\n34 move 450 573\n35 down 1\n36 up 1\n39 atitem \"Move to the playlist\"\n40 down 0\n41 up 0\n"
   "44 dump\n45 undo\n46 dump\n47 redo\n48 dump\n49 undo\n51 redo\n52 dump\n55 quit discard\n")
 execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --no-update-check --fixed-dt 16 --size 1440x900 --frames 80
                         --dev-input "${OUT}/click.txt"
@@ -30,6 +30,9 @@ execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-so
 file(WRITE "${OUT}/click.log" "${out}\n${err}")
 if(NOT rc EQUAL 0)
   message(FATAL_ERROR "FAIL: gridline-app did not survive Move to the playlist from a rack automation row (${rc}): ${err}\n${out}")
+endif()
+if(out MATCHES "atitem frame [0-9]+: [^\n]* not shown")
+  message(FATAL_ERROR "FAIL: a menu row the script picks by its label is missing\n${out}")
 endif()
 if(NOT out MATCHES "knob item 46eb0dbe win \"Mixer\" id \"pan\"")
   message(FATAL_ERROR "FAIL: the first mixer insert's pan knob is not item 46eb0dbe any more (update the script)\n${out}")

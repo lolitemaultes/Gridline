@@ -1,6 +1,7 @@
 // Gridline: ASIO host logic and the simulated driver (K-6). Platform independent; the Windows
 // driver list and COM loading are in AsioWin.cpp. See AsioHost.h.
 #include "AsioHost.h"
+#include "../../core/ThreadName.h"
 
 #include <algorithm>
 #include <cmath>
@@ -72,7 +73,7 @@ abi::Error SimDriver::start() {
   running_ = true;
   if (spec_.threaded) {
     thread_ = std::make_unique<Thread>();
-    thread_->t = std::thread([this]() { run(); });
+    thread_->t = std::thread([this]() { gl::threads::setName("gl-asio"); run(); });
   }
   return abi::kOk;
 }

@@ -18,6 +18,7 @@
 #include "DialogLayout.h"
 #include "MenuParityUi.h"
 #include "Theme.h"
+#include "UiWake.h"
 #include "Widgets.h"
 
 namespace gl::oscui {
@@ -216,6 +217,7 @@ void tick(App& a) {
   if (!S.server->running()) {
     if (a.now < S.retryAt) return;
     std::string err;
+    S.server->onQueued = [] { uiwake::poke(); };  // K-142 (follow-up): a message wakes the interface
     if (!S.server->start(want, &err)) {
       if (err != S.error) logging::error("osc", err);
       S.error = err;
@@ -279,6 +281,12 @@ void tick(App& a) {
       S.feedbackError = err;
     }
   }
+}
+
+bool needsTurns(const App& a) {
+  if (!a.settings.getBool("osc.enabled")) return false;
+  if (!S.server || !S.server->running()) return true;
+  return !S.pending.empty() || (S.host && S.host->lastEdit >= 0);
 }
 
 void shutdown() {

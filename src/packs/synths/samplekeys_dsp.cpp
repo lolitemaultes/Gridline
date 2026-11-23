@@ -10,6 +10,7 @@
 #include <cmath>
 #include "../Packs.h"
 #include "samplekeys.h"
+#include "../rest_render.h"
 
 namespace gl::packs::synths {
 
@@ -163,6 +164,9 @@ class SampleKeysGen final : public Generator {
     lp_[0] = lp_[1] = 0, sinS_ = 0, cosS_ = 1, tail_ = 0;
   }
 
+  // K-142: at rest its idle render runs on unheard (packs/rest_render.h), so the next note
+  // finds every free-running part where it would have been.
+  void rested(int n) override { packs::restRender(n, [this](float* l, float* r, int m) { render(l, r, m); }); }
   void render(float* L, float* R, int n) override {
     if (!set_) return;
     const KeySet& k = *set_;

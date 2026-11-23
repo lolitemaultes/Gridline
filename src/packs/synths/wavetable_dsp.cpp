@@ -230,6 +230,15 @@ class WavetableGen final : public Generator {
     return false;
   }
   bool perVoiceExpression() const override { return true; }  // K-193
+  // K-142: resting n frames moves the shared LFOs and the effects on as render() would have.
+  void rested(int n) override {
+    for (int pos = 0; pos < n;) {
+      const int m = std::min(n - pos, kChunk);
+      for (int l = 0; l < 4; ++l) globalLfo_[l].advance(lfoHz_[l] / sr_ * m);
+      pos += m;
+    }
+    fx_.rested(n);
+  }
 
  protected:
   struct O {

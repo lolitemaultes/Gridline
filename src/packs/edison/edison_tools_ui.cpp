@@ -15,17 +15,16 @@
 #include <vector>
 #include "../../core/I18n.h"
 #include "../../app/Theme.h"
+#include "../../app/ProgressUi.h"
 #include "../../app/Widgets.h"
 #include "../../engine/TimeStretch.h"
+#include "edison_dialog.h"
+#include "edison_repair_ui.h"
 #include "edison_ui.h"
 
 namespace gl::packs::edison {
 
-namespace {
-
-constexpr float kDlgW = 420;      // section width of the slider dialogs
-constexpr float kDlgWideW = 540;  // graph dialogs
-constexpr float kBtnW = 96;       // footer and preset buttons (the house dialogs' button width)
+namespace dlg {
 
 const char* toolTitle(Tool t) {
   switch (t) {
@@ -47,6 +46,9 @@ const char* toolTitle(Tool t) {
     case Tool::Rename: return "Name";
     case Tool::Fade: return "Fade";
     case Tool::Script: return "Script";
+    case Tool::Deverb: return i18n::N_("Deverb (reduce room reverb)");
+    case Tool::Declip: return i18n::N_("Declip (rebuild clipped peaks)");
+    case Tool::DrumStretch: return i18n::N_("Drum loop stretch");
     default: return "Tool";
   }
 }
@@ -82,8 +84,7 @@ void row(const char* label, float col) {
 // and the value in its own recessed field to the right, so the number is never
 // under the handle. Drag the rail (Shift: 8x finer), wheel steps, double-click
 // the value to type one. Same height as the dialog's combos (the frame height).
-constexpr float kValueW = 96;  // the value field (the house button width)
-bool slider(const char* label, float col, float* v, float lo, float hi, const char* fmt, ImGuiSliderFlags flags = 0) {
+bool slider(const char* label, float col, float* v, float lo, float hi, const char* fmt, ImGuiSliderFlags flags) {
   row(label, col);
   ImGui::PushID(label);
   const bool logS = (flags & ImGuiSliderFlags_Logarithmic) != 0 && lo > 0;
@@ -191,6 +192,10 @@ void note(const char* text) {
   ImGui::PopTextWrapPos();
 }
 
+void statusNote(const char* text, int rows) {
+  progui::WrappedRows(text, ImGui::GetContentRegionAvail().x, rows, theme::pal().textDim);
+}
+
 // Preset buttons: one width, one gap; returns the clicked index or -1.
 int presets(std::initializer_list<const char*> labels) {
   int k = 0, hit = -1;
@@ -213,7 +218,7 @@ void scopeLine(App& a, const Session& s, Range tr) {
 }
 
 // The footer: Cancel and Accept (primary), right-aligned. True on Accept.
-bool footer(bool enabled = true) {
+bool footer(bool enabled) {
   ui::DialogFooter(ui::ButtonRowWidth(2, kBtnW));
   if (ui::TextButton("Cancel", false, kBtnW)) ImGui::CloseCurrentPopup();
   ImGui::SameLine(0, theme::kS2);
@@ -224,52 +229,9 @@ bool footer(bool enabled = true) {
   return ok;
 }
 
-// Point editor in a graph: x / y mapping functions, drag points, double-click
-// adds, right-click removes (first and last stay when `pinEnds`).
-template <class P, class ToScreen, class FromScreen>
-void pointGraph(const char* id, std::vector<P>& pts, ImVec2 size, ToScreen toS, FromScreen fromS, bool pinEnds, int& drag,
-                const std::function<void(ImDrawList*, ImVec2, ImVec2)>& grid) {
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  ImVec2 p0 = ImGui::GetCursorScreenPos(), p1(p0.x + size.x, p0.y + size.y);
-  ImGui::InvisibleButton(id, size, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-  skin::insetField(dl, p0, p1, C(col::WaveBg), theme::kRadius);
-  grid(dl, p0, p1);
-  const ImVec2 m = ImGui::GetIO().MousePos;
-  int hot = -1;
-  for (size_t i = 0; i < pts.size(); ++i) {
-    ImVec2 q = toS(pts[i], p0, p1);
-    if (std::fabs(q.x - m.x) < 7 && std::fabs(q.y - m.y) < 7) hot = static_cast<int>(i);
-  }
-  if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) drag = hot;
-  if (ImGui::IsItemActive() && drag >= 0 && drag < static_cast<int>(pts.size())) {
-    P np = fromS(ImVec2(std::clamp(m.x, p0.x, p1.x), std::clamp(m.y, p0.y, p1.y)), p0, p1);
-    if (pinEnds && (drag == 0 || drag + 1 == static_cast<int>(pts.size()))) np.first = pts[static_cast<size_t>(drag)].first;
-    pts[static_cast<size_t>(drag)] = np;
-  }
-  if (ImGui::IsItemDeactivated()) drag = -1;
-  if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && hot < 0)
-    pts.push_back(fromS(m, p0, p1));
-  if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && hot >= 0 && pts.size() > 2 && !(pinEnds && (hot == 0 || hot + 1 == static_cast<int>(pts.size()))))
-    pts.erase(pts.begin() + hot);
-  std::stable_sort(pts.begin(), pts.end(), [](const P& a, const P& b) { return a.first < b.first; });
-  // Curve.
-  std::vector<ImVec2> line;
-  for (const auto& q : pts) line.push_back(toS(q, p0, p1));
-  if (line.size() > 1) dl->AddPolyline(line.data(), static_cast<int>(line.size()), C(col::Wave), 0, 2.f);
-  for (size_t i = 0; i < line.size(); ++i) dl->AddCircleFilled(line[i], static_cast<int>(i) == hot ? 6.f : 4.5f, static_cast<int>(i) == hot ? C(col::WaveSel) : C(col::Wave));
-}
+}  // namespace dlg
 
-// Small grid label (mono caption size) at a point.
-void gridText(ImDrawList* dl, ImVec2 p, const char* t) {
-  ImFont* f = app().fontMono ? app().fontMono : ImGui::GetFont();
-  dl->AddText(f, theme::kFontLabel, ImVec2(std::round(p.x), std::round(p.y)), C(col::TextDim), t);
-}
-
-struct EqPt {
-  double first, second;  // hz, db
-};
-
-}  // namespace
+using namespace dlg;
 
 void openTool(Session& s, Tool t) {
   s.tool = t;
@@ -287,11 +249,17 @@ void drawToolDialogs(App& a, Session& s) {
   }
   ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
   if (!ImGui::BeginPopupModal(id, nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-    if (!ImGui::IsPopupOpen(id)) s.tool = Tool::None;
+    if (!ImGui::IsPopupOpen(id)) {
+      s.tool = Tool::None;
+      repairToolClosed(a, s);  // its preview stops
+    }
     return;
   }
   const Range tr = target(s);
-  static int drag = -1;
+  if (drawRepairDialog(a, s, tr)) {
+    ImGui::EndPopup();
+    return;
+  }
   switch (s.tool) {
     case Tool::Stretch: {
       scopeLine(a, s, tr);
@@ -330,138 +298,6 @@ void drawToolDialogs(App& a, Session& s) {
       }
       break;
     }
-    case Tool::Equalize: {
-      scopeLine(a, s, tr);
-      std::vector<EqPt> pts;
-      for (auto& p : s.eq) pts.push_back({p.hz, p.db});
-      auto toS = [](const EqPt& p, ImVec2 p0, ImVec2 p1) {
-        float x = p0.x + static_cast<float>(std::log(p.first / 20.0) / std::log(1000.0)) * (p1.x - p0.x);
-        float y = (p0.y + p1.y) * 0.5f - static_cast<float>(p.second / 24.0) * (p1.y - p0.y) * 0.5f;
-        return ImVec2(x, y);
-      };
-      auto fromS = [](ImVec2 m, ImVec2 p0, ImVec2 p1) {
-        double hz = 20.0 * std::pow(1000.0, (m.x - p0.x) / (p1.x - p0.x));
-        double db = -((m.y - (p0.y + p1.y) * 0.5) / ((p1.y - p0.y) * 0.5)) * 24.0;
-        return EqPt{hz, std::round(db * 10) / 10};
-      };
-      BeginSection("CURVE", kDlgWideW);
-      pointGraph("eqgraph", pts, ImVec2(ImGui::GetContentRegionAvail().x, 200), toS, fromS, false, drag, [](ImDrawList* dl, ImVec2 p0, ImVec2 p1) {
-        for (double hz : {50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0}) {
-          float x = std::round(p0.x + static_cast<float>(std::log(hz / 20.0) / std::log(1000.0)) * (p1.x - p0.x)) + 0.5f;
-          dl->AddLine(ImVec2(x, p0.y + 1), ImVec2(x, p1.y - 1), C(col::WaveGrid));
-          char b[12];
-          std::snprintf(b, sizeof b, hz >= 1000 ? "%.0fk" : "%.0f", hz >= 1000 ? hz / 1000 : hz);
-          gridText(dl, ImVec2(x + 3, p1.y - theme::kFontLabel - 4), b);
-        }
-        for (int db : {-12, 0, 12}) {
-          float y = std::round((p0.y + p1.y) * 0.5f - db / 24.f * (p1.y - p0.y) * 0.5f) + 0.5f;
-          dl->AddLine(ImVec2(p0.x + 1, y), ImVec2(p1.x - 1, y), db == 0 ? C(col::WaveGridHi) : C(col::WaveGrid));
-          char b[12];  // J-205: the gain scale on the left
-          std::snprintf(b, sizeof b, "%+d dB", db);
-          gridText(dl, ImVec2(p0.x + 5, y - theme::kFontLabel - 3), db == 0 ? "0 dB" : b);
-        }
-      });
-      s.eq.clear();
-      for (auto& p : pts) s.eq.push_back({p.first, p.second});
-      note(i18n::tr("Drag points; double-click adds, right-click removes. +-24 dB, 20 Hz - 20 kHz."));
-      ui::EndSection();
-      switch (presets({"Flat", "Low cut", "Telephone"})) {
-        case 0: s.eq = {{30, 0}, {120, 0}, {500, 0}, {2000, 0}, {8000, 0}, {16000, 0}}; break;
-        case 1: s.eq = {{20, -24}, {60, -24}, {120, 0}, {16000, 0}}; break;
-        case 2: s.eq = {{20, -24}, {300, -24}, {500, 0}, {2500, 3}, {3400, -24}, {20000, -24}}; break;
-        default: break;
-      }
-      if (footer()) {
-        std::vector<EqPoint> e = s.eq;
-        runEdit(a, s, "Equalize", [tr, e](const Content& c) { return equalize(c, tr, e); });
-      }
-      break;
-    }
-    case Tool::Reverb: {
-      scopeLine(a, s, tr);
-      float d = static_cast<float>(s.rv.decay), pd = static_cast<float>(s.rv.predelayMs), dm = static_cast<float>(s.rv.damping),
-            w = static_cast<float>(s.rv.width), wet = static_cast<float>(s.rv.wet), dry = static_cast<float>(s.rv.dry);
-      const float col = column({"Decay", "Pre-delay", "Damping", "Width", "Wet", "Dry"});
-      BeginSection("ROOM", kDlgW);
-      slider("Decay", col, &d, 0.1f, 10.f, "%.2f s", ImGuiSliderFlags_Logarithmic);
-      slider("Pre-delay", col, &pd, 0.f, 200.f, "%.0f ms");
-      slider("Damping", col, &dm, 0.f, 1.f, "%.2f");
-      slider("Width", col, &w, 0.f, 1.f, "%.2f");
-      ui::EndSection();
-      BeginSection("MIX", kDlgW);
-      slider("Wet", col, &wet, 0.f, 1.f, "%.2f");
-      slider("Dry", col, &dry, 0.f, 1.f, "%.2f");
-      note(i18n::tr("The tail rings into the following audio (and past the end)."));
-      ui::EndSection();
-      s.rv.decay = d, s.rv.predelayMs = pd, s.rv.damping = dm, s.rv.width = w, s.rv.wet = wet, s.rv.dry = dry;
-      if (footer()) {
-        ReverbSettings rs = s.rv;
-        runEdit(a, s, "Reverb", [tr, rs](const Content& c) { return reverb(c, tr, rs); });
-      }
-      break;
-    }
-    case Tool::Blur: {
-      scopeLine(a, s, tr);
-      const float col = column({"Amount", "Mix"});
-      BeginSection("OPTIONS", kDlgW);
-      slider("Amount", col, &s.blurMs, 2.f, 500.f, "%.0f ms", ImGuiSliderFlags_Logarithmic);
-      slider("Mix", col, &s.blurMix, 0.f, 1.f, "%.2f");
-      ui::EndSection();
-      if (footer()) {
-        const double ms = s.blurMs, mix = s.blurMix;
-        runEdit(a, s, "Blur", [tr, ms, mix](const Content& c) { return blur(c, tr, ms, mix); });
-      }
-      break;
-    }
-    case Tool::Denoise: {
-      scopeLine(a, s, tr);
-      const float col = column({"Noise profile", "Reduction", "Sensitivity"});
-      BeginSection("NOISE PROFILE", kDlgW);
-      if (ui::TextButton(s.noise.valid() ? "Take again" : "Take from selection", false, ImGui::GetContentRegionAvail().x)) {
-        s.noise = acquireNoise(s.cur().a(), tr);
-        if (!s.noise.valid()) say(s, "Select at least 50 ms of noise first");
-      }
-      note(s.noise.valid() ? i18n::tr("Noise profile ready.") : i18n::tr("No profile yet: select a part with only noise first."));
-      ui::EndSection();
-      BeginSection("REDUCTION", kDlgW);
-      slider("Reduction", col, &s.dnReduce, 3.f, 60.f, "%.0f dB");
-      slider("Sensitivity", col, &s.dnSens, 0.f, 1.f, "%.2f");
-      ui::EndSection();
-      if (footer(s.noise.valid())) {
-        NoiseProfile p = s.noise;
-        const double r = s.dnReduce, se = s.dnSens;
-        runEdit(a, s, "Clean up", [tr, p, r, se](const Content& c) { return denoise(c, tr, p, r, se); });
-      }
-      break;
-    }
-    case Tool::Gate: {
-      scopeLine(a, s, tr);
-      const float col = column({"Threshold", "Attack", "Hold", "Release", "Floor"});
-      BeginSection("GATE", kDlgW);
-      slider("Threshold", col, &s.gThr, -90.f, 0.f, "%.1f dB");
-      slider("Attack", col, &s.gAtt, 0.f, 50.f, "%.1f ms");
-      slider("Hold", col, &s.gHold, 0.f, 500.f, "%.0f ms");
-      slider("Release", col, &s.gRel, 1.f, 1000.f, "%.0f ms", ImGuiSliderFlags_Logarithmic);
-      slider("Floor", col, &s.gFloor, -90.f, 0.f, s.gFloor <= -90 ? i18n::tr("silence") : "%.0f dB");
-      ui::EndSection();
-      if (footer()) {
-        const double t = s.gThr, at = s.gAtt, h = s.gHold, rl = s.gRel, fl = s.gFloor;
-        runEdit(a, s, "Noise gate", [tr, t, at, h, rl, fl](const Content& c) { return gate(c, tr, t, at, h, rl, fl); });
-      }
-      break;
-    }
-    case Tool::Declick: {
-      scopeLine(a, s, tr);
-      const float col = column({"Sensitivity"});
-      BeginSection("OPTIONS", kDlgW);
-      slider("Sensitivity", col, &s.dcSens, 0.f, 1.f, "%.2f");
-      ui::EndSection();
-      if (footer()) {
-        const double se = s.dcSens;
-        runEdit(a, s, "Declick", [tr, se](const Content& c) { return declick(c, tr, se); });
-      }
-      break;
-    }
     case Tool::Resample: {
       const int rates[] = {8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000};
       char cur[64];
@@ -484,58 +320,6 @@ void drawToolDialogs(App& a, Session& s) {
         const double nr = s.rsRate;
         const int qq = s.rsQuality;
         runEdit(a, s, "Resample", [nr, qq](const Content& c) { return resample(c, nr, qq); }, EditMap::scale());
-      }
-      break;
-    }
-    case Tool::Amplify: {
-      scopeLine(a, s, tr);
-      const float col = column({"Gain"});
-      BeginSection("LEVEL", kDlgW);
-      slider("Gain", col, &s.ampDb, -48.f, 24.f, "%+.1f dB");
-      ui::EndSection();
-      if (footer()) {
-        const double g = s.ampDb;
-        runEdit(a, s, "Amplify", [tr, g](const Content& c) { return gain(c, tr, g); });
-      }
-      break;
-    }
-    case Tool::Normalize: {
-      scopeLine(a, s, tr);
-      const float col = column({"Peak level"});
-      BeginSection("LEVEL", kDlgW);
-      slider("Peak level", col, &s.normDb, -24.f, 0.f, "%.1f dBFS");
-      ui::EndSection();
-      if (footer()) {
-        const double g = s.normDb;
-        runEdit(a, s, "Normalize", [tr, g](const Content& c) { return normalize(c, tr, g); });
-      }
-      break;
-    }
-    case Tool::Envelope: {
-      scopeLine(a, s, tr);
-      auto toS = [](const std::pair<double, double>& p, ImVec2 p0, ImVec2 p1) {
-        return ImVec2(p0.x + static_cast<float>(p.first) * (p1.x - p0.x), p1.y - static_cast<float>(p.second / 2.0) * (p1.y - p0.y));
-      };
-      auto fromS = [](ImVec2 m, ImVec2 p0, ImVec2 p1) {
-        return std::make_pair(static_cast<double>((m.x - p0.x) / (p1.x - p0.x)), static_cast<double>((p1.y - m.y) / (p1.y - p0.y) * 2.0));
-      };
-      BeginSection("ENVELOPE", kDlgWideW);
-      pointGraph("envgraph", s.env, ImVec2(ImGui::GetContentRegionAvail().x, 180), toS, fromS, true, drag, [](ImDrawList* dl, ImVec2 p0, ImVec2 p1) {
-        const float y1 = std::round(p1.y - 0.5f * (p1.y - p0.y)) + 0.5f;
-        dl->AddLine(ImVec2(p0.x + 1, y1), ImVec2(p1.x - 1, y1), C(col::WaveGridHi));
-        gridText(dl, ImVec2(p0.x + 5, y1 - theme::kFontLabel - 3), "0 dB");
-      });
-      note(i18n::tr("Gain across the range (0 to +6 dB). Double-click adds a point, right-click removes."));
-      ui::EndSection();
-      switch (presets({"Reset", "Swell", "Duck"})) {
-        case 0: s.env = {{0, 1}, {1, 1}}; break;
-        case 1: s.env = {{0, 0}, {0.7, 1}, {1, 1}}; break;
-        case 2: s.env = {{0, 1}, {0.1, 0.3}, {0.6, 0.3}, {1, 1}}; break;
-        default: break;
-      }
-      if (footer()) {
-        auto e = s.env;
-        runEdit(a, s, "Envelope", [tr, e](const Content& c) { return applyEnvelope(c, tr, e); });
       }
       break;
     }
@@ -610,25 +394,6 @@ void drawToolDialogs(App& a, Session& s) {
           if (c.frames() == 0 && !c.audio) base = makeContent(makeAudio(44100, 2, 0));
           return insertSilence(base, at, static_cast<int64_t>(sec * base.rate()));
         }, EditMap::replace({at, at}));
-      }
-      break;
-    }
-    case Tool::Spectral: {
-      char b[96];
-      std::snprintf(b, sizeof b, i18n::tr("%zu painted areas"), s.brush.size());
-      ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(theme::pal().textDim));
-      ImGui::TextUnformatted(b);
-      ImGui::PopStyleColor();
-      const float col = column({"Gain"});
-      BeginSection("BRUSH", kDlgW);
-      slider("Gain", col, &s.spectralDb, -60.f, 12.f, "%+.0f dB");
-      note(i18n::tr("Attenuate (negative) or boost the painted time / frequency areas."));
-      ui::EndSection();
-      if (footer(!s.brush.empty())) {
-        auto rects = s.brush;
-        const double g = s.spectralDb;
-        runEdit(a, s, "Spectral edit", [rects, g](const Content& c) { return spectralGain(c, rects, g); });
-        s.brush.clear();
       }
       break;
     }

@@ -62,12 +62,12 @@ Gridline > Options > Typing keyboard options > Chord > Minor 7th			e-
 Gridline > Options > Typing keyboard options > Chord > Sus 4			e-
 Gridline > Options > Typing keyboard options > Chord > Power (5th)			e-
 Gridline > Options > Typing keyboard options > Chord > Octave			e-
-Gridline > Options > Typing keyboard options > Keyboard layout > Standard (QWERTY)			ec
-Gridline > Options > Typing keyboard options > Keyboard layout > QWERTZ			e-
-Gridline > Options > Typing keyboard options > Keyboard layout > AZERTY			e-
-Gridline > Options > Typing keyboard options > Keyboard layout > Dvorak			e-
-Gridline > Options > Typing keyboard options > Keyboard layout > Colemak			e-
-Gridline > Options > Typing keyboard options > Keyboard layout > Follow the computer			e-
+Gridline > Options > Typing keyboard options > My keys say > Same as my computer			ec
+Gridline > Options > Typing keyboard options > My keys say > QWERTY			e-
+Gridline > Options > Typing keyboard options > My keys say > QWERTZ			e-
+Gridline > Options > Typing keyboard options > My keys say > AZERTY			e-
+Gridline > Options > Typing keyboard options > My keys say > Dvorak			e-
+Gridline > Options > Typing keyboard options > My keys say > Colemak			e-
 Gridline > Options > Multilink to controllers			e-
 Gridline > Options > Auto scrolling			ec
 Gridline > Options > Auto scrolling in pattern editors			ec
@@ -182,9 +182,12 @@ Edit > Patterns > Delete	Ctrl+Shift+Del	pattern.delete	e-
 Edit > Patterns > Delete unused patterns			e-
 Track > New tracks...	Ctrl+Alt+N	track.newTracks	e-
 Track > New track			e-
+Track > New instrument track > Guide to the instruments...			e-
 Track > New instrument track > Audio file as sampler...			e-
 Track > New instrument track > Speech...			e-
 Track > New track with the same settings	Ctrl+D	track.duplicate	e-
+Track > Duplicate without notes			e-
+Track > Copy to a new pattern			e-
 Track > New mixer track			e-
 Track > Rename track...	Shift+Enter	edit.rename	e-
 Track > Mute track	M	track.mute	e-
@@ -192,6 +195,14 @@ Track > Solo track	S	track.solo	e-
 Track > Create track stack			e-
 Track > Freeze track			e-
 Track > Bounce track in place			e-
+Track > Render to audio > As an audio region			e-
+Track > Render to audio > Into a slicer channel			e-
+Track > Render to audio > As a one-shot sampler channel			e-
+Track > Render to audio > Onto the next free drum pad			e-
+Track > Render to audio > Open in Loupe			e-
+Track > Render to audio > Save to the library			e-
+Track > Render to audio > Render options...			e-
+Track > Render to audio > The whole pattern (every channel)...			e-
 Track > Configure track header > Icon			ec
 Track > Configure track header > On/off button			ec
 Track > Configure track header > Mute and solo buttons			ec
@@ -199,6 +210,7 @@ Track > Configure track header > Record button			ec
 Track > Configure track header > Volume slider			ec
 Track > Configure track header > Pan knob			ec
 Track > Delete track	Ctrl+Backspace	track.delete	e-
+Track > Add > Instrument channel > Guide to the instruments...			e-
 Track > Add > Instrument channel > Audio file as sampler...			e-
 Track > Add > Instrument channel > Speech...			e-
 Track > Add > Pattern	F4	pattern.new	e-
@@ -308,14 +320,15 @@ Record > Typing keyboard options > Chord > Minor 7th			e-
 Record > Typing keyboard options > Chord > Sus 4			e-
 Record > Typing keyboard options > Chord > Power (5th)			e-
 Record > Typing keyboard options > Chord > Octave			e-
-Record > Typing keyboard options > Keyboard layout > Standard (QWERTY)			ec
-Record > Typing keyboard options > Keyboard layout > QWERTZ			e-
-Record > Typing keyboard options > Keyboard layout > AZERTY			e-
-Record > Typing keyboard options > Keyboard layout > Dvorak			e-
-Record > Typing keyboard options > Keyboard layout > Colemak			e-
-Record > Typing keyboard options > Keyboard layout > Follow the computer			e-
+Record > Typing keyboard options > My keys say > Same as my computer			ec
+Record > Typing keyboard options > My keys say > QWERTY			e-
+Record > Typing keyboard options > My keys say > QWERTZ			e-
+Record > Typing keyboard options > My keys say > AZERTY			e-
+Record > Typing keyboard options > My keys say > Dvorak			e-
+Record > Typing keyboard options > My keys say > Colemak			e-
 Record > Multilink to controllers			e-
 Mix > Mixer	X	view.mixer	e-
+Mix > LFO board	Alt+F9	view.lfoBoard	e-
 Mix > Master chain			e-
 Mix > Performance			e-
 Mix > Show automation	A	view.automation	e-
@@ -342,6 +355,7 @@ View > Zoom to fit the song	Z	playlist.zoomFit	e-
 View > More windows and views > Command palette...	Ctrl+Shift+P	view.commandPalette	e-
 View > More windows and views > Piano roll	P	view.pianoRoll	e-
 View > More windows and views > Mixer	X	view.mixer	e-
+View > More windows and views > LFO board	Alt+F9	view.lfoBoard	e-
 View > More windows and views > Browser			e-
 View > More windows and views > Plugin picker	F8	view.pluginPicker	e-
 View > More windows and views > Channel settings			e-
@@ -360,6 +374,7 @@ View > More windows and views > Panels > Notes			e-
 View > More windows and views > Panels > Smart controls			e-
 View > More windows and views > Panels > Pattern editor			e-
 View > More windows and views > Panels > Order list			e-
+View > More windows and views > Panels > Seltmann			e-
 View > More windows and views > Clear time selection			--
 View > More windows and views > Close plugin windows	Alt+F12	view.closePlugins	e-
 View > More windows and views > Close all windows	F12	view.closeAll	e-
@@ -372,6 +387,8 @@ View > More windows and views > Window layout > Layout settings...			e-
 View > More windows and views > Workspaces > New workspace			e-
 View > More windows and views > Workspaces > Add starter workspaces			e-
 View > More windows and views > Workspaces > Close workspace			--
+View > More windows and views > Workspaces > Show all as cards			e-
+View > More windows and views > Workspaces > Workspace settings...			e-
 View > More windows and views > Workspaces > Keep a copy in the project			e-
 View > More windows and views > Workspaces > Tracks			ec
 View > More windows and views > Reopen closed pane tab	Ctrl+Alt+T	view.reopenTab	e-
@@ -393,6 +410,7 @@ View > More windows and views > Mixer layout > Wide strips			e-
 View > More windows and views > Show played chords in the hint bar			e-
 Window > Main window	Ctrl+1	view.playlist	e-
 Window > Mixer	Ctrl+2	view.mixer	e-
+Window > LFO board	Alt+F9	view.lfoBoard	e-
 Window > Step sequencer	Ctrl+3	view.channelRack	e-
 Window > Piano roll	Ctrl+4	view.pianoRoll	e-
 Window > Smart controls			e-
@@ -472,6 +490,12 @@ Window > Tools > Piano roll tools > Quick chop > Into beats			e-
 Window > Tools > Piano roll tools > Quick chop > Into snap grid			e-
 Window > Tools > Piano roll tools > Glue	Ctrl+G	piano.glue	e-
 Window > Tools > Piano roll tools > Discard lengths			e-
+Window > Tools > Piano roll tools > Note lengths > Twice as long			e-
+Window > Tools > Piano roll tools > Note lengths > Half as long			e-
+Window > Tools > Piano roll tools > Note lengths > Longer by the snap grid			e-
+Window > Tools > Piano roll tools > Note lengths > Shorter by the snap grid			e-
+Window > Tools > Piano roll tools > Note lengths > All as long as the snap grid			e-
+Window > Tools > Piano roll tools > Note lengths > Note lengths...			e-
 Window > Tools > Piano roll tools > Strum...	Alt+S	piano.strum	e-
 Window > Tools > Piano roll tools > Arpeggiate...	Alt+A	piano.arpeggiate	e-
 Window > Tools > Piano roll tools > Grace notes...	Alt+G	piano.flam	e-

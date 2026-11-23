@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <filesystem>
 #include "../core/I18n.h"
+#include "../core/KeyCaps.h"
 #include "../core/Params.h"
 #include "Keys.h"
 #include "../../third_party/imgui/imgui.h"
@@ -16,7 +17,9 @@
 #include "MidiUi.h"
 #include "../core/Osc.h"
 #include "OscUi.h"
+#include "FlkeyUi.h"
 #include "MackieUi.h"
+#include "Surfaces.h"
 #include "ScriptUi.h"
 #include "AudioRecordUi.h"
 #include "J31Ui.h"
@@ -110,6 +113,124 @@ void mappingGraph(const ControllerLink& l, ImVec2 size) {
   dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(p.x + 6, p.y + 4), P.textFaint, "VALUE");
 }
 
+// The device an input port number belongs to ("" when none is known).
+std::string deviceOfPort(App& a, int port) {
+  if (!a.midi || port < 0) return "";
+  for (const auto& c : a.midi->inputCfg)
+    if (c.port == port) return c.name;
+  return "";
+}
+
+std::string sourceNumberText(RemoteSource src, int number, bool hiRes) {
+  switch (src) {
+    case RemoteSource::CC: return std::to_string(number) + (hiRes ? " (14-bit)" : "");
+    case RemoteSource::Note:
+    case RemoteSource::KeyPressure: return midiNoteName(number) + " (" + std::to_string(number) + ")";
+    case RemoteSource::Program: return std::to_string(number + 1);
+    case RemoteSource::Nrpn:
+    case RemoteSource::Rpn: return std::to_string(number) + " (" + std::to_string(number / 128) + ", " + std::to_string(number % 128) + ")";
+    default: return "-";
+  }
+}
+
+// k078-linkctl: the listening line and the card of the captured control (device, channel, type,
+// number and a meter that follows it), with the note that a surface's control is taken over.
+void captureBox(App& a, ControllerLink& l) {
+  const auto& P = pal();
+  LinkCapture& cap = linkctl::capture();
+  const bool listening = a.remoteListening;
+  const bool osc = l.source == RemoteSource::Osc;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  {  // the listening line
+    ImVec2 lp = ImGui::GetCursorScreenPos();
+    const float rightX = lp.x + ImGui::GetContentRegionAvail().x;
+    const bool blink = listening && std::fmod(a.now, 0.8) < 0.4;
+    ui::Led(dl, ImVec2(lp.x + 5, lp.y + ImGui::GetFrameHeight() * 0.5f), 4.0f, blink, 1.0f);
+    ImGui::SetCursorScreenPos(ImVec2(lp.x + 16, lp.y));
+    ImGui::AlignTextToFramePadding();
+    const char* line = !listening ? i18n::tr("Not listening")
+                       : cap.hasCapture() ? i18n::tr("Listening: move another control to pick it instead")
+                                          : i18n::tr("Listening: move a control on your controller");
+    ImGui::PushFont(a.fontBold, theme::kFontBody);
+    ImGui::TextColored(theme::vec(listening ? P.text : P.textDim), "%s", line);
+    ImGui::PopFont();
+    const float bw = 130;
+    ImGui::SameLine();
+    ImGui::SetCursorScreenPos(ImVec2(rightX - bw, lp.y));
+    if (ui::TextButton(listening ? "Stop listening" : "Listen again", false, bw,
+                       listening ? "Keep the control captured and stop listening" : "Move a control on your controller to pick it")) {
+      a.remoteListening = !listening;
+      if (a.remoteListening) linkctl::start(a);
+    }
+  }
+  // The card.
+  const float cardH = 78;
+  const ImVec2 p0 = ImGui::GetCursorScreenPos();
+  const float cardW = ImGui::GetContentRegionAvail().x;
+  ImGui::Dummy(ImVec2(cardW, cardH));
+  dl->AddRectFilled(p0, ImVec2(p0.x + cardW, p0.y + cardH), P.field, theme::kRadius);
+  dl->AddRect(p0, ImVec2(p0.x + cardW, p0.y + cardH), listening && !cap.hasCapture() ? theme::withAlpha(P.hot, 0.6f) : P.line, theme::kRadius);
+  const bool have = cap.hasCapture() || (!listening && a.remoteEditIndex >= 0);
+  if (!have || osc) {
+    const char* wait = osc ? i18n::tr("OSC: the address below is what links")
+                       : listening ? i18n::tr("Waiting for a knob, fader, wheel or button. Clock, repeated values and the keys are ignored.")
+                                   : i18n::tr("Nothing captured yet");
+    dl->AddText(ImGui::GetFont(), theme::kFontCaption, ImVec2(p0.x + theme::kS3, p0.y + cardH * 0.5f - theme::kFontCaption * 0.6f), P.textFaint, wait);
+  } else {
+    const bool fromCap = cap.hasCapture();
+    const LinkCapture::Captured& c = cap.captured();
+    std::string device = fromCap ? c.device : deviceOfPort(a, l.port);
+    if (device.empty()) device = i18n::tr("Any device");
+    const std::string ch = l.midiChannel < 0 ? std::string(i18n::tr("Any")) : std::to_string(l.midiChannel + 1);
+    const char* cols[] = {"DEVICE", "CHANNEL", "TYPE", "NUMBER"};
+    const std::string vals[] = {device, ch, remoteSourceName(l.source), sourceNumberText(l.source, l.cc, l.hiRes)};
+    const float colX[] = {0, 190, 270, 410};
+    for (int i = 0; i < 4; ++i) {
+      const ImVec2 q(p0.x + theme::kS3 + colX[i], p0.y + 9);
+      dl->AddText(a.fontMono, theme::kFontLabel, q, P.textFaint, cols[i]);
+      const float maxW = (i < 3 ? colX[i + 1] - colX[i] : cardW - 2 * theme::kS3 - colX[i]) - 10;
+      std::string v = vals[i];
+      while (v.size() > 4 && ImGui::GetFont()->CalcTextSizeA(theme::kFontBody, 1e9f, 0, v.c_str()).x > maxW) v = v.substr(0, v.size() - 4) + "...";
+      dl->AddText(ImGui::GetFont(), theme::kFontBody, ImVec2(q.x, q.y + 17), P.text, v.c_str());
+    }
+    // The meter: where the control is now (it follows the controller while the dialog listens).
+    const float mx = p0.x + theme::kS3 + 52, mw = p0.x + cardW - theme::kS3 - 34 - mx;
+    if (fromCap && mw > 30) {
+      const float my = p0.y + 56, mh = 8;
+      const float f = static_cast<float>(std::clamp(c.value, 0.0, 1.0));
+      dl->AddRectFilled(ImVec2(mx, my), ImVec2(mx + mw, my + mh), theme::withAlpha(P.ink, 0.35f), theme::kRadiusSm);
+      dl->AddRectFilled(ImVec2(mx, my), ImVec2(mx + std::max(2.0f, mw * f), my + mh), P.hot, theme::kRadiusSm);
+      char num[16];
+      std::snprintf(num, sizeof num, "%d", static_cast<int>(std::lround(f * 127.0)));
+      dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(p0.x + theme::kS3, my - 2), P.textFaint, "VALUE");
+      const float tw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, num).x;
+      dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(p0.x + cardW - theme::kS3 - tw, my - 2), P.text, num);
+    }
+  }
+  if (cap.hasCapture() && cap.captured().surface && !osc) {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + cardW);
+    ImGui::TextColored(theme::vec(P.textDim),
+                       i18n::tr("This control belongs to the controller's own Gridline page (%s). Once linked, it moves this control instead; its other controls carry on as before."),
+                       cap.captured().device.c_str());
+    ImGui::PopTextWrapPos();
+  }
+  bool notes = linkctl::notes();
+  if (ImGui::Checkbox(i18n::tr("Notes and pads too (for a button)"), &notes)) {
+    linkctl::notes() = notes;
+    cap.setNotes(notes);
+  }
+  ui::Hint("Off: the keys and pads are ignored while the dialog listens, so playing a note never links it");
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+}
+
+// k078-songlinks: what the INTERNAL CONTROLLER section showed on the last frame: "offered" (the
+// controller choice), "note" (a song setting: the note only), "note-linked" (the note and an old
+// link with its Remove button) or "none" (an action target has no such section).
+std::string& internalShown() {
+  static std::string s = "none";
+  return s;
+}
+
 void saveLink(App& a) {
   ControllerLink l = a.remoteEdit;
   const int idx = a.remoteEditIndex;
@@ -138,6 +259,35 @@ void removeLinkAt(App& a, int idx) {
 }
 
 }  // namespace
+
+void remoteDialogApply(App& a) {
+  if (!a.showRemoteDialog) return;
+  saveLink(a);
+  a.showRemoteDialog = a.remoteListening = a.midiLearning = false;
+}
+
+void remoteDialogCancel(App& a) { a.showRemoteDialog = a.remoteListening = a.midiLearning = false; }
+
+void remoteDialogRemove(App& a) {
+  if (a.showRemoteDialog && a.remoteEditIndex >= 0) removeLinkAt(a, a.remoteEditIndex);
+  remoteDialogCancel(a);
+}
+
+void remoteDialogRemoveInternal(App& a) {
+  const ControllerLink& l = a.remoteEdit;
+  if (a.showRemoteDialog && l.action == RemoteAction::None) a.doc.removeModLink({l.owner, l.index});
+}
+
+std::string remoteDialogDescribe(App& a) {
+  char buf[640];
+  const LinkCapture& cap = linkctl::capture();
+  std::snprintf(buf, sizeof buf, "open %d listening %d captured %d device \"%s\" source \"%s\" meter %.3f surface %d notes %d target \"%s\" internal %s modlinks %zu undo %d",
+                a.showRemoteDialog ? 1 : 0, a.remoteListening ? 1 : 0, cap.captured().captures, cap.captured().device.c_str(),
+                remoteSourceLabel(a.remoteEdit).c_str(), cap.captured().value, cap.captured().surface ? 1 : 0, linkctl::notes() ? 1 : 0,
+                targetName(a, a.remoteEdit).c_str(), a.showRemoteDialog ? internalShown().c_str() : "none", a.doc.song().modLinks.size(),
+                static_cast<int>(a.doc.history().position()));
+  return buf;
+}
 
 // ------------------------------------------------------------ remote dialog ----
 
@@ -187,20 +337,9 @@ void drawRemoteDialog(App& a) {
   }
   ImGui::Dummy(ImVec2(0, theme::kS1));
 
-  // Controller.
+  // Controller: what the dialog captured (k078-linkctl), then the source rows to edit by hand.
   ui::BeginSection("CONTROLLER");
-  {
-    ImVec2 lp = ImGui::GetCursorScreenPos();
-    bool blink = a.remoteListening && std::fmod(a.now, 0.8) < 0.4;
-    ui::Led(ImGui::GetWindowDrawList(), ImVec2(lp.x + 5, lp.y + ImGui::GetFrameHeight() * 0.5f), 4.0f, blink, 1.0f);
-    ImGui::SetCursorScreenPos(ImVec2(lp.x + 16, lp.y));
-    if (ui::TextButton(a.remoteListening ? "Listening: move a control…" : "Learn from controller", a.remoteListening, 220,
-                       oscui::listening() ? "Move a control on a MIDI device, or send an OSC message" : "Move a control on a MIDI device"))
-      a.remoteListening = !a.remoteListening;
-    ImGui::SameLine(0, theme::kS3);
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(theme::vec(P.text), "%s", remoteSourceLabel(l).c_str());
-  }
+  captureBox(a, l);
   label("Source");
   enumCombo("##src", &l.source, static_cast<int>(RemoteSource::Count), remoteSourceName, w);
   if (l.source == RemoteSource::Osc) {  // OSC: an address instead of a MIDI message
@@ -266,7 +405,27 @@ void drawRemoteDialog(App& a) {
   const bool paramTarget = l.action == RemoteAction::None;
   const ParamId target{l.owner, l.index};
   if (ImGui::IsWindowAppearing()) in = Internal{}, in.opened = l;
-  if (paramTarget) {
+  // k078-songlinks: the engine never applies an internal link to a song setting (tempo, swing,
+  // master pitch, groove accents), so the choice is not offered there. A link an older project
+  // already holds is still shown, with a button that removes it.
+  const bool internalOk = paramTarget && internalLinkApplies(a.doc.song(), target);
+  internalShown() = !paramTarget ? "none" : internalOk ? "offered" : "note";
+  if (paramTarget && !internalOk) {
+    ui::BeginSection("INTERNAL CONTROLLER");
+    if (const ModLink* cur = findModLink(a.doc.song(), l.owner, l.index)) {
+      internalShown() = "note-linked";
+      label("Controller");
+      ImGui::AlignTextToFramePadding();
+      ImGui::TextUnformatted(controllerOutputName(a.doc.song(), cur->sourceOwner, cur->sourceSlot, cur->sourceOutput).c_str());
+      ImGui::SameLine(0, theme::kS3);
+      if (ui::TextButton("Remove", false, 80, "Removes this link (it never moved this setting)")) remoteDialogRemoveInternal(a);
+    }
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Internal controllers can't move song settings yet; link a MIDI control instead."));
+    ImGui::PopTextWrapPos();
+    ui::EndSection();
+  }
+  if (internalOk) {
     ui::BeginSection("INTERNAL CONTROLLER");
     const ModLink* cur = findModLink(a.doc.song(), l.owner, l.index);
     const bool none = in.chosen ? in.none : cur == nullptr;
@@ -286,7 +445,9 @@ void drawRemoteDialog(App& a) {
     if (outs.empty()) {
       ImGui::Dummy(ImVec2(150, 0));
       ImGui::SameLine();
+      ImGui::PushTextWrapPos(0.0f);  // (wrapped: it is wider than the dialog)
       ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No controllers yet: add Envelope Mod, Peak Follower, X-Y Pad or Formula Mod first."));
+      ImGui::PopTextWrapPos();
     }
     ui::EndSection();
   }
@@ -398,10 +559,10 @@ void drawRemoteDialog(App& a) {
   if (ui::TextButton("Cancel", false, 96) || ::gl::keys::escapePressed()) close = true;
   ImGui::SameLine(0, theme::kS2);
   const bool oscOk = l.source != RemoteSource::Osc || osc::validAddress(l.oscAddress);
-  if (ui::PrimaryButton("Accept", 96, oscOk ? nullptr : "Enter or learn an OSC address first", oscOk)) {
+  if (ui::PrimaryButton("Apply", 96, oscOk ? nullptr : "Enter or learn an OSC address first", oscOk)) {
     // GitHub #60: the internal controller first; a new MIDI link nobody set up is not saved with it
     bool skipMidi = false;
-    if (paramTarget && in.chosen) {
+    if (internalOk && in.chosen) {
       const ModLink* cur = findModLink(a.doc.song(), target.owner, target.index);
       if (in.none) {
         if (cur) a.doc.removeModLink(target);
@@ -533,11 +694,12 @@ void recordOptionsMenu(App& a) {
   if (!clips) actionLinkMenuItems(a, RemoteAction::Record);  // N49-12: Clips maps controls from its MIDI map
 }
 
-int (*typingLayoutKey)(int position) = nullptr;
+TypingLayout typingLayout = TypingLayout::Computer;
 
-TypingLayout typingLayout = TypingLayout::Standard;
-
-void loadTypingLayout(const Settings& s) { typingLayout = typingLayoutFromId(s.getString("keys.typingLayout")); }
+void loadTypingLayout(const Settings& s) {
+  typingLayout = keycaps::capsFromId(s.getString("keys.myKeys"));
+  keycaps::setCaps(typingLayout);
+}
 
 bool typingKeyboardAtStart(const Settings& s) {
   const std::string at = s.getString("keys.typingAtStart");
@@ -547,25 +709,21 @@ bool typingKeyboardAtStart(const Settings& s) {
 }
 
 void setTypingLayout(App& a, TypingLayout l) {
-  typingLayout = l;
-  a.settings.set("keys.typingLayout", typingLayoutId(l));
+  typingLayout = l < TypingLayout::Count ? l : TypingLayout::Computer;
+  keycaps::setCaps(typingLayout);
+  a.settings.set("keys.myKeys", keycaps::capsId(typingLayout));
 }
 
 std::string typingKeyName(int key) {
   const int position = TypingKeyboard::positionOfKey(key);
-  const int typed = typingLayout == TypingLayout::Computer ? (typingLayoutKey ? typingLayoutKey(position) : 0)
-                                                           : TypingKeyboard::layoutChar(typingLayout, position);
+  const int typed = typingLayout == TypingLayout::Computer ? keycaps::systemChar(position) : TypingKeyboard::layoutChar(typingLayout, position);
   return TypingKeyboard::keyLabel(key, typed);
 }
 
-namespace {
-void typingLayoutItems(App& a) {
-  for (int i = 0; i < static_cast<int>(TypingLayout::Count); ++i) {
-    const auto l = static_cast<TypingLayout>(i);
-    if (ImGui::MenuItem(i18n::tr(typingLayoutName(l)), nullptr, typingLayout == l)) setTypingLayout(a, l);
-  }
+void myKeysItems(App& a) {
+  for (TypingLayout l : keycaps::kCapsOrder)
+    if (ImGui::MenuItem(i18n::tr(keycaps::capsName(l)), nullptr, typingLayout == l)) setTypingLayout(a, l);
 }
-}  // namespace
 
 void typingKeyboardMenu(App& a) {
   TypingKeyboard& k = a.typing;
@@ -576,7 +734,7 @@ void typingKeyboardMenu(App& a) {
     a.typingKeyboard = !a.typingKeyboard;
   if (ImGui::BeginMenu(i18n::tr("Octave"))) {
     for (int o = 1; o <= 8; ++o) {
-      std::string n = k.aRow ? typingKeyName('a') + " = " + midiNoteName(12 * (o + 1)) : typingKeyName('z') + " = " + midiNoteName(12 * o);
+      std::string n = typingKeyName(k.aRow ? 'a' : 'z') + " = " + midiNoteName(k.baseNoteAt(o));
       if (ImGui::MenuItem(n.c_str(), nullptr, k.octave == o)) k.octave = o;
     }
     ImGui::EndMenu();
@@ -589,8 +747,8 @@ void typingKeyboardMenu(App& a) {
       if (ImGui::MenuItem(chordTypeName(static_cast<ChordType>(i)), nullptr, static_cast<int>(k.chord) == i)) k.chord = static_cast<ChordType>(i);
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu(i18n::tr("Keyboard layout"))) {  // K-113
-    typingLayoutItems(a);
+  if (ImGui::BeginMenu(i18n::tr("My keys say"))) {  // K-113, GitHub #79: shared with the names of shortcuts
+    myKeysItems(a);
     ImGui::EndMenu();
   }
   ImGui::Separator();
@@ -641,18 +799,13 @@ void midiSettingsPage(App& a, float fieldW) {
   ImGui::Dummy(ImVec2(0, theme::kS2));
   {  // K-113: the typing keyboard needs no MIDI device
     ui::BeginSection("TYPING KEYBOARD");
-    label("Keyboard layout", 168);
-    if (ui::BeginCombo("##typinglayout", i18n::tr(typingLayoutName(typingLayout)), std::max(240.0f, fieldW))) {
-      for (int i = 0; i < static_cast<int>(TypingLayout::Count); ++i) {
-        const auto l = static_cast<TypingLayout>(i);
-        if (ImGui::Selectable(i18n::tr(typingLayoutName(l)), typingLayout == l)) setTypingLayout(a, l);
-      }
-      ImGui::EndCombo();
-    }
     ImGui::PushTextWrapPos(0);
-    ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("Keys play by where they sit; this names them. %s…%s play, %s %s octave, %s %s velocity."),
+    ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("Keys play by where they sit. %s…%s play, %s %s octave, %s %s velocity."),
                        typingKeyName('z').c_str(), typingKeyName('/').c_str(), typingKeyName('[').c_str(), typingKeyName(']').c_str(),
                        typingKeyName('-').c_str(), typingKeyName('=').c_str());
+    // GitHub #79: what the keys are called is "My keys say", beside the other key settings.
+    ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("Their names follow Settings > Shortcuts > My keys say (%s)."),
+                       i18n::tr(keycaps::capsName(typingLayout)));
     ImGui::PopTextWrapPos();
     label(i18n::tr("When Gridline starts"), 168);
     {
@@ -712,7 +865,10 @@ void midiSettingsPage(App& a, float fieldW) {
       ImGui::TextUnformatted(name.c_str());
       ImGui::TableNextColumn();
       const ControllerTemplate* autoT = matchControllerTemplate(a.controllerTemplates, name);
-      std::string preview = c->controllerType.empty() ? std::string("Auto: ") + (autoT ? autoT->name : "none")
+      const surfaceui::Type* autoS = c->controllerType.empty() ? surfaceui::typeOf(a, name) : nullptr;  // a pad controller
+      const std::string autoFlkey = flkeyAutoName(name);  // k078-flkey: an FLkey's DAW port is found by name
+      std::string preview = c->controllerType.empty()
+                                ? std::string("Auto: ") + (autoS ? autoS->label : !autoFlkey.empty() ? autoFlkey : autoT ? autoT->name : "none")
                             : c->controllerType == "none" ? std::string("(none)")
                                                           : [&]() {
                                                               if (c->controllerType.rfind("script:", 0) == 0) {  // J-24
@@ -721,6 +877,9 @@ void midiSettingsPage(App& a, float fieldW) {
                                                                 return "Script: " + c->controllerType.substr(7) + " (missing)";
                                                               }
                                                               for (const auto& [id, label] : mackieControllerTypes())  // K-214
+                                                                if (id == c->controllerType) return label;
+                                                              if (const surfaceui::Type* st = surfaceui::findType(c->controllerType)) return st->label;
+                                                              for (const auto& [id, label] : flkeyControllerTypes())  // k078-flkey
                                                                 if (id == c->controllerType) return label;
                                                               auto* t = findControllerTemplate(a.controllerTemplates, c->controllerType);
                                                               return t ? t->name : c->controllerType;
@@ -733,6 +892,12 @@ void midiSettingsPage(App& a, float fieldW) {
         // K-214: Mackie Control / HUI surfaces (the protocol, not a template).
         ImGui::SeparatorText(i18n::tr("Control surfaces"));
         for (const auto& [id, label] : mackieControllerTypes())
+          if (ImGui::Selectable((label + "##" + id).c_str(), c->controllerType == id)) c->controllerType = id, changed = true;
+        for (const surfaceui::Type& st : surfaceui::types())  // pad controllers with a DAW mode (Surfaces.h)
+          if (ImGui::Selectable((st.label + "##" + st.id).c_str(), c->controllerType == st.id)) c->controllerType = st.id, changed = true;
+        // k078-flkey: Novation FLkey keyboards (pick it on the keyboard's DAW port; found by name otherwise).
+        ImGui::SeparatorText(i18n::tr("Keyboards with a DAW port"));
+        for (const auto& [id, label] : flkeyControllerTypes())
           if (ImGui::Selectable((label + "##" + id).c_str(), c->controllerType == id)) c->controllerType = id, changed = true;
         // J-24: Lua controller scripts as an alternative to JSON templates.
         if (!controllerScripts(a).empty()) ImGui::SeparatorText(i18n::tr("Scripts"));
@@ -756,8 +921,10 @@ void midiSettingsPage(App& a, float fieldW) {
     }
     ImGui::EndTable();
   }
+  if (surfaceui::settings(a)) changed = true;  // each pad controller's options
   if (ui::TextButton("Rescan devices")) {
     m.scan();
+    surfaceui::rescanned();
     changed = reopen = true;
   }
   ImGui::SameLine(0, theme::kS2);

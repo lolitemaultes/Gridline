@@ -12,6 +12,7 @@
 #include "ClipLoop.h"
 #include "Document.h"
 #include "TrackerStream.h"
+#include "Lanes.h"
 
 namespace gl::trk {
 
@@ -92,11 +93,37 @@ std::vector<int> assignColumns(const std::vector<Note>& notes, int* count) {
   return assignSpans(std::move(spans), count);
 }
 
+int loopRows(const Song& s, const Pattern& p, ObjectId channel, const Grid& g) {
+  const int len = lanes::length(p, channel);
+  if (len <= 0) return 0;
+  if (!lanes::ownGrid(p, channel)) return std::min(len, g.rows);
+  const double at = lanes::stepTick(s, p, channel, len) / static_cast<double>(std::max<Tick>(1, g.rowTicks));
+  return std::clamp(static_cast<int>(std::floor(at + 0.5)), 1, g.rows);
+}
+
+int loopStepsAtRow(const Song& s, const Pattern& p, ObjectId channel, const Grid& g, int row) {
+  if (row <= 0 || row >= g.rows) return 0;
+  if (!lanes::ownGrid(p, channel)) return row;
+  const double st = lanes::stepTicks(s, p, channel);
+  if (st <= 0) return 0;
+  const int k = static_cast<int>(std::floor(static_cast<double>(g.tickOf(row)) / st + 0.5));
+  return k > 0 && k < lanes::steps(p, channel) ? k : 0;
+}
+
 Track buildTrack(const Song& s, const Pattern& p, ObjectId channel, const Grid& g, int minColumns) {
-  (void)s;
   Track t;
   t.channel = channel;
   t.rows = g.rows;
+  t.ownGrid = lanes::ownGrid(p, channel);
+  t.loop = loopRows(s, p, channel, g);
+  // K-255: a step's place in pattern ticks (exact on a grid of its own) and the row it shows at.
+  const bool own = t.ownGrid;
+  auto stepOn = [&](size_t i) { return own ? lanes::stepTick(s, p, channel, static_cast<int64_t>(i)) : static_cast<double>(g.tickOf(static_cast<int>(i))); };
+  auto stepRowOf = [&](size_t i) {
+    if (!own) return static_cast<int>(i);
+    return static_cast<int>(std::floor(stepOn(i) / static_cast<double>(std::max<Tick>(1, g.rowTicks)) + 0.5));
+  };
+  const double stepLen = own ? lanes::stepTicks(s, p, channel) : static_cast<double>(g.rowTicks);
   static const std::vector<Note> none;
   static const std::vector<uint8_t> noSteps;
   static const std::vector<StepProps> noProps;
@@ -112,8 +139,8 @@ Track buildTrack(const Song& s, const Pattern& p, ObjectId channel, const Grid& 
   std::vector<size_t> stepAt;
   for (size_t i = 0; i < steps.size(); ++i)
     if (steps[i] > 0) {
-      const double st = static_cast<double>(g.tickOf(static_cast<int>(i)));
-      spans.push_back({st, st + static_cast<double>(g.rowTicks), stepPitch(props, i), notes.size() + stepAt.size()});
+      const double st = stepOn(i);
+      spans.push_back({st, st + stepLen, stepPitch(props, i), notes.size() + stepAt.size()});
       stepAt.push_back(i);
     }
   t.hasSteps = !stepAt.empty();
@@ -143,13 +170,13 @@ Track buildTrack(const Song& s, const Pattern& p, ObjectId channel, const Grid& 
   for (size_t k = 0; k < stepAt.size(); ++k) {
     const size_t i = stepAt[k];
     const int c = all[notes.size() + k];
-    const int row = static_cast<int>(i);
+    const int row = stepRowOf(i);
     if (c < 0 || row >= g.rows) continue;
     Cell& ce = cell(row, c);
     if (ce.kind != Cell::Empty) continue;
     ce.kind = Cell::Step;
-    ce.step = row;
-    ce.offGrid = i < props.size() && props[i].shift != 0;
+    ce.step = static_cast<int>(i);  // K-255: the lane's own step (its row may be another)
+    ce.offGrid = (i < props.size() && props[i].shift != 0) || (own && std::fabs(stepOn(i) - static_cast<double>(g.tickOf(row))) > 1e-6);
   }
   for (size_t i = 0; i < notes.size(); ++i) {
     const Note& n = notes[i];
@@ -200,6 +227,7 @@ std::string rowText(int row, bool hex) {
 // ---- effects ----
 std::vector<Effect> effectsOf(const Note& n) {
   std::vector<Effect> v;
+  if (n.program >= 0) v.push_back({'I', std::clamp(n.program, 0, 127), true});  // K-348 (first, as kEffectLetters)
   if (n.slide) v.push_back({'G', 1, true});
   if (n.porta) v.push_back({'P', 1, true});
   if (n.fine != 0) {
@@ -221,6 +249,7 @@ bool setEffect(Note& n, char letter, int value) {
     case 'X': n.modX = value; return true;
     case 'Y': n.modY = value; return true;
     case 'R': n.release = std::min(value, 127); return true;
+    case 'I': n.program = std::min(value, 127); return true;  // K-348
     default: return false;
   }
 }
@@ -233,6 +262,7 @@ void resetEffect(Note& n, char letter) {
     case 'X': n.modX = kNoteModCentre; break;
     case 'Y': n.modY = kNoteModCentre; break;
     case 'R': n.release = kNoteReleaseDefault; break;
+    case 'I': n.program = -1; break;
     default: break;
   }
 }
@@ -248,7 +278,10 @@ std::string effectHelp(char letter, int value) {
     case 'X': std::snprintf(b, sizeof b, "X%s: modulation X %d of 255 (centre 128)", hex2(value).c_str(), value); return b;
     case 'Y': std::snprintf(b, sizeof b, "Y%s: modulation Y %d of 255 (centre 128)", hex2(value).c_str(), value); return b;
     case 'R': std::snprintf(b, sizeof b, "R%s: release velocity %d", hex2(value).c_str(), value); return b;
-    default: return "Effect letters: G slide, P portamento, T fine tune, X and Y modulation, R release";
+    case 'I':
+      std::snprintf(b, sizeof b, "I%s: program change to %d (the instrument's patch, in its bank)", hex2(value).c_str(), std::min(value, 127));
+      return b;
+    default: return "Effect letters: I program change, G slide, P portamento, T fine tune, X and Y modulation, R release";
   }
 }
 
@@ -657,7 +690,7 @@ Result setEffectAt(std::vector<Note>& notes, const Track& t, int row, int column
   if (shown && shown != letter) resetEffect(n, shown);
   if (!setEffect(n, letter, value)) {
     n = before;
-    return refuse("effect letters: G slide, P portamento, T fine tune, X and Y modulation, R release");
+    return refuse("effect letters: I program change, G slide, P portamento, T fine tune, X and Y modulation, R release");
   }
   return done(!(n == before));
 }
@@ -798,14 +831,14 @@ Result interpolate(std::vector<Note>& notes, const Grid& g, int r0, int r1, Fiel
     if (f == Field::Effect) {
       for (const Effect& e : effectsOf(n))
         if (e.letter == letter) return e.letter == 'T' ? n.fine : e.value;
-      return letter == 'T' ? 0 : letter == 'R' ? kNoteReleaseDefault : kNoteModCentre;
+      return letter == 'T' ? 0 : letter == 'R' ? kNoteReleaseDefault : letter == 'I' ? -1 : kNoteModCentre;
     }
     return n.velocity;
   };
   if (f == Field::Effect) {
     const std::vector<Effect> fa = effectsOf(first), fb = effectsOf(last);
     if (fa.empty() || fb.empty() || fa.front().letter != fb.front().letter || fa.front().letter == 'G' || fa.front().letter == 'P') {
-      res.refused = "Interpolate an effect: the first and last notes need the same letter with a value (T X Y R)";
+      res.refused = "Interpolate an effect: the first and last notes need the same letter with a value (T X Y R I)";
       return res;
     }
     letter = fa.front().letter;
@@ -944,6 +977,7 @@ void copyPart(const Note& from, Note& to, Part p) {
     case Part::Effect:
       to.slide = from.slide, to.porta = from.porta, to.fine = from.fine;
       to.modX = from.modX, to.modY = from.modY, to.release = from.release;
+      to.program = from.program;  // K-348
       break;
     default: break;
   }
@@ -1005,7 +1039,7 @@ Result pasteRowsMasked(std::vector<Note>& notes, std::vector<uint8_t>& steps, co
       for (size_t k = 0; k < s.size(); ++k) {
         Note n = k < d.size() ? notes[d[k]] : Note{};
         n.start = s[k].start + a, n.length = s[k].length, n.pitch = s[k].pitch, n.frac = s[k].frac, n.endFrac = s[k].endFrac;
-        n.bend = s[k].bend, n.step = s[k].step;
+        n.bend = s[k].bend, n.vib = s[k].vib, n.step = s[k].step;  // K-262: the vibrato travels with the note, as its bend
         if (const Tick pe = g.tickOf(g.rows); n.start + n.length > pe) n.length = std::max<Tick>(1, pe - n.start);  // R7-03: ends at the pattern end
         takeParts(s[k], n);
         added.push_back(n);

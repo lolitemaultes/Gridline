@@ -1,6 +1,8 @@
 // Gridline — groups and loops (J-31). See Grouping.h.
 #include "Grouping.h"
+#include "Lanes.h"
 #include <algorithm>
+#include <cmath>
 #include <map>
 
 namespace gl::tools {
@@ -209,16 +211,18 @@ int stepLoop(const Pattern& p, ObjectId channel) {
 bool setStepLoop(Document& d, ObjectId pattern, const std::vector<ObjectId>& channels, int steps) {
   const Pattern* p = d.song().pattern(pattern);
   if (!p || channels.empty()) return false;
-  const int total = p->bars * p->stepsPerBar;
   steps = std::max(0, steps);
-  if (steps >= total) steps = 0;
+  // K-255: each row's length counts in its own steps (a row on a grid of its own has its own count).
+  auto want = [&](ObjectId ch) { return steps >= lanes::steps(*p, ch) ? 0 : steps; };
   bool change = false;
-  for (ObjectId ch : channels) change = change || stepLoop(*p, ch) != steps;
+  for (ObjectId ch : channels) change = change || stepLoop(*p, ch) != want(ch);
   if (!change) return false;
+  std::vector<std::pair<ObjectId, int>> todo;
+  for (ObjectId ch : channels) todo.push_back({ch, want(ch)});
   return d.editPattern(pattern, steps > 0 ? "loop channel steps" : "stop looping channel steps", [&](Pattern& q) {
-    for (ObjectId ch : channels) {
-      if (steps > 0)
-        q.stepLoop[ch] = steps;
+    for (const auto& [ch, n] : todo) {
+      if (n > 0)
+        q.stepLoop[ch] = n;
       else
         q.stepLoop.erase(ch);
     }
@@ -230,9 +234,15 @@ int contentSteps(const Song& s, const Pattern& p, ObjectId channel) {
   if (auto it = p.steps.find(channel); it != p.steps.end())
     for (size_t i = 0; i < it->second.size(); ++i)
       if (it->second[i] != 0) last = static_cast<int>(i) + 1;
-  const Tick st = s.ticksPerStep(p);
+  if (!lanes::ownGrid(p, channel)) {
+    const Tick st = s.ticksPerStep(p);
+    if (auto it = p.notes.find(channel); it != p.notes.end() && st > 0)
+      for (const Note& n : it->second) last = std::max(last, static_cast<int>((n.start + n.length + st - 1) / st));
+    return last;
+  }
+  const double st = lanes::stepTicks(s, p, channel);  // K-255: in the row's own steps
   if (auto it = p.notes.find(channel); it != p.notes.end() && st > 0)
-    for (const Note& n : it->second) last = std::max(last, static_cast<int>((n.start + n.length + st - 1) / st));
+    for (const Note& n : it->second) last = std::max(last, static_cast<int>(std::ceil(static_cast<double>(n.start + n.length) / st - 1e-9)));
   return last;
 }
 
@@ -240,9 +250,9 @@ int loopToContent(Document& d, ObjectId pattern, const std::vector<ObjectId>& ch
   const Pattern* p = d.song().pattern(pattern);
   if (!p) return 0;
   unit = std::max(1, unit);
-  const int total = p->bars * p->stepsPerBar;
   std::map<ObjectId, int> want;
   for (ObjectId ch : channels) {
+    const int total = lanes::steps(*p, ch);
     const int c = contentSteps(d.song(), *p, ch);
     int L = c <= 0 ? 0 : (c + unit - 1) / unit * unit;
     if (L >= total) L = 0;
@@ -276,9 +286,11 @@ int burnStepLoops(Document& d, ObjectId pattern, const std::vector<ObjectId>& ch
   const int total = p->bars * p->stepsPerBar;
   const Tick st = d.song().ticksPerStep(*p);
   std::vector<ObjectId> todo;
+  bool own = false;
   for (ObjectId ch : channels)
-    if (stepLoop(*p, ch) > 0) todo.push_back(ch);
+    if (stepLoop(*p, ch) > 0) todo.push_back(ch), own = own || !lanes::plain(*p, ch);
   if (todo.empty()) return 0;
+  if (own) return lanes::burn(d, pattern, todo);  // K-255: rows on a grid of their own or running on
   d.editPattern(pattern, "burn step loops", [&](Pattern& q) {
     for (ObjectId ch : todo) {
       const int loop = stepLoop(q, ch);

@@ -54,7 +54,7 @@ class Surface {
 
   int strips() const { return opt_.singleStrip ? 1 : 8 * (1 + opt_.extenders); }
   int units() const { return opt_.singleStrip ? 1 : 1 + opt_.extenders; }
-  int bank() const { return bank_; }  // mixer index of strip 0, minus 1 (strip 0 = insert bank_ + 1)
+  int bank() const { return bank_; }  // strip 0's place among the inserts the mixer shows (GitHub #58: hidden ones skipped)
   // Mixer index (into Song::mixer) on strip s, -1 = none.
   int mixerOf(int strip) const;
   const Options& options() const { return opt_; }

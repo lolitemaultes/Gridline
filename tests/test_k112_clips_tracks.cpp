@@ -16,6 +16,7 @@
 //    other person gets it.
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <set>
@@ -1637,6 +1638,37 @@ void testCheckpoint59() {
              "A-02: the parked one keeps its scene names and colours");
       expect(selectArrangement(q, 0) && q.live == mainLive, "A-02: switched back, its scenes are there");
       expect(projectToText(q).size() > 0 && selectArrangement(q, 1) && q.live == altLive, "A-02: and the other's");
+    }
+    {  // 0.7.8: everything a parked arrangement's scenes hold survives a save (tempo, signature,
+       // follow actions, scene length), twice over; a file from before parked scenes still loads
+      Song p = s;
+      p.live.scenes[1].tempo = 96.5;
+      p.live.scenes[1].sigNum = 7, p.live.scenes[1].sigDen = 8;
+      p.live.scenes[2].follow.on = true;
+      p.live.scenes[2].follow.a = FollowAction::Jump;
+      p.live.scenes[2].follow.jumpA = 0;
+      p.live.scenes[2].follow.chanceA = 70;
+      p.live.scenes[2].follow.time = 4 * 384;
+      p.live.sceneLen = 2 * st;
+      const LiveSettings mainLive = p.live;
+      expect(addArrangement(p, "Alt", false) == 1 && selectArrangement(p, 1), "A-02+: a second arrangement in front");
+      Song q;
+      expect(loadProjectText(projectToText(p), "parked2.gridline", q, &err), ("A-02+: saves and loads " + err).c_str());
+      expect(q.arrangements.size() == 2 && q.arrangements[0].live == mainLive, "A-02+: the parked scenes keep tempo, signature, follow actions and scene length");
+      Song r;
+      expect(loadProjectText(projectToText(q), "parked3.gridline", r, &err) && r.arrangements[0].live == mainLive, "A-02+: and again after a second save");
+      expect(selectArrangement(r, 0) && r.live == mainLive, "A-02+: switched to, it plays its own scenes");
+      // A file written before parked arrangements kept their scenes: no liveScenes key.
+      std::string old = projectToText(p);
+      for (const char* key : {"\"liveScenes\"", "\"liveSceneLen\""}) {
+        const size_t at = old.find(key);
+        expect(at != std::string::npos, (std::string("A-02+: the file has ") + key).c_str());
+        if (at != std::string::npos) old.replace(at, std::strlen(key), std::string(key).insert(1, "x"));
+      }
+      Song o;
+      expect(loadProjectText(old, "old.gridline", o, &err) && o.arrangements.size() == 2 && o.arrangements[0].live.scenes.empty() &&
+                 o.currentArrangement == 1,
+             ("A-02+: an older file opens, its parked arrangement without scenes " + err).c_str());
     }
     // Clearing every name and colour drops the key again.
     for (int k = 0; k < 4; ++k) {

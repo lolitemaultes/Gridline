@@ -4377,7 +4377,9 @@ ImGuiContext::ImGuiContext(ImFontAtlas* shared_font_atlas)
     PlatformLastFocusedViewportId = 0;
     ViewportCreatedCount = PlatformWindowsCreatedCount = 0;
     ViewportLateCreateFilter = NULL; // GRIDLINE PATCH (J-113)
+    ViewportOverlayFilter = NULL; // GRIDLINE PATCH (0.7.8)
     CloseRequestFilter = NULL; // GRIDLINE PATCH (J-116)
+    ActiveIdHook = NULL; // GRIDLINE PATCH (0.7.8 drag log)
     GlyphHook = NULL; // GRIDLINE PATCH (SVG icons)
     WindowsMovedHook = NULL; // GRIDLINE PATCH (J-117)
     CloseWindowRequest = 0; // GRIDLINE PATCH (K-297)
@@ -4899,6 +4901,8 @@ void ImGui::SetActiveID(ImGuiID id, ImGuiWindow* window)
     g.ActiveIdIsJustActivated = (g.ActiveId != id);
     if (g.ActiveIdIsJustActivated)
     {
+        if (g.ActiveIdHook != NULL) // GRIDLINE PATCH (0.7.8 drag log)
+            g.ActiveIdHook(g.ActiveId, id, window);
         IMGUI_DEBUG_LOG_ACTIVEID("SetActiveID() 0x%08X in \"%s\"%*s(previously 0x%08X in \"%s\")\n", id, window ? window->Name : "",
             ImMax(0, 20 - (int)(window ? strlen(window->Name) : 0)), "", g.ActiveId, g.ActiveIdWindow ? g.ActiveIdWindow->Name : "");
         g.ActiveIdTimer = 0.0f;
@@ -8361,7 +8365,8 @@ bool ImGui::Begin(const char* name, bool* p_open, ImGuiWindowFlags flags)
 
         // Late create viewport if we don't fit within our current host viewport.
         if (window->ViewportAllowPlatformMonitorExtend >= 0 && !window->ViewportOwned && !(window->Viewport->Flags & ImGuiViewportFlags_IsMinimized))
-            if (!window->Viewport->GetMainRect().Contains(window->Rect()) && (g.ViewportLateCreateFilter == NULL || g.ViewportLateCreateFilter(window))) // GRIDLINE PATCH (J-113): filter
+            if ((!window->Viewport->GetMainRect().Contains(window->Rect()) && (g.ViewportLateCreateFilter == NULL || g.ViewportLateCreateFilter(window))) || // GRIDLINE PATCH (J-113): filter
+                (g.ViewportOverlayFilter != NULL && g.ViewportOverlayFilter(window))) // GRIDLINE PATCH (0.7.8): over another OS window of the app
             {
                 // This is based on the assumption that the DPI will be known ahead (same as the DPI of the selection done in UpdateSelectWindowViewport)
                 //ImGuiViewport* old_viewport = window->Viewport;
@@ -16955,6 +16960,8 @@ static bool ImGui::GetWindowAlwaysWantOwnViewport(ImGuiWindow* window)
 {
     // Tooltips and menus are not automatically forced into their own viewport when the NoMerge flag is set, however the multiplication of viewports makes them more likely to protrude and create their own.
     ImGuiContext& g = *GImGui;
+    if (g.ViewportOverlayFilter != NULL && (g.ConfigFlagsCurrFrame & ImGuiConfigFlags_ViewportsEnable) && g.ViewportOverlayFilter(window)) // GRIDLINE PATCH (0.7.8): over another OS window of the app
+        return true;
     if (g.IO.ConfigViewportsNoAutoMerge || (window->WindowClass.ViewportFlagsOverrideSet & ImGuiViewportFlags_NoAutoMerge))
         if (g.ConfigFlagsCurrFrame & ImGuiConfigFlags_ViewportsEnable)
             if (!window->DockIsActive)
@@ -17656,6 +17663,8 @@ void ImGui::WindowSyncOwnedViewport(ImGuiWindow* window, ImGuiWindow* parent_win
     const bool is_modal = (window_flags & ImGuiWindowFlags_Modal) != 0;
     const bool is_short_lived_floating_window = (window_flags & (ImGuiWindowFlags_ChildMenu | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_Popup)) != 0;
     if (window_flags & ImGuiWindowFlags_Tooltip)
+        viewport_flags |= ImGuiViewportFlags_TopMost;
+    if (g.ViewportOverlayFilter != NULL && g.ViewportOverlayFilter(window)) // GRIDLINE PATCH (0.7.8): stays above the app's other OS windows (plugin windows)
         viewport_flags |= ImGuiViewportFlags_TopMost;
     if ((g.IO.ConfigViewportsNoTaskBarIcon || is_short_lived_floating_window) && !is_modal)
         viewport_flags |= ImGuiViewportFlags_NoTaskBarIcon;

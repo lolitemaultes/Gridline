@@ -39,6 +39,9 @@ std::vector<CommandInfo> commandList(App& a);
 // Runs a row by id (as Enter on it does), the next frame. False when there is no such row
 // or it cannot run now.
 bool run(App& a, const std::string& id);
+// K-256: a pinned command: the rows are read again now (the menus as they are this frame), then it runs as
+// run() does. False when it is gone or cannot run now.
+bool runFresh(App& a, const std::string& id);
 // K-281 (assistants): runs a row at once, inside this frame, so its edits land in the caller's undo
 // group. `queued`: a keyboard command of an editor, which runs when its editor has the focus (the
 // next frames). False + err when there is no such row or it cannot run now.

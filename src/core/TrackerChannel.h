@@ -45,6 +45,9 @@ struct SampleDef {
   uint8_t loop = kLoopOff;
   uint8_t pan = 128;     // 0..255
   int8_t relNote = 0;    // -48..71
+  // 0.7.8: Gridline's own: the sample (or its loop) plays backwards, read from its end; the audio
+  // stays as it is. Never set by a module (the format has no such flag).
+  bool reverse = false;
   bool present() const { return length > 0; }
 };
 

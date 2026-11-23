@@ -1,5 +1,6 @@
 // Gridline - J-89: update check popup and settings (see UpdateUi.h).
 #include "UpdateUi.h"
+#include "../core/ThreadName.h"
 #include "Keys.h"
 #include "GridlineVersion.h"
 #include <algorithm>
@@ -23,6 +24,7 @@
 #include "../host/net/Http.h"
 #include "App.h"
 #include "DialogLayout.h"
+#include "ProgressUi.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -146,7 +148,7 @@ void startJob(App& a, bool manual) {
   s.job = job;
   const bool beta = a.settings.getBool("update.beta");
   update::Fetcher fetch = s.fetch;
-  std::thread([job, fetch, beta] {
+  std::thread([job, fetch, beta] { gl::threads::setName("gl-update");
     update::CheckResult r = update::check(fetch, GRIDLINE_VERSION, beta);
     std::lock_guard<std::mutex> lk(job->mu);
     job->result = std::move(r);
@@ -233,7 +235,7 @@ void startDownload(const update::Asset& asset) {
   const update::Fetcher fetch = s.fetch;
   const update::Downloader download = s.download;
   const std::string dir = s.downloadDir;
-  std::thread([d, rel, as, fetch, download, dir] {
+  std::thread([d, rel, as, fetch, download, dir] { gl::threads::setName("gl-update-dl");
     const std::string folder = dir.empty() ? http::downloadsFolder() : dir;
     update::InstallerResult r = update::downloadInstaller(
         fetch, download, rel, as, folder,
@@ -311,19 +313,20 @@ void drawAvailable(App& a) {
   // K-1: a Flatpak or Snap is updated by its store; an installer download would not replace it.
   const bool canInstall = asset && update::checksumAsset(r) && !collab::isStoreSandbox(collab::installKind());
   // Download progress / outcome.
-  if (s.dl) {
+  const progui::Fake* fk = progui::fake("update");  // (tests: a stand-in download)
+  if (s.dl || fk) {
     ImGui::Dummy(ImVec2(0, theme::kS1));
-    const Download& d = *s.dl;
-    if (!d.done) {
-      const int64_t total = d.total > 0 ? d.total.load() : d.size;
-      const float f = total > 0 ? std::clamp(static_cast<float>(static_cast<double>(d.got) / static_cast<double>(total)), 0.0f, 1.0f) : 0.0f;
-      std::snprintf(buf, sizeof buf, tr("Downloading %s"), d.name.c_str());
+    if (fk || !s.dl->done) {
+      const int64_t total = fk ? 248000000 : s.dl->total > 0 ? s.dl->total.load() : s.dl->size;
+      const int64_t got = fk ? static_cast<int64_t>(fk->frac * 248000000.0) : s.dl->got.load();
+      const float f = total > 0 ? std::clamp(static_cast<float>(static_cast<double>(got) / static_cast<double>(total)), 0.0f, 1.0f) : 0.0f;
+      std::snprintf(buf, sizeof buf, tr("Downloading %s"), fk ? fk->text.c_str() : s.dl->name.c_str());
       ui::TextFit(buf, kDialogW - 130, P.textDim);
+      // 0.7.8: the amount right-aligned in its field (cut when wider): the window keeps its width.
       ImGui::SameLine(ImGui::GetCursorPosX() + kDialogW - 120);
       ImGui::PushFont(a.fontMono, theme::kFontLabel);
-      const std::string amount = mb(d.got) + " / " + (total > 0 ? mb(total) : std::string("?"));
-      ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, 120 - ImGui::CalcTextSize(amount.c_str()).x));
-      ImGui::TextColored(theme::vec(P.textDim), "%s", amount.c_str());
+      const std::string amount = mb(got) + " / " + (total > 0 ? mb(total) : std::string("?"));
+      progui::RightField(amount.c_str(), 120, P.textDim);
       ImGui::PopFont();
       const ImVec2 q = ImGui::GetCursorScreenPos();
       ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -365,7 +368,7 @@ void drawAvailable(App& a) {
   // Footer: Skip on the left; Remind me later, the installer, Download on the right.
   const bool downloading = s.dl && !s.dl->done;
   const bool downloaded = s.dl && s.dl->done && s.dl->result.ok;
-  const char* mid = downloading ? i18n::N_("Cancel download") : downloaded ? i18n::N_("Show in folder") : canInstall ? i18n::N_("Download installer") : nullptr;
+  const char* mid = downloading || fk ? i18n::N_("Cancel download") : downloaded ? i18n::N_("Show in folder") : canInstall ? i18n::N_("Download installer") : nullptr;
   const float wSkip = buttonW("Skip this version"), wLater = buttonW("Remind me later"), wMid = mid ? buttonW(mid) : 0.0f,
               wGo = buttonW("Download");
   const float x0 = ImGui::GetCursorPosX();
@@ -408,7 +411,7 @@ void drawAvailable(App& a) {
     a.settings.save(Settings::defaultPath());
     if (s.dl) s.dl->cancel = true;
     closeDialog();
-  } else if (midPressed) {
+  } else if (midPressed && !fk) {
     if (downloading) {
       s.dl->cancel = true;
     } else if (downloaded) {
@@ -579,6 +582,7 @@ void draw(App& a) {
     s.dialog = Dialog::None;
     return;
   }
+  if (s.dialog == Dialog::Available) progui::note("update");
   switch (s.dialog) {
     case Dialog::Checking: drawChecking(a); break;
     case Dialog::Result: drawResult(a); break;
@@ -615,7 +619,7 @@ const collab::GateState& gate(App& a) {
     const std::string cur = GRIDLINE_VERSION;
     Settings* st = &a.settings;
     collab::GateState cached = s.gate;
-    std::thread([job, fetch, cur, now, cached, st] {
+    std::thread([job, fetch, cur, now, cached, st] { gl::threads::setName("gl-update");
       // the check runs on a copy of the cached decision (no settings access off the UI thread)
       (void)st;
       const update::HttpResult r = fetch(update::kListUrl);

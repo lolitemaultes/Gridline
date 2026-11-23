@@ -589,9 +589,17 @@ void mapPointer() {
 }
 
 // K-147: the ink of the editor in `s` this frame (before the magnified picture is scaled).
+// K-142: the fit report (ink, body, header rows) is read only by the dev reports ("edzoom" and
+// "fitall"); measuring walks every index the editor drew, so it runs only in a run driven by a
+// dev-input script, or once such a report was asked for.
+static bool gFitReportsWanted = false;
+static bool fitReportsWanted() { return gFitReportsWanted || ui::devKnobsEnabled(); }
+
 void measure(Slot& s, int frame) {
   ImGuiContext& g = *GImGui;
   s.inkValid = false;
+  s.rowsValid = false;
+  if (!fitReportsWanted()) return;
   if (!s.host || !s.zoomable || s.lastFrame != frame || (!s.grouped && !(s.active && s.child))) return;  // built-in editors only
   // At 100 % the editor is drawn straight into its window (from hostVtx0 on): that window's clip is the edge.
   ImGuiWindow* const top = s.grouped ? s.host : s.child;
@@ -700,6 +708,7 @@ ImVec2 devWindowSize(const char* key) {
 }
 
 void devDump(const char* key) {
+  gFitReportsWanted = true;  // K-142: measured from the next frame on (when not already)
   const auto it = slots().find(key);
   if (it == slots().end() || it->second.lastFrame < ImGui::GetFrameCount() - 1) {
     std::printf("edzoom %s: not drawn\n", key);

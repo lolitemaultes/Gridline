@@ -11,6 +11,7 @@
 #include "../../engine/Dsp.h"
 #include "metal.h"
 #include "metal_rt.h"
+#include "../rest_render.h"
 
 namespace gl::packs::models::metal {
 
@@ -307,6 +308,9 @@ class SpectraMorphGen final : public Generator {
     inc0_ = f0;
   }
 
+  // K-142: at rest its idle render runs on unheard (packs/rest_render.h), so the next note
+  // finds every free-running part where it would have been.
+  void rested(int n) override { packs::restRender(n, [this](float* l, float* r, int m) { render(l, r, m); }); }
   void render(float* L, float* R, int n) override {
     const SineTable& sine = sineTable();
     const double dt = kCtl / sr_;

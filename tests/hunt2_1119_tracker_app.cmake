@@ -2,8 +2,10 @@
 # real keys and mouse in the real app on a new song (hidden, an isolated config folder and HOME,
 # SDL's dummy audio driver):
 #   1. a pattern made with Ctrl+Alt+N takes the keys: the next note typed goes in it, with the
-#      Channel frame open or another page in front (before: the frame or the page kept the keys and
-#      the note went nowhere until a click);
+#      instrument's editor open or another page in front (before: the editor or the page kept the keys
+#      and the note went nowhere until a click). K-391 (user 2026-11-22): in the Tracker a plugin's
+#      editor floats in-app and never opens in the lower band, so Ctrl+Alt+7 on the Kick opens its
+#      floating window (the Channel frame is only a dev screen now);
 #   2. it is as long as the current pattern (a new song's 16 rows, or 32 after Expand), not always
 #      64 rows;
 #   3. Esc closes the screen swapped into the header (About, Settings, Help) as its Exit button
@@ -58,7 +60,7 @@ function(key frame k mods var)
 endfunction()
 
 set(D "tracker dump")
-# Edit mode on (Esc); the Kick's Channel frame (Ctrl+Alt+7) with the keys; Ctrl+Alt+N; Z.
+# Edit mode on (Esc); the Kick's editor (Ctrl+Alt+7), floating; Ctrl+Alt+N; Z.
 # The Song page (Ctrl+Alt+2) in front; Ctrl+Alt+N; Z. Expand (the header's button) makes the pattern
 # 32 rows; Ctrl+Alt+N.
 key(10 escape "" k0)
@@ -84,8 +86,8 @@ ${k6}70 ${D}
 ${k7}104 ${D}
 110 quit discard
 ")
-must("tracker editors frame 24: shown 1 [^\n]* keys 1 " "Ctrl+Alt+7 shows the Channel frame with the keys")
-must("tracker dump frame 32: pattern 2 rows 16 [^\n]* keyboard 1 " "Ctrl+Alt+N from the Channel frame: pattern 02, 16 rows as the first, and the pattern has the keys")
+must("tracker editors frame 24: shown 0 [^\n]* pluginwin 1 " "Ctrl+Alt+7 opens the Kick's editor in a floating window, not in the lower band (K-391)")
+must("tracker dump frame 32: pattern 2 rows 16 [^\n]* keyboard 1 " "Ctrl+Alt+N from the Kick's floating editor: pattern 02, 16 rows as the first, and the pattern has the keys")
 must("tracker dump frame 40: [^\n]*\ntracker status: [^\n]*\n  cell 0 0 0 C-4" "Z then writes C-4 in the new pattern")
 must("region tracker.pages [^\n]* front Playlist" "Ctrl+Alt+2 brings the Song page to the front")
 must("tracker dump frame 62: pattern 3 rows 16 [^\n]* keyboard 1 " "Ctrl+Alt+N from the Song page: pattern 03 shown with the keys")

@@ -3,8 +3,13 @@
 // toolbar and menus, the slot editor entry point and the standalone window
 // opened from any sample or audio clip.
 #include "../../core/PluginBrand.h"
+#include "../../core/ThreadName.h"
 #include "../../core/I18n.h"
 #include "../../app/AudioRecordUi.h"
+#include "../../app/ClipEditor.h"
+#include "../../app/PluginUI.h"
+#include "../../core/SampleWarp.h"
+#include "../../engine/SampleWarpRender.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -150,7 +155,11 @@ void startCommit(App& a, Session& s, const std::string& label);
 void launch(App& a, Session& s, const std::string& label, std::function<std::function<void()>()> work) {
   s.job.label = label;
   s.job.started = a.now;
-  s.job.fut = std::async(std::launch::async, std::move(work));
+  s.job.progress.reset();
+  s.job.fut = std::async(std::launch::async, [work = std::move(work)]() mutable {
+    gl::threads::setName("gl-loupe-job");
+    return work();
+  });
 }
 
 void startCommit(App& a, Session& s, const std::string& label) {
@@ -271,11 +280,27 @@ bool devSim(App& a, Session& s) {
   return true;
 }
 
+// The plugin state that keeps the session's warp markers (the Loupe slot's, the channel's
+// instrument); null for a file opened on its own.
+const PluginState* warpOwner(App& a, const Session& s) {
+  if (s.slot) return slotState(a, s);
+  if (!s.file.empty()) return nullptr;
+  const Channel* c = a.doc.song().channel(s.channel);
+  return c ? &c->plugin : nullptr;
+}
+
+std::string warpText(const std::vector<WarpMarker>& m) {
+  SampleWarp w;
+  w.markers = m;
+  return sampleWarpToText(w);
+}
+
 // Per frame: finishes jobs, follows external state changes (song undo), pumps recording.
 void pump(App& a, Session& s) {
   if (s.job.active() && s.job.fut.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
     std::function<void()> done = s.job.fut.get();
     s.job.fut = {};
+    s.job.progress.reset();
     if (done) done();
     if (s.pendingCommit) startCommit(a, s, s.commitLabel);
   }
@@ -291,6 +316,16 @@ void pump(App& a, Session& s) {
     }
     if (st.path != s.committed) startLoad(a, s, st);
   }
+  // The warp markers follow the owner too (song undo or redo, a collaborator, a project load);
+  // Loupe's own steps for them are then out of date.
+  if (!s.warpGesture)
+    if (const PluginState* ps = warpOwner(a, s); ps && ps->loupeWarp != s.warpSynced) {
+      SampleWarp w;
+      sampleWarpFromText(ps->loupeWarp, w);
+      s.warp = w.markers;
+      s.warpSynced = ps->loupeWarp;
+      s.warpUndo.clear(), s.warpRedo.clear();
+    }
   // Recording: drain the slot's capture ring into the recorder.
   if (s.slot) {
     if (EdisonFx* fx = slotFx(a, s)) {
@@ -407,14 +442,25 @@ void runEdit(App& a, Session& s, const std::string& label, std::function<Content
     say(s, "Busy: " + s.job.label);
     return;
   }
+  runEditP(a, s, label, [op](const Content& c, Progress&) { return op(c); }, map);
+  s.job.progress.reset();  // (no progress to show)
+}
+
+void runEditP(App& a, Session& s, const std::string& label, std::function<Content(const Content&, Progress&)> op, EditMap map) {
+  if (s.job.active()) {
+    say(s, "Busy: " + s.job.label);
+    return;
+  }
+  auto prog = std::make_shared<Progress>();
   Content c = s.cur();
   const std::string dir = audioDir(a), name = displayName(a, s);
   Session* sp = &s;
   App* ap = &a;
   const Range was = s.sel;
   const int64_t wasCursor = s.cursor;
-  launch(a, s, label, [c, op, dir, name, sp, ap, label, map, was, wasCursor]() -> std::function<void()> {
-    Content next = op(c);
+  launch(a, s, label, [c, op, dir, name, sp, ap, label, map, was, wasCursor, prog]() -> std::function<void()> {
+    Content next = op(c, *prog);
+    if (prog->cancelled()) return [sp, label]() { say(*sp, label + ": stopped, nothing changed"); };
     if (next.audio == c.audio && next.markers.size() == c.markers.size() && next.regions.size() == c.regions.size() &&
         next.loopStart == c.loopStart && next.loopEnd == c.loopEnd) {
       bool sameMarkers = true;
@@ -434,6 +480,7 @@ void runEdit(App& a, Session& s, const std::string& label, std::function<Content
       applySaved(*ap, *sp, saved.first, saved.second, "Loupe: " + label);
     };
   });
+  s.job.progress = prog;
 }
 
 void applyNow(App& a, Session& s, const std::string& label, const Content& next) {
@@ -442,7 +489,61 @@ void applyNow(App& a, Session& s, const std::string& label, const Content& next)
   startCommit(a, s, "Loupe: " + label);
 }
 
+namespace {
+bool warpUndoNext(const Session& s) { return !s.warpUndo.empty() && s.warpUndo.back().serial == s.hist.serial(); }
+bool warpRedoNext(const Session& s) { return !s.warpRedo.empty() && s.warpRedo.back().serial == s.hist.serial(); }
+}  // namespace
+
+bool canUndo(const Session& s) { return s.hist.canUndo() || warpUndoNext(s); }
+bool canRedo(const Session& s) { return s.hist.canRedo() || warpRedoNext(s); }
+
+void saveWarp(App& a, Session& s, const std::string& label, uint64_t mergeKey) {
+  const PluginState* ps = warpOwner(a, s);
+  if (!ps) return;
+  const std::string text = warpText(s.warp);
+  s.warpSynced = text;
+  if (text == ps->loupeWarp) return;
+  const std::string l = "Loupe: " + label;
+  if (s.slot) {
+    PluginState next = *ps;
+    next.loupeWarp = text;
+    setPluginState(a, s.target, next, l, mergeKey);
+  } else {
+    a.doc.editChannel(s.channel, l, [&](Channel& ch) { ch.plugin.loupeWarp = text; }, mergeKey);
+  }
+}
+
+void pushWarpStep(App& a, Session& s, const std::string& label, const std::vector<WarpMarker>& before) {
+  if (before == s.warp) return;
+  saveWarp(a, s, label);
+  Session::WarpStep st;
+  st.label = label;
+  st.before = before;
+  st.after = s.warp;
+  st.serial = s.hist.serial();
+  st.docSerial = a.doc.history().stateSerial();
+  s.warpUndo.push_back(std::move(st));
+  if (s.warpUndo.size() > 64) s.warpUndo.erase(s.warpUndo.begin());
+  s.warpRedo.clear();
+}
+
 void undo(App& a, Session& s) {
+  if (!s.job.active() && warpUndoNext(s)) {  // K-248: the last thing done was a warp marker gesture
+    Session::WarpStep st = s.warpUndo.back();
+    s.warpUndo.pop_back();
+    s.warp = st.before;
+    s.warpGesture = false;
+    // The song's own step for it when nothing came after; else a step of its own.
+    if (warpOwner(a, s) && st.docSerial != 0 && a.doc.history().stateSerial() == st.docSerial) {
+      a.doc.undo();
+      if (const PluginState* ps = warpOwner(a, s)) s.warpSynced = ps->loupeWarp;
+    } else {
+      saveWarp(a, s, "undo " + st.label);
+    }
+    say(s, "Undo: " + st.label);
+    s.warpRedo.push_back(std::move(st));
+    return;
+  }
   if (s.job.active() || !s.hist.canUndo()) return;
   std::string l = s.hist.undoLabel();
   s.hist.undo();
@@ -452,6 +553,17 @@ void undo(App& a, Session& s) {
 }
 
 void redo(App& a, Session& s) {
+  if (!s.job.active() && warpRedoNext(s)) {
+    Session::WarpStep st = s.warpRedo.back();
+    s.warpRedo.pop_back();
+    s.warp = st.after;
+    s.warpGesture = false;
+    saveWarp(a, s, st.label);
+    st.docSerial = a.doc.history().stateSerial();
+    say(s, "Redo: " + st.label);
+    s.warpUndo.push_back(std::move(st));
+    return;
+  }
   if (s.job.active() || !s.hist.canRedo()) return;
   std::string l = s.hist.redoLabel();
   s.hist.redo();
@@ -798,6 +910,24 @@ void sendToSampler(App& a, Session& s, bool slicer) {
   say(s, slicer ? "Sent to a new slicer channel (markers = slices)" : "Sent to a new sampler channel");
 }
 
+void applyWarp(App& a, Session& s) {
+  std::vector<WarpMarker> m = s.warp;
+  normalizeWarp(m, s.cur().a().seconds());
+  if (m.size() < 2 || warpIsIdentity(m)) {
+    say(s, "The warp markers move nothing");
+    return;
+  }
+  runEdit(a, s, "Apply warp", [m](const Content& c) {
+    SamplePtr smp = toSample(c.a(), "");
+    SamplePtr w = smp ? renderWarpedSample(*smp, m) : nullptr;
+    return w ? makeContent(fromSample(*w)) : c;
+  }, EditMap::scale());
+  s.warp.clear();
+  s.warpOn = false;
+  s.warpUndo.clear(), s.warpRedo.clear();  // (the markers became the audio: one step of the audio's undo)
+  saveWarp(a, s, "Apply warp", mergeKey(s));  // (the song's step of the new audio merges with it)
+}
+
 void detectSlices(App& a, Session& s, double sensitivity) {
   const Range r = target(s);
   runEdit(a, s, "Detect beats", [r, sensitivity](const Content& c) {
@@ -913,7 +1043,7 @@ void devDemo(App& a, Session& s) {
   // J-205: GRIDLINE_EDISON_TOOL=<1..18> opens that tool dialog (Tool enum order) for screenshots.
   if (const char* v = std::getenv("GRIDLINE_EDISON_TOOL"); v && *v) {
     const int k = std::atoi(v);
-    if (k > 0 && k <= static_cast<int>(Tool::Script)) openTool(s, static_cast<Tool>(k));
+    if (k > 0 && k < static_cast<int>(Tool::Count)) openTool(s, static_cast<Tool>(k));
   }
 }
 
@@ -1146,6 +1276,7 @@ bool pinned(App& a) { return a.settings.getBool("ui.loupePinned"); }
 
 // K-112 (R3): the panel's content in `avail`, drawn by the Loupe panel or a layout part's frame.
 void drawPanelBody(App& a, ImVec2 avail) {
+  if (clipeditor::drawPane(a, avail)) return;  // K-249: the pane shows an audio clip in the clip editor
   Session* s = panelSession(a);
   if (!s) {
     if (trackerpages::active(a)) {  // K-106 cp16: the Tracker's Audio page says it in the band's look
@@ -1266,8 +1397,106 @@ bool dockDevCommand(App& a, const std::string& cmd, const std::vector<std::strin
     }
     return true;
   }
+  if (what == "undo" || what == "redo" || what == "warpmode") {  // loupe undo | redo | warpmode 0|1: the first open Loupe (its own undo)
+    for (auto& [k, sp] : sessions()) {
+      Session& s = *sp;
+      if (!alive(a, s)) continue;
+      if (what == "undo") undo(a, s);
+      else if (what == "redo") redo(a, s);
+      else s.warpOn = args.size() > 1 && args[1] == "1";
+      std::printf("loupe %s: warp %d markers %zu undo %d redo %d\n", what.c_str(), s.warpOn ? 1 : 0, s.warp.size(), canUndo(s) ? 1 : 0, canRedo(s) ? 1 : 0);
+      break;
+    }
+    std::fflush(stdout);
+    return true;
+  }
+  if (what == "tool" && args.size() > 1) {  // loupe tool <n> [a b]: the first open Loupe opens tool n (Tool order), on frames a..b if given
+    for (auto& [k, sp] : sessions()) {
+      Session& s = *sp;
+      if (!alive(a, s)) continue;
+      const int t = std::atoi(args[1].c_str());
+      if (args.size() > 3) s.sel = clampRange(s.cur(), {std::atoll(args[2].c_str()), std::atoll(args[3].c_str())});
+      if (t > 0 && t < static_cast<int>(Tool::Count)) openTool(s, static_cast<Tool>(t));
+      std::printf("loupe tool: %d frames %lld\n", t, static_cast<long long>(s.frames()));
+      break;
+    }
+    std::fflush(stdout);
+    return true;
+  }
+  if (what == "spec") {  // loupe spec [<seconds> <hz>...]: the first open Loupe's spectrogram image (size, lanes) and the levels shown there
+    for (auto& [k, sp] : sessions()) {
+      Session& s = *sp;
+      if (!alive(a, s)) continue;
+      const SpecView& v = s.specView.img;
+      std::printf("loupe spec: view %lld %lld cols %d rows %d current %d lanes %.0f %.0f range %d resolution %d", static_cast<long long>(v.req.from),
+                  static_cast<long long>(v.req.to), v.req.cols, v.req.rows, s.specView.imgSerial == s.hist.serial() ? 1 : 0,
+                  static_cast<double>(s.devLx1 - s.devLx0), static_cast<double>(s.devLy1 - s.devLy0), specRange(a), specResolution(a));
+      for (size_t i = 1; i + 1 < args.size(); i += 2) {
+        float db = -999;
+        const bool got = specLevelAt(s, std::atof(args[i].c_str()) * s.rate(), std::atof(args[i + 1].c_str()), db);
+        std::printf(" level %s %s %.1f", args[i].c_str(), args[i + 1].c_str(), got ? static_cast<double>(db) : -999.0);
+      }
+      std::printf("\n");
+      break;
+    }
+    std::fflush(stdout);
+    return true;
+  }
+  if (what == "specset" && args.size() > 2) {  // loupe specset <range dB> <resolution 0..2>: the View menu's two settings
+    setSpecRange(a, std::atoi(args[1].c_str()));
+    setSpecResolution(a, std::atoi(args[2].c_str()));
+    return true;
+  }
+  if (what == "spectral" || what == "zoom") {  // loupe spectral 0|1 | zoom <start s> <length s>: the first open Loupe's view
+    for (auto& [k, sp] : sessions()) {
+      Session& s = *sp;
+      if (!alive(a, s)) continue;
+      if (what == "spectral") {
+        s.spectral = args.size() > 1 && args[1] == "1";
+      } else if (args.size() > 2 && s.rate() > 0) {
+        s.viewLen = std::max(16.0, std::atof(args[2].c_str()) * s.rate());
+        s.viewStart = std::clamp(std::atof(args[1].c_str()) * s.rate(), 0.0, std::max(0.0, static_cast<double>(s.frames()) - s.viewLen));
+      }
+      std::printf("loupe %s: spectral %d view %.0f %.0f\n", what.c_str(), s.spectral ? 1 : 0, s.viewStart, s.viewLen);
+      break;
+    }
+    std::fflush(stdout);
+    return true;
+  }
   if (what == "file" && args.size() > 1) {  // loupe file <path>: the browser's Edit in Loupe
     std::printf("loupe file: %s\n", openFileInLoupe(a, args[1]) ? "opened" : "not opened");
+    std::fflush(stdout);
+    return true;
+  }
+  if (what == "channel" && args.size() > 1) {  // loupe channel <id>: Loupe on the channel's sample (Open in Loupe)
+    const ObjectId id = static_cast<ObjectId>(std::strtoull(args[1].c_str(), nullptr, 10));
+    const Channel* c = a.doc.song().channel(id);
+    std::printf("loupe channel: %s\n", c && openAudioEditor(a, kerfmarks::pathOf(c->plugin.data), id) ? "opened" : "not opened");
+    std::fflush(stdout);
+    return true;
+  }
+  if (what == "warpadd" && args.size() > 1) {  // loupe warpadd <seconds>: a warp marker there (one step), the first open Loupe
+    for (auto& [k, sp] : sessions()) {
+      Session& s = *sp;
+      if (!alive(a, s) || s.frames() == 0) continue;
+      const std::vector<WarpMarker> before = s.warp;
+      if (s.rate() <= 0) continue;
+      sampleWarpAdd(s.warp, std::atof(args[1].c_str()), static_cast<double>(s.frames()) / s.rate());
+      pushWarpStep(a, s, "add warp marker", before);
+      break;
+    }
+    return true;
+  }
+  if (what == "warps") {  // loupe warps: the first open Loupe's markers ("at>to" in seconds)
+    for (auto& [k, sp] : sessions()) {
+      Session& s = *sp;
+      if (!alive(a, s)) continue;
+      std::string m;
+      char b[64];
+      for (const WarpMarker& w : s.warp) std::snprintf(b, sizeof b, " %.3f>%.3f", w.at, w.to), m += b;
+      std::printf("loupe warps: %zu%s\n", s.warp.size(), m.c_str());
+      break;
+    }
     std::fflush(stdout);
     return true;
   }

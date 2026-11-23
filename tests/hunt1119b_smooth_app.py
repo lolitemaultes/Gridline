@@ -427,7 +427,7 @@ def check_cards():
     sc.click(*APP_SETTINGS, settle=20)
     sc.click(*SETTINGS_INTERFACE, settle=30)
     sc.at("launcher", 2)
-    sc.at("shot " + shot, 3)
+    sc.at('shot "%s"' % shot, 3)
     out = run("cards", sc)
     cards = re.findall(r"layoutcard (\d+) (\S+) x=(-?\d+) y=(-?\d+) w=(\d+) h=(\d+)", out)
     if len(cards) < 4:

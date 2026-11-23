@@ -11,6 +11,8 @@ Re-enable automation
 --------------------------------
 Copy the parameter's name
 --------------------------------
+Modulate >
+--------------------------------
 Edit MIDI map…
 ==== tree ====
 Reset
@@ -25,4 +27,11 @@ Delete automation
 Show automation in a new lane
 Re-enable automation
 Copy the parameter's name
+Modulate >
+Modulate > LFO >
+Modulate > Chaos >
+Modulate > Random >
+Modulate > Macro >
+Modulate > Controller plugin >
+Modulate > Open the LFO board
 Edit MIDI map…

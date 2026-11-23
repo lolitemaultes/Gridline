@@ -11,6 +11,7 @@ double clamp01(double x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
 bool remoteMatches(const ControllerLink& l, const MidiMessage& m) {
   if (l.port >= 0 && m.port >= 0 && l.port != m.port) return false;
   if (l.midiChannel >= 0 && l.midiChannel != m.channel()) return false;
+  if (l.hiRes) return false;  // 14-bit CCs, NRPN and RPN run on decoded events (LinkCapture.h)
   const int k = m.kind();
   switch (l.source) {
     case RemoteSource::CC: return k == 0xB0 && m.d1 == l.cc;
@@ -124,7 +125,7 @@ void applyRemotePreset(ControllerLink& l, const RemotePreset& p) {
 
 const char* remoteSourceName(RemoteSource s) {
   static const char* n[] = {"Controller (CC)", "Note / pad", "Pitch bend", "Channel pressure", "Key pressure",
-                            "Program change", "OSC address"};
+                            "Program change", "OSC address", "NRPN", "RPN"};
   int i = static_cast<int>(s);
   return i >= 0 && i < static_cast<int>(RemoteSource::Count) ? n[i] : "?";
 }
@@ -160,7 +161,9 @@ std::string midiNoteName(int note) {
 std::string remoteSourceLabel(const ControllerLink& l) {
   std::string s;
   switch (l.source) {
-    case RemoteSource::CC: s = "CC " + std::to_string(l.cc); break;
+    case RemoteSource::CC: s = "CC " + std::to_string(l.cc) + (l.hiRes ? " (14-bit)" : ""); break;
+    case RemoteSource::Nrpn: s = "NRPN " + std::to_string(l.cc); break;
+    case RemoteSource::Rpn: s = "RPN " + std::to_string(l.cc); break;
     case RemoteSource::Note: s = "Note " + midiNoteName(l.cc); break;
     case RemoteSource::PitchBend: s = "Pitch bend"; break;
     case RemoteSource::ChannelPressure: s = "Ch. pressure"; break;
@@ -191,6 +194,7 @@ uint64_t RemoteMapper::key(const ControllerLink& l) {
   mix(static_cast<uint64_t>(l.cc));
   mix(static_cast<uint64_t>(l.midiChannel + 1));
   mix(static_cast<uint64_t>(l.port + 1));
+  mix(l.hiRes ? 1u : 0u);
   if (l.source == RemoteSource::Osc)
     for (char c : l.oscAddress) mix(static_cast<unsigned char>(c));
   return h;

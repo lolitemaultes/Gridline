@@ -10,6 +10,7 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/CommandPalette.h"
 #include "../core/I18n.h"
+#include "../core/InstrumentGuide.h"
 #include "../host/HostedPlugins.h"
 #include "../host/PluginGroups.h"
 #include "../host/PluginPrefs.h"
@@ -67,7 +68,9 @@ bool pickerRow(const PluginInfo& p, bool current, const char* detail) {
     ui::Hint(fav ? "Remove from favourites" : "Add to favourites (starred plugins are listed first, in every picker and the browser)");
     ui::Tooltip(fav ? "Remove from favourites" : "Add to favourites");
   } else if (hov) {
-    ui::Hint(p.name + " \xC2\xB7 " + p.category + "   (click the star to keep it at the top of the pickers)");
+    // GitHub #73: an instrument's line from the instrument guide (its kind of engine, what it is good for).
+    const std::string line = p.kind == PluginKind::Generator ? guide::shortLine(p.type) : std::string();
+    ui::Hint(p.name + " \xC2\xB7 " + (line.empty() ? p.category : line) + "   (click the star to keep it at the top of the pickers)");
   }
   bool picked = false;
   if (clicked) {
@@ -189,16 +192,9 @@ void pluginMenu(PluginKind kind, const std::function<void(const std::string&)>& 
       if (pickerRow(*p, p->type == current, isHostedType(p->type) ? nullptr : p->category.c_str())) pick(p->type);
     ImGui::Separator();
   }
-  std::map<std::string, std::vector<const PluginInfo*>> cats;
-  std::vector<std::string> order;
-  for (const auto& p : pluginCatalog()) {
-    if (p.kind != kind || p.hidden) continue;
-    if (!cats.count(p.category)) order.push_back(p.category);
-    cats[p.category].push_back(&p);
-  }
-  for (const auto& c : order) {
-    if (ImGui::BeginMenu(c.c_str())) {
-      for (const PluginInfo* p : cats[c])
+  for (const CatalogGroup& g : catalogGroups(kind)) {
+    if (ImGui::BeginMenu(g.category.c_str())) {
+      for (const PluginInfo* p : g.items)
         if (pickerRow(*p, p->type == current)) pick(p->type);
       ImGui::EndMenu();
     }
@@ -211,6 +207,11 @@ void pluginMenu(PluginKind kind, const std::function<void(const std::string&)>& 
       if (pickerRow(*p, p->type == current, f ? f->label : nullptr)) pick(p->type);
     }
     ImGui::EndMenu();
+  }
+  if (kind == PluginKind::Generator) {  // GitHub #73: which instrument is which, with a picture of each
+    ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Guide to the instruments..."))) collabui::openUrl(guide::pageUrl());
+    ui::Hint("Opens the guide to the built-in instruments: what kind of sound engine each one is and what it is good for");
   }
 }
 

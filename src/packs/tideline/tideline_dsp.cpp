@@ -52,6 +52,7 @@ struct TidelineAux final : AuxData {
 
 class Tideline final : public Effect {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: a gain: rests by the hosted rule (stopped, fed silence, its output inaudible)
   void setSideIo(const SideIo& io) override { io_ = io; }
 
   void processAux(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, float* L, float* R, int n) override {

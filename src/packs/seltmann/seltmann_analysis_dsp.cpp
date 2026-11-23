@@ -12,6 +12,7 @@
 //   -> bar features (chroma + timbre) -> self-similarity -> novelty sections
 //   -> labels by aligned similarity -> loop spots -> key.
 #include "seltmann.h"
+#include "../../core/ThreadName.h"
 #include "../../engine/TimeStretch.h"
 #include <algorithm>
 #include <array>
@@ -1726,7 +1727,7 @@ void runJob(const JobPtr& job, std::string cacheDir) {
   {
     // forward progress through a small proxy (analyse writes 0..1)
     std::atomic<bool> stop{false};
-    std::thread fwd([&] {
+    std::thread fwd([&] { gl::threads::setName("gl-seltmann-fwd");
       while (!stop.load()) {
         job->progress = 0.1f + 0.9f * local.load();
         std::this_thread::sleep_for(std::chrono::milliseconds(15));
@@ -1764,7 +1765,7 @@ JobPtr requestAnalysis(const std::string& path) {
   auto job = std::make_shared<Job>();
   job->path = path;
   m.jobs[path] = job;
-  m.threads.emplace_back([job, dir = m.cacheDir] {
+  m.threads.emplace_back([job, dir = m.cacheDir] { gl::threads::setName("gl-seltmann-an");
     runJob(job, dir);
     gJobsDone.fetch_add(1, std::memory_order_acq_rel);
   });

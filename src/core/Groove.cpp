@@ -124,6 +124,37 @@ Warp makeWarp(const Song& song, const Pattern* p, const GrooveShape& shapeIn, do
   return w;
 }
 
+Warp makeCycleWarp(const Song& song, const Pattern* p, const GrooveShape& shapeIn, const double* amount, const double* accent,
+                   double nextFirst, Tick at) {
+  Warp w;
+  GrooveShape shape = shapeIn;
+  normalize(shape);
+  const double cell = cellTicks(song, p, shape.grid, at);
+  if (!(cell > 0)) return w;
+  w.cell = cell;
+  w.cycle = shape.cycle;
+  if (shape.grid == kGridStep && p) w.bar = static_cast<double>(song.ticksPerStep(*p)) * static_cast<double>(p->stepsPerBar);
+  else w.bar = static_cast<double>(p ? song.patternBarTicks(*p) : MeterMap(song).fullBarLenAt(std::max<Tick>(0, at)));
+  if (!(w.bar > 0)) return w;
+  auto unit = [](double v) { return std::isfinite(v) ? std::clamp(v, 0.0, 1.0) : 0.0; };
+  bool moves = false;
+  for (int k = 0; k < w.cycle; ++k) {
+    w.anchor[k] = cell * (static_cast<double>(k) + static_cast<double>(shape.timing[static_cast<size_t>(k)]) * unit(amount[k]));
+    moves = moves || w.anchor[k] != cell * static_cast<double>(k);
+  }
+  const double cyc = cell * static_cast<double>(w.cycle);
+  w.tailEnd = cyc;
+  w.anchor[w.cycle] = cyc + cell * (static_cast<double>(shape.timing[0]) * unit(nextFirst));
+  w.active = moves || w.anchor[w.cycle] != cyc;
+  for (int k = 0; k < w.cycle; ++k) {
+    float f = 1.0f;
+    if (!shape.velocity.empty()) f = static_cast<float>(1.0 + (static_cast<double>(shape.velocity[static_cast<size_t>(k)]) - 1.0) * unit(accent[k]));
+    w.vel[k] = f;
+    w.accents = w.accents || f != 1.0f;
+  }
+  return w;
+}
+
 double Warp::map(double x) const {
   if (!active) return x;
   const double cyc = cell * static_cast<double>(cycle);

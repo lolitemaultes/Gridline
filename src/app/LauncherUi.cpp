@@ -1,5 +1,6 @@
 // Gridline - J-141: the welcome launcher (see LauncherUi.h, core/Launcher.h).
 #include "LauncherUi.h"
+#include "../core/ThreadName.h"
 #include "../core/RemoteFs.h"
 #include "GridlineVersion.h"
 #include <algorithm>
@@ -125,7 +126,7 @@ class Store {
       std::lock_guard<std::mutex> lk(m_);
       if (stop_) return;
       jobs_.push_back(std::move(j));
-      if (!th_.joinable()) th_ = std::thread([this] { run(); });
+      if (!th_.joinable()) th_ = std::thread([this] { gl::threads::setName("gl-launcher"); run(); });
     }
     cv_.notify_one();
   }
@@ -137,6 +138,7 @@ class Store {
         std::unique_lock<std::mutex> lk(m_);
         cv_.wait(lk, [this] { return stop_ || !jobs_.empty(); });
         if (stop_) return;
+        gl::threads::woke();  // K-142: CPU report
         j = std::move(jobs_.front());
         jobs_.pop_front();
         dir = dir_;

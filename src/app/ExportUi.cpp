@@ -6,12 +6,14 @@
 // effects, tempo info, markers). Rendering runs on a worker thread with a
 // progress window that can cancel; the summary lists the files written.
 #include "../core/I18n.h"
+#include "../core/ThreadName.h"
 #include "Keys.h"
 #include "LiveLook.h"
 #include "../engine/LiveRender.h"
 #include "../core/TrackReceipt.h"
 #include "../core/Meter.h"
 #include "ExportUi.h"
+#include "ProgressUi.h"
 #include "LogicPlugins.h"
 #include "../core/Crash.h"
 #include "../core/ProjectArchive.h"
@@ -43,6 +45,7 @@
 #include "../core/Project.h"
 #include "../core/ProjectInterop.h"
 #include "../engine/ClipOps.h"
+#include "../engine/ClipRender.h"
 #include "../engine/ExportJob.h"
 #include "../engine/Resample.h"
 #include "../engine/Sample.h"
@@ -60,6 +63,7 @@
 #include "WorkerStall.h"
 #include "../core/Platform.h"
 #include "../host/HostedPlugins.h"
+#include "../packs/samplers/patchplayer.h"
 
 namespace fs = std::filesystem;
 
@@ -150,6 +154,8 @@ struct MidiDlg {
   std::vector<bool> tracks;
   bool channels[16];
   MidiImportOptions o;
+  bool patchPlayer = false;  // K-333: one Patch Player per track on the SF2 file `sf2`
+  std::string sf2;
 };
 MidiDlg midiDlg;
 
@@ -389,6 +395,12 @@ void startJob(App& a) {
   s.opusBitrate = kBitrates[dlg.opusRate];
   s.render.sampleRate = kRates[dlg.rateIdx];
   s.partPattern = dlg.pattern;
+  {  // K-344: the subfolders when more than one kind of split is on, in this layout's words
+    const bool tw = logicplug::active(a) || livelook::active(a);
+    s.mixerFolder = i18n::tr(logicplug::active(a) ? i18n::N_("Channel strips") : i18n::N_("Mixer tracks"));
+    s.playlistFolder = tw ? i18n::tr("Tracks") : i18n::tr("Playlist tracks");
+    s.groupsFolder = i18n::tr("Track groups");
+  }
   s.projectTitle = projectName(a);
   s.render.threads = std::max(1, a.processingThreads());
   job.settings = s;
@@ -420,7 +432,7 @@ void startJob(App& a) {
   // are busy work (host::runUiThreadTasks).
   // K-133: but its progress is the worker's own sign of life: a worker that stops is reported.
   workerstall::start(job.watch, job.beat);
-  job.worker = std::thread([song = std::move(song), s]() {
+  job.worker = std::thread([song = std::move(song), s]() { gl::threads::setName("gl-export");
     host::UiThreadRenderScope scope;
     ExportOutcome o;
     try {
@@ -462,6 +474,9 @@ void finishJob(App& a) {
     for (const auto& f : o.files) {
       std::error_code ec;
       fs::remove(f, ec);
+      // K-344: a split's own subfolder goes too once empty (fs::remove leaves a folder with files)
+      const fs::path dir = fs::path(f).parent_path();
+      if (dir.lexically_normal() != fs::path(job.settings.folder).lexically_normal()) fs::remove(dir, ec);
     }
     return;
   }
@@ -701,6 +716,10 @@ void drawRenderDialog(App& a) {
       std::map<char, std::string> t = {{'P', dlg.name}, {'N', "03"}, {'T', "Snare"}, {'S', "Song"}, {'R', std::to_string(kRates[dlg.rateIdx])}};
       formLabel("");
       ImGui::TextColored(theme::vec(P.textFaint), "%s", theme::fitText(expandNamePattern(dlg.pattern, t).c_str(), colW - 148));
+      if (int(s.splitMixer) + int(s.splitPlaylist) + int(s.splitPlaylistGroups) > 1) {  // K-344
+        formLabel("");
+        ImGui::TextColored(theme::vec(P.textFaint), "%s", theme::fitText(i18n::tr("Each kind of split goes in its own folder"), colW - 148));
+      }
     }
     ui::EndSection();
     ui::BeginSection("OUTPUT FORMAT", colW);
@@ -841,31 +860,39 @@ bool closeRender() {
 }
 
 
-bool progressBody(const std::string& status, double progress, bool escapeCancels) {
-  ImGui::TextUnformatted(i18n::trMessage(status).c_str());
+bool progressBody(const std::string& status, double progress, bool escapeCancels, const std::string* stalled) {
+  // 0.7.8: one size for the window's whole life. Every row is kProgressW wide: the status cut to
+  // it, the percent right-aligned in a field as wide as "100%", and the row of a stalled job's
+  // warning there from the start (empty while the job moves on).
+  const ImU32 text = ImGui::GetColorU32(ImGuiCol_Text);
+  progui::Line(i18n::trMessage(status).c_str(), kProgressW, text);
   // The percent stands beside the bar: on the fill it could not be read near the end.
   const float done = static_cast<float>(std::clamp(progress, 0.0, 1.0));
-  const std::string percent = std::to_string(static_cast<int>(done * 100.0f)) + "%";
-  const float percentW = ImGui::CalcTextSize("100%").x;
+  const float percentW = progui::PercentWidth();
   ImGui::PushStyleColor(ImGuiCol_PlotHistogram, theme::vec(pal().accent));
-  ImGui::ProgressBar(done, ImVec2(440 - percentW - theme::kS2, 0), "");
+  ImGui::ProgressBar(done, ImVec2(kProgressW - percentW - theme::kS2, 0), "");
   ImGui::PopStyleColor();
   ImGui::SameLine(0, theme::kS2);
   ImGui::AlignTextToFramePadding();
-  ImGui::TextUnformatted(percent.c_str());
+  progui::Percent(done, text);
+  if (stalled) progui::Line(stalled->c_str(), kProgressW, pal().danger);
   ui::DialogFooter(96);
   return ui::TextButton(i18n::tr("Cancel"), false, 96) || (escapeCancels && ::gl::keys::escapePressed());
 }
 
 namespace {
 
-// K-133: under the bar of a worker that stopped moving on.
-void stalledLine(const StallWatch& w) {
+// K-133: the line under the bar of a worker that stopped moving on (empty while it moves).
+std::string stalledText(int seconds) {
   char b[160];
-  std::snprintf(b, sizeof b, i18n::tr("No progress for %d s. A plugin or the disk may not be responding."),
-                static_cast<int>(w.silentMs(workerstall::nowMs()) / 1000));
-  ImGui::TextColored(theme::vec(pal().danger), "%s", b);
+  std::snprintf(b, sizeof b, i18n::tr("No progress for %d s. A plugin or the disk may not be responding."), seconds);
+  return b;
 }
+std::string stalledText(const StallWatch& w) {
+  return w.stalled() ? stalledText(static_cast<int>(w.silentMs(workerstall::nowMs()) / 1000)) : std::string();
+}
+// A stand-in job's line (tests): stalled for a long while, or moving on.
+std::string stalledText(const progui::Fake& f) { return f.stalled ? stalledText(3600) : std::string(); }
 
 std::string statusOf(std::mutex& mu, const std::string& status) {
   std::lock_guard<std::mutex> lk(mu);
@@ -875,23 +902,27 @@ std::string statusOf(std::mutex& mu, const std::string& status) {
 void drawProgress(App& a) {
   finishJob(a);
   if (job.running) workerstall::watch(a, job.watch, job.beat, "Rendering", statusOf(job.mu, job.status));
-  if (!job.running && !job.showSummary) return;
+  const progui::Fake* fk = progui::fake("render");  // (tests: a stand-in render)
+  if (!job.running && !job.showSummary && !fk) return;
   const auto& P = pal();
   centerNext(ImVec2(480, 0));
   bool open = true;
-  const bool summary = !job.running && job.showSummary;
+  const bool summary = !job.running && job.showSummary && !fk;
   bool vis = ImGui::Begin(summary ? "Render finished###renderprog" : "Rendering###renderprog", summary ? &open : nullptr,
                           ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
+  progui::note("render");
   if (vis) {
     if (!summary) {
       std::string st;
-      {
+      if (fk) {
+        st = fk->text;
+      } else {
         std::lock_guard<std::mutex> lk(job.mu);
         st = job.status;
       }
-      if (progressBody(st, job.progress.load())) job.cancel = true;
-      if (job.watch.stalled()) stalledLine(job.watch);
+      const std::string stall = fk ? stalledText(*fk) : stalledText(job.watch);
+      if (progressBody(st, fk ? fk->frac : job.progress.load(), true, &stall) && !fk) job.cancel = true;
     } else {
       ExportOutcome o;
       {
@@ -907,10 +938,13 @@ void drawProgress(App& a) {
         ImGui::TextColored(theme::vec(P.textDim), "Integrated loudness %.1f LUFS%s", o.lufs,
                            o.ceilingLimited ? "  (below the target: the peak ceiling held it back)" : "");
       ImGui::BeginChild("##files", ImVec2(420, std::min(220.0f, 20.0f * static_cast<float>(o.files.size() + o.errors.size()) + 8)));
-      for (const auto& f : o.files) ImGui::TextUnformatted(fs::path(f).filename().string().c_str());
+      for (const auto& f : o.files) {  // K-344: a file in a split's subfolder shows that folder too
+        const fs::path rel = fs::path(f).lexically_relative(job.settings.folder);
+        ImGui::TextUnformatted((rel.empty() || *rel.begin() == ".." ? fs::path(f).filename() : rel).string().c_str());
+      }
       for (const auto& e : o.errors) ImGui::TextColored(theme::vec(P.danger), "%s", e.c_str());
       ImGui::EndChild();
-      if (!o.files.empty()) ImGui::TextColored(theme::vec(P.textFaint), "%s", theme::fitText(fs::path(o.files[0]).parent_path().string().c_str(), 420));
+      if (!o.files.empty()) ImGui::TextColored(theme::vec(P.textFaint), "%s", theme::fitText(job.settings.folder.c_str(), 420));
       ui::EndSection();
       ui::DialogFooter(96);
       if (ui::PrimaryButton("OK", 96) || ImGui::IsKeyPressed(ImGuiKey_Enter)) open = false;
@@ -937,24 +971,28 @@ void finishFileJob(App& a) {
 
 void drawFileJob(App& a) {
   finishFileJob(a);
-  if (!fileJob.running) return;
-  workerstall::watch(a, fileJob.watch, fileJob.beat, fileJob.title, statusOf(fileJob.mu, fileJob.status));
+  const progui::Fake* fk = progui::fake("filejob");  // (tests: a stand-in save)
+  if (!fileJob.running && !fk) return;
+  if (!fk) workerstall::watch(a, fileJob.watch, fileJob.beat, fileJob.title, statusOf(fileJob.mu, fileJob.status));
   centerNext(ImVec2(480, 0));
   if (job.running || flpexport::running()) {  // never on top of the other progress window
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f + 96.0f), ImGuiCond_Appearing, ImVec2(0.5f, 0.0f));
   }
-  const std::string name = std::string(i18n::tr(fileJob.title.c_str())) + "###filejobprog";
+  const std::string name = std::string(i18n::tr(fk ? "Saving the zipped project" : fileJob.title.c_str())) + "###filejobprog";
   const bool vis = ImGui::Begin(name.c_str(), nullptr, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
+  progui::note("filejob");
   if (vis) {
     std::string st;
-    {
+    if (fk) {
+      st = fk->text;
+    } else {
       std::lock_guard<std::mutex> lk(fileJob.mu);
       st = fileJob.status;
     }
-    if (progressBody(st, fileJob.progress.load())) fileJob.cancel = true;
-    if (fileJob.watch.stalled()) stalledLine(fileJob.watch);
+    const std::string stall = fk ? stalledText(*fk) : stalledText(fileJob.watch);
+    if (progressBody(st, fk ? fk->frac : fileJob.progress.load(), true, &stall) && !fk) fileJob.cancel = true;
   }
   ImGui::End();
 }
@@ -996,6 +1034,26 @@ void drawMidiImport(App& a) {
       if (c % 8 != 7) ImGui::SameLine(0, 6);
     }
     ui::EndSection();
+    ui::BeginSection("INSTRUMENTS", 430);  // K-333
+    if (ImGui::RadioButton(i18n::tr("Gridline's synths and drum kit"), !midiDlg.patchPlayer)) midiDlg.patchPlayer = false;
+    if (ImGui::RadioButton(i18n::tr("A Patch Player and this file:"), midiDlg.patchPlayer)) midiDlg.patchPlayer = true;
+    ImGui::SameLine();
+    {
+      const std::string shown = midiDlg.sf2.empty() ? std::string(i18n::tr("Choose an SF2 file...")) : fs::u8path(midiDlg.sf2).filename().u8string();
+      if (ui::TextButton((shown + "##midisf2").c_str(), midiDlg.patchPlayer, 200, midiDlg.sf2.empty() ? nullptr : midiDlg.sf2.c_str())) {
+        a.fileDialog = {};
+        a.fileDialog.open = true;
+        a.fileDialog.title = i18n::tr("Choose an SF2 file");
+        a.fileDialog.dir = midiDlg.sf2.empty() ? gl::platform::homeDir() : fs::u8path(midiDlg.sf2).parent_path().u8string();
+        a.fileDialog.exts = {".sf2", ".sf3"};
+        a.fileDialog.onOk = [](const std::string& p) {
+          midiDlg.sf2 = p;
+          midiDlg.patchPlayer = true;
+        };
+      }
+    }
+    ui::Hint("Each track gets its own Patch Player on its program; MIDI channel 10 plays the file's drum kits. A program the file lacks plays the nearest one.");
+    ui::EndSection();
     ui::BeginSection("OPTIONS", 430);
     ui::ToggleRow(i18n::tr("Tempo (and tempo changes as automation)"), &midiDlg.o.tempo);
     ui::ToggleRow(i18n::tr("Time signature and meter changes"), &midiDlg.o.timeSignature);
@@ -1028,6 +1086,15 @@ void drawMidiImport(App& a) {
       if (!allC)
         for (int c = 0; c < 16; ++c)
           if (midiDlg.channels[c]) o.midiChannels.insert(c);
+      if (midiDlg.patchPlayer && !midiDlg.sf2.empty()) {  // K-333: one Patch Player per track, remembered for next time
+        const std::string sf2 = midiDlg.sf2;
+        o.instrument = o.drumInstrument = packs::samplers::kPatchPlayerType;
+        o.setUpChannel = [sf2](Channel& c, int mch, int bank, int program) { packs::samplers::setPatchForMidiTrack(c.plugin, sf2, mch, bank, program); };
+        // Later program changes switch the patch while the song plays (the Patch parameter's lane).
+        o.programParam = [](const Channel& c) { return c.plugin.type == packs::samplers::kPatchPlayerType ? static_cast<int>(packs::samplers::PpPatch) : -1; };
+      }
+      a.settings.set("midiImport.patchPlayer", midiDlg.patchPlayer && !midiDlg.sf2.empty());
+      a.settings.set("midiImport.sf2", midiDlg.sf2);
       MidiImportResult r;
       const std::string name = fs::path(midiDlg.path).stem().string();
       const MidiFileData& data = midiDlg.data;  // already split by channel (the indexes shown)
@@ -1068,7 +1135,7 @@ void drawMissing(App& a) {
     if (!missing.check && a.now >= missing.nextCheck) {
       missing.nextCheck = a.now + 2.0;
       missing.check = std::make_shared<Missing::Check>();
-      std::thread([c = missing.check, refs = referencedFiles(a.doc.song())] {
+      std::thread([c = missing.check, refs = referencedFiles(a.doc.song())] { gl::threads::setName("gl-missing-chk");
         c->files = missingAmong(refs);
         c->done.store(true, std::memory_order_release);
       }).detach();
@@ -1125,7 +1192,7 @@ void drawMissing(App& a) {
         auto job = std::make_shared<Missing::Search>();
         job->folder = d;
         missing.search = job;
-        std::thread([job, files = missing.files, d] {
+        std::thread([job, files = missing.files, d] { gl::threads::setName("gl-relink");
           RelinkOptions o;
           o.cancel = &job->cancel;
           job->found = findReplacements(files, d, o);
@@ -1232,7 +1299,7 @@ bool startFileJob(App& a, const char* title, const Song& uses, std::function<Fil
   crash::crumb("file job start", title);
   // As for a render: this thread's progress says nothing of the interface's life, so it does not
   // beat for it; calls that must come back to the interface are busy work there.
-  fileJob.worker = std::thread([work = std::move(work), titleText = fileJob.title]() {
+  fileJob.worker = std::thread([work = std::move(work), titleText = fileJob.title]() { gl::threads::setName("gl-file-job");
     host::UiThreadRenderScope scope;
     static const int delayMs = [] {  // tests: a job that takes its time
       const char* e = std::getenv("GRIDLINE_DEV_SLOW_FILE_JOB_MS");
@@ -1363,6 +1430,8 @@ void importMidiFile(App& a, const std::string& path) {
   midiDlg.tracks.assign(midiDlg.data.tracks.size(), true);
   for (bool& c : midiDlg.channels) c = true;
   midiDlg.o = MidiImportOptions{};
+  midiDlg.sf2 = a.settings.getString("midiImport.sf2");  // K-333: the instrument chosen last time
+  midiDlg.patchPlayer = a.settings.getBool("midiImport.patchPlayer") && !midiDlg.sf2.empty();
 }
 
 void importMidiAtCursor(App& a, const std::string& path) {
@@ -1698,27 +1767,13 @@ SampleMaker channelSampleMaker(const std::string& src) {
 
 SampleMaker clipMaker(const Song& songIn, ObjectId clip, int rate) {
   return [song = songIn, clip, rate](const std::string& writeTo, std::string& err, const ExportControl& control, std::unique_ptr<receipt::Origin>& origin) {
-    // The clip as it sounds (clip gain, pitch, stretch, fades) through its channel, master neutral.
-    const Clip* k = song.clip(clip);
-    if (!k) return false;
-    Song solo = stemSong(song, song.masterId(), false);
-    solo.playlist.erase(std::remove_if(solo.playlist.begin(), solo.playlist.end(),
-                                       [&](const Clip& x) { return x.id != clip && x.kind != ClipKind::Automation; }),
-                        solo.playlist.end());
-    for (auto& t : solo.tracks) t.muted = false;
-    for (auto& x : solo.playlist) x.muted = x.id == clip ? false : x.muted;
-    RenderJob j;
-    j.sampleRate = rate;
-    j.scope = RenderScope::Range;
-    j.start = k->start;
-    j.end = k->start + song.clipLength(*k);
-    j.tail = TailMode::Cut;
-    if (control.progress) {
-      control.progress(0, i18n::N_("Rendering the clip"));
-      j.progress = [&control](double p) { control.progress(0.9 * p, i18n::N_("Rendering the clip")); };
-    }
-    j.cancel = control.cancel;
-    RenderResult r = renderAudio(solo, j);
+    // K-250: the clip as it sounds (clip gain, pitch, stretch, fades) through its channels, master
+    // neutral: the one clip render (engine/ClipRender.h) every clip render shares.
+    if (!song.clip(clip)) return false;
+    if (control.progress) control.progress(0, i18n::N_("Rendering the clip"));
+    std::function<void(double)> prog;
+    if (control.progress) prog = [&control](double p) { control.progress(0.9 * p, i18n::N_("Rendering the clip")); };
+    RenderResult r = renderClipAlone(song, clip, rate, prog, control.cancel);
     if (r.cancelled || control.cancelled()) return false;
     if (!r.error.empty()) {
       err = r.error;
@@ -1729,19 +1784,8 @@ SampleMaker clipMaker(const Song& songIn, ObjectId clip, int rate) {
     o.cancel = control.cancel;
     if (control.progress) control.progress(0.92, i18n::N_("Writing the file"));
     if (!writeAudioFile(writeTo, r.audio, rate, o, &err)) return false;
-    if (const Channel* ch = song.channel(k->source); ch && k->kind == ClipKind::Audio && r.audio.frames > 0) {
-      origin = std::make_unique<receipt::Origin>();  // J-219: the clip's part of its file (Track Receipt)
-      receipt::Origin& og = *origin;
-      og.source = ch->plugin.data.substr(0, ch->plugin.data.find('\n'));
-      og.start = std::max(0.0, k->audioStart);
-      og.end = k->audioEnd > og.start ? k->audioEnd : -1;
-      if (og.end < 0)
-        if (SamplePtr sp = sampleCache().get(og.source)) og.end = sp->seconds();
-      if (og.end > 0) og.speed = (og.end - og.start) / (static_cast<double>(r.audio.frames) / rate);
-      else og.rangeKnown = false;
-      og.reverse = k->reverse;
-      og.kind = "clip";
-    }
+    auto og = std::make_unique<receipt::Origin>();  // J-219: the clip's part of its file (Track Receipt)
+    if (clipRenderOrigin(song, clip, static_cast<int64_t>(r.audio.frames), rate, *og)) origin = std::move(og);
     return true;
   };
 }
@@ -1765,6 +1809,60 @@ void exportClipAudio(App& a, ObjectId clip) {
   writeSampleDialog(a, "Export clip as WAV", name, a.doc.song(), clipMaker(a.doc.song(), clip, rate));
 }
 
+// K-251: each clip of `clips` to its own file in a folder the user picks (one job, one file per clip).
+void exportClipsEach(App& a, const std::set<ObjectId>& clips) {
+  const std::vector<ObjectId> ids = renderableClips(a.doc.song(), clips);
+  if (ids.empty()) {
+    a.notify(i18n::tr("Select the clips to render first"), true);
+    return;
+  }
+  a.fileDialog = {};
+  a.fileDialog.open = true;
+  a.fileDialog.title = ids.size() == 1 ? i18n::tr("Choose the folder for the clip's file") : i18n::tr("Choose the folder for the clips' files");
+  const std::string last = a.settings.getString("export.clipsDir");
+  const char* h = platform::homeEnv();
+  std::error_code ec;
+  a.fileDialog.dir = !last.empty() && fs::is_directory(fs::u8path(last), ec) ? last
+                     : a.projectPath.empty()                                  ? std::string(h ? h : ".")
+                                                                              : fs::path(a.projectPath).parent_path().string();
+  a.fileDialog.exts = {"/"};
+  const std::set<ObjectId> sel(ids.begin(), ids.end());
+  a.fileDialog.onOk = [&a, sel](const std::string& dir) { exportClipsEachTo(a, sel, dir); };
+}
+
+void exportClipsEachTo(App& a, const std::set<ObjectId>& clips, const std::string& dir) {
+  a.settings.set("export.clipsDir", dir);
+  const int rate = a.audioSampleRate > 0 ? a.audioSampleRate : 44100;
+  captureHostedStates(a);  // clips through a hosted effect: its current state, asked for here
+  const Song song = a.doc.song();
+  startFileJob(a, i18n::N_("Render clips to files"), song, [song, clips, dir, rate](const ExportControl& control) -> FileJobDone {
+    std::string err;
+    std::vector<ClipFile> files;
+    try {
+      files = renderClipsToFiles(song, clips, dir, rate, 24, &err,
+                                 control.progress ? std::function<void(double)>([&control](double p) { control.progress(p, i18n::N_("Rendering the clips")); })
+                                                  : std::function<void(double)>{},
+                                 control.cancel);
+    } catch (const std::exception& e) {
+      crash::reportCurrentException("Rendering clips to files");
+      err = e.what();
+    }
+    const bool cancelled = control.cancelled();
+    const size_t n = files.size();
+    return [n, err, cancelled, dir](App& app) {
+      if (cancelled) {
+        app.notify("Render cancelled");
+      } else if (n == 0) {
+        app.notify("Nothing rendered: " + err, true);
+      } else {
+        app.notify(i18n::plural(static_cast<long>(n), "%d clip rendered to its own file", "%d clips rendered, each to its own file") + ": " +
+                   fs::path(dir).filename().u8string());
+        app.uiSound(uisound::Event::Export);
+      }
+    };
+  });
+}
+
 void devFileJob(App& a, const std::vector<std::string>& args) {
   const std::string what = args.empty() ? "state" : args[0];
   const std::string to = args.size() > 1 ? args[1] : "";
@@ -1782,6 +1880,11 @@ void devFileJob(App& a, const std::vector<std::string>& args) {
         writeSampleJob(a, "Export clip as WAV", s, to, clipMaker(s, c.id, a.audioSampleRate > 0 ? a.audioSampleRate : 44100));
         break;
       }
+  } else if (what == "clips") {  // K-251: the selected clips (else every clip), each to its own file in <to>
+    std::set<ObjectId> sel = a.playlist.selected;
+    if (sel.empty())
+      for (const auto& c : a.doc.song().playlist) sel.insert(c.id);
+    exportClipsEachTo(a, sel, to);
   } else if (what == "sample") {  // the first channel with a sample file
     for (const auto& c : a.doc.song().channels) {
       const PluginInfo* pi = findPlugin(c.plugin.type);

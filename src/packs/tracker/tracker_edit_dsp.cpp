@@ -660,7 +660,8 @@ int replaceSample(Edit& e, int slot, const std::string& path, int32_t frames, do
   if (path.empty() || frames < 1) return -1;
   bool any = false;
   for (int k = 0; k < trk::kMaxSamples; ++k) any = any || slotUsed(e, k);
-  if (!any || slot < 0 || slot >= trk::kMaxSamples) return addSample(e, path, frames, rate, name);
+  if (slot < 0 || slot >= trk::kMaxSamples) return addSample(e, path, frames, rate, name);
+  if (!any) e.text.def.keymap.fill(static_cast<uint8_t>(slot));  // the first sample: every key plays it (0.7.8: in the entry picked)
   const auto i = static_cast<size_t>(slot);
   trk::SampleDef s;
   s.length = frames;
@@ -673,6 +674,45 @@ int replaceSample(Edit& e, int slot, const std::string& path, int32_t frames, do
   e.eightBit[i] = false;
   compactFiles(e);
   return slot;
+}
+
+int firstFreeEntry(const Edit& e) {
+  for (int k = 0; k < trk::kMaxSamples; ++k)
+    if (!slotUsed(e, k)) return k;
+  return -1;
+}
+
+int regionToEntry(Edit& e, int from, Span r, int to) {
+  if (from < 0 || from >= trk::kMaxSamples || !slotUsed(e, from) || to >= trk::kMaxSamples) return -1;
+  r.a = std::max(0, r.a);
+  if (r.empty()) return -1;
+  if (to < 0) to = firstFreeEntry(e);
+  if (to < 0) return -1;
+  const auto j = static_cast<size_t>(from), i = static_cast<size_t>(to);
+  const int f = e.text.fileOf[j];
+  if (f < 0 || f >= static_cast<int>(e.text.files.size()) || e.text.files[static_cast<size_t>(f)].empty()) return -1;
+  // Read everything first (`to` may be `from`).
+  trk::SampleDef sd = e.text.def.samples[j];
+  const std::string path = e.text.files[static_cast<size_t>(f)];
+  const std::string name = e.text.sampleNames[j];
+  const bool eight = e.eightBit[j];
+  // The loop (file frames) stays only when the whole of it is inside the range.
+  const int64_t ls = sd.loopStart, le = ls + sd.loopLength;
+  if (sd.loop == trk::kLoopOff || sd.loopLength < 1 || ls < r.a || le > r.b) {
+    sd.loop = trk::kLoopOff;
+    sd.loopStart = sd.loopLength = 0;
+  }
+  e.text.def.samples[i] = sd;
+  e.text.fileOf[i] = static_cast<int>(e.text.files.size());
+  e.text.files.push_back(path);
+  const std::string base = name.empty() ? fs::u8path(path).stem().u8string() : name;
+  const bool already = base.size() >= 5 && base.compare(base.size() - 5, 5, " part") == 0;  // (a part of a part keeps the name)
+  e.text.sampleNames[i] = oneLine(already ? base : base + " part");
+  e.cuts.start[i] = r.a;
+  e.cuts.end[i] = r.b;
+  e.eightBit[i] = eight;
+  compactFiles(e);
+  return to;
 }
 
 SampleTrim trimSamples(Edit& e, bool unused, bool afterLoop, bool eightBits) {
@@ -702,7 +742,12 @@ SampleTrim trimSamples(Edit& e, bool unused, bool afterLoop, bool eightBits) {
       // Loop points and the end point are frames of the file: the sample now ends where its loop does.
       const int32_t le = sd.loopStart + sd.loopLength;
       const int32_t end = e.cuts.end[i] > 0 ? std::min(e.cuts.end[i], sd.length) : sd.length;
-      if (le > e.cuts.start[i] && le < end) e.cuts.end[i] = le, ++n.trimmed;
+      // 0.7.8: played backwards, what is never heard lies before the loop: the sample starts there.
+      if (sd.reverse) {
+        if (sd.loopStart > e.cuts.start[i] && sd.loopStart < end) e.cuts.start[i] = sd.loopStart, ++n.trimmed;
+      } else if (le > e.cuts.start[i] && le < end) {
+        e.cuts.end[i] = le, ++n.trimmed;
+      }
     }
     if (eightBits && !e.eightBit[i]) e.eightBit[i] = true, ++n.eightBit;
   }
@@ -815,13 +860,19 @@ void applyMarker(Edit& e, int k, int marker, int32_t f, int32_t frames) {
       sd.loopLength = le - v;
       break;
     }
-    default: sd.loopLength = std::clamp(f, ls + 1, s1) - ls; break;
+    case 3: sd.loopLength = std::clamp(f, ls + 1, s1) - ls; break;
+    default: {  // 4: the whole loop to start at f, its length kept (0.7.8)
+      const int32_t len = std::clamp(le - ls, 1, s1 - s0);
+      sd.loopStart = std::clamp(f, s0, s1 - len);
+      sd.loopLength = len;
+      break;
+    }
   }
 }
 
 const char* markerLabel(int marker) {
-  static const char* labels[] = {"sample start", "sample end", "loop start", "loop end"};
-  return labels[std::clamp(marker, 0, 3)];
+  static const char* labels[] = {"sample start", "sample end", "loop start", "loop end", "move loop"};
+  return labels[std::clamp(marker, 0, 4)];
 }
 
 void applyEnvFlag(Edit& e, bool pan, uint8_t flag) {
@@ -1002,6 +1053,9 @@ PluginState fromSamplerState(const PluginState& sampler, int32_t frames, double 
     sd.loopStart = ls;
     sd.loopLength = le - ls;
   }
+  // 0.7.8: the Sampler's reverse as the sample's Backwards option: both play from the end down and
+  // round the loop backwards, the audio as it is.
+  sd.reverse = par(pp::SmpReverse, 0.0f) >= 0.5f;
   // The amplitude envelope as a volume envelope (ticks of 1/50 s, the classic tracker's at 125 BPM):
   // attack up to full, decay to the sustain level (held while the key is down), release to silence.
   auto ticks = [](float sec) { return std::clamp(static_cast<int>(std::lround(sec * 50.0f)), 0, 8000); };

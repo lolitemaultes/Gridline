@@ -286,7 +286,7 @@ TypingLayout typingLayoutFromId(const std::string& id);  // anything unknown or 
 
 class TypingKeyboard {
  public:
-  int octave = 4;      // lower row starts at baseNote() = 12 * octave
+  int octave = 4;      // the first note key plays baseNote()
   int velocity = 100;  // 1..127
   bool chordMode = false;
   ChordType chord = ChordType::Major;
@@ -294,8 +294,15 @@ class TypingKeyboard {
   // A row plays from the base C (W E T Y U O P the black keys), Z and X move the octave, C and V
   // the velocity; M and the other keys play nothing.
   bool aRow = false;
+  // GitHub #42 (0.7.8): the Tracker layout counts octaves as its pattern editor does (octave 4 starts
+  // at C-4, 60). Set while the Tracker is the layout: a note key then plays the same note whatever
+  // has the keyboard (the pattern, the instrument list, a plugin window, the Sample editor). Before,
+  // only the pattern played that octave and every other place an octave lower.
+  bool trackerOctaves = false;
 
-  int baseNote() const { return 12 * octave; }  // octave 4 → 48 (C4 in FL naming, 60 = C5)
+  // The note the first note key (Z, or A on the A row) plays at octave `o`.
+  int baseNoteAt(int o) const { return 12 * o + (aRow || trackerOctaves ? 12 : 0); }
+  int baseNote() const { return baseNoteAt(octave); }  // octave 4 → 48 (C4 in FL naming, 60 = C5); 60 on the A row and in the Tracker
   // Key codes are lower-case ASCII ('z', ',', '[', …). Returns the notes the
   // key starts (empty when it is not a note key or already held). Octave,
   // velocity and chord keys change the state and return nothing.
@@ -320,6 +327,9 @@ class TypingKeyboard {
   // K-113: what `layout` types at `position` (a Unicode code point), 0 when it has nothing there or the
   // layout is Computer (the caller asks the system).
   static int layoutChar(TypingLayout layout, int position);
+  // GitHub #79: what US QWERTY types at `position` without Shift (the letter, digit and punctuation
+  // keys, USB usages 4 to 56 but the ISO key 50), 0 for any other key.
+  static int usChar(int position);
   bool anyHeld() const { return !held_.empty(); }
   std::vector<int> heldNotes() const;
 

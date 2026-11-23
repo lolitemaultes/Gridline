@@ -30,6 +30,7 @@
 #include "HostedUi.h"
 #include "LauncherUi.h"
 #include "LiveLook.h"
+#include "ProgressUi.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "WorkspacesUi.h"
@@ -420,12 +421,13 @@ void drawChoice(App& a, float w) {
 
 void draw(App& a) {
   projload::Loader& L = a.projectLoad;
-  const bool want = a.projectLoadBlocking();
+  const progui::Fake* fk = progui::fake("projectload");  // (tests: a stand-in load)
+  const bool want = a.projectLoadBlocking() || fk;
   if (want && !ImGui::IsPopupOpen(kPopup)) ImGui::OpenPopup(kPopup);  // (closes any other popup or menu)
   if (!want && !ImGui::IsPopupOpen(kPopup)) return;
-  const bool failed = L.phase() == Phase::Failed;
+  const bool failed = !fk && L.phase() == Phase::Failed;
   // Input is blocked from the first frame; the window (and the dimming) shows after a moment.
-  const float fade = failed ? 1.0f : std::clamp(static_cast<float>((L.elapsed() - kShowAfter) / 0.15), 0.0f, 1.0f);
+  const float fade = failed || fk ? 1.0f : std::clamp(static_cast<float>((L.elapsed() - kShowAfter) / 0.15), 0.0f, 1.0f);
   ImGui::GetCurrentContext()->DimBgRatio = want ? fade : 0.0f;
   ImGui::PushStyleVar(ImGuiStyleVar_Alpha, want ? fade : 0.0f);
   ui::PlaceNextDialog(ImVec2(kWidth, 0), ImGuiCond_Always);
@@ -438,6 +440,7 @@ void draw(App& a) {
     ImGui::PopStyleVar();
     return;
   }
+  progui::note("projectload");
   if (!want) {  // finished or cancelled: gone at once
     ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
@@ -453,7 +456,7 @@ void draw(App& a) {
     ImGui::TextUnformatted(failed ? i18n::tr("Could not open the project") : i18n::tr("Opening project"));
     ImGui::PopFont();
     char t[32];
-    std::snprintf(t, sizeof t, i18n::tr("%.1f s"), L.elapsed());
+    std::snprintf(t, sizeof t, i18n::tr("%.1f s"), fk ? 12.3 : L.elapsed());
     ImGui::PushFont(a.fontMono, theme::kFontCaption);
     const float tw = ImGui::CalcTextSize(t).x;
     ImGui::SameLine(theme::kS6 + w - tw);
@@ -461,9 +464,9 @@ void draw(App& a) {
     else ImGui::NewLine();
     ImGui::PopFont();
   }
-  ui::TextFit(fileNameOf(a.projectLoadName()).c_str(), w, P.textDim);
+  progui::Line(fk ? (fk->text + ".gridline").c_str() : fileNameOf(a.projectLoadName()).c_str(), w, P.textDim);
   ImGui::Dummy(ImVec2(0, theme::kS1));
-  if (L.awaitingChoice()) {
+  if (!fk && L.awaitingChoice()) {
     drawChoice(a, w);
     if (!a.projectLoadBlocking()) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
@@ -477,36 +480,47 @@ void draw(App& a) {
     ImGui::PopTextWrapPos();
     ImGui::PopStyleColor();
   } else {
-    // Progress over the real work units, then the step running now.
-    const int total = L.unitsTotal(), done = L.unitsDone();
-    progressBar(static_cast<float>(L.overall()), w);
-    const std::string step = nowText(L.now());
+    // Progress over the real work units, then the step running now. 0.7.8: the window keeps one
+    // size while the numbers and names change: the step is cut to its room, the percent stands
+    // right-aligned in a field as wide as "100%", and the line under them has two rows from the
+    // start (the drive warning wraps into them; the counts take the first).
+    const int total = fk ? 120 : L.unitsTotal();
+    const double overall = fk ? fk->frac : L.overall();
+    progressBar(static_cast<float>(overall), w);
+    std::string step;
+    if (fk) {
+      projload::Now n;
+      n.kind = projload::Now::Kind::Sample;
+      n.name = fk->text;
+      n.index = std::clamp(static_cast<int>(fk->frac * 120.0), 1, 120);
+      n.count = 120;
+      step = nowText(n);
+    } else {
+      step = nowText(L.now());
+    }
     const ImVec2 p = ImGui::GetCursorScreenPos();
     activityDots(dl, ImVec2(p.x + 3.0f, p.y + ImGui::GetTextLineHeight() * 0.5f + 2.0f), static_cast<float>(ImGui::GetTime()), P.accent);
     ImGui::SetCursorScreenPos(ImVec2(p.x + 24.0f, p.y + 2.0f));
-    char pc[48] = "";
-    if (total > 0 || L.overall() > 0.0) std::snprintf(pc, sizeof pc, i18n::tr("%d%%"), static_cast<int>(std::floor(L.overall() * 100.0)));
-    const float pw = ImGui::CalcTextSize(pc).x;
+    const bool showPc = total > 0 || overall > 0.0;
+    const float pw = progui::PercentWidth();
     ui::TextFit(step.c_str(), w - 24.0f - pw - theme::kS2, P.text);
-    if (pc[0]) {
-      ImGui::SameLine(theme::kS6 + w - pw);
-      ImGui::TextColored(theme::vec(P.textDim), "%s", pc);
-    }
+    ImGui::SameLine(theme::kS6 + w - pw);
+    progui::RightField(showPc ? progui::PercentText(overall).c_str() : "", pw, P.textDim);
     char counts[160] = "";
-    if (total > 0)
+    if (fk)
+      std::snprintf(counts, sizeof counts, i18n::tr("Samples %d of %d, plugins %d of %d"), static_cast<int>(fk->frac * 100.0), 100,
+                    static_cast<int>(fk->frac * 20.0), 20);
+    else if (total > 0)
       std::snprintf(counts, sizeof counts, i18n::tr("Samples %d of %d, plugins %d of %d"), L.samplesDone(), L.samplesTotal(), L.pluginsDone(),
                     L.pluginsTotal());
-    const bool reading = L.phase() == Phase::Reading && L.bytesTotal() > 0;
-    if (L.stalledFor() > 0.0) {  // K-42: a read or a sample on a drive has gone quiet: never a silent wait
-      ImGui::PushStyleColor(ImGuiCol_Text, theme::vec(P.meterMid));
-      ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);
-      ImGui::TextUnformatted(i18n::tr("The drive is not answering. It may be offline or still downloading. Cancel goes back to your project."));
-      ImGui::PopTextWrapPos();
-      ImGui::PopStyleColor();
+    const bool reading = !fk && L.phase() == Phase::Reading && L.bytesTotal() > 0;
+    if (fk ? fk->stalled : L.stalledFor() > 0.0) {  // K-42: a read or a sample on a drive has gone quiet: never a silent wait
+      progui::WrappedRows(i18n::tr("The drive is not answering. It may be offline or still downloading. Cancel goes back to your project."), w, 2,
+                          P.meterMid);
     } else {
-      ui::TextFit(reading ? bytesLine(L).c_str() : counts[0] ? counts : " ", w, P.textFaint);
+      const std::string line = reading ? bytesLine(L) : std::string(counts);
+      progui::WrappedRows(theme::fitText(line.c_str(), w), w, 2, P.textFaint);
     }
-    (void)done;
   }
   ImGui::Dummy(ImVec2(0, theme::kS1));
   drawLog(a, L.log(), 210.0f);
@@ -530,9 +544,9 @@ void draw(App& a) {
   if (failed) {
     if (ui::PrimaryButton("Close", bw) || ::gl::keys::escapePressed() || ImGui::IsKeyPressed(ImGuiKey_Enter)) a.dismissProjectLoad();
   } else if (ui::TextButton("Cancel", false, bw, "Stop opening and go back to the project as it was") || ::gl::keys::escapePressed()) {
-    a.cancelProjectLoad();
+    if (!fk) a.cancelProjectLoad();
   }
-  if (!a.projectLoadBlocking()) ImGui::CloseCurrentPopup();
+  if (!a.projectLoadBlocking() && !fk) ImGui::CloseCurrentPopup();
   ImGui::EndPopup();
   ImGui::PopStyleVar();
 }

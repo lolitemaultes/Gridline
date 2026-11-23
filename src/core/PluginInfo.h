@@ -67,6 +67,9 @@ struct PluginInfo {
   struct Preset {
     std::string name;
     std::vector<std::pair<int, float>> values;
+    // K-257c: the preset's own PluginState::data (Terrace's steps); empty = the preset leaves the
+    // current data alone (a loaded sample stays).
+    std::string data = {};
   };
   std::vector<Preset> presets;
   float editorWidth = 0;  // preferred plugin window width in px (0 = default)
@@ -104,6 +107,9 @@ struct PluginInfo {
   // J-159: names of keys whose notes are commands (index = MIDI note; empty or
   // missing = a plain note). The piano roll labels those rows and notes.
   std::vector<std::string> keyNames = {};
+  // 0.7.8: names that depend on the instance (Seltmann: its regions from the base note, the pattern
+  // octave below); when set, it wins over keyNames. Called on the UI thread; may cache.
+  std::vector<std::string> (*instanceKeyNames)(const struct PluginState&) = nullptr;
   // K-23: kept so old projects open and play the same, but no longer offered
   // (pickers, browser, menus leave it out; projects and FL imports still load it).
   bool hidden = false;
@@ -120,6 +126,10 @@ struct PluginInfo {
   std::vector<std::pair<int, float>> legacyDefaults = {};
   // K-46: PluginState::data of a new instance (states saved earlier keep theirs).
   std::string defaultData = {};
+  // Installed plugins: the plugin's own stable id of each parameter, in `params` order (VST3
+  // ParamID, CLAP id, AU parameter id, VST2 index, LV2 port index). Collaborators whose builds of
+  // the plugin list parameters in another order map them by these ids. Empty for built-in plugins.
+  std::vector<uint32_t> hostParamIds = {};
 };
 
 // K-2: sets parameter defaults to the reference plugin's (index, new default). Factory
@@ -131,6 +141,15 @@ inline constexpr int kRouteIndexAlways = -2;  // PluginInfo::routeModeParam
 
 // All built-in plugins (generators first).
 const std::vector<PluginInfo>& pluginCatalog();
+// The built-in plugins of one kind (hidden ones left out) by category, for every picker that lists
+// them under category headings: each category once, in the order it first appears in the catalogue,
+// its plugins in catalogue order. (The catalogue itself is not grouped: pack plugins come after the
+// core ones, so walking it and starting a heading whenever the category changes shows a category twice.)
+struct CatalogGroup {
+  std::string category;
+  std::vector<const PluginInfo*> items;
+};
+const std::vector<CatalogGroup>& catalogGroups(PluginKind kind);
 // Built-in or runtime-registered plugin; nullptr when unknown.
 const PluginInfo* findPlugin(const std::string& type);
 
@@ -146,6 +165,17 @@ std::vector<const PluginInfo*> dynamicPlugins();
 // "au:…", "lv2:…"), known or not (a project
 // keeps a missing hosted plugin's state instead of dropping it).
 bool isHostedType(const std::string& type);
+
+// Collaboration: an installed plugin's state put in the song from a collaborator's edit (the session
+// marks each one as it arrives). The instance that loads exactly this state then takes the song's
+// parameter values as the truth (they hold the parameter edits made after that state) instead of
+// reading the plugin's values back. Thread-safe; bounded.
+void noteRemotePluginData(const std::string& data);
+bool takeRemotePluginData(const std::string& data);
+// A state that is still arriving from a collaborator ("collab-state:Audio/<sha256>.glstate"): an
+// instance keeps what it has until the real state replaces it.
+inline constexpr const char* kPendingStatePrefix = "collab-state:";
+inline bool isPendingPluginData(const std::string& data) { return data.compare(0, 13, kPendingStatePrefix) == 0; }
 
 // A plugin instance's saved state: type, parameter values, opaque data.
 struct PluginState {
@@ -167,15 +197,25 @@ struct PluginState {
   // panel, chosen with Configure), in order; empty = the default choice. Saved with the project only
   // when set, so older projects save byte-equal. {-1}: none chosen (the panel is empty).
   std::vector<int> shown;
+  // The sample's warp markers (core/SampleWarp.h, compact JSON; empty = none): the sampler, Kerf,
+  // Pads and Seltmann play their sample warped. Saved only when set.
+  std::string warp;
+  // Loupe's warp markers on this instrument's sample (or this Loupe slot's audio), placed and not
+  // applied yet (core/SampleWarp.h's text, markers only; empty = none). Saved only when set.
+  std::string loupeWarp = {};  // (a default: the older aggregate initialisers leave it out)
 
   bool operator==(const PluginState& o) const {
-    return type == o.type && params == o.params && data == o.data && ins == o.ins && original == o.original && shown == o.shown;
+    return type == o.type && params == o.params && data == o.data && ins == o.ins && original == o.original && shown == o.shown &&
+           warp == o.warp && loupeWarp == o.loupeWarp;
   }
   bool empty() const { return type.empty(); }
 };
 
-// State of a factory preset (defaults + overrides).
+// State of a factory preset (defaults + overrides, and the preset's data when it has its own).
 PluginState presetState(const PluginInfo& info, size_t preset);
+// K-257c: the factory preset with the current data kept unless the preset brings its own
+// (loading a factory preset keeps a loaded sample, but takes Terrace's steps).
+PluginState presetStateKeepingData(const PluginInfo& info, size_t preset, const std::string& currentData);
 // State with every parameter at its default (empty state for unknown types).
 PluginState defaultPluginState(const std::string& type);
 // Pads/clamps params to the plugin's descriptor list.

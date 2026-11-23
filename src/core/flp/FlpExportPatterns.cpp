@@ -277,9 +277,23 @@ void Exporter::writePatternNotes() {
         int lane = -1;  // notes carrying pattern automation lane k: kept in lane order at one position
       };
       std::vector<N> all;
-      for (const auto& [cid, ns] : p->notes) {
+      for (const auto& [cid, ns0] : p->notes) {
         const int fl = im.ch(cid);
         if (fl < 0) continue;
+        // K-262: FL notes have no vibrato: it goes into the bend line (sampled), then into slides.
+        std::vector<Note> baked;
+        int vibs = 0;
+        for (const Note& x : ns0) vibs += x.vib.active() && !x.slide ? 1 : 0;
+        if (vibs) {
+          baked = ns0;
+          for (Note& x : baked)
+            if (x.vib.active() && !x.slide) {
+              x.bend = bend::withVibrato(x, s.ppq, s.tempo);
+              x.vib = NoteVibrato{};
+            }
+          rep.counts["notes: vibrato written as slide notes (approximated)"] += vibs;
+        }
+        const std::vector<Note>& ns = vibs ? baked : ns0;
         std::vector<Note> slides;  // K-28: bend lines as slide notes
         ColourUse use;
         if (std::any_of(ns.begin(), ns.end(), [](const Note& x) { return !x.bend.empty(); })) {

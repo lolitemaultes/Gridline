@@ -289,11 +289,13 @@ void Generator::process(const PluginState& state, const ChannelAux& aux, const P
     while (ei < count_ && events_[ei].offset <= pos) fire(events_[ei++]);
     int end = n;
     if (ei < count_) end = std::min(n, std::max(pos + 1, events_[ei].offset));
+    tap::blockOffset(pos);  // K-321: a Track Receipt pass's output clock (no-op otherwise)
     render(L + pos, R + pos, end - pos);
     applyPan(pos, end);
     applyExpr(pos, end);
     pos = end;
   }
+  tap::blockOffset(0);
   // Events at or beyond n (should not happen) fire at the block end.
   while (ei < count_) fire(events_[ei++]);
   count_ = 0;
@@ -1068,6 +1070,10 @@ class SamplerGen final : public Generator {
     v.age = clock_;
     v.note = v.target = pitch;
     v.fitSemis = fitTempo_ > 0 && !stretch_ ? 12.0 * std::log2(tempo_ / fitTempo_) : 0.0;
+    if (tap::active()) {  // K-321: Track Receipt: the pitch and speed this note plays the file at
+      const double semis = pitch - root_ + fine_ / 100.0 + (stretch_ ? pitchShift_ / 100.0 : v.fitSemis);
+      tap::pitch(sample_.get(), semis, stretch_ ? 1.0 / std::max(0.01, timeStretch_) : std::exp2(semis / 12.0));
+    }
     v.dir = reverse_ ? -1 : 1;
     v.pos = reverse_ ? regionHi() : regionLo();
     v.src = v.pos;

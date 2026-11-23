@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include "MixerHide.h"
 #include "Params.h"
 
 namespace gl::mackie {
@@ -51,8 +52,11 @@ int Surface::mixerOf(int strip) const {
     const int sel = host_.selectedMixer();
     return strip == 0 && sel >= 0 && static_cast<size_t>(sel) < mx.size() ? sel : -1;
   }
-  const int m = 1 + bank_ + strip;
-  return strip >= 0 && strip < strips() && static_cast<size_t>(m) < mx.size() ? m : -1;
+  // GitHub #58: the banks walk the inserts the mixer shows a strip for (hidden tracks and a folded
+  // group's members are skipped).
+  const std::vector<int> shown = mixhide::surfaceTracks(host_.doc.song());
+  const int k = bank_ + strip;
+  return strip >= 0 && strip < strips() && k < static_cast<int>(shown.size()) ? shown[static_cast<size_t>(k)] : -1;
 }
 
 double Surface::faderNorm(int mixer) const {
@@ -110,11 +114,15 @@ void Surface::moveBank(int by) {
     host_.selectMixer(std::clamp(host_.selectedMixer() + (by > 0 ? 1 : -1), 0, inserts));
     return;
   }
-  const int nb = std::clamp(bank_ + by, 0, std::max(0, inserts - strips()));
+  const std::vector<int> shown = mixhide::surfaceTracks(host_.doc.song());
+  const int count = static_cast<int>(shown.size());
+  const int nb = std::clamp(bank_ + by, 0, std::max(0, count - strips()));
   if (nb == bank_) return;
   bank_ = nb;
   for (auto& s : shown_) s = Shown{};
-  host_.hint("Mixer inserts " + std::to_string(bank_ + 1) + " to " + std::to_string(std::min(inserts, bank_ + strips())));
+  if (count > 0)
+    host_.hint("Mixer inserts " + std::to_string(shown[static_cast<size_t>(bank_)]) + " to " +
+               std::to_string(shown[static_cast<size_t>(std::min(count, bank_ + strips()) - 1)]));
 }
 
 void Surface::transport(int key, bool down) {

@@ -100,6 +100,27 @@ void process(const float* const* in, int nch, int64_t n, float* const* out, int6
 void processMapped(const float* const* in, int nch, int64_t n, float* const* out, int64_t outLen, double sampleRate,
                    const Settings& s, const std::function<double(int64_t)>& srcAt);
 
+// 0.7.8: processMapped with the stretch (Settings{} at pitch 1), made in pieces: renderTo(k) makes
+// the output up to frame k (in the engine's blocks), and every frame below done() is final and the
+// same as processMapped's. `in` and `out` must outlive it; `out` holds outLen frames per channel
+// (frames from done() on are not written yet). Offline only (it allocates and stretches).
+class MappedStream {
+ public:
+  MappedStream(const float* const* in, int nch, int64_t n, float* const* out, int64_t outLen, double sampleRate,
+               std::function<double(int64_t)> srcAt);
+  ~MappedStream();
+  MappedStream(const MappedStream&) = delete;
+  MappedStream& operator=(const MappedStream&) = delete;
+  void renderTo(int64_t frames);
+  int64_t done() const;
+  int64_t length() const { return len_; }
+
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+  int64_t len_ = 0;
+};
+
 // Onset (attack start) frames of a mono signal (analysis: Seltmann's slices).
 std::vector<int64_t> detectOnsets(const float* x, int64_t n, double sampleRate, double sensitivity);
 

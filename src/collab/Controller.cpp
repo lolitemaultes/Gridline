@@ -271,19 +271,15 @@ void Controller::startHub() {
   session_->onRenamed = [this](const std::string& before, const std::string& after, SiteId by) {
     if (onRenamed) onRenamed(before, after, by);
   };
+  if (pluginInstalledFn) session_->pluginInstalledFn = pluginInstalledFn;
+  session_->onPeerConnected = [this](SiteId s) {
+    if (onPeerConnected) onPeerConnected(s);
+  };
 }
 
 bool Controller::create(Document& doc, const std::string& folder, const std::string& name, std::string* err) {
   if (!profileReady()) {
     if (err) *err = i18n::tr("Choose a display name in Settings > Collaboration first.");
-    return false;
-  }
-  const auto bad = foreignPlugins(songToJson(doc.song(), false));
-  if (!bad.empty()) {
-    if (err) {
-      *err = i18n::tr("This project uses plugins that are not part of Gridline, so it can't be collaborative:");
-      for (const auto& [plug, where] : bad) *err += "\n  " + plug + " (" + where + ")";
-    }
     return false;
   }
   close();

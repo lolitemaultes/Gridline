@@ -1,6 +1,7 @@
 // Gridline — MIDI back ends (see MidiBackend.h). On the BSDs, RtMidi is built with its dummy
 // API and the sndio classes below take its place behind RtMidiIn / RtMidiOut.
 #include "MidiBackend.h"
+#include "../core/ThreadName.h"
 #include "../../third_party/rtmidi/RtMidi.h"
 #include <algorithm>
 #include <atomic>
@@ -13,6 +14,9 @@
 #include <vector>
 #if defined(__linux__) && defined(__LINUX_ALSA__)
 #include <dirent.h>
+#include <poll.h>
+#include <sys/inotify.h>
+#include <unistd.h>
 #include <set>
 #endif
 #if defined(__MACOSX_CORE__) && !defined(GRIDLINE_MIDI_SNDIO)
@@ -23,8 +27,10 @@ void RtMidi_setCoreMidiClientSingleton(MIDIClientRef client);
 #endif
 
 #if defined(GRIDLINE_MIDI_SNDIO)
+#include <fcntl.h>
 #include <poll.h>
 #include <sndio.h>
+#include <unistd.h>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -71,12 +77,28 @@ class MidiInSndio : public MidiInApi {
     }
     connected_ = true;
     quit_ = false;
-    thread_ = std::thread([this] { run(); });
+    // K-142 (0.7.8): the thread sleeps until the device sends or the port closes (a byte on this pipe)
+    if (::pipe(wake_) == 0) {
+      ::fcntl(wake_[0], F_SETFL, O_NONBLOCK);
+      ::fcntl(wake_[0], F_SETFD, FD_CLOEXEC);
+      ::fcntl(wake_[1], F_SETFD, FD_CLOEXEC);
+    } else {
+      wake_[0] = wake_[1] = -1;
+    }
+    thread_ = std::thread([this] { gl::threads::setName("gl-midi-in"); run(); });
   }
   void openVirtualPort(const std::string&) override { error(RtMidiError::WARNING, "sndio: virtual ports are not supported"); }
   void closePort() override {
     quit_ = true;
+    if (wake_[1] >= 0) {
+      const char b = 0;
+      (void)!::write(wake_[1], &b, 1);
+    }
     if (thread_.joinable()) thread_.join();
+    for (int& f : wake_) {
+      if (f >= 0) ::close(f);
+      f = -1;
+    }
     if (hdl_) mio_close(hdl_);
     hdl_ = nullptr;
     connected_ = false;
@@ -163,10 +185,18 @@ class MidiInSndio : public MidiInApi {
   }
   void run() {
     unsigned char buf[256];
-    std::vector<pollfd> fds(static_cast<size_t>(mio_nfds(hdl_) > 0 ? mio_nfds(hdl_) : 1));
+    std::vector<pollfd> fds(static_cast<size_t>(mio_nfds(hdl_) > 0 ? mio_nfds(hdl_) : 1) + 1);
     while (!quit_) {
       const int n = mio_pollfd(hdl_, fds.data(), POLLIN);
-      if (::poll(fds.data(), static_cast<nfds_t>(n), 50) < 0) continue;
+      int count = n;
+      if (wake_[0] >= 0) {
+        fds[static_cast<size_t>(n)] = pollfd{wake_[0], POLLIN, 0};
+        ++count;
+      }
+      // no wake pipe: look every 50 ms whether the port closed (as before)
+      if (::poll(fds.data(), static_cast<nfds_t>(count), wake_[0] >= 0 ? -1 : 50) < 0) continue;
+      gl::threads::woke();  // K-142: CPU report
+      if (quit_) break;
       if (!(mio_revents(hdl_, fds.data()) & POLLIN)) {
         if (mio_eof(hdl_)) break;
         continue;
@@ -177,6 +207,7 @@ class MidiInSndio : public MidiInApi {
     }
   }
   mio_hdl* hdl_ = nullptr;
+  int wake_[2] = {-1, -1};
   std::thread thread_;
   std::atomic<bool> quit_{false};
   std::vector<unsigned char> msg_;
@@ -329,7 +360,7 @@ void keepAlive(CFRunLoopTimerRef, void*) {}
 void ensureCoreWatch() {
   static std::once_flag once;
   std::call_once(once, [] {
-    std::thread([] {
+    std::thread([] { gl::threads::setName("gl-midi-watch");
       CoreWatch& w = coreWatch();
       MIDIClientRef client = 0;
       const OSStatus st = MIDIClientCreate(CFSTR("Gridline"), coreNotify, nullptr, &client);
@@ -362,9 +393,11 @@ void ensureCoreWatch() {
 
 #if defined(__linux__) && defined(__LINUX_ALSA__)
 // MIDIHP-1119: a MIDI device plugged in or out adds or removes its nodes in /dev/snd (a USB
-// keyboard: controlC2, midiC2D0). A thread of its own compares that folder's names every
-// second (no MIDI client: every probe makes a sequencer client, which other programs see come
-// and go), and a change asks Gridline to compare its device lists at once.
+// keyboard: controlC2, midiC2D0). A thread of its own compares that folder's names (no MIDI
+// client: every probe makes a sequencer client, which other programs see come and go), and a
+// change asks Gridline to compare its device lists at once. K-142 (0.7.8): it sleeps until the
+// system says the folder changed (inotify), and looks once a minute anyway; where the folder
+// cannot be watched it looks every second, as before.
 struct NodeWatch {
   std::atomic<uint64_t> changes{0};
   std::atomic<bool> ok{false};
@@ -397,10 +430,37 @@ void ensureNodeWatch() {
     }
     nodeWatch().ok = true;
     try {
-      std::thread([seen = std::move(first)]() mutable {
+      std::thread([seen = std::move(first)]() mutable { gl::threads::setName("gl-midi-watch");
         std::set<std::string> now;
+        const int fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+        int wd = -1;
+        // reads every waiting event; the watch ends when the folder goes (watched again once it is back)
+        const auto drain = [&] {
+          alignas(inotify_event) char buf[4096];
+          for (ssize_t got; (got = ::read(fd, buf, sizeof buf)) > 0;) {
+            for (ssize_t at = 0; at + static_cast<ssize_t>(sizeof(inotify_event)) <= got;) {
+              const auto* ev = reinterpret_cast<const inotify_event*>(buf + at);
+              if (ev->mask & IN_IGNORED) wd = -1;
+              at += static_cast<ssize_t>(sizeof(inotify_event) + ev->len);
+            }
+          }
+        };
         for (;;) {
-          std::this_thread::sleep_for(std::chrono::seconds(1));
+          if (fd >= 0 && wd < 0) wd = inotify_add_watch(fd, "/dev/snd", IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_ATTRIB);
+          if (wd >= 0) {
+            pollfd p{};
+            p.fd = fd;
+            p.events = POLLIN;
+            if (::poll(&p, 1, 60000) > 0) {
+              drain();
+              // a device's nodes come one after another: look once they are all there
+              std::this_thread::sleep_for(std::chrono::milliseconds(150));
+              drain();
+            }
+          } else {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+          }
+          gl::threads::woke();  // K-142: CPU report
           if (sndNodes(now) && now != seen) {
             seen.swap(now);
             nodeWatch().changes.fetch_add(1, std::memory_order_relaxed);

@@ -1,5 +1,6 @@
 // Gridline - J-111: collaboration in the app. See CollabUi.h.
 #include "LayoutPresets.h"
+#include "../core/ThreadName.h"
 #include "LayoutShellUi.h"
 #include "TrackerLook.h"
 #include "TrackerPages.h"
@@ -26,6 +27,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <thread>
 #include <vector>
 #include "../../third_party/imgui/imgui_internal.h"
@@ -34,11 +36,15 @@
 #include "../collab/LocalState.h"
 #include "../collab/NetTest.h"
 #include "../collab/VersionGate.h"
+#include "../host/CrossFormat.h"
+#include "../host/HostedPlugins.h"
 #include "../core/Demo.h"
 #include "../core/I18n.h"
 #include "../core/Meter.h"
 #include "../core/Platform.h"
+#include "../core/Params.h"
 #include "../core/Png.h"
+#include "../core/Update.h"
 #include "../core/Project.h"
 #include "../core/ProjectFiles.h"
 #include "../core/ProjectInterop.h"
@@ -56,6 +62,7 @@
 #include "Theme.h"
 #include "UpdateUi.h"
 #include "Widgets.h"
+#include "RenderSheetUi.h"
 #include "../core/SemanticAnchor.h"
 
 namespace fs = std::filesystem;
@@ -122,7 +129,6 @@ struct Ui {
   int renameFrame = 0;  // the frame it opened on (J-111i: the header's field gives up if it never got focus)
   bool alsoFolder = false;
   std::string nameErr;
-  std::vector<std::pair<std::string, std::string>> foreign;
   // review
   int reviewTab = 0;
   std::string previewObject;
@@ -701,6 +707,14 @@ Controller& ctlOf(App& a) {
     a.collab = std::make_unique<Controller>((fs::path(a.configDir()) / "collab").string());
     a.collab->net = netSettingsFrom(a.settings);
     a.collab->onNotice = [&a](const std::string& t, bool e) { a.notify(t, e); };
+    // k078-collabplug: installed plugins as the plugin host knows them; a collaborator who connects
+    // gets the states touched here first
+    a.collab->pluginInstalledFn = [](const std::string& type, std::string& version) {
+      if (!host::xformat::installed(type)) return false;
+      if (auto c = host::hostedClass(type)) version = c->version;
+      return true;
+    };
+    a.collab->onPeerConnected = [&a](SiteId) { hostedui::collabFlushStates(a); };
     a.collab->onRemoteChange = [&a](const std::vector<Flash>& fl) {
       Ui& u = U();
       Session* s = a.collab ? a.collab->session() : nullptr;
@@ -848,7 +862,6 @@ void shareDefaults(App& a, bool force) {
   u.shareParent = !ref.empty() ? fs::path(ref).parent_path().string() : std::string(platform::homeEnv() ? platform::homeEnv() : ".");
   u.shareChecked.clear();
   u.makeErr.clear();
-  u.foreign.clear();
 }
 
 // File > New collaborative project... (and "collab name-window"): the panel, its name field focused.
@@ -873,8 +886,6 @@ bool shareNow(App& a) {
     a.notify(tr("Choose a display name in Settings > Collaboration first."));
     return false;
   }
-  u.foreign = foreignPlugins(songToJson(a.doc.song(), false));
-  if (!u.foreign.empty()) return false;  // listed in the panel
   const std::string name = cleanProjectName(u.shareName);
   if (name.empty()) return false;
   if (!makeCollaborativeAt(a, shareTarget(name), name)) return false;
@@ -1509,7 +1520,7 @@ void startNetTest(App& a) {
   u.netTest = job;
   NetSettings ns = netSettingsFrom(a.settings);
   fillTurnPassword(ns, true);  // K-327: the user pressed the test: the TURN password is read now
-  std::thread([job, ns] {
+  std::thread([job, ns] { gl::threads::setName("gl-collab-test");
     NetReport r = testConnection(ns);
     std::lock_guard<std::mutex> lk(job->mu);
     job->report = r;
@@ -1815,23 +1826,114 @@ void shareSection(App& a, bool gateOk) {
   ui::EndSection();
 }
 
+}  // namespace
+
+// k078-collabplug: what a plugin's pane says in a collaborative project.
+void pluginStrip(App& a, const PluginTarget& t, float width) {
+  Session* s = session(a);
+  const PluginState* st = s ? t.state(a.doc.song()) : nullptr;
+  if (!st || !isHostedType(st->type)) return;
+  const auto& P = pal();
+  auto who = [s](SiteId site) {
+    std::string n = s->nameOf(site);
+    return n.empty() ? std::string(tr("A collaborator")) : n;
+  };
+  PluginUse use;
+  for (const PluginUse& u : s->pluginUses())
+    if (u.type == st->type) use = u;
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::max(60.0f, width - theme::kS2));
+  bool any = false;
+  if (!s->pluginHere(st->type)) {
+    any = true;
+    const std::string label = pluginLabel(use.name.empty() ? st->type : use.name, use.vendor, use.version);
+    ImGui::TextColored(theme::vec(P.hot), "%s", fmt1(tr("%s is not installed on this computer."), label).c_str());
+    ImGui::TextColored(theme::vec(P.textDim), "%s",
+                       tr("Install it and rescan your plugins to hear this channel. Its settings are kept as they are and passed on to everyone."));
+    float prog = 0;
+    if (s->stateLoading(st->data, &prog)) ImGui::TextColored(theme::vec(P.textFaint), "%s", fmt1(tr("Its settings are arriving: %s"), std::to_string(static_cast<int>(prog * 100)) + " %").c_str());
+  }
+  std::string lacking;
+  for (SiteId site : use.lacking) lacking += (lacking.empty() ? std::string() : std::string(", ")) + who(site);
+  if (!lacking.empty()) {
+    any = true;
+    ImGui::TextColored(theme::vec(P.textDim), "%s", fmt1(tr("Not installed for %s: they don't hear it."), lacking).c_str());
+  }
+  // collaborators whose pointer is in this plugin's interface (their cursor can't be drawn over it)
+  for (const auto& [site, pv] : s->peers()) {
+    const Presence& pr = pv.presence;
+    if (!pv.connected || pv.presenceAt < 0 || U().now - pv.presenceAt > 10 || pr.plugin != t.owner || pr.pluginSlot != t.slot) continue;
+    if (pr.window.empty()) continue;
+    any = true;
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    const float h = ImGui::GetTextLineHeight();
+    ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(p0.x + h * 0.35f, p0.y + h * 0.5f), h * 0.3f, colorOf(pv.profile.color ? pv.profile.color : (s->member(site) ? defaultColor(s->member(site)->signPublic) : 0)));
+    ImGui::Dummy(ImVec2(h * 0.8f, h));
+    ImGui::SameLine(0, theme::kS1);
+    ImGui::TextColored(theme::vec(P.textDim), "%s", fmt1(tr("%s is in this plugin"), who(site)).c_str());
+  }
+  ImGui::PopTextWrapPos();
+  if (any) ImGui::Dummy(ImVec2(0, theme::kS1));
+}
+
+bool pluginOffersOtherFormats(App& a) { return !active(a); }
+
+namespace {
+
+// k078-collabplug: the installed plugins the project uses and who lacks them (or has another version).
+void pluginsSection(App& a, Session& s) {
+  (void)a;
+  const std::vector<PluginUse> uses = s.pluginUses();
+  if (uses.empty()) return;
+  const auto& P = pal();
+  ui::BeginSection(tr("INSTALLED PLUGINS"));
+  const float w = ImGui::GetContentRegionAvail().x;
+  auto who = [&s](SiteId site) {
+    std::string n = s.nameOf(site);
+    return n.empty() ? std::string(tr("A collaborator")) : n;
+  };
+  for (const PluginUse& u : uses) {
+    ImGui::TextUnformatted(u.name.c_str());
+    ImGui::SameLine(0, theme::kS2);
+    std::string detail = u.vendor;
+    if (!u.version.empty()) detail += (detail.empty() ? std::string() : std::string(", ")) + fmt1(tr("version %s"), u.version);
+    ui::TextFit(detail.c_str(), std::max(40.0f, w - ImGui::GetItemRectSize().x - theme::kS2), P.textFaint);
+    if (!u.here) {
+      statusLine(tr("Not installed on this computer: install it and rescan your plugins to hear it"), P.hot);
+    }
+    std::string lacking;
+    for (SiteId site : u.lacking) lacking += (lacking.empty() ? std::string() : std::string(", ")) + who(site);
+    if (!lacking.empty()) statusLine(fmt1(tr("Not installed for %s"), lacking), P.hot);
+    std::string other;
+    for (const auto& [site, v] : u.versions)
+      if (!v.empty() && !u.hereVersion.empty() && v != u.hereVersion) other += (other.empty() ? std::string() : std::string(", ")) + fmt2(tr("%s has version %s"), who(site), v);
+    if (!other.empty()) note(other + " (" + fmt1(tr("yours is %s"), u.hereVersion) + ")");
+  }
+  ui::EndSection();
+}
+
 // No collaborative project open: what collaboration is, share this project or join one, reopen one.
 void panelStart(App& a) {
-  Ui& u = U();
   const auto& P = pal();
   header(a, tr("Work on this project together"), tr("Each person keeps their own windows and transport; only the project is shared."));
   beginBody("##collabbody");
   const bool gateOk = gateLine(a);
-  if (!u.foreign.empty()) {
-    ui::BeginSection(tr("PLUGINS THAT CAN'T BE SHARED"));
-    statusLine(tr("This project uses plugins that are not part of Gridline."), P.hot);
+  static uint64_t plugsRev = ~0ull;
+  static std::vector<std::pair<std::string, std::string>> plugs;
+  if (plugsRev != a.doc.revision()) {  // (worked out again only when the project changes)
+    plugsRev = a.doc.revision();
+    plugs = foreignPlugins(songToJson(a.doc.song(), false));
+  }
+  if (!plugs.empty()) {  // k078-collabplug: shared, but needed everywhere
+    ui::BeginSection(tr("INSTALLED PLUGINS"));
     const float w = ImGui::GetContentRegionAvail().x;
-    for (const auto& [plug, where] : u.foreign) {
+    std::set<std::string> listed;
+    for (const auto& [plug, where] : plugs) {
+      if (!listed.insert(plug).second || listed.size() > 8) continue;
       ImGui::TextUnformatted(plug.c_str());
       ImGui::SameLine(0, theme::kS2);
       ui::TextFit(where.c_str(), std::max(40.0f, w - ImGui::GetItemRectSize().x - theme::kS2), P.textFaint);
     }
-    note(tr("Another computer might not have them, and their settings can't be merged. Replace or remove them, then try again."));
+    note(tr("They are shared with their settings. Each collaborator needs them installed to hear them; Gridline tells them which ones."));
     ui::EndSection();
   }
   shareSection(a, gateOk);
@@ -1947,6 +2049,7 @@ void panelWindow(App& a) {
     }
   }
   ui::EndSection();
+  pluginsSection(a, *s);  // k078-collabplug
   // a peer that could not be reached directly: what still works
   for (const Member& m : s->members()) {
     if (m.site == s->site() || !hub || !s->isActive(m.site)) continue;
@@ -2204,11 +2307,11 @@ void joinWindow(App& a) {
       char b[128];
       std::snprintf(b, sizeof b, tr("Receiving the project: %d of %d changes"), static_cast<int>(done), static_cast<int>(total));
       stepRow(b, P.accent, true);  // (finishJoin, every frame, opens the project once it is in)
-      if (total > 0) {
-        ImGui::Indent(14);
-        ImGui::ProgressBar(static_cast<float>(done) / static_cast<float>(total), ImVec2(-1, 4), "");
-        ImGui::Unindent(14);
-      }
+      // 0.7.8: the bar's row is there from the start (empty until the count is known): what is
+      // under it never jumps down when the first changes arrive.
+      ImGui::Indent(14);
+      ImGui::ProgressBar(total > 0 ? static_cast<float>(done) / static_cast<float>(total) : 0.0f, ImVec2(-1, 4), "");
+      ImGui::Unindent(14);
     } else if (!failed) {
       stepRow(tr("Receive the project"), P.textFaint, false);
     }
@@ -3054,6 +3157,12 @@ Session* session(App& a) { return a.collab ? a.collab->session() : nullptr; }
 
 bool active(const App& a) { return a.collab && a.collab->active(); }
 
+bool sendingFiles(const App& a) {
+  if (!active(a)) return false;
+  const collab::Session* s = a.collab->session();
+  return s && s->sendingFiles();
+}
+
 void closeSession(App& a) {
   if (!a.collab) return;
   a.collab->dismissExit();  // J-111e: the removed / stopped project is replaced too
@@ -3150,7 +3259,8 @@ bool openIfCollab(App& a, const std::string& projectFile, bool* opened) {
   return true;
 }
 
-bool pluginAllowed(const App& a, const std::string& type) { return !active(a) || !isHostedType(type); }
+// k078-collabplug: installed plugins are shared too (everyone needs them installed to hear them).
+bool pluginAllowed(const App&, const std::string&) { return true; }
 
 bool fileLoading(App& a, const std::string& path, float* progress) {
   Session* s = session(a);
@@ -3245,7 +3355,9 @@ void frame(App& a, double now) {
   if (s) {
     const ImGuiIO& io = ImGui::GetIO();
     s->setGesture(io.MouseDown[0] || io.MouseDown[1]);
-    s->setPresence(u.presence);
+    collab::Presence p = u.presence;
+    renderui::localBusy(p.busyKind, p.busyId);  // K-254: what this computer renders now
+    s->setPresence(p);
   }
   // J-111: a collaborator's change never makes sound here; but a plugin playing on its own here
   // whose channel / sample a collaborator removed or replaced stops cleanly
@@ -3403,6 +3515,30 @@ std::string devReport(App& a) {
         notes.object[c.name] = Json::makeString(list);
       }
     r.object["notes"] = std::move(notes);
+    // k078-collabplug: installed plugins, who has them, their state here
+    Json plugs = Json::makeArray();
+    for (const PluginUse& pu : s->pluginUses()) {
+      Json o = Json::makeObject();
+      o.object["type"] = Json::makeString(pu.type);
+      o.object["name"] = Json::makeString(pu.name);
+      o.object["here"] = Json::makeNumber(pu.here ? 1 : 0);
+      Json lack = Json::makeArray();
+      for (SiteId site : pu.lacking) lack.array.push_back(Json::makeString(s->nameOf(site)));
+      o.object["lacking"] = std::move(lack);
+      plugs.array.push_back(std::move(o));
+    }
+    r.object["plugins"] = std::move(plugs);
+    Json states = Json::makeObject();
+    for (const auto& c : a.doc.song().channels)
+      if (isHostedType(c.plugin.type)) {
+        Json o = Json::makeObject();
+        o.object["type"] = Json::makeString(c.plugin.type);
+        o.object["p0"] = Json::makeNumber(c.plugin.params.empty() ? -1.0 : static_cast<double>(c.plugin.params[0]));
+        o.object["data"] = Json::makeString(update::sha256Hex(c.plugin.data));
+        o.object["running"] = Json::makeNumber(hostedInstanceFor(a, PluginTarget{c.id, -1}) ? 1 : 0);
+        states.object[c.name] = std::move(o);
+      }
+    r.object["pluginStates"] = std::move(states);
   }
   return jsonStringify(r, 2);
 }
@@ -3594,6 +3730,23 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame, ImVec2*
   } else if (cmd == "edit") {  // collab edit <name>: a channel with that name
     a.doc.addChannel(arg(1), "gl.synth");
     a.syncEngine();
+  } else if (cmd == "plugin-add") {  // k078-collabplug: collab plugin-add <name> <type>: a channel playing that plugin
+    a.doc.addChannel(arg(1), arg(2));
+    a.syncEngine();
+  } else if (cmd == "plugin-param" || cmd == "plugin-touch") {
+    // collab plugin-param <channel> <k> <value>: as turned in its interface here; collab plugin-touch
+    // <channel>: worked in here, its state is written now (as when its interface closes)
+    for (const auto& ch : a.doc.song().channels)
+      if (ch.name == arg(1)) {
+        const PluginTarget t{ch.id, -1};
+        if (cmd == "plugin-param") {
+          a.doc.setParam(channelPluginParam(ch.id, std::atoi(arg(2).c_str())), std::atof(arg(3).c_str()), true);
+          a.doc.endGesture();
+        }
+        hostedui::collabTouch(a, t);
+        if (cmd == "plugin-touch") hostedui::collabFlushStates(a);
+        break;
+      }
   } else if (cmd == "rename-channel") {  // K-141: collab rename-channel <name> <new name>: the first channel of that name
     for (const auto& ch : a.doc.song().channels)
       if (ch.name == arg(1)) {
@@ -4521,7 +4674,15 @@ void drawCursors(App& a) {
     ImGuiWindow* w = canchor::rootOf(g.HoveredWindow);
     PluginTarget hosted;
     float hx = 0, hy = 0;
-    if (w && !(w->Flags & ImGuiWindowFlags_Tooltip) && w->Size.x > 1 && w->Size.y > 1) {
+    // k078-collabplug: an installed plugin's interface (inside Gridline or in its own window) first:
+    // inside Gridline it takes the mouse itself, so the pane under it would look hovered
+    if (hostedEditorUnderMouse(hosted, hx, hy) && hosted.owner != kNoId) {
+      p.window = kPluginWindow;
+      p.x = hx;
+      p.y = hy;
+      p.plugin = hosted.owner;
+      p.pluginSlot = hosted.slot;
+    } else if (w && !(w->Flags & ImGuiWindowFlags_Tooltip) && w->Size.x > 1 && w->Size.y > 1) {
       const ImVec2 m = ImGui::GetIO().MousePos;
       p.window = ui::stableWindowName(w->Name);
       if (p.window.rfind("##", 0) == 0 && p.window != "##topbar") p.window.clear();  // popups, menus: not on the other screen
@@ -4536,12 +4697,6 @@ void drawCursors(App& a) {
         p.cy = an.cy;
       }
       if (isPluginEditor(p.window)) editorPlugin(a, p.window, p.plugin, p.pluginSlot);
-    } else if (hostedEditorUnderMouse(hosted, hx, hy) && hosted.owner != kNoId) {  // an installed plugin's own window
-      p.window = kPluginWindow;
-      p.x = hx;
-      p.y = hy;
-      p.plugin = hosted.owner;
-      p.pluginSlot = hosted.slot;
     }
     p.playing = a.engine.playing();
     p.songTick = static_cast<double>(a.engine.position());

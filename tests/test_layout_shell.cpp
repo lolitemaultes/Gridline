@@ -138,16 +138,27 @@ int main() {
     }
     layout::setVisible(sh, st, "live.device", true);
     expect(!layout::visible(sh, st, "live.clip") && layout::visible(sh, st, "live.device"), "and the other way round");
-    {  // K-112c (checkpoint 48): the band toggles stack the clip band over the device band (refs 456, 466)
+    {  // 0.7.8: the clip view and the device view are one spot: they never stack, and take the same rect
       layout::State both = st;
+      float devY = -1, devH = 0, devW = 0;
+      for (const auto& pl : layout::solve(Preset::Live, 1440, 860, both))
+        if (pl.id == "live.device") devY = pl.rect.y, devH = pl.rect.h, devW = pl.rect.w;
       layout::setVisible(sh, both, "live.clip", true, false);
-      expect(layout::visible(sh, both, "live.clip") && layout::visible(sh, both, "live.device"), "a stacked clip band keeps the device band");
-      float clipY = -1, devY = -1, clipH = 0, devH = 0;
-      for (const auto& pl : layout::solve(Preset::Live, 1440, 860, both)) {
-        if (pl.id == "live.clip") clipY = pl.rect.y, clipH = pl.rect.h;
-        if (pl.id == "live.device") devY = pl.rect.y, devH = pl.rect.h;
+      expect(layout::visible(sh, both, "live.clip") && !layout::visible(sh, both, "live.device"), "the clip view never stacks over the device view");
+      float clipY = -1, clipH = 0, clipW = 0;
+      for (const auto& pl : layout::solve(Preset::Live, 1440, 860, both))
+        if (pl.id == "live.clip") clipY = pl.rect.y, clipH = pl.rect.h, clipW = pl.rect.w;
+      expect(clipY == devY && clipH == devH && clipW == devW && devH >= 180, "the clip view takes the device view's rect");
+      for (const float h : {520.0f, 640.0f, 1358.0f}) {  // and on a short or tall window
+        layout::State d, c;
+        layout::setVisible(sh, c, "live.clip", true);
+        float dh = 0, ch = 0;
+        for (const auto& pl : layout::solve(Preset::Live, 1440, h, d))
+          if (pl.id == "live.device") dh = pl.rect.h;
+        for (const auto& pl : layout::solve(Preset::Live, 1440, h, c))
+          if (pl.id == "live.clip") ch = pl.rect.h;
+        expect(dh > 0 && dh == ch, "the clip view is as tall as the device view at every window height");
       }
-      expect(clipY >= 0 && devY > clipY && clipH >= 180 && devH >= 236, "stacked: the clip band sits over the device band, both at least their minimum");
     }
     layout::setVisible(sh, st, "live.mixer", true);
     expect(layout::visible(sh, st, "live.mixer") && layout::visible(sh, st, "live.device"), "the mixer band is not in the group");

@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdio>
 #include "dyn_dsp.h"
+#include "../../engine/EffectRest.h"
 #include "effector_ref.h"
 #include "modrack_ref.h"
 #include "pedal_ref.h"
@@ -496,6 +497,11 @@ class RackSlot {
 
 class AmpRackFx final : public DynFx {
  public:
+  // K-142 (0.7.8): rests by the hosted rule (stopped, fed silence, its output inaudible); while
+  // it rests, its modulation move on: its idle render runs unheard (EffectRest.h).
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& c, int n) override { restRenderFx(*this, s, aux, c, n); }
+ private:
+ public:
   AmpRackFx() : DynFx("gl.amprack") {}
   ~AmpRackFx() override {
     delete pending_.exchange(nullptr);
@@ -689,6 +695,7 @@ double effectorShape(int shape, double ph, double randA, double randB) {
 
 class EffectorFx final : public DynFx {
  public:
+  bool restsWhenFaint() const override { return false; }  // K-142: its grain stage replays what it captured: it keeps capturing (silence too)
   EffectorFx()
       : DynFx("gl.effector"),
         delay_{DelayLine(262144), DelayLine(262144)},

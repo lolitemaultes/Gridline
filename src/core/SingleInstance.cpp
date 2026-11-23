@@ -1,5 +1,6 @@
 // Gridline — one Gridline per user on Linux, the BSDs and Windows (K-121). See SingleInstance.h.
 #include "SingleInstance.h"
+#include "ThreadName.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -472,6 +473,7 @@ void Server::serve() {
       if (errno == EINTR) continue;
       return;
     }
+    gl::threads::woke();  // K-142: CPU report
     if (p[1].revents) return;
     if (!(p[0].revents & POLLIN)) continue;
     int c = ::accept(impl_->listenFd, nullptr, nullptr);
@@ -733,7 +735,7 @@ Handover handOver(const std::string& endpoint, const std::vector<std::string>& f
 void Server::start(std::function<void()> wake) {
   if (!claimed_ || thread_.joinable()) return;
   wake_ = std::move(wake);
-  thread_ = std::thread([this] { serve(); });
+  thread_ = std::thread([this] { gl::threads::setName("gl-instance"); serve(); });
 }
 
 void Server::push(Request r) {

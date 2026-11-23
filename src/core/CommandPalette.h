@@ -48,13 +48,19 @@ struct Ranked {
   int index = 0;            // into the entries
   int score = 0;
   bool recent = false;      // one of the recent rows (the empty query lists them first)
+  bool pinned = false;      // K-256: a pinned command (the empty query lists them before the recent ones)
   std::vector<int> hits;    // matched offsets in the label
 };
 
 // The rows for `query` in the order to show them. `kind` < 0: every kind, else only rows of
 // that Kind. An empty query lists the recent rows first (newest first), then every other row
 // in its order. A query lists matches best first; recent rows and enabled rows win ties.
-std::vector<Ranked> rank(const std::vector<Entry>& entries, const std::string& query, const std::vector<std::string>& recent, int kind = -1);
+// K-256: `pinned` (row ids, in order) are listed before the recent rows for an empty query and marked.
+std::vector<Ranked> rank(const std::vector<Entry>& entries, const std::string& query, const std::vector<std::string>& recent, int kind = -1,
+                         const std::vector<std::string>& pinned = {});
+// K-256: a row a person can pin: a command, a menu item or a window (not a setting, a plugin, a project's
+// own channel or effect window, or a row without an id).
+bool pinnableRow(const Entry& e);
 
 // ---- recent rows (a settings value: one id per line, newest first) ----
 constexpr size_t kRecentMax = 8;

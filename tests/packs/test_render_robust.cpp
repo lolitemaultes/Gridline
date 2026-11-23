@@ -2,6 +2,8 @@
 //   - an offline render's worker threads are not real-time threads (they ran flat out above the
 //     interface, the graphics driver and everything else on the computer, for minutes);
 //   - what throws inside a render (out of memory, a file system error) comes back as the export's error;
+//   - so does a progress callback that throws, at any of its calls (mix, stems, playlist tracks,
+//     with and without worker threads); renderAudio and renderSong hand such an exception on;
 //   - Cancel stops an encoder program that is running;
 //   - a full disk is an error, with no cut-off file left under the export's name;
 //   - a folder that cannot be made is an error in every format.
@@ -10,7 +12,9 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <new>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #if !defined(_WIN32)
 #include <signal.h>
@@ -21,6 +25,7 @@
 #include "../../src/core/Document.h"
 #include "../../src/engine/AudioEngine.h"
 #include "../../src/engine/ExportJob.h"
+#include "../../src/engine/Render.h"
 
 #if defined(__has_feature)
 #if __has_feature(address_sanitizer)
@@ -90,6 +95,106 @@ void testThrowInsideARenderIsAnError() {
   }
   expect(!escaped, "an exception inside a render does not leave runExport");
   expect(!o.errors.empty() && o.errors[0].find("simulated failure") != std::string::npos, "and comes back as the export's error");
+}
+
+// A bar on two instruments, each on its own playlist track and mixer insert: a mix, two stems
+// and two playlist track parts, so the progress callback runs inside every kind of render.
+Song twoTrackSong() {
+  Document d;
+  const ObjectId a = d.addChannel("synth a", "gl.synth");
+  const ObjectId b = d.addChannel("synth b", "gl.synth");
+  const ObjectId pa = d.addPattern("a", 1);
+  const ObjectId pb = d.addPattern("b", 1);
+  d.setNotes(pa, a, {Note(0, 192, 60, 100), Note(192, 192, 64, 100)});
+  d.setNotes(pb, b, {Note(0, 384, 48, 100)});
+  d.addClip(pa, 0, 0);
+  d.addClip(pb, 1, 0);
+  const Song& s = d.song();
+  if (s.mixer.size() > 2) {
+    d.routeChannel(a, s.mixer[1].id);
+    d.routeChannel(b, s.mixer[2].id);
+  }
+  return d.song();
+}
+
+// The progress callback throws at its n-th call, for every n a whole export makes (and the
+// threads of the mixer graph are running): the export ends with that error every time, nothing
+// escapes runExport, and the process goes on.
+void testThrowAtEveryProgressPoint() {
+  const fs::path dir = tempFolder("every");
+  const Song song = twoTrackSong();
+  struct Case {
+    const char* name;
+    bool stems, tracks;
+    int threads;
+  };
+  const Case cases[] = {{"mix", false, false, 1}, {"mix, 4 threads", false, false, 4}, {"stems and tracks", true, true, 1},
+                        {"stems and tracks, 4 threads", true, true, 4}};
+  for (const Case& c : cases) {
+    ExportSettings s = wavSettings(dir);
+    s.splitMixer = c.stems;
+    s.splitPlaylist = c.tracks;
+    s.render.threads = c.threads;
+    s.render.sampleRate = 22050;  // (fewer calls: every one of them is a whole export below)
+    s.render.blockSize = 1024;
+    int calls = 0;
+    const ExportOutcome clean = runExport(song, s, [&](double, const std::string&) { ++calls; });
+    expect(clean.errors.empty() && !clean.files.empty() && calls > 8, (std::string(c.name) + ": the export runs, with progress").c_str());
+    std::printf("# %s: %d progress calls, %zu files\n", c.name, calls, clean.files.size());
+    int failedRight = 0, escaped = 0;
+    for (int n = 0; n < calls; ++n) {
+      int seen = 0;
+      ExportOutcome o;
+      try {
+        o = runExport(song, s, [&](double, const std::string&) {
+          if (seen++ == n) throw std::runtime_error("simulated failure " + std::to_string(n));
+        });
+      } catch (...) {
+        ++escaped;
+        continue;
+      }
+      const std::string want = "simulated failure " + std::to_string(n);
+      if (o.errors.size() == 1 && o.errors[0].find(want) != std::string::npos && !o.cancelled) ++failedRight;
+    }
+    expect(escaped == 0, (std::string(c.name) + ": a throw at any progress call stays inside runExport").c_str());
+    expect(failedRight == calls, (std::string(c.name) + ": and is the export's one error, at every call").c_str());
+  }
+  // Out of memory and an exception of no std type from the callback, in the middle of a render.
+  ExportSettings s = wavSettings(dir);
+  s.render.threads = 4;
+  int seen = 0;
+  const ExportOutcome mem = runExport(song, s, [&](double, const std::string&) {
+    if (++seen == 5) throw std::bad_alloc();
+  });
+  expect(mem.errors.size() == 1 && mem.errors[0].find("not enough memory") != std::string::npos, "out of memory in a render: the export's error");
+  seen = 0;
+  const ExportOutcome odd = runExport(song, s, [&](double, const std::string&) {
+    if (++seen == 5) throw 7;
+  });
+  expect(odd.errors.size() == 1 && odd.errors[0].find("unknown error") != std::string::npos, "an exception of no std type: the export's error");
+  // The render functions themselves hand the exception on to their caller, its type and text kept.
+  RenderJob job = s.render;
+  job.progress = [&](double) { throw std::runtime_error("from renderAudio"); };
+  bool caught = false;
+  try {
+    (void)renderAudio(song, job);
+  } catch (const std::runtime_error& e) {
+    caught = std::string(e.what()) == "from renderAudio";
+  }
+  expect(caught, "renderAudio passes the exception on, unchanged");
+  RenderOptions ro;
+  ro.threads = 4;
+  ro.progress = [&](double) { throw std::runtime_error("from renderSong"); };
+  caught = false;
+  try {
+    (void)renderSong(song, ro);
+  } catch (const std::runtime_error& e) {
+    caught = std::string(e.what()) == "from renderSong";
+  }
+  expect(caught, "renderSong passes the exception on, unchanged");
+  // And a render after all of that is whole.
+  const ExportOutcome after = runExport(song, s);
+  expect(after.errors.empty() && after.frames > 0 && after.peak > 0.0f, "an export after them renders the song");
 }
 
 void testTooLongForMemoryIsAnError() {
@@ -179,6 +284,7 @@ void testFullDiskIsAnError() {
 int main() {
   testOfflineWorkersAreNotRealtime();
   testThrowInsideARenderIsAnError();
+  testThrowAtEveryProgressPoint();
   testTooLongForMemoryIsAnError();
   testUnwritableFolder();
 #if !defined(_WIN32)

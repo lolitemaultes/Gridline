@@ -73,6 +73,7 @@ struct SubClock {
 // ================================================================ Curve EQ
 class CurveEqFx final : public UtilityFx {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible)
   CurveEqFx() {
     fftK_.init(kCeLinearKernel);
     fftN_.init(kN);
@@ -274,6 +275,7 @@ class CurveEqFx final : public UtilityFx {
 // ============================================================= Free Filter
 class FreeFilterFx final : public UtilityFx {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible)
   void reset() override {
     for (auto& f : f_) f.clear();
     dcX_[0] = dcX_[1] = dcY_[0] = dcY_[1] = 0;
@@ -362,6 +364,7 @@ class FreeFilterFx final : public UtilityFx {
 // Two-pole state-variable lowpass; the cheapest useful resonant filter.
 class QuickLpFx final : public UtilityFx {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible)
   void reset() override {
     svf_[0].reset();
     svf_[1].reset();
@@ -417,6 +420,7 @@ class QuickLpFx final : public UtilityFx {
 // Low shelf at `freq` lifting by bassBoostDb(amount) (see utility.h).
 class BassBoostFx final : public UtilityFx {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible)
   void reset() override {
     for (auto& f : f_) f.clear();
     primed_ = false;
@@ -549,8 +553,10 @@ class ScopeFx final : public UtilityFx {
     bool tp = truePeak_ && (s.type != "gl.meter" || prm(s, LmTruePeak, 1) >= 0.5f);
     if (meters_) m_.process(st_, L, R, n, ctx.sampleRate, tp);
   }
-  const StereoRing* ring() const override { return &ring_; }
-  LevelState* levels() override { return meters_ ? &st_ : nullptr; }
+  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible) while nobody watches it.
+  bool restsWhenFaint() const override { return unwatched(); }
+  const StereoRing* ringOf() const override { return &ring_; }
+  LevelState* levelsOf() override { return meters_ ? &st_ : nullptr; }
   float meter() const override { return 0.0f; }
 
  private:
@@ -575,7 +581,9 @@ class ClockFx final : public UtilityFx {
     t_.playing.store(ctx.playing, std::memory_order_relaxed);
     t_.playedSamples.store(played_, std::memory_order_relaxed);
   }
-  const TransportState* transport() const override { return &t_; }
+  const TransportState* transportOf() const override { return &t_; }
+  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible) while nobody watches it.
+  bool restsWhenFaint() const override { return unwatched(); }
 
  private:
   TransportState t_;
@@ -586,6 +594,7 @@ class ClockFx final : public UtilityFx {
 // ===================================================================== Notes
 class NotesFx final : public UtilityFx {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: it passes the sound untouched
   void reset() override {}
   void process(const PluginState&, const ProcessContext&, float*, float*, int) override {}
 };
@@ -593,6 +602,7 @@ class NotesFx final : public UtilityFx {
 // ====================================================================== Mute
 class MuteFx final : public UtilityFx {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible)
   void reset() override { g_[0].primed = g_[1].primed = false; }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     bool mute = prm(s, MuMute) >= 0.5f;
@@ -624,6 +634,7 @@ class MuteFx final : public UtilityFx {
 // read by the mixer routing (see docs/plugins/utility.md).
 class StereoMatrixFx final : public UtilityFx {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible)
   void reset() override {
     std::memset(dl_, 0, sizeof dl_);
     std::memset(dr_, 0, sizeof dr_);

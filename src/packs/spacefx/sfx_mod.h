@@ -2,6 +2,7 @@
 // Ensemble, Bucket Chorus, Swirl, Retro Phaser.
 #pragma once
 #include "sfx_common.h"
+#include "../../engine/EffectRest.h"
 #include "sfx_vintage.h"
 #include "hyperchorus_ref.h"
 
@@ -22,6 +23,10 @@ inline void eqPowerMix(double mix, double& dry, double& wet) {
 constexpr int kEnsVoices = 8;
 class EnsembleFx final : public Effect {
  public:
+  // K-142 (0.7.8): rests by the hosted rule (stopped, fed silence, its output inaudible); while
+  // it rests, its LFOs move on: its idle render runs unheard (EffectRest.h).
+  bool restsWhenFaint() const override { return true; }
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& c, int n) override { restRenderFx(*this, s, aux, c, n); }
   EnsembleFx() : ref_(std::make_unique<hcref::Engine>()) {
     for (auto& v : voice_) v.line.init(static_cast<size_t>(0.075 * kMaxRate));
     reset();
@@ -116,6 +121,10 @@ class EnsembleFx final : public Effect {
 // the J-1 reference model (BbdRef, sfx_vintage.h).
 class BbdChorusFx final : public Effect {
  public:
+  // K-142 (0.7.8): rests by the hosted rule (stopped, fed silence, its output inaudible); while
+  // it rests, its LFOs move on: its idle render runs unheard (EffectRest.h).
+  bool restsWhenFaint() const override { return true; }
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& c, int n) override { restRenderFx(*this, s, aux, c, n); }
   BbdChorusFx() {
     line_[0].init(static_cast<size_t>(0.06 * kMaxRate));
     line_[1].init(static_cast<size_t>(0.06 * kMaxRate));
@@ -212,6 +221,10 @@ class BbdChorusFx final : public Effect {
 // side's line (signed), giving flanger-like resonances. Bipolar dry/wet levels.
 class SwirlFx final : public Effect {
  public:
+  // K-142 (0.7.8): rests by the hosted rule (stopped, fed silence, its output inaudible); while
+  // it rests, its LFOs move on: its idle render runs unheard (EffectRest.h).
+  bool restsWhenFaint() const override { return true; }
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& c, int n) override { restRenderFx(*this, s, aux, c, n); }
   SwirlFx() {
     line_[0].init(static_cast<size_t>(0.16 * kMaxRate));  // reference engine: up to ~150 ms
     line_[1].init(static_cast<size_t>(0.16 * kMaxRate));
@@ -361,6 +374,12 @@ class SwirlFx final : public Effect {
 // echo after the phaser. VpModel = 1 runs the J-1 reference model
 // (PhaserRef, sfx_vintage.h).
 class RetroPhaserFx final : public Effect {
+ public:
+  // K-142 (0.7.8): rests by the hosted rule (stopped, fed silence, its output inaudible); while
+  // it rests, its LFOs move on: its idle render runs unheard (EffectRest.h).
+  bool restsWhenFaint() const override { return true; }
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& c, int n) override { restRenderFx(*this, s, aux, c, n); }
+ private:
   static int measureOs(int stages) {
     detail::HalfbandCoefs hc;
     hc.init();

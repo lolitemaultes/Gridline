@@ -129,6 +129,13 @@ bool isCommand(const keys::Chord& c, const char* id) {
 
 void testPluginKeys() {
   using namespace host;
+  // User 2026-11-21: in Smooth the arrow keys a plugin window passes on stay with the instrument.
+  for (int arrow : {79, 80, 81, 82}) {
+    expect(keepInPluginWindow(true, arrow), "Smooth: an arrow key from a plugin window stays with it");
+    expect(!keepInPluginWindow(false, arrow), "other layouts: arrow keys from a plugin window reach the main window as before");
+  }
+  expect(!keepInPluginWindow(true, 44) && !keepInPluginWindow(true, 58) && !keepInPluginWindow(true, 22) && !keepInPluginWindow(true, 40),
+         "Smooth: Space, F1, S and Return still reach the main window");
   // X11 keysyms -> HID usages.
   expect(hidUsageOfX11Keysym(0x20) == 44, "XK_space -> Space");
   expect(hidUsageOfX11Keysym(0x73) == 22 && hidUsageOfX11Keysym(0x53) == 22, "XK_s / XK_S -> S");

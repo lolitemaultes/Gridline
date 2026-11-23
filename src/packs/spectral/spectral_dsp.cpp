@@ -11,6 +11,7 @@
 #include <memory>
 #include <cstring>
 #include <functional>
+#include "../../engine/EffectRest.h"
 #include "../../engine/Dsp.h"
 #include "../../engine/TimeStretch.h"
 #include <map>
@@ -579,6 +580,11 @@ std::vector<float> enhanceProgram(const std::string& data) {
 
 class VocoderFx final : public SpectralFx {
  public:
+  // K-142 (0.7.8): rests by the hosted rule (stopped, fed silence, its output inaudible); while
+  // it rests, its carrier move on: its idle render runs unheard (EffectRest.h).
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& c, int n) override { restRenderFx(*this, s, aux, c, n); }
+ private:
+ public:
   VocoderFx() {
     info_ = findPlugin("gl.vocoder");
     sgState_ = defaultPluginState("gl.enhance");
@@ -1103,6 +1109,11 @@ class PhaseVocoder {
 };
 
 class PitchFx final : public SpectralFx {
+ public:
+  // K-142 (0.7.8): rests by the hosted rule (stopped, fed silence, its output inaudible); while
+  // it rests, its pitch engine move on: its idle render runs unheard (EffectRest.h).
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& c, int n) override { restRenderFx(*this, s, aux, c, n); }
+ private:
  public:
   PitchFx() {
     info_ = findPlugin("gl.pitch");
@@ -1687,6 +1698,11 @@ class PitcherRef {
 
 class PitcherFx final : public SpectralFx {
  public:
+  // K-142 (0.7.8): rests by the hosted rule (stopped, fed silence, its output inaudible); while
+  // it rests, its pitch engine move on: its idle render runs unheard (EffectRest.h).
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& c, int n) override { restRenderFx(*this, s, aux, c, n); }
+ private:
+ public:
   static constexpr int kVoices = 4;
   static constexpr int kW = 512;  // YIN window (decimated samples)
   PitcherFx() {
@@ -1993,6 +2009,7 @@ class PitcherFx final : public SpectralFx {
 // ================================================================ Scratcher
 class ScratchFx final : public SpectralFx {
  public:
+  bool restsWhenFaint() const override { return false; }  // K-142: scratches what it captured: it keeps capturing (silence too)
   ScratchFx() {
     info_ = findPlugin("gl.scratcher");
     for (auto& b : buf_) b.init(static_cast<size_t>(kMaxSeconds * 96000));
@@ -2710,6 +2727,11 @@ class SplitterFx final : public SpectralFx {
 
 // ================================================================= Spreader
 class SpreadFx final : public SpectralFx {
+ public:
+  // K-142 (0.7.8): rests by the hosted rule (stopped, fed silence, its output inaudible); while
+  // it rests, its LFOs move on: its idle render runs unheard (EffectRest.h).
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& c, int n) override { restRenderFx(*this, s, aux, c, n); }
+ private:
  public:
   SpreadFx() {
     info_ = findPlugin("gl.spread");

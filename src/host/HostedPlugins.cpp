@@ -1,4 +1,5 @@
 #include "HostedPlugins.h"
+#include "../core/ThreadName.h"
 #include "CrossFormat.h"
 #include "../core/Crash.h"
 #include <algorithm>
@@ -104,6 +105,7 @@ PluginInfo makePluginInfo(const HostedClass& c) {
       d.def = p.def;
     }
     info.params.push_back(std::move(d));
+    info.hostParamIds.push_back(p.id);  // collaborators map parameters by these
   }
   // Programs are the plugin's factory presets (selected through the instance,
   // not by parameter values; see the plugin header in the app).
@@ -436,7 +438,10 @@ class Core final : public HostedInstance {
   void prepareHostNow(const PluginState& st, double sr) {
     for (size_t k = 0; k < ids_.size(); ++k) base_[k].store(k < st.params.size() ? st.params[k] : std::nanf(""), std::memory_order_relaxed);
     if (uiBlocked()) return;
-    const bool needLoad = !loaded_ || st.data != lastData_;
+    // k078-collabplug: a state still arriving from a collaborator is not loaded; the plugin keeps
+    // what it has until the state itself is in the song.
+    const bool pending = isPendingPluginData(st.data);
+    const bool needLoad = !pending && (!loaded_ || st.data != lastData_);
     const bool needPrepare = !b_->active() || b_->sampleRate() != sr;
     if (!needLoad && !needPrepare) return;
     // K-132: a big plugin can take long to take its state (a replace, a project opening): long
@@ -450,7 +455,10 @@ class Core final : public HostedInstance {
       loaded_ = true;
       // K-78: a state moved from another format of the plugin: its parameters must read back as saved,
       // else the saved values are set one by one (below, like a state-less load).
-      const bool keepSong = !st.data.empty() && !movedStateTook(st, took);
+      // k078-collabplug: a collaborator's state: the song's values (that state's parameters and the
+      // edits made after it) go to the plugin, none are read back from it.
+      const bool remote = !st.data.empty() && takeRemotePluginData(st.data);
+      const bool keepSong = !st.data.empty() && (!movedStateTook(st, took) || remote);
       if (st.data.empty() || keepSong) {
         // No plugin state yet (new instance, imported values): the song's
         // values are the truth — every one goes to the plugin with the next block.
@@ -1521,6 +1529,8 @@ class HostedEffect final : public Effect {
   // state; effects that take MIDI get All Notes Off / All Sound Off with the
   // next block.
   void reset() override { soundOff_ = true; }
+  // GitHub #66: one that takes notes may be played with nothing coming in: it keeps running.
+  bool restsWhenFaint() const override { return !core_->backend()->hasEventInput(); }
   void setSideIo(const SideIo& io) override { io_ = io; }
   void prepareHost(const PluginState& state, double sampleRate) override { core_->prepareHost(state, sampleRate); }
   int latencySamples() const override { return core_->totalLatency(); }
@@ -2025,7 +2035,7 @@ void launch(const std::string& exe, ScanJob job) {
   s.status.total = static_cast<int>(job.entries.size());
   s.status.searching.clear();
   s.pending = false;
-  s.worker = std::thread([exe, job = std::move(job)]() {
+  s.worker = std::thread([exe, job = std::move(job)]() { gl::threads::setName("gl-plug-job");
     try {
       runJob(service(), exe, job);
     } catch (const std::exception&) {  // K-73: a search the system cannot finish ends the scan, not the app

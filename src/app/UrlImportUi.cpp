@@ -1,5 +1,6 @@
 // Gridline - J-192: Import from URL popup, settings and hooks (see UrlImportUi.h).
 #include "UrlImportUi.h"
+#include "../core/ThreadName.h"
 #include "Keys.h"
 #include <algorithm>
 #include <atomic>
@@ -28,6 +29,7 @@
 #include "CollabUi.h"
 #include "DevSignal.h"
 #include "DialogLayout.h"
+#include "ProgressUi.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -228,7 +230,7 @@ std::shared_ptr<SetupJob> launchInstall(bool needYt, bool needFf) {
   auto job = std::make_shared<SetupJob>();
   const mt::Net n = net();
   const std::string dir = mt::installDir();
-  std::thread([job, needYt, needFf, n, dir] {
+  std::thread([job, needYt, needFf, n, dir] { gl::threads::setName("gl-urlimport");
     auto progress = [job](int64_t got, int64_t total) {
       job->got = got;
       job->total = total;
@@ -303,7 +305,7 @@ void maybeUpdate(App& a) {
   s.upd = job;
   const mt::Net n = net();
   const std::string dir = mt::installDir();
-  std::thread([job, n, dir, cur] {
+  std::thread([job, n, dir, cur] { gl::threads::setName("gl-urlimport");
     mt::UpdateResult r = mt::updateYtdlp(n, dir, cur, nullptr);
     std::lock_guard<std::mutex> lk(job->mu);
     job->result = std::move(r);
@@ -346,7 +348,7 @@ void startUpdateNow(App& a) {
                               ? mt::recordedVersion(fs::u8path(s.yt.path).parent_path().u8string())
                               : std::string();
   a.settings.set("import.urlLastUpdateCheck", static_cast<double>(wallNow()));
-  std::thread([job, n, dir, cur] {
+  std::thread([job, n, dir, cur] { gl::threads::setName("gl-urlimport");
     mt::UpdateResult r = mt::updateYtdlp(n, dir, cur, nullptr);
     std::lock_guard<std::mutex> lk(job->mu);
     job->result = std::move(r);
@@ -719,24 +721,26 @@ void drawSetup(App& a) {
   ImGui::Dummy(ImVec2(0, theme::kS2));
   urlRow(a, false);
   ImGui::Dummy(ImVec2(0, theme::kS2));
-  const SetupJob& j = *s.setup;
-  const int64_t total = j.total.load(), got = j.got.load();
+  const progui::Fake* fk = progui::fake("urlsetup");  // (tests: a stand-in setup)
+  const int64_t total = fk ? 84000000 : s.setup->total.load();
+  const int64_t got = fk ? static_cast<int64_t>(fk->frac * static_cast<double>(total)) : s.setup->got.load();
+  const int step = fk ? 0 : s.setup->step.load();
   std::string line = tr("Setting up the downloader (once)...");
   line += "  ";
-  line += j.step == 0 ? "yt-dlp" : "ffmpeg";
+  line += step == 0 ? "yt-dlp" : "ffmpeg";
   ui::TextFit(line.c_str(), kW - 130, P.textDim);
+  // 0.7.8: the amount right-aligned in its field (cut when wider): the window keeps its width.
   ImGui::SameLine(ImGui::GetCursorPosX() + kW - 120);
   ImGui::PushFont(a.fontMono, theme::kFontLabel);
   const std::string amount = total > 0 ? mb(got) + " / " + mb(total) : mb(got);
-  ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, 120 - ImGui::CalcTextSize(amount.c_str()).x));
-  ImGui::TextColored(theme::vec(P.textFaint), "%s", amount.c_str());
+  progui::RightField(amount.c_str(), 120, P.textFaint);
   ImGui::PopFont();
   bar(total > 0 ? static_cast<float>(static_cast<double>(got) / static_cast<double>(total)) : 0.0f, total <= 0);
   rightsNote();
   ImGui::Dummy(ImVec2(kW, theme::kS2));
   const float w = buttonW("Cancel");
   rightAlign(w);
-  if (ui::TextButton("Cancel", false, w) || ::gl::keys::escapePressed()) {
+  if ((ui::TextButton("Cancel", false, w) || ::gl::keys::escapePressed()) && s.setup) {
     s.setup->cancel = true;
     s.fetchAfterSetup = false;
   }
@@ -919,18 +923,24 @@ void drawImporting(App& a) {
   const auto& P = pal();
   title(a, tr("Import from URL"));
   ImGui::Dummy(ImVec2(0, theme::kS1));
-  if (!s.job) return;
-  const ul::Phase ph = s.job->get();
-  const int item = s.job->item.load(), items = s.job->items.load();
+  const progui::Fake* fk = progui::fake("urlimport");  // (tests: a stand-in download)
+  if (!s.job && !fk) return;
+  const ul::Phase ph = fk ? ul::Phase::Downloading : s.job->get();
+  const int item = fk ? static_cast<int>(fk->frac * 11.0) : s.job->item.load(), items = fk ? 12 : s.job->items.load();
   std::string detail, name;
-  {
-    std::lock_guard<std::mutex> lk(s.job->mu);
-    detail = s.job->detail;
+  if (fk) {
+    name = fk->text;
+    detail = mb(static_cast<int64_t>(fk->frac * 312000000.0)) + " / " + mb(312000000);
+  } else {
+    {
+      std::lock_guard<std::mutex> lk(s.job->mu);
+      detail = s.job->detail;
+    }
+    const auto reqs = requests();
+    if (item >= 0 && item < static_cast<int>(reqs.size())) name = reqs[static_cast<size_t>(item)].item.title;
   }
-  const auto reqs = requests();
-  if (item >= 0 && item < static_cast<int>(reqs.size())) name = reqs[static_cast<size_t>(item)].item.title;
   std::string line = ph == ul::Phase::Converting ? tr("Converting to WAV") : tr("Downloading the best audio");
-  if (const int attempt = s.job->attempt.load(); attempt > 1 && ph == ul::Phase::Downloading) {
+  if (const int attempt = fk ? (fk->stalled ? 2 : 1) : s.job->attempt.load(); attempt > 1 && ph == ul::Phase::Downloading) {
     char b[64];
     std::snprintf(b, sizeof b, tr(", trying again (%d of %d)"), attempt, ul::Limits{}.downloadTries);
     line += b;
@@ -940,24 +950,25 @@ void drawImporting(App& a) {
     std::snprintf(b, sizeof b, "  (%d / %d)", item + 1, items);
     line += b;
   }
+  // 0.7.8: the name and the step cut to their room, the amount right-aligned in its field (cut
+  // when wider): the window keeps its size while they change.
   ImGui::PushFont(a.fontBold, theme::kFontBody);
-  ui::TextFit(name.c_str(), kW, P.text);
+  progui::Line(name.c_str(), kW, P.text);
   ImGui::PopFont();
   ui::TextFit(line.c_str(), kW - 140, P.textDim);
   if (!detail.empty() && ph == ul::Phase::Downloading) {
     ImGui::SameLine(ImGui::GetCursorPosX() + kW - 130);
     ImGui::PushFont(a.fontMono, theme::kFontLabel);
-    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, 130 - ImGui::CalcTextSize(detail.c_str()).x));
-    ImGui::TextColored(theme::vec(P.textFaint), "%s", detail.c_str());
+    progui::RightField(detail.c_str(), 130, P.textFaint);
     ImGui::PopFont();
   }
-  const double f = s.job->fraction.load();
+  const double f = fk ? fk->frac : s.job->fraction.load();
   bar(static_cast<float>(f), f < 0);
   rightsNote();
   ImGui::Dummy(ImVec2(kW, theme::kS2));
   const float w = buttonW("Cancel");
   rightAlign(w);
-  if (ui::TextButton("Cancel", false, w) || ::gl::keys::escapePressed()) s.job->cancel = true;
+  if ((ui::TextButton("Cancel", false, w) || ::gl::keys::escapePressed()) && s.job) s.job->cancel = true;
 }
 
 void drawError(App& a) {
@@ -1041,7 +1052,15 @@ void open(App& a) {
 void draw(App& a) {
   State& s = S();
   poll(a);
-  if (s.screen == Screen::Closed) return;
+  // (tests: a stand-in download or setup shows its screen; the pop-up closes after it)
+  static bool faked = false;
+  const bool fakeNow = progui::fake("urlimport") || progui::fake("urlsetup");
+  if (progui::fake("urlimport") && s.screen != Screen::Importing) s.screen = Screen::Importing, s.openPopup = true;
+  if (progui::fake("urlsetup") && s.screen != Screen::Setup) s.screen = Screen::Setup, s.openPopup = true;
+  const bool closeFake = faked && !fakeNow && !s.job && !s.setup && s.screen != Screen::Closed;
+  if (closeFake) s.screen = Screen::Closed;  // (the pop-up closes itself below)
+  faked = fakeNow;
+  if (s.screen == Screen::Closed && !closeFake) return;
   if (s.openPopup) {
     s.openPopup = false;
     if (!ImGui::IsPopupOpen("##urlimport")) {
@@ -1066,10 +1085,11 @@ void draw(App& a) {
     s.screen = Screen::Closed;
     return;
   }
+  progui::note(s.screen == Screen::Setup ? "urlsetup" : "urlimport");
   switch (s.screen) {
     case Screen::Entry: drawEntry(a); break;
     case Screen::Setup:
-      if (s.setup) drawSetup(a);
+      if (s.setup || progui::fake("urlsetup")) drawSetup(a);
       break;
     case Screen::Fetching: drawFetching(a); break;
     case Screen::Preview: drawPreview(a); break;

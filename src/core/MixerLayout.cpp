@@ -28,7 +28,8 @@ Layout compute(const Input& in) {
   float x = 0;
   int row = 0;
   for (int i = 0; i < n; ++i) {
-    const float w = i == 0 ? L.masterW : L.stripW;
+    const size_t k = static_cast<size_t>(i);
+    const float w = i == 0 ? L.masterW : k < in.widths.size() && in.widths[k] > 0 ? std::min(in.widths[k], L.contentW) : L.stripW;
     if (x > 0 && x + w > L.contentW + 0.01f) x = 0, ++row;
     L.cells.push_back({i, row, x, w});
     x += w + gap;
@@ -67,6 +68,45 @@ ToolbarFit toolbarFit(float room, float metersW, float holdW, float routingW) {
   left -= holdW;
   f.routing = left >= routingW;
   return f;
+}
+
+int perRow(int strips, int rows) {
+  rows = std::clamp(rows, 1, 4);
+  return strips > 0 ? (strips + rows - 1) / rows : 0;
+}
+
+float middleRowW(const WideInput& in, int row) {
+  const int n = perRow(in.middle, in.rows);
+  if (n <= 0 || row < 0) return 0;
+  const int from = row * n, to = std::min(in.middle, from + n);
+  if (from >= to) return 0;
+  float w = 0;
+  for (int k = from; k < to; ++k) {
+    const size_t i = static_cast<size_t>(k);
+    w += (i < in.middleW.size() ? in.middleW[i] : in.stripW) + in.gap;
+  }
+  return w - in.gap;
+}
+
+float wideContentW(const WideInput& in) {
+  float x = 0;
+  if (in.left > 0) x += in.masterW + in.gap + static_cast<float>(in.left - 1) * (in.stripW + in.gap) + in.dividerW - in.gap - in.leftSaved;
+  float mid = 0;
+  for (int r = 0; r < std::clamp(in.rows, 1, 4); ++r) mid = std::max(mid, middleRowW(in, r));
+  x += mid;
+  x += in.gap + in.addW + static_cast<float>(std::max(0, in.right)) * (in.stripW + in.gap) - in.rightSaved;
+  return x + in.tail + 2 * in.padding;
+}
+
+float wideInspectorW(float width, float contentW, float preferred) {
+  const float room = std::max(kInspectorMinW, width - kStripsMinW);
+  const float base = preferred > 0 ? std::clamp(preferred, kInspectorMinW, room) : std::clamp(width * 0.27f, kInspectorMinW, kInspectorMaxW);
+  return std::floor(std::max(base, width - contentW));
+}
+
+float masterZoneH(int rows, float rowH, float bandH, float rowGap) {
+  const float r = static_cast<float>(std::clamp(rows, 1, 4));
+  return r * rowH + (r - 1) * (bandH + rowGap);
 }
 
 }  // namespace gl::mixlayout

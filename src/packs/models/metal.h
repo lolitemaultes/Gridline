@@ -16,7 +16,9 @@
 // reference tag) and in the reference control units, so imported states and
 // automation map 1:1.
 #pragma once
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -181,6 +183,59 @@ enum GrainScanParam {
   GsVolume, GsRoot,
   GsCount
 };
+
+// Grain timing from the Grains dials (shared by the engine and the editor's preview).
+// Reference laws (J-33): attack / hold ms = round(10·(e^(0.00786365·x) − 1)); the grain
+// spacing and the read-head step are both proportional to attack + hold:
+// spacing = (A + H)·s(gs)/256 (at least 5 samples), head step = (A + H)·s(ws)/256, with
+// s(x) = round(76.8·(e^(0.0023979·|x|) − 1)) (s(611) = 256). Their ratio is the playback speed.
+struct GsTiming {
+  double attSec = 0, holdSec = 0, grainSec = 0;  // a grain lasts 2·attack + hold (it fades out over the attack time)
+  double spaceSec = 0;  // between two grain starts
+  double stepSec = 0;   // source seconds the read head moves between two grains (negative: backwards)
+  double speed() const { return spaceSec > 0 ? stepSec / spaceSec : 0.0; }
+};
+inline GsTiming gsTiming(float attack, float hold, float grainSpace, float waveSpace, double sampleRate) {
+  auto ms = [](double x) { return std::round(10.0 * (std::exp(0.00786365 * std::max(0.0, x)) - 1.0)); };
+  auto sp = [](double x) { return std::round(76.8 * (std::exp(0.0023979 * std::fabs(x)) - 1.0)); };
+  GsTiming t;
+  t.attSec = std::max(1.0, ms(attack)) * 1e-3;
+  t.holdSec = ms(hold) * 1e-3;
+  t.grainSec = t.attSec + t.holdSec;
+  t.spaceSec = std::max(5.0 / sampleRate, t.grainSec * sp(grainSpace) / 256.0);
+  const double ws = std::clamp(static_cast<double>(waveSpace), -1000.0, 1000.0);
+  t.stepSec = ws == 0 ? 0.0 : (ws < 0 ? -1.0 : 1.0) * t.grainSec * sp(ws) / 256.0;
+  return t;
+}
+
+// The Grains preview: the grains that start within one window (each as attack / hold / release
+// corners, in window fractions 0..1) and where each grain reads the sample (the read head,
+// 0..1 of the window's time, rising for forwards, falling for backwards).
+struct GsPreview {
+  static constexpr int kMax = 12;
+  int count = 0;
+  float x0[kMax] = {}, x1[kMax] = {}, x2[kMax] = {}, x3[kMax] = {};  // start, end of attack, end of hold, end
+  float head[kMax] = {};
+  double speed = 0;
+};
+inline GsPreview gsPreview(const GsTiming& t) {
+  GsPreview p;
+  const double len = 2 * t.attSec + t.holdSec;
+  const double window = len + std::max(len, t.spaceSec);
+  p.speed = t.speed();
+  for (int k = 0; k < GsPreview::kMax; ++k) {
+    const double s = k * t.spaceSec;
+    if (s >= window) break;
+    p.x0[k] = static_cast<float>(s / window);
+    p.x1[k] = static_cast<float>((s + t.attSec) / window);
+    p.x2[k] = static_cast<float>((s + t.attSec + t.holdSec) / window);
+    p.x3[k] = static_cast<float>((s + len) / window);
+    const double h = k * t.stepSec / window;
+    p.head[k] = static_cast<float>(std::clamp(t.stepSec < 0 ? 1.0 + h : h, 0.0, 1.0));
+    p.count = k + 1;
+  }
+  return p;
+}
 
 // ======================================================== Spline Scratcher
 inline constexpr int kSsKeys = 120;

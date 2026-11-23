@@ -99,8 +99,10 @@ Shell live() {
                // Checkpoint 57 (N56-08): the device band and the clip band are one detail view of one fixed
                // height (about 230 at 1440 x 900, as in the refs), so the main view keeps its place when the
                // selection moves between a clip and a device; a drag of either divider sizes both.
-               R("live.device", "", Edge::Bottom, detailSize(0.35f), true, false, TabStyle::None, true),
-               R("live.clip", "", Edge::Bottom, detailSize(0.45f), false, false, TabStyle::Dock, true),
+               // 0.7.8: one spot of one size: both take the same rule (the clip view had a larger share
+               // on a short window, so the switch moved the main view's edge).
+               R("live.device", "", Edge::Bottom, detailSize(0.4f), true, false, TabStyle::None, true),
+               R("live.clip", "", Edge::Bottom, detailSize(0.4f), false, false, TabStyle::Dock, true),
                R("live.mixer", "", Edge::Bottom, share(0.32f, 150, 0.5f), false)};
   for (Region& r : s.regions)
     if (std::string(r.id) == "live.device" || std::string(r.id) == "live.clip") r.group = "live.detail";
@@ -177,7 +179,10 @@ void setVisible(const Shell& sh, State& st, const std::string& region, bool on, 
   const Region* self = nullptr;
   for (const Region& r : sh.regions)
     if (region == r.id) self = &r;
-  if (on && alone && self && *self->group)  // K-112c: one region of a group at a time (unless stacked)
+  // K-112c: one region of a group at a time. 0.7.8: always (the Clips clip view and device view share
+  // one spot and no longer stack), so `alone` only matters to regions outside a group.
+  (void)alone;
+  if (on && self && *self->group)
     for (const Region& r : sh.regions)
       if (region != r.id && std::string(r.group) == self->group && visible(sh, st, r.id)) setVisible(sh, st, r.id, false);
   for (const Region& r : sh.regions)

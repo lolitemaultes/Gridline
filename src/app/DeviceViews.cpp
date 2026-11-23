@@ -17,6 +17,7 @@
 #include "PluginUI.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "../packs/samplers/patchplayer.h"
 
 namespace gl::devview {
 
@@ -515,6 +516,9 @@ std::vector<Main> mainParams(App& a, const PluginTarget& t) {
             Main{legacy ? eqParam(b, EqQ) : eqFl(b, EqWidth), n + (legacy ? std::string("Q") : std::string(i18n::tr("width")))},
             Main{eqParam(b, EqType), n + i18n::tr("type")}};
   }
+  if (ty == packs::samplers::kPatchPlayerType)  // K-333: the patch, its level and sends, the filter offsets
+    return list({packs::samplers::PpPatch, packs::samplers::PpVolume, packs::samplers::PpPan, packs::samplers::PpReverb, packs::samplers::PpChorus,
+                 packs::samplers::PpCutoff, packs::samplers::PpResonance, packs::samplers::PpTranspose});
   if (ty == "gl.filter") return model(st, FltModel) >= 0.5f ? list({FltCutK, FltResK, FltMode, FltMix}) : list({FltCutoff, FltReso, FltMode, FltMix});
   if (ty == "gl.comp") return list({CmpThreshold, CmpRatio, CmpAttack, CmpRelease, CmpMakeup, CmpMix});
   if (ty == "gl.limiter") return list({LimGain, LimCeiling, LimRelease, LimCompThresh});

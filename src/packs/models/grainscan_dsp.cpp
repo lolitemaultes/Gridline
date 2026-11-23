@@ -141,14 +141,10 @@ class GrainScanGen final : public Generator {
     // Reference laws (J-33): attack / hold ms = round(10·(e^(0.00786365·x) − 1));
     // spacing = (A + H)·s(gs)/256 (≥ 5 samples) and head step = (A + H)·s(ws)/256
     // with s(x) = round(76.8·(e^(0.0023979·|x|) − 1)) (s(611) = 256).
-    auto ms = [](double x) { return std::round(10.0 * (std::exp(0.00786365 * std::max(0.0, x)) - 1.0)); };
-    auto sp = [](double x) { return std::round(76.8 * (std::exp(0.0023979 * std::fabs(x)) - 1.0)); };
-    const double attSec = std::max(1.0, ms(p_[GsAttack])) * 1e-3;
-    const double holdSec = ms(p_[GsHold]) * 1e-3;
-    const double grainSec = attSec + holdSec;
-    const double space = std::max(5.0 / sr_, grainSec * sp(p_[GsGrainSpace]) / 256.0);
+    const GsTiming tm = gsTiming(p_[GsAttack], p_[GsHold], p_[GsGrainSpace], p_[GsWaveSpace], sr_);
+    const double attSec = tm.attSec, holdSec = tm.holdSec, space = tm.spaceSec;
     const double ws = std::clamp(static_cast<double>(p_[GsWaveSpace]), -1000.0, 1000.0);
-    double step = ws == 0 ? 0.0 : (ws < 0 ? -1.0 : 1.0) * grainSec * sp(ws) / 256.0;  // source seconds per grain
+    double step = tm.stepSec;  // source seconds per grain
     if (p_[GsTempoLock] >= 0.5f && smp->sampleRate > 0)
       step = (ws < 0 ? -1.0 : 1.0) * smp->seconds() * space / (4.0 * 60.0 / tempo_);
     const double fxDepth = std::clamp(p_[GsFxDepth] / 384.0f, 0.0f, 1.0f);

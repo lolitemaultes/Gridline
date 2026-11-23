@@ -156,6 +156,23 @@ void forgetAnalysis(const std::string& path);
 void setAnalysisCacheDir(const std::string& dir);
 // Waits for every job (tests, shutdown).
 void waitAnalysisIdle();
+// Tests: how long the stretched renders of a file nobody plays any more linger, and how long a
+// render that left use stays in memory (the defaults are minutes); the families of renders alive.
+void setWarpTimesForTest(int lingerMs, int graceMs);
+int warpFamiliesForTest();
+// Tests (0.7.8): the memory caps of the renders made while the tempo moves (bytes per file and for
+// every file; the defaults are 128 MB and 512 MB), and what the warp service did: the bytes of the
+// renders it holds now and the most it held, the renders made (all, and those while the tempo moved),
+// those skipped for the cap, the worker's time spent stretching, and the wakeups a moving tempo's
+// render waited out (the rate limit).
+struct WarpStats {
+  int64_t bytes = 0, peakBytes = 0;
+  int renders = 0, moving = 0, skipped = 0, throttled = 0;
+  double workSeconds = 0;
+};
+void setWarpCapsForTest(int64_t fileBytes, int64_t totalBytes);
+WarpStats warpStatsForTest();
+void resetWarpPeakForTest();
 // J-190: changes every time a job finishes (done or failed), so the app can rebuild what
 // was prepared on a provisional grid (Kerf's beat-grid slices).
 uint64_t analysisGeneration();
@@ -332,6 +349,15 @@ bool splitRegion(Model& m, int x, int parts);
 bool mergeRegion(Model& m, int x);
 // Moves step `from` to the insertion point `to` (0..steps, before removal).
 bool moveStep(Model& m, int from, int to);
+// 0.7.8 blank steps. Step `step` becomes a blank (a rest) that keeps its length: the sequence keeps
+// its length and every later step its place (what the step played, its pitch and its options go).
+// False when it already is a blank.
+bool clearStep(Model& m, int step);
+// Step `step` (a blank or not) plays region `region`; its length and options stay. False when
+// nothing changed.
+bool fillStep(Model& m, int step, int region);
+// Deletes step `step`: the later steps move up and the sequence gets shorter. False for the last one.
+bool deleteStep(Model& m, int step);
 // The natural sequence again: every region once, in order (lengths follow the regions; steps with
 // their own length are not in order: Reset order gives every step its default length back).
 void naturalPattern(Model& m);
@@ -453,8 +479,9 @@ bool writePatternMidi(const std::string& path, const std::vector<PatNote>& notes
 // A new pattern holding the steps as notes for `channel` (slice keys from the
 // base note; mod X = step pitch, mod Y = reverse, stutters expanded), `cycles`
 // times; with track >= 0 also a playlist clip of it at `at`. Returns the pattern id.
+// 0.7.8: with `link` the pattern stays linked to the channel's sequence (seltmann_editor.h).
 ObjectId sendPatternToSong(Song& s, ObjectId channel, const Model& m, const std::vector<float>& params, int cycles = 1, int track = -1,
-                           Tick at = 0);
+                           Tick at = 0, bool link = false);
 // Bars a rendered pattern loop lasts at its pattern speed (in the song's bars).
 double patternBars(const Model& m, const std::vector<float>& params, int beatsPerBar);
 
@@ -477,6 +504,11 @@ struct LiveView {
   bool patternRunning = false;
 };
 bool liveView(const Generator* g, LiveView& out);
+
+// 0.7.8 (tests): offline renders (exports) make each warped render of a tempo whole, as before they
+// were made in pieces (the reference the pieces must equal). Off by default.
+void setWholeOfflineRenders(bool on);
+bool wholeOfflineRenders();
 
 // ------------------------------------------------------------------ J-218 recording a take
 // The audio recorded from an input on the start screen (seltmann_take_dsp.cpp), UI thread only:

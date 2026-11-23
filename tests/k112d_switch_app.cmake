@@ -18,11 +18,11 @@ file(WRITE "${OUT}/input.txt" "5 toasts clear
 22 key b
 26 parts lib state
 40 tempo 133
-44 save ${OUT}/a.gridline.json
-48 open ${OUT}/a.gridline.json
+44 save \"${OUT}/a.gridline.json\"
+48 open \"${OUT}/a.gridline.json\"
 96 parts lib state
 98 tempo
-100 save ${OUT}/b.gridline.json
+100 save \"${OUT}/b.gridline.json\"
 104 quit discard
 ")
 execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --layout-dev --layout logic --size 1440x900

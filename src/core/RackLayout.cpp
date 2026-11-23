@@ -46,7 +46,8 @@ Layout compute(const Input& in) {
   l.steps = std::max(1, in.steps);
   l.group = std::clamp(in.group, 1, 16);
   const int n = l.steps;
-  const float room = std::max(0.0f, in.avail - kNameX - kNameGap - kSelLampW);  // name + step viewport (the lamp cell sits between)
+  const float laneW = std::max(0.0f, in.laneW);
+  const float room = std::max(0.0f, in.avail - kNameX - kNameGap - kSelLampW - (laneW > 0 ? laneW + 2 : 0.0f));  // name + step viewport (the lamp cell sits between)
   // The name yields to the first bars of the pattern: a 16-step pattern at a
   // comfortable step size, up to 32 steps at the smallest size. Longer
   // patterns scroll instead of squeezing the names further.
@@ -76,7 +77,9 @@ Layout compute(const Input& in) {
   l.scrollMax = std::max(0.0f, l.contentW - l.viewW);
   // K-127: name button, the lamp cell, then the steps.
   l.lampX = kNameX + l.nameW + kLampGap;
-  l.stepsX = l.lampX + kSelLampW + (kNameGap - kLampGap);
+  l.laneW = laneW;
+  l.laneX = l.lampX + kSelLampW + (laneW > 0 ? 2.0f : 0.0f);
+  l.stepsX = l.laneX + (laneW > 0 ? laneW : 0.0f) + (kNameGap - kLampGap);
   l.rowW = l.stepsX + l.viewW;
   return l;
 }

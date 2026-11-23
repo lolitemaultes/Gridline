@@ -1,4 +1,5 @@
 #include "WorkerPool.h"
+#include "../core/ThreadName.h"
 #include "Denormals.h"
 #include <cstdlib>
 #include <thread>
@@ -52,7 +53,7 @@ void WorkerPool::ensureThreads(int count) {
   count = count < 0 ? 0 : count > kMaxThreads - 1 ? kMaxThreads - 1 : count;
   while (static_cast<int>(threads_.size()) < count) {
     int index = static_cast<int>(threads_.size()) + 1;
-    threads_.emplace_back([this, index] { loop(index); });
+    threads_.emplace_back([this, index] { gl::threads::setName("gl-audio-pool"); loop(index); });
   }
   spawned_.store(static_cast<int>(threads_.size()), std::memory_order_release);
 }
@@ -101,6 +102,8 @@ void WorkerPool::loop(int index) {
   for (;;) {
     sem_.wait();
     if (quit_.load()) return;
+    gl::threads::woke();  // K-142: CPU report
+    wakeups_.fetch_add(1, std::memory_order_relaxed);
     // Dekker-style handshake with run(): either this thread sees the job
     // closed, or run() sees it inside and waits for it to leave.
     inside_.fetch_add(1);

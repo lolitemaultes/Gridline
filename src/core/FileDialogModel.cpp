@@ -1,5 +1,6 @@
 // Gridline: the Open / Save dialog's model. See FileDialogModel.h.
 #include "FileDialogModel.h"
+#include "ThreadName.h"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -310,7 +311,7 @@ std::shared_ptr<const std::vector<Volume>> VolumeWatch::poll(double maxAge) {
     c->startedAt = now;
     const double started = now;
     try {
-      std::thread([c, started] {
+      std::thread([c, started] { gl::threads::setName("gl-filedialog");
         auto reader = gReader.load();
         auto v = std::make_shared<std::vector<Volume>>(reader ? reader() : detectVolumes());
         std::lock_guard<std::mutex> l2(c->mu);
@@ -543,7 +544,7 @@ FileKind kindOf(const std::string& name, bool isDir) {
     if (ends(e)) return FileKind::Audio;
   for (const char* e : {".mid", ".midi", ".rmi"})
     if (ends(e)) return FileKind::Midi;
-  for (const char* e : {".fst", ".fxp", ".fxb", ".vstpreset", ".aupreset", ".gllayer", ".gltrack", ".nki", ".sfz", ".sf2"})
+  for (const char* e : {".fst", ".fxp", ".fxb", ".vstpreset", ".aupreset", ".gllayer", ".gltrack", ".nki", ".sfz", ".sf2", ".sf3"})
     if (ends(e)) return FileKind::Preset;
   return FileKind::Other;
 }

@@ -894,6 +894,173 @@ void testAccentAutomation() {
   expect(songFromJson(songToJson(s), back) && back == s, "accent automation: saved and loaded losslessly");
 }
 
+// K-152 (0.7.8): swing automation moves the swing inside a pass: every cell of the groove grid plays
+// with the swing (and accent) the automation has where the cell starts, in playback and renders.
+// Projects without swing automation, and passes the automation holds still, play as before.
+void testSwingRamp() {
+  ObjectId ch = kNoId;
+  Song s = grooveSong(96, ch);
+  s.swing = 0.0f;
+  Pattern& p = s.patterns[0];
+  p.bars = 4;  // 64 sixteenths, 1536 ticks, one clip
+  p.steps[ch] = std::vector<uint8_t>(64, 0);
+  for (size_t i = 0; i < 64; ++i) p.steps[ch][i] = 100;
+  const Song plain = s;
+  AutomationClip a;
+  a.id = s.allocateId();
+  a.owner = kSongId;
+  a.index = static_cast<uint32_t>(SongParam::Swing);
+  a.points = {{0, 0.0f, 0, AutoShape::Curve}, {1536, 1.0f, 0, AutoShape::Curve}};  // a straight ramp, 0 to full
+  s.automations.push_back(a);
+  Clip ac;
+  ac.id = s.allocateId(), ac.kind = ClipKind::Automation, ac.source = a.id, ac.start = 0, ac.length = 1536, ac.track = 1;
+  s.playlist.push_back(ac);
+  auto evs = [&](const Song& song) {
+    ProgramBuilder b;
+    auto prog = b.build(song);
+    std::vector<NoteEv> out;
+    const int ci = song.channelIndex(ch);
+    if (prog && ci >= 0) out = prog->channels[static_cast<size_t>(ci)].song;
+    std::sort(out.begin(), out.end(), [](const NoteEv& x, const NoteEv& y) { return noteOnTick(x) < noteOnTick(y); });
+    return out;
+  };
+  auto ons = [&](const Song& song) {
+    std::vector<double> out;
+    for (const NoteEv& e : evs(song)) out.push_back(noteOnTick(e));
+    return out;
+  };
+  const std::vector<double> got = ons(s);
+  bool ok = got.size() == 64;
+  double worst = 0;
+  for (size_t i = 0; ok && i < 64; ++i) {
+    const double g = 24.0 * static_cast<double>(i);
+    // The off-beat of each pair starts late by half a step x the swing the ramp has at its own start.
+    const double want = i % 2 ? g + 12.0 * (g / 1536.0) : g;
+    worst = std::max(worst, std::fabs(got[i] - want));
+  }
+  ok = ok && worst < 0.01;
+  std::printf("# swing ramp: %zu onsets, worst error %.4f ticks; step 1 at %.3f, step 63 at %.3f\n", got.size(), worst,
+              got.size() == 64 ? got[1] : -1.0, got.size() == 64 ? got[63] : -1.0);
+  expect(ok, "swing ramp: every off-beat moves by the swing the automation has at its step, inside one pass");
+  bool rising = got.size() == 64;
+  for (size_t i = 3; rising && i < 64; i += 2) rising = got[i] - 24.0 * static_cast<double>(i) > got[i - 2] - 24.0 * static_cast<double>(i - 2);
+  expect(rising, "swing ramp: the swing grows step pair by step pair");
+
+  // The same ramp heard in a render: the first and last off-beats sound where the ramp puts them.
+  {
+    Song r = s;
+    r.patterns[0].steps[ch] = std::vector<uint8_t>(64, 0);
+    r.patterns[0].steps[ch][1] = 100;
+    r.patterns[0].steps[ch][61] = 100;
+    const double spt = 44100.0 * 60.0 / (120.0 * 96.0);
+    RenderOptions o;
+    const AudioBuffer buf = renderSong(r, o);
+    const long first = firstSound(buf);
+    long last = -1;
+    for (size_t i = static_cast<size_t>(1400.0 * spt); i < buf.frames && last < 0; ++i)
+      if (std::fabs(buf.at(0, i)) > 1e-5f) last = static_cast<long>(i);
+    const double g1 = 24.0, g61 = 24.0 * 61.0;
+    const double want1 = (g1 + 12.0 * g1 / 1536.0) * spt, want61 = (g61 + 12.0 * g61 / 1536.0) * spt;
+    std::printf("# swing ramp render: off-beats at %ld and %ld samples, want %.1f and %.1f (unswung %.1f)\n", first, last, want1, want61,
+                g61 * spt);
+    // (The instrument's first audible sample comes a few samples after its note starts: the same for both.)
+    expect(first >= 0 && last >= 0 && std::fabs(static_cast<double>(first) - want1) <= 4.0 && std::fabs(static_cast<double>(last) - want61) <= 4.0 &&
+               std::fabs(static_cast<double>(last - first) - (want61 - want1)) <= 1.0,
+           "swing ramp render: the off-beats sound where the automation puts them (their distance within a sample)");
+    RenderOptions b;
+    b.blockSize = 37;
+    expect(renderSong(r, b).data == buf.data, "swing ramp render: block-size invariant");
+  }
+  // Null tests: without swing automation nothing changes; a flat automation at the project's swing
+  // renders exactly as none; a muted automation clip plays the project's swing.
+  {
+    const auto base = evs(plain);
+    const auto direct = compilePatternChannel(plain, plain.patterns[0], ch);
+    bool same = base.size() == direct.size();
+    for (size_t i = 0; same && i < base.size(); ++i)
+      same = base[i].on == direct[i].on && base[i].onFrac == direct[i].onFrac && base[i].off == direct[i].off;
+    expect(same, "null: a song without swing automation plays the pattern exactly as compiled");
+    Song flat = s;
+    Song noAuto = plain;
+    flat.swing = noAuto.swing = 0.37f;
+    flat.automations.back().points = {{0, 0.37f, 0, AutoShape::Curve}, {1536, 0.37f, 0, AutoShape::Curve}};
+    RenderOptions o;
+    expect(renderSong(flat, o).data == renderSong(noAuto, o).data, "null: a flat swing automation at the project's swing renders bit for bit as none");
+    Song muted = s;
+    muted.playlist.back().muted = true;
+    expect(renderSong(muted, o).data == renderSong(plain, o).data, "null: a muted swing automation clip renders bit for bit as none");
+  }
+  // A groove that moves its first cell too stays in order under a ramp, and the accent ramps with it.
+  {
+    Song r = s;
+    r.swing = 0.5f;
+    r.groove.shape.cycle = 4;
+    r.groove.shape.timing = {0.25f, -0.2f, 0.5f, 0.1f};
+    r.groove.shape.velocity = {1.0f, 0.5f, 1.0f, 0.5f};
+    AutomationClip acc;
+    acc.id = r.allocateId();
+    acc.owner = kSongId;
+    acc.index = static_cast<uint32_t>(SongParam::GrooveAccent);
+    acc.points = {{0, 0.0f, 0, AutoShape::Curve}, {1536, 1.0f, 0, AutoShape::Curve}};
+    r.automations.push_back(acc);
+    Clip c2 = ac;
+    c2.id = r.allocateId(), c2.source = acc.id, c2.track = 2;
+    r.playlist.push_back(c2);
+    const auto e = evs(r);
+    bool ordered = e.size() == 64;
+    for (size_t i = 1; ordered && i < e.size(); ++i) ordered = noteOnTick(e[i]) >= noteOnTick(e[i - 1]);
+    expect(ordered, "swing ramp: a groove with a moved first cell keeps every step in order");
+    // Step 1 (accent about 0) keeps its velocity; step 61 (accent about 1) drops toward half.
+    const float v0 = 100.0f / 127.0f;
+    if (e.size() == 64)
+      std::printf("# accent ramp: velocities %.3f %.3f %.3f (written %.3f)\n", static_cast<double>(e[0].velocity), static_cast<double>(e[1].velocity),
+                  static_cast<double>(e[61].velocity), static_cast<double>(v0));
+    expect(e.size() == 64 && e[1].velocity > v0 * 0.98f && e[61].velocity < v0 * 0.55f && e[0].velocity == v0,
+           "accent ramp: the accents come in step by step through one pass");
+  }
+  // Undo, saving and a shared session.
+  {
+    Document d(plain);
+    d.editSong("swing ramp", [&](Song& x) {
+      x.automations.push_back(a);
+      x.playlist.push_back(ac);
+    });
+    expect(ons(d.song()) == got, "undo: the ramp added as one edit plays");
+    d.undo();
+    expect(ons(d.song()) == ons(plain), "undo: one undo step takes the ramp away");
+    Song back;
+    expect(songFromJson(songToJson(s), back) && back == s && ons(back) == got, "save: a project with a swing ramp loads and plays the same");
+  }
+  {
+    using namespace gl::collab;
+    using namespace sim;
+    Clock clock;
+    Net net(152);
+    Peer pa, pb;
+    pa.label = "Ann", pb.label = "Ben";
+    for (Peer* x : {&pa, &pb}) x->id = crypto::Identity::generate();
+    pa.doc.reset(plain);
+    pa.folder = tmpDir("k152_a");
+    pb.folder = tmpDir("k152_b");
+    std::string err;
+    pa.s = Session::create(pa.doc, config(pa.folder, pa.id, pa.label, &clock), &err);
+    if (pa.s) {
+      net.add(&pa);
+      pb.s = Session::join(pb.doc, config(pb.folder, pb.id, pb.label, &clock), ticketOf(*pa.s), &err);
+      pa.s->admitMember(memberOf(pb));
+      net.add(&pb);
+      net.connect(&pa, &pb);
+      settle(net, {&pa, &pb}, clock);
+      pa.doc.editSong("swing ramp", [&](Song& x) {
+        x.automations.push_back(a);
+        x.playlist.push_back(ac);
+      });
+      settle(net, {&pa, &pb}, clock);
+    }
+    expect(pa.s && ons(pb.doc.song()) == got, "collab: a swing ramp made on one computer swings the same on the other");
+  }
+}
+
 int main() {
   const std::string& tmp = gl::test::hermeticTestEnv("k151");
   const std::string root = (fs::path(tmp) / "presets").string();
@@ -911,5 +1078,6 @@ int main() {
   testFreeze();
   testSwingAutomation();
   testAccentAutomation();
+  testSwingRamp();
   return finish();
 }

@@ -27,7 +27,9 @@ struct ParamId;
 
 namespace gl::timeknob {
 
-enum class Unit { Ticks, Steps, Ms, Seconds };  // ticks: 1/192 beat; steps: sixteenth notes
+// ticks: 1/192 beat; steps: sixteenth notes. K-240: Beats (a length in beats), Hz (a rate: its
+// magnets are the note values at the song's tempo, one cycle per note).
+enum class Unit { Ticks, Steps, Ms, Seconds, Beats, Hz };
 inline constexpr double kPpq = 192;
 
 struct Spec {
@@ -42,8 +44,14 @@ std::vector<double> noteTicks(double lo, double hi);
 // Round milliseconds between lo and hi: the 1, 2, 5 series (1, 2, 5, 10, 20, 50, 100 ... 5000).
 std::vector<double> roundMs(double lo, double hi);
 
-// The time knob of parameter `param` of plugin `type`, or nullopt when it is not a delay time.
-std::optional<Spec> forParam(const std::string& type, int param);
+// The time knob of parameter `param` of plugin `type`, or nullopt when it is not a time control.
+// K-240: besides the delay times named for K-230, every built-in plugin's time control is one,
+// found from its descriptor (classify): milliseconds and seconds (round values), lengths in beats,
+// steps or ticks (note values) and slow rates in Hz (note values at `tempo`). Installed plugins
+// keep their own knobs.
+std::optional<Spec> forParam(const std::string& type, int param, double tempo = 120.0);
+// K-240: the time knob a descriptor stands for (nullopt: not a time control).
+std::optional<Spec> classify(const ParamDesc& d, double tempo = 120.0);
 // The same for a song parameter id (a channel generator or a mixer slot effect).
 std::optional<Spec> forParam(const Song& song, ParamId pid);
 

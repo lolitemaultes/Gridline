@@ -205,31 +205,108 @@ bool writeFileDurable(const std::string& path, const std::string& text, std::str
 }
 
 // ---------------------------------------------------------------- oplog ----
+// The file side of a log. In async mode (FRZ-1118 (0.7.8)) only the worker touches it.
+struct OpLog::Disk {
+  std::string dir;
+  std::FILE* f = nullptr;
+  int gen = 0;
+  bool dirty = false;
+  std::string logPath(int g) const { return (fs::path(dir) / ("oplog." + std::to_string(g) + ".bin")).string(); }
+  void close() {
+    if (f) {
+      syncFile(f);
+      std::fclose(f);
+      f = nullptr;
+    }
+  }
+  bool openLog(int g, bool truncateAt, uint64_t at) {
+    close();
+    const std::string p = logPath(g);
+    std::error_code ec;
+    if (truncateAt) fs::resize_file(fs::path(p), at, ec);
+    f = fopenPath(p.c_str(), "ab");
+    gen = g;
+    return f != nullptr;
+  }
+  bool append(const std::string& rec) {
+    if (!f) return false;
+    if (std::fwrite(rec.data(), 1, rec.size(), f) != rec.size()) return false;
+    std::fflush(f);
+    dirty = true;
+    return true;
+  }
+  void sync() {
+    if (!dirty || !f) return;
+    syncFile(f);
+    dirty = false;
+  }
+  // Steps 1-3 of a compaction (see OpLog::compact). The next log's size in bytes, or -1 when it
+  // failed before the snapshot named the next log.
+  int64_t compact(Json snapshot, const std::vector<std::string>& keep, std::string* err) {
+    if (dir.empty()) return -1;
+    const int next = gen + 1;
+    // 1. the next log with the kept records, synced
+    const std::string np = logPath(next);
+    std::FILE* nf = fopenPath(np.c_str(), "wb");
+    if (!nf) {
+      if (err) *err = "cannot write " + np;
+      return -1;
+    }
+    uint64_t nbytes = 0;
+    for (const auto& r : keep) {
+      std::string rec;
+      putU32(rec, static_cast<uint32_t>(r.size()));
+      putU32(rec, crc32(r.data(), r.size()));
+      rec += r;
+      if (std::fwrite(rec.data(), 1, rec.size(), nf) != rec.size()) {
+        std::fclose(nf);
+        std::error_code ec;
+        fs::remove(fs::path(np), ec);
+        if (err) *err = "cannot write " + np;
+        return -1;
+      }
+      nbytes += rec.size();
+    }
+    syncFile(nf);
+    std::fclose(nf);
+    // 2. the snapshot naming it (atomic rename) - from here on the new state is the valid one
+    snapshot.object["gen"] = Json::makeNumber(next);
+    if (!writeFileDurable((fs::path(dir) / "snapshot.json").string(), jsonCompact(snapshot), err)) {
+      std::error_code ec;
+      fs::remove(fs::path(np), ec);
+      return -1;
+    }
+    // 3. the old log goes
+    const int old = gen;
+    close();
+    std::error_code ec;
+    fs::remove(fs::path(logPath(old)), ec);
+    f = fopenPath(np.c_str(), "ab");
+    gen = next;
+    dirty = false;
+    return static_cast<int64_t>(nbytes);  // (f null: the next log could not be opened again)
+  }
+};
+
 OpLog::~OpLog() { close(); }
 
-std::string OpLog::logPath(int gen) const { return (fs::path(dir_) / ("oplog." + std::to_string(gen) + ".bin")).string(); }
-
 void OpLog::close() {
-  if (f_) {
-    syncFile(f_);
-    std::fclose(f_);
-    f_ = nullptr;
+  if (!d_) return;
+  open_ = false;
+  if (worker_) {
+    std::shared_ptr<Disk> d = d_;
+    worker_->post([d] { d->close(); });
+    worker_->drain(SerialWorker::kLeaveWaitMs);  // a drive that stopped answering is left behind
+  } else {
+    d_->close();
   }
-}
-
-bool OpLog::openLog(int gen, bool truncateAt, uint64_t at) {
-  close();
-  const std::string p = logPath(gen);
-  std::error_code ec;
-  if (truncateAt) fs::resize_file(fs::path(p), at, ec);
-  f_ = fopenPath(p.c_str(), "ab");
-  gen_ = gen;
-  return f_ != nullptr;
+  d_.reset();
 }
 
 bool OpLog::open(const std::string& dir, Json& snapshot, std::vector<std::string>& records, std::string* err) {
   close();
-  dir_ = dir;
+  d_ = std::make_shared<Disk>();
+  d_->dir = dir_ = dir;
   records.clear();
   snapshot = Json();
   truncated_ = 0;
@@ -252,7 +329,7 @@ bool OpLog::open(const std::string& dir, Json& snapshot, std::vector<std::string
     if (n == "snapshot.json.tmp") fs::remove(e.path(), ec);
   }
   std::string data;
-  const std::string lp = logPath(gen);
+  const std::string lp = d_->logPath(gen);
   uint64_t good = 0;
   bytes_ = 0;
   records_ = 0;
@@ -271,79 +348,64 @@ bool OpLog::open(const std::string& dir, Json& snapshot, std::vector<std::string
     records_ = records.size();
     bytes_ = good;
   }
-  if (!openLog(gen, truncated_ > 0, good)) {
+  if (!d_->openLog(gen, truncated_ > 0, good)) {
     if (err) *err = "cannot open the collaboration log in " + dir;
     return false;
   }
+  gen_ = gen;
+  open_ = true;
   return true;
 }
 
 bool OpLog::append(const std::string& payload) {
-  if (!f_) return false;
+  if (!open_ || !d_) return false;
   std::string rec;
   rec.reserve(payload.size() + 8);
   putU32(rec, static_cast<uint32_t>(payload.size()));
   putU32(rec, crc32(payload.data(), payload.size()));
   rec += payload;
-  if (std::fwrite(rec.data(), 1, rec.size(), f_) != rec.size()) return false;
-  std::fflush(f_);
-  bytes_ += rec.size();
+  if (worker_) {
+    std::shared_ptr<Disk> d = d_;
+    worker_->post([d, rec = std::move(rec)] { d->append(rec); });
+    bytes_ += payload.size() + 8;
+  } else {
+    if (!d_->append(rec)) return false;
+    bytes_ += rec.size();
+  }
   ++records_;
-  dirty_ = true;
   return true;
 }
 
 void OpLog::sync() {
-  if (!dirty_ || !f_) return;
-  syncFile(f_);
-  dirty_ = false;
+  if (!d_) return;
+  if (worker_) {
+    std::shared_ptr<Disk> d = d_;
+    worker_->post([d] { d->sync(); });
+  } else {
+    d_->sync();
+  }
 }
 
 bool OpLog::compact(Json snapshot, const std::vector<std::string>& keep, std::string* err) {
-  if (dir_.empty()) return false;
-  const int next = gen_ + 1;
-  // 1. the next log with the kept records, synced
-  const std::string np = logPath(next);
-  std::FILE* nf = fopenPath(np.c_str(), "wb");
-  if (!nf) {
-    if (err) *err = "cannot write " + np;
-    return false;
+  if (dir_.empty() || !d_) return false;
+  if (worker_) {
+    // Handed over: the worker writes the next log and the snapshot in order with the appends.
+    uint64_t nbytes = 0;
+    for (const auto& r : keep) nbytes += r.size() + 8;
+    std::shared_ptr<Disk> d = d_;
+    worker_->post([d, snapshot = std::move(snapshot), keep] { d->compact(snapshot, keep, nullptr); });
+    ++gen_;
+    bytes_ = nbytes;
+    records_ = keep.size();
+    return true;
   }
-  uint64_t nbytes = 0;
-  for (const auto& r : keep) {
-    std::string rec;
-    putU32(rec, static_cast<uint32_t>(r.size()));
-    putU32(rec, crc32(r.data(), r.size()));
-    rec += r;
-    if (std::fwrite(rec.data(), 1, rec.size(), nf) != rec.size()) {
-      std::fclose(nf);
-      std::error_code ec;
-      fs::remove(fs::path(np), ec);
-      if (err) *err = "cannot write " + np;
-      return false;
-    }
-    nbytes += rec.size();
-  }
-  syncFile(nf);
-  std::fclose(nf);
-  // 2. the snapshot naming it (atomic rename) - from here on the new state is the valid one
-  snapshot.object["gen"] = Json::makeNumber(next);
-  if (!writeFileDurable((fs::path(dir_) / "snapshot.json").string(), jsonCompact(snapshot), err)) {
-    std::error_code ec;
-    fs::remove(fs::path(np), ec);
-    return false;
-  }
-  // 3. the old log goes
-  const int old = gen_;
-  close();
-  std::error_code ec;
-  fs::remove(fs::path(logPath(old)), ec);
-  f_ = fopenPath(np.c_str(), "ab");
-  gen_ = next;
-  bytes_ = nbytes;
+  const int64_t nbytes = d_->compact(std::move(snapshot), keep, err);
+  if (nbytes < 0) return false;
+  gen_ = d_->gen;
+  bytes_ = static_cast<uint64_t>(nbytes);
   records_ = keep.size();
-  dirty_ = false;
-  return f_ != nullptr;
+  open_ = d_->f != nullptr;
+  return open_;
 }
 
 // -------------------------------------------------------------- message ----

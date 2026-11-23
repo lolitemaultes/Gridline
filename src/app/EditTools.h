@@ -14,7 +14,7 @@ namespace gl {
 class App;
 
 enum class NoteTool { None = 0, Quantize, Chop, Strum, Arpeggiate, Flam, Articulate, Randomize, Lfo, ScaleLevels, Limit, Riff,
-                      Properties, Count };
+                      Properties, Lengths, Count };  // Lengths: GitHub #74
 const char* noteToolTitle(NoteTool t);
 void openNoteTool(App& a, NoteTool t);
 bool noteToolOpen();

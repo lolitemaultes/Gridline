@@ -1,5 +1,6 @@
 // Gridline - drum kits loaded as drum pad channels (DrumKitUi.h).
 #include "DrumKitUi.h"
+#include "../core/ThreadName.h"
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -267,7 +268,7 @@ void load(App& a, const std::string& path, ObjectId replace, int insertAt) {
   j->path = path, j->replace = replace, j->insertAt = insertAt;
   job() = j;
   a.notify(std::string(i18n::tr("Reading the drum kit ")) + fs::u8path(path).filename().u8string());
-  std::thread([j] {
+  std::thread([j] { gl::threads::setName("gl-drumkit");
     std::string err;
     j->ok = readAny(j->path, j->kit, j->hold, &err);
     if (j->ok) j->pads = h2::kitToPads(j->kit);
@@ -298,7 +299,7 @@ const Summary* summary(const std::string& path) {
     }
     auto j = std::make_shared<SummaryJob>();
     it = m.emplace(path, j).first;
-    std::thread([j, path] {
+    std::thread([j, path] { gl::threads::setName("gl-drumkit");
       h2::Kit kit;
       std::string err;
       Summary& s = j->s;

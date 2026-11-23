@@ -9,6 +9,7 @@
 // bar, the mapping drawer, the waveform bands and the shared helpers; the decks
 // are in platter_deck_ui.cpp, the mixer in platter_mixer_ui.cpp.
 #include "platter_ui.h"
+#include "../../core/ThreadName.h"
 #include "../../app/Keys.h"
 #include <algorithm>
 #include <chrono>
@@ -334,7 +335,7 @@ std::shared_ptr<const Bands> bandsFor(const SamplePtr& s, const std::string& pat
   if (cache.size() > 16) cache.erase(cache.begin());
   auto b = std::make_shared<Bands>();
   cache[key] = b;
-  std::thread([s, b] { computeBands(s, b); }).detach();
+  std::thread([s, b] { gl::threads::setName("gl-platter-band"); computeBands(s, b); }).detach();
   return b;
 }
 
@@ -951,7 +952,7 @@ void devJog(const Ed& e, const LiveView* lv) {
     std::fclose(fp);
   }
   const uint32_t dev = hub::deviceId(e.m.map.device);
-  std::thread([msgs, dev] {
+  std::thread([msgs, dev] { gl::threads::setName("gl-platter-midi");
     const auto t0 = std::chrono::steady_clock::now();
     for (const Msg& m : msgs) {
       std::this_thread::sleep_until(t0 + std::chrono::microseconds(static_cast<int64_t>(m.ms * 1000)));

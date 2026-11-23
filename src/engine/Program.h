@@ -19,6 +19,7 @@
 #include "../core/Meter.h"
 #include "../core/Fades.h"
 #include "../core/NoteBend.h"
+#include "../core/NoteVibrato.h"
 #include "../core/Params.h"
 #include "../core/Song.h"
 #include "DepthStage.h"
@@ -55,11 +56,15 @@ struct NoteEv {
   std::shared_ptr<const std::vector<BendPoint>> bend;
   // K-144: the note's pressure and timbre lanes (null = none), the same form (Note::pressure / timbre).
   std::shared_ptr<const std::vector<BendPoint>> pressure, timbre;
+  // K-262: the note's vibrato (depth 0 = none), added to the bend line; copied into the bend slot.
+  NoteVibrato vib;
   // K-76: the note's tracker cells (null = none); props.tracker points into them.
   std::shared_ptr<const std::vector<uint8_t>> tracker;
   // grid-1118: the playlist track of the arrangement clip it came from (song events only; -1: none). A
   // track whose clip grid clip overrides the arrangement skips it (AudioEngine::setSessionOverArrangement).
   int16_t track = -1;
+  // K-348: a program change (0..127) sent to the instrument just before the note (-1: none).
+  int16_t program = -1;
 };
 inline constexpr uint8_t kNoteSlide = 1;  // glides sounding notes instead of starting one
 inline constexpr uint8_t kNotePorta = 2;  // starts at the previous note's pitch and glides
@@ -131,6 +136,8 @@ struct ChannelRuntime {
     int count = 0;
     BendPoint pts[bend::kMaxPoints];
     double sent = 0;  // semitones last sent (glide target)
+    NoteVibrato vib;  // K-262: the note's vibrato (bend slots only), added to the line
+    double len = 0;   // K-262: the note's length in ticks (the vibrato's fades)
   };
   static constexpr int kBendSlots = 32;
   BendSlot bendSlots[kBendSlots];
@@ -192,6 +199,12 @@ struct ChannelRuntime {
   layer::PickState layerPick;  // K-169: cycle / no-repeat state of a layer's live notes (audio thread)
   // K-64 (audio thread): an idle channel left outL / outR out of this block: its output is silence.
   bool outZero = false;
+  // K-142 (0.7.8, audio thread): the block before left this idle channel out (K-64) and nothing
+  // ran it since: it is still idle unless an event came.
+  bool idleHeld = false;
+  // K-142 (0.7.8 follow-up, audio thread): how the last block left it: 0 it ran (or a muted rest),
+  // 1 at rest (K-277), 2 idle (K-64). AudioEngine::sleepGraph repeats that way while nothing changes.
+  uint8_t restWay = 0;
   // K-277 (audio thread): Rest silent instruments. Frames in a row the instrument was silent
   // (below kRestFloor) with no note and no event; resting: left out of the blocks until a note, an
   // event, a transport jump or an open editor wakes it; mutedRest: a muted channel at rest (its
@@ -199,9 +212,15 @@ struct ChannelRuntime {
   // sounded without being given anything (it makes sound on its own: never rests).
   int64_t quietFrames = 0;
   bool resting = false, mutedRest = false, selfSound = false;
+  // GitHub #66 (audio thread): the quiet frames counted so far held faint sound (above kRestFloor,
+  // at or below kRestFaint), so the longer kRestHoldFaint applies.
+  bool faintQuiet = false;
   // K-277: blocks left out / processed while the channel may rest (tests, the interface).
   std::atomic<uint64_t> restBlocks{0}, runBlocks{0};
   std::atomic<bool> restingUi{false};  // (relaxed) resting now
+  // K-142 (0.7.8): blocks the instrument's process() ran while the CPU report counts
+  // (AudioEngine::setCallCounting); untouched otherwise.
+  std::atomic<uint64_t> dspCalls{0};
   // K-277 (UI thread writes): its plugin's own editor is open (the editor may play notes itself).
   std::atomic<bool> editorOpen{false};
   // This block's output after the strip gains (the mixer pulls it).
@@ -215,6 +234,14 @@ struct NoteFxRuntime {
   std::atomic<int> position{-1};  // editors: current step
 };
 
+// K-142 (0.7.8 close): counts every hand hold and release of an automation target
+// (ProgramBuilder::holdAutomation and the releases): the audio thread sees a new hold or release while
+// it leaves a stopped block's link evaluation out (AudioEngine::processBlock).
+inline std::atomic<uint64_t>& automationHoldChanges() {
+  static std::atomic<uint64_t> n{0};
+  return n;
+}
+
 // Smoothing state and live value of one internal controller link.
 struct LinkRuntime {
   double value = -1;              // smoothed normalized target value (-1 = not started)
@@ -225,12 +252,59 @@ struct LinkRuntime {
   // while `held`, its automation lanes play `heldValue` (normalized: the control's own value) instead.
   std::atomic<bool> held{false};
   std::atomic<float> heldValue{0};
+  // K-247 (audio thread only): the normalized value last applied to the target and the control block
+  // it was applied in (AudioEngine's control stamp), so the board's LFOs move around a value a
+  // controller link or automation set in the same block.
+  double appliedNorm = 0;
+  uint64_t appliedStamp = 0;
+  // K-247 (UI): LFOs move the target. `display` is then the moved value; `baseDisplay` the value they
+  // move around (the knob's own, or what a link or automation set), in plugin units.
+  std::atomic<bool> lfoMoved{false};
+  std::atomic<float> baseDisplay{0};
+};
+
+// K-247: the running state of one board LFO, kept from build to build by its id.
+struct LfoRuntime {
+  // (audio thread)
+  double phase = 0;        // running phase (cycles, 0..1) of Free and Each note LFOs, and while stopped
+  uint64_t cycle = 0;      // whole cycles run (random shapes)
+  double smooth = 0;       // the smoothed output
+  double fade = 0;         // since the last restart: bars (tempo synced) or seconds
+  double fadeStart = 0;    // On play: the tick the play started from
+  double lastTick = -1;
+  bool started = false, wasPlaying = false;
+  // (UI) the output (-1..1, or 0..1 Up only) and the phase of the last control block.
+  std::atomic<float> display{0};
+  std::atomic<float> phaseUi{0};
+  std::atomic<bool> running{false};
+  // 0.7.8 (UI): Chaos: where on its walk (cycles); Random: the trigger number of the value now.
+  std::atomic<double> xUi{0};
+  // 0.7.8 (audio thread): Random, Note trigger: the notes counted since the start.
+  uint64_t notes = 0;
+  // Set by a note of the channel an Each note LFO follows (or by a test): the next block restarts it.
+  std::atomic<uint32_t> restartPending{0};
+};
+// K-247: the smoothing state of one LFO link (kept by LFO id and target).
+struct LfoLinkRuntime {
+  double value = 0;
+  bool started = false;
 };
 
 struct EffectRuntime {
   std::string type;
   std::unique_ptr<Effect> fx;
   int64_t quiet = 0;  // K-64 (audio thread): frames in a row of exact silence in and out
+  // GitHub #66 (audio thread): a hosted effect (ProgSlot::hostedRest) fed exact silence: frames in
+  // a row its output stayed inaudible (AudioEngine::kRestFaint); resting: left out until sound
+  // comes in, the transport starts or its editor is in use; selfSound: it sounded from silence
+  // with nothing coming in (it makes sound by itself: never rests).
+  int64_t faintFrames = 0;
+  bool resting = false, selfSound = false;
+  std::atomic<uint64_t> restBlocks{0};  // blocks left out at rest (tests)
+  std::atomic<uint64_t> dspCalls{0};    // K-142: blocks it ran while the CPU report counts
+  // GitHub #66 (UI thread writes): its plugin's own editor is in use (open, and under the pointer
+  // or holding the keyboard, or Gridline cannot tell).
+  std::atomic<bool> editorOpen{false};
   bool warmed = false;  // UI thread: the builder ran warmUp on it (never read by the audio thread)
   std::atomic<float> meter{0};
   std::atomic<float> input{-120};
@@ -260,6 +334,7 @@ struct MixerRuntime {
   float curXL = 0, curXR = 0;    // Stage placement cross gains (left in -> right out, right in -> left out), smoothed
   bool sent = false;  // (audio thread) processed and audible this block (destinations pull its output)
   int64_t quiet = 0;  // K-64 (audio thread): frames in a row of exact silence through the strip
+  bool hushed = false;  // K-142 (0.7.8 follow-up, audio thread): the last block left the track out whole (trackHushed)
   CpuStat cpu;        // inputs, strip and sends (slots count separately)
   // Audio input (J-8): input level since the UI last read it, and the disk
   // recording capture (allocated on the UI thread while the track is armed).
@@ -432,6 +507,9 @@ struct ProgChannel {
   std::vector<ProgNoteFx> noteFx;  // note processors, in order
   mutable PluginState live;    // instrument state with linked parameters applied (audio thread)
   bool modded = false;         // a link targets an instrument parameter
+  // K-142 (0.7.8, audio thread): a link, automation or the host bank changed a value of `live`
+  // since the channel's last block (a resting instrument wakes for it; runChannel clears it).
+  mutable bool liveMoved = false;
   bool controller = false;     // instrument has control outputs
   bool stripLinked = false;    // a link drives volume, pan or mute
   mutable float modVolume = 0.78f, modPan = 0;  // (audio thread)
@@ -493,6 +571,12 @@ struct ProgSlot {
   // K-64: realtime playback leaves this effect out once this many frames in a row were exact silence
   // in and out, until sound comes again (0: it always runs). See restSeconds() in Program.cpp.
   int restFrames = 0;
+  // GitHub #66: a hosted plugin (not a send, return, side input or controller) that may rest while
+  // the transport is stopped, its input is silence and its output stays inaudible.
+  bool hostedRest = false;
+  // GitHub #66: a built-in effect that rests by the same rule (restsWhenStopped(); hostedRest is
+  // set too). A hosted one asks its plugin (Effect::restsWhenFaint).
+  bool builtinRest = false;
   int sendTo = -1;           // send effects: destination mixer index
   int busSend = -1;          // audio bus written by a bus send
   int busRecv = -1;          // audio bus read by a bus return
@@ -531,6 +615,10 @@ struct ProgMixer {
   mutable StripEqSettings eq;  // strip EQ (MixerTrack::eqGain/eqFreq/eqQ); linked bands change it (audio thread)
   mutable float depth = 0;     // Stage distance (MixerTrack::depth); a link changes it (audio thread)
   mutable float focus = 0;     // Stage focus (MixerTrack::focus); a link changes it (audio thread)
+  mutable float macroLive[kLayerMacros] = {};  // K-245: the track's macro knobs (automation and links move them)
+  // K-142 (0.7.8 follow-up): the indices of `slots` that hold an effect (a runtime): the rest are
+  // empty slots (most of them), which the graph at rest need not walk.
+  std::vector<uint16_t> filledSlots;
   mutable float xlr = 0, xrl = 0;  // Stage placement law: cross gains (left in -> right out, right in -> left out)
   bool silent = false;      // muted, or silenced by another track's solo
   bool soloSilent = false;  // silenced by another track's solo
@@ -582,10 +670,13 @@ struct ProgLink {
     ChanMacro,                     // K-169: a layer's macro (param = the macro)
     MixDepth,                      // Stage distance (MixerTrack::depth)
     MixFocus,                      // Stage focus (MixerTrack::focus)
-    ChanSustain                    // the channel's sustain pedal (ChannelParam::Sustain)
+    ChanSustain,                   // the channel's sustain pedal (ChannelParam::Sustain)
+    MixMacro,                      // K-245: a mixer track's macro (param = the macro)
+    LfoSetting                     // K-247: a board LFO's own setting (fx = the LFO, param = lfo::LfoParam)
   };
   // source: a channel instrument (srcChannel) or a mixer slot (srcMixer, srcSlot); K-169: a
-  // layer's macro (srcChannel = the layer, srcMacro = the macro)
+  // channel's macro (srcChannel = the channel, srcMacro = the macro); K-245: a mixer track's macro
+  // (srcMixer = the track, srcMacro = the macro)
   int srcChannel = -1, srcMixer = -1, srcSlot = -1, output = 0, srcMacro = -1;
   Kind kind = ChanPlugin;
   int chan = -1, mixer = -1, slot = -1, fx = -1, param = -1;
@@ -595,6 +686,58 @@ struct ProgLink {
   ModCurve curve = ModCurve::Linear;
   Expr formula;     // ModCurve::Formula; variables: input, base, t, beat
   std::shared_ptr<LinkRuntime> rt;
+  // K-247: its source is a macro an LFO moves: applied in the LFO pass (Program::lfoOps), after that
+  // LFO, instead of the first pass over the links.
+  bool late = false;
+};
+
+// K-247: a board LFO compiled for the audio thread (Song::lfos).
+struct ProgLfo {
+  ObjectId id = kNoId;
+  bool on = true;
+  LfoShape shape = LfoShape::Sine;
+  float pulseWidth = 0.5f;
+  int randomSteps = 4;
+  uint32_t seed = 1;
+  std::shared_ptr<const std::array<float, 512>> table;  // Drawn: one cycle (built on the UI thread)
+  bool tempoSync = true;
+  int rateKind = 0;
+  float fadeIn = 0;
+  bool unipolar = false;
+  LfoRestart restart = LfoRestart::OnPlay;
+  int noteChannel = -1;  // Each note: Program channel index
+  // 0.7.8: Chaos and Random (SongLfo::kind and their settings). A Random source's trigger is compiled
+  // to tempoSync / restart (Tempo: synced, On play; Hz: Free; Note: Each note; Roll: none).
+  LfoKind kind = LfoKind::Lfo;
+  RandomTrigger trigger = RandomTrigger::Tempo;
+  bool centred = false;
+  int quantise = 0;
+  uint32_t roll = 0;
+  // Its own settings (lfo::LfoParam order: depth, offset, phase, smooth, rate Hz, rate note,
+  // character), live: links and automation write them (applyLinkValue, LfoSetting).
+  mutable float live[7] = {1, 0, 0, 0, 1, 5, 0.5f};
+  mutable float value = 0;  // this control block's output
+  std::shared_ptr<LfoRuntime> rt;
+};
+// K-247: one LFO link of a target.
+struct ProgLfoLink {
+  int lfo = 0;  // index into Program::lfos
+  float amount = 0, min = 0, max = 1, smoothMs = 0;
+  uint8_t mode = kModAround, direction = kModBothWays;
+  bool invert = false;
+  ModCurve curve = ModCurve::Linear;
+  std::shared_ptr<LfoLinkRuntime> rt;
+};
+// K-247: a parameter the board's LFOs move, with all its LFO links (applied once per block, added up).
+struct ProgLfoTarget {
+  ProgLink target;  // target fields and the target's link runtime
+  std::vector<ProgLfoLink> links;
+};
+// K-247: one step of the LFO pass, in an order that lets every value pass on in the same block.
+struct ProgLfoOp {
+  enum Kind : uint8_t { Eval, Target, Late };
+  Kind kind = Eval;
+  int index = 0;  // Program::lfos / lfoTargets / links
 };
 
 // PH-09: a host macro linked to a parameter (plugin build).
@@ -727,6 +870,11 @@ struct Program {
   int outputLatency = 0;  // samples from the transport to the master output (PDC on); renders skip them
   std::vector<std::shared_ptr<PdcDelay>> pdcLines;  // owners of the delay lines the inputs use
   std::vector<ProgLink> links;  // internal controller links
+  // K-247: the LFO board: its LFOs (song order), the parameters they move, and the pass that runs
+  // them after the links and automation (empty: no LFOs, the links run exactly as before).
+  std::vector<ProgLfo> lfos;
+  std::vector<ProgLfoTarget> lfoTargets;
+  std::vector<ProgLfoOp> lfoOps;
   // The Stage (Song::panLaw, Song::stage; engine/DepthStage.h).
   int panLaw = 0;             // 0 Balance, 1 Constant power, 2 Stage placement
   // K-224: the Stage rooms (Song::stage, Song::stageRooms), never empty; ProgMixer::room indexes it.
@@ -737,7 +885,8 @@ struct Program {
   std::vector<ProgAutoLane> autos;
   TempoMap tempoMap, flatMap;
   // Links and automation are evaluated on a fixed control-block grid.
-  bool controlGrid() const { return !links.empty() || !autos.empty() || hasPatternAutos || hasMacros || hasHostBank; }
+  // (0.7.8: lfoOps, not lfos: a Chaos or Random source that moves nothing is not run, see compileLfoPass)
+  bool controlGrid() const { return !links.empty() || !autos.empty() || hasPatternAutos || hasMacros || hasHostBank || !lfoOps.empty(); }
   // PH-09: host macros (index = macro) and whether any is linked.
   std::vector<ProgMacro> macros;
   bool hasMacros = false;
@@ -794,6 +943,11 @@ struct Program {
 // sees it. Installed plugins are never run here; types that need no warm-up are left alone.
 void warmUpBuiltin(Generator& g, const std::string& type, const PluginState& state, const ChannelAux& aux, double sampleRate);
 void warmUpBuiltin(Effect& fx, const std::string& type, const PluginState& state, const ChannelAux& aux, double sampleRate);
+// K-142 (0.7.8, tests): the engine's resting rules for a built-in effect: K-64, seconds of exact
+// silence in and out before realtime playback leaves it out (0: never by that rule); GitHub #66,
+// whether it rests by the faint rule as the engine's own (without asking Effect::restsWhenFaint).
+double effectRestSeconds(const PluginState& state);
+bool effectRestsWhenStopped(const std::string& type);
 
 class ProgramBuilder {
  public:
@@ -887,6 +1041,11 @@ class ProgramBuilder {
   // Live value (plugin units) of a parameter driven by an internal controller
   // link, as last computed by the audio thread. False when not linked/running.
   bool modulatedValue(ParamId id, double& value) const;
+  // K-247: the value the board's LFOs move `id` to (plugin units), as last computed. False when no
+  // LFO moves it (or it has not run yet).
+  bool lfoValue(ParamId id, double& value) const;
+  // K-247: a board LFO's running state (output, phase), nullptr when absent.
+  std::shared_ptr<LfoRuntime> lfoRuntime(ObjectId lfo) const;
   // Latest output (0..1) of a controller, for editors and meters. 0 when absent.
   float controllerOutput(ObjectId owner, int slot, int output) const;
 
@@ -909,13 +1068,20 @@ class ProgramBuilder {
   void adoptPreloaded(ProgramBuilder&& from);
 
  private:
+  // K-247: the LFO links grouped by target and the LFO pass's order (Program::lfoTargets, lfoOps);
+  // marks the links that must run after an LFO (ProgLink::late).
+  void compileLfoPass(const Song& song, Program& prog, std::map<uint64_t, std::shared_ptr<LinkRuntime>>& linkRts,
+                      std::map<std::pair<ObjectId, uint64_t>, std::shared_ptr<LfoLinkRuntime>>& lfoLinkRts);
   std::map<ObjectId, std::shared_ptr<ChannelRuntime>> channels_;
   std::map<ObjectId, std::shared_ptr<MixerRuntime>> mixers_;
   std::map<ObjectId, std::shared_ptr<depth::RoomTap>> roomTaps_;  // the Stage room sends' delay lines
   std::map<ObjectId, std::shared_ptr<depth::RoomEarly>> roomEarly_;
   std::map<std::pair<ObjectId, int>, std::shared_ptr<EffectRuntime>> effects_;
+  std::unordered_map<uint64_t, std::shared_ptr<EffectRuntime>> effectByUid_;  // 0.7.8: the same runtimes by EffectSlot::uid
   std::map<std::pair<ObjectId, int>, std::shared_ptr<NoteFxRuntime>> noteFx_;
   std::map<uint64_t, std::shared_ptr<LinkRuntime>> links_;  // by target ParamId
+  std::map<ObjectId, std::shared_ptr<LfoRuntime>> lfos_;    // K-247: by LFO id
+  std::map<std::pair<ObjectId, uint64_t>, std::shared_ptr<LfoLinkRuntime>> lfoLinks_;  // K-247: by (LFO, target)
   std::map<ObjectId, SamplePtr> frozenChannels_, frozenMixers_;  // K-87
   std::set<ObjectId> unloadedChannels_, asleepChannels_;          // K-87
   double sampleRate_ = 44100.0;

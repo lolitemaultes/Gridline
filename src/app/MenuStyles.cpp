@@ -37,6 +37,7 @@
 #include "FreezeUi.h"
 #include "../core/MenuParity.h"
 #include "../engine/ClipOps.h"
+#include "RenderSheetUi.h"
 #include <set>
 
 namespace gl {
@@ -186,6 +187,7 @@ const md::Menu& tracksRecordDef() {
 const md::Menu& mixDef() {
   static const md::Menu m = {
       md::toggle(N_("Mixer"), "view.mixer", [](App& a) { return &a.showMixer; }),
+      md::toggle(N_("LFO board"), "view.lfoBoard", [](App& a) { return &a.showLfoBoard; }),  // K-247
       md::toggle(N_("Stage"), "view.stage", [](App& a) { return &a.showStage; }).only([](App& a) { return !logicplug::active(a); }),  // R05-18
       md::toggle(N_("Master chain"), nullptr, [](App& a) { return &a.showMaster; }),
       md::toggle(N_("Performance"), nullptr, [](App& a) { return &a.showPerformance; }),
@@ -252,6 +254,13 @@ const md::Menu& trackDef() {
       md::submenu(N_("New instrument track"), {md::provider([](App& a) { addChannelMenu(a); })}),
       md::item(N_("New track with the same settings"), "track.duplicate", [](App& a) { tracksNewSameSettings(a); })
           .when([](App& a) { return static_cast<int>(a.doc.song().tracks.size()) < kMaxPlaylistTracks; }),
+      // The track header menu's rows, for the selected track.
+      md::item(N_("Duplicate without notes"), [](App& a) { menus::trackDuplicateWithoutNotes(a, currentTrack(a)); })
+          .when([](App& a) { return static_cast<int>(a.doc.song().tracks.size()) < kMaxPlaylistTracks; })
+          .tip(N_("A copy of the track with its instrument, effects and settings, and no clips or notes")),
+      md::item(N_("Copy to a new pattern"), [](App& a) { menus::trackCopyToNewPattern(a, currentTrack(a)); })
+          .when([](App& a) { return menus::trackCanCopyToNewPattern(a, currentTrack(a)); })
+          .tip(N_("A new pattern holding just this track's notes and steps from its clip, placed on the track where that clip is")),
       md::item(N_("New mixer track"),
                [](App& a) {
                  const ObjectId id = a.doc.addMixerTrack();
@@ -272,6 +281,7 @@ const md::Menu& trackDef() {
           .tip(N_("Renders the track's instrument or audio once and unloads its plugins; again: unfreeze")),
       md::item(N_("Bounce track in place"), [](App& a) { tracksBounceInPlace(a); })
           .tip(N_("Renders the selected tracks' regions to one audio region on a new track below; the originals are muted")),
+      md::provider([](App& a) { tracksRenderMenu(a); }),  // K-254: the track's instrument in this pattern
       md::submenu(N_("Configure track header"), {md::provider([](App& a) { configureTrackHeaderItems(a); })}),
       md::separator(),
       md::item(N_("Delete track"), "track.delete", [](App& a) { tracksDeleteSelected(a); })
@@ -299,6 +309,7 @@ const md::Menu& windowDef() {
       md::item(N_("Main window"), "view.playlist", [](App& a) { a.showPlaylist = true, a.focusWindow = "Playlist"; })
           .keyText([](App&) { return keys::modLabel("view.playlist"); }),
       md::item(N_("Mixer"), "view.mixer", [](App& a) { showLower(a, 2); }).keyText([](App&) { return keys::modLabel("view.mixer"); }),
+      md::item(N_("LFO board"), "view.lfoBoard", [](App& a) { layoutui::setRegionVisible(a, "logic.lower", true), a.showLfoBoard = true, a.focusWindow = "LFO board"; }),  // K-247
       md::item(N_("Step sequencer"), "view.channelRack", [](App& a) { showLower(a, 1); }),
       md::item(N_("Piano roll"), "view.pianoRoll", [](App& a) { showLower(a, 0); }).keyText([](App&) { return keys::modLabel("view.pianoRoll"); }),
       md::item(N_("Smart controls"), [](App& a) { showLower(a, 3); }),
@@ -424,15 +435,20 @@ const md::Menu& clipsNavigateDef() {
       md::item(N_("Clip grid"), [](App& a) { livelook::showView(a, true); }).check([](App& a) { return livelook::gridView(a); }),
       md::separator(),
       md::toggle(N_("Browser"), "view.browser", [](App& a) { return &a.showBrowser; }),
-      // Checkpoint 48: each band shows or hides on its own; both shown stack, the clip band over the
-      // device band (refs 456, 466). Shift+Tab swaps one for the other.
-      md::item(N_("Clip band"), [](App& a) { layoutui::setRegionVisible(a, "live.clip", !bandShown(a, "live.clip"), false); })
-          .check([](App& a) { return bandShown(a, "live.clip"); }),
-      md::item(N_("Device band"), [](App& a) { layoutui::setRegionVisible(a, "live.device", !bandShown(a, "live.device"), false); })
-          .check([](App& a) { return bandShown(a, "live.device"); }),
+      // 0.7.8: the clip band and the device band are one detail spot: each item shows its view there
+      // (with the keys) in place of the other, or hides the spot when it is the one shown. Shift+Tab swaps.
+      md::item(N_("Clip band"), [](App& a) {
+        if (bandShown(a, "live.clip")) layoutui::setRegionVisible(a, "live.clip", false);
+        else livelook::showDetailView(a, true, true);
+      }).check([](App& a) { return bandShown(a, "live.clip"); }),
+      md::item(N_("Device band"), [](App& a) {
+        if (bandShown(a, "live.device")) layoutui::setRegionVisible(a, "live.device", false);
+        else livelook::showDetailView(a, false, true);
+      }).check([](App& a) { return bandShown(a, "live.device"); }),
       md::item(N_("Clip and device bands"), "view.detail", [](App& a) { livelook::toggleDetail(a); })
           .check([](App& a) { return bandShown(a, "live.clip") || bandShown(a, "live.device"); }),
       md::toggle(N_("Mixer"), "view.mixer", [](App& a) { return &a.showMixer; }),
+      md::toggle(N_("LFO board"), "view.lfoBoard", [](App& a) { return &a.showLfoBoard; }),  // K-247
       // Checkpoint 56 (N55-10): In/Out and Info View are in the View menu, as the reference's.
       md::separator(),
   };
@@ -467,6 +483,7 @@ const md::Menu& pagesDef() {
       md::item(N_("Roll"), "view.pianoRoll", [](App& a) { trackerview::showPage(a, "Piano roll"); }),
       md::item(N_("Steps"), "view.channelRack", [](App& a) { trackerview::showPage(a, "Channel rack"); }),
       md::item(N_("Mix"), "view.mixer", [](App& a) { trackerview::showPage(a, "Mixer"); }),
+      md::item(N_("LFO"), "view.lfoBoard", [](App& a) { trackerview::showPage(a, "LFO board"); }),  // K-247
       md::item(N_("Pads"), "view.pads", [](App& a) { trackerview::showPage(a, "Live pads"); }),
       md::separator(),
       md::item(N_("Channel settings"), "view.channelSettings", [](App& a) { a.settingsChannel = a.settingsChannel != kNoId ? kNoId : a.selChannel; })
@@ -593,7 +610,7 @@ const md::Menu& trackerPatternDef() {
 // (the pages and header screens in View's first part) and Undo history (in Edit), so no command
 // shows twice under two names.
 bool trackerDuplicate(const md::Entry& e) {
-  static const char* const keys[] = {"view.playlist", "view.channelRack", "view.pianoRoll", "view.mixer", "edit.history", "view.closePlugins"};
+  static const char* const keys[] = {"view.playlist", "view.channelRack", "view.pianoRoll", "view.mixer", "view.lfoBoard", "edit.history", "view.closePlugins"};
   for (const char* k : keys)
     if (e.key && std::string(e.key) == k) return true;
   static const char* const labels[] = {"Pads", "Channel settings", "Panels"};
@@ -738,6 +755,13 @@ std::vector<freeze::Unit> frozenTargets(App& a) {
 }  // namespace
 
 bool tracksCanStack(App& a) { return !stackRun(a).empty(); }
+
+// K-254: the first selected track's instrument, its notes in the current pattern, to audio.
+void tracksRenderMenu(App& a) {
+  const std::vector<int> v = selectedTracks(a);
+  const Channel* ch = v.empty() ? nullptr : logicplug::trackSound(a.doc.song(), v.front(), nullptr);
+  if (ch) renderui::channelMenu(a, ch->id);
+}
 
 // As the reference's Create Track Stack: a new track above the selected ones holds them (Gridline's
 // track group: the head folds and colours them), one undo step, the new stack selected.

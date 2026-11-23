@@ -90,6 +90,18 @@ inline bool pointerInWindow() {
 
 }  // namespace detail
 
+// The app lost the focus: every key the keyboards sound stops now, and stays silent until its button
+// is let go (as Escape), also when the button is still held: a focus loss during a drag reaches ImGui
+// only at the release, so the drag itself goes on.
+inline void silenceHeld() {
+  detail::Guard& g = detail::guard();
+  if (!g.app) return;
+  for (auto& [slot, l] : g.live) {
+    detail::stop(*g.app, l);
+    l.blocked = true;
+  }
+}
+
 // Call every frame after the keyboard's button. `active`: the button is held; `under`: the key under the
 // pointer (-1 when it is off the keys: the last key keeps sounding); `held`: the widget's sounding key
 // (-1 for none), kept by the caller. Plays only on a channel (`ch` != kNoId). True when a key started.

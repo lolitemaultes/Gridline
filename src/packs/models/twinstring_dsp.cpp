@@ -17,6 +17,7 @@
 #include "strings.h"
 #include "strings_laws.h"
 #include "twinref.h"
+#include "../rest_render.h"
 
 namespace gl::packs::models {
 
@@ -382,6 +383,9 @@ class TwinStringGen final : public Generator {
     for (auto& d : rev_) std::fill(d.begin(), d.end(), 0.0f);
   }
 
+  // K-142: at rest its idle render runs on unheard (packs/rest_render.h), so the next note
+  // finds every free-running part where it would have been.
+  void rested(int n) override { packs::restRender(n, [this](float* l, float* r, int m) { render(l, r, m); }); }
   void render(float* L, float* R, int n) override {
     if (ref_) ref_->render(L, R, n);  // (rings out after a switch back to the J-22 engine)
     while (n > 0) {

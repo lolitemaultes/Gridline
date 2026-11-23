@@ -1,6 +1,7 @@
 // Gridline — J-27 menu parity sweep: menu entries (see MenuParityUi.h).
 // Captions are Gridline's own wording; the operations live in
 // core/MenuParity (undoable, tested) and engine/NoteFxBurn.
+#include "../packs/modulation/modulation_ui.h"
 #include "../engine/TimeStretch.h"
 #include "../engine/KerfMarks.h"
 #include "../core/I18n.h"
@@ -119,6 +120,16 @@ void timeModeItems(App& a) {
     ImGui::PopID();
   }
 }
+
+}  // namespace
+
+int dumpScoreLogNow(App& a, double seconds) {
+  const Song& s = a.doc.song();
+  if (!s.pattern(a.curPattern) || !s.channel(a.selChannel) || scoreLog.events.empty()) return 0;
+  return ops::dumpScoreLog(a.doc, a.curPattern, a.selChannel, scoreLog, a.now, seconds, dumpReplaces);
+}
+
+namespace {
 
 void scoreLogItems(App& a) {
   const Song& s = a.doc.song();
@@ -246,7 +257,7 @@ void toolsControlItems(App& a) {
   const ParamId last = a.doc.lastTouchedParam(), prev = a.doc.previousTouchedParam();
   const std::string ln = paramLabel(a, last), pn = paramLabel(a, prev);
   if (ImGui::BeginMenu(("Last moved control" + (ln.empty() ? std::string() : ": " + ln)).c_str(), !ln.empty())) {
-    knobContextMenu(a, last);
+    knobContextMenu(a, last);  // (its Modulate submenu: K-245 macros, also for a control moved in a plugin's own interface)
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu(("Control moved before it" + (pn.empty() ? std::string() : ": " + pn)).c_str(), !pn.empty())) {

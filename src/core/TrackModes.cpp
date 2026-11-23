@@ -142,7 +142,19 @@ const MixerTrack* linkedMixer(const Song& s, int track) {
 std::vector<ObjectId> playedMixers(const Song& s, int track) {
   std::vector<ObjectId> out;
   if (const MixerTrack* m = linkedMixer(s, track)) return {m->id};
+  // K-142 (0.7.8): a channel or a pattern met again adds nothing new (its mixer track is already in
+  // the list, in the place it first came), so each is looked at once: a large project's track
+  // repeats a few patterns hundreds of times (the Clips grid asks this for every strip, every frame).
+  // (small lists, looked through and kept from call to call: no allocation per call, every frame)
+  static thread_local std::vector<ObjectId> seenChannels, seenPatterns;
+  seenChannels.clear(), seenPatterns.clear();
+  auto once = [](std::vector<ObjectId>& seen, ObjectId id) {
+    if (std::find(seen.begin(), seen.end(), id) != seen.end()) return false;
+    seen.push_back(id);
+    return true;
+  };
   auto take = [&](ObjectId channel) {
+    if (!once(seenChannels, channel)) return;
     const Channel* c = s.channel(channel);
     if (!c) return;
     const ObjectId m = c->mixerTrack != kNoId ? c->mixerTrack : s.masterId();
@@ -153,6 +165,7 @@ std::vector<ObjectId> playedMixers(const Song& s, int track) {
     if (c.kind == ClipKind::Audio) {
       take(c.source);
     } else if (c.kind == ClipKind::Pattern) {
+      if (!once(seenPatterns, c.pattern)) continue;
       const Pattern* p = s.pattern(c.pattern);
       if (!p) continue;
       for (const auto& [ch, v] : p->steps)
@@ -1298,6 +1311,7 @@ void eraseChannel(Song& s, ObjectId id) {
     p.notes.erase(id);
     p.stepProps.erase(id);
     p.stepLoop.erase(id);
+    p.lanes.erase(id);
     p.automation.erase(std::remove_if(p.automation.begin(), p.automation.end(), [id](const PatternAutomation& l) { return l.owner == id; }), p.automation.end());
   }
   s.modLinks.erase(std::remove_if(s.modLinks.begin(), s.modLinks.end(), [id](const ModLink& l) { return l.owner == id || (l.sourceOwner == id && l.sourceSlot < 0); }),
@@ -1577,8 +1591,9 @@ int addAutomationLane(Song& s, ObjectId owner, const std::string& name) {
   return at;
 }
 
-int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
-  const std::vector<int> src = withWholeGroups(s, withLanes(s, tracks));  // N53-03: a track's lanes are copied with it
+int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why, bool withContent) {
+  // N53-03: a track's lanes are copied with it (K-351: not without the content, where they would be empty)
+  const std::vector<int> src = withWholeGroups(s, withContent ? withLanes(s, tracks) : tracks);
   if (src.empty()) return fail(why, "Select the tracks to duplicate."), -1;
   const int first = src.front(), last = src.back(), n = static_cast<int>(src.size());
   if (last - first + 1 != n) return fail(why, "Duplicate tracks next to each other."), -1;
@@ -1605,7 +1620,11 @@ int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
     k.groupSize = 0;
     copies.push_back(k);
   }
-  const int at = last + 1;
+  int at = last + 1;
+  if (!withContent) {  // K-351: the copies go after the originals' lanes, which stay under their tracks
+    const std::vector<int> full = withWholeGroups(s, withLanes(s, tracks));
+    if (!full.empty() && full.back() - full.front() + 1 == static_cast<int>(full.size())) at = std::max(at, full.back() + 1);
+  }
   for (int i = 0; i < n; ++i) {
     if (!insertTrackAt(s, at + i)) return fail(why, "There is no room for more tracks."), -1;
     PlaylistTrack& k = s.tracks[static_cast<size_t>(at + i)];
@@ -1661,7 +1680,7 @@ int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
   std::map<ObjectId, ObjectId> patMap, autoMap;
   std::vector<Clip> clips;
   for (const Clip& c : s.playlist)
-    if (c.track >= first && c.track <= last) {
+    if (withContent && c.track >= first && c.track <= last) {
       Clip k = c;
       k.track = c.track + n;
       k.takeGroup = kNoId, k.take = 0;
@@ -1696,6 +1715,7 @@ int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
         remap(p.notes);
         remap(p.stepProps);
         remap(p.stepLoop);
+        remap(p.lanes);
         for (PatternAutomation& pa : p.automation)
           if (auto m = idMap.find(pa.owner); m != idMap.end()) pa.owner = m->second;
         s.patterns.push_back(p);
@@ -1731,9 +1751,10 @@ int deleteTracks(Document& d, const std::vector<int>& tracks, std::string* why) 
   return out;
 }
 
-int duplicateTracks(Document& d, const std::vector<int>& tracks, std::string* why) {
+int duplicateTracks(Document& d, const std::vector<int>& tracks, std::string* why, bool withContent) {
   int out = -1;
-  runEdit(d, "duplicate tracks", [&](Song& s) { return (out = duplicateTracks(s, tracks, why)) >= 0; });
+  runEdit(d, withContent ? "duplicate tracks" : "duplicate tracks without notes",
+          [&](Song& s) { return (out = duplicateTracks(s, tracks, why, withContent)) >= 0; });
   return out;
 }
 

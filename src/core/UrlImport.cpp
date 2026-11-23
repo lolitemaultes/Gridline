@@ -1,5 +1,6 @@
 // Gridline - J-192: Import from URL, pure logic and the worker (see UrlImport.h).
 #include "UrlImport.h"
+#include "ThreadName.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -710,7 +711,7 @@ std::shared_ptr<Job> startFetch(const Tools& t, const std::string& url, const st
   auto job = std::make_shared<Job>();
   job->phase = static_cast<int>(Phase::Info);
   job->items = 1;
-  std::thread([job, t, url, workDir, lim] {
+  std::thread([job, t, url, workDir, lim] { gl::threads::setName("gl-urlimport");
     std::error_code ec;
     fs::create_directories(fs::u8path(workDir), ec);
     const std::vector<std::string> argv = infoArgs(t.ytdlp, url);
@@ -746,7 +747,7 @@ std::shared_ptr<Job> startImport(const Tools& t, const std::vector<Request>& req
   auto job = std::make_shared<Job>();
   job->phase = static_cast<int>(Phase::Downloading);
   job->items = static_cast<int>(reqs.size());
-  std::thread([job, t, reqs, workDir, lim] {
+  std::thread([job, t, reqs, workDir, lim] { gl::threads::setName("gl-urlimport");
     for (size_t i = 0; i < reqs.size(); ++i) {
       Request rq = reqs[i];
       job->item = static_cast<int>(i);

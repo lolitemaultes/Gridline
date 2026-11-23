@@ -12,7 +12,7 @@
 //                                            panel), u32 control count, control
 //                                            records: 32-byte Pascal name, 16 bytes,
 //                                            32-byte Pascal caption, …
-//   Soundfont Player          → gl.multisampler (the .sf2 path found in the state)
+//   Soundfont Player          → gl.patchplayer (the .sf2 path found in the state; K-333)
 //   FL Studio Mobile Rack FX  → gl.pocketrack (J-42: up to four modules, reference engines)
 //                                (chunked "SSLF" state; "RMOd" chunk: u32 size,
 //                                u32 module type, u32 instance)
@@ -32,6 +32,7 @@
 #include <vector>
 #include "../../packs/dynamics/dynamics.h"
 #include "../../packs/modulation/modulation.h"
+#include "../../packs/samplers/patchplayer.h"
 #include "../../packs/utility/utility.h"
 #include "../PluginParams.h"
 #include "FlpGen2.h"
@@ -298,8 +299,14 @@ bool decodeLevelScaler(Context& c, const std::vector<Event>& evs, PluginMapping&
 
 bool decodeSoundfont(Context& c, const std::vector<Event>& evs, PluginMapping& m) {
   Blob b = gen2::stateBlob(evs);
-  begin(m, "gl.multisampler");
-  m.exact = false;  // bank / program, envelope, LFO, reverb and chorus sends are not converted
+  // K-333: the Patch Player plays the file's patches as the file describes them (projects
+  // imported before keep the Multisampler they were saved with).
+  begin(m, packs::samplers::kPatchPlayerType);
+  // Bank / program, envelope, LFO, reverb and chorus sends are not converted. K-348: the format
+  // notes give no layout for the bank and patch in this state (only that the path is a
+  // length-prefixed string), and no shipped project carries one to check a guess against, so the
+  // player starts on the file's first patch rather than on a guessed one.
+  m.exact = false;
   // The SoundFont path: ASCII or UTF-16 text ending in ".sf2".
   std::string path;
   for (size_t at = 0; at + 4 <= b.size() && path.empty(); ++at) {
@@ -315,7 +322,8 @@ bool decodeSoundfont(Context& c, const std::vector<Event>& evs, PluginMapping& m
   }
   if (!path.empty()) {
     path = c.resolvePath(path);
-    m.state.data = "#gl-zones 1\nsf2 0 0 - | " + path + "\n";
+    m.state.data = packs::samplers::serializePatchRef(packs::samplers::PatchRef{path, 0, 0, ""});  // its first melodic patch
+    c.report.warn("Soundfont Player: the saved patch is not read; the Patch Player starts on the file's first patch");
   } else {
     c.report.warn("Soundfont Player: no SoundFont file in the saved state");
   }

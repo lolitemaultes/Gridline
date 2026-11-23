@@ -3,6 +3,7 @@
 #include <atomic>
 #include <memory>
 #include "dyn_dsp.h"
+#include "../../engine/EffectRest.h"
 #include "transmitter_ref.h"
 #include "transporter_ref.h"
 
@@ -235,6 +236,11 @@ class FastDistFx final : public DynFx {
 // ===================================================================== gl.squeeze
 
 class SqueezeFx final : public DynFx {
+ public:
+  // K-142 (0.7.8): rests by the hosted rule (stopped, fed silence, its output inaudible); while
+  // it rests, its modulation move on: its idle render runs unheard (EffectRest.h).
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& c, int n) override { restRenderFx(*this, s, aux, c, n); }
+ private:
  public:
   SqueezeFx() : DynFx("gl.squeeze") {}
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {

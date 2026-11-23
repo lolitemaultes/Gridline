@@ -22,6 +22,7 @@
 #include "../core/LayoutHomes.h"
 #include "../core/MenuOpsExtra.h"
 #include "../core/MixerOps.h"
+#include "../core/MixerHide.h"
 #include "../core/Automation.h"
 #include "../core/Params.h"
 #include "../core/PluginInfo.h"
@@ -34,7 +35,9 @@
 #include "../packs/PacksUi.h"
 #include "App.h"
 #include "BrowserUi.h"
+#include "ClipEditor.h"
 #include "ContextMenus.h"
+#include "FrameProfile.h"
 #include "HostedBodies.h"
 #include "HostedUi.h"
 #include "LayoutPresets.h"
@@ -47,6 +50,7 @@
 #include "../core/Meter.h"
 #include "../core/LevelMeter.h"
 #include "MixerMeters.h"
+#include "MixerHideUi.h"
 #include "SmoothLibrary.h"
 #include "Theme.h"
 #include "TrackIcons.h"
@@ -54,6 +58,7 @@
 #include "TrackerView.h"
 #include "Widgets.h"
 #include "Windows.h"
+#include "../packs/samplers/patchplayer.h"
 
 namespace gl::layoutparts {
 
@@ -800,13 +805,11 @@ void emptyPill(App& a, const MixerTrack& t, int k, float w) {
   const ImVec2 p = ImGui::GetCursorScreenPos();
   const float h = 17;
   if (ImGui::InvisibleButton("##fxadd", ImVec2(w, h)) && k >= 0) ImGui::OpenPopup("##fxpick");
+  if (k >= 0 && ImGui::GetCurrentWindow()->ClipRect.Contains(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax())))
+    devNoteRect("fxslotempty");  // (dev: an "sdlat" target, the last free slot drawn whole)
   const bool hov = ImGui::IsItemHovered();
   slotDrop(a, t.id, k);
-  ImGui::SetNextWindowSizeConstraints(ImVec2(std::max(w, 200.0f), 0), ImVec2(320, 460));
-  if (ImGui::BeginPopup("##fxpick")) {
-    effectPickerList(a, t.id, k, "");
-    ImGui::EndPopup();
-  }
+  effectPickerPopup(a, "##fxpick", p, ImVec2(p.x + w, p.y + h), t.id, k, "");
   ImDrawList* dl = ImGui::GetWindowDrawList();
   dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), emptyFace(hov), 4.0f);
   if (hov) {
@@ -1165,7 +1168,11 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
   mark(RowInst);
   if (ch) {
     const PluginInfo* info = findPlugin(ch->plugin.type);
-    const std::string name = info ? info->name : (ch->isLayer() ? i18n::tr("Layer") : i18n::tr("No instrument"));
+    std::string name = info ? info->name : (ch->isLayer() ? i18n::tr("Layer") : i18n::tr("No instrument"));
+    if (ch->plugin.type == packs::samplers::kPatchPlayerType) {  // K-333: the patch it plays
+      const std::string patch = packs::samplers::parsePatchRef(ch->plugin.data).name;
+      if (!patch.empty()) name = patch;
+    }
     if (stripSlot("##inst", name, a.settingsChannel == ch->id, !info && !ch->isLayer(), w, "The channel's instrument: click to open it", theme::rgb(kSlotGreen)))
       a.settingsChannel = ch->id;
     gap();
@@ -1544,6 +1551,7 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
   ImGui::PopID();
 }
 
+bool gRegionOpen = false;
 void inspector(App& a) {
   const Song& s = a.doc.song();
   // The region: the first selected clip (in song order); edits apply to every selected one.
@@ -1567,7 +1575,8 @@ void inspector(App& a) {
         if (std::find(selIds.begin(), selIds.end(), k.id) != selIds.end()) fn(k);
     }, mergeKey);
   };
-  static bool regionOpen = false, trackOpen = false;  // both cards start folded: the strips below take the column
+  bool& regionOpen = gRegionOpen;
+  static bool trackOpen = false;  // both cards start folded: the strips below take the column
   gHeadFirst = true;  // D9 (R14-08): the first heading is the pane's header (Smooth only: see cardFold)
   // ---- Region card ----
   if (clip) {
@@ -1632,7 +1641,12 @@ void inspector(App& a) {
       const Tick clen = clip->length > 0 ? clip->length : (clip->kind == ClipKind::Pattern && s.pattern(clip->pattern) ? s.patternLength(*s.pattern(clip->pattern)) : 0);
       std::snprintf(len, sizeof len, "%.2f", static_cast<double>(clen) / static_cast<double>(std::max<Tick>(1, s.barTicks())));
       cardRow("##rlen", "Length (bars)", len, nullptr);
-      if (clip->kind == ClipKind::Audio) {
+      if (clip->kind == ClipKind::Audio && logicplug::active(a)) {
+        // 0.7.8: Smooth's audio region: its own settings (gain and pitch, fades, warp, the stretch
+        // engine) as the card's rows, with every control the Audio clip window has for a clip; its
+        // sample's and channel's settings are the audio editor's local inspector (the lower pane).
+        clipeditor::drawInspectorRegion(a, clip->id);
+      } else if (clip->kind == ClipKind::Audio) {
         // Gain in whole dB, the pitch as semitones and cents (the region's own, added to its channel's).
         int gdb = clip->gain > 0.00001f ? static_cast<int>(std::lround(20.0 * std::log10(static_cast<double>(clip->gain)))) : -60;
         if (cardStepper("##rgain", "Gain", &gdb, -60, 24, 0, dbText(clip->gain), "The region's level, in dB (double-click: 0 dB)")) {
@@ -1714,7 +1728,10 @@ void inspector(App& a) {
           }
         }
     }
-    if (!linked && !ch && logicplug::active(a)) ch = logicplug::trackSound(s, track, clip);  // R01-10: a free track's regions' sound
+    // R01-10: a free track's regions' sound. K-142: without a region of the track selected, the
+    // per-song-change memo (the same answer; it was worked out every frame).
+    if (!linked && !ch && logicplug::active(a))
+      ch = clip && clip->track == track ? logicplug::trackSound(s, track, clip) : logicplug::trackSound(a, track);
     // R05-13: a free track's strip is the one its sounds play into (a kit's bus), not its first sound's.
     if (!linked && logicplug::active(a)) mt = logicplug::trackStrip(s, track);
     if (cardFold("##tfold", std::string(i18n::tr("Track")) + ": " + playlistTrackName(s, static_cast<size_t>(track)), &trackOpen)) {
@@ -1996,6 +2013,16 @@ struct ChainDev {  // dev ("parts chain ..."): a chip click
 };
 ChainDev gChainDev;
 
+// The Clips device band holds a channel's settings itself when its instrument's home is the band (a
+// sampler: the Audio clip window's band form in its card); every other editor opens in its window.
+bool bandHostsChannel(const App& a, ObjectId channel, layout::Preset p) {
+  const Channel* c = channel != kNoId ? a.doc.song().channel(channel) : nullptr;
+  const layout::Item* it = c ? layout::findPlugin(c->plugin.type) : nullptr;
+  if (!it) return false;
+  const layout::Home& h = it->home[static_cast<int>(p)];
+  return h.kind == layout::HomeKind::Host && std::string_view(h.region) == "live.device";
+}
+
 // R3, one host per body. Where the layout homes the instrument and effect windows in the chain
 // (Host: Live, Tracker), the chain draws the device it shows and those windows stay closed.
 // Elsewhere (Studio, Logic) the windows are the devices' home: the chain lists the devices and
@@ -2041,13 +2068,19 @@ void deviceChain(App& a) {
     if (opened) band.open = true;
     livelook::deviceBand(a, band);
     pick.kind = band.kind, pick.slot = band.slot, pick.fxTrack = band.fxTrack;
-    // A device asked for in a window (its title bar or menu) leaves its body to that window.
-    if (hostsIns && !band.insWindow) hostbody::claim(hostbody::Body::ChannelSettings, "Device chain");
-    if (hostsFx && !band.fxWindow) hostbody::claim(hostbody::Body::EffectEditor, "Device chain");
+    // The instrument and effect editors open in their floating windows; a sampler's settings stay in
+    // its card (the plugin's home is the band) unless its window button asked for its window.
+    if (bandHostsChannel(a, a.settingsChannel, p) && !band.insWindow) hostbody::claim(hostbody::Body::ChannelSettings, "Device chain");
     return;
   }
-  // K-106 cp18: the Tracker's own screens for the instrument (the Sample editor, the Channel frame).
-  if (p == layout::Preset::Tracker && pick.kind == 0 && c && trackereditors::host(a, c->id)) return;
+  // K-106 cp18: the Tracker's own screens for the instrument (the Sample and Instrument editors,
+  // Seltmann's). K-391: only those: every plugin's editor and settings float in their windows, so
+  // the band never draws a device; with none of its screens asked for it closes.
+  if (p == layout::Preset::Tracker) {
+    if (!c || !trackereditors::host(a, c->id))
+      if (bool* f = flag(a, "Device chain")) *f = false;
+    return;
+  }
   // The chips: one per device, in signal order.
   if (c && ui::TextButton((std::string(findPlugin(c->plugin.type) ? findPlugin(c->plugin.type)->name : c->name) + "##devins").c_str(), pick.kind == 0, 0,
                           hostsIns ? "The channel's instrument" : "The channel's instrument: opens its window"))
@@ -2340,12 +2373,18 @@ const PartDef kParts[] = {
     {"Info box", {280, 120}, infoBox},    {"Files", {420, 360}, files},             {"Notes", {420, 320}, notes},
     {"Smart controls", {640, 240}, logicplug::smartControls},
     {"Pattern editor", {960, 560}, trackerview::patternEditor}, {"Order list", {300, 360}, trackerview::orderList},
+    {"Seltmann", {1200, 420}, packs::seltmannPane},
+    {"Chop", {1200, 640}, packs::seltmannChopPage},  // K-347: Seltmann's page in the Tracker
 };
 // K-112b: built for the Tracks layout so far; the other layouts' menus do not list it yet.
 bool partListed(const char* window) {
   // N45-09: the Tracker's panels are the Tracker's; Clips does not list them.
   const bool tracker = std::strcmp(window, "Pattern editor") == 0 || std::strcmp(window, "Order list") == 0;
   if (tracker && layoutui::active() == layout::Preset::Live) return false;
+  // 0.7.8: Seltmann's pane tab is Smooth's (elsewhere its editor is the instrument window or the device band)
+  if (std::strcmp(window, "Seltmann") == 0) return layoutui::active() == layout::Preset::Logic;
+  // K-347: the Chop page is the Tracker's (a page beside its others while the project has a Seltmann)
+  if (std::strcmp(window, "Chop") == 0) return layoutui::active() == layout::Preset::Tracker;
   return std::strcmp(window, "Smart controls") != 0 || layoutui::active() == layout::Preset::Logic;
 }
 
@@ -2393,11 +2432,109 @@ bool kindToggles(const char* id, const char* const* names, const char* const* hi
 
 // K-112b: the Logic layout's mixer: a legend column, then one strip per mixer track (the inspector's
 // strips, lined up), a view filter above. The detailed mixer (slots, routing, stage) is one click away.
+// GitHub #58: a slim column in Smooth's mixer, for a narrow track (its name, meter, mute and solo) or
+// a folded group (its name and size, its loudest level, mute and solo for every member, an arrow that
+// expands it). Square, as Smooth's strips; the track's colour bar along the foot as their name bars.
+static void smoothSlimStrip(App& a, const mixhide::Entry& e, ImVec2 p, float w, float h) {
+  const auto& P = pal();
+  const Song& s = a.doc.song();
+  const MixerTrack& t = s.mixer[e.index];
+  const bool group = e.show == mixhide::Show::Group;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImGui::PushID(group ? static_cast<int>(ImGui::GetID(e.group.c_str())) : static_cast<int>(t.id));
+  ImGui::PushID("slim");
+  bool on = !group && a.selMixer == t.id;
+  if (group)
+    for (const MixerTrack& m : s.mixer) on = on || (m.group == e.group && m.id == a.selMixer);
+  dl->AddRectFilled(p, ImVec2(p.x + w - 1, p.y + h), on ? theme::mix(P.surface800, P.text, 0.07f) : P.surface800);
+  if (group)  // a stack of strips: a second edge down the right
+    dl->AddRectFilled(ImVec2(p.x + w - 4, p.y + 3), ImVec2(p.x + w - 2, p.y + h - 3), theme::mix(P.surface800, P.ink, 0.35f));
+  const float cx = std::round(p.x + (w - 1) * 0.5f);
+  // The top: a group's arrow (expands it), a track's number.
+  const float topH = 20;
+  ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 2));
+  const bool topClick = ImGui::InvisibleButton("##top", ImVec2(w - 1, topH));
+  const bool topHov = ImGui::IsItemHovered();
+  if (group) {
+    ui::drawIcon(dl, ui::Icon::Chevron, ImVec2(cx, p.y + 2 + topH * 0.5f), 10, topHov ? P.text : P.hot);
+    if (topClick) mixhide::setGroupFolded(a.doc, e.group, false);
+    if (topHov) ui::Hint("Expand the group");
+  } else {
+    const std::string num = std::to_string(e.index);
+    const float nw = a.fontRegular->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, num.c_str()).x;
+    dl->AddText(a.fontRegular, theme::kFontLabel, ImVec2(std::round(cx - nw * 0.5f), std::round(p.y + 2 + (topH - theme::kFontLabel) * 0.5f)), on ? P.text : P.textDim,
+                num.c_str());
+    if (topClick) a.selMixer = t.id;
+    if (topHov) ui::Hint("Narrow strip: click to select, double-click for the full strip, right-click for the track menu");
+    if (topHov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) mixhide::setNarrow(a.doc, {t.id}, false);
+  }
+  // The foot: the colour bar, then M and S above it, the meter above them, the name above the meter.
+  const float plateH = 22, bh = 18;
+  const float plateY = p.y + h - plateH;
+  dl->AddRectFilled(ImVec2(p.x, plateY), ImVec2(p.x + w - 1, p.y + h), theme::mix(P.surface700, theme::content(t.color), 0.85f));
+  const bool muted = group ? mixhide::groupMuted(s, e.group) : t.muted;
+  const bool soloed = group ? mixhide::groupSoloed(s, e.group) : t.solo;
+  auto btn = [&](const char* id, const char* label, bool lit, ImU32 litCol, float y) {
+    const float bw = w - 9, bx = p.x + 4;
+    ImGui::SetCursorScreenPos(ImVec2(bx, y));
+    const bool c = ImGui::InvisibleButton(id, ImVec2(bw, bh));
+    const bool hv = ImGui::IsItemHovered();
+    dl->AddRectFilled(ImVec2(bx, y), ImVec2(bx + bw, y + bh), lit ? litCol : hv ? theme::mix(P.surface700, P.text, 0.12f) : theme::mix(P.surface700, P.text, 0.05f), 4.0f);
+    const ImVec2 ts = a.fontBold->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, label);
+    dl->AddText(a.fontBold, theme::kFontLabel, ImVec2(std::round(bx + (bw - ts.x) * 0.5f), std::round(y + (bh - ts.y) * 0.5f)),
+                lit ? theme::rgb(0x1A1A1C) : theme::mix(P.textDim, P.text, 0.65f), label);
+    return c;
+  };
+  const float sY = plateY - 4 - bh, mY = sY - 4 - bh;
+  if (btn("##m", "M", muted, P.hot, mY)) {
+    if (group) mixhide::setGroupMute(a.doc, e.group, !muted);
+    else a.doc.setParam(mixerParam(t.id, MixerParam::Mute), t.muted ? 0 : 1, false);
+  }
+  if (ImGui::IsItemHovered()) {
+    if (group) ui::Hint(muted ? "Every track in the group is muted: click to unmute them" : "Click to mute every track in the group");
+    else ui::Hint(muted ? "Track is muted: click to unmute" : "Track is on: click to mute");
+  }
+  if (btn("##s", "S", soloed, theme::rgb(0xE8C83A), sY)) {
+    if (group) mixhide::setGroupSolo(a.doc, e.group, !soloed);
+    else mixops::toggleSolo(a.doc, t.id);
+  }
+  if (ImGui::IsItemHovered()) ui::Hint(group ? "Solo every track in the group" : "Solo (keeps tracks routed to and from it)");
+  float pl = 0, pr = 0;
+  for (const MixerTrack& m : s.mixer)
+    if (group ? m.group == e.group : m.id == t.id) {
+      const mixmeters::Reading r = mixmeters::get(a, m.id);
+      pl = std::max(pl, r.peakL), pr = std::max(pr, r.peakR);
+    }
+  const float meterH = std::round(std::clamp(h * 0.32f, 40.0f, 160.0f));
+  const float my1 = mY - 8, my0 = my1 - meterH;
+  ImGui::SetCursorScreenPos(ImVec2(cx - 6, my0));
+  smoothMeter(ImGui::GetID("meter"), pl, pr, ImVec2(12, meterH));
+  const float nameTop = p.y + 2 + topH + 6, nameBottom = my0 - 8;
+  if (nameBottom - nameTop > 16) {
+    const float fs = theme::kFontCaption;
+    std::string name = group ? e.group + "  \xC2\xB7  " + std::to_string(e.members) : mixerTrackName(s, e.index);
+    mixhideui::upwardText(dl, a.fontRegular, fs, ImVec2(std::round(cx - fs * 0.5f - 1), nameBottom), on ? P.text : P.textDim, name, nameBottom - nameTop);
+  }
+  // Right-click anywhere on the column: the track menu (a group: its own).
+  if (ImGui::IsMouseHoveringRect(p, ImVec2(p.x + w - 1, p.y + h)) && ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+    ImGui::OpenPopup("##slimmenu");
+  if (ImGui::IsMouseHoveringRect(p, ImVec2(p.x + w - 1, p.y + h)) && ImGui::IsWindowHovered() && group && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+    mixhide::setGroupFolded(a.doc, e.group, false);
+  if (ImGui::BeginPopup("##slimmenu")) {
+    if (group) mixhideui::groupMenu(a, e.group);
+    else mixerTrackMenu(a, e.index);
+    ImGui::EndPopup();
+  }
+  ImGui::PopID();
+  ImGui::PopID();
+}
+
 void logicMixer(App& a) {
   const Song& s = a.doc.song();
   const auto& P = pal();
   if (s.mixer.empty()) return;
   static int view = 1;  // 0 the selected track and where it goes, 1 the tracks in use, 2 every track
+  if (const int dv = mixhideui::devSmoothView(); dv >= 0) view = dv;  // (dev: "mixhide smoothview N")
   // K-112D (audit F2): the strip kinds shown (the reference's type buttons, 134): bit 0 instrument
   // strips, 1 audio strips, 2 buses (what other strips send into), 3 the master. All on at first.
   static int kindsOn = 15;
@@ -2447,6 +2584,17 @@ void logicMixer(App& a) {
         }
       });
     }
+    // GitHub #58: how many tracks have no strip of their own, beside the menus; the list shows them
+    if (const std::string hl = mixhideui::hiddenLabel(s); !hl.empty()) {
+      ImGui::SameLine(0, 8);
+      ImGui::SetCursorPosY(y0);
+      if (ui::TextButton(hl.c_str(), false, 0, "Tracks hidden from the mixer (they still play): click to show them")) ImGui::OpenPopup("##lghidden");
+      devMenuItem("mixer hidden"), devNoteRect("mixhidden");
+      if (ImGui::BeginPopup("##lghidden")) {
+        mixhideui::hiddenMenu(a);
+        ImGui::EndPopup();
+      }
+    }
     const char* views[] = {i18n::tr("Single"), i18n::tr("Tracks"), i18n::tr("All")};  // K-112D: the reference's names (134)
     const char* hints[] = {i18n::tr("The selected track and where it goes"), i18n::tr("The tracks that something plays through, and the master"),
                            i18n::tr("Every mixer track")};
@@ -2480,6 +2628,7 @@ void logicMixer(App& a) {
     int view = -1, kinds = -1;
     ObjectId sel = kNoId;
     std::vector<size_t> order;
+    std::vector<mixhide::Entry> entries;  // GitHub #58: how each of `order` shows
     int fxRows = 2, sendRows = 0, fxMost = 0;  // fxMost: the most effects any strip shown has
   };
   static OrderMemo om;
@@ -2550,6 +2699,10 @@ void logicMixer(App& a) {
         order.push_back(i);
     }
     if (kindsOn & 8) order.push_back(0);  // the master at the right end
+    // GitHub #58: hidden tracks left out, a folded group as one slim column, narrow tracks slim
+    om.entries = mixhide::arrange(s, order);
+    order.clear();
+    for (const mixhide::Entry& e : om.entries) order.push_back(e.index);
     om.fxRows = 2, om.fxMost = 0;
     for (size_t i : order) {
       int n = 0;
@@ -2583,11 +2736,17 @@ void logicMixer(App& a) {
   float legendW = 84;
   const ImVec2 av = ImGui::GetContentRegionAvail();
   const ImVec2 o = ImGui::GetCursorScreenPos();
-  float stripW = std::clamp(std::floor((av.x - legendW) / static_cast<float>(order.size())), 64.0f, 90.0f);  // K-112D (audit F9): room for "Parametric EQ"
+  // GitHub #58: slim columns keep their own width; the full strips share the rest.
+  constexpr float kSlimColW = 34.0f;
+  int slimCount = 0;
+  for (const mixhide::Entry& e : om.entries) slimCount += e.show != mixhide::Show::Strip;
+  const int fullCount = std::max(1, static_cast<int>(order.size()) - slimCount);
+  const float slimTotal = kSlimColW * static_cast<float>(slimCount);
+  float stripW = std::clamp(std::floor((av.x - legendW - slimTotal) / static_cast<float>(fullCount)), 64.0f, 90.0f);  // K-112D (audit F9): room for "Parametric EQ"
   // D9 (R14-12): when the strips scroll, the view holds whole strips (at 1920 the last one was cut mid-strip):
   // as many as fit at 64 px, widened to share the room, the odd pixels left to the legend (its names are
   // right-aligned, so they stay beside the strips). The scroll then steps a strip at a time (below).
-  const bool scrolls = stripW * static_cast<float>(order.size()) > av.x - legendW;
+  const bool scrolls = stripW * static_cast<float>(fullCount) + slimTotal > av.x - legendW;
   if (scrolls) {
     const float room = av.x - legendW;
     const float fit = std::max(1.0f, std::floor(room / 64.0f));
@@ -2694,12 +2853,23 @@ void logicMixer(App& a) {
     // D5 (CPU): only the strips in view are drawn (the pane scrolls sideways; the rest only take their room)
     const float vis0 = ImGui::GetWindowPos().x, vis1 = vis0 + ImGui::GetWindowWidth();
     bool rowsTaken = false;
-    for (size_t i : order) {
-      if (x + stripW < vis0 || x > vis1) {
-        x += stripW;
+    mixhideui::beginColumns();
+    for (size_t oi = 0; oi < order.size(); ++oi) {
+      const size_t i = order[oi];
+      const bool slimCol = oi < om.entries.size() && om.entries[oi].show != mixhide::Show::Strip;
+      const float colW = slimCol ? kSlimColW : stripW;
+      mixhideui::noteColumn(i, x, x + colW);  // (dev: "mixhide state")
+      if (x + colW < vis0 || x > vis1) {
+        x += colW;
+        continue;
+      }
+      if (slimCol) {  // GitHub #58
+        smoothSlimStrip(a, om.entries[oi], ImVec2(x, b.y), colW, sh);
+        x += colW;
         continue;
       }
       const MixerTrack& m = s.mixer[i];
+
       const Channel* ch = nullptr;
       if (i != 0)
         for (const Channel& c : s.channels)
@@ -2790,6 +2960,8 @@ void logicMixer(App& a) {
 }
 
 // (a pixel above the row's middle: the capitals then sit on the toolbar's, 102 to 110 at 1920 x 1080)
+void openRegionCard() { gRegionOpen = true; }
+
 float paneTitleY(float fs) { return std::round(ImGui::GetWindowPos().y + kPaneHeadTop + (kPaneHeadH - fs) * 0.5f) - 1.0f; }
 
 void draw(App& a) {
@@ -2803,7 +2975,7 @@ void draw(App& a) {
   const layout::Preset p = layoutui::active();
   if (layoutui::shellBuilt(a, p)) {
     const bool newSettings = a.settingsChannel != kNoId && a.settingsChannel != lastSettings && !trackereditors::pluginWindowOpen(a) &&
-                             layout::windowHome("###channelsettings", p).kind == layout::HomeKind::Host;
+                             (layout::windowHome("###channelsettings", p).kind == layout::HomeKind::Host || bandHostsChannel(a, a.settingsChannel, p));
     const bool newFx = a.fxEditor.first != kNoId && (a.fxEditor.first != lastFx || a.fxEditor.second != lastSlot) &&
                        layout::windowHome("###fxeditor", p).kind == layout::HomeKind::Host;
     if (newSettings || newFx)
@@ -2812,9 +2984,21 @@ void draw(App& a) {
         a.focusWindow = "Device chain";
       }
   }
+  // 0.7.8: in Smooth a Seltmann channel's settings open on its lower-pane tab
+  if (p == layout::Preset::Logic && a.settingsChannel != kNoId && a.settingsChannel != lastSettings)
+    if (const Channel* c = a.doc.song().channel(a.settingsChannel); c && c->plugin.type == "gl.seltmann")
+      if (const layout::Item* it = layout::findPlugin(c->plugin.type); it && it->home[static_cast<int>(p)].kind == layout::HomeKind::Host)
+        if (flag(a, "Seltmann")) {
+          // (as a click on its tab: the audio editor holding the pane, an Audio clip there, gives it back)
+          layoutui::showPaneWindow(a, "Seltmann");
+          a.focusWindow = "Seltmann";
+        }
   lastSettings = a.settingsChannel, lastFx = a.fxEditor.first, lastSlot = a.fxEditor.second;
   int i = 0;
-  for (const PartDef& p : kParts) part(a, p.window, i++, p.size, [&] { p.draw(a); });
+  for (const PartDef& p : kParts) {
+    prof::Scope ps(p.window);  // K-142: each part's cost per frame (--profile-frames)
+    part(a, p.window, i++, p.size, [&] { p.draw(a); });
+  }
 }
 
 bool infoInBar(App& a) {

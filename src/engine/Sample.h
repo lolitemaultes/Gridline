@@ -175,7 +175,11 @@ class SampleCache {
   // J-103 app quit: drops queued decodes and joins the background decoders (a running
   // decode finishes), before main() returns: none runs into static destruction. get()
   // still decodes on the calling thread; request() queues nothing any more. Idempotent.
-  void shutdown();
+  // FRZ-1118 (0.7.8): waitMs >= 0 waits at most that long for a running decode (one stuck on a drive that
+  // stopped answering never ends); false: some were left running (abandoned()), so the caller
+  // must leave without static destruction.
+  bool shutdown(int waitMs = -1);
+  bool abandoned() const { return abandoned_; }
   // FRZ-1118: something a background reader made is ready: generation() changes (a rebuild).
   void bumpGeneration() { gen_.fetch_add(1, std::memory_order_acq_rel); }
   // J-111: a file that failed to load (not there yet) has arrived: the next
@@ -212,6 +216,8 @@ class SampleCache {
   std::deque<std::string> queue_;   // waiting for a background decoder
   std::vector<std::thread> workers_;
   bool stop_ = false, paused_ = false;
+  int running_ = 0;         // decoder threads alive (mu_)
+  bool abandoned_ = false;  // shutdown left a stuck decoder behind
   std::atomic<uint64_t> gen_{0};
 };
 

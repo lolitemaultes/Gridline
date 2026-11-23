@@ -16,6 +16,7 @@
 #include "../Packs.h"
 #include "gms.h"
 #include "synths_common.h"
+#include "../rest_render.h"
 
 namespace gl::packs::synths {
 
@@ -786,6 +787,9 @@ class GmsGen final : public Generator {
     }
   }
 
+  // K-142: at rest its idle render runs on unheard (packs/rest_render.h), so the next note
+  // finds every free-running part where it would have been.
+  void rested(int n) override { packs::restRender(n, [this](float* l, float* r, int m) { render(l, r, m); }); }
   void render(float* L, float* R, int n) override {
     float bl[256], br[256];
     for (auto& v : voices_)

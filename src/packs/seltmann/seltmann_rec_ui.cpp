@@ -25,6 +25,7 @@
 #include "../../app/AudioRecordUi.h"
 #include "../../app/BrowserUi.h"
 #include "../../app/DevSignal.h"
+#include "../../app/EditorZoomUi.h"
 #include "../../app/LiveWaveUi.h"
 #include "../../app/PluginSkin.h"
 #include "../../app/Theme.h"
@@ -62,6 +63,8 @@ struct Session {
   std::string msg;
   bool msgErr = false;
   bool askBack = false;      // "discard this recording?"
+  std::string openData;      // 0.7.8: the instance's state when the recorder opened (a take into a loaded one)
+  bool keepChop = true;      // 0.7.8: a take into a loaded instance keeps its chop (else it is analysed fresh)
   size_t lastWritten = 0;
   double lastMove = 0;       // when the tap last advanced (steady clock)
   double lastTick = 0;       // the previous tick (steady clock)
@@ -153,8 +156,12 @@ void loadTake(App& a, Session& s) {
     std::fflush(stdout);
   }
   const PluginTarget t = s.target;
+  const int64_t frames = static_cast<int64_t>(s.take.frames());
+  const double rate = s.take.rate();
+  const bool keep = s.keepChop;
   closeSession(a);
-  loadAudio(a, t, path, i18n::tr("Recording"));
+  if (ed(t).hasModel) useTake(a, t, path, keep, frames, rate);  // 0.7.8: a new take into a loaded instance
+  else loadAudio(a, t, path, i18n::tr("Recording"));
   browserui::refreshIndex(a);
 }
 
@@ -278,11 +285,11 @@ void traceRec(Session& s, const char* screen) {
   static const bool on = std::getenv("GRIDLINE_SELTMANN_TRACE") != nullptr;
   if (!on) return;
   char b[256];
-  std::snprintf(b, sizeof b, "seltmann: rec %s state %s input %d %s ask %d msg \"%s\"", screen, kStateNames[s.state], s.first + 1,
-                s.stereo ? "stereo" : "mono", s.askBack ? 1 : 0, s.msg.c_str());
+  std::snprintf(b, sizeof b, "seltmann: rec %s state %s input %d %s ask %d keep %d msg \"%s\"", screen, kStateNames[s.state], s.first + 1,
+                s.stereo ? "stereo" : "mono", s.askBack ? 1 : 0, s.keepChop ? 1 : 0, s.msg.c_str());
   std::string line = b;
   for (const auto& [n, p] : s.btns) {
-    std::snprintf(b, sizeof b, "\nseltmann: recbtn %s %.0f %.0f", n.c_str(), static_cast<double>(p.x), static_cast<double>(p.y));
+    std::snprintf(b, sizeof b, "\nseltmann: recbtn %s %.0f %.0f", n.c_str(), static_cast<double>(edzoomui::toScreenHere(p).x), static_cast<double>(edzoomui::toScreenHere(p).y));  // (on screen)
     line += b;
   }
   if (line != s.lastTrace) {
@@ -308,6 +315,8 @@ void openRecorder(App& a, const PluginTarget& t) {
   }
   s.open = true;
   s.target = t;
+  s.openData.clear();
+  if (const PluginState* ps = t.state(a.doc.song())) s.openData = ps->data;
   s.state = RecIdle;
   s.askBack = false;
   s.msg.clear();
@@ -357,6 +366,7 @@ void devAutoRecord(App& a, const PluginTarget& t) {
 }
 
 void tick(App& a) {
+  linkTick(a);  // 0.7.8: linked patterns follow their sequence
   Session& s = ses();
   if (!s.open) return;
   const PluginState* st = s.target.state(a.doc.song());
@@ -364,7 +374,7 @@ void tick(App& a) {
     closeSession(a);
     return;
   }
-  if (!st->data.empty()) {  // a file was loaded into it meanwhile
+  if (st->data != s.openData) {  // a file was loaded into it meanwhile
     if (s.take.frames() > 0) a.notify(i18n::tr("The unloaded recording was discarded: a file was loaded into Seltmann."));
     closeSession(a);
     return;
@@ -578,8 +588,19 @@ void drawRecorder(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
       s.msg.clear();
     }
     const ImVec2 ls(176, 40);
-    if (recButton(s, "load", "##selrecload", ImVec2(R - ls.x, y), ls, i18n::N_("Load recording"), static_cast<int>(ui::Icon::Open), true,
-                  s.state == RecDone && s.take.frames() > 0, i18n::N_("Save the recording into the project's Recorded folder and analyse it"))) {
+    const bool loaded = e.hasModel;
+    if (loaded) {  // 0.7.8: a take into a loaded instance: keep the chop or analyse it fresh
+      const ImVec2 ks(132, 40);
+      if (recButton(s, "keepchop", "##selreckeepchop", ImVec2(R - ls.x - 8 - ks.x, y), ks, s.keepChop ? i18n::N_("Keep the chop") : i18n::N_("Analyse fresh"),
+                    -1, false, true,
+                    s.keepChop ? i18n::N_("The take keeps the regions and the sequence (play it to the same tempo). Click to analyse it fresh instead")
+                               : i18n::N_("The take is analysed from the start: a new grid and chop. Click to keep the chop instead")))
+        s.keepChop = !s.keepChop;
+    }
+    if (recButton(s, "load", "##selrecload", ImVec2(R - ls.x, y), ls, loaded ? i18n::N_("Use the take") : i18n::N_("Load recording"),
+                  static_cast<int>(ui::Icon::Open), true, s.state == RecDone && s.take.frames() > 0,
+                  loaded ? i18n::N_("Save the take into the project's Recorded folder and use it in this instance")
+                         : i18n::N_("Save the recording into the project's Recorded folder and analyse it"))) {
       traceRec(s, "open");
       loadTake(a, s);
       return;

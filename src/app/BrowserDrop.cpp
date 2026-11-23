@@ -1,6 +1,8 @@
 // Gridline — browser content in the app: content index, drag & drop of
 // browser files, double-click actions and tempo-synced preview (BrowserUi.h).
 #include <algorithm>
+#include "../core/ThreadName.h"
+#include <iterator>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -31,14 +33,20 @@
 #include "../engine/pitch/Kernel.h"
 #include "../packs/Packs.h"
 #include "../packs/PacksUi.h"
+#include "../packs/samplers/patchplayer.h"
+#include "../packs/samplers/samplers.h"
 #include "App.h"
 #include "BrowserUi.h"
+#include "LayoutPresets.h"
 #include "LiveLook.h"
 #include "LogicPlugins.h"
+#include "../packs/tracker/tracker.h"
+#include "../core/TrackerGrid.h"
 #include "SystemMenu.h"
 #include "../core/RemoteFs.h"
 #include "../core/ProjectFiles.h"
 #include "../core/HydrogenKit.h"
+#include "../core/BrowserTabs.h"
 #include "CollabUi.h"
 #include "DrumKitUi.h"
 #include "ExternalDragUi.h"
@@ -77,6 +85,23 @@ std::string contentDir(App& a, const char* name) { return (fs::path(a.configDir(
 namespace {
 bool indexStarted = false;
 
+// K-333: the patch an SF2 file (its first patch) or one of its patch rows ("<file>#patch=<bank>:<program>")
+// stands for, with the patch's name. False for anything else, or a file that cannot be read.
+bool patchRefFor(const std::string& item, packs::samplers::PatchRef& out) {
+  namespace sm = packs::samplers;
+  std::string file;
+  int bank = 0, program = 0;
+  const bool one = browse::splitPatchItem(item, file, bank, program);
+  if (!one) file = item;
+  if (!sm::isSoundFontPath(file)) return false;
+  auto f = sm::loadSf2(file);
+  if (!f || f->presets.empty()) return false;
+  const int i = one ? sm::sf2NearestPreset(*f, bank, program) : 0;
+  const auto& p = f->presets[static_cast<size_t>(std::max(0, i))];
+  out = sm::PatchRef{file, p.bank, p.program, p.name};
+  return true;
+}
+
 // K-144: a browser click on an .sfz / .sf2 plays a note of it. The map loads and renders on a
 // worker (big maps take a while); the frame loop hands the result to the preview player.
 struct InstrumentPreview {
@@ -91,11 +116,16 @@ InstrumentPreview& instrumentPreview() {
   return p;
 }
 SamplePtr renderInstrumentNote(const std::string& path) {
-  PluginState st = defaultPluginState("gl.multisampler");
-  st.data = path;
+  // K-333: an SF2 file or one of its patches plays on a Patch Player (the file's first patch).
+  packs::samplers::PatchRef pr;
+  const bool patch = patchRefFor(path, pr);
+  const std::string type = patch ? packs::samplers::kPatchPlayerType : "gl.multisampler";
+  PluginState st = defaultPluginState(type);
+  if (patch) packs::samplers::setPatch(st, pr.path, pr.bank, pr.program, pr.name);
+  else st.data = path;
   ChannelAux aux;
   packs::prepareAux(st, aux);
-  std::unique_ptr<Generator> g = packs::createGenerator("gl.multisampler");
+  std::unique_ptr<Generator> g = packs::createGenerator(type);
   if (!g) return nullptr;
   ProcessContext ctx;
   ctx.sampleRate = 44100;
@@ -106,7 +136,7 @@ SamplePtr renderInstrumentNote(const std::string& path) {
   s->sampleRate = 44100;
   s->left.assign(total, 0.0f);
   s->right.assign(total, 0.0f);
-  g->noteOn(1, 60, 0.8f, 0);
+  g->noteOn(1, patch && pr.bank >= 120 ? 38 : 60, 0.8f, 0);  // a drum kit: a snare
   for (size_t p = 0; p < total; p += 512) {
     if (p >= held && p < held + 512) g->noteOff(1, 0);
     const int n = static_cast<int>(std::min<size_t>(512, total - p));
@@ -122,7 +152,7 @@ void previewInstrument(const std::string& path) {
   p.want = path;
   if (p.busy) return;  // the worker picks the latest click up when it is done
   p.busy = true;
-  std::thread([] {
+  std::thread([] { gl::threads::setName("gl-inst-preview");
     InstrumentPreview& q = instrumentPreview();
     for (;;) {
       std::string path;
@@ -156,29 +186,28 @@ void tickInstrumentPreview(App& a) {
   else if (!failed.empty()) a.notify(std::string(i18n::tr("No note to preview in ")) + fs::path(failed).filename().string(), true);
 }
 
+}  // namespace
+
+// GitHub #66: what the index walks: Gridline's own content (presets and the folders it fills) and the
+// folders the user added (browser folders, folder tabs). Another program's shipped content is listed
+// in the browser's tree as it is opened, but it is walked and analysed only once the user adds it.
 std::vector<std::pair<std::string, bool>> indexRoots(App& a) {
   std::vector<std::pair<std::string, bool>> roots;
-  const std::string fl = flDataDir();
-  if (!fl.empty()) {
-    const fs::path p = fs::path(fl) / "Patches";
-    roots.push_back({(p / "Packs").string(), true});
-    roots.push_back({(p / "Impulses").string(), true});
-    roots.push_back({(p / "Misc").string(), true});
-    roots.push_back({(p / "Scores").string(), false});
-    roots.push_back({(p / "Channel presets").string(), false});
-    roots.push_back({(p / "Mixer presets").string(), false});
-    roots.push_back({(p / "Plugin presets").string(), false});
-    roots.push_back({(fs::path(fl) / "Demo projects").string(), false});
-  }
   roots.push_back({presetRoot(a.configDir()), false});
   for (const char* d : {"Recorded", "Rendered", "Sliced audio", "Edited audio", "Seltmann loops", "Clipboard files"}) roots.push_back({contentDir(a, d), true});
   // User folders: only those added in the browser (never the default guesses).
   std::ifstream in(fs::path(a.configDir()) / "browser-folders.txt");
   for (std::string l; std::getline(in, l);)
     if (!l.empty()) roots.push_back({l, true});
+  // GitHub #74: the folders the user keeps as browser tabs (or Clips / Smooth places).
+  std::ifstream tin(fs::path(a.configDir()) / "browser-tabs.txt", std::ios::binary);
+  if (tin) {
+    const std::string text((std::istreambuf_iterator<char>(tin)), std::istreambuf_iterator<char>());
+    for (const std::string& f : browse::folderTabPaths(browse::tabsFromText(text)))
+      if (std::none_of(roots.begin(), roots.end(), [&](const std::pair<std::string, bool>& r) { return r.first == f; })) roots.push_back({f, true});
+  }
   return roots;
 }
-}  // namespace
 
 void ensureIndex(App& a) {
   if (indexStarted || thumbMode()) return;
@@ -187,6 +216,7 @@ void ensureIndex(App& a) {
   ix.setCacheFile((fs::path(a.configDir()) / "browser-index.json").string());
   ix.load();
   ix.setRoots(indexRoots(a));
+  ix.setPace(indexPace());  // GitHub #66: gently, in the background
   ix.stopAtExit();  // K-W: inside a plugin nothing calls shutdownIndex()
   ix.start();
 }
@@ -225,6 +255,21 @@ void offerLibraries(App& a) {
   a.confirm.open = true;
 }
 }  // namespace
+
+browse::Index::Pace indexPace() {
+  browse::Index::Pace p;
+  p.filesPerSec = 12;  // analysed files a second at most
+  p.walkPerSec = 4000;  // folder entries a second at most
+  p.share = 0.25;       // a quarter of one core at most, at background priority
+  return p;
+}
+
+void holdIndexWhileBusy(App& a) {
+  if (!indexStarted) return;
+  // GitHub #66: the song playing or recording, or a mouse button held (a drag, a knob turned): the
+  // index waits for a moment after it, renewed each frame.
+  if (a.engine.playing() || ImGui::IsAnyMouseDown()) index().holdFor(1.0);
+}
 
 void tickIndex(App& a) {
   tickInstrumentPreview(a);
@@ -321,6 +366,12 @@ const Decoded& decodeItem(const std::string& path) {
   } else if (d.item.kind == Kind::Other && hydrogen::isKitFolder(path)) {  // K-162: a drum kit's folder
     d.item.kind = Kind::DrumKit;
     d.name = fs::path(path).filename().string();
+    d.ok = true;
+  } else if (d.item.kind == Kind::Instrument && browse::playsOnPatchPlayer(path)) {  // K-333: an SF2 file or one of its patches
+    d.item.pluginType = browse::kPatchPlayerItem;
+    std::string file;
+    int bank = 0, program = 0;
+    if (browse::splitPatchItem(path, file, bank, program)) d.name = fs::path(file).stem().string();
     d.ok = true;
   } else {
     d.ok = browse::listable(d.item.kind);
@@ -1104,7 +1155,46 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
       if (!cur) return false;
       PluginState ns = *cur;
       ns.data = path;
+      std::string file;
+      int bank = 0, program = 0;
+      if (browse::splitPatchItem(path, file, bank, program)) {  // K-333: one patch of an SF2 file, as zones
+        auto f = packs::samplers::loadSf2(file);
+        const int i = f ? packs::samplers::sf2FindPreset(*f, bank, program) : -1;
+        if (i < 0) return false;
+        ns.data = packs::samplers::serializeZoneMap(packs::samplers::sf2PresetMap(file, static_cast<size_t>(i)));
+      }
       setPluginState(a, t, ns, "load multisample instrument");
+      if (target == DropTarget::Rack) a.selectChannel(place.channel);
+      return true;
+    }
+    case DropAction::NewPatchChannel:  // K-333: a Patch Player channel playing the patch (one undo step)
+    case DropAction::ReplaceWithPatchPlayer: {
+      packs::samplers::PatchRef pr;
+      if (!patchRefFor(path, pr)) {
+        a.notify(std::string(i18n::tr("Cannot read ")) + fs::path(path.substr(0, path.find("#patch="))).filename().string(), true);
+        return false;
+      }
+      ObjectId id = place.channel;
+      a.doc.beginGroup(act == DropAction::NewPatchChannel ? "add channel" : "replace with Patch Player");
+      if (act == DropAction::NewPatchChannel) id = addChannelAt(a, packs::samplers::kPatchPlayerType, "", target == DropTarget::Rack ? place.insertAt : -1);
+      else if (!replaceChannel(a, id, packs::samplers::kPatchPlayerType, nullptr, "", "", "replace with Patch Player")) id = kNoId;
+      if (id != kNoId)
+        a.doc.editChannel(id, "choose patch", [&](Channel& c) {
+          packs::samplers::setPatch(c.plugin, pr.path, pr.bank, pr.program, pr.name);
+          if (act == DropAction::NewPatchChannel || channelNameIsAutomatic(c)) c.name = pr.name;
+        });
+      a.doc.endGroup();
+      if (id != kNoId) a.showNewInstrument(id);
+      return id != kNoId;
+    }
+    case DropAction::LoadPatch: {  // K-333: the Patch Player under the drop plays this patch
+      packs::samplers::PatchRef pr;
+      const PluginTarget t = target == DropTarget::Rack ? PluginTarget{place.channel, -1} : PluginTarget{place.owner, place.pluginSlot};
+      const PluginState* cur = t.state(a.doc.song());
+      if (!cur || !patchRefFor(path, pr)) return false;
+      PluginState ns = *cur;
+      packs::samplers::setPatch(ns, pr.path, pr.bank, pr.program, pr.name);
+      setPluginState(a, t, ns, "change patch");
       if (target == DropTarget::Rack) a.selectChannel(place.channel);
       return true;
     }
@@ -1273,10 +1363,6 @@ PlugPlan planPlugin(App& a, const std::string& type, DropTarget target, const Dr
     return p;
   }
   const Song& s = a.doc.song();
-  if (!collabui::pluginAllowed(a, type)) {  // J-111 / J-208: installed plugins stay out of a collaborative project
-    p.why = i18n::tr("Installed plugins can't be used in a collaborative project");
-    return p;
-  }
   const bool gen = info->kind == PluginKind::Generator, fx = info->kind == PluginKind::Effect;
   const char* genOnly = i18n::tr("Effects go into mixer slots");
   const char* fxOnly = i18n::tr("Instruments go into the channel rack");
@@ -1605,7 +1691,8 @@ void openFile(App& a, const std::string& path) {
   if (d.item.kind == Kind::Instrument) {
     DropPlace pw;
     if (a.settingsChannel != kNoId) pw.owner = a.settingsChannel, pw.pluginSlot = -1;
-    if (pw.owner != kNoId && dropActionFor(a, path, DropTarget::PluginWindow, pw) == DropAction::LoadInstrumentMap) {
+    const DropAction there = pw.owner != kNoId ? dropActionFor(a, path, DropTarget::PluginWindow, pw) : DropAction::None;
+    if (there == DropAction::LoadInstrumentMap || there == DropAction::LoadPatch) {  // K-333: an open Patch Player takes a patch
       performDrop(a, path, DropTarget::PluginWindow, pw);
       return;
     }
@@ -1633,6 +1720,17 @@ void openFile(App& a, const std::string& path) {
   if (d.item.kind == Kind::Layer) {  // K-169: a new layer at the end of the rack
     performDrop(a, path, DropTarget::Rack, DropPlace{});
     return;
+  }
+  // 0.7.8: in the Tracker, a sample opened (a double-click, a file let go on the window) while the
+  // current instrument is a Tracker Sampler goes into its selected sample entry, as the Files page loads.
+  if (d.item.kind == Kind::Audio && layoutui::active() == layout::Preset::Tracker) {
+    const Channel* ch = a.doc.song().channel(a.selChannel);
+    if (ch && ch->plugin.type == tracker::kInstrumentType) {
+      const int k = packs::trackerpack::headerLoadSample(a, a.selChannel, path);
+      if (k < 0) a.notify(i18n::tr("That file holds no audio Gridline can read"), true);
+      else a.notify(std::string(i18n::tr("Loaded into entry")) + " " + trk::hex2(k + 1));
+      return;
+    }
   }
   performDrop(a, path, DropTarget::Workspace, DropPlace{});
 }

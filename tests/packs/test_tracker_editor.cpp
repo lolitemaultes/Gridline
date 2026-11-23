@@ -650,7 +650,9 @@ void testTrimAndLoad(const std::string& dir) {
   expect(l.text.sampleNames[1] == "trim c" && l.text.def.samples[1].length == 2000 && l.text.def.keymap == e.text.def.keymap, "load: the slot's file, the key map kept");
   expect(l.text.sampleNames[0] == "trim a", "load: the other samples stay");
   tp::Edit empty = tp::readEdit("", 0);
-  expect(tp::replaceSample(empty, 3, c, 2000, 44100, "x") == 0, "load: an empty instrument takes it in its first slot");
+  // 0.7.8: the entry picked, even in an empty instrument (before: always its first slot); every key plays it.
+  expect(tp::replaceSample(empty, 3, c, 2000, 44100, "x") == 3 && empty.text.def.keymap[0] == 3 && empty.text.def.keymap[95] == 3,
+         "load: an empty instrument takes it in the entry picked, on every key");
   // cp15 (the classic copy and exchange of samples): another instrument's slot over the selected
   // one, keys kept; into an empty instrument every key plays it; two slots trade, keys kept.
   {

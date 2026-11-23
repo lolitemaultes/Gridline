@@ -192,7 +192,10 @@ inline constexpr int kImgPatterns = 8;
 ImagePtr builtinImage(int pattern);
 // Loads BMP (24/32-bit uncompressed), PPM/PGM (P5/P6) or TGA (uncompressed);
 // downscaled to at most kImgMaxRows × kImgMaxCols. Cached by path. nullptr on failure.
+// FRZ-1118 (0.7.8): on the interface thread a file on a web or network drive is read in the background: the
+// first calls return nullptr with `err` = kImageNotReadYet, a later one the picture.
 ImagePtr loadImageFile(const std::string& path, std::string* err = nullptr);
+inline constexpr const char* kImageNotReadYet = "not read yet (a web or network drive)";
 // Canvas (kCanvasW × kCanvasH greyscale, 0..15 per pixel) <-> hex text.
 std::vector<uint8_t> decodeCanvas(const std::string& hex);
 std::string encodeCanvas(const std::vector<uint8_t>& px);  // all blank → "0"

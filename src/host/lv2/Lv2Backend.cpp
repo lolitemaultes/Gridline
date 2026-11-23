@@ -21,6 +21,7 @@
 // URIDs (atom:Object state) are stored as they are and only round-trip
 // within one process.
 #include <algorithm>
+#include "../../core/ThreadName.h"
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -207,7 +208,7 @@ class Worker {
     syncSchedule_.schedule_work = [](LV2_Worker_Schedule_Handle hd, uint32_t size, const void* data) {
       return static_cast<Worker*>(hd)->doWork(size, data);
     };
-    thread_ = std::thread([this] { loop(); });
+    thread_ = std::thread([this] { gl::threads::setName("gl-lv2-worker"); loop(); });
   }
   ~Worker() {
     quit_.store(true);
@@ -244,6 +245,7 @@ class Worker {
     for (;;) {
       sem_.wait();
       if (quit_.load()) return;
+      gl::threads::woke();  // K-142: CPU report
       uint32_t n = 0;
       bool fits = false;
       if (req_.pop(buf.data(), static_cast<uint32_t>(buf.size()), n, fits) && fits) doWork(n, buf.data());

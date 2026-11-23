@@ -1,5 +1,6 @@
 #include "Params.h"
 #include <atomic>
+#include "Lfo.h"
 
 namespace gl {
 
@@ -49,8 +50,7 @@ bool resolve(Song& s, ParamId id, Target& t) {
       t.desc = p->params[k];
       return true;
     }
-    if (id.index >= kLayerMacroBase && id.index < kLayerMacroBase + static_cast<uint32_t>(kLayerMacros)) {  // K-169
-      if (!c->isLayer()) return false;
+    if (id.index >= kLayerMacroBase && id.index < kLayerMacroBase + static_cast<uint32_t>(kLayerMacros)) {  // K-169, K-245: every channel
       LayerMacro& m = c->macros[id.index - kLayerMacroBase];
       t.f = &m.value;
       t.desc = lin("", "%", 0, 1, 0);
@@ -85,6 +85,13 @@ bool resolve(Song& s, ParamId id, Target& t) {
       if (!p || k >= p->params.size() || k >= es.plugin.params.size()) return false;
       t.f = &es.plugin.params[k];
       t.desc = p->params[k];
+      return true;
+    }
+    if (id.index >= kLayerMacroBase && id.index < kLayerMacroBase + static_cast<uint32_t>(kLayerMacros)) {  // K-245: the track's macros
+      LayerMacro& mc = m->macros[id.index - kLayerMacroBase];
+      t.f = &mc.value;
+      t.desc = lin("", "%", 0, 1, 0);
+      t.desc.name = mc.name.empty() ? "Macro " + std::to_string(id.index - kLayerMacroBase + 1) : mc.name;
       return true;
     }
     if (id.index >= kSendBase && id.index < kSlotBase) {  // send level to a destination track
@@ -126,6 +133,31 @@ bool resolve(Song& s, ParamId id, Target& t) {
       case MixerParam::Mute: t.b = &m->muted; t.desc = tog("Mute"); return true;
       case MixerParam::Depth: t.f = &m->depth; t.desc = lin("Distance", "%", 0.0, 1.0, 0.0); return true;
       case MixerParam::Focus: t.f = &m->focus; t.desc = lin("Focus", "", -1.0, 1.0, 0.0); return true;
+      default: return false;
+    }
+  }
+  if (SongLfo* l = s.lfo(id.owner)) {  // K-247: a board LFO's own settings
+    switch (static_cast<lfo::LfoParam>(id.index)) {
+      case lfo::LfoParam::Depth: t.f = &l->depth; t.desc = lin("Depth", "%", 0, 1, 1); return true;
+      case lfo::LfoParam::Offset: t.f = &l->offset; t.desc = lin("Offset", "%", -1, 1, 0); return true;
+      case lfo::LfoParam::Phase: t.f = &l->phase; t.desc = lin("Phase", "deg", 0, 360, 0); return true;
+      case lfo::LfoParam::Smooth: t.f = &l->smoothMs; t.desc = lin("Smooth", "ms", 0, 500, 0); return true;
+      case lfo::LfoParam::RateHz:
+        t.f = &l->rateHz;
+        t.desc = lin("Rate", "Hz", lfo::kMinHz, lfo::kMaxHz, 1);
+        t.desc.scale = ParamScale::Log;
+        return true;
+      case lfo::LfoParam::RateNote: {
+        t.i = &l->rateNote;
+        t.desc = ParamDesc{"Rate (note)", "", 0, lfo::kRateCount - 1, lfo::kDefaultRateNote, ParamKind::Choice, ParamScale::Linear, {}};
+        for (const char* n : lfo::kRateNames) t.desc.choices.push_back(n);
+        return true;
+      }
+      case lfo::LfoParam::Character:  // 0.7.8: Chaos's calm..wild (a Chaos source's only)
+        if (l->kind != LfoKind::Chaos) return false;
+        t.f = &l->character;
+        t.desc = lin("Character", "%", 0, 1, 0.5);
+        return true;
       default: return false;
     }
   }
@@ -193,16 +225,32 @@ std::string paramDisplayName(const Song& song, ParamId id) {
       return n + " › Send to " + busName(song, id.index - kSendBase);
     return n + " › " + d->name;
   }
+  if (song.lfo(id.owner)) return lfo::label(song, id.owner) + " › " + d->name;  // K-247
   return d->name;
 }
+
+namespace {
+// K-245: a macro that drives something or has a name (core/Macros.h macro::assigned, kept here so
+// this file needs nothing above it).
+bool macroAssigned(const Song& song, ObjectId owner, int k) {
+  const LayerMacro* m = nullptr;
+  if (const Channel* c = song.channel(owner)) m = &c->macros[static_cast<size_t>(k)];
+  else if (const MixerTrack* t = song.mixerTrack(owner)) m = &t->macros[static_cast<size_t>(k)];
+  if (!m) return false;
+  if (!m->name.empty()) return true;
+  for (const auto& l : song.modLinks)
+    if (l.sourceOwner == owner && l.sourceSlot == kLayerMacroSlot && l.sourceOutput == k) return true;
+  return false;
+}
+}  // namespace
 
 std::vector<ParamId> listParams(const Song& song) {
   std::vector<ParamId> out;
   for (uint32_t i = 0; i < static_cast<uint32_t>(SongParam::Count); ++i) out.push_back({kSongId, i});
   for (const auto& c : song.channels) {
     for (uint32_t i = 0; i < static_cast<uint32_t>(ChannelParam::Count); ++i) out.push_back({c.id, i});
-    if (c.isLayer())  // K-169: the layer's macros
-      for (int k = 0; k < kLayerMacros; ++k) out.push_back(layerMacroParam(c.id, k));
+    for (int k = 0; k < kLayerMacros; ++k)  // K-169: a layer's macros; K-245: another channel's assigned ones
+      if (c.isLayer() || macroAssigned(song, c.id, k)) out.push_back(layerMacroParam(c.id, k));
     if (const PluginInfo* p = findPlugin(c.plugin.type))
       for (size_t k = 0; k < p->params.size(); ++k) out.push_back(channelPluginParam(c.id, static_cast<int>(k)));
     for (size_t fx = 0; fx < c.noteFx.size(); ++fx)
@@ -212,6 +260,8 @@ std::vector<ParamId> listParams(const Song& song) {
   }
   for (const auto& m : song.mixer) {
     for (uint32_t i = 0; i < static_cast<uint32_t>(MixerParam::Count); ++i) out.push_back({m.id, i});
+    for (int k = 0; k < kLayerMacros; ++k)  // K-245: the track's assigned macros
+      if (macroAssigned(song, m.id, k)) out.push_back(layerMacroParam(m.id, k));
     for (const auto& sd : m.sends)
       if (!sd.sidechain && song.mixerIndex(sd.to) >= 0) out.push_back(sendParam(m.id, song.mixerIndex(sd.to)));
     for (size_t s = 0; s < m.slots.size(); ++s) {
@@ -223,6 +273,9 @@ std::vector<ParamId> listParams(const Song& song) {
         out.push_back(slotParam(m.id, static_cast<int>(s), static_cast<int>(k)));
     }
   }
+  for (const auto& l : song.lfos)  // K-247: the board's LFOs (0.7.8: Character is Chaos's alone)
+    for (uint32_t i = 0; i < static_cast<uint32_t>(lfo::LfoParam::Count); ++i)
+      if (i != static_cast<uint32_t>(lfo::LfoParam::Character) || l.kind == LfoKind::Chaos) out.push_back({l.id, i});
   return out;
 }
 
@@ -262,12 +315,21 @@ std::vector<ControllerOutput> listControllerOutputs(const Song& song) {
   return out;
 }
 
+bool internalLinkApplies(const Song& song, ParamId id) {
+  if (id.owner == kSongId || id.owner == kNoId) return false;
+  return describeParam(song, id).has_value();
+}
+
 std::string controllerOutputName(const Song& song, ObjectId owner, int slot, int output) {
-  if (slot == kLayerMacroSlot) {  // K-169
-    const Channel* c = song.channel(owner);
-    if (!c || !c->isLayer() || output < 0 || output >= kLayerMacros) return "?";
-    const LayerMacro& m = c->macros[static_cast<size_t>(output)];
-    return c->name + " › " + (m.name.empty() ? "Macro " + std::to_string(output + 1) : m.name);
+  if (slot == kLayerMacroSlot) {  // K-169, K-245: a channel's or a mixer track's macro
+    if (output < 0 || output >= kLayerMacros) return "?";
+    const LayerMacro* m = nullptr;
+    std::string owner_;
+    if (const Channel* c = song.channel(owner)) m = &c->macros[static_cast<size_t>(output)], owner_ = c->name;
+    else if (int mi = song.mixerIndex(owner); mi >= 0)
+      m = &song.mixer[static_cast<size_t>(mi)].macros[static_cast<size_t>(output)], owner_ = mixerTrackName(song, static_cast<size_t>(mi));
+    if (!m) return "?";
+    return owner_ + " › " + (m->name.empty() ? "Macro " + std::to_string(output + 1) : m->name);
   }
   const PluginInfo* info = nullptr;
   std::string prefix = sourcePrefix(song, owner, slot, &info);

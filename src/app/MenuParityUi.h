@@ -25,6 +25,9 @@ void optionsItems(App& a);    // Options: MIDI master sync output
 void toolsControlItems(App& a);  // last tweaked controls
 void toolsNoteItems(App& a);     // composing: last piano roll script, note clipboard as MIDI
 void toolsScoreLogItem(App& a);  // recording: score logger
+// k078-flkey: puts the notes played in the last `seconds` into the selected pattern and channel (a
+// controller's score log button); returns how many.
+int dumpScoreLogNow(App& a, double seconds);
 void toolsMacroItems(App& a);    // macros: lock tracks, live area, audio clip channels, declicking
 void toolsCleanupItems(App& a);  // clean-up: delete unused automation clips
 

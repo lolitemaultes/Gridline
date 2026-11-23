@@ -7,6 +7,7 @@
 // worker thread and applied on the UI thread as one undo step; reverse /
 // flip / invert / reset, the file name and sizes under the picture.
 #include <algorithm>
+#include "../../core/ThreadName.h"
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -139,7 +140,7 @@ bool loadPicture(App& a, const PluginTarget& t, const std::string& path) {
   latestLoad()[t.key()] = j->serial;
   statuses().erase(t.key());
   try {
-    std::thread([j] { runJob(j); }).detach();
+    std::thread([j] { gl::threads::setName("gl-pixel"); runJob(j); }).detach();
   } catch (...) {  // no thread available: decode here
     runJob(j);
   }

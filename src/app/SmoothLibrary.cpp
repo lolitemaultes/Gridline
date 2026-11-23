@@ -1,4 +1,5 @@
 #include "SmoothLibrary.h"
+#include "../core/ThreadName.h"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -7,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <string>
@@ -14,6 +16,7 @@
 #include <vector>
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
+#include "../core/BrowserIndex.h"
 #include "../core/Crash.h"
 #include "../core/I18n.h"
 #include "../core/LayoutShell.h"
@@ -26,6 +29,7 @@
 #include "../host/PluginGroups.h"
 #include "../host/PluginPrefs.h"
 #include "../host/PluginScan.h"
+#include "../packs/samplers/patchplayer.h"
 #include "App.h"
 #include "CollabUi.h"
 #include "Keys.h"
@@ -103,6 +107,44 @@ struct LibSlot {
 };
 std::vector<LibSlot> gLibSlots;
 
+// K-333: patches of the SF2 files used lately (the Patch Player's own list) are rows too, by family.
+// Their Item::preset is -2 - k for the k-th patch item ("<file>#patch=<bank>:<program>") seen; the
+// table only grows, so a row keeps its index.
+std::vector<std::string> gPatchItems;
+int patchRowIndex(const std::string& item) {
+  for (size_t k = 0; k < gPatchItems.size(); ++k)
+    if (gPatchItems[k] == item) return -2 - static_cast<int>(k);
+  gPatchItems.push_back(item);
+  return -1 - static_cast<int>(gPatchItems.size());
+}
+const std::string* patchRowItem(const Item& it) {
+  const int k = -2 - it.preset;
+  return it.type == packs::samplers::kPatchPlayerType && k >= 0 && k < static_cast<int>(gPatchItems.size()) ? &gPatchItems[static_cast<size_t>(k)] : nullptr;
+}
+// The Library's kind of sound for a patch family.
+const char* kindOfFamily(const std::string& fam) {
+  if (fam == "Piano" || fam == "Organ") return "Keys";
+  if (fam == "Chromatic") return "Bells and mallets";
+  if (fam == "Guitar") return "Plucked";
+  if (fam == "Bass") return "Bass";
+  if (fam == "Strings" || fam == "Ensemble" || fam == "Synth pad") return "Pads and strings";
+  if (fam == "Brass" || fam == "Reed" || fam == "Pipe" || fam == "Synth lead") return "Leads";
+  if (fam == "Percussive") return "Drums";
+  if (fam == "Drum kits") return "Drum kit";
+  return "Textures";
+}
+// A row's settings as a double-click loads them.
+PluginState itemState(const PluginInfo& info, const Item& it) {
+  if (const std::string* item = patchRowItem(it)) {
+    PluginState ps = defaultPluginState(it.type);
+    std::string file;
+    int bank = 0, program = 0;
+    if (browse::splitPatchItem(*item, file, bank, program)) packs::samplers::setPatch(ps, file, bank, program, it.name);
+    return ps;
+  }
+  return it.preset >= 0 && static_cast<size_t>(it.preset) < info.presets.size() ? presetState(info, static_cast<size_t>(it.preset)) : defaultPluginState(it.type);
+}
+
 // A row's identity across rebuilds of the list (the selection and the loaded mark).
 std::string itemKey(const Item& it) { return (it.effect ? "fx|" : "in|") + it.type + "|" + std::to_string(it.preset) + "|" + it.name; }
 // The selected row (a click or Up / Down; empty: none). The list scrolls to it once after a key moves it.
@@ -147,7 +189,7 @@ ObjectId busOf(const App& a, int track) {
 }
 const Channel* targetSound(const App& a, int track) {
   const Song& s = a.doc.song();
-  const Channel* c = logicplug::trackSound(s, track, nullptr);
+  const Channel* c = logicplug::trackSound(a, track);  // K-142: the per-song-change memo (the same answer)
   if (!c) return nullptr;
   const PluginInfo* p = findPlugin(c->plugin.type);
   if (!p || p->kind != PluginKind::Generator) return nullptr;
@@ -190,6 +232,28 @@ std::vector<Item> items(const App& a, int nav, const std::string& filterIn) {
       for (size_t i = 0; i < p.presets.size(); ++i) {
         Item it{p.type, static_cast<int>(i), p.presets[i].name, p.name, soundKind(p, p.presets[i].name), false};
         if ((onlyKind.empty() || it.kind == onlyKind) && keep(it)) out.push_back(it);
+      }
+    }
+    // K-333: the patches of the SF2 files used lately (read in the background; listed once read).
+    if (collabui::pluginAllowed(a, packs::samplers::kPatchPlayerType)) {
+      std::string files = a.settings.getString("patchplayer.files"), file;
+      int shownFiles = 0;
+      for (size_t i = 0; i <= files.size() && shownFiles < 4; ++i) {
+        if (i < files.size() && files[i] != '\n') {
+          file += files[i];
+          continue;
+        }
+        if (file.empty()) continue;
+        if (auto sf = packs::samplers::requestSf2(file)) {
+          ++shownFiles;
+          const std::string stem = std::filesystem::u8path(file).stem().u8string();
+          for (const auto& pr : sf->presets) {
+            const std::string fam = packs::samplers::patchFamily(pr.bank, pr.program);
+            Item it{packs::samplers::kPatchPlayerType, patchRowIndex(browse::patchItemPath(file, pr.bank, pr.program)), pr.name, stem, kindOfFamily(fam), false};
+            if ((onlyKind.empty() || it.kind == onlyKind) && (keep(it) || (!f.empty() && lower(fam).find(f) != std::string::npos))) out.push_back(it);
+          }
+        }
+        file.clear();
       }
     }
     if (onlyKind.empty())
@@ -300,8 +364,7 @@ bool loadItem(App& a, const Item& it, bool add) {
     a.notify(playlistTrackName(s0, static_cast<size_t>(track)) + i18n::tr(" is a bus: select an instrument track for a patch, or pick an effect for the bus"));
     return false;
   }
-  PluginState ps = it.preset >= 0 && static_cast<size_t>(it.preset) < info->presets.size() ? presetState(*info, static_cast<size_t>(it.preset))
-                                                                                          : defaultPluginState(it.type);
+  PluginState ps = itemState(*info, it);
   const std::string name = it.name;
   if (const Channel* c = targetSound(a, track)) {
     // The track's sound takes the patch: its instrument and settings; a name that was the old patch's
@@ -487,7 +550,7 @@ void startWorker(const PreviewRequest& r) {
   gPv.cancel = false;
   gPv.finished = false;
   gPv.running = true;
-  gPv.worker = std::thread([]() {
+  gPv.worker = std::thread([]() { gl::threads::setName("gl-lib-preview");
     host::UiThreadRenderScope scope;  // a hosted plugin's interface-thread calls are served there
     SamplePtr smp;
     try {  // an exception must not leave this thread
@@ -561,8 +624,7 @@ void requestPreview(App& a, const Item& it) {
   PreviewRequest r;
   r.serial = ++gPvSerial;
   r.key = itemKey(it);
-  r.state = it.preset >= 0 && static_cast<size_t>(it.preset) < info->presets.size() ? presetState(*info, static_cast<size_t>(it.preset))
-                                                                                  : defaultPluginState(it.type);
+  r.state = itemState(*info, it);
   r.sampleRate = std::max(8000, static_cast<int>(std::lround(a.engine.sampleRate())));
   a.stopPreview();  // the note before stops now, whatever comes next
   gPvQueued = false;

@@ -91,6 +91,7 @@ bool waveOf(const Edit& e, int slot, const InstrumentAux& inst, Wave& out) {
   out.cutA = e.cuts.start[i];
   out.cutB = e.cuts.end[i];
   out.relNote = sd.relNote;
+  out.reverse = sd.reverse;
   tidy(out);
   return true;
 }
@@ -315,6 +316,9 @@ bool waveEcho(Wave& w, int count, int32_t distance, double feedback, bool extend
 
 bool waveMinimise(Wave& w) {
   if (w.loop == trk::kLoopOff || w.loopLength < 1) return false;
+  // 0.7.8: played backwards, the sound runs from the end down into the loop and never reaches what
+  // lies before it: that part goes (the loop then starts the sample; the points move with the audio).
+  if (w.reverse) return w.loopStart > 0 && waveDelete(w, Span{0, w.loopStart});
   const int32_t le = w.loopStart + w.loopLength;
   if (le >= w.frames()) return false;
   eachChannel(w, [&](std::vector<float>& v) { v.resize(static_cast<size_t>(le)); });

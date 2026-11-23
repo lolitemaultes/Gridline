@@ -32,6 +32,13 @@ Settings::Settings() {
       {"project.defaultPpq", Json::makeNumber(96)},
       {"project.defaultTempo", Json::makeNumber(140)},
       {"import.flData", Json::makeString("")},  // FL Studio factory data folder ("" = detect)
+      // K-333: the Patch Player's own lists ("<file>|<bank>|<program>" or a file per line) and the
+      // MIDI import's instrument choice (a Patch Player on this SF2 file, or the synths as before).
+      {"patchplayer.starred", Json::makeString("")},
+      {"patchplayer.recent", Json::makeString("")},
+      {"patchplayer.files", Json::makeString("")},
+      {"midiImport.patchPlayer", b(false)},
+      {"midiImport.sf2", Json::makeString("")},
       {"import.urlAutoUpdate", b(true)},           // J-192: keep yt-dlp current (checked at most once a day, when used)
       {"import.urlLastUpdateCheck", Json::makeNumber(0)},  // J-192: seconds since 1970 of the last yt-dlp check
       {"import.urlPlacement", Json::makeNumber(0)},  // J-192: 0 = clip on a new track at the playhead, 1 = browser only
@@ -142,10 +149,24 @@ Settings::Settings() {
       {"ui.windowSystem", Json::makeString("auto")},  // K-153: "auto" (X11 through XWayland when there is one) or "wayland" (Linux, BSD)
       {"ui.scaleAuto", b(true)},             // J-91: ui.scale is multiplied by the desktop's scale (core/UiScale.h)
       {"ui.detachWindows", b(true)},         // J-113: windows can be dragged out of the main window
+      {"ui.pluginsInside", b(true)},         // 0.7.8: installed plugins' interfaces open inside Gridline (off: in windows of their own)
       {"ui.editorZoom", Json::makeString("")},  // K-19: plugin editor sizes per type ("gl.eq=1.5;..."), core/EditorZoom.h
       {"ui.pluginWindowSize", Json::makeNumber(0.75)},  // K-136, K-147: built-in plugin editors' size, 0.6 .. 1.5 (edzoom::kGlobalDefault)
       {"ui.pluginWindowFit", b(false)},                 // K-136: small editors open larger on a large screen (K-19's automatic size)
       {"ui.loupePinned", b(false)},          // K-15: Loupe is a panel of the main layout
+      {"ui.clipDoubleClick", Json::makeString("editor")},
+      {"ui.clipWindowView", Json::makeString("main")},  // 0.7.8: the Audio clip window's view: "main" (one page) or "advanced" (the tabs)
+      {"ui.clipWindowPanel", Json::makeNumber(0)},  // 0.7.8: the Audio clip window's settings, a share of its height as last dragged (0: as they need)  // K-249: a double-click on an audio clip opens "editor", "channel" (channel settings) or "loupe"
+      {"export.clipsDir", Json::makeString("")},  // K-251: the folder the last "each clip to a file" went to
+      {"render.lastOptions", Json::makeString("")},  // K-254: the render sheet's remembered options
+      // K-253: Trim silence at the ends / Remove silence (engine/Silence.h Options), the same everywhere.
+      {"silence.autoThreshold", b(true)},
+      {"silence.thresholdDb", Json::makeNumber(-50)},
+      {"silence.minGapMs", Json::makeNumber(300)},
+      {"silence.marginMs", Json::makeNumber(25)},
+      {"silence.fadeMs", Json::makeNumber(5)},
+      {"silence.keepBreaths", b(true)},
+      {"silence.ripple", b(false)},
       {"tracker.volumeColumn", b(true)},     // K-106: the pattern editor shows the volume sub-column
       {"tracker.panColumn", b(true)},        // K-106: ... the pan sub-column
       {"tracker.effectColumn", b(true)},     // K-106: ... the effect sub-column
@@ -176,27 +197,31 @@ Settings::Settings() {
       {"tracker.scopeLines", b(false)},    // K-106: the scopes draw a line, not filled bars
       {"tracker.diskFolder", Json::makeString("")},   // K-106: the Files screen's folder (empty: the project's, else home)
       {"tracker.diskSort", Json::makeString("name")},  // K-106: the Files list by "name" or by "type" (extension first)
+      {"tracker.sampleView", Json::makeString("classic")},  // K-391: a Sampler's Sample editor in the Tracker: "classic" or "advanced"
       {"tracker.diskAll", b(false)},       // K-106: the Files list shows every file, not only the kind picked
       {"ui.plasmaFull", b(false)},           // K-164: Plasma editor shows every control in place (Full) instead of Simple
       {"loupe.autoScroll", b(true)},         // Loupe follows the playhead while it plays (its own toggle sets it)
+      {"loupe.specRange", Json::makeNumber(100)},     // Loupe's spectrogram shows this many dB below 0 dBFS (60, 80, 100, 120)
+      {"loupe.specResolution", Json::makeNumber(1)},  // Loupe's spectrogram: 0 sharper in time, 1 balanced, 2 sharper in frequency
       {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
       {"ui.showHints", b(true)},
-      {"ui.cbar.nav", b(true)},  {"ui.cbar.toStart", b(false)},  // checkpoint 48 (A3): go to start, off by default as the reference's     // K-112b: the Tracks layout control bar parts shown (customise menu)
-      {"ui.cbar.cycle", b(true)},
-      {"ui.cbar.countIn", b(true)},
-      {"ui.cbar.click", b(true)},
-      {"ui.cbar.typing", b(true)},
-      {"ui.cbar.master", b(true)},
+      // K-256: Smooth's control bar switches (ui.cbar.*) moved into its bar model (layout.logic.toolbar); a
+      // value a person had set is read once (layout.logic.toolbarMigrated); the keys stay registered only so
+      // that read sees them (nothing else reads or writes them).
+      {"ui.cbar.nav", b(true)},  {"ui.cbar.toStart", b(false)}, {"ui.cbar.cycle", b(true)}, {"ui.cbar.countIn", b(true)},
+      {"ui.cbar.click", b(true)}, {"ui.cbar.typing", b(true)},  {"ui.cbar.master", b(true)},
       {"ui.lcdMode", Json::makeNumber(0)},     // K-112b: the Tracks layout display (0 beats and project, 1 custom)
       {"ui.timeFormat", Json::makeNumber(0)},  // J-27, K-168: the song position shows ops::TimeFormat (0 bars, 1 minutes, 2 timecode)
       {"ui.timeSteps", b(false)},              // J-27, K-168: bars : steps : ticks instead of beats
       {"ui.smpteRate", Json::makeNumber(1)},   // J-27, K-168: the timecode's frame rate, an index of ops::smpteRates (24 fps)
       {"ui.showPlayedChords", b(false)},       // J-27, K-168: the hint bar names the chord held on MIDI input
+      {"ui.lfoHideOnKnobs", b(false)},         // K-247: knobs a song LFO moves stop showing its swing and live dot (LfoUi.cpp)
       {"ui.confirmAutoRevert", b(true)},     // J-77: unconfirmed display / audio changes go back after 15 s
       {"playlist.warpSnapTransients", b(true)},  // K-85: a new warp marker lands on the nearest transient
       {"playlist.quantizeStrength", Json::makeNumber(1.0)},  // K-85: audio quantize strength (0 .. 1)
       {"ui.autoScroll", b(true)},              // the playlist follows the song position while playing
       {"ui.autoScrollPattern", b(true)},       // K-4: the piano roll and channel rack follow the pattern position
+      {"rack.laneColumn", b(false)},           // K-255: the channel rack shows each row's grid and length (also shown while a row has one)
       {"ui.smoothSnap", b(true)},              // J-37: snapped drags glide from cell to cell (drawing only)
       {"ui.smoothScroll", b(true)},            // J-67: wheel scrolling glides to its step (trackpads stay 1:1)
       {"ui.smoothZoom", b(true)},              // J-188: zoom steps glide (the point under the pointer stays put; trackpads stay 1:1)
@@ -218,12 +243,15 @@ Settings::Settings() {
       {"theme.controls", Json::makeString("slate")}, // control style: slate | graphite | hairline | lumen | classic (J-129)
       {"ui.mixerWheel", Json::makeNumber(2)},  // J-83: wheel over mixer controls: 0 adjust, 1 scroll the mixer, 2 auto (scroll when narrow)
       {"ui.mixerLayout", Json::makeNumber(1)},  // mixer strip width: 0 compact, 1 normal, 2 wide
+      {"ui.mixerInspectorW", Json::makeNumber(0)},  // K-338: the side-by-side mixer's inspector width (dragged), 0 automatic
       // Stage (app/StageView.cpp, docs/stage-view.md): view options per user, never in a project.
       {"ui.mixerView", Json::makeNumber(0)},       // the mixer window shows 0 the strips (Mix), 1 the Stage
       {"ui.stage.tracks", Json::makeNumber(0)},    // tracks on the stage: 0 used tracks, 1 every insert track
       {"ui.stage.snap", b(true)},                  // drags snap to the five distances and the centre
       {"ui.stage.labels", b(true)},                // track names under the tokens
       {"ui.stage.welcomed", b(false)},             // the first-run card was answered
+      {"ui.stage.trackerFold", Json::makeString("aaaa")},  // the Tracker's Stage column: Arrange, Track, Place, Level each a(uto), o(pen) or f(olded)
+      {"ui.stage.compactGroups", b(true)},         // groups rest as a small chip and open when focused (off: trays always open)
       {"ui.stage.roomHinted", b(false)},           // "Pick a room to hear depth" was shown once
       {"ui.stage.roomsList", Json::makeNumber(1)},  // K-224 / K-270: the rooms panel beside the stage is open
       {"ui.stage.roomsWidth", Json::makeNumber(264)},  // K-270: the rooms column's width (px); under 150 the slim rail
@@ -261,6 +289,10 @@ Settings::Settings() {
       // them open by the old default has had that kept as their own choice.
       {"layout.logic.panesKept", b(false)},
       {"layout.logic.lowerKept", b(false)},
+      // 0.7.8 Seltmann's Ribbon editor: its height (auto: by the room where it sits; compact, standard,
+      // full) and whether a layout card plays while the pointer rests on it (else while it is held).
+      {"seltmann.height", Json::makeString("auto")},
+      {"seltmann.hoverPreview", b(false)},
       {"ui.logicQuickHelp", b(false)},  // R01-08: the Tracks layout's floating Quick help  // K-112B cp40: the editors pane kept open for someone who used the layout
       {"ui.layoutDev", b(false)},  // K-112: developer commands of development builds (K-329: the layouts ship to everyone)
       {"ui.systemMenuBar", b(true)},
@@ -284,6 +316,19 @@ Settings::Settings() {
       {"layout.live.workspaces", Json::makeString("")},
       {"layout.logic.workspaces", Json::makeString("")},
       {"layout.tracker.workspaces", Json::makeString("")},
+      // K-256: each layout's control bar (core/Toolbar.h: its parts, their order and the pinned commands);
+      // "" = the bar as designed with no pins. Per person, never in a project.
+      {"layout.studio.toolbar", Json::makeString("")},
+      {"layout.live.toolbar", Json::makeString("")},
+      {"layout.logic.toolbar", Json::makeString("")},
+      {"layout.tracker.toolbar", Json::makeString("")},
+      {"layout.logic.toolbarMigrated", b(false)},
+      // K-256: when the workspace strip shows: 0 always, 1 once a layout has two workspaces, 2 never.
+      {"ui.workspaceStrip", Json::makeNumber(1)},
+      // K-340: Studio's zone keys (hold Tab and press a digit), off by default, and what each zone opens
+      // (core/ZoneKeys.h text; "" = 1 playlist, 2 piano roll, 3 mixer and channel rack).
+      {"studio.zoneKeys", b(false)},
+      {"studio.zones", Json::makeString("")},
       {"ui.layout.live.view", Json::makeString("playlist")},  // main view in front: "playlist" | "pads"
       // N45-10: the sets last saved in the Clips layout with the Arrangement in front (one path a line,
       // newest first, at most 40); any other set opens in Clips on the clip grid. Per person, never in a project.
@@ -312,7 +357,11 @@ Settings::Settings() {
       {"general.defaultTemplate", Json::makeString("")},   // "<Category>/<Name>" ("" = built-in starter kit)
       {"general.language", Json::makeString("en")},        // i18n code ("en", "pseudo", catalogue stem)
       {"keys.bindings", Json::makeString("")},             // J-55: shortcut overrides, JSON (keys::Keymap::serialize)
-      {"keys.typingLayout", Json::makeString("standard")},
+      {"keys.typingLayout", Json::makeString("standard")},  // (0.7.7 and before: read once into keys.myKeys)
+      // GitHub #79: "My keys say", what is printed on the keys (keycaps::capsFromId): "computer" (the
+      // computer's own layout: every name as before), "qwerty", "qwertz", "azerty", "dvorak", "colemak".
+      // Shortcuts and the typing keyboard's note keys are named after it.
+      {"keys.myKeys", Json::makeString("computer")},
       {"keys.typingRows", Json::makeString("auto")},  // R06-15: "auto" (home row in the Tracks layout), "two", "home"  // K-113: what the typing keys are called (typingLayoutFromId)
       {"keys.typingAtStart", Json::makeString("last")},  // the typing keyboard when Gridline starts: "last" (as it was left) | "on" | "off"
       {"keys.typingOn", b(false)},                     // the typing keyboard was on when Gridline last closed
@@ -322,6 +371,12 @@ Settings::Settings() {
       {"project.defaultDen", Json::makeNumber(4)},
       {"project.defaultAuthor", Json::makeString("")},
       {"project.defaultPatternBars", Json::makeNumber(1)},
+      // GitHub #74: the colour new channels and patterns take ("varied": the palette in turn; "one": the colour below;
+      // patterns also "channel": the selected channel's colour).
+      {"colors.newChannels", Json::makeString("varied")},
+      {"colors.newChannelColor", Json::makeNumber(0x5A8FD8)},
+      {"colors.newPatterns", Json::makeString("varied")},
+      {"colors.newPatternColor", Json::makeNumber(0x6E9F4B)},
       {"backup.autosave", b(false)},                       // also save the project file itself (saved projects only)
       {"backup.autosaveMinutes", Json::makeNumber(5)},
       {"ui.hintDelay", Json::makeNumber(0.5)},             // tooltip delay, seconds
@@ -454,6 +509,17 @@ bool Settings::load(const std::string& path, std::string* err) {
   // Retired: the channel strip of plugin windows is no longer remembered (it opens
   // hidden, app/ChannelStrip.h); older files that still have it load as before.
   values_.erase("ui.channelStrip");
+  // GitHub #79: the typing keyboard's own layout choice became "My keys say". A layout chosen there
+  // carries over. "standard" was also the starting value, so it does not say the keys are QWERTY:
+  // it becomes "computer", which keeps every shortcut's name as it was (and the note keys' names on
+  // a QWERTY computer).
+  const Json* saved = j.find("values");
+  if (saved && saved->is(Json::Type::Object) && !saved->find("keys.myKeys"))
+    if (const Json* t = saved->find("keys.typingLayout"); t && t->is(Json::Type::String)) {
+      const std::string& was = t->str;
+      if (was == "qwertz" || was == "azerty" || was == "dvorak" || was == "colemak" || was == "computer")
+        values_["keys.myKeys"] = Json::makeString(was);
+    }
   retireLayoutPalette(values_);
   return true;
 }

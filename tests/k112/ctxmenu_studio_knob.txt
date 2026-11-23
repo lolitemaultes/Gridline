@@ -9,6 +9,8 @@ Edit events
 Start the song at this value
 Record automation
 --------------------------------
+Modulate >
+--------------------------------
 Link to controller…
 Multilink to controllers
 ==== tree ====
@@ -24,5 +26,12 @@ Edit automation clip >
 Edit events
 Start the song at this value
 Record automation
+Modulate >
+Modulate > LFO >
+Modulate > Chaos >
+Modulate > Random >
+Modulate > Macro >
+Modulate > Controller plugin >
+Modulate > Open the LFO board
 Link to controller…
 Multilink to controllers

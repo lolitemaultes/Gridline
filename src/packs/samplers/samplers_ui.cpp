@@ -4,6 +4,7 @@
 //   Scratch Sampler: sample + region · move curve editor + mute lane +
 //                    vertical waveform · move keyboard · playback/shape panels
 #include <algorithm>
+#include "../../core/ThreadName.h"
 #include <bitset>
 #include <cctype>
 #include <cmath>
@@ -13,6 +14,9 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <mutex>
+#include <set>
+#include <thread>
 #include "../../core/I18n.h"
 #include "../../core/SafeCast.h"
 #include "../../core/SfzMap.h"
@@ -26,6 +30,8 @@
 #include "../../engine/Sample.h"
 #include "../PacksUi.h"
 #include "samplers.h"
+#include "patchplayer.h"
+#include "patchplayer_ui.h"
 #include "../../core/Platform.h"
 
 namespace gl::packs::samplers {
@@ -1436,6 +1442,10 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   }
   if (st->type == "gl.scratch") {
     editorScratch(a, t, width);
+    return true;
+  }
+  if (st->type == kPatchPlayerType) {
+    drawPatchPlayerEditor(a, t, width);
     return true;
   }
   return false;

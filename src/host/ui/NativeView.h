@@ -4,6 +4,7 @@
 // run time from the library SDL already loaded).
 #pragma once
 #include <string>
+#include <vector>
 #include "../EditorLayout.h"
 #include "../KeyForward.h"
 
@@ -26,6 +27,27 @@ void* createContainer(const Window& w, const layout::Rect& r);
 // Moves / resizes it (keeps it pinned to the top of the content area on macOS).
 void setContainerFrame(const Window& w, void* container, const layout::Rect& r);
 void destroyContainer(const Window& w, void* container);
+// 0.7.8: an installed plugin's interface inside one of Gridline's own windows (its plugin window
+// inside the main window, or popped out of it). The container (returned: the plugin attaches to it)
+// sits in a clipping view of its own in `w`, at `full` (window content coordinates, top-left based).
+// nullptr on failure.
+void* createDockedContainer(const Window& w, const layout::Rect& full);
+// Shows the part `visible` of the interface whose rectangle is `full`, with `holes` (inside
+// `visible`) cut out of it: Gridline's windows, menus, tooltips and notices in front of it.
+// `visible` empty hides it. The interface keeps its size and its place in `full`, whatever is cut.
+void setDockedFrame(const Window& w, void* container, const layout::Rect& full, const layout::Rect& visible,
+                    const std::vector<layout::Rect>& holes);
+void destroyDockedContainer(const Window& w, void* container);
+// The window system can cut holes in a docked interface (macOS, Windows); elsewhere an interface
+// with anything of Gridline's in front of it hides while that is there (layout::dockedShow).
+bool dockedHolesCut();
+// A mouse button went down on the docked interface since the last call (macOS: its plugin window
+// then comes to the front of Gridline's windows). False elsewhere.
+bool takeDockedPress(void* container);
+// The keyboard goes back from the interface to Gridline's own view of its window (a click on
+// Gridline's part of the window while the interface had the keyboard). No-op where the window
+// system moves the keyboard itself.
+void releaseKeyFocus(void* container);
 // K-37: `w` moved on the screen. X11: a window inside another gets no ConfigureNotify of its own when
 // its toplevel moves, so the container is sent one, as ICCCM has a window manager do for a toplevel:
 // what is embedded in it may watch only the container, and needs to know where it is on the screen
@@ -38,6 +60,13 @@ void keepAbove(const Window& child, const Window& parent, bool on);
 // Gridline window kept above the main window when that comes forward). Elsewhere a no-op:
 // keepAbove's ownership does it.
 void orderAbove(const Window& w, const Window& ref);
+// 0.7.8 (macOS): while `on`, `w` cannot become the key window. SDL_ShowWindow makes the window it
+// shows the key window on macOS whatever SDL_HINT_WINDOW_NO_ACTIVATION_WHEN_SHOWN says, and the
+// window that loses the keys loses the held mouse button's gesture and every held key with them (SDL
+// lets go of all keys when its keyboard focus goes). A window shown between this call with `on` and
+// the one with `off` comes to the front and leaves the keys where they are; afterwards a click makes
+// it key as usual. Elsewhere a no-op (the hint works there).
+void setTakesNoKeys(const Window& w, bool on);
 // A click went to `child`, a window kept above `parent` (keepAbove): it comes in front of the other
 // windows kept above that parent. macOS: AppKit keeps a parent's child windows in the order they
 // were added, whichever one is clicked, so the child is taken off and added again on top. X11 and
@@ -87,6 +116,14 @@ long windowNumber(const Window& w);
 // over the bottom of the content (the GL-drawn control bar). False when
 // unsupported.
 bool captureWindow(const Window& w, const std::string& pngPath, const unsigned char* overlay, int overlayW, int overlayH);
+// Dev (0.7.8, macOS): a picture of the main window `main` as the window server stacks this
+// application's windows over it: its own frame (`rgba`, w x h device pixels, rows bottom-up as GL
+// reads them) at the bottom, then every other visible window of the application that is over its
+// area (plugin windows, lifted menus and notices), in their real order, as the window server
+// composites them. Only this application's windows: never the screen. False when unsupported.
+bool captureStack(const Window& main, const unsigned char* rgba, int w, int h, const std::string& pngPath);
+// Dev (0.7.8): the window's stacking level (macOS NSWindow level; 0 elsewhere).
+long windowLevel(const Window& w);
 
 // ---- keyboard (J-66, see host/KeyForward.h) ----
 // Keys a plugin's interface inside `container` did not use queue up for
@@ -131,6 +168,21 @@ bool frameClockStart(const Window& w);
 void frameClockFollow(const Window& w);
 void frameClockWait();
 void frameClockStop();
+// K-142 (0.7.8): idle pacing. frameClockIdle(true) stops the refresh source while the interface
+// idles (no wake every refresh), false starts it again before frames are drawn at the full rate.
+// frameClockSleep sleeps the UI thread in its run loop up to `seconds`; it returns early (true)
+// when input or another source woke it. frameClockWake wakes it from any thread. Elsewhere these
+// do nothing (false): the loop waits on SDL there.
+void frameClockIdle(bool idle);
+bool frameClockSleep(double seconds);
+void frameClockWake();
+// K-142: whether any part of the window is on screen (macOS: not covered by other windows, not on
+// another Space, the application not hidden). True where the platform cannot tell.
+// watchOnScreen wakes the UI thread (frameClockWake) whenever that changes; onScreenChanges counts
+// the changes seen.
+bool windowOnScreen(const Window& w);
+void watchOnScreen(const Window& w);
+int onScreenChanges();
 // J-111: while `on` (a collaborative session is open), the system must not
 // throttle Gridline in the background (macOS App Nap: timers and the run loop
 // slowed when the window is hidden or covered). No-op elsewhere.

@@ -110,6 +110,43 @@ int main() {
   expect(fromJson("nonsense").items.empty() && fromJson("").items.empty(), "broken text: an empty set");
   expect(settingsKey(Preset::Logic) == "layout.logic.workspaces", "settings key");
 
+  // K-256: what a workspace keeps: its own control bar and pinned commands, the pane sizes, a dock plan.
+  {
+    Set k = initial(Preset::Studio, today);
+    add(k, "Mix", arr({"Mixer", "Playlist"}));
+    const std::string plainText = toJson(k);
+    expect(plainText.find("ownBar") == std::string::npos && plainText.find("keepPanes") == std::string::npos && plainText.find("dock") == std::string::npos,
+           "a workspace with nothing of its own writes no new keys");
+    const Set plainBack = fromJson(plainText);
+    expect(plainBack == k && !plainBack.items[1].hasOwnBar() && !plainBack.items[1].hasOwnPins() && plainBack.items[1].keepWindows && plainBack.items[1].keepPanes,
+           "an older set reads with no own bar or pins and keeping everything");
+    Workspace* mix = activeWorkspace(k);
+    expect(mix && mix->name == "Mix", "activeWorkspace is the active one");
+    mix->ownBar = R"([{"id":"menus","on":false}])";
+    mix->ownPins = "[]";
+    mix->keepPanes = false;
+    Arrangement withDock = arr({"Mixer"});
+    withDock.dock = R"({"tree":{"windows":["Mixer"],"central":true}})";
+    record(k, withDock);
+    const Set back = fromJson(toJson(k));
+    expect(back == k, "own bar, own (empty) pins, keep flags and the dock plan round-trip");
+    expect(back.items[1].hasOwnPins() && back.items[1].ownPins == "[]", "an own empty pin list is kept (not the layout's)");
+    expect(back.items[1].current.dock == withDock.dock, "the arrangement keeps its dock plan");
+    // Switching: the arrangement comes back, and the workspace switched to carries its own bar.
+    const Arrangement* to = select(k, 0, withDock);
+    expect(to && *to == today && !activeWorkspace(k)->hasOwnBar(), "switching to a workspace without its own bar: the layout's bar");
+    to = select(k, 1, today);
+    expect(to && to->dock == withDock.dock && activeWorkspace(k)->hasOwnBar() && activeWorkspace(k)->ownBar == mix->ownBar,
+           "switching back: its dock plan and its own bar");
+    // Revert: the arrangement goes back, the own bar stays (it is not part of the arrangement).
+    k.autoSave = false;
+    record(k, arr({"Browser"}));
+    const Arrangement* r = revert(k);
+    expect(r && r->dock == withDock.dock && activeWorkspace(k)->hasOwnBar(), "revert brings the saved arrangement back and keeps the own bar");
+    const int d = duplicate(k, 1);
+    expect(d == 2 && k.items[2].ownBar == k.items[1].ownBar && !k.items[2].keepPanes, "a duplicate keeps what the workspace keeps");
+  }
+
   // The opt-in copy in the project (Song::workspaceCopy): written only when present, read back as it was.
   {
     gl::Song song;

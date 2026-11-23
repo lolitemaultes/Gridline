@@ -6,6 +6,10 @@ namespace gl::packs {
 
 // Draws the custom editor for a pack type; false when no pack owns it.
 bool drawEditor(App& a, const PluginTarget& t, float width);
+// 0.7.8: Seltmann's tab in Smooth's lower pane (the channel being edited, else the last or first one).
+void seltmannPane(App& a);
+// K-347: the Tracker's Chop page (Seltmann on one page beside the Tracker's other pages).
+void seltmannChopPage(App& a);
 // Per frame, after the plugin windows: windows a pack keeps open on its own
 // (e.g. the audio editor's standalone window) and background work (recording).
 void drawWindows(App& a);

@@ -491,15 +491,11 @@ void lanes(App& a, const Channel& l, float width) {
       if (ImGui::MenuItem((o.name + "##k" + std::to_string(o.id)).c_str())) layer::addChild(a.doc, l.id, o.id);
     }
     if (ImGui::BeginMenu(i18n::tr("New instrument"))) {
-      std::string cat;
-      for (const auto& p : pluginCatalog()) {
-        if (p.kind != PluginKind::Generator || p.hidden) continue;
-        if (p.category != cat) {
-          cat = p.category;
-          ui::Label(cat.c_str());
-        }
-        if (ImGui::MenuItem((p.name + "##n" + p.type).c_str()))
-          a.later([&a, lid = l.id, name = p.name, type = p.type] { addNewChild(a, lid, name, type); });  // next frame, as above
+      for (const CatalogGroup& g : catalogGroups(PluginKind::Generator)) {  // each category once
+        ui::Label(g.category.c_str());
+        for (const PluginInfo* p : g.items)
+          if (ImGui::MenuItem((p->name + "##n" + p->type).c_str()))
+            a.later([&a, lid = l.id, name = p->name, type = p->type] { addNewChild(a, lid, name, type); });  // next frame, as above
       }
       ImGui::EndMenu();
     }

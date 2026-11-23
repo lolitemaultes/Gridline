@@ -14,6 +14,7 @@
 
 namespace gl {
 class App;
+struct PluginTarget;
 namespace collab {
 class Controller;
 class Session;
@@ -79,6 +80,9 @@ bool openUrl(const std::string& url);
 collab::Controller* controller(App& a);
 collab::Session* session(App& a);
 bool active(const App& a);
+// K-142 (0.7.8 follow-up): files on their way to a collaborator (sent a share per frame: the idle
+// frames keep their pace meanwhile).
+bool sendingFiles(const App& a);
 // Opening a project file: a collaborative project opens with its session (or
 // asks for an update first). Returns true when it handled the file.
 bool openIfCollab(App& a, const std::string& projectFile, bool* opened = nullptr);
@@ -93,8 +97,14 @@ OpenGate openGate(App& a, const std::string& projectFile);
 std::string projectFileIn(const std::string& path);
 // Before the open project is replaced (new / open): the session closes.
 void closeSession(App& a);
-// Plugins of hosted formats are hidden and refused in a collaborative project.
+// Every plugin may be used (k078-collabplug: installed plugins are shared too; kept for the callers).
 bool pluginAllowed(const App& a, const std::string& type);
+// k078-collabplug: in a collaborative project, at the top of an installed plugin's pane: the plugin is
+// not installed here (with its settings arriving), who lacks it, and who has the pointer in it.
+void pluginStrip(App& a, const PluginTarget& t, float width);
+// A missing plugin's pane may offer the same plugin in another format (not in a collaborative
+// project: that would replace it for everyone).
+bool pluginOffersOtherFormats(App& a);
 // The file of a sample / IR is still arriving from a collaborator.
 bool fileLoading(App& a, const std::string& path, float* progress = nullptr);
 // A collaborator just changed `object` ("channels/#5", "playlist/#40", "mixer/#3"):

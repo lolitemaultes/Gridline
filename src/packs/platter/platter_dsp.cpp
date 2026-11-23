@@ -2093,7 +2093,14 @@ class PlatterGen final : public Generator {
         h.key = k;
         break;
       }
-    if (tap::active() && deck_[0].loaded()) tap::play(deck_[0].rs());  // J-219: Track Receipt (key presses)
+    if (tap::active() && deck_[0].loaded()) {  // J-219: Track Receipt (key presses)
+      const Deck& d = deck_[0];
+      tap::play(d.rs());
+      // K-321: the motor's speed against the original (source seconds per second) and the pitch
+      // it plays at (key lock keeps the original's).
+      const double speed = d.unity() > 0 ? d.baseSpeed() / d.unity() : 0.0;
+      if (speed > 0) tap::pitch(d.rs(), d.on(DKeyLock) ? 0.0 : 12.0 * std::log2(speed), speed);
+    }
     key(k, true);
   }
   void onNoteOff(uint32_t id) override {

@@ -40,6 +40,7 @@ studio	view.pianoRoll	0	F7;
 studio	view.pluginPicker	0	F8;
 studio	view.browser	0	Alt+F8;
 studio	view.mixer	0	F9;
+studio	view.lfoBoard	0	Alt+F9;
 studio	view.stage	0	
 studio	view.settings	0	F10;
 studio	view.backToPlaylist	0	Esc;
@@ -95,6 +96,8 @@ studio	playlist.toolSelect	1	E;
 studio	playlist.toolZoom	1	Z;
 studio	playlist.toolPlay	1	Y;
 studio	playlist.toolWarp	1	W;
+studio	wave.warpMode	7	W;
+studio	wave.spectrum	7	Shift+W;
 studio	playlist.marker	1	Alt+T;
 studio	playlist.loopMarkers	1	Shift+T;
 studio	playlist.meterChange	1	Alt+Shift+T;
@@ -162,13 +165,14 @@ studio	piano.toolPlay	2	Y;
 studio	piano.toolZoom	2	Z;
 studio	piano.toolDetune	2	U;
 studio	piano.toolBend	2	N;
+studio	piano.toolVibrato	2	V;
 studio	piano.chordStamp	2	Alt+C;
 studio	piano.slideMode	2	Shift+S;
-studio	piano.chordStamp	2	Alt+C;
 studio	piano.zoomIn	2	PgUp;
 studio	piano.zoomOut	2	PgDn;
 studio	piano.zoomFit	2	Home;
 studio	rack.clone	3	Alt+C;
+studio	rack.cloneEmpty	3	Alt+Shift+C;
 studio	rack.randomColours	3	Ctrl+Alt+C;
 studio	rack.delete	3	Alt+Del;
 studio	rack.moveUp	3	Alt+Up;
@@ -197,8 +201,6 @@ studio	mixer.renderSelected	4	Alt+Shift+R;
 studio	mixer.waveforms	4	Alt+W;
 studio	mixer.selectAll	4	Ctrl+A;
 studio	mixer.deselect	4	Ctrl+D;
-studio	mixer.selectRoutedChannels	4	Alt+L;
-studio	mixer.selectRoutedTo	4	Ctrl+Alt+L;
 studio	stage.left	6	Left;
 studio	stage.right	6	Right;
 studio	stage.up	6	Up;
@@ -217,7 +219,6 @@ studio	stage.rename	6
 studio	stage.fromSelection	6	
 studio	stage.fromMarkers	6	
 studio	stage.selectAll	6	Ctrl+A;
-studio	stage.roomsPanel	6	\;
 studio	stage.deselect	6	Ctrl+D;
 studio	auto.delete	5	Del;Backspace;
 studio	auto.selectAll	5	Ctrl+A;
@@ -292,6 +293,7 @@ live	view.pianoRoll	0	Ctrl+Alt+3;
 live	view.pluginPicker	0	F8;
 live	view.browser	0	Ctrl+Alt+B;
 live	view.mixer	0	Ctrl+Alt+M;
+live	view.lfoBoard	0	Alt+F9;
 live	view.stage	0	
 live	view.settings	0	Ctrl+,;
 live	view.backToPlaylist	0	Esc;
@@ -347,6 +349,8 @@ live	playlist.toolSelect	1
 live	playlist.toolZoom	1	
 live	playlist.toolPlay	1	
 live	playlist.toolWarp	1	
+live	wave.warpMode	7	Alt+W;
+live	wave.spectrum	7	Shift+W;
 live	playlist.marker	1	Alt+T;
 live	playlist.loopMarkers	1	Ctrl+L;
 live	playlist.meterChange	1	Alt+Shift+T;
@@ -414,13 +418,14 @@ live	piano.toolPlay	2
 live	piano.toolZoom	2	
 live	piano.toolDetune	2	
 live	piano.toolBend	2	
+live	piano.toolVibrato	2	
 live	piano.chordStamp	2	Alt+C;
 live	piano.slideMode	2	Shift+S;
-live	piano.chordStamp	2	Alt+C;
 live	piano.zoomIn	2	=;PgUp;
 live	piano.zoomOut	2	-;PgDn;
 live	piano.zoomFit	2	Home;
 live	rack.clone	3	Alt+C;
+live	rack.cloneEmpty	3	Alt+Shift+C;
 live	rack.randomColours	3	Ctrl+Alt+C;
 live	rack.delete	3	Alt+Del;
 live	rack.moveUp	3	Alt+Up;
@@ -449,8 +454,6 @@ live	mixer.renderSelected	4	Alt+Shift+R;
 live	mixer.waveforms	4	Alt+W;
 live	mixer.selectAll	4	Ctrl+A;
 live	mixer.deselect	4	Ctrl+D;
-live	mixer.selectRoutedChannels	4	Alt+L;
-live	mixer.selectRoutedTo	4	
 live	stage.left	6	Left;
 live	stage.right	6	Right;
 live	stage.up	6	Up;
@@ -469,7 +472,6 @@ live	stage.rename	6
 live	stage.fromSelection	6	
 live	stage.fromMarkers	6	
 live	stage.selectAll	6	Ctrl+A;
-live	stage.roomsPanel	6	\;
 live	stage.deselect	6	Ctrl+D;
 live	auto.delete	5	Del;Backspace;
 live	auto.selectAll	5	Ctrl+A;
@@ -544,6 +546,7 @@ logic	view.pianoRoll	0	P;Ctrl+4;
 logic	view.pluginPicker	0	F8;
 logic	view.browser	0	
 logic	view.mixer	0	X;Ctrl+2;
+logic	view.lfoBoard	0	Alt+F9;
 logic	view.stage	0	
 logic	view.settings	0	Ctrl+,;
 logic	view.backToPlaylist	0	Esc;
@@ -605,6 +608,8 @@ logic	playlist.toolSelect	1
 logic	playlist.toolZoom	1	
 logic	playlist.toolPlay	1	
 logic	playlist.toolWarp	1	
+logic	wave.warpMode	7	Alt+W;
+logic	wave.spectrum	7	Shift+W;
 logic	playlist.marker	1	Alt+';
 logic	playlist.loopMarkers	1	
 logic	playlist.meterChange	1	Alt+Shift+T;
@@ -672,13 +677,14 @@ logic	piano.toolPlay	2
 logic	piano.toolZoom	2	
 logic	piano.toolDetune	2	
 logic	piano.toolBend	2	
+logic	piano.toolVibrato	2	
 logic	piano.chordStamp	2	Alt+C;
 logic	piano.slideMode	2	Shift+S;
-logic	piano.chordStamp	2	Alt+C;
 logic	piano.zoomIn	2	Ctrl+Right;PgUp;
 logic	piano.zoomOut	2	Ctrl+Left;PgDn;
 logic	piano.zoomFit	2	Home;
 logic	rack.clone	3	Alt+C;
+logic	rack.cloneEmpty	3	Alt+Shift+C;
 logic	rack.randomColours	3	Ctrl+Alt+C;
 logic	rack.delete	3	Alt+Del;
 logic	rack.moveUp	3	Alt+Up;
@@ -707,8 +713,6 @@ logic	mixer.renderSelected	4	Alt+Shift+R;
 logic	mixer.waveforms	4	Alt+W;
 logic	mixer.selectAll	4	Ctrl+A;
 logic	mixer.deselect	4	Ctrl+D;
-logic	mixer.selectRoutedChannels	4	Alt+L;
-logic	mixer.selectRoutedTo	4	Ctrl+Alt+L;
 logic	stage.left	6	Left;
 logic	stage.right	6	Right;
 logic	stage.up	6	Up;
@@ -727,7 +731,6 @@ logic	stage.rename	6
 logic	stage.fromSelection	6	
 logic	stage.fromMarkers	6	
 logic	stage.selectAll	6	Ctrl+A;
-logic	stage.roomsPanel	6	\;
 logic	stage.deselect	6	Ctrl+D;
 logic	auto.delete	5	Del;Backspace;
 logic	auto.selectAll	5	Ctrl+A;
@@ -802,6 +805,7 @@ studio+cmd	view.pianoRoll	0	F7;
 studio+cmd	view.pluginPicker	0	F8;
 studio+cmd	view.browser	0	Alt+F8;
 studio+cmd	view.mixer	0	F9;
+studio+cmd	view.lfoBoard	0	Alt+F9;
 studio+cmd	view.stage	0	
 studio+cmd	view.settings	0	F10;
 studio+cmd	view.backToPlaylist	0	Esc;
@@ -857,6 +861,8 @@ studio+cmd	playlist.toolSelect	1	E;
 studio+cmd	playlist.toolZoom	1	Z;
 studio+cmd	playlist.toolPlay	1	Y;
 studio+cmd	playlist.toolWarp	1	W;
+studio+cmd	wave.warpMode	7	W;
+studio+cmd	wave.spectrum	7	Shift+W;
 studio+cmd	playlist.marker	1	Alt+T;
 studio+cmd	playlist.loopMarkers	1	Shift+T;
 studio+cmd	playlist.meterChange	1	Alt+Shift+T;
@@ -924,13 +930,14 @@ studio+cmd	piano.toolPlay	2	Y;
 studio+cmd	piano.toolZoom	2	Z;
 studio+cmd	piano.toolDetune	2	U;
 studio+cmd	piano.toolBend	2	N;
+studio+cmd	piano.toolVibrato	2	V;
 studio+cmd	piano.chordStamp	2	Alt+C;
 studio+cmd	piano.slideMode	2	Shift+S;
-studio+cmd	piano.chordStamp	2	Alt+C;
 studio+cmd	piano.zoomIn	2	PgUp;
 studio+cmd	piano.zoomOut	2	PgDn;
 studio+cmd	piano.zoomFit	2	Home;
 studio+cmd	rack.clone	3	Alt+C;
+studio+cmd	rack.cloneEmpty	3	Alt+Shift+C;
 studio+cmd	rack.randomColours	3	Ctrl+Alt+C;
 studio+cmd	rack.delete	3	Alt+Del;
 studio+cmd	rack.moveUp	3	Alt+Up;
@@ -959,8 +966,6 @@ studio+cmd	mixer.renderSelected	4	Alt+Shift+R;
 studio+cmd	mixer.waveforms	4	Alt+W;
 studio+cmd	mixer.selectAll	4	Ctrl+A;
 studio+cmd	mixer.deselect	4	Ctrl+D;
-studio+cmd	mixer.selectRoutedChannels	4	Alt+L;
-studio+cmd	mixer.selectRoutedTo	4	Ctrl+Alt+L;
 studio+cmd	stage.left	6	Left;
 studio+cmd	stage.right	6	Right;
 studio+cmd	stage.up	6	Up;
@@ -979,7 +984,6 @@ studio+cmd	stage.rename	6
 studio+cmd	stage.fromSelection	6	
 studio+cmd	stage.fromMarkers	6	
 studio+cmd	stage.selectAll	6	Ctrl+A;
-studio+cmd	stage.roomsPanel	6	\;
 studio+cmd	stage.deselect	6	Ctrl+D;
 studio+cmd	auto.delete	5	Del;Backspace;
 studio+cmd	auto.selectAll	5	Ctrl+A;
@@ -1054,6 +1058,7 @@ live+cmd	view.pianoRoll	0	Ctrl+Alt+3;
 live+cmd	view.pluginPicker	0	F8;
 live+cmd	view.browser	0	Ctrl+Alt+B;
 live+cmd	view.mixer	0	Ctrl+Alt+M;
+live+cmd	view.lfoBoard	0	Alt+F9;
 live+cmd	view.stage	0	
 live+cmd	view.settings	0	Ctrl+,;
 live+cmd	view.backToPlaylist	0	Esc;
@@ -1109,6 +1114,8 @@ live+cmd	playlist.toolSelect	1
 live+cmd	playlist.toolZoom	1	
 live+cmd	playlist.toolPlay	1	
 live+cmd	playlist.toolWarp	1	
+live+cmd	wave.warpMode	7	Alt+W;
+live+cmd	wave.spectrum	7	Shift+W;
 live+cmd	playlist.marker	1	Alt+T;
 live+cmd	playlist.loopMarkers	1	Ctrl+L;
 live+cmd	playlist.meterChange	1	Alt+Shift+T;
@@ -1176,13 +1183,14 @@ live+cmd	piano.toolPlay	2
 live+cmd	piano.toolZoom	2	
 live+cmd	piano.toolDetune	2	
 live+cmd	piano.toolBend	2	
+live+cmd	piano.toolVibrato	2	
 live+cmd	piano.chordStamp	2	Alt+C;
 live+cmd	piano.slideMode	2	Shift+S;
-live+cmd	piano.chordStamp	2	Alt+C;
 live+cmd	piano.zoomIn	2	=;PgUp;
 live+cmd	piano.zoomOut	2	-;PgDn;
 live+cmd	piano.zoomFit	2	Home;
 live+cmd	rack.clone	3	Alt+C;
+live+cmd	rack.cloneEmpty	3	Alt+Shift+C;
 live+cmd	rack.randomColours	3	Ctrl+Alt+C;
 live+cmd	rack.delete	3	Alt+Del;
 live+cmd	rack.moveUp	3	Alt+Up;
@@ -1211,8 +1219,6 @@ live+cmd	mixer.renderSelected	4	Alt+Shift+R;
 live+cmd	mixer.waveforms	4	Alt+W;
 live+cmd	mixer.selectAll	4	Ctrl+A;
 live+cmd	mixer.deselect	4	Ctrl+D;
-live+cmd	mixer.selectRoutedChannels	4	Alt+L;
-live+cmd	mixer.selectRoutedTo	4	
 live+cmd	stage.left	6	Left;
 live+cmd	stage.right	6	Right;
 live+cmd	stage.up	6	Up;
@@ -1231,7 +1237,6 @@ live+cmd	stage.rename	6
 live+cmd	stage.fromSelection	6	
 live+cmd	stage.fromMarkers	6	
 live+cmd	stage.selectAll	6	Ctrl+A;
-live+cmd	stage.roomsPanel	6	\;
 live+cmd	stage.deselect	6	Ctrl+D;
 live+cmd	auto.delete	5	Del;Backspace;
 live+cmd	auto.selectAll	5	Ctrl+A;
@@ -1306,6 +1311,7 @@ logic+cmd	view.pianoRoll	0	P;Cmd+4;
 logic+cmd	view.pluginPicker	0	F8;
 logic+cmd	view.browser	0	
 logic+cmd	view.mixer	0	X;Cmd+2;
+logic+cmd	view.lfoBoard	0	Alt+F9;
 logic+cmd	view.stage	0	
 logic+cmd	view.settings	0	Cmd+,;
 logic+cmd	view.backToPlaylist	0	Esc;
@@ -1361,6 +1367,8 @@ logic+cmd	playlist.toolSelect	1
 logic+cmd	playlist.toolZoom	1	
 logic+cmd	playlist.toolPlay	1	
 logic+cmd	playlist.toolWarp	1	
+logic+cmd	wave.warpMode	7	Alt+W;
+logic+cmd	wave.spectrum	7	Shift+W;
 logic+cmd	playlist.marker	1	Alt+';
 logic+cmd	playlist.loopMarkers	1	
 logic+cmd	playlist.meterChange	1	Alt+Shift+T;
@@ -1428,13 +1436,14 @@ logic+cmd	piano.toolPlay	2
 logic+cmd	piano.toolZoom	2	
 logic+cmd	piano.toolDetune	2	
 logic+cmd	piano.toolBend	2	
+logic+cmd	piano.toolVibrato	2	
 logic+cmd	piano.chordStamp	2	Alt+C;
 logic+cmd	piano.slideMode	2	Shift+S;
-logic+cmd	piano.chordStamp	2	Alt+C;
 logic+cmd	piano.zoomIn	2	Cmd+Right;PgUp;
 logic+cmd	piano.zoomOut	2	Cmd+Left;PgDn;
 logic+cmd	piano.zoomFit	2	Home;
 logic+cmd	rack.clone	3	Alt+C;
+logic+cmd	rack.cloneEmpty	3	Alt+Shift+C;
 logic+cmd	rack.randomColours	3	Cmd+Alt+C;
 logic+cmd	rack.delete	3	Alt+Del;
 logic+cmd	rack.moveUp	3	Alt+Up;
@@ -1463,8 +1472,6 @@ logic+cmd	mixer.renderSelected	4	Alt+Shift+R;
 logic+cmd	mixer.waveforms	4	Alt+W;
 logic+cmd	mixer.selectAll	4	Cmd+A;
 logic+cmd	mixer.deselect	4	Cmd+D;
-logic+cmd	mixer.selectRoutedChannels	4	Alt+L;
-logic+cmd	mixer.selectRoutedTo	4	Cmd+Alt+L;
 logic+cmd	stage.left	6	Left;
 logic+cmd	stage.right	6	Right;
 logic+cmd	stage.up	6	Up;
@@ -1483,7 +1490,6 @@ logic+cmd	stage.rename	6
 logic+cmd	stage.fromSelection	6	
 logic+cmd	stage.fromMarkers	6	
 logic+cmd	stage.selectAll	6	Cmd+A;
-logic+cmd	stage.roomsPanel	6	\;
 logic+cmd	stage.deselect	6	Cmd+D;
 logic+cmd	auto.delete	5	Del;Backspace;
 logic+cmd	auto.selectAll	5	Cmd+A;
@@ -1782,7 +1788,8 @@ tracker	view.pianoRoll	0	Ctrl+Alt+3;
 tracker	view.pluginPicker	0	Ctrl+Alt+F;
 tracker	view.browser	0	Ctrl+Alt+B;
 tracker	view.mixer	0	Ctrl+Alt+5;
-tracker	view.stage	0	
+tracker	view.lfoBoard	0	Alt+F9;
+tracker	view.stage	0	Ctrl+Alt+G;
 tracker	view.patternEditor	0	Ctrl+Alt+1;Ctrl+Alt+P;
 tracker	view.pads	0	Ctrl+Alt+6;
 tracker	view.channelSettings	0	Ctrl+Alt+7;Ctrl+Alt+I;
@@ -1809,15 +1816,15 @@ tracker	view.resetLayout	0	Ctrl+Shift+H;
 tracker	view.paneNextTab	0	Ctrl+PgDn;
 tracker	view.panePrevTab	0	Ctrl+PgUp;
 tracker	view.reopenTab	0	
-tracker	view.workspace1	0	
-tracker	view.workspace2	0	
-tracker	view.workspace3	0	
-tracker	view.workspace4	0	
-tracker	view.workspace5	0	
-tracker	view.workspace6	0	
-tracker	view.workspace7	0	
-tracker	view.workspace8	0	
-tracker	view.workspace9	0	
+tracker	view.workspace1	0	Ctrl+Alt+Shift+1;
+tracker	view.workspace2	0	Ctrl+Alt+Shift+2;
+tracker	view.workspace3	0	Ctrl+Alt+Shift+3;
+tracker	view.workspace4	0	Ctrl+Alt+Shift+4;
+tracker	view.workspace5	0	Ctrl+Alt+Shift+5;
+tracker	view.workspace6	0	Ctrl+Alt+Shift+6;
+tracker	view.workspace7	0	Ctrl+Alt+Shift+7;
+tracker	view.workspace8	0	Ctrl+Alt+Shift+8;
+tracker	view.workspace9	0	Ctrl+Alt+Shift+9;
 tracker	view.workspaceNext	0	Ctrl+Alt+PgDn;
 tracker	view.workspacePrevious	0	Ctrl+Alt+PgUp;
 tracker	help.shortcuts	0	Ctrl+/;
@@ -1891,6 +1898,8 @@ tracker	playlist.toolSelect	1	E;
 tracker	playlist.toolZoom	1	Z;
 tracker	playlist.toolPlay	1	Y;
 tracker	playlist.toolWarp	1	W;
+tracker	wave.warpMode	7	Alt+W;
+tracker	wave.spectrum	7	Shift+W;
 tracker	playlist.marker	1	Alt+T;
 tracker	playlist.loopMarkers	1	Shift+T;
 tracker	playlist.meterChange	1	Alt+Shift+T;
@@ -1958,12 +1967,14 @@ tracker	piano.toolPlay	2	Y;
 tracker	piano.toolZoom	2	Z;
 tracker	piano.toolDetune	2	U;
 tracker	piano.toolBend	2	N;
+tracker	piano.toolVibrato	2	V;
 tracker	piano.slideMode	2	Shift+S;
 tracker	piano.chordStamp	2	Alt+C;
 tracker	piano.zoomIn	2	PgUp;
 tracker	piano.zoomOut	2	PgDn;
 tracker	piano.zoomFit	2	Home;
 tracker	rack.clone	3	Alt+C;
+tracker	rack.cloneEmpty	3	Alt+Shift+C;
 tracker	rack.randomColours	3	
 tracker	rack.delete	3	Alt+Del;
 tracker	rack.moveUp	3	Alt+Up;
@@ -2032,7 +2043,7 @@ tracker.pattern	pattern.octaveStep	pattern	Num /;Num *;
 tracker.pattern	pattern.noteOff	pattern	CapsLock;<>;1;
 tracker.pattern	pattern.editMode	pattern	Esc;
 tracker.pattern	pattern.digits	pattern	0;1;2;3;4;5;6;7;8;9;A;B;C;D;E;F;
-tracker.pattern	pattern.effects	pattern	G;P;T;X;Y;R;
+tracker.pattern	pattern.effects	pattern	I;G;P;T;X;Y;R;
 tracker.pattern	pattern.stepKey	pattern	`;Shift+`;
 tracker.pattern	pattern.step	pattern	Ctrl+0;Ctrl+1;Ctrl+2;Ctrl+3;Ctrl+4;Ctrl+5;Ctrl+6;Ctrl+7;Ctrl+8;Ctrl+9;Ctrl+-;Ctrl+=;
 tracker.pattern	pattern.rows	pattern	Up;Down;PgUp;PgDn;
@@ -2041,6 +2052,7 @@ tracker.pattern	pattern.fields	pattern	Left;Right;
 tracker.pattern	pattern.tracks	pattern	Tab;Shift+Tab;
 tracker.pattern	pattern.trackJump	pattern	Alt+Q;Alt+W;Alt+E;Alt+R;Alt+T;Alt+Y;Alt+U;Alt+I;Alt+A;Alt+S;Alt+D;Alt+F;Alt+G;Alt+H;Alt+J;Alt+K;
 tracker.pattern	pattern.instrument	pattern	Ctrl+Shift+Up;Ctrl+Shift+Down;
+tracker.pattern	pattern.sampleEntry	pattern	Ctrl+Alt+Up;Ctrl+Alt+Down;
 tracker.pattern	pattern.jump	pattern	F9;F10;F11;F12;Shift+F9;Shift+F10;Shift+F11;Shift+F12;Ctrl+F9;Ctrl+F10;Ctrl+F11;Ctrl+F12;
 tracker.pattern	pattern.mark	pattern	Shift+Up;Shift+Down;Shift+Left;Shift+Right;Shift+PgUp;Shift+PgDn;Shift+Home;Shift+End;Alt+Up;Alt+Down;Alt+Left;Alt+Right;
 tracker.pattern	pattern.markTrack	pattern	Alt+C;
@@ -2054,6 +2066,7 @@ tracker.pattern	pattern.masterVolume	pattern	Ctrl+Num +;Ctrl+Num -;
 tracker.pattern	pattern.keypadInstrument	pattern	Num 1;Num 2;Num 3;Num 4;Num 5;Num 6;Num 7;Num 8;Num Enter;
 tracker.pattern	pattern.macro	pattern	Alt+0;Alt+1;Alt+2;Alt+3;Alt+4;Alt+5;Alt+6;Alt+7;Alt+8;Alt+9;
 tracker.pattern	pattern.macroStore	pattern	Alt+Shift+0;Alt+Shift+1;Alt+Shift+2;Alt+Shift+3;Alt+Shift+4;Alt+Shift+5;Alt+Shift+6;Alt+Shift+7;Alt+Shift+8;Alt+Shift+9;
+tracker.pattern	pattern.trackLoop	pattern	Ctrl+Alt+L;
 tracker.pattern	pattern.insertRow	pattern	Ins;Shift+Ins;
 tracker.pattern	pattern.deleteRow	pattern	Backspace;Shift+Backspace;
 tracker.pattern	pattern.transposeBlock	pattern	Ctrl+Up;Ctrl+Down;
@@ -2081,13 +2094,16 @@ tracker.sample	sample.selectAll	sample	Ctrl+A;Alt+A;
 tracker.sample	sample.clipboard	sample	Ctrl+X;Ctrl+C;Ctrl+V;Alt+X;Alt+C;Alt+V;
 tracker.sample	sample.crop	sample	Alt+R;
 tracker.sample	sample.zoom	sample	Alt+S;Alt+Z;
-tracker.sample	sample.play	sample	Alt+W;Alt+Q;
+tracker.sample	sample.play	sample	Alt+P;Alt+Q;
+tracker.sample	wave.warpMode	sample	Alt+W;
 tracker.sample	sample.slot	sample	Alt+Up;Alt+Down;
+tracker.sample	sample.entry	sample	Ctrl+Alt+Up;Ctrl+Alt+Down;
 tracker.sample	sample.delete	sample	Del;
 tracker.sample	sample.scroll	sample	Left;Right;Shift+Left;Shift+Right;
 tracker.sample	sample.notes	sample	Z;S;X;D;C;V;G;B;H;N;J;M;,;L;.;;;/;Q;2;W;3;E;R;5;T;6;Y;7;U;I;9;O;0;P;[;=;];
 tracker.instrument	instrument.close	instrument	Esc;Ctrl+W;
 tracker.instrument	instrument.slot	instrument	Alt+Up;Alt+Down;
+tracker.instrument	instrument.entry	instrument	Ctrl+Alt+Up;Ctrl+Alt+Down;
 tracker.instrument	instrument.envelope	instrument	Tab;
 tracker.instrument	instrument.point	instrument	Left;Right;
 tracker.instrument	instrument.pointTick	instrument	Shift+Left;Shift+Right;
@@ -2095,3 +2111,29 @@ tracker.instrument	instrument.pointLevel	instrument	Up;Down;Shift+Up;Shift+Down;
 tracker.instrument	instrument.add	instrument	Ins;Ctrl+Enter;
 tracker.instrument	instrument.remove	instrument	Del;Backspace;
 tracker.instrument	instrument.notes	instrument	Z;S;X;D;C;V;G;B;H;N;J;M;,;L;.;;;/;Q;2;W;3;E;R;5;T;6;Y;7;U;I;9;O;0;P;[;=;];
+tracker.chop	chop.close	chop	Esc;Ctrl+W;
+tracker.chop	chop.region	chop	Left;Right;
+tracker.chop	chop.step	chop	Up;Down;
+tracker.chop	chop.moveStep	chop	Shift+Up;Shift+Down;
+tracker.chop	chop.scope	chop	Tab;
+tracker.chop	chop.hear	chop	Enter;Num Enter;
+tracker.chop	chop.sequence	chop	Shift+Enter;
+tracker.chop	chop.play	chop	Alt+P;Alt+Q;
+tracker.chop	chop.split	chop	Ins;
+tracker.chop	chop.join	chop	Backspace;
+tracker.chop	chop.deleteStep	chop	Del;
+tracker.chop	chop.size	chop	Alt+1;Alt+2;Alt+3;Alt+4;Alt+5;Alt+6;Alt+7;
+tracker.chop	chop.tool	chop	Alt+E;
+tracker.chop	chop.reverse	chop	Alt+R;
+tracker.chop	chop.duplicate	chop	Alt+D;
+tracker.chop	chop.pitch	chop	Alt+Up;Alt+Down;Alt+Shift+Up;Alt+Shift+Down;
+tracker.chop	chop.notes	chop	Z;S;X;D;C;V;G;B;H;N;J;M;,;L;.;;;/;Q;2;W;3;E;R;5;T;6;Y;7;U;I;9;O;0;P;[;=;];
+tracker.seltmann	seltmann.close	seltmann	Esc;Ctrl+W;
+tracker.seltmann	seltmann.layout	seltmann	Up;Down;
+tracker.seltmann	seltmann.group	seltmann	Left;Right;Tab;Shift+Tab;
+tracker.seltmann	seltmann.apply	seltmann	Enter;Num Enter;
+tracker.seltmann	seltmann.hear	seltmann	Alt+P;Alt+Q;
+tracker.seltmann	seltmann.star	seltmann	Alt+F;
+tracker.seltmann	seltmann.base	seltmann	Alt+Up;Alt+Down;
+tracker.seltmann	seltmann.notes	seltmann	Z;S;X;D;C;V;G;B;H;N;J;M;,;L;.;;;/;Q;2;W;3;E;R;5;T;6;Y;7;U;I;9;O;0;P;[;=;];
+tracker.audio	audio.play	audio	Alt+P;

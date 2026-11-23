@@ -4,6 +4,7 @@
 #include "SlicexEngine.h"
 #include "Slicing.h"
 #include "SamplePrecompute.h"
+#include "SampleWarpRender.h"
 #include "../core/PluginInfo.h"
 #include "../core/PluginParams.h"
 #include "Generators.h"
@@ -202,6 +203,19 @@ PadsAuxView padsAuxView(const PadsAux* a) {
   return v;
 }
 
+std::vector<int64_t> warpSlices(const PluginState& st, const Sample& shown) {
+  const SampleWarp w = sampleWarpOf(st);
+  const double rate = shown.sampleRate;
+  const int64_t n = static_cast<int64_t>(shown.frames());
+  std::vector<int64_t> out = {0};
+  for (const WarpMarkerAt& v : sampleWarpViews(w.markers)) {
+    // Where the marker's audio plays: its warped time while the warp plays, else its place in the file.
+    const int64_t f = static_cast<int64_t>(std::llround((w.active() ? v.w : sampleWarpSourceAt(w.markers, v.w)) * rate));
+    if (f > out.back() + 64 && f < n - 64 && out.size() < static_cast<size_t>(pp::kMaxSlices)) out.push_back(f);
+  }
+  return out;
+}
+
 bool prepareBuiltinAux(const PluginState& st, ChannelAux& aux) {
   using namespace pp;
   if (st.type == "gl.pads") {
@@ -241,6 +255,8 @@ bool prepareBuiltinAux(const PluginState& st, ChannelAux& aux) {
     // Sampler: its precomputed effects (J-23) run here, once, on the UI thread.
     aux.samples.assign(1, st.type == "gl.sampler"   ? precomputedSample(st.data, samplePrecomputeFx(st))
                                         : sampleCache().get(st.type == "gl.slicer" ? kerfmarks::pathOf(st.data) : st.data));  // J-182: names after the path
+    // The sample's warp markers (core/SampleWarp.h): every note (and Kerf's slices) plays the warped audio.
+    if (st.type != "gl.granular" && !st.warp.empty()) aux.samples[0] = warpedSample(aux.samples[0], sampleWarpOf(st));
     if (st.type == "gl.slicer" && aux.samples[0] && st.params.size() > static_cast<size_t>(SlEngine) &&
         st.params[SlEngine] >= SlEngineProcessed - 0.5f) {
       // J-41: processed slices (offline, here on the UI thread); the voices
@@ -252,7 +268,9 @@ bool prepareBuiltinAux(const PluginState& st, ChannelAux& aux) {
       int mode = st.params.size() > SlMode ? static_cast<int>(st.params[SlMode] + 0.5f) : 0;
       double sens = st.params.size() > SlSensitivity ? st.params[SlSensitivity] : 0.5;
       const double gap = st.params.size() > SlMinGap ? st.params[SlMinGap] : 0.06;  // J-92: "Minimum slice gap" was never read
-      if (mode == SlModeGrid) {
+      if (mode == SlModeWarp) {
+        aux.slices = warpSlices(st, *aux.samples[0]);  // K-248: at the warp markers
+      } else if (mode == SlModeGrid) {
         // J-190: cuts on the beat grid. App builds never wait for the analysis (the
         // loop-length grid until it is done; its completion rebuilds the program);
         // offline renders and exports do.

@@ -39,6 +39,9 @@ const std::vector<PluginBrand>& pluginBrands() {
       {"gl.master", F::Dynamics, "Multiband loudness for the master.", "mastering dynamics, maximizer, multiband, mastering, loudness"},
       {"gl.tideline", F::Dynamics, "Pumps the mix on the beat, no sidechain needed.",
        "sidechain, pump, pumping, ducking, ducker, duck, volume pump, kickstart"},
+      {"gl.terrace", F::Dynamics, "Gates, filters and pans each band to its own steps.",
+       "terrace, multiband, gate, trance gate, rhythmic gate, step gate, volume shaper, filter shaper, pan, crossover, lfo, sidechain, "
+       "pattern, chopper, stutter"},
       // ---- flagships: voice
       {"gl.vocoder", F::Voice, "Speaks any sound through a voice.", "vocoder, talk box, robot voice, carrier"},
       {"gl.pitcher", F::Voice, "Pulls every note true to the scale.", "pitch corrector, pitch correction, tuning, vocal, scale"},

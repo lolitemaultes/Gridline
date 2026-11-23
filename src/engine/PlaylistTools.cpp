@@ -372,6 +372,10 @@ ObjectId ownPatternCopy(Song& s, const Pattern& src, ObjectId from, ObjectId to)
       if (!p.stepLoop.count(to)) p.stepLoop[to] = it->second;
       p.stepLoop.erase(from);
     }
+    if (auto it = p.lanes.find(from); it != p.lanes.end()) {
+      if (!p.lanes.count(to)) p.lanes[to] = it->second;
+      p.lanes.erase(from);
+    }
   }
   s.patterns.push_back(std::move(p));
   return s.patterns.back().id;

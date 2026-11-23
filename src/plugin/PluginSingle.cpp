@@ -514,7 +514,7 @@ bool Instance::loadFactoryPreset(int i) {
   makeCurrent();
   App& a = *app_;
   PluginState st = presetState(*info_, static_cast<size_t>(i));
-  if (const PluginState* cur = singleState()) st.data = cur->data;
+  if (const PluginState* cur = singleState()) st = presetStateKeepingData(*info_, static_cast<size_t>(i), cur->data);
   const bool inst = variant_ == Variant::Instrument;
   const ObjectId owner = owner_;
   a.doc.patchSong([&](Song& s) {

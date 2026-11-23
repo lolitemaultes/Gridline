@@ -1,5 +1,6 @@
 // Gridline — K-151: swing presets in the interface (see GrooveUi.h).
 #include "GrooveUi.h"
+#include "../core/Lanes.h"
 #include "LiveLook.h"
 #include <algorithm>
 #include <cfloat>
@@ -250,8 +251,8 @@ bool fromPattern(App& a, ObjectId pattern, ObjectId channel) {
     if (auto it = p->notes.find(ch); it != p->notes.end())
       for (const gv::Onset& o : gv::onsetsOfNotes(it->second)) on.push_back(o);
     if (auto it = p->steps.find(ch); it != p->steps.end() && st > 0)
-      for (size_t i = 0; i < it->second.size(); ++i)
-        if (it->second[i]) on.push_back({static_cast<double>(static_cast<Tick>(i) * st), static_cast<float>(it->second[i])});
+      for (size_t i = 0; i < it->second.size(); ++i)  // K-255: a row on its own grid at its exact places
+        if (it->second[i]) on.push_back({lanes::stepTick(s, *p, ch, static_cast<int64_t>(i)), static_cast<float>(it->second[i])});
   };
   if (channel != kNoId) take(channel);
   else

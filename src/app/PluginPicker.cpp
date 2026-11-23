@@ -13,6 +13,7 @@
 #include "CollabUi.h"
 #include "../core/I18n.h"
 #include "../core/PluginBrand.h"
+#include "../core/InstrumentGuide.h"
 #include "Keys.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../host/HostedPlugins.h"
@@ -23,6 +24,7 @@
 #include "BrowserUi.h"
 #include "Theme.h"
 #include "Widgets.h"
+#include "Windows.h"
 
 namespace gl::browserui {
 
@@ -315,8 +317,12 @@ void tile(App& a, const PluginInfo& p, bool fav, ImVec2 pos) {
   theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption - 1, ImVec2(pos.x + 15, pos.y + kThumbH + 21), kTileW - 24, P.textFaint,
                       p.category.c_str());
   if (hov) dl->AddRect(pos, b, P.hot, theme::kRadiusLg, 0, 1.5f);
+  // GitHub #73: an instrument shows its line from the instrument guide (its engine, what it is good for).
+  const std::string guideLine = hov && p.kind == PluginKind::Generator ? guide::shortLine(p.type) : std::string();
   if (hov)
-    ui::Hint(p.name + " \xC2\xB7 " + (pluginTagline(p.type).empty() ? std::string() : pluginTagline(p.type) + " \xC2\xB7 ") + p.category + "   (click: " +
+    ui::Hint(p.name + " \xC2\xB7 " +
+             (!guideLine.empty() ? guideLine + " \xC2\xB7 " : pluginTagline(p.type).empty() ? std::string() : pluginTagline(p.type) + " \xC2\xB7 ") +
+             p.category + "   (click: " +
              (p.kind == PluginKind::Generator ? "new channel" : p.kind == PluginKind::Effect ? "insert on the selected mixer track" : "add to the selected channel") +
              " \xC2\xB7 drag onto the rack, a mixer strip / slot or the playlist \xC2\xB7 Shift+click keeps the picker open)");
   if (clicked) {
@@ -425,6 +431,14 @@ void drawPluginPicker(App& a) {
     ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Rendering thumbnails\xE2\x80\xA6"));
   } else if (ui::TextButton("Render thumbnails", false, 0, "Render every built-in editor once (in the background) and cache the images")) {
     startThumbnailRun(a);
+  }
+  // GitHub #73: the guide to the instruments (which one is which), left of the close button.
+  {
+    const float gw = std::ceil(a.fontRegular->CalcTextSizeA(ImGui::GetFontSize(), 1e9f, 0, i18n::tr("Instrument guide")).x) + 24;
+    ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x - 48 - gw, wp.y + 14));
+    if (ui::TextButton("Instrument guide", false, gw, "Opens the guide to the built-in instruments: what kind of sound engine each one is and what it is good for"))
+      collabui::openUrl(guide::pageUrl());
+    devNoteRect("pickerguide");
   }
   ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x - 40, wp.y + 14));
   if (ui::IconButton("closepicker", ui::Icon::Close, false, 24, "Close (Esc / F8)")) pickerOpen = false;

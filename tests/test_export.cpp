@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -26,6 +27,7 @@
 #include "core/Zip.h"
 #include "engine/Export.h"
 #include "engine/ExportJob.h"
+#include "engine/LoopFile.h"
 #include "engine/Render.h"
 #include "engine/Resample.h"
 #include "engine/Sample.h"
@@ -476,7 +478,15 @@ void testResampleAndFormats() {
     std::string oerr;
     const bool okOpus = writeAudioFile(opus, longer, 44100, fo, &oerr);
     std::error_code oec;
-    if (okOpus) expect(fs::file_size(opus, oec) > 1000, "Opus through ffmpeg writes a file");
+    if (okOpus) {
+      expect(fs::file_size(opus, oec) > 1000, "Opus through ffmpeg writes a file");
+      // Decoded again by ffmpeg's own Opus decoder: one second, as written.
+      const std::string back = (fs::path(scratch) / "t_opus_back.wav").string();
+      const std::string cmd = "\"/usr/local/bin/ffmpeg\" -nostdin -v error -y -i \"" + opus + "\" -c:a pcm_s16le \"" + back + "\"";
+      SamplePtr ob = std::system(cmd.c_str()) == 0 ? loadSample(back) : nullptr;
+      std::printf("# opus decoded: %.4f s\n", ob ? ob->seconds() : -1.0);
+      expect(ob && std::fabs(ob->seconds() - 1.0) < 0.01, "Opus decodes back to the same length");
+    }
     else expect(oerr.find("ffmpeg failed") == 0, ("Opus: an ffmpeg without libopus reports its failure (" + oerr + ")").c_str());
   } else {
     expect(true, "ffmpeg not installed: external encoder round trip skipped");
@@ -1001,6 +1011,17 @@ void testExportJob() {
     const uint32_t loops = sm == std::string::npos ? 0 : le32(sm + 8 + 28), start = le32(sm + 8 + 36 + 8), end = le32(sm + 8 + 36 + 12);
     expect(lo.errors.empty() && sm != std::string::npos && loops == 1 && start == 0 && frames > 0 && end + 1 == frames,
            "export job: a loop export carries a sampler loop over the whole file");
+    // K-109: read back as a sampler and a loop browser read it: the loop points and the tempo.
+    packs::edison::Content lc;
+    expect(packs::edison::parseWav(lb.data(), lb.size(), lc) && lc.hasLoop() && lc.loopStart == 0 && lc.loopEnd == static_cast<int64_t>(frames) &&
+               lc.frames() == static_cast<int64_t>(frames),
+           "export round trip: the loop points read back over the whole file");
+    loopfile::Info li;
+    expect(loopfile::readBytes(lb.data(), lb.size(), li) && li.format == loopfile::Format::Wav && li.loop && std::fabs(li.bpm - 120.0) < 1e-3 &&
+               li.beats > 0 && li.sigNum == 4 && li.sigDen == 4,
+           "export round trip: the tempo, beats and meter read back as a loop at 120 BPM");
+    std::printf("# loop export: %u frames, loop %lld..%lld, %.2f BPM, %.0f beats\n", frames, static_cast<long long>(lc.loopStart),
+                static_cast<long long>(lc.loopEnd), li.bpm, li.beats);
   }
   // Mono + normalize.
   ExportSettings m = es;
@@ -1022,6 +1043,120 @@ void testExportJob() {
   expect(o.cancelled, "export job: cancel");
 }
 
+// Several kinds of split in one export: insert names, playlist track names and a track group's
+// name all expand to the same part names here, so without separate folders they would overwrite.
+void testExportSplitKindsApart() {
+  Song s = baseSong();
+  s.mixer[1].name = "Kick";
+  s.mixer[2].name = "Snare";
+  s.tracks[0].name = "Kick";
+  s.tracks[1].name = "Snare";
+  s.tracks[0].groupSize = 1;  // track 1 heads a group holding track 2: the group is "01 Kick" too
+  ObjectId pat = s.patterns[0].id;
+  ObjectId pat2 = s.allocateId();
+  {
+    Pattern p;
+    p.id = pat2;
+    p.name = "P2";
+    s.patterns.push_back(p);
+  }
+  ObjectId kick = addSampler(s, "Kick", impulseWav(), s.mixer[1].id);
+  ObjectId snare = addSampler(s, "Snare", impulseWav(), s.mixer[2].id);
+  addNote(s, pat, kick, 0);
+  addNote(s, pat, kick, 96 * 2);
+  addNote(s, pat2, snare, 96);
+  addClip(s, pat, 0, 0);
+  addClip(s, pat2, 0, 1);
+  ExportSettings es;
+  es.folder = (fs::path(scratch) / "kinds").string();
+  es.baseName = es.projectTitle = "Job";
+  es.formats = {ExportFormat::Wav};
+  es.wavBits = 32;
+  es.render.tail = TailMode::Cut;
+  es.splitMixer = es.splitPlaylist = es.splitPlaylistGroups = true;
+  const ExportOutcome o = runExport(s, es);
+  const fs::path d(es.folder);
+  const std::vector<fs::path> want = {d / "Job.wav",
+                                      d / "Mixer tracks" / "Job - 01 Kick.wav",
+                                      d / "Mixer tracks" / "Job - 02 Snare.wav",
+                                      d / "Playlist tracks" / "Job - 01 Kick.wav",
+                                      d / "Playlist tracks" / "Job - 02 Snare.wav",
+                                      d / "Track groups" / "Job - 01 Kick.wav"};
+  bool all = o.errors.empty() && o.files.size() == want.size();
+  for (const auto& w : want) all = all && fs::exists(w) && std::count(o.files.begin(), o.files.end(), w.string()) == 1;
+  expect(all, "split kinds apart: the mix plus each kind in its own folder, every file there");
+  std::vector<std::string> sorted = o.files;
+  std::sort(sorted.begin(), sorted.end());
+  expect(std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end(), "split kinds apart: no file name repeats");
+  size_t onDisk = 0;
+  for (const auto& e : fs::recursive_directory_iterator(d))
+    if (e.is_regular_file() && e.path().extension() == ".wav") ++onDisk;
+  expect(onDisk == want.size(), "split kinds apart: nothing else written, nothing overwritten");
+
+  // Each file holds its own part: the same audio as the part rendered on its own.
+  auto same = [&](const fs::path& p, const AudioBuffer& ref) {
+    SamplePtr got = loadSample(p.string());
+    if (!got || got->left.size() != ref.frames) return false;
+    float worst = 0;
+    for (size_t i = 0; i < ref.frames; ++i)
+      worst = std::max({worst, std::fabs(got->left[i] - ref.plane(0)[i]), std::fabs(got->right[i] - ref.plane(1)[i])});
+    return worst < 1e-6f;
+  };
+  RenderJob job = es.render;
+  std::vector<AudioBuffer> stems, tracks, groups;
+  renderStems(s, job, usedInserts(s), false, [&](const SplitPart&, RenderResult&& r) {
+    stems.push_back(std::move(r.audio));
+    return true;
+  });
+  renderPlaylistTracks(s, job, usedPlaylistTracks(s), [&](const SplitPart&, RenderResult&& r) {
+    tracks.push_back(std::move(r.audio));
+    return true;
+  });
+  renderPlaylistTrackSets(s, job, playlistTrackGroups(s), [&](const SplitPart&, RenderResult&& r) {
+    groups.push_back(std::move(r.audio));
+    return true;
+  });
+  const RenderResult mix = renderAudio(s, job);
+  expect(stems.size() == 2 && tracks.size() == 2 && groups.size() == 1, "split kinds apart: reference parts rendered");
+  if (stems.size() == 2 && tracks.size() == 2 && groups.size() == 1) {
+    expect(same(want[0], mix.audio) && same(want[1], stems[0]) && same(want[2], stems[1]) && same(want[3], tracks[0]) &&
+               same(want[4], tracks[1]) && same(want[5], groups[0]),
+           "split kinds apart: every file holds its own part's audio");
+    expect(onsets(stems[0]).size() == 2 && onsets(stems[1]).size() == 1 && onsets(groups[0]).size() == 3,
+           "split kinds apart: the kick part has both kicks, the snare part one hit, the group all three");
+  }
+
+  // One kind alone keeps the names it always had, in the folder itself.
+  for (int k = 0; k < 3; ++k) {
+    ExportSettings one = es;
+    one.splitMixer = k == 0;
+    one.splitPlaylist = k == 1;
+    one.splitPlaylistGroups = k == 2;
+    one.folder = (fs::path(scratch) / ("kinds_one" + std::to_string(k))).string();
+    const ExportOutcome oo = runExport(s, one);
+    const fs::path od(one.folder);
+    const bool ok = k == 2 ? oo.files.size() == 2 && fs::exists(od / "Job - 01 Kick.wav")
+                           : oo.files.size() == 3 && fs::exists(od / "Job - 01 Kick.wav") && fs::exists(od / "Job - 02 Snare.wav");
+    expect(oo.errors.empty() && ok && fs::exists(od / "Job.wav") && !fs::exists(od / "Mixer tracks") && !fs::exists(od / "Playlist tracks") &&
+               !fs::exists(od / "Track groups"),
+           ("split kinds apart: one kind alone keeps its old names (" + std::to_string(k) + ")").c_str());
+  }
+  // A pattern without the number can still repeat inside one kind: the second gets " 2", nothing is lost.
+  {
+    Song dup = s;
+    dup.mixer[2].name = "Kick";
+    ExportSettings ds = es;
+    ds.splitPlaylist = ds.splitPlaylistGroups = false;
+    ds.stemsIncludeMaster = false;
+    ds.partPattern = "%T";
+    ds.folder = (fs::path(scratch) / "kinds_dup").string();
+    const ExportOutcome od = runExport(dup, ds);
+    const fs::path dd(ds.folder);
+    expect(od.errors.empty() && od.files.size() == 2 && fs::exists(dd / "Kick.wav") && fs::exists(dd / "Kick 2.wav"),
+           "split kinds apart: a repeated part name gets a number instead of overwriting");
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -1038,5 +1173,6 @@ int main() {
   testZipAndInflate();
   testInterop();
   testExportJob();
+  testExportSplitKindsApart();
   return finish();
 }

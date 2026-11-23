@@ -1,5 +1,6 @@
 // Gridline — browser content model (see BrowserIndex.h).
 #include "BrowserIndex.h"
+#include "ThreadName.h"
 #include "FileOps.h"
 #include "RemoteFs.h"
 #include "Platform.h"
@@ -7,6 +8,7 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -138,8 +140,32 @@ double fileMtime(const fs::path& p) {
 
 // ------------------------------------------------------------------- kinds
 
+std::string patchItemPath(const std::string& file, int bank, int program) {
+  return file + "#patch=" + std::to_string(bank) + ":" + std::to_string(program);
+}
+
+bool splitPatchItem(const std::string& item, std::string& file, int& bank, int& program) {
+  const size_t h = item.rfind("#patch=");
+  if (h == std::string::npos) return false;
+  const std::string f = item.substr(0, h), e = extOf(f);
+  if (e != ".sf2" && e != ".sf3") return false;
+  int b = 0, p = 0;
+  char tail = 0;
+  if (std::sscanf(item.c_str() + h + 7, "%d:%d%c", &b, &p, &tail) != 2 || b < 0 || b > 128 || p < 0 || p > 127) return false;
+  file = f, bank = b, program = p;
+  return true;
+}
+
+bool playsOnPatchPlayer(const std::string& path) {
+  std::string f;
+  int b = 0, p = 0;
+  const std::string e = extOf(path);
+  return e == ".sf2" || e == ".sf3" || splitPatchItem(path, f, b, p);
+}
+
 Kind kindOf(const std::string& path) {
   const std::string e = extOf(path);
+  if (e.find("#patch=") != std::string::npos && playsOnPatchPlayer(path)) return Kind::Instrument;  // K-333: one patch of an SF2 file
   if (isAudioFile(path)) return Kind::Audio;
   if (e == ".mid" || e == ".midi") return Kind::Midi;
   if (e == ".flp") return Kind::Flp;
@@ -149,7 +175,7 @@ Kind kindOf(const std::string& path) {
   if (e == ".fst") return Kind::Fst;
   if (e == ".serumpreset" || e == ".fxp") return Kind::Preset;  // Serum presets: opened by Plasma
   if (e == ".fsc") return Kind::Score;
-  if (e == ".sfz" || e == ".sf2") return Kind::Instrument;  // K-144: multisample maps the Multisampler plays
+  if (e == ".sfz" || e == ".sf2" || e == ".sf3") return Kind::Instrument;  // K-144: multisample maps; K-333: SF2 files the Patch Player plays
   if (e == ".gllayer") return Kind::Layer;  // K-169: layer presets
   if (e == ".h2drumkit") return Kind::DrumKit;  // K-162: a packed drum kit
   if (e == ".xml" && lower(fs::path(path).filename().string()) == "drumkit.xml") return Kind::DrumKit;  // K-162: an unpacked kit
@@ -197,7 +223,7 @@ bool kindFromName(const std::string& name, Kind& out) {
       {"image", Kind::Image},   {"images", Kind::Image},  {"picture", Kind::Image}, {"pictures", Kind::Image},
       {"png", Kind::Image},     {"jpg", Kind::Image},     {"jpeg", Kind::Image},
       {"instrument", Kind::Instrument}, {"instruments", Kind::Instrument}, {"sfz", Kind::Instrument},
-      {"sf2", Kind::Instrument}, {"soundfont", Kind::Instrument}, {"multisample", Kind::Instrument},
+      {"sf2", Kind::Instrument}, {"sf3", Kind::Instrument}, {"soundfont", Kind::Instrument}, {"multisample", Kind::Instrument},
       {"layer", Kind::Layer},   {"layers", Kind::Layer},
       {"kit", Kind::DrumKit},   {"kits", Kind::DrumKit},  {"drumkit", Kind::DrumKit}, {"drumkits", Kind::DrumKit},
       {"h2drumkit", Kind::DrumKit},
@@ -848,6 +874,20 @@ DropAction dropAction(const DropItem& item, DropTarget target, const std::string
     case Kind::Image:  // J-184: a Pixel Tone window or channel row plays the picture
       return (target == DropTarget::PluginWindow || target == DropTarget::Rack) && targetType == "gl.pixeltone" ? DropAction::LoadPicture : DropAction::None;
     case Kind::Instrument:  // K-144: the Multisampler plays .sfz and .sf2 maps
+      if (item.pluginType == kPatchPlayerItem) {  // K-333: SF2 files and their patches play on the Patch Player
+        switch (target) {
+          case DropTarget::Rack:
+            if (targetType.empty()) return DropAction::NewPatchChannel;
+            if (targetType == kPatchPlayerItem) return DropAction::LoadPatch;
+            return DropAction::ReplaceWithPatchPlayer;
+          case DropTarget::Workspace:
+          case DropTarget::Playlist: return DropAction::NewPatchChannel;
+          case DropTarget::PluginWindow:
+            if (targetType == kPatchPlayerItem) return DropAction::LoadPatch;
+            return targetType == "gl.multisampler" ? DropAction::LoadInstrumentMap : DropAction::None;  // as zones, as before
+          default: return DropAction::None;
+        }
+      }
       switch (target) {
         case DropTarget::Rack:
           if (targetType.empty()) return DropAction::NewInstrumentChannel;
@@ -887,6 +927,9 @@ const char* dropActionLabel(DropAction a) {
     case DropAction::ReplaceWithInstrument: return "Replace with a Multisampler";
     case DropAction::NewLayer: return "New layer from preset";
     case DropAction::LoadDrumKit: return "Load drum kit";
+    case DropAction::NewPatchChannel: return "New Patch Player channel";
+    case DropAction::LoadPatch: return "Play this patch";
+    case DropAction::ReplaceWithPatchPlayer: return "Replace with a Patch Player";
   }
   return "";
 }
@@ -909,22 +952,72 @@ void Index::setRoots(const std::vector<std::pair<std::string, bool>>& roots) {
   roots_ = roots;
 }
 
+void Index::setPace(const Pace& p) {
+  std::lock_guard<std::mutex> lk(mu_);
+  pace_ = p;
+}
+
+namespace {
+int64_t steadyNs() {
+  return static_cast<int64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+}  // namespace
+
+void Index::holdFor(double seconds) {
+  const int64_t until = steadyNs() + static_cast<int64_t>(seconds * 1e9);
+  int64_t cur = holdUntil_.load();
+  while (until > cur && !holdUntil_.compare_exchange_weak(cur, until)) {
+  }
+}
+
+bool Index::sleepFor(double seconds) {
+  if (seconds <= 0) return !cancel_;
+  std::unique_lock<std::mutex> lk(sleepMu_);
+  wake_.wait_for(lk, std::chrono::duration<double>(seconds), [this] { return cancel_.load(); });
+  gl::threads::woke();  // K-142: CPU report
+  return !cancel_;
+}
+
+bool Index::rest(std::chrono::steady_clock::time_point t0, double minGap) {
+  if (cancel_) return false;
+  const Pace& p = runPace_;
+  if (p.filesPerSec > 0 || p.walkPerSec > 0 || p.share < 1) {
+    const double spent = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    const double byShare = p.share > 0 && p.share < 1 ? spent * (1.0 / p.share - 1.0) : 0.0;
+    const double wait = std::max(minGap - spent, byShare);
+    if (wait > 0) {
+      ++rests_;
+      if (!sleepFor(std::min(wait, 2.0))) return false;
+    }
+  }
+  while (holdUntil_.load() > steadyNs()) {  // the song plays, the user drags: wait (re-checked)
+    ++rests_;
+    if (!sleepFor(0.1)) return false;
+  }
+  return !cancel_;
+}
+
 void Index::start() {
   stop();
   std::vector<std::pair<std::string, bool>> roots;
   {
     std::lock_guard<std::mutex> lk(mu_);
     roots = roots_;
+    runPace_ = pace_;
   }
   cancel_ = false;
   busy_ = true;
   done_ = 0;
   pending_ = 0;
-  worker_ = std::thread([this, roots]() { run(roots); });
+  worker_ = std::thread([this, roots]() { gl::threads::setName("gl-index"); run(roots); });
 }
 
 void Index::stop() {
-  cancel_ = true;
+  {
+    std::lock_guard<std::mutex> lk(sleepMu_);  // (a resting worker sees it at once)
+    cancel_ = true;
+  }
+  wake_.notify_all();
   if (worker_.joinable()) worker_.join();
   busy_ = false;
 }
@@ -1299,6 +1392,15 @@ void Index::run(std::vector<std::pair<std::string, bool>> roots) {
   std::vector<Todo> todo;
   std::set<std::string> seen;
   bool changed = false;
+  // GitHub #66: nobody waits for the index: it runs as a background job and keeps to its pace
+  // (Pace, holdFor), so a first run on a large library never takes a core from the music or the
+  // interface. A cancelled pass keeps what it found (saved below); the next one goes on from there.
+  lowPriority_ = platform::backgroundThisThread();
+  const double walkGap = runPace_.walkPerSec > 0 ? 64.0 / runPace_.walkPerSec : 0.0;
+  const double fileGap = runPace_.filesPerSec > 0 ? 1.0 / runPace_.filesPerSec : 0.0;
+  auto lap = std::chrono::steady_clock::now();
+  size_t walked = 0;
+  rest(lap, 0);  // (a hold already asked for: nothing starts while the song plays)
   // 1. Walk: register every listable file at once (search works right away).
   for (const auto& [root, analyse] : roots) {
     if (cancel_) break;
@@ -1312,6 +1414,10 @@ void Index::run(std::vector<std::pair<std::string, bool>> roots) {
     for (fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end;
          it.increment(ec)) {
       if (cancel_ || seen.size() >= kMaxFiles) break;
+      if ((++walked & 63) == 0) {
+        if (!rest(lap, walkGap)) break;
+        lap = std::chrono::steady_clock::now();
+      }
       const std::string name = it->path().filename().string();
       if (name.empty() || name[0] == '.') {
         std::error_code e2;
@@ -1374,14 +1480,18 @@ void Index::run(std::vector<std::pair<std::string, bool>> roots) {
     }
     ++gen_;
   }
+  if (changed && !cancel_) save();  // what the walk found survives a pass cut short
   // 2. Analyse new / changed audio.
   pending_ = todo.size();
   size_t sinceSave = 0;
+  auto lastSave = std::chrono::steady_clock::now();
+  if (!todo.empty()) rest(std::chrono::steady_clock::now(), 0);
   // J-51: stop() also interrupts the analysis of one long file (the decoders
   // check the flag between blocks): the entry is then not stored.
   DecodeCancelScope cancellable(&cancel_);
   for (const auto& t : todo) {
     if (cancel_) break;
+    const auto t0 = std::chrono::steady_clock::now();
     FileMeta m = describe(t.path, true);
     if (cancel_) break;
     {
@@ -1391,10 +1501,12 @@ void Index::run(std::vector<std::pair<std::string, bool>> roots) {
     }
     ++gen_;
     ++done_;
-    if (++sinceSave >= 300) {
+    if (++sinceSave >= 300 || std::chrono::steady_clock::now() - lastSave > std::chrono::seconds(30)) {
       save();
       sinceSave = 0;
+      lastSave = std::chrono::steady_clock::now();
     }
+    if (!rest(t0, fileGap)) break;
   }
   if (changed || !todo.empty()) save();
   busy_ = false;

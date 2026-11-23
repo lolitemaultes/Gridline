@@ -582,9 +582,14 @@ bool setGroup(Document& d, const std::vector<ObjectId>& tracks, const std::strin
   for (ObjectId id : members)
     if (std::find(tracks.begin(), tracks.end(), id) == tracks.end())
       if (const MixerTrack* m = d.song().mixerTrack(id)) link = m->groupLink;
-  return editEach(d, tracks, group.empty() ? "ungroup mixer tracks" : "group mixer tracks", [&group, link](MixerTrack& m) {
+  bool folded = false;  // GitHub #58: and its folded state
+  for (ObjectId id : members)
+    if (std::find(tracks.begin(), tracks.end(), id) == tracks.end())
+      if (const MixerTrack* m = d.song().mixerTrack(id)) folded = folded || m->groupFolded;
+  return editEach(d, tracks, group.empty() ? "ungroup mixer tracks" : "group mixer tracks", [&group, link, folded](MixerTrack& m) {
     m.group = group;
     m.groupLink = !group.empty() && link;
+    m.groupFolded = !group.empty() && folded;
   });
 }
 
@@ -593,6 +598,7 @@ bool createGroup(Document& d, const std::vector<ObjectId>& tracks, const std::st
   return editEach(d, tracks, "group mixer tracks", [&group, linked](MixerTrack& m) {
     m.group = group;
     m.groupLink = linked;
+    m.groupFolded = false;  // GitHub #58: a new group starts open
   });
 }
 
@@ -786,6 +792,9 @@ std::string trackStateText(const MixerTrack& t) {
   j.object.erase("dock");
   j.object.erase("group");
   j.object.erase("groupLink");  // K-238
+  j.object.erase("hidden");  // GitHub #58: how the mixer shows the strip belongs to the project
+  j.object.erase("narrow");
+  j.object.erase("groupFolded");
   j.object.erase("armed");
   j.object.erase("roomId");  // K-224: a track's Stage room belongs to the project, not to the sound
   j.object["format"] = Json::makeString(kTrackStateTag);
@@ -812,6 +821,9 @@ bool applyTrackState(Document& d, ObjectId track, const std::string& text, std::
   loaded.dock = cur->dock;
   loaded.group = cur->group;
   loaded.groupLink = cur->groupLink;  // K-238
+  loaded.hidden = cur->hidden;  // GitHub #58
+  loaded.narrow = cur->narrow;
+  loaded.groupFolded = cur->groupFolded;
   loaded.armed = cur->armed;
   loaded.recordSafe = cur->recordSafe;  // K-123
   loaded.room = cur->room;  // K-224: loading a sound never moves the track to another room

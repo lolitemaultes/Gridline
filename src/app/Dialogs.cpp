@@ -4,6 +4,7 @@
 #include "RecordMoreUi.h"
 #include "WindowRaise.h"
 #include "LayoutShellUi.h"
+#include "LfoUi.h"
 #include "LiveIo.h"
 #include "LiveLook.h"
 #include "ChopUi.h"
@@ -47,12 +48,15 @@
 #include "LayoutPresets.h"
 #include "TrackerLook.h"
 #include "TrackerView.h"
+#include "StageView.h"
 #include "BrowserUi.h"
 #include "../engine/PlaylistTools.h"
 #include "AudioRecordUi.h"
 #include "AsioUi.h"
 #include "ExportUi.h"
+#include "RenderSheetUi.h"
 #include "StemsUi.h"
+#include "ClipToolsUi.h"
 #include "TrackReceiptUi.h"
 #include "../core/ProjectInterop.h"
 #include "Theme.h"
@@ -78,6 +82,7 @@
 #include "Viewports.h"
 #include "../core/WheelRoute.h"
 #include "../core/Platform.h"
+#include "ZoneKeysUi.h"
 
 namespace gl {
 
@@ -156,7 +161,7 @@ void setDevSettingsSize(float w, float h) { gDevSettingsSize = ImVec2(w, h); }
 namespace {
 
 // J-24 appended General, Files and Debug (tab indices 0..4 stay as they were), J-55 Shortcuts and Theme.
-const char* const kSettingsPagesEn[] = {i18n::N_("Audio"), i18n::N_("MIDI"), i18n::N_("Project"), i18n::N_("Backup"), i18n::N_("Interface"), i18n::N_("General"), i18n::N_("Files"), i18n::N_("Debug"), i18n::N_("Shortcuts"), i18n::N_("Theme"), i18n::N_("Integrations"), i18n::N_("Collaboration"), i18n::N_("Plugins")};
+const char* const kSettingsPagesEn[] = {i18n::N_("Audio"), i18n::N_("MIDI"), i18n::N_("Project"), i18n::N_("Backup"), i18n::N_("Interface"), i18n::N_("General"), i18n::N_("Files"), i18n::N_("Debug"), i18n::N_("Shortcuts"), i18n::N_("Theme"), i18n::N_("Integrations"), i18n::N_("Collaboration"), i18n::N_("Plugins"), i18n::N_("Layouts")};
 
 // K-93: one settings page's controls (the settings window draws it; the command palette draws
 // each page once, unseen, to find every setting). `page` may change (a button that opens another page).
@@ -299,6 +304,9 @@ void settingsPageBody(App& a, int& page, float fieldW) {
     ImGui::SetNextItemWidth(160);
     if (ImGui::InputDouble("##deftempo", &tempo, 1, 10, "%.1f")) st.set("project.defaultTempo", std::clamp(tempo, 10.0, 522.0));
     projectDefaultsPanel(a);  // J-24
+    ui::EndSection();
+    ui::BeginSection("NEW CHANNELS AND PATTERNS");  // GitHub #74
+    newColorsPanel(a, fieldW);
     ui::EndSection();
     ui::BeginSection("FL STUDIO IMPORT");
     {
@@ -531,6 +539,16 @@ void settingsPageBody(App& a, int& page, float fieldW) {
     formLabel("Status bar");
     if (ImGui::Checkbox(i18n::tr("Show hints for the control under the mouse"), &hints)) st.set("ui.showHints", hints);
     hintSettingsPanel(a, fieldW);  // J-24
+    // 0.7.8: installed plugins' interfaces inside Gridline (as built-in editors) or in windows of their own.
+    {
+      formLabel("Open installed plugins");
+      const char* opts[] = {i18n::tr("Inside Gridline"), i18n::tr("In their own windows")};
+      int idx = st.getBool("ui.pluginsInside") ? 0 : 1;
+      if (ui::Segmented("##pluginsinside", opts, 2, &idx, 0)) st.set("ui.pluginsInside", idx == 0);
+      ui::Hint("Inside Gridline: a plugin's own interface sits in its plugin window inside the main window, under Gridline's header, "
+               "like the built-in plugins, and its pop-out button puts it in a window of its own. In their own windows: each one opens "
+               "in a window of its own above Gridline. A plugin's window menu keeps a choice for that plugin");
+    }
     // J-113: windows dragged out of the main window become windows of their own.
     bool detach = st.getBool("ui.detachWindows") && viewports::available();
     formLabel("Windows");
@@ -564,8 +582,19 @@ void settingsPageBody(App& a, int& page, float fieldW) {
       ui::Hint("Off: opening a plugin's window closes the other plugin windows");
       formLabel("");
       if (ImGui::Checkbox(i18n::tr("Show only the selected track's plugin windows"), &selOnly)) st.set("live.pluginWindowsSelectedOnly", selOnly);
-      ui::Hint("Selecting another track hides the other tracks' plugin windows (they stay open) and shows its own again. "
-               "Ctrl+Alt+P hides or shows every plugin window");
+      ui::Hint(keys::withKeys(i18n::N_("Selecting another track hides the other tracks' plugin windows (they stay open) and shows its own again. "
+                                       "%s hides or shows every plugin window"),
+                              {keys::cmdKey("view.hidePlugins", "Ctrl+Alt+P")}));
+    }
+    // K-249: what a double-click on an audio clip opens (the editor everywhere, or the earlier behaviour).
+    {
+      formLabel("Double-click an audio clip");
+      const char* opts[] = {i18n::tr("Clip"), i18n::tr("Playback"), i18n::tr("Loupe")};
+      const char* ids[] = {"editor", "channel", "loupe"};
+      const std::string cur = st.getString("ui.clipDoubleClick");
+      int idx = cur == "channel" ? 1 : cur == "loupe" ? 2 : 0;
+      if (ui::Segmented("##clipdbl", opts, 3, &idx, 0)) st.set("ui.clipDoubleClick", std::string(ids[idx]));
+      ui::Hint("What opens when you double-click an audio clip, in every layout: the Audio clip window with its strip at the Clip module or at the Playback module (the sample and the notes it plays), or Loupe");
     }
     // The audio editor's auto-scroll (its own toggle, on the right of its waveform, sets the same thing).
     formLabel("Loupe");
@@ -643,6 +672,7 @@ void settingsPageBody(App& a, int& page, float fieldW) {
   if (page == 10) mcpui::settingsPage(a, fieldW);  // SC-07
   if (page == 11) collabui::settingsPage(a, fieldW);  // J-111
   if (page == kPluginSettingsTab) pluginFoldersSettingsPage(a, fieldW);  // K-13
+  if (page == kLayoutsSettingsTab) layoutsSettingsPage(a, fieldW);        // K-256
 }
 
 // K-112b: the Logic layout's settings tabs: a toolbar band of icon-over-label tiles, centred;
@@ -767,8 +797,9 @@ void settingsWindow(App& a) {
                           i18n::N_("Every keyboard shortcut: search, change, reset"), i18n::N_("Appearance (dark or light, colours, contrast), control style and sounds"),
                           i18n::N_("Let AI assistants (MCP clients) inspect and edit the project"),
                           i18n::N_("Your name, contact and picture for collaborators, identity and connection"),
-                          i18n::N_("Where each plugin format is searched, and scanning")};
-  constexpr int kPages = 13;  // K-13 appended Plugins (kPluginSettingsTab)
+                          i18n::N_("Where each plugin format is searched, and scanning"),
+                          i18n::N_("Each layout's control bar, panels, workspaces and pinned commands")};
+  constexpr int kPages = 14;  // K-13 appended Plugins (kPluginSettingsTab), K-256 Layouts (kLayoutsSettingsTab)
   page = std::clamp(page, 0, kPages - 1);
   // K-112b: the Logic layout's settings: icon tabs in a toolbar band, labels right-aligned to the controls.
   // K-325: the navigation is shared with the Record window (settingsPageNav, below).
@@ -776,7 +807,7 @@ void settingsWindow(App& a) {
   {
     using I = ui::Icon;
     static const I kIcons[kPages] = {I::Wave, I::CatMidi, I::ProjectFile, I::Clock,     I::Monitor, I::Settings, I::Folder,
-                                     I::Info, I::Keyboard, I::Paint,      I::LinkSlots, I::People,  I::Plug};
+                                     I::Info, I::Keyboard, I::Paint,      I::LinkSlots, I::People,  I::Plug, I::Playlist};
     settingsPageNav(a, "##settingstabs", kSettingsPagesEn, kIcons, kPages, &page, blurbs);
   }
   static std::vector<ui::SectionMark> marks;  // the page's sections, as last drawn
@@ -1354,7 +1385,9 @@ void drawDialogs(App& a) {
   settingsWindow(a);
   infoWindow(a);
   exportui::draw(a);
+  renderui::draw(a);  // K-254: render to audio
   stemsui::draw(a);  // J-191: Split stems
+  cliptoolsui::draw(a);  // the clip menus' Audio tools
   receiptui::draw(a);  // J-219: Track Receipt
   historyWindow(a);
   newtracks::draw(a);  // K-112b: the Tracks layout's New tracks dialog
@@ -1689,7 +1722,7 @@ void handleGlobalShortcuts(App& a) {
     livelook::gridKeys(a);  // grid2-1118: Cmd+1 .. 5 the edit grid, Cmd+6 .. 0 the global quantisation
     // Checkpoint 52 (S10): not while the device chain has the keyboard (the reference groups devices there).
     const ImGuiWindow* nw = GImGui->NavWindow;
-    const bool chainKeys = nw && (std::strstr(nw->Name, "##chain") || std::strstr(nw->Name, "##expanded") || std::strstr(nw->Name, "##body"));
+    const bool chainKeys = nw && (std::strstr(nw->Name, "##chain"));
     if (!chainKeys && pressed("track.group")) livelook::groupTracks(a);  // checkpoint 51
     if (!chainKeys && pressed("track.ungroup")) livelook::ungroupTracks(a);
     if (pressed("view.detail")) livelook::toggleDetail(a);
@@ -1703,6 +1736,7 @@ void handleGlobalShortcuts(App& a) {
   }
   if (pressed("options.typingKeyboard")) a.typingKeyboard = !a.typingKeyboard;
   if (typed("options.metronome")) a.metronome = !a.metronome;
+  zonekeysui::frame(a);  // K-340: the zone jump asked for (Tab and a digit, or Tab alone)
   if (!a.typingKeyboard && pressed("transport.songMode"))
     a.engine.setMode(a.engine.mode() == PlayMode::Song ? PlayMode::Pattern : PlayMode::Song);
   if (pressed("help.shortcuts")) a.showShortcuts = !a.showShortcuts;
@@ -1725,6 +1759,9 @@ void handleGlobalShortcuts(App& a) {
     f = !f;
     if (f) a.focusWindow = name;
   };
+  // Smooth's pane views (editors, Smart controls, mixer, lists, notes, browser, files) follow the control
+  // bar's buttons: shown, the key closes the pane; else the view shows in its pane.
+  const bool smoothPanes = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
   if (layoutui::active() == layout::Preset::Tracker) {
     // K-106: the Tracker's screens. A page comes to the front (the pages stay open behind it);
     // Files and the pattern keys swap into the header band; the band hides and comes back.
@@ -1733,9 +1770,17 @@ void handleGlobalShortcuts(App& a) {
       const char* window;
     };
     static const Pg pages[] = {{"view.patternEditor", "Pattern editor"}, {"view.playlist", "Playlist"}, {"view.pianoRoll", "Piano roll"},
-                               {"view.channelRack", "Channel rack"},     {"view.mixer", "Mixer"},      {"view.pads", "Live pads"}};
+                               {"view.channelRack", "Channel rack"},     {"view.mixer", "Mixer"},      {"view.pads", "Live pads"},
+                               {"view.lfoBoard", "LFO board"}};  // K-247: the LFO page
     for (const Pg& p : pages)
-      if (typed(p.id)) trackerview::showPage(a, p.window);
+      if (typed(p.id)) {
+        if (std::strcmp(p.id, "view.mixer") == 0) stageui::setView(a, false);  // the Mix page: the mixer's strips (Stage is its own page)
+        trackerview::showPage(a, p.window);
+      }
+    if (typed("view.stage")) {  // the Stage page: the mixer's Stage view, beside Mix
+      stageui::setView(a, true);
+      trackerview::showPage(a, "Mixer");
+    }
     if (typed("view.files")) trackerview::setHeaderSwap(trackerview::headerSwap() == 2 ? 0 : 2);
     if (typed("help.trackerKeys")) trackerview::setHeaderSwap(trackerview::headerSwap() == 1 ? 0 : 1);
     if (typed("view.headerBand")) trackerview::setExtended(a, !trackerview::extended());
@@ -1764,18 +1809,20 @@ void handleGlobalShortcuts(App& a) {
     }
     if (typed("view.channelRack")) toggle(a.showRack, "Channel rack");
     if (typed("view.pianoRoll")) toggle(a.showPiano, "Piano roll");
-    if (typed("view.mixer")) toggle(a.showMixer, "Mixer");
+    // (Smooth: the mixer and the browser as the control bar's buttons, below)
+    if (typed("view.mixer") && !smoothPanes) toggle(a.showMixer, "Mixer");
+    if (typed("view.lfoBoard")) lfoui::toggle(a);  // K-247
     if (typed("view.patternEditor") && layoutui::active() != layout::Preset::Live)  // N46-09: not in Clips
       if (bool* f = layoutui::windowOpenFlag(a, "Pattern editor")) toggle(*f, "Pattern editor");
     if (typed("view.pads")) toggle(a.showLivePads, "Live pads");
   }
-  if (typed("view.browser")) toggle(a.showBrowser, "Browser");
+  if (typed("view.browser") && !smoothPanes) toggle(a.showBrowser, "Browser");
   if (typed("view.channelSettings") && layoutui::active() != layout::Preset::Tracker) a.settingsChannel = a.settingsChannel != kNoId ? kNoId : a.selChannel;
   if (typed("view.audioEditor") && layoutui::active() != layout::Preset::Tracker) {  // the Tracker's key opens its own page (above)
     if (layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic)) toggleTracksAudioEditor(a);  // R01-15
     else a.settings.set("ui.loupePinned", !a.settings.getBool("ui.loupePinned"));
   }
-  if (typed("view.stage")) toggle(a.showStage, "Mixer");  // the mixer window's Stage view (stageui::sync opens the mixer)
+  if (typed("view.stage") && layoutui::active() != layout::Preset::Tracker) toggle(a.showStage, "Mixer");  // the mixer window's Stage view (stageui::sync opens the mixer)
   // K-124: Esc in an editor or plugin window brings the playlist (the main window) to the front,
   // once nothing else used the key this frame: a popup, menu or dialog, a drag, a text field, a tool.
   // K-297: in the Tracker a page docked in the centre goes as its Exit does (Esc, Cmd+W).
@@ -1826,7 +1873,7 @@ void handleGlobalShortcuts(App& a) {
   }
   if (typed("view.editors")) {
     if (layoutui::active() == layout::Preset::Studio) toggle(a.showPiano, "Piano roll");
-    else layoutui::toggleEditors(a);
+    else if (!smoothPanes) layoutui::toggleEditors(a);
   }
   if (layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic)) {  // K-112b: the layout's panes
     const layout::Preset lp = layout::Preset::Logic;
@@ -1843,22 +1890,12 @@ void handleGlobalShortcuts(App& a) {
     // R01-08: Quick help is a small floating window (LayoutParts.cpp quickHelpFloat), not a pane.
     if (typed("view.quickHelp")) a.settings.set("ui.logicQuickHelp", !a.settings.getBool("ui.logicQuickHelp"));
     if (typed("view.automation")) toggleAutomationLanes();  // R02-15: A, the selected tracks' lanes
-    if (typed("view.smartControls"))  // R01-07: Y, the Smart controls in the lower pane
-      if (bool* sm = layoutui::windowOpenFlag(a, "Smart controls")) {
-        if (*sm && shown("logic.lower")) layoutui::setRegionVisible(a, "logic.lower", false);
-        else layoutui::setRegionVisible(a, "logic.lower", true), *sm = true;
-      }
     if (typed("view.toolbar")) a.settings.set("ui.logicToolbar", !a.settings.getBool("ui.logicToolbar"));
-    auto side = [&](const char* cmd, const char* window) {  // a panel of the right pane: shows it there, or hides the pane
-      if (!typed(cmd)) return;
-      bool* f = layoutui::windowOpenFlag(a, window);
-      if (!f) return;
-      if (*f && shown("logic.right")) layoutui::setRegionVisible(a, "logic.right", false);
-      else layoutui::setRegionVisible(a, "logic.right", true), *f = true;
-    };
-    side("view.lists", "Lists");
-    side("view.notes", "Notes");
-    side("view.files", "Files");  // O: the project's files
+    // The pane views, as the control bar's buttons do (LayoutShellUi.h smoothViewToggle): Y the Smart controls
+    // (R01-07), E the editors, X the mixer, D the lists, O the project's files, the notes; a view shown closes
+    // its pane, another shows in its pane.
+    for (const char* cmd : {"view.editors", "view.smartControls", "view.mixer", "view.lists", "view.notes", "view.browser", "view.files"})
+      if (typed(cmd)) layoutui::smoothViewToggle(a, cmd);
     // (V, view.hidePlugins: menuShortcuts takes it for every layout, K-297)
     if (typed("playlist.toolMenu")) openToolMenu();  // R01-18
     if (typed("view.globalTracks")) a.settings.set("ui.logicGlobalTracks", !a.settings.getBool("ui.logicGlobalTracks"));  // R01-15

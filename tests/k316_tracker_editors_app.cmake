@@ -1,7 +1,7 @@
 # Gridline - K-106 cp18 (K-316 plan 3, 5, 6, 8): the Tracker's lower-band screens in the real app.
-#   Navigation: a Tracker Sampler opens the Sample editor; another instrument the Channel frame;
-#   Esc, Ctrl+Alt+E again and Exit close it; Open plugin window floats the channel settings and the
-#   band stays closed.
+#   Navigation: a Tracker Sampler opens the Sample editor; the Channel frame (a dev screen);
+#   Esc, Ctrl+Alt+E again and Exit close it; Open plugin window on a Sampler floats its Audio clip
+#   window, as in Studio (plugins float in the Tracker), nothing in the band.
 #   The Sample editor: zoom in, zoom to a range, the whole sample; play a part (the play tap's line);
 #   Alt+A selects all while it has the keys; each edit is one undo step and undoing them all saves
 #   the same bytes as before.
@@ -99,7 +99,7 @@ file(WRITE "${OUT}/input.txt" "5 toasts clear
 130 save \"${OUT}/unconverted.gridline.json\"
 132 ${E} plugin 8
 136 ${E} dump
-138 ${E} close
+138 plugwin close
 140 ${E} open sample 7
 142 ${E} close
 144 sdlkey e down ctrl+alt
@@ -310,7 +310,7 @@ endif()
 # ---- the plugin window, Ctrl+Alt+E ----
 set(f 136)
 line(${f})
-want("shown 0 [^\n]* pluginwin 1 " "Open plugin window floats the channel settings, the band closed")
+want("shown 0 [^\n]* pluginwin 1 " "Open plugin window on a Sampler floats its window, nothing in the band")
 set(f 148)
 line(${f})
 want("shown 1 screen 1 want 1 channel 7 " "Ctrl+Alt+E opens the Sample editor")

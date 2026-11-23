@@ -21,6 +21,7 @@
 #include <vector>
 #include "../core/PluginParams.h"
 #include "Dsp.h"
+#include "EffectRest.h"
 #include "Effects.h"
 
 namespace gl {
@@ -706,6 +707,7 @@ class MultibandK2 final : public Effect {
  public:
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
+    rest_.woke();
     const double sr = ctx.sampleRate;
     const bool indep = iprm(s, MbEdgeMode) == 1;
     double fL = prm(s, MbLowXover, 300.3f), fH = prm(s, MbHighXover, 9236.7f);
@@ -785,6 +787,32 @@ class MultibandK2 final : public Effect {
     if (k > 3) out[3] = level_;
     return k;
   }
+  // K-142 (0.7.8): rests by the hosted rule. At rest its band filters empty and its gain followers
+  // recover (a held peak decays for 10 s, then holds) as on silence: its idle render runs unheard
+  // until they have settled (filters at zero, followers at their fixed point); then nothing moves.
+  bool restsWhenFaint() const override { return true; }
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, int n) override {
+    rest_.run(
+        n, [&](int m) { restRenderFx(*this, s, aux, ctx, m); },
+        [&] {
+          for (const auto& c : iir_)
+            for (const auto& q : c)
+              if (!biquadZero(q)) return false;
+          for (const auto& c : lr_)
+            for (const auto& q : c)
+              if (!biquadZero(q)) return false;
+          for (const auto& z : firBank_.z)
+            if (!allZeroOf(z)) return false;
+          for (const MbEnv* e : {&env_[0], &env_[1], &env_[2], &limEnv_[0], &limEnv_[1]}) {
+            if (e->held != 0 && e->count <= static_cast<int64_t>(e->sr * 10.0)) return false;  // still decaying
+            if (e->lpX != e->held || (e->lpX + e->held) * e->a + e->b * e->lp != e->lp) return false;
+          }
+          return true;
+        },
+        [&](int m) {
+          if (ftype_ == 1) firBank_.pos = static_cast<int>((firBank_.pos + m) % MbFirBank::N);
+        });
+  }
   // Linear-phase band filters: every band is delayed by the FIR's centre tap.
   int latencyFor(const PluginState& s, double) const override { return filterType(s) == 1 ? MbFir::H : 0; }
   MultibandK2() {
@@ -850,6 +878,7 @@ class MultibandK2 final : public Effect {
   double f_[4] = {-1, -1, -1, -1}, sr_ = 0;
   int ftype_ = -1;
   float gr_[3] = {0, 0, 0}, level_ = -120;
+  RestSettle rest_;
 };
 
 // ======================================================================= Transient shaper
@@ -867,6 +896,7 @@ class TransientK2 final : public Effect {
   static double coef10(double sec, double sr) { return std::pow(0.1, 1.0 / std::max(1e-9, sec * sr)); }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
+    rest_.woke();
     const double sr = ctx.sampleRate;
     const bool on = prm(s, TrEnabled, 1) >= 0.5f;
     const int as = std::clamp(iprm(s, TrAttackSpeed, 1), 0, 2), rs = std::clamp(iprm(s, TrReleaseSpeed, 1), 0, 2);
@@ -948,8 +978,24 @@ class TransientK2 final : public Effect {
     out[0] = out_;
     return 1;
   }
+  // K-142 (0.7.8): rests by the hosted rule. At rest its detectors fall (the 4 s peak memory too) as
+  // on silence: its idle render runs unheard until they are at zero or below 1e-20 (a level any
+  // sound replaces: each detector takes the larger, or adds to it), its filters at zero; then
+  // nothing moves.
+  bool restsWhenFaint() const override { return true; }
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, int n) override {
+    rest_.run(
+        n, [&](int m) { restRenderFx(*this, s, aux, ctx, m); },
+        [&] {
+          for (int c = 0; c < 2; ++c)
+            if (x1_[c] != 0 || ly_[c] != 0 || hy_[c] != 0) return false;
+          return e1_ == 0 && e2_ == 0 && e3_ < 1e-20 && e4_ < 1e-20 && e5_ < 1e-20;
+        },
+        [](int) {});
+  }
 
  private:
+  RestSettle rest_;
   double e1_ = 0, e2_ = 0, e3_ = 0, e4_ = 0, e5_ = 0;
   double x1_[2] = {0, 0}, ly_[2] = {0, 0}, hy_[2] = {0, 0};
   double split_ = -1, sr_ = 0, lpA_ = 0, lpB_ = 0, hpA_ = 0;

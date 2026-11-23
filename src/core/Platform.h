@@ -48,6 +48,15 @@ std::string configRootFor(const std::function<std::string(const char*)>& env, bo
 // K-64: the calling background worker runs below normal priority, so it never competes with the
 // audio thread or the interface for a core.
 void lowerThisThreadPriority();
+// 0.7.8: the same for a worker whose short timed waits must wake on time (Seltmann's live renders
+// while the tempo moves): on macOS the default class at its lowest relative priority, below every
+// normal thread (the utility class would delay its wakeups: timer coalescing); elsewhere as
+// lowerThisThreadPriority (Windows below normal, Linux nice 10 for this thread).
+void lowerThisThreadPriorityOnTime();
+// GitHub #66: the calling thread as a background job (work nobody waits for, such as indexing):
+// macOS background QoS (its CPU and disk use throttled), Linux nice 19 for this thread, Windows
+// background mode (lowest CPU, disk and memory priority). True when the system took it.
+bool backgroundThisThread();
 std::string cacheRoot();
 std::string dataRoot();
 

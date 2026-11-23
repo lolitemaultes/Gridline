@@ -1,12 +1,14 @@
-// Gridline — "seltmann" pack: the editor's waveform parts. The waveform (the
-// region with its bar grid and the regions coloured by their letter; cut and grid
-// editing open up in the Edit drawer's Chop / Grid tabs), the slim whole-song
-// strip (sections and the region being chopped, songs only, can be hidden) and
-// the chop settings of the drawer (mode, division / sensitivity / count / grain
-// length, snapping).
+// Gridline — "seltmann" pack: the editor's waveform parts. The waveform (the region with its bar
+// grid and the regions coloured by their letter; the tools decide what a click does: Play plays a
+// region and opens its card, Cut adds and removes cuts, Grid moves and stretches the beat grid), the
+// whole-song strip (sections and the region being chopped, songs only, can be hidden), the section
+// buttons under it and the chop settings of the Chop card (mode, division / sensitivity / count /
+// grain length, snapping).
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include "../../../third_party/imgui/imgui_internal.h"
 #include "../../app/PluginSkin.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
@@ -230,7 +232,7 @@ void drawStrip(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const
       }
 }
 
-// ------------------------------------------------------------------ chop settings (drawer)
+// ------------------------------------------------------------------ chop settings (Chop card)
 void drawChopSettings(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, float W) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -359,9 +361,10 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
   auto F = [&](float x) { return ra + (rb - ra) * static_cast<double>((x - g0.x) / w); };
   const float mid = (g0.y + g1.y) * 0.5f, half = (g1.y - g0.y) * 0.5f - 2;
   const int n = static_cast<int>(m.slices.size());
-  // cut and grid editing open up in the Edit drawer (Chop / Grid tabs); otherwise a click plays a slice
-  const bool editCuts = e.drawer && e.drawerTab == DrawChop;
-  const bool editGrid = e.drawer && (e.drawerTab == DrawGrid || e.drawerTab == DrawChop);
+  // 0.7.8: the tool decides: Cut adds / removes cuts, Grid moves the grid (the Grid card too), Play
+  // plays a region and opens its card
+  const bool editCuts = toolCuts(e.tool);
+  const bool editGrid = toolMovesGrid(e.tool) || e.card == CardGrid;
   // slice tints
   for (int k = 0; k < n; ++k) {
     const auto& s = m.slices[static_cast<size_t>(k)];
@@ -449,6 +452,11 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
       Model nm = e.m;
       rechopKeepPattern(nm, smp.get());
       commit(a, t, e, nm, i18n::N_("Stretch the grid"), 0x5E17B0ull);
+    } else if (e.tool == ToolPlay && hv && n > 0 && !ImGui::IsMouseDragPastThreshold(0, 6)) {
+      // 0.7.8: the Play tool's click opens the region's card under the region
+      const auto& sl = m.slices[static_cast<size_t>(under)];
+      e.selStep = -1;
+      openCard(e, CardRegion, ImVec2(std::round((X(static_cast<double>(sl.start)) + X(static_cast<double>(sl.end))) * 0.5f), p1.y), true);
     }
     e.dragBeat = -1;
     auditionStop(a, t, e);
@@ -471,7 +479,7 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
     std::snprintf(b, sizeof b, "%s %s  \xC2\xB7  %.3f s", i18n::tr("Region"), regionName(under).c_str(), static_cast<double>(s.end - s.start) / m.srcRate);
     const char* how = editCuts ? i18n::tr("Click: play. Double-click: add a cut. Drag a cut to move it, right-click it to remove it.")
                       : editGrid ? i18n::tr("Click: play. Drag the bar-1 flag to move the grid, Alt+drag a bar line to stretch it.")
-                                 : i18n::tr("Click a region to play it. Wheel: pitch. Drag a cut to resize. Right-click: more.");
+                                 : i18n::tr("Click a region to play it and open its card. Wheel: pitch. Drag a cut to resize. Right-click: more.");
     ui::Tooltip((std::string(b) + "\n" + how).c_str());
   }
   // bar 1 flag (drag moves the whole grid)
@@ -622,15 +630,44 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, const 
     const float x = X(lv.srcFrame);
     dl->AddLine(ImVec2(x, p0.y + 2), ImVec2(x, p1.y - 2), P.playhead, 2.0f);
   }
-  // caption: region
+  // caption (0.7.8): what the sequence is, its Steps card and Reset order
   {
-    char b[96];
-    const int bars = static_cast<int>(std::lround((beatAt(m.grid, rb) - beatAt(m.grid, ra)) / bpb));
-    std::snprintf(b, sizeof b, "%d %s  ·  %d %s  ·  %s", bars, bars == 1 ? i18n::tr("bar") : i18n::tr("bars"), n,
-                  n == 1 ? i18n::tr("slice") : i18n::tr("slices"), fmtTime((rb - ra) / m.srcRate).c_str());
+    const int ns = static_cast<int>(m.pattern.steps.size());
+    const bool natural = isNaturalOrder(m);
+    const double bars = cycleBeats(m) / bpb;
+    char bb[24];
+    std::snprintf(bb, sizeof bb, std::fabs(bars - std::round(bars)) < 1e-6 ? "%.0f" : "%.2f", bars);
+    char b[200];
+    std::snprintf(b, sizeof b, "%s %s  \xC2\xB7  %d %s  \xC2\xB7  %s %s", i18n::tr("SEQUENCE"), natural ? i18n::tr("IN ORDER") : i18n::tr("YOUR ORDER"), ns,
+                  ns == 1 ? i18n::tr("STEP") : i18n::tr("STEPS"), bb, std::fabs(bars - 1) < 1e-9 ? i18n::tr("BAR") : i18n::tr("BARS"));
+    const int sr = sequenceStartRegion(m);
+    if (sr > 0) {
+      const size_t l = std::strlen(b);
+      std::snprintf(b + l, sizeof b - l, "  \xC2\xB7  %s %s", i18n::tr("STARTS AT"), regionName(sr).c_str());
+    }
     const float tw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, b).x;
-    dl->AddRectFilled(ImVec2(p1.x - 16 - tw, p0.y + 2), ImVec2(p1.x - 4, p0.y + 16), theme::withAlpha(P.well, 0.92f), theme::kRadiusSm);
-    textR(dl, a.fontMono, theme::kFontLabel, ImVec2(p1.x - 10, p0.y + 3), P.textDim, b);
+    const float bh = 15, stepsW = 52, resetW = natural ? 0.0f : 52.0f;
+    float rx = p1.x - 4;
+    rx -= stepsW;
+    if (button("##wsteps", ImVec2(rx, p0.y + 2), ImVec2(stepsW, bh), i18n::N_("Steps"), e.card == CardSteps,
+               i18n::N_("The step length, adding or removing steps and typing the steps")))
+      toggleCard(e, CardSteps, ImVec2(rx + stepsW * 0.5f, p0.y + 2 + bh), true);
+    noteBtn(e, "steps");
+    if (!natural) {
+      rx -= 4 + resetW;
+      if (button("##wreset", ImVec2(rx, p0.y + 2), ImVec2(resetW, bh), i18n::N_("Reset"), false,
+                 i18n::N_("Play every region once, in order (A B C D ...), each as long as its region"))) {
+        Model nm = e.m;
+        nm.preset.clear();
+        naturalPattern(nm);
+        commit(a, t, e, nm, i18n::N_("Reset the order"));
+        e.selStep = -1;
+      }
+    }
+    if (tw + 24 < rx - p0.x - 80) {
+      dl->AddRectFilled(ImVec2(rx - 12 - tw, p0.y + 2), ImVec2(rx - 4, p0.y + 2 + bh), theme::withAlpha(P.well, 0.92f), theme::kRadiusSm);
+      textR(dl, a.fontMono, theme::kFontLabel, ImVec2(rx - 8, p0.y + 3), P.textDim, b);
+    }
   }
 }
 

@@ -20,6 +20,7 @@
 #include "core/Osc.h"
 #include "core/OscControl.h"
 #include "core/OscServer.h"
+#include "core/ThreadName.h"
 #include "fixtures/TestSong.h"
 
 using namespace gl;
@@ -691,12 +692,68 @@ int appHelper() {
 
 }  // namespace
 
+// K-142 (0.7.8): an idle server sleeps (it woke every 100 ms before), a message still arrives at
+// once after the idle spell, over UDP and TCP, and stopping it takes no time.
+void testIdle() {
+  OscServer srv;
+  OscServerConfig cfg;
+  cfg.port = 0;
+  cfg.tcp = true;
+  std::string err;
+  expect(srv.start(cfg, &err), "idle: the server starts");
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  gl::threads::setCountWakes(true);
+  auto wakes = [] {
+    for (const auto& w : gl::threads::wakes())
+      if (w.name == "gl-osc") return w.count;
+    return uint64_t{0};
+  };
+  const uint64_t w0 = wakes();
+  std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+  const double perSec = static_cast<double>(wakes() - w0) / 3.0;
+  std::printf("# idle OSC server: %.1f wakeups a second\n", perSec);
+  expect(perSec <= 1.5, "idle: the server thread sleeps (at most about one wakeup a second)");
+  Udp c;
+  const auto t0 = std::chrono::steady_clock::now();
+  c.send(srv.port(), osc::encode(msg("/after/idle", {I(1)})));
+  auto got = await(srv, 1);
+  const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+  std::printf("# a message after the idle spell: %.1f ms\n", ms);
+  expect(got.size() == 1 && got[0].msg.address == "/after/idle" && ms < 200, "idle: a UDP message after the idle spell arrives at once");
+  net::Sock t = tcpConnect(srv.port());
+  if (t != net::kNoSock) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));  // a connected client, idle
+    const auto t1 = std::chrono::steady_clock::now();
+    sendAll(t, osc::slipEncode(osc::encode(msg("/tcp/after/idle"))));
+    got = await(srv, 1);
+    const double tms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t1).count();
+    expect(got.size() == 1 && got[0].msg.address == "/tcp/after/idle" && tms < 200, "idle: a TCP client's message after an idle spell arrives at once");
+    net::closeSock(t);
+  } else {
+    expect(false, "idle: a TCP client connects");
+  }
+  gl::threads::setCountWakes(false);
+  const auto s0 = std::chrono::steady_clock::now();
+  srv.stop();
+  const double sms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - s0).count();
+  std::printf("# stop took %.1f ms\n", sms);
+  expect(!srv.running() && sms < 300, "idle: stopping the sleeping server is quick");
+  // started again on the same settings (Settings changes restart it)
+  expect(srv.start(cfg, &err) && srv.running(), "idle: it starts again");
+  Udp c2;
+  c2.send(srv.port(), osc::encode(msg("/again")));
+  got = await(srv, 1);
+  expect(got.size() == 1 && got[0].msg.address == "/again", "idle: and receives again");
+  srv.stop();
+}
+
 int main(int argc, char** argv) {
   if (argc > 1 && std::string(argv[1]) == "apphelper") return appHelper();
   testCodec();
   testPatternsAndSlip();
   testFuzz();
   testServer();
+  testIdle();
   testControl();
   testLoopback();
   return finish();

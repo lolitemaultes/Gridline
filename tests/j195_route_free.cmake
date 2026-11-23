@@ -2,7 +2,7 @@
 # config and HOME, 1440x900, a fixed 16 ms frame time). A copy of the test song gets an audio clip
 # channel "Take", a synth channel "Lead" and an installed-plugin channel that is not installed,
 # all on the master; inserts 1-8 are named and used, 9 onwards are free.
-#   1. audio clip channel: the header button routes it to insert 9, named "Take", the track
+#   1. audio clip channel (its settings: the Audio clip window): the header button routes it to insert 9, named "Take", the track
 #      selected, one undo step; a second click keeps the track (no new undo step); undo goes back
 #      to the master;
 #   2. instrument: the first item of the route list does the same (insert 9, "Lead");
@@ -58,7 +58,7 @@ endfunction()
 
 # 1. Audio clip channel (channel 0), the header button.
 run(audio 0 "8 routes
-10 sdlat chroutefree
+10 sdlat ceroutefree
 12 sdldown 0
 13 sdlup 0
 18 routes
@@ -67,11 +67,11 @@ run(audio 0 "8 routes
 26 routes
 28 undo
 30 routes
-34 sdlat chroutefree
+34 sdlat ceroutefree
 40 shot \"${OUT}/audio.ppm\"
 44 quit discard
 ")
-check("audio: the button is in the header" "sdlat frame 10: chroutefree at ")
+check("audio: the button is in the Audio clip window's header" "sdlat frame 10: ceroutefree at ")
 routes(8 r8)
 routes(18 r18)
 routes(26 r26)

@@ -233,6 +233,44 @@ class FxRack {
 
   bool tailActive() const { return choOn_ || dlyOn_ || revOn_; }
 
+  // K-142: n frames of silence went by while the instrument rested (Generator::rested): what
+  // process() would have done with them. The chorus and the delay run as they would (their
+  // movement, write heads and what is left in them, exactly); the reverb's heads move on, its
+  // rooms (silent by then: the instrument rests only after its tail) are left as they are.
+  void rested(int n) {
+    if (choOn_) {  // K-142 (0.7.8 close): the silence written in runs, not a frame at a time
+      for (int left = std::min(n, kChorusLen); left > 0;) {
+        const int k = std::min(left, kChorusLen - choW_);
+        for (auto& ring : chorus_) std::fill(ring.begin() + choW_, ring.begin() + choW_ + k, 0.f);
+        choW_ = (choW_ + k) & (kChorusLen - 1);
+        left -= k;
+      }
+      if (n > kChorusLen) choW_ = (choW_ + (n - kChorusLen)) & (kChorusLen - 1);
+      const double inc = choRate_ / sr_;
+      for (int i = 0; i < n; ++i) {
+        choPh_ += inc;
+        if (choPh_ >= 1) choPh_ -= 1;
+      }
+    }
+    if (dlyOn_) {
+      for (int i = 0; i < n; ++i) {
+        dlyTime_ += (dlyTarget_ - dlyTime_) * 0.0005;
+        float dl = readFrac(delay_[0], dlyW_, dlyTime_, kDelayLen);
+        float dr = readFrac(delay_[1], dlyW_, dlyTime_, kDelayLen);
+        dlpL_ = dl + (dlpL_ - dl) * 0.35;
+        dlpR_ = dr + (dlpR_ - dr) * 0.35;
+        delay_[0][static_cast<size_t>(dlyW_)] = static_cast<float>((0.f + 0.f) * 0.5 + dlpR_ * dlyFb_);
+        delay_[1][static_cast<size_t>(dlyW_)] = static_cast<float>(dlpL_ * dlyFb_);
+        dlyW_ = (dlyW_ + 1) & (kDelayLen - 1);
+      }
+    }
+    if (revOn_)
+      for (int c = 0; c < 2; ++c) {
+        for (auto& k : comb_[c]) k.pos = k.len > 0 ? static_cast<int>((static_cast<int64_t>(k.pos >= k.len ? 0 : k.pos) + n) % k.len) : 0;
+        for (auto& k : ap_[c]) k.pos = k.len > 0 ? static_cast<int>((static_cast<int64_t>(k.pos >= k.len ? 0 : k.pos) + n) % k.len) : 0;
+      }
+  }
+
   void process(float* L, float* R, int n) {
     if (drive_ > 0.001f) {
       double g = 1.0 + drive_ * 12.0, makeup = 1.0 / softClip(g * 0.5) * 0.5;

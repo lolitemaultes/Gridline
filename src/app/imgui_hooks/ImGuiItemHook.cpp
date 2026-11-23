@@ -16,10 +16,14 @@ ItemFn itemFn = nullptr;
 ItemFn cursorFn = nullptr;
 ItemFn typeInFn = nullptr;
 InfoFn infoFn = nullptr;
+InfoFn devLabelFn = nullptr;
+ItemFn sweepItemFn = nullptr;
+InfoFn sweepInfoFn = nullptr;
 MenuWalker* walker = nullptr;
 
 void update() {
-  if (ImGuiContext* g = ImGui::GetCurrentContext()) g->TestEngineHookItems = itemFn != nullptr || cursorFn != nullptr || typeInFn != nullptr || infoFn != nullptr;
+  if (ImGuiContext* g = ImGui::GetCurrentContext()) g->TestEngineHookItems = itemFn != nullptr || cursorFn != nullptr || typeInFn != nullptr || infoFn != nullptr ||
+                                                                 devLabelFn != nullptr || sweepItemFn != nullptr || sweepInfoFn != nullptr;
 }
 }  // namespace
 
@@ -43,6 +47,17 @@ void setInfoHook(InfoFn fn) {
   update();
 }
 
+void setDevLabelHook(InfoFn fn) {
+  devLabelFn = fn;
+  update();
+}
+
+void setSweepHooks(ItemFn item, InfoFn info) {
+  sweepItemFn = item;
+  sweepInfoFn = info;
+  update();
+}
+
 void setMenuWalker(MenuWalker* w) {
   walker = w;
   GImGuiGridlineMenuWalk = w != nullptr;
@@ -56,9 +71,12 @@ void ImGuiTestEngineHook_ItemAdd(ImGuiContext*, ImGuiID id, const ImRect& bb, co
   if (gl::imhook::itemFn) gl::imhook::itemFn(id, bb.Min, bb.Max);
   if (gl::imhook::cursorFn) gl::imhook::cursorFn(id, bb.Min, bb.Max);
   if (gl::imhook::typeInFn) gl::imhook::typeInFn(id, bb.Min, bb.Max);
+  if (gl::imhook::sweepItemFn) gl::imhook::sweepItemFn(id, bb.Min, bb.Max);
 }
 void ImGuiTestEngineHook_ItemInfo(ImGuiContext*, ImGuiID id, const char* label, ImGuiItemStatusFlags flags) {
   if (gl::imhook::infoFn) gl::imhook::infoFn(id, label, static_cast<int>(flags));
+  if (gl::imhook::devLabelFn) gl::imhook::devLabelFn(id, label, static_cast<int>(flags));
+  if (gl::imhook::sweepInfoFn) gl::imhook::sweepInfoFn(id, label, static_cast<int>(flags));
 }
 void ImGuiTestEngineHook_Log(ImGuiContext*, const char*, ...) {}
 const char* ImGuiTestEngine_FindItemDebugLabel(ImGuiContext*, ImGuiID) { return nullptr; }

@@ -93,6 +93,9 @@ constexpr uint32_t kDraw = 0xFFBC40, kPaint = 0x77C5F2, kDelete = 0xFF5B53, kMut
                    kSlice = 0x80ACFF, kSelect = 0xFFAB60, kZoom = 0x80ACFF, kPlay = 0xB1E758, kSnap = 0x7AE4A3,
                    kStamp = 0xD963F1, kLoop = 0xA8E44A, kGraph = 0x4ECCFF, kMenu = 0xFF9637, kView = 0xFB9244,
                    kGhost = 0x80ACFF, kWarp = 0x52D6C2;  // K-85: warp markers
+// K-247: the LFO board's eight colours (SongLfo::colour), drawn with litRole() so the light theme
+// deepens them.
+inline constexpr uint32_t kLfo[8] = {0xD673EA, 0x4FCFE0, 0xF2C451, 0x86E0C2, 0xFF6F5E, 0x62AEF5, 0x9BD65A, 0xF58BB8};
 }  // namespace role
 
 const Palette& pal();

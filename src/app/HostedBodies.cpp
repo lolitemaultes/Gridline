@@ -67,6 +67,7 @@ const char* name(Body b) {
     case Body::EffectEditor: return "effect editor";
     case Body::MasterChain: return "master chain";
     case Body::Loupe: return "Loupe";
+    case Body::ClipEditor: return "Audio clip";
     default: return "";
   }
 }

@@ -71,6 +71,8 @@ inline float layerZoneWeight(const LayerZone& z, int key, int vel127) {
 }
 // K-169: the layer's macro knobs. Each drives parameters of the layer's children through internal
 // controller links (ModLink with sourceSlot kLayerMacroSlot, sourceOutput = the macro).
+// K-245: every channel and every mixer track has these eight macro knobs (the channel window's Misc
+// page, the effect windows of a mixer track); a right-click on any plugin parameter links it to one.
 inline constexpr int kLayerMacros = 8;
 inline constexpr int kLayerMacroSlot = -2;
 struct LayerMacro {
@@ -183,6 +185,9 @@ struct Channel {
   // K-277: the instrument keeps running while silent (Rest silent instruments leaves it alone):
   // for plugins that make sound on their own.
   bool keepRunning = false;
+  // GitHub #58: hidden from the channel rack (it still plays; the rack menu shows it again). Saved
+  // with the song, so everyone in a collaboration sees the same rack.
+  bool rackHidden = false;
   bool fullKeyRange() const { return keyLo <= 0 && keyHi >= 127; }
 
   bool isLayer() const { return !layer.empty(); }
@@ -195,7 +200,7 @@ struct Channel {
            macros == o.macros && group == o.group &&
            auxOuts == o.auxOuts && midiOutPort == o.midiOutPort && midiInPort == o.midiInPort && keyLo == o.keyLo &&
            keyHi == o.keyHi && swingTruncate == o.swingTruncate && audioClip == o.audioClip && flIcon == o.flIcon && icon == o.icon &&
-           freeze == o.freeze && hibernate == o.hibernate && keepRunning == o.keepRunning;
+           freeze == o.freeze && hibernate == o.hibernate && keepRunning == o.keepRunning && rackHidden == o.rackHidden;
   }
 };
 
@@ -293,6 +298,19 @@ struct StepProps {
   }
 };
 
+// K-255: a channel's lane in a pattern (core/Lanes.h). Its grid (steps per bar; 0 = the pattern's
+// stepsPerBar) and what its step loop (Pattern::stepLoop, the lane length) does when the pattern
+// starts again in a longer clip: restart with it (0.7.7's step loop) or run on through the clip.
+enum class LaneMode : uint8_t { Restart = 0, RunOn = 1 };
+inline constexpr int kMaxLaneGrid = 64;  // steps per bar a lane may have of its own
+struct PatternLane {
+  int grid = 0;
+  LaneMode mode = LaneMode::Restart;
+  bool isDefault() const { return grid == 0 && mode == LaneMode::Restart; }
+  bool operator==(const PatternLane& o) const { return grid == o.grid && mode == o.mode; }
+  bool operator!=(const PatternLane& o) const { return !(*this == o); }
+};
+
 // A pattern: per-channel step rows + per-channel piano-roll notes (keyed by Channel::id).
 struct Pattern {
   ObjectId id = kNoId;
@@ -309,6 +327,9 @@ struct Pattern {
   // the channel's first `n` steps (and the notes that start in them) repeat
   // through the pattern.
   std::map<ObjectId, int> stepLoop;
+  // K-255: per-channel lane grid and mode (missing = the pattern's grid, restarting); only
+  // channels whose lane differs from the default have an entry.
+  std::map<ObjectId, PatternLane> lanes;
   // Q-1: loop mode (FL's pattern loop mode, FLP event 26): a playlist clip
   // longer than the pattern repeats it (core/ClipLoop.h). Patterns made in
   // Gridline loop; FL imports keep FL's setting (off unless set there).
@@ -318,11 +339,19 @@ struct Pattern {
   // song never move or resize a clip.
   int meterNum = 0, meterDen = 0;
   bool ownMeter() const { return meterNum > 0 && meterDen > 0; }
+  // 0.7.8: a linked pattern (an instrument's "Send to project", Seltmann): its notes for linkChannel
+  // follow the instrument's sequence while they are what the link last wrote (linkHash, a hash of
+  // those notes); once the notes are edited by hand the pattern stops following until relinked.
+  // linkCycles: how many times the sequence repeats in it. kNoId = not linked (every older pattern).
+  ObjectId linkChannel = kNoId;
+  uint64_t linkHash = 0;
+  int linkCycles = 1;
 
   bool operator==(const Pattern& o) const {
     return id == o.id && name == o.name && color == o.color && stepsPerBar == o.stepsPerBar && bars == o.bars &&
            steps == o.steps && notes == o.notes && automation == o.automation && stepProps == o.stepProps &&
-           stepLoop == o.stepLoop && loop == o.loop && meterNum == o.meterNum && meterDen == o.meterDen;
+           stepLoop == o.stepLoop && lanes == o.lanes && loop == o.loop && meterNum == o.meterNum && meterDen == o.meterDen &&
+           linkChannel == o.linkChannel && linkHash == o.linkHash && linkCycles == o.linkCycles;
   }
 };
 
@@ -550,6 +579,10 @@ struct EffectSlot {
   PluginState plugin;  // empty type = free slot
   bool enabled = true;
   float mix = 1.0f;    // dry/wet 0..1
+  // 0.7.8: which effect this is while the program runs (Document::tagSlots), so its running instance
+  // follows it when it moves (up or down, to another slot or track, undo and redo). Never saved, never
+  // compared; 0 until the document tags it.
+  uint64_t uid = 0;
   bool operator==(const EffectSlot& o) const { return plugin == o.plugin && enabled == o.enabled && mix == o.mix; }
 };
 
@@ -639,6 +672,13 @@ struct MixerTrack {
   // K-238: a linked group: volume, pan, mute and solo of one member move every member (set on all
   // members alike, mixops::setGroupLink).
   bool groupLink = false;
+  // GitHub #58: how the mixer views show the strip (arrangement state, saved and shared; the track
+  // plays and routes the same either way). `hidden`: no strip at all (the toolbar's "N hidden" brings
+  // it back); `narrow`: a slim strip (name, meter, mute and solo); `groupFolded`: the track's group
+  // shows as one strip, its members' own strips hidden (set on every member alike, as groupLink).
+  bool hidden = false;
+  bool narrow = false;
+  bool groupFolded = false;
   // Audio input (J-8): the device input channel feeding this track (0-based,
   // -1 = none); stereo takes `input` and `input + 1`. Input monitoring (see
   // InputMonitor) and the disk-record arm.
@@ -669,6 +709,8 @@ struct MixerTrack {
   // K-224: the Stage room this track stands in (StageSettings::id; kNoId: the project's first room,
   // core/StageRoomOps.h). A track is in exactly one room.
   ObjectId room = kNoId;
+  // K-245: the track's macro knobs (shown in its effect windows; see LayerMacro).
+  std::array<LayerMacro, kLayerMacros> macros{};
   bool hasInput() const { return input >= 0; }
   // J-31: an armed track records (its input, or its output after the effects).
   bool records() const { return armed && (input >= 0 || recPoint != 0); }
@@ -678,11 +720,12 @@ struct MixerTrack {
            stereoSep == o.stereoSep && depth == o.depth && focus == o.focus && muted == o.muted && solo == o.solo && invertPolarity == o.invertPolarity &&
            swapLR == o.swapLR && slots == o.slots && sends == o.sends && eqGain == o.eqGain && eqFreq == o.eqFreq &&
            eqQ == o.eqQ && icon == o.icon && disabled == o.disabled && dock == o.dock &&
-           latencyOffset == o.latencyOffset && threaded == o.threaded && group == o.group && groupLink == o.groupLink && input == o.input &&
+           latencyOffset == o.latencyOffset && threaded == o.threaded && group == o.group && groupLink == o.groupLink && hidden == o.hidden && narrow == o.narrow &&
+           groupFolded == o.groupFolded && input == o.input &&
            inputStereo == o.inputStereo && monitor == o.monitor && armed == o.armed && recordSafe == o.recordSafe && recPoint == o.recPoint &&
            inputTrim == o.inputTrim && inputInvert == o.inputInvert &&
            soloAlone == o.soloAlone && separator == o.separator && locked == o.locked && flIcon == o.flIcon &&
-           freeze == o.freeze && hibernate == o.hibernate && room == o.room;
+           freeze == o.freeze && hibernate == o.hibernate && room == o.room && macros == o.macros;
   }
 };
 
@@ -699,7 +742,8 @@ inline constexpr int kMaxControllerOutputs = 16;
 // note/button, pitch bend, aftertouch, program change) drives a parameter or
 // a global action (transport, record, …).
 // Osc: an Open Sound Control address (ControllerLink::oscAddress) instead of a MIDI message.
-enum class RemoteSource : uint8_t { CC = 0, Note, PitchBend, ChannelPressure, KeyPressure, Program, Osc, Count };
+// Nrpn / Rpn: `cc` is the parameter number 0..16383 (CC 99/98 or 101/100, then data entry CC 6/38).
+enum class RemoteSource : uint8_t { CC = 0, Note, PitchBend, ChannelPressure, KeyPressure, Program, Osc, Nrpn, Rpn, Count };
 // How a link takes over a parameter whose value differs from the hardware position.
 enum class RemoteTakeover : uint8_t {
   Jump = 0,  // the parameter jumps to the control's position
@@ -730,7 +774,7 @@ enum class RemoteAction : uint8_t {
 };
 
 struct ControllerLink {
-  int cc = 1;            // controller / note / program number 0..127
+  int cc = 1;            // controller / note / program number 0..127 (NRPN / RPN: parameter 0..16383)
   int midiChannel = -1;  // 0..15, or -1 = any
   ObjectId owner = kNoId;
   uint32_t index = 0;    // ParamId of the target (owner, index)
@@ -747,17 +791,85 @@ struct ControllerLink {
   RemoteButton button = RemoteButton::Value;
   RemoteAction action = RemoteAction::None;  // != None: triggers the action, (owner, index) unused
   std::string oscAddress;              // RemoteSource::Osc: the address (or address pattern) it listens to
+  bool hiRes = false;                  // CC 0..31: a 14-bit control (its fine part on CC + 32)
   bool operator==(const ControllerLink& o) const {
     return cc == o.cc && midiChannel == o.midiChannel && owner == o.owner && index == o.index && min == o.min &&
            max == o.max && source == o.source && port == o.port && curve == o.curve && formula == o.formula &&
            invert == o.invert && takeover == o.takeover && encoder == o.encoder && sensitivity == o.sensitivity &&
-           button == o.button && action == o.action && oscAddress == o.oscAddress;
+           button == o.button && action == o.action && oscAddress == o.oscAddress && hiRes == o.hiRes;
   }
 };
 
+// K-247: the LFO board. Song-level LFOs (Song::lfos) move any parameter through ModLinks whose
+// source is the LFO (sourceSlot kSongLfoSlot, sourceOwner = the LFO's id, sourceOutput 0). An LFO
+// link either swings the parameter around the knob's own value (ModLink::mode kModAround: amount,
+// direction) or sweeps between two values (kModAbsolute: min..max, as every other link). Any number
+// of LFO links may drive one parameter (they add up); at most one other link does (findModLink).
+inline constexpr int kMaxSongLfos = 32;
+inline constexpr int kSongLfoSlot = -3;
+inline constexpr int kLfoMaxPoints = 64;
+inline constexpr int kLfoColours = 8;
+enum class LfoShape : uint8_t { Sine = 0, Triangle, SawUp, SawDown, Square, RandomHold, RandomGlide, Drawn, Count };
+enum class LfoRestart : uint8_t { Free = 0, OnPlay, EachNote, EachBar, Count };  // (EachBar: Chaos only)
+// 0.7.8: what a board source is. An LFO plays a shape; Chaos a smooth signal that never repeats (smoothed
+// random walk, lfo::chaosValue); Random holds a random value until the next trigger (lfo::randomSample).
+// All three move knobs through the same links (kSongLfoSlot), live on the same board and share the limit.
+enum class LfoKind : uint8_t { Lfo = 0, Chaos, Random, Count };
+// Random: what draws the next value. Tempo: every rate note (locked to the song while it plays); Hz:
+// its own clock; Note: each note of a channel; Roll: only the Roll button (a song edit, so it syncs).
+enum class RandomTrigger : uint8_t { Tempo = 0, Hz, Note, Roll, Count };
+struct LfoPoint {
+  float x = 0, y = 0, curve = 0;  // x 0..1, y -1..1, curve -1..1 (the line after the point)
+  bool operator==(const LfoPoint& o) const { return x == o.x && y == o.y && curve == o.curve; }
+};
+struct SongLfo {
+  ObjectId id = kNoId;
+  std::string name;            // empty = "LFO n" (its place on the board)
+  int colour = 0;              // 0..7, a board colour (theme::role::kLfo1 + colour)
+  bool on = true;              // off: every target keeps its own value
+  LfoShape shape = LfoShape::Sine;
+  float pulseWidth = 0.5f;     // Square: the part of the cycle spent high
+  int randomSteps = 4;         // Random hold / glide: values per cycle (1, 2, 4, 8, 16)
+  uint32_t seed = 1;           // Random hold / glide
+  std::vector<LfoPoint> points;  // Drawn (at most kLfoMaxPoints; empty = a gentle hump)
+  bool drawnSteps = false;     // Drawn: flat steps between the points
+  bool tempoSync = true;       // the rate in note values (rateNote, rateKind), else rateHz
+  int rateNote = 5;            // index into lfo::kRateNames (1/4)
+  int rateKind = 0;            // 0 straight, 1 dotted, 2 triplet
+  float rateHz = 1.0f;         // 0.01..40
+  float phase = 0;             // 0..360 degrees: where a cycle starts
+  float depth = 1;             // 0..1: scales every target's swing
+  float offset = 0;            // -1..1: shifts the output
+  float smoothMs = 0;          // 0..500: rounds off corners
+  float fadeIn = 0;            // 0..8 bars (seconds when not tempo synced): the swing grows after a restart
+  bool unipolar = false;       // Up only: output 0..1 (the knob is the bottom of the swing)
+  LfoRestart restart = LfoRestart::OnPlay;
+  ObjectId noteChannel = kNoId;  // EachNote: the channel whose notes restart it
+  // 0.7.8: Chaos and Random sources (kind). The seed, rate, depth, offset, smoothing (Random: the
+  // glide) and Up only above apply to them too.
+  LfoKind kind = LfoKind::Lfo;
+  float character = 0.5f;      // Chaos: 0 calm (one slow curve) .. 1 wild (faster layers, jumps)
+  RandomTrigger trigger = RandomTrigger::Tempo;  // Random
+  bool centred = false;        // Random: values gather round the middle (else spread evenly)
+  int quantise = 0;            // Random: 0 off, else 2..16 levels
+  uint32_t roll = 0;           // Random: the Roll presses so far (Roll trigger: the value shown)
+  bool operator==(const SongLfo& o) const {
+    return id == o.id && name == o.name && colour == o.colour && on == o.on && shape == o.shape && pulseWidth == o.pulseWidth &&
+           randomSteps == o.randomSteps && seed == o.seed && points == o.points && drawnSteps == o.drawnSteps && tempoSync == o.tempoSync &&
+           rateNote == o.rateNote && rateKind == o.rateKind && rateHz == o.rateHz && phase == o.phase && depth == o.depth &&
+           offset == o.offset && smoothMs == o.smoothMs && fadeIn == o.fadeIn && unipolar == o.unipolar && restart == o.restart &&
+           noteChannel == o.noteChannel && kind == o.kind && character == o.character && trigger == o.trigger &&
+           centred == o.centred && quantise == o.quantise && roll == o.roll;
+  }
+};
+// ModLink::mode and ::direction (K-247).
+inline constexpr uint8_t kModAbsolute = 0;  // the source sweeps the range min..max (every link before 0.7.8)
+inline constexpr uint8_t kModAround = 1;    // the source swings the parameter around its own value by `amount`
+inline constexpr uint8_t kModBothWays = 0, kModUpOnly = 1, kModDownOnly = 2;
+
 struct ModLink {
-  ObjectId sourceOwner = kNoId;  // channel (instrument controller) or mixer track
-  int sourceSlot = -1;           // -1 = the channel's instrument; 0..9 = mixer slot
+  ObjectId sourceOwner = kNoId;  // channel (instrument controller) or mixer track; K-247: the LFO
+  int sourceSlot = -1;           // -1 = the channel's instrument; 0..9 = mixer slot; kSongLfoSlot: a board LFO
   int sourceOutput = 0;          // controller output index
   ObjectId owner = kNoId;        // target ParamId (owner, index)
   uint32_t index = 0;
@@ -766,10 +878,18 @@ struct ModLink {
   std::string formula;           // ModCurve::Formula: maps `input` (0..1) to 0..1
   float smoothMs = 0.0f;         // smoothing time (0 = none)
   bool enabled = true;
+  // K-247 (LFO links): how the source moves the target (kModAbsolute: min..max; kModAround: by
+  // `amount`, -1..1 of the range, in `direction`), and the source turned over for this link.
+  float amount = 0.0f;
+  uint8_t mode = kModAbsolute;
+  uint8_t direction = kModBothWays;
+  bool invert = false;
+  bool isLfo() const { return sourceSlot == kSongLfoSlot; }
   bool operator==(const ModLink& o) const {
     return sourceOwner == o.sourceOwner && sourceSlot == o.sourceSlot && sourceOutput == o.sourceOutput &&
            owner == o.owner && index == o.index && min == o.min && max == o.max && curve == o.curve &&
-           formula == o.formula && smoothMs == o.smoothMs && enabled == o.enabled;
+           formula == o.formula && smoothMs == o.smoothMs && enabled == o.enabled && amount == o.amount && mode == o.mode &&
+           direction == o.direction && invert == o.invert;
   }
 };
 
@@ -889,6 +1009,7 @@ struct Song {
   std::vector<MixerTrack> mixer;     // mixer[0] is the master
   std::vector<ControllerLink> links; // MIDI controller links
   std::vector<ModLink> modLinks;     // internal controller links
+  std::vector<SongLfo> lfos;         // K-247: the LFO board, in board order (at most kMaxSongLfos)
   std::vector<AutomationClip> automations;  // automation clip contents (arrangement)
   std::vector<Marker> markers;              // song markers, sorted by position (arrangement)
   std::vector<std::string> channelGroups;  // channel rack display groups (Channel::group indexes these)
@@ -985,6 +1106,9 @@ struct Song {
   Tick lengthTicks() const;              // end of last clip (0 if empty)
 
   // Lookup by ID (nullptr / -1 when absent).
+  SongLfo* lfo(ObjectId id);  // K-247
+  const SongLfo* lfo(ObjectId id) const;
+  int lfoIndex(ObjectId id) const;
   Channel* channel(ObjectId id);
   const Channel* channel(ObjectId id) const;
   Pattern* pattern(ObjectId id);
@@ -1005,7 +1129,7 @@ struct Song {
     return info == o.info && ppq == o.ppq && tempo == o.tempo && timeSigNum == o.timeSigNum &&
            timeSigDen == o.timeSigDen && swing == o.swing && swingNotes == o.swingNotes && groove == o.groove && slidesAnyColour == o.slidesAnyColour && masterPitch == o.masterPitch && nextId == o.nextId &&
            channels == o.channels && patterns == o.patterns && playlist == o.playlist && tracks == o.tracks &&
-           mixer == o.mixer && links == o.links && modLinks == o.modLinks && automations == o.automations &&
+           mixer == o.mixer && links == o.links && modLinks == o.modLinks && lfos == o.lfos && automations == o.automations &&
            markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live && keptSends == o.keptSends &&
            arrangements == o.arrangements && cycleStart == o.cycleStart && cycleEnd == o.cycleEnd && cycleOn == o.cycleOn && projectEnd == o.projectEnd &&
            currentArrangement == o.currentArrangement && autoCrossfades == o.autoCrossfades && panLaw == o.panLaw && stage == o.stage && stageRooms == o.stageRooms && trackReceipt == o.trackReceipt && flExportGridline == o.flExportGridline && flOrigin == o.flOrigin &&
@@ -1045,8 +1169,13 @@ int changePpq(Song& song, int newPpq);
 int countPpqRoundings(const Song& song, int newPpq);
 
 // Internal controller links (see ModLink).
-// The link driving `target` (nullptr if none). At most one link per target.
+// The link driving `target` (nullptr if none). At most one link per target. K-247: LFO links are left
+// out (any number of them may move a parameter beside it): see lfoLinksOn.
 const ModLink* findModLink(const Song& song, ObjectId owner, uint32_t index);
+// K-247: the LFO links moving `target`, in the song's order.
+std::vector<const ModLink*> lfoLinksOn(const Song& song, ObjectId owner, uint32_t index);
+// K-247: the link from LFO `lfo` to `target` (nullptr: none).
+const ModLink* findLfoLink(const Song& song, ObjectId lfo, ObjectId owner, uint32_t index);
 // True if the source (owner, slot) holds a plugin that has controller outputs.
 bool isControllerSource(const Song& song, ObjectId owner, int slot);
 // Removes links whose source or target no longer exists; returns how many.

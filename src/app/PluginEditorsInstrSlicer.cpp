@@ -15,7 +15,10 @@
 #include <map>
 #include <tuple>
 #include "../engine/KerfGrid.h"
+#include "SilenceUi.h"
 #include "../engine/KerfMarks.h"
+#include "../core/SampleWarp.h"
+#include "WarpWave.h"
 #include "../engine/LoopFile.h"
 #include "../engine/SlicexEngine.h"
 #include "../core/I18n.h"
@@ -137,6 +140,7 @@ iskin::Palette slicexPalette() {
 struct SlicerUi {
   int slice = 0;
   int drag = -1;                     // marker being dragged (slice index)
+  bool pressInWarpLane = false;      // K-248: the wave's press began in the warp lane (the markers take it)
   double viewFrom = 0, viewTo = 1;   // the wave view shown (fractions of the sample)
   double goFrom = 0, goTo = 1;       // where it glides to (smooth zoom / scroll)
   int kbLow = -1;                    // the keyboard's lowest key (follows the selected region)
@@ -204,9 +208,11 @@ std::vector<int64_t> sliceStarts(const PluginState& st, const Sample* smp) {
       if (m >= 0) out.push_back(std::llround(static_cast<double>(m) * static_cast<double>(smp->frames())));  // J-166: nearest frame
     }
     std::sort(out.begin(), out.end());
+  } else if (lMode(st) == SlModeWarp) {
+    out = warpSlices(st, *smp);  // K-248: the engine's own slices at the warp markers
   } else {
     static std::map<std::string, std::pair<std::array<float, 3>, std::vector<int64_t>>> cache;
-    auto& c = cache[smp->path];
+    auto& c = cache[smp->path + "#" + std::to_string(smp->frames())];  // (K-248: the warped sample has the file's path)
     const std::array<float, 3> key{static_cast<float>(lMode(st)), ed::val(st, SlSensitivity, 0.5f), ed::val(st, SlMinGap, 0.06f)};
     if (c.first != key || c.second.empty()) c.first = key, c.second = computeSlices(*smp, static_cast<int>(key[0]), key[1], key[2]);
     out = c.second;
@@ -350,7 +356,10 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
   const PluginState st = *t.state(a.doc.song());
   SlicerUi& ui = slicerUi[t.key()];
   const std::string file = slicex::sampleOf(st.data);  // J-41: region-model data starts with the sample
-  SamplePtr smp = file.empty() ? nullptr : sampleCache().get(file);
+  const SamplePtr smpLoaded = file.empty() ? nullptr : sampleCache().get(file);
+  // K-248: with warp markers playing, Kerf slices (and shows) the warped sample, as its voices play it.
+  const bool regionModel = st.data.find('\n') != std::string::npos && !kerfmarks::hasNames(st.data);
+  SamplePtr smp = regionModel ? smpLoaded : warpwave::shownSample(sampleWarpOf(st), smpLoaded);
   g_layer = ed::val(st, SlEngine, 0) < 0.5f && ed::ival(st, SlLayer) == 1 ? 1 : 0;  // K-217
   const RegionView rv = regionView(st, smp.get());
   // J-190: slices on the beat grid (the detected beats; the loop-length grid while the analysis runs).
@@ -987,6 +996,11 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       tog("Play to the end of the loop", SlPlayToEnd);
       tog("Reverse every region", SlReverse);
       tog("Fit the loop to the tempo", SlFitTempo);
+      {  // K-239: the fit through the stretch (the loop's pitch stays), or by speed (the pitch follows)
+        const bool on = ed::bval(st, SlFitKeepPitch);
+        if (ImGui::MenuItem(i18n::tr("Keep the pitch when fitting"), nullptr, on, classic && ed::bval(st, SlFitTempo)))
+          a.doc.setParam(t.pid(SlFitKeepPitch), on ? 0 : 1, false);
+      }
       ImGui::EndPopup();
     }
     if (!pui::titleWordmarkIn(sk.dl(), "gl.slicer", sk.at(590, 10), sk.at(706, 54), sk.px(26), 2, sk.c.text))  // J-136: the wordmark
@@ -1188,7 +1202,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
                                              "Thirty-two even slices", "Slice on the beat grid (the size: the field above)",
                                              "Slice at the markers set by hand"};
         const int md = lMode(st);
-        const int cur = !classic ? -1 : md == SlModeGrid ? 5 : md == SlModeManual ? 6 : md;
+        const int cur = !classic || md == SlModeWarp ? -1 : md == SlModeGrid ? 5 : md == SlModeManual ? 6 : md;  // (K-248: warp markers: the Regions menu)
         const int mc = kerf::segmented(a, sk, "##slmode", 178, 130, 152, 20, labels, icons, 7, cur, hints, false);
         if (mc >= 0) {
           const int mode = mc == 5 ? SlModeGrid : mc == 6 ? SlModeManual : mc;
@@ -1648,6 +1662,10 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       ImGui::Separator();
       if (ImGui::MenuItem(i18n::tr("Edit the cuts by hand"), nullptr, manual, classic && smp)) makeManual(a, t, st, starts, smp.get());
       if (ImGui::MenuItem(i18n::tr("Clear the markers"), nullptr, false, manual)) clearMarkers();
+      if (t.isChannel() && smp) {  // K-253: the loop's silence (a new file; the markers move with the audio)
+        ImGui::Separator();
+        silenceui::channelItems(a, t.owner);
+      }
       ImGui::EndPopup();
     }
     if (tile("##mtools", 240, ui::Icon::Settings, "Tools", 0, true)) ImGui::OpenPopup("##ktools");
@@ -1675,6 +1693,10 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         addMarkerAt(snapped((static_cast<double>(starts[static_cast<size_t>(k)]) + sliceEnd(k)) * 0.5, false));
       }
       if (ImGui::MenuItem(i18n::tr("Clear markers"), nullptr, false, manual)) clearMarkers();
+      {  // K-248: the slices at the warp markers (the warp lane under the wave)
+        const bool haveWarp = !regionModel && sampleWarpOf(st).markers.size() >= 2;
+        if (ImGui::MenuItem(i18n::tr("Slice at warp markers"), nullptr, classic && lMode(st) == SlModeWarp, classic && haveWarp)) setMode(SlModeWarp);
+      }
       ImGui::Separator();
       layerMenuItems();  // K-217
       ImGui::Separator();
@@ -1997,10 +2019,21 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       dl->PopClipRect();
     }
     ImGui::SetCursorScreenPos(top);
+    ImGui::SetNextItemAllowOverlap();  // K-248: the warp lane's Warp button, drawn over the wave, takes its own clicks
     ImGui::InvisibleButton("##wave", ImVec2(p1.x - top.x, p1.y - top.y));
     traceRect("wave", p0, p1);
     ctl(sk, "##wave", 2, wy + scrollH, ww - 4, waveB - wy - scrollH);
+    // K-248: in warp mode the warp lane at the wave's bottom belongs to the warp markers: a click,
+    // double-click or right-click there never selects, adds or removes a region.
+    const bool warpLaneOn = smpLoaded && !regionModel && t.isChannel() && sampleWarpOf(st).on;
+    const float warpLaneH = sk.px(12);
+    const bool inWarpLane = warpLaneOn && m.y >= p1.y - warpLaneH && m.y < p1.y;
+    if (warpLaneOn) traceRect("warplane", ImVec2(p0.x, p1.y - warpLaneH), p1);
     const bool hov = ImGui::IsItemHovered() && smp;
+    const bool hovRegions = hov && !inWarpLane;  // the pointer over the regions (not the warp lane)
+    // This item's state now: the warp lane's own button comes after it.
+    const bool waveActivated = ImGui::IsItemActivated(), waveDeactivated = ImGui::IsItemDeactivated();
+    if (waveActivated) ui.pressInWarpLane = inWarpLane;
     int hoverMarker = -1;
     // J-182: a dragged marker is shown where it will land (snapped unless Alt is held) and moves on release (one undo step).
     const bool dragging = ui.drag >= 0 && ui.drag < nSl && ImGui::IsItemActive();
@@ -2012,7 +2045,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         if (dragging && s == ui.drag) x = std::round(fx(static_cast<double>(dragTo))) + 0.5f;
         if (x < p0.x - 1 || x > p1.x + 1) continue;
         if (s == 1) traceRect("mk1", ImVec2(x, p0.y), ImVec2(x, p1.y));
-        const bool near = grabMarkers && hov && std::fabs(m.x - x) < 4 && canMove(s);
+        const bool near = grabMarkers && hovRegions && std::fabs(m.x - x) < 4 && canMove(s);
         if (near) hoverMarker = s;
         if (s != k) dl->AddLine(ImVec2(x, p0.y), ImVec2(x, p1.y), near ? rgb(0xFFFFFF, 0.9f) : rgb(kOrangeDeep, markerAlpha), near ? 2.0f : 1.0f);
       }
@@ -2029,7 +2062,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         dl->AddRectFilled(ImVec2(bx, p0.y + sk.px(4)), ImVec2(bx + ts.x + sk.px(8), p0.y + sk.px(4) + ts.y + sk.px(4)), IM_COL32(8, 12, 16, 220), sk.px(3));
         dl->AddText(a.fontMono, labelPx, ImVec2(bx + sk.px(4), p0.y + sk.px(6)), rgb(0xFFD49A), lt.c_str());
       }
-      if (hov && hoverMarker < 0 && m.y >= p0.y) dl->AddLine(ImVec2(m.x, p0.y), ImVec2(m.x, p1.y), theme::withAlpha(IM_COL32_WHITE, 0.18f));  // hover cursor
+      if (hovRegions && hoverMarker < 0 && m.y >= p0.y) dl->AddLine(ImVec2(m.x, p0.y), ImVec2(m.x, p1.y), theme::withAlpha(IM_COL32_WHITE, 0.18f));  // hover cursor
       dl->PopClipRect();
     }
     if (hov && io.MouseWheel != 0) {
@@ -2044,7 +2077,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       const double wv = ui.goTo - ui.goFrom;
       setView(ui.goFrom - io.MouseWheelH * wv * 0.15, ui.goTo - io.MouseWheelH * wv * 0.15);
     }
-    if (ImGui::IsItemActivated() && smp) {
+    if (waveActivated && smp && !ui.pressInWarpLane) {
       ui.drag = hoverMarker;
       if (ui.drag < 0) {
         const int s = regionAt(frameAt(m.x));
@@ -2054,7 +2087,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         }
       }
     }
-    if (ui.drag >= 0 && ImGui::IsItemDeactivated() && ui.drag < nSl && smp) {
+    if (ui.drag >= 0 && waveDeactivated && ui.drag < nSl && smp) {
       // Released: the marker moves (one undo step; classic slicing becomes hand-set markers); a click without moving selects.
       const int64_t to = snapped(frameAt(m.x), io.KeyAlt);
       if (std::fabs(fx(static_cast<double>(to)) - fx(static_cast<double>(starts[static_cast<size_t>(ui.drag)]))) >= 2.0f)
@@ -2062,9 +2095,9 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       else
         ui.slice = ui.drag;
     }
-    if (ImGui::IsItemDeactivated()) ui.drag = -1;
-    if (hov && classic && m.y >= p0.y && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addMarkerAt(snapped(frameAt(m.x), io.KeyAlt));
-    if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+    if (waveDeactivated) ui.drag = -1, ui.pressInWarpLane = false;
+    if (hovRegions && classic && m.y >= p0.y && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addMarkerAt(snapped(frameAt(m.x), io.KeyAlt));
+    if (hovRegions && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
       if (m.y < p0.y) {  // a flag: the region's menu
         for (auto it = flagRects.rbegin(); it != flagRects.rend(); ++it)
           if (m.x >= it->x0 && m.x < it->x1) {
@@ -2111,6 +2144,20 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
         }
       }
       ImGui::EndDragDropTarget();
+    }
+    if (smpLoaded && !regionModel && t.isChannel()) {  // K-248: the warp lane under the wave, its Warp button at the top right
+      // (after the wave's own item checks and drop target: the button is the last item from here)
+      const double rate = std::max(1.0, smp->sampleRate);
+      warpwave::WellOpts wo;
+      wo.slicer = true;
+      bool sliceNow = false;
+      wo.sliceAtMarkers = &sliceNow;
+      wo.xOf = [&](double sec) { return fx(sec * rate); };
+      wo.wOf = [&](float x) { return frameAt(x) / rate; };
+      wo.laneH = warpLaneH;
+      wo.buttonRight = sk.px(8);
+      warpwave::sampleWell(a, t.owner, "##kerfwarp", p0, p1, smpLoaded, rgb(theme::role::kWarp), wo);
+      if (sliceNow) setMode(SlModeWarp);
     }
     if (hov && rv.on)
       a.setHint(std::to_string(nSl) + " " +

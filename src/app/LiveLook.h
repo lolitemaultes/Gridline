@@ -138,13 +138,21 @@ void gridKeys(App& a);
 // tempo and meter, the edit grids, the selected slots, each track's launch grid and removed stop buttons,
 // and every clip with launch settings of its own.
 void devGrid2State(App& a, int frame);
-void editGrid(const App& a, int which, Snap snap, double pxPerTick, Tick& visGrid, Tick& snapG, Tick& effGrid);
+// K-383 (dev input "clipsmeters"): the track meters Clips drew in its last frame (strips and headers):
+// each one's level and held peak (dB) and its height on the Clips scale, beside the old shared scale's.
+void devClipsMeters(App& a, int frame);
+void editGrid(const App& a, int which, Snap snap, double pxPerTick, Tick& visGrid, SnapGrid& snapG, SnapGrid& effGrid);
 std::string gridLabel(const App& a, int which);
 // grid2-1118: a grid clip's launch settings box in the clip view (its launch mode, quantisation, legato and
 // follow actions; `heading`: under a Launch title bar of its own, as the audio clip view's). False (and
 // nothing drawn) for a clip that is not in the clip grid. followFields: the follow action fields of a
 // clip's or a scene's FollowSpec (true when changed); followActionName: an action in the interface's words.
 bool clipLaunchBox(App& a, ObjectId clip, bool heading);
+// The clip editor's Launch and Follow chips (Clips): a part of that box (whatever the view shows), true
+// when drawn; clipLaunchSummary: a chip's value ("Toggle, 1 Bar"; the follow action "Next, 2x" or "off").
+enum : int { kLaunchPartLaunch = 1, kLaunchPartFollow = 2 };
+bool clipLaunchParts(App& a, ObjectId clip, int parts);
+std::string clipLaunchSummary(const App& a, ObjectId clip, bool follow);
 bool followFields(App& a, FollowSpec& f, bool clip, Tick clipLen);
 const char* followActionName(FollowAction f);
 // grid2-1118: inside the Arrangement's drop target: grid clips dragged from the clip grid (GL_GRIDCLIPS)
@@ -268,10 +276,24 @@ void backToArrangement(App& a);
 // use). newTrack makes an audio or MIDI track there and selects it (title and slot).
 int selectedTrack(App& a);
 int newTrack(App& a, bool audio);
-// N47-11: Create's New return track (one undo step), and the detail bands shown or hidden together
-// (both hidden: the clip band comes back).
+// N47-11: Create's New return track (one undo step), and the detail spot shown or hidden (0.7.8: it
+// comes back with the view it last showed).
 void newReturnTrack(App& a);
 void toggleDetail(App& a);
+// 0.7.8: the detail spot under the main view shows one view at a time, in one place and at one size:
+// the clip view (the selected clip's editor: notes, or the audio clip's settings) or the device view
+// (the selected track's instrument and effects). clipViewShown: the clip view is the one shown;
+// detailShown: either is. showDetailView: that view in the spot (`focus`: its window takes the keys
+// once drawn). swapDetailView: Shift+Tab (the spot hidden: it comes back with the other view).
+// trackChosen / clipChosen: a track's title, header or mixer title / a clip was clicked: once the
+// button is up and no menu is open, the spot shows that track's devices / the selected clip (`focus`:
+// a double-click, the keys go there too), also when the selection did not change.
+bool clipViewShown(const App& a);
+bool detailShown(const App& a);
+void showDetailView(App& a, bool clip, bool focus);
+void swapDetailView(App& a);
+void trackChosen();
+void clipChosen(bool focus = false);
 int newTrackAfter(App& a, bool audio, int after);
 // Checkpoint 51: Cmd+G groups the selected tracks (`track` >= 0: that track's menu: the selection
 // when it holds that track, else the track alone) into a group track; Cmd+Shift+G ungroups the
@@ -281,7 +303,7 @@ int newTrackAfter(App& a, bool audio, int after);
 bool clipFitsTrack(const Song& s, ClipKind kind, int track);
 // Checkpoint 52: Clips' Delete / Duplicate of the selected tracks (or `track`): a group brings its tracks.
 void deleteTracks(App& a, int track);
-void duplicateTracks(App& a, int track);
+void duplicateTracks(App& a, int track, bool withContent = true);  // K-351: false: Duplicate without notes
 void groupTracks(App& a, int track = -1);
 void ungroupTracks(App& a, int track = -1);
 // Checkpoint 53 (N52-10): A shows or hides the automation lanes in the Arrangement (the reference's
@@ -290,23 +312,30 @@ void toggleAutomationLanes(App& a);
 bool automationLanesShown();
 
 // ---- parts drawn the Live way (LayoutParts calls these while Live is active) ----
-// The device chain as a row of devices. `pick` is the chain's device (the one opened last: from the
-// mixer, the rack or View); `open` says it was opened since the last frame: the band selects it and
-// shows its whole editor in the panel above the chain. A click on a device's title selects it, a
-// double-click folds it to a strip; its expand arrow (or a double-click on its picture) shows its
-// whole editor above the band, several side by side; its window button opens the editor in the
-// floating window Studio uses instead (`fxWindow` / `insWindow`: the band then leaves the effect
-// editor / channel settings body to its window). An installed plugin shows Gridline's parameter
-// rows (all of them up to 64, else the ones chosen with Configure) and its window button shows the
-// plugin's own window.
+// The device chain as a row of devices (cards only: nothing is drawn above it). `pick` is the chain's
+// device (the one opened last: from the mixer, the rack or View); `open` says it was opened since the
+// last frame: the band selects and unfolds it, and its editor opens in its floating window, as in
+// Studio (the layout homes the instrument and effect windows as floating windows). A click on a
+// device's title selects it; its fold arrow (or a double-click on its name) folds it to a strip in
+// place and back; its window button (or a double-click on its picture) opens or closes its editor's
+// window. A sampler's card holds its settings (the Audio clip window's band form) unless its window
+// button asked for them in the Audio clip window (`insWindow`: the band then leaves them to it). An
+// installed plugin shows Gridline's parameter rows (all of them up to 64, else the ones chosen with
+// Configure) and its window button shows the plugin's own window.
 struct BandPick {
   int kind = 0;  // 0 instrument, 1 effect slot, 2 master chain (its own window)
   int slot = -1;
   ObjectId fxTrack = kNoId;
   bool open = false;
-  bool fxWindow = false, insWindow = false;
+  bool insWindow = false;
 };
 void deviceBand(App& a, BandPick& pick);
+// K-379 (dev input "liveband"): the next drawn device band prints each card: folded, its window
+// shown, an installed plugin's panel shut, its width.
+void devBandAsk(int frame);  // (the report names the script frame it was asked at)
+// 0.7.8 (dev input "livedetail"): which view the detail spot shows, its rectangle, the status bar's
+// Clip and Devices buttons lit, the clip grid in front, and the window with the keys.
+void devDetailReport(App& a, int frame);
 void infoCorner(App& a);  // the hovered thing's name and what it does
 
 // ---- the clip band's left column (the piano roll draws it while Live is active) ----
@@ -323,7 +352,7 @@ bool clipViewTwoColumns(float bandW);
 // K-112 (dev, --menu device): the device band's menu of the first effect on the selected channel's
 // mixer track (none: of its instrument), as its title bar opens it.
 void devDeviceMenu(App& a);
-// The column's pieces, shared with the audio clip view (Playlist.cpp drawLiveAudioClip): a section's
+// The column's pieces (the audio clip editor in the band took the old audio clip view's place): a section's
 // title bar (`fill`: the clip's colour, a tinted band with a swatch; a `foldId` folds the section;
 // returns whether it is open), a field's label above it (`cols` fields side by side, this one at
 // `col`; the cursor is left at the field, whose width it returns), and the fades with an arrow at an
@@ -351,5 +380,19 @@ ObjectId focusedAudioClip(App& a);
 // from the font, and how far the older "(h - size) / 2 - 1" formula sits from the true centre.
 void devCentreAsk();
 void devCentreFrame(App& a);
+
+// Control surfaces (a pad controller's session page, app/LaunchpadUi.cpp): the clip grid as the screen
+// shows it. Columns skip folded group members, automation lanes and gap tracks, as the grid does.
+// Every edit runs the grid's own (one undo step, shared in a collaboration).
+namespace surface {
+std::vector<int> columns(const App& a);         // the playlist track of each column
+int scenes(const App& a);                       // the scenes the live area holds
+ObjectId slotClip(const App& a, int t, int k);  // the first clip of track t's slot in scene k (kNoId: empty)
+void launchClip(App& a, ObjectId clip);         // as its launch triangle
+void launchScene(App& a, int k);                // as the scene's launch cell
+void selectSlot(App& a, int t, int k);          // as a click (the clip band shows it)
+bool deleteSlot(App& a, int t, int k);
+void duplicateSlot(App& a, int t, int k);       // into the slot below (a scene is inserted when it is full)
+}  // namespace surface
 
 }  // namespace gl::livelook

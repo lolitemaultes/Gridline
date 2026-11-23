@@ -6,6 +6,7 @@
 // filling the rest. Every glyph and label is Gridline's own.
 #include <algorithm>
 #include "../../app/Keys.h"
+#include "../../app/SilenceUi.h"
 #include "../../app/UndoUi.h"
 #include <cmath>
 #include <cstdio>
@@ -23,6 +24,25 @@
 namespace gl::packs::edison {
 
 namespace fs = std::filesystem;
+
+
+namespace {
+// K-253: Trim silence at the ends / Remove silence on the whole file, with the shared settings
+// (engine/Silence.h; one undo step each, the selection and the cursor follow the trim).
+void silenceEdit(App& a, Session& s, bool remove) {
+  const silence::Options o = silenceui::options(a);
+  if (remove) {
+    runEdit(a, s, "Remove silence", [o](const Content& c) { return silence::removeSilence(c, o); });
+    return;
+  }
+  const silence::Span k = silence::trimSpan(s.cur().a(), o);
+  if (k.len() <= 0 || (k.a == 0 && k.b == s.cur().frames())) {
+    a.notify(k.len() <= 0 ? "The audio is all silence" : "No silence at the ends");
+    return;
+  }
+  runEdit(a, s, "Trim silence at the ends", [o](const Content& c) { return silence::trimEnds(c, o); }, EditMap::crop({k.a, k.b}));
+}
+}  // namespace
 
 namespace {
 
@@ -234,9 +254,9 @@ void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
     auto gap = [&] {
       if (!compact || x > L) x += gg - cg;
     };
-    if (tb("t_undo", ui::Icon::Undo, "Undo / right-click: redo (Ctrl+Z / Ctrl+Y)", false, s.hist.canUndo() || s.hist.canRedo())) undo(a, s);
+    if (tb("t_undo", ui::Icon::Undo, "Undo / right-click: redo (Ctrl+Z / Ctrl+Y)", false, canUndo(s) || canRedo(s))) undo(a, s);
     if (r) redo(a, s);
-    if (tb("t_redo", ui::Icon::Redo, "Redo", false, s.hist.canRedo())) redo(a, s);
+    if (tb("t_redo", ui::Icon::Redo, "Redo", false, canRedo(s))) redo(a, s);
     if (tb("t_copy", ui::Icon::Clone, "Copy selection / right-click: paste", false, hasAudio)) clipboard() = extract(s.cur().a(), target(s));
     if (r && clipboard().frames() > 0) {
       Audio clip = clipboard();
@@ -260,8 +280,7 @@ void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
         if (std::llabs(s.cur().markers[i].pos - s.cursor) < std::llabs(s.cur().markers[best].pos - s.cursor)) best = i;
       applyNow(a, s, "Remove marker", removeMarker(s.cur(), best));
     }
-    if (tb("t_trim", ui::Icon::Trim, "Trim side silence / right-click: noise gate...", false, hasAudio))
-      runEdit(a, s, "Trim side silence", [](const Content& c) { return trimSilence(c, -60); }, EditMap::trimSilence(-60));
+    if (tb("t_trim", ui::Icon::Trim, "Trim silence at the ends / right-click: noise gate...", false, hasAudio)) silenceEdit(a, s, false);
     if (r) openTool(s, Tool::Gate);
     if (tb("t_slice", ui::Icon::SliceWave, "Detect beats and place slice markers / right-click: slicing options...", false, hasAudio)) detectSlices(a, s, 0.5);
     if (r) openTool(s, Tool::Slice);
@@ -395,11 +414,25 @@ void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
   // Busy: a plate over the lanes with the edit's name and its running time.
   if (busy) {
     char b[96];
-    std::snprintf(b, sizeof b, "%s...  %.1f s", s.job.label.c_str(), ImGui::GetTime() - s.job.started);
+    const float done = s.job.progress ? std::clamp(s.job.progress->done.load(), 0.0f, 1.0f) : -1.0f;  // an edit that tells how far it is
+    if (done >= 0)
+      std::snprintf(b, sizeof b, "%s...  %.0f%%  %.1f s", s.job.label.c_str(), static_cast<double>(done) * 100.0, ImGui::GetTime() - s.job.started);
+    else
+      std::snprintf(b, sizeof b, "%s...  %.1f s", s.job.label.c_str(), ImGui::GetTime() - s.job.started);
     const float fs = M.font(13);
     const ImVec2 ts = fb->CalcTextSizeA(fs, FLT_MAX, 0, b);
+    // 0.7.8: the plate is as wide as the widest the text gets (100%, every digit an 8), so it
+    // keeps its size while the percent and the time count up.
+    char secs[32];
+    std::snprintf(secs, sizeof secs, "%.1f", ImGui::GetTime() - s.job.started);
+    for (char* ch = secs; *ch; ++ch)
+      if (*ch >= '0' && *ch <= '9') *ch = '8';
+    char wb[96];
+    if (done >= 0) std::snprintf(wb, sizeof wb, "%s...  100%%  %s s", s.job.label.c_str(), secs);
+    else std::snprintf(wb, sizeof wb, "%s...  %s s", s.job.label.c_str(), secs);
+    const float wideW = std::max(ts.x, fb->CalcTextSizeA(fs, FLT_MAX, 0, wb).x);
     const ImVec2 c = pt(std::round((L + R) * 0.5f), std::round(headH + waveH * 0.45f));
-    const float pw = std::round(ts.x * 0.5f + P(20)), ph = std::round(P(18));
+    const float pw = std::round(wideW * 0.5f + P(20)), ph = std::round(P(18));
     const ImVec2 q0(c.x - pw, c.y - ph), q1(c.x + pw, c.y + ph);
     dl->AddRectFilled(ImVec2(q0.x + 2, q0.y + 3), ImVec2(q1.x + 2, q1.y + 3), IM_COL32(0, 0, 0, 70), sty::kRadius + 1);
     skin::raisedFace(dl, q0, q1, C(col::Panel), sty::kRadius + 1);
@@ -407,8 +440,12 @@ void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
     const float bw = q1.x - q0.x - P(16), t = static_cast<float>(std::fmod(ImGui::GetTime() * 0.8, 1.0));
     const float bx0 = q0.x + P(8), by = q1.y - P(6);
     dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx0 + bw, by + 2), C(col::BtnLo), 1);
-    dl->AddRectFilled(ImVec2(bx0 + bw * std::max(0.f, t - 0.25f), by), ImVec2(bx0 + bw * std::min(1.f, t + 0.05f), by + 2), C(col::Lit), 1);
-    sty::textAt(dl, fb, fs, c.x, c.y - P(2), C(col::Text), b, 1);
+    if (done >= 0)
+      dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx0 + bw * done, by + 2), C(col::Lit), 1);
+    else
+      dl->AddRectFilled(ImVec2(bx0 + bw * std::max(0.f, t - 0.25f), by), ImVec2(bx0 + bw * std::min(1.f, t + 0.05f), by + 2), C(col::Lit), 1);
+    // (from the left of where the widest text would start: the words stay put while the numbers count)
+    sty::textAt(dl, fb, fs, std::round(c.x - wideW * 0.5f), c.y - P(2), C(col::Text), b, 0);
   }
 
   drawToolDialogs(a, s);
@@ -484,8 +521,8 @@ void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::M
         }
         break;
       case 2:  // Edit
-        if (ImGui::MenuItem(i18n::tr("Undo"), keys::label("edit.undo"), false, s.hist.canUndo() && !busy)) undo(a, s);
-        if (ImGui::MenuItem(i18n::tr("Redo"), keys::label("edit.redo"), false, s.hist.canRedo() && !busy)) redo(a, s);
+        if (ImGui::MenuItem(i18n::tr("Undo"), keys::label("edit.undo"), false, canUndo(s) && !busy)) undo(a, s);
+        if (ImGui::MenuItem(i18n::tr("Redo"), keys::label("edit.redo"), false, canRedo(s) && !busy)) redo(a, s);
         if (ImGui::BeginMenu(i18n::tr("History"), s.hist.canUndo())) {
           auto l = s.hist.labels();
           for (size_t k = l.size(); k-- > 0;) ImGui::MenuItem(l[k].c_str(), nullptr, false, false);
@@ -519,7 +556,13 @@ void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::M
           Range r = s.sel;
           runEdit(a, s, "Trim to selection", [r](const Content& c) { return cropTo(c, r); }, EditMap::crop(r));
         }
-        if (ImGui::MenuItem(i18n::tr("Trim side silence"), nullptr, false, has && !busy)) runEdit(a, s, "Trim side silence", [](const Content& c) { return trimSilence(c, -60); }, EditMap::trimSilence(-60));
+        // K-253: the two silence tools side by side (the playlist's and the instruments' engine and settings).
+        if (ImGui::MenuItem(i18n::tr("Trim silence at the ends"), nullptr, false, has && !busy)) silenceEdit(a, s, false);
+        if (ImGui::MenuItem(i18n::tr("Remove silence"), nullptr, false, has && !busy)) silenceEdit(a, s, true);
+        if (ImGui::BeginMenu(i18n::tr("Silence settings"), !busy)) {
+          silenceui::settingsRows(a, false);
+          ImGui::EndMenu();
+        }
         break;
       case 3:  // Tools
         if (ImGui::BeginMenu(i18n::tr("Scripts"), !busy)) {  // J-57: Lua audio scripts (SC-05)
@@ -545,19 +588,22 @@ void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::M
           if (ImGui::MenuItem(i18n::tr("Noise gate..."))) openTool(s, Tool::Gate);
           ImGui::EndMenu();
         }
-        if (ImGui::BeginMenu(i18n::tr("Noise"), has && !busy)) {
+        if (ImGui::BeginMenu(i18n::tr("Repair"), has && !busy)) {
           if (ImGui::MenuItem(i18n::tr("Take noise profile from selection"), nullptr, s.noise.valid())) {
             s.noise = acquireNoise(s.cur().a(), tr);
             say(s, s.noise.valid() ? "Noise profile taken" : "Select at least 50 ms of noise first");
           }
           if (ImGui::MenuItem(i18n::tr("Clean up (denoise)..."))) openTool(s, Tool::Denoise);
           if (ImGui::MenuItem(i18n::tr("Declick..."))) openTool(s, Tool::Declick);
+          if (ImGui::MenuItem(i18n::tr("Declip..."))) openTool(s, Tool::Declip);
+          if (ImGui::MenuItem(i18n::tr("Deverb (reduce room reverb)..."))) openTool(s, Tool::Deverb);
           ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(i18n::tr("Time and pitch"), has && !busy)) {
           if (ImGui::MenuItem(i18n::tr("Time stretch / pitch shift..."))) openTool(s, Tool::Stretch);
           if (ImGui::MenuItem(i18n::tr("Tune to note..."))) openTool(s, Tool::Tune);
           if (ImGui::MenuItem(i18n::tr("Resample..."))) openTool(s, Tool::Resample);
+          if (ImGui::MenuItem(i18n::tr("Drum loop stretch..."))) openTool(s, Tool::DrumStretch);
           ImGui::EndMenu();
         }
         if (ImGui::BeginMenu(i18n::tr("Effects"), has && !busy)) {
@@ -592,9 +638,23 @@ void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::M
         }
         break;
       case 5:  // View
-        if (ImGui::MenuItem(i18n::tr("Waveform"), "W", !s.spectral)) s.spectral = false;
-        if (ImGui::MenuItem(i18n::tr("Spectrogram"), "W", s.spectral)) s.spectral = true;
+        if (ImGui::MenuItem(i18n::tr("Waveform"), keys::label("wave.spectrum"), !s.spectral)) s.spectral = false;
+        if (ImGui::MenuItem(i18n::tr("Spectrogram"), keys::label("wave.spectrum"), s.spectral)) s.spectral = true;
         if (ImGui::MenuItem(i18n::tr("Spectral brush"), "B", s.brushMode, s.spectral)) s.brushMode = !s.brushMode;
+        if (ImGui::BeginMenu(i18n::tr("Spectrogram range"))) {
+          for (int db : {60, 80, 100, 120}) {
+            char l[32];
+            std::snprintf(l, sizeof l, i18n::tr("%d dB"), db);
+            if (ImGui::MenuItem(l, nullptr, specRange(a) == db)) setSpecRange(a, db);
+          }
+          ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu(i18n::tr("Spectrogram resolution"))) {
+          static const char* kRes[] = {i18n::N_("Sharper in time"), i18n::N_("Balanced"), i18n::N_("Sharper in frequency")};
+          for (int r = 0; r < 3; ++r)
+            if (ImGui::MenuItem(i18n::tr(kRes[r]), nullptr, specResolution(a) == r)) setSpecResolution(a, r);
+          ImGui::EndMenu();
+        }
         ImGui::Separator();
         if (ImGui::MenuItem(i18n::tr("Time as min:sec"), nullptr, !s.barsTime)) s.barsTime = false;
         if (ImGui::MenuItem(i18n::tr("Time as bar:beat (song tempo)"), nullptr, s.barsTime)) s.barsTime = true;
@@ -650,8 +710,8 @@ void handleKeys(App& a, Session& s) {
   if (key(ImGuiKey_Space)) isPlaying(a, s) ? stopPlay(a, s) : play(a, s);
   // K-141: the Undo / Redo shortcuts (as bound) move this editor's own history while it has a
   // step to move; with none, they reach the project's history.
-  if (s.hist.canUndo() && undoui::editorPressed(-1)) undo(a, s);
-  if (s.hist.canRedo() && undoui::editorPressed(1)) redo(a, s);
+  if (canUndo(s) && undoui::editorPressed(-1)) undo(a, s);
+  if (canRedo(s) && undoui::editorPressed(1)) redo(a, s);
   if (ctrl && key(ImGuiKey_A)) s.sel = {0, s.frames()};
   if (ctrl && key(ImGuiKey_C)) clipboard() = extract(s.cur().a(), target(s));
   if (!busy && ctrl && key(ImGuiKey_X) && !s.sel.empty()) {
@@ -677,7 +737,8 @@ void handleKeys(App& a, Session& s) {
   if (!ctrl && key(ImGuiKey_M) && s.frames() > 0) addMarkerAtCursor(a, s);
   if (!ctrl && key(ImGuiKey_L)) setLoop(a, s, !loopOn(a, s));
   if (!ctrl && key(ImGuiKey_R)) toggleRecord(a, s);
-  if (!ctrl && key(ImGuiKey_W)) s.spectral = !s.spectral;
+  if (keys::pressed("wave.spectrum")) s.spectral = !s.spectral;  // K-248: Shift+W (plain W is warp mode, as in every waveform view)
+  if (keys::pressed("wave.warpMode")) s.warpOn = !s.warpOn;  // K-248: W in Studio, Alt+W in the other layouts
   if (!ctrl && key(ImGuiKey_B) && s.spectral) s.brushMode = !s.brushMode;
   if (key(ImGuiKey_Equal) || key(ImGuiKey_KeypadAdd)) zoomBy(s, 0.5, s.viewStart + s.viewLen * 0.5);
   if (key(ImGuiKey_Minus) || key(ImGuiKey_KeypadSubtract)) zoomBy(s, 2.0, s.viewStart + s.viewLen * 0.5);

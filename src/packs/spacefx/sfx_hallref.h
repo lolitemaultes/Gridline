@@ -13,7 +13,10 @@
 // All buffers are allocated in the constructor for 192 kHz; process() never
 // allocates and works per sample (output independent of the block size).
 #pragma once
+#include <algorithm>
+#include <array>
 #include "sfx_common.h"
+#include "../../engine/EffectRest.h"
 
 namespace gl::packs::spacefx::detail {
 
@@ -128,12 +131,101 @@ class HallRef {
     tankLive_ = true;
     shimLive_ = true;
     lastEnvDb_ = -120;
+    // K-142 (0.7.8 close): every ring was just cleared, so each already holds nothing but quiet values
+    // (a freshly loaded hall settles at once instead of counting a whole ring of silence first).
+    zeroShim_ = zeroFf_ = zeroPre_ = zeroTank_ = kAllQuiet;
   }
 
   float meterDb() const { return static_cast<float>(std::clamp(lastEnvDb_, -120.0, 0.0)); }
 
+  // K-142 (0.7.8): fed silence, its signal state (pre-delay, tank, its
+  // filters, diffusers, envelope and limiter levels) is below kQuiet, and its smoothers and absorption
+  // filters sit at their fixed points (silence changes none of them any more). The pitch voices (the
+  // shimmer and the feed-forward voices) only once their rings took nothing but values below kQuiet; their
+  // crossfade phases go on in clocks(). Exact zero would take the tank and the followers half a minute to
+  // minutes; what stays frozen below kQuiet (-160 dBFS) changes the sound after the rest by less than
+  // -120 dBFS.
+  static constexpr double kQuiet = 1e-8;
+  bool settled(const PluginState& s, const ProcessContext& ctx) {
+    if (!primed_ || sr_ != ctx.sampleRate) return false;
+    if (zeroPre_ < static_cast<int64_t>(4.0 * sr_) + 8) return false;  // (the longest pre-delay reads only quiet values)
+    if (tankLive_ && zeroTank_ < static_cast<int64_t>(line_[0].size())) return false;
+    if (fbOn_ && zeroShim_ < static_cast<int64_t>(shim_.r.size())) return false;
+    if (ffOn_)
+      for (const auto& v : ff_)
+        if (zeroFf_ < static_cast<int64_t>(v.r.size())) return false;
+    auto quiet = [](double v) { return std::fabs(v) < kQuiet; };
+    if (fbOn_)
+      for (const auto* q : {&fbHp_, &fbLp_})
+        if (!quiet(q->x1) || !quiet(q->x2) || !quiet(q->y1) || !quiet(q->y2)) return false;
+    for (int k = 0; k < kN; ++k)
+      if (!quiet(shX_[k]) || !quiet(shY_[k])) return false;
+    for (const double v : {tankL_, tankR_, envPk_, envSm_, limLvl_})
+      if (!quiet(v)) return false;
+    if (limiter_ && !quiet(limG_ - 1)) return false;
+    for (const auto& f : inLp_)
+      if (!quiet(f.s)) return false;
+    for (const auto& f : inHp_)
+      if (!quiet(f.s)) return false;
+    for (const auto* q : {&eq_[0], &eq_[1], &envHp_})
+      if (!quiet(q->x1) || !quiet(q->x2) || !quiet(q->y1) || !quiet(q->y2)) return false;
+    if (sIn_.v != inGain_ || sDry_.v != dry_ || sWet_.v != wet_ || sGate_.v != freezeIn_ || sDecEn_.v != decayOn_ || sDecay_.v != decay_) return false;
+    if (envRoute_ == HeDecay) return false;  // (its decay follows the envelope's offset)
+    for (int k = 0; k < kN; ++k) {  // each line's absorption already refreshed at the settled decay
+      const double b0 = sb0_[k], b1 = sb1_[k], a1 = sa1_[k];
+      refreshLine(k, clampd(decay_, 0.25, 20.0), decayOn_);
+      const bool same = b0 == sb0_[k] && b1 == sb1_[k] && a1 == sa1_[k];
+      sb0_[k] = b0, sb1_[k] = b1, sa1_[k] = a1;
+      if (!same) return false;
+    }
+    for (const auto& d : diff_)
+      for (float v : d.r.b)
+        if (!quiet(v)) return false;
+    (void)s;
+    return true;
+  }
+  // What n frames of silence change once settled(): the LFO, the absorption round robin, the write
+  // heads (their rings hold only quiet values), the pitch voices' phases and the per-block setup. The
+  // setup gives the same result for the same settings, tempo and sample rate, so it runs only when one
+  // of them changed since the last block at rest.
+  void clocks(const PluginState& s, const ProcessContext& ctx, int n) {
+    const size_t np = s.params.size();
+    const bool same = setupN_ == np && setupTempo_ == ctx.tempo && sr_ == ctx.sampleRate && np <= setupKeep_.size() &&
+                      std::equal(s.params.begin(), s.params.end(), setupKeep_.begin());
+    if (!same) {
+      setup(s, ctx);
+      setupN_ = np <= setupKeep_.size() ? np : static_cast<size_t>(-1);
+      if (np <= setupKeep_.size()) std::copy(s.params.begin(), s.params.end(), setupKeep_.begin());
+      setupTempo_ = ctx.tempo;
+    }
+    lfoPh_ = advancePhase(lfoPh_, lfoInc_, n);
+    rr_ = static_cast<int>((rr_ + n) % kN);
+    for (auto& p : pre_) p.w += static_cast<size_t>(n);
+    if (diff_g_ > 0)
+      for (auto& d : diff_) d.r.w += static_cast<size_t>(n);
+    if (tankLive_)
+      for (auto& l : line_) l.w += static_cast<size_t>(n);
+    auto voice = [&](PitchVoice& v, double ratio, double W) {  // as PitchVoice::process moves them
+      v.r.w += static_cast<size_t>(n);
+      if (std::fabs(ratio - 1.0) < 1e-6) return;
+      v.ph = advancePhase(v.ph, (1.0 - ratio) / W, n);
+    };
+    if (ffOn_) {
+      for (int k = 0; k < 4; ++k) voice(ff_[k], ffRatio_[k & 1], ffW_);
+      zeroFf_ += n;
+    }
+    if (fbOn_) {
+      voice(shim_, fbRatio_, fbW_);
+      zeroShim_ += n;
+    }
+    zeroPre_ += n;
+    if (tankLive_) zeroTank_ += n;
+    lastEnvDb_ = -200.0;
+  }
+
   void process(const PluginState& s, const ProcessContext& ctx, const float* scL, const float* scR, float* L, float* R, int n) {
     setup(s, ctx);
+    setupN_ = static_cast<size_t>(-1);  // K-142 (0.7.8): clocks() runs its setup again
     for (int i = 0; i < n; ++i) {
       const double xl = L[i], xr = R[i];
       // Smoothed controls.
@@ -157,6 +249,7 @@ class HallRef {
       // Feed-forward pitch voices replace the reverb input.
       if (ffOn_) {
         double vl = il, vr = ir;
+        zeroFf_ = std::fabs(static_cast<float>(vl)) < kQuiet && std::fabs(static_cast<float>(vr)) < kQuiet ? zeroFf_ + 1 : 0;  // K-142 (0.7.8)
         il = ffDirect_ * vl + ffAmp_[0] * ff_[0].process(static_cast<float>(vl), ffD_[0], ffRatio_[0], ffW_, hq_) +
              ffAmp_[1] * ff_[1].process(static_cast<float>(vl), ffD_[1], ffRatio_[1], ffW_, hq_);
         ir = ffDirect_ * vr + ffAmp_[0] * ff_[2].process(static_cast<float>(vr), ffD_[0], ffRatio_[0], ffW_, hq_) +
@@ -164,6 +257,7 @@ class HallRef {
       }
       const double srcL = il, srcR = ir;
       // Pre-delay.
+      zeroPre_ = std::fabs(static_cast<float>(il)) < kQuiet && std::fabs(static_cast<float>(ir)) < kQuiet ? zeroPre_ + 1 : 0;  // K-142 (0.7.8)
       pre_[0].push(static_cast<float>(il));
       pre_[1].push(static_cast<float>(ir));
       if (preD_ >= 1.0) {
@@ -186,6 +280,7 @@ class HallRef {
       double shim = 0;
       if (fbOn_) {
         double src = 0.5 * ((1.0 - fbMix_) * (srcL + srcR) + fbMix_ * (tankL_ + tankR_));
+        zeroShim_ = std::fabs(static_cast<float>(src)) < kQuiet ? zeroShim_ + 1 : 0;  // K-142 (0.7.8)
         double ps = shim_.process(static_cast<float>(src), fbD_, fbRatio_, fbW_, hq_);
         ps = fbLp_.process(fbHp_.process(ps));
         shim = ps * fbGain_ * decEn;
@@ -225,13 +320,17 @@ class HallRef {
             outL += o;
         }
         mix(y);
+        bool zero = true;  // K-142 (0.7.8)
         for (int k = 0; k < kN; ++k) {
           double inj = (k & 1) ? ir : il;
           if ((k >> 1) & 1) inj = -inj;
           double v = y[k] + 0.5 * (inj + shim);
           if (std::fabs(v) > 4.0) v = 4.0 * std::tanh(v * 0.25);  // safety for sustain / runaway shimmer
-          line_[k].push(flush(static_cast<float>(v)));
+          const float f = flush(static_cast<float>(v));
+          zero = zero && std::fabs(f) < static_cast<float>(kQuiet);
+          line_[k].push(f);
         }
+        zeroTank_ = zero ? zeroTank_ + 1 : 0;
       }
       outL *= 0.125 * outK_;
       outR *= 0.125 * outK_;
@@ -409,6 +508,12 @@ class HallRef {
   double lfoPh_ = 0, tankL_ = 0, tankR_ = 0, envPk_ = 0, envSm_ = 0, limLvl_ = 0, limG_ = 1, lastEnvDb_ = -120;
   int rr_ = 0, envRoute_ = 0;
   bool hq_ = true, fbOn_ = false, ffOn_ = false, limiter_ = false, envSc_ = false, primed_ = false, tankLive_ = true, shimLive_ = true;
+  std::array<float, 128> setupKeep_{};  // K-142 (0.7.8): the settings clocks() last ran setup() with
+  size_t setupN_ = static_cast<size_t>(-1);
+  double setupTempo_ = 0;
+  static constexpr int64_t kAllQuiet = int64_t(1) << 60;  // more frames than any ring holds
+  int64_t zeroShim_ = 0, zeroFf_ = 0;  // K-142 (0.7.8): frames in a row the shimmer / feed-forward voices took values below kQuiet
+  int64_t zeroPre_ = 0, zeroTank_ = 0;  // K-142 (0.7.8): frames in a row the pre-delay / every tank line took values below kQuiet
 };
 
 }  // namespace gl::packs::spacefx::detail

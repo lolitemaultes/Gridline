@@ -70,6 +70,12 @@ struct ToolSettings {
   double props[static_cast<int>(tools::NoteProp::Count)] = {0.79, 0.5, 0.5, 0.5, 0.5, 0.5};
   bool propsTouched[static_cast<int>(tools::NoteProp::Count)] = {false, false, false, false, false, false};
   int propsColor = -1;
+  // Lengths (GitHub #74).
+  int lenMode = 0;           // tools::LengthOpts::Mode
+  double lenFactor = 1.0;    // Scale
+  double lenSteps = 4;       // Set: steps
+  double lenAddSteps = 1;    // Add: steps (negative: shorter)
+  bool lenSnap = false;
   // Steps.
   int fillType = 0;  // 0 every N, 1 euclidean
   double fillEvery = 4, fillOffset = 0, fillHits = 5, fillLength = 16, fillRotation = 0, fillVel = 100;
@@ -635,6 +641,43 @@ void scaleLevelsBody(App& a) {
   preview(a, "scale levels", n, sel);
 }
 
+// GitHub #74: every selected note resized at once (none selected: every note): scaled, set to one
+// length, or made longer or shorter, optionally with the new ends on the step grid.
+void lengthsBody(App& a) {
+  const Song& s = a.doc.song();
+  const Pattern* p = s.pattern(T.pat);
+  const Tick step = std::max<Tick>(1, p ? s.ticksPerStep(*p) : s.ppq / 4);
+  section("MODE");
+  static const char* const m[] = {"Scale", "Set", "Lengthen"};
+  static const char* const mh[] = {"Every length times the same amount (50%: half as long)", "Every note the same length",
+                                   "Every note longer (or shorter) by the same amount"};
+  ui::Segmented("##lnmode", m, 3, &S.lenMode, 80, 0.0f, mh);
+  section("LENGTH");
+  if (S.lenMode == tools::LengthOpts::Scale) {
+    knob("##lnf", &S.lenFactor, desc(0.05, 4, 1, ParamScale::Log), "Scale", pct(S.lenFactor));
+  } else if (S.lenMode == tools::LengthOpts::Set) {
+    knob("##lns", &S.lenSteps, desc(0.25, 64, 4, ParamScale::Log), "Length", fmt(S.lenSteps == 1 ? "%.2g step" : "%.2g steps", S.lenSteps));
+  } else {
+    knob("##lna", &S.lenAddSteps, desc(-16, 16, 1), "By", fmt(S.lenAddSteps == 1 || S.lenAddSteps == -1 ? "%+.2g step" : "%+.2g steps", S.lenAddSteps), true, 0.25);
+  }
+  ImGui::SameLine(0, theme::kS3);
+  ImGui::BeginGroup();
+  ui::Label("ENDS");
+  if (ui::TextButton("On the step grid", S.lenSnap, 0, "The new ends land on the pattern's steps")) S.lenSnap = !S.lenSnap;
+  ImGui::EndGroup();
+  tools::LengthOpts o;
+  o.mode = S.lenMode;
+  o.factor = S.lenFactor;
+  o.length = std::max<Tick>(1, static_cast<Tick>(std::llround(S.lenSteps * static_cast<double>(step))));
+  o.delta = static_cast<Tick>(std::llround(S.lenAddSteps * static_cast<double>(step)));
+  o.snapEnds = S.lenSnap;
+  o.grid = step;
+  auto n = T.base;
+  auto sel = T.baseSel;
+  tools::setLengths(n, sel, o);
+  preview(a, "resize notes", n, sel);
+}
+
 void limitBody(App& a) {
   section("KEY RANGE");
   knobInt("##llo", &S.limLo, 0, 127, kToolDefaults.limLo, "Lowest", tools::pitchName(S.limLo));
@@ -826,6 +869,7 @@ const char* noteToolTitle(NoteTool t) {
     case NoteTool::Limit: return "Limit key range";
     case NoteTool::Riff: return "Riff generator";
     case NoteTool::Properties: return "Note properties";
+    case NoteTool::Lengths: return "Note lengths";
     default: return "";
   }
 }
@@ -919,6 +963,7 @@ void drawEditTools(App& a) {
     case NoteTool::Limit: limitBody(a); break;
     case NoteTool::Riff: riffBody(a); break;
     case NoteTool::Properties: propertiesBody(a); break;
+    case NoteTool::Lengths: lengthsBody(a); break;
     default: if (steps) stepBody(a); break;
   }
   ImGui::Dummy(ImVec2(0, 6));
@@ -942,6 +987,7 @@ void drawEditTools(App& a) {
         for (int k = 0; k < static_cast<int>(tools::NoteProp::Count); ++k) S.propsTouched[k] = false;
         S.propsColor = -1;
         break;
+      case NoteTool::Lengths: S.lenMode = 0, S.lenFactor = 1, S.lenSteps = 4, S.lenAddSteps = 1, S.lenSnap = false; break;
       default:
         S.fillType = 0, S.fillEvery = 4, S.fillOffset = 0, S.fillHits = 5, S.fillLength = 16, S.fillRotation = 0, S.fillVel = 100;
         S.rndProb = 0.4, S.rndVelLo = 70, S.rndVelHi = 115;
@@ -969,7 +1015,7 @@ void devOpenTool(App& a, const std::string& name) {
       {"quantize", NoteTool::Quantize}, {"chop", NoteTool::Chop},       {"strum", NoteTool::Strum},
       {"arp", NoteTool::Arpeggiate},    {"flam", NoteTool::Flam},       {"articulate", NoteTool::Articulate},
       {"randomize", NoteTool::Randomize}, {"lfo", NoteTool::Lfo},       {"levels", NoteTool::ScaleLevels},
-      {"limit", NoteTool::Limit},       {"riff", NoteTool::Riff},       {"props", NoteTool::Properties}};
+      {"limit", NoteTool::Limit},       {"riff", NoteTool::Riff},       {"props", NoteTool::Properties}, {"lengths", NoteTool::Lengths}};
   for (const auto& [n, t] : map)
     if (name == n) return openNoteTool(a, t);
   if (name == "fill") openStepTool(a, StepTool::Fill, a.selChannel);

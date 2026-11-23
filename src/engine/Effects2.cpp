@@ -398,6 +398,9 @@ class TunerFx final : public Effect {  // display only (pitch detection in the e
  public:
   void process(const PluginState&, const ProcessContext&, float*, float*, int) override {}
   void reset() override {}
+  // K-142 (0.7.8): it passes the sound untouched and keeps nothing: it rests by the hosted rule (its
+  // display reads the slot's scope tap, which holds the silence it passes at rest).
+  bool restsWhenFaint() const override { return true; }
 };
 
 }  // namespace

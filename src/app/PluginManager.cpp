@@ -412,7 +412,12 @@ void scanCard(App& a, const Model& md) {
     else std::snprintf(b, sizeof b, i18n::tr("Scanning %d / %d"), std::min(ss.done + 1, std::max(1, ss.total)), ss.total);
     text(dl, a.fontRegular, theme::kFontCaption, ImVec2(p.x, p.y + 13), P.text, b);
     const std::string cur = !ss.searching.empty() ? ss.searching : host::scanCurrentLabel(ss);
-    const float bw = textW(a.fontRegular, theme::kFontCaption, b) + 8;
+    // 0.7.8: the plugin's name starts where the widest count ends ("Scanning 120 / 120"), not
+    // where this one does: it never moves while the count goes up.
+    char widest[96];
+    if (!ss.searching.empty()) std::snprintf(widest, sizeof widest, "%s", b);
+    else std::snprintf(widest, sizeof widest, i18n::tr("Scanning %d / %d"), std::max(1, ss.total), std::max(1, ss.total));
+    const float bw = textW(a.fontRegular, theme::kFontCaption, widest) + 8;
     text(dl, a.fontMono, 10.5f, ImVec2(p.x + bw, p.y + 14), P.textFaint, cur.c_str(), w - bw);
     ImGui::Dummy(ImVec2(w, 32));
   } else {

@@ -1,6 +1,9 @@
 # Gridline K-113: the typing keyboard's layout choice in the real app (hidden, isolated config and HOME).
-# A fresh config names the keys as Standard (QWERTY); a settings file saved before the choice existed does
-# too; each layout names the keys its own way, play stays by position, and the choice is kept after a quit.
+# GitHub #79: the choice is now "My keys say", shared with the names of shortcuts. A fresh config names the
+# keys as the computer's layout does (here a US QWERTY layout stands in for it, "keys system qwerty"); a
+# settings file saved before the choice existed does too; each layout names the keys its own way, play
+# stays by position, and the choice is kept after a quit. The old choice carries over, but Standard
+# (QWERTY), which was also the starting value, becomes the computer's layout.
 #   cmake -DAPP=<gridline-app> -DDEMO=<test_song.gridline.json> -DOUT=<dir> -P typing_layout_app.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
@@ -30,11 +33,11 @@ function(check what want)
   endif()
 endfunction()
 
-set(std "typing labels standard: Z S X D C V G B H N J M , L . | / Q 2 W 3 E R 5 T 6 Y 7 U I 9 O 0 P [ ] - = \\ '")
+set(std "typing labels computer: Z S X D C V G B H N J M , L . | / Q 2 W 3 E R 5 T 6 Y 7 U I 9 O 0 P [ ] - = \\ '")
 
-# 1. Fresh config: Standard.
-run_app(fresh "4 typing labels\n6 quit discard\n")
-check("a fresh config is Standard" "${std}")
+# 1. Fresh config: the computer's layout (a US one standing in).
+run_app(fresh "2 keys system qwerty\n4 typing labels\n6 quit discard\n")
+check("a fresh config names the keys as the computer" "${std}")
 
 # 2. Every layout's names; play by position on each (the key in the Z position typing ';' as on Dvorak plays C4).
 run_app(layouts "4 typing on
@@ -78,8 +81,16 @@ if(NOT at EQUAL 0)
   message(FATAL_ERROR "FAIL: the chosen layout was not kept\n${joined}\n")
 endif()
 
-# 4. A settings file from before the choice existed (no keys.typingLayout): Standard.
+# 4. A settings file from before the choice existed (no keys.typingLayout): the computer's layout.
 file(WRITE "${OUT}/cfg/gridline/settings.json" "{\"version\": 1, \"values\": {\"ui.scale\": 1.0, \"general.launcher\": false}}")
-run_app(old "4 typing labels\n6 quit discard\n")
-check("an old settings file is Standard" "${std}")
-message(STATUS "ok - the typing keyboard layout is Standard by default and names keys per layout")
+run_app(old "2 keys system qwerty\n4 typing labels\n6 quit discard\n")
+check("an old settings file names the keys as the computer" "${std}")
+
+# 5. GitHub #79: a layout chosen in 0.7.7 carries over (the same names); Standard (QWERTY) becomes the computer's.
+file(WRITE "${OUT}/cfg/gridline/settings.json" "{\"version\": 1, \"values\": {\"general.launcher\": false, \"keys.typingLayout\": \"dvorak\"}}")
+run_app(olddvorak "4 typing labels\n6 quit discard\n")
+check("an old Dvorak choice carries over" "typing labels dvorak: | O Q E J K I X D B H M W N V S Z ' 2 , 3 . P 5 Y 6 F 7 G C 9 R 0 L / = [ ] \\ -")
+file(WRITE "${OUT}/cfg/gridline/settings.json" "{\"version\": 1, \"values\": {\"general.launcher\": false, \"keys.typingLayout\": \"standard\"}}")
+run_app(oldstandard "2 keys system qwerty\n4 typing labels\n6 quit discard\n")
+check("an old Standard (QWERTY) is the computer's layout, the same names on a QWERTY computer" "${std}")
+message(STATUS "ok - the typing keyboard's keys are named after My keys say (the computer's layout by default)")

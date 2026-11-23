@@ -76,6 +76,7 @@ StandInPolicy standInPolicy(const std::string& type) {
     neutral("gl.busreturn", "bus return: the audio arrives through the bus send's Fruity Send route; nothing to process here");
     neutral("gl.hwinsert", "hardware insert: outboard gear on this studio's audio device; the slot stays neutral (FL routes outboard through the mixer's audio inputs and outputs)");  // K-101
     neutral("gl.shaper", "step volume / filter shaper: no FL effect plays a tempo-synced 16-step volume, filter and pan pattern");
+    neutral("gl.terrace", "multiband step gate: no FL effect plays separate tempo-synced volume, cutoff and pan step patterns per frequency band; the slot stays neutral (render the track to keep the sound)");
     neutral("gl.arp", "note processor: FL's channel arpeggiator carries one arpeggiator (rendered instruments include it)");
     neutral("gl.chord", "note processor: FL channels have no chord generator; a rendered instrument plays the chords as rendered");
     neutral("gl.chater", "Gridline-only effect, not yet offered in Gridline Suite: the slot stays neutral (render the track to keep the sound)");
@@ -722,6 +723,7 @@ ObjectId addFallbackChannel(Song& song, ObjectId src, const PluginState& plays) 
     if (auto it = p.steps.find(src); it != p.steps.end()) p.steps[cp.id] = it->second;
     if (auto it = p.stepProps.find(src); it != p.stepProps.end()) p.stepProps[cp.id] = it->second;
     if (auto it = p.stepLoop.find(src); it != p.stepLoop.end()) p.stepLoop[cp.id] = it->second;
+    if (auto it = p.lanes.find(src); it != p.lanes.end()) p.lanes[cp.id] = it->second;
   }
   for (Channel& l : song.channels)
     if (std::find(l.layer.begin(), l.layer.end(), src) != l.layer.end()) l.layer.push_back(cp.id);

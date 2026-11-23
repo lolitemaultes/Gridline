@@ -4,6 +4,7 @@
 // Everything named "signal context" below runs after a fatal fault: only async-signal-safe calls,
 // no allocation, no locks, no stdio. See CrashPosix.cpp and CrashWin.cpp for the platform parts.
 #include "Crash.h"
+#include "ThreadName.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -600,6 +601,7 @@ std::string readFile(const std::string& path) {
 }
 
 void watchdogLoop(Watchdog* w) {
+  gl::threads::setName("gl-watchdog");
   FreezeDetector det(gFrozenAfterMs);
   int64_t snoozeUntil = 0;
   std::string& freezeReport = gFreezeReport;
@@ -610,6 +612,7 @@ void watchdogLoop(Watchdog* w) {
       std::unique_lock<std::mutex> lk(w->mu);
       if (w->cv.wait_for(lk, std::chrono::milliseconds(500), [w] { return w->stop; })) return;
     }
+    gl::threads::woke();  // K-142: CPU report
     if ((++tick & 3u) == 0) refreshModulesNow();  // plugins come and go; the crash path cannot ask
     if (s->rescueRequest.exchange(0)) {
       plat::rescueNow();

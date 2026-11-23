@@ -4,6 +4,7 @@
 // reads those pixels back and stores a scaled PNG in <config>/thumbs/. The
 // picker loads them lazily as textures.
 #include <SDL.h>
+#include "../core/ThreadName.h"
 #include <SDL_opengl.h>
 #include "GlEpoch.h"
 #include <algorithm>
@@ -156,7 +157,7 @@ void startThumbnailRun(App& a) {
   const std::string frame = (dir / ".frame.ppm").string();
   const std::vector<std::string> args = {exe, "--make-thumbs", "--size", "1400x1000", "--screenshot", frame, "--frames", "100000"};
   a.notify("Rendering plugin thumbnails in the background");
-  std::thread([exe, args]() {
+  std::thread([exe, args]() { gl::threads::setName("gl-thumbs");
     platform::Process p;
     if (p.start(exe, args)) p.wait();
     ++texGeneration;

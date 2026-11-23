@@ -72,7 +72,10 @@ bool parseRanges(const std::string& text, Ranges& out);
 
 // ---- tiers -------------------------------------------------------------------
 inline constexpr double kMaxLicensable = 60.0;
-// Measured reads shorter than this (seconds) are not counted (a voice's block before a jump).
+// A voice's cue block (what it reads in its block before it jumps to where it plays: a deck
+// cueing, a slice retrigger) is not counted when shorter than this (seconds). K-321: the tap
+// flags cue blocks, so other short reads count (a stutter, grains far apart); uses made without
+// the tap (Use::measured false) still leave out every read shorter than this.
 inline constexpr double kMinHeard = 0.01;
 // The tier to choose: 2, 15 or 60 (seconds); 0 when over 60 s (not licensable).
 // Rounded to 0.1 s first, like the figures shown.
@@ -106,9 +109,11 @@ struct SongFields {
   std::string fee;             // license fee, as typed
   std::string tier;            // tier the user chose ("" = the suggested one)
   std::string holders;         // rights holders (master / publishing), free text
+  // K-321: what the licence of this song is counted on: "" = what is read, "heard" = what is heard.
+  std::string basis;
   bool operator==(const SongFields& o) const {
     return artist == o.artist && title == o.title && category == o.category && share == o.share && fee == o.fee && tier == o.tier &&
-           holders == o.holders;
+           holders == o.holders && basis == o.basis;
   }
 };
 struct FileFields {
@@ -117,7 +122,14 @@ struct FileFields {
   // Parts of the file the user says are used ("0:01.0-0:03.0, 0:10-0:12"): replaces the
   // estimate of uses Gridline cannot measure (inside third-party plugins). "" = the estimate.
   std::string ranges;
-  bool operator==(const FileFields& o) const { return ticked == o.ticked && song == o.song && ranges == o.ranges; }
+  // K-321: a length the user says is used, when the parts are not known ("4.5"; "" = none), and
+  // what the user entered per use the receipt cannot measure, by "<owner>:<slot>" (parts as in
+  // `ranges`, or seconds). The per-file `ranges` above stays as it was.
+  std::string seconds;
+  std::map<std::string, std::string> uses;
+  bool operator==(const FileFields& o) const {
+    return ticked == o.ticked && song == o.song && ranges == o.ranges && seconds == o.seconds && uses == o.uses;
+  }
 };
 struct Writer {
   std::string name, role, pro, ipi, share;  // share: percent of your part, as typed
@@ -140,16 +152,27 @@ struct Saved {
   // level, each song, each file and the release keep theirs (a writer's own unknown keys are not
   // kept: writers are a list that is edited by position).
   std::string unknown;
+  // K-321: the project's own trail, by SHA-256 of the file's bytes (the key collab names its
+  // copies by): the original file name of a file (Tracklib names survive a rename to the hash),
+  // and the origin of a derived file (compact JSON as in the sidecar, sources as "sha256:<hex>"
+  // where known), used when the sidecar is missing.
+  std::map<std::string, std::string> names, origins;
+  // K-321: the Heard settings ("" = default: the floor in dBFS as typed, "-60") and the kept
+  // receipt versions (compact JSON each, the newest last).
+  std::string heardFloor;
+  std::vector<std::string> snapshots;
   bool operator==(const Saved& o) const {
-    return songs == o.songs && files == o.files && release == o.release && writers == o.writers && unknown == o.unknown;
+    return songs == o.songs && files == o.files && release == o.release && writers == o.writers && unknown == o.unknown &&
+           names == o.names && origins == o.origins && heardFloor == o.heardFloor && snapshots == o.snapshots;
   }
   bool empty() const;
 };
 std::string savedToJson(const Saved& s);  // compact; "" when empty
 Saved savedFromJson(const std::string& json);
 // (K-322: savedToJson(savedFromJson(j)) == j for any j savedToJson wrote, unknown keys included.)
-// The fields of a file, matched by path, else by file name.
-FileFields fileFields(const Saved& s, const std::string& path);
+// The fields of a file, matched by path, else (K-321) by "sha256:<hash>" when the hash is
+// known, else by file name.
+FileFields fileFields(const Saved& s, const std::string& path, const std::string& hash = {});
 
 // ---- measurement (engine/TrackReceiptPass.h fills it) -------------------------------
 struct Use {
@@ -162,6 +185,23 @@ struct Use {
   bool muted = false;      // not counted: muted or silent
   bool estimated = false;  // counted from the settings, not measured (whole file for analysers)
   std::string note;
+  bool measured = false;   // K-321: ranges from the tap, cue blocks already left out (see kMinHeard)
+  // K-321 (filled by later stages; inert until then):
+  enum class Source { Measured, NotMeasured, EnteredRanges, EnteredSeconds };
+  Source source = Source::Measured;
+  double playSeconds = 0;  // song seconds it sounded while reading (every play counted)
+  struct Detail {
+    int pitched = 0;                       // pitch reports (0 = pitch not known)
+    double semisMin = 0, semisMax = 0;     // pitch in semitones
+    double speedMin = 0, speedMax = 0;     // source seconds per song second (0 = not known)
+    double reversed = 0;                   // share of the reads played backwards (0..1)
+    int chops = 0;                         // jumps inside a voice
+    double avgRead = 0;                    // seconds per read between jumps
+    std::vector<std::string> effects;      // effect categories on the way to the output
+    int recognisable = -1;                 // 0..100 (-1 = not scored)
+    std::vector<std::string> reasons;      // what the score took off
+  };
+  Detail detail;
 };
 struct FileIn {
   std::string path;
@@ -169,6 +209,10 @@ struct FileIn {
   bool exists = true;
   bool derived = false;       // an origin sidecar was found
   std::vector<Origin> chain;  // file -> its source -> ... (chain.back().source is the original)
+  // K-321: SHA-256 of the file ("" = not hashed), and the trail by version 2 maps: every
+  // origin on it, by file (empty when no file on the trail has maps: the chain above is used).
+  std::string hash;
+  std::map<std::string, std::string> trail;  // file -> its origin (compact JSON, ReceiptOrigin.h)
 };
 // The origin chain of `file` (an edit of a stem of X: [edit -> stem, stem -> X]).
 // Empty when the file has no sidecar.
@@ -214,6 +258,11 @@ struct Timeline {
   Ranges used;         // seconds of the original used
   std::vector<RangeFrom> parts;  // `used` with where each range came from
   double seconds = 0;
+  // K-321 (filled by later stages): what of `used` is heard, and lengths the user entered.
+  Ranges heard;
+  double heardSeconds = 0;
+  bool heardKnown = false;
+  double enteredSeconds = 0;
   bool operator==(const Timeline& o) const { return part == o.part && length == o.length && used == o.used && seconds == o.seconds; }
 };
 struct SongRow {

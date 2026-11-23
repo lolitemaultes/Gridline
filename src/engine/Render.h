@@ -105,6 +105,8 @@ struct RenderResult {
   bool cancelled = false;
   std::string error;          // non-empty: nothing rendered
   std::map<ObjectId, int> trackLatency;  // K-87: each mixer track's own effect latency (samples)
+  // K-321: the tail stopped at maxTailSeconds while the job was still busy (tailBusy) or loud.
+  bool tailCapped = false;
 };
 
 // The song as the render switches see it (effects disabled, limits lifted).

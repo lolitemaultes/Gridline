@@ -69,7 +69,8 @@ const char* sampleFieldLabel(SampleField f);
 int sampleFieldMerge(SampleField f);  // 1..4 (the root is 5)
 // Loop type; switched on with no loop, the loop takes the played part s0..s1.
 void applyLoopType(Edit& e, int k, uint8_t loop, int32_t s0, int32_t s1);
-// A waveform marker dragged to frame f (0 sample start, 1 end, 2 loop start, 3 loop end), clamped
+// A waveform marker dragged to frame f (0 sample start, 1 end, 2 loop start, 3 loop end, 4 the whole
+// loop: its start to f, its length kept), clamped
 // as the plugin editor's flags are (the loop inside the played part, start before end).
 void applyMarker(Edit& e, int k, int marker, int32_t f, int32_t frames);
 const char* markerLabel(int marker);
@@ -118,8 +119,19 @@ struct Snapshot {
   std::shared_ptr<const InstrumentAux> inst;
   Edit e;
   int sound = 0;
+  bool sampler = false;  // 0.7.8: a Sampler seen as a one-sample Tracker Sampler (editState)
 };
 const Snapshot& snapshot(App& a, const PluginTarget& t);
+// 0.7.8: the state the editing reads for `t`: a Tracker Sampler's own, or a Sampler's seen as a
+// one-sample Tracker Sampler (the Tracker's classic Sample editor on it: its file as sample 01, its
+// start, end, loop and reverse as the sample's; commitEdit writes those back into the Sampler, an
+// audio edit as a new file it plays). Null: neither.
+const PluginState* editState(App& a, const PluginTarget& t);
+bool bridgesSampler(App& a, const PluginTarget& t);
+// While on (the Tracker's classic Sample editor drawing or editing a Sampler), the header's sample
+// ops (tracker.h header*) take a Sampler as editState shows it; off, a Tracker Sampler only.
+void setSamplerBridge(bool on);
+bool samplerBridge();
 // cp17 CPU counters: snapshots built and served since the start ("tracker editors perf").
 void snapshotCounts(long long* built, long long* served);
 
@@ -129,6 +141,8 @@ bool opSampleField(App& a, const PluginTarget& t, int k, SampleField f, long v, 
 bool opSampleRoot(App& a, const PluginTarget& t, int k, double rate, int note, Edit* mirror = nullptr);
 bool opSampleLoopType(App& a, const PluginTarget& t, int k, uint8_t loop, int32_t s0, int32_t s1, Edit* mirror = nullptr);
 bool opSampleBits(App& a, const PluginTarget& t, int k, bool eight, Edit* mirror = nullptr);
+// 0.7.8: the sample plays backwards (the audio stays as it is), one undo step ("sample play direction").
+bool opSampleReverse(App& a, const PluginTarget& t, int k, bool backwards, Edit* mirror = nullptr);
 bool opSampleMarker(App& a, const PluginTarget& t, int k, int marker, int32_t f, int32_t frames, Edit* mirror = nullptr);
 bool opRenameSample(App& a, const PluginTarget& t, int k, const std::string& name, Edit* mirror = nullptr);
 bool opSwapSamples(App& a, const PluginTarget& t, int k, int to, Edit* mirror = nullptr);
@@ -149,6 +163,12 @@ bool opEnvApplySlot(App& a, const PluginTarget& t, bool pan, const EnvSlot& slot
 bool opMapKeys(App& a, const PluginTarget& t, int lo, int hi, int slot, Edit* mirror = nullptr);
 // K-106 cp19: the keys of `slot` to the nearest other sample (applyKeysAway), labelled "map keys" as the drag.
 bool opMapKeysAway(App& a, const PluginTarget& t, int slot, Edit* mirror = nullptr);
+// 0.7.8: entry `from` copied over entry `to` (copySampleInto; "copy sample"), two entries trading
+// samples (exchangeSampleData; "exchange samples"), a range as an entry (regionToEntry; "range to
+// entry": the entry, -1 when nothing changed).
+bool opCopyEntry(App& a, const PluginTarget& t, int from, int to, Edit* mirror = nullptr);
+bool opExchangeEntries(App& a, const PluginTarget& t, int x, int y, Edit* mirror = nullptr);
+int opRegionToEntry(App& a, const PluginTarget& t, int from, Span r, int to, Edit* mirror = nullptr);
 // K-106 cp19 (moved from tracker_ui.cpp, unchanged): the six envelope slots of each envelope, kept
 // with the user's settings ("tracker-envelopes.txt" in the config folder, never the project), read
 // once. Both front ends use the same slots.

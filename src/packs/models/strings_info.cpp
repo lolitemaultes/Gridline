@@ -182,7 +182,7 @@ PluginInfo stepBass() {
   }
   q[SbProgram] = lin("Program", "", 0, kSbPrograms - 1, 0);
   q[SbSeqOn] = tog("Sequencer", false);
-  q[SbRoot] = lin("Sequence key", "", 0, 127, 60);
+  q[SbRoot] = lin("Sequence key", "note", 0, 127, 60);
   q[SbTempoMode] = ch("Tempo", {"Song", "Own"}, 0);
   q[SbBpm] = lin("Own tempo", "", 10, 522, 125);
   p.presets = {

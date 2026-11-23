@@ -16,7 +16,10 @@
 #include "../PacksUi.h"
 #include "../../core/PianoRollScript.h"
 #include "../../engine/LiveWave.h"
+#include "../../core/TimeWarp.h"
 #include "edison.h"
+#include "edison_repair.h"
+#include "edison_specimage.h"
 #include "edison_transport.h"
 
 namespace gl::packs::edison {
@@ -43,15 +46,20 @@ ImU32 C(uint32_t rgb, float a = 1.f);
 // ------------------------------------------------------------------ tools (dialogs)
 enum class Tool {
   None, Stretch, Equalize, Reverb, Blur, Denoise, Gate, Declick, Resample, Amplify, Normalize, Envelope, Slice, Tune, Silence,
-  Spectral, Rename, Fade, Script
+  Spectral, Rename, Fade, Script,
+  Deverb, Declip, DrumStretch,  // the repair tools (edison_repair_ui.cpp)
+  Count
 };
 
 struct Job {
   std::future<std::function<void()>> fut;  // the worker returns the UI-thread completion
   std::string label;
   double started = 0;
+  std::shared_ptr<Progress> progress;  // an edit that reports how far it is (and can be stopped)
   bool active() const { return fut.valid(); }
 };
+
+// (SpecLayer, the spectrogram image: edison_specimage.h)
 
 struct Session {
   uint64_t key = 0;
@@ -83,6 +91,28 @@ struct Session {
   int dragMarker = -1;  // marker being moved
   bool spectral = false;
   bool brushMode = false;
+  // K-248: warp as an edit: markers on the audio (file seconds), then Apply writes the warped audio
+  // (one undo step). The markers are saved with the project on the owner's plugin state
+  // (PluginState::loupeWarp: the channel's instrument, or the Loupe slot): each change is one step
+  // of the song's undo and reaches collaborators; the session follows the owner (song undo, a
+  // collaborator, a project load). A file opened on its own keeps them in the session only.
+  bool warpOn = false;
+  std::vector<WarpMarker> warp;
+  std::string warpSynced;  // the owner's markers (PluginState::loupeWarp) the session last took or wrote
+  // Each warp marker gesture (add, move, slide, remove, a Warp menu row) is one step of Loupe's
+  // undo, taken back while it is the latest thing done (`serial`: the history's version it was
+  // made on; a later audio edit or undo leaves the markers as they are). `docSerial`: the song's
+  // undo state the step left (Loupe's undo of it is the song's undo while nothing came after).
+  struct WarpStep {
+    std::string label;
+    std::vector<WarpMarker> before, after;
+    uint64_t serial = 0;
+    uint64_t docSerial = 0;
+  };
+  std::vector<WarpStep> warpUndo, warpRedo;
+  bool warpGesture = false;               // a marker gesture is under way
+  std::vector<WarpMarker> warpBefore;     // the markers when it began
+  std::string warpLabel;
   int snap = 1;          // 0 none, 1 zero crossings, 2 markers, 3 beat grid
   bool barsTime = false; // ruler in bars:beats
   bool scrubMode = false;
@@ -99,13 +129,10 @@ struct Session {
   // caches
   PeakCache peaks;
   uint64_t peaksSerial = 0;
-  Spectrogram spec;
-  uint64_t specSerial = 0;
-  std::future<Spectrogram> specJob;
-  unsigned tex = 0;
-  uint64_t texEpoch = 0;  // K-47: the OpenGL context it was made in
-  int texW = 0, texH = 0;
-  bool texDirty = false;
+  SpecLayer specBase;        // the whole file (shown while the view's own image is made)
+  SpecLayer specView;        // the frames in view, one column per screen pixel
+  SpecViewRequest specWant;  // what the view asked for last frame
+  double specWantSince = 0;  // when that changed (a new image waits until the view rests)
   Levels levels;
   PitchInfo pitch;
   uint64_t levelsKey = ~0ull;
@@ -188,12 +215,34 @@ void setParam(App& a, const Session& s, int k, double v);
 // changed while the edit ran. Undo brings back the selection the edit started from, redo the one
 // it left. Without a map they stay where they were (clamped to the new length).
 void runEdit(App& a, Session& s, const std::string& label, std::function<Content(const Content&)> op, EditMap map = {});
+// Same, for a long edit: `op` reports its progress (shown on the busy plate and in the tool's
+// dialog) and returns early when asked to stop (then nothing changes: no undo step).
+void runEditP(App& a, Session& s, const std::string& label, std::function<Content(const Content&, Progress&)> op, EditMap map = {});
 // Same, immediately on the UI thread (cheap edits: markers, loop points).
 void applyNow(App& a, Session& s, const std::string& label, const Content& next);
 void undo(App& a, Session& s);
 void redo(App& a, Session& s);
+// Undo / redo has a step to take (an audio edit, or a warp marker gesture made last).
+bool canUndo(const Session& s);
+bool canRedo(const Session& s);
+// K-248: a warp marker change made from `before` to the session's markers, as one undo step.
+void pushWarpStep(App& a, Session& s, const std::string& label, const std::vector<WarpMarker>& before);
+// The session's warp markers onto the owner's plugin state (one song undo step; nothing for a file
+// on its own or markers already there).
+void saveWarp(App& a, Session& s, const std::string& label, uint64_t mergeKey = 0);
 void say(Session& s, const std::string& text);
 Range target(const Session& s);  // selection or whole file
+
+// Spectrogram view (edison_specview_ui.cpp). Frequencies run from kSpecMinHz at the bottom to
+// the Nyquist frequency at the top on a log axis.
+// Draws frames [start, start + len) into p0..p1 (images are made on a worker for the screen's
+// pixels; until one is ready the last one, or the whole file's, stands in).
+void drawSpecView(App& a, Session& s, ImDrawList* dl, ImVec2 p0, ImVec2 p1, double start, double len);
+// The level shown at a frame and frequency (dBFS); false when no image covers it.
+bool specLevelAt(const Session& s, double frame, double hz, float& db);
+// (kSpecMinHz, specRange and specResolution: edison_specimage.h)
+void setSpecRange(App& a, int db);
+void setSpecResolution(App& a, int r);
 // Clipboard shared by every editor.
 Audio& clipboard();
 
@@ -235,6 +284,8 @@ void dragOutSource(App& a, Session& s);
 // J-191: the current version into the Split stems window (files in the Stems folder).
 void splitStems(App& a, Session& s);
 void sendToSampler(App& a, Session& s, bool slicer);
+// K-248: the warp markers applied: the warped audio replaces the content (one undo step), the markers cleared.
+void applyWarp(App& a, Session& s);
 void detectSlices(App& a, Session& s, double sensitivity);
 void addMarkerAtCursor(App& a, Session& s);
 

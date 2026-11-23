@@ -126,6 +126,7 @@ void reduce(Song& x, const std::set<ObjectId>& keepChannels, const std::set<Obje
       p.steps.erase(id);
       p.stepProps.erase(id);
       p.stepLoop.erase(id);
+      p.lanes.erase(id);
     }
   }
   const ObjectId master = x.masterId();
@@ -139,7 +140,8 @@ void reduce(Song& x, const std::set<ObjectId>& keepChannels, const std::set<Obje
     m.slots.assign(kEffectSlots, EffectSlot{});
     m.muted = true;
   }
-  auto keepOwner = [&](ObjectId o) { return o == kSongId || keepChannels.count(o) || keepMixers.count(o); };
+  // (K-247: the board's LFOs keep the links and automation that move their own settings.)
+  auto keepOwner = [&](ObjectId o) { return o == kSongId || keepChannels.count(o) || keepMixers.count(o) || x.lfo(o) != nullptr; };
   std::set<ObjectId> goneAutos;
   x.automations.erase(std::remove_if(x.automations.begin(), x.automations.end(),
                                      [&](const AutomationClip& a) {

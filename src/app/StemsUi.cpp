@@ -1,5 +1,6 @@
 // Gridline - J-191: the Split stems window (see StemsUi.h).
 #include "StemsUi.h"
+#include "../core/ThreadName.h"
 #include "Keys.h"
 #include "../core/Crash.h"
 #include <algorithm>
@@ -21,6 +22,7 @@
 #include "App.h"
 #include "ContextMenus.h"
 #include "DevSignal.h"
+#include "ProgressUi.h"
 #include "Theme.h"
 #include "Widgets.h"
 
@@ -151,7 +153,7 @@ void startJob(Job::Kind kind, std::function<bool(Job&)> body) {
   j.written.clear();
   j.started = Clock::now();
   j.running = true;
-  j.worker = std::thread([&j, body] {
+  j.worker = std::thread([&j, body] { gl::threads::setName("gl-stems");
     bool ok = false;
     try {
       ok = body(j);
@@ -380,6 +382,11 @@ void draw(App& a) {
   finish(a);
   State& s = S();
   Job& j = J();
+  const progui::Fake* fk = progui::fake("stems");  // (tests: a stand-in split; the window closes after it)
+  static bool faked = false;
+  if (fk) s.open = true, s.name = fk->text, s.seconds = 245;
+  else if (faked) s.open = false;
+  faked = fk != nullptr;
   if (!s.open) return;
   const auto& P = pal();
   const float w = 470.0f;
@@ -390,7 +397,8 @@ void draw(App& a) {
   const bool vis = ImGui::Begin(title.c_str(), &open,
                                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking);
   ui::TrackWindowInViewport();
-  const bool splitting = j.running.load() && j.kind == Job::Kind::Split;
+  progui::note("stems");
+  const bool splitting = (j.running.load() && j.kind == Job::Kind::Split) || fk;
   if (vis) {
     {  // what is split
       char line[512];
@@ -437,12 +445,13 @@ void draw(App& a) {
     }
     ui::EndSection();
     if (splitting) {
-      const double f = j.progress.load();
-      const double el = std::chrono::duration<double>(Clock::now() - j.started).count();
-      std::string status = std::to_string(int(f * 100)) + "%";
-      if (f > 0.02) status += "  \xC2\xB7  " + timeLeft(el / f * (1.0 - f));
-      else status += "  \xC2\xB7  " + std::string(i18n::tr("starting..."));
-      ImGui::TextColored(theme::vec(P.textDim), "%s", status.c_str());
+      // 0.7.8: the percent in a field as wide as "100%", the time left after it: nothing jumps.
+      const double f = fk ? fk->frac : j.progress.load();
+      const double el = fk ? 60.0 : std::chrono::duration<double>(Clock::now() - j.started).count();
+      const std::string rest = "  \xC2\xB7  " + (f > 0.02 ? timeLeft(el / f * (1.0 - f)) : std::string(i18n::tr("starting...")));
+      progui::Percent(f, P.textDim);
+      ImGui::SameLine(0, 0);
+      progui::Line(rest.c_str(), w - progui::PercentWidth(), P.textDim);
       ImGui::ProgressBar(float(f), ImVec2(w, 0), "");
     } else if (!s.lastError.empty()) {
       ImGui::PushTextWrapPos(w - theme::kS2);

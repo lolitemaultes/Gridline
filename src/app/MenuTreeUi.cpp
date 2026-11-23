@@ -10,6 +10,7 @@
 #include "../core/MenuStyle.h"
 #include "../core/Secrets.h"
 #include "App.h"
+#include "FocusGuard.h"
 #include "CommandPaletteUi.h"
 #include "../core/Keymap.h"
 #include "Keys.h"
@@ -20,9 +21,13 @@ namespace gl::menutreeui {
 
 namespace {
 
-// Draws `f` into a window nobody sees: fully clipped, no inputs, no saved settings.
+// Draws `f` into a window nobody sees: fully clipped, no inputs, no saved settings. 0.7.8: and no
+// focus: the menus' code may ask for the keyboard or take the active item (a plugin picker's search
+// field focuses itself as it appears); whatever it asks is put back (FocusGuard.h), so a drag held
+// meanwhile keeps its item.
 template <class F>
 void unseen(const char* id, F&& f) {
+  focusguard::Keep keep;
   const ImGuiViewport* vp = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(vp->Pos);
   ImGui::SetNextWindowSize(ImVec2(820, 600));

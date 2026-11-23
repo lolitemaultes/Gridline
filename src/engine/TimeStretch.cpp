@@ -3,6 +3,7 @@
 // Rubber Band Library R3 (GPL-2.0-or-later); the streaming around them, the
 // resampler, the clip renderer and the realtime voice are Gridline's own.
 #include "../core/Platform.h"
+#include "../core/ThreadName.h"
 #include "TimeStretch.h"
 #include <algorithm>
 #include <cmath>
@@ -178,47 +179,43 @@ using Map = std::function<double(int64_t)>;
 
 // ------------------------------------------------------------- the stream
 
-// Renders frames [0, len) of one continuous stretch whose frame q plays
-// input position x(q) (non-decreasing; x(0) may lie inside the input).
-// The engine starts before frame 0 on the input that leads into x(0) (up to
-// one block and hop of it, silence before the input's start), so frame 0 is
-// already settled, and it is fed at its real latency all the way: frame q
-// is centred on x(q). Past the input's end it reads silence (its tail).
-// `out` must hold len frames; progress reports finished frames. sr: the
-// rate of the input's frames; outRate: the rate after the pitch resampler.
-void stream(const float* const* in, int nch, int64_t n, float* const* out, int64_t len, double sr, double outRate, const Map& x,
-            const Progress* pr, double midPerOut = 1.0) {
-  if (len <= 0) return;
-  Spectral e(kSeed);
-  configure(e, nch, sr);
-  const int inLat = e.inputLatency(), outLat = e.outputLatency();
-  Guard guard;
-  guard.prepare(sr, outRate);
-  const SourceLevel level(in, nch, n);
-  const auto blk = std::max<int64_t>(16, static_cast<int64_t>(0.01 * sr));
-  const double x0 = x(0);
-  const double r0 = std::max(1e-4, (x(blk) - x0) / static_cast<double>(blk));  // input frames per frame at the start
-  // Pre-roll: frames before 0 on the map's start rate, over the input that
-  // exists before x(0).
-  const double lead = std::min(std::max(0.0, x0), static_cast<double>(e.blockSamples() + e.intervalSamples()));
-  const auto pre = std::min<int64_t>(static_cast<int64_t>(std::floor(lead / r0)), 4 * static_cast<int64_t>(e.blockSamples()));
-  const auto xq = [&](int64_t q) { return q < 0 ? x0 + static_cast<double>(q) * r0 : x(q); };
-  const int64_t q0 = -pre;
-  const auto base = static_cast<int64_t>(std::floor(xq(q0)));
-  // Start-up input: to where the map is one output latency in (the engine
-  // infers its starting rate from it), plus the input latency.
-  const int seekLength = std::max(inLat, static_cast<int>(std::llround(xq(q0 + outLat) + inLat)) - static_cast<int>(base));
-  e.outputSeek(PaddedIn{in, n, base}, seekLength);
-  int64_t fed = base + seekLength;  // input frames given to the engine so far
+// 0.7.8: the stream as a runner that can stop between its blocks (MappedStream): run() makes the
+// next block, so frames [0, done) are final as they come; stream() runs it to the end.
+struct StreamRun {
+  StreamRun(const float* const* in_, int nch_, int64_t n_, float* const* out_, int64_t len_, double sr, double outRate, Map x_,
+            double midPerOut_ = 1.0)
+      : in(in_), nch(nch_), n(n_), out(out_), len(len_), x(std::move(x_)), midPerOut(midPerOut_), e(kSeed), level(in_, nch_, n_) {
+    if (len <= 0) return;
+    configure(e, nch, sr);
+    inLat = e.inputLatency(), outLat = e.outputLatency();
+    guard.prepare(sr, outRate);
+    blk = std::max<int64_t>(16, static_cast<int64_t>(0.01 * sr));
+    x0 = x(0);
+    r0 = std::max(1e-4, (x(blk) - x0) / static_cast<double>(blk));  // input frames per frame at the start
+    // Pre-roll: frames before 0 on the map's start rate, over the input that
+    // exists before x(0).
+    const double lead = std::min(std::max(0.0, x0), static_cast<double>(e.blockSamples() + e.intervalSamples()));
+    const auto pre = std::min<int64_t>(static_cast<int64_t>(std::floor(lead / r0)), 4 * static_cast<int64_t>(e.blockSamples()));
+    q = -pre;
+    const auto base = static_cast<int64_t>(std::floor(xq(q)));
+    // Start-up input: to where the map is one output latency in (the engine
+    // infers its starting rate from it), plus the input latency.
+    const int seekLength = std::max(inLat, static_cast<int>(std::llround(xq(q + outLat) + inLat)) - static_cast<int>(base));
+    e.outputSeek(PaddedIn{in, n, base}, seekLength);
+    fed = base + seekLength;  // input frames given to the engine so far
+    scratch.assign(static_cast<size_t>(nch), std::vector<float>(static_cast<size_t>(blk), 0.0f));
+    sp.resize(static_cast<size_t>(nch));
+    for (int c = 0; c < nch; ++c) sp[static_cast<size_t>(c)] = scratch[static_cast<size_t>(c)].data();
+    at.resize(static_cast<size_t>(nch));
+  }
+  double xq(int64_t k) const { return k < 0 ? x0 + static_cast<double>(k) * r0 : x(k); }
+  bool finished() const { return len <= 0 || q >= len; }
+  int64_t done() const { return std::max<int64_t>(0, std::min(q, len)); }
   // The engine emits frame q + m + outLat's analysis once it has been fed up
   // to that frame's input position plus its input latency: feeding from the
   // map at that future frame keeps every frame where the map puts it (also
   // under tempo changes).
-  std::vector<std::vector<float>> scratch(static_cast<size_t>(nch), std::vector<float>(static_cast<size_t>(blk), 0.0f));
-  std::vector<float*> sp(static_cast<size_t>(nch));
-  for (int c = 0; c < nch; ++c) sp[static_cast<size_t>(c)] = scratch[static_cast<size_t>(c)].data();
-  std::vector<float*> at(static_cast<size_t>(nch));
-  for (int64_t q = q0; q < len;) {
+  void run() {
     // Pre-roll blocks end at 0, so no block straddles it.
     const int64_t m = q < 0 ? std::min(blk, -q) : std::min(blk, len - q);
     const auto want = static_cast<int64_t>(std::llround(xq(q + m + outLat) + inLat));
@@ -232,13 +229,48 @@ void stream(const float* const* in, int nch, int64_t n, float* const* out, int64
       dst = at.data();
     }
     const double lead = guard.lead(midPerOut);
+    const int64_t q1 = q;
     guard.apply(dst, nch, static_cast<int>(m), [&](int i) {
-      const double p = xq(q + i + static_cast<int64_t>(std::lround(lead)));
+      const double p = xq(q1 + i + static_cast<int64_t>(std::lround(lead)));
       return level.over(p - guard.window(), p);
     });
     fed += give;
     q += m;
-    if (q > 0 && pr && *pr) (*pr)(q);
+  }
+
+  const float* const* in;
+  int nch;
+  int64_t n;
+  float* const* out;
+  int64_t len;
+  Map x;
+  double midPerOut;
+  Spectral e;
+  Guard guard;
+  const SourceLevel level;
+  int inLat = 0, outLat = 0;
+  int64_t blk = 16;
+  double x0 = 0, r0 = 1;
+  int64_t q = 0, fed = 0;
+  std::vector<std::vector<float>> scratch;
+  std::vector<float*> sp, at;
+};
+
+// Renders frames [0, len) of one continuous stretch whose frame q plays
+// input position x(q) (non-decreasing; x(0) may lie inside the input).
+// The engine starts before frame 0 on the input that leads into x(0) (up to
+// one block and hop of it, silence before the input's start), so frame 0 is
+// already settled, and it is fed at its real latency all the way: frame q
+// is centred on x(q). Past the input's end it reads silence (its tail).
+// `out` must hold len frames; progress reports finished frames. sr: the
+// rate of the input's frames; outRate: the rate after the pitch resampler.
+void stream(const float* const* in, int nch, int64_t n, float* const* out, int64_t len, double sr, double outRate, const Map& x,
+            const Progress* pr, double midPerOut = 1.0) {
+  if (len <= 0) return;
+  StreamRun s(in, nch, n, out, len, sr, outRate, x, midPerOut);
+  while (!s.finished()) {
+    s.run();
+    if (s.q > 0 && pr && *pr) (*pr)(s.q);
   }
 }
 
@@ -588,6 +620,37 @@ void processMapped(const float* const* in, int nch, int64_t n, float* const* out
     stretchPitched(in, nch, n, out, outLen, sr, sr, p, srcAt, nullptr);
 }
 
+// ------------------------------------------------------------- pieces (0.7.8)
+
+struct MappedStream::Impl {
+  std::vector<const float*> in;
+  std::vector<float*> out;
+  std::unique_ptr<StreamRun> run;
+};
+
+MappedStream::MappedStream(const float* const* in, int nch, int64_t n, float* const* out, int64_t outLen, double sr,
+                           std::function<double(int64_t)> srcAt)
+    : impl_(std::make_unique<Impl>()), len_(std::max<int64_t>(0, outLen)) {
+  if (len_ <= 0 || nch <= 0) return;
+  impl_->in.assign(in, in + nch);
+  impl_->out.assign(out, out + nch);
+  for (int c = 0; c < nch; ++c) std::fill(out[c], out[c] + len_, 0.0f);
+  if (n <= 0) return;  // (silence, as processMapped)
+  impl_->run = std::make_unique<StreamRun>(impl_->in.data(), nch, n, impl_->out.data(), len_, sr, sr, std::move(srcAt));
+}
+
+MappedStream::~MappedStream() = default;
+
+void MappedStream::renderTo(int64_t frames) {
+  StreamRun* r = impl_->run.get();
+  if (!r) return;
+  frames = std::min(frames, len_);
+  while (!r->finished() && r->done() < frames) r->run();
+  if (r->finished()) impl_->run.reset();  // (the engine's memory goes as soon as it is done)
+}
+
+int64_t MappedStream::done() const { return impl_->run ? impl_->run->done() : len_; }
+
 // ------------------------------------------------------------- rendered clips
 
 namespace {
@@ -773,7 +836,7 @@ class Renderer {
     // K-64: a project's renders used to wait for one another on one thread (minutes on a large
     // project, all that time on realtime stretch voices): a few workers, below normal priority.
     if (threads_.size() < workerLimit() && threads_.size() < queue_.size() + static_cast<size_t>(busy_))
-      threads_.emplace_back([this] {
+      threads_.emplace_back([this] { gl::threads::setName("gl-stretch");
         platform::lowerThisThreadPriority();
         loop();
       });
@@ -848,6 +911,7 @@ class Renderer {
     for (;;) {
       work_.wait(lk, [this] { return quit_ || !queue_.empty(); });
       if (quit_) return;
+      gl::threads::woke();  // K-142: CPU report
       // K-64: the nearest ahead of the song position first, then the rest in the order they came.
       const double focus = focus_.load(std::memory_order_relaxed);
       auto best = queue_.begin();

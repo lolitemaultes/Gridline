@@ -67,6 +67,12 @@ struct Warp {
 // share (SongGroove::accent x the channel's swing mix). `p` null: song bars, those of the meter
 // in force at song tick `at`.
 Warp makeWarp(const Song& song, const Pattern* p, const GrooveShape& shape, double amount, double accent, Tick at = 0);
+// K-152: one cycle of a groove whose amount moves (swing automation): cell k starts where
+// `amount[k]` puts it and has `accent[k]`; `nextFirst` is the amount of the next cycle's first cell
+// (where this cycle ends). Use the result only for pattern ticks inside that cycle. Unlike
+// makeWarp, it is active whenever any of its anchors (its end included) moves.
+Warp makeCycleWarp(const Song& song, const Pattern* p, const GrooveShape& shape, const double* amount, const double* accent,
+                   double nextFirst, Tick at = 0);
 
 // ---- presets ----
 struct Preset {

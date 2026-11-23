@@ -57,9 +57,16 @@ std::map<Key, double>& reopen() {  // targets to show again once their new insta
   return m;
 }
 
+std::string gDevPress;  // dev: a bar button pressed by name ("prev", "sandbox", ...) the next time a bar draws it
+
 bool barButton(const char* id, const lay::Rect& r, float y0) {
   ImGui::SetCursorPos(ImVec2(static_cast<float>(r.x), y0 + static_cast<float>(r.y)));
-  return ImGui::InvisibleButton(id, ImVec2(static_cast<float>(r.w), static_cast<float>(r.h)));
+  const bool hit = ImGui::InvisibleButton(id, ImVec2(static_cast<float>(r.w), static_cast<float>(r.h)));
+  if (!gDevPress.empty() && gDevPress == id + 2) {
+    gDevPress.clear();
+    return true;
+  }
+  return hit;
 }
 
 void boxAt(ImDrawList* dl, ImVec2 p0, ImVec2 p1, ImU32 fill, ImU32 edge) {
@@ -88,7 +95,7 @@ void drawBar(pluginbar::Bar& w, host::HostedInstance* hi) {
   const float W = static_cast<float>(w.L.w), H = static_cast<float>(w.L.bar.h);
   dl->AddRectFilledMultiColor(ImVec2(o.x, by), ImVec2(o.x + W, by + H), K.top, K.top, K.bottom, K.bottom);
   dl->AddLine(ImVec2(o.x, by + 0.5f), ImVec2(o.x + W, by + 0.5f), K.edge, 1.0f);
-  const lay::BarLayout B = lay::layoutBar(w.L.w, t.isChannel());
+  const lay::BarLayout B = lay::layoutBar(w.L.w, t.isChannel(), w.dock);
   auto R = [&](lay::BarItem it, ImVec2& p0, ImVec2& p1) {
     const lay::Rect& r = B.items[it];
     p0 = ImVec2(o.x + static_cast<float>(r.x), by + static_cast<float>(r.y));
@@ -193,6 +200,16 @@ void drawBar(pluginbar::Bar& w, host::HostedInstance* hi) {
     boxAt(dl, p0, p1, ImGui::IsItemHovered() ? K.btnHov : K.btn, K.edge);
     ui::drawIcon(dl, ui::Icon::RouteFree, ImVec2(std::round((p0.x + p1.x) * 0.5f), std::round((p0.y + p1.y) * 0.5f)), 13.0f, K.text);
     if (clicked) chanroute::routeToFree(a, t.owner);
+  }
+
+  // 0.7.8: the interface into Gridline, as a built-in editor (inside its plugin window).
+  if (w.dock && B.visible[lay::kBarDock]) {
+    R(lay::kBarDock, p0, p1);
+    const bool clicked = barButton("##dockin", B.items[lay::kBarDock], 0);
+    ui::Hint("Put this plugin inside Gridline (it opens there from now on)");
+    boxAt(dl, p0, p1, ImGui::IsItemHovered() ? K.btnHov : K.btn, K.edge);
+    ui::drawIconGlyph(dl, ui::Icon::WindowDockin, ImVec2(std::round((p0.x + p1.x) * 0.5f), std::round((p0.y + p1.y) * 0.5f)), 7.0f, 1.3f, K.text);
+    if (clicked) w.action = pluginbar::Action::Dock;
   }
 
   // CPU / latency readout.
@@ -312,6 +329,9 @@ void runAction(App& a, const PluginTarget& t, const std::string& type, Action ac
     case Action::Close:
       closeHostedEditor(a, t);
       break;
+    case Action::Dock:
+      hostedui::putInterfaceInside(a, t, true);
+      break;
     case Action::None:
       break;
   }
@@ -323,7 +343,7 @@ void reopenPending(App& a) {
       ++it;
       continue;
     }
-    if (it->second == 0) it->second = a.now + 5.0;  // give up after a few seconds
+    if (it->second == 0) it->second = a.now + 15.0;  // give up after a while (a sandbox can take seconds to start)
     bool done = a.now > it->second;
     // Find the target by key among the song's hosted plugins.
     const Song& s = a.doc.song();
@@ -336,6 +356,9 @@ void reopenPending(App& a) {
     if (found.owner == kNoId) done = true;
     if (!done) {
       host::HostedInstance* hi = hostedInstanceFor(a, found);
+      // 0.7.8 (GitHub #46 check): after the sandbox switch the old instance runs on for a few frames;
+      // opening on it showed the interface and lost it when the new one replaced it. Wait for the new one.
+      if (hi && hi->sandboxed() != host::runsInSandbox(hi->hostedClass().type)) hi = nullptr;
       if (hi && !hi->crashed()) {
         if (hi->backend()->editorAvailable() && !host::hostOptions(hi->hostedClass().type).genericEditor) openHostedEditor(a, found);
         done = true;
@@ -344,6 +367,8 @@ void reopenPending(App& a) {
     it = done ? reopen().erase(it) : std::next(it);
   }
 }
+
+void devPress(const std::string& name) { gDevPress = name; }
 
 }  // namespace pluginbar
 
@@ -364,6 +389,7 @@ void routePluginWindows(App& a) {
   }
   auto route = [&a](const PluginTarget& t) {
     if (panelRequested().count(Key{&a, t.key()}) || !wantsNative(a, t)) return;
+    if (hostedui::opensInside(a, t)) return;  // 0.7.8: the pane shows the interface itself
     if (openHostedEditor(a, t))
       hidePanel(a, t);
     else
@@ -377,6 +403,28 @@ void routePluginWindows(App& a) {
 
 bool pluginWindowShown(App& a, const PluginTarget& t) { return hostedEditorOpen(t) || panelShowing(a, t); }
 
+bool hostedui::showsInterfaceInside(App& a, const PluginTarget& t) {
+  if (!panelShowing(a, t) || panelRequested().count(Key{&a, t.key()})) return false;
+  return wantsNative(a, t) && opensInside(a, t);
+}
+
+void hostedui::showInside(App& a, const PluginTarget& t) {
+  panelRequested().erase(Key{&a, t.key()});
+  if (t.isChannel()) {
+    if (layoutui::active() == layout::Preset::Tracker) {  // the Tracker's plugin window (its lower band keeps its own screen)
+      trackereditors::openPluginWindow(a, t.owner);
+      return;
+    }
+    a.settingsChannel = t.owner;
+    a.focusWindow = "###channelsettings";
+  } else {
+    a.fxEditor = {t.owner, t.slot};
+    a.focusWindow = "###fxeditor";
+  }
+}
+
+void hostedui::hidePane(App& a, const PluginTarget& t) { hidePanel(a, t); }
+
 namespace {
 // K-314 (A-01): the instrument window the other layouts had open (App::settingsChannel) while the
 // Tracker's lower band uses that field for its own screen: saved with the project from the Tracker and
@@ -385,6 +433,7 @@ struct ParkedChannel {
   int wasTracker = -1;  // (-1: not yet seen)
   ObjectId channel = kNoId;
   uint64_t epoch = 0;
+  bool bandTook = false;  // K-391: the band held the settings last (not a floating window)
 };
 ParkedChannel gParked;
 
@@ -398,10 +447,15 @@ void trackerChannelFrame(App& a) {
   const bool keptOnLoad = gParked.wasTracker < 0 && gParked.channel != kNoId && gParked.epoch == a.doc.projectEpoch();
   if (gParked.wasTracker != 1 && tracker && !keptOnLoad) {
     gParked.channel = a.settingsChannel, gParked.epoch = a.doc.projectEpoch();
-  } else if (gParked.wasTracker == 1 && !tracker && !trackereditors::pluginWindowOpen(a)) {
-    const ObjectId ch = parkedChannel(a);  // ("Open plugin window" in the Tracker: that window stays)
+    gParked.bandTook = false;
+  } else if (gParked.wasTracker == 1 && !tracker && (trackereditors::bandHolds(a) || (a.settingsChannel == kNoId && gParked.bandTook))) {
+    const ObjectId ch = parkedChannel(a);  // (K-391: a window floating in the Tracker stays open, as it does in Studio)
     a.settingsChannel = ch != kNoId && a.doc.song().channel(ch) ? ch : kNoId;
   }
+  // K-391: the Tracker's band took the settings for its own screen (the window then closed), or a
+  // window floated there since (what is open on the way out stays).
+  if (tracker && trackereditors::bandHolds(a)) gParked.bandTook = true;
+  else if (tracker && trackereditors::pluginWindowOpen(a)) gParked.bandTook = false;
   if (!tracker) {
     gParked.channel = kNoId;
   }
@@ -472,6 +526,10 @@ void togglePluginWindow(App& a, const PluginTarget& t) {
   }
   if (panelShowing(a, t)) {
     hidePanel(a, t);
+    return;
+  }
+  if (hostedui::opensInside(a, t) && wantsNative(a, t)) {  // 0.7.8: its interface inside Gridline, in its window
+    hostedui::showInside(a, t);
     return;
   }
   if (t.isChannel())

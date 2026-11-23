@@ -17,12 +17,16 @@
 // tools run on the thread that owns the Document; renders and exports run on
 // worker threads (Environment::jobs) and their replies are sent by later polls.
 #pragma once
+#include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 #include "Mcp.h"
 #include "McpListen.h"
@@ -80,6 +84,13 @@ class HttpServer {
   // Accepts, reads and answers; waits at most timeoutMs for activity.
   void poll(const Handler& handler, int timeoutMs = 0);
   size_t connections() const { return conns_.size(); }
+  // K-142 (0.7.8 follow-up): a thread of its own (gl-mcp-watch) waits while the server runs for what
+  // a poll would take (a client connecting, a request arriving, a reply ready to go out) and calls
+  // `knock` from there (the app wakes its interface, which polls the server in its next turn, also
+  // while it draws nothing); then it waits for that poll before it looks again. Once started, until
+  // stop(). A streamed reply (a job's progress) still needs the poller's own turns.
+  bool watch(std::function<void()> knock);
+  uint64_t knocks() const { return knocks_.load(std::memory_order_relaxed); }  // (tests)
 
  private:
   struct Conn {
@@ -92,7 +103,21 @@ class HttpServer {
     uint32_t peer = 0x7F000001u;
   };
   void closeConn(size_t i);
+  void stopWatch();
+  static short watchEvents(const Conn& c);
   listen::Policy policy_;
+  // K-142 (follow-up): the watcher, its wake pair (a byte on wakeW_ ends its wait) and the count of
+  // polls it waits on after a knock.
+  std::thread watch_;
+  std::atomic<bool> watchStop_{false};
+  std::intptr_t wakeR_ = -1, wakeW_ = -1;
+  std::mutex watchMu_;
+  std::condition_variable watchCv_;
+  uint64_t polls_ = 0;
+  bool watchWaiting_ = false;
+  std::vector<std::pair<std::intptr_t, short>> watchConns_;  // the open connections, as the last poll left them
+  uint64_t connGen_ = 0, watchGen_ = 0;  // connections opened and closed (a number used again is another one)
+  std::atomic<uint64_t> knocks_{0};
   std::intptr_t fd_ = -1;
   int port_ = 0;
   std::vector<Conn> conns_;
@@ -136,6 +161,7 @@ class HttpEndpoint {
   const std::string& token() const { return token_; }
   void setToken(std::string t) { token_ = std::move(t); }
   void poll(int timeoutMs = 0);
+  bool watch(std::function<void()> knock) { return server_.watch(std::move(knock)); }  // K-142 (follow-up)
   // One request through the endpoint logic (also used by tests without sockets).
   HttpServer::Response handle(const HttpServer::Request& r);
   size_t sessionCount() const { return sessions_.size(); }

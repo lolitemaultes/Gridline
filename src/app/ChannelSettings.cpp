@@ -1,6 +1,7 @@
 // Gridline — channel settings window: strip, routing, instrument parameters,
 // sample loading and waveform for the sampler.
 #include <algorithm>
+#include "MacroUi.h"
 #include "LayoutStyleUi.h"
 #include "EditorZoomUi.h"
 #include "KeyGlide.h"
@@ -12,6 +13,9 @@
 #include <functional>
 #include <string>
 #include <utility>
+#include "../core/ClipWindow.h"
+#include "ClipEditor.h"
+#include "../core/Macros.h"
 #include "../core/I18n.h"
 #include "../core/WindowPlacement.h"
 #include "../../third_party/imgui/imgui.h"
@@ -21,8 +25,11 @@
 #include "LogicPlugins.h"
 #include "GamepadUi.h"
 #include "LayoutPresets.h"
+#include "../core/MixerOps.h"
 #include "../host/HostedPlugins.h"
+#include "../host/PluginScan.h"
 #include "HostedUi.h"
+#include "PluginWindowBar.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "PluginUI.h"
@@ -221,8 +228,10 @@ float& stripContentH(App& a) {
 }  // namespace
 
 // ---- Note settings: tuning, time, polyphony / porta, cut groups, echo,
-// layer children and display group of a channel.
-static void drawNoteSettings(App& a, ObjectId id) {
+// layer children and display group of a channel. `part` -1: all of them (Windows.h).
+void drawNoteSettingsPart(App& a, ObjectId id, int part) { drawNoteSettingsPart(a, id, part, nullptr); }
+
+void drawNoteSettingsPart(App& a, ObjectId id, int part, const NoteGrid* grid) {
   const Song& s = a.doc.song();
   const Channel* c = s.channel(id);
   if (!c) return;
@@ -238,9 +247,54 @@ static void drawNoteSettings(App& a, ObjectId id) {
     d.def = def;
     return d;
   };
-  // One knob cell (knob, value, name). `set` writes the value into the channel.
+  // One knob cell (knob, value, name). `set` writes the value into the channel. A name wider than
+  // its cell shows `shortName` instead (the full name in its tooltip and the hint bar).
+  int gridKnob = 0, gridToggle = 0, gridList = 0;  // (on the grid: the part's knobs, toggles and lists so far)
   auto knob = [&](const char* key, double v, const ParamDesc& d, bool bipolar, const std::function<void(Channel&, double)>& set,
-                  const char* valueText = nullptr) {
+                  const char* valueText = nullptr, const char* shortName = nullptr) {
+    // (the name under the cell, the full one in a tooltip when it is the short one)
+    auto nameFor = [&](ImFont* f, float fs, float room) -> const char* {
+      if (!shortName || f->CalcTextSizeA(fs, 1e9f, 0, d.name.c_str()).x <= room) return d.name.c_str();
+      return i18n::tr(shortName);
+    };
+    auto fullNameTip = [&](const char* shown, ImVec2 p, ImVec2 sz) {
+      if (shown == d.name.c_str()) return;
+      ImGui::SetCursorScreenPos(p);
+      ImGui::InvisibleButton("##name", ImVec2(std::max(1.0f, sz.x), std::max(1.0f, sz.y)));
+      ui::Tooltip(d.name.c_str());
+    };
+    if (grid) {  // the module grid: the name above, the knob, its value below, centred in the cell
+      float gw = 64;
+      const ImVec2 at = grid->place(0, gridKnob++, gw);
+      const float r = grid->knobRadius, cx = std::round(at.x + gw * 0.5f);
+      ImGui::PushID(key);
+      ImDrawList* gdl = ImGui::GetWindowDrawList();
+      ImFont* uf = ImGui::GetFont();
+      auto centred = [&](ImFont* f, const std::string& t, float y, ImU32 col) {
+        const float tw = f->CalcTextSizeA(11.0f, 1e9f, 0, t.c_str()).x;
+        if (tw > gw) theme::textEllipsis(gdl, f, 11.0f, ImVec2(at.x, y), gw, col, t.c_str());
+        else gdl->AddText(f, 11.0f, ImVec2(std::round(cx - tw * 0.5f), y), col, t.c_str());
+      };
+      const char* shown = nameFor(uf, 11.0f, gw);
+      centred(uf, shown, at.y, P.textDim);
+      {
+        const float nw = std::min(gw, uf->CalcTextSizeA(11.0f, 1e9f, 0, shown).x);
+        fullNameTip(shown, ImVec2(std::round(cx - nw * 0.5f), at.y), ImVec2(nw, 12.0f));
+      }
+      ImGui::SetCursorScreenPos(ImVec2(cx - r, at.y + grid->knobOff));
+      bool rel = false;
+      double nv = v;
+      if (ui::Knob("k", &nv, d, r, nullptr, bipolar, &rel)) {
+        std::string label = std::string("change channel ") + d.name;
+        for (auto& ch : label) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        a.doc.editChannel(id, label, [&](Channel& ch) { set(ch, d.clamp(nv)); }, 0x4E53000000000000ull ^ (static_cast<uint64_t>(id) << 8) ^ std::hash<std::string>{}(key));
+      }
+      if (shortName && ImGui::IsItemHovered() && !ImGui::IsItemActive()) ui::Tooltip(d.name.c_str());
+      if (rel) a.doc.endGesture();
+      centred(a.fontMono ? a.fontMono : uf, valueText ? std::string(valueText) : d.format(v), at.y + grid->valueOff, P.text);
+      ImGui::PopID();
+      return;
+    }
     ImGui::PushID(key);
     ImGui::BeginGroup();
     float x = ImGui::GetCursorPosX();
@@ -260,16 +314,18 @@ static void drawNoteSettings(App& a, ObjectId id) {
     ImGui::TextColored(theme::vec(P.text), "%s", val.c_str());
     ImGui::PopFont();
     ImGui::PushFont(nullptr, 11.0f);
-    ts = ImGui::CalcTextSize(d.name.c_str());
-    // hunt-1119: a name wider than its cell ("Mod X per echo") ran into the next cell's name; it is set a
-    // little smaller to fit, on the same line.
+    // A name wider than its cell ("Mod X per echo") shows its short form, the full one in a tooltip;
+    // hunt-1119: one still wider is set a little smaller to fit, on the same line.
+    const char* shown = nameFor(ImGui::GetFont(), 11.0f, cell - 4);
+    ts = ImGui::CalcTextSize(shown);
     if (ts.x > cell - 4) {
       ImGui::PopFont();
       ImGui::PushFont(nullptr, std::max(8.0f, 11.0f * (cell - 4) / ts.x));
-      ts = ImGui::CalcTextSize(d.name.c_str());
+      ts = ImGui::CalcTextSize(shown);
     }
     ImGui::SetCursorPosX(x + std::max(0.0f, (cell - ts.x) * 0.5f));
-    ImGui::TextColored(theme::vec(P.textDim), "%s", d.name.c_str());
+    ImGui::TextColored(theme::vec(P.textDim), "%s", shown);
+    if (shown != d.name.c_str()) ui::Tooltip(d.name.c_str());
     ImGui::PopFont();
     ImGui::SetCursorPosX(x);
     ImGui::Dummy(ImVec2(cell, 0));
@@ -277,13 +333,28 @@ static void drawNoteSettings(App& a, ObjectId id) {
     ImGui::PopID();
   };
   auto toggle = [&](const char* label, bool on, const char* hint, const std::function<void(Channel&)>& flip) {
-    if (ui::TextButton(label, on, 80, hint)) a.doc.editChannel(id, std::string("toggle ") + label, flip);
+    float tw = 80;
+    if (grid) ImGui::SetCursorScreenPos(grid->place(1, gridToggle++, tw));
+    if (ui::TextButton(label, on, tw, hint)) a.doc.editChannel(id, std::string("toggle ") + label, flip);
+  };
+  // A list: on the grid at its place, its name in its preview ("Pressure: Level"); else at the cursor.
+  auto listAt = [&](const char* name, const char* value, float& w) -> std::string {
+    if (!grid) return value;
+    ImGui::SetCursorScreenPos(grid->place(2, gridList++, w));
+    return name && *name ? std::string(name) + ": " + value : std::string(value);
   };
   char buf[48];
+  // The Audio clip window draws each part in a card of its own (its caption the part's heading).
+  const bool all = part < 0;
+  auto on = [&](int k) { return all || part == k; };
+  auto heading = [&](const char* t) {
+    if (all) ui::Label(t);
+  };
 
   // Tuning & time.
+  if (on(0)) {
   ImGui::BeginGroup();
-  ui::Label("TUNE & TIME");
+  heading("TUNE & TIME");
   ui::SetNextKnobStep(1);
   knob("fine", c->fine, desc("Fine", "ct", -200, 200, 0), true, [](Channel& ch, double v) { ch.fine = static_cast<int>(std::lround(v)); });
   ImGui::SameLine(0, 0);
@@ -300,10 +371,12 @@ static void drawNoteSettings(App& a, ObjectId id) {
   std::snprintf(buf, sizeof buf, "%.3f beat", c->timeShift);
   knob("shift", c->timeShift, desc("Shift", "", 0, 1, 0), false, [](Channel& ch, double v) { ch.timeShift = static_cast<float>(v); }, buf);
   ImGui::EndGroup();
-  ImGui::SameLine(0, theme::kS4);
+  }
+  if (all) ImGui::SameLine(0, theme::kS4);
   // Polyphony.
+  if (on(1)) {
   ImGui::BeginGroup();
-  ui::Label("POLYPHONY");
+  heading("POLYPHONY");
   std::snprintf(buf, sizeof buf, "%s", c->polyphony == 0 ? "all" : std::to_string(c->polyphony).c_str());
   ui::SetNextKnobStep(1);
   knob("voices", c->polyphony, desc("Voices", "", 0, 64, 0), false, [](Channel& ch, double v) { ch.polyphony = static_cast<int>(std::lround(v)); }, buf);
@@ -318,14 +391,16 @@ static void drawNoteSettings(App& a, ObjectId id) {
          [](Channel& ch) { ch.porta = !ch.porta; });
   ImGui::EndGroup();
   ImGui::EndGroup();
-  ImGui::SameLine(0, theme::kS4);
+  }
+  if (all) ImGui::SameLine(0, theme::kS4);
   // Cut groups. fix-1119: on the next line when the row has no room for them (pitch-1118's Bend range
   // knob widened the row past the window's 600 px: Cut by was drawn under its right edge, out of reach).
-  if (ImGui::GetContentRegionAvail().x < 2 * cell) {
+  if (all && ImGui::GetContentRegionAvail().x < 2 * cell) {
     ImGui::NewLine();
   }
+  if (on(2)) {
   ImGui::BeginGroup();
-  ui::Label("CUT GROUP");
+  heading("CUT GROUP");
   std::snprintf(buf, sizeof buf, "%s", c->cutGroup ? std::to_string(c->cutGroup).c_str() : "off");
   ui::SetNextKnobStep(1);
   knob("cut", c->cutGroup, desc("Cuts", "", 0, kMaxCutGroups, 0), false, [](Channel& ch, double v) { ch.cutGroup = static_cast<int>(std::lround(v)); }, buf);
@@ -337,17 +412,23 @@ static void drawNoteSettings(App& a, ObjectId id) {
   ui::Hint("This channel is cut by notes of channels in this group (same number in both = cuts itself)");
   ImGui::EndGroup();
 
-  ImGui::Dummy(ImVec2(0, theme::kS1));
+  }
+  if (all) ImGui::Dummy(ImVec2(0, theme::kS1));
   // K-144: per-note expression (MPE controllers, note pressure and timbre lanes).
+  if (on(3)) {
   ImGui::BeginGroup();
-  ui::Label(i18n::tr("EXPRESSION"));
+  heading(i18n::tr("EXPRESSION"));
   {
     static const char* uses[] = {i18n::N_("Instrument's choice"), i18n::N_("Off"), i18n::N_("Level"), i18n::N_("Brightness")};
     auto useCombo = [&](const char* key, const char* name, ExprUse cur, const char* hint, ExprUse ExprSettings::*field) {
-      ImGui::AlignTextToFramePadding();
-      ImGui::TextColored(theme::vec(P.textDim), "%s", name);
-      ImGui::SameLine(0, theme::kS1);
-      if (ui::BeginCombo(key, i18n::tr(uses[static_cast<int>(cur)]), 150)) {
+      float lw = 150;
+      if (!grid) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(theme::vec(P.textDim), "%s", name);
+        ImGui::SameLine(0, theme::kS1);
+      }
+      const std::string pv = listAt(name, i18n::tr(uses[static_cast<int>(cur)]), lw);
+      if (ui::BeginCombo(key, pv.c_str(), lw)) {
         for (int k = 0; k < 4; ++k)
           if (ImGui::Selectable(i18n::tr(uses[k]), k == static_cast<int>(cur)) && k != static_cast<int>(cur))
             a.doc.editChannel(id, "change channel expression", [k, field](Channel& ch) { ch.expr.*field = static_cast<ExprUse>(k); });
@@ -357,14 +438,16 @@ static void drawNoteSettings(App& a, ObjectId id) {
     };
     toggle(i18n::tr("Note bend"), c->expr.pitch, i18n::tr("Per-note pitch from an MPE controller bends each note on its own"),
            [](Channel& ch) { ch.expr.pitch = !ch.expr.pitch; });
-    ImGui::SameLine(0, theme::kS2);
+    if (all) ImGui::SameLine(0, theme::kS2);
     useCombo("##xpress", i18n::tr("Pressure"), c->expr.pressure, i18n::tr("What pressing harder on a held note does"), &ExprSettings::pressure);
-    ImGui::SameLine(0, theme::kS2);
+    if (all) ImGui::SameLine(0, theme::kS2);
     useCombo("##xtimbre", i18n::tr("Timbre"), c->expr.timbre, i18n::tr("What sliding on a held note (CC 74) does"), &ExprSettings::timbre);
     if (c->plugin.type == "gl.midiout") {  // K-99: MPE out
       const bool on = static_cast<int>(c->plugin.params.size()) > pp::MoMpe && c->plugin.params[pp::MoMpe] > 0.5f;
-      ImGui::SameLine(0, theme::kS2);
-      if (ui::TextButton(i18n::tr("MPE out"), on, 80,
+      if (all) ImGui::SameLine(0, theme::kS2);
+      float mw = 80;
+      if (grid) ImGui::SetCursorScreenPos(grid->place(1, gridToggle++, mw));
+      if (ui::TextButton(i18n::tr("MPE out"), on, mw,
                          i18n::tr("Every note on its own MIDI channel (2 to 16) with its own pitch bend, pressure and CC 74; channel 1 is the master")))
         a.doc.setParam(ParamId{id, kChannelPluginBase + static_cast<uint32_t>(pp::MoMpe)}, on ? 0.0 : 1.0, false);
     }
@@ -373,10 +456,12 @@ static void drawNoteSettings(App& a, ObjectId id) {
   ImGui::SameLine(0, theme::kS2);
   std::snprintf(buf, sizeof buf, "%d%%", static_cast<int>(std::lround(c->expr.amount * 100)));
   knob("xamount", c->expr.amount, desc("Amount", "", 0, 1, 1), false, [](Channel& ch, double v) { ch.expr.amount = static_cast<float>(v); }, buf);
-  ImGui::Dummy(ImVec2(0, theme::kS1));
+  }
+  if (all) ImGui::Dummy(ImVec2(0, theme::kS1));
   // Echo.
+  if (on(4)) {
   ImGui::BeginGroup();
-  ui::Label("ECHO");
+  heading("ECHO");
   std::snprintf(buf, sizeof buf, "%s", c->echo.count ? std::to_string(c->echo.count).c_str() : "off");
   ui::SetNextKnobStep(1);
   knob("ecount", c->echo.count, desc("Echoes", "", 0, 10, 0), false, [](Channel& ch, double v) { ch.echo.count = static_cast<int>(std::lround(v)); }, buf);
@@ -391,25 +476,30 @@ static void drawNoteSettings(App& a, ObjectId id) {
   ImGui::SameLine(0, 0);
   ui::SetNextKnobStep(1);
   knob("epitch", c->echo.pitch, desc("Pitch", "ct", -1200, 1200, 0), true, [](Channel& ch, double v) { ch.echo.pitch = static_cast<int>(std::lround(v)); });
-  ImGui::SameLine(0, 0);
-  knob("emodx", c->echo.modX, desc("Mod X per echo", "%", -1, 1, 0), true, [](Channel& ch, double v) { ch.echo.modX = static_cast<float>(v); });
-  ImGui::SameLine(0, 0);
-  knob("emody", c->echo.modY, desc("Mod Y per echo", "%", -1, 1, 0), true, [](Channel& ch, double v) { ch.echo.modY = static_cast<float>(v); });
+  ImGui::SameLine(0, 8);  // (the two long names, "Mod X per echo" and "Mod Y per echo": their short forms where they do not fit)
+  knob("emodx", c->echo.modX, desc("Mod X per echo", "%", -1, 1, 0), true, [](Channel& ch, double v) { ch.echo.modX = static_cast<float>(v); }, nullptr,
+       i18n::N_("Mod X/echo"));
+  ImGui::SameLine(0, 8);
+  knob("emody", c->echo.modY, desc("Mod Y per echo", "%", -1, 1, 0), true, [](Channel& ch, double v) { ch.echo.modY = static_cast<float>(v); }, nullptr,
+       i18n::N_("Mod Y/echo"));
   ImGui::SameLine(0, 4);
   toggle("Ping-pong", c->echo.pingPong, "Echoes alternate between the pan position and its mirror",
          [](Channel& ch) { ch.echo.pingPong = !ch.echo.pingPong; });
   ImGui::EndGroup();
-  ImGui::SameLine(0, theme::kS4);
+  }
+  if (all) ImGui::SameLine(0, theme::kS4);
   // hunt-1119: on the next line when the row has no room for its 150 px lists (the echo row filled the
   // window's width: Layer and Display group were cut off at its right edge, out of reach).
-  if (ImGui::GetContentRegionAvail().x < 150) {
+  if (all && ImGui::GetContentRegionAvail().x < 150) {
     ImGui::NewLine();
   }
   // Layer + display group.
+  if (on(5)) {
   ImGui::BeginGroup();
-  ui::Label("LAYER");
-  std::string preview = c->layer.empty() ? "No children" : std::to_string(c->layer.size()) + " children";
-  if (ui::BeginCombo("##layer", preview.c_str(), 150)) {
+  if (!grid) ui::Label("LAYER");
+  float lw = 150;
+  const std::string preview = listAt(i18n::tr("Layer"), c->layer.empty() ? "No children" : (std::to_string(c->layer.size()) + " children").c_str(), lw);
+  if (ui::BeginCombo("##layer", preview.c_str(), lw)) {
     for (const auto& o : s.channels) {
       if (o.id == id) continue;
       bool on = std::find(c->layer.begin(), c->layer.end(), o.id) != c->layer.end();
@@ -429,7 +519,9 @@ static void drawNoteSettings(App& a, ObjectId id) {
     int m = c->layerMode;
     const char* hints[] = {"Every child plays each note", "One child, picked at random, plays each note", "The children take turns, one note each",
                            "A random child each note, never the same one twice in a row"};
-    if (ui::BeginCombo("##lmode", i18n::tr(modes[std::clamp(m, 0, 3)]), 150)) {
+    float mw = 150;
+    const std::string mpv = listAt(i18n::tr("Mode"), i18n::tr(modes[std::clamp(m, 0, 3)]), mw);
+    if (ui::BeginCombo("##lmode", mpv.c_str(), mw)) {
       for (int k = 0; k < 4; ++k) {
         if (ImGui::Selectable(i18n::tr(modes[k]), k == m) && k != m) a.doc.editChannel(id, "layer mode", [k](Channel& ch) { ch.layerMode = k; });
         ui::Hint(hints[k]);
@@ -438,10 +530,14 @@ static void drawNoteSettings(App& a, ObjectId id) {
     }
     ui::Hint("How the children share the notes");
   }
-  ImGui::Dummy(ImVec2(0, 2));
-  ui::Label("DISPLAY GROUP");
+  if (!grid) {
+    ImGui::Dummy(ImVec2(0, 2));
+    ui::Label("DISPLAY GROUP");
+  }
   const char* gname = c->group >= 0 && static_cast<size_t>(c->group) < s.channelGroups.size() ? s.channelGroups[static_cast<size_t>(c->group)].c_str() : "None";
-  if (ui::BeginCombo("##dgroup", gname, 150)) {
+  float gw = 150;
+  const std::string gpv = listAt(i18n::tr("Group"), gname, gw);
+  if (ui::BeginCombo("##dgroup", gpv.c_str(), gw)) {
     if (ImGui::Selectable(i18n::tr("None"), c->group < 0)) a.doc.editChannel(id, "ungroup channel", [](Channel& ch) { ch.group = -1; });
     for (size_t g = 0; g < s.channelGroups.size(); ++g)
       if (ImGui::Selectable((s.channelGroups[g] + "##dg" + std::to_string(g)).c_str(), c->group == static_cast<int>(g)))
@@ -450,13 +546,17 @@ static void drawNoteSettings(App& a, ObjectId id) {
   }
   ui::Hint("Display group shown by the channel rack's group filter");
   ImGui::EndGroup();
-  ImGui::Dummy(ImVec2(0, theme::kS1));
+  }
+  if (all) ImGui::Dummy(ImVec2(0, theme::kS1));
   // MIDI input port: the channel plays what MIDI Out channels and plugins send on that port.
+  if (on(5)) {
   ImGui::BeginGroup();
-  ui::Label(i18n::tr("MIDI INPUT"));
+  if (!grid) ui::Label(i18n::tr("MIDI INPUT"));
   {
     auto portName = [](int p) { return p < 0 ? std::string(i18n::tr("None")) : i18n::tr("Port") + std::string(" ") + std::to_string(p); };
-    if (ui::BeginCombo("##midiin", portName(c->midiInPort).c_str(), 150)) {
+    float pw = 150;
+    const std::string ppv = listAt(i18n::tr("MIDI in"), portName(c->midiInPort).c_str(), pw);
+    if (ui::BeginCombo("##midiin", ppv.c_str(), pw)) {
       for (int p = -1; p < 64; ++p)
         if (ImGui::Selectable(portName(p).c_str(), p == c->midiInPort) && p != c->midiInPort)
           a.doc.editChannel(id, "MIDI input port", [p](Channel& ch) { ch.midiInPort = p; });
@@ -473,9 +573,16 @@ static void drawNoteSettings(App& a, ObjectId id) {
           from += (from.empty() ? "" : ", ") + s.channels[i].name;
       bool loop = false;
       for (const auto& l : loops) loop = loop || l.second == id;
-      ImGui::SameLine(0, theme::kS2);
-      ImGui::AlignTextToFramePadding();
-      ImGui::PushTextWrapPos(0);
+      if (grid) {  // (in the note text's place)
+        float tw = 200;
+        const ImVec2 at = grid->place(3, 0, tw);
+        ImGui::SetCursorScreenPos(at);
+        ImGui::PushTextWrapPos(at.x + tw);
+      } else {
+        ImGui::SameLine(0, theme::kS2);
+        ImGui::AlignTextToFramePadding();
+        ImGui::PushTextWrapPos(0);
+      }
       if (loop)
         ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("A sender on this port also listens to this channel: that link is left out"));
       else if (from.empty())
@@ -486,6 +593,7 @@ static void drawNoteSettings(App& a, ObjectId id) {
     }
   }
   ImGui::EndGroup();
+  }
 }
 
 // The strip's content: volume / pan / pitch knobs and a two-octave preview
@@ -591,10 +699,88 @@ bool pluginWindowDevCommand(App& a, const std::string& cmd, const std::vector<st
     } else if (what == "at" && args.size() > 2) {  // at <x> <y>: the channel window's top-left corner (tests)
       devPlace = ImVec2(static_cast<float>(std::atof(args[1].c_str())), static_cast<float>(std::atof(args[2].c_str())));
       devPlaceFrames = 4;
+    } else if (what == "pick" && args.size() > 3) {  // 0.7.8: pick <mixer index> <slot> <type>: chosen in the slot's effect list (no engine sync first)
+      const size_t mi = static_cast<size_t>(std::max(0, std::atoi(args[1].c_str())));
+      const int k = std::atoi(args[2].c_str());
+      devRecordHostedDraws(true);
+      if (mi < s.mixer.size()) {
+        const ObjectId id = s.mixer[mi].id;
+        if (a.doc.setSlotPlugin(id, k, args[3])) pui::pluginReplaced(PluginTarget{id, k});
+        a.fxEditor = {id, k};
+        a.selMixer = id;  // its inspector rows show it too
+        a.settingsChannel = kNoId;
+      }
+    } else if (what == "moveto" && args.size() > 2) {  // 0.7.8: moveto <x> <y>: the first plugin window to that place of the main window
+      const bool ok = devMoveHostedEditor(std::atoi(args[1].c_str()), std::atoi(args[2].c_str()));
+      std::printf("plugwin frame %d: moveto %s\n", frame, ok ? "done" : "no window");
+      std::fflush(stdout);
+    } else if (what == "dialog") {  // 0.7.8: a dialog (Save as template, as File > Save as template...)
+      a.showSaveTemplate = true;
+    } else if (what == "nodialog") {
+      a.showSaveTemplate = false;
+    } else if (what == "notify" && args.size() > 1) {  // 0.7.8: notify <text>: a notification card
+      a.notify(args[1]);
+    } else if (what == "step" && args.size() > 3) {  // 0.7.8: step <mixer index> <slot> <steps>: the effect moved down (up: negative), as the wheel does
+      const size_t mi = static_cast<size_t>(std::max(0, std::atoi(args[1].c_str())));
+      if (mi < s.mixer.size()) {
+        const ObjectId id = s.mixer[mi].id;
+        const int k = std::atoi(args[2].c_str());
+        const int to = mixops::stepSlot(a.doc, id, k, std::atoi(args[3].c_str()));
+        if (a.fxEditor == std::make_pair(id, k)) a.fxEditor.second = to;
+        std::printf("plugwin frame %d: step %d -> %d\n", frame, k, to);
+        std::fflush(stdout);
+      }
+    } else if (what == "drawn") {  // 0.7.8: what the hosted plugin panels showed since "pick" (or the last "drawn")
+      std::string line;
+      for (const std::string& d : devTakeHostedDraws()) line += " [" + d + "]";
+      std::printf("plugwin frame %d: drawn%s\n", frame, line.c_str());
+      std::fflush(stdout);
+    } else if (what == "scan" && args.size() > 2) {  // 0.7.8: scan <format> <bundle>: one plugin bundle known this run (in every layout)
+      std::string bundle = args[2];  // (a path with spaces arrives in pieces)
+      for (size_t k = 3; k < args.size(); ++k) bundle += " " + args[k];
+      const host::Format* f = host::findFormat(args[1]);
+      const host::ScanResult r = f ? f->scanInProcess(bundle) : host::ScanResult{};
+      if (r.ok) host::registerScanResult(r);
+      std::printf("plugwin frame %d: scan ok %d classes %zu\n", frame, r.ok ? 1 : 0, r.classes.size());
+      std::fflush(stdout);
+    } else if (what == "inst" && args.size() > 2) {  // 0.7.8: inst <channel index> <type>: the channel's instrument replaced, its window opened
+      const size_t ci = static_cast<size_t>(std::max(0, std::atoi(args[1].c_str())));
+      if (ci < s.channels.size()) {
+        const ObjectId id = s.channels[ci].id;
+        devRecordHostedDraws(true);
+        if (a.doc.setChannelPlugin(id, args[2])) pui::pluginReplaced(PluginTarget{id, -1});
+        a.settingsChannel = id;
+        a.fxEditor = {kNoId, -1};
+        a.selectChannel(id);
+      }
+    } else if (what == "place" && args.size() > 1) {  // 0.7.8: place inside|own [<mixer index> <slot>]: the plugin put there, as its menu / bar do (else the open effect's, else the channel's)
+      PluginTarget t = a.fxEditor.first != kNoId ? PluginTarget{a.fxEditor.first, a.fxEditor.second}
+                                                     : PluginTarget{a.settingsChannel != kNoId ? a.settingsChannel : a.selChannel, -1};
+      if (const size_t mi = args.size() > 3 ? static_cast<size_t>(std::max(0, std::atoi(args[2].c_str()))) : s.mixer.size(); mi < s.mixer.size())
+        t = PluginTarget{s.mixer[mi].id, std::atoi(args[3].c_str())};
+      hostedui::putInterfaceInside(a, t, args[1] == "inside");
+    } else if (what == "dockkey" && args.size() > 1) {  // 0.7.8: dockkey <kind> [space]: a view of the docked interface takes the keyboard
+      const bool ok = hostedui::devDockedKey(std::atoi(args[1].c_str()), args.size() > 2 && args[2] == "space");
+      std::printf("plugwin frame %d: dockkey %s %s\n", frame, args[1].c_str(), ok ? "done" : "no interface inside");
+      std::fflush(stdout);
+    } else if (what == "winshot" && args.size() > 1) {  // 0.7.8: winshot <png>: the main window as on screen (docked interfaces included)
+      const bool ok = hostedui::devCaptureMainWindow(args[1]);
+      std::printf("plugwin frame %d: winshot %s\n", frame, ok ? "written" : "not possible here");
+      std::fflush(stdout);
+    } else if (what == "bar" && args.size() > 1) {  // 0.7.8: bar <button>: a button of an installed plugin's own window's bar pressed
+      pluginbar::devPress(args[1]);
+    } else if (what == "cover" && args.size() > 1) {  // 0.7.8: cover <frames>: a tooltip over the interface inside Gridline
+      hostedui::devCoverDocked(std::atoi(args[1].c_str()));
+    } else if (what == "playing") {  // 0.7.8: the transport
+      std::printf("plugwin frame %d: playing %d\n", frame, a.engine.playing() ? 1 : 0);
+      std::fflush(stdout);
     } else if (what == "close") {
       a.closePluginWindows();
     } else if (what == "info") {  // K-9: open plugin windows and their native windows to stdout
       devPrintPluginWindows(frame);
+    } else if (what == "fxtoggle" && args.size() > 2) {  // 0.7.8: fxtoggle <mixer index> <slot>: the effect's window button (mixer slot, Clips device card)
+      const size_t mi = static_cast<size_t>(std::max(0, std::atoi(args[1].c_str())));
+      if (mi < s.mixer.size()) togglePluginWindow(a, PluginTarget{s.mixer[mi].id, std::atoi(args[2].c_str())});
     } else if (what == "toggle" && args.size() > 1) {  // toggle <plugin type>: the channel button of the first channel with it clicked
       for (const auto& c : s.channels)
         if (c.plugin.type == args[1]) {
@@ -695,6 +881,44 @@ bool pluginWindowDevCommand(App& a, const std::string& cmd, const std::vector<st
     std::fflush(stdout);
     return true;
   }
+  if (cmd == "macros") {  // K-245: the macro panel's last frame and every macro link, to stdout
+    // macros link c|m <channel or mixer index> <parameter index> <macro>: links a parameter of that
+    // channel (plugin parameter k = kChannelPluginBase + k) or mixer track to the owner's macro, as
+    // the menu does; macros learn c|m <index> <macro>: starts learning (the next moved control).
+    const Song& s = a.doc.song();
+    auto ownerOf = [&](const std::string& kind, const std::string& ix) -> ObjectId {
+      const size_t i = static_cast<size_t>(std::max(0, std::atoi(ix.c_str())));
+      if (kind == "c") return i < s.channels.size() ? s.channels[i].id : kNoId;
+      return i < s.mixer.size() ? s.mixer[i].id : kNoId;
+    };
+    if (args.size() >= 5 && args[0] == "link") {
+      const ObjectId o = ownerOf(args[1], args[2]);
+      const bool ok = o != kNoId && macro::link(a.doc, ParamId{o, static_cast<uint32_t>(std::atoi(args[3].c_str()))}, o, std::atoi(args[4].c_str()));
+      std::printf("macros frame %d: linked %d\n", frame, ok ? 1 : 0);
+    } else if (args.size() >= 2 && args[0] == "open") {  // open <channel index>: its window on the Misc page (in the Tracker, as "Open plugin window")
+      const ObjectId o = ownerOf("c", args[1]);
+      if (o != kNoId) {
+        if (layoutui::active() == layout::Preset::Tracker) trackereditors::openPluginWindow(a, o);
+        else a.settingsChannel = o;
+        a.channelTab = 1;
+      }
+      std::printf("macros frame %d: opened %d\n", frame, o != kNoId ? 1 : 0);
+    } else if (args.size() >= 4 && args[0] == "learn") {
+      macroui::devLearn(a, ownerOf(args[1], args[2]), std::atoi(args[3].c_str()));
+      std::printf("macros frame %d: learning\n", frame);
+    } else {
+      const macroui::DevState& d = macroui::devState();
+      std::printf("macros frame %d: drawn %d owner %llu selected %d learning %d box %.0f %.0f %.0f %.0f assigned %zu\n", frame, d.frame,
+                  static_cast<unsigned long long>(d.owner), d.selected, d.learning, d.x0, d.y0, d.x1, d.y1, macro::assignedMacros(s).size());
+      for (int k = 0; k < 8; ++k) std::printf("  knob %d %.0f %.0f\n", k, d.knobX[k], d.knobY[k]);
+      for (const auto& l : s.modLinks)
+        if (l.sourceSlot == kLayerMacroSlot)
+          std::printf("  link %s -> %s range %.3f %.3f\n", controllerOutputName(s, l.sourceOwner, l.sourceSlot, l.sourceOutput).c_str(),
+                      paramDisplayName(s, ParamId{l.owner, l.index}).c_str(), static_cast<double>(l.min), static_cast<double>(l.max));
+    }
+    std::fflush(stdout);
+    return true;
+  }
   if (cmd != "strip") return false;
   // strip [on|off] [frames]: "on" / "off" show or hide the strip at once (no
   // slide) when the window is next drawn, a test set-up; then the state drawn
@@ -753,37 +977,19 @@ void drawChannelSettingsBody(App& a, ObjectId channel, const BodyFrame& f) {
     ui::Hint("Channel name");
     ImGui::SameLine(0, theme::kS2);
     if (ui::BeginCombo("##inst", info ? info->name.c_str() : (c->isLayer() ? "Layer" : "None"), 170)) {
-      std::string cat;
-      for (const auto& p : pluginCatalog()) {
-        if (p.kind != PluginKind::Generator || p.hidden) continue;
-        if (p.category != cat) {
-          cat = p.category;
-          ui::Label(cat.c_str());
-        }
-        if (ImGui::Selectable(p.name.c_str(), p.type == c->plugin.type) && a.doc.setChannelPlugin(id, p.type))
-          pui::pluginReplaced(PluginTarget{id, -1}), a.showNewInstrument(id);  // J-213: the preset selector starts over; K-125
+      for (const CatalogGroup& g : catalogGroups(PluginKind::Generator)) {  // each category once
+        ui::Label(g.category.c_str());
+        for (const PluginInfo* p : g.items)
+          if (ImGui::Selectable(p->name.c_str(), p->type == c->plugin.type) && a.doc.setChannelPlugin(id, p->type))
+            pui::pluginReplaced(PluginTarget{id, -1}), a.showNewInstrument(id);  // J-213: the preset selector starts over; K-125
       }
       ImGui::EndCombo();
     }
     ui::Hint("Instrument");
     ImGui::SameLine(0, theme::kS2);
-    int mi = std::max(0, s.mixerIndex(c->mixerTrack));
-    std::string mlabel = mi == 0 ? "Master" : std::to_string(mi) + "  " + mixerTrackName(s, static_cast<size_t>(mi));
-    // J-195: room for the free-track button and the strip eye after the list.
-    const bool routeOpen =
-        ui::BeginCombo("##route", ("\xE2\x86\x92 " + mlabel).c_str(), std::max(100.0f, ImGui::GetContentRegionAvail().x - 2 * (fh + theme::kS2)));  // K-147: fits a 600 px window
-    devNoteRect("chroute");
-    if (routeOpen) {
-      if (chanroute::listItem()) pendingFreeRoute(a) = id;
-      devNoteRect("chroutelist");
-      ImGui::Separator();
-      for (size_t i = 0; i < s.mixer.size(); ++i) {
-        std::string l = (i == 0 ? std::string("Master") : std::to_string(i) + "  " + mixerTrackName(s, i)) + "##" + std::to_string(i);
-        if (ImGui::Selectable(l.c_str(), static_cast<int>(i) == mi)) a.doc.routeChannel(id, s.mixer[i].id);
-      }
-      ImGui::EndCombo();
-    }
-    ui::Hint("Mixer track this channel plays through");
+    // J-195: room for the free-track button and the strip eye after the list (K-147: fits a 600 px
+    // window). The box is the one the Audio clip window's header has too (ChannelRoute.h).
+    if (chanroute::box(a, id, "##route", std::max(100.0f, ImGui::GetContentRegionAvail().x - 2 * (fh + theme::kS2)), "chroute")) pendingFreeRoute(a) = id;
     // J-195: route this channel to the next free mixer track (named after it).
     ImGui::SameLine(0, theme::kS2);
     if (chanroute::button(a, id, fh)) pendingFreeRoute(a) = id;
@@ -878,7 +1084,9 @@ void drawChannelSettingsBody(App& a, ObjectId channel, const BodyFrame& f) {
     return;
   }
   if (tab == 1) {
-    drawNoteSettings(a, id);
+    drawNoteSettingsPart(a, id, -1);
+    ImGui::Dummy(ImVec2(0, theme::kS2));  // K-245: the channel's macro knobs
+    macroui::drawPanel(a, id, std::min(editorW, 600.0f));
     // K-279: the note processors (arpeggiator, chords, ...) live on the Misc page; J-151: not for
     // instruments that leave them out (while none is set)
     if (const Channel* cc = a.doc.song().channel(id); !info || info->noteFxPanel || (cc && !cc->noteFx.empty())) {
@@ -963,6 +1171,9 @@ void drawChannelSettingsBody(App& a, ObjectId channel, const BodyFrame& f) {
   ImGui::Dummy(ImVec2(0, theme::kS1));  // K-279: a margin under the editor (the note processors moved to Misc)
 }
 
+// The sampler channel whose settings went to the Audio clip window (kNoId: none).
+static ObjectId gClipWindowChannel = kNoId;
+
 void drawChannelSettings(App& a) {
   // K-106 cp22 (dev): the frames a window showed in the Tracker unasked, and the frames the gate below kept one shut
   trackereditors::watchWindows(a, a.settingsChannel != kNoId && trackereditors::ownsChannelWindow(a) &&
@@ -972,10 +1183,17 @@ void drawChannelSettings(App& a) {
   // takes its pointers into the song, which the route changes).
   if (const ObjectId r = std::exchange(pendingFreeRoute(a), kNoId); r != kNoId && r == a.settingsChannel) chanroute::routeToFree(a, r);
   stripDev().open = false;
+  // 0.7.8: a sampler's settings shown in the Audio clip window close with the channel settings
+  // (another channel's settings asked for, or closed by any path): the window closes too.
+  if (gClipWindowChannel != kNoId && a.settingsChannel != gClipWindowChannel) {
+    clipeditor::closeChannel(a, gClipWindowChannel);
+    gClipWindowChannel = kNoId;
+  }
   const Song& s = a.doc.song();
   const Channel* c = a.settingsChannel == kNoId ? nullptr : s.channel(a.settingsChannel);
   if (!c) {
     a.settingsChannel = kNoId;
+    gClipWindowChannel = kNoId;
     stripState(a).open = false;  // closed: the strip is hidden when it opens again
     stripDevFrame();             // (dev) "window closed"
     return;
@@ -987,12 +1205,32 @@ void drawChannelSettings(App& a) {
   if (trackereditors::ownsChannelWindow(a)) return;
   if (hostbody::claimed(hostbody::Body::ChannelSettings)) return;  // K-112: a layout part draws it in its own frame
   if (logicplug::hidden()) return;  // K-112b: hidden (V), still open
+  // 0.7.8: a sampler channel's settings live in the Audio clip window (its Sample, Playback,
+  // Envelope, Sample FX and Channel tabs), with or without a clip of it: the window opens there,
+  // and the channel's settings count as open while it shows the channel (closed with it).
+  {
+    ObjectId& redirected = gClipWindowChannel;
+    if (clipeditor::takesChannel(a, c->id)) {
+      const ObjectId id = c->id;
+      if (redirected != id) {
+        redirected = id;
+        stripState(a).open = false;
+        clipeditor::openChannel(a, id, a.channelTab == 1 ? clipwin::TabChannel : clipwin::TabPlayback);
+      } else if (!clipeditor::showsChannel(a, id)) {  // the window closed, or shows another channel now
+        redirected = kNoId;
+        a.settingsChannel = kNoId;
+      }
+      return;
+    }
+    redirected = kNoId;
+  }
   const PluginInfo* info = findPlugin(c->plugin.type);
   std::string title = c->name + "###channelsettings";
   bool open = true;
   stripOpened(a, c->id);  // opened (or another channel): the strip starts hidden
   // Wide instrument editors (PluginInfo::editorWidth) widen the window.
   float editorW = info && info->editorWidth > 0 ? info->editorWidth : 600.0f;
+  if (info && isHostedType(info->type)) editorW = hostedui::dockedWidth(a, PluginTarget{c->id, -1}, editorW);  // 0.7.8: its own interface inside
   if (!info) editorW = layerui::editorWidth();  // K-169: an instrument-less channel is a layer: the layer editor
   if (info && info->editorMinWidth > 0) {  // J-151: reflowing editors follow a narrower main window (J-158: as far as they fit)
     const ImVec2 area = ui::EditorArea();
@@ -1003,7 +1241,10 @@ void drawChannelSettings(App& a) {
   // K-147: the channel's own rows and the note processors need kChannelMinW at least (K-210b: at the
   // interface size; the zoomed region holds the editor alone).
   constexpr float kChannelMinW = 600.0f;
-  const float regionW = std::max(kChannelMinW, editorW);  // (an editor narrower than that keeps the region it had)
+  // 0.7.8: the zoomed region is the editor's own width, so an editor narrower than the rows sits in
+  // the middle of the window (it sat at the left of a region as wide as the rows, the room all at
+  // its right).
+  const float regionW = editorW;
   {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.42f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));

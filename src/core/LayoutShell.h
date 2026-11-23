@@ -115,8 +115,8 @@ bool canMoveTab(Preset p, const std::string& window, const std::string& to);
 // when it is already there.
 bool moveTab(Preset p, State& st, const std::string& window, const std::string& to);
 bool visible(const Shell& sh, const State& st, const std::string& region);
-// `alone` (the default): showing a region of a group hides the group's others. K-112c (checkpoint 48):
-// false shows it beside them (the Clips clip band stacked over the device band, as the reference's).
+// Showing a region of a group hides the group's others. 0.7.8: always (the Clips clip view and device
+// view are one spot, one shown at a time); `alone` is kept for the callers and no longer stacks them.
 void setVisible(const Shell& sh, State& st, const std::string& region, bool on, bool alone = true);
 // Compact JSON text for settings.json ("" for the default state) and back. Unknown or broken
 // text gives the default state; unknown region ids are dropped.

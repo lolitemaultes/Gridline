@@ -141,8 +141,6 @@ gl.scope	baseline	8
 gl.scope	ctl-row	2
 gl.scope	label	2
 gl.send	label	1
-gl.shaper	baseline	9
-gl.shaper	ctl-row	9
 gl.spectramorph	baseline	4
 gl.spectramorph	gap	3
 gl.spectramorph	row	3

@@ -5,6 +5,7 @@
 // Document::editSong for undo).
 #pragma once
 #include <algorithm>
+#include <functional>
 #include <set>
 #include <string>
 #include <vector>
@@ -27,6 +28,13 @@ struct MidiImportOptions {
   bool placeInPlaylist = true;     // a clip of the new pattern at the song start (first free track)
   std::string instrument = "gl.synth";     // plugin for melodic tracks
   std::string drumInstrument = "gl.drumkit";  // plugin for MIDI channel 10
+  // K-333: called for each new channel after its instrument is set, with the track's MIDI channel
+  // (0..15), bank (its first bank select, 0 without one) and first program (-1 without one); the
+  // Patch Player choice sets the channel's patch here.
+  std::function<void(Channel& ch, int midiChannel, int bank, int program)> setUpChannel;
+  // The channel's plugin parameter that follows a track's program changes when it has more than
+  // one (an automation lane, value = program + 1: the Patch Player's Patch), -1 for none.
+  std::function<int(const Channel& ch)> programParam;
 };
 
 struct MidiImportResult {

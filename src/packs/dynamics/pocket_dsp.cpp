@@ -6,6 +6,7 @@
 // and a smoothed per-side wet amount mixes it back.
 #include <atomic>
 #include "dyn_dsp.h"
+#include "../../engine/EffectRest.h"
 #include "pocket_mods.h"
 
 namespace gl::packs::dynamics {
@@ -30,6 +31,10 @@ int latencyOfModule(int type, const float* p, double sr) {
 
 class PocketRackFx final : public Effect {
  public:
+  // K-142 (0.7.8): rests by the hosted rule (stopped, fed silence, its output inaudible); while
+  // it rests, its modules' modulation move on: its idle render runs unheard (EffectRest.h).
+  bool restsWhenFaint() const override { return true; }
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& c, int n) override { restRenderFx(*this, s, aux, c, n); }
   PocketRackFx() = default;
   PocketRackFx(const PocketRackFx&) = delete;
   PocketRackFx& operator=(const PocketRackFx&) = delete;

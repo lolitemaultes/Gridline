@@ -154,6 +154,23 @@ class Warp final : public MiniFx {
 
 // ---- Crumble: sample-rate and bit-depth reduction ------------------------------
 class Crumble final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override { return hold_[0] == 0 && hold_[1] == 0 && sm_[0].z == 0 && sm_[1].z == 0; }
+  void clocks(const PluginState& s, const ProcessContext&, int n) override {
+    const double rate = std::clamp(static_cast<double>(pv(s, crumble::Rate)), 50.0, sr_);
+    const double jit = pv(s, crumble::Jitter), mT = pv(s, crumble::Mix), inc = rate / sr_;
+    for (int i = 0; i < n; ++i) {
+      mix_.next(mT);
+      ph_ += inc;
+      if (ph_ >= period_) {
+        ph_ -= period_;
+        period_ = 1.0 + jit * 0.9 * noise_.next();
+        if (ph_ >= period_) ph_ = 0;  // (silence takes no dither noise: hold_ stays 0)
+      }
+    }
+  }
+ private:
   double ph_ = 0, period_ = 1, hold_[2] = {};
   dsp::Noise noise_;
   dsp::OnePole sm_[2];
@@ -214,6 +231,25 @@ inline double carrier(int shape, double ph, double dt) {
 }
 
 class Clang final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override { return true; }  // (no signal state: its oscillator and smoothers are all)
+  void clocks(const PluginState& s, const ProcessContext&, int n) override {
+    const double fT = pv(s, clang::Freq), spread = std::clamp(static_cast<double>(pv(s, clang::Spread)), 0.0, 1.0);
+    const bool side = pi(s, clang::Source) == 1;
+    const double mT = pv(s, clang::Mix);
+    for (int i = 0; i < n; ++i) {
+      const double f = f_.next(fT);
+      mix_.next(mT);
+      const double dt[2] = {f / sr_, f * (1.0 + 0.06 * spread) / sr_};
+      if (side) continue;
+      for (int c = 0; c < 2; ++c) {
+        ph_[c] += dt[c];
+        if (ph_[c] >= 1.0) ph_[c] -= std::floor(ph_[c]);
+      }
+    }
+  }
+ private:
   double ph_[2] = {};
   Smooth f_, mix_;
   void clear() override {

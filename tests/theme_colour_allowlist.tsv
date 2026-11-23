@@ -9,6 +9,8 @@ src/app/Splash.cpp	1	splash screen: brand lockup in Paper on the brand black
 src/app/TrackerFrame.cpp	5	Tracker wordmark strip: the fixed brand orange with its light top edge, whatever the theme; the About screen's fixed dark starfield (its version and credit inks); valueInk(), the value colour stepped toward black or white until it reads on the field
 # Pointer
 src/app/main.cpp	1	the drawn mouse pointer: a white arrow in a black outline, readable on every face
+# Image tints (a multiplier on a texture's own colours, not a colour drawn: white keeps them, its alpha fades them)
+src/app/ClipEditor.cpp	1	Audio clip window: a ghost segment's waveform / spectrum image drawn at 35 % opacity (white tint, alpha 90)
 # Smooth layout look (K-112D/K-112B audits): its own fixed faces, drawn only while Smooth faces are on
 src/app/LayoutStyleUi.cpp	1	Smooth palette definition: the light grey playhead (audit C6)
 src/app/PianoRoll.cpp	3	Smooth keyboard: its light white keys; the region strip's light tint of the region colour on the dark faces (D3, R09 visual gap 8)
@@ -41,7 +43,6 @@ src/packs/dynamics/dist_fl_ui.cpp	5	plugin faceplate
 src/packs/dynamics/dist_ui.cpp	2	plugin faceplate
 src/packs/dynamics/masterfl_ui.cpp	11	plugin faceplate
 src/packs/dynamics/rack_ui.cpp	2	plugin faceplate
-src/packs/edison/edison_wave_ui.cpp	1	spectrogram heat map (data colour scale, hottest = white)
 src/packs/flex/flex_ui.cpp	2	plugin faceplate
 src/packs/models/additive_ui.cpp	1	plugin faceplate
 src/packs/models/alloy_ui.cpp	1	plugin faceplate

@@ -15,6 +15,10 @@ namespace mcpui {
 
 // Per frame: starts / stops the server as the settings say, answers requests.
 void tick(App& a);
+// K-142 (0.7.8 follow-up): whether the server needs the interface to keep taking turns while nothing
+// is on screen: starting (or trying again), a job under way (its progress streamed in turns). A client
+// connecting, its request and its reply wake the sleeping interface themselves (HttpServer::watch).
+bool needsTurns(const App& a);
 // K-281 (dev input): "mcp call <tool> <json>" runs a tool call and prints its reply.
 bool devCommand(App& a, const std::vector<std::string>& args);
 // Stops the server and removes the endpoint file (app shutdown).

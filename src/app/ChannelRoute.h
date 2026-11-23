@@ -3,6 +3,7 @@
 // button of the channel window, the first item of its route list, the channel
 // rack's route menu and the hosted plugin window's bar all run this.
 #pragma once
+#include <string>
 #include <vector>
 #include "../core/Types.h"
 
@@ -31,6 +32,14 @@ bool button(const App& a, ObjectId channel, float size);
 bool menuItem(const char* shortcut = nullptr);
 // Same as the first entry of a list (the channel window's mixer track list).
 bool listItem();
+// The box's text for the channel's mixer track: an arrow, then "Master" or "3  Kick".
+std::string boxText(const App& a, ObjectId channel);
+// The mixer track box of a channel's window header (the plugin windows', the Audio clip window's):
+// the channel's track; a click lists the mixer tracks, "Route to a free mixer track" first. Picking
+// a track routes the channel (one undo step). True when the free-track item was picked: the caller
+// runs routeToFree (once it no longer holds pointers into the song). `dev` names the box, its
+// first item and the first four tracks as "sdlat" targets (`dev`, `dev`"list", `dev`"track"<i>).
+bool box(App& a, ObjectId channel, const char* id, float width, const char* dev = nullptr);
 
 }  // namespace chanroute
 }  // namespace gl

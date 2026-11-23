@@ -158,5 +158,6 @@ Painter* makeHairline();
 Painter* makeLumen();
 Painter* makeSlate();
 Painter* makeClassic();
+Painter* makeTracker();  // 0.7.8: the Tracker layout's bevelled faces (LookTracker.cpp)
 
 }  // namespace gl::look

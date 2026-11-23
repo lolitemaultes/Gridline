@@ -86,6 +86,19 @@ Tick Song::lengthTicks() const {
   return end;
 }
 
+SongLfo* Song::lfo(ObjectId id) {
+  if (id == kNoId) return nullptr;
+  for (auto& l : lfos)
+    if (l.id == id) return &l;
+  return nullptr;
+}
+const SongLfo* Song::lfo(ObjectId id) const { return const_cast<Song*>(this)->lfo(id); }
+int Song::lfoIndex(ObjectId id) const {
+  for (size_t i = 0; i < lfos.size(); ++i)
+    if (lfos[i].id == id) return static_cast<int>(i);
+  return -1;
+}
+
 Channel* Song::channel(ObjectId id) {
   int i = indexOf(channels, id);
   return i < 0 ? nullptr : &channels[static_cast<size_t>(i)];
@@ -279,15 +292,27 @@ int changePpq(Song& song, int newPpq) {
 
 const ModLink* findModLink(const Song& song, ObjectId owner, uint32_t index) {
   for (const auto& l : song.modLinks)
-    if (l.owner == owner && l.index == index) return &l;
+    if (l.owner == owner && l.index == index && !l.isLfo()) return &l;
+  return nullptr;
+}
+
+std::vector<const ModLink*> lfoLinksOn(const Song& song, ObjectId owner, uint32_t index) {
+  std::vector<const ModLink*> out;
+  for (const auto& l : song.modLinks)
+    if (l.owner == owner && l.index == index && l.isLfo()) out.push_back(&l);
+  return out;
+}
+
+const ModLink* findLfoLink(const Song& song, ObjectId lfo, ObjectId owner, uint32_t index) {
+  for (const auto& l : song.modLinks)
+    if (l.owner == owner && l.index == index && l.isLfo() && l.sourceOwner == lfo) return &l;
   return nullptr;
 }
 
 bool isControllerSource(const Song& song, ObjectId owner, int slot) {
-  if (slot == kLayerMacroSlot) {  // K-169: a layer's macros
-    const Channel* c = song.channel(owner);
-    return c && c->isLayer();
-  }
+  if (slot == kSongLfoSlot) return song.lfo(owner) != nullptr;  // K-247: a board LFO
+  if (slot == kLayerMacroSlot)  // K-169: a layer's macros; K-245: every channel's and mixer track's
+    return owner != kSongId && (song.channel(owner) != nullptr || song.mixerTrack(owner) != nullptr);
   const PluginState* ps = nullptr;
   if (slot < 0) {
     if (const Channel* c = song.channel(owner)) ps = &c->plugin;
@@ -303,7 +328,7 @@ int pruneModLinks(Song& song) {
   size_t before = song.modLinks.size();
   auto targetOk = [&](const ModLink& l) {
     if (l.owner == kSongId) return true;
-    return song.channel(l.owner) != nullptr || song.mixerTrack(l.owner) != nullptr;
+    return song.channel(l.owner) != nullptr || song.mixerTrack(l.owner) != nullptr || song.lfo(l.owner) != nullptr;
   };
   song.modLinks.erase(std::remove_if(song.modLinks.begin(), song.modLinks.end(),
                                      [&](const ModLink& l) {

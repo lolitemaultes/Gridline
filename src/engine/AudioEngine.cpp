@@ -8,6 +8,7 @@
 #include <limits>
 #include "Dsp.h"
 #include "Resample.h"
+#include "../core/Lfo.h"
 #include "pitch/Kernel.h"
 #include "../packs/edison/edison.h"
 
@@ -37,6 +38,8 @@ AudioEngine::AudioEngine(double sampleRate) : sr_(sampleRate), queue_(kQueue) {
   scR_.assign(buses, std::vector<float>(kMaxBlock, 0.f));
   preL_.assign(buses, std::vector<float>(kMaxBlock, 0.f));
   preR_.assign(buses, std::vector<float>(kMaxBlock, 0.f));
+  busZeroLen_.assign(buses, kMaxBlock);  // (K-142: they start silent)
+  busSilentNow_.assign(buses, 0);
   for (auto* v : {&tmpL_, &tmpR_}) v->assign(kMaxBlock, 0.f);
   for (auto* v : {&devTapL_, &devTapR_}) v->assign(static_cast<size_t>(kMaxDevicePairs) * kMaxBlock, 0.f);
   scratch_.resize(WorkerPool::kMaxThreads);
@@ -139,9 +142,13 @@ void AudioEngine::readDeviceInput(int n) {
   for (int c = 0; c < kMaxInputChannels; ++c) {
     float* dst = inBuf_[static_cast<size_t>(c)].data();
     if (c >= ch) {
-      std::memset(dst, 0, sizeof(float) * un);
+      if (inDirty_[c]) {  // K-142 (0.7.8): cleared once, not in every block
+        std::fill(inBuf_[static_cast<size_t>(c)].begin(), inBuf_[static_cast<size_t>(c)].end(), 0.f);
+        inDirty_[c] = false;
+      }
       continue;
     }
+    inDirty_[c] = true;
     for (size_t i = 0; i < take; ++i) dst[i] = inQueue_[((tail + i) % kInputQueueFrames) * kMaxInputChannels + static_cast<size_t>(c)];
     for (size_t i = take; i < un; ++i) dst[i] = 0.f;
     storeMax(inPeak_[c], peakOf(dst, n));
@@ -203,6 +210,12 @@ const float* AudioEngine::inputR(const ProgMixer& m) const {
 }
 
 void AudioEngine::captureRecording(const Program* p, int n, bool post) {
+  // K-142 (0.7.8 close): with no track armed in this Program, a pass ends any take still open (from
+  // the Program before) and leaves every track's capture off; after one such pass there is nothing
+  // left for one to do.
+  if (p == recIdleProg_) return;
+  recIdleProg_ = nullptr;  // (so a later Program that happens to get a freed one's address is never taken for it)
+  bool anyArmed = false;
   const double pa = punchA_.load(std::memory_order_relaxed), pb = punchB_.load(std::memory_order_relaxed);
   const bool punch = pb > pa;
   for (size_t mi = 0; mi < p->mixer.size(); ++mi) {
@@ -210,6 +223,7 @@ void AudioEngine::captureRecording(const Program* p, int n, bool post) {
     MixerRuntime* rt = m.rt.get();
     if (!rt) continue;
     // J-31: tracks recording their output are captured after the graph.
+    anyArmed = anyArmed || m.armed;
     const bool tapsOutput = m.armed && m.recPoint != static_cast<uint8_t>(RecordPoint::Input);
     if (tapsOutput != post && m.armed) continue;
     if (post && !m.armed) continue;
@@ -262,6 +276,7 @@ void AudioEngine::captureRecording(const Program* p, int n, bool post) {
     if (runFrom >= 0 && n > runFrom) ring->write(L + runFrom, R + runFrom, n - runFrom, true);
     if (arm && (tPlaying_ || rawAt(n - 1) >= 0 || rawAt(0) >= 0)) arm->write(L, R, rawTick_.data(), n);
   }
+  if (!post && !anyArmed) recIdleProg_ = p;  // (the pass before the graph is the one that closes them)
 }
 
 // ---- K-123 (0.7.7): start on the first sound, the loopback latency check ----
@@ -774,7 +789,7 @@ void AudioEngine::drainMidi(const Program* p) {
         const ProgChannel* nc = chan(midiNoteCh_[n]);
         if (bendable(nc)) nc->rt->gen->glide(kMidiBit | static_cast<uint32_t>(n), n + nc->pitchOffset + bend_[mch], 0.004, 0);
       }
-    } else if (kind == 0xA0 || kind == 0xD0) {  // pressure: to the instrument
+    } else if (kind == 0xA0 || kind == 0xD0 || kind == 0xC0) {  // pressure, program change (K-333): to the instrument
       if (const ProgChannel* c = chan(routed(mch)); c && c->rt->gen) c->rt->gen->midi(m.s, m.a, m.b, 0);
     } else if (kind == 0xB0) {
       if (const ProgChannel* c = chan(routed(mch)); c && c->rt->gen) c->rt->gen->midi(m.s, m.a, m.b, 0);
@@ -1038,6 +1053,7 @@ void AudioEngine::runMidiOut(const Program* p, int n) {
     std::memset(L, 0, sizeof(float) * static_cast<size_t>(n));
     std::memset(R, 0, sizeof(float) * static_cast<size_t>(n));
     ch.rt->configuredIn.store(p);  // K-288
+    if (bc_.count) ch.rt->dspCalls.fetch_add(1, std::memory_order_relaxed);  // K-142
     ch.rt->gen->process(ch.modded ? ch.live : ch.plugin, ch.aux, bc_.ctx, L, R, n);
     Generator::MidiOutEvent ev[1024];
     const int count = ch.rt->gen->takeMidiOut(ev, 1024);
@@ -1181,6 +1197,7 @@ void AudioEngine::liveOn(const Program* p, const ProgChannel& ch, uint32_t id, f
 void AudioEngine::liveStart(const Program* p, const ProgChannel& ch, uint32_t id, float pitch, float velocity, int color) {
   ChannelRuntime* rt = ch.rt.get();
   if (!rt || !rt->gen) return;
+  restartNoteLfos(p, ch);  // K-247
   const int64_t at = absClock_;
   for (int i = 0; i < rt->liveCount;)  // pressed again before its release: the new press replaces it
     if (rt->live[i].id == id) {
@@ -1337,12 +1354,23 @@ int takeBendSlot(ChannelRuntime& rt, uint32_t id, const BendPoint* pts, int coun
     s.count = std::clamp(count, 0, bend::kMaxPoints);
     std::copy(pts, pts + s.count, s.pts);
     s.sent = 0;
+    s.vib = NoteVibrato{};
+    s.len = 0;
     return k;
   }
   return -1;
 }
 int takeBendSlot(ChannelRuntime& rt, uint32_t id, const std::vector<BendPoint>& pts) {
   return takeBendSlot(rt, id, pts.data(), static_cast<int>(pts.size()));
+}
+// K-25, K-262: the slot of a starting note: its bend line (if any) and its vibrato (if any).
+int takeNoteSlot(ChannelRuntime& rt, uint32_t id, const NoteEv& e, double lenTicks) {
+  const int k = e.bend && !e.bend->empty() ? takeBendSlot(rt, id, *e.bend) : takeBendSlot(rt, id, nullptr, 0);
+  if (k >= 0 && e.vib.active()) {
+    rt.bendSlots[k].vib = e.vib;
+    rt.bendSlots[k].len = std::max(1e-3, lenTicks);
+  }
+  return k;
 }
 // K-144: a free slot for the note's pressure (d = 0) or timbre (d = 1) lane; -1 = none free.
 int takeExprSlot(ChannelRuntime& rt, int d, uint32_t id, const std::vector<BendPoint>& pts) {
@@ -1362,13 +1390,17 @@ int takeExprSlot(ChannelRuntime& rt, int d, uint32_t id, const std::vector<BendP
 }  // namespace
 
 void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteEv& e, int offset, int64_t at, double spt, Tick shift) {
+  restartNoteLfos(p, ch);  // K-247
   ChannelRuntime* rt = ch.rt.get();
   Generator* gen = rt->gen.get();
+  // K-348: the note's program change reaches the instrument first (at the same sample), so the
+  // note and those after it play the new program.
+  if (e.program >= 0 && e.program <= 127) gen->midi(0xC0, static_cast<uint8_t>(e.program), 0, offset);
   bool chain = false;
   for (const auto& nf : ch.noteFx) chain = chain || nf.rt != nullptr;
   const bool glides = gen->supportsGlide() && !chain;
   // K-25: the note's bend line (note processors make new notes of it: none there).
-  const bool bent = e.bend && !e.bend->empty() && !chain && !(e.flags & kNoteSlide);
+  const bool bent = ((e.bend && !e.bend->empty()) || e.vib.active()) && !chain && !(e.flags & kNoteSlide);  // K-262: or its vibrato
   const auto portaSamples = static_cast<int64_t>(std::llround(static_cast<double>(ch.portaTime) * sr_));
   // Slide note: no new note; the channel's sounding notes of the slide's
   // colour group glide by the interval from the last started note of that
@@ -1450,7 +1482,7 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
     kept.bendFrom = at + portaSamples;
     rt->pending[0] = kept;
     rt->pendingCount = 1;
-    rt->pending[0].bendSlot = bent ? takeBendSlot(*rt, kept.id, *e.bend) : -1;
+    rt->pending[0].bendSlot = bent ? takeNoteSlot(*rt, kept.id, e, kept.off - kept.on) : -1;
     rt->pending[0].exprSlot[0] = e.pressure && !chain ? takeExprSlot(*rt, 0, kept.id, *e.pressure) : -1;  // K-144
     rt->pending[0].exprSlot[1] = e.timbre && !chain ? takeExprSlot(*rt, 1, kept.id, *e.timbre) : -1;
     rt->lastPitch = e.pitch;
@@ -1481,7 +1513,7 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
   pd.color = color;
   pd.on = noteOnTick(e) + static_cast<double>(shift);
   pd.bendFrom = portaGlide ? at + portaSamples : at;
-  pd.bendSlot = bent ? takeBendSlot(*rt, id, *e.bend) : -1;
+  pd.bendSlot = bent ? takeNoteSlot(*rt, id, e, pd.off - pd.on) : -1;
   pd.exprSlot[0] = e.pressure && !chain ? takeExprSlot(*rt, 0, id, *e.pressure) : -1;  // K-144
   pd.exprSlot[1] = e.timbre && !chain ? takeExprSlot(*rt, 1, id, *e.timbre) : -1;
   if (pd.bendSlot >= 0 && glides && !portaGlide) {  // K-25: a line that starts off the note's pitch starts there
@@ -1594,6 +1626,16 @@ void AudioEngine::applyBends(const Program* p, int from, int to) {
   const int64_t b0 = absClock_ + from, b1 = absClock_ + to;
   auto tickOf = [&](double off) { return tickAt(p, anchorTick_, static_cast<double>(clock_) + (off - from)); };
   auto offOf = [&](double tick) { return from + static_cast<int>(sampleAt(p, anchorTick_, tick) - clock_); };
+  // K-262: a note's vibrato `t` ticks after its start (semitones), in seconds through the tempo map;
+  // synced rates follow the tempo at the note's start.
+  constexpr int kVibPiece = 64;
+  auto vibAt = [&](const ChannelRuntime::BendSlot& sl, double on, double t) {
+    if (!sl.vib.active()) return 0.0;
+    const auto& cm = clockMap(p);
+    const double ts = cm.samplesBetween(on, on + std::max(0.0, t), sr_) / sr_, len = cm.samplesBetween(on, on + sl.len, sr_) / sr_;
+    const double beat = 60.0 / std::max(1.0, cm.bpmAt(on));
+    return vib::value(sl.vib, ts, len, beat);
+  };
   for (const ProgChannel& ch : p->channels) {
     ChannelRuntime* rt = ch.rt.get();
     if (!rt || !rt->gen) continue;
@@ -1635,6 +1677,18 @@ void AudioEngine::applyBends(const Program* p, int from, int to) {
         const int64_t s0 = std::max(pd.bendFrom, b0);
         if (s0 >= b1) continue;  // a porta glide still running
         int off = static_cast<int>(s0 - absClock_);
+        if (sl.vib.active()) {  // K-262: the line plus the vibrato, glided in pieces of kVibPiece samples
+          for (; off < to; off += kVibPiece) {
+            const int end = std::min(to, off + kVibPiece);
+            const double tz = tickOf(end) - pd.on;
+            const double v = bend::value(sl.pts, sl.count, tz) + vibAt(sl, pd.on, tz);
+            if (std::fabs(v - sl.sent) > 1e-6) {
+              gen->glide(pd.id, pd.pitch + v + ch.pitchOffset, static_cast<double>(end - off) / sr_, off);
+              sl.sent = v;
+            }
+          }
+          continue;
+        }
         for (int guard = 0; off < to && guard < 96; ++guard) {
           const double ta = tickOf(off) - pd.on, va = bend::value(sl.pts, sl.count, ta);
           if (std::fabs(va - sl.sent) > 0.01) {  // the line jumped (a step passed): at once, on this sample
@@ -1667,8 +1721,13 @@ void AudioEngine::applyBends(const Program* p, int from, int to) {
     }
     // Channel pitch bend: each MIDI channel follows its newest bent note.
     const float range = std::max(0.5f, gen->noteBendRange());
-    for (int off = from; off < to; off += chanPiece) {
-      const int end = std::min(to, off + chanPiece);
+    int piece = chanPiece;  // K-262: notes with vibrato update every kVibPiece samples
+    for (int i = 0; i < rt->pendingCount && piece > kVibPiece; ++i) {
+      const int k = rt->pending[i].bendSlot;
+      if (k >= 0 && rt->bendSlots[k].id == rt->pending[i].id && rt->bendSlots[k].vib.active()) piece = kVibPiece;
+    }
+    for (int off = from; off < to; off += piece) {
+      const int end = std::min(to, off + piece);
       const double tm = tickOf(0.5 * (off + end));
       float want[16] = {};
       int64_t newest[16];
@@ -1684,7 +1743,8 @@ void AudioEngine::applyBends(const Program* p, int from, int to) {
         if (pd.bendFrom >= absClock_ + end) continue;  // not started yet in this block, or a porta glide still running
         if (pd.at > newest[pd.color & 15]) {
           newest[pd.color & 15] = pd.at;
-          want[pd.color & 15] = static_cast<float>(bend::value(sl.pts, sl.count, std::max(0.0, tm - pd.on)));
+          const double t = std::max(0.0, tm - pd.on);
+          want[pd.color & 15] = static_cast<float>(bend::value(sl.pts, sl.count, t) + vibAt(sl, pd.on, t));
         }
       }
       for (int c = 0; c < 16; ++c) {
@@ -2248,6 +2308,15 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     double* cur = recTick_.data();
     double* raw = rawTick_.data();
     for (int i = 0; i < n; ++i) cur[i] = -1.0;
+    // K-142 (0.7.8 close): stopped and not recording, every frame writes "no position, not recording"
+    // into the history; once the whole history holds only that, every frame reads it back too, so the
+    // block only moves the position on (the same history, the same frames read).
+    const bool histStill = !tPlaying_ && !recOn && histStill_ >= kTickHistory;
+    if (histStill) {
+      for (int i = 0; i < n; ++i) raw[i] = -1.0;
+      tickHistLat_ = static_cast<size_t>(recLatency_.load(std::memory_order_relaxed));
+      tickHistPos_ += static_cast<size_t>(n);
+    }
     if (tPlaying_) {
       for (int k = 0; k < segCount_; ++k) {
         const Segment& sg = segs_[k];
@@ -2258,6 +2327,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
         }
       }
     }
+    if (!histStill) {
     const size_t lat = static_cast<size_t>(recLatency_.load(std::memory_order_relaxed));
     const size_t mask = kTickHistory - 1;
     // A longer latency reaches further back than any frame read so far: those
@@ -2279,6 +2349,8 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       cur[i] = recHist_[d] ? tickHist_[d] : -1.0;
       ++tickHistPos_;
     }
+    histStill_ = !tPlaying_ && !recOn ? std::min(histStill_ + static_cast<size_t>(n), kTickHistory) : 0;
+    }  // (histStill)
     captureRecording(p, n);
     lastRaw_ = n > 0 ? raw[n - 1] : lastRaw_;
   }
@@ -2295,7 +2367,17 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   const double eventTick = segCount_ > 0 && segs_[0].from == 0 ? tickAt(p, segs_[0].anchor, static_cast<double>(segs_[0].clock)) : blockTick;
   if (grid && gpos == 0) {
     lastGridTick_ = tPlaying_ ? blockTick : -1;  // R08-01: a stopped transport is never treated as settled
-    evaluateLinks(p, kControlBlock, blockTick, eventTick);
+    // K-142 (0.7.8 close): stopped, the graph at rest since, nothing taken in this block (no command,
+    // MIDI message, held note, host change or hand hold), a Program with nothing that moves by itself
+    // (longRestProgram), and the last evaluation, at this same position and mode, changed nothing: this
+    // one would read the same and set the same, so it is left out.
+    const uint64_t holds = automationHoldChanges().load(std::memory_order_acquire);
+    const bool linksSame = !tPlaying_ && !offline_ && !blockInput_ && linksStill_ && linkSkipProg_ == p && restProg_ == p && linkSkipTick_ == blockTick &&
+                           linkSkipMode_ == tMode_ && linkSkipPattern_ == tPattern_ && linkSkipHolds_ == holds && longRestProgram(p);
+    if (!linksSame) {
+      linkSkipProg_ = p, linkSkipTick_ = blockTick, linkSkipMode_ = tMode_, linkSkipPattern_ = tPattern_, linkSkipHolds_ = holds;
+      evaluateLinks(p, kControlBlock, blockTick, eventTick);
+    }
     if (stepped) {
       stepGains(p, blockAnchor, blockClock, n);  // K-317
     }
@@ -2317,6 +2399,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
   bc_.gpos = gpos;
   bc_.steps = stepped ? std::min(kMaxGainSteps, (n + kControlBlock - 1) / kControlBlock) : 1;
   bc_.nb = std::min(p->mixer.size(), busL_.size());
+  bc_.outFrame = absClock_;  // K-321
   bc_.ctx.sampleRate = sr_;
   bc_.ctx.tempo = clockMap(p).bpmAt(frameTick);
   bc_.ctx.ppq = p->ppq;
@@ -2364,6 +2447,8 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     ctxNextTick_ = curTick_;
   }
   bc_.profile = profiling_.load(std::memory_order_relaxed);
+  bc_.count = countCalls_.load(std::memory_order_relaxed);  // K-142
+  if (bc_.count) countedBlocks_.fetch_add(1, std::memory_order_relaxed);
   bc_.rest = !offline_;
   bc_.restInstruments = restInstruments_.load(std::memory_order_relaxed);
   if (bc_.rest && tPlaying_ && tMode_ == PlayMode::Song) {
@@ -2375,18 +2460,31 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     }
   }
   if (!p->midiOrder.empty()) runMidiOut(p, n);  // MIDI Out channels reach their listeners in this block
-  runGraph(p, n);
+  // K-142 (0.7.8 follow-up): with the whole graph at rest and nothing to wake it, one pass of rest
+  // bookkeeping instead of the graph (AudioEngineGraph.cpp).
+  const bool slept = graphSleeps(p, n);
+  if (slept) {
+    sleepGraph(p, n);
+  } else {
+    runGraph(p, n);
+    noteGraphRest(p);
+  }
   captureRecording(p, n, true);  // J-31: tracks recording their output (closes their takes too)
   const float* mL = busL_[static_cast<size_t>(p->master)].data();
   const float* mR = busR_[static_cast<size_t>(p->master)].data();
   logAudio(p, mL, mR, n);
+  // K-142 (follow-up): a master track left out holds exact silence (its bus, at least n frames):
+  // L and R already hold it, its peaks are 0.
+  const size_t mi = static_cast<size_t>(p->master);
+  const bool masterSilent = bc_.rest && mi < bc_.nb && busSilentNow_[mi] != 0 && busZeroLen_[mi] >= n;
   bool bad = false;
-  for (int i = 0; i < n; ++i) {
-    L[i] = mL[i];
-    R[i] = mR[i];
-    bad = bad || !std::isfinite(L[i]) || !std::isfinite(R[i]);
-  }
-  if (!bad) {  // J-143: the OUT meter reads the master bus (no metronome click, no browser preview)
+  if (!masterSilent)
+    for (int i = 0; i < n; ++i) {
+      L[i] = mL[i];
+      R[i] = mR[i];
+      bad = bad || !std::isfinite(L[i]) || !std::isfinite(R[i]);
+    }
+  if (!bad && !masterSilent) {  // J-143: the OUT meter reads the master bus (no metronome click, no browser preview)
     storeMax(outPeakL_, peakOf(mL, n));
     storeMax(outPeakR_, peakOf(mR, n));
   }
@@ -2403,6 +2501,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       for (const auto& s : m.slots)
         if (s.rt && s.rt->fx) s.rt->fx->reset();
   }
+  const bool clickWas = clickLeft_ > 0, pvWas = pvSample_ != nullptr;
   if (clickLeft_ > 0) {  // metronome click
     int from = std::max(0, clickStart_);
     int total = static_cast<int>(sr_ * 0.03);
@@ -2443,8 +2542,10 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       pvPos_ += rate;
     }
   }
+  const bool added = clickWas || pvWas || panicLeft_ > 0;  // K-142 (follow-up): anything added to the silent master
   applyPanicFade(p, L, R, n);
   publishOwn(p);  // J-112
+  if (masterSilent && !added) return;  // (the peak of silence: 0)
   const float outPeak = std::max(peakOf(L, n), peakOf(R, n));
   storeMax(outPeakRecent_, outPeak);
   if (outPeak > 1e-5f) audibleBlocks_.fetch_add(1, std::memory_order_relaxed);  // K-277
@@ -3235,40 +3336,69 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
   if (offChanged) publishArrangementOff();
 }
 
-void AudioEngine::evaluateLinks(const Program* p, int n, double blockTick, double eventTick) {
-  double vars[4] = {0, 0, static_cast<double>(absClock_) / sr_, blockTick / std::max(1, p->ppq)};
-  for (const ProgLink& l : p->links) {
-    float src = 0;
-    if (l.srcMacro >= 0) {  // K-169: a layer's macro
-      src = p->channels[static_cast<size_t>(l.srcChannel)].macroLive[static_cast<size_t>(l.srcMacro)];
-    } else if (l.srcChannel >= 0) {
-      const ChannelRuntime* r = p->channels[static_cast<size_t>(l.srcChannel)].rt.get();
-      if (!r) continue;
-      src = r->ctl[l.output];
-    } else {
-      const EffectRuntime* r = p->mixer[static_cast<size_t>(l.srcMixer)].slots[static_cast<size_t>(l.srcSlot)].rt.get();
-      if (!r) continue;
-      src = r->ctl[l.output];
-    }
-    LinkRuntime& lr = *l.rt;
-    double y;
-    if (l.curve == ModCurve::Formula) {
-      vars[0] = src;
-      vars[1] = l.base;
-      y = l.formula.eval(vars, &lr.rng);
-    } else {
-      y = applyModCurve(l.curve, src);
-    }
-    y = y < 0 ? 0 : (y > 1 ? 1 : y);
-    double target = l.min + y * (l.max - l.min);
-    if (lr.value < 0 || l.smoothMs <= 0) {
-      lr.value = target;
-    } else {
-      double coef = 1.0 - std::exp(-static_cast<double>(n) / (l.smoothMs * 0.001 * sr_));
-      lr.value += (target - lr.value) * coef;
-    }
-    applyLinkValue(p, l, lr.value);
+void AudioEngine::evaluateLink(const Program* p, const ProgLink& l, int n, double* vars) {
+  float src = 0;
+  if (l.srcMacro >= 0) {  // K-169: a channel's macro; K-245: or a mixer track's
+    src = l.srcChannel >= 0 ? p->channels[static_cast<size_t>(l.srcChannel)].macroLive[static_cast<size_t>(l.srcMacro)]
+                            : p->mixer[static_cast<size_t>(l.srcMixer)].macroLive[static_cast<size_t>(l.srcMacro)];
+  } else if (l.srcChannel >= 0) {
+    const ChannelRuntime* r = p->channels[static_cast<size_t>(l.srcChannel)].rt.get();
+    if (!r) return;
+    src = r->ctl[l.output];
+  } else {
+    const EffectRuntime* r = p->mixer[static_cast<size_t>(l.srcMixer)].slots[static_cast<size_t>(l.srcSlot)].rt.get();
+    if (!r) return;
+    src = r->ctl[l.output];
   }
+  LinkRuntime& lr = *l.rt;
+  double y;
+  if (l.curve == ModCurve::Formula) {
+    vars[0] = src;
+    vars[1] = l.base;
+    y = l.formula.eval(vars, &lr.rng);
+  } else {
+    y = applyModCurve(l.curve, src);
+  }
+  y = y < 0 ? 0 : (y > 1 ? 1 : y);
+  double target = l.min + y * (l.max - l.min);
+  const double was = lr.value;
+  if (lr.value < 0 || l.smoothMs <= 0) {
+    lr.value = target;
+  } else {
+    double coef = 1.0 - std::exp(-static_cast<double>(n) / (l.smoothMs * 0.001 * sr_));
+    lr.value += (target - lr.value) * coef;
+  }
+  if (lr.value != was) linkLinkMoved_ = true;  // K-142 (0.7.8 close)
+  applyLinkValue(p, l, lr.value);
+}
+
+// K-142 (0.7.8 follow-up): whether a stopped block at rest may be longer than a control block. Not with
+// what moves by itself from one control block to the next whatever the values: the LFO board, formula
+// links (the time, their random numbers), the host's macros and parameters, recorded event lanes.
+bool AudioEngine::longRestProgram(const Program* p) {
+  if (p == longProg_) return longOk_;
+  longProg_ = p;
+  longOk_ = p->lfoOps.empty() && !p->hasMacros && !p->hasHostBank && !p->hasEventLanes && p->midiOrder.empty();
+  for (const ProgLink& l : p->links)
+    if (l.curve == ModCurve::Formula) longOk_ = false;
+  return longOk_;
+}
+
+void AudioEngine::evaluateLinks(const Program* p, int n, double blockTick, double eventTick) {
+  const uint64_t changesBefore = linkChanges_;  // K-142 (follow-up)
+  linkLinkMoved_ = false;
+  struct Settled {
+    AudioEngine& e;
+    uint64_t before;
+    ~Settled() {
+      e.linksSettled_ = e.linkChanges_ == before;
+      e.linksStill_ = e.linksSettled_ && !e.linkLinkMoved_;  // K-142 (0.7.8 close)
+    }
+  } settled{*this, changesBefore};
+  ++ctlStamp_;  // K-247
+  double vars[4] = {0, 0, static_cast<double>(absClock_) / sr_, blockTick / std::max(1, p->ppq)};
+  for (const ProgLink& l : p->links)
+    if (!l.late) evaluateLink(p, l, n, vars);  // (K-247: late links run in the LFO pass)
   if (p->hasHostBank) applyHostBank(p);  // J-131
   // PH-09: host macros (the plugin's host parameters), before automation clips.
   if (p->hasMacros)
@@ -3277,7 +3407,146 @@ void AudioEngine::evaluateLinks(const Program* p, int n, double blockTick, doubl
       if (p->macros[k].valid && v >= 0.f) applyLinkValue(p, p->macros[k].target, v > 1.f ? 1.0 : static_cast<double>(v));
     }
   applyAutomation(p, blockTick, eventTick, false);
+  if (!p->lfoOps.empty()) runLfoPass(p, n, blockTick, vars);  // K-247: the board's LFOs, around what the above set
   updateStripGains(p);
+}
+
+// --- K-247: the LFO board ------------------------------------------------------
+
+void AudioEngine::runLfoPass(const Program* p, int n, double blockTick, double* vars) {
+  for (const ProgLfoOp& op : p->lfoOps) {
+    switch (op.kind) {
+      case ProgLfoOp::Eval: evaluateLfo(p, p->lfos[static_cast<size_t>(op.index)], n, blockTick); break;
+      case ProgLfoOp::Target: applyLfoTarget(p, p->lfoTargets[static_cast<size_t>(op.index)], n); break;
+      case ProgLfoOp::Late: evaluateLink(p, p->links[static_cast<size_t>(op.index)], n, vars); break;
+    }
+  }
+}
+
+void AudioEngine::evaluateLfo(const Program* p, const ProgLfo& f, int n, double blockTick) {
+  LfoRuntime& r = *f.rt;
+  const uint32_t pending = r.restartPending.exchange(0, std::memory_order_relaxed);
+  const bool restart = pending != 0;
+  const double depth = std::clamp(static_cast<double>(f.live[0]), 0.0, 1.0);
+  const double offset = std::clamp(static_cast<double>(f.live[1]), -1.0, 1.0);
+  const double phase0 = std::clamp(static_cast<double>(f.live[2]), 0.0, 360.0) / 360.0;
+  const double smoothMs = std::clamp(static_cast<double>(f.live[3]), 0.0, 500.0);
+  const int note = std::clamp(static_cast<int>(std::lround(f.live[5])), 0, lfo::kRateCount - 1);
+  const double beats = lfo::rateBeats(note, f.rateKind);
+  const double bpm = std::max(1.0, flatBpm(p));
+  const double hz = f.tempoSync ? bpm / 60.0 / beats : std::clamp(static_cast<double>(f.live[4]), static_cast<double>(lfo::kMinHz), static_cast<double>(lfo::kMaxHz));
+  const double secs = static_cast<double>(n) / sr_;
+  const bool playing = tPlaying_ && countInLeft_ <= 0;
+  double ph = 0;
+  uint64_t cyc = 0;
+  double x = 0;  // 0.7.8: the whole position in cycles (Chaos's walk, Random's trigger number)
+  // A Random source on the Note trigger counts the notes (every one a new value, never restarted).
+  const bool noteSteps = f.kind == LfoKind::Random && f.trigger == RandomTrigger::Note;
+  if (noteSteps) r.notes += pending;
+  if ((f.restart == LfoRestart::OnPlay || f.restart == LfoRestart::EachBar) && playing) {
+    // Locked to the song position: the same movement on every play, loop, export and computer.
+    // (0.7.8: Each bar: the same, from the start of every bar.)
+    const double ppq = std::max(1, p->ppq);
+    double tick = blockTick;
+    if (f.restart == LfoRestart::EachBar) {
+      const double bar = std::max<double>(1.0, static_cast<double>(p->barTicks));
+      tick = blockTick - std::floor(blockTick / bar) * bar;
+    }
+    double cycles = f.tempoSync ? tick / ppq / beats : tick / ppq * 60.0 / bpm * hz;
+    cycles += phase0;
+    if (cycles < 0) cycles = 0;
+    cyc = static_cast<uint64_t>(cycles);
+    ph = cycles - static_cast<double>(cyc);
+    x = cycles;
+    r.phase = ph - phase0 - std::floor(ph - phase0);
+    r.cycle = cyc;
+    if (!r.wasPlaying || blockTick < r.lastTick) r.fadeStart = blockTick;  // a new play or a loop back
+    r.fade = f.tempoSync ? (blockTick - r.fadeStart) / (ppq * 4.0) : (blockTick - r.fadeStart) / ppq * 60.0 / bpm;
+    r.wasPlaying = true;
+  } else {
+    // Free, Each note, and On play while stopped: its own clock from where it was.
+    if ((restart && !noteSteps) || !r.started) {
+      r.phase = 0;
+      r.cycle = 0;
+      r.fade = 0;
+    } else {
+      r.phase += secs * hz;
+      if (r.phase >= 1.0) {
+        const double w = std::floor(r.phase);
+        r.cycle += static_cast<uint64_t>(w);
+        r.phase -= w;
+      }
+      r.fade += f.tempoSync ? secs * bpm / 60.0 / 4.0 : secs;
+    }
+    const double total = r.phase + phase0;
+    cyc = r.cycle + static_cast<uint64_t>(total);
+    ph = total - std::floor(total);
+    x = static_cast<double>(r.cycle) + total;
+    r.wasPlaying = false;
+  }
+  r.lastTick = blockTick;
+  float raw;
+  if (f.kind == LfoKind::Chaos) {
+    raw = lfo::chaosValue(f.seed, x, std::clamp(f.live[6], 0.0f, 1.0f));
+  } else if (f.kind == LfoKind::Random) {
+    // The trigger number: steps of the clock (Tempo, Hz), notes counted (Note) or Roll presses (Roll).
+    const uint64_t step = noteSteps ? r.notes : f.trigger == RandomTrigger::Roll ? f.roll : cyc;
+    raw = lfo::randomSample(f.seed, step, f.centred, f.quantise);
+    x = static_cast<double>(step) + (noteSteps || f.trigger == RandomTrigger::Roll ? 0.0 : ph);
+  } else {
+    raw = lfo::shapeValue(f.shape, ph, cyc, f.pulseWidth, f.randomSteps, f.seed, f.table.get());
+  }
+  const float fade = f.fadeIn > 0 ? static_cast<float>(std::min(1.0, r.fade / static_cast<double>(f.fadeIn))) : 1.0f;
+  const double v = lfo::shapeOutput(raw, static_cast<float>(depth), static_cast<float>(offset), f.unipolar, fade);
+  if (!r.started || smoothMs <= 0) {
+    r.smooth = v;
+  } else {
+    r.smooth += (v - r.smooth) * (1.0 - std::exp(-static_cast<double>(n) / (smoothMs * 0.001 * sr_)));
+  }
+  r.started = true;
+  f.value = static_cast<float>(r.smooth);
+  r.display.store(f.value, std::memory_order_relaxed);
+  r.phaseUi.store(static_cast<float>(ph), std::memory_order_relaxed);
+  r.xUi.store(x, std::memory_order_relaxed);
+  r.running.store(true, std::memory_order_relaxed);
+}
+
+void AudioEngine::applyLfoTarget(const Program* p, const ProgLfoTarget& t, int n) {
+  LinkRuntime& rt = *t.target.rt;
+  // The value the LFOs move around: what a link or automation set in this block, else the knob's own.
+  double base = rt.appliedStamp == ctlStamp_ ? rt.appliedNorm : t.target.base;
+  double add = 0;
+  bool any = false, absolute = false;
+  double absValue = 0;
+  for (const ProgLfoLink& k : t.links) {
+    const ProgLfo& f = p->lfos[static_cast<size_t>(k.lfo)];
+    if (!f.on) continue;  // an LFO switched off leaves its targets alone
+    lfo::LinkShape s;
+    s.amount = k.amount, s.min = k.min, s.max = k.max, s.mode = k.mode, s.direction = k.direction;
+    s.invert = k.invert, s.unipolar = f.unipolar, s.curve = k.curve;
+    const double y = lfo::linkValue(s, f.value);
+    LfoLinkRuntime& lr = *k.rt;
+    if (!lr.started || k.smoothMs <= 0) lr.value = y;
+    else lr.value += (y - lr.value) * (1.0 - std::exp(-static_cast<double>(n) / (k.smoothMs * 0.001 * sr_)));
+    lr.started = true;
+    any = true;
+    if (k.mode == kModAbsolute) absolute = true, absValue = lr.value;
+    else add += lr.value;
+  }
+  if (!any) return;
+  if (absolute) base = absValue;
+  const double out = std::clamp(base + add, 0.0, 1.0);
+  rt.baseDisplay.store(static_cast<float>(t.target.desc.fromNormalized(std::clamp(base, 0.0, 1.0))), std::memory_order_relaxed);
+  rt.lfoMoved.store(true, std::memory_order_relaxed);
+  applyLinkValue(p, t.target, out);
+}
+
+void AudioEngine::restartNoteLfos(const Program* p, const ProgChannel& ch) {
+  if (p->lfos.empty() || p->channels.empty()) return;
+  const int ci = static_cast<int>(&ch - p->channels.data());
+  for (const ProgLfo& f : p->lfos)
+    if (f.restart == LfoRestart::EachNote && (f.noteChannel < 0 || f.noteChannel == ci) && f.rt)  // (-1: every channel)
+      f.rt->restartPending.fetch_add(1, std::memory_order_relaxed);
 }
 
 namespace {
@@ -3364,7 +3633,7 @@ int AudioEngine::settledGridBlock(const Program* p, int n, bool& stepped) const 
   const int grid = kControlBlock;
   stepped = false;
   if (!tPlaying_ || countInLeft_ > 0 || tMode_ != PlayMode::Song || lastGridTick_ < 0) return grid;
-  if (!p->links.empty() || p->hasMacros || p->hasHostBank || p->hasEventLanes) return grid;
+  if (!p->links.empty() || p->hasMacros || p->hasHostBank || p->hasEventLanes || !p->lfoOps.empty()) return grid;
   double anchor = anchorTick_;
   int64_t clock = clock_;
   if (tLoop_ && sampleAt(p, anchor, transportEnd(p)) <= clock) return grid;  // the block starts with the loop wrap
@@ -3499,15 +3768,24 @@ void AudioEngine::syncChannelPitch(const Program* p) {
 void AudioEngine::applyLinkValue(const Program* p, const ProgLink& l, double normalized) {
   {
     double v = l.desc.fromNormalized(normalized);
+    // K-142 (0.7.8 follow-up): a value that changed (or one with nothing to compare it with) may wake
+    // a node at rest (AudioEngine::nodesStayAtRest) and keeps blocks on the control grid.
+    if (!l.rt || l.rt->appliedNorm != normalized) ++linkChanges_;
     if (l.rt) {
       l.rt->display.store(static_cast<float>(v), std::memory_order_relaxed);
       l.rt->active.store(true, std::memory_order_relaxed);
+      l.rt->appliedNorm = normalized;  // K-247: what the board's LFOs move around in this block
+      l.rt->appliedStamp = ctlStamp_;
     }
     float fv = static_cast<float>(v);
     switch (l.kind) {
       case ProgLink::ChanPlugin: {
         const ProgChannel& c = p->channels[static_cast<size_t>(l.chan)];
-        if (static_cast<size_t>(l.param) < c.live.params.size()) c.live.params[static_cast<size_t>(l.param)] = fv;
+        if (static_cast<size_t>(l.param) < c.live.params.size()) {
+          float& slot = c.live.params[static_cast<size_t>(l.param)];
+          if (slot != fv) c.liveMoved = true;  // K-142: a resting instrument wakes for it
+          slot = fv;
+        }
         break;
       }
       case ProgLink::ChanNoteFx: {
@@ -3547,6 +3825,12 @@ void AudioEngine::applyLinkValue(const Program* p, const ProgLink& l, double nor
       case ProgLink::ChanMacro:  // K-169: a layer's macro (its own links read it in the next control block)
         p->channels[static_cast<size_t>(l.chan)].macroLive[static_cast<size_t>(l.param)] = fv;
         break;
+      case ProgLink::MixMacro:  // K-245: a mixer track's macro
+        p->mixer[static_cast<size_t>(l.mixer)].macroLive[static_cast<size_t>(l.param)] = fv;
+        break;
+      case ProgLink::LfoSetting:  // K-247: a board LFO's own setting (read when it runs next)
+        if (static_cast<size_t>(l.fx) < p->lfos.size() && l.param >= 0 && l.param < 7) p->lfos[static_cast<size_t>(l.fx)].live[l.param] = fv;
+        break;
     }
   }
 }
@@ -3574,7 +3858,9 @@ void AudioEngine::applyHostBank(const Program* p) {
       const float v = hostParam_[k].load(std::memory_order_relaxed);
       if (v < 0.f) continue;
       const ParamDesc& d = descs[k];
-      (*params)[k] = static_cast<float>(d.clamp(d.fromNormalized(v > 1.f ? 1.0 : static_cast<double>(v))));
+      const float nv = static_cast<float>(d.clamp(d.fromNormalized(v > 1.f ? 1.0 : static_cast<double>(v))));
+      if ((*params)[k] != nv && b.kind == ProgLink::ChanPlugin) p->channels[static_cast<size_t>(b.chan)].liveMoved = true;  // K-142
+      (*params)[k] = nv;
     }
   }
 }
@@ -3730,6 +4016,8 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
   int done = 0;
   while (done < frames) {
     int n = std::min(kMaxBlock, frames - done);
+    const int room = n;
+    bool longAsk = false;  // K-142 (follow-up): see below
     // Tell the interface thread which Program this block uses (collectGarbage), then look again: if a
     // newer one arrived in between, that thread may not have seen this one in time, so take the newer.
     const Program* p = live_.load();
@@ -3748,14 +4036,44 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
       bool stepped = false;
       n = toGrid == kControlBlock && n > kControlBlock ? settledGridBlock(p, n, stepped) : std::min(n, toGrid);
       stepNext_ = stepped;
+      // K-142 (0.7.8 follow-up): stopped with the whole graph at rest and every link and automation
+      // value holding still (the control blocks of a longer block would all set what the first sets),
+      // one block for the whole buffer instead of one per control block, unless something arrives
+      // for it below.
+      longAsk = !stepped && n == kControlBlock && toGrid == kControlBlock && room >= 2 * kControlBlock && !tPlaying_ && countInLeft_ <= 0 &&
+                !offline_ && restProg_ == p && linksSettled_ && graphSleep_.load(std::memory_order_relaxed) && longRestProgram(p);
     } else {
       stepNext_ = false;
     }
     hits_.clear();  // J-165: filled by the commands, MIDI and sequencing below
     syncChannelPitch(p);  // before any note of this block: notes include the pitch the instrument has
+    const size_t cmdsBefore = qTail_.load(std::memory_order_relaxed), midiBefore = mTail_.load(std::memory_order_relaxed);
+    const bool heldBefore = heldCount_ > 0 || heldOffCount_ > 0;
     deliverHeld(p);  // K-87: notes that waited for an instrument to load
     drain(p);
     drainMidi(p);
+    if (longAsk && !heldBefore && !tPlaying_ && !(done == 0 && hostNew_) && qTail_.load(std::memory_order_relaxed) == cmdsBefore &&
+        mTail_.load(std::memory_order_relaxed) == midiBefore) {
+      // (Whether every node stays at rest is looked at before the graph, graphSleeps: should one
+      // wake meanwhile from outside, an editor opened or an event from a plugin's own window in this
+      // very buffer, the graph runs on the longer block, its event at the block's start as before.)
+      const int len = room / kControlBlock * kControlBlock;
+      {
+        // The tracks left out hold silence on their buses for as long as the block (as a block of
+        // that length that found them silent would leave them).
+        for (size_t idx = 0; idx < std::min(p->mixer.size(), busL_.size()); ++idx) {
+          const int z = busZeroLen_[idx];
+          if (z >= len) continue;
+          std::memset(busL_[idx].data() + z, 0, sizeof(float) * static_cast<size_t>(len - z));
+          std::memset(busR_[idx].data() + z, 0, sizeof(float) * static_cast<size_t>(len - z));
+          busZeroLen_[idx] = len;
+        }
+        n = len;
+        longRestBlocks_.fetch_add(1, std::memory_order_relaxed);
+      }
+    }
+    blockInput_ = heldBefore || (done == 0 && hostNew_) || qTail_.load(std::memory_order_relaxed) != cmdsBefore ||
+                  mTail_.load(std::memory_order_relaxed) != midiBefore;  // K-142 (0.7.8 close)
     if (done == 0 && hostNew_) followHost(p);
     if (p) {  // grid2-1118: a scene follow action or a scene's tempo due now; the block ends at the next one
       sceneStep(p);

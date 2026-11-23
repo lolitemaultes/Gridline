@@ -210,7 +210,75 @@ class Shifter {
     }
   }
 
+  // K-142 (0.7.8), at rest: once every filter, all-pass and feedback value is below 1e-30 (fed zeros, these
+  // recursive filters can hover near the smallest normal number, about 1e-307, for good), they are set to
+  // exact zero: fed zeros they then stay zero and the output is zero, and advance() moves on only what
+  // process() moves besides them (the smoothers, the shift, the filter design countdown, the sideband swap,
+  // the phase and the beat) in the same order. Setting values below 1e-30 to zero changes the output by far
+  // less than the smallest float step.
+  bool settle() {
+    if (!primed_) return false;
+    bool tiny = true;
+    eachState([&](double& v) { tiny = tiny && std::fabs(v) < 1e-30; });
+    if (!tiny) return false;
+    eachState([](double& v) { v = 0; });
+    return true;
+  }
+  void advance(const Settings& s, double sr, double tempo, bool playing, double posBeats, int n) {
+    if (sr != sr_) {
+      sr_ = sr;
+      k5_ = 1 - std::pow(0.1, 1 / (0.005 * sr));
+      k100_ = 1 - std::pow(0.1, 1 / (0.1 * sr));
+      for (int c = 0; c < 2; ++c) hp_[c].set(true, 20, 0.5, sr), lp_[c].set(false, 20000, 0.5, sr);
+      design_ = 0;
+    }
+    const double tgt[8] = {s.mix, s.lrPhase, s.shapeL, s.shapeR, s.feedback, s.stereo, s.startPhase, s.freqPos};
+    const bool tempoRange = s.range == 2;
+    if ((playing && !wasPlaying_) || tempoRange != wasTempo_) retrigger(s, tempo, playing, posBeats);
+    wasPlaying_ = playing, wasTempo_ = tempoRange;
+    const double beatInc = tempo / 60.0 / sr;
+    for (int i = 0; i < n; ++i) {
+      for (int k = 0; k < 7; ++k) {
+        sm_[k] += (tgt[k] - sm_[k]) * k5_;
+        if (std::fabs(sm_[k] - tgt[k]) < 1e-5) sm_[k] = tgt[k];
+      }
+      sm_[7] += (tgt[7] - sm_[7]) * k100_;
+      if (std::fabs(sm_[7] - tgt[7]) < 1e-4) sm_[7] = tgt[7];
+      if (sm_[7] != hzPos_ || s.type != hzType_ || s.range != hzRange_ || tempo != hzTempo_ || s.law != hzLaw_) {
+        hzPos_ = sm_[7], hzType_ = s.type, hzRange_ = s.range, hzTempo_ = tempo, hzLaw_ = s.law;
+        hz_ = shiftHz(hzPos_, s.type, s.range, tempo, s.law);
+      }
+      const bool hq = s.type == 1;
+      if (hq && --design_ <= 0) design(s);
+      if (hq) {
+        double target = hz_ >= 0 ? -1.0 : 1.0;
+        double st = 1.0 / (0.002 * sr);
+        swap_ = target > swap_ ? std::min(target, swap_ + 2 * st) : std::max(target, swap_ - 2 * st);
+      }
+      phase_ += hz_ / sr;
+      phase_ -= std::floor(phase_);
+      beat_ += beatInc;
+    }
+  }
+
  private:
+  template <class F>
+  void eachState(F&& f) {
+    auto bq = [&](Biquad& b) { f(b.z1), f(b.z2); };
+    auto lr = [&](Lr16& l) {
+      for (Biquad& b : l.s) bq(b);
+    };
+    for (int c = 0; c < 2; ++c) {
+      f(fb_[c]);
+      bq(hp_[c]), bq(lp_[c]);
+      for (Quadrature& q : q_[c]) {
+        for (int k = 0; k < 4; ++k)
+          for (int j = 0; j < 2; ++j) f(q.xr[k][j]), f(q.yr[k][j]), f(q.xi[k][j]), f(q.yi[k][j]);
+        f(q.rd);
+      }
+      for (int k = 0; k < 2; ++k) lr(bandLo_[c][k]), lr(apLo_[c][k].lo), lr(apLo_[c][k].hi), lr(dryAp_[c][k].lo), lr(dryAp_[c][k].hi);
+    }
+  }
   void retrigger(const Settings& s, double tempo, bool playing, double posBeats) {
     const double ph0 = s.startPhase + 0.5;
     if (s.range == 2) {

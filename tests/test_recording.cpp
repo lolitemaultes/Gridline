@@ -221,6 +221,40 @@ void testPlacement() {
   expect(s24 && std::fabs(s24->left[k] - 1.0f) < 1e-3f, "24-bit WAV option");
 }
 
+// K-142 (0.7.8 close): a long stop first (the engine then leaves the stopped history and the empty
+// capture pass out), with the track armed from the start or armed only after the stop: the take is
+// placed and as long as in testPlacement.
+void testAfterLongStop() {
+  for (const bool armLate : {false, true}) {
+    Rig r(48000);
+    r.song.mixer[1].input = 0;
+    r.song.mixer[1].armed = !armLate;
+    r.build();
+    const int lat = 137;
+    r.eng.setRecordLatency(lat);
+    r.run(4 * 48000);  // longer than the latency history: stopped all through
+    if (armLate) {
+      r.song.mixer[1].armed = true;
+      r.build();
+      r.run(4 * 48000);
+    }
+    const int64_t F = r.frame + 20011;  // the input frame carrying the impulse
+    r.input = [F](int64_t f, int) { return f == F ? 1.0f : 0.0f; };
+    r.rec.begin();
+    r.eng.setRecording(true);
+    r.eng.play();
+    r.run(48000, 256);
+    r.finish();
+    const char* what = armLate ? "armed after a long stop" : "armed through a long stop";
+    auto& takes = r.rec.takes();
+    expect(!r.rec.open() && takes.size() == 1, (std::string(what) + ": one take, closed").c_str());
+    if (takes.size() != 1) continue;
+    expect(takes[0].frames() == 48000, (std::string(what) + ": the take is as long as the played music").c_str());
+    const size_t at = static_cast<size_t>(20011 - lat);
+    expect(takes[0].L.size() > at && takes[0].L[at] == 1.0f, (std::string(what) + ": the impulse on the frame played").c_str());
+  }
+}
+
 void testPunch() {
   Rig r(48000);
   r.song.tempo = 133;
@@ -485,6 +519,7 @@ int main() {
   testMonitoring();
   testInputQueue();
   testPlacement();
+  testAfterLongStop();
   testPunch();
   testLoopTakes();
   testEngineFlags();

@@ -34,7 +34,7 @@ void drawMasterChainBody(App& a, const BodyFrame& f);
 void drawLoupeBody(App& a, float w, float h);
 
 namespace hostbody {
-enum class Body : int { ChannelSettings = 0, EffectEditor, MasterChain, Loupe, Count };
+enum class Body : int { ChannelSettings = 0, EffectEditor, MasterChain, Loupe, ClipEditor, Count };
 const char* name(Body b);
 // A host drew this body this frame: its window stays out of the way next frame.
 void claim(Body b, const char* host);

@@ -537,7 +537,9 @@ void drawFrame(Ctx& c) {
       if (u.linkSrc >= 0) u.linkSrc = -1, keys::claimEscape();
       else if (isOverlay(u.view) || u.large || (tabOf(u.view) == TabSynth && u.view != VLayer)) beginClose(u), keys::claimEscape();
     }
-    const bool prev = ImGui::IsKeyPressed(ImGuiKey_LeftBracket, false), next = ImGui::IsKeyPressed(ImGuiKey_RightBracket, false);
+    // (GitHub #42: while the typing keyboard is on, [ and ] step its octave only.)
+    const bool prev = !keys::typingKeyboardTakes(ImGuiKey_LeftBracket) && ImGui::IsKeyPressed(ImGuiKey_LeftBracket, false);
+    const bool next = !keys::typingKeyboardTakes(ImGuiKey_RightBracket) && ImGui::IsKeyPressed(ImGuiKey_RightBracket, false);
     if (prev || next) {
       const int d = next ? 1 : -1;
       if (u.view == VLayer) u.layer = (u.layer + d + kOscs) % kOscs;

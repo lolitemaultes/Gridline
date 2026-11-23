@@ -5,11 +5,22 @@
 // ("status: File name too long" in an export worker). These never throw: a string that cannot
 // name a file is "not there".
 #pragma once
+#include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <system_error>
 
 namespace gl::safefs {
+
+// K-142 (0.7.8): the CPU report (app/CpuReport.h) counts the file system questions asked through
+// these wrappers while it records; otherwise one relaxed load and a branch.
+enum FsCall { kFsExists, kFsIsFile, kFsIsDir, kFsCalls };
+inline std::atomic<bool> gCountCalls{false};
+inline std::atomic<uint64_t> gCalls[kFsCalls] = {};
+inline void counted(FsCall c) noexcept {
+  if (gCountCalls.load(std::memory_order_relaxed)) gCalls[c].fetch_add(1, std::memory_order_relaxed);
+}
 
 inline constexpr size_t kMaxPath = 4096;  // PATH_MAX on Linux (longer than macOS and Windows allow)
 inline constexpr size_t kMaxName = 255;   // one name in a path (NAME_MAX)
@@ -42,30 +53,36 @@ inline std::filesystem::path toPath(const std::string& s) noexcept {
 }
 
 inline bool exists(const std::string& s) noexcept {
+  counted(kFsExists);
   if (!plausiblePath(s)) return false;
   std::error_code ec;
   return std::filesystem::exists(toPath(s), ec) && !ec;
 }
 inline bool isFile(const std::string& s) noexcept {
+  counted(kFsIsFile);
   if (!plausiblePath(s)) return false;
   std::error_code ec;
   return std::filesystem::is_regular_file(toPath(s), ec) && !ec;
 }
 inline bool isDir(const std::string& s) noexcept {
+  counted(kFsIsDir);
   if (!plausiblePath(s)) return false;
   std::error_code ec;
   return std::filesystem::is_directory(toPath(s), ec) && !ec;
 }
 // The same for a path built here (no name check), without the exception.
 inline bool existsAt(const std::filesystem::path& p) noexcept {
+  counted(kFsExists);
   std::error_code ec;
   return std::filesystem::exists(p, ec) && !ec;
 }
 inline bool isFileAt(const std::filesystem::path& p) noexcept {
+  counted(kFsIsFile);
   std::error_code ec;
   return std::filesystem::is_regular_file(p, ec) && !ec;
 }
 inline bool isDirAt(const std::filesystem::path& p) noexcept {
+  counted(kFsIsDir);
   std::error_code ec;
   return std::filesystem::is_directory(p, ec) && !ec;
 }

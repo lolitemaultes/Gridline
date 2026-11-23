@@ -24,6 +24,7 @@
 #include "Windows.h"
 #include "Theme.h"
 #include "LiveLook.h"
+#include "LfoUi.h"
 #include "icons/IconTexture.h"
 #include "../core/I18n.h"
 #include "../core/LevelMeter.h"
@@ -868,6 +869,7 @@ std::vector<DevKnob> gDevKnobsNow, gDevKnobsLast;  // this frame's controls, the
 }  // namespace
 
 void devKnobsEnable(bool on) { gDevKnobs = on; }
+bool devKnobsEnabled() { return gDevKnobs; }
 std::string devKnobReport() {
   std::string out;
   int i = 0;
@@ -1039,6 +1041,9 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   } else {
     DrawKnob(dl, c, radius, static_cast<float>(d.toNormalized(*value)), bipolar, hov, act);
   }
+  // K-247: an LFO's swing and live dot, its handle's drop, Alt-drag for its amount (on the knob's item).
+  const bool lfoAlt = knobParam.owner != kNoId && lfoui::altOwned(app(), knobParam);
+  if (knobParam.owner != kNoId) lfoui::knobOverlay(app(), knobParam, c, radius, act);
   if (label) {
     ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(labelFs, 1e9f, 0, label);
     dl->AddText(ImGui::GetFont(), labelFs, ImVec2(std::round(c.x - ts.x * 0.5f), p.y + radius * 2.0f + 2.0f), P.textDim, label);
@@ -1051,7 +1056,10 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   // J-136: right-click menu with the reset first, then type, then the
   // caller's items; Alt+click types directly.
   if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##kmenu");
-  if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && io.KeyAlt) {
+  // K-247: on a knob an LFO moves, Alt-drag sets the LFO's amount; an Alt-click (no drag) still types.
+  const bool altClick = lfoAlt ? (ImGui::IsItemDeactivated() && io.KeyAlt && io.MouseDragMaxDistanceSqr[0] < 9.0f)
+                               : (ImGui::IsItemClicked(ImGuiMouseButton_Left) && io.KeyAlt);
+  if (altClick) {
     if (gAltClickResets) {  // R09-04: Option-click resets (Smooth's strips), as the reference's
       *value = d.def;
       KnobDragSet(d.toNormalized(d.def));
@@ -1098,7 +1106,34 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
 // A mixer track's own control (fader, pan, separation, depth, EQ, sends) while automation or a
 // link plays it: the live value, so the strips and the Stage agree during playback. Edits
 // still write the stored value.
+// K-152 (0.7.8): the song's swing and groove accent knobs follow their automation while the song plays.
+static bool liveSwingValue(App& a, ParamId pid, double& v) {
+  if (pid.owner != kSongId || (pid.index != static_cast<uint32_t>(SongParam::Swing) && pid.index != static_cast<uint32_t>(SongParam::GrooveAccent)))
+    return false;
+  if (!a.engine.playing() || a.engine.mode() != PlayMode::Song) return false;
+  const Song& s = a.doc.song();
+  static const Song* song = nullptr;
+  static uint64_t rev = ~0ull;
+  static std::vector<AutomationLane> lanes;
+  if (song != &s || rev != a.doc.revision()) {
+    song = &s, rev = a.doc.revision();
+    lanes.clear();
+    for (const auto& am : s.automations)
+      if (am.owner == kSongId && am.index != static_cast<uint32_t>(SongParam::Tempo)) {
+        lanes = automationLanes(s);
+        break;
+      }
+  }
+  for (const AutomationLane& l : lanes)
+    if (l.targets(pid.owner, pid.index)) {
+      v = std::clamp(l.valueAt(a.engine.position()), 0.0, 1.0);  // both run 0..1
+      return true;
+    }
+  return false;
+}
+
 static bool liveMixerValue(App& a, ParamId pid, double& v) {
+  if (liveSwingValue(a, pid, v)) return true;
   const Song& s = a.doc.song();
   const bool tracks = logicplug::active(a);
   // R06-04: in the Tracks layout every automated control follows its curve while playing (a
@@ -1177,8 +1212,7 @@ bool ParamKnob(const char* id, ParamId pid, float radius, const char* label, boo
     if (ImGui::GetActiveID() != kid && liveMixerValue(a, pid, live)) val = live;
   }
   auto menu = [&a, pid]() {
-    packs::modulation::drawLinkMenu(a, pid);  // controller links (modulation pack)
-    knobContextMenu(a, pid);                  // values, MIDI learn, reset
+    knobContextMenu(a, pid);  // values, automation, Modulate (LFO board, macros, controllers), MIDI
   };
   ImVec2 kp = ImGui::GetCursorScreenPos();
   SetNextKnobParam(pid);
@@ -1869,6 +1903,15 @@ void DragPreview(Icon icon, const char* text, ImU32 tint) {
   drawIcon(dl, icon, ImVec2(std::round(p.x + 17), std::round(p.y + h * 0.5f)), 12, theme::lit(bar));
   theme::textEllipsis(dl, nullptr, 0, ImVec2(p.x + 30, std::round(p.y + (h - ImGui::GetFontSize()) * 0.5f)), tw + 1, P.text, text);
   ImGui::Dummy(ImVec2(tw + 36, h));
+}
+
+void Spinner(ImDrawList* dl, ImVec2 c, float r, ImU32 col) {
+  // A faint ring with a short arc turning on it (still, it reads as a spinner, not a letter).
+  const float t = static_cast<float>(ImGui::GetTime()) * 6.0f, th = std::max(1.25f, r * 0.3f);
+  const ImU32 ring = (col & ~IM_COL32_A_MASK) | (static_cast<ImU32>(((col >> IM_COL32_A_SHIFT) & 0xFF) * 0.28f) << IM_COL32_A_SHIFT);
+  dl->AddCircle(c, r, ring, 16, th);
+  dl->PathArcTo(c, r, t, t + 1.9f, 10);
+  dl->PathStroke(col, ImDrawFlags_None, th);
 }
 
 void Led(ImDrawList* dl, ImVec2 c, float r, bool on, float level) {

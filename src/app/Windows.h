@@ -3,6 +3,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include "../../third_party/imgui/imgui.h"
 #include "../core/Params.h"
 #include "../core/Types.h"
 #include "ClipHeaderHit.h"
@@ -18,6 +19,8 @@ float drawTopBar(App& a);      // menu + transport; returns height used
 bool topBarButtonRect(const char* name, float& x0, float& y0, float& x1, float& y1);
 void devNoteRect(const char* name);  // the last item's rectangle as an "sdlat" target (browser: "brsearch", "brclear", "brcollapse"; channel window: "chroute", "chroutefree", "chroutelist"; piano roll: "prstamp", "prstamplbl", "prstampchip")
 void devNoteRectAt(const char* name, float x0, float y0, float x1, float y1);  // K-237: a rectangle as an "sdlat" target ("ptabsrc", "ptabdst": a pane tab drag)
+// Smooth's control bar: each pane button drawn last frame ("lb_lists", "lb_ed", ...) and whether it was lit.
+std::string devBarLit();
 void splitClipsAtPlayhead(App& a);  // K-112b: the clips across the song position split there (Dialogs.cpp)
 void tracksNewSameSettings(App& a);
 void tracksMuteSelected(App& a);  // R04-11: M, the selected tracks (or the focused one)
@@ -31,6 +34,7 @@ void tracksFreeze(App& a);
 bool tracksFrozen(App& a);
 bool tracksCanFreeze(App& a);
 void tracksBounceInPlace(App& a);
+void tracksRenderMenu(App& a);  // K-254: the selected track's instrument to audio (a submenu)
 void regionsBounceInPlace(App& a);
 // The header's parts the person hid (Configure track header): bits of ui.logicHeaderHide.
 enum TrackHeaderPart : int { kHeadIcon = 1, kHeadPower = 2, kHeadMuteSolo = 4, kHeadRecord = 8, kHeadVolume = 16, kHeadPan = 32 };
@@ -65,6 +69,7 @@ void devTopBarFitWidth(float w);  // K-132: dev, the top bar fits its groups int
 float topBarMetronomeMirror();
 double topBarMetronomeBeat();  // dev: the beat that pose was drawn for
 bool topBarMetronomeTicking(double* anchorBeat);  // dev: ... whether it ticked then, and the beat it started in
+void clipsMetronomeState(bool* leftLit, bool* menuOpen);  // dev: the Clips metronome's beat pose (left circle filled) and its menu
 void drawStatusBar(App& a);    // hint bar + notifications
 void drawNotificationCards(App& a);  // J-141: the notification cards alone (the launcher has no status bar)
 void drawBrowser(App& a);
@@ -91,6 +96,16 @@ void rackDevDump(App& a, int frame);
 // The last ImGui item's rectangle, listed as "rect <name>" by the "rack" dump (rack menus: scripted checks).
 void devRackItem(const std::string& name);
 void drawPianoRoll(App& a);
+// K-262: the Vibrato tool's defaults (preset, depth, rate, sync) for the current pattern and channel, in a
+// toolbar row; a change also sets the selected notes' vibrato. The Tracker's Roll page opens it in a popup.
+void pianoVibratoStrip(App& a);
+// Dev ("pianobar"): Studio's piano roll toolbar last frame: the Vibrato tool's icon (1 shown, 0 gave
+// way to the zoom buttons, -1 no tool row) and the zoom buttons (1 shown, 0 not, -1 no tool row).
+void pianoToolbarState(int& vibIcon, int& zoomButtons);
+// Dev ("pianobar"): Studio's tool row folding: "row N more 0", or "row N more 1 at x0 y0 x1 y1 list
+// x0 y0 x1 y1 pitch h hidden Name,Name" (the "..." button, its open list's first row and row pitch,
+// the folded tools in the list's order; list -1 when closed).
+std::string pianoToolbarFold();
 // Q-4 dev check (--dev-input "lane"): the piano roll's event lane as drawn last
 // frame, in logical pixels: x of tick t = x0 + t * pxPerTick; value v (0..1) at
 // y = yBottom - v * (yBottom - yTop).
@@ -131,6 +146,15 @@ struct PlaylistGeometry {
     float x, y;
   };
   std::vector<Curve> curves;
+  // K-388: the divots of Smooth's looped regions drawn last frame: the seam's left x (a device-pixel
+  // edge), the divot's centre x, the loop point's tick from the region start, and whether the top one shows.
+  struct Divot {
+    unsigned clip;
+    float x, cx;
+    long long at;
+    bool top;
+  };
+  std::vector<Divot> divots;
   // J-208: the picker's "+" (new pattern) button centre (0 0 when not drawn) and the
   // track a dragged plugin would land on (-1 = none this frame).
   float plusX = 0, plusY = 0;
@@ -149,6 +173,20 @@ struct PlaylistGeometry {
   bool valid = false;
 };
 const PlaylistGeometry& playlistGeometry();
+// 0.7.8 (dev): the time zoom sliders in Smooth's tracks area (0) and piano roll (1): the
+// track's ends and centre line on screen, and the frame they were last drawn (-1: never).
+struct ZoomSliderGeometry {
+  float x0 = 0, x1 = 0, y = 0;
+  int frame = -1;
+};
+ZoomSliderGeometry& zoomSliderGeometry(int which);
+// 0.7.8: a time zoom slider's fine drag. Called right after the slider's button: f is the value it shows
+// (0..1), x0 and span its line on screen, knobX the knob's centre. A press on the knob keeps the value; a
+// press on the line beside it jumps there. While held the pointer's motion moves the value relative to the
+// press, the whole range over kZoomSliderTravel px (Shift: a quarter of that); a wheel over it steps finely.
+// Returns the new value while held or wheeled, else -1.
+constexpr float kZoomSliderTravel = 250.0f;
+float zoomSliderFine(float f, float x0, float span, float knobX);
 // K-112b (dev, "autolane <track>"): the Tracks layout shows the automation lane under that playlist track.
 void devShowAutomationLane(int track);
 // R02-15: A / Mix > Show automation: the selected tracks' automation lanes (the focus track's when
@@ -181,10 +219,6 @@ bool mixerWheelScrolls();
 void devMenuItem(const std::string& name);
 // K-158: a clip's whole playlist menu (--menu arrclip; K-112: also Live's grid slots).
 void devArrangementClipMenu(App& a, ObjectId clip);
-// K-112 (Live): the clip band's audio clip view (the clip column's audio rows, the file's details, a
-// ruler, the loop brace and the clip's waveform) in place of the notes editor, at the cursor.
-void drawLiveAudioClip(App& a, ObjectId clip);
-bool devLiveAudioClipShown();  // dev (clipview): the audio clip view drew this frame or the last
 void devMenuRects();
 std::string mixerDragDev();  // GitHub #46: the strip drag ("mixer" dev dump)
 void drawChannelSettings(App& a);
@@ -203,6 +237,10 @@ void devShowPpqWarning(App& a, int ppq);  // J-54 layout check (--show ppqwarn):
 // (per frame) and draws the "Performance" window.
 void updatePerformance(App& a);
 void drawPerformance(App& a);
+// 0.7.8: the width the Tracker's Performance panel asks for (its content, the side panel's rail left
+// out), from the interface's fonts and language; and the dev report of its last layout ("perfpanel").
+float performanceTrackerWidth(App& a);
+void performanceDevReport(App& a, int frame);
 void drawPluginManager(App& a);  // Options > Plugin manager (PluginManager.cpp)
 // Arrangements and live mode (Live.cpp).
 void drawLivePads(App& a);                         // "Live pads" window
@@ -241,6 +279,10 @@ int settingsTabFlags(App& a, int index);
 // Context menu bodies (call between BeginPopup/EndPopup) — ContextMenus.cpp.
 void channelContextMenu(App& a, ObjectId channel);
 void rackOptionsMenu(App& a);      // channel rack menu: selection ops, sorting, colours
+// GitHub #58: hide channels from the rack (one undo step; the selection leaves them), and the menu
+// rows that show hidden ones again (each, or all).
+void hideChannels(App& a, const std::vector<ObjectId>& ids);
+void hiddenChannelItems(App& a);
 // K-4: "Auto scrolling" menu item: the playlist's (ui.autoScroll) or, with `pattern`, the piano
 // roll's and channel rack's (ui.autoScrollPattern).
 void autoScrollItem(App& a, bool pattern);
@@ -277,6 +319,11 @@ void mixerSlotMenu(App& a, ObjectId track, int slot);
 // The effect list a mixer slot offers (favourites, categories, installed): a pick puts the effect
 // in (track, slot) and opens it (K-112b: the strips' empty slots and Replace).
 void effectPickerList(App& a, ObjectId track, int slot, const std::string& current);
+// The same list as a slot's popup `id` (opened with ImGui::OpenPopup(id) beside the slot's item):
+// its own width (the list's widest row, never the slot's), below the slot or above it, flipped left
+// at the window's right edge, always inside the window (a long list scrolls inside it).
+void effectPickerPopup(App& a, const char* id, ImVec2 slotMin, ImVec2 slotMax, ObjectId track, int slot, const std::string& current);
+std::string devSlotPickReport();  // dev "slotpick": the picker popup drawn last (its rectangle, scrollbar, the room it had)
 // Mixer (MixerView.cpp, J-12): selected tracks in mixer order (the focused
 // one when nothing else is selected), the send menu of a route arrow, the
 // mixer options menu, the track latency menu, per-track stem renders.
@@ -306,6 +353,23 @@ void pluginWindowMenu(App& a, ObjectId owner, int slot);  // slot < 0: channel i
 // Checkpoint 59 (N58-06): the same menu for a device docked in Clips' device band, in Clips' words
 // (track and device, no channel, mixer track, piano roll, editor size or window rows).
 void pluginWindowMenu(App& a, ObjectId owner, int slot, bool clipsDevice);
+// 0.7.8: the same menu in the Audio clip window's header (a sampler channel): no channel header,
+// editor size or Close window rows (the window has its own).
+void pluginWindowMenu(App& a, ObjectId owner, int slot, bool clipsDevice, bool clipWindow);
+// The channel settings' note rows (ChannelSettings.cpp): `part` -1 all of them as the channel
+// settings draw them; else one, without its heading, for a card of the Audio clip window's Channel
+// tab (0 tune and time, 1 polyphony, 2 cut groups, 3 expression, 4 echo, 5 layer, group and MIDI).
+void drawNoteSettingsPart(App& a, ObjectId id, int part);
+// The same part laid on the Audio clip window's module grid: `place(kind, index, width)` gives the
+// top-left (screen) of the part's index-th knob (kind 0: its name's row; the knob 16 px under it, its
+// value 60 under it), toggle (1), list (2, its name in its preview) or note text (3), and sets the
+// width to draw it at. Each control's edits are the same as above.
+struct NoteGrid {
+  std::function<ImVec2(int kind, int index, float& width)> place;
+  float knobRadius = 20.0f;
+  float knobOff = 16.0f, valueOff = 60.0f;  // the knob's and the value's top, from the name's
+};
+void drawNoteSettingsPart(App& a, ObjectId id, int part, const NoteGrid* grid);
 // K-112c: the device title bar's save and hot-swap buttons. savePresetDialog: Save preset to file
 // for that plugin; swapDeviceItems: menu rows of the instruments (slot < 0) or effects to put in its place.
 void savePresetDialog(App& a, ObjectId owner, int slot);

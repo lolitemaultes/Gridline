@@ -16,6 +16,8 @@
 #include "../engine/ClipSource.h"
 #include "../engine/TimeStretch.h"
 #include "PluginEditorsFlSynth.h"
+#include "WarpWave.h"
+#include "../core/SampleWarp.h"
 
 namespace gl {
 
@@ -263,8 +265,12 @@ void editorSamplerFl(App& a, const PluginTarget& t, float width) {
     SamplePtr smp = st.data.empty() ? nullptr : sampleCache().request(st.data);  // K-85: never waits for a decode
     ImVec2 p0 = F.p(6, 31), p1 = F.p(674, 131);
     ImGui::SetCursorScreenPos(p0);
+    ImGui::SetNextItemAllowOverlap();  // K-248: the Warp button drawn over the well takes its own clicks
     ImGui::InvisibleButton("##swave", ImVec2(p1.x - p0.x, p1.y - p0.y));
-    sampleWell(dl, p0, p1, K, smp.get());
+    // K-248: the sample as it plays (warped while its warp markers play).
+    const SampleWarp sw8 = sampleWarpOf(st);
+    sampleWell(dl, p0, p1, K, t.isChannel() ? warpwave::shownSample(sw8, smp).get() : smp.get());
+    const bool warping = t.isChannel() && sw8.on;  // warp mode: the pointer edits the warp markers
     const float sw = p1.x - p0.x, sh = p1.y - p0.y;
     if (!smp) skin::text(dl, ImVec2(p0.x + 12, p0.y + sh * 0.5f - 6), K.graphText, "Load or drop a sample", lf(F, 8));
     struct Mk {
@@ -284,7 +290,7 @@ void editorSamplerFl(App& a, const PluginTarget& t, float width) {
     ImGuiIO& io = ImGui::GetIO();
     if (ImGui::IsItemActivated()) {
       ui.drag = -1;
-      float best = 10;
+      float best = warping ? -1.0f : 10.0f;
       for (int k = 0; k < 4; ++k) {
         if (k >= 2 && !loop) continue;
         float x = p0.x + val(st, mks[k].param, k % 2 ? 1.f : 0.f) * sw;
@@ -305,7 +311,9 @@ void editorSamplerFl(App& a, const PluginTarget& t, float width) {
       a.doc.setParam(t.pid(mks[k].param), v, true);
     }
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
-    if (ImGui::IsItemHovered()) a.setHint("Drag the start / end and loop markers");
+    if (ImGui::IsItemHovered()) a.setHint(warping ? "Warp mode: click to add a warp marker, drag one to stretch the sample around it, double-click removes it"
+                                                  : "Drag the start / end and loop markers");
+    if (t.isChannel()) warpwave::sampleWell(a, t.owner, "##smpwarp", p0, p1, smp, K.graphCurve);  // K-248
     // PLAYBACK
     panelBox(dl, F, 6, 137, 214, 157, K, "PLAYBACK");
     skin::check(a, t, SmpLoop, F.p(14, 158), F.sz(60, 17), K, "LOOP");

@@ -1,8 +1,10 @@
 // Gridline — native pieces of a plugin window (macOS / AppKit).
 #import <AppKit/AppKit.h>
+#import <QuartzCore/QuartzCore.h>
 #include <dlfcn.h>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <deque>
 #include <map>
 #include <set>
@@ -37,6 +39,18 @@ Class containerClass() {
     self_ = rc.done();
     return self_;
   }();
+  return c;
+}
+
+// 0.7.8: the view a docked interface's container sits in. It shows the visible part of the
+// interface (its frame), cuts holes where Gridline draws in front of it (a mask on its layer),
+// and is flipped so the container is placed from the top-left like Gridline's coordinates.
+Class dockClipClass() {
+  static RuntimeClass rc("GridlineDockClip", [NSView class]);
+  static Class c = rc.method(@selector(isOpaque), +[](id, SEL) -> BOOL { return NO; })
+                       .method(@selector(isFlipped), +[](id, SEL) -> BOOL { return YES; })
+                       .method(@selector(acceptsFirstMouse:), +[](id, SEL, NSEvent*) -> BOOL { return YES; })
+                       .done();
   return c;
 }
 
@@ -157,6 +171,147 @@ void setContainerFrame(const Window& w, void* container, const layout::Rect& r) 
   if (!NSEqualRects([v frame], f)) [v setFrame:f];
 }
 
+namespace {
+struct Docked {
+  NSView* clip = nil;  // retained
+  bool pressed = false;
+  layout::Rect visible;
+  size_t holes = 0;
+};
+std::map<void*, Docked>& docked() {
+  static std::map<void*, Docked> m;
+  return m;
+}
+// A press on a docked interface is noted for Gridline (its window comes to the front); the event goes on.
+void installPressMonitor() {
+  static id monitor = nil;
+  if (monitor) return;
+  const NSEventMask mask = NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskOtherMouseDown;
+  monitor = [[NSEvent addLocalMonitorForEventsMatchingMask:mask
+                                                   handler:^NSEvent*(NSEvent* e) {
+                                                     NSWindow* win = [e window];
+                                                     NSView* content = win ? [win contentView] : nil;
+                                                     if (!content) return e;
+                                                     NSView* hit = [content hitTest:[content convertPoint:[e locationInWindow] fromView:nil]];
+                                                     if (!hit) return e;
+                                                     for (auto& [c, d] : docked())
+                                                       if ([d.clip window] == win && [hit isDescendantOf:d.clip]) d.pressed = true;
+                                                     return e;
+                                                   }] retain];
+}
+}  // namespace
+
+void* createDockedContainer(const Window& w, const layout::Rect& full) {
+  NSView* content = contentOf(w);
+  if (!content) return nullptr;
+  NSView* clip = [[dockClipClass() alloc] initWithFrame:toFrame(content, full)];
+  [clip setAutoresizingMask:NSViewNotSizable];
+  [clip setWantsLayer:YES];
+  [[clip layer] setMasksToBounds:YES];
+  if ([clip respondsToSelector:@selector(setClipsToBounds:)]) [clip setClipsToBounds:YES];
+  NSView* v = [[containerClass() alloc] initWithFrame:NSMakeRect(0, 0, std::max(1, full.w), std::max(1, full.h))];
+  [v setAutoresizingMask:NSViewNotSizable];
+  if ([v respondsToSelector:@selector(setClipsToBounds:)]) [v setClipsToBounds:YES];
+  [v setWantsLayer:YES];
+  [[v layer] setMasksToBounds:YES];
+  [clip addSubview:v];
+  [content addSubview:clip positioned:NSWindowAbove relativeTo:nil];
+  Docked d;
+  d.clip = clip;
+  d.visible = full;
+  docked()[v] = d;
+  installPressMonitor();
+  watchKeys(v);
+  return v;  // retained: released in destroyDockedContainer
+}
+
+void setDockedFrame(const Window& w, void* container, const layout::Rect& full, const layout::Rect& visible, const std::vector<layout::Rect>& holes) {
+  auto it = docked().find(container);
+  NSView* content = contentOf(w);
+  if (it == docked().end() || !content) return;
+  Docked& d = it->second;
+  NSView* clip = d.clip;
+  NSView* v = (NSView*)container;
+  // QuartzCore by name (not linked: AppKit loads it), as DrawStatsMac.mm does.
+  static id const tx = NSClassFromString(@"CATransaction");
+  static id const shape = NSClassFromString(@"CAShapeLayer");
+  [tx begin];
+  [tx setDisableActions:YES];  // moves at once, never animated
+  if (visible.empty()) {
+    if (![clip isHidden]) [clip setHidden:YES];
+  } else {
+    // Back in its window when it was popped out and in again (the plugin's view keeps its window).
+    if ([clip superview] != content) {
+      [clip removeFromSuperview];
+      [content addSubview:clip positioned:NSWindowAbove relativeTo:nil];
+    }
+    const NSRect cf = toFrame(content, visible);
+    if (!NSEqualRects([clip frame], cf)) [clip setFrame:cf];
+    const NSRect vf = NSMakeRect(full.x - visible.x, full.y - visible.y, std::max(1, full.w), std::max(1, full.h));  // the clip view is flipped
+    if (!NSEqualRects([v frame], vf)) [v setFrame:vf];
+    if (holes.empty()) {
+      if ([[clip layer] mask]) [[clip layer] setMask:nil];
+    } else {
+      CAShapeLayer* mask = static_cast<CAShapeLayer*>([shape layer]);
+      const CGRect b = [[clip layer] bounds];
+      [mask setFrame:b];
+      CGMutablePathRef path = CGPathCreateMutable();
+      CGPathAddRect(path, nullptr, b);
+      // A flipped view's layer has the view's y axis (AppKit keeps them alike): holes go top-down there
+      // (seen in a capture: the layer's own flags said otherwise and the holes came out mirrored).
+      const bool flipped = [clip isFlipped];
+      for (const layout::Rect& h : holes) {
+        const CGFloat hx = h.x - visible.x, hy = h.y - visible.y;
+        CGPathAddRect(path, nullptr, CGRectMake(hx, flipped ? hy : b.size.height - hy - h.h, h.w, h.h));
+      }
+      [mask setPath:path];
+      [mask setFillRule:@"even-odd"];  // kCAFillRuleEvenOdd
+      CGPathRelease(path);
+      [[clip layer] setMask:mask];
+    }
+    if ([clip isHidden]) [clip setHidden:NO];
+  }
+  [tx commit];
+  d.visible = visible;
+  d.holes = holes.size();
+}
+
+void destroyDockedContainer(const Window& w, void* container) {
+  (void)w;
+  auto it = docked().find(container);
+  if (it == docked().end()) return;
+  NSView* clip = it->second.clip;
+  docked().erase(it);
+  unwatchKeys(container);
+  NSView* v = (NSView*)container;
+  [v removeFromSuperview];
+  [v release];
+  [clip removeFromSuperview];
+  [clip release];
+}
+
+bool dockedHolesCut() { return true; }
+
+bool takeDockedPress(void* container) {
+  auto it = docked().find(container);
+  if (it == docked().end() || !it->second.pressed) return false;
+  it->second.pressed = false;
+  return true;
+}
+
+void releaseKeyFocus(void* container) {
+  NSView* c = (NSView*)container;
+  NSWindow* win = c ? [c window] : nil;
+  if (!win || !inside([win firstResponder], c)) return;
+  // SDL's own text view takes the keys of its window (it adds it to the content view): back to it,
+  // else to the content view.
+  NSView* content = [win contentView];
+  NSView* to = content;
+  for (NSView* s in [content subviews])
+    if ([NSStringFromClass([s class]) hasPrefix:@"SDL"] && [s acceptsFirstResponder]) to = s;
+  [win makeFirstResponder:to];
+}
+
 void containerMoved(const Window&, void*) {}
 
 void destroyContainer(const Window& w, void* container) {
@@ -184,6 +339,54 @@ void orderAbove(const Window& w, const Window& ref) {
   NSWindow* c = (NSWindow*)w.handle;
   if (![c isVisible]) return;
   [c orderWindow:NSWindowAbove relativeTo:[(NSWindow*)ref.handle windowNumber]];
+}
+
+namespace {
+// setTakesNoKeys: the windows that may not become key right now. The window's class (SDL's) answers
+// canBecomeKeyWindow / canBecomeMainWindow through this check first, then as it did.
+std::set<void*>& noKeyWindows() {
+  static std::set<void*> s;
+  return s;
+}
+std::map<std::pair<Class, SEL>, IMP>& originalImps() {
+  static std::map<std::pair<Class, SEL>, IMP> m;
+  return m;
+}
+BOOL askOriginal(id self, SEL sel) {
+  for (Class c = [self class]; c; c = class_getSuperclass(c)) {
+    const auto it = originalImps().find({c, sel});
+    if (it != originalImps().end()) return it->second ? reinterpret_cast<BOOL (*)(id, SEL)>(it->second)(self, sel) : NO;
+  }
+  return NO;
+}
+BOOL mayBecome(id self, SEL sel) {
+  if (noKeyWindows().count((void*)self)) return NO;
+  return askOriginal(self, sel);
+}
+void guardClass(Class cls) {
+  for (SEL sel : {@selector(canBecomeKeyWindow), @selector(canBecomeMainWindow)}) {
+    if (originalImps().count({cls, sel})) continue;
+    Method m = class_getInstanceMethod(cls, sel);
+    if (!m) continue;
+    const IMP orig = method_getImplementation(m);
+    const IMP mine = reinterpret_cast<IMP>(&mayBecome);
+    if (orig == mine) continue;
+    originalImps()[{cls, sel}] = orig;
+    // The class's own method is replaced; an inherited one gets an override in this class only.
+    if (!class_addMethod(cls, sel, mine, method_getTypeEncoding(m))) method_setImplementation(m, mine);
+  }
+}
+}  // namespace
+
+void setTakesNoKeys(const Window& w, bool on) {
+  if (!w.handle) return;
+  NSWindow* nw = (NSWindow*)w.handle;
+  if (on) {
+    guardClass([nw class]);
+    noKeyWindows().insert(w.handle);
+  } else {
+    noKeyWindows().erase(w.handle);
+  }
 }
 
 void raiseChild(const Window& child, const Window& parent) {
@@ -456,6 +659,56 @@ bool captureWindow(const Window& w, const std::string& pngPath, const unsigned c
     }
     NSData* png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
     return png && [png writeToFile:[NSString stringWithUTF8String:pngPath.c_str()] atomically:YES];
+  }
+}
+
+long windowLevel(const Window& w) { return w.handle ? static_cast<long>([(NSWindow*)w.handle level]) : 0; }
+
+bool captureStack(const Window& main, const unsigned char* rgba, int w, int h, const std::string& pngPath) {
+  NSWindow* m = (NSWindow*)main.handle;
+  if (!m || !rgba || w <= 0 || h <= 0) return false;
+  using CreateFromArray = CGImageRef (*)(CGRect, CFArrayRef, uint32_t);
+  static auto createImage = reinterpret_cast<CreateFromArray>(dlsym(RTLD_DEFAULT, "CGWindowListCreateImageFromArray"));
+  @autoreleasepool {
+    const NSRect cf = [m contentRectForFrameRect:[m frame]];
+    NSScreen* primary = [[NSScreen screens] firstObject];
+    if (!primary) return false;
+    const CGFloat primaryH = [primary frame].size.height;
+    const CGRect area = CGRectMake(cf.origin.x, primaryH - cf.origin.y - cf.size.height, cf.size.width, cf.size.height);
+    std::vector<const void*> ids;
+    for (NSWindow* o in [NSApp orderedWindows])  // front to back
+      if (o != m && [o isVisible] && NSIntersectsRect([o frame], [m frame])) ids.push_back(reinterpret_cast<const void*>(static_cast<uintptr_t>([o windowNumber])));
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(nullptr, static_cast<size_t>(w), static_cast<size_t>(h), 8, static_cast<size_t>(w) * 4, cs,
+                                             static_cast<uint32_t>(kCGImageAlphaPremultipliedLast));
+    if (!ctx) {
+      CGColorSpaceRelease(cs);
+      return false;
+    }
+    // The main window's own frame: GL rows are bottom-up, as a bitmap context's (origin bottom-left).
+    std::vector<unsigned char> flip(static_cast<size_t>(w) * static_cast<size_t>(h) * 4);
+    for (int y = 0; y < h; ++y) std::memcpy(flip.data() + static_cast<size_t>(h - 1 - y) * static_cast<size_t>(w) * 4, rgba + static_cast<size_t>(y) * static_cast<size_t>(w) * 4, static_cast<size_t>(w) * 4);
+    std::memcpy(CGBitmapContextGetData(ctx), flip.data(), flip.size());
+    bool ok = true;
+    if (!ids.empty() && createImage) {
+      CFArrayRef arr = CFArrayCreate(nullptr, ids.data(), static_cast<CFIndex>(ids.size()), nullptr);
+      CGImageRef top = createImage(area, arr, 1u << 0 /* ignore framing */);
+      CFRelease(arr);
+      if (top) {
+        CGContextDrawImage(ctx, CGRectMake(0, 0, w, h), top);
+        CGImageRelease(top);
+      } else {
+        ok = false;  // the window server gave nothing (no permission to read windows)
+      }
+    }
+    CGImageRef img = CGBitmapContextCreateImage(ctx);
+    CGContextRelease(ctx);
+    CGColorSpaceRelease(cs);
+    if (!img) return false;
+    NSBitmapImageRep* rep = [[[NSBitmapImageRep alloc] initWithCGImage:img] autorelease];
+    CGImageRelease(img);
+    NSData* png = [rep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+    return ok && png && [png writeToFile:[NSString stringWithUTF8String:pngPath.c_str()] atomically:YES];
   }
 }
 

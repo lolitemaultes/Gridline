@@ -10,6 +10,8 @@
 #include <set>
 #include <sstream>
 #include "Json.h"
+#include "ReceiptHashes.h"
+#include "ReceiptOrigin.h"
 
 namespace gl::receipt {
 
@@ -245,100 +247,13 @@ double shareRate(const std::string& category, int tier) {
   return rates[row][col];
 }
 
-// ---- origin sidecar
-
-std::string originPath(const std::string& file) { return file + ".origin.json"; }
-
-bool writeOrigin(const std::string& file, const Origin& o) {
-  Json j = Json::makeObject();
-  j.object["gridlineOrigin"] = Json::makeNumber(1);
-  j.object["source"] = Json::makeString(o.source);
-  j.object["start"] = Json::makeNumber(o.start);
-  j.object["end"] = Json::makeNumber(o.end);
-  j.object["speed"] = Json::makeNumber(o.speed);
-  Json b;
-  b.type = Json::Type::Bool;
-  b.boolean = o.reverse;
-  j.object["reverse"] = b;
-  b.boolean = o.rangeKnown;
-  j.object["rangeKnown"] = b;
-  j.object["kind"] = Json::makeString(o.kind);
-  if (!o.sources.empty()) {
-    Json a = Json::makeArray();
-    for (const auto& s : o.sources) a.array.push_back(Json::makeString(s));
-    j.object["sources"] = a;
-  }
-  std::ofstream f(originPath(file), std::ios::binary | std::ios::trunc);
-  if (!f) return false;
-  f << jsonStringify(j, 2) << "\n";
-  return static_cast<bool>(f);
-}
-
-bool readOrigin(const std::string& file, Origin& o) {
-  std::ifstream f(originPath(file), std::ios::binary);
-  if (!f) return false;
-  std::stringstream ss;
-  ss << f.rdbuf();
-  Json j;
-  if (!jsonParse(ss.str(), j) || j.type != Json::Type::Object || !j.find("gridlineOrigin")) return false;
-  o = Origin{};
-  o.source = j.text("source");
-  o.start = j.num("start", 0);
-  o.end = j.num("end", -1);
-  o.speed = j.num("speed", 1);
-  if (!(o.speed > 0)) o.speed = 1;
-  if (const Json* v = j.find("reverse"); v && v->type == Json::Type::Bool) o.reverse = v->boolean;
-  if (const Json* v = j.find("rangeKnown"); v && v->type == Json::Type::Bool) o.rangeKnown = v->boolean;
-  o.kind = j.text("kind");
-  if (const Json* a = j.find("sources"); a && a->type == Json::Type::Array)
-    for (const auto& s : a->array)
-      if (s.type == Json::Type::String) o.sources.push_back(s.str);
-  // In a package the sources are named relative to the file (ProjectInterop, sidecarsFor).
-  auto beside = [&](std::string& p) {
-    const std::filesystem::path f = std::filesystem::u8path(p);
-    if (!p.empty() && !f.is_absolute()) p = (std::filesystem::u8path(file).parent_path() / f).lexically_normal().u8string();
-  };
-  beside(o.source);
-  for (auto& x : o.sources) beside(x);
-  return !o.source.empty();
-}
-
-std::vector<Origin> originChain(const std::string& file) {
-  std::vector<Origin> chain;
-  std::set<std::string> seen{file};
-  std::string at = file;
-  Origin o;
-  while (chain.size() < 8 && readOrigin(at, o)) {
-    chain.push_back(o);
-    if (!seen.insert(o.source).second) break;  // a loop
-    at = o.source;
-  }
-  return chain;
-}
-
-bool mapThrough(const std::vector<Origin>& chain, double fileSeconds, Ranges& r) {
-  double len = fileSeconds;
-  for (const Origin& o : chain) {
-    if (!o.rangeKnown) return false;
-    if (len <= 0)
-      for (const Range& x : r) len = std::max(len, x.b);
-    const double end = o.end >= 0 ? o.end : o.start + len * o.speed;
-    Ranges m;
-    for (const Range& x : r) {
-      Range y = o.reverse ? Range{end - x.b * o.speed, end - x.a * o.speed} : Range{o.start + x.a * o.speed, o.start + x.b * o.speed};
-      y.a = std::clamp(y.a, o.start, end), y.b = std::clamp(y.b, o.start, end);
-      if (y.b > y.a) m.push_back(y);
-    }
-    r = unite(m);
-    len = 0;  // the next file's length: from its own range end
-  }
-  return true;
-}
+// (The origin sidecars are in ReceiptOrigin.cpp.)
 
 // ---- saved fields
 
 bool Saved::empty() const {
   if (!(release == Release{}) || !writers.empty() || !unknown.empty()) return false;
+  if (!names.empty() || !origins.empty() || !heardFloor.empty() || !snapshots.empty()) return false;
   for (const auto& [k, v] : songs)
     if (!(v == SongFields{})) return false;
   for (const auto& [k, v] : files)
@@ -352,8 +267,8 @@ void put(Json& j, const char* k, const std::string& v) {
 }
 
 // K-322: the known keys of each part of the saved object (everything else is kept as it was).
-const char* const kSongKeys[] = {"artist", "title", "category", "share", "fee", "tier", "holders"};
-const char* const kFileKeys[] = {"ticked", "song", "ranges"};
+const char* const kSongKeys[] = {"artist", "title", "category", "share", "fee", "tier", "holders", "basis"};
+const char* const kFileKeys[] = {"ticked", "song", "ranges", "seconds", "uses"};
 const char* const kReleaseKeys[] = {"title", "performer", "licensee", "isrc", "date", "distributor"};
 
 // Takes the known keys out of each entry of the object `key` of `j` (an entry left empty goes,
@@ -404,13 +319,38 @@ std::string savedToJson(const Saved& s) {
     if (f == SongFields{}) continue;  // (its unknown keys, if any, are in j already)
     Json& o = objectAt(objectAt(j, "songs"), k);
     put(o, "artist", f.artist), put(o, "title", f.title), put(o, "category", f.category), put(o, "share", f.share);
-    put(o, "fee", f.fee), put(o, "tier", f.tier), put(o, "holders", f.holders);
+    put(o, "fee", f.fee), put(o, "tier", f.tier), put(o, "holders", f.holders), put(o, "basis", f.basis);
   }
   for (const auto& [k, f] : s.files) {
     if (f == FileFields{}) continue;
     Json& o = objectAt(objectAt(j, "files"), k);
     if (f.ticked >= 0) o.object["ticked"] = Json::makeNumber(f.ticked);
-    put(o, "song", f.song), put(o, "ranges", f.ranges);
+    put(o, "song", f.song), put(o, "ranges", f.ranges), put(o, "seconds", f.seconds);
+    if (!f.uses.empty()) {
+      Json& u = objectAt(o, "uses");
+      for (const auto& [key, text] : f.uses) u.object[key] = Json::makeString(text);
+    }
+  }
+  // K-321: the project's trail and the newer settings.
+  if (!s.names.empty()) {
+    Json& o = objectAt(j, "names");
+    for (const auto& [h, name] : s.names) o.object[h] = Json::makeString(name);
+  }
+  if (!s.origins.empty()) {
+    Json& o = objectAt(j, "origins");
+    for (const auto& [h, text] : s.origins) {
+      Json v;
+      if (jsonParse(text, v) && v.type == Json::Type::Object) o.object[h] = v;
+    }
+  }
+  if (!s.heardFloor.empty()) put(objectAt(j, "heard"), "floor", s.heardFloor);
+  if (!s.snapshots.empty()) {
+    Json a = Json::makeArray();
+    for (const std::string& text : s.snapshots) {
+      Json v;
+      if (jsonParse(text, v)) a.array.push_back(v);
+    }
+    j.object["snapshots"] = a;
   }
   if (!(s.release == Release{})) {
     Json& rel = objectAt(j, "release");
@@ -437,14 +377,17 @@ Saved savedFromJson(const std::string& json) {
     for (const auto& [k, o] : songs->object) {
       SongFields f;
       f.artist = o.text("artist"), f.title = o.text("title"), f.category = o.text("category"), f.share = o.text("share");
-      f.fee = o.text("fee"), f.tier = o.text("tier"), f.holders = o.text("holders");
+      f.fee = o.text("fee"), f.tier = o.text("tier"), f.holders = o.text("holders"), f.basis = o.text("basis");
       s.songs[k] = f;
     }
   if (const Json* files = j.find("files"); files && files->type == Json::Type::Object)
     for (const auto& [k, o] : files->object) {
       FileFields f;
       f.ticked = std::clamp(jsonInt<int>(o.num("ticked", -1)), -1, 1);
-      f.song = o.text("song"), f.ranges = o.text("ranges");
+      f.song = o.text("song"), f.ranges = o.text("ranges"), f.seconds = o.text("seconds");
+      if (const Json* u = o.find("uses"); u && u->type == Json::Type::Object)
+        for (const auto& [key, v] : u->object)
+          if (v.type == Json::Type::String) f.uses[key] = v.str;
       s.files[k] = f;
     }
   if (const Json* r = j.find("release"); r && r->type == Json::Type::Object) {
@@ -457,8 +400,32 @@ Saved savedFromJson(const std::string& json) {
       w.name = o.text("name"), w.role = o.text("role"), w.pro = o.text("pro"), w.ipi = o.text("ipi"), w.share = o.text("share");
       s.writers.push_back(w);
     }
+  // K-321: the project's trail and the newer settings.
+  if (const Json* o = j.find("names"); o && o->type == Json::Type::Object)
+    for (const auto& [h, v] : o->object)
+      if (v.type == Json::Type::String) s.names[h] = v.str;
+  if (const Json* o = j.find("origins"); o && o->type == Json::Type::Object)
+    for (const auto& [h, v] : o->object)
+      if (v.type == Json::Type::Object) s.origins[h] = jsonCompact(v);
+  if (const Json* h = j.find("heard"); h && h->type == Json::Type::Object) s.heardFloor = h->text("floor");
+  if (const Json* a = j.find("snapshots"); a && a->type == Json::Type::Array)
+    for (const Json& v : a->array) s.snapshots.push_back(jsonCompact(v));
   // K-322: everything else is kept as it is (a newer Gridline's keys survive an edit here).
   Json rest = j;
+  // (K-321: the known entries of the trail tables.)
+  for (const char* table : {"names", "origins"}) {
+    auto t = rest.object.find(table);
+    if (t == rest.object.end() || t->second.type != Json::Type::Object) continue;
+    const Json::Type want = std::string(table) == "names" ? Json::Type::String : Json::Type::Object;
+    for (auto e = t->second.object.begin(); e != t->second.object.end();)
+      e = e->second.type == want ? t->second.object.erase(e) : std::next(e);
+    if (t->second.object.empty()) rest.object.erase(t);
+  }
+  if (auto h = rest.object.find("heard"); h != rest.object.end() && h->second.type == Json::Type::Object) {
+    if (const Json* fl = h->second.find("floor"); fl && fl->type == Json::Type::String) h->second.object.erase("floor");
+    if (h->second.object.empty()) rest.object.erase(h);
+  }
+  if (const Json* a = rest.find("snapshots"); a && a->type == Json::Type::Array) rest.object.erase("snapshots");
   dropKnownEntries(rest, "songs", kSongKeys);
   dropKnownEntries(rest, "files", kFileKeys);
   if (auto r = rest.object.find("release"); r != rest.object.end() && r->second.type == Json::Type::Object) {
@@ -481,9 +448,11 @@ Saved savedFromJson(const std::string& json) {
   return s;
 }
 
-FileFields fileFields(const Saved& s, const std::string& path) {
+FileFields fileFields(const Saved& s, const std::string& path, const std::string& hash) {
   auto it = s.files.find(path);
   if (it != s.files.end()) return it->second;
+  if (!hash.empty())
+    if (auto h = s.files.find("sha256:" + hash); h != s.files.end()) return h->second;
   const std::string name = baseName(path);
   for (const auto& [k, f] : s.files)
     if (baseName(k) == name) return f;
@@ -546,6 +515,26 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
   rep.saved = saved;
   rep.mode = m.mode;
   rep.warnings = m.warnings;
+  // K-321: names from the project's table, for files whose own name says nothing (renamed, or a
+  // collab copy named by its hash).
+  std::map<std::string, std::string> hashOfPath;
+  for (const FileIn& f : m.files)
+    if (!f.hash.empty()) hashOfPath[f.path] = f.hash;
+  bool renamed = false;
+  const auto nameOf = [&](const std::string& path) {
+    NameInfo n = parseName(path);
+    renamed = false;
+    if (n.tracklib || saved.names.empty()) return n;
+    std::string h = path.rfind("sha256:", 0) == 0 ? path.substr(7) : std::string();
+    if (h.empty())
+      if (auto it = hashOfPath.find(path); it != hashOfPath.end()) h = it->second;
+    if (h.empty()) h = hashFromName(path);
+    if (auto it = saved.names.find(h); !h.empty() && it != saved.names.end()) {
+      NameInfo t = parseName(it->second);
+      if (t.tracklib) return renamed = true, t;
+    }
+    return n;
+  };
   // Files.
   std::map<std::string, size_t> rowOf;
   for (const FileIn& f : m.files) {
@@ -553,7 +542,8 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
     FileRow r;
     r.path = f.path;
     r.name = baseName(f.path);
-    r.info = parseName(f.path);
+    r.info = nameOf(f.path);
+    if (renamed) r.originNote = "named from the project (file renamed)";
     r.seconds = f.seconds;
     r.exists = f.exists;
     r.derived = f.derived && !f.chain.empty();
@@ -575,13 +565,25 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
     const FileIn* fin = nullptr;
     for (const FileIn& f : m.files)
       if (f.path == r.path) fin = &f;
-    const FileFields ff = fileFields(saved, r.path);
+    const FileFields ff = fileFields(saved, r.path, fin ? fin->hash : std::string());
     NameInfo src = r.info;  // the original's name (derived files: their source)
     if (r.derived) {
-      src = parseName(r.origin.source);
+      src = nameOf(r.origin.source);
       r.originNote = "derived from " + baseName(r.origin.source) + (r.origin.kind.empty() ? "" : " (" + r.origin.kind + ")");
     }
+    // K-321: the trail of version 2 maps (several originals at once, each with its parts).
+    std::map<std::string, OriginV2> trail;
+    if (r.derived && fin)
+      for (const auto& [file, text] : fin->trail) {
+        Json j;
+        OriginV2 o;
+        if (jsonParse(text, j) && originFromJson(j, o)) trail[file] = o;
+      }
+    const bool traced = !trail.empty();
+    const Lookup trailLk = traced ? trailLookup(trail) : Lookup{};
     r.autoTicked = src.tracklib;
+    if (traced && !src.tracklib)  // ticked when any original it traces to is a Tracklib file
+      for (const auto& [k, st] : trace(r.path, {{0, std::max(1e9, r.seconds)}}, r.seconds, trailLk)) r.autoTicked = r.autoTicked || nameOf(k).tracklib;
     r.ticked = ff.ticked >= 0 ? ff.ticked == 1 : r.autoTicked;
     if (!ff.song.empty())
       r.song = ff.song;
@@ -601,9 +603,10 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
     for (const Use& u : r.uses) {
       Ranges ur;
       // Measured reads shorter than 10 ms are a voice's first block before it jumps to its
-      // start (a deck cueing, a slice retrigger), not a part anyone hears: left out.
+      // start (a deck cueing, a slice retrigger), not a part anyone hears: left out. K-321: the
+      // tap flags those itself (measure() left them out), so its other short reads stay.
       for (const Range& x : unite(u.ranges))
-        if (u.estimated || x.b - x.a >= kMinHeard) ur.push_back(x);
+        if (u.estimated || u.measured || x.b - x.a >= kMinHeard) ur.push_back(x);
       if (u.estimated) {
         r.estimated = true;
         if (r.manual) {
@@ -625,8 +628,51 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
       if (r.ticked) songRows[r.song].push_back(ri);  // a ticked file with nothing used still shows its song
       continue;
     }
-    songRows[r.song].push_back(ri);
     const std::string label = r.info.stem.empty() ? r.name : r.info.stem;
+    if (traced) {
+      // K-321: each use's parts on every original it traces to, each on that original's song
+      // and part (the user's song for the file, when set, takes them all).
+      bool any = false;
+      for (const auto& [ur, u] : per) {
+        std::vector<std::string> warns;
+        for (const auto& [orig, st] : trace(r.path, ur, r.seconds, trailLk, &warns)) {
+          const NameInfo on = nameOf(orig);
+          const std::string song = !ff.song.empty() ? ff.song : on.tracklib ? on.song : stripExtension(baseName(orig));
+          int part = st.unknown ? -1 : on.part;
+          if (st.unknown) r.unknownRange = true;
+          Ranges mapped = st.ranges;
+          if (on.loopEnd > on.loopStart && part >= 0) {
+            Ranges shifted;
+            for (const Range& x : mapped) {
+              const double a = std::min(on.loopEnd, on.loopStart + x.a), b = std::min(on.loopEnd, on.loopStart + x.b);
+              if (b > a) shifted.push_back({a, b});
+            }
+            mapped = shifted;
+          }
+          auto& rowsOf = songRows[song];
+          if (std::find(rowsOf.begin(), rowsOf.end(), ri) == rowsOf.end()) rowsOf.push_back(ri);
+          for (const Range& x : mapped) {
+            Piece pc;
+            pc.r = x;
+            pc.from = (u ? u->where : std::string("typed by you"));
+            if (u && u->bar0 > 0) {
+              const int b0 = static_cast<int>(u->bar0), b1 = static_cast<int>(u->bar1);
+              pc.from += b1 > b0 ? ", bars " + std::to_string(b0) + "-" + std::to_string(b1) : ", bar " + std::to_string(b0);
+            }
+            pc.from += " (" + label + ")";
+            pc.estimated = (u && u->estimated && !r.manual);
+            pieces[song].push_back({part, pc});
+            any = true;
+          }
+        }
+        for (const std::string& w : warns)
+          if (std::find(rep.warnings.begin(), rep.warnings.end(), w) == rep.warnings.end()) rep.warnings.push_back(w);
+      }
+      if (!any) songRows[r.song].push_back(ri);
+      if (r.unknownRange) r.originNote += ", range unknown";
+      continue;
+    }
+    songRows[r.song].push_back(ri);
     for (const auto& [ur, u] : per) {
       Ranges mapped = ur;
       int part = r.part;
@@ -661,7 +707,7 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
         // A render of several originals: each one's song gets the part (unknown range) too.
         if (r.unknownRange && ff.song.empty())
           for (const std::string& other : r.origin.sources) {
-            const NameInfo on = parseName(other);
+            const NameInfo on = nameOf(other);
             if (!on.tracklib || on.song == r.song) continue;
             pieces[on.song].push_back({part, p});
             auto& rowsOf = songRows[on.song];
@@ -674,7 +720,7 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
   // Artists the names make plain (one hyphen between artist and title): they settle ambiguous splits.
   std::set<std::string> knownArtists;
   for (const FileRow& r : rep.files) {
-    for (const NameInfo& n : {r.info, r.derived ? parseName(r.origin.source) : NameInfo{}})
+    for (const NameInfo& n : {r.info, r.derived ? nameOf(r.origin.source) : NameInfo{}})
       if (n.tracklib && !n.ambiguous && !n.artist.empty()) knownArtists.insert(lowerText(n.artist));
   }
   for (const auto& [key, f] : saved.songs)
@@ -690,10 +736,10 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
     bool haveFirst = false;
     for (size_t ri : rows) {
       const FileRow& r = rep.files[ri];
-      NameInfo src = r.derived ? parseName(r.origin.source) : r.info;
+      NameInfo src = r.derived ? nameOf(r.origin.source) : r.info;
       if (r.derived && src.song != key)  // a render of several originals: the one of this song
         for (const std::string& other : r.origin.sources)
-          if (const NameInfo on = parseName(other); on.song == key) src = on;
+          if (const NameInfo on = nameOf(other); on.song == key) src = on;
       if (!haveFirst && (src.tracklib || !r.derived)) first = src, haveFirst = true;
       std::string st = r.info.tracklib ? r.info.stem : src.stem;
       if (r.derived) st = (st.empty() ? std::string("file") : st) + " (" + (r.origin.kind.empty() ? "derived" : r.origin.kind) + ")";

@@ -74,6 +74,30 @@ struct ExprSettings {
   bool operator==(const ExprSettings& o) const { return pitch == o.pitch && pressure == o.pressure && timbre == o.timbre && amount == o.amount; }
 };
 
+// K-262: a note's vibrato (its math in core/NoteVibrato.h). depth 0 = none. Times are fractions of
+// the note, so moves, copies and resizes carry it.
+struct NoteVibrato {
+  float depth = 0;           // cents, the peak swing (0..1200)
+  float rate = 5.5f;         // Hz; with `sync`: one cycle's length in beats (0.25 = a sixteenth)
+  bool sync = false;
+  float delay = 0;           // fraction of the note before it starts (0..1)
+  float fadeIn = 0.25f;      // fraction of the note over which the depth grows from 0 (after the delay)
+  float fadeOut = 0;         // fraction at the end over which it falls to 0
+  float fadeInCurve = 0;     // tension -1..1 (0 straight)
+  float fadeOutCurve = 0;
+  uint8_t shape = 0;         // vib::Shape in core/NoteVibrato.h
+  float phase = 0;           // start phase 0..1
+  float rateEnd = 0;         // 0 = steady; else the rate (same unit) it sweeps to by the note's end
+  float centre = 0.5f;       // 0.5 around the pitch, 0 only above, 1 only below
+  bool active() const { return depth > 0; }
+  bool operator==(const NoteVibrato& o) const {
+    return depth == o.depth && rate == o.rate && sync == o.sync && delay == o.delay && fadeIn == o.fadeIn && fadeOut == o.fadeOut &&
+           fadeInCurve == o.fadeInCurve && fadeOutCurve == o.fadeOutCurve && shape == o.shape && phase == o.phase && rateEnd == o.rateEnd &&
+           centre == o.centre;
+  }
+  bool operator!=(const NoteVibrato& o) const { return !(*this == o); }
+};
+
 // One piano-roll note.
 struct Note {
   Tick start = 0;               // ticks from pattern/clip start
@@ -92,6 +116,9 @@ struct Note {
   bool porta = false;  // starts at the previous note's pitch and glides to its own (channel porta time)
   bool muted = false;  // J-11: kept in the pattern but not played (mute tool)
   int group = 0;       // J-31: note group (0 = none); grouped notes are selected together
+  // K-348: a program change (0..127) the instrument gets just before this note starts (the
+  // Tracker's I effect); -1 = none. The instrument keeps the program for the notes after it.
+  int program = -1;
   // J-159: sub-tick timing (recorded performances keep their exact sample): the note starts
   // at start + frac (0 <= frac < 1) and ends at start + length + endFrac (-1 < endFrac < 1).
   // Edits that move or copy notes keep them; 0 for every ordinary note.
@@ -104,6 +131,8 @@ struct Note {
   // neutral in both, as before a line's first point). Empty = none. Moves, copies and resizes
   // carry them as they carry `bend`.
   std::vector<BendPoint> pressure, timbre;
+  // K-262: the note's vibrato (depth 0 = none), added to the bend line wherever it plays.
+  NoteVibrato vib;
   // K-22: a channel rack step shown in (or moved into) the piano roll, FL's step note (stored with
   // length 0 in .flp files). While it lasts one step of its pattern it plays exactly as the step
   // did: its step's swing, its offset inside the step, one step long (or truncated by the channel's
@@ -124,14 +153,14 @@ struct Note {
 
   bool hasProps() const {
     return pan != 0 || fine != 0 || release != kNoteReleaseDefault || modX != kNoteModCentre || modY != kNoteModCentre ||
-           color != 0 || slide || porta || muted || group != 0 || !bend.empty() || step || !tracker.empty() ||
-           !pressure.empty() || !timbre.empty();
+           color != 0 || slide || porta || muted || group != 0 || program >= 0 || !bend.empty() || step || !tracker.empty() ||
+           !pressure.empty() || !timbre.empty() || vib.active();
   }
   bool operator==(const Note& o) const {
     return start == o.start && length == o.length && pitch == o.pitch && velocity == o.velocity && pan == o.pan &&
            fine == o.fine && release == o.release && modX == o.modX && modY == o.modY && color == o.color &&
-           slide == o.slide && porta == o.porta && muted == o.muted && group == o.group && frac == o.frac && endFrac == o.endFrac &&
-           bend == o.bend && step == o.step && tracker == o.tracker && pressure == o.pressure && timbre == o.timbre;
+           slide == o.slide && porta == o.porta && muted == o.muted && group == o.group && program == o.program && frac == o.frac && endFrac == o.endFrac &&
+           bend == o.bend && step == o.step && tracker == o.tracker && pressure == o.pressure && timbre == o.timbre && vib == o.vib;
   }
 };
 

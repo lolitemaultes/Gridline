@@ -102,6 +102,11 @@ struct ControllerOutput {
 std::vector<ControllerOutput> listControllerOutputs(const Song& song);
 // Display name of a link source ("?" when it does not resolve).
 std::string controllerOutputName(const Song& song, ObjectId owner, int slot, int output);
+// k078-songlinks: whether the engine applies an internal controller link (Peak Follower, X-Y Pad,
+// Envelope Mod, a macro, ...) to this parameter. False for the song's own settings (tempo, swing,
+// master pitch, groove accents): the program builder's resolveTarget (engine/Program.cpp) leaves
+// those out, so such a link would never move anything. MIDI and OSC links still work there.
+bool internalLinkApplies(const Song& song, ParamId id);
 // True when an enabled internal controller link drives the parameter (knobs
 // draw a marker and show the live value instead of the stored one).
 bool isModulated(const Song& song, ParamId id);

@@ -351,7 +351,7 @@ void testStage5() {
   expect(info && info->params.size() == static_cast<size_t>(SlCount) && info->params[static_cast<size_t>(B(slParam(0, SliceGain)))].name == "Layer B slice 1 gain" &&
              info->params[static_cast<size_t>(B(slMarker(63)))].name == "Layer B slice 64 position" &&
              info->params[static_cast<size_t>(B(slParam3(63, SliceEnvSet)))].name == "Layer B slice 64 envelope set" &&
-             SlCount == SlLayerKey + 1 + kMaxSlices * (1 + SliceFields + SliceFields2 + SliceFields3),
+             SlFitKeepPitch == SlLayerKey + 1 + kMaxSlices * (1 + SliceFields + SliceFields2 + SliceFields3),
          "layer B: a copy of every per-slice parameter, after the old ones");
   expect(B(SlMode) == SlMode && B(SlModX) == SlModX && B(slParam2(63, SliceKey)) == SlBMarkers + kLayerBlock - 1, "layerPid maps only the per-slice blocks");
   // A (markers 0 / 50 %): key 61 plays the silent half.

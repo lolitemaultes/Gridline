@@ -15,6 +15,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <unordered_map>
 #include <string>
@@ -99,12 +100,15 @@ struct Presence {
   double editTick = 0;
   uint32_t selChannel0 = 0, selChannel1 = 0;
   double selTick0 = 0, selTick1 = 0;
+  // K-254: what this computer is rendering to audio (1 channel rows, 2 a pattern, 3 a clip; 0 =
+  // nothing) and its id: collaborators see it as busy ("Rendering...") until the render lands.
+  uint32_t busyKind = 0, busyId = 0;
   bool operator==(const Presence& o) const {
     return window == o.window && x == o.x && y == o.y && kind == o.kind && a == o.a && b == o.b && cx == o.cx && cy == o.cy &&
            plugin == o.plugin && pluginSlot == o.pluginSlot && playing == o.playing && songTick == o.songTick &&
            targetKind == o.targetKind && targetId == o.targetId && targetSub == o.targetSub && editPattern == o.editPattern &&
            editChannel == o.editChannel && editTick == o.editTick && selChannel0 == o.selChannel0 && selChannel1 == o.selChannel1 &&
-           selTick0 == o.selTick0 && selTick1 == o.selTick1;
+           selTick0 == o.selTick0 && selTick1 == o.selTick1 && busyKind == o.busyKind && busyId == o.busyId;
   }
 };
 
@@ -123,7 +127,30 @@ struct PeerView {
   VersionVector known;       // their last version vector, as they reported it (stability, compaction)
   VersionVector seen;        // what they have at least (reported, or sent over the reliable link)
   double avatarAskedAt = -1; // J-111g: when their picture's bytes were last asked for
+  // k078-collabplug: the installed plugins of the project as they last reported them: type ->
+  // installed there, and its version there ("" when not known). Kept while they are offline.
+  std::map<std::string, std::pair<bool, std::string>> plugins;
+  bool pluginsKnown = false;
 };
+
+// k078-collabplug: an installed plugin (VST3, VST2, CLAP, AU, LV2) the project uses, and who has it.
+struct PluginUse {
+  std::string type;                      // "<format>:<id>", the plugin's identity
+  std::string name, vendor, version;     // from the shared identity record (who wrote its state)
+  int instances = 0;                     // channels and slots using it
+  bool here = false;                     // installed on this computer
+  std::string hereVersion;
+  std::vector<SiteId> lacking;           // collaborators who reported they don't have it
+  std::map<SiteId, std::string> versions;  // collaborators who have it: their version ("" unknown)
+};
+// Limits of plugin states in a session: up to kInlineStateBytes a state travels inside the edit; a
+// bigger one is compressed and sent as a file of the project (Audio/<sha256>.glstate) with progress;
+// above kMaxStateBytes it is not shared (a notice says so).
+inline constexpr size_t kInlineStateBytes = 8 * 1024;
+inline constexpr size_t kMaxStateBytes = 64u << 20;
+// A state file (compressed) bigger than this is refused when it arrives (never written or read).
+inline constexpr size_t kMaxStateFileBytes = kMaxStateBytes + (2u << 20);
+inline constexpr double kPluginCheckSec = 2.0;
 
 // J-111e membership (signed, replicated; docs: "Removing someone", "What happens to the files").
 enum class MemberState { Unknown, Active, Removed, Left };
@@ -302,6 +329,23 @@ class Session {
   // Tests: the newest foreign stamp recorded at or under a path (zero when none).
   Stamp foreignWithin(const Path& p) const;
 
+  // ---- installed plugins (k078-collabplug) ----
+  // Whether `type` is installed on this computer and its version ("" = not known). The app asks its
+  // plugin host; tests fake it per computer. Unset: the registered plugin catalogue decides.
+  std::function<bool(const std::string& type, std::string& version)> pluginInstalledFn;
+  // A collaborator connected (joined, or came back): the app writes the plugin states it still holds
+  // back into the project first, so they arrive with the newest ones.
+  std::function<void(SiteId)> onPeerConnected;
+  // Every installed plugin the project uses, with who has it (this computer, collaborators).
+  std::vector<PluginUse> pluginUses() const;
+  bool pluginHere(const std::string& type) const;
+  // Big plugin states on their way here (shown as progress by the placeholder): the state named by a
+  // pending value (kPendingStatePrefix) is still arriving; `progress` 0..1.
+  bool stateLoading(const std::string& pendingData, float* progress = nullptr) const;
+  // Checks which installed plugins are here now (after a rescan): reports changes to collaborators
+  // and loads plugins that became available with the shared state. frame() does it every 2 s.
+  void checkPlugins();
+
   // ---- notifications (UI) ----
   std::function<void(const std::string& text, bool error)> onNotice;
   std::function<void(const std::vector<Flash>&)> onRemoteChange;
@@ -372,6 +416,8 @@ class Session {
   bool learnNotice(const Json& notice);
   // Our batches no collaborator has confirmed yet (Leave warns about them).
   size_t unackedBatches() const;
+  // K-142 (0.7.8 follow-up): files on their way to a collaborator (sent a share per frame).
+  bool sendingFiles() const { return !outgoing_.empty(); }
   // Leave: announces "left" (a signed op) before the session stops.
   bool announceLeave();
   // Admin: stop sharing for everyone (a signed "ended" op).
@@ -460,10 +506,35 @@ class Session {
   void refreshStepMarks();
   void writeHistory();
   void loadHistory();
-  Json localSongJson();
+  using FullStates = std::vector<std::pair<Path, Json>>;  // a plugin's params path and values, for each state written
+  Json localSongJson(FullStates* fullStates = nullptr);
   void refsToReplica(Json& song);
   void refsToLocal(Json& song) const;
-  bool policyAllows(const Json& song, std::string* offending) const;
+  // k078-collabplug: installed plugins between this computer's song and the shared document.
+  struct PluginRef {
+    Json* plug = nullptr;
+    std::vector<std::string> rel;  // its place in the element: keys, "[i]" for list positions
+  };
+  static std::vector<PluginRef> pluginsOf(Json& element);
+  // Local -> shared: big states become file references, parameters go in the shared order, the shared
+  // identity stays unless this computer writes a new state. `fullStates` gets the shared path and the
+  // values of the parameter list of each plugin whose state this computer writes now (every parameter
+  // is written with it, so the newest state wins over older parameter edits).
+  void pluginsToReplica(Json& element, const Path& elemPath, FullStates* fullStates);
+  void songPluginsToReplica(Json& song, FullStates* fullStates);
+  bool pluginToReplica(Json& plug, const Json* shared);
+  void pluginToLocal(Json& plug) const;
+  std::string stateToReplica(const std::string& data, bool* tooBig);
+  std::string stateToLocal(const std::string& shared) const;
+  bool replicaPath(const Path& elemPath, const std::vector<std::string>& rel, Path& out) const;
+  void forceParamSets(const Path& paramsPath, const Json& values, std::vector<Op>& ops, size_t opsFrom);
+  void sendPlugins(SiteId to);
+  bool installedHere(const std::string& type, std::string& version) const;
+  std::map<std::string, std::pair<bool, std::string>> pluginsHere_;  // as last reported
+  std::set<std::string> missingNoticed_, tooBigNoticed_;
+  double lastPluginCheck_ = -1;
+  mutable std::map<std::pair<size_t, size_t>, std::string> stateRefs_;  // (size, hash) of a state -> its file
+  mutable std::map<std::string, std::string> stateCache_;              // file -> the state (a few, recent)
   // remote
   void handleBatches(SiteId from, const Json& list);
   bool tryApply(const Batch& b, bool local);
@@ -494,6 +565,27 @@ class Session {
   void writeCollabJson();       // collab.json: the name, the file, the newest version that wrote here
   void checkName();             // the shared name changed: rename the file, tell the UI
   void syncFileName();          // the project file follows the shared name
+  // FRZ-1118 (0.7.8): a folder on a web or network drive: the session's files are written by disk_, in order,
+  // never by the interface thread (a mount that stops answering held it in the kernel).
+  void onDisk(std::function<void()> job);
+  void postFileWrite(const std::string* text);  // rename to the shared name, write `text` (if any), collab.json
+  void takeDiskResults();                       // the file name the disk thread settled on
+  struct DiskResult {
+    std::mutex mu;
+    bool set = false;
+    std::string fileName, err;
+    std::string current;  // the file's name as the disk thread last left it
+  };
+  std::shared_ptr<SerialWorker> disk_;
+  std::shared_ptr<DiskResult> diskResult_ = std::make_shared<DiskResult>();
+  struct ScanResult {  // the disk thread's look at the media files (scanFiles)
+    std::mutex mu;
+    bool set = false, busy = false;
+    std::set<std::string> wanted;
+    std::map<std::string, uint64_t> have;
+  };
+  std::shared_ptr<ScanResult> scanResult_ = std::make_shared<ScanResult>();
+  void applyScan(const std::set<std::string>& wanted, const std::map<std::string, uint64_t>& have);
   bool isStable(const Batch& b) const;
   void updateReady();
   // files
@@ -631,5 +723,11 @@ void repairProjectJson(Json& song);
 std::vector<std::pair<std::string, std::string>> foreignPlugins(const Json& song);
 // "Audio/<sha256>.<ext>" references in a text (JSON of ops, replica, undo records).
 void audioRefsIn(const std::string& text, std::set<std::string>& out);
+// A safe "Audio/<sha256>.<ext>" name of the project folder.
+bool safeMediaName(const std::string& rel);
+// k078-collabplug: the plugin states of a song still arriving (kPendingStatePrefix values).
+std::vector<std::string> pendingStates(const Song& s);
+// "Name (Vendor, version 1.2)" for notices.
+std::string pluginLabel(const std::string& name, const std::string& vendor, const std::string& version);
 
 }  // namespace gl::collab

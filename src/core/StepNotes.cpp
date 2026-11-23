@@ -1,6 +1,7 @@
 // Gridline — K-22: channel rack steps in the piano roll (see StepNotes.h).
 #include "StepNotes.h"
 #include <algorithm>
+#include "Lanes.h"
 
 namespace gl::stepnotes {
 
@@ -21,6 +22,7 @@ void normalise(std::vector<Note>& notes) {
 
 std::vector<Note> fromSteps(const Song& s, const Pattern& p, ObjectId channel) {
   std::vector<Note> out;
+  if (lanes::ownGrid(p, channel)) return lanes::rowAsNotes(s, p, channel);  // K-255: a row on its own grid (exact places)
   const auto it = p.steps.find(channel);
   const Tick tps = s.ticksPerStep(p);
   if (it == p.steps.end() || tps <= 0) return out;
@@ -49,8 +51,8 @@ std::vector<Note> fromSteps(const Song& s, const Pattern& p, ObjectId channel) {
 
 bool hasSteps(const Song& s, const Pattern& p, ObjectId channel) {
   const auto it = p.steps.find(channel);
-  if (it == p.steps.end() || s.ticksPerStep(p) <= 0) return false;
-  const size_t total = static_cast<size_t>(std::max(0, p.bars)) * static_cast<size_t>(std::max(0, p.stepsPerBar));
+  if (it == p.steps.end() || (s.ticksPerStep(p) <= 0 && !lanes::ownGrid(p, channel))) return false;
+  const size_t total = static_cast<size_t>(std::max(0, lanes::steps(p, channel)));  // K-255
   for (size_t k = 0; k < it->second.size() && k < total; ++k)
     if (it->second[k]) return true;
   return false;

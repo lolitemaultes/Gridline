@@ -25,6 +25,7 @@
 #include "SettingsPages.h"
 #include "Theme.h"
 #include "TrackerLook.h"
+#include "Keys.h"
 #include "Widgets.h"
 
 namespace fs = std::filesystem;
@@ -187,7 +188,7 @@ void foldClose(State& S, ImDrawList* dl, float x, float y) {
   ImGui::SetCursorScreenPos(ImVec2(x, y));
   if (ImGui::InvisibleButton("##fold", ImVec2(20, 20))) S.hidden = true;
   const bool hf = ImGui::IsItemHovered();
-  ui::Hint("Folds to a small REC pill (H)");
+  ui::Hint(keys::withKeys(i18n::N_("Folds to a small REC pill (%s)"), {keys::fixedKey("H")}));
   if (hf) dl->AddRectFilled(ImVec2(x, y), ImVec2(x + 20, y + 20), theme::withAlpha(P.text, 0.08f), 4);
   dl->AddLine(ImVec2(x + 6, cy), ImVec2(x + 14, cy), hf ? P.text : P.textDim, 1.5f);
   const float bx = x + 24;
@@ -833,7 +834,7 @@ void draw(App& a) {
       ImFont* f = recording ? a.fontMono : a.fontRegular;
       const float w = 18 + textW(f, theme::kFontBody - 1, t.c_str());
       if (ImGui::InvisibleButton("##pill", ImVec2(w, 16))) S.hidden = false;
-      ui::Hint("Shows the record controls again (H)");
+      ui::Hint(keys::withKeys(i18n::N_("Shows the record controls again (%s)"), {keys::fixedKey("H")}));
       recDot(dl, ImVec2(p.x + 5, p.y + 8), recording);
       dl->AddText(f, theme::kFontBody - 1, ImVec2(p.x + 16, p.y + 8 - (theme::kFontBody - 1) * 0.5f - 1), recording ? P.text : P.textDim, t.c_str());
     }

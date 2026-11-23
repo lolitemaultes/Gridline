@@ -28,6 +28,19 @@ float gFooterY = 0.0f;
 int gFooterFrame = -1;
 }  // namespace
 
+namespace {
+std::unordered_map<ImGuiID, int> gDialogs;  // 0.7.8: dialog windows (root id) -> frame last drawn
+void markDialog() {
+  if (const ImGuiWindow* w = ImGui::GetCurrentWindow()) gDialogs[w->RootWindow->ID] = ImGui::GetFrameCount();
+}
+}  // namespace
+
+bool IsDialogWindow(const ImGuiWindow* w) {
+  if (!w) return false;
+  auto it = gDialogs.find(w->RootWindow->ID);
+  return it != gDialogs.end() && ImGui::GetFrameCount() - it->second <= 2;
+}
+
 bool InDialogFooter() {
   const ImGuiWindow* w = ImGui::GetCurrentWindow();
   return gFooterFrame == ImGui::GetFrameCount() && w && w->ID == gFooterWindow && ImGui::GetCursorScreenPos().y >= gFooterY;
@@ -38,6 +51,7 @@ void DialogFooter(float buttonsWidth) {
   ImGuiWindow* w = ImGui::GetCurrentWindow();
   gFooterWindow = w->ID;
   gFooterFrame = ImGui::GetFrameCount();
+  markDialog();
   ImGui::Dummy(ImVec2(0, theme::kS1));
   const ImVec2 p = ImGui::GetCursorScreenPos();
   // An auto-sizing dialog aligns to its content's right edge: aligning to the
@@ -439,9 +453,13 @@ void settleCentred() {
 }
 }  // namespace
 
-void SettleDialogCentred() { settleCentred(); }  // K-325
+void SettleDialogCentred() {  // K-325
+  markDialog();
+  settleCentred();
+}
 
 void BeginDialogBody(const char* id, int footerRows) {
+  markDialog();
   settleCentred();
   const float padY = ImGui::GetCurrentWindow()->WindowPadding.y;  // the dialog's own padding (often pushed only around Begin)
   const float maxH = std::max(120.0f, DialogArea().y - ImGui::GetCursorPosY() - padY - DialogFooterHeight(footerRows));

@@ -1,5 +1,6 @@
 // Gridline: files on mounted web and network drives. See RemoteFs.h.
 #include "RemoteFs.h"
+#include "ThreadName.h"
 #include "Platform.h"
 #include <algorithm>
 #include <cctype>
@@ -435,7 +436,7 @@ bool startThread(Fn fn) {
     return false;
   }
   try {
-    std::thread([fn = std::move(fn)]() mutable {
+    std::thread([fn = std::move(fn)]() mutable { gl::threads::setName("gl-remotefs");
       fn();
       gThreads.fetch_sub(1);
     }).detach();

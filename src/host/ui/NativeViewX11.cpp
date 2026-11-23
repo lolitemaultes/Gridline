@@ -114,6 +114,7 @@ constexpr long kPMinSize = 1L << 4, kPMaxSize = 1L << 5;
 struct Xlib {
   XWin (*createSimpleWindow)(void*, XWin, int, int, unsigned, unsigned, unsigned, unsigned long, unsigned long) = nullptr;
   int (*mapWindow)(void*, XWin) = nullptr;
+  int (*unmapWindow)(void*, XWin) = nullptr;  // 0.7.8: docked interfaces
   int (*moveResizeWindow)(void*, XWin, int, int, unsigned, unsigned) = nullptr;
   int (*destroyWindow)(void*, XWin) = nullptr;
   int (*setTransientForHint)(void*, XWin, XWin) = nullptr;
@@ -159,6 +160,7 @@ const Xlib& xlib() {
     auto sym = [h](const char* n) { return dlsym(h, n); };
     l.createSimpleWindow = reinterpret_cast<decltype(l.createSimpleWindow)>(sym("XCreateSimpleWindow"));
     l.mapWindow = reinterpret_cast<decltype(l.mapWindow)>(sym("XMapWindow"));
+    l.unmapWindow = reinterpret_cast<decltype(l.unmapWindow)>(sym("XUnmapWindow"));
     l.moveResizeWindow = reinterpret_cast<decltype(l.moveResizeWindow)>(sym("XMoveResizeWindow"));
     l.destroyWindow = reinterpret_cast<decltype(l.destroyWindow)>(sym("XDestroyWindow"));
     l.setTransientForHint = reinterpret_cast<decltype(l.setTransientForHint)>(sym("XSetTransientForHint"));
@@ -366,6 +368,73 @@ void setContainerFrame(const Window& w, void* container, const layout::Rect& r) 
   x.flush(w.display);
 }
 
+// 0.7.8: docked interfaces. A child window clips its children to itself: the container sits in a
+// clipping window of its own, moved and sized to the part shown. X cannot cut holes here without
+// the shape extension, so layout::dockedShow hides an interface with something in front of it.
+namespace {
+struct DockedX {
+  XWin clip = 0;
+  bool mapped = true;
+};
+std::map<void*, DockedX>& dockedX() {
+  static std::map<void*, DockedX> m;
+  return m;
+}
+}  // namespace
+
+void* createDockedContainer(const Window& w, const layout::Rect& full) {
+  const Xlib& x = xlib();
+  if (!w.handle || !x.ok || !x.unmapWindow || !w.display) return nullptr;
+  XWin clip = x.createSimpleWindow(w.display, win(w.handle), full.x, full.y, dim(full.w), dim(full.h), 0, 0, 0);
+  if (!clip) return nullptr;
+  XWin c = x.createSimpleWindow(w.display, clip, 0, 0, dim(full.w), dim(full.h), 0, 0, 0);
+  if (!c) {
+    x.destroyWindow(w.display, clip);
+    x.flush(w.display);
+    return nullptr;
+  }
+  x.mapWindow(w.display, c);
+  x.mapWindow(w.display, clip);
+  x.flush(w.display);
+  dockedX()[ptr(c)] = DockedX{clip, true};
+  watchKeys(ptr(c));
+  return ptr(c);
+}
+
+void setDockedFrame(const Window& w, void* container, const layout::Rect& full, const layout::Rect& visible, const std::vector<layout::Rect>&) {
+  const Xlib& x = xlib();
+  auto it = dockedX().find(container);
+  if (it == dockedX().end() || !x.ok || !x.unmapWindow || !w.display) return;
+  DockedX& d = it->second;
+  if (visible.empty()) {
+    if (d.mapped) x.unmapWindow(w.display, d.clip);
+    d.mapped = false;
+  } else {
+    x.moveResizeWindow(w.display, d.clip, visible.x, visible.y, dim(visible.w), dim(visible.h));
+    x.moveResizeWindow(w.display, win(container), full.x - visible.x, full.y - visible.y, dim(full.w), dim(full.h));
+    if (!d.mapped) x.mapWindow(w.display, d.clip);
+    d.mapped = true;
+  }
+  x.flush(w.display);
+}
+
+void destroyDockedContainer(const Window& w, void* container) {
+  const Xlib& x = xlib();
+  auto it = dockedX().find(container);
+  if (it == dockedX().end()) return;
+  const XWin clip = it->second.clip;
+  dockedX().erase(it);
+  unwatchKeys(container);
+  if (!x.ok || !w.display) return;
+  x.destroyWindow(w.display, win(container));
+  x.destroyWindow(w.display, clip);
+  x.flush(w.display);
+}
+
+bool dockedHolesCut() { return false; }
+bool takeDockedPress(void*) { return false; }
+void releaseKeyFocus(void*) {}
+
 void containerMoved(const Window& w, void* container) {
   const Xlib& x = xlib();
   if (!x.ok || !x.sendEvent || !x.translateCoordinates || !x.getWindowAttributes || !w.display || !container || container == w.handle) return;
@@ -545,6 +614,8 @@ void sideWindowClose(void* side) {
 double backingScale(const Window&) { return 1.0; }
 long windowNumber(const Window&) { return -1; }
 bool captureWindow(const Window&, const std::string&, const unsigned char*, int, int) { return false; }
+bool captureStack(const Window&, const unsigned char*, int, int, const std::string&) { return false; }
+long windowLevel(const Window&) { return 0; }
 void startDrawStats(void*) {}
 
 // Keys (J-91, see the top of this file).
@@ -593,6 +664,7 @@ DrawStats takeDrawStats() { return {}; }
 void devDrag(const Window&, void*, int, int, double) {}
 void devPostMouse(const Window&, int, double, double) {}
 void orderAbove(const Window&, const Window&) {}
+void setTakesNoKeys(const Window&, bool) {}
 void raiseChild(const Window&, const Window&) {}  // the window manager raises a clicked transient
 void devLiveResize(const Window&, double, double, int) {}
 void devPerformClose(const Window&) {}
@@ -603,6 +675,12 @@ bool frameClockStart(const Window&) { return false; }
 void frameClockFollow(const Window&) {}
 void frameClockWait() {}
 void frameClockStop() {}
+void frameClockIdle(bool) {}
+bool frameClockSleep(double) { return false; }
+void frameClockWake() {}
+bool windowOnScreen(const Window&) { return true; }
+void watchOnScreen(const Window&) {}
+int onScreenChanges() { return 0; }
 void keepAwake(bool) {}
 
 }  // namespace gl::host::native

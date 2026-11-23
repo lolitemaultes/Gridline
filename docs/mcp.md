@@ -209,6 +209,7 @@ Editing (one undo step each; needs "Allow assistants to change the project"):
 | `add_pattern`, `edit_pattern`, `remove_pattern` | patterns |
 | `set_notes` | piano-roll notes of a channel in a pattern (replace or add) |
 | `set_steps` | step-sequencer row of a channel in a pattern |
+| `set_lane` | a channel's row in a pattern: its own grid (steps per bar), its length and whether the length restarts with the pattern or runs on |
 | `add_clip`, `edit_clip`, `remove_clip` | pattern clips on the playlist |
 | `add_automation` | an automation clip for any parameter, optionally placed |
 | `add_plugin`, `remove_plugin` | effects in mixer slots, with presets |

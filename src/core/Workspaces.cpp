@@ -192,6 +192,7 @@ Json arrangementJson(const Arrangement& a) {
   for (const std::string& w : a.open) open.array.push_back(Json::makeString(w));
   o.object["open"] = open;
   if (!a.regionState.empty()) o.object["state"] = Json::makeString(a.regionState);
+  if (!a.dock.empty()) o.object["dock"] = Json::makeString(a.dock);
   return o;
 }
 Arrangement arrangementFrom(const Json* o) {
@@ -201,6 +202,7 @@ Arrangement arrangementFrom(const Json* o) {
     for (const Json& v : open->array)
       if (v.is(Json::Type::String) && !v.str.empty() && v.str.size() < 200) a.open.insert(v.str);
   if (const Json* st = o->find("state"); st && st->is(Json::Type::String) && st->str.size() < 65536) a.regionState = st->str;
+  if (const Json* d = o->find("dock"); d && d->is(Json::Type::String) && d->str.size() < 65536) a.dock = d->str;
   return a;
 }
 }  // namespace
@@ -213,6 +215,16 @@ std::string toJson(const Set& s) {
     j.object["name"] = Json::makeString(w.name);
     j.object["saved"] = arrangementJson(w.saved);
     if (w.changed()) j.object["current"] = arrangementJson(w.current);
+    auto flag = [&j](const char* key, bool v) {
+      Json b;
+      b.type = Json::Type::Bool;
+      b.boolean = v;
+      j.object[key] = b;
+    };
+    if (!w.keepWindows) flag("keepWindows", false);
+    if (!w.keepPanes) flag("keepPanes", false);
+    if (w.hasOwnBar()) j.object["ownBar"] = Json::makeString(w.ownBar);
+    if (w.hasOwnPins()) j.object["ownPins"] = Json::makeString(w.ownPins);
     items.array.push_back(j);
   }
   o.object["items"] = items;
@@ -239,6 +251,10 @@ Set fromJson(const std::string& text) {
       w.saved = arrangementFrom(j.find("saved"));
       const Json* cur = j.find("current");
       w.current = cur ? arrangementFrom(cur) : w.saved;
+      if (const Json* k = j.find("keepWindows"); k && k->is(Json::Type::Bool)) w.keepWindows = k->boolean;
+      if (const Json* k = j.find("keepPanes"); k && k->is(Json::Type::Bool)) w.keepPanes = k->boolean;
+      if (const Json* b = j.find("ownBar"); b && b->is(Json::Type::String) && b->str.size() < 65536) w.ownBar = b->str;
+      if (const Json* b = j.find("ownPins"); b && b->is(Json::Type::String) && b->str.size() < 65536) w.ownPins = b->str;
       s.items.push_back(w);
     }
   if (const Json* a = o.find("active"); a && a->is(Json::Type::Number) && a->number >= 0 && a->number < 1000) s.active = static_cast<int>(a->number);
@@ -250,5 +266,16 @@ Set fromJson(const std::string& text) {
 }
 
 std::string settingsKey(Preset p) { return std::string("layout.") + layout::id(p) + ".workspaces"; }
+
+const Workspace* activeWorkspace(const Set& s) {
+  if (s.items.empty()) return nullptr;
+  return &s.items[static_cast<size_t>(std::clamp(s.active, 0, static_cast<int>(s.items.size()) - 1))];
+}
+
+Workspace* activeWorkspace(Set& s) {
+  if (s.items.empty()) return nullptr;
+  clampActive(s);
+  return &s.items[static_cast<size_t>(s.active)];
+}
 
 }  // namespace gl::workspaces

@@ -52,6 +52,10 @@ void drawStandInNote(App& a, const PluginTarget& t, float width);
 // K-223: `rule` false leaves out the line under the row (the channel window draws the row on
 // its tab row, whose own line already separates it from the editor).
 void drawPluginHeader(App& a, const PluginTarget& t, bool rule = true);
+// The header's preset arrows without the header (a controller's Preset buttons): the next (`by` > 0)
+// or previous preset of `t`, loaded as the arrows load it (one undo step, shared in a collaboration).
+// Returns the preset's name, empty when there is none to step to.
+std::string stepPluginPreset(App& a, const PluginTarget& t, int by);
 // K-223b: the width drawPluginHeader takes for an instrument of `info` (its preset box at full
 // width), known before it is drawn, so the channel window puts it on its tab row from the first frame.
 float pluginHeaderWidth(App& a, const PluginInfo& info);

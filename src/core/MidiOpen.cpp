@@ -1,5 +1,6 @@
 // Gridline — opening the system MIDI service without trusting it (see MidiOpen.h).
 #include "MidiOpen.h"
+#include "ThreadName.h"
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -59,7 +60,7 @@ void MidiOpener::rescan(double now) {
 
 void MidiOpener::spawn(std::shared_ptr<Shared> sh, double now) {
   try {
-    std::thread([sh, probe = probe_] {
+    std::thread([sh, probe = probe_] { gl::threads::setName("gl-midi-probe");
       MidiProbeResult r;
       try {
         r = probe();

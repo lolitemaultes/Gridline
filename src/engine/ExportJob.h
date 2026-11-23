@@ -37,10 +37,16 @@ struct ExportSettings {
   bool splitPlaylist = false;        // one file per playlist track
   bool splitPlaylistGroups = false;  // J-31: one file per playlist track group
   // Files: <folder>/<baseName>.<ext>; split parts use `partPattern` (see expandNamePattern).
+  // With more than one kind of split on, each kind writes into its own subfolder of `folder`
+  // (named below), so the sets never share a name; one kind alone writes into `folder` itself.
+  // A name that would still repeat inside one folder gets " 2", " 3"... (never overwritten).
   std::string folder;
   std::string baseName = "Untitled";
   std::string partPattern = "%P - %N %T";
   std::string projectTitle;
+  std::string mixerFolder = "Mixer tracks";
+  std::string playlistFolder = "Playlist tracks";
+  std::string groupsFolder = "Track groups";
 };
 
 struct ExportOutcome {

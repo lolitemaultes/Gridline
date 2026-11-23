@@ -3,9 +3,12 @@
 // the UI (recording, controller links, templates). Also: external clock
 // following, MMC transport, and the MIDI sync output sender thread.
 #pragma once
+#include <array>
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <set>
 #include <string>
@@ -27,6 +30,30 @@ struct MidiEvent {
   std::string port;
   int portNumber = -1;
   double time = 0;  // K-226: when it arrived (MidiManager::clockNow seconds, stamped on the driver thread)
+  bool surfacePad = false;  // a control surface's pad, played as this note (SurfacePads); `port` is the surface's
+};
+
+// A SysEx message from an input (control surfaces read their devices' answers from these).
+struct SysexEvent {
+  std::string port;
+  std::vector<uint8_t> bytes;
+  double time = 0;
+};
+
+// Control surfaces (core/surfaces): a port a surface owns. Everything it sends goes to the UI for the
+// surface to read, and nothing plays straight from it. The pads the surface turns into notes (a keys or
+// drums page) are translated here, on the driver thread, so they play with no added delay: a note `n`
+// on MIDI channel `channel` plays `pitch[n]` (-1: not a note), its poly pressure follows it, and the
+// note-off ends the pitch the note-on played even if the map changed in between.
+struct SurfacePads {
+  std::array<std::atomic<int16_t>, 128> pitch;
+  std::atomic<int> channel{0};
+  std::atomic<int> velocity{0};  // VelocityCurve for the pads
+  std::array<int16_t, 128> held{};  // (driver thread) the pitch each pad's note-on played
+  SurfacePads() {
+    for (auto& p : pitch) p.store(-1);
+    held.fill(-1);
+  }
 };
 
 // Per-input settings (Settings → MIDI → input devices).
@@ -36,6 +63,7 @@ struct MidiInputConfig {
   int port = 0;                  // port number links can filter on
   std::string controllerType;    // template id; "" = automatic (by device name), "none" = no template
   bool notes = true;             // play notes from this device
+  std::string surface;           // control surface options of this device ("key=value;..."), "" = defaults
 };
 
 // Global input routing (Settings → MIDI → input).
@@ -97,6 +125,11 @@ class MidiManager {
   std::vector<MidiEvent> poll();
   // Transport actions from MMC sysex since the last call.
   std::vector<RemoteAction> pollActions();
+  // SysEx messages received since the last call (UI thread; at most 64 kept between calls).
+  std::vector<SysexEvent> pollSysex();
+  // Control surfaces: `port` belongs to a surface (see SurfacePads); release gives it back.
+  void claimSurfacePort(const std::string& port, std::shared_ptr<SurfacePads> pads);
+  void releaseSurfacePort(const std::string& port);
   void send(uint8_t s, uint8_t a, uint8_t b);  // to the selected output
   void sendRaw(const std::vector<unsigned char>& bytes);
   // J-150: to the output of a given device (controller LEDs), opened on first
@@ -135,6 +168,9 @@ class MidiManager {
   // driver callback). False when no such input is open.
   bool deviceMessage(const std::string& device, const std::vector<unsigned char>& msg);
   int heldNotes(const std::string& device) const;  // notes the open input holds down now
+  // k078-flkey (GRIDLINE_TEST_MIDI=fake): what sendTo sent to the stand-in output `device`, in
+  // order (`clear`: forgotten after reading).
+  std::vector<std::vector<unsigned char>> fakeSent(const std::string& device, bool clear);
   int releasedNotes() const { return releasedNotes_; }  // note-offs sent for inputs that closed
   bool outputOpen();  // the selected output port is open
   int openDeviceOutputs();  // sendTo ports open (controller LEDs)
@@ -164,12 +200,20 @@ class MidiManager {
   std::mutex mu_;
   std::vector<MidiEvent> pending_;
   std::vector<RemoteAction> actions_;
+  std::vector<SysexEvent> sysex_;  // (under mu_)
+  std::mutex surfMu_;
+  std::map<std::string, std::shared_ptr<SurfacePads>> surfaces_;  // (under surfMu_)
   std::atomic_flag engineLock_ = ATOMIC_FLAG_INIT;  // several inputs → one engine queue
   std::atomic<double> lastActivity_{-1};
+  // K-142 (0.7.8 follow-up): when the input last woke the interface for a stream of sync messages
+  // (clock, time code): at most ten times a second, as its idle frames took them before.
+  std::atomic<double> syncPokeAt_{-1};
+  void pokeSync(double t);
   MidiClockFollower follower_;
   MtcReceiver mtc_;
   SyncChase chase_;
   std::mutex followerMu_;
+  WakeSignal senderWake_;  // K-142: the sender's sleep (posted by the engine's ring and to quit)
   std::thread sender_;
   std::atomic<bool> quit_{false};
   std::unique_ptr<MidiOpener> opener_;
@@ -183,6 +227,7 @@ class MidiManager {
   bool openOutput();                        // the selected output (under outMu_)
   bool fake_ = false;     // GRIDLINE_TEST_MIDI=fake: stand-in devices, no MIDI client
   bool fakeOut_ = false;  // the stand-in selected output is open (under outMu_)
+  std::map<std::string, std::vector<std::vector<unsigned char>>> fakeSent_;  // k078-flkey (under outMu_)
   bool answered_ = false;  // a probe answered since the last failure: later answers change only what changed
   double nextRescan_ = 0;
   uint64_t seenChanges_ = 0;

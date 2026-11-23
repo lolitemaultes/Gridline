@@ -44,6 +44,10 @@
 #include "PlayLights.h"
 #include "DevSignal.h"
 #include "LogicPlugins.h"
+#include "LaneUi.h"
+#include "../core/Lanes.h"
+#include "../core/ClipSources.h"
+#include "../engine/Sample.h"
 
 namespace gl {
 
@@ -71,6 +75,8 @@ struct RackShown {
   // K-146: the rows pane as ImGui sees it (its own scrollbars, its own sideways scroll, content vs. room)
   bool barX = false, barY = false;
   float paneScrollX = 0, paneContentW = 0, paneInnerW = 0, itemsRight = 0, rowRight = 0;
+  // K-349: the rows drawn whole inside the rows pane
+  std::set<ObjectId> visible;
 };
 RackShown gShown;
 // K-136: the rack's height follows its content (racklayout::fitHeight), measured each frame.
@@ -85,6 +91,8 @@ struct RackFit {
 // K-127 dev check: each row's controls as drawn last frame (screen rectangles: x0 y0 x1 y1).
 struct RowGeom {
   ImVec4 phones, pan, vol, mix, name, lamp, steps;
+  ImVec4 chip, handle;  // K-255: the lane chip and length handle (0 wide: not shown)
+  float step0 = 0, step1 = 0;  // K-255: screen x of the row's first step and of its lane step 1 (step pitch)
   const char* phonesState = "on";  // K-186: the headphones button as drawn (on, muted, solo)
   int lights = 0;  // K-127: lights drawn on the row (one)
   int frame = -1;
@@ -99,7 +107,7 @@ struct RackDev {
   float w = 0, h = 0, scroll = -1;
   bool dock = false;
   int playStep = -1;  // J-137 "play<k>": the song-position outline on step k (stills of the play highlight)
-  int group = -2;     // K-173 "group<n>": the display group filter (-1: all channels; -2: left as it is)
+  int group = -9;     // K-173 "group<n>": the display group filter (-1: all channels; -2: audio clips; -9: left as it is)
   bool graph = false; // K-173 "graph": the graph editor open under the rows
   ImVec2 addMin{0, 0}, addMax{0, 0};  // K-72: the toolbar's "+" (add an instrument) button, last drawn
   struct Rect {
@@ -158,8 +166,43 @@ void drawRowLamp(ImDrawList* dl, ImVec2 p0, ImVec2 p1, float level, bool selecte
 std::vector<uint8_t> rowOf(const Pattern& p, ObjectId ch) {
   std::vector<uint8_t> row;
   if (auto it = p.steps.find(ch); it != p.steps.end()) row = it->second;
-  row.resize(static_cast<size_t>(p.bars * p.stepsPerBar), 0);
+  row.resize(static_cast<size_t>(std::max(0, lanes::steps(p, ch))), 0);  // K-255: the row's own steps
   return row;
+}
+
+// K-255: where a row's steps sit. A row on the pattern's grid uses the layout's steps as before;
+// a row on its own grid stretches its steps so a bar is as wide on every row (step k sits where
+// pattern step k x spb / grid would).
+struct LaneGeo {
+  const racklayout::Layout* L = nullptr;
+  int spb = 16, grid = 16, steps = 16, total = 16;
+  bool own = false;
+  float pos(int k) const {
+    if (!own) return L->stepPos(k);
+    const double u = static_cast<double>(k) * spb / grid;
+    const int i = static_cast<int>(std::floor(u));
+    const double f = u - i;
+    if (i >= total) return L->stepPos(total - 1) + L->stepW + racklayout::kStepGap + static_cast<float>(u - total) * (L->stepW + racklayout::kStepGap);
+    const float a0 = L->stepPos(i), a1 = i + 1 >= total ? a0 + L->stepW + racklayout::kStepGap : L->stepPos(i + 1);
+    return a0 + static_cast<float>(f) * (a1 - a0);
+  }
+  float width(int k) const { return own ? std::max(2.0f, pos(k + 1) - pos(k) - racklayout::kStepGap) : L->stepW; }
+  // The beat band (K-236) of step k: on its own grid, the pattern beat it starts in.
+  bool alt(int k) const {
+    if (!own) return (k / L->group) % 2 == 1;
+    const int u = static_cast<int>(std::floor(static_cast<double>(k) * spb / grid + 1e-9));
+    return (u / L->group) % 2 == 1;
+  }
+};
+LaneGeo laneGeo(const racklayout::Layout& L, const Pattern& p, ObjectId ch) {
+  LaneGeo g;
+  g.L = &L;
+  g.spb = std::max(1, p.stepsPerBar);
+  g.grid = lanes::grid(p, ch);
+  g.own = lanes::ownGrid(p, ch);
+  g.steps = std::max(1, lanes::steps(p, ch));
+  g.total = std::max(1, p.bars * p.stepsPerBar);
+  return g;
 }
 
 // Accepts instruments and audio files dropped from the browser on the rack's
@@ -241,10 +284,59 @@ void rowDropTarget(App& a, const Channel& c, int index, ImVec2 rp, float rowW, f
   dl->AddText(font, fs, ImVec2(b0.x + 6, b0.y + 2), theme::contrastText(hot), badge.c_str());
 }
 
-// Display group filter of the rack (-1 = all channels). Groups and membership
-// are saved with the project (Song::channelGroups, Channel::group).
+// Display group filter of the rack (-1 = all channels, kAudioClipsFilter = the audio clip channels).
+// Groups and membership are saved with the project (Song::channelGroups, Channel::group).
+constexpr int kAudioClipsFilter = -2;
 int groupFilter = -1;
 char newGroupName[64] = "";
+
+// K-349: the channel passes the rack's display filter.
+bool filterShows(const Channel& c, const std::set<ObjectId>& audioClips) {
+  if (groupFilter == kAudioClipsFilter) return audioClips.count(c.id) > 0;
+  return groupFilter < 0 || c.group == groupFilter;
+}
+
+// K-349: a channel made since the last frame (an audio file dropped on the playlist, a render, a
+// recording, stems, an instrument added, in any layout) is brought into view the next time the rack
+// draws: a display filter that would hide it gives way to all channels, and the rows scroll to it.
+// A project opened or replaced starts afresh.
+struct NewRowReveal {
+  uint64_t epoch = ~uint64_t{0};
+  std::set<ObjectId> known;
+  ObjectId pending = kNoId;  // the row to scroll to (drawn rows clear it)
+  int frames = 0;            // frames the rack drew while it was pending
+} gReveal;
+
+// Every frame, rack shown or not: notes the channels that are new since the last frame.
+void noteNewChannels(const App& a) {
+  const Song& s = a.doc.song();
+  std::set<ObjectId> now;
+  for (const auto& c : s.channels) now.insert(c.id);
+  if (a.doc.projectEpoch() != gReveal.epoch) {
+    gReveal.epoch = a.doc.projectEpoch();
+    gReveal.known = std::move(now);
+    gReveal.pending = kNoId;
+    return;
+  }
+  for (const auto& c : s.channels)
+    if (!gReveal.known.count(c.id)) {  // the first new one in rack order
+      gReveal.pending = c.id, gReveal.frames = 0;
+      break;
+    }
+  gReveal.known = std::move(now);
+}
+
+// While the rack draws: the new channel to bring into view (kNoId: none).
+ObjectId revealNewChannel(const Song& s, const std::set<ObjectId>& audioClips) {
+  if (gReveal.pending == kNoId) return kNoId;
+  const Channel* c = s.channel(gReveal.pending);
+  if (!c || c->rackHidden || ++gReveal.frames > 30) {  // hidden on purpose, gone, or never reached
+    gReveal.pending = kNoId;
+    return kNoId;
+  }
+  if (!filterShows(*c, audioClips)) groupFilter = -1;
+  return gReveal.pending;
+}
 
 void groupMenu(App& a) {
   const Song& s = a.doc.song();
@@ -253,7 +345,12 @@ void groupMenu(App& a) {
     for (const auto& c : s.channels) n += c.group == g;
     return n;
   };
-  if (ImGui::Selectable(i18n::tr("All channels"), groupFilter < 0)) groupFilter = -1;
+  if (ImGui::Selectable(i18n::tr("All channels"), groupFilter == -1)) groupFilter = -1;
+  {  // K-349: the channels playlist audio clips play from
+    const std::string l = std::string(i18n::tr("Audio clips")) + "  (" + std::to_string(ops::audioClipChannels(s).size()) + ")##gaudio";
+    if (ImGui::Selectable(l.c_str(), groupFilter == kAudioClipsFilter)) groupFilter = kAudioClipsFilter;
+    devRackRect("group audio");
+  }
   for (size_t g = 0; g < s.channelGroups.size(); ++g) {
     std::string l = s.channelGroups[g] + "  (" + std::to_string(countIn(static_cast<int>(g))) + ")##g" + std::to_string(g);
     if (ImGui::Selectable(l.c_str(), groupFilter == static_cast<int>(g))) groupFilter = static_cast<int>(g);
@@ -357,6 +454,7 @@ std::string laneText(uint8_t vel, const StepProps& p, tools::StepLane l) {
 }  // namespace
 
 void drawChannelRack(App& a) {
+  noteNewChannels(a);  // K-349: every frame, the rack shown or not
   if (!a.showRack) return;
   // K-136: a floating rack is never taller than its content (docked, the dock node sets the size).
   // A rack popped out into an OS window of its own (or being placed outside the main window this
@@ -428,13 +526,28 @@ void drawChannelRack(App& a) {
     if (showGroup) {
       if (groupFilter >= static_cast<int>(s.channelGroups.size())) groupFilter = -1;
       const bool groupOpen =
-          ui::BeginCombo("##group", groupFilter < 0 ? "All" : s.channelGroups[static_cast<size_t>(groupFilter)].c_str(), 92);
+          ui::BeginCombo("##group", groupFilter == kAudioClipsFilter ? i18n::tr("Audio clips")
+                                    : groupFilter < 0                ? "All"
+                                                                     : s.channelGroups[static_cast<size_t>(groupFilter)].c_str(),
+                         92);
       if (!groupOpen) devRackRect("groupcombo");
       if (groupOpen) {
         groupMenu(a);
         ImGui::EndCombo();
       }
       ui::Hint("Display group: show all channels or one group (groups are saved with the project)");
+      ImGui::SameLine(0, 8);
+    }
+    // GitHub #58: channels hidden from the rack: how many, and a click lists them to show again.
+    if (const size_t nHidden = ops::rackHiddenChannels(s).size(); nHidden > 0) {
+      const std::string hl = std::to_string(nHidden) + " " + i18n::tr("hidden") + "##rkhiddenbtn";
+      if (ui::TextButton(hl.c_str(), ImGui::IsPopupOpen("##rkhiddenpop"), 0.0f, "Channels hidden from the rack: click to show them again"))
+        ImGui::OpenPopup("##rkhiddenpop");
+      devRackRect("hiddenbtn");
+      if (ImGui::BeginPopup("##rkhiddenpop")) {
+        hiddenChannelItems(a);
+        ImGui::EndPopup();
+      }
       ImGui::SameLine(0, 8);
     }
     // Pattern chip: colour + name.
@@ -489,7 +602,7 @@ void drawChannelRack(App& a) {
       rx -= wGraph;
       ImGui::SetCursorScreenPos(ImVec2(rx, rowY));
       if (ui::IconButton("graph", ui::Icon::Wave, a.rack.showGraph, fh,
-                         "Graph editor (Ctrl+K): step velocity, pan, release, fine pitch, mod X / Y, shift and keyboard (note) of the selected channel",
+                         keys::withKeys(i18n::N_("Graph editor (%s): step velocity, pan, release, fine pitch, mod X / Y, shift and keyboard (note) of the selected channel"), {keys::cmdKey("rack.graphEditor", "Ctrl+K")}),
                          theme::rgb(theme::role::kGraph)))
         a.rack.showGraph = !a.rack.showGraph;
     }
@@ -604,7 +717,13 @@ void drawChannelRack(App& a) {
     nameNeed = std::max(nameNeed, a.fontRegular->CalcTextSizeA(theme::kFontCaption + 1, 1e9f, 0, ch.name.c_str()).x + 14);
   // K-236: the steps group by beats of the pattern's meter (3/4: three groups a bar; 7/8: pairs).
   const int stepGrp = pat ? racklayout::stepGroup(pat->stepsPerBar, s.patternMeterNum(*pat), s.patternMeterDen(*pat)) : 4;
-  const racklayout::Layout L = racklayout::compute({avail, total, lgSteps ? 64.0f : racklayout::kStepMax, nameNeed, stepGrp});
+  // K-255: the lane column (each row's grid chip) shows while the pattern has a lane of its own or
+  // the rack menu asks for it; without it the rack is laid out as before.
+  const bool laneCol = laneui::columnShown(a, pat);
+  racklayout::Input lin{avail, total, lgSteps ? 64.0f : racklayout::kStepMax, nameNeed, stepGrp};
+  lin.laneW = laneCol ? racklayout::kLaneW : 0.0f;
+  const racklayout::Layout L = racklayout::compute(lin);
+  if (laneCol) laneui::beginRows();
   const float xLeft = racklayout::kXLeft, xPan = racklayout::kXPan, xVol = racklayout::kXVol, xMix = racklayout::kXMix,
               nameX = racklayout::kNameX, nameW = L.nameW, stepsX = L.stepsX, stepW = L.stepW, stepGap = racklayout::kStepGap,
               groupGap = racklayout::kGroupGap, viewW = L.viewW, rowW = L.rowW;
@@ -655,6 +774,13 @@ void drawChannelRack(App& a) {
     ImGui::Dummy(ImVec2(rowW, 8));
     ui::Hint("Playing step");
   }
+  if (pat && laneCol && lanes::anyRunOn(*pat)) {  // K-255: where the lanes that run on meet again
+    const std::string up = laneui::lineUpText(s, *pat);
+    const ImVec2 lp = ImGui::GetCursorScreenPos();
+    dl->AddText(a.fontRegular, theme::kFontLabel + 1, ImVec2(std::round(lp.x + stepsX), std::round(lp.y)), theme::litRole(theme::role::kLoop), up.c_str());
+    ImGui::Dummy(ImVec2(rowW, 15));
+    ui::Hint("Lanes of other lengths that keep running meet the pattern's start together again here");
+  }
   static int paintValue = -1;  // -1 idle, else velocity to paint (0 = erase)
   static ObjectId paintRow = kNoId;
   if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseDown(ImGuiMouseButton_Right) && paintValue >= 0) {
@@ -669,11 +795,20 @@ void drawChannelRack(App& a) {
   // the song or add, remove and move channels, and every row holds references into the song.
   const ImGuiID chMenuId = ImGui::GetID("##chmenu");
   static ObjectId chMenuChannel = kNoId;
+  const std::set<ObjectId> audioClips = ops::audioClipChannels(s);  // K-349
+  const ObjectId reveal = revealNewChannel(s, audioClips);
+  const float paneY0 = ImGui::GetWindowPos().y, paneY1 = paneY0 + ImGui::GetWindowHeight();
   for (size_t ci = 0; ci < s.channels.size(); ++ci) {
     const Channel& c = s.channels[ci];
-    if (groupFilter >= 0 && c.group != groupFilter) continue;  // display group filter
+    if (!filterShows(c, audioClips)) continue;  // display group filter
+    if (c.rackHidden) continue;  // GitHub #58: hidden from the rack (the rack menu shows it again)
     ImGui::PushID(static_cast<int>(c.id));
     ImVec2 rp = ImGui::GetCursorScreenPos();
+    if (c.id == reveal) {  // K-349: a new channel: the rows scroll to it when it is out of sight
+      if (rp.y < paneY0 || rp.y + rowH > paneY1) ImGui::SetScrollFromPosY(rp.y + rowH * 0.5f - paneY0, 0.5f);
+      gReveal.pending = kNoId;
+    }
+    if (rp.y >= paneY0 - 0.5f && rp.y + rowH <= paneY1 + 0.5f) shown.visible.insert(c.id);
     if (a.rack.zipped.count(c.id)) {  // J-11 zipped row: a thin strip; click unzips
       const float zh = 7.0f;
       ImGui::InvisibleButton("zip", ImVec2(L.rowW, zh));
@@ -914,6 +1049,9 @@ void drawChannelRack(App& a) {
     // Steps or note preview, inside the step viewport (scrolled by scrollX).
     ImVec2 sp(rp.x + stepsX - scrollX, cy - cellH * 0.5f);
     bool hasNotes = pat && pat->notes.count(c.id) && !pat->notes.at(c.id).empty();
+    laneui::Handle handleShown;  // K-255: the length handle, drawn after the steps' clip
+    LaneMode handleMode = LaneMode::Restart;
+    bool drawHandle = false;
     stepClipBegin(rp.y, rp.y + rowH);
     if (pat && hasNotes) {
       ImGui::SetCursorScreenPos(ImVec2(viewX0, sp.y));
@@ -946,19 +1084,50 @@ void drawChannelRack(App& a) {
     } else if (pat) {
       auto row = rowOf(*pat, c.id);
       const float dpp = pixelgrid::frameScale();  // K-276
-      for (int k = 0; k < total; ++k) {
-        ImVec2 q(sp.x + stepPos(k), sp.y);
-        if (q.x + stepW <= viewX0 || q.x >= viewX1) continue;  // scrolled out of the step viewport (long patterns)
+      // K-255: the row's own steps (its grid), its length, and what plays at its playing step.
+      const LaneGeo lg = laneGeo(L, *pat, c.id);
+      const int laneLen = lanes::length(*pat, c.id);
+      const bool laneShade = laneCol && laneLen > 0;  // steps past the length show what plays there (the loop again)
+      int lanePlay = playStep;
+      if (lg.own && playStep >= 0) {
+        const double st = lanes::stepTicks(s, *pat, c.id);
+        lanePlay = st > 0 ? static_cast<int>(std::floor(a.engine.position() / st + 1e-9)) : -1;
+        if (gRackDev.playStep >= 0) lanePlay = static_cast<int>(static_cast<int64_t>(gRackDev.playStep) * lg.grid / lg.spb);
+      }
+      laneui::Handle lh;
+      if (laneCol) {  // the length handle takes the pointer before the steps under it
+        lh.at = laneLen > 0 ? laneLen : lg.steps;
+        lh.looping = laneLen > 0;
+        lh.x = std::min(sp.x + lg.pos(lh.at) - racklayout::kStepGap * 0.5f, viewX1 - 2.0f);
+        lh.y0 = sp.y - 1, lh.y1 = sp.y + cellH + 1;
+        if (lh.x > viewX0) {
+          const float sx = sp.x;
+          bool hclick = false;
+          laneui::handleInput(a, *pat, c, lh, lg.steps, [&lg, sx](int k) { return sx + lg.pos(k) - racklayout::kStepGap * 0.5f; }, &hclick);
+          if (hclick) laneui::openLength(c.id);
+        }
+        geom.handle = rectOf(ImVec2(lh.x - 4, lh.y0), ImVec2(lh.x + 4, lh.y1));
+      } else {
+        geom.handle = ImVec4(0, 0, 0, 0);
+      }
+      geom.step0 = sp.x + lg.pos(0), geom.step1 = sp.x + lg.pos(1);
+      const int rowSteps = lg.steps;
+      for (int k = 0; k < rowSteps; ++k) {
+        const float kw = lg.width(k);
+        ImVec2 q(sp.x + lg.pos(k), sp.y);
+        if (q.x + kw <= viewX0 || q.x >= viewX1) continue;  // scrolled out of the step viewport (long patterns)
+        const bool looped = laneShade && k >= laneLen;  // K-255: a step the loop plays again (edits go to the step it repeats)
+        const int ek = looped ? k % laneLen : k;
         // K-146: a step cut by an edge of the viewport is clickable only where it shows. Its button
         // must not reach past the row's right edge: that widened the rows pane, which then showed a
         // second sideways scrollbar of its own (and took sideways swipes, sliding the whole rack).
-        const float bx1 = std::min(q.x + stepW, viewX1), bx0 = std::min(std::max(q.x, viewX0), bx1 - 1.0f);  // (at least a pixel)
+        const float bx1 = std::min(q.x + kw, viewX1), bx0 = std::min(std::max(q.x, viewX0), bx1 - 1.0f);  // (at least a pixel)
         ImGui::SetCursorScreenPos(ImVec2(bx0, q.y));
         ImGui::PushID(k);
         ImGui::InvisibleButton("s", ImVec2(bx1 - bx0, cellH), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
         bool hov = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
-        if (hov) a.rack.hoverChannel = c.id, a.rack.hoverStep = k;
-        uint8_t v = row[static_cast<size_t>(k)];
+        if (hov) a.rack.hoverChannel = c.id, a.rack.hoverStep = ek;
+        uint8_t v = row[static_cast<size_t>(ek)];
         // Q-15: in a scrolling rack the plain wheel scrolls; the step takes it after a click or with Ctrl / Cmd.
         const ui::WheelGate wg = ui::wheelGate(v > 0);
         if (ImGui::IsItemActivated() && wg.dragOk) {
@@ -967,7 +1136,7 @@ void drawChannelRack(App& a) {
         }
         if (paintValue >= 0 && hov && paintRow == c.id && v != paintValue) {
           auto nr = row;
-          nr[static_cast<size_t>(k)] = static_cast<uint8_t>(paintValue);
+          nr[static_cast<size_t>(ek)] = static_cast<uint8_t>(paintValue);
           bool empty = std::all_of(nr.begin(), nr.end(), [](uint8_t x) { return x == 0; });
           a.doc.editPattern(pat->id, paintValue ? "add steps" : "remove steps",
                             [&](Pattern& p) {
@@ -984,15 +1153,15 @@ void drawChannelRack(App& a) {
         if (wg.scale > 0 && v > 0 && ImGui::GetIO().MouseWheel != 0) {
           auto nr = row;
           const int dv = static_cast<int>(std::lround(ImGui::GetIO().MouseWheel * 8 * wg.scale));
-          nr[static_cast<size_t>(k)] = static_cast<uint8_t>(std::clamp(v + (dv != 0 ? dv : (ImGui::GetIO().MouseWheel > 0 ? 1 : -1)), 1, 127));
+          nr[static_cast<size_t>(ek)] = static_cast<uint8_t>(std::clamp(v + (dv != 0 ? dv : (ImGui::GetIO().MouseWheel > 0 ? 1 : -1)), 1, 127));
           a.doc.editPattern(pat->id, "change step velocity", [&](Pattern& p) { p.steps[c.id] = nr; }, kStepGestureKey ^ (pat->id + 7));
           wheelUsed = true;
         }
-        const bool alt = (k / L.group) % 2 == 1;  // K-236: one colour band a beat
+        const bool alt = lg.alt(k);  // K-236: one colour band a beat
         // K-276: the pad on whole device pixels, its gap to the next pad whole too (PixelGrid.h), so
         // the gaps stay even at every interface scale (a pad may be a device pixel wider instead).
-        const float nextX = sp.x + stepPos(k + 1);
-        const pixelgrid::Span padX = pixelgrid::block(q.x, nextX, dpp, 0.0f, nextX - q.x - stepW), padY = pixelgrid::block(q.y, q.y + cellH, dpp, 0.0f, 0.0f);
+        const float nextX = sp.x + lg.pos(k + 1);
+        const pixelgrid::Span padX = pixelgrid::block(q.x, nextX, dpp, 0.0f, nextX - q.x - kw), padY = pixelgrid::block(q.y, q.y + cellH, dpp, 0.0f, 0.0f);
         q = ImVec2(padX.x0, padY.x0);
         ImVec2 q1(padX.x1, padY.x1);
         if (lgSteps) {
@@ -1007,26 +1176,31 @@ void drawChannelRack(App& a) {
           ui::StepPad(dl, q, q1, v > 0, alt, hov, theme::rgb(c.color), v / 127.0f);
         }
         // J-31 step loop: steps past the channel's loop length repeat the loop (shaded; the first one marked).
-        if (auto lp = pat->stepLoop.find(c.id); lp != pat->stepLoop.end() && lp->second > 0 && k >= lp->second) {
+        // K-255: with the lane column they show the steps the loop plays there (the handle marks the length).
+        if (looped) {
+          dl->AddRectFilled(q, q1, theme::withAlpha(P.surface950, 0.5f), 2.0f);
+        } else if (auto lp = pat->stepLoop.find(c.id); !laneShade && lp != pat->stepLoop.end() && lp->second > 0 && k >= lp->second) {
           dl->AddRectFilled(q, q1, theme::withAlpha(P.surface950, 0.55f), 2.0f);
           if (k == lp->second) dl->AddLine(ImVec2(q.x - 1, q.y - 2), ImVec2(q.x - 1, q1.y + 2), theme::lit(theme::rgb(theme::role::kLoop)), 2.0f);
         }
         if (v > 0 && pat->stepProps.count(c.id)) {  // J-11: steps with their own note / parameters get a corner mark
           const auto& pr = pat->stepProps.at(c.id);
-          if (static_cast<size_t>(k) < pr.size() && !pr[static_cast<size_t>(k)].isDefault())
+          if (static_cast<size_t>(ek) < pr.size() && !pr[static_cast<size_t>(ek)].isDefault())
             dl->AddTriangleFilled(ImVec2(q1.x - 6, q.y + 1), ImVec2(q1.x - 1, q.y + 1), ImVec2(q1.x - 1, q.y + 6),
                                   theme::withAlpha(theme::rgb(theme::role::kGraph), 0.9f));
         }
-        if (k == playStep) ui::StepPlayOutline(dl, q, q1);  // J-137: inside the pad (the step viewport's clip cut the first column's left edge)
+        if (k == lanePlay) ui::StepPlayOutline(dl, q, q1);  // J-137: inside the pad (the step viewport's clip cut the first column's left edge)
         if (hov)
-          app().setHint("Step " + std::to_string(k + 1) +
+          app().setHint("Step " + std::to_string(ek + 1) + (looped ? std::string(" ") + i18n::tr("(played again by the loop)") : std::string()) +
                         (v ? " \xC2\xB7 velocity " + std::to_string(v) + " (" + (wg.hint ? i18n::tr("click or Ctrl+wheel to change") : i18n::tr("scroll to change")) + ")"
                            : std::string()) +
                         "   (click/drag: paint \xC2\xB7 right-drag: erase \xC2\xB7 Insert / Delete: insert or remove a step here)");
         ImGui::PopID();
       }
+      if (laneCol && lh.x > viewX0) handleShown = lh, handleMode = lanes::mode(*pat, c.id), drawHandle = true;
     }
     ImGui::PopClipRect();
+    if (drawHandle) laneui::handleDraw(dl, handleShown, handleMode);  // K-255: over the row's top edge (its length tab)
     // Scrolled steps end under a soft edge (more steps to either side).
     if (L.scrolls()) {
       const ImU32 edge = theme::withAlpha(P.surface950, 0.0f), edgeIn = theme::withAlpha(P.surface950, 0.55f);
@@ -1050,7 +1224,8 @@ void drawChannelRack(App& a) {
       if (lclick || rclick) {
         std::vector<ObjectId> order;
         order.reserve(s.channels.size());
-        for (const auto& oc : s.channels) order.push_back(oc.id);
+        for (const auto& oc : s.channels)
+          if (!oc.rackHidden) order.push_back(oc.id);  // a run skips hidden channels
         const rackselect::Click how = rclick ? rackselect::Click::Only : ImGui::GetIO().KeyShift ? rackselect::Click::Range : rackselect::Click::Toggle;
         rackselect::click(order, a.selChannels, a.selChannel, c.id, how);
         selected = a.selChannels.count(c.id) > 0;
@@ -1059,6 +1234,13 @@ void drawChannelRack(App& a) {
       ++geom.lights;
       ui::Hint(i18n::N_("Select: click adds or removes this channel \xC2\xB7 right-click: this one only \xC2\xB7 Shift+click: a run \xC2\xB7 the keyboard plays every selected channel"));
       drawRowLamp(dl, l0, l1, rackPlayLight(a, c, ci), selected, lhov);
+    }
+    if (laneCol && pat) {  // K-255: the row's grid chip (click: grid, right-click: length)
+      const ImVec2 c0(std::round(rp.x + L.laneX), std::round(cy - cellH * 0.5f + 2));
+      laneui::chip(a, *pat, c, c0, ImVec2(L.laneW, cellH - 4));
+      geom.chip = rectOf(c0, ImVec2(c0.x + L.laneW, c0.y + cellH - 4));
+    } else {
+      geom.chip = ImVec4(0, 0, 0, 0);
     }
 
     const ObjectId rowId = c.id;
@@ -1080,6 +1262,7 @@ void drawChannelRack(App& a) {
     channelContextMenu(a, chMenuChannel);
     ImGui::EndPopup();
   }
+  if (laneCol) laneui::popovers(a);  // K-255
   pat = s.pattern(a.curPattern);  // the menu may have replaced the song (its patterns too)
 
   // J-173: the pattern's automation clips as rows below the channels, and a
@@ -1174,9 +1357,10 @@ void drawChannelRack(App& a) {
     ImGui::InvisibleButton("##graph", ImVec2(viewW, gh));
     const ImVec2 m = ImGui::GetIO().MousePos;
     int hk = -1;
+    const LaneGeo gg = laneGeo(L, *pat, gc->id);  // K-255: the row's own steps
     if (m.x >= viewX0 && m.x < viewX1)
-      for (int i = 0; i < total; ++i)
-        if (m.x >= w0.x + stepPos(i) - stepGap && m.x < w0.x + stepPos(i) + stepW + groupGap) hk = i;
+      for (int i = 0; i < static_cast<int>(row.size()); ++i)
+        if (m.x >= w0.x + gg.pos(i) - stepGap && m.x < w0.x + gg.pos(i) + gg.width(i) + (gg.own ? stepGap : groupGap)) hk = i;
     const ObjectId cid = gc->id;
     // Q-15: in a scrolling rack the keyboard lane takes the wheel after a click on it or with Ctrl / Cmd.
     const ui::WheelGate wg = ui::wheelGate(keys && hk >= 0 && row[static_cast<size_t>(hk)] > 0);
@@ -1227,10 +1411,10 @@ void drawChannelRack(App& a) {
                (keys ? std::string(" \xC2\xB7 ") + (wg.hint ? i18n::tr("click or Ctrl+wheel: semitone") : i18n::tr("wheel: semitone")) + ")" : std::string(")")));
     const ImU32 bar = theme::litRole(theme::role::kGraph);
     stepClipBegin(g0.y, w1.y);
-    for (int k = 0; k < total; ++k) {
+    for (int k = 0; k < static_cast<int>(row.size()); ++k) {
       uint8_t v = row[static_cast<size_t>(k)];
       if (!v) continue;
-      const float x0 = w0.x + stepPos(k) + 1, x1 = x0 + stepW - 2;
+      const float x0 = w0.x + gg.pos(k) + 1, x1 = x0 + gg.width(k) - 2;
       if (x1 < viewX0 || x0 > viewX1) continue;
       const float f = static_cast<float>(laneNorm(v, props[static_cast<size_t>(k)], lane));
       const float y = bot - span * f;
@@ -1430,7 +1614,7 @@ void rackDevBefore(App& a, int frame) {
     if (ImGuiWindow* bw = ImGui::FindWindowByName("Browser"); bw && bw->DockId) ImGui::SetNextWindowDockID(bw->DockId, ImGuiCond_Always);
   if (gRackDev.dock && frame == 5) a.focusWindow = "Channel rack";  // its tab in front of the browser's
   if (gRackDev.scroll >= 0 && frame == 6) a.rack.stepScroll = gRackDev.scroll;
-  if (gRackDev.group >= -1 && frame == 2) groupFilter = gRackDev.group;
+  if (gRackDev.group >= kAudioClipsFilter && frame == 2) groupFilter = gRackDev.group;
   if (gRackDev.graph && frame == 2) a.rack.showGraph = true;
 }
 
@@ -1475,9 +1659,9 @@ void rackDevDump(App& a, int frame) {
     }
     const auto lt = gRackLights.find(c.id);  // J-186: the row's play light as drawn last
     const float light = lt == gRackLights.end() ? 0.0f : lt->second.light.alpha();
-    std::printf("  channel %zu volume %.4f pan %.4f velsum %d pitchsum %d light %.3f muted %d\n", i, static_cast<double>(c.gain),
-                static_cast<double>(c.pan), velSum, pitchSum, static_cast<double>(light), c.muted ? 1 : 0);
-    if (const auto g = gRowGeom.find(c.id); g != gRowGeom.end()) {  // K-127: the row's controls, left to right
+    std::printf("  channel %zu volume %.4f pan %.4f velsum %d pitchsum %d light %.3f muted %d hidden %d\n", i, static_cast<double>(c.gain),
+                static_cast<double>(c.pan), velSum, pitchSum, static_cast<double>(light), c.muted ? 1 : 0, c.rackHidden ? 1 : 0);
+    if (const auto g = gRowGeom.find(c.id); g != gRowGeom.end() && !c.rackHidden) {  // K-127: the row's controls, left to right
       const RowGeom& r = g->second;
       const std::pair<const char*, ImVec4> parts[] = {{"pan", r.pan}, {"vol", r.vol}, {"mix", r.mix},       {"name", r.name},
                                                       {"lamp", r.lamp}, {"steps", r.steps}, {"phones", r.phones}};
@@ -1485,6 +1669,12 @@ void rackDevDump(App& a, int frame) {
       for (const auto& [n, v] : parts)
         std::printf(" %s %.1f %.1f %.1f %.1f", n, static_cast<double>(v.x), static_cast<double>(v.y), static_cast<double>(v.z), static_cast<double>(v.w));
       std::printf(" phonestate %s\n", r.phonesState);  // K-186: the headphones button (on, muted, solo)
+      if (pat)  // K-255: the row's lane and its controls
+        std::printf("  lane %zu grid %d steps %d length %d mode %s chip %.1f %.1f %.1f %.1f handle %.1f %.1f %.1f %.1f step0 %.1f step1 %.1f\n", i,
+                    lanes::grid(*pat, c.id), lanes::steps(*pat, c.id), lanes::length(*pat, c.id), lanes::runsOn(*pat, c.id) ? "runOn" : "restart",
+                    static_cast<double>(r.chip.x), static_cast<double>(r.chip.y), static_cast<double>(r.chip.z), static_cast<double>(r.chip.w),
+                    static_cast<double>(r.handle.x), static_cast<double>(r.handle.y), static_cast<double>(r.handle.z), static_cast<double>(r.handle.w),
+                    static_cast<double>(r.step0), static_cast<double>(r.step1));
     }
   }
   // K-173: the separator above the automation rows and the first automation row
@@ -1494,6 +1684,20 @@ void rackDevDump(App& a, int frame) {
               static_cast<double>(r.sepCaption.z), static_cast<double>(r.sepCaption.w), r.autoRows, static_cast<double>(r.autoY0), r.lastRowIndex);
   // The display groups and where the group combo and its menu rows were drawn (last).
   std::printf("  groups %zu filter %d\n", s.channelGroups.size(), groupFilter);
+  {  // K-349: each channel as the rack listed it last frame: an audio clip channel, in view, its steps
+    // (an audio clip channel is a row of steps like any other channel's)
+    const std::set<ObjectId> clips = ops::audioClipChannels(s);
+    const Pattern* pat = s.pattern(a.curPattern);
+    for (size_t i = 0; i < s.channels.size(); ++i) {
+      const Channel& c = s.channels[i];
+      int on = 0;
+      if (pat)
+        if (auto st = pat->steps.find(c.id); st != pat->steps.end())
+          for (uint8_t v : st->second) on += v ? 1 : 0;
+      std::printf("  rackrow %zu id %u audioclip %d steps %d visible %d shown %d name %s\n", i, static_cast<unsigned>(c.id), clips.count(c.id) ? 1 : 0, on,
+                  r.visible.count(c.id) ? 1 : 0, filterShows(c, clips) && !c.rackHidden ? 1 : 0, c.name.c_str());
+    }
+  }
   for (const auto& [name, rc] : gRackDev.rects)
     if (rc.frame >= ImGui::GetFrameCount() - 2)
       std::printf("  rect %s %.1f %.1f %.1f %.1f\n", name.c_str(), static_cast<double>(rc.a.x), static_cast<double>(rc.a.y),

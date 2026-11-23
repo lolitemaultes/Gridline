@@ -12,6 +12,7 @@
 #include "AudioLogger.h"
 #include "Program.h"
 #include "TransportClock.h"
+#include "ParallelGate.h"
 #include "WorkerPool.h"
 
 namespace gl {
@@ -122,6 +123,14 @@ class AudioEngine {
   // muted strip; and the silence after which sound with no cause marks one that plays by itself.
   static constexpr float kRestFloor = 1e-6f;
   static constexpr double kRestHoldKnown = 0.5, kRestHoldListened = 2.0, kRestHoldMuted = 0.5, kRestSelfAfter = 0.25;
+  // GitHub #66: a hosted plugin whose sound only its output tells (an instrument, or an effect
+  // fed silence) never goes below kRestFloor when it has a noise floor of its own (a chip
+  // emulation, an analogue model, a little DC). At or below kRestFaint (-90 dBFS peak, under the
+  // noise of a 16-bit file) its output is inaudible: it rests once it stayed there kRestHoldFaint
+  // seconds with nothing playing it. Sound above that after a moment's quiet with no cause still
+  // marks one that plays by itself.
+  static constexpr float kRestFaint = 3.1622776e-5f;
+  static constexpr double kRestHoldFaint = 4.0;
   // Offline renders (J-30): the engine renders blocks of `frames` (<= kMaxBlock)
   // on its own absolute sample grid, buffered, whatever chunk sizes the caller
   // asks for — so the output is identical for any caller block size, hosted
@@ -359,7 +368,16 @@ class AudioEngine {
   int threads() const { return threads_.load(std::memory_order_relaxed); }
   // K-277 (tests): graph blocks run on the audio thread alone / shared out over the pool.
   uint64_t serialBlocks() const { return serialBlocks_.load(std::memory_order_relaxed); }
+  // K-142 (0.7.8): mixer track blocks left out whole (a track at rest with nothing coming in; tests).
+  uint64_t hushedTracks() const { return hushedTracks_.load(std::memory_order_relaxed); }
+  // K-142 (0.7.8 follow-up, tests): blocks in which the whole graph stayed at rest and was left out in
+  // one pass (sleepGraph), and stopped blocks made longer than one control block while it rested.
+  uint64_t sleptBlocks() const { return sleptBlocks_.load(std::memory_order_relaxed); }
+  uint64_t longRestBlocks() const { return longRestBlocks_.load(std::memory_order_relaxed); }
+  // (tests) false: never sleep the whole graph nor lengthen a block (each node rests on its own, as before)
+  void setGraphSleep(bool on) { graphSleep_.store(on, std::memory_order_relaxed); }
   uint64_t parallelBlocks() const { return parallelBlocks_.load(std::memory_order_relaxed); }
+  uint64_t workerWakeups() const { return pool_.wakeups(); }  // GitHub #66: pool threads woken for a block
   // Worker threads that run with real-time scheduling (the others can be
   // preempted mid-block and stall the audio thread waiting for their tasks).
   int realtimeWorkers() const { return pool_.realtimeThreads(); }
@@ -368,6 +386,12 @@ class AudioEngine {
   // default; costs two clock reads per object per block when on.
   void setProfiling(bool on) { profiling_.store(on, std::memory_order_relaxed); }
   bool profiling() const { return profiling_.load(std::memory_order_relaxed); }
+  // K-142 (0.7.8): count the blocks each instrument and effect runs (ChannelRuntime::dspCalls,
+  // EffectRuntime::dspCalls) and the blocks the engine makes (countedBlocks). For the CPU report
+  // (app/CpuReport.h); off, it costs one branch per object per block and changes nothing heard.
+  void setCallCounting(bool on) { countCalls_.store(on, std::memory_order_relaxed); }
+  bool callCounting() const { return countCalls_.load(std::memory_order_relaxed); }
+  uint64_t countedBlocks() const { return countedBlocks_.load(std::memory_order_relaxed); }
   // Samples between the transport and the master output (plugin delay
   // compensation) for the current program.
   int outputLatency() const;
@@ -648,6 +672,15 @@ class AudioEngine {
   // Internal controller links + automation (`eventTick`: J-210, where lanes of
   // recorded events read, the block's first frame after a loop wrap at its start).
   void evaluateLinks(const Program* p, int n, double blockTick, double eventTick);
+  // One internal controller link (the first pass, and K-247's late links). `vars`: the formula's.
+  void evaluateLink(const Program* p, const ProgLink& l, int n, double* vars);
+  // K-247: the LFO pass (Program::lfoOps) after the links and automation of the control block.
+  void runLfoPass(const Program* p, int n, double blockTick, double* vars);
+  void evaluateLfo(const Program* p, const ProgLfo& f, int n, double blockTick);
+  void applyLfoTarget(const Program* p, const ProgLfoTarget& t, int n);
+  // K-247: a note of channel `ch` starts: the Each note LFOs that follow it restart.
+  static void restartNoteLfos(const Program* p, const ProgChannel& ch);
+  uint64_t ctlStamp_ = 1;  // K-247: counts control blocks (LinkRuntime::appliedStamp)
   // J-210: the automation lanes of the playing mode at `blockTick` (`eventsOnly`: only
   // lanes of recorded events, applied between control blocks on their steps).
   void applyAutomation(const Program* p, double blockTick, double eventTick, bool eventsOnly);
@@ -732,11 +765,27 @@ class AudioEngine {
   static void graphJob(void* self, int worker);
   void claimTasks(int worker);
   void runTask(int task, int worker);
+  uint64_t runTaskFrom(int task, int worker, uint64_t t0);  // K-142: realtime, timed from t0; returns its end
   void runChannel(size_t channel, int worker);
   void noteQuiet(ChannelRuntime& rt, float peak, bool calm, bool muted, int n);  // K-277
+  // GitHub #66: after a block a hosted effect ran with `silentIn` (its input exact silence) and
+  // `may` (it may rest now): counts its inaudible output, rests it.
+  void noteEffectQuiet(EffectRuntime& rt, const float* L, const float* R, bool silentIn, bool may, int n);
   void runMixer(size_t mixer, int worker);
   // `early`: the Stage room track's reflections input (its room senders add their reflections there).
   void pullInput(const ProgInput& in, float* accL, float* accR, depth::RoomEarly* early = nullptr) const;
+  bool inputSilent(const ProgInput& in) const;                    // K-142: pullInput would add nothing, change nothing
+  bool trackHushed(const ProgMixer& m, size_t idx, int n) const;  // K-142: the track stays at rest this block
+  // K-142 (0.7.8 follow-up): the whole graph at rest. noteGraphRest (after a graph block): did every
+  // instrument and track take a rest path? nodesStayAtRest: nothing outside the graph's own state
+  // (an event, an open editor, a link, a note held) can wake one of them in a block of `n` frames;
+  // graphSleeps: that, and nothing about the block itself either; sleepGraph: the block as runGraph
+  // would make it then, every node's rest bookkeeping in one pass without its checks.
+  void noteGraphRest(const Program* p);
+  bool nodesStayAtRest(const Program* p, int n) const;
+  bool graphSleeps(const Program* p, int n) const;
+  void sleepGraph(const Program* p, int n);
+  bool longRestProgram(const Program* p);  // the Program allows long blocks at rest (no LFOs, formulas, ...)
   void readDeviceInput(int n);                        // input queue → inBuf_ (start of a block)
   // Armed tracks → capture rings: before the graph (inputs) or after it (post = tracks recording their output).
   void captureRecording(const Program* p, int n, bool post = false);
@@ -958,6 +1007,10 @@ class AudioEngine {
   std::vector<std::vector<float>> busL_, busR_;
   std::vector<std::vector<float>> scL_, scR_;    // per mixer track sidechain inputs
   std::vector<std::vector<float>> preL_, preR_;  // per mixer track pre-fader signal (tracks with pre-fader sends)
+  // K-142 (0.7.8, audio thread): per bus, the frames from its start known to hold exact silence (in
+  // busL_ / busR_), and whether its output this block is exact silence (pre-fader signal too).
+  std::vector<int> busZeroLen_;
+  std::vector<uint8_t> busSilentNow_;
   MidiPortBus ports_;  // notes MIDI Out channels hold per port (read by MIDI-input effects)
   NoteHitBus hits_;    // J-165: notes / clip starts / MIDI input notes of the current block (note triggers)
   std::vector<float> tmpL_, tmpR_;
@@ -979,25 +1032,51 @@ class AudioEngine {
     int steps = 1;  // K-317: control blocks of a stepped block (strip gains per control block), else 1
     size_t nb = 0;
     bool profile = false;
+    bool count = false;  // K-142: dspCalls counted (setCallCounting)
     bool rest = false;  // K-64: realtime playback: idle channels and effects are left out
     bool restInstruments = true;  // K-277: Rest silent instruments (setRestInstruments)
+    int64_t outFrame = 0;  // K-321: the block's first frame since the engine was made (a receipt pass's output clock)
     ProcessContext ctx;
   } bc_;
   WorkerPool pool_;
   std::atomic<int> threads_{1};
   // K-277 (audio thread): heavy tasks of the last blocks (realtime playback shares a block out only
   // when it has several): a task heavier than kHeavyTaskShare of the block (at least kHeavyTaskMinSec);
-  // the estimate holds its highest count for kHeavyHoldBlocks blocks. And only when the whole graph's
-  // work (the highest of those blocks) is over kParallelWorkShare of the block's time: below it one
-  // thread finishes in good time, and waking the others only costs what they spend waiting.
-  static constexpr double kHeavyTaskShare = 0.02, kHeavyTaskMinSec = 40e-6, kParallelWorkShare = 0.3;
+  // the estimate holds its highest count for kHeavyHoldBlocks blocks. And only while the whole graph's
+  // work keeps the gate open (ParallelGate: over a share of the block's time, with hysteresis): below
+  // it one thread finishes in good time, and waking the others only costs what they spend waiting.
+  static constexpr double kHeavyTaskShare = 0.02, kHeavyTaskMinSec = 40e-6;
   static constexpr int kHeavyHoldBlocks = 64;
   std::atomic<int> heavyNow_{0};
   std::atomic<uint64_t> workNow_{0};
-  uint64_t heavyNs_ = 0, workEst_ = 0;
-  int heavyEst_ = 0, heavyHold_ = 0, workHold_ = 0;
+  uint64_t heavyNs_ = 0;
+  int heavyEst_ = 0, heavyHold_ = 0;
+  ParallelGate gate_;
   std::atomic<uint64_t> serialBlocks_{0}, parallelBlocks_{0};  // K-277: graph blocks run on one thread / shared out
+  std::atomic<uint64_t> hushedTracks_{0};                       // K-142
+  // K-142 (0.7.8 follow-up, audio thread): the Program whose whole graph rested in the last block (none:
+  // it did not), with what the rest depended on then: Rest silent instruments, low-latency monitoring
+  // while recording, and the count of values links and automation changed (applyLinkValue).
+  const Program* restProg_ = nullptr;
+  bool restInstrPrev_ = true, lowLatPrev_ = false;
+  uint64_t linkChanges_ = 0, linkChangesRest_ = 0;
+  bool linksSettled_ = false;  // the last evaluateLinks changed no value
+  // K-142 (0.7.8 close): the last evaluateLinks changed nothing at all (no value applied changed, no
+  // link's smoothing moved), and what it read then: a stopped block reading the same leaves it out.
+  bool linksStill_ = false, linkLinkMoved_ = false;
+  const Program* linkSkipProg_ = nullptr;
+  double linkSkipTick_ = -1;
+  PlayMode linkSkipMode_ = PlayMode::Pattern;
+  ObjectId linkSkipPattern_ = kNoId;
+  uint64_t linkSkipHolds_ = 0;
+  bool blockInput_ = true;  // this block took a command, a MIDI message, a held note or a host change
+  const Program* longProg_ = nullptr;  // longRestProgram's answer for this Program
+  bool longOk_ = false;
+  std::atomic<bool> graphSleep_{true};
+  std::atomic<uint64_t> sleptBlocks_{0}, longRestBlocks_{0};
   std::atomic<bool> profiling_{false};
+  std::atomic<bool> countCalls_{false};          // K-142
+  std::atomic<uint64_t> countedBlocks_{0};        // K-142: blocks made while counting
   std::atomic<float> cpuPeak_{0};
   CpuMeter cpuMeter_;  // audio thread only
   // Audio input (J-8).
@@ -1010,6 +1089,7 @@ class AudioEngine {
   bool inPrimed_ = false;  // (audio thread) the jitter buffer has filled
   std::vector<std::vector<float>> inBuf_;  // per input channel, this block
   const float* inPtrs_[kMaxInputChannels] = {};  // K-170: inBuf_ for ProcessContext::deviceIn
+  bool inDirty_[kMaxInputChannels] = {};  // K-142: inBuf_ holds something other than silence
   std::vector<float> silence_;
   std::atomic<float> inPeak_[kMaxInputChannels] = {};
   std::shared_ptr<packs::edison::CaptureRing> tapOwn_;  // J-218 input tap (the UI thread creates it)
@@ -1034,6 +1114,8 @@ class AudioEngine {
   std::vector<double> rawTick_;
   std::vector<uint8_t> recHist_;
   double lastRaw_ = -1;  // rawTick_ of the previous block's last frame
+  size_t histStill_ = 0;  // K-142 (0.7.8 close): frames in a row written stopped and not recording (up to kTickHistory)
+  const Program* recIdleProg_ = nullptr;  // K-142 (0.7.8 close): a Program with no armed track whose captures are all closed
   std::atomic<float> startLevel_{0};
   std::atomic<uint32_t> startSerial_{0};
   std::atomic<int> inputStarts_{0};

@@ -97,15 +97,17 @@ message(STATUS "ok - a small effect's editor sits in the middle of its wider win
 run(smooth logic gl.minisieve 40 "32 hdrmix\n34 quit discard\n")
 mixflush("Smooth, a small effect (the mix knob on its own row)")
 
-run(chan studio gl.sampler 40 "32 edzoom channelsettings\n34 quit discard\n")
-if(NOT out MATCHES "edregion channelsettings: type gl.sampler width ([0-9]+) left (-?[0-9]+) right (-?[0-9]+)")
-  fail("Sampler: no edregion line")
+# (0.7.8: the Sampler's settings are the Audio clip window's now; Finger Bass is an instrument whose
+# editor is narrower than its channel window's rows too.)
+run(chan studio gl.fingerbass 40 "32 edzoom channelsettings\n34 quit discard\n")
+if(NOT out MATCHES "edregion channelsettings: type gl.fingerbass width ([0-9]+) left (-?[0-9]+) right (-?[0-9]+)")
+  fail("Finger Bass: no edregion line")
 endif()
 if(CMAKE_MATCH_2 LESS 4)
-  fail("Sampler: the channel window is no wider than its editor (left ${CMAKE_MATCH_2}): the case is not covered")
+  fail("Finger Bass: the channel window is no wider than its editor (left ${CMAKE_MATCH_2}): the case is not covered")
 endif()
-near("Sampler: room left and right of the editor" ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} 1)
-message(STATUS "ok - the Sampler's editor sits in the middle of its channel window (${CMAKE_MATCH_2} / ${CMAKE_MATCH_3} px)")
+near("Finger Bass: room left and right of the editor" ${CMAKE_MATCH_2} ${CMAKE_MATCH_3} 1)
+message(STATUS "ok - Finger Bass's editor sits in the middle of its channel window (${CMAKE_MATCH_2} / ${CMAKE_MATCH_3} px)")
 
 # 3 to 5, on the Reverb window found above (the menu button at the row's left, the bypass button
 # left of the mix knob, the title bar, its close button 17 px from the right).

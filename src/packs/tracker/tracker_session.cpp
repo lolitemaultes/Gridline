@@ -9,6 +9,8 @@
 #include "../../app/AudioRecordUi.h"
 #include "../../app/PluginUI.h"
 #include "../../core/I18n.h"
+#include "../../core/PluginInfo.h"
+#include "../../core/PluginParams.h"
 #include "../../engine/Sample.h"
 
 namespace gl::packs::trackerpack {
@@ -40,9 +42,114 @@ Wave& clipboard() {
 
 uint64_t mergeKey(const PluginTarget& t, int field) { return mergeKeyFor(t.key(), field); }
 
+// ---- 0.7.8: a Sampler seen as a one-sample Tracker Sampler (the Tracker's classic Sample editor) ----
+namespace {
+bool isSampler(const PluginState* st) { return st && st->type == "gl.sampler"; }
+struct Virtual {
+  std::string data;    // the Sampler's file and settings the view was made from
+  std::vector<float> params;
+  uint64_t gen = ~uint64_t{0};
+  PluginState state;   // the Tracker Sampler it reads as
+};
+std::map<uint64_t, Virtual>& virtuals() {
+  static std::map<uint64_t, Virtual> m;
+  return m;
+}
+// The Sampler's file as sample 01 of a Tracker Sampler: its start and end the sample's, its loop
+// points and type, its reverse as Backwards (fromSamplerState, as Convert makes it). No file yet:
+// an instrument with no sample (the editor's Load picks one).
+const PluginState& virtualOf(const PluginTarget& t, const PluginState& smp) {
+  Virtual& v = virtuals()[t.key()];
+  const uint64_t gen = sampleCache().generation();
+  if (v.gen == gen && v.data == smp.data && v.params == smp.params) return v.state;
+  v.data = smp.data, v.params = smp.params, v.gen = gen;
+  v.state = defaultPluginState(trk::kInstrumentType);
+  if (!smp.data.empty()) {
+    const SamplePtr sp = sampleCache().get(smp.data);
+    if (sp && sp->frames() > 0)
+      v.state = fromSamplerState(smp, static_cast<int32_t>(std::min<size_t>(sp->frames(), 0x3FFFFFFF)), sp->sampleRate > 0 ? sp->sampleRate : 44100.0,
+                                 std::filesystem::u8path(smp.data).stem().u8string());
+  }
+  return v.state;
+}
+float frac(int32_t f, int32_t frames) { return frames > 0 ? std::clamp(static_cast<float>(static_cast<double>(f) / frames), 0.0f, 1.0f) : 0.0f; }
+// The edit written back into the Sampler: its file (a new one after an audio edit or a load), the
+// start and end, the loop and Backwards. What a Sampler cannot hold (a second sample, 8 bits) is
+// refused with a note. One undo step, as the Tracker Sampler's.
+bool commitSampler(App& a, const PluginTarget& t, const PluginState& cur, const Edit& e, const char* label, uint64_t merge) {
+  const Edit was = readEdit(virtualOf(t, cur).data, 0);
+  for (int k = 1; k < trk::kMaxSamples; ++k)
+    if (hasSample(e, k) && !hasSample(was, k)) {
+      a.notify(i18n::tr("A Sampler plays one sample: convert it to a Tracker Sampler for more entries"));
+      return false;
+    }
+  if (e.eightBit[0] != was.eightBit[0]) {
+    a.notify(i18n::tr("A Sampler plays its sample as it is: convert it to a Tracker Sampler for 8-bit"));
+    return false;
+  }
+  const trk::InstrumentText& tx = e.text;
+  const int fi = tx.fileOf[0];
+  const std::string path = fi >= 0 && fi < static_cast<int>(tx.files.size()) ? tx.files[static_cast<size_t>(fi)] : std::string();
+  if (path.empty()) {
+    a.notify(i18n::tr("A Sampler keeps its sample: load another file to replace it"));
+    return false;
+  }
+  const SamplePtr sp = sampleCache().get(path);
+  const int32_t frames = sp ? static_cast<int32_t>(std::min<size_t>(sp->frames(), 0x3FFFFFFF)) : 0;
+  if (frames <= 0) {
+    a.notify(i18n::tr("The sample file is missing"));
+    return false;
+  }
+  PluginState ns = cur;
+  const bool newFile = path != cur.data;
+  ns.data = path;
+  if (ns.params.size() < static_cast<size_t>(pp::SmpCount)) {
+    const PluginState d = defaultPluginState("gl.sampler");
+    for (size_t i = ns.params.size(); i < d.params.size(); ++i) ns.params.push_back(d.params[i]);
+  }
+  auto set = [&](int i, float v) {
+    if (i < static_cast<int>(ns.params.size())) ns.params[static_cast<size_t>(i)] = v;
+  };
+  const trk::SampleDef& sd = tx.def.samples[0];
+  const trk::SampleDef& od = was.text.def.samples[0];
+  // (only what the edit changed: the rest keeps the Sampler's own values exactly)
+  if (newFile || e.cuts.start[0] != was.cuts.start[0]) set(pp::SmpStart, frac(e.cuts.start[0], frames));
+  if (newFile || e.cuts.end[0] != was.cuts.end[0]) set(pp::SmpEnd, e.cuts.end[0] > 0 ? frac(e.cuts.end[0], frames) : 1.0f);
+  const bool loops = sd.loop != trk::kLoopOff && sd.loopLength > 0;
+  if (newFile || sd.loop != od.loop || sd.loopStart != od.loopStart || sd.loopLength != od.loopLength) {
+    set(pp::SmpLoop, loops ? 1.0f : 0.0f);
+    if (loops) {
+      set(pp::SmpLoopMode, sd.loop == trk::kLoopPingPong ? 1.0f : 0.0f);
+      set(pp::SmpLoopStart, frac(sd.loopStart, frames));
+      set(pp::SmpLoopEnd, frac(sd.loopStart + sd.loopLength, frames));
+    }
+  }
+  if (sd.reverse != od.reverse) set(pp::SmpReverse, sd.reverse ? 1.0f : 0.0f);
+  if (ns.data == cur.data && ns.params == cur.params) return false;
+  setPluginState(a, t, ns, label, merge);
+  return true;
+}
+}  // namespace
+
+const PluginState* editState(App& a, const PluginTarget& t) {
+  const PluginState* st = t.state(a.doc.song());
+  if (st && st->type == trk::kInstrumentType) return st;
+  if (isSampler(st) && t.isChannel()) return &virtualOf(t, *st);
+  return nullptr;
+}
+
+namespace {
+bool gBridge = false;
+}  // namespace
+void setSamplerBridge(bool on) { gBridge = on; }
+bool samplerBridge() { return gBridge; }
+
+bool bridgesSampler(App& a, const PluginTarget& t) { return t.isChannel() && isSampler(t.state(a.doc.song())); }
+
 bool commitEdit(App& a, const PluginTarget& t, const Edit& e, const char* label, uint64_t merge) {
   const PluginState* cur = t.state(a.doc.song());
   if (!cur) return false;
+  if (isSampler(cur) && t.isChannel()) return commitSampler(a, t, *cur, e, label, merge);
   PluginState ns = *cur;
   ns.data = writeEdit(e);
   if (ns.data == cur->data) return false;
@@ -59,8 +166,8 @@ const Snapshot& snapshot(App& a, const PluginTarget& t) {
   };
   static std::map<uint64_t, Entry> cache;
   static const Snapshot none;
-  const PluginState* st = t.state(a.doc.song());
-  if (!st || st->type != trk::kInstrumentType) return none;
+  const PluginState* st = editState(a, t);  // (0.7.8: a Sampler's, as a one-sample Tracker Sampler)
+  if (!st) return none;
   Entry& en = cache[t.key()];
   const uint64_t rev = a.doc.revision();
   // (The state's address and the revision: an edit anywhere bumps the revision; the song swapped
@@ -86,6 +193,7 @@ const Snapshot& snapshot(App& a, const PluginTarget& t) {
   en.snap.sound = soundOf(*st);
   en.snap.e = readEdit(st->data, en.snap.sound);
   en.snap.ok = en.snap.inst != nullptr;
+  en.snap.sampler = bridgesSampler(a, t);
   return en.snap;
 }
 
@@ -98,8 +206,8 @@ namespace {
 // The current state read, `f` applied (false: nothing to do), one commit.
 template <class F>
 bool run(App& a, const PluginTarget& t, const char* label, uint64_t merge, Edit* mirror, F&& f) {
-  const PluginState* st = t.state(a.doc.song());
-  if (!st || st->type != trk::kInstrumentType) return false;
+  const PluginState* st = editState(a, t);
+  if (!st) return false;
   Edit e = readEdit(st->data, soundOf(*st));
   if (!f(e)) return false;
   const bool changed = commitEdit(a, t, e, label, merge);
@@ -132,6 +240,16 @@ bool opSampleLoopType(App& a, const PluginTarget& t, int k, uint8_t loop, int32_
 bool opSampleBits(App& a, const PluginTarget& t, int k, bool eight, Edit* mirror) {
   return run(a, t, "sample bit depth", 0, mirror, [&](Edit& e) {
     e.eightBit[static_cast<size_t>(k)] = eight;
+    return true;
+  });
+}
+
+bool opSampleReverse(App& a, const PluginTarget& t, int k, bool backwards, Edit* mirror) {
+  if (k < 0 || k >= trk::kMaxSamples) return false;
+  return run(a, t, "sample play direction", 0, mirror, [&](Edit& e) {
+    trk::SampleDef& sd = e.text.def.samples[static_cast<size_t>(k)];
+    if (!sd.present() || sd.reverse == backwards) return false;
+    sd.reverse = backwards;
     return true;
   });
 }
@@ -264,6 +382,27 @@ bool opMapKeysAway(App& a, const PluginTarget& t, int slot, Edit* mirror) {
   return run(a, t, "map keys", 0, mirror, [&](Edit& e) { return applyKeysAway(e, slot); });
 }
 
+bool opCopyEntry(App& a, const PluginTarget& t, int from, int to, Edit* mirror) {
+  return run(a, t, "copy sample", 0, mirror, [&](Edit& e) { return from != to && copySampleInto(e, to, e, from) >= 0; });
+}
+
+bool opExchangeEntries(App& a, const PluginTarget& t, int x, int y, Edit* mirror) {
+  return run(a, t, "exchange samples", 0, mirror, [&](Edit& e) {
+    if (x == y || x < 0 || y < 0 || x >= trk::kMaxSamples || y >= trk::kMaxSamples || (!hasSample(e, x) && !hasSample(e, y))) return false;
+    exchangeSampleData(e, x, y);
+    return true;
+  });
+}
+
+int opRegionToEntry(App& a, const PluginTarget& t, int from, Span r, int to, Edit* mirror) {
+  int slot = -1;
+  run(a, t, "range to entry", 0, mirror, [&](Edit& e) {
+    slot = regionToEntry(e, from, r, to);
+    return slot >= 0;
+  });
+  return slot;
+}
+
 std::string envSlotsPath(App& a) { return (std::filesystem::u8path(a.configDir()) / "tracker-envelopes.txt").u8string(); }
 EnvSlots& envSlots(App& a) {
   static EnvSlots s;
@@ -283,8 +422,8 @@ bool opSetMidi(App& a, const PluginTarget& t, const MidiSettings& m, bool syncMu
 }
 
 bool opWaveCommit(App& a, const PluginTarget& t, int k, const Wave& w, const char* label, Edit* mirror) {
-  const PluginState* st = t.state(a.doc.song());
-  if (!st || st->type != trk::kInstrumentType) return false;
+  const PluginState* st = editState(a, t);
+  if (!st) return false;
   Edit e = readEdit(st->data, soundOf(*st));
   const std::string path = commitWave(e, k, w, editedDir(a), editName(e, k));
   if (path.empty()) {

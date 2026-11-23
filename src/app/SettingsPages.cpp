@@ -1,7 +1,10 @@
 // Gridline — J-24 settings pages (see SettingsPages.h).
 #include "CacheUi.h"
+#include "../core/ThreadName.h"
 #include "DisplayConfirmUi.h"
 #include "SettingsPages.h"
+#include "Keys.h"
+#include "ContextMenus.h"
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
@@ -90,7 +93,7 @@ void generalSettingsPage(App& a, float fieldW) {
       }
       ImGui::EndCombo();
     }
-    ui::Hint("Used by File > New (Ctrl+N) and at startup");
+    ui::Hint(keys::withKeys(i18n::N_("Used by File > New (%s) and at startup"), {keys::cmdKey("file.new", "Ctrl+N")}));
   }
   label("");
   if (ui::TextButton(tr("Browse templates..."), false, 0, "File > New from template")) a.showNewProject = true;
@@ -203,7 +206,7 @@ void dataFolderSection(App& a, float fieldW) {
       job->folder = want;
       DataFolderCopy* j = job.get();
       const std::string cfg = platform::configRoot(), cache = platform::cacheRoot(), data = platform::dataRoot();
-      j->worker = std::thread([j, cfg, cache, data, defRoot] {
+      j->worker = std::thread([j, cfg, cache, data, defRoot] { gl::threads::setName("gl-settings-job");
         std::string err;
         bool ok = df::copyInto(cfg, cache, data, j->folder,
                                [j](double f, const std::string&) {
@@ -426,6 +429,80 @@ void projectDefaultsPanel(App& a) {
   if (ImGui::InputTextWithHint("##dauthor", i18n::tr("Your name"), author, sizeof author)) st.set("project.defaultAuthor", std::string(author));
   ui::FocusRing();
   ui::Hint("Filled into Project info of new projects");
+}
+
+// GitHub #74: the colour new channels and patterns take (Settings > Project). A preference of this
+// computer: it decides what new channels and patterns get, never changes existing ones.
+namespace {
+Document::NewColors newColorsFromSettings(const Settings& st) {
+  Document::NewColors c;
+  const std::string ch = st.getString("colors.newChannels"), pt = st.getString("colors.newPatterns");
+  c.channels = ch == "one" ? Document::NewColors::One : Document::NewColors::Varied;
+  c.patterns = pt == "one" ? Document::NewColors::One : pt == "channel" ? Document::NewColors::Channel : Document::NewColors::Varied;
+  c.channel = static_cast<Rgb>(std::clamp(st.getNumber("colors.newChannelColor"), 0.0, 16777215.0)) & 0xFFFFFF;
+  c.pattern = static_cast<Rgb>(std::clamp(st.getNumber("colors.newPatternColor"), 0.0, 16777215.0)) & 0xFFFFFF;
+  return c;
+}
+
+// A colour chip that opens the palette grid; returns true when a colour was picked.
+bool colorChip(const char* id, uint32_t* col, bool enabled) {
+  const float h = ImGui::GetFrameHeight();
+  ImGui::BeginDisabled(!enabled);
+  const ImVec2 q = ImGui::GetCursorScreenPos();
+  const bool click = ImGui::InvisibleButton(id, ImVec2(h * 1.6f, h));
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  dl->AddRectFilled(q, ImVec2(q.x + h * 1.6f, q.y + h), theme::rgb(*col, enabled ? 1.0f : 0.35f), theme::kRadius);
+  dl->AddRect(q, ImVec2(q.x + h * 1.6f, q.y + h), ImGui::IsItemHovered() ? pal().text : pal().lineStrong, theme::kRadius);
+  ImGui::EndDisabled();
+  const std::string pop = std::string(id) + "pop";
+  if (click) ImGui::OpenPopup(pop.c_str());
+  bool picked = false;
+  if (ImGui::BeginPopup(pop.c_str())) {
+    picked = menus::colorGrid(col);
+    ImGui::EndPopup();
+  }
+  return picked;
+}
+}  // namespace
+
+void publishNewColors(App& a) {
+  Document::NewColors c = newColorsFromSettings(a.settings);
+  if (const Channel* ch = a.doc.song().channel(a.selChannel)) c.channelHint = ch->color, c.hasHint = true;
+  a.doc.setNewColors(c);
+}
+
+void newColorsPanel(App& a, float fieldW) {
+  Settings& st = a.settings;
+  const Document::NewColors c = newColorsFromSettings(st);
+  {
+    label("New channels");
+    static const char* const ids[] = {"varied", "one"};
+    const char* names[] = {tr("Varied colours"), tr("One colour")};
+    const char* hints[] = {tr("Each new channel takes the next colour of the palette, so neighbours differ"),
+                           tr("Every new channel takes the colour beside this choice")};
+    int idx = c.channels == Document::NewColors::One ? 1 : 0;
+    if (ui::OptionRow("newchcol", names, 2, &idx, std::max(120.0f, fieldW - 60), hints)) st.set("colors.newChannels", std::string(ids[idx]));
+    ImGui::SameLine(0, 8);
+    uint32_t col = c.channel;
+    if (colorChip("##newchcolchip", &col, idx == 1)) st.set("colors.newChannelColor", static_cast<double>(col & 0xFFFFFF));
+    ui::Hint("The colour every new channel takes");
+  }
+  {
+    label("New patterns");
+    static const char* const ids[] = {"varied", "one", "channel"};
+    const char* names[] = {tr("Varied colours"), tr("One colour"), tr("The channel's colour")};
+    const char* hints[] = {tr("Each new pattern takes the next colour of the palette"), tr("Every new pattern takes the colour beside this choice"),
+                           tr("A new pattern takes the colour of the selected channel")};
+    int idx = c.patterns == Document::NewColors::One ? 1 : c.patterns == Document::NewColors::Channel ? 2 : 0;
+    if (ui::OptionRow("newptcol", names, 3, &idx, std::max(120.0f, fieldW - 60), hints)) st.set("colors.newPatterns", std::string(ids[idx]));
+    ImGui::SameLine(0, 8);
+    uint32_t col = c.pattern;
+    if (colorChip("##newptcolchip", &col, idx == 1)) st.set("colors.newPatternColor", static_cast<double>(col & 0xFFFFFF));
+    ui::Hint("The colour every new pattern takes");
+  }
+  ImGui::PushTextWrapPos(0);
+  ImGui::TextColored(theme::vec(pal().textFaint), "%s", tr("Only new channels and patterns follow this; the ones you have keep their colours (right-click one to change it)."));
+  ImGui::PopTextWrapPos();
 }
 
 void backupRestorePanel(App& a, float fieldW) {

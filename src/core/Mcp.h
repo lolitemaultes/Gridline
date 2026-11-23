@@ -170,6 +170,12 @@ class JobRunner {
   void poll(const std::function<void(Job&)>& finalize);
   std::shared_ptr<Job> find(uint64_t id) const;
   std::vector<std::shared_ptr<Job>> running() const;  // started, not finalized
+  // K-142 (0.7.8 follow-up): any job started and not finalized (no allocation: asked between frames).
+  bool busy() const {
+    for (const auto& s : slots_)
+      if (!s.job->finalized) return true;
+    return false;
+  }
   uint64_t nextId() { return ++lastId_; }
   void cancelAll();  // cancels and joins every worker
 

@@ -1,13 +1,15 @@
-// Gridline — "seltmann" pack: Seltmann editor. One calm flow: drop audio (or
-// load it), it is analysed on its own, pick a layout, play it and drag the loop
-// out. This file holds the frame (drop zone / progress, the top bar with the
-// file and what it is, the key controls: tempo with the x2 / /2 fix, chop
-// size, tempo mode, play, drag handles, make loops, send to project), the
-// grid tools of the Edit drawer, the shared helpers, auditions, loop renders
-// and "send to project". The waveform lives in seltmann_wave_ui.cpp, the layout
-// cards, the pads and the Edit drawer in seltmann_parts_ui.cpp. Everything is
-// drawn as vectors with Theme roles.
+// Gridline — "seltmann" pack: Seltmann editor (0.7.8 Ribbon). One calm flow: drop audio (or load
+// it, or record a take), it is analysed on its own, pick a layout, play it and drag the loop out.
+// This file holds the frame (the height from the room the editor has; drop zone / progress), the
+// header (the file and what it is, the tempo with its fixes, Follow, the Sound / Grid / Loops cards,
+// Load, Record take, the height), the action row (play, chop size, the tool, drag handles, make
+// loops, send to project, linked), the Compact row, the hint line, the grid tools of the Grid card,
+// the shared helpers, auditions, layout previews, loop renders, the linked pattern and the editor's
+// own keys. The waveform lives in seltmann_wave_ui.cpp, the sequence in seltmann_seq_ui.cpp, the
+// layout pickers and the keys strip in seltmann_parts_ui.cpp, the cards in seltmann_cards_ui.cpp.
+// Everything is drawn as vectors with Theme roles.
 #include "seltmann_ui.h"
+#include "../../core/ThreadName.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -15,12 +17,22 @@
 #include <cstring>
 #include <filesystem>
 #include <functional>
+#include <map>
+#include <thread>
 #include <unordered_map>
+#include "../../../third_party/imgui/imgui_internal.h"
 #include "../../app/AudioRecordUi.h"
+#include "../../app/EditorZoomUi.h"
+#include "../../app/Keys.h"
+#include "../../core/KeyCaps.h"
+#include "../../core/Settings.h"
 #include "../../core/TrackReceipt.h"
 #include "../../app/DevSignal.h"
 #include "../../app/Look.h"
 #include "../../app/BrowserUi.h"
+#include "../../app/ExternalDragUi.h"
+#include "../../core/BrowserIndex.h"
+#include "../../core/ExternalDrop.h"
 #include "../../app/PluginSkin.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
@@ -348,7 +360,7 @@ LiveView live(App& a, const PluginTarget& t) {
 }
 
 // ------------------------------------------------------------------ audition
-void auditionStart(App& a, const PluginTarget& t, Ed& e, int slice) {
+void auditionStart(App& a, const PluginTarget& t, Ed& e, int slice, float vel) {
   auditionStop(a, t, e);
   if (!t.isChannel() || slice < 0) return;
   const int base = baseNote(a, t);
@@ -360,7 +372,7 @@ void auditionStart(App& a, const PluginTarget& t, Ed& e, int slice) {
     key = base + slice;
   }
   if (key >= 0 && key <= 127) {
-    a.engine.noteOn(t.owner, key, 0.9f);
+    a.engine.noteOn(t.owner, key, std::clamp(vel, 0.05f, 1.0f));
     e.auditionKey = key;
   } else {
     // not on a key: play a rendered copy
@@ -544,7 +556,7 @@ void makeLoops(App& a, const PluginTarget& t, Ed& e) {
   };
   static Joiner joiner;
   (void)joiner;
-  threads.emplace_back([job, items, m, src, o] {
+  threads.emplace_back([job, items, m, src, o] { gl::threads::setName("gl-seltmann-job");
     std::vector<std::string> out;
     for (const auto& it : items) {
       if (renderTo(it.item, m, src, o, it.file)) out.push_back(it.file);
@@ -571,7 +583,7 @@ void sendToProject(App& a, const PluginTarget& t, Ed& e) {
       if (c.track == track && c.start < len && c.start + std::max<Tick>(c.length, 1) > 0) busy = true;
     if (!busy) break;
   }
-  a.doc.editSong(i18n::tr("Send pattern to project"), [&](Song& s) { pid = sendPatternToSong(s, t.owner, e.m, params, 1, track, 0); });
+  a.doc.editSong(i18n::tr("Send pattern to project"), [&](Song& s) { pid = sendPatternToSong(s, t.owner, e.m, params, 1, track, 0, true); });
   if (pid != kNoId) {
     a.selectPattern(pid);
     a.notify(std::string(i18n::tr("Added the pattern to the project: ")) + e.m.pattern.name);
@@ -626,6 +638,7 @@ float dragChip(App& a, const PluginTarget& t, Ed& e, const char* id, ImVec2 p0, 
 void applyLayout(App& a, const PluginTarget& t, Ed& e, const Preset& p, bool play) {
   Model m = e.m;
   auto params = applyPreset(m, sampleOf(e).get(), p, e.seed);
+  resolveSlots(m);  // 0.7.8: one letter system: the steps name their regions
   commitWith(a, t, e, m, params, (std::string(i18n::tr("Layout")) + ": " + p.name).c_str());
   e.selSlice = 0;
   e.selStep = -1;
@@ -749,7 +762,7 @@ void drawEmpty(App& a, const PluginTarget& t, Ed& e, ImVec2 z0, ImVec2 z1) {
 // /2 and x2 fix, Load and Edit. Every control is kHeaderCtl tall on the row's centre line.
 constexpr float kHeaderCtl = 28;
 
-void drawBpm(App& a, const PluginTarget& t, Ed& e, ImVec2 f0) {
+void drawBpm(App& a, const PluginTarget& t, Ed& e, ImVec2 f0, bool fixes) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   Analysis& g = e.m.grid;
@@ -797,6 +810,7 @@ void drawBpm(App& a, const PluginTarget& t, Ed& e, ImVec2 f0) {
   dl->AddRectFilled(ImVec2(f0.x + 6, f1.y - 4), ImVec2(f1.x - 6, f1.y - 2), P.surface900, 1);
   dl->AddRectFilled(ImVec2(f0.x + 6, f1.y - 4), ImVec2(f0.x + 6 + (f1.x - f0.x - 12) * c, f1.y - 2),
                     c > 0.6f ? P.meterLow : c > 0.3f ? P.meterMid : P.meterHigh, 1);
+  if (!fixes) return;
   float x = f1.x + 4;
   if (button("##shalf", ImVec2(x, f0.y), ImVec2(30, kHeaderCtl), "/2", false, i18n::N_("Half the tempo: the analysis heard double time"))) {
     Model m = e.m;
@@ -813,37 +827,144 @@ void drawBpm(App& a, const PluginTarget& t, Ed& e, ImVec2 f0) {
   }
 }
 
-void drawTopBar(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, float H, bool song) {
+// (trace) a row whose controls ran into each other: what was left between its two ends
+void crowded(Ed& e, const char* row, float left) {
+  if (left < 0) e.crowd += std::string(e.crowd.empty() ? "" : " ") + row;
+}
+
+// ------------------------------------------------------------------ header (what it is, how it follows)
+// 0.7.8 Ribbon: left the kind, the file and its facts; right the tempo with its fixes and Tap, how
+// it follows the project (Stretch / Resample / Off), the Sound / Grid / Loops cards, Load, Record
+// take and the height.
+void drawHeader(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, float H, bool song) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const Model& m = e.m;
   const float cy = o.y + H * 0.5f, cTop = std::round(cy - kHeaderCtl * 0.5f);
-  // right to left: Edit, Load, (songs) the strip toggle, the tempo
+  const bool wide = W >= 1180, narrow = W < 1100;  // (narrow: a height menu, shorter Follow and card buttons, no Tap)
   float rx = o.x + W;
-  rx -= 84;
-  if (button("##sedit", ImVec2(rx, cTop), ImVec2(84, kHeaderCtl), i18n::N_("Edit"), e.drawer,
-             i18n::N_("Show the advanced controls: the slice inspector, manual cuts, the steps, the beat grid, the sound and the loop list"),
-             static_cast<int>(ui::Icon::Settings)))
-    e.drawer = !e.drawer;
-  rx -= 8 + 96;
-  if (button("##sload", ImVec2(rx, cTop), ImVec2(96, kHeaderCtl), i18n::N_("Load..."), false, i18n::N_("Load a song, a loop or any audio file"),
-             static_cast<int>(ui::Icon::Open)))
-    openLoadDialog(a, t, e);
-  if (song) {
-    rx -= 8 + kHeaderCtl;
-    ImGui::SetCursorScreenPos(ImVec2(rx, cTop));
-    if (ui::ToggleIcon("##sstrip", e.stripHidden ? ui::Icon::EyeOff : ui::Icon::Eye, !e.stripHidden, kHeaderCtl,
-                       e.stripHidden ? i18n::tr("Show the whole song above the waveform") : i18n::tr("Hide the whole-song strip")))
-      e.stripHidden = !e.stripHidden;
+  // the height (Auto follows the room the editor has): pills, or a menu where the header is narrow
+  if (wide) {
+    static const char* const l[4] = {i18n::N_("Auto"), i18n::N_("Compact"), i18n::N_("Standard"), i18n::N_("Full")};
+    static const char* const h[4] = {i18n::N_("The height follows the room the editor has (remembered for you, not in the project)"),
+                                     i18n::N_("One row and the ribbon: for a device band"), i18n::N_("The ribbon, the tools and the layout cards"),
+                                     i18n::N_("Everything: the layout library and the keys")};
+    const int choice = heightChoice(a.settings.getString("seltmann.height"));
+    int cur = choice + 1;
+    const float w = wide ? 236.0f : 168.0f;
+    rx -= w;
+    if (pills(a, "##sheight", ImVec2(rx, cTop), w, kHeaderCtl, l, 4, cur, h) && cur >= 0) {
+      a.settings.set("seltmann.height", heightChoiceName(cur - 1));
+      a.settings.save(Settings::defaultPath());
+    }
+    e.btns.push_back({"heightauto", ImVec2(rx + w * 0.125f, cTop + kHeaderCtl * 0.5f)});
+    e.btns.push_back({"heightcompact", ImVec2(rx + w * 0.375f, cTop + kHeaderCtl * 0.5f)});
+    e.btns.push_back({"heightstandard", ImVec2(rx + w * 0.625f, cTop + kHeaderCtl * 0.5f)});
+    e.btns.push_back({"heightfull", ImVec2(rx + w * 0.875f, cTop + kHeaderCtl * 0.5f)});
+  } else {
+    static const char* const names[4] = {i18n::N_("Auto"), i18n::N_("Compact"), i18n::N_("Standard"), i18n::N_("Full")};
+    const int choice = heightChoice(a.settings.getString("seltmann.height"));
+    const float w = 92;
+    rx -= w;
+    char lb[48];
+    std::snprintf(lb, sizeof lb, "%s   ", i18n::tr(names[std::clamp(choice + 1, 0, 3)]));  // (room for the arrow)
+    if (button("##sheightmenu", ImVec2(rx, cTop), ImVec2(w, kHeaderCtl), lb, false,
+               i18n::N_("The editor's height: Auto follows the room it has (remembered for you, not in the project)")))
+      ImGui::OpenPopup("##sheightpop");
+    {  // the menu's arrow
+      const float ax = rx + w - 14, ay = cTop + kHeaderCtl * 0.5f;
+      dl->AddTriangleFilled(ImVec2(ax - 4, ay - 2), ImVec2(ax + 4, ay - 2), ImVec2(ax, ay + 3), P.textDim);
+    }
+    noteBtn(e, "height");
+    ImGui::SetNextWindowPos(ImVec2(rx, cTop + kHeaderCtl + 2));
+    if (ImGui::BeginPopup("##sheightpop")) {
+      for (int i = 0; i < 4; ++i)
+        if (ImGui::MenuItem(i18n::tr(names[i]), nullptr, choice == i - 1)) {
+          a.settings.set("seltmann.height", heightChoiceName(i - 1));
+          a.settings.save(Settings::defaultPath());
+        }
+      ImGui::EndPopup();
+    }
   }
-  rx -= 24;
-  // a hairline between the file and the actions
-  dl->AddLine(ImVec2(rx + 12, cTop + 4), ImVec2(rx + 12, cTop + kHeaderCtl - 4), P.line, 1);
+  rx -= 8;
+  {
+    const float w = wide ? 112.0f : kHeaderCtl + 6;
+    rx -= w;
+    if (button("##srectake", ImVec2(rx, cTop), ImVec2(w, kHeaderCtl), wide ? i18n::N_("Record take") : "", recorderOpenFor(t),
+               i18n::N_("Record a new take into this instance (keep the chop or analyse it fresh)"), static_cast<int>(ui::Icon::Record)))
+      openRecorder(a, t);
+    noteBtn(e, "rectake");
+  }
+  const float loadW = narrow ? 62.0f : 76.0f;
+  rx -= 6 + loadW;
+  if (button("##sload", ImVec2(rx, cTop), ImVec2(loadW, kHeaderCtl), i18n::N_("Load..."), false, i18n::N_("Load a song, a loop or any audio file")))
+    openLoadDialog(a, t, e);
+  rx -= 10;
+  // the cards of the header: Sound, Grid, Loops
+  {
+    struct C {
+      int card;
+      const char* id;
+      const char* text;
+      const char* hint;
+      const char* trace;
+    };
+    static const C cs[3] = {{CardLoops, "##scloops", i18n::N_("Loops"), i18n::N_("The pattern, the best phrases and the sections to drag out"), "loops"},
+                            {CardGrid, "##scgrid", i18n::N_("Grid"), i18n::N_("Tap the tempo, nudge the grid, meter, bar 1, analyse again"), "grid"},
+                            {CardSound, "##scsound", i18n::N_("Sound"), i18n::N_("Keys, speed, base note, the envelope, filter and mix"), "sound"}};
+    for (const C& c : cs) {
+      const float w = narrow ? 54.0f : 60.0f;
+      rx -= w;
+      if (button(c.id, ImVec2(rx, cTop), ImVec2(w, kHeaderCtl), c.text, e.card == c.card, c.hint))
+        toggleCard(e, c.card, ImVec2(rx + w * 0.5f, cTop + kHeaderCtl), true);
+      noteBtn(e, c.trace);
+      rx -= 4;
+    }
+  }
+  rx -= 8;
+  // how it follows the project
+  {
+    static const char* const l[3] = {i18n::N_("Stretch"), i18n::N_("Resample"), i18n::N_("Off")};
+    static const char* const h[3] = {i18n::N_("Follow the project tempo time-stretched: the pitch stays"),
+                                     i18n::N_("Follow the project tempo sped up or slowed down: the pitch follows (vinyl)"),
+                                     i18n::N_("Play at the sample's own tempo")};
+    const int sync = static_cast<int>(std::lround(paramOf(a, t, SmSync)));
+    int cur = sync == SyncResample ? 1 : sync == SyncOriginal ? 2 : 0;
+    const float w = narrow ? 172.0f : 204.0f;
+    rx -= w;
+    if (pills(a, "##sfollow", ImVec2(rx, cTop), w, kHeaderCtl, l, 3, cur, h)) pui::setParamValue(a, t, SmSync, cur == 1 ? SyncResample : cur == 2 ? SyncOriginal : SyncStretch, false);
+    e.btns.push_back({"followstretch", ImVec2(rx + w / 6, cTop + kHeaderCtl * 0.5f)});
+    e.btns.push_back({"followresample", ImVec2(rx + w * 0.5f, cTop + kHeaderCtl * 0.5f)});
+    e.btns.push_back({"followoff", ImVec2(rx + w * 5 / 6, cTop + kHeaderCtl * 0.5f)});
+    if (wide) {
+      const float lw = inlineLabel(nullptr, a, ImVec2(0, 0), 0, i18n::N_("FOLLOW"));
+      rx -= lw;
+      inlineLabel(dl, a, ImVec2(rx, cTop), kHeaderCtl, i18n::N_("FOLLOW"));
+    }
+  }
+  rx -= 12;
+  // the tempo, its fixes, Tap (narrow: Tap is in the Grid card)
+  if (!narrow) rx -= 44;
+  if (!narrow && button("##stap", ImVec2(rx, cTop), ImVec2(44, kHeaderCtl), i18n::N_("Tap"), false,
+                        i18n::N_("Tap along on the beat; after four taps the tempo follows (bar 1 stays)"))) {
+    Analysis& g = e.m.grid;
+    if (!e.taps.empty() && a.now - e.taps.back() > 2.0) e.taps.clear();
+    e.taps.push_back(a.now);
+    const double bpm = tapTempo(e.taps);
+    if (bpm > 0 && e.taps.size() >= 4 && !g.beats.empty()) {
+      Model nm = e.m;
+      gridSetBpm(nm.grid, bpm, nm.grid.beats[static_cast<size_t>(std::clamp(nm.grid.bar1, 0, static_cast<int>(nm.grid.beats.size()) - 1))]);
+      nm.grid.loopFit = false;
+      rechopKeepPattern(nm, sampleOf(e).get());
+      commit(a, t, e, nm, i18n::N_("Tap tempo"), 0x5E17A9ull);
+    }
+  }
+  rx -= 4;
   const float bpmW = 104 + 4 + 30 + 4 + 30;
   rx -= bpmW;
-  drawBpm(a, t, e, ImVec2(rx, cTop));
+  drawBpm(a, t, e, ImVec2(rx, cTop), true);
   const float tempoX = rx;
-  // left: kind chip, then the name over the facts
+  // left: kind chip, the name, the facts
   float x = o.x;
   {
     const char* k = kindLabel(m.grid.kind);
@@ -857,122 +978,349 @@ void drawTopBar(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, float H
     if (ImGui::IsItemHovered())
       ui::Tooltip(i18n::tr("What Seltmann heard. It picks the automatic chop: breaks on their hits, loops and songs by beats and bars, "
                            "one-shots at their transients."));
-    x = c1.x + 12;
+    x = c1.x + 10;
   }
-  const float nameW = std::max(120.0f, tempoX - 24 - x);
-  theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(x, std::round(cy - 17)), nameW, P.text, fs::path(e.path).filename().string().c_str());
-  {
-    std::string facts;
+  const float room = tempoX - 16 - x;
+  crowded(e, "header", room - 40);
+  const std::string file = fs::path(e.path).filename().string();
+  const float nameW = std::min(room, a.fontBold->CalcTextSizeA(theme::kFontBody, 1e9f, 0, file.c_str()).x);
+  theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(x, std::round(cy - theme::kFontBody * 0.6f)), std::max(40.0f, room), P.text, file.c_str());
+  x += nameW + 10;
+  if (tempoX - 16 - x > 60) {
+    // The facts in order of use; a part that does not fit whole is left out with those after it
+    // (0.7.8: no word cut in half while there is room for the parts before it); only a first part
+    // too long for the room is ellipsized.
+    std::vector<std::string> parts;
     char b[64];
     const double secs = m.srcFrames / std::max(1.0, m.srcRate);
     if (m.grid.kind != KindOneShot && m.grid.kind != KindAmbient) {
       const int bars = static_cast<int>(std::lround(regionBars(m)));
       std::snprintf(b, sizeof b, "%d %s", bars, bars == 1 ? i18n::tr("bar") : i18n::tr("bars"));
-      facts += b;
-      facts += song ? std::string(" ") + i18n::tr("chopped") : "";
-      facts += "  \xC2\xB7  ";
+      parts.push_back(std::string(b) + (song ? std::string(" ") + i18n::tr("chopped") : std::string()));
     }
-    facts += fmtTime(secs);
-    if (m.grid.key >= 0 && m.grid.kind != KindBreak && m.grid.keyConfidence >= 0.25)  // drums have no key worth showing
-      facts += std::string("  \xC2\xB7  ") + i18n::tr(keyName(m.grid.key, m.grid.minor));
-    std::snprintf(b, sizeof b, "  \xC2\xB7  %d %s", static_cast<int>(m.slices.size()), m.slices.size() == 1 ? i18n::tr("slice") : i18n::tr("slices"));
-    facts += b;
-    facts += std::string("  \xC2\xB7  ") + chopSummary(m);
-    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(x, std::round(cy + 2)), nameW, P.textDim, facts.c_str());
+    parts.push_back(fmtTime(secs));
+    std::snprintf(b, sizeof b, "%d %s", static_cast<int>(m.slices.size()), m.slices.size() == 1 ? i18n::tr("region") : i18n::tr("regions"));
+    parts.push_back(b);
+    parts.push_back(chopSummary(m));
+    if (m.grid.key >= 0 && m.grid.kind != KindBreak && m.grid.keyConfidence >= 0.25) parts.push_back(i18n::tr(keyName(m.grid.key, m.grid.minor)));
+    const float avail = tempoX - 16 - x;
+    std::string facts;
+    for (const std::string& p : parts) {
+      const std::string next = facts.empty() ? p : facts + " \xC2\xB7 " + p;
+      if (!facts.empty() && a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, next.c_str()).x > avail) break;
+      facts = next;
+    }
+    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(x, std::round(cy - theme::kFontCaption * 0.6f)), avail, P.textDim, facts.c_str());
   }
+  (void)song;
 }
 
-// ------------------------------------------------------------------ action bar (what to do)
-// J-152: one row in the order of the work: play it, how it is chopped, then everything that takes
-// it out (drag the loop or the notes, make loop files, send the pattern to the project). Group
-// labels sit left of their control; every control is 28 px on the row's centre line.
-void drawControls(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, float H) {
+// ------------------------------------------------------------------ action row (what to do)
+// Play; how it is chopped (More... opens every chop mode); the tool; then everything that takes it
+// out (drag the loop or the notes, make loop files, send the pattern to the project, linked).
+void drawActions(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, float H) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float ch = 28, top = std::round(o.y + (H - ch) * 0.5f);
+  const bool labels = W >= 1150, narrow = W < 1060;  // (narrow: shorter pills, a shorter Send)
   float x = o.x;
-  // ---- play
   e.playBtn = ImVec2(x + 28, top + ch * 0.5f);
   if (button("##splay", ImVec2(x, top), ImVec2(56, ch), "", e.pattern.on,
              e.pattern.on ? i18n::N_("Stop the pattern") : i18n::N_("Play the pattern (or hold a key in the octave below the base note)"),
              static_cast<int>(e.pattern.on ? ui::Icon::Stop : ui::Icon::Play), !e.pattern.on))
     togglePattern(a, t, e);
-  x += 56 + 20;
+  x += 56 + 16;
   // ---- chop size
   {
-    x += inlineLabel(dl, a, ImVec2(x, top), ch, i18n::N_("CHOP"));
-    static const char* const labels[6] = {i18n::N_("Auto"), i18n::N_("1 bar"), "1/2", "1/4", "1/8", "1/16"};
-    static const char* const hints[6] = {i18n::N_("The size that suits the material: breaks on their hits in eighths or sixteenths, loops and songs by beats and bars"),
-                                         i18n::N_("One slice per bar"), i18n::N_("Half a bar per slice"), i18n::N_("One beat per slice"),
-                                         i18n::N_("Eighth notes"), i18n::N_("Sixteenth notes")};
-    static const int divs[6] = {-1, Div1Bar, DivHalf, DivBeat, Div8th, Div16th};
-    const Model& m = e.m;
-    int cur = -1;
-    if (m.chop.autoSize) cur = 0;
-    else if (m.chop.mode == ChopGrid)
-      for (int i = 1; i < 6; ++i)
-        if (m.chop.division == divs[i]) cur = i;
-    const float w = 288;
-    if (pills(a, "##schopsize", ImVec2(x, top), w, ch, labels, 6, cur, hints, false) && cur >= 0) {
-      Model nm = e.m;
-      nm.chop.autoSize = cur == 0;
-      if (cur > 0) {
-        nm.chop.mode = ChopGrid;
-        nm.chop.division = divs[cur];
-        nm.chop.hitSnap = nm.grid.kind == KindBreak;
-      }
-      commitChop(a, t, e, nm, i18n::N_("Chop size"));
+    if (labels) x += inlineLabel(dl, a, ImVec2(x, top), ch, i18n::N_("CHOP"));
+    static const char* const l[7] = {i18n::N_("Auto"), i18n::N_("1 bar"), "1/2", "1/4", "1/8", "1/16", i18n::N_("Hits")};
+    static const char* const h[7] = {i18n::N_("The size that suits the material: breaks on their hits in eighths or sixteenths, loops and songs by beats and bars"),
+                                     i18n::N_("One region per bar"), i18n::N_("Half a bar per region"), i18n::N_("One beat per region"),
+                                     i18n::N_("Eighth notes"), i18n::N_("Sixteenth notes"), i18n::N_("Cut at the hits (drum hits, note starts)")};
+    int cur = chopSizeOf(e.m);
+    const float w = labels ? 316.0f : narrow ? 252.0f : 280.0f;
+    if (pills(a, "##schopsize", ImVec2(x, top), w, ch, l, 7, cur, h, false) && cur >= 0) setChopSize(a, t, e, cur);
+    for (int i = 0; i < 7; ++i) {
+      static const char* const tn[7] = {"chopauto", "chop1bar", "chophalf", "chopbeat", "chop8", "chop16", "chophits"};
+      e.btns.push_back({tn[i], ImVec2(x + w * (i + 0.5f) / 7, top + ch * 0.5f)});
     }
-    x += w + 20;
+    x += w + 4;
+    if (button("##schopmore", ImVec2(x, top), ImVec2(64, ch), i18n::N_("More..."), e.card == CardChop,
+               i18n::N_("Every chop mode: grid, hits, sections, equal parts, grains, by hand; snapping")))
+      toggleCard(e, CardChop, ImVec2(x + 32, top + ch), true);
+    noteBtn(e, "chopmore");
+    x += 64 + 16;
   }
-  // ---- tempo mode
+  // ---- the tool: what a click in the waveform does
   {
-    x += inlineLabel(dl, a, ImVec2(x, top), ch, i18n::N_("PLAY AT"));
-    static const char* const labels[2] = {i18n::N_("Project"), i18n::N_("Original")};
-    static const char* const hints[2] = {i18n::N_("Follow the project tempo (time-stretched; Edit > Sound has Resample)"),
-                                         i18n::N_("Play at the sample's own tempo")};
-    const int sync = static_cast<int>(std::lround(paramOf(a, t, SmSync)));
-    int cur = sync == SyncOriginal ? 1 : 0;
-    if (pills(a, "##stempo", ImVec2(x, top), 160, ch, labels, 2, cur, hints))
-      pui::setParamValue(a, t, SmSync, cur == 1 ? SyncOriginal : SyncStretch, false);
+    if (labels) x += inlineLabel(dl, a, ImVec2(x, top), ch, i18n::N_("TOOL"));
+    static const char* const l[3] = {i18n::N_("Play"), i18n::N_("Cut"), i18n::N_("Grid")};
+    static const char* const h[3] = {i18n::N_("Click a region to play it and open its card"),
+                                     i18n::N_("Double-click to add a cut, drag a cut to move it, right-click a cut to remove it"),
+                                     i18n::N_("Drag the bar-1 flag to move the grid, Alt+drag a bar line to stretch it")};
+    const float w = narrow ? 126.0f : 156.0f;
+    pills(a, "##stool", ImVec2(x, top), w, ch, l, 3, e.tool, h);
+    e.btns.push_back({"toolplay", ImVec2(x + w / 6, top + ch * 0.5f)});
+    e.btns.push_back({"toolcut", ImVec2(x + w * 0.5f, top + ch * 0.5f)});
+    e.btns.push_back({"toolgrid", ImVec2(x + w * 5 / 6, top + ch * 0.5f)});
+    x += w + 16;
   }
-  // ---- right: drag handles, make loops, send to project
+  // ---- right: send to project (linked), make loops, drag handles
   float rx = o.x + W;
-  rx -= 136;
-  if (button("##ssend", ImVec2(rx, top), ImVec2(136, ch), i18n::N_("Send to project"), false,
-             i18n::N_("Add a pattern with these steps as notes on this channel and place it in the playlist"), static_cast<int>(ui::Icon::Pattern),
-             true))
-    sendToProject(a, t, e);
-  rx -= 8 + 112;
-  if (button("##smake", ImVec2(rx, top), ImVec2(112, ch), i18n::N_("Make loops"), false,
-             i18n::N_("Render the pattern, the best phrases and the sections as loops at the project tempo into the \"Seltmann loops\" folder"),
-             static_cast<int>(ui::Icon::Save)))
+  LinkState ls = LinkNone;
+  const ObjectId lp = linkedPatternOf(a, t, &ls);
+  if (ls == LinkEdited) {
+    rx -= 64;
+    if (button("##srelink", ImVec2(rx, top), ImVec2(64, ch), i18n::N_("Relink"), false,
+               i18n::N_("The sent pattern was edited in the piano roll, so it stopped following. Relink: it follows the sequence again (your edits go)")))
+      relink(a, t);
+    noteBtn(e, "relink");
+    const char* bt = i18n::tr("edited");
+    const float bw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, bt).x + 14;
+    rx -= 4 + bw;
+    const ImVec2 b0(rx, top + 6), b1(rx + bw, top + ch - 6);
+    dl->AddRectFilled(b0, b1, theme::withAlpha(P.meterMid, 0.22f), theme::kRadius);
+    dl->AddRect(b0, b1, theme::withAlpha(P.meterMid, 0.8f), theme::kRadius);
+    textC(dl, a.fontMono, theme::kFontLabel, ImVec2((b0.x + b1.x) * 0.5f, (b0.y + b1.y) * 0.5f), P.text, bt);
+    rx -= 6;
+  }
+  {
+    const char* sl = ls == LinkFollowing ? (narrow ? i18n::N_("Send \xC2\xB7 linked") : i18n::N_("Send to project \xC2\xB7 linked"))
+                                         : (narrow ? i18n::N_("Send") : i18n::N_("Send to project"));
+    const float sw = std::round(a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, i18n::tr(sl)).x + 40);
+    rx -= sw;
+    if (button("##ssend", ImVec2(rx, top), ImVec2(sw, ch), sl, false,
+               ls == LinkFollowing ? i18n::N_("The sent pattern follows the sequence until its notes are edited. Click to send another one")
+                                   : i18n::N_("Add a pattern with these steps as notes on this channel and place it in the playlist; it follows later edits of the sequence"),
+               static_cast<int>(ui::Icon::Pattern), true))
+      sendToProject(a, t, e);
+    noteBtn(e, "send");
+  }
+  (void)lp;
+  rx -= 8 + 104;
+  if (button("##smake", ImVec2(rx, top), ImVec2(104, ch), i18n::N_("Make loops"), false,
+             i18n::N_("Render the pattern, the best phrases and the sections as loops at the project tempo into the \"Seltmann loops\" folder")))
     makeLoops(a, t, e);
   if (e.loopJob && !e.loopJob->finished) {
     const float pr = static_cast<float>(e.loopJob->done) / std::max(1, e.loopJob->total.load());
-    dl->AddRectFilled(ImVec2(rx + 6, top + ch - 4), ImVec2(rx + 106, top + ch - 2), P.surface900, 1);
-    dl->AddRectFilled(ImVec2(rx + 6, top + ch - 4), ImVec2(rx + 6 + 100 * pr, top + ch - 2), accent(), 1);
+    dl->AddRectFilled(ImVec2(rx + 6, top + ch - 4), ImVec2(rx + 98, top + ch - 2), P.surface900, 1);
+    dl->AddRectFilled(ImVec2(rx + 6, top + ch - 4), ImVec2(rx + 6 + 92 * pr, top + ch - 2), accent(), 1);
   }
   {
-    // drag handles: the pattern as audio and as notes
     const float mw = std::round(a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, "MIDI").x + 30);
-    rx -= 12 + mw;
+    rx -= 10 + mw;
     dragChip(a, t, e, "##smidi", ImVec2(rx, top), ch, "MIDI", "midi", e.m.pattern.name + " notes",
              i18n::N_("Drag the pattern's notes into the piano roll or the playlist"));
     const float lw = std::round(a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, "LOOP").x + 30);
     rx -= 6 + lw;
     dragChip(a, t, e, "##sploop", ImVec2(rx, top), ch, "LOOP", "pattern", e.m.pattern.name,
              i18n::N_("Drag the pattern out as an audio loop at the project tempo (playlist, channel rack, browser)"));
-    const float dw = inlineLabel(nullptr, a, ImVec2(0, 0), 0, i18n::N_("DRAG OUT"));
-    inlineLabel(dl, a, ImVec2(rx - dw, top), ch, i18n::N_("DRAG OUT"));
+    if (labels && rx - x > 80) {
+      const float dw = inlineLabel(nullptr, a, ImVec2(0, 0), 0, i18n::N_("DRAG OUT"));
+      inlineLabel(dl, a, ImVec2(rx - dw, top), ch, i18n::N_("DRAG OUT"));
+    }
   }
+  crowded(e, "actions", rx - x);
+}
+
+// ------------------------------------------------------------------ Compact: one row
+// Play, what it is, the tempo, a short chop choice, the layout, the drag handles and a menu with
+// everything else (the cards, load, record, make loops, send, the tool, follow and the height).
+void drawCompactRow(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, float H) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float ch = 26, top = std::round(o.y + (H - ch) * 0.5f);
+  float x = o.x;
+  e.playBtn = ImVec2(x + 22, top + ch * 0.5f);
+  if (button("##splay", ImVec2(x, top), ImVec2(44, ch), "", e.pattern.on, e.pattern.on ? i18n::N_("Stop the pattern") : i18n::N_("Play the pattern"),
+             static_cast<int>(e.pattern.on ? ui::Icon::Stop : ui::Icon::Play), !e.pattern.on))
+    togglePattern(a, t, e);
+  x += 44 + 10;
+  // right to left: menu, MIDI, LOOP, layout, chop, tempo
+  float rx = o.x + W - 30;
+  ImGui::SetCursorScreenPos(ImVec2(rx, top));
+  if (ui::IconButton("##smore", ui::Icon::More, false, ch, i18n::tr("More: the cards, load, record, make loops, send to project, the tool, follow, the height")))
+    ImGui::OpenPopup("##scompactmenu");
+  noteBtn(e, "menu");
+  const float mw = std::round(a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, "MIDI").x + 30);
+  rx -= 6 + mw;
+  dragChip(a, t, e, "##smidi", ImVec2(rx, top), ch, "MIDI", "midi", e.m.pattern.name + " notes", i18n::N_("Drag the pattern's notes into the piano roll or the playlist"));
+  const float lw = std::round(a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, "LOOP").x + 30);
+  rx -= 4 + lw;
+  dragChip(a, t, e, "##sploop", ImVec2(rx, top), ch, "LOOP", "pattern", e.m.pattern.name, i18n::N_("Drag the pattern out as an audio loop at the project tempo"));
+  const float pw = std::clamp(W * 0.16f, 120.0f, 180.0f);
+  rx -= 10 + pw;
+  drawLayoutPicker(a, t, e, ImVec2(rx, top), pw, ch);
+  {
+    static const char* const l[3] = {i18n::N_("Auto"), "1/8", "1/16"};
+    static const int map[3] = {0, 4, 5};
+    const int full = chopSizeOf(e.m);
+    int cur = full == 0 ? 0 : full == 4 ? 1 : full == 5 ? 2 : -1;
+    const float w = 132;
+    rx -= 10 + w;
+    if (pills(a, "##schopmini", ImVec2(rx, top), w, ch, l, 3, cur) && cur >= 0) setChopSize(a, t, e, map[cur]);
+  }
+  rx -= 10 + 104;
+  drawBpm(a, t, e, ImVec2(rx, top), false);
+  crowded(e, "compactrow", rx - 10 - x - 40);
+  // the kind and the file in what is left
+  {
+    const char* k = kindLabel(e.m.grid.kind);
+    const float tw = a.fontBold->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, k).x;
+    const float cy = top + ch * 0.5f;
+    if (rx - x > tw + 60) {
+      const ImVec2 c0(x, std::round(cy - 10)), c1(x + std::round(tw) + 14, std::round(cy + 10));
+      dl->AddRectFilled(c0, c1, theme::withAlpha(accent(), 0.14f), theme::kRadius);
+      dl->AddRect(c0, c1, theme::withAlpha(accent(), 0.5f), theme::kRadius);
+      textC(dl, a.fontBold, theme::kFontLabel, ImVec2((c0.x + c1.x) * 0.5f, cy), theme::isDark() ? accent() : P.text, k);
+      x = c1.x + 8;
+    }
+    char facts[64];
+    std::snprintf(facts, sizeof facts, "  %d %s", static_cast<int>(e.m.slices.size()), i18n::tr("regions"));
+    const std::string s = fs::path(e.path).filename().string() + facts;
+    theme::textEllipsis(dl, a.fontBold, theme::kFontCaption, ImVec2(x, std::round(cy - theme::kFontCaption * 0.6f)), rx - 10 - x, P.text, s.c_str());
+  }
+  // the menu
+  if (ImGui::BeginPopup("##scompactmenu")) {
+    const ImVec2 at = ImGui::GetIO().MousePos;
+    if (ImGui::MenuItem(i18n::tr("Sound..."))) openCard(e, CardSound, at, true);
+    if (ImGui::MenuItem(i18n::tr("Grid..."))) openCard(e, CardGrid, at, true);
+    if (ImGui::MenuItem(i18n::tr("Loops..."))) openCard(e, CardLoops, at, true);
+    if (ImGui::MenuItem(i18n::tr("Chop..."))) openCard(e, CardChop, at, true);
+    if (ImGui::MenuItem(i18n::tr("Steps..."))) openCard(e, CardSteps, at, true);
+    if (!e.takes.empty() && ImGui::MenuItem(i18n::tr("Takes..."))) openCard(e, CardTakes, at, true);
+    ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Half the tempo (/2)"))) {
+      Model m = e.m;
+      gridHalve(m.grid);
+      rechopKeepPattern(m, sampleOf(e).get());
+      commit(a, t, e, m, i18n::N_("Half tempo"));
+    }
+    if (ImGui::MenuItem(i18n::tr("Double the tempo (x2)"))) {
+      Model m = e.m;
+      gridDouble(m.grid);
+      rechopKeepPattern(m, sampleOf(e).get());
+      commit(a, t, e, m, i18n::N_("Double tempo"));
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Load..."))) openLoadDialog(a, t, e);
+    if (ImGui::MenuItem(i18n::tr("Record take"))) openRecorder(a, t);
+    if (ImGui::MenuItem(i18n::tr("Make loops"))) makeLoops(a, t, e);
+    if (ImGui::MenuItem(i18n::tr("Send to project"))) sendToProject(a, t, e);
+    LinkState ls = LinkNone;
+    linkedPatternOf(a, t, &ls);
+    if (ls == LinkEdited && ImGui::MenuItem(i18n::tr("Relink the sent pattern"))) relink(a, t);
+    if (ls != LinkNone && ImGui::MenuItem(i18n::tr("Unlink the sent pattern"))) unlink(a, t);
+    ImGui::Separator();
+    if (ImGui::BeginMenu(i18n::tr("Tool"))) {
+      static const char* const l[3] = {i18n::N_("Play"), i18n::N_("Cut"), i18n::N_("Grid")};
+      for (int i = 0; i < 3; ++i)
+        if (ImGui::MenuItem(i18n::tr(l[i]), nullptr, e.tool == i)) e.tool = i;
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu(i18n::tr("Follow"))) {
+      const int sync = static_cast<int>(std::lround(paramOf(a, t, SmSync)));
+      if (ImGui::MenuItem(i18n::tr("Stretch"), nullptr, sync == SyncStretch)) pui::setParamValue(a, t, SmSync, SyncStretch, false);
+      if (ImGui::MenuItem(i18n::tr("Resample"), nullptr, sync == SyncResample)) pui::setParamValue(a, t, SmSync, SyncResample, false);
+      if (ImGui::MenuItem(i18n::tr("Off"), nullptr, sync == SyncOriginal)) pui::setParamValue(a, t, SmSync, SyncOriginal, false);
+      ImGui::EndMenu();
+    }
+    if (ImGui::BeginMenu(i18n::tr("Height"))) {
+      static const char* const l[4] = {i18n::N_("Auto"), i18n::N_("Compact"), i18n::N_("Standard"), i18n::N_("Full")};
+      const int choice = heightChoice(a.settings.getString("seltmann.height"));
+      for (int i = 0; i < 4; ++i)
+        if (ImGui::MenuItem(i18n::tr(l[i]), nullptr, choice == i - 1)) {
+          a.settings.set("seltmann.height", heightChoiceName(i - 1));
+          a.settings.save(Settings::defaultPath());
+        }
+      ImGui::EndMenu();
+    }
+    editorKeyMenu(a, t, e);
+    ImGui::EndPopup();
+  }
+}
+
+// ------------------------------------------------------------------ the hint line
+// What the tool does in the waveform on the left, the editor's own keys on the right.
+void drawHint(App& a, Ed& e, ImVec2 o, float W, float H) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const char* how = e.tool == ToolCut    ? i18n::tr("Cut: double-click the waveform to add a cut, drag a cut to move it, right-click a cut to remove it")
+                    : e.tool == ToolGrid ? i18n::tr("Grid: drag the bar-1 flag to move the grid, Alt+drag a bar line to stretch it")
+                                         : i18n::tr("Play: click a region to play it and open its card. Wheel: pitch. Drag a cut to resize, a block to move it");
+  std::string keysText;
+  {
+    struct K {
+      int a, b;
+      const char* text;
+    };
+    static const K ks[5] = {{KeyPrevRegion, KeyNextRegion, i18n::N_("region")}, {KeySplit, -1, i18n::N_("split")}, {KeyJoin, -1, i18n::N_("join")},
+                            {KeyChop1, KeyChop6, i18n::N_("chop")}, {KeyPlayRegion, -1, i18n::N_("play")}};
+    for (const K& k : ks) {
+      if (!editorKeyFree(editorChord(k.a))) continue;
+      std::string c = keycaps::keyName(editorChord(k.a).key);
+      if (k.b >= 0 && editorKeyFree(editorChord(k.b))) c += k.b == KeyNextRegion ? std::string(" ") + keycaps::keyName(editorChord(k.b).key) : std::string("-") + keycaps::keyName(editorChord(k.b).key);
+      keysText += (keysText.empty() ? "" : "  \xC2\xB7  ") + c + " " + i18n::tr(k.text);
+    }
+  }
+  const float kw = keysText.empty() ? 0.0f : a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, keysText.c_str()).x;
+  const float y = std::round(o.y + (H - theme::kFontCaption) * 0.5f - 1);
+  theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(o.x + 2, y), W - kw - 24, P.textDim, how);
+  if (kw > 0 && kw < W * 0.5f) textR(dl, a.fontMono, theme::kFontLabel, ImVec2(o.x + W - 2, y + 1), P.textFaint, keysText.c_str());
+}
+
+// ------------------------------------------------------------------ songs: section buttons (P11)
+void drawSectionButtons(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, float H) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const Model& m = e.m;
+  float x = o.x;
+  x += inlineLabel(dl, a, ImVec2(x, o.y), H, i18n::N_("SECTIONS"));
+  SamplePtr smp = sampleOf(e);
+  const double N = static_cast<double>(m.srcFrames);
+  for (size_t i = 0; i < m.grid.sections.size() && i < 32; ++i) {
+    const auto& s = m.grid.sections[i];
+    char lb[24];
+    std::snprintf(lb, sizeof lb, "%s%zu", slotName(s.label), i + 1);
+    const float w = std::round(a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, lb).x + 22);
+    if (x + w > o.x + W) break;
+    const int64_t f0 = static_cast<int64_t>(std::llround(std::max(0.0, frameAt(m.grid, s.firstBeat))));
+    const int64_t f1 = static_cast<int64_t>(std::llround(std::min(N, frameAt(m.grid, s.endBeat))));
+    const bool on = m.regionStart == f0 && m.regionEnd == f1;
+    char id[24];
+    std::snprintf(id, sizeof id, "##ssec%zu", i);
+    if (button(id, ImVec2(x, o.y), ImVec2(w, H), lb, on, i18n::N_("Chop this section (the box in the whole-song strip takes its bars)")) && !on) {
+      Model nm = e.m;
+      nm.regionStart = f0;
+      nm.regionEnd = f1;
+      if (nm.chop.mode == ChopManual) nm.chop.mode = ChopGrid;
+      rechopKeepPattern(nm, smp.get());
+      commit(a, t, e, nm, i18n::N_("Select a section"));
+      e.selSlice = 0;
+    }
+    dl->AddRectFilled(ImVec2(x + 3, o.y + H - 3), ImVec2(x + w - 3, o.y + H - 1), slotColor(s.label, 0.9f), 1);
+    x += w + 4;
+  }
+  textR(dl, a.fontRegular, theme::kFontCaption, ImVec2(o.x + W, o.y + (H - theme::kFontCaption) * 0.5f - 1), P.textFaint,
+        x < o.x + W - 360 ? i18n::tr("Double-click a section in the strip to chop it; the box keeps whole bars") : "");
 }
 
 // ------------------------------------------------------------------ dev trace
 void trace(Ed& e, const char* state, const LiveView& lv) {
   static const bool on = std::getenv("GRIDLINE_SELTMANN_TRACE") != nullptr;
   if (!on) return;
+  // Nothing while the window is still finding its place (its first frames): the traced points are
+  // where a pointer can reach them only once it stays put.
+  {
+    const ImGuiWindow* root = ImGui::GetCurrentWindowRead()->RootWindow;
+    const ImVec2 at = root ? root->Pos : ImVec2(0, 0);
+    const bool moved = at.x != e.tracePos.x || at.y != e.tracePos.y;
+    e.tracePos = at;
+    if (moved) return;
+  }
   char b[512];
+  // K-147: traced points are where they show on screen (the editor may be drawn reduced or magnified)
+  auto scr = [](ImVec2 q) { return edzoomui::toScreenHere(q); };
   std::snprintf(b, sizeof b, "seltmann: state %s kind %s bpm %.2f slices %zu preset \"%s\" pattern %d playing %d running %d", state,
                 e.hasModel ? kindName(e.m.grid.kind) : "-", e.hasModel ? e.m.grid.bpm : 0.0, e.hasModel ? e.m.slices.size() : 0,
                 e.hasModel ? e.m.preset.c_str() : "", e.pattern.on ? 1 : 0, e.pattern.on && lv.step >= 0 ? 1 : 0, lv.patternRunning ? 1 : 0);
@@ -1012,39 +1360,43 @@ void trace(Ed& e, const char* state, const LiveView& lv) {
   std::snprintf(b, sizeof b, "\nseltmann: body %.0f %.0f", e.body.x, e.body.y);  // J-152: the measured size
   line += b;
   if (std::string(state) == "empty") {
-    std::snprintf(b, sizeof b, "\nseltmann: zone %.0f %.0f %.0f %.0f", e.zone0.x, e.zone0.y, e.zone1.x, e.zone1.y);
+    std::snprintf(b, sizeof b, "\nseltmann: zone %.0f %.0f %.0f %.0f", scr(e.zone0).x, scr(e.zone0).y, scr(e.zone1).x, scr(e.zone1).y);
     line += b;
-    std::snprintf(b, sizeof b, "\nseltmann: recentry %.0f %.0f", e.recEntry.x, e.recEntry.y);  // J-218
+    std::snprintf(b, sizeof b, "\nseltmann: recentry %.0f %.0f", scr(e.recEntry).x, scr(e.recEntry).y);  // J-218
     line += b;
   }
   if (std::string(state) == "ready") {
     for (size_t i = 0; i < e.cards.size() && i < 3; ++i) {
-      std::snprintf(b, sizeof b, "\nseltmann: card \"%s\" %.0f %.0f", e.cards[i].first.c_str(), e.cards[i].second.x, e.cards[i].second.y);
+      std::snprintf(b, sizeof b, "\nseltmann: card \"%s\" %.0f %.0f", e.cards[i].first.c_str(), scr(e.cards[i].second).x, scr(e.cards[i].second).y);
       line += b;
     }
-    std::snprintf(b, sizeof b, "\nseltmann: play %.0f %.0f", e.playBtn.x, e.playBtn.y);
+    std::snprintf(b, sizeof b, "\nseltmann: play %.0f %.0f", scr(e.playBtn).x, scr(e.playBtn).y);
     line += b;
     for (size_t i = 0; i < e.seqCentres.size() && i < 24; ++i) {
-      std::snprintf(b, sizeof b, "\nseltmann: seq %zu %.0f %.0f", i, e.seqCentres[i].x, e.seqCentres[i].y);
+      std::snprintf(b, sizeof b, "\nseltmann: seq %zu %.0f %.0f", i, scr(e.seqCentres[i]).x, scr(e.seqCentres[i]).y);
       line += b;
     }
     // J-185: the START flag, the cut handles (waveform, lane), the pads' pitch readouts, the open region menu
-    std::snprintf(b, sizeof b, "\nseltmann: startflag %.0f %.0f", e.startFlag.x, e.startFlag.y);
+    std::snprintf(b, sizeof b, "\nseltmann: startflag %.0f %.0f", scr(e.startFlag).x, scr(e.startFlag).y);
     line += b;
     for (size_t i = 0; i < e.cutPts.size() && i < 4; ++i) {
-      std::snprintf(b, sizeof b, "\nseltmann: cut %zu %.0f %.0f", i + 1, e.cutPts[i].x, e.cutPts[i].y);
+      std::snprintf(b, sizeof b, "\nseltmann: cut %zu %.0f %.0f", i + 1, scr(e.cutPts[i]).x, scr(e.cutPts[i]).y);
       line += b;
     }
     for (size_t i = 0; i < e.laneLenPts.size() && i < 24; ++i) {  // J-214: the step length handles (right edges)
-      std::snprintf(b, sizeof b, "\nseltmann: steplen %zu %.0f %.0f", i, e.laneLenPts[i].x, e.laneLenPts[i].y);
+      std::snprintf(b, sizeof b, "\nseltmann: steplen %zu %.0f %.0f", i, scr(e.laneLenPts[i]).x, scr(e.laneLenPts[i]).y);
       line += b;
     }
     for (size_t i = 0; i < e.padChips.size() && i < 4; ++i) {
-      std::snprintf(b, sizeof b, "\nseltmann: padchip %zu %.0f %.0f", i, e.padChips[i].x, e.padChips[i].y);
+      std::snprintf(b, sizeof b, "\nseltmann: padchip %zu %.0f %.0f", i, scr(e.padChips[i]).x, scr(e.padChips[i]).y);
+      line += b;
+    }
+    for (const auto& [tag, pt] : e.btns) {  // 0.7.8: named controls (tools, header cards, chop sizes, ...)
+      std::snprintf(b, sizeof b, "\nseltmann: btn %s %.0f %.0f", tag.c_str(), scr(pt).x, scr(pt).y);
       line += b;
     }
     for (const auto& [tag, pt] : e.menuPts) {
-      std::snprintf(b, sizeof b, "\nseltmann: menu %s %.0f %.0f", tag.c_str(), pt.x, pt.y);
+      std::snprintf(b, sizeof b, "\nseltmann: menu %s %.0f %.0f", tag.c_str(), scr(pt).x, scr(pt).y);
       line += b;
     }
   }
@@ -1061,7 +1413,335 @@ void trace(Ed& e, const char* state, const LiveView& lv) {
 
 }  // namespace
 
-// ------------------------------------------------------------------ grid tools (drawer)
+// ------------------------------------------------------------------ 0.7.8 shared pieces
+void noteBtn(Ed& e, const char* name) {
+  const ImVec2 a0 = ImGui::GetItemRectMin(), a1 = ImGui::GetItemRectMax();
+  e.btns.push_back({name, ImVec2(std::round((a0.x + a1.x) * 0.5f), std::round((a0.y + a1.y) * 0.5f))});
+}
+
+int chopSizeOf(const Model& m) {
+  static const int divs[6] = {-1, Div1Bar, DivHalf, DivBeat, Div8th, Div16th};
+  if (m.chop.autoSize) return 0;
+  if (m.chop.mode == ChopTransients) return 6;
+  if (m.chop.mode == ChopGrid)
+    for (int i = 1; i < 6; ++i)
+      if (m.chop.division == divs[i]) return i;
+  return -1;
+}
+
+void setChopSize(App& a, const PluginTarget& t, Ed& e, int which) {
+  static const int divs[6] = {-1, Div1Bar, DivHalf, DivBeat, Div8th, Div16th};
+  if (which < 0 || which > 6 || which == chopSizeOf(e.m)) return;
+  Model nm = e.m;
+  nm.chop.autoSize = which == 0;
+  if (which >= 1 && which <= 5) {
+    nm.chop.mode = ChopGrid;
+    nm.chop.division = divs[which];
+    nm.chop.hitSnap = nm.grid.kind == KindBreak;
+  } else if (which == 6) {
+    nm.chop.mode = ChopTransients;
+  }
+  commitChop(a, t, e, nm, i18n::N_("Chop size"));
+}
+
+// ---- layout previews: the layout rendered on the current chop, played as a loop while it is held
+namespace {
+std::vector<std::thread>& previewThreads() {
+  static std::vector<std::thread> threads;  // joined when the editor library unloads (static destruction)
+  struct Joiner {
+    ~Joiner() {
+      for (auto& th : threads)
+        if (th.joinable()) th.join();
+    }
+  };
+  static Joiner joiner;
+  (void)joiner;
+  // finished ones are joined as new ones start (a preview renders in a fraction of a second)
+  return threads;
+}
+
+void tracePreview(Ed& e, const char* what) {
+  static const bool on = std::getenv("GRIDLINE_SELTMANN_TRACE") != nullptr;
+  if (!on) return;
+  std::printf("seltmann: preview %s \"%s\"\n", what, e.previewName.c_str());
+  std::fflush(stdout);
+}
+}  // namespace
+
+void previewStart(App& a, const PluginTarget& t, Ed& e, const Preset& p) {
+  const PluginState* sp = t.state(a.doc.song());
+  SamplePtr src = sampleOf(e);
+  if (!sp || !src || !e.hasModel) return;
+  previewStop(a, t, e);
+  if (e.pattern.on) {  // the pattern pauses while a layout is heard
+    togglePattern(a, t, e);
+    e.previewResume = true;
+  }
+  e.previewName = p.name;
+  auto job = std::make_shared<PreviewJob>();
+  e.previewJob = job;
+  RenderOpts o = optsOf(a, *sp);
+  const Model base = e.m;
+  const Preset pr = p;
+  const uint32_t seed = e.seed;
+  auto& threads = previewThreads();
+  for (auto it = threads.begin(); it != threads.end();) {
+    if (it->joinable() && threads.size() > 4) {
+      it->join();
+      it = threads.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  threads.emplace_back([job, base, src, pr, seed, o]() mutable { gl::threads::setName("gl-seltmann-job");
+    std::vector<std::pair<int, float>> params;
+    const Model pv = previewModel(base, src.get(), pr, seed, &params);
+    for (const auto& [k, v] : params)
+      if (k >= 0 && k < static_cast<int>(o.params.size())) o.params[static_cast<size_t>(k)] = v;
+    std::vector<float> L, R;
+    if (renderPatternLoop(pv, src, o, L, R) && !L.empty()) {
+      auto s = std::make_shared<Sample>();
+      s->sampleRate = o.sampleRate;
+      s->left = std::move(L);
+      s->right = std::move(R);
+      job->sample = s;
+    }
+    job->done = true;
+  });
+  tracePreview(e, "start");
+}
+
+void previewStop(App& a, const PluginTarget& t, Ed& e) {
+  if (e.previewName.empty()) return;
+  tracePreview(e, "stop");
+  if (e.previewPlaying) a.engine.preview(nullptr);
+  e.previewPlaying = false;
+  e.previewName.clear();
+  e.previewJob.reset();
+  if (e.previewResume && !e.pattern.on) togglePattern(a, t, e);
+  e.previewResume = false;
+}
+
+void previewTick(App& a, const PluginTarget& t, Ed& e) {
+  if (!e.previewName.empty() && e.previewJob && e.previewJob->done && !e.previewPlaying) {
+    if (e.previewJob->sample) {
+      a.engine.preview(e.previewJob->sample, true, 0);
+      e.previewPlaying = true;
+      tracePreview(e, "playing");
+    }
+  }
+  // the item being heard is no longer held or under the pointer: stop
+  if (!e.previewName.empty() && !e.previewSeen) previewStop(a, t, e);
+  e.previewSeen = false;
+  if (!ImGui::IsMouseDown(0) && e.previewHeld) e.previewHeld = false;
+}
+
+void keepLayout(App& a, const PluginTarget& t, Ed& e, const Preset& p) {
+  previewStop(a, t, e);
+  // a sequence made by hand stays under Recent as "Custom (yours)"
+  if (!isNaturalOrder(e.m) && (e.m.preset.empty() || e.m.pattern.name == kEditedName)) {
+    e.custom = e.m;
+    e.hasCustom = true;
+  }
+  const bool again = p.name == e.m.preset && p.gen;
+  if (again) ++e.seed;  // a generated layout clicked again: another take
+  applyLayout(a, t, e, p, true);
+  prefs(a, e).used(p.name);
+  savePrefs(a, e);
+}
+
+void restoreCustom(App& a, const PluginTarget& t, Ed& e) {
+  if (!e.hasCustom) return;
+  previewStop(a, t, e);
+  commit(a, t, e, e.custom, i18n::N_("Back to your own sequence"));
+  e.selStep = -1;
+  if (!e.pattern.on) togglePattern(a, t, e);
+}
+
+// ---- takes (S0h): a new take into a loaded instance
+void useTake(App& a, const PluginTarget& t, const std::string& path, bool keepChop, int64_t frames, double rate) {
+  Ed& e = ed(t);
+  bool known = false;
+  for (const Take& tk : e.takes) known = known || tk.path == path;
+  if (!known) e.takes.push_back({path, frames, rate});
+  const PluginState* sp = t.state(a.doc.song());
+  if (!sp) return;
+  if (keepChop && e.hasModel && frames > 0 && rate > 0) {
+    const Model m = keepChopOnTake(e.m, frames, rate);
+    PluginState st = *sp;
+    st.data = formatData(path, m);
+    setPluginState(a, t, st, i18n::tr("Use a take (keep the chop)"));
+  } else {
+    PluginState st = *sp;
+    st.data = path;
+    setPluginState(a, t, st, i18n::tr("Use a take"));
+  }
+  if (std::getenv("GRIDLINE_SELTMANN_TRACE")) {
+    std::printf("seltmann: take \"%s\" keep %d takes %zu\n", path.c_str(), keepChop ? 1 : 0, e.takes.size());
+    std::fflush(stdout);
+  }
+}
+
+// ---- linked send (S0g)
+ObjectId linkedPatternOf(App& a, const PluginTarget& t, LinkState* st) {
+  if (st) *st = LinkNone;
+  if (!t.isChannel()) return kNoId;
+  const Song& s = a.doc.song();
+  for (auto it = s.patterns.rbegin(); it != s.patterns.rend(); ++it)
+    if (it->linkChannel == t.owner) {
+      if (st) *st = linkState(*it, t.owner);
+      return it->id;
+    }
+  return kNoId;
+}
+
+namespace {
+// The model and parameters of a channel (parsed; cached by the state's data).
+bool channelModel(const Channel& c, Model& m) {
+  static std::string lastData;
+  static Model lastModel;
+  static bool lastOk = false;
+  if (c.plugin.data != lastData) {
+    lastData = c.plugin.data;
+    std::string path;
+    lastModel = Model{};
+    lastOk = parseData(c.plugin.data, path, lastModel);
+  }
+  m = lastModel;
+  return lastOk;
+}
+}  // namespace
+
+void relink(App& a, const PluginTarget& t) {
+  const ObjectId pid = linkedPatternOf(a, t);
+  const Channel* c = a.doc.song().channel(t.owner);
+  Model m;
+  if (pid == kNoId || !c || !channelModel(*c, m)) return;
+  const std::vector<float> params = c->plugin.params;
+  a.doc.editPattern(pid, i18n::tr("Relink the sent pattern"), [&](gl::Pattern& p) { refreshLinked(a.doc.song(), p, t.owner, m, params, true); });
+}
+
+void unlink(App& a, const PluginTarget& t) {
+  const ObjectId pid = linkedPatternOf(a, t);
+  if (pid == kNoId) return;
+  a.doc.editPattern(pid, i18n::tr("Unlink the sent pattern"), [&](gl::Pattern& p) {
+    p.linkChannel = kNoId;
+    p.linkHash = 0;
+    p.linkCycles = 1;
+  });
+}
+
+// Each frame: a linked pattern that still follows takes its channel's sequence. The change joins the
+// edit that caused it (a sequence edit, a parameter), so one edit stays one undo step and syncs as one.
+void linkTick(App& a) {
+  const Song& s = a.doc.song();
+  bool any = false;
+  for (const auto& p : s.patterns) any = any || p.linkChannel != kNoId;
+  if (!any) return;
+  // after an undo / redo the song is as it was: nothing to follow
+  const uint64_t serial = a.doc.history().stateSerial();
+  if (serial == a.doc.moveSerial()) return;
+  static std::map<ObjectId, std::string> checked;  // pattern -> what it was last checked against
+  for (const auto& p : s.patterns) {
+    if (p.linkChannel == kNoId) continue;
+    const Channel* c = s.channel(p.linkChannel);
+    if (!c || c->plugin.type != kType) continue;
+    char key[96];
+    std::snprintf(key, sizeof key, "|%llu|%d|%lld|%d", static_cast<unsigned long long>(p.linkHash), s.ppq, static_cast<long long>(s.barTicks()),
+                  p.linkCycles);
+    std::string k = c->plugin.data + key + std::string(reinterpret_cast<const char*>(c->plugin.params.data()), c->plugin.params.size() * sizeof(float));
+    auto it = checked.find(p.id);
+    if (it != checked.end() && it->second == k) continue;
+    checked[p.id] = k;
+    if (linkState(p, p.linkChannel) != LinkFollowing) continue;
+    Model m;
+    if (!channelModel(*c, m)) continue;
+    gl::Pattern np = p;
+    if (!refreshLinked(s, np, p.linkChannel, m, c->plugin.params)) continue;
+    const ObjectId pid = p.id;
+    a.doc.amendStep(serial, [&] { a.doc.editPattern(pid, i18n::tr("Follow the sequence"), [&](gl::Pattern& q) { q = np; }); });
+    break;  // (the song changed: the next frame looks at the others)
+  }
+}
+
+// ---- editor keys (S0i): only keys no key set uses
+namespace {
+void editorAction(App& a, const PluginTarget& t, Ed& e, int key) {
+  const int n = static_cast<int>(e.m.slices.size());
+  if (n == 0) return;
+  switch (key) {
+    case KeyPrevRegion:
+    case KeyNextRegion: {
+      e.selSlice = std::clamp(e.selSlice + (key == KeyNextRegion ? 1 : -1), 0, n - 1);
+      if (e.card == CardRegion || e.card == CardStep) e.card = CardRegion, e.selStep = -1;
+      auditionStart(a, t, e, e.selSlice);
+      break;
+    }
+    case KeyPlayRegion: auditionStart(a, t, e, e.selSlice); break;
+    case KeyPlayPattern: togglePattern(a, t, e); break;
+    case KeySplit: splitRegionUi(a, t, e, e.selSlice, 2); break;
+    case KeyJoin:
+      if (n > 1) deleteRegionUi(a, t, e, e.selSlice);
+      break;
+    case KeyReverseStep: {
+      const int s = e.selStep >= 0 ? e.selStep : firstStepOf(e.m, e.selSlice);
+      if (s < 0 || s >= static_cast<int>(e.m.pattern.steps.size())) break;
+      Model nm = e.m;
+      nm.pattern.steps[static_cast<size_t>(s)].reverse = !nm.pattern.steps[static_cast<size_t>(s)].reverse;
+      markEdited(nm);
+      commit(a, t, e, nm, i18n::N_("Play the step backwards"));
+      break;
+    }
+    case KeyToolPlay: e.tool = ToolPlay; break;
+    default:
+      if (key >= KeyChop1 && key <= KeyChop6) setChopSize(a, t, e, key - KeyChop1);
+      break;
+  }
+}
+}  // namespace
+
+void editorKeys(App& a, const PluginTarget& t, Ed& e) {
+  const ImGuiIO& io = ImGui::GetIO();
+  if (io.WantTextInput || keys::capturing() || !e.hasModel) return;
+  if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && e.card == CardNone) return;  // (or its card has the focus)
+  static bool freeKeys[KeyCount];
+  static bool known = false;
+  if (!known) {
+    for (int k = 0; k < KeyCount; ++k) freeKeys[k] = editorKeyFree(editorChord(k));
+    known = true;
+  }
+  uint8_t mods = 0;
+  if (io.KeyShift) mods |= keys::kShift;
+  if (io.KeyCtrl) mods |= keys::kCtrl;
+  if (io.KeyAlt) mods |= keys::kAlt;
+  if (io.KeySuper) mods |= keys::kCmd;
+  for (int k = 0; k < KeyCount; ++k) {
+    if (!freeKeys[k]) continue;
+    const keys::Chord c = editorChord(k);
+    if (c.mods != mods) continue;
+    if (a.typingKeyboard && keys::playsOnTypingKeyboard(c)) continue;  // the typing keyboard plays it
+    if (k == KeyToolPlay && e.card != CardNone) continue;              // Esc closes the card first
+    if (ImGui::IsKeyPressed(keys::toImGui(c.key), false)) {
+      if (std::getenv("GRIDLINE_SELTMANN_TRACE")) {
+        std::printf("seltmann: key %s\n", editorKeyLabel(k));
+        std::fflush(stdout);
+      }
+      editorAction(a, t, e, k);
+    }
+  }
+}
+
+void editorKeyMenu(App& a, const PluginTarget& t, Ed& e) {
+  if (!ImGui::BeginMenu(i18n::tr("Region and keys"))) return;
+  for (int k = 0; k < KeyCount; ++k) {
+    const keys::Chord c = editorChord(k);
+    const std::string sc = editorKeyFree(c) ? keys::shown(c) : std::string();
+    if (ImGui::MenuItem(i18n::tr(editorKeyLabel(k)), sc.empty() ? nullptr : sc.c_str())) editorAction(a, t, e, k);
+  }
+  ImGui::EndMenu();
+}
+
+// ------------------------------------------------------------------ grid tools (Grid card)
 void drawGridTools(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -1164,30 +1844,30 @@ void drawGridTools(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
 
 // ================================================================== editor
 
-bool drawEditor(App& a, const PluginTarget& t, float width) {
+namespace sui {
+// 0.7.8 (K-347): the editor's per-frame work before drawing (the model parsed from the state, the
+// analysis, the first chop, the dev hooks, finished renders), shared by the Ribbon and the Tracker's
+// own screens. False when the state is gone.
+bool prepare(App& a, const PluginTarget& t) {
   const PluginState* sp = t.state(a.doc.song());
   if (!sp || sp->type != kType) return false;
-  using namespace sui;
   Ed& e = ed(t);
   static bool cacheSet = false;
   if (!cacheSet) {
     setAnalysisCacheDir((fs::path(a.configDir()) / "cache" / "seltmann").string());
     cacheSet = true;
   }
-  // dev hooks (screenshots / checks): a file to load, a layout to apply, play the pattern, the drawer
+  // dev hooks (screenshots / checks): a file to load, a layout to apply, play the pattern, a card, the tool
   if (!e.demoDone) {
     e.demoDone = true;
-    if (const char* d = std::getenv("GRIDLINE_SELTMANN_DRAWER"); d && *d) {
-      e.drawer = true;
-      e.drawerTab = std::clamp(std::atoi(d), 0, DrawCount - 1);
-    }
-    if (const char* tab = std::getenv("GRIDLINE_SELTMANN_TAB"); tab && *tab) e.presetTab = std::clamp(std::atoi(tab), 0, TabCount - 1);
+    if (const char* tool = std::getenv("GRIDLINE_SELTMANN_TOOL"); tool && *tool) e.tool = std::clamp(std::atoi(tool), 0, ToolCount - 1);
+    if (const char* tab = std::getenv("GRIDLINE_SELTMANN_TAB"); tab && *tab) e.presetTab = std::clamp(std::atoi(tab), 0, TabCount + 1);
     if (const char* demo = std::getenv("GRIDLINE_SELTMANN_DEMO"); demo && *demo && sp->data.empty()) {
       PluginState st = *sp;
       st.data = demo;
       setPluginState(a, t, st, "demo");
       sp = t.state(a.doc.song());
-      if (!sp) return true;
+      if (!sp) return false;
     }
   }
   // parse the state when it changed (undo, drops, loads)
@@ -1198,9 +1878,11 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     e.hasModel = parseData(sp->data, e.path, m);
     if (e.hasModel) e.m = std::move(m);
     if (e.path != before) {
-      e.selSlice = 0, e.selStep = -1, e.rendered.clear(), e.padPage = 0;
+      e.selSlice = 0, e.selStep = -1, e.rendered.clear(), e.keyPage = 0;
       e.job.reset();
       if (e.pattern.on) togglePattern(a, t, e);
+      previewStop(a, t, e);
+      closeCard(e);
     }
   }
   if (!e.path.empty() && (!e.job || e.job->path != e.path)) e.job = requestAnalysis(e.path);
@@ -1235,22 +1917,97 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     e.loopJob.reset();
   }
 
-  const float W = std::max(width, 1040.0f);
+  return true;
+}
+
+const char* chopSummaryText(const Model& m) { return chopSummary(m); }
+
+void wellDropTarget(App& a, const PluginTarget& t, ImVec2 p0, ImVec2 p1) {
+  const ImGuiPayload* pl = ImGui::GetDragDropPayload();
+  if (!pl) return;
+  std::string file;
+  if (pl->IsDataType("GL_FILES") || xdragui::ownsPayload(pl))
+    for (const xdrop::Item& it : xdragui::items())
+      if (file.empty() && !it.dir && !it.pending && !it.path.empty() && browse::kindOf(it.path) == browse::Kind::Audio) file = it.path;
+  if (file.empty()) file = browserui::draggedAudioFile(a, pl);
+  if (file.empty()) return;
+  if (!ImGui::BeginDragDropTargetCustom(ImRect(p0, p1), ImGui::GetID("##seltdrop"))) return;
+  if (const ImGuiPayload* x = ImGui::AcceptDragDropPayload(pl->DataType, ImGuiDragDropFlags_AcceptNoDrawDefaultRect | ImGuiDragDropFlags_AcceptBeforeDelivery)) {
+    if (x->Delivery) {
+      xdragui::markConsumed();
+      loadAudio(a, t, file);
+    } else {
+      ImGui::GetForegroundDrawList()->AddRect(p0, p1, accent(), 0, 0, 2.0f);
+    }
+  }
+  ImGui::EndDragDropTarget();
+}
+}  // namespace sui
+
+bool drawEditor(App& a, const PluginTarget& t, float width) {
+  const PluginState* sp = t.state(a.doc.song());
+  if (!sp || sp->type != kType) return false;
+  using namespace sui;
+  Ed& e = ed(t);
+  static const char* devCard = std::getenv("GRIDLINE_SELTMANN_CARD");
+  static const char* devHeight = std::getenv("GRIDLINE_SELTMANN_HEIGHT");
+  static const char* devPreview = std::getenv("GRIDLINE_SELTMANN_PREVIEW");
+  if (!prepare(a, t)) return true;
+  // ---- S0a: the height. Floating (its own window, sized to the editor): Full unless the person
+  // chose another; hosted in a layout's region: by the room the region gives.
+  const ImGuiWindow* root = ImGui::GetCurrentWindowRead()->RootWindow;
+  const bool floating = root && (root->Flags & ImGuiWindowFlags_AlwaysAutoResize) != 0;
+  const float hostH = floating ? 0.0f : ImGui::GetContentRegionAvail().y;
+  int choice = heightChoice(a.settings.getString("seltmann.height"));
+  if (devHeight && *devHeight) choice = heightChoice(devHeight);
+  e.height = heightClassFor(hostH, choice);
+  e.hosted = !floating;
+  {
+    const ImGuiWindow* w = ImGui::GetCurrentWindowRead();
+    e.win0 = w->InnerClipRect.Min, e.win1 = w->InnerClipRect.Max;
+    if (e.win1.x - e.win0.x < 200) e.win0 = w->Pos, e.win1 = ImVec2(w->Pos.x + w->Size.x, w->Pos.y + w->Size.y);
+  }
+
+  const float W = std::max(width, 640.0f);
   const ImVec2 o = ImGui::GetCursorScreenPos();
   const LiveView lv = live(a, t);
   syncPattern(a, t, e, lv);
-  // J-152: the body, top to bottom in the order of the work (heights at UI scale 1):
-  //   header 36 (what it is) | waveform 128 + sequence 80 (the hero, one time axis) |
-  //   action bar 32 (play, chop, take it out) | tools 200 (layouts | pads) | Edit drawer 132..236 (per tab, closed by default)
-  const float headH = 36, waveH = 128, seqH = 80, barH = 32, toolsH = 200, gap = 8;
-  const float bodyH = headH + gap + waveH + seqH + gap + barH + gap + toolsH;
+  e.btns.clear();
+  e.crowd.clear();
+  // heights at UI scale 1 (the waveform takes what the room leaves: no overlap at any size)
+  const float gap = 8;
+  const bool hasModel = e.hasModel;
+  const bool song = hasModel && (e.m.grid.kind == KindSong || barCount(e.m) > 16);
+  const bool strip = song && !e.stripHidden && e.height != HeightCompact;
+  const float stripH = strip ? 40.0f + 6.0f : 0.0f, secH = strip && !e.m.grid.sections.empty() ? 26.0f + 6.0f : 0.0f;
+  float waveH = 0, seqH = 0, bodyH = 0;
+  float fixedH = 0;
+  switch (e.height) {
+    case HeightCompact:
+      seqH = 24;
+      fixedH = 30 + 6 + seqH + 4 + 16;
+      waveH = std::clamp(hostH > 0 ? hostH - fixedH - 8 : 66.0f, 44.0f, 96.0f);
+      break;
+    case HeightStandard:
+      seqH = 32;
+      fixedH = 36 + gap + stripH + seqH + secH + gap + 32 + 6 + 18 + 6 + 84;
+      waveH = std::clamp(hostH > 0 ? hostH - fixedH - 8 : 128.0f, 88.0f, 170.0f);
+      break;
+    default:
+      seqH = 34;
+      fixedH = 36 + gap + stripH + seqH + secH + gap + 32 + 6 + 18 + gap + 52;
+      waveH = std::clamp(hostH > 0 ? hostH - fixedH - 8 : 200.0f, 140.0f, 280.0f);
+      break;
+  }
+  bodyH = fixedH + waveH;
   if (!e.hasModel && e.path.empty()) devAutoRecord(a, t);  // K-145 dev checks
   if (!e.hasModel && e.path.empty() && recorderOpenFor(t)) {
     // J-218: the recorder in place of the drop zone, the same height
-    drawRecorder(a, t, e, o, ImVec2(o.x + W, o.y + bodyH));
-    ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + bodyH + 6));
+    const float rh = std::max(bodyH, e.height == HeightCompact ? 150.0f : 300.0f);
+    drawRecorder(a, t, e, o, ImVec2(o.x + W, o.y + rh));
+    ImGui::SetCursorScreenPos(ImVec2(o.x, o.y + rh + 6));
     ImGui::Dummy(ImVec2(W, 1));
-    e.body = ImVec2(W, bodyH + 6);
+    e.body = ImVec2(W, rh + 6);
     trace(e, "recorder", lv);
     return true;
   }
@@ -1263,33 +2020,125 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     trace(e, e.path.empty() ? "empty" : (e.job && e.job->state == 2) ? "error" : "analysing", lv);
     return true;
   }
-  const bool song = e.m.grid.kind == KindSong || barCount(e.m) > 16;
-  drawTopBar(a, t, e, o, W, headH, song);
-  float y = o.y + headH + gap;
-  if (song && !e.stripHidden) {
-    drawStrip(a, t, e, ImVec2(o.x, y), ImVec2(o.x + W, y + 28), lv);
-    y += 28 + 6;
+  editorKeys(a, t, e);
+  if (devCard && *devCard && e.card == CardNone && !e.cardTouched && e.job && e.job->state == 1) {
+    static bool devCardDone = false;
+    if (!devCardDone) {
+      devCardDone = true;
+      openCard(e, std::clamp(std::atoi(devCard), 1, static_cast<int>(CardTakes)), ImVec2(o.x + W * 0.4f, o.y + 36 + gap + waveH + seqH), true);
+    }
   }
-  drawWave(a, t, e, ImVec2(o.x, y), ImVec2(o.x + W, y + waveH), lv);
+  float y = o.y;
+  float x0 = o.x, cw = W;  // the ribbon's column
+  std::string rows;        // (trace: each row's name and its top and bottom, for the no-overlap checks)
+  auto row = [&](const char* name, float r0, float r1) {
+    char rb[64];
+    const ImVec2 q0 = edzoomui::toScreenHere(ImVec2(x0, r0)), q1 = edzoomui::toScreenHere(ImVec2(x0 + cw, r1));
+    std::snprintf(rb, sizeof rb, "%s%s %.0f %.0f %.0f %.0f", rows.empty() ? "" : "; ", name, q0.x, q0.y, q1.x, q1.y);
+    rows += rb;
+  };
+  if (e.height == HeightCompact) {
+    drawCompactRow(a, t, e, o, W, 30);
+    row("compactrow", y, y + 30);
+    y += 30 + 6;
+  } else {
+    drawHeader(a, t, e, o, W, 36, song);
+    row("header", y, y + 36);
+    y += 36 + gap;
+    if (e.height == HeightFull && !recorderOpenFor(t)) {
+      // B's library list beside the strip, the waveform and the sequence; the rows under them span the width
+      const float libW = W >= 1240 ? 252.0f : 212.0f;
+      const float libBottom = y + stripH + waveH + seqH + secH;
+      drawLibrary(a, t, e, ImVec2(o.x, y), ImVec2(o.x + libW, libBottom));
+      char rb[64];
+      const ImVec2 q0 = edzoomui::toScreenHere(ImVec2(o.x, y)), q1 = edzoomui::toScreenHere(ImVec2(o.x + libW, libBottom));
+      std::snprintf(rb, sizeof rb, "; library %.0f %.0f %.0f %.0f", q0.x, q0.y, q1.x, q1.y);
+      rows += rb;
+      x0 = o.x + libW + 10;
+      cw = W - libW - 10;
+    }
+  }
+  if (recorderOpenFor(t)) {
+    // 0.7.8: a new take into this instance, over the ribbon (Back returns)
+    const float rh = std::max(150.0f, o.y + bodyH - y);
+    drawRecorder(a, t, e, ImVec2(x0, y), ImVec2(x0 + cw, y + rh));
+    ImGui::SetCursorScreenPos(ImVec2(o.x, std::max(o.y + bodyH, y + rh) + 6));
+    ImGui::Dummy(ImVec2(W, 1));
+    e.body = ImVec2(W, std::max(bodyH, y + rh - o.y) + 6);
+    trace(e, "recorder", lv);
+    return true;
+  }
+  if (strip) {
+    drawStrip(a, t, e, ImVec2(x0, y), ImVec2(x0 + cw, y + 40), lv);
+    row("strip", y, y + 40);
+    y += 40 + 6;
+  }
+  drawWave(a, t, e, ImVec2(x0, y), ImVec2(x0 + cw, y + waveH), lv);
+  row("wave", y, y + waveH);
   y += waveH;
-  drawSequence(a, t, e, ImVec2(o.x, y), ImVec2(o.x + W, y + seqH), lv);  // J-149, under the waveform (J-152)
-  y += seqH + gap;
-  drawControls(a, t, e, ImVec2(o.x, y), W, barH);
-  y += barH + gap;
-  const float leftW = std::round((W - gap) * 0.5f);
-  drawPresets(a, t, e, ImVec2(o.x, y), ImVec2(o.x + leftW, y + toolsH));
-  drawPads(a, t, e, ImVec2(o.x + leftW + gap, y), ImVec2(o.x + W, y + toolsH), lv);
-  y += toolsH;
-  if (e.drawer) {
-    y += gap;
-    const float drawerH = drawerHeight(e);
-    drawDrawer(a, t, e, ImVec2(o.x, y), ImVec2(o.x + W, y + drawerH), lv);
-    y += drawerH;
+  drawSequence(a, t, e, ImVec2(x0, y), ImVec2(x0 + cw, y + seqH), lv);
+  row("sequence", y, y + seqH);
+  y += seqH;
+  if (secH > 0) {
+    y += 6;
+    drawSectionButtons(a, t, e, ImVec2(x0, y), cw, 26);
+    row("sections", y, y + 26);
+    y += 26;
   }
+  x0 = o.x, cw = W;  // (Full: back to the whole width under the library)
+  if (e.height == HeightCompact) {
+    y += 4;
+    drawHint(a, e, ImVec2(x0, y), cw, 16);
+    row("hint", y, y + 16);
+    y += 16;
+  } else {
+    y += gap;
+    drawActions(a, t, e, ImVec2(x0, y), cw, 32);
+    row("actions", y, y + 32);
+    y += 32 + 6;
+    drawHint(a, e, ImVec2(x0, y), cw, 18);
+    row("hint", y, y + 18);
+    y += 18;
+    if (e.height == HeightStandard) {
+      y += 6;
+      drawLayoutStrip(a, t, e, ImVec2(x0, y), cw);
+      row("layouts", y, y + 84);
+      y += 84;
+    } else {
+      y += gap;
+      drawKeys(a, t, e, ImVec2(x0, y), ImVec2(x0 + cw, y + 52), lv);
+      row("keys", y, y + 52);
+      y += 52;
+    }
+  }
+  y = std::max(y, o.y + bodyH);
   drawRegionMenu(a, t, e);
+  previewTick(a, t, e);
+  if (devPreview && *devPreview && e.previewName.empty()) {  // dev: hear a layout (screenshots of a preview)
+    if (const Preset* p = findLayout(a, e, devPreview)) previewStart(a, t, e, *p);
+  }
+  if (devPreview && *devPreview) e.previewSeen = true;
+  drawCard(a, t, e, lv);
   ImGui::SetCursorScreenPos(ImVec2(o.x, y + 6));
   ImGui::Dummy(ImVec2(W, 1));
   e.body = ImVec2(W, y + 6 - o.y);
+  if (std::getenv("GRIDLINE_SELTMANN_TRACE")) {
+    static const char* const hn[3] = {"compact", "standard", "full"};
+    char b[320];
+    // the room it had (window or region: its visible rect) and each row; host 0 = its own window
+    // (on screen: the room, the card and the rows as they show; the room's window is not zoomed itself)
+    const ImVec2 c0 = edzoomui::toScreenHere(e.card0), c1 = edzoomui::toScreenHere(e.card1);
+    std::snprintf(b, sizeof b, "seltmann: height %s host %.0f room %.0f %.0f %.0f %.0f tool %d card %d %.0f %.0f %.0f %.0f takes %zu", hn[e.height], hostH, e.win0.x,
+                  e.win0.y, e.win1.x, e.win1.y, e.tool, e.card, c0.x, c0.y, c1.x, c1.y, e.takes.size());
+    const std::string text = std::string(b) + "\nseltmann: rows " + rows + (e.crowd.empty() ? "" : "\nseltmann: crowded " + e.crowd);
+    static std::map<uint64_t, std::string> last;
+    std::string& l = last[t.key()];
+    if (l != text) {
+      l = text;
+      std::printf("%s\n", text.c_str());
+      std::fflush(stdout);
+    }
+  }
   trace(e, "ready", lv);
   return true;
 }

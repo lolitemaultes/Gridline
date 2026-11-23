@@ -1,6 +1,7 @@
 // Gridline — render to sampled instrument window (RN-08, see J59Ui.h and
 // engine/SampledInstrument.h).
 #include "../core/Crash.h"
+#include "../core/ThreadName.h"
 #include "Keys.h"
 #include <algorithm>
 #include <atomic>
@@ -20,6 +21,7 @@
 #include "DialogLayout.h"
 #include "HostedUi.h"
 #include "J59Ui.h"
+#include "ProgressUi.h"
 #include "Theme.h"
 #include "Widgets.h"
 #include "WorkerStall.h"
@@ -96,7 +98,7 @@ void start(App& a) {
   // A worker for every instrument (host::UiThreadRenderScope, as the render dialog does; no heartbeat
   // for the interface from its progress either, for the same reason). K-133: its own sign of life is
   // watched (a worker that stops moving on is reported).
-  job.worker = std::thread([song = std::move(song), ch, o, dir]() {
+  job.worker = std::thread([song = std::move(song), ch, o, dir]() { gl::threads::setName("gl-render-smp");
     host::UiThreadRenderScope scope;
     sampled::Result r;
     try {  // an exception must not leave this thread (out of memory, a file system error)
@@ -154,6 +156,15 @@ void finish(App& a) {
 void window(App& a) {
   finish(a);
   if (job.running) workerstall::watch(a, job.watch, job.beat, "Render to sampled instrument", "");
+  const progui::Fake* fk = progui::fake("samplerrender");  // (tests: a stand-in render of the first channel; closes after it)
+  static bool faked = false;
+  if (fk && !R.open && !a.doc.song().channels.empty()) {
+    R.open = true;
+    R.channel = a.doc.song().channels.front().id;
+  } else if (!fk && faked) {
+    R.open = false;
+  }
+  faked = fk != nullptr;
   if (!R.open) return;
   const Song& song = a.doc.song();
   const Channel* ch = song.channel(R.channel);
@@ -172,7 +183,8 @@ void window(App& a) {
     return;
   }
   ui::KeepWindowInViewport();
-  const bool busy = job.running;
+  progui::note("samplerrender");
+  const bool busy = job.running || fk;
   ui::BeginDialogBody("##j59renderbody");
   ImGui::BeginDisabled(busy);
   const float w = 520;
@@ -296,13 +308,15 @@ void window(App& a) {
   const float bw = 96;
   if (busy) {
     ui::DialogFooter(w);
+    // 0.7.8: the percent on the bar, and the row of a stalled render's warning kept from the start.
+    const double f = fk ? fk->frac : job.progress.load();
     char pr[64];
-    std::snprintf(pr, sizeof pr, i18n::tr("Rendering %.0f%%"), job.progress.load() * 100.0);
-    ImGui::ProgressBar(static_cast<float>(job.progress.load()), ImVec2(w - bw - theme::kS2, 0), pr);
+    std::snprintf(pr, sizeof pr, i18n::tr("Rendering %.0f%%"), std::floor(std::clamp(f, 0.0, 1.0) * 100.0));
+    ImGui::ProgressBar(static_cast<float>(f), ImVec2(w - bw - theme::kS2, 0), pr);
     ImGui::SameLine(0, theme::kS2);
-    if (ui::TextButton("Stop", false, bw, "Cancel the render")) job.cancel = true;
-    if (job.watch.stalled())
-      ImGui::TextColored(theme::vec(theme::pal().danger), "%s", i18n::tr("No progress for a while. A plugin or the disk may not be responding."));
+    if (ui::TextButton("Stop", false, bw, "Cancel the render") && !fk) job.cancel = true;
+    const bool stalled = fk ? fk->stalled : job.watch.stalled();
+    progui::Line(stalled ? i18n::tr("No progress for a while. A plugin or the disk may not be responding.") : "", w, theme::pal().danger);
   } else {
     ui::DialogFooter(ui::ButtonRowWidth(2, bw));
     if (ui::TextButton("Cancel", false, bw) || (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ::gl::keys::escapePressed()))

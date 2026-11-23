@@ -404,6 +404,50 @@ void testNotches() {
   expect(grows, "notches never shrink as the zoom grows");
 }
 
+// K-388: Smooth's divots: size, thinning by zoom, and the loop points visited.
+void testSmoothDivots() {
+  const loopnotch::SmoothGeom bar = loopnotch::smoothGeom(64.0f, 40.0f);
+  expect(bar.show && bar.stride == 1 && bar.width >= 8.0f && bar.width <= 11.0f && bar.depth >= 2.0f && bar.depth <= bar.width * 0.6f + 1e-4f && bar.depth >= 4.0f,
+         "smooth divot at a 64 px repeat: 8..11 px wide, every loop point");
+  expect(loopnotch::smoothGeom(400.0f, 40.0f).width == 11.0f, "smooth divot zoomed in: at most 11 px wide");
+  expect(!loopnotch::smoothGeom(64.0f, 10.0f).show, "a region under 12 px tall: no divots");
+  expect(loopnotch::smoothGeom(400.0f, 16.0f).depth <= 16.0f * 0.2f + 1e-4f, "a short region: shallow divots");
+  // Thinning: shown divots are always at least kSmoothMinGap apart, never a saw edge; past a stride of 8 none.
+  bool apart = true, strides = true;
+  int lastStride = 2;
+  for (float px = 0.5f; px <= 120.0f; px += 0.25f) {
+    const loopnotch::SmoothGeom g = loopnotch::smoothGeom(px, 40.0f);
+    if (g.show) apart = apart && px * static_cast<float>(g.stride) >= loopnotch::kSmoothMinGap && px * static_cast<float>(g.stride) >= g.width * 3.0f;
+    strides = strides && (g.stride == 1 || g.stride == 2);
+    if (g.show) strides = strides && g.stride <= lastStride, lastStride = g.stride;
+  }
+  expect(apart, "smooth divots: shown ones at least 20 px (and 3 widths) apart at every zoom");
+  expect(strides, "smooth divots: every loop point or every 2nd, less thinned as the zoom grows");
+  expect(loopnotch::smoothGeom(14.0f, 40.0f).show && loopnotch::smoothGeom(14.0f, 40.0f).stride == 2, "a 14 px repeat: every 2nd divot");
+  expect(!loopnotch::smoothGeom(8.0f, 40.0f).show, "an 8 px repeat: no divots (never every 4th: it would read as a longer loop)");
+  expect(!loopnotch::smoothGeom(1.5f, 40.0f).show, "a 1.5 px repeat: no divots");
+  // Loop points: first one where the first (partial) pass ends; then every loop; stride counted from the first.
+  expect(loopnotch::firstLoopPoint(0, 384) == 384 && loopnotch::firstLoopPoint(100, 384) == 284 && loopnotch::firstLoopPoint(384 * 2 + 10, 384) == 374,
+         "first loop point: after the first, possibly partial, pass");
+  expect(loopnotch::firstLoopPoint(150, 96, 100) == 46, "first loop point: a cut loop [100, 196) entered at 150");
+  std::vector<Tick> at;
+  loopnotch::forEachLoopPoint(100, 2000, 384, 0, 1, -1e9, 1e9, [&](Tick t, int) { at.push_back(t); });
+  const std::vector<ClipPass> ps = loopPasses(100, 2000, 384);
+  bool same = at.size() + 1 == ps.size();
+  for (size_t k = 1; same && k < ps.size(); ++k) same = at[k - 1] == ps[k].at;
+  expect(same, "loop points: exactly the passes' starts (loopPasses)");
+  at.clear();
+  std::vector<int> ks;
+  loopnotch::forEachLoopPoint(0, 384 * 20, 384, 0, 4, -1e9, 1e9, [&](Tick t, int k) { at.push_back(t), ks.push_back(k); });
+  expect(at.size() == 5 && at[0] == 384 && at[1] == 384 * 5 && ks[1] == 5, "stride 4: loop points 1, 5, 9, ... (the first always)");
+  at.clear();
+  loopnotch::forEachLoopPoint(0, 384 * 1000, 384, 0, 2, 384.0 * 500.5, 384.0 * 506.0, [&](Tick t, int) { at.push_back(t); });
+  expect(at.size() == 3 && at[0] == 384 * 501 && at[2] == 384 * 505, "visible range: only the loop points in view are visited (stride kept)");
+  at.clear();
+  loopnotch::forEachLoopPoint(0, 384, 384, 0, 1, -1e9, 1e9, [&](Tick t, int) { at.push_back(t); });
+  expect(at.empty(), "one whole pass: no loop point");
+}
+
 }  // namespace
 
 int main() {
@@ -417,5 +461,6 @@ int main() {
   testDemo();
   testCopies();
   testNotches();
+  testSmoothDivots();
   return finish();
 }

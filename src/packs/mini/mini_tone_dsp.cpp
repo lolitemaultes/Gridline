@@ -272,6 +272,19 @@ class Tines final : public MiniFx {
 
 // ---- Chime: bank of tuned two-pole resonators ---------------------------------
 class Chime final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override {
+    for (const auto& r : r_)
+      for (int c = 0; c < 2; ++c)
+        if (r.y1[c] != 0 || r.y2[c] != 0 || r.x1[c] != 0 || r.x2[c] != 0) return false;
+    return true;
+  }
+  void clocks(const PluginState& s, const ProcessContext&, int n) override {
+    const double mixT = pv(s, chime::Mix);
+    mix_.advance(mixT, n);  // K-142 (0.7.8 close): O(1) once settled
+  }
+ private:
   static constexpr int kPartials = 12;
   struct Res {
     double b0 = 0, a1 = 0, a2 = 0, y1[2] = {}, y2[2] = {}, x1[2] = {}, x2[2] = {}, amp = 0;

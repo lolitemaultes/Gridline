@@ -11,6 +11,7 @@
 // something is being dragged and dropped, a press inside a popup or tooltip, a press under a modal
 // dialog (the dialog stays on top) and a press on the window that already has the focus.
 #pragma once
+#include <string>
 
 struct ImGuiWindow;
 
@@ -38,5 +39,16 @@ bool focusWindowKeepPopups(ImGuiWindow* w);
 // it) and not while a menu or pop-up is open. Drawn once a frame, after every window. colour 0: the
 // palette's accent; otherwise that colour (an ImU32, alpha included).
 void drawKeyFocusFrame(unsigned int colour = 0);
+// K-376: an area that only borrows the keys for a moment (true for it) keeps the frame on the area
+// that had it: the Tracker's header band, which hands the keys back to the pattern once a click on
+// it is over. One function, set by the layout that needs it (it checks the layout itself).
+void setKeyFocusBorrower(bool (*borrows)(const ImGuiWindow* area));
+// K-376 (dev, tests): the frame's record since the last reset: frames drawn, frames without it (no
+// area with the keys), frames with a menu or pop-up open, moves to another area, the area now.
+struct KeyFocusFrameStats {
+  int drawn = 0, missed = 0, popups = 0, moves = 0;
+  std::string area;
+};
+KeyFocusFrameStats& keyFocusFrameStats();
 
 }  // namespace gl::ui

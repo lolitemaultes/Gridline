@@ -1,4 +1,5 @@
 #include "PluginFolders.h"
+#include "../core/ThreadName.h"
 
 #include <algorithm>
 #include <cctype>
@@ -122,7 +123,7 @@ std::vector<FolderRow> folderRowsForDisplay(const Format& f, const PluginPrefs& 
         d.refreshing = true;
         try {
           // The format by value (the list of formats may be gone when a late refresh ends).
-          std::thread([fmt = f, prefs = p, gen] {
+          std::thread([fmt = f, prefs = p, gen] { gl::threads::setName("gl-plug-folders");
             std::vector<FolderRow> rows = folderRows(fmt, prefs);
             std::lock_guard<std::mutex> g2(displayLock());
             DisplayRows& e = displayRows()[fmt.id];

@@ -37,6 +37,7 @@
 #include "collab/Hub.h"
 #include "collab/Link.h"
 #include "collab/NetTest.h"
+#include "core/ThreadName.h"
 #include "juice/juice.h"
 
 using namespace gl;
@@ -385,7 +386,8 @@ std::string withPort(const std::string& desc, uint16_t port) {
 
 // Runs one join; returns whether it connected and synced. `jv` gets the joiner's last view,
 // `path` the inviter's path to the joiner.
-bool runScenario(const Scenario& sc, Hub::JoinView* jv = nullptr, std::string* path = nullptr) {
+bool runScenario(const Scenario& sc, Hub::JoinView* jv = nullptr, std::string* path = nullptr,
+                 const std::function<void(Computer&, Computer&)>& connected = nullptr) {
   Net net(2);
   if (!net.ok()) return false;
   net.router(0).kind = sc.inviter;
@@ -464,6 +466,7 @@ bool runScenario(const Scenario& sc, Hub::JoinView* jv = nullptr, std::string* p
       });
     }
   }
+  if (connected && ok) connected(a, b);
   if (path && ok) {
     for (const auto& lv : a.hub->links())
       if (!lv.path.empty()) *path = lv.path;
@@ -476,6 +479,72 @@ bool runScenario(const Scenario& sc, Hub::JoinView* jv = nullptr, std::string* p
               net.router(0).dropped, net.router(1).dropped, b.hub->joinView().attempts);
   if (!ok && std::getenv("GRIDLINE_COLLAB_DEBUG")) std::printf("# inviter links:\n%s# joiner links:\n%s", a.hub->describeLinks().c_str(), b.hub->describeLinks().c_str());
   return ok;
+}
+
+// K-142 (0.7.8): a connected session left idle. The network threads sleep while nothing is
+// sent (they woke every 10 ms before), the links stay up past the idle timeout (keepalives
+// still go out on time), and an edit made after the idle spell reaches the other computer at
+// once. The interface polls at the idle pace (10 frames a second) meanwhile. K-142 (0.7.8 follow-up):
+// the edit wakes the receiving interface from its network thread, before that interface polls.
+void idleLinks(Computer& a, Computer& b) {
+  auto up = [](Computer& c) {
+    for (const auto& lv : c.hub->links())
+      if (lv.state == Hub::LinkView::State::Direct || lv.state == Hub::LinkView::State::Relayed) return true;
+    return false;
+  };
+  frame({&a, &b}, 3);  // the join's traffic settles
+  gl::threads::setCountWakes(true);
+  auto hubWakes = [] {
+    for (const auto& w : gl::threads::wakes())
+      if (w.name == "gl-collab-hub") return w.count;
+    return uint64_t{0};
+  };
+  const uint64_t w0 = hubWakes();
+  const double idleSecs = 20, t0 = secs();
+  while (secs() < t0 + idleSecs) {  // idle pace: a frame every 100 ms
+    gClock.ms += 100;
+    for (Computer* c : {&a, &b}) {
+      c->hub->poll(secs());
+      if (c->peer.s) c->peer.s->frame(secs());
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  const double perHub = static_cast<double>(hubWakes() - w0) / 2.0 / (secs() - t0);
+  gl::threads::setCountWakes(false);
+  std::printf("# idle session: each network thread woke %.1f times a second\n", perHub);
+  for (const auto& t : gl::threads::sampleThreads())
+    if (t.name.empty() || t.name.rfind("gl-collab", 0) == 0)
+      std::printf("#   thread %s: %.3f s of processor time so far\n", t.name.empty() ? "(unnamed)" : t.name.c_str(), t.cpu);
+  expect(perHub <= 8.0, "an idle session: the network threads sleep (at most 8 wakeups a second each, was 100)");
+  expect(up(a) && up(b), "the link is still up after 20 s idle (keepalives went out; the idle timeout is 15 s)");
+  // K-142 (0.7.8 follow-up): the message wakes the other computer's interface from its network
+  // thread (Hub::setUiWake), before that interface polls again: a sleeping interface takes it at once.
+  static std::atomic<int> hookCalls{0};
+  Hub::setUiWake([] { hookCalls.fetch_add(1); });
+  // an edit after the idle spell arrives at once
+  a.peer.doc.addChannel("Snare", "gl.kick");
+  const uint64_t bw0 = b.hub->uiWakes();
+  const int calls0 = hookCalls.load();
+  if (a.peer.s) a.peer.s->frame(secs());  // (only the sender takes a turn: the receiver's interface sleeps)
+  a.hub->poll(secs());
+  const auto s0 = std::chrono::steady_clock::now();
+  while (b.hub->uiWakes() == bw0 && std::chrono::steady_clock::now() - s0 < std::chrono::seconds(3))
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  const double hookTook = std::chrono::duration<double>(std::chrono::steady_clock::now() - s0).count();
+  std::printf("# the receiving network thread woke its interface %.3f s after the edit went out\n", hookTook);
+  expect(b.hub->uiWakes() > bw0 && hookCalls.load() > calls0 && hookTook < 0.5,
+         "an edit wakes the other computer's interface from its network thread at once (no frame of its own)");
+  Hub::setUiWake(nullptr);
+  const double e0 = secs();
+  const bool got = until({&a, &b}, 10, [&] { return synced(a, b); });
+  const double took = secs() - e0;
+  std::printf("# an edit after the idle spell arrived in %.3f s\n", took);
+  expect(got && took < 1.0, "an edit after the idle spell reaches the other computer within a second");
+  // and the other way
+  b.peer.doc.addChannel("Hat", "gl.kick");
+  const double e1 = secs();
+  const bool got2 = until({&a, &b}, 10, [&] { return synced(a, b); });
+  expect(got2 && secs() - e1 < 1.0, "and an edit from the joiner comes back as fast");
 }
 
 // K-312: an inviter behind a symmetric router, a joiner behind a port-restricted one: each
@@ -637,6 +706,13 @@ int main() {
     s.inviter = Router::Kind::Open;
     s.replyAfter = -1;
     if (want(s.name)) expect(runScenario(s), "an inviter whose router lets connections in: joined without a reply code");
+  }
+  {
+    Scenario s;
+    s.name = "idle_session";
+    s.inviter = Router::Kind::Open;
+    s.replyAfter = -1;
+    if (want(s.name)) expect(runScenario(s, nullptr, nullptr, idleLinks), "an idle session: connected");
   }
   {
     Scenario s;

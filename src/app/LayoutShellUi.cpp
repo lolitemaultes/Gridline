@@ -13,6 +13,7 @@
 #include <vector>
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/I18n.h"
+#include "../core/ClipWindow.h"
 #include "../core/LayoutHomes.h"
 #include "../core/PaneTabs.h"
 #include "../core/PluginInfo.h"
@@ -70,6 +71,7 @@ const std::vector<WindowFlag>& windowFlags(App& a) {
       {"Keyboard shortcuts", &a.showShortcuts}, {"Project info", &a.showInfo},
       {"Plugin manager", &a.showPluginManager}, {"Collaboration", &a.showCollab},
       {"Sync review", &a.showSyncReview}, {"Groove editor", &a.showGroove},
+      {"LFO board", &a.showLfoBoard},   {"LFO detail", &a.showLfoDetail},  // K-247
   };
   for (const layout::Item& it : layout::items())
     if (std::strncmp(it.id, "N", 1) == 0 && *it.window && !*it.later) v.push_back({it.window, &partFlags()[it.window]});
@@ -222,8 +224,9 @@ void setRegionVisible(App& a, const std::string& region, bool on, bool alone) {
       setRegionVisible(a, r->parent, true);
       st = regionState(a, p);
     }
-  // K-112c: a region of a group (the Clips detail bands) hides the others first, with their windows.
-  if (const layout::Region* r = layout::findRegion(p, region); on && alone && r && *r->group) {
+  // K-112c: a region of a group (the Clips detail views) hides the others first, with their windows
+  // (0.7.8: whatever `alone` says: the two never stack).
+  if (const layout::Region* r = layout::findRegion(p, region); on && r && *r->group) {
     for (const layout::Region& o : layout::shell(p).regions)
       if (region != o.id && std::string(o.group) == r->group) setRegionVisible(a, o.id, false);
     st = regionState(a, p);
@@ -415,12 +418,16 @@ void buildShell(App& a, Preset p, ImGuiID dockspace, ImVec2 size) {
       if (id != "live.side")
         if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(node)) n->SetLocalFlags(n->LocalFlags | ImGuiDockNodeFlags_AutoHideTabBar);
   // K-106: the Tracker's header band and lower frame show no tab bar while they hold one part (the
-  // header boxes, the device chain); a second window docked there (the browser as the disk page)
-  // brings the tabs back so both stay reachable.
+  // header boxes, the device chain); a second window docked there brings the tabs back so both stay
+  // reachable. trackerband (0.7.8): the header band takes no other window (none is homed there now,
+  // and none may be dragged onto it: keepTrackerBand sends one that docks there anyway home).
   if (p == Preset::Tracker)
     for (const auto& [id, node] : gNodes)
       if (id == "tracker.header" || id == "tracker.lower")
-        if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(node)) n->SetLocalFlags(n->LocalFlags | ImGuiDockNodeFlags_AutoHideTabBar);
+        if (ImGuiDockNode* n = ImGui::DockBuilderGetNode(node)) {
+          const int noDock = static_cast<int>(ImGuiDockNodeFlags_NoDockingOverMe) | static_cast<int>(ImGuiDockNodeFlags_NoDockingSplit);
+          n->SetLocalFlags(n->LocalFlags | ImGuiDockNodeFlags_AutoHideTabBar | (id == "tracker.header" ? noDock : 0));
+        }
   // K-106: the Tracker's centre holds its pages as hidden tabs (the header's page strip picks one);
   // the pattern editor is the page it starts on.
   if (p == Preset::Tracker)
@@ -624,6 +631,11 @@ bool restorePanes(App& a, Preset p) {
     if (!w.compare(0, 6, "front:")) fronts.push_back(w.substr(6));
     else open.insert(w);
   }
+  // trackerband (0.7.8): the Tracker's header band always opens (0.7.7 could save its panes without it,
+  // the Browser alone in its place). The Browser saved open comes back in the side panel, its home now.
+  if (p == Preset::Tracker) {
+    open.insert("Order list");
+  }
   for (const layout::Item& it : layout::items())
     if (*it.window && keptAcrossRuns(a, it, p))
       if (bool* f = windowOpenFlag(a, it.window)) *f = open.count(it.window) > 0;
@@ -660,7 +672,6 @@ namespace {
 struct Boost {
   float px = 0;
   int frame = -10;
-  bool exact = false;  // setBandSize: the band is px tall (wide), not px more
   float maxShare = 0.6f;  // the most of its parent the band may take
 };
 std::map<std::string, Boost>& boosts() {
@@ -669,9 +680,8 @@ std::map<std::string, Boost>& boosts() {
 }
 }  // namespace
 
-void setBandBoost(const std::string& region, float px) { boosts()[region] = Boost{std::max(0.0f, px), ImGui::GetFrameCount(), false}; }
 void setBandSize(const std::string& region, float px, float maxShare) {
-  boosts()[region] = Boost{std::max(1.0f, px), ImGui::GetFrameCount(), true, std::clamp(maxShare, 0.1f, 0.95f)};
+  boosts()[region] = Boost{std::max(1.0f, px), ImGui::GetFrameCount(), std::clamp(maxShare, 0.1f, 0.95f)};
 }
 
 namespace {
@@ -690,6 +700,8 @@ const StripName kStripNames[] = {
     {"Piano roll", i18n::N_("Piano roll"), true}, {"Channel rack", i18n::N_("Steps"), true}, {"Loupe", i18n::N_("Loupe"), true},
     {"###autoedit", i18n::N_("Automation"), true}, {"Chord progression", i18n::N_("Chords"), false}, {"Mixer", i18n::N_("Mixer"), true},
     {"Smart controls", i18n::N_("Smart controls"), false}, {"Pattern editor", i18n::N_("Pattern"), false},
+    {"LFO board", i18n::N_("LFO board"), false},  // K-247: its segment shows while it is open
+    {"Seltmann", i18n::N_("Seltmann"), false},
 };
 
 // K-237: tabs the person closed in a pane (this run; their window can come back from the menu, the
@@ -1333,6 +1345,67 @@ void drawPaneStrips(App& a) {
 
 }  // namespace
 
+void showPaneWindow(App& a, const std::string& stableName) {
+  bool* f = windowOpenFlag(a, stableName);
+  if (!f) return;
+  // (as the strip finds it this frame: the audio editor holds Smooth's lower pane)
+  gAudioOn = active() == Preset::Logic && a.settings.getBool("ui.loupePinned") && !a.showPiano && !a.showRack;
+  showPaneTab(a, f);
+}
+
+namespace {
+// Smooth's pane views behind the control bar's pane buttons (and their keys): the pane each lives in
+// and the window it shows ("" for the editors: the piano roll, the step editor or the audio editor).
+struct SmoothView {
+  const char* cmd;
+  const char* region;
+  const char* window;
+};
+constexpr SmoothView kSmoothViews[] = {{"view.editors", "logic.lower", ""},          {"view.smartControls", "logic.lower", "Smart controls"},
+                                       {"view.mixer", "logic.lower", "Mixer"},        {"view.lists", "logic.right", "Lists"},
+                                       {"view.notes", "logic.right", "Notes"},        {"view.browser", "logic.right", "Browser"},
+                                       {"view.files", "logic.right", "Files"}};
+const SmoothView* smoothView(const char* cmd) {
+  for (const SmoothView& v : kSmoothViews)
+    if (std::strcmp(v.cmd, cmd) == 0) return &v;
+  return nullptr;
+}
+}  // namespace
+
+bool smoothViewShown(App& a, const char* cmd) {
+  const SmoothView* v = smoothView(cmd);
+  if (!v || !layout::visible(layout::shell(Preset::Logic), regionState(a, Preset::Logic), v->region)) return false;
+  // (as the lower pane's strip finds it: the audio editor holds the pane while it is pinned there and no
+  // other editor is open; the mixer's flag can stay set behind it)
+  const bool audio = a.settings.getBool("ui.loupePinned") && !a.showPiano && !a.showRack;
+  const bool* smart = windowOpenFlag(a, "Smart controls");
+  const bool smartOn = smart && *smart;
+  const bool mixerOn = a.showMixer && !audio && !smartOn;
+  if (std::strcmp(cmd, "view.mixer") == 0) return mixerOn;
+  if (std::strcmp(cmd, "view.smartControls") == 0) return smartOn;
+  if (!*v->window) return !mixerOn && !smartOn;  // the editors: whatever else the pane shows (its editor tabs)
+  const bool* f = windowOpenFlag(a, v->window);
+  return f && *f;
+}
+
+bool smoothViewToggle(App& a, const char* cmd) {
+  const SmoothView* v = smoothView(cmd);
+  if (!v || active() != Preset::Logic || !shellBuilt(a, Preset::Logic)) return false;
+  if (smoothViewShown(a, cmd)) {  // shown: the pane closes (the tracks take its room, as any other close)
+    setRegionVisible(a, v->region, false);
+    return true;
+  }
+  // Not shown: its window opens in the pane. An open pane switches to it as a click on its tab does; a
+  // closed one comes back with it alone (the shell shows a pane for a window opened into it, without the
+  // pane's default window beside it).
+  if (*v->window) {
+    showPaneWindow(a, v->window);
+  } else if (!a.showPiano && !a.showRack) {
+    toggleEditors(a);  // the editor shown last (the piano roll or the step editor); the pane's rule closes the one shown
+  }
+  return true;
+}
+
 bool reopenClosedTab(App& a, const std::string& region) {
   const Preset p = active();
   if (!shellBuilt(a, p)) return false;  // (the Smooth strips; K-237: the Clips and Tracker rails too)
@@ -1536,6 +1609,109 @@ void regionsFrameStart(App& a) {
 
 void closePaneLater(const std::string& region) { gDeferHide.push_back(region); }
 
+namespace {
+constexpr const char* kTrackerBand = "tracker.header";
+constexpr const char* kTrackerBandWindow = "Order list";
+constexpr float kTrackerBrowserW = 280.0f;  // the side panel's width for the Browser (its rail included)
+constexpr float kDockDividerW = 2.0f;       // what the dock's divider takes from a side panel's width
+
+// trackerband (0.7.8): the Tracker's header band (the order list, tempo and rows, scopes, instruments, the
+// buttons and the page tabs) is never covered or lost. 0.7.7 docked the Browser there as a tab in front of
+// it, and a layout saved with the Browser open but the band's own window closed came back with the Browser
+// alone in the band: no band, no page tabs, no tab strip to switch back. Each frame here: the band is shown,
+// its window open and in front, no tab is moved into it (or its window out of it), and a window that docks
+// in it anyway (a saved dock file, a drag) goes back to its own home (the side panel for the Browser),
+// or floats when it has none.
+void keepTrackerBand(App& a, int frame) {
+  const Preset p = Preset::Tracker;
+  const layout::Shell& sh = layout::shell(p);
+  layout::State st = regionState(a, p);
+  bool fix = false;
+  for (auto it = st.moved.begin(); it != st.moved.end();) {
+    if (it->second == kTrackerBand || it->first == kTrackerBandWindow) {
+      it = st.moved.erase(it);
+      fix = true;
+    } else {
+      ++it;
+    }
+  }
+  if (!layout::visible(sh, st, kTrackerBand)) {
+    layout::setVisible(sh, st, kTrackerBand, true);
+    fix = true;
+  }
+  // The Browser's home is the side panel: the first time it opens there (and the person has not sized the
+  // panel) the panel takes a browser's width, so its tabs and search field fit; a width dragged stays theirs.
+  if (const bool* b = windowOpenFlag(a, "Browser"); b && *b && !st.regionSize.count("tracker.side") &&
+                                                    std::strcmp(windowHomeIn("Browser", p).region, "tracker.side") == 0) {
+    st.regionSize["tracker.side"] = kTrackerBrowserW;
+    fix = true;
+  }
+  // 0.7.8: the Performance panel's home is the side panel too: as it opens there the panel widens to the
+  // width its readouts need (Performance.cpp works it out from the fonts and the language), so nothing in
+  // it is squeezed or wrapped; a wider panel stays as it is, and a width dragged after that is theirs.
+  {
+    static bool perfWas = false;
+    const bool* f = windowOpenFlag(a, "Performance");
+    const bool perf = f && *f && std::strcmp(windowHomeIn("Performance", p).region, "tracker.side") == 0;
+    if (perf && !perfWas) {
+      gFrontTabs["Performance"] = 0;  // in front of the Browser or another tab the side panel holds (the CPU readout opens it to be seen)
+      const float want = std::ceil(performanceTrackerWidth(a) + layout::kPaneRailW + kDockDividerW);
+      const layout::Region* r = layout::findRegion(p, "tracker.side");
+      const float now = st.regionSize.count("tracker.side") ? st.regionSize["tracker.side"] : r ? r->size.px : 0.0f;
+      if (now < want) {
+        st.regionSize["tracker.side"] = want;
+        fix = true;
+      }
+    }
+    perfWas = perf;
+  }
+  if (fix) {
+    setRegionState(a, p, st);
+    gRebuild = true;
+  }
+  if (bool* f = windowOpenFlag(a, kTrackerBandWindow); f && !*f) {
+    *f = true;
+    gOpenedFrame[kTrackerBandWindow] = frame;
+  }
+  ImGuiDockNode* n = ImGui::DockBuilderGetNode(regionNode(kTrackerBand));
+  if (!n) {
+    return;
+  }
+  ImGuiWindow* band = nullptr;
+  std::vector<ImGuiWindow*> foreign;
+  for (ImGuiWindow* w : n->Windows) {
+    if (std::strcmp(ui::stableWindowName(w->Name), kTrackerBandWindow) == 0) {
+      band = w;
+    } else {
+      foreign.push_back(w);
+    }
+  }
+  for (ImGuiWindow* w : foreign) {
+    const std::string name = ui::stableWindowName(w->Name);
+    const layout::Home h = windowHomeIn(name, p);
+    const bool homed = dockedHome(h) && std::strcmp(h.region, kTrackerBand) != 0 && layout::hasRegion(p, h.region);
+    const bool open = w->Active || w->WasActive;
+    if (gCollapseTrace) {
+      std::printf("frame %d band holds %s (%s): sent %s\n", frame, name.c_str(), open ? "open" : "closed", homed ? h.region : "out");
+    }
+    if (homed && open) {
+      // An open window goes home with a rebuild of the dock tree (its region shown, the other windows where
+      // they live); its region holds it meanwhile, so it does not collapse as the window leaves it.
+      gOpenedFrame[name] = frame;
+      if (!layout::visible(sh, regionState(a, p), h.region)) {
+        setRegionVisible(a, h.region, true);
+      }
+      gRebuild = true;
+    } else {
+      ImGui::DockBuilderDockWindow(w->Name, 0);  // (a closed window, or one with no docked home: out of the band)
+    }
+  }
+  if (band && n->VisibleWindow != band && n->TabBar && band->TabId) {
+    n->TabBar->NextSelectedTabId = band->TabId;
+  }
+}
+}  // namespace
+
 void collapseRegions(App& a) {
   const Preset p = active();
   if (!shellBuilt(a, p) || gBuiltFor != p) {
@@ -1544,6 +1720,9 @@ void collapseRegions(App& a) {
     return;
   }
   const int frame = ImGui::GetFrameCount();
+  if (p == Preset::Tracker) {
+    keepTrackerBand(a, frame);
+  }
   if (gHeldFor != p || gHeldFrame != frame - 1) {  // just switched here (or back): nothing to compare with
     gHeld.clear();
     gOpenAtCheck.clear();  // (the windows open here count as just opened: they draw once the tree is built)
@@ -1838,7 +2017,14 @@ void shellFrame(App& a) {
         changed = true;
       }
     }
-    if (r.exclusive && dn) {
+    if (r.exclusive && (!dn || !layout::visible(sh, st, r.id))) {
+      // A hidden pane shows nothing: whatever is open when it comes back counts as just opened. Without
+      // this the one shown before it closed still counted as open, so a pane opened again by the same
+      // button (Smooth's Mixer, Smart controls, Lists, Notes) lost to the pane's default window, which
+      // opens with it: the Mixer button's third click showed the piano roll, Notes the Browser.
+      for (const layout::Item& it : layout::items())
+        if (*it.window && r.id == std::string(homeIn(it, p).region)) prevOpen[std::string(r.id) + "|" + it.window] = false;
+    } else if (r.exclusive) {
       // The members: windows homed here. One opened this frame closes the others.
       std::vector<std::pair<const char*, bool*>> members;
       for (const layout::Item& it : layout::items()) {
@@ -1937,8 +2123,7 @@ void pinBands(App& a) {
       const float parent = hz ? dn->ParentNode->Size.x : dn->ParentNode->Size.y;
       float want = layout::regionExtent(r, parent, st, member);
       if (const auto b = boosts().find(r.id); b != boosts().end() && b->second.px > 0 && ImGui::GetFrameCount() - b->second.frame <= 1)
-        want = b->second.exact ? std::min(b->second.px, std::floor(parent * b->second.maxShare))
-                               : std::max(want, std::min(want + b->second.px, std::floor(parent * b->second.maxShare)));
+        want = std::min(b->second.px, std::floor(parent * b->second.maxShare));
       float& v = hz ? dn->SizeRef.x : dn->SizeRef.y;
       if (want > 0 && std::fabs(v - want) > 0.5f) v = want;
       // K-112c (round 22): a sibling without the central node shares the parent by the ratio of the
@@ -2457,10 +2642,8 @@ bool pluginRow(App& a, const layout::Item& it, Preset p, int frame) {
       a.doc.setSlotPlugin(gInv.track, gInv.slot, it.plugin);
       a.fxEditor = {gInv.track, gInv.slot};
     }
-    // K-106 cp18-cp20: the Tracker's lower band shows its own screen for the instrument (Sample or
-    // Instrument editor, the Channel frame); the plugin's editor opens from the frame's "Open plugin
-    // window", floating, as the person opens it there.
-    if (p == Preset::Tracker && gInv.channel != kNoId) trackereditors::openPluginWindow(a, gInv.channel);
+    // K-391: in the Tracker too the channel settings asked for float (the band shows only the
+    // Tracker's own screens), as a double-click opens them there.
     a.syncEngine();
     gInv.step = 1;
     return false;
@@ -2470,12 +2653,20 @@ bool pluginRow(App& a, const layout::Item& it, Preset p, int frame) {
     return false;
   }
   std::string host;
-  const int n = gInv.channel != kNoId ? hostbody::drawnNow(hostbody::Body::ChannelSettings, gInv.channel, -1, &host)
-                                      : hostbody::drawnNow(hostbody::Body::EffectEditor, gInv.track, gInv.slot, &host);
-  const bool hosted = h.kind == HomeKind::Host;  // (the Tracker's instruments: Inside its lower band, their editors float)
-  const bool pass = n == 1 && (hosted ? host == "Device chain" : host != "Device chain");
+  // 0.7.8: a sampler's settings are the Audio clip window (its own window; the Clips device band
+  // draws it in the band's form, Smooth on its lower pane's Audio tab)
+  const bool clipWin = gInv.channel != kNoId && clipwin::ownsType(it.plugin);
+  const int n = clipWin                  ? hostbody::drawnNow(hostbody::Body::ClipEditor, gInv.channel, -1, &host)
+                : gInv.channel != kNoId ? hostbody::drawnNow(hostbody::Body::ChannelSettings, gInv.channel, -1, &host)
+                                        : hostbody::drawnNow(hostbody::Body::EffectEditor, gInv.track, gInv.slot, &host);
+  const bool hosted = h.kind == HomeKind::Host;
+  const bool lower = hosted && std::string_view(h.region) == "logic.lower";
+  // 0.7.8: Smooth hosts Seltmann on its lower-pane tab, and a sampler on its Audio tab (in the Loupe pane)
+  // K-391: the Tracker floats every editor (a sampler's settings in the Audio clip window), as Studio
+  const std::string want = lower ? (clipWin ? "Loupe" : "Seltmann") : hosted ? "Device chain" : clipWin ? "Audio clip" : "its own window";
+  const bool pass = n == 1 && (hosted || clipWin ? host == want : host != "Device chain" && host != "Seltmann");
   std::printf("frame %d inventory %s %s home %s %s got drawn %d by %s want %s %s\n", frame, it.id, it.plugin, layout::kindName(h.kind),
-              *h.region ? h.region : "-", n, host.empty() ? "-" : host.c_str(), hosted ? "the Device chain" : "its own window", pass ? "ok" : "FAIL");
+              *h.region ? h.region : "-", n, host.empty() ? "-" : host.c_str(), want.c_str(), pass ? "ok" : "FAIL");
   (pass ? gInv.ok : gInv.failed)++;
   if (gInv.channel != kNoId) {
     a.settingsChannel = kNoId;
@@ -2533,6 +2724,16 @@ void inventoryFrame(App& a, int frame) {
     }
     gInv.wasOpen = f && *f;
     if (f) *f = true;  // a window homed in a hidden region shows the region (shellFrame)
+    // K-391: the Tracker's band shows only its own screens: opened on an instrument that has one
+    // (a plugin's editor floats instead of drawing there)
+    // (none in the song: the dev Channel frame for the first instrument)
+    if (p == Preset::Tracker && w == "Device chain") {
+      const std::vector<Channel>& chans = a.doc.song().channels;
+      size_t k = 0;
+      while (k < chans.size() && !trackereditors::hasSampleEditor(a, chans[k].id)) ++k;
+      const bool own = k < chans.size();
+      trackereditors::devCommand(a, {"editors", "open", own ? "sample" : "frame", std::to_string(own ? k : 0)}, frame);
+    }
     gInv.step = 1;
     return;
   }
@@ -2704,6 +2905,16 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     std::string moved;
     for (const auto& [w, r] : st.moved) moved += (moved.empty() ? "" : ",") + w + ">" + r;
     std::printf("frame %d tabs moved [%s]\n", frame, moved.c_str());
+  } else if (c == "dockinto") {  // trackerband: "layout dockinto <window>|<region>": docks the window there (as a drag or a saved dock file would)
+    const size_t bar = arg.find('|');
+    const std::string w = arg.substr(0, bar), to = bar == std::string::npos ? std::string() : arg.substr(bar + 1);
+    const ImGuiWindow* found = findTop(w);
+    const ImGuiID node = regionNode(to);
+    if (found && node) {
+      ImGui::DockBuilderDockWindow(found->Name, node);
+      noteOpenedNow(w);  // (the region it leaves holds it a few frames, as for a window docking: it does not collapse first)
+    }
+    std::printf("frame %d dockinto %s %s\n", frame, arg.c_str(), found && node ? "ok" : "missing");
   } else if (c == "splittrace") {  // rsz-1118: splittrace on|off: a line per frame (splitTraceFrame)
     gSplitTrace = arg != "off";
   } else if (c == "collapsetrace") {  // gap-1118: collapsetrace on|off: a line for each region collapsed

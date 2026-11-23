@@ -1,4 +1,6 @@
 #include "Sample.h"
+#include "../core/ThreadName.h"
+#include <chrono>
 #include <thread>
 #include <set>
 #include <atomic>
@@ -170,7 +172,7 @@ void readInBackground(const std::string& key, std::function<void()> job) {
   }
   // Detached: a reader stuck on a drive that stopped answering must keep nobody waiting, not
   // even the app on its way out.
-  std::thread([key, job = std::move(job)] {
+  std::thread([key, job = std::move(job)] { gl::threads::setName("gl-sample-load");
     try {
       job();
     } catch (...) {  // a file too big or unreadable: what it would have made stays missing
@@ -354,7 +356,7 @@ bool SampleCache::NonBlocking::active() { return tNonBlocking; }
 
 SampleCache::~SampleCache() { shutdown(); }
 
-void SampleCache::shutdown() {
+bool SampleCache::shutdown(int waitMs) {
   std::vector<std::thread> workers;
   {
     std::lock_guard<std::mutex> lk(mu_);
@@ -364,7 +366,21 @@ void SampleCache::shutdown() {
   }
   work_.notify_all();
   done_.notify_all();
+  if (waitMs >= 0 && !workers.empty()) {
+    // FRZ-1118 (0.7.8): a decoder stuck reading a drive that stopped answering never returns; quitting waits
+    // `waitMs` for the decoders, then leaves the stuck ones behind (the caller then skips static
+    // destruction, which they would run into).
+    std::unique_lock<std::mutex> lk(mu_);
+    const bool all = done_.wait_for(lk, std::chrono::milliseconds(waitMs), [&] { return running_ == 0; });
+    lk.unlock();
+    if (!all) {
+      for (auto& t : workers) t.detach();
+      abandoned_ = true;
+      return false;
+    }
+  }
   for (auto& t : workers) t.join();
+  return true;
 }
 
 // Decodes `path` on this thread (mu_ held on entry and exit; released while decoding).
@@ -392,15 +408,24 @@ void SampleCache::enqueueLocked(const std::string& path) {
   queue_.push_back(path);
   if (workers_.empty()) {  // background decoders start with the first request
     const int n = static_cast<int>(std::clamp(std::thread::hardware_concurrency() / 4, 1u, 4u));
-    for (int i = 0; i < n; ++i) workers_.emplace_back([this] { worker(); });
+    for (int i = 0; i < n; ++i) workers_.emplace_back([this] { gl::threads::setName("gl-sample-strm"); worker(); });
   }
   work_.notify_one();
 }
 
 void SampleCache::worker() {
   std::unique_lock<std::mutex> lk(mu_);
+  ++running_;
+  struct Leave {  // (mu_ held when the loop returns)
+    SampleCache* c;
+    ~Leave() {
+      --c->running_;
+      c->done_.notify_all();
+    }
+  } leave{this};
   for (;;) {
     work_.wait(lk, [&] { return stop_ || (!paused_ && !queue_.empty()); });
+    gl::threads::woke();  // K-142: CPU report
     if (stop_) return;
     const std::string path = queue_.front();
     queue_.pop_front();

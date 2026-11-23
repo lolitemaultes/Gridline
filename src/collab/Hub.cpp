@@ -1,5 +1,6 @@
 // Gridline - J-111 collaboration: network hub. See Hub.h.
 #include "Hub.h"
+#include "../core/ThreadName.h"
 #include <cstdio>
 #include <cstdlib>
 #include <algorithm>
@@ -1287,19 +1288,53 @@ void Hub::startThread() {
   if (thread_.joinable()) return;
   threaded_ = true;
   stop_ = false;
-  thread_ = std::thread([this] {
+  thread_ = std::thread([this] { gl::threads::setName("gl-collab-hub");
     std::unique_lock<std::mutex> wl(wake_->mu);
     while (!stop_) {
-      wake_->cv.wait_for(wl, std::chrono::milliseconds(10), [this] { return stop_.load() || wake_->pending; });
+      // K-142 (0.7.8): every 10 ms while a link has something under way, else until the next
+      // keepalive (a second at most); a datagram arriving, or the interface sending, wakes it.
+      wake_->cv.wait_for(wl, std::chrono::milliseconds(sleepMs_.load()), [this] { return stop_.load() || wake_->pending; });
+      gl::threads::woke();  // K-142: CPU report
       wake_->pending = false;
       wl.unlock();
       {
         std::lock_guard<std::recursive_mutex> lk(mu_);
-        if (!stop_) transportStep(clockSec());
+        if (!stop_) {
+          transportStep(clockSec());
+          sleepMs_ = quietMs();
+          // K-142 (0.7.8 follow-up): the interface takes it now, not at its next frame
+          if (uiWork()) {
+            uiWakes_.fetch_add(1, std::memory_order_relaxed);
+            if (void (*w)() = uiWakeHook().load()) w();
+          }
+        }
       }
       wl.lock();
     }
   });
+}
+
+bool Hub::uiWork() const {
+  for (const auto& [id, lp] : links_) {
+    const LinkRec& l = *lp;
+    if (!l.uiIn.empty() || !l.rx.empty() || l.openedEv || l.closedEv) return true;
+  }
+  return false;
+}
+
+int Hub::quietMs() const {
+  constexpr int kBusy = 10, kIdleMax = 1000;
+  uint64_t q = kIdleMax;
+  for (const auto& [id, lp] : links_) {
+    const LinkRec& l = *lp;
+    if (l.dead) continue;
+    // ICE under way (gathering, checking, a fresh attempt to come), the handshake not started,
+    // a test's held description: as before
+    if (l.heldUntil >= 0 || !l.started || l.ep->state() != Endpoint::State::Connected) return kBusy;
+    q = std::min(q, l.sl->quietForMs(nowMs()));
+    if (q <= static_cast<uint64_t>(kBusy)) return kBusy;
+  }
+  return static_cast<int>(q);
 }
 
 void Hub::stopThread() {
@@ -1378,6 +1413,20 @@ void Hub::transportStep(double t) {
 
 void Hub::poll(double nowSec) {
   std::lock_guard<std::recursive_mutex> lk(mu_);
+  // K-142: something new on this thread (a link made, data sent past the window, a handshake):
+  // the sleeping network thread runs now
+  struct WakeIfBusy {
+    Hub& h;
+    ~WakeIfBusy() {
+      if (!h.threaded_ || h.sleepMs_.load() <= 10 || h.quietMs() > 10) return;
+      h.sleepMs_ = 10;
+      {
+        std::lock_guard<std::mutex> wl(h.wake_->mu);
+        h.wake_->pending = true;
+      }
+      h.wake_->cv.notify_one();
+    }
+  } wakeIfBusy{*this};
   if (threaded_) {
     const double t = clockSec();
     if (lastPoll_ >= 0 && t - lastPoll_ > 1.0 && !links_.empty())

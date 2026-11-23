@@ -11,6 +11,7 @@
 #include <vector>
 #include "../../core/PluginInfo.h"
 #include "../../engine/Sample.h"
+#include "sf2/Sf2File.h"
 
 namespace gl::packs::samplers {
 
@@ -93,33 +94,7 @@ void mapAsDrumKit(std::vector<Zone>& zones, int base);
 Zone zoneForFile(const std::string& path);
 
 // ---------------------------------------------------------------- SoundFont 2
-struct Sf2Preset {
-  std::string name;
-  int bank = 0, program = 0;
-  uint32_t bagStart = 0, bagEnd = 0;
-};
-struct Sf2SampleHeader {
-  std::string name;
-  uint32_t start = 0, end = 0, loopStart = 0, loopEnd = 0, rate = 44100;
-  int originalPitch = 60, correction = 0;
-  uint16_t type = 1;
-};
-struct Sf2File {
-  std::string name;
-  std::vector<Sf2Preset> presets;  // sorted by bank, program
-  // pdta records (generators as {oper, amount}).
-  struct Bag { uint16_t gen = 0; };
-  struct Gen { uint16_t oper = 0; int16_t amount = 0; uint8_t lo = 0, hi = 0; };
-  struct Inst { std::string name; uint16_t bag = 0; };
-  std::vector<Bag> pbag, ibag;
-  std::vector<Gen> pgen, igen;
-  std::vector<Inst> inst;
-  std::vector<Sf2SampleHeader> samples;
-  std::vector<int16_t> data;  // smpl chunk
-};
-std::shared_ptr<const Sf2File> parseSf2(const uint8_t* bytes, size_t n, std::string* err = nullptr);
-// Cached by path.
-std::shared_ptr<const Sf2File> loadSf2(const std::string& path, std::string* err = nullptr);
+// The file reader (parseSf2, loadSf2, Sf2File) is shared with the Patch Player: sf2/Sf2File.h.
 // Zones of one preset (index into presets), sample paths "sf2:<path>#<sample>".
 std::vector<Zone> sf2PresetZones(const Sf2File& f, const std::string& path, size_t preset);
 // Mono float sample for one SoundFont sample header.

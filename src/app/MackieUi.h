@@ -16,5 +16,6 @@ bool isMackieType(const std::string& type);
 void mackieTick(App& a);
 // A message from a device of the surface: true when the surface took it.
 bool mackieMidi(App& a, const std::string& device, const MidiMessage& m);
+bool mackieOwns(const std::string& device);  // a unit of the surface is this input
 
 }  // namespace gl

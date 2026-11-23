@@ -21,8 +21,8 @@ file(WRITE "${OUT}/input.txt" "5 toasts clear
 34 parts lib state
 36 key b
 42 parts lib state
-44 save ${OUT}/closed.gridline.json
-48 open ${OUT}/closed.gridline.json
+44 save \"${OUT}/closed.gridline.json\"
+48 open \"${OUT}/closed.gridline.json\"
 60 parts lib state
 62 quit discard
 ")

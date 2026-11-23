@@ -11,6 +11,8 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <chrono>
+#include <condition_variable>
 #include <vector>
 #include "PluginInfo.h"
 #include "Presets.h"
@@ -26,6 +28,11 @@ enum class Kind { Other, Audio, Midi, Project, Flp, Fst, Preset, Chain, Shape, S
 // project, files under a "chains" / "automation" folder of the preset library
 // are chains / shapes, other .json files there are plugin presets).
 Kind kindOf(const std::string& path);
+// K-333: SF2 files open like folders in the browser; one patch of one is the item
+// "<file>#patch=<bank>:<program>" (an Instrument). playsOnPatchPlayer: an .sf2 / .sf3 file or such an item.
+std::string patchItemPath(const std::string& file, int bank, int program);
+bool splitPatchItem(const std::string& item, std::string& file, int& bank, int& program);
+bool playsOnPatchPlayer(const std::string& path);
 const char* kindName(Kind k);  // "audio", "midi", "project", …
 // Kind named in a search filter ("audio", "sample", "wav", "midi", "preset",
 // "fst", …); false when unknown.
@@ -200,6 +207,9 @@ enum class DropAction {
   ReplaceWithInstrument,  // .sfz / .sf2 → another instrument's row becomes a Multisampler with it (K-144)
   NewLayer,            // layer preset → a new layer with its children (K-169)
   LoadDrumKit,         // drum kit (.h2drumkit, drumkit.xml, its folder) → drum pad channels (K-162)
+  NewPatchChannel,         // .sf2 / .sf3 or one of its patches → new Patch Player channel playing it (K-333)
+  LoadPatch,               // ... → the Patch Player window / channel row plays it (K-333)
+  ReplaceWithPatchPlayer,  // ... → another instrument's row becomes a Patch Player playing it (K-333)
 };
 // What a dragged item is. FL presets (.fst) are decoded first and described
 // by what they contain (plugin preset or chain).
@@ -208,6 +218,9 @@ struct DropItem {
   std::string pluginType;  // Preset: its plugin type
   PluginKind pluginKind = PluginKind::Generator;
 };
+// K-333: an Instrument item whose pluginType is this is an SF2 file or one of its patches, played
+// by the Patch Player (an empty type: an .sfz / .sf2 map the Multisampler plays).
+constexpr const char* kPatchPlayerItem = "gl.patchplayer";
 // `targetType` = the plugin type shown by a PluginWindow target / of the
 // MixerSlot's current effect / of the Rack channel row under the pointer
 // (empty: the rack's free area); `targetUsesSample` = that plugin loads samples.
@@ -243,6 +256,19 @@ class Index {
   // module; call it before start().
   void stopAtExit();
   void waitIdle();        // blocks until the current pass ends (tests)
+  // GitHub #66: how gently a pass runs. The worker always runs as a background thread; with a pace
+  // it also rests between pieces of work: after each analysed file (at most `filesPerSec` a second)
+  // and after every 64 walked entries (at most `walkPerSec`), and at least long enough that it uses
+  // no more than `share` of one core. The default (no pace) runs flat out (tests); the app sets one.
+  struct Pace {
+    double filesPerSec = 0, walkPerSec = 0, share = 1;
+  };
+  void setPace(const Pace& p);
+  // GitHub #66: the worker waits (between files) until `seconds` from now: the app holds it while
+  // the song plays or the user drags something, each frame, so a hold left unrenewed ends by itself.
+  void holdFor(double seconds);
+  bool lowPriority() const { return lowPriority_.load(); }  // the last pass's thread ran as a background job
+  uint64_t rests() const { return rests_.load(); }          // pauses the pace and holds made (tests)
   bool busy() const { return busy_.load(); }
   size_t done() const { return done_.load(); }
   size_t pending() const { return pending_.load(); }
@@ -277,7 +303,18 @@ class Index {
 
  private:
   void run(std::vector<std::pair<std::string, bool>> roots);
+  // Between pieces of work: rests as the pace asks for work that started at `t0` (and `minGap`
+  // seconds a piece), then waits out a hold. False once the pass is cancelled.
+  bool rest(std::chrono::steady_clock::time_point t0, double minGap);
+  bool sleepFor(double seconds);  // false when cancelled meanwhile
   mutable std::mutex mu_;
+  std::mutex sleepMu_;
+  std::condition_variable wake_;
+  Pace pace_;     // (mu_)
+  Pace runPace_;  // the running pass's (copied at start)
+  std::atomic<int64_t> holdUntil_{0};  // steady clock, ns
+  std::atomic<bool> lowPriority_{false};
+  std::atomic<uint64_t> rests_{0};
   std::map<std::string, FileMeta> entries_;
   std::map<std::string, std::vector<std::string>> tags_;
   std::vector<std::pair<std::string, bool>> roots_;

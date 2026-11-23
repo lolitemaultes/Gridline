@@ -10,6 +10,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -61,6 +62,9 @@ class OscServer {
   const OscServerConfig& config() const { return cfg_; }
   // Messages received since the last call (UI thread).
   void poll(std::vector<OscIncoming>& out);
+  // K-142 (0.7.8 follow-up): called on the network thread after messages were queued (the app wakes
+  // its interface, which takes them in its next turn, also while it draws nothing). Set before start.
+  std::function<void()> onQueued;
   Status status() const;
   // One UDP packet to ip:port (feedback, the test button). From the server's own port while it
   // runs, else from a socket of its own. Never blocks.

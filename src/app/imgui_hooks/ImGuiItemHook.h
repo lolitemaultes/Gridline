@@ -20,6 +20,11 @@ void setTypeInHook(ItemFn fn);
 // (ImGui::GetItemRectMin/Max are the item's). nullptr = off.
 using InfoFn = void (*)(ImGuiID id, const char* label, int statusFlags);
 void setInfoHook(InfoFn fn);
+// Scripted runs (--dev-input): a second, independent label hook, so the "atitem" dev command
+// finds a menu row by its label while the command palette's own hook is on. nullptr = off.
+void setDevLabelHook(InfoFn fn);
+// 0.7.8: the ID-conflict sweep's own pair (IdSweep.h), independent of the others. nullptr = off.
+void setSweepHooks(ItemFn item, InfoFn info);
 
 // K-93: the command palette's menu walk. While a walker is set, ImGui::BeginMenu() /
 // EndMenu() / MenuItem() call it instead of drawing anything: BeginMenu returns what

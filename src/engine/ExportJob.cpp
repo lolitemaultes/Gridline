@@ -1,11 +1,13 @@
 // Gridline — complete export. See ExportJob.h.
 #include "ExportJob.h"
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <exception>
 #include <filesystem>
 #include <map>
 #include <new>
+#include <set>
 #include "../core/Automation.h"
 #include "../core/Crash.h"
 #include "../core/Meter.h"
@@ -64,8 +66,29 @@ struct Writer {
   const std::atomic<bool>* cancel;
 
   bool first = true;
+  std::set<std::string> taken;  // folder-relative stems written so far (lower case: case-blind file systems)
 
-  void write(const std::string& stem, RenderResult&& r) {
+  // A stem unique in its folder: the name itself, else "name 2", "name 3"...
+  std::string unique(const std::string& sub, const std::string& stem) {
+    auto key = [&](const std::string& n) {
+      std::string k = sub + "/" + n;
+      for (char& c : k) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+      return k;
+    };
+    std::string n = stem;
+    for (int k = 2; taken.count(key(n)); ++k) n = stem + " " + std::to_string(k);
+    taken.insert(key(n));
+    return n;
+  }
+
+  void write(const std::string& stem0, RenderResult&& r, const std::string& sub = {}) {
+    const std::string stem = unique(sub, stem0);
+    fs::path dir = fs::path(s.folder);
+    if (!sub.empty()) {
+      dir /= sub;
+      std::error_code ec;
+      fs::create_directories(dir, ec);
+    }
     AudioBuffer buf = applyChannelMode(r.audio, s.channels);
     if (s.normalize && s.normalizeLoudness) {  // RN-09: loudness target, peak ceiling
       const LoudnessNormalization n = normalizeLoudness(buf, s.render.sampleRate, s.normalizeLufs, std::min(0.0, s.normalizeDb));
@@ -101,7 +124,7 @@ struct Writer {
       o.bitrate = f == ExportFormat::Mp3 ? s.mp3Bitrate : f == ExportFormat::Ogg ? s.oggBitrate : f == ExportFormat::Opus ? s.opusBitrate : s.m4aBitrate;
       o.cancel = cancel;
       if (f == ExportFormat::Wav) o.meta = meta;
-      const std::string path = (fs::path(s.folder) / (stem + exportFormatExt(f))).string();
+      const std::string path = (dir / (stem + exportFormatExt(f))).string();
       std::string err;
       if (writeAudioFile(path, buf, s.render.sampleRate, o, &err)) {
         out.files.push_back(path);
@@ -128,7 +151,7 @@ void runExportInto(ExportOutcome& out, const Song& song, const ExportSettings& s
     out.errors.push_back("cannot create folder " + s.folder);
     return;
   }
-  Writer w{song, s, out, cancel};
+  Writer w{song, s, out, cancel, true, {}};
   const std::string base = safeFileName(s.baseName);
   const bool audio = !s.formats.empty();
   // Work units for the progress bar: the mix + each part.
@@ -179,6 +202,10 @@ void runExportInto(ExportOutcome& out, const Song& song, const ExportSettings& s
   std::map<char, std::string> tok = {{'P', s.projectTitle.empty() ? base : s.projectTitle},
                                      {'S', s.render.scope == RenderScope::Pattern ? "Pattern" : s.render.scope == RenderScope::Range ? "Range" : "Song"},
                                      {'R', std::to_string(s.render.sampleRate)}};
+  // K-344: several kinds of split in one export each get their own subfolder (one kind alone: as before).
+  const int kinds = (stems.empty() ? 0 : 1) + (tracks.empty() ? 0 : 1) + (groups.empty() ? 0 : 1);
+  std::string sub;
+  auto subFolder = [&](const std::string& name) { return kinds > 1 ? safeFileName(name) : std::string(); };
   auto partSink = [&](const SplitPart& p, RenderResult&& r) {
     if (out.frames == 0) {
       out.frames = static_cast<int64_t>(r.audio.frames);
@@ -190,7 +217,7 @@ void runExportInto(ExportOutcome& out, const Song& song, const ExportSettings& s
     t['N'] = num;
     t['T'] = p.name;
     t['F'] = s.formats.empty() ? "" : exportFormatName(s.formats[0]);
-    w.write(expandNamePattern(s.partPattern, t), std::move(r));
+    w.write(expandNamePattern(s.partPattern, t), std::move(r), sub);
     done += 1;
     return !(cancel && cancel->load());
   };
@@ -198,18 +225,21 @@ void runExportInto(ExportOutcome& out, const Song& song, const ExportSettings& s
     RenderJob sj = job;
     const double base0 = done;
     sj.progress = [&](double f) { report(f * static_cast<double>(stems.size()) - (done - base0), "Rendering mixer tracks"); };
+    sub = subFolder(s.mixerFolder);
     renderStems(song, sj, stems, s.stemsMasterFx, partSink);
   }
   if (!tracks.empty() && !(cancel && cancel->load())) {
     RenderJob tj = job;
     const double base0 = done;
     tj.progress = [&](double f) { report(f * static_cast<double>(tracks.size()) - (done - base0), "Rendering playlist tracks"); };
+    sub = subFolder(s.playlistFolder);
     renderPlaylistTracks(song, tj, tracks, partSink);
   }
   if (!groups.empty() && !(cancel && cancel->load())) {
     RenderJob gj = job;
     const double base0 = done;
     gj.progress = [&](double f) { report(f * static_cast<double>(groups.size()) - (done - base0), "Rendering playlist track groups"); };
+    sub = subFolder(s.groupsFolder);
     renderPlaylistTrackSets(song, gj, groups, partSink);
   }
   if (cancel && cancel->load()) {

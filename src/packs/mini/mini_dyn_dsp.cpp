@@ -10,6 +10,10 @@ namespace {
 
 // ---- Press: feed-forward compressor with optional sidechain key ---------------
 class Press final : public MiniFx {
+  // K-142 (0.7.8): its detector and gain recover at rest (MiniFx::rested); then nothing moves.
+  bool movesAtRest() const override { return true; }
+  bool settled() const override { return det_.env == 0 && ms_.z == 0 && gr_ == 0; }
+ private:
   Follower det_;
   dsp::OnePole ms_;
   double gr_ = 0;
@@ -208,6 +212,14 @@ class Pack final : public MiniFx {
 
 // ---- Span: upward / downward processing below and above two thresholds ---------
 class Span final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override { return det_.env == 0 && gdb_ == 0; }
+  void clocks(const PluginState& s, const ProcessContext&, int n) override {
+    const double outT = dbg(pv(s, span::Output));
+    out_.advance(outT, n);  // K-142 (0.7.8 close): O(1) once settled
+  }
+ private:
   Follower det_;
   double gdb_ = 0;
   Smooth out_;

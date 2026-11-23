@@ -16,6 +16,7 @@
 #include "../core/PluginInfo.h"
 #include "../core/Secrets.h"
 #include "App.h"
+#include "FocusGuard.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
 #include "Keys.h"
@@ -23,6 +24,7 @@
 #include "SettingsPages.h"
 #include "Theme.h"
 #include "TrackerView.h"
+#include "ToolbarUi.h"
 #include "Widgets.h"
 #include "Windows.h"
 #include "imgui_hooks/ImGuiItemHook.h"
@@ -45,6 +47,7 @@ constexpr int kCategories = 5;  // All, then one per Kind
 // inputs, no saved settings, inside the main viewport (never a window of its own).
 template <class F>
 void unseen(const char* id, F&& f) {
+  focusguard::Keep keep;  // 0.7.8: what the pages' code asks of the focus is put back (FocusGuard.h)
   const ImGuiViewport* vp = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(vp->Pos);
   ImGui::SetNextWindowSize(ImVec2(820, 600));
@@ -233,6 +236,7 @@ const WinDef kWindows[] = {
     {"Channel rack", "Channel rack", &App::showRack, "view.channelRack"},
     {"Piano roll", "Piano roll", &App::showPiano, "view.pianoRoll"},
     {"Mixer", "Mixer", &App::showMixer, "view.mixer"},
+    {"LFO board", "LFO board", &App::showLfoBoard, "view.lfoBoard"},  // K-247
     {"Browser", "Browser", &App::showBrowser, "view.browser"},
     {"Plugin picker", "Plugin picker", nullptr, "view.pluginPicker"},
     {"Master chain", "Master chain", &App::showMaster, nullptr},
@@ -300,6 +304,8 @@ struct State {
   bool scrollToSel = false;
   std::string rankedQuery = "\x01";
   int rankedCat = -1;
+  std::vector<std::string> rankedPins;  // K-256: the pinned commands the list was ranked with
+  std::string devPin;                   // K-256 dev: pin or unpin this row (or the selected one: "-")
   std::vector<Entry> rows;
   std::vector<Action> acts;
   std::vector<MenuRec> menuRecs;  // for the dev dump
@@ -505,6 +511,27 @@ void build(App& a) {
       addRow(rows, acts, std::move(e), std::move(act));
     }
 
+  // 0.7.8: the Settings key shows on one row. A menu item that runs it (Studio's MIDI settings...,
+  // Clips' General settings...) keeps it, as the menu shows it; else the Settings window's row has
+  // it, and the keymap's own row for it (Tracker) is not listed beside.
+  int settingsRow = -1;
+  for (int k = 0; k < kWindowCount; ++k)
+    if (kWindows[k].flag == &App::showSettings) settingsRow = winRow[static_cast<size_t>(k)];
+  if (settingsRow < 0)
+    for (size_t i = 0; i < rows.size(); ++i)
+      if (rows[i].kind == Kind::Window && acts[i].flag == &App::showSettings) settingsRow = static_cast<int>(i);
+  if (settingsRow >= 0) {
+    Entry& w = rows[static_cast<size_t>(settingsRow)];
+    if (auto it = at.find("cmd:view.settings"); it != at.end() && it->second != static_cast<size_t>(settingsRow) && !rows[it->second].shortcut.empty() &&
+                                                rows[it->second].shortcut == w.shortcut)
+      w.shortcut.clear();
+  }
+  auto settingsKeyShown = [&](const char* id) {
+    if (settingsRow < 0 || std::strcmp(id, "view.settings") != 0) return false;
+    const char* l = keys::label(id);
+    return l && rows[static_cast<size_t>(settingsRow)].shortcut == l;
+  };
+
   // 3. Keymap commands no menu item runs.
   ObjectId autoClip = kNoId, autoPattern = kNoId;
   ParamId autoTarget{};
@@ -512,6 +539,10 @@ void build(App& a) {
   for (const keys::Command& c : keys::commands()) {
     if (usedCmds.count(c.id)) continue;
     if (clips && notClipsCommand(c.id)) continue;
+    if (settingsKeyShown(c.id)) {  // the Settings window's row has its key (above), and is the command's row
+      if (rows[static_cast<size_t>(settingsRow)].commandId.empty()) rows[static_cast<size_t>(settingsRow)].commandId = c.id;
+      continue;
+    }
     Entry e;
     e.id = std::string("cmd:") + c.id;
     e.kind = Kind::Command;
@@ -661,6 +692,25 @@ void closeNow() {
   if (!S.prevFocus.empty()) ImGui::SetWindowFocus(S.prevFocus.c_str());
 }
 
+// K-256: pins (or unpins) a row: a command, a menu item or a window; it then shows on the bar and leads
+// the empty list. Its English name is kept, so the pin reads right in any language.
+void togglePinRow(App& a, int row) {
+  if (row < 0 || row >= static_cast<int>(S.rows.size())) return;
+  const Entry& e = S.rows[static_cast<size_t>(row)];
+  if (!cmdpal::pinnableRow(e)) {
+    a.notify(i18n::trMessage("Settings and plugins cannot be pinned"));
+    return;
+  }
+  const bool was = toolbarui::isPinned(a, e.id);
+  if (!toolbarui::togglePin(a, e.id, e.labelEn.empty() ? e.label : e.labelEn)) {
+    a.notify(i18n::trMessage("The pinned list is full"), true);
+    return;
+  }
+  S.rankedQuery = "\x01";  // re-rank with the new pins
+  std::printf("palette pin %s %s\n", e.id.c_str(), was ? "off" : "on");
+  std::fflush(stdout);
+}
+
 bool choose(App& a, int row) {
   if (row < 0 || row >= static_cast<int>(S.rows.size())) return false;
   const Entry& e = S.rows[static_cast<size_t>(row)];
@@ -684,11 +734,14 @@ void tickInject() {
 // ------------------------------------------------------------- ranking ----
 void rerank() {
   const std::string q = S.query;
-  if (q == S.rankedQuery && S.cat == S.rankedCat) return;
-  S.ranked = cmdpal::rank(S.rows, q, S.recent, S.cat == 0 ? -1 : S.cat - 1);
+  // K-256: the pinned commands lead the empty list (Ctrl+Enter pins and unpins the selected row).
+  const std::vector<std::string> pins = toolbarui::paletteFirst(app());
+  if (q == S.rankedQuery && S.cat == S.rankedCat && pins == S.rankedPins) return;
+  S.ranked = cmdpal::rank(S.rows, q, S.recent, S.cat == 0 ? -1 : S.cat - 1, pins);
+  S.rankedPins = pins;
   // Counts per category for the tabs.
   std::fill(S.counts, S.counts + kCategories, 0);
-  for (const auto& r : (S.cat == 0 ? S.ranked : cmdpal::rank(S.rows, q, S.recent, -1))) {
+  for (const auto& r : (S.cat == 0 ? S.ranked : cmdpal::rank(S.rows, q, S.recent, -1, pins))) {
     ++S.counts[0];
     ++S.counts[1 + static_cast<int>(S.rows[static_cast<size_t>(r.index)].kind)];
   }
@@ -721,7 +774,18 @@ float drawKeycaps(ImDrawList* dl, App& a, const std::string& shortcut, float rig
     if (c.mods & keys::kShift) parts.push_back("Shift");
     parts.push_back(keys::keyName(c.key));
   } else {
-    parts.push_back(shortcut);
+    // GitHub #79: a shortcut named as the keys say ("Ctrl+Ö", "Ctrl+/ (no key)"): its modifiers, then the rest.
+    std::string rest = shortcut;
+    for (bool more = true; more;) {
+      more = false;
+      for (const char* m : {"Ctrl+", "Cmd+", "Alt+", "Shift+"})
+        if (rest.size() > std::strlen(m) && rest.compare(0, std::strlen(m), m) == 0) {
+          parts.emplace_back(m, std::strlen(m) - 1);
+          rest.erase(0, std::strlen(m));
+          more = true;
+        }
+    }
+    parts.push_back(rest);
   }
   const float fs = theme::kFontLabel, h = 18.0f, padX = 5.0f, gap = 3.0f;
   float x = right;
@@ -785,12 +849,18 @@ void drawPanel(App& a) {
   bool anyRecent = false;
   for (size_t i = 0; i < S.ranked.size(); ++i) {
     const bool rec = S.ranked[i].recent;
-    if (empty && i == 0 && rec) {
+    const bool pin = empty && S.ranked[i].pinned;  // K-256: the pinned commands, first
+    if (pin && i == 0) {
+      items.push_back({-1, i18n::tr("PINNED"), y, kHeadH});
+      y += kHeadH;
+      anyRecent = true;
+    }
+    if (empty && rec && (i == 0 || !S.ranked[i - 1].recent)) {
       items.push_back({-1, i18n::tr("RECENT"), y, kHeadH});
       y += kHeadH;
       anyRecent = true;
     }
-    if (empty && anyRecent && !rec && (i == 0 || S.ranked[i - 1].recent)) {
+    if (empty && anyRecent && !rec && !pin && i > 0 && (S.ranked[i - 1].recent || S.ranked[i - 1].pinned)) {
       items.push_back({-1, S.cat == 0 ? i18n::tr("EVERYTHING") : i18n::tr(cmdpal::kindName(static_cast<Kind>(S.cat - 1))), y, kHeadH});
       y += kHeadH;
     }
@@ -906,7 +976,11 @@ void drawPanel(App& a) {
     if (ImGui::IsKeyPressed(ImGuiKey_PageUp, true)) S.sel = std::max(0, S.sel - page), S.scrollToSel = true;
     if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) S.cat = (S.cat + (io.KeyShift ? kCategories - 1 : 1)) % kCategories;
     const bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false);
-    if (enter && S.sel >= 0 && S.sel < n) choose(a, S.ranked[static_cast<size_t>(S.sel)].index);
+    if (enter && (io.KeyCtrl || io.KeySuper) && S.sel >= 0 && S.sel < n) {
+      togglePinRow(a, S.ranked[static_cast<size_t>(S.sel)].index);  // K-256: Ctrl+Enter pins (or unpins) it
+    } else if (enter && S.sel >= 0 && S.sel < n) {
+      choose(a, S.ranked[static_cast<size_t>(S.sel)].index);
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
       keys::claimEscape();
       closeNow();
@@ -962,12 +1036,24 @@ void drawPanel(App& a) {
       } else if (hov) {
         rl->AddRectFilled(r0, r1, P.surface800, 6.0f);
       }
-      if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) choose(a, rk.index);
       const float cy = std::round((r0.y + r1.y) * 0.5f);
+      // K-256: the pin column at the right end: a star, lit while pinned, shown on the hovered or selected
+      // row too; a click on it pins or unpins (a click elsewhere runs the row).
+      const bool canPin = cmdpal::pinnableRow(e);
+      const bool pinnedRow = canPin && toolbarui::isPinned(a, e.id);
+      const ImVec2 star(r1.x - 18, cy);
+      const bool overStar = canPin && hov && std::fabs(io.MousePos.x - star.x) <= 11;
+      if (hov && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (overStar) togglePinRow(a, rk.index);
+        else choose(a, rk.index);
+      }
+      if (canPin && (pinnedRow || hov || sel))
+        ui::drawIcon(rl, pinnedRow ? ui::Icon::StarFilled : ui::Icon::Star, star, 12, pinnedRow ? P.hot : overStar ? P.text : P.textFaint);
+      if (overStar) ImGui::SetTooltip("%s", pinnedRow ? i18n::tr("Unpin (Ctrl+Enter)") : i18n::tr("Pin to the bar and the top of this list (Ctrl+Enter)"));
       const ImU32 main = e.enabled ? P.text : P.textFaint;
       ui::drawIcon(rl, iconFor(e, S.acts[static_cast<size_t>(rk.index)]), ImVec2(r0.x + 18, cy), 14, e.enabled ? (sel ? P.text : P.textDim) : P.textFaint);
       // Right side: on / off state, then the shortcut.
-      float right = r1.x - 10;
+      float right = r1.x - 10 - (canPin ? 22.0f : 0.0f);
       right = drawKeycaps(rl, a, e.shortcut, right, cy, !e.enabled);
       if (!e.shortcut.empty()) right -= theme::kS2;
       if (e.checked) {
@@ -1038,6 +1124,7 @@ void drawPanel(App& a) {
     hintAt("Up Down", i18n::tr("Move"));
     hintAt("Enter", i18n::tr("Run"));
     hintAt("Tab", i18n::tr("Category"));
+    hintAt("Ctrl Enter", i18n::tr("Pin"));  // K-256
     // The selected row's own description, right-aligned when it fits.
     if (S.sel >= 0 && S.sel < n) {
       const Entry& e = S.rows[static_cast<size_t>(S.ranked[static_cast<size_t>(S.sel)].index)];
@@ -1199,6 +1286,11 @@ bool setWindowOpen(App& a, const std::string& name, bool open, std::string& err)
   return false;
 }
 
+bool runFresh(App& a, const std::string& id) {
+  build(a);
+  return run(a, id);
+}
+
 bool run(App& a, const std::string& id) {
   if (!S.built) build(a);
   for (size_t i = 0; i < S.rows.size(); ++i)
@@ -1238,6 +1330,20 @@ void draw(App& a) {
     S.devDump = false;
     S.devRun.clear();
   }
+  if (!S.devPin.empty()) {  // K-256 dev
+    if (!S.built) build(a);
+    rerank();
+    int row = -1;
+    if (S.devPin == "-") {
+      if (S.sel >= 0 && S.sel < static_cast<int>(S.ranked.size())) row = S.ranked[static_cast<size_t>(S.sel)].index;
+    } else {
+      for (size_t i = 0; i < S.rows.size(); ++i)
+        if (S.rows[i].id == S.devPin) row = static_cast<int>(i);
+    }
+    if (row >= 0) togglePinRow(a, row);
+    else std::printf("palette pin %s missing\n", S.devPin.c_str()), std::fflush(stdout);
+    S.devPin.clear();
+  }
   detail::noting = lit;
   imhook::setInfoHook(lit ? infoHook : nullptr);
   if (S.open) drawPanel(a);
@@ -1262,6 +1368,13 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
     for (size_t i = 1; i < args.size(); ++i) S.devRun += (i > 1 ? " " : "") + args[i];
   }
   else if (c == "cat" && args.size() > 1) S.cat = std::clamp(std::atoi(args[1].c_str()), 0, kCategories - 1);
+  else if (c == "pin") {  // K-256: "palette pin" (the selected row, as Ctrl+Enter) or "palette pin <row id>"
+    S.devPin = "-";
+    if (args.size() > 1) {
+      S.devPin.clear();
+      for (size_t i = 1; i < args.size(); ++i) S.devPin += (i > 1 ? " " : "") + args[i];
+    }
+  }
   else return false;
   return true;
 }

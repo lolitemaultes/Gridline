@@ -23,6 +23,9 @@ void DialogFooter(float buttonsWidth);
 // K-112c: true for an item placed in the current window below its DialogFooter this frame (Live
 // draws the footer's buttons as pills, as its dialogs do).
 bool InDialogFooter();
+// 0.7.8: `w` (its root) is a dialog drawn lately: one with a DialogFooter or a dialog body
+// (plugin windows step aside from over it, PluginWindow.cpp).
+bool IsDialogWindow(const ImGuiWindow* w);
 // Width of `count` buttons of `width` px each, kS2 apart (for DialogFooter).
 float ButtonRowWidth(int count, float width);
 

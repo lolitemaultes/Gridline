@@ -20,6 +20,7 @@
 #include "../src/core/PluginInfo.h"
 #include "../src/core/Project.h"
 #include "../src/core/SfzText.h"
+#include "../src/core/ReceiptOrigin.h"
 #include "../src/core/TrackReceipt.h"
 #include "../src/core/ProjectArchive.h"
 #include "../src/core/ProjectInterop.h"
@@ -630,7 +631,7 @@ void testNoFalseAlarms() {
   // A note processor's state is walked too.
   {
     Song n = s;
-    n.channels.front().noteFx.push_back(PluginState{"gl.sampler", {}, "/somewhere/note.wav", "", "", "", {}});
+    n.channels.front().noteFx.push_back(PluginState{"gl.sampler", {}, "/somewhere/note.wav", "", "", "", {}, {}});
     expect(contains(referencedFiles(n), "/somewhere/note.wav"), "a note processor's file is listed");
   }
   const auto refs = referencedFiles(s);
@@ -913,12 +914,24 @@ void testSidecars() {
   o.source = base2, o.start = 0, o.end = 0.5, o.kind = "slice";
   o.sources = {base2, original};
   expect(rc::writeOrigin(derived, o), "sidecars: written");
+  // K-321: a version 2 note: each map's source travels too.
+  const std::string two = tone(src / "two.wav", 340);
+  {
+    rc::OriginV2 v;
+    v.version = 2, v.v1.kind = "render", v.length = 1;
+    rc::SourceMap a, b;
+    a.source = base2, a.segs = {{0, 0.5, 0.1, 0.6}};
+    b.source = original, b.segs = {{0.5, 1, 2, 1.5}};
+    v.maps = {a, b};
+    expect(rc::writeOriginV2(two, v), "sidecars: a version 2 note written");
+  }
   const std::string note = "{\"title\":\"A title\",\"uploader\":\"Someone\",\"site\":\"Example\",\"url\":\"https://example.org/x\"}\n";
   writeText(fs::u8path(edit + ".source.json"), note);
   Song s = emptySong();
   addChannel(s, "gl.sampler", edit, true);
   addChannel(s, "gl.sampler", derived, true);
   addChannel(s, "gl.sampler", base2, true);
+  addChannel(s, "gl.sampler", two, true);
 
   auto check = [&](const fs::path& place, const std::string& what) {
     const std::vector<rc::Origin> chain = rc::originChain((place / "edit.wav").u8string());
@@ -936,6 +949,16 @@ void testSidecars() {
     std::ifstream f(place / "edit.wav.source.json", std::ios::binary);
     const std::string t((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     expect(t == note, what + ": the source note travels as it is");
+    rc::OriginV2 v;
+    expect(rc::readOriginV2((place / "two.wav").u8string(), v) && v.maps.size() == 2, what + ": a version 2 note reads");
+    if (v.maps.size() == 2) {
+      expect(fs::exists(fs::u8path(v.maps[0].source)) && fs::u8path(v.maps[0].source).filename() == "packed source.wav" &&
+                 fs::u8path(v.maps[1].source).filename() == "original.wav",
+             what + ": its maps lead to the packed sources");
+      expect(v.maps[0].source.find(src.u8string()) == std::string::npos && v.maps[1].source.find(src.u8string()) == std::string::npos,
+             what + ": no map path back to the old place");
+      expect(v.v1.sources.size() == 2 && v.v1.sources[0] == v.maps[0].source, what + ": its v1 view follows the same way");
+    }
   };
   const std::string zip = (base / "z.gridline.zip").u8string();
   CollectReport rep = exportZippedProject(s, zip, "Z");

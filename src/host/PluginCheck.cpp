@@ -1,4 +1,5 @@
 #include "PluginCheck.h"
+#include "../core/ThreadName.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -68,7 +69,10 @@ struct Reporter {
 
 // Runs f on a separate thread (the plugin's audio thread) and waits.
 void onAudio(const std::function<void()>& f) {
-  std::thread t(f);
+  std::thread t([&f] {
+    gl::threads::setName("gl-check-audio");
+    f();
+  });
   t.join();
 }
 

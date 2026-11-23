@@ -1,5 +1,6 @@
 // Gridline — J-167: opening a project without freezing the interface (see ProjectLoad.h).
 #include "ProjectLoad.h"
+#include "../core/ThreadName.h"
 #include "../host/CrossFormat.h"
 #include "../core/Crash.h"
 #include <algorithm>
@@ -320,7 +321,7 @@ void Loader::start(Request r) {
   job_->req = req_;
   add(Level::Info, N_("Opening %s"), fileName(req_.path));
   std::shared_ptr<Job> job = job_;
-  worker_ = std::thread([job] { job->run(); });
+  worker_ = std::thread([job] { gl::threads::setName("gl-project-load"); job->run(); });
 }
 
 void Loader::clear() {

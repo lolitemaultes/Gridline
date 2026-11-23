@@ -1,7 +1,10 @@
 // Gridline — timeline maths (see Timeline.h).
 #include "Timeline.h"
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cstdio>
+#include <numeric>
 #include <vector>
 
 namespace gl {
@@ -18,39 +21,125 @@ const char* snapName(Snap s) {
     case Snap::Step: return "Step";
     case Snap::Beat: return "Beat";
     case Snap::Bar: return "Bar";
+    case Snap::Main: return "Main";
+    case Snap::BeatSixth: return "1/6 beat";
+    case Snap::BeatQuarter: return "1/4 beat";
+    case Snap::BeatThird: return "1/3 beat";
+    case Snap::BeatHalf: return "1/2 beat";
+    case Snap::StepDotted: return "Dotted step";
+    case Snap::BeatHalfDotted: return "Dotted 1/2 beat";
+    case Snap::BeatDotted: return "Dotted beat";
+    case Snap::BeatFifth: return "1/5 beat";
+    case Snap::BeatSeventh: return "1/7 beat";
+    case Snap::RowGrid: return "Row grid";
   }
   return "?";
+}
+
+// ---- SnapGrid: a size that may be a fraction of a tick ----
+namespace {
+Tick floorDivT(Tick a, Tick b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
+}  // namespace
+
+SnapGrid::SnapGrid(Tick n, Tick d) {
+  if (d < 1) d = 1;
+  if (n < d) n = d;  // never finer than one tick
+  const Tick g = std::gcd(n, d);
+  num = n / g;
+  den = d / g;
+}
+
+SnapGrid::operator Tick() const {
+  if (den <= 1) return num;
+  return std::max<Tick>(1, (num + den / 2) / den);
+}
+
+Tick SnapGrid::at(int64_t k) const {
+  if (den <= 1) return k * num;
+  return floorDivT(2 * k * num + den, 2 * den);  // round(k * num / den), halves up
+}
+
+int64_t SnapGrid::indexDown(Tick t) const {
+  if (num <= 0) return 0;
+  if (den <= 1) return floorDivT(t, num);
+  int64_t k = floorDivT(t * den, num);
+  while (at(k) > t) --k;
+  while (at(k + 1) <= t) ++k;
+  return k;
+}
+
+Tick snapDown(Tick t, const SnapGrid& g) {
+  if (!g.fractional()) return snapDown(t, g.num);
+  return g.at(g.indexDown(t));
+}
+
+Tick snapNearest(Tick t, const SnapGrid& g) {
+  if (!g.fractional()) return snapNearest(t, g.num);
+  const int64_t k = g.indexDown(t);
+  const Tick a = g.at(k), b = g.at(k + 1);
+  return t - a < b - t ? a : b;  // ties go to the later line, as snapNearest does
+}
+
+namespace {
+std::atomic<int> gMainSnap{static_cast<int>(Snap::Line)};
+}  // namespace
+
+void setMainSnap(Snap s) { gMainSnap.store(static_cast<int>(s), std::memory_order_relaxed); }
+Snap mainSnap() { return static_cast<Snap>(gMainSnap.load(std::memory_order_relaxed)); }
+Snap resolveSnap(Snap s) {
+  if (s != Snap::Main) return s;
+  const Snap m = mainSnap();
+  return m == Snap::Main ? Snap::Line : m;
+}
+bool adaptiveSnap(Snap s) {
+  s = resolveSnap(s);
+  return s == Snap::Line || s == Snap::Cell;
 }
 
 namespace {
 struct Sizes {
   Tick bar, beat, step;
+  Tick rowNum = 0, rowDen = 1;  // K-255: the edited row's own step (bar / grid; 0: the step)
 };
 Sizes sizesOf(const Song& s) {
   return {std::max<Tick>(1, s.barTicks()), std::max<Tick>(1, s.beatTicks()), std::max<Tick>(1, s.ppq / 4)};
 }
-Sizes sizesOf(const MeterMap& m) { return {m.baseBar(), m.baseBeat(), std::max<Tick>(1, m.ppq() / 4)}; }
+Sizes sizesOf(const MeterMap& m) { return {m.baseBar(), m.baseBeat(), m.stepTicks(), m.rowGridNum(), m.rowGridDen()}; }
 
-Tick snapTicksZ(const Sizes& z, Snap snap) {
-  const Tick step = z.step;
-  switch (snap) {
-    case Snap::None: return 1;
-    case Snap::Sixth: return std::max<Tick>(1, step / 6);
-    case Snap::Quarter: return std::max<Tick>(1, step / 4);
-    case Snap::Third: return std::max<Tick>(1, step / 3);
-    case Snap::Half: return std::max<Tick>(1, step / 2);
+SnapGrid snapSizeZ(const Sizes& z, Snap snap) {
+  const Tick step = z.step, beat = z.beat;
+  switch (resolveSnap(snap)) {
+    case Snap::None: return SnapGrid(1);
+    case Snap::Sixth: return SnapGrid(step, 6);
+    case Snap::Quarter: return SnapGrid(step, 4);
+    case Snap::Third: return SnapGrid(step, 3);
+    case Snap::Half: return SnapGrid(step, 2);
+    case Snap::Main:  // (resolved above)
     case Snap::Line:
     case Snap::Cell:
-    case Snap::Step: return step;
-    case Snap::Beat: return z.beat;
-    case Snap::Bar: return z.bar;
+    case Snap::Step: return SnapGrid(step);
+    case Snap::Beat: return SnapGrid(beat);
+    case Snap::Bar: return SnapGrid(z.bar);
+    case Snap::BeatSixth: return SnapGrid(beat, 6);
+    case Snap::BeatQuarter: return SnapGrid(beat, 4);
+    case Snap::BeatThird: return SnapGrid(beat, 3);
+    case Snap::BeatHalf: return SnapGrid(beat, 2);
+    case Snap::StepDotted: return SnapGrid(step * 3, 2);
+    case Snap::BeatHalfDotted: return SnapGrid(beat * 3, 4);
+    case Snap::BeatDotted: return SnapGrid(beat * 3, 2);
+    case Snap::BeatFifth: return SnapGrid(beat, 5);
+    case Snap::BeatSeventh: return SnapGrid(beat, 7);
+    case Snap::RowGrid: return z.rowNum > 0 ? SnapGrid(z.rowNum, z.rowDen) : SnapGrid(step);
   }
-  return 1;
+  return SnapGrid(1);
 }
+Tick snapTicksZ(const Sizes& z, Snap snap) { return snapSizeZ(z, snap); }
 }  // namespace
 
 Tick snapTicks(const Song& s, Snap snap) { return snapTicksZ(sizesOf(s), snap); }
 Tick snapTicks(const MeterMap& m, Snap snap) { return snapTicksZ(sizesOf(m), snap); }
+SnapGrid snapSize(const Song& s, Snap snap) { return snapSizeZ(sizesOf(s), snap); }
+SnapGrid snapSize(const MeterMap& m, Snap snap) { return snapSizeZ(sizesOf(m), snap); }
 
 Tick snapDown(Tick t, Tick g) { return g <= 1 ? t : (t >= 0 ? t / g * g : -((-t + g - 1) / g * g)); }
 Tick snapNearest(Tick t, Tick g) { return g <= 1 ? t : snapDown(t + g / 2, g); }
@@ -90,11 +179,12 @@ bool atMaxZoomZ(const Sizes& z, double pxPerTick) {
   return pxPerTick >= std::max(16.0, kMaxBeatPx / static_cast<double>(z.beat)) * 0.98;
 }
 
-Tick snapGridZ(const Sizes& z, Snap mode, double pxPerTick, bool altHeld) {
+SnapGrid snapGridZ(const Sizes& z, Snap mode, double pxPerTick, bool altHeld) {
+  mode = resolveSnap(mode);
   const bool adaptive = mode == Snap::Line || mode == Snap::Cell;
-  if (altHeld) return mode == Snap::None ? visibleGridZ(z, pxPerTick, 16.0) : 1;  // Alt inverts snapping
-  if (!adaptive) return snapTicksZ(z, mode);
-  return atMaxZoomZ(z, pxPerTick) ? 1 : visibleGridZ(z, pxPerTick, 16.0);
+  if (altHeld) return SnapGrid(mode == Snap::None ? visibleGridZ(z, pxPerTick, 16.0) : 1);  // Alt inverts snapping
+  if (!adaptive) return snapSizeZ(z, mode);
+  return SnapGrid(atMaxZoomZ(z, pxPerTick) ? 1 : visibleGridZ(z, pxPerTick, 16.0));
 }
 
 std::string gridNameZ(const Sizes& z, Tick grid) {
@@ -119,15 +209,25 @@ bool atMaxZoom(const Song& s, double pxPerTick) { return pxPerTick >= maxPxPerTi
 Tick visibleGrid(const Song& s, double pxPerTick, double minPx) { return visibleGridZ(sizesOf(s), pxPerTick, minPx); }
 Tick visibleGrid(const MeterMap& m, double pxPerTick, double minPx) { return visibleGridZ(sizesOf(m), pxPerTick, minPx); }
 
-Tick snapGrid(const Song& s, Snap mode, double pxPerTick, bool altHeld) { return snapGridZ(sizesOf(s), mode, pxPerTick, altHeld); }
-Tick snapGrid(const MeterMap& m, Snap mode, double pxPerTick, bool altHeld) { return snapGridZ(sizesOf(m), mode, pxPerTick, altHeld); }
+SnapGrid snapGrid(const Song& s, Snap mode, double pxPerTick, bool altHeld) { return snapGridZ(sizesOf(s), mode, pxPerTick, altHeld); }
+SnapGrid snapGrid(const MeterMap& m, Snap mode, double pxPerTick, bool altHeld) { return snapGridZ(sizesOf(m), mode, pxPerTick, altHeld); }
 
-Tick snapTick(Tick t, Tick grid, Snap mode) { return mode == Snap::Cell ? snapDown(t, grid) : snapNearest(t, grid); }
+Tick snapTick(Tick t, Tick grid, Snap mode) { return resolveSnap(mode) == Snap::Cell ? snapDown(t, grid) : snapNearest(t, grid); }
+Tick snapTick(Tick t, const SnapGrid& grid, Snap mode) { return resolveSnap(mode) == Snap::Cell ? snapDown(t, grid) : snapNearest(t, grid); }
 
 Tick moveDistance(Tick dragged, Tick grid, Snap mode, Tick earliest) {
   const Tick d = snapTick(dragged, grid, mode);
   if (earliest + d >= 0) return d;
-  (void)grid;
+  return -std::max<Tick>(0, earliest);  // K-82: the wall at 0 (always a grid line)
+}
+
+Tick moveDistance(Tick dragged, const SnapGrid& grid, Snap mode, Tick earliest) {
+  if (!grid.fractional()) return moveDistance(dragged, grid.num, mode, earliest);
+  // A fractional grid is not evenly spaced in ticks: move the earliest one's own grid line to the
+  // line nearest where it is dragged (or the cell under it), keeping its offset from that line.
+  const Tick from = snapDown(earliest, grid);
+  const Tick d = snapTick(from + dragged, grid, mode) - from;
+  if (earliest + d >= 0) return d;
   return -std::max<Tick>(0, earliest);  // K-82: the wall at 0 (always a grid line)
 }
 
@@ -159,6 +259,29 @@ std::string rulerLabel(const Song& s, Tick t, Tick grid) {
 
 std::string gridName(const Song& s, Tick grid) { return gridNameZ(sizesOf(s), grid); }
 std::string gridName(const MeterMap& m, Tick grid) { return gridNameZ(sizesOf(m), grid); }
+std::string gridName(const MeterMap& m, const SnapGrid& grid) {
+  if (!grid.fractional()) return gridName(m, grid.num);
+  const Sizes z = sizesOf(m);
+  if (z.rowNum > 0 && SnapGrid(z.rowNum, z.rowDen) == grid) return snapName(Snap::RowGrid);  // K-255
+  for (Snap sn : {Snap::BeatFifth, Snap::BeatSeventh, Snap::Sixth, Snap::Third, Snap::Quarter, Snap::Half, Snap::BeatSixth, Snap::BeatThird,
+                  Snap::StepDotted, Snap::BeatHalfDotted, Snap::BeatDotted, Snap::BeatQuarter, Snap::BeatHalf})
+    if (snapSizeZ(z, sn) == grid) {
+      std::string n = snapName(sn);
+      if (!n.empty() && n[0] == 'D') n[0] = 'd';  // "dotted step", as the other names read
+      return n;
+    }
+  char buf[64];
+  std::snprintf(buf, sizeof buf, "%.2f ticks", static_cast<double>(grid.num) / static_cast<double>(grid.den));
+  return buf;
+}
+
+bool drawsSnapLines(const MeterMap& m, Snap mode, double pxPerTick, double minPx) {
+  mode = resolveSnap(mode);
+  if (mode == Snap::Line || mode == Snap::Cell || mode == Snap::None) return false;
+  const SnapGrid g = snapSizeZ(sizesOf(m), mode);
+  const double size = static_cast<double>(g.num) / static_cast<double>(g.den);
+  return size < static_cast<double>(m.baseBeat()) && size * pxPerTick >= minPx;
+}
 
 // --- K-179: song time with meter changes -----------------------------------------------------
 
@@ -188,7 +311,13 @@ Tick snapBars(const MeterMap& m, Tick t, int64_t k, bool down) {
 }
 }  // namespace
 
+Tick snapTick(const MeterMap& m, Tick t, const SnapGrid& grid, Snap mode) {
+  if (grid.fractional()) return snapTick(t, grid, mode);  // the same absolute grid in every section
+  return snapTick(m, t, grid.num, mode);
+}
+
 Tick snapTick(const MeterMap& m, Tick t, Tick grid, Snap mode) {
+  mode = resolveSnap(mode);
   if (m.constant()) return snapTick(t, grid, mode);
   const GridLevel lv = gridLevel(m, grid);
   const bool down = mode == Snap::Cell;
@@ -200,7 +329,13 @@ Tick snapTick(const MeterMap& m, Tick t, Tick grid, Snap mode) {
   return snapTick(t, lv.ticks, mode);
 }
 
+Tick moveDistance(const MeterMap& m, Tick dragged, const SnapGrid& grid, Snap mode, Tick earliest) {
+  if (grid.fractional()) return moveDistance(dragged, grid, mode, earliest);
+  return moveDistance(m, dragged, grid.num, mode, earliest);
+}
+
 Tick moveDistance(const MeterMap& m, Tick dragged, Tick grid, Snap mode, Tick earliest) {
+  mode = resolveSnap(mode);
   if (m.constant()) return moveDistance(dragged, grid, mode, earliest);
   const GridLevel lv = gridLevel(m, grid);
   Tick d = 0;
@@ -229,7 +364,7 @@ Tick moveDistance(const MeterMap& m, Tick dragged, Tick grid, Snap mode, Tick ea
 
 std::string rulerLabel(const MeterMap& m, Tick t, Tick grid) {
   t = std::max<Tick>(0, t);
-  const Tick step = std::max<Tick>(1, m.ppq() / 4);
+  const Tick step = m.stepTicks();
   const MeterMap::Bbt p = m.toBbt(t);
   const long long b = p.bar + 1, bt = p.beat + 1, st = p.tick / step + 1, tk = p.tick % step;
   const Tick bar = m.baseBar(), beat = m.baseBeat();

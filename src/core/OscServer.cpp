@@ -1,5 +1,6 @@
 // Gridline: the OSC server (see OscServer.h).
 #include "OscServer.h"
+#include "ThreadName.h"
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -240,7 +241,7 @@ bool OscServer::start(const OscServerConfig& cfg, std::string* err) {
   }
   buf_.assign(osc::kMaxPacket + 4, 0);
   quit_ = false;
-  thread_ = std::thread([this] { loop(); });
+  thread_ = std::thread([this] { gl::threads::setName("gl-osc"); loop(); });
   return true;
 }
 
@@ -254,6 +255,12 @@ OscServer::~OscServer() {
 void OscServer::stop() {
   if (thread_.joinable()) {
     quit_ = true;
+    // K-142 (0.7.8): the thread sleeps until a packet comes: one to itself wakes it to stop
+    if (udp_ != kNoSock && port_ > 0) {
+      const char b = 0;
+      const sockaddr_in a = addrOf(kLoopback, port_);
+      (void)::sendto(raw(udp_), &b, 1, 0, reinterpret_cast<const sockaddr*>(&a), sizeof a);
+    }
     thread_.join();
   }
   for (auto& c : conns_) net::closeSock(c->fd);
@@ -319,7 +326,8 @@ void OscServer::packet(const uint8_t* data, size_t n, uint32_t ip, uint16_t port
     status_.lastProblem = "Malformed packet from " + from + ": " + why;
     return;
   }
-  std::lock_guard<std::mutex> lk(mu_);
+  std::unique_lock<std::mutex> lk(mu_);
+  bool queued = false;
   for (auto& t : parsed_) {
     ++status_.received;
     status_.lastAddress = osc::describe(t.msg);
@@ -336,7 +344,10 @@ void OscServer::packet(const uint8_t* data, size_t n, uint32_t ip, uint16_t port
     in.port = port;
     in.tcp = tcp;
     queue_.push_back(std::move(in));
+    queued = true;
   }
+  lk.unlock();
+  if (queued && onQueued) onQueued();  // K-142 (follow-up)
 }
 
 void OscServer::loop() {
@@ -348,7 +359,10 @@ void OscServer::loop() {
     if (tcp_ != kNoSock) fds.push_back(net::pollEntry(tcp_, POLLIN));
     const size_t firstConn = fds.size();
     for (const auto& c : conns_) fds.push_back(net::pollEntry(c->fd, POLLIN));
-    const int r = net::pollSocks(fds.data(), fds.size(), 100);
+    // K-142: sleeps until a packet or a client comes (stop() sends one to wake it); a second at
+    // most, in case that packet was lost (it was 100 ms: ten wakeups a second for nothing)
+    const int r = net::pollSocks(fds.data(), fds.size(), 1000);
+    gl::threads::woke();  // K-142: CPU report
     if (r <= 0) continue;
     // UDP: every waiting datagram (a bounded number per round).
     if (fds[0].revents & (POLLIN | POLLERR)) {

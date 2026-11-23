@@ -19,6 +19,7 @@
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
 #include "../../core/I18n.h"
+#include "../../app/EditorZoomUi.h"
 #include "seltmann_ui.h"
 
 namespace gl::packs::seltmann::sui {
@@ -142,12 +143,14 @@ float pitchChip(App& a, const PluginTarget& t, Ed& e, const char* id, ImVec2 p0,
   }
   if (ac && e.pitchDrag == slice && io.MouseDelta.y != 0) {
     float nv;
+    // K-147: measured on screen (the editor may be drawn reduced or magnified)
+    const float dy = io.MouseDelta.y * std::max(0.1f, edzoomui::currentZoom());
     if (io.KeyShift) {  // fine: 0.05 semitone per pixel
-      nv = v - io.MouseDelta.y * 0.05f;
+      nv = v - dy * 0.05f;
       e.pitchFrom = nv;
       e.pitchAcc = 0;
     } else {  // a semitone per 8 px
-      e.pitchAcc -= io.MouseDelta.y;
+      e.pitchAcc -= dy;
       nv = e.pitchFrom + std::round(e.pitchAcc / 8.0f);
     }
     slicePitchUi(a, t, e, slice, nv, gestureKey(0x5E18500000000000ull, e, slice));
@@ -208,6 +211,67 @@ void startHereUi(App& a, const PluginTarget& t, Ed& e, int step, bool keepRest) 
   e.selStep = 0;
 }
 
+// ------------------------------------------------------------------ 0.7.8 blank steps
+bool stepIsBlank(const Model& m, int step) {
+  if (step < 0 || step >= static_cast<int>(m.pattern.steps.size())) return false;
+  const Step& s = m.pattern.steps[static_cast<size_t>(step)];
+  return s.src == kRest || stepSlice(m.pattern, s, static_cast<int>(m.slices.size())) < 0;
+}
+
+void clearStepUi(App& a, const PluginTarget& t, Ed& e, int step) {
+  Model nm = e.m;
+  if (!clearStep(nm, step)) return;
+  commit(a, t, e, nm, i18n::N_("Remove a step (leave a blank)"));
+  e.selStep = step;
+}
+
+void fillStepUi(App& a, const PluginTarget& t, Ed& e, int step, int region) {
+  Model nm = e.m;
+  if (!fillStep(nm, step, region)) return;
+  char lab[64];
+  std::snprintf(lab, sizeof lab, "%s %s", i18n::tr("Fill a step with"), regionName(region).c_str());
+  commit(a, t, e, nm, lab);
+  e.selStep = step;
+  e.selSlice = region;
+}
+
+void deleteStepUi(App& a, const PluginTarget& t, Ed& e, int step) {
+  Model nm = e.m;
+  if (!deleteStep(nm, step)) return;
+  commit(a, t, e, nm, i18n::N_("Delete a step"));
+  e.selStep = -1;
+}
+
+void fillMenu(App& a, const PluginTarget& t, Ed& e, int step) {
+  const int n = static_cast<int>(e.m.slices.size());
+  if (ImGui::BeginMenu(i18n::tr("Fill with"), n > 0)) {
+    // the regions in rows of eight, each in its colour (a long chop: the first 128)
+    for (int k = 0; k < n && k < 128; ++k) {
+      if (k % 8 != 0) ImGui::SameLine(0, 4);
+      ImGui::PushID(k);
+      const std::string L = regionName(k);
+      ImGui::PushStyleColor(ImGuiCol_Button, regionFace(k, 0.45f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, regionColor(k, 0.95f));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive, regionColor(k));
+      ImGui::PushStyleColor(ImGuiCol_Text, pal().text);
+      if (ImGui::Button(L.c_str(), ImVec2(30, 24))) {
+        fillStepUi(a, t, e, step, k);
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::PopStyleColor(4);
+      if (ImGui::IsItemHovered()) {
+        char b[96];
+        std::snprintf(b, sizeof b, "%s %d %s %s", i18n::tr("Step"), step + 1, i18n::tr("plays region"), L.c_str());
+        ui::Tooltip(b);
+      }
+      ImGui::PopID();
+    }
+    ImGui::EndMenu();
+  }
+  if (ImGui::IsItemHovered() && !ImGui::IsPopupOpen(i18n::tr("Fill with")))
+    ui::Tooltip(i18n::tr("Pick the region this blank plays. Also: drag a region's pad onto the blank, or click the blank and pick it under Plays."));
+}
+
 void regionMenuItems(App& a, const PluginTarget& t, Ed& e, int region) {
   const int n = static_cast<int>(e.m.slices.size());
   if (region < 0 || region >= n) return;
@@ -259,26 +323,37 @@ void drawRegionMenu(App& a, const PluginTarget& t, Ed& e) {
   const int n = static_cast<int>(e.m.slices.size());
   const int ns = static_cast<int>(e.m.pattern.steps.size());
   const int region = e.menuRegion;
-  if (region < 0 || region >= n) {
+  // 0.7.8: a blank step (a rest) has its own menu: fill it with a region, or the step's own items
+  const bool blank = region < 0 && e.menuStep >= 0 && e.menuStep < ns && stepIsBlank(e.m, e.menuStep);
+  if ((region < 0 || region >= n) && !blank) {
     ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
     return;
   }
   {
     char b[96];
-    const double secs = static_cast<double>(e.m.slices[static_cast<size_t>(region)].end - e.m.slices[static_cast<size_t>(region)].start) /
-                        std::max(1.0, e.m.srcRate);
-    if (e.menuStep >= 0 && e.menuStep < ns)
-      std::snprintf(b, sizeof b, "%s %d  \xC2\xB7  %s %s  \xC2\xB7  %.3f s", i18n::tr("Step"), e.menuStep + 1, i18n::tr("region"), regionName(region).c_str(), secs);
-    else std::snprintf(b, sizeof b, "%s %s  \xC2\xB7  %.3f s", i18n::tr("Region"), regionName(region).c_str(), secs);
+    if (blank) {
+      std::snprintf(b, sizeof b, "%s %d  \xC2\xB7  %s", i18n::tr("Step"), e.menuStep + 1, i18n::tr("blank"));
+    } else {
+      const double secs = static_cast<double>(e.m.slices[static_cast<size_t>(region)].end - e.m.slices[static_cast<size_t>(region)].start) /
+                          std::max(1.0, e.m.srcRate);
+      if (e.menuStep >= 0 && e.menuStep < ns)
+        std::snprintf(b, sizeof b, "%s %d  \xC2\xB7  %s %s  \xC2\xB7  %.3f s", i18n::tr("Step"), e.menuStep + 1, i18n::tr("region"), regionName(region).c_str(), secs);
+      else std::snprintf(b, sizeof b, "%s %s  \xC2\xB7  %.3f s", i18n::tr("Region"), regionName(region).c_str(), secs);
+    }
     ImGui::TextDisabled("%s", b);
   }
   ImGui::Separator();
-  regionMenuItems(a, t, e, region);
-  // J-185: the pitch: from a block of the sequence, that step's own pitch (the region's other steps
-  // keep theirs) and the region's (every step of it); from a pad or the waveform, the region's
-  ImGui::Separator();
-  {
+  if (blank) {
+    fillMenu(a, t, e, e.menuStep);
+    note("fill");
+  } else {
+    regionMenuItems(a, t, e, region);
+    // J-185: the pitch: from a block of the sequence, that step's own pitch (the region's other steps
+    // keep theirs) and the region's (every step of it); from a pad or the waveform, the region's
+    ImGui::Separator();
+  }
+  if (!blank) {
     const int nsP = static_cast<int>(e.m.pattern.steps.size());
     const bool fromStep = e.menuStep >= 0 && e.menuStep < nsP;
     const int stepI = e.menuStep;
@@ -338,7 +413,7 @@ void drawRegionMenu(App& a, const PluginTarget& t, Ed& e) {
     ImGui::Separator();
     Model nm = e.m;
     Step& s = nm.pattern.steps[static_cast<size_t>(st)];
-    if (ImGui::MenuItem(i18n::tr("Play backwards"), nullptr, s.reverse)) {
+    if (!blank && ImGui::MenuItem(i18n::tr("Play backwards"), nullptr, s.reverse)) {
       s.reverse = !s.reverse;
       markEdited(nm);
       commit(a, t, e, nm, i18n::N_("Reverse a step"));
@@ -359,14 +434,20 @@ void drawRegionMenu(App& a, const PluginTarget& t, Ed& e) {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
       ui::Tooltip(own ? i18n::tr("The step lasts its default length in the sequence again.")
                   : i18n::tr("Drag the block's right edge to give this step its own length in the sequence."));
-    if (ImGui::MenuItem(i18n::tr("Remove from the sequence"), nullptr, false, ns > 1)) {
-      nm.pattern.steps.erase(nm.pattern.steps.begin() + st);
-      markEdited(nm);
-      commit(a, t, e, nm, i18n::N_("Remove a step"));
-      e.selStep = -1;
+    // 0.7.8: Remove leaves a blank in the step's place (the sequence keeps its length and every later
+    // step its place); Delete step takes the step out (the later steps move up)
+    if (!blank) {
+      if (ImGui::MenuItem(i18n::tr("Remove from the sequence"))) clearStepUi(a, t, e, st);
+      note("remove");
+      if (ImGui::IsItemHovered())
+        ui::Tooltip(i18n::tr("A blank takes this step's place: the sequence keeps its length and the later steps stay where they are. "
+                             "Right-click the blank or drop a region on it to fill it."));
     }
+    if (ImGui::MenuItem(i18n::tr("Delete step"), nullptr, false, ns > 1)) deleteStepUi(a, t, e, st);
+    note("delete");
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-      ui::Tooltip(i18n::tr("Only this step leaves the sequence; the region stays (use Delete to join regions)."));
+      ui::Tooltip(ns > 1 ? i18n::tr("The step leaves the sequence and the later steps move up. The region stays (Delete in the region items joins regions).")
+                         : i18n::tr("The last step stays."));
   }
   ImGui::Separator();
   if (ImGui::MenuItem(i18n::tr("Reset to A B C D order"), nullptr, false, !isNaturalOrder(e.m))) {
@@ -376,6 +457,8 @@ void drawRegionMenu(App& a, const PluginTarget& t, Ed& e) {
     commit(a, t, e, nm, i18n::N_("Reset the order"));
     e.selStep = -1;
   }
+  ImGui::Separator();
+  editorKeyMenu(a, t, e);  // 0.7.8: the editor's commands (their keys where they are free)
   ImGui::EndPopup();
 }
 
@@ -409,8 +492,11 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
   }
   // J-152: the lane sits right under the waveform and shares its inner width (in order, A plays
   // under A). A 24 px strip between the two carries the title, the caption, the hint and Reset.
-  const float stripH = 24;
-  {
+  // 0.7.8 Ribbon: a short lane (the blocks only) sits flush under the waveform; its caption and
+  // Reset order move into the waveform's corner and the Steps card.
+  const bool tall = p1.y - p0.y >= 60;
+  const float stripH = tall ? 24.0f : 0.0f;
+  if (tall) {
     const float cy = std::round(p0.y + stripH * 0.5f);
     dl->AddRectFilled(ImVec2(p0.x + 8, cy - 5), ImVec2(p0.x + 10, cy + 4), accent(), 1);
     ImFont* f = a.fontMonoBold ? a.fontMonoBold : a.fontMono;
@@ -435,13 +521,13 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
           i18n::tr("Drag a block to move it, its right edge to set its length. Right-click: more"));
   }
   // the well
-  const float lx0 = p0.x, lx1 = p1.x, ly0 = p0.y + stripH, rulerH = 13, ly1 = p1.y - rulerH;
+  const float lx0 = p0.x, lx1 = p1.x, ly0 = p0.y + stripH, rulerH = tall ? 13.0f : 3.0f, ly1 = p1.y - rulerH;
   const ImVec2 w0(lx0, ly0), w1(lx1, p1.y);
   pui::displayFrame(dl, w0, w1);
   e.seq0 = ImVec2(lx0, ly0), e.seq1 = ImVec2(lx1, ly1);
   e.seqCentres.clear();
   if (ns == 0) return;
-  const float bx0 = lx0 + 8, bx1 = lx1 - 8, by0 = ly0 + 5, by1 = ly1 - 1;
+  const float bx0 = lx0 + 8, bx1 = lx1 - 8, by0 = ly0 + (tall ? 5.0f : 3.0f), by1 = ly1 - 1;
   const float bw = bx1 - bx0;
   auto X = [&](double beat) { return bx0 + static_cast<float>(beat / beats) * bw; };
   // block edges (beats)
@@ -454,8 +540,8 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
     }
     edge[static_cast<size_t>(ns)] = X(stepsEnd);
   }
-  // ruler: bars and beats under the blocks
-  {
+  // ruler: bars and beats under the blocks (the tall lane)
+  if (tall) {
     const float ry = ly1 + 1;
     const float beatPx = bw / static_cast<float>(beats);
     for (int b = 0; b <= static_cast<int>(std::floor(beats + 1e-9)); ++b) {
@@ -499,22 +585,45 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
       e.seqDrag = i;
       auditionStop(a, t, e);
     }
-    if (ImGui::IsItemDeactivated()) auditionStop(a, t, e);
+    if (ImGui::IsItemDeactivated()) {
+      auditionStop(a, t, e);
+      // 0.7.8: a click (no drag) opens the step's card under the block
+      if (e.seqPress == i && e.seqDrag < 0 && hv) openCard(e, CardStep, ImVec2(std::round((q0.x + q1.x) * 0.5f), q1.y + 2), true);
+    }
+    // 0.7.8: a key of the keys strip dropped on a block: the step plays that region
+    if (ImGui::BeginDragDropTarget()) {
+      if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_SELT_SLICE")) {
+        const int slice = *static_cast<const int*>(pl->Data);
+        Model nm = m;
+        Step& st = nm.pattern.steps[static_cast<size_t>(i)];
+        st.slot = false;
+        st.src = std::clamp(slice, 0, std::max(0, nSl - 1));
+        markEdited(nm);
+        commit(a, t, e, nm, i18n::N_("Place a region on a step"));
+      }
+      ImGui::EndDragDropTarget();
+    }
     // The wheel over a block steps that step's own pitch (Shift: 0.1), not its region's: the region's
     // other steps keep theirs. The wheel elsewhere scrolls as before.
     if (k >= 0 && e.seqDrag < 0) wheelStepPitch(a, t, e, i);
-    if (hv && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && k >= 0) {
+    if (hv && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
       e.selStep = i;
-      e.selSlice = k;
-      openRegionMenu(e, k, i);
+      if (k >= 0) e.selSlice = k;
+      openRegionMenu(e, k, i);  // (a blank: its own menu)
     }
-    if (hv && !ImGui::IsItemActive() && e.seqDrag < 0) {
+    const bool blankTile = s.src == kRest || k < 0;
+    if (hv && !ImGui::IsItemActive() && e.seqDrag < 0 && blankTile) {
+      char b[320];
+      std::snprintf(b, sizeof b, "%s %d: %s  \xC2\xB7  %.4g %s\n%s", i18n::tr("Step"), i + 1, i18n::tr("blank"), stepBeats(m.pattern, i), i18n::tr("beats"),
+                    i18n::tr("Silent, it keeps its place. Right-click to fill it with a region, or drag a region's pad onto it."));
+      ui::Tooltip(b);
+    } else if (hv && !ImGui::IsItemActive() && e.seqDrag < 0) {
       char b[320];
       const std::string pt = k >= 0 ? pitchText(m.slices[static_cast<size_t>(k)].pitch + s.pitch) : std::string("0");
       std::snprintf(b, sizeof b, "%s %d: %s %s  \xC2\xB7  %.4g %s%s  \xC2\xB7  %s %s %s\n%s", i18n::tr("Step"), i + 1, i18n::tr("region"),
                     k >= 0 ? regionName(k).c_str() : "-", stepBeats(m.pattern, i), i18n::tr("beats"),
                     s.beats > 0 ? (std::string(" (") + i18n::tr("its own length") + ")").c_str() : "", i18n::tr("pitch"), pt.c_str(), i18n::tr("st"),
-                    i18n::tr("Click to hear it. Drag to move it. Wheel: this step's pitch (Shift: finer). Right-click: start here, pitch, split or delete the region."));
+                    i18n::tr("Click to hear it. Drag to move it. Wheel: this step's pitch (Shift: finer). Right-click: remove it (a blank keeps its place), pitch, split or delete the region."));
       ui::Tooltip(b);
     }
     if (hv && e.seqDrag < 0) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -522,7 +631,34 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
     // paint
     // J-152: a quiet tinted face with the hue along its foot; only the playing step lights up fully
     if (s.src == kRest || k < 0) {
-      dl->AddRect(q0, q1, theme::withAlpha(P.line, 1.0f), theme::kRadius);
+      // 0.7.8: a blank: an empty slot (a sunken face, a dashed edge) with a plus that brightens on
+      // hover and while a region's pad is dragged over it
+      const ImGuiPayload* pl = ImGui::GetDragDropPayload();
+      const bool target = pl && pl->IsDataType("GL_SELT_SLICE") && ImGui::IsMouseHoveringRect(q0, q1);
+      const bool lit = hv || target;
+      const float fade = dragged ? 0.35f : 1.0f;
+      dl->AddRectFilled(q0, q1, theme::withAlpha(theme::mix(P.well, accent(), target ? 0.16f : lit ? 0.06f : 0.0f), fade), theme::kRadius);
+      const ImU32 edgeCol = theme::withAlpha(lit ? accent() : P.textDim, (lit ? 0.95f : 0.5f) * fade);
+      const float dash = 4, gap = 3;
+      const ImVec2 r0(q0.x + 0.5f, q0.y + 0.5f), r1(q1.x - 0.5f, q1.y - 0.5f);
+      for (float x = r0.x; x < r1.x; x += dash + gap) {
+        const float x2 = std::min(x + dash, r1.x);
+        dl->AddLine(ImVec2(x, r0.y), ImVec2(x2, r0.y), edgeCol, 1);
+        dl->AddLine(ImVec2(x, r1.y), ImVec2(x2, r1.y), edgeCol, 1);
+      }
+      for (float y = r0.y; y < r1.y; y += dash + gap) {
+        const float y2 = std::min(y + dash, r1.y);
+        dl->AddLine(ImVec2(r0.x, y), ImVec2(r0.x, y2), edgeCol, 1);
+        dl->AddLine(ImVec2(r1.x, y), ImVec2(r1.x, y2), edgeCol, 1);
+      }
+      const float cw = q1.x - q0.x, ch = q1.y - q0.y;
+      if (cw >= 9 && ch >= 9) {
+        const float arm = std::round(std::min(4.0f, std::min(cw, ch) * 0.22f));
+        const ImVec2 c(std::round((q0.x + q1.x) * 0.5f) + 0.5f, std::round((q0.y + q1.y) * 0.5f) + 0.5f);
+        const ImU32 plus = theme::withAlpha(lit ? accent() : P.textFaint, (lit ? 1.0f : 0.8f) * fade);
+        dl->AddLine(ImVec2(c.x - arm, c.y), ImVec2(c.x + arm + 1, c.y), plus, lit ? 1.5f : 1.0f);
+        dl->AddLine(ImVec2(c.x, c.y - arm), ImVec2(c.x, c.y + arm + 1), plus, lit ? 1.5f : 1.0f);
+      }
     } else {
       const ImU32 face = playing ? regionColor(k) : regionFace(k, hv ? 0.42f : sel ? 0.36f : 0.28f);
       skin::raisedFace(dl, q0, q1, dragged ? theme::withAlpha(face, 0.3f) : face, theme::kRadius);
@@ -619,11 +755,9 @@ void drawSequence(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, co
       if (h && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) stepBeatsUi(a, t, e, i, 0);
       if (h && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
         const int k = stepSlice(m.pattern, m.pattern.steps[static_cast<size_t>(i)], nSl);
-        if (k >= 0) {
-          e.selStep = i;
-          e.selSlice = k;
-          openRegionMenu(e, k, i);
-        }
+        e.selStep = i;
+        if (k >= 0) e.selSlice = k;
+        openRegionMenu(e, k, i);  // (a blank: its own menu)
       }
       if (h || ac) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);

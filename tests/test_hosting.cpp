@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <functional>
@@ -17,6 +18,7 @@
 #include "NoteRetrigger.h"
 #include "core/Crash.h"
 #include "core/Document.h"
+#include "core/MixerOps.h"
 #include "core/PatternAutomation.h"
 #include "core/PluginParams.h"
 #include "core/Project.h"
@@ -1424,6 +1426,148 @@ void testLatencyChange() {
   expect(rt->fx->latencySamples() == 64 && b.latencyChanged(), "latency change → restart → new latency → program rebuild for PDC");
 }
 
+// 0.7.8 (user report: moving an effect up one slot in the mixer reset some plugins, a third-party
+// one especially): moving an effect never makes a new instance or gives it another's state. The
+// CLAP test gain holds a live state the song never saw (as a plugin that saves lazily does): it
+// keeps it through move up, move down, a drag to another slot and to another track, undo and redo,
+// and every other effect keeps its own instance.
+void testEffectMoveKeepsInstance() {
+  Document d(makeEmptySong());
+  const ObjectId t1 = d.song().mixer[1].id, t2 = d.song().mixer[2].id;
+  expect(d.setSlotPlugin(t1, 0, kClapGain) && d.setSlotPlugin(t1, 1, "gl.utility") && d.setSlotPlugin(t1, 2, kClapGain), "three effects on a track");
+  ProgramBuilder b;
+  b.setSampleRate(48000);
+  auto prog = b.build(d.song());  // held, as the engine holds the playing program
+  const auto fxAt = [&](ObjectId t, int k) -> Effect* {
+    auto rt = b.effectRuntime(t, k);
+    return rt ? rt->fx.get() : nullptr;
+  };
+  Effect* gainA = fxAt(t1, 0);
+  Effect* util = fxAt(t1, 1);
+  Effect* gainB = fxAt(t1, 2);
+  expect(gainA && util && gainB && host::hostedInstance(gainB), "effects built");
+  if (!gainA || !util || !gainB || !host::hostedInstance(gainB)) return;
+  // A live state only the plugin knows (level 0.3, sidechain 0.7): never captured into the song.
+  std::string bytes(16, '\0');
+  const double lv = 0.3, sd = 0.7;
+  std::memcpy(&bytes[0], &lv, 8);
+  std::memcpy(&bytes[8], &sd, 8);
+  const std::string live = "clap1:" + host::base64Encode(bytes);
+  expect(host::hostedInstance(gainB)->backend()->setState(live), "the plugin takes a state the song does not hold");
+  std::string other;
+  host::hostedInstance(gainA)->captureState(other);
+  expect(other != live, "the other gain has its own (default) state");
+  const auto stateOf = [&](Effect* fx) {
+    std::string s;
+    host::HostedInstance* hi = fx ? host::hostedInstance(fx) : nullptr;
+    if (hi) hi->captureState(s);
+    return s;
+  };
+  const auto check = [&](const char* what, ObjectId tB, int kB, ObjectId tU, int kU, ObjectId tA, int kA) {
+    prog = b.build(d.song());
+    const bool same = fxAt(tB, kB) == gainB && fxAt(tU, kU) == util && fxAt(tA, kA) == gainA;
+    expect(same, (std::string(what) + ": every effect keeps its instance (none made again)").c_str());
+    expect(stateOf(fxAt(tB, kB)) == live, (std::string(what) + ": the moved plugin keeps its live state").c_str());
+    expect(stateOf(fxAt(tA, kA)) == other, (std::string(what) + ": the other plugin of the same kind keeps its own state").c_str());
+  };
+  expect(mixops::stepSlot(d, t1, 2, -1) == 1, "move up one");
+  check("move up past another kind", t1, 1, t1, 2, t1, 0);
+  expect(mixops::stepSlot(d, t1, 1, -1) == 0, "move up again");
+  check("move up past the same kind", t1, 0, t1, 2, t1, 1);
+  expect(mixops::stepSlot(d, t1, 0, 1) == 1, "move down one");
+  check("move down", t1, 1, t1, 2, t1, 0);
+  expect(mixops::moveSlotTo(d, t1, 1, t1, 4), "drag to a free slot");
+  check("drag to another slot", t1, 4, t1, 1, t1, 0);
+  expect(mixops::moveSlotTo(d, t1, 4, t2, 0), "drag to another track");
+  check("drag to another track", t2, 0, t1, 1, t1, 0);
+  expect(d.undo(), "undo the drag to another track");
+  check("undo", t1, 4, t1, 1, t1, 0);
+  expect(d.undo() && d.undo(), "undo twice more");
+  check("undo of moves", t1, 0, t1, 2, t1, 1);
+  expect(d.redo(), "redo");
+  check("redo", t1, 1, t1, 2, t1, 0);
+  // A copy (Ctrl drag) is a new instance of its own; the original keeps its own.
+  expect(mixops::moveSlotTo(d, t1, 1, t1, 5, true), "copy to a free slot");
+  prog = b.build(d.song());
+  expect(fxAt(t1, 1) == gainB && fxAt(t1, 5) && fxAt(t1, 5) != gainB && stateOf(fxAt(t1, 1)) == live, "a copy is a new instance, the original stays");
+}
+
+// 0.7.8: the same with a real third-party effect, when GRIDLINE_TEST_SYSTEM_PLUGIN names one
+// ("vst3:<bundle>", "clap:<bundle>" or "au:<entry>"; never set in CI). Its first parameter is set
+// on the running instance only (the song never sees it): moved up and down, dragged and undone, it
+// keeps its instance and that value.
+void testSystemPluginMove() {
+  const char* env = std::getenv("GRIDLINE_TEST_SYSTEM_PLUGIN");
+  if (!env || !*env) return;
+  const std::string spec = env;
+  const size_t colon = spec.find(':');
+  if (colon == std::string::npos) return;
+  const std::string format = spec.substr(0, colon), entry = spec.substr(colon + 1);
+  const host::Format* f = host::findFormat(format);
+  host::ScanResult r = f ? f->scanInProcess(entry) : host::ScanResult{};
+  const host::ScannedClass* fxClass = nullptr;
+  for (const auto& c : r.classes)
+    if (!c.instrument && !fxClass) fxClass = &c;
+  expect(r.ok && fxClass, ("system plugin scanned: " + spec + " " + r.error).c_str());
+  if (!r.ok || !fxClass) return;
+  host::registerScanResult(r);
+  const std::string type = format + ":" + fxClass->uid;
+  std::printf("system plugin: %s (%s)\n", fxClass->name.c_str(), type.c_str());
+  Document d(makeEmptySong());
+  const ObjectId t1 = d.song().mixer[1].id;
+  expect(d.setSlotPlugin(t1, 0, type) && d.setSlotPlugin(t1, 1, "gl.utility") && d.setSlotPlugin(t1, 2, type), "system plugin: three effects on a track");
+  ProgramBuilder b;
+  b.setSampleRate(48000);
+  auto prog = b.build(d.song());
+  const auto fxAt = [&](int k) -> Effect* {
+    auto rt = b.effectRuntime(t1, k);
+    return rt ? rt->fx.get() : nullptr;
+  };
+  Effect* a0 = fxAt(0);
+  Effect* b0 = fxAt(2);
+  host::HostedInstance* hb = b0 ? host::hostedInstance(b0) : nullptr;
+  expect(a0 && hb, ("system plugin instantiates " + host::lastError()).c_str());
+  if (!a0 || !hb) return;
+  const auto& ps = hb->backend()->params();
+  expect(!ps.empty(), "system plugin has parameters");
+  if (ps.empty()) return;
+  size_t pi = 0;  // the first continuous parameter one can see (a toggle would round the value)
+  for (size_t i = 0; i < ps.size(); ++i)
+    if (ps[i].stepCount == 0 && ps[i].exposed()) {
+      pi = i;
+      break;
+    }
+  const uint32_t pid = ps[pi].id;
+  const double was = hb->backend()->paramNormalized(pid);
+  const double want = was > 0.5 ? 0.13 : 0.87;
+  hb->backend()->setParamNormalized(pid, want);
+  const auto valueOf = [&](Effect* fx) { return fx && host::hostedInstance(fx) ? host::hostedInstance(fx)->backend()->paramNormalized(pid) : -1.0; };
+  std::printf("system plugin: parameter \"%s\" %.3f -> %.3f on the running instance\n", ps[pi].title.c_str(), was, valueOf(b0));
+  // (CLAP plugins take a parameter change through their queue, when they next process: then only the
+  // instances are checked here; the in-tree test plugins check the state of each.)
+  const bool took = std::fabs(valueOf(b0) - want) < 0.02;
+  if (!took) std::printf("system plugin: the value did not take outside processing; instances only\n");
+  const auto check = [&](const char* what, int kB, int kA) {
+    prog = b.build(d.song());
+    expect(fxAt(kB) == b0 && fxAt(kA) == a0, (std::string("system plugin, ") + what + ": both instances kept").c_str());
+    if (took)
+      expect(std::fabs(valueOf(fxAt(kB)) - valueOf(b0)) < 1e-9 && std::fabs(valueOf(b0) - want) < 0.02,
+             (std::string("system plugin, ") + what + ": the moved plugin keeps its live value").c_str());
+  };
+  expect(mixops::stepSlot(d, t1, 2, -1) == 1, "system plugin: move up");
+  check("move up", 1, 0);
+  expect(mixops::stepSlot(d, t1, 1, -1) == 0, "system plugin: move up again");
+  check("move up past the same plugin", 0, 1);
+  expect(mixops::stepSlot(d, t1, 0, 1) == 1, "system plugin: move down");
+  check("move down", 1, 0);
+  expect(mixops::moveSlotTo(d, t1, 1, t1, 5), "system plugin: drag");
+  check("drag", 5, 0);
+  expect(d.undo() && d.undo(), "system plugin: undo twice");
+  check("undo", 0, 1);
+  expect(d.redo(), "system plugin: redo");
+  check("redo", 1, 0);
+}
+
 // K-144: slide notes and bend lines on a hosted instrument, per its "Per-note pitch" option:
 // automatic (the CLAP note tuning expression), MPE (a member channel per note, its bend; the zone
 // and bend range announced), channel pitch bend (the engine bends the channel) and off.
@@ -1966,6 +2110,150 @@ void testSandboxFeatures() {
   host::setRunInSandbox(kClapSynth, false);
 }
 
+// K-142: a sandboxed plugin with nothing to do costs no calls to its process. Its interface frame
+// polls the child every frame only while a block ran since the last poll, another call was made or
+// its interface is open, else once a second; the sync that rides on the poll still arrives in the
+// frame after the block (an edit made in the plugin), and a resting sandboxed instrument sends no
+// block at all until something plays it, then in the very block it is played.
+unsigned sandboxCount(host::HostedInstance* hi, const char* key) {
+  const std::string d = hi->backend()->diagnostics();
+  const size_t p = d.find(key);
+  return p == std::string::npos ? ~0u : static_cast<unsigned>(std::strtoul(d.c_str() + p + std::strlen(key), nullptr, 10));
+}
+void testSandboxIdlePolls() {
+  host::setChildExecutable(GRIDLINE_CLI_EXE);
+  host::setRunInSandbox(kClapSynth, true);
+  {
+    OfflineScope offline;
+    auto g = createGenerator(kClapSynth);
+    expect(g != nullptr, ("idle polls: sandboxed instrument starts " + host::lastError()).c_str());
+    if (!g) {
+      host::setRunInSandbox(kClapSynth, false);
+      return;
+    }
+    host::HostedInstance* hi = host::hostedInstance(g.get());
+    PluginState st = defaultPluginState(kClapSynth);
+    g->prepareHost(st, 48000);
+    host::UiUpdate u;
+    hi->pumpUi(u);
+    expect(u.readback, "idle polls: the first frame reads the parameters back");
+    // Frames until one makes no call (what a poll brings may call the plugin once more: its
+    // parameter values read back or handed on); returns the frames that called it.
+    auto settle = [&](host::UiUpdate* first = nullptr) {
+      int calling = 0;
+      for (int i = 0; i < 10; ++i) {
+        const unsigned c = sandboxCount(hi, "calls ");
+        host::UiUpdate q;
+        hi->pumpUi(q);
+        if (i == 0 && first) *first = q;
+        if (sandboxCount(hi, "calls ") == c) break;
+        ++calling;
+      }
+      return calling;
+    };
+    settle();
+    auto quiet = [&](const char* what) {
+      // (at most one hand-back and its poll: an edit made in the plugin is handed back to its
+      // controller once its hold of 60 frames ends, K-168)
+      const unsigned calls = sandboxCount(hi, "calls ");
+      for (int i = 0; i < 30; ++i) {
+        host::UiUpdate q;
+        hi->pumpUi(q);
+      }
+      expect(sandboxCount(hi, "calls ") <= calls + 2, (std::string("idle polls: ") + what + ": " + hi->backend()->diagnostics()).c_str());
+    };
+    quiet("30 frames with nothing processed make no call");
+    // A block: the next frame polls, and an edit made in the plugin arrives in it.
+    std::vector<float> L, R;
+    g->midi(0xB0, 20, 64, 0);
+    runGen(*g, st, L, R, 256);
+    unsigned polls = sandboxCount(hi, "idle polls ");
+    u = host::UiUpdate{};
+    settle(&u);
+    expect(sandboxCount(hi, "idle polls ") > polls, "idle polls: a block makes the next frame poll");
+    expect(u.edits.size() == 1 && std::fabs(u.edits[0].value - 64.0f / 127.0f) < 1e-4f && u.gestureEnd,
+           "idle polls: an edit made in the plugin arrives in the frame after its block");
+    quiet("no block since: no call");
+    // Another call (here its state read) makes the next frame poll.
+    std::string data;
+    expect(hi->captureState(data), "idle polls: state read");
+    polls = sandboxCount(hi, "idle polls ");
+    settle();
+    expect(sandboxCount(hi, "idle polls ") == polls + 1, "idle polls: a call makes the next frame poll, once");
+    quiet("after the call: no call");
+    // Left alone, it is still polled once a second (what the plugin's own threads did arrives).
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    polls = sandboxCount(hi, "idle polls ");
+    settle();
+    expect(sandboxCount(hi, "idle polls ") == polls + 1, "idle polls: polled again after a second");
+    // A parameter change from the song still reaches the plugin's controller after its block.
+    std::vector<float> L2, R2;
+    PluginState st2 = st;
+    st2.params[0] = 0.25f;
+    runGen(*g, st2, L2, R2, 256);  // the engine sends the change with the block
+    const unsigned calls1 = sandboxCount(hi, "calls ");
+    polls = sandboxCount(hi, "idle polls ");
+    settle();
+    expect(sandboxCount(hi, "idle polls ") > polls && sandboxCount(hi, "calls ") >= calls1 + 2,
+           "idle polls: a parameter change from the song: polled after its block and handed to the plugin's controller");
+    expect(std::fabs(hi->backend()->paramNormalized(hi->backend()->params()[0].id) - 0.25) < 1e-6,
+           "idle polls: the plugin's controller has the song's value");
+    quiet("after the change: no call");
+    // Its process, asleep with no timeout, still leaves at once when its host lets it go (it
+    // would be killed after a second otherwise).
+    const auto t0 = std::chrono::steady_clock::now();
+    g.reset();
+    const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    expect(took < 0.9, ("idle polls: the sleeping sandbox process leaves when its instance goes (" + std::to_string(took) + " s)").c_str());
+  }
+  {  // GitHub #66 in the sandbox: a resting instrument sends no block; a live note wakes it in its block.
+    Song s = makeEmptySong();
+    Channel c;
+    c.id = s.allocateId();
+    c.name = "Sandboxed";
+    c.plugin = defaultPluginState(kClapSynth);
+    c.mixerTrack = s.mixer[1].id;
+    s.channels.push_back(c);
+    ProgramBuilder b;
+    b.setSampleRate(48000);
+    AudioEngine e(48000);
+    e.setRestInstruments(true);
+    e.setProgram(b.build(s));
+    auto rt = b.channelRuntime(c.id);
+    host::HostedInstance* hi = rt && rt->gen ? host::hostedInstance(rt->gen.get()) : nullptr;
+    expect(hi && hi->sandboxed(), "rest in the sandbox: the channel's synth runs in the sandbox");
+    if (hi) {
+      std::vector<float> L(256), R(256);
+      for (int i = 0; i < 48000 * 3 / 256; ++i) e.process(L.data(), R.data(), 256);  // past the 2 s hold
+      const uint64_t rested = rt->restBlocks.load();
+      const unsigned sent = sandboxCount(hi, "blocks sent "), calls = sandboxCount(hi, "calls ");
+      for (int i = 0; i < 100; ++i) e.process(L.data(), R.data(), 256);
+      expect(rested > 0 && rt->restBlocks.load() == rested + 100, "rest in the sandbox: the silent instrument rests");
+      expect(sandboxCount(hi, "blocks sent ") == sent && sandboxCount(hi, "calls ") == calls,
+             ("rest in the sandbox: resting costs no block and no call: " + hi->backend()->diagnostics()).c_str());
+      int calling = 0;
+      for (int i = 0; i < 30; ++i) {
+        const unsigned c = sandboxCount(hi, "calls ");
+        host::UiUpdate q;
+        hi->pumpUi(q);
+        calling += sandboxCount(hi, "calls ") != c;
+      }
+      const unsigned callsNow = sandboxCount(hi, "calls ");
+      for (int i = 0; i < 30; ++i) {
+        host::UiUpdate q;
+        hi->pumpUi(q);
+      }
+      expect(calling <= 4 && sandboxCount(hi, "calls ") == callsNow,
+             ("rest in the sandbox: its frames settle and then call it no more while it rests: " + hi->backend()->diagnostics()).c_str());
+      e.noteOn(c.id, 69, 0.8f);
+      e.process(L.data(), R.data(), 256);
+      expect(sandboxCount(hi, "blocks sent ") == sent + 1 && rt->restBlocks.load() == rested + 100, "rest in the sandbox: a note wakes it in the block it arrives in");
+      e.noteOff(c.id, 69);
+    }
+  }
+  host::setRunInSandbox(kClapSynth, false);
+}
+
 
 // ---- J-29: plugin windows (the plugin's own interface on top, the control
 // bar under it, the settings panel under the bar) ----
@@ -2097,6 +2385,92 @@ void testPluginWindowLayout() {
 // Real instances: plugins with an interface open it by default, plugins
 // without one fall back to the generic list; nothing is ever swapped for a
 // Gridline built-in.
+// 0.7.8: installed plugins' interfaces inside Gridline: where one opens, the per-plugin choice and
+// how a docked interface is cut by its pane and by what Gridline draws in front of it.
+void testInterfaceInside() {
+  namespace L = gl::host::layout;
+  using P = L::InterfacePlace;
+  expect(L::chooseInterfacePlace(true, L::kChoiceSetting, true) == P::Inside && L::chooseInterfacePlace(false, L::kChoiceSetting, true) == P::OwnWindow,
+         "inside Gridline: the setting decides for a plugin without a choice of its own");
+  expect(L::chooseInterfacePlace(false, L::kChoiceInside, true) == P::Inside && L::chooseInterfacePlace(true, L::kChoiceOwnWindow, true) == P::OwnWindow,
+         "inside Gridline: a plugin's own choice wins over the setting");
+  expect(L::chooseInterfacePlace(true, L::kChoiceInside, false) == P::OwnWindow && L::chooseInterfacePlace(true, L::kChoiceSetting, false) == P::OwnWindow,
+         "inside Gridline: an interface that cannot sit inside (sandbox window, Wayland) keeps its own window");
+  expect(L::interfaceChoiceFor(true, true) == L::kChoiceSetting && L::interfaceChoiceFor(true, false) == L::kChoiceOwnWindow &&
+             L::interfaceChoiceFor(false, true) == L::kChoiceInside && L::interfaceChoiceFor(false, false) == L::kChoiceSetting,
+         "inside Gridline: a choice the setting makes anyway is not kept");
+  bool roundTrip = true;
+  for (bool setting : {false, true})
+    for (bool inside : {false, true})
+      roundTrip = roundTrip && (L::chooseInterfacePlace(setting, L::interfaceChoiceFor(setting, inside), true) == P::Inside) == inside;
+  expect(roundTrip, "inside Gridline: the kept choice puts the plugin where the person put it, whatever the setting");
+
+  // The per-plugin choice is saved with the plugin settings, and older files (no choice) follow the setting.
+  {
+    const std::string was = host::pluginPrefsFile();
+    const fs::path dir = fs::temp_directory_path() / ("gl-dock-prefs-" + std::to_string(reinterpret_cast<uintptr_t>(&was)));
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    host::loadPluginPrefs(dir.u8string());
+    host::HostOptions o = host::hostOptions("test.dock");
+    expect(o.window == L::kChoiceSetting, "inside Gridline: no choice before one is made");
+    o.window = L::kChoiceOwnWindow;
+    host::setHostOptions("test.dock", o);
+    host::loadPluginPrefs(dir.u8string());
+    expect(host::hostOptions("test.dock").window == L::kChoiceOwnWindow, "inside Gridline: a plugin's choice is saved and read back");
+    o.window = L::kChoiceSetting;
+    host::setHostOptions("test.dock", o);
+    host::loadPluginPrefs(dir.u8string());
+    expect(host::hostOptions("test.dock").window == L::kChoiceSetting, "inside Gridline: back to the setting");
+    if (!was.empty()) host::loadPluginPrefs(fs::u8path(was).parent_path().u8string());
+    fs::remove_all(dir);
+  }
+
+  const L::Rect full{100, 80, 400, 300};
+  // Nothing in front, fully in view.
+  L::DockedShow d = L::dockedShow(full, L::Rect{0, 0, 1200, 800}, {}, true);
+  expect(d.visible == full && d.holes.empty(), "docked interface: shown whole when nothing covers it");
+  // Scrolled: the pane shows its lower part only.
+  d = L::dockedShow(full, L::Rect{0, 200, 1200, 600}, {}, true);
+  expect(d.visible == (L::Rect{100, 200, 400, 180}) && d.holes.empty(), "docked interface: cut by its pane when scrolled");
+  // Out of its pane (a hidden tab, a collapsed pane): hidden.
+  d = L::dockedShow(full, L::Rect{600, 0, 200, 800}, {}, true);
+  expect(d.visible.empty(), "docked interface: hidden when its pane shows none of it");
+  // A window across its whole right edge trims it, on every system.
+  d = L::dockedShow(full, L::Rect{0, 0, 1200, 800}, {L::Rect{400, 0, 500, 800}}, false);
+  expect(d.visible == (L::Rect{100, 80, 300, 300}) && d.holes.empty(), "docked interface: a window over a whole edge trims it (no hole needed)");
+  d = L::dockedShow(full, L::Rect{0, 0, 1200, 800}, {L::Rect{0, 0, 1200, 120}}, false);
+  expect(d.visible == (L::Rect{100, 120, 400, 260}) && d.holes.empty(), "docked interface: a bar over its top edge trims it");
+  // A menu in the middle: a hole where holes can be cut, else hidden while it is open.
+  const L::Rect menu{200, 150, 120, 200};
+  d = L::dockedShow(full, L::Rect{0, 0, 1200, 800}, {menu}, true);
+  expect(d.visible == full && d.holes.size() == 1 && d.holes[0] == menu, "docked interface: a menu over it is cut out of it");
+  d = L::dockedShow(full, L::Rect{0, 0, 1200, 800}, {menu}, false);
+  expect(d.visible.empty() && d.holes.empty(), "docked interface: hidden while a menu is over it where no hole can be cut");
+  // A tooltip sticking out of it: only the part over it is cut.
+  d = L::dockedShow(full, L::Rect{0, 0, 1200, 800}, {L::Rect{450, 300, 200, 40}}, true);
+  expect(d.holes.size() == 1 && d.holes[0] == (L::Rect{450, 300, 50, 40}), "docked interface: holes stay inside what shows");
+  // Covered whole by a window in front: hidden.
+  d = L::dockedShow(full, L::Rect{0, 0, 1200, 800}, {L::Rect{50, 50, 600, 400}}, true);
+  expect(d.visible.empty(), "docked interface: hidden under a window that covers it whole");
+  // Covers that do not touch it change nothing.
+  d = L::dockedShow(full, L::Rect{0, 0, 1200, 800}, {L::Rect{0, 0, 50, 50}, L::Rect{700, 500, 100, 100}}, false);
+  expect(d.visible == full && d.holes.empty(), "docked interface: covers elsewhere change nothing");
+
+  // The own window's bar: the dock button comes from the preset box's room and never adds a row.
+  bool dockOk = true;
+  for (int bw = L::kMinWindowW; bw <= 1400; bw += 9)
+    for (bool route : {false, true}) {
+      const L::BarLayout with = L::layoutBar(bw, route, true), without = L::layoutBar(bw, route, false);
+      dockOk = dockOk && with.visible[L::kBarDock] && !without.visible[L::kBarDock] && with.rows == without.rows;
+      for (int i = 0; i < L::kBarItemCount; ++i)
+        for (int j = i + 1; j < L::kBarItemCount; ++j)
+          dockOk = dockOk && !(with.visible[i] && with.visible[j] && with.items[i].overlaps(with.items[j]));
+      for (int i = 0; i < L::kBarItemCount; ++i) dockOk = dockOk && (!with.visible[i] || with.items[i].right() <= std::max(bw, L::kMinWindowW));
+    }
+  expect(dockOk, "control bar: the dock button fits at every width, overlaps nothing and never adds a row");
+}
+
 void testEditorDefaults() {
   namespace L = host::layout;
   auto gain = createEffect(kClapGain);
@@ -2277,6 +2651,8 @@ int main() {
   testMidiOutHostedListener();
   testSampleAccurate();
   testLatencyChange();
+  testEffectMoveKeepsInstance();
+  testSystemPluginMove();
   testClapModulation();
   testClapSlides();
   testClapExpression();
@@ -2285,7 +2661,9 @@ int main() {
   testSandboxEmbeddedInterface();
   testPresetsAndBypass();
   testSandboxFeatures();
+  testSandboxIdlePolls();
   testPluginWindowLayout();
+  testInterfaceInside();
   testEditorDefaults();
   testSandboxOfflineRender();
   testScanShutdown();  // last: the scan service is closed afterwards

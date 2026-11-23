@@ -67,7 +67,8 @@ int main() {
   expect(monotone, "the magnets run in order along the knob");
   expect(exact, "a magnet's knob position gives back exactly the magnet");
   expect(!timeknob::forParam("gl.delay", pp::DlyFeedback), "other knobs keep their plain behaviour");
-  expect(!timeknob::forParam("gl.reverb", 0), "a reverb's knobs are not delay times");
+  expect(!timeknob::forParam("gl.reverb", pp::RvbSize), "a reverb's room size is not a time");
+  expect(timeknob::forParam("gl.reverb", pp::RvbPreDelay).has_value(), "a reverb's pre-delay is a time (K-240)");
 
   // 2. Tracer's synced time: even travel, note values spread out
   const auto tk = *timeknob::forParam("gl.delay", pp::DlyTicks);

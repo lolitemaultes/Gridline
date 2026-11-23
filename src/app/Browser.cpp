@@ -5,6 +5,7 @@
 // key: len:), sample preview with tempo sync, waveform + file info panel,
 // tags, drag & drop to every window (BrowserUi.h).
 #include <algorithm>
+#include <iterator>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -20,6 +21,7 @@
 #include <vector>
 #include "GrooveUi.h"
 #include "StageView.h"
+#include "../core/Macros.h"
 #include "../core/MixerOps.h"
 #include "../core/StageRoomOps.h"
 #include "ContextMenus.h"
@@ -51,14 +53,19 @@
 #include "LayoutPresets.h"
 #include "LayoutShellUi.h"
 #include "Theme.h"
+#include "TrackerLook.h"
 #include "TrackerPages.h"
+#include "TrackerView.h"
 #include "UrlImportUi.h"
 #include "Widgets.h"
 #include "Windows.h"
 #include "../core/Platform.h"
 #include "../packs/PacksUi.h"
+#include "../packs/samplers/patchplayer.h"
 #include "../core/SafeFs.h"
 #include "../core/TrackModes.h"
+#include "../core/BrowserTabs.h"
+#include "../core/BrowserHidden.h"
 
 namespace gl {
 
@@ -167,10 +174,178 @@ void saveFolders(App& a) {
   for (const auto& f : folders) out << f << "\n";
 }
 
+// GitHub #58: folders the user hid (core/BrowserHidden.h), saved per user in
+// <config>/browser-hidden.txt. With Show hidden (the eye in the header) they show dimmed with an
+// eye-off mark, and are shown again from their menu or with a click on the mark.
+browse::HiddenFolders hiddenDirs;
+bool hiddenLoaded = false;
+bool showHidden = false;  // this session only: hidden folders stay hidden at the next start
+fs::path hiddenFile(App& a) { return fs::path(a.configDir()) / "browser-hidden.txt"; }
+void loadHidden(App& a) {
+  if (hiddenLoaded) return;
+  hiddenLoaded = true;
+  std::ifstream in(hiddenFile(a), std::ios::binary);
+  if (!in) return;
+  hiddenDirs = browse::HiddenFolders::fromText(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()));
+}
+void saveHidden(App& a) {
+  std::error_code ec;
+  fs::create_directories(a.configDir(), ec);
+  std::ofstream out(hiddenFile(a), std::ios::binary | std::ios::trunc);
+  out << hiddenDirs.toText();
+}
+void hideFolder(App& a, const std::string& dir) {
+  loadHidden(a);
+  if (!hiddenDirs.hide(dir)) return;
+  saveHidden(a);
+  if (!showHidden)
+    a.notify(std::string(i18n::tr("Folder hidden")) + ": " + fs::path(dir).filename().string() + "  \xC2\xB7  " +
+             i18n::tr("the eye in the browser's header shows hidden folders"));
+}
+void showFolder(App& a, const std::string& dir) {
+  loadHidden(a);
+  if (!hiddenDirs.show(dir)) return;
+  saveHidden(a);
+  if (hiddenDirs.empty()) showHidden = false;  // nothing left to show: the eye goes away
+}
+// The Hide folder / Show folder item of a folder's menu.
+void hideMenuItem(App& a, const std::string& dir) {
+  const bool hid = hiddenDirs.isHidden(dir);
+  const bool picked = ImGui::MenuItem(hid ? i18n::tr("Show folder") : i18n::tr("Hide folder"));
+  devNoteRect(hid ? "brshowfolder" : "brhidefolder");
+  if (picked) {
+    if (hid) showFolder(a, dir);
+    else hideFolder(a, dir);
+  }
+  ui::Hint(hid ? "Show this folder in the browser again"
+               : "Leave this folder and what is in it out of the browser and its search (the eye in the header shows hidden folders)");
+}
+// While Show hidden is on, what a hidden folder draws (its row and its open contents) is dimmed.
+// Nested scopes dim once.
+int dimDepth = 0;
+struct DimScope {
+  ImDrawList* dl = nullptr;
+  int v0 = 0;
+  bool counted = false;
+  explicit DimScope(bool on) {
+    if (!on) return;
+    counted = true;
+    if (dimDepth++ > 0) return;
+    dl = ImGui::GetWindowDrawList();
+    v0 = dl->VtxBuffer.Size;
+  }
+  ~DimScope() {
+    if (counted) --dimDepth;
+    if (!dl) return;
+    for (int i = v0; i < dl->VtxBuffer.Size; ++i) {
+      ImU32& c = dl->VtxBuffer[i].col;
+      const ImU32 al = (c >> IM_COL32_A_SHIFT) & 0xFF;
+      c = (c & ~IM_COL32_A_MASK) | (static_cast<ImU32>(static_cast<float>(al) * 0.45f) << IM_COL32_A_SHIFT);
+    }
+  }
+  DimScope(const DimScope&) = delete;
+  DimScope& operator=(const DimScope&) = delete;
+};
+// The row or header drawn next carries the eye-off mark (a hidden folder while Show hidden is on);
+// a click on the mark is reported in `eyeHit` (the row's own click is not).
+bool eyeMark = false, eyeHit = false;
+constexpr float kEyeMarkW = 22.0f;
+void drawEyeMark(ImDrawList* dl, ImVec2 q, float w, float h, bool hov) {
+  const auto& P = pal();
+  const ImVec2 c(std::round(q.x + w - 11), std::round(q.y + h * 0.5f));
+  if (hov) dl->AddCircleFilled(c, 8.0f, theme::withAlpha(P.surface950, 0.55f), 16);
+  ui::drawIcon(dl, ui::Icon::EyeOff, c, 12, hov ? P.text : P.textDim);
+  if (hov) app().setHint(i18n::tr("Hidden folder: click the eye to show it again (or right-click: Show folder)"));
+}
+// Takes the mark for the row about to be drawn (true when it has one).
+bool takeEyeMark() {
+  const bool on = eyeMark;
+  eyeMark = false;
+  eyeHit = false;
+  return on;
+}
+
 // ------------------------------------------------------------- state
 
 enum Tab { TabAll, TabProject, TabPlugins, TabSounds, TabStarred, TabCount };
-int tab = TabAll;
+constexpr int TabFolder = TabCount;  // a folder tab is shown (`curTab` says which)
+int tab = TabAll;  // what the tree shows: a built-in tab's contents, or TabFolder
+
+// GitHub #74: the tabs the user keeps (core/BrowserTabs.h): the built-in ones and folders added as
+// tabs, closed, renamed and reordered at will, saved per user in <config>/browser-tabs.txt. The Clips
+// and Smooth layouts list the folder tabs among their places.
+std::vector<browse::TabEntry> tabs = browse::defaultTabs();
+bool tabsLoaded = false;
+int curTab = 0;  // the shown tab's index; -1: a built-in view whose tab is closed (View > Project picker)
+fs::path tabsFile(App& a) { return fs::path(a.configDir()) / "browser-tabs.txt"; }
+void loadTabs(App& a) {
+  if (tabsLoaded) return;
+  tabsLoaded = true;
+  std::ifstream in(tabsFile(a), std::ios::binary);
+  if (!in) return;
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  tabs = browse::tabsFromText(text);
+  curTab = 0;
+  tab = tabs[0].kind == browse::TabKind::Folder ? TabFolder : static_cast<int>(tabs[0].kind);
+}
+void saveTabs(App& a) {
+  std::error_code ec;
+  fs::create_directories(a.configDir(), ec);
+  std::ofstream out(tabsFile(a), std::ios::binary | std::ios::trunc);
+  out << browse::tabsToText(tabs);
+}
+void showTabAt(int i) {
+  if (i < 0 || i >= static_cast<int>(tabs.size())) return;
+  curTab = i;
+  const browse::TabKind k = tabs[static_cast<size_t>(i)].kind;
+  tab = k == browse::TabKind::Folder ? TabFolder : static_cast<int>(k);
+}
+// A built-in view (the dev command, View > Project picker): its tab when it has one, else the view
+// alone with no tab lit.
+void showKind(int k) {
+  k = std::clamp(k, 0, TabCount - 1);
+  const int i = browse::findTab(tabs, static_cast<browse::TabKind>(k));
+  if (i >= 0) showTabAt(i);
+  else curTab = -1, tab = k;
+}
+const browse::TabEntry* shownFolderTab() {
+  if (tab != TabFolder || curTab < 0 || curTab >= static_cast<int>(tabs.size())) return nullptr;
+  const browse::TabEntry& t = tabs[static_cast<size_t>(curTab)];
+  return t.kind == browse::TabKind::Folder ? &t : nullptr;
+}
+// The k-th folder tab's index in `tabs` (the Clips and Smooth places), or -1.
+int folderTabIndex(int k) {
+  for (size_t i = 0; i < tabs.size(); ++i)
+    if (tabs[i].kind == browse::TabKind::Folder && k-- == 0) return static_cast<int>(i);
+  return -1;
+}
+int folderTabCount() { return static_cast<int>(browse::folderTabPaths(tabs).size()); }
+// Adds `path` as a folder tab and shows it.
+void addFolderTabNow(App& a, const std::string& path) {
+  loadTabs(a);
+  const size_t before = tabs.size();
+  const int i = browse::addFolderTab(tabs, path);
+  if (i < 0) return;
+  showTabAt(i);
+  if (tabs.size() != before) {
+    saveTabs(a);
+    browserui::refreshIndex(a);
+  }
+}
+void closeTabNow(App& a, size_t i) {
+  if (!browse::closeTab(tabs, i)) return;
+  if (curTab >= 0) showTabAt(static_cast<int>(browse::shownAfterClose(static_cast<size_t>(curTab), i, tabs.size())));
+  saveTabs(a);
+}
+void askFolderTab(App& a) {
+  a.fileDialog = {};
+  a.fileDialog.open = true;
+  a.fileDialog.title = i18n::N_("Add a folder as a tab");
+  const char* h = gl::platform::homeEnv();
+  a.fileDialog.dir = h ? h : ".";
+  a.fileDialog.exts = {"/"};  // folder mode
+  a.fileDialog.onOk = [&a](const std::string& path) { addFolderTabNow(a, path); };
+}
 std::string selPath;  // file shown in the info panel
 char filterBuf[128] = "";  // the search field's text
 
@@ -204,6 +379,63 @@ std::string devSection;  // dev: the section the rows drawn belong to (K-18 "bro
 // K-112D: the Smooth layout's browser (its shell built).
 bool lgFindLook(const App& a) { return layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic); }
 ImU32 roleCol(uint32_t r, float a = 0.9f) { return livelook::active(app()) || lgFindLook(app()) ? theme::withAlpha(pal().textDim, a) : theme::tintRole(r, a); }
+
+// The Tracker's browser: drawn with the header band's pieces (TrackerLook.h). Raised bevel boxes on
+// the band's face, the tree in a sunken well with the band's bevel scroll bar, square row highlights,
+// bevel buttons and tabs (the shown one lit, as the band's page tabs), numbers in the monospaced face.
+// The other layouts are unchanged; every row, key, drag, drop and menu is the same code in all four.
+bool trkLook(const App& a) { return layoutui::active() == layout::Preset::Tracker && layoutui::shellBuilt(a, layout::Preset::Tracker); }
+bool trkLook() { return trkLook(app()); }
+namespace sp = trackerview::space;
+// A bevel button over p0..p1 that keeps the keys in the browser (the band's own buttons hand them back
+// to the pattern).
+bool trkButton(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, bool on = false, const char* hint = nullptr) {
+  const bool r = trackerview::bevelButton(a, id, label, p0, p1, on, hint);
+  if (r) trackerview::keepKeysHere();
+  return r;
+}
+// A square bevel button with a glyph, at the cursor (moved past it as an ImGui button does).
+bool trkIconButton(App& a, const char* id, ui::Icon icon, bool on, float size, const char* hint) {
+  const auto& P = pal();
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  ImGui::PushID(id);
+  const bool r = trkButton(a, "##tib", "", p, ImVec2(p.x + size, p.y + size), on, hint);
+  const bool held = ImGui::IsItemActive();
+  ImGui::PopID();
+  const float d = held ? 1.0f : 0.0f;
+  ui::drawIcon(ImGui::GetWindowDrawList(), icon, ImVec2(std::round(p.x + size * 0.5f) + d, std::round(p.y + size * 0.5f) + d), std::round(size * 0.5f),
+               on ? theme::contrastText(P.hot) : P.text);
+  ImGui::SetCursorScreenPos(p);
+  ImGui::Dummy(ImVec2(size, size));
+  return r;
+}
+// A bevel text button at the cursor, as wide as its label (`w` 0) and a field high.
+float trkTextButtonWidth(const char* label) { return std::ceil(ImGui::CalcTextSize(i18n::tr(label)).x) + 2 * (sp::kPad + sp::kGroup); }
+bool trkTextButton(App& a, const char* label, bool on, const char* hint, float w = 0) {
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  if (w <= 0) w = trkTextButtonWidth(label);
+  const float h = ImGui::GetFrameHeight();
+  ImGui::PushID(label);
+  const bool r = trkButton(a, "##ttb", label, p, ImVec2(p.x + w, p.y + h), on, hint);
+  ImGui::PopID();
+  ImGui::SetCursorScreenPos(p);
+  ImGui::Dummy(ImVec2(w, h));
+  return r;
+}
+// A sunken bevel well round the one-line field about to be drawn at the cursor (`w` wide).
+void trkFieldWell(float w) {
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  trackerview::bevelBox(ImGui::GetWindowDrawList(), ImVec2(p.x - 1, p.y - 1), ImVec2(p.x + w + 1, p.y + ImGui::GetFrameHeight() + 1), true);
+}
+// A chip or tab face: raised, pressed while held, lit (the hot colour) when on; the hover face lighter.
+// Returns the ink for its label.
+ImU32 trkFace(ImDrawList* dl, ImVec2 p0, ImVec2 p1, bool on, bool hov, bool held) {
+  const auto& P = pal();
+  trackerview::bevelBox(dl, p0, p1, on || held);
+  if (on) dl->AddRectFilled(ImVec2(p0.x + 1, p0.y + 1), ImVec2(p1.x - 1, p1.y - 1), theme::withAlpha(P.hot, 0.85f));
+  else if (hov && !held) dl->AddRectFilled(ImVec2(p0.x + 2, p0.y + 2), ImVec2(p1.x - 2, p1.y - 2), theme::withAlpha(P.surface600, 0.6f));
+  return on ? theme::contrastText(P.hot) : hov ? P.text : P.textDim;
+}
 
 // K-160: browsing with the keyboard. Every row the tree draws (section headers, folders, files,
 // plugins, the project's items) is noted in drawing order; the next frame's keys move a cursor
@@ -250,7 +482,7 @@ void navNote(float indent, ImGuiID openId = 0, bool open = false, const std::str
 // The keyboard cursor's outline on a row that does not show a selection of its own.
 void navOutline(ImDrawList* dl, ImVec2 q, float w, float h, bool selected) {
   if (!nav.focused || selected || ImGui::GetItemID() != nav.cursor) return;
-  dl->AddRect(ImVec2(q.x + 0.5f, q.y + 0.5f), ImVec2(q.x + w - 0.5f, q.y + h - 0.5f), theme::withAlpha(pal().hot, 0.6f), theme::kRadiusSm);
+  dl->AddRect(ImVec2(q.x + 0.5f, q.y + 0.5f), ImVec2(q.x + w - 0.5f, q.y + h - 0.5f), theme::withAlpha(pal().hot, 0.6f), trkLook() ? 0.0f : theme::kRadiusSm);
 }
 
 // A row's click and double-click from the keys (the row just drawn). A file takes the move as a
@@ -296,7 +528,11 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
   // Checkpoint 31 (Smooth layout): a list as 158 and 111 draw it: the chosen row a grey band (no
   // orange edge), a folder row led by its disclosure chevron instead of a coloured folder.
   const bool lg = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
-  if (lg) {
+  const bool trk = trkLook(a);
+  if (trk) {  // the Tracker: square highlights, as its Files page and file lists
+    if (selected) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), theme::withAlpha(P.surface600, 0.95f));
+    else if (hov || ImGui::IsItemActive()) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), theme::withAlpha(P.surface700, ImGui::IsItemActive() ? 0.9f : 0.6f));
+  } else if (lg) {
     if (selected || hov || ImGui::IsItemActive())
       dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), selected ? P.surface600 : ImGui::IsItemActive() ? P.surface700 : theme::withAlpha(P.surface700, 0.6f),
                         theme::kRadiusSm);
@@ -310,6 +546,7 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
   // Tree guide: dotted stem down the indent with a tick into the row (the Smooth layout's list has none, 158;
   // nor Clips: the refs' lists have no guides, 211, 094, 329).
   if (indent > 0 && !lg && !livelook::active(a)) {
+    const trackerview::Aliased hard(trk ? dl : nullptr);  // the Tracker: hard pixel dots
     const ImU32 gc = theme::withAlpha(P.lineStrong, 0.7f);
     const float gx = std::round(x - 3);
     for (float y = q.y; y < q.y + gRowH; y += 3) dl->AddLine(ImVec2(gx, y), ImVec2(gx, y + 1), gc);
@@ -336,6 +573,13 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
   else
     ui::drawIcon(dl, icon, ImVec2(x + 8, q.y + gRowH * 0.5f), 12, hov ? P.text : ic);
   float detailW = 0;
+  if (takeEyeMark()) {  // GitHub #58: a hidden folder (Show hidden): the eye-off mark at the row's end, a click on it shows the folder
+    const bool eh = hov && ImGui::GetIO().MousePos.x >= q.x + w - kEyeMarkW;
+    eyeHit = clicked && eh && !nav.synth;
+    if (eyeHit) clicked = false;
+    drawEyeMark(dl, q, w, gRowH, eh);
+    detailW += kEyeMarkW;
+  }
   if (starHit) {
     const bool sh = hov && ImGui::GetIO().MousePos.x >= q.x + w - 20;
     *starHit = clicked && sh && !nav.synth;  // K-160: Enter with the pointer resting on the star is not a click on it
@@ -352,7 +596,7 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
   if (detail && *detail && w - indent > 150) {
     float dw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, detail).x;
     dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q.x + w - dw - 8 - detailW, std::round(q.y + (gRowH - theme::kFontLabel) * 0.5f)),
-                P.textFaint, detail);
+                trk && selected ? trackerview::valueInk() : P.textFaint, detail);
     detailW += dw + 12;
   }
   theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(x + 22, std::round(q.y + (gRowH - 13) * 0.5f) - 1),
@@ -390,9 +634,16 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
   ImVec2 q = ImGui::GetCursorScreenPos();
   float w = ImGui::GetContentRegionAvail().x;
   ImGui::PushID(title);
+  const bool mark = takeEyeMark();  // GitHub #58: a hidden folder's section (Show hidden): the eye-off mark
+  const bool markHov = mark && ImGui::IsMouseHoveringRect(ImVec2(q.x + w - kEyeMarkW, q.y), ImVec2(q.x + w, q.y + 26)) &&
+                       ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
   if (ImGui::InvisibleButton("##hdr", ImVec2(std::max(w, 1.0f), 26)) && !secondOfDouble()) {
-    open = !open;
-    st->SetBool(id, open);
+    if (markHov) {
+      eyeHit = true;
+    } else {
+      open = !open;
+      st->SetBool(id, open);
+    }
     nav.cursor = ImGui::GetItemID();  // K-160
   }
   bool hov = ImGui::IsItemHovered();
@@ -403,11 +654,25 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
   const bool liveRow = livelook::active(a);  // K-112c (round 19): a flat list row, as the refs' browser lists (211, 094)
   // Checkpoint 31 (Smooth layout): a flat heading row and a quiet chevron, as the list rows below it (158).
   const bool lgRow = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
-  if (!liveRow && !lgRow) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 26), hov ? P.surface700 : theme::withAlpha(P.surface800, 0.6f), theme::kRadiusSm);
-  else if (hov) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 26), P.surface700, 0.0f);
+  const bool trk = trkLook(a);
+  if (trk) {  // the Tracker: a raised bevel strip, as the band's list headings (pressed while held)
+    trackerview::bevelBox(dl, ImVec2(q.x, q.y + 1), ImVec2(q.x + w, q.y + 25), ImGui::IsItemActive());
+    if (hov && !ImGui::IsItemActive()) dl->AddRectFilled(ImVec2(q.x + 2, q.y + 3), ImVec2(q.x + w - 2, q.y + 23), theme::withAlpha(P.surface600, 0.6f));
+  } else if (!liveRow && !lgRow) {
+    dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 26), hov ? P.surface700 : theme::withAlpha(P.surface800, 0.6f), theme::kRadiusSm);
+  } else if (hov) {
+    dl->AddRectFilled(q, ImVec2(q.x + w, q.y + 26), P.surface700, 0.0f);
+  }
   navOutline(dl, q, w, 26, false);
   ImGui::PopID();
-  ui::drawIcon(dl, open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(q.x + 9, q.y + 13), 10, open && !lgRow ? P.hot : P.textDim);
+  if (trk) {  // a hard-edged arrow, as the band's arrow buttons draw theirs
+    const trackerview::Aliased hard(dl);
+    const float cx = q.x + 9, cy = q.y + 13, r = 3.5f;
+    if (open) dl->AddTriangleFilled(ImVec2(cx - r - 1, cy - r * 0.6f), ImVec2(cx + r + 1, cy - r * 0.6f), ImVec2(cx, cy + r * 0.9f), P.hot);
+    else dl->AddTriangleFilled(ImVec2(cx - r * 0.6f, cy - r - 1), ImVec2(cx - r * 0.6f, cy + r + 1), ImVec2(cx + r * 0.9f, cy), P.textDim);
+  } else {
+    ui::drawIcon(dl, open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(q.x + 9, q.y + 13), 10, open && !lgRow ? P.hot : P.textDim);
+  }
   ui::drawIcon(dl, icon, ImVec2(q.x + 25, q.y + 13), 12, lgRow ? (hov ? P.text : P.textDim) : roleCol(roleColour));  // checkpoint 32: one quiet colour (111)
   if (icon == ui::Icon::Folder) theme::devNote("folder", roleCol(roleColour));  // K-177 dev: the folder glyph colour
   const std::string label = translate ? i18n::tr(title) : title;  // J-61: tree roots are translated
@@ -417,10 +682,11 @@ bool sectionHeader(const char* title, int count, bool defaultOpen, uint32_t role
                         shown.c_str());
   else
     theme::textEllipsis(dl, a.fontBold, theme::kFontCaption + 1, ImVec2(q.x + 37, q.y + 6), w - 37 - 30, P.text, shown.c_str());
+  if (mark) drawEyeMark(dl, q, w, 26, markHov);
   if (count >= 0) {
     std::string c = std::to_string(count);
     float cw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, c.c_str()).x;
-    dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q.x + w - cw - 8, q.y + 7), P.textFaint, c.c_str());
+    dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q.x + w - cw - 8 - (mark ? kEyeMarkW : 0.0f), q.y + 7), trk ? P.textDim : P.textFaint, c.c_str());
   }
   ImGui::Dummy(ImVec2(0, 1));
   return open;
@@ -619,6 +885,7 @@ int refsTo(App& a, const std::string& path) {
 // folders and Gridline's own folders.
 std::vector<std::string> editableRoots(App& a) {
   std::vector<std::string> r(folders.begin(), folders.end());
+  for (const std::string& f : browse::folderTabPaths(tabs)) r.push_back(f);  // GitHub #74: folders the user keeps as tabs
   for (const char* n : {"Clipboard files", "Sliced audio"}) r.push_back(browserui::contentDir(a, n));
   r.push_back(recordedDir(a));
   r.push_back(renderedDir(a));
@@ -710,6 +977,7 @@ void afterMoves(App& a, const fileops::Result& r, const std::string& label) {
   bool foldersChanged = false;
   for (auto& f : folders) foldersChanged = fileops::retargetPath(f, top.first, top.second) || foldersChanged;
   if (foldersChanged) saveFolders(a);
+  if (hiddenDirs.moved(top.first, top.second)) saveHidden(a);  // GitHub #58: a hidden folder renamed or moved stays hidden
   fileops::retargetPath(selPath, top.first, top.second);
   std::vector<fileops::Move> recents;
   for (const auto& rf : a.recentFiles) {
@@ -786,8 +1054,13 @@ bool renameRow(App& a, const fs::path& p, float indent, ui::Icon icon, ImU32 ico
   const ImVec2 q = ImGui::GetCursorScreenPos();
   const float w = std::max(1.0f, ImGui::GetContentRegionAvail().x);
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), P.surface800, theme::kRadiusSm);
-  dl->AddRectFilled(q, ImVec2(q.x + 2, q.y + gRowH), P.hot);
+  const bool trk = trkLook(a);
+  if (trk) {
+    dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), theme::withAlpha(P.surface600, 0.95f));
+  } else {
+    dl->AddRectFilled(q, ImVec2(q.x + w, q.y + gRowH), P.surface800, theme::kRadiusSm);
+    dl->AddRectFilled(q, ImVec2(q.x + 2, q.y + gRowH), P.hot);
+  }
   const float x = q.x + indent;
   ui::drawIcon(dl, icon, ImVec2(x + 8, q.y + gRowH * 0.5f), 12, iconCol);
   std::error_code ec;
@@ -802,6 +1075,7 @@ bool renameRow(App& a, const fs::path& p, float indent, ui::Icon icon, ImU32 ico
     fops.focus = false;
   }
   ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(theme::kS1, std::max(0.0f, std::floor((fieldH - ImGui::GetFontSize()) * 0.5f))));
+  if (trk) trkFieldWell(std::max(40.0f, w - indent - 22 - extW - theme::kS1));
   const bool enter = ImGui::InputText("##name", fops.buf, sizeof fops.buf, ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
   const bool escape = ::gl::keys::escapePressed(false);
   const bool left = ImGui::IsItemDeactivated();
@@ -894,6 +1168,8 @@ void folderRowExtras(App& a, const fs::path& dir) {
     }
     if (live) {
       if (opItem("New folder", lockedWhy(a, d, true))) newFolderIn(a, d);
+      if (ImGui::MenuItem(i18n::tr("Add as a place"))) addFolderTabNow(a, d);  // GitHub #74: the folder among the places
+      hideMenuItem(a, d);  // GitHub #58
       collapseAllItem();
       ImGui::EndPopup();
       ImGui::PopID();
@@ -903,6 +1179,8 @@ void folderRowExtras(App& a, const fs::path& dir) {
     if (opItem("Rename", why)) startRename(d);
     if (opItem("Move to the trash...", why)) fops.trashAsk = d, fops.trashOpen = true;
     ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Open as a tab"))) addFolderTabNow(a, d);  // GitHub #74
+    hideMenuItem(a, d);  // GitHub #58
     collapseAllItem();
     ImGui::EndPopup();
   }
@@ -956,10 +1234,13 @@ void trashDialog(App& a) {
   }
   ImGuiViewport* vp = ImGui::GetMainViewport();
   ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.35f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+  const bool trk = trkLook(a);  // the Tracker: the classic dialog (a raised frame round a sunken well, bevel buttons)
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS4));
+  if (trk) ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f), ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
   const bool open = ImGui::BeginPopupModal("##trashask", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar);
-  ImGui::PopStyleVar();
+  ImGui::PopStyleVar(trk ? 3 : 1);
   if (!open) return;
+  if (trk) trackerview::dialogFrame();
   const auto& P = pal();
   constexpr float kW = 340.0f, kButtonW = 112.0f;
   const fs::path p(fops.trashAsk);
@@ -991,9 +1272,9 @@ void trashDialog(App& a) {
   ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("It can be restored from the system trash."));
   ImGui::Dummy(ImVec2(kW, theme::kS2));
   ImGui::SetCursorPosX(ImGui::GetCursorPosX() + kW - ui::ButtonRowWidth(2, kButtonW));
-  const bool cancel = ui::TextButton("Cancel", false, kButtonW) || ::gl::keys::escapePressed();
+  const bool cancel = (trk ? trackerview::dialogButton(a, "Cancel", kButtonW) : ui::TextButton("Cancel", false, kButtonW)) || ::gl::keys::escapePressed();
   ImGui::SameLine(0, theme::kS2);
-  if (ui::DangerButton("Move to trash", true, kButtonW) || ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {  // R7-07: Enter, as the other prompts
+  if ((trk ? trackerview::dialogButton(a, "Move to trash", kButtonW, true) : ui::DangerButton("Move to trash", true, kButtonW)) || ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter)) {  // R7-07: Enter, as the other prompts
     trashNow(a);
     ImGui::CloseCurrentPopup();
   } else if (cancel) {
@@ -1020,6 +1301,7 @@ void fileContextMenu(App& a, const std::string& ps) {
     if (ImGui::MenuItem(isStarred(ps) ? i18n::tr("Remove star") : i18n::tr("Star"))) toggleStar(ps);
   }
   if (ImGui::MenuItem(i18n::tr("Open / add"))) browserui::openFile(a, ps);
+  devNoteRect("brfilemenu");
   if (browse::kindOf(ps) == Kind::Audio) {
     if (ImGui::MenuItem(i18n::tr("Preview"))) browserui::previewFile(a, ps);
     if (ImGui::MenuItem(i18n::tr("Edit in Loupe"))) packs::openFileInLoupe(a, ps);  // the file opens on its own; it is never changed
@@ -1048,8 +1330,65 @@ void fileContextMenu(App& a, const std::string& ps) {
   ImGui::EndPopup();
 }
 
+// K-333: one patch of an SF2 file: a click plays it, a double-click or a drag makes a Patch Player
+// channel playing it (dropped on a Patch Player channel, it changes that channel's patch).
+void patchRow(App& a, const std::string& file, const packs::samplers::Sf2Preset& pr, float indent) {
+  const std::string item = browse::patchItemPath(file, pr.bank, pr.program);
+  char num[16];
+  std::snprintf(num, sizeof num, "%03d:%03d", pr.bank, pr.program);
+  bool dbl = false;
+  const bool clicked = browserRow(item.c_str(), ui::Icon::Piano, pr.name.c_str(), num, indent, &dbl, iconColOf(Kind::Instrument), item == selPath, false,
+                                  nullptr, RowNav{0, false, item.c_str()});
+  if (clicked) {
+    selPath = item;
+    nav.deferred.clear();
+    if (nav.synth && nav.repeat) nav.deferred = item;  // a held key previews where it stops
+    else browserui::previewFile(a, item);
+    if (nav.synth && !nav.repeat) nav.previewed = item;
+  }
+  if (dbl) browserui::openFile(a, item);
+  ui::Hint("Click: hear the patch \xC2\xB7 double-click: new Patch Player channel \xC2\xB7 drag onto the rack, or onto a Patch Player channel to change its patch");
+  devRow(item);
+  browserui::fileDragSource(item, pr.name.c_str());
+}
+
+// K-333: an SF2 / SF3 file opens like a folder: its patches by family (Piano, Organ, ..., Drum kits).
+void patchFileNode(App& a, const fs::path& p, float indent) {
+  namespace sm = packs::samplers;
+  const std::string ps = p.string();
+  const bool open = treeNode(ps + "#patches", p.filename().string().c_str(), -1, indent, role::kPaint);
+  devRow(ps);
+  ImGui::PushID(ps.c_str());
+  fileContextMenu(a, ps);
+  ImGui::PopID();
+  browserui::fileDragSource(ps);
+  if (!open) return;
+  bool failed = false;
+  auto f = sm::requestSf2(ps, &failed);
+  if (!f) {
+    emptyLine(failed ? "Cannot read this file" : "Reading this file", indent + 20.0f);
+    return;
+  }
+  std::vector<std::vector<size_t>> byFamily(sm::patchFamilies().size());
+  for (size_t i = 0; i < f->presets.size(); ++i) {
+    const auto& fams = sm::patchFamilies();
+    const auto it = std::find(fams.begin(), fams.end(), std::string(sm::patchFamily(f->presets[i].bank, f->presets[i].program)));
+    if (it != fams.end()) byFamily[static_cast<size_t>(it - fams.begin())].push_back(i);
+  }
+  for (size_t k = 0; k < byFamily.size(); ++k) {
+    if (byFamily[k].empty()) continue;
+    const std::string& fam = sm::patchFamilies()[k];
+    if (treeNode(ps + "#family/" + fam, i18n::tr(fam.c_str()), static_cast<int>(byFamily[k].size()), indent + 14.0f, role::kPaint))
+      for (size_t i : byFamily[k]) patchRow(a, ps, f->presets[i], indent + 28.0f);
+  }
+}
+
 void fileRow(App& a, const fs::path& p, float indent) {
   const std::string ps = p.string();
+  if (packs::samplers::isSoundFontPath(ps)) {
+    patchFileNode(a, p, indent);
+    return;
+  }
   const Kind k = browse::kindOf(ps);
   // Presets show their names; files keep their extension.
   const bool named = k == Kind::Preset || k == Kind::Chain || k == Kind::Shape || k == Kind::Fst || k == Kind::Layer;
@@ -1106,8 +1445,14 @@ void dirTree(App& a, const fs::path& dir, int depth, float baseIndent = 12.0f) {
   if (d.pending) emptyLine("Reading this folder", indent + 20.0f);
   for (const auto& sub : d.dirs) {
     std::string key = sub.string();
+    // GitHub #58: a hidden folder is left out, or (Show hidden) drawn dimmed with its eye-off mark
+    const bool hid = hiddenDirs.isHidden(key);
+    if (hid && !showHidden) continue;
+    const DimScope dim(hid);
     if (renameRow(a, sub, indent, ui::Icon::Folder, roleCol(role::kView))) continue;  // K-18
+    eyeMark = hid;
     const bool open = treeNode(key, sub.filename().string().c_str(), -1, indent);
+    if (hid && eyeHit) showFolder(a, key);
     if (nav.recording && !nav.now.empty()) nav.now.back().item = key;  // K-112c: the Delete key's folder
     devRow(key);
     folderRowExtras(a, sub);  // K-18: drag, drop into, menu
@@ -1119,7 +1464,21 @@ void dirTree(App& a, const fs::path& dir, int depth, float baseIndent = 12.0f) {
 // Folder of FL Studio's shipped content (read in place) as a tree node.
 void flFolderNode(App& a, const char* label, const fs::path& dir, float indent, uint32_t roleColour) {
   if (!isDirCached(dir, a.now)) return;
-  if (treeNode(dir.string(), label, -1, indent, roleColour)) dirTree(a, dir, 0, indent + 14);
+  const std::string d = dir.string();
+  const bool hid = hiddenDirs.isHidden(d);  // GitHub #58
+  if (hid && !showHidden) return;
+  const DimScope dim(hid);
+  eyeMark = hid;
+  const bool open = treeNode(d, label, -1, indent, roleColour);
+  if (hid && eyeHit) showFolder(a, d);
+  ImGui::PushID(d.c_str());
+  if (ImGui::BeginPopupContextItem("##flctx")) {
+    hideMenuItem(a, d);
+    collapseAllItem();
+    ImGui::EndPopup();
+  }
+  ImGui::PopID();
+  if (open) dirTree(a, dir, 0, indent + 14);
 }
 
 // --------------------------------------------------------------- presets
@@ -1334,21 +1693,13 @@ void installedPlugins(App& a, float indent) {
     const std::vector<const PluginInfo*> all = dynamicPlugins();
     std::shared_ptr<const host::GroupSnapshot> groups = host::pluginGroups();
     const uint64_t pg = host::pluginPrefsGeneration();
-    // A collaborative project decides per plugin (its session changes): worked out every frame.
-    if (collabui::active(a) || cached.count != all.size() || cached.groups != groups.get() || cached.prefsGen != pg) {
+    if (cached.count != all.size() || cached.groups != groups.get() || cached.prefsGen != pg) {
       buildInstalled(a, cached, all);
       cached.count = all.size();
       cached.groups = groups.get();
       cached.keep = std::move(groups);
       cached.prefsGen = pg;
     }
-  }
-  if (collabui::active(a)) {
-    ImGui::Indent(indent);
-    ImGui::PushTextWrapPos(0);
-    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Plugins that are not part of Gridline are hidden in a collaborative project."));
-    ImGui::PopTextWrapPos();
-    ImGui::Unindent(indent);
   }
   const host::PluginPrefs prefs = host::pluginPrefs();
   if (!treeNode("##installed", "Installed", cached.total, indent, role::kMenu)) return;
@@ -1450,7 +1801,8 @@ void sectionCurrentProject(App& a) {
   }
   size_t inPatterns = 0;  // J-173: pattern automation clips are listed too ("in <pattern>")
   for (const auto& p : s.patterns) inPatterns += p.automation.size();
-  if (treeNode("##cp.auto", "Automation", static_cast<int>(s.automations.size() + inPatterns), in, role::kGraph)) {
+  const std::vector<ParamId> macros = macro::assignedMacros(s);  // K-246: the assigned macros, ready to automate
+  if (treeNode("##cp.auto", "Automation", static_cast<int>(s.automations.size() + inPatterns + macros.size()), in, role::kGraph)) {
     for (const auto& ac : s.automations) {
       bool dbl = false;
       const std::string id = "##ac" + std::to_string(ac.id);
@@ -1471,6 +1823,22 @@ void sectionCurrentProject(App& a) {
         ui::Hint("Automation in a pattern \xC2\xB7 double-click: edit it");
       }
     if (openPat != kNoId) openPatternAutomation(a, openPat, openTgt);
+    ParamId automate{kNoId, 0};
+    for (ParamId pid : macros) {  // K-246
+      bool dbl = false;
+      const std::string id = "##mac" + std::to_string(pid.packed());
+      const std::string name = paramDisplayName(s, pid);
+      const size_t n = macro::links(s, pid.owner, static_cast<int>(pid.index - kLayerMacroBase)).size();
+      const std::string where = std::to_string(n) + " " + i18n::tr(n == 1 ? "control" : "controls");
+      browserRow(id.c_str(), ui::Icon::Plug, name.c_str(), where.c_str(), in + 14, &dbl);
+      if (dbl) automate = pid;
+      if (ImGui::BeginPopupContextItem((id + "menu").c_str())) {
+        knobContextMenu(a, pid);
+        ImGui::EndPopup();
+      }
+      ui::Hint("Macro Â· double-click: a new automation clip for it Â· right-click: automation and links");
+    }
+    if (automate.owner != kNoId) createAutomationClip(a, automate);
   }
   // Samples used by the project's channels (preview, drag elsewhere), listed
   // again only when the project changes.
@@ -1693,7 +2061,12 @@ void folderSection(App& a, const char* title, const fs::path& dir, uint32_t role
     ImGuiStorage* st = ImGui::GetStateStorage();
     if (forceOpen.erase(dir.string())) st->SetBool(ImGui::GetID(title), true);
   }
+  const bool hid = hiddenDirs.isHidden(dir.string());  // GitHub #58
+  if (hid && !showHidden) return;
+  const DimScope dim(hid);
+  eyeMark = hid;
   const bool open = sectionHeader(title, -1, false, roleColour);
+  if (hid && eyeHit) showFolder(a, dir.string());
   const HeaderHit hh = lastHeader;
   if (ImGui::IsMouseHoveringRect(hh.min, hh.max) && ImGui::IsWindowHovered()) a.setHint(dir.string() + "   (right-click: new folder)");
   rootHeaderExtras(a, dir.string(), hh);  // K-18: drops move into it
@@ -1702,6 +2075,7 @@ void folderSection(App& a, const char* title, const fs::path& dir, uint32_t role
     ImGui::TextDisabled("%s", theme::fitText(dir.string().c_str(), 300));
     if (opItem("New folder", lockedWhy(a, dir.string(), true))) newFolderIn(a, dir.string());
     ImGui::Separator();
+    hideMenuItem(a, dir.string());  // GitHub #58
     collapseAllItem();
     ImGui::EndPopup();
   }
@@ -1728,8 +2102,16 @@ void sectionUserFolders(App& a) {
   for (size_t i = 0; i < folders.size(); ++i) {
     ImGui::PushID(static_cast<int>(i));
     fs::path f(folders[i]);
+    const bool hid = hiddenDirs.isHidden(folders[i]);  // GitHub #58
+    if (hid && !showHidden) {
+      ImGui::PopID();
+      continue;
+    }
+    const DimScope dim(hid);
     if (forceOpen.erase(folders[i])) ImGui::GetStateStorage()->SetBool(ImGui::GetID(f.filename().string().c_str()), true);
+    eyeMark = hid;
     bool open = sectionHeader(f.filename().string().c_str(), -1, false, role::kView, ui::Icon::Folder, false);
+    if (hid && eyeHit) showFolder(a, folders[i]);
     const HeaderHit hh = lastHeader;
     if (ImGui::IsMouseHoveringRect(hh.min, hh.max) && ImGui::IsWindowHovered())
       a.setHint(folders[i] + "   " + i18n::tr("(right-click: new folder, refresh, remove from the browser)"));
@@ -1749,12 +2131,26 @@ void sectionUserFolders(App& a) {
         break;
       }
       ImGui::Separator();
+      hideMenuItem(a, folders[i]);  // GitHub #58
       collapseAllItem();
       ImGui::EndPopup();
     }
     if (open) dirTree(a, f, 0);
     ImGui::PopID();
   }
+}
+
+// GitHub #74: a folder tab (or a Clips / Smooth place) shows its folder's contents at the top level.
+void folderTabContent(App& a, const std::string path) {
+  const fs::path dir(path);
+  if (!isDirCached(dir, a.now)) {
+    emptyLine("This folder is not there any more (right-click its tab to close it)", 12);
+    return;
+  }
+  const DirCache& d = listDir(dir, a.now);
+  if (d.dirs.empty() && d.files.empty()) emptyLine(d.pending ? "Reading this folder" : "This folder is empty", 12);
+  else dirTree(a, dir, 0, 4.0f);
+  ImGui::Dummy(ImVec2(0, 4));
 }
 
 void sectionStarred(App& a) {
@@ -1770,6 +2166,8 @@ void sectionStarred(App& a) {
   browse::Query q;
   q.tags = {kStarTag};
   auto files = browserui::index().search(q, 400);
+  if (!showHidden && !hiddenDirs.empty())  // GitHub #58: starred files in hidden folders stay out too
+    files.erase(std::remove_if(files.begin(), files.end(), [](const browse::FileMeta& m) { return hiddenDirs.covers(m.path); }), files.end());
   if (sectionHeader("Starred files", static_cast<int>(files.size()), true, role::kMenu)) {
     for (const auto& m : files) fileRow(a, m.path, 12);
     if (files.empty()) emptyLine("Right-click a file: Star");
@@ -1821,14 +2219,16 @@ int searchResults(App& a, const std::string& text) {
       {Kind::Shape, i18n::N_("Automation shapes")}, {Kind::Image, i18n::N_("Pictures")}, {Kind::Layer, i18n::N_("Layers")},
       {Kind::Instrument, i18n::N_("Multisample instruments")}, {Kind::DrumKit, i18n::N_("Drum kits")},
   };
+  // GitHub #58: files in hidden folders are left out unless Show hidden is on
+  auto listed = [](const browse::FileMeta& m) { return showHidden || !hiddenDirs.covers(m.path); };
   for (const auto& [kind, title] : groups) {
     int n = 0;
-    for (const auto& m : r.files) n += m.kind == kind;
+    for (const auto& m : r.files) n += m.kind == kind && listed(m);
     if (!n) continue;
     shown += n;
     if (!sectionHeader((std::string(title) + "##res").c_str(), n, true, kind == Kind::Audio ? role::kPaint : role::kStamp)) continue;
     for (const auto& m : r.files)
-      if (m.kind == kind) fileRow(a, m.path, 12);
+      if (m.kind == kind && listed(m)) fileRow(a, m.path, 12);
     ImGui::Dummy(ImVec2(0, 4));
   }
   return shown;
@@ -1867,8 +2267,13 @@ void kitPreview(App& a, ImDrawList* dl, ImVec2 w0, ImVec2 w1, const drumkitui::S
     const bool hov = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
     browserui::fileDragSource(selPath);
     ImGui::PopID();
-    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + cw, y + H), held ? theme::withAlpha(tint, 0.45f) : hov ? theme::withAlpha(tint, 0.28f) : theme::withAlpha(tint, 0.14f),
-                      theme::kRadiusSm);
+    if (trkLook(a)) {  // the Tracker: bevel pads (pressed while held)
+      trackerview::bevelBox(dl, ImVec2(x, y), ImVec2(x + cw, y + H), held);
+      if (hov && !held) dl->AddRectFilled(ImVec2(x + 2, y + 2), ImVec2(x + cw - 2, y + H - 2), theme::withAlpha(P.surface600, 0.6f));
+    } else {
+      dl->AddRectFilled(ImVec2(x, y), ImVec2(x + cw, y + H), held ? theme::withAlpha(tint, 0.45f) : hov ? theme::withAlpha(tint, 0.28f) : theme::withAlpha(tint, 0.14f),
+                        theme::kRadiusSm);
+    }
     std::string label;
     if (more) {
       label = "+" + std::to_string(n - shown);
@@ -1890,17 +2295,22 @@ void infoPanel(App& a) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImVec2 p0 = ImGui::GetCursorScreenPos();
   const float w = ImGui::GetContentRegionAvail().x;
-  dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + kInfoH), P.surface900);
-  dl->AddLine(p0, ImVec2(p0.x + w, p0.y), P.line);
+  const bool trk = trkLook(a);
+  if (trk) {  // the Tracker: a raised box on the band's face, a gap above it
+    trackerview::bevelBox(dl, ImVec2(p0.x + sp::kPad, p0.y + sp::kGap), ImVec2(p0.x + w - sp::kPad, p0.y + kInfoH - sp::kGap));
+  } else {
+    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + kInfoH), P.surface900);
+    dl->AddLine(p0, ImVec2(p0.x + w, p0.y), P.line);
+  }
   browse::FileMeta m;
   const bool known = browserui::index().lookup(selPath, m);
   if (!known) m = browse::Index::describe(selPath, false);
-  const float pad = theme::kS2;
+  const float pad = trk ? sp::kPad + sp::kGroup : theme::kS2;
   // Title + star + close.
   const drumkitui::Summary* kit = m.kind == Kind::DrumKit ? drumkitui::summary(selPath) : nullptr;  // K-162: read on a worker
   const std::string name = kit && kit->ok && !kit->name.empty() ? kit->name : fs::path(selPath).filename().string();
   theme::textEllipsis(dl, a.fontBold, theme::kFontCaption + 1, ImVec2(p0.x + pad, p0.y + 6), w - 2 * pad - 48, P.text, name.c_str());
-  ImGui::SetCursorScreenPos(ImVec2(p0.x + w - 46, p0.y + 3));
+  ImGui::SetCursorScreenPos(ImVec2(p0.x + w - (trk ? pad + 42 : 46), p0.y + 3));
   {
     const bool st = std::find(m.tags.begin(), m.tags.end(), kStarTag) != m.tags.end();
     ImVec2 sp = ImGui::GetCursorScreenPos();
@@ -1908,11 +2318,17 @@ void infoPanel(App& a) {
     browserui::drawStar(dl, ImVec2(sp.x + 10, sp.y + 10), 6, st ? P.hot : P.textFaint, st);
     ui::Hint(st ? "Starred (click to remove the star)" : "Star this file (Starred tab)");
   }
-  ImGui::SetCursorScreenPos(ImVec2(p0.x + w - 24, p0.y + 3));
-  if (ui::IconButton("closeinfo", ui::Icon::Close, false, 20, "Close the file info")) selPath.clear();
+  if (trk) {
+    ImGui::SetCursorScreenPos(ImVec2(p0.x + w - pad - 18, p0.y + 5));
+    if (trkIconButton(a, "closeinfo", ui::Icon::Close, false, 18, "Close the file info")) selPath.clear();
+  } else {
+    ImGui::SetCursorScreenPos(ImVec2(p0.x + w - 24, p0.y + 3));
+    if (ui::IconButton("closeinfo", ui::Icon::Close, false, 20, "Close the file info")) selPath.clear();
+  }
   // Waveform mini-view.
   const ImVec2 w0(p0.x + pad, p0.y + 26), w1(p0.x + w - pad, p0.y + 26 + 40);
-  dl->AddRectFilled(w0, w1, P.well, theme::kRadiusSm);
+  if (trk) trackerview::bevelBox(dl, ImVec2(w0.x - 2, w0.y - 2), ImVec2(w1.x + 2, w1.y + 2), true);  // a sunken well, as the band's scopes
+  else dl->AddRectFilled(w0, w1, P.well, theme::kRadiusSm);
   const std::vector<float> peaks = browse::decodePeaks(m.peaks);
   if (m.kind == Kind::DrumKit) {
     kitPreview(a, dl, w0, w1, kit);
@@ -1920,6 +2336,7 @@ void infoPanel(App& a) {
     const float mid = (w0.y + w1.y) * 0.5f, hh = (w1.y - w0.y) * 0.5f - 2;
     const float bw = (w1.x - w0.x) / static_cast<float>(peaks.size());
     const ImU32 wc = theme::rgb(role::kPaint, 0.9f);
+    const trackerview::Aliased hard(trk ? dl : nullptr);
     for (size_t i = 0; i < peaks.size(); ++i) {
       float x = w0.x + bw * static_cast<float>(i);
       float h = std::max(0.5f, peaks[i] * hh);
@@ -1990,7 +2407,12 @@ void infoPanel(App& a) {
     if (ImGui::InvisibleButton("##tag", ImVec2(tw, 18))) removeAt = static_cast<int>(i);
     const bool hov = ImGui::IsItemHovered();
     ImGui::PopID();
-    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + tw, y + 18), hov ? theme::withAlpha(P.danger, 0.35f) : theme::withAlpha(P.hot, 0.22f), 9);
+    if (trk) {  // a raised bevel chip; red under the pointer (a click removes it)
+      trackerview::bevelBox(dl, ImVec2(x, y), ImVec2(x + tw, y + 18));
+      if (hov) dl->AddRectFilled(ImVec2(x + 2, y + 2), ImVec2(x + tw - 2, y + 16), theme::withAlpha(P.danger, 0.35f));
+    } else {
+      dl->AddRectFilled(ImVec2(x, y), ImVec2(x + tw, y + 18), hov ? theme::withAlpha(P.danger, 0.35f) : theme::withAlpha(P.hot, 0.22f), 9);
+    }
     dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x + 6, y + 2), P.text, t.c_str());
     if (hov) ui::Hint("Click to remove this tag");
     x += tw + 4;
@@ -2003,7 +2425,8 @@ void infoPanel(App& a) {
     const std::string s = "#" + t;
     float tw = a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, s.c_str()).x + 12;
     if (x + tw > p0.x + w - pad - 70) break;
-    dl->AddRect(ImVec2(x, y), ImVec2(x + tw, y + 18), P.line, 9);
+    if (trk) trackerview::bevelBox(dl, ImVec2(x, y), ImVec2(x + tw, y + 18), true);  // automatic tags: sunken, faint
+    else dl->AddRect(ImVec2(x, y), ImVec2(x + tw, y + 18), P.line, 9);
     dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(x + 6, y + 2), P.textFaint, s.c_str());
     x += tw + 4;
   }
@@ -2015,6 +2438,7 @@ void infoPanel(App& a) {
   static char tagBuf[48] = "";
   ImGui::SetCursorScreenPos(ImVec2(p0.x + w - pad - 66, y - 2));
   ImGui::SetNextItemWidth(66);
+  if (trk) trkFieldWell(66);
   if (ImGui::InputTextWithHint("##addtag", i18n::tr("+ tag"), tagBuf, sizeof tagBuf, ImGuiInputTextFlags_EnterReturnsTrue) && tagBuf[0]) {
     auto t = m.tags;
     t.push_back(tagBuf);
@@ -2028,9 +2452,9 @@ void infoPanel(App& a) {
 // Tab strip under the search field (All / Project / Plugins / Sounds / Starred).
 void tabStrip(App& a) {
   const auto& P = pal();
-  static const char* labels[TabCount] = {"All", "Project", "Plugins", "Sounds", "Starred"};
-  static const char* hints[TabCount] = {"Everything", "Current project, recent files, projects", "Plugin database and presets",
-                                        "Packs, impulses, scores, recordings and your folders", "Favourite plugins and starred files"};
+  static const char* labels[TabCount] = {i18n::N_("All"), i18n::N_("Project"), i18n::N_("Plugins"), i18n::N_("Sounds"), i18n::N_("Starred")};
+  static const char* hints[TabCount] = {i18n::N_("Everything"), i18n::N_("Current project, recent files, projects"), i18n::N_("Plugin database and presets"),
+                                        i18n::N_("Packs, impulses, scores, recordings and your folders"), i18n::N_("Favourite plugins and starred files")};
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImVec2 p0 = ImGui::GetCursorScreenPos();
   const float w = ImGui::GetContentRegionAvail().x, h = 24;
@@ -2054,7 +2478,7 @@ void tabStrip(App& a) {
     for (int i = 0; i < TabCount; ++i) {
       ImGui::SetCursorScreenPos(ImVec2(x, y0));
       ImGui::PushID(i);
-      if (ImGui::InvisibleButton("##tab", ImVec2(segW[i], sh))) tab = i;
+      if (ImGui::InvisibleButton("##tab", ImVec2(segW[i], sh))) showKind(i);
       const bool hov = ImGui::IsItemHovered(), on = tab == i;
       ImGui::PopID();
       if (hov) ui::Hint(hints[i]);
@@ -2070,31 +2494,264 @@ void tabStrip(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + h + 6));
     return;
   }
-  dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), P.surface900);
-  dl->AddLine(ImVec2(p0.x, p0.y + h - 1), ImVec2(p0.x + w, p0.y + h - 1), P.line);
-  const float tw = w / TabCount;
-  for (int i = 0; i < TabCount; ++i) {
-    ImVec2 q(p0.x + tw * static_cast<float>(i), p0.y);
-    ImGui::SetCursorScreenPos(q);
-    ImGui::PushID(i);
-    if (ImGui::InvisibleButton("##tab", ImVec2(tw, h))) tab = i;
-    const bool hov = ImGui::IsItemHovered();
-    ImGui::PopID();
-    if (hov) ui::Hint(hints[i]);
-    const bool on = tab == i;
-    if (on) {
-      dl->AddRectFilled(q, ImVec2(q.x + tw, q.y + h - 1), P.surface800);
-      dl->AddRectFilled(ImVec2(q.x + 4, q.y + h - 3), ImVec2(q.x + tw - 4, q.y + h - 1), P.hot);
-    }
-    if (i == TabStarred) {
-      browserui::drawStar(dl, ImVec2(q.x + tw * 0.5f, q.y + h * 0.5f - 1), 5.5f, on ? P.hot : hov ? P.text : P.textDim, on);
-    } else {
-      float lw = a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, labels[i]).x;
-      dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2(std::round(q.x + (tw - lw) * 0.5f), q.y + 5), on ? P.text : hov ? P.text : P.textDim,
-                  labels[i]);
+  // GitHub #74: the user's tabs (built-in and folder tabs), then a + button that adds one. Tabs share
+  // the width evenly while every label fits; else each takes its label's width (shrunk to fit, the
+  // label shortened). Click: show it; drag: reorder; middle-click or the menu: close; right-click:
+  // its menu (rename a folder tab, move, close).
+  loadTabs(a);
+  // The Tracker: each tab a bevel button on the band's face, the shown one lit (as the band's page
+  // tabs), a gap between them; the strip sits inside the panel's edge.
+  const bool trk = trkLook(a);
+  if (trk) {
+    p0.x += sp::kPad, p0.y += sp::kGap;
+  } else {
+    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + h), P.surface900);
+    dl->AddLine(ImVec2(p0.x, p0.y + h - 1), ImVec2(p0.x + w, p0.y + h - 1), P.line);
+  }
+  const float tw0 = trk ? w - 2 * sp::kPad : w;  // the strip's width
+  const float plusW = trk ? 22 : 20, fs = theme::kFontCaption, iconW = 16;
+  const size_t n = tabs.size();
+  auto label = [](const browse::TabEntry& t) -> std::string {
+    return t.kind == browse::TabKind::Folder ? browse::folderTabLabel(t) : std::string(i18n::tr(labels[static_cast<int>(t.kind)]));
+  };
+  // Each tab's content (its label, a folder tab's icon; the star), then the padding the width allows:
+  // 20 px when it fits, down to 6 px (a narrow browser keeps whole words), else the labels shorten.
+  std::vector<float> base(n), tw(n);
+  float content = 0;
+  for (size_t i = 0; i < n; ++i) {
+    const browse::TabEntry& t = tabs[i];
+    base[i] = t.kind == browse::TabKind::Starred ? 12.0f
+                                                 : std::ceil(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, label(t).c_str()).x) +
+                                                       (t.kind == browse::TabKind::Folder ? iconW : 0.0f);
+    content += base[i];
+  }
+  const float avail = std::max(1.0f, tw0 - plusW - (trk ? sp::kGap : 0.0f)), nf = static_cast<float>(n), equal = std::floor(avail / nf);
+  float widest = 0;
+  for (float b : base) widest = std::max(widest, b + 20);
+  if (widest <= equal) {
+    for (float& v : tw) v = equal;
+  } else if (content + 6 * nf <= avail) {
+    const float pad = std::floor((avail - content) / nf);
+    for (size_t i = 0; i < n; ++i) tw[i] = base[i] + pad;
+  } else {
+    for (size_t i = 0; i < n; ++i) tw[i] = std::max(18.0f, std::floor((base[i] + 6) * avail / (content + 6 * nf)));
+  }
+  // Where each tab sits. The Tracker never shortens a label: a tab is at least its label and the
+  // band's padding, and when the tabs at that width do not fit in one row they wrap into more rows
+  // (the + stays at the first row's end), each row's tabs sharing its width.
+  std::vector<float> tx(n, p0.x), ty(n, p0.y);
+  std::vector<bool> rowEnd(n, false);
+  int rows = 1;
+  {
+    float x = p0.x;
+    for (size_t i = 0; i < n; ++i) tx[i] = x, x += tw[i];
+    if (n) rowEnd[n - 1] = true;
+  }
+  if (trk && n) {
+    const float least = 2 * sp::kGroup + sp::kGap;
+    float need = 0;
+    for (float b : base) need += b + least;
+    if (need > avail) {
+      size_t start = 0;
+      int row = 0;
+      auto layRow = [&](size_t from, size_t to, float width) {  // tabs [from, to) across `width`
+        float sum = 0;
+        for (size_t k = from; k < to; ++k) sum += std::min(base[k] + least, tw0);
+        const float extra = std::max(0.0f, (width - sum) / static_cast<float>(to - from));
+        float x = p0.x;
+        for (size_t k = from; k < to; ++k) {
+          tw[k] = k + 1 == to ? p0.x + width - x : std::floor(std::min(base[k] + least, tw0) + extra);
+          tx[k] = x, ty[k] = p0.y + static_cast<float>(row) * (h + sp::kGap);
+          rowEnd[k] = k + 1 == to;
+          x += tw[k];
+        }
+      };
+      float used = 0;
+      for (size_t i = 0; i < n; ++i) {
+        const float wi = std::min(base[i] + least, tw0);
+        const float width = row == 0 ? avail : tw0;
+        if (i > start && used + wi > width) {
+          layRow(start, i, width);
+          ++row, start = i, used = 0;
+        }
+        used += wi;
+      }
+      layRow(start, n, row == 0 ? avail : tw0);
+      rows = row + 1;
     }
   }
-  ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + h));
+  static int ctxTab = -1;      // the tab whose menu is open
+  static int renaming = -1;    // the folder tab being renamed
+  static char renameBuf[128] = "";
+  static bool renameOpen = false;  // open the name field next frame (the menu that asked has closed)
+  static bool dragged = false;  // a drag moved a tab (its release is not a click)
+  int closeAsk = -1;
+  std::vector<float> xs(n + 1, p0.x);
+  for (size_t i = 0; i < n; ++i) xs[i + 1] = xs[i] + tw[i];
+  for (size_t i = 0; i < n; ++i) {
+    const browse::TabEntry t = tabs[i];  // (a copy: a move below changes the list)
+    const ImVec2 q(tx[i], ty[i]);
+    ImGui::SetCursorScreenPos(q);
+    ImGui::PushID(t.kind == browse::TabKind::Folder ? ("f:" + t.path).c_str() : browse::tabId(t.kind));  // follows the tab when it moves
+    const bool clicked = ImGui::InvisibleButton("##tab", ImVec2(tw[i], h), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle);
+    const bool hov = ImGui::IsItemHovered();
+    devNoteRect(("brtab" + std::to_string(i)).c_str());
+    if (ImGui::IsItemActivated()) dragged = false;
+    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 4.0f)) {  // drag: the tab goes where the pointer is
+      const float mx = ImGui::GetIO().MousePos.x;
+      size_t to = i;
+      if (rows > 1) {  // wrapped (the Tracker): the tab under the pointer's place
+        const ImVec2 mp = ImGui::GetIO().MousePos;
+        for (size_t k = 0; k < n; ++k)
+          if (mp.x >= tx[k] && mp.x < tx[k] + tw[k] && mp.y >= ty[k] && mp.y < ty[k] + h) to = k;
+      } else {
+        while (to + 1 < n && mx > xs[to + 1] + tw[to + 1] * 0.5f && mx > xs[i + 1]) ++to;
+        while (to > 0 && mx < xs[to - 1] + tw[to - 1] * 0.5f && mx < xs[i]) --to;
+      }
+      if (to != i && browse::moveTab(tabs, i, to)) {
+        const bool wasShown = curTab == static_cast<int>(i);
+        if (wasShown) curTab = static_cast<int>(to);
+        else if (curTab >= 0) {
+          if (static_cast<int>(i) < curTab && static_cast<int>(to) >= curTab) --curTab;
+          else if (static_cast<int>(i) > curTab && static_cast<int>(to) <= curTab) ++curTab;
+        }
+        dragged = true;
+        saveTabs(a);
+      }
+    }
+    if (clicked && ImGui::IsMouseReleased(ImGuiMouseButton_Middle)) closeAsk = static_cast<int>(i);
+    else if (clicked && !dragged) showTabAt(static_cast<int>(i));
+    const bool menu = ImGui::IsItemClicked(ImGuiMouseButton_Right);
+    ImGui::PopID();
+    if (menu) ctxTab = static_cast<int>(i), ImGui::OpenPopup("##tabctx");  // (outside the tab's ID, where the menu is drawn)
+    if (hov) {
+      if (t.kind == browse::TabKind::Folder) ui::Hint(t.path + "   " + i18n::tr("(right-click: rename, move or close this tab)"));
+      else ui::Hint(std::string(i18n::tr(hints[static_cast<int>(t.kind)])) + "   " + i18n::tr("(right-click: move or close this tab)"));
+    }
+    const bool on = curTab == static_cast<int>(i);
+    ImU32 trkInk = 0;
+    if (trk) {
+      // (the gap between tabs: each face a pixel or two short of the next tab)
+      trkInk = trkFace(dl, q, ImVec2(q.x + tw[i] - (!rowEnd[i] ? sp::kGap : 0.0f), q.y + h), on, hov, ImGui::IsItemActive() && !dragged);
+    } else if (on) {
+      dl->AddRectFilled(q, ImVec2(q.x + tw[i], q.y + h - 1), P.surface800);
+      dl->AddRectFilled(ImVec2(q.x + 4, q.y + h - 3), ImVec2(q.x + tw[i] - 4, q.y + h - 1), P.hot);
+    }
+    if (!trk && i > 0 && !on && curTab != static_cast<int>(i) - 1 && n > static_cast<size_t>(browse::kBuiltInTabs))  // a faint rule between tabs once there are more than the usual five
+      dl->AddLine(ImVec2(std::round(q.x) + 0.5f, q.y + 6), ImVec2(std::round(q.x) + 0.5f, q.y + h - 7), theme::withAlpha(P.line, 0.7f));
+    const ImU32 col = trk ? trkInk : on || hov ? P.text : P.textDim;
+    if (t.kind == browse::TabKind::Starred) {
+      browserui::drawStar(dl, ImVec2(q.x + tw[i] * 0.5f, q.y + h * 0.5f - 1), 5.5f, on && !trk ? P.hot : col, on);
+      continue;
+    }
+    const std::string lb = label(t);
+    const float lw = a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, lb.c_str()).x;
+    const float icon = t.kind == browse::TabKind::Folder ? iconW : 0.0f;
+    const float room = tw[i] - 4 - icon;
+    if (trk) trackerview::watchLabel("tab", lb.c_str(), lw, tw[i] - (rowEnd[i] ? 0.0f : sp::kGap) - 2 - icon);  // (the face's room)
+    float x = lw <= room ? std::round(q.x + (tw[i] - lw - icon) * 0.5f) : q.x + 2;
+    if (icon > 0) {
+      ui::drawIconFit(dl, ui::Icon::Folder, ImVec2(x, q.y + h * 0.5f - 6), ImVec2(x + 12, q.y + h * 0.5f + 5), on && !trk ? roleCol(role::kView) : col);
+      x += icon;
+    }
+    if (room > 8) theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(x, q.y + 5), room, col, lb.c_str());
+  }
+  // The + button: add a folder tab, one of the browser's folders, or a closed built-in tab again.
+  {
+    const float bx = trk ? p0.x + tw0 - plusW : std::min(xs[n], p0.x + w - plusW);
+    ImGui::SetCursorScreenPos(ImVec2(bx, p0.y));
+    if (ImGui::InvisibleButton("##addtab", ImVec2(plusW, h))) ImGui::OpenPopup("##addtabmenu");
+    const bool hov = ImGui::IsItemHovered();
+    devNoteRect("braddtab");
+    if (hov) ui::Hint("Add a tab: a folder, or a tab you closed");
+    ImU32 ink = hov ? P.text : P.textDim;
+    if (trk) ink = trkFace(dl, ImVec2(bx, p0.y), ImVec2(bx + plusW, p0.y + h), ImGui::IsPopupOpen("##addtabmenu"), hov, ImGui::IsItemActive());
+    else if (hov) dl->AddRectFilled(ImVec2(bx, p0.y), ImVec2(bx + plusW, p0.y + h - 1), P.surface800);
+    ui::drawIconFit(dl, ui::Icon::Plus, ImVec2(bx + plusW * 0.5f - 5, p0.y + h * 0.5f - 5), ImVec2(bx + plusW * 0.5f + 5, p0.y + h * 0.5f + 5), ink);
+  }
+  if (ImGui::BeginPopup("##addtabmenu")) {
+    if (ImGui::MenuItem(i18n::tr("Folder as a tab..."))) askFolderTab(a);
+    devNoteRect("braddfolder");
+    bool head = false;
+    for (const std::string& f : folders) {
+      if (browse::findTab(tabs, browse::TabKind::Folder, f) >= 0) continue;
+      if (!head) ImGui::SeparatorText(i18n::tr("Your browser folders")), head = true;
+      ImGui::PushID(f.c_str());
+      if (ImGui::MenuItem(browse::folderTabLabel(browse::TabEntry{browse::TabKind::Folder, f, {}}).c_str())) addFolderTabNow(a, f);
+      ui::Hint(f);
+      ImGui::PopID();
+    }
+    const std::vector<browse::TabKind> closed = browse::closedBuiltIns(tabs);
+    if (!closed.empty()) {
+      ImGui::SeparatorText(i18n::tr("Closed tabs"));
+      for (browse::TabKind k : closed) {
+        if (ImGui::MenuItem(i18n::tr(labels[static_cast<int>(k)]))) {
+          showTabAt(browse::reopenBuiltIn(tabs, k));
+          saveTabs(a);
+        }
+        devNoteRect((std::string("brreopen") + browse::tabId(k)).c_str());
+      }
+    }
+    ImGui::EndPopup();
+  }
+  if (ImGui::BeginPopup("##tabctx")) {
+    if (ctxTab >= 0 && ctxTab < static_cast<int>(tabs.size())) {
+      const browse::TabEntry& t = tabs[static_cast<size_t>(ctxTab)];
+      const size_t ci = static_cast<size_t>(ctxTab);
+      if (t.kind == browse::TabKind::Folder) {
+        ImGui::TextDisabled("%s", theme::fitText(t.path.c_str(), 300));
+        if (ImGui::MenuItem(i18n::tr("Rename tab..."))) {
+          renaming = ctxTab, renameOpen = true;
+          std::snprintf(renameBuf, sizeof renameBuf, "%s", browse::folderTabLabel(t).c_str());
+        }
+        devNoteRect("brtabmrename");
+      }
+      if (ImGui::MenuItem(i18n::tr("Move left"), nullptr, false, ci > 0)) {
+        browse::moveTab(tabs, ci, ci - 1);
+        if (curTab == ctxTab) --curTab;
+        else if (curTab == ctxTab - 1) ++curTab;
+        saveTabs(a);
+      }
+      if (ImGui::MenuItem(i18n::tr("Move right"), nullptr, false, ci + 1 < tabs.size())) {
+        browse::moveTab(tabs, ci, ci + 1);
+        if (curTab == ctxTab) ++curTab;
+        else if (curTab == ctxTab + 1) --curTab;
+        saveTabs(a);
+      }
+      ImGui::Separator();
+      if (ImGui::MenuItem(i18n::tr("Close tab"), nullptr, false, tabs.size() > 1)) closeAsk = ctxTab;
+      devNoteRect("brtabmclose");
+      if (tabs.size() <= 1) ui::Hint("The browser keeps at least one tab");
+    }
+    ImGui::EndPopup();
+  }
+  if (renaming >= 0) {
+    if (renameOpen) ImGui::OpenPopup("##tabrename"), renameOpen = false;
+    if (ImGui::BeginPopup("##tabrename")) {
+      ImGui::TextUnformatted(i18n::tr("Tab name"));
+      ImGui::SetNextItemWidth(220);
+      if (trk) trkFieldWell(220);
+      if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+      const bool enter = ImGui::InputText("##tabname", renameBuf, sizeof renameBuf, ImGuiInputTextFlags_EnterReturnsTrue);
+      devNoteRect("brtabname");
+      if (enter || (trk ? trkTextButton(a, "Rename", false, nullptr) : ImGui::Button(i18n::tr("Rename")))) {
+        if (browse::renameTab(tabs, static_cast<size_t>(renaming), renameBuf)) saveTabs(a);
+        renaming = -1;
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::SameLine();
+      if ((trk ? trkTextButton(a, "Cancel", false, nullptr) : ImGui::Button(i18n::tr("Cancel"))) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        renaming = -1;
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::EndPopup();
+    } else {
+      renaming = -1;  // clicked away
+    }
+  }
+  if (closeAsk >= 0) closeTabNow(a, static_cast<size_t>(closeAsk));
+  if (trk) ImGui::SetCursorScreenPos(ImVec2(p0.x - sp::kPad, p0.y + static_cast<float>(rows) * (h + sp::kGap)));
+  else ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + h));
 }
 
 // K-112c: the Live layout's browser: a flat list of categories (and places) in place of the tabs;
@@ -2159,6 +2816,10 @@ void liveSidebar(App& a, bool twoPane) {
     ImGui::PushID(r.cat);
     if (ImGui::InvisibleButton("##cat", ImVec2(w, rh))) liveCat = r.cat;
     const bool hov = ImGui::IsItemHovered();
+    if (ImGui::BeginPopupContextItem("##catctx")) {  // GitHub #74: a folder of the user's own among the places
+      if (ImGui::MenuItem(i18n::tr("Add a folder as a place..."))) askFolderTab(a);
+      ImGui::EndPopup();
+    }
     ImGui::PopID();
     if (hov) {
       ui::Hint(icons ? std::string(i18n::tr(r.label)) + ": " + i18n::tr(r.hint) : std::string(r.hint));
@@ -2176,6 +2837,90 @@ void liveSidebar(App& a, bool twoPane) {
     const ImVec4 clip(q.x, q.y, q.x + w - 4, q.y + rh);
     dl->AddText(a.fontRegular, fs, ImVec2(q.x + 31, std::round(q.y + (rh - fs) * 0.5f)), P.text, i18n::tr(r.label), nullptr, 0, &clip);
     y += rh;
+  }
+  // GitHub #74: the folders the user keeps as tabs, as places of their own under "On this computer"
+  // (the same list the Studio browser shows as tabs; right-click: rename or remove).
+  loadTabs(a);
+  static int placeRename = -1;
+  static bool placeRenameOpen = false;
+  static char placeBuf[128] = "";
+  int removeAsk = -1;
+  for (int k = 0, nf = folderTabCount(); k < nf; ++k) {
+    const int ti = folderTabIndex(k);
+    const browse::TabEntry t = tabs[static_cast<size_t>(ti)];
+    const std::string lb = browse::folderTabLabel(t);
+    const int cat = LcCount + k;
+    const ImVec2 q(p0.x, y);
+    ImGui::SetCursorScreenPos(q);
+    ImGui::PushID(("place:" + t.path).c_str());
+    if (ImGui::InvisibleButton("##cat", ImVec2(w, rh))) liveCat = cat;
+    const bool hov = ImGui::IsItemHovered();
+    devNoteRect(("brplace" + std::to_string(k)).c_str());
+    if (ImGui::BeginPopupContextItem("##placectx")) {
+      ImGui::TextDisabled("%s", theme::fitText(t.path.c_str(), 300));
+      if (ImGui::MenuItem(i18n::tr("Rename place..."))) {
+        placeRename = ti, placeRenameOpen = true;
+        std::snprintf(placeBuf, sizeof placeBuf, "%s", lb.c_str());
+      }
+      if (ImGui::MenuItem(i18n::tr("Remove from places"))) removeAsk = ti;
+      ImGui::Separator();
+      if (ImGui::MenuItem(i18n::tr("Add a folder as a place..."))) askFolderTab(a);
+      ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    if (hov) ui::Hint(icons ? lb + ": " + t.path : t.path + "   " + i18n::tr("(right-click: rename or remove this place)"));
+    const bool on = liveCat == cat;
+    if (on || hov) dl->AddRectFilled(q, ImVec2(q.x + w, q.y + rh), on ? P.surface700 : P.surface800);
+    const float cy = q.y + rh * 0.5f;
+    if (icons) {
+      const float cx = std::round(q.x + w * 0.5f);
+      ui::drawIconFit(dl, ui::Icon::Folder, ImVec2(cx - 6, cy - 6), ImVec2(cx + 6, cy + 6), on ? P.text : P.textDim);
+    } else {
+      ui::drawIconFit(dl, ui::Icon::Folder, ImVec2(q.x + 12, cy - 6), ImVec2(q.x + 24, cy + 6), on ? P.text : P.textDim);
+      const ImVec4 clip(q.x, q.y, q.x + w - 4, q.y + rh);
+      dl->AddText(a.fontRegular, fs, ImVec2(q.x + 31, std::round(q.y + (rh - fs) * 0.5f)), P.text, lb.c_str(), nullptr, 0, &clip);
+    }
+    y += rh;
+  }
+  if (removeAsk >= 0) {
+    const int shown = liveCat - LcCount;  // the place shown keeps showing (or Folders when it goes)
+    int removedK = -1;
+    for (int k = 0; k < folderTabCount(); ++k)
+      if (folderTabIndex(k) == removeAsk) removedK = k;
+    if (tabs.size() <= 1) {  // the only tab left (the Studio tabs all closed): All comes back so it can go
+      browse::reopenBuiltIn(tabs, browse::TabKind::All);
+      ++removeAsk;
+      if (curTab >= 0) ++curTab;
+    }
+    if (browse::closeTab(tabs, static_cast<size_t>(removeAsk))) {
+      if (curTab == removeAsk) showTabAt(static_cast<int>(browse::shownAfterClose(static_cast<size_t>(curTab), static_cast<size_t>(removeAsk), tabs.size())));
+      else if (curTab > removeAsk) --curTab;
+      if (shown == removedK) liveCat = LcFolders;
+      else if (shown > removedK && shown >= 0) --liveCat;
+      saveTabs(a);
+    }
+  }
+  if (placeRename >= 0) {
+    if (placeRenameOpen) ImGui::OpenPopup("##placerename"), placeRenameOpen = false;
+    if (ImGui::BeginPopup("##placerename")) {
+      ImGui::TextUnformatted(i18n::tr("Place name"));
+      ImGui::SetNextItemWidth(220);
+      if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+      const bool enter = ImGui::InputText("##placename", placeBuf, sizeof placeBuf, ImGuiInputTextFlags_EnterReturnsTrue);
+      if (enter || ImGui::Button(i18n::tr("Rename"))) {
+        if (browse::renameTab(tabs, static_cast<size_t>(placeRename), placeBuf)) saveTabs(a);
+        placeRename = -1;
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::SameLine();
+      if (ImGui::Button(i18n::tr("Cancel")) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        placeRename = -1;
+        ImGui::CloseCurrentPopup();
+      }
+      ImGui::EndPopup();
+    } else {
+      placeRename = -1;
+    }
   }
   if (twoPane) {
     ImGui::SetCursorScreenPos(ImVec2(p0.x, y + 4));
@@ -2269,7 +3014,7 @@ void liveFilterRows(App& a, float w) {
     liveKindChips(a, w);
     return;
   }
-  const bool files = liveCat == LcSamples || liveCat == LcFolders || liveCat == LcDrums || liveCat == LcRecent || liveCat == LcStarred;
+  const bool files = liveCat == LcSamples || liveCat == LcFolders || liveCat == LcDrums || liveCat == LcRecent || liveCat == LcStarred || liveCat >= LcCount;
   if (!files) return;
   filterRows(a, w);
 }
@@ -2284,8 +3029,10 @@ void filterRows(App& a, float w) {
   if (filterTags.empty()) return;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 o = ImGui::GetCursorScreenPos();
-  const float fs = theme::kFontLabel, ch = 16, gap = 4, pad = 6;
-  float x = o.x + 6, y = o.y + 1;
+  const bool trk = trkLook(a);  // the Tracker: bevel chips, the chosen one lit
+  const float fs = theme::kFontLabel, ch = trk ? 18.0f : 16.0f, gap = trk ? sp::kGap : 4.0f, pad = 6;
+  const float x0 = trk ? o.x + sp::kPad : o.x + 6;
+  float x = x0, y = o.y + 1;
   int rowsUsed = 1;
   for (size_t i = 0; i < filterTags.size(); ++i) {
     const std::string& tag = filterTags[i].first;
@@ -2293,28 +3040,34 @@ void filterRows(App& a, float w) {
     std::string t = tag;  // N48-16: shown in title case, as the other places' chips
     if (!t.empty()) t[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(t[0])));
     const float cw = std::ceil(a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, t.c_str()).x) + pad * 2;
-    if (x + cw > o.x + w - 6) {
+    if (x + cw > o.x + w - (x0 - o.x)) {
       if (rowsUsed == 2) break;
-      ++rowsUsed, x = o.x + 6, y += ch + gap;
+      ++rowsUsed, x = x0, y += ch + gap;
     }
     const std::string q = "tag:" + tag;
     const bool on = q == filterBuf;
     ImGui::SetCursorScreenPos(ImVec2(x, y));
     ImGui::PushID(static_cast<int>(i));
     if (ImGui::InvisibleButton("##chip", ImVec2(cw, ch))) std::snprintf(filterBuf, sizeof filterBuf, "%s", on ? "" : q.c_str());
-    const bool hov = ImGui::IsItemHovered();
+    const bool hov = ImGui::IsItemHovered(), held = ImGui::IsItemActive();
     if (i == 0) devNoteRect("brchip");
     ImGui::PopID();
     ui::Hint((std::to_string(filterTags[i].second) + " " + i18n::tr("files") + " \xC2\xB7 " + i18n::tr("click to show only these")).c_str());
     // K-112c (round 19): flat chips, no outline, nearly square, the tag in the text colour (211, 094).
-    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + cw, y + ch), on ? P.hot : hov ? P.surface600 : P.surface700, 1.0f);
-    theme::centreText(dl, a.fontRegular, fs, ImVec2(x, y), ImVec2(x + cw, y + ch), on ? theme::contrastText(P.hot) : hov ? P.text : theme::mix(P.textDim, P.text, 0.5f), t.c_str());
+    if (trk) {
+      const ImU32 ink = trkFace(dl, ImVec2(x, y), ImVec2(x + cw, y + ch), on, hov, held);
+      const float d = held ? 1.0f : 0.0f;
+      theme::centreText(dl, a.fontRegular, fs, ImVec2(x + d, y + d), ImVec2(x + cw + d, y + ch + d), ink, t.c_str());
+    } else {
+      dl->AddRectFilled(ImVec2(x, y), ImVec2(x + cw, y + ch), on ? P.hot : hov ? P.surface600 : P.surface700, 1.0f);
+      theme::centreText(dl, a.fontRegular, fs, ImVec2(x, y), ImVec2(x + cw, y + ch), on ? theme::contrastText(P.hot) : hov ? P.text : theme::mix(P.textDim, P.text, 0.5f), t.c_str());
+    }
     x += cw + gap;
     ++devFilterChips;
   }
   ImGui::SetCursorScreenPos(ImVec2(o.x, o.y));
   ImGui::Dummy(ImVec2(w, y + ch + 3 - o.y));
-  dl->AddLine(ImVec2(o.x, y + ch + 2.5f), ImVec2(o.x + w, y + ch + 2.5f), P.line);
+  if (!trk) dl->AddLine(ImVec2(o.x, y + ch + 2.5f), ImVec2(o.x + w, y + ch + 2.5f), P.line);
 }
 
 void liveListHead(App& a) {
@@ -2366,7 +3119,9 @@ void liveContent(App& a) {
     case LcRecent: sectionRecent(a); break;
     case LcProjects: sectionProjects(a); break;
     case LcFolders: sectionUserFolders(a); break;
-    default: break;
+    default:  // GitHub #74: a folder the user keeps as a place
+      if (const int ti = folderTabIndex(liveCat - LcCount); ti >= 0) folderTabContent(a, tabs[static_cast<size_t>(ti)].path);
+      break;
   }
 }
 
@@ -2489,7 +3244,19 @@ void drawBrowser(App& a) {
   }
   const auto& P = pal();
   gRowH = livelook::active(a) ? 20.0f : 24.0f;
+  // The Tracker: the panel is one raised box on the band's face (TrackerLook.h), its fields square.
+  const bool trk = trkLook(a);
+  if (trk) {
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+    const ImRect r = ImGui::GetCurrentWindow()->InnerRect;
+    trackerview::bevelBox(ImGui::GetWindowDrawList(), r.Min, r.Max, false);
+  }
+  // A glyph button: the shared one, or a bevel button in the Tracker.
+  auto iconButton = [&a, trk](const char* id, ui::Icon icon, bool on, float size, const char* hint) {
+    return trk ? trkIconButton(a, id, icon, on, size, hint) : ui::IconButton(id, icon, on, size, hint);
+  };
   loadFolders(a);
+  loadHidden(a);  // GitHub #58
   browserui::ensureIndex(a);
   browserui::tickIndex(a);
   if (!ImGui::GetDragDropPayload()) fops.browserDrag.clear();  // K-18
@@ -2501,7 +3268,7 @@ void drawBrowser(App& a) {
   static bool devInit = false;
   if (!devInit) {  // dev: screenshots
     devInit = true;
-    if (const char* t = std::getenv("GRIDLINE_BROWSER_TAB")) tab = std::clamp(std::atoi(t), 0, TabCount - 1);
+    if (const char* t = std::getenv("GRIDLINE_BROWSER_TAB")) loadTabs(a), showKind(std::atoi(t));
     // GRIDLINE_BROWSER_DROP="playlist=<file>;mixer=<file>;…" runs drops as if
     // dragged there (targets: rack, playlist, piano, mixer, slot, window, open).
     if (const char* d = std::getenv("GRIDLINE_BROWSER_DROP")) {
@@ -2544,11 +3311,15 @@ void drawBrowser(App& a) {
   }
 
   // ---- search ----
-  ui::BeginToolbar("##brtb");
+  const ImVec2 searchAt = ImGui::GetCursorScreenPos();
+  if (trk) ImGui::SetCursorScreenPos(ImVec2(searchAt.x + sp::kPad + 1, searchAt.y + sp::kPad + 1));
+  else ui::BeginToolbar("##brtb");
   {
     ImVec2 p = ImGui::GetCursorScreenPos();
-    const float bw = ImGui::GetFrameHeight() + 4;  // each button right of the field, with its gap
-    float w = ImGui::GetContentRegionAvail().x - 2 * bw;
+    const float bw = ImGui::GetFrameHeight() + (trk ? sp::kGap : 4.0f);  // each button right of the field, with its gap
+    // GitHub #58: the eye (Show hidden) joins the buttons while some folder is hidden
+    const bool eye = !hiddenDirs.empty();
+    float w = ImGui::GetContentRegionAvail().x - (trk ? sp::kPad + 1 : 0.0f) - (eye ? 3 : 2) * bw;
     // K-112c (round 20): Live's search field has no glyph, its text at the field's own inset, as every
     // ref's browser search (211, 094, 329, 214, 216).
     const bool searchGlyph = !livelook::active(a);
@@ -2559,6 +3330,7 @@ void drawBrowser(App& a) {
     static bool refocus = false;  // after the clear button: typing goes on in the empty field
     if (refocus) ImGui::SetKeyboardFocusHere(), refocus = false;
     ImGui::SetNextItemAllowOverlap();  // the clear button drawn over the field's right end takes its clicks
+    if (trk) trkFieldWell(w);
     // Checkpoint 32: the Smooth layout says only "Search" (111, 158); the filters stay in the hint.
     const bool lgFind = layoutui::active() == layout::Preset::Logic && layoutui::shellBuilt(a, layout::Preset::Logic);
     ImGui::InputTextWithHint("##filter", lgFind ? i18n::tr("Search") : i18n::tr("Search  (bpm: key: tag:)"), filterBuf, sizeof filterBuf);
@@ -2569,22 +3341,35 @@ void drawBrowser(App& a) {
     ui::Hint("Search plugins, presets and files \xC2\xB7 filters: type:audio|midi|preset|project|effect  tag:kick  bpm:120-130  key:Am  len:<2");
     if (searchGlyph) ui::drawIcon(ImGui::GetWindowDrawList(), ui::Icon::Search, ImVec2(p.x + 14, p.y + ImGui::GetFrameHeight() * 0.5f), 12, P.textFaint);
     if (filterBuf[0]) {
-      ImGui::SetCursorScreenPos(ImVec2(p.x + w - 22, p.y + 2));
-      if (ui::IconButton("clear", ui::Icon::Close, false, 20, "Clear search")) {
+      const float cs = trk ? ImGui::GetFrameHeight() - 4 : 20.0f;
+      ImGui::SetCursorScreenPos(ImVec2(p.x + w - cs - 2, p.y + 2));
+      if (iconButton("clear", ui::Icon::Close, false, cs, i18n::N_("Clear search"))) {
         filterBuf[0] = 0;
         if (ImGui::GetActiveID() == filterId) ImGui::ClearActiveID();  // an active field would write its own copy back
         refocus = true;
       }
       devNoteRect("brclear");
     }
-    ImGui::SetCursorScreenPos(ImVec2(p.x + w + 4, p.y));
-    if (ui::IconButton("collapse", ui::Icon::CollapseAll, false, ImGui::GetFrameHeight(), "Collapse all folders")) collapseAsked = true;
+    const float g = trk ? sp::kGap : 4.0f;
+    float bx = p.x + w + g;
+    if (eye) {
+      ImGui::SetCursorScreenPos(ImVec2(bx, p.y));
+      if (iconButton("showhidden", ui::eyeIcon(showHidden), showHidden, ImGui::GetFrameHeight(),
+                     showHidden ? i18n::N_("Hidden folders are shown, dimmed: click to hide them again")
+                                : i18n::N_("Show hidden folders (dimmed, each with an eye to show it again)")))
+        showHidden = !showHidden;
+      devNoteRect("brshowhidden");
+      bx += bw;
+    }
+    ImGui::SetCursorScreenPos(ImVec2(bx, p.y));
+    if (iconButton("collapse", ui::Icon::CollapseAll, false, ImGui::GetFrameHeight(), i18n::N_("Collapse all folders"))) collapseAsked = true;
     devNoteRect("brcollapse");
-    ImGui::SetCursorScreenPos(ImVec2(p.x + w + bw + 4, p.y));
-    if (ui::IconButton("picker", ui::Icon::Plug, browserui::pluginPickerOpen(), ImGui::GetFrameHeight(), "Plugin picker (F8)"))
+    ImGui::SetCursorScreenPos(ImVec2(bx + bw, p.y));
+    if (iconButton("picker", ui::Icon::Plug, browserui::pluginPickerOpen(), ImGui::GetFrameHeight(), i18n::N_("Plugin picker (F8)")))
       browserui::togglePluginPicker();
   }
-  ui::EndToolbar();
+  if (trk) ImGui::SetCursorScreenPos(ImVec2(searchAt.x, searchAt.y + ImGui::GetFrameHeight() + 2 * sp::kPad + 2));
+  else ui::EndToolbar();
   // K-112c: categories in place of the tabs. K-112D (audit H3): Smooth too: the reference's browser
   // is a short list of kinds of content and places beside a flat list of results (111, 252, 233), not
   // a long folder tree.
@@ -2626,7 +3411,26 @@ void drawBrowser(App& a) {
     ImGui::BeginGroup();
     liveListHead(a);
   }
-  ImGui::BeginChild("##tree", ImVec2(0, -footerH - (info ? kInfoH : 0)), ImGuiChildFlags_AlwaysUseWindowPadding);
+  // The Tracker: the tree in a sunken well inside the panel's edge, scrolled with the band's bevel bar
+  // (shown from the frame after the rows outgrow the well).
+  static bool trkBar = false;
+  static ImGuiWindow* trkTreeWin = nullptr;
+  static float trkScroll = 0, trkScrollMax = 0, trkView = 1;
+  const float trkBarW = std::round(std::max(12.0f, ImGui::GetFontSize() + 1));
+  ImRect trkWell;
+  if (trk) {
+    const ImVec2 t0 = ImGui::GetCursorScreenPos();
+    const float W = ImGui::GetContentRegionAvail().x, H = ImGui::GetContentRegionAvail().y - footerH - (info ? kInfoH : 0);
+    trkWell = ImRect(ImVec2(t0.x + sp::kPad, t0.y), ImVec2(t0.x + W - sp::kPad, t0.y + std::max(4.0f, H)));
+    trackerview::bevelBox(ImGui::GetWindowDrawList(), trkWell.Min, trkWell.Max, true);
+    ImGui::SetCursorScreenPos(ImVec2(trkWell.Min.x + 1, trkWell.Min.y + 1));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, IM_COL32(0, 0, 0, 0));
+    ImGui::BeginChild("##tree", ImVec2(std::max(1.0f, trkWell.GetWidth() - 2 - (trkBar ? trkBarW + sp::kLine : 0.0f)), std::max(1.0f, trkWell.GetHeight() - 2)),
+                      ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
+    ImGui::PopStyleColor();
+  } else {
+    ImGui::BeginChild("##tree", ImVec2(0, -footerH - (info ? kInfoH : 0)), ImGuiChildFlags_AlwaysUseWindowPadding);
+  }
   if (collapseAsked) {
     collapseAsked = false;
     collapseAll(searching);
@@ -2683,6 +3487,7 @@ void drawBrowser(App& a) {
       sectionUserFolders(a);
     }
     if (tab == TabStarred) sectionStarred(a);
+    if (const browse::TabEntry* ft = shownFolderTab()) folderTabContent(a, ft->path);  // GitHub #74
   }
   nav.recording = false;
   nav.last.swap(nav.now);
@@ -2691,7 +3496,21 @@ void drawBrowser(App& a) {
     collapseAllItem();  // the tree's empty space
     ImGui::EndPopup();
   }
+  if (trk) {
+    trkTreeWin = ImGui::GetCurrentWindow();
+    trkScroll = ImGui::GetScrollY(), trkScrollMax = ImGui::GetScrollMaxY(), trkView = ImGui::GetWindowHeight();
+  }
   ImGui::EndChild();
+  if (trk) {
+    trkBar = trkScrollMax > 0;
+    if (trkBar && trkTreeWin) {
+      double at = trkScroll;
+      const ImVec2 s0(trkWell.Max.x - 1 - trkBarW, trkWell.Min.y + 1), s1(trkWell.Max.x - 1, trkWell.Max.y - 1);
+      if (trackerview::vScrollBar(a, "##treesb", s0, s1, &at, trkView, trkScrollMax + trkView, gRowH * 3))
+        ImGui::SetScrollY(trkTreeWin, static_cast<float>(std::clamp(at, 0.0, static_cast<double>(trkScrollMax))));
+    }
+    ImGui::SetCursorScreenPos(ImVec2(trkWell.Min.x - sp::kPad, trkWell.Max.y));
+  }
   if (twoPane) ImGui::EndGroup();
   ImGui::PopStyleVar(2);
   if (info) infoPanel(a);
@@ -2700,10 +3519,15 @@ void drawBrowser(App& a) {
   {
     ImVec2 p = ImGui::GetCursorScreenPos();
     float w = ImGui::GetContentRegionAvail().x;
-    ImGui::GetWindowDrawList()->AddLine(p, ImVec2(p.x + w, p.y), P.line);
+    if (!trk) ImGui::GetWindowDrawList()->AddLine(p, ImVec2(p.x + w, p.y), P.line);
     const float fh = ImGui::GetFrameHeight();
-    ImGui::SetCursorScreenPos(ImVec2(p.x + theme::kS2, p.y + (footerH - fh) * 0.5f));
-    if (ui::TextButton("Add folder...", false, 0, "Add a folder of samples or projects to the browser (it is indexed for search)")) {
+    const float gap = trk ? sp::kGap : theme::kS1;
+    // The Tracker: bevel buttons (Sync lit while on), as the band's.
+    auto textButton = [&a, trk](const char* label, bool on, const char* hint) {
+      return trk ? trkTextButton(a, label, on, hint) : ui::TextButton(label, on, 0, hint);
+    };
+    ImGui::SetCursorScreenPos(ImVec2(p.x + (trk ? sp::kPad + 1 : theme::kS2), p.y + (footerH - fh) * 0.5f));
+    if (textButton(i18n::N_("Add folder..."), false, i18n::N_("Add a folder of samples or projects to the browser (it is indexed for search)"))) {
       a.fileDialog = {};
       a.fileDialog.open = true;
       a.fileDialog.title = "Add a folder to the browser";
@@ -2712,12 +3536,12 @@ void drawBrowser(App& a) {
       a.fileDialog.exts = {"/"};  // folder mode
       a.fileDialog.onOk = [&a](const std::string& path) { browserui::addBrowserFolder(a, path); };
     }
-    ImGui::SameLine(0, theme::kS1);
-    if (ui::TextButton("Sync", browserui::previewSync(), 0,
-                       "Tempo sync: previews (and audio clips dropped on the playlist) follow the song tempo when the file's tempo is known"))
+    ImGui::SameLine(0, gap);
+    if (textButton(i18n::N_("Sync"), browserui::previewSync(),
+                   i18n::N_("Tempo sync: previews (and audio clips dropped on the playlist) follow the song tempo when the file's tempo is known")))
       browserui::previewSync() = !browserui::previewSync();
-    ImGui::SameLine(0, theme::kS1);
-    if (ui::IconButton("refresh", ui::Icon::Loop, false, fh, "Refresh: re-read folders and index new or changed files")) {
+    ImGui::SameLine(0, gap);
+    if (iconButton("refresh", ui::Icon::Loop, false, fh, i18n::N_("Refresh: re-read folders and index new or changed files"))) {
       dirCache.clear();
       browserui::refreshIndex(a);
     }
@@ -2735,12 +3559,13 @@ void drawBrowser(App& a) {
     }
     if (a.engine.previewing()) {
       ImGui::SameLine(0, theme::kS1);
-      ImGui::SetCursorScreenPos(ImVec2(p.x + w - fh - theme::kS2, p.y + (footerH - fh) * 0.5f));
-      if (ui::IconButton("stopprev", ui::Icon::Stop, true, fh, "Stop the preview")) a.stopPreview();
+      ImGui::SetCursorScreenPos(ImVec2(p.x + w - fh - (trk ? sp::kPad + 1 : theme::kS2), p.y + (footerH - fh) * 0.5f));
+      if (iconButton("stopprev", ui::Icon::Stop, true, fh, i18n::N_("Stop the preview"))) a.stopPreview();
     }
   }
   browserui::browserDropTarget(a);  // J-75: folders dragged in from other applications
   trashDialog(a);                   // K-18
+  if (trk) ImGui::PopStyleVar();
   ui::EndDockWindow();
 }
 
@@ -2855,10 +3680,11 @@ void browserDropTarget(App& a) {
 }
 
 // K-17 / K-18 dev checks (--dev-input "browser ..."):
-//   browser tab <0..4>                the tab (All, Project, Plugins, Sounds, Starred)
-//   browser cat <0..12>               K-112c: the Live browser's category (12: Folders)
+//   browser tab <0..4>                the tab (All, Project, Plugins, Sounds, Starred); a closed one shows with no tab lit
+//   browser cat <0..12+>              K-112c: the Live browser's category (12: Folders; 13 on: the folder places)
 //   browser rows [on]                 on: record the drawn rows; else print last frame's rows
 //   browser select <path>             K-162: selects a file (its info panel)
+//   browser drag <item> [channel]     K-333: <item> (a file, or an SF2 patch "<file>#patch=<bank>:<program>") dropped on the rack / that channel row
 //   browser rename <path>             the inline name field on that row (type with "text", then "key enter")
 //   browser newfolder <dir>           New folder in <dir> (its name field opens)
 //   browser move <path> <dir>         a drop of <path> on folder <dir> inside the browser
@@ -2869,18 +3695,34 @@ void browserDropTarget(App& a) {
 //   browser collapse                  Collapse all folders (the toolbar button's action)
 //   browser tree                      the rows drawn last frame: folders, how many are open, the cursor, the selection, the search text
 //   browser state                     the name field, its error and why <path> is locked ("browser state <path>")
+//   browser tabs                      GitHub #74: the tabs (kind, label, path), the one shown, the places shown in Clips / Smooth
+//   browser addtab <dir>              a folder as a tab (as the + menu's Folder as a tab); "browser showtab <i>" shows tab i
 bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
   if (args.empty()) return false;
   const std::string& op = args[0];
   const std::string p1 = args.size() > 1 ? args[1] : std::string(), p2 = args.size() > 2 ? args[2] : std::string();
   if (op == "tab") {
-    tab = std::clamp(std::atoi(p1.c_str()), 0, TabCount - 1);
+    loadTabs(a), showKind(std::atoi(p1.c_str()));
+  } else if (op == "tabs") {
+    loadTabs(a);
+    std::printf("browsertabs frame %d: count %zu shown %d view %d cat %d\n", frame, tabs.size(), curTab, tab, liveCat);
+    for (size_t i = 0; i < tabs.size(); ++i) {
+      const browse::TabEntry& t = tabs[i];
+      std::printf("  tab %zu %s \"%s\" %s\n", i, t.kind == browse::TabKind::Folder ? "folder" : browse::tabId(t.kind),
+                  t.kind == browse::TabKind::Folder ? browse::folderTabLabel(t).c_str() : "", t.path.c_str());
+    }
+  } else if (op == "addtab") {
+    std::string dir = p1;  // a path with spaces comes as several words
+    for (size_t i = 2; i < args.size(); ++i) dir += " " + args[i];
+    addFolderTabNow(a, dir);
+  } else if (op == "showtab") {
+    loadTabs(a), showTabAt(std::atoi(p1.c_str()));
   } else if (op == "chips") {  // K-112c: the Live filter rows: chips drawn last frame, the search text, the top tags
     std::printf("browserchips frame %d: chips %d search \"%s\"", frame, devFilterChips, filterBuf);
     for (size_t i = 0; i < filterTags.size() && i < 6; ++i) std::printf(" %s=%d", filterTags[i].first.c_str(), filterTags[i].second);
     std::printf("\n");
   } else if (op == "cat") {  // K-112c: the Live browser's category (LiveCat order: 12 is Folders)
-    liveCat = std::clamp(std::atoi(p1.c_str()), 0, LcCount - 1);
+    loadTabs(a), liveCat = std::clamp(std::atoi(p1.c_str()), 0, LcCount - 1 + folderTabCount());  // past Folders: the folder places
   } else if (op == "rows" && p1 == "on") {
     devRowsOn = true;
   } else if (op == "rows") {
@@ -2888,8 +3730,26 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
     for (const auto& r : devRowsLast)
       std::printf("  row \"%s\" x %.1f %.1f y %.1f %.1f path %s\n", r.section.c_str(), static_cast<double>(r.x0), static_cast<double>(r.x1),
                   static_cast<double>(r.y0), static_cast<double>(r.y1), r.path.c_str());
+  } else if (op == "look") {  // the browser's look (the Tracker's band pieces or the shared ones) and the drag in progress
+    const ImGuiPayload* pl = ImGui::GetDragDropPayload();
+    const std::string data = pl && pl->Data ? std::string(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize)) : std::string();
+    std::printf("browserlook frame %d: tracker %d drag %s \"%s\"\n", frame, trkLook(a) ? 1 : 0, pl ? pl->DataType : "-",
+                pl && (pl->IsDataType("GL_FILE") || pl->IsDataType("GL_ITEM")) ? data.c_str() : "");
   } else if (op == "select") {  // K-162: a file selected as a click on its row does (the info panel shows it)
     selPath = p1;
+  } else if (op == "drag") {  // K-333: browser drag <item> [channel index]: a row dropped on the rack (on that channel's row)
+    browserui::DropPlace pl;
+    const auto& chans = a.doc.song().channels;
+    if (p2 == "sel") {
+      pl.channel = a.selChannel;
+    } else if (!p2.empty()) {
+      const int ci = std::atoi(p2.c_str());
+      if (ci >= 0 && ci < static_cast<int>(chans.size())) pl.channel = chans[static_cast<size_t>(ci)].id;
+    }
+    const browse::DropAction act = browserui::dropActionFor(a, p1, browse::DropTarget::Rack, pl);
+    std::printf("browserdrag frame %d: %s -> %s\n", frame, p1.c_str(), browse::dropActionLabel(act));
+    browserui::performDrop(a, p1, browse::DropTarget::Rack, pl);
+    a.syncEngine();
   } else if (op == "rename") {
     startRename(p1);
   } else if (op == "newfolder") {
@@ -2915,6 +3775,17 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
     std::snprintf(filterBuf, sizeof filterBuf, "%s", p1.c_str());
   } else if (op == "collapse") {  // the Collapse all button's action
     collapseAsked = true;
+  } else if (op == "hide" || op == "unhide") {  // GitHub #58: browser hide|unhide <folder> (a path may hold spaces)
+    std::string dir = p1;
+    for (size_t i = 2; i < args.size(); ++i) dir += " " + args[i];
+    if (op == "hide") hideFolder(a, dir);
+    else showFolder(a, dir);
+  } else if (op == "showhidden") {  // browser showhidden 0|1: the header's eye
+    showHidden = p1 == "1";
+  } else if (op == "hidden") {  // the hidden folders, Show hidden, and the search results listed last frame
+    loadHidden(a);
+    std::printf("browserhidden frame %d: count %zu show %d\n", frame, hiddenDirs.folders().size(), showHidden ? 1 : 0);
+    for (const std::string& f : hiddenDirs.folders()) std::printf("  hidden %s\n", f.c_str());
   } else if (op == "tree") {  // the rows drawn last frame: how many folders are open, the cursor, the search text
     int open = 0, folders = 0, at = -1;
     for (size_t i = 0; i < nav.last.size(); ++i) {
@@ -2939,7 +3810,7 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
 
 // J-27: View > Project picker — the browser on its current-project tab.
 void showProjectTab(App& a) {
-  tab = TabProject;
+  loadTabs(a), showKind(TabProject);
   a.showBrowser = true;
 }
 }  // namespace browserui

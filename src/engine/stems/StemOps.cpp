@@ -1,5 +1,6 @@
 // Gridline - J-191: stem splitter building blocks (see StemOps.h).
 #include "StemOps.h"
+#include "../../core/ThreadName.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -23,7 +24,7 @@ namespace gl::stems {
 Pool::Pool(int threads) {
   if (threads <= 0) threads = int(std::max(1u, std::thread::hardware_concurrency()));
   threads = std::min(threads, 64);
-  for (int t = 1; t < threads; ++t) workers_.emplace_back([this] { loop(); });
+  for (int t = 1; t < threads; ++t) workers_.emplace_back([this] { gl::threads::setName("gl-stems-op"); loop(); });
 }
 
 Pool::~Pool() {

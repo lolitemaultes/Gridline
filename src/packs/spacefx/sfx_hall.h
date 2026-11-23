@@ -11,6 +11,7 @@
 #include <complex>
 #include "sfx_common.h"
 #include "sfx_hallref.h"
+#include "../../engine/EffectRest.h"
 
 namespace gl::packs::spacefx::detail {
 
@@ -46,6 +47,7 @@ class HallFx final : public Effect {
   }
   void setSideIo(const SideIo& io) override { side_ = io; }
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
+    rest_.woke();
     refModel_ = pi(s, HvModel, 1) == 1;
     if (refModel_) {
       ref_.process(s, ctx, side_.scL, side_.scR, L, R, n);
@@ -189,6 +191,22 @@ class HallFx final : public Effect {
     pitchPh_ = 0;
   }
   float meter() const override { return refModel_ ? ref_.meterDb() : static_cast<float>(dsp::gainToDb(std::max(1e-6, envOut_))); }
+  // K-142 (0.7.8): at rest its movement goes on: its idle render runs unheard until (reference model,
+  // no pitch voices) its pre-delay holds exact zeros, its tank, diffusers and followers are below
+  // -160 dBFS and its smoothers have settled; then only its LFO, absorption round robin and write heads
+  // move. (The check
+  // scans its diffusers and absorption filters, so it runs every 16th block; the render goes on exactly
+  // in between.)
+  bool restSettled() const override { return rest_.zero; }
+  void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, int n) override {
+    rest_.run(
+        n, [&](int m) { restRenderFx(*this, s, aux, ctx, m); },
+        [&] { return (++settleTick_ & 15) == 0 && pi(s, HvModel, 1) == 1 && ref_.settled(s, ctx); },
+        [&](int m) {
+          if (pi(s, HvModel, 1) == 1) ref_.clocks(s, ctx, m);
+          else restRenderFx(*this, s, aux, ctx, m);  // (the model changed while it rested)
+        });
+  }
 
  private:
   static constexpr int kEr = 12;
@@ -301,6 +319,8 @@ class HallFx final : public Effect {
   HallRef ref_;
   SideIo side_;
   bool refModel_ = true;
+  RestSettle rest_;
+  unsigned settleTick_ = 0;
   Ring line_[kHallLines], pre_[2], shim_, pitch_;
   Allpass diff_[8];
   OnePole abL_[kHallLines], abH_[kHallLines];

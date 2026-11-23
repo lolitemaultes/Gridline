@@ -17,6 +17,38 @@ the device's name, a script, or none), a port number that links can filter on, a
 (whether the device plays notes or only drives controls). **Rescan devices** looks for devices
 plugged in since Gridline started; new devices are switched on with the next free port number.
 
+## Linking a control to your controller
+
+Right-click any knob, fader or button (in the mixer, the channel rack, plugin windows, built-in
+plugin editors and hosted plugin parameters) and choose **Link to controller...**. The dialog opens
+listening: it says **Move a control on your controller**.
+
+- Move one knob, fader or button. The dialog shows the device, the MIDI channel, the kind of control
+  and its number, and a meter that follows the control as you move it.
+- Moved the wrong one? Move another: the last control you moved on purpose is the one that links.
+- Then choose the range, invert, curve, takeover (**Jump**, **Pick up** or **Scale**) and, for an
+  endless encoder, its relative mode, and press **Apply** (one undo step). **Cancel** links nothing;
+  **Remove link** deletes a link the control already has. From then on, moving the controller moves
+  the control at once.
+
+What the dialog does not take, so it never links the wrong thing:
+
+- MIDI clock, active sensing and SysEx;
+- a control that only sends the same value over and over, or a fader that jitters by one step;
+- messages that were already on their way when the dialog opened, and a pitch wheel at rest;
+- the keys and pads, unless you tick **Notes and pads too** (on by default for buttons and
+  transport actions), so a hand on the keyboard does not take over.
+
+While the dialog listens, the controller's knobs and faders move nothing else. An NRPN or RPN knob
+(CC 99 and 98, or 101 and 100, then data entry) links as one NRPN or RPN control, and a fader that
+sends 14 bits (a CC from 0 to 31 followed by its partner 32 higher) links as one 14-bit control.
+An endless encoder links once you turn it a little both ways.
+
+A link is tied to the input port it came from (**Input port** in the dialog; choose **Any device**
+to take it from every input). A knob, fader or button that a control surface such as an FLkey's DAW
+port owns can be linked too: the dialog says so, and once linked that control moves what you linked
+it to instead of what the surface's page gives it. The surface's other controls carry on as before.
+
 ## Control surfaces: Mackie Control and HUI
 
 Surfaces that speak the Mackie Control protocol (and the many that copy it in their "MC" or "MCU" mode) or HUI drive the mixer and transport. In **Settings > MIDI**, set the surface's input to one of the **Control surfaces** controller types, and enable its output of the same name: Gridline sends the fader positions, LEDs, rings, names, timecode and meters back to it.
@@ -38,6 +70,21 @@ Surfaces that speak the Mackie Control protocol (and the many that copy it in th
 Each move is one undo step, and in a shared session it reaches the other people like a mouse edit.
 
 Keyboards whose transport buttons send Mackie notes can use the **Mackie Control transport** controller template instead, which only maps the transport buttons.
+
+## Pad controllers
+
+Some controllers have a mode made for music software: Gridline switches them into it, lights their pads and
+buttons from the project and gives them pages of their own. They are found by their port name and also listed
+under **Control surfaces** in the controller type list. Gridline gives them back their standalone mode when it
+quits or the device is unplugged, and sets them up again when they are plugged back in. Each connected one has
+its own options under the input list.
+
+| Controller | Guide |
+| --- | --- |
+| Novation Launchpad Pro [MK3] | [docs/controllers/launchpad-pro-mk3.md](controllers/launchpad-pro-mk3.md) |
+## Novation FLkey keyboards
+
+Every Novation FLkey (FLkey Mini, 37, 49, 61 and FLkey 2 Mini 25, 37, 49, 61) is found by its DAW port's name and works as a full controller: step pads for the selected channel, knobs and faders on plugins and the mixer, transport and edit buttons, and the screen showing what moves. See [Novation FLkey keyboards](controllers/novation-flkey.md).
 
 ## Pedals
 
@@ -70,7 +117,8 @@ listens on its **Port**: its notes, its controller knobs and their automation (C
 pressure and note knobs), program and bank changes, the pitch bend range, and the pitch bend,
 pressure, controllers and pedals you play into it from a keyboard.
 
-To make a channel listen, open its channel settings, choose the **Misc** tab and set **MIDI input**
+To make a channel listen, open its channel settings, choose the **Misc** tab (a sampler: the Audio
+clip window's **Layer and MIDI** module) and set **MIDI input**
 to the same port number. Every instrument and controller channel has this setting, including
 Envelope Mod and Keyboard Mod, so a MIDI Out channel's notes can trigger an envelope too. It starts
 at **None**, and projects made before it open with every channel set to None.

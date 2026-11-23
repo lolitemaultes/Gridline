@@ -10,6 +10,17 @@ inline double wrap01(double p) { return p - std::floor(p); }
 
 // ---- Double: chorus with 2 to 4 voices spread across the stereo field ---------
 class Double final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override { return silentIn_ >= static_cast<int64_t>(d_.b.size()); }  // (its line holds only its input)
+  void clocks(const PluginState& s, const ProcessContext&, int n) override {
+    const double rate = pv(s, dbl::Rate);
+    const double delT = pv(s, dbl::Delay) * 0.001 * sr_, depT = pv(s, dbl::Depth) * 0.001 * sr_, mT = pv(s, dbl::Mix);
+    del_.advance(delT, n), dep_.advance(depT, n), mix_.advance(mT, n);  // K-142 (0.7.8 close): O(1) once settled
+    ph_ = advancePhase(ph_, rate / sr_, n);
+    d_.w += static_cast<size_t>(n);
+  }
+ private:
   Ring d_;
   double ph_ = 0;
   Smooth del_, dep_, mix_;
@@ -56,6 +67,22 @@ class Double final : public MiniFx {
 
 // ---- Crowd: up to 12 slowly drifting voices (unison thickener) -----------------
 class Crowd final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override { return silentIn_ >= static_cast<int64_t>(d_.b.size()); }  // (its line holds only its input)
+  void clocks(const PluginState& s, const ProcessContext&, int n) override {
+    const int voices = std::clamp(static_cast<int>(std::lround(pv(s, crowd::Voices))), 2, kVoices);
+    const bool swirl = pi(s, crowd::Motion) == 1;
+    const double detT = std::clamp(static_cast<double>(pv(s, crowd::Detune)), 0.0, 1.0) * 0.006 * sr_, mT = pv(s, crowd::Mix);
+    det_.advance(detT, n), mix_.advance(mT, n);  // K-142 (0.7.8 close): O(1) once settled
+    for (int k = 0; k < voices; ++k) {
+      const double rate = (0.13 + 0.37 * wrap01(k * 0.618034)) * (swirl ? 4.0 : 1.0);
+      ph_[k] = advancePhase(ph_[k], rate / sr_, n);
+      if (swirl) pan_[k] = advancePhase(pan_[k], rate * 0.25 / sr_, n);
+    }
+    d_.w += static_cast<size_t>(n);
+  }
+ private:
   static constexpr int kVoices = 12;
   Ring d_;
   double ph_[kVoices] = {}, pan_[kVoices] = {};
@@ -105,6 +132,16 @@ class Crowd final : public MiniFx {
 
 // ---- Jet: flanger with feedback ------------------------------------------------
 class Jet final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override { return allZeroOf(d_[0].b) && allZeroOf(d_[1].b); }
+  void clocks(const PluginState& s, const ProcessContext&, int n) override {
+    const double delT = pv(s, jet::Delay) * 0.001 * sr_, rate = pv(s, jet::Rate), mT = pv(s, jet::Mix);
+    del_.advance(delT, n), mix_.advance(mT, n);  // K-142 (0.7.8 close): O(1) once settled
+    ph_ = advancePhase(ph_, rate / sr_, n);
+    d_[0].w += static_cast<size_t>(n), d_[1].w += static_cast<size_t>(n);
+  }
+ private:
   Ring d_[2];
   double ph_ = 0;
   Smooth del_, mix_;
@@ -144,6 +181,20 @@ class Jet final : public MiniFx {
 
 // ---- Orbit: phaser (2 to 12 first-order allpass stages) ------------------------
 class Orbit final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override {
+    for (const auto& c : ap_)
+      for (const auto& a : c)
+        if (a.z != 0) return false;
+    return last_[0] == 0 && last_[1] == 0;
+  }
+  void clocks(const PluginState& s, const ProcessContext&, int n) override {
+    const double rate = pv(s, orbit::Rate), mT = pv(s, orbit::Mix);
+    mix_.advance(mT, n);  // K-142 (0.7.8 close): O(1) once settled
+    ph_ = advancePhase(ph_, rate / sr_, n);
+  }
+ private:
   static constexpr int kMaxStages = 12;
   dsp::Allpass1 ap_[2][kMaxStages];
   double last_[2] = {}, ph_ = 0;
@@ -218,6 +269,29 @@ struct Hilbert {
 };
 
 class Slide final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override {
+    for (const auto& h : h_) {
+      if (h.delayB != 0) return false;
+      for (int k = 0; k < 4; ++k)
+        for (int j = 0; j < 2; ++j)
+          if (h.xa[k][j] != 0 || h.ya[k][j] != 0 || h.xb[k][j] != 0 || h.yb[k][j] != 0) return false;
+    }
+    return fbv_[0] == 0 && fbv_[1] == 0;
+  }
+  void clocks(const PluginState& s, const ProcessContext&, int n) override {
+    const double shT = pv(s, slide::Shift), st = pv(s, slide::Stereo), mT = pv(s, slide::Mix);
+    for (int i = 0; i < n; ++i) {
+      const double shift = sh_.next(shT);
+      mix_.next(mT);
+      for (int c = 0; c < 2; ++c) {
+        const double f = shift + (c == 0 ? -st : st);
+        ph_[c] = wrap01(ph_[c] + f / sr_);
+      }
+    }
+  }
+ private:
   Hilbert h_[2];
   double ph_[2] = {}, fbv_[2] = {};
   Smooth sh_, mix_;
@@ -250,6 +324,29 @@ class Slide final : public MiniFx {
 
 // ---- Interval: two-tap granular pitch shifter ----------------------------------
 class Interval final : public MiniFx {
+  // K-142 (0.7.8): moves on at rest (MiniFx::rested).
+  bool movesAtRest() const override { return true; }
+  bool settled() const override { return silentIn_ >= static_cast<int64_t>(d_[0].b.size()); }  // (its lines hold only its input)
+  void clocks(const PluginState& s, const ProcessContext&, int n) override {
+    const double ratio = std::pow(2.0, (pv(s, interval::Pitch) + pv(s, interval::Fine) / 100.0) / 12.0);
+    const double maxG = (d_[0].maxDelay() - 4.0) / 1.5;
+    const double G = std::clamp(pv(s, interval::Grain) * 0.001 * sr_, 64.0, maxG);
+    const double jit = std::clamp(static_cast<double>(pv(s, interval::Jitter)), 0.0, 1.0), mT = pv(s, interval::Mix);
+    const double dp = (1.0 - ratio) / G;
+    for (int i = 0; i < n; ++i) {
+      mix_.next(mT);
+      const double q0 = wrap01(p_ + 0.5);
+      p_ += dp;
+      if (p_ >= 1.0 || p_ < 0.0) {
+        p_ = wrap01(p_);
+        off_[0] = jit * 0.5 * G * (0.5 + 0.5 * noise_.next());
+      }
+      const double q = wrap01(p_ + 0.5);
+      if (std::fabs(q - q0) > 0.5) off_[1] = jit * 0.5 * G * (0.5 + 0.5 * noise_.next());
+    }
+    d_[0].w += static_cast<size_t>(n), d_[1].w += static_cast<size_t>(n);
+  }
+ private:
   Ring d_[2];
   double p_ = 0, off_[2] = {};
   dsp::Noise noise_;

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <vector>
 
 namespace gl {
@@ -17,7 +18,26 @@ struct MidiOutEvent {
   uint8_t data[10] = {};
 };
 
+// K-142 (0.7.8): a wakeup one thread waits on and another gives without ever blocking (a counting
+// semaphore: dispatch semaphore on macOS, POSIX semaphore on Linux and the BSDs, a Windows
+// semaphore). post() is safe on the audio thread.
+class WakeSignal {
+ public:
+  WakeSignal();
+  ~WakeSignal();
+  WakeSignal(const WakeSignal&) = delete;
+  WakeSignal& operator=(const WakeSignal&) = delete;
+  void post() noexcept;
+  void wait();                  // until posted
+  bool waitFor(double seconds);  // until posted (true) or `seconds` passed (false)
+
+ private:
+  void* h_ = nullptr;
+};
+
 // Single-producer / single-consumer ring of MidiOutEvents (audio → MIDI thread).
+// K-142: the consumer can sleep until something is pushed (sleepUntilPushed): a push then
+// wakes it, and nothing else does, so an idle ring costs no wakeups.
 class MidiEventRing {
  public:
   static constexpr size_t kSize = 2048;
@@ -26,8 +46,26 @@ class MidiEventRing {
     if (h - tail_.load(std::memory_order_acquire) >= kSize) return false;
     buf_[h % kSize] = e;
     head_.store(h + 1, std::memory_order_release);
+    // (the consumer's flag is read after the event is published: see sleepUntilPushed)
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    if (sleeping_.load(std::memory_order_relaxed) && sleeping_.exchange(false))
+      if (WakeSignal* w = waker_.load(std::memory_order_acquire)) w->post();
     return true;
   }
+  // Consumer: waits on `w` until the next push (returns at once when the ring is not empty).
+  // `w` may also be posted by others (to stop the consumer); then it returns too.
+  void sleepUntilPushed(WakeSignal& w) {
+    waker_.store(&w, std::memory_order_release);
+    sleeping_.store(true, std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    if (tail_.load(std::memory_order_relaxed) != head_.load(std::memory_order_acquire)) {
+      sleeping_.store(false, std::memory_order_relaxed);
+      return;
+    }
+    w.wait();
+    sleeping_.store(false, std::memory_order_relaxed);
+  }
+  bool empty() const { return tail_.load(std::memory_order_relaxed) == head_.load(std::memory_order_acquire); }
   bool pop(MidiOutEvent& e) {
     size_t t = tail_.load(std::memory_order_relaxed);
     if (t == head_.load(std::memory_order_acquire)) return false;
@@ -45,7 +83,31 @@ class MidiEventRing {
  private:
   MidiOutEvent buf_[kSize];
   std::atomic<size_t> head_{0}, tail_{0};
+  std::atomic<bool> sleeping_{false};
+  std::atomic<WakeSignal*> waker_{nullptr};
 };
+
+// K-142: the MIDI sync sender (the "gl-midi-send" thread of the app's MidiManager): sends each
+// event of `ring` when `due(event)` (seconds on `now()`'s clock) comes, sleeping in between, and
+// until something is pushed when the ring is empty. An event due more than a second from now (a
+// clock that jumped) goes at once. Returns when `quit` is set and `wake` posted.
+// `wakeups` (optional) counts the times it woke.
+struct SyncSenderHooks {
+  std::function<double(const MidiOutEvent&)> due;
+  std::function<double()> now;
+  std::function<void(const MidiOutEvent&)> send;
+  std::function<void()> woke;
+  // The system stretches timed waits (macOS timer coalescing: up to half the wait on a thread
+  // without a real-time policy): wait in shorter steps as the message nears, so it is never late
+  // by more than a fraction of a millisecond.
+  bool coarseTimers = false;
+};
+// macOS: gives the calling thread a real-time policy (its timed waits end on time, within tens of
+// microseconds). False when refused, elsewhere, or with GRIDLINE_NO_REALTIME=1.
+bool makeSyncSenderRealtime();
+void runSyncSender(MidiEventRing& ring, WakeSignal& wake, const std::atomic<bool>& quit, const SyncSenderHooks& h);
+// How early an event may go (seconds): one due within this of now is sent rather than waited for.
+inline constexpr double kSyncSendEarly = 0.0002;
 
 enum class SyncOut : uint8_t { Off = 0, Clock, Mtc24, Mtc25, Mtc2997Drop, Mtc30, Count };
 const char* syncOutName(SyncOut s);

@@ -7,6 +7,8 @@
 #   channel settings or effect editor window (or an installed plugin's own window) was up without
 #   "Open plugin window" asking for it ("tracker editors windows"). It must stay 0, and each path
 #   must still open the band. "Open plugin window" then floats the channel settings as before.
+#   A double-click on an instrument without a Tracker screen of its own (a synth) floats its window,
+#   as it does in Studio (asked for, so not counted): nothing of it in the band.
 #   cmake -DAPP=<gridline-app> -DDEMO=<song> -DWAV=<audio file> -DOUT=<dir> -P k106_tracker_no_window_flash_app.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
@@ -129,7 +131,11 @@ macro(expect frame band what)
   if(NOT _shown EQUAL 0 OR NOT _hosted EQUAL 0)
     fail("${what}: a plugin or channel window showed over the Tracker (${_shown} frames, plugin windows ${_hosted}, first on frame ${_first})")
   endif()
-  if(NOT "${band}" STREQUAL "any" AND NOT _band STREQUAL "${band}")
+  if("${band}" STREQUAL "float")  # (its window floats, asked for: the band stays closed)
+    if(NOT _band STREQUAL "closed" OR NOT CMAKE_MATCH_7 STREQUAL "open")
+      fail("${what}: expected its window floating and the band closed (plugin ${CMAKE_MATCH_7}, band ${_band})")
+    endif()
+  elseif(NOT "${band}" STREQUAL "any" AND NOT _band STREQUAL "${band}")
     fail("${what}: the lower band shows '${_band}', expected '${band}'")
   endif()
   message(STATUS "${what}: no window, band ${_band}")
@@ -137,15 +143,15 @@ endmacro()
 
 expect(20 closed "start")
 expect(30 closed "a click in the instrument list (selects)")
-expect(44 frame "a double-click in the instrument list (a synth: its Channel frame)")
+expect(44 float "a double-click in the instrument list (a synth: its window floats)")
 expect(66 instrument "Instrument")
 expect(76 closed "Instrument again (closes)")
 expect(88 sample "Sample")
 expect(102 instrument "Ctrl+Alt+I")
 expect(116 sample "Ctrl+Alt+E")
-expect(134 frame "a double-click on another instrument")
+expect(134 float "a double-click on another instrument")
 expect(146 closed "the Steps page")
-expect(158 frame "a double-click on a channel on the Steps page")
+expect(158 float "a double-click on a channel on the Steps page")
 
 # "Open plugin window" still floats the channel settings (and the band leaves them alone).
 if(NOT out MATCHES "tracker windows frame 178: [^\n]* plugin open band ([a-z]+)")

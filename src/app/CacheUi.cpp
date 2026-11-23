@@ -1,5 +1,6 @@
 // Gridline - K-45: see CacheUi.h.
 #include "CacheUi.h"
+#include "../core/ThreadName.h"
 #include "../../third_party/imgui/imgui.h"
 #include <algorithm>
 #include <atomic>
@@ -150,7 +151,7 @@ void ensureWorker() {
   if (u.worker.joinable()) return;
   u.st->stop = false;
   std::shared_ptr<State> s = u.st;
-  u.worker = std::thread([s] { s->work(); });
+  u.worker = std::thread([s] { gl::threads::setName("gl-cache"); s->work(); });
 }
 
 void requestSweep(double inSeconds) {

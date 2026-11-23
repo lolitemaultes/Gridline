@@ -69,6 +69,18 @@ class Phaser {
       ph_ = (ph_ + inc) & 0xFFFFFF;
     }
   }
+  // K-142 (0.7.8): its all-pass chain and feedback hold exact zeros (silence keeps them so).
+  bool silent() const {
+    for (const auto& c : st_)
+      for (const auto& z : c)
+        if (z.x != 0 || z.y != 0) return false;
+    return y_[0] == 0 && y_[1] == 0;
+  }
+  // What n frames of silence change while silent(): the LFO phase.
+  void advance(const PhaserSettings& s, double sr, int n) {
+    const uint32_t inc = lfoInc(phaserRateHz(s.sweep, s.large), sr);
+    ph_ = (ph_ + inc * static_cast<uint32_t>(n)) & 0xFFFFFF;
+  }
 
  private:
   struct Z {
@@ -126,6 +138,20 @@ class Flanger {
       w_ = (w_ + 1) & kMask;
       ph_ = (ph_ + inc) & 0xFFFFFF;
     }
+  }
+  // K-142 (0.7.8): its lines and damping hold exact zeros (silence keeps them so).
+  bool silent() const {
+    if (yd_[0] != 0 || yd_[1] != 0) return false;
+    for (const auto& l : line_)
+      for (float v : l)
+        if (v != 0.f) return false;
+    return true;
+  }
+  // What n frames of silence change while silent(): the write head and the LFO phase.
+  void advance(const FlangerSettings& s, double sr, int n) {
+    const uint32_t inc = lfoInc(flangerRateHz(s.rate), sr);
+    w_ = (w_ + static_cast<uint32_t>(n)) & kMask;
+    ph_ = (ph_ + inc * static_cast<uint32_t>(n)) & 0xFFFFFF;
   }
 
  private:

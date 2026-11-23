@@ -20,8 +20,10 @@
 #include "App.h"
 #include "CommandPaletteUi.h"
 #include "ExportUi.h"
+#include "ProgressUi.h"
 #include "ScriptUi.h"
 #include "Theme.h"
+#include "UiWake.h"
 #include "Widgets.h"
 
 namespace gl::mcpui {
@@ -51,6 +53,7 @@ struct State {
   std::vector<uint32_t> own;
   std::string listenProblem;
   int confirmMode = -1;  // a mode beyond loopback waiting for the one-time confirmation
+  bool watching = false;  // K-142 (follow-up): a new client wakes the interface (HttpServer::watch)
 };
 State M;
 
@@ -196,11 +199,13 @@ void drawJobs(App& a) {
   if (ImGui::Begin(tr("Assistant job###mcpjobs"), nullptr,
                    ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse)) {
     ui::KeepWindowInViewport();
+    progui::note("mcpjob");
     for (size_t i = 0; i < jobs.size(); ++i) {
       mcp::Job& j = *jobs[i];
       ImGui::PushID(static_cast<int>(j.id));
       if (i > 0) ImGui::Separator();
-      ImGui::TextColored(theme::vec(pal().textDim), "%s: %s", j.client.c_str(), j.title.c_str());
+      const std::string who = j.client + ": " + j.title;  // 0.7.8: cut to the window's fixed width
+      progui::Line(who.c_str(), exportui::kProgressW, pal().textDim);
       std::string st = j.status();
       if (st.empty()) st = "Preparing";
       if (j.cancel.load()) st = "Cancelling";
@@ -291,6 +296,7 @@ void tick(App& a) {
     if (M.ep->start(port, &err)) {
       M.port = port;
       M.error.clear();
+      M.watching = M.ep->watch([] { uiwake::poke(); });  // K-142 (follow-up): a client wakes the interface
       std::string ferr;
       // the bridge runs on this computer: loopback reaches every mode but a specific address
       const std::string host = pol.mode == mcp::listen::Mode::Address ? mcp::listen::ipv4Text(pol.address) : std::string("127.0.0.1");
@@ -307,6 +313,13 @@ void tick(App& a) {
   // requests waiting: an assistant step must never land inside the user's.
   if (M.ep->running() && a.doc.groupDepth() == 0) M.ep->poll(0);
   else mcp::pollJobs(e);
+}
+
+bool needsTurns(const App& a) {
+  const bool jobs = M.env && M.env->jobs.busy();
+  if (!a.settings.getBool("mcp.enabled")) return jobs;  // (jobs still finishing after the switch went off)
+  if (!M.ep || !M.ep->running() || !M.watching) return true;
+  return jobs;  // (a request, its reply going out: the server wakes the loop itself)
 }
 
 void shutdown() {

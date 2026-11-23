@@ -22,6 +22,8 @@
 #include "Widgets.h"
 #include "Windows.h"
 #include "UndoUi.h"
+#include "CollabUi.h"
+#include "../core/SlowCallGate.h"
 
 namespace gl {
 
@@ -144,9 +146,71 @@ void storeState(App& a, const PluginTarget& t, const std::string& data) {
 
 std::map<uint64_t, double> gCaptureDue;  // target key → time of the pending state capture
 
+// k078-collabplug: in a collaborative project a plugin's state is written to the project only from
+// the computer where someone works in the plugin: a collaborator's parameter edits make the plugin
+// "dirty" on every computer, and writing those captures back would overwrite a state someone else
+// just wrote. A plugin is touched here by an edit in its interface, a program or preset chosen here,
+// or the pointer over (or the keyboard in) its interface; for kTouchSec after the last touch its
+// state is written as it changes, read every kIdleCheckSec while it is open (plugins that change
+// their state without telling), once more when its interface closes and once when the touch ends.
+struct CollabTouch {
+  double at = -1;        // last touch
+  double checked = -1;   // last idle read
+  bool dirty = false;    // touched since the last write
+  bool open = false;     // its interface was open last frame
+};
+std::map<uint64_t, CollabTouch> gTouch;
+constexpr double kTouchSec = 3.0, kIdleCheckSec = 1.5;
+void touchHere(App& a, const PluginTarget& t) {
+  CollabTouch& c = gTouch[t.key()];
+  c.at = a.now;
+  c.dirty = true;
+}
+// May this computer write the plugin's state into the project now?
+bool mayStore(App& a, const PluginTarget& t) {
+  if (!collabui::active(a)) return true;
+  auto it = gTouch.find(t.key());
+  return it != gTouch.end() && it->second.dirty;
+}
+// 0.7.8: a plugin whose state took longer than a frame to read is not read after each edit any more
+// (it held the interface every time); saving, reloading and closing still read it.
+SlowCallGate gSlowState;
+
 }  // namespace
 
 std::string hostedTargetName(App& a, const PluginTarget& t) { return targetName(a, t); }
+
+namespace {
+bool gRecordDraws = false;
+std::vector<std::string> gDraws;
+void recordDraw(const char* what) {
+  if (gRecordDraws && gDraws.size() < 256) gDraws.push_back(std::to_string(ImGui::GetFrameCount()) + " " + what);
+}
+}  // namespace
+void devRecordHostedDraws(bool on) {
+  gRecordDraws = on;
+  gDraws.clear();
+}
+std::vector<std::string> devTakeHostedDraws() {
+  std::vector<std::string> v;
+  v.swap(gDraws);
+  return v;
+}
+
+bool hostedLoading(App& a, const PluginTarget& t) {
+  const PluginState* st = t.state(a.doc.song());
+  return st && isHostedType(st->type) && findPlugin(st->type) && a.enginePending() && !hostedInstanceFor(a, t);
+}
+
+bool hostedTargetOf(App& a, const void* backend, PluginTarget& out) {
+  if (!backend) return false;
+  for (const PluginTarget& t : hostedTargets(a.doc.song()))
+    if (host::HostedInstance* hi = hostedInstanceFor(a, t); hi && hi->backend() == backend) {
+      out = t;
+      return true;
+    }
+  return false;
+}
 
 namespace {
 void (*gRunLoopGlBracket)(bool) = nullptr;
@@ -269,6 +333,8 @@ void pumpHostedPlugins(App& a) {
     targetCache = hostedTargets(a.doc.song());
   }
   const std::vector<PluginTarget> targets = targetCache;  // copy: the loop may edit the song
+  const bool collab = collabui::active(a);
+  bool idleRead = false;
   for (const PluginTarget& t : targets) {
     host::HostedInstance* hi = hostedInstanceFor(a, t);
     if (!hi) continue;
@@ -293,6 +359,25 @@ void pumpHostedPlugins(App& a) {
       gOwnStep[t.key()] = a.doc.history().stateSerial();
       gLastTouched[t.key()] = u.edits.back().index;
     }
+    if (collab) {  // k078-collabplug: who works in this plugin, and its state from here
+      const bool open = hostedEditorOpen(t);
+      if (!u.edits.empty() || (open && hostedEditorEngaged(t))) touchHere(a, t);
+      auto it = gTouch.find(t.key());
+      if (it != gTouch.end()) {
+        CollabTouch& c = it->second;
+        const bool closed = c.open && !open, stale = a.now - c.at >= kTouchSec;
+        const bool idle = open && !stale && a.now - c.checked >= kIdleCheckSec && !idleRead;
+        if (c.dirty && (closed || stale || idle) && !gSlowState.slow(t.key())) {
+          std::string data;
+          if (idle) idleRead = true;  // one plugin read per frame
+          c.checked = a.now;
+          if (hi->captureState(data)) storeState(a, t, data);
+          if (stale || closed) c.dirty = false;
+        }
+        c.open = open;
+        if (!c.dirty && stale && !open) gTouch.erase(it);
+      }
+    }
     if (u.gestureEnd) a.doc.endGesture();
     if (u.readback) {
       const PluginState* st = t.state(a.doc.song());
@@ -303,7 +388,7 @@ void pumpHostedPlugins(App& a) {
         takeOver(a, t, ns, "plugin parameters", t.key() ^ 0x706172616d73ull);
       }
     }
-    if (u.captureState && !gCaptureDue.count(t.key())) gCaptureDue[t.key()] = a.now + 0.4;
+    if (u.captureState && !gCaptureDue.count(t.key()) && mayStore(a, t)) gCaptureDue[t.key()] = a.now + 0.4;
   }
   for (auto it = gCaptureDue.begin(); it != gCaptureDue.end();) {
     if (a.now < it->second) {
@@ -312,9 +397,15 @@ void pumpHostedPlugins(App& a) {
     }
     for (const PluginTarget& t : targets)
       if (t.key() == it->first)
-        if (host::HostedInstance* hi = hostedInstanceFor(a, t)) {
+        if (host::HostedInstance* hi = mayStore(a, t) ? hostedInstanceFor(a, t) : nullptr) {
           std::string data;
-          if (hi->captureState(data)) storeState(a, t, data);
+          bool got = false;
+          double ms = 0;
+          if (gSlowState.run(t.key(), [&] { got = hi->captureState(data); }, &ms) && gSlowState.slow(t.key())) {
+            std::fprintf(stderr, "plugin state: %s took %.0f ms to give its state; it is read when saving from now on\n", hi->hostedClass().name.c_str(), ms);
+            a.notify(hi->hostedClass().name + ": " + i18n::tr("slow to give its state, so Gridline reads it when saving, not after each edit."), false);
+          }
+          if (got) storeState(a, t, data);
         }
     it = gCaptureDue.erase(it);
   }
@@ -323,7 +414,7 @@ void pumpHostedPlugins(App& a) {
 void captureHostedStates(App& a) {
   crash::BusyScope busy("reading plugin states", 120);
   for (const PluginTarget& t : hostedTargets(a.doc.song()))
-    if (host::HostedInstance* hi = hostedInstanceFor(a, t)) {
+    if (host::HostedInstance* hi = mayStore(a, t) ? hostedInstanceFor(a, t) : nullptr) {  // (a collaborator's state stays theirs)
       std::string data;
       if (hi->captureState(data)) storeState(a, t, data);
     }
@@ -333,14 +424,29 @@ void captureHostedStates(App& a) {
 bool selectHostedProgram(App& a, const PluginTarget& t, int index) {
   host::HostedInstance* hi = hostedInstanceFor(a, t);
   if (!hi || index < 0 || index >= hi->programCount()) return false;
+  touchHere(a, t);  // k078-collabplug: chosen here, so its new state is written from here
   return hi->selectProgram(index);
 }
+
+void hostedui::collabFlushStates(App& a) {
+  for (const PluginTarget& t : hostedTargets(a.doc.song())) {
+    if (!mayStore(a, t)) continue;
+    if (host::HostedInstance* hi = hostedInstanceFor(a, t); hi && !gSlowState.slow(t.key())) {
+      std::string data;
+      if (hi->captureState(data)) storeState(a, t, data);
+    }
+    gCaptureDue.erase(t.key());
+  }
+}
+
+void hostedui::collabTouch(App& a, const PluginTarget& t) { touchHere(a, t); }
 
 void reloadHostedPlugin(App& a, const PluginTarget& t) {
   host::HostedInstance* hi = hostedInstanceFor(a, t);
   if (!hi) return;
+  gSlowState.reset(t.key());  // a fresh instance gets another chance
   closeHostedEditor(a, t);
-  if (!hi->crashed()) {  // keep what it has now
+  if (!hi->crashed() && mayStore(a, t)) {  // keep what it has now
     std::string data;
     if (hi->captureState(data)) storeState(a, t, data);
   }
@@ -397,8 +503,7 @@ void paramRow(App& a, const PluginTarget& t, host::HostedInstance* hi, int k, co
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   if (ImGui::IsItemActivated()) gLastTouched[t.key()] = k;
   if (ImGui::BeginPopupContextItem("##ctx")) {  // controller link, then reset, type a value, MIDI link, automation clip…
-    packs::modulation::drawLinkMenu(a, pid);
-    knobContextMenu(a, pid);
+    knobContextMenu(a, pid);  // (0.7.8: with its Modulate submenu)
     ImGui::EndPopup();
   }
   if (hov && ImGui::GetIO().MouseWheel != 0 && d.kind == ParamKind::Continuous) {
@@ -593,6 +698,7 @@ std::string presetName(host::HostedInstance* hi, int i) {
 bool selectPreset(App& a, const PluginTarget& t, host::HostedInstance* hi, int i) {
   if (i < 0 || i >= presetCount(hi)) return false;
   if (i < hi->programCount()) return selectHostedProgram(a, t, i);
+  touchHere(a, t);
   return hi->loadLibraryPreset(static_cast<size_t>(i - hi->programCount()));
 }
 
@@ -932,7 +1038,21 @@ void drawHostedEditor(App& a, const PluginTarget& t, float width) {
   const PluginState* st = t.state(a.doc.song());
   const PluginInfo* info = st ? findPlugin(st->type) : nullptr;
   host::HostedInstance* hi = hostedInstanceFor(a, t);
+  if (info && !hi && hostedLoading(a, t)) {  // 0.7.8: on its way, not failed (user report: "couldn't load" flashed first)
+    pui::beginSection("HOSTED PLUGIN", width);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = ImGui::GetTextLineHeight();
+    ui::Spinner(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.36f, P.textDim);
+    ImGui::Dummy(ImVec2(h + theme::kS1, h));
+    ImGui::SameLine(0, 0);
+    ImGui::TextColored(theme::vec(P.textDim), i18n::tr("Loading %s..."), info->name.c_str());
+    pui::endSection();
+    recordDraw("loading");
+    return;
+  }
+  collabui::pluginStrip(a, t, width);  // k078-collabplug: missing here, who lacks it, who is in it
   if (!info || !hi) {
+    recordDraw("failed");
     pui::beginSection("HOSTED PLUGIN", width);
     ImGui::TextColored(theme::vec(P.danger), "%s", info ? "This plugin could not be loaded." : "This plugin is not installed or not scanned yet.");
     ImGui::TextColored(theme::vec(P.textFaint), "%s", st ? st->type.c_str() : "");
@@ -941,11 +1061,12 @@ void drawHostedEditor(App& a, const PluginTarget& t, float width) {
     ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Its parameters and state stay in the project."));
     if (info && ui::TextButton("Try again", false, 0, "Loads the plugin again")) a.syncEngine();
     pui::endSection();
-    if (!info && st) otherFormatsSection(a, t, *st, width);
+    if (!info && st && collabui::pluginOffersOtherFormats(a)) otherFormatsSection(a, t, *st, width);
     return;
   }
   const host::HostedClass& cls = hi->hostedClass();
   if (hi->crashed()) {
+    recordDraw("crashed");
     pui::beginSection("HOSTED PLUGIN", width);
     ImGui::TextColored(theme::vec(P.danger), i18n::tr("%s crashed and is silenced."), cls.name.c_str());
     ImGui::TextColored(theme::vec(P.textDim), "%s", hi->crashReason().c_str());
@@ -953,6 +1074,7 @@ void drawHostedEditor(App& a, const PluginTarget& t, float width) {
     pui::endSection();
     return;
   }
+  recordDraw("ready");
   const bool fresh = wrapperUi().try_emplace(t.key()).second;
   WrapperUi& w = wrapperFor(t, hi);
   if (fresh) w.tab = gWrapperPage;

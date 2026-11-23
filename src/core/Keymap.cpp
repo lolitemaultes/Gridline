@@ -36,7 +36,7 @@ constexpr uint8_t C = kCtrl, S = kShift, A = kAlt, H = C | A | S;  // H: the fre
 std::vector<Command> buildCommands() {
   using K = Key;
   const Context G = Context::Global, PL = Context::Playlist, PR = Context::PianoRoll, CR = Context::ChannelRack,
-                MX = Context::Mixer, AU = Context::Automation, ST = Context::Stage;
+                MX = Context::Mixer, AU = Context::Automation, ST = Context::Stage, WF = Context::Waveform;
   return {
       // ---- global: file ----
       {"file.new", G, N_("New project"), {ch(K::N, C)}},
@@ -96,6 +96,7 @@ std::vector<Command> buildCommands() {
       {"view.pluginPicker", G, N_("Plugin picker"), {ch(K::F8)}},
       {"view.browser", G, N_("Browser"), {ch(K::F8, A)}},
       {"view.mixer", G, N_("Mixer"), {ch(K::F9)}},
+      {"view.lfoBoard", G, N_("LFO board"), {ch(K::F9, A)}},  // K-247
       {"view.stage", G, N_("Stage (place the mixer tracks in a room)"), {}},  // no default key (bind one in the shortcut editor)
       // K-106: the Tracker pages and header screens (keys in the Tracker set only).
       {"view.patternEditor", G, N_("Pattern editor"), {}},
@@ -226,6 +227,8 @@ std::vector<Command> buildCommands() {
       {"playlist.toolZoom", PL, N_("Zoom tool"), {ch(K::Z)}},
       {"playlist.toolPlay", PL, N_("Playback tool"), {ch(K::Y)}},
       {"playlist.toolWarp", PL, N_("Warp tool"), {ch(K::W)}},  // K-85
+      {"wave.warpMode", WF, N_("Warp mode (audio clip editor, sampler, Kerf, pads, Loupe)"), {ch(K::W)}},  // K-248
+      {"wave.spectrum", WF, N_("Spectrum view (Loupe, audio clip editor)"), {ch(K::W, S)}},  // K-248: was W in Loupe
       {"playlist.marker", PL, N_("Add a marker at the song position"), {ch(K::T, A)}},
       {"playlist.loopMarkers", PL, N_("Place loop: around the time selection, else a loop marker at the song position"), {ch(K::T, S)}},
       {"playlist.meterChange", PL, N_("Add a meter change at the song position"), {ch(K::T, A | S)}},  // K-179
@@ -295,6 +298,7 @@ std::vector<Command> buildCommands() {
       {"piano.toolZoom", PR, N_("Zoom tool"), {ch(K::Z)}},
       {"piano.toolDetune", PR, N_("Detune tool"), {ch(K::U)}},
       {"piano.toolBend", PR, N_("Pitch bend tool"), {ch(K::N)}},  // K-25
+      {"piano.toolVibrato", PR, N_("Vibrato tool"), {ch(K::V)}},  // K-262
       {"piano.slideMode", PR, N_("Slide mode (new notes are slide notes)"), {ch(K::S, S)}},
       {"piano.chordStamp", PR, N_("Chord stamp: pick a chord to stamp"), {ch(K::C, A)}},
       {"piano.zoomIn", PR, N_("Zoom in"), {ch(K::PageUp)}, true},
@@ -302,6 +306,7 @@ std::vector<Command> buildCommands() {
       {"piano.zoomFit", PR, N_("Zoom to fit the pattern"), {ch(K::Home)}},
       // ---- channel rack ----
       {"rack.clone", CR, N_("Clone selected channels"), {ch(K::C, A)}},
+      {"rack.cloneEmpty", CR, N_("Clone selected channels without their notes"), {ch(K::C, A | S)}},  // GitHub #74
       {"rack.randomColours", CR, N_("Random colours for selected channels"), {ch(K::C, C | A)}},
       {"rack.delete", CR, N_("Delete selected channels"), {ch(K::Delete, A)}},
       {"rack.moveUp", CR, N_("Move selected channels up"), {ch(K::Up, A)}, true},
@@ -444,6 +449,7 @@ const char* contextName(Context c) {
     case Context::Mixer: return N_("Mixer");
     case Context::Automation: return N_("Automation clip editor");
     case Context::Stage: return N_("Stage");
+    case Context::Waveform: return N_("Waveform");
     default: return "";
   }
 }
@@ -631,7 +637,7 @@ using Rows = std::vector<std::pair<const char*, std::vector<Chord>>>;
 const char* const kToolCommands[] = {"playlist.toolDraw", "playlist.toolPaint", "playlist.toolDelete", "playlist.toolMute", "playlist.toolSlip",
                                      "playlist.toolSlice", "playlist.toolSelect", "playlist.toolZoom", "playlist.toolPlay", "playlist.toolWarp", "piano.toolDraw",
                                      "piano.toolPaint", "piano.toolDelete", "piano.toolSelect", "piano.toolSlice", "piano.toolMute",
-                                     "piano.toolPlay", "piano.toolZoom", "piano.toolDetune", "piano.toolBend", "auto.toolDraw",
+                                     "piano.toolPlay", "piano.toolZoom", "piano.toolDetune", "piano.toolBend", "piano.toolVibrato", "auto.toolDraw",
                                      "auto.toolSelect", "auto.toolDelete"};
 
 // Performance: view keys on Ctrl+Alt, single-key switches (O, M, 0), Tab
@@ -650,6 +656,7 @@ Rows liveRows() {
     r.push_back({id, std::move(c)});
   };
   set("view.toggleMain", {ch(K::Tab)});
+  set("wave.warpMode", {ch(K::W, A)});  // K-248: single-letter tools are cleared here (Ctrl+W closes the window)
   set("view.automation", {ch(K::A)});  // checkpoint 53 (N52-10): A shows or hides the automation lanes, as the reference
   set("view.browser", {ch(K::B, C | A)});
   set("view.mixer", {ch(K::M, C | A)});
@@ -744,6 +751,7 @@ Rows logicRows(bool sep) {
   add("transport.play", {ch(K::Space), ch(K::NumEnter), ch(K::Num0)});
   add("transport.record", {ch(K::R)});
   add("transport.toStart", {ch(K::Enter)});
+  add("wave.warpMode", {ch(K::W, A)});  // K-248
   add("transport.rewindBar", {ch(K::Comma)});
   add("transport.forwardBar", {ch(K::Period)});
   add("options.metronome", {ch(K::K)});
@@ -833,6 +841,7 @@ Rows trackerRows() {
   for (int i = 0; i < 8; ++i) r.push_back({octaves[i], {ch(fkeys[i])}});
   auto add = [&](const char* id, std::vector<Chord> c) { r.push_back({id, std::move(c)}); };
   add("help.shortcuts", {ch(K::Slash, C)});
+  add("wave.warpMode", {ch(K::W, A)});  // K-248: plain W types a note here
   // cp25: Ctrl+Alt+F2 (Studio's F2 with Ctrl+Alt): Shift+Enter plays the pattern from the cursor's row.
   add("edit.rename", {ch(K::F2, C | A)});
   add("pattern.new", {ch(K::N, C | A)});
@@ -843,6 +852,7 @@ Rows trackerRows() {
   add("view.pianoRoll", {ch(K::D3, C | A)});
   add("view.channelRack", {ch(K::D4, C | A)});
   add("view.mixer", {ch(K::D5, C | A)});  // cp25: no F9 (it jumps rows in the pattern; T-26)
+  add("view.stage", {ch(K::G, C | A)});  // the Stage page, beside Mix (G: staGe; free in this set)
   add("view.pads", {ch(K::D6, C | A)});
   add("view.channelSettings", {ch(K::D7, C | A), ch(K::I, C | A)});  // K-66: I, the instrument
   add("view.audioEditor", {ch(K::D8, C | A)});
@@ -886,7 +896,10 @@ Rows trackerRows() {
   add("edit.history", {});  // Alt+Z: the Sample editor's zoom out (Ctrl+Alt+Z is the header strip)
   const char* const workspaces[9] = {"view.workspace1", "view.workspace2", "view.workspace3", "view.workspace4", "view.workspace5",
                                      "view.workspace6", "view.workspace7", "view.workspace8", "view.workspace9"};
-  for (const char* w : workspaces) add(w, {});  // Ctrl+1 .. 9: the edit step
+  // K-256: Ctrl+1 .. 9 is the edit step here, Ctrl+Alt+digit the screens and Alt+digit the macros; the
+  // workspaces take Ctrl+Alt+Shift+1 .. 9, free in this set.
+  const Key digits[9] = {K::D1, K::D2, K::D3, K::D4, K::D5, K::D6, K::D7, K::D8, K::D9};
+  for (int i = 0; i < 9; ++i) add(workspaces[i], {ch(digits[i], C | A | S)});
   return r;
 }
 

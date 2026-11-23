@@ -11,8 +11,10 @@
 #include "../core/I18n.h"
 #include "../core/Log.h"
 #include "../core/PluginInfo.h"
+#include "../core/PluginStandIn.h"
 #include "../core/Project.h"
 #include "../core/ProjectInterop.h"
+#include "../core/RemoteFs.h"
 #include "../core/TrackModes.h"
 #include "../core/TrackOrder.h"
 #include "../core/Update.h"
@@ -174,6 +176,7 @@ void copyRest(Song& t, const Song& c) {
   t.tracks = c.tracks;
   t.links = c.links;
   t.modLinks = c.modLinks;
+  t.lfos = c.lfos;  // K-247: the LFO board
   t.markers = c.markers;
   t.channelGroups = c.channelGroups;
   t.patternGroups = c.patternGroups;
@@ -214,22 +217,6 @@ std::vector<ObjectId> idsOf(const std::vector<T>& v) {
   out.reserve(v.size());
   for (const auto& x : v) out.push_back(x.id);
   return out;
-}
-
-bool hostedIn(const Json& j, std::string* which) {
-  bool bad = false;
-  Json copy = j;
-  forEachPluginJson(copy, [&](Json& plug) {
-    const std::string t = plug.text("type");
-    if (isHostedType(t)) {
-      bad = true;
-      if (which && which->empty()) {
-        const PluginInfo* pi = findPlugin(t);
-        *which = pi ? pi->name : t;
-      }
-    }
-  });
-  return bad;
 }
 
 // this computer's session fields survive a collaborator's change of the element (LocalState.h)
@@ -434,6 +421,8 @@ void repairProjectJson(Json& j) {
       clampNum(p, "bars", 1, kMaxPatternBars, 1);
       if (p.find("meterNum")) clampNum(p, "meterNum", 0, 32, 0);  // K-179: the pattern's own meter
       if (p.find("meterDen")) clampNum(p, "meterDen", 0, 32, 0);
+      // 0.7.8: a linked pattern names one of the song's channels; anything else drops the link
+      if (const Json* lk = p.find("link"); lk && (!lk->is(Json::Type::Object) || !chans.count(lk->num("channel", 0)))) p.object.erase("link");
     }
   auto fixClips = [&](Json* arr) {
     if (!arr || !arr->is(Json::Type::Array)) return;
@@ -662,6 +651,90 @@ std::string Session::renameProjectFileIn(const std::string& folder, const std::s
 Session::Session(Document& doc, Config cfg) : doc_(doc), cfg_(std::move(cfg)) {
   me_ = cfg_.identity.site();
   if (cfg_.wallMs) hlc_.wallMs = cfg_.wallMs;
+  if (remotefs::isRemote(cfg_.folder)) {  // FRZ-1118 (0.7.8)
+    disk_ = std::make_shared<SerialWorker>();
+    log_.setWorker(disk_);
+  }
+}
+
+void Session::onDisk(std::function<void()> job) {
+  if (disk_) {
+    disk_->post(std::move(job));
+  } else {
+    job();
+  }
+}
+
+void Session::takeDiskResults() {
+  {
+    std::set<std::string> wanted;
+    std::map<std::string, uint64_t> have;
+    bool scanned = false;
+    {
+      std::lock_guard<std::mutex> lk(scanResult_->mu);
+      if (scanResult_->set) {
+        scanResult_->set = false, scanned = true;
+        wanted.swap(scanResult_->wanted);
+        have.swap(scanResult_->have);
+      }
+    }
+    if (scanned) applyScan(wanted, have);
+  }
+  std::string got, err;
+  {
+    std::lock_guard<std::mutex> lk(diskResult_->mu);
+    if (!diskResult_->set) return;
+    diskResult_->set = false;
+    got = diskResult_->fileName;
+    err = diskResult_->err;
+  }
+  if (!err.empty()) logging::warning("collab", "cannot rename the project file " + fileName_ + ": " + err);
+  if (got.empty() || got == fileName_) return;
+  logging::info("collab", "project file renamed: " + fileName_ + " -> " + got);
+  fileName_ = got;
+}
+
+void Session::postFileWrite(const std::string* text) {
+  const std::string folder = cfg_.folder, stem = projectFileStem(projectName());
+  const std::string appVersion = cfg_.appVersion, minV = minAppVersion(), name = ready_ ? projectName() : std::string();
+  const bool rename = ready_ && !stopped_;
+  std::shared_ptr<DiskResult> res = diskResult_;
+  {
+    std::lock_guard<std::mutex> lk(res->mu);
+    if (res->current.empty()) res->current = fileName_;  // (the disk thread's own idea of the name from here on)
+  }
+  std::shared_ptr<const std::string> body = text ? std::make_shared<const std::string>(*text) : nullptr;
+  disk_->post([=] {
+    std::string err, from;
+    {
+      std::lock_guard<std::mutex> lk(res->mu);
+      from = res->current;
+    }
+    const std::string got = rename ? renameProjectFileIn(folder, from, stem, &err) : from;
+    if (body) {
+      std::string werr;
+      if (writeFileAtomic((fs::path(folder) / got).string(), *body, &werr))
+        writeFileDurable((fs::path(folder) / kDir / "written.txt").string(), update::sha256Hex(*body));
+    }
+    Json cj;  // collab.json, as writeCollabJson keeps it
+    if (jsonParse(readCollabFileText(folder), cj) && cj.is(Json::Type::Object)) {
+      std::string v = minV;
+      const update::Version cur = update::parseVersion(appVersion), have = update::parseVersion(cj.text("minAppVersion"));
+      if (cur.valid && (!have.valid || update::compare(cur, have) > 0)) v = update::toString(cur);
+      else if (have.valid) v = update::toString(have);
+      const std::string n = !name.empty() ? name : cj.text("name");
+      if (cj.text("minAppVersion") != v || cj.text("name") != n || cj.text("file") != got) {
+        cj.object["minAppVersion"] = Json::makeString(v);
+        cj.object["name"] = Json::makeString(n);
+        cj.object["file"] = Json::makeString(got);
+        writeFileDurable((fs::path(folder) / kDir / "collab.json").string(), jsonStringify(cj, 2));
+      }
+    }
+    std::lock_guard<std::mutex> lk(res->mu);
+    res->set = true;
+    res->fileName = res->current = got;
+    res->err = err;
+  });
 }
 
 Session::~Session() {
@@ -1037,6 +1110,7 @@ bool Session::loadFromDisk(std::string* err) {
   repairProjectJson(song);
   Song s;
   std::string e;
+  const standin::NoResolve keepPlugins;  // k078-collabplug: the shared plugins stay as they are (no format switch, no stand-in)
   if (!song.is(Json::Type::Object) || !songFromJson(song, s, &e)) {
     if (err) *err = i18n::tr("The collaborative project could not be read") + std::string(": ") + e;
     return false;
@@ -1058,6 +1132,7 @@ bool Session::loadFromDisk(std::string* err) {
   readFileText((fs::path(cfg_.folder) / kDir / "written.txt").string(), written, 1 << 10);
   if (readFileText(projectFile(), cur) && !written.empty() && update::sha256Hex(cur) != written) {
     Song ext;
+    const standin::NoResolve keepPlugins;
     if (loadProject(projectFile(), ext, &e)) {
       ext.idSlot = doc_.song().idSlot;
       ext.idStride = kIdStride;
@@ -1102,16 +1177,20 @@ void Session::detach() {
 bool Session::diffIncremental(std::vector<Op>& ops, std::string* bad) {
   const Song& cur = doc_.song();
   auto next = [this] { return hlc_.tick(); };
+  (void)bad;  // k078-collabplug: installed plugins are shared like the rest of the project
   if (!shadowValid_) {
-    Json song = localSongJson();
-    if (!policyAllows(song, bad)) return false;
+    FullStates full;
+    Json song = localSongJson(&full);
+    const size_t from = ops.size();
     replica_.diff({"song"}, song, me_, next, ops);
+    for (const auto& [p, v] : full) forceParamSets(p, v, ops, from);
     shadow_ = withoutOrigin(doc_.song());
     shadowValid_ = true;
     return true;
   }
-  std::vector<std::pair<Path, Json>> work;  // diffs to run once every part passed the plugin check
+  std::vector<std::pair<Path, Json>> work;  // diffs to run
   std::vector<std::function<void()>> commit;
+  FullStates full;  // k078-collabplug: plugins whose state this computer writes now
   auto keyed = [&](const std::string& kind, const auto& oldList, const auto& nowList, auto& shadowList) {
     if (idsOf(oldList) == idsOf(nowList)) {
       for (size_t i = 0; i < nowList.size(); ++i) {
@@ -1121,14 +1200,20 @@ bool Session::diffIncremental(std::vector<Op>& ops, std::string* bad) {
         Json e = std::move(j.array[0]);
         refsToReplica(e);
         maskElementJson(kind, e);
-        work.push_back({{"song", kind, "#" + std::to_string(nowList[i].id)}, std::move(e)});
+        const Path ep{"song", kind, "#" + std::to_string(nowList[i].id)};
+        pluginsToReplica(e, ep, &full);
+        work.push_back({ep, std::move(e)});
         commit.push_back([&shadowList, &nowList, i] { shadowList[i] = nowList[i]; });
       }
     } else {
       Json j = listJsonOf(cur, kind, -1);
       if (!j.is(Json::Type::Null)) {
         refsToReplica(j);
-        for (auto& e : j.array) maskElementJson(kind, e);
+        for (auto& e : j.array) {
+          maskElementJson(kind, e);
+          if (const Json* id = e.find("id"); id && id->is(Json::Type::Number))
+            pluginsToReplica(e, {"song", kind, "#" + std::to_string(static_cast<long long>(id->number))}, &full);
+        }
       }
       work.push_back({{"song", kind}, std::move(j)});
       commit.push_back([&shadowList, &nowList] { shadowList = nowList; });
@@ -1146,8 +1231,7 @@ bool Session::diffIncremental(std::vector<Op>& ops, std::string* bad) {
     for (const char* l : kLists) rest.object.erase(l);
     maskSessionJson(rest);
   }
-  for (const auto& [path, j] : work)
-    if (hostedIn(j, bad)) return false;
+  const size_t opsFrom = ops.size();
   for (const auto& [path, j] : work) {
     if (j.is(Json::Type::Null)) {  // an optional list that became empty
       if (replica_.visible(path)) {
@@ -1161,6 +1245,7 @@ bool Session::diffIncremental(std::vector<Op>& ops, std::string* bad) {
     }
     replica_.diff(path, j, me_, next, ops);
   }
+  for (const auto& [p, v] : full) forceParamSets(p, v, ops, opsFrom);
   if (restChanged) {
     if (const Node* sn = replica_.find({"song"}))
       for (const auto& [k, n] : visibleKids(*sn, Stamp{}))
@@ -1178,10 +1263,11 @@ bool Session::diffIncremental(std::vector<Op>& ops, std::string* bad) {
   return true;
 }
 
-Json Session::localSongJson() {
+Json Session::localSongJson(FullStates* fullStates) {
   Json j = songToJson(doc_.song(), false);
   refsToReplica(j);
   maskSessionJson(j);  // solo, record arm, plugin listen / hold toggles ... stay on this computer
+  songPluginsToReplica(j, fullStates);
   return j;
 }
 
@@ -1224,6 +1310,10 @@ void Session::refsToReplica(Json& song) {
 
 void Session::refsToLocal(Json& song) const {
   forEachPluginJson(song, [&](Json& plug) {
+    if (isHostedType(plug.text("type"))) {  // k078-collabplug
+      pluginToLocal(plug);
+      return;
+    }
     Json* data = plug.find("data") ? &plug.object["data"] : nullptr;
     if (!data || !data->is(Json::Type::String) || data->str.empty()) return;
     PluginState st;
@@ -1234,13 +1324,6 @@ void Session::refsToLocal(Json& song) const {
         }))
       data->str = st.data;
   });
-}
-
-bool Session::policyAllows(const Json& song, std::string* offending) const {
-  const auto bad = foreignPlugins(song);
-  if (bad.empty()) return true;
-  if (offending) *offending = bad.front().first + " (" + bad.front().second + ")";
-  return false;
 }
 
 void Session::flushLocal() {
@@ -1256,19 +1339,7 @@ void Session::flushLocal() {
   std::vector<Op> ops;
   std::string bad;
   auto next = [this] { return hlc_.tick(); };
-  if (!diffIncremental(ops, &bad)) {
-    if (!bad.empty()) {
-      if (onNotice)
-        onNotice(i18n::tr("External plugins can't be used in a collaborative project") + std::string(": ") + bad, true);
-      dirty_.full = true;
-      remoteDirty_ = true;
-      lastRev_ = doc_.revision();
-      lastPush_ = doc_.pushCount();
-      lastSerial_ = doc_.history().stateSerial();
-      materialize();
-      return;
-    }
-  }
+  diffIncremental(ops, &bad);  // (installed plugins are shared since k078-collabplug: nothing refused)
   if (!(doc_.song().flOrigin == floShadow_)) {
     replica_.diff({"flo"}, floToJson(doc_.song().flOrigin), me_, next, ops);
     floShadow_ = doc_.song().flOrigin;
@@ -1364,7 +1435,7 @@ bool isRefField(const std::string& k) {
   return k == "pattern" || k == "source" || k == "mixerTrack" || k == "to" || k == "mixer" || k == "channel" || k == "owner" ||
          k == "target";
 }
-bool isChannelMap(const std::string& k) { return k == "notes" || k == "steps" || k == "stepProps" || k == "stepLoop"; }
+bool isChannelMap(const std::string& k) { return k == "notes" || k == "steps" || k == "stepProps" || k == "stepLoop" || k == "lanes"; }
 
 }  // namespace
 
@@ -1982,7 +2053,12 @@ void Session::writeHistory() {
   }
   j.object["steps"] = std::move(steps);
   const std::string file = (fs::path(cfg_.folder) / kDir / ("history-" + siteHex(me_) + ".json")).string();
-  if (writeFileDurable(file, jsonCompact(j))) {
+  if (disk_) {  // FRZ-1118 (0.7.8)
+    std::string text = jsonCompact(j);
+    disk_->post([file, text = std::move(text)] { writeFileDurable(file, text); });
+    historySavedSerial_ = h.stateSerial();
+    historySavedSize_ = h.size();
+  } else if (writeFileDurable(file, jsonCompact(j))) {
     historySavedSerial_ = h.stateSerial();
     historySavedSize_ = h.size();
   }
@@ -2333,6 +2409,7 @@ bool Session::buildFullSong(Song& s, std::string* err) {
   if (!song.is(Json::Type::Object)) return false;
   refsToLocal(song);
   repairProjectJson(song);
+  const standin::NoResolve keepPlugins;
   if (!songFromJson(song, s, err)) return false;
   keepSessionState(s, doc_.song());  // this computer's solo, arm, listen toggles ... stay as they are
   if (floDirty_) {
@@ -2522,6 +2599,8 @@ void Session::peerUp(SiteId peer) {
   p.site = peer;
   p.connected = true;
   sendHello(peer);
+  sendPlugins(peer);  // k078-collabplug
+  if (onPeerConnected) onPeerConnected(peer);
 }
 
 void Session::peerDown(SiteId peer) {
@@ -2722,6 +2801,15 @@ void Session::receive(SiteId from, int stream, const std::string& wire) {
     askAvatar(from, pv);  // J-111g: their picture, by the hash the profile names
     sendMissing(from, pv.known);
     // they may have what we lack: ask by sending ours (hello is symmetric)
+  } else if (type == "plugs") {  // k078-collabplug: which of the project's installed plugins they have
+    pv.plugins.clear();
+    if (const Json* h = m.head.find("have"); h && h->is(Json::Type::Object))
+      for (const auto& [t, v] : h->object)
+        if (isHostedType(t)) pv.plugins[t] = {true, v.is(Json::Type::String) ? v.str : std::string()};
+    if (const Json* miss = m.head.find("miss"); miss && miss->is(Json::Type::Array))
+      for (const auto& t : miss->array)
+        if (t.is(Json::Type::String) && isHostedType(t.str)) pv.plugins[t.str] = {false, std::string()};
+    pv.pluginsKnown = true;
   } else if (type == "batches") {
     if (const Json* b = m.head.find("b")) handleBatches(from, *b);
   } else if (type == "sync") {
@@ -2790,6 +2878,8 @@ void Session::receive(SiteId from, int stream, const std::string& wire) {
       p.selTick0 = tick("t0");
       p.selTick1 = tick("t1");
     }
+    p.busyKind = u32("bk") & 0xFF;  // K-254: a render to audio in progress (older peers send none)
+    if (p.busyKind) p.busyId = u32("bi");
     pv.presence = p;
     pv.presenceAt = now_;
   } else if (type == "prof") {
@@ -2917,6 +3007,10 @@ void Session::sendPresence(double now) {
     }
   }
   m.head.object["st"] = Json::makeNumber(localPresence_.songTick);
+  if (localPresence_.busyKind) {  // K-254: rendering to audio (older peers ignore it)
+    m.head.object["bk"] = Json::makeNumber(localPresence_.busyKind);
+    m.head.object["bi"] = Json::makeNumber(localPresence_.busyId);
+  }
   for (auto& [s, pv] : peers_)
     if (pv.connected) send(s, kStreamUnreliable, m);
 }
@@ -2924,6 +3018,7 @@ void Session::sendPresence(double now) {
 // ---------------------------------------------------------------- frame ----
 void Session::frame(double now) {
   now_ = now;
+  if (disk_) takeDiskResults();  // FRZ-1118 (0.7.8)
   if (exitPending_) finishExit();
   if (stopped_) return;
   const bool gestureEnded = wasGesture_ && !gesture_;
@@ -2945,12 +3040,14 @@ void Session::frame(double now) {
   }
   if (rebuildPending_) rebuild();
   if (tainted_ && (snapAskedAt_ < 0 || now - snapAskedAt_ >= 5.0)) requestCleanSnapshot();
+  if (lastPluginCheck_ < 0 || now - lastPluginCheck_ >= kPluginCheckSec) checkPlugins();  // k078-collabplug
   if (remoteDirty_) materialize();
   if (lastContact_ && (contactSavedAt_ < 0 || now - contactSavedAt_ >= 60.0)) {
     contactSavedAt_ = now;
     Json c = Json::makeObject();
     c.object["last"] = Json::makeNumber(static_cast<double>(lastContact_));
-    writeFileDurable((fs::path(cfg_.folder) / kDir / "contact.json").string(), jsonCompact(c));
+    const std::string path = (fs::path(cfg_.folder) / kDir / "contact.json").string(), text = jsonCompact(c);
+    onDisk([path, text] { writeFileDurable(path, text); });
   }
   checkName();  // a rename (live, caught up, from a snapshot, an undo, a review choice)
   if (verifyAt_ >= 0 && now >= verifyAt_ && !gesture_ && pending_.empty()) verifyNow();
@@ -3067,6 +3164,10 @@ void Session::writeProjectFile() {
     if (g.rfind(base, 0) == 0) p = g.substr(base.size());
   });
   const std::string text = projectToText(copy);
+  if (disk_) {  // FRZ-1118 (0.7.8): the disk thread renames, writes and updates collab.json, in that order
+    postFileWrite(&text);
+    return;
+  }
   syncFileName();  // first the file gets its name, then the content
   std::string err;
   if (writeFileAtomic(projectFile(), text, &err))
@@ -3077,6 +3178,10 @@ void Session::writeProjectFile() {
 void Session::writeCollabJson() {
   // collab.json keeps the highest version that ever wrote here, the name (for lists of projects
   // that are not open) and which file in the folder is the project
+  if (disk_) {
+    postFileWrite(nullptr);
+    return;
+  }
   Json cj;
   if (!jsonParse(readCollabFileText(cfg_.folder), cj) || !cj.is(Json::Type::Object)) return;
   std::string minV = minAppVersion();
@@ -3094,6 +3199,10 @@ void Session::writeCollabJson() {
 
 void Session::syncFileName() {
   if (!ready_ || stopped_) return;
+  if (disk_) {
+    postFileWrite(nullptr);
+    return;
+  }
   if (fileRetryAt_ >= 0 && now_ < fileRetryAt_) return;
   std::string err;
   const std::string got = renameProjectFileIn(cfg_.folder, fileName_, projectFileStem(projectName()), &err);
@@ -3179,11 +3288,13 @@ void Session::leave(bool stopSharing) {
   m.head.object["stop"] = Json::makeNumber(stopSharing ? 1 : 0);
   for (auto& [s, pv] : peers_)
     if (pv.connected) send(s, kStreamControl, m);
-  Json cj;
-  if (jsonParse(readCollabFileText(cfg_.folder), cj)) {
-    cj.object["left"] = Json::makeNumber(1);
-    writeFileDurable((fs::path(cfg_.folder) / kDir / "collab.json").string(), jsonStringify(cj, 2));
-  }
+  onDisk([folder = cfg_.folder] {
+    Json cj;
+    if (jsonParse(readCollabFileText(folder), cj)) {
+      cj.object["left"] = Json::makeNumber(1);
+      writeFileDurable((fs::path(folder) / kDir / "collab.json").string(), jsonStringify(cj, 2));
+    }
+  });
   detach();
   stopped_ = true;
 }
@@ -3244,6 +3355,7 @@ bool Session::preview(const std::string& object, SiteId keepSite) {
   refsToLocal(song);
   repairProjectJson(song);
   Song s;
+  const standin::NoResolve keepPlugins;
   if (!songFromJson(song, s)) return false;
   keepSessionState(s, doc_.song());
   s.flOrigin = floCache_;
@@ -3293,6 +3405,8 @@ bool Session::transferAdmin(SiteId to) {
 // Only the admin's signature is honoured for removals: the admin role is a chain
 // of signed transfers, each made by the admin of its moment, and batches apply in
 // causal order, so "the author is the admin" means the same on every peer.
+
+bool safeMediaName(const std::string& rel) { return safeAudioName(rel); }
 
 void audioRefsIn(const std::string& t, std::set<std::string>& out) {
   size_t at = 0;
@@ -3509,12 +3623,14 @@ void Session::refreshMembership() {
   }
 }
 
-void Session::writeCollabFlag(const char* key, const Json& value) {
-  Json cj;
-  if (!jsonParse(readCollabFileText(cfg_.folder), cj) || !cj.is(Json::Type::Object)) return;
-  if (value.is(Json::Type::Null)) cj.object.erase(key);
-  else cj.object[key] = value;
-  writeFileDurable((fs::path(cfg_.folder) / kDir / "collab.json").string(), jsonStringify(cj, 2));
+void Session::writeCollabFlag(const char* keyIn, const Json& value) {
+  onDisk([folder = cfg_.folder, key = std::string(keyIn), value] {
+    Json cj;
+    if (!jsonParse(readCollabFileText(folder), cj) || !cj.is(Json::Type::Object)) return;
+    if (value.is(Json::Type::Null)) cj.object.erase(key);
+    else cj.object[key] = value;
+    writeFileDurable((fs::path(folder) / kDir / "collab.json").string(), jsonStringify(cj, 2));
+  });
 }
 
 void Session::finishExit() {
@@ -3886,44 +4002,98 @@ bool Session::fileLoading(const std::string& absPath, float* progress) const {
   return true;
 }
 
+namespace {
+
+// The media files a song names that this folder lacks (`wanted`), with what a partial download of
+// each already has, and partial downloads nobody needs any more, older than 7 days, removed.
+// `members` lists what a map or a folder names beside it.
+void scanMedia(const std::string& folder, const std::vector<std::string>& rels, const std::function<std::vector<std::string>(const std::string&)>& members,
+               const std::set<std::string>& keep, std::set<std::string>& wanted, std::map<std::string, uint64_t>& have) {
+  auto local = [&](const std::string& rel) { return (fs::path(folder) / fs::path(rel)).lexically_normal().string(); };
+  for (const std::string& rel : rels) {
+    std::error_code ec;
+    if (!fs::exists(local(rel), ec)) {
+      wanted.insert(rel);
+    } else {  // a map or a folder: what it names beside it comes too
+      for (const auto& m : members(rel))
+        if (!fs::exists(local(m), ec)) wanted.insert(m);
+    }
+  }
+  for (const auto& w : wanted) {
+    std::error_code ec;
+    const fs::path part = fs::path(folder) / kDir / "partial" / (fs::path(w).filename().string() + ".part");
+    if (fs::exists(part, ec)) have[w] = fs::file_size(part, ec);
+  }
+  std::error_code ec;
+  const fs::path pdir = fs::path(folder) / kDir / "partial";
+  if (fs::exists(pdir, ec))
+    for (const auto& e : fs::directory_iterator(pdir, ec)) {
+      const std::string rel = "Audio/" + e.path().stem().string();
+      if (wanted.count(rel) || keep.count(rel)) continue;
+      const auto age = fs::file_time_type::clock::now() - fs::last_write_time(e.path(), ec);
+      if (!ec && age > std::chrono::hours(24 * 7)) fs::remove(e.path(), ec);
+    }
+}
+
+}  // namespace
+
 void Session::scanFiles() {
   if (!ready_) return;
   const std::string base = (fs::path(cfg_.folder) / "Audio").lexically_normal().generic_string() + "/";
-  std::set<std::string> wanted;
+  std::vector<std::string> rels;
   Song copy = doc_.song();
   forEachRef(copy, [&](std::string& p, bool) {
     const std::string g = fs::path(p).lexically_normal().generic_string();
     if (g.rfind(base, 0) != 0) return;
     const std::string rel = "Audio/" + g.substr(base.size());
     if (!safeAudioName(rel)) return;
-    std::error_code ec;
-    if (!fs::exists(localPath(rel), ec)) {
-      wanted.insert(rel);
-    } else {  // a map or a folder: what it names beside it comes too
-      for (const auto& m : membersOf(rel))
-        if (!fs::exists(localPath(m), ec)) wanted.insert(m);
-    }
+    rels.push_back(rel);
   });
+  // k078-collabplug: big plugin states still on their way
+  for (const std::string& d : pendingStates(copy))
+    if (const std::string rel = d.substr(std::char_traits<char>::length(kPendingStatePrefix)); safeAudioName(rel)) rels.push_back(rel);
+  std::set<std::string> keep;
+  for (const auto& [rel, inc] : incoming_) keep.insert(rel);
+  if (disk_) {  // FRZ-1118 (0.7.8): a folder on a web or network drive is looked at by the disk thread
+    std::shared_ptr<ScanResult> res = scanResult_;
+    {
+      std::lock_guard<std::mutex> lk(res->mu);
+      if (res->busy) return;  // (the last look is not back yet)
+      res->busy = true;
+    }
+    disk_->post([res, folder = cfg_.folder, rels = std::move(rels), keep = std::move(keep)] {
+      std::set<std::string> wanted;
+      std::map<std::string, uint64_t> have;
+      auto members = [&](const std::string& rel) {
+        std::vector<std::string> names;
+        for (const auto& n : bundleMembers((fs::path(folder) / fs::path(rel)).lexically_normal().string()))
+          if (safeAudioName("Audio/" + n)) names.push_back("Audio/" + n);
+        return names;
+      };
+      scanMedia(folder, rels, members, keep, wanted, have);
+      std::lock_guard<std::mutex> lk(res->mu);
+      res->wanted = std::move(wanted);
+      res->have = std::move(have);
+      res->set = true;
+      res->busy = false;
+    });
+    return;
+  }
+  std::set<std::string> wanted;
+  std::map<std::string, uint64_t> have;
+  scanMedia(cfg_.folder, rels, [this](const std::string& rel) { return membersOf(rel); }, keep, wanted, have);
+  applyScan(wanted, have);
+}
+
+void Session::applyScan(const std::set<std::string>& wanted, const std::map<std::string, uint64_t>& have) {
   for (const auto& w : wanted)
     if (!incoming_.count(w)) {
       Incoming inc;
-      std::error_code ec;
-      const fs::path part = fs::path(cfg_.folder) / kDir / "partial" / (fs::path(w).filename().string() + ".part");
-      if (fs::exists(part, ec)) inc.have = fs::file_size(part, ec);
+      if (auto it = have.find(w); it != have.end()) inc.have = it->second;
       incoming_[w] = inc;
     }
   for (auto it = incoming_.begin(); it != incoming_.end();)
     it = wanted.count(it->first) || it->second.verifying ? std::next(it) : incoming_.erase(it);
-  // partial downloads nobody needs any more, older than 7 days
-  std::error_code ec;
-  const fs::path pdir = fs::path(cfg_.folder) / kDir / "partial";
-  if (fs::exists(pdir, ec))
-    for (const auto& e : fs::directory_iterator(pdir, ec)) {
-      const std::string rel = "Audio/" + e.path().stem().string();
-      if (incoming_.count(rel)) continue;
-      const auto age = fs::file_time_type::clock::now() - fs::last_write_time(e.path(), ec);
-      if (!ec && age > std::chrono::hours(24 * 7)) fs::remove(e.path(), ec);
-    }
 }
 
 void Session::requestFiles() {
@@ -4022,6 +4192,12 @@ void Session::onFileData(SiteId from, const Message& m) {
   inc.askedAt = now_;
   std::error_code ec;
   const fs::path pdir = fs::path(cfg_.folder) / kDir / "partial";
+  if (fs::path(name).extension() == ".glstate" && (inc.total > kMaxStateFileBytes || off + m.bin.size() > kMaxStateFileBytes)) {
+    // k078-collabplug: a plugin state over the limit is refused (never written here)
+    fs::remove(pdir / (fs::path(name).filename().string() + ".part"), ec);
+    inc.failed = true;
+    return;
+  }
   fs::create_directories(pdir, ec);
   const fs::path part = pdir / (fs::path(name).filename().string() + ".part");
   const uint64_t have = fs::exists(part, ec) ? fs::file_size(part, ec) : 0;
@@ -4065,6 +4241,10 @@ void Session::finishFile(const std::string& name) {
   }
   incoming_.erase(it);
   sampleCache().forget(dst);
+  if (fs::path(name).extension() == ".glstate") {  // k078-collabplug: a plugin's state arrived: it loads now
+    dirty_.full = true;
+    remoteDirty_ = true;
+  }
 }
 
 }  // namespace gl::collab

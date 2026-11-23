@@ -19,6 +19,7 @@
 #include <limits>
 #include <sstream>
 #include "../PluginStandIn.h"
+#include "../Lanes.h"
 #include "../PluginBrand.h"
 #include "../Arrangements.h"
 #include "../ClipLoop.h"
@@ -920,6 +921,9 @@ bool exportFlpWithStandIns(const Song& work, const StandInResult& sr, Bytes& out
 namespace {
 bool exportPrepared(const Song& prepared, const StandInResult* standIns, Bytes& out, ExportReport& rep, const ExportOptions& opt) {
   Song song = prepared;
+  // K-255: the FL format has no lanes of their own grid or length: they are written out first.
+  if (lanes::needsBurn(song) && lanes::burnSong(song) > 0)
+    rep.warn("rows with their own grid or length were written out as plain steps and notes");
   writeClipLoopsAsFl(song, rep);  // K-114
   writeWarpsAsFl(song, rep);      // K-85
   writeDepthAsFl(song, rep);      // Stage depth

@@ -8,7 +8,14 @@
 // Audio thread: no allocation, no locks, no I/O. Voices are a fixed array; the
 // aux data never changes once built; warp renders are retired with a grace
 // period long after the audio thread could still read them.
+//
+// GitHub #80: a voice reads a render, or the file itself, for as long as it sounds, which can
+// be long after the data it started under was replaced (a layout, Analyse, another file) and
+// freed. A sounding voice counts itself as a reader of what it reads (Render::readers,
+// WarpFamily::srcReaders, which holds the file); the worker never frees a render or a family
+// while it has readers, whatever its age.
 #include "../Packs.h"
+#include "../../core/ThreadName.h"
 #include "../../engine/SampleTap.h"
 #include <algorithm>
 #include <array>
@@ -20,13 +27,22 @@
 #include <mutex>
 #include <thread>
 #include "../../core/AudioBuffer.h"
+#include "../../core/Platform.h"
 #include "../../core/MidiFile.h"
 #include "../../core/Song.h"
 #include "../../core/WavWriter.h"
 #include "../../engine/TimeStretch.h"
 #include "seltmann.h"
+#include "seltmann_editor.h"
 
 namespace gl::packs::seltmann {
+
+namespace {
+std::atomic<bool> gWholeOffline{false};
+}  // namespace
+
+void setWholeOfflineRenders(bool on) { gWholeOffline.store(on, std::memory_order_relaxed); }
+bool wholeOfflineRenders() { return gWholeOffline.load(std::memory_order_relaxed); }
 
 namespace {
 
@@ -35,53 +51,254 @@ int ipar(const PluginState& s, int i, int def) { return static_cast<int>(std::lr
 double dbToGain(double db) { return std::pow(10.0, db / 20.0); }
 
 // ================================================================== warp service
+// 0.7.8: a stretched render covers a span of the source's beats. Every instance playing the same
+// file on the same grid shares a family of renders, so a new sequence (a layout, a typed sequence,
+// undo, a collaborator's edit) whose region lies inside a render the family already has plays it
+// at once, at the right pitch: nothing waits for the worker. A slot renders its region first, then
+// the region grown to kSpanBars bars (the longest layout), so that every layout keeping the
+// region's first bar finds its slices ready.
+inline constexpr int kSpanBars = 8;
+
+// 0.7.8: while the tempo moves (a ramp, a dragged tempo), the worker makes a render once the nearest
+// one is more than this far from the tempo, aimed this far ahead along a ramp, so renders come about
+// 1% apart and a voice never plays one further off than this (the voices play the nearest render
+// that much faster or slower). Before, it waited for the tempo to hold still and a slice that started
+// meanwhile played the plain resampled source (a ramp: up to several semitones off).
+inline constexpr double kLiveCents = 8;
+inline constexpr double kMaxAheadCents = 300;  // (how far ahead a render is aimed at most)
+// 0.7.8: a moving tempo's renders for one file are rate limited: they may take this share of the
+// worker's time (a budget of stretching time that fills at that rate, up to kMovingBudgetSecs: a
+// short burst is free), so a tempo dragged back and forth keeps the worker stretching for it about
+// 40% of the time instead of a whole core. A steady ramp (each render aimed about as far ahead as the one
+// before) may take more, so that its renders stay close enough together for every slice to play in
+// tune.
+inline constexpr double kMovingDuty = 0.4;
+inline constexpr double kRampDuty = 0.7;
+inline constexpr double kMovingBudgetSecs = 0.3;
+
+using Clock = std::chrono::steady_clock;
+
+// 0.7.8: the bytes of the renders the warp service holds (made, in use, or waiting out their grace
+// period) and the most it held, the renders made while the tempo moves, those skipped for the memory
+// cap, and the worker's time spent stretching.
+std::atomic<int64_t> gWarpBytes{0}, gWarpPeak{0}, gWarpWorkNs{0};
+std::atomic<int64_t> gWarpEvicted{0};  // (of them, those evicted for the memory cap, still in their grace period)
+std::atomic<int> gWarpRenders{0}, gWarpMoving{0}, gWarpSkipped{0}, gWarpThrottled{0};
+
+struct WarpSlot;
+
 struct Render {
+  Render() = default;
+  Render(const Render&) = delete;
+  Render& operator=(const Render&) = delete;
+  ~Render() {
+    if (counted) gWarpBytes.fetch_sub(counted, std::memory_order_relaxed);
+    if (counted && evicted) gWarpEvicted.fetch_sub(counted, std::memory_order_relaxed);
+  }
   double tempo = 0;
   double rate = 44100;
+  double beatA = 0, beatB = 0;  // the source beats it covers (frame 0 = beatA)
   std::vector<float> L, R;
-  int64_t frames() const { return static_cast<int64_t>(L.size()); }
+  // K-321: a Track Receipt pass that only measures (tap::readsOnly) needs where a voice reads, not
+  // the stretched sound: a render with only its length (no audio, nothing stretched).
+  bool lengthOnly = false;
+  int64_t length = 0;  // frames (also before a render made in pieces has any)
+  int64_t frames() const { return length; }
+  // GitHub #80: the voices reading it now (audio thread); never freed while above zero
+  mutable std::atomic<int> readers{0};
+  bool covers(double b0, double b1) const { return b0 >= beatA - 1e-6 && b1 <= beatB + 1e-6; }
+  // 0.7.8: an offline render (an export) is made only as far as its voices read it (a tempo
+  // automation meets many tempos, and the voices at each read a slice or two): `from` is the region
+  // it stretches (null: made whole). L and R are sized on its first read and `pieces` makes them up
+  // to the frame a voice needs, the same frames a whole render has. Never on the audio thread.
+  std::shared_ptr<const WarpSlot> from;
+  std::unique_ptr<stretch::MappedStream> pieces;
+  bool partial() const { return from && (L.empty() || pieces); }
+  int64_t ready() const { return !from ? frames() : L.empty() ? 0 : pieces ? pieces->done() : frames(); }
+  // 0.7.8 (live renders, the warp service): a voice started on it since the worker last looked
+  // (audio thread sets it); when that last was (worker only: the render read least recently leaves
+  // first when the memory cap is reached); its bytes once the service holds it; evicted for the cap
+  // (freed after a short grace period instead of the long one, still never while a voice reads it).
+  mutable std::atomic<bool> touched{false};
+  Clock::time_point lastUse{};
+  int64_t counted = 0;
+  bool evicted = false;
+  int64_t bytes() const { return static_cast<int64_t>((L.size() + R.size()) * sizeof(float)); }
+  void evict() {
+    if (evicted) return;
+    evicted = true;
+    gWarpEvicted.fetch_add(counted, std::memory_order_relaxed);
+  }
+  void count() {
+    if (counted) return;
+    counted = std::max<int64_t>(1, bytes());
+    const int64_t now = gWarpBytes.fetch_add(counted, std::memory_order_relaxed) + counted;
+    int64_t peak = gWarpPeak.load(std::memory_order_relaxed);
+    while (now > peak && !gWarpPeak.compare_exchange_weak(peak, now, std::memory_order_relaxed)) {
+    }
+  }
+};
+
+// A source span to stretch: frames [a, b), beats [beatA, beatB) of the grid.
+struct Span {
+  int64_t a = 0, b = 0;
+  double beatA = 0, beatB = 0;
+};
+
+// Output frame -> frame of the span (from its start) of a span's render.
+struct SpanMap {
+  const Analysis* g = nullptr;
+  double beatA = 0, outBeat = 1;
+  int64_t a = 0, n = 1;
+  double operator()(int64_t j) const {
+    return std::clamp(frameAt(*g, beatA + static_cast<double>(j) / outBeat) - static_cast<double>(a), 0.0, static_cast<double>(n - 1));
+  }
+};
+
+std::unique_ptr<Render> makeRender(const SamplePtr& src, const Analysis& g, const Span& sp, double tempo, bool lengthOnly = false) {
+  if (!src || sp.b <= sp.a || tempo <= 0) return nullptr;
+  auto r = std::make_unique<Render>();
+  r->tempo = tempo;
+  r->rate = src->sampleRate;
+  r->beatA = sp.beatA;
+  r->beatB = sp.beatB;
+  const double outBeat = 60.0 / tempo * r->rate;  // output frames per beat
+  const int64_t outLen = std::max<int64_t>(1, static_cast<int64_t>(std::llround((sp.beatB - sp.beatA) * outBeat)));
+  if (outLen > static_cast<int64_t>(r->rate * 60 * 12)) return nullptr;  // 12 minutes: refuse
+  r->length = outLen;
+  if (lengthOnly) {  // K-321 (see Render::lengthOnly)
+    r->lengthOnly = true;
+    return r;
+  }
+  r->L.assign(static_cast<size_t>(outLen), 0.f);
+  r->R.assign(static_cast<size_t>(outLen), 0.f);
+  const float* in[2] = {src->left.data() + sp.a, src->right.data() + sp.a};
+  float* out[2] = {r->L.data(), r->R.data()};
+  stretch::Settings st;
+  st.mode = stretch::kStretch;  // J-153 / 0.7.8: one stretch for every stored mode
+  st.pitch = 1;
+  stretch::processMapped(in, 2, sp.b - sp.a, out, outLen, r->rate, st, SpanMap{&g, sp.beatA, outBeat, sp.a, sp.b - sp.a});
+  return r;
+}
+
+using Retired = std::pair<Clock::time_point, std::unique_ptr<Render>>;
+
+// The renders of one file on one grid, shared by every slot (region) that plays it.
+struct WarpFamily {
+  static constexpr int kRing = 16;  // (0.7.8: a moving tempo keeps the renders of the tempos it met last)
+  // worker -> audio: the renders made so far (null = free). A render leaves the ring before it is
+  // retired, and is freed long after (the audio thread reads one when a voice starts).
+  std::array<std::atomic<const Render*>, kRing> ring{};
+  // the tempo the family's instances asked for last (a new slot starts on it at once)
+  std::atomic<double> tempo{0};
+  SamplePtr src;
+  // GitHub #80: the voices reading `src` itself now (audio thread); the family stays while above zero
+  mutable std::atomic<int> srcReaders{0};
+  // worker only
+  std::vector<std::unique_ptr<Render>> owned;  // oldest first
+  std::vector<Retired> retired;
+  Clock::time_point idleSince{};
+  bool idle = false;
+  // 0.7.8 (the rate limit): the stretching time the renders made while the tempo moves may still
+  // take (seconds), when it was last filled, the rate it fills at, how far ahead (cents) the last
+  // one was aimed
+  double movingBudget = kMovingBudgetSecs;
+  Clock::time_point movingAt{};
+  double movingDuty = kMovingDuty;
+  double movingAhead = 0;
+  // A finished render at `t` covering beats [b0, b1] (any thread; null none).
+  const Render* find(double t, double b0, double b1) const {
+    for (const auto& e : ring) {
+      const Render* r = e.load(std::memory_order_acquire);
+      if (r && std::fabs(r->tempo - t) < 1e-4 && r->covers(b0, b1)) return r;
+    }
+    return nullptr;
+  }
+  // 0.7.8: the finished render nearest in tempo to `t` covering beats [b0, b1] (any thread; null none).
+  const Render* nearest(double t, double b0, double b1) const {
+    const Render* best = nullptr;
+    double bd = 0;
+    for (const auto& e : ring) {
+      const Render* r = e.load(std::memory_order_acquire);
+      if (!r || !r->covers(b0, b1)) continue;
+      const double d = std::fabs(std::log(r->tempo / t));
+      if (!best || d < bd) best = r, bd = d;
+    }
+    return best;
+  }
+  // The bytes of its renders (worker only); `kept`: without those evicted (they go soon).
+  int64_t bytes(bool kept = false) const {
+    int64_t n = 0;
+    for (const auto& o : owned) n += o->counted;
+    for (const auto& r : retired)
+      if (!kept || !r.second->evicted) n += r.second->counted;
+    return n;
+  }
 };
 
 struct WarpSlot {
   // inputs (immutable)
   SamplePtr src;
   Analysis grid;  // beats only
-  int64_t a = 0, b = 0;
+  int64_t a = 0, b = 0;  // the region
   double beatA = 0, beatB = 0;
-  int mode = 0;
+  Span span;             // what the slot renders once its region is ready: the region grown to kSpanBars bars
+  std::shared_ptr<WarpFamily> fam;  // null: a private slot (offline renders)
   // audio -> worker
   std::atomic<double> wanted{0};
-  // worker -> audio
+  // worker -> audio: a render at the wanted tempo that covers the region
   std::atomic<const Render*> current{nullptr};
   // worker only
   double lastWanted = 0;
   int stable = 0;
-  std::vector<std::unique_ptr<Render>> owned;
-  std::vector<std::pair<std::chrono::steady_clock::time_point, std::unique_ptr<Render>>> retired;
+  // 0.7.8: the tempo it wanted at the worker's last three wakeups (and when), how long a render of
+  // its region takes (seconds)
+  double seenPrev2 = 0, seenPrev = 0, seenNow = 0;
+  Clock::time_point seenPrevAt{}, seenNowAt{};
+  double renderSecs = 0.1;
+  Span region() const { return Span{a, b, beatA, beatB}; }
 };
 
-std::unique_ptr<Render> makeRender(const WarpSlot& w, double tempo) {
-  if (!w.src || w.b <= w.a || tempo <= 0) return nullptr;
-  auto r = std::make_unique<Render>();
-  r->tempo = tempo;
-  r->rate = w.src->sampleRate;
-  const double outBeat = 60.0 / tempo * r->rate;  // output frames per beat
-  const int64_t outLen = std::max<int64_t>(1, static_cast<int64_t>(std::llround((w.beatB - w.beatA) * outBeat)));
-  if (outLen > static_cast<int64_t>(r->rate * 60 * 12)) return nullptr;  // 12 minutes: refuse
-  r->L.assign(static_cast<size_t>(outLen), 0.f);
-  r->R.assign(static_cast<size_t>(outLen), 0.f);
-  const float* in[2] = {w.src->left.data() + w.a, w.src->right.data() + w.a};
-  float* out[2] = {r->L.data(), r->R.data()};
-  stretch::Settings st;
-  st.mode = w.mode == 3 ? stretch::Mode::RubberBand : stretch::kStretch;  // J-153: one stretch; J-157: or Rubber Band
-  st.pitch = 1;
-  const Analysis& g = w.grid;
-  const double beatA = w.beatA;
-  const int64_t a = w.a, n = w.b - w.a;
-  stretch::processMapped(in, 2, n, out, outLen, r->rate, st, [&](int64_t j) {
-    return std::clamp(frameAt(g, beatA + static_cast<double>(j) / outBeat) - static_cast<double>(a), 0.0, static_cast<double>(n - 1));
-  });
+// The span a slot renders: the region grown to kSpanBars bars from its first beat (back from the
+// end of the file when the file ends sooner), so the layouts that keep the region's first bar fall
+// inside it.
+Span spanFor(const Analysis& g, int64_t nFrames, const Span& region) {
+  Span s = region;
+  const double want = kSpanBars * std::max(1, g.beatsPerBar);
+  if (region.beatB - region.beatA >= want - 1e-6 || nFrames <= 0) return s;
+  const double endBeat = beatAt(g, static_cast<double>(nFrames));
+  const double b1 = std::min(endBeat, region.beatA + want);
+  const double b0 = std::max(beatAt(g, 0.0), std::min(region.beatA, b1 - want));
+  s.a = std::clamp<int64_t>(static_cast<int64_t>(std::floor(frameAt(g, b0))), 0, std::max<int64_t>(0, region.a));
+  s.b = std::clamp<int64_t>(static_cast<int64_t>(std::ceil(frameAt(g, b1))), region.b, std::max(region.b, nFrames));
+  s.beatA = std::min(region.beatA, beatAt(g, static_cast<double>(s.a)));
+  s.beatB = std::max(region.beatB, beatAt(g, static_cast<double>(s.b)));
+  return s;
+}
+
+// 0.7.8: a render of a slot's region at `tempo` made in pieces, as its voices read it (offline).
+std::unique_ptr<Render> renderInPieces(const std::shared_ptr<WarpSlot>& w, double tempo) {
+  auto r = makeRender(w->src, w->grid, w->region(), tempo, true);  // (its length: nothing stretched yet)
+  if (!r) return nullptr;
+  r->lengthOnly = false;
+  r->from = w;
   return r;
+}
+
+// Makes a render in pieces up to frame `upTo` (its buffers on the first call).
+void renderUpTo(Render& r, int64_t upTo) {
+  if (!r.partial()) return;
+  const WarpSlot& w = *r.from;
+  if (r.L.empty()) {
+    r.L.assign(static_cast<size_t>(r.length), 0.f);
+    r.R.assign(static_cast<size_t>(r.length), 0.f);
+    const float* in[2] = {w.src->left.data() + w.a, w.src->right.data() + w.a};
+    float* out[2] = {r.L.data(), r.R.data()};
+    const double outBeat = 60.0 / r.tempo * r.rate;  // (as makeRender)
+    r.pieces = std::make_unique<stretch::MappedStream>(in, 2, w.b - w.a, out, r.length, r.rate, SpanMap{&w.grid, w.beatA, outBeat, w.a, w.b - w.a});
+  }
+  r.pieces->renderTo(upTo);
+  if (r.pieces->done() >= r.length) r.pieces.reset();
 }
 
 class WarpService {
@@ -90,15 +307,53 @@ class WarpService {
     static WarpService s;
     return s;
   }
-  std::shared_ptr<WarpSlot> slot(const std::string& key, const std::function<std::shared_ptr<WarpSlot>()>& make) {
+  // The family of a file on a grid (prepared data without a region holds one too: it keeps the
+  // file while a voice reads it).
+  std::shared_ptr<WarpFamily> family(const std::string& famKey, const SamplePtr& src) {
     std::lock_guard<std::mutex> lk(mu_);
-    auto it = slots_.find(key);
-    if (it != slots_.end())
-      if (auto s = it->second.lock()) return s;
-    auto s = make();
-    slots_[key] = s;
-    if (!thread_.joinable()) thread_ = std::thread([this] { loop(); });
+    if (!thread_.joinable()) thread_ = std::thread([this] { gl::threads::setName("gl-warp"); loop(); });
+    return familyLocked(famKey, src);
+  }
+  // The slot for a region (`key`) of a family (`famKey`): an existing one, else a new one made by
+  // `make`. A new slot starts on the tempo its family plays at, so a render that covers it is
+  // there at once, or the worker makes one right away (without waiting for the tempo to settle).
+  std::shared_ptr<WarpSlot> slot(const std::string& famKey, const std::string& key, const std::function<std::shared_ptr<WarpSlot>()>& make) {
+    std::shared_ptr<WarpSlot> s;
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      auto it = slots_.find(key);
+      if (it != slots_.end()) s = it->second.lock();
+      if (!s) {
+        s = make();
+        auto fam = familyLocked(famKey, s->src);
+        s->fam = fam;
+        const double t = fam->tempo.load(std::memory_order_relaxed);
+        if (t > 0) {
+          s->wanted.store(t, std::memory_order_relaxed);
+          s->seenNow = t;  // (its span follows its region at once)
+          if (const Render* r = fam->find(t, s->beatA, s->beatB)) s->current.store(r, std::memory_order_release);
+        }
+        slots_[key] = s;
+      }
+      if (!thread_.joinable()) thread_ = std::thread([this] { gl::threads::setName("gl-warp"); loop(); });
+    }
+    cv_.notify_all();
     return s;
+  }
+  // How long a family nobody plays keeps its renders (switching back, undo, a layout tried again),
+  // and how long a render that left the ring stays in memory at least (it also stays while a voice
+  // reads it, GitHub #80). Tests shorten them (setWarpTimesForTest).
+  static inline std::atomic<int64_t> lingerMs{120000}, graceMs{60000};
+  // 0.7.8: the memory the renders made while the tempo moves may take (bytes, per file and for every
+  // file together, counting every render the service holds): past it the renders no voice reads go,
+  // least recently read first, after a short grace period (a voice may just be starting on one), and
+  // while there is still no room the voices play the nearest render there is (or the plain source).
+  // The renders of a tempo that holds still are made as before, whatever the cap.
+  static inline std::atomic<int64_t> fileCap{int64_t{128} << 20}, totalCap{int64_t{512} << 20};
+  static constexpr int64_t kEvictGraceMs = 2000;
+  int familiesForTest() {
+    std::lock_guard<std::mutex> lk(mu_);
+    return static_cast<int>(families_.size());
   }
   ~WarpService() {
     {
@@ -107,14 +362,119 @@ class WarpService {
     }
     cv_.notify_all();
     if (thread_.joinable()) thread_.join();
+    // at exit: what a voice still reads stays (an instrument may go after this)
+    const auto keep = [](std::unique_ptr<Render>& r) {
+      if (r && r->readers.load() > 0) (void)r.release();
+    };
+    for (auto& d : dying_) keep(d.second);
+    for (auto& [k, f] : families_) {
+      for (auto& o : f->owned) keep(o);
+      for (auto& r : f->retired) keep(r.second);
+      if (f->srcReaders.load() > 0) (void)new std::shared_ptr<WarpFamily>(f);
+    }
   }
 
  private:
+  std::shared_ptr<WarpFamily> familyLocked(const std::string& famKey, const SamplePtr& src) {
+    auto& fam = families_[famKey];
+    if (!fam) {
+      fam = std::make_shared<WarpFamily>();
+      fam->src = src;  // (held: no other sample takes its address while the family lingers)
+    }
+    return fam;
+  }
+
+  // Runs a stretch, adding its time to the worker's.
+  // (`secs`: a running estimate of how long such a render takes)
+  template <class F>
+  static std::unique_ptr<Render> timed(F&& make, double* secs = nullptr) {
+    const auto t0 = Clock::now();
+    auto r = make();
+    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count();
+    gWarpWorkNs.fetch_add(ns, std::memory_order_relaxed);
+    if (secs && r) *secs = 0.5 * *secs + 0.5 * static_cast<double>(ns) * 1e-9;
+    return r;
+  }
+  static bool usedBySlot(const WarpFamily& f, const Render* r, const std::vector<std::shared_ptr<WarpSlot>>& live) {
+    for (const auto& s : live)
+      if (s->fam.get() == &f && s->current.load() == r) return true;
+    return false;
+  }
+  // The render of `f` read least recently that no live slot plays (and, `unread`, no voice reads); -1 none.
+  static long leastUsed(const WarpFamily& f, const std::vector<std::shared_ptr<WarpSlot>>& live, bool unread) {
+    long best = -1;
+    for (size_t k = 0; k < f.owned.size(); ++k) {
+      const Render* o = f.owned[k].get();
+      if (usedBySlot(f, o, live) || (unread && o->readers.load(std::memory_order_acquire) > 0)) continue;
+      if (best < 0 || o->lastUse < f.owned[static_cast<size_t>(best)]->lastUse) best = static_cast<long>(k);
+    }
+    return best;
+  }
+  // Takes owned render `k` out of the ring and retires it (it stays while a voice reads it).
+  static int retire(WarpFamily& f, long k, Clock::time_point now) {
+    const Render* old = f.owned[static_cast<size_t>(k)].get();
+    int at = -1;
+    for (int i = 0; i < WarpFamily::kRing; ++i)
+      if (f.ring[static_cast<size_t>(i)].load() == old) {
+        f.ring[static_cast<size_t>(i)].store(nullptr, std::memory_order_release);
+        at = i;
+      }
+    f.retired.push_back({now, std::move(f.owned[static_cast<size_t>(k)])});
+    f.owned.erase(f.owned.begin() + k);
+    return at;
+  }
+  // 0.7.8: room for a render of `need` bytes made while the tempo moves: renders no voice reads are
+  // evicted (least recently read first) while the family or the service is over its cap. False: no
+  // room yet (what was evicted is freed once its short grace period is over).
+  static bool roomFor(WarpFamily& f, int64_t need, const std::vector<std::shared_ptr<WarpSlot>>& live) {
+    // (kept: once what was evicted is gone)
+    const auto over = [&](bool kept) {
+      const int64_t all = gWarpBytes.load(std::memory_order_relaxed) - (kept ? gWarpEvicted.load(std::memory_order_relaxed) : 0);
+      return f.bytes(kept) + need > fileCap.load(std::memory_order_relaxed) || all + need > totalCap.load(std::memory_order_relaxed);
+    };
+    if (!over(false)) return true;
+    // the renders already out of use first (they go after the short grace period), then the ones
+    // read least recently, until there will be room
+    for (auto& r : f.retired) r.second->evict();
+    const auto now = Clock::now();
+    for (long k; over(true) && (k = leastUsed(f, live, true)) >= 0;) {
+      f.owned[static_cast<size_t>(k)]->evict();
+      (void)retire(f, k, now);
+    }
+    // (the bytes of what was just evicted are still held until its grace period is over)
+    return !over(false);
+  }
+
+  // Adds a render to its family's ring; when the ring is full, the renders read least recently that
+  // no live slot plays are retired until a place is free.
+  static const Render* publish(WarpFamily& f, std::unique_ptr<Render> r, const std::vector<std::shared_ptr<WarpSlot>>& live) {
+    const auto now = Clock::now();
+    int at = -1;
+    for (int i = 0; i < WarpFamily::kRing && at < 0; ++i)
+      if (!f.ring[static_cast<size_t>(i)].load()) at = i;
+    while (at < 0) {
+      const long k = leastUsed(f, live, false);
+      if (k < 0) break;
+      at = retire(f, k, now);
+    }
+    r->lastUse = now;
+    r->count();
+    gWarpRenders.fetch_add(1, std::memory_order_relaxed);
+    const Render* p = r.get();
+    f.owned.push_back(std::move(r));
+    if (at >= 0) f.ring[static_cast<size_t>(at)].store(p, std::memory_order_release);  // (else only its slot plays it)
+    return p;
+  }
+
   void loop() {
+    // 0.7.8: below normal priority (never the audio thread's: this is the warp worker's own thread),
+    // so stretching while the tempo moves never competes with the audio or the interface for a core
+    platform::lowerThisThreadPriorityOnTime();
     std::unique_lock<std::mutex> lk(mu_);
     while (!stop_) {
       cv_.wait_for(lk, std::chrono::milliseconds(30));
       if (stop_) break;
+      gl::threads::woke();  // K-142: CPU report
       std::vector<std::shared_ptr<WarpSlot>> live;
       for (auto it = slots_.begin(); it != slots_.end();) {
         if (auto s = it->second.lock()) {
@@ -124,41 +484,141 @@ class WarpService {
           it = slots_.erase(it);
         }
       }
-      lk.unlock();
-      const auto now = std::chrono::steady_clock::now();
-      for (auto& s : live) {
-        // free retired renders after a long grace period (the audio thread reads one per block)
-        for (auto r = s->retired.begin(); r != s->retired.end();) {
-          if (now - r->first > std::chrono::seconds(10)) r = s->retired.erase(r);
-          else ++r;
+      const auto now = Clock::now();
+      // a family nobody plays lingers, then goes (its renders after the grace period)
+      for (auto it = families_.begin(); it != families_.end();) {
+        WarpFamily& f = *it->second;
+        const bool used = it->second.use_count() > 1;
+        if (used) {
+          f.idle = false;
+        } else if (!f.idle) {
+          f.idle = true;
+          f.idleSince = now;
         }
+        if (!used && now - f.idleSince > std::chrono::milliseconds(lingerMs.load(std::memory_order_relaxed)) &&
+            f.srcReaders.load(std::memory_order_acquire) == 0) {
+          for (auto& e : f.ring) e.store(nullptr);
+          for (auto& o : f.owned) dying_.push_back({now, std::move(o)});
+          for (auto& r : f.retired) dying_.push_back(std::move(r));
+          it = families_.erase(it);
+        } else {
+          ++it;
+        }
+      }
+      // (a render a slot still plays stays, however long ago it left the ring: a slot made while
+      // the worker ran may have taken it from the ring just before)
+      const auto old = [&](const Retired& r) {
+        // (0.7.8: one evicted for the memory cap goes after the short grace period)
+        const int64_t grace = graceMs.load(std::memory_order_relaxed);
+        if (now - r.first <= std::chrono::milliseconds(r.second->evicted ? std::min(grace, kEvictGraceMs) : grace)) return false;
+        if (r.second->readers.load(std::memory_order_acquire) > 0) return false;  // GitHub #80: a voice still reads it
+        for (const auto& s : live)
+          if (s->current.load() == r.second.get()) return false;
+        return true;
+      };
+      dying_.erase(std::remove_if(dying_.begin(), dying_.end(), old), dying_.end());
+      for (auto& [k, f] : families_) f->retired.erase(std::remove_if(f->retired.begin(), f->retired.end(), old), f->retired.end());
+      lk.unlock();
+      // 1) every slot gets a render covering its region at its tempo: one its family has, else its
+      //    region stretched now
+      // (0.7.8: what the voices read since the last wakeup, for the memory cap's least recently read)
+      for (auto& s : live)
+        for (auto& o : s->fam->owned)
+          if (o->touched.exchange(false, std::memory_order_relaxed) || o->readers.load(std::memory_order_relaxed) > 0 ||
+              s->current.load(std::memory_order_relaxed) == o.get())
+            o->lastUse = now;
+      for (auto& s : live) {
+        WarpFamily& f = *s->fam;
         const double w = s->wanted.load(std::memory_order_relaxed);
+        s->seenPrev2 = s->seenPrev;
+        s->seenPrev = s->seenNow;
+        s->seenPrevAt = s->seenNowAt;
+        s->seenNow = w;
+        s->seenNowAt = now;
+        if (w <= 0) continue;
         const Render* cur = s->current.load(std::memory_order_acquire);
-        if (w <= 0 || (cur && std::fabs(cur->tempo - w) < 1e-4)) continue;
+        if (cur && std::fabs(cur->tempo - w) < 1e-4) {
+          f.tempo.store(w, std::memory_order_relaxed);
+          continue;
+        }
         if (w == s->lastWanted) ++s->stable;
         else s->stable = 0, s->lastWanted = w;
-        if (s->stable < 2) continue;  // wait until the tempo settles
-        // reuse an owned render of that tempo
-        Render* found = nullptr;
-        for (auto& o : s->owned)
-          if (std::fabs(o->tempo - w) < 1e-4) found = o.get();
-        if (!found) {
-          auto r = makeRender(*s, w);
+        if (const Render* r = f.find(w, s->beatA, s->beatB)) {
+          s->current.store(r, std::memory_order_release);
+          f.tempo.store(w, std::memory_order_relaxed);
+          continue;
+        }
+        // a render at this tempo once the tempo settles, or at once when the family already plays
+        // at it (a new region)
+        const bool known = std::fabs(f.tempo.load(std::memory_order_relaxed) - w) < 1e-4;
+        if (known || s->stable >= 2) {
+          (void)roomFor(f, 0, live);  // (made whatever the cap: the cap only evicts for it)
+          auto r = timed([&] { return makeRender(s->src, s->grid, s->region(), w); }, &s->renderSecs);
           if (!r) {
             s->wanted = 0;
             continue;
           }
-          found = r.get();
-          s->owned.push_back(std::move(r));
-          // keep at most four renders; older ones retire (freed after the grace period)
-          while (s->owned.size() > 4) {
-            auto& o = s->owned.front();
-            if (o.get() == s->current.load() ) break;
-            s->retired.push_back({now, std::move(o)});
-            s->owned.erase(s->owned.begin());
-          }
+          s->current.store(publish(f, std::move(r), live), std::memory_order_release);
+          f.tempo.store(w, std::memory_order_relaxed);
+          continue;
         }
-        s->current.store(found, std::memory_order_release);
+        // 0.7.8: the tempo moves. The voices play the nearest render a little faster or slower; a
+        // new one once that is more than kLiveCents off the tempo (or would be by the time a render
+        // is ready, along a ramp), while the memory cap leaves room. Along a ramp it is aimed where
+        // the tempo will be when it is ready, kLiveCents further on; a jump gets one at the tempo.
+        const Render* near = f.nearest(w, s->beatA, s->beatB);
+        if (cur && cur->covers(s->beatA, s->beatB) && (!near || std::fabs(std::log(cur->tempo / w)) < std::fabs(std::log(near->tempo / w)))) near = cur;
+        const double moved = s->seenPrev > 0 ? 1200.0 * std::log2(w / s->seenPrev) : 0.0;
+        const double before = s->seenPrev2 > 0 && s->seenPrev > 0 ? 1200.0 * std::log2(s->seenPrev / s->seenPrev2) : 0.0;
+        const double dt = std::chrono::duration<double>(now - s->seenPrevAt).count();
+        double ahead = 0;  // cents the tempo moves on while a render is made
+        if (moved * before > 0 && dt > 1e-3) ahead = std::clamp(moved / dt * (s->renderSecs + 0.03), -kMaxAheadCents, kMaxAheadCents);
+        const double ready = w * std::exp2(ahead / 1200.0);
+        const auto off = [&](double t) { return near ? std::fabs(1200.0 * std::log2(t / near->tempo)) : 1e9; };
+        if (off(w) <= kLiveCents && off(ready) <= kLiveCents) continue;
+        if (f.movingAt != Clock::time_point{})
+          f.movingBudget = std::min(kMovingBudgetSecs, f.movingBudget + std::chrono::duration<double>(now - f.movingAt).count() * f.movingDuty);
+        f.movingAt = now;
+        if (f.movingBudget <= 0) {  // (rate limited: the worker looks again at its next wakeup)
+          gWarpThrottled.fetch_add(1, std::memory_order_relaxed);
+          continue;
+        }
+        const double target = ahead != 0 ? ready * std::exp2(std::copysign(kLiveCents, ahead) / 1200.0) : w;
+        const double outFrames = (s->beatB - s->beatA) * 60.0 / target * s->src->sampleRate;
+        if (!roomFor(f, static_cast<int64_t>(outFrames * 2 * sizeof(float)), live)) {
+          gWarpSkipped.fetch_add(1, std::memory_order_relaxed);
+          continue;
+        }
+        const auto t0 = Clock::now();
+        auto r = timed([&] { return makeRender(s->src, s->grid, s->region(), target); }, &s->renderSecs);
+        f.movingBudget -= std::chrono::duration<double>(Clock::now() - t0).count();
+        // (a steady ramp: aimed about as far ahead as the render before, the same way)
+        const bool steady = ahead * f.movingAhead > 0 && std::fabs(ahead) <= 2 * std::fabs(f.movingAhead) && std::fabs(f.movingAhead) <= 2 * std::fabs(ahead);
+        f.movingDuty = steady ? kRampDuty : kMovingDuty;
+        f.movingAhead = ahead;
+        if (!r) continue;
+        gWarpMoving.fetch_add(1, std::memory_order_relaxed);
+        s->current.store(publish(f, std::move(r), live), std::memory_order_release);
+      }
+      // 2) then the spans, so the next layouts find their regions ready
+      for (auto& s : live) {
+        WarpFamily& f = *s->fam;
+        const double w = s->wanted.load(std::memory_order_relaxed);
+        if (w <= 0 || (s->span.a == s->a && s->span.b == s->b)) continue;
+        const Render* cur = s->current.load(std::memory_order_acquire);
+        if (!cur || std::fabs(cur->tempo - w) >= 1e-4 || cur->covers(s->span.beatA, s->span.beatB)) continue;
+        if (const Render* r = f.find(w, s->span.beatA, s->span.beatB)) {
+          s->current.store(r, std::memory_order_release);
+          continue;
+        }
+        // (0.7.8: not while the tempo moves: a moving tempo plays its region's renders)
+        if (s->seenPrev != s->seenNow || w != s->seenNow) continue;
+        (void)roomFor(f, 0, live);
+        auto r = timed([&] { return makeRender(s->src, s->grid, s->span, w); });
+        if (!r) continue;
+        const Render* p = publish(f, std::move(r), live);
+        // the slot plays the span from now on (the region render stays for the voices reading it)
+        if (std::fabs(s->wanted.load(std::memory_order_relaxed) - w) < 1e-4) s->current.store(p, std::memory_order_release);
       }
       live.clear();
       lk.lock();
@@ -167,6 +627,8 @@ class WarpService {
   std::mutex mu_;
   std::condition_variable cv_;
   std::map<std::string, std::weak_ptr<WarpSlot>> slots_;
+  std::map<std::string, std::shared_ptr<WarpFamily>> families_;
+  std::vector<Retired> dying_;
   std::thread thread_;
   bool stop_ = false;
 };
@@ -200,6 +662,7 @@ struct SeltmannAux final : AuxData {
   double stepsBeats = 0;  // J-214: where the last step ends (beats)
   double patBeats = 0;    // one cycle (the rest up to the bar line included)
   std::shared_ptr<WarpSlot> warp;
+  std::shared_ptr<WarpFamily> fam;  // the file's family (registered data only): a voice reading the file holds it
 };
 
 uint64_t hashBeats(const Analysis& g) {
@@ -209,6 +672,10 @@ uint64_t hashBeats(const Analysis& g) {
     h = (h ^ v) * 1099511628211ull;
   }
   return h;
+}
+
+std::string familyKey(const std::string& path, int stretchMode, const Analysis& g, const SamplePtr& src) {
+  return path + "|" + std::to_string(stretchMode) + "|" + std::to_string(hashBeats(g)) + "|" + std::to_string(reinterpret_cast<uintptr_t>(src.get()));
 }
 
 std::shared_ptr<SeltmannAux> buildAux(const Model& m, SamplePtr src, const std::string& path, int stretchMode, bool registerWarp) {
@@ -270,17 +737,18 @@ std::shared_ptr<SeltmannAux> buildAux(const Model& m, SamplePtr src, const std::
       w->b = std::clamp<int64_t>(m.regionEnd, w->a, nFrames);
       w->beatA = beatAt(m.grid, static_cast<double>(w->a));
       w->beatB = beatAt(m.grid, static_cast<double>(w->b));
-      w->mode = stretchMode;
+      w->span = registerWarp ? spanFor(x->grid, nFrames, w->region()) : w->region();
       return w;
     };
     if (registerWarp) {
-      const std::string key = path + "|" + std::to_string(m.regionStart) + "|" + std::to_string(m.regionEnd) + "|" + std::to_string(stretchMode) + "|" +
-                              std::to_string(hashBeats(m.grid)) + "|" + std::to_string(reinterpret_cast<uintptr_t>(src.get()));
-      x->warp = WarpService::get().slot(key, make);
+      const std::string fam = familyKey(path, stretchMode, m.grid, src);
+      x->warp = WarpService::get().slot(fam, fam + "|" + std::to_string(m.regionStart) + "|" + std::to_string(m.regionEnd), make);
     } else {
       x->warp = make();
     }
   }
+  // GitHub #80: the file's family, so that a voice reading the file keeps it (with or without a region)
+  if (src && registerWarp) x->fam = x->warp ? x->warp->fam : WarpService::get().family(familyKey(path, stretchMode, m.grid, src), src);
   return x;
 }
 
@@ -309,6 +777,9 @@ class SeltmannGen final : public Generator {
  public:
   bool mayRest() const override { return false; }  // K-277: sound without notes
   SeltmannGen() { (void)stretch::sincTable(stretch::Quality::Realtime); }
+  ~SeltmannGen() override {
+    for (auto& v : voices_) unhold(v);
+  }
 
   bool active() const override {
     if (patOn_) return true;
@@ -339,6 +810,12 @@ class SeltmannGen final : public Generator {
     int dir = 1;
     bool warped = false;
     double wTempo = 0, wRate = 0;  // J-219: the warped render this voice plays (tempo, source rate)
+    Render* pieces = nullptr;      // 0.7.8 (offline): ... while it is made in pieces (renderUpTo ahead of the reads)
+    double wBeatA = 0;             // 0.7.8: ... and the source beat its frame 0 is
+    uint32_t gen = 0;              // 0.7.8: the prepared data (sequence) it was started under
+    // GitHub #80: what it reads, counted as read until the voice has ended (see unhold)
+    const Render* rd = nullptr;
+    const WarpFamily* hold = nullptr;
     double gain = 1;
     double played = 0;       // output samples since the start
     double left = -1;        // output samples until the gate closes (-1 = while held)
@@ -351,7 +828,10 @@ class SeltmannGen final : public Generator {
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     const auto* nx = dynamic_cast<const SeltmannAux*>(aux.custom.get());
-    if (nx != aux_) patPrimed_ = false;  // new chop: find the step again
+    if (nx != aux_) {
+      patPrimed_ = false;  // new chop: find the step again
+      ++auxGen_;           // 0.7.8: steps of the sequence before end when the new one plays its first
+    }
     aux_ = nx;
     sr_ = ctx.sampleRate > 0 ? ctx.sampleRate : 44100.0;
     tempo_ = ctx.tempo > 1 ? ctx.tempo : 120.0;
@@ -390,6 +870,7 @@ class SeltmannGen final : public Generator {
     }
     // warp: ask for this tempo; use the render when it matches
     render_ = nullptr;
+    offline_ = ctx.offline;
     if (aux_ && sync_ == SyncStretch) {
       if (forced_) {
         render_ = forced_;
@@ -398,7 +879,13 @@ class SeltmannGen final : public Generator {
       } else if (aux_->warp) {
         aux_->warp->wanted.store(tempo_, std::memory_order_relaxed);
         const Render* r = aux_->warp->current.load(std::memory_order_acquire);
-        if (r && std::fabs(r->tempo - tempo_) < 1e-4) render_ = r;
+        // 0.7.8: while the tempo moves, the render nearest this tempo (played a little faster or
+        // slower) when that is nearer the pitch than the plain resampled source
+        if (!(r && std::fabs(r->tempo - tempo_) < 1e-4) && aux_->warp->fam) {
+          const Render* nr = aux_->warp->fam->nearest(tempo_, aux_->warp->beatA, aux_->warp->beatB);
+          if (nr && (!r || std::fabs(std::log(nr->tempo / tempo_)) < std::fabs(std::log(r->tempo / tempo_)))) r = nr;
+        }
+        if (nearerThanSource(r)) render_ = r;
       }
     }
   }
@@ -455,7 +942,10 @@ class SeltmannGen final : public Generator {
   }
   void onKill() override {
     setPat(false);
-    for (auto& v : voices_) v.on = false;
+    for (auto& v : voices_) {
+      v.on = false;
+      unhold(v);
+    }
     display_.store(-1, std::memory_order_relaxed);
   }
 
@@ -479,6 +969,8 @@ class SeltmannGen final : public Generator {
     }
     blockOff_ += n;
     publish();
+    for (auto& v : voices_)
+      if (!v.on) unhold(v);  // GitHub #80: an ended voice reads nothing any more
     if (!patOn_) {
       bool any = false;
       for (const auto& v : voices_) any = any || v.on;
@@ -519,15 +1011,41 @@ class SeltmannGen final : public Generator {
     int64_t n = 0;
     double rate = 1;  // input frames per output frame before pitch
     bool warped = false;
+    bool lengthOnly = false;  // K-321: no audio (L and R null): voices only move through it
   };
-  Src source() const {
+  // 0.7.8: the warped render a slice plays: this sequence's own (covering its region), else any
+  // render of the same file at this tempo that covers the slice (a sequence switched while playing
+  // finds its regions in the render the last one played, so it is in tune from its first step);
+  // null: the plain source (resampled) until one is ready.
+  const Render* renderFor(const RtSlice& sl) const {
+    if (!aux_ || sync_ != SyncStretch) return nullptr;
+    const bool exact = render_ && std::fabs(render_->tempo - tempo_) < 1e-4;
+    if (render_ && render_->covers(sl.beatA, sl.beatB) && (exact || forced_ || offline_)) return render_;
+    if (forced_ || offline_ || !aux_->warp || !aux_->warp->fam) return nullptr;
+    // 0.7.8: the render nearest this tempo covering the slice (another region's render may be nearer
+    // than this sequence's own), when that is nearer the pitch than the plain resampled source
+    const Render* r = aux_->warp->fam->nearest(tempo_, sl.beatA, sl.beatB);
+    if (render_ && render_->covers(sl.beatA, sl.beatB) &&
+        (!r || std::fabs(std::log(render_->tempo / tempo_)) <= std::fabs(std::log(r->tempo / tempo_))))
+      r = render_;
+    return nearerThanSource(r) ? r : nullptr;
+  }
+  // 0.7.8 (live): a render is played (at tempo_ / its tempo: nearSpeed) when it is at this tempo, or
+  // when it is nearer the source pitch than the plain resampled source is (never worse than that).
+  bool nearerThanSource(const Render* r) const {
+    if (!r) return false;
+    if (std::fabs(r->tempo - tempo_) < 1e-4) return true;
+    return std::fabs(std::log(tempo_ / r->tempo)) < std::fabs(std::log(tempo_ / aux_->srcBpm));
+  }
+  Src source(const Render* rr) const {
     Src s;
     if (!aux_ || !aux_->src) return s;
-    if (render_) {
-      s.L = render_->L.data();
-      s.R = render_->R.data();
-      s.n = render_->frames();
-      s.rate = render_->rate / sr_;
+    if (rr) {
+      s.lengthOnly = rr->lengthOnly;
+      s.L = s.lengthOnly ? nullptr : rr->L.data();
+      s.R = s.lengthOnly ? nullptr : rr->R.data();
+      s.n = rr->frames();
+      s.rate = rr->rate / sr_ * nearSpeed(rr);
       s.warped = true;
       return s;
     }
@@ -539,18 +1057,25 @@ class SeltmannGen final : public Generator {
     s.rate = smp.sampleRate / sr_ * sp;
     return s;
   }
+  // 0.7.8 (offline): a render made for a tempo a hair from this one (kNearCents) plays a little
+  // faster or slower, so its slices keep their time (1: a render at this tempo).
+  double nearSpeed(const Render* rr) const { return !rr || std::fabs(rr->tempo - tempo_) < 1e-4 ? 1.0 : tempo_ / rr->tempo; }
   // Source frame -> buffer frame (warped renders map beats onto the project tempo).
-  double mapFrame(const Src& s, double beat, double frame) const {
-    if (!s.warped || !aux_->warp) return frame;
-    return (beat - aux_->warp->beatA) * 60.0 / render_->tempo * render_->rate;
+  static double mapFrame(const Render* rr, double beat, double frame) {
+    if (!rr) return frame;
+    return (beat - rr->beatA) * 60.0 / rr->tempo * rr->rate;
   }
 
   // Starts a slice. gateSamples < 0: plays while held (keys), else for that long (pattern steps).
   void startVoice(uint32_t id, int slice, double semis, float vel, double stepGain, bool stepReverse, double stepOffset, double gateSamples,
                   bool pattern) {
     const RtSlice& sl = aux_->slices[static_cast<size_t>(slice)];
-    const Src s = source();
-    if (!s.L || s.n <= 0) return;
+    const Render* rr = renderFor(sl);
+    // 0.7.8: an offline render made in pieces gets its buffers on its first voice
+    Render* pieces = rr && rr == own_.get() && own_->partial() ? own_.get() : nullptr;
+    if (pieces) renderUpTo(*pieces, 0);
+    const Src s = source(rr);
+    if ((!s.L && !s.lengthOnly) || s.n <= 0) return;
     // chokes: mono, the slice's group
     for (auto& v : voices_)
       if (v.on && (mono_ || (sl.choke > 0 && v.choke == sl.choke))) startKill(v);
@@ -566,6 +1091,7 @@ class SeltmannGen final : public Generator {
         if (v.age < pick->age) pick = &v;
     }
     Voice& v = *pick;
+    unhold(v);  // (a stolen voice)
     v = Voice{};
     v.on = true;
     v.held = gateSamples < 0;
@@ -577,13 +1103,35 @@ class SeltmannGen final : public Generator {
     v.R = s.R;
     v.n = s.n;
     v.warped = s.warped;
-    if (s.warped && render_) v.wTempo = render_->tempo, v.wRate = render_->rate;  // J-219
+    v.gen = auxGen_;
+    // GitHub #80: the voice reads this render, or the file, until it ends (the prepared data it
+    // started under may be freed long before). Offline and forced renders belong to this instance.
+    if (rr && !forced_ && !offline_) {
+      rr->readers.fetch_add(1, std::memory_order_acq_rel);
+      rr->touched.store(true, std::memory_order_relaxed);  // 0.7.8: read lately (the memory cap)
+      v.rd = rr;
+    } else if (!rr && aux_->fam) {
+      aux_->fam->srcReaders.fetch_add(1, std::memory_order_acq_rel);
+      v.hold = aux_->fam.get();
+    }
+    if (rr) v.wTempo = rr->tempo, v.wRate = rr->rate, v.wBeatA = rr->beatA;  // J-219
     if (aux_ && aux_->src) tap::play(aux_->src.get());
-    v.lo = std::clamp(mapFrame(s, sl.beatA, static_cast<double>(sl.a)), 0.0, static_cast<double>(s.n - 1));
-    v.hi = std::clamp(mapFrame(s, sl.beatB, static_cast<double>(sl.b)), v.lo + 1, static_cast<double>(s.n));
+    v.lo = std::clamp(mapFrame(rr, sl.beatA, static_cast<double>(sl.a)), 0.0, static_cast<double>(s.n - 1));
+    v.hi = std::clamp(mapFrame(rr, sl.beatB, static_cast<double>(sl.b)), v.lo + 1, static_cast<double>(s.n));
     if (stepOffset > 0) v.lo = std::min(v.hi - 1, v.lo + (v.hi - v.lo) * stepOffset);
     v.rate = s.rate * std::pow(2.0, (sl.pitch + semis + pitch_) / 12.0);
     v.baseRate = v.rate;
+    if (pieces) {  // the whole slice now (reversed, it reads from its end), the rest as it plays
+      v.pieces = pieces;
+      piecesAhead(v, v.hi);
+    }
+    if (tap::active() && aux_ && aux_->src && aux_->src->sampleRate > 0) {
+      // K-321: Track Receipt: a warped slice keeps its pitch at the project tempo (the speed then
+      // comes from the reads); a plain one is resampled, its pitch following its speed.
+      const double speed = v.rate * sr_ / aux_->src->sampleRate;
+      if (s.warped) tap::pitch(aux_->src.get(), sl.pitch + semis + pitch_ + 12.0 * std::log2(nearSpeed(rr)), 0.0);
+      else if (speed > 0) tap::pitch(aux_->src.get(), 12.0 * std::log2(speed), speed);
+    }
     const bool rev = (sl.reverse != stepReverse) != reverseAll_;
     v.dir = rev ? -1 : 1;
     v.pos = rev ? v.hi - 1 : v.lo;
@@ -598,8 +1146,24 @@ class SeltmannGen final : public Generator {
     v.age = ++ageCounter_;
   }
 
+  // 0.7.8 (offline): makes the frames of the voice's render a read at `pos` reaches (a little more, so
+  // this runs once every 2048 frames at most, and hardly more is stretched than the voices read).
+  static void piecesAhead(Voice& v, double pos) {
+    Render& r = *v.pieces;
+    const int64_t need = static_cast<int64_t>(std::floor(pos)) + pitch::reach(std::fabs(v.rate), stretch::sincTable(stretch::Quality::Realtime)) + 8;
+    if (need < r.ready()) return;
+    renderUpTo(r, need + 2048);
+    if (!r.partial()) v.pieces = nullptr;
+  }
+
   void release(Voice& v) {
     if (v.stage < 3) v.stage = 3;
+  }
+  static void unhold(Voice& v) {
+    if (v.rd) v.rd->readers.fetch_sub(1, std::memory_order_acq_rel);
+    if (v.hold) v.hold->srcReaders.fetch_sub(1, std::memory_order_acq_rel);
+    v.rd = nullptr;
+    v.hold = nullptr;
   }
   void startKill(Voice& v) {
     if (v.killStep <= 0) v.killStep = 1.0 / std::max(1.0, declick_ * sr_);
@@ -607,8 +1171,8 @@ class SeltmannGen final : public Generator {
 
   // The file frame a voice reads (warped renders map back through the beat grid).
   double sourceFrame(const Voice& v) const {
-    if (!v.warped || !aux_ || !aux_->warp || v.wTempo <= 0 || v.wRate <= 0) return v.pos;
-    return frameAt(aux_->warp->grid, aux_->warp->beatA + v.pos / (60.0 / v.wTempo * v.wRate));
+    if (!v.warped || !aux_ || v.wTempo <= 0 || v.wRate <= 0) return v.pos;
+    return frameAt(aux_->grid, v.wBeatA + v.pos / (60.0 / v.wTempo * v.wRate));
   }
 
   void voiceSample(Voice& v, double& outL, double& outR, tap::Run* run = nullptr) {
@@ -657,7 +1221,10 @@ class SeltmannGen final : public Generator {
     const double a = v.env * fin * fout * v.kill * v.gain;
     float l, r;
     if (run) run->at(sourceFrame(v));
-    if (std::fabs(v.rate - 1.0) < 1e-9 && std::fabs(v.pos - std::floor(v.pos)) < 1e-9) {
+    if (v.pieces) piecesAhead(v, v.pos);
+    if (!v.L) {  // K-321: a length-only render (a receipt pass that only measures): no sound
+      l = r = 0.f;
+    } else if (std::fabs(v.rate - 1.0) < 1e-9 && std::fabs(v.pos - std::floor(v.pos)) < 1e-9) {
       const auto i = static_cast<int64_t>(v.pos);
       l = i >= 0 && i < v.n ? v.L[i] : 0.f;
       r = i >= 0 && i < v.n ? v.R[i] : 0.f;
@@ -726,6 +1293,10 @@ class SeltmannGen final : public Generator {
   void trigger(int step, int sub) {
     const RtStep& st = aux_->steps[static_cast<size_t>(step)];
     if (sub == 0) display_.store(packDisplay(step, st.slice), std::memory_order_relaxed);
+    // 0.7.8: the first step (or rest) of a sequence switched in while playing ends the steps of the one before
+    // with the declick crossfade (as a mono step would): the two never play over each other
+    for (auto& v : voices_)
+      if (v.on && v.pattern && v.gen != auxGen_) startKill(v);
     if (st.slice < 0 || st.slice >= static_cast<int>(aux_->slices.size())) return;
     const double lenBeats = stepLen(step) / st.stutter;
     const double gateSamples = std::max(1.0, lenBeats / beatsPerSample() * gate_ * st.length);
@@ -775,13 +1346,15 @@ class SeltmannGen final : public Generator {
   const SeltmannAux* aux_ = nullptr;
   const Render* render_ = nullptr;
   const Render* forced_ = nullptr;
+  bool offline_ = false;
+  uint32_t auxGen_ = 0;
   // Offline renders (export, not the realtime audio thread): a private warp
   // render made here, so the output never depends on when the worker thread
   // finishes (the stretched sound would start at a random point of the render).
   std::unique_ptr<Render> own_;
   std::vector<std::unique_ptr<Render>> ownOld_;  // replaced, still read by voices
   std::shared_ptr<WarpSlot> ownFor_;  // the slot own_ was made from (kept alive: no reused address)
-  double ownTempo_ = 0, ownPrevTempo_ = 0;
+  double ownTempo_ = 0;
   std::array<Voice, kMaxVoices> voices_{};
   uint64_t ageCounter_ = 0;
   double sr_ = 44100, tempo_ = 120, tick_ = 0;
@@ -815,23 +1388,55 @@ class SeltmannGen final : public Generator {
   }
 
   // The private render for this tempo (offline only: allocates and stretches).
-  // While the tempo moves, the plain resampled source plays, as in real time.
+  // 0.7.8: every tempo gets its render from its first block, also while the tempo moves (a ramp
+  // meets a new tempo every few blocks; a slice starting on one played the plain resampled source,
+  // up to several semitones off): no slice of an export plays off its pitch. A tempo met again
+  // plays the render made for it (the same frames): the renders of the last tempos no voice reads stay, up to these.
+  static constexpr int kKeepRenders = 16;
+  static constexpr int64_t kKeepFrames = 4 * 1024 * 1024;  // (32 MB of buffers per instance)
+  static constexpr double kNearCents = 3;  // (a tempo step of a bpm is 12 cents or more: never near)
   const Render* offlineRender() {
-    ownOld_.erase(std::remove_if(ownOld_.begin(), ownOld_.end(),
-                                 [&](const std::unique_ptr<Render>& r) {
-                                   for (const auto& v : voices_)
-                                     if (v.on && v.L == r->L.data()) return false;
-                                   return true;
-                                 }),
-                  ownOld_.end());
-    const bool mine = ownFor_ == aux_->warp, settled = ownPrevTempo_ == tempo_;
-    ownPrevTempo_ = tempo_;
+    int kept = 0;
+    int64_t keptFrames = 0;
+    for (size_t k = ownOld_.size(); k-- > 0;) {  // (newest first)
+      const Render& r = *ownOld_[k];
+      bool keep = false;
+      if (!r.lengthOnly) {  // K-321: no voice reads a length-only render
+        for (const auto& v : voices_) keep = keep || (v.on && v.L == r.L.data());
+        const auto size = static_cast<int64_t>(r.L.size());
+        // (one no voice has read holds nothing: it is made again for nothing if its tempo comes back)
+        if (!keep && r.from && r.from == ownFor_ && size > 0 && kept < kKeepRenders && keptFrames + size <= kKeepFrames) {
+          keep = true;
+          ++kept;
+          keptFrames += size;
+        }
+      }
+      if (!keep) ownOld_.erase(ownOld_.begin() + static_cast<long>(k));
+    }
+    const bool mine = ownFor_ == aux_->warp;
     if (mine && std::fabs(ownTempo_ - tempo_) < 1e-4) return own_.get();  // (null: too long to stretch)
-    if (mine && !settled) return nullptr;
+    // a ramp moves on by a hair each few blocks: the render it plays stays while the tempo is within
+    // kNearCents of the render's (its voices play it that much faster or slower: nearSpeed), so a ramp
+    // stretches a few hundred renders, not one for every slice
+    if (mine && own_ && std::fabs(1200.0 * std::log2(tempo_ / ownTempo_)) <= kNearCents) return own_.get();
     if (own_) ownOld_.push_back(std::move(own_));
-    own_ = makeRender(*aux_->warp, tempo_);
     ownFor_ = aux_->warp;
     ownTempo_ = tempo_;
+    if (tap::readsOnly() || wholeOfflineRenders()) {
+      // K-321: a Track Receipt pass that only measures stretches nothing (each tempo it meets
+      // would stretch the whole region again): the voices read where they would, silently.
+      own_ = makeRender(aux_->warp->src, aux_->warp->grid, aux_->warp->region(), tempo_, tap::readsOnly());
+      return own_.get();
+    }
+    // 0.7.8: the render at this tempo, made as far as the voices read it (one made for this tempo
+    // before goes on where it stopped)
+    for (size_t k = 0; k < ownOld_.size(); ++k)
+      if (ownOld_[k]->from == ownFor_ && ownOld_[k]->tempo == tempo_) {
+        own_ = std::move(ownOld_[k]);
+        ownOld_.erase(ownOld_.begin() + static_cast<long>(k));
+        return own_.get();
+      }
+    own_ = renderInPieces(aux_->warp, tempo_);
     return own_.get();
   }
 
@@ -842,8 +1447,7 @@ class SeltmannGen final : public Generator {
       if (v.on && (!nv || v.age > nv->age)) nv = &v;
     double f = -1;
     if (nv && aux_) {
-      if (nv->warped && aux_->warp && render_) f = frameAt(aux_->grid, aux_->warp->beatA + nv->pos / (60.0 / render_->tempo * render_->rate));
-      else f = nv->pos;
+      f = sourceFrame(*nv);
     }
     liveFrame_.store(f, std::memory_order_relaxed);
     double pp = -1;
@@ -874,7 +1478,7 @@ std::unique_ptr<Offline> makeOffline(const Model& m, SamplePtr src, const Render
   off->st.params[SmSync] = static_cast<float>(o.sync);
   off->aux = buildAux(m, src, "", o.stretchMode, false);
   if (o.sync == SyncStretch && off->aux->warp) {
-    off->warp = makeRender(*off->aux->warp, o.tempo);
+    off->warp = makeRender(off->aux->warp->src, off->aux->warp->grid, off->aux->warp->region(), o.tempo);
     off->gen.forceRender(off->warp.get());
   }
   off->ch.custom = off->aux;
@@ -916,6 +1520,28 @@ bool liveView(const Generator* g, LiveView& out) {
   return true;
 }
 
+void setWarpTimesForTest(int lingerMs, int graceMs) {
+  WarpService::lingerMs.store(std::max(0, lingerMs));
+  WarpService::graceMs.store(std::max(0, graceMs));
+}
+int warpFamiliesForTest() { return WarpService::get().familiesForTest(); }
+void setWarpCapsForTest(int64_t fileBytes, int64_t totalBytes) {
+  WarpService::fileCap.store(std::max<int64_t>(0, fileBytes));
+  WarpService::totalCap.store(std::max<int64_t>(0, totalBytes));
+}
+WarpStats warpStatsForTest() {
+  WarpStats s;
+  s.bytes = gWarpBytes.load();
+  s.peakBytes = gWarpPeak.load();
+  s.renders = gWarpRenders.load();
+  s.moving = gWarpMoving.load();
+  s.skipped = gWarpSkipped.load();
+  s.throttled = gWarpThrottled.load();
+  s.workSeconds = static_cast<double>(gWarpWorkNs.load()) * 1e-9;
+  return s;
+}
+void resetWarpPeakForTest() { gWarpPeak.store(gWarpBytes.load()); }
+
 // ================================================================== pack entry points
 
 std::unique_ptr<Generator> createGenerator(const std::string& type) {
@@ -938,8 +1564,9 @@ bool prepareAux(const PluginState& state, ChannelAux& aux) {
   Model m;
   std::string p2;
   if (!modelOf(state, src, p2, m)) return true;
-  const int mode = std::clamp(static_cast<int>(std::lround(state.params.size() > SmStretchMode ? state.params[SmStretchMode] : 0)), 0, 3);
-  aux.custom = buildAux(m, src, path, mode, true);
+  // 0.7.8: one stretch (Follow: Stretch / Resample / Off). Every stored stretch mode plays it; the
+  // Rubber Band choice of older projects (3) plays it too.
+  aux.custom = buildAux(m, src, path, 0, true);
   return true;
 }
 
@@ -1016,7 +1643,7 @@ bool renderSpan(const Model& m, SamplePtr src, double b0, double b1, const Rende
     float* out[2] = {l.data(), r.data()};
     const float* inw[2] = {in[0] + w.a, in[1] + w.a};
     stretch::Settings st;
-    st.mode = o.stretchMode == 3 ? stretch::Mode::RubberBand : stretch::kStretch;  // J-157
+    st.mode = stretch::kStretch;  // 0.7.8: one stretch for every stored mode
     st.pitch = s.sampleRate / o.sampleRate;  // output frames play at the project rate: keep the musical pitch
     const double outBeat = 60.0 / bpm * o.sampleRate;
     stretch::processMapped(inw, 2, w.b - w.a, out, total, s.sampleRate, st, [&](int64_t j) {
@@ -1107,33 +1734,23 @@ double patternBars(const Model& m, const std::vector<float>& params, int beatsPe
   return cycleBeats(m) / speed / std::max(1, beatsPerBar);
 }
 
-ObjectId sendPatternToSong(Song& s, ObjectId channel, const Model& m, const std::vector<float>& params, int cycles, int track, Tick at) {
+ObjectId sendPatternToSong(Song& s, ObjectId channel, const Model& m, const std::vector<float>& params, int cycles, int track, Tick at, bool link) {
   if (m.pattern.steps.empty() || !s.channel(channel)) return kNoId;
   auto prm = [&](int k, float d) { return k < static_cast<int>(params.size()) ? params[static_cast<size_t>(k)] : d; };
-  const int base = std::clamp(static_cast<int>(std::lround(prm(SmBaseNote, 60))), 0, 127);
   const int sp = std::clamp(static_cast<int>(std::lround(prm(SmSpeed, SpeedNormal))), 0, 2);
   const double speed = sp == SpeedHalf ? 0.5 : sp == SpeedDouble ? 2.0 : 1.0;
-  const auto notes = patternNotes(m, base, prm(SmSwing, 0), prm(SmGate, 1));
   const double cycleB = cycleBeats(m) / speed;
   cycles = std::clamp(cycles, 1, 64);
   gl::Pattern p;
   p.id = s.allocateId();
   p.name = "Seltmann " + m.pattern.name;
   p.color = 0xE0A04A;
-  const double beatsPerBar = std::max<double>(1, static_cast<double>(s.barTicks()) / std::max(1, s.ppq));
-  p.bars = std::clamp(static_cast<int>(std::ceil(cycleB * cycles / beatsPerBar - 1e-9)), 1, kMaxPatternBars);
-  auto& row = p.notes[channel];
-  for (int c = 0; c < cycles; ++c)
-    for (const auto& n : notes) {
-      Note nn;
-      nn.start = static_cast<Tick>(std::llround((c * cycleB + n.start / speed) * s.ppq));
-      nn.length = std::max<Tick>(1, static_cast<Tick>(std::llround(n.length / speed * s.ppq)));
-      nn.pitch = n.key;
-      nn.velocity = n.velocity;
-      nn.modX = n.modX;
-      nn.modY = n.modY;
-      row.push_back(nn);
-    }
+  writePatternNotes(s, p, channel, m, params, cycles);  // 0.7.8: the same notes a linked pattern follows
+  if (link) {
+    p.linkChannel = channel;
+    p.linkCycles = cycles;
+    p.linkHash = notesHash(p.notes[channel]);
+  }
   s.patterns.push_back(p);
   if (track >= 0) {
     Clip c;

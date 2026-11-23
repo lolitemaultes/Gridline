@@ -36,29 +36,34 @@ struct LevelMeter {
   // dB back to linear gain; the floor reads as silence (0).
   static float toGain(float db) { return db <= kFloorDb ? 0.0f : std::pow(10.0f, db / 20.0f); }
 
+  LevelMeter() = default;
+  // K-383: a meter with its own release (dB per second) and hold (seconds); the scale and the clip
+  // lamp stay the same. The default is the shared one above.
+  LevelMeter(float releaseDbPerSec, float holdSeconds) : release_(releaseDbPerSec), holdSec_(holdSeconds) {}
+
   // One UI frame: the peaks taken since the last frame and the seconds since it.
   void update(float peakL, float peakR, float dt) {
     if (!(dt >= 0.0f) || !std::isfinite(dt)) dt = 0.0f;
-    const float fall = kReleaseDbPerSec * dt;
+    const float fall = release_ * dt;
     const float in[2] = {peakL, peakR};
     for (int c = 0; c < 2; ++c) {
       const float db = toDb(in[c]);
       level_[c] = std::max(db, std::max(kFloorDb, level_[c] - fall));
       if (db >= hold_[c]) {
         hold_[c] = db;
-        holdLeft_[c] = kHoldSeconds;
+        holdLeft_[c] = holdSec_;
       } else if (holdLeft_[c] > dt) {
         holdLeft_[c] -= dt;
       } else {  // hold time over: the marker falls (at the release rate) to the bar
         const float spill = dt - std::max(0.0f, holdLeft_[c]);
         holdLeft_[c] = 0.0f;
-        hold_[c] = std::max(level_[c], std::max(kFloorDb, hold_[c] - kReleaseDbPerSec * spill));
+        hold_[c] = std::max(level_[c], std::max(kFloorDb, hold_[c] - release_ * spill));
       }
     }
     if (peakL > 1.0f || peakR > 1.0f) clipLeft_ = kClipSeconds;
     else clipLeft_ = std::max(0.0f, clipLeft_ - dt);
   }
-  void reset() { *this = LevelMeter{}; }
+  void reset() { *this = LevelMeter(release_, holdSec_); }
 
   float levelDb(int ch) const { return level_[ch & 1]; }
   float holdDb(int ch) const { return hold_[ch & 1]; }
@@ -74,6 +79,8 @@ struct LevelMeter {
   float hold_[2] = {kFloorDb, kFloorDb};
   float holdLeft_[2] = {0.0f, 0.0f};
   float clipLeft_ = 0.0f;
+  float release_ = kReleaseDbPerSec;
+  float holdSec_ = kHoldSeconds;
 };
 
 }  // namespace gl

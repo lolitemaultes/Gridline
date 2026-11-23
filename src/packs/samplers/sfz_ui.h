@@ -4,6 +4,7 @@
 // what the reader could not play, and converts it to editable zones on request.
 #pragma once
 #include "../../core/SfzMap.h"
+#include "../../core/ThreadName.h"  // (included at the top of samplers_ui.cpp too: this file is read inside a namespace)
 
 struct SfzView {
   std::string key;
@@ -12,14 +13,57 @@ struct SfzView {
 };
 std::map<std::string, SfzView> gSfzViews;
 
+// FRZ-1118 (0.7.8): an instrument on a web or network drive is statted and read by a background thread, never
+// by the editor (a mount that stops answering held the interface in the kernel). The editor shows
+// the last reading meanwhile (an empty map at first).
+struct SfzRemote {
+  std::mutex mu;
+  std::map<std::string, std::pair<std::string, std::shared_ptr<const gl::sfz::Instrument>>> read;  // path -> (time stamp, instrument)
+  std::set<std::string> running;
+};
+SfzRemote& sfzRemote() {
+  static SfzRemote& r = *new SfzRemote;  // never destroyed: a reader may end during exit
+  return r;
+}
+std::string sfzStampOf(const std::string& path) {
+  std::error_code ec;
+  const auto t = fs::last_write_time(fs::u8path(path), ec);
+  return ec ? std::string("-") : std::to_string(static_cast<long long>(t.time_since_epoch().count()));
+}
+std::shared_ptr<const gl::sfz::Instrument> sfzForEditorRemote(App& a, const std::string& path, SfzView& v) {
+  SfzRemote& R = sfzRemote();
+  std::lock_guard<std::mutex> lk(R.mu);
+  if (auto it = R.read.find(path); it != R.read.end() && it->second.first != v.key) {
+    v.key = it->second.first;
+    v.ins = it->second.second;
+  }
+  if (!v.ins) v.ins = std::make_shared<gl::sfz::Instrument>();
+  if (a.now - v.checked >= 2.0 && R.running.insert(path).second) {  // (looked at again every two seconds)
+    v.checked = a.now;
+    const std::string known = v.key;
+    std::thread([path, known] { ::gl::threads::setName("gl-sfz-stamp");
+      const std::string key = sfzStampOf(path);
+      std::shared_ptr<gl::sfz::Instrument> ins;
+      if (key != known) {
+        ins = std::make_shared<gl::sfz::Instrument>();
+        gl::sfz::load(path, *ins);
+      }
+      SfzRemote& Q = sfzRemote();
+      std::lock_guard<std::mutex> l2(Q.mu);
+      if (ins) Q.read[path] = {key, std::move(ins)};
+      Q.running.erase(path);
+    }).detach();
+  }
+  return v.ins;
+}
+
 // The instrument for the editor, read again when the file changes (checked twice a second).
 std::shared_ptr<const gl::sfz::Instrument> sfzForEditor(App& a, const std::string& path) {
   SfzView& v = gSfzViews[path];
+  if (gl::mustNotReadNow(path)) return sfzForEditorRemote(a, path, v);
   if (v.ins && a.now - v.checked < 0.5) return v.ins;
   v.checked = a.now;
-  std::error_code ec;
-  const auto t = fs::last_write_time(fs::u8path(path), ec);
-  const std::string key = ec ? std::string("-") : std::to_string(static_cast<long long>(t.time_since_epoch().count()));
+  const std::string key = sfzStampOf(path);
   if (v.ins && key == v.key) return v.ins;
   auto ins = std::make_shared<gl::sfz::Instrument>();
   gl::sfz::load(path, *ins);

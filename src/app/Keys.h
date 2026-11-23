@@ -4,6 +4,7 @@
 #pragma once
 #include <string>
 #include "../../third_party/imgui/imgui.h"
+#include "../core/KeyCaps.h"
 #include "../core/Keymap.h"
 
 namespace gl::keys {
@@ -21,6 +22,9 @@ Context focusContext();
 // do not run their commands, except the one that switches it off.
 void setTypingKeyboard(bool on, bool aRow = false);  // R09-10: aRow: only the A row's own keys
 bool typingKeyPlays(Key k);  // R09-10: false for a key the A-row typing keyboard leaves to its command (R, B, I ...)
+// GitHub #42 (0.7.8): the typing keyboard is on and plays (or steps the octave or velocity with) this
+// plain key: an editor's own single-key action on it waits until the typing keyboard is off.
+bool typingKeyboardTakes(ImGuiKey k);
 // K-106: the tracker pattern editor has the keyboard (set once a frame): the chords it uses itself
 // (note, value and navigation keys, its block keys) run no command, so one key press does one thing.
 // Space, the function keys, undo and the other Ctrl chords keep their commands.
@@ -75,6 +79,9 @@ bool escapeBusy();
 // dialog goes ahead, as with the default button of a system dialog.
 bool defaultPressed();
 
+// GitHub #79: every shortcut text below names keys as "My keys say" (core/KeyCaps.h): by what is
+// printed on the key that runs it. At "Same as my computer" (the default) the text is as it always was.
+
 // Menu shortcut text: the first chord ("Ctrl+S"), nullptr when unbound.
 const char* label(const char* id);
 // K-112B: the first chord with a modifier ("Cmd+2" where the command also has a plain "X"), else
@@ -87,6 +94,21 @@ std::string labels(const char* id);
 std::string shown(const Chord& c);
 // The same for a fixed menu hint written as "Ctrl+X" (a pointer that stays valid).
 const char* shownText(const char* text);
+// GitHub #79: a chord's text with the keys named as the keys say, Ctrl as Ctrl (the shortcut editor's
+// side panel and its clash message); keys::format(c) at "Same as my computer".
+std::string named(const Chord& c);
+// The same for fixed text written as a chord ("Alt+X"; a pointer that stays valid). Other text as is.
+const char* namedText(const char* text);
+// GitHub #79: keys named inside a sentence (tooltips, hints, status lines; core/KeyCaps.h). The sentence
+// is one translatable string with a %s for each key:
+//   keys::withKeys(N_("Metronome (%s)"), {keys::cmdKey("options.metronome", "Ctrl+M")})
+// cmdKey: a command's key (follows the person's own binding); fixedKey: a key no command runs.
+using keycaps::cmdKey;
+using keycaps::fixedKey;
+using keycaps::withKeys;
+inline std::string fillKeys(const char* text, std::initializer_list<std::string> keyTexts) { return keycaps::fill(text, keyTexts); }
+// (GitHub #79: keys::processEvent, which hands SDL's events to the interface, is in KeysSdl.h: the
+// plugin builds have no SDL.)
 // K-93: the command whose label() returned exactly this pointer (a menu item's shortcut
 // text), nullptr when it is not one (a literal or unbound).
 const char* commandForLabel(const char* text);

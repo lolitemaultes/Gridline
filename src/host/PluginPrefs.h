@@ -37,9 +37,12 @@ struct HostOptions {
   enum NotePitch : int { PitchAuto = 0, PitchMpe = 1, PitchChannelBend = 2, PitchOff = 3 };
   int notePitch = PitchAuto;
   int mpeBendRange = 48;  // semitones of a full MPE bend (the MPE standard's default)
+  // 0.7.8: where its own interface opens (EditorLayout.h kChoiceSetting / kChoiceInside / kChoiceOwnWindow).
+  int window = 0;
   bool operator==(const HostOptions& o) const {
     return fixedBuffers == o.fixedBuffers && fixedSize == o.fixedSize && maxBuffers == o.maxBuffers && notifyRender == o.notifyRender &&
-           modulation == o.modulation && genericEditor == o.genericEditor && notePitch == o.notePitch && mpeBendRange == o.mpeBendRange;
+           modulation == o.modulation && genericEditor == o.genericEditor && notePitch == o.notePitch && mpeBendRange == o.mpeBendRange &&
+           window == o.window;
   }
   bool operator!=(const HostOptions& o) const { return !(*this == o); }
   // Options that need a new instance when they change.

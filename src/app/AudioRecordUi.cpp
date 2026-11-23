@@ -1,12 +1,17 @@
 // Gridline — audio input & recording UI (J-8). See AudioRecordUi.h.
+#include "ClipEditor.h"
 #include "../engine/TimeStretch.h"
 #include "../../third_party/imgui/imgui_internal.h"
+#include "../core/ClipWindow.h"
 #include "../core/I18n.h"
 #include "J31Ui.h"
 #include "LiveLook.h"
 #include "DialogLayout.h"
 #include "LiveTakes.h"
 #include "AudioRecordUi.h"
+#include "ClipRenderUi.h"
+#include "SilenceUi.h"
+#include "ClipToolsUi.h"
 #include "../engine/TakeLanes.h"
 #include "LogicPlugins.h"
 #include "RecordRowsUi.h"
@@ -139,7 +144,7 @@ void devDemo(App& a) {
       if (mode == "props") propsClip = r.clips[0];
     }
   });
-  a.clipProps = propsClip;
+  if (propsClip != kNoId) clipeditor::open(a, propsClip);  // K-249: the audio clip editor
   const Song& s = a.doc.song();
   if (s.mixer.size() > 2) a.selMixer = s.mixer[2].id;
   const MeterMap mm(s);  // K-193: bars 3-4 of the song's meters
@@ -601,7 +606,8 @@ void audioClipMenu(App& a, ObjectId id) {
   const Clip* c = s.clip(id);
   if (!c || c->kind != ClipKind::Audio) return;
   const Clip clip = *c;
-  if (ImGui::MenuItem(i18n::tr("Clip properties..."))) a.clipProps = id;
+  if (ImGui::MenuItem(i18n::tr("Edit clip..."))) clipeditor::open(a, id, clipwin::entryTab(clipwin::Entry::EditClip));  // the Audio clip window
+  ui::Hint("The Audio clip window: every setting of the clip and its sample, its waveform, warp markers and audio edits (also a double-click)");
   compMenu(a, clip);
   if (ImGui::BeginMenu(i18n::tr("Time stretch"))) {
     const Channel* ch = s.channel(clip.source);
@@ -627,16 +633,24 @@ void audioClipMenu(App& a, ObjectId id) {
   }
   stemsui::clipMenuItem(a, id);  // J-191: vocals / drums / bass / other onto new tracks
   chopui::clipMenu(a, id);  // PL-13: slice at the grid / into parts / at transients, stutter presets
+  if (ImGui::BeginMenu(i18n::tr("Silence"))) {  // K-253: trim the ends / remove every silence, side by side
+    const bool done = silenceui::clipItems(a, id);
+    ImGui::EndMenu();
+    if (done) return;
+  }
+  cliptoolsui::clipMenu(a, id);  // Loupe's tools on the clip (each clip a new file, one undo step)
   ImGui::Separator();
   std::set<ObjectId> sel = a.playlist.selected;
   if (!sel.count(id)) sel = {id};
-  if (ImGui::MenuItem(sel.size() > 1 ? i18n::tr("Consolidate selected clips to audio") : i18n::tr("Render clip to audio (consolidate)"))) {
+  if (cliprenderui::menuItems(a, id)) return;  // K-250 / K-251: to audio in place, to a file (each clip its own)
+  if (sel.size() > 1 && ImGui::MenuItem(i18n::tr("Consolidate selected clips to audio"))) {  // several clips into one
     const std::string dir = renderedDir(a);
     const double sr = a.engine.sampleRate();
     ObjectId nid = kNoId;
     editSongClip(a, "consolidate clips", [&](Song& x) { nid = consolidateClips(x, sel, dir, sr, true); });
     if (nid != kNoId) a.playlist.selected = {nid};
     else a.notify("Nothing to render", true);
+    return;
   }
   if (ImGui::MenuItem(i18n::tr("Bounce this track to audio"))) {
     const std::string dir = renderedDir(a);
@@ -698,6 +712,7 @@ void clipsAudioClipMenu(App& a, ObjectId id) {
     a.doc.editClip(id, c->muted ? "activate clip" : "deactivate clip", [](Clip& x) { x.muted = !x.muted; });
     return;
   }
+  if (cliprenderui::sendToLoupeItem(a, id)) return;  // K-252
   ImGui::Separator();  // N49-13: no freeze or hibernate rows: those are the track's (its menu has Freeze track)
   if (ImGui::MenuItem(i18n::tr("Consolidate"), keys::label("playlist.merge"))) {  // the clips rendered to one new audio clip
     const std::string dir = renderedDir(a);
@@ -721,167 +736,11 @@ void clipsAudioClipMenu(App& a, ObjectId id) {
     return;
   }
   ImGui::Separator();
+  if (silenceui::clipItems(a, id)) return;  // K-253
+  cliptoolsui::clipMenu(a, id);  // Loupe's tools on the clip (each clip a new file, one undo step)
+  ImGui::Separator();
+  if (cliprenderui::menuItems(a, id)) return;  // K-250 / K-251
   stemsui::clipMenuItem(a, id);  // J-191: vocals, drums, bass and the rest onto new audio tracks
-}
-
-void drawClipProperties(App& a) {
-  if (a.clipProps == kNoId) return;
-  const Song& s = a.doc.song();
-  const Clip* cp = s.clip(a.clipProps);
-  const Channel* ch = cp ? s.channel(cp->source) : nullptr;
-  if (!cp || cp->kind != ClipKind::Audio || !ch) {
-    a.clipProps = kNoId;
-    return;
-  }
-  const Clip c = *cp;
-  const ObjectId id = c.id;
-  const auto& P = pal();
-  bool open = true;
-  ImGui::SetNextWindowSize(ImVec2(380, 0), ImGuiCond_Appearing);
-  std::string title = "Audio clip \xC2\xB7 " + ch->name + "###clipprops";
-  if (!ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
-    ImGui::End();
-    if (!open) a.clipProps = kNoId;
-    return;
-  }
-  const uint64_t key = 0x434C500000000000ull ^ (static_cast<uint64_t>(id) << 4);
-  const float fw = 200;
-  auto row = [&](const char* label) {
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(theme::vec(P.textDim), "%s", label);
-    ImGui::SameLine(110);
-    ImGui::SetNextItemWidth(fw);
-  };
-  SamplePtr smp = sampleCache().get(ch->plugin.data);
-  ImGui::PushFont(a.fontMono, theme::kFontLabel);
-  if (smp)
-    ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("%s \xC2\xB7 %.0f Hz \xC2\xB7 %.2f s"), fs::path(ch->plugin.data).filename().string().c_str(),
-                       smp->sampleRate, smp->seconds());
-  ImGui::PopFont();
-  urlimportui::clipSourceInfo(a, ch->plugin.data);  // J-192: imported from a link
-  ui::Label("LEVEL");
-  float gainDb = c.gain > 0 ? 20.0f * std::log10(c.gain) : -60.0f;
-  row("Gain");
-  using clipmulti::Param;  // J-142: in a multi-selection each field moves every selected audio clip by the same amount
-  if (!clipui::multiDrag(a, id, Param::GainDb, "##gain", gainDb, 0.1f, -60.0f, 24.0f, "%.1f dB", 1.0, "clip gain", key) &&
-      ImGui::DragFloat("##gain", &gainDb, 0.1f, -60.0f, 24.0f, "%.1f dB"))
-    a.doc.editClip(id, "clip gain", [&](Clip& x) { x.gain = gainDb <= -60.0f ? 0.0f : std::pow(10.0f, gainDb / 20.0f); }, key);
-  ImGui::SameLine(0, theme::kS1);
-  if (ui::TextButton("Normalize")) a.doc.editSong("normalize clip", [&](Song& x) { normalizeClip(x, id, 0.0); });
-  float fi = static_cast<float>(c.fadeIn * 1000.0), fo = static_cast<float>(c.fadeOut * 1000.0);
-  row("Fade in");
-  if (!clipui::multiDrag(a, id, Param::FadeIn, "##fi", fi, 1.0f, 0.0f, 60000.0f, "%.0f ms", 1000.0, "clip fade in", key + 1) &&
-      ImGui::DragFloat("##fi", &fi, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
-    a.doc.editClip(id, "clip fade in", [&](Clip& x) { x.fadeIn = std::max(0.0f, fi) / 1000.0, x.fadeInManual = true; }, key + 1);
-  row("Fade out");
-  if (!clipui::multiDrag(a, id, Param::FadeOut, "##fo", fo, 1.0f, 0.0f, 60000.0f, "%.0f ms", 1000.0, "clip fade out", key + 2) &&
-      ImGui::DragFloat("##fo", &fo, 1.0f, 0.0f, 60000.0f, "%.0f ms"))
-    a.doc.editClip(id, "clip fade out", [&](Clip& x) { x.fadeOut = std::max(0.0f, fo) / 1000.0, x.fadeOutManual = true; }, key + 2);
-  bool rev = c.reverse;
-  row("Reverse");
-  if (ImGui::Checkbox("##rev", &rev)) a.doc.editClip(id, "reverse clip", [rev](Clip& x) { x.reverse = rev; });
-
-  ImGui::Dummy(ImVec2(0, theme::kS1));
-  ui::Label("PITCH & TIME");
-  float cents = c.pitch;
-  row("Pitch");
-  if (!clipui::multiDrag(a, id, Param::Pitch, "##pitch", cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct", 1.0, "clip pitch", key + 3) &&
-      ImGui::DragFloat("##pitch", &cents, 1.0f, -2400.0f, 2400.0f, "%.0f ct"))
-    a.doc.editClip(id, "clip pitch", [&](Clip& x) { x.pitch = cents; }, key + 3);
-  const bool keep = ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode) && ch->plugin.params[pp::SmpStretchMode] >= 0.5f;
-  const stretch::Mode cur = ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode)
-                                ? stretch::choiceOf(stretch::modeOf(ch->plugin.params[pp::SmpStretchMode]))
-                                : stretch::Mode::Resample;
-  // J-87 / J-153 / J-157: the channel's time mode: Stretch (pitch kept), Rubber Band or Resample.
-  row("Stretch mode");
-  ImGui::SetNextItemWidth(200);
-  if (ImGui::BeginCombo("##smode", i18n::tr(stretch::modeName(cur)))) {
-    for (const stretch::Mode m : stretch::kChoices) {
-      if (ImGui::Selectable(i18n::tr(stretch::modeName(m)), m == cur)) {
-        const int pick = static_cast<int>(m);
-        a.doc.editSong("stretch mode", [&](Song& x) { setClipStretchMode(x, id, c.stretch, pick); });
-      }
-      ui::Tooltip(stretch::modeHint(m));
-    }
-    ImGui::EndCombo();
-  }
-  ui::Tooltip(stretch::modeHint(cur));
-  float tf = static_cast<float>(c.stretch);
-  row("Time");
-  if (ImGui::DragFloat("##tf", &tf, 0.005f, 0.0625f, 16.0f, "x %.3f")) {
-    float v = tf;
-    a.doc.editSong("stretch clip", [&](Song& x) { setClipStretch(x, id, v, keep); });
-  }
-  bool follow = c.syncBpm > 0;
-  row("Follow tempo");
-  // J-193: on after a stretch: the clip keeps its bars when the tempo changes (Resample: its pitch follows).
-  if (ImGui::Checkbox("##follow", &follow)) a.doc.editSong("follow tempo", [&](Song& x) { setClipFollowsTempo(x, id, follow); });
-  ui::Tooltip("Follow the project tempo: the clip keeps its bars when the tempo changes (on after a stretch). Off: it keeps its audio and its length follows the tempo");
-  if (c.syncBpm > 0) {
-    ImGui::SameLine(0, theme::kS2);
-    ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("at %.2f BPM"), c.syncBpm);
-  }
-  ImGui::Dummy(ImVec2(110 - ImGui::GetStyle().ItemSpacing.x, 0));
-  ImGui::SameLine();
-  if (ui::TextButton("Fit to tempo", false, 0, "Guess the number of beats and make the clip follow the tempo"))
-    a.doc.editSong("fit clip to tempo", [&](Song& x) { fitClipToTempo(x, id); });
-
-  ImGui::Dummy(ImVec2(0, theme::kS1));
-  ui::Label("RENDER STRETCH (LOUPE)");
-  static float rFactor = 1.0f, rSemis = 0.0f;
-  static int rAlgo = 0;
-  row("Length");
-  ImGui::DragFloat("##rf", &rFactor, 0.005f, 0.25f, 4.0f, "x %.3f");
-  row("Pitch");
-  ImGui::DragFloat("##rs", &rSemis, 0.05f, -24.0f, 24.0f, "%+.2f st");
-  // J-153 / J-157: the one stretch (pitch kept), Rubber Band or resampling (pitch follows speed).
-  const char* algos[] = {stretch::modeName(stretch::kStretch), stretch::modeName(stretch::Mode::RubberBand), stretch::modeName(stretch::Mode::Resample)};
-  const char* algoHints[] = {stretch::modeHint(stretch::kStretch), stretch::modeHint(stretch::Mode::RubberBand), stretch::modeHint(stretch::Mode::Resample)};
-  static int rSeg = 0;
-  row("Algorithm");
-  ui::Segmented("##ralgo", algos, 3, &rSeg, 86, 0.0f, algoHints);
-  static constexpr int kAlgoOf[3] = {0, 2, 1};  // segment -> renderClipStretch mode (0 stretch, 1 tape, 2 Rubber Band)
-  rAlgo = kAlgoOf[std::clamp(rSeg, 0, 2)];
-  ImGui::Dummy(ImVec2(110 - ImGui::GetStyle().ItemSpacing.x, 0));
-  ImGui::SameLine();
-  if (ui::TextButton("Render", false, 0, "Writes a stretched copy of the audio and points the clip at it")) {
-    std::string out;
-    const std::string dir = renderedDir(a);
-    a.doc.editSong("render stretch", [&](Song& x) { out = renderClipStretch(x, id, rFactor, rSemis, rAlgo, dir); });
-    a.notify(out.empty() ? std::string("Render failed") : "Rendered " + fs::path(out).filename().string(), out.empty());
-  }
-
-  ImGui::Dummy(ImVec2(0, theme::kS1));
-  ui::Label("SLICE");
-  // K-193: with meter changes, at the beat / bar lines of the meter map.
-  auto sliceAtLines = [&](bool bars) {
-    a.doc.editSong("slice clip", [&](Song& x) {
-      const MeterMap mm(x);
-      if (mm.constant()) {
-        sliceClipAtGrid(x, id, bars ? x.barTicks() : x.beatTicks());
-        return;
-      }
-      const Clip* c = x.clip(id);
-      if (!c) return;
-      const Tick end = c->start + x.clipLength(*c);
-      ObjectId cur = id;
-      for (Tick t = bars ? mm.nextBar(c->start) : mm.nextBeat(c->start); t < end; t = bars ? mm.nextBar(t) : mm.nextBeat(t)) {
-        const ObjectId r = splitClipAt(x, cur, t);
-        if (r == kNoId) break;
-        cur = r;
-      }
-    });
-  };
-  if (ui::TextButton("At beats")) sliceAtLines(false);
-  ImGui::SameLine(0, theme::kS1);
-  if (ui::TextButton("At bars")) sliceAtLines(true);
-  ImGui::SameLine(0, theme::kS1);
-  if (ui::TextButton("At transients")) a.doc.editSong("slice clip at transients", [&](Song& x) { sliceClipAtTransients(x, id, 0.5); });
-  ImGui::SameLine(0, theme::kS1);
-  if (ui::TextButton("Edit audio")) packs::openAudioEditor(a, ch->plugin.data, ch->id);
-  if (ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows) && !ImGui::IsAnyItemActive()) a.doc.endGesture();
-  ImGui::End();
-  if (!open) a.clipProps = kNoId;
 }
 
 // ------------------------------------------------------------------ settings

@@ -4,12 +4,16 @@
 #include "TimeStretch.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <memory>
+#include <vector>
 #include <cmath>
 #include "SlicexEngine.h"
 #include "../core/PluginParams.h"
 #include "Dsp.h"
 #include "Generators.h"
 #include "Slicing.h"
+#include "KerfMarks.h"
 
 namespace gl {
 
@@ -706,6 +710,18 @@ class AcidGen final : public Generator {
     int next = (step + 1) % seqLen_;
     if (stepGate_[step] != 0 && !stepSlide_[step] && stepGate_[next] != 2 && local > seqGate_) gate_ = false;
   }
+  // K-142: its oscillator, slide and filters run free: at rest the same render runs on unheard,
+  // so the next note starts where it would have.
+  void rested(int n) override {
+    float l[256], r[256];  // its render is per sample: any split is the same
+    for (int pos = 0; pos < n;) {
+      const int m = std::min(n - pos, 256);
+      std::fill(l, l + m, 0.f);
+      std::fill(r, r + m, 0.f);
+      render(l, r, m);
+      pos += m;
+    }
+  }
   void render(float* L, float* R, int n) override {
     const double slideCoef = std::exp(-1.0 / std::max(1.0, slide_ * sr_ * 0.3));
     const double fdec = std::exp(-1.0 / std::max(1.0, decay_ * sr_ * 0.3));
@@ -1094,6 +1110,35 @@ class KeysGen final : public Generator {
 class SlicerGen final : public Generator {
  public:
   SlicerGen() { sxe_.setActivity(&ra_); }
+  ~SlicerGen() override {
+    delete pending_.exchange(nullptr);
+    delete retired_.exchange(nullptr);
+    delete active_;
+  }
+  SlicerGen(const SlicerGen&) = delete;
+  SlicerGen& operator=(const SlicerGen&) = delete;
+  // K-239: Fit to tempo with Keep pitch: one stretch voice per note slot (engine/TimeStretch, the
+  // one stretch every pitch-keeping path uses), built here on the UI thread and handed over.
+  void prepareHost(const PluginState& s, double sampleRate) override {
+    delete retired_.exchange(nullptr, std::memory_order_acq_rel);
+    if (!keepsPitch(s)) return;  // the pool (if any) stays until it is needed again
+    const SamplePtr smp = sampleCache().get(kerfmarks::pathOf(s.data));
+    const double srcRate = smp ? smp->sampleRate : 0.0;
+    if (uiPool_ && sampleRate == uiRate_ && srcRate == uiSrcRate_) return;
+    auto* pool = new StretchPool;
+    pool->rate = sampleRate;
+    pool->voices.resize(voices_.size());
+    for (auto& v : pool->voices) {
+      v = std::make_unique<stretch::Voice>();
+      v->prepare(2, sampleRate, 8.0, 8.0, false, stretch::Engine::Stretch, 0.0, srcRate);
+    }
+    delete pending_.exchange(pool, std::memory_order_acq_rel);
+    uiPool_ = true, uiRate_ = sampleRate, uiSrcRate_ = srcRate;
+  }
+  static bool keepsPitch(const PluginState& s) {
+    using namespace pp;
+    return param(s, SlFitTempo) >= 0.5f && param(s, SlFitKeepPitch) >= 0.5f && param(s, SlEngine, 0) < 0.5f;
+  }
   const RegionActivity* regionActivity() const override { return &ra_; }  // J-186
   bool active() const override {
     if (sx_) return sxe_.active();
@@ -1128,6 +1173,15 @@ class SlicerGen final : public Generator {
     Adsr env;
     Svf filt[2];
     VoiceExpr vx;  // K-193: the note's own pressure and timbre response
+    // K-239: the stretch voice (index into the pool, -1: read at the rate as before), its source
+    // cursor and direction, the read rate's part that is the tempo fit (taken out of the pitch),
+    // the slice's speed, and its last rendered frames.
+    int sv = -1;
+    int64_t si = 0;
+    int sdir = 1;
+    double fitPart = 1, sliceSpeed = 1;
+    float sb[2][16] = {};
+    int sbPos = 16;
   };
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     using namespace pp;
@@ -1164,6 +1218,17 @@ class SlicerGen final : public Generator {
     if (smp && param(s, SlFitTempo) >= 0.5f && smp->seconds() > 0) {
       double loopSec = param(s, SlLoopBeats, 4) * 60.0 / std::max(20.0, ctx.tempo);
       speed_ = smp->seconds() / loopSec;
+    }
+    // K-239: the stretch voices from prepareHost (a sounding voice finishes on its own pool).
+    keepPitch_ = !proc_ && keepsPitch(s);
+    if (StretchPool* p = pending_.load(std::memory_order_acquire)) {
+      if (!active_ || retired_.load(std::memory_order_acquire) == nullptr) {
+        pending_.store(nullptr, std::memory_order_release);
+        StretchPool* old = active_;
+        active_ = p;
+        for (auto& v : voices_) v.sv = -1;  // sounding voices go on reading at their rate
+        if (old) retired_.store(old, std::memory_order_release);
+      }
     }
     // Slice starts: manual markers or the prepared automatic slices.
     nSlices_ = 0;
@@ -1325,6 +1390,27 @@ class SlicerGen final : public Generator {
     const double sliceSpeed = param(s, lp(slParam3(k, SliceSpeed)), 1);  // K-217
     if (sliceSpeed != 1) v.rate *= std::clamp(sliceSpeed, 0.25, 4.0);
     v.notePitch = pitch, v.baseRate = v.rate, v.semi = 0, v.semiLeft = 0;
+    // K-239: with Keep pitch the tempo fit goes to the stretch's time, the rest stays the pitch.
+    v.sv = -1;
+    v.sliceSpeed = sliceSpeed != 1 ? std::clamp(sliceSpeed, 0.25, 4.0) : 1.0;
+    v.fitPart = smp->sampleRate / sr_ * speed_;
+    const auto slot = static_cast<size_t>(&v - voices_.data());
+    if (keepPitch_ && active_ && active_->rate == sr_ && slot < active_->voices.size()) {
+      v.sv = static_cast<int>(slot);
+      v.si = static_cast<int64_t>(std::llround(v.pos));
+      v.sdir = v.reverse ? -1 : 1;
+      v.sbPos = 16;
+      ReadCtx rc{smp.get(), &v};
+      active_->voices[slot]->start(&SlicerGen::readSlice, &rc, stretchSpeed(v), stretchPitch(v, 1.0));
+    }
+    if (tap::active() && !proc_ && smp->sampleRate > 0) {  // K-321: Track Receipt: a resampled slice (pitch follows speed)
+      if (v.sv >= 0) {  // K-239: the stretch: its pitch, its speed
+        tap::pitch(smp.get(), 12.0 * std::log2(stretchPitch(v, 1.0)), stretchSpeed(v) * sr_ / smp->sampleRate);
+      } else {
+        const double ratio = v.rate * sr_ / smp->sampleRate;
+        if (ratio > 0) tap::pitch(smp.get(), 12.0 * std::log2(ratio), ratio);
+      }
+    }
     v.gain0 = dbToGain(param(s, lp(slParam(k, SliceGain))));
     if (velDest_ == SlDestLevel) v.gain0 *= 1 - velAmt_ + velAmt_ * vel;
     v.pan0 = param(s, lp(slParam(k, SlicePan)));
@@ -1461,8 +1547,22 @@ class SlicerGen final : public Generator {
           envelopes(v, m);
           control(v, m);
         }
-        const double rate = v.rate * v.modRate;
-        interpBl(*smp, v.pos, rate, bl, br);
+        double rate = v.rate * v.modRate;
+        if (v.sv >= 0 && active_ && static_cast<size_t>(v.sv) < active_->voices.size()) {
+          // K-239: the slice through its stretch voice, 16 frames at a time (the control rate):
+          // its time follows the tempo, the pitch stays the note's (and the slice's own speed).
+          if (v.sbPos >= 16) {
+            float* o[2] = {v.sb[0], v.sb[1]};
+            ReadCtx rc{smp.get(), &v};
+            active_->voices[static_cast<size_t>(v.sv)]->render(o, 16, stretchSpeed(v), stretchPitch(v, v.modRate), &SlicerGen::readSlice, &rc);
+            v.sbPos = 0;
+          }
+          bl = v.sb[0][v.sbPos], br = v.sb[1][v.sbPos];
+          ++v.sbPos;
+          rate = stretchSpeed(v);  // the read position moves at the stretched speed
+        } else {
+          interpBl(*smp, v.pos, rate, bl, br);
+        }
         double l = bl, r = br;
         if (ftype_ > 0) {
           double io[2] = {l, r};
@@ -1603,6 +1703,41 @@ class SlicerGen final : public Generator {
     }
     for (int i = n; i < RegionActivity::kSlots; ++i) ra_.off(i);
   }
+  // ---- K-239 stretch voices
+  struct StretchPool {
+    double rate = 0;
+    std::vector<std::unique_ptr<stretch::Voice>> voices;
+  };
+  struct ReadCtx {
+    const Sample* smp;
+    Voice* v;
+  };
+  // Input frames per output frame (the source's own frames) and the pitch (frequency ratio):
+  // the read rate is pitch x fit x slice speed; the fit becomes time only (the slice's own speed
+  // stays a speed, its pitch following, as before).
+  static double stretchSpeed(const Voice& v) { return std::clamp(v.fitPart * v.sliceSpeed, 1e-3, 8.0); }
+  static double stretchPitch(const Voice& v, double mod) { return std::clamp(v.rate * mod / std::max(1e-9, v.fitPart), 0.125, 8.0); }
+  // The slice's frames from the voice's cursor in its direction, silence outside the slice.
+  static void readSlice(void* ctx, float* const* dst, int frames) {
+    auto* rc = static_cast<ReadCtx*>(ctx);
+    Voice& v = *rc->v;
+    const Sample& smp = *rc->smp;
+    const auto lo = static_cast<int64_t>(std::floor(v.start)), hi = static_cast<int64_t>(std::ceil(v.end));
+    const auto nf = static_cast<int64_t>(smp.frames());
+    for (int i = 0; i < frames; ++i) {
+      const int64_t k = v.si;
+      const bool in = k >= lo && k < hi && k >= 0 && k < nf;
+      dst[0][i] = in ? smp.left[static_cast<size_t>(k)] : 0.0f;
+      dst[1][i] = in ? smp.right[static_cast<size_t>(k)] : 0.0f;
+      v.si += v.sdir;
+    }
+  }
+  std::atomic<StretchPool*> pending_{nullptr};  // UI -> audio thread
+  std::atomic<StretchPool*> retired_{nullptr};  // audio thread -> UI (freed by the next prepareHost)
+  StretchPool* active_ = nullptr;               // audio thread
+  bool uiPool_ = false;
+  double uiRate_ = 0, uiSrcRate_ = 0;
+  bool keepPitch_ = false;
   std::array<Voice, 16> voices_{};
   double procFrac_[pp::kMaxSlices] = {};  // J-219
   int nProcFrac_ = 0;
@@ -1636,6 +1771,14 @@ class GranularGen final : public Generator {
     for (const auto& v : notes_)
       if (v.on) return true;
     return false;
+  }
+  // K-142 (0.7.8): its pitch wobble runs on with a sample loaded (as render() moves it every frame).
+  void rested(int n) override {
+    if (!hadSample_) return;
+    for (int i = 0; i < n; ++i) {
+      wobPh_ += wobbleRate_ / sr_;
+      wobPh_ -= std::floor(wobPh_);
+    }
   }
 
  protected:
@@ -1674,6 +1817,19 @@ class GranularGen final : public Generator {
     if (param(s, GrTempoSync) >= 0.5f) density_ = density_ * std::max(20.0, ctx.tempo) / 60.0 / 4.0;  // grains per 1/16 beat → Hz
     wobble_ = param(s, GrWobble), wobbleRate_ = param(s, GrWobbleRate, 4), jitter_ = param(s, GrJitter);
     stepHold_ = param(s, GrTransientHold, 0.25f), pitchOfs_ = param(s, GrPitch);
+    // K-341: each grain's gain. Classic (0.7.7 and before): a fixed 0.35, so the usual two or three
+    // overlapping grains came out far quieter than Grain Scanner playing the same sample. Balanced:
+    // grains at scattered positions add up in power, so dividing by the root of the grains sounding
+    // at once (and of the window's mean square) keeps one level at any density, size and shape
+    // (sparse grains, with gaps between them, a little louder each, down to a quarter overlap);
+    // kBalancedGain puts that level where Grain Scanner plays at its defaults.
+    if (param(s, GrLevel, 1) >= 0.5f) {
+      const double e = std::clamp(shape_, 0.02, 0.5), w2 = (1.0 - 2.0 * e) + 2.0 * e * 0.375;
+      const double overlap = std::max(0.25, density_ * std::max(16.0 / sr_, size_));
+      grainGain_ = kBalancedGain / std::sqrt(overlap * w2);
+    } else {
+      grainGain_ = 0.35;
+    }
     for (auto& v : notes_) v.env.set(sr_, param(s, GrAttack, 0.05f), 30, 1, param(s, GrRelease, 0.6f));
   }
   void onNoteOn(uint32_t id, double pitch, float vel) override {
@@ -1712,7 +1868,15 @@ class GranularGen final : public Generator {
   }
   void render(float* L, float* R, int n) override {
     SamplePtr smp = aux_ ? aux_->sample() : nullptr;
-    if (!smp || smp->frames() < 16) return;
+    hadSample_ = smp && smp->frames() >= 16;
+    if (!hadSample_) {  // K-142 (0.7.8): nothing to play, but its notes still end (then it rests)
+      for (auto& v : notes_)
+        for (int i = 0; i < n && v.on; ++i) {
+          v.env.next();
+          if (!v.env.active()) v.on = false;
+        }
+      return;
+    }
     const Sample& sm = *smp;
     const double len = static_cast<double>(sm.frames());
     // J-219: Track Receipt coverage, one run per grain.
@@ -1774,7 +1938,7 @@ class GranularGen final : public Generator {
         NoteV& v = notes_[static_cast<size_t>(g.note)];
         double ph = g.t / g.len, edge = std::clamp(shape_, 0.02, 0.5);
         double w = ph < edge ? 0.5 - 0.5 * std::cos(kPi * ph / edge) : ph > 1 - edge ? 0.5 - 0.5 * std::cos(kPi * (1 - ph) / edge) : 1.0;
-        double a = w * v.env.level * v.vel * vol_ * 0.35;
+        double a = w * v.env.level * v.vel * vol_ * grainGain_;
         if (g.pos >= len - 1) g.pos = 0;
         if (tapOn) runs[static_cast<size_t>(&g - grains_.data())].at(g.pos);
         // J-140: band-limited grain reads (compact kernel: many grains),
@@ -1835,6 +1999,9 @@ class GranularGen final : public Generator {
   float vol_ = 0.7f;
   double speed_ = 1, shape_ = 0.5, baseNote_ = 60, wobble_ = 0, wobbleRate_ = 4, jitter_ = 0, stepHold_ = 0.25, pitchOfs_ = 0, wobPh_ = 0;
   int keyMode_ = 0;
+  double grainGain_ = 0.35;
+  bool hadSample_ = false;  // K-142 (0.7.8): the last render had a sample to play
+  static constexpr double kBalancedGain = 2.3;
 };
 
 // ============================================================ MIDI Out

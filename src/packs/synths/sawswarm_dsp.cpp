@@ -27,6 +27,7 @@
 #include "va.h"
 #include "va_fx.h"
 #include "va_voice.h"
+#include "../rest_render.h"
 
 namespace gl::packs::synths::va {
 
@@ -178,6 +179,9 @@ class SawSwarm final : public Generator {
     if (dly_.on() || rev_.on()) tail_ = static_cast<int>(sr_ * 5);
   }
 
+  // K-142: at rest its idle render runs on unheard (packs/rest_render.h), so the next note
+  // finds every free-running part where it would have been.
+  void rested(int n) override { packs::restRender(n, [this](float* l, float* r, int m) { render(l, r, m); }); }
   void render(float* L, float* R, int n) override {
     const double level = dsp::dbToGain(P(SwLevel)) * 0.5;  // ±24 dB around the reference's centre
     const double pan = P(SwPan);

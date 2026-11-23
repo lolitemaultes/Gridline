@@ -12,6 +12,8 @@
 #include <optional>
 #include "../core/Automation.h"
 #include "../core/Params.h"
+#include "../core/ReceiptHashes.h"
+#include "../core/ReceiptOrigin.h"
 #include "../core/ProjectInterop.h"
 #include "../core/Zip.h"
 #include "../host/Backend.h"
@@ -308,7 +310,8 @@ bool hasNotes(const Pattern& p, ObjectId ch) {
 //    instrument was taken out) is taken out as well: offline, nothing rests, so levels never
 //    change what a voice reads.
 // True when the mix's sound then matters to nothing (no effect plays a file, nothing
-// modulates): audio clips may then only mark their reads (tap::readsOnly).
+// modulates): audio clips and Seltmann may then only mark their reads (tap::readsOnly; K-321:
+// Seltmann then stretches nothing, under any tempo, and its voices read where they would).
 bool reduceToSampleVoices(Song& song, const std::vector<FileRef>& refs) {
   std::set<ObjectId> reads;
   bool mixerReads = false;
@@ -399,7 +402,7 @@ bool reduceToSampleVoices(Song& song, const std::vector<FileRef>& refs) {
 
 }  // namespace
 
-Measurement scan(const Song& song, bool decode) {
+Measurement scan(const Song& song, bool decode, HashCache* hashes) {
   Measurement m;
   std::set<std::string> seen;
   const std::vector<FileRef> refs = fileRefs(song);
@@ -412,6 +415,26 @@ Measurement scan(const Song& song, bool decode) {
     }
     sampleCache().prefetch(paths);
   }
+  // K-321: the hashes of the project's files, and where to find each file's origin.
+  std::map<std::string, std::string> hashOf, fileOf;
+  for (const FileRef& r : refs) {
+    if (hashOf.count(r.path)) continue;
+    std::string h = hashFromName(r.path);
+    if (h.empty() && hashes && safefs::toPath(r.path).is_absolute() && safefs::isFile(r.path)) h = hashes->get(r.path);
+    hashOf[r.path] = h;
+    if (!h.empty()) fileOf.emplace(h, r.path);
+  }
+  const Saved saved = savedFromJson(song.trackReceipt);
+  Lookup lookup;
+  lookup.origin = [&](const std::string& file, OriginV2& o) {
+    if (readOriginV2(file, o)) return true;
+    auto it = hashOf.find(file);
+    return tableFind(saved, it != hashOf.end() ? it->second : hashFromName(file), o);
+  };
+  lookup.fileOfHash = [&](const std::string& h) {
+    auto it = fileOf.find(h);
+    return it != fileOf.end() ? it->second : std::string();
+  };
   for (const FileRef& r : refs) {
     if (!seen.insert(r.path).second) continue;
     FileIn f;
@@ -420,15 +443,18 @@ Measurement scan(const Song& song, bool decode) {
     f.exists = safefs::toPath(r.path).is_absolute() && safefs::isFile(r.path);
     if (f.exists && decode)
       if (SamplePtr s = sampleCache().get(r.path)) f.seconds = s->seconds();
-    f.chain = originChain(r.path);
+    f.hash = hashOf[r.path];
+    f.chain = chainOf(r.path, lookup);
     f.derived = !f.chain.empty();
+    if (f.derived && hasMaps(r.path, lookup))
+      for (const auto& [file, o] : trailOf(r.path, lookup)) f.trail[file] = jsonCompact(originToJson(o));
     m.files.push_back(f);
   }
   return m;
 }
 
 Measurement measure(const Song& song0, const PassOptions& o) {
-  Measurement m = scan(song0, true);
+  Measurement m = scan(song0, true, o.hashes);
   const std::vector<FileRef> refs = fileRefs(song0);
   std::map<std::string, int> fileIndex;
   for (size_t i = 0; i < m.files.size(); ++i) fileIndex[m.files[i].path] = static_cast<int>(i);
@@ -520,7 +546,10 @@ Measurement measure(const Song& song0, const PassOptions& o) {
   for (const FileIn& f : m.files) watch.push_back(tap::WatchFile{f.path, f.seconds});
   // K-322: the pass belongs to this measurement's renders alone (bound on their threads), so
   // the app playing meanwhile, or another measurement, never marks into it.
-  tap::Pass pass(watch);
+  // K-321: with the segment log (when in the output each read happened).
+  tap::Pass::Options po;
+  po.segments = true;
+  tap::Pass pass(watch, po);
   pass.setReadsOnly(readsOnly);
   std::vector<RenderJob> jobs;
   RenderJob base;
@@ -530,19 +559,21 @@ Measurement measure(const Song& song0, const PassOptions& o) {
   base.threads = 1;
   base.cancel = o.cancel;
   base.tapPass = &pass;
+  // K-319 / K-321: the tail runs while sample voices still read (reads marked within the last
+  // second), not while effects ring on, at most 10 s: the same rule in the fast and the
+  // reference pass, so both count the same reads after the song end.
+  base.tailBusy = [&pass, last = uint64_t{0}]() mutable {
+    const uint64_t now = pass.marks();
+    const bool busy = now != last;
+    last = now;
+    return busy;
+  };
   if (!o.reference) {
     // K-319: the mixer graph on a few cores (the same reads for any thread count: each channel,
     // clip and mixer track is one task, and a tap slot belongs to one of them). Half the cores,
     // at most 4: offline workers spin while they wait, so more only slow a busy computer down
-    // (and the app keeps playing meanwhile). The tail runs while sample voices still read, not
-    // while effects ring on.
+    // (and the app keeps playing meanwhile).
     base.threads = static_cast<int>(std::clamp(std::thread::hardware_concurrency() / 2, 1u, 4u));
-    base.tailBusy = [&pass, last = uint64_t{0}]() mutable {
-      const uint64_t now = pass.marks();
-      const bool busy = now != last;
-      last = now;
-      return busy;
-    };
   }
   if (!patternMode) {
     m.mode = "song";
@@ -572,6 +603,10 @@ Measurement measure(const Song& song0, const PassOptions& o) {
     };
     RenderResult rr = renderAudio(song, j);
     if (!rr.error.empty() && rr.error.find("empty") == std::string::npos) m.warnings.push_back("Render: " + rr.error);
+    if (rr.tailCapped) {  // K-321
+      const std::string w = "A sound still reads its sample 10 s after the song end; only the first 10 s are counted.";
+      if (std::find(m.warnings.begin(), m.warnings.end(), w) == m.warnings.end()) m.warnings.push_back(w);
+    }
     if (rr.cancelled || (o.cancel && o.cancel->load())) {
       m.cancelled = true;
       break;
@@ -581,14 +616,18 @@ Measurement measure(const Song& song0, const PassOptions& o) {
   // Uses measured.
   const MeterMap mm0(song0);
   std::set<std::pair<std::string, ObjectId>> measured;
-  for (const tap::Use& u : pass.uses()) {
+  const std::vector<tap::Use> tapUses = pass.uses();
+  if (o.tapUses) *o.tapUses = tapUses;
+  for (const tap::Use& u : tapUses) {
     if (u.file < 0 || static_cast<size_t>(u.file) >= m.files.size()) continue;
     Use x;
     x.file = m.files[static_cast<size_t>(u.file)].path;
     x.owner = u.owner;
     x.plays = u.plays;
+    // K-321: only a voice's cue block is left out (see kMinHeard); other short reads count.
     for (const tap::Range& r : u.ranges)
-      if (r.b - r.a >= kMinHeard) x.ranges.push_back(Range{r.a, r.b});  // see kMinHeard
+      if (!(r.cue && r.b - r.a < kMinHeard)) x.ranges.push_back(Range{r.a, r.b});
+    x.measured = true;
     if (u.tick1 >= u.tick0) {
       x.bar0 = static_cast<double>(mm0.barIndex(static_cast<Tick>(std::max(0.0, u.tick0)))) + 1;  // K-179: meter map bars
       x.bar1 = static_cast<double>(mm0.barIndex(static_cast<Tick>(std::max(0.0, u.tick1)))) + 1;

@@ -5,6 +5,10 @@
 // and every other layout keeps its own views. Same data, same Document commands: a step toggled
 // here, a clip placed or a volume dragged is one undo step and syncs to collaborators as anywhere.
 #include "TrackerPages.h"
+#include "../core/Lanes.h"
+#include "SnapMenu.h"
+#include "ClipEditor.h"
+#include "Keys.h"
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
@@ -33,12 +37,15 @@
 #include "LayoutShellUi.h"
 #include "MenuParityUi.h"
 #include "MixerMeters.h"
+#include "MixerHideUi.h"
 #include "PixelGrid.h"
 #include "Theme.h"
 #include "TrackerLook.h"
+#include "TrackerOrder.h"
 #include "TrackerView.h"
 #include "Widgets.h"
 #include "Windows.h"
+#include "RenderSheetUi.h"
 
 namespace gl::trackerpages {
 
@@ -98,7 +105,7 @@ float titleBar(App& a, ImVec2 o, float w, const char* title, const std::string& 
   boxTitle(a, ImVec2(o.x + 6, std::round(o.y + (h - fs) * 0.5f)), title);
   const float ew = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Exit")).x) + 24;
   if (bevelButton(a, "##pageexit", "Exit", ImVec2(o.x + w - 2 - ew, o.y + 2), ImVec2(o.x + w - 2, o.y + h - 2), false, "Back to the pattern"))
-    trackerview::showPage(a, "Pattern editor");
+    trackerview::exitPage(a, ui::stableWindowName(ImGui::GetCurrentWindowRead()->RootWindow->Name));  // as Esc: a page off the strip (LFO) closes
   // cp16: a message just said (an edit refused, a file saved: the app's notices in the Tracker) takes
   // the info's place for a few seconds, as the pattern bar shows it on the pattern page.
   const float tx0 = o.x + 6 + std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(title)).x) + fs * 12;
@@ -202,27 +209,63 @@ void endBody(App& a, float contentH) {
 GL_STEPS_FN void stepCells(App& a, ImDrawList* dl, const Pattern* pat, ObjectId channel, const std::vector<uint8_t>* row, int first, int nSteps, int playStep,
                            float gx, float y, float rh, float cw, float group) {
   const auto& P = pal();
+  // K-255: the row's own steps (a grid of its own sits stretched under the pattern's steps, a bar as
+  // wide as every row's) and its length (the steps past it show, dim, what the loop plays there).
+  const bool own = pat && lanes::ownGrid(*pat, channel);
+  const int len = pat ? lanes::length(*pat, channel) : 0;
+  const int spb = pat ? std::max(1, pat->stepsPerBar) : 16, g = pat ? lanes::grid(*pat, channel) : 16;
+  const int laneSteps = pat ? lanes::steps(*pat, channel) : nSteps;
+  auto xAt = [&](double u) {  // screen x of pattern step position u (fractional) in the part shown
+    const double r = u - first;
+    const int i = static_cast<int>(std::floor(r));
+    auto X = [&](int k) { return gx + static_cast<float>(k) * (cw + 1) + group * static_cast<float>(k >= 0 ? k / 4 : (k - 3) / 4); };
+    return X(i) + static_cast<float>(r - i) * (X(i + 1) - X(i));
+  };
+  int k0 = first, k1 = first + nSteps;
+  if (own) {  // the lane steps that start in the part shown
+    k0 = static_cast<int>(std::ceil(static_cast<double>(first) * g / spb - 1e-9));
+    k1 = std::min(laneSteps, static_cast<int>(std::ceil(static_cast<double>(first + nSteps) * g / spb - 1e-9)));
+  }
+  int lanePlay = playStep;
+  if (own && playStep >= 0 && pat) {
+    const double st = lanes::stepTicks(a.doc.song(), *pat, channel);
+    lanePlay = -1;
+    if (a.engine.playing() && st > 0) lanePlay = static_cast<int>(static_cast<int64_t>(std::floor(static_cast<double>(playStep) * a.doc.song().ticksPerStep(*pat) / st + 1e-9)) % std::max(1, laneSteps));
+  }
   // cp24: the steps first .. first + nSteps - 1 (a long pattern shows a part at a time).
-  for (int k = first; k < first + nSteps; ++k) {
-    const int i = k - first;
-    const float x = std::round(gx + static_cast<float>(i) * (cw + 1) + group * static_cast<float>(i / 4));
-    const ImVec2 s0(x, y + 1), s1(x + cw, y + rh - 2);
-    const uint8_t v = row && static_cast<size_t>(k) < row->size() ? (*row)[static_cast<size_t>(k)] : 0;
+  for (int k = k0; k < k1; ++k) {
+    float x, w;
+    if (own) {
+      const double u = static_cast<double>(k) * spb / g, u1 = static_cast<double>(k + 1) * spb / g;
+      x = std::round(xAt(u));
+      w = std::max(3.0f, std::round(xAt(u1)) - x - 1);
+    } else {
+      const int i = k - first;
+      x = std::round(gx + static_cast<float>(i) * (cw + 1) + group * static_cast<float>(i / 4));
+      w = cw;
+    }
+    const bool looped = len > 0 && k >= len;
+    const int ek = looped ? k % len : k;  // a looped step edits the step it repeats
+    const ImVec2 s0(x, y + 1), s1(x + w, y + rh - 2);
+    const uint8_t v = row && static_cast<size_t>(ek) < row->size() ? (*row)[static_cast<size_t>(ek)] : 0;
     ImGui::SetCursorScreenPos(s0);
     ImGui::PushID(k);
-    const bool click = ImGui::InvisibleButton("##st", ImVec2(cw, s1.y - s0.y));
+    const bool click = ImGui::InvisibleButton("##st", ImVec2(w, s1.y - s0.y));
     const bool hov = ImGui::IsItemHovered();
     ImGui::PopID();
-    const bool beat = (k / 4) % 2 == 0;
+    const bool beat = own ? (static_cast<int>(std::floor(static_cast<double>(k) * spb / g + 1e-9)) / 4) % 2 == 0 : (k / 4) % 2 == 0;
     bevelBox(dl, s0, s1, v == 0);
     if (v > 0) {
       dl->AddRectFilled(ImVec2(s0.x + 1, s0.y + 1), ImVec2(s1.x - 1, s1.y - 1), theme::mix(P.surface700, P.hot, 0.35f + 0.65f * static_cast<float>(v) / 127.0f));
     } else {
       dl->AddRectFilled(ImVec2(s0.x + 1, s0.y + 1), ImVec2(s1.x - 1, s1.y - 1), beat ? P.surface900 : P.surface950);
     }
+    if (looped) dl->AddRectFilled(ImVec2(s0.x + 1, s0.y + 1), ImVec2(s1.x - 1, s1.y - 1), theme::withAlpha(P.surface950, 0.55f));
+    if (len > 0 && k == len) dl->AddRectFilled(ImVec2(s0.x - 2, s0.y - 1), ImVec2(s0.x, s1.y + 1), P.hot);  // where the loop starts again
     if (hov) dl->AddRectFilled(ImVec2(s0.x + 1, s0.y + 1), ImVec2(s1.x - 1, s1.y - 1), theme::withAlpha(P.text, 0.12f));
-    if (k == playStep) dl->AddRectFilled(ImVec2(s0.x + 1, s1.y - 3), ImVec2(s1.x - 1, s1.y - 1), P.playhead);
-    if (click && pat) a.doc.setStep(pat->id, channel, k, v > 0 ? 0 : 100);
+    if (k == lanePlay) dl->AddRectFilled(ImVec2(s0.x + 1, s1.y - 3), ImVec2(s1.x - 1, s1.y - 1), P.playhead);
+    if (hov && looped) ui::Hint("A step the loop plays again: a click sets the step it repeats");
+    if (click && pat) a.doc.setStep(pat->id, channel, ek, v > 0 ? 0 : 100);
   }
 }
 
@@ -378,14 +421,14 @@ void moveEntry(App& a, const std::vector<trk::OrderEntry>& ol, int i, int d) {
     sayOrder(r);
     return;
   }
-  goEntry(a, trk::orderList(a.doc.song()), j);
+  goEntry(a, *trackerorder::of(a), j);
 }
 
 void setEntryPattern(App& a, const std::vector<trk::OrderEntry>& ol, int i, ObjectId p) {
   if (i < 0 || i >= static_cast<int>(ol.size()) || p == kNoId) return;
   const trk::OrderEdit r = trk::orderSetPattern(a.doc, i, p);
   sayOrder(r);
-  if (r == trk::OrderEdit::Done) goEntry(a, trk::orderList(a.doc.song()), i);
+  if (r == trk::OrderEdit::Done) goEntry(a, *trackerorder::of(a), i);
 }
 
 void stepEntryPattern(App& a, const std::vector<trk::OrderEntry>& ol, int i, int d) {
@@ -401,7 +444,7 @@ void insertEntry(App& a, const std::vector<trk::OrderEntry>& /*ol*/, int at, Obj
   gMark = -1;
   const trk::OrderEdit r = trk::orderInsert(a.doc, at, p);
   sayOrder(r);
-  if (r == trk::OrderEdit::Done) goEntry(a, trk::orderList(a.doc.song()), at);
+  if (r == trk::OrderEdit::Done) goEntry(a, *trackerorder::of(a), at);
 }
 
 void removeEntry(App& a, const std::vector<trk::OrderEntry>& ol, int at) {
@@ -410,7 +453,8 @@ void removeEntry(App& a, const std::vector<trk::OrderEntry>& ol, int at) {
   const trk::OrderEdit r = trk::orderRemove(a.doc, at);
   sayOrder(r);
   if (r == trk::OrderEdit::Done) {
-    const auto nl = trk::orderList(a.doc.song());
+    const trackerorder::List nlHeld = trackerorder::of(a, a.doc.song());  // K-142: cached per song change
+    const std::vector<trk::OrderEntry>& nl = *nlHeld;
     goEntry(a, nl, std::min(at, static_cast<int>(nl.size()) - 1));
   }
 }
@@ -444,7 +488,8 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImFont* mono = monoFont(a);
   const float fs = ImGui::GetFontSize(), rh = rowHeight(), pad = 4;
-  const std::vector<trk::OrderEntry> ol = trk::orderList(s);
+  const trackerorder::List olHeld = trackerorder::of(a, s);  // K-142: cached per song change
+  const std::vector<trk::OrderEntry>& ol = *olHeld;
   const int cur = entryAt(a, ol), loopAt = loopEntry(s, ol);
   int mLo, mHi, lLo, lHi;
   markedBlock(cur, static_cast<int>(ol.size()), &mLo, &mHi);
@@ -732,7 +777,7 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
     {
       const bool looping = lLo <= lHi;
       if (bevelButton(a, "##sgloopblk", looping ? "Loop off" : "Loop block", ImVec2(x, y), ImVec2(x + w, y + bh), looping,
-                      "Plays the marked entries (Shift+Up/Down) or the current one over and over; again: the whole song (Ctrl+L)") ||
+                      keys::withKeys(i18n::N_("Plays the marked entries (Shift+Up/Down) or the current one over and over; again: the whole song (%s)"), {keys::fixedKey("Ctrl+L")})) ||
           (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && !ImGui::GetIO().WantTextInput && (ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper) &&
            ImGui::IsKeyPressed(ImGuiKey_L, false))) {
         if (looping) {
@@ -957,7 +1002,8 @@ void rollToolbar(App& a) {
                             {Tool::Paint, i18n::N_("Paint"), i18n::N_("Paint notes along a drag")},
                             {Tool::Select, i18n::N_("Select"), i18n::N_("Select notes with a box")},
                             {Tool::Erase, i18n::N_("Erase"), i18n::N_("Erase the notes clicked or dragged over")},
-                            {Tool::Slice, i18n::N_("Slice"), i18n::N_("Cut notes where the drag crosses them")}};
+                            {Tool::Slice, i18n::N_("Slice"), i18n::N_("Cut notes where the drag crosses them")},
+                            {Tool::Vibrato, i18n::N_("Vibrato"), i18n::N_("Drag up on a note: vibrato depth; sideways or the wheel: its rate; right-click: shape and presets")}};
   for (const T& t : tools) {
     ImGui::PushID(static_cast<int>(t.tool));
     if (btn("##trprtool", t.label, st.tool == t.tool, t.hint)) st.tool = t.tool;
@@ -974,10 +1020,28 @@ void rollToolbar(App& a) {
                             {Snap::Beat, i18n::N_("Beat"), i18n::N_("Notes snap to beats")},
                             {Snap::Bar, i18n::N_("Bar"), i18n::N_("Notes snap to bars")},
                             {Snap::None, i18n::N_("Off"), i18n::N_("No snap: notes go where they are put")}};
+  bool listed = false;
   for (const S& sn : snaps) {
     ImGui::PushID(100 + static_cast<int>(sn.snap));
     if (btn("##trprsnap", sn.label, st.snap == sn.snap, sn.hint)) st.snap = sn.snap;
     ImGui::PopID();
+    listed = listed || st.snap == sn.snap;
+  }
+  // GitHub #58: every other grid (step and beat fractions, dotted values, tuplets, Main) from one
+  // more button; it is lit, and reads as the grid, while one of those is chosen.
+  {
+    const char* more = listed ? i18n::N_("More") : snapmenu::label(st.snap);
+    const float w = width(more);
+    const ImVec2 at(x, y1);
+    if (bevelButton(a, "##trprsnapmore", more, ImVec2(x, y0), ImVec2(x + w, y1), !listed || ImGui::IsPopupOpen("##trprsnapmorepop"),
+                    "More grids: step and beat fractions, dotted values, quintuplets and septuplets, or Main (the playlist's snap)"))
+      ImGui::OpenPopup("##trprsnapmorepop");
+    x += w + kGap;
+    ImGui::SetNextWindowPos(at);
+    if (ImGui::BeginPopup("##trprsnapmorepop")) {
+      snapmenu::items(st.snap, true, true);
+      ImGui::EndPopup();
+    }
   }
   // The instrument: arrows and its number and name (the notes edited are its notes).
   const float zw = width("-") + width("+") + kGap + 8;
@@ -1003,6 +1067,20 @@ void rollToolbar(App& a) {
     }
     x = fx1 + kGap;
   }
+  // K-262: with the Vibrato tool, its defaults (preset, depth, rate) in a popup.
+  if (st.tool == Tool::Vibrato) {
+    const char* vl = i18n::N_("Vibrato defaults");
+    if (x + width(vl) < right) {
+      const ImVec2 at(x, y1);
+      if (btn("##trprvib", vl, ImGui::IsPopupOpen("##trprvibpop"), "The vibrato a note gets with the Vibrato tool: preset, depth and rate"))
+        ImGui::OpenPopup("##trprvibpop");
+      ImGui::SetNextWindowPos(at);
+      if (ImGui::BeginPopup("##trprvibpop")) {
+        pianoVibratoStrip(a);
+        ImGui::EndPopup();
+      }
+    }
+  }
   // Zoom at the right end.
   x = std::max(x, right + 8);
   if (btn("##trprzout", "-", false, "Zoom out (PgDn, Ctrl+wheel)")) st.zoomRequest /= 1.5f;
@@ -1019,7 +1097,8 @@ void devOrder(App& a, const std::vector<std::string>& args, int frame) {
     const int n = num(i, 0);
     return n >= 1 && n <= static_cast<int>(s.patterns.size()) ? s.patterns[static_cast<size_t>(n - 1)].id : kNoId;
   };
-  const std::vector<trk::OrderEntry> ol = trk::orderList(a.doc.song());
+  const trackerorder::List olHeld = trackerorder::of(a, a.doc.song());  // K-142: cached per song change
+  const std::vector<trk::OrderEntry>& ol = *olHeld;
   if (c == "go") {
     gMark = -1;
     goEntry(a, ol, num(2, 0));
@@ -1058,7 +1137,8 @@ void devOrder(App& a, const std::vector<std::string>& args, int frame) {
     if (!a.engine.playing()) menuparity::playPressed(a);
   }
   const Song& s = a.doc.song();
-  const std::vector<trk::OrderEntry> now = trk::orderList(s);
+  const trackerorder::List nowHeld = trackerorder::of(a, s);  // K-142: cached per song change
+  const std::vector<trk::OrderEntry>& now = *nowHeld;
   std::string line;
   for (const trk::OrderEntry& e : now) line += " " + (e.pattern != kNoId ? trk::hexNum(trk::patternNumber(s, e.pattern)) : std::string("AU"));
   int lLo, lHi;
@@ -1395,6 +1475,12 @@ void clipBox(App& a, ImVec2 p0, ImVec2 p1) {
                                  "The clip's whole menu, as in the playlist: warp markers, audio tools, curves, export"))
       ImGui::OpenPopup("##songclipmore");
   }
+  if (c->kind == ClipKind::Audio) {  // K-249: the audio clip editor on the Audio page
+    ImVec2 at;
+    if (cell(&at) && bevelButton(a, "##editclip", "Edit...", at, ImVec2(at.x + std::min(cellW, std::round(fs * 6)), at.y + rh), false,
+                                 "Opens the sample clip in the audio clip editor (on the Audio page)"))
+      clipeditor::open(a, id);
+  }
   if (ImGui::BeginPopup("##songclipmore")) {
     devArrangementClipMenu(a, id);
     ImGui::EndPopup();
@@ -1436,15 +1522,15 @@ void song(App& a) {
     float zx = o.x + av.x - 2 - ew - 8 - fitBw;
     const bool fitOn = gSongLanes ? a.settings.getNumber("tracker.songLaneWidth") < 0 : a.settings.getNumber("tracker.timelineZoom") <= 1.0;
     if (bevelButton(a, "##sgfit", "Fit", ImVec2(zx, o.y + 2), ImVec2(zx + fitBw, o.y + 2 + zh), fitOn,
-                    gSongLanes ? "Every lane in view (Ctrl+Alt+/)" : "The whole song in the timeline (Ctrl+Alt+/)"))
+                    gSongLanes ? keys::withKeys(i18n::N_("Every lane in view (%s)"), {keys::cmdKey("view.zoomTracksFit", "Ctrl+Alt+/")}) : keys::withKeys(i18n::N_("The whole song in the timeline (%s)"), {keys::cmdKey("view.zoomTracksFit", "Ctrl+Alt+/")})))
       zoomSong(a, 0);
     zx -= pmW + 2;
     if (bevelButton(a, "##sgzin", "+", ImVec2(zx, o.y + 2), ImVec2(zx + pmW, o.y + 2 + zh), false,
-                    gSongLanes ? "Wider lanes (Ctrl+Alt+. or Ctrl+wheel up)" : "The timeline zoomed in (Ctrl+Alt+. or Ctrl+wheel up over it)"))
+                    gSongLanes ? keys::withKeys(i18n::N_("Wider lanes (%s or Ctrl+wheel up)"), {keys::cmdKey("view.zoomTracksIn", "Ctrl+Alt+.")}) : keys::withKeys(i18n::N_("The timeline zoomed in (%s or Ctrl+wheel up over it)"), {keys::cmdKey("view.zoomTracksIn", "Ctrl+Alt+.")})))
       zoomSong(a, 1);
     zx -= pmW + 2;
     if (bevelButton(a, "##sgzout", "-", ImVec2(zx, o.y + 2), ImVec2(zx + pmW, o.y + 2 + zh), false,
-                    gSongLanes ? "Narrower lanes, more in view (Ctrl+Alt+, or Ctrl+wheel down)" : "The timeline zoomed out (Ctrl+Alt+, or Ctrl+wheel down over it)"))
+                    gSongLanes ? keys::withKeys(i18n::N_("Narrower lanes, more in view (%s or Ctrl+wheel down)"), {keys::cmdKey("view.zoomTracksOut", "Ctrl+Alt+,")}) : keys::withKeys(i18n::N_("The timeline zoomed out (%s or Ctrl+wheel down over it)"), {keys::cmdKey("view.zoomTracksOut", "Ctrl+Alt+,")})))
       zoomSong(a, -1);
   }
   {  // the arranger or the lanes (the clips on the song's tracks, as they lie)
@@ -1695,6 +1781,7 @@ void song(App& a) {
           if (c && c->kind == ClipKind::Pattern) a.selectPattern(c->pattern);
         }
         if (dbl && !c && a.curPattern != kNoId) a.doc.addClip(a.curPattern, t, b0t);
+        if (dbl && c && c->kind == ClipKind::Audio) clipeditor::openFromDoubleClick(a, c->id);  // K-249: the Audio page edits it
         if (rclick && c) {
           gSongClip = c->id;
           menuClip = c->id;
@@ -1709,7 +1796,7 @@ void song(App& a) {
         if (ImGui::MenuItem(i18n::tr("Delete clip"))) {
           a.doc.removeClip(menuClip);
           if (gSongClip == menuClip) gSongClip = kNoId;
-        } else {
+        } else if (!renderui::clipMenu(a, menuClip)) {  // K-254: the order entry's pattern to a sample
           ImGui::Separator();
           devArrangementClipMenu(a, menuClip);
         }
@@ -1904,12 +1991,31 @@ void mixer(App& a) {
   const ImVec2 o = ImGui::GetCursorScreenPos(), av = ImGui::GetContentRegionAvail();
   char info[64];
   std::snprintf(info, sizeof info, "%s %s", i18n::tr("Tracks"), trk::hex2(static_cast<int>(s.mixer.size())).c_str());
-  const float th = titleBar(a, o, av.x, i18n::tr("Mix"), info);
+  // GitHub #58: hidden tracks have no row, a folded group one row, a narrow track a short row (name,
+  // mute and meter); the title bar's button lists what is hidden.
+  std::vector<size_t> all(s.mixer.size());
+  for (size_t i = 0; i < all.size(); ++i) all[i] = i;
+  const std::vector<mixhide::Entry> entries = mixhide::arrange(s, all);
+  const std::string hiddenText = mixhideui::hiddenLabel(s);
+  const float hiddenW = hiddenText.empty() ? 0.0f : std::ceil(a.fontRegular->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, hiddenText.c_str()).x) + 24;
+  const float th = titleBar(a, o, av.x, i18n::tr("Mix"), info, hiddenW > 0 ? hiddenW + 4 : 0.0f);
+  if (hiddenW > 0) {
+    const float ew = std::ceil(a.fontRegular->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, i18n::tr("Exit")).x) + 24;
+    const float x1 = o.x + av.x - 2 - ew - 4;
+    if (bevelButton(a, "##mixhidden", hiddenText.c_str(), ImVec2(x1 - hiddenW, o.y + 2), ImVec2(x1, o.y + th - 2), false,
+                    "Tracks hidden from the mixer (they still play): click to show them"))
+      ImGui::OpenPopup("##trkhidden");
+    devNoteRect("trkmixhidden");
+    if (ImGui::BeginPopup("##trkhidden")) {
+      mixhideui::hiddenMenu(a);
+      ImGui::EndPopup();
+    }
+  }
   const float rh0 = rowHeight();
   const ImVec2 b0(o.x, o.y + th + kGap), b1(o.x + av.x, o.y + std::max(av.y, th + rh0 * 3));
   // Few tracks: the rows grow (up to twice their height) so the page has no empty lower part.
-  const float rh = std::max(rh0, std::min(rh0 * 2, std::floor((b1.y - b0.y - 4) / static_cast<float>(std::max<size_t>(1, s.mixer.size())))));
-  const float contentH = static_cast<float>(s.mixer.size()) * rh + 4;
+  const float rh = std::max(rh0, std::min(rh0 * 2, std::floor((b1.y - b0.y - 4) / static_cast<float>(std::max<size_t>(1, entries.size())))));
+  const float contentH = static_cast<float>(entries.size()) * rh + 4;
   if (beginBody("##mix", b0, b1, contentH)) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const ImVec2 c0 = ImGui::GetCursorScreenPos();
@@ -1930,19 +2036,65 @@ void mixer(App& a) {
         }
       }
     }
-    for (size_t i = 0; i < s.mixer.size(); ++i) {
+    for (size_t row = 0; row < entries.size(); ++row) {
+      const mixhide::Entry& e = entries[row];
+      const size_t i = e.index;
       const MixerTrack& m = s.mixer[i];
-      const float y = std::round(c0.y + 2 + static_cast<float>(i) * rh);
+      const bool group = e.show == mixhide::Show::Group;
+      const float y = std::round(c0.y + 2 + static_cast<float>(row) * rh);
       ImGui::PushID(static_cast<int>(i));
-      const std::string name = m.name.empty() ? (i == 0 ? std::string(i18n::tr("Master")) : std::string(i18n::tr("Insert")) + " " + std::to_string(i)) : m.name;
+      std::string name = m.name.empty() ? (i == 0 ? std::string(i18n::tr("Master")) : std::string(i18n::tr("Insert")) + " " + std::to_string(i)) : m.name;
+      if (group) name = "> " + e.group + "  (" + std::to_string(e.members) + " " + i18n::tr("tracks") + ")";  // a folded group
+      const bool muted = group ? mixhide::groupMuted(s, e.group) : m.muted;
       float x = c0.x + 2;
-      nameField(a, ImVec2(x, y), ImVec2(x + nameW, y + rh - 1), static_cast<int>(i), m.color, name, a.selMixer == m.id, m.muted);
+      nameField(a, ImVec2(x, y), ImVec2(x + nameW, y + rh - 1), static_cast<int>(i), m.color, name, a.selMixer == m.id, muted);
       ImGui::SetCursorScreenPos(ImVec2(x, y));
-      if (ImGui::InvisibleButton("##name", ImVec2(nameW, rh - 1))) a.selMixer = m.id;
+      if (ImGui::InvisibleButton("##name", ImVec2(nameW, rh - 1)) && !group) a.selMixer = m.id;
+      if (group && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) mixhide::setGroupFolded(a.doc, e.group, false);
+      if (ImGui::IsItemHovered()) {
+        if (group) ui::Hint("A collapsed group: double-click to expand it \xC2\xB7 right-click: its menu");
+        else if (i > 0) ui::Hint("Click: select \xC2\xB7 right-click: hide the track, a short row, its group");
+      }
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && (group || i > 0)) {
+        if (!group) a.selMixer = m.id;
+        ImGui::OpenPopup("##trkmixrow");
+      }
+      if (ImGui::BeginPopup("##trkmixrow")) {
+        if (group) {
+          mixhideui::groupMenu(a, e.group);
+        } else {
+          mixhideui::trackItems(a, m.id, {m.id});
+          if (!a.doc.song().mixer[i].group.empty()) mixhideui::groupItem(a, a.doc.song().mixer[i].group);
+        }
+        ImGui::EndPopup();
+      }
       x += nameW + kGap;
-      if (lamp(a, "##mute", ImVec2(x, std::round(y + (rh - rh0) * 0.5f)), lampW, !m.muted, P.led, "Lit: the track plays \xC2\xB7 click: mute"))
-        a.doc.setParam(mixerParam(m.id, MixerParam::Mute), m.muted ? 0 : 1, false);
+      if (lamp(a, "##mute", ImVec2(x, std::round(y + (rh - rh0) * 0.5f)), lampW, !muted, P.led,
+               group ? i18n::tr("Lit: the group plays \xC2\xB7 click: mute every track in it") : i18n::tr("Lit: the track plays \xC2\xB7 click: mute"))) {
+        if (group) mixhide::setGroupMute(a.doc, e.group, !muted);
+        else a.doc.setParam(mixerParam(m.id, MixerParam::Mute), m.muted ? 0 : 1, false);
+      }
       x += lampW + trackerview::space::kGroup;
+      if (e.show != mixhide::Show::Strip) {  // a short row: the meter right after the lamp (a group: its loudest track)
+        float lvl = 0;
+        for (const MixerTrack& t2 : s.mixer)
+          if (group ? t2.group == e.group : t2.id == m.id) lvl = std::max(lvl, mixmeters::get(a, t2.id).peak());
+        lvl = std::clamp(lvl, 0.0f, 1.0f);
+        const float mx1 = c0.x + W - 2;
+        if (mx1 - x > 20) {
+          bevelBox(dl, ImVec2(x, y), ImVec2(mx1, y + rh - 1), true);
+          const int segs = std::max(4, static_cast<int>((mx1 - x - 4) / 5));
+          const int lit = static_cast<int>(std::round(lvl * static_cast<float>(segs)));
+          for (int k = 0; k < segs; ++k) {
+            const float sx = std::round(x + 2 + static_cast<float>(k) * 5);
+            const ImU32 col = k >= segs * 9 / 10 ? P.danger : k >= segs * 7 / 10 ? P.hot : P.led;
+            dl->AddRectFilled(ImVec2(sx, y + 3), ImVec2(sx + 3, y + rh - 4), k < lit ? col : theme::withAlpha(col, 0.12f));
+          }
+        }
+        ImGui::PopID();
+        continue;
+      }
+
       double nv = 0;
       char txt[16];
       std::snprintf(txt, sizeof txt, "%3d", static_cast<int>(std::lround(m.volume * 100)));

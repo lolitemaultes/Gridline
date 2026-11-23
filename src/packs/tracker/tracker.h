@@ -114,9 +114,12 @@ int copySampleInto(Edit& dst, int dslot, const Edit& src, int sslot);
 // K-106 (the classic "Xchg smp."): two slots trade their samples, the key map stays.
 void exchangeSampleData(Edit& e, int a, int b);
 // K-106: the file into slot `slot` (the Files screen's load into the selected sample): its keys,
-// the other samples and the instrument stay; an instrument with no sample takes it as addSample
-// does. The slot, -1 when nothing was loaded.
+// the other samples and the instrument stay; an instrument with no sample takes it on every key, as
+// addSample does (0.7.8: in `slot`, the entry picked; before, always the first). The slot, -1 when
+// nothing was loaded.
 int replaceSample(Edit& e, int slot, const std::string& path, int32_t frames, double rate, const std::string& name);
+// 0.7.8: the first entry with no sample (-1: all 16 used).
+int firstFreeEntry(const Edit& e);
 // K-106: the Clean up box's sample parts (the classic Trim): samples no key plays go (the rest move
 // up in order, the key map following), looped samples end at their loop's end (the sample's end
 // point; the file stays), samples play at 8 bits. Counts of each.
@@ -171,12 +174,20 @@ struct Wave {
   uint8_t loop = trk::kLoopOff;
   int32_t cutA = 0, cutB = 0;  // sample start / end (end 0 = the end)
   int relNote = 0;              // the sample's transpose (resampling keeps the pitch with it)
+  bool reverse = false;         // 0.7.8: the sample plays backwards (waveMinimise drops what precedes the loop)
   int32_t frames() const { return static_cast<int32_t>(L.size()); }
 };
 struct Span {
   int32_t a = 0, b = 0;  // frames [a, b)
   bool empty() const { return b <= a; }
 };
+// 0.7.8 (the Sample editor's To entry): frames r (file frames of slot `from`'s file) as entry `to`
+// (-1: the first free one): the same file played from r.a to r.b (a cut; nothing written), with
+// `from`'s volume, pan, fine tune, relative note and bit depth; its loop only when it lies inside the
+// range (else no loop); named after `from` with " part". A free entry gets no keys; a used one is
+// replaced and keeps its keys. `to` may be `from` (the sample becomes its range). The entry, or -1
+// (`from` empty or without a file, an empty range, no free entry).
+int regionToEntry(Edit& e, int from, Span r, int to);
 // The slot's wave from its file and settings (false when the file is not there).
 bool waveOf(const Edit& e, int slot, const InstrumentAux& inst, Wave& out);
 // The edits. Each returns false when it changes nothing (an empty range, nothing copied, ...).
@@ -196,7 +207,7 @@ bool waveCrossfadeLoop(Wave& w, int32_t fadeFrames);      // smooths the loop se
 bool waveFixDc(Wave& w, Span r);
 bool waveMix(Wave& w, const Wave& other, double balance);  // other mixed in from the start (0 = none, 1 = only it)
 bool waveEcho(Wave& w, int count, int32_t distance, double feedback, bool extend);
-bool waveMinimise(Wave& w);                               // drops what follows the loop
+bool waveMinimise(Wave& w);                               // drops what follows the loop (0.7.8: played backwards, what precedes it)
 // K-106 cp20 (the Sample editor's pencil): frames from `from` take `values` on every channel (a NaN
 // value keeps that frame); clamped to the wave, each value to -1..1. False when nothing changed.
 bool waveDraw(Wave& w, int32_t from, const std::vector<float>& values);
@@ -243,7 +254,8 @@ int headerLoadSample(App& a, ObjectId channel, const std::string& path);
 // while there is none. `tracker` false: not a Tracker Sampler.
 // cp20: `marks` beside `list`, one per row: kMarkLoop / kMarkPingPong (it loops), kMark8Bit (played at
 // 8 bits), kMarkMissing (its file is not there: moved, or still arriving from a collaborator).
-inline constexpr uint8_t kMarkLoop = 1, kMarkPingPong = 2, kMark8Bit = 4, kMarkMissing = 8;
+// 0.7.8: kMarkBackwards (the sample's Backwards option: it plays from its end).
+inline constexpr uint8_t kMarkLoop = 1, kMarkPingPong = 2, kMark8Bit = 4, kMarkMissing = 8, kMarkBackwards = 16;
 struct HeaderSamples {
   bool tracker = false;
   int sel = -1, sound = 0;
@@ -262,12 +274,26 @@ bool headerCopySample(App& a, ObjectId channel, ObjectId srcChannel, int srcSlot
 bool headerExchangeSamples(App& a, ObjectId channel, int srcSlot);
 // The name of a channel's sample slot ("" when the slot is empty or it is not a Tracker Sampler).
 std::string headerSampleName(App& a, ObjectId channel, int slot);
+// 0.7.8: the sample entries (the classic sample list 01 .. 10 of the current instrument). The entry
+// picked (an empty one picked in the list, else the selected sample; -1: not a Tracker Sampler).
+int headerEntry(App& a, ObjectId channel);
+// The previous / next entry, empty ones too (Ctrl+Alt+Up / Down), stopping at 01 and 10.
+void headerStepEntry(App& a, ObjectId channel, int d);
+// The file into entry `slot` (it is picked first): headerLoadSample's rules. The entry, or -1.
+int headerLoadSampleInto(App& a, ObjectId channel, const std::string& path, int slot);
+// An entry's menu (one undo step each): clear it, duplicate it to the next free entry (selected),
+// copy it over entry `other` (selected), exchange it with `other`, rename it, map every key to it.
+enum class EntryOp { Clear, Duplicate, CopyTo, Exchange, Rename, MapAllKeys };
+bool headerEntryOp(App& a, ObjectId channel, EntryOp op, int slot, int other = -1, const std::string& name = {});
+// The range dragged on the selected sample as entry `to` (-1: the next free one; regionToEntry), one
+// undo step; the new entry is selected. The entry, or -1 (with the reason on the status line).
+int headerRegionToEntry(App& a, ObjectId channel, int to);
 
 // K-106 cp18 (K-316 plan 6, the user's Q2): a plain Sampler's state (one audio file of `frames`
 // frames at `rate`) as a Tracker Sampler's: the file as sample 01 on every key (named `name`), its
 // root key and fine tune, start and end, loop points and type, volume and pan, and its amplitude
-// envelope as a volume envelope (sustain at the decay's end). Time stretch, filter, reverse and the
-// rest have no counterpart and are not carried over. Not a Sampler (or no file): a default state.
+// envelope as a volume envelope (sustain at the decay's end), and (0.7.8) its reverse as Backwards.
+// Time stretch, filter and the rest have no counterpart and are not carried over. Not a Sampler (or no file): a default state.
 PluginState fromSamplerState(const PluginState& sampler, int32_t frames, double rate, const std::string& name);
 
 // K-129: the MIDI pitch of key `key` (0 = C0 .. 95 = B7) of the editor's key strip.

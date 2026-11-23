@@ -1,4 +1,5 @@
 #include "Midi.h"
+#include "../core/ThreadName.h"
 #include <algorithm>
 #include <atomic>
 #include <bitset>
@@ -8,6 +9,7 @@
 #include <sstream>
 #include "../../third_party/rtmidi/RtMidi.h"
 #include "MidiBackend.h"
+#include "UiWake.h"
 #include "../core/Json.h"
 #include "../core/MidiTemplates.h"
 #include "../core/Project.h"
@@ -78,7 +80,7 @@ double MidiManager::clockNow() { return nowSec(); }
 MidiManager::MidiManager(AudioEngine& engine, bool systemPorts)
     : engine_(engine), systemPorts_(systemPorts), fake_(systemPorts && midiFakeMode()) {
   packs::platter::hub::setTapped(true);  // J-150: DJ decks read every input from the hub
-  sender_ = std::thread([this] { senderLoop(); });
+  sender_ = std::thread([this] { gl::threads::setName("gl-midi-send"); senderLoop(); });
   if (systemPorts_) {
     opener_ = std::make_unique<MidiOpener>(probeMidiService);
   } else {  // MIDI-1118: no MIDI client is created; the "service" answers at once with no devices
@@ -92,6 +94,7 @@ MidiManager::MidiManager(AudioEngine& engine, bool systemPorts)
 
 MidiManager::~MidiManager() {
   quit_ = true;
+  senderWake_.post();
   if (sender_.joinable()) sender_.join();
   try {
     for (auto& p : ins_)
@@ -438,6 +441,7 @@ void MidiManager::load(const std::string& file) {
       c.port = jsonInt<int>(x.num("port", 0));
       c.controllerType = x.text("controller");
       c.notes = x.num("notes", 1) != 0;
+      c.surface = x.text("surface");
       if (!c.name.empty()) inputCfg.push_back(c);
     }
   output = j.text("output");
@@ -478,6 +482,7 @@ void MidiManager::save(const std::string& file) const {
     x.object["port"] = Json::makeNumber(c.port);
     x.object["controller"] = Json::makeString(c.controllerType);
     x.object["notes"] = Json::makeNumber(c.notes ? 1 : 0);
+    if (!c.surface.empty()) x.object["surface"] = Json::makeString(c.surface);
     ins.array.push_back(std::move(x));
   }
   j.object["inputs"] = std::move(ins);
@@ -510,6 +515,17 @@ void MidiManager::save(const std::string& file) const {
   writeFileAtomic(file, jsonStringify(j) + "\n");
 }
 
+// K-142 (0.7.8 follow-up): the input thread wakes the interface for what it takes from here
+// (controllers, remote actions, control surfaces, the activity light, a sync start or stop), so a
+// hidden Gridline answers at once; the notes themselves went straight to the engine. A clock or time
+// code stream (24 or 100 messages a second) wakes it at most ten times a second.
+void MidiManager::pokeSync(double t) {
+  const double last = syncPokeAt_.load(std::memory_order_relaxed);
+  if (last >= 0 && t - last < 0.1) return;
+  syncPokeAt_.store(t, std::memory_order_relaxed);
+  uiwake::poke();
+}
+
 void MidiManager::onMessage(const std::string& port, int portNumber, const std::vector<unsigned char>& msg, bool syncPort) {
   if (msg.empty()) return;
   const double t = nowSec();
@@ -518,25 +534,72 @@ void MidiManager::onMessage(const std::string& port, int portNumber, const std::
   uint8_t s = msg[0], a = msg.size() > 1 ? msg[1] : 0, b = msg.size() > 2 ? msg[2] : 0;
   const auto src = static_cast<SyncSource>(syncSrc_.load());
   if (src == SyncSource::Mtc && syncPort && (s == 0xF1 || s == 0xF0)) {  // MI-02: time code (quarter / full frames)
-    std::lock_guard<std::mutex> lk(followerMu_);
-    if (mtc_.message(msg.data(), msg.size(), t)) return;
-  }
-  if (s == 0xF0) {  // sysex: MIDI Machine Control transport
-    RemoteAction act = parseMmc(msg);
-    if (act != RemoteAction::None) {
-      std::lock_guard<std::mutex> lk(mu_);
-      if (actions_.size() < 256) actions_.push_back(act);
+    bool taken = false;
+    {
+      std::lock_guard<std::mutex> lk(followerMu_);
+      taken = mtc_.message(msg.data(), msg.size(), t);
     }
+    if (taken) {  // K-142 (follow-up): a full frame (a locate) at once, quarter frames paced
+      if (s == 0xF0) uiwake::poke();
+      else pokeSync(t);
+      return;
+    }
+  }
+  if (s == 0xF0) {  // sysex: MIDI Machine Control transport; every message is kept for control surfaces
+    RemoteAction act = parseMmc(msg);
+    std::lock_guard<std::mutex> lk(mu_);
+    if (act != RemoteAction::None && actions_.size() < 256) actions_.push_back(act);
+    if (sysex_.size() < 64) sysex_.push_back({port, std::vector<uint8_t>(msg.begin(), msg.end()), t});
+    uiwake::poke();  // K-142 (follow-up)
     return;
   }
   if (s >= 0xF0) {  // clock, start/continue/stop, song position
     if (src == SyncSource::Clock && syncPort) {
-      std::lock_guard<std::mutex> lk(followerMu_);
-      follower_.message(s, a, b, t);
+      {
+        std::lock_guard<std::mutex> lk(followerMu_);
+        follower_.message(s, a, b, t);
+      }
+      if (s == 0xF8) pokeSync(t);  // K-142 (follow-up): the tempo it implies
+      else if (s != 0xFE) uiwake::poke();  // start, continue, stop, song position
     }
     return;
   }
   if (s < 0x80) return;
+  std::shared_ptr<SurfacePads> surf;  // a control surface's port: to the UI only, its pads translated
+  {
+    std::lock_guard<std::mutex> lk(surfMu_);
+    if (auto it = surfaces_.find(port); it != surfaces_.end()) surf = it->second;
+  }
+  if (surf) {
+    const int kind = s & 0xF0;
+    MidiEvent played;
+    if (notes && (s & 0x0F) == surf->channel.load() && (kind == 0x90 || kind == 0x80 || kind == 0xA0)) {
+      int16_t& held = surf->held[a & 0x7F];
+      int pitch = held, vel = b;
+      if (kind == 0x90 && b > 0) {
+        pitch = held = surf->pitch[a & 0x7F].load();
+        vel = applyVelocityCurve(static_cast<VelocityCurve>(surf->velocity.load()), b, fixedVel_.load());
+      } else if (kind != 0xA0) {
+        held = -1;
+      }
+      if (pitch >= 0 && pitch < 128) {
+        played = {static_cast<uint8_t>(kind == 0x80 ? 0x90 : kind), static_cast<uint8_t>(pitch),
+                  static_cast<uint8_t>(kind == 0x80 ? 0 : vel), port, portNumber, t, true};
+        while (engineLock_.test_and_set(std::memory_order_acquire)) {
+        }
+        engine_.midiEvent(played.status, played.data1, played.data2);
+        engineLock_.clear(std::memory_order_release);
+      }
+    }
+    lastActivity_.store(t);
+    {
+      std::lock_guard<std::mutex> lk(mu_);
+      if (pending_.size() < 4096) pending_.push_back({s, a, b, port, portNumber, t});
+      if (played.status && pending_.size() < 4096) pending_.push_back(played);
+    }
+    uiwake::poke();  // K-142 (follow-up)
+    return;
+  }
   const uint32_t deck = packs::platter::hub::deviceId(port);
   packs::platter::hub::push(deck, s, a, b);  // J-150: DJ decks
   const int kind = s & 0xF0;
@@ -554,8 +617,11 @@ void MidiManager::onMessage(const std::string& port, int portNumber, const std::
     engineLock_.clear(std::memory_order_release);
   }
   lastActivity_.store(t);
-  std::lock_guard<std::mutex> lk(mu_);
-  if (pending_.size() < 4096) pending_.push_back({s, a, b, port, portNumber, t});
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (pending_.size() < 4096) pending_.push_back({s, a, b, port, portNumber, t});
+  }
+  uiwake::poke();  // K-142 (follow-up)
 }
 
 std::vector<MidiEvent> MidiManager::poll() {
@@ -563,6 +629,23 @@ std::vector<MidiEvent> MidiManager::poll() {
   std::vector<MidiEvent> out;
   out.swap(pending_);
   return out;
+}
+
+std::vector<SysexEvent> MidiManager::pollSysex() {
+  std::lock_guard<std::mutex> lk(mu_);
+  std::vector<SysexEvent> out;
+  out.swap(sysex_);
+  return out;
+}
+
+void MidiManager::claimSurfacePort(const std::string& port, std::shared_ptr<SurfacePads> pads) {
+  std::lock_guard<std::mutex> lk(surfMu_);
+  surfaces_[port] = std::move(pads);
+}
+
+void MidiManager::releaseSurfacePort(const std::string& port) {
+  std::lock_guard<std::mutex> lk(surfMu_);
+  surfaces_.erase(port);
 }
 
 std::vector<RemoteAction> MidiManager::pollActions() {
@@ -588,7 +671,22 @@ void MidiManager::sendRaw(const std::vector<unsigned char>& m) {
   }
 }
 
+std::vector<std::vector<unsigned char>> MidiManager::fakeSent(const std::string& device, bool clear) {
+  std::lock_guard<std::mutex> lk(outMu_);
+  auto it = fakeSent_.find(device);
+  if (it == fakeSent_.end()) return {};
+  auto r = it->second;
+  if (clear) it->second.clear();
+  return r;
+}
+
 void MidiManager::sendTo(const std::string& device, const std::vector<unsigned char>& m) {
+  if (fake_ && !device.empty() && !m.empty() && midiFakePresent(true, device)) {  // k078-flkey: tests read it back
+    std::lock_guard<std::mutex> lk(outMu_);
+    auto& v = fakeSent_[device];
+    if (v.size() < 20000) v.push_back(m);
+    return;
+  }
   if (device.empty() || m.empty() || !serviceAvailable() || !systemPorts_ || fake_) {
     return;
   }
@@ -665,23 +763,25 @@ int MidiManager::openDeviceOutputs() {
 
 // Sends the engine's sync messages when they are heard: the engine stamps them
 // with sample positions; the block they belong to started at blockTime() and
-// reaches the speakers after the output latency.
+// reaches the speakers after the output latency. K-142: the thread sleeps until the
+// next message is due, and while there is none until the engine pushes one.
 void MidiManager::senderLoop() {
   std::vector<unsigned char> bytes;
-  while (!quit_.load()) {
-    MidiOutEvent e;
-    while (engine_.syncEvents().peek(e)) {
-      const double sr = engine_.sampleRate();
-      const double due = engine_.blockTime() + static_cast<double>(e.sample - engine_.blockSample()) / sr +
-                         outputLatency.load() + syncOffsetUs_.load() * 1e-6;
-      const double now = nowSec();
-      if (due > now + 0.0005 && due < now + 1.0) break;  // not yet
-      engine_.syncEvents().pop(e);
-      bytes.assign(e.data, e.data + e.size);
-      sendRaw(bytes);
-    }
-    std::this_thread::sleep_for(std::chrono::microseconds(500));
-  }
+  SyncSenderHooks h;
+#if defined(__APPLE__)
+  h.coarseTimers = !makeSyncSenderRealtime();  // its timed waits end on time
+#endif
+  h.due = [this](const MidiOutEvent& e) {
+    return engine_.blockTime() + static_cast<double>(e.sample - engine_.blockSample()) / engine_.sampleRate() + outputLatency.load() +
+           syncOffsetUs_.load() * 1e-6;
+  };
+  h.now = [] { return nowSec(); };
+  h.send = [this, &bytes](const MidiOutEvent& e) {
+    bytes.assign(e.data, e.data + e.size);
+    sendRaw(bytes);
+  };
+  h.woke = [] { gl::threads::woke(); };  // K-142: CPU report
+  runSyncSender(engine_.syncEvents(), senderWake_, quit_, h);
 }
 
 }  // namespace gl

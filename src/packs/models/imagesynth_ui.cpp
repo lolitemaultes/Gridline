@@ -13,6 +13,7 @@
 #include "models_widgets.h"
 #include "../../core/Platform.h"
 #include "../../core/SafeCast.h"
+#include "../../core/I18n.h"
 
 namespace gl::packs::models {
 
@@ -49,7 +50,7 @@ void openImageDialog(App& a, const PluginTarget& t) {
     const PluginState* cur = tt.state(a.doc.song());
     if (!cur) return;
     std::string err;
-    if (!loadImageFile(path, &err)) {
+    if (!loadImageFile(path, &err) && err != kImageNotReadYet) {  // (a network drive's file: read in the background)
       a.setHint("Could not load image: " + err);
       return;
     }
@@ -155,7 +156,8 @@ void imageView(App& a, const PluginTarget& t, const PluginState& st, ImVec2 size
   if (ImGui::BeginDragDropTarget()) {
     if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("GL_FILE")) {
       std::string path(static_cast<const char*>(pl->Data), static_cast<size_t>(pl->DataSize));
-      if (isImageFile(path) && loadImageFile(path)) {
+      std::string why;
+      if (isImageFile(path) && (loadImageFile(path, &why) || why == kImageNotReadYet)) {
         PluginState ns = st;
         ns.data = makeImageData(path, imageDataCanvas(st.data));
         ns.params[ImSource] = SrcFile;
@@ -224,8 +226,10 @@ void drawImageSynth(App& a, const PluginTarget& t, float width) {
     if (flk::btn(c, "##open", 190, 85, 50, 31, "OPEN", false)) openImageDialog(a, t);
     if (ImGui::IsItemHovered()) a.setHint("Load an image (BMP · PPM/PGM · TGA)");
     std::string nm = path.empty() ? "drop a file on the picture" : std::filesystem::path(path).filename().string();
-    bool bad = !path.empty() && !loadImageFile(path);
-    flk::lcd(c, 246, 89, 210, 24, bad ? "cannot read this file" : nm.c_str());
+    std::string why;
+    const bool bad = !path.empty() && !loadImageFile(path, &why);
+    const bool waiting = bad && why == kImageNotReadYet;
+    flk::lcd(c, 246, 89, 210, 24, waiting ? i18n::tr("reading the file") : bad ? "cannot read this file" : nm.c_str());
   } else {
     int& brush = brushes()[t.key()];
     if (brush <= 0) brush = 15;

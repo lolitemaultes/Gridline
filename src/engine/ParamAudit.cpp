@@ -104,7 +104,31 @@ const InertDoc kInert[] = {
     {"gl.bussend", "Bus", "bus destination (routing)"},
     {"gl.busreturn", "Bus", "bus source (routing)"},
     {"gl.splitter", "Send numbering", "send destination numbering (routing)"},
-    {"gl.tideline", "MIDI port", "MIDI trigger source port (routing; covered by test_tideline)"},
+    {"gl.shaper", "Pattern notes*", "notes that pick the pattern: source, port, first note (needs the engine's notes; covered by test_k257b)"},
+    {"gl.shaper", "Pattern chain", "plays the chain of the step text (empty in the audit's states; covered by test_k257b)"},
+    // Terrace: the lanes play the step text, which is at rest (every step open) in the audit's states.
+    {"gl.terrace", "Band * steps", "lane length: moves steps of the step text (at rest in the audit; covered by test_terrace)"},
+    {"gl.terrace", "Band * step size", "lane step size: moves steps of the step text (at rest in the audit; covered by test_terrace)"},
+    {"gl.terrace", "Band * swing", "lane swing: moves steps of the step text (at rest in the audit; covered by test_terrace)"},
+    {"gl.terrace", "Band * depth", "lane depth: scales the steps of the step text (at rest in the audit; covered by test_terrace)"},
+    {"gl.terrace", "Band * curve", "lane curve: bends between steps of the step text (at rest in the audit; covered by test_terrace)"},
+    {"gl.terrace", "Length", "pattern length: the chain, Auto step sizes and LFO restarts (covered by test_terrace)"},
+    {"gl.terrace", "Pattern", "picks one of 8 patterns of the step text (all at rest in the audit; covered by test_terrace)"},
+    {"gl.terrace", "Pattern chain", "plays the chain of the step text (empty in the audit; covered by test_terrace)"},
+    {"gl.terrace", "LFO * speed", "the LFO's rate in Hz when not synced; an LFO moves only what a route sends it to (covered by test_terrace)"},
+    {"gl.terrace", "LFO * restart", "where the LFO starts again; moves only what a route sends it to (covered by test_terrace)"},
+    {"gl.terrace", "Sidechain listens to", "needs a sidechain input or notes (covered by test_terrace)"},
+    {"gl.terrace", "Sidechain threshold", "needs a sidechain input (covered by test_terrace)"},
+    {"gl.terrace", "Sidechain release", "needs a sidechain input or notes (covered by test_terrace)"},
+    {"gl.terrace", "Sidechain amount", "needs a sidechain input and a route (covered by test_terrace)"},
+    {"gl.terrace", "Notes restart the lanes", "needs the engine's notes (covered by test_terrace)"},
+    {"gl.terrace", "Note source", "notes from ports, a channel or the MIDI input (needs the engine's notes; covered by test_terrace)"},
+    {"gl.terrace", "Note port", "notes from one MIDI Out port (needs the engine's notes; covered by test_terrace)"},
+    {"gl.terrace", "Notes pick patterns", "needs the engine's notes (covered by test_terrace)"},
+    {"gl.terrace", "Pattern notes from", "needs the engine's notes (covered by test_terrace)"},
+    {"gl.terrace", "Route * target", "a route with no source sends nothing (covered by test_terrace)"},
+    {"gl.terrace", "Route * amount", "a route with no source sends nothing (covered by test_terrace)"},
+    {"gl.tideline", "MIDI port","MIDI trigger source port (routing; covered by test_tideline)"},
     {"gl.tideline", "MIDI note", "MIDI trigger note filter (needs MIDI input; covered by test_tideline)"},
     {"gl.tideline", "Note source", "MIDI trigger source: ports / channel / MIDI input (needs the engine's notes; covered by test_tideline_sources)"},
     {"gl.tideline", "MIDI note to", "MIDI trigger note range (needs MIDI input; covered by test_tideline / test_tideline_sources)"},
@@ -1212,9 +1236,109 @@ const std::string& auditSample() {
   return path;
 }
 
+// A small SoundFont for the Patch Player, written once to the temp folder: a sample with a hit
+// and a looped tone (220 Hz, whole cycles in the loop) and four patches that sound different
+// (bank 0 programs 0 and 1, bank 1, the drum bank 128), so Bank and Patch have something to choose.
+const std::string& auditSoundFont() {
+  static const std::string& path = *new std::string([] {
+    std::error_code ec;
+    const std::string p = (std::filesystem::temp_directory_path(ec) / ("gridline_param_audit_" + std::to_string(platform::processId()) + ".sf2")).string();
+    struct B {
+      std::vector<uint8_t> b;
+      void u8(unsigned v) { b.push_back(static_cast<uint8_t>(v)); }
+      void u16(unsigned v) { u8(v & 0xFF), u8((v >> 8) & 0xFF); }
+      void u32(uint32_t v) { u16(v & 0xFFFF), u16(v >> 16); }
+      void id(const char* t) { b.insert(b.end(), t, t + 4); }
+      void name(const std::string& t, size_t n) {
+        for (size_t i = 0; i < n; ++i) u8(i < t.size() && i + 1 < n ? static_cast<uint8_t>(t[i]) : 0u);
+      }
+      void add(const B& o) { b.insert(b.end(), o.b.begin(), o.b.end()); }
+    };
+    auto chunk = [](const char* id, const B& body) {
+      B c;
+      c.id(id), c.u32(static_cast<uint32_t>(body.b.size())), c.add(body);
+      if (body.b.size() & 1) c.u8(0);
+      return c;
+    };
+    auto list = [&](const char* type, std::initializer_list<B> kids) {
+      B body;
+      body.id(type);
+      for (const auto& k : kids) body.add(k);
+      return chunk("LIST", body);
+    };
+    // One second: a decaying hit over the tone, then the tone alone (looped from 0.5 s).
+    const uint32_t n = 44100, ls = 22050;
+    uint32_t sd = 0x5F2A1u;
+    B smpl;
+    for (uint32_t i = 0; i < n; ++i) {
+      const double t = static_cast<double>(i) / 44100.0;
+      double x = 0;
+      for (int h = 1; h <= 5; ++h) x += 0.3 / h * std::sin(2 * kPi * 220.0 * h * t);
+      if (t < 0.2) x += 0.5 * std::exp(-t * 30) * (std::sin(2 * kPi * (60 + 200 * std::exp(-t * 40)) * t) + 0.4 * nz(sd));
+      smpl.u16(static_cast<uint16_t>(static_cast<int16_t>(std::lround(std::clamp(x * 0.6, -1.0, 1.0) * 32000))));
+    }
+    for (int i = 0; i < 46; ++i) smpl.u16(0);
+    B shdr;
+    shdr.name("audit", 20), shdr.u32(0), shdr.u32(n), shdr.u32(ls), shdr.u32(n), shdr.u32(44100), shdr.u8(57), shdr.u8(0), shdr.u16(0), shdr.u16(1);
+    shdr.name("EOS", 20);
+    for (int i = 0; i < 26; ++i) shdr.u8(0);
+    // Instruments: one zone each over every key; gens {operator, amount}, sampleID last.
+    const std::vector<std::vector<std::pair<unsigned, int>>> insts = {
+        {{54, 1}, {53, 0}},                                       // looped tone
+        {{54, 1}, {51, 7}, {8, 9000}, {53, 0}},                   // a fifth up, darker
+        {{54, 1}, {51, 12}, {36, -1200}, {37, 300}, {53, 0}},     // an octave up, decaying to -30 dB in 0.5 s
+        {{54, 0}, {57, 1}, {53, 0}},                              // drum: the hit, played once
+    };
+    B inst, ibag, imod, igen;
+    unsigned bags = 0, gens = 0;
+    for (size_t k = 0; k < insts.size(); ++k) {
+      inst.name("audit " + std::to_string(k), 20), inst.u16(bags);
+      ibag.u16(gens), ibag.u16(0), ++bags;
+      for (const auto& g : insts[k]) igen.u16(g.first), igen.u16(static_cast<uint16_t>(static_cast<int16_t>(g.second))), ++gens;
+    }
+    inst.name("EOI", 20), inst.u16(bags);
+    ibag.u16(gens), ibag.u16(0);
+    igen.u32(0);
+    for (int i = 0; i < 10; ++i) imod.u8(0);
+    const int presets[][2] = {{0, 0}, {0, 1}, {1, 0}, {128, 0}};  // bank, program
+    B phdr, pbag, pmod, pgen;
+    for (unsigned k = 0; k < 4; ++k) {
+      phdr.name("Audit " + std::to_string(k), 20), phdr.u16(static_cast<unsigned>(presets[k][1])), phdr.u16(static_cast<unsigned>(presets[k][0]));
+      phdr.u16(k), phdr.u32(0), phdr.u32(0), phdr.u32(0);
+      pbag.u16(k), pbag.u16(0);
+      pgen.u16(41), pgen.u16(k);
+    }
+    phdr.name("EOP", 20), phdr.u16(0), phdr.u16(0), phdr.u16(4), phdr.u32(0), phdr.u32(0), phdr.u32(0);
+    pbag.u16(4), pbag.u16(0);
+    pgen.u32(0);
+    for (int i = 0; i < 10; ++i) pmod.u8(0);
+    B ifil, inam;
+    ifil.u16(2), ifil.u16(1);
+    inam.name("Audit", 8);
+    B body;
+    body.id("sfbk");
+    body.add(list("INFO", {chunk("ifil", ifil), chunk("INAM", inam)}));
+    body.add(list("sdta", {chunk("smpl", smpl)}));
+    body.add(list("pdta", {chunk("phdr", phdr), chunk("pbag", pbag), chunk("pmod", pmod), chunk("pgen", pgen), chunk("inst", inst),
+                           chunk("ibag", ibag), chunk("imod", imod), chunk("igen", igen), chunk("shdr", shdr)}));
+    const B file = chunk("RIFF", body);
+    if (FILE* f = std::fopen(p.c_str(), "wb")) {
+      std::fwrite(file.b.data(), 1, file.b.size(), f);
+      std::fclose(f);
+    }
+    std::atexit([] {
+      std::error_code e;
+      std::filesystem::remove(auditSoundFont(), e);
+    });
+    return p;
+  }());
+  return path;
+}
+
 PluginState defaultsFor(const PluginInfo& info) {
   PluginState s = defaultPluginState(info.type);
-  if (info.usesSample && s.data.empty()) s.data = auditSample();
+  if (info.type == "gl.patchplayer") s.data = auditSoundFont();
+  else if (info.usesSample && s.data.empty()) s.data = auditSample();
   if (info.type == "gl.pads") {  // a sample on every pad and velocity layer
     static const char* kit[] = {"kick", "snare", "clap", "hat", "openhat", "tomlo", "tomhi", "rim"};
     std::string d;

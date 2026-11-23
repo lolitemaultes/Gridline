@@ -1,5 +1,6 @@
 // Gridline - J-131: the Gridline Suite in the app. See SuiteUi.h.
 #include "SuiteUi.h"
+#include "../core/ThreadName.h"
 #include "Keys.h"
 #include <algorithm>
 #include <cstdlib>
@@ -77,7 +78,7 @@ void startCopy(bool remove) {
   auto job = std::make_shared<Job>();
   job->removing = remove;
   s.job = job;
-  std::thread([job, todo, remove] {
+  std::thread([job, todo, remove] { gl::threads::setName("gl-suite");
     std::string err;
     bool ok = true;
     for (const auto& st : todo) ok = (remove ? suite::remove(st, &err) : suite::install(st, &err)) && ok;

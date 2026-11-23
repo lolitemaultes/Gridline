@@ -191,6 +191,9 @@ struct BreakState {
 
 class ChaterFx final : public Effect {
  public:
+  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible) once its rolling
+  // capture holds nothing but silence (a break replays it), never while Hold keeps a loop.
+  bool restsWhenFaint() const override { return !holdOn_ && silentIn_ >= kCatch; }
   ChaterFx() {
     info_ = findPlugin(kType);
     catchL_.assign(kCatch, 0), catchR_.assign(kCatch, 0);
@@ -347,6 +350,7 @@ class ChaterFx final : public Effect {
   int64_t w_ = 0;       // next catch write index
   int64_t frame_ = 0;   // frames processed (control blocks align to it)
   bool holdOn_ = false;
+  int64_t silentIn_ = 0;  // K-142: frames in a row of exact silence in
   int holdLen_ = 1;
   // params
   std::vector<double> page_, base_, E_;
@@ -1302,6 +1306,11 @@ void ChaterFx::noiseSample(int64_t fi, float& l, float& r) {
 
 void ChaterFx::process(const PluginState& state, const ProcessContext& ctx, float* L, float* R, int n) {
   if (!info_ || n <= 0) return;
+  {  // K-142: frames in a row of exact silence in (restsWhenFaint)
+    bool z = true;
+    for (int i = 0; i < n && z; ++i) z = L[i] == 0.f && R[i] == 0.f;
+    silentIn_ = z ? silentIn_ + n : 0;
+  }
   if (ctx.sampleRate != sr_) setRate(ctx.sampleRate);
   readParams(state);
   // latency follows the Halo engine setting (constant while it does not change)

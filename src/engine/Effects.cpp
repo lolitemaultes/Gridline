@@ -315,6 +315,17 @@ class PassFx final : public Effect {  // analyzer: display only (publishes stere
     for (int i = 0; i < k; ++i) out[i] = m_[i];
     return k;
   }
+  // K-142 (0.7.8): it passes the sound untouched, so it rests by the hosted rule; its display reads
+  // the slot's scope tap, which the engine fills with the silence it passes at rest. Its smoothed
+  // statistics take each left-out block as silence (what process() would do with it).
+  bool restsWhenFaint() const override { return true; }
+  void rested(const PluginState&, const ChannelAux&, const ProcessContext&, int n) override {
+    accL_ = accL_ * 0.9, accR_ = accR_ * 0.9, accLR_ = accLR_ * 0.9, accN_ = accN_ * 0.9 + n;
+    m_[0] = m_[1] = static_cast<float>(gainToDb(0.0));
+    double den = std::sqrt(accL_ * accR_);
+    m_[2] = den > 1e-12 ? static_cast<float>(accLR_ / den) : 1.f;
+    m_[3] = static_cast<float>(10.0 * std::log10(std::max(1e-12, (accL_ + accR_) * 0.5 / std::max(1.0, accN_))));
+  }
 
  private:
   double accL_ = 0, accR_ = 0, accLR_ = 0, accN_ = 0;

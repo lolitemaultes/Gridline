@@ -14,6 +14,7 @@
 #include "../../core/Json.h"
 #include "../Packs.h"
 #include "plasma_dsp.h"
+#include "../rest_render.h"
 
 namespace gl::packs::plasma {
 
@@ -749,6 +750,9 @@ class PlasmaGen final : public Generator {
     if (po >= 0) noteOutId(0xFFFF0000u | static_cast<uint32_t>(po));
   }
 
+  // K-142: at rest its idle render runs on unheard (packs/rest_render.h), so the next note
+  // finds every free-running part where it would have been.
+  void rested(int n) override { packs::restRender(n, [this](float* l, float* r, int m) { render(l, r, m); }); }
   void render(float* L, float* R, int n) override {
     if (!aux_) return;
     // the editor reads the live data (liveView): asleep, the unrouted LFOs and displays keep moving for it

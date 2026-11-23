@@ -4,8 +4,10 @@
 #include "ClipGain.h"
 #include "Fades.h"
 #include "Groove.h"
+#include "Lanes.h"
 #include "ProjectInterop.h"
 #include "TrackModes.h"
+#include "NoteVibrato.h"
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
@@ -28,6 +30,7 @@
 #include "../host/CrossFormat.h"
 #include "TrackIconSet.h"
 #include "TrackModes.h"
+#include "NoteVibrato.h"
 #include "StageRooms.h"
 
 namespace gl {
@@ -220,6 +223,14 @@ Json pluginToJson(const PluginState& p) {
     for (int k : p.shown) sh.array.push_back(num(k));
     j.object["shown"] = std::move(sh);
   }
+  if (!p.warp.empty()) {  // a sample's warp markers (core/SampleWarp.h)
+    Json w;
+    if (jsonParse(p.warp, w) && w.is(Json::Type::Object)) j.object["warp"] = std::move(w);
+  }
+  if (!p.loupeWarp.empty()) {  // Loupe's warp markers not applied yet (core/SampleWarp.h)
+    Json w;
+    if (jsonParse(p.loupeWarp, w) && w.is(Json::Type::Object)) j.object["loupeWarp"] = std::move(w);
+  }
   return j;
 }
 
@@ -242,6 +253,32 @@ Json freezeToJson(const FreezeRecord& f) {
   j.object["seconds"] = num(f.seconds);
   if (f.latency) j.object["latency"] = num(f.latency);
   return j;
+}
+
+// K-169 / K-245: the eight macro knobs of a channel or a mixer track (Null: all unnamed at 0, not written).
+Json macrosToJson(const std::array<LayerMacro, kLayerMacros>& ms) {
+  bool any = false;
+  for (const LayerMacro& m : ms) any = any || !m.name.empty() || m.value != 0;
+  if (!any) return Json();
+  Json jm = Json::makeArray();
+  for (const LayerMacro& m : ms) {
+    Json o = Json::makeObject();
+    if (!m.name.empty()) o.object["name"] = Json::makeString(m.name);
+    if (m.value != 0) o.object["value"] = Json::makeNumber(m.value);
+    jm.array.push_back(std::move(o));
+  }
+  return jm;
+}
+
+void macrosFromJson(const Json* jm, std::array<LayerMacro, kLayerMacros>& ms) {
+  ms = {};
+  if (!jm || !jm->is(Json::Type::Array)) return;
+  for (size_t k = 0; k < jm->array.size() && k < static_cast<size_t>(kLayerMacros); ++k) {
+    const Json& o = jm->array[k];
+    if (!o.is(Json::Type::Object)) continue;
+    ms[k].name = o.text("name").substr(0, 24);
+    ms[k].value = static_cast<float>(std::clamp(o.num("value", 0), 0.0, 1.0));
+  }
 }
 
 FreezeRecord freezeFromJson(const Json* j) {
@@ -331,19 +368,8 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
       zs.array.push_back(std::move(jz));
     }
     if (!zs.array.empty()) jc.object["layerZones"] = std::move(zs);
-    bool macros = false;
-    for (const LayerMacro& m : c.macros) macros = macros || !m.name.empty() || m.value != 0;
-    if (macros) {
-      Json jm = Json::makeArray();
-      for (const LayerMacro& m : c.macros) {
-        Json o = Json::makeObject();
-        if (!m.name.empty()) o.object["name"] = str(m.name);
-        if (m.value != 0) o.object["value"] = num(m.value);
-        jm.array.push_back(std::move(o));
-      }
-      jc.object["macros"] = std::move(jm);
-    }
   }
+  if (Json jm = macrosToJson(c.macros); !jm.is(Json::Type::Null)) jc.object["macros"] = std::move(jm);  // K-169; K-245: every channel
   if (c.group >= 0) jc.object["group"] = num(c.group);
   if (!c.fullKeyRange()) {  // J-31 key range
     jc.object["keyLo"] = num(c.keyLo);
@@ -356,6 +382,7 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
   if (c.freeze.frozen()) jc.object["freeze"] = freezeToJson(c.freeze);  // K-87
   if (c.hibernate) jc.object["hibernate"] = boolean(true);
   if (c.keepRunning) jc.object["keepRunning"] = boolean(true);  // K-277
+  if (c.rackHidden) jc.object["rackHidden"] = boolean(true);  // GitHub #58
 }
 
 void channelExtrasFromJson(const Json& jc, Channel& c) {
@@ -420,13 +447,7 @@ void channelExtrasFromJson(const Json& jc, Channel& c) {
       z.solo = flag(jz, "solo");
       if (!z.full()) c.layerZones.push_back(z);
     }
-  if (const Json* jm = jc.find("macros"); jm && jm->is(Json::Type::Array))
-    for (size_t k = 0; k < jm->array.size() && k < static_cast<size_t>(kLayerMacros); ++k) {
-      const Json& o = jm->array[k];
-      if (!o.is(Json::Type::Object)) continue;
-      c.macros[k].name = o.text("name");
-      c.macros[k].value = static_cast<float>(std::clamp(o.num("value", 0), 0.0, 1.0));
-    }
+  macrosFromJson(jc.find("macros"), c.macros);
   c.group = jsonInt<int>(std::clamp(jc.num("group", -1), -1.0, 1e6));
   c.keyLo = jsonInt<int>(std::clamp(jc.num("keyLo", 0), 0.0, 127.0));  // J-31
   c.keyHi = jsonInt<int>(std::clamp(jc.num("keyHi", 127), 0.0, 127.0));
@@ -438,6 +459,7 @@ void channelExtrasFromJson(const Json& jc, Channel& c) {
   c.freeze = freezeFromJson(jc.find("freeze"));  // K-87
   c.hibernate = flag(jc, "hibernate");
   c.keepRunning = flag(jc, "keepRunning");  // K-277
+  c.rackHidden = flag(jc, "rackHidden");  // GitHub #58
 }
 
 void noteToJson(const Note& n, Json& jn) {
@@ -450,6 +472,7 @@ void noteToJson(const Note& n, Json& jn) {
   if (n.color != d.color) jn.object["color"] = num(n.color);
   if (n.slide) jn.object["slide"] = boolean(true);
   if (n.porta) jn.object["porta"] = boolean(true);
+  if (n.program >= 0) jn.object["program"] = num(n.program);  // K-348
   if (n.muted) jn.object["muted"] = boolean(true);
   if (n.group > 0) jn.object["group"] = num(n.group);  // J-31
   if (n.frac != 0.f) jn.object["frac"] = num(n.frac);  // J-159
@@ -473,6 +496,26 @@ void noteToJson(const Note& n, Json& jn) {
   line(n.bend, "bend");
   line(n.pressure, "pressure");
   line(n.timbre, "timbre");
+  if (n.vib.active()) {  // K-262: the note's vibrato, the fields away from their defaults
+    const NoteVibrato d;
+    Json v = Json::makeObject();
+    auto f = [&](const char* k, float x, float def) {
+      if (x != def) v.object[k] = num(x);
+    };
+    f("depth", n.vib.depth, -1);
+    f("rate", n.vib.rate, d.rate);
+    if (n.vib.sync) v.object["sync"] = num(1);
+    f("delay", n.vib.delay, d.delay);
+    f("fadeIn", n.vib.fadeIn, d.fadeIn);
+    f("fadeOut", n.vib.fadeOut, d.fadeOut);
+    f("inCurve", n.vib.fadeInCurve, 0);
+    f("outCurve", n.vib.fadeOutCurve, 0);
+    f("shape", n.vib.shape, 0);
+    f("phase", n.vib.phase, 0);
+    f("rateEnd", n.vib.rateEnd, 0);
+    f("centre", n.vib.centre, d.centre);
+    jn.object["vib"] = std::move(v);
+  }
   if (!n.tracker.empty()) {  // K-76: the note's tracker cells, as hex
     static const char* hex = "0123456789abcdef";
     std::string h;
@@ -488,6 +531,7 @@ void noteFromJson(const Json& e, Note& n) {
   n.release = jsonInt<int>(std::clamp(e.num("release", kNoteReleaseDefault), 0.0, 127.0));
   n.modX = jsonInt<int>(std::clamp(e.num("modX", kNoteModCentre), 0.0, static_cast<double>(kNoteModMax)));
   n.modY = jsonInt<int>(std::clamp(e.num("modY", kNoteModCentre), 0.0, static_cast<double>(kNoteModMax)));
+  n.program = jsonInt<int>(std::clamp(e.num("program", -1), -1.0, 127.0));  // K-348
   n.color = jsonInt<int>(std::clamp(e.num("color", 0), 0.0, static_cast<double>(kNoteColors - 1)));
   n.slide = flag(e, "slide");
   n.porta = flag(e, "porta");
@@ -519,6 +563,27 @@ void noteFromJson(const Json& e, Note& n) {
   line(n.bend, "bend", -1e3, 1e3);
   line(n.pressure, "pressure", 0.0, 1.0);
   line(n.timbre, "timbre", -0.5, 0.5);
+  n.vib = NoteVibrato{};
+  if (const Json* v = e.find("vib"); v && v->is(Json::Type::Object)) {  // K-262
+    const NoteVibrato d;
+    auto f = [&](const char* k, float def) {
+      const double x = v->num(k, def);
+      return std::isfinite(x) ? static_cast<float>(std::clamp(x, -1e6, 1e6)) : def;
+    };
+    n.vib.sync = flag(*v, "sync");
+    n.vib.depth = f("depth", 0);
+    n.vib.rate = f("rate", d.rate);
+    n.vib.delay = f("delay", d.delay);
+    n.vib.fadeIn = f("fadeIn", d.fadeIn);
+    n.vib.fadeOut = f("fadeOut", d.fadeOut);
+    n.vib.fadeInCurve = f("inCurve", 0);
+    n.vib.fadeOutCurve = f("outCurve", 0);
+    n.vib.shape = static_cast<uint8_t>(std::clamp(f("shape", 0), 0.0f, 255.0f));
+    n.vib.phase = f("phase", 0);
+    n.vib.rateEnd = f("rateEnd", 0);
+    n.vib.centre = f("centre", d.centre);
+    vib::clamp(n.vib);
+  }
   n.tracker.clear();
   if (const Json* t = e.find("trk"); t && t->is(Json::Type::String) && t->str.size() % 2 == 0 && t->str.size() <= 2 * 65536) {  // K-76
     auto nib = [](char c) { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1; };
@@ -542,6 +607,8 @@ PluginState pluginFromJson(const Json* j) {
   p.ins = j->text("ins");
   if (const Json* o = j->find("original"); o && o->is(Json::Type::Object)) p.original = jsonCompact(*o);
   if (const Json* o = j->find("ident"); o && o->is(Json::Type::Object)) p.ident = jsonCompact(*o);
+  if (const Json* o = j->find("warp"); o && o->is(Json::Type::Object)) p.warp = jsonCompact(*o);
+  if (const Json* o = j->find("loupeWarp"); o && o->is(Json::Type::Object)) p.loupeWarp = jsonCompact(*o);
   if (const Json* a = j->find("params"); a && a->is(Json::Type::Array))
     for (const auto& v : a->array) p.params.push_back(static_cast<float>(v.is(Json::Type::Number) ? v.number : 0));
   if (const Json* a = j->find("shown"); a && a->is(Json::Type::Array))  // K-112c
@@ -836,10 +903,10 @@ void stepPropsToJson(const Pattern& p, Json& jp) {
 void stepPropsFromJson(const Json& jp, Pattern& p, const Song& s) {
   const Json* obj = jp.find("stepProps");
   if (!obj || !obj->is(Json::Type::Object)) return;
-  const size_t total = static_cast<size_t>(p.bars) * static_cast<size_t>(p.stepsPerBar);
   for (const auto& [key, arr] : obj->object) {
     ObjectId ch = static_cast<ObjectId>(std::strtoul(key.c_str(), nullptr, 10));
     if (!s.channel(ch) || !arr.is(Json::Type::Array)) continue;
+    const size_t total = static_cast<size_t>(lanes::steps(p, ch));  // K-255: a row on its own grid has its own count
     std::vector<StepProps> row;
     for (const auto& e : arr.array) {
       if (!e.is(Json::Type::Array) || e.array.size() < 8) continue;
@@ -869,6 +936,26 @@ void patternExtrasToJson(const Pattern& p, Json& jp) {
     jp.object["meterNum"] = num(p.meterNum);
     jp.object["meterDen"] = num(p.meterDen);
   }
+  if (p.linkChannel != kNoId) {  // 0.7.8: a linked pattern (written only when linked)
+    Json lk = Json::makeObject();
+    lk.object["channel"] = num(p.linkChannel);
+    char hb[24];
+    std::snprintf(hb, sizeof hb, "%016llx", static_cast<unsigned long long>(p.linkHash));
+    lk.object["hash"] = str(hb);
+    if (p.linkCycles != 1) lk.object["cycles"] = num(p.linkCycles);
+    jp.object["link"] = std::move(lk);
+  }
+  if (!p.lanes.empty()) {  // K-255: lanes with a grid or mode of their own ({"grid": 5, "runOn": true})
+    Json obj = Json::makeObject();
+    for (const auto& [ch, l] : p.lanes) {
+      if (l.isDefault()) continue;
+      Json jl = Json::makeObject();
+      if (l.grid > 0) jl.object["grid"] = num(l.grid);
+      if (l.mode == LaneMode::RunOn) jl.object["runOn"] = boolean(true);
+      obj.object[std::to_string(ch)] = std::move(jl);
+    }
+    if (!obj.object.empty()) jp.object["lanes"] = std::move(obj);
+  }
   if (!p.stepLoop.empty()) {  // J-31: per-channel step loop lengths
     Json loops = Json::makeObject();
     for (const auto& [ch, n] : p.stepLoop)
@@ -897,11 +984,31 @@ void patternExtrasToJson(const Pattern& p, Json& jp) {
 
 // Lanes whose target no longer exists, or that repeat a target, are dropped.
 void patternExtrasFromJson(const Json& jp, Pattern& p, const Song& s) {
+  if (const Json* obj = jp.find("lanes"); obj && obj->is(Json::Type::Object))  // K-255 (before the step properties: a lane's row length)
+    for (const auto& [k, v] : obj->object) {
+      const ObjectId ch = static_cast<ObjectId>(std::strtoul(k.c_str(), nullptr, 10));
+      if (!s.channel(ch) || !v.is(Json::Type::Object)) continue;
+      PatternLane l;
+      l.grid = jsonInt<int>(std::clamp(v.num("grid", 0), 0.0, static_cast<double>(kMaxStepsPerBar)));
+      if (l.grid == p.stepsPerBar) l.grid = 0;
+      if (const Json* ro = v.find("runOn"); ro && ro->is(Json::Type::Bool) && ro->boolean) l.mode = LaneMode::RunOn;
+      if (!l.isDefault()) p.lanes[ch] = l;
+    }
   stepPropsFromJson(jp, p, s);
   if (const Json* lp = jp.find("loop"); lp && lp->is(Json::Type::Bool)) p.loop = lp->boolean;  // Q-1
   p.meterNum = jsonInt<int>(std::clamp(jp.num("meterNum", 0), 0.0, 32.0));  // K-179
   p.meterDen = jsonInt<int>(std::clamp(jp.num("meterDen", 0), 0.0, 32.0));
   if (p.meterNum <= 0 || p.meterDen <= 0 || !normalizeMeter(p.meterNum, p.meterDen, s.ppq)) p.meterNum = p.meterDen = 0;
+  p.linkChannel = kNoId, p.linkHash = 0, p.linkCycles = 1;
+  if (const Json* lk = jp.find("link"); lk && lk->is(Json::Type::Object)) {  // 0.7.8: a linked pattern (its channel must exist)
+    const ObjectId ch = jsonInt<ObjectId>(std::max(0.0, lk->num("channel", 0)));
+    const unsigned long long h = std::strtoull(lk->text("hash", "").c_str(), nullptr, 16);
+    if (s.channel(ch) && h != 0) {
+      p.linkChannel = ch;
+      p.linkHash = static_cast<uint64_t>(h);
+      p.linkCycles = jsonInt<int>(std::clamp(lk->num("cycles", 1), 1.0, 64.0));
+    }
+  }
   if (const Json* loops = jp.find("stepLoop"); loops && loops->is(Json::Type::Object))  // J-31
     for (const auto& [k, v] : loops->object) {
       const ObjectId ch = static_cast<ObjectId>(std::strtoul(k.c_str(), nullptr, 10));
@@ -1534,8 +1641,12 @@ Json mixerTrackToJson(const MixerTrack& m) {
   if (!m.threaded) jm.object["threaded"] = boolean(false);
   if (!m.group.empty()) jm.object["group"] = str(m.group);
   if (!m.group.empty() && m.groupLink) jm.object["groupLink"] = boolean(true);  // K-238
+  if (m.hidden) jm.object["hidden"] = boolean(true);  // GitHub #58: how the mixer shows the strip
+  if (m.narrow) jm.object["narrow"] = boolean(true);
+  if (!m.group.empty() && m.groupFolded) jm.object["groupFolded"] = boolean(true);
   if (m.freeze.frozen()) jm.object["freeze"] = freezeToJson(m.freeze);  // K-87
   if (m.hibernate) jm.object["hibernate"] = boolean(true);
+  if (Json mc = macrosToJson(m.macros); !mc.is(Json::Type::Null)) jm.object["macros"] = std::move(mc);  // K-245
   return jm;
 }
 
@@ -1719,6 +1830,7 @@ Json songToJson(const Song& s, bool withFlOrigin) {
     if (l.button != RemoteButton::Value) jl.object["button"] = num(static_cast<int>(l.button));
     if (l.action != RemoteAction::None) jl.object["action"] = num(static_cast<int>(l.action));
     if (!l.oscAddress.empty()) jl.object["osc"] = Json::makeString(l.oscAddress);  // OSC links
+    if (l.hiRes) jl.object["hires"] = num(1);  // a 14-bit CC
     links.array.push_back(std::move(jl));
   }
   j.object["links"] = std::move(links);
@@ -1737,9 +1849,62 @@ Json songToJson(const Song& s, bool withFlOrigin) {
     if (!l.formula.empty()) jl.object["formula"] = str(l.formula);
     jl.object["smoothMs"] = num(l.smoothMs);
     jl.object["enabled"] = boolean(l.enabled);
+    // K-247 (LFO links): written only when not the default, so links made before read and write as before.
+    if (l.amount != 0.0f) jl.object["amount"] = num(l.amount);
+    if (l.mode != kModAbsolute) jl.object["mode"] = num(l.mode);
+    if (l.direction != kModBothWays) jl.object["direction"] = num(l.direction);
+    if (l.invert) jl.object["invert"] = boolean(true);
     mods.array.push_back(std::move(jl));
   }
   j.object["modLinks"] = std::move(mods);
+  if (!s.lfos.empty()) {  // K-247: the LFO board (written only when it has LFOs; each field only when not the default)
+    Json lfos = Json::makeArray();
+    const SongLfo d;
+    for (const auto& l : s.lfos) {
+      Json jl = Json::makeObject();
+      jl.object["id"] = num(l.id);
+      if (!l.name.empty()) jl.object["name"] = str(l.name);
+      if (l.colour != d.colour) jl.object["colour"] = num(l.colour);
+      if (l.on != d.on) jl.object["on"] = boolean(l.on);
+      if (l.shape != d.shape) jl.object["shape"] = num(static_cast<int>(l.shape));
+      if (l.pulseWidth != d.pulseWidth) jl.object["pulseWidth"] = num(l.pulseWidth);
+      if (l.randomSteps != d.randomSteps) jl.object["randomSteps"] = num(l.randomSteps);
+      if (l.seed != d.seed) jl.object["seed"] = num(static_cast<double>(l.seed));
+      if (!l.points.empty()) {
+        Json pts = Json::makeArray();
+        for (const auto& p : l.points) {
+          Json jp = Json::makeArray();
+          jp.array.push_back(num(p.x));
+          jp.array.push_back(num(p.y));
+          jp.array.push_back(num(p.curve));
+          pts.array.push_back(std::move(jp));
+        }
+        jl.object["points"] = std::move(pts);
+      }
+      if (l.drawnSteps != d.drawnSteps) jl.object["drawnSteps"] = boolean(l.drawnSteps);
+      if (l.tempoSync != d.tempoSync) jl.object["tempoSync"] = boolean(l.tempoSync);
+      if (l.rateNote != d.rateNote) jl.object["rateNote"] = num(l.rateNote);
+      if (l.rateKind != d.rateKind) jl.object["rateKind"] = num(l.rateKind);
+      if (l.rateHz != d.rateHz) jl.object["rateHz"] = num(l.rateHz);
+      if (l.phase != d.phase) jl.object["phase"] = num(l.phase);
+      if (l.depth != d.depth) jl.object["depth"] = num(l.depth);
+      if (l.offset != d.offset) jl.object["offset"] = num(l.offset);
+      if (l.smoothMs != d.smoothMs) jl.object["smoothMs"] = num(l.smoothMs);
+      if (l.fadeIn != d.fadeIn) jl.object["fadeIn"] = num(l.fadeIn);
+      if (l.unipolar != d.unipolar) jl.object["unipolar"] = boolean(l.unipolar);
+      if (l.restart != d.restart) jl.object["restart"] = num(static_cast<int>(l.restart));
+      if (l.noteChannel != d.noteChannel) jl.object["noteChannel"] = num(l.noteChannel);
+      // 0.7.8: Chaos and Random sources (an LFO writes none of these).
+      if (l.kind != d.kind) jl.object["kind"] = num(static_cast<int>(l.kind));
+      if (l.character != d.character) jl.object["character"] = num(l.character);
+      if (l.trigger != d.trigger) jl.object["trigger"] = num(static_cast<int>(l.trigger));
+      if (l.centred != d.centred) jl.object["centred"] = boolean(l.centred);
+      if (l.quantise != d.quantise) jl.object["quantise"] = num(l.quantise);
+      if (l.roll != d.roll) jl.object["roll"] = num(static_cast<double>(l.roll));
+      lfos.array.push_back(std::move(jl));
+    }
+    j.object["lfos"] = std::move(lfos);
+  }
   if (!s.channelGroups.empty()) {  // channel rack display groups (written only when used)
     Json groups = Json::makeArray();
     for (const auto& g : s.channelGroups) groups.array.push_back(str(g));
@@ -1922,8 +2087,12 @@ void mixerTrackFromJson(const Json& jm, MixerTrack& m) {
   m.threaded = flag(jm, "threaded", true);
   m.group = jm.text("group");
   m.groupLink = !m.group.empty() && flag(jm, "groupLink");  // K-238
+  m.hidden = flag(jm, "hidden");  // GitHub #58
+  m.narrow = flag(jm, "narrow");
+  m.groupFolded = !m.group.empty() && flag(jm, "groupFolded");
   m.freeze = freezeFromJson(jm.find("freeze"));  // K-87
   m.hibernate = flag(jm, "hibernate");
+  macrosFromJson(jm.find("macros"), m.macros);  // K-245
 }
 
 // ---- J-111: one element at a time. Collaboration applies a collaborator's
@@ -2245,15 +2414,68 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
       l.button = static_cast<RemoteButton>(en("button", static_cast<int>(RemoteButton::Count)));
       l.action = static_cast<RemoteAction>(en("action", static_cast<int>(RemoteAction::Count)));
       l.oscAddress = jl.text("osc");
+      l.hiRes = jl.num("hires", 0) != 0 && l.source == RemoteSource::CC && l.cc < 32;
+      if (l.source == RemoteSource::Nrpn || l.source == RemoteSource::Rpn)  // a parameter number of 14 bits
+        l.cc = jsonInt<int>(std::clamp(jl.num("cc", 1), 0.0, 16383.0));
       if (l.source == RemoteSource::Osc && l.oscAddress.empty()) continue;  // an OSC link without an address
       // Drop links to deleted targets (action links have no target).
       if (l.action != RemoteAction::None || describeParam(s, {l.owner, l.index})) s.links.push_back(l);
+    }
+  if (const Json* lfos = j.find("lfos"); lfos && lfos->is(Json::Type::Array))  // K-247: the LFO board (before the links that use it)
+    for (const auto& jl : lfos->array) {
+      if (s.lfos.size() >= static_cast<size_t>(kMaxSongLfos) || !jl.is(Json::Type::Object)) break;
+      SongLfo l;
+      if (!takeId(jl, l.id)) return fail(err, "LFO has missing or duplicate id");
+      l.name = jl.text("name");
+      if (l.name.size() > 32) l.name.resize(32);
+      l.colour = jsonInt<int>(std::clamp(jl.num("colour", 0), 0.0, static_cast<double>(kLfoColours - 1)));
+      l.on = flag(jl, "on", true);
+      l.shape = static_cast<LfoShape>(jsonInt<int>(std::clamp(jl.num("shape", 0), 0.0, static_cast<double>(static_cast<int>(LfoShape::Count) - 1))));
+      l.pulseWidth = static_cast<float>(std::clamp(jl.num("pulseWidth", 0.5), 0.02, 0.98));
+      l.randomSteps = jsonInt<int>(std::clamp(jl.num("randomSteps", 4), 1.0, 16.0));
+      l.seed = jsonInt<uint32_t>(std::clamp(jl.num("seed", 1), 0.0, 4294967295.0));
+      if (const Json* pts = jl.find("points"); pts && pts->is(Json::Type::Array))
+        for (const auto& jp : pts->array) {
+          if (!jp.is(Json::Type::Array) || jp.array.size() < 2 || l.points.size() >= static_cast<size_t>(kLfoMaxPoints)) continue;
+          auto at = [&](size_t k, double lo, double hi) {
+            return k < jp.array.size() && jp.array[k].is(Json::Type::Number) ? static_cast<float>(std::clamp(jp.array[k].number, lo, hi)) : 0.0f;
+          };
+          l.points.push_back({at(0, 0, 1), at(1, -1, 1), at(2, -1, 1)});
+        }
+      l.drawnSteps = flag(jl, "drawnSteps", false);
+      l.tempoSync = flag(jl, "tempoSync", true);
+      l.rateNote = jsonInt<int>(std::clamp(jl.num("rateNote", 5), 0.0, 9.0));
+      l.rateKind = jsonInt<int>(std::clamp(jl.num("rateKind", 0), 0.0, 2.0));
+      l.rateHz = static_cast<float>(std::clamp(jl.num("rateHz", 1), 0.01, 40.0));
+      l.phase = static_cast<float>(std::clamp(jl.num("phase", 0), 0.0, 360.0));
+      l.depth = static_cast<float>(std::clamp(jl.num("depth", 1), 0.0, 1.0));
+      l.offset = static_cast<float>(std::clamp(jl.num("offset", 0), -1.0, 1.0));
+      l.smoothMs = static_cast<float>(std::clamp(jl.num("smoothMs", 0), 0.0, 500.0));
+      l.fadeIn = static_cast<float>(std::clamp(jl.num("fadeIn", 0), 0.0, 8.0));
+      l.unipolar = flag(jl, "unipolar", false);
+      l.restart = static_cast<LfoRestart>(jsonInt<int>(std::clamp(jl.num("restart", 1), 0.0, static_cast<double>(static_cast<int>(LfoRestart::Count) - 1))));
+      l.noteChannel = jsonInt<ObjectId>(std::clamp(jl.num("noteChannel", 0), 0.0, 4e9));
+      if (!s.channel(l.noteChannel)) l.noteChannel = kNoId;
+      // 0.7.8: Chaos and Random. A kind this version does not know is left out with its links (the
+      // links' source is then missing): it never plays as something else.
+      const double kind = jl.num("kind", 0);
+      if (kind < 0 || kind >= static_cast<double>(static_cast<int>(LfoKind::Count))) continue;
+      l.kind = static_cast<LfoKind>(jsonInt<int>(kind));
+      if (l.restart == LfoRestart::EachBar && l.kind != LfoKind::Chaos) l.restart = LfoRestart::OnPlay;
+      l.character = static_cast<float>(std::clamp(jl.num("character", 0.5), 0.0, 1.0));
+      l.trigger = static_cast<RandomTrigger>(jsonInt<int>(std::clamp(jl.num("trigger", 0), 0.0, static_cast<double>(static_cast<int>(RandomTrigger::Count) - 1))));
+      l.centred = flag(jl, "centred", false);
+      l.quantise = jsonInt<int>(std::clamp(jl.num("quantise", 0), 0.0, 16.0));
+      if (l.quantise < 2) l.quantise = 0;
+      l.roll = jsonInt<uint32_t>(std::clamp(jl.num("roll", 0), 0.0, 4294967295.0));
+      if (l.kind == LfoKind::Random) l.tempoSync = l.trigger != RandomTrigger::Hz;
+      s.lfos.push_back(std::move(l));
     }
   if (const Json* mods = j.find("modLinks"); mods && mods->is(Json::Type::Array))
     for (const auto& jl : mods->array) {
       ModLink l;
       l.sourceOwner = jsonInt<ObjectId>(jl.num("sourceOwner", 0));
-      l.sourceSlot = jsonInt<int>(std::clamp(jl.num("sourceSlot", -1), static_cast<double>(kLayerMacroSlot), static_cast<double>(kEffectSlots - 1)));  // K-169: -2 = layer macro
+      l.sourceSlot = jsonInt<int>(std::clamp(jl.num("sourceSlot", -1), static_cast<double>(kSongLfoSlot), static_cast<double>(kEffectSlots - 1)));  // K-169: -2 = layer macro; K-247: -3 = a board LFO
       l.sourceOutput = jsonInt<int>(std::clamp(jl.num("sourceOutput", 0), 0.0, static_cast<double>(kMaxControllerOutputs - 1)));
       l.owner = jsonInt<ObjectId>(jl.num("owner", 0));
       l.index = jsonInt<uint32_t>(jl.num("index", 0));
@@ -2263,9 +2485,14 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
       l.formula = jl.text("formula");
       l.smoothMs = static_cast<float>(std::clamp(jl.num("smoothMs", 0), 0.0, 10000.0));
       l.enabled = flag(jl, "enabled", true);
-      // Drop links whose source or target no longer exists, and duplicate targets.
+      l.amount = static_cast<float>(std::clamp(jl.num("amount", 0), -1.0, 1.0));  // K-247
+      l.mode = jl.num("mode", 0) >= 0.5 ? kModAround : kModAbsolute;
+      l.direction = static_cast<uint8_t>(jsonInt<int>(std::clamp(jl.num("direction", 0), 0.0, static_cast<double>(kModDownOnly))));
+      l.invert = flag(jl, "invert", false);
+      // Drop links whose source or target no longer exists, and duplicate targets (K-247: an LFO's
+      // second link to the same target).
       if (!describeParam(s, {l.owner, l.index}) || !isControllerSource(s, l.sourceOwner, l.sourceSlot)) continue;
-      if (findModLink(s, l.owner, l.index)) continue;
+      if (l.isLfo() ? findLfoLink(s, l.sourceOwner, l.owner, l.index) != nullptr : findModLink(s, l.owner, l.index) != nullptr) continue;
       s.modLinks.push_back(std::move(l));
     }
   if (!songExtrasFromJson(j, s, takeId, err)) return false;  // live area, arrangements (see block above)

@@ -323,7 +323,7 @@ void testNonBlocking() {
 
 void testState() {
   const PluginInfo* info = findPlugin("gl.slicer");
-  expect(info && info->params.size() == static_cast<size_t>(pp::SlCount) && info->params[pp::SlMode].choices.size() == 7 &&
+  expect(info && info->params.size() == static_cast<size_t>(pp::SlCount) && info->params[pp::SlMode].choices.size() == 8 &&
              info->params[pp::SlGridDiv].choices.size() == kg::DivCount && info->params[pp::SlGridMeter].choices.size() == kg::MeterCount,
          "state: the grid settings are gl.slicer parameters");
   // States saved before J-190 open with the grid defaults and their own mode.

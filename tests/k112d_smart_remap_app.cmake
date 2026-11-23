@@ -33,7 +33,7 @@ file(WRITE "${OUT}/input.txt" "5 toasts clear
 53 mod shift 0
 54 mod super 0
 58 parts smart state
-60 save ${OUT}/moved.gridline.json
+60 save \"${OUT}/moved.gridline.json\"
 62 parts smart focus 2
 64 parts smart learn param
 66 parts smart touch 0 6

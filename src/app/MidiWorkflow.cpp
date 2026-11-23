@@ -4,6 +4,8 @@
 #include <array>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include "../../third_party/imgui/imgui.h"
 #include "MenuParityUi.h"
@@ -17,11 +19,14 @@
 #include "LiveLook.h"
 #include "LogicPlugins.h"
 #include "MidiArm.h"
+#include "MidiUi.h"
 #include "RecordMoreUi.h"
 #include "../core/Automation.h"
 #include "../core/Meter.h"
 #include "../packs/PacksUi.h"
+#include "FlkeyUi.h"
 #include "MackieUi.h"
+#include "Surfaces.h"
 #include "TrackerView.h"
 
 namespace gl {
@@ -52,6 +57,18 @@ void sourceFrom(ControllerLink& l, const MidiMessage& m) {
   l.midiChannel = m.channel();
 }
 
+// k078-linkctl: NRPN / RPN and 14-bit CCs of every input (links on them, and the link dialog).
+MidiControlDecoder gDecoder;
+LinkCapture gCapture;
+bool gCaptureNotes = false;
+
+// Keys and pads count when the control is a button (an on / off) or the link triggers an action.
+bool wantsNotes(const Song& s, const ControllerLink& l) {
+  if (l.action != RemoteAction::None) return true;
+  const auto d = describeParam(s, {l.owner, l.index});
+  return d && d->kind == ParamKind::Toggle;
+}
+
 double stepOf(const ParamDesc& d) {
   if (d.kind == ParamKind::Toggle) return 1.0;
   if (d.kind == ParamKind::Choice && d.choices.size() > 1) return 1.0 / static_cast<double>(d.choices.size() - 1);
@@ -79,6 +96,18 @@ void App::publishMidi() {
   midi->publish(rack);
 }
 
+namespace linkctl {
+LinkCapture& capture() { return gCapture; }
+bool& notes() { return gCaptureNotes; }
+void start(App& a) {
+  (void)a;
+  LinkCapture::Options o;
+  o.notes = gCaptureNotes;
+  gCapture.start(MidiManager::clockNow(), o);
+}
+bool surfacePort(const std::string& port) { return flkeyOwns(port) || mackieOwns(port) || surfaceui::owns(port); }
+}  // namespace linkctl
+
 void App::openRemoteDialog(ParamId target) {
   const auto& links = doc.song().links;
   for (size_t i = 0; i < links.size(); ++i)
@@ -95,6 +124,8 @@ void App::openRemoteDialog(ParamId target) {
   midiLearning = true;
   midiLearnTarget = target;
   showRemoteDialog = true;
+  gCaptureNotes = wantsNotes(doc.song(), remoteEdit);
+  linkctl::start(*this);  // k078-linkctl: it opens listening, and only what is moved from now on counts
 }
 
 void App::openRemoteDialog(RemoteAction action) {
@@ -111,6 +142,8 @@ void App::openRemoteDialog(RemoteAction action) {
   remoteListening = true;
   midiLearning = false;
   showRemoteDialog = true;
+  gCaptureNotes = true;
+  linkctl::start(*this);
 }
 
 void App::openRemoteDialogForLink(int index) {
@@ -118,7 +151,9 @@ void App::openRemoteDialogForLink(int index) {
   if (index < 0 || index >= static_cast<int>(links.size())) return;
   remoteEdit = links[static_cast<size_t>(index)];
   remoteEditIndex = index;
-  remoteListening = false;
+  remoteListening = false;  // an existing link opens as it is ("Listen again" captures another control)
+  gCapture.reset();
+  gCaptureNotes = wantsNotes(doc.song(), remoteEdit);
   midiLearning = remoteEdit.action == RemoteAction::None;
   midiLearnTarget = {remoteEdit.owner, remoteEdit.index};
   showRemoteDialog = true;
@@ -463,18 +498,82 @@ void App::processMidi() {
   for (RemoteAction act : midi->pollActions()) runAction(act, true);  // MMC
   controllerScriptsTick(*this);  // J-24: device scripts (load, onIdle, onRefresh)
   mackieTick(*this);             // K-214: Mackie Control / HUI surfaces
+  surfaceui::tick(*this);        // pad controllers with a DAW mode (Surfaces.h)
+  flkeyTick(*this);              // k078-flkey: Novation FLkey keyboards (their DAW ports)
 
   const Song& song = doc.song();
+  // k078-linkctl: the link dialog listens to every input, ahead of the surfaces, scripts and links.
+  const bool listening = remoteListening && showRemoteDialog;
+  if (listening && !gCapture.listening()) linkctl::start(*this);  // (Listen again)
+  if (!listening && gCapture.listening()) gCapture.stop();
+  std::vector<ControlEvent> decoded;
+  // Runs the links a message drives; `portOnly`: only links made on this very port (a surface's control).
+  auto runLinks = [&](const MidiEvent& e, const MidiMessage& m, bool portOnly) {
+    bool handled = false;
+    for (const ControllerLink& l : doc.song().links) {
+      if (portOnly && (l.port < 0 || l.port != m.port)) continue;
+      // A 14-bit CC, NRPN or RPN link runs on the decoded events; the others on the message itself.
+      const ControlEvent* ev = nullptr;
+      if (linkUsesDecoder(l)) {
+        for (const auto& d : decoded)
+          if (remoteMatchesEvent(l, d)) ev = &d;
+        if (!ev) continue;
+      } else if (!remoteMatches(l, m)) {
+        continue;
+      }
+      handled = true;
+      if (ev && ev->delta != 0 && l.encoder == RemoteEncoder::Absolute) continue;  // an increment button on an absolute link
+      const double in = ev ? (ev->delta != 0 ? static_cast<double>(ev->delta) : remoteEventInput(l, *ev)) : 0.0;
+      if (l.action != RemoteAction::None) {
+        if (ev ? remote.triggerOsc(l, in, false) : remote.trigger(l, m)) runAction(l.action);
+        continue;
+      }
+      ParamId pid{l.owner, l.index};
+      auto d = describeParam(doc.song(), pid);
+      auto v = getParam(doc.song(), pid);
+      if (!d || !v) continue;
+      double out = 0;
+      if (ev ? remote.processOsc(l, in, false, d->toNormalized(*v), &out, stepOf(*d)) : remote.process(l, m, d->toNormalized(*v), &out, stepOf(*d))) {
+        const double value = d->fromNormalized(out);
+        automationFromController() = true;  // N58-01: recorded below, with the event's time
+        if (recorder.active())  // K-226: part of the recording's undo step
+          recorder.edit(doc, [&] { doc.setParam(pid, value, true); });
+        else
+          doc.setParam(pid, value, true);
+        automationFromController() = false;
+        lastCcTime_ = now;
+        if (recorder.active() && !automationCapturing(*this) && recordFilterTakes(recorder.options(), m.status, m.d1)) {  // K-123: the input filter
+          recorder.controller(pid, out, recordTick(e.time));  // else captured by the automation recorder
+        }
+      }
+    }
+    return handled;
+  };
+  static const bool trace = std::getenv("GRIDLINE_MIDI_TRACE") != nullptr;  // K-142 (follow-up): when a turn takes each
   for (const auto& e : midi->poll()) {
+    if (trace) std::printf("midi: taken %02X %d %d from \"%s\"\n", e.status, e.data1, e.data2, e.port.c_str()), std::fflush(stdout);
     MidiMessage m{e.status, e.data1, e.data2, e.portNumber};
     const int kind = m.kind();
     menuparity::logMidi(*this, m);  // J-27: score logger
-
-    // The remote control dialog takes the next control moved.
-    if (remoteListening && showRemoteDialog && learnable(m)) {
-      sourceFrom(remoteEdit, m);
-      if (e.portNumber >= 0 && remoteEdit.port >= 0) remoteEdit.port = e.portNumber;
-      remoteListening = false;
+    decoded.clear();
+    if (!e.surfacePad) gDecoder.feed(m, decoded);
+    const bool surface = !e.surfacePad && linkctl::surfacePort(e.port);
+    // The link dialog: the latest control moved on purpose is the link's (LinkCapture). While it
+    // listens, controls drive nothing else (a knob turned to link it must not move what a surface
+    // gives it); the keys still play unless notes are being linked.
+    if (listening && !e.surfacePad) {
+      for (const auto& ev : decoded)
+        if (gCapture.feed(ev, e.port, surface, e.time)) gCapture.apply(remoteEdit);
+      const bool keys = kind == 0x90 || kind == 0x80 || kind == 0xA0;
+      if (!keys || gCaptureNotes || surface) continue;
+    }
+    // A link made on a surface's own control (its port) takes that control over from the surface.
+    if (surface && runLinks(e, m, true)) {
+      lastCcTime_ = now;
+      continue;
+    }
+    if (surfaceui::midi(*this, e)) {  // a pad controller's own buttons, pads and faders
+      lastCcTime_ = now;  // its edits merge until the controller pauses
       continue;
     }
 
@@ -487,6 +586,10 @@ void App::processMidi() {
       continue;
     }
     if (mackieMidi(*this, e.port, m)) {  // K-214
+      lastCcTime_ = now;
+      continue;
+    }
+    if (flkeyMidi(*this, e.port, m)) {  // k078-flkey
       lastCcTime_ = now;
       continue;
     }
@@ -513,33 +616,7 @@ void App::processMidi() {
     }
 
     // Links.
-    bool handled = false;
-    for (const ControllerLink& l : doc.song().links) {
-      if (!remoteMatches(l, m)) continue;
-      handled = true;
-      if (l.action != RemoteAction::None) {
-        if (remote.trigger(l, m)) runAction(l.action);
-        continue;
-      }
-      ParamId pid{l.owner, l.index};
-      auto d = describeParam(doc.song(), pid);
-      auto v = getParam(doc.song(), pid);
-      if (!d || !v) continue;
-      double out = 0;
-      if (remote.process(l, m, d->toNormalized(*v), &out, stepOf(*d))) {
-        const double value = d->fromNormalized(out);
-        automationFromController() = true;  // N58-01: recorded below, with the event's time
-        if (recorder.active())  // K-226: part of the recording's undo step
-          recorder.edit(doc, [&] { doc.setParam(pid, value, true); });
-        else
-          doc.setParam(pid, value, true);
-        automationFromController() = false;
-        lastCcTime_ = now;
-        if (recorder.active() && !automationCapturing(*this) && recordFilterTakes(recorder.options(), m.status, m.d1)) {  // K-123: the input filter
-          recorder.controller(pid, out, recordTick(e.time));  // else captured by the automation recorder
-        }
-      }
-    }
+    bool handled = runLinks(e, m, false);
 
     // K-112D (D5, R11-06): Smooth's Smart Controls in learn mode: a control not linked yet links to
     // the screen control in focus, without a dialog (the pane stays in learn mode for the next one).
@@ -684,6 +761,7 @@ void App::processMidi() {
       }
     }
   }
+  if (listening && gCapture.tick(MidiManager::clockNow())) gCapture.apply(remoteEdit);  // a lone button press
   // A controller gesture ends after a short pause: one undo step per move.
   if (lastCcTime_ >= 0 && now - lastCcTime_ > 0.4) {
     doc.endGesture();

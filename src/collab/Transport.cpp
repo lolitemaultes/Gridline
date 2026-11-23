@@ -574,6 +574,17 @@ void SecureLink::flush(uint64_t now) {
   }
 }
 
+uint64_t SecureLink::quietForMs(uint64_t nowMs) const {
+  if (state_ == State::Handshake) return 0;
+  if (!hs_.initiator && !h2_.empty() && !anyRecv_ && h2Tries_ < 40) return 0;  // H2 repeats
+  if (state_ != State::Open) return UINT64_MAX;
+  if (!inflight_.empty() || ackDue_ != 0 || !dgrams_.empty()) return 0;
+  for (const Stream& st : st_)
+    if (!st.lost.empty() || st.next < st.base + st.buf.size()) return 0;
+  const uint64_t due = std::min(lastSend_ + kKeepaliveMs, lastRecv_ + kIdleTimeoutMs + 1);
+  return due > nowMs ? due - nowMs : 0;
+}
+
 void SecureLink::tick(uint64_t nowMs) {
   now_ = nowMs;
   if (state_ == State::Handshake) {

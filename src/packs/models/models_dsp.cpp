@@ -1,6 +1,8 @@
 // Gridline — "models" pack: runtime registry and models shared by the
 // runtimes and the editors (partial gains, image sources, body and mode tables).
 #include <algorithm>
+#include <chrono>
+#include <filesystem>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -8,11 +10,14 @@
 #include <fstream>
 #include <map>
 #include <mutex>
+#include "../../engine/Sample.h"
 #include "../Packs.h"
 #include "models.h"
 #include "models_rt.h"
 
 namespace gl::packs::models {
+
+namespace fs = std::filesystem;
 
 namespace {
 
@@ -260,12 +265,11 @@ ImagePtr builtinImage(int pattern) {
   return all[static_cast<size_t>(std::clamp(pattern, 0, kImgPatterns - 1))];
 }
 
-ImagePtr loadImageFile(const std::string& path, std::string* err) {
-  std::lock_guard<std::mutex> lk(imgMutex());
-  static std::map<std::string, ImagePtr> cache;
-  auto it = cache.find(path);
-  if (it != cache.end()) return it->second;
-  std::ifstream in(path, std::ios::binary);
+namespace {
+
+// FRZ-1118 (0.7.8): the file read and decode, on whatever thread asks (no lock held).
+ImagePtr readImageFile(const std::string& path, std::string* err) {
+  std::ifstream in(fs::u8path(path), std::ios::binary);
   if (!in) {
     if (err) *err = "cannot open file";
     return nullptr;
@@ -279,7 +283,58 @@ ImagePtr loadImageFile(const std::string& path, std::string* err) {
   else
     im = decodeTga(f);
   if (!im && err && err->empty()) *err = "unsupported image (use BMP, PPM/PGM or TGA)";
-  if (im) cache[path] = im;
+  return im;
+}
+
+struct ImageFiles {
+  std::mutex mu;
+  std::map<std::string, ImagePtr> loaded;
+  std::map<std::string, std::pair<std::string, double>> failed;  // why, and when (seconds): tried again after a while
+};
+ImageFiles& imageFiles() {
+  static ImageFiles& f = *new ImageFiles;  // never destroyed: a background reader may end during exit
+  return f;
+}
+double secondsNow() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
+constexpr double kRetryFailedSec = 2.0;
+
+}  // namespace
+
+ImagePtr loadImageFile(const std::string& path, std::string* err) {
+  ImageFiles& F = imageFiles();
+  {
+    std::lock_guard<std::mutex> lk(F.mu);
+    if (auto it = F.loaded.find(path); it != F.loaded.end()) return it->second;
+    // A file that failed is not read again every frame (the editor asks once a frame).
+    if (auto it = F.failed.find(path); it != F.failed.end() && secondsNow() - it->second.second < kRetryFailedSec) {
+      if (err) *err = it->second.first;
+      return nullptr;
+    }
+  }
+  // FRZ-1118 (0.7.8): the interface never reads a file on a web or network drive itself (a mount that stops
+  // answering held it in the kernel): a background reader does, and the next build picks it up.
+  if (mustNotReadNow(path)) {
+    readInBackground("image\n" + path, [path] {
+      std::string why;
+      ImagePtr im = readImageFile(path, &why);
+      ImageFiles& G = imageFiles();
+      std::lock_guard<std::mutex> lk(G.mu);
+      if (im) G.loaded[path] = im, G.failed.erase(path);
+      else G.failed[path] = {why, secondsNow()};
+    });
+    if (err) *err = kImageNotReadYet;
+    return nullptr;
+  }
+  std::string why;
+  ImagePtr im = readImageFile(path, &why);
+  std::lock_guard<std::mutex> lk(F.mu);
+  if (im) {
+    F.loaded[path] = im;
+    F.failed.erase(path);
+  } else {
+    F.failed[path] = {why, secondsNow()};
+    if (err) *err = why;
+  }
   return im;
 }
 

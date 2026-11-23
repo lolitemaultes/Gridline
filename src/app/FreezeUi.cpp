@@ -1,5 +1,6 @@
 // Gridline - K-87: freezing and hibernating in the app (FreezeUi.h).
 #include "FreezeUi.h"
+#include "../core/ThreadName.h"
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -223,7 +224,7 @@ void startJob(App& a, const Request& r) {
   const std::string dir = frozenDir(a);
   crash::crumb("freeze render start");
   Job* jp = &job;
-  job.worker = std::thread([jp, song = std::move(song), rate, dir]() {
+  job.worker = std::thread([jp, song = std::move(song), rate, dir]() { gl::threads::setName("gl-freeze");
     host::UiThreadRenderScope scope;  // hosted plugins' main-thread calls come back to the interface
     FreezeRecord rec;
     std::string err;

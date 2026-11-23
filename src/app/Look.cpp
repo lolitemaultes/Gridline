@@ -16,7 +16,7 @@ namespace gl::look {
 
 // ================================================================ names / override
 namespace {
-const char* const kTitles[] = {"Classic", "Graphite", "Hairline", "Lumen", "Slate"};
+const char* const kTitles[] = {"Classic", "Graphite", "Hairline", "Lumen", "Slate", "Tracker"};
 }  // namespace
 
 const char* dirName(Dir d) { return ui::controlStyleName(d); }
@@ -845,6 +845,7 @@ Painter& painter(Dir d) {
       case Dir::Hairline: p.reset(makeHairline()); break;
       case Dir::Lumen: p.reset(makeLumen()); break;
       case Dir::Slate: p.reset(makeSlate()); break;
+      case Dir::Tracker: p.reset(makeTracker()); break;
       default: p.reset(makeClassic()); break;
     }
   }

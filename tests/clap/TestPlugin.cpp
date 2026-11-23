@@ -56,6 +56,8 @@ struct Gain {
   float delay[2][64] = {};
   int pos = 0;
   bool active = false;
+  bool gui = false;      // GRIDLINE_TEST_GAIN_GUI: clap.gui created
+  void* view = nullptr;  // its view (macOS)
 };
 
 enum : clap_id { kGain = 1, kWave = 2, kMode = 3, kEcho = 4, kLevel = 10, kSide = 11, kLong = 12, kBypass = 13 };
@@ -594,7 +596,65 @@ bool gainPortGet(const clap_plugin_t*, uint32_t i, bool input, clap_audio_port_i
 const clap_plugin_audio_ports_t kGainPorts = {gainPortCount, gainPortGet};
 uint32_t gainLatency(const clap_plugin_t* p) { return static_cast<uint32_t>(gainOf(p)->latency.load()); }
 const clap_plugin_latency_t kGainLatency = {gainLatency};
+// GRIDLINE_TEST_GAIN_GUI (0.7.8 tests, macOS): the gain gets an interface of its own like the
+// synth's (an effect with a window: a mixer insert's window follows its effect when it moves).
+const clap_plugin_gui_t kGainGui = {
+    [](const clap_plugin_t*, const char* api, bool floating) { return !floating && api && !std::strcmp(api, kGuiApi); },
+    [](const clap_plugin_t*, const char** api, bool* floating) {
+      *api = kGuiApi;
+      *floating = false;
+      return true;
+    },
+    [](const clap_plugin_t* p, const char* api, bool floating) {
+      if (floating || !api || std::strcmp(api, kGuiApi) || gainOf(p)->gui) return false;
+      gainOf(p)->gui = true;
+      return true;
+    },
+    [](const clap_plugin_t* p) {
+      Gain* g = gainOf(p);
+#if defined(__APPLE__)
+      if (g->view) {
+        gridlineTestViewRemove(g->view);
+        g->view = nullptr;
+        --gProbe.views;
+      }
+#endif
+      g->gui = false;
+    },
+    [](const clap_plugin_t*, double) { return false; },
+    [](const clap_plugin_t*, uint32_t* w, uint32_t* h) {
+      *w = kGuiW;
+      *h = kGuiH;
+      return true;
+    },
+    [](const clap_plugin_t*) { return false; },
+    [](const clap_plugin_t*, clap_gui_resize_hints_t*) { return false; },
+    [](const clap_plugin_t*, uint32_t* w, uint32_t* h) {
+      *w = kGuiW;
+      *h = kGuiH;
+      return true;
+    },
+    [](const clap_plugin_t*, uint32_t w, uint32_t h) { return w == kGuiW && h == kGuiH; },
+    [](const clap_plugin_t* p, const clap_window_t* win) {
+      Gain* g = gainOf(p);
+#if defined(__APPLE__)
+      if (!g->gui || g->view || !win || !win->cocoa) return false;
+      g->view = gridlineTestViewAttach(win->cocoa, kGuiW, kGuiH, "CLAP test effect", 0.48f, 0.22f, 0.30f);
+      if (g->view) ++gProbe.views;
+      return g->view != nullptr;
+#else
+      (void)g, (void)win;
+      return false;
+#endif
+    },
+    [](const clap_plugin_t*, const clap_window_t*) { return false; },
+    [](const clap_plugin_t*, const char*) {},
+    [](const clap_plugin_t*) { return true; },
+    [](const clap_plugin_t*) { return true; },
+};
+
 const void* gainExt(const clap_plugin_t*, const char* id) {
+  if (!std::strcmp(id, CLAP_EXT_GUI) && std::getenv("GRIDLINE_TEST_GAIN_GUI")) return &kGainGui;
   if (!std::strcmp(id, CLAP_EXT_PARAMS)) return &kGainParams;
   if (!std::strcmp(id, CLAP_EXT_STATE)) return &kGainState;
   if (!std::strcmp(id, CLAP_EXT_AUDIO_PORTS)) return &kGainPorts;

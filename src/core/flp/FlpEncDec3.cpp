@@ -21,6 +21,7 @@
 #include "../../packs/modulation/modulation.h"
 #include "../../packs/spacefx/sfx_mbd.h"
 #include "../../packs/spacefx/spacefx.h"
+#include "../../packs/samplers/patchplayer.h"
 #include "../../packs/utility/utility.h"
 #include "../PluginParams.h"
 #include "FlpEncode.h"
@@ -1052,8 +1053,10 @@ Encoder dashboard() {
 
 // Soundfont Player: the .sf2 path is a byte-length-prefixed string in the
 // state; write() replaces it (the rest of the state stays).
-Encoder soundfont() {
-  Encoder e = make("Soundfont Player", "gl.multisampler", -1, true);
+// K-333: imports now make a Patch Player (its file is the path); projects imported before keep a
+// Multisampler with a one-line "sf2 0 0 - | <path>" map. Both write back.
+Encoder soundfont(const char* glType) {
+  Encoder e = make("Soundfont Player", glType, -1, true);
   // J-44: without the FL origin, the state starts from the FL installation's
   // plugin database preset (its bank / program / envelope / effect settings
   // are FL's defaults; their layout is not modelled here); write() puts the
@@ -1068,11 +1071,16 @@ Encoder soundfont() {
   e.write = [](const PluginState& g, Bytes& b, const EncodeContext& c) {
     PluginState cur;
     if (decoded("Soundfont Player", b, c, cur) && cur.data == g.data) return;
-    const std::string pre = "#gl-zones 1\nsf2 0 0 - | ";
-    if (g.data.compare(0, pre.size(), pre) != 0) return;
-    std::string path = g.data.substr(pre.size());
-    while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) path.pop_back();
-    if (path.find('\n') != std::string::npos) return;  // more than one zone
+    std::string path;
+    if (g.type == packs::samplers::kPatchPlayerType) {
+      path = packs::samplers::parsePatchRef(g.data).path;
+    } else {
+      const std::string pre = "#gl-zones 1\nsf2 0 0 - | ";
+      if (g.data.compare(0, pre.size(), pre) != 0) return;
+      path = g.data.substr(pre.size());
+      while (!path.empty() && (path.back() == '\n' || path.back() == '\r')) path.pop_back();
+      if (path.find('\n') != std::string::npos) return;  // more than one zone
+    }
     path = flPath(path, c);
     if (path.empty() || path.size() > 255) return;
     for (size_t at = 0; at + 4 <= b.size(); ++at) {
@@ -1288,7 +1296,8 @@ void registerDec3(std::vector<Encoder>& v) {
   v.push_back(levelScaler());
   v.push_back(sequencer());
   v.push_back(dashboard());
-  v.push_back(soundfont());
+  v.push_back(soundfont("gl.multisampler"));
+  v.push_back(soundfont(packs::samplers::kPatchPlayerType));
   v.push_back(mobileRack());
   v.push_back(make("Fruity Mute 2", "gl.mute", 0));  // no stored setting decoded: FL defaults
   v.push_back(phaseInverter());

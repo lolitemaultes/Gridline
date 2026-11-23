@@ -5,6 +5,7 @@
 // library's public headers and extra room at the end.
 #if !defined(_WIN32)
 #include "DBusMenuBus.h"
+#include "../../core/ThreadName.h"
 #include <dlfcn.h>
 #include <cstdint>
 #include <cstring>
@@ -660,7 +661,7 @@ void Worker::start(const char* library) {
     std::lock_guard<std::mutex> l(m_);
     status_ = "starting";
   }
-  thread_ = std::thread([this, lib = std::string(library ? library : "")]() { run(lib); });
+  thread_ = std::thread([this, lib = std::string(library ? library : "")]() { gl::threads::setName("gl-dbus-menu"); run(lib); });
 }
 
 void Worker::stop() {

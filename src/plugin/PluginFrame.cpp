@@ -3,6 +3,7 @@
 // dialogs, status bar) drawn into the host's plugin window, plus the "Host
 // link" panel: transport sync, MIDI input, outputs, latency and the macros.
 #include <algorithm>
+#include "../core/ThreadName.h"
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -193,7 +194,7 @@ void kick(bool forced) {
   if (c.busy.exchange(true)) return;
   if (c.worker.joinable()) c.worker.join();  // the last one has finished (busy was false)
   c.startedAt = now;
-  c.worker = std::thread([forced, now] {
+  c.worker = std::thread([forced, now] { gl::threads::setName("gl-plug-check");
     Check& k = check();
     const update::shared::State st =
         update::shared::runCheck(stateDir(), now, envOf, http::fetcher(), GRIDLINE_VERSION, update::currentTarget(), forced);

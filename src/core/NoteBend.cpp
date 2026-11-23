@@ -1,5 +1,6 @@
 // Gridline - K-25: per-note pitch bend lines (see NoteBend.h).
 #include "NoteBend.h"
+#include "NoteVibrato.h"
 #include <cstdint>
 #include <algorithm>
 
@@ -49,6 +50,27 @@ std::vector<BendPoint> head(const std::vector<BendPoint>& b, double at) {
   return out;
 }
 
+double pitchAt(const Note& n, double t, int ppq, double bpm) {
+  double v = value(n.bend, t);
+  if (n.vib.active() && n.length > 0 && ppq > 0 && bpm > 0) {
+    const double beat = 60.0 / bpm, tick = beat / ppq;
+    v += vib::value(n.vib, t * tick, static_cast<double>(n.length) * tick, beat);
+  }
+  return v;
+}
+
+std::vector<BendPoint> withVibrato(const Note& n, int ppq, double bpm, double tolerance) {
+  if (!n.vib.active() || n.length <= 0) return n.bend;
+  // 24 samples per vibrato cycle at its fastest, at least every tick
+  const double hz = std::max(vib::rateHz(n.vib, 60.0 / bpm), vib::rateHz(n.vib, 60.0 / bpm, true));
+  const double ticksPerSec = ppq * bpm / 60.0;
+  const double step = std::max(1.0, ticksPerSec / (hz * 24.0));
+  std::vector<std::pair<double, double>> samples;
+  for (double t = 0; t < static_cast<double>(n.length); t += step) samples.push_back({t, pitchAt(n, t, ppq, bpm)});
+  samples.push_back({static_cast<double>(n.length), pitchAt(n, static_cast<double>(n.length), ppq, bpm)});
+  return fromSamples(samples, tolerance, step * 1.5);
+}
+
 void split(const Note& n, Tick cut, Note& left, Note& right) {
   const double at = static_cast<double>(cut);
   left.bend = head(n.bend, at);
@@ -57,6 +79,11 @@ void split(const Note& n, Tick cut, Note& left, Note& right) {
   right.pressure = tail(n.pressure, at);
   left.timbre = head(n.timbre, at);
   right.timbre = tail(n.timbre, at);
+  if (n.vib.active() && n.length > 0) {  // K-262: each part keeps its stretch of the vibrato
+    const double f = std::clamp(at / static_cast<double>(n.length), 0.0, 1.0);
+    left.vib = vib::part(n.vib, 0.0, f);
+    right.vib = vib::part(n.vib, f, 1.0);
+  }
 }
 
 void append(std::vector<BendPoint>& a, const std::vector<BendPoint>& b, double offset) {

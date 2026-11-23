@@ -413,6 +413,7 @@ ObjectId passPattern(Document& doc, ObjectId want, ObjectId channel, bool song) 
     p.steps = base.steps;
     p.stepProps = base.stepProps;
     p.stepLoop = base.stepLoop;
+    p.lanes = base.lanes;
     p.loop = base.loop;
     p.notes = base.notes;
     if (auto it = p.notes.find(channel); it != p.notes.end()) {

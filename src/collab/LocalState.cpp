@@ -30,6 +30,7 @@ const Rule kRules[] = {
     {"gl.pads", "* solo"},              // Abacus: pad solo
     {"gl.membranekit", "* solo"},       // Membrane Kit: channel solo
     {"gl.splitter", "* solo"},          // Band Splitter: band solo
+    {"gl.terrace", "* solo"},           // Terrace: band solo
     {"gl.eq", "Listen"},                // Parametric EQ: band listen
     {"gl.eq", "Band solo on Shift"},    // ... and how Shift behaves (a preference)
     {"gl.maximizer", "Solo band"},

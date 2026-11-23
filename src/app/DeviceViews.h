@@ -33,7 +33,7 @@ float width(App& a, const PluginTarget& t);
 // the EQ's dots (frequency and gain; with Alt, the band's width), the filter's cutoff and resonance,
 // a dynamics device's threshold, the distortion's drive, the delay's time and feedback, the reverb's
 // decay; each drag is one undo step. Returns true when it was double-clicked where no handle took
-// it (the caller opens the device's whole editor).
+// it (the caller opens the device's editor in its window).
 bool draw(App& a, const PluginTarget& t, ImVec2 p0, ImVec2 p1);
 
 // The device's main controls for a device row, in order: the ones a person reaches for first (the

@@ -1268,6 +1268,7 @@ struct ConvStage {
 
 class ConvolverFx final : public Effect {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible): its state is its signal
   ConvolverFx() {
     a_.init(kBA, 1, kPartsA);
     b_.init(kBB, kStartB, kMaxPartsB);

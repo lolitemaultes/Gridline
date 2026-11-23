@@ -721,6 +721,7 @@ bool menuRow(App& a, const char* id, const char* title, const char* hint, const 
 }  // namespace
 
 void presetsMenu(App& a) {
+  if (view().trk) return trackerPresets(a);  // the Tracker layout's page: its own look (StageTrackerUi.cpp)
   const auto& P = pal();
   View& v = view();
   auto glyph = [&](ui::Icon ic) {
@@ -751,6 +752,7 @@ void presetsMenu(App& a) {
 
 // ---------------------------------------------------------------- the room
 void roomPopover(App& a) {
+  if (view().trk) return trackerRoomPopover(a);
   const auto& P = pal();
   const Song& s = a.doc.song();
   const View& v = view();
@@ -880,7 +882,8 @@ void effectsPopover(App& a, ObjectId id) {
       ImGui::EndPopup();
     }
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddCircleFilled(ImVec2(p.x + 6, p.y + 10), 3, es.enabled ? P.led : P.surface600, 10);
+    if (view().trk) dl->AddRectFilled(ImVec2(p.x + 3, p.y + 7), ImVec2(p.x + 9, p.y + 13), es.enabled ? P.led : P.surface600);  // the Tracker's square lamp
+    else dl->AddCircleFilled(ImVec2(p.x + 6, p.y + 10), 3, es.enabled ? P.led : P.surface600, 10);
     dl->AddText(ImVec2(p.x + 16, p.y + 2), es.enabled ? P.text : P.textFaint, info->name.c_str());
     ImGui::PopID();
   }
@@ -898,6 +901,7 @@ void effectsPopover(App& a, ObjectId id) {
 
 // ---------------------------------------------------------------- first run
 void firstRunCard(App& a) {
+  if (view().trk) return trackerFirstRun(a);
   const auto& P = pal();
   View& v = view();
   const st::Geo& g = v.g;

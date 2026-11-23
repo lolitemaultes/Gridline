@@ -32,6 +32,23 @@ Tick audioClipNaturalLength(const Song& song, const Clip& clip);
 // writes; a clip that does not loop is returned alone.
 Tick audioLoopLength(const Song& song, const Clip& clip, const TempoMap& map);
 std::vector<Clip> audioLoopPasses(const Song& song, const Clip& clip, const TempoMap& map);
+// Where an audio clip makes sound: per pass (audioLoopPasses), song ticks
+// [t0, t1) from the pass's start until its audio window runs out or the
+// pass ends, playing source seconds [s0, s1) (the clip's own direction, as
+// clipSourceAt). `pass` is the pass as a plain clip, for mapping ticks inside
+// the span (clipSourceAt(song, pass, map, tick)). Empty when the clip has no
+// audio. The clip editor draws, scrubs and selects through these, so what it
+// shows is what the engine plays.
+struct AudibleSpan {
+  double t0 = 0, t1 = 0;
+  double s0 = 0, s1 = 0;
+  Clip pass;
+};
+std::vector<AudibleSpan> clipAudibleSpans(const Song& song, const Clip& clip, const TempoMap& map);
+// The source second (own direction) an audio clip plays at song tick `tick`,
+// through its loop passes; NaN where it is silent (before it, after its
+// audio ran out, after its end).
+double clipHeardSourceAt(const std::vector<AudibleSpan>& spans, const Song& song, const TempoMap& map, double tick);
 // K-114: turning a clip's loop on or off (a copy; gestures and the clip menu).
 // On: an audio clip shorter than its audio loops what it shows (its window
 // ends at the clip's end); K-140: so does a pattern or automation clip cut

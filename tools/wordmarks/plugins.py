@@ -48,6 +48,7 @@ P = {
     'gl.samplekeys': ('synth', 'keys', 'Sampled keyboard instrument'),
     'gl.multisampler': ('sample', 'folio', 'Multi-zone sampler'),
     'gl.waveprogram': ('sample', 'folio', 'Zones, layers and loops in one instrument'),
+    'gl.patchplayer': ('sample', 'patchbank', 'Plays a SoundFont patch as the file describes it'),
     'gl.scratch': ('sample', 'scratch', 'Scratch sampler (turntable moves)'),
     'gl.envctl': ('structure', 'envelope', 'Envelope / LFO modulation source'),
     'gl.keyctl': ('structure', 'keyctl', 'Keyboard tracking modulation source'),
@@ -163,6 +164,7 @@ P = {
     'gl.octafilter': ('tone', 'octagon', 'Eight-band creative filter'),
     'gl.edison': ('sample', 'loupe', 'Close-up audio editor and recorder'),
     'gl.tideline': ('dynamics', 'tideline', 'Volume pump on the beat (no sidechain needed)'),
+    'gl.terrace': ('dynamics', 'terrace', 'Multiband rhythmic gate: steps per band'),
 }
 
 

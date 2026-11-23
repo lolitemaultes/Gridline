@@ -58,6 +58,7 @@ Edit > Delete	Del	playlist.delete	e-
 Edit > Select all	Ctrl+A	playlist.selectAll	e-
 Edit > Deselect	Ctrl+D	playlist.deselect	e-
 Edit > Rename...	F2	edit.rename	e-
+Add > Instrument channel > Guide to the instruments...			e-
 Add > Instrument channel > Audio file as sampler...			e-
 Add > Instrument channel > Speech...			e-
 Add > Pattern	F4	pattern.new	e-
@@ -112,6 +113,7 @@ View > Playlist	F5	view.playlist	ec
 View > Channel rack	F6	view.channelRack	ec
 View > Piano roll	F7	view.pianoRoll	ec
 View > Mixer	F9	view.mixer	ec
+View > LFO board	Alt+F9	view.lfoBoard	e-
 View > Browser	Alt+F8	view.browser	ec
 View > Plugin picker	F8	view.pluginPicker	e-
 View > Project picker			e-
@@ -149,6 +151,8 @@ View > Window layout > Layout settings...			e-
 View > Workspaces > New workspace			e-
 View > Workspaces > Add starter workspaces			e-
 View > Workspaces > Close workspace			--
+View > Workspaces > Show all as cards			e-
+View > Workspaces > Workspace settings...			e-
 View > Workspaces > Keep a copy in the project			e-
 View > Workspaces > Arrange	Ctrl+1	view.workspace1	ec
 View > Reopen closed pane tab	Ctrl+Alt+T	view.reopenTab	e-
@@ -294,12 +298,12 @@ Options > Typing keyboard options > Chord > Minor 7th			e-
 Options > Typing keyboard options > Chord > Sus 4			e-
 Options > Typing keyboard options > Chord > Power (5th)			e-
 Options > Typing keyboard options > Chord > Octave			e-
-Options > Typing keyboard options > Keyboard layout > Standard (QWERTY)			ec
-Options > Typing keyboard options > Keyboard layout > QWERTZ			e-
-Options > Typing keyboard options > Keyboard layout > AZERTY			e-
-Options > Typing keyboard options > Keyboard layout > Dvorak			e-
-Options > Typing keyboard options > Keyboard layout > Colemak			e-
-Options > Typing keyboard options > Keyboard layout > Follow the computer			e-
+Options > Typing keyboard options > My keys say > Same as my computer			ec
+Options > Typing keyboard options > My keys say > QWERTY			e-
+Options > Typing keyboard options > My keys say > QWERTZ			e-
+Options > Typing keyboard options > My keys say > AZERTY			e-
+Options > Typing keyboard options > My keys say > Dvorak			e-
+Options > Typing keyboard options > My keys say > Colemak			e-
 Options > Multilink to controllers			e-
 Options > Auto scrolling			ec
 Options > Auto scrolling in pattern editors			ec
@@ -376,6 +380,12 @@ Tools > Piano roll tools > Quick chop > Into beats			e-
 Tools > Piano roll tools > Quick chop > Into snap grid			e-
 Tools > Piano roll tools > Glue	Ctrl+G	piano.glue	e-
 Tools > Piano roll tools > Discard lengths			e-
+Tools > Piano roll tools > Note lengths > Twice as long			e-
+Tools > Piano roll tools > Note lengths > Half as long			e-
+Tools > Piano roll tools > Note lengths > Longer by the snap grid			e-
+Tools > Piano roll tools > Note lengths > Shorter by the snap grid			e-
+Tools > Piano roll tools > Note lengths > All as long as the snap grid			e-
+Tools > Piano roll tools > Note lengths > Note lengths...			e-
 Tools > Piano roll tools > Strum...	Alt+S	piano.strum	e-
 Tools > Piano roll tools > Arpeggiate...	Alt+A	piano.arpeggiate	e-
 Tools > Piano roll tools > Grace notes...	Alt+G	piano.flam	e-

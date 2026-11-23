@@ -17,12 +17,12 @@ if(size LESS 20000)
   message(FATAL_ERROR "FAIL: the notes are only ${size} bytes")
 endif()
 file(WRITE "${OUT}/input.txt" "5 toasts clear
-6 parts notes set ${OUT}/notes.txt
+6 parts notes set \"${OUT}/notes.txt\"
 8 layout open Notes
 14 parts notes focus
 18 text X
 22 parts notes blur
-28 parts notes dump ${OUT}/after.txt
+28 parts notes dump \"${OUT}/after.txt\"
 ")
 configure_file("${DEMO}" "${OUT}/song.gridline.json" COPYONLY)
 execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --size 1440x900 --dev-input "${OUT}/input.txt"

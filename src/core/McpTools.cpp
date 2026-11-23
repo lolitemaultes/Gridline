@@ -13,6 +13,7 @@
 #include "Automation.h"
 #include "Arrangements.h"
 #include "Groove.h"
+#include "Lanes.h"
 #include "StageRoomOps.h"
 #include "Mcp.h"
 #include "McpInternal.h"
@@ -358,8 +359,16 @@ Json patternJson(const Song& s, size_t i) {
     size_t notes = 0, steps = 0;
     if (auto it = p.notes.find(id); it != p.notes.end()) notes = it->second.size();
     if (auto it = p.steps.find(id); it != p.steps.end()) steps = static_cast<size_t>(std::count_if(it->second.begin(), it->second.end(), [](uint8_t v) { return v > 0; }));
-    if (notes || steps)
-      chans.array.push_back(jobj({{"channel", jnum(static_cast<double>(c + 1))}, {"notes", jnum(static_cast<double>(notes))}, {"steps", jnum(static_cast<double>(steps))}}));
+    if (notes || steps || p.lanes.count(id) || p.stepLoop.count(id)) {
+      Json jc = jobj({{"channel", jnum(static_cast<double>(c + 1))}, {"notes", jnum(static_cast<double>(notes))}, {"steps", jnum(static_cast<double>(steps))}});
+      // K-255: the lane's own grid, length and mode, when it has them.
+      if (lanes::ownGrid(p, id)) jc.object["grid"] = jnum(lanes::grid(p, id));
+      if (const int len = lanes::length(p, id); len > 0) {
+        jc.object["length"] = jnum(len);
+        jc.object["mode"] = jstr(lanes::mode(p, id) == LaneMode::RunOn ? "runOn" : "restart");
+      }
+      chans.array.push_back(std::move(jc));
+    }
   }
   return jobj({{"pattern", jnum(static_cast<double>(i + 1))},
                {"name", jstr(p.name)},
@@ -638,6 +647,13 @@ ToolResult tGetPattern(Environment& env, const Json& a) {
       Json st = Json::makeArray();
       for (uint8_t v : it->second) st.array.push_back(jnum(v));
       cj.object["steps"] = st;
+      any = true;
+    }
+    // K-255: the lane's own grid (steps per bar), its length and what the length does.
+    if (lanes::ownGrid(*p, id)) cj.object["grid"] = jnum(lanes::grid(*p, id)), any = true;
+    if (const int len = lanes::length(*p, id); len > 0) {
+      cj.object["length"] = jnum(len);
+      cj.object["mode"] = jstr(lanes::runsOn(*p, id) ? "runOn" : "restart");
       any = true;
     }
     if (any || only != kNoId) chans.array.push_back(std::move(cj));
@@ -1051,12 +1067,47 @@ ToolResult tSetSteps(Environment& env, const Json& a) {
   if (!c) return fail(err);
   std::vector<uint8_t> row;
   for (const auto& v : a.find("steps")->array) row.push_back(static_cast<uint8_t>(std::clamp<long long>(std::llround(v.number), 0, 127)));
-  const size_t n = static_cast<size_t>(p->bars) * static_cast<size_t>(p->stepsPerBar);
+  const size_t n = static_cast<size_t>(lanes::steps(*p, c->id));  // K-255: a row on its own grid has its own count
   if (row.size() > n) row.resize(n);
   const size_t on = static_cast<size_t>(std::count_if(row.begin(), row.end(), [](uint8_t v) { return v > 0; }));
   if (!d.setSteps(p->id, c->id, row)) return fail("could not set the steps");
   return ok(jobj({{"steps", jnum(static_cast<double>(row.size()))}, {"active", jnum(static_cast<double>(on))}, {"patternSteps", jnum(static_cast<double>(n))}}),
             std::to_string(on) + " steps in pattern " + std::to_string(argInt(a, "pattern")));
+}
+
+// K-255: a channel's lane in a pattern: its own grid, its length and what the length does.
+ToolResult tSetLane(Environment& env, const Json& a) {
+  Document& d = env.doc;
+  std::string err;
+  const Pattern* p = patternAt(d.song(), argInt(a, "pattern"), err);
+  if (!p) return fail(err);
+  const Channel* c = channelAt(d.song(), argInt(a, "channel"), err);
+  if (!c) return fail(err);
+  const ObjectId pid = p->id, cid = c->id;
+  d.beginGroup("set lane");
+  if (has(a, "grid")) {
+    const std::string how = argStr(a, "regrid", "nearest");
+    lanes::setGrid(d, pid, {cid}, static_cast<int>(argInt(a, "grid")), how == "order" ? lanes::Regrid::Order : lanes::Regrid::Nearest);
+  }
+  if (has(a, "mode")) {
+    const std::string m = argStr(a, "mode");
+    if (m != "restart" && m != "runOn") {
+      d.endGroup();
+      return fail("mode must be \"restart\" or \"runOn\"");
+    }
+    lanes::setMode(d, pid, {cid}, m == "runOn" ? LaneMode::RunOn : LaneMode::Restart);
+  }
+  if (has(a, "length")) lanes::setLength(d, pid, {cid}, static_cast<int>(argInt(a, "length")));
+  d.endGroup();
+  const Pattern* q = d.song().pattern(pid);
+  if (!q) return fail("the pattern is gone");
+  return ok(jobj({{"grid", jnum(lanes::grid(*q, cid))},
+                  {"ownGrid", jbool(lanes::ownGrid(*q, cid))},
+                  {"steps", jnum(lanes::steps(*q, cid))},
+                  {"length", jnum(lanes::length(*q, cid))},
+                  {"mode", jstr(lanes::mode(*q, cid) == LaneMode::RunOn ? "runOn" : "restart")},
+                  {"linesUpAfterBars", jnum(static_cast<double>(lanes::lineUpBars(d.song(), *q)))}}),
+            "lane of channel " + std::to_string(argInt(a, "channel")) + " in pattern " + std::to_string(argInt(a, "pattern")));
 }
 
 ToolResult tAddClip(Environment& env, const Json& a) {
@@ -1715,6 +1766,18 @@ std::vector<Tool> buildTools() {
                  {"steps", arrP("Velocity per step", intP("Velocity 0..127", 0, 127), 4096)}},
                 {"pattern", "channel", "steps"}),
       false, tSetSteps);
+  add("set_lane", "set lane",
+      "Gives one channel's row in a pattern its own grid (steps per bar; 0 = the pattern's grid), a length in its own steps (0 = no loop) "
+      "and a mode: \"restart\" (the length starts again with the pattern) or \"runOn\" (it keeps counting through a longer clip). "
+      "regrid \"nearest\" (default) keeps set steps where they sound, \"order\" keeps their numbers. One undo step.",
+      objSchema({{"pattern", intP(kPatternD, 1, 999)},
+                 {"channel", intP(kChannelD, 1, 999)},
+                 {"grid", intP("Steps per bar of the row's own grid (0 = the pattern's)", 0, kMaxLaneGrid)},
+                 {"length", intP("Lane length in its own steps (0 = no loop)", 0, 4096)},
+                 {"mode", enumP("restart or runOn", {"restart", "runOn"})},
+                 {"regrid", enumP("nearest (default) or order", {"nearest", "order"})}},
+                {"pattern", "channel"}),
+      false, tSetLane);
   add("add_clip", "add pattern clip", "Places a pattern on the playlist. Returns the clip id. One undo step.",
       objSchema({{"pattern", intP(kPatternD, 1, 999)},
                  {"track", intP("Playlist track (1 = first)", 1, kMaxPlaylistTracks)},

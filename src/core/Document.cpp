@@ -2,6 +2,8 @@
 #include "TrackOrder.h"
 #include "TrackModes.h"
 #include "Meter.h"
+#include "Lanes.h"
+#include <atomic>
 #include <type_traits>
 #include "Crash.h"
 #include <algorithm>
@@ -9,6 +11,7 @@
 #include "Arrangements.h"
 #include "ExternalDrop.h"
 #include "../engine/ClipOps.h"
+#include "Lfo.h"
 
 namespace gl {
 
@@ -16,7 +19,7 @@ namespace {
 
 // K-141: rough memory of the objects commands copy (the history's byte budget).
 size_t approxOf(const PluginState& p) {
-  return sizeof(PluginState) + p.params.size() * sizeof(float) + p.data.size() + p.ins.size() + p.original.size();
+  return sizeof(PluginState) + p.params.size() * sizeof(float) + p.data.size() + p.ins.size() + p.original.size() + p.warp.size();
 }
 size_t approxOf(const Channel& c) {
   size_t n = sizeof(Channel) + approxOf(c.plugin) + c.name.size();
@@ -127,6 +130,43 @@ class ModLinksCommand final : public Command {
  private:
   std::string label_;
   std::vector<ModLink> before_, after_;
+  uint64_t key_;
+};
+
+// K-247: the LFO board (Song::lfos), its links and the next id, as one step; consecutive edits with
+// the same key merge (a knob drag on the board).
+class LfoBoardCommand final : public Command {
+ public:
+  struct State {
+    std::vector<SongLfo> lfos;
+    std::vector<ModLink> links;
+    ObjectId nextId = kNoId;
+  };
+  LfoBoardCommand(std::string label, State before, State after, uint64_t key)
+      : label_(std::move(label)), before_(std::move(before)), after_(std::move(after)), key_(key) {}
+  void apply(Song& s) override { put(s, after_); }
+  void revert(Song& s) override { put(s, before_); }
+  std::string label() const override { return label_; }
+  bool mayMoveTempo() const override { return false; }
+  size_t approxBytes() const override {
+    return 128 + (before_.lfos.size() + after_.lfos.size()) * sizeof(SongLfo) + (before_.links.size() + after_.links.size()) * sizeof(ModLink);
+  }
+  uint64_t mergeKey() const override { return key_; }
+  bool mergeWith(const Command& next) override {
+    auto* n = dynamic_cast<const LfoBoardCommand*>(&next);
+    if (!n) return false;
+    after_ = n->after_;
+    return true;
+  }
+
+ private:
+  static void put(Song& s, const State& st) {
+    s.lfos = st.lfos;
+    s.modLinks = st.links;
+    s.nextId = st.nextId;
+  }
+  std::string label_;
+  State before_, after_;
   uint64_t key_;
 };
 
@@ -272,6 +312,35 @@ CommandPtr Document::withKeptSends(CommandPtr cmd) {
   return std::make_unique<KeptSendsCommand>(std::move(cmd), std::move(patches), std::move(before), song_.keptSends);
 }
 
+void Document::tagSlots() {
+  static std::atomic<uint64_t> next{1};
+  std::unordered_map<uint64_t, std::vector<EffectSlot*>> seen;
+  std::unordered_map<const EffectSlot*, std::pair<ObjectId, int>> where;
+  for (MixerTrack& m : song_.mixer)
+    for (size_t k = 0; k < m.slots.size(); ++k) {
+      EffectSlot& e = m.slots[k];
+      if (e.plugin.empty()) {
+        e.uid = 0;
+        continue;
+      }
+      where[&e] = {m.id, static_cast<int>(k)};
+      if (e.uid == 0) e.uid = next++;
+      else seen[e.uid].push_back(&e);
+    }
+  for (auto& [uid, v] : seen) {
+    if (v.size() < 2) continue;
+    auto at = slotAt_.find(uid);
+    EffectSlot* keep = v.front();
+    if (at != slotAt_.end())
+      for (EffectSlot* e : v)
+        if (where[e] == at->second) keep = e;
+    for (EffectSlot* e : v)
+      if (e != keep) e->uid = next++;
+  }
+  slotAt_.clear();
+  for (const auto& [e, w] : where) slotAt_[e->uid] = w;
+}
+
 void Document::reset(Song song) {
   song_ = std::move(song);
   groups_.clear();
@@ -279,6 +348,7 @@ void Document::reset(Song song) {
   undo_.clear();
   savedSerial_ = undo_.stateSerial();
   ++revision_;
+  tagSlots();
   ++projectEpoch_;
 }
 
@@ -294,6 +364,7 @@ void Document::exec(CommandPtr cmd, bool mayJoin, bool clipLevels) {
     cmd->apply(song_);
     if (levelTail_ != revision_) levelRunStart_ = revision_;
     ++revision_;
+  tagSlots();
     levelTail_ = revision_;
     tempoMapRev_ = revision_;
     if (!mapCurrent) tempoMapOk_ = false;
@@ -301,11 +372,13 @@ void Document::exec(CommandPtr cmd, bool mayJoin, bool clipLevels) {
     const bool mapCurrent = tempoMapOk_ && tempoMapRev_ == revision_;
     cmd->apply(song_);
     ++revision_;
+  tagSlots();
     tempoMapRev_ = revision_;
     if (!mapCurrent) tempoMapOk_ = false;
   } else {
     cmd = applyWithTempoRefit(std::move(cmd));  // (applied)
     ++revision_;
+  tagSlots();
     tempoMapRev_ = revision_;
   }
   if (!clipLevels) {
@@ -432,6 +505,7 @@ void Document::cancelGroup() {
   if (g->empty()) return;
   g->revert(song_);
   ++revision_;
+  tagSlots();
 }
 
 void Document::recordMark(const std::string& label) {
@@ -441,6 +515,7 @@ void Document::recordMark(const std::string& label) {
 bool Document::stepHistory(int dir, Song* scratch) {
   if (!groups_.empty() || !undo_.stepPosition(dir, scratch)) return false;
   ++revision_;
+  tagSlots();
   moveSerial_ = undo_.stateSerial();
   if (onHistoryMove) onHistoryMove(dir, dir < 0 ? undo_.position() : undo_.position() - 1);
   return true;
@@ -473,6 +548,7 @@ void Document::restoreHistory(const std::vector<std::string>& labels, size_t pos
 void Document::replaceSong(Song song) {
   song_ = std::move(song);
   ++revision_;
+  tagSlots();
 }
 
 bool Document::undo() {
@@ -480,6 +556,7 @@ bool Document::undo() {
   if (historyHook) return groups_.empty() && undo_.canUndo() && historyHook(-1);
   if (!groups_.empty() || !undo_.undo(song_)) return false;
   ++revision_;
+  tagSlots();
   moveSerial_ = undo_.stateSerial();
   if (onHistoryMove) onHistoryMove(-1, undo_.position());
   return true;
@@ -490,6 +567,7 @@ bool Document::redo() {
   if (historyHook) return groups_.empty() && undo_.canRedo() && historyHook(1);
   if (!groups_.empty() || !undo_.redo(song_)) return false;
   ++revision_;
+  tagSlots();
   moveSerial_ = undo_.stateSerial();
   if (onHistoryMove) onHistoryMove(1, undo_.position() - 1);
   return true;
@@ -509,6 +587,7 @@ void Document::jumpTo(size_t position) {
   const size_t from = undo_.position();
   undo_.jumpTo(song_, position);
   ++revision_;
+  tagSlots();
   moveSerial_ = undo_.stateSerial();
   if (onHistoryMove && from != position) onHistoryMove(position < from ? -1 : 1, position < from ? position : position - 1);
 }
@@ -548,7 +627,17 @@ bool Document::editAutomation(ObjectId id, const std::string& label, const std::
 }
 bool Document::editMixerTrack(ObjectId id, const std::string& label, const std::function<void(MixerTrack&)>& fn,
                               uint64_t mergeKey) {
-  GL_OBJECT_EDIT(MixerTrack, getMixer, song_.mixerTrack(id))
+  MixerTrack* obj = song_.mixerTrack(id);
+  if (!obj) return false;
+  MixerTrack after = *obj;
+  fn(after);
+  // 0.7.8: two of the same effect with the same saved settings swapped places are equal, but their
+  // running instances are not (EffectSlot::uid): the swap is an edit, so each instance follows.
+  bool same = after == *obj;
+  for (size_t k = 0; same && k < after.slots.size() && k < obj->slots.size(); ++k) same = after.slots[k].uid == obj->slots[k].uid;
+  if (same) return true;
+  exec(std::make_unique<ObjectEdit<MixerTrack>>(label, getMixer, id, *obj, std::move(after), mergeKey));
+  return true;
 }
 bool Document::editPlaylistTrack(int index, const std::string& label, const std::function<void(PlaylistTrack&)>& fn) {
   if (index < 0) return false;
@@ -654,13 +743,24 @@ void Document::editSong(const std::string& label, const std::function<void(Song&
   exec(std::move(cmd));
 }
 
+Rgb Document::newChannelColor() const {
+  if (newColors_.channels == NewColors::One) return newColors_.channel;
+  return paletteColor(song_.channels.size());
+}
+
+Rgb Document::newPatternColor() const {
+  if (newColors_.patterns == NewColors::One) return newColors_.pattern;
+  if (newColors_.patterns == NewColors::Channel && newColors_.hasHint) return newColors_.channelHint;
+  return paletteColor(song_.patterns.size() + 2);
+}
+
 // --- channels ---------------------------------------------------------------
 
 ObjectId Document::addChannel(const std::string& name, const std::string& pluginType, int index) {
   Channel c;
   c.id = song_.peekId();  // allocated in apply so redo reproduces the same ID
   c.name = name;
-  c.color = paletteColor(song_.channels.size());
+  c.color = newChannelColor();
   c.plugin = defaultPluginState(pluginType);
   c.mixerTrack = song_.masterId();
   ObjectId id = c.id;
@@ -687,11 +787,13 @@ bool Document::removeChannel(ObjectId id) {
   std::vector<std::pair<ObjectId, std::vector<Note>>> notes;
   std::vector<std::pair<ObjectId, std::vector<StepProps>>> props;
   std::vector<std::pair<ObjectId, int>> loops;  // J-36: J-31 step loops went missing on reload when left behind
+  std::vector<std::pair<ObjectId, PatternLane>> laneSpecs;  // K-255
   for (const auto& p : song_.patterns) {
     if (auto it = p.steps.find(id); it != p.steps.end()) steps.push_back({p.id, it->second});
     if (auto it = p.notes.find(id); it != p.notes.end()) notes.push_back({p.id, it->second});
     if (auto it = p.stepProps.find(id); it != p.stepProps.end()) props.push_back({p.id, it->second});
     if (auto it = p.stepLoop.find(id); it != p.stepLoop.end()) loops.push_back({p.id, it->second});
+    if (auto it = p.lanes.find(id); it != p.lanes.end()) laneSpecs.push_back({p.id, it->second});
   }
   beginGroup("delete channel");
   exec(std::make_unique<LambdaCommand>(
@@ -703,14 +805,16 @@ bool Document::removeChannel(ObjectId id) {
           p.notes.erase(id);
           p.stepProps.erase(id);
           p.stepLoop.erase(id);
+          p.lanes.erase(id);
         }
       },
-      [saved, idx, steps, notes, props, loops](Song& s) {
+      [saved, idx, steps, notes, props, loops, laneSpecs](Song& s) {
         insertAt(s.channels, idx, saved);
         for (const auto& [pid, row] : steps) s.pattern(pid)->steps[saved.id] = row;
         for (const auto& [pid, ns] : notes) s.pattern(pid)->notes[saved.id] = ns;
         for (const auto& [pid, pr] : props) s.pattern(pid)->stepProps[saved.id] = pr;
         for (const auto& [pid, n] : loops) s.pattern(pid)->stepLoop[saved.id] = n;
+        for (const auto& [pid, l] : laneSpecs) s.pattern(pid)->lanes[saved.id] = l;
       }));
   {
     std::vector<ModLink> links = song_.modLinks;
@@ -837,11 +941,11 @@ static std::string cloneName(const std::string& n) {
   return n + " #2";
 }
 
-ObjectId Document::cloneChannel(ObjectId id) {
+ObjectId Document::cloneChannel(ObjectId id, CloneNotes what, ObjectId pattern) {
   int idx = song_.channelIndex(id);
   if (idx < 0) return kNoId;
   Channel src = song_.channels[static_cast<size_t>(idx)];
-  beginGroup("clone channel");
+  beginGroup(what == CloneNotes::All ? "clone channel" : what == CloneNotes::None ? "clone channel without its notes" : "clone channel with one pattern's notes");
   ObjectId nid = addChannel(cloneName(src.name), src.plugin.type, idx + 1);
   editChannel(nid, "clone channel", [&](Channel& c) {
     ObjectId keep = c.id;
@@ -850,16 +954,22 @@ ObjectId Document::cloneChannel(ObjectId id) {
     c.id = keep;
     c.color = color;
     c.name = cloneName(src.name);
+    c.rackHidden = false;  // a clone shows in the rack, its original hidden or not
   });
   for (const auto& p : song_.patterns) {
+    if (what == CloneNotes::None || (what == CloneNotes::OnePattern && p.id != pattern)) continue;
     auto st = p.steps.find(id);
     auto nt = p.notes.find(id);
     auto pt = p.stepProps.find(id);
+    auto lt = p.stepLoop.find(id);
+    auto lnt = p.lanes.find(id);
     if (st == p.steps.end() && nt == p.notes.end()) continue;
     editPattern(p.id, "clone channel", [&](Pattern& q) {
       if (st != p.steps.end()) q.steps[nid] = st->second;
       if (nt != p.notes.end()) q.notes[nid] = nt->second;
       if (pt != p.stepProps.end()) q.stepProps[nid] = pt->second;
+      if (lt != p.stepLoop.end()) q.stepLoop[nid] = lt->second;  // J-31: its step loop goes with its steps
+      if (lnt != p.lanes.end()) q.lanes[nid] = lnt->second;      // K-255: and its grid and mode
     });
   }
   endGroup();
@@ -938,7 +1048,7 @@ ObjectId Document::addPattern(const std::string& name, int bars, int stepsPerBar
     p.meterNum = meterNum;
     p.meterDen = meterDen;
   }
-  p.color = paletteColor(song_.patterns.size() + 2);
+  p.color = newPatternColor();
   ObjectId id = p.id;
   exec(std::make_unique<LambdaCommand>(
       "add pattern",
@@ -1029,7 +1139,7 @@ bool Document::setStep(ObjectId pattern, ObjectId channel, int step, uint8_t vel
   if (!p || step < 0) return false;
   std::vector<uint8_t> row;
   if (auto it = p->steps.find(channel); it != p->steps.end()) row = it->second;
-  int total = p->bars * p->stepsPerBar;
+  const int total = lanes::steps(*p, channel);  // K-255: the row's own steps
   if (step >= total) return false;
   if (static_cast<int>(row.size()) < total) row.resize(static_cast<size_t>(total), 0);
   row[static_cast<size_t>(step)] = velocity;
@@ -1420,18 +1530,28 @@ void Document::setModLinks(std::vector<ModLink> after, const std::string& label)
 }
 
 bool Document::setModLink(const ModLink& link) {
+  linkRefusal_.clear();
   if (!describeParam(song_, {link.owner, link.index})) return false;
   if (!isControllerSource(song_, link.sourceOwner, link.sourceSlot)) return false;
   std::vector<ModLink> links = song_.modLinks;
+  // K-247: the link it replaces: the same LFO's link to the target, or the target's one other link.
+  auto same = [&](const ModLink& l) {
+    if (l.owner != link.owner || l.index != link.index || l.isLfo() != link.isLfo()) return false;
+    return !link.isLfo() || l.sourceOwner == link.sourceOwner;
+  };
+  if (std::string why; lfo::wouldLoop(song_, link, &why)) {  // (it leaves out the link being replaced)
+    linkRefusal_ = why;
+    return false;
+  }
   bool replaced = false;
   for (auto& l : links)
-    if (l.owner == link.owner && l.index == link.index) {
+    if (same(l)) {
       l = link;
       replaced = true;
     }
   if (!replaced) links.push_back(link);
   undo_.breakMerge();
-  setModLinks(std::move(links), "link to controller");
+  setModLinks(std::move(links), link.isLfo() ? "link LFO" : "link to controller");
   undo_.breakMerge();
   return true;
 }
@@ -1439,7 +1559,7 @@ bool Document::setModLink(const ModLink& link) {
 bool Document::removeModLink(ParamId target) {
   std::vector<ModLink> links = song_.modLinks;
   auto it = std::remove_if(links.begin(), links.end(),
-                           [&](const ModLink& l) { return l.owner == target.owner && l.index == target.index; });
+                           [&](const ModLink& l) { return l.owner == target.owner && l.index == target.index && !l.isLfo(); });
   if (it == links.end()) return false;
   links.erase(it, links.end());
   undo_.breakMerge();
@@ -1453,7 +1573,7 @@ bool Document::editModLink(ParamId target, const std::string& label, const std::
   std::vector<ModLink> links = song_.modLinks;
   ModLink* l = nullptr;
   for (auto& x : links)
-    if (x.owner == target.owner && x.index == target.index) l = &x;
+    if (x.owner == target.owner && x.index == target.index && !x.isLfo()) l = &x;
   if (!l) return false;
   fn(*l);
   l->owner = target.owner;  // the target identifies the link
@@ -1461,6 +1581,140 @@ bool Document::editModLink(ParamId target, const std::string& label, const std::
   l->min = std::clamp(l->min, 0.0f, 1.0f);
   l->max = std::clamp(l->max, 0.0f, 1.0f);
   l->smoothMs = std::clamp(l->smoothMs, 0.0f, 10000.0f);
+  if (links == song_.modLinks) return true;
+  exec(std::make_unique<ModLinksCommand>(label, song_.modLinks, std::move(links), mergeKey));
+  return true;
+}
+
+// --- the LFO board (K-247) ----------------------------------------------------
+
+namespace {
+void clampLfo(SongLfo& l) {
+  l.colour = std::clamp(l.colour, 0, kLfoColours - 1);
+  if (static_cast<int>(l.shape) < 0 || l.shape >= LfoShape::Count) l.shape = LfoShape::Sine;
+  if (static_cast<int>(l.restart) < 0 || l.restart >= LfoRestart::Count) l.restart = LfoRestart::OnPlay;
+  l.pulseWidth = std::clamp(l.pulseWidth, 0.02f, 0.98f);
+  l.randomSteps = std::clamp(l.randomSteps, 1, 16);
+  if (l.points.size() > static_cast<size_t>(kLfoMaxPoints)) l.points.resize(static_cast<size_t>(kLfoMaxPoints));
+  for (auto& p : l.points) {
+    p.x = std::clamp(p.x, 0.0f, 1.0f);
+    p.y = std::clamp(p.y, -1.0f, 1.0f);
+    p.curve = std::clamp(p.curve, -1.0f, 1.0f);
+  }
+  l.rateNote = std::clamp(l.rateNote, 0, lfo::kRateCount - 1);
+  l.rateKind = std::clamp(l.rateKind, 0, 2);
+  l.rateHz = std::clamp(l.rateHz, lfo::kMinHz, lfo::kMaxHz);
+  l.phase = std::clamp(l.phase, 0.0f, 360.0f);
+  l.depth = std::clamp(l.depth, 0.0f, 1.0f);
+  l.offset = std::clamp(l.offset, -1.0f, 1.0f);
+  l.smoothMs = std::clamp(l.smoothMs, 0.0f, 500.0f);
+  l.fadeIn = std::clamp(l.fadeIn, 0.0f, 8.0f);
+  if (l.name.size() > 32) l.name.resize(32);
+  // 0.7.8: Chaos and Random.
+  if (static_cast<int>(l.kind) < 0 || l.kind >= LfoKind::Count) l.kind = LfoKind::Lfo;
+  if (l.restart == LfoRestart::EachBar && l.kind != LfoKind::Chaos) l.restart = LfoRestart::OnPlay;
+  l.character = std::clamp(l.character, 0.0f, 1.0f);
+  if (static_cast<int>(l.trigger) < 0 || l.trigger >= RandomTrigger::Count) l.trigger = RandomTrigger::Tempo;
+  l.quantise = l.quantise < 2 ? 0 : std::min(l.quantise, 16);
+  if (l.kind == LfoKind::Random) l.tempoSync = l.trigger != RandomTrigger::Hz;  // (its rate follows the trigger)
+}
+}  // namespace
+
+void Document::setLfoBoard(std::vector<SongLfo> lfos, std::vector<ModLink> links, ObjectId nextId, const std::string& label, uint64_t mergeKey) {
+  if (lfos == song_.lfos && links == song_.modLinks && nextId == song_.nextId) return;
+  LfoBoardCommand::State before{song_.lfos, song_.modLinks, song_.nextId};
+  LfoBoardCommand::State after{std::move(lfos), std::move(links), nextId};
+  if (!mergeKey) undo_.breakMerge();
+  exec(std::make_unique<LfoBoardCommand>(label, std::move(before), std::move(after), mergeKey));
+  if (!mergeKey) undo_.breakMerge();
+}
+
+ObjectId Document::addLfo(SongLfo lfo, int index, const std::string& label) {
+  if (song_.lfos.size() >= static_cast<size_t>(kMaxSongLfos)) return kNoId;
+  lfo.id = song_.peekId();  // the id allocateId gives (collaborators' id partitions)
+  clampLfo(lfo);
+  if (lfo.noteChannel != kNoId && !song_.channel(lfo.noteChannel)) lfo.noteChannel = kNoId;
+  std::vector<SongLfo> lfos = song_.lfos;
+  const int n = static_cast<int>(lfos.size());
+  if (index < 0 || index > n) index = n;
+  lfos.insert(lfos.begin() + index, lfo);
+  setLfoBoard(std::move(lfos), song_.modLinks, lfo.id + 1, label, 0);
+  return lfo.id;
+}
+
+bool Document::removeLfo(ObjectId id) {
+  const int i = song_.lfoIndex(id);
+  if (i < 0) return false;
+  std::vector<SongLfo> lfos = song_.lfos;
+  lfos.erase(lfos.begin() + i);
+  std::vector<ModLink> links = song_.modLinks;
+  // Its links, and the links that move its own settings.
+  links.erase(std::remove_if(links.begin(), links.end(), [id](const ModLink& l) { return (l.isLfo() && l.sourceOwner == id) || l.owner == id; }),
+              links.end());
+  setLfoBoard(std::move(lfos), std::move(links), song_.nextId, "remove LFO", 0);
+  return true;
+}
+
+bool Document::editLfo(ObjectId id, const std::string& label, const std::function<void(SongLfo&)>& fn, uint64_t mergeKey) {
+  const int i = song_.lfoIndex(id);
+  if (i < 0) return false;
+  std::vector<SongLfo> lfos = song_.lfos;
+  SongLfo& l = lfos[static_cast<size_t>(i)];
+  fn(l);
+  l.id = id;
+  clampLfo(l);
+  if (l.noteChannel != kNoId && !song_.channel(l.noteChannel)) l.noteChannel = kNoId;
+  if (lfos == song_.lfos) return true;
+  setLfoBoard(std::move(lfos), song_.modLinks, song_.nextId, label, mergeKey);
+  return true;
+}
+
+bool Document::moveLfo(ObjectId id, int to) {
+  const int i = song_.lfoIndex(id);
+  const int n = static_cast<int>(song_.lfos.size());
+  if (i < 0) return false;
+  to = std::clamp(to, 0, n - 1);
+  if (to == i) return true;
+  std::vector<SongLfo> lfos = song_.lfos;
+  SongLfo l = lfos[static_cast<size_t>(i)];
+  lfos.erase(lfos.begin() + i);
+  lfos.insert(lfos.begin() + to, std::move(l));
+  setLfoBoard(std::move(lfos), song_.modLinks, song_.nextId, "move LFO", 0);
+  return true;
+}
+
+bool Document::removeLfoLink(ObjectId lfo, ParamId target) {
+  std::vector<ModLink> links = song_.modLinks;
+  auto it = std::remove_if(links.begin(), links.end(), [&](const ModLink& l) {
+    return l.isLfo() && l.sourceOwner == lfo && l.owner == target.owner && l.index == target.index;
+  });
+  if (it == links.end()) return false;
+  links.erase(it, links.end());
+  undo_.breakMerge();
+  setModLinks(std::move(links), "remove LFO target");
+  undo_.breakMerge();
+  return true;
+}
+
+bool Document::editLfoLink(ObjectId lfo, ParamId target, const std::string& label, const std::function<void(ModLink&)>& fn,
+                           uint64_t mergeKey) {
+  std::vector<ModLink> links = song_.modLinks;
+  ModLink* l = nullptr;
+  for (auto& x : links)
+    if (x.isLfo() && x.sourceOwner == lfo && x.owner == target.owner && x.index == target.index) l = &x;
+  if (!l) return false;
+  fn(*l);
+  l->sourceOwner = lfo;  // the LFO and the target identify the link
+  l->sourceSlot = kSongLfoSlot;
+  l->sourceOutput = 0;
+  l->owner = target.owner;
+  l->index = target.index;
+  l->min = std::clamp(l->min, 0.0f, 1.0f);
+  l->max = std::clamp(l->max, 0.0f, 1.0f);
+  l->amount = std::clamp(l->amount, -1.0f, 1.0f);
+  l->mode = l->mode == kModAround ? kModAround : kModAbsolute;
+  l->direction = std::min<uint8_t>(l->direction, kModDownOnly);
+  l->smoothMs = std::clamp(l->smoothMs, 0.0f, 2000.0f);
   if (links == song_.modLinks) return true;
   exec(std::make_unique<ModLinksCommand>(label, song_.modLinks, std::move(links), mergeKey));
   return true;

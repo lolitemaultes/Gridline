@@ -47,6 +47,8 @@ class WorkerPool {
   int threads() const { return spawned_.load(std::memory_order_acquire); }
   // Pool threads running with real-time scheduling (diagnostics / tests).
   int realtimeThreads() const { return realtime_.load(std::memory_order_acquire); }
+  // Times a pool thread woke from its semaphore (diagnostics / tests: an idle graph wakes none).
+  uint64_t wakeups() const { return wakeups_.load(std::memory_order_relaxed); }
 
   // Audio thread.
   void run(JobFn fn, void* ctx, int workers);
@@ -64,6 +66,7 @@ class WorkerPool {
   std::atomic<JobFn> fn_{nullptr};
   std::atomic<void*> ctx_{nullptr};
   std::atomic<int> nextWorker_{1};
+  std::atomic<uint64_t> wakeups_{0};
 };
 
 }  // namespace gl

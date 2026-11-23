@@ -374,15 +374,6 @@ void tPageShare(App& a, ImVec2 t0, ImVec2 t1, float pad) {
   } else if (!c.profileReady()) {
     tNote(msg, tr("Choose a display name first: collaborators see it."), P.hot, 2);
   }
-  if (!u.foreign.empty()) {
-    std::string t = tr("This project uses plugins that are not part of Gridline:");
-    for (size_t i = 0; i < u.foreign.size(); ++i) {
-      t += (i ? ", " : " ") + u.foreign[i].first;
-    }
-    t += ". ";
-    t += tr("Another computer might not have them, and their settings can't be merged. Replace or remove them, then try again.");
-    tNote(msg, t, P.hot, 3);
-  }
   if (!u.makeErr.empty()) {
     tNote(msg, u.makeErr, theme::lit(P.danger), 2);
   }

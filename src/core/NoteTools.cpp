@@ -1,9 +1,11 @@
 #include "Groove.h"
 #include "NoteTools.h"
+#include "Lanes.h"
 #include "Meter.h"
 #include "StepNotes.h"
 #include "ChordTools.h"
 #include "NoteBend.h"
+#include "TrackModes.h"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -628,6 +630,29 @@ void articulate(std::vector<Note>& notes, NoteSel& sel, const ArticulateOpts& o)
   }
 }
 
+// --------------------------------------------------------------------- lengths ----
+
+void setLengths(std::vector<Note>& notes, NoteSel& sel, const LengthOpts& o) {
+  auto t = targets(notes, sel);
+  const Tick minLen = std::max<Tick>(1, o.minLength), g = std::max<Tick>(1, o.grid);
+  for (size_t i = 0; i < notes.size(); ++i) {
+    if (!t[i]) continue;
+    Note& n = notes[i];
+    Tick len = n.length;
+    if (o.mode == LengthOpts::Scale) len = roundTick(static_cast<double>(n.length) * std::clamp(o.factor, 0.05, 8.0));
+    else if (o.mode == LengthOpts::Set) len = o.length;
+    else len = n.length + o.delta;
+    // Shorter by an amount: a note keeps at least that amount (one shorter than it stays as it is).
+    if (o.mode == LengthOpts::Add && o.delta < 0) len = std::max(len, std::min(n.length, -o.delta));
+    if (o.snapEnds && g > 1) {
+      const Tick end = n.start + len;
+      const Tick snapped = (end + g / 2) / g * g;
+      len = std::max(snapped - n.start, g - (n.start % g));  // at least to the next grid line
+    }
+    n.length = std::max(minLen, len);
+  }
+}
+
 // -------------------------------------------------------------------- randomize ----
 
 std::vector<Note> randomNotes(const RandomOpts& o) {
@@ -1105,7 +1130,7 @@ void readStepRow(const Pattern& p, ObjectId ch, tools::StepRow& row, tools::Step
   props.clear();
   if (auto it = p.steps.find(ch); it != p.steps.end()) row = it->second;
   if (auto it = p.stepProps.find(ch); it != p.stepProps.end()) props = it->second;
-  row.resize(static_cast<size_t>(std::max(0, p.bars * p.stepsPerBar)), 0);
+  row.resize(static_cast<size_t>(std::max(0, lanes::steps(p, ch))), 0);  // K-255: the row's own steps
   props.resize(row.size());
 }
 
@@ -1131,8 +1156,11 @@ bool editStepRow(Document& d, ObjectId pattern, ObjectId channel, const std::str
 bool convertStepsToNotes(Document& d, ObjectId pattern, ObjectId channel) {
   const Pattern* p = d.song().pattern(pattern);
   if (!p || !d.song().channel(channel) || !p->steps.count(channel)) return false;
-  // K-22: as step notes, so they play exactly as the steps did (swing, shift, length).
-  std::vector<Note> all = stepnotes::view(d.song(), *p, channel);
+  // K-22: as step notes, so they play exactly as the steps did (swing, shift, length). K-255: a
+  // row on its own grid becomes notes at its steps' exact places.
+  std::vector<Note> all = lanes::ownGrid(*p, channel) ? lanes::rowAsNotes(d.song(), *p, channel) : stepnotes::view(d.song(), *p, channel);
+  if (lanes::ownGrid(*p, channel))
+    if (auto it = p->notes.find(channel); it != p->notes.end()) all.insert(all.begin(), it->second.begin(), it->second.end());
   return d.editPattern(pattern, "steps to piano roll", [&](Pattern& q) {
     if (all.empty())
       q.notes.erase(channel);
@@ -1148,8 +1176,14 @@ bool convertNotesToSteps(Document& d, ObjectId pattern, ObjectId channel) {
   if (!p || !d.song().channel(channel)) return false;
   auto it = p->notes.find(channel);
   if (it == p->notes.end() || it->second.empty()) return false;
-  const Tick tps = d.song().ticksPerStep(*p);
-  const int total = p->bars * p->stepsPerBar;
+  Tick tps = d.song().ticksPerStep(*p);
+  const int total = lanes::steps(*p, channel);  // K-255: the row's own steps
+  if (lanes::ownGrid(*p, channel)) {  // a row on its own grid: its steps are whole ticks only where the bar divides
+    const Tick bar = d.song().patternBarTicks(*p);
+    const int g = lanes::grid(*p, channel);
+    if (g <= 0 || bar % g != 0) return false;
+    tps = bar / g;
+  }
   return d.editPattern(pattern, "piano roll to steps", [&](Pattern& q) {
     tools::StepRow row;
     tools::StepPropRow props;
@@ -1175,21 +1209,85 @@ ObjectId channelsToNewPattern(Document& d, ObjectId pattern, const std::vector<O
   if (!p || channels.empty() || static_cast<int>(s.patterns.size()) >= kMaxPatterns) return kNoId;
   const Pattern src = *p;
   d.beginGroup(move ? "move channels to a new pattern" : "copy channels to a new pattern");
-  ObjectId np = d.addPattern(nextPatternName(s), src.bars, src.stepsPerBar, s.patternIndex(pattern) + 1);
+  ObjectId np = d.addPattern(nextPatternName(s), src.bars, src.stepsPerBar, s.patternIndex(pattern) + 1, src.meterNum, src.meterDen);
+  if (np == kNoId) {
+    d.endGroup();
+    return kNoId;
+  }
   d.editPattern(np, "copy channel data", [&](Pattern& q) {
-    q.color = src.color;
+    // Varied colours: the source pattern's colour; else the colour new patterns take (GitHub #74),
+    // the one channel's own colour when patterns take their channel's.
+    const Document::NewColors& nc = d.newColors();
+    const Channel* one = channels.size() == 1 ? d.song().channel(channels[0]) : nullptr;
+    q.color = nc.patterns == Document::NewColors::Varied ? src.color
+              : nc.patterns == Document::NewColors::Channel && one ? one->color
+                                                                     : q.color;
+    q.loop = src.loop;
+    q.meterNum = src.meterNum, q.meterDen = src.meterDen;  // GitHub #58: the same meter (its length stays the same)
     for (ObjectId ch : channels) {
       if (auto it = src.steps.find(ch); it != src.steps.end()) q.steps[ch] = it->second;
       if (auto it = src.stepProps.find(ch); it != src.stepProps.end()) q.stepProps[ch] = it->second;
       if (auto it = src.notes.find(ch); it != src.notes.end()) q.notes[ch] = it->second;
+      if (auto it = src.stepLoop.find(ch); it != src.stepLoop.end()) q.stepLoop[ch] = it->second;
+      if (auto it = src.lanes.find(ch); it != src.lanes.end()) q.lanes[ch] = it->second;  // K-255
     }
   });
   if (move)
     d.editPattern(pattern, "move channel data", [&](Pattern& q) {
-      for (ObjectId ch : channels) q.steps.erase(ch), q.stepProps.erase(ch), q.notes.erase(ch);
+      for (ObjectId ch : channels) q.steps.erase(ch), q.stepProps.erase(ch), q.notes.erase(ch), q.stepLoop.erase(ch), q.lanes.erase(ch);
     });
   d.endGroup();
   return np;
+}
+
+ObjectId channelToNewPatternClip(Document& d, ObjectId clip, ObjectId channel, bool replace, ObjectId* placed, bool ownSlot) {
+  if (placed) *placed = kNoId;
+  const Clip* c = d.song().clip(clip);
+  if (!c || c->kind != ClipKind::Pattern) return kNoId;
+  const Clip orig = *c;
+  d.beginGroup("copy to a new pattern");
+  const ObjectId np = channelsToNewPattern(d, orig.pattern, {channel}, false);
+  if (np == kNoId) {
+    d.cancelGroup();
+    return kNoId;
+  }
+  ObjectId id = kNoId;
+  d.editSong("place the new pattern", [&](Song& s) {
+    Clip k = orig;
+    k.id = id = s.allocateId();
+    k.pattern = np;
+    auto at = std::find_if(s.playlist.begin(), s.playlist.end(), [&](const Clip& x) { return x.id == orig.id; });
+    if (replace && at != s.playlist.end()) {
+      *at = k;  // in its place: the same slot of the clip grid, the same spot in the playlist order
+    } else {
+      k.group = kNoId;  // lying on the original: a clip of its own (never in the original's group or take)
+      k.takeGroup = kNoId, k.take = 0, k.takeRating = 0;
+      k.launched = false;
+      if (ownSlot && s.live.areaEnd > 0 && orig.start >= 0 && orig.start < s.live.areaEnd) {
+        // A clip of the clip grid: the slot under the original's (a slot holds one clip).
+        const Tick st = trackmodes::sceneTicksOf(s);
+        const int sc = trackmodes::sceneOf(s, orig.start);
+        const Tick below0 = static_cast<Tick>(sc + 1) * st, below1 = below0 + st;
+        bool taken = below0 >= s.live.areaEnd;
+        for (const Clip& x : s.playlist)
+          if (x.track == orig.track && x.start >= below0 && x.start < below1) taken = true;
+        if (taken) trackmodes::insertScene(s, sc, st);  // an empty scene under the original's
+        k.start += st;
+      }
+      s.playlist.push_back(k);
+    }
+  });
+  d.endGroup();
+  if (placed) *placed = id;
+  return np;
+}
+
+bool channelHasSequence(const Pattern& p, ObjectId channel) {
+  if (auto it = p.notes.find(channel); it != p.notes.end() && !it->second.empty()) return true;
+  if (auto it = p.steps.find(channel); it != p.steps.end())
+    for (uint8_t v : it->second)
+      if (v) return true;
+  return false;
 }
 
 bool renameChannelGroup(Document& d, int group, const std::string& name) {

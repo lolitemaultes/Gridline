@@ -114,6 +114,13 @@ void rescale(std::vector<BendPoint>& b, int fromPpq, int toPpq);
 // straight segments through the samples, thinned to within `tolerance` semitones and kMaxPoints.
 std::vector<BendPoint> fromSamples(const std::vector<std::pair<double, double>>& samples, double tolerance = 0.02, double rampGap = 0);
 
+// K-262: the note's pitch offset `t` ticks after its start: its line plus its vibrato (core/NoteVibrato.h)
+// at `bpm` with `ppq` ticks per beat. The exports that have no vibrato of their own use it.
+double pitchAt(const Note& n, double t, int ppq, double bpm);
+// K-262: the note's line with its vibrato sampled in (straight segments, at most kMaxPoints, so a
+// long vibrato is approximated). The note's own line when it has no vibrato.
+std::vector<BendPoint> withVibrato(const Note& n, int ppq, double bpm, double tolerance = 0.05);
+
 // K-28: a bend line as slide notes (FL Studio export). FL notes have no bend line; a slide note
 // glides the sounding notes of its channel and colour to its own pitch (key + fine pitch, in 10
 // cent steps) over its length. The line from the note's start to `length` ticks becomes:

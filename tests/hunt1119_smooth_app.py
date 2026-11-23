@@ -221,7 +221,7 @@ def check_reopen():
     sc.dclick(bar_x(1) + 30, TRACK1_Y, settle=20)
     draw_notes(sc, (700, 840, 990))
     sc.at("dump", 2)
-    sc.at("save " + song, 10)
+    sc.at('save "%s"' % song, 10)
     out, cfg = run("reopen_save", sc)
     cs = clips(out, 0) or []
     m = re.search(r"dump frame \d+: \d+ clips[^\n]*\n  clip \d+ kind 0 track 0 start 0 len \d+ .*? pattern (\d+)", out)
@@ -296,7 +296,7 @@ def check_misc():
         return fail("misc: the instrument window did not open from the inspector")
     wx, wy, ww, wh = (float(v) for v in m.groups())
     sc.click(wx + MISC_TAB_DX, wy + MISC_TAB_DY, settle=12)  # its Misc tab (the extra settings)
-    sc.at("shot " + shot, 3)
+    sc.at('shot "%s"' % shot, 3)
     run("misc", sc)
     w, h, px = read_ppm(shot)
     # Nothing is cut off at the window's right edge: no text in its last few columns (the Layer list's
@@ -356,7 +356,7 @@ def check_menukey():
     shot = os.path.join(OUT, "menukey.ppm")
     sc = Script()
     sc.click(*APP_MENU, settle=8)
-    sc.at("shot " + shot, 3)
+    sc.at('shot "%s"' % shot, 3)
     run("menukey", sc)
     w, h, px = read_ppm(shot)
     # The app menu's Settings... row: its shortcut is written as the other rows' are, glyphs ("⌘,", a dozen px
@@ -381,7 +381,7 @@ def check_velocity():
     sc = Script()
     load_sound(sc)
     sc.click(*EDITORS_BUTTON, settle=15)
-    sc.at("shot " + shot, 3)
+    sc.at('shot "%s"' % shot, 3)
     draw_notes(sc, (700,))
     sc.at("notes", 2)
     out, _ = run("velocity", sc)

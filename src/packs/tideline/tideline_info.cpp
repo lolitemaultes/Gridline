@@ -46,14 +46,14 @@ void appendInfos(std::vector<PluginInfo>& v) {
   p.params[BwDetLow] = lg("Detect low cut", "Hz", 20, 2000, 30);
   p.params[BwDetHigh] = lg("Detect high cut", "Hz", 40, 20000, 200);
   p.params[BwMidiPort] = lin("MIDI port", "", -1, 255, -1);
-  p.params[BwMidiNote] = lin("MIDI note", "", -1, 127, -1);
+  p.params[BwMidiNote] = lin("MIDI note", "note-any", -1, 127, -1);
   p.params[BwTension] = lin("Curve tension", "%", -1, 1, 0.3);
   for (int i = 0; i < kNodes; ++i) {
     p.params[static_cast<size_t>(BwNodeX0 + i)] = lin("Point " + std::to_string(i + 1) + " time", "%", 0, 1, kDefNodeX[i]);
     p.params[static_cast<size_t>(BwNodeY0 + i)] = lin("Point " + std::to_string(i + 1) + " level", "%", 0, 1, kDefNodeY[i]);
   }
   p.params[BwNoteSrc] = ch("Note source", {"MIDI Out ports", "Channel", "MIDI input"}, SrcPorts);
-  p.params[BwMidiNoteHi] = lin("MIDI note to", "", -1, 127, -1);
+  p.params[BwMidiNoteHi] = lin("MIDI note to", "note-any", -1, 127, -1);
   p.params[BwLookahead] = lin("Look-ahead", "ms", 0, kMaxLookaheadMs, 0);
   p.sideInParam = BwScIn;
   p.midiInput = true;

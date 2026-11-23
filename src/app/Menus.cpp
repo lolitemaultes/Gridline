@@ -723,6 +723,7 @@ const md::Menu& viewDef() {
       md::toggle(N_("Channel rack"), "view.channelRack", [](App& a) { return &a.showRack; }).only(studioNotTracks),
       md::toggle(N_("Piano roll"), "view.pianoRoll", [](App& a) { return &a.showPiano; }).only(studioWindows),
       md::toggle(N_("Mixer"), "view.mixer", [](App& a) { return &a.showMixer; }),  // K-77: with the other main editors
+      md::toggle(N_("LFO board"), "view.lfoBoard", [](App& a) { return &a.showLfoBoard; }),  // K-247
       // hunt-clips4-1119: Clips has no Mix menu, so its Stage sits here beside the Mixer (it was reached
       // only through the command palette). The other layouts keep theirs further down.
       md::toggle(N_("Stage"), "view.stage", [](App& a) { return &a.showStage; }).only([](App& a) { return livelook::active(a); }),
@@ -883,7 +884,7 @@ const md::Menu& optionsDef() {
 
 void tapperBody(App& a) {
   const ops::TapTempo& tapper = a.tapper;  // K-48: the top bar button's tapper
-  ImGui::TextDisabled("%s", i18n::tr("Click Tap (or press T) on every beat"));
+  ImGui::TextDisabled("%s", keys::withKeys(i18n::N_("Click Tap (or press %s) on every beat"), {keys::fixedKey("T")}));
   bool tap = ImGui::Button(i18n::tr("Tap"), ImVec2(160, 36));
   devNoteRect("tapmenutap");
   tap = tap || (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_T, false));
@@ -1099,8 +1100,9 @@ bool menuShortcuts(App& a) {
   const bool inMixer = inMixerWindow && !a.showStage;
   const bool inAuto = std::strstr(focused, "###autoedit") != nullptr;
   const bool inStage = inMixerWindow && a.showStage;  // the mixer window's Stage view
+  const bool inWave = !std::strcmp(focusedId, "Audio clip");  // K-248: the audio clip editor's window
   keys::setFocusContext(inPiano ? keys::Context::PianoRoll : inPlaylist ? keys::Context::Playlist : inRack ? keys::Context::ChannelRack
-                        : inMixer ? keys::Context::Mixer : inAuto ? keys::Context::Automation : inStage ? keys::Context::Stage
+                        : inMixer ? keys::Context::Mixer : inAuto ? keys::Context::Automation : inStage ? keys::Context::Stage : inWave ? keys::Context::Waveform
                         : keys::Context::Global);
   if (io.WantTextInput || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel)) return false;
   bool used = false;  // a handled key stops handleGlobalShortcuts from also acting on it
@@ -1158,6 +1160,10 @@ bool menuShortcuts(App& a) {
     auto sel = selectedChannels(a);
     if (key("rack.clone")) {
       auto ids = ops::cloneChannels(a.doc, sel);
+      if (!ids.empty()) a.selChannel = ids.back(), a.selChannels = std::set<ObjectId>(ids.begin(), ids.end());
+    }
+    if (key("rack.cloneEmpty")) {  // GitHub #74: the sound and its settings, none of its notes
+      auto ids = ops::cloneChannels(a.doc, sel, Document::CloneNotes::None);
       if (!ids.empty()) a.selChannel = ids.back(), a.selChannels = std::set<ObjectId>(ids.begin(), ids.end());
     }
     if (key("rack.randomColours")) {

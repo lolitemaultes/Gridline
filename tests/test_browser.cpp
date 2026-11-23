@@ -11,6 +11,7 @@
 #include "Check.h"
 #include "Hermetic.h"
 #include "core/BrowserIndex.h"
+#include "core/BrowserTabs.h"
 #include "core/Png.h"
 #include "core/WavWriter.h"
 #include "engine/Sample.h"
@@ -194,6 +195,29 @@ void testDrop() {
     expect(dropAction(ins, DropTarget::Playlist) == DropAction::NewInstrumentChannel, "drop instrument -> playlist: new Multisampler");
     expect(dropAction(ins, DropTarget::MixerSlot) == DropAction::None, "drop instrument -> mixer: nothing");
     expect(std::string(dropActionLabel(DropAction::NewInstrumentChannel)).size() > 0, "drop instrument: labelled");
+  }
+  // K-333: SF2 files open like folders; a patch of one is an item the Patch Player plays
+  {
+    const std::string item = patchItemPath("/a b/GM.sf2", 128, 0);
+    std::string file;
+    int bank = -1, prog = -1;
+    expect(splitPatchItem(item, file, bank, prog) && file == "/a b/GM.sf2" && bank == 128 && prog == 0, "patch item round trip");
+    expect(!splitPatchItem("/a/x.wav#patch=0:1", file, bank, prog) && !splitPatchItem("/a/x.sf2#patch=0:200", file, bank, prog) &&
+               !splitPatchItem("/a/x.sf2", file, bank, prog),
+           "patch item: only SF2 files, valid numbers");
+    expect(kindOf(item) == Kind::Instrument && kindOf("/a/Small.sf3") == Kind::Instrument, "kind: patches and sf3 are instruments");
+    expect(playsOnPatchPlayer("/a/GM.SF2") && playsOnPatchPlayer(item) && !playsOnPatchPlayer("/a/Piano.sfz"), "plays on the Patch Player");
+    DropItem pp{Kind::Instrument, kPatchPlayerItem, PluginKind::Generator};
+    expect(dropAction(pp, DropTarget::Rack) == DropAction::NewPatchChannel, "drop patch -> rack: new Patch Player");
+    expect(dropAction(pp, DropTarget::Workspace) == DropAction::NewPatchChannel && dropAction(pp, DropTarget::Playlist) == DropAction::NewPatchChannel,
+           "drop patch -> workspace, playlist: new Patch Player");
+    expect(dropAction(pp, DropTarget::Rack, "gl.patchplayer") == DropAction::LoadPatch, "drop patch -> Patch Player row: change its patch");
+    expect(dropAction(pp, DropTarget::PluginWindow, "gl.patchplayer") == DropAction::LoadPatch, "drop patch -> Patch Player window");
+    expect(dropAction(pp, DropTarget::Rack, "gl.synth") == DropAction::ReplaceWithPatchPlayer, "drop patch -> other row: replace");
+    expect(dropAction(pp, DropTarget::PluginWindow, "gl.multisampler") == DropAction::LoadInstrumentMap, "drop patch -> Multisampler window: its zones");
+    expect(dropAction(pp, DropTarget::MixerSlot) == DropAction::None, "drop patch -> mixer: nothing");
+    expect(std::string(dropActionLabel(DropAction::LoadPatch)).size() > 0 && std::string(dropActionLabel(DropAction::NewPatchChannel)).size() > 0,
+           "drop patch: labelled");
   }
   DropItem audio{Kind::Audio, "", PluginKind::Generator};
   expect(dropAction(audio, DropTarget::Rack) == DropAction::NewSamplerChannel, "drop audio -> rack: sampler");
@@ -432,6 +456,49 @@ void testStopAtExit() {
   expect(ended && !child.status().crashed && child.status().code == 0, "index: an exit during a pass stops the worker before the statics go");
 }
 
+// GitHub #74: the browser's tabs (add folder tabs, close, reopen, rename, reorder, saved per user).
+void testTabs() {
+  auto d = defaultTabs();
+  expect(d.size() == 5 && d[0].kind == TabKind::All && d[4].kind == TabKind::Starred, "tabs: five built-in tabs by default");
+  expect(isDefault(d), "tabs: the defaults are the default set");
+  expect(tabsFromText("") == d && tabsFromText("gridline-browser-tabs 1\nnonsense\n") == d, "tabs: nothing usable gives the defaults");
+  auto t = d;
+  expect(addFolderTab(t, "/home/u/Samples/") == 5 && t[5].path == "/home/u/Samples", "tabs: a folder tab goes at the end, no trailing slash");
+  expect(addFolderTab(t, "/home/u/Samples") == 5 && t.size() == 6, "tabs: the same folder twice keeps one tab");
+  expect(addFolderTab(t, "") == -1, "tabs: an empty path adds nothing");
+  expect(folderTabLabel(t[5]) == "Samples", "tabs: a folder tab is labelled with the folder's name");
+  expect(renameTab(t, 5, "  My kicks ") && folderTabLabel(t[5]) == "My kicks", "tabs: a folder tab can be renamed (trimmed)");
+  expect(renameTab(t, 5, "Samples") && t[5].name.empty(), "tabs: renaming to the folder's own name follows the folder again");
+  expect(!renameTab(t, 0, "Everything"), "tabs: built-in tabs keep their names");
+  expect(folderTabLabel(TabEntry{TabKind::Folder, "/", {}}) == "/", "tabs: the root folder's label");
+  expect(addFolderTab(t, "C:\\Audio\\Loops", "Loops two", 1) == 1 && t[1].name == "Loops two", "tabs: a folder tab inserted at a place");
+  const std::string text = tabsToText(t);
+  expect(text.rfind("gridline-browser-tabs 1\n", 0) == 0, "tabs: the saved text starts with its header");
+  expect(tabsFromText(text) == t, "tabs: saved and read back unchanged");
+  expect(folderTabPaths(t).size() == 2, "tabs: the folders that have tabs");
+  // Closing: the last one is kept.
+  auto c = d;
+  for (int i = 0; i < 4; ++i) expect(closeTab(c, 0), "tabs: a tab closes");
+  expect(c.size() == 1 && c[0].kind == TabKind::Starred && !closeTab(c, 0), "tabs: the last tab is never closed");
+  expect(closedBuiltIns(c).size() == 4 && closedBuiltIns(c)[0] == TabKind::All, "tabs: the closed built-ins in their usual order");
+  expect(reopenBuiltIn(c, TabKind::Plugins) == 0 && c[0].kind == TabKind::Plugins, "tabs: a reopened tab goes before a later built-in");
+  expect(reopenBuiltIn(c, TabKind::Sounds) == 1, "tabs: and between the built-ins around it");
+  expect(reopenBuiltIn(c, TabKind::Sounds) == 1 && c.size() == 3, "tabs: reopening an open tab keeps one");
+  expect(reopenBuiltIn(c, TabKind::All) == 0, "tabs: All goes back to the start");
+  expect(tabsFromText(tabsToText(c)) == c, "tabs: a closed built-in stays closed once saved");
+  // Moving.
+  auto m = d;
+  expect(moveTab(m, 4, 0) && m[0].kind == TabKind::Starred && m[1].kind == TabKind::All, "tabs: drag the last tab to the front");
+  expect(!moveTab(m, 2, 2) && !moveTab(m, 9, 0), "tabs: no move to the same place or from outside");
+  expect(moveTab(m, 0, 99) && m[4].kind == TabKind::Starred, "tabs: a move past the end lands last");
+  // Which tab shows after a close.
+  expect(shownAfterClose(3, 1, 4) == 2 && shownAfterClose(1, 3, 4) == 1, "tabs: the shown tab stays when another closes");
+  expect(shownAfterClose(2, 2, 4) == 2 && shownAfterClose(4, 4, 4) == 3, "tabs: closing the shown tab shows its neighbour");
+  // Repeats and bad lines in a saved file.
+  const auto r = tabsFromText("gridline-browser-tabs 1\nall\nall\nfolder\nfolder\t/a\nfolder\t/a/\tx\nsounds\r\n");
+  expect(r.size() == 3 && r[1].path == "/a" && r[2].kind == TabKind::Sounds, "tabs: repeats and folder lines without a path are skipped");
+}
+
 int main(int argc, char** argv) {
   if (argc == 3 && std::strcmp(argv[1], "--exit-while-indexing") == 0) exitWhileIndexing(argv[2]);
   gl::test::hermeticTestEnv("browser");
@@ -446,5 +513,6 @@ int main(int argc, char** argv) {
   testIndex();
   testAcid();
   testPng();
+  testTabs();
   return finish();
 }

@@ -1,4 +1,5 @@
 #include "ProjectPreview.h"
+#include "Lanes.h"
 #include "RemoteFs.h"
 #include <algorithm>
 #include <cmath>
@@ -74,11 +75,12 @@ void pattern(const Song& s, Sketch& k) {
       const auto it = p.steps.find(ch.id);
       if (it == p.steps.end() || row >= kMaxRows) continue;
       bool any = false;
-      for (size_t i = 0; i < it->second.size() && static_cast<int>(i) < cols; ++i)
+      const int n = lanes::ownGrid(p, ch.id) ? std::min(kMaxStepCols, std::max(1, lanes::steps(p, ch.id))) : cols;  // K-255: its own steps
+      for (size_t i = 0; i < it->second.size() && static_cast<int>(i) < n; ++i)
         if (it->second[i] > 0) {
           any = true;
           if (k.blocks.size() < kMaxBlocks)
-            k.blocks.push_back({row, static_cast<float>(i) / static_cast<float>(cols), static_cast<float>(i + 1) / static_cast<float>(cols), ch.color & 0xFFFFFF, ch.muted});
+            k.blocks.push_back({row, static_cast<float>(i) / static_cast<float>(n), static_cast<float>(i + 1) / static_cast<float>(n), ch.color & 0xFFFFFF, ch.muted});
         }
       if (any) ++row;
     }

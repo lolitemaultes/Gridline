@@ -251,9 +251,9 @@ checkTree(track
       "Group > Hold the next 1 track" "Group > Group with the track above" "Group > Auto colour group" "Group > Collapse grouped tracks" "Group > Fold" "Group > Ungroup"
       "Clips > Send" "Clips > Merge pattern clips" "Clips > Mute all clips" "Clips > Unmute all clips")
 check(clip
-      "Edit pattern" "Duplicate" "Make unique" "Split at pattern repeats" "Slice at the song position" "Chop" "Split by channel" "Merge selected clips" "Fit length to pattern" "Rename pattern..." "Pattern colour" "Select all clips of this pattern" "Delete")
+      "Edit pattern" "Duplicate" "Make unique" "Split at pattern repeats" "Slice at the song position" "Chop" "Split by channel" "Merge selected clips" "Fit length to pattern" "Render clip to audio" "Render clip to file..." "Rename pattern..." "Pattern colour" "Select all clips of this pattern" "Delete")
 check(arrclip
-      "Mute clip" "Loop" "Rename..." "Edit in Loupe" "Export clip as WAV..." "Reverse" "Channel settings" "Audio" "Clip properties..." "Time stretch" "Render clip to audio (consolidate)" "Bounce this track to audio")
+      "Mute clip" "Loop" "Rename..." "Send to Loupe" "Reverse" "Channel settings" "Audio" "Edit clip..." "Time stretch" "Render clip to audio" "Render clip to file..." "Bounce this track to audio")
 checkTree(arrclip
       "Audio > Follow the project tempo" "Audio > Fit to tempo" "Audio > Normalize" "Audio > Make unique as sample" "Audio > Pitch a semitone up" "Audio > Pitch a semitone down")
 check(playlist
@@ -296,11 +296,17 @@ set(kGone "channel|Fill every step" "channel|Fill every 2 steps" "channel|Fill e
           "channel|Open the sample in a new channel" "channel|Granular" "channel|Kerf" "mixer|Disarm selected tracks" "mixer|Drop its audio track link"
           # moved: into the clip menu's Audio submenu (checked in the arrclip tree above)
           "audioclip|Fit to tempo" "audioclip|Normalize"
+          # renamed (0.7.8): Send to Loupe, Render clip to file..., Render clip to audio (checked in arrclip above)
+          "arrclip|Edit in Loupe" "arrclip|Export clip as WAV..." "arrclip|Render clip to audio (consolidate)"
+          "audioclip|Render clip to audio (consolidate)"
           # renamed: meter changes replaced time signature markers ("Add meter change" in the same menu)
           "playlist|Add time signature marker"
           # K-123: into the "Name takes after" submenu ("The mixer track", "The audio input")
           "options|Name takes after the audio input" "options|Name takes after the mixer track"
-          "record|Name takes after the audio input" "record|Name takes after the mixer track")
+          "record|Name takes after the audio input" "record|Name takes after the mixer track"
+          # renamed (0.7.8): the typing keyboard's Keyboard layout became My keys say (Same as my computer, QWERTY, ...)
+          "options|Keyboard layout" "options|Follow the computer" "options|Standard (QWERTY)"
+          "typing|Keyboard layout" "typing|Follow the computer" "typing|Standard (QWERTY)")
 if(BEFORE AND EXISTS "${BEFORE}")
   file(STRINGS "${BEFORE}" before)
   set(cur "")

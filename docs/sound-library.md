@@ -12,6 +12,18 @@ whether to add them to the browser. Say **Add** and they appear among the browse
 Gridline never looks into your personal folders (documents, music, downloads, desktop) unless you
 add them to the browser yourself.
 
+## What the browser indexes
+
+The browser's search and tags come from an index of Gridline's own folders (your presets,
+recordings, renders, sliced and edited audio) and the folders you add (browser folders and folder
+tabs). Content that another program installed is shown in the browser's tree when you open it, but
+it is indexed only once you add its folder yourself.
+
+Indexing is gentle: it runs in the background at the lowest priority, at most about a dozen audio
+files a second and a quarter of one processor core, and it waits while the song plays or records and
+while you hold a mouse button (dragging, turning a knob). If Gridline quits in the middle, the next
+start goes on from where it stopped.
+
 ## Tempo, key and sound kind from the audio
 
 While the browser indexes your folders, it listens to every audio file whose name and loop

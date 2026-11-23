@@ -3,6 +3,7 @@
 // buttons in the theme's roles, numbers in the monospaced face, two-digit hex numbering.
 #pragma once
 #include <initializer_list>
+#include <string>
 #include "../../third_party/imgui/imgui.h"
 
 namespace gl {
@@ -51,6 +52,14 @@ bool checkRow(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, b
 void bevelBox(ImDrawList* dl, ImVec2 p0, ImVec2 p1, bool sunken = false);
 // A bevel button: raised; pressed (inset) while held; lit when `on`; a lighter face on hover.
 bool bevelButton(App& a, const char* id, const char* label, ImVec2 p0, ImVec2 p1, bool on = false, const char* hint = nullptr);
+// 0.7.8 (dev): the label watch. While it is on, every labelled bevel button, radio row and check row
+// notes its label's width and its room; labelReport lists, for the last frame drawn, the labels cut
+// short (" clip <kind> \"<label>\" need>room") and those with less than kPad each side (" tight ...").
+void watchLabels(bool on);
+std::string labelReport(int* drawn, int* clipped, int* tight);
+// The watch for a label drawn some other way (the Browser's tabs): the last item's, `shown` as drawn,
+// `need` its width and `room` the width it has.
+void watchLabel(const char* kind, const char* shown, float need, float room);
 // A box title in the bold face.
 void boxTitle(App& a, ImVec2 p, const char* text);
 // A small arrow button (a filled triangle on a bevel face); repeats while held.

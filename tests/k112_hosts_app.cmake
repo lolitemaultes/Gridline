@@ -2,9 +2,9 @@
 # With the Device chain open, the instrument, an effect, the master chain and Loupe are opened
 # from their windows and from the chain's chips. Each frame's body draws ("layout bodies") must
 # never show a body twice, nor a Loupe effect both as an effect editor and in the Loupe panel, and
-# the device last opened is drawn exactly once: by the chain where the layout homes it there
-# (Live, Tracker), by its own window elsewhere (Studio, Logic: the chain's chips open the window).
-# The Tracker's instrument is its lower band's own screen (K-106 cp18-cp20): no channel settings body.
+# the device last opened is drawn exactly once, by its own window in every layout (in Clips the
+# device band shows the cards and the editors float, nothing above the band; in the Tracker the lower
+# band shows only its own screens and draws no plugin; elsewhere the chain's chips open the window).
 #   cmake -DAPP=<gridline-app> -DDEMO=<song> -DOUT=<dir> -P k112_hosts_app.cmake
 cmake_minimum_required(VERSION 3.16)
 file(REMOVE_RECURSE "${OUT}")
@@ -75,11 +75,8 @@ macro(expect tag f b what host)
 endmacro()
 
 foreach(lay studio live logic tracker)
-  if(lay STREQUAL "live" OR lay STREQUAL "tracker")
-    set(h chain)
-  else()
-    set(h window)
-  endif()
+  # (K-391: the Tracker too: every plugin's editor and settings float in their windows, as in Studio)
+  set(h window)
   # ---- instrument, effect, chips, master chain ----
   run(${lay} ${lay} "5 toasts clear
 20 layout open Device chain
@@ -96,33 +93,22 @@ foreach(lay studio live logic tracker)
 98 layout bodies
 " --frames 104)
   bodies(${lay} 34 b)
-  if(lay STREQUAL "tracker")
-    # K-106 cp18-cp20: the Tracker's lower band shows its own screen for the instrument (the
-    # Instrument editor or the Channel frame), never the channel settings body; that opens floating
-    # from the frame's "Open plugin window" (k316_tracker_editors_app, the inventory).
-    if("${b}" MATCHES "channel settings")
-      fail("${lay} frame 34: the channel settings body is drawn in the Tracker (${b})")
-    endif()
-  else()
-    expect(${lay} 34 "${b}" "channel settings" ${h})
-  endif()
+  expect(${lay} 34 "${b}" "channel settings" ${h})
   bodies(${lay} 50 b)
   expect(${lay} 50 "${b}" "effect editor" ${h})
   if(h STREQUAL "window")  # their windows: both stay open, each drawn once
     expect(${lay} 50 "${b}" "channel settings" window)
   endif()
-  bodies(${lay} 70 b)
-  expect(${lay} 70 "${b}" "effect editor" ${h})
-  bodies(${lay} 84 b)
-  if(lay STREQUAL "tracker")  # (as at frame 34)
-    if("${b}" MATCHES "channel settings")
-      fail("${lay} frame 84: the channel settings body is drawn in the Tracker (${b})")
-    endif()
-  else()
+  # (the Tracker's band has no device chips: its lower band shows only the Tracker's own screens;
+  # k078_tracker_float_app opens each window there)
+  if(NOT lay STREQUAL "tracker")
+    bodies(${lay} 70 b)
+    expect(${lay} 70 "${b}" "effect editor" ${h})
+    bodies(${lay} 84 b)
     expect(${lay} 84 "${b}" "channel settings" ${h})
+    bodies(${lay} 98 b)
+    expect(${lay} 98 "${b}" "master chain" window)
   endif()
-  bodies(${lay} 98 b)
-  expect(${lay} 98 "${b}" "master chain" window)
 
   # ---- Loupe: as an effect, then pinned into the layout ----
   run(${lay}_loupe ${lay} "5 toasts clear
@@ -132,9 +118,15 @@ foreach(lay studio live logic tracker)
 50 layout bodies
 " --frames 56 --plugin gl.edison)
   bodies(${lay}_loupe 30 b)
-  expect(${lay}_loupe 30 "${b}" "effect editor" ${h})
+  if(lay STREQUAL "tracker")  # (its band draws no plugin)
+    if("${b}" MATCHES "@Device chain")
+      fail("${lay}_loupe frame 30: the Tracker's band draws a plugin (${b})")
+    endif()
+  else()
+    expect(${lay}_loupe 30 "${b}" "effect editor" ${h})
+  endif()
   bodies(${lay}_loupe 50 b)
-  expect(${lay}_loupe 50 "${b}" "Loupe" ${h})  # Live, Tracker: the chain hosts Loupe and the panel steps aside
+  expect(${lay}_loupe 50 "${b}" "Loupe" ${h})  # Tracker: the chain hosts Loupe and the panel steps aside
 endforeach()
 
 if(failures GREATER 0)

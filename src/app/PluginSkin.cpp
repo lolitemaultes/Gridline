@@ -1,7 +1,9 @@
 // Gridline — rack skin: per-plugin palettes and vector control styles.
 #include "Look.h"
+#include "LookPaint.h"
 #include "../core/I18n.h"
 #include "PluginSkin.h"
+#include "PluginSkinMemo.h"
 #include "TypeInMenu.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include <functional>
@@ -262,8 +264,42 @@ void gradientCircle(ImDrawList* dl, ImVec2 c, float r, ImU32 top, ImU32 bottom) 
   ImGui::ShadeVertsLinearColorGradientKeepAlpha(dl, v0, dl->VtxBuffer.Size, ImVec2(c.x, c.y - r), ImVec2(c.x, c.y + r), top, bottom);
 }
 
+namespace {
+void knobFaceDraw(ImDrawList* dl, ImVec2 c, float r, const KnobPaint& p);
+}
+
 void knobFace(ImDrawList* dl, ImVec2 c, float r, const KnobPaint& p) {
   if (r < 2.0f) return;
+  // K-142: a knob drawn again as it was is copied from the last frame (PluginSkinMemo.h).
+  memo::Key key;
+  key.add(0x4B4E4F42u);  // which drawing: the knob face
+  if (look::styled()) {  // the control style's knob: its painter, the palette and the style's colours
+    const look::Dir dir = look::current();
+    const look::Painter& pt = look::painter(dir);
+    struct Ctx {
+      theme::Palette pal;
+      look::Tokens tk;
+    } ctx;
+    std::memset(static_cast<void*>(&ctx), 0, sizeof ctx);  // (padding compares equal)
+    ctx.pal = theme::pal();
+    ctx.tk = pt.tk;
+    key.add(static_cast<int>(dir)), key.add(memo::contextId(&ctx, sizeof ctx));
+    const auto addr = reinterpret_cast<uintptr_t>(&pt);
+    key.add(static_cast<uint32_t>(addr)), key.add(static_cast<uint32_t>(static_cast<uint64_t>(addr) >> 32));
+  } else {
+    key.add(0u);
+  }
+  key.add(c), key.add(r);
+  key.add(p.rail), key.add(p.fill), key.add(p.cap), key.add(p.pointer);
+  key.add(p.a0), key.add(p.a1), key.add(p.from), key.add(p.an), key.add(p.railTh), key.add(p.capR);
+  key.add(p.ring), key.add(p.hot), key.add(p.active), key.add(p.machined), key.add(p.dents), key.add(p.pointerDot);
+  if (memo::replay(dl, key)) return;
+  memo::Record rec(dl, key);
+  knobFaceDraw(dl, c, r, p);
+}
+
+namespace {
+void knobFaceDraw(ImDrawList* dl, ImVec2 c, float r, const KnobPaint& p) {
   if (look::styled()) {  // J-129 control style
     look::Knob k;
     const float sweep = std::max(0.01f, p.a1 - p.a0);
@@ -337,6 +373,7 @@ void knobFace(ImDrawList* dl, ImVec2 c, float r, const KnobPaint& p) {
   dl->AddCircleFilled(q1, lw * 0.5f, pc, 10);
   dl->AddCircleFilled(q0, lw * 0.5f, pc, 10);
 }
+}  // namespace
 
 void graphGrid(ImDrawList* dl, ImVec2 p0, ImVec2 p1, const Skin& k, int cols, int rows, bool centre) {
   const ImU32 g = theme::withAlpha(k.graphGrid ? k.graphGrid : lighten(k.panel, 0.1f), 0.75f);

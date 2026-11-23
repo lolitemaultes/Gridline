@@ -15,14 +15,10 @@ audio files the project uses.
   profile picture are optional. The profile belongs to you, not to a project.
 * **The same Gridline.** Everyone needs the same version (and the same build). If a newer Gridline
   has been released, collaboration asks you to update first (see "Versions" below).
-* **Only Gridline's own plugins.** A project that uses a plugin that is not part of Gridline
-  (VST3, VST2, CLAP, Audio Unit or LV2, sandboxed or not) cannot be collaborative. The other
-  computer might not have the plugin, or have another version of it, and its settings are a sealed
-  blob that only that plugin understands, so changes to it could neither be sent as they happen nor
-  merged. Gridline lists every such plugin and where it is, so you can replace or remove it.
-  In a collaborative project these plugins are hidden from the plugin picker and the browser, and
-  anything that would add one (drag and drop, paste, presets, scripts, AI assistants) is refused
-  with a message.
+* **Installed plugins.** VST3, VST2, CLAP, Audio Unit and LV2 plugins (sandboxed or not) can be
+  used in a collaborative project, and a project that already uses them can be made collaborative.
+  Everyone who wants to hear such a plugin needs it installed on their own computer. See
+  [Installed plugins](#installed-plugins) below.
 
 ## Making a project collaborative
 
@@ -255,7 +251,8 @@ member. Inviting the person again also works (see above).
   it), their cursor is on top of it. Docked panels side by side never cover each other. While you
   have a confirmation (a modal) open, cursors behind it are dimmed with everything else.
   **Plugin editors**: a cursor in a plugin editor is drawn there only when you have the same
-  plugin's editor open (the same channel's instrument, the same mixer slot).
+  plugin's editor open (the same channel's instrument, the same mixer slot). Over an installed
+  plugin's own interface no cursor can be drawn; its window says who is in it instead.
 * The **top bar** shows everyone in the project: their picture or initials, a green dot when they
   are online, the latency on hover. Click it to open the Collaboration panel. A collaborator's
   picture arrives when you connect and again whenever they change it; it is kept on your computer
@@ -344,6 +341,68 @@ others. Until the file has arrived and its checksum matches, the others see a **
 placeholder** (striped, with the progress) and the clip or sample is silent. Then it plays.
 Files are named by their content (SHA-256), so the same file is never stored or sent twice, and
 an interrupted transfer continues where it stopped.
+
+## Installed plugins
+
+Plugins you installed yourself (VST3, VST2, CLAP, Audio Unit, LV2) are shared like Gridline's own:
+the plugin picker and the browser list them in a collaborative project, and drag and drop, presets,
+scripts and AI assistants can add them.
+
+* **Who the plugin is.** Each plugin is named by its own identity: the VST3 class id, the CLAP id,
+  the Audio Unit type, subtype and manufacturer, the VST2 unique id or the LV2 URI, with its name,
+  vendor and version. Another computer uses its own copy of the same plugin. A different version is
+  allowed; the Collaboration panel notes it ("Sam has version 1.3, yours is 1.2").
+* **Turning its knobs.** A change of one of the plugin's automatable parameters (in its own
+  interface, in Gridline's parameter list, by automation or a controller) reaches the others as you
+  make it, like a knob of Gridline's own plugins: it streams while you drag, the latest change of
+  each parameter wins and Undo takes back only yours. Parameters are matched by the plugin's own
+  parameter ids, so two builds that list them in another order still change the same thing.
+* **Everything else it keeps.** What the plugin keeps beyond its parameters (a loaded sample or
+  wavetable, a preset, its internal settings) is sent as its whole state: when you close its
+  interface, when you load one of its presets, when the plugin says it changed, and while you work
+  in its interface, whenever its state changed without a parameter explaining it (Gridline looks
+  every second and a half). A collaborator who joins, or comes back, gets the newest states with the
+  project. Only the computer where someone works in the plugin sends its state, so a collaborator's
+  knob turns never send it back and forth.
+* **Big states** (more than 8 KB) are compressed and sent as a file of the project, in small pieces
+  next to the other work, with progress; an interrupted transfer continues where it stopped, and
+  anyone who has the file passes it on. Until it has arrived, the plugin there keeps the settings it
+  had and its window says "Its settings are arriving". A state over 64 MB is not shared (a notice
+  says so).
+* **Two changes at once.** The newest whole state wins, then parameter changes made after it apply
+  on top. (Sending a state also sends every parameter's value with it, so an older knob turn of
+  someone else's can't undo part of it.)
+* **A plugin someone doesn't have.** The channel or mixer slot stays in their project as it is,
+  silent, with all its settings kept exactly as they came and passed on to others unchanged; their
+  edits of the channel (its name, volume, notes) never touch the plugin's settings. They are told
+  which plugin it is, its vendor and version, and that they need to install it; its window says the
+  same. Everyone who has it sees who lacks it, in its window ("Not installed for Sam: they don't hear
+  it") and in the Collaboration panel under **Installed plugins**. Once they install it and rescan
+  their plugins, it loads with the shared settings. In a collaborative project Gridline never
+  replaces a missing plugin by another format of it or by a stand-in, because that would replace it
+  for everyone.
+* **Hearing a plugin you don't have.** Ask someone who has it to freeze the channel or the mixer
+  track (see [freeze.md](freeze.md)): the freeze is shared, so everyone plays the render. When the
+  channel changes, the freeze is out of date and the channel is silent again on computers without
+  the plugin until it is frozen again; renders to audio files can be shared the same way.
+* **Sandboxed plugins** work the same way: the sandbox hands Gridline the state and the
+  parameters.
+* **Cursors.** A plugin's own interface is drawn by the plugin, on top of Gridline (inside the
+  plugin window or in a window of its own), so a collaborator's cursor can't be drawn over it.
+  Instead its window shows "Sam is in this plugin" in Sam's colour while their pointer is in the
+  same plugin's interface.
+
+* **What a collaborator can't do.** Only a plugin's settings and parameter values travel, never
+  a plugin itself: Gridline loads only plugins installed and scanned on your own computer, and a
+  plugin name that points at a file loads nothing. A state file is stored only inside the
+  project's `Audio` folder under its own checksum; any other name is kept as text and never read
+  or written, and a state file over the size limit is refused. A collaborator's state still runs
+  inside your copy of the plugin, so a plugin with a flaw in reading its own settings could be
+  upset by one; run it in the sandbox (its menu in the plugin window) if you don't trust it.
+
+Limits: both of you need the plugin installed to hear it. A plugin that changes its sound from
+something that is neither a parameter nor its saved state (a file it reads itself, a licence, the
+computer's own settings) may sound different on another computer.
 
 ## Working offline and catching up
 
@@ -448,8 +507,9 @@ are shown as "about".
   behind the top modal, its outline is painted over with the modal's dim colour (`ModalWindowDimBg`
   at the current dim ratio). The crossfading copy uses the window it was over. An installed plugin's own window (outside the main window) is
   reported as `plugin-window` with the plugin and the pointer's fraction of it; Gridline cannot
-  draw over a plugin's own interface, so such a cursor is hidden here. (Installed plugins are not
-  allowed in collaborative projects today, so this only matters for later versions.)
+  draw over a plugin's own interface, so such a cursor is hidden here and the plugin's pane names
+  who is in it. An interface inside Gridline's window takes the mouse itself, so the pointer is
+  found in it from the global pointer position and the part of the window it shows.
 * **Pictures.** The profile names the picture by its hash (`avatar`); the bytes (up to 64 KB, more
   than a datagram) are asked for with `avreq` and sent as `av` on the reliable bulk stream, checked
   against the hash. Before J-111g nobody asked and the hash was dropped on arrival, so pictures never
@@ -457,6 +517,31 @@ are shown as "about".
   again every 3 s until it arrives; pictures are kept in `<config>/collab/peers/` by fingerprint
   and not fetched again. Older builds of this branch neither ask nor answer pictures by hash; the
   version gate keeps them apart.
+
+## Design notes: installed plugins
+
+* **In the shared document** a plugin is the same JSON object as in a project file (`type`,
+  `params`, `data`, `ident`). `ident` names whoever wrote the current state (name, vendor, version)
+  and lists the stable parameter ids of their build (`pids`, `params` in that order). It is replaced
+  only together with a new state, so computers with other builds never write it back and forth.
+  Each computer maps `params` between that order and its own build's by id.
+* **States** up to 8 KB stay inline in `data`. A bigger one is packed (its base64 parts back to
+  bytes), compressed (zlib) and kept as `Audio/<sha256>.glstate`; `data` then holds
+  `collab-state:Audio/<sha256>.glstate`, the file travels like an audio file (16 KB pieces on the
+  bulk stream, resumed, checked) and is turned back into the state when it is there. An instance
+  never loads a `collab-state:` value.
+* **Who writes states.** In a session a plugin's state is read and stored only on the computer where
+  it was touched: an edit in its interface, a program or preset, or the pointer or keyboard in its
+  interface, for 3 s after the last touch, plus once when the interface closes and once when the
+  touch ends; an idle read every 1.5 s finds states that changed silently. A state written here
+  writes every parameter too (one op each), so its stamp is newer than every parameter edit it
+  includes.
+* **Loading a collaborator's state.** The song's parameter values are the truth after it (they
+  include edits made after the state): they are sent to the plugin instead of being read back.
+* **Missing plugins.** In a session, project JSON is read without format switches and stand-ins
+  (`standin::NoResolve`). Which plugins each computer has is sent as a `plugs` message when a link
+  comes up and whenever it changes (checked every 2 s); a plugin that is installed (or updated) here
+  makes the whole project load again, so it gets the shared state in its own parameter order.
 
 ## Leaving and stopping
 
@@ -752,7 +837,8 @@ server (J-146).
   which follow the interface language: with two different languages, a few controls fall back to
   the spot in the window.
 * Transport, playback and the metronome stay on each computer (Follow their playhead is optional).
-* Plugins that are not part of Gridline can't be used in a collaborative project.
+* An installed plugin is heard only on computers that have it installed (a freeze of its channel
+  is heard everywhere).
 * Two invites handed out by different members at the very same moment can be given the same
   internal number; Gridline keeps object ids apart by member, so this is rare and only affects
   objects created in that same second.

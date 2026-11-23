@@ -291,8 +291,11 @@ bool sceneSignature(const SceneInfo& sc, int& num, int& den);
 // grid2-1118: scene k's tempo, time signature and follow actions (its name and colour stay).
 void setSceneSettings(Song& s, int k, const SceneInfo& info);
 int deleteTracks(Song& s, const std::vector<int>& tracks, std::string* why = nullptr);
-int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why = nullptr);
+// K-351: withContent false ("Duplicate without notes"): the copies get their own instrument, mixer track
+// and settings as Duplicate gives them, but no clips (so no notes, audio or automation of their own),
+// and a track's automation lanes stay with the original.
+int duplicateTracks(Song& s, const std::vector<int>& tracks, std::string* why = nullptr, bool withContent = true);
 int deleteTracks(Document& d, const std::vector<int>& tracks, std::string* why = nullptr);
-int duplicateTracks(Document& d, const std::vector<int>& tracks, std::string* why = nullptr);
+int duplicateTracks(Document& d, const std::vector<int>& tracks, std::string* why = nullptr, bool withContent = true);
 
 }  // namespace gl::trackmodes

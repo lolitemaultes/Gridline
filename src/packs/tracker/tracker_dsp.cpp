@@ -128,6 +128,11 @@ struct Mix {
   uint32_t frac = 0;
   uint64_t delta = 0;
   bool back = false, looped = false;
+  // 0.7.8: played backwards (the sample's Backwards option): every place above counts in the mirrored
+  // sample (frame i reads frame revTop - i of the data), so the loops, the edges and the ends work
+  // as they do forwards. revTop: the played part's last frame.
+  bool rev = false;
+  int32_t revTop = 0;
   int kernel = 0;
   float vol = 0;
   uint8_t pan = 128;
@@ -137,6 +142,7 @@ struct Mix {
 
   // The sample value at index i, with the loop's continuation around it.
   float tap(int64_t i) const { return tapOf(base, i); }
+  float rd(const float* b, int64_t i) const { return rev ? b[revTop - i] : b[i]; }
   float tapOf(const float* b, int64_t i) const {
     if (loop == trk::kLoopForward) {
       const int64_t le = static_cast<int64_t>(loopStart) + loopLength;
@@ -150,9 +156,9 @@ struct Mix {
     // Past either edge the tracker repeats the edge's sample point (a sample that ends without a
     // loop does not fall to silence between its last points).
     if (length < 1) return 0.0f;
-    if (i < 0) return b[0];
-    if (i >= length) return b[length - 1];
-    return b[i];
+    if (i < 0) return rd(b, 0);
+    if (i >= length) return rd(b, length - 1);
+    return rd(b, i);
   }
   float sampleAt(int interp) const { return sampleOf(base, interp); }
   float sampleOf(const float* src, int interp) const {
@@ -165,7 +171,7 @@ struct Mix {
     const int64_t hiLimit = loop == trk::kLoopOff ? length : static_cast<int64_t>(loopStart) + loopLength;
     const int64_t loLimit = looped ? loopStart : 0;
     const bool inside = i - 3 >= loLimit && i + 4 < hiLimit;
-    auto at = [&](int k) { return inside ? src[i + k] : tapOf(src, i + k); };
+    auto at = [&](int k) { return inside ? rd(src, i + k) : tapOf(src, i + k); };
     switch (interp) {
       case trk::InterpNone: return at(0);
       case trk::InterpLinear: {
@@ -448,7 +454,14 @@ class TrackerGen final : public Generator {
       trk::SampleDef& ps = previewDef_.samples[static_cast<size_t>(slot)];
       const int32_t to = au.to.load(std::memory_order_acquire);
       previewFrom_ = std::clamp(au.from.load(std::memory_order_acquire), 0, std::max(0, ps.length - 1));
-      if (to > previewFrom_ && to < ps.length) ps.length = to;
+      if (ps.reverse) {
+        // 0.7.8: backwards: the part from its end down to its start (counted in the mirrored sample).
+        const int32_t full = ps.length, end = to > previewFrom_ && to < full ? to : full;
+        ps.length = full - previewFrom_;
+        previewFrom_ = full - end;
+      } else if (to > previewFrom_ && to < ps.length) {
+        ps.length = to;
+      }
       v.audition = true;
       v.auditionId = want;
     } else {
@@ -634,7 +647,15 @@ class TrackerGen final : public Generator {
     m.loopStart = sd.loopStart;
     m.loopLength = sd.loopLength;
     m.loop = sd.loopLength < 1 ? static_cast<uint8_t>(trk::kLoopOff) : sd.loop;
-    m.sampleEnd = m.loop == trk::kLoopOff ? sd.length : sd.loopStart + sd.loopLength;
+    // 0.7.8: backwards: the mirrored sample (its loop mirrored with it). A preview's part keeps the
+    // whole sample's mirror (its length is cut to the part's end in the mirror).
+    m.rev = sd.reverse;
+    if (m.rev) {
+      const int32_t full = std::max<int32_t>(1, inst_->text.def.samples[static_cast<size_t>(slot)].length);
+      m.revTop = full - 1;
+      if (m.loop != trk::kLoopOff) m.loopStart = std::max<int32_t>(0, full - (sd.loopStart + sd.loopLength));
+    }
+    m.sampleEnd = m.loop == trk::kLoopOff ? sd.length : m.loopStart + m.loopLength;
     m.pos = position;
     m.frac = 0;
     m.back = false;
@@ -940,8 +961,15 @@ class TrackerGen final : public Generator {
       const int note = v.live ? v.first.note : v.lastNote;
       const trk::InstrumentDef& in = v.ch.instrument();
       ek[static_cast<size_t>(n)] = envTap(in.vol, v.ch.s.volEnvTick, v.ch.s.volEnvPos) | (envTap(in.pan, v.ch.s.panEnvTick, v.ch.s.panEnvPos) << 16);
+      // 0.7.8: the frame the voice reads, as sampleOf does: on a ping-pong loop's way back the count
+      // still runs up, the frame read is its mirror in the loop (the editor's line walks back).
+      const int64_t read = v.mix.back ? static_cast<int64_t>(v.mix.loopStart) + v.mix.loopStart + v.mix.loopLength - 1 - v.mix.pos
+                                      : static_cast<int64_t>(v.mix.pos);
+      // Backwards: the frame of the sample that mirrored frame is (the line runs right to left).
+      const int64_t real = v.mix.rev ? static_cast<int64_t>(v.mix.revTop) - read : read;
+      const int32_t at = static_cast<int32_t>(std::clamp<int64_t>(real, 0, std::max<int64_t>(0, static_cast<int64_t>(v.mix.rev ? v.mix.revTop + 1 : v.mix.length) - 1)));
       pk[static_cast<size_t>(n++)] = (uint64_t{1} << 63) | (static_cast<uint64_t>(note & 0xFF) << 48) | (static_cast<uint64_t>(v.ch.s.smpNum & 15) << 40) |
-                                     static_cast<uint32_t>(std::max<int32_t>(0, v.mix.pos));
+                                     static_cast<uint32_t>(at);
     }
     if (n == 0 && tapEmpty_ && tap_->inst.load(std::memory_order_relaxed) == inst_) return;  // (nothing new)
     tapEmpty_ = n == 0;

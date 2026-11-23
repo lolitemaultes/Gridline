@@ -1,5 +1,6 @@
 // Gridline — J-75: external drag & drop, platform-independent part (see ExternalDrop.h).
 #include "ExternalDrop.h"
+#include "ThreadName.h"
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -334,9 +335,11 @@ Plan plan(const std::vector<Item>& items, const std::vector<browse::DropItem>& k
     }
     // On a channel row: Shift (or a second sample / preset) makes new channels instead of replacing.
     const bool replaces = act == DropAction::ReplaceSample || act == DropAction::ReplaceInstrument || act == DropAction::ReplaceFromPreset ||
-                          (act == DropAction::LoadInstrumentMap && ctx.target == DropTarget::Rack) || act == DropAction::ReplaceWithInstrument;
+                          (act == DropAction::LoadInstrumentMap && ctx.target == DropTarget::Rack) || act == DropAction::ReplaceWithInstrument ||
+                          (act == DropAction::LoadPatch && ctx.target == DropTarget::Rack) || act == DropAction::ReplaceWithPatchPlayer;
     if (replaces && (mods.shift || rowTaken))
       act = act == DropAction::ReplaceFromPreset                                                ? DropAction::NewChannelFromPreset
+            : act == DropAction::LoadPatch || act == DropAction::ReplaceWithPatchPlayer         ? DropAction::NewPatchChannel  // K-333
             : act == DropAction::LoadInstrumentMap || act == DropAction::ReplaceWithInstrument ? DropAction::NewInstrumentChannel
                                                                                                 : DropAction::NewSamplerChannel;
     else if (replaces)
@@ -462,6 +465,19 @@ Plan plan(const std::vector<Item>& items, const std::vector<browse::DropItem>& k
       case DropAction::NewLayer:  // K-169
         parts.push_back(n == 1 ? fmt(i18n::tr("add the layer %s with its channels"), w.c_str()) : fmt(i18n::tr("add %d layers"), n));
         break;
+      case DropAction::NewPatchChannel:  // K-333
+        if (ctx.insertHere)
+          parts.push_back(n == 1 ? fmt(i18n::tr("insert a Patch Player channel playing %s here"), w.c_str()) : fmt(i18n::tr("insert %d Patch Player channels here"), n));
+        else
+          parts.push_back(n == 1 ? fmt(i18n::tr("add a Patch Player channel playing %s"), w.c_str()) : fmt(i18n::tr("add %d Patch Player channels"), n));
+        break;
+      case DropAction::LoadPatch:
+        parts.push_back(ctx.targetName.empty() ? fmt(i18n::tr("play %s on the Patch Player"), w.c_str()) : fmt(i18n::tr("play %s on %s"), w.c_str(), ctx.targetName.c_str()));
+        break;
+      case DropAction::ReplaceWithPatchPlayer:
+        parts.push_back(ctx.targetName.empty() ? fmt(i18n::tr("replace the channel's instrument with a Patch Player playing %s"), w.c_str())
+                                               : fmt(i18n::tr("replace %s with a Patch Player playing %s"), ctx.targetName.c_str(), w.c_str()));
+        break;
       case DropAction::LoadDrumKit:  // K-162
         parts.push_back(n == 1 ? fmt(i18n::tr("load the drum kit %s"), w.c_str()) : fmt(i18n::tr("load %d drum kits"), n));
         break;
@@ -491,7 +507,7 @@ void poll() {}
 // No system download service here: `curl` when installed (Linux), on a
 // background thread. Untested on Windows.
 void download(uint64_t token, size_t index, const std::string& url) {
-  std::thread([token, index, url] {
+  std::thread([token, index, url] { gl::threads::setName("gl-drop-fetch");
     const std::string dest = uniquePath(dropFolder(), fileNameForUrl(url));
     auto quote = [](const std::string& s) {
       std::string q = "'";

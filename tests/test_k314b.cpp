@@ -29,6 +29,14 @@ using namespace sim;
 
 namespace {
 
+// K-256: a workspace copy as the app writes it now: a workspace keeping its own control bar, its own pinned
+// commands and a Studio dock plan (the new keys of the copy must survive a collaborator's change too).
+const char* const kWorkspaceCopy =
+    "{\"active\":1,\"items\":[{\"name\":\"Arrange\",\"saved\":{\"open\":[\"Playlist\"]}},"
+    "{\"name\":\"Mix\",\"ownBar\":\"[{\\\"id\\\":\\\"menus\\\",\\\"on\\\":false}]\","
+    "\"ownPins\":\"[{\\\"command\\\":\\\"cmd:edit.undo\\\"}]\",\"keepPanes\":false,"
+    "\"saved\":{\"dock\":\"{\\\"tree\\\":{\\\"windows\\\":[\\\"Mixer\\\"],\\\"central\\\":true}}\",\"open\":[\"Mixer\"]}}]}";
+
 std::string readText(const std::string& path) {
   std::ifstream in(path, std::ios::binary);
   std::stringstream ss;
@@ -236,6 +244,7 @@ void testEqualityCoversFields() {
       {"Song", {"pluginWindows", "workspaceCopy", "idSlot", "idStride", "newTrackRoom"}},
       {"LiveSettings", {"view"}},  // read once from 0.7.7 development saves, never written
       {"SmoothView", {"library"}},
+      {"EffectSlot", {"uid"}},  // the running instance's identity (Document::tagSlots), never saved
   };
   std::set<std::string> seen;
   checkEquality(src + "/src/core/Song.h", allowed, seen);
@@ -389,7 +398,7 @@ void testEveryRestFieldTravels() {
     x.smooth.controls.push_back(SmartControlMap{x.masterId(), 1, lead, 0});
     x.trackReceipt = "{\"v\":1}";
     x.flExportGridline = "suite";
-    x.workspaceCopy["studio"] = "{\"sets\":[]}";
+    x.workspaceCopy["studio"] = kWorkspaceCopy;
     x.tracks[0].name = "Lead track";
     x.tracks[0].locked = true;
   });
@@ -416,6 +425,8 @@ void testEveryRestFieldTravels() {
   const Song& a = p.a.doc.song();
   expect(a.slidesAnyColour && a.flExportGridline == "suite" && a.workspaceCopy.count("studio") == 1 && !a.autoCrossfades,
          "rest: the author keeps them after the collaborator's change (B-01: defaults were written over them)");
+  expect(a.workspaceCopy.at("studio") == kWorkspaceCopy && p.b.doc.song().workspaceCopy.at("studio") == kWorkspaceCopy,
+         "rest: a workspace's own bar, own pins and dock plan in the copy stay whole on both peers (K-256)");
   expect(p.same(), "rest: still the same after the collaborator's change");
   // and a change of only one of these fields travels by itself
   p.b.doc.editSong("export choice", [](Song& x) { x.flExportGridline = "render"; });

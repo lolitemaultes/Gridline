@@ -178,6 +178,7 @@ enum Slicer {
 inline constexpr int kMaxSlices = 64;
 inline constexpr int SlModeManual = 5;  // SlMode choice: slice at the manual markers
 inline constexpr int SlModeGrid = 6;    // J-190: SlMode choice: slice on the loop's beat grid (engine/KerfGrid.h)
+inline constexpr int SlModeWarp = 7;    // SlMode choice: slice at the sample's warp markers (core/SampleWarp.h)
 inline constexpr int slMarker(int k) { return SlMarkers + k; }  // position 0..1 of slice k start, -1 = unused
 enum SliceField { SliceGain, SlicePan, SlicePitch, SliceReverse, SliceCutoff, SliceStart, SliceMute, SliceFields };
 inline constexpr int SliceBase = SlMarkers + kMaxSlices;
@@ -282,7 +283,11 @@ inline constexpr int SlLayerKey = SlLayer + 1;
 inline constexpr int SlBMarkers = SlLayerKey + 1;
 inline constexpr int kLayerBlock = SlModX - SlMarkers;  // markers, slice blocks 1 and 2 (832)
 inline constexpr int SlBSlice3 = SlBMarkers + kLayerBlock;
-inline constexpr int SlCount = SlBSlice3 + kMaxSlices * SliceFields3;
+// K-239: with Fit to tempo on, the loop follows the tempo through the stretch (engine/TimeStretch)
+// and keeps its pitch (off: it plays faster or slower, its pitch following, as before). K-351: on
+// for new instances; states saved before it load with it off (legacyDefaults).
+inline constexpr int SlFitKeepPitch = SlBSlice3 + kMaxSlices * SliceFields3;
+inline constexpr int SlCount = SlFitKeepPitch + 1;
 // Layer `layer`'s copy of layer A's per-slice parameter `pid` (other parameters: `pid`).
 inline constexpr int layerPid(int layer, int pid) {
   return layer == 0 ? pid
@@ -294,6 +299,9 @@ inline constexpr int layerPid(int layer, int pid) {
 enum Granular {
   GrPosition, GrSpread, GrSize, GrDensity, GrPitchRand, GrStereo, GrAttack, GrRelease, GrFreeze, GrVolume,
   GrSpeed, GrShape, GrLoop, GrKeyMode, GrBaseNote, GrTempoSync, GrWobble, GrWobbleRate, GrJitter, GrTransientHold, GrPitch,  // 0.5
+  // K-341: 1 = the level follows the grains' overlap (as loud as the sample at any density and
+  // size; new instances), 0 = the level of 0.7.7 and before, kept for states saved before
+  GrLevel,
   GrCount
 };
 // "gl.midiout"
@@ -574,7 +582,26 @@ inline constexpr int ShDrive = ShPan + kShaperPoints, ShDriveMix = ShDrive + 1, 
 inline constexpr int ShFollow = ShDrive + 4, ShFollowAtt = ShDrive + 5, ShFollowRel = ShDrive + 6;
 inline constexpr int ShLfoAmt = ShDrive + 7, ShLfoRate = ShDrive + 8, ShLfoShape = ShDrive + 9;
 inline constexpr int ShInput = ShDrive + 10, ShOutput = ShDrive + 11;
-inline constexpr int ShCount = ShDrive + 12;
+// K-257 (0.7.8): each lane's own step count (independent sequencing: a lane of n steps loops every
+// n steps of the pattern, so lanes of different lengths run against each other) and a band split
+// (the shaping acts on the lows or the highs only, the rest passes untouched). States saved before
+// load as 16 steps each and the full band: they play exactly as before.
+inline constexpr int ShVolSteps = ShDrive + 12, ShCutSteps = ShDrive + 13, ShPanSteps = ShDrive + 14;  // choice: 1..16 steps
+inline constexpr int ShBand = ShDrive + 15, ShBandFreq = ShDrive + 16;                                 // 0 full, 1 lows, 2 highs; split in Hz
+// K-257 phase 2 (0.7.8): lanes of up to 64 steps (the Steps choices run 1..64), each lane's own step
+// size (0 Auto: the Length switch over 16 steps, as before; then 1/32 .. 1 bar with triplets) and
+// swing; 8 patterns (steps past 16 of pattern 1, patterns 2..8, per-step chance and repeats and the
+// chain live in PluginState::data, engine/ShaperSteps.h), the pattern played chosen by ShPattern
+// (automation), the chain (one slot per Length) or notes. Defaults play exactly as before.
+inline constexpr int kShaperMaxSteps = 64;
+inline constexpr int ShVolRate = ShDrive + 17, ShCutRate = ShDrive + 18, ShPanRate = ShDrive + 19;     // choice, kShaperRateBeats
+inline constexpr int ShVolSwing = ShDrive + 20, ShCutSwing = ShDrive + 21, ShPanSwing = ShDrive + 22;  // 0..1
+inline constexpr int ShPattern = ShDrive + 23, ShChain = ShDrive + 24;                                  // choice 1..8; toggle
+inline constexpr int ShNoteSrc = ShDrive + 25, ShNotePort = ShDrive + 26, ShNoteBase = ShDrive + 27;   // 0 off, 1 MIDI Out ports, 2 MIDI input; port (-1 any); first note
+inline constexpr int ShCount = ShDrive + 28;
+// Step sizes of the ShVolRate .. ShPanRate choices in beats (index 0, Auto, follows ShLength).
+inline constexpr double kShaperRateBeats[] = {0, 0.125, 1.0 / 12, 0.25, 1.0 / 6, 0.5, 1.0 / 3, 1, 2.0 / 3, 2, 4.0 / 3, 4};
+inline constexpr int kShaperRates = 12;
 // ShFilter choices: 0 off, 1 LP, 2 BP, 3 HP, then (0.5) 4 notch, 5 low shelf, 6 peak, 7 high shelf, 8 all-pass.
 // "gl.timegate" — stutter / half-speed / tape-stop / reverse + 16-step gate
 inline constexpr int kGateSteps = 16;

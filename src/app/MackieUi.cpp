@@ -90,6 +90,13 @@ void mackieTick(App& a) {
   rig.surface->idle(t, levels);
 }
 
+bool mackieOwns(const std::string& device) {
+  if (!rig.surface) return false;
+  for (const auto& [unit, dev] : rig.unitDevice)
+    if (dev == device) return true;
+  return false;
+}
+
 bool mackieMidi(App& a, const std::string& device, const MidiMessage& m) {
   (void)a;
   if (!rig.surface) return false;

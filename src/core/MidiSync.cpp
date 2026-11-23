@@ -1,7 +1,120 @@
 #include "MidiSync.h"
 #include <algorithm>
+#include <cerrno>
+#include <cstdlib>
+#if defined(__APPLE__)
+#include <dispatch/dispatch.h>
+#include <mach/mach.h>
+#include <mach/mach_time.h>
+#include <mach/thread_policy.h>
+#include <pthread.h>
+#include <sys/qos.h>
+#elif defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <semaphore.h>
+#include <time.h>
+#endif
 
 namespace gl {
+
+// ---------------------------------------------------------------- K-142: the sync sender
+
+#if defined(__APPLE__)
+WakeSignal::WakeSignal() : h_(dispatch_semaphore_create(0)) {}
+WakeSignal::~WakeSignal() { dispatch_release(static_cast<dispatch_semaphore_t>(h_)); }
+void WakeSignal::post() noexcept { dispatch_semaphore_signal(static_cast<dispatch_semaphore_t>(h_)); }
+void WakeSignal::wait() { dispatch_semaphore_wait(static_cast<dispatch_semaphore_t>(h_), DISPATCH_TIME_FOREVER); }
+bool WakeSignal::waitFor(double seconds) {
+  const int64_t ns = seconds <= 0 ? 0 : static_cast<int64_t>(seconds * 1e9);
+  return dispatch_semaphore_wait(static_cast<dispatch_semaphore_t>(h_), dispatch_time(DISPATCH_TIME_NOW, ns)) == 0;
+}
+#elif defined(_WIN32)
+WakeSignal::WakeSignal() : h_(CreateSemaphoreW(nullptr, 0, 0x7fffffff, nullptr)) {}
+WakeSignal::~WakeSignal() { CloseHandle(static_cast<HANDLE>(h_)); }
+void WakeSignal::post() noexcept { ReleaseSemaphore(static_cast<HANDLE>(h_), 1, nullptr); }
+void WakeSignal::wait() { WaitForSingleObject(static_cast<HANDLE>(h_), INFINITE); }
+bool WakeSignal::waitFor(double seconds) {
+  const DWORD ms = seconds <= 0 ? 0 : static_cast<DWORD>(std::ceil(seconds * 1000.0));
+  return WaitForSingleObject(static_cast<HANDLE>(h_), ms) == WAIT_OBJECT_0;
+}
+#else
+WakeSignal::WakeSignal() : h_(new sem_t) { sem_init(static_cast<sem_t*>(h_), 0, 0); }
+WakeSignal::~WakeSignal() {
+  sem_destroy(static_cast<sem_t*>(h_));
+  delete static_cast<sem_t*>(h_);
+}
+void WakeSignal::post() noexcept { sem_post(static_cast<sem_t*>(h_)); }
+void WakeSignal::wait() {
+  while (sem_wait(static_cast<sem_t*>(h_)) != 0 && errno == EINTR) {
+  }
+}
+bool WakeSignal::waitFor(double seconds) {
+  sem_t* s = static_cast<sem_t*>(h_);
+  if (seconds <= 0) return sem_trywait(s) == 0;
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 30))
+  const clockid_t clk = CLOCK_MONOTONIC;  // (a wall clock set back never stretches the wait)
+#else
+  const clockid_t clk = CLOCK_REALTIME;
+#endif
+  timespec ts{};
+  clock_gettime(clk, &ts);
+  const int64_t ns = static_cast<int64_t>(ts.tv_nsec) + static_cast<int64_t>(seconds * 1e9);
+  ts.tv_sec += static_cast<time_t>(ns / 1000000000);
+  ts.tv_nsec = static_cast<long>(ns % 1000000000);
+  for (;;) {
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 30))
+    const int r = sem_clockwait(s, clk, &ts);
+#else
+    const int r = sem_timedwait(s, &ts);
+#endif
+    if (r == 0) return true;
+    if (errno != EINTR) return false;
+  }
+}
+#endif
+
+bool makeSyncSenderRealtime() {
+  if (const char* off = std::getenv("GRIDLINE_NO_REALTIME"); off && *off && *off != '0') return false;
+#if defined(__APPLE__)
+  pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+  mach_timebase_info_data_t tb;
+  mach_timebase_info(&tb);
+  const double ticksPerMs = 1e6 * static_cast<double>(tb.denom) / static_cast<double>(tb.numer);
+  thread_time_constraint_policy_data_t pol;
+  pol.period = 0;                                             // it wakes when a message is due
+  pol.computation = static_cast<uint32_t>(0.5 * ticksPerMs);  // sending a message takes microseconds
+  pol.constraint = static_cast<uint32_t>(1.0 * ticksPerMs);
+  pol.preemptible = 1;
+  return thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, reinterpret_cast<thread_policy_t>(&pol),
+                           THREAD_TIME_CONSTRAINT_POLICY_COUNT) == KERN_SUCCESS;
+#else
+  return false;
+#endif
+}
+
+void runSyncSender(MidiEventRing& ring, WakeSignal& wake, const std::atomic<bool>& quit, const SyncSenderHooks& h) {
+  MidiOutEvent e;
+  while (!quit.load()) {
+    double wait = -1;  // < 0: until something is pushed
+    while (ring.peek(e)) {
+      const double due = h.due(e), now = h.now();
+      if (due > now + kSyncSendEarly && due < now + 1.0) {  // not yet: sleep until just before it
+        wait = due - now - kSyncSendEarly * 0.5;
+        break;
+      }
+      ring.pop(e);
+      h.send(e);
+    }
+    if (quit.load()) break;
+    if (wait < 0) ring.sleepUntilPushed(wake);
+    else wake.waitFor(h.coarseTimers && wait > 0.001 ? wait / 3.0 : wait);
+    if (h.woke) h.woke();
+  }
+}
 
 const char* syncOutName(SyncOut s) {
   static const char* n[] = {"Off", "MIDI clock", "MTC 24 fps", "MTC 25 fps", "MTC 29.97 fps (drop)", "MTC 30 fps"};

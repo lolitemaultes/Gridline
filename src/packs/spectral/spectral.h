@@ -603,6 +603,7 @@ enum TelSlot {
 
 class SpectralFx : public Effect {
  public:
+  bool restsWhenFaint() const override { return true; }  // K-142: rests by the hosted rule (stopped, fed silence, its output inaudible): its state is its signal
   Telemetry tel;
 };
 

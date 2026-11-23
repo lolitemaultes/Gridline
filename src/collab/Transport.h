@@ -55,6 +55,10 @@ class SecureLink {
   bool heardData() const { return anyRecv_; }
   void input(const std::string& datagram, uint64_t nowMs);
   void tick(uint64_t nowMs);
+  // K-142 (0.7.8): how long tick() may wait (ms) before this link has something to do: 0 while
+  // anything is under way (the handshake, data in flight or waiting, an ack owed), else until
+  // the next keepalive or the idle timeout. A datagram arriving or a send needs no tick.
+  uint64_t quietForMs(uint64_t nowMs) const;
   std::function<void(const std::string& datagram)> output;
   std::string tag;  // names the link in GRIDLINE_COLLAB_DEBUG lines
 

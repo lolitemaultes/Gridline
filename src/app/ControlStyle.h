@@ -18,20 +18,23 @@ enum class ControlStyle : int {
   Hairline,     // flat, hairlines and type, one accent
   Lumen,        // dark glass, values drawn as light
   Slate,        // the studio slate roles with one consistent finish (default)
+  // 0.7.8: the Tracker layout's bevelled faces (TrackerLook.h). Never a setting: only a scope uses it
+  // (the Tracker's Sample editor draws the Audio clip window's parts with it).
+  Tracker,
   Count
 };
 constexpr ControlStyle kDefaultControlStyle = ControlStyle::Slate;
 
 // Setting value ("slate", ...).
 inline const char* controlStyleName(ControlStyle s) {
-  static const char* const names[] = {"classic", "graphite", "hairline", "lumen", "slate"};
+  static const char* const names[] = {"classic", "graphite", "hairline", "lumen", "slate", "tracker"};
   const int i = static_cast<int>(s);
   return i >= 0 && i < static_cast<int>(ControlStyle::Count) ? names[i] : names[static_cast<int>(kDefaultControlStyle)];
 }
-// Strict parse (false for an unknown name).
+// Strict parse (false for an unknown name; the Tracker's own style is never a setting).
 inline bool parseControlStyle(const char* s, ControlStyle& out) {
   if (!s) return false;
-  for (int i = 0; i < static_cast<int>(ControlStyle::Count); ++i)
+  for (int i = 0; i < static_cast<int>(ControlStyle::Tracker); ++i)
     if (std::strcmp(s, controlStyleName(static_cast<ControlStyle>(i))) == 0) {
       out = static_cast<ControlStyle>(i);
       return true;

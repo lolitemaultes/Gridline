@@ -623,8 +623,8 @@ fs::path freeFolder(const fs::path& folder, const std::string& name, std::set<st
 bool looksLikeFilePath(const std::string& s) {
   if (s.size() < 5 || s.size() > 4096 || s.find('\n') != std::string::npos) return false;
   static const std::set<std::string> kExt = {".wav", ".wave", ".flac", ".ogg", ".oga", ".mp3", ".aif", ".aiff", ".aifc", ".wv",
-                                             ".w64", ".rf64", ".caf", ".m4a", ".mid", ".midi", ".sf2", ".sfz", ".png", ".jpg",
-                                             ".jpeg", ".bmp", ".rx2", ".rex", ".rcy", ".aac", ".ir", ".fst", ".zip"};
+                                             ".w64", ".rf64", ".caf", ".m4a", ".mid", ".midi", ".sf2", ".sf3", ".sfz", ".png",
+                                             ".jpg", ".jpeg", ".bmp", ".rx2", ".rex", ".rcy", ".aac", ".ir", ".fst", ".zip"};
   const size_t dot = s.find_last_of('.');
   if (dot == std::string::npos || dot == 0) return false;
   return kExt.count(lower(s.substr(dot))) > 0;
@@ -977,6 +977,12 @@ std::map<std::string, std::string> sidecarsFor(const std::map<std::string, std::
     if (auto a = j.object.find("sources"); a != j.object.end() && a->second.type == Json::Type::Array)
       for (auto& v : a->second.array)
         if (v.type == Json::Type::String) follow(v.str);
+    // K-321: version 2 names each source of its maps too (a "sha256:" source is no path).
+    if (auto a = j.object.find("maps"); a != j.object.end() && a->second.type == Json::Type::Array)
+      for (auto& m : a->second.array)
+        if (m.type == Json::Type::Object)
+          if (auto s = m.object.find("source"); s != m.object.end() && s->second.type == Json::Type::String && s->second.str.rfind("sha256:", 0) != 0)
+            follow(s->second.str);
     out[target + ".origin.json"] = jsonStringify(j, 2) + "\n";
   }
   return out;

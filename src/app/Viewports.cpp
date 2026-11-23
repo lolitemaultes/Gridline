@@ -106,6 +106,12 @@ struct State {
   Uint64 lastRender = 0;
   std::vector<VRect> devMonitors;  // dev "vmonitors": the monitors published instead (ImGui coordinates)
   int popupWindowsMade = 0;        // dev: OS windows made for popups / menus / tooltips so far
+  // 0.7.8: the app's other OS windows above the main window (plugin windows), OS units, and the
+  // overlays of the last frame that overlap one (see overlay()).
+  std::vector<SDL_Rect> covers;
+  std::vector<OverlayRect> overlaysOver;
+  int overlaysLifted = 0;  // dev: overlays lifted into OS windows of their own so far
+  bool devShowOverlays = false;  // dev (GRIDLINE_DEV_SHOW_OVERLAYS): a hidden run shows lifted overlays (screenshots of the stack)
   // K-83: popups, menus and tooltips of a detached window stay inside it where they fit (X11 window
   // managers flash the screen as an OS window is made and destroyed for each one); dev "popupsin".
 #if defined(__APPLE__) || defined(_WIN32)
@@ -128,7 +134,10 @@ SDL_Window* sdlOf(const ImGuiViewport* vp) {
   return vp && vp->PlatformHandle ? SDL_GetWindowFromID(static_cast<Uint32>(reinterpret_cast<intptr_t>(vp->PlatformHandle))) : nullptr;
 }
 Uint32 idOf(const ImGuiViewport* vp) { return vp ? static_cast<Uint32>(reinterpret_cast<intptr_t>(vp->PlatformHandle)) : 0; }
-bool shortLived(const ImGuiWindow* w) { return (w->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_ChildMenu)) != 0; }
+constexpr ImGuiID kOverlayClass = 0x474C4F56;  // "GLOV": an overlay that is not a popup (the notification cards)
+bool shortLived(const ImGuiWindow* w) {
+  return (w->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_ChildMenu)) != 0 || w->WindowClass.ClassId == kOverlayClass;
+}
 // K-72: the viewport a popup / menu / tooltip belongs to: a tooltip's is the one under the pointer
 // (ImGui gives it that one: a drag's tooltip follows the pointer onto a detached window), a
 // popup's or menu's that of the window it was opened from (through its parent menus); none yet
@@ -242,13 +251,27 @@ void wDestroy(ImGuiViewport* vp) {
   if (const Uint32 id = idOf(vp)) S.ours.erase(id);
   S.destroyWindow(vp);
 }
+// Dev (GRIDLINE_DEV_SHOW_OVERLAYS): in a hidden run a lifted overlay's OS window is shown where it
+// belongs anyway (the plugin windows of a hidden run are on screen too), for pictures of the stack.
+bool devShown(const ImGuiViewport* vp) {
+  return S.devShowOverlays && vp && (vp->Flags & ImGuiViewportFlags_TopMost) && static_cast<const ImGuiViewportP*>(vp)->Window &&
+         shortLived(static_cast<const ImGuiViewportP*>(vp)->Window);
+}
 void wShow(ImGuiViewport* vp) {
-  if (S.hidden) return;
+  if (S.hidden && !devShown(vp)) return;
+  // 0.7.8: a popup, menu, tooltip or notice lifted into an OS window of its own comes to the front
+  // without the keys. On macOS SDL made it the key window: the main window lost the keys, which
+  // ended the drag in progress (a note or a region stopped after a few steps) and every held key
+  // (a note played on the typing keyboard stopped while its key was still down).
+  SDL_Window* w = (vp->Flags & ImGuiViewportFlags_NoFocusOnAppearing) ? sdlOf(vp) : nullptr;
+  if (w) host::native::setTakesNoKeys(nativeOf(w), true);
   S.showWindow(vp);
+  if (w) host::native::setTakesNoKeys(nativeOf(w), false);
 }
 void wSetPos(ImGuiViewport* vp, ImVec2 p) {
   if (S.hidden) {
     S.virt[vp].pos = p;
+    if (devShown(vp)) S.setPos(vp, rounded(toOs(p)));
     return;
   }
   S.setPos(vp, rounded(toOs(p)));
@@ -301,7 +324,34 @@ bool wGetFocus(ImGuiViewport* vp) { return !S.hidden && S.getFocus(vp); }
 // and animated by the window manager, and the screen flickered (user report, GNOME on X11). Only
 // one larger than the detached window itself still gets an OS window, and dialogs (modal popups)
 // still open where they are placed.
+// 0.7.8 (user report: plugin windows covered Gridline's menus and notices): a menu, popup, combo
+// list, tooltip, modal dialog or notification card over one of the app's other OS windows (a
+// plugin's window, a detached Gridline window it does not belong to) is drawn in an OS window of
+// its own, kept on top (ImGuiViewportFlags_TopMost: SDL's always-on-top window, an AppKit floating
+// window level, a Win32 top-most window, X11's "above" state), for as long as it stays over it; so
+// is a menu or popup opened from one that is. GRIDLINE PATCH (0.7.8) in imgui.cpp asks this.
+bool overRect(const ImRect& r, ImVec2 p0, ImVec2 p1) { return r.Min.x < p1.x && r.Max.x > p0.x && r.Min.y < p1.y && r.Max.y > p0.y; }
+bool overCover(const ImGuiWindow* w) {
+  if (w->Size.x <= 0 || w->Size.y <= 0) return false;
+  const ImRect r = w->Rect();
+  for (const SDL_Rect& c : S.covers)
+    if (overRect(r, fromOs(ImVec2(static_cast<float>(c.x), static_cast<float>(c.y))), fromOs(ImVec2(static_cast<float>(c.x + c.w), static_cast<float>(c.y + c.h)))))
+      return true;
+  const ImGuiViewport* host = shortLivedHost(w);
+  for (ImGuiViewportP* vp : GImGui->Viewports)  // detached Gridline windows (ordered above the main one)
+    if (!isMain(vp) && vp != host && owned(vp) && overRect(r, vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y))) return true;
+  return false;
+}
+bool overlay(ImGuiWindow* w) {
+  if (!w || !(shortLived(w) || (w->Flags & ImGuiWindowFlags_Modal))) return false;
+  if (S.covers.empty() && GImGui->Viewports.Size <= 1) return false;
+  for (const ImGuiWindow* p = w->ParentWindow; p && shortLived(p); p = p->ParentWindow)  // opened from a lifted one
+    if (p->Viewport && !isMain(p->Viewport) && (p->Viewport->Flags & ImGuiViewportFlags_TopMost) && p->Viewport->Window == p) return true;
+  return overCover(w);
+}
+
 bool lateCreate(ImGuiWindow* w) {
+  if (overlay(w)) return true;  // 0.7.8
   if (shortLived(w)) {
     const ImGuiViewport* host = shortLivedHost(w);
     if (isMain(host)) return false;
@@ -999,6 +1049,8 @@ void install(SDL_Window* mainWindow, SDL_GLContext gl, const Options& o) {
   if (S.available) {
     hookBackend();
     GImGui->ViewportLateCreateFilter = lateCreate;
+    GImGui->ViewportOverlayFilter = overlay;
+    S.devShowOverlays = std::getenv("GRIDLINE_DEV_SHOW_OVERLAYS") != nullptr;
     GImGui->CloseRequestFilter = closeFilter;
   }
   GImGui->DockNodeWindowMenuHandler = windowMenu;  // the button's slot is there everywhere (dockedButton)
@@ -1020,6 +1072,32 @@ void setVirtualMonitors(bool v) { S.virtualMonitors = v; }
 bool available() { return S.available; }
 std::string unavailableReason() { return S.reason; }
 bool enabled() { return S.available && on(); }
+
+void setCovers(const std::vector<SDL_Rect>& osRects) { S.covers = osRects; }
+const std::vector<OverlayRect>& overlaysOverCovers() { return S.overlaysOver; }
+bool overCovers(ImVec2 p0, ImVec2 p1) {
+  if (!enabled()) return false;
+  const ImRect r(p0, p1);
+  for (const SDL_Rect& c : S.covers)
+    if (overRect(r, fromOs(ImVec2(static_cast<float>(c.x), static_cast<float>(c.y))), fromOs(ImVec2(static_cast<float>(c.x + c.w), static_cast<float>(c.y + c.h)))))
+      return true;
+  for (ImGuiViewportP* vp : GImGui->Viewports)
+    if (!isMain(vp) && owned(vp) && overRect(r, vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y))) return true;
+  return false;
+}
+void nextWindowIsOverlay() {
+  ImGuiWindowClass c;
+  c.ClassId = kOverlayClass;
+  c.DockingAllowUnclassed = false;
+  // Lifted, it is a bare OS window as a popup's: no title bar, no taskbar button, never takes the focus.
+  c.ViewportFlagsOverrideSet = ImGuiViewportFlags_NoDecoration | ImGuiViewportFlags_NoTaskBarIcon | ImGuiViewportFlags_NoFocusOnAppearing |
+                               ImGuiViewportFlags_NoFocusOnClick;
+  ImGui::SetNextWindowClass(&c);
+}
+bool windowLifted() {
+  const ImGuiWindow* w = ImGui::GetCurrentWindow();
+  return w && w->Viewport && !isMain(w->Viewport) && w->Viewport->Window == w;
+}
 
 void togglePopOut(const char* name) {
   if (!enabled() || !buttonsOn()) return;
@@ -1203,6 +1281,26 @@ void drawTitleButtons() {
   }
 }
 
+// 0.7.8: the overlays of this frame over one of the app's other OS windows, where they are now.
+void collectOverlays() {
+  S.overlaysOver.clear();
+  if (S.covers.empty() && GImGui->Viewports.Size <= 1) return;
+  for (ImGuiWindow* w : GImGui->Windows) {
+    if (!w->WasActive || w->Hidden || (w->Flags & ImGuiWindowFlags_ChildWindow)) continue;
+    // A dialog in the main window is never lifted (it is no short-lived window): what it is under steps aside.
+    const bool dialog = !shortLived(w) && w->RootWindow == w && ui::IsDialogWindow(w) && (!w->Viewport || isMain(w->Viewport));
+    if (dialog ? !overCover(w) : !(shortLived(w) || (w->Flags & ImGuiWindowFlags_Modal)) || !overlay(w)) continue;
+    OverlayRect o;
+    const ImVec2 p0 = toOs(w->Pos), p1 = toOs(ImVec2(w->Pos.x + w->Size.x, w->Pos.y + w->Size.y));
+    o.x = static_cast<int>(std::floor(p0.x)), o.y = static_cast<int>(std::floor(p0.y));
+    o.w = static_cast<int>(std::ceil(p1.x)) - o.x, o.h = static_cast<int>(std::ceil(p1.y)) - o.y;
+    o.name = nameOf(w);
+    o.lifted = w->Viewport && !isMain(w->Viewport) && w->Viewport->Window == w && (w->Viewport->Flags & ImGuiViewportFlags_TopMost);
+    if (o.lifted) ++S.overlaysLifted;
+    S.overlaysOver.push_back(o);
+  }
+}
+
 void renderWindows() {
   if (!S.installed) return;
   const Uint64 t = now();
@@ -1210,6 +1308,7 @@ void renderWindows() {
   if (S.lastRender) S.frameMs[slot] = seconds(S.lastRender, t) * 1000.0, S.windowsMs[slot] = 0, ++S.frameN;
   S.lastRender = t;
   ImGui::UpdatePlatformWindows();  // every frame, also with detached windows off: ImGui checks it when they come on
+  collectOverlays();
   if (!(GImGui->ConfigFlagsCurrFrame & ImGuiConfigFlags_ViewportsEnable)) return;
   for (ImGuiViewportP* vp : GImGui->Viewports)
     if (!isMain(vp) && owned(vp) && vp->PlatformWindowCreated && !S.homing.count(vp->Window->ID))
@@ -1403,6 +1502,21 @@ void gatherAll() {
 }
 
 bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args, int frame) {
+  if (cmd == "overlays") {  // 0.7.8: the app's other windows (covers) and the overlays over them last frame
+    std::printf("overlays frame %d: covers %zu over %zu lifted so far %d\n", frame, S.covers.size(), S.overlaysOver.size(), S.overlaysLifted);
+    for (const SDL_Rect& c : S.covers) std::printf("  cover %d,%d %dx%d\n", c.x, c.y, c.w, c.h);
+    for (const OverlayRect& o : S.overlaysOver) {
+      long level = 0, topmost = 0;
+      if (ImGuiWindow* w = findWindow(o.name); w && w->Viewport && !isMain(w->Viewport))
+        if (SDL_Window* sw = sdlOf(w->Viewport)) {
+          level = host::native::windowLevel(nativeOf(sw));
+          topmost = (SDL_GetWindowFlags(sw) & SDL_WINDOW_ALWAYS_ON_TOP) ? 1 : 0;
+        }
+      std::printf("  overlay \"%s\" %d,%d %dx%d lifted %d topmost %ld level %ld\n", o.name.c_str(), o.x, o.y, o.w, o.h, o.lifted ? 1 : 0, topmost, level);
+    }
+    std::fflush(stdout);
+    return true;
+  }
   auto num = [&](size_t i) { return i < args.size() ? std::strtof(args[i].c_str(), nullptr) : 0.0f; };
   auto window = [&]() -> ImGuiWindow* {
     ImGuiWindow* w = args.empty() ? nullptr : findWindow(args[0]);

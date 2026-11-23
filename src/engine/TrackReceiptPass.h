@@ -17,7 +17,13 @@
 #include "../core/Song.h"
 #include "../core/TrackReceipt.h"
 
+namespace gl::tap {
+struct Use;
+}
+
 namespace gl::receipt {
+
+class HashCache;
 
 struct PassOptions {
   int sampleRate = 44100;
@@ -26,6 +32,12 @@ struct PassOptions {
   // K-319: true plays the whole mix as the first versions did (every effect, one thread):
   // the reference the fast pass is checked against in tests.
   bool reference = false;
+  // K-321: when set, the tap's own figures of every measured pair (play seconds, jumps, pitch,
+  // segments) are copied here, in the tap's order (tests; the later receipt stages read them).
+  std::vector<tap::Use>* tapUses = nullptr;
+  // K-321: hashes the project's files (the project's trail is kept by hash: a file whose sidecar
+  // is missing finds its origin there). Null: only files named by their hash (collab) have one.
+  HashCache* hashes = nullptr;
 };
 
 // One file reference of a plugin.
@@ -49,7 +61,9 @@ bool isAudioName(const std::string& path);
 bool writeRenderOrigin(const Song& song, const std::string& path);
 
 // The files only (no render): what the picker lists. `decode` reads each file's length.
-Measurement scan(const Song& song, bool decode = false);
+// K-321: each file's origin comes from its sidecar, else from the project's table by its hash
+// (`hashes`, see PassOptions); the trail of version 2 maps is read into FileIn::trail.
+Measurement scan(const Song& song, bool decode = false, HashCache* hashes = nullptr);
 // The full measurement (renders the project; can take a while for long songs).
 Measurement measure(const Song& song, const PassOptions& o = {});
 

@@ -20,6 +20,14 @@ std::string copiedText(size_t n);
 
 namespace menus {
 
+// Clips' and Smooth's track menus (and Smooth's Track menu in the menu bar): Duplicate without notes (the
+// selected tracks, or `track`, with their instruments, mixer tracks and settings and no clips, one undo
+// step) and Copy to a new pattern (the track's notes and steps from its clip in a new pattern, placed on
+// the track where that clip is, one undo step; can: the track has a clip or pattern to copy from).
+void trackDuplicateWithoutNotes(App& a, int track);
+bool trackCanCopyToNewPattern(const App& a, int track);
+void trackCopyToNewPattern(App& a, int track);
+
 // Palette grid inside a menu; returns true and sets *out when a colour is picked.
 bool colorGrid(uint32_t* out);
 uint32_t randomColor();

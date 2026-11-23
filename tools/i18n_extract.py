@@ -49,6 +49,10 @@ HELPERS = {
     "rlLabel": [0], "rlButton": [1, 4], "rlChoice": [6], "rlToggle": [3], "rlSection": [0],
     # N59-10: i18n::plural(n, one, other): both forms of a counted sentence.
     "plural": [1, 2],
+    # TRK-1118: the Tracker instrument menu's rows (TrackerFrame.cpp insMenuItem: label first).
+    "insMenuItem": [0],
+    # K-347: Seltmann's Tracker screens (seltmann_tracker_ui.cpp): the band's cells (label, hint).
+    "sButton": [1, 2], "sRadio": [1, 2], "sCheck": [1, 2], "sStepper": [1, 3], "sDrag": [1, 2], "sCaption": [0],
 }
 # Helpers called on an object (a.notify(...)).
 MEMBER_HELPERS = {"notify"}
@@ -73,6 +77,7 @@ def source_files():
     files += [os.path.join(ROOT, "src", "core", n) for n in ("LayoutPreset.cpp", "MenuStyle.cpp")]  # layout names and menu titles (N_)
     files += [os.path.join(ROOT, "src", "engine", "Chop.cpp")]  # PL-13: chop preset names and hints (N_)
     files += [os.path.join(ROOT, "src", "engine", "ProjectLoad.cpp")]  # J-167: the loading window's log lines (N_)
+    files += [os.path.join(ROOT, "src", "engine", "ClipTools.cpp")]  # an edited copy's channel name ("%s (edited)")
     files += glob.glob(os.path.join(ROOT, "src", "plugin", "*.cpp"))  # PH-09: the plugin build's own panel and messages
     files += glob.glob(os.path.join(ROOT, "src", "plugin", "*.mm"))  # J-64: Cocoa views, hosted plugins' windows, Audio Unit
     files += glob.glob(os.path.join(ROOT, "src", "collab", "*.cpp"))  # J-111: collaboration messages (codes, refusals, connection test)
@@ -80,6 +85,9 @@ def source_files():
     files.append(os.path.join(ROOT, "src", "core", "ProjectInterop.cpp"))  # K-47: what a running export is doing (N_)
     files.append(os.path.join(ROOT, "src", "core", "StageRoomOps.cpp"))  # Stage rooms: default room and space track names
     files.append(os.path.join(ROOT, "src", "core", "HydrogenKit.cpp"))  # K-162: the drum kit import report (N_)
+    files.append(os.path.join(ROOT, "src", "core", "Toolbar.cpp"))  # the control bar parts and sections (N_)
+    files.append(os.path.join(ROOT, "src", "core", "InstrumentGuide.cpp"))  # GitHub #73: the instrument guide lines (N_)
+    files.append(os.path.join(ROOT, "src", "core", "KeyCaps.cpp"))  # GitHub #79: My keys say choices, "no key" (N_, tr)
     files += [os.path.join(ROOT, "src", "core", n) for n in ("StageMap.cpp", "StageArrange.cpp", "MixerOps.cpp")]  # the Stage: words, roles, presets (N_)
     return sorted(files)
 

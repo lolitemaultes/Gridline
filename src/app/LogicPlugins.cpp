@@ -220,15 +220,22 @@ const MixerTrack* trackStrip(const Song& s, int track) {
     if (c && c->mixerTrack != master && s.mixerTrack(c->mixerTrack) && std::find(outs.begin(), outs.end(), c->mixerTrack) == outs.end()) outs.push_back(c->mixerTrack);
   };
   if (const Channel* c = trackmodes::linkedChannel(s, track)) add(c);
-  if (outs.empty())
+  if (outs.empty()) {
+    // K-142 (0.7.8): a pattern met again adds nothing new (its channels' mixer tracks are in the
+    // list already, in the place they first came), so each is looked at once: a large project's
+    // track repeats a few patterns hundreds of times, and Smooth asks this every frame.
+    static thread_local std::vector<ObjectId> seenPatterns;  // (a short list, looked through, kept: no allocation per call)
+    seenPatterns.clear();
     for (const Clip& k : s.playlist) {
       if (k.track != track) continue;
       if (k.kind == ClipKind::Audio) add(s.channel(k.source));
-      else if (k.kind == ClipKind::Pattern)
+      else if (k.kind == ClipKind::Pattern && std::find(seenPatterns.begin(), seenPatterns.end(), k.pattern) == seenPatterns.end() &&
+               (seenPatterns.push_back(k.pattern), true))
         if (const Pattern* p = s.pattern(k.pattern))
           for (const Channel& c : s.channels)
             if (p->notes.count(c.id) || p->steps.count(c.id)) add(&c);
     }
+  }
   if (outs.empty()) add(s.channel(s.tracks[static_cast<size_t>(track)].sound));  // R08-07: the sound it kept
   if (outs.empty()) {  // checkpoint 48: a bus track (automation of a bus) shows the bus's strip
     if (gFold.on && gFold.busStrip.size() == s.tracks.size() && gFold.busStrip[static_cast<size_t>(track)] != kNoId) {

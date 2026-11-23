@@ -172,7 +172,8 @@ int main(int argc, char** argv) {
       if (std::find(sb.begin(), sb.end(), ch) != sb.end()) continue;
       const std::string id = c.id;
       const bool safe = startsWith(id, "view.") || startsWith(id, "help.") || startsWith(id, "typing.") || id == "edit.rename" || id == "pattern.new" ||
-                        id == "pattern.clone";  // TRK-1118: Duplicate pattern adds a pattern, as New pattern
+                        id == "pattern.clone" ||  // TRK-1118: Duplicate pattern adds a pattern, as New pattern
+                        startsWith(id, "wave.");  // K-248: warp mode and the spectrum switch a waveform view
       expect(safe, ("Tracker adds " + format(ch) + " to " + id + ": not an open / show / pick command").c_str());
     }
   }
@@ -190,6 +191,17 @@ int main(int argc, char** argv) {
     }
     for (const std::string& h : have) expect(want.count(h) != 0, ("not in the golden (or changed): " + h).c_str());
     for (const std::string& w : want) expect(have.count(w) != 0, ("golden row gone: " + w).c_str());
+  }
+  // K-255: Ctrl+Alt+L is the pattern editor's track loop in the Tracker set: no global command of
+  // the set has it (the Mix page's Select routed tracks keeps it in the mixer), and Studio, the
+  // Clips and Smooth sets are unchanged (the golden above).
+  {
+    bool own = false;
+    for (const gl::trackerkeys::Row& r : gl::trackerkeys::rows())
+      if (std::string(r.id) == "pattern.trackLoop") own = r.chords.size() == 1 && r.chords[0] == "Ctrl+Alt+L";
+    expect(own, "the Tracker's track loop is Ctrl+Alt+L");
+    const Chord cl = parse("Ctrl+Alt+L");
+    expect(tracker.lookup(Context::Global, cl).empty(), "no global command of the Tracker set takes Ctrl+Alt+L");
   }
   // No own key twice in one area (the keys typed into the field at the cursor apart: notes, digits).
   {
@@ -257,6 +269,52 @@ int main(int argc, char** argv) {
       if (tb.empty() || tb == sb) continue;  // (no key, or Studio's: "Every shortcut" lists those)
       expect(listed.count(c.id) != 0, (std::string("the Tracker help lists the Tracker set's key for ") + c.id).c_str());
     }
+  }
+  // K-256: the workspace keys of every set: each of the nine has a key in the Studio, Clips and Tracker
+  // sets (Command told apart or not), and no other command of the set takes it in any context.
+  // The Tracker's are Ctrl+Alt+Shift+1 .. 9 (Ctrl+digit is its edit step, Ctrl+Alt+digit its screens).
+  for (Profile p : {Profile::Studio, Profile::Live, Profile::Logic, Profile::Tracker})
+    for (bool sep : {false, true}) {
+      Keymap km;
+      km.setProfile(p, sep);
+      const std::string set = std::string(profileId(p)) + (sep ? "+cmd" : "");
+      for (int i = 1; i <= 9; ++i) {
+        const std::string id = "view.workspace" + std::to_string(i);
+        const auto& b = km.bindings(id);
+        // (Smooth keeps Ctrl+1 .. 4 and 6 .. 8 for its windows: those workspaces go without a key there)
+        if (p != Profile::Logic) expect(!b.empty(), (set + ": " + id + " has a key").c_str());
+        for (const Chord& ch : b)
+          for (const Command& c : commands()) {
+            if (id == c.id) continue;
+            const auto& o = km.bindings(c.id);
+            expect(std::find(o.begin(), o.end(), ch) == o.end(), (set + ": " + id + "'s " + format(ch) + " is also " + c.id).c_str());
+          }
+      }
+    }
+  {
+    Keymap tr;
+    tr.setProfile(Profile::Tracker, false);
+    const Key d[9] = {Key::D1, Key::D2, Key::D3, Key::D4, Key::D5, Key::D6, Key::D7, Key::D8, Key::D9};
+    for (int i = 0; i < 9; ++i) {
+      const auto& b = tr.bindings("view.workspace" + std::to_string(i + 1));
+      expect(b.size() == 1 && b[0].key == d[i] && b[0].mods == (kCtrl | kAlt | kShift), "Tracker: workspace keys are Ctrl+Alt+Shift+digit");
+    }
+    // The Tracker's own keys (the pattern, the macros, the screens) never take one either.
+    for (const gl::trackerkeys::Row& r : gl::trackerkeys::rows())
+      for (const std::string& c : r.chords) {
+        const Chord x = parse(c);
+        for (int i = 0; i < 9; ++i) expect(!(x.key == d[i] && x.mods == (kCtrl | kAlt | kShift)), (std::string(r.id) + " takes a workspace key").c_str());
+      }
+  }
+  // K-340: Studio's zone keys (hold Tab, press a digit) need plain Tab free in the Studio set: no command
+  // there binds Tab alone or Tab with a digit (the layer is not a chord). The Clips and Tracker sets give
+  // Tab its own work in their views, so the setting is greyed there (app/ZoneKeysUi.cpp keySetTakesTab()).
+  for (bool sep : {false, true}) {
+    Keymap st;
+    st.setProfile(Profile::Studio, sep);
+    for (const Command& c : commands())
+      if (c.context == Context::Global)
+        for (const Chord& ch : st.bindings(c.id)) expect(!(ch.key == Key::Tab && ch.mods == 0), (std::string("Studio: plain Tab is ") + c.id).c_str());
   }
   return finish();
 }

@@ -1,5 +1,6 @@
 // Gridline — plugin pack registry (editor side).
 #include "PacksUi.h"
+#include "../app/ClipEditor.h"
 
 GL_DECLARE_PACK_UI(synths)
 GL_DECLARE_PACK_UI(samplers)
@@ -19,6 +20,10 @@ GL_DECLARE_PACK_UI(mini)
 GL_DECLARE_PACK_UI(platter)
 GL_DECLARE_PACK_UI(trackerpack)
 GL_DECLARE_PACK_UI(chater)
+GL_DECLARE_PACK_UI(terrace)
+namespace gl::packs::terrace {
+bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);  // "terrace": bands, solo, lanes, undo
+}  // namespace gl::packs::terrace
 namespace gl::packs::edison {
 void drawWindows(App& a);
 bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
@@ -45,13 +50,16 @@ void tick(App& a);  // J-218: the start screen recorder drains the input tap
 namespace gl::packs::chater {
 bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);  // "chater state|click x y|menu"
 }  // namespace gl::packs::chater
+namespace gl::packs::samplers {
+bool patchPlayerDevCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);  // "patchplayer tab|find|pick|..."
+}  // namespace gl::packs::samplers
 namespace gl::packs::platter {
 void tick(App& a);
 bool claimMidi(App& a, const std::string& device);
 bool recordsWithTransport(App& a);
 }  // namespace gl::packs::platter
 
-#define GL_PACK_LIST X(synths) X(samplers) X(spacefx) X(spectral) X(dynamics) X(modulation) X(models) X(utility) X(creative) X(edison) X(flexpack) X(tideline) X(seltmann) X(plasma) X(mini) X(platter) X(trackerpack) X(chater)
+#define GL_PACK_LIST X(synths) X(samplers) X(spacefx) X(spectral) X(dynamics) X(modulation) X(models) X(utility) X(creative) X(edison) X(flexpack) X(tideline) X(seltmann) X(plasma) X(mini) X(platter) X(trackerpack) X(chater) X(terrace)
 
 namespace gl::packs {
 
@@ -77,10 +85,16 @@ bool claimMidi(App& a, const std::string& device) { return platter::claimMidi(a,
 
 bool recordsWithTransport(App& a) { return platter::recordsWithTransport(a); }
 
-bool openAudioEditor(App& a, const std::string& path, ObjectId channel) { return edison::openAudioEditor(a, path, channel); }
+bool openAudioEditor(App& a, const std::string& path, ObjectId channel) {
+  clipeditor::paneShowsLoupe();  // asked for Loupe: the pane shows it, not the clip editor
+  return edison::openAudioEditor(a, path, channel);
+}
 void closeAudioEditorWindows(App& a) { edison::closeOwnWindows(a); }
 
-bool openFileInLoupe(App& a, const std::string& path) { return edison::openFileInLoupe(a, path); }
+bool openFileInLoupe(App& a, const std::string& path) {
+  clipeditor::paneShowsLoupe();
+  return edison::openFileInLoupe(a, path);
+}
 
 void closeAudioEditorSampleWindows() { edison::closeStandaloneWindows(); }
 
@@ -88,7 +102,10 @@ bool claimEffectEditor(App& a, const PluginTarget& t) { return edison::claimEffe
 void drawLoupeBody(App& a, float w, float h) { edison::drawPanelBody(a, ImVec2(w, h)); }
 bool showInLoupePanel(App& a, const PluginTarget& t) { return edison::showInPanel(a, t); }
 
-bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args) { return edison::dockDevCommand(a, cmd, args) || modulation::junctionDevCommand(a, cmd, args) || chater::devCommand(a, cmd, args); }
+bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args) {
+  return edison::dockDevCommand(a, cmd, args) || modulation::junctionDevCommand(a, cmd, args) || chater::devCommand(a, cmd, args) ||
+         samplers::patchPlayerDevCommand(a, cmd, args) || terrace::devCommand(a, cmd, args);
+}
 
 int armAudioEditorRecording(App& a, ObjectId track) { return edison::armTransportRecording(a, track); }
 

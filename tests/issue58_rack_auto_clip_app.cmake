@@ -17,10 +17,11 @@ set(ENV{GRIDLINE_HIDE_PLUGINS} "all")
 configure_file("${DEMO}" "${OUT}/song.gridline.json" COPYONLY)  # a copy: never the fixture itself
 
 # The rack's first row volume knob (item 3682d582 in the fixture's layout at 1440x900); its menu
-# opens at the pointer, "Create automation clip" 96 px right and 176 px down from the knob centre.
-# (The knob report at frame 19 names the knob, so a moved knob fails the check below, not the click.)
+# opens at the pointer and the script picks "Create automation clip" by its label (atitem), so a row
+# added to the knob menu does not move the click. (The knob report at frame 19 names the knob, so a
+# moved knob fails the check below, not the click.)
 file(WRITE "${OUT}/click.txt"
-  "19 knobs\n20 atknob 3682d582\n21 down 1\n22 up 1\n25 atknob 3682d582 96 176\n26 down 0\n27 up 0\n"
+  "19 knobs\n20 atknob 3682d582\n21 down 1\n22 up 1\n25 atitem \"Create automation clip\"\n26 down 0\n27 up 0\n"
   "32 autoedit\n33 dump\n40 undo\n42 dump\n45 redo\n47 dump\n50 undo\n52 redo\n55 dump\n60 quit discard\n")
 execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --fixed-dt 16 --size 1440x900 --frames 80
                         --dev-input "${OUT}/click.txt"
@@ -28,6 +29,9 @@ execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-so
 file(WRITE "${OUT}/click.log" "${out}\n${err}")
 if(NOT rc EQUAL 0)
   message(FATAL_ERROR "FAIL: gridline-app did not survive Create automation clip from the rack knob (${rc}): ${err}\n${out}")
+endif()
+if(out MATCHES "atitem frame [0-9]+: [^\n]* not shown")
+  message(FATAL_ERROR "FAIL: the knob menu has no Create automation clip row\n${out}")
 endif()
 if(NOT out MATCHES "knob item 3682d582 win \"Channel rack\" id \"vol\"")
   message(FATAL_ERROR "FAIL: the rack's first volume knob is not item 3682d582 any more (update the script)\n${out}")

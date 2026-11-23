@@ -1,6 +1,7 @@
 #include "../core/ClipPlayback.h"
 #include "../packs/Packs.h"
 #include "../core/Groove.h"
+#include "../core/Lanes.h"
 #include "Program.h"
 #include "ArmedRing.h"
 #include "../core/StageRoomOps.h"
@@ -27,6 +28,7 @@
 #include "../core/ClipLoop.h"
 #include "../core/StageRooms.h"
 #include "../core/ClipRate.h"
+#include "../core/Lfo.h"
 #include "../core/PatternAutomation.h"
 #include "../core/PluginParams.h"
 #include "Delay3Ref.h"
@@ -100,6 +102,102 @@ std::shared_ptr<EffectRuntime> newEffectRuntime(const std::string& type) {
   return rt;
 }
 
+// 0.7.8: the effect runtimes of a build, by (mixer track, slot). A runtime follows its effect: one
+// that moved (a move up or down, a drag to another slot or track, the undo or redo of one, a
+// collaborator's move) keeps its live instance, so a third-party plugin keeps everything it has,
+// also what it never reported (before, the runtime stayed with the slot number and the instance
+// there took the moved effect's saved state, or a new one was made: plugins that save lazily came
+// back reset). Each effect is known by its uid (EffectSlot::uid, given by the document); for one
+// without (or a uid this builder has not seen: a song from elsewhere) the previous Program says what
+// state each runtime was built with:
+//  0. the runtime built for the same uid;
+//  1. the slot's own runtime when the slot holds the same effect as before (type and state);
+//  2. else an unclaimed runtime of the same effect from another slot (it moved here): the same
+//     track first, then the nearest slot;
+//  3. else the slot's own runtime of the same type (it takes the new state, as before);
+//  4. else none: the build makes a new one.
+// An installed plugin (VST3, CLAP ...) that is known now: a silent runtime made while it was missing
+// (a collaborator's project, a plugin not installed yet) is made again after a rescan finds it.
+bool installedNow(const std::string& type) { return isHostedType(type) && findPlugin(type) != nullptr; }
+
+using EffectKey = std::pair<ObjectId, int>;
+std::map<EffectKey, std::shared_ptr<EffectRuntime>> matchEffectRuntimes(const Song& song, const std::map<EffectKey, std::shared_ptr<EffectRuntime>>& had,
+                                                                       const std::unordered_map<uint64_t, std::shared_ptr<EffectRuntime>>& byUid,
+                                                                       const Program* prev) {
+  std::map<EffectKey, std::shared_ptr<EffectRuntime>> out;
+  std::unordered_map<const EffectRuntime*, const PluginState*> builtWith;
+  if (prev)
+    for (const ProgMixer& pm : prev->mixer)
+      for (const ProgSlot& ps : pm.slots)
+        if (ps.rt) builtWith[ps.rt.get()] = &ps.plugin;
+  const auto usable = [](const std::shared_ptr<EffectRuntime>& rt, const std::string& type) {
+    // (a silent one of an installed plugin that was missing is made again once it is installed)
+    return rt && rt->type == type && !(rt->fx && rt->fx->stale()) && (rt->fx || !installedNow(type));
+  };
+  const auto same = [&](const EffectRuntime* rt, const PluginState& st) {
+    auto it = builtWith.find(rt);
+    return it != builtWith.end() && *it->second == st;
+  };
+  struct Want {
+    EffectKey key;
+    const PluginState* st;
+    uint64_t uid;
+  };
+  std::vector<Want> wants;
+  for (const MixerTrack& m : song.mixer)
+    for (size_t s = 0; s < m.slots.size(); ++s)
+      if (!m.slots[s].plugin.empty()) wants.push_back({{m.id, static_cast<int>(s)}, &m.slots[s].plugin, m.slots[s].uid});
+  std::unordered_set<const EffectRuntime*> claimed;
+  std::vector<const Want*> byState;
+  for (const Want& w : wants) {  // 0
+    auto u = w.uid ? byUid.find(w.uid) : byUid.end();
+    if (u != byUid.end() && usable(u->second, w.st->type) && !claimed.count(u->second.get())) {
+      out[w.key] = u->second;
+      claimed.insert(u->second.get());
+    } else {
+      byState.push_back(&w);
+    }
+  }
+  std::vector<const Want*> open;
+  for (const Want* wp : byState) {  // 1
+    const Want& w = *wp;
+    auto e = had.find(w.key);
+    if (e != had.end() && usable(e->second, w.st->type) && !claimed.count(e->second.get()) && same(e->second.get(), *w.st)) {
+      out[w.key] = e->second;
+      claimed.insert(e->second.get());
+    } else {
+      open.push_back(wp);
+    }
+  }
+  if (!open.empty() && !builtWith.empty()) {  // 2
+    std::vector<const Want*> still;
+    for (const Want* w : open) {
+      const std::pair<const EffectKey, std::shared_ptr<EffectRuntime>>* best = nullptr;
+      long bestCost = 0;
+      for (const auto& kv : had) {
+        if (claimed.count(kv.second.get()) || !usable(kv.second, w->st->type) || !same(kv.second.get(), *w->st)) continue;
+        const long cost = (kv.first.first == w->key.first ? 0 : 1000) + std::labs(static_cast<long>(kv.first.second) - w->key.second);
+        if (!best || cost < bestCost) best = &kv, bestCost = cost;
+      }
+      if (best) {
+        out[w->key] = best->second;
+        claimed.insert(best->second.get());
+      } else {
+        still.push_back(w);
+      }
+    }
+    open = std::move(still);
+  }
+  for (const Want* w : open) {  // 3
+    auto e = had.find(w->key);
+    if (e != had.end() && usable(e->second, w->st->type) && !claimed.count(e->second.get())) {
+      out[w->key] = e->second;
+      claimed.insert(e->second.get());
+    }
+  }
+  return out;
+}
+
 // A new channel runtime of `type` (gen is null when the instrument cannot be created).
 // K-64: how long exact silence must have gone through an effect before realtime playback leaves it
 // out (seconds, longer than anything it can still hold; 0: it always runs). Only effects whose whole
@@ -124,6 +222,19 @@ double restSeconds(const PluginState& p) {
     return 6.0;  // (the longest pre-delay and the first reflections)
   }
   return 0.0;
+}
+
+// GitHub #66: built-in effects that may rest while the transport is stopped, nothing comes into them
+// and what they put out has stayed below -90 dBFS for a while (the rule hosted effects follow). Only
+// effects that make no sound of their own: no playback started from their window, no generator.
+// Their free-running modulation (a chorus, a hall's movement) stands still while they rest, which
+// only a stopped transport allows: Play wakes them, and renders never leave anything out.
+bool restsWhenStopped(const std::string& type) {
+  static const std::set<std::string> kTypes = {"gl.autopan", "gl.bitcrush", "gl.chorus",    "gl.clipper",  "gl.comp",    "gl.delay",
+                                                "gl.dist",    "gl.eq",       "gl.filter",    "gl.flanger",  "gl.freqshift", "gl.gate",
+                                                "gl.geq",     "gl.hall",     "gl.limiter",   "gl.maximizer", "gl.phaser",   "gl.reverb",
+                                                "gl.scduck",  "gl.shaper",   "gl.stereo",    "gl.utility",  "gl.waveshaper"};
+  return kTypes.count(type) != 0;
 }
 
 std::shared_ptr<ChannelRuntime> newChannelRuntime(const std::string& type) {
@@ -299,6 +410,9 @@ bool resolveTarget(const Song& song, Program& prog, ParamId target, ProgLink& pl
         pl.param = static_cast<int>(k);
         pm.slots[static_cast<size_t>(pl.slot)].modded = true;
       }
+    } else if (target.index >= kLayerMacroBase && target.index < kLayerMacroBase + static_cast<uint32_t>(kLayerMacros)) {
+      pl.kind = ProgLink::MixMacro;  // K-245: a mixer track's macro
+      pl.param = static_cast<int>(target.index - kLayerMacroBase);
     } else if (target.index >= kSendBase) {
       int dest = static_cast<int>(target.index - kSendBase);
       pl.kind = ProgLink::MixSend;
@@ -337,6 +451,12 @@ bool resolveTarget(const Song& song, Program& prog, ParamId target, ProgLink& pl
         default: return false;
       }
     }
+  } else if (const int li = song.lfoIndex(target.owner); li >= 0 && static_cast<size_t>(li) < prog.lfos.size()) {
+    // K-247: a board LFO's own setting (Program::lfos follows the song's order).
+    if (target.index >= static_cast<uint32_t>(lfo::LfoParam::Count)) return false;
+    pl.kind = ProgLink::LfoSetting;
+    pl.fx = li;
+    pl.param = static_cast<int>(target.index);
   } else {
     return false;
   }
@@ -540,6 +660,8 @@ void warmUpBuiltin(Effect& fx, const std::string& type, const PluginState& state
   fx.processAux(state, aux, warmUpContext(sampleRate), &l, &r, 0);
   fx.reset();
 }
+double effectRestSeconds(const PluginState& state) { return restSeconds(state); }
+bool effectRestsWhenStopped(const std::string& type) { return restsWhenStopped(type); }
 
 namespace {
 
@@ -711,6 +833,52 @@ namespace {
 // pattern clip's passes with the swing the automation has where each pass starts.
 thread_local double gSwingOverride = -1.0;
 thread_local double gAccentOverride = -1.0;  // the same for the groove's accents (< 0: SongGroove::accent)
+// K-255: the pass of a looping clip a pattern is compiled for (lanes that run on take their phase from it).
+thread_local int64_t gLanePass = 0;
+// K-152 (0.7.8): swing that moves inside a pass. The swing and groove accent (thousandths, the
+// song's values before the channel's swing mix) of every cell of the pattern's groove grid, read
+// where each cell starts in the song: cell k of full cycle j of the pattern is [j * cycle + k]
+// (cycles counted bar after bar, the partial cycle at a bar's end left out: it stays straight).
+struct SwingCells {
+  int cycle = 2;
+  std::vector<int> swing, accent;
+};
+thread_local const SwingCells* gSwingCells = nullptr;
+
+// Where the groove puts a note: one warp for the whole pattern, or (gSwingCells) one per cycle.
+struct PlaceWarp {
+  groove::Warp one;
+  std::vector<groove::Warp> per;
+  double cyc = 0;
+  int64_t full = 0;  // full cycles per bar
+  bool active = false, accents = false;
+  const groove::Warp& at(double x) const {
+    x = std::max(0.0, x);
+    const double bi = std::floor(x / one.bar);
+    const int64_t c = std::min<int64_t>(full - 1, static_cast<int64_t>(std::floor((x - bi * one.bar) / cyc)));
+    const int64_t j = std::clamp<int64_t>(static_cast<int64_t>(bi) * full + c, 0, static_cast<int64_t>(per.size()) - 1);
+    return per[static_cast<size_t>(j)];
+  }
+  double map(double x) const { return per.empty() ? one.map(x) : at(x).map(x); }
+  // The cell a note belongs to is the nearest cell start, which may open the next cycle.
+  float velocityAt(double x) const { return per.empty() ? one.velocityAt(x) : at(x + 0.5 * one.cell).velocityAt(x); }
+};
+
+// The groove geometry of pattern `p`: ticks per cell and bar, cells per cycle, full cycles per bar
+// (0: no groove grid).
+struct CellGrid {
+  double cell = 0, bar = 0;
+  int cycle = 2;
+  int64_t full = 0;
+};
+CellGrid cellGrid(const Song& song, const Pattern& p) {
+  CellGrid g;
+  const groove::Warp w = groove::makeWarp(song, &p, song.groove.shape, 1.0, 1.0);
+  if (!(w.cell > 0) || !(w.bar > 0)) return g;
+  g.cell = w.cell, g.bar = w.bar, g.cycle = w.cycle;
+  g.full = static_cast<int64_t>(std::floor((w.bar + 1e-9) / (w.cell * static_cast<double>(w.cycle))));
+  return g;
+}
 }  // namespace
 
 std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, const Channel& c) {
@@ -728,22 +896,78 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
   const double swing = std::clamp(songSwing * static_cast<double>(c.swingMix), 0.0, 1.0);
   // K-151: the song's swing shape (the classic step swing unless a preset or the groove editor
   // changed it; that one places every step and note exactly as swingWarp does).
-  const groove::Warp gw = groove::makeWarp(song, &p, song.groove.shape, swing,
-                                           std::clamp((gAccentOverride >= 0.0 ? gAccentOverride : static_cast<double>(song.groove.accent)) * static_cast<double>(c.swingMix), 0.0, 1.0));
-  auto warpAt = [&gw](double x) { return gw.active ? std::max(0.0, gw.map(x)) : x; };
+  PlaceWarp gw;
+  gw.one = groove::makeWarp(song, &p, song.groove.shape, swing,
+                            std::clamp((gAccentOverride >= 0.0 ? gAccentOverride : static_cast<double>(song.groove.accent)) * static_cast<double>(c.swingMix), 0.0, 1.0));
+  gw.active = gw.one.active, gw.accents = gw.one.accents;
+  // K-152 (0.7.8): swing automation that moves inside the pass: each cycle of the groove plays with
+  // the swing and accent the automation has where each of its cells starts.
+  if (gSwingCells) {
+    const CellGrid g = cellGrid(song, p);
+    const SwingCells& sc = *gSwingCells;
+    const size_t cy = static_cast<size_t>(g.cycle);
+    const size_t cycles = cy > 0 ? sc.swing.size() / cy : 0;
+    if (g.full > 0 && cy == static_cast<size_t>(sc.cycle) && cycles > 0 && sc.accent.size() == sc.swing.size()) {
+      const double mix = static_cast<double>(c.swingMix);
+      gw.cyc = g.cell * static_cast<double>(g.cycle), gw.full = g.full;
+      gw.per.reserve(cycles);
+      gw.active = gw.accents = false;
+      double am[groove::kMaxCycle], ac[groove::kMaxCycle];
+      for (size_t j = 0; j < cycles; ++j) {
+        for (size_t k = 0; k < cy; ++k) {
+          am[k] = std::clamp(sc.swing[j * cy + k] / 1000.0 * mix, 0.0, 1.0);
+          ac[k] = std::clamp(sc.accent[j * cy + k] / 1000.0 * mix, 0.0, 1.0);
+        }
+        const double next = std::clamp(sc.swing[(j + 1 < cycles ? j + 1 : j) * cy] / 1000.0 * mix, 0.0, 1.0);
+        gw.per.push_back(groove::makeCycleWarp(song, &p, song.groove.shape, am, ac, next));
+        gw.active = gw.active || gw.per.back().active;
+        gw.accents = gw.accents || gw.per.back().accents;
+      }
+    }
+  }
+  auto warpAt = [&gw](double x) { return gw.active ? std::max(0.0, gw.map(x)) : x; };  // (K-152: one warp, or one per cycle)
   auto accent = [&gw](NoteEv& e, double written) {
     if (gw.accents) e.velocity = std::clamp(e.velocity * gw.velocityAt(written), 0.0f, 1.0f);
   };
-  if (auto it = p.steps.find(channel); it != p.steps.end() && stepTicks > 0) {
+  // K-255: a lane of its own (a grid of its own, or running on) plays through core/Lanes.h; every
+  // other row keeps the 0.7.7 code below, so songs without lanes render exactly as before.
+  const bool laneWay = !lanes::plain(p, channel);
+  const bool ownGrid = lanes::ownGrid(p, channel);
+  if (auto it = p.steps.find(channel); it != p.steps.end() && (stepTicks > 0 || ownGrid)) {
     const auto& row = it->second;
     // J-11: per-step pitch, properties and shift (graph / keyboard editor).
     const std::vector<StepProps>* props = nullptr;
     if (auto pt = p.stepProps.find(channel); pt != p.stepProps.end()) props = &pt->second;
+    // K-255: the row's own steps ([s] the step in the pass, [src] the row step it plays).
+    std::vector<lanes::StepHit> hits;
+    if (laneWay) hits = lanes::playedSteps(song, p, channel, gLanePass);
+    const double laneStep = ownGrid ? lanes::stepTicks(song, p, channel) : 0.0;
+    const size_t count = laneWay ? hits.size() : total;
     // J-31 / J-138: a swung step keeps its length (or, truncated, still ends where the
     // unswung step ends); its start follows the swing warp, to a fraction of a tick.
-    for (size_t s = 0; s < total; ++s) {
-      const size_t src = loop ? s % loop : s;
+    for (size_t k = 0; k < count; ++k) {
+      const size_t s = laneWay ? static_cast<size_t>(hits[k].index) : k;
+      const size_t src = laneWay ? static_cast<size_t>(hits[k].src) : loop ? s % loop : s;
       if (src >= row.size() || row[src] == 0) continue;
+      if (ownGrid) {  // K-255: exact place on the row's grid (no swing: it belongs to the pattern's steps)
+        const double at = hits[k].on;
+        const StepProps sp = props && src < props->size() ? (*props)[src] : StepProps{};
+        const double on = at + laneStep * static_cast<double>(sp.shift) / static_cast<double>(kStepShiftMax);
+        NoteEv e = makeEv(0, 0, static_cast<float>(sp.pitch < 0 ? 60 : sp.pitch) + static_cast<float>(sp.fine) / 100.0f,
+                          static_cast<float>(row[src]) / 127.0f);
+        setOn(e, on);
+        setOff(e, on + laneStep);
+        if (!sp.isDefault()) {
+          e.props.pan = static_cast<float>(sp.pan) / static_cast<float>(kNotePanMax);
+          e.props.release = sp.release == kNoteReleaseDefault ? 0.5f : static_cast<float>(sp.release) / 127.0f;
+          e.props.modX = sp.modX == kNoteModCentre ? 0.5f : static_cast<float>(sp.modX) / static_cast<float>(kNoteModMax + 1);
+          e.props.modY = sp.modY == kNoteModCentre ? 0.5f : static_cast<float>(sp.modY) / static_cast<float>(kNoteModMax + 1);
+          e.props.detune = static_cast<float>(sp.fine) / 100.0f;
+        }
+        accent(e, at);
+        out.push_back(e);
+        continue;
+      }
       const Tick grid = static_cast<Tick>(s) * stepTicks;
       double on = warpAt(static_cast<double>(grid));
       const double gridEnd = static_cast<double>(grid + stepTicks);
@@ -779,11 +1003,8 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
   const Tick patLen = static_cast<Tick>(total) * stepTicks;
   std::shared_ptr<const std::vector<BendPoint>> bendShared;  // K-25: one copy per note (step loop repeats share it)
   const Note* bendOf = nullptr;
-  if (auto it = p.notes.find(channel); it != p.notes.end())
-    for (const auto& n : it->second)
-      for (Tick rep = 0;; rep += loopTicks) {  // one pass, or the step loop's repeats (J-31)
-      if (n.muted) break;  // J-11: muted notes stay in the pattern but do not play
-      if (loopTicks > 0 && (n.start >= loopTicks || n.start + rep >= patLen)) break;
+  // One played copy of note `n`, `rep` ticks later (a step loop's repeat).
+  auto emitNote = [&](const Note& n, Tick rep) {
       NoteEv e = makeEv(n.start + rep, n.start + rep + n.length, static_cast<float>(n.pitch) + static_cast<float>(n.fine) / 100.0f,
                         static_cast<float>(n.velocity) / 127.0f);
       // K-22: a step note one step long plays exactly as the rack step it was: its step's swing
@@ -822,6 +1043,8 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       if (n.modX == kNoteModCentre) e.props.modX = 0.5f;
       if (n.modY == kNoteModCentre) e.props.modY = 0.5f;
       e.flags = static_cast<uint8_t>((n.slide ? kNoteSlide : 0) | (n.porta ? kNotePorta : 0));
+      e.program = static_cast<int16_t>(n.program);  // K-348
+      if (!n.slide) e.vib = n.vib;  // K-262: the note's vibrato rides its pitch line
       if (!n.bend.empty() && !n.slide) {  // K-25: slide notes glide other notes, they have no line of their own
         if (!bendShared || bendOf != &n) bendShared = std::make_shared<const std::vector<BendPoint>>(n.bend), bendOf = &n;
         e.bend = bendShared;
@@ -842,8 +1065,29 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
         e.props.trackerLen = static_cast<uint32_t>(e.tracker->size());
       }
       out.push_back(e);
-      if (loopTicks <= 0) break;
+  };
+  if (auto it = p.notes.find(channel); it != p.notes.end()) {
+    if (!laneWay) {
+      for (const auto& n : it->second)
+        for (Tick rep = 0;; rep += loopTicks) {  // one pass, or the step loop's repeats (J-31)
+          if (n.muted) break;  // J-11: muted notes stay in the pattern but do not play
+          if (loopTicks > 0 && (n.start >= loopTicks || n.start + rep >= patLen)) break;
+          emitNote(n, rep);
+          if (loopTicks <= 0) break;
+        }
+    } else {  // K-255: the lane's repeats (a fraction of a tick apart on an odd grid; phased when it runs on)
+      for (const lanes::NoteRepeat& r : lanes::playedNotes(song, p, channel, gLanePass)) {
+        if (r.note->muted) continue;
+        const double whole = std::floor(r.offset);
+        emitNote(*r.note, static_cast<Tick>(whole));
+        if (const double fr = r.offset - whole; fr > 0) {
+          NoteEv& e = out.back();
+          setOn(e, noteOnTick(e) + fr);
+          setOff(e, noteOffTick(e) + fr);
+        }
+      }
     }
+  }
   // Echo: repeats of every played note.
   if (c.echo.active()) {
     const size_t base = out.size();
@@ -1016,6 +1260,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   }
   std::map<ObjectId, std::shared_ptr<MixerRuntime>> mixers;
   std::map<std::pair<ObjectId, int>, std::shared_ptr<EffectRuntime>> effects;
+  const std::shared_ptr<const Program> prevProg = last_.lock();
+  const std::map<std::pair<ObjectId, int>, std::shared_ptr<EffectRuntime>> matched = matchEffectRuntimes(song, effects_, effectByUid_, prevProg.get());
   prog->panLaw = static_cast<int>(song.panLaw);
   prog->rooms.clear();
   for (int r = 0; r < roomops::roomCount(song); ++r) {
@@ -1053,6 +1299,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     pm.volume = pm.modVolume = m.volume;
     pm.pan = pm.modPan = m.pan;
     pm.sep = pm.sepBase = m.stereoSep;
+    for (int k = 0; k < kLayerMacros; ++k) pm.macroLive[k] = m.macros[static_cast<size_t>(k)].value;  // K-245
     pm.invert = m.invertPolarity;
     pm.swap = m.swapLR;
     pm.inFirst = m.input;
@@ -1103,12 +1350,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       ps.mix = es.mix;
       if (!es.plugin.empty()) {
         auto key = std::make_pair(m.id, static_cast<int>(s));
-        auto e = effects_.find(key);
-        if (e != effects_.end() && e->second->type == es.plugin.type && !(e->second->fx && e->second->fx->stale())) {
-          ps.rt = e->second;
-        } else {
-          ps.rt = newEffectRuntime(es.plugin.type);
-        }
+        auto e = matched.find(key);  // 0.7.8: the runtime that follows this effect (matchEffectRuntimes)
+        ps.rt = e != matched.end() ? e->second : newEffectRuntime(es.plugin.type);
         if (ps.rt) {
           effects[key] = ps.rt;
           prepareForHost(es.plugin, live, m.id, slotParam(m.id, static_cast<int>(s), 0).index,
@@ -1118,6 +1361,10 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
         if (ps.rt && warmUp_) warmUp(*ps.rt, es.plugin, ps.aux, sampleRate_);
         ps.controller = hasOutputs(es.plugin.type);
         ps.restFrames = static_cast<int>(restSeconds(es.plugin) * sampleRate_);
+        ps.builtinRest = restsWhenStopped(es.plugin.type);  // GitHub #66
+        // K-142 (0.7.8): every built-in effect too; one not in that list rests only while it says
+        // restsWhenFaint(), which the engine asks every block (the answer may change as it plays).
+        ps.hostedRest = isHostedType(es.plugin.type) || ps.builtinRest || (ps.rt && ps.rt->fx);
         if (const PluginInfo* pi = findPlugin(es.plugin.type); pi && pi->sideInParam >= 0) {  // J-45 side input
           const int v = paramInt(es.plugin, static_cast<size_t>(pi->sideInParam), -1);
           if (v >= 0) {
@@ -1128,6 +1375,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       }
       pm.slots.push_back(std::move(ps));
     }
+    for (size_t s = 0; s < pm.slots.size(); ++s)  // K-142 (follow-up)
+      if (pm.slots[s].rt) pm.filledSlots.push_back(static_cast<uint16_t>(s));
     prog->mixer.push_back(std::move(pm));
   }
   std::map<ObjectId, std::shared_ptr<depth::RoomTap>> roomTaps;
@@ -1242,7 +1491,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     ProgChannel pc;
     pc.id = c.id;
     auto it = channels_.find(c.id);
-    if (it != channels_.end() && it->second->type == c.plugin.type && !(it->second->gen && it->second->gen->stale())) {
+    if (it != channels_.end() && it->second->type == c.plugin.type && !(it->second->gen && it->second->gen->stale()) &&
+        (it->second->gen || !installedNow(c.plugin.type))) {  // (a missing plugin installed since: made again)
       pc.rt = it->second;
     } else {
       pc.rt = newChannelRuntime(c.plugin.type);
@@ -1372,15 +1622,60 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     prog->channels.push_back(std::move(pc));
   }
 
+  // --- K-247: the board's LFOs (before the links: their settings are link targets) ---
+  std::map<ObjectId, std::shared_ptr<LfoRuntime>> lfoRts;
+  std::map<std::pair<ObjectId, uint64_t>, std::shared_ptr<LfoLinkRuntime>> lfoLinkRts;
+  for (const SongLfo& l : song.lfos) {
+    ProgLfo pf;
+    pf.id = l.id;
+    pf.on = l.on;
+    pf.shape = l.shape;
+    pf.pulseWidth = l.pulseWidth;
+    pf.randomSteps = l.randomSteps;
+    pf.seed = l.seed;
+    if (l.shape == LfoShape::Drawn) {
+      auto t = std::make_shared<lfo::DrawnTable>();
+      lfo::buildTable(l, *t);
+      pf.table = std::move(t);
+    }
+    pf.tempoSync = l.tempoSync;
+    pf.rateKind = l.rateKind;
+    pf.fadeIn = l.fadeIn;
+    pf.unipolar = l.unipolar;
+    pf.restart = l.restart;
+    pf.noteChannel = song.channelIndex(l.noteChannel);
+    pf.live[0] = l.depth, pf.live[1] = l.offset, pf.live[2] = l.phase, pf.live[3] = l.smoothMs;
+    pf.live[4] = l.rateHz, pf.live[5] = static_cast<float>(l.rateNote), pf.live[6] = l.character;
+    pf.kind = l.kind;
+    pf.trigger = l.trigger;
+    pf.centred = l.centred;
+    pf.quantise = l.quantise;
+    pf.roll = l.roll;
+    if (l.kind == LfoKind::Random) {  // the trigger as the clock the pass runs
+      if (l.trigger == RandomTrigger::Tempo) pf.tempoSync = true, pf.restart = LfoRestart::OnPlay;
+      else if (l.trigger == RandomTrigger::Hz) pf.tempoSync = false, pf.restart = LfoRestart::Free;
+      else pf.restart = l.trigger == RandomTrigger::Note ? LfoRestart::EachNote : LfoRestart::Free;
+    } else if (l.kind == LfoKind::Lfo && pf.restart == LfoRestart::EachBar) {
+      pf.restart = LfoRestart::OnPlay;  // (a bar restart is Chaos's)
+    }
+    auto it = lfos_.find(l.id);
+    pf.rt = it != lfos_.end() ? it->second : std::make_shared<LfoRuntime>();
+    lfoRts[l.id] = pf.rt;
+    prog->lfos.push_back(std::move(pf));
+  }
+
   // --- internal controller links ---
   std::map<uint64_t, std::shared_ptr<LinkRuntime>> linkRts;
   for (const auto& ml : song.modLinks) {
-    if (!ml.enabled) continue;
+    if (!ml.enabled || ml.isLfo()) continue;  // (K-247: LFO links: the LFO pass below)
     ProgLink pl;
-    if (ml.sourceSlot == kLayerMacroSlot) {  // K-169: a layer's macro
-      pl.srcChannel = song.channelIndex(ml.sourceOwner);
+    if (ml.sourceSlot == kLayerMacroSlot) {  // K-169: a channel's macro; K-245: or a mixer track's
       pl.srcMacro = std::clamp(ml.sourceOutput, 0, kLayerMacros - 1);
-      if (pl.srcChannel < 0 || prog->channels[static_cast<size_t>(pl.srcChannel)].layer.empty()) continue;
+      pl.srcChannel = song.channelIndex(ml.sourceOwner);
+      if (pl.srcChannel < 0) pl.srcMixer = song.mixerIndex(ml.sourceOwner);
+      if (pl.srcChannel < 0 && pl.srcMixer < 0) continue;
+      if (pl.srcChannel >= 0 && static_cast<size_t>(pl.srcChannel) >= prog->channels.size()) continue;
+      if (pl.srcMixer >= 0 && static_cast<size_t>(pl.srcMixer) >= prog->mixer.size()) continue;
     } else if (ml.sourceSlot < 0) {
       pl.srcChannel = song.channelIndex(ml.sourceOwner);
       if (pl.srcChannel < 0 || !prog->channels[static_cast<size_t>(pl.srcChannel)].controller) continue;
@@ -1406,6 +1701,9 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     linkRts[key] = pl.rt;
     prog->links.push_back(std::move(pl));
   }
+  compileLfoPass(song, *prog, linkRts, lfoLinkRts);
+  lfos_ = std::move(lfoRts);
+  lfoLinks_ = std::move(lfoLinkRts);
   // --- PH-09: host macros (plugin build) ---
   prog->macros.assign(std::min(macroTargets_.size(), static_cast<size_t>(kHostMacros)), ProgMacro{});
   for (size_t k = 0; k < macroTargets_.size() && k < static_cast<size_t>(kHostMacros); ++k) {
@@ -1491,9 +1789,11 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   }
   // Live copies for the states that links rewrite.
   for (auto& pc : prog->channels) {
-    // K-277: an instrument whose parameters links or automation move, or whose MIDI output other
-    // channels play, keeps running.
-    if (pc.modded || !pc.midiTargets.empty()) pc.restSilent = false;
+    // K-277: an instrument whose MIDI output other channels play keeps running. K-142 (0.7.8): one
+    // whose parameters links or automation move may rest while they hold still (a stopped
+    // transport): a value that changes wakes it in that block (ProgChannel::liveMoved), so it
+    // follows every change as it did when it never rested.
+    if (!pc.midiTargets.empty()) pc.restSilent = false;
     if (pc.modded) pc.live = pc.plugin;
     for (auto& nf : pc.noteFx)
       if (nf.modded) nf.live = nf.state;
@@ -1502,9 +1802,12 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     for (auto& ps : pm.slots) {
       if (ps.modded) ps.live = ps.plugin;
       // K-64: an effect taking sound from elsewhere or passing it on keeps running.
-      if (ps.controller || ps.sideOwn || ps.sendTo >= 0 || ps.busSend >= 0 || ps.busRecv >= 0) ps.restFrames = 0;
+      if (ps.controller || ps.sideOwn || ps.sendTo >= 0 || ps.busSend >= 0 || ps.busRecv >= 0) ps.restFrames = 0, ps.hostedRest = false;
       for (int k : ps.multiSend)
-        if (k >= 0) ps.restFrames = 0;
+        if (k >= 0) ps.restFrames = 0, ps.hostedRest = false;
+      // GitHub #66: what a hosted effect does with a side input is its own. K-142 (0.7.8): a built-in
+      // one rests only while its side input is silent too (AudioEngine::runMixer).
+      if (pm.hasSidechain && !ps.builtinRest) ps.hostedRest = false;
     }
 
   // --- patterns (pattern mode) and song events ---
@@ -1538,7 +1841,34 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   // Swing and accent in thousandths: the project's, and what a lane has at tick t.
   auto milli = [](double v) { return static_cast<int>(std::lround(std::clamp(v, 0.0, 1.0) * 1000.0)); };
   const int baseSwing = milli(static_cast<double>(song.swing)), baseAccent = milli(static_cast<double>(song.groove.accent));
-  std::map<std::tuple<ObjectId, int, int>, std::vector<std::vector<NoteEv>>> swingVariants;
+  std::map<std::tuple<ObjectId, int, int, int64_t>, std::vector<std::vector<NoteEv>>> swingVariants;
+  // K-255: which pass of the clip's lanes that run on a pass plays (0: as the pattern itself).
+  // Only a clip that loops over its whole pattern runs them on; a cut clip's own loop restarts them.
+  auto lanePassOf = [&song](const Clip& clip, const ClipPass& ps) -> int64_t {
+    if (ps.index <= 0) return 0;
+    const Pattern* pat = song.pattern(clip.pattern);
+    if (!pat || !lanes::anyRunOn(*pat)) return 0;
+    const LoopWindow w = clipLoopWindow(song, clip);
+    if (w.from != 0 || w.len != song.patternContentLength(*pat)) return 0;
+    return ps.index % lanes::lineUpPasses(song, *pat, 4096);
+  };
+  // Events of a pattern compiled for swing / accent (thousandths; the project's: as it is) and a lane pass.
+  auto variant = [&](ObjectId pattern, int qs, int qa, int64_t lp) -> const std::vector<std::vector<NoteEv>>* {
+    auto& v = swingVariants[{pattern, qs, qa, lp}];
+    if (v.empty())
+      if (const Pattern* pat = song.pattern(pattern)) {
+        if (qs != baseSwing || qa != baseAccent) gSwingOverride = qs / 1000.0, gAccentOverride = qa / 1000.0;
+        gLanePass = lp;
+        for (const auto& c : song.channels) v.push_back(compilePatternChannel(song, *pat, c.id));
+        gSwingOverride = gAccentOverride = -1.0;
+        gLanePass = 0;
+      }
+    return &v;
+  };
+  // K-152 (0.7.8): passes whose swing moves inside them, compiled per pattern, lane pass and cell values.
+  std::map<std::pair<ObjectId, int64_t>, std::map<std::vector<int>, std::vector<std::vector<NoteEv>>>> movingVariants;
+  std::unordered_map<ObjectId, CellGrid> cellGrids;
+  SwingCells cells;
   std::unordered_set<ObjectId> mutedClips;  // K-64: they keep what they had (clipRenders_, clipVoices_)
   for (size_t clipIdx = 0; clipIdx < song.playlist.size(); ++clipIdx) {
     const Clip& clip = song.playlist[clipIdx];
@@ -1573,21 +1903,56 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     const std::vector<ClipPass> passes = clipPasses(song, clip);
     const bool play = clipplay::active(clip);
     for (const ClipPass& ps : passes) {
-      // K-152: swing automation: this pass plays with the swing the automation has where it starts.
+      // K-152: swing automation: each cell of the groove grid in this pass plays with the swing (and
+      // accent) the automation has where the cell starts; a pass the automation holds still is the
+      // pattern compiled once for that value.
       const std::vector<std::vector<NoteEv>>* per = &pp->perChannel;
+      const int64_t lp = lanePassOf(clip, ps);  // K-255
+      int qs = baseSwing, qa = baseAccent;
+      bool moving = false;
       if (swingLane || accentLane) {
         const double at = static_cast<double>(clip.start + ps.at);
-        const int qs = swingLane ? milli(swingLane->valueAt(at)) : baseSwing, qa = accentLane ? milli(accentLane->valueAt(at)) : baseAccent;
-        if (qs != baseSwing || qa != baseAccent) {
-          auto& v = swingVariants[{clip.pattern, qs, qa}];
-          if (v.empty())
-            if (const Pattern* pat = song.pattern(clip.pattern)) {
-              gSwingOverride = qs / 1000.0, gAccentOverride = qa / 1000.0;
-              for (const auto& c : song.channels) v.push_back(compilePatternChannel(song, *pat, c.id));
-              gSwingOverride = gAccentOverride = -1.0;
-            }
-          if (v.size() == pp->perChannel.size()) per = &v;
+        qs = swingLane ? milli(swingLane->valueAt(at)) : baseSwing, qa = accentLane ? milli(accentLane->valueAt(at)) : baseAccent;
+        if (const Pattern* pat = song.pattern(clip.pattern)) {
+          auto gi = cellGrids.find(pat->id);
+          if (gi == cellGrids.end()) gi = cellGrids.emplace(pat->id, cellGrid(song, *pat)).first;
+          const CellGrid& g = gi->second;
+          if (g.full > 0) {
+            // Cells of every bar the pattern's content covers, read inside this pass's window.
+            const int64_t bars = static_cast<int64_t>(std::ceil(static_cast<double>(std::max<Tick>(1, song.patternContentLength(*pat))) / g.bar)) + 1;
+            const double lo = static_cast<double>(ps.content), hi = std::max(lo, static_cast<double>(ps.content + ps.len) - 1e-3);
+            const double cyc = g.cell * static_cast<double>(g.cycle);
+            cells.cycle = g.cycle;
+            cells.swing.clear(), cells.accent.clear();
+            for (int64_t b = 0; b < bars; ++b)
+              for (int64_t j = 0; j < g.full; ++j)
+                for (int k = 0; k < g.cycle; ++k) {
+                  const double pt = std::clamp(static_cast<double>(b) * g.bar + static_cast<double>(j) * cyc + static_cast<double>(k) * g.cell, lo, hi);
+                  const double st = static_cast<double>(clip.start + ps.at) + (pt - lo);
+                  cells.swing.push_back(swingLane ? milli(swingLane->valueAt(st)) : baseSwing);
+                  cells.accent.push_back(accentLane ? milli(accentLane->valueAt(st)) : baseAccent);
+                }
+            for (size_t i = 0; i < cells.swing.size() && !moving; ++i) moving = cells.swing[i] != cells.swing[0] || cells.accent[i] != cells.accent[0];
+            if (!moving && !cells.swing.empty()) qs = cells.swing[0], qa = cells.accent[0];
+          }
         }
+      }
+      if (moving) {
+        std::vector<int> key(cells.swing);
+        key.insert(key.end(), cells.accent.begin(), cells.accent.end());
+        auto& v = movingVariants[{clip.pattern, lp}][key];
+        if (v.empty())
+          if (const Pattern* pat = song.pattern(clip.pattern)) {
+            gSwingCells = &cells;
+            gLanePass = lp;
+            for (const auto& c : song.channels) v.push_back(compilePatternChannel(song, *pat, c.id));
+            gSwingCells = nullptr;
+            gLanePass = 0;
+          }
+        if (v.size() == pp->perChannel.size()) per = &v;
+      } else if (qs != baseSwing || qa != baseAccent || lp != 0) {
+        const auto* v = variant(clip.pattern, qs, qa, lp);
+        if (v->size() == pp->perChannel.size()) per = v;
       }
       for (size_t ci = 0; ci < per->size(); ++ci)
         for (const auto& e : (*per)[ci]) {
@@ -1620,7 +1985,12 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       if (const ProgPattern* pp = prog->pattern(clip.pattern))
         for (size_t ci = 0; ci < pp->perChannel.size(); ++ci)
           for (const ClipPass& ps : clipPasses(song, clip))  // Q-1: repeats of a looping pattern
-            for (const auto& e : pp->perChannel[ci]) {
+            for (const auto& e : [&]() -> const std::vector<NoteEv>& {  // K-255: lanes that run on, from the launch
+                   const int64_t lp = lanePassOf(clip, ps);
+                   if (lp == 0) return pp->perChannel[ci];
+                   const auto* v = variant(clip.pattern, baseSwing, baseAccent, lp);
+                   return ci < v->size() ? (*v)[ci] : pp->perChannel[ci];
+                 }()) {
               if (e.on < ps.content || e.on >= ps.content + ps.len) continue;
               ProgLiveClip::Ev x;
               x.channel = static_cast<int>(ci);
@@ -1810,6 +2180,11 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   mixers_ = std::move(mixers);
   roomTaps_ = std::move(roomTaps);
   roomEarly_ = std::move(roomEarly);
+  effectByUid_.clear();  // 0.7.8 (matchEffectRuntimes)
+  for (const MixerTrack& m : song.mixer)
+    for (size_t k = 0; k < m.slots.size(); ++k)
+      if (m.slots[k].uid)
+        if (auto e = effects.find({m.id, static_cast<int>(k)}); e != effects.end()) effectByUid_[m.slots[k].uid] = e->second;
   effects_ = std::move(effects);
   noteFx_ = std::move(noteFx);
   links_ = std::move(linkRts);
@@ -1935,16 +2310,19 @@ void ProgramBuilder::holdAutomation(ParamId pid, double normalized) {
   if (!rt) rt = std::make_shared<LinkRuntime>();  // (the next build's lane takes it: compileLane)
   rt->heldValue.store(static_cast<float>(std::clamp(normalized, 0.0, 1.0)), std::memory_order_relaxed);
   rt->held.store(true, std::memory_order_relaxed);
+  automationHoldChanges().fetch_add(1, std::memory_order_release);  // K-142 (0.7.8 close)
 }
 
 void ProgramBuilder::releaseAutomation(ParamId pid) {
   auto it = links_.find(pid.packed());
   if (it != links_.end() && it->second) it->second->held.store(false, std::memory_order_relaxed);
+  automationHoldChanges().fetch_add(1, std::memory_order_release);  // K-142 (0.7.8 close)
 }
 
 void ProgramBuilder::releaseAllAutomation() {
   for (auto& [key, rt] : links_)
     if (rt) rt->held.store(false, std::memory_order_relaxed);
+  automationHoldChanges().fetch_add(1, std::memory_order_release);  // K-142 (0.7.8 close)
 }
 
 bool ProgramBuilder::automationHeld(ParamId pid) const {
@@ -1955,8 +2333,149 @@ bool ProgramBuilder::automationHeld(ParamId pid) const {
 bool ProgramBuilder::modulatedValue(ParamId id, double& value) const {
   auto it = links_.find(id.packed());
   if (it == links_.end() || !it->second->active.load(std::memory_order_relaxed)) return false;
+  // K-247: under the board's LFOs, the value they move around (the dot shows where they took it).
+  value = it->second->lfoMoved.load(std::memory_order_relaxed) ? it->second->baseDisplay.load(std::memory_order_relaxed)
+                                                                 : it->second->display.load(std::memory_order_relaxed);
+  return true;
+}
+
+bool ProgramBuilder::lfoValue(ParamId id, double& value) const {
+  auto it = links_.find(id.packed());
+  if (it == links_.end() || !it->second->lfoMoved.load(std::memory_order_relaxed)) return false;
   value = it->second->display.load(std::memory_order_relaxed);
   return true;
+}
+
+std::shared_ptr<LfoRuntime> ProgramBuilder::lfoRuntime(ObjectId lfo) const {
+  auto it = lfos_.find(lfo);
+  return it == lfos_.end() ? nullptr : it->second;
+}
+
+void ProgramBuilder::compileLfoPass(const Song& song, Program& prog, std::map<uint64_t, std::shared_ptr<LinkRuntime>>& linkRts,
+                                    std::map<std::pair<ObjectId, uint64_t>, std::shared_ptr<LfoLinkRuntime>>& lfoLinkRts) {
+  if (prog.lfos.empty()) return;
+  // The LFO links, one group per target.
+  std::map<uint64_t, size_t> groupOf;
+  for (const auto& ml : song.modLinks) {
+    if (!ml.enabled || !ml.isLfo()) continue;
+    const int li = song.lfoIndex(ml.sourceOwner);
+    if (li < 0) continue;
+    const ParamId target{ml.owner, ml.index};
+    const uint64_t key = target.packed();
+    auto g = groupOf.find(key);
+    if (g == groupOf.end()) {
+      ProgLfoTarget t;
+      if (!resolveTarget(song, prog, target, t.target)) continue;  // song parameters are not modulated
+      auto lr = links_.find(key);
+      t.target.rt = linkRts.count(key) ? linkRts[key] : lr != links_.end() ? lr->second : std::make_shared<LinkRuntime>();
+      linkRts[key] = t.target.rt;
+      g = groupOf.emplace(key, prog.lfoTargets.size()).first;
+      prog.lfoTargets.push_back(std::move(t));
+    }
+    ProgLfoLink k;
+    k.lfo = li;
+    k.amount = ml.amount;
+    k.min = ml.min;
+    k.max = ml.max;
+    k.smoothMs = ml.smoothMs;
+    k.mode = ml.mode;
+    k.direction = ml.direction;
+    k.invert = ml.invert;
+    k.curve = ml.curve == ModCurve::Formula ? ModCurve::Linear : ml.curve;
+    const auto rk = std::make_pair(ml.sourceOwner, key);
+    auto old = lfoLinks_.find(rk);
+    k.rt = old != lfoLinks_.end() ? old->second : std::make_shared<LfoLinkRuntime>();
+    lfoLinkRts[rk] = k.rt;
+    prog.lfoTargets[g->second].links.push_back(std::move(k));
+  }
+  // A macro's identity (channel or mixer track, macro) as a number; -1: not a macro.
+  auto targetMacro = [](const ProgLink& t) -> int64_t {
+    if (t.kind == ProgLink::ChanMacro) return (int64_t{t.chan} << 8) | t.param;
+    if (t.kind == ProgLink::MixMacro) return (int64_t{1} << 40) | (int64_t{t.mixer} << 8) | t.param;
+    return -1;
+  };
+  auto sourceMacro = [](const ProgLink& l) -> int64_t {
+    if (l.srcMacro < 0) return -1;
+    if (l.srcChannel >= 0) return (int64_t{l.srcChannel} << 8) | l.srcMacro;
+    return (int64_t{1} << 40) | (int64_t{l.srcMixer} << 8) | l.srcMacro;
+  };
+  // Links whose source is a macro an LFO moves (directly, or through such links) run after it.
+  std::set<int64_t> moved;
+  for (const auto& t : prog.lfoTargets)
+    if (int64_t m = targetMacro(t.target); m >= 0) moved.insert(m);
+  for (bool grew = true; grew;) {
+    grew = false;
+    for (auto& l : prog.links) {
+      if (l.late || !moved.count(sourceMacro(l))) continue;
+      l.late = true;
+      grew = true;
+      if (int64_t m = targetMacro(l); m >= 0) moved.insert(m);
+    }
+  }
+  // The pass's order: every LFO before the targets it moves, a target before the LFO whose setting
+  // it is and before the links its macro drives (a topological order; what a loop leaves over runs
+  // last, in the song's order: the document refuses loops, older files may still hold one).
+  const int nl = static_cast<int>(prog.lfos.size()), nt = static_cast<int>(prog.lfoTargets.size());
+  std::vector<int> late;
+  for (int k = 0; k < static_cast<int>(prog.links.size()); ++k)
+    if (prog.links[static_cast<size_t>(k)].late) late.push_back(k);
+  const int n = nl + nt + static_cast<int>(late.size());
+  std::vector<std::vector<int>> out(static_cast<size_t>(n));
+  std::vector<int> indeg(static_cast<size_t>(n), 0);
+  auto edge = [&](int a, int b) {
+    out[static_cast<size_t>(a)].push_back(b);
+    ++indeg[static_cast<size_t>(b)];
+  };
+  auto targetEdges = [&](int from, const ProgLink& t) {  // what follows a node that sets target t
+    if (t.kind == ProgLink::LfoSetting) edge(from, t.fx);
+    const int64_t m = targetMacro(t);
+    for (size_t j = 0; j < late.size(); ++j) {
+      const ProgLink& l = prog.links[static_cast<size_t>(late[j])];
+      if (m >= 0 && sourceMacro(l) == m) edge(from, nl + nt + static_cast<int>(j));
+    }
+  };
+  auto sameTarget = [](const ProgLink& a, const ProgLink& b) {
+    return a.kind == b.kind && a.chan == b.chan && a.mixer == b.mixer && a.slot == b.slot && a.fx == b.fx && a.param == b.param;
+  };
+  for (int g = 0; g < nt; ++g) {
+    for (const auto& k : prog.lfoTargets[static_cast<size_t>(g)].links) edge(k.lfo, nl + g);
+    targetEdges(nl + g, prog.lfoTargets[static_cast<size_t>(g)].target);
+  }
+  for (size_t j = 0; j < late.size(); ++j) {
+    const ProgLink& l = prog.links[static_cast<size_t>(late[j])];
+    const int node = nl + nt + static_cast<int>(j);
+    targetEdges(node, l);
+    for (int g = 0; g < nt; ++g)  // the LFOs move around what the link set
+      if (sameTarget(l, prog.lfoTargets[static_cast<size_t>(g)].target)) edge(node, nl + g);
+  }
+  std::vector<int> order, ready;
+  std::vector<char> done(static_cast<size_t>(n), 0);
+  for (int i = 0; i < n; ++i)
+    if (indeg[static_cast<size_t>(i)] == 0) ready.push_back(i);
+  while (!ready.empty()) {
+    std::sort(ready.begin(), ready.end(), std::greater<int>());
+    const int i = ready.back();
+    ready.pop_back();
+    order.push_back(i);
+    done[static_cast<size_t>(i)] = 1;
+    for (int b : out[static_cast<size_t>(i)])
+      if (--indeg[static_cast<size_t>(b)] == 0) ready.push_back(b);
+  }
+  for (int i = 0; i < n; ++i)
+    if (!done[static_cast<size_t>(i)]) order.push_back(i);
+  // 0.7.8 (K-142): a Chaos or Random source that moves nothing (no enabled link) is left out of the
+  // pass: it costs nothing and a song with only such sources rests as one without them.
+  std::vector<char> used(static_cast<size_t>(nl), 0);
+  for (const auto& t : prog.lfoTargets)
+    for (const auto& k : t.links) used[static_cast<size_t>(k.lfo)] = 1;
+  for (int i : order) {
+    ProgLfoOp op;
+    if (i < nl && !used[static_cast<size_t>(i)] && prog.lfos[static_cast<size_t>(i)].kind != LfoKind::Lfo) continue;
+    if (i < nl) op.kind = ProgLfoOp::Eval, op.index = i;
+    else if (i < nl + nt) op.kind = ProgLfoOp::Target, op.index = i - nl;
+    else op.kind = ProgLfoOp::Late, op.index = late[static_cast<size_t>(i - nl - nt)];
+    prog.lfoOps.push_back(op);
+  }
 }
 
 float ProgramBuilder::controllerOutput(ObjectId owner, int slot, int output) const {

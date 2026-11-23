@@ -67,6 +67,7 @@ Edit > Render clip in place...			e-
 Edit > Render clip to file...			e-
 Create > New audio track	Ctrl+T	track.newAudio	e-
 Create > New MIDI track	Ctrl+Shift+T	track.newMidi	e-
+Create > New instrument track > Guide to the instruments...			e-
 Create > New instrument track > Audio file as sampler...			e-
 Create > New instrument track > Speech...			e-
 Create > New return track	Ctrl+Alt+T	track.newReturn	e-
@@ -79,6 +80,7 @@ Create > Import audio file...			e-
 Create > Import MIDI file...			e-
 View > Command palette...	Ctrl+K	view.commandPalette	e-
 View > Mixer	Ctrl+Alt+M	view.mixer	e-
+View > LFO board	Alt+F9	view.lfoBoard	e-
 View > Stage			e-
 View > Return tracks			ec
 View > In/Out	Ctrl+Alt+I	view.io	e-
@@ -105,6 +107,8 @@ View > Window layout > Layout settings...			e-
 View > Workspaces > New workspace			e-
 View > Workspaces > Add starter workspaces			e-
 View > Workspaces > Close workspace			--
+View > Workspaces > Show all as cards			e-
+View > Workspaces > Workspace settings...			e-
 View > Workspaces > Keep a copy in the project			e-
 View > Workspaces > Session	Alt+1	view.workspace1	ec
 View > Reopen closed pane tab			e-
@@ -244,12 +248,12 @@ Options > Recording and metronome > Typing keyboard options > Chord > Minor 7th	
 Options > Recording and metronome > Typing keyboard options > Chord > Sus 4			e-
 Options > Recording and metronome > Typing keyboard options > Chord > Power (5th)			e-
 Options > Recording and metronome > Typing keyboard options > Chord > Octave			e-
-Options > Recording and metronome > Typing keyboard options > Keyboard layout > Standard (QWERTY)			ec
-Options > Recording and metronome > Typing keyboard options > Keyboard layout > QWERTZ			e-
-Options > Recording and metronome > Typing keyboard options > Keyboard layout > AZERTY			e-
-Options > Recording and metronome > Typing keyboard options > Keyboard layout > Dvorak			e-
-Options > Recording and metronome > Typing keyboard options > Keyboard layout > Colemak			e-
-Options > Recording and metronome > Typing keyboard options > Keyboard layout > Follow the computer			e-
+Options > Recording and metronome > Typing keyboard options > My keys say > Same as my computer			ec
+Options > Recording and metronome > Typing keyboard options > My keys say > QWERTY			e-
+Options > Recording and metronome > Typing keyboard options > My keys say > QWERTZ			e-
+Options > Recording and metronome > Typing keyboard options > My keys say > AZERTY			e-
+Options > Recording and metronome > Typing keyboard options > My keys say > Dvorak			e-
+Options > Recording and metronome > Typing keyboard options > My keys say > Colemak			e-
 Navigate > Arrangement			e-
 Navigate > Clip grid			ec
 Navigate > Browser	Ctrl+Alt+B	view.browser	ec
@@ -257,6 +261,7 @@ Navigate > Clip band			e-
 Navigate > Device band			ec
 Navigate > Clip and device bands	Ctrl+Alt+L	view.detail	ec
 Navigate > Mixer	Ctrl+Alt+M	view.mixer	e-
+Navigate > LFO board	Alt+F9	view.lfoBoard	e-
 Navigate > Go to the start	Ctrl+Alt+Shift+Home	transport.toStart	e-
 Navigate > Back one bar	Ctrl+Alt+Shift+Left	transport.rewindBar	e-
 Navigate > Forward one bar	Ctrl+Alt+Shift+Right	transport.forwardBar	e-

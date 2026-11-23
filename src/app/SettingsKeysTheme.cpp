@@ -15,6 +15,7 @@
 #include "Look.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/I18n.h"
+#include "../core/KeyCaps.h"
 #include "../core/Keymap.h"
 #include "App.h"
 #include "Keys.h"
@@ -134,6 +135,19 @@ void shortcutSettingsPage(App& a, float fieldW) {
       ImGui::EndCombo();
     }
     ui::Hint("Which default shortcuts apply. Choosing a window layout can switch it too (Settings > Interface)");
+    // GitHub #79: what is printed on the keys. Every shortcut (and the typing keyboard's note keys) is
+    // named by the printed key that runs it; no shortcut moves.
+    ImGui::SameLine(0, theme::kS4);
+    if (ImGui::GetContentRegionAvail().x < ImGui::CalcTextSize(tr("My keys say")).x + theme::kS2 + 180) ImGui::NewLine();  // (a narrow window: below)
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.textDim), "%s", tr("My keys say"));
+    ImGui::SameLine(0, theme::kS2);
+    if (ui::BeginCombo("##mykeys", tr(keycaps::capsName(typingLayout)), 180)) {
+      for (TypingLayout l : keycaps::kCapsOrder)
+        if (ImGui::Selectable(tr(keycaps::capsName(l)), typingLayout == l)) setTypingLayout(a, l);
+      ImGui::EndCombo();
+    }
+    ui::Hint("What is printed on your keys. Shortcuts and the typing keyboard's keys are named after it; no shortcut moves");
   }
   // Checkpoint 29 (Tracks layout): which commands the list shows, one segmented control leading the
   // toolbar row, as 015 and 115 lead their window with it.
@@ -185,7 +199,7 @@ void shortcutSettingsPage(App& a, float fieldW) {
     std::string who;
     for (const keys::Command* o : km.conflicts(E.pendingId, E.pendingChord)) who += (who.empty() ? "" : ", ") + std::string(tr(o->label));
     ImGui::PushTextWrapPos(0);
-    ImGui::TextColored(theme::vec(P.danger), "%s %s %s. %s %s?", keys::format(E.pendingChord).c_str(), tr("is already used by"), who.c_str(),
+    ImGui::TextColored(theme::vec(P.danger), "%s %s %s. %s %s?", keys::named(E.pendingChord).c_str(), tr("is already used by"), who.c_str(),
                        tr("Use it for"), cmd ? tr(cmd->label) : E.pendingId.c_str());
     ImGui::PopTextWrapPos();
     if (ui::PrimaryButton(tr("Reassign"), 0, tr("Takes the shortcut away from the other command"))) {
@@ -374,7 +388,7 @@ void shortcutSettingsPage(App& a, float fieldW) {
       float x = k0.x;
       if (km.bindings(sel->id).empty()) dl->AddText(ImVec2(x, k0.y + 3), PP.textFaint, tr("none"));
       for (const auto& ch : km.bindings(sel->id)) {
-        const std::string t = keys::format(ch);
+        const std::string t = keys::named(ch);
         if (x + 40 > maxX) break;
         x += keyChip(a, dl, ImVec2(x, k0.y), t.c_str(), km.customized(sel->id) ? PP.hot : PP.line) + theme::kS1;
       }
