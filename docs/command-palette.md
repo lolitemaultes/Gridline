@@ -19,6 +19,8 @@ Settings > Shortcuts ("Command palette").
   Ctrl+Shift+P.
 - If you give Ctrl+K to another command yourself, that command gets it and the palette keeps
   Ctrl+Shift+P.
+- The shortcut works in a plugin's window too, when the plugin passes it on: the palette opens in
+  the main window, which comes to the front with the keyboard so that what you type goes into it.
 
 The same shortcut, or Esc, closes it. Clicking outside it closes it too.
 

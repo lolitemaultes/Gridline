@@ -1745,6 +1745,20 @@ bool hostedui::devDockedKey(int kind, bool space) {
   return false;
 }
 
+void hostedui::keyboardToMainWindow() {
+  if (!gMainWin || (SDL_GetWindowFlags(gMainWin) & SDL_WINDOW_HIDDEN)) return;
+  bool ownWindow = false;
+  for (const auto& [k, w] : windows()) {
+    if (w->dead) continue;
+    if (w->docked && w->container) {  // inside Gridline: as a click on Gridline's part of the window
+      if (native::keyFocus(w->container) != native::KeyFocus::Host) native::releaseKeyFocus(w->container);
+    } else if (w->win) {
+      ownWindow = true;
+    }
+  }
+  if (ownWindow && !(SDL_GetWindowFlags(gMainWin) & SDL_WINDOW_INPUT_FOCUS)) SDL_RaiseWindow(gMainWin);
+}
+
 bool hostedui::dockedKeyEvent(const SDL_Event& ev) {
   if (windows().empty()) return false;
   if (ev.type == SDL_KEYUP) return dockSwallowed().erase(static_cast<int>(ev.key.keysym.scancode)) > 0;

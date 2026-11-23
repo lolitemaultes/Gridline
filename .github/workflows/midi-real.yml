@@ -5,12 +5,15 @@ name: MIDI real devices
 # snd-virmidi, loaded and unloaded; a user-space sequencer port), and sndio's MIDI thru box on
 # OpenBSD and FreeBSD. The regular CI uses stand-in devices instead. The test loads kernel modules
 # and restarts sndiod, so it is registered only with GRIDLINE_MIDI_REAL=1 (tools/ci/midi-real.sh,
-# tools/ci/midi-real.py). Each job's summary page lists what ran, what passed and what was skipped.
+# tools/ci/midi-real.py). On a runner whose kernel has no sound modules the Linux test runs in a
+# virtual machine with Ubuntu's generic kernel (tools/ci/midi-real-vm.sh); when even that cannot run,
+# the job says so in its summary and ends with a warning. Each job's summary page lists what ran,
+# what passed and what was skipped.
 on:
   workflow_dispatch:
     inputs:
       require_kernel:
-        description: "Linux: fail when the kernel virtual MIDI module cannot be loaded (otherwise a warning, and the user-space port checks run alone)"
+        description: "Linux: fail when the kernel virtual MIDI module cannot be loaded, here or in the virtual machine (otherwise a warning, and what could run runs alone)"
         type: boolean
         default: false
 
@@ -28,27 +31,49 @@ jobs:
   linux:
     name: Linux ALSA
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - name: Dependencies
         run: |
           sudo sh tools/ci/install-deps.sh apt
           sudo apt-get install -y -q --no-install-recommends alsa-utils kmod
-          # The runner's kernel keeps its sound modules in the extra package.
-          if ! sudo apt-get install -y -q --no-install-recommends "linux-modules-extra-$(uname -r)"; then
-            echo "::warning::linux-modules-extra-$(uname -r) could not be installed: the sound modules may be missing"
-          fi
+          # Some runner kernels keep their sound modules in an extra package.
+          sudo apt-get install -y -q --no-install-recommends "linux-modules-extra-$(uname -r)" || echo "linux-modules-extra-$(uname -r) is not a package"
+      # GitHub's azure kernel is built without sound: no package has snd-seq or snd-virmidi for it. The
+      # test then runs in a virtual machine with Ubuntu's generic kernel (tools/ci/midi-real-vm.sh).
       - name: Sound modules on this runner
+        id: kernel
         run: |
           uname -a
+          where=runner
           for m in snd-seq snd-virmidi; do
-            if modinfo "$m" > /dev/null 2>&1; then echo "$m: $(modinfo -F filename "$m")"; else echo "::warning::kernel module $m is not available on $(uname -r)"; fi
+            if modinfo "$m" > /dev/null 2>&1; then echo "$m: $(modinfo -F filename "$m")"; else echo "$m: not in this kernel ($(uname -r))"; where=vm; fi
           done
-      - name: MIDI through ALSA, devices plugged in and out
+          cfg="/boot/config-$(uname -r)"
+          if [ -f "$cfg" ]; then grep -E '^(# )?CONFIG_(SOUND|SND|SND_SEQUENCER|SND_VIRMIDI)[ =]' "$cfg" || echo "$cfg sets no sound options: the kernel is built without sound"; fi
+          echo "where=$where" >> "$GITHUB_OUTPUT"
+      - name: MIDI through ALSA, devices plugged in and out (this runner's kernel)
+        if: steps.kernel.outputs.where == 'runner'
         env:
           GRIDLINE_MIDI_REAL_ARGS: ${{ inputs.require_kernel && '--require-kernel' || '' }}
         run: xvfb-run -a -s "-screen 0 1600x1000x24" sh tools/ci/midi-real.sh
+      - name: MIDI through ALSA, devices plugged in and out (virtual machine, generic kernel)
+        if: steps.kernel.outputs.where == 'vm'
+        env:
+          GRIDLINE_MIDI_REAL_ARGS: ${{ inputs.require_kernel && '--require-kernel' || '' }}
+          REQUIRE_KERNEL: ${{ inputs.require_kernel && 'true' || 'false' }}
+        run: |
+          rc=0
+          sh tools/ci/midi-real-vm.sh || rc=$?
+          if [ "$rc" = 3 ]; then
+            # Nothing could be tested here: said in the summary and as a warning, and the job ends
+            # neutral unless the kernel test was required.
+            echo "::warning title=Real ALSA MIDI NOT tested::$(sed -n 's/^NOT TESTED: //p' midi-real-out/summary.md)"
+            [ "$REQUIRE_KERNEL" = true ] && exit 1
+            exit 0
+          fi
+          exit "$rc"
       - name: Summary
         if: always()
         run: cat midi-real-out/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No summary was written." >> "$GITHUB_STEP_SUMMARY"

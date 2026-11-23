@@ -276,6 +276,11 @@ class App:
             time.sleep(0.5)
         return None
 
+    def focus(self):
+        """The name of the window of Gridline's interface that has its keyboard focus (playstate), or None."""
+        m = self.ask("playstate", r'playstate frame \d+: playing \d own \d+ epoch \d+ focus "([^"]*)"')
+        return m.group(1) if m else None
+
     def main_window(self):
         """The biggest mapped Gridline window that is not a plugin window."""
         rc, o = sh("xwininfo", "-root", "-tree", timeout=10)
@@ -608,6 +613,27 @@ def check_keys(ctx, r, window, app):
     time.sleep(0.4)
     t = probe.text(m0)
     r.expect("Ctrl chord reaches the editor", bool(re.search(r"keydown 75 shift 0 ctrl 1", t)), t[-200:])
+    # Ctrl+K is also Gridline's command palette: the interface passes the shortcut on, the palette opens in
+    # the main window and the main window takes the keyboard to be typed into. Escape closes it (typed
+    # into whichever window has the keyboard), and a click gives the editor the keyboard again.
+    time.sleep(0.4)
+    focus = app.focus()
+    r.expect("Ctrl+K in the editor opens Gridline's command palette", focus == "##cmdpalette", f"focus {focus!r}")
+    took = sh("xdotool", "getwindowfocus", timeout=5)[1].strip()
+    main = app.main_window()
+    on_main = bool(main and took.isdigit() and int(took) == int(main, 16))
+    r.add("the palette takes the keyboard to the main window (for information)", "pass" if on_main else "skip",
+          "the main window has the keyboard" if on_main else f"the window manager left the keyboard where it was (window {took})")
+    x.key("Escape")
+    time.sleep(0.5)
+    focus = app.focus()
+    r.expect("Escape closes the palette", focus != "##cmdpalette", f"focus {focus!r}")
+    sh("xdotool", "windowraise", window["window"], timeout=5)
+    time.sleep(0.3)
+    g = x.geom(window["container"])
+    x.move(g["x"] + 450, g["y"] + 300)
+    x.click(1)
+    time.sleep(0.3)
     m0 = probe.size()
     x.key("alt+k")
     time.sleep(0.4)
@@ -1401,6 +1427,63 @@ def control_real(ctx, r, name, fmt, entry, script):
         kill_hosts()
 
 
+def side_windows():
+    """XWayland windows Gridline opened for interfaces (class gridline-plugin): [(id, title)]."""
+    rc, o = sh("xwininfo", "-root", "-tree", timeout=10)
+    return re.findall(r'^\s+(0x[0-9a-f]+) "([^"]*)": \("gridline-plugin" ', o, re.M) if rc == 0 else []
+
+
+def wayland_side_window(ctx, r, app):
+    """Gridline on Wayland: the interface opens in a window of its own on XWayland, drawn, with the bar apart."""
+    probe, x = ctx.probe, ctx.x
+    app.send("plugwin chan 0")
+    ws = wait_window(app)
+    r.expect("the plugin window opens", len(ws) == 1, f"{len(ws)} windows")
+    if not ws:
+        return
+    w = ws[0]
+    r.expect("the interface has a window of its own (the bar is apart)", w["external"], w)
+    r.expect("the plugin's window was created", bool(probe.wait(r"attached 640 400 hwnd ok", 0, timeout=15)), probe.text()[-200:])
+    side = []
+    end = time.time() + 10
+    while time.time() < end and not side:
+        side = side_windows()
+        time.sleep(0.3)
+    r.expect("one window for the interface on XWayland", len(side) == 1, side)
+    if len(side) != 1:
+        return
+    win, title = side[0]
+    r.expect("its title names the plugin", title.startswith("Gridline Probe Synth"), title)
+    r.expect("the bar is as wide as the interface", w["w"] == 640, f"bar {w['w']}x{w['h']}")
+    time.sleep(1.0)
+    x.dump(win, ctx.cell_dir / "x-side.txt")
+    g = x.geom(win)
+    r.expect("the interface's window is mapped at the plugin's size", bool(g and g["mapped"] and (g["w"], g["h"]) == (640, 400)), g)
+    r.expect("the interface's window holds the plugin's window", bool(x.children(win)), x.children(win)[:6])
+    img = x.shot(win, str(ctx.cell_dir / "shot-side.png"))
+    if not img:
+        r.add("editor drawn, corners in place", "fail", "no screenshot")
+    else:
+        pw, ph = 640, 400
+        want = {"top left": (3, 3, (255, 0, 0)), "top right": (pw - 4, 3, (0, 255, 0)), "bottom left": (3, ph - 4, (0, 0, 255)), "bottom right": (pw - 4, ph - 4, (255, 255, 0))}
+        bad = {k: pixel(img, v[0], v[1]) for k, v in want.items() if not near(pixel(img, v[0], v[1]), v[2])}
+        r.expect("editor drawn, corners in place", not bad, bad or f"{img[0]}x{img[1]}")
+    # Closed from Gridline and opened again: the window goes with it and comes back.
+    app.send("plugwin close")
+    end = time.time() + 10
+    while time.time() < end and side_windows():
+        time.sleep(0.3)
+    left = side_windows()
+    r.expect("closing the plugin window closes the interface's window", not left, left)
+    m0 = probe.size()
+    app.send("plugwin chan 0")
+    again = bool(wait_window(app)) and bool(probe.wait(r"attached \d+ \d+ hwnd ok", m0, timeout=15))
+    end = time.time() + 10
+    while time.time() < end and again and len(side_windows()) != 1:
+        time.sleep(0.3)
+    r.expect("it opens again in a window of its own", again and len(side_windows()) == 1, side_windows())
+
+
 def scan(ctx, r):
     """yabridge plugins through Gridline's own scanner, as a user's first start does."""
     r.cell = {"format": "all", "mode": "inproc", "plugin": "scan", "host": "gridline"}
@@ -1507,7 +1590,10 @@ def main():
         probes[fmt] = {"synth": synth["type"], "fx": fx["type"], "entry": PROBE_ENTRIES[fmt]}
 
     if a.display == "weston-wayland":
-        # SDL on its Wayland driver: there is no X window to embed a bridged interface in.
+        # SDL on its Wayland driver: Gridline's windows are Wayland windows, and an X11 interface cannot
+        # embed in them. With XWayland it opens in a window of its own there, titled with the plugin's and
+        # the channel's names, and Gridline's bar for it is a window of its own (docs/wayland.md). This
+        # XWayland takes no XTEST input (weston-env checks that), so the window is checked from outside.
         for fmt, types in probes.items():
             r.cell = {"format": fmt, "mode": "inproc", "plugin": "probe", "host": "gridline"}
             ctx.cell_dir = out / f"{fmt}-wayland"
@@ -1523,15 +1609,12 @@ def main():
                 app.send(f'open "{path}"')
                 p = app.wait_instance()
                 r.expect("the plugin loads", bool(p), app.output()[-200:])
-                app.send("plugwin chan 0")
-                time.sleep(4)
-                ws = app.windows()
-                out_text = app.output()
-                # X11 is what plugin interfaces embed in: on purpose on Wayland, they stay closed and it says so.
-                r.expect("no interface window on the Wayland driver", len(ws) == 0, f"{len(ws)} windows")
-                r.expect("the message names the reason", "GRIDLINE_VIDEO_DRIVER keeps Gridline on Wayland" in out_text, out_text[-200:])
+                wayland_side_window(ctx, r, app)
                 done, code = app.quit()
                 r.expect("quit: no hang, clean exit", done and code == 0, f"exited {done}, code {code}")
+                time.sleep(0.5)
+                left = side_windows()
+                r.expect("quit: the interface's window is gone", not left, left)
             finally:
                 app.kill()
                 kill_hosts()

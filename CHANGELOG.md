@@ -112,6 +112,7 @@ All notable changes to Gridline. Versions follow `project(VERSION)` and `GRIDLIN
 - **Track Receipt: very short uses count**, and a sound read after the song end is counted the same way in both calculations.
 - **Fewer pauses on slow drives** in collaboration sessions, saves, quitting and loading.
 - **The command palette shows the Settings key once.**
+- **The command palette opened from a plugin's window takes the keyboard.** Its shortcut typed into a plugin's interface opens it in the main window, which now comes to the front, so the next keys go into the palette instead of being half shared with the plugin.
 
 ## 0.7.7
 

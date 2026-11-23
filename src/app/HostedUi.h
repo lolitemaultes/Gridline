@@ -185,6 +185,10 @@ void placeDockedInterfaces();
 // interface does not use come back to Gridline as before). A click on Gridline's part of the window
 // takes the keyboard back for Gridline (false: the click goes on).
 bool dockedKeyEvent(const SDL_Event& ev);
+// Something of the main window that is typed into opened (the command palette) while the keyboard is in a
+// plugin's interface, from a shortcut the interface passed on: the main window comes forward and takes
+// the keyboard, so the next keys reach it and not the interface (whose copies would only move it).
+void keyboardToMainWindow();
 // Dev (tests): in the first interface inside Gridline, a view like a plugin's takes the keyboard
 // (native::devTestKeyView kinds: 0 passes keys on, 1 uses every key, 2 a text field, 3 a text field
 // that takes the keyboard without a click); with `space`

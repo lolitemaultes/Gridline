@@ -17,6 +17,7 @@
 #include "../core/Secrets.h"
 #include "App.h"
 #include "FocusGuard.h"
+#include "HostedUi.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
 #include "Keys.h"
@@ -1225,6 +1226,9 @@ void open(App& a) {
   S.rankedQuery = "\x01";
   S.prevFocus.clear();
   if (ImGuiWindow* nw = GImGui->NavWindow) S.prevFocus = nw->RootWindow ? nw->RootWindow->Name : nw->Name;
+  // Opened from a plugin's window (Ctrl+K typed into its interface reaches Gridline as a shortcut): the
+  // palette is typed into, so the keyboard comes to the main window with it.
+  hostedui::keyboardToMainWindow();
 }
 
 void close() { closeNow(); }
