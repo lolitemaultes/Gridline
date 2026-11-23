@@ -361,9 +361,14 @@ bool isPluginFile(const std::filesystem::path& p) {
 }
 
 // Every file and folder under `dir`, with its sha256 ("dir" for a folder).
+// A plain file (a CLAP plugin outside macOS is one shared library, not a bundle folder) is itself.
 std::map<std::string, std::string> filesUnder(const std::string& dir) {
   std::map<std::string, std::string> out;
   std::error_code ec;
+  if (std::filesystem::is_regular_file(dir, ec)) {
+    out[dir] = update::sha256File(dir);
+    return out;
+  }
   for (auto it = std::filesystem::recursive_directory_iterator(dir, ec); !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec))
     out[it->path().string()] = it->is_regular_file(ec) ? update::sha256File(it->path().string()) : std::string("dir");
   return out;

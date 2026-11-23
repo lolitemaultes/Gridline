@@ -130,9 +130,8 @@ Result measure(SyncOut mode, bool legacy, double seconds, bool coarse = false) {
   } else {
     s = std::thread([&] {
       SyncSenderHooks h;
-#if defined(__APPLE__)
-      h.coarseTimers = coarse || !makeSyncSenderRealtime();  // as MidiManager::senderLoop
-#endif
+      if (coarse) h.coarseTimers = true;  // (no real-time policy asked for)
+      else prepareSyncSender(h);          // as MidiManager::senderLoop
       h.due = [&](const MidiOutEvent& ev) { return e.due(ev); };
       h.now = nowSec;
       h.send = [&](const MidiOutEvent& ev) { r.sent.push_back({nowSec() - e.due(ev), ev.sample}); };
@@ -168,11 +167,23 @@ void timing(SyncOut mode, const char* name, size_t expectAtLeast) {
   print(label, after);
   expect(after.sent.size() == before.sent.size() && after.sent.size() >= expectAtLeast, "every message sent (as many as before)");
   expect(after.ordered, "in order");
-  // at least as close to due as before (a small allowance for a busy test machine)
-  expect(after.p99 <= std::max(before.p99, 0.5) + 0.25, "99 % of messages at least as close to due as before");
-  expect(after.p50 <= std::max(before.p50, 0.3) + 0.1, "the typical message at least as close to due as before");
+  // The polling sender asks for 2000 wakeups a second. A system whose timed waits end only on its
+  // clock ticks (OpenBSD and NetBSD: 10 ms, so about 50 a second) gives it far fewer: there both
+  // senders can only send on a tick, both are late by up to a tick or two, and the sleeping one
+  // looks on every tick while a message waits (SyncSenderHooks::tickTimers), as the poller did.
+  const double pollRate = static_cast<double>(before.wakeups) / before.seconds;
+  const bool tickBound = pollRate < 1000.0;
+  const double tickMs = tickBound ? 1000.0 / pollRate : 0.0;
+  if (tickBound) std::printf("# timed waits end on clock ticks of about %.1f ms\n", tickMs);
+  // at least as close to due as before (a small allowance for a busy test machine; on clock ticks,
+  // a fifth of a tick for the two runs falling differently on them)
+  expect(after.p99 <= std::max(before.p99, 0.5) + 0.25 + 0.2 * tickMs, "99 % of messages at least as close to due as before");
+  expect(after.p50 <= std::max(before.p50, 0.3) + 0.1 + 0.2 * tickMs, "the typical message at least as close to due as before");
   expect(after.early >= -0.5, "never sent more than half a millisecond early");
-  expect(static_cast<double>(after.wakeups) < static_cast<double>(before.wakeups) / 4.0, "far fewer wakeups than before");
+  if (!tickBound)
+    expect(static_cast<double>(after.wakeups) < static_cast<double>(before.wakeups) / 4.0, "far fewer wakeups than before");
+  else  // (the poller already woke only once a tick): a tick while a message waits, one per push
+    expect(after.wakeups <= before.wakeups + 2 * after.sent.size(), "no more wakeups than before besides those for pushed messages");
 #if defined(__APPLE__)
   // without the real-time policy (refused, or GRIDLINE_NO_REALTIME): shorter steps keep it on time
   const Result coarse = measure(mode, false, secs, true);

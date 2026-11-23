@@ -98,10 +98,18 @@ struct SyncSenderHooks {
   std::function<void(const MidiOutEvent&)> send;
   std::function<void()> woke;
   // The system stretches timed waits (macOS timer coalescing: up to half the wait on a thread
-  // without a real-time policy): wait in shorter steps as the message nears, so it is never late
+  // without a real-time policy; FreeBSD: up to 5 % of it): wait in shorter steps as the message nears, so it is never late
   // by more than a fraction of a millisecond.
   bool coarseTimers = false;
+  // The system ends timed waits only on its clock ticks (OpenBSD and NetBSD: 10 ms): sleeping
+  // until a message is due wakes up to a tick or two late, so while one waits it looks every
+  // half millisecond as the polling sender did (the wait rounds up to the next tick), and is
+  // never later than that sender was. With nothing to send it still sleeps until a push.
+  bool tickTimers = false;
 };
+// Sets the hooks' timer handling for this system; call it on the sender thread (on macOS it asks
+// for the real-time policy, see makeSyncSenderRealtime).
+void prepareSyncSender(SyncSenderHooks& h);
 // macOS: gives the calling thread a real-time policy (its timed waits end on time, within tens of
 // microseconds). False when refused, elsewhere, or with GRIDLINE_NO_REALTIME=1.
 bool makeSyncSenderRealtime();

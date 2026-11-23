@@ -18,7 +18,7 @@ namespace gl::threads {
 
 // Names the calling thread (cut to 15 characters). Never fails loudly.
 void setName(const char* name) noexcept;
-// The calling thread's name as the system has it ("" when unnamed or unknown).
+// The calling thread's name as setName gave it, else as the system has it ("" when unnamed or unknown).
 std::string currentName();
 
 // Wakeup counting (CPU report).

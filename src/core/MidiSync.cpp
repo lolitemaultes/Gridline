@@ -96,6 +96,18 @@ bool makeSyncSenderRealtime() {
 #endif
 }
 
+void prepareSyncSender(SyncSenderHooks& h) {
+#if defined(__APPLE__)
+  h.coarseTimers = !makeSyncSenderRealtime();  // its timed waits end on time
+#elif defined(__FreeBSD__)
+  h.coarseTimers = true;  // a timed wait may end up to 5 % late (kern.timecounter.alloweddeviation)
+#elif defined(__OpenBSD__) || defined(__NetBSD__)
+  h.tickTimers = true;
+#else
+  (void)h;
+#endif
+}
+
 void runSyncSender(MidiEventRing& ring, WakeSignal& wake, const std::atomic<bool>& quit, const SyncSenderHooks& h) {
   MidiOutEvent e;
   while (!quit.load()) {
@@ -111,6 +123,7 @@ void runSyncSender(MidiEventRing& ring, WakeSignal& wake, const std::atomic<bool
     }
     if (quit.load()) break;
     if (wait < 0) ring.sleepUntilPushed(wake);
+    else if (h.tickTimers) wake.waitFor(std::min(wait, 0.0005));
     else wake.waitFor(h.coarseTimers && wait > 0.001 ? wait / 3.0 : wait);
     if (h.woke) h.woke();
   }

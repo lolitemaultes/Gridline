@@ -768,9 +768,7 @@ int MidiManager::openDeviceOutputs() {
 void MidiManager::senderLoop() {
   std::vector<unsigned char> bytes;
   SyncSenderHooks h;
-#if defined(__APPLE__)
-  h.coarseTimers = !makeSyncSenderRealtime();  // its timed waits end on time
-#endif
+  prepareSyncSender(h);
   h.due = [this](const MidiOutEvent& e) {
     return engine_.blockTime() + static_cast<double>(e.sample - engine_.blockSample()) / engine_.sampleRate() + outputLatency.load() +
            syncOffsetUs_.load() * 1e-6;

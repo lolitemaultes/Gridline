@@ -9,6 +9,9 @@
 #else
 #include <pthread.h>
 #endif
+#if defined(__OpenBSD__)
+#include <pthread_np.h>
+#endif
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/thread_info.h>
@@ -21,15 +24,26 @@
 
 namespace gl::threads {
 
+namespace {
+// The name setName gave this thread, kept here too: not every system reads a thread's name back
+// (the BSDs and Windows here do not), and the wakeup count groups threads by it.
+thread_local char tName[16] = {};
+}  // namespace
+
 void setName(const char* name) noexcept {
   if (!name || !*name) return;
   char buf[16];
   std::strncpy(buf, name, sizeof buf - 1);
   buf[sizeof buf - 1] = 0;
+  std::memcpy(tName, buf, sizeof tName);
 #if defined(__APPLE__)
   pthread_setname_np(buf);
 #elif defined(__linux__) || defined(__FreeBSD__)
   pthread_setname_np(pthread_self(), buf);
+#elif defined(__NetBSD__)
+  pthread_setname_np(pthread_self(), "%s", static_cast<void*>(buf));
+#elif defined(__OpenBSD__)
+  pthread_set_name_np(pthread_self(), buf);
 #elif defined(_WIN32)
   // SetThreadDescription: Windows 10 1607 and later (looked up, so older systems still start).
   using SetDesc = HRESULT(WINAPI*)(HANDLE, PCWSTR);
@@ -48,6 +62,7 @@ void setName(const char* name) noexcept {
 }
 
 std::string currentName() {
+  if (tName[0]) return tName;
 #if defined(__APPLE__) || defined(__linux__)
   char name[64] = "";
   pthread_getname_np(pthread_self(), name, sizeof name);
@@ -78,9 +93,7 @@ void wokeSlow() noexcept {
       tSlot = kSlots;  // (full: this thread is not counted)
       return;
     }
-#if defined(__APPLE__) || defined(__linux__)
-    pthread_getname_np(pthread_self(), gSlots[k].name, sizeof gSlots[k].name);
-#endif
+    std::snprintf(gSlots[k].name, sizeof gSlots[k].name, "%s", currentName().c_str());
     if (!gSlots[k].name[0]) std::snprintf(gSlots[k].name, sizeof gSlots[k].name, "unnamed");
     tSlot = k;
   }
