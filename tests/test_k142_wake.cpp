@@ -58,6 +58,10 @@ struct Loop {
   std::atomic<bool> stop{false};
   std::thread th;
   void start() {
+    {
+      std::lock_guard<std::mutex> lk(gMu);
+      gWoken = false;  // (the wake that ended the loop before, if its thread left without taking it)
+    }
     th = std::thread([this] {
       while (!stop.load()) {
         if (uiwake::beginWait()) {

@@ -104,7 +104,9 @@ void prepareSyncSender(SyncSenderHooks& h) {
 #elif defined(__OpenBSD__) || defined(__NetBSD__)
   h.tickTimers = true;
 #else
-  (void)h;
+  // Linux and the rest: no real-time policy here, and a busy (or shared) machine can wake a long
+  // wait a millisecond or more late. Shorter steps as it nears the message keep it on time.
+  h.coarseTimers = true;
 #endif
 }
 

@@ -159,11 +159,13 @@ int main() {
     }
     // (K-306: YouTube answers a shared CI runner's address with a page that has no player in it,
     // which yt-dlp reports as "Failed to extract any player response": the same refusal as its
-    // bot check, seen on the Debian 11 runner with the newest yt-dlp. The other sites still run.)
+    // bot check, seen on the Debian 11 runner with the newest yt-dlp; on the Fedora runner it says
+    // "This content isn't available" for a video that plays everywhere else. The other sites still run.)
     const bool youtube = tag == "YouTube";
     auto limited = [youtube](const std::string& e) {
       return e.find("not a bot") != std::string::npos || e.find("429") != std::string::npos || e.find("403") != std::string::npos ||
-             (youtube && e.find("Failed to extract any player response") != std::string::npos);
+             (youtube && (e.find("Failed to extract any player response") != std::string::npos ||
+                          e.find("content isn") != std::string::npos));
     };
     if (f->get() != ul::Phase::Done && limited(err)) {
       std::printf("skipped: %s limits this computer right now (%s)\n", src.name, err.c_str());

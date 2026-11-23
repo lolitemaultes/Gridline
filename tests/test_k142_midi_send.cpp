@@ -184,9 +184,10 @@ void timing(SyncOut mode, const char* name, size_t expectAtLeast) {
   expect(after.p99 <= std::max(before.p99, 0.5) + 0.25 + 0.2 * tickMs, "99 % of messages at least as close to due as before");
   expect(after.p50 <= std::max(before.p50, 0.3) + 0.1 + 0.2 * tickMs, "the typical message at least as close to due as before");
   expect(after.early >= -0.5, "never sent more than half a millisecond early");
-#if defined(__FreeBSD__)
-  // FreeBSD waits in shorter steps (timed waits may end up to 5 % late), as macOS does without the
-  // real-time policy: the same bar as that case below
+#if !defined(__APPLE__)
+  // Away from macOS's real-time policy the sender waits in shorter steps near each message (FreeBSD's
+  // timed waits may end up to 5 % late; Linux has no real-time policy for it), as macOS does without
+  // that policy: the same bar as that case below
   const double fewer = 2.0;
 #else
   const double fewer = 4.0;

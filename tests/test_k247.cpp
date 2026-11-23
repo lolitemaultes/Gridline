@@ -51,18 +51,16 @@ void* operator new[](std::size_t n) {
   throw std::bad_alloc();
 }
 // GCC 11 and later warn on these frees once they are inlined next to the library's calls to
-// operator new; the replaced operator new above uses malloc, so they do match.
+// operator new; the replaced operator new above uses malloc, so they do match. The warning comes
+// after inlining, at the caller, so it is off for the rest of the file (as in the other tests
+// that count allocations).
 #if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
-#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmismatched-new-delete"
 #endif
 void operator delete(void* p) noexcept { std::free(p); }
 void operator delete[](void* p) noexcept { std::free(p); }
 void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
-#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 11
-#pragma GCC diagnostic pop
-#endif
 
 using namespace gl;
 

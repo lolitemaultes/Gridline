@@ -401,12 +401,18 @@ void testSafety() {
     for (const std::string& n : badNames) fetched = fetched || f.name == n;
   expect(kept, "a state named outside Audio/ (or not by its sha256) stays the collaborator's text, never resolved");
   expect(!fetched, "and it is never fetched");
-  // (other tests share the folder around ours: only the names these states point at are looked for)
+  // (other tests share the folder around ours: only the names these states point at are looked for;
+  // paths compare as paths, since Windows lists them with its own separator)
   bool onlyOwn = true;
   std::error_code wec;
+  const std::filesystem::path planted0 = std::filesystem::path(outside) / "evil.glstate";
   for (auto it = std::filesystem::recursive_directory_iterator(outside, wec); !wec && it != std::filesystem::recursive_directory_iterator(); it.increment(wec)) {
-    const std::string path = it->path().string(), f = it->path().filename().string();
-    if ((f == "evil.glstate" && path != outside + "/evil.glstate") || f == "x.glstate" || f.find("evil.glstate.part") != std::string::npos) onlyOwn = false;
+    const std::string f = it->path().filename().string();
+    if ((f == "evil.glstate" && it->path().lexically_normal() != planted0.lexically_normal()) || f == "x.glstate" ||
+        f.find("evil.glstate.part") != std::string::npos) {
+      std::printf("# written outside the project folders: %s\n", it->path().string().c_str());
+      onlyOwn = false;
+    }
   }
   std::string planted;
   readFileText(outside + "/evil.glstate", planted);

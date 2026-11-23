@@ -16,9 +16,14 @@ bool startup() {
   return ok;
 }
 
+// Sockets are made overlapped, as socket() makes them. Without the flag the handle is synchronous
+// and Windows runs one call on it at a time: a send from one thread waits while another thread
+// polls the same socket (for the poll's whole timeout, or longer while that thread keeps polling),
+// and receive timeouts (setTimeouts) do not work. The calls here stay blocking or non-blocking as
+// before; nothing uses overlapped I/O itself.
 Sock tcpSocket() {
   startup();
-  SOCKET s = ::WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_NO_HANDLE_INHERIT);
+  SOCKET s = ::WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, nullptr, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
   return s == INVALID_SOCKET ? kNoSock : static_cast<Sock>(s);
 }
 void closeSock(Sock s) {

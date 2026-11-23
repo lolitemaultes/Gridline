@@ -43,6 +43,9 @@
 #if defined(__APPLE__)
 #include "../common/TestView.h"
 #endif
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 using namespace Steinberg;
 using namespace Steinberg::Vst;
@@ -78,7 +81,15 @@ struct Chip {
   double busyUs = 0;  // processor time each block costs
   uint32_t rng = 0x1234567u;
   explicit Chip(bool forEffect) {
+    // (Windows: the process's environment itself. This module has its own static C runtime, whose
+    // copy of the environment was taken when it was loaded, before the test set the variable.)
+#if defined(_WIN32)
+    char buf[64] = {};
+    const DWORD len = GetEnvironmentVariableA("GRIDLINE_TEST_CHIP", buf, sizeof buf);
+    const char* e = len > 0 && len < sizeof buf ? buf : nullptr;
+#else
     const char* e = std::getenv("GRIDLINE_TEST_CHIP");
+#endif
     double db = 0, us = 0;
     char kind[8] = {};
     if (!e) return;

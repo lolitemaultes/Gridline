@@ -20,8 +20,12 @@ apt_retry() {
 case "${1:?platform}" in
   apt)
     export DEBIAN_FRONTEND=noninteractive
+    # A mirror that stops answering mid-download would otherwise hold apt until the job's time limit:
+    # a connection idle for 30 s is dropped and tried again, and a whole install that still hangs is
+    # ended after 15 minutes so apt_retry starts over.
+    printf 'Acquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::Retries "5";\n' > /etc/apt/apt.conf.d/99gridline-timeouts 2> /dev/null || true
     apt-get update -q -o Acquire::Retries=3 || true
-    apt_retry apt-get install -y -q -o Acquire::Retries=3 --no-install-recommends build-essential cmake ninja-build pkg-config git ca-certificates \
+    apt_retry timeout 900 apt-get install -y -q -o Acquire::Retries=3 --no-install-recommends build-essential cmake ninja-build pkg-config git ca-certificates \
       libsdl2-dev libgl-dev libx11-dev libasound2-dev libjack-jackd2-dev libgl1-mesa-dri xvfb xauth x11-utils desktop-file-utils file python3
     # Debian 11's CMake (3.18) builds Gridline, but the app tests read JSON with CMake 3.19 or later:
     # there Kitware's official CMake goes to /usr/local (checked against its SHA-256).

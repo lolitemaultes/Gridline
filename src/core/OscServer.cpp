@@ -28,7 +28,8 @@ bool inUse() { return errno == EADDRINUSE; }
 Sock udpSocket() {
   net::startup();
 #if defined(_WIN32)
-  SOCKET s = ::WSASocketW(AF_INET, SOCK_DGRAM, IPPROTO_UDP, nullptr, 0, WSA_FLAG_NO_HANDLE_INHERIT);
+  // (overlapped, as net::tcpSocket: stop() and sendTo send on the socket the server thread polls)
+  SOCKET s = ::WSASocketW(AF_INET, SOCK_DGRAM, IPPROTO_UDP, nullptr, 0, WSA_FLAG_OVERLAPPED | WSA_FLAG_NO_HANDLE_INHERIT);
   return s == INVALID_SOCKET ? kNoSock : static_cast<Sock>(s);
 #else
   const int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
