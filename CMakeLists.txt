@@ -2353,6 +2353,9 @@ foreach(t ${GRIDLINE_PACK_TESTS})
   target_link_libraries(gridline_${tn} PRIVATE gridline_core)
   add_test(NAME ${tn} COMMAND gridline_${tn} WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endforeach()
+# These two time the warp worker against a real-time audio thread: alone, not beside other tests
+# on a shared machine.
+set_tests_properties(test_seltmann_restretch test_seltmann_lifetime PROPERTIES RUN_SERIAL TRUE)
 
 # ---- desktop application (SDL2 + OpenGL 3 + Dear ImGui) ----
 # GRIDLINE_BUNDLED_SDL2=ON builds SDL2 from source as a static library (Windows, the macOS
