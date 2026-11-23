@@ -2635,6 +2635,9 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
   add_executable(gridline-app src/app/main.cpp src/app/PluginWindow.cpp src/app/Viewports.cpp src/app/LiveResize.cpp src/app/GlRecovery.cpp src/app/VideoDriver.cpp src/app/OpenDocuments.cpp src/app/WindowActivate.cpp src/app/GamepadSdl.cpp src/app/CpuReport.cpp $<TARGET_OBJECTS:gridline_ui> ${GRIDLINE_ICON_OBJS}
                               src/app/AppIcon.cpp $<TARGET_OBJECTS:gridline_appicon>)
   target_link_libraries(gridline-app PRIVATE gridline_core imgui rtmidi)
+  if(GL_EXECINFO_LIB)
+    target_link_libraries(gridline-app PRIVATE ${GL_EXECINFO_LIB})  # backtrace() for the drag log lives in libexecinfo on the BSDs
+  endif()
   if(APPLE)
     target_link_libraries(gridline-app PRIVATE objc)  # plugin editor windows (NSView of an SDL window)
   endif()
@@ -4977,6 +4980,27 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
       list(REMOVE_ITEM _glGuiAfter ${_glGuiBefore})
     endif()
     set_property(TEST ${_glGuiAfter} APPEND PROPERTY LABELS gui)
+  endif()
+
+  # MIDI through the real system back end (ALSA on Linux, sndio on the BSDs), devices plugged in and
+  # out while the app runs. It loads kernel modules or restarts sndiod, so it is registered only when
+  # GRIDLINE_MIDI_REAL=1 is set at configure time, on a throwaway CI machine
+  # (.github/workflows/midi-real.yml, tools/ci/midi-real.sh); normal builds never see it.
+  if("$ENV{GRIDLINE_MIDI_REAL}" STREQUAL "1" AND Python3_Interpreter_FOUND)
+    set(_glMidiRealHelper "")
+    separate_arguments(_glMidiRealArgs UNIX_COMMAND "$ENV{GRIDLINE_MIDI_REAL_ARGS}")  # --require-kernel, --require-sndiod
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ALSA_FOUND)
+      add_executable(midi-seq-port tools/ci/midi-seq-port.c)
+      target_link_libraries(midi-seq-port PRIVATE PkgConfig::ALSA)
+      set(_glMidiRealHelper --helper $<TARGET_FILE:midi-seq-port>)
+    endif()
+    add_test(NAME midi_real_app
+             COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/ci/midi-real.py --app $<TARGET_FILE:gridline-app>
+                     --demo ${CMAKE_SOURCE_DIR}/tests/fixtures/test_song.gridline.json --out ${CMAKE_BINARY_DIR}/midi_real_app
+                     ${_glMidiRealHelper} ${_glMidiRealArgs}
+             WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    set_tests_properties(midi_real_app PROPERTIES TIMEOUT 900 LABELS midi-real ENVIRONMENT "GRIDLINE_MIDI_REAL=1")
+    message(STATUS "MIDI real-device test registered (GRIDLINE_MIDI_REAL=1)")
   endif()
 
   include(cmake/GridlinePlugins.cmake)  # PH-09: Gridline.clap / Gridline.vst3

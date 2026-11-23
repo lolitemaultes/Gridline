@@ -34,8 +34,8 @@ void activeHook(ImGuiID oldId, ImGuiID newId, ImGuiWindow* window) {
     Dl_info info{};
     if (dladdr(frames[i], &info) && info.dli_fbase) {
       std::fprintf(gFile, "    at %s +0x%lx (%s +0x%lx)\n", info.dli_sname ? info.dli_sname : "?",
-                   info.dli_saddr ? static_cast<unsigned long>(static_cast<char*>(frames[i]) - static_cast<char*>(info.dli_saddr)) : 0ul,
-                   info.dli_fname ? info.dli_fname : "?", static_cast<unsigned long>(static_cast<char*>(frames[i]) - static_cast<char*>(info.dli_fbase)));
+                   info.dli_saddr ? static_cast<unsigned long>(static_cast<const char*>(frames[i]) - static_cast<const char*>(info.dli_saddr)) : 0ul,
+                   info.dli_fname ? info.dli_fname : "?", static_cast<unsigned long>(static_cast<const char*>(frames[i]) - static_cast<const char*>(info.dli_fbase)));
     } else {
       std::fprintf(gFile, "    at %p\n", frames[i]);
     }

@@ -1,0 +1,107 @@
+name: MIDI real devices
+
+# Manual only. MIDI through the real system back ends, with devices plugged in and out while the
+# app runs: the ALSA sequencer and its /dev/snd watcher on Linux (a kernel virtual MIDI device,
+# snd-virmidi, loaded and unloaded; a user-space sequencer port), and sndio's MIDI thru box on
+# OpenBSD and FreeBSD. The regular CI uses stand-in devices instead. The test loads kernel modules
+# and restarts sndiod, so it is registered only with GRIDLINE_MIDI_REAL=1 (tools/ci/midi-real.sh,
+# tools/ci/midi-real.py). Each job's summary page lists what ran, what passed and what was skipped.
+on:
+  workflow_dispatch:
+    inputs:
+      require_kernel:
+        description: "Linux: fail when the kernel virtual MIDI module cannot be loaded (otherwise a warning, and the user-space port checks run alone)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: midi-real-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRIDLINE_NO_PLUGIN_SCAN: "1"
+
+jobs:
+  linux:
+    name: Linux ALSA
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependencies
+        run: |
+          sudo sh tools/ci/install-deps.sh apt
+          sudo apt-get install -y -q --no-install-recommends alsa-utils kmod
+          # The runner's kernel keeps its sound modules in the extra package.
+          if ! sudo apt-get install -y -q --no-install-recommends "linux-modules-extra-$(uname -r)"; then
+            echo "::warning::linux-modules-extra-$(uname -r) could not be installed: the sound modules may be missing"
+          fi
+      - name: Sound modules on this runner
+        run: |
+          uname -a
+          for m in snd-seq snd-virmidi; do
+            if modinfo "$m" > /dev/null 2>&1; then echo "$m: $(modinfo -F filename "$m")"; else echo "::warning::kernel module $m is not available on $(uname -r)"; fi
+          done
+      - name: MIDI through ALSA, devices plugged in and out
+        env:
+          GRIDLINE_MIDI_REAL_ARGS: ${{ inputs.require_kernel && '--require-kernel' || '' }}
+        run: xvfb-run -a -s "-screen 0 1600x1000x24" sh tools/ci/midi-real.sh
+      - name: Summary
+        if: always()
+        run: cat midi-real-out/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No summary was written." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: midi-real-linux
+          path: midi-real-out
+          retention-days: 7
+
+  bsd:
+    name: ${{ matrix.name }} sndio
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # sndio is part of OpenBSD's base system: it must work there.
+          - { name: OpenBSD 7, os: openbsd, args: "--require-sndiod" }
+          # FreeBSD's sndio package: reported as skipped when sndiod cannot run in the VM.
+          - { name: FreeBSD 14, os: freebsd, args: "" }
+    steps:
+      - uses: actions/checkout@v4
+      - name: OpenBSD
+        if: matrix.os == 'openbsd'
+        uses: vmactions/openbsd-vm@v1
+        with:
+          release: "7.7"
+          usesh: true
+          copyback: true  # midi-real-out only: the script removes its build folder
+          mem: 8192
+          prepare: sh tools/ci/install-deps.sh openbsd
+          run: GRIDLINE_MIDI_REAL_SOFT=1 GRIDLINE_MIDI_REAL_ARGS="${{ matrix.args }}" sh tools/ci/midi-real.sh
+      - name: FreeBSD
+        if: matrix.os == 'freebsd'
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: "14"
+          usesh: true
+          copyback: true  # midi-real-out only: the script removes its build folder
+          mem: 8192
+          prepare: sh tools/ci/install-deps.sh freebsd
+          run: GRIDLINE_MIDI_REAL_SOFT=1 GRIDLINE_MIDI_REAL_ARGS="${{ matrix.args }}" sh tools/ci/midi-real.sh
+      - name: Summary and result
+        if: always()
+        run: |
+          cat midi-real-out/summary.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "No summary was copied back from the VM." >> "$GITHUB_STEP_SUMMARY"
+          cat midi-real-out/summary.md 2>/dev/null || true
+          test "$(cat midi-real-out/status 2>/dev/null || echo missing)" = 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: midi-real-${{ matrix.os }}
+          path: midi-real-out
+          retention-days: 7
