@@ -273,7 +273,7 @@ void testHttp() {
   };
   loop.start();
   std::this_thread::sleep_for(std::chrono::milliseconds(50));
-  const uint64_t turns0 = loop.turns.load();
+  const uint64_t turns0 = loop.started.load();
   double worst = 0;
   bool all = true;
   for (int i = 0; i < 10; ++i) {
@@ -284,16 +284,21 @@ void testHttp() {
     worst = std::max(worst, took);
     all = all && ok && reply.status == 200 && reply.body.find("/p" + std::to_string(i)) != std::string::npos;
   }
-  const uint64_t turns = loop.turns.load() - turns0;
+  const uint64_t turns = loop.started.load() - turns0;  // (begun: see the idle check below)
   std::printf("# HTTP request answered: worst %.2f ms over 10, %llu turns, %llu knocks\n", worst * 1000,
               static_cast<unsigned long long>(turns), static_cast<unsigned long long>(server.knocks()));
   expect(all && handled.load() == 10, "HTTP: every request answered with the loop taking turns only when woken");
   expect(worst < 0.3, "HTTP: each within 300 ms (the loop's timed wake: 2 s)");
   expect(loop.timed.load() == 0 && server.knocks() >= 10, "HTTP: the watcher woke the loop for them (no timed wake)");
-  // Idle: the watcher sleeps, the loop takes no turn.
-  const uint64_t k0 = server.knocks(), t0 = loop.turns.load();
+  // Idle: the watcher sleeps, the loop takes no turn. Counted by the turns begun: the client has its
+  // reply while the turn that sent it is still ending (closing the connection, telling the watcher),
+  // so that turn may count as ended only after this looks (Linux runs the client at once).
+  const uint64_t k0 = server.knocks(), t0 = loop.started.load();
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
-  expect(server.knocks() == k0 && loop.turns.load() == t0, "HTTP: no client, no knock, no turn");
+  const uint64_t k1 = server.knocks(), t1 = loop.started.load();
+  if (k1 != k0 || t1 != t0)
+    std::printf("# idle: %llu knocks, %llu turns begun\n", static_cast<unsigned long long>(k1 - k0), static_cast<unsigned long long>(t1 - t0));
+  expect(k1 == k0 && t1 == t0, "HTTP: no client, no knock, no turn");
   const auto s = Clock::now();
   loop.end();
   server.stop();

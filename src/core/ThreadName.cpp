@@ -18,6 +18,7 @@
 #endif
 #if defined(__linux__)
 #include <dirent.h>
+#include <time.h>
 #include <unistd.h>
 #include <cstdlib>
 #endif
@@ -170,6 +171,17 @@ std::vector<ThreadTime> sampleThreads() {
       ++p;
     }
     if (std::sscanf(p, "%llu %llu", &ut, &st) == 2 && tick > 0) t.cpu = static_cast<double>(ut + st) / tick;
+    // The stat file counts whole clock ticks (10 ms): over a few seconds of a thread that runs a
+    // fraction of a percent, each thread's time was off by up to a tick (a third of a percent over
+    // 3 s), and the threads' times no longer added up to the process's (which getrusage gives to
+    // the microsecond). The thread's own processor-time clock is exact to the nanosecond and is the
+    // one the process total sums: the kernel's clock id for a thread of this process is its id
+    // inverted, shifted, with "per thread, scheduler time" (what pthread_getcpuclockid makes from
+    // a pthread_t; this has the thread id, not the pthread_t). Kept the tick count where it fails.
+    const unsigned tid = static_cast<unsigned>(t.id);
+    const clockid_t clk = static_cast<clockid_t>((~tid << 3) | 6u);
+    timespec ts{};
+    if (clock_gettime(clk, &ts) == 0) t.cpu = static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1e-9;
     out.push_back(std::move(t));
   }
   closedir(d);

@@ -5,8 +5,9 @@
 # saved with the Browser open but the band's own window closed came back with the Browser alone there: no band,
 # no page tabs, nothing to switch back with.
 #   - every way the Browser opens in the Tracker (its window flag, the Tracker and Studio keys, the system menu
-#     in both menu styles, the command palette, a folder dropped on the window, a switch from Studio with the
-#     Browser shown) opens it in the side panel, with the band drawn every frame and holding its window alone;
+#     in both menu styles where there is one (macOS, or Linux with a global menu host), the command palette, a
+#     folder dropped on the window, a switch from Studio with the Browser shown) opens it in the side panel,
+#     with the band drawn every frame and holding its window alone;
 #   - the band's Files page shows the files in the band (no Browser);
 #   - Performance (also homed in the band before) opens in the side panel too;
 #   - a window docked in the band anyway (a drag, a saved dock file) goes back to its home;
@@ -140,8 +141,8 @@ ways = [
     ("flag", {}, "20 layout open Browser\n", ()),
     ("trackerkey", TRACKER_KEYS, key_b(20), ()),
     ("studiokey", {}, key_f8(20), ()),
-    ("sysmenu_tracker", TRACKER_KEYS, "20 sysmenu choose View/Windows and panels/Browser\n", ("--system-menu",)),
-    ("sysmenu_studio", {}, "20 sysmenu choose View/Browser\n", ("--system-menu",)),
+    ("sysmenu_tracker", TRACKER_KEYS, "19 sysmenu status\n20 sysmenu choose View/Windows and panels/Browser\n", ("--system-menu",)),
+    ("sysmenu_studio", {}, "19 sysmenu status\n20 sysmenu choose View/Browser\n", ("--system-menu",)),
     ("palette", {}, "18 palette open\n20 palette run win:Browser\n", ()),
 ]
 folder = os.path.join(OUT, "dropped folder")
@@ -149,8 +150,18 @@ os.makedirs(folder, exist_ok=True)
 ways.append(("drop", {}, '20 sdlwin drop "%s"\n' % folder, ()))
 for tag, values, lines, extra in ways:
     out = run(tag, "tracker", START + lines + check_lines(50) + "60 shot \"@SHOT@\"\n" + END, 100, values, extra=extra)
-    if tag.startswith("sysmenu") and "sysmenu choose" in out and " ok" not in out.split("sysmenu choose", 1)[1].splitlines()[0]:
-        fail("%s: the menu item was not found" % tag)
+    if tag.startswith("sysmenu"):
+        # The system menu bar is there on macOS always, on Linux only while a global menu host runs on the
+        # session bus (none under the CI's xvfb or Weston): with no host, Gridline keeps its in-window menu
+        # row, nothing is installed and there is no system menu to choose from. Then the run still checks
+        # the band stays whole with --system-menu asked for, and the Browser stays closed.
+        st = re.search(r"frame 19 sysmenu status installed (\d)", out)
+        if st and st.group(1) == "0" and sys.platform != "darwin":
+            print("note %s: no system menu bar here (no global menu host on the session bus); the in-window menu row is used" % tag)
+            check_band(tag, out, 50, browser="")
+            continue
+        if "sysmenu choose" in out and " ok" not in out.split("sysmenu choose", 1)[1].splitlines()[0]:
+            fail("%s: the menu item was not found" % tag)
     check_band(tag, out, 50)
 
 # A switch from Studio with the Browser shown (Studio opens it by default).

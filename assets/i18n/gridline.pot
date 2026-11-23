@@ -19090,7 +19090,7 @@ msgid "%.1f%% of one core"
 msgstr ""
 
 #: src/app/Performance.cpp
-msgid "%d  (%d of %d workers without real-time priority)"
+msgid "%d of %d workers without real-time priority"
 msgstr ""
 
 #: src/app/Performance.cpp
@@ -19139,6 +19139,10 @@ msgstr ""
 
 #: src/app/Performance.cpp
 msgid "TOP CONSUMERS"
+msgstr ""
+
+#: src/app/Performance.cpp
+msgid "The audio engine's worker threads run at normal priority, so other programs can delay them and the sound can break up. On Linux, allow real-time priority (rtkit, or the audio group's limits) and start Gridline again"
 msgstr ""
 
 #: src/app/Performance.cpp

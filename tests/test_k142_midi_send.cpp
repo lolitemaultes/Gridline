@@ -166,8 +166,8 @@ void trial(SyncOut mode, double seconds, int kinds, Result* res, std::vector<dou
     }
     s[k] = std::thread([&, k] {
       SyncSenderHooks h;
-      if (k == kNoRealtime) h.coarseTimers = true;  // (no real-time policy asked for)
-      else prepareSyncSender(h);                    // as MidiManager::senderLoop
+      // (no real-time policy asked for: the hooks as prepareSyncSender leaves them without it)
+      if (k != kNoRealtime) prepareSyncSender(h);  // as MidiManager::senderLoop
       h.due = [&](const MidiOutEvent& ev) { return e.due(ev); };
       h.now = nowSec;
       h.send = [&, k](const MidiOutEvent& ev) { r[k].sent.push_back({nowSec() - e.due(ev), ev.sample}); };
@@ -263,7 +263,9 @@ void timing(SyncOut mode, const char* name, size_t expectAtLeast) {
   else  // (the poller already woke only once a tick): a tick while a message waits, one per push
     expect(after.wakeups <= before.wakeups + 2 * after.sent.size(), "no more wakeups than before besides those for pushed messages");
 #if defined(__APPLE__)
-  // without the real-time policy (refused, or GRIDLINE_NO_REALTIME): shorter steps keep it on time
+  // without the real-time policy (refused, or GRIDLINE_NO_REALTIME): its timed waits still end on
+  // time (WakeSignal's critical timer: before it, a process the system ran at a lower latency tier,
+  // as shared test machines do, had them end several times the wait late now and then)
   const Result& coarse = res[kNoRealtime];
   std::snprintf(label, sizeof label, "%s, after, no real-time", name);
   print(label, coarse);
@@ -296,6 +298,23 @@ void wakeSignal() {
   const double woke = nowSec() - t;
   p.join();
   expect(woke < 0.5, "a post wakes a waiter");
+  // posts racing short timed waits that end: each post taken exactly once, none lost, none extra
+  constexpr int kPosts = 5000;
+  std::thread q([&] {
+    for (int i = 0; i < kPosts; ++i) {
+      w.post();
+      if (i % 3 == 0) std::this_thread::yield();
+    }
+  });
+  int taken = 0;
+  t = nowSec();
+  int waits = 0;
+  while (taken < kPosts && nowSec() - t < 30.0) taken += w.waitFor(0.00002 * (++waits % 5)) ? 1 : 0;
+  const double tookRace = nowSec() - t;
+  q.join();
+  const bool extra = w.waitFor(0.02);
+  std::printf("# posts racing timed waits: %d of %d taken in %.3f s (%d waits)%s\n", taken, kPosts, tookRace, waits, extra ? ", then one more" : "");
+  expect(taken == kPosts && !extra, "posts racing timed waits: each taken once");
 }
 
 void ringSleep() {

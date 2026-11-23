@@ -19,9 +19,9 @@ struct MidiOutEvent {
 };
 
 // K-142 (0.7.8): a wakeup one thread waits on and another gives without ever blocking (a counting
-// semaphore: dispatch semaphore on macOS, POSIX semaphore on Linux and the BSDs, a Windows
-// semaphore, there with a high-resolution waitable timer for waitFor). post() is safe on the audio
-// thread; one thread waits.
+// semaphore: on macOS a kqueue's user event, with a critical timer for waitFor that the system
+// never coalesces; POSIX semaphore on Linux and the BSDs; a Windows semaphore, there with a
+// high-resolution waitable timer for waitFor). post() is safe on the audio thread; one thread waits.
 class WakeSignal {
  public:
   WakeSignal();
@@ -101,9 +101,9 @@ struct SyncSenderHooks {
   std::function<double()> now;
   std::function<void(const MidiOutEvent&)> send;
   std::function<void()> woke;
-  // The system stretches timed waits (macOS timer coalescing: up to half the wait on a thread
-  // without a real-time policy; FreeBSD: up to 5 % of it): wait in shorter steps as the message nears, so it is never late
-  // by more than a fraction of a millisecond. Waits that keep ending far later than that (four in
+  // The system stretches timed waits (FreeBSD: by up to 5 % of the wait; Linux: a busy machine;
+  // not macOS, where WakeSignal's timer is never coalesced): wait in shorter steps as the message
+  // nears, so it is never late by more than a fraction of a millisecond. Waits that keep ending far later than that (four in
   // a row over twice their length and a millisecond) switch it to the tick timers' way below.
   bool coarseTimers = false;
   // The system ends timed waits only on its clock ticks (OpenBSD and NetBSD: 10 ms): sleeping
@@ -115,8 +115,8 @@ struct SyncSenderHooks {
 // Sets the hooks' timer handling for this system; call it on the sender thread (on macOS it asks
 // for the real-time policy, see makeSyncSenderRealtime).
 void prepareSyncSender(SyncSenderHooks& h);
-// macOS: gives the calling thread a real-time policy (its timed waits end on time, within tens of
-// microseconds). False when refused, elsewhere, or with GRIDLINE_NO_REALTIME=1.
+// macOS: gives the calling thread a real-time policy (other threads never hold it off when a
+// message is due). False when refused, elsewhere, or with GRIDLINE_NO_REALTIME=1.
 bool makeSyncSenderRealtime();
 void runSyncSender(MidiEventRing& ring, WakeSignal& wake, const std::atomic<bool>& quit, const SyncSenderHooks& h);
 // How early an event may go (seconds): one due within this of now is sent rather than waited for.

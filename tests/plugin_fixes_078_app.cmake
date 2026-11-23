@@ -16,6 +16,11 @@ set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}")
 set(ENV{HOME} "${OUT}/home")
 set(ENV{GRIDLINE_DEV_PLUGIN_WINDOWS} "1")
 set(ENV{GRIDLINE_TEST_GAIN_GUI} "1")
+if(NOT APPLE)
+  # The test effect's interface draws only on macOS; elsewhere it takes Gridline's window and draws
+  # nothing, which is all part 3 needs (the window, its slot and its instance).
+  set(ENV{GRIDLINE_TEST_PLAIN_GUI} "1")
+endif()
 set(ENV{GRIDLINE_DEV_SHOW_OVERLAYS} "1")  # lifted menus and notices really show in hidden runs (their windows are checked)  # the CLAP test gain gets an interface (an effect window)
 file(READ "${DEMO}" demo)
 file(WRITE "${OUT}/fixture.gridline.json" "${demo}")
@@ -61,6 +66,11 @@ run(follow "10 junction scan clap ${CLAP}
 80 plugwin info
 90 quit discard
 ")
+if(out MATCHES "plugin interfaces need XWayland, and this session has none")
+  # A Wayland session without XWayland: no plugin can show an interface, and the person is told so.
+  message(STATUS "SKIP: no plugin windows in a Wayland session without XWayland (part 3), and the person is told\n${out}")
+  return()
+endif()
 must(follow "plugwin frame 40: 1 windows" "the effect's window opens")
 must(follow "plugwin frame 80: 1 windows" "its window stays open after the move")
 if(NOT out MATCHES "plugwin frame 40: [^\n]*\n[^\n]*\n  plugwin [^\n]* slot [0-9]+/1 [^\n]* instance (0x[0-9a-f]+)")

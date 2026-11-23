@@ -3398,6 +3398,7 @@ int main(int argc, char** argv) {
     const char* videoName = SDL_GetCurrentVideoDriver();
     const std::string versionLine = std::string(glVersion ? glVersion : "?") + " / " + (videoName ? videoName : "?");
     crash::setGpu(reinterpret_cast<const char*>(glGetString(GL_VENDOR)), reinterpret_cast<const char*>(glGetString(GL_RENDERER)), versionLine.c_str());
+    cpureport::setRenderer(reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
     std::fprintf(stderr, "[graphics] OpenGL %s, shaders %s\n", versionLine.c_str(), glsl);  // K-75
   }
 
@@ -4016,6 +4017,11 @@ int main(int argc, char** argv) {
   const char* driverNow = SDL_GetCurrentVideoDriver();
   const bool onWaylandDriver = driverNow && std::strcmp(driverNow, "wayland") == 0;  // K-324: endMainFrame
   const bool hiddenOnWayland = startHidden && onWaylandDriver;
+  // That stand-in for the window is the size the window would be: never under the main window's
+  // minimum, which the window keeps everywhere else (a smaller --size gets the minimum, as on X11,
+  // macOS and Windows). Pictures keep the exact size asked for.
+  if (hiddenOnWayland && shotPath.empty() && profilePath.empty() && forcedSize.first > 0)
+    forcedSize = {std::max(forcedSize.first, winrole::kMainMinW), std::max(forcedSize.second, winrole::kMainMinH)};
   const bool useOffscreen = (!shotPath.empty() || !profilePath.empty() || hiddenOnWayland) && forcedSize.first > 0 &&
                             offscreen.create(static_cast<int>(static_cast<float>(forcedSize.first) * shotScale),
                                              static_cast<int>(static_cast<float>(forcedSize.second) * shotScale));
@@ -4174,6 +4180,7 @@ int main(int argc, char** argv) {
   float lastUiScale = 1.0f;  // the failing-interface pop-up draws at the same size
   bool crashTestDirty = hiddenRun && std::getenv("GRIDLINE_CRASH_TEST_DIRTY") != nullptr;
   const char* graphicsLost = nullptr;  // K-47: why, until it is dealt with
+  long long reportGlCpu = 0;  // the CPU report's share of a turn's frame inside the OpenGL calls (drawing and presenting it)
   auto frame = [&](bool live) {
     const Uint64 frameStart = SDL_GetPerformanceCounter();  // K-71: "scan state"
     const long long frameCpu0 = devSwitchCheck ? prof::threadCpuNow() : 0;  // K-112: the switch frame's own CPU time
@@ -4890,6 +4897,7 @@ int main(int argc, char** argv) {
     layoutui::endStyleFrame();  // K-112: the base sizes back for the next frame
     edzoomui::afterRender();  // K-19: magnified plugin editors
     if (useOffscreen) offscreen.use(true);
+    long long reportGl0 = cpureport::on() ? prof::threadCpuNow() : 0;  // (reportGlCpu)
     glViewport(0, 0, fbW, fbH);
     ImVec4 bg = theme::vec(theme::pal().chrome);
     glClearColor(bg.x, bg.y, bg.z, 1.0f);
@@ -4907,6 +4915,7 @@ int main(int argc, char** argv) {
       static const int slowDrawMs = std::getenv("GRIDLINE_DEV_SLOW_DRAW_MS") ? std::max(0, std::atoi(std::getenv("GRIDLINE_DEV_SLOW_DRAW_MS"))) : 0;
       if (slowDrawMs > 0) SDL_Delay(static_cast<Uint32>(slowDrawMs));
     }
+    if (cpureport::on()) reportGlCpu += prof::threadCpuNow() - reportGl0;
     {  // Tests: GRIDLINE_DEV_SLOW_FRAME_MS=<ms>: every frame, drawn or not, that much longer (a loaded machine)
       static const int slowFrameMs = std::getenv("GRIDLINE_DEV_SLOW_FRAME_MS") ? std::max(0, std::atoi(std::getenv("GRIDLINE_DEV_SLOW_FRAME_MS"))) : 0;
       if (slowFrameMs > 0) SDL_Delay(static_cast<Uint32>(slowFrameMs));
@@ -4922,14 +4931,7 @@ int main(int argc, char** argv) {
       // The GL calls' share and whether the renderer is a software one (Mesa's llvmpipe, softpipe or
       // swrast, SwiftShader, Apple's software renderer): there the drawing itself runs on the CPU,
       // k112_switch holds the interface's own CPU time and gives the wall time a software budget.
-      static const bool softGl = [] {
-        const char* r = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
-        std::string low = r ? r : "";
-        for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        for (const char* k : {"llvmpipe", "softpipe", "swrast", "swiftshader", "software"})
-          if (low.find(k) != std::string::npos) return true;
-        return false;
-      }();
+      static const bool softGl = cpureport::softwareRenderer(reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
       std::fprintf(stderr, "[layout-switch] frame %d whole frame %.2f ms cpu %.2f ms gl %.2f ms renderer %s (state check %.2f ms not counted)\n", frameNo, ms,
                    cpuMs, static_cast<double>(switchGlCpu) * 1e-6, softGl ? "software" : "hardware", checkMs);
       prof::setTrace(false);
@@ -5017,12 +5019,14 @@ int main(int argc, char** argv) {
         framesEnded = true;
       }
     }
+    if (cpureport::on()) reportGl0 = prof::threadCpuNow();
     if (useOffscreen) offscreen.use(false);
     if (const char* why = glrecovery::poll()) graphicsLost = why;  // K-47: seen on the main context, dealt with between frames
     fstats::since(fstats::Ui, statT);
     statT = fstats::stamp();
     viewports::renderWindows();  // J-113: the detached windows
     endMainFrame(window, onWaylandDriver);
+    if (cpureport::on()) reportGlCpu += prof::threadCpuNow() - reportGl0;
     fstats::since(fstats::Present, statT);
     statT = fstats::stamp();
     renderHostedEditors(app);  // control bars of open plugin windows
@@ -5143,6 +5147,7 @@ int main(int argc, char** argv) {
     glsl = glrecovery::glsl();
     crash::setGpu(reinterpret_cast<const char*>(glGetString(GL_VENDOR)), reinterpret_cast<const char*>(glGetString(GL_RENDERER)),
                   reinterpret_cast<const char*>(glGetString(GL_VERSION)));
+    cpureport::setRenderer(reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
     ImGui_ImplSDL2_InitForOpenGL(window, gl);
     ImGui_ImplOpenGL3_Init(glsl);
     if (std::getenv("GRIDLINE_DEV_NO_VTX_OFFSET")) ImGui::GetIO().BackendFlags &= ~ImGuiBackendFlags_RendererHasVtxOffset;
@@ -5301,6 +5306,7 @@ int main(int argc, char** argv) {
     lastDrawn = paceNow();
     uiwake::takePending();  // K-142 (follow-up): this turn takes what was queued so far
     const long long frameCpu0 = cpureport::on() ? prof::threadCpuNow() : 0;
+    reportGlCpu = 0;
     prof::beginFrame();
     SDL_Event ev;
     int paceEvents = 0;
@@ -5586,7 +5592,7 @@ int main(int argc, char** argv) {
     prof::endFrame();
     if (fstats::enabled()) fstats::engineBlocks(app.engine.serialBlocks(), app.engine.parallelBlocks(), app.engine.workerWakeups());
     fstats::endFrame();
-    if (cpureport::on() && cpureport::frame(app, window, true, prof::threadCpuNow() - frameCpu0)) {  // K-142: the report is written: quit, changes discarded
+    if (cpureport::on() && cpureport::frame(app, window, true, prof::threadCpuNow() - frameCpu0, reportGlCpu)) {  // K-142: the report is written: quit, changes discarded
       app.doc.markSaved();
       gDevQuitDiscard = true;
       SDL_Event q{};

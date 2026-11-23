@@ -14,7 +14,9 @@
 # second). From the drag log (GRIDLINE_DRAGLOG) of every frame:
 #   the zoom changes by ln(range) / 250 per px of pointer travel (a quarter with Shift), within 25%;
 #   the drawn zoom moves one way only through each drag and after it (in: never out, back: never in);
-#   no frame changes it by more than kMaxStep (natural log), so it never jumps;
+#   no frame changes it by more than kMaxStep (natural log) unless the pointer itself moved that much
+#   that frame (a slow frame of software OpenGL on a shared runner: the zoom keeps up with the
+#   pointer), and never by more than the pointer's travel over the frame asks for, so it never jumps;
 #   the point held (the song position in the tracks area, the middle of the notes in the piano roll) stays
 #   within 1 px of where it was;
 #   after the release it settles on the zoom the slider showed at the release and stays there;
@@ -33,7 +35,7 @@ import time
 
 APP, DEMO, OUT = sys.argv[1], sys.argv[2], sys.argv[3]
 failures = []
-kMaxStep = 0.15  # the largest change of ln(zoom) one frame may draw
+kMaxStep = 0.15  # the largest change of ln(zoom) one frame may draw, whatever the pointer did
 kTravel = 250.0  # px of pointer travel over the whole zoom range
 STREAMS = [("hand", 1.5, 120), ("trackpad", 2.0, 250)]
 
@@ -177,17 +179,17 @@ class App:
 
 
 def zoom_frames(chunk, tag):
-    """[(frame, mouse down, px, scroll, anchor px, target)] of the drag log's frames that noted the view's zoom."""
+    """[(frame, mouse down, px, scroll, anchor px, target, mouse x)] of the drag log's frames that noted the view's zoom."""
     rows = []
     cur = None
     for ln in chunk.split("\n"):
         m = re.match(r"frame (\d+) t [0-9.]+ dt [0-9.]+ mouse ([-0-9.e+]+) [-0-9.e+]+ down (\d)", ln)
         if m:
-            cur = (int(m.group(1)), m.group(3) == "1")
+            cur = (int(m.group(1)), m.group(3) == "1", float(m.group(2)))
             continue
         m = re.match(r"  %s px ([0-9.e-]+) scroll ([-0-9.e]+) keyanchor ([-0-9.e]+) tick [-0-9.e]+ target ([0-9.e-]+)" % tag, ln)
         if m and cur:
-            rows.append((cur[0], cur[1], float(m.group(1)), float(m.group(2)), float(m.group(3)), float(m.group(4))))
+            rows.append((cur[0], cur[1], float(m.group(1)), float(m.group(2)), float(m.group(3)), float(m.group(4)), cur[2]))
     return rows
 
 
@@ -206,13 +208,24 @@ def check_drag(a, what, which, tag, dx, stream, shift=False):
         fail("%s: only %d frames of the zoom in the drag log" % (name, len(rows)))
         return None
     sign = 1 if dx > 0 else -1
+    want = math.log(ZMAX[which] / ZMIN[which]) / kTravel * (0.25 if shift else 1.0)
     worst_back, worst_step, worst_anchor = 0.0, 0.0, 0.0
+    jump = None  # (step, what the pointer's travel allowed)
     first = rows[0]
     tick0 = (first[4] + first[3]) / first[2]
-    for p, q in zip(rows, rows[1:]):
+    for i in range(1, len(rows)):
+        p, q = rows[i - 1], rows[i]
         d = math.log(q[2] / p[2])
         worst_step = max(worst_step, abs(d))
         worst_back = max(worst_back, -sign * d)
+        # the pointer's travel this frame, or the frame before (the view may draw the zoom a frame
+        # after the slider reads the pointer), at the slider's rate with the same 25% room as its gain
+        travel = abs(q[6] - p[6])
+        if i >= 2:
+            travel = max(travel, abs(p[6] - rows[i - 2][6]))
+        allowed = max(kMaxStep, 1.25 * want * travel + 1e-3)
+        if abs(d) > allowed and (jump is None or abs(d) - allowed > jump[0] - jump[1]):
+            jump = (abs(d), allowed)
     for r in rows:
         if r[3] > 0.5:  # (a view scrolled to its start cannot hold a point left of it)
             worst_anchor = max(worst_anchor, abs(tick0 * r[2] - r[3] - first[4]))
@@ -228,8 +241,8 @@ def check_drag(a, what, which, tag, dx, stream, shift=False):
     if worst_back > 1e-5:
         fail("%s: the zoom went back against the pointer by %.4f (ln)" % (name, worst_back))
         good = False
-    if worst_step > kMaxStep:
-        fail("%s: one frame jumped the zoom by %.3f (ln, at most %.2f)" % (name, worst_step, kMaxStep))
+    if jump:
+        fail("%s: one frame jumped the zoom by %.3f (ln, at most %.3f for the pointer's travel then)" % (name, jump[0], jump[1]))
         good = False
     if worst_anchor > 1.0:
         fail("%s: the held point moved %.2f px" % (name, worst_anchor))
@@ -240,7 +253,6 @@ def check_drag(a, what, which, tag, dx, stream, shift=False):
     if abs(math.log(px1 / release_target)) > 1e-3 or px2 != px1:
         fail("%s: after the release the zoom is %.7f then %.7f, the slider showed %.7f (settled %.7f)" % (name, px1, px2, release_target, settled))
         good = False
-    want = math.log(ZMAX[which] / ZMIN[which]) / kTravel * (0.25 if shift else 1.0)
     gain = math.log(px1 / px0) / dx
     at_end = min(abs(math.log(px1 / ZMIN[which])), abs(math.log(px1 / ZMAX[which]))) < 1e-3
     if not at_end and abs(gain / want - 1) > 0.25:

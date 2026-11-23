@@ -78,9 +78,14 @@ struct AudioCallbackScope {
 };
 
 // The main loop, once per turn: runs the report (`drew`: a frame was drawn this turn, taking
-// `frameCpuNs` of the UI thread's processor time). True once it is written (the run then quits,
-// discarding changes).
-bool frame(App& app, SDL_Window* window, bool drew, long long frameCpuNs);
+// `frameCpuNs` of the UI thread's processor time, `glCpuNs` of it inside the OpenGL calls that draw
+// and present it). True once it is written (the run then quits, discarding changes).
+bool frame(App& app, SDL_Window* window, bool drew, long long frameCpuNs, long long glCpuNs = 0);
+// The main window's OpenGL renderer (GL_RENDERER), recorded in the report with whether it is a
+// software one (Mesa's llvmpipe, softpipe or swrast, SwiftShader, Apple's software renderer): there
+// drawing runs on the processor, in the interface thread and the renderer's own threads.
+void setRenderer(const char* renderer);
+bool softwareRenderer(const char* renderer);
 // K-142: seconds until the report next has something to do (its next state or the end of a
 // recording); an idle loop that draws nothing wakes for it.
 double secondsToNext();

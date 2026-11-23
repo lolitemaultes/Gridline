@@ -97,6 +97,7 @@ struct TrkReport {
   float need = 0;      // the width the panel asks for (its rail left out)
   int texts = 0, clipped = 0, wrapped = 0, rows = 0;
   bool historyShown = false;
+  bool rtNote = false;  // the Threads note (workers without real-time priority) was drawn
   std::string cut;  // the texts cut short or wrapped: " clip \"<text>\" need>room"
 } gTrk;
 
@@ -110,11 +111,13 @@ void noteFit(const char* kind, const char* text, float need, float room) {
   else ++gTrk.clipped;
 }
 
+// The Threads note when some worker threads lack real-time priority (in the Tracker, on its own line).
+const char* const kThreadNote = i18n::N_("%d of %d workers without real-time priority");
 const char* const kEngineLabels[] = {i18n::N_("Audio load"), i18n::N_("Processing"), i18n::N_("Threads"), i18n::N_("Delay compensation")};
 float engineLabelW(App& a) {
   return trackerview::labelColumn(a, {kEngineLabels[0], kEngineLabels[1], kEngineLabels[2], kEngineLabels[3]}, 2 * sp::kGroup);
 }
-// The widest readout the panel is made to show on one line (a long delay, the thread note).
+// The widest readout the panel is made to show on one line (a long delay, the load and its peak).
 float widestValue(App& a) {
   ImFont* mono = trackerview::monoFont(a);
   const float fs = ImGui::GetFontSize();
@@ -268,11 +271,22 @@ void drawPerformanceTracker(App& a) {
                  "Sum of the consumers below (channels, inserts, effects). Spread over several threads it can exceed the audio load") + sp::kGap;
   }
   const int rtw = a.engine.realtimeWorkers(), wk = a.engine.workerThreads();
-  if (wk > 0 && rtw < wk)
-    std::snprintf(buf, sizeof buf, i18n::tr("%d  (%d of %d workers without real-time priority)"), a.engine.threads(), wk - rtw, wk);
-  else
-    std::snprintf(buf, sizeof buf, "%d", a.engine.threads());
-  ry = readout(a, dl, ix0, fx, ix1, ry, kEngineLabels[2], buf, wk > 0 && rtw < wk ? P.danger : trackerview::valueInk(), nullptr) + sp::kGap;
+  const bool noRt = wk > 0 && rtw < wk;
+  std::snprintf(buf, sizeof buf, "%d", a.engine.threads());
+  ry = readout(a, dl, ix0, fx, ix1, ry, kEngineLabels[2], buf, noRt ? P.danger : trackerview::valueInk(), nullptr) + sp::kGap;
+  gTrk.rtNote = noRt;
+  if (noRt) {  // the note on a line of its own under the field, the box's full width (a system without real-time limits)
+    std::snprintf(buf, sizeof buf, i18n::tr(kThreadNote), wk - rtw, wk);
+    const float room = ix1 - ix0;
+    noteFit("wrap", buf, a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, buf).x, room);
+    const float th = a.fontRegular->CalcTextSizeA(fs, FLT_MAX, std::max(1.0f, room), buf).y;
+    dl->AddText(a.fontRegular, fs, ImVec2(ix0, ry), P.danger, buf, nullptr, std::max(1.0f, room));
+    ImGui::SetCursorScreenPos(ImVec2(ix0, ry));
+    ImGui::InvisibleButton("##rtnote", ImVec2(std::max(1.0f, room), std::max(1.0f, th)));
+    ui::Hint("The audio engine's worker threads run at normal priority, so other programs can delay them and the sound can break up. "
+             "On Linux, allow real-time priority (rtkit, or the audio group's limits) and start Gridline again");
+    ry += std::round(th) + sp::kGap;
+  }
   const int ol = a.engine.outputLatency();
   if (a.settings.getBool("audio.pdc"))
     std::snprintf(buf, sizeof buf, i18n::tr("on   %d samples (%.1f ms)"), ol, 1000.0 * ol / sr);
@@ -400,16 +414,20 @@ void drawPerformanceTracker(App& a) {
 }  // namespace
 
 float performanceTrackerWidth(App& a) {
-  // the label column, the widest readout in its field, the box's and the panel's edges
-  return std::ceil(engineLabelW(a) + widestValue(a) + 2 * sp::kPad + 2 * (sp::kPad + sp::kGroup) + 2);
+  // the label column, the widest readout in its field, the box's and the panel's edges; at least the
+  // Threads note on one line across the box (measured always, so the width does not hang on the system)
+  char b[200];
+  std::snprintf(b, sizeof b, i18n::tr(kThreadNote), 99, 99);
+  const float note = a.fontRegular->CalcTextSizeA(ImGui::GetFontSize(), FLT_MAX, 0, b).x;
+  return std::ceil(std::max(engineLabelW(a) + widestValue(a) + 2 * sp::kPad, note) + 2 * (sp::kPad + sp::kGroup) + 2);
 }
 
 void performanceDevReport(App& a, int frame) {
   const TrkReport& t = gTrk;
-  std::printf("perfpanel frame %d: open %d tracker %d drawn %d win %.0f %.0f %.0f %.0f need %.0f history %d rows %d texts %d clipped %d wrapped %d%s\n", frame,
+  std::printf("perfpanel frame %d: open %d tracker %d drawn %d win %.0f %.0f %.0f %.0f need %.0f history %d rows %d texts %d clipped %d wrapped %d note %d%s\n", frame,
               a.showPerformance ? 1 : 0, trackerLook(a) ? 1 : 0, t.frame >= ImGui::GetFrameCount() - 2 ? 1 : 0, static_cast<double>(t.win.Min.x),
               static_cast<double>(t.win.Min.y), static_cast<double>(t.win.GetWidth()), static_cast<double>(t.win.GetHeight()), static_cast<double>(t.need),
-              t.historyShown ? 1 : 0, t.rows, t.texts, t.clipped, t.wrapped, t.cut.c_str());
+              t.historyShown ? 1 : 0, t.rows, t.texts, t.clipped, t.wrapped, t.rtNote ? 1 : 0, t.cut.c_str());
   if (ImGuiWindow* w = ImGui::FindWindowByName(ui::windowTitle("Performance").c_str()))
     std::printf("perfpanel window: %.0f %.0f %.0f %.0f docked %d\n", static_cast<double>(w->Pos.x), static_cast<double>(w->Pos.y), static_cast<double>(w->Size.x),
                 static_cast<double>(w->Size.y), w->DockIsActive ? 1 : 0);

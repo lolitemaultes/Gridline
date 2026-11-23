@@ -16,6 +16,13 @@
 #    They fail the test only past a generous sanity bound that means Gridline drives them
 #    abnormally, and a display link running while hidden fails at once (nothing is drawn then).
 # The structural checks count and never time, so they hold on any machine.
+# A software OpenGL renderer (the report's gl_software: Mesa's llvmpipe on the Linux CI, which has
+# no graphics card) draws every frame on the processor: in the interface thread's OpenGL calls
+# and in the renderer's own threads (llvmpipe-N), the work a graphics card does elsewhere. There,
+# visible, the interface thread's time inside the calls that draw and present the frames
+# (main_gl_percent) is the renderer's, not Gridline's, and the renderer's threads are left out of
+# the system's sanity bound; both are printed. Everything else is judged as on a graphics card,
+# and hidden draws nothing, so it is judged whole.
 #
 # Label k142_expected_fail stays until the coordinator has seen it pass on main; it lists every
 # check that failed and the numbers, so it shows what is left.
@@ -45,6 +52,7 @@ CAP_078 = {"hidden": 1.0}
 # system kept busy by Gridline, lands well past it, while a busy machine does not.
 SYSTEM_SANITY = {"visible": 2.5, "hidden": 1.5}
 MAX_WAKES_PER_S = 4.0
+RENDERER_THREADS = ("llvmpipe", "SwiftShader")  # a software renderer's drawing threads
 
 failures = []
 
@@ -68,14 +76,22 @@ for lay, name in cpurun.LAYOUTS:
     except Exception as e:  # noqa: BLE001
         check(False, "%s: no report (%s)" % (name, str(e).splitlines()[0]))
         continue
+    soft = bool(rep.get("gl_software"))
     for run in rep["runs"]:
         st = run["state"]
         tag = "%s %s" % (name, st)
         own, system, total = cpurun.split(run)
         sp = run.get("cpu_split") or {}
+        own_judged, system_judged, scoped = own, system, ""
+        if soft and st == "visible":
+            gl = sp.get("main_gl_percent", 0.0)
+            drawn = sum(t["cpu_percent"] for t in sp.get("system_threads", []) if t["name"].startswith(RENDERER_THREADS))
+            own_judged, system_judged = own - gl, system - drawn
+            scoped = " (software OpenGL %s: its calls on the interface thread %.2f%%, its threads %.2f%%, not Gridline's)" % (
+                rep.get("gl_renderer", "?"), gl, drawn)
         fps = run["frames_per_s"]
         print("%s: own %.2f%% of one core, system %.2f%%, total %.2f%%; %.1f frames/s, %d nodes ran DSP (%d calls), pool wakeups %d" % (
-            tag, own, system, total, fps, run["nodes_running"], run["dsp_calls_total"], run["audio"]["pool_wakeups"]), flush=True)
+            tag, own, system, total, fps, run["nodes_running"], run["dsp_calls_total"], run["audio"]["pool_wakeups"]) + scoped, flush=True)
         print("    own: %s" % fmt(cpurun.top_split(run, "own", 6)), flush=True)
         print("    system: %s" % fmt(cpurun.top_split(run, "system", 6)), flush=True)
         check(bool(sp), "%s: the report has no own and system split" % tag)
@@ -92,11 +108,11 @@ for lay, name in cpurun.LAYOUTS:
             check(link == 0, "%s: a display link runs while hidden (%.3f%%)" % (tag, link))
         if SCALE > 0:
             cap = max(BUDGET[st] * SCALE, CAP_078.get(st, 0.0) if SCALE > 0 else 0.0)
-            check(own <= cap, "%s: Gridline's own threads %.2f%% of one core (budget %.2f%%, %.1f x %.2f%%): %s" % (
-                tag, own, cap, SCALE, BUDGET[st], fmt(cpurun.top_split(run, "own", 6))))
+            check(own_judged <= cap, "%s: Gridline's own threads %.2f%% of one core (budget %.2f%%, %.1f x %.2f%%): %s%s" % (
+                tag, own_judged, cap, SCALE, BUDGET[st], fmt(cpurun.top_split(run, "own", 6)), scoped))
             scap = SYSTEM_SANITY[st]
-            check(system <= scap, "%s: the system's threads %.2f%% of one core (sanity bound %.2f%%): Gridline drives them abnormally? %s" % (
-                tag, system, scap, fmt(cpurun.top_split(run, "system", 6))))
+            check(system_judged <= scap, "%s: the system's threads %.2f%% of one core (sanity bound %.2f%%): Gridline drives them abnormally? %s%s" % (
+                tag, system_judged, scap, fmt(cpurun.top_split(run, "system", 6)), scoped))
 
 if failures:
     print("\n%d check(s) failed:" % len(failures))

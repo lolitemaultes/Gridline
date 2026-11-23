@@ -596,8 +596,9 @@ bool gainPortGet(const clap_plugin_t*, uint32_t i, bool input, clap_audio_port_i
 const clap_plugin_audio_ports_t kGainPorts = {gainPortCount, gainPortGet};
 uint32_t gainLatency(const clap_plugin_t* p) { return static_cast<uint32_t>(gainOf(p)->latency.load()); }
 const clap_plugin_latency_t kGainLatency = {gainLatency};
-// GRIDLINE_TEST_GAIN_GUI (0.7.8 tests, macOS): the gain gets an interface of its own like the
-// synth's (an effect with a window: a mixer insert's window follows its effect when it moves).
+// GRIDLINE_TEST_GAIN_GUI (0.7.8 tests): the gain gets an interface of its own like the synth's (an
+// effect with a window: a mixer insert's window follows its effect when it moves). It draws on
+// macOS; elsewhere it takes a window only with GRIDLINE_TEST_PLAIN_GUI, drawing nothing.
 const clap_plugin_gui_t kGainGui = {
     [](const clap_plugin_t*, const char* api, bool floating) { return !floating && api && !std::strcmp(api, kGuiApi); },
     [](const clap_plugin_t*, const char** api, bool* floating) {
@@ -637,6 +638,7 @@ const clap_plugin_gui_t kGainGui = {
     [](const clap_plugin_t*, uint32_t w, uint32_t h) { return w == kGuiW && h == kGuiH; },
     [](const clap_plugin_t* p, const clap_window_t* win) {
       Gain* g = gainOf(p);
+      if (plainGui()) return g->gui && win;  // (GRIDLINE_TEST_PLAIN_GUI: draws nothing, any system)
 #if defined(__APPLE__)
       if (!g->gui || g->view || !win || !win->cocoa) return false;
       g->view = gridlineTestViewAttach(win->cocoa, kGuiW, kGuiH, "CLAP test effect", 0.48f, 0.22f, 0.30f);

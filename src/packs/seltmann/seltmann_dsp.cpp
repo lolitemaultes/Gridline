@@ -87,6 +87,10 @@ std::atomic<int> gWarpRenders{0}, gWarpMoving{0}, gWarpSkipped{0}, gWarpThrottle
 // (tests: the most a moving tempo's render came later than the worker planned for, from its wakeup
 // ending late and its stretch taking longer than the estimate it aimed with)
 std::atomic<int64_t> gWarpLateNs{0};
+// (tests: when each render was there and its tempo, while logging is on)
+std::atomic<bool> gWarpLogOn{false};
+std::mutex gWarpLogMu;
+std::vector<WarpLogEntry> gWarpLog;
 
 struct WarpSlot;
 
@@ -463,6 +467,10 @@ class WarpService {
     r->lastUse = now;
     r->count();
     gWarpRenders.fetch_add(1, std::memory_order_relaxed);
+    if (gWarpLogOn.load(std::memory_order_relaxed)) {
+      std::lock_guard<std::mutex> g(gWarpLogMu);
+      gWarpLog.push_back({std::chrono::duration<double>(now.time_since_epoch()).count(), r->tempo});
+    }
     const Render* p = r.get();
     f.owned.push_back(std::move(r));
     if (at >= 0) f.ring[static_cast<size_t>(at)].store(p, std::memory_order_release);  // (else only its slot plays it)
@@ -1549,6 +1557,15 @@ WarpStats warpStatsForTest() {
   s.workSeconds = static_cast<double>(gWarpWorkNs.load()) * 1e-9;
   s.worstLateSeconds = static_cast<double>(gWarpLateNs.load()) * 1e-9;
   return s;
+}
+void setWarpLogForTest(bool on) {
+  std::lock_guard<std::mutex> g(gWarpLogMu);
+  gWarpLog.clear();
+  gWarpLogOn.store(on);
+}
+std::vector<WarpLogEntry> warpLogForTest() {
+  std::lock_guard<std::mutex> g(gWarpLogMu);
+  return gWarpLog;
 }
 void resetWarpPeakForTest() {
   gWarpPeak.store(gWarpBytes.load());

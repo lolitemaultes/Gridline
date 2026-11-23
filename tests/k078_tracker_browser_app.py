@@ -39,7 +39,10 @@ def ok(cond, msg, out=""):
         fail(msg)
 
 
-def wav(path, freq, secs=0.4):
+# 3 s long: the preview a click starts runs in real time on the (dummy) audio device and is checked five
+# frames later, and a software-rendered display can take well over 80 ms a frame (a 0.4 s sample had ended
+# by then on a Weston display, though the click had previewed it).
+def wav(path, freq, secs=3.0):
     rate = 22050
     n = int(rate * secs)
     data = b"".join(struct.pack("<h", int(10000 * math.sin(2 * math.pi * freq * i / rate))) for i in range(n))

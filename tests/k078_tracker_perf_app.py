@@ -6,6 +6,8 @@
 #     at 100 and 200 percent;
 #   - opened after the Browser (whose panel is narrower) the panel still widens to the width it needs;
 #   - closed and opened again it keeps its width; it never shrinks a wider panel;
+#   - with worker threads at normal priority (a Linux system without real-time limits; GRIDLINE_NO_REALTIME=1
+#     here) the Threads note shows on a line of its own, still nothing cut or wrapped;
 #   - the other three layouts keep their own window (the Tracker's panel is not drawn there).
 #   python3 k078_tracker_perf_app.py <gridline-app> <song.gridline.json> <out dir>
 import json
@@ -34,7 +36,7 @@ shutil.rmtree(OUT, ignore_errors=True)
 os.makedirs(OUT)
 
 
-def run(tag, layout, script, size="1440x900", scale=1, frames=120):
+def run(tag, layout, script, size="1440x900", scale=1, frames=120, env_extra=None):
     cfg = os.path.join(OUT, "cfg_" + tag)
     os.makedirs(os.path.join(cfg, "gridline"))
     os.makedirs(os.path.join(cfg, "home"))
@@ -46,6 +48,7 @@ def run(tag, layout, script, size="1440x900", scale=1, frames=120):
     with open(sp, "w") as f:
         f.write(script)
     env = dict(os.environ, SDL_AUDIODRIVER="dummy", GRIDLINE_NO_PLUGIN_SCAN="1", GRIDLINE_CONFIG_HOME=cfg, HOME=os.path.join(cfg, "home"))
+    env.update(env_extra or {})
     r = subprocess.run([APP, song, "--hidden", "--no-ui-sounds", "--no-update-check", "--fixed-dt", "16", "--size", size, "--ui-scale", str(scale),
                         "--dev-input", sp, "--frames", str(frames)], env=env, capture_output=True, text=True, timeout=600)
     with open(os.path.join(OUT, tag + ".log"), "w") as f:
@@ -55,7 +58,7 @@ def run(tag, layout, script, size="1440x900", scale=1, frames=120):
 
 
 PAT = re.compile(r"perfpanel frame (\d+): open (\d) tracker (\d) drawn (\d) win (\S+) (\S+) (\S+) (\S+) need (\S+) history (\d) rows (\d+) texts (\d+) "
-                 r"clipped (\d+) wrapped (\d+)(.*)")
+                 r"clipped (\d+) wrapped (\d+) note (\d)(.*)")
 
 
 def report(out, frame):
@@ -63,7 +66,7 @@ def report(out, frame):
         if int(m.group(1)) == frame:
             return {"open": m.group(2) == "1", "tracker": m.group(3) == "1", "drawn": m.group(4) == "1", "w": float(m.group(7)),
                     "h": float(m.group(8)), "need": float(m.group(9)), "history": m.group(10) == "1", "texts": int(m.group(12)),
-                    "clipped": int(m.group(13)), "wrapped": int(m.group(14)), "cut": m.group(15)}
+                    "clipped": int(m.group(13)), "wrapped": int(m.group(14)), "note": m.group(15) == "1", "cut": m.group(16)}
     return None
 
 
@@ -79,6 +82,19 @@ for size in ("1440x900", "1024x700"):
         ok(r["need"] > 200 and r["w"] + 1 >= r["need"], "%s: the panel is as wide as it needs (%.0f for %.0f)" % (tag, r["w"], r["need"]))
         ok(r["texts"] >= 8 and r["clipped"] == 0 and r["wrapped"] == 0, "%s: no text cut or wrapped (%d texts:%s)" % (tag, r["texts"], r["cut"]))
         ok(r["history"] or size == "1024x700", "%s: the load history shows" % tag)
+
+# ---- workers at normal priority: the Threads note on its own line, nothing cut or wrapped ----
+for size in ("1440x900", "1024x700"):
+    for scale in (1, 2):
+        tag = "nort_%s_%dx" % (size, scale)
+        out = run(tag, "tracker", "5 toasts clear\n8 layout open Performance\n10 key space\n60 perfpanel\n70 quit discard\n", size, scale, 80,
+                  {"GRIDLINE_NO_REALTIME": "1"})
+        r = report(out, 60)
+        ok(r is not None and r["drawn"] and r["note"], "%s: the Threads note shows" % tag)
+        if r is None:
+            continue
+        ok(r["w"] + 1 >= r["need"], "%s: the panel is as wide as it needs (%.0f for %.0f)" % (tag, r["w"], r["need"]))
+        ok(r["clipped"] == 0 and r["wrapped"] == 0, "%s: no text cut or wrapped (%d texts:%s)" % (tag, r["texts"], r["cut"]))
 
 # ---- after the Browser (a 280 px panel), then closed and opened again: still wide enough ----
 out = run("trk_after_browser", "tracker",

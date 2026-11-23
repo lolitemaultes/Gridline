@@ -2,6 +2,7 @@
 #include "CpuReport.h"
 #include <SDL.h>
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
@@ -116,6 +117,7 @@ struct Run {
   double enter = 0, start = 0;
   int frames = 0;
   double frameCpuNs = 0;  // the UI thread's processor time inside the frames drawn
+  double glCpuNs = 0;     // of that, inside the OpenGL calls that draw and present them
   ProcessSnap p0;
   std::vector<threads::ThreadTime> t0;
   uint64_t graphBlocks0 = 0, poolWakes0 = 0, counted0 = 0, audible0 = 0, slept0 = 0, longRest0 = 0;
@@ -129,6 +131,7 @@ Run gRun;
 Json gRuns = Json::makeArray();
 double gLoadedAt = 0;
 std::string gPrevState = "visible";
+std::string gRenderer;
 
 Json num(double v) { return Json::makeNumber(v); }
 Json str(const std::string& s) { return Json::makeString(s); }
@@ -188,8 +191,10 @@ void beginRecord(App& a) {
   safefs::gCountCalls.store(true, std::memory_order_relaxed);
   a.engine.setCallCounting(true);
   gCounting.store(true, std::memory_order_relaxed);
-  r.t0 = threads::sampleThreads();
+  // The process is sampled around the threads (before them here, after them at the end), so the
+  // threads' times fall within the process's and add up to no more than it.
   r.p0 = processSnap();
+  r.t0 = threads::sampleThreads();
   r.start = nowSec();
   r.recording = true;
 }
@@ -208,9 +213,9 @@ std::string songName(App& a, const NodeKey& k) {
 
 void endRecord(App& a) {
   Run& r = gRun;
-  const ProcessSnap p1 = processSnap();
   const std::vector<threads::ThreadTime> t1 = threads::sampleThreads();
   const double callbackCpu = static_cast<double>(gCallbackCpuNs.load(std::memory_order_relaxed)) * 1e-9;  // read with the threads
+  const ProcessSnap p1 = processSnap();
   const double span = std::max(1e-6, nowSec() - r.start);
   gCounting.store(false, std::memory_order_relaxed);
   a.engine.setCallCounting(false);
@@ -321,6 +326,9 @@ void endRecord(App& a) {
     sp.object["audio_callback_percent"] = num(audioOwn / span * 100.0);
     sp.object["audio_driver_percent"] = num(audioDriver / span * 100.0);
     sp.object["main_frames_percent"] = num(r.frameCpuNs * 1e-9 / span * 100.0);  // drawing, inside gl-main's own time
+    // Of that, the OpenGL calls that draw and present the frames: a hardware driver hands them to
+    // the graphics card, a software one (gl_software) draws them right there on the processor.
+    sp.object["main_gl_percent"] = num(r.glCpuNs * 1e-9 / span * 100.0);
     sp.object["own_threads"] = list(ownBy);
     sp.object["system_threads"] = list(sysBy);
     run.object["cpu_split"] = sp;
@@ -425,6 +433,13 @@ bool writeReport(App& a) {
   root.object["record_seconds"] = num(gOpt.seconds);
   const char* drv = SDL_GetCurrentAudioDriver();
   root.object["audio_driver"] = str(drv ? drv : "");
+  root.object["gl_renderer"] = str(gRenderer);
+  {
+    Json soft;
+    soft.type = Json::Type::Bool;
+    soft.boolean = softwareRenderer(gRenderer.c_str());
+    root.object["gl_software"] = soft;
+  }
   root.object["runs"] = gRuns;
   std::string path = gOpt.out;
   if (path.empty()) path = (std::filesystem::path(a.configDir()) / "cpu-report.json").string();
@@ -461,7 +476,17 @@ bool parseStates(const std::string& list, std::vector<std::string>& out) {
   return !out.empty();
 }
 
-bool frame(App& a, SDL_Window* window, bool drew, long long frameCpuNs) {
+void setRenderer(const char* renderer) { gRenderer = renderer ? renderer : ""; }
+
+bool softwareRenderer(const char* renderer) {
+  std::string low = renderer ? renderer : "";
+  for (char& c : low) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  for (const char* k : {"llvmpipe", "softpipe", "swrast", "swiftshader", "software"})
+    if (low.find(k) != std::string::npos) return true;
+  return false;
+}
+
+bool frame(App& a, SDL_Window* window, bool drew, long long frameCpuNs, long long glCpuNs) {
   if (!on() || gPhase == Phase::Done) return false;
   const double now = nowSec();
   switch (gPhase) {
@@ -488,7 +513,7 @@ bool frame(App& a, SDL_Window* window, bool drew, long long frameCpuNs) {
     case Phase::Record:
       // (The wake that ends the recording is not one of its frames: a hidden window draws none.)
       if (now - gRun.start < gOpt.seconds) {
-        if (drew) ++gRun.frames, gRun.frameCpuNs += static_cast<double>(frameCpuNs);
+        if (drew) ++gRun.frames, gRun.frameCpuNs += static_cast<double>(frameCpuNs), gRun.glCpuNs += static_cast<double>(glCpuNs);
         return false;
       }
       endRecord(a);

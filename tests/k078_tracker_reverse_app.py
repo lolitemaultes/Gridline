@@ -133,7 +133,12 @@ script = START + """20 {E} open sample 0
 {d2}292 sdlkey z up
 296 quit discard
 """.format(E=E, pad=PAD, d1=d1, d2=d2)
-out = run("click", script, 300)
+# The play line follows the audio engine: --video-clock runs it from the frame loop, 1/60 s of samples per
+# frame, so the line's walk is the same however long a frame takes to draw (a software-rendered CI display
+# draws a frame in 40 to 60 ms, and the real-time dummy device then played the 2 s sample out in some 25
+# frames, a loop round in two or three).
+CLOCK = ("--video-clock", "60")
+out = run("click", script, 300, extra=CLOCK)
 u38, u172 = undo_of(out, 38), undo_of(out, 172)
 ok(u38[1] == "sample play direction", "a click on Backwards: one undo step, \"sample play direction\" (%s)" % (u38,))
 xs, left, right = walk(out, range(60, 150))
@@ -158,7 +163,7 @@ script = START + """20 {E} open sample 0
 {d1}202 sdlkey z up
 206 quit discard
 """.format(E=E, pad=PAD, d1=d1)
-out = run("loop", script, 210)
+out = run("loop", script, 210, extra=CLOCK)
 xs, left, right = walk(out, range(60, 200))
 inside = [x for x in xs if x[2] < 40000]
 ok(len(xs) > 40 and left >= 5 * max(1, right) and right >= 1,

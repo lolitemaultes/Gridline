@@ -176,6 +176,13 @@ struct WarpStats {
 void setWarpCapsForTest(int64_t fileBytes, int64_t totalBytes);
 WarpStats warpStatsForTest();
 void resetWarpPeakForTest();  // (and worstLateSeconds)
+// Tests: a log of the renders the warp service makes (when each was there, in seconds on
+// std::chrono::steady_clock, and its tempo), kept while on; turning it on or off clears it.
+struct WarpLogEntry {
+  double at = 0, tempo = 0;
+};
+void setWarpLogForTest(bool on);
+std::vector<WarpLogEntry> warpLogForTest();
 // J-190: changes every time a job finishes (done or failed), so the app can rebuild what
 // was prepared on a provisional grid (Kerf's beat-grid slices).
 uint64_t analysisGeneration();

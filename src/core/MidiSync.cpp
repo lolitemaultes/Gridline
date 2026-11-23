@@ -3,7 +3,8 @@
 #include <cerrno>
 #include <cstdlib>
 #if defined(__APPLE__)
-#include <dispatch/dispatch.h>
+#include <sys/event.h>
+#include <unistd.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <mach/thread_policy.h>
@@ -24,13 +25,87 @@ namespace gl {
 // ---------------------------------------------------------------- K-142: the sync sender
 
 #if defined(__APPLE__)
-WakeSignal::WakeSignal() : h_(dispatch_semaphore_create(0)) {}
-WakeSignal::~WakeSignal() { dispatch_release(static_cast<dispatch_semaphore_t>(h_)); }
-void WakeSignal::post() noexcept { dispatch_semaphore_signal(static_cast<dispatch_semaphore_t>(h_)); }
-void WakeSignal::wait() { dispatch_semaphore_wait(static_cast<dispatch_semaphore_t>(h_), DISPATCH_TIME_FOREVER); }
+// A kqueue: a user event wakes the waiter, and waitFor's timer is a critical one (NOTE_CRITICAL:
+// the system does not coalesce it). A plain timed wait (a semaphore's, a sleep) on a thread
+// without the real-time policy may end later by a share of the wait, and where the system runs
+// the process at a lower latency tier (as shared test machines do) by several times the wait,
+// now and then: the sender was then late by tens of milliseconds. The count is kept here: a post
+// triggers the event only when the waiter is (or is about to be) waiting.
+namespace {
+struct KqSignal {
+  int kq = -1;
+  std::atomic<int> value{0};  // posts not yet taken; below 0: the waiter waits
+};
+constexpr uint64_t kUserId = 1, kTimerId = 2;
+// Until the user event (true) or, with `seconds` >= 0, the timer (false).
+bool kqBlock(int kq, double seconds) {
+  struct kevent64_s change {};
+  int changes = 0;
+  if (seconds >= 0) {
+    EV_SET64(&change, kTimerId, EVFILT_TIMER, EV_ADD | EV_ONESHOT, NOTE_NSECONDS | NOTE_CRITICAL, static_cast<int64_t>(seconds * 1e9), 0, 0, 0);
+    changes = 1;
+  }
+  for (;;) {
+    struct kevent64_s out[2];
+    const int n = kevent64(kq, &change, changes, out, 2, 0, nullptr);
+    if (n < 0) {
+      if (errno != EINTR) return false;
+      changes = 0;  // (the timer stays set: wait on for it)
+      continue;
+    }
+    changes = 0;
+    bool user = false, timer = false;
+    for (int i = 0; i < n; ++i) {
+      user = user || out[i].filter == EVFILT_USER;
+      timer = timer || out[i].filter == EVFILT_TIMER;
+    }
+    if (user) {
+      if (seconds >= 0 && !timer) {  // (the timer is not needed any more)
+        struct kevent64_s del {};
+        EV_SET64(&del, kTimerId, EVFILT_TIMER, EV_DELETE, 0, 0, 0, 0, 0);
+        kevent64(kq, &del, 1, nullptr, 0, 0, nullptr);
+      }
+      return true;
+    }
+    if (timer) return false;
+  }
+}
+}  // namespace
+WakeSignal::WakeSignal() : h_(new KqSignal) {
+  auto* k = static_cast<KqSignal*>(h_);
+  k->kq = kqueue();
+  struct kevent64_s ev {};
+  EV_SET64(&ev, kUserId, EVFILT_USER, EV_ADD | EV_CLEAR, 0, 0, 0, 0, 0);
+  kevent64(k->kq, &ev, 1, nullptr, 0, 0, nullptr);
+}
+WakeSignal::~WakeSignal() {
+  auto* k = static_cast<KqSignal*>(h_);
+  if (k->kq >= 0) close(k->kq);
+  delete k;
+}
+void WakeSignal::post() noexcept {
+  auto* k = static_cast<KqSignal*>(h_);
+  if (k->value.fetch_add(1, std::memory_order_acq_rel) < 0) {
+    struct kevent64_s ev {};
+    EV_SET64(&ev, kUserId, EVFILT_USER, 0, NOTE_TRIGGER, 0, 0, 0, 0);
+    kevent64(k->kq, &ev, 1, nullptr, 0, 0, nullptr);
+  }
+}
+void WakeSignal::wait() {
+  auto* k = static_cast<KqSignal*>(h_);
+  if (k->value.fetch_sub(1, std::memory_order_acq_rel) > 0) return;
+  kqBlock(k->kq, -1);
+}
 bool WakeSignal::waitFor(double seconds) {
-  const int64_t ns = seconds <= 0 ? 0 : static_cast<int64_t>(seconds * 1e9);
-  return dispatch_semaphore_wait(static_cast<dispatch_semaphore_t>(h_), dispatch_time(DISPATCH_TIME_NOW, ns)) == 0;
+  auto* k = static_cast<KqSignal*>(h_);
+  if (k->value.fetch_sub(1, std::memory_order_acq_rel) > 0) return true;
+  if (seconds > 0 && kqBlock(k->kq, seconds)) return true;
+  // the time is up: take back the wait, unless a post already counted it (its event then comes)
+  int v = k->value.load(std::memory_order_acquire);
+  while (v < 0)
+    if (k->value.compare_exchange_weak(v, v + 1, std::memory_order_acq_rel)) return false;
+  kqBlock(k->kq, -1);
+  return true;
 }
 #elif defined(_WIN32)
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
@@ -126,7 +201,10 @@ bool makeSyncSenderRealtime() {
 
 void prepareSyncSender(SyncSenderHooks& h) {
 #if defined(__APPLE__)
-  h.coarseTimers = !makeSyncSenderRealtime();  // its timed waits end on time
+  // Its timed waits end on time with or without the real-time policy (WakeSignal's critical
+  // timer, never coalesced); the policy also keeps other threads from holding it off.
+  makeSyncSenderRealtime();
+  h.coarseTimers = false;
 #elif defined(_WIN32)
   // Its timed waits end on time with the precise timer (see WakeSignal::waitFor); without it
   // (before Windows 10 1803) on the system's clock tick: shorter steps, then the tick timers' way

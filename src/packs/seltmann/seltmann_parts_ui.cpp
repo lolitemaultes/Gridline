@@ -237,17 +237,21 @@ float regionChips(ImDrawList* dl, App& a, ImVec2 p0, float maxW, float h, const 
 
 void layoutGesture(App& a, const PluginTarget& t, Ed& e, const Preset& p, bool clicked, bool previewOnly) {
   constexpr double kHold = 0.3, kRest = 0.45;
+  // Click, hold and rest are timed on the interface's clock, as its own clicks and double-clicks
+  // are: the wall clock for a person, and a scripted click stays a click on a slow machine (a
+  // frame of software OpenGL can take a few hundred ms).
+  const double now = ImGui::GetTime();
   const bool hv = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
   if (ImGui::IsItemActivated()) {
-    e.pressAt = a.now;
+    e.pressAt = now;
     e.previewHeld = true;
   }
   if (ac) {
-    if ((previewOnly || a.now - e.pressAt >= kHold) && e.previewName != p.name) previewStart(a, t, e, p);
+    if ((previewOnly || now - e.pressAt >= kHold) && e.previewName != p.name) previewStart(a, t, e, p);
     if (e.previewName == p.name) e.previewSeen = true;
   }
   if (ImGui::IsItemDeactivated()) {
-    const bool quick = a.now - e.pressAt < kHold;
+    const bool quick = now - e.pressAt < kHold;
     e.previewHeld = false;
     if (e.previewName == p.name) previewStop(a, t, e);
     if (clicked && quick && !previewOnly) keepLayout(a, t, e, p);
@@ -260,8 +264,8 @@ void layoutGesture(App& a, const PluginTarget& t, Ed& e, const Preset& p, bool c
     hoverRead = a.now;
   }
   if (hoverPlays && hv && !ac && !e.previewHeld) {
-    if (e.hoverName != p.name) e.hoverName = p.name, e.hoverAt = a.now;
-    if (a.now - e.hoverAt >= kRest && e.previewName != p.name) previewStart(a, t, e, p);
+    if (e.hoverName != p.name) e.hoverName = p.name, e.hoverAt = now;
+    if (now - e.hoverAt >= kRest && e.previewName != p.name) previewStart(a, t, e, p);
     if (e.previewName == p.name) e.previewSeen = true;
   }
   if (hv && !ac) {

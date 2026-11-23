@@ -377,8 +377,9 @@ Song heldProject(const Sample& src, int bars, double from, double to, bool stepp
 // The channel of a held project run as the audio thread runs it: blocks of 64 frames (the control
 // blocks a tempo automation plays in), the tempo of each block's start, paced in real time so the
 // warp worker has the time it really has. Before the song, two seconds stopped at the first tempo
-// (the instrument open in the project before Play). `took` (optional): the seconds the song took.
-std::vector<float> realtimeOf(const Song& s, int64_t frames, double* took = nullptr) {
+// (the instrument open in the project before Play). `took` (optional): the seconds the song took;
+// `madeAt` (optional): when each block of 64 frames was made (seconds on steady_clock).
+std::vector<float> realtimeOf(const Song& s, int64_t frames, double* took = nullptr, std::vector<double>* madeAt = nullptr) {
   TempoMap map;
   map.build(s);
   const PluginState& st = s.channels.front().plugin;
@@ -396,6 +397,7 @@ std::vector<float> realtimeOf(const Song& s, int64_t frames, double* took = null
     }
   }
   ctx.playing = true;
+  if (madeAt) madeAt->reserve(static_cast<size_t>(frames / 64 + 1));
   gen->noteOn(1, static_cast<double>(std::lround(st.params[sm::SmBaseNote]) - 12), 1.0f, 0);
   const auto t0 = std::chrono::steady_clock::now();
   for (int64_t pos = 0; pos < frames; pos += 64) {
@@ -403,6 +405,7 @@ std::vector<float> realtimeOf(const Song& s, int64_t frames, double* took = null
     ctx.tick = map.tickAtSeconds(static_cast<double>(pos) / kRate);
     ctx.tempo = map.bpmAt(ctx.tick);
     ctx.jumped = pos == 0;
+    if (madeAt) madeAt->push_back(std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
     gen->process(st, aux, ctx, L.data() + pos, R.data() + pos, n);
     if (pos % 512 == 0) std::this_thread::sleep_until(t0 + std::chrono::microseconds(static_cast<int64_t>(static_cast<double>(pos) / kRate * 1e6)));
   }
@@ -467,13 +470,20 @@ void rampCase(const Sample& src, int bars, double from, double to, bool stepped 
   const sm::WarpStats w0 = sm::warpStatsForTest();
   const auto rt0 = std::chrono::steady_clock::now();
   double songTook = 0;
-  const std::vector<float> rtL = realtimeOf(s, frames, &songTook);
+  std::vector<double> madeAt;
+  sm::setWarpLogForTest(true);
+  const std::vector<float> rtL = realtimeOf(s, frames, &songTook, &madeAt);
+  const std::vector<sm::WarpLogEntry> made = sm::warpLogForTest();
+  sm::setWarpLogForTest(false);
   const sm::WarpStats w1 = sm::warpStatsForTest();
   const double rtSecs = std::chrono::duration<double>(std::chrono::steady_clock::now() - rt0).count();
   // (the export's level is the channel's through the mixer: the two are lined up on their first slice)
   const auto ex1 = slicesOf(s, exL, bars), rt1 = slicesOf(s, rtL, bars);
   const double off = ex1.front().db - rt1.front().db;
   double worstEx = 0, worstRt = 0, worstLevel = 0, worstRtLate = 0;
+  constexpr double kLiveCents = 8;  // (as in the instrument)
+  int overTen = 0, noneNear = 0;
+  double worstPastThere = -1e9;  // the most a slice over 10 cents was further off than the render there allowed (+2 cents)
   int offEx = 0, offRt = 0;
   // real time: in each stretch of one tempo (a bar of the steps; the ramp: all of it) the first two
   // slices may still play without a render near the tempo (the worker makes it meanwhile), every
@@ -484,6 +494,19 @@ void rampCase(const Sample& src, int bars, double from, double to, bool stepped 
   for (size_t k = 0; k < rt1.size(); ++k) {
     late[k] = k % seg >= 2;
     fallback += std::fabs(rt1[k].cents) > 10 && !late[k];
+  }
+  // How far off the renders made in this run that were there when each slice started let it be
+  // (cents): a slice plays the render nearest the tempo of the block it starts in, at that tempo
+  // over the render's (faster or slower), to its end. (Renders of the cases before, still held, are
+  // not in the log: a slice playing one of them is nearer than this, never further.)
+  TempoMap tm;
+  tm.build(s);
+  std::vector<double> nearestThere(ex1.size(), 1e9);
+  for (size_t k = 0; k < ex1.size() && !madeAt.empty(); ++k) {
+    const auto block = std::min(madeAt.size() - 1, static_cast<size_t>(tm.secondsAt(static_cast<double>(k) * s.ppq / 4.0) * kRate) / 64);
+    const double startedAt = madeAt[block], tempo = tm.bpmAt(tm.tickAtSeconds(static_cast<double>(block * 64) / kRate));
+    for (const auto& m : made)
+      if (m.at <= startedAt) nearestThere[k] = std::min(nearestThere[k], std::fabs(1200 * std::log2(tempo / m.tempo)));
   }
   for (size_t k = 0; k < ex1.size(); ++k) {
     const auto& e = ex1[k];
@@ -496,6 +519,12 @@ void rampCase(const Sample& src, int bars, double from, double to, bool stepped 
     offEx += std::fabs(e.cents) > 10;
     offRt += std::fabs(r.cents) > 10;
     if (late[k]) worstRtLate = std::max(worstRtLate, std::fabs(r.cents));
+    // (on a shared test machine: a slice off by more than the 10 cents only as far as the renders there allow)
+    if (late[k] && std::fabs(r.cents) > 10) {
+      ++overTen;
+      noneNear += nearestThere[k] > kLiveCents;
+      worstPastThere = std::max(worstPastThere, std::fabs(r.cents) - (nearestThere[k] + 2));
+    }
     worstLevel = std::max(worstLevel, std::fabs(e.db - r.db - off));
   }
   std::printf("# %s, %d bars, %zu slices: export worst %.1f cents (%d over 10), realtime worst %.1f cents (%d over 10), levels within %.2f dB\n",
@@ -507,34 +536,33 @@ void rampCase(const Sample& src, int bars, double from, double to, bool stepped 
               100 * (w1.workSeconds - w0.workSeconds) / std::max(1e-3, rtSecs), static_cast<double>(w1.peakBytes) / (1 << 20));
   // The 10 cents hold while the worker keeps up: it aims each render where the tempo will be once
   // the render is ready (its last render time plus a wakeup), kLiveCents further on, so a slice is
-  // at most about kLiveCents off. What the aim cannot know is the machine's own delays: a wakeup
-  // that ends late, a stretch that takes longer than the ones before (another program, a shared
-  // virtual machine's other guests). The worker measures the worst of them (worstLateSeconds);
-  // the tempo moves on for that long past kLiveCents. While the tempo moves it may also stretch for
-  // at most a set share of the time (kRampDuty: the rate limit, by design, so a moving tempo never
-  // takes a whole core); a machine too slow for this ramp within that share hits the limit and its
-  // slices drift by the tempo's motion over a render at that share, a render and a wakeup.
-  // On a shared test machine (CI set) the bound is what these allow, never under the 10 cents;
-  // anywhere else the 10 cents. (A render aimed wrong, or made too seldom, is off by more than the
-  // machine's delays allow on any machine.)
+  // at most about kLiveCents off; after a step in tempo the new tempo's render is there within the
+  // two slices excused. What the aim cannot know is the machine's own delays: a wakeup that ends
+  // late, a stretch that takes longer than the ones before (another program, a shared virtual
+  // machine's other guests), the test's own thread late and then catching up. On a shared test
+  // machine (CI set) a slice over the 10 cents is judged by the renders that were there when it
+  // started: it may be off by as much as the one it plays, the nearest of them (+2 cents: the pitch
+  // measured over a slice's zero crossings), never more (a voice playing a render further off than
+  // one that was there is off by more than that on any machine). Anywhere else,
+  // the 10 cents. The worker's own figures for the machine's delays (worstLateSeconds) and the
+  // fastest the tempo moves are printed to explain a slower machine.
   const double songSecs = static_cast<double>(frames) / kRate;
   const int limited = w1.throttled - w0.throttled;
-  constexpr double kLiveCents = 8, kRampDuty = 0.7, kWake = 0.05;  // (as in the instrument)
   double rate = 0;  // the fastest the tempo moves (cents a second) within a stretch of one tempo's renders
   for (size_t k = 0; k + 1 < ex1.size(); ++k)
     if ((k + 1) % seg != 0) rate = std::max(rate, std::fabs(1200 * std::log2(ex1[k + 1].tempo / ex1[k].tempo)) / (15.0 / ex1[k].tempo));
   const double render = (w1.workSeconds - w0.workSeconds) / std::max(1, w1.renders - w0.renders);
-  // (2 cents: the pitch measured over a slice's zero crossings, and the slice's tempo within it)
-  double achievable = kLiveCents + rate * w1.worstLateSeconds + 2;
-  if (limited > 0) achievable = std::max(achievable, kLiveCents + rate * (render / kRampDuty + render + kWake));
-  double bound = 10;
+  const bool ci = std::getenv("CI") != nullptr;
   if (from != to) {
-    std::printf("# %s: realtime: the machine's delays: a render came up to %.3f s later than planned (%.3f s a render), %d wakeups rate limited, the tempo moving up to %.0f cents a second: %.1f cents achievable\n",
-                name, w1.worstLateSeconds, render, limited, rate, achievable);
-    if (std::getenv("CI")) bound = std::max(bound, achievable);
+    std::printf("# %s: realtime: the machine's delays: a render came up to %.3f s later than planned (%.3f s a render), %d wakeups rate limited, the tempo moving up to %.0f cents a second\n",
+                name, w1.worstLateSeconds, render, limited, rate);
+    std::printf("# %s: realtime: %d slices after the first two over 10 cents, %d of them with the nearest render there when they started over %.0f cents off; the most one was further off than that render: %.1f cents%s\n",
+                name, overTen, noneNear, kLiveCents, overTen ? worstPastThere : 0.0, ci ? " (a shared test machine: allowed up to 0)" : "");
   }
   std::printf("# %s: realtime: the song took %.2f s of real time for %.2f s\n", name, songTook, songSecs);
-  if (from != to) expect(worstRtLate <= bound, (std::string(name) + ": real time plays every slice within 10 cents once its tempo's render is there").c_str());
+  if (from != to)
+    expect(ci ? overTen == 0 || worstPastThere <= 0 : worstRtLate <= 10,
+           (std::string(name) + ": real time plays every slice within 10 cents once its tempo's render is there").c_str());
   expect(ex.audio.frames > 0 && ex1.size() == static_cast<size_t>(bars * 16), (std::string(name) + ": the export has every slice").c_str());
   expect(worstEx < 5, (std::string(name) + ": every slice of the export at the source pitch (within 5 cents)").c_str());
   expect(worstLevel < 1, (std::string(name) + ": ... at the level the instrument plays it in real time (within 1 dB)").c_str());

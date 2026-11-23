@@ -26,6 +26,8 @@ rep = cpurun.run_report(APP, DEMO, "studio", cpurun.STATES, os.path.join(OUT, "r
 check(rep.get("format") == "gridline-cpu-report-1", "report format")
 check(rep.get("layout") == "studio", "layout recorded")
 check(bool(rep.get("machine")) and rep.get("cores", 0) > 0, "machine and cores recorded")
+check(bool(rep.get("gl_renderer")) and isinstance(rep.get("gl_software"), bool),
+      "OpenGL renderer recorded (%s, %s)" % (rep.get("gl_renderer"), "software" if rep.get("gl_software") else "hardware"))
 runs = rep.get("runs", [])
 check([r["state"] for r in runs] == cpurun.STATES, "one run per state, in order: %s" % [r["state"] for r in runs])
 for r in runs:
@@ -44,10 +46,12 @@ for r in runs:
     # K-142z: Gridline's own threads and the system's, adding up to the whole process.
     sp = r.get("cpu_split") or {}
     check(all(k in sp for k in ("own_percent", "system_percent", "total_percent", "audio_callback_percent", "audio_driver_percent",
-                                "own_threads", "system_threads")), "%s: own and system split" % st)
+                                "main_frames_percent", "main_gl_percent", "own_threads", "system_threads")), "%s: own and system split" % st)
     if sp:
         check(abs(sp["own_percent"] + sp["system_percent"] - sp["total_percent"]) <= max(0.05, 0.02 * sp["total_percent"]),
               "%s: own %.3f + system %.3f = total %.3f" % (st, sp["own_percent"], sp["system_percent"], sp["total_percent"]))
+        check(0 <= sp["main_gl_percent"] <= sp["main_frames_percent"] + 1e-9,
+              "%s: the frames' OpenGL calls (%.3f %%) are timed, within the frames (%.3f %%)" % (st, sp["main_gl_percent"], sp["main_frames_percent"]))
         if sys.platform in ("darwin", "linux"):
             check(0 < sp["audio_callback_percent"] <= sp["audio_thread_percent"] + 1e-9,
                   "%s: the audio callback (%.3f %%) is timed, within its thread (%.3f %%)" % (st, sp["audio_callback_percent"], sp["audio_thread_percent"]))
