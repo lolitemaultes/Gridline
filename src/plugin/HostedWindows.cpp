@@ -494,6 +494,8 @@ void hostedui::drawDockedInterface(App&, const PluginTarget&, float) {}
 float hostedui::dockedWidth(App&, const PluginTarget&, float fallback) { return fallback; }
 void hostedui::placeDockedInterfaces() {}
 bool hostedui::dockedKeyEvent(const SDL_Event&) { return false; }
+// (inside a host the palette lives in the host's plugin window, which already has the keyboard)
+void hostedui::keyboardToMainWindow() {}
 bool hostedui::devDockedKey(int, bool) { return false; }
 bool hostedui::devCaptureMainWindow(const std::string&) { return false; }
 void hostedui::devCoverDocked(int) {}

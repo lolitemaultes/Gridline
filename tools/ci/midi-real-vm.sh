@@ -43,7 +43,7 @@ stop_vm() {
 }
 
 # 1. The binaries, built on this runner (the machine runs the same Ubuntu release, so they run there).
-if ! cmake -S . -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_GUI_TESTS=OFF > "$OUT/configure.log" 2>&1; then
+if ! GRIDLINE_MIDI_REAL=1 cmake -S . -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE=Release -DGRIDLINE_GUI_TESTS=OFF > "$OUT/configure.log" 2>&1; then
   cat "$OUT/configure.log" >&2
   printf '%s\n\nFAIL: CMake configure failed.\n' "$TITLE" > "$OUT/summary.md"
   echo 1 > "$OUT/status"
