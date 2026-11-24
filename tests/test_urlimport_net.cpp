@@ -146,16 +146,34 @@ int main() {
       // Wikimedia Commons file page (CC BY-SA 3.0), whose title the site gives as HTML
       {"Wikimedia Commons", "https://commons.wikimedia.org/wiki/File:Example.ogg"},
   };
+  // The other side can also fail for a moment or for days without Gridline being at fault: the
+  // runner cannot look the site's name up, the connection times out, or the site changed its page
+  // so yt-dlp's reader for it no longer finds what it needs ("Unable to extract ..."). Such a site is
+  // read once more after a pause, then reported and skipped; at least two of the four must import.
+  auto siteSide = [](const std::string& e) {
+    for (const char* k : {"Failed to resolve", "nodename nor servname", "Name or service not known", "name resolution",
+                          "timed out", "Connection reset", "Unable to extract", "please report this issue"})
+      if (e.find(k) != std::string::npos) return true;
+    return false;
+  };
+  int imported = 0;
   for (const Source& src : sources) {
     std::this_thread::sleep_for(std::chrono::seconds(2));  // gentle with the sites
     const std::string tag = src.name;
-    auto f = waitJob(ul::startFetch(t, src.url, (work / ("info " + tag)).u8string()), 200);
     ul::Info in;
     std::string err;
-    {
+    std::shared_ptr<ul::Job> f;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      if (attempt) std::this_thread::sleep_for(std::chrono::seconds(15));
+      f = waitJob(ul::startFetch(t, src.url, (work / ("info " + tag)).u8string()), 200);
       std::lock_guard<std::mutex> lk(f->mu);
       in = f->info;
       err = f->error;
+      if (f->get() == ul::Phase::Done || !siteSide(err)) break;
+    }
+    if (f->get() != ul::Phase::Done && siteSide(err)) {
+      std::printf("skipped: %s could not be reached or read right now (%s)\n", src.name, err.c_str());
+      continue;
     }
     // (K-306: YouTube answers a shared CI runner's address with a page that has no player in it,
     // which yt-dlp reports as "Failed to extract any player response": the same refusal as its
@@ -188,7 +206,7 @@ int main() {
       if (!im->results.empty()) w = im->results[0].wav;
       ierr = im->error;
     }
-    if (im->get() != ul::Phase::Done && limited(ierr)) {
+    if (im->get() != ul::Phase::Done && (limited(ierr) || siteSide(ierr))) {
       std::printf("skipped: %s refused the download on every try (%s)\n", src.name, ierr.c_str());
       continue;
     }
@@ -199,6 +217,8 @@ int main() {
     check(im->get() == ul::Phase::Done && s && std::fabs(s->seconds() - want) < 0.1 && peak > 1e-3,
           tag + ": the range imported, not silent: " + ierr);
     if (s) std::printf("%s: %.2f s at %.0f Hz, peak %.3f\n", src.name, s->seconds(), static_cast<double>(s->sampleRate), static_cast<double>(peak));
+    if (im->get() == ul::Phase::Done && s) ++imported;
   }
+  check(imported >= 2, "at least two of the four sites imported (" + std::to_string(imported) + ")");
   return finish();
 }
