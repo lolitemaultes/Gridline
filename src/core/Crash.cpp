@@ -679,6 +679,8 @@ void fillSession(SessionBlock* s, int64_t startUnix, const std::string& sid) {
 
 }  // namespace
 
+double frozenAfterSeconds() noexcept { return gFrozenAfterMs / 1000.0; }
+
 void install(const Config& c) {
   if (gInstalled.exchange(true)) return;
   setCrumbClockStart(steadyMs());

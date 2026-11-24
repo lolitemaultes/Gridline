@@ -176,6 +176,13 @@ void frameClockStop();
 void frameClockIdle(bool idle);
 bool frameClockSleep(double seconds);
 void frameClockWake();
+// 0.7.8 (X11): the interface loop's idle sleep on SDL's own X connection, for an SDL whose
+// own wait looks every few milliseconds instead of sleeping (older than 2.0.16). displayWaitStart
+// takes SDL's Display (false where it cannot: another platform, no Xlib): the loop then waits on
+// SDL. displaySleep then sleeps up to `seconds` until the X server sends something or
+// frameClockWake is called (from any thread); true when woken before the time was up.
+bool displayWaitStart(void* xDisplay);
+bool displaySleep(double seconds);
 // K-142: whether any part of the window is on screen (macOS: not covered by other windows, not on
 // another Space, the application not hidden). True where the platform cannot tell.
 // watchOnScreen wakes the UI thread (frameClockWake) whenever that changes; onScreenChanges counts

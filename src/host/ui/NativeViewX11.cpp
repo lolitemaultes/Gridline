@@ -16,7 +16,11 @@
 // Gridline's own window as before (SDL, PluginWindow.cpp routeKey).
 #if !defined(__APPLE__) && !defined(_WIN32)
 #include <dlfcn.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <unistd.h>
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -144,6 +148,8 @@ struct Xlib {
   int (*resizeWindow)(void*, XWin, unsigned, unsigned) = nullptr;
   int (*defaultScreen)(void*) = nullptr;
   XWin (*rootWindow)(void*, int) = nullptr;
+  int (*eventsQueued)(void*, int) = nullptr;
+  int (*connectionNumber)(void*) = nullptr;
   bool ok = false;
   bool keys = false;
 };
@@ -188,6 +194,8 @@ const Xlib& xlib() {
     l.resizeWindow = reinterpret_cast<decltype(l.resizeWindow)>(sym("XResizeWindow"));
     l.defaultScreen = reinterpret_cast<decltype(l.defaultScreen)>(sym("XDefaultScreen"));
     l.rootWindow = reinterpret_cast<decltype(l.rootWindow)>(sym("XRootWindow"));
+    l.eventsQueued = reinterpret_cast<decltype(l.eventsQueued)>(sym("XEventsQueued"));
+    l.connectionNumber = reinterpret_cast<decltype(l.connectionNumber)>(sym("XConnectionNumber"));
     l.ok = l.createSimpleWindow && l.mapWindow && l.moveResizeWindow && l.destroyWindow && l.flush;
     l.keys = l.openDisplay && l.queryTree && l.selectInput && l.getWindowAttributes && l.pending && l.nextEvent && l.xfree && l.sync &&
              l.setErrorHandler && l.keycodeToKeysym;
@@ -677,7 +685,63 @@ void frameClockWait() {}
 void frameClockStop() {}
 void frameClockIdle(bool) {}
 bool frameClockSleep(double) { return false; }
-void frameClockWake() {}
+
+// 0.7.8: the idle sleep on SDL's own X connection (NativeView.h displayWaitStart). A wake
+// from another thread is a byte written to a pipe of its own, which is safe from any thread (and
+// from a signal handler).
+namespace {
+void* gWaitDisplay = nullptr;
+int gWaitFd = -1;                  // SDL's X connection
+std::atomic<int> gWakeWrite{-1};   // the pipe frameClockWake writes to
+int gWakeRead = -1;
+}  // namespace
+
+bool displayWaitStart(void* xDisplay) {
+  if (gWaitDisplay) return gWaitDisplay == xDisplay;
+  const Xlib& x = xlib();
+  if (!xDisplay || !x.eventsQueued || !x.connectionNumber || !x.flush) return false;
+  const int fd = x.connectionNumber(xDisplay);
+  if (fd < 0) return false;
+  int p[2];
+  if (::pipe(p) != 0) return false;
+  for (int e : p) {
+    ::fcntl(e, F_SETFL, ::fcntl(e, F_GETFL) | O_NONBLOCK);
+    ::fcntl(e, F_SETFD, FD_CLOEXEC);
+  }
+  gWaitDisplay = xDisplay;
+  gWaitFd = fd;
+  gWakeRead = p[0];
+  gWakeWrite.store(p[1]);
+  return true;
+}
+
+bool displaySleep(double seconds) {
+  if (!gWaitDisplay) return false;
+  const Xlib& x = xlib();
+  // Events Xlib has already read off the connection (another call on it read them) are not on the
+  // socket any more: they are there now. The requests waiting to go out go first (QueuedAfterFlush).
+  if (x.eventsQueued(gWaitDisplay, 2) > 0) return true;
+  pollfd p[2] = {};
+  p[0].fd = gWaitFd;
+  p[0].events = POLLIN;
+  p[1].fd = gWakeRead;
+  p[1].events = POLLIN;
+  const int ms = seconds <= 0 ? 0 : static_cast<int>(std::min(seconds * 1000.0 + 0.999, 2.0e9));
+  const int r = ::poll(p, 2, ms);
+  if (p[1].revents & POLLIN) {
+    char buf[64];
+    while (::read(gWakeRead, buf, sizeof buf) > 0) {
+    }
+  }
+  return r != 0;  // (a signal that ended the wait counts as a wake: the loop looks again)
+}
+
+void frameClockWake() {
+  const int fd = gWakeWrite.load();
+  if (fd < 0) return;
+  const char b = 1;
+  [[maybe_unused]] const ssize_t n = ::write(fd, &b, 1);  // (a full pipe already wakes it)
+}
 bool windowOnScreen(const Window&) { return true; }
 void watchOnScreen(const Window&) {}
 int onScreenChanges() { return 0; }

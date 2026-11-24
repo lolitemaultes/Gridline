@@ -219,6 +219,9 @@ bool frameClockSleep(double seconds) {
   return r == kCFRunLoopRunHandledSource || r == kCFRunLoopRunStopped;
 }
 
+bool displayWaitStart(void*) { return false; }  // (the run loop: frameClockSleep)
+bool displaySleep(double) { return false; }
+
 void frameClockWake() {
   Clock* c = gClock;
   if (!c) return;

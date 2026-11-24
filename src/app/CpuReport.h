@@ -86,6 +86,19 @@ bool frame(App& app, SDL_Window* window, bool drew, long long frameCpuNs, long l
 // drawing runs on the processor, in the interface thread and the renderer's own threads.
 void setRenderer(const char* renderer);
 bool softwareRenderer(const char* renderer);
+// The interface loop's idle wait, counted by the loop itself (interface thread only): how often it
+// slept, what ended each sleep, and the processor time spent waiting (its looks at what changed and
+// the system's waking it) apart from the turns it took. Recorded in the report as "main_loop".
+struct MainLoop {
+  uint64_t sleeps = 0;    // sleeps begun
+  uint64_t timeouts = 0;  // sleeps that ran to their end with nothing new
+  uint64_t events = 0;    // sleeps ended by a window system event
+  uint64_t pokes = 0;     // sleeps ended by work another thread queued (UiWake.h)
+  uint64_t busy = 0;      // sleeps ended by a change seen without an event (sound, MIDI, the song)
+  uint64_t turns = 0;     // turns of the loop (with or without a frame)
+  long long waitCpuNs = 0;  // the interface thread's processor time inside the wait
+};
+MainLoop& mainLoop();
 // K-142: seconds until the report next has something to do (its next state or the end of a
 // recording); an idle loop that draws nothing wakes for it.
 double secondsToNext();

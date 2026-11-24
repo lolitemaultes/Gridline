@@ -55,6 +55,11 @@ long long callingThreadCpuNs() noexcept {
 #endif
 }
 
+MainLoop& mainLoop() {
+  static MainLoop m;
+  return m;
+}
+
 namespace {
 
 Options gOpt;
@@ -122,6 +127,7 @@ struct Run {
   std::vector<threads::ThreadTime> t0;
   uint64_t graphBlocks0 = 0, poolWakes0 = 0, counted0 = 0, audible0 = 0, slept0 = 0, longRest0 = 0;
   std::map<NodeKey, NodeStart> nodes0;
+  MainLoop main0;
 };
 
 enum class Phase { WaitLoad, Settle, Record, Done };
@@ -182,6 +188,7 @@ void beginRecord(App& a) {
   gCallbackCpuNs.store(0, std::memory_order_relaxed);
   r.graphBlocks0 = a.engine.serialBlocks() + a.engine.parallelBlocks();
   r.poolWakes0 = a.engine.workerWakeups();
+  r.main0 = mainLoop();
   r.slept0 = a.engine.sleptBlocks();  // K-142 (follow-up)
   r.longRest0 = a.engine.longRestBlocks();
   r.counted0 = a.engine.countedBlocks();
@@ -397,6 +404,20 @@ void endRecord(App& a) {
     wk.array.push_back(j);
   }
   run.object["worker_wakeups"] = wk;
+  {
+    const MainLoop& m = mainLoop();
+    const MainLoop& m0 = r.main0;
+    auto rate = [&](uint64_t v, uint64_t v0) { return num(static_cast<double>(v - v0) / span); };
+    Json ml = Json::makeObject();
+    ml.object["sleeps_per_s"] = rate(m.sleeps, m0.sleeps);
+    ml.object["timeouts_per_s"] = rate(m.timeouts, m0.timeouts);
+    ml.object["events_per_s"] = rate(m.events, m0.events);
+    ml.object["pokes_per_s"] = rate(m.pokes, m0.pokes);
+    ml.object["busy_per_s"] = rate(m.busy, m0.busy);
+    ml.object["turns_per_s"] = rate(m.turns, m0.turns);
+    ml.object["wait_cpu_percent"] = num(static_cast<double>(m.waitCpuNs - m0.waitCpuNs) * 1e-9 / span * 100.0);
+    run.object["main_loop"] = ml;
+  }
   gRuns.array.push_back(run);
   r.recording = false;
 }

@@ -178,7 +178,7 @@ void testRace() {
 
 void testRealtime() {
   Loop loop;
-  loop.nap = 0.25;  // (the app's hidden look: kHiddenPoll)
+  loop.nap = 0.25;  // (a timed look, as with a game controller attached: kHiddenPoll)
   loop.start();
   std::this_thread::sleep_for(std::chrono::milliseconds(30));
   const int c0 = gWakerCalls.load();

@@ -11,6 +11,7 @@
 #    makes, the time inside Gridline's callback: at most 2 % of one core visible and 0.5 % hidden
 #    (the 0.7.8 budget, measured on an i7-10700K Release build), times CPU_SCALE (default 1.5) for
 #    the margin. GRIDLINE_K142_CPU_SCALE sets another; 0 reports the time without judging it.
+#    Hidden, the interface thread alone at most 0.1 % (times CPU_SCALE): it sleeps until it has work.
 #  * the system's threads (the audio driver's own share of its thread, CoreAudio, the display link,
 #    SDL's and the system's threads) are printed, not budgeted: Gridline cannot make them cheaper.
 #    They fail the test only past a generous sanity bound that means Gridline drives them
@@ -40,11 +41,19 @@ SECONDS = float(os.environ.get("GRIDLINE_K142_SECONDS", "15"))
 SCALE = float(os.environ.get("GRIDLINE_K142_CPU_SCALE", "1.5"))
 IDLE_FPS = 10.0
 BUDGET = {"visible": 2.0, "hidden": 0.5}  # Gridline's own threads, percent of one core (times SCALE)
-# 0.7.8 (user decision 2026-11-22): hidden is capped at 1.0 % of one core after the margin. Hidden own
-# time is nearly all the audio callback's rest bookkeeping (AudioEngine::sleepGraph visits every node each
-# block, ~45 us at 256 frames); five runs measured 0.65 to 0.89. 0.7.9 lets the graph sleep without
-# touching its nodes and restores 0.5 x SCALE. Visible stays 2.0 x SCALE.
-CAP_078 = {"hidden": 1.0}
+# 0.7.8 (user decision 2026-11-22): hidden was capped at 1.0 % of one core after the margin. On macOS it
+# still is: there hidden own time is nearly all the audio callback's rest bookkeeping
+# (AudioEngine::sleepGraph visits every node each block, ~45 us at 256 frames; 0.65 to 0.9 measured), and
+# 0.7.9 lets the graph sleep without touching its nodes. Elsewhere that callback costs about 0.15 % and
+# hidden is judged at the design budget (0.5 x SCALE): the rest was the interface thread, which SDL older
+# than 2.0.16 kept looking for events every few milliseconds (0.7 to 0.9 % on Debian 11) and which now
+# sleeps until it has work (IdlePace.h, NativeView.h displaySleep). Visible stays 2.0 x SCALE.
+CAP_078 = {"hidden": 1.0} if sys.platform == "darwin" else {}
+# The interface thread alone, hidden (percent of one core, times SCALE): it draws nothing and sleeps until
+# input, a wake from another thread or a duty (a changed project's backups, the report's steps), waking
+# only for the freeze watchdog every few seconds. Measured near 0.01 %; a loop that looks for events on a
+# timer again lands far past it.
+MAIN_HIDDEN = 0.1
 # The system's threads, percent of one core (not scaled). Measured on this Mac (K-142z, 2026-11-22, five
 # runs of every layout): hidden 0.25 to 0.6 (nearly all the dummy audio driver's waking between
 # callbacks), visible 0.4 to 0.8 (that, and the window system's unnamed threads). About three times the
@@ -94,6 +103,11 @@ for lay, name in cpurun.LAYOUTS:
             tag, own, system, total, fps, run["nodes_running"], run["dsp_calls_total"], run["audio"]["pool_wakeups"]) + scoped, flush=True)
         print("    own: %s" % fmt(cpurun.top_split(run, "own", 6)), flush=True)
         print("    system: %s" % fmt(cpurun.top_split(run, "system", 6)), flush=True)
+        if run.get("main_loop"):
+            ml = run["main_loop"]
+            print("    interface loop: %.1f sleeps/s (%.1f timed out, %.1f events, %.1f wakes, %.1f changes), %.1f turns/s, waiting %.3f%%" % (
+                ml["sleeps_per_s"], ml["timeouts_per_s"], ml["events_per_s"], ml["pokes_per_s"], ml["busy_per_s"], ml["turns_per_s"],
+                ml["wait_cpu_percent"]), flush=True)
         check(bool(sp), "%s: the report has no own and system split" % tag)
         limit = IDLE_FPS * 1.05 if st == "visible" else 0.5
         check(fps <= limit, "%s: %.1f frames/s (at most %.1f)" % (tag, fps, limit))
@@ -110,6 +124,11 @@ for lay, name in cpurun.LAYOUTS:
             cap = max(BUDGET[st] * SCALE, CAP_078.get(st, 0.0) if SCALE > 0 else 0.0)
             check(own_judged <= cap, "%s: Gridline's own threads %.2f%% of one core (budget %.2f%%, %.1f x %.2f%%): %s%s" % (
                 tag, own_judged, cap, SCALE, BUDGET[st], fmt(cpurun.top_split(run, "own", 6)), scoped))
+            if st == "hidden":
+                main = sum(t["cpu_percent"] for t in sp.get("own_threads", []) if t["name"] == "gl-main")
+                ml = run.get("main_loop") or {}
+                check(main <= MAIN_HIDDEN * SCALE, "%s: the interface thread %.3f%% of one core (budget %.2f%%, %.1f x %.2f%%; it slept %.1f times a second)" % (
+                    tag, main, MAIN_HIDDEN * SCALE, SCALE, MAIN_HIDDEN, ml.get("sleeps_per_s", -1)))
             scap = SYSTEM_SANITY[st]
             check(system_judged <= scap, "%s: the system's threads %.2f%% of one core (sanity bound %.2f%%): Gridline drives them abnormally? %s%s" % (
                 tag, system_judged, scap, fmt(cpurun.top_split(run, "system", 6)), scoped))

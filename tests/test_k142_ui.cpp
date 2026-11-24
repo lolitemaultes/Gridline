@@ -2,7 +2,8 @@
 // be checked without a window.
 //  * idlepace::planWait: shown, the idle frames as before; nothing shown, no frames while idle,
 //    only a changed project's housekeeping (every 5 s) and the CPU report's steps (drawing nothing);
-//    the sleeps between looks at what changes without an event: a refresh shown, 0.25 s hidden.
+//    the sleeps between looks at what changes without an event: a refresh shown; hidden, none but
+//    the watchdog's beat (5 s), or 0.25 s with a game controller attached.
 //  * trackerorder::ofDoc: the Tracker's cached order list is exactly trk::orderList after every
 //    kind of change (edit, undo, redo, another project), a list held stays as it was, and another
 //    song is never served from the cache.
@@ -57,7 +58,9 @@ void testPlanWait() {
   p.active(0.0);
   // Nothing shown, the project unchanged: no frame however long (and the active second does not draw either).
   w = idlepace::planWait(p, 1000.0, false, false, 2.0, 1e300);
-  expect(w.left > 1e299 && near(w.nap, idlepace::kHiddenPoll) && !w.reportOnly, "hidden, unchanged project: no frames, looks four times a second");
+  expect(w.left > 1e299 && near(w.nap, idlepace::kHiddenBeat) && !w.reportOnly, "hidden, unchanged project: no frames, no looks (only the watchdog's beat)");
+  w = idlepace::planWait(p, 1000.0, false, false, 2.0, 1e300, true);
+  expect(w.left > 1e299 && near(w.nap, idlepace::kHiddenPoll), "hidden with a game controller attached: looks four times a second");
   idlepace::IdlePace busy;
   busy.active(10.0);
   w = idlepace::planWait(busy, 10.1, false, false, 10.0, 1e300);

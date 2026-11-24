@@ -47,6 +47,8 @@ void setGpu(const char* vendor, const char* renderer, const char* version);
 // ---- watchdog ----
 // UI thread, once per frame. Also fine from a worker doing the UI thread's work while it waits.
 void uiHeartbeat() noexcept;
+// How long a silent UI thread may stay silent before it counts as frozen (a sleeping one beats sooner).
+double frozenAfterSeconds() noexcept;
 // From here on a silent UI thread counts as frozen (startup work is not watched).
 void armWatchdog() noexcept;
 void noteAudioThread() noexcept;  // audio callback: a relaxed store of the thread id

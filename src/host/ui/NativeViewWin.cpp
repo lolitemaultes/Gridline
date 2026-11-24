@@ -296,6 +296,8 @@ void frameClockWait() {}
 void frameClockStop() {}
 void frameClockIdle(bool) {}
 bool frameClockSleep(double) { return false; }
+bool displayWaitStart(void*) { return false; }
+bool displaySleep(double) { return false; }
 void frameClockWake() {}
 bool windowOnScreen(const Window&) { return true; }
 void watchOnScreen(const Window&) {}

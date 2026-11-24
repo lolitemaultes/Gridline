@@ -3004,7 +3004,7 @@ if((SDL2_FOUND OR SDL2PC_FOUND) AND OPENGL_FOUND)
       set_tests_properties(k142_ui_pacing_app PROPERTIES TIMEOUT 300 RUN_SERIAL TRUE)
       # K-142 (0.7.8): the demo song idle in every layout, visible and hidden: frames at most the idle pace (none
       # hidden), no DSP on silent instruments and effects, no worker waking without work, process CPU within the
-      # 0.7.8 budget (with a margin; hidden capped at 1.0 % for 0.7.8). A real gate since K-142z.
+      # 0.7.8 budget (with a margin; hidden capped at 1.0 % on macOS for 0.7.8, the interface thread alone at 0.15 %). A real gate since K-142z.
       add_test(NAME k142_idle_budget_app
                COMMAND ${Python3_EXECUTABLE} -I ${CMAKE_SOURCE_DIR}/tests/k142_idle_budget_app.py $<TARGET_FILE:gridline-app>
                        ${CMAKE_SOURCE_DIR}/tools/cpu ${CMAKE_SOURCE_DIR}/assets/demo/Gridline.gridline.json ${CMAKE_BINARY_DIR}/k142_idle_budget_app)

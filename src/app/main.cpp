@@ -4111,6 +4111,21 @@ int main(int argc, char** argv) {
   }
   const bool frameClock = gVideoFps == 0 && profilePath.empty() && mainNative.valid() && !std::getenv("GRIDLINE_VSYNC_SWAP") && host::native::frameClockStart(mainNative);
   if (frameClock) SDL_GL_SetSwapInterval(0);
+  // 0.7.8: SDL older than 2.0.16 (Debian 11, the Chromebook's Linux) has no sleeping wait:
+  // SDL_WaitEventTimeout looks for events every few milliseconds, most of an idle interface
+  // thread's time (0.7 to 0.9 % of a core hidden). There the idle wait sleeps on SDL's own X
+  // connection instead (NativeView.h displaySleep). GRIDLINE_DISPLAY_WAIT=1 uses it with any SDL,
+  // 0 never.
+  bool displayWait = false;
+#if defined(SDL_VIDEO_DRIVER_X11) && !defined(__APPLE__) && !defined(_WIN32)
+  if (!frameClock && pointerNative.display) {
+    SDL_version sv;
+    SDL_GetVersion(&sv);
+    const char* dw = std::getenv("GRIDLINE_DISPLAY_WAIT");
+    const bool want = dw ? std::strcmp(dw, "0") != 0 : SDL_VERSIONNUM(sv.major, sv.minor, sv.patch) < SDL_VERSIONNUM(2, 0, 16);
+    if (want) displayWait = host::native::displayWaitStart(pointerNative.display);
+  }
+#endif
   // The saved layout, read now that the main window is where it will be (J-113: detached
   // windows are saved relative to it), then saved there on exit.
   viewports::setVirtualMonitors(useOffscreen);
@@ -5265,30 +5280,51 @@ int main(int argc, char** argv) {
     if (pace.enabled()) {  // K-277: idle: wait for input, sound or the next idle frame
       // K-142: the wait sleeps until then (no wake every refresh: the display link stops) and
       // looks at what changes without an event (sound, MIDI, the song) every refresh while shown,
-      // four times a second while nothing is shown.
+      // and, while nothing is shown, only when woken or its next duty is due (IdlePace.h planWait).
       bool reportOnly = false;
+      cpureport::MainLoop& loopCount = cpureport::mainLoop();
+      const long long waitCpu0 = cpureport::on() ? prof::threadCpuNow() : 0;
       for (;;) {
         crash::uiHeartbeat();  // K-142: waiting with nothing to draw is not a freeze (the watchdog counts these)
         const bool shown = anythingShown();
         pace.setDeep(openHostedEditorTargets().empty() && !collabui::sendingFiles(app));  // K-142: 4 idle frames a second after a while, unless a plugin window is open (its parameters) or files go to a collaborator (a share a frame); a collaborator's edits wake the loop at once (follow-up)
-        const idlepace::Wait w = idlepace::planWait(pace, paceNow(), shown, app.doc.modified(), lastDrawn, cpureport::secondsToNext());
+        // (a game controller's buttons are read only when the loop looks: SDL has no wake for them)
+        idlepace::Wait w = idlepace::planWait(pace, paceNow(), shown, app.doc.modified(), lastDrawn, cpureport::secondsToNext(), SDL_NumJoysticks() > 0);
+        w.nap = std::min(w.nap, crash::frozenAfterSeconds() / 3.0);  // (the watchdog hears from a sleeping loop well within its limit)
         reportOnly = w.reportOnly;
         if (w.left <= 0) break;
         if (frameClock) host::native::frameClockIdle(true);
+        // Events already queued (this thread's own, such as a window state the CPU report gives, or
+        // ones SDL read meanwhile) take their turn now: the sleeps below wake only for new ones.
+        if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT)) {
+          ++loopCount.events;
+          pace.active(paceNow());
+          break;
+        }
         // K-142 (0.7.8 follow-up): work another thread queued (UiWake.h) takes a turn now; one that
         // comes while the loop sleeps wakes it (the waker set below).
         if (!uiwake::beginWait()) break;
         bool woke = true;
+        ++loopCount.sleeps;
         if (frameClock) woke = host::native::frameClockSleep(w.nap);
+        else if (displayWait) woke = host::native::displaySleep(w.nap);
         else SDL_WaitEventTimeout(nullptr, std::max(1, static_cast<int>(std::ceil(w.nap * 1000.0))));
         uiwake::endWait();
         if (woke) SDL_PumpEvents();
-        if (uiwake::takePending()) break;
-        if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT) || paceBusy(shown)) {
+        if (termAsked) break;  // (a hidden run's SIGTERM: the turn ends the run)
+        if (uiwake::takePending()) {
+          ++loopCount.pokes;
+          break;
+        }
+        const bool event = SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT);
+        if (event || paceBusy(shown)) {
+          ++(event ? loopCount.events : loopCount.busy);
           pace.active(paceNow());
           break;
         }
+        ++loopCount.timeouts;
       }
+      if (cpureport::on()) loopCount.waitCpuNs += prof::threadCpuNow() - waitCpu0;
       if (reportOnly) {  // K-142: the CPU report's next step, nothing drawn
         if (cpureport::frame(app, window, false, 0)) {
           app.doc.markSaved();
@@ -5304,6 +5340,7 @@ int main(int argc, char** argv) {
       pace.framed(paceNow());
     }
     lastDrawn = paceNow();
+    ++cpureport::mainLoop().turns;
     uiwake::takePending();  // K-142 (follow-up): this turn takes what was queued so far
     const long long frameCpu0 = cpureport::on() ? prof::threadCpuNow() : 0;
     reportGlCpu = 0;

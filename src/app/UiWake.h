@@ -11,8 +11,9 @@
 // seen by the loop before it sleeps or wakes it.
 //
 // From a real-time thread (the audio callback, markRealtimeThread) poke() only marks the work
-// pending, lock-free and with no system call: the sleeping loop finds it at its next look (at most
-// a quarter second later; IdlePace.h kHiddenPoll).
+// pending, lock-free and with no system call: the sleeping loop finds it at its next look (while
+// nothing is shown that can be seconds later, IdlePace.h kHiddenBeat): work that needs the
+// interface at once goes through a thread that can wake it.
 //
 // No SDL here: the core library's services (OscServer, the collaboration hub, the AI assistant's
 // HTTP server) reach poke() through hooks the app sets.

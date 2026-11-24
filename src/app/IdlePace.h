@@ -42,12 +42,18 @@ class IdlePace {
 // (App::tick looks every kHiddenHousekeeping seconds) and, in a CPU report, its next step
 // (`reportLeft`, which needs a turn of the loop but no frame: `reportOnly`). What breaks a wait
 // early (input, sound, MIDI, playback, an edit) is the loop's own business; `nap` is how long it
-// sleeps between looking at what changes without an event: every refresh while shown, four times
-// a second while not (input still wakes it at once). K-142 (0.7.8 close): in the long idle (frames
+// sleeps between looking at what changes without an event: every refresh while shown (input still
+// wakes it at once). K-142 (0.7.8 close): in the long idle (frames
 // a quarter second apart) twenty times a second: each look woke the interface thread and the
 // window server's link to it, a third of an idle window's processor time; sound that starts with
 // no event (a plugin of its own, an input monitored) brings the full rate back a few hundredths of
 // a second later, input and MIDI at once as before (UiWake.h).
+// Nothing shown, nothing that changes without an event needs the interface thread (what does wakes
+// it: input, MIDI, OSC, a collaborator, a later launch; sound only moves meters nobody sees), so the
+// loop sleeps until its next duty, waking only every kHiddenBeat seconds for the freeze watchdog
+// (Crash.h: a UI thread silent for 30 s counts as frozen). Four looks a second remain only where an
+// input has no wake of its own (`looks`: a game controller attached, whose buttons SDL reads only
+// when the loop looks).
 struct Wait {
   double left = 0;          // seconds still to wait (0: take the turn now)
   bool reportOnly = false;  // the turn is the report's alone: draw nothing
@@ -55,9 +61,10 @@ struct Wait {
 };
 constexpr double kHiddenHousekeeping = 5.0;
 constexpr double kHiddenPoll = 0.25;
+constexpr double kHiddenBeat = 5.0;
 constexpr double kShownPoll = 1.0 / 60.0;
 constexpr double kDeepPoll = 1.0 / 20.0;
-inline Wait planWait(const IdlePace& p, double now, bool shown, bool modified, double lastDrawn, double reportLeft) {
+inline Wait planWait(const IdlePace& p, double now, bool shown, bool modified, double lastDrawn, double reportLeft, bool looks = false) {
   Wait w;
   if (!p.enabled()) return w;
   if (shown) {
@@ -67,7 +74,7 @@ inline Wait planWait(const IdlePace& p, double now, bool shown, bool modified, d
     w.left = std::min(housekeeping, std::max(0.0, reportLeft));
     w.reportOnly = w.left <= 0 && housekeeping > 0;
   }
-  w.nap = std::min(w.left, !shown ? kHiddenPoll : p.deep(now) ? kDeepPoll : kShownPoll);
+  w.nap = std::min(w.left, !shown ? (looks ? kHiddenPoll : kHiddenBeat) : p.deep(now) ? kDeepPoll : kShownPoll);
   return w;
 }
 
