@@ -9,7 +9,9 @@
 #   4. a window that sizes itself to a full-width section ("collab section-probe", as the old name
 #      window did: it shrank from 520 to 440 px, a pixel a frame),
 # and for each, every window's position and size and the main window's size over 60 frames after it
-# settled: none may change.
+# settled: none may change. Only the screenshot frame is drawn (--no-draw): the check reads window
+# geometry, and 530 software-rendered frames at 2200x1300 came to the run's time limit on a loaded
+# ARM runner.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -P j111h_dialog_stable.cmake
 cmake_minimum_required(VERSION 3.16)  # the project's policies, also under CMake 3.x (CMP0054: a quoted "keep" is that string, never a variable)
 file(REMOVE_RECURSE "${OUT}")
@@ -77,7 +79,7 @@ foreach(size 2200x1300 1000x640)
 ")
   execute_process(
     COMMAND ${CMAKE_COMMAND} -E env GRIDLINE_CONFIG_HOME=${D}/cfg XDG_CONFIG_HOME=${D}/cfg
-            "${APP}" --hidden --no-ui-sounds --size ${size} --ui-scale 1 --frames 530 --screenshot "${D}/shot.ppm" --dev-input "${D}/script.txt"
+            "${APP}" --hidden --no-ui-sounds --size ${size} --ui-scale 1 --no-draw --frames 530 --screenshot "${D}/shot.ppm" --dev-input "${D}/script.txt"
     RESULT_VARIABLE rc OUTPUT_FILE "${D}/out.txt" ERROR_FILE "${D}/err.txt" TIMEOUT 240)
   if(NOT rc EQUAL 0)
     message(FATAL_ERROR "FAIL (${size}): exit code ${rc}")

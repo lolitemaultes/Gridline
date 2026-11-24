@@ -4,7 +4,9 @@
 # conflicting ID!" tooltip). The app's dev commands (IdSweep.h) read that state every frame
 # ("idconflicts": the count since the start) and sweep the pointer over every visible item of some
 # windows, one a frame, scrolling them to their end ("idsweep <windows>"). Runs the app hidden
-# (isolated config and HOME, SDL's dummy audio, a fixed frame time) on a copy of the test song with
+# (isolated config and HOME, SDL's dummy audio, a fixed frame time; frames laid out, not drawn: the
+# finding is Dear ImGui's item state, and a software renderer's long sweeps came to a run's whole
+# time limit on a loaded ARM runner) on a copy of the test song with
 # a sampler channel "Take" playing an audio clip (clip 70) and checks, each sweep finding no conflict:
 #   0. the check finds one: two buttons of one ID ("idsweep demo") are reported, with their label;
 #   1. Studio, the Audio clip window's Main view (user report rc11: Time stretching's engine chips
@@ -43,7 +45,7 @@ function(run tag layout view script)
   set(ENV{GRIDLINE_CONFIG_HOME} "${cfg}")
   set(ENV{HOME} "${cfg}/home")
   file(WRITE "${OUT}/${tag}.txt" "${script}")
-  execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --fixed-dt 16 --size 1440x900 --frames 400 ${ARGN}
+  execute_process(COMMAND "${APP}" "${OUT}/song.gridline.json" --hidden --no-ui-sounds --no-draw --fixed-dt 16 --size 1440x900 --frames 400 ${ARGN}
                           --dev-input "${OUT}/${tag}.txt"
                   RESULT_VARIABLE rc OUTPUT_VARIABLE o ERROR_VARIABLE err TIMEOUT 300)
   file(WRITE "${OUT}/${tag}.log" "${o}\n${err}")

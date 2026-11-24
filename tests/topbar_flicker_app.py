@@ -11,8 +11,13 @@
 #     level end may step back over a few pixels (rise on a buffer, fall in between).
 # Before flick-1119 Smooth's master volume pill drew the raw peak since the last frame: empty on every frame no
 # audio buffer finished in, so it flashed on and off while the song played.
+# The readouts that count on their own while playing (the song position, the metronome's beat, the processing load;
+# the app lists where it drew them: "barcounters") are left out while playing: on a slow machine (a software renderer
+# on a loaded runner, frames a fifth of a second or more apart) a counter's digits or a beat light can show again
+# what they showed two frames before, which is no flash.
 #   python3 topbar_flicker_app.py <gridline-app> <song.gridline.json> <out dir> [only-layout]
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -79,6 +84,7 @@ def run(layout):
     lines += ['%d shot "%s"' % (k, os.path.join(out, "f", "i%d.ppm" % k)) for k in IDLE]
     lines.append("80 key space")
     lines += ['%d shot "%s"' % (k, os.path.join(out, "f", "p%d.ppm" % k)) for k in PLAY]
+    lines += ["%d barcounters" % k for k in (PLAY[0], PLAY[-1] + 1)]
     lines.append("150 quit discard")
     with open(os.path.join(out, "input.txt"), "w") as f:
         f.write("\n".join(lines) + "\n")
@@ -91,6 +97,16 @@ def run(layout):
     if p.returncode != 0:
         fail("%s: gridline-app failed (%d), see %s" % (layout, p.returncode, os.path.join(out, "run.log")))
         return
+    counters = set()
+    named = set()
+    for m in re.finditer(r"^barcounters frame \d+: (.*)$", p.stdout.decode("utf-8", "replace"), re.M):
+        for part in filter(None, (t.strip() for t in m.group(1).split(";"))):
+            what, x0, y0, x1, y1 = part.split()
+            named.add(what)
+            x0, y0, x1, y1 = (int(float(v)) for v in (x0, y0, x1, y1))
+            counters |= {y * W + x for y in range(max(0, y0 - 2), min(BAR, y1 + 3)) for x in range(max(0, x0 - 2), min(W, x1 + 3))}
+    if counters:
+        print("%s: playing, the readouts that count are left out (%s)" % (layout, ", ".join(sorted(named))))
     frames = {}
     for k in list(IDLE) + list(PLAY):
         path = os.path.join(out, "f", ("i%d.ppm" if k in IDLE else "p%d.ppm") % k)
@@ -129,8 +145,8 @@ def run(layout):
     for a, b, c in zip(play, play[1:], play[2:]):
         d = changed(frames[b], frames[c]) - load
         if d:
-            moving += 1
-        back = d - changed(frames[a], frames[c])  # changed in c and back as it was in a
+            moving += 1  # (the counters too: the position moving shows the transport runs)
+        back = d - counters - changed(frames[a], frames[c])  # changed in c and back as it was in a (a counter aside)
         flips = max(flips, len(back))
         if len(back) > FLIP_MAX:
             fail("%s: playing, a part of the bar flips back on frame %d (%d px, %s)" % (layout, c, len(back), box(back)))

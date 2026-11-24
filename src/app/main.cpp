@@ -2230,6 +2230,9 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       zonekeysui::devCommand(app, l.args);
     } else if (l.cmd == "layout") {  // K-112: the region shell (LayoutShellUi.h): dump, show/hide <region>, open/close <window>, state
       layoutui::devCommand(app, l.args, frame);
+    } else if (l.cmd == "barcounters") {  // the bar's readouts that change while playing (topbar_flicker_app)
+      std::printf("barcounters frame %d: %s\n", frame, devBarCounters().c_str());
+      std::fflush(stdout);
     } else if (l.cmd == "barlit") {  // Smooth's control bar: its pane buttons drawn last frame, lit or not
       std::printf("barlit frame %d: %s\n", frame, devBarLit().c_str());
       std::fflush(stdout);

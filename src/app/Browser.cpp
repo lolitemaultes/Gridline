@@ -3024,7 +3024,13 @@ void filterRows(App& a, float w) {
   const auto& P = pal();
   const uint64_t gen = browserui::index().generation();
   static double countedAt = -100;  // recounted at most every 2 s while the index changes (a pass bumps it often)
-  if (gen != filterTagsGen && (filterTags.empty() || a.now - countedAt > 2.0))
+  // The chips are in order of use, so a recount can reorder them: never under the pointer (last
+  // frame's rows), where a click meant for one chip would land on another (the tags of files still
+  // being analysed come in while the user reaches for a chip). The rows recount once it leaves.
+  static ImVec2 rowsMin, rowsMax;
+  static int rowsFrame = -10;
+  const bool pointerOnRows = rowsFrame >= ImGui::GetFrameCount() - 1 && ImGui::IsMouseHoveringRect(rowsMin, rowsMax, false);
+  if (gen != filterTagsGen && (filterTags.empty() || (a.now - countedAt > 2.0 && !pointerOnRows)))
     filterTags = browserui::index().tagCounts(24), filterTagsGen = gen, countedAt = a.now;
   if (filterTags.empty()) return;
   ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -3067,6 +3073,7 @@ void filterRows(App& a, float w) {
   }
   ImGui::SetCursorScreenPos(ImVec2(o.x, o.y));
   ImGui::Dummy(ImVec2(w, y + ch + 3 - o.y));
+  rowsMin = o, rowsMax = ImVec2(o.x + w, y + ch + 3), rowsFrame = ImGui::GetFrameCount();
   if (!trk) dl->AddLine(ImVec2(o.x, y + ch + 2.5f), ImVec2(o.x + w, y + ch + 2.5f), P.line);
 }
 

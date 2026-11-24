@@ -25,9 +25,11 @@ function(run tag rec)
   file(WRITE "${cfg}/input.txt" "${in}")
   set(ENV{GRIDLINE_CONFIG_HOME} "${cfg}")
   set(ENV{HOME} "${cfg}/home")
-  # A new project (its song is one bar long, so it wraps within the run).
+  # A new project (its song is one bar long, so it wraps within the run). The run reads the transport,
+  # never pixels: its frames are laid out, not drawn (--no-draw), as 1980 frames of a software
+  # renderer on a loaded ARM runner came to the run's whole time limit.
   execute_process(COMMAND "${APP}" --hidden --no-ui-sounds --fixed-dt 16 --size 1440x900 --layout studio --layout-dev
-                          --dev-input "${cfg}/input.txt" --frames 1980
+                          --dev-input "${cfg}/input.txt" --frames 1980 --no-draw
                   RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 300)
   file(WRITE "${OUT}/${tag}.log" "${out}\n---- stderr ----\n${err}")
   if(NOT rc EQUAL 0)

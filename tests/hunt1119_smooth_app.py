@@ -256,7 +256,12 @@ def check_ruler():
     sc.dclick(bar_x(3) + 30, TRACK1_Y, settle=20)  # its piano roll: the region's bar from x 689 to 1289
     sc.click(689 + 600 * 0.5, PIANO_RULER_Y, settle=6)  # the ruler, half way through the region
     sc.at("transport", 2)
-    sc.at("key space", 10)
+    # The song plays in real time while the frames take as long as the machine needs: the song (it ends with
+    # the region, at bar 4) has about a second left from the ruler's spot, which a few frames of a loaded,
+    # software-rendered runner can take. So the transport is read as soon as playback has moved, and a song
+    # that already played on to its end and stopped there counts too (in pattern mode it would loop instead).
+    sc.at("key space")
+    sc.at("waitfor transport-moved 30")
     sc.at("transport", 2)
     sc.at("key space", 4)
     out, _ = run("ruler", sc)
@@ -267,8 +272,12 @@ def check_ruler():
     if mode != 1 or not (2 * BAR + BAR // 2 - 24 <= pos <= 2 * BAR + BAR // 2 + 24):
         fail("ruler: the click puts the song's playhead half way through the region at bar 3 (tick %d, song mode): "
              "tick %d mode %d" % (2 * BAR + BAR // 2, pos, mode))
-    if int(ts[1][2]) != 1 or int(ts[1][1]) != 1:
-        fail("ruler: Space then plays the song from there: %s" % (ts[1],))
+    pos1, playing1, mode1 = (int(v) for v in ts[1])
+    moved = re.search(r"waitfor transport-moved: reached", out)
+    played = playing1 == 1 and pos < pos1 <= 3 * BAR
+    played_out = playing1 == 0 and pos1 == 3 * BAR  # (at the song's end: it stops there)
+    if mode1 != 1 or not moved or not (played or played_out):
+        fail("ruler: Space then plays the song from there: %s%s" % (ts[1], "" if moved else " (playback never moved)"))
     if not [f for f in failures if f.startswith("ruler")]:
         print("ok - ruler: the piano roll's ruler moves the song's playhead into the region")
 

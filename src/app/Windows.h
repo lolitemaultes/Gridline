@@ -21,6 +21,9 @@ void devNoteRect(const char* name);  // the last item's rectangle as an "sdlat" 
 void devNoteRectAt(const char* name, float x0, float y0, float x1, float y1);  // K-237: a rectangle as an "sdlat" target ("ptabsrc", "ptabdst": a pane tab drag)
 // Smooth's control bar: each pane button drawn last frame ("lb_lists", "lb_ed", ...) and whether it was lit.
 std::string devBarLit();
+// The bar's readouts that change on their own while playing (song position, beat, load), drawn last
+// frame: "<what> x0 y0 x1 y1; ..." in the main window's logical pixels.
+std::string devBarCounters();
 void splitClipsAtPlayhead(App& a);  // K-112b: the clips across the song position split there (Dialogs.cpp)
 void tracksNewSameSettings(App& a);
 void tracksMuteSelected(App& a);  // R04-11: M, the selected tracks (or the focused one)

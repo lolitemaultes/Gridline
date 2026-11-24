@@ -439,9 +439,36 @@ void noteRectAt(const char* name, ImVec2 a, ImVec2 b) {
 }
 void noteRect(const char* name) { noteRectAt(name, ImGui::GetItemRectMin(), ImGui::GetItemRectMax()); }  // the last item's rectangle
 std::map<std::string, std::pair<bool, int>> gBarLit;  // (dev) Smooth's pane buttons: lit, frame drawn
+// (dev) The bar's readouts that change on their own while the song plays (the song position, the
+// metronome's beat, the processing load), where drawn last frame: a check comparing frames tells
+// them from a part that flashes (topbar_flicker_app).
+struct DevCounter {
+  std::string what;
+  ImVec2 a, b;
+  int frame;
+};
+std::vector<DevCounter> gDevCounters;
+void noteCounter(const char* what, ImVec2 a, ImVec2 b) {
+  const int f = ImGui::GetFrameCount();
+  gDevCounters.erase(std::remove_if(gDevCounters.begin(), gDevCounters.end(), [&](const DevCounter& c) { return c.frame < f - 1 || c.what == what; }),
+                     gDevCounters.end());
+  gDevCounters.push_back({what, a, b, f});
+}
 }  // namespace
 
 void devNoteRect(const char* name) { noteRect(name); }
+std::string devBarCounters() {
+  std::string s;
+  const ImVec2 o = ImGui::GetMainViewport()->Pos;
+  char buf[160];
+  for (const DevCounter& c : gDevCounters)
+    if (c.frame >= ImGui::GetFrameCount() - 1) {
+      std::snprintf(buf, sizeof buf, "%s%s %.0f %.0f %.0f %.0f", s.empty() ? "" : "; ", c.what.c_str(), static_cast<double>(c.a.x - o.x), static_cast<double>(c.a.y - o.y),
+                    static_cast<double>(c.b.x - o.x), static_cast<double>(c.b.y - o.y));
+      s += buf;
+    }
+  return s;
+}
 std::string devBarLit() {
   std::string s;
   for (const auto& [id, v] : gBarLit)
@@ -799,6 +826,7 @@ float drawTopBar(App& a) {
       ImVec2 p(x + kPanelPad + tempoW + kInner + kBtn + kInner, btnTop);
       ImGui::SetCursorScreenPos(p);
       noteRectAt("bar_pos", p, ImVec2(p.x + posW, p.y + kBtn));
+      noteCounter("position", p, ImVec2(p.x + posW, p.y + kBtn));
       ImGui::InvisibleButton("##pos", ImVec2(posW, kBtn));
       if (ImGui::BeginPopupContextItem("##posmenu")) {
         menuparity::timeFormatMenu(a);
@@ -923,6 +951,7 @@ float drawTopBar(App& a) {
     float by = y2 + std::floor(lf * 0.5f) - 1;
     dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx1, by + 3), P.surface950, 2);
     dl->AddRectFilled(ImVec2(bx0, by), ImVec2(bx0 + (bx1 - bx0) * std::min(load, 1.0f), by + 3), col, 2);
+    noteCounter("load", ImVec2(bx0, y2), ImVec2(p.x + w, y2 + lf + 1));
   };
   auto drawMonitor = [&]() {
     rx -= wMonitor;
@@ -1318,6 +1347,7 @@ static float drawTopBarLogic(App& a) {
       ImGui::EndPopup();
     }
     ui::Lcd(dl, ImVec2(cx, btnTop), ImVec2(posW, kBtn), posText.c_str(), false, false);
+    noteCounter("position", ImVec2(cx, btnTop), ImVec2(cx + posW, btnTop + kBtn));
     ui::Hint("Song position (right-click: bars and beats, minutes and seconds, or timecode)");
     cx += posW + kInner;
     static TempoMap map;
@@ -1434,6 +1464,7 @@ static float drawTopBarLogic(App& a) {
     dl->AddText(a.fontMono, lf, ImVec2(p.x, y2), P.textFaint, "CPU");
     const float tw = a.fontMono->CalcTextSizeA(lf, 1e9f, 0, cpu).x;
     dl->AddText(a.fontMono, lf, ImVec2(p.x + w - tw, y2), col, cpu);
+    noteCounter("load", ImVec2(p.x + labelW, y2), ImVec2(p.x + w, y2 + lf + 1));
     ImGui::SetCursorScreenPos(ImVec2(rx, panelTop));
     if (ImGui::InvisibleButton("##mon", ImVec2(wMonitor, kPanelH))) a.showPerformance = !a.showPerformance;
     ui::Hint("Master output level and audio processing load (click: Performance window)");
@@ -1592,7 +1623,10 @@ static float drawTrackerMenuRow(App& a) {
     }
     const float load = std::clamp(a.engine.cpuLoad(), 0.0f, 1.0f);
     std::string c = std::string("CPU ") + cpu;
-    if (showCpu) dl->AddText(mono, lf, ImVec2(b1.x - 6 - cpuW, ty), load > 0.8f ? P.danger : P.textDim, c.c_str());
+    if (showCpu) {
+      dl->AddText(mono, lf, ImVec2(b1.x - 6 - cpuW, ty), load > 0.8f ? P.danger : P.textDim, c.c_str());
+      noteCounter("load", ImVec2(b1.x - 6 - cpuW, ty), ImVec2(b1.x - 6, ty + lf + 1));
+    }
     ImGui::SetCursorScreenPos(b0);
     if (ImGui::InvisibleButton("##mon", ImVec2(b1.x - b0.x, b1.y - b0.y))) a.showPerformance = !a.showPerformance;
     ui::Hint("Master output level and audio processing load (click: Performance window)");
@@ -1905,6 +1939,7 @@ static float drawTopBarLive(App& a) {
       const float r = 4.5f, cyc = std::round(cy + kH * 0.5f) + 0.5f, gap = 2.5f;  // (as big as the refs': near half the box's height)
       const float cxR = std::round(x + mainW * 0.5f + 2.0f + gap * 0.5f + r) + 0.5f, cxL = cxR - 2 * r - gap;
       dl->AddCircle(ImVec2(left ? cxR : cxL, cyc), r - 0.6f, ink, 20, 1.3f);
+      noteCounter("beat", ImVec2(cxL - r - 1, cyc - r - 1), ImVec2(cxR + r + 1, cyc + r + 1));
       dl->AddCircleFilled(ImVec2(left ? cxL : cxR, cyc), r, ink, 20);
       const float ax = std::round(x + mainW + kArrowW * 0.5f - 1.0f), ay = std::round(cy + kH * 0.5f) - 1.0f;
       dl->AddTriangleFilled(ImVec2(ax - 3, ay), ImVec2(ax + 3, ay), ImVec2(ax, ay + 3), ink);
@@ -2015,6 +2050,7 @@ static float drawTopBarLive(App& a) {
       if (field("##cpulive", "", x, 66, false, "Audio processing load (click: the Performance panel)")) {
         a.showPerformance = !a.showPerformance;
       }
+      noteCounter("load", ImVec2(x, cy), ImVec2(x + 66, cy + kH));
       ImFont* f = a.fontRegular;
       const float wHead = f->CalcTextSizeA(fsNum, FLT_MAX, 0, "CPU ").x, wNum = f->CalcTextSizeA(fsNum, FLT_MAX, 0, "100").x;
       const float wAll = wHead + wNum + f->CalcTextSizeA(fsNum, FLT_MAX, 0, " %").x;
@@ -2029,6 +2065,7 @@ static float drawTopBarLive(App& a) {
       const Tick posOrigin = a.engine.mode() == PlayMode::Song ? livelook::arrangementOrigin(a) : 0;
       const std::string pos = bbt(std::max<Tick>(0, static_cast<Tick>(a.engine.position()) - posOrigin), false);
       field("##poslive", pos.c_str(), x, posW, false, "Song position: bars . beats . sixteenths");
+      noteCounter("position", ImVec2(x, cy), ImVec2(x + posW, cy + kH));
     } else if (id == "transport") {
       float mx = x;
       const bool playing = a.engine.playing();
@@ -2990,6 +3027,7 @@ static float drawLogicControlBar(App& a) {
       ImGui::SetCursorScreenPos(l0);
       ImGui::InvisibleButton("##lcdpos", ImVec2(posW, lcdH));
       noteRectAt("lcd_position", l0, ImVec2(l0.x + posW, l1.y));
+      noteCounter("position", l0, ImVec2(l0.x + posW, l1.y));
       // R05-16: a double-click types a position (bar beat division tick, or h:mm:ss in the time modes).
       static char posBuf[96] = "";  // (room for the four numbers: GCC -Wformat-truncation)
       if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {

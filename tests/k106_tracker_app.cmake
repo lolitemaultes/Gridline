@@ -87,11 +87,29 @@ file(WRITE "${OUT}/input2.txt" "5 toasts clear
 14 notes
 16 playmode pattern
 17 startsong
+24 tracker dump
+26 tracker dump
+28 tracker dump
+30 tracker dump
+32 tracker dump
+34 tracker dump
+36 tracker dump
+38 tracker dump
 40 tracker dump
-41 transport
+42 tracker dump
+44 tracker dump
+46 tracker dump
+48 tracker dump
+50 tracker dump
+52 tracker dump
+54 tracker dump
+56 tracker dump
+58 tracker dump
+60 tracker dump
+63 transport
 ")
 execute_process(COMMAND "${APP}" "${OUT}/saved.gridline.json" --hidden --no-ui-sounds --size 1440x900 --layout tracker --dev-input "${OUT}/input2.txt"
-                        --fixed-dt 16 --frames 44 --screenshot "${OUT}/playing.ppm"
+                        --fixed-dt 16 --frames 66 --screenshot "${OUT}/playing.ppm"
                 RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 180)
 file(WRITE "${OUT}/run2.log" "${out}\n---- stderr ----\n${err}")
 if(NOT rc EQUAL 0)
@@ -104,15 +122,28 @@ string(REGEX MATCH "tracker dump frame 12:.*tracker dump end" d12 "${out}")
 if(NOT d12 MATCHES "cell 6 0 0 C-4" OR NOT d12 MATCHES "cell 6 2 0 OFF|cell 6 2 0 D-4")
   fail("the tracker does not show the saved notes")
 endif()
-if(NOT out MATCHES "transport frame 41: pos ([0-9]+) playing 1")
+if(NOT out MATCHES "transport frame 63: pos ([0-9]+) playing 1")
   fail("playback did not start")
 endif()
-string(REGEX MATCH "tracker dump frame 40: [^\n]*cursor 6 ([0-9]+) 0 0 play ([0-9-]+)" pd "${out}")
-if(NOT pd)
+# The song plays in real time (the audio device's clock) while the frames run as fast as the machine
+# allows (--fixed-dt only steps the interface's clock): how many rows a frame count spans depends on
+# the machine and its load. So the play row is read on every other frame for a while; once it has
+# moved off the first row, the cursor must be on it.
+string(REGEX MATCHALL "tracker dump frame [0-9]+: [^\n]*cursor 6 [0-9]+ 0 0 play [0-9-]+" pds "${out}")
+if(NOT pds)
   fail("no dump while playing")
 endif()
-if(CMAKE_MATCH_2 LESS 1 OR NOT CMAKE_MATCH_1 EQUAL CMAKE_MATCH_2)
-  fail("the play row did not move, or the cursor did not follow it (${pd})")
+set(pd "")
+foreach(d IN LISTS pds)
+  string(REGEX MATCH "cursor 6 ([0-9]+) 0 0 play ([0-9-]+)" _ "${d}")
+  if(CMAKE_MATCH_2 GREATER_EQUAL 1)
+    set(pd "${d}")
+    break()
+  endif()
+endforeach()
+if(NOT pd OR NOT CMAKE_MATCH_1 EQUAL CMAKE_MATCH_2)
+  list(GET pds -1 last)
+  fail("the play row did not move, or the cursor did not follow it (${pd}${last})")
 endif()
 message(STATUS "ok - typed notes, edit step, piano roll, undo, save and reopen, follow play (${pd}), pixel grid")
 
