@@ -61,6 +61,13 @@ void testPlanWait() {
   expect(w.left > 1e299 && near(w.nap, idlepace::kHiddenBeat) && !w.reportOnly, "hidden, unchanged project: no frames, no looks (only the watchdog's beat)");
   w = idlepace::planWait(p, 1000.0, false, false, 2.0, 1e300, true);
   expect(w.left > 1e299 && near(w.nap, idlepace::kHiddenPoll), "hidden with a game controller attached: looks four times a second");
+  // MIDI's own timed look (devices plugged in where the system does not say; a service retry): a full turn then.
+  w = idlepace::planWait(p, 1000.0, false, false, 2.0, 1e300, false, 1.5);
+  expect(near(w.left, 1.5) && near(w.nap, 1.5) && !w.reportOnly, "hidden: waits for MIDI's next look at most");
+  w = idlepace::planWait(p, 1000.0, false, false, 2.0, 0.0, false, 0.0);
+  expect(w.left == 0 && !w.reportOnly, "hidden, MIDI's look due with the report's step: a full turn (MIDI is read)");
+  w = idlepace::planWait(p, 1000.0, false, false, 2.0, 0.5, false, 3.0);
+  expect(near(w.left, 0.5), "hidden: the report's step sooner than MIDI's look comes first");
   idlepace::IdlePace busy;
   busy.active(10.0);
   w = idlepace::planWait(busy, 10.1, false, false, 10.0, 1e300);

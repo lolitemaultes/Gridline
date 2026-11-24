@@ -39,3 +39,27 @@ What to re-test, and how:
 | Linux with SDL older than 2.0.16 | the X11 wait | the ChromeOS workflow's Debian 11 jobs (x86_64 and arm64): `k142_*`, `k201_osc_app`, `midihp1119_hotplug_app`, collab tests |
 | Linux with newer SDL | `GRIDLINE_DISPLAY_WAIT=1` exercises the same wait | the Linux test machine: `GRIDLINE_DISPLAY_WAIT=1 ctest -R "k142_|k201|midihp"` |
 | Game controller | looks stay four a second while one is attached | on a machine with a controller: Gridline minimised, a controller button still reaches its action |
+
+## MIDI devices while hidden (follow-up to the hidden idle wait)
+
+The hidden loop no longer takes timed turns, and MIDI's device look ran only on turns: a controller
+plugged in while Gridline was minimised opened 10 to 15 s later (CI: `k142_wake_sources_app`). Now
+the system's "devices changed" notice (CoreMIDI, the Linux /dev/snd watch), a stand-in test device
+and the background probe's answer each wake the loop, and the hidden wait also ends for MIDI's own
+timed look (`MidiManager::secondsToNextLook`: the 1.5 s look where the system does not report
+changes, a retry of a service that refused).
+
+What changed:
+
+* `src/core/MidiOpen.*`: `setOnAnswer`, run on the probe's thread once its answer is ready.
+* `src/app/Midi.*`: the opener's answer pokes the loop; `secondsToNextLook`.
+* `src/app/MidiBackend.cpp`: setup changes and stand-in devices poke the loop.
+* `src/app/IdlePace.h` / `src/app/main.cpp`: `planWait` takes `dutyLeft` (a full turn when due).
+
+| Area | Why | Test |
+| --- | --- | --- |
+| MIDI hotplug | the change itself | `midihp1119_hotplug_app`, `k142_wake_sources_app`, `midi_open` |
+| MIDI ports in hidden runs | hidden runs keep no system ports | `midi1118_hidden_ports_app` |
+| Idle pacing | the wait's plan | `k142_ui`, `k142_ui_wake_app`, `k142_ui_pacing_app` |
+| Idle budget | a hidden run with system MIDI ports now wakes for MIDI's look (every 10 s where watched) | `k142_idle_budget_app` (CI decides) |
+| Windows and the BSDs | no change notice there: the 1.5 s look keeps hidden hotplug as before | the Windows test machine: plug a controller in while Gridline is minimised, it works when restored |

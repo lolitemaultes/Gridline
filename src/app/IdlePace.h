@@ -53,7 +53,9 @@ class IdlePace {
 // loop sleeps until its next duty, waking only every kHiddenBeat seconds for the freeze watchdog
 // (Crash.h: a UI thread silent for 30 s counts as frozen). Four looks a second remain only where an
 // input has no wake of its own (`looks`: a game controller attached, whose buttons SDL reads only
-// when the loop looks).
+// when the loop looks). `dutyLeft`: other timed work that needs a full turn while nothing is shown
+// (MIDI's next look for devices plugged in or out where the system does not say, or a retry of its
+// service: Midi.h secondsToNextLook).
 struct Wait {
   double left = 0;          // seconds still to wait (0: take the turn now)
   bool reportOnly = false;  // the turn is the report's alone: draw nothing
@@ -64,13 +66,13 @@ constexpr double kHiddenPoll = 0.25;
 constexpr double kHiddenBeat = 5.0;
 constexpr double kShownPoll = 1.0 / 60.0;
 constexpr double kDeepPoll = 1.0 / 20.0;
-inline Wait planWait(const IdlePace& p, double now, bool shown, bool modified, double lastDrawn, double reportLeft, bool looks = false) {
+inline Wait planWait(const IdlePace& p, double now, bool shown, bool modified, double lastDrawn, double reportLeft, bool looks = false, double dutyLeft = 1e300) {
   Wait w;
   if (!p.enabled()) return w;
   if (shown) {
     w.left = p.waitLeft(now);
   } else {
-    const double housekeeping = modified ? std::max(0.0, lastDrawn + kHiddenHousekeeping - now) : 1e300;
+    const double housekeeping = std::min(modified ? std::max(0.0, lastDrawn + kHiddenHousekeeping - now) : 1e300, std::max(0.0, dutyLeft));
     w.left = std::min(housekeeping, std::max(0.0, reportLeft));
     w.reportOnly = w.left <= 0 && housekeeping > 0;
   }

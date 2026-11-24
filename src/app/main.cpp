@@ -5289,7 +5289,9 @@ int main(int argc, char** argv) {
         const bool shown = anythingShown();
         pace.setDeep(openHostedEditorTargets().empty() && !collabui::sendingFiles(app));  // K-142: 4 idle frames a second after a while, unless a plugin window is open (its parameters) or files go to a collaborator (a share a frame); a collaborator's edits wake the loop at once (follow-up)
         // (a game controller's buttons are read only when the loop looks: SDL has no wake for them)
-        idlepace::Wait w = idlepace::planWait(pace, paceNow(), shown, app.doc.modified(), lastDrawn, cpureport::secondsToNext(), SDL_NumJoysticks() > 0);
+        const double waitNow = paceNow();
+        idlepace::Wait w = idlepace::planWait(pace, waitNow, shown, app.doc.modified(), lastDrawn, cpureport::secondsToNext(), SDL_NumJoysticks() > 0,
+                                              app.midi ? app.midi->secondsToNextLook(MidiManager::clockNow()) : 1e300);
         w.nap = std::min(w.nap, crash::frozenAfterSeconds() / 3.0);  // (the watchdog hears from a sleeping loop well within its limit)
         reportOnly = w.reportOnly;
         if (w.left <= 0) break;

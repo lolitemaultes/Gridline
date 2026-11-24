@@ -268,5 +268,21 @@ int main() {
     expect(o.rescans() == 3, "no quiet rescan while failed");
   }
 
+  {  // K-142 (0.7.8): the answer hook runs once the answer is ready (a hidden interface loop is woken by it)
+    std::atomic<int> calls{0};
+    MidiOpener o([] { return okResult(); });
+    o.setOnAnswer([&] { calls.fetch_add(1); });
+    o.start(0.0);
+    const auto t0 = std::chrono::steady_clock::now();
+    while (calls.load() == 0 && secondsSince(t0) < 5.0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    expect(calls.load() == 1 && o.waitFor(0.0), "the answer hook runs once the answer is ready");
+    expect(o.update(0.01) && o.state() == MidiOpenState::Ready, "update takes the answer the hook announced");
+    o.takeResult();
+    o.rescan(1.0);
+    o.waitFor(5.0);
+    for (int i = 0; i < 1000 && calls.load() < 2; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    expect(calls.load() == 2, "a quiet rescan's answer runs it too");
+  }
+
   return finish();
 }

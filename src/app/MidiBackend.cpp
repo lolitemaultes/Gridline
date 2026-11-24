@@ -2,6 +2,7 @@
 // API and the sndio classes below take its place behind RtMidiIn / RtMidiOut.
 #include "MidiBackend.h"
 #include "../core/ThreadName.h"
+#include "UiWake.h"
 #include "../../third_party/rtmidi/RtMidi.h"
 #include <algorithm>
 #include <atomic>
@@ -352,6 +353,7 @@ CoreWatch& coreWatch() {
 void coreNotify(const MIDINotification* n, void*) {
   if (n && (n->messageID == kMIDIMsgSetupChanged || n->messageID == kMIDIMsgObjectAdded || n->messageID == kMIDIMsgObjectRemoved)) {
     coreWatch().changes.fetch_add(1, std::memory_order_relaxed);
+    uiwake::poke();  // K-142 (0.7.8): a hidden Gridline looks at once
   }
 }
 void keepAlive(CFRunLoopTimerRef, void*) {}
@@ -464,6 +466,7 @@ void ensureNodeWatch() {
           if (sndNodes(now) && now != seen) {
             seen.swap(now);
             nodeWatch().changes.fetch_add(1, std::memory_order_relaxed);
+            uiwake::poke();  // K-142 (0.7.8): a hidden Gridline looks at once
           }
         }
       }).detach();
@@ -476,17 +479,24 @@ void ensureNodeWatch() {
 
 }  // namespace
 
+namespace {
+std::atomic<uint64_t> gFakeChanges{0};  // stand-in devices plugged in or out (counted like the system's)
+}
+
 uint64_t midiSetupChanges() {
+  const uint64_t fake = gFakeChanges.load(std::memory_order_relaxed);
 #if defined(__MACOSX_CORE__) && !defined(GRIDLINE_MIDI_SNDIO)
-  return coreWatch().changes.load(std::memory_order_relaxed);
+  return fake + coreWatch().changes.load(std::memory_order_relaxed);
 #elif defined(__linux__) && defined(__LINUX_ALSA__)
-  return nodeWatch().changes.load(std::memory_order_relaxed);
+  return fake + nodeWatch().changes.load(std::memory_order_relaxed);
 #else
-  return 0;
+  return fake;
 #endif
 }
 
 bool midiSetupWatched() {
+  static const bool fake = midiFakeMode();
+  if (fake) return true;  // stand-in devices say when they come and go (midiFakeSetPort)
 #if defined(__MACOSX_CORE__) && !defined(GRIDLINE_MIDI_SNDIO)
   CoreWatch& w = coreWatch();
   std::lock_guard<std::mutex> lk(w.mu);
@@ -510,14 +520,20 @@ bool midiFakeMode() { return testMode() == "fake"; }
 
 void midiFakeSetPort(bool output, const std::string& name, bool present) {
   FakePorts& f = fakePorts();
-  std::lock_guard<std::mutex> lk(f.mu);
-  auto& v = output ? f.outs : f.ins;
-  auto it = std::find(v.begin(), v.end(), name);
-  if (present && it == v.end()) {
-    v.push_back(name);
-  } else if (!present && it != v.end()) {
-    v.erase(it);
+  {
+    std::lock_guard<std::mutex> lk(f.mu);
+    auto& v = output ? f.outs : f.ins;
+    auto it = std::find(v.begin(), v.end(), name);
+    if (present && it == v.end()) {
+      v.push_back(name);
+    } else if (!present && it != v.end()) {
+      v.erase(it);
+    } else {
+      return;
+    }
   }
+  gFakeChanges.fetch_add(1, std::memory_order_relaxed);  // as the system says a device came or went
+  uiwake::poke();
 }
 
 bool midiFakePresent(bool output, const std::string& name) {

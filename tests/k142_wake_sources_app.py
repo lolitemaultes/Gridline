@@ -138,8 +138,8 @@ while time.time() < end and "midi: taken B0 20 64" not in stamps:
     time.sleep(0.01)
 check("midifake later: send" in stamps and "delivered" in next((l for l in lines if l.startswith("midifake later: send")), ""),
       "the controller's message arrives on its own thread")
-took = stamps.get("midi: taken B0 20 64", 1e9) - stamps.get("midifake later: send", 0)
-check(took < 0.5, "a MIDI controller's message is taken at once while nothing is drawn (%.3f s)" % took)
+took = stamps["midi: taken B0 20 64"] - stamps["midifake later: send"] if "midi: taken B0 20 64" in stamps and "midifake later: send" in stamps else None
+check(took is not None and took < 0.5, "a MIDI controller's message is taken at once while nothing is drawn (%s)" % ("%.3f s" % took if took is not None else "never taken"))
 
 try:
     app.wait(timeout=120)

@@ -60,7 +60,7 @@ void MidiOpener::rescan(double now) {
 
 void MidiOpener::spawn(std::shared_ptr<Shared> sh, double now) {
   try {
-    std::thread([sh, probe = probe_] { gl::threads::setName("gl-midi-probe");
+    std::thread([sh, probe = probe_, onAnswer = onAnswer_] { gl::threads::setName("gl-midi-probe");
       MidiProbeResult r;
       try {
         r = probe();
@@ -72,10 +72,13 @@ void MidiOpener::spawn(std::shared_ptr<Shared> sh, double now) {
         r.error = "unknown error";
       }
       if (!r.ok && r.error.empty()) r.error = "unknown error";
-      std::lock_guard<std::mutex> lk(sh->mu);
-      sh->result = std::move(r);
-      sh->done = true;
-      sh->cv.notify_all();
+      {
+        std::lock_guard<std::mutex> lk(sh->mu);
+        sh->result = std::move(r);
+        sh->done = true;
+        sh->cv.notify_all();
+      }
+      if (onAnswer) onAnswer();
     }).detach();
     cur_ = std::move(sh);
   } catch (const std::exception& e) {  // no thread could be started

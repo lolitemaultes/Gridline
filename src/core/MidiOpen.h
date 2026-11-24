@@ -63,6 +63,9 @@ class MidiOpener {
   bool probeRunning() const;                        // a probe (maybe hung) is still out
   double nextRetryIn(double now) const;             // seconds; < 0 when none is scheduled
   MidiProbeResult takeResult();
+  // K-142 (0.7.8): called on the probe's own thread once its answer is ready for update() (the
+  // app wakes its sleeping interface loop with it, so a hidden Gridline takes the answer at once).
+  void setOnAnswer(std::function<void()> f) { onAnswer_ = std::move(f); }
 
  private:
   struct Shared;
@@ -70,6 +73,7 @@ class MidiOpener {
   void spawn(std::shared_ptr<Shared> sh, double now);
   void schedule(double now);
   Probe probe_;
+  std::function<void()> onAnswer_;
   double timeout_;
   std::vector<double> delays_;
   std::shared_ptr<Shared> cur_;  // the probe that is out (or answered and not taken)

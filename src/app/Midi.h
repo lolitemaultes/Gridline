@@ -107,6 +107,10 @@ class MidiManager {
   // in opens as at startup (per its settings; a new one enabled), one unplugged is closed and
   // the notes it held are released; plugged in again, it opens again.
   bool update();
+  // K-142 (0.7.8): seconds until update() has timed work of its own (the next look for devices
+  // plugged in or out, a retry of a service that refused); 1e300 when none. A hidden interface
+  // loop sleeps until then at most (what comes sooner wakes it: UiWake.h).
+  double secondsToNextLook(double now) const;
   // Startup: gives a working service up to `seconds` to answer, then takes its answer.
   void waitForService(double seconds);
   // The Retry button: asks the service again now.

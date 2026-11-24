@@ -90,6 +90,7 @@ MidiManager::MidiManager(AudioEngine& engine, bool systemPorts)
       return r;
     });
   }
+  opener_->setOnAnswer([] { uiwake::poke(); });  // K-142 (0.7.8): the answer is taken at once, also while nothing is drawn
 }
 
 MidiManager::~MidiManager() {
@@ -184,6 +185,17 @@ bool MidiManager::update() {
     }
   }
   return changed;
+}
+
+double MidiManager::secondsToNextLook(double now) const {
+  double left = 1e300;
+  const MidiOpenState st = opener_->state();
+  if (systemPorts_ && midiHotplugSupported() && st == MidiOpenState::Ready && !opener_->probeRunning()) {
+    left = std::max(0.0, nextRescan_ - now);
+  }
+  const double retry = opener_->nextRetryIn(now);
+  if (retry >= 0) left = std::min(left, retry);
+  return left;
 }
 
 std::vector<std::string> MidiManager::openInputNames() const {

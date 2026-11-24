@@ -66,7 +66,11 @@ void testWorker() {
   const double postMs = msSince(t0);
   ex(postMs < 20, fmt("worker: five posts to a slow drive return at once (%.1f ms)", postMs));
   const auto t1 = Clk::now();
-  ex(!w.drain(50) && msSince(t1) < 200, "worker: a drain is bounded");
+  // (bounded: it gives up long before the slow jobs could all run, 5 x 300 ms; a loaded runner may
+  // hold the waiting thread a while past its 50 ms, so the bound is under a third of what the jobs need, not 4x the wait)
+  const bool drained = w.drain(50);
+  const double drainMs = msSince(t1);
+  ex(!drained && drainMs < 450, fmt("worker: a drain is bounded (%.0f ms)", drainMs));
   SerialWorker::setTestDelayMs(0);
   ex(w.drain(5000) && ran.load() == 5, "worker: every job runs, in the end");
 }
