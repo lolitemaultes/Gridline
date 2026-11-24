@@ -25,7 +25,7 @@ jobs:
   chromeos:
     name: ChromeOS Linux ${{ matrix.arch }} (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 240  # the whole interface suite under xvfb (arm64 runners take about three hours), as in ci.yml
+    timeout-minutes: 330  # build about 25 min, then the whole interface suite under xvfb: about 3 h 40 min on the arm64 runners (GitHub allows 360)
     strategy:
       fail-fast: false
       matrix:
