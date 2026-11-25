@@ -19,6 +19,7 @@
 // HTTP server) reach poke() through hooks the app sets.
 #pragma once
 #include <atomic>
+#include <cstdint>
 
 namespace gl::uiwake {
 
@@ -29,13 +30,17 @@ inline std::atomic<bool>& pending() {
   static std::atomic<bool> f{false};
   return f;
 }
-inline std::atomic<bool>& asleep() {
-  static std::atomic<bool> f{false};
-  return f;
+// 0 = awake; (gen << 1) = asleep in generation `gen`, not yet woken;
+// (gen << 1) | 1 = asleep in generation `gen`, already woken.
+// Packing sleep state and generation in one atomic prevents a delayed poke() from an
+// earlier sleep from stealing the woken bit of a later sleep.
+inline std::atomic<uint64_t>& sleepState() {
+  static std::atomic<uint64_t> s{0};
+  return s;
 }
-inline std::atomic<bool>& wokenThisSleep() {
-  static std::atomic<bool> f{false};
-  return f;
+inline std::atomic<uint64_t>& sleepGen() {
+  static std::atomic<uint64_t> g{0};
+  return g;
 }
 inline std::atomic<Waker>& waker() {
   static std::atomic<Waker> w{nullptr};
@@ -58,10 +63,11 @@ inline void markRealtimeThread() { detail::realtimeThread() = true; }
 
 // Work for the interface thread was queued: take a turn now.
 inline void poke() {
-  detail::pending().store(true);  // (sequentially consistent: before the look at `asleep`)
-  if (!detail::asleep().load()) return;
-  if (detail::realtimeThread()) return;              // lock-free: found at the loop's next look
-  if (detail::wokenThisSleep().exchange(true)) return;  // this sleep is already being woken
+  detail::pending().store(true);  // (sequentially consistent: before the look at `sleepState`)
+  uint64_t s = detail::sleepState().load();
+  if (s == 0 || (s & 1u) != 0) return;  // awake, or this sleep is already being woken
+  if (detail::realtimeThread()) return;  // lock-free: found at the loop's next look
+  if (!detail::sleepState().compare_exchange_strong(s, s | 1u)) return;  // sleep ended, changed generation, or already woken
   detail::wakes().fetch_add(1, std::memory_order_relaxed);
   if (const Waker w = detail::waker().load()) w();
 }
@@ -69,18 +75,19 @@ inline void poke() {
 // The interface thread, around each sleep of its wait. beginWait: false when work is already
 // pending (do not sleep; takePending says so too).
 inline bool beginWait() {
-  detail::wokenThisSleep().store(false);
-  detail::asleep().store(true);  // (sequentially consistent: before the look at `pending`)
+  uint64_t g = detail::sleepGen().fetch_add(1, std::memory_order_relaxed) + 1;
+  if ((g << 1) == 0) g = detail::sleepGen().fetch_add(1, std::memory_order_relaxed) + 1;  // never encode 0
+  detail::sleepState().store(g << 1);  // (sequentially consistent: before the look at `pending`)
   if (detail::pending().load()) {
-    detail::asleep().store(false);
+    detail::sleepState().store(0);
     return false;
   }
   return true;
 }
-inline void endWait() { detail::asleep().store(false); }
+inline void endWait() { detail::sleepState().store(0); }
 // The interface thread: true (once) when work was poked since the last call; its turn takes it.
 inline bool takePending() {
-  if (!detail::pending().load(std::memory_order_relaxed)) return false;
+  if (!detail::pending().load(std::memory_order_acquire)) return false;
   return detail::pending().exchange(false);
 }
 // Sleeps the waker was called for (tests, the CPU report).
