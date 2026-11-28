@@ -3,7 +3,7 @@
 #      in the narrow column; Clips: the mixer band; Smooth: the lower pane; Tracker: the LFO page), the
 #      cards or rows lie inside the window, Alt+F9 again closes it (the Tracker: the page stays, as its page keys do);
 #   2. Studio's Pop out gives the full board: cards several across;
-#   3. dragging LFO 1's handle onto LFO 2's Depth knob links them (one undo step); Alt-drag on that
+#   3. dragging LFO 1's handle onto LFO 2's Depth knob (in the inspector, LFO 2 selected) links them (one undo step); Alt-drag on that
 #      knob changes the amount, not the depth;
 #   4. the target settings and add-target popovers open over the board.
 # Screenshots: <OUT>/<tag>.ppm.
@@ -119,13 +119,13 @@ report(p 0)
 check("pop out: the cards in ${p_cols} columns" p_compact EQUAL 0 AND p_cols GREATER 2)
 
 # ---- 3. drag LFO 1's handle onto LFO 2's Depth knob; Alt-drag the amount
-run(dragmap 40 "${setup}4 lfo open\n12 lfo popout\n30 lfo\n38 quit discard\n")
+run(dragmap 40 "${setup}4 lfo open\n12 lfo popout\n14 lfo select 2\n30 lfo\n38 quit discard\n")
 report(d 0)
 card(c1 "${d_text}" 0)
 card(c2 "${d_text}" 1)
 math(EXPR ay "${c2_dy} - 30")
 run(drag 120
-    "${setup}4 lfo open\n12 lfo popout\n30 lfo\n32 move ${c1_hx} ${c1_hy}\n34 down 0\n36 move ${c1_dx} ${c1_dy}\n38 move ${c2_dx} ${c2_dy}\n40 move ${c2_dx} ${c2_dy}\n42 up 0\n50 lfo\n60 move ${c2_dx} ${c2_dy}\n62 mod alt 1\n64 down 0\n66 move ${c2_dx} ${ay}\n68 move ${c2_dx} ${ay}\n70 up 0\n72 mod alt 0\n80 lfo\n118 quit discard\n")
+    "${setup}4 lfo open\n12 lfo popout\n14 lfo select 2\n30 lfo\n32 move ${c1_hx} ${c1_hy}\n34 down 0\n36 move ${c2_dx} ${c1_hy}\n38 move ${c2_dx} ${c2_dy}\n40 move ${c2_dx} ${c2_dy}\n42 up 0\n50 lfo\n52 lfo select 2\n60 move ${c2_dx} ${c2_dy}\n62 mod alt 1\n64 down 0\n66 move ${c2_dx} ${ay}\n68 move ${c2_dx} ${ay}\n70 up 0\n72 mod alt 0\n80 lfo\n118 quit discard\n")
 report(b 0)
 report(a 1)
 report(z 2)
@@ -138,8 +138,10 @@ set(amt "${CMAKE_MATCH_1}")
 check("Alt-drag up raises the amount from 0.250 (${amt})" amt STREQUAL "0.400")
 
 # ---- 3b. Pick on screen: LFO 1 waits for a knob; clicking LFO 3's depth knob links it
-card(c3 "${d_text}" 2)
-run(pick 70 "${setup}4 lfo open\n12 lfo popout\n30 lfo pick 1\n34 move ${c3_dx} ${c3_dy}\n38 down 0\n40 up 0\n50 lfo\n68 quit discard\n")
+run(dragmap3 40 "${setup}4 lfo open\n12 lfo popout\n14 lfo select 3\n30 lfo\n38 quit discard\n")
+report(d3 0)
+card(c3 "${d3_text}" 2)
+run(pick 70 "${setup}4 lfo open\n12 lfo popout\n14 lfo select 3\n30 lfo pick 1\n34 move ${c3_dx} ${c3_dy}\n38 down 0\n40 up 0\n50 lfo\n68 quit discard\n")
 report(p 0)
 check("Pick on screen links the clicked knob (targets ${p_targets})" p_targets EQUAL 3)
 string(REGEX MATCH "chip LFO 3 · Depth[^\n]*amount ([-0-9.]+)" m "${p_text}")

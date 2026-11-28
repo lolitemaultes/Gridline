@@ -23,6 +23,16 @@ bool download(const std::string& url, const std::string& path, const std::functi
 update::Fetcher fetcher();
 update::Downloader downloader();
 
+// Automatic updates: a GET with If-None-Match (`etag`, "" for none); a 304 answer has status 304
+// and no body. The answer's ETag is in HttpResult::etag.
+update::HttpResult getConditional(const std::string& url, const std::string& etag, int timeoutSeconds);
+update::CondFetcher condFetcher();
+// Like download(), but continues a partial `path` with a Range request (a server that ignores it
+// sends the whole file, which then replaces the part). A download that receives nothing for
+// `stallSeconds` fails with "stalled". progress(received, total) counts the whole file.
+bool downloadContinue(const std::string& url, const std::string& path, const std::function<void(int64_t, int64_t)>& progress,
+                      const std::atomic<bool>* cancel, int stallSeconds, std::string* err);
+
 // The user's Downloads folder (created when missing; the home folder when there is none).
 std::string downloadsFolder();
 // Shows `path` selected in Finder / Explorer, or opens its folder in the file manager.
@@ -34,7 +44,10 @@ bool reveal(const std::string& path);
 int checkCommand(bool beta);
 
 namespace detail {  // shared by the platform files
+// HTTPS only. Tests' own server: plain http://127.0.0.1:<port>/ when GRIDLINE_UPDATE_TEST_SERVER
+// names that same address (never any other host).
 bool httpsOnly(const std::string& url);
+bool loopbackTest(const std::string& url);
 }
 
 }  // namespace gl::http

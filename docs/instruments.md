@@ -61,7 +61,7 @@ Plugin type `gl.platter`.
 **Engine:** Two DJ decks and a mixer with cues, loops, beat jumps and scratching.  
 **Good for:** mixing tracks live, scratching and recording DJ sets.
 
-More: [Recording with Platter](plugins/platter-recording.md).
+More: [Recording with Platter](plugins/platter-recording.md), [Scratching and nudging](plugins/platter-scratching.md).
 
 
 ### Tideline

@@ -2,6 +2,7 @@
 #include "ThemeSettings.h"
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include "../core/Settings.h"
@@ -59,16 +60,17 @@ void modeToSettings(Mode m, Settings& s) {
 }
 
 Tweaks tweaksFromSettings(const Settings& s) {
+  auto unit = [](double v) { return std::isfinite(v) ? static_cast<float>(std::clamp(v, -1.0, 1.0)) : 0.0f; };
   Tweaks t;
   t.accent = parseColour(s.getString("theme.accent"));
   t.hot = parseColour(s.getString("theme.hot"));
   t.led = parseColour(s.getString("theme.led"));
   t.playhead = parseColour(s.getString("theme.playhead"));
-  t.contrast = static_cast<float>(std::clamp(s.getNumber("theme.contrast"), -1.0, 1.0));
-  t.brightness = static_cast<float>(std::clamp(s.getNumber("theme.brightness"), -1.0, 1.0));
+  t.contrast = unit(s.getNumber("theme.contrast"));
+  t.brightness = unit(s.getNumber("theme.brightness"));
   t.whiteText = s.getBool("theme.whiteText");
-  t.hue = static_cast<float>(std::clamp(s.getNumber("theme.hue"), -1.0, 1.0));  // K-104
-  t.saturation = static_cast<float>(std::clamp(s.getNumber("theme.saturation"), -1.0, 1.0));
+  t.hue = unit(s.getNumber("theme.hue"));  // K-104
+  t.saturation = unit(s.getNumber("theme.saturation"));
   t.stepEven = parseColour(s.getString("theme.stepEven"));
   t.stepOdd = parseColour(s.getString("theme.stepOdd"));
   return t;
@@ -109,8 +111,15 @@ bool systemPrefersDark() {
   if (const char* g = std::getenv("GTK_THEME"); g && *g) {
     std::string t = g;
     for (auto& c : t) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return has(t, "dark");
+    if (has(t, "dark")) return true;
+    if (has(t, "light")) return false;
   }
+  // K-395: Freedesktop XDG Desktop Portal (Hyprland, Sway, KDE, GNOME): 1 = prefer-dark, 2 = prefer-light, 0 = none.
+  const std::string portal = query(
+      "gdbus call --session --timeout 1 --dest org.freedesktop.portal.Desktop --object-path /org/freedesktop/portal/desktop "
+      "--method org.freedesktop.portal.Settings.Read org.freedesktop.appearance color-scheme 2>/dev/null");
+  if (has(portal, "uint32 1")) return true;
+  if (has(portal, "uint32 2")) return false;
   const std::string scheme = query("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null");
   if (has(scheme, "prefer-dark")) return true;
   if (has(scheme, "prefer-light")) return false;
@@ -125,8 +134,7 @@ void applyFromSettings(const Settings& s, bool requerySystem) {
   if (m == Mode::System && (requerySystem || systemDark < 0)) systemDark = systemPrefersDark() ? 1 : 0;
   const bool dark = m == Mode::System ? systemDark != 0 : m == Mode::Dark;
   const Tweaks t = tweaksFromSettings(s);
-  if (t != tweaks()) setTweaks(t);  // re-applies the current base
-  apply(dark);
+  applyWithTweaks(dark, t);
   ui::setControlStyle(controlStyleFromSettings(s));  // drawn from the next frame on, open plugin windows too
 }
 

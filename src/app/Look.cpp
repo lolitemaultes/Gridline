@@ -814,11 +814,15 @@ struct PainterSet {
 };
 uint64_t paletteKey(const theme::Palette& P) {
   const ImU32 roles[] = {P.surface950, P.surface900, P.surface800, P.surface700, P.surface600, P.line,      P.lineStrong,
-                         P.text,       P.textDim,    P.textFaint,  P.paper,      P.accent,     P.danger,    P.meterLow,
-                         P.meterMid,   P.meterHigh,  P.hot,        P.led,        P.well,       P.field,     P.knobFill};
+                         P.text,       P.textDim,    P.textFaint,  P.paper,      P.ink,        P.accent,    P.danger,
+                         P.stepOff,    P.stepOffAlt, P.stepOn,     P.gridBar,    P.gridBeat,   P.gridStep,  P.playhead,
+                         P.meterLow,   P.meterMid,   P.meterHigh,  P.logo,       P.chrome,     P.hot,       P.led,
+                         P.well,       P.field,      P.knobFill,   P.solo,       P.muteLamp,   P.arm,       P.launch,
+                         P.selection};
   uint64_t h = 1469598103934665603ull;  // FNV-1a
   for (ImU32 c : roles) h = (h ^ c) * 1099511628211ull;
-  return (h ^ (P.dark ? 1u : 0u)) * 1099511628211ull;
+  const uint32_t flags = (P.dark ? 1u : 0u) | (P.whiteGlyphs ? 2u : 0u);
+  return (h ^ flags) * 1099511628211ull;
 }
 }  // namespace
 
@@ -856,7 +860,7 @@ Painter& cur() { return painter(current()); }
 // Surfaces (panels, sections, wells, faces, fields) handed over by the shared
 // drawers: in the light theme every style keeps the caller's own colours with
 // Slate's finish, so the dark materials stay on the controls.
-Painter& surf() { return theme::isDark() ? cur() : painter(Dir::Slate); }
+Painter& surf() { return theme::pal().dark ? cur() : painter(Dir::Slate); }
 }  // namespace
 
 void knob(ImDrawList* dl, ImVec2 c, float r, const Knob& k) { cur().knob(dl, c, r, k); }

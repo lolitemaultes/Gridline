@@ -1,5 +1,6 @@
 // Gridline - J-191: stem splitter building blocks (see StemOps.h).
 #include "StemOps.h"
+#include "../../core/ThreadJoin.h"
 #include "../../core/ThreadName.h"
 #include <algorithm>
 #include <cmath>
@@ -33,7 +34,7 @@ Pool::~Pool() {
     quit_ = true;
   }
   cv_.notify_all();
-  for (auto& w : workers_) w.join();
+  for (auto& w : workers_) gl::threads::safeJoin(w);
 }
 
 void Pool::loop() {

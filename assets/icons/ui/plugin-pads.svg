@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><title>Abacus</title>
+<path id="mark-1" d="M5.6 0H18.4A5.6 5.6 0 0 1 24 5.6V18.4A5.6 5.6 0 0 1 18.4 24H5.6A5.6 5.6 0 0 1 0 18.4V5.6A5.6 5.6 0 0 1 5.6 0Z" fill="#80ACFF"/>
+<path id="cut-2" d="M 5 7.5 H 19 M 5 12 H 19 M 5 16.5 H 19" fill="none" stroke="#353D42" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle id="cut-3" cx="8" cy="7.5" r="2" fill="#353D42"/>
+<circle id="cut-4" cx="11" cy="7.5" r="2" fill="#353D42"/>
+<circle id="cut-5" cx="15.8" cy="12" r="2" fill="#353D42"/>
+<circle id="cut-6" cx="8" cy="16.5" r="2" fill="#353D42"/>
+<circle id="cut-7" cx="13" cy="16.5" r="2" fill="#353D42"/>
+<circle id="cut-8" cx="16" cy="16.5" r="2" fill="#353D42"/>
+</svg>

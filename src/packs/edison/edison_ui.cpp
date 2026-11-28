@@ -7,6 +7,7 @@
 #include "../../core/I18n.h"
 #include "../../app/AudioRecordUi.h"
 #include "../../app/ClipEditor.h"
+#include "../../app/ClipRenderUi.h"
 #include "../../app/PluginUI.h"
 #include "../../core/SampleWarp.h"
 #include "../../engine/SampleWarpRender.h"
@@ -179,6 +180,22 @@ void startCommit(App& a, Session& s, const std::string& label) {
   });
 }
 
+// K-419: sync Loupe's editable markers back onto the linked Playlist clip's warp markers (undoable).
+void syncClipWarpFromLoupe(App& a, Session& s, const std::string& label) {
+  if (s.sourceClip == kNoId || s.frames() == 0) return;
+  const Clip* c = a.doc.song().clip(s.sourceClip);
+  if (!c || c->kind != ClipKind::Audio) return;
+  std::vector<WarpMarker> next = exportWarpMarkers(s.cur(), s.clipWarpOrig);
+  s.clipWarpSynced = next;
+  s.clipWarpOrig = next;
+  // The markers keep the warp ids they were given, so the next sync does not hand out new ones.
+  bool newIds = false;
+  for (const Marker& m : s.cur().markers) newIds = newIds || m.warpId == 0;
+  if (newIds) s.hist.amend(importWarpMarkers(s.cur(), next));
+  if (next == c->warp) return;
+  a.doc.editClip(s.sourceClip, label, [&next](Clip& k) { k.warp = next; }, mergeKey(s));
+}
+
 // Loads `path` (worker) into the history; state markers override the file's.
 void startLoad(App& a, Session& s, const State& st) {
   Session* sp = &s;
@@ -194,7 +211,12 @@ void startLoad(App& a, Session& s, const State& st) {
       c.loopEnd = st.loopEnd;
     }
     return [sp, c, ok, err, path]() {
-      sp->hist.reset(c);
+      Content loaded = c;
+      if (sp->pendingClipWarpImport) {
+        sp->pendingClipWarpImport = false;
+        if (!sp->clipWarpOrig.empty() && loaded.frames() > 0) loaded = importWarpMarkers(loaded, sp->clipWarpOrig);
+      }
+      sp->hist.reset(loaded);
       sp->loadedFrom = path;
       sp->committed = path;
       sp->sel = {};
@@ -326,6 +348,21 @@ void pump(App& a, Session& s) {
       s.warpSynced = ps->loupeWarp;
       s.warpUndo.clear(), s.warpRedo.clear();
     }
+  // K-419: follow external Playlist warp marker changes (e.g. Warp tool or Playlist Undo/Redo) on the linked clip.
+  if (s.sourceClip != kNoId && !s.job.active() && s.frames() > 0) {
+    if (const Clip* c = a.doc.song().clip(s.sourceClip); c && c->kind == ClipKind::Audio) {
+      if (s.pendingClipWarpImport || c->warp != s.clipWarpSynced) {
+        const bool first = s.pendingClipWarpImport;
+        s.pendingClipWarpImport = false;
+        s.clipWarpOrig = c->warp;
+        s.clipWarpSynced = c->warp;
+        // A later change from outside (the Playlist's warp tool, its undo) is one Loupe step: the
+        // audio edits before it stay undoable.
+        if (first) s.hist.reset(importWarpMarkers(s.cur(), c->warp));
+        else s.hist.push(i18n::N_("Warp markers from the Playlist"), importWarpMarkers(s.cur(), c->warp));
+      }
+    }
+  }
   // Recording: drain the slot's capture ring into the recorder.
   if (s.slot) {
     if (EdisonFx* fx = slotFx(a, s)) {
@@ -478,6 +515,7 @@ void runEditP(App& a, Session& s, const std::string& label, std::function<Conten
       sp->cursor = same ? cursorAfter : std::min(sp->cursor, next.frames());
       if (sp->viewStart + sp->viewLen > static_cast<double>(next.frames()) * 1.05 || sp->viewLen <= 0) zoomAll(*sp);
       applySaved(*ap, *sp, saved.first, saved.second, "Loupe: " + label);
+      syncClipWarpFromLoupe(*ap, *sp, "Loupe: " + label);
     };
   });
   s.job.progress = prog;
@@ -486,6 +524,7 @@ void runEditP(App& a, Session& s, const std::string& label, std::function<Conten
 void applyNow(App& a, Session& s, const std::string& label, const Content& next) {
   s.hist.push(label, next, s.sel, clampRange(next, s.sel));
   s.sel = clampRange(next, s.sel);
+  syncClipWarpFromLoupe(a, s, "Loupe: " + label);
   startCommit(a, s, "Loupe: " + label);
 }
 
@@ -548,6 +587,7 @@ void undo(App& a, Session& s) {
   std::string l = s.hist.undoLabel();
   s.hist.undo();
   s.sel = clampRange(s.cur(), s.hist.sel() ? *s.hist.sel() : s.sel);  // GitHub #69: the selection the edit started from
+  syncClipWarpFromLoupe(a, s, "Loupe: undo " + l);
   startCommit(a, s, "Loupe: undo " + l);
   say(s, "Undo: " + l);
 }
@@ -568,6 +608,7 @@ void redo(App& a, Session& s) {
   std::string l = s.hist.redoLabel();
   s.hist.redo();
   s.sel = clampRange(s.cur(), s.hist.sel() ? *s.hist.sel() : s.sel);  // GitHub #69: the selection the edit left
+  syncClipWarpFromLoupe(a, s, "Loupe: redo " + l);
   startCommit(a, s, "Loupe: redo " + l);
   say(s, "Redo: " + l);
 }
@@ -731,6 +772,80 @@ void scrubEnd(App& a, Session& s) {
 bool autoScroll(App& a) { return a.settings.getBool("loupe.autoScroll"); }
 void setAutoScroll(App& a, bool on) { a.settings.set("loupe.autoScroll", on); }
 
+namespace {
+bool gPendingWindowResize = false;
+float gLastSavedW = 0.0f, gLastSavedH = 0.0f;
+}  // namespace
+
+float uiScale(App& a) { return dock::clampUiScale(static_cast<float>(a.settings.getNumber("loupe.uiScale"))); }
+
+void setUiScale(App& a, float scale, bool resizeWindow) {
+  const float sc = dock::clampUiScale(scale);
+  a.settings.set("loupe.uiScale", static_cast<double>(sc));
+  if (resizeWindow) {
+    float cw = 0.0f, ch = 0.0f;
+    dock::defaultContentSize(sc, cw, ch);
+    const double nw = std::round(cw + 16.0f), nh = std::round(ch + 92.0f);
+    a.settings.set("loupe.windowW", nw);
+    a.settings.set("loupe.windowH", nh);
+    gLastSavedW = static_cast<float>(nw);
+    gLastSavedH = static_cast<float>(nh);
+    gPendingWindowResize = true;
+  }
+}
+
+void resetWindowSize(App& a) {
+  a.settings.set("loupe.uiScale", 1.0);
+  a.settings.set("loupe.windowW", 0.0);
+  a.settings.set("loupe.windowH", 0.0);
+  gLastSavedW = gLastSavedH = 0.0f;
+  gPendingWindowResize = true;
+}
+
+void rememberWindowSize(App& a, float w, float h) {
+  const float rw = std::round(w), rh = std::round(h);
+  if (rw < 480.0f || rh < 320.0f) return;
+  if (std::fabs(rw - gLastSavedW) < 1.0f && std::fabs(rh - gLastSavedH) < 1.0f) return;
+  gLastSavedW = rw;
+  gLastSavedH = rh;
+  a.settings.set("loupe.windowW", static_cast<double>(rw));
+  a.settings.set("loupe.windowH", static_cast<double>(rh));
+}
+
+void preferredWindowSize(App& a, float extraChromeW, float extraChromeH, ImVec2 workSize, float& outW, float& outH, bool& forceApply) {
+  forceApply = std::exchange(gPendingWindowResize, false);
+  const double sw = a.settings.getNumber("loupe.windowW");
+  const double sh = a.settings.getNumber("loupe.windowH");
+  if (sw >= 480.0 && sh >= 320.0) {
+    outW = static_cast<float>(sw);
+    outH = static_cast<float>(sh);
+  } else {
+    float cw = 0.0f, ch = 0.0f;
+    dock::defaultContentSize(uiScale(a), cw, ch);
+    outW = cw + extraChromeW;
+    outH = ch + extraChromeH;
+  }
+  const float maxW = std::max(480.0f, std::floor(workSize.x - 24.0f));
+  const float maxH = std::max(320.0f, std::floor(workSize.y - 24.0f));
+  outW = std::clamp(std::round(outW), 480.0f, maxW);
+  outH = std::clamp(std::round(outH), 320.0f, maxH);
+  gLastSavedW = outW;
+  gLastSavedH = outH;
+}
+
+void drawSizeMenu(App& a) {
+  if (!ImGui::BeginMenu(i18n::tr("Editor size"))) return;
+  const float cur = uiScale(a);
+  for (float z : dock::kScaleSteps) {
+    char b[24];
+    std::snprintf(b, sizeof b, "%.0f %%", static_cast<double>(z * 100.0f));
+    if (ImGui::MenuItem(b, nullptr, std::fabs(cur - z) < 0.01f)) setUiScale(a, z, true);
+  }
+  ImGui::Separator();
+  if (ImGui::MenuItem(i18n::tr("Reset window size"))) resetWindowSize(a);
+  ImGui::EndMenu();
+}
+
 void toggleRecord(App& a, Session& s) {
   if (!s.slot) {
     say(s, "Recording needs the editor in a mixer slot");
@@ -828,7 +943,13 @@ void splitStems(App& a, Session& s) {
     say(s, s.frames() == 0 ? "Nothing to split" : "Busy");
     return;
   }
-  stemsui::openForFile(a, path, displayName(a, s));
+  // K-447: the selection when there is one, else the whole sound
+  const Range r = s.sel;
+  const double rate = s.rate();
+  if (!r.empty() && rate > 0 && (r.a > 0 || r.b < s.frames()))
+    stemsui::openForFile(a, path, displayName(a, s), static_cast<double>(r.a) / rate, static_cast<double>(std::min(r.b, s.frames())) / rate);
+  else
+    stemsui::openForFile(a, path, displayName(a, s));
 }
 
 void sendToPlaylist(App& a, Session& s) {
@@ -838,9 +959,20 @@ void sendToPlaylist(App& a, Session& s) {
     return;
   }
   const double secs = s.cur().a().seconds();
+  // K-419: export Loupe's editable markers (or warp-mode markers) back onto the playlist clip's warp markers.
+  std::vector<WarpMarker> exportedWarp = !s.cur().markers.empty() ? exportWarpMarkers(s.cur(), s.clipWarpOrig) : s.warp;
+  normalizeWarp(exportedWarp, secs);
   a.doc.beginGroup("Send to playlist");
   ObjectId ch = a.addInstrument("gl.sampler", path);
   a.doc.editSong("Send to playlist", [&](Song& song) {
+    // Also keep the linked originating clip's warp markers in sync when sending back.
+    if (s.sourceClip != kNoId) {
+      if (Clip* orig = song.clip(s.sourceClip); orig && orig->kind == ClipKind::Audio) {
+        orig->warp = exportedWarp;
+        s.clipWarpSynced = exportedWarp;
+        s.clipWarpOrig = exportedWarp;
+      }
+    }
     int track = 0;
     for (const auto& c : song.playlist) track = std::max(track, c.track + 1);
     if (track >= static_cast<int>(song.tracks.size())) track = static_cast<int>(song.tracks.size()) - 1;
@@ -851,11 +983,12 @@ void sendToPlaylist(App& a, Session& s) {
     c.track = std::max(0, track);
     c.start = 0;
     c.length = std::max<Tick>(1, static_cast<Tick>(std::llround(secs * song.tempo / 60.0 * song.ppq)));
+    c.warp = exportedWarp;
     song.playlist.push_back(c);
   });
   a.doc.endGroup();
   a.showPlaylist = true;
-  say(s, "Sent to the playlist as an audio clip");
+  say(s, exportedWarp.empty() ? "Sent to the playlist as an audio clip" : "Sent to the playlist with synced warp markers");
 }
 
 std::string dragOutFile(App& a, Session& s) {
@@ -1089,8 +1222,21 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   pump(a, s);
   devDemo(a, s);
   devState(a, s);
-  const float maxH = ImGui::GetMainViewport()->WorkSize.y - 170.0f;
-  drawForm(a, s, std::max(width, 660.0f), maxH);
+  ImGuiWindow* w = ImGui::GetCurrentWindow();
+  const ImVec2 avail = ImGui::GetContentRegionAvail();
+  const float sc = uiScale(a);
+  if (w && !(w->Flags & ImGuiWindowFlags_AlwaysAutoResize) && avail.x > 100.0f && avail.y > 100.0f) {
+    // K-421: freely resizable effect window — leave room for the Track Macros row below.
+    const float h = std::max(240.0f, avail.y - 28.0f);
+    const dock::Layout lo = dock::scaledLayout(avail.x, h, sc);
+    dockDev() = {avail.x, h, lo.compact, lo.scale, lo.formW, lo.headH, lo.waveH};
+    drawFormLayout(a, s, lo);
+  } else {
+    const float maxH = ImGui::GetMainViewport()->WorkSize.y - 170.0f;
+    const dock::Layout lo = dock::scaledLayout(std::max(width, 660.0f), maxH, sc);
+    dockDev() = {std::max(width, 660.0f), maxH, lo.compact, lo.scale, lo.formW, lo.headH, lo.waveH};
+    drawFormLayout(a, s, lo);
+  }
   return true;
 }
 
@@ -1126,7 +1272,7 @@ void closeStandaloneWindows() {
     if (!sp->slot && sp->file.empty()) sp->open = false;
 }
 
-bool openAudioEditor(App& a, const std::string& path, ObjectId channel) {
+bool openAudioEditor(App& a, const std::string& path, ObjectId channel, ObjectId clip = kNoId) {
   if (path.empty() || channel == kNoId) return false;
   auto& m = sessions();
   const uint64_t k = standaloneKey(channel);
@@ -1139,12 +1285,31 @@ bool openAudioEditor(App& a, const std::string& path, ObjectId channel) {
     s->committed = "\x01";
     it = m.emplace(k, std::move(s)).first;
   }
+  // K-419: link the originating Playlist clip (if any) and import its warp markers into Loupe.
+  Session& sess = *it->second;
+  sess.sourceClip = clip;
+  if (clip != kNoId) {
+    if (const Clip* c = a.doc.song().clip(clip); c && c->kind == ClipKind::Audio) {
+      sess.clipWarpOrig = c->warp;
+      sess.clipWarpSynced = c->warp;
+      if (!sess.job.active() && sess.frames() > 0 && sess.committed == path) {
+        sess.hist.reset(importWarpMarkers(sess.cur(), c->warp));
+        sess.pendingClipWarpImport = false;
+      } else {
+        sess.pendingClipWarpImport = true;
+      }
+    }
+  } else {
+    sess.clipWarpOrig.clear();
+    sess.clipWarpSynced.clear();
+    sess.pendingClipWarpImport = false;
+  }
   if (pinned(a)) {  // K-15: pinned into the layout: the panel shows it
     panelKey() = k;
     a.focusWindow = "Loupe";
     return true;
   }
-  it->second->open = true;
+  sess.open = true;
   a.focusWindow = "###edison-standalone-" + std::to_string(channel);
   return true;
 }
@@ -1161,6 +1326,22 @@ std::string fileWindowId(uint64_t key) {
   return b;
 }
 }  // namespace
+
+bool openFileInLoupe(App& a, const std::string& path);
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path) {
+  const PluginInfo* info = t.info(a.doc.song());
+  if (!info || info->type != kType) return false;
+  auto& m = sessions();
+  if (auto it = m.find(t.key()); it != m.end()) {
+    Session& s = *it->second;
+    runEdit(a, s, "Load " + fs::path(path).filename().string(), [path](const Content& c) {
+      Content n;
+      return loadContent(path, n) ? n : c;
+    });
+    return true;
+  }
+  return openFileInLoupe(a, path);
+}
 
 bool openFileInLoupe(App& a, const std::string& path) {
   std::error_code ec;
@@ -1272,6 +1453,17 @@ void drawPanel(App& a) {
 
 }  // namespace
 
+// Import from URL into an open Loupe window, found by its key (it may have closed meanwhile).
+bool loadIntoSession(App& a, uint64_t key, const std::string& path) {
+  Session* sp = findSession(key);
+  if (!sp) return false;
+  runEdit(a, *sp, "Load " + fs::path(path).filename().string(), [path](const Content& c) {
+    Content n;
+    return loadContent(path, n) ? n : c;
+  });
+  return true;
+}
+
 bool pinned(App& a) { return a.settings.getBool("ui.loupePinned"); }
 
 // K-112 (R3): the panel's content in `avail`, drawn by the Loupe panel or a layout part's frame.
@@ -1294,13 +1486,15 @@ void drawPanelBody(App& a, ImVec2 avail) {
   devDemo(a, *s);
   devState(a, *s);
   // A dock smaller than the form's minimum scrolls (never squeezed below it).
-  const dock::Layout l = dock::layoutFor(avail.x, avail.y);
+  const float sc = uiScale(a);
+  const dock::Layout l = std::fabs(sc - 1.0f) < 0.01f ? dock::layoutFor(avail.x, avail.y) : dock::scaledLayout(avail.x, avail.y, sc);
   const bool scroll = l.formW > avail.x + 0.5f || l.headH + l.waveH + l.pad > avail.y + 0.5f;
   if (scroll)
     ImGui::BeginChild("##loupescroll", avail, ImGuiChildFlags_None, ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoBackground);
   const ImVec2 room = scroll ? ImGui::GetContentRegionAvail() : avail;
-  dockDev() = {room.x, room.y, l.compact, l.scale, l.formW, l.headH, l.waveH};
-  drawFormDocked(a, *s, room);
+  const dock::Layout lRoom = std::fabs(sc - 1.0f) < 0.01f ? dock::layoutFor(room.x, room.y) : dock::scaledLayout(room.x, room.y, sc);
+  dockDev() = {room.x, room.y, lRoom.compact, lRoom.scale, lRoom.formW, lRoom.headH, lRoom.waveH};
+  drawFormLayout(a, *s, lRoom);
   if (scroll) ImGui::EndChild();
 }
 
@@ -1500,6 +1694,79 @@ bool dockDevCommand(App& a, const std::string& cmd, const std::vector<std::strin
     std::fflush(stdout);
     return true;
   }
+  if (what == "scale" && args.size() > 1) {  // K-421: loupe scale <factor>
+    setUiScale(a, static_cast<float>(std::atof(args[1].c_str())), true);
+    std::printf("loupe scale: %.2f\n", static_cast<double>(uiScale(a)));
+    std::fflush(stdout);
+    return true;
+  }
+  if (what == "resize" && args.size() > 2) {  // K-421: loupe resize <w> <h>
+    const float w = static_cast<float>(std::atof(args[1].c_str()));
+    const float h = static_cast<float>(std::atof(args[2].c_str()));
+    a.settings.set("loupe.windowW", static_cast<double>(std::round(w)));
+    a.settings.set("loupe.windowH", static_cast<double>(std::round(h)));
+    gLastSavedW = std::round(w);
+    gLastSavedH = std::round(h);
+    gPendingWindowResize = true;
+    std::printf("loupe resize: %.0fx%.0f\n", static_cast<double>(gLastSavedW), static_cast<double>(gLastSavedH));
+    std::fflush(stdout);
+    return true;
+  }
+  if (what == "size") {  // K-421: loupe size
+    const DockDev& d = dockDev();
+    std::printf("loupe size: scale %.2f saved %.0fx%.0f room %.0fx%.0f compact %d form %.0f head %.0f wave %.0f\n",
+                static_cast<double>(uiScale(a)), a.settings.getNumber("loupe.windowW"), a.settings.getNumber("loupe.windowH"),
+                static_cast<double>(d.w), static_cast<double>(d.h), d.compact ? 1 : 0, static_cast<double>(d.formW),
+                static_cast<double>(d.headH), static_cast<double>(d.waveH));
+    std::fflush(stdout);
+    return true;
+  }
+  if (what == "sendclip" && args.size() > 1) {  // K-419: loupe sendclip <clipId>
+    const ObjectId cid = static_cast<ObjectId>(std::strtoull(args[1].c_str(), nullptr, 10));
+    std::printf("loupe sendclip: %s\n", cliprenderui::sendToLoupe(a, cid) ? "opened" : "not opened");
+    std::fflush(stdout);
+    return true;
+  }
+  if (what == "sendback") {  // K-419: loupe sendback
+    for (auto& [k, sp] : sessions()) {
+      Session& s = *sp;
+      if (!alive(a, s)) continue;
+      sendToPlaylist(a, s);
+      std::printf("loupe sendback: clips %zu\n", a.doc.song().playlist.size());
+      break;
+    }
+    std::fflush(stdout);
+    return true;
+  }
+  if (what == "markers" || what == "addmarker" || what == "movemarker" || what == "delmarker" || what == "dblmarker") {
+    for (auto& [k, sp] : sessions()) {
+      Session& s = *sp;
+      if (!alive(a, s)) continue;
+      if (what == "addmarker" && args.size() > 1) {
+        const int64_t pos = std::atoll(args[1].c_str());
+        const std::string nm = args.size() > 2 ? args[2] : ("Marker " + std::to_string(s.cur().markers.size() + 1));
+        applyNow(a, s, "Add marker", addMarker(s.cur(), pos, nm));
+      } else if (what == "movemarker" && args.size() > 2) {
+        const size_t idx = static_cast<size_t>(std::atoi(args[1].c_str()));
+        const int64_t pos = std::atoll(args[2].c_str());
+        applyNow(a, s, "Move marker", moveMarker(s.cur(), idx, pos));
+      } else if (what == "delmarker" && args.size() > 1) {
+        const size_t idx = static_cast<size_t>(std::atoi(args[1].c_str()));
+        applyNow(a, s, "Remove marker", removeMarker(s.cur(), idx));
+      } else if (what == "dblmarker" && args.size() > 1) {
+        const size_t idx = static_cast<size_t>(std::atoi(args[1].c_str()));
+        s.sel = markerSpan(s.cur(), idx);
+        s.cursor = s.sel.a;
+      }
+      std::printf("loupe markers: %zu", s.cur().markers.size());
+      for (const Marker& m : s.cur().markers)
+        std::printf(" %lld:%s:%u", static_cast<long long>(m.pos), m.name.c_str(), m.warpId);
+      std::printf(" sel %lld %lld\n", static_cast<long long>(s.sel.a), static_cast<long long>(s.sel.b));
+      break;
+    }
+    std::fflush(stdout);
+    return true;
+  }
   if (what == "pin") {  // loupe pin tab|below|left|right|float: the slot session (first Loupe effect) or the open one
     Session* s = panelSession(a);
     if (!s)
@@ -1569,14 +1836,27 @@ void drawWindows(App& a) {
     const std::string title = s.file.empty()
                                   ? pluginDisplayName(kType) + "  \xC2\xB7  " + ch->name + "###edison-standalone-" + std::to_string(s.channel)
                                   : pluginDisplayName(kType) + "  \xC2\xB7  " + fs::path(s.file).filename().string() + fileWindowId(s.key);
-    const int fitFlags = ui::NextFloatingWindowSize(1100 + 24);  // J-158: capped to the work area, the rest scrolls
     ImGuiViewport* vp = ImGui::GetMainViewport();
+    // K-421: freely resizable standalone Loupe window, remembering its size and UI scale across sessions.
+    float winW = 0.0f, winH = 0.0f;
+    bool forceSz = false;
+    preferredWindowSize(a, 16.0f, 36.0f, vp->WorkSize, winW, winH, forceSz);
+    ImGui::SetNextWindowSize(ImVec2(winW, winH), forceSz ? ImGuiCond_Always : ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(480.0f, 320.0f),
+                                        ImVec2(std::max(480.0f, vp->WorkSize.x - 16.0f), std::max(320.0f, vp->WorkSize.y - 16.0f)));
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.45f), ImGuiCond_Appearing,
                             ImVec2(0.5f, 0.5f));
     bool open = true;
-    if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags)) {
+    if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoDocking)) {
       ui::KeepWindowInViewport();
-      drawForm(a, s, std::clamp(std::floor(vp->WorkSize.x - 48.0f), 660.0f, 1100.0f), vp->WorkSize.y - 120.0f);  // J-207: fits the work area
+      const ImVec2 avail = ImGui::GetContentRegionAvail();
+      const dock::Layout lo = dock::scaledLayout(avail.x, avail.y, uiScale(a));
+      dockDev() = {avail.x, avail.y, lo.compact, lo.scale, lo.formW, lo.headH, lo.waveH};
+      drawFormLayout(a, s, lo);
+      if (!ImGui::IsWindowAppearing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        const ImVec2 curSz = ImGui::GetWindowSize();
+        rememberWindowSize(a, curSz.x, curSz.y);
+      }
     }
     ImGui::End();
     if (!open) {

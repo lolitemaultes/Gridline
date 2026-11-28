@@ -142,6 +142,8 @@ void uninstall() {
 
 bool installed() { return gInstalled; }
 
+bool shown() { return gInstalled; }  // the Cocoa menu bar is always on screen
+
 bool busStarted() { return false; }  // no bus: the Cocoa menu bar
 
 std::string takeChosen() {

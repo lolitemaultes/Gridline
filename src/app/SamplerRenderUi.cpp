@@ -1,6 +1,7 @@
 // Gridline — render to sampled instrument window (RN-08, see J59Ui.h and
 // engine/SampledInstrument.h).
 #include "../core/Crash.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include "Keys.h"
 #include <algorithm>
@@ -45,7 +46,7 @@ struct Job {
   StallWatch watch;
   ~Job() {
     cancel = true;
-    if (worker.joinable()) worker.join();
+    gl::threads::safeJoin(worker);
   }
 };
 

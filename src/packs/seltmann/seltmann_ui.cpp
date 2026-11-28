@@ -8,7 +8,9 @@
 // own keys. The waveform lives in seltmann_wave_ui.cpp, the sequence in seltmann_seq_ui.cpp, the
 // layout pickers and the keys strip in seltmann_parts_ui.cpp, the cards in seltmann_cards_ui.cpp.
 // Everything is drawn as vectors with Theme roles.
+#include "../../app/UrlImportUi.h"
 #include "seltmann_ui.h"
+#include "../../core/ThreadJoin.h"
 #include "../../core/ThreadName.h"
 #include <algorithm>
 #include <cmath>
@@ -36,6 +38,7 @@
 #include "../../app/PluginSkin.h"
 #include "../../app/Theme.h"
 #include "../../app/Widgets.h"
+#include "../../app/Windows.h"
 #include "../../core/I18n.h"
 #include "../../core/Song.h"
 #include "../../engine/Program.h"
@@ -213,6 +216,10 @@ bool button(const char* id, ImVec2 p0, ImVec2 size, const char* text, bool on, c
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImGui::SetCursorScreenPos(p0);
   const bool clicked = ImGui::InvisibleButton(id, size);
+  if (text && *text) {  // the button's English label for the item hooks (the dev "atitem" finds it by name)
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    IMGUI_TEST_ENGINE_ITEM_INFO(g.LastItemData.ID, text, g.LastItemData.StatusFlags);
+  }
   const bool hv = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
   if (hv && hint) ui::Tooltip(i18n::tr(hint));
   const ImVec2 p1(p0.x + size.x, p0.y + size.y);
@@ -550,8 +557,7 @@ void makeLoops(App& a, const PluginTarget& t, Ed& e) {
   static std::vector<std::thread> threads;  // joined when the editor library unloads (static destruction)
   struct Joiner {
     ~Joiner() {
-      for (auto& th : threads)
-        if (th.joinable()) th.join();
+      for (auto& th : threads) gl::threads::safeJoin(th);
     }
   };
   static Joiner joiner;
@@ -591,6 +597,22 @@ void sendToProject(App& a, const PluginTarget& t, Ed& e) {
 }
 
 void dragOut(App& a, const PluginTarget& t, Ed& e, const std::string& item, const std::string& label) {
+  // K-445: the same file without a drag (right-click): placed by Gridline itself, so it never
+  // depends on the window system (a drag between OS windows, X11, Wayland), and where it is kept.
+  if (ImGui::BeginPopupContextItem()) {  // (the item's own id: one menu per chip and row)
+    const bool notes = item == "midi";
+    if (ImGui::MenuItem(browserui::playlistAddText(a)))
+      if (const std::string f = renderItem(a, t, e, item, label); !f.empty()) browserui::addFileToPlaylist(a, f);
+    if (!notes && ImGui::MenuItem(browserui::rackAddText(a)))
+      if (const std::string f = renderItem(a, t, e, item, label); !f.empty()) browserui::addFileToRack(a, f);
+    ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr(browserui::revealText()))) {
+      const std::string f = renderItem(a, t, e, item, label);
+      browserui::revealInFileManager(a, f.empty() ? loopsDir(a) : f);
+    }
+    if (ImGui::IsItemHovered()) a.setHint(loopsDir(a));
+    ImGui::EndPopup();
+  }
   if (!ImGui::IsItemActive() || !ImGui::IsMouseDragging(0, 4.0f)) return;
   // render once, when the drag starts (cached by content)
   const std::string f = renderItem(a, t, e, item, label);
@@ -622,6 +644,10 @@ float dragChip(App& a, const PluginTarget& t, Ed& e, const char* id, ImVec2 p0, 
   const float w = std::round(tw + 30);
   ImGui::SetCursorScreenPos(p0);
   ImGui::InvisibleButton(id, ImVec2(w, h));
+  if (std::strcmp(id, "##sploop") == 0 || std::strcmp(id, "##smidi") == 0) {  // K-445: "sdlat" targets, where they show on screen
+    const ImVec2 s0 = edzoomui::toScreenHere(ImGui::GetItemRectMin()), s1 = edzoomui::toScreenHere(ImGui::GetItemRectMax());
+    devNoteRectAt(id[3] == 'p' ? "selloop" : "selmidi", s0.x, s0.y, s1.x, s1.y);
+  }
   const bool hv = ImGui::IsItemHovered(), ac = ImGui::IsItemActive();
   if (hv && !ac && hint) ui::Tooltip(i18n::tr(hint));
   if (hv || ac) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
@@ -661,7 +687,15 @@ void loadAudio(App& a, const PluginTarget& t, const std::string& path, const std
     st.data = path;
     setPluginState(a, t, st, i18n::tr("Load audio"));
     if (t.isChannel()) a.doc.renameChannel(t.owner, name.empty() ? fs::path(path).stem().string() : name);
+    ed(t).foldPath = path;
   }
+}
+
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path, const std::string& title) {
+  const PluginInfo* info = t.info(a.doc.song());
+  if (!info || info->type != kType) return false;
+  loadAudio(a, t, path, title);
+  return true;
 }
 
 namespace {
@@ -746,12 +780,15 @@ void drawEmpty(App& a, const PluginTarget& t, Ed& e, ImVec2 z0, ImVec2 z1) {
                : i18n::tr("Breaks, loops, full songs, anything. Seltmann finds the tempo and the bars and chops it for you."));
   textC(dl, a.fontRegular, theme::kFontCaption, ImVec2(c.x, c.y + 58), P.textFaint,
         i18n::tr("From Finder or Explorer, Tracklib, the browser, the playlist or the audio editor"));
-  // J-218: Load and Record side by side, the same size
-  if (button("##sload2", ImVec2(c.x - 155, c.y + 82), ImVec2(150, 34), i18n::N_("Load audio..."), false, nullptr,
+  // J-218: Load, Import from URL and Record side by side, the same size
+  if (button("##sload2", ImVec2(c.x - 233, c.y + 82), ImVec2(150, 34), i18n::N_("Load audio..."), false, nullptr,
              static_cast<int>(ui::Icon::Open), true))
     openLoadDialog(a, t, e);
-  e.recEntry = ImVec2(c.x + 80, c.y + 99);
-  if (button("##srec2", ImVec2(c.x + 5, c.y + 82), ImVec2(150, 34), i18n::N_("Record..."), false,
+  if (button("##surl2", ImVec2(c.x - 75, c.y + 82), ImVec2(150, 34), i18n::N_("From URL..."), false,
+             i18n::N_("Import from URL: a web link's audio, chopped here"), static_cast<int>(ui::Icon::Download), true))
+    urlimportui::openForPlugin(a, t, 0);
+  e.recEntry = ImVec2(c.x + 158, c.y + 99);
+  if (button("##srec2", ImVec2(c.x + 83, c.y + 82), ImVec2(150, 34), i18n::N_("Record..."), false,
              i18n::N_("Record from an audio input (a microphone, an instrument) and load the recording here"),
              static_cast<int>(ui::Icon::Record), true))
     openRecorder(a, t);
@@ -899,6 +936,11 @@ void drawHeader(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, float H
   rx -= 6 + loadW;
   if (button("##sload", ImVec2(rx, cTop), ImVec2(loadW, kHeaderCtl), i18n::N_("Load..."), false, i18n::N_("Load a song, a loop or any audio file")))
     openLoadDialog(a, t, e);
+  rx -= 6 + kHeaderCtl;
+  if (button("##surl", ImVec2(rx, cTop), ImVec2(kHeaderCtl, kHeaderCtl), "", false, i18n::N_("Import from URL: a web link's audio, chopped here"),
+             static_cast<int>(ui::Icon::Download)))
+    urlimportui::openForPlugin(a, t, 0);
+  noteBtn(e, "url");
   rx -= 10;
   // the cards of the header: Sound, Grid, Loops
   {
@@ -1101,6 +1143,7 @@ void drawActions(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, float 
   if (button("##smake", ImVec2(rx, top), ImVec2(104, ch), i18n::N_("Make loops"), false,
              i18n::N_("Render the pattern, the best phrases and the sections as loops at the project tempo into the \"Seltmann loops\" folder")))
     makeLoops(a, t, e);
+  if (ImGui::IsItemHovered()) a.setHint(std::string(i18n::tr("Loops go to")) + " " + loopsDir(a));  // K-445: the whole path
   if (e.loopJob && !e.loopJob->finished) {
     const float pr = static_cast<float>(e.loopJob->done) / std::max(1, e.loopJob->total.load());
     dl->AddRectFilled(ImVec2(rx + 6, top + ch - 4), ImVec2(rx + 98, top + ch - 2), P.surface900, 1);
@@ -1204,8 +1247,11 @@ void drawCompactRow(App& a, const PluginTarget& t, Ed& e, ImVec2 o, float W, flo
     }
     ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("Load..."))) openLoadDialog(a, t, e);
+    if (ImGui::MenuItem(i18n::tr("Import from URL..."))) urlimportui::openForPlugin(a, t, 0);
     if (ImGui::MenuItem(i18n::tr("Record take"))) openRecorder(a, t);
     if (ImGui::MenuItem(i18n::tr("Make loops"))) makeLoops(a, t, e);
+    if (ImGui::MenuItem(i18n::tr("Show the loops folder"))) browserui::revealInFileManager(a, loopsDir(a));  // K-445
+    if (ImGui::IsItemHovered()) a.setHint(loopsDir(a));
     if (ImGui::MenuItem(i18n::tr("Send to project"))) sendToProject(a, t, e);
     LinkState ls = LinkNone;
     linkedPatternOf(a, t, &ls);
@@ -1450,8 +1496,7 @@ std::vector<std::thread>& previewThreads() {
   static std::vector<std::thread> threads;  // joined when the editor library unloads (static destruction)
   struct Joiner {
     ~Joiner() {
-      for (auto& th : threads)
-        if (th.joinable()) th.join();
+      for (auto& th : threads) gl::threads::safeJoin(th);
     }
   };
   static Joiner joiner;
@@ -1878,6 +1923,9 @@ bool prepare(App& a, const PluginTarget& t) {
     e.hasModel = parseData(sp->data, e.path, m);
     if (e.hasModel) e.m = std::move(m);
     if (e.path != before) {
+      // the step that loaded it here is the newest one (not an undo or redo since): remember it
+      e.foldSerial = !e.path.empty() && e.foldPath == e.path && a.doc.history().stateSerial() != a.doc.moveSerial() ? a.doc.history().stateSerial() : 0;
+      e.foldPath.clear();
       e.selSlice = 0, e.selStep = -1, e.rendered.clear(), e.keyPage = 0;
       e.job.reset();
       if (e.pattern.on) togglePattern(a, t, e);
@@ -1898,7 +1946,11 @@ bool prepare(App& a, const PluginTarget& t) {
       m = k;
     }
     e.reanalyse = false;
-    commit(a, t, e, m, i18n::N_("Analyse"));
+    const uint64_t fold = e.hasModel ? 0 : e.foldSerial;
+    e.foldSerial = 0;
+    // a first analysis right after a load here: part of the load's undo step (else its own)
+    if (fold) a.doc.amendStep(fold, [&] { commit(a, t, e, m, i18n::N_("Analyse")); });  // (recorded as usual when it cannot join)
+    else commit(a, t, e, m, i18n::N_("Analyse"));
   }
   if (e.hasModel) {
     if (const char* lay = std::getenv("GRIDLINE_SELTMANN_LAYOUT"); lay && *lay && e.m.preset != lay)
@@ -1910,9 +1962,12 @@ bool prepare(App& a, const PluginTarget& t) {
     }
   }
   if (e.loopJob && e.loopJob->finished) {
-    char b[160];
-    std::snprintf(b, sizeof b, "%s %zu %s", i18n::tr("Made"), e.loopJob->files.size(), i18n::tr("loops in the \"Seltmann loops\" folder"));
-    a.notify(b);
+    // K-445: where they are (the folder's whole path; the browser lists it as "Seltmann loops") and
+    // a button that opens it in the system's file manager.
+    const std::string dir = loopsDir(a);
+    char b[96];
+    std::snprintf(b, sizeof b, "%s %zu %s", i18n::tr("Made"), e.loopJob->files.size(), i18n::tr("loops in"));
+    a.notifyAction(std::string(b) + " " + dir, {{browserui::revealText(), [&a, dir] { browserui::revealInFileManager(a, dir); }}}, 20.0);
     browserui::refreshIndex(a);
     e.loopJob.reset();
   }

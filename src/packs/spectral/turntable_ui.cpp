@@ -28,6 +28,7 @@
 #include "../../app/PluginSkin.h"
 #include "../../app/PluginUI.h"
 #include "../../app/Theme.h"
+#include "../../app/UrlImportUi.h"
 #include "../../app/Widgets.h"
 #include "../../core/I18n.h"
 #include "../../engine/Program.h"
@@ -476,13 +477,17 @@ void editorTurntable(App& a, const PluginTarget& t, float width) {
   }
 
   // ---- bottom row: load, sample name, options, zoom
-  if (skin::button(F, "##ttload", 2, 205, 34, 20, "", skin::hex(kButton), skin::hex(0xE4ECEE), i18n::tr("Load a sample (or drop one on the deck)"))) {
+  const ImU32 glyph = skin::hex(0xE4ECEE);  // (the load and URL buttons' glyphs)
+  if (skin::button(F, "##ttload", 2, 205, 21, 20, "", skin::hex(kButton), glyph, i18n::tr("Load a sample (or drop one on the deck)"))) {
     const PluginTarget tt = t;
     openSampleDialog(a, i18n::tr("Load sample"), [&a, tt](const std::string& p) { loadSample(a, tt, p); });
   }
-  ui::drawIconFitC(dl, ui::Icon::Folder, F.p(19, 215), F.sz(12, 9), skin::hex(0xE4ECEE));
+  ui::drawIconFitC(dl, ui::Icon::Folder, F.p(12.5f, 215), F.sz(12, 9), glyph);
+  if (skin::button(F, "##tturl", 24, 205, 21, 20, "", skin::hex(kButton), glyph, i18n::tr("Import from URL: a web link's audio onto the deck")))
+    urlimportui::openForPlugin(a, t, 0);
+  ui::drawIconFitC(dl, ui::Icon::Download, F.p(34.5f, 215), F.sz(11, 10), glyph);
   {
-    const ImVec2 p0 = F.p(39, 207), p1 = F.p(206, 223);
+    const ImVec2 p0 = F.p(48, 207), p1 = F.p(206, 223);
     dl->AddRectFilled(p0, p1, skin::hex(kPathBg), F.u(1.5f));
     const float fs = fontPx(F, 5.8f);
     const std::string name = fitText(sampleName(st, missing), p1.x - p0.x - F.u(6), fs);
@@ -529,6 +534,13 @@ void editorTurntable(App& a, const PluginTarget& t, float width) {
   }
   dropTarget(a, t, F.o, F.p(kW, formH));
   F.end(kW, formH);
+}
+
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path) {
+  const PluginInfo* info = t.info(a.doc.song());
+  if (!info || (info->type != kTurntableFx && info->type != kTurntableInst)) return false;
+  loadSample(a, t, path);
+  return true;
 }
 
 }  // namespace gl::packs::spectral

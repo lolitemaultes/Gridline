@@ -15,25 +15,36 @@ Open it with **Alt+F9** or **View > LFO board** in every layout:
 - **Tracker**: the **LFO** page, after Mix. As with the other page keys, Alt+F9 shows the page (pressed
   again it stays); **Exit** or Esc closes the board and goes back to the pattern.
 
-## The cards
+## The cards and the inspector
 
-Each LFO is a card, four across on a wide screen and one column in a narrow space:
+Each source is a calm card: its colour, on lamp, number and name (double-click to rename), its wave
+as it plays, a one-line summary (shape, rate and restart) and how many targets it moves. The round
+**handle** and the **...** menu show when you point at a card or select it. Click a card to select it:
+the **inspector** beside the cards shows everything about it:
 
-- The header: the on lamp (off: every target keeps its own value), the LFO's number and name
-  (double-click to rename), its shape, the round **handle** and the **...** menu.
-- The wave, as it plays, with a dot at the current position.
-- Eight shapes: sine, triangle, saw up, saw down, square, random hold, random glide and a drawn shape.
+- The wave, large, with a dot at the current position (for the drawn shape: the shape editor, see
+  [Drawing a shape](#drawing-a-shape)).
+- Eight shapes: sine, triangle, saw up, saw down, square, random hold, random glide and **Draw**.
+  **Edit this shape** turns the shape shown into points you can change.
 - **Hz** or **Tempo**, the rate (note values with dotted and triplet ones, or 0.01 to 40 Hz), and
   when it restarts: **Free** (runs freely), **Play** (locked to the song: the same place in the song is
   always the same place in the wave) or **Note** (restarts on every note of a channel).
-- Knobs for **Rate**, **Phase**, **Depth**, **Offset** and **Smooth**. These are ordinary knobs: they
-  can be automated, linked to a macro or moved by another LFO.
-- **Targets**: a chip for each knob the LFO moves, with how far. Click a chip for its settings; **+ Add
-  target** lists every control in the project, with a search, to pick from.
+- Knobs for **Rate**, **Phase**, **Depth**, **Offset** and **Smooth**, in the source's colour. These
+  are ordinary knobs: they can be automated, linked to a macro or moved by another source.
+- **Targets**: a row for each knob the source moves, with its owner, the control and the amount as a
+  bar. Click a row for its settings; **+ Add target** lists every control in the project, with a
+  search, to pick from.
+- **Presets**: load a preset into the source, or save it as one (see [LFO presets](#lfo-presets)).
 
-The dashed **New LFO** card (or **+ New LFO**) adds a sine at 1/4, locked to the song. The toolbar
-filters the cards (**All**, **Moving now**, **No targets**), finds an LFO or a target by name, sorts
-them and switches between **Cards** and **Compact**.
+Where the board is short (Smooth's lower pane), the inspector lays out in two columns: the picture
+and the shapes on the left, the rate, knobs and targets on the right. Where it is narrow, the cards
+fill the width without an inspector; select a card and use **Edit in a window**.
+
+**+ New LFO** adds a sine at 1/4, locked to the song; the arrow beside it adds **Chaos**, **Random**
+or a **New LFO from a preset**. With no sources yet the board shows the same three choices. The
+toolbar filters the cards (**All**, **Moving now**, **No targets**), finds a source or a target by
+name, sorts them and switches between **Cards** and **Compact** (one row each; the list scrolls a row
+at a time).
 
 ## Linking a knob
 
@@ -124,16 +135,54 @@ An LFO can move a macro, and everything the macro drives moves with it in the sa
 also move another LFO's depth, rate or phase. Gridline refuses a link that would make a loop (an LFO
 moving a macro that moves the same LFO's depth, for instance) and says which links would close it.
 
-## Presets and more settings
+## Drawing a shape
 
-The card's **...** menu renames, turns off, duplicates, colours and reorders an LFO (or a Chaos or
-Random source, with its seed and, for Random, Roll, the spread and the steps), applies one of
-the presets (Dotted wobble, Quarter pump, Slow drift, Sixteenth gate, Random steps, Long swell) and has
-the settings that are not on the card: **Up only** (the knob is the bottom of the swing), the pulse
-width of the square, the steps per cycle and new values of the random shapes, a **Fade in** after each
-restart and the channel whose notes restart a **Note** LFO. **Edit in a window** shows the LFO with
-all its settings, every target's settings and, for the drawn shape, an editor: click to add a point,
-drag to move it, right-click to remove it.
+Pick **Draw** in the shapes, or **Edit this shape** to start from the shape you have (a sine, a saw,
+the random steps and so on become points that play the same). The inspector's large wave becomes
+the editor:
+
+- **Points**: click to add a point, drag a point to move it, drag the small diamond in the middle of a
+  line to bend it, right-click a point to remove it.
+- **Pencil**: draw the shape by hand. With a grid, every cell you cross becomes a step at the height
+  you drew; without one, the line follows your hand.
+- **Grid**: off, or 4, 8, 16, 32 or 64 steps across the cycle. Points snap to it.
+- **Line**, **Smooth** and **Step** set the selected point: a straight line to the next point (bent by
+  its curve), a smooth curve flat at both points, or a hold until the next point.
+- **Flip** mirrors the shape left to right, **Invert** turns it upside down and **Clear** leaves a flat
+  line at the middle to draw on.
+
+Each stroke, point move or button is one undo step. The shape is saved with the project and, in a
+shared session, reaches the others as one change when you let go of the mouse. A shape holds up to
+128 points.
+
+## LFO presets
+
+A preset keeps a whole source: its shape (a drawn one too), rate, restart and knobs. It never keeps
+the targets, so loading one into a source changes how it moves and leaves what it moves alone.
+
+- **Load**: the card's **...** menu (**Load a preset**), the inspector's **Presets** button, or the
+  Browser's **LFO presets** (double-click loads one into the selected LFO, or makes a new one when none
+  is selected; right-click for **New LFO from it** and **Load into the selected LFO**).
+- **New**: **New LFO from a preset** beside **+ New LFO**, in the board's **...** menu and in every
+  knob's **Modulate > LFO** menu.
+- **Save**: **Save as a preset...** in the card's menu or under **Presets**. A name with a `/` makes a
+  folder. Your presets go to the `lfos` folder of your preset folder (see
+  [the data folder](data-folder.md)) and show under **My presets** next to the factory ones.
+
+The factory presets are Slow swell, Wobble 1/4, Dotted wobble, Triplet tremolo, Gate 1/8, Ramp up bar,
+Random steps, Drift, and three drawn ones: Stutter gate, Sidechain pump and Bounce 1/2.
+
+The Browser lists **LFO presets** with the other presets in Studio, Smooth and the Tracker, and as a
+place of its own in Clips.
+
+## More settings
+
+The card's **...** menu renames, turns off, duplicates, colours and reorders a source (or a Chaos or
+Random source, with its seed and, for Random, Roll, the spread and the steps), loads and saves presets
+and has the settings that are not on the card: **Up only** (the knob is the bottom of the swing), the
+pulse width of the square, the steps per cycle and new values of the random shapes, a **Fade in**
+after each restart and the channel whose notes restart a **Note** LFO. **Edit in a window** shows the
+selected source in a window of its own, the same as the inspector.
 
 ## Saving and sharing
 

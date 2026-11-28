@@ -53,9 +53,11 @@ const std::vector<Kind>& kinds() {
         {"swingNotes", "swing moves piano-roll notes too (false: steps only)"},
         {"groove", "swing shape: grid, cycle, timing[], velocity[], accent, preset"},
         {"slidesByColour", "slide notes glide only notes of their own colour"},
+        {"slidesVelocity", "slide notes also glide the velocity of the notes they slide (fade in, fade out, swell)"},
         {"masterPitch", "semitones"},
         {"autoCrossfades", "overlapping audio clips crossfade"},
         {"panLaw", "0 balance, 1 constant power, 2 Stage placement"},
+        {"rackAutoLanes", "the rack's automation lanes for song and mixer parameters, kept across patterns: owner, index, name, color"},
         {"stage", "the first Stage room (use room/1)"},
         {"live", "areaEnd: clips starting before this tick are launched by hand"},
         {"channelGroups", "channel rack display group names"},
@@ -95,6 +97,7 @@ const std::vector<Kind>& kinds() {
         {"keyLo", "lowest key that plays"},
         {"keyHi", "highest key that plays"},
         {"swingTruncate", "swung steps end at their unswung end"},
+        {"automationLanes", "the rack's automation lanes for this channel's parameters, kept across patterns: index, name, color"},
         {"audioClip", "a playlist audio clip source"},
         {"icon", "track icon number"},
         {"flIcon", "icon number from an imported .flp, kept for export"},
@@ -607,6 +610,7 @@ bool transplant(Document& d, const Ref& r, const Song& ns, const Json& patchKeys
     x.swingNotes = ns.swingNotes;
     x.groove = ns.groove;
     x.slidesAnyColour = ns.slidesAnyColour;
+    x.slidesVelocity = ns.slidesVelocity;
     x.masterPitch = ns.masterPitch;
     x.autoCrossfades = ns.autoCrossfades;
     x.panLaw = ns.panLaw;
@@ -1321,6 +1325,10 @@ ToolResult tArrangement(Environment& env, const Json& a) {
   } else if (action == "remove") {
     if (count <= 1) return fail("the only arrangement cannot be removed");
     d.editSong("delete arrangement", [&](Song& s) { okDone = removeArrangement(s, n); });
+  } else if (action == "move") {
+    const int to = static_cast<int>(argInt(a, "to", 1)) - 1;
+    if (to < 0 || to >= count) return fail("no destination arrangement " + std::to_string(to + 1) + " (1.." + std::to_string(count) + ")");
+    d.editSong("reorder arrangement", [&](Song& s) { okDone = moveArrangement(s, n, to); });
   } else if (action != "list") {
     return fail("unknown action");
   }
@@ -1799,9 +1807,10 @@ void addMoreTools(std::vector<Tool>& v) {
                 {"action"}),
       false, tStageRoom);
   add("arrangement", "arrangements",
-      "Lists the playlist arrangements, or adds (name, copyCurrent), selects, renames or removes one. One undo step." + ex("arrangement"),
-      objSchema({{"action", enumP("list (default), add, select, rename, remove", {"list", "add", "select", "rename", "remove"})},
+      "Lists the playlist arrangements, or adds (name, copyCurrent), selects, renames, moves (to) or removes one. One undo step." + ex("arrangement"),
+      objSchema({{"action", enumP("list (default), add, select, rename, move, remove", {"list", "add", "select", "rename", "move", "remove"})},
                  {"arrangement", intP("Arrangement (1 = first)", 1, 999)},
+                 {"to", intP("move: new position (1 = first)", 1, 999)},
                  {"name", strP("Name")},
                  {"copyCurrent", boolP("add: start as a copy of the current arrangement")}}),
       false, tArrangement);
@@ -1844,7 +1853,7 @@ namespace gl::mcp {
 // the network and files may do stay with the user.
 const std::vector<std::string>& settingAccessRules() {
   static const std::vector<std::string> v = {"mcp.", "osc.", "collab.", "scripts.", "update.", "suite.", "import.", "file.", "files.", "audio.inputDevice",
-                                             "backup.location", "backup.autosave", "debug.logToFile", "logger.enabled", "general.startup", "keys.bindings"};
+                                             "audio.jack.", "backup.location", "backup.autosave", "debug.logToFile", "logger.enabled", "general.startup", "keys.bindings"};
   return v;
 }
 

@@ -619,8 +619,10 @@ void editorMultiband(App& a, const PluginTarget& t, float width) {
   skin::label(dl, f, 150, 89, 34, 11, "SPEED", lblText, 0, 7.5f);
   skin::slider(f, "mbspeed", 186, 90, 87, 9, ui.speed, hex(0x5D6466), hex(0x6E6E6E), "Display speed");
   skin::wheel(a, t, MbLowXover, f, 82, 103, 36, 36, wf);
+  ImGui::PushID("midedges");  // K-459: linked, these two show the low / high edge again (one ID each)
   skin::wheel(a, t, indep ? MbMidLowEdge : MbLowXover, f, 132, 103, 36, 36, wf);
   skin::wheel(a, t, indep ? MbMidHighEdge : MbHighXover, f, 182, 103, 36, 36, wf);
+  ImGui::PopID();
   skin::wheel(a, t, MbHighXover, f, 233, 103, 36, 36, wf);
   {  // edge labels + link toggle
     char b0[16], b1[16];

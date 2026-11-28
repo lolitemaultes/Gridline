@@ -4,6 +4,7 @@
 // layout is built from its shell, so those windows keep their identity (menus, keys, the page strip)
 // and every other layout keeps its own views. Same data, same Document commands: a step toggled
 // here, a clip placed or a volume dragged is one undo step and syncs to collaborators as anywhere.
+#include "PluginIcons.h"
 #include "TrackerPages.h"
 #include "../core/Lanes.h"
 #include "SnapMenu.h"
@@ -31,6 +32,7 @@
 #include "../core/TrackerGrid.h"
 #include "App.h"
 #include "ContextMenus.h"
+#include "MidiUi.h"
 #include "PluginUI.h"
 #include "TrackerEditors.h"
 #include "LayoutPresets.h"
@@ -98,7 +100,7 @@ float rowHeight() { return std::round(ImGui::GetFontSize() + 4); }
 // right end Exit, back to the pattern (S-03: the pages are screens swapped into the centre, as the
 // classic tracker's; each has its Exit, and the page strip switches between them. They do not
 // close or float: the centre always shows one page and nothing gets lost behind another window).
-float titleBar(App& a, ImVec2 o, float w, const char* title, const std::string& info, float reserve = 0) {
+float titleBar(App& a, ImVec2 o, float w, const char* title, const std::string& info, float reserve = 0, float leftReserve = 0) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float fs = ImGui::GetFontSize(), h = std::round(fs + 8);
   bevelBox(dl, o, ImVec2(o.x + w, o.y + h));
@@ -108,15 +110,19 @@ float titleBar(App& a, ImVec2 o, float w, const char* title, const std::string& 
     trackerview::exitPage(a, ui::stableWindowName(ImGui::GetCurrentWindowRead()->RootWindow->Name));  // as Esc: a page off the strip (LFO) closes
   // cp16: a message just said (an edit refused, a file saved: the app's notices in the Tracker) takes
   // the info's place for a few seconds, as the pattern bar shows it on the pattern page.
-  const float tx0 = o.x + 6 + std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(title)).x) + fs * 12;
+  const float tx0 = std::max(o.x + 6 + std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(title)).x) + fs * 12,
+                             leftReserve > 0 ? o.x + leftReserve + 12 : 0.0f);
+  const float rightLim = o.x + w - ew - reserve - 10;
+  const float room = rightLim - tx0;
   if (const std::string* msg = trackerview::freshStatus()) {
-    const float room = std::max(1.0f, o.x + w - ew - reserve - 10 - tx0);
-    const float tw = std::min(room, a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, msg->c_str()).x);
-    theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(std::round(o.x + w - ew - reserve - 10 - tw), std::round(o.y + (h - fs) * 0.5f)), room, pal().hot, msg->c_str());
-  } else if (!info.empty()) {
+    if (room > 24.0f) {
+      const float tw = std::min(room, a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, msg->c_str()).x);
+      theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(std::round(rightLim - tw), std::round(o.y + (h - fs) * 0.5f)), room, pal().hot, msg->c_str());
+    }
+  } else if (!info.empty() && room > 32.0f) {
     ImFont* mono = monoFont(a);
-    const float tw = mono->CalcTextSizeA(fs, FLT_MAX, 0, info.c_str()).x;
-    dl->AddText(mono, fs, ImVec2(std::round(o.x + w - ew - reserve - 10 - tw), std::round(o.y + (h - fs) * 0.5f)), pal().textDim, info.c_str());
+    const float tw = std::min(room, mono->CalcTextSizeA(fs, FLT_MAX, 0, info.c_str()).x);
+    theme::textEllipsis(dl, mono, fs, ImVec2(std::round(rightLim - tw), std::round(o.y + (h - fs) * 0.5f)), room, pal().textDim, info.c_str());
   }
   return h;
 }
@@ -652,28 +658,41 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
       const float cw = ImGui::GetContentRegionAvail().x, dx = c0.x - (xP + pad);
       for (size_t i = 0; i < s.patterns.size(); ++i) {
         const Pattern& p = s.patterns[i];
+        const ObjectId pid = p.id;
+        const Rgb color = p.color;
+        const std::string name = p.name;
+        const int barsCount = p.bars;
         const float y = std::round(c0.y + static_cast<float>(i) * rh);
         ImGui::SetCursorScreenPos(ImVec2(c0.x, y));
         ImGui::PushID(static_cast<int>(i));
         const bool click = ImGui::InvisibleButton("##pat", ImVec2(std::max(1.0f, cw), rh));
+        if (i == 0) devNoteRect("trpat0");
         const bool hov = ImGui::IsItemHovered();
         const bool dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+        ui::Hint("Click: select \xC2\xB7 double-click: pattern editor \xC2\xB7 right-click: rename & options");
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) a.selectPattern(pid);
+        const uint64_t rev = a.doc.revision();
+        if (ImGui::BeginPopupContextItem("##trpatctx")) {
+          patternContextMenu(a, pid);
+          ImGui::EndPopup();
+        }
         ImGui::PopID();
-        const bool sel = p.id == a.curPattern;
+        const bool sel = pid == a.curPattern;
         if (sel) cl->AddRectFilled(ImVec2(c0.x, y), ImVec2(c0.x + cw, y + rh), theme::withAlpha(P.surface600, 0.95f));
         else if (hov) cl->AddRectFilled(ImVec2(c0.x, y), ImVec2(c0.x + cw, y + rh), theme::withAlpha(P.surface700, 0.6f));
         const float ty = std::round(y + (rh - fs) * 0.5f);
-        cl->AddRectFilled(ImVec2(cNo + dx - 5, y + 3), ImVec2(cNo + dx - 2, y + rh - 3), theme::rgb(p.color));
+        cl->AddRectFilled(ImVec2(cNo + dx - 5, y + 3), ImVec2(cNo + dx - 2, y + rh - 3), theme::rgb(color));
         const std::string num = trk::hex2(static_cast<int>(i) + 1);
         cl->AddText(mono, fs, ImVec2(cNo + dx, ty), sel ? P.hot : P.textDim, num.c_str());
-        theme::textEllipsis(cl, a.fontRegular, fs, ImVec2(cName + dx, ty), cBars - cName - 8, sel ? P.text : P.textDim, p.name.c_str());
+        theme::textEllipsis(cl, a.fontRegular, fs, ImVec2(cName + dx, ty), cBars - cName - 8, sel ? P.text : P.textDim, name.c_str());
         char u[16];
-        const std::string bars = countText(a, p.bars);
+        const std::string bars = countText(a, barsCount);
         std::snprintf(u, sizeof u, "%d", uses[i]);
         cl->AddText(mono, fs, ImVec2(cBars + dx, ty), P.textDim, bars.c_str());
         cl->AddText(mono, fs, ImVec2(cUses + dx, ty), uses[i] ? P.textDim : P.textFaint, u);
-        if (click) a.selectPattern(p.id);
+        if (click) a.selectPattern(pid);
         if (dbl) trackerview::showPage(a, "Pattern editor");
+        if (a.doc.revision() != rev) break;
       }
       endBody(a, contentH);
     }
@@ -746,11 +765,48 @@ void arranger(App& a, ImVec2 o, ImVec2 av, float th) {
     line("Time", timeText(s, len));
     line("Position", cur >= 0 ? trk::hexNum(cur) : std::string("--"));
     y += tsp::kGap;
-    char bpm[16];
-    std::snprintf(bpm, sizeof bpm, std::fabs(s.tempo - std::round(s.tempo)) < 0.05 ? "%.0f" : "%.1f", s.tempo);
-    if (const int d = stepper(a, "sgbpm", "Tempo", bpm, ImVec2(x, y), w, bh, "The song tempo in beats per minute (Shift: steps of 0.1)", w)) {
+    char bpm[24];
+    {  // K-409: preserve decimals up to 3 places, trimming trailing zeros
+      std::snprintf(bpm, sizeof bpm, "%.3f", s.tempo);
+      char* dot = std::strchr(bpm, '.');
+      if (dot) {
+        char* end = bpm + std::strlen(bpm);
+        while (end > dot + 1 && end[-1] == '0') *--end = '\0';
+        if (end == dot + 1) *dot = '\0';
+      }
+    }
+    double typedBpm = std::nan("");
+    if (const int d = stepper(a, "sgbpm", "Tempo", bpm, ImVec2(x, y), w, bh,
+                              "The song tempo in beats per minute: click, double-click or right-click to type (Shift: steps of 0.1)", w, false, &typedBpm)) {
       const double t = ImGui::GetIO().KeyShift ? std::round(s.tempo * 10 + d) / 10.0 : std::round(s.tempo) + d;
       a.doc.setParam(songParam(SongParam::Tempo), std::clamp(t, 10.0, 522.0), true);
+    }
+    if (!std::isnan(typedBpm)) {
+      const double v = std::clamp(std::round(typedBpm * 1000.0) / 1000.0, 10.0, 522.0);
+      if (std::fabs(v - s.tempo) > 1e-6) {
+        a.doc.endGesture();
+        a.doc.setParam(songParam(SongParam::Tempo), v, false);
+        a.doc.endGesture();
+      }
+    }
+    {  // K-409: right-click > Type a value... on the Song page's Tempo stepper
+      static bool openSgBpmType = false;
+      const ImVec2 tp0(x, y), tp1(x + w, y + bh);
+      if (ImGui::IsMouseHoveringRect(tp0, tp1) && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+        ImGui::OpenPopup("##sgbpmmenu");
+      if (ImGui::BeginPopup("##sgbpmmenu")) {
+        if (ImGui::MenuItem(i18n::tr("Type a value..."))) openSgBpmType = true;
+        ImGui::Separator();
+        knobContextMenu(a, songParam(SongParam::Tempo));
+        actionLinkMenuItems(a, RemoteAction::TapTempo);
+        ImGui::EndPopup();
+      }
+      if (openSgBpmType) {
+        openSgBpmType = false;
+        ImGui::OpenPopup("##type");
+      }
+      if (const auto d = describeParam(a.doc.song(), songParam(SongParam::Tempo)))
+        ui::ParamTypePopup(songParam(SongParam::Tempo), *d);
     }
     y += bh + tsp::kGap;
     if (const int d = stepper(a, "sgloop", "Loop to", loopAt < 0 ? std::string("--") : trk::hexNum(loopAt), ImVec2(x, y), w, bh,
@@ -1062,7 +1118,11 @@ void rollToolbar(App& a) {
       const std::string num = trk::hex2(ci + 1);
       const float ty = std::round(o.y + (h - fs) * 0.5f);
       dl->AddText(mono, fs, ImVec2(x + 5, ty), P.hot, num.c_str());
-      const float nx = x + 5 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00 ").x;
+      float nx = x + 5 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00 ").x;
+      // K-450: its instrument's own icon before the name (a built-in instrument).
+      if (fx1 - nx > 80 && ui::drawPluginIcon(dl, c->plugin.type, ImVec2(std::round(nx + 6), std::round((y0 + y1) * 0.5f)), std::min(14.0f, std::floor(y1 - y0 - 4)),
+                                             ui::PluginIconSurface::Tracker))
+        nx += 18;
       theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(nx, ty), fx1 - nx - 4, P.text, c->name.c_str());
     }
     x = fx1 + kGap;
@@ -1514,9 +1574,15 @@ void song(App& a) {
   const float zh = std::round(fs + 8) - 4, pmW = std::round(zh * 1.3f);
   const float fitBw = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Fit")).x) + 14;
   const float zoomW = pmW * 2 + fitBw + 4 + 8;
+  const float bx0 = std::round(6 + a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Song")).x + fs * 1.5f);
+  const float arrBtnW = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Arranger")).x) + 20;
+  const float lanesBtnW = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Lanes")).x) + 20;
+  const std::string curArrName = arrangementName(s, s.arrangements.empty() ? 0 : s.currentArrangement);
+  const float arrDropW = std::clamp(std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, curArrName.c_str()).x) + 34.0f, 108.0f, 180.0f);
+  const float leftReserve = bx0 + arrBtnW + 2 + lanesBtnW + 8 + arrDropW;
   const float th = titleBar(a, o, av.x, i18n::tr("Song"),
                             gSongLanes ? std::string(info) : std::string(i18n::tr("Up/Down: entry  Shift: mark  Ctrl: move  Left/Right: pattern  Ins Del  Enter: play")),
-                            zoomW);
+                            zoomW, leftReserve);
   {
     const float ew = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Exit")).x) + 24;
     float zx = o.x + av.x - 2 - ew - 8 - fitBw;
@@ -1533,16 +1599,21 @@ void song(App& a) {
                     gSongLanes ? keys::withKeys(i18n::N_("Narrower lanes, more in view (%s or Ctrl+wheel down)"), {keys::cmdKey("view.zoomTracksOut", "Ctrl+Alt+,")}) : keys::withKeys(i18n::N_("The timeline zoomed out (%s or Ctrl+wheel down over it)"), {keys::cmdKey("view.zoomTracksOut", "Ctrl+Alt+,")})))
       zoomSong(a, -1);
   }
-  {  // the arranger or the lanes (the clips on the song's tracks, as they lie)
-    const float bh = th - 4, bx = std::round(o.x + 6 + a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Song")).x + fs * 1.5f);
-    const float bw = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Arranger")).x) + 20;
-    if (bevelButton(a, "##sgarr", "Arranger", ImVec2(bx, o.y + 2), ImVec2(bx + bw, o.y + 2 + bh), !gSongLanes,
+  {  // the arranger or the lanes (the clips on the song's tracks, as they lie), plus the K-406 arrangement switcher
+    const float bh = th - 4, bx = o.x + bx0;
+    if (bevelButton(a, "##sgarr", "Arranger", ImVec2(bx, o.y + 2), ImVec2(bx + arrBtnW, o.y + 2 + bh), !gSongLanes,
                     "The song as a list of entries, one pattern each, with the pattern bank"))
       gSongLanes = false;
-    const float lw = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Lanes")).x) + 20;
-    if (bevelButton(a, "##sglanes", "Lanes", ImVec2(bx + bw + 2, o.y + 2), ImVec2(bx + bw + 2 + lw, o.y + 2 + bh), gSongLanes,
+    if (bevelButton(a, "##sglanes", "Lanes", ImVec2(bx + arrBtnW + 2, o.y + 2), ImVec2(bx + arrBtnW + 2 + lanesBtnW, o.y + 2 + bh), gSongLanes,
                     "The clips on the song's tracks as they lie (layered patterns, audio, automation)"))
       gSongLanes = true;
+    const float ax = bx + arrBtnW + 2 + lanesBtnW + 8;
+    const float ew = std::ceil(a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr("Exit")).x) + 24;
+    const float maxDropW = o.x + av.x - 2 - ew - zoomW - 8 - ax;
+    if (maxDropW >= 72.0f) {
+      ImGui::SetCursorScreenPos(ImVec2(ax, o.y + 2));
+      arrangementDropdown(a, "##trkArrDrop", std::min(arrDropW, maxDropW), bh, ArrangementStyle::Tracker);
+    }
   }
   if (!gSongLanes) {
     arranger(a, o, av, th);
@@ -1792,14 +1863,10 @@ void song(App& a) {
     }
     if (ImGui::BeginPopup("##songclipmenu")) {
       if (s.clip(menuClip)) {
-        // (N-08: the clip's menu below opens with its name; no second title here)
-        if (ImGui::MenuItem(i18n::tr("Delete clip"))) {
-          a.doc.removeClip(menuClip);
-          if (gSongClip == menuClip) gSongClip = kNoId;
-        } else if (!renderui::clipMenu(a, menuClip)) {  // K-254: the order entry's pattern to a sample
-          ImGui::Separator();
-          devArrangementClipMenu(a, menuClip);
-        }
+        // K-456: the arrangement's clip menu as it is (its name, render rows and Delete included; a
+        // second Delete and render block here doubled them).
+        devArrangementClipMenu(a, menuClip);
+        if (!a.doc.song().clip(menuClip) && gSongClip == menuClip) gSongClip = kNoId;
       }
       ImGui::EndPopup();
     }
@@ -1905,9 +1972,24 @@ void effectMenu(App& a, ObjectId track) {
     }
     ++used;
     const PluginInfo* fx = findPlugin(sl.plugin.type);
-    const std::string label = std::to_string(k + 1) + "  " + (fx ? fx->name : sl.plugin.type) + (sl.enabled ? "" : std::string("  (") + i18n::tr("bypassed") + ")") +
-                              "##fxslot" + std::to_string(k);
-    if (ImGui::BeginMenu(label.c_str())) {
+    // K-450: the effect's icon after the slot number (room kept in the label, drawn on the menu's
+    // own draw list after the item, so it stays in front of the item's highlight).
+    const std::string num = std::to_string(k + 1) + "  ";
+    const bool own = ui::hasPluginIcon(sl.plugin.type);
+    const float isz = std::min(13.0f, std::floor(ImGui::GetTextLineHeight()));
+    std::string pad;  // spaces as wide as the icon and a 5 px gap before the name
+    while (own && ImGui::CalcTextSize(pad.c_str()).x < isz + 5.0f) pad += ' ';
+    const std::string label = num + pad + (fx ? fx->name : sl.plugin.type) +
+                              (sl.enabled ? "" : std::string("  (") + i18n::tr("bypassed") + ")") + "##fxslot" + std::to_string(k);
+    ImDrawList* menuDl = ImGui::GetWindowDrawList();
+    // Where BeginMenu writes its label: the cursor plus the menu's label column.
+    const ImVec2 at(ImGui::GetCursorScreenPos().x + static_cast<float>(ImGui::GetCurrentWindow()->DC.MenuColumns.OffsetLabel), ImGui::GetCursorScreenPos().y);
+    const float lineH = ImGui::GetTextLineHeight();
+    const bool opened = ImGui::BeginMenu(label.c_str());
+    if (!own) ui::notePluginIconFallback(sl.plugin.type, ui::PluginIconSurface::Menu);
+    else ui::drawPluginIcon(menuDl, sl.plugin.type, ImVec2(std::round(at.x + ImGui::CalcTextSize(num.c_str()).x + isz * 0.5f), std::round(at.y + lineH * 0.5f)), isz,
+                            ui::PluginIconSurface::Menu, sl.enabled ? 1.0f : 0.45f);
+    if (opened) {
       if (ImGui::MenuItem(i18n::tr("Open editor"))) {
         openEffect(a, track, k);
       }
@@ -2125,7 +2207,7 @@ void mixer(App& a) {
         ImGui::SetCursorScreenPos(f0);
         const bool click = ImGui::InvisibleButton("##fx", ImVec2(fxW, rh - 1));
         const bool hov = ImGui::IsItemHovered();
-        if (click || ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+        if (click || ImGui::IsItemClicked(ImGuiMouseButton_Right) || devMenuTake(("trackerfx" + std::to_string(i)).c_str())) {  // dev: "menu open trackerfx<n>"
           a.selMixer = m.id;
           ImGui::OpenPopup("##fxmenu");
         }

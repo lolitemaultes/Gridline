@@ -5,6 +5,7 @@
 #include "TrackerLook.h"
 #include "TrackerPages.h"
 #include "CollabUi.h"
+#include "CollabChatUi.h"
 #include "Keys.h"
 #include "GlEpoch.h"
 #include <SDL.h>
@@ -137,10 +138,12 @@ struct Ui {
   std::shared_ptr<NetTestJob> netTest;
   NetReport lastReport;
   bool haveReport = false;
-  // flashes of remote edits
+  // flashes of remote edits and Chat "View" targets
   struct FlashMark {
     double until = 0;
     uint32_t color = 0;
+    double duration = kFlashSec;
+    int minFrame = 0;
   };
   std::map<std::string, FlashMark> flashes;
   // avatars
@@ -722,7 +725,7 @@ Controller& ctlOf(App& a) {
         uint32_t c = 0;
         if (s)
           if (PeerView* pv = s->peer(f.site)) c = pv->profile.color;
-        u.flashes[f.object] = Ui::FlashMark{u.now + kFlashSec, c};
+        u.flashes[f.object] = Ui::FlashMark{u.now + kFlashSec, c, kFlashSec, 0};
       }
     };
     a.collab->onRenamed = [&a](const std::string&, const std::string& after, SiteId by) {  // J-111f
@@ -2101,6 +2104,17 @@ void panelWindow(App& a) {
     label("Cursors", x);
     bool cursors = a.settings.getBool("collab.showCursors");
     if (ImGui::Checkbox(tr("Show collaborators' cursors"), &cursors)) a.settings.set("collab.showCursors", cursors);
+    label("Chat", x);
+    {
+      const size_t unread = s->unreadChat();
+      std::string lbl = tr("Open chat");
+      if (unread > 0) lbl += " (" + std::to_string(unread) + ")";
+      if (ui::TextButton((lbl + "##openchat").c_str(), a.showChat)) {
+        a.showChat = !a.showChat;
+        if (a.showChat) a.focusWindow = "Chat";
+      }
+      ui::Hint("Discuss changes and jump straight to referenced clips, channels, plugins, tracks and markers");
+    }
     label("Sync", x);
     ImGui::BeginGroup();
     ImGui::PushTextWrapPos(0);
@@ -3291,12 +3305,48 @@ float flash(App& a, const std::string& object, ImU32* color) {
   auto it = u.flashes.find(object);
   if (it == u.flashes.end()) return 0;
   const double left = it->second.until - a.now;
-  if (left <= 0) {
+  const bool frameKeep = it->second.minFrame > 0 && ImGui::GetFrameCount() <= it->second.minFrame;
+  if (left <= 0 && !frameKeep) {
     u.flashes.erase(it);
     return 0;
   }
-  if (color) *color = colorOf(it->second.color);
-  return static_cast<float>(std::clamp(left / kFlashSec, 0.0, 1.0));
+  if (color) *color = it->second.color ? colorOf(it->second.color) : pal().hot;
+  const double dur = it->second.duration > 0 ? it->second.duration : kFlashSec;
+  if (left <= 0) return 0.75f;
+  return static_cast<float>(std::clamp(left / dur, 0.0, 1.0));
+}
+
+void triggerFlash(App& a, const std::string& object, uint32_t colorRgb, double durationSec) {
+  if (!active(a) || object.empty()) return;
+  Ui& u = U();
+  const double dur = durationSec > 0 ? durationSec : kFlashSec;
+  u.flashes[object] = Ui::FlashMark{a.now + dur, colorRgb & 0xFFFFFFu, dur, ImGui::GetFrameCount() + 6};
+}
+
+bool hasFlash(const App& a, const std::string& object) {
+  if (!active(a)) return false;
+  const Ui& u = U();
+  const int fc = ImGui::GetFrameCount();
+  if (object.empty()) {
+    for (const auto& [k, fm] : u.flashes)
+      if (fm.until > a.now || (fm.minFrame > 0 && fc <= fm.minFrame)) return true;
+    return false;
+  }
+  auto it = u.flashes.find(object);
+  return it != u.flashes.end() && (it->second.until > a.now || (it->second.minFrame > 0 && fc <= it->second.minFrame));
+}
+
+uint32_t memberColorRgb(const App& a, uint64_t site) {
+  const Session* s = a.collab ? a.collab->session() : nullptr;
+  if (!s) return 0;
+  if (site == s->site()) {
+    if (s->config().profile.color) return s->config().profile.color;
+    return defaultColor(s->config().identity.signPublic);
+  }
+  if (auto it = s->peers().find(site); it != s->peers().end() && it->second.profile.color)
+    return it->second.profile.color;
+  if (const Member* m = s->member(site)) return defaultColor(m->signPublic);
+  return 0;
 }
 
 void drawLoading(ImDrawList* dl, ImVec2 a0, ImVec2 b0, float progress, bool compact) {
@@ -3349,6 +3399,7 @@ void frame(App& a, double now) {
   if (u.renameAt == 1 && !a.showCollab) finishTitleRename(a, true);  // closed while renaming: clicked away
   // no App Nap while collaborating (the network thread keeps links alive anyway; this keeps edits flowing)
   host::native::keepAwake(!a.embedded && a.collab && a.collab->active());
+  collabchat::frame(a, now);
   if (a.embedded || !a.collab) return;
   Controller& c = *a.collab;
   Session* s = c.session();
@@ -3504,6 +3555,9 @@ std::string devReport(App& a) {
     Json names = Json::makeArray();
     for (const auto& c : a.doc.song().channels) names.array.push_back(Json::makeString(c.name));
     r.object["channels"] = std::move(names);
+    Json clipIds = Json::makeArray();  // K-456: the playlist's clips by id (clip menu checks)
+    for (const auto& c : a.doc.song().playlist) clipIds.array.push_back(Json::makeNumber(static_cast<double>(c.id)));
+    r.object["clips"] = std::move(clipIds);
     // K-106: each channel's notes in the shown pattern, "start:length:pitch" in order (cross-layout checks).
     Json notes = Json::makeObject();
     if (const Pattern* p = a.doc.song().pattern(a.curPattern))
@@ -3700,6 +3754,51 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame, ImVec2*
   const std::string cmd = args.empty() ? std::string() : args[0];
   auto arg = [&](size_t i) { return i < args.size() ? args[i] : std::string(); };
   Controller& c = ctlOf(a);
+  if (cmd == "chat-peer-send" && u.demo && u.demo->session) {
+    std::string body;
+    for (size_t i = 1; i < args.size(); ++i) {
+      if (i > 1) body += ' ';
+      body += args[i];
+    }
+    u.demo->session->sendChatMessage(body);
+    return false;
+  }
+  if (cmd == "chat-peer-ref" && u.demo && u.demo->session) {
+    const std::string kind = arg(1);
+    const int idx = std::atoi(arg(2).c_str());
+    const int sub = args.size() > 3 ? std::atoi(arg(3).c_str()) : -1;
+    std::string comment;
+    for (size_t i = 4; i < args.size(); ++i) {
+      if (i > 4) comment += ' ';
+      comment += args[i];
+    }
+    const Song& ds = u.demo->doc.song();
+    ChatAttachment att;
+    if (kind == "clip" && idx >= 0 && static_cast<size_t>(idx) < ds.playlist.size())
+      att = makeClipAttachment(ds, ds.playlist[static_cast<size_t>(idx)].id);
+    else if (kind == "pattern" && idx >= 0 && static_cast<size_t>(idx) < ds.patterns.size())
+      att = makePatternAttachment(ds, ds.patterns[static_cast<size_t>(idx)].id);
+    else if (kind == "channel" && idx >= 0 && static_cast<size_t>(idx) < ds.channels.size())
+      att = makeChannelAttachment(ds, ds.channels[static_cast<size_t>(idx)].id);
+    else if (kind == "mixer" && idx >= 0 && static_cast<size_t>(idx) < ds.mixer.size())
+      att = makeMixerTrackAttachment(ds, ds.mixer[static_cast<size_t>(idx)].id);
+    else if (kind == "plugin") {
+      if (sub < 0 && idx >= 0 && static_cast<size_t>(idx) < ds.channels.size())
+        att = makePluginAttachment(ds, ds.channels[static_cast<size_t>(idx)].id, -1);
+      else if (sub >= 0 && idx >= 0 && static_cast<size_t>(idx) < ds.mixer.size())
+        att = makePluginAttachment(ds, ds.mixer[static_cast<size_t>(idx)].id, sub);
+    } else if (kind == "param" && idx >= 0 && static_cast<size_t>(idx) < ds.channels.size()) {
+      att = makeParamAttachment(ds, channelParam(ds.channels[static_cast<size_t>(idx)].id, ChannelParam::Volume));
+    } else if (kind == "marker" && idx >= 0 && static_cast<size_t>(idx) < ds.markers.size()) {
+      att = makeMarkerAttachment(ds, static_cast<size_t>(idx));
+    }
+    if (att.valid()) u.demo->session->sendChatMessage(comment, att);
+    return false;
+  }
+  if (cmd.rfind("chat-", 0) == 0) {
+    collabchat::devCommand(a, args, frame);
+    return false;
+  }
   if (cmd == "panel") {  // collab panel: the Collaboration panel's form (K-314: stacked when narrow)
     if (trackerpages::active(a)) {  // K-106: the Tracker's page in place of the panel
       std::printf("collab frame %d panel open %d tracker-page %d\n", frame, a.showCollab ? 1 : 0, ImGui::GetFrameCount() - u.trk.shownFrame <= 2 ? 1 : 0);
@@ -4174,6 +4273,7 @@ void devFrame(App& a) {
   for (const Member& m : s->members()) left += s->memberState(m.site) == MemberState::Left ? 1 : 0;
   devsig::reach("collab-left-members:" + std::to_string(left));
   for (const auto& ch : a.doc.song().channels) devsig::reach("collab-channel:" + ch.name);
+  devsig::reach("collab-clips:" + std::to_string(a.doc.song().playlist.size()));  // K-456 (with "forget" to wait for a count again)
   {  // K-106: how many notes each channel has in all patterns ("collab-notes:<name>:<count>")
     const Song& song = a.doc.song();
     for (const auto& ch : song.channels) {
@@ -4339,6 +4439,7 @@ void draw(App& a) {
   if (a.embedded) return;
   refusalPopup(a);
   panelWindow(a);
+  collabchat::draw(a);
   sectionProbe();
   joinWindow(a);
   reviewWindow(a);
@@ -4882,6 +4983,31 @@ void drawCursors(App& a) {
   }
 }
 
+float topBarWidth(const App& a, float height) {
+  const Session* s = a.collab ? a.collab->session() : nullptr;
+  if (!s) return 0.0f;
+  const float r = std::min(11.0f, height * 0.5f - 2);
+  const int shown = static_cast<int>(std::min<size_t>(s->activeMembers().size(), 6));
+  float w = static_cast<float>(shown) * (2.0f * r + 4.0f);
+  if (const size_t open = s->conflicts().openCount(); open > 0) {
+    char b[16];
+    std::snprintf(b, sizeof b, "%d", static_cast<int>(open));
+    w += ImGui::CalcTextSize(b).x + 12.0f;
+  }
+  const size_t unread = s->unreadChat();
+  const char* chatLbl = tr("Chat");
+  const ImVec2 lblSz = a.fontRegular ? a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, chatLbl) : ImGui::CalcTextSize(chatLbl);
+  float badgeW = 0.0f;
+  if (unread > 0) {
+    char badgeBuf[16];
+    std::snprintf(badgeBuf, sizeof badgeBuf, "%d", static_cast<int>(std::min<size_t>(unread, 99)));
+    const ImVec2 badgeSz = a.fontMono ? a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, badgeBuf) : ImGui::CalcTextSize(badgeBuf);
+    badgeW = 5.0f + std::max(14.0f, badgeSz.x + 8.0f);
+  }
+  w += 14.0f + lblSz.x + badgeW + 6.0f + theme::kS2;
+  return w;
+}
+
 float topBar(App& a, ImDrawList* dl, float rx, float top, float height) {
   Session* s = session(a);
   if (!s) return rx;
@@ -4936,6 +5062,51 @@ float topBar(App& a, ImDrawList* dl, float rx, float top, float height) {
     ImGui::SetCursorScreenPos(b0);
     if (ImGui::InvisibleButton("##revbadge", ImVec2(b1.x - b0.x, b1.y - b0.y))) a.showSyncReview = true;
     if (ImGui::IsItemHovered()) ui::Tooltip(s->isAdmin() ? tr("Changes made while apart need your review") : tr("Changes awaiting the admin's review"));
+  }
+  // K-86 part 2: collaboration chat toggle button + unread badge (collab projects only).
+  {
+    const size_t unread = s->unreadChat();
+    const char* chatLbl = tr("Chat");
+    const ImVec2 lblSz = a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, chatLbl);
+    char badgeBuf[16] = {};
+    ImVec2 badgeSz(0, 0);
+    float badgeW = 0.0f;
+    if (unread > 0) {
+      std::snprintf(badgeBuf, sizeof badgeBuf, "%d", static_cast<int>(std::min<size_t>(unread, 99)));
+      badgeSz = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, badgeBuf);
+      badgeW = std::max(14.0f, badgeSz.x + 8.0f);
+    }
+    const float btnH = std::min(22.0f, height - 4.0f);
+    const float btnW = 14.0f + lblSz.x + (unread > 0 ? (5.0f + badgeW) : 0.0f);
+    x -= btnW + 6.0f;
+    const ImVec2 c0(x, std::round(top + (height - btnH) * 0.5f));
+    const ImVec2 c1(x + btnW, c0.y + btnH);
+    ImGui::SetCursorScreenPos(c0);
+    if (ImGui::InvisibleButton("##chatbadge", ImVec2(btnW, btnH))) {
+      a.showChat = !a.showChat;
+      if (a.showChat) a.focusWindow = "Chat";
+    }
+    const bool hov = ImGui::IsItemHovered();
+    const ImU32 bg = a.showChat ? theme::mix(P.surface700, P.accent, 0.25f) : hov ? P.surface700 : P.surface800;
+    const ImU32 border = a.showChat ? P.accent : hov ? P.lineStrong : P.line;
+    dl->AddRectFilled(c0, c1, bg, theme::kRadius);
+    dl->AddRect(c0, c1, border, theme::kRadius, 0, 1.0f);
+    dl->AddText(a.fontRegular, theme::kFontCaption,
+                ImVec2(c0.x + 7.0f, theme::textTop(a.fontRegular, theme::kFontCaption, c0.y, btnH)),
+                a.showChat ? P.text : P.textDim, chatLbl);
+    if (unread > 0) {
+      const float bh = 14.0f;
+      const ImVec2 b0(c0.x + 7.0f + lblSz.x + 5.0f, std::round(c0.y + (btnH - bh) * 0.5f));
+      const ImVec2 b1(b0.x + badgeW, b0.y + bh);
+      dl->AddRectFilled(b0, b1, P.hot, 7.0f);
+      dl->AddText(a.fontMono, theme::kFontLabel,
+                  ImVec2(std::round(b0.x + (badgeW - badgeSz.x) * 0.5f), theme::textTop(a.fontMono, theme::kFontLabel, b0.y, bh)),
+                  theme::contrastText(P.hot), badgeBuf);
+    }
+    if (hov) {
+      ui::Tooltip(unread > 0 ? tr("Collaboration chat (unread messages)") : tr("Collaboration chat"));
+      ui::Hint(std::string(tr("Collaboration chat")) + "   (" + tr("click: toggle the Chat panel") + ")");
+    }
   }
   return x - theme::kS2;
 }

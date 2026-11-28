@@ -295,6 +295,8 @@ class Document {
     fn(song_);
     ++revision_;
   }
+  // K-86 part 2: updates collaboration chat messages without incrementing revision or dirtying undo.
+  void setCollabChat(std::vector<ChatMessage> msgs) { song_.collabChat = std::move(msgs); }
   // Number of edits made outside groups that started a new history step.
   uint64_t pushCount() const { return undo_.pushCount(); }
   // K-64 (tests): tempo map builds the edits have done so far.

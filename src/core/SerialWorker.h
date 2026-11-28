@@ -7,6 +7,7 @@
 // worker's own shared state alive, so nothing it touches goes away under it).
 #pragma once
 #include <atomic>
+#include "ThreadJoin.h"
 #include "ThreadName.h"
 #include <chrono>
 #include <condition_variable>
@@ -26,18 +27,21 @@ class SerialWorker {
     t_ = std::thread([s] { gl::threads::setName("gl-serial"); run(*s); });
   }
   ~SerialWorker() {
-    drain(kLeaveWaitMs);
-    bool idle;
+    const bool onSelf = t_.joinable() && t_.get_id() == std::this_thread::get_id();
+    if (!onSelf) drain(kLeaveWaitMs);
+    bool idle = false;
     {
       std::lock_guard<std::mutex> lk(s_->mu);
       s_->stop = true;
       idle = !s_->busy;
     }
     s_->cv.notify_all();
-    if (idle) {
-      t_.join();
-    } else {
-      t_.detach();  // stuck in a job: it ends on its own (or with the process)
+    if (t_.joinable()) {
+      if (idle && !onSelf) {
+        gl::threads::safeJoin(t_);
+      } else {
+        t_.detach();  // stuck in a job or destroyed from the worker itself: ends on its own
+      }
     }
   }
   SerialWorker(const SerialWorker&) = delete;

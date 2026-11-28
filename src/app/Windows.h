@@ -98,6 +98,8 @@ void rackDevAfter(App& a, int frame);   // right after it
 void rackDevDump(App& a, int frame);
 // The last ImGui item's rectangle, listed as "rect <name>" by the "rack" dump (rack menus: scripted checks).
 void devRackItem(const std::string& name);
+// K-456: a click on the middle of a row devRackItem noted in the last frames (false: not drawn).
+bool devRackClick(const std::string& name);
 void drawPianoRoll(App& a);
 // K-262: the Vibrato tool's defaults (preset, depth, rate, sync) for the current pattern and channel, in a
 // toolbar row; a change also sets the selected notes' vibrato. The Tracker's Roll page opens it in a popup.
@@ -222,6 +224,7 @@ bool mixerWheelScrolls();
 void devMenuItem(const std::string& name);
 // K-158: a clip's whole playlist menu (--menu arrclip; K-112: also Live's grid slots).
 void devArrangementClipMenu(App& a, ObjectId clip);
+void devClipLevelFields(App& a, ObjectId clip);  // K-456: --menu cliplevels: the audio clip menu's gain, pitch and fades fields
 void devMenuRects();
 std::string mixerDragDev();  // GitHub #46: the strip drag ("mixer" dev dump)
 void drawChannelSettings(App& a);
@@ -248,8 +251,13 @@ void drawPluginManager(App& a);  // Options > Plugin manager (PluginManager.cpp)
 // Arrangements and live mode (Live.cpp).
 void drawLivePads(App& a);                         // "Live pads" window
 void drawMasterPanel(App& a);                      // RN-09 "Master chain" window
-void arrangementMenu(App& a);                      // menu body: list, new, duplicate, rename, delete
+enum class ArrangementStyle { Studio, Smooth, Clips, Tracker };
+void arrangementMenu(App& a);                      // menu body: list, new, duplicate, rename, reorder, delete
 void arrangementSelector(App& a, float width);     // toolbar combo
+void arrangementDropdown(App& a, const char* id, float width, float height, ArrangementStyle style);  // K-406: layout-native switcher
+void switchArrangement(App& a, int index);         // K-406: 1 undo step, stops live, clears selection
+void stepArrangement(App& a, int delta);           // K-406: prev/next arrangement shortcut
+bool devArrangementCommand(App& a, const std::vector<std::string>& args, int frame);  // K-406 dev-input
 void liveTrackMenu(App& a, int track);             // menu body: a track's live settings
 void setLiveArea(App& a, Tick end);                // 0 removes it      // file dialog, settings, info, export, history, about, prompts
 void handleGlobalShortcuts(App& a);
@@ -305,8 +313,10 @@ std::vector<int> playlistTrackSelection(App& a, int track);
 bool stepPlaylistSelection(App& a, const std::vector<int>& tracks, int dir);
 void clipContextMenu(App& a, ObjectId clip);
 // K-112: with the clip's own rows (`clipRows`, true when it edited the song) placed in the menu by
-// Live's order; Studio's order ignores them (its caller draws them above the menu).
-void clipContextMenu(App& a, ObjectId clip, const std::function<bool()>& clipRows);
+// the layout's order (Studio: after Edit pattern; Clips: after the colour; Smooth draws them above).
+// K-456: `beforeDelete` (Studio, Smooth) draws its rows just before Delete (the clip's Stage rows).
+void clipContextMenu(App& a, ObjectId clip, const std::function<bool()>& clipRows,
+                     const std::function<void()>& beforeDelete = {});
 // N46-08: set while a Clips grid slot's menu draws the clip menu (the slot has its own edit block).
 extern bool gClipMenuFromSlot;
 void playlistOptionsMenu(App& a, int part = 0);  // part: 0 every menu, 1 edit, 2 functions, 3 view (K-112b)
@@ -381,5 +391,8 @@ void swapDeviceItems(App& a, ObjectId owner, int slot);
 void menuButton(const char* id, const char* hint, const std::function<void()>& body);
 // Development: draws the named menu open (for --menu screenshots).
 void drawDevMenu(App& a, const std::string& name);
+// K-459: "devmenu <name>" (a scripted run): that menu drawn as --menu does, opened anew; "" none.
+void devMenuShow(const std::string& name);
+const std::string& devMenuShown();
 
 }  // namespace gl

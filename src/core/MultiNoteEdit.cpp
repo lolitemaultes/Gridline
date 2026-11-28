@@ -12,7 +12,7 @@ namespace {
 void sortKeeping(std::vector<Note>& notes, std::vector<bool>& sel) {
   for (auto& n : notes) {
     n.pitch = std::clamp(n.pitch, 0, 127);
-    n.velocity = std::clamp(n.velocity, 1, 127);
+    n.velocity = std::clamp(n.velocity, 0, 127);  // GitHub #87
     n.start = std::max<Tick>(n.start, 0);
     n.length = std::max<Tick>(n.length, 1);
   }

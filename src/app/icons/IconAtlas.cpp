@@ -168,16 +168,19 @@ bool rasterize(const char* svgText, int px, float strokeDevicePx, std::vector<ui
   int shapes = 0;
   for (NSVGshape* s = p.img->shapes; s; s = s->next) shapes += (s->flags & NSVG_FLAGS_VISIBLE) != 0;
   if (shapes > 1) {
-    // Composite the fitted shapes in paint order (source-over, as the SVG draws them).
+    // Composite the fitted shapes in paint order (source-over, as the SVG draws them). K-450: a
+    // shape whose id starts with "cut" is cut out of what is under it (destination-out): the
+    // plugin icons' pictograms are true holes in their tiles, whatever surface they sit on.
     std::vector<float> acc(whole.size(), 0.0f);
     int k = 0;
     for (NSVGshape* s = p.img->shapes; s; s = s->next, ++k) {
       if (!(s->flags & NSVG_FLAGS_VISIBLE)) continue;
       float bx = gx, by = gy;
       search(k, 0.25f, bx, by, big);
+      const bool cut = std::strncmp(s->id, "cut", 3) == 0;
       for (size_t i = 0; i < acc.size(); ++i) {
         const float a = static_cast<float>(big[i]) / 255.0f;
-        acc[i] = acc[i] + a * (1.0f - acc[i]);
+        acc[i] = cut ? acc[i] * (1.0f - a) : acc[i] + a * (1.0f - acc[i]);
       }
     }
     for (size_t i = 0; i < whole.size(); ++i) whole[i] = static_cast<uint8_t>(std::lround(std::min(1.0f, acc[i]) * 255.0f));

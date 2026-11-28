@@ -4,6 +4,7 @@
 // Everything named "signal context" below runs after a fatal fault: only async-signal-safe calls,
 // no allocation, no locks, no stdio. See CrashPosix.cpp and CrashWin.cpp for the platform parts.
 #include "Crash.h"
+#include "ThreadJoin.h"
 #include "ThreadName.h"
 #include <algorithm>
 #include <atomic>
@@ -588,6 +589,14 @@ struct Watchdog {
   std::mutex mu;
   std::condition_variable cv;
   bool stop = false;
+  ~Watchdog() {
+    {
+      std::lock_guard<std::mutex> lk(mu);
+      stop = true;
+    }
+    cv.notify_all();
+    gl::threads::safeJoin(thread);
+  }
 };
 Watchdog* gWatchdog = nullptr;
 int gFrozenAfterMs = 30000;
@@ -741,7 +750,7 @@ void markCleanExit() {
       w->stop = true;
     }
     w->cv.notify_all();
-    if (w->thread.joinable()) w->thread.join();
+    gl::threads::safeJoin(w->thread);
   }
   // It came back and ended properly before the watchdog looked again: no hang to report.
   if (!gFreezeReport.empty()) {

@@ -8,6 +8,7 @@
 #include "AutomationEdit.h"
 #include "Json.h"
 #include "Project.h"
+#include "ProjectInterop.h"
 #include "../packs/plasma/plasma.h"
 
 namespace gl {
@@ -98,6 +99,9 @@ bool loadPreset(const std::string& file, const std::string& type, PluginState& o
   Json j;
   if (!readJson(file, j) || j.text("type") != type) return false;
   out = stateFrom(j);
+  // K-435: the samples it carries ("<name> samples/x.wav" beside it), and files saved under an older
+  // place of Gridline's own folders found where they are now.
+  resolveStateFiles(out, fs::u8path(file).parent_path().u8string(), gridlineFileRoots());
   return true;
 }
 
@@ -108,10 +112,25 @@ std::string foreignPresetType(const std::string& file) {
 }
 bool isForeignPresetFile(const std::string& file) { return !foreignPresetType(file).empty(); }
 
+std::string presetSamplesFolder(const std::string& file) {
+  const fs::path f = fs::u8path(file);
+  return (f.parent_path() / fs::u8path(f.stem().u8string() + " samples")).u8string();
+}
+
 bool savePreset(const std::string& root, const PluginState& st, const std::string& relName, const std::string& source, bool exact) {
-  fs::path file = fs::path(root) / st.type / (relName + ".json");
+  return savePresetFile((fs::u8path(root) / fs::u8path(st.type) / fs::u8path(relName + ".json")).u8string(), st, source, exact);
+}
+
+bool savePresetFile(const std::string& path, const PluginState& stIn, const std::string& source, bool exact, int* carried) {
+  const fs::path file = fs::u8path(path);
   std::error_code ec;
   fs::create_directories(file.parent_path(), ec);
+  // K-435: the samples Gridline made for it (an imported module's, edited or drawn audio) go with
+  // it, named relative to it: the preset keeps its sound after the cache is cleared or the project
+  // is gone. Files from the person's own folders are only referred to.
+  PluginState st = stIn;
+  const int n = bundleStateFiles(st, presetSamplesFolder(path), file.parent_path().u8string(), gridlineFileRoots());
+  if (carried) *carried = n;
   Json j = stateJson(st);
   j.object["format"] = Json::makeString("gridline-preset");
   if (!source.empty()) j.object["source"] = Json::makeString(source);
@@ -121,7 +140,7 @@ bool savePreset(const std::string& root, const PluginState& st, const std::strin
     t.boolean = true;
     j.object["approximate"] = t;
   }
-  return writeFileAtomic(file.string(), jsonStringify(j) + "\n");
+  return writeFileAtomic(file.u8string(), jsonStringify(j) + "\n");
 }
 
 std::vector<PresetEntry> listChains(const std::string& root) { return listDir(fs::path(root) / "chains"); }
@@ -158,6 +177,7 @@ bool saveChain(const std::string& root, const ChainPreset& chain, const std::str
 
 std::vector<PresetEntry> listAutomationShapes(const std::string& root) { return listDir(fs::path(root) / "automation"); }
 std::vector<PresetEntry> listGrooves(const std::string& root) { return listDir(fs::path(root) / "grooves"); }
+std::vector<PresetEntry> listLfoPresets(const std::string& root) { return listDir(fs::path(root) / "lfos"); }
 
 bool loadAutomationShape(const std::string& file, int ppq, AutomationShape& out) {
   Json j;

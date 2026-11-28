@@ -1,6 +1,7 @@
 // Gridline — channel settings window: strip, routing, instrument parameters,
 // sample loading and waveform for the sampler.
 #include <algorithm>
+#include "PluginIcons.h"
 #include "MacroUi.h"
 #include "LayoutStyleUi.h"
 #include "EditorZoomUi.h"
@@ -22,6 +23,8 @@
 #include "../core/PluginParams.h"
 #include "../engine/ChannelIns.h"
 #include "App.h"
+#include "CollabUi.h"
+#include "CollabChatUi.h"
 #include "LogicPlugins.h"
 #include "GamepadUi.h"
 #include "LayoutPresets.h"
@@ -34,6 +37,7 @@
 #include "Widgets.h"
 #include "PluginUI.h"
 #include "BrowserUi.h"
+#include "UrlImportUi.h"
 #include "Windows.h"
 #include "../packs/modulation/modulation_ui.h"
 #include "../packs/PacksUi.h"
@@ -355,8 +359,22 @@ void drawNoteSettingsPart(App& a, ObjectId id, int part, const NoteGrid* grid) {
   if (on(0)) {
   ImGui::BeginGroup();
   heading("TUNE & TIME");
+  {
+    const ParamId trPid = channelParam(id, ChannelParam::Transpose);
+    double trShown = static_cast<double>(c->transpose);
+    ui::shownParamValue(trPid, trShown);
+    const int trVal = std::clamp(static_cast<int>(std::lround(trShown)), -kChannelTransposeMax, kChannelTransposeMax);
+    std::snprintf(buf, sizeof buf, "%+d st", trVal);
+    ui::SetNextKnobParam(trPid);
+    ui::SetNextKnobStep(1);
+    knob("transpose", trVal, desc("Transpose", "st", -kChannelTransposeMax, kChannelTransposeMax, 0), true,
+         [](Channel& ch, double v) { ch.transpose = std::clamp(static_cast<int>(std::lround(v)), -kChannelTransposeMax, kChannelTransposeMax); }, buf);
+    ui::Hint("Channel transpose in semitones (-48..+48 st). Works on every native and installed instrument (MIDI note transpose for installed plugins)");
+  }
+  ImGui::SameLine(0, 0);
   ui::SetNextKnobStep(1);
   knob("fine", c->fine, desc("Fine", "ct", -200, 200, 0), true, [](Channel& ch, double v) { ch.fine = static_cast<int>(std::lround(v)); });
+  ui::Hint("Channel fine tune in cents (-200..+200 ct, added to Transpose and Pitch)");
   ImGui::SameLine(0, 0);
   std::snprintf(buf, sizeof buf, "%d st", c->bendRange);
   ui::SetNextKnobStep(1);
@@ -551,11 +569,14 @@ void drawNoteSettingsPart(App& a, ObjectId id, int part, const NoteGrid* grid) {
   // MIDI input port: the channel plays what MIDI Out channels and plugins send on that port.
   if (on(5)) {
   ImGui::BeginGroup();
-  if (!grid) ui::Label(i18n::tr("MIDI INPUT"));
+  const PluginInfo* outInfo = findPlugin(c->plugin.type);
+  const bool sendsMidi = !grid && outInfo && outInfo->midiOutput;  // K-438: and its MIDI output port
+  if (!grid) ui::Label(sendsMidi ? i18n::tr("MIDI") : i18n::tr("MIDI INPUT"));
   {
     auto portName = [](int p) { return p < 0 ? std::string(i18n::tr("None")) : i18n::tr("Port") + std::string(" ") + std::to_string(p); };
     float pw = 150;
-    const std::string ppv = listAt(i18n::tr("MIDI in"), portName(c->midiInPort).c_str(), pw);
+    const std::string ppv = sendsMidi ? i18n::tr("In") + std::string(": ") + portName(c->midiInPort)
+                                      : listAt(i18n::tr("MIDI in"), portName(c->midiInPort).c_str(), pw);
     if (ui::BeginCombo("##midiin", ppv.c_str(), pw)) {
       for (int p = -1; p < 64; ++p)
         if (ImGui::Selectable(portName(p).c_str(), p == c->midiInPort) && p != c->midiInPort)
@@ -590,6 +611,29 @@ void drawNoteSettingsPart(App& a, ObjectId id, int part, const NoteGrid* grid) {
       else
         ImGui::TextColored(theme::vec(P.textDim), i18n::tr("From: %s"), from.c_str());
       ImGui::PopTextWrapPos();
+    }
+    // K-438: a built-in instrument that sends MIDI (its own sequencer): the port it sends on.
+    if (sendsMidi) {
+      float ow = 150;
+      const std::string opv = i18n::tr("Out") + std::string(": ") + portName(c->midiOutPort);
+      if (ui::BeginCombo("##midiout", opv.c_str(), ow)) {
+        for (int p = -1; p < 64; ++p)
+          if (ImGui::Selectable(portName(p).c_str(), p == c->midiOutPort) && p != c->midiOutPort)
+            a.doc.editChannel(id, "MIDI output port", [p](Channel& ch) { ch.midiOutPort = p; });
+        ImGui::EndCombo();
+      }
+      ui::Hint(i18n::tr("MIDI out: the notes this instrument's own sequencer plays go to every channel listening on this port"));
+      ImGui::SameLine(0, theme::kS2);
+      ImGui::AlignTextToFramePadding();
+      if (c->midiOutPort < 0) {
+        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Its sequence plays here only"));
+      } else {
+        int listeners = 0;
+        for (const auto& o : s.channels) listeners += o.id != c->id && o.midiInPort == c->midiOutPort;
+        if (listeners == 0) ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No channel listens on this port yet"));
+        else if (listeners == 1) ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("To 1 listening channel"));
+        else ImGui::TextColored(theme::vec(P.textDim), i18n::tr("To %d listening channels"), listeners);
+      }
     }
   }
   ImGui::EndGroup();
@@ -714,6 +758,24 @@ bool pluginWindowDevCommand(App& a, const std::string& cmd, const std::vector<st
       const bool ok = devMoveHostedEditor(std::atoi(args[1].c_str()), std::atoi(args[2].c_str()));
       std::printf("plugwin frame %d: moveto %s\n", frame, ok ? "done" : "no window");
       std::fflush(stdout);
+    } else if (what == "types") {  // K-459: every built-in plugin type, one line each ("plugwin type gen|fx|notefx <type>")
+      for (const PluginInfo& p : pluginCatalog())
+        std::printf("plugwin type %s %s\n", p.kind == PluginKind::Generator ? "gen" : p.kind == PluginKind::Effect ? "fx" : "notefx", p.type.c_str());
+      std::fflush(stdout);
+    } else if (what == "tab" && args.size() > 1) {  // K-459: tab <0 plugin | 1 misc | 2 envelope>: the channel window's page
+      a.channelTab = std::clamp(std::atoi(args[1].c_str()), 0, 2);
+    } else if (what == "notefx" && args.size() > 2) {  // K-459: notefx <channel index> <type>: only that note processor on the channel
+      const size_t ci = static_cast<size_t>(std::max(0, std::atoi(args[1].c_str())));
+      if (ci < s.channels.size()) {
+        const ObjectId id = s.channels[ci].id;
+        while (const Channel* c = a.doc.song().channel(id)) {
+          if (c->noteFx.empty()) break;
+          if (!a.doc.removeNoteFx(id, 0)) break;
+        }
+        a.doc.addNoteFx(id, args[2]);
+        a.settingsChannel = id;
+        a.channelTab = 1;  // (the note processors live on the Misc page)
+      }
     } else if (what == "dialog") {  // 0.7.8: a dialog (Save as template, as File > Save as template...)
       a.showSaveTemplate = true;
     } else if (what == "nodialog") {
@@ -778,6 +840,11 @@ bool pluginWindowDevCommand(App& a, const std::string& cmd, const std::vector<st
       a.closePluginWindows();
     } else if (what == "info") {  // K-9: open plugin windows and their native windows to stdout
       devPrintPluginWindows(frame);
+    } else if (what == "panel" && args.size() > 2) {  // panel <mixer index> <slot>: an installed effect's Gridline panel, as its menu's "Parameters and settings..."
+      const size_t mi = static_cast<size_t>(std::max(0, std::atoi(args[1].c_str())));
+      if (mi < s.mixer.size()) showHostedPanel(a, PluginTarget{s.mixer[mi].id, std::atoi(args[2].c_str())});
+    } else if (what == "stalls") {  // the longest plugin window idle / frame gap since the last "stalls", each window's state
+      devPrintPluginStalls(a, frame);
     } else if (what == "fxtoggle" && args.size() > 2) {  // 0.7.8: fxtoggle <mixer index> <slot>: the effect's window button (mixer slot, Clips device card)
       const size_t mi = static_cast<size_t>(std::max(0, std::atoi(args[1].c_str())));
       if (mi < s.mixer.size()) togglePluginWindow(a, PluginTarget{s.mixer[mi].id, std::atoi(args[2].c_str())});
@@ -1107,17 +1174,11 @@ void drawChannelSettingsBody(App& a, ObjectId channel, const BodyFrame& f) {
       }
       ImGui::EndDragDropTarget();
     }
-    if (ui::TextButton("Load sample...", false, 0, "Choose an audio file for this channel")) {
-      a.fileDialog = {};
-      a.fileDialog.open = true;
-      a.fileDialog.title = "Load sample";
-      a.fileDialog.dir = c->plugin.data.empty() ? (gl::platform::homeEnv() ? gl::platform::homeEnv() : ".") : fs::path(c->plugin.data).parent_path().string();
-      a.fileDialog.exts = audioFileExtensions();
-      a.fileDialog.onOk = [&a, id](const std::string& p) {
-        a.doc.editChannel(id, "load sample", [&](Channel& x) { x.plugin.data = p; });
-        if (!sampleCache().get(p)) a.notify("Cannot decode " + p, true);
-      };
-    }
+    if (ui::TextButton("Load sample...", false, 0, "Choose an audio file for this channel"))
+      clipeditor::sampleDialog(a, id);  // the Audio clip window's dialog: one step that names the channel, as a drop or Import from URL does
+    ImGui::SameLine();
+    if (ui::TextButton("Import from URL...", false, 0, "Download and load audio from a web link into this sampler"))
+      urlimportui::openForPlugin(a, PluginTarget{id, -1}, 0);
     ImGui::SameLine();
     if (!c->plugin.data.empty() && smp) {
       // Opens the sample in Loupe; its edits come back to this channel (one undo step each).
@@ -1133,12 +1194,14 @@ void drawChannelSettingsBody(App& a, ObjectId channel, const BodyFrame& f) {
         ImGui::TextColored(theme::vec(pal().danger), "%s", i18n::tr("missing"));
       }
     }
+    urlimportui::clipSourceInfo(a, c->plugin.data);
     ImGui::Dummy(ImVec2(0, theme::kS1));
     ImGui::Separator();
     ImGui::Dummy(ImVec2(0, theme::kS1));
   }
 
   // Instrument editor.
+  const bool missingHosted = !info && isHostedType(c->plugin.type);
   if (info) {
     PluginTarget target{id, -1};
     // K-223: the header row goes on the tab row when it fits beside the tabs (the menu button and
@@ -1162,8 +1225,13 @@ void drawChannelSettingsBody(App& a, ObjectId channel, const BodyFrame& f) {
       drawPluginBody(a, target, editorW);
       if (f.zoom) edzoomui::end(a, "channelsettings");
     }
+  } else if (missingHosted) {
+    // Q-14: missing or unscanned hosted instrument: show its placeholder card, never the Layer editor.
+    PluginTarget target{id, -1};
+    menuButton("plmenu", "Instrument menu: presets, state, channel", [&a, id]() { pluginWindowMenu(a, id, -1); });
+    drawPluginBody(a, target, editorW);
   }
-  if (!info) {  // K-169: the layer editor (children, zones, macros, layer presets)
+  if (!info && !missingHosted) {  // K-169: the layer editor (children, zones, macros, layer presets)
     if (f.zoom) edzoomui::begin(a, "channelsettings");
     layerui::drawEditor(a, id, editorW);
     if (f.zoom) edzoomui::end(a, "channelsettings");
@@ -1225,13 +1293,14 @@ void drawChannelSettings(App& a) {
     redirected = kNoId;
   }
   const PluginInfo* info = findPlugin(c->plugin.type);
-  std::string title = c->name + "###channelsettings";
+  std::string title = ui::pluginWindowTitle(c->plugin.type, c->name + "###channelsettings");  // K-450: its icon before the name
   bool open = true;
   stripOpened(a, c->id);  // opened (or another channel): the strip starts hidden
   // Wide instrument editors (PluginInfo::editorWidth) widen the window.
+  const bool missingHosted = !info && isHostedType(c->plugin.type);
   float editorW = info && info->editorWidth > 0 ? info->editorWidth : 600.0f;
   if (info && isHostedType(info->type)) editorW = hostedui::dockedWidth(a, PluginTarget{c->id, -1}, editorW);  // 0.7.8: its own interface inside
-  if (!info) editorW = layerui::editorWidth();  // K-169: an instrument-less channel is a layer: the layer editor
+  if (!info && !missingHosted) editorW = layerui::editorWidth();  // K-169: an instrument-less channel is a layer: the layer editor
   if (info && info->editorMinWidth > 0) {  // J-151: reflowing editors follow a narrower main window (J-158: as far as they fit)
     const ImVec2 area = ui::EditorArea();
     editorW = place::fitEditor(editorW, info->editorMinWidth, 24.0f + ImGui::GetStyle().ScrollbarSize, area.x, area.y).content;
@@ -1254,9 +1323,9 @@ void drawChannelSettings(App& a) {
     }
   }
   // K-19: the window's own size on top of the interface scale (installed plugins keep theirs).
-  const bool zoomable = !info || !isHostedType(info->type);
+  const bool zoomable = (!info && !missingHosted) || (info && !isHostedType(info->type));
   // K-210b: only the editor itself zooms; the channel's own rows above and below it (kChannelMinW wide) keep the interface size
-  edzoomui::prepare(a, "channelsettings", info ? info->type : std::string("(layer)"), zoomable ? regionW : winW, zoomable, kChannelMinW);
+  edzoomui::prepare(a, "channelsettings", info ? info->type : (missingHosted ? c->plugin.type : std::string("(layer)")), zoomable ? regionW : winW, zoomable, kChannelMinW);
   // K-79: the performance preset docks the channel settings in its bottom panel (they scroll there).
   // K-199: a Game mode session shows one window: built-in editors dock with the main view there.
   const bool gameDock = layoutui::active() != layout::Preset::Live && zoomable && gamepadui::dockPlugins(a);
@@ -1276,12 +1345,17 @@ void drawChannelSettings(App& a) {
   }
   ui::KeepWindowInViewport();
   ui::MarkDetachable();  // J-114: pops out / docks back like the panels
+  ui::drawPluginWindowTitleIcon(c->plugin.type);  // K-450: also on its tab when docked behind another
   if (!vis) {
     ImGui::End();
     if (!open) a.settingsChannel = kNoId;
     return;
   }
   drawChannelSettingsBody(a, c->id, BodyFrame{editorW, true, ""});
+  if (ImU32 fc = 0; const float fl = collabui::flash(a, collabchat::pluginFlashKey(c->id, -1), &fc)) {
+    const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+    ImGui::GetForegroundDrawList()->AddRect(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), theme::withAlpha(fc, 0.90f * fl), theme::kRadius, 0, 3.0f);
+  }
   ImGui::End();
   if (!open) a.settingsChannel = kNoId;
 }

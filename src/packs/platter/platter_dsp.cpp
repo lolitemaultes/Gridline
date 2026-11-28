@@ -548,23 +548,28 @@ class Deck {
   }
   double speedNow() const { return vel_ / std::max(1e-9, unity()); }
 
-  // -- the hand: ticks or mouse moves -> the record follows it (K-273, after J-197)
+  // -- the hand: ticks or mouse moves -> the record follows it
   // Two stages, the same for the jog wheel and the mouse. The hand follower turns the
-  // hand's moves (a jog message's ticks, a mouse update), each at the sample it came on,
-  // into a smooth path: what the hand moved is played out over about the time its last
-  // moves took (Mixxx's wheel filter estimates the hand's speed from the tick rate; here
-  // the time between moves gives it), re-planned at every move, so a hand speeding up,
-  // turning or stopping is followed within a move or two and a steady hand gives a steady
-  // speed (the time is an average that takes a big change at once and averages out the
-  // small ups and downs of a controller's report grid or the UI's frames). The tracker
-  // then moves the record after that path: `jogE_` is how far the record is from it
-  // (seconds of record), `jogV_` its speed. Its two poles are the wheel's alpha-beta pair
-  // (given per millisecond, as Mixxx's mappings give it), carried to the step length and
-  // scaled by Hand feel and by the speed-up: quick (an eighth of the standard time) while
-  // the hand starts, turns or changes speed, calmer on a steady hand, the standard
-  // smoothing once it stops (a touch catching a playing record, a release). The record
-  // always ends where the hand put it. Only the moves and their times go in, so a live
-  // pass, its capture and its replay from the travel lanes run the same.
+  // hand's moves (a jog message's ticks, a mouse move), each at the time it was made, into a
+  // smooth path: what the hand moved is played out over about the time its last moves took
+  // (Mixxx's wheel filter estimates the hand's speed from the tick rate; here the time
+  // between moves gives it), re-planned at every move, so a hand speeding up, turning or
+  // stopping is followed within a move or two and a steady hand gives a steady speed (the
+  // time is an average that takes a big change at once and averages out the small ups and
+  // downs). The time is each move's own stamp: a controller's message when the driver
+  // handed it over, a mouse move the start of the UI frame that read it (not the moment the
+  // editor got round to drawing, which wanders by milliseconds from frame to frame).
+  //
+  // The tracker then moves the record after that path: `jogE_` is how far the record is
+  // from it (seconds of record), `jogV_` its speed. Its two poles are the wheel's
+  // alpha-beta pair (given per millisecond, as Mixxx's mappings give it), carried to the
+  // step length and scaled by Hand feel and by the speed-up: quick (an eighth of the
+  // standard time) while the hand starts, turns or changes speed, calmer on a steady hand,
+  // the standard smoothing once it stops (a touch catching a playing record, a release).
+  // When the hand has stopped, the record comes to rest on it from the side it comes from,
+  // on a curve that starts at its speed, and never runs past and back. The record always
+  // ends where the hand put it. Only the moves and their times go in, so a live pass, its
+  // capture and its replay from the travel lanes run the same.
   static constexpr double kJogMaxSpeedUp = 8.0;      // while the hand changes its speed
   static constexpr double kJogSpeedUpRise = 0.001;   // the speed-up comes over this (s)
   static constexpr double kJogSpeedUpFall = 0.03;    // back to the standard smoothing (s)
@@ -572,8 +577,8 @@ class Deck {
   static constexpr double kFollowQuickHold = 0.012;  // the quick tracker stays on this long after a change (s)
   // Per input: how long a move is played over (x the time the moves take), the tracker's
   // speed-up on a steady hand, a change of speed that counts as one (fraction), the longest
-  // gap between moves of one motion (s; longer: the hand starts afresh). The mouse comes at
-  // the UI's frame rate in whole pixels: it is played over longer and tracked calmer.
+  // gap between moves of one motion (s; longer: the hand starts afresh). The mouse is played
+  // over longer and tracked calmer.
   struct FollowKind {
     double stretch, steady, change, gap;
   };
@@ -622,7 +627,7 @@ class Deck {
   void followKnot(double dx, double t) {
     if (dx == 0.0) return;
     const FollowKind& k = followKind();
-    const double cap = k.gap * sh_->sr;
+    const double sr = sh_->sr, cap = k.gap * sr;
     const int dir = dx > 0 ? 1 : -1;
     const double since = t - fLast_;
     const bool fresh = dir != fDir_ || since >= cap || fTg_ <= 0;
@@ -636,10 +641,10 @@ class Deck {
     fDir_ = dir;
     fLast_ = t;
     fD_ += dx;
-    const double T = std::clamp(fTg_ * k.stretch, kFollowMin * sh_->sr, cap);
-    const double v = fD_ * sh_->sr / T;  // (x the record's own speed)
+    const double T = std::clamp(fTg_ * k.stretch, kFollowMin * sr, cap);
+    const double v = fD_ * sr / T;  // (x the record's own speed)
     if (fresh || std::fabs(v - fV_) > k.change * std::max(std::fabs(v), std::fabs(fV_)))
-      fQuick_ = std::max(kFollowQuickHold * sh_->sr, 2.0 * T);
+      fQuick_ = std::max(kFollowQuickHold * sr, 2.0 * T);
     fV_ = v;
     fLeft_ = T;
   }
@@ -755,7 +760,7 @@ class Deck {
     if (jogRelease_) {
       // there: the motor has it (live, once the wheel's last ticks are in; a pass's wheel lane
       // has only what reached the tracker, so there it ends as soon as the speed is there)
-      if (std::fabs(jogV_ - releaseTo_) <= 1e-5 && fLeft_ <= 0 && (sh_->strict || tqTail_ == tqHead_)) {
+      if (std::fabs(jogV_ - releaseTo_) <= 1e-5 && fD_ == 0.0 && (sh_->strict || tqTail_ == tqHead_)) {
         scr_ = ScrOff;
         jogRelease_ = false;
         jogE_ = 0;
@@ -779,8 +784,18 @@ class Deck {
     if (t <= glT0_) return glA_;
     return glA_ + (glB_ - glA_) * (t - glT0_) / (glT1_ - glT0_);
   }
-  void glideTo(double target, double t0) {
-    glA_ = speedNow(), glB_ = target, glT0_ = t0, glT1_ = t0 + glideLen();
+  void glideTo(double target, double t0, double len = 0) {
+    glA_ = speedNow(), glB_ = target, glT0_ = t0, glT1_ = t0 + (len > 0 ? len : glideLen());
+  }
+  // A hand lets go of the record: a running motor takes it back to its speed as the start or stop
+  // time says, on a ramp of at least kReleaseMin. With the motor off the record stops at once, and a
+  // synced deck is back at its speed and phase at once (the sync keeps it on the beat).
+  static constexpr double kReleaseMin = 0.035;  // (s)
+  double releaseLen(double from, double to) const {
+    if (to == 0.0 || on(DSync)) return glideLen();
+    const double t = std::fabs(to) > std::fabs(from) ? P(DStartTime) : P(DStopTime);
+    const double sec = std::clamp(std::fabs(to - from) * static_cast<double>(t), kReleaseMin, 3.0);
+    return std::round(sec * sh_->sr);
   }
   // The mouse grabs the record: the hand catches it as a touch on the wheel does.
   void handDown() {
@@ -841,7 +856,7 @@ class Deck {
       thrFloor_ = std::max(std::fabs(rel), 0.01);
     } else {
       scr_ = ScrGlide;
-      glideTo(rel, static_cast<double>(sh_->clock));
+      glideTo(rel, static_cast<double>(sh_->clock), releaseLen(v, rel));
     }
   }
   // One step of the mouse: its moves that are due, then the follower and the tracker.
@@ -2040,7 +2055,7 @@ class PlatterGen final : public Generator {
     const size_t h = cmdHead_.load(std::memory_order_relaxed);
     if (h - cmdTail_.load(std::memory_order_acquire) >= cmds_.size()) return false;
     cmds_[h % cmds_.size()] = c;
-    cmdNs_[h % cmds_.size()] = hub::nowNs();
+    cmdNs_[h % cmds_.size()] = c.ns > 0 ? c.ns : hub::nowNs();
     cmdHead_.store(h + 1, std::memory_order_release);
     return true;
   }
@@ -2157,12 +2172,13 @@ class PlatterGen final : public Generator {
   }
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
-    // key lock voices from the UI thread
-    if (KeyPool* np = pending_.load(std::memory_order_acquire); np && !retired_.load(std::memory_order_relaxed)) {
-      pending_.store(nullptr, std::memory_order_relaxed);
-      retired_.store(sh_.pool, std::memory_order_release);
-      sh_.pool = np;
-      for (auto& d : deck_) d.keyOn_ = false;
+    // key lock voices from the UI thread (K-431: atomic exchange prevents UAF with prepareHost)
+    if (!sh_.pool || !retired_.load(std::memory_order_acquire)) {
+      if (KeyPool* np = pending_.exchange(nullptr, std::memory_order_acq_rel)) {
+        if (sh_.pool) retired_.store(sh_.pool, std::memory_order_release);
+        sh_.pool = np;
+        for (auto& d : deck_) d.keyOn_ = false;
+      }
     }
     sh_.sr = ctx.sampleRate > 0 ? ctx.sampleRate : 44100.0;
     for (auto& d : deck_) d.setEqRate(sh_.sr);
@@ -2456,6 +2472,22 @@ class PlatterGen final : public Generator {
       return;
     }
     if (deck_[static_cast<size_t>(c.deck & 1)].driven_ && c.kind != CmdAbsolute) return;  // J-163: a pass plays it
+    if (c.kind == CmdNudge) {
+      // the editor's rim: as many of the controller's jog ticks (the rest waits for the next move)
+      double& fr = nudgeFrac_[static_cast<size_t>(c.deck & 1)];
+      const double tpr = sh_.aux ? std::max(8.0, sh_.aux->m.map.ticksPerRev) : 128.0;
+      fr = std::clamp(fr + c.v * tpr, -4096.0, 4096.0);
+      const double whole = std::trunc(fr);
+      fr -= whole;
+      if (whole == 0.0) return;
+      InEvent e;
+      e.control = CtlJogRim;
+      e.type = TypeRelative;
+      e.deck = static_cast<uint8_t>(c.deck & 1);
+      e.ticks = static_cast<int>(whole);
+      input(e);
+      return;
+    }
     if (sh_.strict) {  // J-159
       if (c.kind == CmdButton) {
         InEvent e;
@@ -3429,6 +3461,7 @@ class PlatterGen final : public Generator {
   uint64_t hubPos_ = 0;
   std::array<Cmd, 256> cmds_{};
   std::array<int64_t, 256> cmdNs_{};  // arrival times (hub::nowNs)
+  std::array<double, kDecks> nudgeFrac_{};  // the editor rim's part of a jog tick still to send
   std::atomic<size_t> cmdHead_{0}, cmdTail_{0};
   struct Timed {
     double at = 0;  // sample time it acts on

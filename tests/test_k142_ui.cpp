@@ -89,6 +89,11 @@ void testPlanWait() {
   off.setEnabled(false);
   w = idlepace::planWait(off, 100.0, false, false, 0.0, 1e300);
   expect(w.left == 0, "pacing off: no wait, shown or not");
+  // 0.7.9 (TASKS.md:1441): SDL >= 2.0.16 1 ms joystick poll suppression policy.
+  expect(idlepace::suppressJoystickWait(false, 0), "hidden, no joystick: suppress SDL joystick wait poll");
+  expect(idlepace::suppressJoystickWait(false, 2), "hidden, joysticks attached: suppress 1 ms wait poll (4 Hz pump still reads)");
+  expect(idlepace::suppressJoystickWait(true, 0), "shown, no joystick: suppress SDL joystick wait poll");
+  expect(!idlepace::suppressJoystickWait(true, 1), "shown, joystick attached: keep joystick event polling active");
 }
 
 bool sameOrder(const std::vector<trk::OrderEntry>& a, const std::vector<trk::OrderEntry>& b) {

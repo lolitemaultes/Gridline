@@ -21,10 +21,16 @@ bool claimEffectEditor(App& a, const PluginTarget& t);
 bool showInLoupePanel(App& a, const PluginTarget& t);
 // K-112 (R3): the Loupe panel's content in w x h (a layout part's frame hosts it).
 void drawLoupeBody(App& a, float w, float h);
+// K-421: Loupe freely-resizable window sizing and size/scale menu (persisted in Settings).
+void loupePreferredWindowSize(App& a, float extraW, float extraH, float workW, float workH, float& outW, float& outH, bool& forceApply);
+void rememberLoupeWindowSize(App& a, float w, float h);
+void drawLoupeSizeMenu(App& a);
 // Dev checks (--dev-input): commands a pack answers ("loupe ..."); true when handled.
 bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);
 // Opens the audio editor (gl.edison) on a channel's sample in its own window.
-bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
+// K-419: when `clip` is a Playlist audio clip id, its warp markers are imported into
+// Loupe as editable markers and kept in sync when edited or sent back to the playlist.
+bool openAudioEditor(App& a, const std::string& path, ObjectId channel, ObjectId clip = kNoId);
 // The audio editor's windows of their own close (the panel pinned into the layout stays).
 void closeAudioEditorWindows(App& a);
 // K-112B (R04-04): closes the audio editor's own windows on channel samples (the Tracks layout:
@@ -42,6 +48,10 @@ int armAudioEditorRecording(App& a, ObjectId track);
 // picture"); a file that is not a picture leaves the state as it was and says
 // why. False when the target is not a Pixel Tone.
 bool loadPicture(App& a, const PluginTarget& t, const std::string& path);
+// K-408: loads an audio file into a pack-owned audio-loading plugin through its exact native load
+// path (preserving auto-chop, deck selection, wavetable/IR import, undo and collab). `subTarget`
+// selects a deck/osc/slot when relevant (e.g. Platter 0=Deck A / 1=Deck B).
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path, const std::string& title = "", int subTarget = 0);
 // J-150: true when a pack takes this device's MIDI for itself (a DJ deck bound to
 // the controller, or learning a control): the app's links and templates skip it.
 bool claimMidi(App& a, const std::string& device);

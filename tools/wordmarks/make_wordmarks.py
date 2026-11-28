@@ -7,7 +7,10 @@ name in lower case, Inter Bold, in the logo guide's lockup proportions (mark 120
 gap 28, tracking -3). The two suites get the real Tile mark with "gridline suite" and
 "gridline suite mini".
 
-Output: assets/wordmarks/<id>.svg for type gl.<id>, plus _suite.svg and _suite-mini.svg.
+Output: assets/wordmarks/<id>.svg for type gl.<id>, plus _suite.svg and _suite-mini.svg, and the
+plugin icon assets/icons/ui/plugin-<id>.svg (K-450): the same tile and pictogram on the 24-unit
+icon grid, the tile filling the box (so its edges land on whole pixels at every size), the motif
+cut out (shape ids mark* / cut*, drawn by the icon atlas as a tile with true holes).
 Each SVG is 24 units tall (logical px at 100 % UI scale). Shape ids carry the colour role the
 app tints them with (src/app/icons/Wordmark.h): mark* (family colour), cut* (cut out of the
 mark: transparent), word* (text), dim* (secondary text). The <title> is the display name.
@@ -21,6 +24,9 @@ The SVGs are committed; the build only embeds them (cmake/EmbedWordmarks.cmake).
 
 Usage: python3 tools/wordmarks/make_wordmarks.py [--gridline build-cmake/gridline]
                                                  [--extra-names file.json] [--sheet out.svg]
+       python3 tools/wordmarks/make_wordmarks.py --recut
+         (K-450: no font or CLI needed: redraws only the tiles of the committed wordmarks, keeping
+          each name as set, and writes every plugin icon; use it after changing a motif)
 """
 import argparse
 import json
@@ -34,14 +40,14 @@ ROOT = os.path.normpath(os.path.join(HERE, '..', '..'))
 sys.path.insert(0, HERE)
 sys.dont_write_bytecode = True  # keep tools/wordmarks free of __pycache__
 from motifs import M as MOTIFS  # noqa: E402
-from plugins import FAMILIES, P, MINI, MINI_FAMILIES  # noqa: E402
+from plugins import FAMILIES, P, MINI, MINI_FAMILIES, RESERVED  # noqa: E402
 
 try:
     from fontTools.ttLib import TTFont
     from fontTools.pens.svgPathPen import SVGPathPen
     from fontTools.pens.transformPen import TransformPen
 except ImportError:
-    sys.exit('make_wordmarks.py needs fontTools: pip install fonttools')
+    TTFont = None  # only --recut works without it
 
 TEXT, DIM, HOT, SURFACE = '#D5DBDF', '#A2ABB0', '#FFB547', '#353D42'  # default colours (dark theme) for viewing
 H = 24.0
@@ -189,20 +195,48 @@ class Svg:
                 % (w, num(H), w, num(H), title, '\n'.join(self.items)))
 
 
-def tile_wordmark(font, name, colour, motif):
-    svg = Svg()
-    svg.fill('mark', rrect(0, 2, TILE, TILE, TILE * 28 / 120), colour)
-    s = TILE / 24.0
+def tile(svg, colour, motif, x, y, size, cut_w):
+    """The family tile at (x, y), `size` square, with the motif cut out of it."""
+    svg.fill('mark', rrect(x, y, size, size, size * 28 / 120), colour)
+    s = size / 24.0
     for it in MOTIFS[motif]:  # the motif is cut out of the tile (drawn in the surface colour for viewers)
         if it[0] == 'c':
-            svg.dot('cut', it[1] * s, 2 + it[2] * s, it[3] * s, SURFACE)
+            svg.dot('cut', x + it[1] * s, y + it[2] * s, it[3] * s, SURFACE)
         elif it[0] == 's':
-            svg.stroke('cut', place(it[1], 0, 2, s), SURFACE, CUT_W * s)
+            svg.stroke('cut', place(it[1], x, y, s), SURFACE, cut_w * s)
         else:
-            svg.fill('cut', place(it[1], 0, 2, s), SURFACE)
+            svg.fill('cut', place(it[1], x, y, s), SURFACE)
+
+
+def tile_wordmark(font, name, colour, motif):
+    svg = Svg()
+    tile(svg, colour, motif, 0, 2, TILE, CUT_W)
     d, x = font.set(name.lower(), TILE + GAP, BASE, FS, TRACK)
     svg.fill('word', d, TEXT)
     return svg.doc(x, name)
+
+
+def plugin_icon(name, colour, motif):
+    """K-450: the plugin's icon on the 24-unit icon grid (assets/icons/ui/plugin-<id>.svg). The tile
+    fills the box; the motif strokes are 2 units, the icon set's stroke, which the atlas scales by
+    its stroke rule (icons::strokePx) like every other icon."""
+    svg = Svg()
+    tile(svg, colour, motif, 0, 0, 24.0, 2.0)
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><title>%s</title>\n%s\n</svg>\n'
+            % (name, '\n'.join(svg.items)))
+
+
+def recut(path, colour, motif):
+    """Redraws the tile (mark and cut shapes) of a committed wordmark, keeping its name shapes."""
+    text = open(path).read()
+    title = re.search(r'<title>(.*?)</title>', text).group(1)
+    words = [l for l in text.split('\n') if l.startswith('<path id="word') or l.startswith('<path id="dim')]
+    head = text.split('\n')[0]
+    svg = Svg()
+    tile(svg, colour, motif, 0, 2, TILE, CUT_W)
+    n = len(svg.items)
+    words = [re.sub(r'id="(word|dim)-\d+"', lambda m, i=i: 'id="%s-%d"' % (m.group(1), n + 1 + i), w) for i, w in enumerate(words)]
+    return head + '\n' + '\n'.join(svg.items + words) + '\n</svg>\n', title
 
 
 def suite_wordmark(font, mini):
@@ -223,12 +257,63 @@ def catalogue(cli):
     return {p['type']: p['name'] for p in json.loads(out)}
 
 
+def write_icons(rows, names):
+    """K-450: assets/icons/ui/plugin-<id>.svg for every row; stale plugin-*.svg removed."""
+    out = os.path.join(ROOT, 'assets', 'icons', 'ui')
+    keep = set()
+    for t, colour, motif in rows:
+        f = 'plugin-' + t[3:] + '.svg'
+        keep.add(f)
+        open(os.path.join(out, f), 'w').write(plugin_icon(names.get(t, t), colour, motif))
+    for f in os.listdir(out):
+        if f.startswith('plugin-') and f.endswith('.svg') and f not in keep:
+            os.remove(os.path.join(out, f))
+    return len(keep)
+
+
+def all_rows():
+    rows = {}
+    for t, (fam, motif, _) in P.items():
+        rows[t] = ('#%06X' % FAMILIES[fam][1], motif)
+    for t, (n, fam, motif, _) in MINI.items():
+        rows[t] = ('#%06X' % MINI_FAMILIES[fam], motif)
+    for t, (_, motif) in rows.items():
+        if motif not in MOTIFS:
+            sys.exit('%s: unknown motif %s' % (t, motif))
+    return rows
+
+
+def recut_all(out_dir):
+    names, icons = {}, []
+    rows = all_rows()
+    for t, (colour, motif) in sorted(rows.items()):
+        path = os.path.join(out_dir, t[3:] + '.svg')
+        if not os.path.exists(path):
+            if t in RESERVED:  # a plugin on its way: its icon now, its wordmark once it is built
+                names[t] = RESERVED[t]
+                icons.append((t, colour, motif))
+                continue
+            print('%s: no wordmark yet (run without --recut to set its name)' % t)
+            continue
+        text, names[t] = recut(path, colour, motif)
+        open(path, 'w').write(text)
+        icons.append((t, colour, motif))
+    n = write_icons(icons, names)
+    print('%d tiles recut, %d plugin icons in assets/icons/ui' % (len(names) - len([t for t in names if t in RESERVED and t[3:] + '.svg' not in os.listdir(out_dir)]), n))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('--gridline', default=os.path.join(ROOT, 'build-cmake', 'gridline'), help='gridline CLI (catalogue names)')
     ap.add_argument('--out', default=os.path.join(ROOT, 'assets', 'wordmarks'))
     ap.add_argument('--sheet', help='also write a contact sheet SVG of every wordmark')
+    ap.add_argument('--recut', action='store_true', help='only redraw the tiles and the plugin icons (no font, no CLI)')
     args = ap.parse_args()
+    if args.recut:
+        recut_all(args.out)
+        return
+    if TTFont is None:
+        sys.exit('make_wordmarks.py needs fontTools: pip install fonttools (or use --recut)')
 
     font = Font(os.path.join(ROOT, 'assets', 'fonts', 'Inter-Bold.ttf'))
     names = catalogue(args.gridline)
@@ -263,6 +348,7 @@ def main():
         if f.endswith('.svg') and f not in keep:
             os.remove(os.path.join(args.out, f))
     print('%d wordmarks + 2 suite logos in %s' % (len(rows), os.path.relpath(args.out, ROOT)))
+    print('%d plugin icons in assets/icons/ui' % write_icons([(t, c, m) for t, _, c, m in rows], {t: n for t, n, _, _ in rows}))
 
     if args.sheet:
         cols, cw, ch = 3, 300, 36

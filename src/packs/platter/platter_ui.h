@@ -38,11 +38,16 @@ std::shared_ptr<const Bands> bandsFor(const SamplePtr& s, const std::string& pat
 
 // Per deck, UI only.
 struct DeckUi {
+  // A track loaded here (Load, a drop, Import from URL): its first analysis joins the load's
+  // undo step, so one undo takes the track off again.
+  std::string foldPath;
+  uint64_t foldSerial = 0;
   std::string path;
   seltmann::JobPtr job;               // analysis + peaks of `path`
   std::shared_ptr<const Bands> bands;
-  bool platterDrag = false;
-  double dragTurns = 0, lastAngle = 0;
+  bool platterDrag = false, rimDrag = false;  // the hand on the record (scratch) / on the rim (nudge)
+  PlatterGrip grip;     // the hand on the record
+  double lastAngle = 0; // the rim's last angle
   bool waveDrag = false;
   float waveGrabX = 0;
   double strobe = 0;  // strobe dots' drift (turns): stands still at 1.0x
@@ -67,6 +72,7 @@ struct Ed {
   bool setupInit = false;
   // mapping drawer
   bool drawer = false;
+  bool drawerJog = false;  // (dev hook GRIDLINE_PLATTER_DRAWER=1jog: keep the jog wheel's row in view)
   int drawerTab = 0;      // 0 deck A, 1 deck B, 2 mixer
   int learn = -1;         // control waiting for a MIDI message
   int learnDeck = 0;
@@ -79,6 +85,8 @@ struct Ed {
   std::string lastTrace;
 };
 Ed& ed(const PluginTarget& t);
+// One notch of the scroll wheel over a platter nudges it as this much of a turn of its rim.
+inline constexpr double kScrollNudgeTurns = 1.0 / 32;
 
 // ---- colours / text
 ImU32 accent();
@@ -117,7 +125,10 @@ void commit(App& a, const PluginTarget& t, Ed& e, const Model& m, const char* la
 LiveView live(App& a, const PluginTarget& t, int deck);
 MixView mixLive(App& a, const PluginTarget& t);
 Generator* deckGen(App& a, const PluginTarget& t);
-void send(App& a, const PluginTarget& t, int deck, uint8_t kind, uint8_t control = 0, double v = 0, double w = 0);
+// `ns`: when the input was read (hub::nowNs; 0: now). The hand's moves pass the frame's start
+// (frameNs), so the time the editor takes to draw up to them is not heard as unevenness.
+void send(App& a, const PluginTarget& t, int deck, uint8_t kind, uint8_t control = 0, double v = 0, double w = 0, int64_t ns = 0);
+int64_t frameNs();
 void press(App& a, const PluginTarget& t, int deck, int control, bool down);
 void openLoadDialog(App& a, const PluginTarget& t, int deck);
 // Puts `path` on deck `deck` (deck A: the first line of the data).

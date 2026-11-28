@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><title>Terrace</title>
+<path id="mark-1" d="M5.6 0H18.4A5.6 5.6 0 0 1 24 5.6V18.4A5.6 5.6 0 0 1 18.4 24H5.6A5.6 5.6 0 0 1 0 18.4V5.6A5.6 5.6 0 0 1 5.6 0Z" fill="#FF9637"/>
+<path id="cut-2" d="M 5 18.5 H 9.5 V 14.5 H 14 V 10.5 H 18.5 V 6.5" fill="none" stroke="#353D42" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle id="cut-3" cx="7.25" cy="15.6" r="1.1" fill="#353D42"/>
+<circle id="cut-4" cx="11.75" cy="11.6" r="1.1" fill="#353D42"/>
+<circle id="cut-5" cx="16.25" cy="7.6" r="1.1" fill="#353D42"/>
+</svg>

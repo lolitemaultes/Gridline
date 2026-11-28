@@ -16,6 +16,8 @@
 #include "LogicPlugins.h"
 #include "RecordRowsUi.h"
 #include "AsioUi.h"
+#include "JackUi.h"
+#include "../host/audio/JackCore.h"
 #include "ChopUi.h"
 #include "ContextMenus.h"
 #include "FreezeUi.h"
@@ -30,7 +32,9 @@
 #include <cstdlib>
 #include <filesystem>
 #include <map>
+#include <set>
 #include "../core/Automation.h"
+#include "../core/Log.h"
 #include "../core/Meter.h"
 #include "../core/PluginParams.h"
 #include "../engine/ClipOps.h"
@@ -167,12 +171,60 @@ std::string inputName(int first, bool stereo) {
   return "In " + std::to_string(first + 1);
 }
 
+std::vector<InputChoice> inputChoices(const App& a, bool padToStereo) {
+  std::vector<InputChoice> out;
+  const bool jackOn = a.jack.active;
+  const int devCh = jackOn ? a.jack.inputs : deviceInputs(a);
+  const int listCh = padToStereo && !jackOn ? std::max(devCh, 2) : devCh;
+  auto peersFor = [&](int first, bool stereo) -> std::string {
+    if (!jackOn) return {};
+    std::vector<std::string> peers;
+    auto collect = [&](int ch) {
+      if (ch >= 0 && static_cast<size_t>(ch) < a.jack.inPorts.size()) {
+        for (const auto& p : a.jack.inPorts[static_cast<size_t>(ch)].connected) peers.push_back(p);
+      }
+    };
+    collect(first);
+    if (stereo) collect(first + 1);
+    return jack::formatConnectedPeers(peers);
+  };
+  for (int c = 0; c + 1 < listCh; c += 2) {
+    out.push_back({c, true, inputName(c, true), peersFor(c, true), jackOn});
+  }
+  for (int c = 0; c < listCh; ++c) {
+    out.push_back({c, false, inputName(c, false), peersFor(c, false), jackOn});
+  }
+  return out;
+}
+
+std::string inputChoiceMenuLabel(const InputChoice& c) {
+  if (!c.jackPort) return c.label;
+  if (!c.peers.empty()) return c.label + "  (" + c.peers + ")";
+  return c.label + "  (" + i18n::tr("not connected") + ")";
+}
+
 // ------------------------------------------------------------------ recording session
 
 void App::processAudioRecording() {
   devDemo(*this);
   recmore::frame(*this);  // K-123 (0.7.7): quick punch, capture while armed, start on the first note, the latency check
   const Song& s = doc.song();
+  // K-430: keep automatic latency compensation aligned with any adaptive jitter buffer growth
+  // while idle (never shift mid-take), and log once if a live capture device stalls at 0 frames.
+  if (audioInputLiveDevice && engine.inputChannels() > 0) {
+    if (!audioRecSession) {
+      const double sr = std::max(1.0, engine.sampleRate());
+      const double capRate = std::max(1.0, static_cast<double>(audioInputRate > 0 ? audioInputRate : static_cast<int>(sr)));
+      const int capOut = static_cast<int>(std::llround(static_cast<double>(audioInputBuffer) * sr / capRate));
+      const int eff = std::max(capOut, engine.inputEffectivePrefill());
+      audioInputLatency = capOut + eff + audioInputOutFrames;
+    }
+    static double warnedOpenAt = -1.0;
+    if (now - audioInputOpenedAt > 2.5 && engine.inputFramesPushed() == 0 && warnedOpenAt != audioInputOpenedAt) {
+      warnedOpenAt = audioInputOpenedAt;
+      logging::warning("audio", "capture device '" + audioInputDevice + "' delivered 0 frames in 2.5 s (check system audio routing/permissions)");
+    }
+  }
   // Latency compensation: device buffers (K-123: the measured round trip when one applies) + delay
   // compensation + manual offset.
   const double offMs = settings.getNumber("audio.inputOffsetMs");
@@ -217,7 +269,9 @@ void App::processAudioRecording() {
   // Clips: Arrangement Record takes MIDI too, and a take ends where recording stopped (N50-06).
   // R06-01: the Tracks layout loops only inside the cycle; without one playback and recording run
   // on past the song end (a new project's one bar never wraps a take onto itself).
-  const bool pastEnd = song && !sel && ((recordArmed && ((armedTracks && recAudio) || packRecords || livelook::active(*this))) || logicplug::active(*this));
+  // K-415: normal Song mode playback wraps (or stops if transport.stopAtEnd is on) at song end in every
+  // layout; only an armed recording without a loop selection runs freely past the song end.
+  const bool pastEnd = song && !sel && recordArmed && ((armedTracks && recAudio) || packRecords || livelook::active(*this) || logicplug::active(*this));
   if (pastEnd && audioRecLoopRestore < 0) {
     engine.setLooping(false);
     audioRecLoopRestore = 1;
@@ -382,7 +436,29 @@ void toggleArm(App& a, ObjectId track) {
       m.inputStereo = inputs != 1;
     }
   });
-  if (on && a.audioInputDevice.empty()) a.notify("Armed. Choose an input device in Settings \xE2\x86\x92 Audio to record.");
+  // (GitHub #89: with no input device chosen yet, armInputCheck opens the default one this frame.)
+}
+
+void armInputCheck(App& a) {
+  static uint64_t epoch = ~0ull;
+  static std::set<ObjectId> was;  // the tracks armed with an input at the last look
+  const Song& s = a.doc.song();
+  std::set<ObjectId> now;
+  for (const auto& m : s.mixer)
+    if (m.armed && m.input >= 0) now.insert(m.id);
+  const bool opened = epoch != a.doc.projectEpoch();  // another project: its arms are not this person's click
+  epoch = a.doc.projectEpoch();
+  bool newly = false;
+  if (!opened)
+    for (ObjectId id : now) newly = newly || !was.count(id);
+  was = std::move(now);
+  if (!newly || !a.audioInputDevice.empty() || asioui::inputsFromDriver(a)) return;
+  // A track was just armed and nothing could record it: the computer's default input, as Settings >
+  // Audio > Input device > System default picks it (the devices reopen with it).
+  a.audioInputDevice = "*";
+  a.settings.set("audio.inputDevice", "*");
+  a.audioReopen = true;
+  a.notify(i18n::tr("Armed. Recording from the computer's default input: Settings > Audio > Input device picks another."));
 }
 
 bool stripArmButton(App& a, const MixerTrack& t, ImVec2 pos) {
@@ -437,8 +513,7 @@ void mixerInputPanel(App& a, const MixerTrack& t, float width) {
   if (t.id == s.masterId()) return;
   ImGui::PushID("input");
   ui::Label("INPUT");
-  const int devCh = deviceInputs(a);
-  const int listCh = std::max(devCh, 2);
+  const int devCh = a.jack.active ? a.jack.inputs : deviceInputs(a);
   const float comboW = std::max(80.0f, width - 64);
   if (ui::BeginCombo("##in", inputName(t.input, t.inputStereo).c_str(), comboW)) {
     auto pick = [&](int first, bool stereo) {
@@ -449,13 +524,18 @@ void mixerInputPanel(App& a, const MixerTrack& t, float width) {
       });
     };
     if (ImGui::Selectable(i18n::tr("(none)"), t.input < 0)) pick(-1, true);
-    for (int c = 0; c + 1 < listCh; c += 2) {
-      std::string n = inputName(c, true);
-      if (ImGui::Selectable(n.c_str(), t.input == c && t.inputStereo)) pick(c, true);
+    const std::vector<InputChoice> choices = inputChoices(a, true);
+    if (choices.empty() && a.jack.active) {
+      ImGui::BeginDisabled();
+      ImGui::Selectable(i18n::tr("No input ports (Settings, Audio, JACK / PipeWire ports)"), false);
+      ImGui::EndDisabled();
     }
-    for (int c = 0; c < listCh; ++c) {
-      std::string n = inputName(c, false);
-      if (ImGui::Selectable(n.c_str(), t.input == c && !t.inputStereo)) pick(c, false);
+    for (size_t i = 0; i < choices.size(); ++i) {
+      const InputChoice& c = choices[i];
+      ImGui::PushID(static_cast<int>(i));
+      const std::string item = inputChoiceMenuLabel(c);
+      if (ImGui::Selectable(item.c_str(), t.input == c.first && t.inputStereo == c.stereo)) pick(c.first, c.stereo);
+      ImGui::PopID();
     }
     ImGui::EndCombo();
   }
@@ -601,13 +681,15 @@ void audioClipTempoItems(App& a, ObjectId id) {
   if (ImGui::MenuItem(i18n::tr("Normalize"))) editSongClip(a, "normalize clip", [&](Song& x) { normalizeClip(x, id, 0.0); });
 }
 
-void audioClipMenu(App& a, ObjectId id) {
+void audioClipMenu(App& a, ObjectId id, bool withEdit) {
   const Song& s = a.doc.song();
   const Clip* c = s.clip(id);
   if (!c || c->kind != ClipKind::Audio) return;
   const Clip clip = *c;
-  if (ImGui::MenuItem(i18n::tr("Edit clip..."))) clipeditor::open(a, id, clipwin::entryTab(clipwin::Entry::EditClip));  // the Audio clip window
-  ui::Hint("The Audio clip window: every setting of the clip and its sample, its waveform, warp markers and audio edits (also a double-click)");
+  if (withEdit) {
+    if (ImGui::MenuItem(i18n::tr("Edit clip..."))) clipeditor::open(a, id, clipwin::entryTab(clipwin::Entry::EditClip));  // the Audio clip window
+    ui::Hint("The Audio clip window: every setting of the clip and its sample, its waveform, warp markers and audio edits (also a double-click)");
+  }
   compMenu(a, clip);
   if (ImGui::BeginMenu(i18n::tr("Time stretch"))) {
     const Channel* ch = s.channel(clip.source);
@@ -627,7 +709,7 @@ void audioClipMenu(App& a, ObjectId id) {
     }
     if (ImGui::MenuItem(i18n::tr("Half as long"))) editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, clip.stretch * 0.5, keep); });
     if (ImGui::MenuItem(i18n::tr("Twice as long"))) editSongClip(a, "stretch clip", [&](Song& x) { setClipStretch(x, id, clip.stretch * 2.0, keep); });
-    if (ImGui::MenuItem(i18n::tr("Original length"), nullptr, false, clip.stretch != 1.0))
+    if (ImGui::MenuItem(i18n::tr("Original length"), nullptr, false, clip.stretch != 1.0 || clip.tempoLock))
       editSongClip(a, "stretch clip", [&](Song& x) { resetClipStretch(x, id); });  // J-193: unstretched: fixed seconds again
     ImGui::EndMenu();
   }
@@ -753,6 +835,9 @@ void audioInputSettings(App& a, float fieldW) {
   if (asioui::inputsFromDriver(a)) {  // K-6: the ASIO driver's inputs feed the mixer
     label("Input device");
     ImGui::TextColored(theme::vec(P.textDim), i18n::tr("%s, %d inputs (ASIO CHANNELS above)"), a.asio.driver.c_str(), a.asio.inputs);
+  } else if (jackui::inputsFromDriver(a)) {  // K-357: JACK / PipeWire named input ports
+    label("Input device");
+    ImGui::TextColored(theme::vec(P.textDim), i18n::tr("JACK / PipeWire, %d inputs (ports above)"), a.jack.inputs);
   } else {
     label("Input device");
     const char* cur = a.audioInputDevice.empty() ? "None" : a.audioInputDevice == "*" ? "System default" : a.audioInputDevice.c_str();
@@ -827,9 +912,62 @@ void audioInputSettings(App& a, float fieldW) {
   if (livelook::active(a)) ui::PathFit(recordedDir(a).c_str(), std::max(40.0f, ImGui::GetContentRegionAvail().x - 8), P.textDim);
   else ImGui::TextColored(theme::vec(P.textDim), "%s", recordedDir(a).c_str());
   ImGui::PopFont();
+  if (!a.audioInputDevice.empty() && a.engine.inputChannels() > 0) {
+    // K-430: live input signal meter right in Settings > Audio so users can immediately confirm
+    // microphone signal before arming a mixer track. Strictly theme::pal() tokens.
+    label("Input level");
+    struct StatusMeter {
+      int frame = -1;
+      float l = 0.f, r = 0.f;
+      float hold = 0.f;
+      double holdAt = 0.0;
+    };
+    static StatusMeter sm;
+    if (sm.frame != ImGui::GetFrameCount()) {
+      sm.frame = ImGui::GetFrameCount();
+      a.engine.takeInputStatusPeaks(sm.l, sm.r);
+      const float pk = std::max(sm.l, sm.r);
+      if (pk >= sm.hold || a.now - sm.holdAt > 1.2) sm.hold = pk, sm.holdAt = a.now;
+    }
+    const float meterW = std::min(fieldW, std::max(140.0f, ImGui::GetContentRegionAvail().x - 110.0f));
+    const float rowH = ImGui::GetFrameHeight();
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + std::floor((rowH - 10.0f) * 0.5f)));
+    ui::Meter(ImGui::GetID("settings_inmeter"), sm.l, sm.r, ImVec2(meterW, 10.0f), false);
+    ui::Hint("Live peak level from the selected input device");
+    ImGui::SameLine(0, theme::kS2);
+    ImGui::SetCursorScreenPos(ImVec2(ImGui::GetCursorScreenPos().x, p0.y));
+    ImGui::AlignTextToFramePadding();
+    if (sm.hold > 1e-4f) {
+      const float db = 20.0f * std::log10(sm.hold);
+      ImGui::PushFont(livelook::numFont(a), theme::kFontNumber + 1);
+      ImGui::TextColored(theme::vec(sm.hold >= 1.0f ? P.danger : theme::lit(P.led)), "%+.1f dB", db);
+      ImGui::PopFont();
+    } else {
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Silent"));
+    }
+  }
   if (!a.audioInputStatus.empty()) {
     label("Input status");
+    ImGui::BeginGroup();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::max(180.0f, ImGui::GetContentRegionAvail().x));
     ImGui::TextColored(theme::vec(P.textDim), "%s", a.audioInputStatus.c_str());
+    if (a.audioInputLiveDevice && a.audioInputHwChannels == 1 && a.audioInputReqChannels > 1) {
+      ImGui::TextColored(theme::vec(P.textFaint), "%s",
+                         i18n::tr("Hardware input is mono (1 channel): stereo track inputs mirror In 1."));
+    }
+    if (a.audioInputLiveDevice && a.engine.inputChannels() > 0) {
+      const int ur = a.engine.inputUnderruns();
+      const int eff = a.engine.inputEffectivePrefill();
+      if (a.now - a.audioInputOpenedAt > 1.5 && a.engine.inputFramesPushed() == 0) {
+        ImGui::TextColored(theme::vec(P.danger), "%s",
+                           i18n::tr("No audio frames received yet. Check system audio permissions, routing, or buffer size."));
+      } else if (ur > 0 && eff > std::max(a.audioInputBuffer, a.audioInputOutFrames)) {
+        ImGui::TextColored(theme::vec(P.accent), i18n::tr("Adaptive jitter buffer expanded to %d frames (%d recovered)."), eff, ur);
+      }
+    }
+    ImGui::PopTextWrapPos();
+    ImGui::EndGroup();
   }
 }
 

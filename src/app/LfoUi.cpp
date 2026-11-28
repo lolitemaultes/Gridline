@@ -21,6 +21,7 @@
 #include "LayoutPresets.h"
 #include "TrackerView.h"
 #include "LayoutShellUi.h"
+#include "../core/Presets.h"
 #include "Theme.h"
 #include "TrackerLook.h"
 #include "TrackerPages.h"
@@ -300,7 +301,7 @@ void shapeGlyph(ImDrawList* dl, ImVec2 mn, ImVec2 mx, LfoShape s, ImU32 c) {
 // The width miniSeg takes for these labels.
 float miniSegWidth(App& a, const char* const* labels, int count) {
   ImFont* f = monoFont(a);
-  const float fs = fsLabel() - 1.0f;
+  const float fs = fsLabel();
   float total = 3;
   for (int i = 0; i < count; ++i) total += std::ceil(textW(f, fs, tr(labels[i]))) + 13;
   return total;
@@ -312,7 +313,7 @@ bool miniSeg(App& a, const char* id, const char* const* labels, int count, int* 
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImFont* f = monoFont(a);
-  const float fs = fsLabel() - 1.0f;
+  const float fs = fsLabel();
   float total = 2;
   std::vector<float> ws;
   for (int i = 0; i < count; ++i) ws.push_back(std::ceil(textW(f, fs, tr(labels[i]))) + 12), total += ws.back() + 1;
@@ -378,16 +379,16 @@ bool chip(App& a, const char* id, ImVec2 p, float w, ImU32 dotCol, bool roundDot
     else dl->AddRectFilled(ImVec2(x, p.y + 6.5f), ImVec2(x + 9, p.y + 15.5f), dc, 2.0f);
     x += 14;
   }
-  const float amtW = amt && *amt ? textW(monoFont(a), fs - 1, amt) + 6 : 0;
+  const float amtW = amt && *amt ? textW(monoFont(a), fs, amt) + 6 : 0;
   const char* shown = fit(ImGui::GetFont(), fs, label, q.x - x - amtW - 6);
   text(dl, ImGui::GetFont(), fs, ImVec2(x, p.y + (h - fs) * 0.5f), dashed ? (hov ? P.text : P.textDim) : dim ? P.textFaint : P.text, shown);
-  if (amtW > 0) text(dl, monoFont(a), fs - 1, ImVec2(q.x - amtW - 3, p.y + (h - fs + 1) * 0.5f), P.textDim, amt);
+  if (amtW > 0) text(dl, monoFont(a), fs, ImVec2(q.x - amtW - 3, p.y + (h - fs) * 0.5f), P.textDim, amt);
   return click;
 }
 
 float chipWidth(App& a, const char* label, const char* amt, bool dot) {
   const float fs = fsLabel();
-  return std::ceil(6 + (dot ? 14 : 0) + textW(ImGui::GetFont(), fs, label) + (amt && *amt ? textW(monoFont(a), fs - 1, amt) + 6 : 0) + 8);
+  return std::ceil(6 + (dot ? 14 : 0) + textW(ImGui::GetFont(), fs, label) + (amt && *amt ? textW(monoFont(a), fs, amt) + 6 : 0) + 8);
 }
 
 // The round drag handle of an LFO: drag it onto any knob.
@@ -677,6 +678,101 @@ void addTargetBody(App& a, ObjectId lfoId) {
   }
 }
 
+// ---- presets (0.7.9) ---------------------------------------------------------
+// The user's presets, read again at most every two seconds (and at once after a save or delete).
+std::vector<lfo::Preset> gUserPresets;
+double gUserPresetsAt = -100;
+const std::vector<lfo::Preset>& userPresetList(App& a) {
+  if (a.now - gUserPresetsAt > 2.0) gUserPresets = lfo::listUserPresets(presetRoot(a.configDir())), gUserPresetsAt = a.now;
+  return gUserPresets;
+}
+std::string presetLabel(const lfo::Preset& p) {
+  if (p.factory) return tr(p.name.c_str());
+  return p.folder.empty() ? p.name : p.folder + "/" + p.name;
+}
+// The preset rows of a menu: the factory presets, then the user's (each a click: `pick`).
+void presetItems(App& a, const std::function<void(const lfo::Preset&)>& pick) {
+  ImGui::TextDisabled("%s", tr("Factory"));
+  for (const lfo::Preset& p : lfo::presets())
+    if (ImGui::MenuItem(presetLabel(p).c_str())) pick(p);
+  ImGui::Separator();
+  ImGui::TextDisabled("%s", tr("My presets"));
+  const auto& mine = userPresetList(a);
+  if (mine.empty()) ImGui::MenuItem(tr("None saved yet"), nullptr, false, false);
+  for (const lfo::Preset& p : mine)
+    if (ImGui::MenuItem(presetLabel(p).c_str())) pick(p);
+}
+// Save-as popover state.
+ObjectId gSaveLfo = kNoId;
+bool gOpenSave = false;
+char gSaveName[96] = {};
+}  // namespace
+
+const std::vector<lfo::Preset>& userPresets(App& a) { return userPresetList(a); }
+void refreshPresets() { gUserPresetsAt = -100; }
+
+bool usePreset(App& a, const lfo::Preset& p, ObjectId into) {
+  const Song& s = a.doc.song();
+  if (into != kNoId && s.lfo(into)) {
+    const SongLfo settings = p.lfo;
+    return a.doc.editLfo(into, "load LFO preset", [settings](SongLfo& x) { lfo::applyPreset(x, settings); });
+  }
+  if (static_cast<int>(s.lfos.size()) >= kMaxSongLfos) return false;
+  SongLfo l = lfo::makeDefault(s, p.lfo.kind);
+  lfo::applyPreset(l, p.lfo);
+  const ObjectId id = a.doc.addLfo(l, -1, "new LFO from a preset");
+  if (id != kNoId) gSelected = id;
+  return id != kNoId;
+}
+
+bool savePreset(App& a, ObjectId id, const std::string& name) {
+  const SongLfo* L = a.doc.song().lfo(id);
+  if (!L) return false;
+  std::string err, path;
+  if (!lfo::saveUserPreset(presetRoot(a.configDir()), *L, name, &path, &err)) {
+    a.notify(tr("Could not save the LFO preset"), true, err);
+    return false;
+  }
+  refreshPresets();
+  a.notify(std::string(tr("Saved the LFO preset")) + " " + name);
+  return true;
+}
+
+void askSavePreset(ObjectId id) {
+  gSaveLfo = id, gOpenSave = true;
+  gSaveName[0] = 0;
+}
+
+namespace {
+// The Load and Save rows of a source's menus.
+void presetMenuRows(App& a, ObjectId id) {
+  if (ImGui::BeginMenu(tr("Load a preset"))) {
+    presetItems(a, [&a, id](const lfo::Preset& p) { usePreset(a, p, id); });
+    ImGui::EndMenu();
+  }
+  if (ImGui::MenuItem(tr("Save as a preset..."))) askSavePreset(id);
+}
+void savePopup(App& a) {
+  if (gOpenSave) {
+    ImGui::OpenPopup("##lfosave");
+    gOpenSave = false;
+    if (const SongLfo* L = a.doc.song().lfo(gSaveLfo)) std::snprintf(gSaveName, sizeof gSaveName, "%s", lfo::label(a.doc.song(), L->id).c_str());
+  }
+  if (!ImGui::BeginPopup("##lfosave")) return;
+  ImGui::PushFont(a.fontBold, 0.0f);
+  ImGui::TextUnformatted(tr("Save as a preset"));
+  ImGui::PopFont();
+  ImGui::TextColored(theme::vec(pal().textDim), "%s", tr("The shape, rate, restart and knobs; not the targets."));
+  if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+  ImGui::SetNextItemWidth(300);
+  const bool enter = ImGui::InputTextWithHint("##name", tr("Name (a / makes a folder)"), gSaveName, sizeof gSaveName, ImGuiInputTextFlags_EnterReturnsTrue);
+  ImGui::Dummy(ImVec2(1, 4));
+  if ((ui::PrimaryButton("Save", 0, nullptr, gSaveName[0] != 0) || (enter && gSaveName[0])) && savePreset(a, gSaveLfo, gSaveName)) ImGui::CloseCurrentPopup();
+  ImGui::SameLine(0, 8);
+  if (ui::TextButton("Cancel")) ImGui::CloseCurrentPopup();
+  ImGui::EndPopup();
+}
+
 // ---- one LFO's menu (the card's "...") ------------------------------------
 void lfoMenuItems(App& a, ObjectId id) {
   const Song& s = a.doc.song();
@@ -705,11 +801,8 @@ void lfoMenuItems(App& a, ObjectId id) {
     }
     ImGui::EndMenu();
   }
-  if (L->kind == LfoKind::Lfo && ImGui::BeginMenu(tr("Apply a preset"))) {  // (the presets are LFOs)
-    for (const lfo::Preset& p : lfo::presets())
-      if (ImGui::MenuItem(tr(p.name))) a.doc.editLfo(id, "apply LFO preset", [&p](SongLfo& x) { lfo::applyPreset(x, p.lfo); });
-    ImGui::EndMenu();
-  }
+  ImGui::Separator();
+  presetMenuRows(a, id);
   ImGui::Separator();
   if (ImGui::MenuItem(tr("Up only (the knob is the bottom of the swing)"), nullptr, L->unipolar))
     a.doc.editLfo(id, "change LFO polarity", [](SongLfo& x) { x.unipolar = !x.unipolar; });
@@ -884,6 +977,24 @@ int knobsOf(const SongLfo& l, CardKnob* ks) {
   }
   return n;
 }
+// 0.7.9: the knob face of the board's knobs: a recessed dot, a faint full track and the value arc in the
+// source's colour (bipolar knobs from the top).
+ImU32 gFaceCol = 0;
+void lfoKnobFace(ImDrawList* dl, ImVec2 c, float r, float norm, bool bipolar, bool hov, bool act) {
+  const auto& P = pal();
+  const float a0 = kPi * 0.75f, a1 = kPi * 2.25f;
+  dl->AddCircleFilled(c, r - 4.0f, hov || act ? theme::mix(P.field, P.text, 0.10f) : theme::mix(P.field, P.text, 0.04f), 28);
+  dl->PathArcTo(c, r - 1.5f, a0, a1, 36);
+  dl->PathStroke(theme::withAlpha(P.text, 0.13f), ImDrawFlags_None, 2.5f);
+  const float av = a0 + (a1 - a0) * std::clamp(norm, 0.0f, 1.0f), from = bipolar ? (a0 + a1) * 0.5f : a0;
+  if (std::fabs(av - from) > 0.01f) {
+    dl->PathArcTo(c, r - 1.5f, std::min(from, av), std::max(from, av), 36);
+    dl->PathStroke(gFaceCol, ImDrawFlags_None, 2.5f);
+  }
+  const ImVec2 d(std::cos(av), std::sin(av));
+  dl->AddLine(ImVec2(c.x + d.x * (r - 10.0f), c.y + d.y * (r - 10.0f)), ImVec2(c.x + d.x * (r - 5.0f), c.y + d.y * (r - 5.0f)), P.text, 2.0f);
+}
+
 void cardKnobs(App& a, const SongLfo& l, float x0, float x1, float y, float r, float* depthX = nullptr) {
   const auto& P = pal();
   const Song& s = a.doc.song();
@@ -900,30 +1011,33 @@ void cardKnobs(App& a, const SongLfo& l, float x0, float x1, float y, float r, f
     ImGui::SetCursorScreenPos(ImVec2(cx - r, y));
     ImGui::PushID(i);
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, theme::vec(colour(l.colour)));
+    gFaceCol = l.on ? colour(l.colour) : theme::withAlpha(colour(l.colour), 0.45f);
+    ui::SetNextKnobFace(lfoKnobFace);
     ui::ParamKnob("##k", pid, r, nullptr, ks[i].bipolar);
     ImGui::PopStyleColor();
     ImGui::PopID();
     const char* nm = tr(ks[i].name);
     text(dl, ImGui::GetFont(), fs, ImVec2(cx - textW(ImGui::GetFont(), fs, nm) * 0.5f, y + r * 2 + 3), P.textDim, nm);
-    std::string val;
-    if (ks[i].p == lfo::LfoParam::RateNote) val = lfo::rateLabel(l);
-    else if (auto d = describeParam(s, pid))
-      if (auto v = getParam(s, pid)) {
+    {  // the value in the text colour, at the label size
+      std::string v2;
+      if (ks[i].p == lfo::LfoParam::RateNote) v2 = lfo::rateLabel(l);
+      else if (auto v = getParam(s, pid)) {
         char b[32];
         if (ks[i].p == lfo::LfoParam::Phase) std::snprintf(b, sizeof b, "%d\xC2\xB0", static_cast<int>(std::lround(*v)));
         else if (ks[i].p == lfo::LfoParam::Depth || ks[i].p == lfo::LfoParam::Character) std::snprintf(b, sizeof b, "%d%%", static_cast<int>(std::lround(*v * 100)));
         else if (ks[i].p == lfo::LfoParam::Offset) std::snprintf(b, sizeof b, "%+d%%", static_cast<int>(std::lround(*v * 100)));
         else if (ks[i].p == lfo::LfoParam::Smooth) std::snprintf(b, sizeof b, "%d ms", static_cast<int>(std::lround(*v)));
         else std::snprintf(b, sizeof b, "%.2f Hz", *v);
-        val = std::strcmp(b, "+0%") == 0 ? "0%" : b;
+        v2 = std::strcmp(b, "+0%") == 0 ? "0%" : b;
       }
-    ImFont* mf = monoFont(a);
-    text(dl, mf, fs - 1, ImVec2(cx - textW(mf, fs - 1, val.c_str()) * 0.5f, y + r * 2 + 3 + fs + 1), P.text, val.c_str());
+      ImFont* mf = monoFont(a);
+      text(dl, mf, fs, ImVec2(cx - textW(mf, fs, v2.c_str()) * 0.5f, y + r * 2 + 4 + fs), P.text, v2.c_str());
+    }
   }
 }
 
 // ---- the card ----------------------------------------------------------
-constexpr float kHeadH = 32, kWaveH = 74, kShapeH = 22, kRowH = 20, kKnobR = 15, kChipH = 22, kChipGap = 5;
+constexpr float kShapeH = 22, kRowH = 22, kChipH = 22, kChipGap = 5;
 
 struct ChipLay {
   ParamId pid;
@@ -949,26 +1063,6 @@ std::vector<ChipLay> chipsOf(App& a, const SongLfo& l) {
     v.push_back(std::move(c));
   }
   return v;
-}
-
-// Rows the chips (and the add chip) take in `w`.
-int chipRows(App& a, const std::vector<ChipLay>& chips, float w) {
-  float x = 0;
-  int rows = 1;
-  const float addW = chipWidth(a, tr("+ Add target"), "", false);
-  auto place = [&](float cw) {
-    cw = std::min(cw, w);
-    if (x > 0 && x + cw > w) ++rows, x = 0;
-    x += cw + kChipGap;
-  };
-  for (const ChipLay& c : chips) place(c.w);
-  place(addW);
-  return rows;
-}
-
-float cardHeight(App& a, const SongLfo& l, float w) {
-  const int rows = chipRows(a, chipsOf(a, l), w - 20);
-  return kHeadH + 8 + kWaveH + 7 + kShapeH + 7 + kRowH + 8 + kKnobR * 2 + 3 + fsLabel() * 2 + 6 + 8 + 16 + static_cast<float>(rows) * (kChipH + kChipGap) + 6;
 }
 
 // 0.7.8: the two rows a Chaos or Random source has where an LFO has its shapes and its rate (from y
@@ -1075,245 +1169,6 @@ void sourceRows(App& a, const SongLfo& l, ImVec2 w0, ImVec2 w1, float& y) {
   }
 }
 
-void drawCard(App& a, const SongLfo& l, ImVec2 mn, ImVec2 mx) {
-  const auto& P = pal();
-  const Song& s = a.doc.song();
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  const ImU32 c = colour(l.colour);
-  const bool sel = gSelected == l.id;
-  const bool tl = trackerLook();
-  DevCard dev{l.id, mn, mx, {}, {}, {}, {}};
-  ImGui::PushID(static_cast<int>(l.id));
-  // The frame (a click anywhere on it selects the LFO).
-  ImGui::SetCursorScreenPos(mn);
-  ImGui::SetNextItemAllowOverlap();
-  if (ImGui::InvisibleButton("##card", ImVec2(mx.x - mn.x, mx.y - mn.y))) gSelected = l.id;
-  if (tl) {
-    dl->AddRectFilled(mn, mx, P.surface900);
-    trackerview::bevelBox(dl, mn, mx, false);
-    if (sel) dl->AddRect(mn, mx, P.accent, 0, 0, 1.0f);
-  } else {
-    dl->AddRectFilled(mn, mx, P.well, 6.0f);
-    dl->AddRect(mn, mx, sel ? P.accent : P.line, 6.0f, 0, 1.0f);
-    if (sel) dl->AddRect(ImVec2(mn.x - 1, mn.y - 1), ImVec2(mx.x + 1, mx.y + 1), theme::withAlpha(P.accent, 0.35f), 7.0f);
-  }
-  // Header: the colour bar, on lamp, number, name, shape, the handle and the menu.
-  const float hy = mn.y, hb = mn.y + kHeadH;
-  dl->AddRectFilled(ImVec2(mn.x, hy), ImVec2(mn.x + 4, hb), c, tl ? 0.0f : 6.0f, ImDrawFlags_RoundCornersTopLeft);
-  dl->AddLine(ImVec2(mn.x + 1, hb - 0.5f), ImVec2(mx.x - 1, hb - 0.5f), P.line);
-  float x = mn.x + 12;
-  {
-    ImGui::SetCursorScreenPos(ImVec2(x - 3, hy + kHeadH * 0.5f - 7));
-    if (ImGui::InvisibleButton("##on", ImVec2(15, 14))) a.doc.editLfo(l.id, l.on ? "turn LFO off" : "turn LFO on", [](SongLfo& q) { q.on = !q.on; });
-    if (ImGui::IsItemHovered()) ui::Hint(l.on ? "On: click to stop this LFO (every target keeps its own value)" : "Off: click to start this LFO");
-    ui::Led(dl, ImVec2(x + 4.5f, hy + kHeadH * 0.5f), 4.5f, l.on);
-    x += 17;
-  }
-  const std::string num = lfo::number(s, l.id);
-  ImGui::PushFont(a.fontBold, 0.0f);
-  const float fs = ImGui::GetFontSize() - 1.5f;
-  text(dl, a.fontBold, fs, ImVec2(x, hy + (kHeadH - fs) * 0.5f), P.text, num.c_str());
-  x += textW(a.fontBold, fs, num.c_str()) + 7;
-  ImGui::PopFont();
-  const float handleX = mx.x - 8 - 22 - 4 - 24;
-  if (!renameField(a, l.id, ImVec2(x, hy + 5), std::max(40.0f, handleX - x - 8))) {
-    const std::string nm = l.name;
-    const float shapeW = textW(monoFont(a), fsLabel() - 1, tr(lfo::kindSummary(l)));
-    const char* shown = fit(ImGui::GetFont(), fs, nm.c_str(), std::max(10.0f, handleX - x - shapeW - 20));
-    text(dl, ImGui::GetFont(), fs, ImVec2(x, hy + (kHeadH - fs) * 0.5f), P.textDim, shown);
-    ImGui::SetCursorScreenPos(ImVec2(x, hy + 4));
-    const float nw = std::max(30.0f, textW(ImGui::GetFont(), fs, shown));
-    ImGui::InvisibleButton("##name", ImVec2(nw, kHeadH - 8));
-    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-      gRename = l.id;
-      std::snprintf(gRenameBuf, sizeof gRenameBuf, "%s", l.name.c_str());
-    }
-    if (ImGui::IsItemClicked()) gSelected = l.id;
-    if (ImGui::IsItemHovered()) ui::Hint("Double-click to rename");
-    x += nw + 8;
-    text(dl, monoFont(a), fsLabel() - 1, ImVec2(x, hy + (kHeadH - fsLabel() + 1) * 0.5f), P.textFaint, tr(lfo::kindSummary(l)));
-  }
-  handle(a, l, ImVec2(handleX, hy + 5), ImVec2(24, 22), &dev.handle);
-  {
-    const ImVec2 mp(mx.x - 8 - 22, hy + 5);
-    ImGui::SetCursorScreenPos(mp);
-    if (ImGui::InvisibleButton("##menu", ImVec2(22, 22))) ImGui::OpenPopup("##lfomenu");
-    const bool hov = ImGui::IsItemHovered();
-    if (hov) dl->AddRectFilled(mp, ImVec2(mp.x + 22, mp.y + 22), theme::withAlpha(P.text, 0.08f), 4.0f);
-    for (int k = -1; k <= 1; ++k) dl->AddCircleFilled(ImVec2(mp.x + 11 + static_cast<float>(k) * 4.5f, mp.y + 11), 1.4f, hov ? P.text : P.textDim, 6);
-    if (ImGui::BeginPopup("##lfomenu")) {
-      lfoMenuItems(a, l.id);
-      ImGui::EndPopup();
-    }
-  }
-  if (!s.lfo(l.id)) {  // removed from its own menu
-    ImGui::PopID();
-    return;
-  }
-  // The wave.
-  float y = hb + 8;
-  const ImVec2 w0(mn.x + 10, y), w1(mx.x - 10, y + kWaveH);
-  dl->AddRectFilled(w0, w1, P.surface950, tl ? 0.0f : 4.0f);
-  dl->AddRect(w0, w1, P.line, tl ? 0.0f : 4.0f);
-  if (tl) trackerview::bevelBox(dl, w0, w1, true);
-  drawWave(a, dl, ImVec2(w0.x + 1, w0.y + 1), ImVec2(w1.x - 1, w1.y - 1), l, 2.0f, true, true);
-  {
-    const std::string rl = lfo::rateLabel(l);
-    ImFont* mf = monoFont(a);
-    text(dl, mf, fsLabel() - 1.5f, ImVec2(w1.x - 6 - textW(mf, fsLabel() - 1.5f, rl.c_str()), w0.y + 4), P.textFaint, rl.c_str());
-  }
-  y += kWaveH + 7;
-  if (l.kind != LfoKind::Lfo) {
-    sourceRows(a, l, w0, w1, y);  // 0.7.8: Chaos's and Random's two rows
-  } else {
-    // The shapes.
-    {
-      const float sw = (w1.x - w0.x - 3 * 7) / 8.0f;
-      for (int k = 0; k < static_cast<int>(LfoShape::Count); ++k) {
-        const ImVec2 s0(std::round(w0.x + static_cast<float>(k) * (sw + 3)), y), s1(std::round(w0.x + static_cast<float>(k) * (sw + 3) + sw), y + kShapeH);
-        ImGui::SetCursorScreenPos(s0);
-        ImGui::PushID(k);
-        const LfoShape sh = static_cast<LfoShape>(k);
-        if (ImGui::InvisibleButton("##shape", ImVec2(s1.x - s0.x, kShapeH)) && l.shape != sh) {
-          a.doc.editLfo(l.id, "change LFO shape", [sh](SongLfo& q) {
-            q.shape = sh;
-            if (sh == LfoShape::Drawn && q.points.empty()) q.points = lfo::defaultPoints();
-          });
-          if (sh == LfoShape::Drawn) gSelected = l.id;
-        }
-        const bool hov = ImGui::IsItemHovered();
-        if (hov) ui::Hint(lfo::shapeName(sh));
-        ImGui::PopID();
-        const bool on = l.shape == sh;
-        dl->AddRectFilled(s0, s1, on ? theme::mix(P.field, P.text, 0.04f) : hov ? theme::mix(P.field, P.text, 0.05f) : P.field, tl ? 0.0f : 3.0f);
-        dl->AddRect(s0, s1, on ? c : P.line, tl ? 0.0f : 3.0f);
-        const float gw = std::min(22.0f, s1.x - s0.x - 6), gh = 11;
-        const ImVec2 g0((s0.x + s1.x - gw) * 0.5f, (s0.y + s1.y - gh) * 0.5f);
-        shapeGlyph(dl, g0, ImVec2(g0.x + gw, g0.y + gh), sh, on ? c : P.textFaint);
-      }
-    }
-    y += kShapeH + 7;
-    // Hz / Tempo, the rate, Free / Play / Note.
-    {
-      static const char* const kSync[] = {i18n::N_("Hz"), i18n::N_("Tempo")};
-      static const char* const kSyncHints[] = {i18n::N_("The rate in cycles a second"), i18n::N_("The rate in note values, following the tempo")};
-      int sync = l.tempoSync ? 1 : 0;
-      float sw = 0;
-      if (miniSeg(a, "##sync", kSync, 2, &sync, ImVec2(w0.x, y), kRowH, &sw, kSyncHints))
-        a.doc.editLfo(l.id, "change LFO rate mode", [sync](SongLfo& q) { q.tempoSync = sync == 1; });
-      rateControl(a, l, ImVec2(w0.x + sw + 6, y), 76, kRowH);
-      static const char* const kRestart[] = {i18n::N_("Free"), i18n::N_("Play"), i18n::N_("Note")};
-      static const char* const kRestartHints[] = {i18n::N_("Runs freely, never restarted"), i18n::N_("Locked to the song: the same place in the song is the same place in the wave"),
-                                                  i18n::N_("Restarts on every note of a channel (the card's menu picks which)")};
-      int rs = static_cast<int>(l.restart);
-      const float rw = miniSegWidth(a, kRestart, 3);
-      if (miniSeg(a, "##restart", kRestart, 3, &rs, ImVec2(w1.x - rw, y), kRowH, nullptr, kRestartHints))
-        a.doc.editLfo(l.id, "change LFO restart", [rs, ch = a.selChannel](SongLfo& q) {
-          q.restart = static_cast<LfoRestart>(rs);
-          if (q.restart == LfoRestart::EachNote && q.noteChannel == kNoId) q.noteChannel = ch;
-        });
-    }
-  }
-  y += kRowH + 8;
-  float depthX = w0.x;
-  cardKnobs(a, l, w0.x + 4, w1.x - 4, y, kKnobR, &depthX);
-  dev.depth = ImVec2(depthX, y + kKnobR);
-  y += kKnobR * 2 + 3 + fsLabel() * 2 + 6 + 8;
-  // Targets.
-  dl->AddLine(ImVec2(w0.x, y - 0.5f), ImVec2(w1.x, y - 0.5f), P.line);
-  y += 6;
-  const std::vector<ChipLay> chips = chipsOf(a, l);
-  {
-    char cap[48];
-    std::snprintf(cap, sizeof cap, "%s %d", tr("TARGETS"), static_cast<int>(chips.size()));
-    ImFont* mf = a.fontMonoBold ? a.fontMonoBold : monoFont(a);
-    text(dl, mf, fsLabel() - 1.5f, ImVec2(w0.x, y), P.textFaint, cap);
-    const std::string note = restartNote(s, l);
-    text(dl, ImGui::GetFont(), fsLabel() - 0.5f, ImVec2(w1.x - textW(ImGui::GetFont(), fsLabel() - 0.5f, note.c_str()), y - 1), P.textFaint, note.c_str());
-  }
-  y += 16;
-  float cx = w0.x;
-  const float cw = w1.x - w0.x;
-  int k = 0;
-  auto place = [&](float wch) {
-    wch = std::min(wch, cw);
-    if (cx > w0.x && cx + wch > w1.x) cx = w0.x, y += kChipH + kChipGap;
-    const ImVec2 at(cx, y);
-    cx += wch + kChipGap;
-    return std::make_pair(at, wch);
-  };
-  for (const ChipLay& ch : chips) {
-    const auto [at, wch] = place(ch.w);
-    ImGui::PushID(k++);
-    bool rc = false;
-    if (chip(a, "##chip", at, wch, ch.dot, ch.round, ch.label.c_str(), ch.amt.c_str(), false, ch.dim, &rc) || rc) {
-      gSetLfo = l.id, gSetTarget = ch.pid, gOpenSettings = true, gPopAt = underItem();
-    }
-    if (ImGui::IsItemHovered()) ui::Hint((ch.label + "  " + ch.amt + "   (" + tr("click: its settings") + ")").c_str());
-    ImGui::PopID();
-    dev.chips.emplace_back(ch.pid, ImVec2(at.x + wch * 0.5f, at.y + kChipH * 0.5f));
-  }
-  {
-    const char* addL = tr("+ Add target");
-    const auto [at, wch] = place(chipWidth(a, addL, "", false));
-    if (chip(a, "##add", at, wch, 0, false, addL, "", true, false)) gAddLfo = l.id, gOpenAdd = true, gAddSearch[0] = 0, gPopAt = underItem();
-    dev.add = ImVec2(at.x + wch * 0.5f, at.y + kChipH * 0.5f);
-  }
-  ImGui::PopID();
-  gDevCards.push_back(std::move(dev));
-}
-
-// The dashed "New LFO" card.
-void ghostCard(App& a, ImVec2 mn, ImVec2 mx) {
-  const auto& P = pal();
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  const bool full = static_cast<int>(a.doc.song().lfos.size()) >= kMaxSongLfos;
-  ImGui::SetCursorScreenPos(mn);
-  ImGui::SetNextItemAllowOverlap();
-  const bool click = ImGui::InvisibleButton("##ghost", ImVec2(mx.x - mn.x, mx.y - mn.y)) && !full;
-  const bool hov = ImGui::IsItemHovered() && !full;
-  const ImU32 lc = hov ? P.textDim : P.lineStrong;
-  // A dashed outline.
-  auto dash = [&](ImVec2 p0, ImVec2 p1) {
-    const float len = std::hypot(p1.x - p0.x, p1.y - p0.y);
-    for (float t = 0; t < len; t += 7) {
-      const float t1 = std::min(len, t + 4);
-      dl->AddLine(ImVec2(p0.x + (p1.x - p0.x) * t / len, p0.y + (p1.y - p0.y) * t / len),
-                  ImVec2(p0.x + (p1.x - p0.x) * t1 / len, p0.y + (p1.y - p0.y) * t1 / len), lc);
-    }
-  };
-  dash(ImVec2(mn.x + 6, mn.y + 0.5f), ImVec2(mx.x - 6, mn.y + 0.5f));
-  dash(ImVec2(mn.x + 6, mx.y - 0.5f), ImVec2(mx.x - 6, mx.y - 0.5f));
-  dash(ImVec2(mn.x + 0.5f, mn.y + 6), ImVec2(mn.x + 0.5f, mx.y - 6));
-  dash(ImVec2(mx.x - 0.5f, mn.y + 6), ImVec2(mx.x - 0.5f, mx.y - 6));
-  const float cxm = (mn.x + mx.x) * 0.5f, cym = (mn.y + mx.y) * 0.5f - 34;
-  dl->AddRect(ImVec2(cxm - 21, cym - 21), ImVec2(cxm + 21, cym + 21), lc, 8.0f);
-  dl->AddLine(ImVec2(cxm, cym - 9), ImVec2(cxm, cym + 9), hov ? P.text : P.textDim, 2.0f);
-  dl->AddLine(ImVec2(cxm - 9, cym), ImVec2(cxm + 9, cym), hov ? P.text : P.textDim, 2.0f);
-  const char* t = full ? tr("The board is full (32 sources)") : tr("New LFO");
-  text(dl, a.fontBold, ImGui::GetFontSize(), ImVec2(cxm - textW(a.fontBold, ImGui::GetFontSize(), t) * 0.5f, cym + 32), P.text, t);
-  const char* lines[3] = {tr("A sine at 1/4, locked to the song."), tr("Drag its handle onto a knob,"), tr("or right-click any knob.")};
-  const float fs = fsLabel();
-  for (int i = 0; i < 3; ++i)
-    text(dl, ImGui::GetFont(), fs, ImVec2(cxm - textW(ImGui::GetFont(), fs, lines[i]) * 0.5f, cym + 54 + static_cast<float>(i) * (fs + 4)), P.textDim, lines[i]);
-  if (click)
-    if (ObjectId id = lfo::addNew(a.doc); id != kNoId) gSelected = id;
-  // 0.7.8: the other sources, as two chips along the foot.
-  if (full) return;
-  const char* kc = tr("+ Chaos");
-  const char* kr = tr("+ Random");
-  const float cw = chipWidth(a, kc, "", false), rw = chipWidth(a, kr, "", false);
-  const float y = mx.y - 14 - kChipH, x0 = std::round(cxm - (cw + rw + 8) * 0.5f);
-  if (y > cym + 54 + 3 * (fs + 4) + 4) {
-    if (chip(a, "##newchaos", ImVec2(x0, y), cw, 0, false, kc, "", true, false))
-      if (ObjectId id = lfo::addNew(a.doc, LfoKind::Chaos); id != kNoId) gSelected = id;
-    if (ImGui::IsItemHovered()) ui::Hint("A new chaos source: a smooth movement that never repeats");
-    if (chip(a, "##newrandom", ImVec2(x0 + cw + 8, y), rw, 0, false, kr, "", true, false))
-      if (ObjectId id = lfo::addNew(a.doc, LfoKind::Random); id != kNoId) gSelected = id;
-    if (ImGui::IsItemHovered()) ui::Hint("A new random source: holds a random value until the next trigger");
-  }
-}
-
 // ---- the compact row (a narrow place: Studio's mixer column) ---------------
 constexpr float kCompactH = 40;
 
@@ -1330,9 +1185,9 @@ void drawCompactRow(App& a, const SongLfo& l, ImVec2 mn, float w) {
   ImGui::SetNextItemAllowOverlap();
   if (ImGui::InvisibleButton("##row", ImVec2(w, kCompactH))) gSelected = l.id;
   if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##lfomenu");
-  dl->AddRectFilled(mn, mx, P.well, 4.0f);
-  dl->AddRect(mn, mx, sel ? P.accent : P.line, 4.0f);
-  dl->AddRectFilled(mn, ImVec2(mn.x + 4, mx.y), c, 4.0f, ImDrawFlags_RoundCornersLeft);
+  dl->AddRectFilled(mn, mx, P.surface800, 4.0f);
+  dl->AddRect(mn, mx, sel ? c : P.line, 4.0f, 0, sel ? 1.5f : 1.0f);
+  dl->AddRectFilled(mn, ImVec2(mn.x + 3, mx.y), c, 4.0f, ImDrawFlags_RoundCornersLeft);
   float x = mn.x + 10;
   {
     ImGui::SetCursorScreenPos(ImVec2(x - 2, mn.y + 13));
@@ -1389,7 +1244,7 @@ void drawCompactRow(App& a, const SongLfo& l, ImVec2 mn, float w) {
                     tr(lfo::restartName(l.restart)), n, n == 1 ? tr("target") : tr("targets"));
     else
       std::snprintf(b, sizeof b, "%s \xC2\xB7 %s \xC2\xB7 %d %s", lfo::rateLabel(l).c_str(), tr(lfo::restartName(l.restart)), n, n == 1 ? tr("target") : tr("targets"));
-    text(dl, monoFont(a), fsLabel() - 1.5f, ImVec2(x, mn.y + 22), P.textFaint, fit(monoFont(a), fsLabel() - 1.5f, b, std::max(8.0f, rightX - x - 4)));
+    text(dl, ImGui::GetFont(), fsLabel(), ImVec2(x, mn.y + 22), P.textDim, fit(ImGui::GetFont(), fsLabel(), b, std::max(8.0f, rightX - x - 4)));
   }
   const ImVec2 w0(waveX, mn.y + 5), w1(waveX + waveW, mx.y - 5);
   dl->AddRectFilled(w0, w1, P.surface950, 3.0f);
@@ -1420,6 +1275,734 @@ void drawCompactRow(App& a, const SongLfo& l, ImVec2 mn, float w) {
   }
   ImGui::PopID();
   gDevCards.push_back(std::move(dev));
+}
+
+// ---- the board's parts --------------------------------------------
+// The handle as a glyph (a ring in the source's colour); its box shows only on hover or drag.
+void handleGlyph(const SongLfo& l, ImVec2 p, float sz, ImVec2* devAt) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImGui::SetCursorScreenPos(p);
+  ImGui::InvisibleButton("##handle", ImVec2(sz, sz));
+  const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  if (hov) ui::Hint(l.kind == LfoKind::Lfo ? "Drag onto any knob: this LFO moves it (25 percent around the knob)"
+                                            : "Drag onto any knob: this source moves it (25 percent around the knob)");
+  const ImVec2 c(std::round(p.x + sz * 0.5f), std::round(p.y + sz * 0.5f));
+  if (devAt) *devAt = c;
+  if (hov || act) dl->AddRectFilled(p, ImVec2(p.x + sz, p.y + sz), theme::withAlpha(P.text, 0.08f), 4.0f);
+  const ImU32 col = colour(l.colour);
+  dl->AddCircle(c, 5.5f, col, 16, 1.5f);
+  dl->AddCircleFilled(c, 2.0f, col, 8);
+  if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceNoPreviewTooltip | ImGuiDragDropFlags_SourceNoDisableHover)) {
+    const ObjectId id = l.id;
+    ImGui::SetDragDropPayload(kPayload, &id, sizeof id);
+    ImGui::EndDragDropSource();
+  }
+}
+// The three dots of the source's menu (the same items as the card's menu).
+// The next popup under a button at [mn, mx]: from its left edge, or to its right edge in the right half
+// of the screen (so it stays on it).
+void popupUnder(ImVec2 mn, ImVec2 mx) {
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  const bool right = mn.x > vp->WorkPos.x + vp->WorkSize.x * 0.5f;
+  ImGui::SetNextWindowPos(ImVec2(right ? mx.x : mn.x, mx.y + 2), ImGuiCond_Always, ImVec2(right ? 1.0f : 0.0f, 0.0f));
+}
+// Dev: a menu to open from a script (1 a card's menu, 2 the inspector's, 3 the inspector's presets,
+// 4 the New menu, 5 the board's menu) and for which source.
+int gDevMenu = 0;
+ObjectId gDevMenuLfo = kNoId;
+bool devMenu(int which, ObjectId id = kNoId) {
+  if (gDevMenu != which || (id != kNoId && gDevMenuLfo != id)) return false;
+  gDevMenu = 0;
+  return true;
+}
+void menuDots(App& a, const SongLfo& l, ImVec2 p, float sz, bool show, int devWhich = 1) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImGui::SetCursorScreenPos(p);
+  if (ImGui::InvisibleButton("##menu", ImVec2(sz, sz)) || devMenu(devWhich, l.id)) {
+    ImGui::OpenPopup("##lfomenu");
+    popupUnder(p, ImVec2(p.x + sz, p.y + sz));
+  }
+  const bool hov = ImGui::IsItemHovered();
+  if (hov) dl->AddRectFilled(p, ImVec2(p.x + sz, p.y + sz), theme::withAlpha(P.text, 0.08f), 4.0f);
+  const ImU32 dc = hov ? P.text : show ? P.textDim : theme::withAlpha(P.textDim, 0.45f);
+  for (int k = -1; k <= 1; ++k) dl->AddCircleFilled(ImVec2(p.x + sz * 0.5f + static_cast<float>(k) * 4.5f, p.y + sz * 0.5f), 1.5f, dc, 6);
+  if (ImGui::BeginPopup("##lfomenu")) {
+    lfoMenuItems(a, l.id);
+    ImGui::EndPopup();
+  }
+}
+// The on lamp (click toggles).
+void onLamp(App& a, const SongLfo& l, ImVec2 c) {
+  ImGui::SetCursorScreenPos(ImVec2(c.x - 8, c.y - 8));
+  if (ImGui::InvisibleButton("##on", ImVec2(16, 16))) a.doc.editLfo(l.id, l.on ? "turn LFO off" : "turn LFO on", [](SongLfo& q) { q.on = !q.on; });
+  if (ImGui::IsItemHovered()) ui::Hint(l.on ? "On: click to stop this LFO (every target keeps its own value)" : "Off: click to start this LFO");
+  ui::Led(ImGui::GetWindowDrawList(), c, 4.5f, l.on);
+}
+// The source's number (bold) and name (double-click renames) from x on the line centred at cy; the x after.
+float titleText(App& a, const SongLfo& l, float x, float cy, float maxX, float fs) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const std::string num = lfo::number(a.doc.song(), l.id);
+  text(dl, a.fontBold, fs, ImVec2(x, cy - fs * 0.5f - 1), P.text, num.c_str());
+  x += textW(a.fontBold, fs, num.c_str()) + 6;
+  if (renameField(a, l.id, ImVec2(x, cy - 10), std::max(40.0f, maxX - x))) return maxX;
+  const char* shown = fit(ImGui::GetFont(), fs, l.name.c_str(), std::max(10.0f, maxX - x));
+  text(dl, ImGui::GetFont(), fs, ImVec2(x, cy - fs * 0.5f - 1), P.textDim, shown);
+  const float nw = std::max(30.0f, textW(ImGui::GetFont(), fs, shown));
+  ImGui::SetCursorScreenPos(ImVec2(x, cy - 10));
+  ImGui::InvisibleButton("##name", ImVec2(nw, 20));
+  if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+    gRename = l.id;
+    std::snprintf(gRenameBuf, sizeof gRenameBuf, "%s", l.name.c_str());
+  }
+  if (ImGui::IsItemClicked()) gSelected = l.id;
+  if (ImGui::IsItemHovered()) ui::Hint("Double-click to rename");
+  return x + nw;
+}
+// One line saying what the source does: "Sine · 1/4 · locked to the song".
+std::string summaryLine(const Song& s, const SongLfo& l) {
+  std::string r = tr(lfo::kindSummary(l));
+  if (l.kind != LfoKind::Random) r += std::string(" \xC2\xB7 ") + lfo::rateLabel(l);
+  return r + " \xC2\xB7 " + restartNote(s, l);
+}
+// The eight shapes as a strip in [x0, x1] at y, `h` tall.
+void shapeStrip(App& a, const SongLfo& l, float x0, float x1, float y, float h) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImU32 c = colour(l.colour);
+  const int n = static_cast<int>(LfoShape::Count);
+  const float gap = 3, sw = (x1 - x0 - gap * static_cast<float>(n - 1)) / static_cast<float>(n);
+  for (int k = 0; k < n; ++k) {
+    const ImVec2 s0(std::round(x0 + static_cast<float>(k) * (sw + gap)), y), s1(std::round(x0 + static_cast<float>(k) * (sw + gap) + sw), y + h);
+    ImGui::SetCursorScreenPos(s0);
+    ImGui::PushID(k);
+    const LfoShape sh = static_cast<LfoShape>(k);
+    if (ImGui::InvisibleButton("##shape", ImVec2(s1.x - s0.x, h)) && l.shape != sh)
+      a.doc.editLfo(l.id, "change LFO shape", [sh](SongLfo& q) {
+        if (sh == LfoShape::Drawn && q.points.empty()) q.points = lfo::pointsFromShape(q);  // starts from the shape it had
+        q.shape = sh;
+      });
+    const bool hov = ImGui::IsItemHovered();
+    if (hov) ui::Hint(lfo::shapeName(sh));
+    ImGui::PopID();
+    const bool on = l.shape == sh;
+    if (on) dl->AddRectFilled(s0, s1, theme::withAlpha(c, 0.16f), 4.0f);
+    else if (hov) dl->AddRectFilled(s0, s1, theme::withAlpha(P.text, 0.07f), 4.0f);
+    if (on) dl->AddRect(s0, s1, theme::withAlpha(c, 0.7f), 4.0f);
+    const float gw = std::min(20.0f, s1.x - s0.x - 8), gh = std::min(10.0f, h - 10);
+    const ImVec2 g0(std::round((s0.x + s1.x - gw) * 0.5f), std::round((s0.y + s1.y - gh) * 0.5f));
+    shapeGlyph(dl, g0, ImVec2(g0.x + gw, g0.y + gh), sh, on ? c : hov ? P.text : P.textDim);
+  }
+}
+// An LFO's rate row: Hz / Tempo, the rate, Free / Play / Note across [x0, x1] at y.
+void rateRow(App& a, const SongLfo& l, float x0, float x1, float y, float h) {
+  static const char* const kSync[] = {i18n::N_("Hz"), i18n::N_("Tempo")};
+  static const char* const kSyncHints[] = {i18n::N_("The rate in cycles a second"), i18n::N_("The rate in note values, following the tempo")};
+  int sync = l.tempoSync ? 1 : 0;
+  float sw = 0;
+  if (miniSeg(a, "##sync", kSync, 2, &sync, ImVec2(x0, y), h, &sw, kSyncHints))
+    a.doc.editLfo(l.id, "change LFO rate mode", [sync](SongLfo& q) { q.tempoSync = sync == 1; });
+  static const char* const kRestart[] = {i18n::N_("Free"), i18n::N_("Play"), i18n::N_("Note")};
+  static const char* const kRestartHints[] = {i18n::N_("Runs freely, never restarted"), i18n::N_("Locked to the song: the same place in the song is the same place in the wave"),
+                                              i18n::N_("Restarts on every note of a channel (the card's menu picks which)")};
+  const float rw = miniSegWidth(a, kRestart, 3);
+  rateControl(a, l, ImVec2(x0 + sw + 8, y), std::max(56.0f, x1 - rw - 8 - (x0 + sw + 8)), h);
+  int rs = static_cast<int>(l.restart);
+  if (miniSeg(a, "##restart", kRestart, 3, &rs, ImVec2(x1 - rw, y), h, nullptr, kRestartHints))
+    a.doc.editLfo(l.id, "change LFO restart", [rs, ch = a.selChannel](SongLfo& q) {
+      q.restart = static_cast<LfoRestart>(rs);
+      if (q.restart == LfoRestart::EachNote && q.noteChannel == kNoId) q.noteChannel = ch;
+    });
+}
+// The targets as rows in [x0, x1] from y: where it goes (the owner's colour and name, the control),
+// how far (a centred bar in the source's colour and the amount). At most `maxRows`, then "+n more";
+// with `addRow`, "+ Add target" last. The height used.
+constexpr float kTRowH = 24;
+float targetRows(App& a, const SongLfo& l, float x0, float x1, float y, int maxRows, bool addRow, DevCard* dev) {
+  const auto& P = pal();
+  const Song& s = a.doc.song();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImU32 c = colour(l.colour);
+  const float fs = fsLabel() + 1.0f, y0 = y;
+  ImFont* mf = monoFont(a);
+  const auto links = lfo::linksOf(s, l.id);
+  int k = 0;
+  for (const ModLink* m : links) {
+    if (k >= maxRows) break;
+    const ParamId pid{m->owner, m->index};
+    ImGui::PushID(k++);
+    const ImVec2 r0(x0, y), r1(x1, y + kTRowH);
+    ImGui::SetCursorScreenPos(r0);
+    const bool click = ImGui::InvisibleButton("##t", ImVec2(r1.x - r0.x, kTRowH));
+    const bool rc = ImGui::IsItemClicked(ImGuiMouseButton_Right);
+    const bool hov = ImGui::IsItemHovered();
+    if (click || rc) gSetLfo = l.id, gSetTarget = pid, gOpenSettings = true, gPopAt = underItem();
+    if (hov) {
+      dl->AddRectFilled(r0, r1, theme::withAlpha(P.text, 0.06f), 4.0f);
+      ui::Hint(tr("Click: how this target moves (amount, direction, curve), or remove it"));
+    }
+    const uint32_t oc = lfo::targetColour(s, pid);
+    const ImU32 own = macro::isMacroParam(pid) ? colour(6) : oc ? theme::content(oc) : P.textDim;
+    const float cy = y + kTRowH * 0.5f;
+    dl->AddRectFilled(ImVec2(x0 + 6, cy - 6), ImVec2(x0 + 9, cy + 6), m->enabled ? own : theme::withAlpha(own, 0.35f), 1.5f);
+    // The amount: a 40 px track, filled from its middle by the amount, the number after it.
+    const std::string amt = amountText(*m);
+    const float aw = std::ceil(textW(mf, fsLabel(), "-100%")), bw = 40;
+    const float ax = x1 - 6 - aw, bx = ax - 8 - bw;
+    dl->AddLine(ImVec2(bx, cy), ImVec2(bx + bw, cy), theme::withAlpha(P.text, 0.14f), 2.0f);
+    const float mid = bx + bw * 0.5f, amtF = m->mode == kModAbsolute ? (m->max - m->min) : m->amount;
+    const float fx = mid + std::clamp(amtF, -1.0f, 1.0f) * bw * 0.5f * (m->invert ? -1.0f : 1.0f);
+    const ImU32 fc = m->enabled && l.on ? c : theme::withAlpha(c, 0.4f);
+    if (m->mode == kModAbsolute) dl->AddLine(ImVec2(bx + bw * m->min, cy), ImVec2(bx + bw * m->max, cy), fc, 2.0f);
+    else if (m->direction == kModBothWays) dl->AddLine(ImVec2(mid - std::fabs(fx - mid), cy), ImVec2(mid + std::fabs(fx - mid), cy), fc, 2.0f);
+    else dl->AddLine(ImVec2(mid, cy), ImVec2(fx, cy), fc, 2.0f);
+    text(dl, mf, fsLabel(), ImVec2(x1 - 6 - textW(mf, fsLabel(), amt.c_str()), cy - fsLabel() * 0.5f - 1), m->enabled ? P.textDim : P.textFaint, amt.c_str());
+    // Owner (dim) then the control.
+    const std::string full = lfo::targetLabel(s, pid);
+    const size_t at = full.rfind(" \xC2\xB7 ");
+    const std::string owner = at == std::string::npos ? std::string() : full.substr(0, at), ctl = at == std::string::npos ? full : full.substr(at + 4);
+    float tx = x0 + 16;
+    const float room = bx - 10 - tx;
+    const float ow = owner.empty() ? 0 : std::min(room * 0.45f, textW(ImGui::GetFont(), fs, owner.c_str()));
+    if (!owner.empty()) {
+      text(dl, ImGui::GetFont(), fs, ImVec2(tx, cy - fs * 0.5f - 1), P.textDim, fit(ImGui::GetFont(), fs, owner.c_str(), ow + 0.5f));
+      tx += ow + 6;
+    }
+    text(dl, ImGui::GetFont(), fs, ImVec2(tx, cy - fs * 0.5f - 1), m->enabled ? P.text : P.textFaint, fit(ImGui::GetFont(), fs, ctl.c_str(), std::max(10.0f, bx - 10 - tx)));
+    if (dev) dev->chips.emplace_back(pid, ImVec2((x0 + x1) * 0.5f, cy));
+    ImGui::PopID();
+    y += kTRowH;
+  }
+  const int more = static_cast<int>(links.size()) - k;
+  if (more > 0 || addRow) {
+    const float cy = y + kTRowH * 0.5f;
+    float tx = x0 + 6;
+    if (more > 0) {
+      char b[48];
+      std::snprintf(b, sizeof b, tr("+%d more"), more);
+      ImGui::SetCursorScreenPos(ImVec2(tx, y));
+      const float w = textW(ImGui::GetFont(), fs, b) + 8;
+      if (ImGui::InvisibleButton("##more", ImVec2(w, kTRowH))) gSelected = l.id;
+      const bool hov = ImGui::IsItemHovered();
+      if (hov) ui::Hint("Select this source to see every target");
+      text(dl, ImGui::GetFont(), fs, ImVec2(tx, cy - fs * 0.5f - 1), hov ? P.text : P.textDim, b);
+      tx += w + 10;
+    }
+    if (addRow) {
+      const char* al = tr("+ Add target");
+      ImGui::SetCursorScreenPos(ImVec2(tx - 6, y));
+      const float w = textW(ImGui::GetFont(), fs, al) + 12;
+      if (ImGui::InvisibleButton("##add", ImVec2(w, kTRowH))) gAddLfo = l.id, gOpenAdd = true, gAddSearch[0] = 0, gPopAt = underItem();
+      const bool hov = ImGui::IsItemHovered();
+      if (hov) dl->AddRectFilled(ImVec2(tx - 6, y), ImVec2(tx - 6 + w, y + kTRowH), theme::withAlpha(P.text, 0.06f), 4.0f);
+      text(dl, ImGui::GetFont(), fs, ImVec2(tx, cy - fs * 0.5f - 1), hov ? P.text : P.textDim, al);
+      if (dev) dev->add = ImVec2(tx + w * 0.5f, cy);
+    }
+    y += kTRowH;
+  }
+  return y - y0;
+}
+// A card or panel frame: raised on the board, an outline in the source's colour when selected.
+void frame(ImVec2 mn, ImVec2 mx, ImU32 c, bool sel, bool hov) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  if (trackerLook()) {
+    dl->AddRectFilled(mn, mx, P.surface800);
+    trackerview::bevelBox(dl, mn, mx, false);
+    if (sel) dl->AddRect(mn, mx, c, 0, 0, 1.5f);
+    return;
+  }
+  dl->AddRectFilled(mn, mx, P.surface800, 6.0f);
+  dl->AddRect(mn, mx, sel ? c : hov ? P.lineStrong : P.line, 6.0f, 0, sel ? 1.5f : 1.0f);
+}
+void wavePanel(App& a, const SongLfo& l, ImVec2 w0, ImVec2 w1, float cycles) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const bool tl = trackerLook();
+  dl->AddRectFilled(w0, w1, P.field, tl ? 0.0f : 4.0f);
+  if (tl) trackerview::bevelBox(dl, w0, w1, true);
+  drawWave(a, dl, ImVec2(w0.x + 1, w0.y + 1), ImVec2(w1.x - 1, w1.y - 1), l, cycles, true, true);
+}
+
+// ---- the drawn shape: tools and editor (0.7.9) ------------------------------------
+constexpr int kGrids[] = {0, 4, 8, 16, 32, 64};
+constexpr int kGridCount = 6;
+int gTool = 0;        // 0 points, 1 pencil
+int gGrid = 0;        // index into kGrids
+int gSelPoint = -1;   // the selected point (of gSelPointLfo)
+ObjectId gSelPointLfo = kNoId;
+// A gesture in progress: shown from gEditPts, written as one edit when the mouse is let go.
+bool gEditing = false;
+ObjectId gEditLfo = kNoId;
+std::vector<LfoPoint> gEditPts;
+int gDragIdx = -1, gCurveIdx = -1;
+float gCurveStart = 0, gDragY0 = 0;
+std::vector<std::pair<float, float>> gStroke;
+const char* gEditLabel = "draw LFO shape";
+
+int gridSteps() { return kGrids[std::clamp(gGrid, 0, kGridCount - 1)]; }
+std::vector<LfoPoint> pointsOf(const SongLfo& l) { return l.points.empty() ? lfo::defaultPoints() : l.points; }
+// One edit of the drawn points (one undo step).
+void setPoints(App& a, ObjectId id, const char* label, std::vector<LfoPoint> pts) {
+  a.doc.editLfo(id, label, [pts](SongLfo& q) {
+    q.points = pts;
+    q.shape = LfoShape::Drawn;
+  });
+}
+// Draws this LFO's own shape as points ("Edit this shape"): one edit.
+void editThisShape(App& a, const SongLfo& l) {
+  a.doc.editLfo(l.id, "edit LFO shape", [](SongLfo& q) {
+    q.points = lfo::pointsFromShape(q);
+    q.shape = LfoShape::Drawn;
+  });
+  gSelected = l.id;
+}
+
+// A small flat button drawn like a segment (the label at the label size); true when clicked.
+bool smallButton(App& a, const char* id, const char* label, ImVec2 p, float h, const char* hint, bool enabled = true) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImFont* f = ImGui::GetFont();
+  const float fs = fsLabel();
+  const char* lb = tr(label);
+  const float w = std::ceil(textW(f, fs, lb)) + 16;
+  ImGui::SetCursorScreenPos(p);
+  const bool click = ImGui::InvisibleButton(id, ImVec2(w, h)) && enabled;
+  const bool hov = ImGui::IsItemHovered() && enabled;
+  if (hov && hint) ui::Hint(hint);
+  dl->AddRectFilled(p, ImVec2(p.x + w, p.y + h), hov ? theme::mix(P.field, P.text, 0.08f) : P.field, 4.0f);
+  dl->AddRect(p, ImVec2(p.x + w, p.y + h), P.line, 4.0f);
+  text(dl, f, fs, ImVec2(p.x + 8, p.y + (h - fs) * 0.5f - 1), !enabled ? P.textFaint : hov ? P.text : P.textDim, lb);
+  (void)a;
+  return click;
+}
+float smallButtonWidth(const char* label) { return std::ceil(textW(ImGui::GetFont(), fsLabel(), tr(label))) + 16; }
+
+// The drawing tools over the editor, two rows across [x0, x1] from y; the height used.
+float shapeTools(App& a, const SongLfo& l, float x0, float x1, float y) {
+  const float h = 22, gap = 8;
+  {
+    static const char* const kTools[] = {i18n::N_("Points"), i18n::N_("Pencil")};
+    static const char* const kToolHints[] = {i18n::N_("Click to add a point, drag a point to move it, drag a line's middle to bend it, right-click a point to remove it"),
+                                             i18n::N_("Draw the shape by hand; with a grid, every cell you cross becomes a step")};
+    float tw = 0;
+    miniSeg(a, "##tool", kTools, 2, &gTool, ImVec2(x0, y), h, &tw, kToolHints);
+    static const char* const kGridNames[] = {i18n::N_("No grid"), "4", "8", "16", "32", "64"};
+    char cur[32];
+    if (gGrid == 0) std::snprintf(cur, sizeof cur, "%s", tr(kGridNames[0]));
+    else std::snprintf(cur, sizeof cur, "%s %s", tr("Grid"), kGridNames[gGrid]);
+    ImGui::SetCursorScreenPos(ImVec2(x0 + tw + gap, y));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, std::max(0.0f, (h - ImGui::GetFontSize()) * 0.5f)));
+    ImGui::SetNextItemWidth(96);
+    if (ImGui::BeginCombo("##grid", cur)) {
+      for (int k = 0; k < kGridCount; ++k) {
+        char b[32];
+        if (k == 0) std::snprintf(b, sizeof b, "%s", tr(kGridNames[0]));
+        else std::snprintf(b, sizeof b, tr("%s steps"), kGridNames[k]);
+        if (ImGui::Selectable(b, gGrid == k)) gGrid = k;
+      }
+      ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) ui::Hint("Snap points to even steps of the cycle; the pencil draws one step per cell");
+    ImGui::PopStyleVar();
+  }
+  y += h + 6;
+  {
+    const std::vector<LfoPoint> pts = pointsOf(l);
+    const bool has = gSelPointLfo == l.id && gSelPoint >= 0 && gSelPoint < static_cast<int>(pts.size());
+    static const char* const kKinds[] = {i18n::N_("Line"), i18n::N_("Smooth"), i18n::N_("Step")};
+    static const char* const kKindHints[] = {i18n::N_("A straight line to the next point (drag its middle to bend it)"),
+                                             i18n::N_("A smooth curve, flat at both points"), i18n::N_("Holds this point's value until the next point")};
+    int k = has ? pts[static_cast<size_t>(gSelPoint)].kind : -1;
+    const int before = k;
+    if (miniSeg(a, "##pkind", kKinds, 3, &k, ImVec2(x0, y), h, nullptr, kKindHints) && has && k != before) {
+      std::vector<LfoPoint> v = pts;
+      v[static_cast<size_t>(gSelPoint)].kind = static_cast<uint8_t>(k);
+      setPoints(a, l.id, "change LFO point", v);
+    }
+    // Flip, Invert, Clear at the right.
+    const float wc = smallButtonWidth("Clear"), wi = smallButtonWidth("Invert"), wf = smallButtonWidth("Flip");
+    float bx = x1 - wc - 6 - wi - 6 - wf;
+    if (smallButton(a, "##flip", "Flip", ImVec2(bx, y), h, "Mirror the shape left to right: the cycle runs backwards"))
+      setPoints(a, l.id, "flip LFO shape", lfo::flipPoints(pts));
+    bx += wf + 6;
+    if (smallButton(a, "##invert", "Invert", ImVec2(bx, y), h, "Turn the shape upside down")) setPoints(a, l.id, "invert LFO shape", lfo::invertPoints(pts));
+    bx += wi + 6;
+    if (smallButton(a, "##clear", "Clear", ImVec2(bx, y), h, "A flat line at the middle, to draw on")) {
+      setPoints(a, l.id, "clear LFO shape", lfo::clearPoints());
+      gSelPoint = -1;
+    }
+  }
+  return h + 6 + h;
+}
+
+// The editor in [mn, mx]: the drawn cycle, its points and the lines' bend handles.
+ImVec2 gDevEditor0, gDevEditor1;
+void shapeEditor(App& a, const SongLfo& l, ImVec2 mn, ImVec2 mx) {
+  const auto& P = pal();
+  gDevEditor0 = mn, gDevEditor1 = mx;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImU32 c = colour(l.colour);
+  ImGui::SetCursorScreenPos(mn);
+  ImGui::InvisibleButton("##drawn", ImVec2(mx.x - mn.x, mx.y - mn.y), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+  const bool hov = ImGui::IsItemHovered();
+  const float pad = 8;
+  auto toScreen = [&](const LfoPoint& p) { return ImVec2(mn.x + p.x * (mx.x - mn.x), mx.y - pad - (p.y + 1) * 0.5f * (mx.y - mn.y - pad * 2)); };
+  auto fromScreen = [&](ImVec2 s) {
+    return std::make_pair(std::clamp((s.x - mn.x) / (mx.x - mn.x), 0.0f, 1.0f), std::clamp(((mx.y - pad - s.y) / (mx.y - mn.y - pad * 2)) * 2 - 1, -1.0f, 1.0f));
+  };
+  const bool mine = gEditing && gEditLfo == l.id;
+  std::vector<LfoPoint> pts = mine ? gEditPts : pointsOf(l);
+  const int steps = gridSteps();
+  const ImVec2 m = ImGui::GetIO().MousePos;
+  // What is under the pointer: a point, or a straight line's bend handle.
+  int near = -1, nearCurve = -1;
+  SongLfo shown = l;
+  shown.points = pts;
+  shown.shape = LfoShape::Drawn;
+  lfo::DrawnTable table{};
+  lfo::buildTable(shown, table);
+  auto valueAt = [&](float x) { return table[static_cast<size_t>(std::clamp(static_cast<int>(x * lfo::kTableSize), 0, lfo::kTableSize - 1))]; };
+  std::vector<ImVec2> handles(pts.size(), ImVec2(-1e9f, -1e9f));
+  for (size_t i = 0; i < pts.size(); ++i) {
+    const ImVec2 sp = toScreen(pts[i]);
+    if (std::hypot(sp.x - m.x, sp.y - m.y) < 8) near = static_cast<int>(i);
+    if (pts[i].kind != kLfoPointCurve || l.drawnSteps || pts.size() < 2) continue;
+    const float x0 = pts[i].x, x1 = i + 1 < pts.size() ? pts[i + 1].x : pts[0].x + 1.0f;
+    if (x1 - x0 < 0.03f) continue;
+    float hx = (x0 + x1) * 0.5f;
+    if (hx >= 1.0f) hx -= 1.0f;
+    LfoPoint hp{hx, valueAt(hx), 0, 0};
+    handles[i] = toScreen(hp);
+    if (near < 0 && std::hypot(handles[i].x - m.x, handles[i].y - m.y) < 7) nearCurve = static_cast<int>(i);
+  }
+  const bool pencil = gTool == 1;
+  // Starting a gesture.
+  if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    gEditing = true, gEditLfo = l.id, gEditPts = pts, gDragIdx = -1, gCurveIdx = -1;
+    gSelected = l.id;
+    const auto [fx, fy] = fromScreen(m);
+    if (pencil) {
+      gStroke = {{fx, fy}};
+      gEditPts = lfo::drawStroke(l, gStroke, steps);
+      gEditLabel = "draw LFO shape";
+    } else if (near >= 0) {
+      gDragIdx = near, gSelPoint = near, gSelPointLfo = l.id;
+      gEditLabel = "move LFO point";
+    } else if (nearCurve >= 0) {
+      gCurveIdx = nearCurve, gCurveStart = pts[static_cast<size_t>(nearCurve)].curve, gDragY0 = m.y;
+      gSelPoint = nearCurve, gSelPointLfo = l.id;
+      gEditLabel = "bend LFO line";
+    } else if (static_cast<int>(pts.size()) < kLfoMaxPoints) {
+      LfoPoint np{lfo::snapX(fx, steps), fy, 0.0f, steps >= 2 ? kLfoPointStep : kLfoPointCurve};
+      if (np.x >= 1.0f) np.x = 0.0f;
+      gEditPts.push_back(np);
+      std::stable_sort(gEditPts.begin(), gEditPts.end(), [](const LfoPoint& x, const LfoPoint& y) { return x.x < y.x; });
+      for (size_t i = 0; i < gEditPts.size(); ++i)
+        if (gEditPts[i] == np) gDragIdx = static_cast<int>(i);
+      gSelPoint = gDragIdx, gSelPointLfo = l.id;
+      gEditLabel = "add LFO point";
+    }
+  }
+  // Going on.
+  if (gEditing && gEditLfo == l.id && ImGui::IsItemActive() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    const auto [fx, fy] = fromScreen(m);
+    if (pencil && !gStroke.empty()) {
+      if (std::fabs(fx - gStroke.back().first) > 0.001f || std::fabs(fy - gStroke.back().second) > 0.005f) {
+        gStroke.emplace_back(fx, fy);
+        gEditPts = lfo::drawStroke(l, gStroke, steps);
+      }
+    } else if (gDragIdx >= 0 && gDragIdx < static_cast<int>(gEditPts.size()) && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 1.0f)) {
+      LfoPoint& p = gEditPts[static_cast<size_t>(gDragIdx)];
+      const float lo = gDragIdx > 0 ? gEditPts[static_cast<size_t>(gDragIdx) - 1].x : 0.0f;
+      const float hi = gDragIdx + 1 < static_cast<int>(gEditPts.size()) ? gEditPts[static_cast<size_t>(gDragIdx) + 1].x : 1.0f - 1.0f / lfo::kTableSize;
+      p.x = std::clamp(lfo::snapX(fx, steps), lo, hi);
+      p.y = fy;
+    } else if (gCurveIdx >= 0 && gCurveIdx < static_cast<int>(gEditPts.size())) {
+      // Up bends the line up (it rises late), down bends it down.
+      gEditPts[static_cast<size_t>(gCurveIdx)].curve = std::clamp(gCurveStart + (m.y - gDragY0) / 80.0f, -1.0f, 1.0f);
+    }
+  }
+  // Done: one edit (one undo step; one change for the others in a shared session).
+  if (ImGui::IsItemDeactivated() && gEditing && gEditLfo == l.id) {
+    gEditing = false;
+    if (gEditPts != pointsOf(l) || l.shape != LfoShape::Drawn) setPoints(a, l.id, gEditLabel, gEditPts);
+    gStroke.clear();
+    gDragIdx = gCurveIdx = -1;
+    pts = gEditPts;
+  }
+  if (hov && near >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && pts.size() > 1) {
+    pts.erase(pts.begin() + near);
+    setPoints(a, l.id, "remove LFO point", pts);
+    if (gSelPointLfo == l.id) gSelPoint = -1;
+  }
+  if (hov) ui::Hint(pencil ? "Draw the shape: drag across it (with a grid, each cell becomes a step)"
+                           : "Click to add a point, drag to move it, drag a line's middle to bend it, right-click a point to remove it");
+  // The picture.
+  const bool tl = trackerLook();
+  dl->AddRectFilled(mn, mx, P.field, tl ? 0.0f : 4.0f);
+  if (tl) trackerview::bevelBox(dl, mn, mx, true);
+  else dl->AddRect(mn, mx, hov || mine ? P.lineStrong : P.line, 4.0f);
+  if (steps >= 2) {
+    for (int k = 1; k < steps; ++k) {
+      const float x = std::round(mn.x + (mx.x - mn.x) * static_cast<float>(k) / static_cast<float>(steps)) + 0.5f;
+      dl->AddLine(ImVec2(x, mn.y + 1), ImVec2(x, mx.y - 1), theme::withAlpha(P.text, k % 4 == 0 ? 0.12f : 0.06f));
+    }
+  }
+  shown.phase = 0, shown.depth = 1, shown.offset = 0, shown.unipolar = false;
+  drawWave(a, dl, mn, mx, shown, 1.0f, steps < 2, false);
+  const bool showMarks = hov || mine || gSelected == l.id;
+  for (size_t i = 0; i < pts.size(); ++i) {
+    const ImVec2 sp = toScreen(pts[i]);
+    const bool selP = gSelPointLfo == l.id && gSelPoint == static_cast<int>(i);
+    const float r = static_cast<int>(i) == near || selP ? 5.0f : 3.5f;
+    dl->AddCircleFilled(sp, r, c, 12);
+    dl->AddCircle(sp, r, P.field, 12, 1.5f);
+    if (selP) dl->AddCircle(sp, r + 3, P.text, 16, 1.0f);
+    if (showMarks && handles[i].x > -1e8f) {
+      const ImVec2 h = handles[i];
+      const float hr = static_cast<int>(i) == nearCurve || (gCurveIdx == static_cast<int>(i) && mine) ? 4.5f : 3.0f;
+      dl->AddQuadFilled(ImVec2(h.x, h.y - hr), ImVec2(h.x + hr, h.y), ImVec2(h.x, h.y + hr), ImVec2(h.x - hr, h.y), theme::withAlpha(P.text, 0.55f));
+    }
+  }
+}
+
+// ---- the calm cards and the inspector ------------------------------------
+constexpr float kAHead = 36, kAWave = 76, kAInspW = 344;
+int cardRowsA(const Song& s, const SongLfo& l) { return std::min(3, static_cast<int>(lfo::linksOf(s, l.id).size())); }
+float cardHeightA(const Song& s, const SongLfo* l) {
+  int rows = l ? cardRowsA(s, *l) : 0;
+  const bool more = l && static_cast<int>(lfo::linksOf(s, l->id).size()) > 3;
+  return kAHead + kAWave + 8 + 18 + 10 + 1 + 6 + static_cast<float>(rows + (more ? 1 : 0)) * kTRowH + (more ? 0 : kTRowH) + 8;
+}
+void calmCard(App& a, const SongLfo& l, ImVec2 mn, ImVec2 mx) {
+  const auto& P = pal();
+  const Song& s = a.doc.song();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImU32 c = colour(l.colour);
+  const bool sel = gSelected == l.id;
+  const bool hov = ImGui::IsMouseHoveringRect(mn, mx) && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows);
+  DevCard dev{l.id, mn, mx, {}, {}, {}, {}};
+  ImGui::PushID(static_cast<int>(l.id));
+  ImGui::SetCursorScreenPos(mn);
+  ImGui::SetNextItemAllowOverlap();
+  if (ImGui::InvisibleButton("##card", ImVec2(mx.x - mn.x, mx.y - mn.y))) gSelected = l.id;
+  if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##lfomenu");
+  frame(mn, mx, c, sel, hov);
+  const float cy = mn.y + kAHead * 0.5f + 1;
+  onLamp(a, l, ImVec2(mn.x + 16, cy));
+  const float right = mx.x - 8 - 24 - 2 - 24;
+  titleText(a, l, mn.x + 28, cy, right - 8, ImGui::GetFontSize() - 1.0f);
+  handleGlyph(l, ImVec2(right, cy - 12), 24, &dev.handle);
+  menuDots(a, l, ImVec2(mx.x - 8 - 24, cy - 12), 24, hov || sel);
+  if (!s.lfo(l.id)) {
+    ImGui::PopID();
+    return;
+  }
+  float y = mn.y + kAHead;
+  const ImVec2 w0(mn.x + 10, y), w1(mx.x - 10, y + kAWave);
+  wavePanel(a, l, w0, w1, 2.0f);
+  y += kAWave + 8;
+  {
+    const std::string sum = summaryLine(s, l);
+    const float fs = fsLabel() + 0.5f;
+    text(dl, ImGui::GetFont(), fs, ImVec2(w0.x + 2, y + (18 - fs) * 0.5f - 1), P.textDim, fit(ImGui::GetFont(), fs, sum.c_str(), w1.x - w0.x - 4));
+  }
+  y += 18 + 10;
+  dl->AddLine(ImVec2(w0.x, y - 0.5f), ImVec2(w1.x, y - 0.5f), theme::withAlpha(P.line, 0.8f));
+  y += 6;
+  const auto links = lfo::linksOf(s, l.id);
+  if (links.empty()) {
+    const float fs = fsLabel() + 1.0f;
+    text(dl, ImGui::GetFont(), fs, ImVec2(w0.x + 6, y + (kTRowH - fs) * 0.5f - 1), P.textDim, tr("Moves nothing yet"));
+    y += kTRowH;
+    const char* al = tr("+ Add target");
+    const float aw = textW(ImGui::GetFont(), fs, al) + 12;
+    ImGui::SetCursorScreenPos(ImVec2(w1.x - aw, y - kTRowH));
+    if (ImGui::InvisibleButton("##add", ImVec2(aw, kTRowH))) gAddLfo = l.id, gOpenAdd = true, gAddSearch[0] = 0, gPopAt = underItem();
+    const bool ah = ImGui::IsItemHovered();
+    if (ah) dl->AddRectFilled(ImVec2(w1.x - aw, y - kTRowH), ImVec2(w1.x, y), theme::withAlpha(P.text, 0.06f), 4.0f);
+    text(dl, ImGui::GetFont(), fs, ImVec2(w1.x - aw + 6, y - kTRowH + (kTRowH - fs) * 0.5f - 1), ah ? P.text : P.textDim, al);
+    dev.add = ImVec2(w1.x - aw * 0.5f, y - kTRowH * 0.5f);
+  } else {
+    targetRows(a, l, w0.x - 4, w1.x + 4, y, 3, static_cast<int>(links.size()) <= 3, &dev);
+  }
+  ImGui::PopID();
+  gDevCards.push_back(std::move(dev));
+}
+// The inspector: everything about the selected source, in one column, or in two where the place is
+// short (the left: the picture, its shape and drawing tools; the right: rate, knobs and targets).
+float inspectorWidth(float W, float H) { return H < 620 && W >= 840 ? std::clamp(std::floor(W * 0.6f), 560.0f, 720.0f) : kAInspW; }
+void inspector(App& a, ImVec2 mn, ImVec2 mx) {
+  const auto& P = pal();
+  const Song& s = a.doc.song();
+  ImDrawList* pdl = ImGui::GetWindowDrawList();
+  const bool tl = trackerLook();
+  if (!tl) pdl->AddRectFilled(mn, mx, P.surface800, 6.0f), pdl->AddRect(mn, mx, P.line, 6.0f);
+  else pdl->AddRectFilled(mn, mx, P.surface800), trackerview::bevelBox(pdl, mn, mx, false);
+  ImGui::SetCursorScreenPos(mn);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::BeginChild("##inspector", ImVec2(mx.x - mn.x, mx.y - mn.y), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+  ImGui::PopStyleVar();
+  const SongLfo* L = s.lfo(gSelected);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 o = ImGui::GetCursorScreenPos();
+  const float W = mx.x - mn.x, H = mx.y - mn.y;
+  const bool two = W >= 560;
+  const float pad = 16, colGap = 24;
+  const float colW = two ? std::floor((W - pad * 2 - colGap) * 0.5f) : W - pad * 2;
+  const float lx0 = o.x + pad, lx1 = lx0 + colW;
+  const float rx0 = two ? lx1 + colGap : lx0, rx1 = two ? rx0 + colW : lx1;
+  if (!L) {
+    text(dl, ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(lx0, o.y + 18), P.textDim, tr("Select a source to edit it"));
+    ImGui::EndChild();
+    return;
+  }
+  const SongLfo l = *L;
+  const ImU32 c = colour(l.colour);
+  ImGui::PushID(static_cast<int>(l.id));
+  float y = o.y + 14;
+  // Header across the whole width: the colour, on lamp, name; Presets, the handle and the menu.
+  {
+    const float x1 = two ? rx1 : lx1;
+    const float cy = y + 12;
+    dl->AddRectFilled(ImVec2(lx0, cy - 9), ImVec2(lx0 + 3, cy + 9), c, 1.5f);
+    onLamp(a, l, ImVec2(lx0 + 16, cy));
+    const float pw = smallButtonWidth("Presets");
+    const float tx = titleText(a, l, lx0 + 28, cy, x1 - 60 - pw - 8, ImGui::GetFontSize() + 1.0f);
+    const std::string sum = summaryLine(s, l);
+    const float sumFs = fsLabel() + 0.5f;
+    // Two columns (a short place): the summary on the title's line, after the name.
+    const float sumRoom = x1 - 60 - pw - 16 - (tx + 14);
+    const bool sumInline = two && sumRoom > 120;
+    if (sumInline) text(dl, ImGui::GetFont(), sumFs, ImVec2(tx + 14, cy - sumFs * 0.5f - 1), P.textDim, fit(ImGui::GetFont(), sumFs, sum.c_str(), sumRoom));
+    if (smallButton(a, "##presets", "Presets", ImVec2(x1 - 52 - pw - 8, cy - 11), 22, "Load a preset into this source, or save it as one") || devMenu(3, l.id)) {
+      ImGui::OpenPopup("##inspresets");
+      popupUnder(ImVec2(x1 - 52 - pw - 8, cy - 11), ImVec2(x1 - 52 - 8, cy + 11));
+    }
+    if (ImGui::BeginPopup("##inspresets")) {
+      presetMenuRows(a, l.id);
+      ImGui::EndPopup();
+    }
+    handleGlyph(l, ImVec2(x1 - 24 - 2 - 24, cy - 12), 24, nullptr);
+    menuDots(a, l, ImVec2(x1 - 24, cy - 12), 24, true, 2);
+    y += 24 + 6;
+    if (!sumInline) {
+      text(dl, ImGui::GetFont(), sumFs, ImVec2(lx0, y), P.textDim, fit(ImGui::GetFont(), sumFs, sum.c_str(), x1 - lx0));
+      y += 24;
+    } else {
+      y += 4;
+    }
+  }
+  const float top = y;
+  auto caption = [&](float x, float& yy, const char* t) {
+    text(dl, ImGui::GetFont(), fsLabel(), ImVec2(x, yy), P.textDim, tr(t));
+    yy += fsLabel() + 8;
+  };
+  // Left: the picture (or the drawn shape with its tools), the shapes.
+  const bool drawn = l.kind == LfoKind::Lfo && l.shape == LfoShape::Drawn;
+  float ly = y;
+  if (drawn) {
+    ly += shapeTools(a, l, lx0, lx1, ly) + 10;
+    const float eh = two ? std::clamp(H - (ly - o.y) - (16 + fsLabel() + 8 + 26 + 14), 80.0f, 200.0f) : 150.0f;
+    shapeEditor(a, l, ImVec2(lx0, ly), ImVec2(lx1, ly + eh));
+    ly += eh + 16;
+  } else {
+    const float wh = two ? std::clamp(H - (ly - o.y) - (16 + fsLabel() + 8 + 26 + 14), 80.0f, 180.0f) : 112.0f;
+    wavePanel(a, l, ImVec2(lx0, ly), ImVec2(lx1, ly + wh), 2.0f);
+    ly += wh + 16;
+  }
+  if (l.kind == LfoKind::Lfo) {
+    // "Shape", and at its right "Edit this shape" (draws a built-in shape as points to change).
+    const float capY = ly;
+    caption(lx0, ly, i18n::N_("Shape"));
+    if (!drawn) {
+      const char* el = tr("Edit this shape");
+      const float ew = textW(ImGui::GetFont(), fsLabel(), el) + 12;
+      ImGui::SetCursorScreenPos(ImVec2(lx1 - ew, capY - 4));
+      if (ImGui::InvisibleButton("##editshape", ImVec2(ew, fsLabel() + 8))) editThisShape(a, l);
+      const bool eh = ImGui::IsItemHovered();
+      if (eh) ui::Hint("Draw this shape as points you can move, bend and add to");
+      text(dl, ImGui::GetFont(), fsLabel(), ImVec2(lx1 - ew + 6, capY), eh ? P.text : P.textDim, el);
+    }
+    shapeStrip(a, l, lx0, lx1, ly, 26);
+    ly += 26 + 16;
+  }
+  // Right (or below): rate and restart, the knobs, the targets.
+  float ry = two ? top : ly;
+  if (l.kind == LfoKind::Lfo) {
+    caption(rx0, ry, i18n::N_("Rate and restart"));
+    rateRow(a, l, rx0, rx1, ry, kRowH);
+    ry += kRowH + 18;
+  } else {
+    caption(rx0, ry, l.kind == LfoKind::Chaos ? i18n::N_("Restart and rate") : i18n::N_("New value"));
+    sourceRows(a, l, ImVec2(rx0, ry), ImVec2(rx1, ry), ry);
+    ry += kRowH + 18;
+  }
+  {
+    float dx = 0;
+    cardKnobs(a, l, rx0, rx1, ry, 17, &dx);
+    for (DevCard& dc : gDevCards)  // (dev: the selected source's depth knob is the inspector's)
+      if (dc.id == l.id) dc.depth = ImVec2(dx, ry + 17);
+  }
+  ry += 34 + 4 + fsLabel() * 2 + 18;
+  dl->AddLine(ImVec2(rx0, ry - 0.5f), ImVec2(rx1, ry - 0.5f), theme::withAlpha(P.line, 0.8f));
+  ry += 12;
+  {
+    char cap[48];
+    std::snprintf(cap, sizeof cap, "%s  %d", tr("Targets"), static_cast<int>(lfo::linksOf(s, l.id).size()));
+    text(dl, ImGui::GetFont(), fsLabel(), ImVec2(rx0, ry), P.textDim, cap);
+    ry += fsLabel() + 6;
+  }
+  if (lfo::linksOf(s, l.id).empty()) {
+    const float fs = fsLabel() + 1.0f;
+    text(dl, ImGui::GetFont(), fs, ImVec2(rx0, ry + (kTRowH - fs) * 0.5f - 1), P.textDim, tr("Moves nothing yet: drag the handle onto any knob"));
+    ry += kTRowH;
+  }
+  ry += targetRows(a, l, rx0 - 6, rx1 + 6, ry, 64, true, nullptr);
+  ImGui::SetCursorScreenPos(ImVec2(lx0, std::max(ly - 12, ry) + 2));  // (no scroll for the margin alone)
+  ImGui::Dummy(ImVec2(1, 1));
+  ImGui::PopID();
+  ImGui::EndChild();
+}
+
+// The empty board.
+void emptyBoard(App& a, ImVec2 o, ImVec2 size) {
+  const auto& P = pal();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float cx = std::round(o.x + size.x * 0.5f), top = std::round(o.y + std::max(24.0f, size.y * 0.30f - 60));
+  // A soft sine in a rounded well.
+  const ImVec2 g0(cx - 44, top), g1(cx + 44, top + 52);
+  dl->AddRectFilled(g0, g1, P.field, 10.0f);
+  ImVec2 pts[41];
+  for (int i = 0; i <= 40; ++i) {
+    const float t = static_cast<float>(i) / 40.0f;
+    pts[i] = ImVec2(g0.x + 12 + t * (g1.x - g0.x - 24), (g0.y + g1.y) * 0.5f - std::sin(t * kPi * 2) * 12);
+  }
+  dl->AddPolyline(pts, 41, colour(0), ImDrawFlags_None, 2.0f);
+  float y = g1.y + 20;
+  const char* t = tr("No LFOs yet");
+  text(dl, a.fontBold, ImGui::GetFontSize() + 2, ImVec2(cx - textW(a.fontBold, ImGui::GetFontSize() + 2, t) * 0.5f, y), P.text, t);
+  y += ImGui::GetFontSize() + 12;
+  const char* l1 = tr("A source moves knobs for you: a steady wave, a drifting chaos or random steps.");
+  const char* l2 = tr("Make one, then drag its handle onto any knob, or right-click a knob and choose Modulate.");
+  const float fs = fsLabel() + 1.5f;
+  text(dl, ImGui::GetFont(), fs, ImVec2(cx - textW(ImGui::GetFont(), fs, l1) * 0.5f, y), P.textDim, l1);
+  y += fs + 6;
+  text(dl, ImGui::GetFont(), fs, ImVec2(cx - textW(ImGui::GetFont(), fs, l2) * 0.5f, y), P.textDim, l2);
+  y += fs + 22;
+  const float bw = ui::TextButtonWidth("+ New LFO") + ui::TextButtonWidth("+ Chaos") + ui::TextButtonWidth("+ Random") + 16;
+  ImGui::SetCursorScreenPos(ImVec2(std::round(cx - bw * 0.5f), y));
+  if (ui::PrimaryButton("+ New LFO", 0, "A new LFO: a sine at 1/4, locked to the song"))
+    if (ObjectId id = lfo::addNew(a.doc); id != kNoId) gSelected = id;
+  ImGui::SameLine(0, 8);
+  if (ui::TextButton("+ Chaos", false, 0, "A new chaos source: a smooth movement that never repeats"))
+    if (ObjectId id = lfo::addNew(a.doc, LfoKind::Chaos); id != kNoId) gSelected = id;
+  ImGui::SameLine(0, 8);
+  if (ui::TextButton("+ Random", false, 0, "A new random source: holds a random value until the next trigger"))
+    if (ObjectId id = lfo::addNew(a.doc, LfoKind::Random); id != kNoId) gSelected = id;
 }
 
 // The order the board shows: filtered by the toolbar's filter and search, sorted.
@@ -1462,28 +2045,47 @@ void toolbar(App& a, bool narrow, bool studioDocked) {
   ImGui::PopFont();
   char b[96];
   std::snprintf(b, sizeof b, tr("%d of %d sources \xC2\xB7 %d targets"), static_cast<int>(s.lfos.size()), kMaxSongLfos, targetCount(s));
-  ImGui::SameLine(0, 8);
-  ImGui::PushFont(monoFont(a), 0.0f);
-  ImGui::TextColored(theme::vec(P.textFaint), "%s", narrow || tier >= 2 ? (std::to_string(s.lfos.size()) + "/" + std::to_string(kMaxSongLfos)).c_str() : b);
-  ImGui::PopFont();
   ImGui::SameLine(0, 10);
+  {
+    const int n = static_cast<int>(s.lfos.size()), t = targetCount(s);
+    if (narrow) std::snprintf(b, sizeof b, "%d", n);
+    else std::snprintf(b, sizeof b, "%d %s \xC2\xB7 %d %s", n, n == 1 ? tr("source") : tr("sources"), t, t == 1 ? tr("target") : tr("targets"));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.textDim), "%s", b);
+  }
+  ImGui::SameLine(0, 14);
   const bool full = static_cast<int>(s.lfos.size()) >= kMaxSongLfos;
   if (ui::PrimaryButton(narrow ? "+" : "+ New LFO", 0, "A new LFO: a sine at 1/4, locked to the song", !full))
     if (ObjectId id = lfo::addNew(a.doc); id != kNoId) gSelected = id;
-  if (!narrow && tier <= 2) {  // 0.7.8: the other sources (else in the ... menu)
-    ImGui::SameLine(0, 6);
-    if (ui::TextButton("+ Chaos", false, 0, "A new chaos source: a smooth movement that never repeats") && !full)
-      if (ObjectId id = lfo::addNew(a.doc, LfoKind::Chaos); id != kNoId) gSelected = id;
-    ImGui::SameLine(0, 6);
-    if (ui::TextButton("+ Random", false, 0, "A new random source: holds a random value until the next trigger") && !full)
-      if (ObjectId id = lfo::addNew(a.doc, LfoKind::Random); id != kNoId) gSelected = id;
+  if (!narrow) {  // the other sources and the presets: one menu beside it
+    ImGui::SameLine(0, 2);
+    const ImVec2 p0 = ImGui::GetCursorScreenPos();
+    if (ui::TextButton("##newmore", false, 24, "Chaos, Random, or an LFO from a preset") || devMenu(4)) {
+      ImGui::OpenPopup("##newmenu");
+      popupUnder(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    }
+    const ImVec2 q0 = ImGui::GetItemRectMin(), q1 = ImGui::GetItemRectMax();
+    const ImVec2 cc((q0.x + q1.x) * 0.5f, (q0.y + q1.y) * 0.5f + 1);
+    ImGui::GetWindowDrawList()->AddTriangleFilled(ImVec2(cc.x - 4, cc.y - 2), ImVec2(cc.x + 4, cc.y - 2), ImVec2(cc.x, cc.y + 2.5f), P.textDim);
+    (void)p0;
+    if (ImGui::BeginPopup("##newmenu")) {
+      if (ImGui::MenuItem(tr("New chaos"), nullptr, false, !full))
+        if (ObjectId id = lfo::addNew(a.doc, LfoKind::Chaos); id != kNoId) gSelected = id;
+      if (ImGui::MenuItem(tr("New random"), nullptr, false, !full))
+        if (ObjectId id = lfo::addNew(a.doc, LfoKind::Random); id != kNoId) gSelected = id;
+      if (ImGui::BeginMenu(tr("New LFO from a preset"), !full)) {
+        presetItems(a, [&a](const lfo::Preset& p) { usePreset(a, p, kNoId); });
+        ImGui::EndMenu();
+      }
+      ImGui::EndPopup();
+    }
   }
   if (!narrow) {
-    ImGui::SameLine(0, 10);
+    ImGui::SameLine(0, 16);
     static const char* const kFilt[] = {i18n::N_("All"), i18n::N_("Moving now"), i18n::N_("No targets")};
     ui::Segmented("##filter", kFilt, 3, &gFilter);
     // The search takes what is left before the right-hand group (none when too little).
-    ImGui::SameLine(0, 6);
+    ImGui::SameLine(0, 8);
     const float room = ImGui::GetContentRegionAvail().x - rw - 12;
     if (room >= 100) {
       const float w = std::min(room, 220.0f);
@@ -1506,11 +2108,6 @@ void toolbar(App& a, bool narrow, bool studioDocked) {
   static const char* const kViews[] = {i18n::N_("Cards"), i18n::N_("Compact")};
   const bool menuHasSort = narrow || tier >= 3;
   if (!menuHasSort) {
-    if (tier == 0) {
-      ImGui::AlignTextToFramePadding();
-      ImGui::TextColored(theme::vec(P.textDim), "%s", tr("Sort"));
-      ImGui::SameLine(0, 6);
-    }
     if (ui::BeginCombo("##sort", tr(kSorts[gSort]), 120)) {
       for (int i = 0; i < 3; ++i)
         if (ImGui::Selectable(tr(kSorts[i]), gSort == i)) gSort = i;
@@ -1519,11 +2116,6 @@ void toolbar(App& a, bool narrow, bool studioDocked) {
     ImGui::SameLine(0, 6);
     ui::Segmented("##view", kViews, 2, &gView);
     ImGui::SameLine(0, 6);
-    if (tier == 0) {
-      const bool on = showOnKnobs(a);
-      if (ui::TextButton("Show on knobs", on, 0, "Knobs an LFO moves show the swing and a live dot")) a.settings.set("ui.lfoHideOnKnobs", on);
-      ImGui::SameLine(0, 6);
-    }
   }
   if (studioDocked) {
     if (ui::TextButton("Pop out", false, 0, "The full board in a window of its own")) gPopOut = true;
@@ -1532,7 +2124,7 @@ void toolbar(App& a, bool narrow, bool studioDocked) {
     if (ui::TextButton("Dock", false, 0, "Back beside the mixer")) gDockBack = true;
     ImGui::SameLine(0, 6);
   }
-  if (ui::TextButton("...", false, 26, "More")) ImGui::OpenPopup("##boardmenu");
+  if (ui::TextButton("...", false, 26, "More") || devMenu(5)) ImGui::OpenPopup("##boardmenu");
   rw = std::ceil(ImGui::GetItemRectMax().x - groupX) + 2;
   if (ImGui::BeginPopup("##boardmenu")) {
     if (ImGui::MenuItem(tr("New chaos"), nullptr, false, !full))
@@ -1540,12 +2132,7 @@ void toolbar(App& a, bool narrow, bool studioDocked) {
     if (ImGui::MenuItem(tr("New random"), nullptr, false, !full))
       if (ObjectId id = lfo::addNew(a.doc, LfoKind::Random); id != kNoId) gSelected = id;
     if (ImGui::BeginMenu(tr("New LFO from a preset"), !full)) {
-      for (const lfo::Preset& p : lfo::presets())
-        if (ImGui::MenuItem(tr(p.name))) {
-          SongLfo l = lfo::makeDefault(s);
-          lfo::applyPreset(l, p.lfo);
-          if (ObjectId id = a.doc.addLfo(l); id != kNoId) gSelected = id;
-        }
+      presetItems(a, [&a](const lfo::Preset& p) { usePreset(a, p, kNoId); });
       ImGui::EndMenu();
     }
     if (ImGui::MenuItem(tr("Edit the selected LFO in a window"), nullptr, false, s.lfo(gSelected) != nullptr)) a.showLfoDetail = true;
@@ -1598,56 +2185,91 @@ void popups(App& a) {
     addTargetBody(a, gAddLfo);
     ImGui::EndPopup();
   }
+  savePopup(a);
 }
 
-// The board's body in [the cursor, avail]: cards in columns, or compact rows.
+// The board's body in [the cursor, avail]: the cards in columns beside the inspector, or compact rows.
 void boardBody(App& a, bool compact) {
   const auto& P = pal();
-  const ImVec2 avail = ImGui::GetContentRegionAvail();
-  ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface800));
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 10));
-  ImGui::BeginChild("##rack", avail, ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_None);
+  ImVec2 avail = ImGui::GetContentRegionAvail();
+  const float pad = 12, step = kCompactH + 6;
+  // Compact rows: the list is cut to whole rows (nothing half shown at the foot) and the wheel moves
+  // a row at a time.
+  if (compact) {
+    const int rows = static_cast<int>(std::floor((avail.y - pad * 2 + 6) / step));
+    if (rows >= 1) avail.y = static_cast<float>(rows) * step - 6 + pad * 2;
+  }
+  ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.surface900));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(pad, pad));
+  ImGui::BeginChild("##rack", avail, ImGuiChildFlags_AlwaysUseWindowPadding,
+                    compact ? ImGuiWindowFlags_NoScrollWithMouse : ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
   ImGui::PopStyleVar();
   ImGui::PopStyleColor();
   const ImVec2 o = ImGui::GetCursorScreenPos();
-  const float W = ImGui::GetContentRegionAvail().x;
+  const float W = ImGui::GetContentRegionAvail().x, H = ImGui::GetContentRegionAvail().y;
   const std::vector<const SongLfo*> shown = shownLfos(a);
   gDevCards.clear();
   gDevCompact = compact;
-  if (compact) {
-    gDevCols = 1;
-    float y = o.y;
-    for (const SongLfo* l : shown) {
-      drawCompactRow(a, *l, ImVec2(o.x, y), W);
-      y += kCompactH + 6;
-    }
-    if (shown.empty()) {
-      ImGui::SetCursorScreenPos(ImVec2(o.x, y));
-      ImGui::TextDisabled("%s", a.doc.song().lfos.empty() ? tr("No LFOs yet: + makes one, or right-click any knob.") : tr("No LFO matches."));
-      y += ImGui::GetTextLineHeightWithSpacing();
-    }
-    ImGui::SetCursorScreenPos(ImVec2(o.x, y));
-    ImGui::Dummy(ImVec2(W, 4));
-  } else {
-    const float gap = 10;
-    const int cols = std::clamp(static_cast<int>((W + gap) / (290 + gap)), 1, 4);
+  if (!compact && a.doc.song().lfos.empty()) {
+    gDevCols = 0;
+    emptyBoard(a, o, ImVec2(W, H));
+  } else if (!compact) {
+    const bool insp = W >= 900;
+    const float inspW = insp ? inspectorWidth(W, H) : 0.0f, gap = 12;
+    const float gridW = insp ? W - inspW - gap : W;
+    // The cards scroll on their own; the inspector stays.
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::BeginChild("##cards", ImVec2(gridW, H), ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground);
+    ImGui::PopStyleVar();
+    const float cwAvail = ImGui::GetContentRegionAvail().x - (ImGui::GetScrollMaxY() > 0 ? ImGui::GetStyle().ScrollbarSize + 4 : 0);
+    const int cols = std::clamp(static_cast<int>((cwAvail + gap) / (250 + gap)), 1, 4);
     gDevCols = cols;
-    const float cw = std::floor((W - gap * static_cast<float>(cols - 1)) / static_cast<float>(cols));
-    const size_t n = shown.size() + 1;  // with the New LFO card
-    float y = o.y;
-    for (size_t r0 = 0; r0 < n; r0 += static_cast<size_t>(cols)) {
+    const float cw = std::floor((cwAvail - gap * static_cast<float>(cols - 1)) / static_cast<float>(cols));
+    const Song& s = a.doc.song();
+    const ImVec2 g = ImGui::GetCursorScreenPos();
+    float y = g.y;
+    for (size_t r0 = 0; r0 < shown.size(); r0 += static_cast<size_t>(cols)) {
       float h = 0;
-      for (size_t i = r0; i < std::min(n, r0 + static_cast<size_t>(cols)); ++i) h = std::max(h, i < shown.size() ? cardHeight(a, *shown[i], cw) : 0.0f);
-      if (h <= 0) h = cardHeight(a, SongLfo{}, cw);
-      for (size_t i = r0; i < std::min(n, r0 + static_cast<size_t>(cols)); ++i) {
-        const float x = std::round(o.x + static_cast<float>(i - r0) * (cw + gap));
-        if (i < shown.size()) drawCard(a, *shown[i], ImVec2(x, y), ImVec2(x + cw, y + h));
-        else ghostCard(a, ImVec2(x, y), ImVec2(x + cw, y + h));
+      for (size_t i = r0; i < std::min(shown.size(), r0 + static_cast<size_t>(cols)); ++i) h = std::max(h, cardHeightA(s, shown[i]));
+      for (size_t i = r0; i < std::min(shown.size(), r0 + static_cast<size_t>(cols)); ++i) {
+        const float x = std::round(g.x + static_cast<float>(i - r0) * (cw + gap));
+        calmCard(a, *shown[i], ImVec2(x, y), ImVec2(x + cw, y + h));
       }
       y += h + gap;
     }
-    ImGui::SetCursorScreenPos(ImVec2(o.x, y - gap));
-    ImGui::Dummy(ImVec2(W, 1));
+    if (shown.empty()) {
+      ImGui::SetCursorScreenPos(ImVec2(g.x, y));
+      ImGui::TextColored(theme::vec(P.textDim), "%s", tr("No source matches."));
+      y += ImGui::GetTextLineHeightWithSpacing();
+    }
+    ImGui::SetCursorScreenPos(ImVec2(g.x, std::max(y - gap, g.y)));
+    ImGui::Dummy(ImVec2(cw, 1));
+    ImGui::EndChild();
+    if (insp) inspector(a, ImVec2(o.x + W - inspW, o.y), ImVec2(o.x + W, o.y + H));
+  } else {
+    gDevCols = 1;
+    float y = o.y;
+    // (the rows end at the padding: no part row shows in it)
+    const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+    ImGui::PushClipRect(ImVec2(wp.x, wp.y + pad), ImVec2(wp.x + ws.x, wp.y + ws.y - pad), true);
+    for (const SongLfo* l : shown) {
+      drawCompactRow(a, *l, ImVec2(o.x, y), W);
+      y += step;
+    }
+    ImGui::PopClipRect();
+    if (shown.empty()) {
+      ImGui::SetCursorScreenPos(ImVec2(o.x, y));
+      ImGui::TextColored(theme::vec(P.textDim), "%s", a.doc.song().lfos.empty() ? tr("No LFOs yet: + makes one, or right-click any knob.") : tr("No LFO matches."));
+      y += ImGui::GetTextLineHeightWithSpacing();
+    }
+    ImGui::SetCursorScreenPos(ImVec2(o.x, std::max(o.y, y - 6)));
+    ImGui::Dummy(ImVec2(W, 0));
+    // The wheel: a row at a time.
+    const float wheel = ImGui::GetIO().MouseWheel;
+    if (wheel != 0 && ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows)) {
+      const float rowsNow = std::round(ImGui::GetScrollY() / step) - (wheel > 0 ? 1.0f : -1.0f);
+      ImGui::SetScrollY(std::clamp(rowsNow * step, 0.0f, ImGui::GetScrollMaxY()));
+    }
   }
   ImGui::EndChild();
 }
@@ -1659,70 +2281,6 @@ void trackTouched(App& a) {
   gTouched.erase(std::remove(gTouched.begin(), gTouched.end(), t), gTouched.end());
   gTouched.push_front(t);
   while (gTouched.size() > 16) gTouched.pop_back();
-}
-
-// ---- the drawn shape editor (detail window) ----------------------------
-void drawnEditor(App& a, const SongLfo& l, ImVec2 mn, ImVec2 mx) {
-  const auto& P = pal();
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  ImGui::SetCursorScreenPos(mn);
-  ImGui::InvisibleButton("##drawn", ImVec2(mx.x - mn.x, mx.y - mn.y), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
-  const bool hov = ImGui::IsItemHovered();
-  const float pad = 6;
-  auto toScreen = [&](const LfoPoint& p) { return ImVec2(mn.x + p.x * (mx.x - mn.x), mx.y - pad - (p.y + 1) * 0.5f * (mx.y - mn.y - pad * 2)); };
-  auto fromScreen = [&](ImVec2 s) {
-    LfoPoint p;
-    p.x = std::clamp((s.x - mn.x) / (mx.x - mn.x), 0.0f, 1.0f);
-    p.y = std::clamp(((mx.y - pad - s.y) / (mx.y - mn.y - pad * 2)) * 2 - 1, -1.0f, 1.0f);
-    return p;
-  };
-  std::vector<LfoPoint> pts = l.points.empty() ? lfo::defaultPoints() : l.points;
-  static int dragIdx = -1;
-  const ImVec2 m = ImGui::GetIO().MousePos;
-  int near = -1;
-  for (size_t i = 0; i < pts.size(); ++i) {
-    const ImVec2 sp = toScreen(pts[i]);
-    if (std::hypot(sp.x - m.x, sp.y - m.y) < 7) near = static_cast<int>(i);
-  }
-  const uint64_t key = (static_cast<uint64_t>(l.id) << 8) ^ 0x54;
-  if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-    if (near >= 0) {
-      dragIdx = near;
-    } else if (static_cast<int>(pts.size()) < kLfoMaxPoints) {
-      LfoPoint np = fromScreen(m);
-      pts.push_back(np);
-      std::sort(pts.begin(), pts.end(), [](const LfoPoint& x, const LfoPoint& y) { return x.x < y.x; });
-      for (size_t i = 0; i < pts.size(); ++i)
-        if (pts[i].x == np.x && pts[i].y == np.y) dragIdx = static_cast<int>(i);
-      a.doc.editLfo(l.id, "add LFO point", [pts](SongLfo& q) { q.points = pts; }, key);
-    }
-  }
-  if (ImGui::IsItemActive() && dragIdx >= 0 && dragIdx < static_cast<int>(pts.size()) && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0)) {
-    LfoPoint np = fromScreen(m);
-    np.curve = pts[static_cast<size_t>(dragIdx)].curve;
-    const float lo = dragIdx > 0 ? pts[static_cast<size_t>(dragIdx) - 1].x : 0.0f;
-    const float hi = dragIdx + 1 < static_cast<int>(pts.size()) ? pts[static_cast<size_t>(dragIdx) + 1].x : 1.0f;
-    np.x = std::clamp(np.x, lo, hi);
-    pts[static_cast<size_t>(dragIdx)] = np;
-    a.doc.editLfo(l.id, "move LFO point", [pts](SongLfo& q) { q.points = pts; }, key);
-  }
-  if (ImGui::IsItemDeactivated()) dragIdx = -1, a.doc.endGesture();
-  if (hov && near >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && pts.size() > 2) {
-    pts.erase(pts.begin() + near);
-    a.doc.editLfo(l.id, "remove LFO point", [pts](SongLfo& q) { q.points = pts; });
-  }
-  if (hov) ui::Hint("Click to add a point, drag to move it, right-click removes it");
-  dl->AddRectFilled(mn, mx, P.surface950, 4.0f);
-  dl->AddRect(mn, mx, P.line, 4.0f);
-  SongLfo shown = l;
-  shown.points = pts;
-  shown.phase = 0, shown.depth = 1, shown.offset = 0;
-  drawWave(a, dl, mn, mx, shown, 1.0f, true, false);
-  for (size_t i = 0; i < pts.size(); ++i) {
-    const ImVec2 sp = toScreen(pts[i]);
-    dl->AddCircleFilled(sp, static_cast<int>(i) == near ? 5.0f : 4.0f, colour(l.colour), 12);
-    dl->AddCircle(sp, static_cast<int>(i) == near ? 5.0f : 4.0f, P.surface950, 12);
-  }
 }
 
 bool studioDockedNow() {
@@ -1737,6 +2295,15 @@ ImU32 colour(int k) { return theme::litRole(theme::role::kLfo[std::clamp(k, 0, k
 
 void select(ObjectId id) { gSelected = id; }
 ObjectId selected() { return gSelected; }
+
+void toggleOpen(App& a) {
+  if (layoutui::active() == layout::Preset::Tracker) {
+    trackerview::showPage(a, "LFO board");
+    return;
+  }
+  if (!a.showLfoBoard) toggle(a);
+  else a.focusWindow = "LFO board";
+}
 
 void toggle(App& a) {
   if (!a.showLfoBoard) {
@@ -1831,127 +2398,34 @@ void drawDetail(App& a) {
     ImGui::End();
     return;
   }
-  const SongLfo l = *L;
   const auto& P = pal();
-  // A row of LFO tabs to pick which one.
-  for (const SongLfo& o : s.lfos) {
-    ImGui::PushID(static_cast<int>(o.id));
-    const ImVec2 p = ImGui::GetCursorScreenPos();
-    if (ui::TextButton(lfo::number(s, o.id).c_str(), o.id == l.id)) gSelected = o.id;
-    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y + ImGui::GetFrameHeight() - 3), ImVec2(ImGui::GetItemRectMax().x, p.y + ImGui::GetFrameHeight()), colour(o.colour));
-    ImGui::PopID();
-    ImGui::SameLine(0, 4);
-    if (ImGui::GetContentRegionAvail().x < 60) ImGui::NewLine();
-  }
-  ImGui::NewLine();
-  ImGui::PushID(static_cast<int>(l.id));
-  ImGui::PushFont(a.fontBold, 0.0f);
-  ImGui::TextUnformatted(lfo::label(s, l.id).c_str());
-  ImGui::PopFont();
-  ImGui::SameLine();
-  if (l.kind == LfoKind::Random) ImGui::TextDisabled("%s", restartNote(s, l).c_str());
-  else ImGui::TextDisabled("%s \xC2\xB7 %s \xC2\xB7 %s", tr(lfo::kindSummary(l)), lfo::rateLabel(l).c_str(), restartNote(s, l).c_str());
-  const float W = ImGui::GetContentRegionAvail().x;
-  const bool side = W >= 620;  // settings beside the wave, else under it
-  const float waveW = side ? std::clamp(W - 340, 280.0f, 620.0f) : W;
-  const ImVec2 w0 = ImGui::GetCursorScreenPos(), w1(w0.x + waveW, w0.y + 150);
-  // Left: the wave (or the drawn editor), the shapes, the drawn shape's options.
-  ImGui::BeginGroup();
-  if (l.kind == LfoKind::Lfo && l.shape == LfoShape::Drawn) {
-    drawnEditor(a, l, w0, w1);
-  } else {
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(w0, w1, P.surface950, 4.0f);
-    dl->AddRect(w0, w1, P.line, 4.0f);
-    drawWave(a, dl, w0, w1, l, 2.0f, true, true);
-    ImGui::Dummy(ImVec2(waveW, 150));
-  }
-  ImGui::SetCursorScreenPos(ImVec2(w0.x, w1.y + 8));
-  if (l.kind != LfoKind::Lfo) {  // 0.7.8: Chaos's and Random's own rows
-    float yy = w1.y + 8;
-    const ImVec2 r1(w0.x + waveW, w1.y);
-    sourceRows(a, l, ImVec2(w0.x, w1.y), r1, yy);
-    ImGui::SetCursorScreenPos(ImVec2(w0.x, yy + kRowH + 4));
-    ImGui::Dummy(ImVec2(waveW, 1));
-  } else {
-    float x = 0;
-    const float gap = 4;
-    for (int k = 0; k < static_cast<int>(LfoShape::Count); ++k) {
-      const LfoShape sh = static_cast<LfoShape>(k);
-      const char* nm = tr(lfo::shapeName(sh));
-      const float bw = ImGui::CalcTextSize(nm).x + ImGui::GetStyle().FramePadding.x * 2;
-      if (k > 0) {
-        if (x + gap + bw <= waveW) ImGui::SameLine(0, gap), x += gap;
-        else x = 0;
-      }
-      ImGui::PushID(k);
-      if (ui::TextButton(nm, l.shape == sh))
-        a.doc.editLfo(l.id, "change LFO shape", [sh](SongLfo& q) {
-          q.shape = sh;
-          if (sh == LfoShape::Drawn && q.points.empty()) q.points = lfo::defaultPoints();
-        });
-      ImGui::PopID();
-      x += ImGui::GetItemRectSize().x;
-    }
-  }
-  if (l.kind == LfoKind::Lfo && l.shape == LfoShape::Drawn) {
-    bool steps = l.drawnSteps;
-    if (ImGui::Checkbox(tr("Steps between the points"), &steps)) a.doc.editLfo(l.id, "change LFO drawn steps", [steps](SongLfo& q) { q.drawnSteps = steps; });
-    ImGui::SameLine();
-    if (ui::TextButton("Reset the shape")) a.doc.editLfo(l.id, "reset LFO shape", [](SongLfo& q) { q.points = lfo::defaultPoints(); });
-  }
-  ImGui::EndGroup();
-  const float leftBottom = ImGui::GetItemRectMax().y;
-  // Right (or below): rate, restart, the five knobs, more settings.
-  if (side) ImGui::SetCursorScreenPos(ImVec2(w1.x + 16, w0.y));
-  else ImGui::SetCursorScreenPos(ImVec2(w0.x, leftBottom + 8));
-  ImGui::BeginGroup();
+  // A row of source tabs to pick which one: the colour under each, the chosen one lit.
   {
-    if (l.kind == LfoKind::Lfo) {  // (Chaos and Random: these are in their rows under the picture)
-      static const char* const kSync[] = {i18n::N_("Hz"), i18n::N_("Tempo")};
-      int sync = l.tempoSync ? 1 : 0;
-      if (ui::Segmented("##sync", kSync, 2, &sync)) a.doc.editLfo(l.id, "change LFO rate mode", [sync](SongLfo& q) { q.tempoSync = sync == 1; });
-      ImGui::SameLine();
-      rateControl(a, l, ImGui::GetCursorScreenPos(), 96, ImGui::GetFrameHeight());
-      ImGui::Dummy(ImVec2(96, ImGui::GetFrameHeight()));
-      static const char* const kRestart[] = {i18n::N_("Free"), i18n::N_("Play"), i18n::N_("Note")};
-      int rs = static_cast<int>(l.restart);
-      if (ui::Segmented("##restart", kRestart, 3, &rs))
-        a.doc.editLfo(l.id, "change LFO restart", [rs, ch = a.selChannel](SongLfo& q) {
-          q.restart = static_cast<LfoRestart>(rs);
-          if (q.restart == LfoRestart::EachNote && q.noteChannel == kNoId) q.noteChannel = ch;
-        });
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float h = 24;
+    float x = ImGui::GetCursorScreenPos().x, y = ImGui::GetCursorScreenPos().y;
+    const float x0 = x, xMax = x + ImGui::GetContentRegionAvail().x;
+    for (const SongLfo& o : s.lfos) {
+      ImGui::PushID(static_cast<int>(o.id));
+      const std::string nm = lfo::number(s, o.id);
+      const float w = std::ceil(textW(ImGui::GetFont(), fsLabel() + 1, nm.c_str())) + 18;
+      if (x + w > xMax && x > x0) x = x0, y += h + 4;
+      ImGui::SetCursorScreenPos(ImVec2(x, y));
+      if (ImGui::InvisibleButton("##tab", ImVec2(w, h))) gSelected = o.id;
+      const bool on = o.id == L->id, hov = ImGui::IsItemHovered();
+      if (hov) ui::Hint(lfo::label(s, o.id).c_str());
+      dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), on ? P.surface800 : hov ? theme::mix(P.surface900, P.text, 0.05f) : P.surface900, 4.0f);
+      dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), on ? colour(o.colour) : P.line, 4.0f, 0, on ? 1.5f : 1.0f);
+      dl->AddRectFilled(ImVec2(x + 5, y + h - 4), ImVec2(x + w - 5, y + h - 2), on ? colour(o.colour) : theme::withAlpha(colour(o.colour), 0.5f), 1.0f);
+      text(dl, ImGui::GetFont(), fsLabel() + 1, ImVec2(x + 9, y + (h - fsLabel() - 1) * 0.5f - 2), on ? P.text : P.textDim, nm.c_str());
+      ImGui::PopID();
+      x += w + 4;
     }
-    const ImVec2 kp = ImGui::GetCursorScreenPos();
-    const float kh = 6 + 34 + 3 + fsLabel() * 2 + 10;
-    cardKnobs(a, l, kp.x, kp.x + 300, kp.y + 6, 17);
-    ImGui::SetCursorScreenPos(kp);
-    ImGui::Dummy(ImVec2(300, kh));
-    if (ui::TextButton("More settings", false, 0, l.kind == LfoKind::Lfo ? "Fade in, steps, seed, the note channel, colour and more"
-                                                                          : "The seed, the note channel, colour and more"))
-      ImGui::OpenPopup("##detailmore");
-    if (ImGui::BeginPopup("##detailmore")) {
-      lfoMenuItems(a, l.id);
-      ImGui::EndPopup();
-    }
+    ImGui::SetCursorScreenPos(ImVec2(x0, y + h + 8));
   }
-  ImGui::EndGroup();
-  ImGui::SetCursorScreenPos(ImVec2(w0.x, std::max(leftBottom, ImGui::GetItemRectMax().y) + 10));
-  ImGui::Dummy(ImVec2(1, 1));
-  // Targets, each with its settings inline.
-  ImGui::Separator();
-  ImGui::TextDisabled("%s", tr("TARGETS"));
-  for (const ModLink* m : lfo::linksOf(s, l.id)) {
-    const ParamId pid{m->owner, m->index};
-    ImGui::PushID(static_cast<int>(pid.packed() & 0x7FFFFFFF));
-    if (ImGui::TreeNode((lfo::targetLabel(s, pid) + "  " + amountText(*m) + "###t").c_str())) {
-      targetSettingsBody(a, l.id, pid, true);
-      ImGui::TreePop();
-    }
-    ImGui::PopID();
-  }
-  if (ui::TextButton("+ Add target")) gAddLfo = l.id, gOpenAdd = true, gAddSearch[0] = 0, gPopAt = underItem();
-  ImGui::PopID();
+  // The rest: the inspector, the same as on the board.
+  const ImVec2 o = ImGui::GetCursorScreenPos(), av = ImGui::GetContentRegionAvail();
+  if (av.x > 40 && av.y > 40) inspector(a, o, ImVec2(o.x + av.x, o.y + av.y));
   popups(a);
   ImGui::End();
 }
@@ -2034,9 +2508,9 @@ void sourceMenu(App& a, ParamId pid, LfoKind kind) {
   if (ImGui::MenuItem(newLabel, newWhat.c_str(), false, !full)) knobNew(a, pid, kind);
   if (full && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ui::Hint("The board is full (32 sources)");
   if (kind == LfoKind::Lfo && ImGui::BeginMenu(tr("New LFO from a preset"), !full)) {
-    for (const lfo::Preset& p : lfo::presets())
-      if (ImGui::MenuItem(tr(p.name)))
-        if (ObjectId id = lfo::newForKnob(a.doc, pid, &p.lfo); id != kNoId) gSelected = id;
+    presetItems(a, [&a, pid](const lfo::Preset& p) {
+      if (ObjectId id = lfo::newForKnob(a.doc, pid, &p.lfo, p.lfo.kind); id != kNoId) gSelected = id;
+    });
     ImGui::EndMenu();
   }
 }
@@ -2246,11 +2720,42 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     const float amt = args.size() > 4 ? static_cast<float>(std::atof(args[4].c_str())) : 0.25f;
     const bool ok = id != kNoId && lfo::link(a.doc, id, pid, amt);
     std::printf("[lfo] link %s %s\n", ok ? "ok" : "refused", a.doc.lastLinkRefusal().c_str());
-  } else if (sub == "preset" && args.size() > 2) {  // lfo preset <n> <preset index>
-    const ObjectId id = lfoAt(1);
+  } else if (sub == "preset" && args.size() > 2) {  // lfo preset <n|new> <preset index (factory, then the user's)>
+    refreshPresets();
+    const std::vector<lfo::Preset> all = lfo::allPresets(presetRoot(a.configDir()));
     const int k = std::atoi(args[2].c_str());
-    if (id != kNoId && k >= 0 && k < static_cast<int>(lfo::presets().size()))
-      a.doc.editLfo(id, "apply LFO preset", [k](SongLfo& x) { lfo::applyPreset(x, lfo::presets()[static_cast<size_t>(k)].lfo); });
+    const ObjectId id = args[1] == "new" ? kNoId : lfoAt(1);
+    const bool ok = k >= 0 && k < static_cast<int>(all.size()) && (args[1] == "new" || id != kNoId) && usePreset(a, all[static_cast<size_t>(k)], id);
+    std::printf("[lfo] preset %s %s\n", ok ? "ok" : "refused", ok ? all[static_cast<size_t>(k)].name.c_str() : "");
+  } else if (sub == "presetsave" && args.size() > 2) {  // lfo presetsave <n> <name>
+    std::string nm = args[2];
+    for (size_t i = 3; i < args.size(); ++i) nm += " " + args[i];
+    const bool ok = savePreset(a, lfoAt(1), nm);
+    std::printf("[lfo] presetsave %s\n", ok ? "ok" : "refused");
+  } else if (sub == "presets") {  // lfo presets: list them
+    refreshPresets();
+    int i = 0;
+    for (const lfo::Preset& p : lfo::allPresets(presetRoot(a.configDir())))
+      std::printf("[lfo] preset %d %s %s\n", i++, p.factory ? "factory" : "user", presetLabel(p).c_str());
+  } else if (sub == "asksave") {  // lfo asksave <n>: the save popover
+    askSavePreset(lfoAt(1));
+  } else if (sub == "menu" && args.size() > 1) {  // lfo menu card|inspector|presets|new|board [n]
+    const std::string w = args[1];
+    gDevMenu = w == "card" ? 1 : w == "inspector" ? 2 : w == "presets" ? 3 : w == "new" ? 4 : w == "board" ? 5 : 0;
+    gDevMenuLfo = lfoAt(2);
+  } else if (sub == "editshape") {  // lfo editshape <n>: "Edit this shape"
+    if (const SongLfo* l = s.lfo(lfoAt(1))) editThisShape(a, *l);
+  } else if (sub == "tool") {  // lfo tool <0 points|1 pencil> [grid index 0..5]
+    gTool = args.size() > 1 ? std::clamp(std::atoi(args[1].c_str()), 0, 1) : 0;
+    if (args.size() > 2) gGrid = std::clamp(std::atoi(args[2].c_str()), 0, kGridCount - 1);
+  } else if (sub == "selpoint") {  // lfo selpoint <n> <point index>
+    gSelPointLfo = lfoAt(1), gSelPoint = args.size() > 2 ? std::atoi(args[2].c_str()) : -1;
+  } else if (sub == "points") {  // lfo points <n>: print its drawn points
+    if (const SongLfo* l = s.lfo(lfoAt(1))) {
+      std::printf("[lfo] points %zu shape %s\n", l->points.size(), lfo::shapeName(l->shape));
+      for (const LfoPoint& q : l->points)
+        std::printf("[lfo]   point %.4f %.4f curve %.3f kind %d\n", static_cast<double>(q.x), static_cast<double>(q.y), static_cast<double>(q.curve), q.kind);
+    }
   } else if (sub == "name" && args.size() > 2) {  // lfo name <n> <name>
     const std::string nm = args[2];
     if (const ObjectId id = lfoAt(1); id != kNoId) a.doc.editLfo(id, "rename LFO", [nm](SongLfo& x) { x.name = nm; });
@@ -2288,6 +2793,9 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     gPickLfo = lfoAt(1);
   } else if (sub == "toggle") {
     toggle(a);
+  } else if (sub == "editor") {  // lfo editor: where the shape editor is (for scripted strokes)
+    std::printf("[lfo] editor %.0f %.0f %.0f %.0f\n", static_cast<double>(gDevEditor0.x), static_cast<double>(gDevEditor0.y), static_cast<double>(gDevEditor1.x),
+                static_cast<double>(gDevEditor1.y));
   } else {
     std::printf("[lfo] frame %d lfos %zu targets %d open %d detail %d compact %d cols %d win %.0f %.0f %.0f %.0f undo %zu\n", frame, s.lfos.size(),
                 targetCount(s), a.showLfoBoard ? 1 : 0, a.showLfoDetail ? 1 : 0, gDevCompact ? 1 : 0, gDevCols, static_cast<double>(gDevWin0.x),

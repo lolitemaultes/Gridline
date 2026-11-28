@@ -1,5 +1,6 @@
 // Gridline - J-111 collaboration: network hub. See Hub.h.
 #include "Hub.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include <cstdio>
 #include <cstdlib>
@@ -1344,7 +1345,7 @@ void Hub::stopThread() {
     stop_ = true;
   }
   wake_->cv.notify_all();
-  thread_.join();
+  gl::threads::safeJoin(thread_);
 }
 
 // Transport work for every link: datagrams in, handshakes, acks, keepalives,

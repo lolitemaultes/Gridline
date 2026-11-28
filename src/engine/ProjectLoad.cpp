@@ -1,5 +1,6 @@
 // Gridline — J-167: opening a project without freezing the interface (see ProjectLoad.h).
 #include "ProjectLoad.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include "../host/CrossFormat.h"
 #include "../core/Crash.h"
@@ -285,9 +286,13 @@ namespace {
 // behind (it owns its Job, and the process is ending).
 void joinOrLeave(std::thread& t, const std::atomic<bool>& done) {
   if (!t.joinable()) return;
+  if (t.get_id() == std::this_thread::get_id()) {
+    t.detach();
+    return;
+  }
   const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);  // (real time: a busy machine stretches sleeps)
   while (!done.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < until) std::this_thread::sleep_for(std::chrono::milliseconds(10));
-  if (done.load(std::memory_order_acquire)) t.join();
+  if (done.load(std::memory_order_acquire)) gl::threads::safeJoin(t);
   else t.detach();
 }
 }  // namespace
@@ -295,7 +300,7 @@ void joinOrLeave(std::thread& t, const std::atomic<bool>& done) {
 Loader::~Loader() {
   if (job_) job_->cancel.store(true);
   if (job_) joinOrLeave(worker_, job_->done);
-  else if (worker_.joinable()) worker_.join();
+  else gl::threads::safeJoin(worker_);
   for (auto& r : retired_) joinOrLeave(r.second, r.first->done);
 }
 

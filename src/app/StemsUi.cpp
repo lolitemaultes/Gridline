@@ -1,9 +1,11 @@
 // Gridline - J-191: the Split stems window (see StemsUi.h).
 #include "StemsUi.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include "Keys.h"
 #include "../core/Crash.h"
 #include <algorithm>
+#include <cfloat>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -55,9 +57,7 @@ struct Job {
   bool ok = false;
   std::string err;
   std::vector<std::pair<std::string, std::string>> written;
-  void join() {
-    if (worker.joinable()) worker.join();
-  }
+  void join() { gl::threads::safeJoin(worker); }
   ~Job() {
     cancel = true;
     join();
@@ -70,6 +70,13 @@ struct State {
   std::string path;          // the audio file to split
   std::string name;          // shown / used for file names
   double seconds = 0;
+  // K-447: what is split. Clip mode: song ticks [t0, t1) of the clip (t1 <= t0: all of it);
+  // file mode: seconds [fileStart, fileEnd) of the file (fileEnd <= fileStart: all of it).
+  Tick t0 = 0, t1 = 0;
+  double fileStart = 0, fileEnd = 0;
+  bool partial = false;          // less than the whole file
+  bool wholeClip = true;         // clip mode: the whole clip (else a part of it)
+  double partFrom = 0, total = 0;  // where the part starts in the file and the file's length (seconds)
   int model = 0;             // index into the catalogue
   std::map<std::string, bool> keep;
   int place = 0;             // clip mode: 0 new tracks under the clip, 1 files only
@@ -77,6 +84,7 @@ struct State {
   std::string lastError;
   // the split that is running: what it was started for
   ObjectId jobClip = kNoId;
+  st::StemPart jobPart;
   int jobPlace = 0;
   bool jobMute = true;
   std::string jobName, jobDir;
@@ -108,6 +116,12 @@ std::string mb(int64_t bytes) {
   char b[32];
   std::snprintf(b, sizeof b, "%.0f MB", double(bytes) / 1e6);
   return b;
+}
+
+// "1:02.5" (minutes, seconds and tenths)
+void clockText(double secs, char* out, size_t n) {
+  const long tenths = std::lround(std::max(0.0, secs) * 10.0);
+  std::snprintf(out, n, "%ld:%02ld.%ld", tenths / 600, (tenths / 10) % 60, tenths % 10);
 }
 
 std::string timeLeft(double secs) {
@@ -192,12 +206,25 @@ void startSplit(App& a) {
     if (s.keep[src]) req.keep.push_back(src);
   req.outDir = stemsDir(a);
   req.baseName = s.name;
+  if (s.clip != kNoId) {  // K-447: the clip's part as it is now, from the audio the clip plays
+    if (!st::clipStemPart(a.doc.song(), s.clip, s.t0, s.t1, s.jobPart)) {
+      s.lastError = i18n::tr("This part of the clip has no audio to split");
+      return;
+    }
+    req.sound = s.jobPart.sound;
+    req.start = s.jobPart.startSeconds();
+    req.end = s.jobPart.endSeconds();
+  } else {
+    req.start = s.fileStart;
+    req.end = s.fileEnd;
+  }
   s.jobClip = s.clip;
   s.jobPlace = s.clip != kNoId ? s.place : 1;
   s.jobMute = s.muteOriginal;
   s.jobName = s.name;
   s.jobDir = req.outDir;
   s.lastError.clear();
+  s.jobPart.sound.reset();  // (the worker's request holds the audio; placing the stems needs none)
   startJob(Job::Kind::Split, [req](Job& j) {
     std::string err;
     std::vector<std::pair<std::string, std::string>> written;
@@ -244,7 +271,7 @@ void finish(App& a) {
   bool placed = false;
   if (s.jobPlace == 0 && s.jobClip != kNoId && a.doc.song().clip(s.jobClip)) {
     std::vector<ObjectId> made;
-    a.doc.editSong("split stems", [&](Song& x) { made = st::placeStems(x, s.jobClip, files, s.jobName, s.jobMute); });
+    a.doc.editSong("split stems", [&](Song& x) { made = st::placeStems(x, s.jobPart, files, s.jobName, s.jobMute); });
     if (!made.empty()) {
       a.playlist.selected.clear();
       for (ObjectId id : made) a.playlist.selected.insert(id);
@@ -266,8 +293,6 @@ void openWith(const std::string& path, const std::string& name, ObjectId clip) {
   s.clip = clip;
   s.path = path;
   s.name = name.empty() ? fs::u8path(path).stem().u8string() : name;
-  s.seconds = 0;
-  if (SamplePtr smp = sampleCache().get(path)) s.seconds = smp->seconds();
   s.lastError.clear();
   // a model the user already has comes first
   if (!st::modelInstalled(currentModel()))
@@ -351,7 +376,7 @@ void downloadSection(App& a, float w) {
 
 }  // namespace
 
-void openForClip(App& a, ObjectId clip) {
+void openForClip(App& a, ObjectId clip, Tick t0, Tick t1) {
   const Song& s = a.doc.song();
   const Clip* c = s.clip(clip);
   const Channel* ch = c ? s.channel(c->source) : nullptr;
@@ -359,23 +384,72 @@ void openForClip(App& a, ObjectId clip) {
     a.notify("This clip has no audio file to split", true);
     return;
   }
+  // K-447: only the part the clip plays (inside [t0, t1) when given)
+  st::StemPart part;
+  if (!st::clipStemPart(s, clip, t0, t1, part)) {
+    a.notify("This part of the clip has no audio to split", true);
+    return;
+  }
   // named after the clip's channel (what the clip shows), else the file
   openWith(ch->plugin.data, !ch->name.empty() ? ch->name : fs::u8path(ch->plugin.data).stem().u8string(), clip);
+  State& st = S();
+  st.t0 = t1 > t0 ? t0 : 0;
+  st.t1 = t1 > t0 ? t1 : 0;
+  st.fileStart = st.fileEnd = 0;
+  st.seconds = part.seconds();
+  st.total = double(part.frames) / part.rate;
+  st.partFrom = double(part.heardFrom) / part.rate;
+  st.partial = part.from > 0 || part.to < part.frames;  // (handles aside: less than the file)
+  st.wholeClip = part.wholeClip;
+  if (trace())
+    std::printf("stems: part frames %lld %lld of %lld whole %d\n", static_cast<long long>(part.from), static_cast<long long>(part.to),
+                static_cast<long long>(part.frames), part.wholeClip ? 1 : 0);
 }
 
-void openForFile(App& a, const std::string& path, const std::string& name) {
+void openForFile(App& a, const std::string& path, const std::string& name, double start, double end) {
   (void)a;
   openWith(path, name, kNoId);
+  State& s = S();
+  s.t0 = s.t1 = 0;
+  s.wholeClip = true;
+  s.total = 0;
+  if (SamplePtr smp = sampleCache().get(path)) s.total = smp->seconds();
+  s.fileStart = end > start ? std::max(0.0, start) : 0.0;
+  s.fileEnd = end > start ? std::min(end, s.total > 0 ? s.total : end) : 0.0;
+  s.partial = s.fileEnd > s.fileStart && (s.fileStart > 0 || s.fileEnd < s.total);
+  if (!s.partial) s.fileStart = s.fileEnd = 0;
+  s.partFrom = s.fileStart;
+  s.seconds = s.partial ? s.fileEnd - s.fileStart : s.total;
+}
+
+void clipMenuRange(const App& a, ObjectId clip, Tick& t0, Tick& t1) {
+  t0 = t1 = 0;
+  const Song& s = a.doc.song();
+  const Clip* c = s.clip(clip);
+  if (!c) return;
+  const Tick cs = c->start, ce = c->start + s.clipLength(*c);
+  const auto& pl = a.playlist;
+  Tick ra = 0, rb = 0;
+  if (pl.selEnd > pl.selStart && (pl.selTracks.empty() || pl.selTracks.count(c->track))) {
+    ra = pl.selStart, rb = pl.selEnd;
+  } else if (pl.mqB > pl.mqA && c->track >= std::min(pl.mqT0, pl.mqT1) && c->track <= std::max(pl.mqT0, pl.mqT1)) {
+    ra = pl.mqA, rb = pl.mqB;
+  }
+  // a selection that covers the clip only in part takes that part; one that covers all of it or none of it, the clip
+  if (rb > ra && ra < ce && rb > cs && (ra > cs || rb < ce)) t0 = std::max(ra, cs), t1 = std::min(rb, ce);
 }
 
 void clipMenuItem(App& a, ObjectId clip) {
   const bool busy = J().running.load() && J().kind == Job::Kind::Split;
-  if (ImGui::MenuItem(i18n::tr("Split stems..."), nullptr, false, !busy)) openForClip(a, clip);
+  Tick t0 = 0, t1 = 0;
+  clipMenuRange(a, clip, t0, t1);
+  if (ImGui::MenuItem(i18n::tr("Split stems..."), nullptr, false, !busy)) openForClip(a, clip, t0, t1);
   if (trace()) {
     const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
     std::printf("stems: menu %d %d\n", int((mn.x + mx.x) * 0.5f), int((mn.y + mx.y) * 0.5f));
   }
-  ui::Tooltip(i18n::tr("Separate vocals, drums, bass and other onto new tracks under the clip"));
+  ui::Tooltip(t1 > t0 ? i18n::tr("Separate the part inside the time selection into vocals, drums, bass and other on new tracks under the clip")
+                      : i18n::tr("Separate vocals, drums, bass and other onto new tracks under the clip"));
 }
 
 void draw(App& a) {
@@ -384,7 +458,8 @@ void draw(App& a) {
   Job& j = J();
   const progui::Fake* fk = progui::fake("stems");  // (tests: a stand-in split; the window closes after it)
   static bool faked = false;
-  if (fk) s.open = true, s.name = fk->text, s.seconds = 245;
+  if (fk && !s.open) s.name = fk->text, s.seconds = 245, s.partial = false, s.wholeClip = true;  // (a window already open keeps what it splits)
+  if (fk) s.open = true;
   else if (faked) s.open = false;
   faked = fk != nullptr;
   if (!s.open) return;
@@ -400,21 +475,57 @@ void draw(App& a) {
   progui::note("stems");
   const bool splitting = (j.running.load() && j.kind == Job::Kind::Split) || fk;
   if (vis) {
-    {  // what is split
-      char line[512];
-      if (s.seconds > 0)
-        std::snprintf(line, sizeof line, "%s \xC2\xB7 %d:%02d", s.name.c_str(), int(s.seconds) / 60, int(s.seconds) % 60);
-      else
-        std::snprintf(line, sizeof line, "%s", s.name.c_str());
-      ImGui::PushFont(a.fontMono, theme::kFontLabel);
-      ImGui::TextColored(theme::vec(P.textFaint), "%s", theme::fitText(line, w));
-      ImGui::PopFont();
+    {  // what is split: the name, then its length or the part (no separator before an empty name)
+      char rest[256] = "";
+      if (s.partial && s.seconds > 0) {  // K-447: the part, and where it lies in the file
+        char from[32], to[32], len[32];
+        clockText(s.partFrom, from, sizeof from);
+        clockText(s.partFrom + s.seconds, to, sizeof to);
+        clockText(s.seconds, len, sizeof len);
+        std::snprintf(rest, sizeof rest, i18n::tr("%s, the part from %s to %s"), len, from, to);
+      } else if (s.seconds > 0) {
+        std::snprintf(rest, sizeof rest, "%d:%02d", int(s.seconds) / 60, int(s.seconds) % 60);
+      }
+      const std::string line = s.name.empty() ? std::string(rest) : !*rest ? s.name : s.name + " \xC2\xB7 " + rest;
+      // (the window's own text size, so it reads as the rest of the window at every scale)
+      ImGui::TextColored(theme::vec(P.textDim), "%s", theme::fitText(line.c_str(), w));
     }
-    ui::BeginDialogBody("##stemsbody");
+    // The progress lives under the body in a row of its own (a line of text over the bar): while
+    // nothing runs it says what a split will do. The body is as wide as the bar from the start, so
+    // starting a split moves nothing. A body taller than the screen scrolls, and its visible part
+    // ends on the edge of a section, never through a row of buttons.
+    const float rowH = ImGui::GetTextLineHeightWithSpacing() + ImGui::GetFrameHeight() + ImGui::GetStyle().ItemSpacing.y;
+    static std::vector<float> edges, lastEdges;  // where each section ends in the body (this frame, the last)
+    lastEdges.swap(edges);
+    edges.clear();
+    {
+      ui::SettleDialogCentred();
+      const float padY = ImGui::GetStyle().WindowPadding.y;
+      const float room = std::max(120.0f, ui::DialogArea().y - ImGui::GetCursorPosY() - padY - ui::DialogFooterHeight(1) - rowH);
+      float maxH = room;
+      if (!lastEdges.empty() && lastEdges.back() > room) {  // it scrolls: show whole sections only
+        float fit = 0;
+        for (float e : lastEdges)
+          if (e <= room) fit = e;
+        if (fit > 0) maxH = fit;
+      }
+      ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, maxH));
+      ImGui::BeginChild("##stemsbody", ImVec2(0, 0), ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysAutoResize,
+                        ImGuiWindowFlags_NoBackground);
+    }
+    auto sectionEnd = [&] {
+      ui::EndSection();
+      edges.push_back(ImGui::GetCursorPosY() - ImGui::GetStyle().ItemSpacing.y);
+    };
+    ImGui::Dummy(ImVec2(w, 0));
     modelSection(a, w);
+    edges.push_back(ImGui::GetCursorPosY() - ImGui::GetStyle().ItemSpacing.y);
     const st::ModelInfo& m = currentModel();
     const bool have = st::modelInstalled(m);
-    if (!have) downloadSection(a, w);
+    if (!have) {
+      downloadSection(a, w);
+      edges.push_back(ImGui::GetCursorPosY() - ImGui::GetStyle().ItemSpacing.y);
+    }
     ui::BeginSection(i18n::tr("STEMS"), w);
     {
       std::vector<std::string> order = m.sources;
@@ -428,14 +539,15 @@ void draw(App& a) {
       }
       ImGui::EndDisabled();
     }
-    ui::EndSection();
+    sectionEnd();
     ui::BeginSection(i18n::tr("RESULT"), w);
     if (s.clip != kNoId) {
       ImGui::BeginDisabled(splitting);
-      ImGui::RadioButton(i18n::tr("New tracks under the clip, lined up with it"), &s.place, 0);
+      ImGui::RadioButton(s.wholeClip ? i18n::tr("New tracks under the clip, lined up with it")
+                                     : i18n::tr("New tracks under the clip, lined up with the part"), &s.place, 0);
       ImGui::RadioButton(i18n::tr("Files only, in the Stems folder"), &s.place, 1);
       ImGui::BeginDisabled(s.place != 0);
-      ImGui::Checkbox(i18n::tr("Mute the original clip"), &s.muteOriginal);
+      ImGui::Checkbox(s.wholeClip ? i18n::tr("Mute the original clip") : i18n::tr("Mute that part of the original clip"), &s.muteOriginal);
       ImGui::EndDisabled();
       ImGui::EndDisabled();
     } else {
@@ -443,22 +555,41 @@ void draw(App& a) {
       ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("The stems are saved as WAV files in the Stems folder (Browser, Stems)."));
       ImGui::PopTextWrapPos();
     }
-    ui::EndSection();
-    if (splitting) {
-      // 0.7.8: the percent in a field as wide as "100%", the time left after it: nothing jumps.
-      const double f = fk ? fk->frac : j.progress.load();
-      const double el = fk ? 60.0 : std::chrono::duration<double>(Clock::now() - j.started).count();
-      const std::string rest = "  \xC2\xB7  " + (f > 0.02 ? timeLeft(el / f * (1.0 - f)) : std::string(i18n::tr("starting...")));
-      progui::Percent(f, P.textDim);
-      ImGui::SameLine(0, 0);
-      progui::Line(rest.c_str(), w - progui::PercentWidth(), P.textDim);
-      ImGui::ProgressBar(float(f), ImVec2(w, 0), "");
-    } else if (!s.lastError.empty()) {
+    sectionEnd();
+    if (!splitting && !s.lastError.empty()) {
       ImGui::PushTextWrapPos(w - theme::kS2);
       ImGui::TextColored(theme::vec(P.danger), "%s", s.lastError.c_str());
       ImGui::PopTextWrapPos();
     }
-    ui::EndDialogBody();
+    ImGui::EndChild();
+    {  // the progress row: always there (a line of text over the bar), so the window keeps its size when a split starts
+      if (splitting) {
+        // 0.7.8: the percent in a field as wide as "100%", the time left after it: nothing jumps.
+        const double f = fk ? fk->frac : j.progress.load();
+        const double el = fk ? 60.0 : std::chrono::duration<double>(Clock::now() - j.started).count();
+        const std::string rest = "  \xC2\xB7  " + (f > 0.02 ? timeLeft(el / f * (1.0 - f)) : std::string(i18n::tr("starting...")));
+        progui::Percent(f, P.textDim);
+        ImGui::SameLine(0, 0);
+        progui::Line(rest.c_str(), w - progui::PercentWidth(), P.textDim);
+        ImGui::ProgressBar(float(f), ImVec2(w, 0), "");
+      } else {  // what a split will do, in the same two rows
+        int n = 0;
+        for (const auto& src : currentModel().sources) n += s.keep[src] ? 1 : 0;
+        std::string what = std::string(i18n::tr(currentModel().title.c_str())) + "  \xC2\xB7  " +
+                           (n == 0 ? std::string(i18n::tr("no stems chosen")) : i18n::plural(n, "%d stem", "%d stems"));
+        if (!st::modelInstalled(currentModel())) what += std::string("  \xC2\xB7  ") + i18n::tr("download needed");
+        const char* where = s.clip != kNoId && s.place == 0
+                                ? (s.wholeClip ? i18n::tr("On new tracks under the clip, saved in the Stems folder")
+                                               : i18n::tr("On new tracks under the part, saved in the Stems folder"))
+                                : i18n::tr("WAV files in the Stems folder (Browser, Stems)");
+        progui::Line(what.c_str(), w, P.textDim);
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float fh = ImGui::GetFrameHeight();
+        ImGui::GetWindowDrawList()->AddText(ImVec2(p.x, p.y + std::round((fh - ImGui::GetTextLineHeight()) * 0.5f)), P.textFaint,
+                                            theme::fitText(where, w));
+        ImGui::Dummy(ImVec2(w, fh));
+      }
+    }
     int nKeep = 0;
     for (const auto& src : m.sources) nKeep += s.keep[src] ? 1 : 0;
     const float bw = 96.0f;

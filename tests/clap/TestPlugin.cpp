@@ -16,6 +16,7 @@
 // the tests read through the exported gridline_clap_probe().
 #include <stdexcept>
 #include <clap/clap.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -58,6 +59,12 @@ struct Gain {
   bool active = false;
   bool gui = false;      // GRIDLINE_TEST_GAIN_GUI: clap.gui created
   void* view = nullptr;  // its view (macOS)
+  // Interface trouble on purpose (plugin window stress tests, GRIDLINE_TEST_GUI_* below).
+  uint32_t guiW = 320, guiH = 200;
+  clap_id timer = CLAP_INVALID_ID;
+  std::chrono::steady_clock::time_point shownAt{};
+  bool shown = false, busyDone = false;
+  int ticks = 0;
 };
 
 enum : clap_id { kGain = 1, kWave = 2, kMode = 3, kEcho = 4, kLevel = 10, kSide = 11, kLong = 12, kBypass = 13 };
@@ -599,6 +606,45 @@ const clap_plugin_latency_t kGainLatency = {gainLatency};
 // GRIDLINE_TEST_GAIN_GUI (0.7.8 tests): the gain gets an interface of its own like the synth's (an
 // effect with a window: a mixer insert's window follows its effect when it moves). It draws on
 // macOS; elsewhere it takes a window only with GRIDLINE_TEST_PLAIN_GUI, drawing nothing.
+// Interfaces in trouble, for the plugin window stress tests (the gain's interface only):
+//   GRIDLINE_TEST_GUI_OPEN_MS=<ms>  opening it (set_parent) takes that long;
+//   GRIDLINE_TEST_GUI_BUSY_MS=<ms>  half a second after it first shows, its thread is busy that long (once per instance)
+//                                   (a plugin loading a library, or holding the mouse in a loop of its own);
+//   GRIDLINE_TEST_GUI_RESIZE=echo   resizable; each size the host sets is asked for again (request_resize
+//                                   from inside set_size, as some plugin frameworks do);
+//   GRIDLINE_TEST_GUI_RESIZE=loop   resizable; it asks for another size on every timer tick (20 a second);
+//   GRIDLINE_TEST_LOG_GUI           each set_size and request_resize to stderr ("testgui ...").
+int envMs(const char* name) {
+  const char* e = std::getenv(name);
+  return e ? std::max(0, std::atoi(e)) : 0;
+}
+bool resizeMode(const char* mode) {
+  const char* e = std::getenv("GRIDLINE_TEST_GUI_RESIZE");
+  return e && !std::strcmp(e, mode);
+}
+bool guiResizable() { return resizeMode("echo") || resizeMode("loop"); }
+bool logGui() { return std::getenv("GRIDLINE_TEST_LOG_GUI") != nullptr; }
+const clap_host_gui_t* hostGui(const Gain* g) {
+  return g->host && g->host->get_extension ? static_cast<const clap_host_gui_t*>(g->host->get_extension(g->host, CLAP_EXT_GUI)) : nullptr;
+}
+void gainAskSize(Gain* g, uint32_t w, uint32_t h) {
+  if (logGui()) std::fprintf(stderr, "testgui request_resize %ux%u\n", w, h);
+  if (const clap_host_gui_t* hg = hostGui(g)) hg->request_resize(g->host, w, h);
+}
+void gainTimer(const clap_plugin_t* p, clap_id) {
+  Gain* g = gainOf(p);
+  if (!g->gui || !g->shown) return;
+  ++g->ticks;
+  const int busy = envMs("GRIDLINE_TEST_GUI_BUSY_MS");
+  if (busy > 0 && !g->busyDone && std::chrono::steady_clock::now() - g->shownAt > std::chrono::milliseconds(500)) {
+    g->busyDone = true;
+    std::fprintf(stderr, "testgui busy %d ms\n", busy);
+    std::this_thread::sleep_for(std::chrono::milliseconds(busy));
+    std::fprintf(stderr, "testgui busy over\n");
+  }
+  if (resizeMode("loop")) gainAskSize(g, (g->ticks & 1) ? 360 : 320, (g->ticks & 1) ? 230 : 200);
+}
+const clap_plugin_timer_support_t kGainTimer = {gainTimer};
 const clap_plugin_gui_t kGainGui = {
     [](const clap_plugin_t*, const char* api, bool floating) { return !floating && api && !std::strcmp(api, kGuiApi); },
     [](const clap_plugin_t*, const char** api, bool* floating) {
@@ -608,7 +654,14 @@ const clap_plugin_gui_t kGainGui = {
     },
     [](const clap_plugin_t* p, const char* api, bool floating) {
       if (floating || !api || std::strcmp(api, kGuiApi) || gainOf(p)->gui) return false;
-      gainOf(p)->gui = true;
+      Gain* g = gainOf(p);
+      g->gui = true;
+      g->shown = false;  // (busyDone stays: busy once per instance)
+      g->ticks = 0;
+      g->guiW = kGuiW, g->guiH = kGuiH;
+      if (g->timer == CLAP_INVALID_ID && g->host && g->host->get_extension)
+        if (auto* ts = static_cast<const clap_host_timer_support_t*>(g->host->get_extension(g->host, CLAP_EXT_TIMER_SUPPORT)))
+          if (!ts->register_timer(g->host, 50, &g->timer)) g->timer = CLAP_INVALID_ID;
       return true;
     },
     [](const clap_plugin_t* p) {
@@ -620,28 +673,45 @@ const clap_plugin_gui_t kGainGui = {
         --gProbe.views;
       }
 #endif
-      g->gui = false;
+      if (g->timer != CLAP_INVALID_ID && g->host && g->host->get_extension)
+        if (auto* ts = static_cast<const clap_host_timer_support_t*>(g->host->get_extension(g->host, CLAP_EXT_TIMER_SUPPORT)))
+          ts->unregister_timer(g->host, g->timer);
+      g->timer = CLAP_INVALID_ID;
+      g->gui = g->shown = false;
     },
     [](const clap_plugin_t*, double) { return false; },
-    [](const clap_plugin_t*, uint32_t* w, uint32_t* h) {
-      *w = kGuiW;
-      *h = kGuiH;
+    [](const clap_plugin_t* p, uint32_t* w, uint32_t* h) {
+      *w = gainOf(p)->guiW;
+      *h = gainOf(p)->guiH;
       return true;
     },
-    [](const clap_plugin_t*) { return false; },
+    [](const clap_plugin_t*) { return guiResizable(); },
     [](const clap_plugin_t*, clap_gui_resize_hints_t*) { return false; },
     [](const clap_plugin_t*, uint32_t* w, uint32_t* h) {
-      *w = kGuiW;
-      *h = kGuiH;
+      if (!guiResizable()) *w = kGuiW, *h = kGuiH;
       return true;
     },
-    [](const clap_plugin_t*, uint32_t w, uint32_t h) { return w == kGuiW && h == kGuiH; },
+    [](const clap_plugin_t* p, uint32_t w, uint32_t h) {
+      Gain* g = gainOf(p);
+      if (logGui()) std::fprintf(stderr, "testgui set_size %ux%u\n", w, h);
+      if (!guiResizable()) return w == kGuiW && h == kGuiH;
+      g->guiW = w, g->guiH = h;
+#if defined(__APPLE__)
+      if (g->view) gridlineTestViewResize(g->view, static_cast<int>(w), static_cast<int>(h));
+#endif
+      if (resizeMode("echo")) gainAskSize(g, w, h);
+      return true;
+    },
     [](const clap_plugin_t* p, const clap_window_t* win) {
       Gain* g = gainOf(p);
+      if (const int ms = envMs("GRIDLINE_TEST_GUI_OPEN_MS")) {
+        std::fprintf(stderr, "testgui opening for %d ms\n", ms);
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+      }
       if (plainGui()) return g->gui && win;  // (GRIDLINE_TEST_PLAIN_GUI: draws nothing, any system)
 #if defined(__APPLE__)
       if (!g->gui || g->view || !win || !win->cocoa) return false;
-      g->view = gridlineTestViewAttach(win->cocoa, kGuiW, kGuiH, "CLAP test effect", 0.48f, 0.22f, 0.30f);
+      g->view = gridlineTestViewAttach(win->cocoa, static_cast<int>(g->guiW), static_cast<int>(g->guiH), "CLAP test effect", 0.48f, 0.22f, 0.30f);
       if (g->view) ++gProbe.views;
       return g->view != nullptr;
 #else
@@ -651,12 +721,21 @@ const clap_plugin_gui_t kGainGui = {
     },
     [](const clap_plugin_t*, const clap_window_t*) { return false; },
     [](const clap_plugin_t*, const char*) {},
-    [](const clap_plugin_t*) { return true; },
-    [](const clap_plugin_t*) { return true; },
+    [](const clap_plugin_t* p) {
+      Gain* g = gainOf(p);
+      g->shown = true;
+      g->shownAt = std::chrono::steady_clock::now();
+      return true;
+    },
+    [](const clap_plugin_t* p) {
+      gainOf(p)->shown = false;
+      return true;
+    },
 };
 
 const void* gainExt(const clap_plugin_t*, const char* id) {
   if (!std::strcmp(id, CLAP_EXT_GUI) && std::getenv("GRIDLINE_TEST_GAIN_GUI")) return &kGainGui;
+  if (!std::strcmp(id, CLAP_EXT_TIMER_SUPPORT) && std::getenv("GRIDLINE_TEST_GAIN_GUI")) return &kGainTimer;
   if (!std::strcmp(id, CLAP_EXT_PARAMS)) return &kGainParams;
   if (!std::strcmp(id, CLAP_EXT_STATE)) return &kGainState;
   if (!std::strcmp(id, CLAP_EXT_AUDIO_PORTS)) return &kGainPorts;

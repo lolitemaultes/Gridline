@@ -54,6 +54,10 @@ struct Take {
 
 // Per editor (one per plugin instance), UI-only.
 struct Ed {
+  // A file loaded here (Load, a drop on the well, a recording, Import from URL): its first
+  // analysis joins the load's undo step, so one undo takes the file out again.
+  std::string foldPath;
+  uint64_t foldSerial = 0;
   // parsed state
   std::string data;           // PluginState::data the model was parsed from
   std::string path;

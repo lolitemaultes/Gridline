@@ -59,6 +59,14 @@ class StepBassGen final : public Generator {
   }
   bool active() const override { return gate_ || amp_ > 1e-5 || held_ > 0 || tail_ > 0; }
   bool supportsGlide() const override { return true; }
+  // K-438: the notes its sequencer played in the last process(), for the channels listening on the
+  // channel's MIDI output port (and for writing the sequence to the piano roll).
+  int takeMidiOut(MidiOutEvent* out, int max) override {
+    const int k = std::min(sentCount_, max);
+    for (int i = 0; i < k; ++i) out[i] = sent_[static_cast<size_t>(i)];
+    sentCount_ = 0;
+    return k;
+  }
 
  private:
   float p(int i) const { return p_[static_cast<size_t>(i)]; }
@@ -69,6 +77,9 @@ class StepBassGen final : public Generator {
     for (int i = 0; i < SbCount; ++i) p_[static_cast<size_t>(i)] = prmf(st, i, p_[static_cast<size_t>(i)]);
     bank_ = dynamic_cast<const SbBank*>(aux.custom.get());
     seqOn_ = p(SbSeqOn) >= 0.5f;
+    pos_ = 0;
+    sentCount_ = 0;  // a new block (messages nobody took are gone)
+    if (!seqOn_) seqKeyOff(0);
     prog_ = std::clamp(static_cast<int>(std::lround(p(SbProgram))), 0, kSbPrograms - 1);
     root_ = std::clamp(static_cast<int>(std::lround(p(SbRoot))), 0, 127);
     const double bpm = p(SbTempoMode) >= 0.5f ? std::clamp(static_cast<double>(p(SbBpm)), 10.0, 522.0) : songBpm_;
@@ -153,7 +164,7 @@ class StepBassGen final : public Generator {
       }
     if (seqOn_) {
       if (held_ > 0) seqKey_ = heldKeys_[held_ - 1];
-      else gate_ = false;
+      else gate_ = false, seqKeyOff(static_cast<int>(pos_));
       return;
     }
     if (held_ > 0)
@@ -173,10 +184,12 @@ class StepBassGen final : public Generator {
   void onAllOff() override {
     held_ = 0;
     gate_ = false;
+    seqKeyOff(static_cast<int>(pos_));
   }
   void onKill() override {
     held_ = 0;
     gate_ = false;
+    seqKeyOff(static_cast<int>(pos_));
     amp_ = 0;
     tail_ = 0;
     for (auto& d : dly_) std::fill(d.begin(), d.end(), 0.0f);
@@ -185,14 +198,38 @@ class StepBassGen final : public Generator {
     for (double& s : lad_) s = 0;
   }
 
-  void sequencerTick() {
+  // K-438: the sequence as MIDI: a note-on for each step that starts a note (accents at velocity
+  // 127, the rest at 100, under the accent threshold), its note-off when the gate closes. A slide
+  // to a new key starts the new note before the old one ends; a slide on the same key goes on.
+  void emit(uint8_t st, uint8_t a, uint8_t b, int offset) {
+    if (sentCount_ >= static_cast<int>(sent_.size())) return;
+    MidiOutEvent& e = sent_[static_cast<size_t>(sentCount_++)];
+    e.offset = offset;
+    e.s = st, e.a = a, e.b = b;
+    e.pitch = -1.0f, e.time = 0.0f, e.detune = 0.0f;
+  }
+  void seqKeyOff(int offset) {
+    if (outKey_ < 0) return;
+    emit(0x80, static_cast<uint8_t>(outKey_), 0, offset);
+    outKey_ = -1;
+  }
+  void seqKeyOn(int key, bool accent, bool legato, int offset) {
+    key = std::clamp(key, 0, 127);
+    if (legato && key == outKey_) return;
+    const int old = outKey_;
+    emit(0x90, static_cast<uint8_t>(key), accent ? 127 : 100, offset);
+    outKey_ = key;
+    if (old >= 0 && old != key) emit(0x80, static_cast<uint8_t>(old), 0, offset);
+  }
+
+  void sequencerTick(int at) {
     if (!seqOn_ || held_ == 0) {
       uiStep_.store(-1, std::memory_order_relaxed);
       return;
     }
     stepPos_ += 1.0;
     if (stepPos_ < stepLen_) {
-      if (gate_ && !curSlide_ && stepPos_ >= 0.5 * stepLen_) gate_ = false;  // gate length: half a step unless sliding
+      if (gate_ && !curSlide_ && stepPos_ >= 0.5 * stepLen_) gate_ = false, seqKeyOff(at);  // gate length: half a step unless sliding
       return;
     }
     stepPos_ -= stepLen_;
@@ -206,8 +243,10 @@ class StepBassGen final : public Generator {
     if (!s.gate[step_]) {
       gate_ = false;
       curSlide_ = false;
+      seqKeyOff(at);
       return;
     }
+    seqKeyOn(s.note[step_] + (seqKey_ - root_), s.accent[step_], prevSlide && gate_, at);
     startNote(s.note[step_] + (seqKey_ - root_), s.accent[step_], prevSlide);
     curSlide_ = s.slide[step_];
   }
@@ -226,7 +265,7 @@ class StepBassGen final : public Generator {
     const double ampAtk = 1.0 - std::exp(-1.0 / (0.003 * sr_)), ampRel = 1.0 - std::exp(-1.0 / (0.008 * sr_));
     bool loud = false;
     for (int i = 0; i < n; ++i) {
-      sequencerTick();
+      sequencerTick(static_cast<int>(pos_) + i);
       if (glideLeft_ > 0) {
         pitch_ += glideStep_;
         if (--glideLeft_ == 0) pitch_ = target_;
@@ -324,6 +363,7 @@ class StepBassGen final : public Generator {
     for (double& s : lad_)
       if (std::fabs(s) < 1e-20) s = 0;
     tail_ = loud ? static_cast<int64_t>(sr_ * 6) : tail_ - n;
+    pos_ += n;
   }
 
   std::array<float, SbCount> p_ = [] {
@@ -347,6 +387,10 @@ class StepBassGen final : public Generator {
   double revG_[4] = {}, revLp_[4] = {}, revDamp_ = 0, revHi_ = 0, revLo_ = 0, preFb_ = 0, revWet_ = 0, revDry_ = 1, revEr_ = 0,
          revWidth_ = 1, revDiff_ = 0.3, rHi_[2] = {0, 0}, rLo_[2] = {0, 0};
   int64_t tail_ = 0;
+  int64_t pos_ = 0;   // K-438: samples rendered in this block (event offsets)
+  int outKey_ = -1;   // K-438: the key of the sequence's sounding note on the MIDI output (-1: none)
+  std::array<MidiOutEvent, 128> sent_{};
+  int sentCount_ = 0;
 };
 
 }  // namespace

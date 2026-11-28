@@ -30,6 +30,7 @@ File > Other imports and exports > Import from URL...	Ctrl+Shift+U	file.importUr
 File > Other imports and exports > FL Studio presets...			e-
 File > Other imports and exports > Export each track...			e-
 File > Other imports and exports > Export each track group...			e-
+File > Other imports and exports > Export marker areas...			e-
 File > Other imports and exports > Render again with the last settings...			e-
 File > Other imports and exports > Time selection as MIDI file...			--
 File > Other imports and exports > Project data files...			e-
@@ -69,6 +70,7 @@ Create > New audio track	Ctrl+T	track.newAudio	e-
 Create > New MIDI track	Ctrl+Shift+T	track.newMidi	e-
 Create > New instrument track > Guide to the instruments...			e-
 Create > New instrument track > Audio file as sampler...			e-
+Create > New instrument track > Audio from URL as sampler...			e-
 Create > New instrument track > Speech...			e-
 Create > New return track	Ctrl+Alt+T	track.newReturn	e-
 Create > Insert scene			e-
@@ -139,12 +141,12 @@ Options > Debug log and script console...			e-
 Options > Keyboard shortcuts...			e-
 Options > Theme...			e-
 Options > Plugin manager...			e-
-Options > Arrangements > Arrangement			ec
+Options > Arrangements > Arrangement	16 bars		ec
 Options > Arrangements > New arrangement			e-
 Options > Arrangements > Duplicate arrangement			e-
 Options > Arrangements > Delete arrangement			--
-Options > Arrangements > Previous arrangement			--
-Options > Arrangements > Next arrangement			--
+Options > Arrangements > Previous arrangement	Ctrl+Alt+Left	arrangement.previous	--
+Options > Arrangements > Next arrangement	Ctrl+Alt+Right	arrangement.next	--
 Options > Song position jumps > At once			ec
 Options > Song position jumps > Next beat			e-
 Options > Song position jumps > Next bar			e-
@@ -379,6 +381,8 @@ Tools > Freeze > Unfreeze all			--
 Tools > Clean up > Delete unused automation clips			e-
 Tools > Clean up > Delete unused MIDI clips			e-
 Tools > AI assistant activity			e-
+Help > Setup wizard...			e-
+Help > Guided tour...			e-
 Help > Keyboard shortcuts	F1	help.shortcuts	e-
 Help > Load demo song			e-
 Help > Licensed samples used (receipt)...			e-

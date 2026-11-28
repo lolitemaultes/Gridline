@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,7 @@
 #include "App.h"
 #include "DialogLayout.h"
 #include "Theme.h"
+#include "HostedUi.h"
 #include "Widgets.h"
 
 namespace gl {
@@ -199,6 +201,44 @@ void pluginFoldersSettingsPage(App& a, float fieldW) {
     ImGui::EndDisabled();
     ImGui::SameLine(0, theme::kS2);
     if (ui::TextButton("Plugin Manager", false, 0, "Every plugin found: formats, favourites, sandbox, failed scans")) a.showPluginManager = true;
+  }
+  ui::EndSection();
+
+  // ---- K-437: internet access of plugins found from now on ----
+  ui::BeginSection(tr("INTERNET ACCESS"));
+  {
+    const char* unavailable = netBlockUnavailableReason();
+    static const char* const kNew[] = {i18n::N_("Allow internet access"), i18n::N_("Block internet access")};
+    static const char* const kNewHints[] = {i18n::N_("New plugins may connect to the internet"),
+                                            i18n::N_("New plugins run in a sandbox that cannot connect to the internet, from their first scan on")};
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.textDim), "%s", tr("New plugins"));
+    ImGui::SameLine(0, theme::kS3);
+    int choice = prefs.netBlockNew ? 1 : 0;
+    ImGui::BeginDisabled(unavailable != nullptr && !prefs.netBlockNew);
+    if (ui::Segmented("##netnew", kNew, 2, &choice, 0, 0, kNewHints)) {
+      host::PluginPrefs now = host::pluginPrefs();
+      now.netBlockNew = choice == 1;
+      host::setPluginPrefs(now);
+      prefs.netBlockNew = now.netBlockNew;
+    }
+    ImGui::EndDisabled();
+    ImGui::PushTextWrapPos(0);
+    if (unavailable) ImGui::TextColored(theme::vec(P.textDim), "%s", tr(unavailable));
+    ImGui::TextColored(theme::vec(P.textFaint), "%s",
+                       tr("A blocked plugin runs in a sandbox that cannot connect to the internet; it is scanned that way too. Gridline itself still can. "
+                          "Set each plugin in the Plugin Manager or in its window's Internet page."));
+    ImGui::PopTextWrapPos();
+    const std::set<std::string> forNow = host::netAllowedUntilClose();
+    if (!forNow.empty()) {
+      char n[160];
+      std::snprintf(n, sizeof n, tr("%d plugins may connect until Gridline closes."), static_cast<int>(forNow.size()));
+      ImGui::AlignTextToFramePadding();
+      ImGui::TextColored(theme::vec(theme::lit(P.hot)), "%s", n);
+      ImGui::SameLine(0, theme::kS2);
+      if (ui::TextButton("Block them again now", false, 0, "Blocks their internet access again without waiting for Gridline to close"))
+        setHostedNetAccess(a, std::vector<std::string>(forNow.begin(), forNow.end()), host::NetAccess::Blocked);
+    }
   }
   ui::EndSection();
 

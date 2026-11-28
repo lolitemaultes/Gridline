@@ -69,6 +69,23 @@ using DrawnTable = std::array<float, kTableSize>;
 void buildTable(const SongLfo& l, DrawnTable& out);
 // The points a drawn shape without points of its own starts from (a gentle hump).
 std::vector<LfoPoint> defaultPoints();
+// 0.7.9: editing a drawn shape (pure; the board wraps each in one undo step).
+// The built-in shape of `l` as points that draw the same cycle ("Edit this shape"): Sine as two smooth
+// peaks, Triangle and the saws as straight lines, Square and Random hold as steps, Random glide as
+// smooth steps (Random's values of its first cycle). A drawn shape: its own points.
+std::vector<LfoPoint> pointsFromShape(const SongLfo& l);
+// Mirrored left to right (the cycle runs backwards), and upside down.
+std::vector<LfoPoint> flipPoints(const std::vector<LfoPoint>& pts);
+std::vector<LfoPoint> invertPoints(const std::vector<LfoPoint>& pts);
+// A flat line at the middle, to draw on.
+std::vector<LfoPoint> clearPoints();
+// The points after a pencil stroke over `pts`: `stroke` is the pointer's path (x 0..1, y -1..1) in the
+// order drawn. `steps` >= 2: the cycle is that many cells and every cell the stroke crosses holds the
+// stroke's value there (a step); else the stroke is drawn freehand as straight lines (64 to a cycle).
+// The shape outside the stroke stays as it was. At most kLfoMaxPoints points.
+std::vector<LfoPoint> drawStroke(const SongLfo& l, const std::vector<std::pair<float, float>>& stroke, int steps);
+// `x` snapped to the nearest of `steps` even cells' edges (steps < 2: unchanged).
+float snapX(float x, int steps);
 // A repeatable random value (-1..1) for step `step` of cycle `cycle`.
 inline float randomValue(uint32_t seed, uint64_t cycle, uint32_t step) {
   uint64_t z = (static_cast<uint64_t>(seed) << 40) ^ (cycle * 0x9E3779B97F4A7C15ull) ^ (static_cast<uint64_t>(step) * 0xD1B54A32D192ED03ull);
@@ -213,13 +230,32 @@ ObjectId newForKnob(Document& d, ParamId target, const SongLfo* preset = nullptr
 bool roll(Document& d, ObjectId id);
 
 // --- presets ---------------------------------------------------------------
+// A whole source's settings by name: the shape (a drawn one too), the rate, restart, knobs and the
+// kind's own settings. Never its targets, name, colour or on switch (applyPreset keeps those).
 struct Preset {
-  const char* name;
+  std::string name;     // factory: untranslated (i18n::tr when shown); user: the file name
   SongLfo lfo;
+  bool factory = false;
+  std::string folder;   // user presets: below lfos/ ("" = top level)
+  std::string file;     // user presets: the absolute path
 };
 // The factory LFO presets (original settings).
 const std::vector<Preset>& presets();
-// The preset's settings on an LFO (keeps its id, name, colour and on switch).
+// The preset's settings on an LFO (keeps its id, name, colour, on switch and note channel).
 void applyPreset(SongLfo& l, const SongLfo& preset);
+// What a preset keeps of `l` (no id, name, colour, on switch, note channel or Roll count).
+SongLfo presetSettings(const SongLfo& l);
+// User presets: <presetRoot>/lfos/<folder...>/<name>.json ("gridline-lfo" files).
+std::string presetFolder(const std::string& presetRoot);
+std::vector<Preset> listUserPresets(const std::string& presetRoot);
+// Factory first, then the user's.
+std::vector<Preset> allPresets(const std::string& presetRoot);
+std::string presetToText(const std::string& name, const SongLfo& l);
+bool presetFromText(const std::string& text, Preset& out, std::string* err = nullptr);
+bool loadPresetFile(const std::string& file, Preset& out, std::string* err = nullptr);
+// Saves `l`'s settings as <root>/lfos/<relName>.json (relName may hold folders). Its path to `path`.
+bool saveUserPreset(const std::string& presetRoot, const SongLfo& l, const std::string& relName, std::string* path = nullptr,
+                    std::string* err = nullptr);
+bool deleteUserPreset(const Preset& p);
 
 }  // namespace gl::lfo

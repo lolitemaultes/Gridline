@@ -9,15 +9,20 @@
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Arrangements.h"
 #include "App.h"
+#include "Keys.h"
 #include "LiveLook.h"
 #include "Theme.h"
+#include "TrackerLook.h"
 #include "TrackerPages.h"
+#include "TrackerView.h"
 #include "Widgets.h"
 #include "Windows.h"
 
 namespace gl {
 
 namespace {
+
+bool gDevOpenArrPopup = false;
 
 // Name field inside a popup/menu: Enter applies.
 bool nameField(const char* id, const std::string& current, std::string& out) {
@@ -32,11 +37,8 @@ bool nameField(const char* id, const std::string& current, std::string& out) {
   return ok && buf[0];
 }
 
-void switchTo(App& a, int index) {
-  if (index == a.doc.song().currentArrangement && !a.doc.song().arrangements.empty()) return;
-  a.engine.stopAllLive();
-  a.doc.editSong("switch arrangement", [index](Song& s) { selectArrangement(s, index); });
-  a.playlist.selected.clear();
+bool arrangementPlaying(const App& a) {
+  return a.engine.playing() && a.engine.mode() == PlayMode::Song;
 }
 
 }  // namespace
@@ -44,14 +46,56 @@ void switchTo(App& a, int index) {
 // ---------------------------------------------------------------------------
 // Arrangements
 
+void switchArrangement(App& a, int index) {
+  const int n = arrangementCount(a.doc.song());
+  if (index < 0 || index >= n) return;
+  if (index == a.doc.song().currentArrangement && !a.doc.song().arrangements.empty()) return;
+  a.engine.stopAllLive();
+  a.doc.editSong("switch arrangement", [index](Song& s) { selectArrangement(s, index); });
+  a.playlist.selected.clear();
+}
+
+void stepArrangement(App& a, int delta) {
+  const Song& s = a.doc.song();
+  const int n = arrangementCount(s);
+  if (n <= 1) return;
+  const int cur = s.arrangements.empty() ? 0 : s.currentArrangement;
+  const int next = std::clamp(cur + delta, 0, n - 1);
+  if (next != cur) switchArrangement(a, next);
+}
+
 void arrangementMenu(App& a) {
   const Song& s = a.doc.song();
   const int n = arrangementCount(s);
   const int cur = s.arrangements.empty() ? 0 : s.currentArrangement;
+  const bool songPlay = arrangementPlaying(a);
+  const Tick bar = std::max<Tick>(1, s.barTicks());
+  const auto& P = theme::pal();
   for (int i = 0; i < n; ++i) {
     ImGui::PushID(i);
     std::string label = arrangementName(s, i);
-    if (ImGui::MenuItem(label.c_str(), nullptr, i == cur)) switchTo(a, i);
+    const Tick len = arrangementLengthTicks(s, i);
+    const int bars = static_cast<int>((len + bar - 1) / bar);
+    char meta[48];
+    if (i == cur && songPlay) {
+      if (bars > 0) {
+        std::snprintf(meta, sizeof meta, "%d %s \xC2\xB7 %s", bars, bars == 1 ? i18n::tr("bar") : i18n::tr("bars"), i18n::tr("playing"));
+      } else {
+        std::snprintf(meta, sizeof meta, "%s", i18n::tr("playing"));
+      }
+    } else if (bars > 0) {
+      std::snprintf(meta, sizeof meta, "%d %s", bars, bars == 1 ? i18n::tr("bar") : i18n::tr("bars"));
+    } else {
+      std::snprintf(meta, sizeof meta, "%s", i18n::tr("empty"));
+    }
+    const ImVec2 rowPos = ImGui::GetCursorScreenPos();
+    const bool picked = ImGui::MenuItem(label.c_str(), meta, i == cur);
+    if (i == cur && songPlay) {
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      const float lh = ImGui::GetTextLineHeight();
+      dl->AddCircleFilled(ImVec2(rowPos.x + 4.0f, std::round(rowPos.y + lh * 0.5f)), 3.0f, theme::rgb(theme::role::kPlay), 12);
+    }
+    if (picked) switchArrangement(a, i);
     ImGui::PopID();
   }
   ImGui::Separator();
@@ -74,25 +118,148 @@ void arrangementMenu(App& a) {
     }
     ImGui::EndMenu();
   }
+  if (n > 1) {
+    if (ImGui::MenuItem(i18n::tr("Move arrangement up"), nullptr, false, cur > 0)) {
+      a.doc.editSong("reorder arrangement", [cur](Song& x) { moveArrangement(x, cur, cur - 1); });
+    }
+    if (ImGui::MenuItem(i18n::tr("Move arrangement down"), nullptr, false, cur + 1 < n)) {
+      a.doc.editSong("reorder arrangement", [cur](Song& x) { moveArrangement(x, cur, cur + 1); });
+    }
+  }
   if (ImGui::MenuItem(i18n::tr("Delete arrangement"), nullptr, false, n > 1)) {
     a.engine.stopAllLive();
     a.doc.editSong("delete arrangement", [cur](Song& x) { removeArrangement(x, cur); });
     a.playlist.selected.clear();
   }
   ImGui::Separator();
-  if (ImGui::MenuItem(i18n::tr("Previous arrangement"), nullptr, false, cur > 0)) switchTo(a, cur - 1);
-  if (ImGui::MenuItem(i18n::tr("Next arrangement"), nullptr, false, cur + 1 < n)) switchTo(a, cur + 1);
+  if (ImGui::MenuItem(i18n::tr("Previous arrangement"), keys::label("arrangement.previous"), false, cur > 0)) switchArrangement(a, cur - 1);
+  if (ImGui::MenuItem(i18n::tr("Next arrangement"), keys::label("arrangement.next"), false, cur + 1 < n)) switchArrangement(a, cur + 1);
+  (void)P;
 }
 
 void arrangementSelector(App& a, float width) {
+  arrangementDropdown(a, "##arrangement", width, ImGui::GetFrameHeight(), ArrangementStyle::Studio);
+}
+
+void arrangementDropdown(App& a, const char* id, float width, float height, ArrangementStyle style) {
   const Song& s = a.doc.song();
+  const auto& P = theme::pal();
+  const int n = arrangementCount(s);
   const int cur = s.arrangements.empty() ? 0 : s.currentArrangement;
-  std::string preview = arrangementName(s, cur);
-  if (ui::BeginCombo("##arrangement", preview.c_str(), width)) {
-    arrangementMenu(a);
-    ImGui::EndCombo();
+  const std::string name = arrangementName(s, cur);
+  const bool songPlay = arrangementPlaying(a);
+  const std::string popId = std::string(id) + "_pop";
+  const ImVec2 p0 = ImGui::GetCursorScreenPos();
+  const ImVec2 p1(p0.x + width, p0.y + height);
+  ImGui::InvisibleButton(id, ImVec2(width, height));
+  const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+  const bool hov = ImGui::IsItemHovered();
+  const bool open = ImGui::IsPopupOpen(popId.c_str());
+  if (clicked || gDevOpenArrPopup) {
+    ImGui::OpenPopup(popId.c_str());
+    gDevOpenArrPopup = false;
   }
-  ui::Hint("Arrangement: the playlist being edited and played \xC2\xB7 new, duplicate, rename, delete");
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float cy = std::round(p0.y + height * 0.5f);
+  if (style == ArrangementStyle::Tracker) {
+    trackerview::bevelBox(dl, p0, p1, open);
+    if (hov && !open) dl->AddRectFilled(ImVec2(p0.x + 1, p0.y + 1), ImVec2(p1.x - 1, p1.y - 1), theme::withAlpha(P.paper, 0.06f));
+  } else if (style == ArrangementStyle::Smooth) {
+    const ImU32 face = theme::mix(P.surface700, P.text, open ? 0.14f : hov ? 0.10f : 0.06f);
+    dl->AddRectFilled(p0, p1, face, 5.0f);
+  } else if (style == ArrangementStyle::Clips) {
+    const ImU32 face = open ? P.surface600 : hov ? P.surface700 : P.surface800;
+    dl->AddRectFilled(p0, p1, face, 2.0f);
+    dl->AddRect(p0, p1, theme::withAlpha(P.ink, P.dark ? 0.55f : 0.22f), 2.0f);
+  } else {
+    const ImU32 face = open ? theme::mix(P.field, P.surface600, 0.5f) : hov ? theme::mix(P.field, P.surface700, 0.45f) : P.field;
+    dl->AddRectFilled(p0, p1, face, theme::kRadius);
+    dl->AddRect(p0, p1, open ? P.hot : P.line, theme::kRadius);
+  }
+  float tx = p0.x + 7.0f;
+  if (songPlay || n > 1) {
+    const ImU32 dotCol = songPlay ? theme::rgb(theme::role::kPlay) : P.textFaint;
+    if (style == ArrangementStyle::Tracker) {
+      dl->AddRectFilled(ImVec2(tx, cy - 2.5f), ImVec2(tx + 5.0f, cy + 2.5f), dotCol);
+    } else {
+      dl->AddCircleFilled(ImVec2(tx + 2.5f, cy), 3.0f, dotCol, 12);
+    }
+    tx += 10.0f;
+  }
+  const float chevArea = style == ArrangementStyle::Smooth ? 16.0f : 15.0f;
+  const float maxTw = std::max(8.0f, p1.x - chevArea - tx);
+  const float fontSz = style == ArrangementStyle::Clips ? theme::kFontCaption + 1.0f : style == ArrangementStyle::Tracker ? ImGui::GetFontSize() : theme::kFontBody;
+  ImFont* fnt = a.fontRegular;
+  const float textH = fnt->CalcTextSizeA(fontSz, 1e9f, 0.0f, "Ag").y;
+  theme::textEllipsis(dl, fnt, fontSz, ImVec2(tx, std::round(p0.y + (height - textH) * 0.5f)), maxTw,
+                      hov || open ? P.text : (style == ArrangementStyle::Clips ? P.text : P.text), name.c_str());
+  if (style == ArrangementStyle::Smooth) {
+    const float cx = std::round(p1.x - 9.0f);
+    dl->AddTriangleFilled(ImVec2(cx - 2.5f, cy - 1.5f), ImVec2(cx + 2.5f, cy - 1.5f), ImVec2(cx, cy - 4.5f), P.textDim);
+    dl->AddTriangleFilled(ImVec2(cx + 2.5f, cy + 1.5f), ImVec2(cx - 2.5f, cy + 1.5f), ImVec2(cx, cy + 4.5f), P.textDim);
+  } else {
+    ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(std::round(p1.x - 8.5f), cy), 8.5f, hov || open ? P.text : P.textDim);
+  }
+  if (hov) {
+    std::string tip = std::string(i18n::tr("Arrangement")) + ": " + name;
+    if (songPlay) tip += std::string(" (") + i18n::tr("playing") + ")";
+    tip += " \xC2\xB7 ";
+    tip += i18n::tr("switch, add, duplicate, rename, reorder or delete arrangements");
+    ui::Hint(tip);
+  }
+  ImGui::SetNextWindowPos(ImVec2(p0.x, p1.y + 2.0f));
+  if (ImGui::BeginPopup(popId.c_str())) {
+    arrangementMenu(a);
+    ImGui::EndPopup();
+  }
+}
+
+bool devArrangementCommand(App& a, const std::vector<std::string>& args, int frame) {
+  if (args.empty()) return false;
+  const std::string& op = args[0];
+  const std::string p1 = args.size() > 1 ? args[1] : std::string();
+  const std::string p2 = args.size() > 2 ? args[2] : std::string();
+  if (op == "select") {
+    switchArrangement(a, std::atoi(p1.c_str()));
+  } else if (op == "next") {
+    stepArrangement(a, 1);
+  } else if (op == "prev") {
+    stepArrangement(a, -1);
+  } else if (op == "add") {
+    a.engine.stopAllLive();
+    a.doc.editSong("new arrangement", [p1](Song& x) { selectArrangement(x, addArrangement(x, p1, false)); });
+    a.playlist.selected.clear();
+  } else if (op == "dup") {
+    a.engine.stopAllLive();
+    const Song& s = a.doc.song();
+    const int cur = s.arrangements.empty() ? 0 : s.currentArrangement;
+    const std::string nm = p1.empty() ? uniqueArrangementName(s, arrangementName(s, cur)) : p1;
+    a.doc.editSong("duplicate arrangement", [nm](Song& x) { selectArrangement(x, addArrangement(x, nm, true)); });
+    a.playlist.selected.clear();
+  } else if (op == "rename") {
+    const int cur = a.doc.song().arrangements.empty() ? 0 : a.doc.song().currentArrangement;
+    if (!p1.empty()) a.doc.editSong("rename arrangement", [cur, p1](Song& x) { renameArrangement(x, cur, p1); });
+  } else if (op == "move") {
+    const int from = std::atoi(p1.c_str()), to = std::atoi(p2.c_str());
+    a.doc.editSong("reorder arrangement", [from, to](Song& x) { moveArrangement(x, from, to); });
+  } else if (op == "delete") {
+    const int cur = p1.empty() ? (a.doc.song().arrangements.empty() ? 0 : a.doc.song().currentArrangement) : std::atoi(p1.c_str());
+    a.engine.stopAllLive();
+    a.doc.editSong("delete arrangement", [cur](Song& x) { removeArrangement(x, cur); });
+    a.playlist.selected.clear();
+  } else if (op == "popup") {
+    gDevOpenArrPopup = true;
+  } else if (op != "list") {
+    return false;
+  }
+  const Song& s = a.doc.song();
+  const int n = arrangementCount(s);
+  const int cur = s.arrangements.empty() ? 0 : s.currentArrangement;
+  std::printf("arr frame %d: count %d cur %d playing %d undo %zu", frame, n, cur, arrangementPlaying(a) ? 1 : 0, a.doc.history().position());
+  for (int i = 0; i < n; ++i) std::printf(" [%d:\"%s\" len=%lld]", i, arrangementName(s, i).c_str(), static_cast<long long>(arrangementLengthTicks(s, i)));
+  std::printf("\n");
+  std::fflush(stdout);
+  return true;
 }
 
 // ---------------------------------------------------------------------------

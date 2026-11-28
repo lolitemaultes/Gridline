@@ -1385,10 +1385,12 @@ class PitchFx final : public SpectralFx {
   float hifiOut_[2][256] = {};
 
   void processHifi(const Params& p, float* L, float* R, int n, double tempo) {
-    if (Hifi* h = hifiPending_.load(std::memory_order_acquire); h && hifiRetired_.load(std::memory_order_acquire) == nullptr) {
-      hifiPending_.store(nullptr, std::memory_order_release);
-      if (hifi_) hifiRetired_.store(hifi_, std::memory_order_release);
-      hifi_ = h;
+    // K-431: atomically claim hifiPending_ with exchange() so prepareHost() cannot free it concurrently.
+    if (!hifi_ || hifiRetired_.load(std::memory_order_acquire) == nullptr) {
+      if (Hifi* h = hifiPending_.exchange(nullptr, std::memory_order_acq_rel)) {
+        if (hifi_) hifiRetired_.store(hifi_, std::memory_order_release);
+        hifi_ = h;
+      }
     }
     Hifi* h = hifi_;
     if (!h) {  // not prepared yet (first block after switching): silence

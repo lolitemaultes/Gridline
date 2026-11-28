@@ -13,10 +13,17 @@ class App;
 
 namespace stemsui {
 
-void openForClip(App& a, ObjectId clip);
-void openForFile(App& a, const std::string& path, const std::string& name = "");
-// The "Split stems..." item of an audio clip's menus.
+// K-447: only what the user chose is split: the clip's own part of its file (a slice, a trim, a
+// piece the split or cut tool left), and of that only song ticks [t0, t1) when t1 > t0 (a time
+// selection, the clip editor's selection). The stems land lined up with exactly that part.
+void openForClip(App& a, ObjectId clip, Tick t0 = 0, Tick t1 = 0);
+// A file (the browser: all of it), or seconds [start, end) of it when end > start (Loupe's selection).
+void openForFile(App& a, const std::string& path, const std::string& name = "", double start = 0, double end = 0);
+// The "Split stems..." item of an audio clip's menus: the clip's part inside the playlist's time
+// selection (or the Marquee tool's area on its track) when one covers it, else the whole clip.
 void clipMenuItem(App& a, ObjectId clip);
+// The song ticks of `clip` that clipMenuItem splits (t1 <= t0: the whole clip).
+void clipMenuRange(const App& a, ObjectId clip, Tick& t0, Tick& t1);
 // Every frame (from drawDialogs).
 void draw(App& a);
 // App exit: a running split or download is cancelled and joined.

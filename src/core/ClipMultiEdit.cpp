@@ -78,6 +78,7 @@ double Snapshot::maxDelta() const {
 double valueOf(const Song& s, const Clip& c, Param p) {
   switch (p) {
     case Param::GainDb: return std::max(clipgain::kMinDb - 0.1, clipgain::toDb(c.gain));
+    case Param::Pan: return static_cast<double>(c.pan);
     case Param::Pitch: return static_cast<double>(c.pitch);
     case Param::FadeIn:
     case Param::FadeOut: {
@@ -95,6 +96,7 @@ double valueOf(const Song& s, const Clip& c, Param p) {
 void store(Clip& c, Param p, double v) {
   switch (p) {
     case Param::GainDb: c.gain = clipgain::fromDb(v); break;
+    case Param::Pan: c.pan = static_cast<float>(std::clamp(v, -1.0, 1.0)); break;
     case Param::Pitch: c.pitch = static_cast<float>(v); break;
     case Param::FadeIn: c.fadeIn = std::max(0.0, v), c.fadeInManual = true; break;
     case Param::FadeOut: c.fadeOut = std::max(0.0, v), c.fadeOutManual = true; break;
@@ -118,6 +120,9 @@ Snapshot capture(const Song& s, const std::vector<ObjectId>& ids, Param p, Objec
     switch (p) {
       case Param::GainDb:
         e.base = valueOf(s, *c, p), e.lo = clipgain::kMinDb - 0.1, e.hi = clipgain::kMaxDb;
+        break;
+      case Param::Pan:
+        e.base = static_cast<double>(c->pan), e.lo = -1.0, e.hi = 1.0;
         break;
       case Param::Pitch:
         e.base = static_cast<double>(c->pitch), e.lo = -kPitchLimit, e.hi = kPitchLimit;

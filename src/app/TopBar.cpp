@@ -257,7 +257,12 @@ bool tempoLcd(App& a, double* v, float width, float lcdH = kBtn, bool big = fals
     changed = true;
   }
   if (hov || act) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-  if (ImGui::BeginPopupContextItem("##tempomenu")) {  // tempo: controller link, tap tempo
+  static ImGuiID openTypeFor = 0;
+  const ImGuiID typeId = ImGui::GetID("##type");
+  if (ImGui::BeginPopupContextItem("##tempomenu")) {  // K-409: type a value, controller link, tap tempo
+    if (ImGui::MenuItem(i18n::tr("Type a value..."))) openTypeFor = typeId;
+    noteRect("tempotype");
+    ImGui::Separator();
     knobContextMenu(a, songParam(SongParam::Tempo));
     actionLinkMenuItems(a, RemoteAction::TapTempo);
     ImGui::EndPopup();
@@ -294,25 +299,17 @@ bool tempoLcd(App& a, double* v, float width, float lcdH = kBtn, bool big = fals
     const float y = std::round(p.y + lcdH - 4.0f);
     dl->AddLine(ImVec2(std::round(x0) + 1.0f, y), ImVec2(std::round(x1) - 1.0f, y), theme::withAlpha(P.accent, act ? 0.9f : 0.5f), 1.5f);
   }
-  if (overWhole) ui::Hint("Tempo (BPM): drag or scroll the whole number to step whole BPM (the decimals stay), double-click to type");
-  else ui::Hint("Tempo (BPM): drag or scroll the decimals to fine-tune (scroll: 0.1, Shift: 0.01), double-click to type");
+  if (overWhole) ui::Hint("Tempo (BPM): drag or scroll the whole number to step whole BPM (the decimals stay), double-click or right-click to type");
+  else ui::Hint("Tempo (BPM): drag or scroll the decimals to fine-tune (scroll: 0.1, Shift: 0.01), double-click or right-click to type");
   ui::Tooltip("Tempo (BPM)");
-  if (hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) ImGui::OpenPopup("##type");
-  if (ImGui::BeginPopup("##type")) {
-    static double typed;
-    if (ImGui::IsWindowAppearing()) {
-      typed = *v;
-      ImGui::SetKeyboardFocusHere();
-    }
-    ImGui::SetNextItemWidth(110);
-    if (ImGui::InputDouble("##t", &typed, 0, 0, "%.3f", ImGuiInputTextFlags_EnterReturnsTrue)) {
-      *v = std::clamp(typed, 10.0, 522.0);
-      changed = true;
-      ImGui::CloseCurrentPopup();
-    }
-    ImGui::SameLine();
-    ImGui::TextDisabled("%s", i18n::tr("BPM"));
-    ImGui::EndPopup();
+  if ((hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) || openTypeFor == typeId) {
+    openTypeFor = 0;
+    ImGui::OpenPopup("##type");
+  }
+  if (const auto d = describeParam(a.doc.song(), songParam(SongParam::Tempo))) {
+    const double before = a.doc.song().tempo;
+    ui::ParamTypePopup(songParam(SongParam::Tempo), *d);
+    if (a.doc.song().tempo != before) *v = a.doc.song().tempo;
   }
   ImGui::PopID();
   (void)a;
@@ -385,16 +382,27 @@ void outMeter(ImDrawList* dl, ImVec2 p, ImVec2 size, const LevelMeter& m) {
 
 void patternList(App& a) {
   const Song& s = a.doc.song();
+  bool first = true;
   for (const auto& p : s.patterns) {
-    ImGui::PushID(static_cast<int>(p.id));
+    const ObjectId pid = p.id;
+    const Rgb color = p.color;
+    const std::string name = p.name;
+    ImGui::PushID(static_cast<int>(pid));
     ImVec2 q = ImGui::GetCursorScreenPos();
     float h = ImGui::GetTextLineHeight();
-    if (ImGui::Selectable("##pat", p.id == a.curPattern, 0, ImVec2(std::max(160.0f, ImGui::GetContentRegionAvail().x), 0)))
-      a.selectPattern(p.id);
+    if (ImGui::Selectable("##pat", pid == a.curPattern, 0, ImVec2(std::max(160.0f, ImGui::GetContentRegionAvail().x), 0)))
+      a.selectPattern(pid);
+    if (first) devNoteRect("patrow0"), first = false;
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    dl->AddRectFilled(ImVec2(q.x + 2, q.y + 2), ImVec2(q.x + 6, q.y + h - 2), theme::rgb(p.color), 2);
-    dl->AddText(ImVec2(q.x + 14, q.y), pal().text, p.name.c_str());
+    dl->AddRectFilled(ImVec2(q.x + 2, q.y + 2), ImVec2(q.x + 6, q.y + h - 2), theme::rgb(color), 2);
+    dl->AddText(ImVec2(q.x + 14, q.y), pal().text, name.c_str());
+    const uint64_t rev = a.doc.revision();
+    if (ImGui::BeginPopupContextItem("##patrowctx")) {
+      patternContextMenu(a, pid);
+      ImGui::EndPopup();
+    }
     ImGui::PopID();
+    if (a.doc.revision() != rev) break;
   }
 }
 
@@ -410,7 +418,7 @@ struct DevRect {
 };
 DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"metro", {}, {}}, {"brsearch", {}, {}}, {"brclear", {}, {}}, {"chroute", {}, {}}, {"chroutefree", {}, {}}, {"ceroutefree", {}, {}}, {"chroutelist", {}, {}},
                      // 0.7.8: the Audio clip window's mixer track box (ChannelRoute.h box), its first item and first tracks
-                     {"ceroute", {}, {}}, {"ceroutelist", {}, {}}, {"ceroutetrack0", {}, {}}, {"ceroutetrack1", {}, {}}, {"ceroutetrack2", {}, {}}, {"ceroutetrack3", {}, {}}, {"ceview", {}, {}}, {"ceviewmain", {}, {}}, {"ceviewadvanced", {}, {}}, {"tempoint", {}, {}}, {"tempofrac", {}, {}}, {"loupedrag", {}, {}}, {"taptempo", {}, {}}, {"tapmenu", {}, {}}, {"tapmenutap", {}, {}}, {"menutools", {}, {}}, {"bar_transport", {}, {}}, {"bar_tempo", {}, {}}, {"bar_pos", {}, {}}, {"bar_pattern", {}, {}}, {"bar_master", {}, {}}, {"bar_monitor", {}, {}}, {"bar_windows", {}, {}}, {"bar_more", {}, {}}, {"prstamp", {}, {}}, {"prstamplbl", {}, {}}, {"prstampchip", {}, {}}, {"brcollapse", {}, {}}, {"capture", {}, {}}, {"sessrec", {}, {}}, {"drawmode", {}, {}}, {"devswap", {}, {}}, {"devsave", {}, {}}, {"brchip", {}, {}}, {"devfold", {}, {}}, {"devwindow", {}, {}}, {"ptabsrc", {}, {}}, {"ptabdst", {}, {}}, {"follow", {}, {}}, {"loop", {}, {}},
+                     {"ceroute", {}, {}}, {"ceroutelist", {}, {}}, {"ceroutetrack0", {}, {}}, {"ceroutetrack1", {}, {}}, {"ceroutetrack2", {}, {}}, {"ceroutetrack3", {}, {}}, {"ceview", {}, {}}, {"ceviewmain", {}, {}}, {"ceviewadvanced", {}, {}}, {"tempoint", {}, {}}, {"tempofrac", {}, {}}, {"tempotype", {}, {}}, {"loupedrag", {}, {}}, {"taptempo", {}, {}}, {"tapmenu", {}, {}}, {"tapmenutap", {}, {}}, {"menutools", {}, {}}, {"bar_transport", {}, {}}, {"bar_tempo", {}, {}}, {"bar_pos", {}, {}}, {"bar_pattern", {}, {}}, {"bar_master", {}, {}}, {"bar_monitor", {}, {}}, {"bar_windows", {}, {}}, {"bar_more", {}, {}}, {"prstamp", {}, {}}, {"prstamplbl", {}, {}}, {"prstampchip", {}, {}}, {"brcollapse", {}, {}}, {"capture", {}, {}}, {"sessrec", {}, {}}, {"drawmode", {}, {}}, {"devswap", {}, {}}, {"devsave", {}, {}}, {"brchip", {}, {}}, {"devfold", {}, {}}, {"devwindow", {}, {}}, {"ptabsrc", {}, {}}, {"ptabdst", {}, {}}, {"follow", {}, {}}, {"loop", {}, {}},
                      // K-337: the browser tab strip, its menus and the Clips / Smooth places
                      {"braddtab", {}, {}}, {"braddfolder", {}, {}}, {"brfilemenu", {}, {}}, {"brtabmrename", {}, {}}, {"brtabmclose", {}, {}}, {"brtabname", {}, {}},
                      {"brtab0", {}, {}}, {"brtab1", {}, {}}, {"brtab2", {}, {}}, {"brtab3", {}, {}}, {"brtab4", {}, {}}, {"brtab5", {}, {}},
@@ -425,7 +433,11 @@ DevRect gDevRects[] = {{"play", {}, {}}, {"stop", {}, {}}, {"rec", {}, {}}, {"me
                      {"clipssig", {}, {}}, {"clipsmetroarrow", {}, {}}, {"clipsquant", {}, {}},
                      // Smooth's control bar: the pane and panel buttons (sdlat lb_lists ...)
                      {"lb_lib", {}, {}}, {"lb_ins", {}, {}}, {"lb_ed", {}, {}}, {"lb_sm", {}, {}}, {"lb_mx", {}, {}},
-                     {"lb_lists", {}, {}}, {"lb_notes", {}, {}}, {"lb_browser", {}, {}}};
+                     {"lb_lists", {}, {}}, {"lb_notes", {}, {}}, {"lb_browser", {}, {}},
+                     // K-428: pattern context menu targets
+                     {"patbtn", {}, {}}, {"patrow0", {}, {}}, {"patmenurename", {}, {}}, {"brpat0", {}, {}}, {"plsrc", {}, {}}, {"trpat0", {}, {}},
+                     // K-445: Show in Finder / Files in a browser menu; Seltmann's LOOP and MIDI drag chips
+                     {"brreveal", {}, {}}, {"selloop", {}, {}}, {"selmidi", {}, {}}, {"smlibpatch", {}, {}}};
 float gMetroMirror = 1.0f;
 bool gClipsMetroLeft = false;  // (dev: the Clips metronome's left circle is the filled one: an odd beat while playing)
 bool gClipsMetroMenu = false;  // (dev: its menu is open)
@@ -624,7 +636,7 @@ float drawTopBar(App& a) {
   measure(false);
   setWidths();
   auto required = [&]() {
-    float r = kPad * 2 + wMark;
+    float r = kPad * 2 + wMark + (collabui::active(a) && W > 900 ? collabui::topBarWidth(a, kPanelH) : 0.0f);
     int n = 0;
     for (int g = 0; g < Count; ++g)
       if (show[g]) {
@@ -812,11 +824,15 @@ float drawTopBar(App& a) {
       mapRev = a.doc.revision();
       mapSong = &s;
     }
+    double liveTempo = 0;
+    const bool modulated = isModulated(s, songParam(SongParam::Tempo)) && a.builder.modulatedValue(songParam(SongParam::Tempo), liveTempo);
     const bool automated = !map.constant() && a.engine.mode() == PlayMode::Song;
-    if (automated) tempo = map.bpmAt(a.engine.position());
+    if (modulated) tempo = liveTempo;
+    else if (automated) tempo = map.bpmAt(a.engine.position());
     const double shown = tempo;
-    if (tempoLcd(a, &tempo, tempoW) && !(automated && tempo == shown)) a.doc.setParam(songParam(SongParam::Tempo), tempo, true);
-    if (automated) ui::Hint("Tempo follows the tempo automation clip; dragging changes the base tempo");
+    if (tempoLcd(a, &tempo, tempoW) && !((automated || modulated) && tempo == shown)) a.doc.setParam(songParam(SongParam::Tempo), tempo, true);
+    if (modulated) ui::Hint("Tempo is driven by an internal controller link; dragging changes the base tempo");
+    else if (automated) ui::Hint("Tempo follows the tempo automation clip; dragging changes the base tempo");
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     ImGui::SetCursorScreenPos(ImVec2(x + kPanelPad + tempoW + kInner, btnTop));
     tapButton(a, kBtn);
@@ -844,10 +860,12 @@ float drawTopBar(App& a) {
     panel(dl, x, wPattern, panelTop);
     noteRectAt("bar_pattern", ImVec2(x, panelTop), ImVec2(x + wPattern, panelTop + kPanelH));
     const Pattern* cur = s.pattern(a.curPattern);
+    const ObjectId curId = cur ? cur->id : kNoId;
     ImVec2 p(x + kPanelPad, btnTop);
     ImGui::SetCursorScreenPos(p);
     ImGui::InvisibleButton("##patbtn", ImVec2(patW, kBtn));
-    bool hov = ImGui::IsItemHovered(), open = ImGui::IsPopupOpen("##patpop");
+    noteRect("patbtn");
+    bool hov = ImGui::IsItemHovered(), open = ImGui::IsPopupOpen("##patpop") || ImGui::IsPopupOpen("##patctx");
     if (ImGui::IsItemClicked()) ImGui::OpenPopup("##patpop");
     // Mouse wheel steps through patterns (like FL's pattern spinner).
     if (hov && ImGui::GetIO().MouseWheel != 0 && !s.patterns.empty()) {
@@ -861,7 +879,11 @@ float drawTopBar(App& a) {
     theme::textEllipsis(dl, a.fontRegular, theme::kFontBody, ImVec2(p.x + 20, std::round(p.y + (kBtn - theme::kFontBody) * 0.5f)),
                         patW - 20 - 24, P.text, cur ? cur->name.c_str() : "No pattern");
     ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(p.x + patW - 13, p.y + kBtn * 0.5f), 12, P.textDim);
-    ui::Hint("Selected pattern: click to choose, scroll to step (edited by the channel rack and piano roll)");
+    ui::Hint("Selected pattern: click to choose, scroll to step, right-click: rename & options (edited by the channel rack and piano roll)");
+    if (curId != kNoId && ImGui::BeginPopupContextItem("##patctx")) {
+      patternContextMenu(a, curId);
+      ImGui::EndPopup();
+    }
     ImGui::SetNextWindowPos(ImVec2(p.x, wp.y + h - 2));
     ImGui::SetNextWindowSizeConstraints(ImVec2(patW, 0), ImVec2(320, 420));
     if (ImGui::BeginPopup("##patpop")) {
@@ -1093,6 +1115,17 @@ float drawTopBar(App& a) {
         if (ImGui::DragScalar("BPM", ImGuiDataType_Double, &tempo, 0.25f, nullptr, nullptr, "%.3f"))
           a.doc.setParam(songParam(SongParam::Tempo), std::clamp(tempo, 10.0, 522.0), true);
         if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+        static bool openOvType = false;
+        if (ImGui::BeginPopupContextItem("##tempomenu_ov")) {
+          if (ImGui::MenuItem(i18n::tr("Type a value..."))) openOvType = true;
+          ImGui::Separator();
+          knobContextMenu(a, songParam(SongParam::Tempo));
+          actionLinkMenuItems(a, RemoteAction::TapTempo);
+          ImGui::EndPopup();
+        }
+        if (openOvType) openOvType = false, ImGui::OpenPopup("##type");
+        if (const auto d = describeParam(a.doc.song(), songParam(SongParam::Tempo)))
+          ui::ParamTypePopup(songParam(SongParam::Tempo), *d);
         ImGui::SameLine(0, theme::kS2);
         tapButton(a, kBtn);  // K-48: goes with the tempo
       }
@@ -1358,11 +1391,13 @@ static float drawTopBarLogic(App& a) {
       mapRev = a.doc.revision();
       mapSong = &s;
     }
+    double liveTempo = 0;
+    const bool modulated = isModulated(s, songParam(SongParam::Tempo)) && a.builder.modulatedValue(songParam(SongParam::Tempo), liveTempo);
     const bool automated = !map.constant() && a.engine.mode() == PlayMode::Song;
-    double tempo = automated ? map.bpmAt(a.engine.position()) : s.tempo;
+    double tempo = modulated ? liveTempo : automated ? map.bpmAt(a.engine.position()) : s.tempo;
     const double shown = tempo;
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
-    if (tempoLcd(a, &tempo, tempoW) && !(automated && tempo == shown)) a.doc.setParam(songParam(SongParam::Tempo), tempo, true);
+    if (tempoLcd(a, &tempo, tempoW) && !((automated || modulated) && tempo == shown)) a.doc.setParam(songParam(SongParam::Tempo), tempo, true);
     if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     cx += tempoW + kInner;
     ImGui::SetCursorScreenPos(ImVec2(cx, btnTop));
@@ -1413,10 +1448,12 @@ static float drawTopBarLogic(App& a) {
   if (showPattern) {
     panel(dl, x, wPattern, panelTop);
     const Pattern* cur = s.pattern(a.curPattern);
+    const ObjectId curId = cur ? cur->id : kNoId;
     const ImVec2 p(x + kPanelPad, btnTop);
     ImGui::SetCursorScreenPos(p);
     ImGui::InvisibleButton("##patbtn", ImVec2(patW, kBtn));
-    const bool hov = ImGui::IsItemHovered(), open = ImGui::IsPopupOpen("##patpop");
+    noteRect("patbtn");
+    const bool hov = ImGui::IsItemHovered(), open = ImGui::IsPopupOpen("##patpop") || ImGui::IsPopupOpen("##patctx");
     if (ImGui::IsItemClicked()) ImGui::OpenPopup("##patpop");
     dl->AddRectFilled(p, ImVec2(p.x + patW, p.y + kBtn), open ? P.surface700 : hov ? P.surface800 : P.surface950, theme::kRadius);
     dl->AddRect(p, ImVec2(p.x + patW, p.y + kBtn), open ? P.accent : P.line, theme::kRadius);
@@ -1424,7 +1461,11 @@ static float drawTopBarLogic(App& a) {
     theme::textEllipsis(dl, a.fontRegular, theme::kFontBody, ImVec2(p.x + 20, std::round(p.y + (kBtn - theme::kFontBody) * 0.5f)), patW - 20 - 24, P.text,
                         cur ? cur->name.c_str() : "No pattern");
     ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(p.x + patW - 13, p.y + kBtn * 0.5f), 12, P.textDim);
-    ui::Hint("Selected pattern: click to choose");
+    ui::Hint("Selected pattern: click to choose, right-click: rename & options");
+    if (curId != kNoId && ImGui::BeginPopupContextItem("##patctx")) {
+      patternContextMenu(a, curId);
+      ImGui::EndPopup();
+    }
     ImGui::SetNextWindowPos(ImVec2(p.x, panelTop + kPanelH));
     ImGui::SetNextWindowSizeConstraints(ImVec2(patW, 0), ImVec2(320, 420));
     if (ImGui::BeginPopup("##patpop")) {
@@ -1878,11 +1919,13 @@ static float drawTopBarLive(App& a) {
         mapRev = a.doc.revision();
         mapSong = &s;
       }
+      double liveTempo = 0;
+      const bool modulated = isModulated(s, songParam(SongParam::Tempo)) && a.builder.modulatedValue(songParam(SongParam::Tempo), liveTempo);
       const bool automated = !map.constant() && a.engine.mode() == PlayMode::Song;
-      double tempo = automated ? map.bpmAt(a.engine.position()) : s.tempo;
+      double tempo = modulated ? liveTempo : automated ? map.bpmAt(a.engine.position()) : s.tempo;
       const double shown = tempo;
       ImGui::SetCursorScreenPos(ImVec2(x, cy));
-      if (tempoLcd(a, &tempo, 64, kH) && !(automated && tempo == shown)) a.doc.setParam(songParam(SongParam::Tempo), tempo, true);
+      if (tempoLcd(a, &tempo, 64, kH) && !((automated || modulated) && tempo == shown)) a.doc.setParam(songParam(SongParam::Tempo), tempo, true);
       if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     } else if (id == "meter") {
       int sigNum = s.timeSigNum, sigDen = s.timeSigDen;
@@ -1936,13 +1979,13 @@ static float drawTopBarLive(App& a) {
         left = (n % 2 + 2) % 2 == 1;
       }
       gClipsMetroLeft = left;
-      const float r = 4.5f, cyc = std::round(cy + kH * 0.5f) + 0.5f, gap = 2.5f;  // (as big as the refs': near half the box's height)
-      const float cxR = std::round(x + mainW * 0.5f + 2.0f + gap * 0.5f + r) + 0.5f, cxL = cxR - 2 * r - gap;
-      dl->AddCircle(ImVec2(left ? cxR : cxL, cyc), r - 0.6f, ink, 20, 1.3f);
-      noteCounter("beat", ImVec2(cxL - r - 1, cyc - r - 1), ImVec2(cxR + r + 1, cyc + r + 1));
-      dl->AddCircleFilled(ImVec2(left ? cxL : cxR, cyc), r, ink, 20);
-      const float ax = std::round(x + mainW + kArrowW * 0.5f - 1.0f), ay = std::round(cy + kH * 0.5f) - 1.0f;
-      dl->AddTriangleFilled(ImVec2(ax - 3, ay), ImVec2(ax + 3, ay), ImVec2(ax, ay + 3), ink);
+      const float r = 4.5f, cyc = std::round(cy + kH * 0.5f), gap = 2.5f;
+      const float cxR = std::round(x + mainW * 0.5f + 2.0f + gap * 0.5f + r), cxL = cxR - 2 * r - gap;
+      const ImVec2 beatMin(cxL - r - 1, cyc - r - 1), beatMax(cxR + r + 1, cyc + r + 1);
+      noteCounter("beat", beatMin, beatMax);
+      ui::drawIconFit(dl, left ? ui::Icon::MetroBeatLeft : ui::Icon::MetroBeatRight, beatMin, beatMax, ink);
+      const float ax = std::round(x + mainW + kArrowW * 0.5f - 1.0f), ay = std::round(cy + kH * 0.5f);
+      ui::drawIconFitC(dl, ui::Icon::Down, ImVec2(ax, ay), ImVec2(7.0f, 5.0f), ink);
       ImGui::SetNextWindowPos(ImVec2(x, cy + kH + 2));
       gClipsMetroMenu = false;
       if (ImGui::BeginPopup("##metromenulive")) {
@@ -2084,7 +2127,7 @@ static float drawTopBarLive(App& a) {
         menuparity::stopMenuItems(a);
         ImGui::EndPopup();
       }
-      dl->AddRectFilled(ImVec2(mx + 9, cy + 7), ImVec2(mx + 17, cy + kH - 7), P.text, 1.0f);
+      ui::drawIconFit(dl, ui::Icon::Stop, ImVec2(mx + 8, cy + 6), ImVec2(mx + 18, cy + kH - 6), P.text);
       mx += 26 + kIn;
       if (flat("##reclive", mx, 26, false, keyHint("Record (right-click: what to record, punch, count-in)", "transport.record").c_str(), true))
         livelook::toggleArrangementRecord(a), recordcard::recordClicked(a, ImGui::GetIO().KeyShift);  // K-123: the card
@@ -2093,8 +2136,11 @@ static float drawTopBarLive(App& a) {
         recordOptionsMenu(a);
         ImGui::EndPopup();
       }
-      dl->AddCircleFilled(ImVec2(mx + 13, cy + kH * 0.5f), 4.5f, a.recordArmed ? P.arm : theme::withAlpha(P.arm, 0.75f), 16);
-      if (a.recordArmed) dl->AddCircle(ImVec2(mx + 13, cy + kH * 0.5f), 7.0f, P.arm, 16, 1.5f);
+      const ImVec2 rc(std::round(mx + 13.0f), std::round(cy + kH * 0.5f));
+      if (a.recordArmed)
+        ui::drawIconFitC(dl, ui::Icon::RecordArmed, rc, ImVec2(14.0f, 14.0f), P.arm);
+      else
+        ui::drawIconFitC(dl, ui::Icon::Record, rc, ImVec2(10.0f, 10.0f), theme::withAlpha(P.arm, 0.75f));
     } else if (id == "recording") {
       // What a recording takes besides audio: notes on top of the existing ones (overdub), and
       // controller moves (automation). The same switches as the record menu.
@@ -2131,9 +2177,9 @@ static float drawTopBarLive(App& a) {
       if (flat("##sessreclive", x, 26, on, "Session record: records into the selected slot of the armed track, or adds to the clip it plays (click again to stop; the clip plays on)"))
         livelook::toggleSessionRecord(a);
       noteRect("sessrec");
-      const ImVec2 c(x + 13, cy + kH * 0.5f);
-      dl->AddRect(ImVec2(c.x - 6, c.y - 6), ImVec2(c.x + 6, c.y + 6), on ? glyphCol(true) : P.text, 2.0f, 1.2f, 0);
-      dl->AddCircleFilled(c, 3.0f, on ? glyphCol(true) : P.arm, 12);
+      const ImVec2 c(std::round(x + 13.0f), std::round(cy + kH * 0.5f));
+      ui::drawIconFitC(dl, ui::Icon::SessionRecordFrame, c, ImVec2(13.0f, 13.0f), on ? glyphCol(true) : P.text);
+      ui::drawIconFitC(dl, ui::Icon::Record, c, ImVec2(6.5f, 6.5f), on ? glyphCol(true) : P.arm);
     } else if (id == "recordMenu") {
       if (flat("##recoptlive", x, 26, false, "Recording options: what to record, punch, count-in")) ImGui::OpenPopup("##recoptpop");
       ui::drawIconFit(dl, ui::Icon::More, ImVec2(x + 7, cy + kH * 0.5f - 1), ImVec2(x + 19, cy + kH * 0.5f + 2), P.text);
@@ -2309,48 +2355,8 @@ bool barPill(const char* id, ImVec2 p, ImVec2 size, ui::Icon icon, const char* l
     }
     const ImVec2 c(std::round(p.x + size.x * 0.5f), std::round(p.y + size.y * 0.5f));
     const float isz = std::round((gBigGlyphs || size.y >= 32 ? 16.0f : 14.0f) * k);  // transport 16, the pane pills 14
-    if (icon == ui::Icon::ChevronLeft || icon == ui::Icon::Left || icon == ui::Icon::Right) {
-      // Checkpoint 35: the start, back and forward buttons as filled transport glyphs (a bar and a
-      // triangle, two triangles each way), as 216 and 125 draw them, at the play triangle's height
-      // (they were thin 6 x 12 outline arrows beside 13 px filled glyphs).
-      const float hh = std::round(isz * 0.375f), tw = std::round(isz * 0.44f);  // at 16: half height 6, triangle 7 wide
-      const float cy = c.y;
-      auto tri = [&](float tipX, float baseX) {  // clockwise either way (ImGui's anti-aliased fill wants it)
-        const float s0 = tipX < baseX ? -hh : hh;
-        dl->AddTriangleFilled(ImVec2(tipX, cy), ImVec2(baseX, cy + s0), ImVec2(baseX, cy - s0), ink);
-      };
-      if (icon == ui::Icon::ChevronLeft) {  // to the start: a bar and a triangle pointing at it
-        const float x0 = c.x - std::round((tw + 4) * 0.5f);
-        dl->AddRectFilled(ImVec2(x0, cy - hh), ImVec2(x0 + 2, cy + hh), ink);
-        tri(x0 + 3, x0 + 3 + tw + 1);
-      } else {  // back or forward: two triangles touching
-        const float x0 = c.x - tw;
-        if (icon == ui::Icon::Left) tri(x0, x0 + tw), tri(x0 + tw, x0 + 2 * tw);
-        else tri(x0 + tw, x0), tri(x0 + 2 * tw, x0 + tw);
-      }
-    } else if (icon == ui::Icon::Info) {
-      // The inspector: two switches stacked (a panel of settings), drawn here at the bar's optical size
-      // (the bare "i" drew 2 px wide, the faintest glyph in the bar).
-      const float w = std::round(isz * 0.9f), hh = std::round(isz * 0.36f), r = hh * 0.5f;
-      for (int i = 0; i < 2; ++i) {
-        const float y0 = std::round(c.y - isz * 0.5f + (i ? isz - hh : 0.0f)) + 0.5f, x0 = std::round(c.x - w * 0.5f) + 0.5f;
-        dl->AddRect(ImVec2(x0, y0), ImVec2(x0 + w - 1, y0 + hh - 1), ink, r, 0, 1.5f);
-        const float kx = i ? x0 + w - 1 - r : x0 + r;
-        dl->AddCircleFilled(ImVec2(kx, y0 + (hh - 1) * 0.5f), r - 1.5f, ink, 12);
-      }
-    } else if (icon == ui::Icon::Plug) {
-      // A1 (checkpoint 49): the Library as a stack of media (a card with a note on two cards behind
-      // it), Gridline's own glyph; the plug read as "plugins".
-      const float w = std::round(isz * 0.86f), h = std::round(isz * 0.62f);
-      const float x0 = std::round(c.x - w * 0.5f) + 0.5f, y1 = std::round(c.y + isz * 0.5f) - 0.5f, y0 = y1 - h;
-      dl->AddLine(ImVec2(x0 + 2, y0 - 3), ImVec2(x0 + w - 2, y0 - 3), ink, 1.5f);
-      dl->AddLine(ImVec2(x0 + 4, y0 - 6), ImVec2(x0 + w - 4, y0 - 6), ink, 1.5f);
-      dl->AddRect(ImVec2(x0, y0), ImVec2(x0 + w, y1), ink, 2.0f, 0, 1.5f);
-      const ImVec2 nh(std::round(c.x - 1.5f), std::round(y1 - h * 0.32f));  // the note's head, its stem and flag
-      dl->AddCircleFilled(nh, 1.9f, ink, 10);
-      dl->AddLine(ImVec2(nh.x + 1.6f, nh.y), ImVec2(nh.x + 1.6f, y0 + 2.5f), ink, 1.3f);
-      dl->AddLine(ImVec2(nh.x + 1.6f, y0 + 2.5f), ImVec2(nh.x + 4.0f, y0 + 4.5f), ink, 1.3f);
-    } else if (known || newCount < 3) {
+    // K-402: every Smooth control bar glyph is drawn through Studio's crisp SVG icon atlas.
+    if (known || newCount < 3) {
       if (!known) drawn.insert(static_cast<int>(icon)), ++newCount;
       ui::drawIcon(dl, icon, c, isz, ink);
     }
@@ -2757,8 +2763,8 @@ static float drawLogicControlBar(App& a) {
     // K-112b (second pass): two groups, as 125, 216 and 195 all split them: the side panes and
     // bars (library, inspector, quick help, toolbar), then the lower pane's views (editors, smart
     // controls, mixer).
-    const Pane panes[] = {{"##lb_lib", ui::Icon::Plug, "logic.library", i18n::N_("Library: instruments and effects"), "view.library"},
-                          {"##lb_ins", ui::Icon::Info, "logic.inspector", i18n::N_("Inspector"), "view.inspector"},
+    const Pane panes[] = {{"##lb_lib", ui::Icon::LibraryStack, "logic.library", i18n::N_("Library: instruments and effects"), "view.library"},
+                          {"##lb_ins", ui::Icon::InspectorSwitches, "logic.inspector", i18n::N_("Inspector"), "view.inspector"},
                           {"##lb_help", ui::Icon::Question, nullptr, i18n::N_("Quick help: what the item under the pointer does"), "view.quickHelp"},
                           {"##lb_tb", ui::Icon::Download, nullptr, i18n::N_("Toolbar: a strip of editing buttons under the control bar"), "view.toolbar"},
                           {"##lb_ed", ui::Icon::ToolDraw, nullptr, i18n::N_("Editors"), "view.editors"},
@@ -2913,14 +2919,14 @@ static float drawLogicControlBar(App& a) {
     gGrouped = true;
     if (showNav) {
     if (showStart) {
-      if (barPill("##lb_start", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::ChevronLeft, nullptr, false, hintWithKey("Go to the start", "transport.toStart").c_str()))
+      if (barPill("##lb_start", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::SkipBack, nullptr, false, hintWithKey("Go to the start", "transport.toStart").c_str()))
         a.engine.setPosition(0);
       cx += tb + gi;
     }
-    if (barPill("##lb_back", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::Left, nullptr, false, hintWithKey("Back one bar", "transport.rewindBar").c_str()))
+    if (barPill("##lb_back", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::Rewind, nullptr, false, hintWithKey("Back one bar", "transport.rewindBar").c_str()))
       a.engine.setPosition(std::max<Tick>(0, songBars ? MeterMap(s).barStartAt(std::max<Tick>(0, pos - 1)) : (pos - 1) / bar * bar));
     cx += tb + gi;
-    if (barPill("##lb_fwd", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::Right, nullptr, false, hintWithKey("Forward one bar", "transport.forwardBar").c_str()))
+    if (barPill("##lb_fwd", ImVec2(cx, ty), ImVec2(tb, tbH), ui::Icon::FastForward, nullptr, false, hintWithKey("Forward one bar", "transport.forwardBar").c_str()))
       a.engine.setPosition(songBars ? MeterMap(s).nextBar(pos) : (pos / bar + 1) * bar);
     cx += tb + gi;
     }
@@ -3179,12 +3185,14 @@ static float drawLogicControlBar(App& a) {
         mapRev = a.doc.revision();
         mapSong = &s;
       }
+      double liveTempo = 0;
+      const bool modulated = isModulated(s, songParam(SongParam::Tempo)) && a.builder.modulatedValue(songParam(SongParam::Tempo), liveTempo);
       const bool automated = !map.constant() && a.engine.mode() == PlayMode::Song;
-      double tempo = automated ? map.bpmAt(a.engine.position()) : s.tempo;
+      double tempo = modulated ? liveTempo : automated ? map.bpmAt(a.engine.position()) : s.tempo;
       const double shown = tempo;
       const ImVec2 tp(std::round(l0.x + third + 2), l0.y);
       ImGui::SetCursorScreenPos(tp);
-      if (tempoLcd(a, &tempo, tempoW - 4, lcdH, true) && !(automated && tempo == shown)) a.doc.setParam(songParam(SongParam::Tempo), tempo, true);
+      if (tempoLcd(a, &tempo, tempoW - 4, lcdH, true) && !((automated || modulated) && tempo == shown)) a.doc.setParam(songParam(SongParam::Tempo), tempo, true);
       if (ImGui::IsItemDeactivated()) a.doc.endGesture();
     }
     if (!lcdAlone) {

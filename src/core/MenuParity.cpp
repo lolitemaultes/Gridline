@@ -1,5 +1,6 @@
 // Gridline — J-27 menu parity operations (see MenuParity.h).
 #include "MenuParity.h"
+#include "../engine/ClipOps.h"
 #include "Meter.h"
 #include "ClipSources.h"
 #include "ChordTools.h"
@@ -154,18 +155,42 @@ ObjectId makeAudioClipUnique(Document& d, ObjectId clip) {
 }
 
 int setAudioClipTimeMode(Document& d, const std::set<ObjectId>& clips, int mode) {
-  mode = static_cast<int>(stretch::choiceOf(stretch::modeOf(mode)));  // J-153 / J-157: Resample, Stretch or Rubber Band
+  const stretch::Mode m = stretch::choiceOf(stretch::modeOf(mode));  // J-153 / J-157: Resample, Stretch or Rubber Band
+  const int choice = static_cast<int>(m);
+  const bool lock = stretch::keepsPitch(m);
   const Song& s = d.song();
   std::set<ObjectId> chans;
   for (const auto& c : s.playlist)
     if (c.kind == ClipKind::Audio && (clips.empty() || clips.count(c.id)))
-      if (const Channel* ch = s.channel(c.source); ch && isSampler(*ch) && ch->plugin.params[pp::SmpStretchMode] != mode)
+      if (const Channel* ch = s.channel(c.source);
+          ch && isSampler(*ch) && (ch->plugin.params[pp::SmpStretchMode] != choice || (lock && c.syncBpm <= 0)))
         chans.insert(ch->id);
   if (chans.empty()) return 0;
-  d.editSong(mode == 0 ? "switch audio clips to resample" : mode == static_cast<int>(stretch::Mode::RubberBand) ? "switch audio clips to Rubber Band" : "switch audio clips' time mode", [&](Song& x) {
-    for (auto& ch : x.channels)
-      if (chans.count(ch.id)) ch.plugin.params[pp::SmpStretchMode] = static_cast<float>(mode);
-  });
+  d.editSong(choice == 0 ? "switch audio clips to resample"
+                         : choice == static_cast<int>(stretch::Mode::RubberBand) ? "switch audio clips to Rubber Band"
+                                                                                 : "switch audio clips' time mode",
+             [&](Song& x) {
+               TempoMap map;
+               if (lock) map.build(x);
+               for (auto& ch : x.channels)
+                 if (chans.count(ch.id)) ch.plugin.params[pp::SmpStretchMode] = static_cast<float>(choice);
+               if (lock) {
+                 for (auto& c : x.playlist) {
+                   if (c.kind == ClipKind::Audio && chans.count(c.source) && (clips.empty() || clips.count(c.id)) && c.syncBpm <= 0)
+                     lockClipToTempo(x, c, map);
+                 }
+                 for (auto& ch : x.channels) {
+                   if (!chans.count(ch.id) || !isSampler(ch) || ch.plugin.params.size() <= static_cast<size_t>(pp::SmpFitTempo) ||
+                       ch.plugin.params[pp::SmpFitTempo] > 0.0f)
+                     continue;
+                   for (const auto& c : x.playlist)
+                     if (c.kind == ClipKind::Audio && c.source == ch.id && c.syncBpm > 0) {
+                       ch.plugin.params[pp::SmpFitTempo] = static_cast<float>(c.syncBpm);
+                       break;
+                     }
+                 }
+               }
+             });
   return static_cast<int>(chans.size());
 }
 

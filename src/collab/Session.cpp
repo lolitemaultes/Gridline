@@ -171,6 +171,7 @@ void copyRest(Song& t, const Song& c) {
   t.swingNotes = c.swingNotes;  // K-151: was missing, so "Swing piano roll notes" never reached collaborators
   t.groove = c.groove;          // K-151: the swing preset / groove
   t.slidesAnyColour = c.slidesAnyColour;  // K-314 B-01: older projects' slides (saved "slidesByColour")
+  t.slidesVelocity = c.slidesVelocity;    // GitHub #87: slides glide velocity (older projects: saved off)
   t.masterPitch = c.masterPitch;
   t.nextId = c.nextId;
   t.tracks = c.tracks;
@@ -196,6 +197,7 @@ void copyRest(Song& t, const Song& c) {
   t.trackReceipt = c.trackReceipt;  // K-322: the Track Receipt's typed fields (were missing: they stayed on one computer)
   t.flExportGridline = c.flExportGridline;  // K-314 B-01: how Gridline plugins go into FL exports
   t.workspaceCopy = c.workspaceCopy;        // K-314 B-01: View > Workspaces > Keep a copy in the project
+  t.rackAutoLanes = c.rackAutoLanes;  // the rack's song and mixer automation lanes kept across patterns
 }
 
 Song restOf(const Song& c) {
@@ -966,6 +968,11 @@ bool Session::bootstrap(std::string* err) {
   versions.object[siteHex(me_)] = Json::makeString(cfg_.appVersion);
   meta.object["versions"] = std::move(versions);
   meta.object["resolutions"] = Json::makeObject();
+  // K-86 part 2: carry any saved chat messages from the project file into genesis metadata.
+  for (const auto& cm : doc_.song().collabChat) {
+    if (!cm.id.empty() && (!cm.text.empty() || cm.att.valid()))
+      meta.object["chat:" + cm.id] = chatMessageToJson(cm);
+  }
   std::vector<Op> ops(3);
   ops[0].kind = OpKind::Ins;
   ops[0].t = hlc_.tick();
@@ -987,6 +994,7 @@ bool Session::bootstrap(std::string* err) {
     if (err) *err = "cannot start the collaboration log";
     return false;
   }
+  refreshChat(false);
   doc_.patchSong([&](Song& s) {
     s.idSlot = 0;
     s.idStride = kIdStride;
@@ -1104,6 +1112,7 @@ bool Session::loadFromDisk(std::string* err) {
   }
   floDirty_ = true;
   updateReady();
+  refreshChat(false);
   // the plain project file may have been edited without collaboration since
   Json song = replica_.materialize({"song"});
   refsToLocal(song);
@@ -1111,6 +1120,7 @@ bool Session::loadFromDisk(std::string* err) {
   Song s;
   std::string e;
   const standin::NoResolve keepPlugins;  // k078-collabplug: the shared plugins stay as they are (no format switch, no stand-in)
+  const NoRackLaneMigration sharedLanesOnly;  // (the lanes the shared document holds, the same on every computer)
   if (!song.is(Json::Type::Object) || !songFromJson(song, s, &e)) {
     if (err) *err = i18n::tr("The collaborative project could not be read") + std::string(": ") + e;
     return false;
@@ -1119,6 +1129,7 @@ bool Session::loadFromDisk(std::string* err) {
   floShadow_ = floCache_;
   floDirty_ = false;
   s.flOrigin = floCache_;
+  s.collabChat = chatMessages_;
   const Member* m = member(me_);
   s.idSlot = m ? static_cast<uint32_t>(m->slot) : 0;
   s.idStride = kIdStride;
@@ -1132,11 +1143,12 @@ bool Session::loadFromDisk(std::string* err) {
   readFileText((fs::path(cfg_.folder) / kDir / "written.txt").string(), written, 1 << 10);
   if (readFileText(projectFile(), cur) && !written.empty() && update::sha256Hex(cur) != written) {
     Song ext;
-    const standin::NoResolve keepPlugins;
+    const standin::NoResolve keepPlugins;  // (an edit made outside: migrated as a load, and shared as a local change)
     if (loadProject(projectFile(), ext, &e)) {
       ext.idSlot = doc_.song().idSlot;
       ext.idStride = kIdStride;
       ext.flOrigin = doc_.song().flOrigin;
+      ext.collabChat = doc_.song().collabChat;
       doc_.patchSong([&](Song& x) { x = std::move(ext); });
       flushLocal();
       if (onNotice) onNotice(i18n::tr("Changes made to the project file outside a collaboration session were added."), false);
@@ -1506,6 +1518,7 @@ void Session::recordStep(const std::vector<Op>& ops, const std::vector<Json>& be
 // ------------------------------------------------------ others' writes ----
 void Session::noteForeign(const Op& op, SiteId site, const Json& before) {
   if (op.path.empty() || (op.path[0] != "song" && op.path[0] != "meta" && op.path[0] != "flo")) return;
+  if (op.path[0] == "meta" && op.path.size() >= 2 && op.path[1].rfind("chat:", 0) == 0) return;  // K-86 part 2: chat never affects undo conflicts
   const Stamp s{op.t, site};
   {
     ForeignWrite w;
@@ -2257,6 +2270,7 @@ bool Session::tryApply(const Batch& b, bool local) {
       remoteDirty_ = remoteDirty_ || !local;
     } else {
       metaDirty_ = true;
+      if (op.path.size() == 1 || (op.path.size() >= 2 && op.path[1].rfind("chat:", 0) == 0)) chatDirty_ = true;
     }
   }
   if (counts && b.site != me_ && !replaying_ && !genesis) {  // K-141: the history panel's greyed rows
@@ -2298,6 +2312,10 @@ bool Session::tryApply(const Batch& b, bool local) {
     conflicts_.setResolved(std::move(refs));
     metaDirty_ = false;
     updateReady();
+    if (chatDirty_) {
+      chatDirty_ = false;
+      refreshChat(!replaying_ && !local && !genesis);
+    }
   }
   if (!local && conflicts_.openCount() > openBefore && isAdmin()) reviewRequest_ = true;
   if (!local) {
@@ -2410,6 +2428,7 @@ bool Session::buildFullSong(Song& s, std::string* err) {
   refsToLocal(song);
   repairProjectJson(song);
   const standin::NoResolve keepPlugins;
+  const NoRackLaneMigration sharedLanesOnly;  // (the lanes the shared document holds, the same on every computer)
   if (!songFromJson(song, s, err)) return false;
   keepSessionState(s, doc_.song());  // this computer's solo, arm, listen toggles ... stay as they are
   if (floDirty_) {
@@ -2417,6 +2436,7 @@ bool Session::buildFullSong(Song& s, std::string* err) {
     floDirty_ = false;
   }
   s.flOrigin = floCache_;
+  s.collabChat = chatMessages_;
   const Member* m = member(me_);
   s.idSlot = m ? static_cast<uint32_t>(m->slot) : 0;
   s.idStride = kIdStride;
@@ -2752,6 +2772,7 @@ void Session::applySnapshot(const Message& m) {
     ++rebuilds_;
   }
   refreshMembership();  // their removals decide what of ours still counts
+  refreshChat(false);
   if (const Json* c = s.find("conflicts")) conflicts_.fromJson(*c);
   hlc_.observe(siteFromHex(s.text("hlc")));
   // the log restarts from this snapshot
@@ -3356,6 +3377,7 @@ bool Session::preview(const std::string& object, SiteId keepSite) {
   repairProjectJson(song);
   Song s;
   const standin::NoResolve keepPlugins;
+  const NoRackLaneMigration sharedLanesOnly;  // (the lanes the shared document holds, the same on every computer)
   if (!songFromJson(song, s)) return false;
   keepSessionState(s, doc_.song());
   s.flOrigin = floCache_;
@@ -3479,6 +3501,16 @@ bool Session::metaAllowed(const Batch& b, const Op& op, SiteId adminNow) const {
     if (op.path.size() != 2) return false;
     if (op.kind == OpKind::Ins) return siteFromHex(sub.substr(5)) == b.site;  // only they leave
     return op.kind == OpKind::Del;                                          // invited back by a member
+  }
+  if (sub.rfind("chat:", 0) == 0) {
+    if (op.path.size() != 2 || op.kind != OpKind::Ins) return false;
+    // A message is its author's own (site), under the id its stamp gives (no one writes over another's
+    // message under a made-up id), and of a sane size (text and labels are capped when read; the raw
+    // value is what every member stores and replays).
+    if (jsonCompact(op.value).size() > kChatMaxRawBytes) return false;
+    ChatMessage m;
+    if (!chatMessageFromJson(op.value, m)) return false;
+    return m.site == b.site && m.id == makeChatMessageId(m.hlc, m.site) && sub == "chat:" + m.id;
   }
   if (sub == "ended") return op.path.size() == 2 && op.kind == OpKind::Ins && b.site == adminNow;
   return true;
@@ -3620,6 +3652,85 @@ void Session::refreshMembership() {
       exit_ = ExitKind::Ended;
       exitPending_ = true;
     }
+  }
+}
+
+bool Session::sendChatMessage(const std::string& text, const ChatAttachment& att, std::string* err) {
+  if (stopped_ || !ready_) {
+    if (err) *err = i18n::tr("Not connected to a collaborative project.");
+    return false;
+  }
+  if (!isActive(me_)) {
+    if (err) *err = i18n::tr("You are no longer a member of this project.");
+    return false;
+  }
+  const std::string body = cleanChatText(text);
+  if (body.empty() && !att.valid()) {
+    if (err) *err = i18n::tr("Message is empty.");
+    return false;
+  }
+  ChatMessage msg;
+  msg.hlc = hlc_.tick();
+  msg.site = me_;
+  msg.id = makeChatMessageId(msg.hlc, msg.site);
+  // Keep displayed wall timestamp causally monotonic with HLC even when peer clocks are skewed.
+  msg.atMs = std::max(wallNowMs(), Hlc::msOf(msg.hlc));
+  msg.author = cleanChatLabel(nameOf(me_), kChatMaxAuthorBytes);
+  msg.color = cfg_.profile.color & 0xFFFFFFu;
+  msg.text = body;
+  msg.att = att;
+  msg.att.label = cleanChatLabel(msg.att.label);
+  msg.att.detail = cleanChatLabel(msg.att.detail);
+
+  Op op;
+  op.kind = OpKind::Ins;
+  op.t = msg.hlc;
+  op.path = {"meta", "chat:" + msg.id};
+  op.value = chatMessageToJson(msg);
+  seenChatIds_.insert(msg.id);
+  if (!makeLocalBatch({std::move(op)}, false, false)) {
+    if (err) *err = i18n::tr("Could not send the message.");
+    return false;
+  }
+  return true;
+}
+
+void Session::refreshChat(bool notifyNew) {
+  const Json meta = replica_.materialize({"meta"});
+  std::vector<ChatMessage> msgs;
+  if (meta.is(Json::Type::Object)) {
+    for (const auto& [k, v] : meta.object) {
+      if (k.rfind("chat:", 0) != 0) continue;
+      ChatMessage m;
+      if (!chatMessageFromJson(v, m)) continue;
+      if (m.site == me_) {
+        const std::string nm = cleanChatLabel(nameOf(me_), kChatMaxAuthorBytes);
+        if (!nm.empty()) m.author = nm;
+        if (cfg_.profile.color != 0) m.color = cfg_.profile.color & 0xFFFFFFu;
+      } else {
+        auto pv = peers_.find(m.site);
+        if (pv != peers_.end()) {
+          const std::string nm = cleanChatLabel(pv->second.profile.name, kChatMaxAuthorBytes);
+          if (!nm.empty()) m.author = nm;
+          if (pv->second.profile.color != 0) m.color = pv->second.profile.color & 0xFFFFFFu;
+        }
+        if (m.author.empty()) m.author = cleanChatLabel(nameOf(m.site), kChatMaxAuthorBytes);
+      }
+      msgs.push_back(std::move(m));
+    }
+  }
+  std::sort(msgs.begin(), msgs.end(), chatMessageLess);
+  std::vector<ChatMessage> incoming;
+  for (const auto& m : msgs) {
+    if (seenChatIds_.insert(m.id).second && notifyNew && m.site != me_) {
+      ++unreadChat_;
+      incoming.push_back(m);
+    }
+  }
+  chatMessages_ = std::move(msgs);
+  doc_.setCollabChat(chatMessages_);
+  if (onChatMessage) {
+    for (const auto& m : incoming) onChatMessage(m);
   }
 }
 

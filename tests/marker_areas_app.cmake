@@ -1,0 +1,83 @@
+# Gridline: Export marker areas in the real app (hidden, isolated config and HOME, dummy audio
+# driver). For each layout (Studio, Clips, Smooth, Tracker) on a song with three markers:
+#   - the menu tree has the item (File > Export > Marker areas..., in Clips File > Other imports
+#     and exports > Export marker areas...);
+#   - the item's dialog opens in marker area mode and lists the three areas (drawn rows), ticked;
+# and in Studio an export writes one WAV per area while the project stays unchanged (no undo step).
+#   cmake -DAPP=<gridline-app> -DDEMO=<test_song.gridline.json> -DOUT=<dir> -P marker_areas_app.cmake
+cmake_minimum_required(VERSION 3.19)
+file(REMOVE_RECURSE "${OUT}")
+file(MAKE_DIRECTORY "${OUT}")
+set(ENV{SDL_AUDIODRIVER} "dummy")
+set(ENV{GRIDLINE_NO_PLUGIN_SCAN} "1")
+
+# The demo song with three markers (bars 1, 5 and 11 at 96 PPQ, 4/4).
+file(READ "${DEMO}" song)
+string(JSON song SET "${song}" markers
+       "[{\"pos\": 0, \"name\": \"Opening\"}, {\"pos\": 1536, \"name\": \"Second song\"}, {\"pos\": 3840, \"name\": \"Finale\"}]")
+
+set(names "Opening" "Second song" "Finale")
+foreach(L studio live logic tracker)
+  set(cfg "${OUT}/cfg_${L}")
+  file(MAKE_DIRECTORY "${cfg}/gridline" "${cfg}/home")
+  file(WRITE "${cfg}/gridline/settings.json"
+       "{\"format\": \"gridline-settings\", \"values\": {\"ui.layoutChosen\": true, \"ui.layoutDev\": true, \"ui.layout\": \"${L}\", \"keys.profile\": \"${L}\", \"ui.menuStyle\": \"${L}\"}}\n")
+  file(WRITE "${cfg}/song.gridline.json" "${song}")
+  set(script "5 toasts clear\n7 menutree dump\n9 markerareas open\n16 markerareas dump\n")
+  if(L STREQUAL "studio")
+    string(APPEND script "18 knobs\n20 markerareas start \"${cfg}/out\"\n400 waitfor render-finished 120\n402 export\n403 knobs\n")
+  endif()
+  string(APPEND script "410 quit discard\n")
+  file(WRITE "${cfg}/input.txt" "${script}")
+  set(ENV{GRIDLINE_CONFIG_HOME} "${cfg}")
+  set(ENV{HOME} "${cfg}/home")
+  execute_process(COMMAND "${APP}" "${cfg}/song.gridline.json" --hidden --no-ui-sounds --size 1440x900 --frames 600 --dev-input "${cfg}/input.txt"
+                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 240)
+  file(WRITE "${OUT}/${L}.log" "${out}\n---- stderr ----\n${err}")
+  if(NOT rc EQUAL 0)
+    message(FATAL_ERROR "FAIL: ${L}: gridline-app failed (${rc}): ${err}")
+  endif()
+  if(L STREQUAL "live")
+    set(row "File > Other imports and exports > Export marker areas...")
+  else()
+    set(row "File > Export > Marker areas...")
+  endif()
+  string(FIND "${out}" "${row}" at)
+  if(at LESS 0)
+    message(FATAL_ERROR "FAIL: ${L}: no menu row '${row}' (see ${OUT}/${L}.log)")
+  endif()
+  if(NOT out MATCHES "markerareas frame 16: open 1 mode 1 areas 3 ticked 3 drawn 3")
+    message(FATAL_ERROR "FAIL: ${L}: the dialog does not list the three areas (see ${OUT}/${L}.log)")
+  endif()
+  foreach(n IN LISTS names)
+    if(NOT out MATCHES "row ${n} \\| [0-9]+\\.[0-9]+ \\| [0-9]+:[0-9.]+ \\| on")
+      message(FATAL_ERROR "FAIL: ${L}: the dialog has no ticked row for '${n}' (see ${OUT}/${L}.log)")
+    endif()
+  endforeach()
+  message(STATUS "ok - ${L}: the menu has the item; the dialog lists the three areas")
+endforeach()
+
+# Studio's export: one file per area, named project - marker; nothing to undo afterwards.
+set(cfg "${OUT}/cfg_studio")
+file(READ "${OUT}/studio.log" out)
+if(NOT out MATCHES "export frame 402: running 0 finished 0 progress [0-9.]+ files 3 errors 0 cancelled 0")
+  message(FATAL_ERROR "FAIL: the marker area export did not write three files (see ${OUT}/studio.log)")
+endif()
+foreach(n IN LISTS names)
+  file(GLOB f "${cfg}/out/* - ${n}.wav")
+  if(NOT f)
+    message(FATAL_ERROR "FAIL: no file for the area '${n}' in ${cfg}/out")
+  endif()
+  file(SIZE "${f}" size)
+  if(size LESS 1000)
+    message(FATAL_ERROR "FAIL: the file of '${n}' is empty (${size} bytes)")
+  endif()
+endforeach()
+string(REGEX MATCH "knobs frame 18 undo ([0-9]+)" m1 "${out}")
+set(u1 "${CMAKE_MATCH_1}")
+string(REGEX MATCH "knobs frame 403 undo ([0-9]+)" m2 "${out}")
+set(u2 "${CMAKE_MATCH_1}")
+if(NOT m1 OR NOT m2 OR NOT u1 STREQUAL u2)
+  message(FATAL_ERROR "FAIL: the export changed the undo history (${u1} -> ${u2})")
+endif()
+message(STATUS "ok - studio: one file per marker area; the undo history is untouched")

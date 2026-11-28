@@ -66,6 +66,20 @@ void mapPointer();
 // Main loop, right after ImGui::Render(): the magnified regions' draw lists are scaled.
 void afterRender();
 
+// K-404: inline scaled editor regions (multiple editors side by side inside a container such as
+// Studio's Device chain). The caller supplies the height-fitted scale `z` and screen clip rect
+// [clipMin, clipMax]; each region uses a unique `key` (e.g. target key).
+ImVec2 inlineDesignSize(const std::string& key, const std::string& type, float defaultW);
+void beginInline(const std::string& key, const std::string& type, float designW, float z, ImVec2 clipMin, ImVec2 clipMax);
+void endInline(const std::string& key);
+// LayoutAudit helper: when `w` is a child window inside an active scaled region this frame (before
+// afterRender() scales its draw list), returns true and fills its origin, scale and screen clip.
+bool pendingWindowTransform(const void* imguiWindow, ImVec2& origin, float& z, ImVec2& clipMin, ImVec2& clipMax);
+// Dev (the item hooks, while the frame is drawn): when `imguiWindow` is inside a magnified editor this
+// frame, its child windows and the popups it opened alike, `p` (design coordinates) becomes where it
+// shows on screen; false (and `p` unchanged) elsewhere.
+bool devToScreen(const void* imguiWindow, ImVec2& p);
+
 // Dev checks (--dev-input "edzoom"): the zoom drawn last frame for `key` (0 = not drawn),
 // the design size and the window's size and position, to stdout.
 void devDump(const char* key);

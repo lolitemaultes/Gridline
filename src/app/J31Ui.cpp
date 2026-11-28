@@ -413,6 +413,9 @@ void pianoViewItems(App& a) {
   ui::Hint("A click on another channel's ghost note switches to that channel with the note selected");
   b = a.settings.getBool("piano.followKeyMarkers");
   if (ImGui::MenuItem(i18n::tr("Scale follows key markers"), nullptr, &b)) a.settings.set("piano.followKeyMarkers", b);
+  b = a.settings.getBool("piano.previewWhilePlaying");  // K-422
+  if (ImGui::MenuItem(i18n::tr("Preview notes while playing"), nullptr, &b)) a.settings.set("piano.previewWhilePlaying", b);
+  ui::Hint("Clicking, adding or dragging notes plays a preview even while the song or pattern is playing");
   if (ImGui::BeginMenu(i18n::tr("Background waveform"))) {
     if (ImGui::MenuItem(i18n::tr("None"), nullptr, bgChannel == kNoId)) bgChannel = kNoId;
     ImGui::Separator();

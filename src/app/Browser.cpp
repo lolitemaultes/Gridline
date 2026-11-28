@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 #include "GrooveUi.h"
+#include "LfoUi.h"
 #include "StageView.h"
 #include "../core/Macros.h"
 #include "../core/MixerOps.h"
@@ -45,6 +46,7 @@
 #include "AudioRecordUi.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
+#include "PluginIcons.h"
 #include "../core/RemoteFs.h"
 #include "StemsUi.h"
 #include "ExternalDragUi.h"
@@ -207,6 +209,17 @@ void showFolder(App& a, const std::string& dir) {
   if (!hiddenDirs.show(dir)) return;
   saveHidden(a);
   if (hiddenDirs.empty()) showHidden = false;  // nothing left to show: the eye goes away
+}
+// K-445: "Show in Finder / Explorer / Files": a folder (or the folder holding a file) in the
+// system's file manager; its hint says where it is.
+void revealItem(App& a, const std::string& path) {
+  if (remotefs::isRemote(path)) return;
+  const bool picked = ImGui::MenuItem(i18n::tr(browserui::revealText()));
+  devNoteRect("brreveal");
+  if (picked) browserui::revealInFileManager(a, path);
+  std::error_code ec;
+  const std::string where = fs::is_regular_file(fs::u8path(path), ec) ? fs::u8path(path).parent_path().u8string() : path;
+  if (ImGui::IsItemHovered()) a.setHint(where);
 }
 // The Hide folder / Show folder item of a folder's menu.
 void hideMenuItem(App& a, const std::string& dir) {
@@ -509,6 +522,7 @@ struct RowNav {
   ImGuiID openId = 0;
   bool open = false;
   const char* path = nullptr;
+  const char* pluginType = nullptr;  // K-450: a plugin row: the plugin's own icon instead of `icon`
 };
 bool browserRow(const char* id, ui::Icon icon, const char* name, const char* detail, float indent, bool* dbl, ImU32 iconCol = 0,
                 bool selected = false, bool star = false, bool* starHit = nullptr, RowNav rn = {}) {
@@ -570,8 +584,10 @@ bool browserRow(const char* id, ui::Icon icon, const char* name, const char* det
     }
   if (lg && icon == ui::Icon::Folder && rn.openId)
     ui::drawIcon(dl, rn.open ? ui::Icon::ChevronDown : ui::Icon::Chevron, ImVec2(x + 8, q.y + gRowH * 0.5f), 9, hov ? P.text : P.textDim);
-  else
+  else if (!rn.pluginType || !ui::drawPluginIcon(dl, rn.pluginType, ImVec2(x + 7, q.y + gRowH * 0.5f), 14, ui::PluginIconSurface::Browser)) {
+    if (rn.pluginType) ui::notePluginIconFallback(rn.pluginType, ui::PluginIconSurface::Browser);
     ui::drawIcon(dl, icon, ImVec2(x + 8, q.y + gRowH * 0.5f), 12, hov ? P.text : ic);
+  }
   float detailW = 0;
   if (takeEyeMark()) {  // GitHub #58: a hidden folder (Show hidden): the eye-off mark at the row's end, a click on it shows the folder
     const bool eh = hov && ImGui::GetIO().MousePos.x >= q.x + w - kEyeMarkW;
@@ -1169,6 +1185,7 @@ void folderRowExtras(App& a, const fs::path& dir) {
     if (live) {
       if (opItem("New folder", lockedWhy(a, d, true))) newFolderIn(a, d);
       if (ImGui::MenuItem(i18n::tr("Add as a place"))) addFolderTabNow(a, d);  // GitHub #74: the folder among the places
+      revealItem(a, d);  // K-445
       hideMenuItem(a, d);  // GitHub #58
       collapseAllItem();
       ImGui::EndPopup();
@@ -1180,6 +1197,7 @@ void folderRowExtras(App& a, const fs::path& dir) {
     if (opItem("Move to the trash...", why)) fops.trashAsk = d, fops.trashOpen = true;
     ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("Open as a tab"))) addFolderTabNow(a, d);  // GitHub #74
+    revealItem(a, d);  // K-445
     hideMenuItem(a, d);  // GitHub #58
     collapseAllItem();
     ImGui::EndPopup();
@@ -1321,12 +1339,15 @@ void fileContextMenu(App& a, const std::string& ps) {
   if (livelook::active(a)) {
     if (ImGui::MenuItem(isStarred(ps) ? i18n::tr("Remove star") : i18n::tr("Star"))) toggleStar(ps);
     if (opItem("New folder", lockedWhy(a, parent, true))) newFolderIn(a, parent);
+    revealItem(a, ps);  // K-445: the folder holding it
     ImGui::EndPopup();
     return;
   }
   if (opItem("Rename", why)) startRename(ps);
   if (opItem("New folder", lockedWhy(a, parent, true))) newFolderIn(a, parent);
   if (opItem("Move to the trash...", why)) fops.trashAsk = ps, fops.trashOpen = true;
+  ImGui::Separator();
+  revealItem(a, ps);  // K-445: the folder holding it
   ImGui::EndPopup();
 }
 
@@ -1537,12 +1558,14 @@ void pluginRow(App& a, const PluginInfo& p, float indent, const char* detail, bo
   bool dbl = false;
   ui::Icon icon = p.kind == PluginKind::Generator ? ui::Icon::Plug : p.kind == PluginKind::Effect ? ui::Icon::Mixer : ui::Icon::Piano;
   bool starHit = false;
-  browserRow(p.type.c_str(), icon, p.name.c_str(), detail, indent, &dbl, 0, false, fav, &starHit);
+  RowNav rn;
+  rn.pluginType = p.type.c_str();
+  browserRow(p.type.c_str(), icon, p.name.c_str(), detail, indent, &dbl, 0, false, fav, &starHit, rn);
   if (starHit) host::setFavourite(p.type, !fav);  // K-16: the star toggles the favourite
   if (starHit) dbl = false;
   if (ImGui::BeginDragDropSource()) {
     ImGui::SetDragDropPayload("GL_PLUGIN", p.type.data(), p.type.size());
-    ui::DragPreview(icon, p.name.c_str());
+    ui::DragPreview(icon, p.name.c_str(), 0, p.type.c_str());
     ImGui::EndDragDropSource();
   }
   ImGui::PushID(p.type.c_str());
@@ -1755,17 +1778,28 @@ void sectionCurrentProject(App& a) {
   if (!sectionHeader("Current project", -1, true, role::kPlay, ui::Icon::Song)) return;
   const float in = 12;
   if (treeNode("##cp.pat", "Patterns", static_cast<int>(s.patterns.size()), in, role::kPlay)) {
+    bool firstPat = true;
     for (const auto& p : s.patterns) {
+      const ObjectId pid = p.id;
+      const Rgb color = p.color;
+      const std::string name = p.name;
       bool dbl = false;
-      const std::string id = "##pat" + std::to_string(p.id);
-      if (browserRow(id.c_str(), ui::Icon::Pattern, p.name.c_str(), nullptr, in + 14, &dbl, theme::rgb(p.color), p.id == a.curPattern))
-        a.selectPattern(p.id);
+      const std::string id = "##pat" + std::to_string(pid);
+      if (browserRow(id.c_str(), ui::Icon::Pattern, name.c_str(), nullptr, in + 14, &dbl, theme::rgb(color), pid == a.curPattern))
+        a.selectPattern(pid);
+      if (firstPat) devNoteRect("brpat0"), firstPat = false;
       if (ImGui::BeginDragDropSource()) {
-        ImGui::SetDragDropPayload("GL_PATTERN", &p.id, sizeof p.id);
-        ui::DragPreview(ui::Icon::Pattern, p.name.c_str(), theme::rgb(p.color));
+        ImGui::SetDragDropPayload("GL_PATTERN", &pid, sizeof pid);
+        ui::DragPreview(ui::Icon::Pattern, name.c_str(), theme::rgb(color));
         ImGui::EndDragDropSource();
       }
-      ui::Hint("Click: select the pattern \xC2\xB7 drag onto the playlist to place it");
+      const uint64_t rev = a.doc.revision();
+      if (ImGui::BeginPopupContextItem((id + "menu").c_str())) {
+        patternContextMenu(a, pid);
+        ImGui::EndPopup();
+      }
+      ui::Hint("Click: select the pattern \xC2\xB7 drag onto the playlist to place it \xC2\xB7 right-click: rename & options");
+      if (a.doc.revision() != rev) break;
     }
   }
   if (treeNode("##cp.ch", "Channels", static_cast<int>(s.channels.size()), in, role::kDraw)) {
@@ -1773,8 +1807,10 @@ void sectionCurrentProject(App& a) {
       bool dbl = false;
       const PluginInfo* info = findPlugin(c.plugin.type);
       const std::string id = "##ch" + std::to_string(c.id);
+      RowNav rn;
+      rn.pluginType = c.plugin.type.c_str();
       if (browserRow(id.c_str(), ui::Icon::Plug, c.name.c_str(), info ? info->name.c_str() : "", in + 14, &dbl, theme::rgb(c.color),
-                     c.id == a.selChannel))
+                     c.id == a.selChannel, false, nullptr, rn))
         a.selectChannel(c.id);
       if (dbl) a.settingsChannel = c.id;
       ui::Hint("Click: select \xC2\xB7 double-click: open the channel");
@@ -1792,8 +1828,10 @@ void sectionCurrentProject(App& a) {
         bool dbl = false;
         const std::string id = "##fx" + std::to_string(s.mixer[i].id) + "." + std::to_string(k);
         const std::string where = mixerTrackName(s, i);
+        RowNav rn;
+        rn.pluginType = sl.plugin.type.c_str();
         if (browserRow(id.c_str(), ui::Icon::Mixer, info->name.c_str(), where.c_str(), in + 14, &dbl, 0,
-                       a.fxEditor == std::make_pair(s.mixer[i].id, k)))
+                       a.fxEditor == std::make_pair(s.mixer[i].id, k), false, nullptr, rn))
           a.selMixer = s.mixer[i].id;
         if (dbl) a.fxEditor = {s.mixer[i].id, k};
         ui::Hint("Click: select the mixer track \xC2\xB7 double-click: open the effect");
@@ -2014,6 +2052,66 @@ void sectionSwingPresets(App& a) {
   ImGui::Dummy(ImVec2(0, 4));
 }
 
+// 0.7.9: LFO presets (a whole source's shape, rate, restart and knobs; never its targets).
+// Double-click loads one into the selected source (or makes a new one when none is selected).
+void lfoPresetRow(App& a, const lfo::Preset& p, float indent) {
+  const std::string full = p.folder.empty() ? p.name : p.folder + "/" + p.name;
+  const std::string id = (p.factory ? "##lff." : "##lfu.") + full + p.file;
+  bool dbl = false;
+  const char* name = p.factory ? i18n::tr(p.name.c_str()) : p.name.c_str();
+  browserRow(id.c_str(), ui::Icon::Sine, name, "", indent, &dbl, roleCol(role::kGraph), false);
+  {
+    const std::string what = std::string(i18n::tr(lfo::shapeName(p.lfo.shape))) + " " + lfo::rateLabel(p.lfo);
+    std::vector<char> b(what.size() + 256);
+    std::snprintf(b.data(), b.size(), i18n::tr("%s \xC2\xB7 double-click: load it into the selected LFO (or a new one)"), what.c_str());
+    ui::Hint(std::string(b.data()));
+  }
+  const Song& s = a.doc.song();
+  const ObjectId sel = s.lfo(lfoui::selected()) && s.lfo(lfoui::selected())->kind == LfoKind::Lfo ? lfoui::selected() : kNoId;
+  ImGui::PushID(id.c_str());
+  if (ImGui::BeginPopupContextItem("##lfctx")) {
+    if (ImGui::MenuItem(i18n::tr("New LFO from it"))) lfoui::usePreset(a, p, kNoId), lfoui::toggleOpen(a);
+    if (ImGui::MenuItem(i18n::tr("Load into the selected LFO"), nullptr, false, sel != kNoId)) lfoui::usePreset(a, p, sel);
+    if (!p.factory) {
+      ImGui::Separator();
+      if (ImGui::MenuItem(i18n::tr("Delete"))) {
+        lfo::deleteUserPreset(p);
+        lfoui::refreshPresets();
+      }
+    }
+    ImGui::EndPopup();
+  }
+  ImGui::PopID();
+  if (dbl) {
+    lfoui::usePreset(a, p, sel);
+    lfoui::toggleOpen(a);
+  }
+}
+
+void sectionLfoPresets(App& a) {
+  const auto& factory = lfo::presets();
+  const auto& mine = lfoui::userPresets(a);
+  if (!sectionHeader("LFO presets", static_cast<int>(factory.size() + mine.size()), false, role::kGraph, ui::Icon::Sine)) return;
+  if (treeNode("##lf.factory", "Factory", -1, 12, role::kGraph))
+    for (const lfo::Preset& p : factory) lfoPresetRow(a, p, 26);
+  if (!mine.empty() && treeNode("##lf.user", "My presets", static_cast<int>(mine.size()), 12, role::kGraph)) {
+    std::vector<PresetEntry> user;
+    for (const lfo::Preset& p : mine) user.push_back({p.name, p.folder, p.file});
+    const browse::PresetNode tree = browse::buildPresetTree(user);
+    std::function<void(const browse::PresetNode&, const std::string&, float)> rows = [&](const browse::PresetNode& node, const std::string& key,
+                                                                                        float indent) {
+      for (const auto& f : node.folders) {
+        const std::string k = key + "/" + f.name;
+        if (treeNode(k, f.name.c_str(), static_cast<int>(f.count()), indent)) rows(f, k, indent + 14);
+      }
+      for (size_t i : node.presets) lfoPresetRow(a, mine[i], indent);
+    };
+    rows(tree, "##lf.user", 26);
+  }
+  if (mine.empty()) emptyLine("Save yours from an LFO's menu");
+  ImGui::Dummy(ImVec2(0, 4));
+}
+
 // K-224: Stage room templates (factory and the user's own): double-click applies one to the room the
 // Stage shows; the menu also starts a new room from it.
 void stageRoomRow(App& a, const roomops::RoomTemplate& t, float indent) {
@@ -2074,6 +2172,7 @@ void folderSection(App& a, const char* title, const fs::path& dir, uint32_t role
   if (rootHeaderMenu(hh, "##rootctx")) {
     ImGui::TextDisabled("%s", theme::fitText(dir.string().c_str(), 300));
     if (opItem("New folder", lockedWhy(a, dir.string(), true))) newFolderIn(a, dir.string());
+    revealItem(a, dir.string());  // K-445: where Gridline keeps it, in the system's file manager
     ImGui::Separator();
     hideMenuItem(a, dir.string());  // GitHub #58
     collapseAllItem();
@@ -2119,6 +2218,7 @@ void sectionUserFolders(App& a) {
     if (rootHeaderMenu(hh, "##fmenu")) {
       ImGui::TextDisabled("%s", folders[i].c_str());
       if (opItem("New folder", lockedWhy(a, folders[i], true))) newFolderIn(a, folders[i]);
+      revealItem(a, folders[i]);  // K-445
       if (ImGui::MenuItem(i18n::tr("Refresh"))) {
         dirCache.clear();
         browserui::refreshIndex(a);
@@ -2237,6 +2337,12 @@ int searchResults(App& a, const std::string& text) {
 // ------------------------------------------------------------ info panel
 
 constexpr float kInfoH = 128.0f;
+constexpr float kInfoAudioH = 160.0f;
+
+float currentInfoH() {
+  if (selPath.empty()) return 0.0f;
+  return browse::kindOf(selPath) == Kind::Audio ? kInfoAudioH : kInfoH;
+}
 
 // K-162: a drum kit's instruments in the info panel's preview box, two rows of pads; a click plays
 // the instrument's loudest sample, a drag takes the whole kit.
@@ -2296,20 +2402,27 @@ void infoPanel(App& a) {
   ImVec2 p0 = ImGui::GetCursorScreenPos();
   const float w = ImGui::GetContentRegionAvail().x;
   const bool trk = trkLook(a);
-  if (trk) {  // the Tracker: a raised box on the band's face, a gap above it
-    trackerview::bevelBox(dl, ImVec2(p0.x + sp::kPad, p0.y + sp::kGap), ImVec2(p0.x + w - sp::kPad, p0.y + kInfoH - sp::kGap));
-  } else {
-    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + kInfoH), P.surface900);
-    dl->AddLine(p0, ImVec2(p0.x + w, p0.y), P.line);
-  }
   browse::FileMeta m;
   const bool known = browserui::index().lookup(selPath, m);
   if (!known) m = browse::Index::describe(selPath, false);
+  const bool isAudio = m.kind == Kind::Audio;
+  const float infoH = isAudio ? kInfoAudioH : kInfoH;
+  if (trk) {  // the Tracker: a raised box on the band's face, a gap above it
+    trackerview::bevelBox(dl, ImVec2(p0.x + sp::kPad, p0.y + sp::kGap), ImVec2(p0.x + w - sp::kPad, p0.y + infoH - sp::kGap));
+  } else {
+    dl->AddRectFilled(p0, ImVec2(p0.x + w, p0.y + infoH), P.surface900);
+    dl->AddLine(p0, ImVec2(p0.x + w, p0.y), P.line);
+  }
   const float pad = trk ? sp::kPad + sp::kGroup : theme::kS2;
-  // Title + star + close.
+  // Title + star + close (title is also draggable so file drag works alongside waveform scrubbing).
   const drumkitui::Summary* kit = m.kind == Kind::DrumKit ? drumkitui::summary(selPath) : nullptr;  // K-162: read on a worker
   const std::string name = kit && kit->ok && !kit->name.empty() ? kit->name : fs::path(selPath).filename().string();
-  theme::textEllipsis(dl, a.fontBold, theme::kFontCaption + 1, ImVec2(p0.x + pad, p0.y + 6), w - 2 * pad - 48, P.text, name.c_str());
+  const float titleW = std::max(24.0f, w - 2 * pad - 48);
+  ImGui::SetCursorScreenPos(ImVec2(p0.x + pad, p0.y + 4));
+  ImGui::InvisibleButton("##infotitle", ImVec2(titleW, 18));
+  browserui::fileDragSource(selPath);
+  if (ImGui::IsItemHovered()) ui::Hint("Drag into the playlist, channel rack, or a sampler");
+  theme::textEllipsis(dl, a.fontBold, theme::kFontCaption + 1, ImVec2(p0.x + pad, p0.y + 6), titleW, P.text, name.c_str());
   ImGui::SetCursorScreenPos(ImVec2(p0.x + w - (trk ? pad + 42 : 46), p0.y + 3));
   {
     const bool st = std::find(m.tags.begin(), m.tags.end(), kStarTag) != m.tags.end();
@@ -2325,7 +2438,7 @@ void infoPanel(App& a) {
     ImGui::SetCursorScreenPos(ImVec2(p0.x + w - 24, p0.y + 3));
     if (ui::IconButton("closeinfo", ui::Icon::Close, false, 20, "Close the file info")) selPath.clear();
   }
-  // Waveform mini-view.
+  // Waveform mini-view with live playhead and click/right-click/drag scrubbing (K-416).
   const ImVec2 w0(p0.x + pad, p0.y + 26), w1(p0.x + w - pad, p0.y + 26 + 40);
   if (trk) trackerview::bevelBox(dl, ImVec2(w0.x - 2, w0.y - 2), ImVec2(w1.x + 2, w1.y + 2), true);  // a sunken well, as the band's scopes
   else dl->AddRectFilled(w0, w1, P.well, theme::kRadiusSm);
@@ -2344,15 +2457,194 @@ void infoPanel(App& a) {
     }
     dl->AddLine(ImVec2(w0.x, mid), ImVec2(w1.x, mid), theme::withAlpha(wc, 0.5f));
   } else {
-    const char* t = m.kind == Kind::Audio ? "Click to preview and analyse" : browse::kindName(m.kind);
+    const char* t = isAudio ? i18n::tr("Click to preview and analyse") : browse::kindName(m.kind);
     float tw = a.fontRegular->CalcTextSizeA(theme::kFontCaption, 1e9f, 0, t).x;
     dl->AddText(a.fontRegular, theme::kFontCaption, ImVec2((w0.x + w1.x - tw) * 0.5f, (w0.y + w1.y - theme::kFontCaption) * 0.5f), P.textFaint, t);
   }
+  const bool playingSel = isAudio && a.engine.previewing() && browserui::previewActivePath() == selPath;
+  const bool pendingSel = playingSel && a.engine.previewPending();
+  const float playNorm = playingSel && !pendingSel ? a.engine.previewPosition() : -1.0f;
+  if (playingSel && playNorm >= 0.0f) {
+    const float px = std::round(w0.x + std::clamp(playNorm, 0.0f, 1.0f) * (w1.x - w0.x));
+    dl->AddRectFilled(w0, ImVec2(px, w1.y), theme::withAlpha(P.hot, 0.14f), trk ? 0.0f : theme::kRadiusSm);
+    dl->AddLine(ImVec2(px, w0.y + 1), ImVec2(px, w1.y - 1), P.hot, 1.5f);
+    dl->AddTriangleFilled(ImVec2(px - 3.5f, w0.y), ImVec2(px + 3.5f, w0.y), ImVec2(px, w0.y + 4.5f), P.hot);
+  } else if (pendingSel) {
+    dl->AddRect(w0, w1, theme::withAlpha(P.accent, 0.75f), trk ? 0.0f : theme::kRadiusSm, 0, 1.5f);
+    const char* badge = i18n::tr("Sync...");
+    const float btw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, badge).x;
+    dl->AddRectFilled(ImVec2(w1.x - btw - 10, w0.y + 3), ImVec2(w1.x - 3, w0.y + 17), theme::withAlpha(P.surface950, 0.85f), 3.0f);
+    dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(w1.x - btw - 6, w0.y + 4), P.accent, badge);
+  }
   if (m.kind != Kind::DrumKit) {  // (a kit's instruments are buttons of their own)
     ImGui::SetCursorScreenPos(w0);
-    if (ImGui::InvisibleButton("##wave", ImVec2(w1.x - w0.x, w1.y - w0.y)) && m.kind == Kind::Audio) browserui::previewFile(a, selPath);
-    browserui::fileDragSource(selPath);
-    ui::Hint("Click to preview \xC2\xB7 drag like the file row");
+    const float waveW = std::max(1.0f, w1.x - w0.x);
+    ImGui::InvisibleButton("##wave", ImVec2(waveW, w1.y - w0.y), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const bool wHov = ImGui::IsItemHovered();
+    const bool wAct = ImGui::IsItemActive();
+    static bool scrubbing = false;
+    static float lastScrubX = -1e9f;
+    if (isAudio) {
+      const bool lDown = ImGui::IsMouseClicked(ImGuiMouseButton_Left) && wHov;
+      const bool rDown = ImGui::IsMouseClicked(ImGuiMouseButton_Right) && wHov;
+      if (lDown || rDown) {
+        const float mx = ImGui::GetIO().MousePos.x;
+        const double norm = std::clamp(static_cast<double>(mx - w0.x) / static_cast<double>(waveW), 0.0, 0.999);
+        browserui::scrubPreview(a, selPath, norm);
+        scrubbing = true;
+        lastScrubX = mx;
+      } else if (scrubbing && (ImGui::IsMouseDown(ImGuiMouseButton_Left) || ImGui::IsMouseDown(ImGuiMouseButton_Right))) {
+        const float mx = ImGui::GetIO().MousePos.x;
+        if (std::fabs(mx - lastScrubX) >= 2.0f) {
+          const double norm = std::clamp(static_cast<double>(mx - w0.x) / static_cast<double>(waveW), 0.0, 0.999);
+          browserui::scrubPreview(a, selPath, norm);
+          lastScrubX = mx;
+        }
+      } else if (scrubbing) {
+        scrubbing = false;
+      }
+      if (wHov || wAct) ui::Hint("Click or right-click to play from here \xC2\xB7 drag to scrub");
+    } else {
+      browserui::fileDragSource(selPath);
+      if (wHov) ui::Hint("Drag into the project");
+    }
+  }
+  // K-407 + K-417: inline preview controls strip (Pitch transpose knob + Carry-on-drop + Start on + Speed).
+  float factsY = w1.y + 5;
+  if (isAudio) {
+    const float sy = w1.y + 4;
+    const float sh = 24.0f;
+    const float cy = std::round(sy + sh * 0.5f);
+    float lx = p0.x + pad;
+    // 1. Pitch transpose knob (-12..+12 st, double-click resets to 0 st, right-click for carry-on-drop).
+    float& pitchSt = browserui::previewPitchSt();
+    const float kr = 9.0f;
+    ImGui::SetCursorScreenPos(ImVec2(lx, cy - kr));
+    ImGui::InvisibleButton("##pvpitch", ImVec2(kr * 2.0f, kr * 2.0f));
+    const bool pHov = ImGui::IsItemHovered(), pAct = ImGui::IsItemActive();
+    static float pitchDragStart = 0.0f;
+    static float pitchDragY0 = 0.0f;
+    if (ImGui::IsItemActivated()) {
+      pitchDragStart = pitchSt;
+      pitchDragY0 = ImGui::GetIO().MousePos.y;
+    }
+    if (pAct && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f)) {
+      const float dy = pitchDragY0 - ImGui::GetIO().MousePos.y;
+      const float next = std::clamp(std::round(pitchDragStart + dy / 6.0f), -12.0f, 12.0f);
+      if (next != pitchSt) {
+        pitchSt = next;
+        browserui::syncPreviewControls(a);
+      }
+    }
+    if (pHov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+      pitchSt = 0.0f;
+      browserui::syncPreviewControls(a);
+    }
+    if (pHov && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##pvpitchctx");
+    ui::DrawKnob(dl, ImVec2(std::round(lx + kr), cy), kr, (pitchSt + 12.0f) / 24.0f, true, pHov, pAct);
+    if (pHov || pAct) ui::Hint("Preview pitch transpose (semitones) \xC2\xB7 drag up/down, double-click resets to 0 st, right-click for drop option");
+    lx += kr * 2.0f + 4.0f;
+    char pbuf[20];
+    const int stInt = static_cast<int>(std::lround(pitchSt));
+    if (stInt > 0) std::snprintf(pbuf, sizeof pbuf, "+%d st", stInt);
+    else std::snprintf(pbuf, sizeof pbuf, "%d st", stInt);
+    const float ptw = std::max(32.0f, a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, pbuf).x + 2.0f);
+    ImGui::SetCursorScreenPos(ImVec2(lx, sy + 3));
+    ImGui::InvisibleButton("##pvpitchlbl", ImVec2(ptw, sh - 6));
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+      pitchSt = 0.0f;
+      browserui::syncPreviewControls(a);
+    }
+    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##pvpitchctx");
+    dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(lx, std::round(cy - theme::kFontLabel * 0.5f)),
+                stInt != 0 ? P.hot : P.textDim, pbuf);
+    lx += ptw + 4.0f;
+    if (ImGui::BeginPopup("##pvpitchctx")) {
+      if (ImGui::MenuItem(i18n::tr("Reset pitch (0 st)"), nullptr, false, stInt != 0)) {
+        pitchSt = 0.0f;
+        browserui::syncPreviewControls(a);
+      }
+      bool carry = browserui::previewCarryPitch();
+      if (ImGui::MenuItem(i18n::tr("Carry pitch when dragging into project"), nullptr, carry)) {
+        browserui::previewCarryPitch() = !carry;
+      }
+      ImGui::EndPopup();
+    }
+    // Right-aligned: Start on (1/8, 1/4, 1/2, 1 bar) and Speed (x1/2, x1, x2) pills.
+    static const char* const kQuantLabels[4] = {"1/8", "1/4", "1/2", "1 bar"};
+    static const char* const kSpeedLabels[3] = {"\xC3\x97" "1/2", "\xC3\x97" "1", "\xC3\x97" "2"};
+    const bool syncOn = browserui::previewSync();
+    int& qIdx = browserui::previewQuant();
+    int& sIdx = browserui::previewSpeedIdx();
+    qIdx = std::clamp(qIdx, 0, 3);
+    sIdx = std::clamp(sIdx, 0, 2);
+    const float pillH = 20.0f;
+    const float pillY = std::round(cy - pillH * 0.5f);
+    auto miniPill = [&](const char* id, float px, float pw, const char* text, bool lit, const char* hint) {
+      ImGui::SetCursorScreenPos(ImVec2(px, pillY));
+      const bool click = ImGui::InvisibleButton(id, ImVec2(pw, pillH));
+      const bool hov = ImGui::IsItemHovered();
+      const ImVec2 b0(px, pillY), b1(px + pw, pillY + pillH);
+      if (trk) {
+        trackerview::bevelBox(dl, b0, b1, lit && hov);
+        if (lit) dl->AddRectFilled(ImVec2(b0.x + 1, b0.y + 1), ImVec2(b1.x - 1, b1.y - 1), theme::withAlpha(P.accent, hov ? 0.25f : 0.14f));
+      } else {
+        const ImU32 bg = lit ? (hov ? theme::mix(P.surface700, P.accent, 0.22f) : theme::mix(P.surface800, P.accent, 0.14f))
+                             : (hov ? P.surface700 : P.surface800);
+        dl->AddRectFilled(b0, b1, bg, 3.0f);
+        dl->AddRect(b0, b1, lit ? theme::withAlpha(P.accent, 0.55f) : P.line, 3.0f);
+      }
+      const float tw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, text).x;
+      dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(std::round(px + (pw - tw) * 0.5f), std::round(pillY + (pillH - theme::kFontLabel) * 0.5f)),
+                  lit ? P.text : P.textFaint, text);
+      if (hov) ui::Hint(hint);
+      return click;
+    };
+    const float spdW = 36.0f, qW = 44.0f;
+    const float spdX = p0.x + w - pad - spdW;
+    const float qX = spdX - 4.0f - qW;
+    // Optional Carry-pitch badge if pitch != 0 and space allows.
+    const float carryW = 36.0f;
+    if (stInt != 0 && lx + carryW + 4.0f <= qX) {
+      if (miniPill("##pvcarry", lx, carryW, i18n::tr("Drop"), browserui::previewCarryPitch(),
+                   browserui::previewCarryPitch() ? "Carry pitch on: dragging this file into the project applies the preview pitch (click to turn off)"
+                                                  : "Carry pitch off: dragging this file into the project keeps its original pitch (click to turn on)")) {
+        browserui::previewCarryPitch() = !browserui::previewCarryPitch();
+      }
+    }
+    if (qX >= lx) {
+      if (miniPill("##pvquant", qX, qW, kQuantLabels[qIdx], syncOn,
+                   "Start on: quantise synced loop preview to the next 1/8, 1/4, 1/2, or 1 bar (click to choose)")) {
+        ImGui::OpenPopup("##pvquantpop");
+      }
+      if (ImGui::BeginPopup("##pvquantpop")) {
+        ImGui::TextDisabled("%s", i18n::tr("Start on"));
+        for (int k = 0; k < 4; ++k) {
+          if (ImGui::MenuItem(kQuantLabels[k], nullptr, qIdx == k)) {
+            qIdx = k;
+            browserui::previewSync() = true;
+            browserui::syncPreviewControls(a);
+          }
+        }
+        ImGui::EndPopup();
+      }
+      if (miniPill("##pvspeed", spdX, spdW, kSpeedLabels[sIdx], syncOn,
+                   "Speed: half-time, normal, or double-time synced loop preview (click to choose)")) {
+        ImGui::OpenPopup("##pvspeedpop");
+      }
+      if (ImGui::BeginPopup("##pvspeedpop")) {
+        ImGui::TextDisabled("%s", i18n::tr("Speed"));
+        for (int k = 0; k < 3; ++k) {
+          if (ImGui::MenuItem(kSpeedLabels[k], nullptr, sIdx == k)) {
+            sIdx = k;
+            browserui::previewSync() = true;
+            browserui::syncPreviewControls(a);
+          }
+        }
+        ImGui::EndPopup();
+      }
+    }
+    factsY = sy + sh + 4;
   }
   // Facts line.
   std::string facts;
@@ -2393,9 +2685,9 @@ void infoPanel(App& a) {
     std::snprintf(b, sizeof b, m.size >= (1u << 20) ? "%.1f MB" : "%.0f KB", m.size >= (1u << 20) ? m.size / 1048576.0 : m.size / 1024.0);
     add(b);
   }
-  dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(p0.x + pad, w1.y + 5), P.textDim, theme::fitText(facts.c_str(), w - 2 * pad));
+  dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(p0.x + pad, factsY), P.textDim, theme::fitText(facts.c_str(), w - 2 * pad));
   // Tags: user tags as removable chips, then automatic ones (faint), then the add field.
-  float x = p0.x + pad, y = w1.y + 24;
+  float x = p0.x + pad, y = factsY + 19;
   int removeAt = -1;
   for (size_t i = 0; i < m.tags.size(); ++i) {
     if (m.tags[i] == kStarTag) continue;
@@ -2446,7 +2738,7 @@ void infoPanel(App& a) {
     tagBuf[0] = 0;
   }
   ui::Hint("Add a tag (Enter) \xC2\xB7 search with tag:<name>");
-  ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + kInfoH));
+  ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + infoH));
 }
 
 // Tab strip under the search field (All / Project / Plugins / Sounds / Starred).
@@ -2757,7 +3049,7 @@ void tabStrip(App& a) {
 // K-112c: the Live layout's browser: a flat list of categories (and places) in place of the tabs;
 // the chosen one's contents show under it, drawn by the same sections as everywhere else.
 enum LiveCat { LcStarred, LcSounds, LcDrums, LcInstruments, LcAudioFx, LcNoteFx, LcPlugins, LcClips, LcSamples, LcGrooves,
-               LcRecent, LcProjects, LcFolders, LcCount };
+               LcLfos, LcRecent, LcProjects, LcFolders, LcCount };
 int liveCat = LcInstruments;
 
 // The places: three headed groups (what you starred, the content, places on this computer), each
@@ -2784,6 +3076,7 @@ void liveSidebar(App& a, bool twoPane) {
       {LcClips, i18n::N_("Clips"), i18n::N_("The current project's patterns, audio and automation"), ui::Icon::ClipPattern},
       {LcSamples, i18n::N_("Samples"), i18n::N_("Recorded, rendered, imported and edited audio, and your folders"), ui::Icon::Wave},
       {LcGrooves, i18n::N_("Grooves"), i18n::N_("Swing and groove presets"), ui::Icon::Groove},
+      {LcLfos, i18n::N_("LFO presets"), i18n::N_("Shapes, rates and settings for the LFO board"), ui::Icon::Sine},
       {-1, i18n::N_("On this computer"), nullptr, ui::Icon::Star},
       {LcRecent, i18n::N_("Recent"), i18n::N_("Recently opened files"), ui::Icon::Clock},
       {LcProjects, i18n::N_("Projects"), i18n::N_("Your projects"), ui::Icon::ProjectFile},
@@ -3119,10 +3412,12 @@ void liveContent(App& a) {
       folderSection(a, "Imported", urlimportui::importedDir(a), role::kLoop, "Nothing imported from links yet", true);
       folderSection(a, "Stems", stemsDir(a), role::kGraph, "No stems yet", true);
       folderSection(a, "Edited audio", editedDir(a), role::kSlip, "No edited audio", true);
+      folderSection(a, "Seltmann loops", seltmannLoopsDir(a), role::kSlice, "No loops made yet", true);  // K-445: as in the other layouts
       folderSection(a, "Sliced audio", browserui::contentDir(a, "Sliced audio"), role::kSlip, "No sliced audio", true);
       folderSection(a, "Clipboard files", browserui::contentDir(a, "Clipboard files"), role::kGhost, "Empty", true);
       break;
     case LcGrooves: sectionSwingPresets(a); break;
+    case LcLfos: sectionLfoPresets(a); break;
     case LcRecent: sectionRecent(a); break;
     case LcProjects: sectionProjects(a); break;
     case LcFolders: sectionUserFolders(a); break;
@@ -3383,6 +3678,7 @@ void drawBrowser(App& a) {
   const bool liveLook = livelook::active(a) || lgFindLook(a);
   const float footerH = theme::kToolbarH;
   const bool info = !selPath.empty() && tab != TabPlugins;
+  const float curInfoH = info ? currentInfoH() : 0.0f;
   // K-112c: two panes (the places beside the list) once the browser is wide enough for both.
   const float paneW = ImGui::GetContentRegionAvail().x;
   // hunt-clips2-1119: in Clips down to the narrowest browser (236 px at the 960 x 600 least layout, as at 2x
@@ -3392,7 +3688,7 @@ void drawBrowser(App& a) {
     // Checkpoint 58 (N57-12): under 270 px (1024 wide) the places are icons (36 px), so names read in full beside them.
     const float sideW = paneW < 270 ? 36.0f : std::clamp(std::floor(paneW * 0.42f), 120.0f, 190.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::BeginChild("##lcside", ImVec2(sideW, -footerH - (info ? kInfoH : 0)), ImGuiChildFlags_None);
+    ImGui::BeginChild("##lcside", ImVec2(sideW, -footerH - curInfoH), ImGuiChildFlags_None);
     liveSidebar(a, true);
     ImGui::EndChild();
     ImGui::PopStyleVar();
@@ -3427,7 +3723,7 @@ void drawBrowser(App& a) {
   ImRect trkWell;
   if (trk) {
     const ImVec2 t0 = ImGui::GetCursorScreenPos();
-    const float W = ImGui::GetContentRegionAvail().x, H = ImGui::GetContentRegionAvail().y - footerH - (info ? kInfoH : 0);
+    const float W = ImGui::GetContentRegionAvail().x, H = ImGui::GetContentRegionAvail().y - footerH - curInfoH;
     trkWell = ImRect(ImVec2(t0.x + sp::kPad, t0.y), ImVec2(t0.x + W - sp::kPad, t0.y + std::max(4.0f, H)));
     trackerview::bevelBox(ImGui::GetWindowDrawList(), trkWell.Min, trkWell.Max, true);
     ImGui::SetCursorScreenPos(ImVec2(trkWell.Min.x + 1, trkWell.Min.y + 1));
@@ -3436,7 +3732,7 @@ void drawBrowser(App& a) {
                       ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NoScrollbar);
     ImGui::PopStyleColor();
   } else {
-    ImGui::BeginChild("##tree", ImVec2(0, -footerH - (info ? kInfoH : 0)), ImGuiChildFlags_AlwaysUseWindowPadding);
+    ImGui::BeginChild("##tree", ImVec2(0, -footerH - curInfoH), ImGuiChildFlags_AlwaysUseWindowPadding);
   }
   if (collapseAsked) {
     collapseAsked = false;
@@ -3469,6 +3765,7 @@ void drawBrowser(App& a) {
       sectionChannelPresets(a);
       sectionMixerPresets(a);
       sectionSwingPresets(a);  // K-151
+      sectionLfoPresets(a);    // 0.7.9
       sectionStageRooms(a);    // K-224
     }
     if (all || tab == TabSounds) {
@@ -3728,8 +4025,10 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
     std::printf("browserchips frame %d: chips %d search \"%s\"", frame, devFilterChips, filterBuf);
     for (size_t i = 0; i < filterTags.size() && i < 6; ++i) std::printf(" %s=%d", filterTags[i].first.c_str(), filterTags[i].second);
     std::printf("\n");
-  } else if (op == "cat") {  // K-112c: the Live browser's category (LiveCat order: 12 is Folders)
-    loadTabs(a), liveCat = std::clamp(std::atoi(p1.c_str()), 0, LcCount - 1 + folderTabCount());  // past Folders: the folder places
+  } else if (op == "cat") {  // K-112c: the Live browser's category: "folders", or a LiveCat index (13 is Folders)
+    loadTabs(a);
+    liveCat = p1 == "folders" ? static_cast<int>(LcFolders)
+                              : std::clamp(std::atoi(p1.c_str()), 0, LcCount - 1 + folderTabCount());  // past Folders: the folder places
   } else if (op == "rows" && p1 == "on") {
     devRowsOn = true;
   } else if (op == "rows") {
@@ -3804,6 +4103,20 @@ bool devCommand(App& a, const std::vector<std::string>& args, int frame) {
                 folders, open, at, at >= 0 ? static_cast<double>(nav.last[static_cast<size_t>(at)].indent) : -2.0, selPath.c_str(), filterBuf);
     for (const NavRow& r : nav.last)
       std::printf("  treerow indent %.0f folder %d open %d path %s\n", static_cast<double>(r.indent), r.openId ? 1 : 0, r.open ? 1 : 0, r.path.c_str());
+  } else if (op == "preview") {  // K-407 / K-416 / K-417: preview sync/pitch/quant/speed/carry/scrub/state
+    if (p1 == "sync") browserui::previewSync() = (p2 == "1");
+    else if (p1 == "pitch") browserui::previewPitchSt() = std::clamp(std::strtof(p2.c_str(), nullptr), -12.0f, 12.0f), browserui::syncPreviewControls(a);
+    else if (p1 == "quant") browserui::previewQuant() = std::clamp(std::atoi(p2.c_str()), 0, 3), browserui::syncPreviewControls(a);
+    else if (p1 == "speed") browserui::previewSpeedIdx() = std::clamp(std::atoi(p2.c_str()), 0, 2), browserui::syncPreviewControls(a);
+    else if (p1 == "carry") browserui::previewCarryPitch() = (p2 == "1");
+    else if (p1 == "scrub" && !selPath.empty()) browserui::scrubPreview(a, selPath, std::strtod(p2.c_str(), nullptr));
+    else if (p1 == "play" && !selPath.empty()) browserui::previewFile(a, selPath);
+    else if (p1 == "stop") a.stopPreview();
+    std::printf("browserpreview frame %d: sync %d pitch %.1f quant %d speed %d carry %d playing %d pending %d pos %.4f sel \"%s\"\n",
+                frame, browserui::previewSync() ? 1 : 0, static_cast<double>(browserui::previewPitchSt()),
+                browserui::previewQuant(), browserui::previewSpeedIdx(), browserui::previewCarryPitch() ? 1 : 0,
+                a.engine.previewing() ? 1 : 0, a.engine.previewPending() ? 1 : 0,
+                static_cast<double>(a.engine.previewPosition()), selPath.c_str());
   } else if (op == "state") {
     std::printf("browserstate frame %d: renaming \"%s\" error \"%s\" trash \"%s\" locked \"%s\" undo %zu \"%s\"\n", frame, fops.renaming.c_str(),
                 fops.error.c_str(), fops.trashAsk.c_str(), p1.empty() ? "" : lockedWhy(a, p1).c_str(), a.doc.history().position(),

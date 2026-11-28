@@ -28,6 +28,7 @@
 #include "BrowserUi.h"
 #include "InstrumentSkin.h"
 #include "PluginEditorsCommon.h"
+#include "UrlImportUi.h"
 #include "PluginEditorsInstrSlicerKit.h"
 #include "RunLatch.h"
 #include "DevSignal.h"
@@ -490,13 +491,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     const char* h = gl::platform::homeEnv();
     a.fileDialog.dir = file.empty() ? (h ? h : ".") : fs::path(file).parent_path().string();
     a.fileDialog.exts = audioFileExtensions();
-    a.fileDialog.onOk = [&a, tt](const std::string& p) {
-      if (const PluginState* cur = tt.state(a.doc.song())) {
-        PluginState ns = *cur;
-        ns.data = p;
-        setPluginState(a, tt, ns, "load loop");
-      }
-    };
+    a.fileDialog.onOk = [&a, tt](const std::string& p) { urlimportui::loadPluginSample(a, tt, p); };
   };
   // K-217: layer B is cut by its own markers: slicing it writes them (A's mode stays).
   auto setLayerCuts = [&](const std::vector<int64_t>& cuts, const char* what) {
@@ -1054,6 +1049,11 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
       if (kerf::deckButton(a, sk, "##loadbig", 39, 222, 100, 26, ui::Icon::Open, "Load a loop", false, false, i18n::tr("Load a loop"))) loadLoop();
       ctl(sk, "##loadbig", 39, 222, 100, 26);
       traceRect("loadbig", sk.at(39, 222), sk.at(139, 248));
+      if (kerf::deckButton(a, sk, "##urlbig", 39, 256, 100, 26, ui::Icon::Download, "Import from URL: a web link's audio as the loop", false, false,
+                           i18n::tr("From URL")))
+        urlimportui::openForPlugin(a, t, 0);
+      ctl(sk, "##urlbig", 39, 256, 100, 26);
+      traceRect("urlbig", sk.at(39, 256), sk.at(139, 282));
     } else {
       if (kerf::deckButton(a, sk, "##rmenu", 12, 108, 18, 18, ui::Icon::Menu, "Region menu")) ImGui::OpenPopup("##regionmenu");
       ctl(sk, "##rmenu", 12, 108, 18, 18);
@@ -1634,6 +1634,7 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     if (tile("##mfile", 160, ui::Icon::Folder, "File", 0, true)) ImGui::OpenPopup("##kfile");
     if (ImGui::BeginPopup("##kfile")) {
       if (ImGui::MenuItem(i18n::tr("Load a loop..."))) loadLoop();
+      if (ImGui::MenuItem(i18n::tr("Import from URL..."))) urlimportui::openForPlugin(a, t, 0);
       if (ImGui::MenuItem(i18n::tr("Remove the loop"), nullptr, false, !file.empty())) {
         PluginState ns = st;
         ns.data.clear();
@@ -1806,6 +1807,11 @@ void editorSlicex(App& a, const PluginTarget& t, float width) {
     ImGui::BeginDisabled(file.empty());
     tile("##drag", 684, ui::Icon::GripDots, "Drag the loop out (to the playlist, a channel or the browser)");
     if (!file.empty()) browserui::fileDragSource(file);
+    if (!file.empty() && ImGui::BeginPopupContextItem("##dragmenu")) {  // K-445: the loop without a drag
+      if (ImGui::MenuItem(browserui::playlistAddText(a))) browserui::addFileToPlaylist(a, file);
+      if (ImGui::MenuItem(i18n::tr(browserui::revealText()))) browserui::revealInFileManager(a, file);
+      ImGui::EndPopup();
+    }
     ImGui::EndDisabled();
     traceRect("dump", sk.at(628, 298), sk.at(652, 330));
     // Row 2: a caption over each value, hairlines between the fields.

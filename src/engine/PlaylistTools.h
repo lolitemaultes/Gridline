@@ -96,6 +96,20 @@ std::vector<ObjectId> sliceClips(Song& s, const std::vector<ObjectId>& ids, Tick
 // Clips crossed by a vertical slice line at `at` over tracks [t0, t1].
 std::vector<ObjectId> clipsAcross(const Song& s, Tick at, int t0, int t1);
 
+// K-418: Split/cut tool "snap to transients" (reuses Slicer's cached transient detector).
+struct TransientSnap {
+  bool snapped = false;
+  Tick tick = 0;             // snapped transient tick, or fallbackTick when none is within range
+  int64_t sourceFrame = -1;  // transient sample frame in the clip's source sample (-1 if not snapped)
+};
+inline constexpr float kTransientSnapPx = 12.0f;
+inline bool transientSnapActive(bool optionOn, bool ctrlHeld, bool altHeld) {
+  const bool modToggle = ctrlHeld && altHeld;
+  return modToggle ? !optionOn : (optionOn && !altHeld);
+}
+TransientSnap snapCutToTransient(const Song& s, const Clip& clip, const TempoMap& tm, Tick pointerTick, double maxDistTicks,
+                                 Tick fallbackTick, double sensitivity = 0.5);
+
 // Paint: positions of a trail of back-to-back clips of length `len` laid from
 // `anchor` towards the pointer at `to` (both directions).
 std::vector<Tick> paintSlots(Tick anchor, Tick to, Tick len);

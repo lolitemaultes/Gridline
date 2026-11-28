@@ -1,9 +1,9 @@
-// Gridline - k078-songlinks: the "Link to controller" dialog offers an internal controller only
-// where the engine applies one. internalLinkApplies (core/Params.h) is checked against the program
-// builder itself: for every parameter of the test song, a link from a channel macro compiles into
-// Program::links exactly when internalLinkApplies says so. The song's own settings (tempo, swing,
-// master pitch, groove accents) are the ones left out. A project saved with such a link (it never
-// did anything) still loads with it, so the dialog can show it and remove it.
+// Gridline - k078-songlinks (upgraded in 0.7.9 for live song-parameter internal links):
+// internalLinkApplies (core/Params.h) is checked against the program builder itself: for every
+// parameter of the test song (including tempo, swing, master pitch and groove accents), a link
+// from a channel macro compiles into Program::links exactly when internalLinkApplies says so.
+// A project saved with an internal link on a song setting loads, saves back unchanged, and
+// compiles live into Program::links.
 #include <string>
 #include <vector>
 #include "Check.h"
@@ -31,11 +31,11 @@ ModLink macroLink(ObjectId sourceChannel, ParamId target) {
 
 void predicateTests(const Song& song) {
   for (uint32_t i = 0; i < static_cast<uint32_t>(SongParam::Count); ++i)
-    expect(!internalLinkApplies(song, {kSongId, i}), "song setting " + paramDisplayName(song, {kSongId, i}) + ": no internal link");
-  expect(!internalLinkApplies(song, songParam(SongParam::Swing)), "swing: no internal link");
-  expect(!internalLinkApplies(song, songParam(SongParam::GrooveAccent)), "groove accents: no internal link");
-  expect(!internalLinkApplies(song, songParam(SongParam::Tempo)), "tempo: no internal link");
-  expect(!internalLinkApplies(song, songParam(SongParam::MasterPitch)), "master pitch: no internal link");
+    expect(internalLinkApplies(song, {kSongId, i}), "song setting " + paramDisplayName(song, {kSongId, i}) + ": live internal link supported");
+  expect(internalLinkApplies(song, songParam(SongParam::Swing)), "swing: live internal link supported");
+  expect(internalLinkApplies(song, songParam(SongParam::GrooveAccent)), "groove accents: live internal link supported");
+  expect(internalLinkApplies(song, songParam(SongParam::Tempo)), "tempo: live internal link supported");
+  expect(internalLinkApplies(song, songParam(SongParam::MasterPitch)), "master pitch: live internal link supported");
   expect(!internalLinkApplies(song, {kSongId, static_cast<uint32_t>(SongParam::Count)}), "an unknown song parameter: no internal link");
   expect(!internalLinkApplies(song, {kNoId, 0}), "no owner: no internal link");
   expect(internalLinkApplies(song, channelParam(song.channels[0].id, ChannelParam::Volume)), "a channel's volume takes an internal link");
@@ -63,10 +63,10 @@ void engineAgrees(const Song& base) {
   }
   expect(checked > 50, "the test song has plenty of parameters to check (" + std::to_string(checked) + ")");
   expect(mismatches == 0, "the engine applies an internal link exactly where the dialog offers one");
-  expect(refused == static_cast<int>(SongParam::Count), "only the song's own settings are refused (" + std::to_string(refused) + ")");
+  expect(refused == 0, "every listed parameter including song settings accepts live internal links (" + std::to_string(refused) + " refused)");
 }
 
-// A project holding an internal link on swing (made before this change) loads with it and keeps it.
+// A project holding an internal link on swing loads with it, keeps it, and compiles it live.
 void oldLinkLoads(const Song& base) {
   Song s = base;
   s.modLinks = {macroLink(s.channels[0].id, songParam(SongParam::Swing))};
@@ -75,12 +75,13 @@ void oldLinkLoads(const Song& base) {
   std::string err;
   expect(loadProjectText(text, "", back, &err), "a project with an internal link on swing loads (" + err + ")");
   const ModLink* l = findModLink(back, kSongId, static_cast<uint32_t>(SongParam::Swing));
-  expect(l != nullptr, "its swing link is still there, for the dialog to show and remove");
+  expect(l != nullptr, "its swing link is still there, for the dialog to show and edit");
   expect(l && l->sourceOwner == s.channels[0].id && l->sourceSlot == kLayerMacroSlot, "the link keeps its source");
   expect(projectToText(back) == text, "it saves back unchanged");
   ProgramBuilder pb;
   auto prog = pb.build(back);
-  expect(prog && prog->links.empty(), "the engine still leaves it out (nothing moves)");
+  expect(prog && prog->links.size() == 1 && prog->swingLinked && prog->links[0].kind == ProgLink::SongSwing,
+         "the engine now compiles the swing link live");
 }
 
 }  // namespace

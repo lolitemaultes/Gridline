@@ -1,0 +1,5 @@
+<!-- Gridline original (GPL-3.0), drawn on the 24-unit grid: vertical bar and filled right triangle (clip follow action badge). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+  <rect x="4" y="5.5" width="2.4" height="13" rx="1" />
+  <path d="M9.6 6.1a.9.9 0 0 1 1.38-.76l8.6 5.9a.9.9 0 0 1 0 1.52l-8.6 5.9a.9.9 0 0 1-1.38-.76z" />
+</svg>

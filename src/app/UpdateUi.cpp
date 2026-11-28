@@ -5,6 +5,7 @@
 #include "GridlineVersion.h"
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -20,6 +21,9 @@
 #include "../core/Platform.h"
 #include "../core/Settings.h"
 #include "../core/Update.h"
+#include "../core/UpdateApply.h"
+#include "../core/UpdateInstall.h"
+#include "SplashUpdate.h"
 #include "../collab/VersionGate.h"
 #include "../host/net/Http.h"
 #include "App.h"
@@ -59,7 +63,7 @@ struct Download {
   int64_t size = 0;
 };
 
-enum class Dialog { None, Checking, Result, Available };
+enum class Dialog { None, Checking, Result, Available, Notice };
 
 struct State {
   Options opt;
@@ -93,6 +97,13 @@ struct State {
   collab::GateState gate;
   bool gateLoaded = false;
   std::string fakeLatest;  // GRIDLINE_FAKE_LATEST / --fake-update: a made-up newest release (no network)
+  // Automatic updates: what the start-up found, told once ("Updated to ...", "... is back",
+  // "Couldn't update ..."), and the new version's confirmation a few seconds after start.
+  enum class Notice { None, Updated, PutBack, Failed } notice = Notice::None;
+  bool noticeDue = false;
+  std::string noticeVersion, noticeReason, updatesDir;
+  bool showDetails = false;
+  bool confirmDue = false;
 };
 
 State& S() {
@@ -207,7 +218,11 @@ void collect(App& a) {
     }
     return;
   }
-  // Automatic: quiet unless there is something to offer.
+  // Automatic: quiet unless there is something to offer. When the next start installs it by
+  // itself (both switches on, an install that can update itself), no popup either.
+  if (r.status == update::Status::Available && a.settings.getBool("update.autoInstall") &&
+      update::strategyFor(splashupd::install(), &r.release, update::currentTarget()).automatic())
+    return;
   if (r.status == update::Status::Available && update::shouldOffer(p, r.release, wallNow())) {
     s.shown = r;
     s.offerPending = true;
@@ -340,7 +355,7 @@ void drawAvailable(App& a) {
         res = s.dl->result;
       }
       if (res.ok) {
-        dimLine(tr("Downloaded and checked against the release's SHA256SUMS. It is not installed: open it when you are ready."), P.textDim);
+        dimLine(tr("Downloaded and checked: it is the genuine file. It is not installed: open it when you are ready."), P.textDim);
         // "<file>  in  <folder>": a long folder is cut, the file name stays readable.
         const fs::path saved = fs::u8path(res.path);
         std::string folder = saved.parent_path().u8string();
@@ -351,8 +366,9 @@ void drawAvailable(App& a) {
         ui::TextFit(shown.c_str(), kDialogW, P.text);  // cut: the full path on hover
         ImGui::PopFont();
       } else {
-        std::snprintf(buf, sizeof buf, tr("The download did not finish: %s"), res.error.c_str());
+        std::snprintf(buf, sizeof buf, tr("The download did not finish: %s."), tr(update::apply::plainReason(res.error).c_str()));
         dimLine(buf, P.danger);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", res.error.c_str());  // the technical reason
       }
     }
   } else if (!canInstall) {
@@ -492,6 +508,104 @@ void drawChecking(App& a) {
   }
 }
 
+// "Gridline 0.7.9 didn't install: the download was damaged. It will try again later." Plain words;
+// the technical reason stays in update.log (Details).
+std::string failureSentence(const update::apply::Failure& f) {
+  char buf[384];
+  if (f.kind == "started") {
+    std::snprintf(buf, sizeof buf, tr("Gridline %s didn't start, so the previous version was put back."), f.version.c_str());
+    return buf;
+  }
+  const std::string why = update::apply::plainReason(f.reason);
+  std::snprintf(buf, sizeof buf, f.blocked ? tr("Gridline %s didn't install: %s. It won't try that version again by itself.")
+                                           : tr("Gridline %s didn't install: %s. It will try again later."),
+                f.version.c_str(), tr(why.c_str()));
+  return buf;
+}
+
+void drawNotice(App& a) {
+  State& s = S();
+  const auto& P = pal();
+  char buf[256];
+  switch (s.notice) {
+    case State::Notice::Updated:
+      std::snprintf(buf, sizeof buf, tr("Updated to Gridline %s"), GRIDLINE_VERSION);
+      title(a, buf);
+      dimLine(tr("Your settings and projects are as you left them. What's new is on the releases page."), P.textDim);
+      break;
+    case State::Notice::PutBack:
+      std::snprintf(buf, sizeof buf, tr("Gridline %s didn't start, so %s is back"), s.noticeVersion.c_str(), GRIDLINE_VERSION);
+      title(a, buf);
+      dimLine(tr("Nothing was lost. Gridline won't install that version by itself again; Settings can try it again."), P.textDim);
+      break;
+    default:
+      std::snprintf(buf, sizeof buf, tr("Couldn't update to Gridline %s"), s.noticeVersion.c_str());
+      title(a, buf);
+      if (s.noticeReason.empty()) {
+        dimLine(tr("Something went wrong. This version works as before."), P.textDim);
+      } else {  // in plain words; Details shows the log with the technical reason
+        std::string r = update::apply::plainReason(s.noticeReason);
+        r[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(r[0])));
+        dimLine(r + ". " + tr("This version works as before, and Gridline will try again later."), P.textDim);
+      }
+      break;
+  }
+  if (s.showDetails) {
+    std::string text;
+    for (const std::string& l : update::apply::logTail(s.updatesDir, 14)) text += l + "\n";
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(P.field));
+    ImGui::BeginChild("##updlog", ImVec2(kDialogW, 150), ImGuiChildFlags_None);
+    ImGui::PushTextWrapPos(kDialogW - 12);
+    ImGui::TextColored(theme::vec(P.textDim), "%s", text.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+  }
+  ImGui::Dummy(ImVec2(kDialogW, theme::kS1 + theme::kS2));
+  const bool failed = s.notice != State::Notice::Updated;
+  const char* detailsLabel = s.showDetails ? "Hide details" : "Details";
+  const float wd = failed ? buttonW(detailsLabel) : 0, wt = s.notice == State::Notice::Failed ? buttonW("Try again") : 0, wo = buttonW("OK");
+  rightAlign(wd + wt + wo + (failed ? theme::kS2 : 0) + (wt > 0 ? theme::kS2 : 0));
+  if (failed) {
+    if (ui::TextButton(detailsLabel, false, wd, "The last lines of the update log")) s.showDetails = !s.showDetails;
+    ImGui::SameLine(0, theme::kS2);
+  }
+  if (wt > 0) {
+    if (ui::TextButton("Try again", false, wt, "Clear the wait and try at the next start of Gridline")) {
+      update::apply::clearFailure(s.updatesDir);
+      closeDialog();
+      return;
+    }
+    ImGui::SameLine(0, theme::kS2);
+  }
+  if (ui::PrimaryButton("OK", wo) || ::gl::keys::escapePressed() || ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter))
+    closeDialog();
+}
+
+// What the start-up found, decided once: the notice to show and whether to confirm.
+void loadNotices(App& a) {
+  State& s = S();
+  namespace ap = update::apply;
+  s.updatesDir = ap::updatesDir(a.configDir());
+  const ap::Recovery& r = splashupd::startRecovery();
+  using W = ap::Recovery::What;
+  if (r.what == W::Trial || (r.what == W::FinishedSwap && r.journal.to == GRIDLINE_VERSION)) s.confirmDue = true;
+  if ((r.what == W::Trial || r.what == W::Confirmed || r.what == W::FinishedSwap) && !r.journal.noticeShown && r.journal.to == GRIDLINE_VERSION) {
+    s.notice = State::Notice::Updated;
+  } else if (r.what == W::RolledBack && !r.journal.noticeShown) {
+    s.notice = State::Notice::PutBack;
+    s.noticeVersion = r.journal.to;
+  } else {
+    ap::Failure f;
+    if (ap::readFailure(s.updatesDir, f) && !f.noticeShown && !f.version.empty() && f.kind != "network" && f.kind != "cancelled") {
+      s.notice = f.kind == "started" ? State::Notice::PutBack : State::Notice::Failed;
+      s.noticeVersion = f.version;
+      s.noticeReason = f.reason;
+    }
+  }
+  s.noticeDue = s.notice != State::Notice::None;
+}
+
 }  // namespace
 
 void start(App& a, const Options& o) {
@@ -499,6 +613,7 @@ void start(App& a, const Options& o) {
   s = State{};
   s.opt = o;
   s.started = true;
+  loadNotices(a);
   s.fetch = http::fetcher();
   s.download = http::downloader();
   if (const char* fl = std::getenv("GRIDLINE_FAKE_LATEST"); fl && *fl) s.fakeLatest = fl;  // J-111 screenshots
@@ -554,6 +669,24 @@ void draw(App& a) {
     startJob(a, false);
   }
   collect(a);
+  // The new version has run for a few seconds: the update is final, the old copy goes.
+  if (s.confirmDue && s.frames >= 180) {
+    s.confirmDue = false;
+    update::apply::confirm(s.updatesDir, GRIDLINE_VERSION, wallNow());
+  }
+  if (s.noticeDue && s.dialog == Dialog::None && goodMoment(a)) {
+    s.noticeDue = false;
+    if (s.notice == State::Notice::Failed || (s.notice == State::Notice::PutBack && s.noticeReason.size())) {
+      update::apply::Failure f;
+      if (update::apply::readFailure(s.updatesDir, f)) {
+        f.noticeShown = true;
+        update::apply::writeFailure(s.updatesDir, f);
+      }
+    } else {
+      update::apply::noticeShown(s.updatesDir);
+    }
+    showDialog(Dialog::Notice);
+  }
   if (s.offerPending && s.dialog == Dialog::None && goodMoment(a)) {
     s.offerPending = false;
     offer(s.shown);
@@ -587,6 +720,7 @@ void draw(App& a) {
     case Dialog::Checking: drawChecking(a); break;
     case Dialog::Result: drawResult(a); break;
     case Dialog::Available: drawAvailable(a); break;
+    case Dialog::Notice: drawNotice(a); break;
     case Dialog::None: ImGui::CloseCurrentPopup(); break;
   }
   ImGui::EndPopup();
@@ -674,9 +808,50 @@ void settingsSection(App& a) {
   Settings& st = a.settings;
   const auto& P = pal();
   ui::BeginSection(tr("UPDATES"));
+  // Turned off for this run (a flag or an environment variable): the switches can't do anything now.
+  const bool off = (s.opt.disabled || update::disabledByEnvironment()) && s.opt.fakeVersion.empty();
   bool autoCheck = st.getBool("update.auto");
-  if (ImGui::Checkbox(tr("Check for updates automatically"), &autoCheck)) st.set("update.auto", autoCheck);
-  ui::Hint("Once a day at startup, Gridline asks GitHub for the newest release. Nothing else is sent.");
+  ImGui::BeginDisabled(off);
+  if (ImGui::Checkbox(tr("Check for updates"), &autoCheck)) st.set("update.auto", autoCheck);
+  ImGui::EndDisabled();
+  ui::Hint("At startup, Gridline asks GitHub for the newest release. Nothing else is sent.");
+  {  // Install updates automatically: only where this copy can update itself
+    const update::Install& in = splashupd::install();
+    const update::Strategy plan = update::strategyFor(in, nullptr, update::currentTarget());
+    const bool can = plan.method == update::Method::ReplaceFile || plan.method == update::Method::ReplaceFolder ||
+                     plan.method == update::Method::RunInstallScript || plan.method == update::Method::RunWindowsSetup ||
+                     plan.method == update::Method::SystemPackage;
+    bool autoInstall = st.getBool("update.autoInstall");
+    ImGui::BeginDisabled(off || !autoCheck || !can);
+    bool shown = autoInstall && can;
+    if (ImGui::Checkbox(tr("Install updates automatically"), &shown)) st.set("update.autoInstall", shown);
+    ImGui::EndDisabled();
+    ui::Hint(can ? "On the start screen: download, check and install the new version, then restart. The old version stays until the new one starts."
+                 : "This copy is updated by its package manager or store, so Gridline only tells you about new versions.");
+    char buf[256];
+    std::snprintf(buf, sizeof buf, tr("Installed as: %s"), tr(update::kindName(in.kind)));
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", buf);
+    if (!plan.command.empty()) {
+      std::snprintf(buf, sizeof buf, tr("To update: %s"), plan.command.c_str());
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", buf);
+    }
+    const std::string lastResult = st.getString("update.lastResult");
+    if (!lastResult.empty()) {
+      std::snprintf(buf, sizeof buf, tr("At the last start: %s"), lastResult.c_str());
+      ui::TextFit(buf, ImGui::GetContentRegionAvail().x, P.textFaint);
+    }
+    update::apply::Failure f;
+    if (update::apply::readFailure(update::apply::updatesDir(a.configDir()), f) && !f.version.empty() && (f.blocked || f.count > 0)) {
+      const std::string line = failureSentence(f);
+      ImGui::AlignTextToFramePadding();
+      ui::TextFit(line.c_str(), std::max(80.0f, ImGui::GetContentRegionAvail().x - 120), P.textDim);
+      if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", f.reason.c_str());  // Details: the technical reason, as in update.log
+      ImGui::SameLine();
+      if (ui::TextButton("Try again", false, 0, "Clear the wait and try at the next start of Gridline"))
+        update::apply::clearFailure(update::apply::updatesDir(a.configDir()));
+    }
+    (void)autoInstall;
+  }
   bool beta = st.getBool("update.beta");
   if (ImGui::Checkbox(tr("Include beta versions"), &beta)) st.set("update.beta", beta);
   ui::Hint("Also offer prereleases (may be less stable)");
@@ -704,8 +879,15 @@ void settingsSection(App& a) {
       update::savePrefs(st, q);
     }
   }
-  if (s.opt.disabled && s.opt.fakeVersion.empty())
-    ImGui::TextColored(theme::vec(P.textFaint), "%s", tr("Turned off: --no-update-check, GRIDLINE_NO_UPDATE_CHECK or CI is set."));
+  if (off) {
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", tr("Update checks are turned off for this run"));
+    if (ImGui::IsItemHovered()) {  // the actual cause only
+      const char* why = std::getenv("GRIDLINE_NO_UPDATE_CHECK") ? "GRIDLINE_NO_UPDATE_CHECK is set"
+                        : std::getenv("CI")                     ? "CI is set (a build server)"
+                                                                : "Gridline was started with --no-update-check";
+      ImGui::SetTooltip("%s", why);
+    }
+  }
   ui::EndSection();
 }
 

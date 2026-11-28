@@ -1,5 +1,6 @@
 // Gridline: the OSC server (see OscServer.h).
 #include "OscServer.h"
+#include "ThreadJoin.h"
 #include "ThreadName.h"
 #include <algorithm>
 #include <cerrno>
@@ -262,7 +263,7 @@ void OscServer::stop() {
       const sockaddr_in a = addrOf(kLoopback, port_);
       (void)::sendto(raw(udp_), &b, 1, 0, reinterpret_cast<const sockaddr*>(&a), sizeof a);
     }
-    thread_.join();
+    gl::threads::safeJoin(thread_);
   }
   for (auto& c : conns_) net::closeSock(c->fd);
   conns_.clear();

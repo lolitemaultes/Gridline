@@ -58,4 +58,21 @@ std::vector<AutoPoint> patternClipSteps(const PatternAutomation& c, Tick until, 
 // Content end of the clip (its last point, or the loop length when longer).
 Tick patternClipEnd(const PatternAutomation& c);
 
+// ---- K-413: channel-rack automation lanes persisted across patterns --------
+// Records `(owner, index)` on the owning channel (`Channel::automationLanes`) or
+// on `Song::rackAutoLanes` (song/mixer targets). Returns true when added.
+bool ensureRackAutoLane(Song& s, ObjectId owner, uint32_t index, const std::string& name = {}, Rgb color = AutomationClip{}.color);
+// Removes `(owner, index)` from the channel / song persistent lane list.
+bool removeRackAutoLane(Song& s, ObjectId owner, uint32_t index);
+// True when `(owner, index)` is registered in the persistent lane list.
+bool hasRackAutoLane(const Song& s, ObjectId owner, uint32_t index);
+// Updates the saved name / colour of a persistent lane when renamed or recoloured.
+void updateRackAutoLaneMeta(Song& s, ObjectId owner, uint32_t index, const std::string* name, const Rgb* color);
+// Effective automation lanes to display in the channel rack for `pat` (may be null):
+// all persistent channel + song lanes plus any extra clips in `pat->automation`, deduped.
+std::vector<SongAutoLane> effectiveRackAutoLanes(const Song& s, const Pattern* pat = nullptr);
+// Backward-compatible migration for older projects: unions every pattern's
+// automation targets into `Channel::automationLanes` / `Song::rackAutoLanes`.
+void migrateRackAutoLanes(Song& s);
+
 }  // namespace gl

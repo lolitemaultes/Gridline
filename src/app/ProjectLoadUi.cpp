@@ -20,6 +20,7 @@
 #include "../core/I18n.h"
 #include "../core/Log.h"
 #include "../core/ProjectInterop.h"
+#include "../host/HostedPlugins.h"
 #include "App.h"
 #include "CrashUi.h"
 #include "../core/Crash.h"
@@ -189,9 +190,11 @@ void App::completeProjectLoad() {
   livelook::projectOpened(*this, projectPath);  // N45-10: Clips opens it in the view it was saved in
   engine.setMode(doc.song().playlist.empty() ? PlayMode::Pattern : PlayMode::Song);
   rackReveal.quietSwitch(engine.mode());  // J-77: opening a project does not count as choosing PAT
+  lastHostedGen_ = host::hostedClassesGeneration();
   syncEngine();
   reopenPluginWindowList(*this, pluginWins);
   workspacesui::projectOpened(*this);  // K-237: its workspaces copy, where the person has none of their own
+  jack.restoreProjectLinks = true;     // K-357: restore this computer's saved JACK / PipeWire connections
   home.projectOpened(now);
   if (r.fromFl) {
     importReport = ImportReport{};
@@ -204,16 +207,50 @@ void App::completeProjectLoad() {
     notify("Opened " + importReport.source);
     // J-48: warnings or unmapped plugins: the report needs a look.
     uiSound(importReport.warnings.empty() && importReport.unmapped.empty() ? uisound::Event::Open : uisound::Event::Warning);
-  } else if (!warnings.empty()) {
-    // The warnings stay on a card (all of them in its details, copied with a click).
-    std::string details;
-    for (const auto& w : warnings) details += (details.empty() ? "" : "\n") + w;
-    notify("Opened " + name + ": " + warnings.front() + (warnings.size() > 1 ? " (+" + std::to_string(warnings.size() - 1) + ")" : ""), false,
-           details);
-    uiSound(uisound::Event::Warning);
   } else {
-    notify("Opened " + name);
-    uiSound(uisound::Event::Open);
+    // Q-14: detect missing vs unscanned hosted plugins in native projects and offer a one-click scan.
+    int nUnscanned = 0, nNotInstalled = 0;
+    auto checkMissing = [&](const PluginState& st) {
+      if (!isHostedType(st.type) || findPlugin(st.type)) return;
+      const host::MissingStatus ms = host::missingStatus(st.type);
+      if (ms == host::MissingStatus::NotScannedYet || ms == host::MissingStatus::Scanning) ++nUnscanned;
+      else ++nNotInstalled;
+    };
+    for (const auto& ch : doc.song().channels) checkMissing(ch.plugin);
+    for (const auto& m : doc.song().mixer)
+      for (const auto& sl : m.slots)
+        if (!sl.plugin.empty()) checkMissing(sl.plugin);
+    if (nUnscanned + nNotInstalled > 0) {
+      importReport = ImportReport{};
+      importReport.source = name;
+      importReport.missingPluginsOnly = true;
+      importReport.warnings = warnings;  // (the load's own warnings: in the same report, not dropped)
+      if (!embedded) {
+        const std::string msg = nUnscanned > 0
+                                    ? i18n::plural(nUnscanned, "%d plugin not scanned yet", "%d plugins not scanned yet")
+                                    : i18n::plural(nNotInstalled, "%d plugin not installed", "%d plugins not installed");
+        std::vector<Toast::Action> acts;
+        if (nUnscanned > 0 && !host::scanRunning()) {
+          acts.push_back({i18n::tr("Scan for plugins"), [this] {
+                            scanByUser = true;
+                            host::startScan(host::selfExecutablePath());
+                          }});
+        }
+        acts.push_back({i18n::tr("Details..."), [this] { showImportReport = true; }});
+        notifyAction(msg, std::move(acts), 15.0);
+        uiSound(uisound::Event::Warning);
+      }
+    } else if (!warnings.empty()) {
+      // The warnings stay on a card (all of them in its details, copied with a click).
+      std::string details;
+      for (const auto& w : warnings) details += (details.empty() ? "" : "\n") + w;
+      notify("Opened " + name + ": " + warnings.front() + (warnings.size() > 1 ? " (+" + std::to_string(warnings.size() - 1) + ")" : ""), false,
+             details);
+      uiSound(uisound::Event::Warning);
+    } else {
+      notify("Opened " + name);
+      uiSound(uisound::Event::Open);
+    }
   }
   const bool zipped = r.fromZip;
   std::vector<std::string> missingRefs = std::move(r.missingRefs);  // (checked on the loader's worker)

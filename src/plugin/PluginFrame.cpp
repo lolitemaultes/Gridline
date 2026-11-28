@@ -3,6 +3,7 @@
 // dialogs, status bar) drawn into the host's plugin window, plus the "Host
 // link" panel: transport sync, MIDI input, outputs, latency and the macros.
 #include <algorithm>
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include <chrono>
 #include <cmath>
@@ -165,7 +166,7 @@ struct Check {
   double startedAt = -1e18;  // this process's last automatic check
   std::thread worker;
   ~Check() {
-    if (worker.joinable()) worker.join();
+    gl::threads::safeJoin(worker);
   }
 };
 Check& check() {
@@ -536,6 +537,7 @@ void Frame::draw(int winW, int winH, int fbW, int fbH) {
   last_ = now;
   app.engine.setMetronome(app.metronome);
   app.engine.setReturnToSeek(app.settings.getBool("transport.rememberSeek"));
+  app.engine.setStopAtEnd(app.settings.getBool("transport.stopAtEnd"));
   app.hint.clear();
   float uiScale = static_cast<float>(std::clamp(app.settings.getNumber("ui.scale"), 0.75, 2.0));
   if (uiScale > 1.0f)

@@ -4412,6 +4412,10 @@ extern ImFont*      GImGuiGridlineTitleFont;
 // Gridline (K-112b, checkpoint 38): while >= 0, a check box's corner radius (the Tracks layout's rounded
 // squares; its pill-round frames would make them circles). Set per frame by the layout style.
 extern float        GImGuiGridlineCheckRounding;
+// Gridline (smooth-radio): while >= 0, a selected radio button is filled with CheckboxSelectedBg and
+// carries a CheckMark dot this fraction of its radius (the Tracks layout's filled radios, as its ticked
+// boxes); < 0: ImGui's own (a CheckMark dot on the frame).
+extern float        GImGuiGridlineRadioDot;
 extern ImU32        GImGuiGridlineMenuHover;      // K-112B: menu row hover fill in the Tracks layout (0 = the style's)
 // Gridline (K-106): while set, BeginMenu() and MenuItem() show the label it returns (a layout's own
 // words for the same item; it returns its argument when nothing changes). Set per frame by the layout style.

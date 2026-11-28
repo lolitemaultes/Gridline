@@ -3,6 +3,7 @@
 #include <SDL.h>
 #include <cstdio>
 #include <map>
+#include "App.h"
 #include "GamepadUi.h"
 
 namespace gl::gamepadui {
@@ -15,6 +16,10 @@ bool openUrl(const char* url) { return SDL_OpenURL(url) == 0; }
 void init(App& a) {
   initRules(a);
   setOpenUrl(&openUrl);
+  // 0.7.9 (TASKS.md:1441): keep SDL from polling joysticks in the background when unfocused/hidden,
+  // and skip initialising SDL_INIT_GAMECONTROLLER altogether when gamepads are turned off.
+  if (gamepad::modeFromSetting(a.settings.getString("input.gamepad")) == gamepad::Mode::Off) return;
+  SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "0");
   if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) std::fprintf(stderr, "[gamepad] controllers unavailable: %s\n", SDL_GetError());
 }
 

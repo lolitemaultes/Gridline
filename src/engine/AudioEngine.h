@@ -4,6 +4,7 @@
 // offline, so exports match playback exactly.
 #pragma once
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <memory>
@@ -11,6 +12,7 @@
 #include "../core/MidiSync.h"
 #include "AudioLogger.h"
 #include "Program.h"
+#include "TimeStretch.h"
 #include "TransportClock.h"
 #include "ParallelGate.h"
 #include "WorkerPool.h"
@@ -158,12 +160,18 @@ class AudioEngine {
     arrEnd_.store(static_cast<double>(std::max<Tick>(0, end)), std::memory_order_relaxed);
     arrStop_.store(stopAtEnd, std::memory_order_relaxed);
   }
+  // K-415: Song mode end-of-song behaviour (false = loop back to start, true = stop at end).
+  // Ignored during offline renders, host transport follow, or when an explicit loop range is active.
+  void setStopAtEnd(bool stop) { stopAtEnd_.store(stop, std::memory_order_relaxed); }
+  bool stopAtEnd() const { return stopAtEnd_.load(std::memory_order_relaxed); }
   void noteOn(ObjectId channel, int pitch, float velocity);
   void noteOff(ObjectId channel, int pitch);
   // K-87: the channel the last live note (noteOn / ownNoteOn, any thread) went to and how many live
   // notes there were so far: the app wakes a frozen or hibernating channel that is played by hand.
   ObjectId lastLiveNoteChannel() const { return lastLiveChannel_.load(std::memory_order_relaxed); }
   uint64_t liveNoteCount() const { return liveNotes_.load(std::memory_order_relaxed); }
+  // GitHub #88: how many noteOff() calls there were so far (the checks count a held key's note-ons and offs).
+  uint64_t liveNoteOffCount() const { return liveNoteOffs_.load(std::memory_order_relaxed); }
   // J-112: a key an editor's own Play holds (Seltmann's pattern button, Kerf's
   // region play, the chord editor's progression preview): a live note like
   // noteOn(), released by noteOff() as usual, that also counts as plugin
@@ -290,17 +298,65 @@ class AudioEngine {
   // K-112c (checkpoint 48): the transport tick of the playing clip's content tick 0 (Session record
   // places the notes played at their place in the clip).
   Tick liveOrigin(int track) const;
+  // K-407 / K-416 / K-417: browser preview launch quantisation and options.
+  enum class PreviewQuant : int { Eighth = 0, Quarter, Half, Bar, Count };
+  struct PreviewOptions {
+    bool own = false;
+    int64_t loopFrom = -1;
+    bool synced = false;
+    double sampleBpm = 0.0;
+    PreviewQuant quant = PreviewQuant::Bar;
+    double speedMult = 1.0;
+    double pitchSemitones = 0.0;
+    double startNorm = 0.0;
+    bool immediate = false;
+  };
   // Plays a sample directly to the output (browser preview); nullptr stops it.
   // J-112: `own` = an editor's own Play (Loupe standalone), plugin playback.
   // `loopFrom` >= 0 (an editor's own loop): at the end the preview goes on from that frame,
   // with no gap, until it is stopped or replaced.
   void preview(SamplePtr sample, bool own = false, int64_t loopFrom = -1);
+  void preview(SamplePtr sample, const PreviewOptions& opt);
+  // K-416: moves the preview playhead immediately to normalized position [0, 1).
+  void seekPreview(double normPos);
+  // K-417 / K-407: live updates while a preview plays (allocation-free, atomic).
+  void setPreviewPitch(double semitones);
+  void setPreviewSpeed(double speedMult);
+  void setPreviewQuant(PreviewQuant q);
   bool previewing() const { return previewing_.load(); }
+  bool previewPending() const { return pvPendingUi_.load(std::memory_order_relaxed); }
+  float previewPosition() const { return pvNormPos_.load(std::memory_order_relaxed); }
+  const Sample* previewSamplePtr() const { return previewOwner_.get(); }
   void setMetronome(bool on) { metronome_.store(on); }
   // MIDI input (called from the MIDI driver thread; single producer).
   void midiEvent(uint8_t status, uint8_t d1, uint8_t d2);
   // Channel that MIDI input plays (UI thread).
   void setMidiTarget(ObjectId channel) { midiTarget_.store(channel); }
+  // K-438: recording an instrument's MIDI output (a hosted plugin's, or a built-in sequencer's).
+  // While `channel` is set (UI thread; kNoId stops), the audio thread copies every message the
+  // channel's instrument sends into a fixed ring with the transport tick it was sent at (pattern
+  // ticks in pattern mode, song ticks in song mode); only while the transport plays. Nothing is
+  // allocated or locked on the audio thread; a full ring drops messages (counted).
+  struct CapturedMidi {
+    double tick = 0;
+    uint32_t pass = 0;  // transport passes: grows by one at every loop wrap and Play
+    uint8_t s = 0, a = 0, b = 0;
+  };
+  void captureMidiOf(ObjectId channel) { capChannel_.store(channel, std::memory_order_release); }
+  ObjectId midiCaptureChannel() const { return capChannel_.load(std::memory_order_acquire); }
+  // UI thread: moves up to `max` captured messages into `out` (oldest first), no allocation.
+  int drainCapturedMidi(CapturedMidi* out, int max) {
+    size_t t = capTail_.load(std::memory_order_relaxed);
+    const size_t h = capHead_.load(std::memory_order_acquire);
+    int n = 0;
+    while (t != h && n < max) {
+      out[n++] = capRing_[t % kCapRing];
+      ++t;
+    }
+    capTail_.store(t, std::memory_order_release);
+    return n;
+  }
+  uint64_t capturedMidiDropped() const { return capDropped_.load(std::memory_order_relaxed); }
   // Notes on MIDI channel `midiCh` (0..15) play `channel`; kNoId = the
   // channel set by setMidiTarget (the selected one). UI thread.
   void setMidiChannelRoute(int midiCh, ObjectId channel) {
@@ -374,6 +430,9 @@ class AudioEngine {
   // one pass (sleepGraph), and stopped blocks made longer than one control block while it rested.
   uint64_t sleptBlocks() const { return sleptBlocks_.load(std::memory_order_relaxed); }
   uint64_t longRestBlocks() const { return longRestBlocks_.load(std::memory_order_relaxed); }
+  // K-142e (0.7.9): blocks skipped in true O(1) whole-graph deep sleep (zero node traversal).
+  uint64_t deepSleptBlocks() const { return deepSleptBlocks_.load(std::memory_order_relaxed); }
+  bool graphDeepAsleep() const { return deepSleepProgUi_.load(std::memory_order_acquire) != nullptr; }
   // (tests) false: never sleep the whole graph nor lengthen a block (each node rests on its own, as before)
   void setGraphSleep(bool on) { graphSleep_.store(on, std::memory_order_relaxed); }
   uint64_t parallelBlocks() const { return parallelBlocks_.load(std::memory_order_relaxed); }
@@ -401,20 +460,33 @@ class AudioEngine {
   float takeMasterPeakL() { return outPeakL_.exchange(0.f, std::memory_order_relaxed); }
   float takeMasterPeakR() { return outPeakR_.exchange(0.f, std::memory_order_relaxed); }
 
-  // ---- audio input & recording (J-8) ----
+  // ---- audio input & recording (J-8, K-430) ----
   // Device input: the capture callback pushes interleaved frames (single
   // producer: the device thread); each processed block takes the same number
   // of frames from the queue (missing frames are silence). UI thread:
-  // setInputChannels while the stream is stopped.
+  // setInputChannels / setInputSampleRate while the stream is stopped.
   void setInputChannels(int channels);
   int inputChannels() const { return inChannels_.load(std::memory_order_relaxed); }
+  // K-430: capture device sample rate (<= 0 = same as engine sampleRate()).
+  // When different from sampleRate(), readDeviceInput() resamples smoothly in-place
+  // with zero audio-thread allocations so e.g. a 48 kHz USB mic records cleanly at 44.1 kHz.
+  void setInputSampleRate(double sr);
+  double inputSampleRate() const { return inRate_.load(std::memory_order_relaxed); }
   void pushInput(const float* interleaved, int frames);
+  // K-430: stride-aware push when the hardware stream has more channels than kMaxInputChannels
+  // (or an explicit device stride); reads the first min(stride, inputChannels()) channels.
+  void pushInput(const float* interleaved, int frames, int stride);
   void clearInput();  // drops queued input (UI thread, stream stopped)
   // Frames kept queued as a jitter buffer between the capture and playback
-  // callbacks (adds to the input latency).
-  void setInputPrefill(int frames) { inPrefill_.store(std::max(0, frames)); }
+  // callbacks (adds to the input latency). 0 = synchronous mode (no adaptive jitter buffer).
+  void setInputPrefill(int frames);
+  int inputEffectivePrefill() const { return inEffPrefill_.load(std::memory_order_relaxed); }
+  int inputObservedBurst() const { return inObservedBurst_.load(std::memory_order_relaxed); }
+  uint64_t inputFramesPushed() const { return inFramesPushed_.load(std::memory_order_relaxed); }
   // Peak of a device input channel since the UI last read it.
   float takeInputPeak(int channel);
+  // K-430: dedicated L/R status peak pair for Settings > Audio live meter (does not steal takeInputPeak).
+  void takeInputStatusPeaks(float& l, float& r);
   // J-218: input tap. While on, every block's device input (channel `first`,
   // plus `first + 1` when stereo; a mono input feeds both sides) goes into one
   // capture ring, whatever the program and the transport do: an instrument
@@ -567,13 +639,14 @@ class AudioEngine {
 
  private:
   struct Cmd {
-    enum Kind { Play, Stop, Pause, Mode, Pattern, Position, NoteOn, NoteOff, Panic, Loop, Preview, LoopRange,
+    enum Kind { Play, Stop, Pause, Mode, Pattern, Position, NoteOn, NoteOff, Panic, Loop, Preview, PreviewSeek, LoopRange,
                 Launch, Release, LiveStop, LiveStopAll, Jump, ReleaseAll, ReleaseLive, StopOwn, BackToArrangement, LaunchScene } kind;
     ObjectId id = kNoId;
     int pitch = 0;
     float value = 0;
     double tick = 0, tick2 = 0;
     const Sample* sample = nullptr;
+    PreviewOptions pvOpt = {};
   };
   void send(const Cmd& c);
   void processDirect(float* L, float* R, int frames);  // host blocks as given
@@ -625,6 +698,11 @@ class AudioEngine {
     // slide ends (slideTo < 0: none).
     float slideTo = -1;
     int64_t slideEnd = 0;
+    // GitHub #87: a 0% note started at a level a slide can raise (silenced at once), and a slide's
+    // velocity glide that came while it waited (slideVel < 0: none) with the clock where it ends.
+    bool silenced = false;
+    float slideVel = -1;
+    int64_t slideVelEnd = 0;
   };
   struct HeldOff {
     ObjectId ch = kNoId;
@@ -733,14 +811,16 @@ class AudioEngine {
   // pattern mode: constant). `clk` samples after the tick `anchor`.
   // Following a host (PH-09): its tempo, constant.
   const TempoMap& clockMap(const Program* p) const {
-    return hostTempo() ? hostMap_ : sceneTempo() ? sceneMap_ : tMode_ == PlayMode::Song ? p->tempoMap : p->flatMap;
+    return hostTempo() ? hostMap_ : sceneTempo() ? sceneMap_ : modTempo(p) ? modTempoMap_ : tMode_ == PlayMode::Song ? p->tempoMap : p->flatMap;
   }
   bool hostTempo() const { return hostFollow_ && hostBpm_ > 0; }
   // grid2-1118: a launched scene's tempo is in force (song mode under the clip grid).
   bool sceneTempo() const { return sceneBpm_ > 0 && tMode_ == PlayMode::Song; }
-  const TempoMap& songMap(const Program* p) const { return hostTempo() ? hostMap_ : sceneTempo() ? sceneMap_ : p->tempoMap; }
-  const TempoMap& flatMap(const Program* p) const { return hostTempo() ? hostMap_ : sceneTempo() ? sceneMap_ : p->flatMap; }
-  double flatBpm(const Program* p) const { return hostTempo() ? hostBpm_ : sceneTempo() ? sceneBpm_ : p->tempo; }
+  // 0.7.9: an internal controller / LFO drives SongParam::Tempo (zero-alloc constant map).
+  bool modTempo(const Program* p) const { return p && p->tempoLinked && modTempoBpm_ > 0.0 && !hostTempo() && !sceneTempo(); }
+  const TempoMap& songMap(const Program* p) const { return hostTempo() ? hostMap_ : sceneTempo() ? sceneMap_ : modTempo(p) ? modTempoMap_ : p->tempoMap; }
+  const TempoMap& flatMap(const Program* p) const { return hostTempo() ? hostMap_ : sceneTempo() ? sceneMap_ : modTempo(p) ? modTempoMap_ : p->flatMap; }
+  double flatBpm(const Program* p) const { return hostTempo() ? hostBpm_ : sceneTempo() ? sceneBpm_ : modTempo(p) ? modTempoBpm_ : p->tempo; }
   void followHost(const Program* p);  // applies hostIn_ (start of a process() call)
   double tickAt(const Program* p, double anchor, double clk) const { return clockMap(p).tickAfterSamples(anchor, clk, sr_); }
   // First sample (counted from the anchor) at or after `tick`. A position within a millionth of a
@@ -785,6 +865,10 @@ class AudioEngine {
   bool nodesStayAtRest(const Program* p, int n) const;
   bool graphSleeps(const Program* p, int n) const;
   void sleepGraph(const Program* p, int n);
+  // K-142e (0.7.9): true O(1) whole-graph deep sleep (no node walk while quiescent; O(1) clock catch-up on wakeup).
+  void tryEnterDeepSleep(const Program* p, int n);  // n: the block that just went by
+  bool canStayDeepAsleep(const Program* p, int n) const;
+  void leaveDeepSleep();
   bool longRestProgram(const Program* p);  // the Program allows long blocks at rest (no LFOs, formulas, ...)
   void readDeviceInput(int n);                        // input queue → inBuf_ (start of a block)
   // Armed tracks → capture rings: before the graph (inputs) or after it (post = tracks recording their output).
@@ -821,7 +905,30 @@ class AudioEngine {
   const Sample* pvSample_ = nullptr;  // audio thread
   double pvPos_ = 0;
   double pvLoop_ = -1;  // frame the preview loops back to (-1 = plays once)
+  // K-407 / K-416 / K-417: realtime-safe stretched & phase-locked browser preview state (audio thread).
+  stretch::Voice pvStretch_;
+  std::vector<float> pvOutL_, pvOutR_;
+  bool pvStretchActive_ = false;
+  bool pvSynced_ = false;
+  bool pvPendingLaunch_ = false;
+  bool pvStopOnTransportStop_ = false;
+  double pvSampleBpm_ = 0.0;
+  double pvOctaveFold_ = 1.0;
+  double pvLastSpeed_ = 1.0;
+  double pvLaunchBeat_ = -1.0;
+  double pvPhaseOffsetBeats_ = 0.0;
+  int64_t pvReadCursor_ = 0;
+  bool pvReadLoop_ = false;
+  static void pvStretchReader(void* ctx, float* const* dst, int frames);
+  void pvStartStretch(const Sample& smp, double startFrame, double speed, double pitch, bool loop);
+  void renderPreview(const Program* p, float* L, float* R, int n);
+  void stopPreviewRt();
   std::atomic<bool> previewing_{false};
+  std::atomic<bool> pvPendingUi_{false};
+  std::atomic<float> pvNormPos_{-1.0f};
+  std::atomic<float> pvPitchSt_{0.0f};
+  std::atomic<float> pvSpeedMult_{1.0f};
+  std::atomic<int> pvQuant_{static_cast<int>(PreviewQuant::Bar)};
   std::atomic<bool> metronome_{false};
   // MIDI queue (single producer: MIDI thread, single consumer: audio).
   struct MidiMsg {
@@ -831,6 +938,26 @@ class AudioEngine {
   std::vector<MidiMsg> mqueue_ = std::vector<MidiMsg>(kMidiQueue);
   std::atomic<size_t> mHead_{0}, mTail_{0};
   std::atomic<ObjectId> midiTarget_{kNoId};
+  // K-438: MIDI output capture (captureMidiOf). The ring is written by the audio thread only and
+  // read by the UI thread only. capSegs_ keep the previous block's transport (hosted output is read
+  // one block late, its offsets are in that block).
+  static constexpr size_t kCapRing = 8192;
+  std::array<CapturedMidi, kCapRing> capRing_{};
+  std::atomic<size_t> capHead_{0}, capTail_{0};
+  std::atomic<uint64_t> capDropped_{0};
+  std::atomic<ObjectId> capChannel_{kNoId};
+  struct CapSeg {
+    int from = 0, len = 0;
+    double anchor = 0;
+    int64_t clock = 0;
+  };
+  CapSeg capSegs_[72];
+  int capSegCount_ = 0;
+  bool capPlaying_ = false;   // the transport played in that block
+  uint32_t capPass_ = 0;      // passes so far (see CapturedMidi::pass)
+  double capLastTick_ = -1;
+  void captureMidi(const Program* p, const Generator::MidiOutEvent* ev, int count, bool previousBlock);
+  void keepCaptureBlock();
   ObjectId midiNoteCh_[128] = {};  // channel each sounding MIDI note was sent to
   bool sustain_ = false;
   bool sustained_[128] = {};
@@ -875,6 +1002,7 @@ class AudioEngine {
   std::atomic<uint32_t> activity_{0};
   std::atomic<ObjectId> lastLiveChannel_{kNoId};  // K-87
   std::atomic<uint64_t> liveNotes_{0};
+  std::atomic<uint64_t> liveNoteOffs_{0};  // GitHub #88
   uint32_t stopActivity_ = 0;
   bool stopArmed_ = false;
   // Count-in and sync output.
@@ -926,7 +1054,8 @@ class AudioEngine {
   bool pastLoop_ = false;
   std::atomic<double> arrStart_{0.0}, arrEnd_{0.0};  // K-112c (N55-02): setArrangement
   std::atomic<bool> arrStop_{false};
-  bool stopsAtEnd() const;  // (audio thread) the transport stops at the Arrangement's end now
+  std::atomic<bool> stopAtEnd_{false};  // K-415: Song mode stops at end instead of looping
+  bool stopsAtEnd() const;  // (audio thread) the transport stops at the song / Arrangement end now
   PlayMode tMode_ = PlayMode::Pattern;
   ObjectId tPattern_ = kNoId;
   double anchorTick_ = 0;   // tick at sample clock 0
@@ -1073,25 +1202,61 @@ class AudioEngine {
   const Program* longProg_ = nullptr;  // longRestProgram's answer for this Program
   bool longOk_ = false;
   std::atomic<bool> graphSleep_{true};
-  std::atomic<uint64_t> sleptBlocks_{0}, longRestBlocks_{0};
+  std::atomic<uint64_t> sleptBlocks_{0}, longRestBlocks_{0}, deepSleptBlocks_{0};
+  // K-142e (0.7.9): O(1) whole-graph deep sleep state.
+  const Program* deepSleepProg_ = nullptr;
+  std::atomic<const Program*> deepSleepProgUi_{nullptr};
+  SleepLedger sleepLedger_;
+  int64_t deepSleepFrames_ = 0;
+  size_t deepSleepNb_ = 0;
+  uint64_t deepSleepEditorEpoch_ = 0, deepSleepHoldEpoch_ = 0;
+  bool deepSleepRestInstr_ = true, deepSleepLowLat_ = false;
+  ProcessContext deepSleepCtx_;
+  bool lastDirectSilent_ = false;
+  int directFrames_ = 0;  // the frames of the processDirect call in progress (audio thread)
   std::atomic<bool> profiling_{false};
   std::atomic<bool> countCalls_{false};          // K-142
   std::atomic<uint64_t> countedBlocks_{0};        // K-142: blocks made while counting
   std::atomic<float> cpuPeak_{0};
   CpuMeter cpuMeter_;  // audio thread only
-  // Audio input (J-8).
-  static constexpr size_t kInputQueueFrames = size_t{1} << 15;
+  // Audio input (J-8, K-430).
+  static constexpr size_t kInputQueueFrames = size_t{1} << 16;  // 65536 frames (~1.48 s @ 44.1 kHz)
   std::vector<float> inQueue_;  // interleaved, kInputQueueFrames * kMaxInputChannels
   std::atomic<size_t> inHead_{0}, inTail_{0};  // frames written / read
   std::atomic<int> inChannels_{2};
+  std::atomic<double> inRate_{0.0};  // 0 = matches engine sr_
   std::atomic<int> inUnderruns_{0};
   std::atomic<int> inPrefill_{0};
-  bool inPrimed_ = false;  // (audio thread) the jitter buffer has filled
+  std::atomic<int> inEffPrefill_{0};
+  std::atomic<int> inObservedBurst_{0};
+  std::atomic<uint64_t> inFramesPushed_{0};
+  std::atomic<uint32_t> inResetGen_{0};
+  // Audio-thread private input jitter/resampler state (zero allocations, fixed-size).
+  uint32_t inSeenResetGen_ = 0;
+  bool inPrimed_ = false;
+  bool inWasUnderrun_ = false;
+  int inFadeIn_ = 0;
+  size_t inLastHead_ = 0;
+  size_t inWaveFrames_ = 0;
+  size_t inGapFrames_ = 0;
+  size_t inBurstEst_ = 0;
+  size_t inMaxGap_ = 0;
+  size_t inAdaptPrefill_ = 0;
+  size_t inWinMinAvail_ = ~size_t{0};
+  size_t inWinFrames_ = 0;
+  double inSrcPhase_ = 0.0;
+  float inHist_[kMaxInputChannels] = {};
+  // Lightweight 2-pole Butterworth anti-aliasing prefilter when downsampling significantly (ratio > 1.15).
+  size_t inLpPos_ = 0;
+  double inLpRatio_ = 1.0;
+  float inLpB0_ = 1.0f, inLpB1_ = 0.0f, inLpB2_ = 0.0f, inLpA1_ = 0.0f, inLpA2_ = 0.0f;
+  float inLpZ1_[kMaxInputChannels] = {}, inLpZ2_[kMaxInputChannels] = {};
   std::vector<std::vector<float>> inBuf_;  // per input channel, this block
   const float* inPtrs_[kMaxInputChannels] = {};  // K-170: inBuf_ for ProcessContext::deviceIn
   bool inDirty_[kMaxInputChannels] = {};  // K-142: inBuf_ holds something other than silence
   std::vector<float> silence_;
   std::atomic<float> inPeak_[kMaxInputChannels] = {};
+  std::atomic<float> inStatusPeakL_{0.f}, inStatusPeakR_{0.f};
   std::shared_ptr<packs::edison::CaptureRing> tapOwn_;  // J-218 input tap (the UI thread creates it)
   std::atomic<packs::edison::CaptureRing*> tap_{nullptr};
   std::atomic<int> tapFirst_{-1};
@@ -1153,6 +1318,14 @@ class AudioEngine {
   // live area end and project, and their copies for the interface.
   double sceneBpm_ = 0;
   TempoMap sceneMap_;
+  // 0.7.9 (audio thread): live internal-controller modulated tempo (pre-allocated 1-seg map).
+  double modTempoBpm_ = 0.0;
+  // Live swing (dispatch, dispatchLive): the amount the last block placed notes with, the clock
+  // sample it ended on and its anchor (a block that follows on takes no note twice, drops none).
+  float swingSeen_ = 0, liveSwingSeen_ = 0;
+  int64_t swingSeenEnd_ = -1, liveSwingSeenEnd_ = -1;
+  double swingSeenAnchor_ = 0, liveSwingSeenAnchor_ = 0;
+  TempoMap modTempoMap_;
   bool meterOv_ = false;
   Tick meterOvAt_ = 0, meterOvBar_ = 384, meterOvBeat_ = 96;
   Tick scenePendAt_ = -1;

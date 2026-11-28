@@ -40,6 +40,27 @@ Some sites, video sites above all, now and then refuse a download link they gave
 before (HTTP 403), or a connection breaks off. Gridline then reads the page again and tries once
 more, up to three tries in all; the popup shows "trying again (2 of 3)".
 
+## Into a plugin
+
+Every plugin that loads audio has Import from URL beside its own Load button, and in its
+window's menu (the menu at the top left of a plugin window): Sampler (also **Import from URL...**
+in the Audio clip window), Kerf, Granular, Abacus (into the selected pad and layer), Tercet's
+custom wave, Seltmann, Platter (deck A or B), Loupe, Convolver, Turntable, Grain Scanner, Spline
+Scratch, Multisampler (a new zone, or **Replace from URL...** in a zone's menu), Scratch Sampler,
+Tracker Sampler, Plasma (a layer's sample or wavetable, the wavetable editor and an impulse
+response), Halftone (into the part shown) and Facet. In the Tracker layout the Sample editor has
+**URL...** beside **Load...**, and an entry's menu has **Import from URL into entry...**. The
+channel rack's **Add** menu has **Audio from URL as sampler...**: each imported file becomes a new
+sampler channel. Ctrl+Shift+U in a focused plugin window opens the popup for that plugin.
+
+The popup is the same one, with the same options (the link and what it holds, the first or
+chosen playlist items, **Only part**), and the file is kept the same way in the project's
+`Imported` folder. **Place** offers the plugin first, then a clip or the browser. The plugin loads
+the file the way its own Load button does: Seltmann chops it, Kerf slices it, Platter analyses it
+for the deck, Multisampler and Tracker Sampler add each playlist item as its own sample. The
+whole import into a plugin is one undo step, and in a collaborative project the file and the
+change reach everyone, as a dropped file does.
+
 ## Where the files go
 
 * A saved project: `<project folder>/Imported/`.

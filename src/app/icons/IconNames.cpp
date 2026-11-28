@@ -187,6 +187,22 @@ const char* iconSvgName(Icon icon) {
     case Icon::ProjectFile: return "track-project";
     case Icon::ChordStamp: return "chord-stamp";
     case Icon::CollapseAll: return "collapse-all";
+    case Icon::SkipBack: return "skip-back-filled";
+    case Icon::Rewind: return "rewind-filled";
+    case Icon::FastForward: return "fast-forward-filled";
+    case Icon::InspectorSwitches: return "inspector-switches";
+    case Icon::LibraryStack: return "library-stack";
+    case Icon::ZoomVertical: return "move-vertical";
+    case Icon::ChevronsUpDown: return "chevrons-up-down";
+    case Icon::MetroBeatRight: return "metronome-beat-right";
+    case Icon::MetroBeatLeft: return "metronome-beat-left";
+    case Icon::RecordArmed: return "record-armed";
+    case Icon::SessionRecordFrame: return "session-record-frame";
+    case Icon::CircleCaretRight: return "circle-caret-right";
+    case Icon::CircleCaretDown: return "circle-caret-down";
+    case Icon::FollowAction: return "follow-action";
+    case Icon::Globe: return "globe";
+    case Icon::GlobeOff: return "globe-off";
     case Icon::Count: break;
   }
   return nullptr;

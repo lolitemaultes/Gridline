@@ -126,8 +126,14 @@ class Backend final : public host::Backend {
     return n.empty() ? host::Backend::auxOutputName(k) : n;
   }
   bool supportsTuning() const override { return p_->supportsTuningExpression(); }
+  bool supportsPitchBend() const override {
+    for (int ch = 0; ch < 16; ++ch)
+      if (p_->midiParam(ch, sv::kPitchBend) >= 0) return true;
+    return false;
+  }
   bool hasEventOutput() const override { return p_->hasEventOutput(); }
   bool handlesNotePan() const override { return p_->supportsExpression(sv::kPanTypeID); }
+  bool supportsNoteVolume() const override { return p_->supportsExpression(sv::kVolumeTypeID); }  // GitHub #87
   bool hasBypass() const override { return p_->bypassParam() >= 0; }
   bool setBypass(bool on) override {
     if (p_->bypassParam() < 0) return false;
@@ -296,6 +302,14 @@ class Backend final : public host::Backend {
           e.polyPressure.noteId = n.noteId;
           break;
         }
+        if (n.expr == host::NoteEvent::ExprVolume) {  // GitHub #87: normalized 0.25 = 0 dB, 1 = +12 dB (gain 4)
+          if (!p_->supportsExpression(sv::kVolumeTypeID)) return;
+          e.type = sv::Event::kNoteExpressionValueEvent;
+          e.noteExpressionValue.typeId = sv::kVolumeTypeID;
+          e.noteExpressionValue.noteId = n.noteId;
+          e.noteExpressionValue.value = std::clamp(static_cast<double>(n.value) * 0.25, 0.0, 1.0);
+          break;
+        }
         if (!p_->supportsExpression(sv::kBrightnessTypeID)) return;
         e.type = sv::Event::kNoteExpressionValueEvent;
         e.noteExpressionValue.typeId = sv::kBrightnessTypeID;
@@ -317,7 +331,12 @@ class Backend final : public host::Backend {
         double v = 0;
         if (st == 0xB0) ctrl = n.midi[1] & 0x7F, v = (n.midi[2] & 0x7F) / 127.0;
         else if (st == 0xD0) ctrl = sv::kAfterTouch, v = (n.midi[1] & 0x7F) / 127.0;
-        else if (st == 0xE0) ctrl = sv::kPitchBend, v = ((n.midi[1] & 0x7F) | ((n.midi[2] & 0x7F) << 7)) / 16383.0;
+        else if (st == 0xE0) {
+          // Q-13: map 14-bit MIDI center (8192) to exact 0.5 normalized value.
+          const int raw = (n.midi[1] & 0x7F) | ((n.midi[2] & 0x7F) << 7);
+          ctrl = sv::kPitchBend;
+          v = raw == 8192 ? 0.5 : (raw < 8192 ? raw / 16384.0 : 0.5 + (raw - 8192) / 16382.0);
+        }
         const int64_t pid = ctrl >= 0 ? p_->midiParam(ch, ctrl) : -1;
         if (pid >= 0) addParamChange(static_cast<uint32_t>(pid), v, n.offset);
         return;

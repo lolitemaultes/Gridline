@@ -1,12 +1,18 @@
 // Gridline - K-247: the LFO board (see Lfo.h).
 #include "Lfo.h"
 #include <algorithm>
+#include <array>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <map>
 #include <set>
 #include "Document.h"
 #include "I18n.h"
 #include "Macros.h"
+#include "Presets.h"
+#include "Project.h"
 
 namespace gl::lfo {
 
@@ -124,6 +130,7 @@ void buildTable(const SongLfo& l, DrawnTable& out) {
     p.x = std::clamp(p.x, 0.0f, 1.0f);
     p.y = std::clamp(p.y, -1.0f, 1.0f);
     p.curve = std::clamp(p.curve, -1.0f, 1.0f);
+    if (p.kind > kLfoPointStep) p.kind = kLfoPointCurve;
   }
   std::stable_sort(pts.begin(), pts.end(), [](const LfoPoint& a, const LfoPoint& b) { return a.x < b.x; });
   const size_t n = pts.size();
@@ -142,8 +149,13 @@ void buildTable(const SongLfo& l, DrawnTable& out) {
     const double span = bx - ax;
     double t = span > 1e-9 ? (xx - ax) / span : 0.0;
     t = std::clamp(t, 0.0, 1.0);
-    if (l.drawnSteps || n == 1) {
+    if (l.drawnSteps || n == 1 || a.kind == kLfoPointStep) {
       out[static_cast<size_t>(i)] = a.y;
+      continue;
+    }
+    if (a.kind == kLfoPointSmooth) {  // 0.7.9: an S curve, flat at both ends
+      t = 0.5 - 0.5 * std::cos(t * 3.141592653589793);
+      out[static_cast<size_t>(i)] = static_cast<float>(a.y + (b.y - a.y) * t);
       continue;
     }
     const double c = a.curve;
@@ -152,6 +164,161 @@ void buildTable(const SongLfo& l, DrawnTable& out) {
     out[static_cast<size_t>(i)] = static_cast<float>(a.y + (b.y - a.y) * t);
   }
 }
+
+namespace {
+std::vector<LfoPoint> sortedPoints(std::vector<LfoPoint> v) {
+  for (auto& p : v) p.x = std::clamp(p.x, 0.0f, 1.0f), p.y = std::clamp(p.y, -1.0f, 1.0f), p.curve = std::clamp(p.curve, -1.0f, 1.0f);
+  std::stable_sort(v.begin(), v.end(), [](const LfoPoint& a, const LfoPoint& b) { return a.x < b.x; });
+  // Two points at one place: the later one wins.
+  std::vector<LfoPoint> out;
+  for (const auto& p : v) {
+    if (!out.empty() && std::fabs(out.back().x - p.x) < 1e-5f) out.back() = p;
+    else out.push_back(p);
+  }
+  if (out.empty()) out.push_back({0.0f, 0.0f, 0.0f, kLfoPointCurve});
+  return out;
+}
+// The drawn shape's value at x (0..1) as it plays (its table).
+float drawnAt(const SongLfo& src, const std::vector<LfoPoint>& pts, float x) {
+  SongLfo l = src;
+  l.points = pts;
+  DrawnTable t{};
+  buildTable(l, t);
+  const double pos = std::clamp(static_cast<double>(x), 0.0, 1.0) * kTableSize;
+  const int i = static_cast<int>(pos) % kTableSize;
+  return t[static_cast<size_t>(i)];
+}
+}  // namespace
+
+float snapX(float x, int steps) {
+  if (steps < 2) return std::clamp(x, 0.0f, 1.0f);
+  return std::clamp(std::round(x * static_cast<float>(steps)) / static_cast<float>(steps), 0.0f, 1.0f);
+}
+
+std::vector<LfoPoint> pointsFromShape(const SongLfo& l) {
+  constexpr float kEnd = 1.0f - 1.0f / kTableSize;  // the last place before the cycle wraps
+  switch (l.shape) {
+    case LfoShape::Sine: return {{0.25f, 1.0f, 0.0f, kLfoPointSmooth}, {0.75f, -1.0f, 0.0f, kLfoPointSmooth}};
+    case LfoShape::Triangle: return {{0.25f, 1.0f, 0.0f, kLfoPointCurve}, {0.75f, -1.0f, 0.0f, kLfoPointCurve}};
+    case LfoShape::SawUp: return {{0.0f, -1.0f, 0.0f, kLfoPointCurve}, {kEnd, 1.0f, 0.0f, kLfoPointStep}};
+    case LfoShape::SawDown: return {{0.0f, 1.0f, 0.0f, kLfoPointCurve}, {kEnd, -1.0f, 0.0f, kLfoPointStep}};
+    case LfoShape::Square: return {{0.0f, 1.0f, 0.0f, kLfoPointStep}, {std::clamp(l.pulseWidth, 0.02f, 0.98f), -1.0f, 0.0f, kLfoPointStep}};
+    case LfoShape::RandomHold:
+    case LfoShape::RandomGlide: {
+      const int n = std::clamp(l.randomSteps, 1, 16);
+      std::vector<LfoPoint> v;
+      for (int k = 0; k < n; ++k)
+        v.push_back({static_cast<float>(k) / static_cast<float>(n), randomValue(l.seed, 0, static_cast<uint32_t>(k)), 0.0f,
+                     l.shape == LfoShape::RandomHold ? kLfoPointStep : kLfoPointSmooth});
+      return v;
+    }
+    default: break;
+  }
+  return l.points.empty() ? defaultPoints() : l.points;
+}
+
+std::vector<LfoPoint> flipPoints(const std::vector<LfoPoint>& in) {
+  const std::vector<LfoPoint> pts = sortedPoints(in);
+  const size_t n = pts.size();
+  std::vector<LfoPoint> out;
+  for (size_t k = 0; k < n; ++k) {
+    // The line from point k to point k+1 runs backwards: from (1 - x[k+1]) to (1 - x[k]).
+    const LfoPoint& a = pts[k];
+    const LfoPoint& b = pts[(k + 1) % n];
+    LfoPoint q;
+    float x = 1.0f - b.x;
+    if (k + 1 >= n) x = 1.0f - (b.x + 1.0f);  // the wrap segment
+    q.x = x - std::floor(x);
+    if (q.x >= 1.0f) q.x = 0.0f;
+    q.kind = a.kind;
+    q.y = a.kind == kLfoPointStep ? a.y : b.y;
+    q.curve = a.kind == kLfoPointCurve ? -a.curve : 0.0f;
+    out.push_back(q);
+  }
+  return sortedPoints(out);
+}
+
+std::vector<LfoPoint> invertPoints(const std::vector<LfoPoint>& in) {
+  std::vector<LfoPoint> out = in;
+  for (auto& p : out) p.y = -p.y;
+  return out;
+}
+
+std::vector<LfoPoint> clearPoints() { return {{0.0f, 0.0f, 0.0f, kLfoPointCurve}}; }
+
+std::vector<LfoPoint> drawStroke(const SongLfo& l, const std::vector<std::pair<float, float>>& stroke, int steps) {
+  std::vector<LfoPoint> base = sortedPoints(l.points.empty() ? defaultPoints() : l.points);
+  if (stroke.empty()) return base;
+  const bool cells = steps >= 2;
+  const int n = cells ? std::min(steps, 64) : 64;
+  // Which cells the stroke crosses, and its value in each (later passes win).
+  std::array<float, 64> val{};
+  std::array<bool, 64> hit{};
+  auto cellOf = [&](float x) { return std::clamp(static_cast<int>(std::floor(std::clamp(x, 0.0f, 1.0f) * static_cast<float>(n))), 0, n - 1); };
+  auto put = [&](float x, float y) {
+    const int c = cellOf(x);
+    val[static_cast<size_t>(c)] = std::clamp(y, -1.0f, 1.0f);
+    hit[static_cast<size_t>(c)] = true;
+  };
+  put(stroke.front().first, stroke.front().second);
+  for (size_t i = 1; i < stroke.size(); ++i) {
+    const auto [x0, y0] = stroke[i - 1];
+    const auto [x1, y1] = stroke[i];
+    const int c0 = cellOf(x0), c1 = cellOf(x1);
+    const int dir = c1 >= c0 ? 1 : -1;
+    for (int c = c0; c != c1 + dir; c += dir) {  // every cell between, at the stroke's height there
+      const float cx = (static_cast<float>(c) + 0.5f) / static_cast<float>(n);
+      const float t = std::fabs(x1 - x0) > 1e-6f ? std::clamp((cx - x0) / (x1 - x0), 0.0f, 1.0f) : 1.0f;
+      val[static_cast<size_t>(c)] = std::clamp(y0 + (y1 - y0) * t, -1.0f, 1.0f);
+      hit[static_cast<size_t>(c)] = true;
+    }
+    put(x1, y1);
+  }
+  // Keep the old points outside the touched cells; a point at the end of every touched run carries
+  // the old shape on from there.
+  std::vector<LfoPoint> out;
+  auto inHit = [&](float x) { return hit[static_cast<size_t>(cellOf(x))] && x < 1.0f; };
+  for (const auto& p : base)
+    if (!inHit(p.x)) out.push_back(p);
+  for (int c = 0; c < n; ++c) {
+    if (!hit[static_cast<size_t>(c)]) continue;
+    const float x = static_cast<float>(c) / static_cast<float>(n);
+    out.push_back({x, val[static_cast<size_t>(c)], 0.0f, cells ? kLfoPointStep : kLfoPointCurve});
+    // Where a run starts, the old shape holds up to it (a point just before it, then a step).
+    const bool runStarts = c == 0 ? !hit[static_cast<size_t>(n - 1)] : !hit[static_cast<size_t>(c - 1)];
+    if (runStarts) {
+      const float px = (c == 0 ? 1.0f : x) - 1.0f / kTableSize;
+      bool has = false;
+      for (const auto& p : out) has = has || std::fabs(p.x - px) < 1e-5f;
+      if (!has) out.push_back({px, drawnAt(l, base, px), 0.0f, kLfoPointStep});
+    }
+    const bool runEnds = c + 1 >= n ? !hit[0] : !hit[static_cast<size_t>(c + 1)];
+    if (runEnds) {
+      const float ex = static_cast<float>(c + 1) / static_cast<float>(n);
+      const float e = ex >= 1.0f ? 0.0f : ex;
+      bool has = false;
+      for (const auto& p : out) has = has || std::fabs(p.x - e) < 1e-5f;
+      if (!has) {
+        // The old shape's value there and the kind of the old segment it sits in.
+        uint8_t kind = kLfoPointCurve;
+        for (const auto& p : base)
+          if (p.x <= e) kind = p.kind;
+        out.push_back({e, drawnAt(l, base, e), 0.0f, kind == kLfoPointStep ? kLfoPointStep : kLfoPointCurve});
+      }
+    }
+  }
+  out = sortedPoints(out);
+  // Too many points: drop every other freehand one until it fits.
+  while (out.size() > static_cast<size_t>(kLfoMaxPoints)) {
+    std::vector<LfoPoint> thin;
+    for (size_t i = 0; i < out.size(); ++i)
+      if (i % 2 == 0 || !inHit(out[i].x)) thin.push_back(out[i]);
+    if (thin.size() == out.size()) thin.resize(static_cast<size_t>(kLfoMaxPoints));
+    out = std::move(thin);
+  }
+  return out;
+}
+
 
 double linkValue(const LinkShape& k, float v) {
   // The unit value (0..1) of the LFO's output, turned over when the link inverts it.
@@ -347,39 +514,186 @@ const std::vector<Preset>& presets() {
     auto mk = [](LfoShape shape, int note, int kind, bool unipolar, float depth) {
       SongLfo l;
       l.shape = shape;
-      l.rateNote = note;
+      l.rateNote = note;  // kRateNames: 1 "4 bars", 3 "1/1", 4 "1/2", 5 "1/4", 6 "1/8", 7 "1/16"
       l.rateKind = kind;
       l.unipolar = unipolar;
       l.depth = depth;
       return l;
     };
-    SongLfo wobble = mk(LfoShape::Sine, 6, 1, false, 0.8f);  // 1/8 dotted
-    wobble.smoothMs = 30;
-    out.push_back({i18n::N_("Dotted wobble"), wobble});
-    SongLfo pump = mk(LfoShape::SawDown, 5, 0, true, 0.9f);  // 1/4, the knob at the bottom
-    pump.smoothMs = 10;
-    out.push_back({i18n::N_("Quarter pump"), pump});
-    SongLfo drift = mk(LfoShape::RandomGlide, 2, 0, false, 0.35f);  // 2 bars
+    auto add = [&out](const char* name, const SongLfo& l) {
+      Preset p;
+      p.name = name;
+      p.lfo = l;
+      p.factory = true;
+      out.push_back(std::move(p));
+    };
+    SongLfo swell = mk(LfoShape::Triangle, 1, 0, true, 0.7f);  // 4 bars, growing in over a bar
+    swell.fadeIn = 1;
+    swell.smoothMs = 60;
+    add(i18n::N_("Slow swell"), swell);
+    SongLfo wobble = mk(LfoShape::Sine, 5, 0, false, 0.8f);
+    wobble.smoothMs = 20;
+    add(i18n::N_("Wobble 1/4"), wobble);
+    SongLfo dotted = mk(LfoShape::Sine, 6, 1, false, 0.8f);  // 1/8 dotted
+    dotted.smoothMs = 30;
+    add(i18n::N_("Dotted wobble"), dotted);
+    SongLfo trem = mk(LfoShape::Sine, 6, 2, true, 0.6f);  // 1/8 triplet
+    add(i18n::N_("Triplet tremolo"), trem);
+    SongLfo gate = mk(LfoShape::Square, 6, 0, true, 1.0f);
+    gate.smoothMs = 4;
+    add(i18n::N_("Gate 1/8"), gate);
+    SongLfo ramp = mk(LfoShape::SawUp, 3, 0, true, 1.0f);  // one rise a bar
+    ramp.smoothMs = 6;
+    add(i18n::N_("Ramp up bar"), ramp);
+    SongLfo steps = mk(LfoShape::RandomHold, 3, 0, false, 0.3f);  // a new value every 1/16 over a bar
+    steps.randomSteps = 16;
+    add(i18n::N_("Random steps"), steps);
+    SongLfo drift = mk(LfoShape::RandomGlide, 2, 0, false, 0.35f);
     drift.randomSteps = 2;
     drift.restart = LfoRestart::Free;
     drift.tempoSync = false;
     drift.rateHz = 0.21f;
     drift.smoothMs = 80;
-    out.push_back({i18n::N_("Slow drift"), drift});
-    SongLfo gate = mk(LfoShape::Square, 7, 0, true, 1.0f);  // 1/16
-    gate.pulseWidth = 0.5f;
-    gate.smoothMs = 4;
-    out.push_back({i18n::N_("Sixteenth gate"), gate});
-    SongLfo steps = mk(LfoShape::RandomHold, 3, 0, false, 0.3f);  // one value per 1/16 over a bar
-    steps.randomSteps = 16;
-    out.push_back({i18n::N_("Random steps"), steps});
-    SongLfo swell = mk(LfoShape::Triangle, 1, 0, true, 0.7f);  // 4 bars
-    swell.fadeIn = 1;
-    swell.smoothMs = 60;
-    out.push_back({i18n::N_("Long swell"), swell});
+    add(i18n::N_("Drift"), drift);
+    // Drawn: a bar of sixteenths, some of them silent.
+    SongLfo stutter = mk(LfoShape::Drawn, 3, 0, true, 1.0f);
+    {
+      const int on[16] = {1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0};
+      for (int k = 0; k < 16; ++k) stutter.points.push_back({static_cast<float>(k) / 16.0f, on[k] ? 1.0f : -1.0f, 0.0f, kLfoPointStep});
+      stutter.smoothMs = 3;
+    }
+    add(i18n::N_("Stutter gate"), stutter);
+    // Drawn: down on the beat, a quick climb back, then held up until the next beat.
+    SongLfo pump = mk(LfoShape::Drawn, 5, 0, true, 1.0f);
+    pump.points = {{0.0f, -1.0f, -0.6f, kLfoPointCurve}, {0.55f, 1.0f, 0.0f, kLfoPointStep}};
+    pump.smoothMs = 2;
+    add(i18n::N_("Sidechain pump"), pump);
+    // Drawn: two soft bumps a cycle, the second smaller.
+    SongLfo bounce = mk(LfoShape::Drawn, 4, 0, false, 0.8f);
+    bounce.points = {{0.0f, -1.0f, 0.0f, kLfoPointSmooth}, {0.25f, 1.0f, 0.0f, kLfoPointSmooth}, {0.5f, -1.0f, 0.0f, kLfoPointSmooth},
+                     {0.75f, 0.3f, 0.0f, kLfoPointSmooth}};
+    add(i18n::N_("Bounce 1/2"), bounce);
     return out;
   }();
   return v;
+}
+
+SongLfo presetSettings(const SongLfo& in) {
+  SongLfo l = in;
+  const SongLfo d;
+  l.id = kNoId;
+  l.name.clear();
+  l.colour = d.colour;
+  l.on = d.on;
+  l.noteChannel = kNoId;
+  l.roll = 0;
+  return l;
+}
+
+std::string presetFolder(const std::string& presetRoot) { return (std::filesystem::u8path(presetRoot) / "lfos").u8string(); }
+
+std::string presetToText(const std::string& name, const SongLfo& l) {
+  Json j = Json::makeObject();
+  j.object["format"] = Json::makeString("gridline-lfo");
+  j.object["version"] = Json::makeNumber(1);
+  j.object["name"] = Json::makeString(name);
+  j.object["lfo"] = lfoToJson(presetSettings(l));
+  return jsonStringify(j) + "\n";
+}
+
+bool presetFromText(const std::string& text, Preset& out, std::string* err) {
+  Json j;
+  if (!jsonParse(text, j) || !j.is(Json::Type::Object)) {
+    if (err) *err = "not an LFO preset";
+    return false;
+  }
+  if (j.text("format") != "gridline-lfo") {
+    if (err) *err = "not an LFO preset";
+    return false;
+  }
+  const Json* jl = j.find("lfo");
+  SongLfo l;
+  if (!jl || !jl->is(Json::Type::Object) || !lfoFromJson(*jl, l)) {
+    if (err) *err = "the preset's settings are missing or of a newer kind";
+    return false;
+  }
+  out = Preset{};
+  out.name = j.text("name");
+  out.lfo = presetSettings(l);
+  return true;
+}
+
+bool loadPresetFile(const std::string& file, Preset& out, std::string* err) {
+  std::ifstream in(std::filesystem::u8path(file), std::ios::binary);
+  if (!in) {
+    if (err) *err = "cannot read " + file;
+    return false;
+  }
+  std::stringstream ss;
+  ss << in.rdbuf();
+  if (ss.str().size() > (1u << 20)) {
+    if (err) *err = "the file is too large for an LFO preset";
+    return false;
+  }
+  if (!presetFromText(ss.str(), out, err)) return false;
+  if (out.name.empty()) out.name = std::filesystem::u8path(file).stem().u8string();
+  return true;
+}
+
+std::vector<Preset> listUserPresets(const std::string& presetRoot) {
+  std::vector<Preset> out;
+  if (presetRoot.empty()) return out;
+  for (const PresetEntry& e : listLfoPresets(presetRoot)) {
+    Preset p;
+    if (!loadPresetFile(e.file, p)) continue;
+    p.name = e.name;  // the file name is its name in the library
+    p.folder = e.folder;
+    p.file = e.file;
+    p.factory = false;
+    out.push_back(std::move(p));
+  }
+  return out;
+}
+
+std::vector<Preset> allPresets(const std::string& presetRoot) {
+  std::vector<Preset> out = presets();
+  for (Preset& p : listUserPresets(presetRoot)) out.push_back(std::move(p));
+  return out;
+}
+
+bool saveUserPreset(const std::string& presetRoot, const SongLfo& l, const std::string& relName, std::string* path, std::string* err) {
+  namespace fs = std::filesystem;
+  fs::path f = fs::u8path(presetFolder(presetRoot));
+  std::string part;
+  std::vector<std::string> parts;
+  for (char c : relName + "/") {
+    if (c == '/' || c == '\\') {
+      const size_t b0 = part.find_first_not_of(" \t"), b1 = part.find_last_not_of(" \t");
+      part = b0 == std::string::npos ? std::string() : part.substr(b0, b1 - b0 + 1);
+      if (!part.empty() && part != "." && part != "..") parts.push_back(safePresetName(part));
+      part.clear();
+    } else {
+      part += c;
+    }
+  }
+  parts.erase(std::remove_if(parts.begin(), parts.end(), [](const std::string& x) { return x.empty(); }), parts.end());
+  if (parts.empty()) {
+    if (err) *err = "the preset needs a name";
+    return false;
+  }
+  for (size_t i = 0; i + 1 < parts.size(); ++i) f /= fs::u8path(parts[i]);
+  f /= fs::u8path(parts.back() + ".json");
+  std::error_code ec;
+  fs::create_directories(f.parent_path(), ec);
+  if (!writeFileAtomic(f.u8string(), presetToText(parts.back(), l), err)) return false;
+  if (path) *path = f.u8string();
+  return true;
+}
+
+bool deleteUserPreset(const Preset& p) {
+  if (p.factory || p.file.empty()) return false;
+  std::error_code ec;
+  return std::filesystem::remove(std::filesystem::u8path(p.file), ec);
 }
 
 void applyPreset(SongLfo& l, const SongLfo& p) {

@@ -13,6 +13,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <map>
+#include "../../core/PluginBrand.h"
+#include "../../app/UrlImportUi.h"
 #include "../../app/ContextMenus.h"
 #include "../../core/KnobMagnet.h"
 #include "../../engine/Sample.h"
@@ -377,6 +379,27 @@ void envPage(App& a, const PluginTarget& t, const PluginState& st, PatchData& d,
   }
 }
 
+// An audio file resynthesized into part `p`'s image (LOAD AUDIO, Import from URL), one undo step.
+bool resynthesize(App& a, const PluginTarget& t, const std::string& path, int p) {
+  const PluginState* s0 = t.state(a.doc.song());
+  if (!s0) return false;
+  SamplePtr smp = sampleCache().get(path);
+  if (!smp) return false;
+  std::vector<float> mono(smp->left);
+  for (size_t i = 0; i < mono.size() && i < smp->right.size(); ++i) mono[i] = 0.5f * (mono[i] + smp->right[i]);
+  PatchData dd;
+  parsePatch(s0->data, dd);
+  ImageData out;
+  if (!analyzeAudio(mono, smp->sampleRate, 255, 0.01, out)) return false;
+  out.source = path;
+  dd.part[static_cast<size_t>(p)].image = out;
+  PluginState ns = *s0;
+  ns.data = serializePatch(dd);
+  ns.params[static_cast<size_t>(pf(p, PfImgGainMix))] = 1;
+  setPluginState(a, t, ns, "Resynthesize audio");
+  return true;
+}
+
 void imagePage(App& a, const PluginTarget& t, const PluginState& st, PatchData& d, const flk::Ctx& c, const flk::Ctx& cO, HmUi& u) {
   const int p = u.part;
   ImageData& im = d.part[static_cast<size_t>(p)].image;
@@ -398,26 +421,16 @@ void imagePage(App& a, const PluginTarget& t, const PluginState& st, PatchData& 
   }
   if (!im.source.empty()) flk::text(c, 400, 410, std::filesystem::path(im.source).filename().string().c_str());
   const PluginTarget tc = t;
-  if (flk::btn(c, "loadAudio", 527, 378, 90, 22, "LOAD AUDIO", false))
-    menus::fileDialog(a, "Resynthesize audio", false, {".wav", ".flac", ".ogg", ".mp3", ".wv"}, "", [&a, tc, p](const std::string& path) {
-      const PluginState* s0 = tc.state(a.doc.song());
-      if (!s0) return;
-      SamplePtr smp = sampleCache().get(path);
-      if (!smp) return;
-      std::vector<float> mono(smp->left);
-      for (size_t i = 0; i < mono.size() && i < smp->right.size(); ++i) mono[i] = 0.5f * (mono[i] + smp->right[i]);
-      PatchData dd;
-      parsePatch(s0->data, dd);
-      ImageData out;
-      if (!analyzeAudio(mono, smp->sampleRate, 255, 0.01, out)) return;
-      out.source = path;
-      dd.part[static_cast<size_t>(p)].image = out;
-      PluginState ns = *s0;
-      ns.data = serializePatch(dd);
-      ns.params[static_cast<size_t>(pf(p, PfImgGainMix))] = 1;
-      setPluginState(a, tc, ns, "Resynthesize audio");
-    });
-  if (flk::btn(c, "loadPic", 621, 378, 90, 22, "LOAD PICTURE", false))
+  if (flk::btn(c, "loadAudio", 527, 378, 64, 22, "LOAD AUDIO", false))
+    menus::fileDialog(a, "Resynthesize audio", false, {".wav", ".flac", ".ogg", ".mp3", ".wv"}, "",
+                      [&a, tc, p](const std::string& path) { resynthesize(a, tc, path, p); });
+  if (ImGui::IsItemHovered()) a.setHint("Resynthesize an audio file into this part's image");
+  if (flk::btn(c, "urlAudio", 595, 378, 56, 22, "FROM URL", false)) {
+    const std::string label = std::string(pluginDisplayName("gl.harmor")) + (p == 0 ? " (Part A)" : " (Part B)");
+    urlimportui::openFor(a, urlimportui::Target{label, [tc, p](App& app, const std::string& path, const std::string&) { resynthesize(app, tc, path, p); }, false});
+  }
+  if (ImGui::IsItemHovered()) a.setHint("Import from URL: a web link's audio, resynthesized into this part's image");
+  if (flk::btn(c, "loadPic", 655, 378, 78, 22, "LOAD PICTURE", false))
     menus::fileDialog(a, "Load picture", false, {".bmp", ".ppm", ".pgm", ".tga"}, "", [&a, tc, p](const std::string& path) {
       const PluginState* s0 = tc.state(a.doc.song());
       if (!s0) return;
@@ -430,7 +443,7 @@ void imagePage(App& a, const PluginTarget& t, const PluginState& st, PatchData& 
       ns.data = serializePatch(dd);
       setPluginState(a, tc, ns, "Load picture");
     });
-  if (flk::btn(c, "clearImg", 715, 378, 60, 22, "CLEAR", false) && (!im.gain.empty() || !im.source.empty())) {
+  if (flk::btn(c, "clearImg", 737, 378, 44, 22, "CLEAR", false) && (!im.gain.empty() || !im.source.empty())) {
     im = ImageData{};
     commit(a, t, st, d, "Clear image", 0x7300);
   }
@@ -519,8 +532,10 @@ void drawHarmor(App& a, const PluginTarget& t, float width) {
   topSection(a, t, st, d, c, cO, cG, cV, u.part);
   globalSection(c, cO, u);
   static const char* kPages[4] = {"ENV", "IMAGE", "FX", "ADV"};
+  ImGui::PushID("pages");  // K-459: the ENV page tab and the curve editor's ENV button are two buttons
   for (int i = 0; i < 4; ++i)
     if (flk::btn(c, kPages[i], 829 + i * 46.0f, 340, 44, 22, kPages[i], u.page == i)) u.page = i;
+  ImGui::PopID();
   switch (u.page) {
     case 0: envPage(a, t, st, d, c, u); break;
     case 1: imagePage(a, t, st, d, c, cO, u); break;
@@ -529,6 +544,10 @@ void drawHarmor(App& a, const PluginTarget& t, float width) {
   }
   F.end(kW, kH);
   ImGui::PopID();
+}
+
+bool loadHarmorAudio(App& a, const PluginTarget& t, const std::string& path) {
+  return resynthesize(a, t, path, ui(t).part);  // the part shown in the editor, as its LOAD AUDIO
 }
 
 }  // namespace gl::packs::models

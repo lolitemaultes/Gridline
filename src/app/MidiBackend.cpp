@@ -1,6 +1,7 @@
 // Gridline — MIDI back ends (see MidiBackend.h). On the BSDs, RtMidi is built with its dummy
 // API and the sndio classes below take its place behind RtMidiIn / RtMidiOut.
 #include "MidiBackend.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include "UiWake.h"
 #include "../../third_party/rtmidi/RtMidi.h"
@@ -95,7 +96,7 @@ class MidiInSndio : public MidiInApi {
       const char b = 0;
       (void)!::write(wake_[1], &b, 1);
     }
-    if (thread_.joinable()) thread_.join();
+    gl::threads::safeJoin(thread_);
     for (int& f : wake_) {
       if (f >= 0) ::close(f);
       f = -1;

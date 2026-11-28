@@ -1,5 +1,6 @@
 // Gridline - the layout style in the interface (K-112). See LayoutStyleUi.h.
 #include "LayoutStyleUi.h"
+#include "SmoothToggles.h"
 #include <algorithm>
 #include <cmath>
 #include "../../third_party/imgui/imgui.h"
@@ -30,7 +31,7 @@ bool gTitled = false;
 const layout::Style* gStyle = nullptr;
 ImVec4 gSep[2];       // checkpoint 30: the base splitter hover and held colours, put back at frame end
 bool gSepSet = false;
-ImVec4 gChk[2];       // checkpoint 38: the base check mark and checked-box colours, put back at frame end
+smoothtoggles::Saved gChk;  // checkpoint 38: the base check mark, checked-box and progress colours, put back at frame end
 bool gChkSet = false;
 // K-112D: Smooth's neutral faces. The reference's panels are neutral greys, darker than Gridline's slate:
 // while Smooth draws (dark theme, panels' tint and brightness untouched in Settings > Theme), every
@@ -41,6 +42,7 @@ constexpr uint32_t kSmoothBlue = 0x2F7FE0;  // audit X2: the accent, a muted sys
 ImVec4 gFaceSaved[ImGuiCol_COUNT];
 bool gFaces = false;
 theme::Palette gFacePal, gFaceBase;
+uint64_t gFrameThemeGen = 0;  // K-395: detect any mid-frame theme::apply() so stale overrides are never restored
 
 // A face colour toward Smooth's grey: saturation out, darker in the dark range (text barely moves).
 ImVec4 smoothFace(ImVec4 c) {
@@ -139,6 +141,8 @@ bool styled() { return gStyled; }
 bool smoothFaces() { return gFaces; }
 
 void beginStyleFrame(App& a, bool welcomeScreen) {
+  theme::resetPaletteStack();  // K-395: never carry a leaked temporary palette across frames
+  gFrameThemeGen = theme::generation();
   gStyle = shellBuilt(a, active()) ? &layout::style(active()) : &layout::style(layout::Preset::Studio);
   gStyled = false;
   const layout::Style& s = *gStyle;
@@ -222,13 +226,9 @@ void beginStyleFrame(App& a, bool welcomeScreen) {
     // rsz-1118: held, the hairline takes Smooth's blue (the divider being moved reads as picked).
     st.Colors[ImGuiCol_SeparatorActive] = theme::vec(theme::rgb(kSmoothBlue));
     gSepSet = true;
-    // Checkpoint 38: a ticked box is filled with the layout's blue and ticked in white, as every reference
-    // window draws its check boxes (023, 100, 132); it was an orange tick on a faintly tinted field.
-    gChk[0] = st.Colors[ImGuiCol_CheckMark], gChk[1] = st.Colors[ImGuiCol_CheckboxSelectedBg];
-    st.Colors[ImGuiCol_CheckMark] = theme::vec(theme::contrastText(theme::rgb(0x2F7EDB)));
-    st.Colors[ImGuiCol_CheckboxSelectedBg] = theme::vec(theme::rgb(0x2F7EDB));
+    // Checkpoint 38: ticked boxes and selected radios filled with the layout's blue, marked in white.
+    smoothtoggles::apply(st, gChk);
     gChkSet = true;
-    GImGuiGridlineCheckRounding = 4.0f;  // rounded squares (023, 100, 132), not the pill-round frames
     // Checkpoint 39: a menu row under the pointer fills with the same blue, rounded (177, 021, 216).
     GImGuiGridlineMenuHover = theme::rgb(0x2F7EDB);
   }
@@ -242,23 +242,22 @@ void endStyleFrame() {
   }
   GImGuiGridlineToggleW = 0.0f;  // never carried into the next frame (a group left open by an early return)
   GImGuiGridlineMenuLive = false;
+  const bool themeChanged = theme::generation() != gFrameThemeGen;  // K-395: never overwrite a new theme with frame-start colours
   if (gStyled) write(ImGui::GetStyle(), gBase);
-  if (gTitled) {
+  if (gTitled && !themeChanged) {
     ImGuiStyle& st = ImGui::GetStyle();
     st.Colors[ImGuiCol_TitleBg] = gTitle[0], st.Colors[ImGuiCol_TitleBgActive] = gTitle[1], st.Colors[ImGuiCol_TitleBgCollapsed] = gTitle[2];
   }
   gTitled = false;
-  if (gSepSet) {
+  if (gSepSet && !themeChanged) {
     ImGuiStyle& st = ImGui::GetStyle();
     st.Colors[ImGuiCol_SeparatorHovered] = gSep[0], st.Colors[ImGuiCol_SeparatorActive] = gSep[1];
   }
   gSepSet = false;
-  if (gChkSet) {
-    ImGuiStyle& st = ImGui::GetStyle();
-    st.Colors[ImGuiCol_CheckMark] = gChk[0], st.Colors[ImGuiCol_CheckboxSelectedBg] = gChk[1];
-  }
+  if (gChkSet && !themeChanged) smoothtoggles::restore(ImGui::GetStyle(), gChk);  // K-395: never over a new theme
   gChkSet = false;
   GImGuiGridlineCheckRounding = -1.0f;
+  GImGuiGridlineRadioDot = -1.0f;
   GImGuiGridlineMenuHover = 0;
   GImGuiGridlineMenuLabel = nullptr;
   GImGuiGridlineMenuRight = false;
@@ -266,13 +265,14 @@ void endStyleFrame() {
   look::setFlatFaces(false);
   if (gFaces) {  // K-112D: the base colours back, after the overrides above
     ImGuiStyle& st = ImGui::GetStyle();
-    // the theme applied during the frame (Settings > Theme): its new palette and colours stand
-    const bool applied = !(theme::pal().surface900 == gFacePal.surface900 && theme::pal().text == gFacePal.text);
-    for (int i = 0; i < ImGuiCol_COUNT; ++i) st.Colors[i] = gFaceSaved[i];
+    if (!themeChanged) {
+      for (int i = 0; i < ImGuiCol_COUNT; ++i) st.Colors[i] = gFaceSaved[i];
+    }
     theme::popPalette();
-    if (applied) theme::apply(theme::isDark());
     gFaces = false;
   }
+  theme::resetPaletteStack();
+  if (themeChanged) theme::apply(theme::isDark());
   gStyled = false;
 }
 
@@ -316,10 +316,12 @@ BaseStyleScope::BaseStyleScope() {
     if (faces) theme::pushPalette(gFaceBase);
   }
   if (gChkSet) {  // checkpoint 38: an editor's check boxes keep their own colours
-    ImGui::PushStyleColor(ImGuiCol_CheckMark, gChk[0]);
-    ImGui::PushStyleColor(ImGuiCol_CheckboxSelectedBg, gChk[1]);
-    colours += 2;
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, gChk.mark);
+    ImGui::PushStyleColor(ImGuiCol_CheckboxSelectedBg, gChk.selected);
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, gChk.bar);
+    colours += 3;
     checkRound = GImGuiGridlineCheckRounding, GImGuiGridlineCheckRounding = -1.0f;
+    radioDot = GImGuiGridlineRadioDot, GImGuiGridlineRadioDot = -1.0f;
   }
 }
 
@@ -327,7 +329,7 @@ BaseStyleScope::~BaseStyleScope() {
   --gBaseDepth;
   if (faces) theme::popPalette();  // K-112D
   if (gBaseDepth >= 0 && gBaseDepth < 16) GImGuiGridlineToggleW = gToggleSaved[gBaseDepth], GImGuiGridlineMenuLive = gMenuSaved[gBaseDepth];
-  if (colours) ImGui::PopStyleColor(colours), GImGuiGridlineCheckRounding = checkRound;
+  if (colours) ImGui::PopStyleColor(colours), GImGuiGridlineCheckRounding = checkRound, GImGuiGridlineRadioDot = radioDot;
   if (pushed) ImGui::PopStyleVar(pushed);
   if (pushed) GImGuiGridlineMenuRight = menuRight;
   if (pushed) look::setFlatFaces(flat);
@@ -342,15 +344,17 @@ BaseBorderScope::BaseBorderScope() {
   flat = look::flatFaces();  // checkpoint 29: a plugin window's buttons keep their own faces
   look::setFlatFaces(false);
   if (gChkSet) {  // checkpoint 38: a plugin window's check boxes keep their own colours
-    ImGui::PushStyleColor(ImGuiCol_CheckMark, gChk[0]);
-    ImGui::PushStyleColor(ImGuiCol_CheckboxSelectedBg, gChk[1]);
-    colours = 2;
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, gChk.mark);
+    ImGui::PushStyleColor(ImGuiCol_CheckboxSelectedBg, gChk.selected);
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, gChk.bar);
+    colours = 3;
     checkRound = GImGuiGridlineCheckRounding, GImGuiGridlineCheckRounding = -1.0f;
+    radioDot = GImGuiGridlineRadioDot, GImGuiGridlineRadioDot = -1.0f;
   }
 }
 
 BaseBorderScope::~BaseBorderScope() {
-  if (colours) ImGui::PopStyleColor(colours), GImGuiGridlineCheckRounding = checkRound;
+  if (colours) ImGui::PopStyleColor(colours), GImGuiGridlineCheckRounding = checkRound, GImGuiGridlineRadioDot = radioDot;
   if (pushed) ImGui::PopStyleVar();
   if (pushed) GImGuiGridlineMenuRight = menuRight;
   if (pushed) look::setFlatFaces(flat);

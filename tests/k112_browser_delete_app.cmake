@@ -66,7 +66,7 @@ endfunction()
 foreach(layout live studio)
   configure_file("${wav}" "${L}/A.wav" COPYONLY)
   if(layout STREQUAL "live")
-    set(pick "8 browser cat 12")  # Live: the Folders category
+    set(pick "8 browser cat folders")  # Live: the Folders category
   else()
     set(pick "8 browser tab 3")   # Studio: the Sounds tab
   endif()

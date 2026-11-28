@@ -49,6 +49,7 @@ enum BarItem : int {
   kBarNext,      // next preset
   kBarBypass,    // plugin on / bypassed
   kBarSandbox,   // run in sandbox
+  kBarOffline,   // K-437: internet access (opens the Internet page; lit while blocked)
   kBarGeneric,   // generic parameter editor instead of the plugin's interface
   kBarRoute,     // J-195: route the instrument's channel to a free mixer track (channels only)
   kBarCpu,       // CPU and latency readout (dropped first when narrow)
@@ -59,7 +60,8 @@ enum BarItem : int {
 
 // Preferred / minimum widths of each item.
 int barItemWidth(BarItem item);
-inline constexpr int kPresetMinW = 96, kPresetMaxW = 300;
+inline constexpr int kPresetMinW = 80, kPresetMaxW = 300;  // K-437: 80 (was 96), room for the internet switch
+inline constexpr int kBarOfflineWideW = 62;                // K-437: the internet switch in words (OFFLINE)
 
 struct BarLayout {
   int height = kBarRowH;

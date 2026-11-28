@@ -106,7 +106,7 @@ struct Synth {
   const float* echo = nullptr;
   double sr = 48000;
   int key = 60;
-  double amp = 0, phase = 0;
+  double amp = 0, bend = 0, phase = 0;
   LV2_URID midiEvent = 0, position = 0, frame = 0, speed = 0, bpm = 0, bar = 0, barBeat = 0, beat = 0, beatUnit = 0, beatsPerBar = 0,
            atomLong = 0, atomFloat = 0, atomInt = 0, atomDouble = 0, atomObject = 0, atomBlank = 0;
   LV2_Atom_Forge forge;
@@ -175,7 +175,7 @@ void synthRun(LV2_Handle h, uint32_t n) {
   lv2_atom_forge_sequence_head(&s->forge, &frame, 0);
   uint32_t pos = 0;
   auto render = [s](uint32_t from, uint32_t to) {
-    const double inc = 440.0 * std::pow(2.0, (s->key - 69) / 12.0) / s->sr;
+    const double inc = 440.0 * std::pow(2.0, (s->key + s->bend - 69.0) / 12.0) / s->sr;
     for (uint32_t i = from; i < to; ++i) {
       float v = static_cast<float>(std::sin(6.283185307179586 * s->phase) * s->amp * *s->gain);
       s->phase += inc;
@@ -202,6 +202,8 @@ void synthRun(LV2_Handle h, uint32_t n) {
         ++gProbe.notesOn;
       } else if (st == 0x80 || (st == 0x90 && m[2] == 0)) {
         if (m[1] == s->key) s->amp = 0;
+      } else if (st == 0xE0) {
+        s->bend = (((m[1] & 0x7F) | ((m[2] & 0x7F) << 7)) - 8192) / 8192.0 * 2.0;
       }
       if ((st == 0x80 || st == 0x90) && *s->echo >= 0.5f) {
         uint8_t o[3] = {m[0], static_cast<uint8_t>(m[1] + 12 <= 127 ? m[1] + 12 : m[1]), m[2]};

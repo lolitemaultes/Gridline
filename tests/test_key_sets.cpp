@@ -99,7 +99,10 @@ int main(int argc, char** argv) {
           continue;
         }
         auto it = golden.find(set + "\t" + id);
-        expect(it != golden.end(), (set + ": " + id + " in the golden").c_str());
+        // (A deliberate new command: the message is the row to add to tests/k112/key_sets.tsv.)
+        expect(it != golden.end(), (set + ": " + id + " in the golden (row: " + set + "\t" + id + "\t" +
+                                    std::to_string(static_cast<int>(c.context)) + "\t" + row(k, c) + ")")
+                                       .c_str());
         if (it == golden.end()) continue;
         ++compared;
         if (it->second != row(k, c)) {

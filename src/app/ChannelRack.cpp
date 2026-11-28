@@ -11,6 +11,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include "PluginIcons.h"
 #include "GrooveUi.h"
 #include "MeterUi.h"
 #include "../core/MeterEdit.h"
@@ -41,6 +42,7 @@
 #include "Windows.h"
 #include "BrowserUi.h"
 #include "PatternAutoUi.h"
+#include "../core/PatternAutomation.h"
 #include "PlayLights.h"
 #include "DevSignal.h"
 #include "LogicPlugins.h"
@@ -983,7 +985,10 @@ void drawChannelRack(App& a) {
       const float nameFont = theme::kFontCaption + 1;
       // J-211: the channel's icon before its name, when the button has room for both.
       const float iconBox = c.icon > 0 && nameW >= 96 ? trackicons::boxFor(cellH - 4, 14.0f) : 0.0f;
-      const float iconW = iconBox > 0 ? iconBox + 4 : 0.0f;
+      // K-450: without an icon of its own (set by the user or the project), a channel shows its
+      // instrument's icon (built-in instruments; an installed one has none), with room for the name.
+      const float plugBox = iconBox <= 0 && nameW >= 80 && ui::hasPluginIcon(c.plugin.type) ? std::min(14.0f, std::floor(cellH - 6)) : 0.0f;
+      const float iconW = iconBox > 0 ? iconBox + 4 : plugBox > 0 ? plugBox + 5 : 0.0f;
       const float nameTextW = nameW - 14 - iconW - (armDotX > 0 ? 14.0f : 0.0f);  // K-123: the record dot
       const bool truncated = a.fontRegular->CalcTextSizeA(nameFont, 1e9f, 0, c.name.c_str()).x > nameTextW;
       if (truncated) {
@@ -1020,6 +1025,9 @@ void drawChannelRack(App& a) {
       if (iconBox > 0)
         trackicons::draw(dl, c.icon, ImVec2(std::round(np.x + 9 + iconBox * 0.5f), std::round(np.y + cellH * 0.5f)), iconBox,
                          c.muted ? P.textFaint : P.textDim);
+      else if (plugBox > 0)
+        ui::drawPluginIcon(dl, c.plugin.type, ImVec2(std::round(np.x + 9 + plugBox * 0.5f), std::round(np.y + cellH * 0.5f)), plugBox,
+                           ui::PluginIconSurface::Rack, c.muted ? 0.45f : 1.0f);
       const freeze::Unit fu = freeze::channelUnit(c.id);  // K-87: frozen / hibernating marker at the right end
       const float mkBox = freezeui::hasMarker(a, fu) ? std::min(14.0f, cellH - 6) : 0.0f;
       theme::textEllipsis(dl, a.fontRegular, nameFont, ImVec2(np.x + 10 + iconW, std::round(np.y + (cellH - 13) * 0.5f) - 1),
@@ -1265,13 +1273,14 @@ void drawChannelRack(App& a) {
   if (laneCol) laneui::popovers(a);  // K-255
   pat = s.pattern(a.curPattern);  // the menu may have replaced the song (its patterns too)
 
-  // J-173: the pattern's automation clips as rows below the channels, and a
-  // drop row while an automation clip is dragged from the clip sources.
+  // J-173 / K-413: the channel & pattern automation lanes as rows below the channels,
+  // persisted across patterns, plus a drop row while dragging an automation clip.
   if (pat) {
     const ObjectId patId = pat->id;
+    const size_t nAutoLanes = effectiveRackAutoLanes(s, pat).size();
     // K-173: one quiet hairline with a small caption between the channel rows and the automation
     // rows (or the automation drop row), only while both are shown. It adds a small fixed gap only.
-    if (shown.lastRowBottom >= 0 && (!pat->automation.empty() || patautoui::rackDropRowShown(a, patId))) {
+    if (shown.lastRowBottom >= 0 && (nAutoLanes > 0 || patautoui::rackDropRowShown(a, patId))) {
       constexpr float kSepH = 12.0f;  // the gap the separator adds to the rows' rhythm
       const ImVec2 s0 = ImGui::GetCursorScreenPos();
       ImGui::SetCursorScreenPos(ImVec2(s0.x, s0.y + kSepH - ImGui::GetStyle().ItemSpacing.y));
@@ -1297,7 +1306,7 @@ void drawChannelRack(App& a) {
         }
       }
     }
-    shown.autoRows = static_cast<int>(pat->automation.size());
+    shown.autoRows = static_cast<int>(nAutoLanes);
     if (shown.autoRows > 0) shown.autoY0 = ImGui::GetCursorScreenPos().y;
     patautoui::RackRows rr{rowW, rowH, rowGap, cellH, xLeft, nameX, nameW, stepsX, stepsW, scrollX, viewX0, viewX1};
     if (a.engine.playing() && a.engine.mode() == PlayMode::Pattern && a.engine.pattern() == patId) rr.playTick = a.engine.position();
@@ -1626,6 +1635,15 @@ void rackDevAfter(App& a, int frame) {
 }
 
 void devRackItem(const std::string& name) { devRackRect(name); }
+bool devRackClick(const std::string& name) {
+  const auto it = gRackDev.rects.find(name);
+  if (it == gRackDev.rects.end() || it->second.frame < ImGui::GetFrameCount() - 3) return false;
+  ImGuiIO& io = ImGui::GetIO();
+  io.AddMousePosEvent((it->second.a.x + it->second.b.x) * 0.5f, (it->second.a.y + it->second.b.y) * 0.5f);
+  io.AddMouseButtonEvent(0, true);
+  io.AddMouseButtonEvent(0, false);
+  return true;
+}
 
 void rackDevDump(App& a, int frame) {
   const Song& s = a.doc.song();

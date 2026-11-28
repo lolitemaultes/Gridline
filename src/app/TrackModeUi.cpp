@@ -25,30 +25,37 @@ namespace {
 
 enum Control { kNone = 0, kArm, kMonitor, kInput, kKeys, kNoteArm };  // kNoteArm: K-123, an instrument track's record dot
 
-int inputCount(const App& a) { return a.audioInputDevice.empty() ? 0 : a.engine.inputChannels(); }
-
 void report(App& a, bool ok, const std::string& why) {
   if (!ok && !why.empty()) a.notify(why, true);
 }
 
-// Input choices: stereo pairs, then mono inputs (FL lists both).
+// Input choices: stereo pairs, then mono inputs (FL lists both; K-357 adds connected JACK peers).
 void inputItems(App& a, int track, const MixerTrack& m) {
-  const int n = inputCount(a);
+  const std::vector<InputChoice> choices = inputChoices(a, false);
   if (ImGui::MenuItem(i18n::tr("(none)"), nullptr, m.input < 0)) a.later([&a, track] { trackmodes::setInput(a.doc, track, -1, true); });
-  if (n == 0) {
+  if (choices.empty()) {
     ImGui::BeginDisabled();
-    ImGui::MenuItem(i18n::tr("No audio input device (Settings \xE2\x86\x92 Audio)"));
+    ImGui::MenuItem(a.jack.active ? i18n::tr("No input ports (Settings, Audio, JACK / PipeWire ports)")
+                                  : i18n::tr("No audio input device (Settings \xE2\x86\x92 Audio)"));
     ImGui::EndDisabled();
     return;
   }
-  ImGui::SeparatorText(i18n::tr("Stereo"));
-  for (int i = 0; i + 1 < n; i += 2)
-    if (ImGui::MenuItem(inputName(i, true).c_str(), nullptr, m.input == i && m.inputStereo))
-      a.later([&a, track, i] { trackmodes::setInput(a.doc, track, i, true); });
-  ImGui::SeparatorText(i18n::tr("Mono"));
-  for (int i = 0; i < n; ++i)
-    if (ImGui::MenuItem(inputName(i, false).c_str(), nullptr, m.input == i && !m.inputStereo))
-      a.later([&a, track, i] { trackmodes::setInput(a.doc, track, i, false); });
+  bool stereoHead = false, monoHead = false;
+  for (size_t k = 0; k < choices.size(); ++k) {
+    const InputChoice& c = choices[k];
+    if (c.stereo && !stereoHead) {
+      ImGui::SeparatorText(i18n::tr("Stereo"));
+      stereoHead = true;
+    } else if (!c.stereo && !monoHead) {
+      ImGui::SeparatorText(i18n::tr("Mono"));
+      monoHead = true;
+    }
+    ImGui::PushID(static_cast<int>(k));
+    const std::string item = inputChoiceMenuLabel(c);
+    if (ImGui::MenuItem(item.c_str(), nullptr, m.input == c.first && m.inputStereo == c.stereo))
+      a.later([&a, track, first = c.first, st = c.stereo] { trackmodes::setInput(a.doc, track, first, st); });
+    ImGui::PopID();
+  }
 }
 
 std::string mixerLabel(const Song& s, const MixerTrack& m) {

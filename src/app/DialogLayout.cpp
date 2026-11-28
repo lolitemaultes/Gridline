@@ -414,14 +414,44 @@ void ClampTrackedWindows() {
   g.WindowsMovedHook = keepInWorkArea;
 }
 
+// K-442 / K-440: the largest size Dear ImGui lets a window that sizes itself to its content take
+// (CalcWindowAutoFitSize): the work size of the monitor the window may extend over (detachable
+// windows on), less the safe area padding; otherwise the main viewport's. A dialog laid out for the
+// work area between the bars was cut to this instead where the monitor is the smaller of the two
+// (the window larger than its monitor's usable area at a large interface scale, a monitor that
+// reports less than the window covers): the body did not scroll far enough and the footer, Cancel
+// and Start with it, fell below the window's edge. Inside a dialog window this follows ImGui's own
+// rule for that window; before its Begin (placing it), the monitor of the focused window's viewport.
+ImVec2 DialogFitSize() {
+  const ImGuiContext& g = *GImGui;
+  const ImVec2 pad = g.Style.DisplaySafeAreaPadding;
+  auto less = [&](ImVec2 size) { return ImVec2(size.x - 2 * pad.x, size.y - 2 * pad.y); };
+  const auto monitor = [&](int mi, ImVec2& cap) {
+    if (mi < 0 || mi >= g.PlatformIO.Monitors.Size) return false;
+    cap = less(g.PlatformIO.Monitors[mi].WorkSize);
+    return true;
+  };
+  ImVec2 cap = less(ImGui::GetMainViewport()->WorkSize);
+  if (const ImGuiWindow* w = g.CurrentWindow ? g.CurrentWindow->RootWindow : nullptr; w && !(w->Flags & ImGuiWindowFlags_ChildWindow))
+    if (monitor(w->ViewportAllowPlatformMonitorExtend, cap)) return cap;
+  if (!viewportsOn()) return cap;
+  const ImGuiWindow* w = g.NavWindow;
+  while (w && (w->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_ChildMenu | ImGuiWindowFlags_Tooltip)) && w->ParentWindow) w = w->ParentWindow;
+  const ImGuiViewport* vp = w && w->RootWindowDockTree->Viewport ? w->RootWindowDockTree->Viewport : ImGui::GetMainViewport();
+  monitor(static_cast<const ImGuiViewportP*>(vp)->PlatformMonitor, cap);
+  return cap;
+}
+
 float DialogMaxHeight() {
   const Anchor a = dialogAnchor();
-  return std::max(200.0f, a.a1.y - a.a0.y);
+  return std::max(200.0f, std::min(a.a1.y - a.a0.y, DialogFitSize().y));
 }
 
 ImVec2 DialogArea() {
   const Anchor a = dialogAnchor();
-  return ImVec2(std::max(240.0f, a.a1.x - a.a0.x - 2 * theme::kS2), std::max(200.0f, std::max(200.0f, a.a1.y - a.a0.y) - 2 * theme::kS2));
+  const ImVec2 cap = DialogFitSize();
+  return ImVec2(std::max(240.0f, std::min(a.a1.x - a.a0.x - 2 * theme::kS2, cap.x)),
+                std::max(200.0f, std::min(std::max(200.0f, a.a1.y - a.a0.y) - 2 * theme::kS2, cap.y)));
 }
 
 ImVec2 FitDialogSize(ImVec2 want) {
@@ -462,10 +492,22 @@ void BeginDialogBody(const char* id, int footerRows) {
   markDialog();
   settleCentred();
   const float padY = ImGui::GetCurrentWindow()->WindowPadding.y;  // the dialog's own padding (often pushed only around Begin)
-  const float maxH = std::max(120.0f, DialogArea().y - ImGui::GetCursorPosY() - padY - DialogFooterHeight(footerRows));
-  ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, maxH));
+  // ImGui never auto-fits a window past its screen's work size (less the safe-area padding), and
+  // DialogArea() is capped to it (DialogFitSize): past it the footer would fall outside the window.
+  const ImVec2 area = DialogArea();
+  const float maxH = std::max(120.0f, area.y - ImGui::GetCursorPosY() - padY - DialogFooterHeight(footerRows));
+  // Never wider than the screen either (a last resort: dialogs reflow first); past it the body scrolls sideways.
+  const float padX = ImGui::GetCurrentWindow()->WindowPadding.x;
+  const float maxW = std::max(240.0f, area.x - 2.0f * padX);
+  ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(maxW, maxH));
   ImGui::BeginChild(id, ImVec2(0, 0), ImGuiChildFlags_AutoResizeX | ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_AlwaysAutoResize,
-                    ImGuiWindowFlags_NoBackground);
+                    ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_HorizontalScrollbar);
+}
+
+float DialogListHeight(float want, float after, int footerRows, float minH) {
+  const float padY = ImGui::GetCurrentWindow()->WindowPadding.y;
+  const float room = DialogArea().y - ImGui::GetCursorPosY() - padY - DialogFooterHeight(footerRows) - after;
+  return std::max(std::min(minH, want), std::min(want, std::floor(room)));
 }
 
 void EndDialogBody() { ImGui::EndChild(); }  // the auto-fit width already makes room for the scrollbar

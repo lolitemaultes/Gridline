@@ -67,15 +67,15 @@ function(expect what re)
   message(STATUS "ok - ${what}")
 endfunction()
 
-expect("the old swing link loads; on swing the dialog shows it with Remove and the note, no controller choice"
-       "linkctl frame 13: open 1 [^\n]*target \"Swing\" internal note-linked modlinks 1 undo ([0-9]+)\n")
+expect("the swing link loads; on swing the dialog offers the live internal controller with Remove"
+       "linkctl frame 13: open 1 [^\n]*target \"Swing\" internal offered-linked modlinks 1 undo ([0-9]+)\n")
 set(u0 ${CMAKE_MATCH_1})
 math(EXPR u1 "${u0} + 1")
-expect("Remove takes the link away in one undo step; the note stays"
-       "linkctl frame 17: open 1 [^\n]*target \"Swing\" internal note modlinks 0 undo ${u1}\n")
+expect("Remove takes the link away in one undo step; the controller choice stays offered"
+       "linkctl frame 17: open 1 [^\n]*target \"Swing\" internal offered modlinks 0 undo ${u1}\n")
 expect("a channel's volume offers the internal controller choice"
        "linkctl frame 24: open 1 [^\n]*target \"[^\"]+ Volume\" internal offered modlinks 0 ")
-expect("tempo shows only the note" "linkctl frame 30: open 1 [^\n]*target \"Tempo\" internal note modlinks 0 ")
+expect("tempo now offers live internal controller linking" "linkctl frame 30: open 1 [^\n]*target \"Tempo\" internal offered modlinks 0 ")
 expect("an action target has no internal controller section" "linkctl frame 35: open 1 [^\n]*internal none ")
 foreach(s swing-linked swing channel)
   if(NOT EXISTS "${SHOTS}/${s}.png")

@@ -252,7 +252,7 @@ double shareRate(const std::string& category, int tier) {
 // ---- saved fields
 
 bool Saved::empty() const {
-  if (!(release == Release{}) || !writers.empty() || !unknown.empty()) return false;
+  if (!(release == Release{}) || !writers.empty() || !unknown.empty() || !merges.empty()) return false;
   if (!names.empty() || !origins.empty() || !heardFloor.empty() || !snapshots.empty()) return false;
   for (const auto& [k, v] : songs)
     if (!(v == SongFields{})) return false;
@@ -331,6 +331,10 @@ std::string savedToJson(const Saved& s) {
       for (const auto& [key, text] : f.uses) u.object[key] = Json::makeString(text);
     }
   }
+  if (!s.merges.empty()) {
+    Json& o = objectAt(j, "merges");
+    for (const auto& [from, into] : s.merges) o.object[from] = Json::makeString(into);
+  }
   // K-321: the project's trail and the newer settings.
   if (!s.names.empty()) {
     Json& o = objectAt(j, "names");
@@ -400,6 +404,9 @@ Saved savedFromJson(const std::string& json) {
       w.name = o.text("name"), w.role = o.text("role"), w.pro = o.text("pro"), w.ipi = o.text("ipi"), w.share = o.text("share");
       s.writers.push_back(w);
     }
+  if (const Json* o = j.find("merges"); o && o->type == Json::Type::Object)
+    for (const auto& [from, v] : o->object)
+      if (v.type == Json::Type::String && !v.str.empty() && v.str != from) s.merges[from] = v.str;
   // K-321: the project's trail and the newer settings.
   if (const Json* o = j.find("names"); o && o->type == Json::Type::Object)
     for (const auto& [h, v] : o->object)
@@ -413,10 +420,10 @@ Saved savedFromJson(const std::string& json) {
   // K-322: everything else is kept as it is (a newer Gridline's keys survive an edit here).
   Json rest = j;
   // (K-321: the known entries of the trail tables.)
-  for (const char* table : {"names", "origins"}) {
+  for (const char* table : {"names", "origins", "merges"}) {
     auto t = rest.object.find(table);
     if (t == rest.object.end() || t->second.type != Json::Type::Object) continue;
-    const Json::Type want = std::string(table) == "names" ? Json::Type::String : Json::Type::Object;
+    const Json::Type want = std::string(table) == "origins" ? Json::Type::Object : Json::Type::String;
     for (auto e = t->second.object.begin(); e != t->second.object.end();)
       e = e->second.type == want ? t->second.object.erase(e) : std::next(e);
     if (t->second.object.empty()) rest.object.erase(t);
@@ -457,6 +464,42 @@ FileFields fileFields(const Saved& s, const std::string& path, const std::string
   for (const auto& [k, f] : s.files)
     if (baseName(k) == name) return f;
   return FileFields{};
+}
+
+std::string ownSongKey(const std::string& path) { return kOwnSong + path; }
+
+std::string mergedSong(const Saved& s, const std::string& key) {
+  std::string k = key;
+  std::set<std::string> seen{k};
+  for (auto it = s.merges.find(k); it != s.merges.end(); it = s.merges.find(k)) {
+    if (!seen.insert(it->second).second) break;  // a loop: stop before it repeats
+    k = it->second;
+  }
+  return k;
+}
+
+void mergeSong(Saved& s, const std::string& from, const std::string& into) {
+  if (from == into || from.empty() || into.empty()) return;
+  std::string x = into;
+  for (size_t guard = 0; guard <= s.merges.size(); ++guard) {
+    auto it = s.merges.find(x);
+    if (it == s.merges.end()) break;
+    if (it->second == from) {
+      s.merges.erase(it);
+      break;
+    }
+    x = it->second;
+  }
+  s.merges[from] = into;
+}
+
+void unmergeInto(Saved& s, const std::string& key) {
+  for (auto it = s.merges.begin(); it != s.merges.end();) it = it->second == key ? s.merges.erase(it) : std::next(it);
+}
+
+void keepApart(Saved& s, const std::string& key, const std::vector<std::string>& paths) {
+  for (const std::string& p : paths) s.files[p].song = ownSongKey(p);
+  for (auto it = s.merges.begin(); it != s.merges.end();) it = it->first == key || it->second == key ? s.merges.erase(it) : std::next(it);
 }
 
 double parseShare(const std::string& s0) {
@@ -505,7 +548,75 @@ struct Piece {
   Range r;
   std::string from;
   bool estimated = false;
+  bool rough = false;  // marker areas: when it plays is only known roughly
 };
+
+// [a, b) of each range of `x` that is also in `y` (both sorted and merged).
+Ranges intersect(const Ranges& x, const Ranges& y) {
+  Ranges out;
+  for (const Range& p : x)
+    for (const Range& q : y) {
+      const double a = std::max(p.a, q.a), b = std::min(p.b, q.b);
+      if (b > a) out.push_back({a, b});
+    }
+  return unite(out);
+}
+
+// What of `x` is not in `y` (both sorted and merged).
+Ranges subtract(const Ranges& x, const Ranges& y) {
+  Ranges out;
+  for (const Range& p : x) {
+    double a = p.a;
+    for (const Range& q : y) {
+      if (q.b <= a || q.a >= p.b) continue;
+      if (q.a > a) out.push_back({a, q.a});
+      a = std::max(a, q.b);
+      if (a >= p.b) break;
+    }
+    if (a < p.b) out.push_back({a, p.b});
+  }
+  return out;
+}
+
+// Left over by the segments only through rounding (a frame or a block): not a read of its own.
+constexpr double kSliver = 0.002;
+
+// The file seconds of `ur` (what use `u` counts) read inside song seconds [a, b); `play` gets the
+// song seconds it sounded there. `rough`: some of it is only known roughly (counted in every area
+// it may play in).
+Ranges inArea(const Use* u, const Ranges& ur, double a, double b, bool& rough, Ranges& play) {
+  Ranges out;
+  if (!u) {  // typed for a file nothing measured: when is not known
+    rough = true;
+    return ur;
+  }
+  Ranges covered;
+  for (const Use::Timed& t : u->timed) {
+    covered.push_back({std::min(t.srcA, t.srcB), std::max(t.srcA, t.srcB)});
+    const double x = std::max(a, t.a), y = std::min(b, t.b);
+    if (!(t.b > t.a) || !(y > x)) continue;
+    const double s0 = t.srcA + (t.srcB - t.srcA) * (x - t.a) / (t.b - t.a), s1 = t.srcA + (t.srcB - t.srcA) * (y - t.a) / (t.b - t.a);
+    if (s0 != s1) out.push_back({std::min(s0, s1), std::max(s0, s1)});
+    play.push_back({x, y});
+  }
+  out = intersect(unite(out), ur);
+  Ranges rest;
+  for (const Range& x : subtract(ur, unite(covered)))
+    if (x.b - x.a >= kSliver) rest.push_back(x);
+  if (!rest.empty()) {
+    bool inside = u->spans.empty(), outside = u->spans.empty();
+    for (const Range& sp : u->spans) {
+      const double x = std::max(a, sp.a), y = std::min(b, sp.b);
+      if (y > x) inside = true, play.push_back({x, y});
+      if (sp.a < a || sp.b > b) outside = true;
+    }
+    if (inside) {
+      for (const Range& x : rest) out.push_back(x);
+      rough = rough || outside;
+    }
+  }
+  return unite(out);
+}
 
 }  // namespace
 
@@ -535,6 +646,25 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
     }
     return n;
   };
+  // The song a file names by itself: a store download's artist and title, else the song its name
+  // carries (SongIdentity), else the whole name (as before song identities).
+  const auto autoSong = [](const NameInfo& n, const std::string& path) {
+    if (n.tracklib) return n.song;
+    const SongIdentity id = songIdentity(path);
+    return id.key.empty() ? stripExtension(baseName(path)) : id.key;
+  };
+  // Song keys of 0.7.8 and before (the whole name) -> the song now: fields typed and files linked
+  // under the old key still find their song.
+  std::map<std::string, std::string> legacy;
+  for (const FileIn& f : m.files) {
+    const NameInfo n = parseName(f.path);
+    if (!n.tracklib) legacy.emplace(stripExtension(baseName(f.path)), autoSong(n, f.path));
+  }
+  const auto linked = [&](const std::string& key) {
+    if (key.rfind(kOwnSong, 0) == 0) return key;
+    auto it = legacy.find(key);
+    return it != legacy.end() ? it->second : key;
+  };
   // Files.
   std::map<std::string, size_t> rowOf;
   for (const FileIn& f : m.files) {
@@ -557,9 +687,15 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
     FileRow& r = rep.files[it->second];
     (u.muted ? r.muted : r.uses).push_back(u);
   }
+  // The marker areas (two or more: one area is the whole song).
+  const size_t nAreas = m.areas.size() >= 2 ? m.areas.size() : 0;
   // Song of each file, tick state, mapped ranges.
   std::map<std::string, std::vector<std::pair<int, Piece>>> pieces;  // song key -> (timeline part, piece)
+  std::vector<std::map<std::string, std::vector<std::pair<int, Piece>>>> areaPieces(nAreas);
+  std::vector<std::map<std::string, Ranges>> areaPlay(nAreas);         // song key -> song seconds it sounds
+  std::vector<std::map<std::string, std::pair<Ranges, Ranges>>> areaFile(nAreas);  // path -> (file seconds, song seconds)
   std::map<std::string, std::vector<size_t>> songRows;
+  std::vector<std::string> autoKeyOf(rep.files.size());  // the song before the user's merges
   for (size_t ri = 0; ri < rep.files.size(); ++ri) {
     FileRow& r = rep.files[ri];
     const FileIn* fin = nullptr;
@@ -571,6 +707,7 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
       src = nameOf(r.origin.source);
       r.originNote = "derived from " + baseName(r.origin.source) + (r.origin.kind.empty() ? "" : " (" + r.origin.kind + ")");
     }
+    if (!src.tracklib) r.identity = songIdentity(r.derived ? r.origin.source : r.path);
     // K-321: the trail of version 2 maps (several originals at once, each with its parts).
     std::map<std::string, OriginV2> trail;
     if (r.derived && fin)
@@ -581,19 +718,20 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
       }
     const bool traced = !trail.empty();
     const Lookup trailLk = traced ? trailLookup(trail) : Lookup{};
-    r.autoTicked = src.tracklib;
+    // Ticked for you: a store download, or a name that says it needs clearing.
+    const auto needsLicense = [&](const NameInfo& n, const std::string& path) { return n.tracklib || songIdentity(path).clearance; };
+    r.autoTicked = needsLicense(src, r.derived ? r.origin.source : r.path);
     if (traced && !src.tracklib)  // ticked when any original it traces to is a Tracklib file
-      for (const auto& [k, st] : trace(r.path, {{0, std::max(1e9, r.seconds)}}, r.seconds, trailLk)) r.autoTicked = r.autoTicked || nameOf(k).tracklib;
+      for (const auto& [k, st] : trace(r.path, {{0, std::max(1e9, r.seconds)}}, r.seconds, trailLk)) r.autoTicked = r.autoTicked || needsLicense(nameOf(k), k);
     r.ticked = ff.ticked >= 0 ? ff.ticked == 1 : r.autoTicked;
+    r.ownSong = ff.song.rfind(kOwnSong, 0) == 0;
     if (!ff.song.empty())
-      r.song = ff.song;
-    else if (src.tracklib)
-      r.song = src.song;
-    else if (r.derived)
-      r.song = stripExtension(baseName(r.origin.source));
+      autoKeyOf[ri] = linked(ff.song);
     else
-      r.song = stripExtension(r.name);
-    r.part = src.part;
+      autoKeyOf[ri] = autoSong(src, r.derived ? r.origin.source : r.path);
+    r.autoSong = autoKeyOf[ri];
+    r.song = mergedSong(saved, autoKeyOf[ri]);
+    r.part = src.part > 0 ? src.part : r.identity.part;
     // Used ranges of this file (file seconds).
     Ranges manual;
     r.manual = !ff.ranges.empty() && parseRanges(ff.ranges, manual);
@@ -629,93 +767,137 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
       continue;
     }
     const std::string label = r.info.stem.empty() ? r.name : r.info.stem;
-    if (traced) {
-      // K-321: each use's parts on every original it traces to, each on that original's song
-      // and part (the user's song for the file, when set, takes them all).
-      bool any = false;
-      for (const auto& [ur, u] : per) {
-        std::vector<std::string> warns;
-        for (const auto& [orig, st] : trace(r.path, ur, r.seconds, trailLk, &warns)) {
-          const NameInfo on = nameOf(orig);
-          const std::string song = !ff.song.empty() ? ff.song : on.tracklib ? on.song : stripExtension(baseName(orig));
-          int part = st.unknown ? -1 : on.part;
-          if (st.unknown) r.unknownRange = true;
-          Ranges mapped = st.ranges;
-          if (on.loopEnd > on.loopStart && part >= 0) {
-            Ranges shifted;
-            for (const Range& x : mapped) {
-              const double a = std::min(on.loopEnd, on.loopStart + x.a), b = std::min(on.loopEnd, on.loopStart + x.b);
-              if (b > a) shifted.push_back({a, b});
+    // Pass -1 maps the whole song; pass k (marker areas) what the file's uses read in area k.
+    for (int pass = -1; pass < static_cast<int>(nAreas); ++pass) {
+      auto& into = pass < 0 ? pieces : areaPieces[static_cast<size_t>(pass)];
+      std::vector<std::pair<Ranges, const Use*>> list = per;
+      std::vector<bool> rough(per.size(), false);
+      std::vector<Ranges> plays(per.size());
+      if (pass >= 0) {
+        const Area& ar = m.areas[static_cast<size_t>(pass)];
+        // The first area also takes what reads before it, the last what reads after the end (the tail).
+        const double a = pass == 0 ? -1e18 : ar.a, b = pass + 1 == static_cast<int>(nAreas) ? 1e18 : ar.b;
+        Ranges fileIn, playIn;
+        for (size_t k = 0; k < per.size(); ++k) {
+          bool rk = false;
+          list[k].first = inArea(per[k].second, per[k].first, a, b, rk, plays[k]);
+          rough[k] = rk;
+          for (const Range& x : list[k].first) fileIn.push_back(x);
+          for (const Range& x : plays[k]) playIn.push_back(x);
+        }
+        fileIn = unite(fileIn);
+        if (!fileIn.empty()) {
+          auto& af = areaFile[static_cast<size_t>(pass)][r.path];
+          af.first = unite(fileIn);
+          af.second = unite(playIn);
+        }
+      }
+      const auto playTo = [&](const std::string& song, size_t k) {
+        if (pass < 0 || list[k].first.empty()) return;
+        Ranges& pl = areaPlay[static_cast<size_t>(pass)][song];
+        for (const Range& x : plays[k]) pl.push_back(x);
+      };
+      if (traced) {
+        // K-321: each use's parts on every original it traces to, each on that original's song
+        // and part (the user's song for the file, when set, takes them all).
+        bool any = false;
+        for (size_t k = 0; k < list.size(); ++k) {
+          const auto& [ur, u] = list[k];
+          if (pass >= 0 && ur.empty()) continue;
+          std::vector<std::string> warns;
+          for (const auto& [orig, st] : trace(r.path, ur, r.seconds, trailLk, &warns)) {
+            const NameInfo on = nameOf(orig);
+            const std::string song = mergedSong(saved, !ff.song.empty() ? linked(ff.song) : autoSong(on, orig));
+            int part = st.unknown ? -1 : on.part > 0 ? on.part : on.tracklib ? 0 : songIdentity(orig).part;
+            if (st.unknown) r.unknownRange = true;
+            Ranges mapped = st.ranges;
+            if (on.loopEnd > on.loopStart && part >= 0) {
+              Ranges shifted;
+              for (const Range& x : mapped) {
+                const double a = std::min(on.loopEnd, on.loopStart + x.a), b = std::min(on.loopEnd, on.loopStart + x.b);
+                if (b > a) shifted.push_back({a, b});
+              }
+              mapped = shifted;
             }
-            mapped = shifted;
-          }
-          auto& rowsOf = songRows[song];
-          if (std::find(rowsOf.begin(), rowsOf.end(), ri) == rowsOf.end()) rowsOf.push_back(ri);
-          for (const Range& x : mapped) {
-            Piece pc;
-            pc.r = x;
-            pc.from = (u ? u->where : std::string("typed by you"));
-            if (u && u->bar0 > 0) {
-              const int b0 = static_cast<int>(u->bar0), b1 = static_cast<int>(u->bar1);
-              pc.from += b1 > b0 ? ", bars " + std::to_string(b0) + "-" + std::to_string(b1) : ", bar " + std::to_string(b0);
-            }
-            pc.from += " (" + label + ")";
-            pc.estimated = (u && u->estimated && !r.manual);
-            pieces[song].push_back({part, pc});
-            any = true;
-          }
-        }
-        for (const std::string& w : warns)
-          if (std::find(rep.warnings.begin(), rep.warnings.end(), w) == rep.warnings.end()) rep.warnings.push_back(w);
-      }
-      if (!any) songRows[r.song].push_back(ri);
-      if (r.unknownRange) r.originNote += ", range unknown";
-      continue;
-    }
-    songRows[r.song].push_back(ri);
-    for (const auto& [ur, u] : per) {
-      Ranges mapped = ur;
-      int part = r.part;
-      if (r.derived && fin) {
-        if (!mapThrough(fin->chain, r.seconds, mapped)) {
-          r.unknownRange = true;
-          part = -1;
-          mapped = ur;
-        }
-      }
-      // A loop the store cut from the song: its seconds sit at loopStart in the original.
-      const NameInfo& li = r.derived ? src : r.info;
-      if (li.loopEnd > li.loopStart && part >= 0) {
-        Ranges shifted;
-        for (const Range& x : mapped) {
-          const double a = std::min(li.loopEnd, li.loopStart + x.a), b = std::min(li.loopEnd, li.loopStart + x.b);
-          if (b > a) shifted.push_back({a, b});
-        }
-        mapped = shifted;
-      }
-      for (const Range& x : mapped) {
-        Piece p;
-        p.r = x;
-        p.from = (u ? u->where : std::string("typed by you"));
-        if (u && u->bar0 > 0) {
-          const int b0 = static_cast<int>(u->bar0), b1 = static_cast<int>(u->bar1);
-          p.from += b1 > b0 ? ", bars " + std::to_string(b0) + "-" + std::to_string(b1) : ", bar " + std::to_string(b0);
-        }
-        p.from += " (" + label + ")";
-        p.estimated = (u && u->estimated && !r.manual);
-        pieces[r.song].push_back({part, p});
-        // A render of several originals: each one's song gets the part (unknown range) too.
-        if (r.unknownRange && ff.song.empty())
-          for (const std::string& other : r.origin.sources) {
-            const NameInfo on = nameOf(other);
-            if (!on.tracklib || on.song == r.song) continue;
-            pieces[on.song].push_back({part, p});
-            auto& rowsOf = songRows[on.song];
+            auto& rowsOf = songRows[song];
             if (std::find(rowsOf.begin(), rowsOf.end(), ri) == rowsOf.end()) rowsOf.push_back(ri);
+            playTo(song, k);
+            for (const Range& x : mapped) {
+              Piece pc;
+              pc.r = x;
+              pc.from = (u ? u->where : std::string("typed by you"));
+              if (u && u->bar0 > 0) {
+                const int b0 = static_cast<int>(u->bar0), b1 = static_cast<int>(u->bar1);
+                pc.from += b1 > b0 ? ", bars " + std::to_string(b0) + "-" + std::to_string(b1) : ", bar " + std::to_string(b0);
+              }
+              pc.from += " (" + label + ")";
+              pc.estimated = (u && u->estimated && !r.manual);
+              pc.rough = rough[k];
+              into[song].push_back({part, pc});
+              any = true;
+            }
           }
+          if (pass < 0)
+            for (const std::string& w : warns)
+              if (std::find(rep.warnings.begin(), rep.warnings.end(), w) == rep.warnings.end()) rep.warnings.push_back(w);
+        }
+        if (pass < 0) {
+          if (!any) songRows[r.song].push_back(ri);
+          if (r.unknownRange) r.originNote += ", range unknown";
+        }
+        continue;
       }
+      if (pass < 0) songRows[r.song].push_back(ri);
+      for (size_t k = 0; k < list.size(); ++k) {
+        const auto& [ur, u] = list[k];
+        if (pass >= 0 && ur.empty()) continue;
+        Ranges mapped = ur;
+        int part = r.part;
+        if (r.derived && fin) {
+          if (!mapThrough(fin->chain, r.seconds, mapped)) {
+            r.unknownRange = true;
+            part = -1;
+            mapped = ur;
+          }
+        }
+        // A loop the store cut from the song: its seconds sit at loopStart in the original.
+        const NameInfo& li = r.derived ? src : r.info;
+        if (li.loopEnd > li.loopStart && part >= 0) {
+          Ranges shifted;
+          for (const Range& x : mapped) {
+            const double a = std::min(li.loopEnd, li.loopStart + x.a), b = std::min(li.loopEnd, li.loopStart + x.b);
+            if (b > a) shifted.push_back({a, b});
+          }
+          mapped = shifted;
+        }
+        playTo(r.song, k);
+        for (const Range& x : mapped) {
+          Piece p;
+          p.r = x;
+          p.from = (u ? u->where : std::string("typed by you"));
+          if (u && u->bar0 > 0) {
+            const int b0 = static_cast<int>(u->bar0), b1 = static_cast<int>(u->bar1);
+            p.from += b1 > b0 ? ", bars " + std::to_string(b0) + "-" + std::to_string(b1) : ", bar " + std::to_string(b0);
+          }
+          p.from += " (" + label + ")";
+          p.estimated = (u && u->estimated && !r.manual);
+          p.rough = rough[k];
+          into[r.song].push_back({part, p});
+          // A render of several originals: each one's song gets the part (unknown range) too.
+          if (r.unknownRange && ff.song.empty())
+            for (const std::string& other : r.origin.sources) {
+              const NameInfo on = nameOf(other);
+              const std::string os = mergedSong(saved, autoSong(on, other));
+              if (!on.tracklib || os == r.song) continue;
+              into[os].push_back({part, p});
+              playTo(os, k);
+              auto& rowsOf = songRows[os];
+              if (std::find(rowsOf.begin(), rowsOf.end(), ri) == rowsOf.end()) rowsOf.push_back(ri);
+            }
+        }
+      }
+      if (pass < 0 && r.unknownRange) r.originNote += ", range unknown";
     }
-    if (r.unknownRange) r.originNote += ", range unknown";
   }
   // Artists the names make plain (one hyphen between artist and title): they settle ambiguous splits.
   std::set<std::string> knownArtists;
@@ -725,44 +907,63 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
   }
   for (const auto& [key, f] : saved.songs)
     if (!f.artist.empty()) knownArtists.insert(lowerText(f.artist));
+  // The fields typed for a song: under its key, else (0.7.8 and before) under a file's whole name.
+  const auto fieldsOf = [&](const std::string& key, const std::vector<size_t>& rows) {
+    if (auto sf = saved.songs.find(key); sf != saved.songs.end()) return sf->second;
+    for (size_t ri : rows)
+      if (!rep.files[ri].info.tracklib && !rep.files[ri].derived)
+        if (auto sf = saved.songs.find(stripExtension(rep.files[ri].name)); sf != saved.songs.end()) return sf->second;
+    return SongFields{};
+  };
   // Songs.
   for (auto& [key, rows] : songRows) {
     SongRow s;
     s.key = key;
-    auto sf = saved.songs.find(key);
-    if (sf != saved.songs.end()) s.fields = sf->second;
-    std::set<std::string> stems, files;
+    s.fields = fieldsOf(key, rows);
+    std::set<std::string> stems, files, names;
     NameInfo first;
-    bool haveFirst = false;
-    for (size_t ri : rows) {
+    const FileRow* firstRow = nullptr;
+    size_t firstIdx = 0;
+    // Its own files first (a song merged into it comes after).
+    std::vector<size_t> order = rows;
+    const std::string& own = key;
+    std::stable_sort(order.begin(), order.end(), [&](size_t x, size_t y) { return (autoKeyOf[x] == own) > (autoKeyOf[y] == own); });
+    for (size_t ri : order) {
       const FileRow& r = rep.files[ri];
       NameInfo src = r.derived ? nameOf(r.origin.source) : r.info;
-      if (r.derived && src.song != key)  // a render of several originals: the one of this song
+      if (r.derived && mergedSong(saved, autoSong(src, r.origin.source)) != key)  // a render of several originals: the one of this song
         for (const std::string& other : r.origin.sources)
-          if (const NameInfo on = nameOf(other); on.song == key) src = on;
-      if (!haveFirst && (src.tracklib || !r.derived)) first = src, haveFirst = true;
+          if (const NameInfo on = nameOf(other); mergedSong(saved, autoSong(on, other)) == key) src = on;
+      if (!firstRow && (src.tracklib || !r.derived)) first = src, firstRow = &r, firstIdx = ri;
       std::string st = r.info.tracklib ? r.info.stem : src.stem;
       if (r.derived) st = (st.empty() ? std::string("file") : st) + " (" + (r.origin.kind.empty() ? "derived" : r.origin.kind) + ")";
       if (st.empty()) st = r.name;
       if (!r.used.empty()) stems.insert(st);
       files.insert(r.path);
+      if (!r.info.tracklib && !r.derived) names.insert(stripExtension(r.name));
+      if (autoKeyOf[ri] != key) s.merged = true;
       for (const Use& u : r.uses) s.plays += u.plays;
       if (r.estimated && !r.manual)
         s.warnings.push_back(r.name + ": used inside a plugin Gridline cannot measure; the whole file is counted. Type the parts used if you know them.");
       if (r.unknownRange) s.warnings.push_back(r.name + ": " + r.originNote + "; counted on its own.");
       if (!r.exists) s.warnings.push_back(r.name + ": the file is missing on this computer.");
     }
-    if (!haveFirst && !rows.empty()) first = rep.files[rows.front()].info;
+    if (!firstRow && !order.empty()) first = rep.files[order.front()].info, firstRow = &rep.files[order.front()], firstIdx = order.front();
     first = resplit(first, knownArtists);
-    for (size_t ri : rows)
+    for (size_t ri : order)
       if (!rep.files[ri].derived) {
         s.sourceName = rep.files[ri].name;
         break;
       }
-    if (s.sourceName.empty() && !rows.empty()) s.sourceName = baseName(rep.files[rows.front()].origin.source);
+    if (s.sourceName.empty() && !order.empty()) s.sourceName = baseName(rep.files[order.front()].origin.source);
+    // A song its files' names carry: shown by those words, not by one file's whole name.
+    std::string titleGuess = !first.title.empty() ? first.title : key;
+    if (firstRow && !first.tracklib && !firstRow->ownSong && !firstRow->identity.key.empty() && autoKeyOf[firstIdx] == firstRow->identity.key)
+      titleGuess = firstRow->identity.title;
+    s.grouped = names.size() >= 2 && key.rfind(kOwnSong, 0) != 0;
     s.checkName = first.ambiguous && !first.artistKnown && s.fields.artist.empty() && s.fields.title.empty();
     s.artist = !s.fields.artist.empty() ? s.fields.artist : first.artist;
-    s.title = !s.fields.title.empty() ? s.fields.title : (!first.title.empty() ? first.title : key);
+    s.title = !s.fields.title.empty() ? s.fields.title : titleGuess;
     s.stems.assign(stems.begin(), stems.end());
     s.files.assign(files.begin(), files.end());
     // Timelines: union per part (stems of one song share a timeline).
@@ -815,6 +1016,58 @@ Report build(const Measurement& m, const Saved& saved, const std::string& projec
       rep.sharesComplete = false;
   }
   if (rep.totalShare > 100) rep.warnings.push_back("The sample shares add up to more than 100%.");
+  // How each file's song is shown (songs with nothing counted too: the files page groups by them).
+  {
+    std::map<std::string, std::string> titles;
+    for (const SongRow& s : rep.songs) titles[s.key] = s.artist.empty() ? s.title : s.artist + " - " + s.title;
+    for (size_t ri = 0; ri < rep.files.size(); ++ri) {
+      FileRow& r = rep.files[ri];
+      if (auto t = titles.find(r.song); t != titles.end()) {
+        r.songTitle = t->second;
+        continue;
+      }
+      const SongFields f = fieldsOf(r.song, {ri});
+      const NameInfo n = r.derived ? nameOf(r.origin.source) : r.info;
+      std::string title = !f.title.empty() ? f.title : !r.ownSong && !r.identity.key.empty() && r.identity.key == r.song ? r.identity.title
+                                                     : !n.title.empty() ? n.title : r.song;
+      const std::string artist = !f.artist.empty() ? f.artist : n.tracklib ? n.artist : std::string();
+      titles[r.song] = r.songTitle = artist.empty() ? title : artist + " - " + title;
+    }
+  }
+  // Marker areas: what of each song each one uses (licensed as if each area were its own song).
+  for (size_t k = 0; k < nAreas; ++k) {
+    AreaRow ar;
+    ar.area = m.areas[k];
+    for (const SongRow& s : rep.songs) {
+      auto it = areaPieces[k].find(s.key);
+      if (it == areaPieces[k].end() || it->second.empty()) continue;
+      AreaSong as;
+      as.key = s.key, as.artist = s.artist, as.title = s.title;
+      std::map<int, Ranges> byPart;
+      for (const auto& [part, p] : it->second) {
+        byPart[part].push_back(p.r);
+        as.rough = as.rough || p.rough;
+        as.estimated = as.estimated || p.estimated;
+      }
+      for (auto& [part, rs] : byPart) as.seconds += total(unite(rs));
+      as.seconds = std::round(as.seconds * 10.0) / 10.0;
+      if (as.seconds <= 0) continue;
+      as.tier = tierFor(as.seconds);
+      as.over = as.seconds > kMaxLicensable;
+      if (auto pl = areaPlay[k].find(s.key); pl != areaPlay[k].end()) as.playSeconds = total(unite(pl->second));
+      for (const std::string& path : s.files) {
+        auto af = areaFile[k].find(path);
+        if (af == areaFile[k].end()) continue;
+        AreaFile f;
+        f.path = path, f.name = baseName(path);
+        f.seconds = total(af->second.first);
+        f.playSeconds = total(af->second.second);
+        as.files.push_back(f);
+      }
+      ar.songs.push_back(as);
+    }
+    rep.areas.push_back(ar);
+  }
   return rep;
 }
 

@@ -41,14 +41,8 @@ SECONDS = float(os.environ.get("GRIDLINE_K142_SECONDS", "15"))
 SCALE = float(os.environ.get("GRIDLINE_K142_CPU_SCALE", "1.5"))
 IDLE_FPS = 10.0
 BUDGET = {"visible": 2.0, "hidden": 0.5}  # Gridline's own threads, percent of one core (times SCALE)
-# 0.7.8 (user decision 2026-11-22): hidden was capped at 1.0 % of one core after the margin. On macOS it
-# still is: there hidden own time is nearly all the audio callback's rest bookkeeping
-# (AudioEngine::sleepGraph visits every node each block, ~45 us at 256 frames; 0.65 to 0.9 measured), and
-# 0.7.9 lets the graph sleep without touching its nodes. Elsewhere that callback costs about 0.15 % and
-# hidden is judged at the design budget (0.5 x SCALE): the rest was the interface thread, which SDL older
-# than 2.0.16 kept looking for events every few milliseconds (0.7 to 0.9 % on Debian 11) and which now
-# sleeps until it has work (IdlePace.h, NativeView.h displaySleep). Visible stays 2.0 x SCALE.
-CAP_078 = {"hidden": 1.0} if sys.platform == "darwin" else {}
+# K-142e (0.7.9): the audio graph sleeps in O(1) without touching its nodes once quiescent, so hidden
+# is judged at the original strict 0.5 % x SCALE budget on every platform (including macOS).
 # The interface thread alone, hidden (percent of one core, times SCALE): it draws nothing and sleeps until
 # input, a wake from another thread or a duty (a changed project's backups, the report's steps), waking
 # only for the freeze watchdog every few seconds. Measured near 0.01 %; a loop that looks for events on a
@@ -121,7 +115,7 @@ for lay, name in cpurun.LAYOUTS:
             link = sum(t["cpu_percent"] for t in run["threads_by_name"] if t["name"] == "CVDisplayLink")
             check(link == 0, "%s: a display link runs while hidden (%.3f%%)" % (tag, link))
         if SCALE > 0:
-            cap = max(BUDGET[st] * SCALE, CAP_078.get(st, 0.0) if SCALE > 0 else 0.0)
+            cap = BUDGET[st] * SCALE
             check(own_judged <= cap, "%s: Gridline's own threads %.2f%% of one core (budget %.2f%%, %.1f x %.2f%%): %s%s" % (
                 tag, own_judged, cap, SCALE, BUDGET[st], fmt(cpurun.top_split(run, "own", 6)), scoped))
             if st == "hidden":

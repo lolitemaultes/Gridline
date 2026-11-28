@@ -54,6 +54,8 @@ void open(App& a, ObjectId clip, int tab = -1);
 bool openChannel(App& a, ObjectId channel, int tab);
 // The window shows this channel's settings (a sampler).
 bool takesChannel(const App& a, ObjectId channel);
+// The sampler channel's file dialog (the window's Replace sample...): the file and its name, in one step.
+void sampleDialog(App& a, ObjectId channel);
 // The window (or the pane) is open on this channel, or on a clip of it.
 bool showsChannel(const App& a, ObjectId channel);
 // Closes the window (or the pane) when it shows this channel or a clip of it.

@@ -844,21 +844,37 @@ void tracksNewSameSettings(App& a) {
 
 // Every selected track goes (one undo step), the current one when none is selected; one track always stays.
 void tracksDeleteSelected(App& a) {
+  if (livelook::active(a)) {
+    livelook::deleteTracks(a, -1);  // K-395: Clips track deletion (with groups, mixers, and shown-track guard)
+    return;
+  }
   std::vector<int> del(a.playlist.trackSel.begin(), a.playlist.trackSel.end());
   if (del.empty()) del.push_back(currentTrack(a));
   const bool lanes = logicplug::active(a);  // R04-13: the Tracks layout's track automation goes with its track
   a.later([&a, del, lanes] {
-    a.doc.beginGroup("delete tracks");
-    for (auto it = del.rbegin(); it != del.rend(); ++it)
-      if (a.doc.song().tracks.size() > 1) {
-        if (lanes) logicplug::deleteTrack(a, *it);  // R06-06: with its strip and the sounds only it used
-        else ops::deletePlaylistTrack(a.doc, *it, false);
-      }
-    a.doc.endGroup();
-    // R02-14: a track is always selected: the one that took the first deleted one's place.
-    const int n = static_cast<int>(a.doc.song().tracks.size());
-    a.playlist.trackSel.clear();
-    if (n > 0) a.playlist.trackSel.insert(std::min(*std::min_element(del.begin(), del.end()), n - 1));
+    auto run = [&a, del, lanes] {
+      a.doc.beginGroup("delete tracks");
+      for (auto it = del.rbegin(); it != del.rend(); ++it)
+        if (a.doc.song().tracks.size() > 1) {
+          if (lanes) logicplug::deleteTrack(a, *it);  // R06-06: with its strip and the sounds only it used
+          else ops::deletePlaylistTrack(a.doc, *it, false);
+        }
+      a.doc.endGroup();
+      // R02-14: a track is always selected: the one that took the first deleted one's place.
+      const int n = static_cast<int>(a.doc.song().tracks.size());
+      a.playlist.trackSel.clear();
+      if (n > 0) a.playlist.trackSel.insert(std::min(*std::min_element(del.begin(), del.end()), n - 1));
+    };
+    if (del.size() > 1) {
+      a.confirm = {};
+      a.confirm.open = true;
+      a.confirm.title = std::string(i18n::tr("Delete ")) + std::to_string(del.size()) + " " + i18n::tr("tracks") + "?";
+      a.confirm.subtitle = i18n::tr("Their clips and unused instruments are removed. Undo brings them back.");
+      a.confirm.okLabel = i18n::N_("Delete");
+      a.confirm.action = std::move(run);
+    } else {
+      run();
+    }
   });
 }
 

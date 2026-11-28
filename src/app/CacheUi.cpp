@@ -1,5 +1,6 @@
 // Gridline - K-45: see CacheUi.h.
 #include "CacheUi.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include "../../third_party/imgui/imgui.h"
 #include <algorithm>
@@ -139,6 +140,39 @@ struct Ui {
   int sweepsSeen = 0, clearsSeen = 0;
   double nextMeasure = 0;
   ImVec2 buttonAt{0, 0};  // (dev-input: where the button is)
+  // K-432 (GL-8006CE18): if the process exits unexpectedly before App::~App() calls shutdown(),
+  // static teardown must stop and join/detach `worker` instead of hitting ~std::thread() -> std::terminate().
+  ~Ui() {
+    if (!worker.joinable()) return;
+    std::shared_ptr<State> s = st;
+    {
+      std::lock_guard<std::mutex> lk(s->mu);
+      s->stop = true;
+      s->haveUses = false;
+      s->sweepDue = false;
+      s->clearWanted = false;
+      s->measureWanted = false;
+      s->moreFolders.clear();
+    }
+    s->wake.notify_all();
+    if (worker.get_id() == std::this_thread::get_id()) {
+      worker.detach();
+      return;
+    }
+    const Clock::time_point until = Clock::now() + std::chrono::milliseconds(static_cast<int>(kQuitWait * 1000.0));
+    for (;;) {
+      {
+        std::lock_guard<std::mutex> lk(s->mu);
+        if (!s->working) break;
+      }
+      if (Clock::now() >= until) {
+        worker.detach();
+        return;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    gl::threads::safeJoin(worker);
+  }
 };
 
 Ui& ui_() {
@@ -289,6 +323,10 @@ void shutdown(App& a) {
     s->measureWanted = false;
   }
   s->wake.notify_all();
+  if (u.worker.get_id() == std::this_thread::get_id()) {
+    u.worker.detach();
+    return;
+  }
   // A big delete must not hold up the quit: a worker still busy is left behind (it owns its state and
   // the process is ending), and the next start finishes what it did not.
   const Clock::time_point until = Clock::now() + std::chrono::milliseconds(static_cast<int>(kQuitWait * 1000.0));
@@ -303,7 +341,7 @@ void shutdown(App& a) {
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-  u.worker.join();
+  gl::threads::safeJoin(u.worker);
 }
 
 void settingsSection(App& a) {

@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include "Lv2Native.h"
+#include "../ui/NativeView.h"
 
 namespace gl::host::lv2::native {
 
@@ -21,6 +22,7 @@ struct Xlib {
 };
 Xlib& xlib() {
   static Xlib x = [] {
+    host::native::installX11SafetyHandlers();  // K-432: XInitThreads + non-fatal error handler before XOpenDisplay
     Xlib l;
     // libX11.so.6 (Linux, FreeBSD, NetBSD); OpenBSD numbers its libraries differently.
     void* h = nullptr;

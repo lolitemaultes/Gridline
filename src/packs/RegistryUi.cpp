@@ -26,7 +26,7 @@ bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& 
 }  // namespace gl::packs::terrace
 namespace gl::packs::edison {
 void drawWindows(App& a);
-bool openAudioEditor(App& a, const std::string& path, ObjectId channel);
+bool openAudioEditor(App& a, const std::string& path, ObjectId channel, ObjectId clip = kNoId);
 void closeOwnWindows(App& a);
 void closeStandaloneWindows();
 bool openFileInLoupe(App& a, const std::string& path);
@@ -34,6 +34,9 @@ int armTransportRecording(App& a, ObjectId track);
 bool claimEffectEditor(App& a, const PluginTarget& t);  // K-15
 bool showInPanel(App& a, const PluginTarget& t);         // K-112
 void drawPanelBody(App& a, ImVec2 avail);                 // K-112
+void preferredWindowSize(App& a, float extraW, float extraH, ImVec2 workSize, float& outW, float& outH, bool& forceApply);
+void rememberWindowSize(App& a, float w, float h);
+void drawSizeMenu(App& a);
 bool dockDevCommand(App& a, const std::string& cmd, const std::vector<std::string>& args);
 }  // namespace gl::packs::edison
 namespace gl::packs::modulation {
@@ -57,7 +60,34 @@ namespace gl::packs::platter {
 void tick(App& a);
 bool claimMidi(App& a, const std::string& device);
 bool recordsWithTransport(App& a);
+namespace pv {
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path, int deck);
+}  // namespace pv
 }  // namespace gl::packs::platter
+namespace gl::packs::seltmann::sui {
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path, const std::string& title);
+}  // namespace gl::packs::seltmann::sui
+namespace gl::packs::edison {
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path);
+}  // namespace gl::packs::edison
+namespace gl::packs::spacefx {
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path);
+}  // namespace gl::packs::spacefx
+namespace gl::packs::spectral {
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path);
+}  // namespace gl::packs::spectral
+namespace gl::packs::models {
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path);
+}  // namespace gl::packs::models
+namespace gl::packs::samplers {
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path, int subTarget);
+}  // namespace gl::packs::samplers
+namespace gl::packs::trackerpack {
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path);
+}  // namespace gl::packs::trackerpack
+namespace gl::packs::plasma {
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path, int subTarget);
+}  // namespace gl::packs::plasma
 
 #define GL_PACK_LIST X(synths) X(samplers) X(spacefx) X(spectral) X(dynamics) X(modulation) X(models) X(utility) X(creative) X(edison) X(flexpack) X(tideline) X(seltmann) X(plasma) X(mini) X(platter) X(trackerpack) X(chater) X(terrace)
 
@@ -81,13 +111,21 @@ void drawWindows(App& a) {
 
 bool loadPicture(App& a, const PluginTarget& t, const std::string& path) { return synths::loadPicture(a, t, path); }
 
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path, const std::string& title, int subTarget) {
+  return seltmann::sui::loadAudioIntoPlugin(a, t, path, title) || platter::pv::loadAudioIntoPlugin(a, t, path, subTarget) ||
+         edison::loadAudioIntoPlugin(a, t, path) || spacefx::loadAudioIntoPlugin(a, t, path) ||
+         spectral::loadAudioIntoPlugin(a, t, path) || models::loadAudioIntoPlugin(a, t, path) ||
+         samplers::loadAudioIntoPlugin(a, t, path, subTarget) || trackerpack::loadAudioIntoPlugin(a, t, path) ||
+         plasma::loadAudioIntoPlugin(a, t, path, subTarget);
+}
+
 bool claimMidi(App& a, const std::string& device) { return platter::claimMidi(a, device); }
 
 bool recordsWithTransport(App& a) { return platter::recordsWithTransport(a); }
 
-bool openAudioEditor(App& a, const std::string& path, ObjectId channel) {
+bool openAudioEditor(App& a, const std::string& path, ObjectId channel, ObjectId clip) {
   clipeditor::paneShowsLoupe();  // asked for Loupe: the pane shows it, not the clip editor
-  return edison::openAudioEditor(a, path, channel);
+  return edison::openAudioEditor(a, path, channel, clip);
 }
 void closeAudioEditorWindows(App& a) { edison::closeOwnWindows(a); }
 
@@ -100,6 +138,11 @@ void closeAudioEditorSampleWindows() { edison::closeStandaloneWindows(); }
 
 bool claimEffectEditor(App& a, const PluginTarget& t) { return edison::claimEffectEditor(a, t); }
 void drawLoupeBody(App& a, float w, float h) { edison::drawPanelBody(a, ImVec2(w, h)); }
+void loupePreferredWindowSize(App& a, float extraW, float extraH, float workW, float workH, float& outW, float& outH, bool& forceApply) {
+  edison::preferredWindowSize(a, extraW, extraH, ImVec2(workW, workH), outW, outH, forceApply);
+}
+void rememberLoupeWindowSize(App& a, float w, float h) { edison::rememberWindowSize(a, w, h); }
+void drawLoupeSizeMenu(App& a) { edison::drawSizeMenu(a); }
 bool showInLoupePanel(App& a, const PluginTarget& t) { return edison::showInPanel(a, t); }
 
 bool devCommand(App& a, const std::string& cmd, const std::vector<std::string>& args) {

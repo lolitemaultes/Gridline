@@ -49,6 +49,10 @@ enum class Icon {
   Drive, DriveUsb, DriveNetwork, Home, Monitor, Download, Disc, Clock, ProjectFile,  // the file dialog's drives, places and files
   ChordStamp,   // the piano roll's chord stamp button
   CollapseAll,  // the browser's Collapse all folders button
+  // K-402: crisp SVG icons replacing primitive glyphs in Clips and Smooth.
+  SkipBack, Rewind, FastForward, InspectorSwitches, LibraryStack, ZoomVertical, ChevronsUpDown,
+  MetroBeatRight, MetroBeatLeft, RecordArmed, SessionRecordFrame, CircleCaretRight, CircleCaretDown, FollowAction,
+  Globe, GlobeOff,  // K-437: a plugin's internet access (allowed / blocked)
   Count  // number of icons (not an icon)
 };
 // Q-12: true for the tool family (playlist / piano roll / automation editor strips).
@@ -175,6 +179,13 @@ bool ParamKnob(const char* id, ParamId pid, float radius = 14.0f, const char* la
 bool ParamFader(const char* id, ParamId pid, ImVec2 size);
 // R07-08: the value a control shows now (automation playing, a Read curve when stopped), false: its stored one.
 bool shownParamValue(ParamId pid, double& v);
+// K-446: automated controls move. ShowsLiveValue: the control `item` may show the moving value
+// (it is not held, or held but not moved yet: the user's grab wins once it moves). NoteHeldEdit:
+// the held control `item` has changed its value (call it where a drag writes). LiveParamValue: both
+// together, the value `pid`'s control shows now (false: its stored one).
+bool ShowsLiveValue(ImGuiID item);
+void NoteHeldEdit(ImGuiID item);
+bool LiveParamValue(ImGuiID item, ParamId pid, double& v);
 // J-83: wheel routing (core/WheelRoute.h). Inside a scope whose pane scrolls
 // (the thin mixer, or Settings > Interface "Mouse wheel over mixer controls:
 // scroll") the plain wheel over a knob / fader / slot scrolls the pane; the
@@ -251,7 +262,8 @@ void devKnobsEnable(bool on);
 bool devKnobsEnabled();
 std::string devKnobReport();
 // A plugin editor control (PluginUI dragParam) for the report.
-void devKnobRecord(const char* kind, const std::string& id, const ParamDesc& d, double value, ImVec2 min, ImVec2 max, double stepNorm = 0);
+void devKnobRecord(const char* kind, const std::string& id, const ParamDesc& d, double value, ImVec2 min, ImVec2 max, double stepNorm = 0,
+                   ParamId pid = ParamId{});  // K-446: the parameter it shows (reported as "pid <owner> <index>")
 // The centre of the control with this item id in the last frame ("atknob"), and its window.
 bool devKnobCentre(unsigned item, ImVec2& out, std::string* window = nullptr);
 
@@ -380,6 +392,9 @@ void EmptyState(ImDrawList* dl, ImVec2 min, ImVec2 max, const char* title, const
 // a small caption): contents are laid out inside with kS2 padding. `width` 0 =
 // the remaining width of the window. Nestable; always pair with EndSection().
 void BeginSection(const char* caption, float width = 0.0f);
+// While on, a boxed section's caption is a bold heading in sentence case at the body size (the
+// Export audio dialog), not the small capitals caption. Clips and Smooth keep their own headings.
+void SetSectionBoldCaptions(bool on);
 // K-112 (Live): inside a group of settings a switch is an On / Off field kToggleFieldW wide, lit
 // while on (check boxes become one through ImGui's hook). toggleFields(): such a field is wanted here.
 constexpr float kToggleFieldW = 48.0f;
@@ -408,7 +423,8 @@ void EndSection();
 bool TabStrip(const char* id, const char* const* labels, int count, int* index, const char* const* hints = nullptr);
 // Drag-and-drop preview chip (call between BeginDragDropSource/End): a tint
 // bar (content colour, or the lit orange), the kind icon and the item name.
-void DragPreview(Icon icon, const char* text, ImU32 tint = 0);
+// K-450: `pluginType` (a plugin being dragged): its own icon instead of `icon` when it has one.
+void DragPreview(Icon icon, const char* text, ImU32 tint = 0, const char* pluginType = nullptr);
 // Round LED (mute/enable lamps). `level` 0..1 brightens it.
 void Led(ImDrawList* dl, ImVec2 center, float radius, bool on, float level = 0.0f);
 // 0.7.8: a small turning arc (something loading), `radius` px around `center`.

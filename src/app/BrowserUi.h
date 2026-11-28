@@ -74,6 +74,22 @@ struct DropPlace {
 };
 // Call right after a browser item: makes it draggable.
 void fileDragSource(const std::string& path, const char* label = nullptr);
+// K-445: the system file manager at `path` (a folder; a file: the folder holding it, made when it
+// is one of Gridline's folders not filled yet). "Show in Finder" / "Show in Explorer" / "Show in
+// Files" (revealText, untranslated: pass it through i18n::tr). Hidden runs (tests) only print
+// "reveal: <folder>". False (and a notice saying where the folder is) when nothing could open it.
+const char* revealText();
+bool revealInFileManager(App& a, const std::string& path);
+// K-445: a file made by a plugin (a loop, a render, notes) placed without dragging it: as a clip
+// on the playlist (a new lane below the used ones, or a new audio track in the Tracks layout, at
+// the playhead's bar), or as a new channel in the channel rack. True when placed; a notice says
+// where. The same planner as a drop, so it never depends on the window system's drag and drop.
+bool addFileToPlaylist(App& a, const std::string& path);
+bool addFileToRack(App& a, const std::string& path);
+// Their menu items in the layout's own words (Studio: the playlist and the channel rack; Clips: the
+// arrangement; the Tracks layout: its tracks; the Tracker: the song and the steps), translated.
+const char* playlistAddText(const App& a);
+const char* rackAddText(const App& a);
 // What dropping `path` on `target` would do (FL presets are decoded, cached).
 browse::DropAction dropActionFor(App& a, const std::string& path, browse::DropTarget target, const DropPlace& place);
 // Between BeginDragDropTarget / EndDragDropTarget: accepts browser files for
@@ -163,12 +179,24 @@ void drawSounds(App& a, const std::string& filter);
 void browserDropTarget(App& a);
 
 // ---- preview ----
-// Plays a sample; with tempo sync on and a known tempo it is resampled to the song tempo.
-void previewFile(App& a, const std::string& path);
+// Plays a sample; with tempo sync on and a known loop tempo it stretches and phase-locks to the transport.
+void previewFile(App& a, const std::string& path, double startNorm = 0.0, bool immediate = false);
+// K-416: jumps preview playhead to normalized position [0, 1) (starts previewing if not active).
+void scrubPreview(App& a, const std::string& path, double normPos);
+// K-407 / K-417: session-remembered preview controls (Sync, Start on quant, Speed, Pitch, Carry pitch on drop).
 bool& previewSync();
+int& previewQuant();          // 0=1/8, 1=1/4, 2=1/2, 3=1 bar (matches AudioEngine::PreviewQuant)
+int& previewSpeedIdx();       // 0=x1/2, 1=x1, 2=x2
+double previewSpeedMult();    // 0.5, 1.0, or 2.0
+float& previewPitchSt();      // semitones (-12..+12), remembered per session
+bool& previewCarryPitch();    // carry pitch setting when dragging into project
+const std::string& previewActivePath();
+void syncPreviewControls(App& a);  // push live pitch/speed/quant updates to AudioEngine
 
 // ---- plugin picker (F8) ----
 void drawPluginPicker(App& a);
+// (dev "pickerhead") the header parts drawn last frame, their overlaps and parts outside it.
+std::string devPickerHeader();
 // K-93: every plugin the picker lists (no filter or search); pickerAdd() adds one.
 std::vector<const PluginInfo*> pickerPlugins(App& a);
 void togglePluginPicker();

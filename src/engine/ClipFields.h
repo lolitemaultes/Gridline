@@ -14,6 +14,7 @@ namespace gl::clipfields {
 
 enum class Field : int {
   GainDb,         // dB (below -96: silent)
+  Pan,            // K-414: -100 .. +100 % (-1..+1)
   Mute,           // 0 / 1
   Reverse,        // 0 / 1 (the clip keeps the same audio, played backwards)
   FadeIn,         // seconds (set by hand)

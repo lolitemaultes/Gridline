@@ -104,6 +104,12 @@ ImU32 popupBg(const Palette& p);
 // Temporarily replaces the palette (plugin editor skins); pops restore it. Nestable.
 void pushPalette(const Palette& p);
 void popPalette();
+// K-395: clears any stray pushed palettes back to the canonical base palette (frame boundary guard).
+void resetPaletteStack();
+// K-395: monotonic counter incremented whenever apply() changes the theme / palette.
+uint64_t generation();
+// K-395: applies the current canonical base palette's ImGui style to the active ImGui context.
+void applyImGuiStyle();
 void apply(bool dark);  // sets ImGui style + palette (with the current tweaks)
 bool isDark();
 
@@ -133,6 +139,8 @@ struct Tweaks {
 };
 // Stores the tweaks and re-applies the current theme with them.
 void setTweaks(const Tweaks& t);
+// Applies mode and tweaks in one step (no intermediate apply with mixed mode/tweaks).
+void applyWithTweaks(bool dark, const Tweaks& t);
 const Tweaks& tweaks();
 // The dark / light base palette with `t` applied (no global state touched).
 Palette makePalette(bool dark, const Tweaks& t);

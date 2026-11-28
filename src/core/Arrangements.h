@@ -26,6 +26,12 @@ bool renameArrangement(Song& s, int index, const std::string& name);
 // Removes an arrangement (never the last one). Removing the current one makes
 // its neighbour current.
 bool removeArrangement(Song& s, int index);
+// Moves arrangement `from` to index `to`, keeping the current arrangement active.
+bool moveArrangement(Song& s, int from, int to);
+// Copy of `s` with arrangement `index` active (unchanged copy if out of range).
+Song songWithArrangement(const Song& s, int index);
+// Length in ticks of arrangement `index` (works for both active and parked).
+Tick arrangementLengthTicks(const Song& s, int index);
 // A name not used by any arrangement yet ("Arrangement 2", …).
 std::string uniqueArrangementName(const Song& s, const std::string& base);
 

@@ -5,6 +5,7 @@ studio	file.saveAs	0	Ctrl+Shift+S;
 studio	file.saveNewVersion	0	Ctrl+Alt+S;
 studio	file.render	0	Ctrl+R;
 studio	file.renderStems	0	Ctrl+Shift+R;
+studio	file.renderMarkerAreas	0	
 studio	file.exportMidi	0	Ctrl+Shift+M;
 studio	file.importUrl	0	Ctrl+Shift+U;
 studio	file.projectInfo	0	F11;
@@ -34,6 +35,8 @@ studio	pattern.moveUp	0	Ctrl+Shift+Up;
 studio	pattern.moveDown	0	Ctrl+Shift+Down;
 studio	pattern.next	0	Num +;
 studio	pattern.previous	0	Num -;
+studio	arrangement.previous	0	Ctrl+Alt+Left;
+studio	arrangement.next	0	Ctrl+Alt+Right;
 studio	view.playlist	0	F5;
 studio	view.channelRack	0	F6;
 studio	view.pianoRoll	0	F7;
@@ -174,7 +177,7 @@ studio	piano.zoomFit	2	Home;
 studio	rack.clone	3	Alt+C;
 studio	rack.cloneEmpty	3	Alt+Shift+C;
 studio	rack.randomColours	3	Ctrl+Alt+C;
-studio	rack.delete	3	Alt+Del;
+studio	rack.delete	3	Alt+Del;Shift+Del;
 studio	rack.moveUp	3	Alt+Up;
 studio	rack.moveDown	3	Alt+Down;
 studio	rack.routeFree	3	Ctrl+L;
@@ -258,6 +261,7 @@ live	file.saveAs	0	Ctrl+Shift+S;
 live	file.saveNewVersion	0	Ctrl+Alt+S;
 live	file.render	0	Ctrl+Shift+R;
 live	file.renderStems	0	
+live	file.renderMarkerAreas	0	
 live	file.exportMidi	0	Ctrl+Shift+E;
 live	file.importUrl	0	Ctrl+Shift+U;
 live	file.projectInfo	0	F11;
@@ -287,6 +291,8 @@ live	pattern.moveUp	0	Ctrl+Shift+Up;
 live	pattern.moveDown	0	Ctrl+Shift+Down;
 live	pattern.next	0	Num +;
 live	pattern.previous	0	Num -;
+live	arrangement.previous	0	Ctrl+Alt+Left;
+live	arrangement.next	0	Ctrl+Alt+Right;
 live	view.playlist	0	F5;
 live	view.channelRack	0	F6;
 live	view.pianoRoll	0	Ctrl+Alt+3;
@@ -427,7 +433,7 @@ live	piano.zoomFit	2	Home;
 live	rack.clone	3	Alt+C;
 live	rack.cloneEmpty	3	Alt+Shift+C;
 live	rack.randomColours	3	Ctrl+Alt+C;
-live	rack.delete	3	Alt+Del;
+live	rack.delete	3	Alt+Del;Shift+Del;
 live	rack.moveUp	3	Alt+Up;
 live	rack.moveDown	3	Alt+Down;
 live	rack.routeFree	3	Ctrl+L;
@@ -511,6 +517,7 @@ logic	file.saveAs	0	Ctrl+Shift+S;
 logic	file.saveNewVersion	0	Ctrl+Alt+S;
 logic	file.render	0	Ctrl+B;
 logic	file.renderStems	0	Ctrl+Shift+E;
+logic	file.renderMarkerAreas	0	
 logic	file.exportMidi	0	Ctrl+Alt+E;
 logic	file.importUrl	0	Ctrl+Shift+U;
 logic	file.projectInfo	0	F11;
@@ -540,6 +547,8 @@ logic	pattern.moveUp	0	Ctrl+Shift+Up;
 logic	pattern.moveDown	0	Ctrl+Shift+Down;
 logic	pattern.next	0	Num +;
 logic	pattern.previous	0	Num -;
+logic	arrangement.previous	0	Ctrl+Alt+Left;
+logic	arrangement.next	0	Ctrl+Alt+Right;
 logic	view.playlist	0	Ctrl+1;
 logic	view.channelRack	0	Ctrl+3;
 logic	view.pianoRoll	0	P;Ctrl+4;
@@ -686,7 +695,7 @@ logic	piano.zoomFit	2	Home;
 logic	rack.clone	3	Alt+C;
 logic	rack.cloneEmpty	3	Alt+Shift+C;
 logic	rack.randomColours	3	Ctrl+Alt+C;
-logic	rack.delete	3	Alt+Del;
+logic	rack.delete	3	Alt+Del;Shift+Del;
 logic	rack.moveUp	3	Alt+Up;
 logic	rack.moveDown	3	Alt+Down;
 logic	rack.routeFree	3	Ctrl+L;
@@ -770,6 +779,7 @@ studio+cmd	file.saveAs	0	Ctrl+Shift+S;
 studio+cmd	file.saveNewVersion	0	Ctrl+Alt+S;
 studio+cmd	file.render	0	Ctrl+R;
 studio+cmd	file.renderStems	0	Ctrl+Shift+R;
+studio+cmd	file.renderMarkerAreas	0	
 studio+cmd	file.exportMidi	0	Ctrl+Shift+M;
 studio+cmd	file.importUrl	0	Ctrl+Shift+U;
 studio+cmd	file.projectInfo	0	F11;
@@ -799,6 +809,8 @@ studio+cmd	pattern.moveUp	0	Ctrl+Shift+Up;
 studio+cmd	pattern.moveDown	0	Ctrl+Shift+Down;
 studio+cmd	pattern.next	0	Num +;
 studio+cmd	pattern.previous	0	Num -;
+studio+cmd	arrangement.previous	0	Ctrl+Alt+Left;
+studio+cmd	arrangement.next	0	Ctrl+Alt+Right;
 studio+cmd	view.playlist	0	F5;
 studio+cmd	view.channelRack	0	F6;
 studio+cmd	view.pianoRoll	0	F7;
@@ -939,7 +951,7 @@ studio+cmd	piano.zoomFit	2	Home;
 studio+cmd	rack.clone	3	Alt+C;
 studio+cmd	rack.cloneEmpty	3	Alt+Shift+C;
 studio+cmd	rack.randomColours	3	Ctrl+Alt+C;
-studio+cmd	rack.delete	3	Alt+Del;
+studio+cmd	rack.delete	3	Alt+Del;Shift+Del;
 studio+cmd	rack.moveUp	3	Alt+Up;
 studio+cmd	rack.moveDown	3	Alt+Down;
 studio+cmd	rack.routeFree	3	Ctrl+L;
@@ -1023,6 +1035,7 @@ live+cmd	file.saveAs	0	Ctrl+Shift+S;
 live+cmd	file.saveNewVersion	0	Ctrl+Alt+S;
 live+cmd	file.render	0	Ctrl+Shift+R;
 live+cmd	file.renderStems	0	
+live+cmd	file.renderMarkerAreas	0	
 live+cmd	file.exportMidi	0	Ctrl+Shift+E;
 live+cmd	file.importUrl	0	Ctrl+Shift+U;
 live+cmd	file.projectInfo	0	F11;
@@ -1052,6 +1065,8 @@ live+cmd	pattern.moveUp	0	Ctrl+Shift+Up;
 live+cmd	pattern.moveDown	0	Ctrl+Shift+Down;
 live+cmd	pattern.next	0	Num +;
 live+cmd	pattern.previous	0	Num -;
+live+cmd	arrangement.previous	0	Ctrl+Alt+Left;
+live+cmd	arrangement.next	0	Ctrl+Alt+Right;
 live+cmd	view.playlist	0	F5;
 live+cmd	view.channelRack	0	F6;
 live+cmd	view.pianoRoll	0	Ctrl+Alt+3;
@@ -1192,7 +1207,7 @@ live+cmd	piano.zoomFit	2	Home;
 live+cmd	rack.clone	3	Alt+C;
 live+cmd	rack.cloneEmpty	3	Alt+Shift+C;
 live+cmd	rack.randomColours	3	Ctrl+Alt+C;
-live+cmd	rack.delete	3	Alt+Del;
+live+cmd	rack.delete	3	Alt+Del;Shift+Del;
 live+cmd	rack.moveUp	3	Alt+Up;
 live+cmd	rack.moveDown	3	Alt+Down;
 live+cmd	rack.routeFree	3	Ctrl+L;
@@ -1276,6 +1291,7 @@ logic+cmd	file.saveAs	0	Cmd+Shift+S;
 logic+cmd	file.saveNewVersion	0	Cmd+Alt+S;
 logic+cmd	file.render	0	Cmd+B;
 logic+cmd	file.renderStems	0	Cmd+Shift+E;
+logic+cmd	file.renderMarkerAreas	0	
 logic+cmd	file.exportMidi	0	Cmd+Alt+E;
 logic+cmd	file.importUrl	0	Cmd+Shift+U;
 logic+cmd	file.projectInfo	0	F11;
@@ -1305,6 +1321,8 @@ logic+cmd	pattern.moveUp	0	Cmd+Shift+Up;
 logic+cmd	pattern.moveDown	0	Cmd+Shift+Down;
 logic+cmd	pattern.next	0	Num +;
 logic+cmd	pattern.previous	0	Num -;
+logic+cmd	arrangement.previous	0	Cmd+Alt+Left;
+logic+cmd	arrangement.next	0	Cmd+Alt+Right;
 logic+cmd	view.playlist	0	Cmd+1;
 logic+cmd	view.channelRack	0	Cmd+3;
 logic+cmd	view.pianoRoll	0	P;Cmd+4;
@@ -1445,7 +1463,7 @@ logic+cmd	piano.zoomFit	2	Home;
 logic+cmd	rack.clone	3	Alt+C;
 logic+cmd	rack.cloneEmpty	3	Alt+Shift+C;
 logic+cmd	rack.randomColours	3	Cmd+Alt+C;
-logic+cmd	rack.delete	3	Alt+Del;
+logic+cmd	rack.delete	3	Alt+Del;Shift+Del;
 logic+cmd	rack.moveUp	3	Alt+Up;
 logic+cmd	rack.moveDown	3	Alt+Down;
 logic+cmd	rack.routeFree	3	Cmd+L;
@@ -1745,6 +1763,7 @@ tracker	file.saveAs	0	Ctrl+Shift+S;
 tracker	file.saveNewVersion	0	Ctrl+Alt+S;
 tracker	file.render	0	Ctrl+R;
 tracker	file.renderStems	0	Ctrl+Shift+R;
+tracker	file.renderMarkerAreas	0	
 tracker	file.exportMidi	0	Ctrl+Shift+M;
 tracker	file.importUrl	0	Ctrl+Shift+U;
 tracker	file.projectInfo	0	
@@ -1782,6 +1801,8 @@ tracker	pattern.moveUp	0
 tracker	pattern.moveDown	0	
 tracker	pattern.next	0	
 tracker	pattern.previous	0	
+tracker	arrangement.previous	0	Ctrl+Alt+Left;
+tracker	arrangement.next	0	Ctrl+Alt+Right;
 tracker	view.playlist	0	Ctrl+Alt+2;
 tracker	view.channelRack	0	Ctrl+Alt+4;
 tracker	view.pianoRoll	0	Ctrl+Alt+3;
@@ -1976,7 +1997,7 @@ tracker	piano.zoomFit	2	Home;
 tracker	rack.clone	3	Alt+C;
 tracker	rack.cloneEmpty	3	Alt+Shift+C;
 tracker	rack.randomColours	3	
-tracker	rack.delete	3	Alt+Del;
+tracker	rack.delete	3	Alt+Del;Shift+Del;
 tracker	rack.moveUp	3	Alt+Up;
 tracker	rack.moveDown	3	Alt+Down;
 tracker	rack.routeFree	3	Ctrl+L;
@@ -2017,11 +2038,11 @@ tracker	stage.mute	6	M;
 tracker	stage.solo	6	S;
 tracker	stage.reset	6	0;
 tracker	stage.rename	6	
-tracker	stage.fromSelection	6	
-tracker	stage.fromMarkers	6	
 tracker	stage.selectAll	6	Ctrl+A;
 tracker	stage.deselect	6	Ctrl+D;
 tracker	stage.roomsPanel	6	\;
+tracker	stage.fromSelection	6	
+tracker	stage.fromMarkers	6	
 tracker	auto.delete	5	Del;Backspace;
 tracker	auto.selectAll	5	Ctrl+A;
 tracker	auto.deselect	5	Ctrl+D;

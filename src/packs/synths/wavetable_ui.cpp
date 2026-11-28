@@ -132,7 +132,9 @@ void oscSection(const flk::Ctx& c, const PluginState& st, int k, float x0) {
   flk::textBeside(c, x0 + 284, 54, 17, "WARP");
   flk::menu(c, wtOsc(k, WoWarp), x0 + 314, 54, 120, 17);
   ImGui::SetCursorScreenPos(c.F.p(x0 + 8, 76));
+  ImGui::PushID(k);  // K-459: OSC A and OSC B each draw a "##table" graph; one ID per oscillator
   tableDisplay(c.a, c.t, k, c.F.sz(426, 82));
+  ImGui::PopID();
   const int r1[6] = {WoPos, WoWarpAmt, WoCoarse, WoFine, WoLevel, WoPan};
   const char* n1[6] = {"Position", "Warp", "Coarse", "Fine", "Level", "Pan"};
   for (int i = 0; i < 6; ++i) flk::wheel(c, wtOsc(k, r1[i]), x0 + 18 + i * 70, 164, 30, n1[i]);

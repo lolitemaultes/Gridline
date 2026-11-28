@@ -62,16 +62,86 @@ anything else (a tail left ringing, trimmed notes, a clip that starts off the ba
 click **Loop** or **One-shot** to tag it the other way before you render. The quick menu row always
 uses the automatic tag.
 
+## The Export audio window
+
+**File > Export > Render to file...** (Clips **File > Export audio...**, Tracker **Project or
+section...**) opens one window for every audio export. **Marker areas...**, **Mixer tracks
+(stems)...**, the playlist track rows and a pattern's **Render pattern to file...** open the same
+window with their choice already made.
+
+- **What to export**: four cards at the top. **Whole song** (Clips **Arrangement**), **Time
+  selection** (Smooth **Cycle area**; or **Between markers**, from one marker to another),
+  **Marker areas** (see below) and **Current pattern** (Clips **Current clip**, Smooth **Current
+  region**). Each card says what it holds.
+- The left column shows what the card covers (from, to, length, or the list of areas), then the
+  **Ending**:
+  - **Cut exactly at the end**;
+  - **Let sounds ring out, up to** a number of seconds (it stops sooner once the sound goes quiet);
+  - **Add a fixed tail of** a number of seconds, loud or quiet;
+  - **Fold the ring-out into the start**, for loops that repeat without a gap.
+
+  **Play it** repeats the part, and **Render to** sends it to files, an audio clip or the audio
+  editor.
+- **Split**: **One file, the full mix** or **Separate files**, then which parts: a file per mixer
+  track (stems, with or without the master effects, and with the full mix or without it), per
+  playlist track or per track group.
+- **Files and names**:
+  - **Folder** shows the folder on one line, with the start of a long path shortened and the last
+    folder always whole; point at it for the whole path, or click it to type one. **Browse...**
+    picks a folder and **Next to the project** puts the files in the project's folder.
+  - **File name**, **File names** (marker areas) and **Each part** are built from pieces: Project,
+    Marker, Track, Number, Date, Sample rate and your own text. Click **+ Marker**, **+ Number** and
+    the other buttons to add a piece, click a piece to take it out, and click text to change it.
+    **More...** has every piece, **Text...** and **Edit the whole name as text...**, where `%P`
+    stands for the project, `%M` the marker, `%T` the track, `%N` the number, `%D` the date and `%R`
+    the sample rate.
+  - **Example** shows the first file as it will be written.
+- **Format**: WAV, FLAC, MP3, Ogg, AAC and Opus, each with its own setting. MP3, Ogg, AAC and Opus
+  need an encoder program (see below). **In WAV files** keeps the tempo and the markers in the
+  file. There are also **Channels** (stereo or mono) and **Also a MIDI file of the notes**.
+- **Quality and processing**: the sample rate, dither, resampling and oversampling, the master
+  and mixer track effects, **Every note plays** (channels ignore their voice limits) and
+  **Normalize** (to a peak level, or to a loudness under a peak ceiling).
+
+The line beside **Cancel** and **Render** sums up what you will get, for example `5 files · 0:31.0
+in all · WAV 24-bit · 44.1 kHz`. The window's choices are your own: they are not saved in the
+project and do not reach the others in a collaboration session.
+
 ## Exporting a song in parts
 
-The export window can write one file per mixer track (**Split mixer tracks**), per playlist track
-(**Split playlist tracks**) or per track group. The parts are named with **Part names** (for
-example `Song - 03 Snare`). With one kind of split on, the parts go in the folder you chose, next
+Choose **Separate files** under **Split** to write one file per mixer track, per playlist track or
+per track group. The parts are named with **Each part** (for example `Song - 03 Snare`). With one kind of split on, the parts go in the folder you chose, next
 to the full mix. With two or three kinds on, each kind goes in a folder of its own there (**Mixer
 tracks**, **Playlist tracks**, **Track groups**; in Smooth **Channel strips** and **Tracks**, in
 Clips **Tracks**), so a mixer track and a playlist track with the same name never replace each
 other's file. A name that would still repeat in one folder (a part name pattern without the
 number) gets ` 2`, ` 3` added.
+
+## Exporting marker areas
+
+When one arrangement holds several songs, put a marker at the start of each and choose **File >
+Export > Marker areas...** (in Clips **File > Other imports and exports > Export marker areas...**).
+Each marker area runs from its marker to the next marker, and the last one to the end of the song.
+The stretch before the first marker is an area only when something plays there. Meter and key
+markers do not start an area, and markers at the same place start one area.
+
+The window lists every area with its name, where it starts (bar and beat) and its length, each
+with a tick box. Areas that hold something are ticked; an empty area is listed, dimmed and
+unticked. **All** and **None** tick or untick every area. The formats, quality and the other
+switches are those of the rest of the window.
+
+Every area is rendered on its own: its file starts at the area's start, with the tempo, meter and
+automation that playback has there. Its **Ending** (ring out, a fixed tail or folded into the
+start) is the sound still ringing after the area's last notes, never the notes of the next area.
+**File names** names each file from pieces: Project, Marker, Number, Sample rate and Date (by
+default Project - Marker, for example `Album - Opening`). Characters a file system
+does not accept become `_`, and a name that would repeat gets ` 2`, ` 3` added. With a split on
+(mixer tracks, playlist tracks or track groups) each area gets a folder of its own holding its mix
+and its parts. Each file gets its own Track Receipt record, listing the files that area uses.
+
+The export uses the current arrangement and changes nothing in the project, so there is nothing to
+undo and nothing is sent to the others in a collaboration session. **Cancel** stops at once: the
+areas already finished keep their files, the one under way is removed.
 
 ## Export formats and loop files
 

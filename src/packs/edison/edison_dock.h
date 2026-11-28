@@ -111,4 +111,60 @@ inline Layout layoutFor(float availW, float availH) {
   return l;
 }
 
+// K-421: scalable Loupe window (freely resizable with crisp vector UI scale 75% .. 200%).
+inline constexpr float kMinUiScale = 0.75f, kMaxUiScale = 2.0f;
+inline constexpr float kScaleSteps[] = {0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f};
+inline constexpr float kDefaultWaveH = 440.0f;
+
+inline float clampUiScale(float s) {
+  return std::isfinite(s) && s > 0.0f ? std::clamp(s, kMinUiScale, kMaxUiScale) : 1.0f;
+}
+
+// Preferred floating content size (width, height) for a given UI scale.
+inline void defaultContentSize(float uiScale, float& outW, float& outH) {
+  const float sc = clampUiScale(uiScale);
+  outW = std::round(kDesignW * sc);
+  const float head = px(kPad, sc) * 4.0f + px(kBtn, sc) * 2.0f + px(kField, sc);
+  outH = std::round(head + px(kDefaultWaveH, sc) + px(kPad, sc));
+}
+
+inline Layout scaledLayout(float availW, float availH, float uiScale) {
+  const float sc = clampUiScale(uiScale);
+  Layout l;
+  const float W = std::floor(std::max(availW, kMinW));
+  const float H = std::floor(std::max(availH, 240.0f));
+  l.formW = W;
+  const float compactCutoff = kCompactW * std::min(sc, 1.0f);
+  l.compact = W < compactCutoff;
+  if (l.compact) {
+    l.scale = std::clamp(W / 400.0f, 0.7f, std::min(sc, 1.0f));
+  } else if (W >= kDesignW * sc) {
+    l.scale = sc;
+  } else {
+    l.scale = std::clamp(W / kDesignW, 0.6f, sc);
+  }
+  const float s = l.scale;
+  l.pad = px(kPad, s), l.btn = px(kBtn, s), l.fld = px(kField, s);
+  l.minWaveH = px(kMinWave, std::min(s, 1.25f));
+  l.yTransport = l.pad;
+  if (!l.compact) {
+    l.yMenus = l.yTools = l.yTransport + l.btn + l.pad;
+    l.yInfo = l.yMenus + l.btn + l.pad;
+    l.headH = l.yInfo + l.fld + l.pad;
+  } else {
+    const float L = l.pad, R = W - l.pad;
+    const float cg = px(kCellGap, s), gg = px(kGroupGap, s);
+    l.yRec = l.yTransport + l.btn + l.pad;
+    l.yMenus = l.yRec + l.fld + l.pad;
+    l.menuRows = (R - L) / 9.0f < px(52, s) ? 2 : 1;
+    l.yTools = l.yMenus + static_cast<float>(l.menuRows) * l.btn + l.pad;
+    l.toolRows = toolRowsFor(L, R, l.btn, cg, gg);
+    l.yInfo = l.yTools + static_cast<float>(l.toolRows) * (l.btn + cg) - cg + l.pad;
+    l.yInfo2 = l.yInfo + l.fld + px(4, s);
+    l.headH = l.yInfo2 + l.fld + l.pad;
+  }
+  l.waveH = std::max(l.minWaveH, std::floor(H - l.headH - l.pad));
+  return l;
+}
+
 }  // namespace gl::packs::edison::dock

@@ -218,6 +218,29 @@ std::string commitWave(Edit& e, int slot, const Wave& w, const std::string& dir,
 // as a 24-bit WAV file at `path`. False when nothing could be written.
 bool writeWaveFile(const std::string& path, const Wave& w, Span r);
 
+// ---- K-435: a Tracker Sampler's samples as files of their own ----
+// Each sample of `st` (the part the instrument plays) written as a WAV file: at `path` when it has one
+// sample, else beside it as "<name> 01 <sample name>.wav", "<name> 02 ...". How many were written.
+int exportSampleFiles(const PluginState& st, const std::string& path, std::vector<std::string>* written = nullptr);
+
+// ---- K-436: the Sample editor's Effects (Gridline's own effects run over a sample) ----
+// One effect of the chain: its state (type, parameters) and how much of it is heard (0 dry .. 1 wet).
+struct FxStep {
+  PluginState state;
+  double mix = 1.0;
+};
+inline constexpr double kMaxEffectTail = 30.0;  // seconds
+// An effect a sample can go through: a built-in effect that needs nothing but its input (no sends,
+// sidechain, notes, sample file or controller outputs).
+bool sampleEffectAllowed(const PluginInfo& info);
+// Those effects, by category then name.
+std::vector<const PluginInfo*> sampleEffects();
+// Runs `chain` in order over frames r of `w` (empty: the whole sample) at the wave's own rate.
+// `tailSeconds` of silence follow the part so echoes and reverb ring out: after a range they add to
+// what follows it, at the sample's end the sample grows to hold them (its silent end left out). A
+// mono sample becomes stereo when the effects make its sides differ. False when no effect ran.
+bool waveEffects(Wave& w, Span r, const std::vector<FxStep>& chain, double tailSeconds, double tempo = 120.0);
+
 // ---- K-106: the Tracker layout's header tools (its scope box) on a channel's Tracker Sampler ----
 // The classic sample editor's extension (range tools) and instrument editor's extension (MIDI)
 // work on the current instrument. Here they act on the sample its editor has selected (the first

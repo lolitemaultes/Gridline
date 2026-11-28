@@ -41,6 +41,8 @@ void uninstall() {
 
 bool installed() { return gInstalled; }
 
+bool shown() { return gInstalled && gStarted && worker().hostShows(); }
+
 void poll() {}  // the worker serves the bus
 
 std::string takeChosen() { return gStarted ? worker().takeChosen() : std::string(); }

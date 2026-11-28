@@ -143,7 +143,9 @@ set(s "2 lfo new\n2 lfo new chaos\n2 lfo new random\n3 lfo link 1 20 1 0.4\n4 lf
 sweep(s "LFO board")
 finish(s)
 run(lfo studio advanced "${s}")
-clean("the LFO board" 1 "LFO board/##rack>=40;LFO board/##lfotools>=5")
+# (0.7.9: the rack holds the cards and the selected LFO's inspector as two child windows; the
+# sweep goes into both, at least 40 items between them as it went over 40 in the one rack before)
+clean("the LFO board" 1 "LFO board/##rack[^/\"]*/##cards>=15;LFO board/##rack[^/\"]*/##inspector>=25;LFO board/##lfotools>=5")
 
 # ---- 4: a knob's right-click menu (Modulate: New chaos, New random, ...)
 set(f 30)

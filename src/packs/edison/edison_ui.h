@@ -67,6 +67,10 @@ struct Session {
   bool slot = false;
   PluginTarget target;
   ObjectId channel = kNoId;  // standalone: the channel whose sample is edited
+  ObjectId sourceClip = kNoId;             // K-419: linked Playlist audio clip for warp marker sync
+  std::vector<WarpMarker> clipWarpOrig;    // K-419: baseline warp markers from sourceClip
+  std::vector<WarpMarker> clipWarpSynced;  // K-419: last warp markers synced with sourceClip
+  bool pendingClipWarpImport = false;      // K-419: import sourceClip warp markers once audio finishes loading
   std::string file;          // a file opened on its own (the browser's Edit in Loupe): no owner in the project
   bool open = true;          // standalone window shown
   std::string dragOut;       // K-17: the file the drag out of the editor carries (made once per drag)
@@ -83,6 +87,7 @@ struct Session {
   // view
   double viewStart = 0, viewLen = 0;  // frames
   smoothscroll::Axis viewAx;          // J-67: wheel scrolling glides (no elastic edges: frames outside the take)
+  gesture::SmartZoomRange smartZoom;  // K-410: trackpad smart-zoom toggle state
   float vZoom = 1.f;
   Range sel;
   int64_t cursor = 0;
@@ -266,6 +271,13 @@ void scrubEnd(App& a, Session& s);
 // Loupe follows the playhead (setting loupe.autoScroll, also the editor's own toggle).
 bool autoScroll(App& a);
 void setAutoScroll(App& a, bool on);
+// K-421: Loupe UI scale (0.75 .. 2.0) and remembered floating window size (persisted in Settings).
+float uiScale(App& a);
+void setUiScale(App& a, float scale, bool resizeWindow = true);
+void resetWindowSize(App& a);
+void rememberWindowSize(App& a, float w, float h);
+void preferredWindowSize(App& a, float extraChromeW, float extraChromeH, ImVec2 workSize, float& outW, float& outH, bool& forceApply);
+void drawSizeMenu(App& a);
 void toggleRecord(App& a, Session& s);
 
 // Actions shared by the toolbar and the menus.
@@ -281,7 +293,8 @@ std::string dragOutFile(App& a, Session& s);
 // payload is a browser audio file ("GL_FILE"), so the playlist (at the drop position, with
 // snap), the channel rack, sample slots and samplers take it as they take a browser file.
 void dragOutSource(App& a, Session& s);
-// J-191: the current version into the Split stems window (files in the Stems folder).
+// J-191: the current version into the Split stems window (files in the Stems folder); K-447: only the
+// selection when there is one.
 void splitStems(App& a, Session& s);
 void sendToSampler(App& a, Session& s, bool slicer);
 // K-248: the warp markers applied: the warped audio replaces the content (one undo step), the markers cleared.
@@ -346,5 +359,8 @@ void zoomBy(Session& s, double factor, double centreFrame);
 std::string timeText(App& a, const Session& s, int64_t frame, bool precise = true);
 // K-145: the rate the view's times are in (the live take's while it records).
 double viewRate(const Session& s);
+
+// Import from URL: a file into the open Loupe window with this key (false when it has closed).
+bool loadIntoSession(App& a, uint64_t key, const std::string& path);
 
 }  // namespace gl::packs::edison

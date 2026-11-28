@@ -110,7 +110,15 @@ float normalizeClip(Song& song, ObjectId clip, double targetDb = 0.0);
 bool setClipStretch(Song& song, ObjectId clip, double timeFactor, bool keepPitch);
 // J-87: the same with an explicit time mode of the clip's channel (0 resample,
 // 1 stretch, 7 Rubber Band; J-153: any other value is the stretch too).
+// K-431: switching to a pitch-preserving mode (Stretch / Rubber Band) locks
+// unlocked audio clips on the channel to the project tempo grid.
 bool setClipStretchMode(Song& song, ObjectId clip, double timeFactor, int mode);
+// K-431: channel-level stretch mode, source BPM (SmpFitTempo) and TIME knob
+// (SmpTimeStretch) operations that keep all playlist audio clips of `channel`
+// locked to the tempo grid and in sync with the channel's settings.
+bool setChannelStretchMode(Song& song, ObjectId channel, int mode);
+bool setChannelSourceBpm(Song& song, ObjectId channel, double bpm);
+bool applyChannelTimeStretch(Song& song, ObjectId channel, double timeStretch);
 // Rendered stretch through the audio editor's stretch (mode: 0 stretch, 1
 // tape: pitch follows speed, 2 Rubber Band). Writes the result into `dir` on a new channel and points
 // the clip at it (stretch reset to 1). Returns the file ("" = failed).

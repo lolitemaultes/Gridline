@@ -19,7 +19,9 @@ class App;
 
 namespace gl::sysmenu {
 
-// True while the system menu bar holds the menus (the top bar then draws no menu buttons).
+// True while the system menu bar shows the menus (the top bar then draws no menu buttons). On
+// Linux the menus are offered to a global menu host as soon as one is on the bus, but the row stays
+// until the host has read them (GitHub #85).
 bool active();
 // Per frame, after the windows: installs, refreshes (when the menus changed) or removes the
 // system menu bar, and runs the item chosen there.

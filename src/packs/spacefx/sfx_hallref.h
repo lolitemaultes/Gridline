@@ -59,13 +59,16 @@ inline double hallRefOutK(double size01) {
 struct PitchVoice {
   Ring r;
   double ph = 0;
+  RestPhase restPh;
   void init(size_t n) { r.init(n); }
   void clear() {
     r.clear();
     ph = 0;
+    restPh.reset();
   }
   // Push x, return the signal delayed by `d` samples and shifted by `ratio`.
   float process(float x, double d, double ratio, double W, bool hq) {
+    restPh.flush(ph);
     r.push(x);
     const double base = std::max(1.0, d) + 1.0;  // x was just pushed: read(1) is the current sample
     if (std::fabs(ratio - 1.0) < 1e-6) return hq ? r.read(base) : r.readLinear(base);
@@ -122,6 +125,7 @@ class HallRef {
     for (auto& f : eq_) f = dsp::Biquad{};
     fbHp_ = fbLp_ = envHp_ = dsp::Biquad{};
     lfoPh_ = 0;
+    lfoRest_.reset();
     tankL_ = tankR_ = 0;
     envPk_ = envSm_ = 0;
     limLvl_ = 0;
@@ -188,7 +192,7 @@ class HallRef {
   // heads (their rings hold only quiet values), the pitch voices' phases and the per-block setup. The
   // setup gives the same result for the same settings, tempo and sample rate, so it runs only when one
   // of them changed since the last block at rest.
-  void clocks(const PluginState& s, const ProcessContext& ctx, int n) {
+  void clocks(const PluginState& s, const ProcessContext& ctx, int64_t n) {
     const size_t np = s.params.size();
     const bool same = setupN_ == np && setupTempo_ == ctx.tempo && sr_ == ctx.sampleRate && np <= setupKeep_.size() &&
                       std::equal(s.params.begin(), s.params.end(), setupKeep_.begin());
@@ -198,8 +202,8 @@ class HallRef {
       if (np <= setupKeep_.size()) std::copy(s.params.begin(), s.params.end(), setupKeep_.begin());
       setupTempo_ = ctx.tempo;
     }
-    lfoPh_ = advancePhase(lfoPh_, lfoInc_, n);
-    rr_ = static_cast<int>((rr_ + n) % kN);
+    lfoRest_.advance(lfoPh_, lfoInc_, n);
+    rr_ = static_cast<int>((static_cast<int64_t>(rr_) + n) % kN);
     for (auto& p : pre_) p.w += static_cast<size_t>(n);
     if (diff_g_ > 0)
       for (auto& d : diff_) d.r.w += static_cast<size_t>(n);
@@ -208,7 +212,7 @@ class HallRef {
     auto voice = [&](PitchVoice& v, double ratio, double W) {  // as PitchVoice::process moves them
       v.r.w += static_cast<size_t>(n);
       if (std::fabs(ratio - 1.0) < 1e-6) return;
-      v.ph = advancePhase(v.ph, (1.0 - ratio) / W, n);
+      v.restPh.advance(v.ph, (1.0 - ratio) / W, n);
     };
     if (ffOn_) {
       for (int k = 0; k < 4; ++k) voice(ff_[k], ffRatio_[k & 1], ffW_);
@@ -224,6 +228,7 @@ class HallRef {
   }
 
   void process(const PluginState& s, const ProcessContext& ctx, const float* scL, const float* scR, float* L, float* R, int n) {
+    lfoRest_.flush(lfoPh_);
     setup(s, ctx);
     setupN_ = static_cast<size_t>(-1);  // K-142 (0.7.8): clocks() runs its setup again
     for (int i = 0; i < n; ++i) {
@@ -506,6 +511,7 @@ class HallRef {
          ffW_ = 2400;
   double envScale_ = 0, envOffset_ = 0, envThr_ = -40, envAtk_ = 0.9, envRel_ = 0.99, envSmooth_ = 1, width_ = 1.25, limRel_ = 0.999;
   double lfoPh_ = 0, tankL_ = 0, tankR_ = 0, envPk_ = 0, envSm_ = 0, limLvl_ = 0, limG_ = 1, lastEnvDb_ = -120;
+  RestPhase lfoRest_;
   int rr_ = 0, envRoute_ = 0;
   bool hq_ = true, fbOn_ = false, ffOn_ = false, limiter_ = false, envSc_ = false, primed_ = false, tankLive_ = true, shimLive_ = true;
   std::array<float, 128> setupKeep_{};  // K-142 (0.7.8): the settings clocks() last ran setup() with

@@ -1,6 +1,7 @@
 // Gridline - the Track Receipt window: the results page (the summary and a card per original
 // song), see TrackReceiptUiKit.h.
 #include "App.h"
+#include "DialogLayout.h"
 #include "TrackReceiptUiKit.h"
 
 namespace gl::receiptui {
@@ -35,9 +36,28 @@ void songCard(App& a, SongRow& sr, int idx) {
     ImGui::SameLine(x0 + kW - w - 16);
     chip(t, sr.over ? P.danger : sr.seconds <= 0 ? P.well : theme::withAlpha(P.accent, 0.3f), sr.over ? P.paper : P.text);
   }
+  if (sr.grouped || sr.merged) {
+    char b[160];
+    std::snprintf(b, sizeof b, sr.merged ? i18n::tr("%d files counted as one song: merged by you") : i18n::tr("%d files counted as one song: the same song name"),
+                  static_cast<int>(sr.files.size()));
+    ImGui::PushFont(nullptr, theme::kFontLabel);
+    ImGui::TextColored(theme::vec(P.textDim), "%s", b);
+    ImGui::PopFont();
+  }
   ImGui::PushFont(a.fontMono, theme::kFontLabel);
   ImGui::PushTextWrapPos(x0 + kW - 140);
-  ImGui::TextColored(theme::vec(P.textFaint), "%s", sr.sourceName.c_str());
+  if (sr.grouped || sr.merged) {
+    // Every file counted as this song, each on its own line.
+    constexpr size_t kShown = 6;
+    for (size_t i = 0; i < sr.files.size() && i < kShown; ++i) ImGui::TextColored(theme::vec(P.textFaint), "%s", baseName(sr.files[i]).c_str());
+    if (sr.files.size() > kShown) {
+      char b[64];
+      std::snprintf(b, sizeof b, i18n::tr("and %d more"), static_cast<int>(sr.files.size() - kShown));
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", b);
+    }
+  } else {
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", sr.sourceName.c_str());
+  }
   ImGui::PopTextWrapPos();
   ImGui::PopFont();
   if (sr.checkName) ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("Check artist and title: guessed from the file name."));
@@ -148,7 +168,8 @@ void resultsPage(App& a) {
     ImGui::TextColored(theme::vec(P.textDim), "%s", b);
   }
   for (const auto& w : r.warnings) ImGui::TextColored(theme::vec(P.danger), "%s", w.c_str());
-  ImGui::BeginChild("##rres", ImVec2(kW + 16, 430), ImGuiChildFlags_Borders);
+  // K-442: the closing note's two lines stay below it, the footer on screen.
+  ImGui::BeginChild("##rres", ImVec2(kW + 16, ui::DialogListHeight(430, 2 * ImGui::GetTextLineHeightWithSpacing())), ImGuiChildFlags_Borders);
   if (r.songs.empty())
     ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("No ticked files: go back and tick the licensed samples."));
   int idx = 0;
@@ -156,6 +177,7 @@ void resultsPage(App& a) {
     SongRow sr = r.songs[i];
     songCard(a, sr, idx++);
   }
+  areasSection(a, r);
   notCounted(a, r);
   releaseSection(a);
   ImGui::EndChild();

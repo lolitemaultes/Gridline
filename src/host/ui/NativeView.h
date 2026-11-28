@@ -79,6 +79,13 @@ bool inModalSizeLoop();
 // An X server answers on this session's display: a real one or XWayland, which may start now (X11
 // systems; false elsewhere). Before SDL starts, to choose its window system (core/VideoDriverChoice.h).
 bool xServerAnswers();
+// K-432 (GL-8006CE18): initializes libX11 threading (XInitThreads once before any XOpenDisplay)
+// and installs a permanent non-fatal XSetErrorHandler (+ safe XSetIOErrorHandler) on Linux/BSD.
+// On Wayland, SDL2 never initializes X11, leaving _XDefaultError active so any minor X11 error
+// from a third-party plugin on XWayland calls exit(1). Safe to call repeatedly: re-ensures a
+// plugin has not reset the handler to nullptr / _XDefaultError without overwriting custom non-fatal
+// handlers. No-op on macOS and Windows.
+void installX11SafetyHandlers();
 // K-153: when Gridline's own windows are Wayland windows (SDL's Wayland driver), a plugin's X11
 // interface cannot embed in them; it opens in a window of its own on XWayland instead: a top-level
 // X11 window, on an X connection of Gridline's (X11 systems; nullptr elsewhere or with no X server).
@@ -176,12 +183,14 @@ void frameClockStop();
 void frameClockIdle(bool idle);
 bool frameClockSleep(double seconds);
 void frameClockWake();
-// 0.7.8 (X11): the interface loop's idle sleep on SDL's own X connection, for an SDL whose
-// own wait looks every few milliseconds instead of sleeping (older than 2.0.16). displayWaitStart
-// takes SDL's Display (false where it cannot: another platform, no Xlib): the loop then waits on
-// SDL. displaySleep then sleeps up to `seconds` until the X server sends something or
-// frameClockWake is called (from any thread); true when woken before the time was up.
+// 0.7.8 (X11) + 0.7.9 (Wayland): the interface loop's idle sleep on SDL's own display connection,
+// for an SDL whose own wait looks every few milliseconds instead of sleeping (older than 2.0.16).
+// displayWaitStart takes SDL's X11 Display; displayWaitStartWayland takes SDL's Wayland wl_display
+// (false where unsupported: another platform, no Xlib / libwayland-client). displaySleep then
+// sleeps up to `seconds` until the display server sends something or frameClockWake is called
+// (from any thread); true when woken before the time was up.
 bool displayWaitStart(void* xDisplay);
+bool displayWaitStartWayland(void* wlDisplay);
 bool displaySleep(double seconds);
 // K-142: whether any part of the window is on screen (macOS: not covered by other windows, not on
 // another Space, the application not hidden). True where the platform cannot tell.

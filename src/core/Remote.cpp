@@ -1,6 +1,7 @@
 #include "Remote.h"
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 namespace gl {
 
@@ -74,6 +75,10 @@ double remoteCurve(const ControllerLink& l, double u, const Expr* formula) {
     return std::isfinite(v) ? clamp01(v) : 0.0;
   }
   return applyModCurve(l.curve, u);
+}
+
+bool remoteInverted(const ControllerLink& l) {
+  return (l.invert != (l.curve == ModCurve::Inverted)) != (l.max < l.min);
 }
 
 bool compileRemoteFormula(const std::string& text, Expr& out, std::string* err) {
@@ -227,8 +232,38 @@ bool RemoteMapper::waiting(const ControllerLink& l) const {
 
 void RemoteMapper::forget(const ControllerLink& l) { st_.erase(key(l)); }
 
+uint64_t RemoteMapper::configHashOf(const ControllerLink& l) {
+  uint64_t h = 1469598103934665603ull;
+  auto mix = [&h](uint64_t v) {
+    for (int i = 0; i < 8; ++i) {
+      h ^= (v >> (i * 8)) & 0xFF;
+      h *= 1099511628211ull;
+    }
+  };
+  auto bits = [](float f) -> uint32_t {
+    uint32_t u = 0;
+    static_assert(sizeof(u) == sizeof(f));
+    std::memcpy(&u, &f, sizeof(u));
+    return u;
+  };
+  mix(static_cast<uint64_t>(l.curve));
+  mix(l.invert ? 1u : 0u);
+  mix(bits(l.min));
+  mix(bits(l.max));
+  mix(static_cast<uint64_t>(l.takeover));
+  mix(static_cast<uint64_t>(l.encoder));
+  mix(static_cast<uint64_t>(l.button));
+  for (char c : l.formula) mix(static_cast<unsigned char>(c));
+  return h;
+}
+
 bool RemoteMapper::process(const ControllerLink& l, const MidiMessage& m, double cur, double* out, double step) {
   State& s = st_[key(l)];
+  const uint64_t ch = configHashOf(l);
+  if (s.configHash != ch) {
+    s = State{};
+    s.configHash = ch;
+  }
   const double lo = std::min(l.min, l.max), hi = std::max(l.min, l.max);
   // Someone else moved the parameter since this link last wrote it: pick it up again.
   if (s.lastOut >= 0 && std::fabs(cur - s.lastOut) > 1e-4) s.picked = false;
@@ -245,7 +280,7 @@ bool RemoteMapper::process(const ControllerLink& l, const MidiMessage& m, double
     int d = decodeRelative(l.encoder, m.d2);
     if (d == 0) return false;
     double delta = d * static_cast<double>(l.sensitivity) / 128.0 * (hi - lo);
-    if (l.invert != (l.max < l.min)) delta = -delta;
+    if (remoteInverted(l)) delta = -delta;
     s.picked = true;
     return write(std::clamp(cur + delta, lo, hi));
   }
@@ -270,9 +305,15 @@ bool RemoteMapper::process(const ControllerLink& l, const MidiMessage& m, double
         return write(remoteRange(l, remoteCurve(l, s.toggled ? 1.0 : 0.0, f)));
       case RemoteButton::Increment: {
         if (!rising) return false;
-        double st = step > 0 ? step : 0.125;
-        double v = cur + st;
-        if (v > hi + 1e-9) v = lo;
+        const double st = step > 0 ? step : 0.125;
+        double v;
+        if (remoteInverted(l)) {
+          v = cur - st;
+          if (v < lo - 1e-9) v = hi;
+        } else {
+          v = cur + st;
+          if (v > hi + 1e-9) v = lo;
+        }
         return write(std::clamp(v, lo, hi));
       }
       default: return false;
@@ -343,6 +384,11 @@ bool RemoteMapper::triggerOsc(const ControllerLink& l, double value, bool impuls
 
 bool RemoteMapper::processOsc(const ControllerLink& l, double value, bool impulse, double cur, double* out, double step) {
   State& s = st_[key(l)];
+  const uint64_t ch = configHashOf(l);
+  if (s.configHash != ch) {
+    s = State{};
+    s.configHash = ch;
+  }
   const double lo = std::min(l.min, l.max), hi = std::max(l.min, l.max);
   if (s.lastOut >= 0 && std::fabs(cur - s.lastOut) > 1e-4) s.picked = false;
   auto write = [&](double v) {
@@ -358,7 +404,7 @@ bool RemoteMapper::processOsc(const ControllerLink& l, double value, bool impuls
   if (l.encoder != RemoteEncoder::Absolute) {
     if (impulse || value == 0) return false;
     double delta = std::clamp(value, -1024.0, 1024.0) * static_cast<double>(l.sensitivity) / 128.0 * (hi - lo);
-    if (l.invert != (l.max < l.min)) delta = -delta;
+    if (remoteInverted(l)) delta = -delta;
     s.picked = true;
     return write(std::clamp(cur + delta, lo, hi));
   }
@@ -378,8 +424,15 @@ bool RemoteMapper::processOsc(const ControllerLink& l, double value, bool impuls
         return write(remoteRange(l, remoteCurve(l, s.toggled ? 1.0 : 0.0, f)));
       case RemoteButton::Increment: {
         if (!rising) return false;
-        double v = cur + (step > 0 ? step : 0.125);
-        if (v > hi + 1e-9) v = lo;
+        const double st = step > 0 ? step : 0.125;
+        double v;
+        if (remoteInverted(l)) {
+          v = cur - st;
+          if (v < lo - 1e-9) v = hi;
+        } else {
+          v = cur + st;
+          if (v > hi + 1e-9) v = lo;
+        }
         return write(std::clamp(v, lo, hi));
       }
       default:  // an impulse on a value link: the top of the range

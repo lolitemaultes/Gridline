@@ -4,6 +4,7 @@
 #include "Log.h"
 #include "Net.h"
 #include "Platform.h"
+#include "ThreadJoin.h"
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -236,7 +237,7 @@ void HttpServer::stopWatch() {
   watchCv_.notify_all();
   const char b = 1;
   net::sendSome(static_cast<net::Sock>(wakeW_), &b, 1);
-  watch_.join();
+  gl::threads::safeJoin(watch_);
   net::closeSock(static_cast<net::Sock>(wakeR_));
   net::closeSock(static_cast<net::Sock>(wakeW_));
   wakeR_ = wakeW_ = -1;

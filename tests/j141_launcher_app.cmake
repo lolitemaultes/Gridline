@@ -151,4 +151,29 @@ if(NOT favs STREQUAL "${OUT}/Song B.gridline.json\n")
   message(FATAL_ERROR "FAIL (favourite): favourite-projects.txt is \"${favs}\"")
 endif()
 message(STATUS "ok - tile heart and menu buttons")
+# 5. GitHub #86: the welcome screen stays up in every layout. Clips made its start-up project
+#    again (with Clips' tracks) after the launcher was shown, and the new project made the
+#    launcher give way: a plain launch in Clips went straight into an empty project. Each layout
+#    starts from a config of its own; the launcher must still be up, nothing open, a few frames in
+#    and a second later.
+foreach(lay studio live logic tracker)
+  set(cfg "${OUT}/cfg5_${lay}")
+  file(REMOVE_RECURSE "${cfg}")
+  file(MAKE_DIRECTORY "${cfg}/gridline")
+  file(MAKE_DIRECTORY "${cfg}/home")
+  file(WRITE "${cfg}/gridline/settings.json"
+       "{\"format\": \"gridline-settings\", \"values\": {\"ui.layoutChosen\": true, \"general.demoShown\": true, \"ui.layout\": \"${lay}\", \"keys.profile\": \"${lay}\", \"ui.menuStyle\": \"${lay}\"}}\n")
+  set(ENV{GRIDLINE_CONFIG_HOME} "${cfg}")
+  set(ENV{HOME} "${cfg}/home")
+  set(ENV{SDL_AUDIODRIVER} "dummy")
+  file(WRITE "${OUT}/e_${lay}.txt" "6 launcher\n70 launcher\n72 quit discard\n")
+  execute_process(COMMAND "${APP}" --show launcher --hidden --no-ui-sounds --no-update-check --size 1280x800 --ui-scale 1
+                          --dev-input "${OUT}/e_${lay}.txt"
+                  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 240)
+  if(NOT rc EQUAL 0)
+    message(FATAL_ERROR "FAIL (5 ${lay}): gridline-app exited with ${rc}:\n${err}")
+  endif()
+  expectReports("welcome-${lay}" "${out}" "visible=1 open=0" "visible=1 open=0")
+endforeach()
+set(ENV{GRIDLINE_CONFIG_HOME} "${OUT}/cfg")
 message(STATUS "PASS")

@@ -359,10 +359,14 @@ bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m, 
       m.glType = st.type;
       m.state = st;
       m.exact = false;
-      c.report.counts["hosted plugins: missing, opened with a built-in stand-in"]++;
+      const host::MissingStatus ms = host::missingStatus(w.savedType());
+      const bool unscanned = ms == host::MissingStatus::NotScannedYet || ms == host::MissingStatus::Scanning;
+      c.report.counts[unscanned ? "hosted plugins: not scanned yet, opened with a built-in stand-in"
+                                : "hosted plugins: missing, opened with a built-in stand-in"]++;
       const PluginInfo* si = findPlugin(st.type);
       const std::string by = fam == standin::Family::Kilohearts ? "Gridline Suite Mini " + (si ? si->name : st.type) : std::string(standin::standInName(fam));
-      c.report.warn(label + ": not installed; " + by + " plays it (approximate), the plugin and its settings are kept");
+      c.report.warn(label + (unscanned ? ": not scanned yet; " : ": not installed; ") + by +
+                    " plays it (approximate), the plugin and its settings are kept");
       const std::vector<uint32_t> ids = w.paramIds;
       const bool byIndex = w.format != WrapperInfo::Vst3;
       auto link = [fam, orig, ids, byIndex](int fl, standin::ParamLink& l) {
@@ -385,14 +389,23 @@ bool decodeWrapper(Context& c, const std::vector<Event>& evs, PluginMapping& m, 
       return true;
     }
   }
-  // Not installed: keep it as the type it was saved with, with its state, so
-  // it loads once the plugin is installed and scanned.
+  // Not installed / not scanned yet: keep it as the type it was saved with, with its state, so
+  // it loads automatically once the plugin is installed and scanned.
   m.glType = w.savedType();
   m.state.type = m.glType;
   m.state.data = w.data;
   m.exact = false;
-  c.report.counts["hosted plugins: missing (kept with their state)"]++;
-  c.report.unmapped[label + " - not installed (kept with its state)"]++;
+  const host::MissingStatus ms = host::missingStatus(m.glType);
+  if (ms == host::MissingStatus::NotScannedYet || ms == host::MissingStatus::Scanning) {
+    c.report.counts["hosted plugins: not scanned yet (kept with their state)"]++;
+    c.report.unmapped[label + " - not scanned yet (kept with its state)"]++;
+  } else if (ms == host::MissingStatus::FormatDisabled) {
+    c.report.counts["hosted plugins: format disabled (kept with their state)"]++;
+    c.report.unmapped[label + " - format disabled (kept with its state)"]++;
+  } else {
+    c.report.counts["hosted plugins: missing (kept with their state)"]++;
+    c.report.unmapped[label + " - not installed (kept with its state)"]++;
+  }
   return true;
 }
 

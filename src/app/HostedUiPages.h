@@ -29,7 +29,7 @@ void cpuLoad(App& a, const PluginTarget& t, host::HostedInstance* hi, float& ave
 // Generic parameter editor instead of the plugin's interface, for every
 // instance of `type` (switches open windows over).
 void setGenericEditor(App& a, std::string type, bool on);
-// One wrapper page: 0 parameters, 1 processing, 2 settings.
+// One wrapper page: 0 parameters, 1 processing, 2 settings, 3 parameters (compact), 4 internet access (K-437).
 void drawPage(App& a, const PluginTarget& t, int page, float width);
 // Per frame (pumpHostedPlugins): editor idle, sandboxed editor windows
 // followed, closed windows dropped.

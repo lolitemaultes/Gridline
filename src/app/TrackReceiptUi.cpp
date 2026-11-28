@@ -1,6 +1,7 @@
 // Gridline - J-219: the Track Receipt window (see TrackReceiptUi.h): the shell (the window, the
 // steps, the measuring job, the footer). The pages are in their own files (TrackReceiptUiKit.h).
 #include "TrackReceiptUi.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include "LayoutShellUi.h"
 #include "Keys.h"
@@ -53,8 +54,11 @@ struct Job {
   WorkerBeat beat;    // K-133: each progress step
   StallWatch watch;
   std::chrono::steady_clock::time_point started;  // K-319: for the time left (UI thread)
-  void join() {
-    if (worker.joinable()) worker.join();
+  void join() { gl::threads::safeJoin(worker); }
+  // K-432 (GL-8006CE18): safe teardown on unexpected exit() when receiptui::shutdown() was skipped.
+  ~Job() {
+    cancel = true;
+    gl::threads::joinWithin(worker, running);
   }
 };
 Job& J() {
@@ -265,7 +269,7 @@ void draw(App& a) {
   finish(a);
   if (J().running.load()) workerstall::watch(a, J().watch, J().beat, "Track Receipt", "");
   State& s = S();
-  // Screenshots: GRIDLINE_TRACK_RECEIPT_DEMO=picker|progress|results opens a page on the project given
+  // Screenshots: GRIDLINE_TRACK_RECEIPT_DEMO=picker|progress|results|areas opens a page on the project given
   // (K-133: calculate also starts the measurement, as the Calculate button does).
   static int frames = 0;
   if (const char* env = std::getenv("GRIDLINE_TRACK_RECEIPT_DEMO"); env && *env && ++frames == 4) {
@@ -276,7 +280,8 @@ void draw(App& a) {
     } else if (mode == "progress") {
       s.page = 1;
       s.demoProgress = 0.42;
-    } else if (mode == "results") {
+    } else if (mode == "results" || mode == "areas") {
+      if (mode == "areas") s.demoScrollAreas = 20;
       PassOptions o;
       o.sampleRate = 44100;
       s.measured = measure(a.doc.song(), o);
@@ -296,8 +301,16 @@ void draw(App& a) {
   bool open = true;
   const std::string title = std::string(i18n::tr("Track Receipt")) + "###trackreceipt";
   const bool vis = ImGui::Begin(title.c_str(), &open,  // K-112: docked in its region in a layout
-                                layoutui::dockFlags(title.c_str(), ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking));
+                                layoutui::dockFlags(title.c_str(), ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking |
+                                                                       ImGuiWindowFlags_HorizontalScrollbar));  // (a pane narrower than the receipt scrolls)
   ui::TrackWindowInViewport();
+  // Docked in the Clips layout's side pane: the pane widens to the receipt's width while it shows
+  // (its columns are laid out for that width; the narrow pane cut them off). Where the window is too
+  // small for that (a large interface scale), the receipt scrolls sideways.
+  if (ImGui::IsWindowDocked())
+    layoutui::setBandSize("live.side", std::ceil(kW + 16 + 2 * ImGui::GetStyle().WindowPadding.x + ImGui::GetStyle().ScrollbarSize +
+                                                    layout::kPaneRailW + 2 * theme::kS2),  // (the band holds the pane's tab rail too)
+                          0.9f);
   progui::note("trackreceipt");
   if (vis) {
     {  // steps

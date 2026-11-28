@@ -9,6 +9,7 @@
 #include <cstring>
 #include <map>
 #include "../../app/LayoutAudit.h"
+#include "../../app/UrlImportUi.h"
 #include "../../core/I18n.h"
 #include "plasma_dsp.h"
 #include "../../third_party/imgui/imgui_internal.h"
@@ -615,6 +616,16 @@ void fxChoice(Ctx& c, int s, int type, int q, float x, float y, float w, float h
                                st.params[static_cast<size_t>(fxP(slot, X_P0 + q))] = static_cast<float>(fxNorm(type, q, 0));
                              });
                            });
+                }
+                if (ImGui::MenuItem(i18n::tr("Import impulse from URL..."))) {
+                  const int slot = s;
+                  const PluginTarget tt = c.t;
+                  urlimportui::openFor(c.a, urlimportui::Target{"Plasma (Impulse)", [tt, slot, type, q](App& a, const std::string& p, const std::string&) {
+                    editState(a, tt, "Import impulse from URL", [&](PluginState& st, Model& m) {
+                      m.fxExtra[static_cast<size_t>(slot)].ir = p;
+                      st.params[static_cast<size_t>(fxP(slot, X_P0 + q))] = static_cast<float>(fxNorm(type, q, 0));
+                    });
+                  }, false});
                 }
                 ImGui::Separator();
               }

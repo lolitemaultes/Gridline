@@ -15,6 +15,7 @@
 // WarpFamily::srcReaders, which holds the file); the worker never frees a render or a family
 // while it has readers, whatever its age.
 #include "../Packs.h"
+#include "../../core/ThreadJoin.h"
 #include "../../core/ThreadName.h"
 #include "../../engine/SampleTap.h"
 #include <algorithm>
@@ -59,22 +60,27 @@ double dbToGain(double db) { return std::pow(10.0, db / 20.0); }
 // region's first bar finds its slices ready.
 inline constexpr int kSpanBars = 8;
 
-// 0.7.8: while the tempo moves (a ramp, a dragged tempo), the worker makes a render once the nearest
-// one is more than this far from the tempo, aimed this far ahead along a ramp, so renders come about
-// 1% apart and a voice never plays one further off than this (the voices play the nearest render
-// that much faster or slower). Before, it waited for the tempo to hold still and a slice that started
-// meanwhile played the plain resampled source (a ramp: up to several semitones off).
-inline constexpr double kLiveCents = 8;
+// 0.7.8 / 0.7.9: while the tempo moves (a ramp, a dragged tempo), the worker makes a render once the
+// nearest one is more than this far from the tempo, aimed ahead along a ramp, so a voice never plays
+// one further off than a couple of cents (even on slower machines). Moving-tempo renders use a
+// focused window around the active playback beat (kFocusWindowBeats) so each stretch finishes 4-6x
+// faster than stretching a multi-bar region; once the tempo settles, the full region is rendered.
+inline constexpr double kLiveCents = 1.8;
 inline constexpr double kMaxAheadCents = 300;  // (how far ahead a render is aimed at most)
-// 0.7.8: a moving tempo's renders for one file are rate limited: they may take this share of the
-// worker's time (a budget of stretching time that fills at that rate, up to kMovingBudgetSecs: a
-// short burst is free), so a tempo dragged back and forth keeps the worker stretching for it about
-// 40% of the time instead of a whole core. A steady ramp (each render aimed about as far ahead as the one
-// before) may take more, so that its renders stay close enough together for every slice to play in
-// tune.
-inline constexpr double kMovingDuty = 0.4;
-inline constexpr double kRampDuty = 0.7;
-inline constexpr double kMovingBudgetSecs = 0.3;
+inline constexpr double kFocusWindowBeats = 0.85;
+inline constexpr double kFocusLeadInBeats = 0.10;
+inline constexpr int kActivePollMs = 4;
+inline constexpr int kIdlePollMs = 30;
+// 0.7.8 / 0.7.9: a moving tempo's renders for one file are rate limited so an erratic tempo drag
+// does not saturate a core; a steady ramp gets generous duty so slower machines stay well under
+// 4 cents without throttling.
+inline constexpr double kMovingDuty = 0.45;
+inline constexpr double kRampDuty = 0.85;
+inline constexpr double kMovingBudgetSecs = 0.40;
+// K-464b: the time the ramp's rate is smoothed over (seconds), and the frames a whole-region render
+// is made in at a time (the worker keeps the playing beat covered between them)
+inline constexpr double kRateSecs = 0.10;
+inline constexpr int64_t kRegionPiece = 8192;
 
 using Clock = std::chrono::steady_clock;
 
@@ -87,6 +93,16 @@ std::atomic<int> gWarpRenders{0}, gWarpMoving{0}, gWarpSkipped{0}, gWarpThrottle
 // (tests: the most a moving tempo's render came later than the worker planned for, from its wakeup
 // ending late and its stretch taking longer than the estimate it aimed with)
 std::atomic<int64_t> gWarpLateNs{0};
+// (tests: simulated slower machine factor >= 1.0 for real-time warp worker)
+std::atomic<double> gWarpSlowdown{1.0};
+// (tests, K-464: extra seconds every whole-region render of the worker takes, a machine whose long
+// stretches end late)
+std::atomic<int64_t> gWarpRegionDelayNs{0};
+std::atomic<int> gWarpRegionDelayFrom{0};  // (... from the region render after this many, K-464b: a machine that slows down)
+std::atomic<int> gWarpRegionSeen{0};
+// (tests, K-464b: ... and every focused render of a moving tempo)
+std::atomic<int64_t> gWarpFocusDelayNs{0};
+enum class Kind { Other, Region, Focus };  // (what a render is, for the test delays)
 // (tests: when each render was there and its tempo, while logging is on)
 std::atomic<bool> gWarpLogOn{false};
 std::mutex gWarpLogMu;
@@ -192,7 +208,7 @@ using Retired = std::pair<Clock::time_point, std::unique_ptr<Render>>;
 
 // The renders of one file on one grid, shared by every slot (region) that plays it.
 struct WarpFamily {
-  static constexpr int kRing = 16;  // (0.7.8: a moving tempo keeps the renders of the tempos it met last)
+  static constexpr int kRing = 32;  // (0.7.8 / 0.7.9: holds focused ramp renders + full-region anchors)
   // worker -> audio: the renders made so far (null = free). A render leaves the ring before it is
   // retired, and is freed long after (the audio thread reads one when a voice starts).
   std::array<std::atomic<const Render*>, kRing> ring{};
@@ -253,18 +269,41 @@ struct WarpSlot {
   std::shared_ptr<WarpFamily> fam;  // null: a private slot (offline renders)
   // audio -> worker
   std::atomic<double> wanted{0};
-  // worker -> audio: a render at the wanted tempo that covers the region
+  // 0.7.9: audio -> worker: beat position and slice length of active playback for focused
+  // moving-tempo window renders (-1 = unknown, falls back to full region).
+  std::atomic<double> activeBeat{-1.0};
+  std::atomic<double> activeSliceBeats{0.0};
+  // worker -> audio: a full-region render at the wanted tempo
   std::atomic<const Render*> current{nullptr};
   // worker only
   double lastWanted = 0;
   int stable = 0;
-  // 0.7.8: the tempo it wanted at the worker's last three wakeups (and when), how long a render of
-  // its region takes (seconds)
-  double seenPrev2 = 0, seenPrev = 0, seenNow = 0;
-  Clock::time_point seenPrevAt{}, seenNowAt{};
+  // 0.7.8 / 0.7.9: the last distinct tempos observed (and when), so ramp velocity and settle time
+  // are independent of worker poll interval and audio buffer size.
+  double prevChangeTempo = 0, curChangeTempo = 0;
+  Clock::time_point prevChangeAt{}, curChangeAt{};
   double renderSecs = 0.1;
+  double movingRenderSecs = 0.0;  // 0 = unmeasured (initialized directly on first moving render)
+  // K-464b: the rate the tempo moves at (cents a second), smoothed over about kRateSecs (the audio
+  // thread hands tempos over in bursts, a buffer at a time, so two wakeups a few ms apart see the
+  // tempo jump or stand still); 0 samples: none yet
+  double rateCps = 0;
+  int rateSamples = 0;
+  bool lastWrap = false;  // K-464b: the last moving render was the region's start (an in-order sequence wraps)
   Span region() const { return Span{a, b, beatA, beatB}; }
 };
+
+// 0.7.9: focused sub-span of `s` starting at `fromBeat` for `winBeats` beats, clamped to `s.region()`.
+Span focusWindowFor(const WarpSlot& s, double fromBeat, double winBeats) {
+  const double b0 = std::clamp(fromBeat, s.beatA, s.beatB);
+  const double b1 = std::clamp(fromBeat + winBeats, b0, s.beatB);
+  Span sp;
+  sp.a = std::clamp<int64_t>(static_cast<int64_t>(std::floor(frameAt(s.grid, b0))), s.a, std::max(s.a, s.b - 1));
+  sp.b = std::clamp<int64_t>(static_cast<int64_t>(std::ceil(frameAt(s.grid, b1))), sp.a + 1, s.b);
+  sp.beatA = std::min(b0, beatAt(s.grid, static_cast<double>(sp.a)));
+  sp.beatB = std::max(b1, beatAt(s.grid, static_cast<double>(sp.b)));
+  return sp;
+}
 
 // The span a slot renders: the region grown to kSpanBars bars from its first beat (back from the
 // end of the file when the file ends sooner), so the layouts that keep the region's first bar fall
@@ -337,7 +376,8 @@ class WarpService {
         const double t = fam->tempo.load(std::memory_order_relaxed);
         if (t > 0) {
           s->wanted.store(t, std::memory_order_relaxed);
-          s->seenNow = t;  // (its span follows its region at once)
+          s->curChangeTempo = t;
+          s->curChangeAt = Clock::now();
           if (const Render* r = fam->find(t, s->beatA, s->beatB)) s->current.store(r, std::memory_order_release);
         }
         slots_[key] = s;
@@ -368,7 +408,7 @@ class WarpService {
       stop_ = true;
     }
     cv_.notify_all();
-    if (thread_.joinable()) thread_.join();
+    gl::threads::safeJoin(thread_);
     // at exit: what a voice still reads stays (an instrument may go after this)
     const auto keep = [](std::unique_ptr<Render>& r) {
       if (r && r->readers.load() > 0) (void)r.release();
@@ -393,13 +433,29 @@ class WarpService {
 
   // Runs a stretch, adding its time to the worker's.
   // (`secs`: a running estimate of how long such a render takes)
+  // (tests: the delay of the region render starting now)
+  static int64_t regionDelayNs() {
+    const int seen = gWarpRegionSeen.fetch_add(1, std::memory_order_relaxed);
+    return seen >= gWarpRegionDelayFrom.load(std::memory_order_relaxed) ? gWarpRegionDelayNs.load(std::memory_order_relaxed) : 0;
+  }
+  // (`kind`: a whole-region or focused render, which the K-464 test delays apply to)
   template <class F>
-  static std::unique_ptr<Render> timed(F&& make, double* secs = nullptr) {
+  static std::unique_ptr<Render> timed(F&& make, double* secs = nullptr, Kind kind = Kind::Other) {
     const auto t0 = Clock::now();
     auto r = make();
-    const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count();
+    auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count();
+    const double slow = gWarpSlowdown.load(std::memory_order_relaxed);
+    const int64_t delay = !r ? 0
+                          : kind == Kind::Region ? regionDelayNs()
+                          : kind == Kind::Focus  ? gWarpFocusDelayNs.load(std::memory_order_relaxed)
+                                                 : 0;
+    if ((slow > 1.0 && r) || delay > 0) {
+      const auto extra = static_cast<int64_t>(static_cast<double>(ns) * (slow - 1.0)) + delay;
+      if (extra > 0) std::this_thread::sleep_for(std::chrono::nanoseconds(extra));
+      ns = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - t0).count();
+    }
     gWarpWorkNs.fetch_add(ns, std::memory_order_relaxed);
-    if (secs && r) *secs = 0.5 * *secs + 0.5 * static_cast<double>(ns) * 1e-9;
+    if (secs && r) *secs = (*secs <= 0.0) ? static_cast<double>(ns) * 1e-9 : (0.5 * *secs + 0.5 * static_cast<double>(ns) * 1e-9);
     return r;
   }
   static bool usedBySlot(const WarpFamily& f, const Render* r, const std::vector<std::shared_ptr<WarpSlot>>& live) {
@@ -477,16 +533,57 @@ class WarpService {
     return p;
   }
 
+  // K-464b: keeps the beats the voices of `s` reach in the next `secs` (plus a focused render's time)
+  // covered by a render at `w` (a focused window from the playing beat, and from the region's
+  // start when an in-order sequence wraps), when no render near `w` covers them. True: one made.
+  static bool coverPlaying(WarpSlot& s, WarpFamily& f, double w, double secs, const std::vector<std::shared_ptr<WarpSlot>>& live) {
+    const double act = s.activeBeat.load(std::memory_order_relaxed);
+    const double slice = s.activeSliceBeats.load(std::memory_order_relaxed);
+    const double regionBeats = s.beatB - s.beatA;
+    if (!(regionBeats > kFocusWindowBeats + 0.5 && act >= s.beatA - 1e-6 && act < s.beatB + 1e-6)) return false;
+    const Render* cur = s.current.load(std::memory_order_acquire);
+    const auto off = [&](double aB, double bB) {
+      const Render* r = f.nearest(w, aB, bB);
+      if (cur && cur->covers(aB, bB) && (!r || std::fabs(std::log(cur->tempo / w)) < std::fabs(std::log(r->tempo / w)))) r = cur;
+      return r ? std::fabs(1200.0 * std::log2(w / r->tempo)) : 1e9;
+    };
+    const double bps = w / 60.0;
+    const double focusSecs = s.movingRenderSecs > 0.0 ? s.movingRenderSecs : s.renderSecs * 0.20;
+    const double need = slice + 2.0 * (secs + focusSecs + kActivePollMs * 0.001) * bps;
+    const double more = (secs + focusSecs) * bps;  // (the voices move on while it is made)
+    const double winBeats = std::max(kFocusWindowBeats, slice + 0.75);
+    const double a = std::clamp(act, s.beatA, s.beatB);
+    const double spill = a + need - s.beatB;  // (an in-order sequence goes on from its start)
+    Span gap{};
+    if (off(a, std::min(s.beatB, a + need)) > kLiveCents)
+      gap = focusWindowFor(s, std::max(s.beatA, act - kFocusLeadInBeats), std::max(winBeats, need + more + kFocusLeadInBeats));
+    else if (spill > 0 && off(s.beatA, std::min(s.beatB, s.beatA + spill)) > kLiveCents)
+      gap = focusWindowFor(s, s.beatA, std::max(winBeats, spill + more));
+    else
+      return false;
+    if (gap.beatB - gap.beatA >= 0.75 * regionBeats) return false;  // (as much as the region render itself)
+    const double frames = (gap.beatB - gap.beatA) * 60.0 / w * s.src->sampleRate;
+    if (!roomFor(f, static_cast<int64_t>(frames * 2 * sizeof(float)), live)) return false;
+    auto r = timed([&] { return makeRender(s.src, s.grid, gap, w); }, &s.movingRenderSecs, Kind::Focus);
+    if (!r) return false;
+    gWarpMoving.fetch_add(1, std::memory_order_relaxed);
+    (void)publish(f, std::move(r), live);
+    return true;
+  }
+
   void loop() {
     // 0.7.8: below normal priority (never the audio thread's: this is the warp worker's own thread),
     // so stretching while the tempo moves never competes with the audio or the interface for a core
     platform::lowerThisThreadPriorityOnTime();
     std::unique_lock<std::mutex> lk(mu_);
+    bool fastPoll = false;
     while (!stop_) {
+      const int pollMs = fastPoll ? kActivePollMs : kIdlePollMs;
       const auto slept = Clock::now();
-      cv_.wait_for(lk, std::chrono::milliseconds(30));
+      cv_.wait_for(lk, std::chrono::milliseconds(pollMs));
       if (stop_) break;
-      const double wokeLate = std::max(0.0, std::chrono::duration<double>(Clock::now() - slept).count() - 0.03);
+      const double pollSecs = static_cast<double>(pollMs) * 0.001;
+      const double wokeLate = std::max(0.0, std::chrono::duration<double>(Clock::now() - slept).count() - pollSecs);
       gl::threads::woke();  // K-142: CPU report
       std::vector<std::shared_ptr<WarpSlot>> live;
       for (auto it = slots_.begin(); it != slots_.end();) {
@@ -540,83 +637,207 @@ class WarpService {
           if (o->touched.exchange(false, std::memory_order_relaxed) || o->readers.load(std::memory_order_relaxed) > 0 ||
               s->current.load(std::memory_order_relaxed) == o.get())
             o->lastUse = now;
+      bool anyActive = false;
       for (auto& s : live) {
         WarpFamily& f = *s->fam;
         const double w = s->wanted.load(std::memory_order_relaxed);
-        s->seenPrev2 = s->seenPrev;
-        s->seenPrev = s->seenNow;
-        s->seenPrevAt = s->seenNowAt;
-        s->seenNow = w;
-        s->seenNowAt = now;
         if (w <= 0) continue;
+        if (std::fabs(w - s->curChangeTempo) > 1e-6) {
+          if (s->curChangeTempo > 0 && s->curChangeAt != Clock::time_point{}) {
+            const double c = 1200.0 * std::log2(w / s->curChangeTempo);
+            const double d = std::chrono::duration<double>(now - s->curChangeAt).count();
+            if (std::fabs(c) >= 35.0 || d <= 1e-3 || d >= 0.25) {
+              s->rateCps = 0, s->rateSamples = 0;  // (a step, or the tempo held: a new ramp starts from here)
+            } else {
+              const double inst = c / d;
+              s->rateCps = s->rateSamples == 0 ? inst : s->rateCps + d / (d + kRateSecs) * (inst - s->rateCps);
+              ++s->rateSamples;
+            }
+          }
+          s->prevChangeTempo = s->curChangeTempo;
+          s->prevChangeAt = s->curChangeAt;
+          s->curChangeTempo = w;
+          s->curChangeAt = now;
+          s->stable = 0;
+          s->lastWanted = w;
+        } else {
+          ++s->stable;
+        }
         const Render* cur = s->current.load(std::memory_order_acquire);
-        if (cur && std::fabs(cur->tempo - w) < 1e-4) {
+        if (cur && std::fabs(cur->tempo - w) < 1e-4 && cur->covers(s->beatA, s->beatB)) {
           f.tempo.store(w, std::memory_order_relaxed);
           continue;
         }
-        if (w == s->lastWanted) ++s->stable;
-        else s->stable = 0, s->lastWanted = w;
+        anyActive = true;
         if (const Render* r = f.find(w, s->beatA, s->beatB)) {
           s->current.store(r, std::memory_order_release);
           f.tempo.store(w, std::memory_order_relaxed);
           continue;
         }
-        // a render at this tempo once the tempo settles, or at once when the family already plays
-        // at it (a new region)
+        // 0.7.8 / 0.7.9: where the voices play now (the focused renders of a moving tempo cover it)
+        const double actBeat = s->activeBeat.load(std::memory_order_relaxed);
+        const double actSlice = s->activeSliceBeats.load(std::memory_order_relaxed);
+        const bool useFocus = (s->beatB - s->beatA) > kFocusWindowBeats + 0.5 && actBeat >= s->beatA - 1e-6 && actBeat < s->beatB + 1e-6;
+        const double estSecs = useFocus ? (s->movingRenderSecs > 0.0 ? s->movingRenderSecs : s->renderSecs * 0.20) : s->renderSecs;
+        // K-464b: the beats from the playing one a focused render covers: every slice that starts
+        // before the next render can be there (two renders' time; the slice at the edge whole). A
+        // fixed beat left a slower machine's slices beyond it on the plain source.
+        const double reach = 2.0 * actSlice + 2.0 * (estSecs + kActivePollMs * 0.001) * w / 60.0;
+        const double winBeats =
+            std::min(std::max(kFocusWindowBeats, 0.5 * (s->beatB - s->beatA)), std::max({kFocusWindowBeats, actSlice + 0.75, kFocusLeadInBeats + reach}));
+        const double checkA = useFocus ? std::clamp(actBeat, s->beatA, s->beatB) : s->beatA;
+        const double checkB = useFocus ? std::min(s->beatB, checkA + std::max({0.5, actSlice + 0.25, std::min(reach, winBeats - kFocusLeadInBeats)})) : s->beatB;
+        const bool nearWrap = useFocus && (actBeat + winBeats > s->beatB - 0.1);
+        const double wrapCheckB = std::min(s->beatB, s->beatA + std::max(0.5, actSlice + 0.25));
+
+        const auto nearestCovering = [&](double t, double aB, double bB) -> const Render* {
+          const Render* r = f.nearest(t, aB, bB);
+          if (cur && cur->covers(aB, bB) && (!r || std::fabs(std::log(cur->tempo / t)) < std::fabs(std::log(r->tempo / t)))) r = cur;
+          return r;
+        };
+        const auto offOf = [&](const Render* rr, double t) { return rr ? std::fabs(1200.0 * std::log2(t / rr->tempo)) : 1e9; };
+        // A full-region render once the tempo has genuinely held still for >= 80 ms (independent
+        // of poll interval and audio buffer size), or at once when the family already plays at it.
         const bool known = std::fabs(f.tempo.load(std::memory_order_relaxed) - w) < 1e-4;
-        if (known || s->stable >= 2) {
+        const bool settled = s->curChangeAt != Clock::time_point{} && (now - s->curChangeAt) >= std::chrono::milliseconds(80);
+        if (known || settled) {
+          // K-464 / K-464b: the full-region render is the longest the worker makes, and the slices
+          // that start meanwhile play the renders there are. After a step the focused render covers
+          // the playing beat only a few slices on; those after it would play the plain source until
+          // the region render lands (a step of 10 bpm: 165 cents off). How long that takes is not
+          // known ahead (a machine that slows down, another program), so it is made in pieces, and
+          // before each the beats the voices reach while it and a focused render are made get a
+          // render at this tempo when they have none near it. A tempo that moves on meanwhile
+          // drops it (the renders for where the tempo is come first).
           (void)roomFor(f, 0, live);  // (made whatever the cap: the cap only evicts for it)
-          auto r = timed([&] { return makeRender(s->src, s->grid, s->region(), w); }, &s->renderSecs);
+          auto r = makeRender(s->src, s->grid, s->region(), w, true);  // (its length: nothing stretched yet)
           if (!r) {
             s->wanted = 0;
             continue;
           }
+          r->lengthOnly = false;
+          r->L.assign(static_cast<size_t>(r->length), 0.f);
+          r->R.assign(static_cast<size_t>(r->length), 0.f);
+          bool dropped = false;
+          {
+            const float* in[2] = {s->src->left.data() + s->a, s->src->right.data() + s->a};
+            float* out[2] = {r->L.data(), r->R.data()};
+            const double outBeat = 60.0 / w * r->rate;  // (as makeRender: the same frames)
+            stretch::MappedStream ms(in, 2, s->b - s->a, out, r->length, r->rate, SpanMap{&s->grid, s->beatA, outBeat, s->a, s->b - s->a});
+            const double slow = gWarpSlowdown.load(std::memory_order_relaxed);
+            const int64_t delay = regionDelayNs();
+            double pieceSecs = s->renderSecs * static_cast<double>(kRegionPiece) / static_cast<double>(std::max<int64_t>(1, r->length));
+            double workSecs = 0;
+            int ahead = 0;
+            while (true) {
+              if (ahead < 16 && coverPlaying(*s, f, w, pieceSecs, live)) ++ahead, anyActive = true;
+              const int64_t from = ms.done();
+              if (from >= r->length) break;
+              const auto c0 = Clock::now();
+              ms.renderTo(from + kRegionPiece);
+              auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - c0).count();
+              const auto extra = static_cast<int64_t>(static_cast<double>(ns) * (slow - 1.0)) +
+                                 static_cast<int64_t>(static_cast<double>(delay) * static_cast<double>(ms.done() - from) / static_cast<double>(r->length));
+              if (extra > 0) {  // (tests: a slower machine)
+                std::this_thread::sleep_for(std::chrono::nanoseconds(extra));
+                ns = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - c0).count();
+              }
+              gWarpWorkNs.fetch_add(ns, std::memory_order_relaxed);
+              pieceSecs = static_cast<double>(ns) * 1e-9;
+              workSecs += pieceSecs;
+              if (ms.done() >= r->length) break;
+              const double now2 = s->wanted.load(std::memory_order_relaxed);
+              if (now2 > 0 && std::fabs(1200.0 * std::log2(now2 / w)) > kLiveCents) {
+                dropped = true;
+                break;
+              }
+            }
+            s->renderSecs = 0.5 * s->renderSecs + 0.5 * workSecs;
+          }
+          if (dropped) continue;
           s->current.store(publish(f, std::move(r), live), std::memory_order_release);
           f.tempo.store(w, std::memory_order_relaxed);
           continue;
         }
-        // 0.7.8: the tempo moves. The voices play the nearest render a little faster or slower; a
-        // new one once that is more than kLiveCents off the tempo (or would be by the time a render
-        // is ready, along a ramp), while the memory cap leaves room. Along a ramp it is aimed where
-        // the tempo will be when it is ready, kLiveCents further on; a jump gets one at the tempo.
-        const Render* near = f.nearest(w, s->beatA, s->beatB);
-        if (cur && cur->covers(s->beatA, s->beatB) && (!near || std::fabs(std::log(cur->tempo / w)) < std::fabs(std::log(near->tempo / w)))) near = cur;
-        const double moved = s->seenPrev > 0 ? 1200.0 * std::log2(w / s->seenPrev) : 0.0;
-        const double before = s->seenPrev2 > 0 && s->seenPrev > 0 ? 1200.0 * std::log2(s->seenPrev / s->seenPrev2) : 0.0;
-        const double dt = std::chrono::duration<double>(now - s->seenPrevAt).count();
+        // 0.7.8 / 0.7.9: the tempo moves (ramp or step onset). Stretch a fast focused window around
+        // the active playback beat so even 2x slower machines keep pitch well within < 4 cents.
+        const double moved = s->prevChangeTempo > 0 ? 1200.0 * std::log2(w / s->prevChangeTempo) : 0.0;
+        const double dt = (s->prevChangeAt != Clock::time_point{}) ? std::chrono::duration<double>(s->curChangeAt - s->prevChangeAt).count() : 0.0;
         double ahead = 0;  // cents the tempo moves on while a render is made
-        if (moved * before > 0 && dt > 1e-3) ahead = std::clamp(moved / dt * (s->renderSecs + 0.03), -kMaxAheadCents, kMaxAheadCents);
+        // Smooth ramp: predict ahead from true distinct-tempo slope; large stepped jump (>= 35 cents): aim directly at w.
+        if (moved != 0.0 && std::fabs(moved) < 35.0 && dt > 1e-3 && dt < 0.25) {
+          const double rateCentsPerSec = s->rateSamples > 0 ? s->rateCps : moved / dt;  // K-464b: smoothed
+          ahead = std::clamp(rateCentsPerSec * (estSecs + kActivePollMs * 0.001), -kMaxAheadCents, kMaxAheadCents);
+        }
         const double ready = w * std::exp2(ahead / 1200.0);
-        const auto off = [&](double t) { return near ? std::fabs(1200.0 * std::log2(t / near->tempo)) : 1e9; };
-        if (off(w) <= kLiveCents && off(ready) <= kLiveCents) continue;
+        // Check `w` and `ready` independently so an already-ready future render covering `ready` is
+        // recognized alongside the current render covering `w` (avoids redundant mid-ramp renders).
+        const bool primaryOk =
+            offOf(nearestCovering(w, checkA, checkB), w) <= kLiveCents && offOf(nearestCovering(ready, checkA, checkB), ready) <= kLiveCents;
+        const bool wrapNeeded = nearWrap && (offOf(nearestCovering(w, s->beatA, wrapCheckB), w) > kLiveCents ||
+                                             offOf(nearestCovering(ready, s->beatA, wrapCheckB), ready) > kLiveCents);
+        if (primaryOk && !wrapNeeded) continue;
+        // K-464b: which render first. Before, the region's start (where an in-order sequence goes
+        // on after its last slice) was rendered only on a wakeup that found the playing beat
+        // covered near the tempo; a ramp on a slow machine hardly leaves one, and the first slice
+        // after the wrap played an old render or the plain source (315 cents off at 120 bpm). Now
+        // it goes first once a voice may start there within two renders' time (taking turns with
+        // the playing beat; always, once the next slice to start is there), and before anything
+        // when the next slice to start is there and it has nothing a voice would play. A beat with
+        // no render a voice would play (only the plain source) is rendered whatever the rate
+        // limit; so is the region's start once it is due.
+        const double srcBpm = s->grid.bpm > 1 ? s->grid.bpm : 120.0;
+        const auto playable = [&](const Render* rr, double t) {
+          return rr && (std::fabs(rr->tempo - t) < 1e-4 || std::fabs(std::log(t / rr->tempo)) < std::fabs(std::log(t / srcBpm)));
+        };
+        const double toWrap = useFocus ? std::max(0.0, s->beatB - actBeat - actSlice) / (w / 60.0) : 1e9;
+        const bool nextIsWrap = useFocus && actBeat + actSlice >= s->beatB - 1e-6;
+        const bool wrapUrgent = wrapNeeded && toWrap <= 2.0 * (estSecs + kActivePollMs * 0.001);
+        const bool wrapStarved = wrapUrgent && !playable(nearestCovering(w, s->beatA, wrapCheckB), w);
+        const bool primaryStarved = useFocus && !primaryOk && !playable(nearestCovering(w, checkA, checkB), w);
+        bool needWrapRender = false;
+        if (primaryOk) needWrapRender = true;  // (wrapNeeded)
+        else if (wrapStarved && (nextIsWrap || !primaryStarved)) needWrapRender = true;
+        else if (primaryStarved) needWrapRender = false;
+        else if (wrapUrgent) needWrapRender = nextIsWrap || !s->lastWrap;  // (the playing slice is the last: nothing else starts first)
+        const bool due = needWrapRender ? wrapUrgent : primaryStarved;
+
         if (f.movingAt != Clock::time_point{})
           f.movingBudget = std::min(kMovingBudgetSecs, f.movingBudget + std::chrono::duration<double>(now - f.movingAt).count() * f.movingDuty);
         f.movingAt = now;
-        if (f.movingBudget <= 0) {  // (rate limited: the worker looks again at its next wakeup)
+        if (f.movingBudget <= 0 && !due) {  // (rate limited: the worker looks again at its next wakeup)
           gWarpThrottled.fetch_add(1, std::memory_order_relaxed);
           continue;
         }
-        const double target = ahead != 0 ? ready * std::exp2(std::copysign(kLiveCents, ahead) / 1200.0) : w;
-        const double outFrames = (s->beatB - s->beatA) * 60.0 / target * s->src->sampleRate;
+        const double target = ahead != 0 ? ready * std::exp2(std::copysign(kLiveCents * 0.85, ahead) / 1200.0) : w;
+        const Span renderSpanTarget = !useFocus ? s->region()
+                                                : needWrapRender ? focusWindowFor(*s, s->beatA, winBeats)
+                                                                 : focusWindowFor(*s, std::max(s->beatA, actBeat - kFocusLeadInBeats), winBeats);
+        const double outFrames = (renderSpanTarget.beatB - renderSpanTarget.beatA) * 60.0 / target * s->src->sampleRate;
         if (!roomFor(f, static_cast<int64_t>(outFrames * 2 * sizeof(float)), live)) {
           gWarpSkipped.fetch_add(1, std::memory_order_relaxed);
           continue;
         }
         const auto t0 = Clock::now();
-        const double planned = s->renderSecs;
-        auto r = timed([&] { return makeRender(s->src, s->grid, s->region(), target); }, &s->renderSecs);
+        const double planned = estSecs;
+        double* durEst = useFocus ? &s->movingRenderSecs : &s->renderSecs;
+        auto r = timed([&] { return makeRender(s->src, s->grid, renderSpanTarget, target); }, durEst, useFocus ? Kind::Focus : Kind::Region);
         const double took = std::chrono::duration<double>(Clock::now() - t0).count();
         f.movingBudget -= took;
         const auto lateNs = static_cast<int64_t>((wokeLate + std::max(0.0, took - planned)) * 1e9);
         if (lateNs > gWarpLateNs.load(std::memory_order_relaxed)) gWarpLateNs.store(lateNs, std::memory_order_relaxed);
         // (a steady ramp: aimed about as far ahead as the render before, the same way)
-        const bool steady = ahead * f.movingAhead > 0 && std::fabs(ahead) <= 2 * std::fabs(f.movingAhead) && std::fabs(f.movingAhead) <= 2 * std::fabs(ahead);
+        const bool steady = ahead * f.movingAhead > 0 && std::fabs(ahead) <= 3.0 * std::fabs(f.movingAhead) &&
+                            std::fabs(f.movingAhead) <= 3.0 * std::fabs(ahead);
         f.movingDuty = steady ? kRampDuty : kMovingDuty;
         f.movingAhead = ahead;
         if (!r) continue;
+        s->lastWrap = useFocus && needWrapRender;
         gWarpMoving.fetch_add(1, std::memory_order_relaxed);
-        s->current.store(publish(f, std::move(r), live), std::memory_order_release);
+        const Render* pub = publish(f, std::move(r), live);
+        if (!useFocus) s->current.store(pub, std::memory_order_release);
       }
+      fastPoll = anyActive;
       // 2) then the spans, so the next layouts find their regions ready
       for (auto& s : live) {
         WarpFamily& f = *s->fam;
@@ -629,7 +850,7 @@ class WarpService {
           continue;
         }
         // (0.7.8: not while the tempo moves: a moving tempo plays its region's renders)
-        if (s->seenPrev != s->seenNow || w != s->seenNow) continue;
+        if (std::fabs(w - s->curChangeTempo) > 1e-6 || (now - s->curChangeAt) < std::chrono::milliseconds(80)) continue;
         (void)roomFor(f, 0, live);
         auto r = timed([&] { return makeRender(s->src, s->grid, s->span, w); });
         if (!r) continue;
@@ -834,6 +1055,7 @@ class SeltmannGen final : public Generator {
     const Render* rd = nullptr;
     const WarpFamily* hold = nullptr;
     double gain = 1;
+    VoiceVel vv;  // GitHub #87: a slide's velocity glide on this voice (exactly 1 without one)
     double played = 0;       // output samples since the start
     double left = -1;        // output samples until the gate closes (-1 = while held)
     double fadeInS = 1, fadeOutS = 1;
@@ -914,6 +1136,7 @@ class SeltmannGen final : public Generator {
   // K-144: a slide plays the slice faster or slower by its interval from the played pitch (the
   // pattern's own steps keep theirs).
   bool supportsGlide() const override { return true; }
+  bool perVoiceVelocity() const override { return true; }  // GitHub #87: a slide fades its own voice only
   void onGlide(uint32_t id, double pitch, double seconds) override {
     for (auto& v : voices_)
       if (v.on && v.id == id && v.notePitch >= 0) {
@@ -969,6 +1192,8 @@ class SeltmannGen final : public Generator {
   void render(float* L, float* R, int n) override {
     // J-219: Track Receipt coverage, one run per voice (source frames of the file).
     const bool tapOn = tap::active() && aux_ && aux_->src;
+    for (auto& v : voices_)  // GitHub #87: each voice's velocity glide, from this render's first sample
+      if (v.on) velVoice(v.vv, v.id);
     std::array<tap::Run, kMaxVoices> runs;
     if (tapOn)
       for (auto& rn : runs) rn.begin(aux_->src.get());
@@ -1087,6 +1312,10 @@ class SeltmannGen final : public Generator {
   void startVoice(uint32_t id, int slice, double semis, float vel, double stepGain, bool stepReverse, double stepOffset, double gateSamples,
                   bool pattern) {
     const RtSlice& sl = aux_->slices[static_cast<size_t>(slice)];
+    if (!offline_ && !forced_ && aux_->warp) {
+      aux_->warp->activeBeat.store(sl.beatA, std::memory_order_relaxed);
+      aux_->warp->activeSliceBeats.store(std::max(0.0, sl.beatB - sl.beatA), std::memory_order_relaxed);
+    }
     const Render* rr = renderFor(sl);
     // 0.7.8: an offline render made in pieces gets its buffers on its first voice
     Render* pieces = rr && rr == own_.get() && own_->partial() ? own_.get() : nullptr;
@@ -1235,7 +1464,7 @@ class SeltmannGen final : public Generator {
     const double fin = std::min(1.0, (v.played + 1) / v.fadeInS);
     const double fout = std::min(1.0, dist / v.fadeOutS);
     // declick the gate's own end too (the release may be shorter than the declick)
-    const double a = v.env * fin * fout * v.kill * v.gain;
+    const double a = v.env * fin * fout * v.kill * v.gain * static_cast<double>(v.vv.next());
     float l, r;
     if (run) run->at(sourceFrame(v));
     if (v.pieces) piecesAhead(v, v.pos);
@@ -1570,6 +1799,15 @@ std::vector<WarpLogEntry> warpLogForTest() {
 void resetWarpPeakForTest() {
   gWarpPeak.store(gWarpBytes.load());
   gWarpLateNs.store(0);
+}
+void setWarpSlowdownForTest(double factor) { gWarpSlowdown.store(std::max(1.0, factor), std::memory_order_relaxed); }
+void setWarpRegionDelayForTest(double seconds, int fromRender) {
+  gWarpRegionSeen.store(0, std::memory_order_relaxed);
+  gWarpRegionDelayFrom.store(std::max(0, fromRender), std::memory_order_relaxed);
+  gWarpRegionDelayNs.store(static_cast<int64_t>(std::max(0.0, seconds) * 1e9), std::memory_order_relaxed);
+}
+void setWarpFocusDelayForTest(double seconds) {
+  gWarpFocusDelayNs.store(static_cast<int64_t>(std::max(0.0, seconds) * 1e9), std::memory_order_relaxed);
 }
 
 // ================================================================== pack entry points

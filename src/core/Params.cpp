@@ -63,6 +63,7 @@ bool resolve(Song& s, ParamId id, Target& t) {
       case ChannelParam::Mute: t.b = &c->muted; t.desc = tog("Mute"); return true;
       case ChannelParam::Pitch: t.f = &c->pitchCents; t.desc = lin("Pitch", "ct", -kChannelPitchMaxCents, kChannelPitchMaxCents, 0); return true;
       case ChannelParam::Sustain: t.b = &c->sustainPedal; t.desc = tog("Sustain pedal"); return true;
+      case ChannelParam::Transpose: t.i = &c->transpose; t.desc = lin("Transpose", "st", -kChannelTransposeMax, kChannelTransposeMax, 0); return true;
       default: return false;
     }
   }
@@ -316,7 +317,7 @@ std::vector<ControllerOutput> listControllerOutputs(const Song& song) {
 }
 
 bool internalLinkApplies(const Song& song, ParamId id) {
-  if (id.owner == kSongId || id.owner == kNoId) return false;
+  if (id.owner == kNoId) return false;
   return describeParam(song, id).has_value();
 }
 

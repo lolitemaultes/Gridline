@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><title>MIDI Out</title>
+<path id="mark-1" d="M5.6 0H18.4A5.6 5.6 0 0 1 24 5.6V18.4A5.6 5.6 0 0 1 18.4 24H5.6A5.6 5.6 0 0 1 0 18.4V5.6A5.6 5.6 0 0 1 5.6 0Z" fill="#B1E758"/>
+<path id="cut-2" d="M 12 12 m -6.6 0 a 6.6 6.6 0 1 0 13.2 0 a 6.6 6.6 0 1 0 -13.2 0" fill="none" stroke="#353D42" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle id="cut-3" cx="8.8" cy="12.6" r="1.1" fill="#353D42"/>
+<circle id="cut-4" cx="15.2" cy="12.6" r="1.1" fill="#353D42"/>
+<circle id="cut-5" cx="9.8" cy="9.6" r="1.1" fill="#353D42"/>
+<circle id="cut-6" cx="14.2" cy="9.6" r="1.1" fill="#353D42"/>
+<circle id="cut-7" cx="12" cy="8.6" r="1.1" fill="#353D42"/>
+</svg>

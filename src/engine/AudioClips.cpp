@@ -16,6 +16,7 @@
 // over 10 ms.
 #include <algorithm>
 #include <cmath>
+#include "Dsp.h"
 #include "Program.h"
 #include "SampleTap.h"
 
@@ -45,6 +46,10 @@ void readClip(void* ctx, float* const* dst, int frames) {
 
 // Band-limited read (J-87): plain clips, sample-rate conversion.
 inline void readFrameSinc(const Sample& s, double sec, bool reverse, float& l, float& r, const stretch::SincTable& t, double rate) {
+  if (s.frames() == 0 || !std::isfinite(s.sampleRate) || s.sampleRate <= 0 || !std::isfinite(sec)) {
+    l = r = 0.f;
+    return;
+  }
   double f = sec * s.sampleRate;
   const double last = static_cast<double>(s.frames() - 1);
   if (reverse) f = last - f;
@@ -92,7 +97,9 @@ double pitchOf(const ProgAudioClip& c, double secRate) {
 
 std::shared_ptr<ClipVoice> makeClipVoice(double sampleRate, stretch::Engine engine, double sourceRate, bool spread) {
   auto v = std::make_shared<ClipVoice>();
-  const double toFrames = sourceRate > 0 && engine == stretch::Engine::Stretch ? sourceRate / sampleRate : 1.0;
+  sampleRate = std::isfinite(sampleRate) && sampleRate > 0 ? sampleRate : 44100.0;
+  sourceRate = std::isfinite(sourceRate) && sourceRate > 0 ? sourceRate : 0.0;
+  const double toFrames = sourceRate > 0 && engine == stretch::Engine::Stretch ? std::clamp(sourceRate / sampleRate, 0.0625, 16.0) : 1.0;
   const double top = 8.0 * std::max(1.0, toFrames);
   v->voice.prepare(2, sampleRate, top, top, false, engine, toFrames / 8.0, sourceRate, spread);
   return v;
@@ -110,9 +117,9 @@ bool audioClipsNear(const std::vector<ProgAudioClip>& clips, double t0, double t
 
 void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& map, double sr, double anchorTick,
                       int64_t clock, int from, int len, float* L, float* R, double pitchSemis, const uint8_t* skipTrack) {
-  if (clips.empty() || len <= 0) return;
+  if (clips.empty() || len <= 0 || !std::isfinite(sr) || sr <= 0) return;
   auto skipped = [&](const ProgAudioClip& c) { return skipTrack && c.track >= 0 && c.track < kMaxPlaylistTracks && skipTrack[c.track] != 0; };
-  const double chanRatio = pitchSemis != 0 ? std::pow(2.0, pitchSemis / 12.0) : 1.0;
+  const double chanRatio = std::isfinite(pitchSemis) && pitchSemis != 0 ? std::pow(2.0, std::clamp(pitchSemis, -60.0, 60.0) / 12.0) : 1.0;
   const bool readsOnly = tap::readsOnly();
   const stretch::SincTable& rt = stretch::sincTable(stretch::Quality::Realtime);  // built by the program builder
   const double t0 = map.tickAfterSamples(anchorTick, static_cast<double>(clock), sr);
@@ -124,7 +131,9 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
   auto tickAt = [&](int64_t i) { return t0 + (t1 - t0) * static_cast<double>(i) / static_cast<double>(len); };
   for (const ProgAudioClip& c : clips) {
     if (static_cast<double>(c.start) > t1 + 1.0) break;  // sorted by start
-    if (static_cast<double>(c.end) < t0 - 1.0 || !c.sample || skipped(c)) continue;
+    if (static_cast<double>(c.end) < t0 - 1.0 || !c.sample || c.sample->frames() == 0 || !std::isfinite(c.sample->sampleRate) ||
+        c.sample->sampleRate <= 0 || skipped(c))
+      continue;
     int64_t a = std::clamp<int64_t>(sampleOf(static_cast<double>(c.start)), 0, len);
     int64_t b = std::clamp<int64_t>(sampleOf(static_cast<double>(c.end)), 0, len);
     if (b <= a) continue;
@@ -140,6 +149,9 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
     const uint8_t declickIn = c.declickIn, declickOut = c.declickOut;
     const double fadeIn = c.fadeIn, fadeOut = c.fadeOut;
     const double gain = c.gain;
+    const double pan = std::clamp<double>(static_cast<double>(c.pan), -1.0, 1.0);
+    double panL = 1.0, panR = 1.0;
+    dsp::panGains(pan, panL, panR);
     if (tap::active() && gain > 0) {  // J-219: Track Receipt pass: the source seconds this block plays
       tap::OwnerScope own(c.clip, t0);
       tap::Slot* slot = tap::slotFor(&s);
@@ -173,7 +185,7 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
     // J-87: the offline render, while it applies.
     // (A render in progress publishes its finished start: frames below hqReady.)
     // J-145: a render at another pitch still plays while the realtime stretch fades in.
-    const stretch::RenderedClip* hq = c.hq.get();
+    const stretch::RenderedClip* hq = c.hq && !c.hq->failed.load(std::memory_order_acquire) ? c.hq.get() : nullptr;
     const bool hqPitch = hq && std::fabs(pitchSemis - c.hqSemis) < 1e-6;
     const int64_t hqReady = hq ? hq->readyFrames.load(std::memory_order_acquire) : 0;
     const int64_t hqFrames = hq ? hq->frames() : 0;
@@ -270,8 +282,8 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
           l = static_cast<float>(w * hl + (1.0 - w) * l);
           r = static_cast<float>(w * hr + (1.0 - w) * r);
         }
-        L[from + i] += l * static_cast<float>(g);
-        R[from + i] += r * static_cast<float>(g);
+        L[from + i] += l * static_cast<float>(g * panL);
+        R[from + i] += r * static_cast<float>(g * panR);
       }
     }
   }
@@ -286,10 +298,14 @@ void renderAudioClips(const std::vector<ProgAudioClip>& clips, const TempoMap& m
   for (const ProgAudioClip& c : clips) {
     if (static_cast<double>(c.start) > tA + 1.0) break;  // sorted by start
     ClipVoice* rv = c.rt.get();
-    if (!rv || !c.sample || (!c.granular && chanRatio == 1.0)) continue;
+    if (!rv || !c.sample || c.sample->frames() == 0 || !std::isfinite(c.sample->sampleRate) || c.sample->sampleRate <= 0 ||
+        (!c.granular && chanRatio == 1.0))
+      continue;
     const int64_t first = sampleOf(static_cast<double>(c.start));
     if (first < len || first >= len + ahead) continue;
-    if (c.hq && std::fabs(pitchSemis - c.hqSemis) < 1e-6 && c.hq->readyFrames.load(std::memory_order_acquire) > 0) continue;  // its render plays
+    if (c.hq && !c.hq->failed.load(std::memory_order_acquire) && std::fabs(pitchSemis - c.hqSemis) < 1e-6 &&
+        c.hq->readyFrames.load(std::memory_order_acquire) > 0)
+      continue;  // its render plays
     const Sample& s = *c.sample;
     // As the block it starts in will compute them.
     const double toFrames = s.sampleRate / sr;

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><title>Chime</title>
+<path id="mark-1" d="M5.6 0H18.4A5.6 5.6 0 0 1 24 5.6V18.4A5.6 5.6 0 0 1 18.4 24H5.6A5.6 5.6 0 0 1 0 18.4V5.6A5.6 5.6 0 0 1 5.6 0Z" fill="#8BC34A"/>
+<path id="cut-2" d="M 8 15.5 V 11 A 4 4 0 0 1 16 11 V 15.5 L 17.5 17 H 6.5 Z" fill="none" stroke="#353D42" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<circle id="cut-3" cx="12" cy="19" r="1.5" fill="#353D42"/>
+</svg>

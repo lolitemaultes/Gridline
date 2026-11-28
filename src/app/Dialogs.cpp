@@ -41,7 +41,10 @@
 #include "../core/I18n.h"
 #include "../core/EditorZoom.h"
 #include "../core/UiScale.h"
+#include "../core/PluginStandIn.h"
 #include "../core/flp/Flp.h"
+#include "../host/CrossFormat.h"
+#include "../host/HostedPlugins.h"
 #include "App.h"
 #include "LogicPlugins.h"
 #include "LogicNewTracks.h"
@@ -53,6 +56,7 @@
 #include "../engine/PlaylistTools.h"
 #include "AudioRecordUi.h"
 #include "AsioUi.h"
+#include "JackUi.h"
 #include "ExportUi.h"
 #include "RenderSheetUi.h"
 #include "StemsUi.h"
@@ -172,8 +176,10 @@ void settingsPageBody(App& a, int& page, float fieldW) {
   if (page == 0) {
     ui::BeginSection("INPUT / OUTPUT");
     const bool asioMode = asioui::backendRow(a, fieldW);  // K-6
+    const bool jackMode = !asioMode && jackui::backendRow(a, fieldW);  // K-357
     if (asioMode) asioui::deviceRows(a, fieldW);
-    if (!asioMode) {
+    if (jackMode) jackui::deviceRows(a, fieldW);
+    if (!asioMode && !jackMode) {
       formLabel("Output device");
       if (ui::BeginCombo("##dev", a.audioDevice.empty() ? "System default" : a.audioDevice.c_str(), fieldW)) {
         // J-77: device / rate / buffer changes apply at once and ask Keep / Revert (they can cut the sound).
@@ -232,17 +238,73 @@ void settingsPageBody(App& a, int& page, float fieldW) {
         }
         ui::Hint("Channels opened on the output device: 3-4, 5-6 and 7-8 are extra pairs for Hardware Insert sends and Voltage Out");
       }
-      char lat[96];
-      std::snprintf(lat, sizeof lat, "%.1f ms", 1000.0 * a.audioBuffer / std::max(1, a.audioSampleRate));
+      // K-95: Windows WASAPI Exclusive low-latency mode (falls back to shared automatically).
+      if (wasapi::ExclusiveHost::backendAvailable()) {
+        formLabel("WASAPI mode");
+        bool excl = st.getBool("audio.wasapi.exclusive");
+        if (ImGui::Checkbox(i18n::tr("Exclusive mode (low latency)##wasapiexcl"), &excl)) {
+          st.set("audio.wasapi.exclusive", excl);
+          a.audioReopen = true;
+        }
+        ui::Hint("Takes direct control of the audio device for lower latency; falls back to shared audio automatically if busy or unsupported");
+      }
+      // K-95: Cross-platform Audio Backend Status & Latency Readout.
+      const auto& bs = a.audioBackendStatus;
+      formLabel("Active backend");
+      {
+        const ImVec2 p = ImGui::GetCursorScreenPos();
+        const float r = 4.0f;
+        const float h = ImGui::GetFrameHeight();
+        const float cy = p.y + h * 0.5f;
+        const ImU32 dotCol = bs.fellBack ? P.hot : (bs.sampleRate > 0 ? P.led : P.textFaint);
+        ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(p.x + r, cy), r, dotCol);
+        ImGui::Dummy(ImVec2(r * 2.0f + theme::kS2, h));
+        ImGui::SameLine(0, 0);
+        ImGui::AlignTextToFramePadding();
+        const std::string bk = bs.backendName.empty() ? std::string(i18n::tr("System audio")) : bs.backendName;
+        const std::string fmt = bs.sampleFormat.empty() ? std::string("32-bit float") : bs.sampleFormat;
+        ImGui::TextColored(theme::vec(P.text), "%s  \xC2\xB7  %s", bk.c_str(), fmt.c_str());
+      }
+      const int latFrames = bs.outputLatencyFrames > 0 ? bs.outputLatencyFrames : a.audioBuffer;
+      const double latMs = bs.outputLatencyMs > 0.0 ? bs.outputLatencyMs : (1000.0 * latFrames / std::max(1, a.audioSampleRate));
+      char lat[128];
+      std::snprintf(lat, sizeof lat, "%.1f ms  (%d %s)", latMs, latFrames, i18n::tr("samples"));
       formLabel("Output latency");
       ImGui::PushFont(livelook::numFont(a), theme::kFontNumber + 1);  // K-112c: sans in Live, as the refs' values
       ImGui::TextUnformatted(lat);
       ImGui::PopFont();
+      if (bs.roundTripLatencyMs > latMs + 0.05) {
+        ImGui::SameLine(0, theme::kS2);
+        ImGui::TextColored(theme::vec(P.textDim), i18n::tr("(round-trip %.1f ms)"), bs.roundTripLatencyMs);
+      }
+      if (bs.fellBack && !bs.fallbackReason.empty()) {
+        ImGui::Dummy(ImVec2(0, theme::kS1 * 0.5f));
+        const float availW = std::max(160.0f, ImGui::GetContentRegionAvail().x);
+        const float pad = theme::kS2;
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        const ImVec2 txtSz = ImGui::CalcTextSize(bs.fallbackReason.c_str(), nullptr, false, std::max(80.0f, availW - pad * 2.0f - 4.0f));
+        const float boxH = txtSz.y + pad * 2.0f;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(p0, ImVec2(p0.x + availW, p0.y + boxH), P.surface950, theme::kRadius);
+        dl->AddRectFilled(p0, ImVec2(p0.x + 3.0f, p0.y + boxH), P.hot, theme::kRadius);
+        dl->AddRect(p0, ImVec2(p0.x + availW, p0.y + boxH), P.line, theme::kRadius);
+        ImGui::SetCursorScreenPos(ImVec2(p0.x + pad + 3.0f, p0.y + pad));
+        ImGui::PushTextWrapPos(p0.x + availW - pad);
+        ImGui::TextColored(theme::vec(P.hot), "%s", bs.fallbackReason.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::SetCursorScreenPos(ImVec2(p0.x, p0.y + boxH + theme::kS1 * 0.5f));
+        ImGui::Dummy(ImVec2(0, 0));
+      }
     }
     ui::EndSection();
     if (asioMode) {
       ui::BeginSection("ASIO CHANNELS");
       asioui::channelRows(a, fieldW);
+      ui::EndSection();
+    }
+    if (jackMode) {
+      ui::BeginSection("JACK / PIPEWIRE PORTS");
+      jackui::portRows(a, fieldW);
       ui::EndSection();
     }
     ui::BeginSection("MIXER");
@@ -648,6 +710,13 @@ void settingsPageBody(App& a, int& page, float fieldW) {
       }
       ui::Hint("Mouse wheel over controls in scrolling panes (narrow mixer, channel rack with a long pattern or many channels). "
                "Scrolling: the wheel scrolls the pane; drag, click then wheel, or hold Ctrl and wheel, to change a control or step");
+    }
+    {  // K-410: native trackpad pinch-to-zoom, two-finger 2D pan, and smart-zoom (macOS + Windows)
+      bool trackpad = st.getBool("input.trackpadGestures");
+      formLabel("Trackpad");
+      if (ImGui::Checkbox(i18n::tr("Trackpad gestures"), &trackpad)) st.set("input.trackpadGestures", trackpad);
+      ui::Hint("Pinch to zoom around the pointer, two-finger scroll to pan in both axes, and two-finger double-tap to smart-zoom "
+               "in the playlist, piano roll, automation editor and Loupe (macOS and Windows)");
     }
     ui::EndSection();
     // J-99: smooth freehand drawing (app/DrawSmoothUi.h).
@@ -1284,18 +1353,177 @@ void settingsFormEnd() {
   ui::SectionMarksReset();
 }
 
-// Summary after importing an FL Studio project: what came across, what was
-// approximated, what has no Gridline equivalent yet.
+// Summary after importing an FL Studio project (or opening a project with missing/unscanned
+// hosted plugins): what came across, what is not scanned yet vs not installed, and a one-click
+// scan action that automatically resolves placeholders once found (Q-14).
 void importReportWindow(App& a) {
   if (!a.showImportReport) return;
-  centerNext(ImVec2(560, 520), ImVec2(440, 300));
-  bool vis = ImGui::Begin(ui::windowTitle("FL Studio import").c_str(), &a.showImportReport, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
+  const auto& r = a.importReport;
+  centerNext(ImVec2(590, r.missingPluginsOnly ? 440.0f : 540.0f), ImVec2(460, 300));
+  const std::string winTitle = r.missingPluginsOnly ? ui::windowTitle("Missing plugins") : ui::windowTitle("FL Studio import");
+  bool vis = ImGui::Begin(winTitle.c_str(), &a.showImportReport, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
   if (vis) {
     const auto& P = pal();
-    const auto& r = a.importReport;
-    dialogTitle(a, r.source.c_str(), "Opened as a Gridline project. Save asks where to keep it, and in which format.");
+    dialogTitle(a, r.source.c_str(),
+                r.missingPluginsOnly ? "Saved parameters and plugin state remain untouched in the project."
+                                     : "Opened as a Gridline project. Save asks where to keep it, and in which format.");
     ImGui::BeginChild("##rep", ImVec2(0, -ui::DialogFooterHeight()));
+
+    // Q-14: inspect live missing / unscanned hosted plugins in the open song.
+    struct MissingRow {
+      std::string name, fmt, location, type;
+      host::MissingStatus status = host::MissingStatus::NotInstalled;
+      bool standIn = false;
+    };
+    std::vector<MissingRow> missingHosted;
+    auto fmtLabelOf = [](const std::string& type) -> std::string {
+      std::string f, u;
+      host::splitType(type, f, u);
+      if (const host::Format* fi = host::findFormat(f)) return fi->label;
+      if (f == "vst3") return "VST3";
+      if (f == "clap") return "CLAP";
+      if (f == "vst2") return "VST2";
+      if (f == "au") return "AU";
+      if (f == "lv2") return "LV2";
+      return "Plugin";
+    };
+    auto collectOne = [&](const PluginState& st, const std::string& loc) {
+      if (isHostedType(st.type) && !findPlugin(st.type)) {
+        const host::ident::Identity sid = host::xformat::savedIdentity(st, loc);
+        MissingRow row;
+        row.name = !sid.name.empty() ? sid.name : st.type;
+        row.fmt = fmtLabelOf(st.type);
+        row.location = loc;
+        row.type = st.type;
+        row.status = host::missingStatus(st.type);
+        missingHosted.push_back(std::move(row));
+      } else if (standin::isStandIn(st)) {
+        const PluginState orig = standin::originalState(st);
+        if (isHostedType(orig.type) && !standin::installed(orig.type)) {
+          MissingRow row;
+          row.name = standin::pluginNameOf(orig.type);
+          if (row.name.empty()) row.name = orig.type;
+          row.fmt = fmtLabelOf(orig.type);
+          row.location = loc;
+          row.type = orig.type;
+          row.status = host::missingStatus(orig.type);
+          row.standIn = true;
+          missingHosted.push_back(std::move(row));
+        }
+      }
+    };
+    const Song& s = a.doc.song();
+    for (const auto& ch : s.channels) collectOne(ch.plugin, ch.name);
+    for (size_t mi = 0; mi < s.mixer.size(); ++mi) {
+      const std::string tname = mixerTrackName(s, mi);
+      for (int k = 0; k < kEffectSlots; ++k) {
+        const auto& sl = s.mixer[mi].slots[static_cast<size_t>(k)];
+        if (!sl.plugin.empty()) collectOne(sl.plugin, tname + " \xC2\xB7 slot " + std::to_string(k + 1));
+      }
+    }
+
+    if (!missingHosted.empty() || r.missingPluginsOnly) {
+      int nUnscanned = 0, nScanning = 0, nNotInstalled = 0, nDisabled = 0;
+      for (const auto& m : missingHosted) {
+        if (m.status == host::MissingStatus::NotScannedYet) ++nUnscanned;
+        else if (m.status == host::MissingStatus::Scanning) ++nScanning;
+        else if (m.status == host::MissingStatus::FormatDisabled) ++nDisabled;
+        else ++nNotInstalled;
+      }
+      ui::BeginSection(nUnscanned > 0 ? "PLUGINS NOT SCANNED YET" : "MISSING HOSTED PLUGINS");
+      const float availW = ImGui::GetContentRegionAvail().x;
+      if (missingHosted.empty()) {
+        ImGui::TextColored(theme::vec(P.accent), "%s", i18n::tr("All hosted plugins in this project are now installed and loaded."));
+      } else {
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::max(160.0f, availW - 4.0f));
+        if (nScanning > 0 || host::scanRunning()) {
+          const host::ScanStatus ss = host::scanStatus();
+          const ImVec2 sp = ImGui::GetCursorScreenPos();
+          const float lh = ImGui::GetTextLineHeight();
+          ui::Spinner(ImGui::GetWindowDrawList(), ImVec2(sp.x + lh * 0.5f, sp.y + lh * 0.5f), lh * 0.36f, P.hot);
+          ImGui::Dummy(ImVec2(lh + theme::kS1, lh));
+          ImGui::SameLine(0, 0);
+          if (ss.total > 0) ImGui::TextColored(theme::vec(P.text), i18n::tr("Scanning for plugins (%d / %d)..."), ss.done, ss.total);
+          else ImGui::TextColored(theme::vec(P.text), "%s", i18n::tr("Scanning plugin folders..."));
+        } else if (nUnscanned > 0 && nNotInstalled > 0) {
+          ImGui::TextColored(theme::vec(P.text), i18n::tr("%d plugin(s) not scanned yet, %d not installed. Scan now to load any that are installed."),
+                             nUnscanned, nNotInstalled);
+        } else if (nUnscanned > 0) {
+          ImGui::TextColored(theme::vec(P.text), "%s",
+                             i18n::tr("Plugins have not been scanned yet. Scan now to check whether these plugins are installed on this computer."));
+        } else if (nDisabled > 0 && nNotInstalled == 0) {
+          ImGui::TextColored(theme::vec(P.textDim), "%s",
+                             i18n::tr("These plugin formats are disabled in Plugin Manager. Enable them and scan to load; saved state remains untouched."));
+        } else {
+          ImGui::TextColored(theme::vec(P.textDim), "%s",
+                             i18n::tr("These plugins were not found in the last scan. Their saved state remains untouched in the project."));
+        }
+        ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0, theme::kS1));
+
+        for (size_t i = 0; i < missingHosted.size(); ++i) {
+          const auto& m = missingHosted[i];
+          const char* badge = i18n::tr("Not installed");
+          ImU32 role = P.danger;
+          if (m.status == host::MissingStatus::NotScannedYet) {
+            badge = i18n::tr("Not scanned yet");
+            role = P.accent;
+          } else if (m.status == host::MissingStatus::Scanning) {
+            badge = i18n::tr("Scanning...");
+            role = P.hot;
+          } else if (m.status == host::MissingStatus::FormatDisabled) {
+            badge = i18n::tr("Format disabled");
+            role = P.hot;
+          } else if (m.status == host::MissingStatus::Unsupported) {
+            badge = i18n::tr("Unsupported");
+            role = P.danger;
+          }
+          ImGui::PushFont(a.fontBold, theme::kFontLabel);
+          const ImVec2 bts = ImGui::CalcTextSize(badge);
+          ImGui::PopFont();
+          const float pillW = bts.x + 16.0f;
+          const float rowH = std::max(22.0f, bts.y + 8.0f);
+          const ImVec2 p0 = ImGui::GetCursorScreenPos();
+          const float rw = ImGui::GetContentRegionAvail().x;
+          ImDrawList* dl = ImGui::GetWindowDrawList();
+          const std::string left = m.name + " (" + m.fmt + ")" + (m.standIn ? "  \xC2\xB7  stand-in active" : "") +
+                                   (m.location.empty() || m.location == m.name ? "" : "  \xC2\xB7  " + m.location);
+          const float maxLeft = std::max(80.0f, rw - pillW - 14.0f);
+          theme::textEllipsis(dl, a.fontRegular, theme::kFontBody, ImVec2(p0.x, p0.y + std::floor((rowH - theme::kFontBody) * 0.5f)), maxLeft,
+                              P.text, left.c_str());
+          const ImVec2 bp0(p0.x + rw - pillW, p0.y + 1.0f);
+          const ImVec2 bp1(p0.x + rw, p0.y + rowH - 1.0f);
+          dl->AddRectFilled(bp0, bp1, theme::withAlpha(role, P.dark ? 0.20f : 0.14f), 4.0f);
+          dl->AddRect(bp0, bp1, theme::withAlpha(role, P.dark ? 0.55f : 0.45f), 4.0f, 0, 1.0f);
+          const ImU32 fg = theme::mix(role, P.text, P.dark ? 0.22f : 0.30f);
+          dl->AddText(a.fontBold, theme::kFontLabel, ImVec2(bp0.x + 8.0f, bp0.y + std::floor(((bp1.y - bp0.y) - bts.y) * 0.5f)), fg, badge);
+          ImGui::Dummy(ImVec2(rw, rowH));
+        }
+
+        ImGui::Dummy(ImVec2(0, theme::kS1));
+        const bool scanningNow = host::scanRunning();
+        if (scanningNow) {
+          ImGui::BeginDisabled();  // (a status in the scan button's place, not a lit button)
+          ui::TextButton("Scanning...", false, 124, "Plugin scan is running in the background");
+          ImGui::EndDisabled();
+        } else if (nUnscanned > 0) {
+          if (ui::PrimaryButton("Scan for plugins", 156, "Scan your plugin folders in the background and load found plugins automatically")) {
+            a.scanByUser = true;
+            host::startScan(host::selfExecutablePath());
+          }
+        } else {
+          if (ui::TextButton("Rescan plugins", false, 140, "Scan your plugin folders for newly installed plugins")) {
+            a.scanByUser = true;
+            host::startScan(host::selfExecutablePath());
+          }
+        }
+        ImGui::SameLine(0, theme::kS2);
+        if (ui::TextButton("Plugin manager...", false, 144, "Configure plugin formats and search folders")) a.showPluginManager = true;
+      }
+      ui::EndSection();
+    }
+
     // J-54: one number column for both lists, as wide as the longest label
     // allows (labels beyond ~62% of the width are fitted, full text on hover).
     std::vector<const char*> labels;
@@ -1305,14 +1533,16 @@ void importReportWindow(App& a) {
     const float sectionPad = 2 * theme::kS2;
     const float numX = ui::FormColumn(labels.data(), static_cast<int>(labels.size()), 168.0f,
                                       std::max(168.0f, (ImGui::GetContentRegionAvail().x - 2 * sectionPad) * 0.62f), theme::kS6);
-    ui::BeginSection("IMPORTED");
-    for (const auto& [k, v] : r.counts) {
-      formLabel(k.c_str(), numX);
-      ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
-      ImGui::Text("%d", v);
-      ImGui::PopFont();
+    if (!r.counts.empty()) {
+      ui::BeginSection("IMPORTED");
+      for (const auto& [k, v] : r.counts) {
+        formLabel(k.c_str(), numX);
+        ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
+        ImGui::Text("%d", v);
+        ImGui::PopFont();
+      }
+      ui::EndSection();
     }
-    ui::EndSection();
     if (!r.mapped.empty()) {  // J-94: which Gridline plugin each FL plugin became
       ui::BeginSection("PLUGINS");
       for (const auto& [k, v] : r.mapped) {
@@ -1328,7 +1558,8 @@ void importReportWindow(App& a) {
       for (const auto& [k, v] : r.unmapped) {
         formLabel(k.c_str(), numX);
         ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
-        ImGui::TextColored(theme::vec(P.danger), "\xC3\x97%d", v);
+        const bool isUnscanned = k.find("not scanned yet") != std::string::npos;
+        ImGui::TextColored(theme::vec(isUnscanned ? P.accent : P.danger), "\xC3\x97%d", v);
         ImGui::PopFont();
       }
       ui::EndSection();
@@ -1350,12 +1581,17 @@ void importReportWindow(App& a) {
       ui::EndSection();
     }
     ImGui::EndChild();
-    ui::DialogFooter(ui::ButtonRowWidth(2, 96));
-    if (ui::TextButton("Close", false, 96)) a.showImportReport = false;
-    ImGui::SameLine(0, theme::kS2);
-    if (ui::PrimaryButton("Save as...", 96)) {
-      a.saveAs();
-      a.showImportReport = false;
+    if (r.missingPluginsOnly) {
+      ui::DialogFooter(96);
+      if (ui::TextButton("Close", false, 96)) a.showImportReport = false;
+    } else {
+      ui::DialogFooter(ui::ButtonRowWidth(2, 96));
+      if (ui::TextButton("Close", false, 96)) a.showImportReport = false;
+      ImGui::SameLine(0, theme::kS2);
+      if (ui::PrimaryButton("Save as...", 96)) {
+        a.saveAs();
+        a.showImportReport = false;
+      }
     }
   }
   ImGui::End();
@@ -1709,7 +1945,9 @@ void handleGlobalShortcuts(App& a) {
       if (logicplug::active(a)) newtracks::open();  // R01-17: the Tracks layout asks for the first tracks, as the reference does
     });
   if (pressed("file.render")) a.showExport = true;
-  if (pressed("file.importUrl")) urlimportui::open(a);  // J-192
+  if (pressed("file.importUrl")) {  // J-192 / K-408: target the focused audio-loading plugin when one has focus
+    if (!urlimportui::openForFocusedPlugin(a)) urlimportui::open(a);
+  }
   if (pressed("transport.tapTempo")) a.tapTempo();  // K-48
   for (const bool audio : {true, false})  // K-112c: a new track of the Clips set, selected
     if (pressed(audio ? "track.newAudio" : "track.newMidi"))
@@ -1921,6 +2159,8 @@ void handleGlobalShortcuts(App& a) {
   int pi = a.doc.song().patternIndex(a.curPattern);
   if (pressed("pattern.next") && pi + 1 < static_cast<int>(pats.size())) a.selectPattern(pats[static_cast<size_t>(pi + 1)].id);
   if (pressed("pattern.previous") && pi > 0) a.selectPattern(pats[static_cast<size_t>(pi - 1)].id);
+  if (pressed("arrangement.next")) stepArrangement(a, 1);
+  if (pressed("arrangement.previous")) stepArrangement(a, -1);
 }
 
 }  // namespace gl

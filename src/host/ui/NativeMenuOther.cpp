@@ -12,6 +12,7 @@ void install(const std::vector<Item>&, const std::vector<Item>&) {}
 void setSystemKeys(const std::vector<std::string>&) {}
 void uninstall() {}
 bool installed() { return false; }
+bool shown() { return false; }
 void poll() {}
 std::string takeChosen() { return {}; }
 bool busStarted() { return false; }

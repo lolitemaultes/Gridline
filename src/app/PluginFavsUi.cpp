@@ -1,5 +1,6 @@
 // Gridline: K-16: favourite plugins in the pickers. See PluginFavsUi.h.
 #include "PluginFavsUi.h"
+#include "PluginIcons.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -47,7 +48,10 @@ bool pickerRow(const PluginInfo& p, bool current, const char* detail) {
   const float detailFs = theme::kFontLabel;
   const float detW = hasDetail ? a.fontMono->CalcTextSizeA(detailFs, 1e9f, 0, detail).x : 0.0f;
   const float nameW = ImGui::CalcTextSize(p.name.c_str()).x;
-  const float minW = nameW + (hasDetail ? detW + theme::kS4 : 0.0f) + starW + theme::kS2;
+  // K-450: the plugin's icon in front of its name (a column kept for every row, so names line up).
+  const float iconSz = std::min(14.0f, std::floor(lineH));
+  const float iconW = iconSz + theme::kS2;
+  const float minW = iconW + nameW + (hasDetail ? detW + theme::kS4 : 0.0f) + starW + theme::kS2;
   ImGui::PushItemFlag(ImGuiItemFlags_AutoClosePopups, false);
   const bool clicked = ImGui::Selectable("##pick", current, ImGuiSelectableFlags_SpanAvailWidth, ImVec2(minW, 0));
   ImGui::PopItemFlag();
@@ -57,10 +61,12 @@ bool pickerRow(const PluginInfo& p, bool current, const char* detail) {
   const bool starHov = hov && ImGui::GetIO().MousePos.x >= r1.x - starW;
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float ty = std::round((r0.y + r1.y - lineH) * 0.5f);
-  dl->AddText(ImVec2(r0.x, ty), current ? P.hot : P.text, p.name.c_str());
+  if (!ui::drawPluginIcon(dl, p.type, ImVec2(r0.x + iconSz * 0.5f, std::round((r0.y + r1.y) * 0.5f)), iconSz, ui::PluginIconSurface::Menu))
+    ui::notePluginIconFallback(p.type, ui::PluginIconSurface::Menu);
+  dl->AddText(ImVec2(r0.x + iconW, ty), current ? P.hot : P.text, p.name.c_str());
   if (hasDetail) {
     const float dx = std::round(r1.x - starW - detW - theme::kS1);
-    if (dx > r0.x + nameW + theme::kS2)
+    if (dx > r0.x + iconW + nameW + theme::kS2)
       dl->AddText(a.fontMono, detailFs, ImVec2(dx, std::round((r0.y + r1.y - detailFs) * 0.5f)), P.textFaint, detail);
   }
   drawRowStar(dl, ImVec2(std::round(r1.x - starW * 0.5f), std::round((r0.y + r1.y) * 0.5f)), fav, hov, starHov);

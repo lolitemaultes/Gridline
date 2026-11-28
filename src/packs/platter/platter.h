@@ -603,14 +603,47 @@ enum CmdKind : uint8_t {
   CmdSeek,         // v = frame
   CmdLoop,         // v = in, w = out (in < 0: loop off)
   CmdAbsolute,     // control a, v = 0..1
+  CmdNudge,        // v = turns of the platter's rim (forward > 0): bends the speed for a moment, as the jog wheel's side
 };
 struct Cmd {
   uint8_t kind = CmdButton;
   uint8_t a = 0;
   uint8_t deck = 0;
   double v = 0, w = 0;
+  int64_t ns = 0;  // when the input was read (hub::nowNs; 0: when the command is sent)
 };
 bool command(Generator* g, const Cmd& c);
+
+// The mouse's hold on the editor's platter: the pointer's angle round the centre (in whole
+// pixels, as the UI reads it), summed from move to move into the turns the hand has given the
+// record. Rounding to pixels makes that angle step back now and then while the hand goes on
+// (most at a pixel or so a frame); a step back smaller than `backlash` pixels of the circle the
+// pointer is on is held until the hand really turns, so the record never twitches backwards.
+struct PlatterGrip {
+  static constexpr double kPi = 3.14159265358979323846;
+  static constexpr double kBacklash = 0.75;  // pixels
+  double last = 0, turns = 0, sent = 0;
+  int dir = 0;
+  void down(double x, double y) { last = std::atan2(y, x), turns = sent = 0, dir = 0; }
+  // (x, y) relative to the centre; returns the turns to send.
+  double move(double x, double y) {
+    const double an = std::atan2(y, x);
+    double dd = an - last;
+    if (dd > kPi) dd -= 2 * kPi;
+    if (dd < -kPi) dd += 2 * kPi;
+    last = an;
+    const double r2 = x * x + y * y;
+    if (r2 <= 16) return sent;  // (no wild turns through the centre)
+    turns += dd / (2 * kPi);
+    const double hold = kBacklash / (2 * kPi * std::sqrt(r2));  // (turns)
+    const double d = turns - sent;
+    if (dir == 0 ? d != 0 : (d * dir > 0 || std::fabs(d) > hold)) {
+      if (d != 0) dir = d > 0 ? 1 : -1;
+      sent = turns;
+    }
+    return sent;
+  }
+};
 
 // Recorded material handed from the setup to the editor (UI thread drains it).
 // J-159: a performance capture adds Move events for every parameter (the normalized

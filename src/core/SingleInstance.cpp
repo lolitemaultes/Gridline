@@ -1,5 +1,6 @@
 // Gridline — one Gridline per user on Linux, the BSDs and Windows (K-121). See SingleInstance.h.
 #include "SingleInstance.h"
+#include "ThreadJoin.h"
 #include "ThreadName.h"
 #include <algorithm>
 #include <cctype>
@@ -500,7 +501,7 @@ void Server::stop() {
     const char b = 1;
     (void)!::write(impl_->wakeW, &b, 1);
   }
-  if (thread_.joinable()) thread_.join();
+  gl::threads::safeJoin(thread_);
   if (impl_->listenFd >= 0) {
     struct stat st{};
     if (::lstat(endpoint_.c_str(), &st) == 0 && st.st_ino == impl_->inode && st.st_dev == impl_->device) ::unlink(endpoint_.c_str());
@@ -685,7 +686,7 @@ void Server::serve() {
 
 void Server::stop() {
   if (impl_->stopEvent) SetEvent(impl_->stopEvent);
-  if (thread_.joinable()) thread_.join();
+  gl::threads::safeJoin(thread_);
   if (impl_->pipe != INVALID_HANDLE_VALUE) CloseHandle(impl_->pipe);
   if (impl_->stopEvent) CloseHandle(impl_->stopEvent);
   if (impl_->ioEvent) CloseHandle(impl_->ioEvent);

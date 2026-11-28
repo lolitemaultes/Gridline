@@ -138,6 +138,17 @@ int trackReceiptMain(const std::string& project, int argc, char** argv) {
   }
   for (const auto& f : r.files)
     std::printf("file: %s | %s | used %s s\n", f.name.c_str(), f.ticked ? "ticked" : "not ticked", gl::receipt::secondsText(f.usedSeconds).c_str());
+  for (size_t k = 0; k < r.areas.size(); ++k) {  // each marker area as if it were a song of its own
+    const auto& ar = r.areas[k];
+    std::printf("area: %s | %s | %s-%s\n", gl::receipt::areaName(ar.area, k).c_str(), gl::receipt::areaBars(ar.area).c_str(),
+                gl::receipt::timeText(ar.area.a).c_str(), gl::receipt::timeText(ar.area.b).c_str());
+    for (const auto& as : ar.songs) {
+      std::printf("  song: %s | %s | %s s | %s | sounds for %s s%s\n", as.artist.c_str(), as.title.c_str(), gl::receipt::secondsText(as.seconds).c_str(),
+                  as.over ? "over 60 s" : ("up to " + std::to_string(as.tier) + " s").c_str(), gl::receipt::secondsText(as.playSeconds).c_str(),
+                  as.rough ? " | may play in other areas too" : "");
+      for (const auto& f : as.files) std::printf("    file: %s | %s s\n", f.name.c_str(), gl::receipt::secondsText(f.seconds).c_str());
+    }
+  }
   for (const auto& w : r.warnings) std::printf("warning: %s\n", w.c_str());
   for (const auto& w : m.warnings) std::printf("warning: %s\n", w.c_str());
   std::printf("wrote %s\nwrote %s\n", xmlPath.c_str(), pdfPath.c_str());

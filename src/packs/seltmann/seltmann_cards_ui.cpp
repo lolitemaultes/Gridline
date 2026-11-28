@@ -397,7 +397,7 @@ void loopsCard(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1) {
     ImGui::SetCursorScreenPos(r0);
     ImGui::InvisibleButton("##lrow", ImVec2(colW - 34, rowH - 4));
     const bool hv = ImGui::IsItemHovered();
-    if (hv && !ImGui::IsItemActive()) ui::Tooltip(i18n::tr("Drag into the playlist (audio clip), the channel rack (sampler) or the browser"));
+    if (hv && !ImGui::IsItemActive()) ui::Tooltip(i18n::tr("Drag into the playlist (audio clip), the channel rack (sampler) or the browser. Right-click to add it without dragging"));
     if (hv) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
     dragOut(a, t, e, r.item, r.label);
     cl->AddRectFilled(r0, r1, hv ? P.surface700 : P.surface900, theme::kRadius);

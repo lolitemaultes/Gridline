@@ -1,0 +1,531 @@
+# K-456: every row the playlist clip menus had before the clean-up (<layout>|<menu>|<row>, taken from
+# the menus' trees: --menu patclip / arrclip, and the automation clip's rows), checked by k456_clip_menu_app.
+# (Clips: the automation clip's mute row is "Deactivate", as in its other clip menus.)
+live|arrclip|Amplify...
+live|arrclip|Audio tools
+live|arrclip|Automatic threshold
+live|arrclip|Blur...
+live|arrclip|Clean up...
+live|arrclip|Close the gaps
+live|arrclip|Colour
+live|arrclip|Consolidate
+live|arrclip|Copy
+live|arrclip|Cut
+live|arrclip|Deactivate
+live|arrclip|Declick...
+live|arrclip|Declip...
+live|arrclip|Delete
+live|arrclip|Deverb...
+live|arrclip|Drum loop stretch...
+live|arrclip|Duplicate
+live|arrclip|Equalize...
+live|arrclip|Fade in...
+live|arrclip|Fade out...
+live|arrclip|Keep breaths
+live|arrclip|Noise gate...
+live|arrclip|Normalize...
+live|arrclip|Paste
+live|arrclip|Remove silence
+live|arrclip|Rename
+live|arrclip|Render clip to audio
+live|arrclip|Render clip to file...
+live|arrclip|Reverb...
+live|arrclip|Reverse
+live|arrclip|Send to Loupe
+live|arrclip|Silence settings
+live|arrclip|Split
+live|arrclip|Split stems...
+live|arrclip|Trim silence at the ends
+logic|arrclip|100%
+logic|arrclip|12 parts
+logic|arrclip|16 parts
+logic|arrclip|2 beats
+logic|arrclip|2 parts
+logic|arrclip|25%
+logic|arrclip|3 parts
+logic|arrclip|4 parts
+logic|arrclip|50%
+logic|arrclip|6 parts
+logic|arrclip|75%
+logic|arrclip|8 parts
+logic|arrclip|Add at transients
+logic|arrclip|Amplify...
+logic|arrclip|At the file's slices
+logic|arrclip|Audio
+logic|arrclip|Audio tools
+logic|arrclip|Automatic threshold
+logic|arrclip|Bar
+logic|arrclip|Beat
+logic|arrclip|Beat repeat...
+logic|arrclip|Blur...
+logic|arrclip|Bounce this track to audio
+logic|arrclip|Channel settings
+logic|arrclip|Chop
+logic|arrclip|Chop and stutter...
+logic|arrclip|Clean up...
+logic|arrclip|Clear warp markers
+logic|arrclip|Close the gaps
+logic|arrclip|Declick...
+logic|arrclip|Declip...
+logic|arrclip|Deverb...
+logic|arrclip|Drum loop stretch...
+logic|arrclip|Edit clip...
+logic|arrclip|Eighth beat
+logic|arrclip|Equalize...
+logic|arrclip|Fade in...
+logic|arrclip|Fade out...
+logic|arrclip|Fit to tempo
+logic|arrclip|Follow the project tempo
+logic|arrclip|Gentle
+logic|arrclip|Half as long
+logic|arrclip|Half beat
+logic|arrclip|Half-time...
+logic|arrclip|Into equal parts
+logic|arrclip|Keep breaths
+logic|arrclip|Loop
+logic|arrclip|Make unique as sample
+logic|arrclip|Medium
+logic|arrclip|Mute region
+logic|arrclip|New markers snap to transients
+logic|arrclip|Noise gate...
+logic|arrclip|Normalize
+logic|arrclip|Normalize...
+logic|arrclip|Original length
+logic|arrclip|Pitch a semitone down
+logic|arrclip|Pitch a semitone up
+logic|arrclip|Quantize strength
+logic|arrclip|Quantize to the grid (100%)
+logic|arrclip|Quarter beat
+logic|arrclip|Remove silence
+logic|arrclip|Rename...
+logic|arrclip|Render clip to audio
+logic|arrclip|Render clip to file...
+logic|arrclip|Resample
+logic|arrclip|Reverb...
+logic|arrclip|Reverse
+logic|arrclip|Reverse build...
+logic|arrclip|Rubber Band
+logic|arrclip|Send to Loupe
+logic|arrclip|Sharp
+logic|arrclip|Silence
+logic|arrclip|Silence settings
+logic|arrclip|Snap grid
+logic|arrclip|Split stems...
+logic|arrclip|Stretch
+logic|arrclip|Swing to the song's groove (100%)
+logic|arrclip|Take its groove as the song's swing
+logic|arrclip|Tape stop...
+logic|arrclip|Time stretch
+logic|arrclip|Trim silence at the ends
+logic|arrclip|Triplet stutter...
+logic|arrclip|Twice as long
+logic|arrclip|Warp markers
+studio|arrclip|100%
+studio|arrclip|12 parts
+studio|arrclip|16 parts
+studio|arrclip|2 beats
+studio|arrclip|2 parts
+studio|arrclip|25%
+studio|arrclip|3 parts
+studio|arrclip|4 parts
+studio|arrclip|50%
+studio|arrclip|6 parts
+studio|arrclip|75%
+studio|arrclip|8 parts
+studio|arrclip|Add at transients
+studio|arrclip|Amplify...
+studio|arrclip|At the file's slices
+studio|arrclip|Audio
+studio|arrclip|Audio tools
+studio|arrclip|Automatic threshold
+studio|arrclip|Bar
+studio|arrclip|Beat
+studio|arrclip|Beat repeat...
+studio|arrclip|Blur...
+studio|arrclip|Bounce this track to audio
+studio|arrclip|Channel settings
+studio|arrclip|Chop
+studio|arrclip|Chop and stutter...
+studio|arrclip|Clean up...
+studio|arrclip|Clear warp markers
+studio|arrclip|Close the gaps
+studio|arrclip|Declick...
+studio|arrclip|Declip...
+studio|arrclip|Deverb...
+studio|arrclip|Drum loop stretch...
+studio|arrclip|Edit clip...
+studio|arrclip|Eighth beat
+studio|arrclip|Equalize...
+studio|arrclip|Fade in...
+studio|arrclip|Fade out...
+studio|arrclip|Fit to tempo
+studio|arrclip|Follow the project tempo
+studio|arrclip|Gentle
+studio|arrclip|Half as long
+studio|arrclip|Half beat
+studio|arrclip|Half-time...
+studio|arrclip|Into equal parts
+studio|arrclip|Keep breaths
+studio|arrclip|Loop
+studio|arrclip|Make unique as sample
+studio|arrclip|Medium
+studio|arrclip|Mute clip
+studio|arrclip|New markers snap to transients
+studio|arrclip|Noise gate...
+studio|arrclip|Normalize
+studio|arrclip|Normalize...
+studio|arrclip|Original length
+studio|arrclip|Pitch a semitone down
+studio|arrclip|Pitch a semitone up
+studio|arrclip|Quantize strength
+studio|arrclip|Quantize to the grid (100%)
+studio|arrclip|Quarter beat
+studio|arrclip|Remove silence
+studio|arrclip|Rename...
+studio|arrclip|Render clip to audio
+studio|arrclip|Render clip to file...
+studio|arrclip|Resample
+studio|arrclip|Reverb...
+studio|arrclip|Reverse
+studio|arrclip|Reverse build...
+studio|arrclip|Rubber Band
+studio|arrclip|Send to Loupe
+studio|arrclip|Sharp
+studio|arrclip|Silence
+studio|arrclip|Silence settings
+studio|arrclip|Snap grid
+studio|arrclip|Split stems...
+studio|arrclip|Stretch
+studio|arrclip|Swing to the song's groove (100%)
+studio|arrclip|Take its groove as the song's swing
+studio|arrclip|Tape stop...
+studio|arrclip|Time stretch
+studio|arrclip|Trim silence at the ends
+studio|arrclip|Triplet stutter...
+studio|arrclip|Twice as long
+studio|arrclip|Warp markers
+tracker|arrclip|100%
+tracker|arrclip|12 parts
+tracker|arrclip|16 parts
+tracker|arrclip|2 beats
+tracker|arrclip|2 parts
+tracker|arrclip|25%
+tracker|arrclip|3 parts
+tracker|arrclip|4 parts
+tracker|arrclip|50%
+tracker|arrclip|6 parts
+tracker|arrclip|75%
+tracker|arrclip|8 parts
+tracker|arrclip|Add at transients
+tracker|arrclip|Amplify...
+tracker|arrclip|At the file's slices
+tracker|arrclip|Audio
+tracker|arrclip|Audio tools
+tracker|arrclip|Automatic threshold
+tracker|arrclip|Bar
+tracker|arrclip|Beat
+tracker|arrclip|Beat repeat...
+tracker|arrclip|Blur...
+tracker|arrclip|Bounce this track to audio
+tracker|arrclip|Channel settings
+tracker|arrclip|Chop
+tracker|arrclip|Chop and stutter...
+tracker|arrclip|Clean up...
+tracker|arrclip|Clear warp markers
+tracker|arrclip|Close the gaps
+tracker|arrclip|Declick...
+tracker|arrclip|Declip...
+tracker|arrclip|Deverb...
+tracker|arrclip|Drum loop stretch...
+tracker|arrclip|Edit clip...
+tracker|arrclip|Eighth beat
+tracker|arrclip|Equalize...
+tracker|arrclip|Fade in...
+tracker|arrclip|Fade out...
+tracker|arrclip|Fit to tempo
+tracker|arrclip|Follow the project tempo
+tracker|arrclip|Gentle
+tracker|arrclip|Half as long
+tracker|arrclip|Half beat
+tracker|arrclip|Half-time...
+tracker|arrclip|Into equal parts
+tracker|arrclip|Keep breaths
+tracker|arrclip|Loop
+tracker|arrclip|Make unique as sample
+tracker|arrclip|Medium
+tracker|arrclip|Mute clip
+tracker|arrclip|New markers snap to transients
+tracker|arrclip|Noise gate...
+tracker|arrclip|Normalize
+tracker|arrclip|Normalize...
+tracker|arrclip|Original length
+tracker|arrclip|Pitch a semitone down
+tracker|arrclip|Pitch a semitone up
+tracker|arrclip|Quantize strength
+tracker|arrclip|Quantize to the grid (100%)
+tracker|arrclip|Quarter beat
+tracker|arrclip|Remove silence
+tracker|arrclip|Rename...
+tracker|arrclip|Render clip to audio
+tracker|arrclip|Render clip to file...
+tracker|arrclip|Resample
+tracker|arrclip|Reverb...
+tracker|arrclip|Reverse
+tracker|arrclip|Reverse build...
+tracker|arrclip|Rubber Band
+tracker|arrclip|Send to Loupe
+tracker|arrclip|Sharp
+tracker|arrclip|Silence
+tracker|arrclip|Silence settings
+tracker|arrclip|Snap grid
+tracker|arrclip|Split stems...
+tracker|arrclip|Stretch
+tracker|arrclip|Swing to the song's groove (100%)
+tracker|arrclip|Take its groove as the song's swing
+tracker|arrclip|Tape stop...
+tracker|arrclip|Time stretch
+tracker|arrclip|Trim silence at the ends
+tracker|arrclip|Triplet stutter...
+tracker|arrclip|Twice as long
+tracker|arrclip|Warp markers
+live|patclip|As a one-shot sampler channel
+live|patclip|As an audio clip
+live|patclip|Colour
+live|patclip|Consolidate
+live|patclip|Copy
+live|patclip|Crop clip
+live|patclip|Cut
+live|patclip|Deactivate
+live|patclip|Delete
+live|patclip|Duplicate
+live|patclip|Into a slicer channel
+live|patclip|Onto the next free drum pad
+live|patclip|Open in Loupe
+live|patclip|Paste
+live|patclip|Rename
+live|patclip|Render clip to audio
+live|patclip|Render clip to file...
+live|patclip|Render options...
+live|patclip|Render to audio
+live|patclip|Save to the library
+live|patclip|Split
+logic|patclip|1/16
+logic|patclip|1/16 T
+logic|patclip|1/32
+logic|patclip|1/4
+logic|patclip|1/8
+logic|patclip|1/8 T
+logic|patclip|12 parts
+logic|patclip|16 parts
+logic|patclip|2 beats
+logic|patclip|2 parts
+logic|patclip|3 parts
+logic|patclip|4 parts
+logic|patclip|6 parts
+logic|patclip|8 parts
+logic|patclip|As a one-shot sampler channel
+logic|patclip|As an audio region
+logic|patclip|At the note starts
+logic|patclip|Automation in this region
+logic|patclip|Bar
+logic|patclip|Beat
+logic|patclip|Beat repeat...
+logic|patclip|Chop
+logic|patclip|Chop and stutter...
+logic|patclip|Delete
+logic|patclip|Duplicate
+logic|patclip|Edit
+logic|patclip|Edit region
+logic|patclip|Eighth beat
+logic|patclip|Fit length to pattern
+logic|patclip|Half beat
+logic|patclip|Half-time...
+logic|patclip|Into a slicer channel
+logic|patclip|Into equal parts
+logic|patclip|Join
+logic|patclip|Loop
+logic|patclip|Make unique
+logic|patclip|Merge selected clips
+logic|patclip|Mute region
+logic|patclip|Name and colour
+logic|patclip|Off
+logic|patclip|Onto the next free drum pad
+logic|patclip|Open in Loupe
+logic|patclip|Pattern colour
+logic|patclip|Playback
+logic|patclip|Quantize
+logic|patclip|Quarter beat
+logic|patclip|Rename pattern...
+logic|patclip|Render
+logic|patclip|Render clip to audio
+logic|patclip|Render clip to file...
+logic|patclip|Render options...
+logic|patclip|Render to audio
+logic|patclip|Reset
+logic|patclip|Reset loop start
+logic|patclip|Reverse build...
+logic|patclip|Save to the library
+logic|patclip|Select
+logic|patclip|Select all clips of this pattern
+logic|patclip|Slice at the song position
+logic|patclip|Snap grid
+logic|patclip|Split
+logic|patclip|Split at pattern repeats
+logic|patclip|Split by channel
+logic|patclip|Tape stop...
+logic|patclip|Trim
+logic|patclip|Triplet stutter...
+studio|patclip|1/16
+studio|patclip|1/16 T
+studio|patclip|1/32
+studio|patclip|1/4
+studio|patclip|1/8
+studio|patclip|1/8 T
+studio|patclip|12 parts
+studio|patclip|16 parts
+studio|patclip|2 beats
+studio|patclip|2 parts
+studio|patclip|3 parts
+studio|patclip|4 parts
+studio|patclip|6 parts
+studio|patclip|8 parts
+studio|patclip|As a one-shot sampler channel
+studio|patclip|As an audio clip
+studio|patclip|At the note starts
+studio|patclip|Automation in this pattern
+studio|patclip|Bar
+studio|patclip|Beat
+studio|patclip|Beat repeat...
+studio|patclip|Chop
+studio|patclip|Chop and stutter...
+studio|patclip|Delete
+studio|patclip|Duplicate
+studio|patclip|Edit pattern
+studio|patclip|Eighth beat
+studio|patclip|Fit length to pattern
+studio|patclip|Half beat
+studio|patclip|Half-time...
+studio|patclip|Into a slicer channel
+studio|patclip|Into equal parts
+studio|patclip|Loop
+studio|patclip|Make unique
+studio|patclip|Merge selected clips
+studio|patclip|Mute clip
+studio|patclip|Off
+studio|patclip|Onto the next free drum pad
+studio|patclip|Open in Loupe
+studio|patclip|Pattern colour
+studio|patclip|Playback
+studio|patclip|Quantize
+studio|patclip|Quarter beat
+studio|patclip|Rename pattern...
+studio|patclip|Render clip to audio
+studio|patclip|Render clip to file...
+studio|patclip|Render options...
+studio|patclip|Render to audio
+studio|patclip|Reset
+studio|patclip|Reset loop start
+studio|patclip|Reverse build...
+studio|patclip|Save to the library
+studio|patclip|Select all clips of this pattern
+studio|patclip|Slice at the song position
+studio|patclip|Snap grid
+studio|patclip|Split at pattern repeats
+studio|patclip|Split by channel
+studio|patclip|Tape stop...
+studio|patclip|Triplet stutter...
+tracker|patclip|1/16
+tracker|patclip|1/16 T
+tracker|patclip|1/32
+tracker|patclip|1/4
+tracker|patclip|1/8
+tracker|patclip|1/8 T
+tracker|patclip|12 parts
+tracker|patclip|16 parts
+tracker|patclip|2 beats
+tracker|patclip|2 parts
+tracker|patclip|3 parts
+tracker|patclip|4 parts
+tracker|patclip|6 parts
+tracker|patclip|8 parts
+tracker|patclip|As a one-shot sampler channel
+tracker|patclip|As a sample in the song
+tracker|patclip|At the note starts
+tracker|patclip|Automation in this pattern
+tracker|patclip|Bar
+tracker|patclip|Beat
+tracker|patclip|Beat repeat...
+tracker|patclip|Chop
+tracker|patclip|Chop and stutter...
+tracker|patclip|Delete
+tracker|patclip|Duplicate
+tracker|patclip|Edit pattern
+tracker|patclip|Eighth beat
+tracker|patclip|Fit length to pattern
+tracker|patclip|Half beat
+tracker|patclip|Half-time...
+tracker|patclip|Into a slicer channel
+tracker|patclip|Into equal parts
+tracker|patclip|Loop
+tracker|patclip|Make unique
+tracker|patclip|Merge selected clips
+tracker|patclip|Mute clip
+tracker|patclip|Off
+tracker|patclip|Onto the next free drum pad
+tracker|patclip|Open in Loupe
+tracker|patclip|Pattern colour
+tracker|patclip|Playback
+tracker|patclip|Quantize
+tracker|patclip|Quarter beat
+tracker|patclip|Rename pattern...
+tracker|patclip|Render clip to audio
+tracker|patclip|Render clip to file...
+tracker|patclip|Render options...
+tracker|patclip|Render to audio
+tracker|patclip|Reset
+tracker|patclip|Reset loop start
+tracker|patclip|Reverse build...
+tracker|patclip|Save to the library
+tracker|patclip|Select all clips of this pattern
+tracker|patclip|Slice at the song position
+tracker|patclip|Snap grid
+tracker|patclip|Split at pattern repeats
+tracker|patclip|Split by channel
+tracker|patclip|Tape stop...
+tracker|patclip|Triplet stutter...
+studio|autoclip|Mute clip
+studio|autoclip|Loop
+studio|autoclip|Edit automation...
+studio|autoclip|Curve of every segment
+studio|autoclip|Reset tensions
+studio|autoclip|Merge selected automation clips
+studio|autoclip|Select all clips of this automation
+studio|autoclip|Move into pattern "Beat"
+studio|autoclip|Copy into pattern "Beat"
+live|autoclip|Deactivate
+live|autoclip|Loop
+live|autoclip|Edit automation...
+live|autoclip|Curve of every segment
+live|autoclip|Reset tensions
+live|autoclip|Merge selected automation clips
+live|autoclip|Select all clips of this automation
+live|autoclip|Move into pattern "Beat"
+live|autoclip|Copy into pattern "Beat"
+logic|autoclip|Mute region
+logic|autoclip|Loop
+logic|autoclip|Edit automation...
+logic|autoclip|Curve of every segment
+logic|autoclip|Reset tensions
+logic|autoclip|Merge selected automation clips
+logic|autoclip|Select all clips of this automation
+logic|autoclip|Move into pattern "Beat"
+logic|autoclip|Copy into pattern "Beat"
+tracker|autoclip|Mute clip
+tracker|autoclip|Loop
+tracker|autoclip|Edit automation...
+tracker|autoclip|Curve of every segment
+tracker|autoclip|Reset tensions
+tracker|autoclip|Merge selected automation clips
+tracker|autoclip|Select all clips of this automation
+tracker|autoclip|Move into pattern "Beat"
+tracker|autoclip|Copy into pattern "Beat"

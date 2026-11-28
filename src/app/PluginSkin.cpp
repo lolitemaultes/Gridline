@@ -94,6 +94,13 @@ Bound bind(App& a, const PluginTarget& t, int param) {
   return b;
 }
 
+// K-446: a switch, toggle or tab row shows the value automation, a link or an LFO moves.
+Bound bindShown(App& a, const PluginTarget& t, int param) {
+  Bound b = bind(a, t, param);
+  if (b.ok) b.val = b.d.clamp(pui::shownValue(a, b.pid, b.val));
+  return b;
+}
+
 }  // namespace
 
 ImU32 hex(uint32_t c, float alpha) { return theme::rgb(c, alpha); }
@@ -596,7 +603,7 @@ bool hslider(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, c
 
 bool switchSel(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, const Skin& k, const char* const* labels, int count,
                bool horizontal) {
-  Bound b = bind(a, t, param);
+  Bound b = bindShown(a, t, param);
   if (!b.ok || count <= 0) return false;
   ImGui::PushID(param);
   ImGui::SetCursorScreenPos(tl);
@@ -669,7 +676,7 @@ bool switchSel(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size,
 }
 
 bool check(App& a, const PluginTarget& t, int param, ImVec2 tl, ImVec2 size, const Skin& k, const char* text, ImU32 on) {
-  Bound b = bind(a, t, param);
+  Bound b = bindShown(a, t, param);
   if (!b.ok) return false;
   ImGui::PushID(param);
   ImGui::SetCursorScreenPos(tl);
@@ -965,7 +972,7 @@ bool tabsImpl(const Form& f, float x, float y, float w, float h, const char* con
 
 bool tabs(App& a, const PluginTarget& t, int param, const Form& f, float x, float y, float w, float h, const char* const* labels, int count,
           const TabLook& look, bool vertical) {
-  Bound bb = bind(a, t, param);
+  Bound bb = bindShown(a, t, param);
   if (!bb.ok) return false;
   const ParamDesc* d = &bb.d;
   double val = bb.val;
@@ -1008,7 +1015,7 @@ bool switchSel(App& a, const PluginTarget& t, int param, const Form& f, float x,
 
 bool ledToggle(App& a, const PluginTarget& t, int param, const Form& f, float x, float y, float w, float h, const char* txt, ImU32 bg,
                ImU32 on, ImU32 textCol) {
-  Bound bb = bind(a, t, param);
+  Bound bb = bindShown(a, t, param);
   if (!bb.ok) return false;
   const ParamDesc* d = &bb.d;
   double val = bb.val;
@@ -1176,6 +1183,18 @@ float wheelAngle(const FormCtl& c, double n) {
   return -th;                                     // screen convention
 }
 
+
+// K-446: what the control `item` shows: the value automation, a link or an LFO moves (until the
+// pointer holding it moves it), else the stored one. `item` 0: a click control (always the shown value).
+ParamView pviewShown(App& a, const PluginTarget& t, int param, ImGuiID item) {
+  ParamView r = pview(a, t, param);
+  double live = 0;
+  if (r.d && ui::LiveParamValue(item, t.pid(param), live)) {
+    r.v = r.d->clamp(live);
+    r.norm = std::clamp(r.d->toNormalized(r.v), 0.0, 1.0);
+  }
+  return r;
+}
 
 // Standard interaction (pui::dragParamItem) on the last item for a bound parameter.
 bool dragBound(App& a, const PluginTarget& t, int param, float pixels, bool horizontal) {
@@ -1456,10 +1475,11 @@ bool wheelAt(App& a, const PluginTarget& t, const View& v, const char* like, flo
   ImGui::PushID(like);
   ImGui::SetCursorScreenPos(p0);
   ImGui::InvisibleButton("##w", ImVec2(std::max(1.f, p1.x - p0.x), std::max(1.f, p1.y - p0.y)));
+  const ImGuiID iid = ImGui::GetItemID();
   bool hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
   audit::nextKind(align::kKnob);  // J-128
   bool ch = dragBound(a, t, param, 180.f, false);
-  if (ch) pv = pview(a, t, param);
+  pv = pviewShown(a, t, param, iid);  // K-446
   drawWheel(ImGui::GetWindowDrawList(), p0, p1, c, pal, pv.norm, pv.bipolar, hot, v.s);
   if (pui::paramLinked(a, t.pid(param))) ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(p1.x - v.px(3), p0.y + v.px(3)), v.px(2), pal.accent2);
   ImGui::PopID();
@@ -1484,6 +1504,7 @@ bool slider(App& a, const PluginTarget& t, const View& v, const char* name, int 
   ImGui::PushID(name);
   ImGui::SetCursorScreenPos(p0);
   ImGui::InvisibleButton("##s", ImVec2(p1.x - p0.x, p1.y - p0.y));
+  const ImGuiID iid = ImGui::GetItemID();
   bool hot = ImGui::IsItemHovered() || ImGui::IsItemActive();
   // Click on the rail jumps there (FL sliders), then drags.
   bool ch = false;
@@ -1500,7 +1521,7 @@ bool slider(App& a, const PluginTarget& t, const View& v, const char* name, int 
   }
   audit::nextKind(align::kSlider);  // J-128
   ch |= dragBound(a, t, param, vert ? (p1.y - p0.y) : (p1.x - p0.x), !vert);
-  if (ch) pv = pview(a, t, param);
+  pv = pviewShown(a, t, param, iid);  // K-446
   drawSlider(ImGui::GetWindowDrawList(), p0, p1, c, pal, pv.norm, pv.bipolar, hot, v.s);
   ImGui::PopID();
   ImGui::PopID();
@@ -1510,7 +1531,7 @@ bool slider(App& a, const PluginTarget& t, const View& v, const char* name, int 
 bool selector(App& a, const PluginTarget& t, const View& v, const char* name, int param, const Palette& pal, const CellFn& draw, int cells,
               int valueOffset) {
   const FormCtl& c = v.c(name);
-  ParamView pv = pview(a, t, param);
+  ParamView pv = pviewShown(a, t, param, 0);  // K-446
   if (!pv.d) return false;
   int cols = std::max(1, c.cols), rows = std::max(1, c.rows);
   if (cells <= 0) cells = cols * rows;
@@ -1581,7 +1602,7 @@ bool textSelector(App& a, const PluginTarget& t, const View& v, const char* name
 
 bool check(App& a, const PluginTarget& t, const View& v, const char* name, int param, const Palette& pal, const char* text) {
   const FormCtl& c = v.c(name);
-  ParamView pv = pview(a, t, param);
+  ParamView pv = pviewShown(a, t, param, 0);  // K-446
   if (!pv.d) return false;
   ImVec2 p0 = v.p0(c), p1 = v.p1(c);
   fitKit(v, p0, p1);
@@ -1638,9 +1659,10 @@ bool digi(App& a, const PluginTarget& t, const View& v, const char* name, int pa
   ImGui::PushID(name);
   ImGui::SetCursorScreenPos(p0);
   ImGui::InvisibleButton("##d", ImVec2(p1.x - p0.x, p1.y - p0.y));
+  const ImGuiID iid = ImGui::GetItemID();
   audit::nextKind(align::kField);  // J-128
   bool ch = dragBound(a, t, param, 120.f, false);
-  if (ch) pv = pview(a, t, param);
+  pv = pviewShown(a, t, param, iid);  // K-446
   std::string s = fmt ? fmt(pv.v) : pv.d->format(pv.v);
   lcd(ImGui::GetWindowDrawList(), p0, p1, pal, s.c_str(), 0);
   ImGui::PopID();
@@ -1650,7 +1672,7 @@ bool digi(App& a, const PluginTarget& t, const View& v, const char* name, int pa
 
 bool combo(App& a, const PluginTarget& t, const View& v, const char* name, int param, const Palette& pal) {
   const FormCtl& c = v.c(name);
-  ParamView pv = pview(a, t, param);
+  ParamView pv = pviewShown(a, t, param, 0);  // K-446
   if (!pv.d) return false;
   ImVec2 p0 = v.p0(c), p1 = v.p1(c);
   fitKit(v, p0, p1);

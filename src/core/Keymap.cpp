@@ -46,6 +46,7 @@ std::vector<Command> buildCommands() {
       {"file.saveNewVersion", G, N_("Save new version"), {ch(K::S, C | A)}},
       {"file.render", G, N_("Render to audio file"), {ch(K::R, C)}},
       {"file.renderStems", G, N_("Render mixer tracks (stems)"), {ch(K::R, C | S)}},
+      {"file.renderMarkerAreas", G, N_("Export marker areas"), {}},  // each marker to the next as its own file
       {"file.exportMidi", G, N_("Export song as MIDI file"), {ch(K::M, C | S)}},
       {"file.importUrl", G, N_("Import audio from a link (URL)"), {ch(K::U, C | S)}},  // J-192
       {"file.projectInfo", G, N_("Project info"), {ch(K::F11)}},
@@ -89,6 +90,9 @@ std::vector<Command> buildCommands() {
       {"pattern.moveDown", G, N_("Move pattern down"), {ch(K::Down, C | S)}, true},
       {"pattern.next", G, N_("Next pattern"), {ch(K::NumAdd)}, true},
       {"pattern.previous", G, N_("Previous pattern"), {ch(K::NumSubtract)}, true},
+      // ---- global: arrangements (K-406) ----
+      {"arrangement.previous", G, N_("Previous arrangement"), {ch(K::Left, C | A)}, true},
+      {"arrangement.next", G, N_("Next arrangement"), {ch(K::Right, C | A)}, true},
       // ---- global: windows ----
       {"view.playlist", G, N_("Playlist"), {ch(K::F5)}},
       {"view.channelRack", G, N_("Channel rack"), {ch(K::F6)}},
@@ -308,7 +312,7 @@ std::vector<Command> buildCommands() {
       {"rack.clone", CR, N_("Clone selected channels"), {ch(K::C, A)}},
       {"rack.cloneEmpty", CR, N_("Clone selected channels without their notes"), {ch(K::C, A | S)}},  // GitHub #74
       {"rack.randomColours", CR, N_("Random colours for selected channels"), {ch(K::C, C | A)}},
-      {"rack.delete", CR, N_("Delete selected channels"), {ch(K::Delete, A)}},
+      {"rack.delete", CR, N_("Delete selected channels"), {ch(K::Delete, A), ch(K::Delete, S)}},
       {"rack.moveUp", CR, N_("Move selected channels up"), {ch(K::Up, A)}, true},
       {"rack.moveDown", CR, N_("Move selected channels down"), {ch(K::Down, A)}, true},
       {"rack.routeFree", CR, N_("Route selected channels to free mixer tracks"), {ch(K::L, C)}},

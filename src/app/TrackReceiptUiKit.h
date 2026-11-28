@@ -4,6 +4,7 @@
 //   TrackReceiptUiFiles.cpp    the files page (tick the licensed samples, link files to songs)
 //   TrackReceiptUiResults.cpp  the results summary and the song cards
 //   TrackReceiptUiUses.cpp     the uses inside a song card, parts typed by hand, uses not counted
+//   TrackReceiptUiAreas.cpp    what each marker area of the arrangement uses
 //   TrackReceiptUiRelease.cpp  the release and the writers
 // The pieces they share (the window state, a text field, labels, chips, the timeline bar) are here.
 #pragma once
@@ -34,6 +35,7 @@ struct State {
   std::vector<receipt::FileRef> refs;
   std::string lastFile;
   double demoProgress = -1;  // screenshots: a frozen progress page
+  int demoScrollAreas = 0;   // screenshots ("areas"): frames left to scroll the results to the areas
 };
 State& S();  // (TrackReceiptUi.cpp)
 
@@ -47,6 +49,7 @@ void resultsPage(App& a);                                        // TrackReceipt
 void timelineUses(const receipt::Timeline& t, float x0);         // TrackReceiptUiUses.cpp
 void typedParts(App& a, const receipt::SongRow& sr, float x0);   // TrackReceiptUiUses.cpp
 void notCounted(App& a, const receipt::Report& r);               // TrackReceiptUiUses.cpp
+void areasSection(App& a, const receipt::Report& r);             // TrackReceiptUiAreas.cpp
 void releaseSection(App& a);                                     // TrackReceiptUiRelease.cpp
 
 // ---- the kit
@@ -122,6 +125,8 @@ inline void chip(const std::string& t, ImU32 bg, ImU32 fg) {
 inline std::string songDisplay(const std::string& key, const receipt::Report& r) {
   for (const receipt::SongRow& s : r.songs)
     if (s.key == key) return s.artist.empty() ? s.title : s.artist + " - " + s.title;
+  for (const receipt::FileRow& f : r.files)  // a song with nothing counted yet (not ticked)
+    if (f.song == key && !f.songTitle.empty()) return f.songTitle;
   return key;
 }
 

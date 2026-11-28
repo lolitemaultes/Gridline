@@ -3,13 +3,10 @@ Edit pattern
 --------------------------------
 Duplicate ( Ctrl+B )
 Make unique
---------------------------------
-Split at pattern repeats
-Slice at the song position
-Chop >
-Split by channel
-Merge selected clips ( Ctrl+G )
 Fit length to pattern
+--------------------------------
+Split and merge >
+Chop >
 --------------------------------
 Render clip to audio
 Render clip to file...
@@ -24,8 +21,12 @@ Delete ( Del )
 Edit pattern
 Duplicate
 Make unique
-Split at pattern repeats
-Slice at the song position
+Fit length to pattern
+Split and merge >
+Split and merge > Split at pattern repeats
+Split and merge > Slice at the song position
+Split and merge > Split by channel
+Split and merge > Merge selected clips
 Chop >
 Chop > Bar
 Chop > 2 beats
@@ -42,9 +43,6 @@ Chop > Half-time...
 Chop > Triplet stutter...
 Chop > Reverse build...
 Chop > Chop and stutter...
-Split by channel
-Merge selected clips
-Fit length to pattern
 Render clip to audio
 Render clip to file...
 Render to audio >

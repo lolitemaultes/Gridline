@@ -6,9 +6,14 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 #include "StemSplit.h"
+
+namespace gl {
+struct Sample;
+}
 
 namespace gl::stems {
 
@@ -59,6 +64,11 @@ bool removeModel(const ModelInfo& m, std::string* err);
 // Splits one audio file and writes the chosen stems as 32-bit float WAV files into `outDir`
 // ("<baseName> - <Stem>.wav", never overwriting). `keep` lists source ids (empty: all).
 // `written` gets (source id, path) pairs in the model's order.
+// K-447: only a part of the audio is split when `end` > `start` (seconds of the audio, rounded
+// to the nearest frame): the stems then hold that part alone, its first frame first, and nothing
+// outside it is read or separated. `sound` (when set) is the audio itself, as a clip plays it
+// (core/ClipSource: the channel's sample processing applied); `input` still names its file (the
+// stems' names and their Track Receipt origin).
 struct ExtractRequest {
   std::string input;
   std::string modelId;
@@ -66,7 +76,11 @@ struct ExtractRequest {
   std::string outDir;
   std::string baseName;
   int threads = 0;
+  std::shared_ptr<const Sample> sound;
+  double start = 0, end = 0;
 };
+// The frames [from, to) of an `frames` long audio at `rate` that a request's start / end take.
+void extractRange(const ExtractRequest& req, double rate, int64_t frames, int64_t& from, int64_t& to);
 bool extractStems(const ExtractRequest& req, const std::function<void(double)>& progress, const std::atomic<bool>* cancel,
                   std::vector<std::pair<std::string, std::string>>* written, std::string* err);
 

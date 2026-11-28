@@ -25,6 +25,7 @@
 #include "Json.h"
 #include "NoteBend.h"
 #include "Params.h"
+#include "PatternAutomation.h"
 #include "PluginParams.h"
 #include "PluginStandIn.h"
 #include "../host/CrossFormat.h"
@@ -34,6 +35,13 @@
 #include "StageRooms.h"
 
 namespace gl {
+
+namespace {
+thread_local int tNoRackLaneMigration = 0;
+}
+NoRackLaneMigration::NoRackLaneMigration() { ++tNoRackLaneMigration; }
+NoRackLaneMigration::~NoRackLaneMigration() { --tNoRackLaneMigration; }
+
 
 namespace {
 Json followToJson(const FollowSpec& f);  // grid2-1118 (below)
@@ -311,6 +319,7 @@ float channelPitchFromJson(const Json& jc) {
 
 void channelExtrasToJson(const Channel& c, Json& jc) {
   const Channel d;
+  if (c.transpose != d.transpose) jc.object["transpose"] = num(c.transpose);
   if (c.fine != d.fine) jc.object["fine"] = num(c.fine);
   if (c.bendRange != d.bendRange) jc.object["bendRange"] = num(c.bendRange);
   if (c.swingMix != d.swingMix) jc.object["swingMix"] = num(c.swingMix);
@@ -383,9 +392,22 @@ void channelExtrasToJson(const Channel& c, Json& jc) {
   if (c.hibernate) jc.object["hibernate"] = boolean(true);
   if (c.keepRunning) jc.object["keepRunning"] = boolean(true);  // K-277
   if (c.rackHidden) jc.object["rackHidden"] = boolean(true);  // GitHub #58
+  if (!c.automationLanes.empty()) {  // K-413: persistent channel automation lanes
+    Json arr = Json::makeArray();
+    for (const ChannelAutoLane& l : c.automationLanes) {
+      Json jl = Json::makeObject();
+      jl.object["index"] = num(l.index);
+      if (!l.name.empty()) jl.object["name"] = str(l.name);
+      if (l.color != AutomationClip{}.color) jl.object["color"] = num(l.color);
+      arr.array.push_back(std::move(jl));
+    }
+    jc.object["automationLanes"] = std::move(arr);
+  }
+  if (!c.notes.empty()) jc.object["notes"] = str(c.notes);  // K-128
 }
 
 void channelExtrasFromJson(const Json& jc, Channel& c) {
+  c.transpose = jsonInt<int>(std::clamp(jc.num("transpose", 0), -static_cast<double>(kChannelTransposeMax), static_cast<double>(kChannelTransposeMax)));
   c.fine = jsonInt<int>(std::clamp(jc.num("fine", 0), -200.0, 200.0));
   c.bendRange = jsonInt<int>(std::clamp(jc.num("bendRange", 2), 1.0, static_cast<double>(kChannelBendRangeMax)));
   // K-132 projects (FL import before 0.7.7): an automated pitch knob kept whole semitones in "pitch"
@@ -460,6 +482,21 @@ void channelExtrasFromJson(const Json& jc, Channel& c) {
   c.hibernate = flag(jc, "hibernate");
   c.keepRunning = flag(jc, "keepRunning");  // K-277
   c.rackHidden = flag(jc, "rackHidden");  // GitHub #58
+  c.automationLanes.clear();  // K-413
+  if (const Json* al = jc.find("automationLanes"); al && al->is(Json::Type::Array)) {
+    for (const Json& jl : al->array) {
+      if (!jl.is(Json::Type::Object) || c.automationLanes.size() >= 256) continue;
+      ChannelAutoLane l;
+      l.index = jsonInt<uint32_t>(std::max(0.0, jl.num("index", 0)));
+      l.name = jl.text("name");
+      l.color = color(jl, AutomationClip{}.color);
+      bool dup = false;
+      for (const auto& ex : c.automationLanes)
+        if (ex.index == l.index) dup = true;
+      if (!dup) c.automationLanes.push_back(std::move(l));
+    }
+  }
+  c.notes = jc.text("notes");  // K-128
 }
 
 void noteToJson(const Note& n, Json& jn) {
@@ -639,6 +676,7 @@ void clipArrangementToJson(const Clip& c, Json& jc) {
   if (c.fadeIn != 0) jc.object["fadeIn"] = num(c.fadeIn);
   if (c.fadeOut != 0) jc.object["fadeOut"] = num(c.fadeOut);
   if (c.gain != 1.0f) jc.object["gain"] = num(c.gain);
+  if (c.pan != 0.0f) jc.object["pan"] = num(c.pan);  // K-414: per-clip stereo pan
   if (c.pitch != 0.0f) jc.object["pitch"] = num(c.pitch);
   if (c.stretch != 1.0) jc.object["stretch"] = num(c.stretch);
   if (c.speedPitch != 0.0f) jc.object["speedPitch"] = num(c.speedPitch);  // J-164
@@ -712,6 +750,8 @@ void clipArrangementFromJson(const Json& jc, Clip& c) {
   c.fadeIn = std::clamp(jc.num("fadeIn", 0), 0.0, 3600.0);
   c.fadeOut = std::clamp(jc.num("fadeOut", 0), 0.0, 3600.0);
   c.gain = clipgain::clampGain(static_cast<float>(jc.num("gain", 1)));  // J-79: FL's range, up to +36 dB
+  c.pan = static_cast<float>(std::clamp(jc.num("pan", 0.0), -1.0, 1.0));  // K-414
+  if (!std::isfinite(c.pan)) c.pan = 0.0f;
   c.pitch = static_cast<float>(std::clamp(jc.num("pitch", 0), -4800.0, 4800.0));
   c.stretch = std::clamp(jc.num("stretch", 1), 0.0625, 16.0);
   c.speedPitch = static_cast<float>(std::clamp(jc.num("speedPitch", 0), -6000.0, 6000.0));  // J-164 (clip + channel pitch shift)
@@ -1260,6 +1300,17 @@ void songExtrasToJson(const Song& s, Json& j) {
     for (const auto& [lay, text] : s.workspaceCopy) jw.object[lay] = Json::makeString(text);
     j.object["workspaces"] = std::move(jw);
   }
+  if (!s.portLinks.empty()) {  // K-357: per-computer JACK / PipeWire port connections [[own, peer], ...]
+    Json jl = Json::makeArray();
+    for (const Song::PortLink& l : s.portLinks) {
+      if (l.own.empty() || l.peer.empty()) continue;
+      Json pair = Json::makeArray();
+      pair.array.push_back(Json::makeString(l.own));
+      pair.array.push_back(Json::makeString(l.peer));
+      jl.array.push_back(std::move(pair));
+    }
+    if (!jl.array.empty()) j.object["portLinks"] = std::move(jl);
+  }
   if (s.live.areaEnd > 0 || !s.keptSends.empty() || !s.live.scenes.empty() || s.live.sceneLen > 0) {
     Json jl = Json::makeObject();
     if (s.live.areaEnd > 0) jl.object["areaEnd"] = num(static_cast<double>(s.live.areaEnd));
@@ -1300,6 +1351,23 @@ void songExtrasToJson(const Song& s, Json& j) {
       js.object["controls"] = std::move(jc);
     }
     j.object["smooth"] = std::move(js);
+  }
+  if (!s.rackAutoLanes.empty()) {  // K-413: non-channel persistent rack automation lanes
+    Json arr = Json::makeArray();
+    for (const SongAutoLane& l : s.rackAutoLanes) {
+      Json jl = Json::makeObject();
+      jl.object["owner"] = num(l.owner);
+      jl.object["index"] = num(l.index);
+      if (!l.name.empty()) jl.object["name"] = str(l.name);
+      if (l.color != AutomationClip{}.color) jl.object["color"] = num(l.color);
+      arr.array.push_back(std::move(jl));
+    }
+    j.object["rackAutoLanes"] = std::move(arr);
+  } else {
+    bool anyPatAuto = false, anyChLanes = false;
+    for (const auto& c : s.channels) anyChLanes = anyChLanes || !c.automationLanes.empty();
+    for (const auto& p : s.patterns) anyPatAuto = anyPatAuto || !p.automation.empty();
+    if (anyPatAuto && !anyChLanes) j.object["rackAutoLanes"] = Json::makeArray();
   }
   // Arrangements: written when there are several, or the single one was renamed.
   if (s.arrangements.size() > 1 || (s.arrangements.size() == 1 && s.arrangements[0].name != "Arrangement")) {
@@ -1378,6 +1446,15 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
       if (exists && std::find(s.pluginWindows.begin(), s.pluginWindows.end(), w) == s.pluginWindows.end()) s.pluginWindows.push_back(w);
     }
   }
+  if (const Json* jl = j.find("portLinks"); jl && jl->is(Json::Type::Array)) {  // K-357
+    for (const Json& e : jl->array) {
+      if (!e.is(Json::Type::Array) || e.array.size() != 2) continue;
+      if (!e.array[0].is(Json::Type::String) || !e.array[1].is(Json::Type::String)) continue;
+      if (e.array[0].str.empty() || e.array[1].str.empty()) continue;
+      Song::PortLink l{e.array[0].str, e.array[1].str};
+      if (std::find(s.portLinks.begin(), s.portLinks.end(), l) == s.portLinks.end()) s.portLinks.push_back(std::move(l));
+    }
+  }
   if (const Json* jl = j.find("live"); jl && jl->is(Json::Type::Object)) {
     s.live.areaEnd = std::max<Tick>(0, jsonTick(jl->num("areaEnd", 0)));
     s.live.sceneLen = std::max<Tick>(0, jsonTick(jl->num("sceneLen", 0)));  // grid2-1118
@@ -1432,6 +1509,23 @@ bool songExtrasFromJson(const Json& j, Song& s, const std::function<bool(const J
     s.cycleOn = s.cycleEnd > s.cycleStart && flag(*jc, "on");
     if (s.cycleEnd <= s.cycleStart) s.cycleStart = s.cycleEnd = 0;
   }
+  s.rackAutoLanes.clear();  // K-413
+  bool hasSavedRackLanes = j.find("rackAutoLanes") != nullptr;
+  for (const auto& ch : s.channels) hasSavedRackLanes = hasSavedRackLanes || !ch.automationLanes.empty();
+  if (const Json* rl = j.find("rackAutoLanes"); rl && rl->is(Json::Type::Array)) {
+    for (const Json& jl : rl->array) {
+      if (!jl.is(Json::Type::Object) || s.rackAutoLanes.size() >= 256) continue;
+      SongAutoLane l;
+      l.owner = jsonInt<ObjectId>(std::max(0.0, jl.num("owner", 0)));
+      l.index = jsonInt<uint32_t>(std::max(0.0, jl.num("index", 0)));
+      l.name = jl.text("name");
+      l.color = color(jl, AutomationClip{}.color);
+      if (l.owner == kNoId || !describeParam(s, ParamId{l.owner, l.index})) continue;
+      if (s.channel(l.owner)) ensureRackAutoLane(s, l.owner, l.index, l.name, l.color);
+      else if (!hasRackAutoLane(s, l.owner, l.index)) s.rackAutoLanes.push_back(std::move(l));
+    }
+  }
+  if (!hasSavedRackLanes && tNoRackLaneMigration == 0) migrateRackAutoLanes(s);  // K-413: old projects union pattern automation lanes
   s.projectEnd = std::max<Tick>(0, jsonTick(j.num("projectEnd", 0)));  // K-112B (checkpoint 47)
   const Json* arr = j.find("arrangements");
   if (!arr || !arr->is(Json::Type::Array) || arr->array.empty()) return true;
@@ -1650,6 +1744,99 @@ Json mixerTrackToJson(const MixerTrack& m) {
   return jm;
 }
 
+Json lfoToJson(const SongLfo& l) {
+  const SongLfo d;
+  Json jl = Json::makeObject();
+  if (!l.name.empty()) jl.object["name"] = str(l.name);
+  if (l.colour != d.colour) jl.object["colour"] = num(l.colour);
+  if (l.on != d.on) jl.object["on"] = boolean(l.on);
+  if (l.shape != d.shape) jl.object["shape"] = num(static_cast<int>(l.shape));
+  if (l.pulseWidth != d.pulseWidth) jl.object["pulseWidth"] = num(l.pulseWidth);
+  if (l.randomSteps != d.randomSteps) jl.object["randomSteps"] = num(l.randomSteps);
+  if (l.seed != d.seed) jl.object["seed"] = num(static_cast<double>(l.seed));
+  if (!l.points.empty()) {
+    Json pts = Json::makeArray();
+    for (const auto& p : l.points) {
+      Json jp = Json::makeArray();
+      jp.array.push_back(num(p.x));
+      jp.array.push_back(num(p.y));
+      jp.array.push_back(num(p.curve));
+      if (p.kind != kLfoPointCurve) jp.array.push_back(num(p.kind));  // 0.7.9
+      pts.array.push_back(std::move(jp));
+    }
+    jl.object["points"] = std::move(pts);
+  }
+  if (l.drawnSteps != d.drawnSteps) jl.object["drawnSteps"] = boolean(l.drawnSteps);
+  if (l.tempoSync != d.tempoSync) jl.object["tempoSync"] = boolean(l.tempoSync);
+  if (l.rateNote != d.rateNote) jl.object["rateNote"] = num(l.rateNote);
+  if (l.rateKind != d.rateKind) jl.object["rateKind"] = num(l.rateKind);
+  if (l.rateHz != d.rateHz) jl.object["rateHz"] = num(l.rateHz);
+  if (l.phase != d.phase) jl.object["phase"] = num(l.phase);
+  if (l.depth != d.depth) jl.object["depth"] = num(l.depth);
+  if (l.offset != d.offset) jl.object["offset"] = num(l.offset);
+  if (l.smoothMs != d.smoothMs) jl.object["smoothMs"] = num(l.smoothMs);
+  if (l.fadeIn != d.fadeIn) jl.object["fadeIn"] = num(l.fadeIn);
+  if (l.unipolar != d.unipolar) jl.object["unipolar"] = boolean(l.unipolar);
+  if (l.restart != d.restart) jl.object["restart"] = num(static_cast<int>(l.restart));
+  if (l.noteChannel != d.noteChannel) jl.object["noteChannel"] = num(l.noteChannel);
+  // 0.7.8: Chaos and Random sources (an LFO writes none of these).
+  if (l.kind != d.kind) jl.object["kind"] = num(static_cast<int>(l.kind));
+  if (l.character != d.character) jl.object["character"] = num(l.character);
+  if (l.trigger != d.trigger) jl.object["trigger"] = num(static_cast<int>(l.trigger));
+  if (l.centred != d.centred) jl.object["centred"] = boolean(l.centred);
+  if (l.quantise != d.quantise) jl.object["quantise"] = num(l.quantise);
+  if (l.roll != d.roll) jl.object["roll"] = num(static_cast<double>(l.roll));
+  return jl;
+}
+
+bool lfoFromJson(const Json& jl, SongLfo& l) {
+  l.name = jl.text("name");
+  if (l.name.size() > 32) l.name.resize(32);
+  l.colour = jsonInt<int>(std::clamp(jl.num("colour", 0), 0.0, static_cast<double>(kLfoColours - 1)));
+  l.on = flag(jl, "on", true);
+  l.shape = static_cast<LfoShape>(jsonInt<int>(std::clamp(jl.num("shape", 0), 0.0, static_cast<double>(static_cast<int>(LfoShape::Count) - 1))));
+  l.pulseWidth = static_cast<float>(std::clamp(jl.num("pulseWidth", 0.5), 0.02, 0.98));
+  l.randomSteps = jsonInt<int>(std::clamp(jl.num("randomSteps", 4), 1.0, 16.0));
+  l.seed = jsonInt<uint32_t>(std::clamp(jl.num("seed", 1), 0.0, 4294967295.0));
+  if (const Json* pts = jl.find("points"); pts && pts->is(Json::Type::Array))
+    for (const auto& jp : pts->array) {
+      if (!jp.is(Json::Type::Array) || jp.array.size() < 2 || l.points.size() >= static_cast<size_t>(kLfoMaxPoints)) continue;
+      auto at = [&](size_t k, double lo, double hi) {
+        return k < jp.array.size() && jp.array[k].is(Json::Type::Number) ? static_cast<float>(std::clamp(jp.array[k].number, lo, hi)) : 0.0f;
+      };
+      LfoPoint pt{at(0, 0, 1), at(1, -1, 1), at(2, -1, 1)};
+      pt.kind = static_cast<uint8_t>(std::lround(at(3, 0, 2)));  // 0.7.9 (older files: 0, a curve)
+      l.points.push_back(pt);
+    }
+  l.drawnSteps = flag(jl, "drawnSteps", false);
+  l.tempoSync = flag(jl, "tempoSync", true);
+  l.rateNote = jsonInt<int>(std::clamp(jl.num("rateNote", 5), 0.0, 9.0));
+  l.rateKind = jsonInt<int>(std::clamp(jl.num("rateKind", 0), 0.0, 2.0));
+  l.rateHz = static_cast<float>(std::clamp(jl.num("rateHz", 1), 0.01, 40.0));
+  l.phase = static_cast<float>(std::clamp(jl.num("phase", 0), 0.0, 360.0));
+  l.depth = static_cast<float>(std::clamp(jl.num("depth", 1), 0.0, 1.0));
+  l.offset = static_cast<float>(std::clamp(jl.num("offset", 0), -1.0, 1.0));
+  l.smoothMs = static_cast<float>(std::clamp(jl.num("smoothMs", 0), 0.0, 500.0));
+  l.fadeIn = static_cast<float>(std::clamp(jl.num("fadeIn", 0), 0.0, 8.0));
+  l.unipolar = flag(jl, "unipolar", false);
+  l.restart = static_cast<LfoRestart>(jsonInt<int>(std::clamp(jl.num("restart", 1), 0.0, static_cast<double>(static_cast<int>(LfoRestart::Count) - 1))));
+  l.noteChannel = jsonInt<ObjectId>(std::clamp(jl.num("noteChannel", 0), 0.0, 4e9));
+  // 0.7.8: Chaos and Random. A kind this version does not know is left out with its links (the
+  // links' source is then missing): it never plays as something else.
+  const double kind = jl.num("kind", 0);
+  if (kind < 0 || kind >= static_cast<double>(static_cast<int>(LfoKind::Count))) return false;
+  l.kind = static_cast<LfoKind>(jsonInt<int>(kind));
+  if (l.restart == LfoRestart::EachBar && l.kind != LfoKind::Chaos) l.restart = LfoRestart::OnPlay;
+  l.character = static_cast<float>(std::clamp(jl.num("character", 0.5), 0.0, 1.0));
+  l.trigger = static_cast<RandomTrigger>(jsonInt<int>(std::clamp(jl.num("trigger", 0), 0.0, static_cast<double>(static_cast<int>(RandomTrigger::Count) - 1))));
+  l.centred = flag(jl, "centred", false);
+  l.quantise = jsonInt<int>(std::clamp(jl.num("quantise", 0), 0.0, 16.0));
+  if (l.quantise < 2) l.quantise = 0;
+  l.roll = jsonInt<uint32_t>(std::clamp(jl.num("roll", 0), 0.0, 4294967295.0));
+  if (l.kind == LfoKind::Random) l.tempoSync = l.trigger != RandomTrigger::Hz;
+  return true;
+}
+
 Json channelToJson(const Channel& c) {
   Json jc = Json::makeObject();
   jc.object["id"] = num(c.id);
@@ -1706,6 +1893,8 @@ Json songToJson(const Song& s, bool withFlOrigin) {
   if (!s.groove.isDefault()) j.object["groove"] = grooveToJson(s.groove);  // K-151 (absent: the classic step swing)
   // K-5: always written, so a project saved before slides kept to their colour (no key) is told apart.
   j.object["slidesByColour"] = boolean(!s.slidesAnyColour);
+  // GitHub #87: always written, so a project saved before slides glided velocity (no key) is told apart.
+  j.object["slidesVelocity"] = boolean(s.slidesVelocity);
   // K-114: always written, so a project saved before clips looped one by one (no key) is told apart.
   j.object["clipLoops"] = boolean(true);
   j.object["masterPitch"] = num(s.masterPitch);
@@ -1859,48 +2048,9 @@ Json songToJson(const Song& s, bool withFlOrigin) {
   j.object["modLinks"] = std::move(mods);
   if (!s.lfos.empty()) {  // K-247: the LFO board (written only when it has LFOs; each field only when not the default)
     Json lfos = Json::makeArray();
-    const SongLfo d;
     for (const auto& l : s.lfos) {
-      Json jl = Json::makeObject();
+      Json jl = lfoToJson(l);
       jl.object["id"] = num(l.id);
-      if (!l.name.empty()) jl.object["name"] = str(l.name);
-      if (l.colour != d.colour) jl.object["colour"] = num(l.colour);
-      if (l.on != d.on) jl.object["on"] = boolean(l.on);
-      if (l.shape != d.shape) jl.object["shape"] = num(static_cast<int>(l.shape));
-      if (l.pulseWidth != d.pulseWidth) jl.object["pulseWidth"] = num(l.pulseWidth);
-      if (l.randomSteps != d.randomSteps) jl.object["randomSteps"] = num(l.randomSteps);
-      if (l.seed != d.seed) jl.object["seed"] = num(static_cast<double>(l.seed));
-      if (!l.points.empty()) {
-        Json pts = Json::makeArray();
-        for (const auto& p : l.points) {
-          Json jp = Json::makeArray();
-          jp.array.push_back(num(p.x));
-          jp.array.push_back(num(p.y));
-          jp.array.push_back(num(p.curve));
-          pts.array.push_back(std::move(jp));
-        }
-        jl.object["points"] = std::move(pts);
-      }
-      if (l.drawnSteps != d.drawnSteps) jl.object["drawnSteps"] = boolean(l.drawnSteps);
-      if (l.tempoSync != d.tempoSync) jl.object["tempoSync"] = boolean(l.tempoSync);
-      if (l.rateNote != d.rateNote) jl.object["rateNote"] = num(l.rateNote);
-      if (l.rateKind != d.rateKind) jl.object["rateKind"] = num(l.rateKind);
-      if (l.rateHz != d.rateHz) jl.object["rateHz"] = num(l.rateHz);
-      if (l.phase != d.phase) jl.object["phase"] = num(l.phase);
-      if (l.depth != d.depth) jl.object["depth"] = num(l.depth);
-      if (l.offset != d.offset) jl.object["offset"] = num(l.offset);
-      if (l.smoothMs != d.smoothMs) jl.object["smoothMs"] = num(l.smoothMs);
-      if (l.fadeIn != d.fadeIn) jl.object["fadeIn"] = num(l.fadeIn);
-      if (l.unipolar != d.unipolar) jl.object["unipolar"] = boolean(l.unipolar);
-      if (l.restart != d.restart) jl.object["restart"] = num(static_cast<int>(l.restart));
-      if (l.noteChannel != d.noteChannel) jl.object["noteChannel"] = num(l.noteChannel);
-      // 0.7.8: Chaos and Random sources (an LFO writes none of these).
-      if (l.kind != d.kind) jl.object["kind"] = num(static_cast<int>(l.kind));
-      if (l.character != d.character) jl.object["character"] = num(l.character);
-      if (l.trigger != d.trigger) jl.object["trigger"] = num(static_cast<int>(l.trigger));
-      if (l.centred != d.centred) jl.object["centred"] = boolean(l.centred);
-      if (l.quantise != d.quantise) jl.object["quantise"] = num(l.quantise);
-      if (l.roll != d.roll) jl.object["roll"] = num(static_cast<double>(l.roll));
       lfos.array.push_back(std::move(jl));
     }
     j.object["lfos"] = std::move(lfos);
@@ -1927,6 +2077,11 @@ Json songToJson(const Song& s, bool withFlOrigin) {
     Json fo = Json::makeObject();
     for (const auto& [k, v] : s.flOrigin.blobs) fo.object[k] = str(b64Encode(v));
     j.object["flOrigin"] = std::move(fo);
+  }
+  if (!s.collabChat.empty()) {  // K-86 part 2: written only when messages exist (empty projects stay byte-identical)
+    Json chat = Json::makeArray();
+    for (const auto& m : s.collabChat) chat.array.push_back(chatMessageToJson(m));
+    j.object["collabChat"] = std::move(chat);
   }
   return j;
 }
@@ -1982,6 +2137,19 @@ bool slidesMeetOtherColours(const Song& s) {
       for (const auto& n : ns) slide = slide || n.slide, mixed = mixed || n.color != ns.front().color;
       if (slide && mixed) return true;
     }
+  return false;
+}
+
+bool slidesChangeVelocity(const Song& s) {
+  for (const auto& pat : s.patterns)
+    for (const auto& [ch, ns] : pat.notes)
+      for (const auto& sl : ns) {
+        if (!sl.slide || sl.muted) continue;
+        for (const auto& n : ns)
+          if (!n.slide && !n.muted && (s.slidesAnyColour || n.color == sl.color) && n.velocity != sl.velocity &&
+              n.start <= sl.start && n.start + n.length > sl.start)
+            return true;
+      }
   return false;
 }
 
@@ -2426,49 +2594,8 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
       if (s.lfos.size() >= static_cast<size_t>(kMaxSongLfos) || !jl.is(Json::Type::Object)) break;
       SongLfo l;
       if (!takeId(jl, l.id)) return fail(err, "LFO has missing or duplicate id");
-      l.name = jl.text("name");
-      if (l.name.size() > 32) l.name.resize(32);
-      l.colour = jsonInt<int>(std::clamp(jl.num("colour", 0), 0.0, static_cast<double>(kLfoColours - 1)));
-      l.on = flag(jl, "on", true);
-      l.shape = static_cast<LfoShape>(jsonInt<int>(std::clamp(jl.num("shape", 0), 0.0, static_cast<double>(static_cast<int>(LfoShape::Count) - 1))));
-      l.pulseWidth = static_cast<float>(std::clamp(jl.num("pulseWidth", 0.5), 0.02, 0.98));
-      l.randomSteps = jsonInt<int>(std::clamp(jl.num("randomSteps", 4), 1.0, 16.0));
-      l.seed = jsonInt<uint32_t>(std::clamp(jl.num("seed", 1), 0.0, 4294967295.0));
-      if (const Json* pts = jl.find("points"); pts && pts->is(Json::Type::Array))
-        for (const auto& jp : pts->array) {
-          if (!jp.is(Json::Type::Array) || jp.array.size() < 2 || l.points.size() >= static_cast<size_t>(kLfoMaxPoints)) continue;
-          auto at = [&](size_t k, double lo, double hi) {
-            return k < jp.array.size() && jp.array[k].is(Json::Type::Number) ? static_cast<float>(std::clamp(jp.array[k].number, lo, hi)) : 0.0f;
-          };
-          l.points.push_back({at(0, 0, 1), at(1, -1, 1), at(2, -1, 1)});
-        }
-      l.drawnSteps = flag(jl, "drawnSteps", false);
-      l.tempoSync = flag(jl, "tempoSync", true);
-      l.rateNote = jsonInt<int>(std::clamp(jl.num("rateNote", 5), 0.0, 9.0));
-      l.rateKind = jsonInt<int>(std::clamp(jl.num("rateKind", 0), 0.0, 2.0));
-      l.rateHz = static_cast<float>(std::clamp(jl.num("rateHz", 1), 0.01, 40.0));
-      l.phase = static_cast<float>(std::clamp(jl.num("phase", 0), 0.0, 360.0));
-      l.depth = static_cast<float>(std::clamp(jl.num("depth", 1), 0.0, 1.0));
-      l.offset = static_cast<float>(std::clamp(jl.num("offset", 0), -1.0, 1.0));
-      l.smoothMs = static_cast<float>(std::clamp(jl.num("smoothMs", 0), 0.0, 500.0));
-      l.fadeIn = static_cast<float>(std::clamp(jl.num("fadeIn", 0), 0.0, 8.0));
-      l.unipolar = flag(jl, "unipolar", false);
-      l.restart = static_cast<LfoRestart>(jsonInt<int>(std::clamp(jl.num("restart", 1), 0.0, static_cast<double>(static_cast<int>(LfoRestart::Count) - 1))));
-      l.noteChannel = jsonInt<ObjectId>(std::clamp(jl.num("noteChannel", 0), 0.0, 4e9));
+      if (!lfoFromJson(jl, l)) continue;
       if (!s.channel(l.noteChannel)) l.noteChannel = kNoId;
-      // 0.7.8: Chaos and Random. A kind this version does not know is left out with its links (the
-      // links' source is then missing): it never plays as something else.
-      const double kind = jl.num("kind", 0);
-      if (kind < 0 || kind >= static_cast<double>(static_cast<int>(LfoKind::Count))) continue;
-      l.kind = static_cast<LfoKind>(jsonInt<int>(kind));
-      if (l.restart == LfoRestart::EachBar && l.kind != LfoKind::Chaos) l.restart = LfoRestart::OnPlay;
-      l.character = static_cast<float>(std::clamp(jl.num("character", 0.5), 0.0, 1.0));
-      l.trigger = static_cast<RandomTrigger>(jsonInt<int>(std::clamp(jl.num("trigger", 0), 0.0, static_cast<double>(static_cast<int>(RandomTrigger::Count) - 1))));
-      l.centred = flag(jl, "centred", false);
-      l.quantise = jsonInt<int>(std::clamp(jl.num("quantise", 0), 0.0, 16.0));
-      if (l.quantise < 2) l.quantise = 0;
-      l.roll = jsonInt<uint32_t>(std::clamp(jl.num("roll", 0), 0.0, 4294967295.0));
-      if (l.kind == LfoKind::Random) l.tempoSync = l.trigger != RandomTrigger::Hz;
       s.lfos.push_back(std::move(l));
     }
   if (const Json* mods = j.find("modLinks"); mods && mods->is(Json::Type::Array))
@@ -2501,6 +2628,13 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
       std::string bytes;
       if (v.is(Json::Type::String) && b64Decode(v.str, bytes)) s.flOrigin.blobs[k] = std::move(bytes);
     }
+  if (const Json* cc = j.find("collabChat"); cc && cc->is(Json::Type::Array)) {
+    for (const auto& jm : cc->array) {
+      ChatMessage m;
+      if (chatMessageFromJson(jm, m)) s.collabChat.push_back(std::move(m));
+    }
+    std::sort(s.collabChat.begin(), s.collabChat.end(), chatMessageLess);
+  }
   s.nextId = std::max<ObjectId>(jsonInt<ObjectId>(j.num("nextId", 0)), maxId + 1);
   trackmodes::dropStaleLinks(s);  // PL-08: links to deleted mixer tracks / channels
   if (srcVersion < 7) remapBitcrushNormalized(s, pp::BcBits, bitsLawV7);
@@ -2511,6 +2645,12 @@ bool songFromJson(const Json& src, Song& out, std::string* err) {
     s.slidesAnyColour = !sc->boolean;
   else
     s.slidesAnyColour = slidesMeetOtherColours(s);
+  // GitHub #87: slide notes glide velocity. A project saved before that (no "slidesVelocity") keeps
+  // its slides on pitch alone when one of them would change a note's velocity.
+  if (const Json* sv = j.find("slidesVelocity"); sv && sv->is(Json::Type::Bool))
+    s.slidesVelocity = sv->boolean;
+  else
+    s.slidesVelocity = !slidesChangeVelocity(s);
   // K-114: before clips looped one by one, a pattern's loop mode (or an automation
   // curve's loop length) looped every clip of it: each clip keeps the loop it played with.
   if (const Json* cl = j.find("clipLoops"); !cl || !cl->is(Json::Type::Bool)) adoptOldClipLoops(s);
@@ -2540,6 +2680,9 @@ bool loadProjectText(const std::string& text, const std::string& path, Song& out
   // Portable projects (zipped / exported data files) refer to their files
   // relative to the project file.
   resolveRelativePaths(out, std::filesystem::path(path).parent_path().string());
+  // K-435: files saved in Gridline's own folders (edited audio of a project not saved yet, unpacked
+  // samples) that are no longer where the project says: found where those folders are now.
+  relinkGridlineFiles(out, gridlineFileRoots());
   // Checkpoint 58 (N57-01): a kept send whose track a layout without it (or an older version) routed
   // elsewhere goes back into the track's sends. Nothing changes when no entry is stale.
   trackmodes::restoreKeptSends(out);

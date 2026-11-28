@@ -44,6 +44,7 @@ class DrumGen final : public Generator {
     float level = 1, velGain = 1;  // pad level and velocity gain (amp = level x velGain)
     Svf nf;
     Noise rng;
+    VoiceVel vv;  // GitHub #87: a slide's velocity glide on this hit (exactly 1 without one)
   };
 
   void configure(const PluginState& s, const ChannelAux&, const ProcessContext& ctx) override {
@@ -215,8 +216,10 @@ class DrumGen final : public Generator {
       }
       o *= v.fade;
       v.fade = std::max(0.0f, v.fade - v.fadeStep);
-      bl[j] += o * v.gl;
-      br[j] += o * v.gr;
+      // GitHub #87: the glide on the output only, so a hit faded to 0 rings on (a later slide raises it).
+      const float vg = v.vv.next();
+      bl[j] += o * vg * v.gl;
+      br[j] += o * vg * v.gr;
       float a = std::fabs(o);
       v.peak = a > v.peak ? a : v.peak * 0.9993f;
       ++v.n;
@@ -228,7 +231,11 @@ class DrumGen final : public Generator {
     }
   }
 
+  // GitHub #87: a slide fades its own hit only, never the others still ringing.
+  bool perVoiceVelocity() const override { return true; }
   void render(float* L, float* R, int n) override {
+    for (auto& v : voices_)
+      if (v.on) velVoice(v.vv, v.id);
     int pos = 0;
     while (pos < n) {
       if (ctr_ == 0) {

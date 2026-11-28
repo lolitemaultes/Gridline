@@ -1,4 +1,5 @@
 // Gridline - the layout parts (K-112 R4). See LayoutParts.h.
+#include "PluginIcons.h"
 #include "LayoutParts.h"
 #include <algorithm>
 #include <cctype>
@@ -37,6 +38,7 @@
 #include "BrowserUi.h"
 #include "ClipEditor.h"
 #include "ContextMenus.h"
+#include "DeviceChainUi.h"
 #include "FrameProfile.h"
 #include "HostedBodies.h"
 #include "HostedUi.h"
@@ -52,6 +54,7 @@
 #include "MixerMeters.h"
 #include "MixerHideUi.h"
 #include "SmoothLibrary.h"
+#include "SmoothPanels.h"
 #include "Theme.h"
 #include "TrackIcons.h"
 #include "TrackerEditors.h"
@@ -131,7 +134,7 @@ void part(App& a, const char* window, int index, ImVec2 firstSize, F&& body) {
     // (cp24: the lower band too, the Device chain in the Tracker: its screens draw their own boxes; its
     // 8 px padding left a 16 px strip of empty band round the Channel frame.)
     const bool edge = std::strcmp(window, "Pattern editor") == 0 || std::strcmp(window, "Order list") == 0 ||
-                      (p == layout::Preset::Tracker && std::strcmp(window, "Device chain") == 0);
+                      ((p == layout::Preset::Tracker || p == layout::Preset::Studio) && std::strcmp(window, "Device chain") == 0);
     const float padPart = edge ? 2.0f : theme::kS2;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(padPart, padPart));
     ImGui::BeginChild("##part", ImVec2(0, 0), ImGuiChildFlags_AlwaysUseWindowPadding);
@@ -671,7 +674,7 @@ ImU32 emptyFace(bool hov) {
   return hov ? P.surface700 : theme::withAlpha(P.surface700, 0.4f);
 }
 
-bool stripSlot(const char* id, const std::string& name, bool lit, bool empty, float w, const char* hint, ImU32 fill = 0) {
+bool stripSlot(const char* id, const std::string& name, bool lit, bool empty, float w, const char* hint, ImU32 fill = 0, const char* pluginType = nullptr) {
   App& a = app();
   const auto& P = pal();
   const ImVec2 p = ImGui::GetCursorScreenPos();
@@ -688,10 +691,19 @@ bool stripSlot(const char* id, const std::string& name, bool lit, bool empty, fl
   if (lit) dl->AddRect(p, ImVec2(p.x + w, p.y + h), P.hot, 4.0f);
   const float fs = theme::kFontLabel;
   char shortBuf[64];
+  // K-450: an instrument slot shows its plugin's icon at the left (in the slot's text colour, the
+  // pictogram cut through to the pill), the name centred in the rest.
+  float tx = p.x + 5, tw = w - 10;
+  if (pluginType && !empty && w >= 48) {
+    if (ui::drawPluginIcon(dl, pluginType, ImVec2(p.x + 9, p.y + h * 0.5f), 12, ui::PluginIconSurface::Smooth, 1.0f, coloured ? pal().paper : 0))
+      tx = p.x + 17, tw = w - 20;
+    else
+      ui::notePluginIconFallback(pluginType, ui::PluginIconSurface::Smooth);
+  }
   // D4 (R10-04): every named slot in Smooth (sends, outputs, groups too), not only the coloured ones
-  const float nfs = empty ? fs : slotNameSize(a, name.c_str(), w - 10 - gFitExcess);  // D9 (R14-11)
-  const char* shown = logicplug::active(a) && !empty ? fitSlotName(a.fontRegular, nfs, name.c_str(), w - 10 - gFitExcess, shortBuf, sizeof shortBuf) : name.c_str();
-  theme::textEllipsis(dl, a.fontRegular, nfs, ImVec2(centredX(a.fontRegular, nfs, shown, p.x + 5, w - 10), std::round(p.y + (h - fs) * 0.5f) - 1), w - 10,
+  const float nfs = empty ? fs : slotNameSize(a, name.c_str(), tw - gFitExcess);  // D9 (R14-11)
+  const char* shown = logicplug::active(a) && !empty ? fitSlotName(a.fontRegular, nfs, name.c_str(), tw - gFitExcess, shortBuf, sizeof shortBuf) : name.c_str();
+  theme::textEllipsis(dl, a.fontRegular, nfs, ImVec2(centredX(a.fontRegular, nfs, shown, tx, tw), std::round(p.y + (h - fs) * 0.5f) - 1), tw,
                       coloured ? pal().paper : empty ? P.textFaint : P.text, shown);
   if (hint && hov) ui::Hint(shown != name.c_str() ? name + "\n" + hint : std::string(hint));  // D4: a shortened name in full
   return click;
@@ -757,7 +769,7 @@ void fxPill(App& a, const MixerTrack& t, int k, float w) {
   if (gBypassPaint < 0 && ImGui::BeginDragDropSource()) {
     const StripSlotDrag sd{t.id, k};
     ImGui::SetDragDropPayload("GL_SLOT", &sd, sizeof sd);
-    ui::DragPreview(ui::Icon::Mixer, (name + "  (Alt: copy)").c_str());
+    ui::DragPreview(ui::Icon::Mixer, (name + "  (Alt: copy)").c_str(), 0, e.plugin.type.c_str());
     ImGui::EndDragDropSource();
   }
   slotDrop(a, t.id, k);
@@ -781,6 +793,15 @@ void fxPill(App& a, const MixerTrack& t, int k, float w) {
   // D7 (R13-07): the name has the pill's full width (a 2 px inset each side), so "Parametric EQ" reads
   // whole on a 74 px strip; the hover icons take their room only while shown.
   float tx = p.x + 2, tw = w - 4;
+  // K-450: a built-in effect's icon at the left of its pill (in the pill's text colour, the pictogram
+  // cut through to the pill); the hover icons take that place while shown.
+  if (!hov && info && w >= 48) {
+    if (ui::drawPluginIcon(dl, info->type, ImVec2(p.x + 9, p.y + h * 0.5f), 12, ui::PluginIconSurface::Smooth, e.enabled ? 1.0f : 0.5f,
+                           e.enabled ? pal().paper : P.textFaint))
+      tx = p.x + 17, tw = w - 20;
+    else
+      ui::notePluginIconFallback(info->type, ui::PluginIconSurface::Smooth);
+  }
   if (hov) {
     const ImU32 on = pal().paper, dim = theme::withAlpha(pal().paper, 170.0f / 255.0f);
     ui::drawIcon(dl, ui::Icon::Power, ImVec2(p.x + 8, p.y + h * 0.5f), 10, e.enabled ? (inBypass ? on : dim) : (inBypass ? P.text : P.textFaint));
@@ -1173,7 +1194,8 @@ void strip(App& a, const MixerTrack& t, const Channel* ch, ImVec2 p, ImVec2 size
       const std::string patch = packs::samplers::parsePatchRef(ch->plugin.data).name;
       if (!patch.empty()) name = patch;
     }
-    if (stripSlot("##inst", name, a.settingsChannel == ch->id, !info && !ch->isLayer(), w, "The channel's instrument: click to open it", theme::rgb(kSlotGreen)))
+    if (stripSlot("##inst", name, a.settingsChannel == ch->id, !info && !ch->isLayer(), w, "The channel's instrument: click to open it", theme::rgb(kSlotGreen),
+                  ch->plugin.type.c_str()))
       a.settingsChannel = ch->id;
     gap();
   } else if (fxRows >= 0 || padRows > 0) {
@@ -1846,117 +1868,10 @@ void library(App& a) {
 }
 
 // -------------------------------------------------------------------- Lists ----
-// Checkpoint 28 (Tracks layout): the lists as 087, 128, 172 and 189 draw them: a centred segmented
-// control (Marker, Tempo, Signature), then a table of 20 px rows under its header (hairlines between the
-// header's columns only), and a footer line with the list's name and count.
-void logicLists(App& a) {
-  const Song& s = a.doc.song();
-  const auto& P = pal();
-  static int tab = 0;
-  const char* tabs[] = {i18n::tr("Marker"), i18n::tr("Tempo"), i18n::tr("Signature")};
-  const char* hints[] = {i18n::tr("The song's markers"), i18n::tr("The song's tempo"), i18n::tr("The song's time signatures")};
-  {
-    // Checkpoint 29: an add button at the row's left (128 and 087 lead the list with one), the
-    // segmented control centred in what is left of the row.
-    const float fh = ImGui::GetFrameHeight(), x0 = ImGui::GetCursorPosX(), y0 = ImGui::GetCursorPosY();
-    const float W = ImGui::GetContentRegionAvail().x;
-    ImGui::BeginDisabled(tab != 0);
-    if (ui::IconButton("lgaddmk", ui::Icon::Plus, false, fh, "Add a marker at the song position"))
-      ops::addMarker(a.doc, static_cast<Tick>(a.engine.position()), ops::nextMarkerName(s));
-    ImGui::EndDisabled();
-    float segW = std::min(84.0f, std::floor((W - fh * 2 - 16) / 3));
-    // R02-21: a narrow pane (1024 x 640) still shows "Signature" whole: the segments take the room
-    // the centring kept free before they cut a name.
-    float need = 0;
-    for (const char* tl : tabs) need = std::max(need, std::ceil(ImGui::CalcTextSize(tl).x) + 14);
-    if (segW < need) segW = std::max(segW, std::min(need, std::floor((W - fh - 12) / 3)));
-    ImGui::SameLine(0, 0);
-    ImGui::SetCursorPos(ImVec2(x0 + std::max(fh + 8, std::floor((W - segW * 3 - 4) * 0.5f)), y0));
-    ui::Segmented("##lglists", tabs, 3, &tab, segW, 0, hints);
-  }
-  ImGui::Dummy(ImVec2(0, 2));
-  struct Row {
-    Tick pos;
-    std::string a, b;
-  };
-  std::vector<Row> rows;
-  const char* cols[3] = {i18n::tr("Position"), i18n::tr("Name"), nullptr};
-  char t[32];
-  if (tab == 0) {
-    for (const Marker& m : s.markers)
-      if (!m.isMeter()) rows.push_back({m.pos, m.name, i18n::tr(m.isKey() ? "Key" : "Marker")});
-    cols[2] = i18n::tr("Kind");
-  } else if (tab == 1) {
-    std::snprintf(t, sizeof t, "%.4f", s.tempo);
-    rows.push_back({0, t, ""});
-    cols[1] = i18n::tr("Tempo");
-  } else {
-    std::snprintf(t, sizeof t, "%d/%d", s.timeSigNum, s.timeSigDen);
-    rows.push_back({0, t, ""});
-    for (const Marker& m : s.markers)
-      if (m.isMeter()) {
-        std::snprintf(t, sizeof t, "%d/%d", m.timeSigNum, m.timeSigDen);
-        rows.push_back({m.pos, t, ""});
-      }
-    cols[1] = i18n::tr("Signature");
-  }
-  const int nCols = cols[2] ? 3 : 2;
-  const float footH = 24;
-  const ImVec2 av = ImGui::GetContentRegionAvail();
-  ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 3));
-  const float tableH = std::max(40.0f, av.y - footH - ImGui::GetStyle().ItemSpacing.y);
-  if (ImGui::BeginTable("##lglist", nCols, ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp, ImVec2(av.x, tableH))) {
-    ImGui::TableSetupScrollFreeze(0, 1);
-    ImGui::TableSetupColumn(cols[0], ImGuiTableColumnFlags_WidthStretch, 1.0f);
-    ImGui::TableSetupColumn(cols[1], ImGuiTableColumnFlags_WidthStretch, 1.3f);
-    if (nCols == 3) ImGui::TableSetupColumn(cols[2], ImGuiTableColumnFlags_WidthStretch, 0.7f);
-    ImGui::TableHeadersRow();
-    {  // hairlines between the header's columns only, as 087 and 128 draw them (not down the rows)
-      ImGuiTable* tb = ImGui::GetCurrentTable();
-      const ImRect hr = ImGui::TableGetCellBgRect(tb, 0);
-      for (int k = 1; k < nCols; ++k) {
-        const float x = std::round(ImGui::TableGetCellBgRect(tb, k).Min.x) - 0.5f;
-        ImGui::GetWindowDrawList()->AddLine(ImVec2(x, hr.Min.y + 4), ImVec2(x, hr.Max.y - 4), theme::withAlpha(P.text, 0.18f));
-      }
-    }
-    for (size_t i = 0; i < rows.size(); ++i) {
-      const Row& r = rows[i];
-      ImGui::TableNextRow(ImGuiTableRowFlags_None, 20);
-      if (i % 2) ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, theme::withAlpha(P.text, 0.03f));
-      ImGui::TableNextColumn();
-      ImGui::PushID(static_cast<int>(i));
-      if (ImGui::Selectable(tickText(a, r.pos).c_str(), false, ImGuiSelectableFlags_SpanAllColumns)) a.engine.setPosition(r.pos);
-      ui::Hint("Click: move the song position here");
-      ImGui::PopID();
-      ImGui::TableNextColumn();
-      ImGui::TextUnformatted(r.a.c_str());
-      if (nCols == 3) {
-        ImGui::TableNextColumn();
-        ImGui::TextColored(theme::vec(P.textDim), "%s", r.b.c_str());
-      }
-    }
-    ImGui::EndTable();
-  }
-  ImGui::PopStyleVar();
-  // The footer: what the list holds, its count at the right.
-  ImDrawList* dl = ImGui::GetWindowDrawList();
-  const ImVec2 f0 = ImGui::GetCursorScreenPos();
-  const float fw = ImGui::GetContentRegionAvail().x;
-  dl->AddLine(ImVec2(f0.x, f0.y + 0.5f), ImVec2(f0.x + fw, f0.y + 0.5f), P.dark ? P.ink : P.line);
-  const size_t n = rows.size();
-  const std::string cnt = tab == 0 ? std::to_string(n) + " " + i18n::tr(n == 1 ? "marker" : "markers")
-                          : tab == 1 ? std::string(t)
-                                     : std::to_string(n) + " " + i18n::tr(n == 1 ? "signature" : "signatures");
-  const float fs = theme::kFontLabel;
-  const float ty = theme::textTop(a.fontRegular, fs, f0.y + 1, footH - 1);
-  dl->AddText(a.fontRegular, fs, ImVec2(f0.x + 8, ty), P.textDim, tabs[tab]);
-  const float cw = a.fontRegular->CalcTextSizeA(fs, 1e9f, 0, cnt.c_str()).x;
-  dl->AddText(a.fontRegular, fs, ImVec2(std::round(f0.x + fw - 8 - cw), ty), P.textDim, cnt.c_str());
-  ImGui::Dummy(ImVec2(fw, footH));
-}
+// K-128: Smooth's Lists drawer (Event | Marker | Tempo | Signature) lives in SmoothPanels.cpp.
 
 void lists(App& a) {
-  if (logicplug::active(a)) return logicLists(a);
+  if (logicplug::active(a)) return smoothpanels::drawEventList(a);
   const Song& s = a.doc.song();
   static int tab = 0;
   const char* tabs[] = {"Markers", "Tempo and meter"};
@@ -2081,17 +1996,23 @@ void deviceChain(App& a) {
       if (bool* f = flag(a, "Device chain")) *f = false;
     return;
   }
+  // K-404: Studio's inline Device chain: the selected channel's instrument followed by its mixer
+  // track's effect slots (including Junction FX) in a horizontal, height-snapped row.
+  if (p == layout::Preset::Studio) {
+    devchainui::draw(a);
+    return;
+  }
   // The chips: one per device, in signal order.
-  if (c && ui::TextButton((std::string(findPlugin(c->plugin.type) ? findPlugin(c->plugin.type)->name : c->name) + "##devins").c_str(), pick.kind == 0, 0,
-                          hostsIns ? "The channel's instrument" : "The channel's instrument: opens its window"))
+  if (c && ui::pluginTextButton(c->plugin.type, findPlugin(c->plugin.type) ? findPlugin(c->plugin.type)->name : c->name, "##devins", pick.kind == 0,
+                                hostsIns ? i18n::N_("The channel's instrument") : i18n::N_("The channel's instrument: opens its window"), ui::PluginIconSurface::DeviceBand))
     choose(0, -1);
   if (t)
     for (int k = 0; k < kEffectSlots; ++k) {
       const PluginInfo* fx = findPlugin(t->slots[static_cast<size_t>(k)].plugin.type);
       if (!fx) continue;
       ImGui::SameLine(0, 4);
-      if (ui::TextButton((fx->name + "##devfx" + std::to_string(k)).c_str(), pick.kind == 1 && pick.slot == k, 0,
-                         hostsFx ? "An effect on the track" : "An effect on the track: opens its window"))
+      if (ui::pluginTextButton(fx->type, fx->name, ("##devfx" + std::to_string(k)).c_str(), pick.kind == 1 && pick.slot == k,
+                               hostsFx ? i18n::N_("An effect on the track") : i18n::N_("An effect on the track: opens its window"), ui::PluginIconSurface::DeviceBand))
         choose(1, k);
     }
   if (onMaster) {
@@ -2325,41 +2246,10 @@ void files(App& a) {
 }
 
 // -------------------------------------------------------------------- Notes ----
-struct NotesDev {
-  bool focus = false, blur = false;
-};
-
-// The notes text grows as typed (no fixed buffer: long notes are never cut, nor a character split).
-int growString(ImGuiInputTextCallbackData* d) {
-  if (d->EventFlag == ImGuiInputTextFlags_CallbackResize) {
-    auto* s = static_cast<std::string*>(d->UserData);
-    s->resize(static_cast<size_t>(d->BufTextLen));
-    d->Buf = s->data();
-  }
-  return 0;
-}
-
-NotesDev gNotesDev;
+// K-128: Smooth Project / Track Notes live in SmoothPanels.cpp.
 
 void notes(App& a) {
-  const Song& s = a.doc.song();
-  static std::string buf;
-  static bool editing = false;
-  if (!editing) buf = s.info.comments;  // a collaborator's edit shows at once
-  if (gNotesDev.focus) ImGui::SetKeyboardFocusHere(), gNotesDev.focus = false;
-  if (gNotesDev.blur && editing) ImGui::ClearActiveID(), gNotesDev.blur = false;
-  // K-297 (round 6): Esc ends the typing and keeps the notes. The field put back the text it had
-  // when the typing began (a text field's Esc), so everything typed since the click was lost.
-  if (editing && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::ClearActiveID();
-  ImGui::InputTextMultiline("##notes", buf.data(), buf.capacity() + 1, ImGui::GetContentRegionAvail(), ImGuiInputTextFlags_CallbackResize,
-                            growString, &buf);
-  editing = ImGui::IsItemActive();
-  if (ImGui::IsItemDeactivatedAfterEdit() && s.info.comments != buf) {  // one undo step per edit
-    SongInfo info = s.info;
-    info.comments = buf;
-    a.doc.setInfo(info);
-  }
-  ui::Hint("The project's notes (saved with it, shared with collaborators)");
+  smoothpanels::drawNotes(a);
 }
 
 struct PartDef {
@@ -2372,6 +2262,7 @@ const PartDef kParts[] = {
     {"Device chain", {900, 260}, deviceChain}, {"Clip panel", {320, 360}, clipPanel}, {"Track scopes", {520, 200}, trackScopes},
     {"Info box", {280, 120}, infoBox},    {"Files", {420, 360}, files},             {"Notes", {420, 320}, notes},
     {"Smart controls", {640, 240}, logicplug::smartControls},
+    {"Score", {900, 320}, smoothpanels::drawScore},
     {"Pattern editor", {960, 560}, trackerview::patternEditor}, {"Order list", {300, 360}, trackerview::orderList},
     {"Seltmann", {1200, 420}, packs::seltmannPane},
     {"Chop", {1200, 640}, packs::seltmannChopPage},  // K-347: Seltmann's page in the Tracker
@@ -2383,6 +2274,8 @@ bool partListed(const char* window) {
   if (tracker && layoutui::active() == layout::Preset::Live) return false;
   // 0.7.8: Seltmann's pane tab is Smooth's (elsewhere its editor is the instrument window or the device band)
   if (std::strcmp(window, "Seltmann") == 0) return layoutui::active() == layout::Preset::Logic;
+  // K-128: Score lives on Smooth's lower-pane editor strip (keeps menu goldens unchanged)
+  if (std::strcmp(window, "Score") == 0) return false;
   // K-347: the Chop page is the Tracker's (a page beside its others while the project has a Seltmann)
   if (std::strcmp(window, "Chop") == 0) return layoutui::active() == layout::Preset::Tracker;
   return std::strcmp(window, "Smart controls") != 0 || layoutui::active() == layout::Preset::Logic;
@@ -3016,27 +2909,16 @@ void devCommand(App& a, const std::vector<std::string>& args) {
     logicplug::smartDevCommand(a, std::vector<std::string>(args.begin() + 1, args.end()));
     return;
   }
-  // parts chain instrument | fx <slot> | master: a Device chain chip click
+  // parts chain instrument | fx <slot> | master (k112_hosts) or K-404 dev commands
   if (args.size() >= 2 && args[0] == "chain") {
     if (args[1] == "instrument") gChainDev = {0, -1};
     else if (args[1] == "fx" && args.size() > 2) gChainDev = {1, std::atoi(args[2].c_str())};
     else if (args[1] == "master") gChainDev = {2, -1};
+    else devchainui::devCommand(a, args);
     return;
   }
-  // parts notes set <file> | dump <file> | focus | blur
-  if (args.size() < 2 || args[0] != "notes") return;
-  std::string path;  // the rest of the line (paths may have spaces)
-  for (size_t i = 2; i < args.size(); ++i) path += (i > 2 ? " " : "") + args[i];
-  if (args[1] == "focus") gNotesDev.focus = true;
-  else if (args[1] == "blur") gNotesDev.blur = true;
-  else if (args[1] == "set" && !path.empty()) {
-    std::ifstream f(path, std::ios::binary);
-    SongInfo info = a.doc.song().info;
-    info.comments.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-    a.doc.setInfo(info);
-  } else if (args[1] == "dump" && !path.empty()) {
-    writeFileAtomic(path, a.doc.song().info.comments);
-  }
+  // parts notes|eventlist|score ... (K-128)
+  if (smoothpanels::devCommand(a, args)) return;
 }
 
 void panelsMenu(App& a, bool tracker) {

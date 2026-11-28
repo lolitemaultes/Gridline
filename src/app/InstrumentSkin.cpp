@@ -38,6 +38,12 @@ ParamView view(App& a, const PluginTarget& t, int param) {
   pv.v = v.value_or(0.0);
   return pv;
 }
+// K-446: a switch shows the value automation, a link or an LFO moves.
+ParamView viewShown(App& a, const PluginTarget& t, int param) {
+  ParamView pv = view(a, t, param);
+  if (pv.ok) pv.v = pui::shownValue(a, t.pid(param), pv.v);
+  return pv;
+}
 
 ImFont* fontFor(bool mono, bool bold) {
   App& a = app();
@@ -214,17 +220,21 @@ bool dragValue(App& a, double& v, const ParamDesc& d, float pixels, bool horizon
       return true;
     }
   }
+  const bool semiSnap = isSemitonePitchParam(d);
+  const bool fineMod = io.KeyShift || io.KeyAlt;
   if (act && !(io.KeyCtrl || io.KeySuper)) {
     float delta = horizontal ? io.MouseDelta.x : -io.MouseDelta.y;
     if (delta != 0) {
       double& acc = accum[id];
-      acc = std::clamp(acc + delta * (io.KeyShift ? 0.12 : 1.0) / std::max(40.0f, pixels), 0.0, 1.0);
-      double nv = d.fromNormalized(acc);
+      acc = std::clamp(acc + delta * (fineMod ? 0.12 : 1.0) / std::max(40.0f, pixels), 0.0, 1.0);
+      double nv = snapSemitonePitch(d, d.fromNormalized(acc), fineMod);
       if (nv != v) v = nv, changed = true;
     }
   }
   if (hov && !act && io.MouseWheel != 0) {
-    double nv = d.fromNormalized(std::clamp(d.toNormalized(v) + io.MouseWheel * (io.KeyShift ? 0.005 : 0.025), 0.0, 1.0));
+    double nv = semiSnap && !fineMod
+                    ? d.clamp(std::round(v) + (io.MouseWheel > 0 ? 1.0 : -1.0))
+                    : snapSemitonePitch(d, d.fromNormalized(std::clamp(d.toNormalized(v) + io.MouseWheel * (fineMod ? 0.005 : 0.025), 0.0, 1.0)), fineMod);
     if (nv != v) v = nv, changed = true;
   }
   ParamDoubleClick dbl = ParamDoubleClick::Type;
@@ -323,7 +333,7 @@ bool digiValue(App& a, const Skin& k, const char* id, double& v, const ParamDesc
 
 bool check(App& a, const PluginTarget& t, const Skin& k, int param, float x, float y, float w, float h, const char* caption,
            float size) {
-  ParamView pv = view(a, t, param);
+  ParamView pv = viewShown(a, t, param);
   if (!pv.ok) return false;
   bool on = pv.v >= 0.5;
   ImGui::PushID(param);
@@ -345,7 +355,7 @@ bool check(App& a, const PluginTarget& t, const Skin& k, int param, float x, flo
 
 bool switchBtn(App& a, const PluginTarget& t, const Skin& k, int param, float x, float y, float w, float h,
                const std::function<void(ImDrawList*, ImVec2, ImVec2, bool)>& icon) {
-  ParamView pv = view(a, t, param);
+  ParamView pv = viewShown(a, t, param);
   if (!pv.ok) return false;
   bool on = pv.v >= 0.5;
   ImGui::PushID(param);
@@ -387,7 +397,8 @@ bool selector(App& a, const PluginTarget& t, const Skin& k, int param, float x, 
       a.doc.setParam(t.pid(param), nx, false), cur = nx, changed = true;
       io.MouseWheel = 0;
     }
-    if (pui::dragParamItem(a, t.pid(param), *pv.d, val, 220.0f, true)) cur = static_cast<int>(std::lround(val)), changed = true;
+    if (pui::dragParamItem(a, t.pid(param), *pv.d, val, 220.0f, true)) changed = true;
+    cur = std::clamp(static_cast<int>(std::lround(val)), 0, count - 1);  // K-446: as automation moves it, too
   }
   item(k.dl(), p, q, cur);
   if (hov) a.setHint(pv.d->name + ": " + pv.d->choices[static_cast<size_t>(cur)] + "   (click left/right half to step · drag · wheel)");
@@ -417,6 +428,10 @@ bool button(const Skin& k, const char* id, float x, float y, float w, float h, c
   ImVec2 p = k.at(x, y), q = k.at(x + w, y + h);
   ImGui::SetCursorScreenPos(p);
   bool pressed = ImGui::InvisibleButton(id, ImVec2(q.x - p.x, q.y - p.y));
+  if (caption && *caption) {  // the caption for the item hooks (the dev "atitem" finds the button by it)
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    IMGUI_TEST_ENGINE_ITEM_INFO(g.LastItemData.ID, caption, g.LastItemData.StatusFlags);
+  }
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   ImU32 lc = litCol ? litCol : k.c.led;
   ImU32 bg = lit ? theme::withAlpha(lc, 0.85f) : act ? lerp(k.c.panel, IM_COL32_WHITE, 0.14f) : hov ? lerp(k.c.panel, IM_COL32_WHITE, 0.07f) : k.c.panel;

@@ -56,7 +56,7 @@ function(chips_at var frame)
 endfunction()
 
 # ---- Live: the chips, then a click on the first one (and again)
-run(live live "6 browser cat 12\n40 browser chips\n42 sdlat brchip\n44 sdldown 0\n45 sdlup 0\n50 browser chips\n52 sdlat brchip\n54 sdldown 0\n55 sdlup 0\n60 browser chips\n")
+run(live live "6 browser cat folders\n40 browser chips\n42 sdlat brchip\n44 sdldown 0\n45 sdlup 0\n50 browser chips\n52 sdlat brchip\n54 sdldown 0\n55 sdlup 0\n60 browser chips\n")
 chips_at(c0 40)
 check("live: chips drawn (${c0_n})" c0_n GREATER 1)
 # (The index holds only this folder and the empty Gridline folders: GRIDLINE_FL_DATA points at an empty one.)

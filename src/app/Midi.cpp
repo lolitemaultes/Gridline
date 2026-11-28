@@ -1,4 +1,5 @@
 #include "Midi.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include <algorithm>
 #include <atomic>
@@ -96,7 +97,7 @@ MidiManager::MidiManager(AudioEngine& engine, bool systemPorts)
 MidiManager::~MidiManager() {
   quit_ = true;
   senderWake_.post();
-  if (sender_.joinable()) sender_.join();
+  gl::threads::safeJoin(sender_);
   try {
     for (auto& p : ins_)
       if (p->in) p->in->closePort();

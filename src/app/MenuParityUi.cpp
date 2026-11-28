@@ -23,6 +23,7 @@
 #include "../core/ProjectInterop.h"
 #include "../core/StepNotes.h"
 #include "../engine/NoteFxBurn.h"
+#include "../host/HostedPlugins.h"
 #include "App.h"
 #include "AutomationEditor.h"
 #include "BrowserUi.h"
@@ -340,13 +341,125 @@ void channelStepItems(App& a, ObjectId channel) {
   const Pattern* p = s.pattern(a.curPattern);
   if (p && ImGui::MenuItem(i18n::tr("Repeat the first bar of steps"), nullptr, false, p->bars > 1 && p->steps.count(channel)))
     a.later([&a, pid = p->id, channel] { ops::autoFillSteps(a.doc, pid, channel); });  // next frame: the rack's channel menu
-  if (p && ImGui::MenuItem(i18n::tr("Bake note effects into the pattern"), nullptr, false, !c->noteFx.empty())) {
+  printItems(a, channel);
+}
+
+void printItems(App& a, ObjectId channel, bool useful) {
+  const Song& s = a.doc.song();
+  const Channel* c = s.channel(channel);
+  const Pattern* p = s.pattern(a.curPattern);
+  if (!c || !p) return;
+  if ((!useful || !c->noteFx.empty()) && ImGui::MenuItem(i18n::tr("Bake note effects into the pattern"), nullptr, false, !c->noteFx.empty())) {
     a.later([&a, pid = p->id, channel, name = p->name] {
-      if (burnNoteFxToPattern(a.doc, pid, channel)) a.notify("Note effects baked into " + name);
-      else a.notify("Nothing to bake: the channel has no notes or steps here");
+      if (burnNoteFxToPattern(a.doc, pid, channel)) a.notify(i18n::tr("Note effects baked into ") + name);
+      else a.notify(i18n::tr("Nothing to bake: the channel has no notes or steps here"));
     });
   }
-  ui::Hint("Plays the channel's note effects (arpeggiator, chords, …) and writes their output as notes");
+  if (!useful || !c->noteFx.empty()) ui::Hint("Plays the channel's note effects (arpeggiator, chords, …) and writes their output as notes");
+  const PluginInfo* info = findPlugin(c->plugin.type);
+  auto print = [&a, pid = p->id, channel, name = p->name](SeqPart part) {
+    a.later([&a, pid, channel, name, part] {
+      if (printSequenceToPattern(a.doc, pid, channel, part)) a.notify(i18n::tr("Sequence written into ") + name);
+      else a.notify(i18n::tr("Nothing to write: the sequence played no notes in this pattern"));
+    });
+  };
+  if (info && !info->sequencerParams.empty()) {
+    if (sequencerPartsOn(s, channel)) {  // arpeggiator and clip player both on: one of them, so nothing doubles
+      if (ImGui::BeginMenu(i18n::tr("Write the sequence to the piano roll"))) {
+        if (ImGui::MenuItem(i18n::tr("The arpeggiator's notes"))) print(SeqPart::Arpeggiator);
+        ui::Hint("Writes what the arpeggiator plays and switches the arpeggiator and the clip player off");
+        if (ImGui::MenuItem(i18n::tr("The clip player's notes"))) print(SeqPart::ClipPlayer);
+        ui::Hint("Writes what the clip player plays and switches it off: the arpeggiator goes on playing the written notes");
+        ImGui::EndMenu();
+      }
+    } else {
+      if (ImGui::MenuItem(i18n::tr("Write the sequence to the piano roll"), nullptr, false, sequencerOn(s, channel))) print(SeqPart::Whole);
+      ui::Hint(sequencerOn(s, channel) ? "Plays the instrument's own sequencer over the pattern, writes its notes into the piano roll and switches the sequencer off"
+                                       : "Switch the instrument's sequencer on to write what it plays into the piano roll");
+    }
+  }
+  bool hosted = false;
+  if (!sendsMidi(a, channel, &hosted)) return;
+  if (hosted) {
+    if (ImGui::MenuItem(i18n::tr("Write its MIDI output to the piano roll"))) {
+      a.later([&a, pid = p->id, channel, name = c->name] {
+        const ObjectId made = printMidiOutputToPattern(a.doc, pid, channel);
+        const Pattern* np = a.doc.song().pattern(made);
+        if (np) {
+          a.curPattern = made;
+          a.notify(i18n::tr("MIDI output written into ") + np->name);
+        } else {
+          a.notify(i18n::tr("Nothing to write: the plugin sent no notes in this pattern"));
+        }
+      });
+    }
+    ui::Hint("Plays the pattern once and writes the notes the plugin sends into a new pattern, on the channel that plays them");
+  }
+  const bool recording = a.outTake.active() && a.outTake.channel() == channel;
+  if (ImGui::MenuItem(recording ? i18n::tr("Stop recording its MIDI output") : i18n::tr("Record this plugin's MIDI output into a pattern"))) {
+    if (recording) a.later([&a] { stopMidiOutTake(a); });
+    else a.later([&a, channel] { startMidiOutTake(a, channel); });
+  }
+  ui::Hint(recording ? "Keeps what it sent so far in a new pattern" : "Plays the transport and records the notes it sends; stop the transport to keep them in a new pattern");
+}
+
+bool sendsMidi(App& a, ObjectId channel, bool* hosted) {
+  if (hosted) *hosted = false;
+  const Channel* c = a.doc.song().channel(channel);
+  if (!c) return false;
+  if (auto rt = a.builder.channelRuntime(channel); rt && rt->gen && rt->type == c->plugin.type)
+    if (host::HostedInstance* hi = host::hostedInstance(rt->gen.get())) {
+      if (hosted) *hosted = true;
+      return hi->hasMidiOutput();
+    }
+  const PluginInfo* info = findPlugin(c->plugin.type);
+  return info && info->midiOutput;
+}
+
+void startMidiOutTake(App& a, ObjectId channel) {
+  const Song& s = a.doc.song();
+  const Channel* c = s.channel(channel);
+  const Pattern* p = s.pattern(a.curPattern);
+  if (!c || !p) return;
+  if (a.engine.mode() == PlayMode::Song) {  // from the bar where it starts
+    const Tick bar = std::max<Tick>(1, s.barTicks());
+    const Tick at = std::max<Tick>(0, static_cast<Tick>(a.engine.position()));
+    a.outTake.begin(a.engine, channel, p->id, 0, at / bar * bar);
+  } else {
+    a.outTake.begin(a.engine, channel, p->id, std::max<Tick>(1, s.patternContentLength(*p)));
+  }
+  a.outTakePlayed = a.engine.playing();
+  if (!a.engine.playing()) a.startPlayback();
+  a.notify(i18n::tr("Recording the MIDI output of ") + c->name + i18n::tr(": stop the transport to keep it"));
+}
+
+void stopMidiOutTake(App& a) {
+  if (!a.outTake.active()) return;
+  const ObjectId ch = a.outTake.channel();
+  const Channel* c = a.doc.song().channel(ch);
+  const std::string name = c ? c->name : std::string();
+  const ObjectId made = c ? a.outTake.end(a.doc, a.engine, midiOutputTarget(a.doc.song(), ch)) : kNoId;
+  if (!c) a.outTake.cancel(a.engine);
+  a.outTakePlayed = false;
+  if (const Pattern* np = a.doc.song().pattern(made)) {
+    a.notify(i18n::tr("MIDI output of ") + name + i18n::tr(" recorded into ") + np->name);
+  } else if (c) {
+    a.notify(i18n::tr("Nothing recorded: ") + name + i18n::tr(" sent no notes"));
+  }
+}
+
+void midiOutTakeFrame(App& a) {
+  if (!a.outTake.active()) return;
+  if (!a.doc.song().channel(a.outTake.channel())) {  // its channel went
+    a.outTake.cancel(a.engine);
+    return;
+  }
+  a.outTake.poll(a.engine);
+  if (a.engine.playing()) {
+    a.outTakePlayed = true;
+  } else if (a.outTakePlayed) {
+    stopMidiOutTake(a);  // stopped: kept in one undo step
+  }
 }
 
 void channelSampleItems(App& a, ObjectId channel) {
@@ -467,6 +580,10 @@ void pianoToolItems(App& a) {
   const Channel* c = a.doc.song().channel(a.selChannel);
   if (ImGui::MenuItem(i18n::tr("Bake note effects into the notes"), nullptr, false, ok && c && !c->noteFx.empty()))
     burnNoteFxToPattern(a.doc, a.curPattern, a.selChannel);
+  const PluginInfo* info = c ? findPlugin(c->plugin.type) : nullptr;
+  if (info && !info->sequencerParams.empty() &&
+      ImGui::MenuItem(i18n::tr("Write the sequence to the piano roll"), nullptr, false, sequencerOn(a.doc.song(), a.selChannel)))
+    if (!printSequenceToPattern(a.doc, a.curPattern, a.selChannel)) a.notify(i18n::tr("Nothing to write: the sequence played no notes in this pattern"));
 }
 
 void pianoSelectItems(App& a) {
@@ -541,6 +658,9 @@ void timeFormatMenu(App& a) {
 void stopMenuItems(App& a) {
   const bool on = a.settings.getBool("transport.rememberSeek");
   if (ImGui::MenuItem(i18n::tr("Stop returns to the set position"), nullptr, on)) a.settings.set("transport.rememberSeek", !on);
+  const bool stopEnd = a.settings.getBool("transport.stopAtEnd");
+  if (ImGui::MenuItem(i18n::tr("Stop at end of song"), nullptr, stopEnd)) a.settings.set("transport.stopAtEnd", !stopEnd);
+  ui::Hint(i18n::tr("Off: Song mode loops back to the start at the end of the song. On: playback stops at the end instead."));
   if (ImGui::MenuItem(i18n::tr("Panic: stop all sound"), keys::label("tools.stopSound"))) panicPressed(a);
   ui::Hint(i18n::tr("Silences everything at once: every note, delay and reverb tails, previews and plugins (pressing Stop twice does the same)"));
 }

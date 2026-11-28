@@ -45,6 +45,10 @@ void setSystemKeys(const std::vector<std::string>& items);
 // Puts back the menu bar the program started with.
 void uninstall();
 bool installed();
+// The installed menus are on screen, so the app's own menu row can go. macOS: once installed.
+// Linux: once a global menu host has read them (GitHub #85: a host's name on the bus alone does
+// not mean anything shows them). Elsewhere: false.
+bool shown();
 // Per frame: handles the system's requests (Linux: the D-Bus messages, without blocking).
 void poll();
 // The id of the item chosen since the last call ("" when none).

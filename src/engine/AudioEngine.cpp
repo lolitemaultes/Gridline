@@ -27,9 +27,44 @@ inline void storeMax(std::atomic<float>& a, float v) {
   while (v > cur && !a.compare_exchange_weak(cur, v, std::memory_order_relaxed)) {
   }
 }
+
+// 0.7.9: live song-parameter swing & groove accent evaluation (audio thread, zero allocation).
+// `swing`: the live swing amount to place the note with (< 0: the Program's live value now).
+inline double liveNoteOnTick(const Program* p, const ProgChannel& ch, const NoteEv& e, float swing = -1.0f) {
+  const double raw = noteOnTick(e);
+  if (p->swingLinked && (e.flags & kNoteSwingTiming) && p->liveGroove.active) {
+    const double eff = std::clamp(static_cast<double>(swing >= 0.0f ? swing : p->modSwing) * static_cast<double>(ch.swingMix), 0.0, 1.0);
+    if (eff > 0.0) return std::max(0.0, raw + eff * (p->liveGroove.map(raw) - raw));
+  }
+  return raw;
+}
+inline double liveNoteOffTick(const Program* p, const ProgChannel& ch, const NoteEv& e) {
+  const double rawOff = noteOffTick(e);
+  if (p->swingLinked && (e.flags & kNoteSwingTiming) && p->liveGroove.active) {
+    const double rawOn = noteOnTick(e);
+    const double on = liveNoteOnTick(p, ch, e);
+    const double shift = on - rawOn;
+    if (shift != 0.0) return ch.swingTruncate ? std::max(on + 1.0, rawOff) : std::max(on + 1.0, rawOff + shift);
+  }
+  return rawOff;
+}
+// The song's master pitch plus the channel's fine tune (ProgChannel::masterPitch), or with a live
+// internal link on the master pitch, its live value plus the fine tune.
+inline float channelMaster(const Program* p, const ProgChannel& c) {
+  return p->masterPitchLinked ? p->modMasterPitch + c.finePitch : c.masterPitch;
+}
+inline float liveNoteVelocity(const Program* p, const ProgChannel& ch, const NoteEv& e) {
+  if (p->grooveAccentLinked && (e.flags & kNoteSwingAccent) && p->liveGroove.accents) {
+    const float eff = std::clamp(p->modGrooveAccent * ch.swingMix, 0.0f, 1.0f);
+    const float f = 1.0f + eff * (p->liveGroove.velocityAt(noteOnTick(e)) - 1.0f);
+    return std::clamp(e.velocity * f, 0.0f, 1.0f);
+  }
+  return e.velocity;
+}
 }  // namespace
 
 AudioEngine::AudioEngine(double sampleRate) : sr_(sampleRate), queue_(kQueue) {
+  modTempoMap_.setConstant(140.0, kDefaultPpq);  // pre-allocate 1-seg storage for audio-thread updates
   // Pre-allocate every bus the mixer can have, so the audio thread never allocates.
   size_t buses = static_cast<size_t>(kMaxMixerInserts) + 2;
   busL_.assign(buses, std::vector<float>(kMaxBlock, 0.f));
@@ -56,35 +91,75 @@ AudioEngine::AudioEngine(double sampleRate) : sr_(sampleRate), queue_(kQueue) {
   recTick_.assign(kMaxBlock, -1.0);
   rawTick_.assign(kMaxBlock, -1.0);   // K-123 (0.7.7)
   recHist_.assign(kTickHistory, 0);
+  // K-407 / K-417: pre-allocate browser preview stretch voice and scratch buffers (zero RT allocs).
+  pvOutL_.assign(kMaxBlock, 0.f);
+  pvOutR_.assign(kMaxBlock, 0.f);
+  pvStretch_.prepare(2, sr_, 4.0, 4.0, true, stretch::Engine::Stretch);
 }
 
-// ---- audio input & recording (J-8) -------------------------------------------
+// ---- audio input & recording (J-8, K-430) ------------------------------------
 
 void AudioEngine::setInputChannels(int channels) {
-  inChannels_.store(std::clamp(channels, 0, kMaxInputChannels));
+  inChannels_.store(std::clamp(channels, 0, kMaxInputChannels), std::memory_order_relaxed);
   clearInput();
+}
+
+void AudioEngine::setInputSampleRate(double sr) {
+  inRate_.store(sr > 0.0 && std::isfinite(sr) ? sr : 0.0, std::memory_order_relaxed);
+  clearInput();
+}
+
+void AudioEngine::setInputPrefill(int frames) {
+  const int p = std::max(0, frames);
+  inPrefill_.store(p, std::memory_order_relaxed);
+  inEffPrefill_.store(p, std::memory_order_relaxed);
+  inResetGen_.fetch_add(1, std::memory_order_release);
 }
 
 void AudioEngine::clearInput() {
   inTail_.store(inHead_.load(std::memory_order_acquire), std::memory_order_release);
+  inUnderruns_.store(0, std::memory_order_relaxed);
+  inFramesPushed_.store(0, std::memory_order_relaxed);
+  inObservedBurst_.store(0, std::memory_order_relaxed);
+  inEffPrefill_.store(inPrefill_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+  inStatusPeakL_.store(0.f, std::memory_order_relaxed);
+  inStatusPeakR_.store(0.f, std::memory_order_relaxed);
+  inResetGen_.fetch_add(1, std::memory_order_release);
 }
 
 void AudioEngine::pushInput(const float* x, int frames) {
   const int ch = inChannels_.load(std::memory_order_relaxed);
+  pushInput(x, frames, ch);
+}
+
+void AudioEngine::pushInput(const float* x, int frames, int stride) {
+  const int ch = inChannels_.load(std::memory_order_relaxed);
+  if (!x || frames <= 0 || ch <= 0 || stride <= 0) return;
+  const int copyCh = std::min(ch, stride);
   size_t head = inHead_.load(std::memory_order_relaxed);
   const size_t tail = inTail_.load(std::memory_order_acquire);
+  int pushed = 0;
   for (int i = 0; i < frames; ++i) {
     if (head - tail >= kInputQueueFrames) break;  // full: the newest frames are dropped
     float* dst = &inQueue_[(head % kInputQueueFrames) * kMaxInputChannels];
-    for (int c = 0; c < ch; ++c) dst[c] = x[static_cast<size_t>(i) * static_cast<size_t>(ch) + static_cast<size_t>(c)];
+    const float* src = x + static_cast<size_t>(i) * static_cast<size_t>(stride);
+    for (int c = 0; c < copyCh; ++c) dst[c] = std::isfinite(src[c]) ? src[c] : 0.f;
+    for (int c = copyCh; c < ch; ++c) dst[c] = copyCh > 0 ? dst[0] : 0.f;  // mono hardware -> duplicate cleanly
     ++head;
+    ++pushed;
   }
   inHead_.store(head, std::memory_order_release);
+  if (pushed > 0) inFramesPushed_.fetch_add(static_cast<uint64_t>(pushed), std::memory_order_relaxed);
 }
 
 float AudioEngine::takeInputPeak(int channel) {
   if (channel < 0 || channel >= kMaxInputChannels) return 0.f;
   return inPeak_[channel].exchange(0.f, std::memory_order_relaxed);
+}
+
+void AudioEngine::takeInputStatusPeaks(float& l, float& r) {
+  l = inStatusPeakL_.exchange(0.f, std::memory_order_relaxed);
+  r = inStatusPeakR_.exchange(0.f, std::memory_order_relaxed);
 }
 
 const packs::edison::CaptureRing& AudioEngine::inputTap() {
@@ -124,21 +199,201 @@ void AudioEngine::readDeviceInput(int n) {
   const int ch = inChannels_.load(std::memory_order_relaxed);
   const size_t head = inHead_.load(std::memory_order_acquire);
   size_t tail = inTail_.load(std::memory_order_relaxed);
-  size_t avail = head - tail;
-  const size_t prefill = static_cast<size_t>(inPrefill_.load(std::memory_order_relaxed));
-  const size_t un = static_cast<size_t>(n);
-  if (!inPrimed_ && avail >= un + prefill && avail > 0) inPrimed_ = true;
-  // Keep the queue short: drop a backlog (e.g. after the stream was paused).
-  const size_t maxBacklog = un + prefill + std::max<size_t>(2 * std::max(un, prefill), 2048);
-  if (avail > maxBacklog) {
-    tail = head - (un + prefill);
-    avail = un + prefill;
-  }
-  size_t take = inPrimed_ ? std::min(avail, un) : 0;
-  if (inPrimed_ && take < un) {  // underrun: refill the jitter buffer
+  // K-430: reset audio-thread state safely whenever input config/prefill/clear changed.
+  const uint32_t gen = inResetGen_.load(std::memory_order_acquire);
+  if (gen != inSeenResetGen_) {
+    inSeenResetGen_ = gen;
     inPrimed_ = false;
-    if (avail > 0 || head > 0) inUnderruns_.fetch_add(1, std::memory_order_relaxed);
+    inWasUnderrun_ = false;
+    inFadeIn_ = 0;
+    inLastHead_ = tail;
+    inWaveFrames_ = 0;
+    inGapFrames_ = 0;
+    inBurstEst_ = 0;
+    inMaxGap_ = 0;
+    inAdaptPrefill_ = 0;
+    inWinMinAvail_ = ~size_t{0};
+    inWinFrames_ = 0;
+    inSrcPhase_ = 0.0;
+    inLpPos_ = tail;
+    inLpRatio_ = 1.0;
+    for (int c = 0; c < kMaxInputChannels; ++c) inHist_[c] = inLpZ1_[c] = inLpZ2_[c] = 0.f;
   }
+  size_t avail = head - tail;
+  const size_t basePrefill = static_cast<size_t>(inPrefill_.load(std::memory_order_relaxed));
+  const size_t un = static_cast<size_t>(std::max(0, n));
+  const double inRate = inRate_.load(std::memory_order_relaxed);
+  const bool resample = inRate > 0.0 && sr_ > 0.0 && std::fabs(inRate - sr_) >= 0.5;
+  const double ratio = resample ? std::clamp(inRate / sr_, 0.125, 8.0) : 1.0;
+
+  // Input frames required to produce `n` output frames at `ratio`.
+  size_t adv = un;
+  size_t needIn = un;
+  if (resample && un > 0) {
+    const double lastPos = inSrcPhase_ + static_cast<double>(un - 1) * ratio;
+    const auto kLast = static_cast<size_t>(lastPos);
+    const double nextPos = inSrcPhase_ + static_cast<double>(un) * ratio;
+    adv = static_cast<size_t>(nextPos);
+    // Async streams hold prefill so 4-point Hermite has full lookahead (kLast + 2);
+    // synchronous lockstep callers (basePrefill == 0) need only `adv` frames.
+    needIn = basePrefill > 0 ? std::max(adv, kLast + 3) : std::max<size_t>(1, adv);
+  }
+
+  static constexpr size_t kMaxAdaptiveIn = kInputQueueFrames / 3;
+  static constexpr int kDeclickFrames = 32;
+  const size_t basePrefillIn = resample ? static_cast<size_t>(std::ceil(static_cast<double>(basePrefill) * ratio)) : basePrefill;
+
+  // Track capture arrival bursts and silent inter-arrival gaps (async capture devices only).
+  if (basePrefill > 0) {
+    const size_t arrived = head >= inLastHead_ ? (head - inLastHead_) : 0;
+    inLastHead_ = head;
+    if (arrived > 0) {
+      inWaveFrames_ = std::min(inWaveFrames_ + arrived, kMaxAdaptiveIn);
+      if (inGapFrames_ > 0) {
+        inMaxGap_ = std::min(std::max(inMaxGap_, inGapFrames_), kMaxAdaptiveIn);
+        inGapFrames_ = 0;
+      }
+      if (inWaveFrames_ > inBurstEst_) inBurstEst_ = inWaveFrames_;
+    } else {
+      if (inWaveFrames_ > 0) {
+        inBurstEst_ = std::min(std::max(inBurstEst_, inWaveFrames_), kMaxAdaptiveIn);
+        inWaveFrames_ = 0;
+      }
+      if (head > 0) inGapFrames_ = std::min(inGapFrames_ + std::max<size_t>(1, adv), kMaxAdaptiveIn);
+    }
+  } else {
+    inLastHead_ = head;
+  }
+
+  const size_t targetPrefillIn = basePrefill > 0 ? std::max(basePrefillIn, inAdaptPrefill_) : 0;
+
+  // Hard overflow guard: only immediately trim when close to overflowing the ring capacity
+  // (never chop normal PulseAudio / PipeWire capture bursts of 4096..10000+ frames).
+  const size_t hardMax = kInputQueueFrames - std::max<size_t>(needIn * 4, 4096);
+  if (avail > hardMax) {
+    const size_t keep = std::min(avail, needIn + targetPrefillIn + std::max(inBurstEst_, basePrefillIn));
+    tail = head - keep;
+    avail = keep;
+    inSrcPhase_ = 0.0;
+    if (inLpPos_ < tail) inLpPos_ = tail;
+    if (tail > 0) {
+      const size_t prevIdx = ((tail - 1) % kInputQueueFrames) * kMaxInputChannels;
+      for (int c = 0; c < ch; ++c) inHist_[c] = inQueue_[prevIdx + static_cast<size_t>(c)];
+    }
+    if (inPrimed_ && basePrefill > 0) inFadeIn_ = kDeclickFrames;
+  }
+
+  // Prime once enough frames have accumulated for this block plus the jitter buffer.
+  if (!inPrimed_ && avail >= needIn + targetPrefillIn && avail > 0) {
+    inPrimed_ = true;
+    if (inWasUnderrun_ && basePrefill > 0) inFadeIn_ = kDeclickFrames;
+    inWinMinAvail_ = avail;
+    inWinFrames_ = 0;
+  }
+
+  // Sustained-backlog guard (async capture): only trim excess steady-state latency if the
+  // minimum queue depth stayed persistently high across a full observation window.
+  if (inPrimed_ && basePrefill > 0 && un > 0) {
+    inWinMinAvail_ = std::min(inWinMinAvail_, avail);
+    inWinFrames_ += std::max<size_t>(1, adv);
+    const size_t burstSpan = std::max(inBurstEst_, inMaxGap_);
+    const size_t winLen = std::max<size_t>(static_cast<size_t>(std::max(1.0, sr_ * 0.5) * ratio), 2 * std::max(burstSpan, basePrefillIn) + 1024);
+    if (inWinFrames_ >= winLen) {
+      const size_t highMargin = targetPrefillIn + std::max<size_t>(burstSpan, 2048);
+      if (inWinMinAvail_ > highMargin && avail > targetPrefillIn + needIn) {
+        const size_t drop = std::min(inWinMinAvail_ - targetPrefillIn, avail - (targetPrefillIn + needIn));
+        if (drop > 0) {
+          tail += drop;
+          avail -= drop;
+          if (inLpPos_ < tail) inLpPos_ = tail;
+          if (tail > 0) {
+            const size_t prevIdx = ((tail - 1) % kInputQueueFrames) * kMaxInputChannels;
+            for (int c = 0; c < ch; ++c) inHist_[c] = inQueue_[prevIdx + static_cast<size_t>(c)];
+          }
+          inFadeIn_ = kDeclickFrames;
+        }
+      }
+      inWinMinAvail_ = ~size_t{0};
+      inWinFrames_ = 0;
+    }
+  }
+
+  // Anti-aliasing 2-pole Butterworth low-pass prefilter on newly arrived input frames when
+  // downsampling significantly (e.g. 96 kHz -> 44.1 kHz, ratio > 1.15). Zero allocations.
+  if (resample && ratio > 1.15 && ch > 0) {
+    if (std::fabs(ratio - inLpRatio_) > 1e-6) {
+      inLpRatio_ = ratio;
+      const double fc = std::clamp(0.45 / ratio, 0.02, 0.45);
+      const double K = std::tan(3.14159265358979323846 * fc);
+      const double norm = 1.0 / (1.0 + 1.4142135623730951 * K + K * K);
+      inLpB0_ = static_cast<float>(K * K * norm);
+      inLpB1_ = static_cast<float>(2.0 * inLpB0_);
+      inLpB2_ = inLpB0_;
+      inLpA1_ = static_cast<float>(2.0 * (K * K - 1.0) * norm);
+      inLpA2_ = static_cast<float>((1.0 - 1.4142135623730951 * K + K * K) * norm);
+      for (int c = 0; c < kMaxInputChannels; ++c) inLpZ1_[c] = inLpZ2_[c] = 0.f;
+      inLpPos_ = tail;
+    }
+    if (inLpPos_ < tail) inLpPos_ = tail;
+    while (inLpPos_ < head) {
+      float* frame = &inQueue_[(inLpPos_ % kInputQueueFrames) * kMaxInputChannels];
+      for (int c = 0; c < ch; ++c) {
+        const float x0 = frame[c];
+        const float y0 = inLpB0_ * x0 + inLpZ1_[c];
+        inLpZ1_[c] = inLpB1_ * x0 - inLpA1_ * y0 + inLpZ2_[c];
+        inLpZ2_[c] = inLpB2_ * x0 - inLpA2_ * y0;
+        frame[c] = y0;
+      }
+      ++inLpPos_;
+    }
+  } else {
+    inLpPos_ = head;
+  }
+
+  size_t outProduced = 0;
+  size_t inConsumed = 0;
+  bool underran = false;
+
+  if (inPrimed_) {
+    if (!resample) {
+      outProduced = std::min(avail, un);
+      inConsumed = outProduced;
+      underran = outProduced < un;
+    } else if (avail >= needIn) {
+      outProduced = un;
+      inConsumed = adv;
+    } else {
+      // Partial resampled block on underrun: emit as many valid output frames as available.
+      underran = true;
+      if (avail > 0) {
+        const size_t maxOut = static_cast<size_t>(std::floor(std::max(0.0, static_cast<double>(avail) - inSrcPhase_) / ratio));
+        outProduced = std::min(un, maxOut);
+        inConsumed = std::min(avail, static_cast<size_t>(std::floor(inSrcPhase_ + static_cast<double>(outProduced) * ratio)));
+      }
+    }
+  }
+
+  if (underran) {
+    inPrimed_ = false;
+    inWasUnderrun_ = true;
+    if (avail > 0 || head > 0) inUnderruns_.fetch_add(1, std::memory_order_relaxed);
+    if (basePrefill > 0) {
+      // Expand adaptive jitter prefill to absorb the observed burst + jitter margin.
+      const size_t span = std::max(inBurstEst_, inMaxGap_);
+      const size_t cur = std::max(basePrefillIn, inAdaptPrefill_);
+      const size_t step = std::max<size_t>(needIn * 2, std::min<size_t>(span / 2, 2048));
+      size_t next = cur + step;
+      if (span > 0) {
+        const size_t burstNeed = span + std::max<size_t>(basePrefillIn, std::min<size_t>(span / 4, 2048));
+        next = std::max(next, burstNeed);
+      }
+      inAdaptPrefill_ = std::min(next, kMaxAdaptiveIn);
+    }
+  }
+
+  const int fadeInStart = inFadeIn_;
+  const size_t fadeOutLen = (underran && basePrefill > 0 && outProduced > 0) ? std::min<size_t>(outProduced, kDeclickFrames) : 0;
+
   for (int c = 0; c < kMaxInputChannels; ++c) {
     float* dst = inBuf_[static_cast<size_t>(c)].data();
     if (c >= ch) {
@@ -148,12 +403,86 @@ void AudioEngine::readDeviceInput(int n) {
       }
       continue;
     }
+    if (outProduced == 0) {  // nothing arrived for this channel: its buffer holds exact silence
+      // (Cleared whole, not just n frames, when it goes quiet: a later, longer block skips it too.)
+      if (inDirty_[c]) {
+        std::fill(inBuf_[static_cast<size_t>(c)].begin(), inBuf_[static_cast<size_t>(c)].end(), 0.f);
+        inDirty_[c] = false;
+      }
+      if (underran) inHist_[c] = 0.f;
+      continue;
+    }
     inDirty_[c] = true;
-    for (size_t i = 0; i < take; ++i) dst[i] = inQueue_[((tail + i) % kInputQueueFrames) * kMaxInputChannels + static_cast<size_t>(c)];
-    for (size_t i = take; i < un; ++i) dst[i] = 0.f;
-    storeMax(inPeak_[c], peakOf(dst, n));
+    if (!resample) {
+      for (size_t i = 0; i < outProduced; ++i)
+        dst[i] = inQueue_[((tail + i) % kInputQueueFrames) * kMaxInputChannels + static_cast<size_t>(c)];
+    } else if (outProduced > 0) {
+      const size_t maxIdx = avail > 0 ? avail - 1 : 0;
+      auto sampleAt = [&](size_t idx) -> float {
+        return inQueue_[((tail + std::min(idx, maxIdx)) % kInputQueueFrames) * kMaxInputChannels + static_cast<size_t>(c)];
+      };
+      for (size_t i = 0; i < outProduced; ++i) {
+        const double pos = inSrcPhase_ + static_cast<double>(i) * ratio;
+        const auto k = static_cast<size_t>(pos);
+        const auto frac = static_cast<float>(pos - static_cast<double>(k));
+        const float xm1 = k == 0 ? inHist_[c] : sampleAt(k - 1);
+        const float x0 = sampleAt(k);
+        const float x1 = sampleAt(k + 1);
+        const float x2 = sampleAt(k + 2);
+        const float c0 = x0;
+        const float c1 = 0.5f * (x1 - xm1);
+        const float c2 = xm1 - 2.5f * x0 + 2.0f * x1 - 0.5f * x2;
+        const float c3 = 0.5f * (x2 - xm1) + 1.5f * (x0 - x1);
+        dst[i] = ((c3 * frac + c2) * frac + c1) * frac + c0;
+      }
+    }
+    for (size_t i = outProduced; i < un; ++i) dst[i] = 0.f;
+    // Short declick ramp on recovery after underrun/trim or on partial starved tail.
+    if (fadeInStart > 0 && outProduced > 0) {
+      const size_t fn = std::min<size_t>(outProduced, static_cast<size_t>(fadeInStart));
+      for (size_t i = 0; i < fn; ++i) {
+        const float g = static_cast<float>(kDeclickFrames - fadeInStart + static_cast<int>(i) + 1) / static_cast<float>(kDeclickFrames);
+        dst[i] *= std::clamp(g, 0.f, 1.f);
+      }
+    }
+    if (fadeOutLen > 0) {
+      const size_t start = outProduced - fadeOutLen;
+      for (size_t i = 0; i < fadeOutLen; ++i) {
+        const float g = static_cast<float>(fadeOutLen - 1 - i) / static_cast<float>(fadeOutLen);
+        dst[start + i] *= g;
+      }
+    }
+    if (inConsumed > 0)
+      inHist_[c] = inQueue_[((tail + inConsumed - 1) % kInputQueueFrames) * kMaxInputChannels + static_cast<size_t>(c)];
+    else if (underran)
+      inHist_[c] = 0.f;
+    const float pk = peakOf(dst, n);
+    storeMax(inPeak_[c], pk);
+    if (c == 0) storeMax(inStatusPeakL_, pk);
+    if (c == 1) storeMax(inStatusPeakR_, pk);
   }
-  inTail_.store(tail + take, std::memory_order_release);
+  if (ch == 1) storeMax(inStatusPeakR_, inStatusPeakL_.load(std::memory_order_relaxed));
+
+  if (fadeInStart > 0 && outProduced > 0)
+    inFadeIn_ = std::max(0, fadeInStart - static_cast<int>(outProduced));
+  if (resample) {
+    if (outProduced == un && !underran) {
+      const double nextPos = inSrcPhase_ + static_cast<double>(un) * ratio;
+      inSrcPhase_ = nextPos - static_cast<double>(inConsumed);
+    } else if (underran) {
+      inSrcPhase_ = 0.0;
+    }
+  }
+  inTail_.store(tail + inConsumed, std::memory_order_release);
+
+  if (basePrefill > 0) {
+    const size_t effIn = std::max(basePrefillIn, inAdaptPrefill_);
+    inEffPrefill_.store(static_cast<int>(std::llround(static_cast<double>(effIn) / ratio)), std::memory_order_relaxed);
+    inObservedBurst_.store(static_cast<int>(std::max(inBurstEst_, inMaxGap_)), std::memory_order_relaxed);
+  } else {
+    inEffPrefill_.store(0, std::memory_order_relaxed);
+  }
+
   // J-218: the input tap (an instrument recording from its own editor).
   const int tf = tapFirst_.load(std::memory_order_acquire);
   if (tf >= 0)
@@ -362,9 +691,12 @@ void AudioEngine::playWithCountIn(double ticks) {
   if (ticks > 0) countingIn_ = true;
 }
 
-AudioEngine::~AudioEngine() = default;
+AudioEngine::~AudioEngine() { leaveDeepSleep(); }
 
-void AudioEngine::setSampleRate(double sr) { sr_ = sr; }
+void AudioEngine::setSampleRate(double sr) {
+  sr_ = sr;
+  pvStretch_.prepare(2, sr_, 4.0, 4.0, true, stretch::Engine::Stretch);
+}
 
 void AudioEngine::setProgram(std::shared_ptr<const Program> p) {
   std::shared_ptr<const Program> old = std::move(current_);
@@ -433,6 +765,7 @@ void AudioEngine::collectGarbage() {
   // The Program of a block in progress stays whatever the count says: a block can take long (a plugin
   // that stops answering, a machine under load) while edits keep arriving. See processDirect.
   const Program* running = running_.load();
+  const Program* deepSleep = deepSleepProgUi_.load(std::memory_order_acquire);  // K-142e: pinned while attached to sleepLedger_
   // K-288: an instrument holds pointers into the aux of the Program it last ran in (an instrument at
   // rest is not run, yet the engine still asks it things: supportsGlide, active, ...). That Program
   // stays until the instrument runs in a newer one. Read after `running`: a block that ran an
@@ -443,7 +776,7 @@ void AudioEngine::collectGarbage() {
       if (ch.rt)
         if (const Program* q = ch.rt->configuredIn.load(); q && q != current_.get() && std::find(pinned_.begin(), pinned_.end(), q) == pinned_.end())
           pinned_.push_back(q);  // (UI thread: may allocate)
-  const auto keep = [&](const Program* q) { return q == running || std::find(pinned_.begin(), pinned_.end(), q) != pinned_.end(); };
+  const auto keep = [&](const Program* q) { return q == running || q == deepSleep || std::find(pinned_.begin(), pinned_.end(), q) != pinned_.end(); };
   retiredLoggers_.erase(std::remove_if(retiredLoggers_.begin(), retiredLoggers_.end(), [&](const auto& r) { return b >= r.second; }),
                         retiredLoggers_.end());
   retired_.erase(std::remove_if(retired_.begin(), retired_.end(), [&](const auto& r) { return b >= r.second && !keep(r.first.get()); }),
@@ -586,6 +919,7 @@ void AudioEngine::noteOff(ObjectId channel, int pitch) {
   c.id = channel;
   c.pitch = pitch;
   send(c);
+  liveNoteOffs_.fetch_add(1, std::memory_order_relaxed);  // GitHub #88: the checks count them
 }
 void AudioEngine::panic(bool declick) {
   panicUi_.store(true, std::memory_order_relaxed);  // (before the command: the audio thread clears it)
@@ -829,17 +1163,48 @@ void AudioEngine::drainMidi(const Program* p) {
 }
 
 void AudioEngine::preview(SamplePtr sample, bool own, int64_t loopFrom) {
+  PreviewOptions opt;
+  opt.own = own;
+  opt.loopFrom = loopFrom;
+  preview(std::move(sample), opt);
+}
+
+void AudioEngine::preview(SamplePtr sample, const PreviewOptions& opt) {
   (void)pitch::table(pitch::Quality::Realtime);  // J-140: built here (UI thread), read by the preview
   if (previewOwner_) retiredSamples_.push_back({previewOwner_, blocks_.load() + 2});
   previewOwner_ = std::move(sample);
-  previewOwn_.store(own && previewOwner_ != nullptr, std::memory_order_relaxed);
+  previewOwn_.store(opt.own && previewOwner_ != nullptr, std::memory_order_relaxed);
   Cmd c{Cmd::Preview};
   c.sample = previewOwner_.get();
-  c.tick = previewOwner_ && loopFrom >= 0 && static_cast<size_t>(loopFrom) + 1 < previewOwner_->frames() ? static_cast<double>(loopFrom) : -1.0;
+  c.tick = previewOwner_ && opt.loopFrom >= 0 && static_cast<size_t>(opt.loopFrom) + 1 < previewOwner_->frames() ? static_cast<double>(opt.loopFrom) : -1.0;
+  c.pvOpt = opt;
   send(c);
   previewing_ = previewOwner_ != nullptr;
-  if (previewOwner_) activity_.fetch_add(1, std::memory_order_relaxed);
+  if (!previewOwner_) {
+    pvPendingUi_.store(false, std::memory_order_relaxed);
+    pvNormPos_.store(-1.0f, std::memory_order_relaxed);
+  } else {
+    activity_.fetch_add(1, std::memory_order_relaxed);
+  }
   collectGarbage();
+}
+
+void AudioEngine::seekPreview(double normPos) {
+  Cmd c{Cmd::PreviewSeek};
+  c.tick = std::clamp(normPos, 0.0, 0.9999);
+  send(c);
+}
+
+void AudioEngine::setPreviewPitch(double semitones) {
+  pvPitchSt_.store(static_cast<float>(std::clamp(semitones, -24.0, 24.0)), std::memory_order_relaxed);
+}
+
+void AudioEngine::setPreviewSpeed(double speedMult) {
+  pvSpeedMult_.store(static_cast<float>(std::clamp(speedMult, 0.25, 4.0)), std::memory_order_relaxed);
+}
+
+void AudioEngine::setPreviewQuant(PreviewQuant q) {
+  pvQuant_.store(std::clamp(static_cast<int>(q), 0, static_cast<int>(PreviewQuant::Count) - 1), std::memory_order_relaxed);
 }
 
 // ---------------------------------------------------------------------------
@@ -853,8 +1218,9 @@ double AudioEngine::loopStart(const Program* p) const {
 }
 
 bool AudioEngine::stopsAtEnd() const {
-  return tMode_ == PlayMode::Song && !hostFollow_ && !offline_ && !(loopB_ > loopA_) && !pendJump_ && arrStop_.load(std::memory_order_relaxed) &&
-         arrStart_.load(std::memory_order_relaxed) > 0;
+  if (tMode_ != PlayMode::Song || hostFollow_ || offline_ || (loopB_ > loopA_) || pendJump_) return false;
+  if (arrStart_.load(std::memory_order_relaxed) > 0) return arrStop_.load(std::memory_order_relaxed);
+  return stopAtEnd_.load(std::memory_order_relaxed);
 }
 
 // J-85: marker actions on the audio thread, at the exact sample. Song mode
@@ -894,7 +1260,14 @@ bool AudioEngine::fireMarker(const Program* p, const ProgMarkerEvent& e, int at)
 }
 
 double AudioEngine::transportEnd(const Program* p) const {
-  if (pastLoop_ && tMode_ == PlayMode::Song && loopB_ > loopA_ && !hostFollow_) return static_cast<double>(p->songLoopEnd);
+  if (pastLoop_ && tMode_ == PlayMode::Song && loopB_ > loopA_ && !hostFollow_) {
+    const double arr = arrStart_.load(std::memory_order_relaxed);
+    if (arr > 0) {
+      const double arrEnd = arrEnd_.load(std::memory_order_relaxed);
+      return arrEnd > arr ? arrEnd : 1e12;
+    }
+    return static_cast<double>(p->songLoopEnd);
+  }
   return loopEnd(p);
 }
 
@@ -923,13 +1296,12 @@ double AudioEngine::loopEnd(const Program* p) const {
   }
   if (tMode_ == PlayMode::Song) {
     if (loopB_ > loopA_ && !hostFollow_) return loopB_;
-    // K-112c (N55-02): the Clips Arrangement with nothing in it, or played from past its end, plays on
-    // (the counter keeps counting) instead of wrapping into the clip grid's storage. Checkpoint 57
-    // (N56-05): a full one too, unless asked to stop at its end: past its last clip it plays silence.
+    // K-415: Clips Arrangement wraps back to arrangement start (or stops when stopAtEnd is on) once
+    // past its end instead of playing infinite silence; an empty arrangement (session-only) stays free.
     const double arr = arrStart_.load(std::memory_order_relaxed);
     if (arr > 0 && !hostFollow_) {
       const double arrEnd = arrEnd_.load(std::memory_order_relaxed);
-      return arrEnd <= arr || anchorTick_ >= arrEnd || !arrStop_.load(std::memory_order_relaxed) ? 1e12 : arrEnd;
+      return arrEnd <= arr ? 1e12 : arrEnd;
     }
     return static_cast<double>(p->songLoopEnd);
   }
@@ -979,13 +1351,58 @@ void AudioEngine::sendOn(const ProgChannel& ch, uint32_t id, float pitch, float 
 // the same offsets. MIDI Out channels deliver theirs in the same block
 // (runMidiOut).
 void AudioEngine::routePluginMidi(const Program* p, int n) {
+  const ObjectId cap = capChannel_.load(std::memory_order_acquire);
   for (size_t ci = 0; ci < p->channels.size(); ++ci) {
     const ProgChannel& src = p->channels[ci];
-    if (src.midiTargets.empty() || src.midiFirst || !src.rt || !src.rt->gen) continue;
+    const bool captured = cap != kNoId && src.id == cap;  // K-438: also read when nothing listens
+    if ((src.midiTargets.empty() && !captured) || src.midiFirst || !src.rt || !src.rt->gen) continue;
     Generator::MidiOutEvent ev[256];
     const int count = src.rt->gen->takeMidiOut(ev, 256);
-    deliverMidi(p, ci, ev, count, n);
+    if (captured) captureMidi(p, ev, count, true);
+    if (!src.midiTargets.empty()) deliverMidi(p, ci, ev, count, n);
   }
+}
+
+// K-438: the captured channel's messages, with the transport tick of their offset (in the previous
+// block for output read one block late). Only notes and controllers sent while the transport played.
+void AudioEngine::captureMidi(const Program* p, const Generator::MidiOutEvent* ev, int count, bool previousBlock) {
+  if (count <= 0) return;
+  if (previousBlock ? !capPlaying_ : !tPlaying_) return;
+  for (int k = 0; k < count; ++k) {
+    if (ev[k].s == Generator::MidiOutEvent::kGlide || ev[k].s < 0x80 || ev[k].s >= 0xF0) continue;
+    const int f = std::max(0, ev[k].offset);
+    double tick = 0;
+    bool found = false;
+    const int segN = previousBlock ? capSegCount_ : segCount_;
+    for (int i = 0; i < segN && !found; ++i) {
+      const int from = previousBlock ? capSegs_[i].from : segs_[i].from;
+      const int len = previousBlock ? capSegs_[i].len : segs_[i].len;
+      if (f < from || (f >= from + len && i + 1 < segN)) continue;
+      const double anchor = previousBlock ? capSegs_[i].anchor : segs_[i].anchor;
+      const int64_t clk = previousBlock ? capSegs_[i].clock : segs_[i].clock;
+      tick = tickAt(p, anchor, static_cast<double>(clk + std::min(f, from + std::max(0, len - 1)) - from));
+      found = true;
+    }
+    if (!found) continue;
+    if (tick < capLastTick_ - 0.5) ++capPass_;  // the transport wrapped (loop) or started again
+    capLastTick_ = tick;
+    const size_t h = capHead_.load(std::memory_order_relaxed);
+    if (h - capTail_.load(std::memory_order_acquire) >= kCapRing) {
+      capDropped_.fetch_add(1, std::memory_order_relaxed);
+      continue;
+    }
+    CapturedMidi& c = capRing_[h % kCapRing];
+    c.tick = tick;
+    c.pass = capPass_;
+    c.s = ev[k].s, c.a = ev[k].a, c.b = ev[k].b;
+    capHead_.store(h + 1, std::memory_order_release);
+  }
+}
+
+void AudioEngine::keepCaptureBlock() {
+  capPlaying_ = tPlaying_;
+  capSegCount_ = std::min(segCount_, 72);
+  for (int i = 0; i < capSegCount_; ++i) capSegs_[i] = {segs_[i].from, segs_[i].len, segs_[i].anchor, segs_[i].clock};
 }
 
 // Note ids are derived from the source channel, MIDI channel and key, so the
@@ -1016,12 +1433,13 @@ void AudioEngine::deliverMidi(const Program* p, size_t ci, const Generator::Midi
           // A MIDI Out channel's note plays as if it were written on the listener: the song's
           // master pitch is in it already (the listener adds it again), its fine pitch is exact,
           // and key-mapped instruments keep the key it was written on (NoteProps::detune).
+          const float mp = p->masterPitchLinked ? p->modMasterPitch : p->masterPitch;
           const float full = ev[k].pitch >= 0.0f ? ev[k].pitch : pitch;
-          const float shift = src.pitchOffset - p->masterPitch;  // the MIDI Out channel's own pitch
+          const float shift = src.pitchOffset - mp;  // the MIDI Out channel's own pitch
           NoteProps np;
           np.color = mch;
           np.detune = (ev[k].detune - src.pitchOffset) + (shift - std::round(shift));
-          pitch = full - p->masterPitch;
+          pitch = full - mp;
           if (std::fabs(pitch - std::round(pitch)) > 1e-5f) pitch = routedPitch(dst, pitch, off, mch);
           sendOn(dst, id, pitch, vel, off, mch, np.detune != 0.0f ? &np : nullptr);
           continue;
@@ -1057,6 +1475,7 @@ void AudioEngine::runMidiOut(const Program* p, int n) {
     ch.rt->gen->process(ch.modded ? ch.live : ch.plugin, ch.aux, bc_.ctx, L, R, n);
     Generator::MidiOutEvent ev[1024];
     const int count = ch.rt->gen->takeMidiOut(ev, 1024);
+    if (ch.id == capChannel_.load(std::memory_order_acquire)) captureMidi(p, ev, count, false);  // K-438
     deliverMidi(p, static_cast<size_t>(ci), ev, count, n);
   }
 }
@@ -1419,12 +1838,28 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
     if (rt->pendingCount == 0 || from < 0) return;
     const float semis = e.pitch - from;
     const double secs = std::max(1.0, noteOffTick(e) - noteOnTick(e)) * spt / sr_;
+    // GitHub #87: the slide also glides the velocity of the notes it slides, from where they are to
+    // its own, over the same length (a slide at the velocity they have sends nothing: as before).
+    const bool velSlide = p->slidesVelocity;
+    const float vt = std::clamp(liveNoteVelocity(p, ch, e), 0.0f, 1.0f);
     if (ch.asleep)  // K-87: notes waiting for a hibernating instrument slide once it has loaded
       for (int k = 0; k < heldCount_; ++k) {
         HeldNote& n = held_[k];
         if (n.ch != ch.id || n.live || (!any && n.color != color)) continue;
         n.slideTo = n.pd.pitch + semis;
         n.slideEnd = absClock_ + offset + static_cast<int64_t>(secs * sr_);
+        if (velSlide && n.pd.vel != vt) {
+          n.slideVel = vt;
+          n.slideVelEnd = n.slideEnd;
+          n.pd.vel = vt;
+        }
+      }
+    if (velSlide)
+      for (int i = 0; i < rt->pendingCount; ++i) {
+        ChannelRuntime::Pending& pd = rt->pending[i];
+        if ((!any && pd.color != color) || pd.vel == vt) continue;
+        gen->glideVelocity(pd.id, vt, secs, offset);
+        pd.vel = vt;
       }
     if (glides) {
       for (int i = 0; i < rt->pendingCount; ++i)
@@ -1459,6 +1894,9 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
   // started earlier (notes starting together, e.g. a chord, survive), held,
   // live or already let go (K-165: a one-shot sample rings on after its note).
   cutGroupsOf(p, ch, at, offset);
+  const double evOn = liveNoteOnTick(p, ch, e);
+  const double evOff = liveNoteOffTick(p, ch, e);
+  const float evVel = liveNoteVelocity(p, ch, e);
   const bool porta = (ch.porta || (e.flags & kNotePorta)) && glides && rt->lastPitch >= 0;
   if (ch.mono && porta && rt->pendingCount > 0) {  // legato: the sounding note glides to the new pitch and takes over its length
     int keep = 0;
@@ -1474,11 +1912,11 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
     chokeChannel(ch, std::numeric_limits<int64_t>::max(), offset);  // K-165: live notes, notes let go
     gen->glide(kept.id, e.pitch + ch.pitchOffset, ch.portaTime, offset);
     rt->keys.retarget(kept.id, e.pitch);
-    kept.off = noteOffTick(e) + static_cast<double>(shift);
+    kept.off = evOff + static_cast<double>(shift);
     kept.pitch = e.pitch;
     kept.at = at;
     kept.color = color;
-    kept.on = noteOnTick(e) + static_cast<double>(shift);  // K-25: the new note's line, after the glide
+    kept.on = evOn + static_cast<double>(shift);  // K-25: the new note's line, after the glide
     kept.bendFrom = at + portaSamples;
     rt->pending[0] = kept;
     rt->pendingCount = 1;
@@ -1498,24 +1936,30 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
   const uint32_t id = 1u + (((rt->noteSeq++ & 0x1FFFFu) << 11) | (static_cast<uint32_t>(&ch - p->channels.data()) & 0x7FFu));
   const NoteProps* props = e.props.neutral() ? nullptr : &e.props;
   const bool portaGlide = porta && std::fabs(rt->lastPitch - e.pitch) > 1e-4f;
+  // GitHub #87: a 0% note that slides fade in starts at the loudest velocity they take it to,
+  // silenced at once, so the slides have a level to raise (a 0% note alone plays at 0%).
+  const bool silenced = p->slidesVelocity && !chain && evVel <= 0.0f && e.slideVelRef > 0.0f;
+  const float startVel = silenced ? e.slideVelRef : evVel;
   if (portaGlide) {
-    sendOn(ch, id, rt->lastPitch, e.velocity, offset, 0, props);
+    sendOn(ch, id, rt->lastPitch, startVel, offset, 0, props);
     gen->glide(id, e.pitch + ch.pitchOffset, ch.portaTime, offset);
     rt->keys.retarget(id, e.pitch);
   } else {
-    sendOn(ch, id, e.pitch, e.velocity, offset, 0, props);
+    sendOn(ch, id, e.pitch, startVel, offset, 0, props);
   }
+  if (silenced) gen->glideVelocity(id, 0.0f, 0.0, offset);
   ChannelRuntime::Pending pd;
   pd.id = id;
-  pd.off = noteOffTick(e) + static_cast<double>(shift);
+  pd.off = evOff + static_cast<double>(shift);
   pd.at = at;
   pd.pitch = e.pitch;
   pd.color = color;
-  pd.on = noteOnTick(e) + static_cast<double>(shift);
+  pd.on = evOn + static_cast<double>(shift);
   pd.bendFrom = portaGlide ? at + portaSamples : at;
   pd.bendSlot = bent ? takeNoteSlot(*rt, id, e, pd.off - pd.on) : -1;
   pd.exprSlot[0] = e.pressure && !chain ? takeExprSlot(*rt, 0, id, *e.pressure) : -1;  // K-144
   pd.exprSlot[1] = e.timbre && !chain ? takeExprSlot(*rt, 1, id, *e.timbre) : -1;
+  pd.vel = evVel;  // GitHub #87
   if (pd.bendSlot >= 0 && glides && !portaGlide) {  // K-25: a line that starts off the note's pitch starts there
     ChannelRuntime::BendSlot& sl = rt->bendSlots[pd.bendSlot];
     const double v0 = bend::value(sl.pts, sl.count, 0.0);
@@ -1532,7 +1976,8 @@ void AudioEngine::startNote(const Program* p, const ProgChannel& ch, const NoteE
     n.ch = ch.id;
     n.id = id;
     n.pitch = e.pitch;
-    n.velocity = e.velocity;
+    n.velocity = startVel;
+    n.silenced = silenced;  // GitHub #87
     n.color = color;
     n.pd = pd;
     n.pd.bendSlot = -1;
@@ -1604,6 +2049,12 @@ void AudioEngine::deliverHeld(const Program* p) {
       const bool glideOn = n.slideTo >= 0 && left > 0 && g->supportsGlide();
       sendOn(ch, n.id, n.slideTo >= 0 && !glideOn ? n.slideTo : n.pitch, n.velocity, 0, n.color, n.hasProps ? &n.props : nullptr);
       if (glideOn) g->glide(n.id, n.slideTo + ch.pitchOffset, static_cast<double>(left) / sr_, 0);
+      // GitHub #87: a 0% note starts silenced; the velocity glide a slide began goes on (or is done).
+      if (n.silenced) g->glideVelocity(n.id, 0.0f, 0.0, 0);
+      if (n.slideVel >= 0) {
+        const int64_t velLeft = n.slideVelEnd - absClock_;
+        g->glideVelocity(n.id, n.slideVel, velLeft > 0 ? static_cast<double>(velLeft) / sr_ : 0.0, 0);
+      }
       rt->pending[rt->pendingCount++] = n.pd;  // it ends where the song ends it
     }
     heldDelivered_.fetch_add(1, std::memory_order_relaxed);
@@ -1811,7 +2262,17 @@ void AudioEngine::drain(const Program* p) {
       sceneBpm_ = 0;
     }
   }
-  if (p) {  // a new tempo map (tempo edit, tempo automation): continue from the current position
+  if (p) {  // 0.7.9: sync live modulated tempo map before re-anchoring (zero allocation)
+    if (p->tempoLinked && p->modTempo > 0.0 && std::isfinite(p->modTempo)) {
+      const double bpm = std::clamp(p->modTempo, 10.0, 522.0);
+      if (bpm != modTempoBpm_ || modTempoMap_.ppq() != std::max(1, p->ppq)) {
+        modTempoBpm_ = bpm;
+        modTempoMap_.setConstant(bpm, p->ppq);
+      }
+    } else {
+      modTempoBpm_ = 0.0;
+    }
+    // a new tempo map (tempo edit, tempo automation, live tempo link): continue from the current position
     uint64_t sig = clockMap(p).signature();
     if (sig != lastMapSig_ && lastMapSig_ != 0 && clock_ != 0) {
       anchorTick_ = curTick_;
@@ -1864,6 +2325,7 @@ void AudioEngine::drain(const Program* p) {
         if (p) releaseAll(p, 0, true);
         clearLive();
         tPlaying_ = false;
+        if (pvSynced_ && pvStopOnTransportStop_) stopPreviewRt();
         landAt(c.tick);  // J-49: the seek position (0 by default); past a selection stays past it (J-40)
         break;
       case Cmd::Pause:
@@ -1873,6 +2335,7 @@ void AudioEngine::drain(const Program* p) {
         anchorTick_ = here();
         clock_ = 0;
         tPlaying_ = false;
+        if (pvSynced_ && pvStopOnTransportStop_) stopPreviewRt();
         break;
       case Cmd::Mode:
         if (p) releaseAll(p, 0);
@@ -1932,9 +2395,70 @@ void AudioEngine::drain(const Program* p) {
         break;
       }
       case Cmd::Preview:
+        if (!c.sample || c.sample->frames() == 0) {
+          stopPreviewRt();
+          break;
+        }
         pvSample_ = c.sample;
-        pvPos_ = 0;
         pvLoop_ = c.tick;
+        pvSynced_ = c.pvOpt.synced && c.pvOpt.sampleBpm > 0.0 && pvSample_->sampleRate > 0.0;
+        pvSampleBpm_ = c.pvOpt.sampleBpm;
+        pvOctaveFold_ = 1.0;
+        if (pvSynced_ && p) {
+          const double curBpm = std::max(1.0, clockMap(p).bpmAt(here()));
+          double r = curBpm / pvSampleBpm_;
+          while (r > 1.4142135623730951) r *= 0.5, pvOctaveFold_ *= 2.0;
+          while (r < 0.7071067811865476) r *= 2.0, pvOctaveFold_ *= 0.5;
+        }
+        pvPitchSt_.store(static_cast<float>(std::clamp(c.pvOpt.pitchSemitones, -24.0, 24.0)), std::memory_order_relaxed);
+        pvSpeedMult_.store(static_cast<float>(std::clamp(c.pvOpt.speedMult, 0.25, 4.0)), std::memory_order_relaxed);
+        pvQuant_.store(std::clamp(static_cast<int>(c.pvOpt.quant), 0, static_cast<int>(PreviewQuant::Count) - 1), std::memory_order_relaxed);
+        pvStretchActive_ = false;
+        pvPhaseOffsetBeats_ = 0.0;
+        pvStopOnTransportStop_ = pvSynced_ && tPlaying_;
+        if (pvSynced_) pvLoop_ = 0.0;
+        if (pvSynced_ && tPlaying_ && !c.pvOpt.immediate) {
+          pvPos_ = 0.0;
+          pvPendingLaunch_ = true;
+          pvLaunchBeat_ = -1.0;
+          pvPendingUi_.store(true, std::memory_order_relaxed);
+          pvNormPos_.store(0.0f, std::memory_order_relaxed);
+        } else {
+          const double len = static_cast<double>(pvSample_->frames());
+          const double norm = std::clamp(c.pvOpt.startNorm, 0.0, 0.9999);
+          pvPos_ = norm * len;
+          pvPendingLaunch_ = false;
+          pvLaunchBeat_ = -1.0;
+          pvPendingUi_.store(false, std::memory_order_relaxed);
+          pvNormPos_.store(static_cast<float>(norm), std::memory_order_relaxed);
+          if (pvSynced_ && tPlaying_ && p) {
+            const double effBpm = pvSampleBpm_ * pvOctaveFold_;
+            const double loopBeats = std::max(0.0625, (len / pvSample_->sampleRate) * (effBpm / 60.0));
+            const double curBeat = here() / std::max<double>(1.0, p->ppq);
+            const double spm = std::clamp(static_cast<double>(pvSpeedMult_.load(std::memory_order_relaxed)), 0.25, 4.0);
+            pvPhaseOffsetBeats_ = norm * loopBeats - std::fmod(curBeat * spm, loopBeats);
+          }
+        }
+        previewing_.store(true, std::memory_order_relaxed);
+        break;
+      case Cmd::PreviewSeek:
+        if (pvSample_ && pvSample_->frames() > 0) {
+          const double len = static_cast<double>(pvSample_->frames());
+          const double norm = std::clamp(c.tick, 0.0, 0.9999);
+          pvPos_ = norm * len;
+          pvPendingLaunch_ = false;
+          pvLaunchBeat_ = -1.0;
+          pvStretchActive_ = false;
+          pvPendingUi_.store(false, std::memory_order_relaxed);
+          pvNormPos_.store(static_cast<float>(norm), std::memory_order_relaxed);
+          if (pvSynced_ && tPlaying_ && p) {
+            const double effBpm = pvSampleBpm_ * pvOctaveFold_;
+            const double loopBeats = std::max(0.0625, (len / pvSample_->sampleRate) * (effBpm / 60.0));
+            const double curBeat = here() / std::max<double>(1.0, p->ppq);
+            const double spm = std::clamp(static_cast<double>(pvSpeedMult_.load(std::memory_order_relaxed)), 0.25, 4.0);
+            pvPhaseOffsetBeats_ = norm * loopBeats - std::fmod(curBeat * spm, loopBeats);
+          }
+        }
         break;
       case Cmd::NoteOn:
       case Cmd::NoteOff: {
@@ -2018,6 +2542,11 @@ void AudioEngine::dispatch(const Program* p, int from, int to) {
   const ProgPattern* pat = tMode_ == PlayMode::Pattern ? p->pattern(tPattern_) : nullptr;
   if (liveOn()) dispatchLive(p, from, to);  // launched clips (note-offs below)
   const bool overSong = tMode_ == PlayMode::Song && sessionOver_.load(std::memory_order_relaxed);  // grid-1118
+  // Live swing (an internal link on the song's swing): the amount the previous block placed notes
+  // with, when this block follows it on the same timeline (< 0: none, notes are placed as compiled).
+  const bool swingLive = p->swingLinked && p->liveGroove.active;
+  const float swingPrev = swingLive && swingSeenEnd_ == c0 && swingSeenAnchor_ == anchorTick_ ? swingSeen_ : -1.0f;
+  if (swingLive) swingSeen_ = p->modSwing, swingSeenEnd_ = c1, swingSeenAnchor_ = anchorTick_;
 
   // J-30: notes start in time order across all channels (then channel order),
   // and note-offs due before a start are sent before it. Handling channel by
@@ -2044,10 +2573,18 @@ void AudioEngine::dispatch(const Program* p, int from, int to) {
       }
     }
     if (!evs || evs->empty()) continue;
-    auto it = std::lower_bound(evs->begin(), evs->end(), static_cast<Tick>(std::floor(tLo)),
+    const double swingMargin = (p->swingLinked && p->liveGroove.active) ? p->liveGroove.cell : 0.0;
+    auto it = std::lower_bound(evs->begin(), evs->end(), static_cast<Tick>(std::floor(tLo - swingMargin)),
                                [](const NoteEv& e, Tick t) { return e.on < t; });
-    for (; it != evs->end() && static_cast<double>(it->on) <= tHi; ++it) {
-      int64_t s = sampleOf(noteOnTick(*it));
+    for (; it != evs->end() && static_cast<double>(it->on) <= tHi + swingMargin; ++it) {
+      int64_t s = sampleOf(liveNoteOnTick(p, ch, *it));
+      if (swingPrev >= 0.0f && (it->flags & kNoteSwingTiming)) {
+        // Live swing moves between blocks: a note belongs to the first block that reaches it. Placed
+        // with the previous block's swing it was due before this block: it has started already.
+        // Placed with this block's it is due before it: it starts now (never dropped, never twice).
+        if (sampleOf(liveNoteOnTick(p, ch, *it, swingPrev)) < c0) continue;
+        s = std::max(s, c0);
+      }
       if (s < c0 || s >= c1) continue;
       if (overSong && it->track >= 0 && it->track < kMaxPlaylistTracks && arrOff_[it->track]) continue;  // grid-1118: the clip grid has the track
       if (nStarts >= kMaxBlockStarts) break;
@@ -2177,10 +2714,12 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
       bool wrap = false, jump = false;
       if (tLoop_) {
         int64_t endSample = sampleAt(p, anchorTick_, end);
-        if (endSample <= clock_ && stopsAtEnd()) {  // K-112c (N55-02): the Arrangement ended (it shrank under the playhead)
+        if (endSample <= clock_ && stopsAtEnd()) {  // K-415 / K-112c: reached/past song end with stop-at-end on
           releaseAll(p, s, true);
           tPlaying_ = false;
-          landAt(returnToSeek_.load(std::memory_order_relaxed) ? seekTick_.load(std::memory_order_relaxed) : arrStart_.load(std::memory_order_relaxed));
+          const double base = arrStart_.load(std::memory_order_relaxed);
+          const double seek = seekTick_.load(std::memory_order_relaxed);
+          landAt(returnToSeek_.load(std::memory_order_relaxed) && seek >= base && seek < end ? seek : base);
           break;
         }
         if (endSample <= clock_) {  // already past the end (e.g. a shorter pattern was selected)
@@ -2268,10 +2807,12 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
         if (!fireMarker(p, *mev, std::min(s, n - 1))) break;
         continue;
       }
-      if (wrap && !jump && stopsAtEnd()) {  // K-112c (N55-02): the Clips Arrangement stops at its end (Loop off)
+      if (wrap && !jump && stopsAtEnd()) {  // K-415 / K-112c: stop at end of song / Arrangement
         releaseAll(p, std::min(s, n - 1), true);
         tPlaying_ = false;
-        landAt(returnToSeek_.load(std::memory_order_relaxed) ? seekTick_.load(std::memory_order_relaxed) : arrStart_.load(std::memory_order_relaxed));
+        const double base = arrStart_.load(std::memory_order_relaxed);
+        const double seek = seekTick_.load(std::memory_order_relaxed);
+        landAt(returnToSeek_.load(std::memory_order_relaxed) && seek >= base && seek < end ? seek : base);
         break;
       }
       if (wrap || jump) {
@@ -2460,6 +3001,7 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     }
   }
   if (!p->midiOrder.empty()) runMidiOut(p, n);  // MIDI Out channels reach their listeners in this block
+  keepCaptureBlock();  // K-438: output read next block is placed on this block's transport
   // K-142 (0.7.8 follow-up): with the whole graph at rest and nothing to wake it, one pass of rest
   // bookkeeping instead of the graph (AudioEngineGraph.cpp).
   const bool slept = graphSleeps(p, n);
@@ -2514,41 +3056,237 @@ void AudioEngine::processBlock(const Program* p, float* L, float* R, int n) {
     }
     clickStart_ = 0;
   }
-  if (pvSample_) {  // browser preview, straight to the output
-    const Sample& smp = *pvSample_;
-    double rate = smp.sampleRate / sr_;
-    size_t len = smp.frames();
-    // J-140: files at another rate play through the band-limited reader
-    // (was linear: dull top, aliasing from 96 kHz files); same rate: exact.
-    const pitch::SincTable& tab = pitch::table(pitch::Quality::Realtime);
-    const double end = static_cast<double>(len);
-    for (int i = 0; i < n; ++i) {
-      if (pvLoop_ >= 0)  // a loop goes on from its start, the phase kept
-        while (pvPos_ >= end) pvPos_ -= end - pvLoop_;
-      size_t p0 = static_cast<size_t>(pvPos_);
-      if (p0 >= len || (pvLoop_ < 0 && p0 + 1 >= len)) {
-        pvSample_ = nullptr;
-        previewing_.store(false);
-        break;
-      }
-      float l, r;
-      if (pitch::exactFrame(pvPos_, rate)) {
-        l = smp.left[p0], r = smp.right[p0];
-      } else {
-        pitch::read2(smp.left.data(), smp.right.data(), static_cast<int64_t>(len), pvPos_, rate, tab, l, r);
-      }
-      L[i] += 0.8f * l;
-      R[i] += 0.8f * r;
-      pvPos_ += rate;
-    }
+  if (pvSample_) {  // browser preview, straight to the output (K-407 / K-416 / K-417)
+    renderPreview(p, L, R, n);
   }
   const bool added = clickWas || pvWas || panicLeft_ > 0;  // K-142 (follow-up): anything added to the silent master
   applyPanicFade(p, L, R, n);
   publishOwn(p);  // J-112
-  if (masterSilent && !added) return;  // (the peak of silence: 0)
+  if (masterSilent && !added) {  // (the peak of silence: 0)
+    if (slept) tryEnterDeepSleep(p, n);  // K-142e: enter true O(1) whole-graph deep sleep once settled
+    return;
+  }
   const float outPeak = std::max(peakOf(L, n), peakOf(R, n));
   storeMax(outPeakRecent_, outPeak);
   if (outPeak > 1e-5f) audibleBlocks_.fetch_add(1, std::memory_order_relaxed);  // K-277
+}
+
+void AudioEngine::stopPreviewRt() {
+  pvSample_ = nullptr;
+  pvPos_ = 0.0;
+  pvLoop_ = -1.0;
+  pvStretchActive_ = false;
+  pvSynced_ = false;
+  pvPendingLaunch_ = false;
+  pvStopOnTransportStop_ = false;
+  pvLaunchBeat_ = -1.0;
+  pvPhaseOffsetBeats_ = 0.0;
+  previewing_.store(false, std::memory_order_relaxed);
+  pvPendingUi_.store(false, std::memory_order_relaxed);
+  pvNormPos_.store(-1.0f, std::memory_order_relaxed);
+}
+
+void AudioEngine::pvStretchReader(void* ctx, float* const* dst, int frames) {
+  AudioEngine* self = static_cast<AudioEngine*>(ctx);
+  float* dL = dst[0];
+  float* dR = dst[1];
+  if (!self || !self->pvSample_ || self->pvSample_->frames() == 0) {
+    std::memset(dL, 0, sizeof(float) * static_cast<size_t>(frames));
+    std::memset(dR, 0, sizeof(float) * static_cast<size_t>(frames));
+    return;
+  }
+  const Sample& smp = *self->pvSample_;
+  const int64_t len = static_cast<int64_t>(smp.frames());
+  const bool loop = self->pvReadLoop_;
+  int64_t cur = self->pvReadCursor_;
+  const float* sL = smp.left.data();
+  const float* sR = smp.right.data();
+  for (int i = 0; i < frames; ++i, ++cur) {
+    if (loop) {
+      int64_t idx = cur % len;
+      if (idx < 0) idx += len;
+      dL[i] = sL[idx];
+      dR[i] = sR[idx];
+    } else if (cur >= 0 && cur < len) {
+      dL[i] = sL[cur];
+      dR[i] = sR[cur];
+    } else {
+      dL[i] = 0.0f;
+      dR[i] = 0.0f;
+    }
+  }
+  self->pvReadCursor_ = cur;
+}
+
+void AudioEngine::pvStartStretch(const Sample& smp, double startFrame, double speed, double pitch, bool loop) {
+  const double len = static_cast<double>(smp.frames());
+  if (loop && len > 0.0) {
+    startFrame = std::fmod(startFrame, len);
+    if (startFrame < 0.0) startFrame += len;
+  } else {
+    startFrame = std::clamp(startFrame, 0.0, std::max(0.0, len - 1.0));
+  }
+  pvPos_ = startFrame;
+  pvReadLoop_ = loop;
+  pvLastSpeed_ = speed;
+  const int pre = pvStretch_.prerollFor(speed);
+  pvReadCursor_ = static_cast<int64_t>(std::llround(startFrame)) - pre;
+  pvStretch_.start(&AudioEngine::pvStretchReader, this, speed, pitch, pre);
+  pvStretchActive_ = true;
+}
+
+void AudioEngine::renderPreview(const Program* p, float* L, float* R, int n) {
+  if (!pvSample_ || pvSample_->frames() == 0) {
+    stopPreviewRt();
+    return;
+  }
+  if (pvSynced_) {
+    if (tPlaying_) pvStopOnTransportStop_ = true;
+    else if (pvStopOnTransportStop_) {
+      stopPreviewRt();
+      return;
+    }
+  }
+  const Sample& smp = *pvSample_;
+  const double len = static_cast<double>(smp.frames());
+  const bool isOwn = previewOwn_.load(std::memory_order_relaxed);
+  const double pitchSt = isOwn ? 0.0 : std::clamp(static_cast<double>(pvPitchSt_.load(std::memory_order_relaxed)), -24.0, 24.0);
+  const double pitchRatio = std::clamp(std::pow(2.0, pitchSt / 12.0), 0.25, 4.0);
+  const double baseRate = smp.sampleRate / sr_;
+  // The stretch voice runs at the engine rate: a file at another rate is read faster or slower
+  // (speed carries baseRate) and its pitch is put back by the same ratio.
+  const double voicePitch = std::clamp(pitchRatio * baseRate, 0.25, 4.0);
+
+  auto mixStretch = [&](int dstOff, int count, double speed, bool loop) {
+    int done = 0;
+    const int cap = static_cast<int>(pvOutL_.size());
+    while (done < count && pvSample_) {
+      const int k = std::min(count - done, cap);
+      float* outPtrs[2] = {pvOutL_.data(), pvOutR_.data()};
+      pvStretch_.render(outPtrs, k, speed, voicePitch, &AudioEngine::pvStretchReader, this);
+      for (int i = 0; i < k; ++i) {
+        L[dstOff + done + i] += 0.8f * pvOutL_[static_cast<size_t>(i)];
+        R[dstOff + done + i] += 0.8f * pvOutR_[static_cast<size_t>(i)];
+      }
+      pvPos_ += static_cast<double>(k) * speed;
+      if (loop) {
+        pvPos_ = std::fmod(pvPos_, len);
+        if (pvPos_ < 0.0) pvPos_ += len;
+      } else if (pvPos_ >= len) {
+        stopPreviewRt();
+        return;
+      }
+      done += k;
+    }
+  };
+
+  if (pvSynced_ && tPlaying_ && p && segCount_ > 0) {
+    const double ppq = std::max<double>(1.0, p->ppq);
+    const double barBeats = std::max<double>(0.25, static_cast<double>(p->barTicks) / ppq);
+    const PreviewQuant qMode = static_cast<PreviewQuant>(std::clamp(pvQuant_.load(std::memory_order_relaxed), 0, static_cast<int>(PreviewQuant::Count) - 1));
+    double qBeats = barBeats;
+    if (qMode == PreviewQuant::Eighth) qBeats = 0.5;
+    else if (qMode == PreviewQuant::Quarter) qBeats = 1.0;
+    else if (qMode == PreviewQuant::Half) qBeats = 2.0;
+    const double speedMult = std::clamp(static_cast<double>(pvSpeedMult_.load(std::memory_order_relaxed)), 0.25, 4.0);
+    const double effBpm = std::max(1.0, pvSampleBpm_ * pvOctaveFold_);
+    const double loopBeats = std::max(0.0625, (len / smp.sampleRate) * (effBpm / 60.0));
+
+    for (int si = 0; si < segCount_ && pvSample_; ++si) {
+      const Segment& seg = segs_[si];
+      if (seg.len <= 0) continue;
+      const double t0 = tickAt(p, seg.anchor, static_cast<double>(seg.clock));
+      const double t1 = tickAt(p, seg.anchor, static_cast<double>(seg.clock + seg.len));
+      const double b0 = t0 / ppq;
+      const double b1 = t1 / ppq;
+      const double bpm = std::max(1.0, clockMap(p).bpmAt(t0));
+      double speed = std::clamp((bpm / effBpm) * speedMult * baseRate, 0.25, 4.0);
+
+      if (pvPendingLaunch_) {
+        if (pvLaunchBeat_ < 0.0 || b0 < pvLaunchBeat_ - qBeats * 1.5) {
+          pvLaunchBeat_ = std::ceil((b0 - 1e-6) / qBeats) * qBeats;
+        }
+        if (b1 < pvLaunchBeat_ - 1e-7) continue;
+        const int64_t sLaunch = sampleAt(p, seg.anchor, pvLaunchBeat_ * ppq) - seg.clock;
+        const int launchOff = std::clamp(static_cast<int>(sLaunch), 0, seg.len - 1);
+        const double bLaunch = tickAt(p, seg.anchor, static_cast<double>(seg.clock + launchOff)) / ppq;
+        double phaseBeats = std::fmod(bLaunch * speedMult + pvPhaseOffsetBeats_, loopBeats);
+        if (phaseBeats < 0.0) phaseBeats += loopBeats;
+        const double startFrame = (phaseBeats / loopBeats) * len;
+        pvStartStretch(smp, startFrame, speed, voicePitch, true);
+        pvPendingLaunch_ = false;
+        pvPendingUi_.store(false, std::memory_order_relaxed);
+        mixStretch(seg.from + launchOff, seg.len - launchOff, speed, true);
+      } else {
+        double expectedBeats = std::fmod(b0 * speedMult + pvPhaseOffsetBeats_, loopBeats);
+        if (expectedBeats < 0.0) expectedBeats += loopBeats;
+        const double expectedFrame = (expectedBeats / loopBeats) * len;
+        double curWrapped = std::fmod(pvPos_, len);
+        if (curWrapped < 0.0) curWrapped += len;
+        double diff = expectedFrame - curWrapped;
+        if (diff > 0.5 * len) diff -= len;
+        if (diff < -0.5 * len) diff += len;
+        const bool speedStep = pvLastSpeed_ > 0.0 && std::fabs(speed - pvLastSpeed_) > 0.015 * pvLastSpeed_;
+        // (pvLastSpeed_ keeps the nominal speed: a drift correction below is not a tempo step.)
+        pvLastSpeed_ = speed;
+        if (!pvStretchActive_ || speedStep || std::fabs(diff) > smp.sampleRate * 0.002) {
+          pvStartStretch(smp, expectedFrame, speed, voicePitch, true);
+        } else if (std::fabs(diff) > 0.25) {
+          const double corr = std::clamp(1.0 + diff / std::max(64.0, static_cast<double>(seg.len) * speed), 0.98, 1.02);
+          speed = std::clamp(speed * corr, 0.25, 4.0);
+        }
+        mixStretch(seg.from, seg.len, speed, true);
+      }
+    }
+    if (pvSample_ && !pvPendingLaunch_) {
+      pvNormPos_.store(static_cast<float>(std::clamp(std::fmod(pvPos_, len) / len, 0.0, 1.0)), std::memory_order_relaxed);
+    }
+    return;
+  }
+
+  if (pvSynced_) {  // synced loop preview while transport is stopped: plays at song tempo, pitch kept
+    const double speedMult = std::clamp(static_cast<double>(pvSpeedMult_.load(std::memory_order_relaxed)), 0.25, 4.0);
+    const double effBpm = std::max(1.0, pvSampleBpm_ * pvOctaveFold_);
+    const double songBpm = p ? std::max(1.0, clockMap(p).bpmAt(curTick_)) : effBpm;
+    const double speed = std::clamp((songBpm / effBpm) * speedMult * baseRate, 0.25, 4.0);
+    if (!pvStretchActive_) pvStartStretch(smp, pvPos_, speed, voicePitch, true);
+    mixStretch(0, n, speed, true);
+    if (pvSample_) pvNormPos_.store(static_cast<float>(std::clamp(std::fmod(pvPos_, len) / len, 0.0, 1.0)), std::memory_order_relaxed);
+    return;
+  }
+
+  // Unsynced preview (one-shot, Sync off, or editor preview).
+  if (std::fabs(pitchSt) > 1e-3) {
+    const bool loop = pvLoop_ >= 0.0;
+    const double speed = std::clamp(baseRate, 0.25, 4.0);
+    if (!pvStretchActive_) pvStartStretch(smp, pvPos_, speed, voicePitch, loop);
+    mixStretch(0, n, speed, loop);
+    if (pvSample_) pvNormPos_.store(static_cast<float>(std::clamp(pvPos_ / len, 0.0, 1.0)), std::memory_order_relaxed);
+    return;
+  }
+
+  // Plain pitch=0 unsynced playback (J-140 band-limited reader; exact when sample rates match).
+  const size_t lenU = smp.frames();
+  const pitch::SincTable& tab = pitch::table(pitch::Quality::Realtime);
+  for (int i = 0; i < n; ++i) {
+    if (pvLoop_ >= 0.0)
+      while (pvPos_ >= len) pvPos_ -= len - pvLoop_;
+    const size_t p0 = static_cast<size_t>(pvPos_);
+    if (p0 >= lenU || (pvLoop_ < 0.0 && p0 + 1 >= lenU)) {
+      stopPreviewRt();
+      return;
+    }
+    float l, r;
+    if (pitch::exactFrame(pvPos_, baseRate)) {
+      l = smp.left[p0], r = smp.right[p0];
+    } else {
+      pitch::read2(smp.left.data(), smp.right.data(), static_cast<int64_t>(lenU), pvPos_, baseRate, tab, l, r);
+    }
+    L[i] += 0.8f * l;
+    R[i] += 0.8f * r;
+    pvPos_ += baseRate;
+  }
+  if (pvSample_) pvNormPos_.store(static_cast<float>(std::clamp(pvPos_ / len, 0.0, 1.0)), std::memory_order_relaxed);
 }
 
 // ---- J-109: Stop releases everything; the second Stop (panic) silences ------
@@ -2695,8 +3433,7 @@ void AudioEngine::killEverything(const Program* p) {
   liveKeyCount_ = 0;
   liveHeldUi_.store(0, std::memory_order_relaxed);
   resetMidiState();
-  pvSample_ = nullptr;
-  previewing_.store(false);
+  stopPreviewRt();
   clickLeft_ = 0;
   panicUi_.store(false, std::memory_order_relaxed);
   panicsDone_.fetch_add(1, std::memory_order_relaxed);
@@ -3180,6 +3917,10 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
   }
   liveLastTick_ = t1;
   bool offChanged = false;
+  // Live swing: as in dispatch (the previous block's amount, when this block follows it).
+  const bool swingLive = p->swingLinked && p->liveGroove.active;
+  const float swingPrev = swingLive && liveSwingSeenEnd_ == c0 && liveSwingSeenAnchor_ == anchorTick_ ? liveSwingSeen_ : -1.0f;
+  if (swingLive) liveSwingSeen_ = p->modSwing, liveSwingSeenEnd_ = c1, liveSwingSeenAnchor_ = anchorTick_;
   const double spt = sr_ * 60.0 / (flatBpm(p) * p->ppq);
   auto sampleOf = [&](double tick) { return sampleAt(p, anchorTick_, tick); };
   // Plays content ticks of one clip between transport ticks [a, b).
@@ -3188,13 +3929,18 @@ void AudioEngine::dispatchLive(const Program* p, int from, int to) {
     const int64_t sa = std::max(c0, sampleOf(a)), sb = std::min(c1, sampleOf(b));
     if (sb <= sa) return;
     const double ca = a - static_cast<double>(origin), cb = b - static_cast<double>(origin);
-    auto it = std::lower_bound(lc.notes.begin(), lc.notes.end(), static_cast<Tick>(std::floor(ca)) - 1,
+    const double swingMargin = (p->swingLinked && p->liveGroove.active) ? p->liveGroove.cell : 0.0;
+    auto it = std::lower_bound(lc.notes.begin(), lc.notes.end(), static_cast<Tick>(std::floor(ca - swingMargin)) - 1,
                                [](const ProgLiveClip::Ev& e, Tick t) { return e.e.on < t; });
-    for (; it != lc.notes.end() && static_cast<double>(it->e.on) < cb + 1.0; ++it) {
-      const int64_t s = sampleOf(static_cast<double>(origin) + noteOnTick(it->e));
-      if (s < sa || s >= sb) continue;
+    for (; it != lc.notes.end() && static_cast<double>(it->e.on) < cb + swingMargin + 1.0; ++it) {
       if (it->channel < 0 || static_cast<size_t>(it->channel) >= p->channels.size()) continue;
       const ProgChannel& ch = p->channels[static_cast<size_t>(it->channel)];
+      int64_t s = sampleOf(static_cast<double>(origin) + liveNoteOnTick(p, ch, it->e));
+      if (swingPrev >= 0.0f && (it->e.flags & kNoteSwingTiming) && sampleOf(a) < c0) {  // (the piece goes on from the block before)
+        if (sampleOf(static_cast<double>(origin) + liveNoteOnTick(p, ch, it->e, swingPrev)) < sa) continue;
+        s = std::max(s, sa);
+      }
+      if (s < sa || s >= sb) continue;
       if (!ch.rt || !ch.rt->gen || ch.rt->pendingCount >= kMaxPendingNotes) continue;
       // (the event as compiled, times shifted by `origin`: the audio thread never copies a NoteEv)
       startNote(p, ch, it->e, from + static_cast<int>(s - c0), absClock_ + from + (s - c0), spt, origin);
@@ -3351,13 +4097,14 @@ void AudioEngine::evaluateLink(const Program* p, const ProgLink& l, int n, doubl
     src = r->ctl[l.output];
   }
   LinkRuntime& lr = *l.rt;
+  const double in = l.invert ? 1.0 - std::clamp(static_cast<double>(src), 0.0, 1.0) : static_cast<double>(src);
   double y;
   if (l.curve == ModCurve::Formula) {
-    vars[0] = src;
+    vars[0] = in;
     vars[1] = l.base;
     y = l.formula.eval(vars, &lr.rng);
   } else {
-    y = applyModCurve(l.curve, src);
+    y = applyModCurve(l.curve, in);
   }
   y = y < 0 ? 0 : (y > 1 ? 1 : y);
   double target = l.min + y * (l.max - l.min);
@@ -3755,19 +4502,29 @@ void AudioEngine::syncChannelPitch(const Program* p) {
     if (!ch.rt || !ch.rt->gen) continue;
     Generator& g = *ch.rt->gen;
     g.setChannelBendRange(ch.bendRange);
-    // A new Program starts at the knob's own value; while automation or a link moves the pitch
-    // during playback, the instrument keeps the moving value until they set it in this Program.
-    float target = ch.pitchTarget;
-    if (ch.pitchMoves && !ch.pitchLinked && tPlaying_) target = static_cast<float>(g.channelPitchSent());
+    // K-411: continuous pitch (pitch knob + fine + master) plus whole-semitone channel transpose.
+    const float cont = ch.pitchCentsLive / 100.0f + channelMaster(p, ch);
+    const float tr = static_cast<float>(ch.transposeLive);
+    float target = tr + cont;
+    // (A hosted plugin's sent bend leaves the transpose out: it travels on the note key, so add it back.)
+    if (ch.pitchMoves && !ch.pitchLinked && !ch.transposeLinked && tPlaying_)
+      target = static_cast<float>(g.channelPitchSent()) + (ch.hosted ? tr : 0.0f);
     ch.pitchOffset = target;
-    if (static_cast<double>(target) != g.channelPitchSent()) g.channelPitch(target, kChannelPitchGlide, 0);
+    // Hosted plugins receive whole-semitone transpose directly on their MIDI NoteOn key (tracked
+    // per note-id for stuck-free NoteOff), so only the continuous pitch/fine/master portion drives
+    // channel pitch bend (avoiding bend-wheel saturation if transpose changes mid-note).
+    const double bendTarget = ch.hosted ? static_cast<double>(cont) : static_cast<double>(target);
+    if (bendTarget != g.channelPitchSent()) g.channelPitch(bendTarget, kChannelPitchGlide, 0);
   }
 }
 
 // Writes a link / automation value (normalized) into the program's live state.
 void AudioEngine::applyLinkValue(const Program* p, const ProgLink& l, double normalized) {
   {
+    if (!std::isfinite(normalized)) normalized = 0.0;
+    normalized = std::clamp(normalized, 0.0, 1.0);
     double v = l.desc.fromNormalized(normalized);
+    if (!std::isfinite(v)) v = l.desc.def;
     // K-142 (0.7.8 follow-up): a value that changed (or one with nothing to compare it with) may wake
     // a node at rest (AudioEngine::nodesStayAtRest) and keeps blocks on the control grid.
     if (!l.rt || l.rt->appliedNorm != normalized) ++linkChanges_;
@@ -3801,8 +4558,16 @@ void AudioEngine::applyLinkValue(const Program* p, const ProgLink& l, double nor
         const ProgChannel& c = p->channels[static_cast<size_t>(l.chan)];
         // The knob in cents (smooth, no whole-semitone steps); the instrument follows it from the
         // next block on (syncChannelPitch).
-        c.pitchTarget = static_cast<float>(v / 100.0) + c.masterPitch;
+        c.pitchCentsLive = fv;
+        c.pitchTarget = static_cast<float>(c.transposeLive) + static_cast<float>(v / 100.0) + channelMaster(p, c);
         c.pitchLinked = true;
+        break;
+      }
+      case ProgLink::ChanTranspose: {
+        const ProgChannel& c = p->channels[static_cast<size_t>(l.chan)];
+        c.transposeLive = std::clamp(static_cast<int>(std::lround(v)), -kChannelTransposeMax, kChannelTransposeMax);
+        c.pitchTarget = static_cast<float>(c.transposeLive) + c.pitchCentsLive / 100.0f + channelMaster(p, c);
+        c.transposeLinked = true;
         break;
       }
       case ProgLink::MixVolume: p->mixer[static_cast<size_t>(l.mixer)].modVolume = fv; break;
@@ -3830,6 +4595,25 @@ void AudioEngine::applyLinkValue(const Program* p, const ProgLink& l, double nor
         break;
       case ProgLink::LfoSetting:  // K-247: a board LFO's own setting (read when it runs next)
         if (static_cast<size_t>(l.fx) < p->lfos.size() && l.param >= 0 && l.param < 7) p->lfos[static_cast<size_t>(l.fx)].live[l.param] = fv;
+        break;
+      case ProgLink::SongTempo:  // 0.7.9: live internal-controller link on song tempo (BPM)
+        p->modTempo = std::clamp(v, 10.0, 522.0);
+        break;
+      case ProgLink::SongSwing:  // 0.7.9: live internal-controller link on global swing (0..1)
+        p->modSwing = static_cast<float>(std::clamp(v, 0.0, 1.0));
+        break;
+      case ProgLink::SongMasterPitch: {  // 0.7.9: live internal-controller link on master pitch (-12..12 st)
+        const float mp = static_cast<float>(std::clamp(v, -12.0, 12.0));
+        p->modMasterPitch = mp;
+        for (const ProgChannel& c : p->channels) {
+          if (c.frozen) continue;
+          c.pitchTarget = static_cast<float>(c.transposeLive) + c.pitchCentsLive / 100.0f + channelMaster(p, c);
+          c.pitchLinked = true;  // (syncChannelPitch takes the live values, not what automation last sent)
+        }
+        break;
+      }
+      case ProgLink::SongGrooveAccent:  // 0.7.9: live internal-controller link on groove accents (0..1)
+        p->modGrooveAccent = static_cast<float>(std::clamp(v, 0.0, 1.0));
         break;
     }
   }
@@ -4013,7 +4797,9 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
   const double testWall = testWall_.load(std::memory_order_relaxed);
   const double wall0 = testWall >= 0 ? testWall : std::chrono::duration<double>(t0.time_since_epoch()).count();
   blockTimeUi_.store(wall0, std::memory_order_relaxed);
+  directFrames_ = frames;
   int done = 0;
+  bool allSilent = true;
   while (done < frames) {
     int n = std::min(kMaxBlock, frames - done);
     const int room = n;
@@ -4027,6 +4813,30 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
       if (again == p) break;
       p = again;
     }
+    // K-142e: true O(1) whole-graph deep sleep fast path — zero node traversal, zero virtual calls,
+    // zero worker wakeups. Leaves deep sleep immediately BEFORE draining/rendering if anything arrives.
+    if (deepSleepProg_) {
+      if (canStayDeepAsleep(p, n)) {
+        std::memset(L + done, 0, sizeof(float) * static_cast<size_t>(n));
+        std::memset(R + done, 0, sizeof(float) * static_cast<size_t>(n));
+        tickHistPos_ += static_cast<size_t>(n);
+        deepSleepFrames_ += n;
+        sleepLedger_.blocks.fetch_add(1, std::memory_order_relaxed);
+        serialBlocks_.fetch_add(1, std::memory_order_relaxed);
+        sleptBlocks_.fetch_add(1, std::memory_order_relaxed);
+        deepSleptBlocks_.fetch_add(1, std::memory_order_relaxed);
+        if (p->controlGrid() && n >= 2 * kControlBlock) longRestBlocks_.fetch_add(1, std::memory_order_relaxed);
+        hushedTracks_.fetch_add(deepSleepNb_, std::memory_order_relaxed);
+        if (countCalls_.load(std::memory_order_relaxed)) countedBlocks_.fetch_add(1, std::memory_order_relaxed);
+        absClock_ += n;
+        running_.store(nullptr);
+        blocks_.fetch_add(1);
+        done += n;
+        continue;
+      }
+      leaveDeepSleep();
+    }
+    allSilent = false;
     // With controller links, render on a fixed grid so link evaluation (once
     // per control block) is independent of the audio buffer size.
     if (p && p->controlGrid()) {
@@ -4090,6 +4900,7 @@ void AudioEngine::processDirect(float* L, float* R, int frames) {
     blocks_.fetch_add(1);
     done += n;
   }
+  lastDirectSilent_ = allSilent && frames > 0;
   double el = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
   double avail = frames / sr_;
   storeMax(cpuPeak_, cpuMeter_.add(el, avail));
@@ -4209,9 +5020,13 @@ void AudioEngine::processInterleaved(float* out, int frames) {
   while (done < frames) {
     int n = std::min(kMaxBlock, frames - done);
     process(tmpL_.data(), tmpR_.data(), n);
-    for (int i = 0; i < n; ++i) {
-      out[2 * (done + i)] = tmpL_[static_cast<size_t>(i)];
-      out[2 * (done + i) + 1] = tmpR_[static_cast<size_t>(i)];
+    if (fixed_ <= 0 && lastDirectSilent_) {
+      std::memset(out + 2 * done, 0, sizeof(float) * 2 * static_cast<size_t>(n));
+    } else {
+      for (int i = 0; i < n; ++i) {
+        out[2 * (done + i)] = tmpL_[static_cast<size_t>(i)];
+        out[2 * (done + i) + 1] = tmpR_[static_cast<size_t>(i)];
+      }
     }
     done += n;
   }

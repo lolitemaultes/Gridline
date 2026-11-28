@@ -11,6 +11,7 @@
 #include <tuple>
 #include <optional>
 #include "../core/Automation.h"
+#include "../core/MarkerAreas.h"
 #include "../core/Params.h"
 #include "../core/ReceiptHashes.h"
 #include "../core/ReceiptOrigin.h"
@@ -277,6 +278,9 @@ void mergeUses(std::vector<Use>& uses) {
     x.plays += u.plays;
     x.ranges.insert(x.ranges.end(), u.ranges.begin(), u.ranges.end());
     x.ranges = unite(x.ranges);
+    x.timed.insert(x.timed.end(), u.timed.begin(), u.timed.end());
+    x.spans.insert(x.spans.end(), u.spans.begin(), u.spans.end());
+    x.spans = unite(x.spans);
     if (u.bar0 > 0) x.bar0 = x.bar0 > 0 ? std::min(x.bar0, u.bar0) : u.bar0;
     x.bar1 = std::max(x.bar1, u.bar1);
   }
@@ -615,6 +619,26 @@ Measurement measure(const Song& song0, const PassOptions& o) {
   if (pass.pairsFull()) m.warnings.push_back("Very many sample uses: some were not told apart (the totals are still complete).");
   // Uses measured.
   const MeterMap mm0(song0);
+  // When in the song each read happened (the marker areas): the render's output clock starts at
+  // the arrangement's start (song mode only; patterns each start their own clock).
+  TempoMap tempo;
+  tempo.build(song);
+  Tick songStart = 0, songEnd = 0;
+  const bool timedOk = m.mode == "song" && renderScopeTicks(prepareRenderSong(song, base), base, songStart, songEnd);
+  const double clock0 = timedOk ? tempo.secondsAt(static_cast<double>(songStart)) : 0.0;
+  if (timedOk) {
+    for (const markers::Area& ma : markers::areas(song0.markers, songStart, songEnd)) {
+      Area ar;
+      ar.name = ma.name;
+      ar.a = tempo.secondsAt(static_cast<double>(ma.start));
+      ar.b = tempo.secondsAt(static_cast<double>(ma.end));
+      ar.bar0 = static_cast<int>(mm0.barIndex(ma.start)) + 1;
+      ar.bar1 = static_cast<int>(mm0.barIndex(std::max(ma.start, ma.end - 1))) + 1;
+      ar.beforeFirst = ma.marker < 0;
+      m.areas.push_back(ar);
+    }
+  }
+  const double blockSeconds = static_cast<double>(base.blockSize) / std::max(1, o.sampleRate);
   std::set<std::pair<std::string, ObjectId>> measured;
   const std::vector<tap::Use> tapUses = pass.uses();
   if (o.tapUses) *o.tapUses = tapUses;
@@ -628,6 +652,11 @@ Measurement measure(const Song& song0, const PassOptions& o) {
     for (const tap::Range& r : u.ranges)
       if (!(r.cue && r.b - r.a < kMinHeard)) x.ranges.push_back(Range{r.a, r.b});
     x.measured = true;
+    if (timedOk) {
+      for (const tap::Segment& g : u.segments) x.timed.push_back(Use::Timed{g.outA + clock0, g.outB + clock0, g.srcA, g.srcB});
+      if (u.tick1 >= u.tick0)
+        x.spans.push_back(Range{tempo.secondsAt(std::max(0.0, u.tick0)), tempo.secondsAt(std::max(0.0, u.tick1)) + blockSeconds});
+    }
     if (u.tick1 >= u.tick0) {
       x.bar0 = static_cast<double>(mm0.barIndex(static_cast<Tick>(std::max(0.0, u.tick0)))) + 1;  // K-179: meter map bars
       x.bar1 = static_cast<double>(mm0.barIndex(static_cast<Tick>(std::max(0.0, u.tick1)))) + 1;
@@ -679,6 +708,24 @@ Measurement measure(const Song& song0, const PassOptions& o) {
       u.where = (r.hosted ? "Used inside " + r.plugin + " on " : "Read whole by " + r.plugin + " on ") + (t ? mixerWhere(song0, *t, -1) : std::string("the mixer"));
     }
     u.note = r.hosted ? "played part unknown" : "the whole file is read";
+    // Where it may play (the marker areas): where its channel's patterns and clips are placed.
+    // (The project as it was: the pass's copy plays only the sample voices.)
+    if (timedOk && r.channel) {
+      for (const Clip& c : song0.playlist) {
+        const bool trackOff = c.track >= 0 && static_cast<size_t>(c.track) < song0.tracks.size() && song0.tracks[static_cast<size_t>(c.track)].muted;
+        if (c.muted || trackOff) continue;
+        const bool plays = (c.kind == ClipKind::Audio && c.source == r.owner) ||
+                           (c.kind == ClipKind::Pattern && [&]() {
+                             const Pattern* p = song0.pattern(c.pattern);
+                             return p && hasNotes(*p, r.owner);
+                           }());
+        if (!plays) continue;
+        const double a = tempo.secondsAt(static_cast<double>(c.start));
+        const double b = tempo.secondsAt(static_cast<double>(c.start + std::max<Tick>(1, song0.clipLength(c))));
+        u.spans.push_back(Range{a, b});
+      }
+      u.spans = unite(u.spans);
+    }
     if (!f.exists) u.note += "; file not on this computer";
     m.uses.push_back(u);
   }

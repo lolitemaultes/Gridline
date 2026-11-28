@@ -40,6 +40,7 @@
 #include "PluginSkin.h"
 #include "Theme.h"
 #include "TypeInMenu.h"
+#include "UrlImportUi.h"
 #include "Widgets.h"
 
 namespace gl {
@@ -974,20 +975,21 @@ void normaliseMagnets(const ParamDesc& d) {
 bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixels, bool horizontal, const Track* track = nullptr) {
   audit::lastItem("param");
   audit::bindControl(pid);  // J-92 binding audit
+  const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
+  ImGuiIO& io = ImGui::GetIO();
+  bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  const ImGuiID item = ImGui::GetItemID();
+  lfoui::controlOverlay(a, pid, r0, r1, act);  // K-247: LFO swing, drop, Alt-drag
+  // GitHub #60 / K-446: automation and internal controllers move it (and its readout); held, it
+  // shows the moving value until the pointer moves it (the drag starts where it was drawn), then
+  // the user's value.
+  if (double live = 0; ui::LiveParamValue(item, pid, live)) val = std::clamp(live, std::min(d.min, d.max), std::max(d.min, d.max));
   {
     pui::DevItem& di = devItems()[pid.packed()];
-    const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
     di = {r0.x, r0.y, r1.x, r1.y, ImGui::GetFrameCount()};
     char key[32];
     std::snprintf(key, sizeof key, "p%u.%u", static_cast<unsigned>(pid.owner), static_cast<unsigned>(pid.index));
-    ui::devKnobRecord("param", key, d, val, r0, r1);  // K-148 (the value as the frame starts)
-  }
-  ImGuiIO& io = ImGui::GetIO();
-  bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
-  lfoui::controlOverlay(a, pid, ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), act);  // K-247: LFO swing, drop, Alt-drag
-  if (!act) {  // GitHub #60: automation and internal controllers move it (and its readout)
-    const double shown = pui::shownValue(a, pid, val);
-    if (shown != val) val = std::clamp(shown, std::min(d.min, d.max), std::max(d.min, d.max));
+    ui::devKnobRecord("param", key, d, val, r0, r1, 0, pid);  // K-148 (the value as the frame starts: K-446, as drawn)
   }
   const double pressed = ui::ValueAtPress(val);
   bool changed = false;
@@ -995,10 +997,14 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
   // the editor set magnets of its own for this knob.
   std::optional<timeknob::Spec> tk;
   if (magnetsRaw().empty() && magnetsNext().empty()) tk = timeknob::forParam(a.doc.song(), pid);
+  const bool semiSnap = isSemitonePitchParam(d);  // K-411: coarse pitch controls step in semitones by default
   auto posOf = [&](double v) { return tk ? timeknob::toPos(*tk, d, v) : d.toNormalized(v); };
-  auto valOf = [&](double p, bool coarse) { return tk ? timeknob::toValue(*tk, d, p, coarse) : d.fromNormalized(p); };
+  auto valOf = [&](double p, bool coarse) {
+    const double raw = tk ? timeknob::toValue(*tk, d, p, coarse) : d.fromNormalized(p);
+    return semiSnap ? snapSemitonePitch(d, raw, !coarse) : raw;
+  };
   double n = posOf(val);
-  ImGuiID id = ImGui::GetItemID();
+  const ImGuiID id = item;
   static std::map<ImGuiID, double> accum;  // choice params step through accumulated motion
   // Track sliders: the pointer position and the normalized value at the grab (re-anchored when Shift changes).
   struct Anchor {
@@ -1019,10 +1025,12 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
   }
   const double zone = static_cast<double>(magnet::kZonePx) / (static_cast<double>(std::max(40.0f, pixels)) * std::max(0.1f, edzoomui::currentZoom()));
   static bool fineDrag = false;
+  const bool altFine = io.KeyAlt && !lfoui::altOwned(a, pid);
+  const bool fineMod = io.KeyShift || altFine;
   if (ImGui::IsItemActivated()) {
-    fineDrag = io.KeyShift;
+    fineDrag = fineMod;
     accum[id] = mags.empty() || fineDrag ? n : magnet::unshape(n, mags, zone);
-    anchor = {along, mags.empty() || io.KeyShift ? n : magnet::unshape(n, mags, zone), io.KeyShift};
+    anchor = {along, mags.empty() || fineMod ? n : magnet::unshape(n, mags, zone), fineMod};
     if (io.KeyCtrl || io.KeySuper) {
       val = d.def;
       a.doc.setParam(pid, val, false);
@@ -1030,7 +1038,7 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
     }
   }
   if (track && track->len > 1 && act && !(io.KeyCtrl || io.KeySuper)) {
-    if (io.KeyShift != anchor.fine) anchor = {along, mags.empty() || io.KeyShift ? n : magnet::unshape(n, mags, zone), io.KeyShift};
+    if (fineMod != anchor.fine) anchor = {along, mags.empty() || fineMod ? n : magnet::unshape(n, mags, zone), fineMod};
     if (along != anchor.pos) {
       const double dir = horizontal ? 1.0 : -1.0;  // vertical: up raises the value
       const double nn = std::clamp(anchor.n + dir * (along - anchor.pos) / track->len * (anchor.fine ? 0.125 : 1.0), 0.0, 1.0);
@@ -1039,32 +1047,39 @@ bool dragParam(App& a, ParamId pid, const ParamDesc& d, double& val, float pixel
         val = v;
         a.doc.setParam(pid, val, true);
         changed = true;
+        ui::NoteHeldEdit(id);  // K-446
       }
     }
   } else if (act && !(io.KeyCtrl || io.KeySuper) && !(io.KeyAlt && lfoui::altOwned(a, pid))) {  // K-247: Alt-drag is the LFO amount
     float delta = horizontal ? io.MouseDelta.x : -io.MouseDelta.y;
     double& acc = accum[id];
-    if (!mags.empty() && io.KeyShift != fineDrag) {  // K-147: Shift toggled mid-drag: carry on from the shown value, no jump
-      fineDrag = io.KeyShift;
-      acc = fineDrag ? n : magnet::unshape(n, mags, zone);
+    if (fineMod != fineDrag) {  // K-147 / K-411: fine modifier toggled mid-drag: carry on from the shown value, no jump
+      fineDrag = fineMod;
+      acc = mags.empty() || fineDrag ? n : magnet::unshape(n, mags, zone);
     }
     if (delta != 0) {
-      double speed = (io.KeyShift ? 0.12 : 1.0) / std::max(40.0f, pixels);
+      double speed = (fineMod ? 0.12 : 1.0) / std::max(40.0f, pixels);
       acc = std::clamp(acc + delta * speed, 0.0, 1.0);
       double v = valOf(mags.empty() || fineDrag ? acc : magnet::shape(acc, mags, zone), !fineDrag);
       if (v != val) {
         val = v;
         a.doc.setParam(pid, val, true);
         changed = true;
+        ui::NoteHeldEdit(id);  // K-446
       }
     }
   }
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   if (hov && !act && io.MouseWheel != 0) {
-    double step = d.kind == ParamKind::Choice ? 1.0 / std::max<size_t>(1, d.choices.empty() ? 1 : d.choices.size() - 1)
-                                              : (io.KeyShift ? 0.005 : 0.025);
-    double v = valOf(std::clamp(n + io.MouseWheel * step, 0.0, 1.0), false);
-    if (!mags.empty() && !io.KeyShift) v = valOf(magnet::step(n, mags, io.MouseWheel > 0 ? 1 : -1), true);  // K-147: magnet to magnet
+    double v = val;
+    if (semiSnap && !fineMod) {
+      v = d.clamp(std::round(val) + (io.MouseWheel > 0 ? 1.0 : -1.0));
+    } else {
+      double step = d.kind == ParamKind::Choice ? 1.0 / std::max<size_t>(1, d.choices.empty() ? 1 : d.choices.size() - 1)
+                                                : (fineMod ? 0.005 : 0.025);
+      v = valOf(std::clamp(n + io.MouseWheel * step, 0.0, 1.0), false);
+      if (!mags.empty() && !fineMod) v = valOf(magnet::step(n, mags, io.MouseWheel > 0 ? 1 : -1), true);  // K-147: magnet to magnet
+    }
     if (v != val) {
       val = v;
       a.doc.setParam(pid, val, false);
@@ -1218,10 +1233,33 @@ bool devPoints(const std::string& name, DevPoints& out) {
   out = it->second;
   return true;
 }
-void devItemHere(ParamId pid) {
-  const ImVec2 r0 = ImGui::GetItemRectMin(), r1 = ImGui::GetItemRectMax();
-  devItems()[pid.packed()] = {r0.x, r0.y, r1.x, r1.y, ImGui::GetFrameCount()};
+void devItemHere(ParamId pid) { devItemHere(pid, ImGui::GetItemRectMin(), ImGui::GetItemRectMax()); }
+void devItemHere(ParamId pid, ImVec2 r0, ImVec2 r1) { devItems()[pid.packed()] = {r0.x, r0.y, r1.x, r1.y, ImGui::GetFrameCount()}; }
+
+void paramContextMenu(App& a, ParamId pid, ImVec2 r0, ImVec2 r1) {
+  const auto d = describeParam(a.doc.song(), pid);
+  if (!d) return;
+  devItemHere(pid, r0, r1);
+  const ImGuiLastItemData last = ImGui::GetCurrentContext()->LastItemData;  // (the caller's item stays the last one)
+  ImGui::PushID("##pctx");
+  ImGui::PushID(static_cast<int>(pid.owner));
+  ImGui::PushID(static_cast<int>(pid.index));
+  // (by its rectangle: a segmented row is several items, and the window's own hover keeps a popup
+  // or a drag elsewhere from opening it)
+  if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) && ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(r0, r1)) ImGui::OpenPopup("##pmenu");
+  bool wantType = false;
+  if (ImGui::BeginPopup("##pmenu")) {
+    paramMenu(a, pid, *d, &wantType);
+    ImGui::EndPopup();
+  }
+  if (wantType) ImGui::OpenPopup("##type");
+  ui::ParamTypePopup(pid, *d);
+  ImGui::PopID();
+  ImGui::PopID();
+  ImGui::PopID();
+  ImGui::GetCurrentContext()->LastItemData = last;
 }
+void paramContextMenu(App& a, ParamId pid) { paramContextMenu(a, pid, ImGui::GetItemRectMin(), ImGui::GetItemRectMax()); }
 bool devItem(ParamId pid, DevItem& out) {
   auto it = devItems().find(pid.packed());
   if (it == devItems().end()) return false;
@@ -1230,12 +1268,9 @@ bool devItem(ParamId pid, DevItem& out) {
 }
 bool paramLinked(App& a, ParamId pid) { return isLinked(a, pid) || isModulated(a.doc.song(), pid); }
 
-double shownValue(App& a, ParamId pid, double stored) {
-  const bool playing = a.engine.playing();
-  if (!playing && a.doc.song().modLinks.empty()) return stored;  // nothing can drive it
-  double live = 0;
-  const bool has = a.builder.modulatedValue(pid, live);
-  return showsLiveValue(a.doc.song(), pid, has, playing, false) ? live : stored;
+double shownValue(App& /*a*/, ParamId pid, double stored) {
+  double live = 0;  // K-446: the one rule every control follows (ui::shownParamValue)
+  return ui::shownParamValue(pid, live) ? live : stored;
 }
 
 float knobCellWidth(int style) { return kKnobCell[std::clamp(style, 0, 2)]; }
@@ -1757,6 +1792,8 @@ void drawPluginBody(App& a, const PluginTarget& t, float width) {
   const layoutui::BaseStyleScope own;  // K-112: every editor keeps its own look in every layout
   edzoomui::markBody(width);  // K-147: the fit report measures the editor from here ...
   const PluginInfo* info = t.info(a.doc.song());
+  if (info && urlimportui::pluginLoadsAudio(info->type) && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+    urlimportui::noteFocusedPlugin(t);
   const bool native = info && !isHostedType(info->type);  // K-311: Gridline's own editors
   if (native) typein::begin(a);
   drawPluginBodyIn(a, t, width);
@@ -1765,8 +1802,16 @@ void drawPluginBody(App& a, const PluginTarget& t, float width) {
 }
 
 static void drawPluginBodyIn(App& a, const PluginTarget& t, float width) {
+  const PluginState* st = t.state(a.doc.song());
   const PluginInfo* info = t.info(a.doc.song());
-  if (!info) return;
+  if (!info) {
+    // Q-14: missing or unscanned hosted plugins render their placeholder card instead of nothing.
+    if (st && isHostedType(st->type)) {
+      skin::resetFrames();  // Q-7: panels of this editor only
+      drawHostedEditor(a, t, width);
+    }
+    return;
+  }
   skin::resetFrames();  // Q-7: panels of this editor only
   if (isHostedType(info->type)) {  // third-party plugin: editor button + parameter list
     if (hostedui::showsInterfaceInside(a, t)) {  // 0.7.8: its own interface, inside Gridline

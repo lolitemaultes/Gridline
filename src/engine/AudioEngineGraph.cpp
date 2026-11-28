@@ -746,6 +746,183 @@ void AudioEngine::sleepGraph(const Program* p, int n) {
   hushedTracks_.fetch_add(bc_.nb, std::memory_order_relaxed);
 }
 
+// ---- K-142e (0.7.9): true O(1) whole-graph deep sleep ---------------------------------------------
+//
+// Once sleepGraph has run and every node's taps hold silence, every strip ramp has settled and every
+// resting instrument / effect either has a no-op rested() or O(1) deferred clocks (canDeferRest()),
+// enter deep sleep: subsequent quiescent blocks check only O(1) engine atomics, zero-fill the output
+// and increment one shared SleepLedger block counter — touching zero channel, mixer or effect objects.
+// Any wake source (command, MIDI, Program swap, audio input, editor open, automation hold, play,
+// preview, tap, probe, logger, sync) leaves deep sleep BEFORE rendering that exact block, flushing
+// the shared RestCounter ledger and catching up O(1) clocks so sample 0 is bit-identical and glitch-free.
+
+void AudioEngine::tryEnterDeepSleep(const Program* p, int n) {
+  if (deepSleepProg_ || !p || offline_ || !bc_.rest || !graphSleep_.load(std::memory_order_relaxed) || tapPass_ || taps_) return;
+  // On the control grid deep sleep holds only for whole control blocks (canStayDeepAsleep): with a
+  // device buffer that is not a multiple of one, or a clock off the grid after this block, the next
+  // block would leave it again at once (entering and leaving every buffer costs more than resting).
+  if (p->controlGrid() && (directFrames_ % kControlBlock != 0 || (absClock_ + n) % kControlBlock != 0)) return;
+  if (tPlaying_ || countInLeft_ > 0 || blockInput_ || !longRestProgram(p)) return;
+  if (restProg_ != p) return;
+  if (p != recIdleProg_ || recordOn_.load(std::memory_order_relaxed) || histStill_ < kTickHistory) return;
+  if (inHead_.load(std::memory_order_acquire) != inTail_.load(std::memory_order_relaxed) || inPrimed_) return;
+  if (tapFirst_.load(std::memory_order_acquire) >= 0 || startLevel_.load(std::memory_order_acquire) > 0.f) return;
+  if (probeState_.load(std::memory_order_acquire) != 0 || logger_.load(std::memory_order_acquire) != nullptr) return;
+  if (syncMode_.load(std::memory_order_relaxed) != 0 || clockOut_.running() || hostFollow_ || hostNew_) return;
+  if (heldCount_ != 0 || heldOffCount_ != 0 || liveKeyCount_ != 0 || pvSample_ != nullptr || clickLeft_ > 0 || panicLeft_ > 0) return;
+  if (qHead_.load(std::memory_order_acquire) != qTail_.load(std::memory_order_relaxed)) return;
+  if (mHead_.load(std::memory_order_acquire) != mTail_.load(std::memory_order_relaxed)) return;
+  const uint64_t edEpoch = editorOpenChanges().load(std::memory_order_acquire);
+  const uint64_t hdEpoch = automationHoldChanges().load(std::memory_order_acquire);
+  if (p->controlGrid()) {
+    if (!linksStill_ || linkSkipProg_ != p || linkSkipTick_ != curTick_ || linkSkipMode_ != tMode_ || linkSkipPattern_ != tPattern_) return;
+    if (hdEpoch != linkSkipHolds_) return;
+  }
+  const bool mayRest = bc_.rest && bc_.restInstruments;
+  for (const ProgChannel& ch : p->channels) {
+    const ChannelRuntime* rt = ch.rt.get();
+    if (!rt || !rt->gen) continue;
+    if (rt->restWay != 1 && rt->restWay != 2) return;
+    if (!rt->primed || rt->curL != ch.gainL || rt->curR != ch.gainR) return;
+    if (!rt->tap.isAllZero()) return;
+    if (ch.sustainMoves || ch.sustain || rt->pedalParam) return;
+    if (!ch.midiTargets.empty() || rt->chainSig != 0) return;
+    for (const auto& nf : ch.noteFx)
+      if (nf.rt) return;
+    if (ch.liveMoved || rt->pendingCount != 0 || rt->liveCount != 0 || rt->editorOpen.load(std::memory_order_relaxed)) return;
+    const Generator& g = *rt->gen;
+    if (g.hasEvents()) return;
+    if (static_cast<double>(ch.pitchTarget) != g.channelPitchSent()) return;
+    if (rt->restWay == 1 && !g.canDeferRest()) return;
+  }
+  const size_t nb = bc_.nb;
+  for (size_t idx = 0; idx < nb; ++idx) {
+    const ProgMixer& m = p->mixer[idx];
+    const MixerRuntime* rt = m.rt.get();
+    if (!rt || !rt->hushed || m.inFirst >= 0) return;
+    if (!rt->primed || rt->curL != m.gainL || rt->curR != m.gainR) return;
+    if (!rt->tap.isAllZero()) return;
+    const bool lowLat = m.armed && lowLatPrev_;
+    for (const uint16_t si : m.filledSlots) {
+      const ProgSlot& slot = m.slots[si];
+      if (slot.rt->editorOpen.load(std::memory_order_relaxed)) return;
+      if (!slot.rt->fx || !slot.enabled || (lowLat && slot.latency > 0)) continue;
+      if (!slot.rt->inTap.isAllZero() || !slot.rt->tap.isAllZero()) return;
+      if (!slot.rt->fx->canDeferRest(slot.modded ? slot.live : slot.plugin, bc_.ctx)) return;
+    }
+  }
+  if (editorOpenChanges().load(std::memory_order_acquire) != edEpoch) return;
+  // Ensure every bus holds exact zeros across the full kMaxBlock so any block size on wakeup sees silence.
+  for (size_t idx = 0; idx < nb; ++idx) {
+    const int z = busZeroLen_[idx];
+    if (z < kMaxBlock) {
+      std::memset(busL_[idx].data() + z, 0, sizeof(float) * static_cast<size_t>(kMaxBlock - z));
+      std::memset(busR_[idx].data() + z, 0, sizeof(float) * static_cast<size_t>(kMaxBlock - z));
+      busZeroLen_[idx] = kMaxBlock;
+    }
+  }
+  // Attach the shared ledger once so RestCounter::load() stays exact while deeply asleep.
+  sleepLedger_.seq.fetch_add(1, std::memory_order_relaxed);  // odd: readers (RestCounter::load) retry
+  std::atomic_thread_fence(std::memory_order_release);    // (the counters below are not seen before it)
+  sleepLedger_.blocks.store(0, std::memory_order_relaxed);
+  sleepLedger_.active.store(true, std::memory_order_release);
+  for (const ProgChannel& ch : p->channels) {
+    ChannelRuntime* rt = ch.rt.get();
+    if (!rt || !rt->gen) continue;
+    if (rt->restWay == 1)
+      rt->restBlocks.attach(&sleepLedger_);
+    else if (mayRest && ch.restSilent)
+      rt->runBlocks.attach(&sleepLedger_);
+  }
+  for (size_t idx = 0; idx < nb; ++idx) {
+    const ProgMixer& m = p->mixer[idx];
+    const bool lowLat = m.armed && lowLatPrev_;
+    for (const uint16_t si : m.filledSlots) {
+      const ProgSlot& slot = m.slots[si];
+      if (!slot.rt->fx || !slot.enabled || (lowLat && slot.latency > 0)) continue;
+      if (!(slot.restFrames > 0 && slot.rt->quiet >= slot.restFrames)) slot.rt->restBlocks.attach(&sleepLedger_);
+    }
+  }
+  sleepLedger_.seq.fetch_add(1, std::memory_order_release);
+  deepSleepProg_ = p;
+  deepSleepFrames_ = 0;
+  deepSleepNb_ = nb;
+  deepSleepEditorEpoch_ = edEpoch;
+  deepSleepHoldEpoch_ = hdEpoch;
+  deepSleepRestInstr_ = bc_.restInstruments;
+  deepSleepLowLat_ = lowLatPrev_;
+  deepSleepCtx_ = bc_.ctx;
+  deepSleepProgUi_.store(p, std::memory_order_release);
+}
+
+bool AudioEngine::canStayDeepAsleep(const Program* p, int n) const {
+  if (!deepSleepProg_ || p != deepSleepProg_ || n <= 0 || n > kMaxBlock) return false;
+  if (offline_ || tapPass_ || taps_ || tPlaying_ || countInLeft_ > 0) return false;
+  if (!graphSleep_.load(std::memory_order_relaxed)) return false;
+  if (restInstruments_.load(std::memory_order_relaxed) != deepSleepRestInstr_) return false;
+  const bool recOn = recordOn_.load(std::memory_order_relaxed);
+  if (recOn || (lowLatMon_.load(std::memory_order_relaxed) && recOn) != deepSleepLowLat_) return false;
+  if (p->controlGrid() && (absClock_ % kControlBlock != 0 || n < kControlBlock || n % kControlBlock != 0)) return false;
+  if (qHead_.load(std::memory_order_acquire) != qTail_.load(std::memory_order_relaxed)) return false;
+  if (mHead_.load(std::memory_order_acquire) != mTail_.load(std::memory_order_relaxed)) return false;
+  if (inHead_.load(std::memory_order_acquire) != inTail_.load(std::memory_order_relaxed)) return false;
+  if (tapFirst_.load(std::memory_order_acquire) >= 0) return false;
+  if (startLevel_.load(std::memory_order_acquire) > 0.f) return false;
+  if (probeState_.load(std::memory_order_acquire) != 0) return false;
+  if (logger_.load(std::memory_order_acquire) != nullptr) return false;
+  if (syncMode_.load(std::memory_order_relaxed) != 0) return false;
+  if (hostNew_ || hostFollow_) return false;
+  if (heldCount_ != 0 || heldOffCount_ != 0 || liveKeyCount_ != 0) return false;
+  if (pvSample_ != nullptr || clickLeft_ > 0 || panicLeft_ > 0) return false;
+  if (editorOpenChanges().load(std::memory_order_acquire) != deepSleepEditorEpoch_) return false;
+  if (automationHoldChanges().load(std::memory_order_acquire) != deepSleepHoldEpoch_) return false;
+  return true;
+}
+
+void AudioEngine::leaveDeepSleep() {
+  const Program* p = deepSleepProg_;
+  if (!p) return;
+  const uint64_t delta = sleepLedger_.blocks.load(std::memory_order_relaxed);
+  const int64_t frames = deepSleepFrames_;
+  const size_t nb = std::min(deepSleepNb_, p->mixer.size());
+  // Detach shared ledger and commit accumulated blocks into each runtime atomically.
+  sleepLedger_.seq.fetch_add(1, std::memory_order_relaxed);  // odd: readers (RestCounter::load) retry
+  std::atomic_thread_fence(std::memory_order_release);    // (the counters below are not seen before it)
+  sleepLedger_.active.store(false, std::memory_order_relaxed);
+  for (const ProgChannel& ch : p->channels) {
+    ChannelRuntime* rt = ch.rt.get();
+    if (!rt) continue;
+    rt->restBlocks.detach(&sleepLedger_, delta);
+    rt->runBlocks.detach(&sleepLedger_, delta);
+  }
+  for (size_t idx = 0; idx < nb; ++idx) {
+    const ProgMixer& m = p->mixer[idx];
+    for (const uint16_t si : m.filledSlots)
+      if (m.slots[si].rt) m.slots[si].rt->restBlocks.detach(&sleepLedger_, delta);
+  }
+  sleepLedger_.blocks.store(0, std::memory_order_relaxed);
+  sleepLedger_.seq.fetch_add(1, std::memory_order_release);
+  // O(1) clock catch-up for instruments and effects that advance free-running phases at rest.
+  if (frames > 0) {
+    for (const ProgChannel& ch : p->channels) {
+      ChannelRuntime* rt = ch.rt.get();
+      if (rt && rt->gen && rt->restWay == 1) rt->gen->restedLong(frames);
+    }
+    for (size_t idx = 0; idx < nb; ++idx) {
+      const ProgMixer& m = p->mixer[idx];
+      const bool lowLat = m.armed && deepSleepLowLat_;
+      for (const uint16_t si : m.filledSlots) {
+        const ProgSlot& slot = m.slots[si];
+        if (!slot.rt || !slot.rt->fx || !slot.enabled || (lowLat && slot.latency > 0)) continue;
+        slot.rt->fx->restedLong(slot.modded ? slot.live : slot.plugin, slot.aux, deepSleepCtx_, frames);
+      }
+    }
+  }
+  deepSleepProg_ = nullptr;
+  deepSleepFrames_ = 0;
+  deepSleepProgUi_.store(nullptr, std::memory_order_release);
+}
+
 void AudioEngine::runMixer(size_t idx, int worker) {
   const Program* p = bc_.p;
   const int n = bc_.n;

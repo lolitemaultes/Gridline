@@ -28,7 +28,9 @@
 #include "collab/CollabSim.h"
 #include "core/Params.h"
 #include "host/HostedPlugins.h"
+#include "host/PluginPrefs.h"
 #include "host/PluginScan.h"
+#include "core/Project.h"
 #include "core/Update.h"
 
 using namespace gl;
@@ -516,6 +518,40 @@ void testHostSide() {
 
 }  // namespace
 
+// K-437: "Block internet access" is a choice of each computer (a privacy setting): it is not part of
+// the project, so it never reaches a collaborator, and a collaborator's edits or a project from
+// someone else never change this computer's list.
+void testNetBlockStaysLocal() {
+  host::setNetAccess({kSynth}, host::NetAccess::Blocked);
+  const std::set<std::string> before = host::pluginPrefs().netBlock;
+  const uint64_t gen = host::pluginPrefsGeneration();
+  Group t;
+  const ObjectId ch = t.a.doc.addChannel("Offline", kSynth);
+  t.sync();
+  t.b.doc.setParam(channelPluginParam(ch, 0), 0.3, true);
+  t.b.doc.endGesture();
+  t.b.doc.addChannel("Theirs", kSynth);
+  t.sync();
+  t.b.doc.undo();
+  t.sync();
+  auto mentions = [](const std::string& text) {
+    return text.find("netBlock") != std::string::npos || text.find("internet") != std::string::npos ||
+           text.find("Internet") != std::string::npos;
+  };
+  const std::string shared = jsonCompact(t.a.s->replica().materialize({"song"}));
+  expect(!shared.empty() && !mentions(shared), "internet blocking: not in the shared document");
+  expect(!mentions(projectToText(t.b.doc.song())), "internet blocking: not in the project file");
+  expect(host::pluginPrefs().netBlock == before && host::pluginPrefsGeneration() == gen,
+         "internet blocking: a collaborator's edits (and their undo) leave this computer's list as it was");
+  // A project from someone else, with the plugin in it, opened here: the list stays as it was.
+  const std::string file = tmpDir("k437_project") + "/theirs.gridline";
+  expect(saveProject(file, t.b.doc.song()), "internet blocking: project saved");
+  Song opened;
+  expect(loadProject(file, opened) && host::pluginPrefs().netBlock == before && host::pluginPrefsGeneration() == gen,
+         "internet blocking: opening someone else's project does not change it");
+  host::setNetAccess({kSynth}, host::NetAccess::Allowed);
+}
+
 int main() {
   gl::test::hermeticTestEnv("collab_plugins");
   host::ScanResult r = host::findFormat("clap")->scanInProcess(kClapBundle);
@@ -528,5 +564,6 @@ int main() {
   testMissingPlugin();
   testBigState();
   testSafety();
+  testNetBlockStaysLocal();
   return finish();
 }

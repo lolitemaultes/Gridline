@@ -241,7 +241,7 @@ void testEqualityCoversFields() {
   // Fields an operator== leaves out on purpose (each one's reason in its declaration's comment).
   const std::map<std::string, std::set<std::string>> allowed = {
       // view and session state: no undo step, never "modified"
-      {"Song", {"pluginWindows", "workspaceCopy", "idSlot", "idStride", "newTrackRoom"}},
+      {"Song", {"pluginWindows", "workspaceCopy", "collabChat", "portLinks", "idSlot", "idStride", "newTrackRoom"}},
       {"LiveSettings", {"view"}},  // read once from 0.7.7 development saves, never written
       {"SmoothView", {"library"}},
       {"EffectSlot", {"uid"}},  // the running instance's identity (Document::tagSlots), never saved
@@ -283,7 +283,9 @@ void testRestCoversSong() {
       {"mixer", "a list, element by element"},
       {"automations", "a list, element by element"},
       {"flOrigin", "its own path (\"flo\")"},
+      {"collabChat", "synced via meta/chat:* (no undo step)"},
       {"pluginWindows", "this computer's open windows"},
+      {"portLinks", "this computer's JACK / PipeWire port connections"},
       {"idSlot", "session state"},
       {"idStride", "session state"},
       {"newTrackRoom", "session state"},
@@ -592,6 +594,31 @@ void testTrackShownHere() {
 
 }  // namespace
 
+// GitHub #87: "Slides glide velocity" and a 0% note travel to the collaborator, and so do their undos.
+void testSlideVelocityTravels() {
+  Song start = baseSong();
+  Pair p(14, "gh87_slidevel", start);
+  const ObjectId pat = p.a.doc.song().patterns[0].id, ch = p.a.doc.song().channels.back().id;
+  expect(p.a.doc.song().slidesVelocity && p.b.doc.song().slidesVelocity, "slide velocity: on for a new project on both peers");
+  p.a.doc.editSong("slides keep velocity", [](Song& x) { x.slidesVelocity = false; });
+  p.settle();
+  expect(!p.b.doc.song().slidesVelocity && p.same(), "slide velocity: turning it off reaches the collaborator");
+  p.a.doc.undo();
+  p.settle();
+  expect(p.a.doc.song().slidesVelocity && p.b.doc.song().slidesVelocity && p.same(), "slide velocity: its undo reaches the collaborator");
+  Note base(0, 384, 60, 0), slide(96, 96, 60, 127);
+  slide.slide = true;
+  p.b.doc.setNotes(pat, ch, {base, slide}, "fade in");
+  p.settle();
+  const auto* got = p.a.doc.song().pattern(pat);
+  expect(got && got->notes.count(ch) && got->notes.at(ch).size() == 2 && got->notes.at(ch)[0].velocity == 0 && got->notes.at(ch)[1].slide && p.same(),
+         "slide velocity: the collaborator's 0% note and its slide reach the author");
+  p.b.doc.undo();
+  p.settle();
+  got = p.a.doc.song().pattern(pat);
+  expect(got && (!got->notes.count(ch) || got->notes.at(ch).empty()) && p.same(), "slide velocity: the collaborator's undo removes them on both peers");
+}
+
 int main() {
   testEqualityCoversFields();
   testRestCoversSong();
@@ -600,5 +627,6 @@ int main() {
   testRecordSafe();
   testTrackViewsStayHere();
   testTrackShownHere();
+  testSlideVelocityTravels();
   return finish();
 }

@@ -16,6 +16,8 @@ int barItemWidth(BarItem item) {
       return 30;
     case kBarSandbox:
       return 62;
+    case kBarOffline:
+      return 26;  // K-437: a globe; OFFLINE in words (kBarOfflineWideW) where the bar has the room
     case kBarGeneric:
       return 62;
     case kBarRoute:
@@ -52,9 +54,13 @@ BarLayout layoutBar(int width, bool route, bool dock) {
   };
   const int one = oneRowBarWidth();
   if (width >= one) {
-    // < preset > | ON SANDBOX GENERIC ROUTE | ... CPU  [gear]   (preset stretches)
-    const int extra = std::min(width - one, kPresetMaxW - kPresetMinW);
-    const int spare = width - one - extra;  // room left over in the middle
+    // < preset > | ON SANDBOX OFFLINE GENERIC ROUTE | ... CPU  [gear]   (preset stretches)
+    // K-437: the internet switch reads OFFLINE where there is room, else it is a globe, so adding it
+    // left the width a bar needs for one row as it was.
+    const int offW = width - one >= kBarOfflineWideW - barItemWidth(kBarOffline) ? kBarOfflineWideW : barItemWidth(kBarOffline);
+    const int fit = one + offW - barItemWidth(kBarOffline);
+    const int extra = std::min(width - fit, kPresetMaxW - kPresetMinW);
+    const int spare = width - fit - extra;  // room left over in the middle
     const int routeRoom = (route ? barItemWidth(kBarRoute) + kGap : 0) + (dock ? barItemWidth(kBarDock) + kGap : 0);
     const int pw = std::max(24, kPresetMinW + extra - std::max(0, routeRoom - spare));
     int x = kBarPad;
@@ -64,10 +70,11 @@ BarLayout layoutBar(int width, bool route, bool dock) {
     x += pw + kGap;
     put(kBarNext, x, 0, barItemWidth(kBarNext));
     x += barItemWidth(kBarNext) + 2 * kGap;
-    for (BarItem it : {kBarBypass, kBarSandbox, kBarGeneric, kBarRoute, kBarDock}) {
+    for (BarItem it : {kBarBypass, kBarSandbox, kBarOffline, kBarGeneric, kBarRoute, kBarDock}) {
       if ((it == kBarRoute && !route) || (it == kBarDock && !dock)) continue;
-      put(it, x, 0, barItemWidth(it));
-      x += barItemWidth(it) + kGap;
+      const int iw = it == kBarOffline ? offW : barItemWidth(it);
+      put(it, x, 0, iw);
+      x += iw + kGap;
     }
     // Readout and settings stay on the right edge.
     const int gx = width - kBarPad - barItemWidth(kBarSettings);
@@ -77,14 +84,18 @@ BarLayout layoutBar(int width, bool route, bool dock) {
     L.height = kBarRowH;
     return L;
   }
-  // Two rows. Row 0: < preset > ... [gear]; the preset takes what is left.
+  // Two rows. Row 0: < preset > ... OFFLINE [gear]; the preset takes what is left. (K-437: the
+  // internet switch sits on the first row, where the narrowest window still has room for it.)
   {
     const int gx = width - kBarPad - barItemWidth(kBarSettings);
     put(kBarSettings, gx, 0, barItemWidth(kBarSettings));
+    const int offW = width >= 320 ? kBarOfflineWideW : barItemWidth(kBarOffline);
+    const int ox = gx - kGap - offW;
+    put(kBarOffline, ox, 0, offW);
     int x = kBarPad;
     put(kBarPrev, x, 0, barItemWidth(kBarPrev));
     x += barItemWidth(kBarPrev) + kGap;
-    const int room = gx - kGap - barItemWidth(kBarNext) - kGap - x;
+    const int room = ox - kGap - barItemWidth(kBarNext) - kGap - x;
     const int pw = std::max(24, std::min(room, kPresetMaxW));
     put(kBarPreset, x, 0, pw);
     put(kBarNext, x + pw + kGap, 0, barItemWidth(kBarNext));

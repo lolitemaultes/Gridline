@@ -215,6 +215,7 @@ class ClapBackend final : public Backend {
                : Backend::auxOutputName(k);
   }
   bool supportsTuning() const override { return clapDialect_; }
+  bool tuningRelativeToKey() const override { return clapDialect_; }
   bool hasEventOutput() const override { return noteOut_; }
   bool supportsParamMod(uint32_t id) const override {
     const Range* r = range(id);
@@ -485,7 +486,7 @@ class ClapBackend final : public Backend {
         in_.add(e);
         return;
       case NoteEvent::Expression:  // K-99: a note's pressure or timbre (brightness), 0..1
-        if (!clapDialect_) return;
+        if (!clapDialect_ || n.expr == NoteEvent::ExprVolume) return;  // GitHub #87: volume only to plugins that list it
         e.expr.header = header(CLAP_EVENT_NOTE_EXPRESSION, sizeof(clap_event_note_expression_t), n.offset);
         e.expr.expression_id = n.expr == NoteEvent::ExprBrightness ? CLAP_NOTE_EXPRESSION_BRIGHTNESS : CLAP_NOTE_EXPRESSION_PRESSURE;
         e.expr.note_id = n.noteId;

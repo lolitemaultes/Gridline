@@ -399,6 +399,97 @@ bool removeChannels(Document& d, const std::vector<ObjectId>& channels) {
   return ok;
 }
 
+bool doublePattern(Document& d, ObjectId pattern, ObjectId alsoResizeClip) {
+  const Song& s = d.song();
+  const Pattern* p = s.pattern(pattern);
+  if (!p) return false;
+  const Tick bar = std::max<Tick>(1, s.patternBarTicks(*p));
+  const Tick content = std::max(bar, s.patternContentLength(*p));
+  const int curBars = std::max(p->bars, static_cast<int>((content + bar - 1) / bar));
+  if (curBars <= 0 || curBars * 2 > kMaxPatternBars) return false;
+  const Tick halfLen = static_cast<Tick>(curBars) * bar;
+  const int newBars = curBars * 2;
+  const int curSteps = curBars * std::max(1, p->stepsPerBar);
+
+  bool resizeClip = false;
+  if (alsoResizeClip != kNoId) {
+    if (const Clip* c = s.clip(alsoResizeClip); c && c->kind == ClipKind::Pattern && c->pattern == pattern && c->length == halfLen)
+      resizeClip = true;
+  }
+
+  d.beginGroup("double pattern");
+  d.editPattern(pattern, "double pattern", [&](Pattern& x) {
+    x.bars = newBars;
+    // Duplicate notes in [0, halfLen) into [halfLen, 2 * halfLen).
+    for (auto& [ch, ns] : x.notes) {
+      std::vector<Note> extra;
+      extra.reserve(ns.size());
+      for (const Note& n : ns) {
+        if (n.start >= 0 && n.start < halfLen) {
+          Note copy = n;
+          copy.start += halfLen;
+          extra.push_back(std::move(copy));
+        }
+      }
+      if (!extra.empty()) {
+        ns.insert(ns.end(), extra.begin(), extra.end());
+        std::stable_sort(ns.begin(), ns.end(), [](const Note& a, const Note& b) {
+          return a.start != b.start ? a.start < b.start : a.pitch < b.pitch;
+        });
+      }
+    }
+    // Duplicate step-sequencer rows & step properties.
+    for (auto& [ch, row] : x.steps) {
+      if (row.empty()) continue;
+      if (static_cast<int>(row.size()) < curSteps) row.resize(static_cast<size_t>(curSteps), 0);
+      row.resize(static_cast<size_t>(curSteps * 2), 0);
+      for (int i = 0; i < curSteps; ++i) row[static_cast<size_t>(curSteps + i)] = row[static_cast<size_t>(i)];
+    }
+    for (auto& [ch, pr] : x.stepProps) {
+      if (pr.empty()) continue;
+      if (static_cast<int>(pr.size()) < curSteps) pr.resize(static_cast<size_t>(curSteps));
+      pr.resize(static_cast<size_t>(curSteps * 2));
+      for (int i = 0; i < curSteps; ++i) pr[static_cast<size_t>(curSteps + i)] = pr[static_cast<size_t>(i)];
+    }
+    // Duplicate pattern automation points in [0, halfLen) into [halfLen, 2 * halfLen).
+    for (PatternAutomation& ac : x.automation) {
+      if (ac.points.empty()) continue;
+      std::vector<AutoPoint> firstHalf;
+      for (const AutoPoint& pt : ac.points) {
+        if (pt.pos >= 0 && pt.pos < halfLen) firstHalf.push_back(pt);
+      }
+      if (firstHalf.empty()) continue;
+      // Preserve tail value up to halfLen if a point at halfLen exists in the original.
+      const bool hadBoundary = std::any_of(ac.points.begin(), ac.points.end(),
+                                           [halfLen](const AutoPoint& q) { return q.pos == halfLen && q.frac == 0.0f; });
+      std::vector<AutoPoint> extra;
+      extra.reserve(firstHalf.size() + 1);
+      for (const AutoPoint& pt : firstHalf) {
+        AutoPoint copy = pt;
+        copy.pos += halfLen;
+        if (pt.pos == 0 && pt.frac == 0.0f && hadBoundary) copy.shape = AutoShape::Hold;
+        extra.push_back(copy);
+      }
+      // Also preserve an explicit end point right at halfLen into the end of the doubled pattern (2 * halfLen).
+      for (const AutoPoint& pt : ac.points) {
+        if (pt.pos == halfLen && pt.frac == 0.0f) {
+          AutoPoint endCopy = pt;
+          endCopy.pos = halfLen * 2;
+          extra.push_back(endCopy);
+          break;
+        }
+      }
+      ac.points.insert(ac.points.end(), extra.begin(), extra.end());
+      std::stable_sort(ac.points.begin(), ac.points.end(), [](const AutoPoint& a, const AutoPoint& b) { return a.at() < b.at(); });
+    }
+  });
+  if (resizeClip) {
+    d.editClip(alsoResizeClip, "double pattern", [halfLen](Clip& c) { c.length = halfLen * 2; });
+  }
+  d.endGroup();
+  return true;
+}
+
 std::vector<ObjectId> unusedChannels(const Song& s) {
   std::vector<ObjectId> out;
   for (const auto& c : s.channels) {

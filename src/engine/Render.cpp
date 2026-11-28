@@ -220,8 +220,12 @@ GL_RENDER_NOINLINE RenderResult renderAudioCaught(const Song& source, const Rend
     const int64_t body = pass * loops;
     const int64_t lat = std::max(0, prog->outputLatency);
     for (const auto& m : prog->mixer) res.trackLatency[m.id] = m.latOwn;  // K-87
-    const bool tails = job.tail != TailMode::Cut;
+    const bool fixedTail = job.tail == TailMode::Fixed;
+    const bool tails = job.tail != TailMode::Cut && !fixedTail;
     const int64_t tailCap = tails ? static_cast<int64_t>(std::max(0.0, job.maxTailSeconds) * sr) : 0;
+    // Fixed: exactly this many frames after the body (at the output rate, then times the oversampling).
+    const int64_t fixedOut = fixedTail ? static_cast<int64_t>(std::llround(std::clamp(job.fixedTailSeconds, 0.0, 60.0) * job.sampleRate)) : 0;
+    const int64_t fixedFrames = fixedOut * os;
 
     const auto engine = std::make_unique<AudioEngine>(sr);
     AudioEngine& eng = *engine;
@@ -246,13 +250,13 @@ GL_RENDER_NOINLINE RenderResult renderAudioCaught(const Song& source, const Rend
     eng.play();
 
     std::vector<float> L, R;
-    L.reserve(static_cast<size_t>(body + lat + tailCap));
-    R.reserve(static_cast<size_t>(body + lat + tailCap));
+    L.reserve(static_cast<size_t>(body + lat + tailCap + fixedFrames));
+    R.reserve(static_cast<size_t>(body + lat + tailCap + fixedFrames));
     const int bs = std::clamp(job.blockSize, 1, AudioEngine::kMaxBlock);
     const float silent = static_cast<float>(std::pow(10.0, job.silenceDb / 20.0));
     const int64_t hold = sr;  // a tail ends after one second below the silence level
     int64_t pos = 0, lastLoud = -1;
-    const int64_t estimate = body + lat + (tails ? std::min<int64_t>(tailCap, 4 * sr) : 0);
+    const int64_t estimate = body + lat + fixedFrames + (tails ? std::min<int64_t>(tailCap, 4 * sr) : 0);
     auto step = [&](int64_t n) {
       L.resize(static_cast<size_t>(pos + n));
       R.resize(static_cast<size_t>(pos + n));
@@ -275,7 +279,7 @@ GL_RENDER_NOINLINE RenderResult renderAudioCaught(const Song& source, const Rend
     bool ok = true;
     while (ok && pos < body) ok = step(std::min<int64_t>(bs, body - pos));
     eng.stopToStart();  // releases every note at the scope end; effects ring on
-    while (ok && pos < body + lat) ok = step(std::min<int64_t>(bs, body + lat - pos));
+    while (ok && pos < body + lat + fixedFrames) ok = step(std::min<int64_t>(bs, body + lat + fixedFrames - pos));
     if (tails) {
       while (ok && pos < body + lat + tailCap && (lastLoud < 0 ? false : pos - 1 - lastLoud < hold)) ok = step(bs);
       res.tailCapped = ok && pos >= body + lat + tailCap && lastLoud >= 0 && pos - 1 - lastLoud < hold && lastLoud >= body + lat;  // K-321
@@ -287,6 +291,7 @@ GL_RENDER_NOINLINE RenderResult renderAudioCaught(const Song& source, const Rend
     // Output frames (after dropping the PDC latency).
     int64_t frames = body;
     if (job.tail == TailMode::Leave) frames = std::max(body, std::min(pos - lat, lastLoud + 1 - lat));
+    if (fixedTail) frames = body + fixedFrames;
     std::vector<float> oL(static_cast<size_t>(frames)), oR(static_cast<size_t>(frames));
     for (int64_t i = 0; i < frames; ++i) {
       oL[static_cast<size_t>(i)] = L[static_cast<size_t>(i + lat)];
@@ -304,7 +309,7 @@ GL_RENDER_NOINLINE RenderResult renderAudioCaught(const Song& source, const Rend
       const int64_t baseBody = basePass * loops;
       std::vector<float> dL = resampleChannel(oL.data(), oL.size(), sr, job.sampleRate, 48);
       std::vector<float> dR = resampleChannel(oR.data(), oR.size(), sr, job.sampleRate, 48);
-      const int64_t want = job.tail == TailMode::Leave ? std::max<int64_t>(baseBody, static_cast<int64_t>(dL.size())) : baseBody;
+      const int64_t want = job.tail == TailMode::Leave ? std::max<int64_t>(baseBody, static_cast<int64_t>(dL.size())) : baseBody + fixedOut;
       dL.resize(static_cast<size_t>(want), 0.0f);
       dR.resize(static_cast<size_t>(want), 0.0f);
       oL.swap(dL);

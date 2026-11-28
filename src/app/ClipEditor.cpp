@@ -43,6 +43,7 @@
 #include "../packs/edison/edison_specimage.h"
 #include "../packs/modulation/modulation_ui.h"
 #include "App.h"
+#include "UrlImportUi.h"
 #include "AudioRecordUi.h"
 #include "BrowserUi.h"
 #include "ChannelRoute.h"
@@ -1797,7 +1798,10 @@ void replaceSampleDialog(App& a, const Channel& ch) {
   const std::string path = samplePath(ch);
   a.fileDialog.dir = path.empty() ? (gl::platform::homeEnv() ? gl::platform::homeEnv() : ".") : fs::path(path).parent_path().string();
   a.fileDialog.exts = audioFileExtensions();
-  a.fileDialog.onOk = [&a, id](const std::string& p) { browserui::loadChannelSample(a, id, p, "load sample"); };
+  a.fileDialog.onOk = [&a, id](const std::string& p) {
+    browserui::loadChannelSample(a, id, p, "load sample");
+    if (!sampleCache().get(p)) a.notify("Cannot decode " + p, true);
+  };
 }
 
 
@@ -2287,7 +2291,9 @@ void knobP(const Cx& x, int c, const char* key, ParamId pid, const char* name, b
   knobAt(x, c);
   ImGui::PushID(key);
   if (step > 0) ui::SetNextKnobStep(step);
-  ui::ParamKnob("##k", pid, x.knobR(), nullptr, bipolar);
+  const ImVec2 kp = ImGui::GetCursorScreenPos();
+  ui::ParamKnob("##k", pid, x.knobR(), nullptr, bipolar);  // (its own menu: the parameter's)
+  pui::devItemHere(pid, kp, ImVec2(kp.x + 2 * x.knobR(), kp.y + 2 * x.knobR()));
   if (x.rows()) ui::Hint(name);
   ImGui::PopID();
   std::string val;
@@ -2326,7 +2332,10 @@ bool button(const Cx& x, int c, int span, int row, const char* label, bool on = 
   return r;
 }
 // One of n (English labels), its segments over `span` cells.
-bool seg(const Cx& x, int c, int span, int row, const char* id, const char* const* labels, int n, int* idx, const char* const* hints = nullptr) {
+// `shown` (when given): the rectangle it took (none when not drawn).
+bool seg(const Cx& x, int c, int span, int row, const char* id, const char* const* labels, int n, int* idx, const char* const* hints = nullptr,
+         std::pair<ImVec2, ImVec2>* shown = nullptr) {
+  if (shown) *shown = {ImVec2(0, 0), ImVec2(0, 0)};
   if (x.compact) return false;
   std::vector<const char*> tl;
   float need = 0;
@@ -2345,6 +2354,7 @@ bool seg(const Cx& x, int c, int span, int row, const char* id, const char* cons
       ImGui::EndCombo();
     }
     laid(p, ImVec2(p.x + w, p.y + kRowH), 0);
+    if (shown) *shown = {p, ImVec2(p.x + w, p.y + kRowH)};
     return r;
   }
   const float w = placeAt(x, c, x.rows() ? 4 : span, row, x.rows() ? need * static_cast<float>(n) + 4 : 0.0f);
@@ -2352,29 +2362,27 @@ bool seg(const Cx& x, int c, int span, int row, const char* id, const char* cons
   const float segW = std::floor((w - 4) / static_cast<float>(n));
   const bool r = ui::Segmented(id, tl.data(), n, idx, segW, kRowH, hints);
   laid(p, ImVec2(p.x + w, p.y + kRowH), need > segW ? need * static_cast<float>(n) : 0);
+  if (shown) *shown = {p, ImVec2(p.x + w, p.y + kRowH)};
   return r;
 }
-// The same over a sampler choice (one undo step).
+// A shown control's parameter menu (the plugin editors' right-click menu), over its rectangle.
+void paramMenuOver(const Cx& x, ParamId pid, const std::pair<ImVec2, ImVec2>& r) {
+  if (r.second.x > r.first.x) pui::paramContextMenu(x.a, pid, r.first, r.second);
+}
+// The same over a sampler choice (one undo step; right-click: the parameter's menu).
 void pseg(const Cx& x, const Channel& ch, int idx, int c, int span, int row, const char* id, const char* const* labels, int n, const char* hint = nullptr) {
   int cur = std::clamp(static_cast<int>(std::lround(smpPar(ch, idx, 0))), 0, n - 1);
-  if (seg(x, c, span, row, id, labels, n, &cur)) x.a.doc.setParam(smpPid(ch.id, idx), cur, false);
+  std::pair<ImVec2, ImVec2> r;
+  if (seg(x, c, span, row, id, labels, n, &cur, nullptr, &r)) x.a.doc.setParam(smpPid(ch.id, idx), cur, false);
   if (hint && !x.compact) ui::Hint(hint);
+  paramMenuOver(x, smpPid(ch.id, idx), r);
 }
-// A toggle over a sampler switch (one undo step).
+// A toggle over a sampler switch (one undo step; right-click: the parameter's menu).
 void ptoggle(const Cx& x, const Channel& ch, int idx, int c, int span, int row, const char* label, const char* hint) {
   const bool on = smpPar(ch, idx, 0) >= 0.5f;
+  const bool shown = !x.compact && !x.omitted(label);
   if (button(x, c, span, row, label, on, hint)) x.a.doc.setParam(smpPid(ch.id, idx), on ? 0.0 : 1.0, false);
-}
-// A typed-in value over a sampler parameter (`scale`: shown as value * scale; one undo step per drag).
-void pdrag(const Cx& x, const Channel& ch, int idx, int c, int span, int row, const char* id, float def, double scale, double lo, double hi, const char* fmt) {
-  if (x.compact) return;
-  App& a = x.a;
-  float v = static_cast<float>(smpPar(ch, idx, def) * scale);
-  ImGui::SetNextItemWidth(placeAt(x, c, span, row));
-  if (ImGui::DragFloat(id, &v, static_cast<float>((hi - lo) / 1000.0), static_cast<float>(lo), static_cast<float>(hi), fmt) && scale > 0)
-    a.doc.setParam(smpPid(ch.id, idx), std::clamp(static_cast<double>(v), lo, hi) / scale, true);
-  if (ImGui::IsItemDeactivated()) a.doc.endGesture();
-  laid(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+  if (shown) pui::paramContextMenu(x.a, smpPid(ch.id, idx));
 }
 
 // A module: its title and scope, its width in cells, its variant, the tab (core/ClipWindow.h) it
@@ -2533,9 +2541,9 @@ void takesMenu(App& a, const Clip& c) {
 
 Mod clipModule(App& a, const Clip& c, const Channel& ch) {
   using clipfields::Field;
-  Mod m("clip", "Clip", MScope::Clip, 3, 0, TabClip);
+  Mod m("clip", "Clip", MScope::Clip, 4, 0, TabClip);
   m.body = [&a, &c, &ch](Cx& x) {
-    for (const char* k : {"gain", "normgain", "reverse.clip", "mute", "semis", "cents", "loopclip", "takes"}) reach(k);
+    for (const char* k : {"gain", "pan", "normgain", "reverse.clip", "mute", "semis", "cents", "loopclip", "takes"}) reach(k);
     const Song& s2 = a.doc.song();
     const double db = std::max(-60.0, clipgain::toDb(c.gain));
     char gainText[32];
@@ -2568,12 +2576,18 @@ Mod clipModule(App& a, const Clip& c, const Channel& ch) {
       laid(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
     }
     knobF(x, 0, "gain", c.id, Field::GainDb, db, -60, 24, 0, "Gain", "dB", true, gainText);
+    const double panPct = clipfields::get(s2, c, Field::Pan);
+    char panText[24];
+    const int panInt = static_cast<int>(std::lround(panPct));
+    if (panInt == 0) std::snprintf(panText, sizeof panText, "C");
+    else std::snprintf(panText, sizeof panText, "%c%d%%", panInt < 0 ? 'L' : 'R', std::abs(panInt));
+    knobF(x, 1, "pan", c.id, Field::Pan, panPct, -100, 100, 0, "Pan", "%", true, panText, 1.0);
     const double semis = clipfields::get(s2, c, Field::Semitones), cents = clipfields::get(s2, c, Field::Cents);
     char b1[24], b2[24];
     std::snprintf(b1, sizeof b1, "%+d st", static_cast<int>(semis));
     std::snprintf(b2, sizeof b2, "%+d ct", static_cast<int>(std::lround(cents)));
-    knobF(x, 1, "semi", c.id, Field::Semitones, semis, -24, 24, 0, "Semitones", "st", true, b1, 1.0);
-    knobF(x, 2, "cents", c.id, Field::Cents, cents, -50, 50, 0, "Cents", "ct", true, b2, 1.0);
+    knobF(x, 2, "semi", c.id, Field::Semitones, semis, -24, 24, 0, "Semitones", "st", true, b1, 1.0);
+    knobF(x, 3, "cents", c.id, Field::Cents, cents, -50, 50, 0, "Cents", "ct", true, b2, 1.0);
   };
   m.menu = [&a, &c] {
     if (ImGui::MenuItem(i18n::tr("Reset loop start"))) setField(a, c.id, clipfields::Field::LoopStart, 0, false);
@@ -2679,6 +2693,7 @@ void stretchPart(const Cx& x, int c0, const Clip* c, const Channel& ch) {
   reach("timestretch");
   reach("fittempo");
   const stretch::Mode cur = stretch::choiceOf(stretch::modeOf(smpPar(ch, pp::SmpStretchMode, 0)));
+  const double from = c && c->syncBpm > 0 ? c->syncBpm : smpPar(ch, pp::SmpFitTempo, 0);
   if (x.disp()) {
     const ImVec2 q0 = x.dp0(c0), q1 = x.dp1(c0, 4);
     const int n = c ? clipsSharing(a.doc.song(), ch.id) : 0;
@@ -2686,7 +2701,6 @@ void stretchPart(const Cx& x, int c0, const Clip* c, const Channel& ch) {
     if (n > 1) std::snprintf(note, sizeof note, i18n::tr("Stretch engine: the sample's, %d clips"), n);
     else std::snprintf(note, sizeof note, "%s", i18n::tr("Stretch engine: the sample's"));
     if (c) dispNote(x, q0, q1, note, false, false, scopeText(MScope::Sample));  // (in Warp: the part that is the sample's)
-    const double from = smpPar(ch, pp::SmpFitTempo, 0);
     char b[64];
     if (from > 0) std::snprintf(b, sizeof b, i18n::tr("follows the tempo from %.1f BPM"), from);
     else std::snprintf(b, sizeof b, "%s", i18n::tr("fixed: keeps its own tempo"));
@@ -2695,7 +2709,8 @@ void stretchPart(const Cx& x, int c0, const Clip* c, const Channel& ch) {
   const char* names[3] = {stretch::modeName(stretch::kChoices[0]), stretch::modeName(stretch::kChoices[1]), stretch::modeName(stretch::kChoices[2])};
   const char* hints[3] = {stretch::modeHint(stretch::kChoices[0]), stretch::modeHint(stretch::kChoices[1]), stretch::modeHint(stretch::kChoices[2])};
   int idx = cur == stretch::kChoices[1] ? 1 : cur == stretch::kChoices[2] ? 2 : 0;
-  if (seg(x, c0, 4, 0, "##ceeng", names, 3, &idx, hints)) {
+  std::pair<ImVec2, ImVec2> engR;
+  if (seg(x, c0, 4, 0, "##ceeng", names, 3, &idx, hints, &engR)) {
     const int pick = static_cast<int>(stretch::kChoices[idx]);
     if (c) {
       const ObjectId id = c->id;
@@ -2705,9 +2720,21 @@ void stretchPart(const Cx& x, int c0, const Clip* c, const Channel& ch) {
       a.doc.setParam(smpPid(ch.id, pp::SmpStretchMode), pick, false);
     }
   }
-  pdrag(x, ch, pp::SmpFitTempo, c0, 2, 1, "##fit", 0, 1.0, 0, 1000,
-        smpPar(ch, pp::SmpFitTempo, 0) > 0 ? i18n::tr("from %.1f BPM") : i18n::tr("fixed"));
-  if (!x.compact) ui::Hint("Set, the sample follows the tempo: a stretch keeps its beats at any tempo (0: fixed). Fit to tempo sets it");
+  paramMenuOver(x, smpPid(ch.id, pp::SmpStretchMode), engR);
+  if (!x.compact) {
+    float v = static_cast<float>(from);
+    ImGui::SetNextItemWidth(placeAt(x, c0, 2, 1));
+    if (ImGui::DragFloat("##fit", &v, 0.5f, 0.0f, 1000.0f, from > 0 ? i18n::tr("from %.1f BPM") : i18n::tr("fixed"))) {
+      double nextBpm = std::clamp(static_cast<double>(v), 0.0, 1000.0);
+      if (from <= 0.0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && nextBpm > 0.0 && nextBpm < 10.0)
+        nextBpm = std::clamp(a.doc.song().tempo, 20.0, 300.0);
+      a.doc.setParam(smpPid(ch.id, pp::SmpFitTempo), nextBpm, true);
+    }
+    if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+    laid(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    ui::Hint("Set, the sample follows the tempo: a stretch keeps its beats at any tempo (0: fixed). Fit to tempo sets it");
+    pui::paramContextMenu(a, smpPid(ch.id, pp::SmpFitTempo));
+  }
   knobP(x, c0, "pshift", smpPid(ch.id, pp::SmpPitchShift), "Pitch shift", true, 1.0);
   knobP(x, c0 + 1, "tstretch", smpPid(ch.id, pp::SmpTimeStretch), "Time stretch", false);
 }
@@ -2857,12 +2884,14 @@ Mod sampleModule(App& a, const Clip* c, const Channel& ch) {
       if (ImGui::IsItemDeactivated()) aa.doc.endGesture();
       ui::Hint("Sample start: the blue handle under the waveform. Trims the sample's notes and every clip of it");
       laid(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+      pui::paramContextMenu(aa, smpPid(ch.id, pp::SmpStart));
       ImGui::SetNextItemWidth(placeAt(x, 3, 1, 1, x.rows() ? 100.0f : 0.0f));
       if (ImGui::DragFloat("##se", &s1, 0.001f, 0.0f, static_cast<float>(secs), x.rows() ? i18n::tr("End %.3f s") : "%.3f s") && secs > 0)
         aa.doc.setParam(smpPid(ch.id, pp::SmpEnd), clampTrimHandle(true, s1 / secs, sf, secs), true);
       if (ImGui::IsItemDeactivated()) aa.doc.endGesture();
       ui::Hint("Sample end: the blue handle under the waveform. Trims the sample's notes and every clip of it");
       laid(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+      pui::paramContextMenu(aa, smpPid(ch.id, pp::SmpEnd));
     }
     knobP(x, 0, "sfin", smpPid(ch.id, pp::SmpFadeIn), "Fade in", false);
     knobP(x, 1, "sfout", smpPid(ch.id, pp::SmpFadeOut), "Fade out", false);
@@ -2870,6 +2899,8 @@ Mod sampleModule(App& a, const Clip* c, const Channel& ch) {
   m.menu = [&a, c, &ch] {
     if (ImGui::MenuItem(i18n::tr("Replace sample..."))) replaceSampleDialog(a, ch);
     ui::Hint("Choose another audio file for the sample (every clip of it and its notes); or drop a file on the waveform");
+    if (ImGui::MenuItem(i18n::tr("Import from URL..."))) urlimportui::openForPlugin(a, PluginTarget{ch.id, -1, 0});
+    ui::Hint("Import audio from a web link into this sample");
     if (c) {
       const ObjectId id = c->id;
       if (ImGui::MenuItem(i18n::tr("Make this clip's sample unique"), nullptr, false, clipsSharing(a.doc.song(), ch.id) > 1))
@@ -3191,15 +3222,15 @@ NoteGrid gridOf(const Cx& x, std::vector<int> knobs, std::vector<Slot> toggles, 
 }
 
 Mod channelModule(App& a, const Channel& ch) {
-  Mod m("channel", "Channel", MScope::Channel, 5, 0, TabChannel);
+  Mod m("channel", "Channel", MScope::Channel, 6, 0, TabChannel);  // (Transpose, Fine, Bend, Swing, Shift, then Expression)
   const ObjectId id = ch.id;
   m.body = [&a, id](Cx& x) {
     reach("tune");
     reach("expr");
     if (x.disp()) dispNote(x, x.d0(), x.d1(), i18n::tr("how the channel plays its notes"));
-    const NoteGrid tune = gridOf(x, {0, 1, 2, 3}, {}, {});
+    const NoteGrid tune = gridOf(x, {0, 1, 2, 3, 4}, {}, {});
     drawNoteSettingsPart(a, id, 0, &tune);
-    const NoteGrid expr = gridOf(x, {4}, {{0, 2, 0}, {0, 2, 1}}, {{2, 3, 0}, {2, 3, 1}});
+    const NoteGrid expr = gridOf(x, {5}, {{0, 2, 0}, {0, 2, 1}}, {{2, 3, 0}, {2, 3, 1}});
     drawNoteSettingsPart(a, id, 3, &expr);
   };
   return m;
@@ -3438,7 +3469,9 @@ void editAudioItems(App& a, State& S, const Clip* c, const Channel& ch) {
   if (!c) return;
   ImGui::Separator();
   if (ImGui::BeginMenu(i18n::tr("Send and split"))) {
-    if (ImGui::MenuItem(i18n::tr("Split stems..."))) stemsui::openForClip(a, clipId);
+    // K-447: the selection when there is one (as every tool here), else the whole clip
+    if (ImGui::MenuItem(i18n::tr("Split stems...")))
+      stemsui::openForClip(a, clipId, a1 > a0 ? static_cast<Tick>(std::llround(a0)) : 0, a1 > a0 ? static_cast<Tick>(std::llround(a1)) : 0);
     if (ImGui::MenuItem(i18n::tr("Chop"))) chopui::open(a, clipId, 0);
     ui::Hint("Slices the clip at the grid, into parts or at its transients");
     if (ImGui::MenuItem(i18n::tr("To sampler"))) {
@@ -4596,6 +4629,10 @@ void closeChannel(const App& a, ObjectId channel) {
   if (gPaneOn && of(gPane)) gPaneOn = false;
 }
 
+void sampleDialog(App& a, ObjectId channel) {
+  if (const Channel* ch = a.doc.song().channel(channel)) replaceSampleDialog(a, *ch);
+}
+
 bool takesChannel(const App& a, ObjectId channel) {
   const Channel* ch = a.doc.song().channel(channel);
   return ch && clipwin::ownsType(ch->plugin.type);
@@ -4807,6 +4844,7 @@ void drawChip(Ctx& x, const C& c, ImVec2 at, float w, int id) {
       const bool on = smpPar(ch, c.idx, 0) >= 0.5f;
       if (ui::TextButton(i18n::tr(c.name), on, w, c.hint)) a.doc.setParam(smpPid(ch.id, c.idx), on ? 0.0 : 1.0, false);
       need = labelNeed(i18n::tr(c.name));
+      pui::paramContextMenu(a, smpPid(ch.id, c.idx));  // right-click: the parameter's menu
       break;
     }
     case K::Seg: {
@@ -4814,6 +4852,7 @@ void drawChip(Ctx& x, const C& c, ImVec2 at, float w, int id) {
       const int idx = choice(c.opts, c.n, cur, nullptr);
       if (c.hint) ui::Hint(c.hint);
       if (idx != cur) a.doc.setParam(smpPid(ch.id, c.idx), idx, false);
+      pui::paramContextMenu(a, smpPid(ch.id, c.idx), at, ImVec2(at.x + w, at.y + x.g.chipH));
       break;
     }
     case K::Engine: {
@@ -4831,15 +4870,22 @@ void drawChip(Ctx& x, const C& c, ImVec2 at, float w, int id) {
           a.doc.setParam(smpPid(ch.id, pp::SmpStretchMode), pick, false);
         }
       }
+      pui::paramContextMenu(a, smpPid(ch.id, pp::SmpStretchMode), at, ImVec2(at.x + w, at.y + x.g.chipH));
       break;
     }
     case K::Fit: {
-      float v = static_cast<float>(smpPar(ch, pp::SmpFitTempo, 0));
+      const double from = x.c && x.c->syncBpm > 0 ? x.c->syncBpm : smpPar(ch, pp::SmpFitTempo, 0);
+      float v = static_cast<float>(from);
       ImGui::SetNextItemWidth(w);
-      if (ImGui::DragFloat("##fit", &v, 0.5f, 0.0f, 1000.0f, v > 0 ? i18n::tr("follows from %.1f BPM") : i18n::tr("fixed tempo")))
-        a.doc.setParam(smpPid(ch.id, pp::SmpFitTempo), std::clamp(static_cast<double>(v), 0.0, 1000.0), true);
+      if (ImGui::DragFloat("##fit", &v, 0.5f, 0.0f, 1000.0f, from > 0 ? i18n::tr("follows from %.1f BPM") : i18n::tr("fixed tempo"))) {
+        double nextBpm = std::clamp(static_cast<double>(v), 0.0, 1000.0);
+        if (from <= 0.0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && nextBpm > 0.0 && nextBpm < 10.0)
+          nextBpm = std::clamp(a.doc.song().tempo, 20.0, 300.0);
+        a.doc.setParam(smpPid(ch.id, pp::SmpFitTempo), nextBpm, true);
+      }
       if (ImGui::IsItemDeactivated()) a.doc.endGesture();
       ui::Hint("Set, the sample follows the tempo: a stretch keeps its beats at any tempo (0: fixed)");
+      pui::paramContextMenu(a, smpPid(ch.id, pp::SmpFitTempo));
       break;
     }
     case K::Loupe:
@@ -4903,7 +4949,9 @@ void drawKnob(Ctx& x, const C& c, ImVec2 at, float cw, int id) {
   ImGui::SetCursorScreenPos(ImVec2(cx - g.r, at.y + g.nameH));
   ImGui::PushID(id);
   if (c.step > 0) ui::SetNextKnobStep(c.step);
-  ui::ParamKnob("##k", pid, g.r, nullptr, c.bip);
+  const ImVec2 kp = ImGui::GetCursorScreenPos();
+  ui::ParamKnob("##k", pid, g.r, nullptr, c.bip);  // (its own menu: the parameter's)
+  pui::devItemHere(pid, kp, ImVec2(kp.x + 2 * g.r, kp.y + 2 * g.r));
   ImGui::PopID();
   centred(x.dl, mono, kTextFs, cx, at.y + g.nameH + 2 * g.r + 4, cw - 4, P.text, v.c_str());
   // (laid as what shows: its name, the knob and a value up to the widest the page shows, in its cell)
@@ -5181,8 +5229,12 @@ void mainPage(App& a, State& S, Host host, const Clip* cp, const Channel& chan, 
     ImFont* mono = a.fontMono ? a.fontMono : ImGui::GetFont();
     label(dl, mono, kTextFs, ImVec2(s0.x, std::round(ry + (rh - mono->CalcTextSizeA(kTextFs, 1e9f, 0, "0").y) * 0.5f)), P.textDim, line.c_str());
     const float rw = chipW(C{K::Replace});
+    const float uw = std::ceil(labelNeed(i18n::tr("Import from URL...")) + 16.0f);
     gLaid[gLaidHost].emplace_back();
     gLaid[gLaidHost].back().id = "sampleline", gLaid[gLaidHost].back().a = ImVec2(s0.x, ry), gLaid[gLaidHost].back().b = ImVec2(s1.x, ry + rh);
+    ImGui::SetCursorScreenPos(ImVec2(s1.x - rw - kGap - uw, ry));
+    if (ui::TextButton(i18n::tr("Import from URL..."), false, uw, "Import audio from a web link directly into this sample"))
+      urlimportui::openForPlugin(a, PluginTarget{ch.id, -1, 0});
     drawChip(x, C{K::Replace}, ImVec2(s1.x - rw, ry), rw, 900);
   }
   const float top = s1.y + lineRowH + gapY;

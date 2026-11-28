@@ -571,11 +571,16 @@ std::string notesExcerpt(const std::string& markdown, size_t maxChars) {
 
 std::string userAgent() { return std::string("Gridline/") + GRIDLINE_VERSION; }
 
+std::string releasesUrl(bool beta) {
+  if (const char* t = std::getenv("GRIDLINE_UPDATE_TEST_SERVER"); t && std::strncmp(t, "http://127.0.0.1:", 17) == 0)
+    return std::string(t) + (beta ? "/releases?per_page=20" : "/releases/latest");
+  return beta ? kListUrl : kLatestUrl;
+}
+
 CheckResult check(const Fetcher& fetch, const std::string& currentVersion, bool beta) {
   CheckResult r;
   r.current = currentVersion;
-  const Version cur = parseVersion(currentVersion);
-  if (!cur.valid) {
+  if (!parseVersion(currentVersion).valid) {
     r.detail = "the running version (" + currentVersion + ") is not a version number";
     return r;
   }
@@ -584,6 +589,17 @@ CheckResult check(const Fetcher& fetch, const std::string& currentVersion, bool 
     res = fetch(beta ? kListUrl : kLatestUrl);
   } catch (...) {
     r.detail = "the request failed";
+    return r;
+  }
+  return evaluate(res, currentVersion, beta);
+}
+
+CheckResult evaluate(const HttpResult& res, const std::string& currentVersion, bool beta) {
+  CheckResult r;
+  r.current = currentVersion;
+  const Version cur = parseVersion(currentVersion);
+  if (!cur.valid) {
+    r.detail = "the running version (" + currentVersion + ") is not a version number";
     return r;
   }
   if (res.offline || (res.status == 0 && !res.error.empty())) {

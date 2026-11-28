@@ -128,6 +128,15 @@ at **None**, and projects made before it open with every channel set to None.
   automation moves the knob.
 - Plugins with a MIDI output (arpeggiators, chord tools) use the same port numbers: set the
   plugin's output port in its window's settings page.
+  What such a plugin sends can also be written into a pattern as notes: see
+  [An installed plugin's MIDI output](channel-rack.md#an-installed-plugins-midi-output).
+- Instruments with a sequencer of their own send what it plays the same way: **Acid Bass** and
+  **Step Bass** send the notes of their sequence, and **Plasma** what its **MIDI Out** setting picks
+  (**Clip Player**, **Arpeggiator**, or **Synth** for both).
+  Set the port under **MIDI** on the **Misc** tab of the channel settings (**Out**). Without a port
+  the sequence plays only on its own channel.
+- Note effects (the arpeggiator, the note sequencer, chords) on a MIDI Out channel send the notes
+  they make, so an arpeggiator can play an external synth or every channel listening on the port.
 - A channel never hears its own MIDI. If ports would send MIDI round in a circle, through one
   channel or several, the link that closes the circle is left out and the listening channel's
   **MIDI input** says so.
@@ -137,7 +146,7 @@ at **None**, and projects made before it open with every channel set to None.
 
 The **Hardware Insert** effect (in a mixer insert's effect slots) puts outboard gear in the mix: a compressor, a pedal, a tape machine.
 
-- **Send** is the extra output pair of the audio device the track goes out of (the pairs after the main outputs). With the ASIO driver they are its extra outputs. With the system audio (macOS, and Linux with PulseAudio, PipeWire or ALSA) choose **Settings > Audio > Output channels** 4, 6 or 8: channels 3-4 are pair 1, 5-6 pair 2, 7-8 pair 3. For the return, set **Input channels** to 4 or 8 under Input and recording. **Return** is the input pair it comes back on; **Return mono** takes one input for both sides.
+- **Send** is the extra output pair of the audio device the track goes out of (the pairs after the main outputs). With the ASIO driver they are its extra outputs. With JACK / PipeWire on Linux, the extra output pairs are the ports Out 3 and up (**Settings > Audio > Extra output pairs**). With the system audio (macOS, and Linux with PulseAudio, PipeWire or ALSA) choose **Settings > Audio > Output channels** 4, 6 or 8: channels 3-4 are pair 1, 5-6 pair 2, 7-8 pair 3. For the return, set **Input channels** to 4 or 8 under Input and recording. **Return** is the input pair it comes back on; **Return mono** takes one input for both sides.
 - **Send level**, **Return level** and **Mix** (dry against what comes back).
 - **PING** sends a single click out of the send and counts the samples until it comes back on the return. That **round trip** is written into the insert (one undo step) and reported as its latency, so plugin delay compensation holds the rest of the mix back by the same amount and the gear stays in time. **Offset** trims it by hand. Ping again after changing the buffer size or the device.
 - **External instruments:** set **Send** to **None** and the insert is an audio return. Put it on the mixer track of a [MIDI Out](#midi-out-to-other-channels) channel that plays a hardware synth, with the synth's audio on the return inputs, and set the round trip by hand (the synth's delay from note to sound). The synth then plays in time with the rest.

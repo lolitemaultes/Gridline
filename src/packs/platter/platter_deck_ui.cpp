@@ -22,6 +22,7 @@
 #include "../../core/I18n.h"
 #include "../../core/Song.h"
 #include "../../engine/AudioEngine.h"
+#include "../../app/UrlImportUi.h"
 #include "platter_ui.h"
 
 namespace gl::packs::platter::pv {
@@ -109,6 +110,13 @@ void drawEmptyLane(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec
   std::snprintf(id, sizeof id, "##pload%d", d);
   if (button(id, ImVec2(p1.x - 150, cy - 14), ImVec2(138, 28), i18n::N_("Load a track..."), false, nullptr, static_cast<int>(ui::Icon::Open)))
     openLoadDialog(a, t, d);
+  if (ImGui::BeginPopupContextItem(id)) {
+    if (ImGui::MenuItem(i18n::tr("Import from URL..."))) urlimportui::openForPlugin(a, t, d);
+    ImGui::EndPopup();
+  }
+  std::snprintf(id, sizeof id, "##purl%d", d);
+  if (button(id, ImVec2(p1.x - 296, cy - 14), ImVec2(138, 28), i18n::N_("Import from URL..."), false, nullptr, static_cast<int>(ui::Icon::Download)))
+    urlimportui::openForPlugin(a, t, d);
 }
 
 // ------------------------------------------------------------------ whole track
@@ -255,15 +263,15 @@ void drawWave(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec2 p1,
   if (ImGui::IsItemActivated()) {
     u.waveDrag = true;
     u.waveGrabX = ImGui::GetIO().MousePos.x;
-    send(a, t, d, CmdHandDown);
+    send(a, t, d, CmdHandDown, 0, 0, 0, frameNs());
   }
   if (u.waveDrag && ImGui::IsItemActive()) {
     const double frames = -(ImGui::GetIO().MousePos.x - u.waveGrabX) * fpp;
-    send(a, t, d, CmdHandMove, 0, frames / (sr * kSecondsPerRev));
+    send(a, t, d, CmdHandMove, 0, frames / (sr * kSecondsPerRev), 0, frameNs());
   }
   if (u.waveDrag && ImGui::IsItemDeactivated()) {
     u.waveDrag = false;
-    send(a, t, d, CmdHandUp);
+    send(a, t, d, CmdHandUp, 0, 0, 0, frameNs());
   }
   if (hv || ImGui::IsItemActive()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
 }
@@ -397,7 +405,9 @@ void drawPlatter(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 c, float R,
   dl->AddCircleFilled(c, 4.5f, theme::rgb(0xC9CCD2), 16);
   dl->AddCircle(c, 4.5f, theme::rgb(0x000000, 0.4f), 16, 1);
   if (lv.touched) dl->AddCircle(c, R + 1.5f, hot(), 96, 2.5f);
-  // the hand: drag the record round
+  // the hand. On the record (inside the strobe band) it scratches (with VINYL off it nudges, as a
+  // CD player's platter does); on the rim it nudges the speed for a moment, faster clockwise
+  // (a stopped record turns a little), as does the scroll wheel anywhere on the platter.
   ImGui::SetCursorScreenPos(ImVec2(c.x - R, c.y - R));
   char id[16];
   std::snprintf(id, sizeof id, "##pplat%d", d);
@@ -405,27 +415,57 @@ void drawPlatter(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 c, float R,
   traceRect(d == 0 ? "platterA" : "platterB", ImVec2(c.x - R, c.y - R), ImVec2(c.x + R, c.y + R));
   const ImVec2 mp = ImGui::GetIO().MousePos;
   const float dx = mp.x - c.x, dy = mp.y - c.y;
-  const bool inside = dx * dx + dy * dy <= R * R;
-  if (ImGui::IsItemHovered() && inside && !u.platterDrag) ui::Tooltip(i18n::tr("Drag the record round to scratch: clockwise plays, back plays backwards."));
+  const float r2 = dx * dx + dy * dy;
+  const bool inside = r2 <= R * R;
+  const float rimIn = rv - 4;  // (the record's outer edge and the strobe band)
+  const bool onRim = inside && r2 >= rimIn * rimIn;
+  const bool vinyl = on(a, t, deckParam(d, DVinyl));
+  const bool hv = ImGui::IsItemHovered() && inside;
+  // the rim lights where the hand can nudge (brighter while it does)
+  if ((hv && (onRim || !vinyl) && !u.platterDrag) || u.rimDrag) {
+    dl->PathArcTo(c, R - 4.5f, 0, 2 * kPi, 96);
+    dl->PathStroke(theme::withAlpha(hot(), u.rimDrag ? 0.55f : 0.28f), 0, 9.0f);
+  }
+  if (hv && !u.platterDrag && !u.rimDrag)
+    ui::Tooltip(onRim || !vinyl ? i18n::tr("Drag the rim to nudge the speed for a moment: clockwise speeds up, back slows down. Scrolling over the "
+                                           "platter nudges too.")
+                                : i18n::tr("Drag the record round to scratch: clockwise plays, back plays backwards. Drag the rim or scroll to nudge."));
+  const int64_t ns = frameNs();
   if (ImGui::IsItemActivated() && inside) {
-    u.platterDrag = true;
-    u.dragTurns = 0;
     u.lastAngle = std::atan2(dy, dx);
-    send(a, t, d, CmdHandDown);
+    if (onRim || !vinyl) {
+      u.rimDrag = true;
+    } else {
+      u.platterDrag = true;
+      u.grip.down(dx, dy);
+      send(a, t, d, CmdHandDown, 0, 0, 0, ns);
+    }
   }
-  if (u.platterDrag && ImGui::IsItemActive()) {
-    const double an = std::atan2(dy, dx);
-    double dd = an - u.lastAngle;
-    if (dd > kPi) dd -= 2 * kPi;
-    if (dd < -kPi) dd += 2 * kPi;
-    if (dx * dx + dy * dy > 16) u.dragTurns += dd / (2 * kPi);  // (no wild turns through the centre)
-    u.lastAngle = an;
-    send(a, t, d, CmdHandMove, 0, u.dragTurns);
-    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+  if ((u.platterDrag || u.rimDrag) && ImGui::IsItemActive()) {
+    if (u.platterDrag) {
+      send(a, t, d, CmdHandMove, 0, u.grip.move(dx, dy), 0, ns);
+      ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+    } else {
+      const double an = std::atan2(dy, dx);
+      double dd = an - u.lastAngle;
+      if (dd > kPi) dd -= 2 * kPi;
+      if (dd < -kPi) dd += 2 * kPi;
+      u.lastAngle = an;
+      if (r2 > 16 && dd != 0) send(a, t, d, CmdNudge, 0, dd / (2 * kPi), 0, ns);
+      ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+    }
+  } else if (hv && (onRim || !vinyl)) {
+    ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
   }
-  if (u.platterDrag && ImGui::IsItemDeactivated()) {
-    u.platterDrag = false;
-    send(a, t, d, CmdHandUp);
+  if ((u.platterDrag || u.rimDrag) && ImGui::IsItemDeactivated()) {
+    if (u.platterDrag) send(a, t, d, CmdHandUp, 0, 0, 0, ns);
+    u.platterDrag = u.rimDrag = false;
+  }
+  // the scroll wheel over the platter: a nudge (the editor does not scroll under it)
+  const float wheel = ImGui::GetIO().MouseWheel;
+  if (hv && wheel != 0) {
+    ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);
+    send(a, t, d, CmdNudge, 0, wheel * kScrollNudgeTurns, 0, ns);
   }
 }
 
@@ -756,9 +796,14 @@ void drawDeck(App& a, const PluginTarget& t, Ed& e, int d, ImVec2 p0, ImVec2 p1,
     // load
     char id[16];
     std::snprintf(id, sizeof id, "##pld%d", d);
-    if (button(id, ImVec2(x1 - readW - 30, y + 6), ImVec2(26, 26), "", false, d == 0 ? i18n::N_("Load a track onto deck A") : i18n::N_("Load a track onto deck B"),
+    if (button(id, ImVec2(x1 - readW - 30, y + 6), ImVec2(26, 26), "", false, d == 0 ? i18n::N_("Load a track onto deck A (right-click: Import from URL)") : i18n::N_("Load a track onto deck B (right-click: Import from URL)"),
                static_cast<int>(ui::Icon::Open)))
       openLoadDialog(a, t, d);
+    if (ImGui::BeginPopupContextItem(id)) {
+      if (ImGui::MenuItem(i18n::tr("Load a track..."))) openLoadDialog(a, t, d);
+      if (ImGui::MenuItem(i18n::tr("Import from URL..."))) urlimportui::openForPlugin(a, t, d);
+      ImGui::EndPopup();
+    }
     if (tempoKeys) {
       const float bx = x1 - readW - 30 - 60;
       std::snprintf(id, sizeof id, "##phalf%d", d);

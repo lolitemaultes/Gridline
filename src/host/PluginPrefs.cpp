@@ -18,6 +18,13 @@ struct Store {
   std::mutex lock;
   std::string file;
   PluginPrefs prefs;
+  std::set<std::string> netSession;  // K-437: allowed until Gridline closes (never saved)
+  // K-437: every plugin type this computer has ever found (<config>/plugin-known.json), so that "new
+  // plugins" means never seen before, also after the plugin cache is rebuilt. `knownFresh`: there
+  // was no such file yet (the first run with it: the cached plugins are known, not new).
+  std::string knownFile;
+  std::set<std::string> known;
+  bool knownFresh = false;
   std::atomic<uint64_t> generation{0};
 };
 Store& store() {
@@ -64,6 +71,8 @@ void save(const Store& s) {
   if (!s.prefs.noDefaultFolders.empty()) j.object["noDefaultFolders"] = strings(s.prefs.noDefaultFolders);
   j.object["disabledFormats"] = strings(s.prefs.disabledFormats);
   j.object["sandbox"] = strings(s.prefs.sandbox);
+  if (!s.prefs.netBlock.empty()) j.object["netBlock"] = strings(s.prefs.netBlock);
+  if (s.prefs.netBlockNew) j.object["netBlockNew"] = jbool(true);
   j.object["favourites"] = strings(s.prefs.favourites);
   Json cats = Json::makeObject();
   for (const auto& [k, v] : s.prefs.categories) cats.object[k] = Json::makeString(v);
@@ -94,6 +103,28 @@ void save(const Store& s) {
 }  // namespace
 
 namespace {
+void saveKnown(const Store& s) {
+  if (s.knownFile.empty()) return;
+  Json j = Json::makeObject();
+  j.object["version"] = Json::makeNumber(1);
+  j.object["types"] = strings(std::vector<std::string>(s.known.begin(), s.known.end()));
+  writeFileAtomic(s.knownFile, jsonStringify(j, 0));
+}
+
+void readKnown(Store& s) {
+  s.known.clear();
+  s.knownFresh = true;
+  if (s.knownFile.empty()) return;
+  std::ifstream f(s.knownFile, std::ios::binary);
+  if (!f) return;
+  std::stringstream ss;
+  ss << f.rdbuf();
+  Json j;
+  if (!jsonParse(ss.str(), j) || !j.is(Json::Type::Object)) return;
+  for (const std::string& t : readStrings(j, "types")) s.known.insert(t);
+  s.knownFresh = false;
+}
+
 void readFile(Store& s, const std::string& file) {
   s.prefs = PluginPrefs{};
   std::ifstream f(file, std::ios::binary);
@@ -112,6 +143,9 @@ void readFile(Store& s, const std::string& file) {
       for (auto& x : readStrings(j, "noDefaultFolders")) s.prefs.noDefaultFolders.insert(x);
       for (auto& x : readStrings(j, "disabledFormats")) s.prefs.disabledFormats.insert(x);
       for (auto& x : readStrings(j, "sandbox")) s.prefs.sandbox.insert(x);
+      for (auto& x : readStrings(j, "netBlock"))
+        if (!x.empty()) s.prefs.netBlock.insert(x);
+      s.prefs.netBlockNew = readBool(j, "netBlockNew", false);
       for (auto& x : readStrings(j, "favourites")) s.prefs.favourites.insert(x);
       if (const Json* c = j.find("categories"); c && c->is(Json::Type::Object))
         for (const auto& [k, v] : c->object)
@@ -144,6 +178,8 @@ void loadPluginPrefs(const std::string& configDir) {
   std::lock_guard<std::mutex> g(s.lock);
   s.file = configDir.empty() ? std::string() : configDir + "/plugin-manager.json";
   readFile(s, s.file);
+  s.knownFile = configDir.empty() ? std::string() : configDir + "/plugin-known.json";
+  readKnown(s);
   ++s.generation;
 }
 
@@ -185,7 +221,76 @@ bool runsInSandbox(const std::string& type) {
   if (all) return true;
   Store& s = store();
   std::lock_guard<std::mutex> g(s.lock);
-  return s.prefs.sandbox.count(type) > 0;
+  return s.prefs.sandbox.count(type) > 0 || (s.prefs.netBlock.count(type) > 0 && !s.netSession.count(type));
+}
+
+NetAccess netAccess(const std::string& type) {
+  Store& s = store();
+  std::lock_guard<std::mutex> g(s.lock);
+  if (!s.prefs.netBlock.count(type)) return NetAccess::Allowed;
+  return s.netSession.count(type) ? NetAccess::AllowedUntilClose : NetAccess::Blocked;
+}
+
+bool blocksNetwork(const std::string& type) { return netAccess(type) == NetAccess::Blocked; }
+
+void setNetAccess(const std::vector<std::string>& types, NetAccess a) {
+  Store& s = store();
+  std::lock_guard<std::mutex> g(s.lock);
+  PluginPrefs p = s.prefs;
+  bool session = false;
+  for (const std::string& t : types) {
+    if (t.empty()) continue;
+    if (a == NetAccess::Allowed) p.netBlock.erase(t);
+    else p.netBlock.insert(t);
+    session = (a == NetAccess::AllowedUntilClose ? s.netSession.insert(t).second : s.netSession.erase(t) > 0) || session;
+  }
+  if (!(p == s.prefs)) {
+    s.prefs = p;
+    save(s);
+  } else if (!session) {
+    return;
+  }
+  ++s.generation;
+}
+
+std::set<std::string> netAllowedUntilClose() {
+  Store& s = store();
+  std::lock_guard<std::mutex> g(s.lock);
+  return s.netSession;
+}
+
+void resetNetAllowedUntilClose() {
+  Store& s = store();
+  std::lock_guard<std::mutex> g(s.lock);
+  s.netSession.clear();
+  ++s.generation;
+}
+
+void seedKnownPlugins(const std::vector<std::string>& types) {
+  Store& s = store();
+  std::lock_guard<std::mutex> g(s.lock);
+  if (!s.knownFresh) return;
+  s.knownFresh = false;
+  for (const std::string& t : types)
+    if (!t.empty()) s.known.insert(t);
+  saveKnown(s);
+}
+
+void blockNewlyFound(const std::vector<std::string>& types) {
+  Store& s = store();
+  std::lock_guard<std::mutex> g(s.lock);
+  std::vector<std::string> fresh;  // never found on this computer before
+  for (const std::string& t : types)
+    if (!t.empty() && s.known.insert(t).second) fresh.push_back(t);
+  if (fresh.empty()) return;
+  s.knownFresh = false;
+  saveKnown(s);
+  if (!s.prefs.netBlockNew) return;
+  bool added = false;
+  for (const std::string& t : fresh) added = s.prefs.netBlock.insert(t).second || added;
+  if (!added) return;
+  save(s);
+  ++s.generation;
 }
 
 void setRunInSandbox(const std::string& type, bool on) {

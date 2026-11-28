@@ -1,4 +1,6 @@
+#include "PluginIcons.h"
 #include "SmoothLibrary.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include <algorithm>
 #include <atomic>
@@ -31,6 +33,7 @@
 #include "../host/PluginScan.h"
 #include "../packs/samplers/patchplayer.h"
 #include "App.h"
+#include "BrowserUi.h"
 #include "CollabUi.h"
 #include "Keys.h"
 #include "LayoutParts.h"
@@ -88,6 +91,7 @@ int gNav = 1;  // Instruments, as a new project's Library opens
 bool gDrill = true;  // D4 (R10-05): a narrow Library shows one column at a time: false the list of kinds, true its patches
 int gNavBeforeBus = -1;  // R10-07: the view before a bus was selected (the Library showed its effects meanwhile)
 char gFilter[64] = "";
+std::string gRevealFile;  // K-445: the file the rows' right-click menu shows
 uint64_t gEpoch = ~0ull;
 bool gShown = false;
 bool gWasActive = false;
@@ -474,6 +478,11 @@ struct PreviewJob {
   std::mutex mu;
   PreviewRequest req;  // what the worker renders (written before it starts, read-only meanwhile)
   SamplePtr result;    // under mu
+  // K-432 (GL-8006CE18): safe teardown on unexpected exit() when smoothlib::shutdown() was skipped.
+  ~PreviewJob() {
+    cancel = true;
+    gl::threads::joinWithin(worker, running);
+  }
 };
 PreviewJob gPv;
 bool gPvQueued = false;
@@ -662,10 +671,8 @@ void select(App& a, const Item& it) { selectItem(a, it); }
 void shutdown() {
   gPvQueued = false;
   gPv.cancel = true;
-  host::serveUiThreadTasksWhile(gPv.running);
-  if (gPv.worker.joinable()) {
-    gPv.worker.join();
-  }
+  if (gPv.worker.joinable() && gPv.worker.get_id() != std::this_thread::get_id() && gPv.running.load()) host::serveUiThreadTasksWhile(gPv.running);
+  gl::threads::safeJoin(gPv.worker);
   gPvCache.clear();
   gPvLast = nullptr;
 }
@@ -822,6 +829,14 @@ void kindBadge(ImDrawList* dl, const Item& it, ImVec2 c) {
                             {"Pads and strings", 0x8A67D6, ui::Icon::CatModulation}, {"Leads", 0xD9644A, ui::Icon::CatSynth},
                             {"Synth", 0x6E62D9, ui::Icon::CatSynth},       {"Textures", 0x8A67D6, ui::Icon::CatSpectral},
                             {"Installed", 0x5C6470, ui::Icon::Plug}};
+  // K-450: an effect, or an instrument with no kind of sound, shows its plugin's own icon (the
+  // sound kinds keep their badges: they tell the patches of one instrument apart).
+  bool known = false;
+  for (const K& k : kinds) known = known || it.kind == k.kind;
+  if (it.effect || !known) {
+    if (ui::drawPluginIcon(dl, it.type, c, 14, ui::PluginIconSurface::Smooth)) return;
+    ui::notePluginIconFallback(it.type, ui::PluginIconSurface::Smooth);
+  }
   uint32_t col = 0x3FA35B;
   ui::Icon icon = ui::Icon::Piano;
   if (it.effect) col = 0x5C6470, icon = ui::Icon::CatFilter;
@@ -992,6 +1007,7 @@ void draw(App& a) {
       }
     }
     gScrollToSel = false;
+    bool notedPatchRow = false, revealAsked = false;
     ImGuiListClipper clip;
     clip.Begin(static_cast<int>(rows.size()), rh);
     while (clip.Step())
@@ -1001,6 +1017,19 @@ void draw(App& a) {
         const ImVec2 p = ImGui::GetCursorScreenPos();
         ImGui::InvisibleButton("##row", ImVec2(rw, rh));
         const bool hov = ImGui::IsItemHovered();
+        // K-445: a row from a file (a patch of an SF2 bank) shows that file in the system's file manager.
+        if (const std::string* patch = patchRowItem(it)) {
+          if (!notedPatchRow) {
+            devNoteRect("smlibpatch");
+            notedPatchRow = true;
+          }
+          std::string file;
+          int bank = 0, program = 0;
+          if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && browse::splitPatchItem(*patch, file, bank, program)) {
+            gRevealFile = file;
+            revealAsked = true;
+          }
+        }
         // A press selects (and previews a patch); the second press of a double-click loads the row.
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
           if (ImGui::GetIO().MouseClickedCount[ImGuiMouseButton_Left] >= 2) {
@@ -1039,6 +1068,14 @@ void draw(App& a) {
         ImGui::PopID();
       }
     if (rows.empty()) ImGui::TextDisabled("%s", i18n::tr("Nothing has that name"));
+    if (revealAsked) ImGui::OpenPopup("##smlibmenu");
+    if (ImGui::BeginPopup("##smlibmenu")) {
+      ImGui::TextDisabled("%s", std::filesystem::u8path(gRevealFile).filename().u8string().c_str());
+      ImGui::Separator();
+      if (ImGui::MenuItem(i18n::tr(browserui::revealText()))) browserui::revealInFileManager(a, gRevealFile);
+      if (ImGui::IsItemHovered()) ui::Hint(std::filesystem::u8path(gRevealFile).parent_path().u8string());
+      ImGui::EndPopup();
+    }
   }
   ImGui::PopStyleVar();
   ImGui::EndChild();
@@ -1103,6 +1140,10 @@ bool devCommand(App& a, const std::vector<std::string>& args) {
   if (op == "nav" && args.size() > 1) {
     gNav = std::clamp(std::atoi(args[1].c_str()), 0, static_cast<int>(2 + kinds().size()));
     gDrill = true;
+  } else if (op == "filter") {  // K-445: the search field's text ("filter" alone clears it)
+    std::string f;
+    for (size_t i = 1; i < args.size(); ++i) f += (i > 1 ? " " : "") + args[i];
+    std::snprintf(gFilter, sizeof gFilter, "%s", f.c_str());
   } else if (op == "rows") {
     const std::vector<Item> v = items(a, gNav, gFilter);
     std::printf("smoothlib rows nav %d: %zu\n", gNav, v.size());

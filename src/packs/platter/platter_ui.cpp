@@ -367,7 +367,7 @@ MixView mixLive(App& a, const PluginTarget& t) {
   return v;
 }
 
-void send(App& a, const PluginTarget& t, int deck, uint8_t kind, uint8_t control, double v, double w) {
+void send(App& a, const PluginTarget& t, int deck, uint8_t kind, uint8_t control, double v, double w, int64_t ns) {
   Generator* g = deckGen(a, t);
   if (!g) return;
   Cmd c;
@@ -376,7 +376,22 @@ void send(App& a, const PluginTarget& t, int deck, uint8_t kind, uint8_t control
   c.deck = static_cast<uint8_t>(deck & 1);
   c.v = v;
   c.w = w;
+  c.ns = ns;
   command(g, c);
+}
+
+// When this frame read the mouse (hub::nowNs): ImGui's frame time runs from the frame starts, so
+// the clock less it, at its smallest (the earliest anything is drawn after a frame starts), is
+// where the frame clock sits on the hub's. It follows a slow drift, and starts again after a jump.
+int64_t frameNs() {
+  static double off = 0;
+  static bool ok = false;
+  const double now = static_cast<double>(hub::nowNs());
+  const double o = now - ImGui::GetTime() * 1e9;
+  if (!ok || o < off || o - off > 5e7) off = o;
+  else off += 1e-3 * (o - off);
+  ok = true;
+  return static_cast<int64_t>(std::min(now, ImGui::GetTime() * 1e9 + off));
 }
 
 void press(App& a, const PluginTarget& t, int deck, int control, bool down) {
@@ -393,6 +408,7 @@ bool deckReady(const Ed& e, int d) {
 void loadOnDeck(App& a, const PluginTarget& t, int deck, const std::string& path) {
   const PluginState* sp = t.state(a.doc.song());
   if (!sp || path.empty()) return;
+  ed(t).d[static_cast<size_t>(deck & 1)].foldPath = path;
   PluginState st = *sp;
   if (deck == 0) {
     const size_t nl = st.data.find('\n');
@@ -408,6 +424,14 @@ void loadOnDeck(App& a, const PluginTarget& t, int deck, const std::string& path
   if (!m.twoDecks()) m.layout = LayoutTwo;
   st.data = formatData(m.trackOf(0), m);
   setPluginState(a, t, st, i18n::tr("Load a track on deck B"));
+}
+
+void loadOnDeck(App& a, const PluginTarget& t, int deck, const std::string& path);
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path, int deck) {
+  const PluginInfo* info = t.info(a.doc.song());
+  if (!info || info->type != kType) return false;
+  loadOnDeck(a, t, deck & 1, path);
+  return true;
 }
 
 void openLoadDialog(App& a, const PluginTarget& t, int deck) {
@@ -891,9 +915,40 @@ void drawDrawer(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, cons
     for (const Binding& b : m.map.bindings)
       if (b.control == k && (ci.mixer || b.deck == deck)) bt += (bt.empty() ? "" : ",  ") + bindingText(b);
     if (learning) bt = i18n::tr("Move or press the control on your controller... (Esc cancels)");
-    theme::textEllipsis(cl, bt.empty() ? a.fontRegular : a.fontMono, theme::kFontLabel, ImVec2(r0.x + 170, r0.y + 6), listW - 170 - 110,
+    // a wheel or encoder bound to a control change: how it sends its turns (a wrong guess of the
+    // learn turns it the wrong way or in jumps)
+    int encOf = -1;
+    if (ci.type == TypeRelative && !learning)
+      for (const Binding& b : m.map.bindings)
+        if (b.control == k && (ci.mixer || b.deck == deck) && b.kind == MkCC) {
+          encOf = b.enc;
+          break;
+        }
+    constexpr float kEncW = 76;
+    const float textW = listW - 170 - 110 - (encOf >= 0 ? kEncW + 8 : 0);
+    theme::textEllipsis(cl, bt.empty() ? a.fontRegular : a.fontMono, theme::kFontLabel, ImVec2(r0.x + 170, r0.y + 6), textW,
                         bt.empty() ? P.textFaint : (learning ? P.text : P.textDim), bt.empty() ? i18n::tr("not mapped") : bt.c_str());
     ImGui::PushID(k + 1000 * deck);
+    if (encOf >= 0) {
+      static const char* const kEnc[4] = {i18n::N_("Absolute"), i18n::N_("Centred"), i18n::N_("Two's"), i18n::N_("Sign bit")};
+      {  // dev hook (GRIDLINE_PLATTER_TRACE): where the button is, and the encoding it shows
+        char nm[48];
+        std::snprintf(nm, sizeof nm, "enc%s%c%d", controlInfo(k).id, deck == 0 ? 'A' : 'B', std::clamp(encOf, 0, 3));
+        traceRect(nm, ImVec2(r0.x + listW - 104 - kEncW - 8, r0.y + 2), ImVec2(r0.x + listW - 104 - 8, r0.y + rowH - 2));
+        // (GRIDLINE_PLATTER_DRAWER=1jog: the list and the editor round it keep the jog wheel's row in view)
+        if (e.drawerJog && std::strcmp(controlInfo(k).id, "jog") == 0)
+          ImGui::ScrollToRectEx(ImGui::GetCurrentWindow(), ImRect(r0, ImVec2(r0.x + listW, r0.y + rowH)), ImGuiScrollFlags_KeepVisibleCenterY);
+      }
+      if (button("##enc", ImVec2(r0.x + listW - 104 - kEncW - 8, r0.y + 2), ImVec2(kEncW, rowH - 4), kEnc[std::clamp(encOf, 0, 3)], false,
+                 i18n::N_("How the controller sends this wheel's turns: centred on 64, two's complement, or a sign bit and a size. "
+                          "Click for the next one if the wheel turns the wrong way or jumps."))) {
+        Model nm = m;
+        const uint8_t next = encOf == EncRelOffset ? EncRelTwos : encOf == EncRelTwos ? EncRelSign : EncRelOffset;
+        for (Binding& b : nm.map.bindings)
+          if (b.control == k && (ci.mixer || b.deck == deck) && b.kind == MkCC) b.enc = next;
+        commit(a, t, e, nm, i18n::N_("Jog encoding"));
+      }
+    }
     if (button("##learn", ImVec2(r0.x + listW - 104, r0.y + 2), ImVec2(64, rowH - 4), learning ? i18n::N_("Cancel") : i18n::N_("Learn"), learning,
                i18n::N_("Bind this control to the next thing you touch on the controller"))) {
       if (learning) {
@@ -918,6 +973,7 @@ void drawDrawer(App& a, const PluginTarget& t, Ed& e, ImVec2 p0, ImVec2 p1, cons
   ImGui::EndChild();
 }
 
+static int gRectMoved = 0;  // (the UI frame a traced rect last appeared or moved)
 void traceRect(const char* name, ImVec2 p0, ImVec2 p1) {
   static const bool on = std::getenv("GRIDLINE_PLATTER_TRACE") != nullptr;
   if (!on) return;
@@ -927,6 +983,7 @@ void traceRect(const char* name, ImVec2 p0, ImVec2 p1) {
   std::string& l = last[name];
   if (l == b) return;
   l = b;
+  gRectMoved = ImGui::GetFrameCount();
   std::printf("%s\n", b);
   std::fflush(stdout);
 }
@@ -981,6 +1038,12 @@ void trace(App& a, const PluginTarget& t, Ed& e, const char* state, const LiveVi
   if (std::string(state) == "ready") devsig::reach("platter-ready");
   if (lv[0].playing || lv[1].playing) devsig::reach("platter-playing");
   if (lv[0].capturing || lv[1].capturing) devsig::reach("platter-capturing");
+  // (both decks loaded and their grids analysed: the editor's layout no longer shifts)
+  if (e.m.deck[0].file >= 0 && e.m.deck[1].file >= 0 && e.m.deck[0].analysed && e.m.deck[1].analysed) {
+    devsig::reach("platter-analysed");
+    // (and no traced control has moved for 10 frames: a script's clicks land where the trace said)
+    if (ImGui::GetFrameCount() - gRectMoved >= 10) devsig::reach("platter-steady");
+  }
   if (!on) return;
   {  // J-197: the jog platter ticks each deck took (the dev jog's are all there)
     static uint64_t lastW[2] = {~uint64_t{0}, ~uint64_t{0}};
@@ -1024,6 +1087,7 @@ void devHooks(App& a, const PluginTarget& t, Ed& e, const PluginState*& sp) {
   if (const char* d = std::getenv("GRIDLINE_PLATTER_DRAWER"); d && *d) {
     e.drawer = true;
     e.drawerTab = std::clamp(std::atoi(d) - 1, 0, 2);
+    e.drawerJog = std::strstr(d, "jog") != nullptr;
   }
   if (const char* h = std::getenv("GRIDLINE_PLATTER_HOTS"); h && *h) e.demoHots = 3;
   if (const char* p = std::getenv("GRIDLINE_PLATTER_PLAY"); p && *p)
@@ -1125,6 +1189,12 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     parseData(sp->data, first, m);
     e.m = std::move(m);
     if (!e.m.asked) e.setup = true, e.setupInit = false;
+    // a deck's track just loaded here, by the newest step (not an undo or redo): its analysis joins that step
+    const bool edited = a.doc.history().stateSerial() != a.doc.moveSerial();
+    for (int d = 0; d < kDecks; ++d) {
+      DeckUi& u = e.d[static_cast<size_t>(d)];
+      if (!u.foldPath.empty() && u.foldPath == e.m.trackOf(d)) u.foldSerial = edited ? a.doc.history().stateSerial() : 0, u.foldPath.clear();
+    }
   }
   // per deck: the analysis gives the grid (and the peaks), the bands colour the waveforms
   for (int d = 0; d < kDecks; ++d) {
@@ -1151,7 +1221,10 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
       Model nm = e.m;
       fresh.file = dm.file;
       nm.deck[static_cast<size_t>(d)] = fresh;
-      commit(a, t, e, nm, i18n::N_("Analyse the track"));
+      const uint64_t fold = u.foldSerial;
+      u.foldSerial = 0;
+      if (fold) a.doc.amendStep(fold, [&] { commit(a, t, e, nm, i18n::N_("Analyse the track")); });  // (recorded as usual when it cannot join)
+      else commit(a, t, e, nm, i18n::N_("Analyse the track"));
     }
     if ((e.demoHots & (1 << d)) && e.m.deck[static_cast<size_t>(d)].analysed) {  // dev hook: a few hot cues on bars
       e.demoHots &= ~(1 << d);

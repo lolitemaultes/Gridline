@@ -8,6 +8,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "PluginIcons.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../core/I18n.h"
 #include "../core/MixerOps.h"
@@ -884,7 +885,11 @@ void effectsPopover(App& a, ObjectId id) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if (view().trk) dl->AddRectFilled(ImVec2(p.x + 3, p.y + 7), ImVec2(p.x + 9, p.y + 13), es.enabled ? P.led : P.surface600);  // the Tracker's square lamp
     else dl->AddCircleFilled(ImVec2(p.x + 6, p.y + 10), 3, es.enabled ? P.led : P.surface600, 10);
-    dl->AddText(ImVec2(p.x + 16, p.y + 2), es.enabled ? P.text : P.textFaint, info->name.c_str());
+    // K-450: the effect's own icon before its name (an installed plugin: none).
+    float tx = p.x + 16;
+    if (ui::drawPluginIcon(dl, info->type, ImVec2(p.x + 23, p.y + 10), 14, ui::PluginIconSurface::MixerSlot, es.enabled ? 1.0f : 0.4f)) tx = p.x + 38;
+    else ui::notePluginIconFallback(info->type, ui::PluginIconSurface::MixerSlot);
+    dl->AddText(ImVec2(tx, p.y + 2), es.enabled ? P.text : P.textFaint, info->name.c_str());
     ImGui::PopID();
   }
   if (n == 0) ImGui::TextDisabled("%s", i18n::tr("No effects on this track yet"));

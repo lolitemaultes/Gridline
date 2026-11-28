@@ -20,6 +20,15 @@ using namespace dsp;
 void Generator::fire(const Ev& e) {
   switch (e.kind) {
     case Ev::On:
+      // GitHub #87: a velocity glide on the whole output ends where a new note starts (it plays at
+      // its own velocity): back to unity, at once when nothing sounds, else over about 5 ms.
+      if (chanVel_.on()) {
+        const int64_t len = active() ? std::max<int64_t>(1, std::llround(0.005 * sampleRate_)) : 1;
+        chanVel_.delay = wholeBlock() ? evOffset_ : 0;
+        chanVel_.left = len;
+        chanVel_.to = 1;
+        chanVel_.step = (1.0 - chanVel_.g) / static_cast<double>(len);
+      }
       if (e.hasProps) {
         const bool silent = !active();  // nothing sounding: the pan can jump without a click
         onNoteOnEx(e.id, e.pitch, e.velocity, e.props);
@@ -34,7 +43,7 @@ void Generator::fire(const Ev& e) {
         panTarget_ = 0;
         if (silent) panCur_ = 0;
       }
-      exprNoteOn(e.id, e.pitch, e.hasProps ? &e.props : nullptr);
+      exprNoteOn(e.id, e.pitch, e.velocity, e.hasProps ? &e.props : nullptr);
       break;
     case Ev::Off:
       onNoteOff(e.id);
@@ -57,6 +66,7 @@ void Generator::fire(const Ev& e) {
       onMidi(static_cast<uint8_t>(e.id & 0xFF), static_cast<uint8_t>((e.id >> 8) & 0xFF), static_cast<uint8_t>((e.id >> 16) & 0xFF));
       break;
     case Ev::Expr: exprEvent(e); break;
+    case Ev::VelGlide: velGlide(e); break;
     case Ev::ChanPitch: {
       const double delta = e.pitch - chanPitch_;
       chanPitch_ = e.pitch;
@@ -100,7 +110,7 @@ ExprUse Generator::exprUse(ExprDim d) const {
   return d == ExprDim::Pressure ? ExprUse::Level : ExprUse::Brightness;
 }
 
-void Generator::exprNoteOn(uint32_t id, double pitch, const NoteProps* props) {
+void Generator::exprNoteOn(uint32_t id, double pitch, float velocity, const NoteProps* props) {
   ExprNote* slot = exprNote(id);
   for (auto& x : exprNotes_)
     if (!slot && !x.on) slot = &x;
@@ -109,6 +119,7 @@ void Generator::exprNoteOn(uint32_t id, double pitch, const NoteProps* props) {
   slot->id = id;
   slot->on = true;
   slot->pitch = pitch;
+  slot->vel0 = std::clamp(velocity, 0.0f, 1.0f);
   if (props && (props->pressure != 0 || props->timbre != 0.5f)) {  // the note starts with expression
     for (ExprDim d : {ExprDim::Pressure, ExprDim::Timbre}) {
       Ev x = Ev::make(Ev::Expr, id, d == ExprDim::Pressure ? props->pressure : props->timbre, 0, 0);
@@ -185,8 +196,57 @@ void Generator::exprTargets() {
   if (levelTarget_ != 0 || brightTarget_ != 0) exprUsed_ = exprVoiceUsed_ = true;
 }
 
+// GitHub #87: a slide note's velocity glide of the held note `e.id`: the gain its new velocity
+// level makes over the level it started with, reached linearly over e.time.
+void Generator::velGlide(const Ev& e) {
+  ExprNote* x = exprNote(e.id);
+  if (!x || !std::isfinite(e.velocity) || !std::isfinite(e.time)) return;
+  const float vel = std::clamp(e.velocity, 0.0f, 1.0f);
+  const double ref = velocityLevel(x->vel0);
+  const bool scales = ref > 1e-9;  // a note started at 0% (no level to scale) stays as it is
+  const double to = scales ? std::clamp(velocityLevel(vel) / ref, 0.0, 128.0) : 1.0;
+  const int64_t len = std::max<int64_t>(1, std::llround(std::max(0.0, e.time) * sampleRate_));
+  const int delay = wholeBlock() ? evOffset_ : 0;
+  velUsed_ = true;
+  if (ownVelocityGlide()) {
+    onVelocityGlide(e.id, to, vel, std::max(0.0, e.time));
+  } else if (!scales) {
+    return;
+  } else if (perVoiceVelocity()) {
+    x->vgTo = to;
+    x->vgLen = len;
+    x->vgDelay = delay;
+    if (++x->vgSeq == 0) x->vgSeq = 1;
+  } else {
+    chanVel_.delay = delay;
+    chanVel_.left = len;
+    chanVel_.to = to;
+    chanVel_.step = (to - chanVel_.g) / static_cast<double>(len);
+  }
+}
+
+void Generator::velVoice(VoiceVel& vv, uint32_t id) const {
+  if (!velUsed_) return;  // no velocity glide yet: every voice stays at exactly 1
+  if (!vv.seen || vv.id != id) {  // a new note on this voice: it starts at its own velocity
+    vv = VoiceVel{};
+    vv.seen = true;
+    vv.id = id;
+  }
+  for (const auto& x : exprNotes_)
+    if (x.on && x.id == id) {
+      if (x.vgSeq != vv.seq) {  // a new glide: from where the voice is now
+        vv.seq = x.vgSeq;
+        vv.delay = x.vgDelay;
+        vv.left = std::max<int64_t>(1, x.vgLen);
+        vv.to = x.vgTo;
+        vv.step = (vv.to - vv.g) / static_cast<double>(vv.left);
+      }
+      return;
+    }
+}
+
 void Generator::exprVoice(VoiceExpr& vx, uint32_t id) const {
-  if (!exprVoiceUsed_) {  // no note of this instrument had a level or brightness response yet
+  if (!exprVoiceUsed_ && !velUsed_) {  // no note of this instrument had a level or brightness response or a velocity glide yet
     vx.on = false;
     return;
   }
@@ -211,8 +271,9 @@ void Generator::exprVoice(VoiceExpr& vx, uint32_t id) const {
   if (held) vx.lt = lt, vx.bt = bt;  // an ended note keeps its last values for its release
   vx.coef = exprCoef_;
   vx.shelfA = exprShelfA_;
+  velVoice(vx.vel, id);  // GitHub #87
   const bool wasOn = vx.on;
-  vx.on = vx.lt != 0 || vx.bt != 0 || std::fabs(vx.lc) > 1e-5f || std::fabs(vx.bc) > 1e-5f;
+  vx.on = vx.lt != 0 || vx.bt != 0 || std::fabs(vx.lc) > 1e-5f || std::fabs(vx.bc) > 1e-5f || vx.vel.on();
   if (!vx.on)
     vx.lc = vx.bc = 0, vx.g = vx.hg = 1;
   else if (!wasOn)
@@ -271,6 +332,15 @@ void Generator::process(const PluginState& state, const ChannelAux& aux, const P
     if (levelTarget_ == 0 && brightTarget_ == 0 && std::fabs(levelCur_) < 1e-5f && std::fabs(brightCur_) < 1e-5f)
       exprUsed_ = false, levelCur_ = brightCur_ = 0, shelfL_ = shelfR_ = 0;
   };
+  // GitHub #87: a velocity glide on the whole output (instruments without per-voice ones).
+  auto applyVel = [&](int from, int to) {
+    if (!chanVel_.on()) return;
+    for (int i = from; i < to; ++i) {
+      const float g = chanVel_.next();
+      L[i] *= g;
+      R[i] *= g;
+    }
+  };
   if (wholeBlock()) {
     for (size_t i = 0; i < count_; ++i) {
       evOffset_ = std::clamp(events_[i].offset, 0, std::max(0, n - 1));
@@ -279,6 +349,7 @@ void Generator::process(const PluginState& state, const ChannelAux& aux, const P
     evOffset_ = 0;
     count_ = 0;
     render(L, R, n);
+    applyVel(0, n);
     applyPan(0, n);
     applyExpr(0, n);
     return;
@@ -291,6 +362,7 @@ void Generator::process(const PluginState& state, const ChannelAux& aux, const P
     if (ei < count_) end = std::min(n, std::max(pos + 1, events_[ei].offset));
     tap::blockOffset(pos);  // K-321: a Track Receipt pass's output clock (no-op otherwise)
     render(L + pos, R + pos, end - pos);
+    applyVel(pos, end);
     applyPan(pos, end);
     applyExpr(pos, end);
     pos = end;
@@ -322,6 +394,10 @@ class SynthGen final : public Generator {
 
  protected:
   bool perVoiceExpression() const override { return true; }  // K-193
+  // GitHub #87: velocity glides follow the voice's own velocity law (the reference engine's curve).
+  double velocityLevel(float v) const override {
+    return ref_ ? (std::pow(11.0, static_cast<double>(std::clamp(v, 0.0f, 1.0f)) * 128.0 / 100.0) - 1.0) / 10.0 : static_cast<double>(v);
+  }
   struct Voice {
     uint32_t id = 0;
     bool held = false;
@@ -883,6 +959,7 @@ class SamplerGen final : public Generator {
 
  protected:
   bool perVoiceExpression() const override { return true; }  // K-193
+  // GitHub #87: velocity glides follow the velocity-to-volume amount.
   struct Voice {
     bool on = false, held = false;
     uint32_t id = 0;
@@ -916,11 +993,17 @@ class SamplerGen final : public Generator {
 
   void configure(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx) override {
     using namespace pp;
-    sr_ = ctx.sampleRate;
+    sr_ = (std::isfinite(ctx.sampleRate) && ctx.sampleRate > 0) ? ctx.sampleRate : 44100.0;
     interp_ = ctx.interp;
     if (aux.sample().get() != sample_.get()) {  // new sample: restart the amortised analysis scan
       sample_ = aux.sample();
       scan_ = 0, peak_ = 0, sumL_ = sumR_ = 0, analysed_ = false;
+      clearAhead();  // K-431: primed streams hold pointers / cursors into the previous sample
+      if (!sample_ || sample_->frames() < 2) {
+        for (auto& v : voices_) v.on = false, v.sv = -1;
+      } else {
+        for (auto& v : voices_) v.sv = -1;
+      }
     }
     smpL_ = sample_ ? sample_->left.data() : nullptr;
     smpR_ = sample_ ? sample_->right.data() : nullptr;
@@ -952,9 +1035,10 @@ class SamplerGen final : public Generator {
     fadeIn_ = param(s, SmpFadeIn), fadeOutAmt_ = param(s, SmpFadeOut), xfade_ = param(s, SmpLoopXfade);
     declick_ = std::clamp(static_cast<int>(param(s, SmpDeclick) + 0.5f), 0, 4);
     stretch_ = stretch::keepsPitch(stretch::modeOf(param(s, SmpStretchMode)));
-    if (StretchPool* p = pending_.load(std::memory_order_acquire)) {  // J-87: a new pool from prepareHost
-      if (!active_ || retired_.load(std::memory_order_acquire) == nullptr) {
-        pending_.store(nullptr, std::memory_order_release);
+    // K-431: atomically claim pending_ with exchange() so prepareHost() on the UI
+    // thread cannot free the pool between load() and store(nullptr).
+    if (!active_ || retired_.load(std::memory_order_acquire) == nullptr) {
+      if (StretchPool* p = pending_.exchange(nullptr, std::memory_order_acq_rel)) {  // J-87: a new pool from prepareHost
         StretchPool* old = active_;
         active_ = p;
         for (auto& v : voices_) v.sv = -1;  // sounding voices finish on the grains
@@ -962,12 +1046,15 @@ class SamplerGen final : public Generator {
         if (old) retired_.store(old, std::memory_order_release);
       }
     }
-    pitchShift_ = param(s, SmpPitchShift);
-    timeStretch_ = param(s, SmpTimeStretch, 1);
+    const double rawPitchShift = param(s, SmpPitchShift);
+    pitchShift_ = std::isfinite(rawPitchShift) ? std::clamp(rawPitchShift, -4800.0, 4800.0) : 0.0;
+    const double rawTimeStretch = param(s, SmpTimeStretch, 1);
+    timeStretch_ = (std::isfinite(rawTimeStretch) && rawTimeStretch > 0) ? std::clamp(rawTimeStretch, 0.01, 100.0) : 1.0;
     // K-132: fitted to a time at `fitTempo_`: the stretch follows the tempo as it changes (a
     // resampled note takes its rate from the tempo when it starts, see onNoteOn).
-    fitTempo_ = param(s, SmpFitTempo, 0);
-    tempo_ = ctx.tempo > 0 ? ctx.tempo : 120.0;
+    const double rawFitTempo = param(s, SmpFitTempo, 0);
+    fitTempo_ = (std::isfinite(rawFitTempo) && rawFitTempo > 0) ? std::clamp(rawFitTempo, 0.0, 1000.0) : 0.0;
+    tempo_ = (std::isfinite(ctx.tempo) && ctx.tempo > 0) ? std::clamp(ctx.tempo, 1.0, 1000.0) : 120.0;
     if (fitTempo_ > 0) timeStretch_ = std::clamp(timeStretch_ * fitTempo_ / tempo_, 0.01, 100.0);
     delay_ = param(s, SmpEnvDelay), hold_ = param(s, SmpEnvHold);
     ftype_ = std::clamp(static_cast<int>(param(s, SmpFilterType) + 0.5f), 0, 5);
@@ -1167,9 +1254,14 @@ class SamplerGen final : public Generator {
 
   // Reads the sample at a fractional frame with the render-time processing applied.
   void read(double p, double& l, double& r) const {
+    if (!sample_ || sample_->frames() < 2 || !smpL_ || !smpR_) {
+      l = r = 0.0;
+      return;
+    }
     const float* sl = smpL_;  // raw channel pointers, set in configure (J-30: no per-read
     const float* sr = smpR_;  // shared-channel test)
-    double len = static_cast<double>(sample_->left.size());
+    const double len = static_cast<double>(sample_->left.size());
+    if (!std::isfinite(p)) p = 0.0;
     p = std::clamp(p, 0.0, len - 2);
     size_t p0 = static_cast<size_t>(p);
     double fr = p - static_cast<double>(p0);
@@ -1216,7 +1308,7 @@ class SamplerGen final : public Generator {
     frame_ += static_cast<uint64_t>(n);
   }
   void renderVoices(float* L, float* R, int n) {
-    if (!sample_) return;
+    if (!sample_ || sample_->frames() < 2 || !smpL_ || !smpR_ || !(sr_ > 0)) return;
     const double base = sample_->sampleRate / sr_;
     const double len = static_cast<double>(sample_->frames());
     const double lo = regionLo(), hi = std::max(lo + 1, regionHi());  // start offset at (or past) the end: keep lo <= hi
@@ -1567,6 +1659,11 @@ class SamplerGen final : public Generator {
     auto* rc = static_cast<ReadCtx*>(ctx);
     SamplerGen& g = *rc->g;
     Voice& v = *rc->v;
+    if (!g.sample_ || g.sample_->frames() < 2 || !g.smpL_ || !g.smpR_) {
+      for (int k = 0; k < frames; ++k) d[0][k] = d[1][k] = 0.0f;
+      v.srcDone = true;
+      return;
+    }
     const double len = static_cast<double>(g.sample_->frames());
     const double lo = g.regionLo(), hi = std::max(lo + 1, g.regionHi());  // keep lo <= hi (start offset at the end)
     const auto ls = static_cast<int64_t>(std::clamp(g.loopStart_ * (len - 1), lo, hi - 1));
@@ -1681,6 +1778,13 @@ class DrumGen : public Generator {
   }
   void onNoteOff(uint32_t) override {}
   void onAllOff() override {}
+  // GitHub #87: a slide fades its own hit only (each voice's level, applied in cutTick), never the
+  // other hits still ringing. Each render() calls velVoices() first.
+  bool perVoiceVelocity() const override { return true; }
+  void velVoices() {
+    for (auto& v : voices_)
+      if (v.on) velVoice(v.vv, v.id);
+  }
   // K-165: cut groups, mono and the voice limit choke the hit over 4 ms (note-offs are ignored).
   void onCut(uint32_t id) override {
     for (auto& v : voices_)
@@ -1703,12 +1807,14 @@ struct DrumVoiceBase {
   uint32_t id = 0;
   float vel = 0;
   double cutGain = 1, cutStep = 0;  // K-165: choke fade (cutStep 0 = not cut)
-  // The choke gain for this frame, then one step down.
+  VoiceVel vv;                      // GitHub #87: a slide's velocity glide on this hit (exactly 1 without one)
+  // The choke gain for this frame (times the velocity glide), then one step down.
   double cutTick() {
-    if (cutStep == 0) return 1.0;
+    const double vg = vv.next();
+    if (cutStep == 0) return vg;
     const double g = std::max(0.0, cutGain);
     cutGain -= cutStep;
-    return g;
+    return g * vg;
   }
   bool cutDone() const { return cutStep > 0 && cutGain <= 0; }
   double t = 0, tune = 1, phase = 0;
@@ -1738,6 +1844,7 @@ class KickGen final : public DrumGen<KickVoice> {
     linear_ = param(s, KickSweepCurve) >= 0.5f;
   }
   void render(float* L, float* R, int n) override {
+    this->velVoices();  // GitHub #87
     const double dt = 1.0 / sr_;
     for (auto& v : voices_) {
       if (!v.on) continue;
@@ -1804,6 +1911,7 @@ class SnareGen final : public DrumGen<SnareVoice> {
     setPan(param(s, SnPan));
   }
   void render(float* L, float* R, int n) override {
+    this->velVoices();  // GitHub #87
     const double dt = 1.0 / sr_;
     for (auto& v : voices_) {
       if (!v.on) continue;
@@ -1869,6 +1977,7 @@ class HatGen final : public DrumGen<HatVoice> {
     DrumGen<HatVoice>::onNoteOn(id, pitch, vel);
   }
   void render(float* L, float* R, int n) override {
+    this->velVoices();  // GitHub #87
     static const double ratios[6] = {2.0, 3.0, 4.16, 5.43, 6.79, 8.21};
     const double dt = 1.0 / sr_;
     const double dec = open_ ? decay_ * 6.0 : decay_;
@@ -1931,6 +2040,7 @@ class ClapGen final : public DrumGen<ClapVoice> {
     for (int b = 0; b < 8; ++b) v.jit[b] = v.noise.next() * 0.3 * humanize_;
   }
   void render(float* L, float* R, int n) override {
+    this->velVoices();  // GitHub #87
     const double dt = 1.0 / sr_;
     for (auto& v : voices_) {
       if (!v.on) continue;

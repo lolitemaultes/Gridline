@@ -6,6 +6,7 @@
 // effects, tempo info, markers). Rendering runs on a worker thread with a
 // progress window that can cancel; the summary lists the files written.
 #include "../core/I18n.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include "Keys.h"
 #include "LiveLook.h"
@@ -20,6 +21,7 @@
 #include "../core/RemoteFs.h"
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -33,6 +35,7 @@
 #include <thread>
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"  // (N58-11: the Render dialog's measuring frames)
+#include "../core/Arrangements.h"
 #include "../core/Automation.h"
 #include "../core/Log.h"
 #include "../core/flp/Flp.h"
@@ -47,6 +50,8 @@
 #include "../engine/ClipOps.h"
 #include "../engine/ClipRender.h"
 #include "../engine/ExportJob.h"
+#include "../engine/ExportChoices.h"
+#include "../engine/MarkerAreas.h"
 #include "../engine/Resample.h"
 #include "../engine/Sample.h"
 #include "../packs/PacksUi.h"
@@ -83,6 +88,7 @@ struct Dialog {
   bool init = false;
   ExportSettings s;
   int scope = 0;           // 0 song, 1 pattern, 2 time selection, 3 marker range
+  int arrangement = -1;    // K-406: -1 = current, 0..N-1 = specific arrangement, -2 = all arrangements
   int markerA = 0, markerB = 1;
   bool fmt[6] = {true, false, false, false, false, false};  // WAV FLAC MP3 Ogg M4A Opus
   int wavBits = 1;         // 0 16, 1 24, 2 32f
@@ -92,10 +98,25 @@ struct Dialog {
   int dest = 0;            // Dest
   bool replacePattern = false;
   char folder[1024] = "";
-  char name[256] = "";
+  char filePattern[160] = "%P";  // the file's name as pieces (ExportChoices.h); "%P" = the project's name
   char pattern[128] = "%P - %N %T";
+  bool lastSplit[3] = {true, false, false};  // the kinds ticked when Separate files was last on
+  // Export marker areas: the dialog lists the arrangement's marker areas (ticked: exported), and
+  // names each area's file with `areaPattern` (MarkerAreas.h). Ticks are kept by the area's start.
+  bool areaMode = false;
+  char areaPattern[160] = "%P - %M";
+  std::map<Tick, bool> areaOn;
 };
 Dialog dlg;
+
+// The dialog's ticks: an area not touched yet is ticked when something plays in it.
+bool areaTicked(const MarkerArea& m) {
+  const auto it = dlg.areaOn.find(m.start);
+  return it == dlg.areaOn.end() ? m.hasContent : it->second;
+}
+// Dev: the area rows the dialog drew last (name, start, length, ticked), and its frame.
+std::vector<std::string> devAreaRows;
+int devAreaFrame = -1;
 
 constexpr int kRates[] = {22050, 32000, 44100, 48000, 88200, 96000, 192000};
 constexpr int kBitrates[] = {128, 192, 256, 320};
@@ -112,13 +133,14 @@ struct Job {
   Dest dest = Dest::Files;
   bool replacePattern = false;
   Tick start = 0;  // scope start (song ticks) for audio clips
+  size_t areas = 0;  // marker areas exported (0: a plain render)
   bool showSummary = false;
   double started = 0, seconds = 0;
   WorkerBeat beat;   // K-133: the worker's sign of life (each progress step)
   StallWatch watch;  // the interface's view of it
   ~Job() {
     cancel = true;
-    if (worker.joinable()) worker.join();
+    gl::threads::safeJoin(worker);
   }
 };
 Job job;
@@ -141,7 +163,7 @@ struct FileJob {
   StallWatch watch;
   ~FileJob() {
     cancel = true;
-    if (worker.joinable()) worker.join();
+    gl::threads::safeJoin(worker);
   }
 };
 FileJob fileJob;
@@ -246,11 +268,24 @@ constexpr const char* kEmptyArrangement = "the arrangement is empty";
 
 // Scope of the dialog → render job fields. False (with a reason) when empty.
 bool applyScope(const App& a, RenderJob& r, std::string* why) {
-  const Song& s = a.doc.song();
+  const Song& baseSong = a.doc.song();
+  const int nArr = arrangementCount(baseSong);
+  const int curArr = baseSong.arrangements.empty() ? 0 : baseSong.currentArrangement;
+  const bool multiArr = dlg.scope != 1 && nArr > 1;
+  const bool allArr = multiArr && dlg.arrangement == -2 && dlg.dest == static_cast<int>(Dest::Files);
+  const int targetArr = multiArr && dlg.arrangement >= 0 && dlg.arrangement < nArr ? dlg.arrangement : curArr;
+  Song chosenStorage;
+  const Song& s = (multiArr && !allArr && targetArr != curArr) ? (chosenStorage = songWithArrangement(baseSong, targetArr)) : baseSong;
   r.scope = RenderScope::Song;
   // N48-10: Clips exports its arrangement, never the clip grid's slots (N55-08: a Session export is first
   // made an arrangement of the clips it plays: startJob).
   r.arrangementOnly = livelook::active(a);
+  if (allArr && dlg.scope == 0 && !gSessionExport) {
+    bool any = false;
+    for (int i = 0; i < nArr; ++i) any = any || (arrangementLengthTicks(baseSong, i) > 0);
+    if (!any) return why && (*why = "every arrangement is empty", false);
+    return true;
+  }
   if (r.arrangementOnly && dlg.scope == 0 && !gSessionExport) {
     bool any = false;
     for (const Clip& c : s.playlist) any = any || (c.start >= s.live.areaEnd && !c.muted && c.kind != ClipKind::Automation);
@@ -285,19 +320,49 @@ bool applyScope(const App& a, RenderJob& r, std::string* why) {
   return true;
 }
 
+// The length of a render job's scope (cached a few times a second per scope).
+double scopeSecondsOf(const App& a, const RenderJob& r) {
+  static double cached = 0, at = -1;
+  static int scope = -1;
+  static Tick s0 = -1, s1 = -1;
+  if (at >= 0 && scope == static_cast<int>(r.scope) && s0 == r.start && s1 == r.end && a.now >= at && a.now - at < 0.25) return cached;
+  at = a.now, scope = static_cast<int>(r.scope), s0 = r.start, s1 = r.end;
+  Tick A = 0, B = 0;
+  cached = renderScopeTicks(a.doc.song(), r, A, B) ? static_cast<double>(scopeFrames(a.doc.song(), r, A, B, 48000)) / 48000.0 : 0.0;
+  return cached;
+}
+
 double scopeSeconds(const App& a) {
   // A few times a second: the song scope copies the whole project.
   static double cached = 0, at = -1;
-  static int scope = -1;
-  if (at >= 0 && scope == dlg.scope && a.now >= at && a.now - at < 0.25) return cached;
+  static int scope = -1, arr = -99;
+  if (at >= 0 && scope == dlg.scope && arr == dlg.arrangement && a.now >= at && a.now - at < 0.25) return cached;
   at = a.now;
   scope = dlg.scope;
+  arr = dlg.arrangement;
   cached = 0;
   RenderJob r;
   if (!applyScope(a, r, nullptr)) return 0;
+  const Song& base = a.doc.song();
+  const int nArr = arrangementCount(base);
+  if (dlg.scope != 1 && nArr > 1 && dlg.arrangement == -2 && dlg.dest == static_cast<int>(Dest::Files)) {
+    double total = 0;
+    for (int i = 0; i < nArr; ++i) {
+      Song tmp = songWithArrangement(base, i);
+      Tick A = 0, B = 0;
+      if (renderScopeTicks(tmp, r, A, B)) total += static_cast<double>(scopeFrames(tmp, r, A, B, 48000)) / 48000.0;
+    }
+    cached = total;
+    return cached;
+  }
+  const int cur = base.arrangements.empty() ? 0 : base.currentArrangement;
+  Song chosenStorage;
+  const Song& s = (dlg.scope != 1 && dlg.arrangement >= 0 && dlg.arrangement < nArr && dlg.arrangement != cur)
+                      ? (chosenStorage = songWithArrangement(base, dlg.arrangement))
+                      : base;
   Tick A = 0, B = 0;
-  if (!renderScopeTicks(a.doc.song(), r, A, B)) return 0;
-  cached = static_cast<double>(scopeFrames(a.doc.song(), r, A, B, 48000)) / 48000.0;
+  if (!renderScopeTicks(s, r, A, B)) return 0;
+  cached = static_cast<double>(scopeFrames(s, r, A, B, 48000)) / 48000.0;
   return cached;
 }
 
@@ -326,7 +391,17 @@ void startJob(App& a) {
   captureHostedStates(a);  // offline instances load the plugins' current state
   ExportSettings s = dlg.s;
   std::string why;
-  if (!applyScope(a, s.render, &why)) {
+  std::vector<MarkerArea> areas;  // Export marker areas: the ticked ones, in order
+  if (dlg.areaMode) {
+    dlg.dest = static_cast<int>(Dest::Files);
+    const std::vector<MarkerArea> all = markerAreas(a.doc.song());
+    for (const MarkerArea& m : all)
+      if (areaTicked(m)) areas.push_back(m);
+    if (areas.empty()) {
+      a.notify(all.empty() ? "Nothing to render: the arrangement has no markers" : "Tick at least one marker area", true);
+      return;
+    }
+  } else if (!applyScope(a, s.render, &why)) {
     if (why == kEmptyArrangement && livelook::active(a)) {
       // N54-06: Clips exports its Arrangement; an empty one says so and offers the Session's clips or a
       // recording of them into the Arrangement first.
@@ -359,8 +434,7 @@ void startJob(App& a) {
   s.formats.clear();
   const Dest dest = static_cast<Dest>(dlg.dest);
   if (dest == Dest::Files) {
-    for (int k = 0; k < 5; ++k)
-      if (dlg.fmt[k]) s.formats.push_back(static_cast<ExportFormat>(k));
+    s.formats = exportchoice::tickedFormats(dlg.fmt, static_cast<int>(ExportFormat::Count));
     for (ExportFormat f : s.formats)
       if (exportFormatExternal(f) && encoderFor(f).empty()) {
         a.notify(std::string(exportFormatName(f)) + ": " + encoderStatus(f), true);
@@ -371,7 +445,10 @@ void startJob(App& a) {
       return;
     }
     s.folder = dlg.folder[0] ? std::string(dlg.folder) : projectFolder(a);
-    s.baseName = dlg.name[0] ? std::string(dlg.name) : projectName(a);
+    s.baseName = expandNamePattern(dlg.filePattern[0] ? dlg.filePattern : "%P", {{'P', projectName(a)},
+                                                                                {'R', std::to_string(kRates[dlg.rateIdx])},
+                                                                                {'S', dlg.scope == 1 ? "Pattern" : dlg.scope == 0 ? "Song" : "Range"}});
+    if (s.baseName.empty()) s.baseName = safeFileName(projectName(a));
     if (gSessionExport && !gSessionLabel.empty()) {
       s.baseName += " (" + gSessionLabel + ")";  // N55-08: says what it holds
     }
@@ -403,6 +480,14 @@ void startJob(App& a) {
   }
   s.projectTitle = projectName(a);
   s.render.threads = std::max(1, a.processingThreads());
+  // K-406: which arrangement renders (marker areas are always the current arrangement's).
+  const int nArr = arrangementCount(a.doc.song());
+  s.arrangement = (!dlg.areaMode && dlg.scope != 1 && nArr > 1)
+                      ? ((dlg.arrangement == -2 && dest == Dest::Files) ? -2 : (dlg.arrangement >= 0 && dlg.arrangement < nArr ? dlg.arrangement : -1))
+                      : -1;
+  std::vector<std::string> names;
+  if (!areas.empty()) names = markerAreaFileNames(areas, dlg.areaPattern, projectName(a), s.render.sampleRate);
+  job.areas = areas.size();
   job.settings = s;
   job.dest = dest;
   job.replacePattern = dlg.replacePattern;
@@ -432,16 +517,18 @@ void startJob(App& a) {
   // are busy work (host::runUiThreadTasks).
   // K-133: but its progress is the worker's own sign of life: a worker that stops is reported.
   workerstall::start(job.watch, job.beat);
-  job.worker = std::thread([song = std::move(song), s]() { gl::threads::setName("gl-export");
+  job.worker = std::thread([song = std::move(song), s, areas = std::move(areas), names = std::move(names)]() { gl::threads::setName("gl-export");
     host::UiThreadRenderScope scope;
     ExportOutcome o;
     try {
-      o = runExport(song, s, [](double p, const std::string& what) {
+      const auto step = [](double p, const std::string& what) {
         job.beat.beat();
         job.progress = p;
         std::lock_guard<std::mutex> lk(job.mu);
         job.status = what;
-      }, &job.cancel);  // reports what it catches (one report, one pop-up)
+      };
+      // reports what it catches (one report, one pop-up); marker areas: one export per area
+      o = areas.empty() ? runExport(song, s, step, &job.cancel) : runMarkerAreaExport(song, s, areas, names, step, &job.cancel);
     } catch (...) {  // only what runExport could not catch itself
       crash::reportCurrentException("Exporting audio");
       o.errors.push_back("An internal error stopped the export.");
@@ -469,6 +556,15 @@ void finishJob(App& a) {
     o = job.outcome;
   }
   ++(o.cancelled ? devRendersCancelled : o.errors.empty() ? devRendersFinished : devRendersFailed);
+  if (o.cancelled && job.areas > 0) {  // marker areas: the areas finished before Cancel stay
+    if (o.files.empty()) {
+      a.notify("Render cancelled");
+    } else {
+      a.notify("Render cancelled: the files of the finished marker areas are kept");
+      job.showSummary = true;
+    }
+    return;
+  }
   if (o.cancelled) {
     a.notify("Render cancelled");
     for (const auto& f : o.files) {
@@ -542,7 +638,8 @@ void finishJob(App& a) {
   if (!o.errors.empty())
     a.notify(o.errors[0], true);
   else {
-    a.notify("Exported " + std::to_string(o.files.size()) + " file(s)");
+    a.notify("Exported " + std::to_string(o.files.size()) + " file(s)" +
+             (job.areas > 0 ? " from " + std::to_string(job.areas) + " marker area(s)" : std::string()));
     a.uiSound(uisound::Event::Export);
   }
 }
@@ -554,8 +651,657 @@ void initDialog(App& a) {
   dlg.init = true;
   dlg.s.render.tail = TailMode::Leave;
   dlg.s.render.maxTailSeconds = 20;
+  dlg.s.render.fixedTailSeconds = 2;
   for (int k = 0; k < 7; ++k)
     if (kRates[k] == a.audioSampleRate) dlg.rateIdx = k;
+}
+
+// "1.1": an area's start as the ruler shows it (bar.beat).
+std::string barBeat(const MeterMap& mm, Tick t) {
+  const MeterMap::Bbt q = mm.toBbt(t);
+  return std::to_string(q.bar + 1) + "." + std::to_string(q.beat + 1);
+}
+// "3:05.2": an area's length in time (the tempo map's, as the file will run without its tail).
+std::string minSec(double sec) {
+  char b[32];
+  std::snprintf(b, sizeof b, "%d:%04.1f", static_cast<int>(sec / 60), std::fmod(sec, 60.0));
+  return b;
+}
+double areaSeconds(const Song& song, const MarkerArea& m) {
+  RenderJob r;
+  r.scope = RenderScope::Range;
+  r.start = m.start;
+  r.end = m.end;
+  return static_cast<double>(scopeFrames(song, r, m.start, m.end, 48000)) / 48000.0;
+}
+
+// ---- the Export audio dialog: "What to export" cards over three columns (what, its ending and
+// where it goes | split, files and names | format, quality and processing), and a footer that
+// sums up the render beside Cancel / Render.
+
+constexpr float kColW = 370.0f;    // each column
+constexpr float kRowX = 104.0f;    // where a row's control starts (its label to the left)
+constexpr float kCardH = 44.0f;
+
+void rowLabel(const char* label) { formLabel(label, kRowX); }
+
+// Words that follow the layout.
+const char* songWord(const App& a) { return livelook::active(a) ? i18n::N_("Arrangement") : i18n::N_("Whole song"); }
+const char* patternWord(const App& a) {
+  return livelook::active(a) ? i18n::N_("Current clip") : logicplug::active(a) ? i18n::N_("Current region") : i18n::N_("Current pattern");
+}
+const char* selectionWord(const App& a) { return logicplug::active(a) ? i18n::N_("Cycle area") : i18n::N_("Time selection"); }
+
+// The card's glyph: 0 song (a waveform), 1 selection (brackets round a block), 2 marker areas
+// (three flags), 3 pattern (a step grid).
+void cardGlyph(ImDrawList* dl, int kind, ImVec2 c, ImU32 col) {
+  const float s = 1.0f;
+  switch (kind) {
+    case 0: {
+      const float h[] = {3, 7, 10, 5, 9, 4, 2};
+      for (int i = 0; i < 7; ++i) {
+        const float x = std::round(c.x - 9 + i * 3.0f) + 0.5f;
+        dl->AddLine(ImVec2(x, c.y - h[i]), ImVec2(x, c.y + h[i]), col, 1.5f * s);
+      }
+      break;
+    }
+    case 1:
+      dl->AddLine(ImVec2(c.x - 7, c.y - 8), ImVec2(c.x - 9, c.y - 8), col, 1.5f);
+      dl->AddLine(ImVec2(c.x - 9, c.y - 8), ImVec2(c.x - 9, c.y + 8), col, 1.5f);
+      dl->AddLine(ImVec2(c.x - 9, c.y + 8), ImVec2(c.x - 7, c.y + 8), col, 1.5f);
+      dl->AddLine(ImVec2(c.x + 7, c.y - 8), ImVec2(c.x + 9, c.y - 8), col, 1.5f);
+      dl->AddLine(ImVec2(c.x + 9, c.y - 8), ImVec2(c.x + 9, c.y + 8), col, 1.5f);
+      dl->AddLine(ImVec2(c.x + 9, c.y + 8), ImVec2(c.x + 7, c.y + 8), col, 1.5f);
+      dl->AddRectFilled(ImVec2(c.x - 4, c.y - 3), ImVec2(c.x + 4, c.y + 3), theme::withAlpha(col, 0.55f), 1.0f);
+      break;
+    case 2:
+      for (int i = 0; i < 3; ++i) {
+        const float x = std::round(c.x - 8 + i * 7.0f) + 0.5f;
+        dl->AddLine(ImVec2(x, c.y + 8), ImVec2(x, c.y - 8), col, 1.5f);
+        dl->AddTriangleFilled(ImVec2(x, c.y - 8), ImVec2(x + 4.5f, c.y - 6), ImVec2(x, c.y - 4), col);
+      }
+      break;
+    default:
+      for (int r = 0; r < 2; ++r)
+        for (int k = 0; k < 4; ++k) {
+          const bool on = (k + r) % 2 == 0;
+          const ImVec2 p(c.x - 9 + k * 5.0f, c.y - 6 + r * 8.0f);
+          dl->AddRectFilled(p, ImVec2(p.x + 3, p.y + 4), on ? col : theme::withAlpha(col, 0.4f), 0.6f);
+        }
+      break;
+  }
+}
+
+// One "What to export" card. True when clicked.
+bool scopeCard(App& a, const char* id, int glyph, const char* title, const std::string& sub, bool on, float w) {
+  const auto& P = pal();
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  const bool clicked = ImGui::InvisibleButton(id, ImVec2(w, kCardH));
+  const bool hov = ImGui::IsItemHovered();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 q(p.x + w, p.y + kCardH);
+  const ImU32 face = on ? theme::mix(P.field, P.hot, P.dark ? 0.14f : 0.10f)
+                        : P.dark ? theme::mix(P.surface900, P.field, hov ? 0.20f : 0.38f) : theme::mix(P.surface900, P.surface800, hov ? 0.85f : 0.55f);
+  dl->AddRectFilled(p, q, face, theme::kRadiusLg);
+  dl->AddRect(p, q, on ? theme::withAlpha(P.hot, 0.65f) : P.dark ? theme::withAlpha(P.ink, 0.45f) : P.line, theme::kRadiusLg);
+  cardGlyph(dl, glyph, ImVec2(p.x + 22, p.y + kCardH * 0.5f), on ? P.hot : P.textFaint);
+  const float tx = p.x + 42;
+  dl->AddText(a.fontBold, theme::kFontBody, ImVec2(tx, p.y + 5), P.text, i18n::tr(title));
+  dl->AddText(ImGui::GetFont(), theme::kFontCaption, ImVec2(tx, p.y + 24), on ? P.textDim : P.textFaint, sub.c_str());
+  return clicked;
+}
+
+// Bottoms of the three columns line up: each column's last section takes the room the tallest
+// column needs (measured on the frame before).
+struct ColumnFit {
+  float natural[3] = {0, 0, 0};
+  float pad[3] = {0, 0, 0};
+  int cols = 3;  // how many columns the measure is for
+};
+ColumnFit colFit;
+void columnPad(int c) {
+  if (colFit.pad[c] > 0.5f) ImGui::Dummy(ImVec2(0, colFit.pad[c]));
+}
+
+// Name pieces for a pattern (`buf`, the tokens it offers): the pieces in a field (a token is a
+// lit chip, text is text; a chip's x removes it, text opens to be edited), and under it the
+// pieces that can be added ("+ Marker", ...; More... for the rest, text, and the pattern as text).
+// True when the pattern changed.
+bool namePieces(App& a, const char* id, char* buf, size_t cap, const char* tokens, const char* offer, float w) {
+  using namespace exportchoice;
+  const auto& P = pal();
+  bool changed = false;
+  ImGui::PushID(id);
+  const std::vector<NamePiece> pieces = parseNamePattern(buf, tokens);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const float fh = ImGui::GetFrameHeight(), chipH = 18.0f, padX = theme::kS2;
+  const ImVec2 p0 = ImGui::GetCursorScreenPos();
+  // Lay the pieces out, wrapping to more lines when they do not fit (never cut off).
+  struct Placed {
+    ImVec2 a, b;
+    size_t index;
+    std::string text;
+    bool token;
+  };
+  std::vector<Placed> placed;
+  float x = p0.x + padX, y = p0.y + (fh - chipH) * 0.5f, lineH = fh;
+  const float right = p0.x + w - padX;
+  int lines = 1;
+  for (size_t i = 0; i < pieces.size(); ++i) {
+    const NamePiece& np = pieces[i];
+    const std::string t = np.token ? i18n::tr(tokenLabel(np.token)) : np.text;
+    const float tw = ImGui::CalcTextSize(t.c_str()).x + (np.token ? 16.0f : 0.0f);
+    if (x + tw > right && x > p0.x + padX) {
+      x = p0.x + padX;
+      y += lineH - 4;
+      ++lines;
+    }
+    placed.push_back({ImVec2(x, y), ImVec2(x + tw, y + chipH), i, t, np.token != 0});
+    x += tw + (np.token ? 4.0f : 0.0f);
+  }
+  const float h = fh + static_cast<float>(lines - 1) * (lineH - 4);
+  const ImVec2 p1(p0.x + w, p0.y + h);
+  dl->AddRectFilled(p0, p1, ImGui::GetColorU32(ImGuiCol_FrameBg), theme::kRadius);
+  dl->AddRect(p0, p1, ImGui::GetColorU32(ImGuiCol_Border), theme::kRadius);
+  int editText = -1, removeAt = -1;
+  for (const Placed& pl : placed) {
+    ImGui::SetCursorScreenPos(pl.a);
+    ImGui::PushID(static_cast<int>(pl.index));
+    ImGui::InvisibleButton("##piece", ImVec2(std::max(4.0f, pl.b.x - pl.a.x), chipH));
+    const bool hov = ImGui::IsItemHovered();
+    if (pl.token) {
+      dl->AddRectFilled(pl.a, pl.b, theme::mix(P.field, P.hot, P.dark ? 0.16f : 0.12f), chipH * 0.5f);
+      dl->AddRect(pl.a, pl.b, theme::withAlpha(P.hot, hov ? 0.9f : 0.55f), chipH * 0.5f);
+      const ImVec2 ts = ImGui::CalcTextSize(pl.text.c_str());
+      dl->AddText(a.fontBold, theme::kFontCaption + 1, ImVec2(pl.a.x + 8, pl.a.y + (chipH - ts.y) * 0.5f), P.hot, pl.text.c_str());
+      if (hov) ui::Tooltip(i18n::tr("Click to remove"));
+      if (ImGui::IsItemClicked()) removeAt = static_cast<int>(pl.index);
+    } else {
+      const ImVec2 ts = ImGui::CalcTextSize(pl.text.c_str());
+      dl->AddText(ImVec2(pl.a.x, pl.a.y + (chipH - ts.y) * 0.5f), P.text, pl.text.c_str());
+      if (hov) ui::Tooltip(i18n::tr("Click to change the text"));
+      if (ImGui::IsItemClicked()) editText = static_cast<int>(pl.index);
+    }
+    ImGui::PopID();
+  }
+  ImGui::SetCursorScreenPos(p0);
+  ImGui::Dummy(ImVec2(w, h));
+  static std::string editBuf;
+  static int editing = -1;
+  static char textBuf[96];
+  if (editText >= 0) {
+    editing = editText;
+    std::snprintf(textBuf, sizeof textBuf, "%s", pieces[static_cast<size_t>(editText)].text.c_str());
+    ImGui::OpenPopup("##edittext");
+  }
+  if (removeAt >= 0) {
+    std::snprintf(buf, cap, "%s", removePiece(buf, static_cast<size_t>(removeAt), tokens).c_str());
+    changed = true;
+  }
+  // The pieces that can be added.
+  ImGui::SetCursorScreenPos(ImVec2(p0.x, ImGui::GetCursorScreenPos().y));
+  bool first = true;
+  for (const char* o = offer; *o; ++o) {
+    bool present = false;
+    for (const NamePiece& np : pieces) present = present || np.token == *o;
+    if (present) continue;
+    if (!first) ImGui::SameLine(0, theme::kS1 + 2);
+    first = false;
+    const std::string l = std::string("+ ") + i18n::tr(tokenLabel(*o));
+    if (ui::TextButton(l.c_str(), false, 0, nullptr)) {
+      std::snprintf(buf, cap, "%s", appendToken(buf, *o, tokens).c_str());
+      changed = true;
+    }
+  }
+  if (!first) ImGui::SameLine(0, theme::kS1 + 2);
+  if (ui::TextButton(i18n::tr("More..."), false, 0, nullptr)) ImGui::OpenPopup("##more");
+  if (ImGui::BeginPopup("##more")) {
+    for (const char* t = tokens; *t; ++t) {
+      bool present = false;
+      for (const NamePiece& np : pieces) present = present || np.token == *t;
+      if (ImGui::MenuItem(i18n::tr(tokenLabel(*t)), nullptr, false, !present)) {
+        std::snprintf(buf, cap, "%s", appendToken(buf, *t, tokens).c_str());
+        changed = true;
+      }
+    }
+    ImGui::Separator();
+    if (ImGui::MenuItem(i18n::tr("Text..."))) {
+      editing = -2;  // new text
+      textBuf[0] = 0;
+      ImGui::CloseCurrentPopup();
+      editText = -2;
+    }
+    if (ImGui::MenuItem(i18n::tr("Edit the whole name as text..."))) {
+      editing = -3;
+      std::snprintf(textBuf, sizeof textBuf, "%s", buf);
+      editText = -3;
+    }
+    ImGui::EndPopup();
+  }
+  if (editText <= -2) ImGui::OpenPopup("##edittext");
+  if (ImGui::BeginPopup("##edittext")) {
+    const char* what = editing == -3 ? i18n::tr("The name as text: %P project, %M marker, %T track, %N number, %D date, %R sample rate")
+                                     : i18n::tr("Text in the name");
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 280);
+    ImGui::TextColored(theme::vec(P.textDim), "%s", what);
+    ImGui::PopTextWrapPos();
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(280);
+    const bool enter = ImGui::InputText("##t", textBuf, sizeof textBuf, ImGuiInputTextFlags_EnterReturnsTrue);
+    if (enter || ui::TextButton(i18n::tr("Done"), false, 80)) {
+      if (editing == -3) {
+        std::snprintf(buf, cap, "%s", textBuf);
+      } else if (editing == -2) {
+        std::snprintf(buf, cap, "%s", appendText(buf, textBuf, tokens).c_str());
+      } else if (editing >= 0) {
+        std::vector<NamePiece> ps = parseNamePattern(buf, tokens);
+        if (static_cast<size_t>(editing) < ps.size()) ps[static_cast<size_t>(editing)].text = textBuf;
+        std::snprintf(buf, cap, "%s", joinNamePattern(ps).c_str());
+      }
+      changed = true;
+      ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+  }
+  ImGui::PopID();
+  return changed;
+}
+
+// The folder on one line (home as ~, the middle shortened, the last folder whole; the whole path
+// in its tooltip). Click it to type a path. Browse... and Next to the project beside it when they
+// fit, else under it.
+void folderRow(App& a, float w) {
+  const auto& P = pal();
+  static bool editing = false;
+  const float bw = ui::TextButtonWidth(i18n::tr("Browse...")) + theme::kS2 + ui::TextButtonWidth(i18n::tr("Next to the project"));
+  const bool beside = w - bw - theme::kS2 >= 200.0f;
+  const float fw = beside ? w - bw - theme::kS2 : w;
+  const float x0 = ImGui::GetCursorPosX();
+  if (editing) {
+    ImGui::SetNextItemWidth(fw);
+    if (ImGui::IsWindowAppearing() || !ImGui::IsAnyItemActive()) ImGui::SetKeyboardFocusHere();
+    ImGui::InputText("##folder", dlg.folder, sizeof dlg.folder);
+    if (ImGui::IsItemDeactivated()) editing = false;
+  } else {
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float fh = ImGui::GetFrameHeight();
+    if (ImGui::InvisibleButton("##folderfield", ImVec2(fw, fh))) editing = true;
+    const bool hov = ImGui::IsItemHovered();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(p, ImVec2(p.x + fw, p.y + fh), ImGui::GetColorU32(hov ? ImGuiCol_FrameBgHovered : ImGuiCol_FrameBg), theme::kRadius);
+    dl->AddRect(p, ImVec2(p.x + fw, p.y + fh), ImGui::GetColorU32(ImGuiCol_Border), theme::kRadius);
+    const float room = fw - 2 * ImGui::GetStyle().FramePadding.x;
+    const std::string shown = exportchoice::shortFolder(dlg.folder, homeDir(), [room](const std::string& t) { return ImGui::CalcTextSize(t.c_str()).x <= room; });
+    const ImVec2 ts = ImGui::CalcTextSize(shown.c_str());
+    dl->PushClipRect(p, ImVec2(p.x + fw - 2, p.y + fh), true);
+    dl->AddText(ImVec2(p.x + ImGui::GetStyle().FramePadding.x, p.y + (fh - ts.y) * 0.5f), P.text, shown.c_str());
+    dl->PopClipRect();
+    if (hov) ui::Tooltip(dlg.folder);
+  }
+  if (beside) ImGui::SameLine(0, theme::kS2);
+  else ImGui::SetCursorPosX(x0);
+  if (ui::TextButton(i18n::tr("Browse..."), false, 0))
+    fileDialog(a, "Render into folder", false, {"/"}, "", [](const std::string& d) { std::snprintf(dlg.folder, sizeof dlg.folder, "%s", d.c_str()); });
+  ImGui::SameLine(0, theme::kS2);
+  if (ui::TextButton(i18n::tr("Next to the project"), false, 0, i18n::tr("Put the files in the project's folder")))
+    std::snprintf(dlg.folder, sizeof dlg.folder, "%s", projectFolder(a).c_str());
+}
+
+// Export marker areas: the arrangement's areas (a tick, the name in full, where it starts, how
+// long it is), All / None and how many are ticked.
+void drawAreaList(App& a) {
+  const auto& P = pal();
+  const Song& song = a.doc.song();
+  const std::vector<MarkerArea> areas = markerAreas(song);
+  devAreaRows.clear();
+  devAreaFrame = ImGui::GetFrameCount();
+  const float w = ImGui::GetContentRegionAvail().x;
+  if (areas.empty()) {
+    const char* say = livelook::active(a) ? i18n::N_("Add markers to the Arrangement: each marker starts an area that runs to the next one.")
+                                          : logicplug::active(a) ? i18n::N_("Add markers: each marker starts an area that runs to the next one.")
+                                                                 : i18n::N_("Add playlist markers: each marker starts an area that runs to the next one.");
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + w);
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(say));
+    ImGui::PopTextWrapPos();
+    return;
+  }
+  const MeterMap mm(song);
+  const float rowH = ImGui::GetFrameHeight();
+  const float startW = std::max(48.0f, ImGui::CalcTextSize(i18n::tr("Start")).x + theme::kS2);
+  const float lenW = std::max(60.0f, ImGui::CalcTextSize(i18n::tr("Length")).x + theme::kS2);
+  constexpr int kRowsShown = 8;  // a long set list scrolls
+  ImGuiTableFlags flags = ImGuiTableFlags_SizingFixedFit | ImGuiTableFlags_PadOuterX | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH;
+  ImVec2 size(w, 0);
+  if (static_cast<int>(areas.size()) > kRowsShown) {
+    flags |= ImGuiTableFlags_ScrollY;
+    size.y = (rowH + 2 * ImGui::GetStyle().CellPadding.y) * static_cast<float>(kRowsShown + 1) + 2;
+  }
+  ImGui::PushStyleColor(ImGuiCol_TableRowBg, theme::vec(theme::withAlpha(P.field, 0.0f)));
+  ImGui::PushStyleColor(ImGuiCol_TableRowBgAlt, theme::vec(theme::withAlpha(P.field, P.dark ? 0.55f : 0.45f)));
+  ImGui::PushStyleColor(ImGuiCol_TableBorderLight, theme::vec(theme::withAlpha(P.line, 0.6f)));
+  if (ImGui::BeginTable("##areas", 4, flags, size)) {
+    ImGui::TableSetupColumn("##on", ImGuiTableColumnFlags_WidthFixed, ui::toggleFields() ? std::max(rowH, GImGuiGridlineToggleW) : rowH);
+    ImGui::TableSetupColumn("##name", ImGuiTableColumnFlags_WidthStretch);
+    ImGui::TableSetupColumn("##start", ImGuiTableColumnFlags_WidthFixed, startW);
+    ImGui::TableSetupColumn("##len", ImGuiTableColumnFlags_WidthFixed, lenW);
+    ImGui::TableSetupScrollFreeze(0, 1);
+    ImGui::TableNextRow(ImGuiTableRowFlags_Headers, rowH);
+    const auto rightText = [](const char* s, ImU32 col) {
+      const float cw = ImGui::GetContentRegionAvail().x, tw = ImGui::CalcTextSize(s).x;
+      if (tw < cw) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + cw - tw);
+      ImGui::TextColored(theme::vec(col), "%s", s);
+    };
+    ImGui::TableSetColumnIndex(1);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Name"));
+    ImGui::TableSetColumnIndex(2);
+    ImGui::AlignTextToFramePadding();
+    rightText(i18n::tr("Start"), P.textDim);
+    ImGui::TableSetColumnIndex(3);
+    ImGui::AlignTextToFramePadding();
+    rightText(i18n::tr("Length"), P.textDim);
+    for (size_t i = 0; i < areas.size(); ++i) {
+      const MarkerArea& m = areas[i];
+      ImGui::PushID(static_cast<int>(i));
+      ImGui::TableNextRow(0, rowH);
+      ImGui::TableSetColumnIndex(0);
+      bool on = areaTicked(m);
+      if (ImGui::Checkbox("##on", &on)) dlg.areaOn[m.start] = on;
+      ImGui::TableSetColumnIndex(1);
+      ImGui::AlignTextToFramePadding();
+      const ImU32 nameCol = !m.hasContent ? P.textFaint : on ? P.text : P.textDim;
+      ImGui::PushTextWrapPos(0.0f);  // the name wraps in its column, never cut off
+      ImGui::TextColored(theme::vec(nameCol), "%s", m.name.c_str());
+      ImGui::PopTextWrapPos();
+      if (!m.hasContent && ImGui::IsItemHovered()) ui::Tooltip(i18n::tr("Nothing plays in this area"));
+      const std::string at = barBeat(mm, m.start), len = minSec(areaSeconds(song, m));
+      ImGui::TableSetColumnIndex(2);
+      ImGui::AlignTextToFramePadding();
+      ImGui::PushFont(livelook::numFont(a), theme::kFontNumber + 1);
+      rightText(at.c_str(), on ? P.text : P.textDim);
+      ImGui::PopFont();
+      ImGui::TableSetColumnIndex(3);
+      ImGui::AlignTextToFramePadding();
+      ImGui::PushFont(livelook::numFont(a), theme::kFontNumber + 1);
+      rightText(len.c_str(), on ? P.text : P.textDim);
+      ImGui::PopFont();
+      ImGui::PopID();
+      devAreaRows.push_back(m.name + " | " + at + " | " + len + " | " + (on ? "on" : "off") + (m.hasContent ? "" : " | empty"));
+    }
+    ImGui::EndTable();
+  }
+  ImGui::PopStyleColor(3);
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+  const float right = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x;
+  if (ui::TextButton(i18n::tr("All"), false, 0, i18n::tr("Tick every area")))
+    for (const MarkerArea& m : areas) dlg.areaOn[m.start] = true;
+  ImGui::SameLine(0, theme::kS2);
+  if (ui::TextButton(i18n::tr("None"), false, 0, i18n::tr("Untick every area")))
+    for (const MarkerArea& m : areas) dlg.areaOn[m.start] = false;
+  double total = 0;
+  int ticked = 0;
+  for (const MarkerArea& m : areas)
+    if (areaTicked(m)) total += areaSeconds(song, m), ++ticked;
+  char b[96];
+  std::snprintf(b, sizeof b, i18n::tr("%d of %d, %s"), ticked, static_cast<int>(areas.size()), minSec(total).c_str());
+  ImGui::SameLine();
+  const float tw = ImGui::CalcTextSize(b).x;
+  ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), right - tw));
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextColored(theme::vec(P.textFaint), "%s", b);
+}
+
+// The scope's own rows: from / to / length, or the selection and its markers, or the pattern.
+void drawScopeDetails(App& a) {
+  const auto& P = pal();
+  const Song& song = a.doc.song();
+  const auto info = [&](const char* label, const std::string& value, const char* note) {
+    rowLabel(label);
+    ImGui::PushFont(livelook::numFont(a), theme::kFontNumber + 1);
+    ImGui::TextUnformatted(value.c_str());
+    ImGui::PopFont();
+    if (note && *note) {
+      ImGui::SameLine(0, theme::kS2);
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(note));
+    }
+  };
+  if (dlg.areaMode) {
+    drawAreaList(a);
+    return;
+  }
+  // K-406: with more than one arrangement, which one renders (or each into its own files). Its
+  // From / To are the chosen arrangement's; for every arrangement only the length in all shows.
+  const int nArr = arrangementCount(song);
+  const bool multiArr = dlg.scope != 1 && nArr > 1;
+  const int curArr = song.arrangements.empty() ? 0 : song.currentArrangement;
+  if (multiArr) {
+    const bool files = dlg.dest == static_cast<int>(Dest::Files);
+    if (dlg.arrangement >= nArr || (dlg.arrangement == -2 && !files)) dlg.arrangement = -1;
+    const std::string curLbl = std::string(i18n::tr("Current")) + " (" + arrangementName(song, curArr) + ")";
+    const std::string allLbl = std::string(i18n::tr("All arrangements")) + " (" + std::to_string(nArr) + ")";
+    const std::string pv = dlg.arrangement == -1 ? curLbl : dlg.arrangement == -2 ? allLbl : arrangementName(song, dlg.arrangement);
+    const float cw = ImGui::GetContentRegionAvail().x - kRowX;
+    rowLabel("Arrangement");
+    if (ui::BeginCombo("##exportarr", pv.c_str(), cw)) {
+      if (ImGui::Selectable(curLbl.c_str(), dlg.arrangement == -1)) dlg.arrangement = -1;
+      ImGui::Separator();
+      for (int i = 0; i < nArr; ++i) {
+        ImGui::PushID(i);
+        if (ImGui::Selectable(arrangementName(song, i).c_str(), dlg.arrangement == i)) dlg.arrangement = i;
+        ImGui::PopID();
+      }
+      if (files) {
+        ImGui::Separator();
+        if (ImGui::Selectable(allLbl.c_str(), dlg.arrangement == -2)) dlg.arrangement = -2;
+      }
+      ImGui::EndCombo();
+    }
+    ui::Tooltip("Choose which arrangement to render, or render every arrangement into separate files");
+  }
+  RenderJob r;
+  std::string why;
+  const bool ok = applyScope(a, r, &why);
+  Song chosen;
+  const Song& scoped = multiArr && dlg.arrangement >= 0 && dlg.arrangement != curArr ? (chosen = songWithArrangement(song, dlg.arrangement)) : song;
+  const MeterMap smm(scoped);
+  Tick A = 0, B = 0;
+  const bool ticks = ok && !(multiArr && dlg.arrangement == -2) && renderScopeTicks(scoped, r, A, B);
+  if (dlg.scope == 2 || dlg.scope == 3) {
+    int kind = dlg.scope == 3 ? 1 : 0;
+    const char* kinds[] = {i18n::N_("Selection"), i18n::N_("Between markers")};
+    rowLabel("Range");
+    const char* tk[] = {logicplug::active(a) ? i18n::tr("Cycle area") : i18n::tr(kinds[0]), i18n::tr(kinds[1])};
+    if (ui::Segmented("rangekind", tk, 2, &kind)) dlg.scope = kind == 1 ? 3 : 2;
+    if (dlg.scope == 3) {
+      std::vector<std::string> names;
+      for (size_t k = 0; k < song.markers.size(); ++k)
+        names.push_back(song.markers[k].name.empty() ? "Marker " + std::to_string(k + 1) : song.markers[k].name);
+      std::vector<const char*> items;
+      for (const auto& n : names) items.push_back(n.c_str());
+      if (items.size() < 2) {
+        rowLabel("");
+        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(livelook::active(a) || logicplug::active(a) ? "Add two markers first" : "Add two playlist markers first"));
+      } else {
+        const float cw = ImGui::GetContentRegionAvail().x - kRowX;
+        rowLabel("From marker");
+        combo("##ma", &dlg.markerA, items.data(), static_cast<int>(items.size()), cw);
+        rowLabel("To marker");
+        combo("##mb", &dlg.markerB, items.data(), static_cast<int>(items.size()), cw);
+      }
+    }
+  }
+  if (dlg.scope == 1) {
+    const Pattern* p = song.pattern(a.curPattern);
+    rowLabel(livelook::active(a) ? "Clip" : logicplug::active(a) ? "Region" : "Pattern");
+    ImGui::TextUnformatted(p ? p->name.c_str() : i18n::tr("(none)"));
+  }
+  if (ticks && dlg.scope != 1) {
+    info("From", barBeat(smm, A), dlg.scope == 0 ? i18n::N_("the start of the song") : nullptr);
+    info("To", barBeat(smm, B), dlg.scope == 0 ? i18n::N_("the end of the last clip") : nullptr);
+  }
+  const double sec = scopeSeconds(a);
+  info("Length", minSec(sec), nullptr);
+  if (!ok && !why.empty()) {
+    rowLabel("");
+    ImGui::PushTextWrapPos(0.0f);
+    std::string say = why;
+    if (!say.empty()) say[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(say[0])));
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(say.c_str()));
+    ImGui::PopTextWrapPos();
+  } else if (livelook::active(a) && dlg.scope == 0 && song.live.areaEnd > 0 && !gSessionExport) {
+    rowLabel("");
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("The Arrangement only, not the Session's clips"));
+  }
+}
+
+// A choice of several on a row: a round box the size of the check boxes, a lit dot when chosen,
+// centred on its text line. True when clicked.
+bool choiceRow(const char* label, bool active) {
+  const auto& P = pal();
+  const float fh = ImGui::GetFrameHeight();
+  const float box = std::min(fh, std::floor(ImGui::GetFontSize() * 1.15f));
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  const float tw = ImGui::CalcTextSize(label).x;
+  const bool clicked = ImGui::InvisibleButton(label, ImVec2(box + ImGui::GetStyle().ItemInnerSpacing.x + tw, fh));
+  const bool hov = ImGui::IsItemHovered();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 c(p.x + box * 0.5f, p.y + fh * 0.5f);
+  const float r = box * 0.5f;
+  dl->AddCircleFilled(c, r, ImGui::GetColorU32(hov ? ImGuiCol_FrameBgHovered : active ? ImGuiCol_CheckboxSelectedBg : ImGuiCol_FrameBg), 24);
+  dl->AddCircle(c, r - 0.5f, ImGui::GetColorU32(ImGuiCol_Border), 24, 1.0f);
+  if (active) dl->AddCircleFilled(c, std::max(2.0f, std::round(r * 0.42f)), P.hot, 16);
+  dl->AddText(ImVec2(p.x + box + ImGui::GetStyle().ItemInnerSpacing.x, p.y + (fh - ImGui::GetFontSize()) * 0.5f), ImGui::GetColorU32(ImGuiCol_Text), label);
+  return clicked;
+}
+
+// How the file ends: cut, ring out (up to N s), a fixed tail of N s, or folded into the start.
+void drawEnding(App& a) {
+  const auto& P = pal();
+  ExportSettings& s = dlg.s;
+  ImGui::PushFont(a.fontBold, theme::kFontBody);
+  // Smooth draws its section headings at the panel's edge, a pad left of the rows: match them.
+  if (logicplug::active(a)) ImGui::SetCursorPosX(ImGui::GetCursorPosX() - 8.0f);
+  ImGui::TextUnformatted(i18n::tr("Ending"));
+  ImGui::PopFont();
+  int tail = static_cast<int>(s.render.tail);
+  const float indent = std::min(ImGui::GetFrameHeight(), std::floor(ImGui::GetFontSize() * 1.15f)) + ImGui::GetStyle().ItemInnerSpacing.x;
+  if (choiceRow(i18n::tr("Cut exactly at the end"), tail == static_cast<int>(TailMode::Cut))) tail = static_cast<int>(TailMode::Cut);
+  if (choiceRow(i18n::tr("Let sounds ring out, up to"), tail == static_cast<int>(TailMode::Leave))) tail = static_cast<int>(TailMode::Leave);
+  ImGui::SameLine(0, theme::kS2);
+  ImGui::SetNextItemWidth(64);
+  float cap = static_cast<float>(s.render.maxTailSeconds);
+  if (ImGui::DragFloat("##ringcap", &cap, 0.1f, 1.0f, 60.0f, "%.0f s", ImGuiSliderFlags_AlwaysClamp)) s.render.maxTailSeconds = cap, tail = static_cast<int>(TailMode::Leave);
+  ui::Tooltip(i18n::tr("The longest the sound may ring on; it stops sooner once it goes quiet"));
+  if (tail == static_cast<int>(TailMode::Leave)) {
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + indent);
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", dlg.areaMode ? i18n::tr("Stops once quiet; never the next area's notes") : i18n::tr("Stops once it goes quiet"));
+  }
+  if (choiceRow(i18n::tr("Add a fixed tail of"), tail == static_cast<int>(TailMode::Fixed))) tail = static_cast<int>(TailMode::Fixed);
+  ImGui::SameLine(0, theme::kS2);
+  ImGui::SetNextItemWidth(64);
+  float fx = static_cast<float>(s.render.fixedTailSeconds);
+  if (ImGui::DragFloat("##fixedtail", &fx, 0.05f, 0.0f, 60.0f, "%.1f s", ImGuiSliderFlags_AlwaysClamp)) s.render.fixedTailSeconds = fx, tail = static_cast<int>(TailMode::Fixed);
+  ui::Tooltip(i18n::tr("Exactly this much after the end, loud or quiet"));
+  if (choiceRow(i18n::tr("Fold the ring-out into the start (loops)"), tail == static_cast<int>(TailMode::Wrap))) tail = static_cast<int>(TailMode::Wrap);
+  ui::Tooltip(i18n::tr("Sound still ringing at the end is mixed into the start, so the file loops without a gap"));
+  s.render.tail = static_cast<TailMode>(tail);
+}
+
+// What the footer says: how many files, how long, which formats.
+std::string summaryLine(App& a, int* filesOut = nullptr) {
+  const ExportSettings& s = dlg.s;
+  const Dest dest = static_cast<Dest>(dlg.dest);
+  double sec = 0;
+  int targets = 1;
+  if (dlg.areaMode) {
+    targets = 0;
+    for (const MarkerArea& m : markerAreas(a.doc.song()))
+      if (areaTicked(m)) sec += areaSeconds(a.doc.song(), m), ++targets;
+  } else {
+    sec = scopeSeconds(a) * std::max(1, s.render.loops);
+  }
+  std::string out;
+  if (dest != Dest::Files) {
+    out = dest == Dest::AudioClip ? (logicplug::active(a) ? i18n::tr("One audio region") : i18n::tr("One audio clip")) : i18n::tr("Opens in the audio editor");
+    out += " \xC2\xB7 " + minSec(sec) + " \xC2\xB7 " + i18n::tr("32-bit float WAV");
+    if (filesOut) *filesOut = 1;
+    return out;
+  }
+  std::vector<std::string> fmts;
+  const char* bits[] = {"16-bit", "24-bit", "32-bit float"};
+  const int nf = static_cast<int>(exportchoice::tickedFormats(dlg.fmt, static_cast<int>(ExportFormat::Count)).size());
+  for (ExportFormat f : exportchoice::tickedFormats(dlg.fmt, static_cast<int>(ExportFormat::Count))) {
+    std::string t = exportFormatName(f);
+    if (f == ExportFormat::Wav) t += std::string(" ") + bits[std::clamp(dlg.wavBits, 0, 2)];
+    else if (f == ExportFormat::Flac) t += std::string(" ") + bits[std::clamp(dlg.flacBits, 0, 1)];
+    else {
+      const int idx = f == ExportFormat::Mp3 ? dlg.mp3Rate : f == ExportFormat::Ogg ? dlg.oggRate : f == ExportFormat::M4a ? dlg.m4aRate : dlg.opusRate;
+      t += " " + std::to_string(kBitrates[std::clamp(idx, 0, 3)]) + " kbps";
+    }
+    fmts.push_back(t);
+  }
+  if (s.midi) fmts.push_back("MIDI");
+  const bool split = s.splitMixer || s.splitPlaylist || s.splitPlaylistGroups;
+  const int files = targets * (nf + (s.midi ? 1 : 0));
+  char b[160];
+  if (split) {
+    std::snprintf(b, sizeof b, dlg.areaMode ? i18n::tr("%d areas, each with its parts") : i18n::tr("A file per part"), targets);
+    out = b;
+  } else {
+    std::snprintf(b, sizeof b, files == 1 ? i18n::tr("%d file") : i18n::tr("%d files"), files);
+    out = b;
+  }
+  if (filesOut) *filesOut = split ? -1 : files;
+  out += " \xC2\xB7 " + minSec(sec) + (dlg.areaMode ? std::string(" ") + i18n::tr("in all") : std::string());
+  for (size_t i = 0; i < fmts.size(); ++i) out += (i ? ", " : " \xC2\xB7 ") + fmts[i];
+  char r[32];
+  std::snprintf(r, sizeof r, " \xC2\xB7 %g kHz", kRates[dlg.rateIdx] / 1000.0);
+  out += r;
+  return out;
+}
+std::string devSummary;  // the footer's line, for dev dumps
+
+// The example under the names: the first file as it will be written, and how many more.
+std::string exampleName(App& a, std::string* more) {
+  const ExportSettings& s = dlg.s;
+  const std::string rate = std::to_string(kRates[dlg.rateIdx]);
+  const std::string base = expandNamePattern(dlg.filePattern, {{'P', projectName(a)}, {'R', rate}, {'S', dlg.scope == 1 ? "Pattern" : dlg.scope == 0 ? "Song" : "Range"}});
+  const ExportFormat f0 = [&] {
+    const auto v = exportchoice::tickedFormats(dlg.fmt, static_cast<int>(ExportFormat::Count));
+    return v.empty() ? ExportFormat::Wav : v[0];
+  }();
+  const std::string ext = exportFormatExt(f0);
+  const bool split = s.splitMixer || s.splitPlaylist || s.splitPlaylistGroups;
+  std::string part;
+  if (split) {
+    std::string track = "Kick";
+    const Song& song = a.doc.song();
+    if (s.splitMixer) {
+      for (const auto& m : song.mixer)
+        if (m.id != song.masterId() && !m.name.empty()) {
+          track = m.name;
+          break;
+        }
+    }
+    part = expandNamePattern(dlg.pattern, {{'P', projectName(a)}, {'N', "01"}, {'T', track}, {'S', "Song"}, {'R', rate}});
+  }
+  if (dlg.areaMode) {
+    std::vector<MarkerArea> ticked;
+    for (const MarkerArea& m : markerAreas(a.doc.song()))
+      if (areaTicked(m)) ticked.push_back(m);
+    if (ticked.empty()) return {};
+    const std::vector<std::string> names = markerAreaFileNames(ticked, dlg.areaPattern, projectName(a), kRates[dlg.rateIdx]);
+    if (more) {
+      char b[96];
+      if (split) std::snprintf(b, sizeof b, "%s", i18n::tr("a folder per area, its mix and its parts"));
+      else if (names.size() > 1) std::snprintf(b, sizeof b, i18n::tr("and %d more, one per area"), static_cast<int>(names.size() - 1));
+      else b[0] = 0;
+      *more = b;
+    }
+    return split ? names[0] + "/" + part + ext : names[0] + ext;
+  }
+  if (more) *more = !split ? std::string() : s.stemsIncludeMaster ? std::string(i18n::tr("and the other parts, plus the full mix")) : std::string(i18n::tr("and the other parts"));
+  return split ? part + ext : base + ext;
 }
 
 void drawRenderDialog(App& a) {
@@ -563,30 +1309,29 @@ void drawRenderDialog(App& a) {
   initDialog(a);
   const auto& P = pal();
   const Song& song = a.doc.song();
-  centerNext(ImVec2(780, 0));
-  // Checkpoint 59 (N58-11): the auto-sized dialog takes a few frames to measure its two columns (the
-  // left one showed clipped for about 3 frames); it stays invisible until its size and its body's hold
-  // still (at most 12 frames), so it appears whole.
+  centerNext(ImVec2(0, 0));
+  // Checkpoint 59 (N58-11): the auto-sized dialog takes a few frames to measure its columns; it stays
+  // invisible until its size and its body's hold still (at most 12 frames), so it appears whole.
   constexpr int kShown = 12;
   static int settle = 0, still = 0, shownFrame = -2;
   static ImVec2 lastSize(0, 0), bodySize(0, 0), lastBody(0, 0);
   if (shownFrame != ImGui::GetFrameCount() - 1) {  // just opened
     settle = 0, still = 0;
     lastSize = bodySize = lastBody = ImVec2(0, 0);
+    colFit = ColumnFit{};
   }
   shownFrame = ImGui::GetFrameCount();
-  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS3));
-  bool vis = ImGui::Begin(i18n::tr("Render###render"), &dlg.open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(theme::kS4, theme::kS4));
+  if (dlg.areaMode) dlg.dest = static_cast<int>(Dest::Files);  // areas go to files only
+  bool vis = ImGui::Begin(i18n::tr("Export audio###render"), &dlg.open, ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
   ui::KeepWindowInViewport();
   {
     const ImVec2 sz = ImGui::GetWindowSize();
-    // shown from the 5th frame once both sizes have held for 2 frames, and from the 13th in any case
     const bool same = sz.x == lastSize.x && sz.y == lastSize.y && bodySize.x == lastBody.x && bodySize.y == lastBody.y;
     still = same && sz.x > 0 && bodySize.x > 0 ? still + 1 : 0;
     settle = settle >= 4 && still >= 2 ? kShown : settle + 1;
     lastSize = sz, lastBody = bodySize;
-    // ImGui's own measuring frames (the window and its body are laid out, not drawn), while not settled
-    if (ImGuiWindow* w = ImGui::GetCurrentWindow(); settle < kShown && w->HiddenFramesCannotSkipItems < 2) w->HiddenFramesCannotSkipItems = 2;  // (counted down before it is read)
+    if (ImGuiWindow* w = ImGui::GetCurrentWindow(); settle < kShown && w->HiddenFramesCannotSkipItems < 2) w->HiddenFramesCannotSkipItems = 2;
   }
   ImGui::PopStyleVar();
   if (!vis) {
@@ -594,259 +1339,365 @@ void drawRenderDialog(App& a) {
     return;
   }
   ExportSettings& s = dlg.s;
-  const float colW = 360;
-  ui::SetFormColumn(logicplug::active(a) ? 132.0f : 0.0f, false);  // K-112b: the Tracks layout's labels end at the controls
   const bool files = dlg.dest == static_cast<int>(Dest::Files);
-  // J-54: on a short screen the two columns scroll; the footer stays visible.
+  ui::SetFormColumn(logicplug::active(a) ? kRowX : 0.0f, false);  // Smooth: labels end at the controls, groups under bold headings
+  ui::SetSectionBoldCaptions(true);
   ui::BeginDialogBody("##renderbody");
   bodySize = ImGui::GetWindowSize();
-  if (ImGui::GetScrollX() != 0.0f) ImGui::SetScrollX(0.0f);  // N58-11: the body only scrolls down (it could open scrolled right)
-  // ---- left column
-  ImGui::BeginGroup();
-  ui::BeginSection("EXPORT TYPE", colW);
+  // Three columns when the screen has room; two (format and quality under split and files) when it
+  // is medium; one when narrow. Only the height scrolls, so the footer's buttons always show.
+  const float room = std::min(ui::DialogArea().x, ui::DialogFitSize().x) - 2 * theme::kS4 - ImGui::GetStyle().ScrollbarSize;
+  const int nc = room >= 3 * kColW + 2 * theme::kS4 ? 3 : room >= 2 * kColW + theme::kS4 ? 2 : 1;
+  const float colW = nc == 1 ? std::clamp(std::floor(room), kColW - 60, kColW + 160) : kColW;
+  const float fullW = nc * colW + static_cast<float>(nc - 1) * theme::kS4;
+  if (nc != colFit.cols) colFit = ColumnFit{}, colFit.cols = nc;
+  const float bodyX = ImGui::GetCursorScreenPos().x;  // the footer's line starts here too
+
+  // ---- What to export
   {
-    formLabel("Render");
-    // R05-11: in the Tracks layout the time selection is the cycle area, and its range is shown.
-    const bool tracksLook = logicplug::active(a);
-    // Checkpoint 58 (N57-09): Clips renders its Arrangement (its word, as the rest of the layout).
-    const char* scopes[] = {livelook::active(a) ? "Arrangement" : "Song", "Pattern", tracksLook ? "Cycle area" : "Time selection", "Marker range"};
-    combo("##scope", &dlg.scope, scopes, 4, colW - 148);
-    if (dlg.scope == 2 && tracksLook) {
-      const PlaylistState& pst = a.playlist;
-      formLabel("Start / end");
-      if (pst.selEnd > pst.selStart) {
-        const MeterMap mm(song);
-        const auto at = [&](Tick t) {
-          const MeterMap::Bbt q = mm.toBbt(t);
-          return std::to_string(q.bar + 1) + "." + std::to_string(q.beat + 1);
-        };
-        ImGui::Text("%s  -  %s", at(pst.selStart).c_str(), at(pst.selEnd).c_str());
-      } else {
-        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Turn Cycle on to render its area"));
-      }
-    }
-    if (dlg.scope == 3) {
-      std::vector<std::string> names;
-      for (size_t k = 0; k < song.markers.size(); ++k)
-        names.push_back(song.markers[k].name.empty() ? "Marker " + std::to_string(k + 1) : song.markers[k].name);
-      std::vector<const char*> items;
-      for (const auto& n : names) items.push_back(n.c_str());
-      if (items.empty()) {
-        formLabel("Markers");
-        ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(livelook::active(a) || tracksLook ? "Add two markers first" : "Add two playlist markers first"));
-      } else {
-        formLabel("From marker");
-        combo("##ma", &dlg.markerA, items.data(), static_cast<int>(items.size()), colW - 148);
-        formLabel("To marker");
-        combo("##mb", &dlg.markerB, items.data(), static_cast<int>(items.size()), colW - 148);
-      }
-    }
-    if (dlg.scope == 1) {
-      const Pattern* p = song.pattern(a.curPattern);
-      formLabel("Pattern");
-      ImGui::TextUnformatted(p ? p->name.c_str() : "(none)");
-    }
-    if (dlg.scope == 2 && a.playlist.selEnd <= a.playlist.selStart) {
-      formLabel("");
-      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr(livelook::active(a) ? "Select a time range in the Arrangement's ruler" : "Select a time range in the playlist ruler"));
-    }
-    formLabel("Tail");
-    int tail = static_cast<int>(s.render.tail);
-    const char* tails[] = {"Cut remainder", "Leave remainder", "Wrap remainder"};
-    if (combo("##tail", &tail, tails, 3, colW - 148)) s.render.tail = static_cast<TailMode>(tail);
-    ui::Tooltip("What happens to sound still ringing at the end: cut it, let it ring out, or mix it into the start (seamless loops)");
-    formLabel("Loops");
-    ImGui::SetNextItemWidth(90);
-    // K-112c (round 33): in Clips a plain number field (drag or type), as the refs' dialogs (134, 135); the
-    // toolkit's tiny step buttons sat apart from it with uneven gaps.
-    if (livelook::active(a)) ImGui::DragInt("##loops", &s.render.loops, 0.1f, 1, 64);
-    else ImGui::InputInt("##loops", &s.render.loops, 1, 1);
-    s.render.loops = std::clamp(s.render.loops, 1, 64);
-    const double sec = scopeSeconds(a) * s.render.loops;
-    formLabel("Length");
-    ImGui::PushFont(livelook::numFont(a), theme::kFontNumber + 1);  // K-112c: sans in Live
-    ImGui::Text("%d:%05.2f", static_cast<int>(sec / 60), std::fmod(sec, 60.0));
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float labelW = 96.0f;
+    const bool labelAbove = nc == 1;   // narrow: the label sits over the cards
+    const int perRow = nc == 3 ? 4 : 2;  // the cards wrap to two rows of two below three columns
+    ImGui::PushTextWrapPos(labelAbove ? 0.0f : ImGui::GetCursorPosX() + labelW - theme::kS1);
+    ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + 4));
+    ImGui::PushFont(a.fontBold, theme::kFontBody);
+    ImGui::TextUnformatted(i18n::tr("What to export"));
     ImGui::PopFont();
-    if (livelook::active(a) && dlg.scope == 0 && sec <= 0.0) {  // checkpoint 58 (N57-09): say why it is 0:00
-      ImGui::SameLine(0, 10);  // on the Length line, inside the column
-      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("the Arrangement is empty"));
-    } else if (livelook::active(a) && dlg.scope == 0 && song.live.areaEnd > 0 && !gSessionExport) {
-      // K-314 (A-08): what it renders, as the other layouts' Song render takes the live area too.
-      formLabel("");
-      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("The Arrangement only, not the Session's clips"));
+    ImGui::PopTextWrapPos();
+    const float cardX = labelAbove ? p.x : p.x + labelW + theme::kS3;
+    if (labelAbove) ImGui::SetCursorScreenPos(ImVec2(cardX, ImGui::GetCursorScreenPos().y + theme::kS1));
+    else ImGui::SetCursorScreenPos(ImVec2(cardX, p.y));
+    const float cw = std::floor((fullW - (cardX - p.x) - static_cast<float>(perRow - 1) * theme::kS2) / static_cast<float>(perRow));
+    const MeterMap mm(song);
+    // Each card says what it holds.
+    std::string songSub, selSub, areaSub, patSub;
+    {
+      RenderJob r;
+      r.scope = RenderScope::Song;
+      r.arrangementOnly = livelook::active(a);
+      Tick A = 0, B = 0;
+      if (song.lengthTicks() > 0 && renderScopeTicks(song, r, A, B))
+        songSub = barBeat(mm, A) + " " + i18n::tr("to") + " " + barBeat(mm, B) + " \xC2\xB7 " + minSec(scopeSecondsOf(a, r));
+      else
+        songSub = i18n::tr("Nothing to play yet");
+      const PlaylistState& pst = a.playlist;
+      selSub = pst.selEnd > pst.selStart ? barBeat(mm, pst.selStart) + " " + i18n::tr("to") + " " + barBeat(mm, pst.selEnd)
+                                         : (logicplug::active(a) ? i18n::tr("Turn Cycle on first") : i18n::tr("None selected yet"));
+      if (dlg.scope == 3) selSub = i18n::tr("Between two markers");
+      const std::vector<MarkerArea> areas = markerAreas(song);
+      char b[64];
+      std::snprintf(b, sizeof b, areas.size() == 1 ? i18n::tr("%d area") : i18n::tr("%d areas"), static_cast<int>(areas.size()));
+      double total = 0;
+      for (const MarkerArea& m : areas) total += areaSeconds(song, m);
+      areaSub = areas.empty() ? std::string(i18n::tr("No markers yet")) : std::string(b) + " \xC2\xB7 " + minSec(total);
+      const Pattern* pt = song.pattern(a.curPattern);
+      patSub = pt ? pt->name : std::string(i18n::tr("None selected"));
     }
-    if (!song.mixer.empty() && song.mixer[0].muted) {
-      ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("The master track is muted: the render will be silent"));
+    const int cur = dlg.areaMode ? 2 : dlg.scope == 0 ? 0 : dlg.scope == 1 ? 3 : 1;
+    const char* titles[] = {songWord(a), selectionWord(a), i18n::N_("Marker areas"), patternWord(a)};
+    const std::string subs[] = {songSub, selSub, areaSub, patSub};
+    for (int k = 0; k < 4; ++k) {
+      if (k % perRow) ImGui::SameLine(0, theme::kS2);
+      else if (k) ImGui::SetCursorScreenPos(ImVec2(cardX, ImGui::GetCursorScreenPos().y - ImGui::GetStyle().ItemSpacing.y + theme::kS2));
+      ImGui::PushID(k);
+      if (scopeCard(a, "##card", k, titles[k], subs[k], cur == k, cw)) {
+        dlg.areaMode = k == 2;
+        if (k == 0) dlg.scope = 0;
+        if (k == 1) dlg.scope = dlg.scope == 3 ? 3 : 2;
+        if (k == 3) dlg.scope = 1;
+        if (k == 2) dlg.dest = static_cast<int>(Dest::Files);
+      }
+      ImGui::PopID();
     }
   }
-  ui::EndSection();
-  ui::BeginSection("DESTINATION", colW);
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+
+  float colTop = ImGui::GetCursorScreenPos().y;
+  float colH[3] = {0, 0, 0};
+  // ---- left: what, its ending, where it goes
+  ImGui::BeginGroup();
+  ui::BeginSection(dlg.areaMode ? "Marker areas" : dlg.scope == 1 ? patternWord(a) : dlg.scope == 0 ? songWord(a) : selectionWord(a), colW);
+  drawScopeDetails(a);
+  ImGui::Dummy(ImVec2(0, theme::kS1));
+  drawEnding(a);
+  rowLabel("Play it");
+  ImGui::SetNextItemWidth(64);
+  if (livelook::active(a)) ImGui::DragInt("##loops", &s.render.loops, 0.1f, 1, 64);
+  else ImGui::InputInt("##loops", &s.render.loops, 0, 0);
+  s.render.loops = std::clamp(s.render.loops, 1, 64);
+  ImGui::SameLine(0, theme::kS2);
+  ImGui::TextColored(theme::vec(P.textFaint), "%s", s.render.loops == 1 ? (dlg.areaMode ? i18n::tr("time (each area)") : i18n::tr("time"))
+                                                                         : (dlg.areaMode ? i18n::tr("times (each area)") : i18n::tr("times")));
   {
-    formLabel("Render to", livelook::active(a) ? 132.0f : 110.0f);  // K-112c (round 32): on the value column in Clips
-    const char* dests[] = {"Files", logicplug::active(a) ? "Audio region" : "Audio clip", logicplug::active(a) ? "Audio editor" : "Loupe"};  // (R06-13)  // R04-13: the Tracks layout's word
-    // Checkpoint 58 (N57-09): in Clips the three segments end with the fields above (76 ran 20 px past them).
-    ui::Segmented("dest", dests, 3, &dlg.dest, livelook::active(a) ? 69 : 76);
-    if (!files) {
-      ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("32-bit float WAV in %s"), theme::fitText(renderedFolder(a).c_str(), colW - 140));
-      if (dlg.dest == 1 && dlg.scope == 1) ImGui::Checkbox(i18n::tr("Replace the pattern's clips (render and replace)"), &dlg.replacePattern);
+    // Marker areas go to files only: the row stays (dimmed, Files lit) so the column keeps its shape.
+    rowLabel("Render to");
+    const char* dests[] = {i18n::tr("Files"), logicplug::active(a) ? i18n::tr("Audio region") : i18n::tr("Audio clip"), logicplug::active(a) ? i18n::tr("Audio editor") : "Loupe"};
+    ImGui::BeginDisabled(dlg.areaMode);
+    ui::Segmented("dest", dests, 3, &dlg.dest);
+    ImGui::EndDisabled();
+    if (dlg.areaMode && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s", i18n::tr("Marker areas are written as files"));
+    if (!dlg.areaMode && dlg.dest == 1 && dlg.scope == 1) {
+      rowLabel("");
+      ImGui::Checkbox(i18n::tr("Replace the pattern's clips"), &dlg.replacePattern);
     }
   }
+  if (!song.mixer.empty() && song.mixer[0].muted) {
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("The master track is muted: the render will be silent"));
+    ImGui::PopTextWrapPos();
+  }
+  ImGui::Dummy(ImVec2(0, theme::kS1));  // room above the panel's soft bottom edge
+  columnPad(0);
   ui::EndSection();
-  if (files) {
-    ui::BeginSection("FILE NAME AND LOCATION", colW);
-    if (!dlg.folder[0]) std::snprintf(dlg.folder, sizeof dlg.folder, "%s", projectFolder(a).c_str());
-    if (!dlg.name[0]) std::snprintf(dlg.name, sizeof dlg.name, "%s", projectName(a).c_str());
-    formLabel("Folder");
-    ImGui::SetNextItemWidth(colW - 148 - 70);
-    ImGui::InputText("##folder", dlg.folder, sizeof dlg.folder);
-    ImGui::SameLine(0, theme::kS1);
-    if (ui::TextButton("Browse", false, 66))
-      fileDialog(a, "Render into folder", false, {"/"}, "", [](const std::string& d) { std::snprintf(dlg.folder, sizeof dlg.folder, "%s", d.c_str()); });
-    formLabel("");
-    if (ui::TextButton("With project", false, 110, "Put the files next to the project file"))
-      std::snprintf(dlg.folder, sizeof dlg.folder, "%s", projectFolder(a).c_str());
-    formLabel("File name");
-    ImGui::SetNextItemWidth(colW - 148);
-    ImGui::InputText("##name", dlg.name, sizeof dlg.name);
-    if (s.splitMixer || s.splitPlaylist || s.splitPlaylistGroups) {
-      formLabel("Part names");
-      ImGui::SetNextItemWidth(colW - 148);
-      ImGui::InputText("##pattern", dlg.pattern, sizeof dlg.pattern);
-      ui::Tooltip("%P project, %T track name, %N track number, %S scope, %R sample rate, %D date");
-      std::map<char, std::string> t = {{'P', dlg.name}, {'N', "03"}, {'T', "Snare"}, {'S', "Song"}, {'R', std::to_string(kRates[dlg.rateIdx])}};
-      formLabel("");
-      ImGui::TextColored(theme::vec(P.textFaint), "%s", theme::fitText(expandNamePattern(dlg.pattern, t).c_str(), colW - 148));
-      if (int(s.splitMixer) + int(s.splitPlaylist) + int(s.splitPlaylistGroups) > 1) {  // K-344
-        formLabel("");
-        ImGui::TextColored(theme::vec(P.textFaint), "%s", theme::fitText(i18n::tr("Each kind of split goes in its own folder"), colW - 148));
+  ImGui::EndGroup();
+  colH[0] = ImGui::GetItemRectSize().y;
+
+  // ---- middle: split, files and names
+  if (nc > 1) ImGui::SameLine(0, theme::kS4);
+  ImGui::BeginGroup();
+  const bool tracksWords = logicplug::active(a) || livelook::active(a);
+  ui::BeginSection("Split", colW);
+  {
+    ImGui::BeginDisabled(!files);
+    int sep = s.splitMixer || s.splitPlaylist || s.splitPlaylistGroups ? 1 : 0;
+    const char* modes[] = {i18n::tr("One file, the full mix"), i18n::tr("Separate files")};
+    if (ui::Segmented("splitmode", modes, 2, &sep)) {
+      if (sep == 0) {
+        dlg.lastSplit[0] = s.splitMixer, dlg.lastSplit[1] = s.splitPlaylist, dlg.lastSplit[2] = s.splitPlaylistGroups;
+        s.splitMixer = s.splitPlaylist = s.splitPlaylistGroups = false;
+      } else {
+        s.splitMixer = dlg.lastSplit[0], s.splitPlaylist = dlg.lastSplit[1], s.splitPlaylistGroups = dlg.lastSplit[2];
+        if (!s.splitMixer && !s.splitPlaylist && !s.splitPlaylistGroups) s.splitMixer = true;
       }
     }
-    ui::EndSection();
-    ui::BeginSection("OUTPUT FORMAT", colW);
-    {
-      const char* wb[] = {"16Bit int", "24Bit int", "32Bit float"};
-      const char* fb[] = {"16Bit int", "24Bit int"};
-      const char* br[] = {"128 kbps", "192 kbps", "256 kbps", "320 kbps"};
-      auto row = [&](int k, const char* label, const char* const* items, int n, int* idx) {
-        ImGui::Checkbox(label, &dlg.fmt[k]);
-        ImGui::SameLine(132);
-        ImGui::BeginDisabled(!dlg.fmt[k]);
-        combo((std::string("##f") + label).c_str(), idx, items, n, 120);
-        ImGui::EndDisabled();
-        if (exportFormatExternal(static_cast<ExportFormat>(k))) {
-          ImGui::SameLine();
-          const EncoderLook& enc = encoderLook(a, static_cast<ExportFormat>(k));
-          const bool have = !enc.name.empty();
-          ImGui::TextColored(theme::vec(have ? P.textFaint : P.danger), "%s", have ? ("via " + enc.name).c_str() : "no encoder");
-          if (ImGui::IsItemHovered()) ui::Tooltip(enc.status.c_str());
-        }
-      };
-      row(0, "WAV", wb, 3, &dlg.wavBits);
-      row(1, "FLAC", fb, 2, &dlg.flacBits);
-      row(2, "MP3", br, 4, &dlg.mp3Rate);
-      row(3, "Ogg Vorbis", br, 4, &dlg.oggRate);
-      row(4, "AAC (.m4a)", br, 4, &dlg.m4aRate);
-      row(5, "Opus", br, 4, &dlg.opusRate);  // K-109
-      ImGui::Checkbox(i18n::tr("MIDI"), &s.midi);
-      formLabel("Channels");
-      int cm = static_cast<int>(s.channels);
-      const char* cms[] = {"Stereo", "Mono (merged)", "Mono (left only)", "Mono (right only)"};
-      if (combo("##chmode", &cm, cms, 4, colW - 148)) s.channels = static_cast<ChannelMode>(cm);
+    ImGui::BeginDisabled(sep == 0);
+    ui::ToggleRow(logicplug::active(a) ? i18n::tr("A file per channel strip (stems)") : i18n::tr("A file per mixer track (stems)"), &s.splitMixer);
+    if (s.splitMixer && sep) {
+      ImGui::Indent(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x);
+      ui::ToggleRow(i18n::tr("Through master effects"), &s.stemsMasterFx);
+      ui::Tooltip(i18n::tr("Each part goes through the master track's effects, as it sounds in the mix"));
+      ui::ToggleRow(i18n::tr("Plus the full mix"), &s.stemsIncludeMaster);
+      ImGui::Unindent(ImGui::GetFrameHeight() + ImGui::GetStyle().ItemInnerSpacing.x);
     }
-    ui::EndSection();
-  }
-  ImGui::EndGroup();
-  ImGui::SameLine(0, theme::kS3);
-  // ---- right column
-  ImGui::BeginGroup();
-  ui::BeginSection("QUALITY", colW);
-  {
-    formLabel("Sample rate");
-    const char* rates[] = {"22050 Hz", "32000 Hz", "44100 Hz", "48000 Hz", "88200 Hz", "96000 Hz", "192000 Hz"};
-    combo("##rate", &dlg.rateIdx, rates, 7, colW - 148);
-    formLabel("Resampling");
-    int q = static_cast<int>(s.render.interp);
-    const char* qs[] = {"Linear (as played)", "Hermite (4-point)", "Sinc 16-point", "Sinc 32-point", "Sinc 64-point", "Sinc 128-point", "Sinc 256-point", "Sinc 512-point"};
-    if (combo("##interp", &q, qs, 8, colW - 148)) s.render.interp = static_cast<RenderInterp>(q);
-    ui::Tooltip("Interpolation of sampler channels while rendering");
-    formLabel("Oversampling");
-    int os = s.render.oversample >= 4 ? 2 : s.render.oversample >= 2 ? 1 : 0;
-    const char* oss[] = {"Off", "2x", "4x"};
-    if (ui::Segmented("os", oss, 3, &os)) s.render.oversample = os == 2 ? 4 : os == 1 ? 2 : 1;
-    ui::Tooltip("Renders at a multiple of the sample rate and filters down (less aliasing from synths and distortion)");
-    formLabel("Dither");
-    int d = static_cast<int>(s.dither);
-    const char* ds[] = {"Off", "Triangular (TPDF)", "Noise-shaped"};
-    if (combo("##dither", &d, ds, 3, colW - 148)) s.dither = static_cast<DitherMode>(d);
-    ui::Tooltip("Applied when writing 16 / 24-bit files");
-    bool hq = true;
-    ImGui::BeginDisabled();
-    ui::ToggleRow(i18n::tr("HQ for all plugins (offline quality)"), &hq);
+    ui::ToggleRow(tracksWords ? i18n::tr("A file per track") : i18n::tr("A file per playlist track"), &s.splitPlaylist);
+    ui::ToggleRow(tracksWords ? i18n::tr("A file per track group") : i18n::tr("A file per playlist track group"), &s.splitPlaylistGroups);
     ImGui::EndDisabled();
-    bool noPoly = !s.render.polyphonyLimits;
-    if (ui::ToggleRow(i18n::tr("Disable maximum polyphony"), &noPoly)) s.render.polyphonyLimits = !noPoly;
+    if (sep && !s.splitMixer && !s.splitPlaylist && !s.splitPlaylistGroups) s.splitMixer = true;  // Separate files needs one kind
+    ImGui::EndDisabled();
+    if (!files) {
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Splitting writes files only"));
+    }
   }
   ui::EndSection();
-  ui::BeginSection("MISCELLANEOUS", colW);
+  ui::BeginSection("Files and names", colW);
+  if (!dlg.folder[0]) std::snprintf(dlg.folder, sizeof dlg.folder, "%s", projectFolder(a).c_str());
+  if (files) {
+    const float fw = ImGui::GetContentRegionAvail().x - kRowX;
+    rowLabel("Folder");
+    ImGui::BeginGroup();
+    folderRow(a, fw);
+    ImGui::EndGroup();
+    rowLabel(dlg.areaMode ? "File names" : "File name");
+    ImGui::BeginGroup();
+    if (dlg.areaMode) namePieces(a, "areaname", dlg.areaPattern, sizeof dlg.areaPattern, exportchoice::kAreaTokens, "MN", fw);
+    else namePieces(a, "filename", dlg.filePattern, sizeof dlg.filePattern, exportchoice::kFileTokens, "D", fw);
+    ImGui::EndGroup();
+    if (s.splitMixer || s.splitPlaylist || s.splitPlaylistGroups) {
+      rowLabel("Each part");
+      ImGui::BeginGroup();
+      namePieces(a, "partname", dlg.pattern, sizeof dlg.pattern, exportchoice::kPartTokens, "NT", fw);
+      ImGui::EndGroup();
+    }
+    std::string more;
+    const std::string ex = exampleName(a, &more);
+    if (!ex.empty()) {
+      rowLabel("Example");
+      ImGui::BeginGroup();
+      const ImVec2 p = ImGui::GetCursorScreenPos();
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      dl->ChannelsSplit(2);
+      dl->ChannelsSetCurrent(1);
+      ImGui::SetCursorScreenPos(ImVec2(p.x + theme::kS2, p.y + 5));
+      ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + fw - 2 * theme::kS2);
+      ImGui::PushFont(a.fontMono, theme::kFontNumber + 1);
+      ImGui::TextUnformatted(ex.c_str());
+      if (!more.empty()) ImGui::TextColored(theme::vec(P.textDim), "%s", more.c_str());
+      ImGui::PopFont();
+      ImGui::PopTextWrapPos();
+      const float y1 = ImGui::GetItemRectMax().y + 5;
+      dl->ChannelsSetCurrent(0);
+      dl->AddRectFilled(p, ImVec2(p.x + fw, y1), ImGui::GetColorU32(ImGuiCol_FrameBg), theme::kRadius);
+      dl->ChannelsMerge();
+      ImGui::SetCursorScreenPos(ImVec2(p.x, y1));
+      ImGui::Dummy(ImVec2(fw, 0));
+      ImGui::EndGroup();
+    }
+  } else {
+    ImGui::PushTextWrapPos(0.0f);
+    ImGui::TextColored(theme::vec(P.textFaint), i18n::tr("A 32-bit float WAV in %s"), renderedFolder(a).c_str());
+    ImGui::PopTextWrapPos();
+  }
+  if (nc == 3) ImGui::Dummy(ImVec2(0, theme::kS1)), columnPad(1);
+  ui::EndSection();
+  if (nc != 2) {  // two columns: format and quality carry on under files and names
+    ImGui::EndGroup();
+    colH[1] = ImGui::GetItemRectSize().y;
+    if (nc == 3) ImGui::SameLine(0, theme::kS4);
+    ImGui::BeginGroup();
+  }
+
+  // ---- right: format, quality and processing
+  ui::BeginSection("Format", colW);
   {
     ImGui::BeginDisabled(!files);
-    // R06-13: the Tracks layout's words (it has channel strips, not mixer inserts)
-    ui::ToggleRow(i18n::tr(logicplug::active(a) ? i18n::N_("A file per channel strip") : i18n::N_("Split mixer tracks")), &s.splitMixer);
-    ui::Tooltip(logicplug::active(a) ? "One file per channel strip that carries sound (stems)" : "One file per mixer insert that carries sound (stems)");
-    if (s.splitMixer) {
-      ImGui::Indent(18);
-      ui::ToggleRow(i18n::tr("Stems through the master effects"), &s.stemsMasterFx);
-      ui::ToggleRow(i18n::tr("Also render the full mix"), &s.stemsIncludeMaster);
-      ImGui::Unindent(18);
+    const char* names[] = {"WAV", "FLAC", "MP3", "Ogg", "AAC", "Opus"};
+    const char* hints[] = {i18n::N_("Uncompressed"), i18n::N_("Lossless, smaller than WAV"), i18n::N_("Compressed (needs an encoder program)"),
+                           i18n::N_("Compressed (needs an encoder program)"), i18n::N_("Compressed, .m4a (needs an encoder program)"),
+                           i18n::N_("Compressed (needs an encoder program)")};
+    for (int k = 0; k < 6; ++k) {
+      if (k) ImGui::SameLine(0, theme::kS1 + 2);
+      ImGui::PushID(k);
+      if (ui::TextButton(names[k], dlg.fmt[k], 0, i18n::tr(hints[k]))) dlg.fmt[k] = !dlg.fmt[k];
+      ImGui::PopID();
     }
-    const bool tracksWords = logicplug::active(a) || livelook::active(a);  // R04-13: the Tracks layout names them tracks and regions (58: Clips too)
-    ui::ToggleRow(tracksWords ? i18n::tr("Split tracks") : i18n::tr("Split playlist tracks"), &s.splitPlaylist);
-    ui::Tooltip(livelook::active(a) ? "One file per track that holds clips" : tracksWords ? "One file per track that holds regions" : "One file per playlist track that holds clips");
-    ui::ToggleRow(tracksWords ? i18n::tr("Split track groups") : i18n::tr("Split playlist track groups"), &s.splitPlaylistGroups);  // J-31
-    ui::Tooltip(tracksWords ? "One file per track group (a group track and the tracks it holds)"
-                            : "One file per playlist track group (a group track and the tracks it holds)");
+    const char* wb[] = {"16-bit", "24-bit", "32-bit float"};
+    const char* br[] = {"128 kbps", "192 kbps", "256 kbps", "320 kbps"};
+    for (int k = 0; k < 6; ++k) {
+      if (!dlg.fmt[k]) continue;
+      ImGui::PushID(100 + k);
+      rowLabel(names[k]);
+      const bool ext = exportFormatExternal(static_cast<ExportFormat>(k));
+      std::string note;
+      bool have = true;
+      if (ext) {
+        const EncoderLook& enc = encoderLook(a, static_cast<ExportFormat>(k));
+        have = !enc.name.empty();
+        note = have ? std::string(i18n::tr("via")) + " " + enc.name : std::string(i18n::tr("no encoder"));
+      }
+      const float nw = note.empty() ? 0.0f : ImGui::CalcTextSize(note.c_str()).x + theme::kS2;
+      const float cw = ImGui::GetContentRegionAvail().x - nw;
+      int* idx = k == 0 ? &dlg.wavBits : k == 1 ? &dlg.flacBits : k == 2 ? &dlg.mp3Rate : k == 3 ? &dlg.oggRate : k == 4 ? &dlg.m4aRate : &dlg.opusRate;
+      combo("##fmt", idx, k <= 1 ? wb : br, k == 0 ? 3 : k == 1 ? 2 : 4, cw);
+      if (!note.empty()) {
+        ImGui::SameLine(0, theme::kS2);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(theme::vec(have ? P.textFaint : P.danger), "%s", note.c_str());
+        if (ImGui::IsItemHovered()) ui::Tooltip(encoderLook(a, static_cast<ExportFormat>(k)).status.c_str());
+      }
+      ImGui::PopID();
+    }
+    rowLabel("In WAV files");
+    ImGui::BeginDisabled(!dlg.fmt[0]);
+    ImGui::Checkbox(i18n::tr("Tempo"), &s.tempoInfo);
+    ui::Tooltip(i18n::tr("The tempo and beats, so samplers and other programs play it in time"));
+    ImGui::SameLine(0, theme::kS4);
+    ImGui::Checkbox(i18n::tr("Markers"), &s.markers);
+    ui::Tooltip(tracksWords ? i18n::tr("The markers as cue points") : i18n::tr("The playlist markers as cue points"));
     ImGui::EndDisabled();
-    ui::ToggleRow(i18n::tr("Enable master effects"), &s.render.masterEffects);
-    ui::ToggleRow(i18n::tr("Enable insert effects"), &s.render.insertEffects);
-    ImGui::BeginDisabled(!files);
-    ui::ToggleRow(i18n::tr("Save tempo information (WAV)"), &s.tempoInfo);
-    ui::ToggleRow(i18n::tr(tracksWords ? i18n::N_("Markers as WAV cue points") : i18n::N_("Playlist markers as WAV cue points")), &s.markers);  // R06-13
+    rowLabel("Channels");
+    int cm = static_cast<int>(s.channels);
+    const char* cms[] = {i18n::N_("Stereo"), i18n::N_("Mono (both sides mixed)"), i18n::N_("Mono (left only)"), i18n::N_("Mono (right only)")};
+    if (combo("##chmode", &cm, cms, 4, ImGui::GetContentRegionAvail().x)) s.channels = static_cast<ChannelMode>(cm);
+    rowLabel("");
+    ImGui::Checkbox(i18n::tr("Also a MIDI file of the notes"), &s.midi);
     ImGui::EndDisabled();
+  }
+  ui::EndSection();
+  ui::BeginSection("Quality and processing", colW);
+  {
+    const float cw = ImGui::GetContentRegionAvail().x - kRowX;
+    rowLabel("Sample rate");
+    const char* rates[] = {"22.05 kHz", "32 kHz", "44.1 kHz", "48 kHz", "88.2 kHz", "96 kHz", "192 kHz"};
+    combo("##rate", &dlg.rateIdx, rates, 7, cw);
+    rowLabel("Dither");
+    int d = static_cast<int>(s.dither);
+    const char* ds[] = {i18n::N_("Off"), i18n::N_("Triangular"), i18n::N_("Noise-shaped")};
+    if (combo("##dither", &d, ds, 3, cw)) s.dither = static_cast<DitherMode>(d);
+    ui::Tooltip(i18n::tr("Applied when writing 16-bit and 24-bit files"));
+    rowLabel("Resampling");
+    int q = static_cast<int>(s.render.interp);
+    const char* qs[] = {i18n::N_("Linear, as played"), i18n::N_("Hermite (4-point)"), "Sinc 16-point", "Sinc 32-point", "Sinc 64-point", "Sinc 128-point", "Sinc 256-point", "Sinc 512-point"};
+    if (combo("##interp", &q, qs, 8, cw)) s.render.interp = static_cast<RenderInterp>(q);
+    ui::Tooltip(i18n::tr("How sampler channels play their samples at other pitches"));
+    rowLabel("Oversample");
+    int os = s.render.oversample >= 4 ? 2 : s.render.oversample >= 2 ? 1 : 0;
+    const char* oss[] = {i18n::tr("Off"), "2x", "4x"};
+    if (ui::Segmented("os", oss, 3, &os)) s.render.oversample = os == 2 ? 4 : os == 1 ? 2 : 1;
+    ui::Tooltip(i18n::tr("Renders at a multiple of the sample rate and filters down (less aliasing from synths and distortion)"));
+    ImGui::Dummy(ImVec2(0, 2));
+    const float half = std::floor(ImGui::GetContentRegionAvail().x * 0.5f);
+    if (ui::toggleFields()) {
+      ui::ToggleRow(i18n::tr("Master effects"), &s.render.masterEffects);
+      ui::ToggleRow(logicplug::active(a) ? i18n::tr("Channel strip effects") : livelook::active(a) ? i18n::tr("Track effects") : i18n::tr("Mixer track effects"),
+                    &s.render.insertEffects);
+    } else {
+      const float x0 = ImGui::GetCursorPosX();
+      ImGui::Checkbox(i18n::tr("Master effects"), &s.render.masterEffects);
+      ImGui::SameLine(0, 0);
+      ImGui::SetCursorPosX(x0 + half);
+      ImGui::Checkbox(logicplug::active(a) ? i18n::tr("Channel strip effects") : livelook::active(a) ? i18n::tr("Track effects") : i18n::tr("Mixer track effects"),
+                      &s.render.insertEffects);
+    }
+    bool noPoly = !s.render.polyphonyLimits;
+    if (ui::ToggleRow(i18n::tr("Every note plays (ignore voice limits)"), &noPoly)) s.render.polyphonyLimits = !noPoly;
+    ui::Tooltip(i18n::tr("Channels play every note, even past their maximum polyphony"));
     ui::ToggleRow(i18n::tr("Normalize"), &s.normalize);
     if (s.normalize) {
-      // RN-09: to a peak level, or to an integrated loudness under a peak ceiling. K-112c: under the
-      // switch's row where the switch sits at the group's right edge (Live).
-      if (!ui::toggleFields()) ImGui::SameLine();
-      ImGui::SetNextItemWidth(92);
+      if (!ui::toggleFields()) ImGui::SameLine(0, theme::kS2);
+      else ImGui::SetCursorPosX(ImGui::GetCursorPosX());
       int kind = s.normalizeLoudness ? 1 : 0;
-      static const char* kinds[] = {"Peak", "Loudness"};
-      if (ImGui::Combo("##nkind", &kind, kinds, 2)) {
+      const char* kinds[] = {i18n::tr("Peak"), i18n::tr("Loudness")};
+      if (ui::Segmented("nkind", kinds, 2, &kind)) {
         s.normalizeLoudness = kind == 1;
         if (s.normalizeLoudness && s.normalizeDb > -0.1) s.normalizeDb = -1.0;  // leave headroom for the peak ceiling
       }
-      ImGui::SameLine();
+      ImGui::SameLine(0, theme::kS2);
       if (s.normalizeLoudness) {
-        ImGui::SetNextItemWidth(96);
+        ImGui::SetNextItemWidth(84);
         float lufs = static_cast<float>(s.normalizeLufs);
         if (ImGui::DragFloat("##nlufs", &lufs, 0.1f, -36.0f, -5.0f, "%.1f LUFS")) s.normalizeLufs = lufs;
-        ui::Tooltip("Integrated loudness the file is scaled to (streaming platforms play around -14 LUFS)");
-        ImGui::SameLine();
+        ui::Tooltip(i18n::tr("Integrated loudness the file is scaled to (streaming services play around -14 LUFS)"));
+        ImGui::SameLine(0, theme::kS2);
       }
-      ImGui::SetNextItemWidth(s.normalizeLoudness ? 96 : 110);
+      ImGui::SetNextItemWidth(s.normalizeLoudness ? 84 : 80);
       float db = static_cast<float>(s.normalizeDb);
-      if (ImGui::DragFloat("##ndb", &db, 0.05f, -24.0f, 0.0f, s.normalizeLoudness ? "max %.1f dB" : "%.1f dBFS")) s.normalizeDb = db;
-      if (s.normalizeLoudness) ui::Tooltip("Peak ceiling: the gain stops where the sample peak would pass it");
+      if (ImGui::DragFloat("##ndb", &db, 0.05f, -24.0f, 0.0f, s.normalizeLoudness ? "max %.1f dB" : "%.1f dB")) s.normalizeDb = db;
+      ui::Tooltip(s.normalizeLoudness ? i18n::tr("Peak ceiling: the gain stops where the sample peak would pass it") : i18n::tr("The loudest sample's level"));
     }
   }
+  ImGui::Dummy(ImVec2(0, theme::kS1));  // room above the panel's soft bottom edge
+  columnPad(nc - 1 > 0 ? nc - 1 : 2);
   ui::EndSection();
   ImGui::EndGroup();
+  colH[nc == 2 ? 1 : 2] = ImGui::GetItemRectSize().y;
+  (void)colTop;
+  ImGui::Dummy(ImVec2(0, theme::kS1));  // room for the sections' bottom edges
+  if (nc > 1) {  // the columns' bottoms line up from the next frame on
+    float tallest = 0;
+    for (int c = 0; c < nc; ++c) colFit.natural[c] = colH[c] - colFit.pad[c], tallest = std::max(tallest, colFit.natural[c]);
+    for (int c = 0; c < nc; ++c) colFit.pad[c] = std::max(0.0f, tallest - colFit.natural[c]);
+  }
   ui::EndDialogBody();
   ui::SetFormColumn(0);
+  ui::SetSectionBoldCaptions(false);
   ui::SectionMarksReset();
-  ui::DialogFooter(96 * 2 + theme::kS2);
-  if (ui::TextButton("Cancel", false, 96)) dlg.open = false;
+  // ---- footer: what the render makes, Cancel, Render
+  const std::string sum = summaryLine(a);
+  devSummary = sum;
+  const float bw = ui::ButtonRowWidth(2, 96);
+  ui::DialogFooter(bw);
+  {
+    const ImVec2 bp = ImGui::GetCursorScreenPos();
+    const float x0 = bodyX;
+    const float room = bp.x - theme::kS4 - x0;
+    const ImVec2 ts = ImGui::CalcTextSize(sum.c_str(), nullptr, false, room);
+    ImGui::GetWindowDrawList()->AddText(ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(x0, bp.y + std::max(0.0f, (ImGui::GetFrameHeight() - ts.y) * 0.5f)), P.textDim,
+                                        sum.c_str(), nullptr, room);
+  }
+  if (ui::TextButton(i18n::tr("Cancel"), false, 96)) dlg.open = false;
   ImGui::SameLine(0, theme::kS2);
-  if (ui::PrimaryButton("Start", 96) || (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Enter)))
+  if (ui::PrimaryButton(i18n::tr("Render"), 96) || (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Enter) && !ImGui::IsAnyItemActive()))
     startJob(a);
   ImGui::End();
 }
@@ -1360,6 +2211,11 @@ void openRender(App& a, Preset p) {
   if (logicplug::active(a) && p != Preset::AudioClip && p != Preset::PatternReplace && p != Preset::PatternFile)
     dlg.scope = a.playlist.selEnd > a.playlist.selStart ? 2 : (dlg.scope == 2 ? 0 : dlg.scope);
   dlg.replacePattern = p == Preset::PatternReplace;
+  dlg.areaMode = p == Preset::MarkerAreas;
+  if (dlg.areaMode) {  // each opening starts with the areas that hold something ticked
+    dlg.areaOn.clear();
+    dlg.dest = static_cast<int>(Dest::Files);
+  }
 }
 
 void openRenderAgain(App& a) {  // J-27: the dialog exactly as last used (formats, scope, splitting)
@@ -1389,6 +2245,106 @@ void devStart(App& a, const DevRender& r) {
 }
 
 void devCancel() { job.cancel = true; }
+
+void devMarkerAreas(App& a, const std::vector<std::string>& args, int frame) {
+  const std::string what = args.empty() ? "dump" : args[0];
+  if (what == "open") {
+    openRender(a, Preset::MarkerAreas);
+  } else if (what == "start" && args.size() > 1) {
+    initDialog(a);
+    dlg.areaMode = true;
+    std::snprintf(dlg.folder, sizeof dlg.folder, "%s", args[1].c_str());
+    startJob(a);
+  } else if (what == "tick" && args.size() > 2) {
+    const std::vector<MarkerArea> areas = markerAreas(a.doc.song());
+    const size_t i = static_cast<size_t>(std::max(0, std::atoi(args[1].c_str())));
+    if (i < areas.size()) dlg.areaOn[areas[i].start] = args[2] == "on";
+  } else if (what == "pattern" && args.size() > 1) {
+    std::snprintf(dlg.areaPattern, sizeof dlg.areaPattern, "%s", args[1].c_str());
+  } else {
+    const Song& s = a.doc.song();
+    const std::vector<MarkerArea> areas = markerAreas(s);
+    std::vector<MarkerArea> ticked;
+    for (const MarkerArea& m : areas)
+      if (areaTicked(m)) ticked.push_back(m);
+    const std::vector<std::string> names = markerAreaFileNames(ticked, dlg.areaPattern, projectName(a), kRates[dlg.rateIdx]);
+    std::printf("markerareas frame %d: open %d mode %d areas %zu ticked %zu drawn %zu (frame %d)\n", frame, dlg.open ? 1 : 0, dlg.areaMode ? 1 : 0,
+                areas.size(), ticked.size(), devAreaRows.size(), devAreaFrame);
+    for (const MarkerArea& m : areas)
+      std::printf("  area %s: %lld..%lld %s%s\n", m.name.c_str(), static_cast<long long>(m.start), static_cast<long long>(m.end), areaTicked(m) ? "on" : "off",
+                  m.hasContent ? "" : " empty");
+    for (const std::string& r : devAreaRows) std::printf("  row %s\n", r.c_str());
+    for (const std::string& n : names) std::printf("  file %s\n", n.c_str());
+    std::fflush(stdout);
+  }
+}
+
+void devExportDialog(App& a, const std::vector<std::string>& args, int frame) {
+  initDialog(a);
+  const std::string what = args.empty() ? "dump" : args[0];
+  const std::string arg = args.size() > 1 ? args[1] : "";
+  ExportSettings& s = dlg.s;
+  if (what == "open") {
+    const std::string p = arg;
+    openRender(a, p == "stems" ? Preset::Stems : p == "areas" ? Preset::MarkerAreas : p == "pattern" ? Preset::PatternFile : p == "clip" ? Preset::AudioClip : Preset::Audio);
+  } else if (what == "scope") {
+    dlg.areaMode = arg == "areas";
+    if (arg == "song") dlg.scope = 0;
+    if (arg == "pattern") dlg.scope = 1;
+    if (arg == "selection") dlg.scope = 2;
+    if (arg == "markers") dlg.scope = 3;
+    if (dlg.areaMode) dlg.dest = static_cast<int>(Dest::Files);
+  } else if (what == "tail") {
+    const double sec = args.size() > 2 ? std::atof(args[2].c_str()) : -1;
+    if (arg == "cut") s.render.tail = TailMode::Cut;
+    if (arg == "wrap") s.render.tail = TailMode::Wrap;
+    if (arg == "ring") s.render.tail = TailMode::Leave, s.render.maxTailSeconds = sec > 0 ? sec : s.render.maxTailSeconds;
+    if (arg == "fixed") s.render.tail = TailMode::Fixed, s.render.fixedTailSeconds = sec >= 0 ? sec : s.render.fixedTailSeconds;
+  } else if (what == "name" && args.size() > 2) {
+    char* buf = arg == "area" ? dlg.areaPattern : arg == "part" ? dlg.pattern : dlg.filePattern;
+    const size_t cap = arg == "area" ? sizeof dlg.areaPattern : arg == "part" ? sizeof dlg.pattern : sizeof dlg.filePattern;
+    const char* tokens = arg == "area" ? exportchoice::kAreaTokens : arg == "part" ? exportchoice::kPartTokens : exportchoice::kFileTokens;
+    const std::string op = args[2], v = args.size() > 3 ? args[3] : "";
+    std::string out = buf;
+    if (op == "add" && !v.empty()) out = exportchoice::appendToken(buf, v[0], tokens);
+    if (op == "remove") out = exportchoice::removePiece(buf, static_cast<size_t>(std::max(0, std::atoi(v.c_str()))), tokens);
+    if (op == "text") out = exportchoice::appendText(buf, v, tokens);
+    if (op == "set") out = v;
+    std::snprintf(buf, cap, "%s", out.c_str());
+  } else if (what == "split") {
+    s.splitMixer = arg == "mixer";
+    s.splitPlaylist = arg == "playlist";
+    s.splitPlaylistGroups = arg == "groups";
+  } else if (what == "dest") {
+    dlg.dest = arg == "clip" ? static_cast<int>(Dest::AudioClip) : arg == "editor" ? static_cast<int>(Dest::AudioEditor) : static_cast<int>(Dest::Files);
+  } else if (what == "format" && args.size() > 2) {
+    const int k = std::atoi(arg.c_str());
+    if (k >= 0 && k < 6) dlg.fmt[k] = args[2] == "on";
+  } else if (what == "folder") {
+    std::snprintf(dlg.folder, sizeof dlg.folder, "%s", arg.c_str());
+  } else {
+    const auto pieces = [](const char* pattern, const char* tokens) {
+      std::string out;
+      for (const exportchoice::NamePiece& p : exportchoice::parseNamePattern(pattern, tokens))
+        out += p.token ? std::string("[") + exportchoice::tokenLabel(p.token) + "]" : "'" + p.text + "'";
+      return out;
+    };
+    const char* tails[] = {"cut", "ring", "wrap", "fixed"};
+    std::string more;
+    const std::string ex = exampleName(a, &more);
+    std::string fmts;
+    for (ExportFormat f : exportchoice::tickedFormats(dlg.fmt, static_cast<int>(ExportFormat::Count))) fmts += std::string(fmts.empty() ? "" : ",") + exportFormatName(f);
+    std::printf("exportdlg frame %d: open %d areas %d scope %d dest %d tail %s ring %.1f fixed %.1f loops %d split %d%d%d formats %s\n", frame, dlg.open ? 1 : 0,
+                dlg.areaMode ? 1 : 0, dlg.scope, dlg.dest, tails[std::clamp(static_cast<int>(s.render.tail), 0, 3)], s.render.maxTailSeconds, s.render.fixedTailSeconds,
+                s.render.loops, s.splitMixer ? 1 : 0, s.splitPlaylist ? 1 : 0, s.splitPlaylistGroups ? 1 : 0, fmts.c_str());
+    std::printf("  file name %s = %s\n  area names %s = %s\n  part names %s = %s\n", dlg.filePattern, pieces(dlg.filePattern, exportchoice::kFileTokens).c_str(),
+                dlg.areaPattern, pieces(dlg.areaPattern, exportchoice::kAreaTokens).c_str(), dlg.pattern, pieces(dlg.pattern, exportchoice::kPartTokens).c_str());
+    std::printf("  example %s | %s\n  summary %s\n  drawn summary %s\n", ex.c_str(), more.c_str(), summaryLine(a).c_str(), devSummary.c_str());
+    std::printf("  folder %s shown(40) %s\n", dlg.folder,
+                exportchoice::shortFolder(dlg.folder, homeDir(), [](const std::string& t) { return t.size() <= 40; }).c_str());
+    std::fflush(stdout);
+  }
+}
 
 std::string devState() {
   std::lock_guard<std::mutex> lk(job.mu);

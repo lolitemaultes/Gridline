@@ -1,4 +1,5 @@
 // Gridline - K-93 command palette (see CommandPaletteUi.h).
+#include "PluginIcons.h"
 #include "CommandPaletteUi.h"
 #include "MenuTreeUi.h"
 #include <algorithm>
@@ -1052,7 +1053,15 @@ void drawPanel(App& a) {
         ui::drawIcon(rl, pinnedRow ? ui::Icon::StarFilled : ui::Icon::Star, star, 12, pinnedRow ? P.hot : overStar ? P.text : P.textFaint);
       if (overStar) ImGui::SetTooltip("%s", pinnedRow ? i18n::tr("Unpin (Ctrl+Enter)") : i18n::tr("Pin to the bar and the top of this list (Ctrl+Enter)"));
       const ImU32 main = e.enabled ? P.text : P.textFaint;
-      ui::drawIcon(rl, iconFor(e, S.acts[static_cast<size_t>(rk.index)]), ImVec2(r0.x + 18, cy), 14, e.enabled ? (sel ? P.text : P.textDim) : P.textFaint);
+      {
+        // K-450: a plugin row shows the plugin's own icon (an installed plugin: the plug glyph).
+        const Action& act = S.acts[static_cast<size_t>(rk.index)];
+        const bool plug = e.kind == Kind::Plugin;
+        if (!plug || !ui::drawPluginIcon(rl, act.type, ImVec2(r0.x + 18, cy), 16, ui::PluginIconSurface::Palette, e.enabled ? 1.0f : 0.5f)) {
+          if (plug) ui::notePluginIconFallback(act.type, ui::PluginIconSurface::Palette);
+          ui::drawIcon(rl, iconFor(e, act), ImVec2(r0.x + 18, cy), 14, e.enabled ? (sel ? P.text : P.textDim) : P.textFaint);
+        }
+      }
       // Right side: on / off state, then the shortcut.
       float right = r1.x - 10 - (canPin ? 22.0f : 0.0f);
       right = drawKeycaps(rl, a, e.shortcut, right, cy, !e.enabled);

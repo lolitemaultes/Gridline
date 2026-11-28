@@ -1,4 +1,5 @@
 #include "WorkerPool.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include "Denormals.h"
 #include <cstdlib>
@@ -46,7 +47,7 @@ void Semaphore::wait() {
 WorkerPool::~WorkerPool() {
   quit_.store(true);
   for (size_t i = 0; i < threads_.size(); ++i) sem_.post();
-  for (auto& t : threads_) t.join();
+  for (auto& t : threads_) gl::threads::safeJoin(t);
 }
 
 void WorkerPool::ensureThreads(int count) {

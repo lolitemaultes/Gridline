@@ -1,5 +1,6 @@
 // Gridline - J-141: the welcome launcher (see LauncherUi.h, core/Launcher.h).
 #include "LauncherUi.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include "../core/RemoteFs.h"
 #include "GridlineVersion.h"
@@ -107,7 +108,7 @@ class Store {
       stop_ = true;
     }
     cv_.notify_all();
-    if (th_.joinable()) th_.join();
+    gl::threads::safeJoin(th_);
   }
 
  private:

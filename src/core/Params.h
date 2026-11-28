@@ -3,6 +3,7 @@
 // UI share one path to it.
 #pragma once
 #include <atomic>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -35,11 +36,27 @@ enum class SongParam : uint32_t { Tempo = 0, Swing, MasterPitch, GrooveAccent, C
 // Sustain: the channel's sustain pedal (CC 64), down at 1. Recorded from a keyboard's pedal and
 // automatable: the instrument gets CC 64 when it moves, and while it is down Gridline holds the
 // channel's note-offs (Settings > MIDI > Pedals > Sustain holds notes).
-enum class ChannelParam : uint32_t { Volume = 0, Pan, Mute, Pitch, Sustain, Count };
+// Transpose (K-411): whole-semitone channel transpose (-48..48 st), applied to every native and
+// installed instrument (MIDI note transpose with active-note tracking for installed plugins).
+enum class ChannelParam : uint32_t { Volume = 0, Pan, Mute, Pitch, Sustain, Transpose, Count };
 // ChannelParam::Pitch is in cents (Channel::pitchCents), -2400..2400: the same span as the
 // whole-semitone knob before 0.7.7 (-24..24), so automation saved then means the same pitch.
 inline constexpr double kChannelPitchMaxCents = 2400.0;
 inline constexpr int kChannelBendRangeMax = 48;
+inline constexpr int kChannelTransposeMax = 48;
+
+// K-411: true when a linear continuous parameter is a coarse semitone pitch / transpose control
+// (unit "st" with integer endpoints spanning at least 4 semitones). These step in whole semitones
+// by default on drag and wheel; holding a fine modifier (Shift / Alt / Ctrl-drag) allows fine values.
+inline bool isSemitonePitchParam(const ParamDesc& d) {
+  if (d.kind != ParamKind::Continuous || d.scale != ParamScale::Linear || d.unit != "st") return false;
+  if (d.max - d.min < 4.0) return false;
+  return std::fabs(d.min - std::round(d.min)) < 1e-6 && std::fabs(d.max - std::round(d.max)) < 1e-6;
+}
+inline double snapSemitonePitch(const ParamDesc& d, double v, bool fine) {
+  if (!fine && isSemitonePitchParam(d)) return d.clamp(std::round(v));
+  return d.clamp(v);
+}
 enum class MixerParam : uint32_t {
   Volume = 0, Pan, StereoSep, Mute,
   // Strip EQ (MixerTrack::eqGain / eqFreq / eqQ), bands low · mid · high.
@@ -102,10 +119,9 @@ struct ControllerOutput {
 std::vector<ControllerOutput> listControllerOutputs(const Song& song);
 // Display name of a link source ("?" when it does not resolve).
 std::string controllerOutputName(const Song& song, ObjectId owner, int slot, int output);
-// k078-songlinks: whether the engine applies an internal controller link (Peak Follower, X-Y Pad,
-// Envelope Mod, a macro, ...) to this parameter. False for the song's own settings (tempo, swing,
-// master pitch, groove accents): the program builder's resolveTarget (engine/Program.cpp) leaves
-// those out, so such a link would never move anything. MIDI and OSC links still work there.
+// 0.7.9: whether the engine applies an internal controller link (Peak Follower, X-Y Pad,
+// Envelope Mod, Formula Mod, LFO, a macro, ...) to this parameter. True for every resolvable
+// parameter in the song, including song settings (tempo, swing, master pitch, groove accents).
 bool internalLinkApplies(const Song& song, ParamId id);
 // True when an enabled internal controller link drives the parameter (knobs
 // draw a marker and show the live value instead of the stored one).

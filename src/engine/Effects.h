@@ -58,6 +58,21 @@ class Effect {
     (void)aux;
     (void)ctx;
     (void)n;
+    restedIsNoop_ = true;
+  }
+  // K-142e: true when rested() is either a no-op (base rested() ran) or settled onto O(1) clocks
+  // that restedLong(int64_t) catches up on wakeup in O(1) time. Subclasses with per-sample
+  // restRenderFx leave this false until settled so whole-graph deep sleep never skips them.
+  virtual bool canDeferRest(const PluginState& state, const ProcessContext& ctx) const {
+    (void)state;
+    (void)ctx;
+    return restedIsNoop_;
+  }
+  virtual void restedLong(const PluginState& state, const ChannelAux& aux, const ProcessContext& ctx, int64_t n) {
+    (void)state;
+    (void)aux;
+    (void)ctx;
+    (void)n;
   }
   // K-142 (0.7.8 close): whether rested() now moves only its clocks (its signal state has settled to
   // zero), not an unheard render. For the tests; false where an effect has no such stage.
@@ -118,6 +133,9 @@ class Effect {
     (void)max;
     return 0;
   }
+
+ private:
+  bool restedIsNoop_ = false;  // K-142e: set when base rested() runs (not overridden)
 };
 
 std::unique_ptr<Effect> createEffect(const std::string& type);

@@ -131,8 +131,12 @@ struct HttpResult {
   std::string body;
   std::string error;  // transport error text
   bool offline = false;  // could not reach the server (no network, DNS, timeout)
+  std::string etag;      // the answer's ETag header ("" when none)
 };
 using Fetcher = std::function<HttpResult(const std::string& url)>;
+// A GET with If-None-Match: `etag` (empty: none) and a time limit for the whole request.
+using CondFetcher = std::function<HttpResult(const std::string& url, const std::string& etag, int timeoutSeconds)>;
+
 
 enum class Status { UpToDate, Available, NoRelease, Offline, RateLimited, Failed, Disabled };
 struct CheckResult {
@@ -143,6 +147,11 @@ struct CheckResult {
 };
 // One request: /releases/latest, or /releases when `beta`. Never throws.
 CheckResult check(const Fetcher& fetch, const std::string& currentVersion, bool beta);
+// The answer of such a request (status, body) as check() reads it.
+CheckResult evaluate(const HttpResult& res, const std::string& currentVersion, bool beta);
+// The release list's address: GRIDLINE_UPDATE_TEST_SERVER (tests' local server, http://127.0.0.1:<port>)
+// replaces https://api.github.com/repos/lolitemaultes/Gridline.
+std::string releasesUrl(bool beta);
 // One line for the command line ("Gridline 0.6.1 is available (you have 0.6.0): <url>").
 std::string describe(const CheckResult& r);
 // Request headers sent with every request (no identifiers): User-Agent and Accept.

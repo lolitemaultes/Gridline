@@ -406,6 +406,7 @@ class DelayFx final : public Effect {
       dl_.init(len);
       dr_.init(len);
       curL_ = curR_ = -1;
+      quietRun_ = static_cast<int64_t>(len);  // K-142e: freshly zeroed ring is already quiet
     }
     double t;
     if (bparam(s, DlySync, true)) {
@@ -450,6 +451,7 @@ class DelayFx final : public Effect {
     if (curL_ < 0) curL_ = tL, curR_ = tR;
     // K-142 (0.7.8): its longest echo now (both heads, the modulation, the diffusers, a crossfade).
     gap_ = static_cast<int>(std::max({tL, tR, curL_, curR_, xf_ > 0 ? std::max(oldL_, oldR_) : 0.0}) + modDepth + dlen1 + dlen2 + 90 + 0.05 * sr_);
+    phRest_.flush(ph_);
     for (int i = 0; i < n; ++i) {
       double lfo = std::sin(kTwoPi * ph_);
       double m = modDepth > 0 ? modDepth * (0.5 + 0.5 * lfo) : 0;
@@ -560,18 +562,47 @@ class DelayFx final : public Effect {
   int faintGap() const override { return gap_; }
   // Resting: a model whose modulation or sample-rate clock moves on (they change what comes after) moves
   // them on (below); any other holds only its signal, which has faded (as before).
+  static bool movesAtRest(const PluginState& s, const ProcessContext& ctx) {
+    using namespace pp;
+    const int model = iparam(s, DlyModel);
+    if (model == 3)
+      return param(s, DlyD3Raw0 + d3ref::PModTime) != 0 || param(s, DlyD3Raw0 + d3ref::PModCut) != 0 || param(s, DlyD3Raw0 + d3ref::PRate) < 1;
+    if (model == 0)
+      return param(s, DlyModDepth) != 0 || param(s, DlyModCutoff) != 0 || param(s, DlyRateReduce, 48000) < 47999;
+    if (model == 1)
+      return param(s, DlyModDepth) != 0 || param(s, DlyModCutoff) != 0 || param(s, DlyRate3, 48000) < ctx.sampleRate * 0.999;
+    return false;
+  }
+  bool canDeferRest(const PluginState& s, const ProcessContext& ctx) const override {
+    using namespace pp;
+    if (!movesAtRest(s, ctx)) return true;
+    const int model = iparam(s, DlyModel);
+    if (model != 0 || model != restModel_ || !rest_.zero || sr_ <= 0) return false;
+    if (param(s, DlyRateReduce, 48000) < 47999) return false;
+    double t;
+    if (bparam(s, DlySync, true)) {
+      int ti = std::clamp(iparam(s, DlyTime), 0, kDelayBeatCount - 1);
+      t = kDelayBeats[ti] * 60.0 / std::max(ctx.tempo, 20.0);
+    } else {
+      t = param(s, DlyTimeMs, 300) * 0.001;
+    }
+    const double off = param(s, DlyOffset) * 0.001;
+    const double tL = std::max(1.0, (t - std::min(0.0, off)) * sr_), tR = std::max(1.0, (t + std::max(0.0, off)) * sr_);
+    const bool keepPitch = bparam(s, DlyKeepPitch);
+    const double smoothMs = param(s, DlyTimeSmooth, 20);
+    const double smooth = smoothMs > 0.5 ? 1.0 - std::pow(0.01, 1.0 / (smoothMs * 0.001 * sr_)) : 1.0;
+    const double cL = curL_ < 0 ? tL : curL_, cR = curR_ < 0 ? tR : curR_;
+    return xf_ <= 0 && (keepPitch ? !(std::fabs(tL - cL) > 1 || std::fabs(tR - cR) > 1)
+                                  : cL + (tL - cL) * smooth == cL && cR + (tR - cR) * smooth == cR);
+  }
+  void restedLong(const PluginState& s, const ChannelAux&, const ProcessContext& ctx, int64_t n) override {
+    if (!movesAtRest(s, ctx)) return;
+    if (iparam(s, pp::DlyModel) == 0 && rest_.zero) moveOn(s, ctx, n);
+  }
   void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, int n) override {
     using namespace pp;
     const int model = iparam(s, DlyModel);
-    bool moves = false;
-    if (model == 3) {
-      moves = param(s, DlyD3Raw0 + d3ref::PModTime) != 0 || param(s, DlyD3Raw0 + d3ref::PModCut) != 0 || param(s, DlyD3Raw0 + d3ref::PRate) < 1;
-    } else if (model == 0) {
-      moves = param(s, DlyModDepth) != 0 || param(s, DlyModCutoff) != 0 || param(s, DlyRateReduce, 48000) < 47999;
-    } else if (model == 1) {
-      moves = param(s, DlyModDepth) != 0 || param(s, DlyModCutoff) != 0 || param(s, DlyRate3, 48000) < ctx.sampleRate * 0.999;
-    }
-    if (!moves) return;
+    if (!movesAtRest(s, ctx)) return;
     if (model != restModel_) rest_.woke(), restModel_ = model;
     if (model != 0) return restRenderFx(*this, s, aux, ctx, n);
     // Its own model: the idle render runs unheard until what its heads can reach and its filters,
@@ -584,10 +615,12 @@ class DelayFx final : public Effect {
   }
   void reset() override {
     rest_.woke();
+    phRest_.reset();
     ref_.reset();
     if (cls_.ready()) cls_.reset();
     if (d3_.ready()) d3_.reset();
     dl_.clear(), dr_.clear();
+    quietRun_ = static_cast<int64_t>(dl_.buf.size());
     lpL_.z = lpR_.z = hpL_.z = hpR_.z = 0;
     svf_[0].reset(), svf_[1].reset();
     for (auto& c : dif_)
@@ -616,6 +649,7 @@ class DelayFx final : public Effect {
   static constexpr double kQuiet = kRestQuiet;
   int64_t quietRun_ = 0;  // samples in a row both lines took values below kQuiet
   RestSettle rest_;
+  RestPhase phRest_;
   int restModel_ = -1;
   unsigned settleTick_ = 0;
   bool quietNow(const PluginState& s) const {
@@ -636,7 +670,7 @@ class DelayFx final : public Effect {
     return true;
   }
   // What process() moves on besides the signal, for n samples of silence, in the same order.
-  void moveOn(const PluginState& s, const ProcessContext& ctx, int n) {
+  void moveOn(const PluginState& s, const ProcessContext& ctx, int64_t n) {
     using namespace pp;
     double t;
     if (bparam(s, DlySync, true)) {
@@ -669,25 +703,34 @@ class DelayFx final : public Effect {
     if (settledTime) {
       const double inc = modRate / sr_;
       if (ftype >= 1 && ftype <= 3) {
-        const int first = static_cast<int>((16u - (ctr_ & 15u)) & 15u);  // the first frame with an update
+        const int64_t first = static_cast<int64_t>((16u - (ctr_ & 15u)) & 15u);  // the first frame with an update
         if (first < n) {
-          const int last = first + (n - 1 - first) / 16 * 16;
-          const double fc = cutoff * std::pow(2.0, modCut * 2.0 * std::sin(kTwoPi * advancePhase(ph_, inc, last)));
+          const int64_t last = first + (n - 1 - first) / 16 * 16;
+          const double fc = cutoff * std::pow(2.0, modCut * 2.0 * std::sin(kTwoPi * phRest_.at(ph_, inc, last)));
           svf_[0].set(sr_, fc, reso), svf_[1].set(sr_, fc, reso);
         }
         ctr_ += static_cast<uint32_t>(n);
       }
-      ph_ = advancePhase(ph_, inc, n);
+      phRest_.advance(ph_, inc, n);
       if (crushRate)
         for (int c = 0; c < 2; ++c)
-          for (int i = 0; i < n; ++i) {
+          for (int64_t i = 0; i < n; ++i) {
             hold_[c] += rateHz / sr_;
             if (hold_[c] >= 1) hold_[c] -= std::floor(hold_[c]), held_[c] = 0;
           }
-      if (mode != 4) dl_.pushZeros(static_cast<size_t>(n)), dr_.pushZeros(static_cast<size_t>(n)), quietRun_ += n;
+      if (mode != 4) {
+        if (quietRun_ >= static_cast<int64_t>(dl_.buf.size())) {
+          dl_.w = (dl_.w + static_cast<size_t>(n)) % dl_.buf.size();
+          dr_.w = (dr_.w + static_cast<size_t>(n)) % dr_.buf.size();
+        } else {
+          dl_.pushZeros(static_cast<size_t>(n)), dr_.pushZeros(static_cast<size_t>(n));
+        }
+        quietRun_ += n;
+      }
       return;
     }
-    for (int i = 0; i < n; ++i) {
+    phRest_.flush(ph_);
+    for (int64_t i = 0; i < n; ++i) {
       const bool svfNow = ftype >= 1 && ftype <= 3 && (ctr_ & 15) == 0;
       const double lfo = svfNow ? std::sin(kTwoPi * ph_) : 0.0;
       ph_ += modRate / sr_;
@@ -726,6 +769,7 @@ class ReverbFx final : public Effect {
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
     rest_.woke();
+    modRest_.flush(modPh_);
     if (sr_ != ctx.sampleRate) init(ctx.sampleRate);
     if (iparam(s, RvbModel) == 2) {  // J-35 full reference (standalone variant)
       fullrev::StudioKnobs k;
@@ -853,6 +897,16 @@ class ReverbFx final : public Effect {
   // K-142 (0.7.8): at rest its comb modulation moves on. Its own model: the idle render runs unheard
   // until every line and filter holds exact zeros, then only the modulation phase moves. The full
   // reference with modulation runs its idle render; the plate (no modulation) holds its signal.
+  bool canDeferRest(const PluginState& s, const ProcessContext& ctx) const override {
+    const int model = iparam(s, pp::RvbModel);
+    if (model == 1) return true;
+    if (model == 2) return param(s, pp::RvbFModDepth, 0) == 0;
+    return sr_ == ctx.sampleRate && rest_.zero;
+  }
+  void restedLong(const PluginState& s, const ChannelAux&, const ProcessContext& ctx, int64_t n) override {
+    if (iparam(s, pp::RvbModel) == 0 && sr_ == ctx.sampleRate && rest_.zero)
+      modRest_.advance(modPh_, param(s, pp::RvbModRate, 0.6f) / sr_, n);
+  }
   void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, int n) override {
     using namespace pp;
     const int model = iparam(s, RvbModel);
@@ -880,10 +934,11 @@ class ReverbFx final : public Effect {
           return allZeroOf(pre_.buf) && allZeroOf(preS_.buf);
         },
         [&](int m) {  // (its lines hold zeros: where their heads stand changes nothing)
-          modPh_ = advancePhase(modPh_, param(s, RvbModRate, 0.6f) / sr_, m);
+          modRest_.advance(modPh_, param(s, RvbModRate, 0.6f) / sr_, m);
         });
   }
   void reset() override {
+    modRest_.reset();
     for (auto& side : combs_)
       for (auto& c : side) c.line.clear(), c.store = 0, c.xo = 0;
     for (auto* v : {&al_, &ar_})
@@ -935,6 +990,7 @@ class ReverbFx final : public Effect {
     xo_ = -1;
   }
   double sr_ = 0, modPh_ = 0, xo_ = -1, xoA_ = 0, lc_ = -1, hc_ = -1, color_ = 9;
+  RestPhase modRest_;
   Comb combs_[2][8];
   std::array<Allpass, 4> al_, ar_;
   Diffuser indiff_[2][4];
@@ -963,6 +1019,7 @@ class ChorusFx final : public Effect {
   void process(const PluginState& s, const ProcessContext& ctx, float* L, float* R, int n) override {
     using namespace pp;
     rest_.woke();
+    for (int k = 0; k < 3; ++k) phRest_[k].flush(ph_[k]);
     if (sr_ != ctx.sampleRate) {
       sr_ = ctx.sampleRate;
       bl_.init(static_cast<size_t>(sr_ * 0.08) + 4);
@@ -1059,6 +1116,12 @@ class ChorusFx final : public Effect {
     }
   }
   // K-142 (0.7.8): its LFOs move on at rest; once its lines and filters hold exact zeros, only they do.
+  bool canDeferRest(const PluginState&, const ProcessContext& ctx) const override {
+    return sr_ == ctx.sampleRate && rest_.zero;
+  }
+  void restedLong(const PluginState& s, const ChannelAux&, const ProcessContext& ctx, int64_t n) override {
+    if (sr_ == ctx.sampleRate && rest_.zero) clocks(s, n);
+  }
   void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, int n) override {
     if (sr_ != ctx.sampleRate) return restRenderFx(*this, s, aux, ctx, n);
     rest_.run(
@@ -1072,20 +1135,21 @@ class ChorusFx final : public Effect {
         [&](int m) { clocks(s, m); });
   }
   // The phases n frames of process() or classic() step (the same operations in the same order).
-  void clocks(const PluginState& s, int n) {
+  void clocks(const PluginState& s, int64_t n) {
     using namespace pp;
     if (bparam(s, ChoClassic, true)) {
       const double rates[3] = {param(s, ChoRate, 0.45f), param(s, ChoRate2, 1.25f), param(s, ChoRate3, 2.45f)};
-      for (int k = 0; k < 3; ++k) ph_[k] = advancePhase(ph_[k], rates[k] / sr_, n);
+      for (int k = 0; k < 3; ++k) phRest_[k].advance(ph_[k], rates[k] / sr_, n);
     } else {
       const double rates[3] = {param(s, ChoRate, 0.6f), param(s, ChoRate2, 1.0f), param(s, ChoRate3, 1.6f)};
       const int voices = std::clamp(iparam(s, ChoVoices) + 1, 1, 3);
-      for (int v = 0; v < voices; ++v) ph_[v] = advancePhase(ph_[v], rates[v] / sr_, n);
+      for (int v = 0; v < voices; ++v) phRest_[v].advance(ph_[v], rates[v] / sr_, n);
     }
     bl_.w = (bl_.w + static_cast<size_t>(n)) % bl_.buf.size();
     br_.w = (br_.w + static_cast<size_t>(n)) % br_.buf.size();
   }
   void reset() override {
+    for (int k = 0; k < 3; ++k) phRest_[k].reset();
     bl_.clear(), br_.clear();
     lp_[0] = lp_[1] = xp_[0] = xp_[1] = 0;
     ph_[0] = 0, ph_[1] = 0.33, ph_[2] = 0.66;
@@ -1098,6 +1162,7 @@ class ChorusFx final : public Effect {
  private:
   static constexpr int kTab = 4096;
   double sr_ = 0, ph_[3] = {0, 0.33, 0.66}, xf_ = -1, lp_[2] = {}, xp_[2] = {};
+  RestPhase phRest_[3];
   float tab_[4][kTab] = {};
   Line bl_, br_;
   Biquad xlp_[2][2], xhp_[2][2];
@@ -1193,6 +1258,7 @@ class PhaserFx final : public Effect {
     using namespace pp;
     const double sr = ctx.sampleRate;
     rest_.woke();
+    phRest_.flush(ph_);
     if (iparam(s, PhsModel) == 1) {  // J-26 reference engine
       ref_.process(refSettings(s), sr, L, R, n);
       return;
@@ -1237,6 +1303,12 @@ class PhaserFx final : public Effect {
     return ps;
   }
   // K-142 (0.7.8): its LFO moves on at rest; once its all-passes hold exact zeros, only it does.
+  bool canDeferRest(const PluginState& s, const ProcessContext&) const override {
+    return rest_.zero && iparam(s, pp::PhsModel) == 0;
+  }
+  void restedLong(const PluginState& s, const ChannelAux&, const ProcessContext& ctx, int64_t n) override {
+    if (rest_.zero && iparam(s, pp::PhsModel) == 0) phRest_.advance(ph_, param(s, pp::PhsRate, 0.4f) / ctx.sampleRate, n);
+  }
   void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, int n) override {
     using namespace pp;
     rest_.run(
@@ -1251,10 +1323,11 @@ class PhaserFx final : public Effect {
             ref_.advance(refSettings(s), ctx.sampleRate, m);
             return;
           }
-          ph_ = advancePhase(ph_, param(s, PhsRate, 0.4f) / ctx.sampleRate, m);
+          phRest_.advance(ph_, param(s, PhsRate, 0.4f) / ctx.sampleRate, m);
         });
   }
   void reset() override {
+    phRest_.reset();
     ref_.reset();
     for (auto& c : z_) c.fill(0);
     last_[0] = last_[1] = 0;
@@ -1263,6 +1336,7 @@ class PhaserFx final : public Effect {
 
  private:
   RestSettle rest_;
+  RestPhase phRest_;
   classic::Phaser ref_;
   std::array<std::array<double, 24>, 2> z_{};
   double last_[2] = {0, 0}, ph_ = 0;

@@ -34,7 +34,7 @@
 
 namespace gl::clipmulti {
 
-enum class Param { GainDb, Pitch, FadeIn, FadeOut, FadeInCurve, FadeOutCurve };
+enum class Param { GainDb, Pan, Pitch, FadeIn, FadeOut, FadeInCurve, FadeOutCurve };
 
 // Whether the clip kind carries the parameter.
 bool hasParam(const Clip& c, Param p);

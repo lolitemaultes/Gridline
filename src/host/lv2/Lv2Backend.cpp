@@ -21,6 +21,7 @@
 // URIDs (atom:Object state) are stored as they are and only round-trip
 // within one process.
 #include <algorithm>
+#include "../../core/Platform.h"
 #include "../../core/ThreadName.h"
 #include <atomic>
 #include <chrono>
@@ -56,6 +57,7 @@
 #include "lv2/ui/ui.h"
 #include "lv2/urid/urid.h"
 #include "lv2/worker/worker.h"
+#include "../../core/ThreadJoin.h"
 #include "../../engine/WorkerPool.h"  // gl::Semaphore
 
 namespace fs = std::filesystem;
@@ -213,7 +215,7 @@ class Worker {
   ~Worker() {
     quit_.store(true);
     sem_.post();
-    thread_.join();
+    gl::threads::safeJoin(thread_);
   }
   LV2_Worker_Schedule* rtSchedule() { return &rt_; }
   LV2_Worker_Schedule* syncSchedule() { return &syncSchedule_; }
@@ -276,7 +278,8 @@ LV2_State_Map_Path gMapPath{nullptr, [](LV2_State_Map_Path_Handle, const char* p
 LV2_State_Free_Path gFreePath{nullptr, [](LV2_State_Free_Path_Handle, char* p) { std::free(p); }};
 LV2_State_Make_Path gMakePath{nullptr, [](LV2_State_Make_Path_Handle, const char* p) {
                                 std::error_code ec;
-                                fs::path dir = fs::temp_directory_path(ec) / "gridline-lv2-state";
+                                // Q-11: scope state scratch directory by PID so parallel processes sharing TMPDIR never collide.
+                                fs::path dir = fs::temp_directory_path(ec) / ("gridline-lv2-state-" + std::to_string(platform::processId()));
                                 fs::path full = dir / fs::path(p).relative_path();
                                 fs::create_directories(full.parent_path(), ec);
                                 return dupString(full.string().c_str());
@@ -1444,7 +1447,11 @@ bool Lv2Editor::attach(void* parent) {
     auto* e = static_cast<Lv2Editor*>(h);
     e->reqW_ = w;
     e->reqH_ = hh;
-    return e->requestResize && e->requestResize(w, hh) ? 0 : 1;
+    if (!e->requestResize || !e->requestResize(w, hh)) return 1;
+    // The host's window took the size; the widget follows it (the host does not tell the UI the size
+    // it asked for: PluginWindow.cpp pluginResize).
+    if (e->ui_.kind != lv2::Ui::External && e->widget_) lv2::native::setWidgetSize(e->widget_, w, hh);
+    return 0;
   };
   portMap_.handle = b_;
   portMap_.port_index = [](LV2UI_Feature_Handle h, const char* sym) {

@@ -19,6 +19,7 @@
 #include "../../../third_party/imgui/imgui_internal.h"
 #include "edison_dock.h"
 #include "edison_style.h"
+#include "../../app/UrlImportUi.h"
 #include "edison_ui.h"
 
 namespace gl::packs::edison {
@@ -182,30 +183,82 @@ void drawFormLayout(App& a, Session& s, const dock::Layout& Lo) {
     b.litRole = 0xE5484D;
     if (cell("rec", "rec", ui::Icon::Record, b)) toggleRecord(a, s);
     x = compact ? L : x + sg - cg;
-    // Record options: when, maximum length, append; one centre line with the transport.
-    const float ft = cyR - fld * 0.5f;
-    paramDrop(a, s, "##recmode", EdRecMode, pt(x, ft), pt(x + P(116), ft + fld), fm, fsVal, "When to start recording");
-    sty::note("row1.record", "mode", pt(x, ft), pt(x + P(116), ft + fld));
-    x += P(116) + gg;
-    sty::caption(dl, o.x + x, o.y + cyR, i18n::tr("MAX"), s.slot ? C(col::TextDim) : C(col::TextDim, 0.6f), fm, fsCap);
-    x += std::round(sty::textW(fm, fsCap, i18n::tr("MAX"))) + P(6);
-    paramDrop(a, s, "##recmax", EdRecMax, pt(x, ft), pt(x + P(84), ft + fld), fm, fsVal, "Maximum recording length");
-    sty::note("row1.record", "max", pt(x, ft), pt(x + P(84), ft + fld));
-    x += P(84) + gg + P(4);
-    {
-      const bool on = param(a, s, EdAppend, 0) >= 0.5;
-      const float box = P(14);
-      const float w = box + std::round(box * 0.5f) + std::round(sty::textW(fm, fsCap, i18n::tr("APPEND")));
-      const ImVec2 tl = pt(x, std::round(cyR - box * 0.5f));
-      if (sty::check("append", tl, box, w, i18n::tr("APPEND"), on, s.slot, fm, fsCap,
-                     "Append recordings after the existing audio (else a take replaces it)") &&
-          s.slot)
-        setParam(a, s, EdAppend, on ? 0 : 1);
-      sty::note("row1.record", "append", tl, ImVec2(tl.x + box, tl.y + box));
+    float row1LeftEnd = x;
+    if (!compact) {
+      // Record options: when, maximum length, append; one centre line with the transport.
+      const float ft = cyR - fld * 0.5f;
+      paramDrop(a, s, "##recmode", EdRecMode, pt(x, ft), pt(x + P(116), ft + fld), fm, fsVal, "When to start recording");
+      sty::note("row1.record", "mode", pt(x, ft), pt(x + P(116), ft + fld));
+      x += P(116) + gg;
+      sty::caption(dl, o.x + x, o.y + cyR, i18n::tr("MAX"), s.slot ? C(col::TextDim) : C(col::TextDim, 0.6f), fm, fsCap);
+      x += std::round(sty::textW(fm, fsCap, i18n::tr("MAX"))) + P(6);
+      paramDrop(a, s, "##recmax", EdRecMax, pt(x, ft), pt(x + P(84), ft + fld), fm, fsVal, "Maximum recording length");
+      sty::note("row1.record", "max", pt(x, ft), pt(x + P(84), ft + fld));
+      x += P(84) + gg + P(4);
+      {
+        const bool on = param(a, s, EdAppend, 0) >= 0.5;
+        const float box = P(14);
+        const float w = box + std::round(box * 0.5f) + std::round(sty::textW(fm, fsCap, i18n::tr("APPEND")));
+        const ImVec2 tl = pt(x, std::round(cyR - box * 0.5f));
+        if (sty::check("append", tl, box, w, i18n::tr("APPEND"), on, s.slot, fm, fsCap,
+                       "Append recordings after the existing audio (else a take replaces it)") &&
+            s.slot)
+          setParam(a, s, EdAppend, on ? 0 : 1);
+        sty::note("row1.record", "append", tl, ImVec2(tl.x + box, tl.y + box));
+        x += w;
+      }
+      row1LeftEnd = x;
+    } else {
+      const float ft = cyR - fld * 0.5f;
+      paramDrop(a, s, "##recmode", EdRecMode, pt(x, ft), pt(x + P(116), ft + fld), fm, fsVal, "When to start recording");
+      sty::note("row1.record", "mode", pt(x, ft), pt(x + P(116), ft + fld));
+      x += P(116) + gg;
+      sty::caption(dl, o.x + x, o.y + cyR, i18n::tr("MAX"), s.slot ? C(col::TextDim) : C(col::TextDim, 0.6f), fm, fsCap);
+      x += std::round(sty::textW(fm, fsCap, i18n::tr("MAX"))) + P(6);
+      paramDrop(a, s, "##recmax", EdRecMax, pt(x, ft), pt(x + P(84), ft + fld), fm, fsVal, "Maximum recording length");
+      sty::note("row1.record", "max", pt(x, ft), pt(x + P(84), ft + fld));
+      x += P(84) + gg + P(4);
+      {
+        const bool on = param(a, s, EdAppend, 0) >= 0.5;
+        const float box = P(14);
+        const float w = box + std::round(box * 0.5f) + std::round(sty::textW(fm, fsCap, i18n::tr("APPEND")));
+        const ImVec2 tl = pt(x, std::round(cyR - box * 0.5f));
+        if (sty::check("append", tl, box, w, i18n::tr("APPEND"), on, s.slot, fm, fsCap,
+                       "Append recordings after the existing audio (else a take replaces it)") &&
+            s.slot)
+          setParam(a, s, EdAppend, on ? 0 : 1);
+        sty::note("row1.record", "append", tl, ImVec2(tl.x + box, tl.y + box));
+      }
+      row1LeftEnd = L + 6 * (btn + cg);
     }
 
-    // Title (the wordmark, right-aligned before the mute button) and mute input.
+    // Mute input (right edge) and K-421 editor size/zoom control just left of it on row 1.
     const float muteX = Rc - btn;
+    {
+      const float scW = P(78);
+      const float scX = muteX - gg - scW;
+      const float scY = std::round(cy1 - fld * 0.5f);
+      if (scX >= row1LeftEnd + gg) {
+        char scBuf[16];
+        std::snprintf(scBuf, sizeof scBuf, "%.0f%%", static_cast<double>(uiScale(a) * 100.0f));
+        if (sty::dropField("##loupescale", pt(scX, scY), pt(scX + scW, scY + fld), scBuf, fm, fsVal, true,
+                           "Editor size / scale (remembered across sessions; window also resizes freely)", ui::Icon::Zoom))
+          ImGui::OpenPopup("##loupescalepop");
+        sty::note("row1.right", "scale", pt(scX, scY), pt(scX + scW, scY + fld));
+        ImGui::SetNextWindowPos(pt(scX, scY + fld + 2));
+        if (ImGui::BeginPopup("##loupescalepop")) {
+          const float cur = uiScale(a);
+          for (float z : dock::kScaleSteps) {
+            char zb[16];
+            std::snprintf(zb, sizeof zb, "%.0f%%", static_cast<double>(z * 100.0f));
+            if (ImGui::MenuItem(zb, nullptr, std::fabs(cur - z) < 0.01f)) setUiScale(a, z, true);
+          }
+          ImGui::Separator();
+          if (ImGui::MenuItem(i18n::tr("Reset window size"))) resetWindowSize(a);
+          ImGui::EndPopup();
+        }
+      }
+    }
     Btn m;
     const bool muted = param(a, s, EdMuteInput, 0) >= 0.5;
     m.lit = muted;
@@ -492,6 +545,13 @@ void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::M
     switch (i) {
       case 0:  // File
         if (ImGui::MenuItem(i18n::tr("Load audio file..."), nullptr, false, !busy)) openFile(a, s);
+        if (ImGui::MenuItem(i18n::tr("Import from URL..."), nullptr, false, !busy)) {
+          // by its key: the window may close while the link is read and imported
+          const uint64_t key = s.key;
+          urlimportui::openFor(a, urlimportui::Target{"Loupe", [key](App& app, const std::string& path, const std::string&) {
+            loadIntoSession(app, key, path);
+          }, false});
+        }
         ImGui::Separator();
         if (ImGui::MenuItem(i18n::tr("Save as WAV..."), nullptr, false, has)) saveAs(a, s, FileFormat::Wav);
         if (ImGui::MenuItem(i18n::tr("Save as FLAC..."), nullptr, false, has)) saveAs(a, s, FileFormat::Flac);
@@ -660,6 +720,7 @@ void drawMenus(App& a, Session& s, ImVec2 tl, float cellW, float h, const sty::M
         if (ImGui::MenuItem(i18n::tr("Time as bar:beat (song tempo)"), nullptr, s.barsTime)) s.barsTime = true;
         if (ImGui::MenuItem(i18n::tr("Auto-scroll"), nullptr, autoScroll(a))) setAutoScroll(a, !autoScroll(a));
         ImGui::Separator();
+        drawSizeMenu(a);       // K-421: Loupe editor size / scale (remembered across sessions)
         dockMenuItems(a, s);  // K-15: pin into the main layout / back into a window of its own
         break;
       case 6:  // Snap

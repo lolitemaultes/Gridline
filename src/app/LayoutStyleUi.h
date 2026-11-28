@@ -38,6 +38,7 @@ struct BaseStyleScope {
   bool flat = false;
   int colours = 0;  // checkpoint 38: base check box colours pushed
   float checkRound = -1.0f;  // checkpoint 38: the check box rounding put back at the end
+  float radioDot = -1.0f;    // smooth-radio: the radio dot put back at the end
   bool faces = false;        // K-112D: Smooth's neutral faces were taken out for the body
 };
 
@@ -54,6 +55,7 @@ struct BaseBorderScope {
   bool flat = false;
   int colours = 0;  // checkpoint 38: base check box colours pushed
   float checkRound = -1.0f;  // checkpoint 38: the check box rounding put back at the end
+  float radioDot = -1.0f;    // smooth-radio: the radio dot put back at the end
 };
 
 // True while a BaseStyleScope is open (a plugin's own body is drawing: it keeps its look).

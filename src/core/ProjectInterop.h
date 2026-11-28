@@ -51,6 +51,34 @@ int adoptProjectFolders(Song& song, const std::vector<std::pair<std::string, std
 // samples folder takes `newStem` + " Samples". Folders that are not Gridline's (a sample library
 // named "Drum Samples" with no project beside it) are never listed.
 std::vector<std::pair<std::string, std::string>> gridlineMadeFolders(Song& song, const std::string& newStem);
+// ---- files Gridline made itself (presets that keep their sound) ----
+// The folders whose audio Gridline writes and may remove again on this computer: the unpack cache
+// (an imported module's samples, an opened archive's files: removed when their project closes or
+// the cache is cleared) and the settings folder (edited and drawn audio of a project not saved yet,
+// dropped and imported files).
+std::vector<std::string> gridlineFileRoots();
+// `path` is a file Gridline made: inside one of `roots` (but not its rendered instruments, which are
+// kept for good), or in an "Edited audio" or "<name> Samples" folder beside
+// a Gridline project. A preset carries such files with it (bundleStateFiles); files from the
+// person's own folders are only referred to.
+bool isGridlineMadeFile(const std::string& path, const std::vector<std::string>& roots);
+// The files `st` refers to that Gridline made (isGridlineMadeFile) copied into `folder` and named
+// relative to `relativeTo` ("<preset> samples/x.wav"), so the state keeps its sound wherever the
+// originals go. A copy with the same name and content is reused; another file of the same name is
+// numbered. Returns how many references changed; `err` gets the first copy that failed.
+int bundleStateFiles(PluginState& st, const std::string& folder, const std::string& relativeTo, const std::vector<std::string>& roots,
+                     std::string* err = nullptr);
+// The other way, for a state read from a file in `baseDir` (a preset): relative names found there
+// become absolute; an absolute name whose file is gone is looked for where Gridline's folders are
+// now (relinkGridlineFile). Returns how many references changed.
+int resolveStateFiles(PluginState& st, const std::string& baseDir, const std::vector<std::string>& roots);
+// A file in Gridline's own folders that is not where a saved name says (the settings or cache folder
+// moved: another HOME, a data folder, another user name; an unpacked copy made again under another
+// version's name): its place under the matching root of `roots` now. "" when it is not found there.
+std::string relinkGridlineFile(const std::string& path, const std::vector<std::string>& roots);
+// The same for every reference of `song` whose file is missing. Returns how many changed.
+int relinkGridlineFiles(Song& song, const std::vector<std::string>& roots);
+
 // The file references of one plugin state (same rules as forEachFileRef).
 // Returns true when `fn` changed one.
 bool forEachStateFileRef(PluginState& state, const std::function<void(std::string& path)>& fn);

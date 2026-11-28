@@ -12,6 +12,7 @@
 #include "LayoutShellUi.h"
 #include "Keys.h"
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <map>
 #include <set>
@@ -49,7 +50,7 @@ namespace {
     i18n::N_("Spatial"),  i18n::N_("Spectral"),    i18n::N_("MIDI"),     i18n::N_("Mastering"), i18n::N_("Utility"),
     i18n::N_("Effect")};
 
-enum View { kAll, kInstruments, kEffects, kFavourites, kFailed, kViewCount };
+enum View { kAll, kInstruments, kEffects, kFavourites, kOffline, kFailed, kViewCount };  // K-437: Offline (internet blocked)
 
 struct ManagerState {
   char search[96] = "";
@@ -57,6 +58,7 @@ struct ManagerState {
   char category[64] = "";
   int view = kAll;
   std::string selected;     // group key of the selected plugin
+  std::set<std::string> multi;  // K-437: group keys picked together (Ctrl / Cmd / Shift + click) for the bulk actions
   std::string selectedFail;  // "<format>\n<entry>" of the selected failed entry
   std::string categoryFor;   // group key the category field was filled for
   bool suiteOpen = false;    // the Gridline Suite group is expanded
@@ -186,6 +188,8 @@ struct Row {
   std::string sortName, sortColumn;      // K-73: lower-case name, and the sorted column's text
   bool fav = false;
   int sandbox = 0;  // members in the sandbox: 0 none, 1 some, 2 all
+  host::NetAccess net = host::NetAccess::Allowed;  // K-437: internet access of the preferred format
+  bool netAny = false;  // some format of it is kept off the internet (saved as blocked)
 };
 
 struct Model {
@@ -198,6 +202,7 @@ struct Model {
   std::map<std::string, const host::PluginGroup*> byKey;  // every group by its key (the details of the selected one)
   std::map<std::string, int> perFormat;                   // plugins scanned per format
   float slotsWidth = 0;                                   // width of the formats column
+  float categoryWidth = 0;  // K-437: the longest category shown (the names take the rest of the room)
 };
 
 std::string shownCategory(const host::GroupSnapshot& s, const host::PluginGroup& g, const host::PluginPrefs& prefs) {
@@ -214,8 +219,15 @@ bool groupFav(const host::GroupSnapshot& s, const host::PluginGroup& g, const ho
 
 int groupSandbox(const host::GroupSnapshot& s, const host::PluginGroup& g, const host::PluginPrefs& prefs) {
   size_t n = 0;
-  for (size_t m : g.members) n += prefs.sandbox.count(s.items[m].type);
+  for (size_t m : g.members) n += prefs.sandbox.count(s.items[m].type) || host::blocksNetwork(s.items[m].type);  // K-437: blocked ones run there
   return n == 0 ? 0 : n == g.members.size() ? 2 : 1;
+}
+
+// K-437: every format of the group (the plugin's internet access is set for all of them).
+std::vector<std::string> groupTypes(const host::GroupSnapshot& s, const host::PluginGroup& g) {
+  std::vector<std::string> out;
+  for (size_t m : g.members) out.push_back(s.items[m].type);
+  return out;
 }
 
 bool matches(const host::GroupSnapshot& s, const host::PluginGroup& g, const std::string& cat, const std::string& q) {
@@ -247,16 +259,20 @@ Model buildModel(const host::PluginPrefs& prefs, const std::string& q) {
     r.category = shownCategory(s, g, prefs);
     r.fav = groupFav(s, g, prefs);
     r.sandbox = groupSandbox(s, g, prefs);
+    r.net = host::netAccess(s.items[g.preferred].type);
+    for (size_t m : g.members) r.netAny = r.netAny || prefs.netBlock.count(s.items[m].type) > 0;
     if (g.ownSuite) {
       ++md.suiteCount;
     } else {
       ++md.counts[kAll];
       ++md.counts[g.instrument ? kInstruments : kEffects];
       if (r.fav) ++md.counts[kFavourites];
+      if (r.netAny) ++md.counts[kOffline];
     }
     if (ms.view == kInstruments && !g.instrument) continue;
     if (ms.view == kEffects && g.instrument) continue;
     if (ms.view == kFavourites && (!r.fav || g.ownSuite)) continue;
+    if (ms.view == kOffline && (!r.netAny || g.ownSuite)) continue;
     if (!matches(s, g, r.category, q)) continue;
     r.key = key;
     // K-73: the sort keys once per row, not twice per comparison.
@@ -290,6 +306,11 @@ Model buildModel(const host::PluginPrefs& prefs, const std::string& q) {
       slots = std::max(slots, f.size());
     }
   md.slotsWidth = static_cast<float>(slots) * kSlotW - 4;
+  {  // K-437: once per category, not per row (thousands of plugins share a few dozen categories)
+    std::set<std::string> cats;
+    for (const Row& r : md.rows) cats.insert(r.category);
+    for (const std::string& c : cats) md.categoryWidth = std::max(md.categoryWidth, ImGui::CalcTextSize(c.c_str()).x * theme::kFontLabel / ImGui::GetFontSize());
+  }
   return md;
 }
 
@@ -672,7 +693,8 @@ void leftColumn(App& a, const Model& md, host::PluginPrefs& prefs, bool& changed
 void viewTabs(App& a, const Model& md, float maxW) {
   const auto& P = pal();
   ManagerState& ms = state();
-  static const char* const labels[kViewCount] = {i18n::N_("All"), i18n::N_("Instruments"), i18n::N_("Effects"), i18n::N_("Favourites"), i18n::N_("Failed")};
+  static const char* const labels[kViewCount] = {i18n::N_("All"),        i18n::N_("Instruments"), i18n::N_("Effects"),
+                                                 i18n::N_("Favourites"), i18n::N_("Offline"),     i18n::N_("Failed")};
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const float h = ImGui::GetFrameHeight() + 4;
   const float pad = 10, gapN = 6;
@@ -781,6 +803,110 @@ void formatSlots(App& a, ImDrawList* dl, ImVec2 p, float rowH, const host::Group
 // Width of the formats column (worked out with the model, K-73).
 float formatSlotsWidth(const Model& md) { return md.slotsWidth; }
 
+// K-437: a click on a row. Ctrl / Cmd adds or removes it from the picked rows, Shift picks the rows
+// from the selected one to it; a plain click picks only it. The bulk bar acts on the picked rows.
+void pickRow(const Model& md, const std::string& key) {
+  ManagerState& ms = state();
+  const ImGuiIO& io = ImGui::GetIO();
+  if (io.KeyShift && !ms.selected.empty()) {
+    int from = -1, to = -1;
+    for (size_t i = 0; i < md.rows.size(); ++i) {
+      if (md.rows[i].key == ms.selected) from = static_cast<int>(i);
+      if (md.rows[i].key == key) to = static_cast<int>(i);
+    }
+    if (from >= 0 && to >= 0) {
+      if (from > to) std::swap(from, to);
+      for (int i = from; i <= to; ++i)
+        if (md.rows[static_cast<size_t>(i)].g && !md.rows[static_cast<size_t>(i)].g->ownSuite) ms.multi.insert(md.rows[static_cast<size_t>(i)].key);
+    }
+  } else if (io.KeyCtrl || io.KeySuper) {
+    if (ms.multi.empty() && !ms.selected.empty()) ms.multi.insert(ms.selected);
+    if (!ms.multi.erase(key)) ms.multi.insert(key);
+  } else {
+    ms.multi.clear();
+  }
+  ms.selected = key;
+}
+
+// The picked rows still shown (a search or another view may hide some).
+std::vector<const host::PluginGroup*> pickedGroups(const Model& md) {
+  std::vector<const host::PluginGroup*> out;
+  for (const Row& r : md.rows)
+    if (r.g && !r.g->ownSuite && state().multi.count(r.key)) out.push_back(r.g);
+  return out;
+}
+
+// K-437: the Internet cell: a globe, crossed out and lit while the plugin is kept off the internet,
+// in the hot colour while it is allowed until Gridline closes, faint (on hover) while allowed.
+void netCell(App& a, const host::GroupSnapshot& s, const host::PluginGroup& g, const Row& row, float rowH, bool rowHot) {
+  const auto& P = pal();
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  const float cw = ImGui::GetContentRegionAvail().x;
+  const char* unavailable = netBlockUnavailableReason();
+  const bool blocked = row.net == host::NetAccess::Blocked, session = row.net == host::NetAccess::AllowedUntilClose;
+  ImGui::SetCursorScreenPos(ImVec2(p.x, p.y + (rowH - 22) * 0.5f));
+  const bool clicked = ImGui::InvisibleButton("##net", ImVec2(std::max(22.0f, cw), 22));
+  const bool hov = ImGui::IsItemHovered();
+  if (hov) {
+    if (unavailable && !blocked && !session) ui::Tooltip(unavailable);
+    else ui::Tooltip(blocked   ? "Internet access blocked (click to allow it)"
+                     : session ? "Allowed until Gridline closes (click to block it again now)"
+                               : "Internet access allowed (click to block it)");
+  }
+  const ImVec2 c(std::round(p.x + std::max(22.0f, cw) * 0.5f), std::round(p.y + rowH * 0.5f));
+  if (blocked) ui::drawIcon(ImGui::GetWindowDrawList(), ui::Icon::GlobeOff, c, 14, theme::lit(P.led));
+  else if (session) ui::drawIcon(ImGui::GetWindowDrawList(), ui::Icon::Globe, c, 14, theme::lit(P.hot));
+  else if (hov || rowHot) ui::drawIcon(ImGui::GetWindowDrawList(), ui::Icon::Globe, c, 14, hov ? P.text : P.textFaint);
+  if (clicked && !(unavailable && !blocked && !session))
+    setHostedNetAccess(a, groupTypes(s, g), blocked ? host::NetAccess::Allowed : host::NetAccess::Blocked);
+}
+
+// K-437: the bulk bar under the table while several rows are picked.
+constexpr float kBulkBarH = 40;
+void bulkBar(App& a, const Model& md, float width) {
+  const auto& P = pal();
+  const Colors C = colors();
+  ManagerState& ms = state();
+  const std::vector<const host::PluginGroup*> picked = pickedGroups(md);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  const ImVec2 p = ImGui::GetCursorScreenPos();
+  dl->AddRectFilled(p, ImVec2(p.x + width, p.y + kBulkBarH), theme::mix(C.panel, P.accent, P.dark ? 0.12f : 0.08f), theme::kRadiusLg);
+  dl->AddRect(p, ImVec2(p.x + width, p.y + kBulkBarH), theme::withAlpha(P.accent, 0.45f), theme::kRadiusLg);
+  const std::string n = fmtCount(i18n::N_("%d selected"), static_cast<int>(picked.size()));
+  const float fs = ImGui::GetFontSize();
+  text(dl, a.fontBold, fs, ImVec2(p.x + 12, p.y + (kBulkBarH - fs) * 0.5f - 1), P.text, n.c_str());
+  std::vector<std::string> types;
+  for (const host::PluginGroup* g : picked)
+    for (const std::string& t : groupTypes(*md.snap, *g)) types.push_back(t);
+  const char* unavailable = netBlockUnavailableReason();
+  float x = p.x + 12 + textW(a.fontBold, fs, n.c_str()) + 14;
+  const float by = p.y + (kBulkBarH - ImGui::GetFrameHeight()) * 0.5f;
+  const float closeW = ImGui::GetFrameHeight();
+  const float right = p.x + width - 8 - closeW - 8;
+  auto button = [&](const char* label, const char* hint, bool primary, bool enabled) {
+    const float bw = ui::TextButtonWidth(label);
+    if (x + bw > right) return false;  // a narrow table: the buttons that fit
+    ImGui::SetCursorScreenPos(ImVec2(x, by));
+    x += bw + 8;
+    return primary ? ui::PrimaryButton(label, bw, hint, enabled) : (ImGui::BeginDisabled(!enabled), [&] {
+      const bool hit = ui::TextButton(label, false, bw, hint);
+      ImGui::EndDisabled();
+      return hit;
+    }());
+  };
+  if (button("Block internet access", unavailable ? unavailable : "The picked plugins run in a sandbox that cannot connect to the internet", true,
+             unavailable == nullptr))
+    setHostedNetAccess(a, types, host::NetAccess::Blocked);
+  if (button("Allow", "The picked plugins may connect to the internet", false, true)) setHostedNetAccess(a, types, host::NetAccess::Allowed);
+  if (button("Allow until Gridline closes", "The picked plugins may connect until Gridline closes, then they are blocked again", false,
+             unavailable == nullptr))
+    setHostedNetAccess(a, types, host::NetAccess::AllowedUntilClose);
+  ImGui::SetCursorScreenPos(ImVec2(p.x + width - 8 - closeW, by));
+  if (ui::IconButton("##clearpick", ui::Icon::Close, false, closeW, "Clear the selection")) ms.multi.clear();
+  ImGui::SetCursorScreenPos(p);
+  ImGui::Dummy(ImVec2(width, kBulkBarH));
+}
+
 void pluginTable(App& a, Model& md, host::PluginPrefs& prefs, bool& changed, ImVec2 size) {
   const auto& P = pal();
   const Colors C = colors();
@@ -790,9 +916,14 @@ void pluginTable(App& a, Model& md, host::PluginPrefs& prefs, bool& changed, ImV
     const ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::GetWindowDrawList()->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), C.panel, theme::kRadiusLg);
     const bool searching = ms.search[0] != 0;
-    const char* title = searching ? "No plugins match your search" : ms.view == kFavourites ? "No favourites yet" : "No plugins found";
-    const char* body = searching ? "Try another word, or clear the search." : ms.view == kFavourites ? "Click the star of a plugin to keep it at hand."
-                                                                                                   : "Click Find plugins, or add the folder your plugins are in.";
+    const char* title = searching ? "No plugins match your search"
+                        : ms.view == kFavourites ? "No favourites yet"
+                        : ms.view == kOffline    ? "No plugin is kept off the internet"
+                                                 : "No plugins found";
+    const char* body = searching ? "Try another word, or clear the search."
+                       : ms.view == kFavourites ? "Click the star of a plugin to keep it at hand."
+                       : ms.view == kOffline    ? "Block a plugin's internet access with the globe in its row, or in its details."
+                                                : "Click Find plugins, or add the folder your plugins are in.";
     ui::EmptyState(ImGui::GetWindowDrawList(), p, ImVec2(p.x + size.x, p.y + size.y - (searching ? 40 : 0)), title, body);
     if (searching) {
       const float bw = ui::TextButtonWidth("Clear search");
@@ -813,16 +944,21 @@ void pluginTable(App& a, Model& md, host::PluginPrefs& prefs, bool& changed, ImV
   const ImGuiTableFlags tf = ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerH | ImGuiTableFlags_Resizable | ImGuiTableFlags_Sortable |
                              ImGuiTableFlags_PadOuterX;
   const bool narrow = size.x < 560;
-  if (ImGui::BeginTable("##plugins", 6, tf, size)) {
+  if (ImGui::BeginTable("##plugins", 7, tf, size)) {
     ImGui::TableSetupScrollFreeze(0, 1);
     ImGui::TableSetupColumn("##fav", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_NoResize, 18);
-    ImGui::TableSetupColumn(i18n::tr("Name"), ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort, 1.5f);
+    ImGui::TableSetupColumn(i18n::tr("Name"), ImGuiTableColumnFlags_WidthStretch | ImGuiTableColumnFlags_DefaultSort, 3.0f);  // K-437: names win the room
     ImGui::TableSetupColumn(i18n::tr("Formats"), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_NoResize,
-                            formatSlotsWidth(md));
-    ImGui::TableSetupColumn(i18n::tr("Category"), ImGuiTableColumnFlags_WidthFixed, narrow ? 76 : 96);
-    ImGui::TableSetupColumn(i18n::tr("Vendor"), ImGuiTableColumnFlags_WidthStretch | (narrow ? ImGuiTableColumnFlags_DefaultHide : 0), 1.0f);
+                            std::max(formatSlotsWidth(md), textW(a.fontRegular, ImGui::GetFontSize(), i18n::tr("Formats")) + 10));
+    ImGui::TableSetupColumn(i18n::tr("Category"), ImGuiTableColumnFlags_WidthFixed,
+                            std::clamp(std::max(md.categoryWidth, textW(a.fontRegular, ImGui::GetFontSize(), i18n::tr("Category")) + 14) + 2, 56.0f,
+                                       narrow ? 76.0f : 96.0f));
+    ImGui::TableSetupColumn(i18n::tr("Vendor"), ImGuiTableColumnFlags_WidthStretch | (narrow ? ImGuiTableColumnFlags_DefaultHide : 0), 1.0f);  // (weights: names 3 to 1)
+    // K-437: internet access (click the globe to block or allow every format of the plugin).
+    ImGui::TableSetupColumn(i18n::tr("Internet"), ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_NoResize,
+                            std::max(30.0f, textW(a.fontRegular, ImGui::GetFontSize(), i18n::tr("Internet")) + 4));
     ImGui::TableSetupColumn("##sb", ImGuiTableColumnFlags_WidthFixed | ImGuiTableColumnFlags_NoSort | ImGuiTableColumnFlags_NoResize, 18);
-    headersRow(6);
+    headersRow(7);
     if (ImGuiTableSortSpecs* sp = ImGui::TableGetSortSpecs(); sp && sp->SpecsCount > 0) {
       const int col = sp->Specs[0].ColumnIndex;
       const bool asc = sp->Specs[0].SortDirection != ImGuiSortDirection_Descending;
@@ -869,10 +1005,10 @@ void pluginTable(App& a, Model& md, host::PluginPrefs& prefs, bool& changed, ImV
           continue;
         }
         const host::PluginGroup& g = *row.g;
-        const bool sel = row.key == ms.selected;
+        const bool sel = row.key == ms.selected || ms.multi.count(row.key) > 0;
         const ImVec2 c0 = ImGui::GetCursorScreenPos();
         if (ImGui::Selectable("##row", sel, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap, ImVec2(0, rowH))) {
-          ms.selected = row.key;
+          pickRow(md, row.key);
         }
         const bool hov = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenOverlappedByItem);
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) addToProject(a, s.items[g.preferred].type, g.instrument);
@@ -933,15 +1069,19 @@ void pluginTable(App& a, Model& md, host::PluginPrefs& prefs, bool& changed, ImV
           text(dl, a.fontRegular, theme::kFontCaption, ImVec2(p.x, p.y + (rowH - theme::kFontCaption) * 0.5f - 1), dim ? P.textFaint : P.textDim,
                g.vendor.empty() ? i18n::tr("Unknown vendor") : g.vendor.c_str(), ImGui::GetContentRegionAvail().x);
         }
-        // sandbox state (switched in the details)
+        // K-437: internet access
         ImGui::TableSetColumnIndex(5);
+        if (!g.ownSuite) netCell(a, s, g, row, rowH, hov || sel);
+        // sandbox state (switched in the details)
+        ImGui::TableSetColumnIndex(6);
         if (row.sandbox) {
           const ImVec2 p = ImGui::GetCursorScreenPos();
           ImGui::Dummy(ImVec2(16, rowH));
           ui::drawIcon(dl, ui::Icon::Lock, ImVec2(p.x + 7, p.y + rowH * 0.5f), 12, row.sandbox == 2 ? theme::lit(P.led) : P.textDim);
           if (ImGui::IsItemHovered())
-            ui::Tooltip(row.sandbox == 2 ? "Runs in a sandbox: its own process, so a crash cannot close Gridline"
-                                         : "Some formats of this plugin run in a sandbox");
+            ui::Tooltip(row.sandbox == 2 && row.netAny ? "Runs in a sandbox: needed while its internet access is blocked"
+                        : row.sandbox == 2             ? "Runs in a sandbox: its own process, so a crash cannot close Gridline"
+                                                       : "Some formats of this plugin run in a sandbox");
         }
         ImGui::PopID();
       }
@@ -1134,8 +1274,15 @@ void detailsPanel(App& a, const Model& md, host::PluginPrefs& prefs, bool& chang
   {
     const int sb = groupSandbox(s, *g, prefs);
     bool on = sb == 2;
+    bool netForced = true;  // K-437: every format kept off the internet: the sandbox is needed
+    for (size_t m : g->members) netForced = netForced && host::blocksNetwork(s.items[m].type);
+    ImGui::BeginDisabled(netForced);
     if (ImGui::Checkbox(i18n::tr("Run in a sandbox"), &on)) setSandbox(a, s, *g, on || sb == 1);
-    if (sb == 1) {
+    ImGui::EndDisabled();
+    if (netForced) {
+      ImGui::SameLine();
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("(needed while its internet access is blocked)"));
+    } else if (sb == 1) {
       ImGui::SameLine();
       ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("(some formats)"));
     }
@@ -1144,6 +1291,12 @@ void detailsPanel(App& a, const Model& md, host::PluginPrefs& prefs, bool& chang
     ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Runs the plugin in its own process: if it crashes, it goes silent instead of closing Gridline. Uses a little more CPU."));
     ImGui::PopFont();
     ImGui::PopTextWrapPos();
+  }
+  // ---- K-437: internet access (every format of the plugin)
+  if (!g->ownSuite) {
+    caption(a, i18n::N_("INTERNET ACCESS"));
+    const std::vector<std::string> types = groupTypes(s, *g);
+    hostedui::internetAccess(a, types, g->name, hostedNetworkGuard(a, types), w);
   }
   // ---- category override
   caption(a, i18n::N_("CATEGORY"));
@@ -1419,8 +1572,25 @@ void drawPluginManager(App& a) {
   const float detW = side ? std::clamp(rightW * 0.32f, 270.0f, 330.0f) : rightW;
   const float detH = side ? availH : std::min(240.0f, std::max(150.0f, availH * 0.42f));
   const ImVec2 tableSize(side ? rightW - detW - 10 : rightW, side ? availH : std::max(120.0f, availH - detH - 8));
+  // K-437: the bulk bar under the table while several plugins are picked.
+  if (static bool devPick = [] {  // dev check (screenshots): GRIDLINE_DEV_PLUGIN_PICK=all picks every row once
+        const char* e = std::getenv("GRIDLINE_DEV_PLUGIN_PICK");
+        return e && std::string(e) == "all";
+      }();
+      devPick) {
+    for (const Row& r : md.rows)
+      if (r.g && !r.g->ownSuite) ms.multi.insert(r.key);
+    devPick = false;
+  }
+  const bool bulk = ms.view != kFailed && pickedGroups(md).size() >= 2;
+  ImGui::BeginGroup();
   if (ms.view == kFailed) failedTable(a, md, tableSize);
-  else pluginTable(a, md, prefs, changed, tableSize);
+  else pluginTable(a, md, prefs, changed, bulk ? ImVec2(tableSize.x, tableSize.y - kBulkBarH - 8) : tableSize);
+  if (bulk) {
+    ImGui::Dummy(ImVec2(0, 2));
+    bulkBar(a, md, tableSize.x);
+  }
+  ImGui::EndGroup();
   if (side) ImGui::SameLine(0, 10);
   ImGui::PushStyleColor(ImGuiCol_ChildBg, theme::vec(C.panel));
   ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, theme::kRadiusLg + 2);
@@ -1433,9 +1603,11 @@ void drawPluginManager(App& a) {
   ImGui::EndChild();
   ImGui::EndChild();
   if (changed) {
-    // Sandbox switches were saved by setHostedSandbox: keep them.
+    // Sandbox switches were saved by setHostedSandbox, internet access by setHostedNetAccess: keep them.
     host::PluginPrefs now = host::pluginPrefs();
     prefs.sandbox = now.sandbox;
+    prefs.netBlock = now.netBlock;
+    prefs.netBlockNew = now.netBlockNew;
     // K-13: a removed folder's plugins leave the list at once (a scan of what changed).
     const bool folders = prefs.extraFolders.size() < now.extraFolders.size() || prefs.formatFolders != now.formatFolders;
     host::setPluginPrefs(prefs);

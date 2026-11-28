@@ -210,7 +210,7 @@ int main() {
     const Note& n = notesOf(doc, kPat, kLead)[0];
     expect(n.velocity == 92 && n.pan == -16, "volume 5C is velocity 92; pan 30 is 16 left of centre");
     edit(doc, kPat, kLead, [](Rows& x, const Track& t, const Grid&) { return setVolume(x.notes, x.steps, t, 0, 0, 0); });
-    expect(notesOf(doc, kPat, kLead)[0].velocity == 1, "volume 00 stores the lowest velocity (1)");
+    expect(notesOf(doc, kPat, kLead)[0].velocity == 0, "volume 00 stores velocity 0 (GitHub #87: a 0% note a slide fades from)");
     bool all = true;
     for (int v = 0; v <= 128; ++v) {
       std::vector<Note> ns = notesOf(doc, kPat, kLead);

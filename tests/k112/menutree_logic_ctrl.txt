@@ -16,12 +16,12 @@ Gridline > Options > Debug log and script console...			e-
 Gridline > Options > Keyboard shortcuts...			e-
 Gridline > Options > Theme...			e-
 Gridline > Options > Plugin manager...			e-
-Gridline > Options > Arrangements > Arrangement			ec
+Gridline > Options > Arrangements > Arrangement	16 bars		ec
 Gridline > Options > Arrangements > New arrangement			e-
 Gridline > Options > Arrangements > Duplicate arrangement			e-
 Gridline > Options > Arrangements > Delete arrangement			--
-Gridline > Options > Arrangements > Previous arrangement			--
-Gridline > Options > Arrangements > Next arrangement			--
+Gridline > Options > Arrangements > Previous arrangement	Ctrl+Alt+Left	arrangement.previous	--
+Gridline > Options > Arrangements > Next arrangement	Ctrl+Alt+Right	arrangement.next	--
 Gridline > Options > Song position jumps > At once			ec
 Gridline > Options > Song position jumps > Next beat			e-
 Gridline > Options > Song position jumps > Next bar			e-
@@ -102,6 +102,7 @@ File > Export > Render to file (WAV, FLAC, MP3, Ogg)...	Ctrl+B	file.render	e-
 File > Export > Mixer tracks (stems)...	Ctrl+Shift+E	file.renderStems	e-
 File > Export > All tracks as audio files...			e-
 File > Export > All playlist track groups...			e-
+File > Export > Marker areas...			e-
 File > Export > Render again with the last settings...			e-
 File > Export > Song as MIDI file...	Ctrl+Alt+E	file.exportMidi	e-
 File > Export > Pattern as MIDI file...			e-
@@ -184,6 +185,7 @@ Track > New tracks...	Ctrl+Alt+N	track.newTracks	e-
 Track > New track			e-
 Track > New instrument track > Guide to the instruments...			e-
 Track > New instrument track > Audio file as sampler...			e-
+Track > New instrument track > Audio from URL as sampler...			e-
 Track > New instrument track > Speech...			e-
 Track > New track with the same settings	Ctrl+D	track.duplicate	e-
 Track > Duplicate without notes			e-
@@ -212,6 +214,7 @@ Track > Configure track header > Pan knob			ec
 Track > Delete track	Ctrl+Backspace	track.delete	e-
 Track > Add > Instrument channel > Guide to the instruments...			e-
 Track > Add > Instrument channel > Audio file as sampler...			e-
+Track > Add > Instrument channel > Audio from URL as sampler...			e-
 Track > Add > Instrument channel > Speech...			e-
 Track > Add > Pattern	F4	pattern.new	e-
 Track > Add > Automation clip for the last moved control			--
@@ -528,6 +531,7 @@ Window > Tools > Piano roll tools > Slide and portamento > Make slide notes			e-
 Window > Tools > Piano roll tools > Slide and portamento > Make normal notes			e-
 Window > Tools > Piano roll tools > Slide and portamento > Portamento on			e-
 Window > Tools > Piano roll tools > Slide and portamento > Portamento off			e-
+Window > Tools > Piano roll tools > Slide and portamento > Slides glide velocity			ec
 Window > Tools > Piano roll tools > Colour group > Group 1 (channel colour)			e-
 Window > Tools > Piano roll tools > Colour group > Group 2			e-
 Window > Tools > Piano roll tools > Colour group > Group 3			e-
@@ -638,6 +642,8 @@ Window > Tools > Clean up > Trim unused mixer tracks			e-
 Window > Tools > Clean up > Delete unused automation clips			e-
 Window > Tools > Clean up > Delete unused patterns			e-
 Window > Tools > AI assistant activity			e-
+Help > Setup wizard...			e-
+Help > Guided tour...			e-
 Help > Keyboard shortcuts	Alt+K	help.shortcuts	e-
 Help > Load demo song			e-
 Help > Track Receipt...			e-

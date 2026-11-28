@@ -62,6 +62,11 @@ bool moveChannels(Document& d, const std::vector<ObjectId>& channels, int dir);
 std::vector<ObjectId> cloneChannels(Document& d, const std::vector<ObjectId>& channels,
                                     Document::CloneNotes what = Document::CloneNotes::All, ObjectId pattern = kNoId);
 bool removeChannels(Document& d, const std::vector<ObjectId>& channels);
+// K-424: doubles a pattern's active bar length (e.g. 1 bar -> 2 bars), copying
+// all notes, step rows, step props, and pattern automation into the second half
+// in one single undo step. If `alsoResizeClip` names a pattern clip of this
+// pattern whose explicit length matched the original half, extends it too.
+bool doublePattern(Document& d, ObjectId pattern, ObjectId alsoResizeClip = kNoId);
 // Channels without steps or notes in any pattern that no playlist audio clip plays from.
 std::vector<ObjectId> unusedChannels(const Song& s);
 // Insert tracks nothing uses yet: no channel output (main or extra), no

@@ -75,4 +75,72 @@ bool applyLine(std::vector<Note>& notes, const std::vector<bool>& only, tools::N
   return setAll(notes, notesBetween(notes, only, lo, hi), p, tA, vA, tB, vB, set);
 }
 
+// ---- K-423: per-lane snap grids ----------------------------------------------
+
+const std::vector<GridOption>& gridOptions(tools::NoteProp p) {
+  static const std::vector<GridOption> kFine = {
+      {"Off", "OFF", 0},
+      {"1 semitone", "1 ST", 24},
+      {"1/2 semitone (50 ct)", "50 CT", 48},
+      {"2 semitones", "2 ST", 12},
+      {"3 semitones", "3 ST", 8},
+      {"Octave", "OCT", 2},
+  };
+  static const std::vector<GridOption> kPan = {
+      {"Off", "OFF", 0},
+      {"1/4 (50%)", "1/4", 4},
+      {"1/8 (25%)", "1/8", 8},
+      {"1/10 (20%)", "1/10", 10},
+  };
+  static const std::vector<GridOption> kUnipolar = {
+      {"Off", "OFF", 0},
+      {"1/4", "1/4", 4},
+      {"1/8", "1/8", 8},
+      {"1/16", "1/16", 16},
+      {"10%", "10%", 10},
+  };
+  if (p == tools::NoteProp::Fine) return kFine;
+  if (p == tools::NoteProp::Pan) return kPan;
+  return kUnipolar;
+}
+
+const char* gridSettingKey(tools::NoteProp p) {
+  switch (p) {
+    case tools::NoteProp::Pan: return "piano.laneGrid.pan";
+    case tools::NoteProp::Release: return "piano.laneGrid.release";
+    case tools::NoteProp::Fine: return "piano.laneGrid.fine";
+    case tools::NoteProp::ModX: return "piano.laneGrid.modX";
+    case tools::NoteProp::ModY: return "piano.laneGrid.modY";
+    default: return "piano.laneGrid.velocity";
+  }
+}
+
+int clampGridMode(tools::NoteProp p, int mode) {
+  const auto& opts = gridOptions(p);
+  if (opts.empty()) return 0;
+  return std::clamp(mode, 0, static_cast<int>(opts.size()) - 1);
+}
+
+int gridSteps(tools::NoteProp p, int mode) {
+  const auto& opts = gridOptions(p);
+  return opts[static_cast<size_t>(clampGridMode(p, mode))].steps;
+}
+
+double snapValue(tools::NoteProp p, int mode, double frac, bool bypass) {
+  frac = std::clamp(frac, 0.0, 1.0);
+  if (bypass) return frac;
+  const int steps = gridSteps(p, mode);
+  if (steps <= 0) return frac;
+  return std::clamp(std::round(frac * static_cast<double>(steps)) / static_cast<double>(steps), 0.0, 1.0);
+}
+
+std::vector<double> gridLines(tools::NoteProp p, int mode) {
+  std::vector<double> out;
+  const int steps = gridSteps(p, mode);
+  if (steps <= 0) return out;
+  out.reserve(static_cast<size_t>(steps));
+  for (int k = 1; k <= steps; ++k) out.push_back(static_cast<double>(k) / static_cast<double>(steps));
+  return out;
+}
+
 }  // namespace gl::notelane

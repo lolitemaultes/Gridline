@@ -74,6 +74,10 @@ bool replaceInstrumentPick(App& a, ObjectId channel, const std::string& type);
 // Renames whatever F2 means for the focused editor.
 void renameFocused(App& a);
 
+// K-425: deletes one or several channels in 1 undo step (1 confirmation when deleting several),
+// cleaning up UI selection and routing/pattern references.
+void deleteChannels(App& a, const std::vector<ObjectId>& ids, const char* pluralNoun = nullptr);
+
 }  // namespace menus
 
 // K-112c: the Live knob menu's rows. knobNewLane: an automation clip for `pid` on a new playlist

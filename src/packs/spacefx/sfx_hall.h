@@ -198,6 +198,12 @@ class HallFx final : public Effect {
   // scans its diffusers and absorption filters, so it runs every 16th block; the render goes on exactly
   // in between.)
   bool restSettled() const override { return rest_.zero; }
+  bool canDeferRest(const PluginState& s, const ProcessContext&) const override {
+    return rest_.zero && pi(s, HvModel, 1) == 1;
+  }
+  void restedLong(const PluginState& s, const ChannelAux&, const ProcessContext& ctx, int64_t n) override {
+    if (rest_.zero && pi(s, HvModel, 1) == 1) ref_.clocks(s, ctx, n);
+  }
   void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, int n) override {
     rest_.run(
         n, [&](int m) { restRenderFx(*this, s, aux, ctx, m); },

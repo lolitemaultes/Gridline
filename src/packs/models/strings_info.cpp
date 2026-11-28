@@ -192,6 +192,8 @@ PluginInfo stepBass() {
       {"Driven line", {{SbCutoff, 0.35f}, {SbReso, 0.7f}, {SbEnvMod, 0.65f}, {SbDistOn, 1.f}, {SbDistDrive, 0.7f}, {SbDistVolume, 0.4f}}},
       {"Dub echo", {{SbCutoff, 0.3f}, {SbReso, 0.6f}, {SbDlyOn, 1.f}, {SbDlyAmount, 0.45f}, {SbDlyFeedback, 0.55f}, {SbRevOn, 1.f}}},
   };
+  p.midiOutput = true;  // K-438: the sequence goes out on the channel's MIDI output port
+  p.sequencerParams = {SbSeqOn};
   p.editorWidth = 760;
   return p;
 }

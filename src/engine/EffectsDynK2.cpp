@@ -791,6 +791,10 @@ class MultibandK2 final : public Effect {
   // recover (a held peak decays for 10 s, then holds) as on silence: its idle render runs unheard
   // until they have settled (filters at zero, followers at their fixed point); then nothing moves.
   bool restsWhenFaint() const override { return true; }
+  bool canDeferRest(const PluginState&, const ProcessContext&) const override { return rest_.zero; }
+  void restedLong(const PluginState&, const ChannelAux&, const ProcessContext&, int64_t n) override {
+    if (rest_.zero && ftype_ == 1) firBank_.pos = static_cast<int>((static_cast<int64_t>(firBank_.pos) + n) % MbFirBank::N);
+  }
   void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, int n) override {
     rest_.run(
         n, [&](int m) { restRenderFx(*this, s, aux, ctx, m); },
@@ -983,6 +987,8 @@ class TransientK2 final : public Effect {
   // sound replaces: each detector takes the larger, or adds to it), its filters at zero; then
   // nothing moves.
   bool restsWhenFaint() const override { return true; }
+  bool canDeferRest(const PluginState&, const ProcessContext&) const override { return rest_.zero; }
+  void restedLong(const PluginState&, const ChannelAux&, const ProcessContext&, int64_t) override {}
   void rested(const PluginState& s, const ChannelAux& aux, const ProcessContext& ctx, int n) override {
     rest_.run(
         n, [&](int m) { restRenderFx(*this, s, aux, ctx, m); },

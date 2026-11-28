@@ -19,6 +19,7 @@
 #include "core/Png.h"
 #include "core/Lfo.h"
 #include "core/Project.h"
+#include "core/TrackReceipt.h"
 #include "packs/dynamics/cabinet_ir.h"
 #include "packs/plasma/plasma_dsp.h"
 #include "core/ProjectFiles.h"
@@ -1191,6 +1192,43 @@ void testRemoval() {
   expect(t.c.s->memberState(kim) == MemberState::Active && t.c.s->exitKind() == ExitKind::None, "a removal claiming to be the admin's but signed by someone else fails its signature");
 }
 
+// K-86 (chat): a member's session takes a chat message only as its author's, under the id its stamp
+// gives, and of a sane size.
+void testChatForgery() {
+  Trio t(73, "chatforge");
+  settle(t.net, t.all(), t.clock);
+  const SiteId kim = t.c.s->site();
+  auto chatOp = [&](const std::string& text, bool rightId) {
+    ChatMessage m;
+    m.hlc = (1ull << 62) + text.size();
+    m.site = kim;
+    m.id = makeChatMessageId(rightId ? m.hlc : m.hlc + 1, m.site);
+    m.author = "Kim";
+    m.text = text;
+    Op op;
+    op.kind = OpKind::Ins;
+    op.t = m.hlc;
+    op.path = {"meta", "chat:" + m.id};
+    op.value = chatMessageToJson(m);
+    if (text.size() > kChatMaxTextBytes) op.value.object["m"] = Json::makeString(text);  // (as sent: no cleaning)
+    return op;
+  };
+  auto has = [&](const std::string& text) {
+    for (const ChatMessage& m : t.a.s->chatMessages())
+      if (m.text.rfind(text, 0) == 0) return true;
+    return false;
+  };
+  t.a.s->receive(kim, kStreamControl, forgedBatch(*t.a.s, kim, t.c.id, {chatOp("made-up id", false)}));
+  run(t.net, {&t.a}, t.clock, 0.1);
+  expect(!has("made-up id"), "a chat message under an id its stamp does not give is refused");
+  t.a.s->receive(kim, kStreamControl, forgedBatch(*t.a.s, kim, t.c.id, {chatOp(std::string(9000, 'x'), true)}));
+  run(t.net, {&t.a}, t.clock, 0.1);
+  expect(!has("xxxx"), "an oversized chat message is refused");
+  t.a.s->receive(kim, kStreamControl, forgedBatch(*t.a.s, kim, t.c.id, {chatOp("a fair message", true)}));
+  run(t.net, {&t.a}, t.clock, 0.1);
+  expect(has("a fair message"), "the same member's well-formed message is taken");
+}
+
 void testRemovalLateOps() {
   // Sam edits while the admin can't see him; Kim gets the edit; the admin removes Sam
   // (cut: what the admin had): Kim drops the late edit again and converges with the admin.
@@ -1666,6 +1704,41 @@ void testTrackReceiptFields() {
   expect(t.a.doc.song().trackReceipt.empty() && t.b.doc.song().trackReceipt.empty() && converged(t), "receipt: clearing the fields travels");
 }
 
+// The Track Receipt's song merges and files kept apart (the files page's Group... and Song...
+// menus write them into Song::trackReceipt as one edit): each reaches the others, and its undo too.
+void testTrackReceiptMerges() {
+  Trio t(73, "receiptmerge");
+  settle(t.net, t.all(), t.clock);
+  const auto savedOf = [](Peer& p) { return receipt::savedFromJson(p.doc.song().trackReceipt); };
+  // Peer B counts one song with another (as Group... > Count with does).
+  receipt::Saved sv = savedOf(t.b);
+  receipt::mergeSong(sv, "mike ransom world wide", "bless ya life");
+  const std::string merged = receipt::savedToJson(sv);
+  t.b.doc.editSong("Track Receipt", [&](Song& x) { x.trackReceipt = merged; });
+  settle(t.net, t.all(), t.clock);
+  expect(savedOf(t.a).merges.count("mike ransom world wide") && savedOf(t.c).merges.at("mike ransom world wide") == "bless ya life",
+         "receipt merges: a merge reaches every peer");
+  // Peer A keeps two files apart (Group... > Keep these files apart).
+  receipt::Saved sa = savedOf(t.a);
+  receipt::keepApart(sa, "bless ya life", {"/media/VOCALS_bless_ya_life.wav", "/media/DRUMS_bless_ya_life.wav"});
+  const std::string apart = receipt::savedToJson(sa);
+  t.a.doc.editSong("Track Receipt", [&](Song& x) { x.trackReceipt = apart; });
+  settle(t.net, t.all(), t.clock);
+  expect(savedOf(t.b).files.at("/media/VOCALS_bless_ya_life.wav").song == receipt::ownSongKey("/media/VOCALS_bless_ya_life.wav") &&
+             savedOf(t.c).merges.empty(),
+         "receipt merges: files kept apart reach every peer (and the merge into the song is undone with it)");
+  expect(converged(t), "receipt merges: the peers converge");
+  // A undoes its edit: everyone is back to B's merge.
+  t.a.doc.undo();
+  settle(t.net, t.all(), t.clock);
+  expect(t.a.doc.song().trackReceipt == merged && t.b.doc.song().trackReceipt == merged && t.c.doc.song().trackReceipt == merged,
+         "receipt merges: an undo reaches every peer");
+  // B undoes the merge.
+  t.b.doc.undo();
+  settle(t.net, t.all(), t.clock);
+  expect(savedOf(t.a).merges.empty() && savedOf(t.c).merges.empty() && converged(t), "receipt merges: undoing the merge reaches every peer");
+}
+
 // 0.7.8: the LFO board's Chaos and Random sources sync as the LFOs do: their kind, seed and settings,
 // a Roll press, their links; undo is each peer's own; every peer then plays the same values.
 void testChaosRandomSync() {
@@ -1701,6 +1774,46 @@ void testChaosRandomSync() {
   expect(!findLfoLink(t.a.doc.song(), chaos, vol.owner, vol.index) && converged(t), "chaos: removing its link travels");
 }
 
+// 0.7.9: a drawn LFO shape and an LFO preset in a shared session. A stroke is one edit (one undo
+// step) that reaches the others whole; a preset load is one edit; undoing either travels.
+void testLfoDrawSync() {
+  Trio t(73, "lfodraw");
+  settle(t.net, t.all(), t.clock);
+  const ObjectId lead = t.b.doc.song().channels[1].id;
+  const ParamId vol = channelParam(lead, ChannelParam::Volume);
+  const ObjectId id = lfo::newForKnob(t.b.doc, vol);
+  t.b.doc.editLfo(id, "edit LFO shape", [](SongLfo& q) { q.points = lfo::pointsFromShape(q), q.shape = LfoShape::Drawn; });
+  settle(t.net, t.all(), t.clock);
+  const SongLfo* la = t.a.doc.song().lfo(id);
+  expect(la && la->shape == LfoShape::Drawn && la->points == lfo::pointsFromShape(SongLfo{}), "lfo draw: Edit this shape reaches the others");
+  // Alex draws a stroke of many mouse moves; it is one edit.
+  std::vector<std::pair<float, float>> stroke;
+  for (int k = 0; k <= 60; ++k) stroke.emplace_back(0.5f + k / 200.0f, k % 2 ? 1.0f : -1.0f);
+  const auto pts = lfo::drawStroke(*t.a.doc.song().lfo(id), stroke, 16);
+  const size_t before = t.a.doc.history().position();
+  t.a.doc.editLfo(id, "draw LFO shape", [pts](SongLfo& q) { q.points = pts; });
+  expect(t.a.doc.history().position() == before + 1, "lfo draw: a stroke is one undo step");
+  settle(t.net, t.all(), t.clock);
+  expect(t.b.doc.song().lfo(id)->points == pts && t.c.doc.song().lfo(id)->points == pts && converged(t), "lfo draw: the stroke reaches every peer whole");
+  // Kim loads a factory preset into it: one edit, the targets kept.
+  const lfo::Preset& pr = lfo::presets()[1];
+  const SongLfo set = pr.lfo;
+  t.c.doc.editLfo(id, "load LFO preset", [set](SongLfo& q) { lfo::applyPreset(q, set); });
+  settle(t.net, t.all(), t.clock);
+  const SongLfo* lb = t.b.doc.song().lfo(id);
+  expect(lb && lb->shape == set.shape && lb->rateNote == set.rateNote && lb->depth == set.depth && findLfoLink(t.b.doc.song(), id, vol.owner, vol.index),
+         "lfo draw: a preset load reaches the others, the target kept");
+  expect(converged(t), "lfo draw: the peers converge after the preset");
+  // Kim's undo takes the preset back everywhere; then Alex's undo takes back the stroke.
+  t.c.doc.undo();
+  settle(t.net, t.all(), t.clock);
+  expect(t.a.doc.song().lfo(id)->shape == LfoShape::Drawn && t.a.doc.song().lfo(id)->points == pts, "lfo draw: undoing the preset travels");
+  t.a.doc.undo();
+  settle(t.net, t.all(), t.clock);
+  expect(t.b.doc.song().lfo(id)->points == lfo::pointsFromShape(SongLfo{}) && t.c.doc.song().lfo(id)->points == lfo::pointsFromShape(SongLfo{}) && converged(t),
+         "lfo draw: undoing the stroke travels");
+}
+
 }  // namespace
 
 int main() {
@@ -1715,6 +1828,7 @@ int main() {
     for (uint32_t k = 1; k <= static_cast<uint32_t>(std::atoi(more)); ++k) testFuzz(1000u + k * 7919u);
   testUndoLocality();
   testChaosRandomSync();
+  testLfoDrawSync();
   testPluginUndo();
   testOpLog();
   testReopen();
@@ -1726,6 +1840,7 @@ int main() {
   testProfile();
   testVersionRecord();
   testRemoval();
+  testChatForgery();
   testRemovalLateOps();
   testReadmitAndLeave();
   testRemovalPurge();
@@ -1738,5 +1853,6 @@ int main() {
   testRenameConflict();
   testRenameJoinAndStop();
   testTrackReceiptFields();
+  testTrackReceiptMerges();
   return finish();
 }

@@ -242,6 +242,16 @@ std::string initial(const ParamDesc& d, double value, const timeknob::Spec* time
     const std::string r = timeknob::readout(*time, value, tempo, false);
     return r.substr(0, r.find(" ("));
   }
+  if (d.unit == "BPM") {  // K-409: keep up to 3 decimal places when typing tempo
+    char buf[32];
+    std::snprintf(buf, sizeof buf, "%.3f", value);
+    std::string s = buf;
+    if (s.find('.') != std::string::npos) {
+      while (!s.empty() && s.back() == '0') s.pop_back();
+      if (!s.empty() && s.back() == '.') s.pop_back();
+    }
+    return s;
+  }
   return d.format(value);
 }
 

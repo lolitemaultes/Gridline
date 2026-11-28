@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24"><title>Folio</title>
+<path id="mark-1" d="M5.6 0H18.4A5.6 5.6 0 0 1 24 5.6V18.4A5.6 5.6 0 0 1 18.4 24H5.6A5.6 5.6 0 0 1 0 18.4V5.6A5.6 5.6 0 0 1 5.6 0Z" fill="#80ACFF"/>
+<path id="cut-2" d="M 6 9 H 15 V 19 H 6 Z M 9 9 V 6 H 18 V 16 H 15" fill="none" stroke="#353D42" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

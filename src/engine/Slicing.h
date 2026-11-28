@@ -10,6 +10,9 @@ struct PluginState;
 
 // Slice start frames. mode 0 = transients (sensitivity 0..1), 1..4 = 4/8/16/32 equal slices.
 std::vector<int64_t> computeSlices(const Sample& s, int mode, double sensitivity, double minGapSeconds = 0.06);
+// K-418: cached transient frame positions for a SamplePtr via Slicer's transient detector
+// (computeSlices mode 0). UI thread only; avoids recomputing on every hover frame.
+std::shared_ptr<const std::vector<int64_t>> cachedSampleTransients(const SamplePtr& smp, double sensitivity = 0.5);
 // K-248: Kerf's slices at the warp markers (SlModeWarp): where each marker plays in `shown` (the warped
 // sample while the warp plays, else the sample itself).
 std::vector<int64_t> warpSlices(const PluginState& st, const Sample& shown);

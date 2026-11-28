@@ -40,6 +40,7 @@ struct HostedClass {
   std::string uid;
   std::string name, vendor, subCategories, version;
   bool instrument = false;
+  bool needsBridge32 = false;  // K-323: 32-bit Windows PE plugin hosted out-of-process via gridline-bridge32
   bool sidechain = false;
   bool eventInput = false, eventOutput = false;  // takes / sends notes and MIDI
   int inputChannels = 0, outputChannels = 0;     // K-78: main bus channels (cross-format matching)
@@ -130,6 +131,8 @@ class HostedInstance {
   virtual bool loadLibraryPreset(size_t index) = 0;
   // Out-of-process instances.
   virtual bool sandboxed() const = 0;
+  // K-437: its process is kept off the internet (Backend::networkGuard says how).
+  virtual bool networkBlocked() const = 0;
   virtual bool crashed() const = 0;
   virtual std::string crashReason() const = 0;
   // The next Program build replaces this instance with a fresh one (reload
@@ -196,6 +199,20 @@ struct ScanStatus {
 ScanStatus scanStatus();
 // K-73: scanStatus().running without the copy (no lock): cheap enough to ask per plugin.
 bool scanRunning();
+// Q-14: why a hosted plugin type is missing (lock-free read, safe to call per UI row).
+enum class MissingStatus {
+  Installed,       // registered in the plugin cache (and not hidden)
+  Scanning,        // a plugin scan is currently running
+  NotScannedYet,   // plugin cache is empty or this format has never been scanned
+  FormatDisabled,  // the format is switched off in Plugin Manager
+  Unsupported,     // format not hosted on this platform (e.g. AU on Linux/Windows)
+  NotInstalled,    // format was scanned and this plugin is genuinely absent
+};
+MissingStatus missingStatus(const std::string& type);
+bool hasScannedPlugins();
+bool formatScanned(const std::string& format);
+// Tests: reset in-memory scanned-format state without touching disk.
+void clearScanStateForTests();
 // K-71: the entry being scanned as the interface shows it: its file name, and after a few seconds
 // how long it has taken ("Big Synth.vst3  12 s"), so a slow plugin never looks like a hang.
 std::string scanCurrentLabel(const ScanStatus& st);

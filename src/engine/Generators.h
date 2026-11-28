@@ -220,6 +220,28 @@ struct PitchGlide {
   void stop() { left = 0; }
 };
 
+// GitHub #87: one voice's velocity glide (slide notes glide the velocity of the notes they slide):
+// a gain on the voice's output, the note's new velocity level over the level it started with
+// (Generator::velocityLevel), ramped linearly per sample. Generator::velVoice keeps it up to date
+// with its note; a voice that never had one stays at exactly 1 (off()).
+struct VoiceVel {
+  uint32_t id = 0;   // the note it follows
+  bool seen = false;
+  uint32_t seq = 0;  // the glide last taken from the note
+  int delay = 0;     // samples before the ramp starts (instruments that render whole blocks)
+  int64_t left = 0;  // samples of the ramp to go
+  double g = 1, to = 1, step = 0;
+  bool on() const { return g != 1.0 || left > 0 || delay > 0; }
+  float next() {
+    if (delay > 0) {
+      --delay;
+      return static_cast<float>(g);
+    }
+    if (left > 0) g = --left == 0 ? to : g + step;
+    return static_cast<float>(g);
+  }
+};
+
 // K-193: one voice's own response to its note's pressure and timbre (the level and brightness
 // responses, per note). A voice keeps one of these; the instrument calls
 // Generator::exprVoice(vx, id) at the start of each render() for each sounding voice, then
@@ -236,6 +258,7 @@ struct VoiceExpr {
   float g = 1, hg = 1;   // gains of lc, bc
   float coef = 0, shelfA = 0;
   float sl = 0, sr = 0;  // the shelf's low-pass state
+  VoiceVel vel;          // GitHub #87: the note's velocity glide (1 without one)
   void step() {
     const float dl = (lt - lc) * coef, db = (bt - bc) * coef;
     if (dl != 0 || db != 0) {
@@ -250,14 +273,16 @@ struct VoiceExpr {
     step();
     sl += (static_cast<float>(l) - sl) * shelfA;
     sr += (static_cast<float>(r) - sr) * shelfA;
-    l = static_cast<T>((sl + (static_cast<float>(l) - sl) * hg) * g);
-    r = static_cast<T>((sr + (static_cast<float>(r) - sr) * hg) * g);
+    const float v = vel.next();
+    l = static_cast<T>((sl + (static_cast<float>(l) - sl) * hg) * g * v);
+    r = static_cast<T>((sr + (static_cast<float>(r) - sr) * hg) * g * v);
   }
   template <class T>
   void apply(T& m) {
     step();
     sl += (static_cast<float>(m) - sl) * shelfA;
-    m = static_cast<T>((sl + (static_cast<float>(m) - sl) * hg) * g);
+    const float v = vel.next();
+    m = static_cast<T>((sl + (static_cast<float>(m) - sl) * hg) * g * v);
   }
 };
 
@@ -281,6 +306,16 @@ class Generator {
   // porta, mono legato). Only instruments with supportsGlide() follow it.
   void glide(uint32_t id, double pitch, double seconds, int offset) {
     Ev e = Ev::make(Ev::Glide, id, pitch, 0, offset);
+    e.time = seconds;
+    push(e);
+  }
+  // GitHub #87: glides the sounding note `id`'s velocity to `velocity` (0..1) over `seconds`, from
+  // where it is (slide notes; 0 s: at once). Instruments scale the note by its velocity level
+  // (velocityLevel) over the level it started at: per voice (perVoiceVelocity), through the
+  // instrument's own means (ownVelocityGlide: hosted plugins with per-note volume), or else on the
+  // instrument's whole output. A note started at 0% has no level to scale and stays silent.
+  void glideVelocity(uint32_t id, float velocity, double seconds, int offset) {
+    Ev e = Ev::make(Ev::VelGlide, id, 0, velocity, offset);
     e.time = seconds;
     push(e);
   }
@@ -341,6 +376,7 @@ class Generator {
     takeDroppedPitch();
     count_ = 0;
     for (auto& x : exprNotes_) x.on = false;  // K-144
+    chanVel_ = VoiceVel{};                      // GitHub #87
     onKill();
   }
 
@@ -367,7 +403,7 @@ class Generator {
   // K-277: the channel's own output pan and expression response have reached their targets
   // (leaving blocks out then changes nothing they would do later).
   bool smoothersSettled() const {
-    return std::fabs(panTarget_ - panCur_) < 1e-7f && (!exprUsed_ || (std::fabs(levelTarget_ - levelCur_) < 1e-7f && std::fabs(brightTarget_ - brightCur_) < 1e-7f &&
+    return std::fabs(panTarget_ - panCur_) < 1e-7f && !chanVel_.on() && (!exprUsed_ || (std::fabs(levelTarget_ - levelCur_) < 1e-7f && std::fabs(brightTarget_ - brightCur_) < 1e-7f &&
                                                                      levelTarget_ == 0 && brightTarget_ == 0));
   }
   // K-277: may the engine leave this instrument out of blocks while it is silent, no note plays
@@ -381,7 +417,16 @@ class Generator {
   virtual bool notesHeld() const { return false; }
   // K-277: `n` frames went by at rest (the block was not run): free-running state (a tremolo's
   // phase) moves on as if it had, so the next note sounds as it would have.
-  virtual void rested(int n) { (void)n; }
+  // K-142e: the default is a no-op and marks restedIsNoop_ so whole-graph deep sleep knows it can
+  // skip this instrument in O(1). Subclasses that override rested() with O(1) clock catch-up also
+  // override canDeferRest() and restedLong(int64_t); subclasses that run per-sample DSP in rested()
+  // leave canDeferRest() false so they are never skipped.
+  virtual void rested(int n) {
+    (void)n;
+    restedIsNoop_ = true;
+  }
+  virtual bool canDeferRest() const { return restedIsNoop_; }
+  virtual void restedLong(int64_t n) { (void)n; }
   // J-112: the instrument plays on its own (its own sequence, not notes it is
   // given: Seltmann's latched pattern). Audio thread, after a block; the
   // engine publishes it as plugin playback (AudioEngine::pluginPlayback).
@@ -507,6 +552,26 @@ class Generator {
   // of render() for each sounding voice). A new id restarts the response at the note's values.
   // Until any note of this instrument has had pressure or timbre, vx.on stays false.
   void exprVoice(VoiceExpr& vx, uint32_t id) const;
+  // GitHub #87: the level a note's velocity `v` (0..1) gives (the default: v, a level linear in
+  // velocity). A velocity glide scales the note by level(new) / level(at its start).
+  virtual double velocityLevel(float v) const { return static_cast<double>(v); }
+  // GitHub #87: the instrument applies velocity glides to each voice itself (VoiceVel through
+  // velVoice; by default where it applies the expression response per voice, VoiceExpr::vel).
+  // Otherwise (and without ownVelocityGlide) the base class scales the instrument's whole output.
+  virtual bool perVoiceVelocity() const { return perVoiceExpression(); }
+  // GitHub #87: brings a voice's velocity glide up to date with its note `id` (the start of
+  // render(), for each sounding voice; exprVoice does it for VoiceExpr::vel).
+  void velVoice(VoiceVel& vv, uint32_t id) const;
+  // GitHub #87: the instrument glides a note's level itself (hosted plugins with per-note volume):
+  // onVelocityGlide gets the gain to reach (level over the note's start level) over `seconds`.
+  virtual bool ownVelocityGlide() const { return false; }
+  // (`velocity`: the slide's own, 0..1, for instruments that glide the velocity they play with.)
+  virtual void onVelocityGlide(uint32_t id, double gain, float velocity, double seconds) {
+    (void)id;
+    (void)gain;
+    (void)velocity;
+    (void)seconds;
+  }
   virtual void onAllOff() = 0;
   virtual void onKill() = 0;
   // Called once per process() before rendering, to read parameters.
@@ -544,14 +609,14 @@ class Generator {
  private:
   int evOffset_ = 0;
   struct Ev {
-    enum Kind { On, Off, AllOff, Glide, Cut, Midi, Expr, ChanPitch };
+    enum Kind { On, Off, AllOff, Glide, Cut, Midi, Expr, ChanPitch, VelGlide };
     Kind kind = On;
     ExprDim dim = ExprDim::Pitch;  // Expr: the dimension (value in pitch)
     uint32_t id = 0;
     double pitch = 0;
     float velocity = 0;
     int offset = 0;
-    double time = 0;  // Glide: seconds
+    double time = 0;  // Glide, VelGlide: seconds
     NoteProps props{};
     bool hasProps = false;
     static Ev make(Kind k, uint32_t id, double pitch, float velocity, int offset) {
@@ -586,12 +651,22 @@ class Generator {
     bool on = false;
     double pitch = 0;  // note-on pitch (the glide's base)
     float bend = 0, pressure = 0, timbre = 0.5f;
+    // GitHub #87: the velocity it started with, and its latest velocity glide (gain, samples,
+    // samples before it starts; seq counts the glides, so each voice takes each one once).
+    float vel0 = 0;
+    uint32_t vgSeq = 0;
+    double vgTo = 1;
+    int64_t vgLen = 0;
+    int vgDelay = 0;
   };
   static constexpr int kExprNotes = 64;
   std::array<ExprNote, kExprNotes> exprNotes_{};
   ExprSettings exprSet_{};
   ExprNote* exprNote(uint32_t id);
-  void exprNoteOn(uint32_t id, double pitch, const NoteProps* props);
+  void exprNoteOn(uint32_t id, double pitch, float velocity, const NoteProps* props);
+  void velGlide(const Ev& e);  // GitHub #87
+  bool velUsed_ = false;       // GitHub #87: some note of this instrument had a velocity glide
+  VoiceVel chanVel_;           // GitHub #87: the whole output's velocity glide (instruments without per-voice ones)
   void exprNoteOff(uint32_t id);
   void exprEvent(const Ev& e);
   void exprTargets();
@@ -606,6 +681,7 @@ class Generator {
   double chanPitch_ = 0;      // the channel pitch the held notes include (semitones)
   double chanPitchSent_ = 0;  // the last channelPitch() value (pushed, maybe not fired yet)
   int chanBendRange_ = 2;     // Channel::bendRange
+  bool restedIsNoop_ = false;  // K-142e: set when base rested() runs (not overridden)
 };
 
 // Instance for a catalogue type ("gl.synth", …); nullptr for unknown types.

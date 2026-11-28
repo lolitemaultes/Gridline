@@ -211,6 +211,7 @@ double backingScale(const Window&) { return 1.0; }  // SDL window units are pixe
 long windowNumber(const Window&) { return -1; }
 std::string xResources(const Window&) { return {}; }  // X11 only
 bool xServerAnswers() { return false; }
+void installX11SafetyHandlers() {}
 void* sideWindowOpen(const std::string&, int, int, bool) { return nullptr; }
 void sideWindowResize(void*, int, int, bool) {}
 bool sideWindowPump(void*, int&, int&) { return false; }
@@ -297,6 +298,7 @@ void frameClockStop() {}
 void frameClockIdle(bool) {}
 bool frameClockSleep(double) { return false; }
 bool displayWaitStart(void*) { return false; }
+bool displayWaitStartWayland(void*) { return false; }
 bool displaySleep(double) { return false; }
 void frameClockWake() {}
 bool windowOnScreen(const Window&) { return true; }

@@ -132,6 +132,22 @@ void setError(const std::string& e) {
   gLastError = e;
 }
 std::atomic<uint64_t> gGeneration{0};
+// Q-14: lock-free bitmask of plugin formats scanned (or populated from cache / registration) so
+// UI rows can distinguish "not scanned yet" from "not installed" without ever blocking on scan locks.
+std::atomic<uint32_t> gScannedFormatBits{0};
+std::atomic<bool> gCacheScanned{false};
+uint32_t formatBit(const std::string& format) {
+  if (format == "vst3") return 1u << 0;
+  if (format == "clap") return 1u << 1;
+  if (format == "vst2") return 1u << 2;
+  if (format == "au") return 1u << 3;
+  if (format == "lv2") return 1u << 4;
+  return 1u << 5;
+}
+void markFormatScannedAtomic(const std::string& format) {
+  gCacheScanned.store(true, std::memory_order_relaxed);
+  if (!format.empty()) gScannedFormatBits.fetch_or(formatBit(format), std::memory_order_relaxed);
+}
 std::mutex& gExeLock = *new std::mutex;
 std::string& gChildExe = *new std::string;
 }  // namespace
@@ -234,9 +250,12 @@ static void unregisterEntries(const std::set<std::pair<std::string, std::string>
 }
 
 void registerScanResult(const ScanResult& r) {
+  if (!r.format.empty()) markFormatScannedAtomic(r.format);
   if (!r.ok) return;
   for (const auto& c : r.classes) {
-    auto h = std::make_shared<const HostedClass>(makeHostedClass(c, r.bundle, r.format));
+    HostedClass hc = makeHostedClass(c, r.bundle, r.format);
+    hc.needsBridge32 = r.needsBridge32;
+    auto h = std::make_shared<const HostedClass>(std::move(hc));
     registerDynamicPlugin(makePluginInfo(*h));
     std::lock_guard<std::mutex> g(gClassLock);
     classMap()[h->type] = h;
@@ -302,8 +321,8 @@ class Core final : public HostedInstance {
   static constexpr int kMaxPending = 4096;
   static constexpr int kMaxMidiOut = 1024;
 
-  Core(std::shared_ptr<const HostedClass> cls, std::unique_ptr<Backend> b, bool sandboxed)
-      : cls_(std::move(cls)), b_(std::move(b)), sandboxed_(sandboxed), opts_(hostOptions(cls_->type)) {
+  Core(std::shared_ptr<const HostedClass> cls, std::unique_ptr<Backend> b, bool sandboxed, bool netBlocked)
+      : cls_(std::move(cls)), b_(std::move(b)), sandboxed_(sandboxed), netBlocked_(netBlocked), opts_(hostOptions(cls_->type)) {
     const size_t n = cls_->params.size();
     ids_.resize(n);
     mapped_.resize(n);
@@ -351,6 +370,7 @@ class Core final : public HostedInstance {
   Backend* backend() override { return b_.get(); }
   const HostedClass& hostedClass() const override { return *cls_; }
   bool sandboxed() const override { return sandboxed_; }
+  bool networkBlocked() const override { return netBlocked_; }
   bool crashed() const override { return b_->crashed(); }
   std::string crashReason() const override { return b_->crashReason(); }
   void requestReload() override { reload_.store(true); }
@@ -380,7 +400,9 @@ class Core final : public HostedInstance {
     }
   }
   bool stale() const {
-    return reload_.load() || runsInSandbox(cls_->type) != sandboxed_ || !hostOptions(cls_->type).sameStructure(opts_);
+    const bool wantSandbox = cls_->needsBridge32 || runsInSandbox(cls_->type);
+    return reload_.load() || wantSandbox != sandboxed_ || blocksNetwork(cls_->type) != netBlocked_ ||
+           !hostOptions(cls_->type).sameStructure(opts_);
   }
   void takeCpu(float& average, float& peak) override {
     const uint64_t ns = cpuNs_.exchange(0, std::memory_order_relaxed);
@@ -523,6 +545,7 @@ class Core final : public HostedInstance {
       resume();
     }
     b_->idle();
+    if (b_->awaitingAnswer()) return;  // busy (out of process): what it has comes with its answer, a later frame
     events_.clear();
     b_->drainHostEvents(events_);
     for (const auto& e : events_) {
@@ -608,7 +631,7 @@ class Core final : public HostedInstance {
   bool captureState(std::string& data) override {
     crash::InsideScope inside("a plugin giving its state:", cls_->name);
     try {
-      if (uiBlocked() || !b_->getState(data)) return false;
+      if (uiBlocked() || b_->notResponding() || !b_->getState(data)) return false;  // (not responding: the project keeps what it has)
     } catch (...) {
       reportThrow();
       b_->markLost();
@@ -619,7 +642,7 @@ class Core final : public HostedInstance {
   }
 
   std::string paramText(int index, float value) override {
-    if (uiBlocked() || index < 0 || static_cast<size_t>(index) >= ids_.size() || !mapped_[static_cast<size_t>(index)]) return {};
+    if (uiBlocked() || b_->notResponding() || index < 0 || static_cast<size_t>(index) >= ids_.size() || !mapped_[static_cast<size_t>(index)]) return {};
     crash::InsideScope inside("a plugin's parameter text:", cls_->name);
     try {
       return b_->paramText(ids_[static_cast<size_t>(index)], cls_->toNormalized(static_cast<size_t>(index), value));
@@ -1039,6 +1062,7 @@ class Core final : public HostedInstance {
   std::shared_ptr<const HostedClass> cls_;
   std::unique_ptr<Backend> b_;
   bool sandboxed_ = false;
+  bool netBlocked_ = false;  // K-437: its process is kept off the internet
   HostOptions opts_;
   std::atomic<bool> reload_{false};
   std::vector<uint32_t> ids_;
@@ -1140,6 +1164,18 @@ class HostedGenerator final : public Generator {
     startNote(id, pitch, velocity, std::clamp(props.color, 0, 15), &props);
   }
   void onCut(uint32_t id) override { stopNote(id, 0.0f); }
+  // GitHub #87: slide notes glide a note's volume through the plugin's per-note volume (VST3's
+  // volume note expression) where it has one; otherwise the base class scales the plugin's output.
+  bool ownVelocityGlide() const override { return core_->backend()->supportsNoteVolume(); }
+  void onVelocityGlide(uint32_t id, double gain, float velocity, double seconds) override {
+    (void)velocity;
+    Note* n = find(id);
+    if (!n) return;
+    n->volTo = std::clamp(gain, 0.0, 4.0);
+    n->volLeft = std::max<int64_t>(1, static_cast<int64_t>(std::llround(seconds * sampleRate_)));
+    n->volStep = (n->volTo - n->vol) / static_cast<double>(n->volLeft);
+    n->volFrom = eventOffset();
+  }
   void onGlide(uint32_t id, double pitch, double seconds) override {
     Note* n = find(id);
     if (!n || core_->options().notePitch == HostOptions::PitchOff || (!mpe() && !core_->backend()->supportsTuning())) return;
@@ -1184,18 +1220,34 @@ class HostedGenerator final : public Generator {
     queue(e, eventOffset());
   }
   void onMidi(uint8_t s, uint8_t a, uint8_t b) override {
-    if ((s & 0xF0) == 0xE0 && bendMerge()) {  // the wheel / a bend line: added to the channel pitch's share
+    const uint8_t st = s & 0xF0;
+    const int ch = s & 15;
+    if (st == 0xE0 && bendMerge()) {  // the wheel / a bend line: added to the channel pitch's share
       const int raw = ((b & 0x7F) << 7) | (a & 0x7F);
-      extBend_[s & 15] = static_cast<double>(raw - 8192) / 8192.0 * static_cast<double>(channelBendRange());
-      sendMergedBend(s & 15);
+      extBend_[ch] = static_cast<double>(raw - 8192) / 8192.0 * static_cast<double>(channelBendRange());
+      sendMergedBend(ch);
       return;
+    }
+    // Q-13: a raw MIDI NoteOn arriving after an earlier detuned sequenced note has already ended
+    // must not inherit that finished note's residual fine-pitch bend.
+    if (st == 0x90 && b > 0 && bendMerge() && lastNote_[ch].on) {
+      bool anyHeld = false;
+      for (const auto& n : notes_)
+        if (n.used && (n.channel & 15) == ch) {
+          anyHeld = true;
+          break;
+        }
+      if (!anyHeld) {
+        lastNote_[ch].on = false;
+        sendMergedBend(ch);
+      }
     }
     NoteEvent e;
     e.type = NoteEvent::Midi;
     e.midi[0] = s;
     e.midi[1] = a;
     e.midi[2] = b;
-    e.channel = static_cast<int8_t>(s & 0x0F);
+    e.channel = static_cast<int8_t>(ch);
     queue(e, eventOffset());
   }
   // J-109: every note Gridline sent ends, then sustain off and All Notes Off
@@ -1276,6 +1328,10 @@ class HostedGenerator final : public Generator {
     int glideFrom = 0;  // offset in the block where the glide starts
     int64_t startAt = 0;  // sample it started on (frames this instrument has run)
     float pressure = 0, timbre = 0.5f;  // K-99: the expression last sent
+    // GitHub #87: its volume expression (gain, 1 = as started) and the glide to volTo.
+    double vol = 1, volTo = 1, volStep = 0;
+    int64_t volLeft = 0;
+    int volFrom = 0;
   };
   Note* find(uint32_t id) {
     for (auto& n : notes_)
@@ -1295,6 +1351,23 @@ class HostedGenerator final : public Generator {
       std::memset(dl + AudioEngine::kMaxBlock, 0, sizeof(float) * static_cast<size_t>(n));
     }
   }
+  // Q-13 hosted fine-pitch dispatch contract (all 5 formats: VST3, CLAP, VST2, AU, LV2):
+  //   1. Fractional MIDI pitch (note key + fine cents/100 + channel pitch) splits into integer MIDI
+  //      key = clamp(lround(pitch), 0, 127) and remainder rem = pitch - key (in [-0.5, +0.5] st for
+  //      in-range keys, including coarse+fine offsets like +360 ct -> key+4, -40 ct).
+  //   2. NoteOff always uses the stored key, channel and noteId captured here, even if channel
+  //      pitch or glides moved the sounding pitch while held (zero stuck notes).
+  //   3. PitchAuto + supportsTuning() (VST3 w/ kTuningTypeID, CLAP note dialect): NoteOn carries
+  //      `key` + `rem`; glides/channel-pitch emit NoteEvent::Tuning (`cur - key` when
+  //      tuningRelativeToKey() [CLAP], `cur - base` otherwise [VST3]).
+  //   4. PitchAuto + !supportsTuning() (VST2, AU, LV2, MIDI-only CLAP, VST3 w/o kTuningTypeID) or
+  //      PitchChannelBend: bendMerge() sends MIDI 0xE0 pitch bend scaled by channelBendRange()
+  //      before NoteOn and clears e.tuning (unless !supportsPitchBend(), e.g. a VST3 plugin with no
+  //      IMidiMapping pitch-bend target, which keeps e.tuning on NoteOnEvent::tuning).
+  //   5. PitchMpe: allocates member channel 1..15, announces lower zone + RPN 0 mpeBendRange, sends
+  //      member-channel 0xE0 bend scaled by mpeBendRange before NoteOn, clears e.tuning, and glides
+  //      via member-channel 0xE0 (`cur - key`).
+  //   6. PitchOff: sends integer `key` only with e.tuning = 0 (no per-note tuning, MPE or slides).
   void startNote(uint32_t id, double pitch, float velocity, int channel, const NoteProps* props) {
     Note* slot = nullptr;
     for (auto& n : notes_)
@@ -1329,12 +1402,14 @@ class HostedGenerator final : public Generator {
     e.key = slot->key;
     e.channel = slot->channel;
     e.velocity = std::clamp(velocity, 0.0f, 1.0f);
-    e.tuning = pitch - key;
+    e.tuning = core_->options().notePitch == HostOptions::PitchOff ? 0.0 : pitch - key;
     if (bendMerge()) {  // no per-note tuning: the pitch off its key (fine pitch, channel pitch) as the channel's bend
-      LastNote& ln = lastNote_[channel & 15];
-      ln.on = true, ln.base = pitch, ln.key = key, ln.chan = channelPitchNow();
-      sendMergedBend(channel & 15);
-      e.tuning = 0;  // (a plugin that could also tune the note would add it twice)
+      if (core_->backend()->supportsPitchBend()) {
+        LastNote& ln = lastNote_[channel & 15];
+        ln.on = true, ln.base = pitch, ln.key = key, ln.chan = channelPitchNow();
+        sendMergedBend(channel & 15);
+        e.tuning = 0;  // (a plugin that could also tune the note would add it twice)
+      }
     }
     if (mpe()) {  // the note's pitch off its key as its channel's bend, before it starts
       sendBend(slot->channel, e.tuning);
@@ -1365,7 +1440,9 @@ class HostedGenerator final : public Generator {
     e.key = n->key;
     e.channel = n->channel;
     e.velocity = velocity;
-    e.tuning = bendMerge() ? 0.0 : n->base - n->key;
+    const bool suppressTuning = (bendMerge() && core_->backend()->supportsPitchBend()) || mpe() ||
+                                core_->options().notePitch == HostOptions::PitchOff;
+    e.tuning = suppressTuning ? 0.0 : n->base - n->key;
     queue(e, eventOffset());
     n->used = false;
   }
@@ -1404,10 +1481,29 @@ class HostedGenerator final : public Generator {
         e.noteId = nt.noteId;
         e.key = nt.key;
         e.channel = nt.channel;
-        e.tuning = nt.cur - nt.base;
+        // Q-13: CLAP note tuning expression replaces tuning relative to note.key (so initial fine
+        // pitch must remain included); VST3 kTuningTypeID adds on top of NoteOn::tuning.
+        e.tuning = core_->backend()->tuningRelativeToKey() ? (nt.cur - nt.key) : (nt.cur - nt.base);
         queue(e, pos);
       }
       nt.glideFrom = 0;
+    }
+    for (auto& nt : notes_) {  // GitHub #87: volume glides, one value every 32 samples
+      if (!nt.used || nt.volLeft <= 0) continue;
+      for (int pos = std::min(nt.volFrom, n - 1); pos < n && nt.volLeft > 0; pos += 32) {
+        const int64_t step = std::min<int64_t>(nt.volLeft, std::min(32, n - pos));
+        nt.volLeft -= step;
+        nt.vol = nt.volLeft == 0 ? nt.volTo : nt.vol + nt.volStep * static_cast<double>(step);
+        NoteEvent e;
+        e.type = NoteEvent::Expression;
+        e.expr = NoteEvent::ExprVolume;
+        e.noteId = nt.noteId;
+        e.key = nt.key;
+        e.channel = nt.channel;
+        e.value = static_cast<float>(nt.vol);
+        queue(e, pos);
+      }
+      nt.volFrom = 0;
     }
   }
 
@@ -1589,14 +1685,27 @@ std::unique_ptr<Core> makeCore(const std::string& type) {
   // as long as the plugin takes: long work, not a freeze.
   crash::BusyScope busy("loading a plugin", 120);
   std::string err;
-  const bool sandbox = runsInSandbox(type);
-  std::unique_ptr<Backend> b = sandbox ? createSandboxBackend(childExecutable(), cls->format, cls->bundle, cls->uid, &err, cls->name)
+  const bool bridge32 = cls->needsBridge32;
+  // K-437: a plugin kept off the internet always runs in the sandbox (runsInSandbox says so), whose
+  // process restricts itself before it loads the plugin, or does not load it.
+  const bool netBlock = blocksNetwork(type);
+  const bool sandbox = bridge32 || runsInSandbox(type) || netBlock;
+  std::string helperExe = childExecutable();
+  if (bridge32) {
+    helperExe = bridge32Executable(helperExe);
+    std::error_code ec;
+    if (helperExe.empty() || !std::filesystem::is_regular_file(std::filesystem::u8path(helperExe), ec)) {
+      setError(cls->name + ": " + bridge32UnavailableError(helperExe));
+      return nullptr;
+    }
+  }
+  std::unique_ptr<Backend> b = sandbox ? createSandboxBackend(helperExe, cls->format, cls->bundle, cls->uid, &err, cls->name, netBlock)
                                        : createBackend(cls->format, cls->bundle, cls->uid, &err);
   if (!b) {
     setError(cls->name + ": " + err);
     return nullptr;
   }
-  return std::make_unique<Core>(cls, std::move(b), sandbox);
+  return std::make_unique<Core>(cls, std::move(b), sandbox, netBlock);
 }
 
 }  // namespace
@@ -1758,6 +1867,13 @@ void finishEntry(Service& sv, ScanResult r) {
   std::lock_guard<std::mutex> w(sv.writeLock);
   // K-71: an unchanged plugin is registered already (the browser's plugin list only grows).
   ScanResult* old = sv.cache.slot(r.bundle, r.format);
+  // K-437: plugins never found on this computer before are kept off the internet when that is the
+  // default (the known list outlives the cache, so a rebuilt cache does not make them new).
+  if (r.ok) {
+    std::vector<std::string> found;
+    for (const ScannedClass& c : r.classes) found.push_back(r.format + ":" + c.uid);
+    blockNewlyFound(found);
+  }
   if (!old || !sameScan(*old, r)) registerScanResult(r);
   const int classes = countClasses();
   // K-150: the searches and counts over the cache (thousands of plugins) run before `lock` (the
@@ -1777,6 +1893,22 @@ void finishEntry(Service& sv, ScanResult r) {
   }
   sv.dirty = true;
   saveCache(sv, false);
+}
+
+// K-437: a scan loads the plugin, so it is kept off the internet like the plugin: when one of the
+// entry's plugins is blocked, or the entry is new (or only failed before) and new plugins are
+// blocked by default. A plugin allowed until Gridline closes is scanned as allowed.
+bool scanBlocksNetwork(Service& sv, const std::string& format, const std::string& entry) {
+  std::vector<std::string> types;
+  {
+    std::lock_guard<std::mutex> w(sv.writeLock);
+    if (const ScanResult* old = sv.cache.slot(entry, format))
+      for (const ScannedClass& c : old->classes) types.push_back(format + ":" + c.uid);
+  }
+  if (types.empty()) return pluginPrefs().netBlockNew;
+  for (const std::string& t : types)
+    if (blocksNetwork(t)) return true;
+  return false;
 }
 
 // K-267: crashes and timeouts are tried once more, alone, after the other entries (GRIDLINE_SCAN_RETRY=0:
@@ -1839,8 +1971,9 @@ void scanPassOf(Service& sv, const std::string& exe, const std::vector<std::pair
       }
       ScanResult r;
       ScanReport rep;
+      const bool netBlock = scanBlocksNetwork(sv, format, entry);  // K-437
       try {
-        r = scanIsolated(exe, format, entry, scanTimeout(), &sv.cancel, &rep, attempt);
+        r = scanIsolated(exe, format, entry, scanTimeout(), &sv.cancel, &rep, attempt, netBlock);
       } catch (const std::exception& e) {  // K-73: (a path the system cannot spell, no temp folder) one entry fails, not the app
         r = ScanResult{};
         r.format = format;
@@ -1905,10 +2038,23 @@ void initHosting(const std::string& configDir) {
   loadPluginPrefs(configDir);
   Service& s = service();
   ScanCache cache(configDir + "/plugin-cache.json");
-  cache.load();
+  const bool loaded = cache.load();
+  // Q-14: reflect the loaded cache's scanned state accurately (empty/missing cache -> not scanned yet).
+  gCacheScanned.store(loaded && cache.scanned(), std::memory_order_relaxed);
+  uint32_t bits = 0;
+  if (loaded) {
+    for (const auto& fmt : cache.scannedFormats()) bits |= formatBit(fmt);
+    for (const auto& e : cache.entries())
+      if (!e.format.empty()) bits |= formatBit(e.format);
+  }
+  gScannedFormatBits.store(bits, std::memory_order_relaxed);
   std::lock_guard<std::mutex> w(s.writeLock);
-  for (const auto& e : cache.entries())
+  std::vector<std::string> cached;  // K-437: known plugins for the first run with the known list
+  for (const auto& e : cache.entries()) {
     if (findFormat(e.format)) registerScanResult(e);
+    for (const ScannedClass& c : e.classes) cached.push_back(e.format + ":" + c.uid);
+  }
+  seedKnownPlugins(cached);
   const int classes = countClasses();
   std::lock_guard<std::mutex> g(s.lock);
   s.cacheFile = cache.file();
@@ -1964,6 +2110,25 @@ void scanPass(Service& sv, const std::string& exe, bool force) {
     sv.status.generation = gGeneration.load();
   }
   scanEntries(sv, exe, todo);
+  // Q-14: a completed scan pass records every enabled format as scanned (even when 0 plugins
+  // were found) so subsequent opens report "not installed" instead of "not scanned yet".
+  if (!sv.cancel.load()) {
+    const PluginPrefs prefs = pluginPrefs();
+    std::lock_guard<std::mutex> w(sv.writeLock);
+    for (const Format& f : formats()) {
+      if (prefs.disabledFormats.count(f.id)) continue;
+      if (!sv.cache.formatScanned(f.id)) {
+        sv.cache.markScanned(f.id);
+        sv.dirty = true;
+      }
+      markFormatScannedAtomic(f.id);
+    }
+    if (!sv.cache.scanned()) {
+      sv.cache.markScanned("");
+      sv.dirty = true;
+    }
+    gCacheScanned.store(true, std::memory_order_relaxed);
+  }
 }
 // K-13: a scan asked for while another ran (search folders changed): run it now.
 bool takePending(Service& sv) {
@@ -2091,6 +2256,29 @@ void rescanFolder(const std::string& exe, const std::string& format, const std::
 uint64_t hostedClassesGeneration() { return gGeneration.load(); }
 
 bool scanRunning() { return service().running.load(); }
+
+bool hasScannedPlugins() { return gCacheScanned.load(std::memory_order_relaxed); }
+
+bool formatScanned(const std::string& format) {
+  if (format.empty()) return hasScannedPlugins();
+  return (gScannedFormatBits.load(std::memory_order_relaxed) & formatBit(format)) != 0;
+}
+
+MissingStatus missingStatus(const std::string& type) {
+  std::string format, uid;
+  if (!splitType(type, format, uid)) return MissingStatus::NotInstalled;
+  if (xformat::installed(type)) return MissingStatus::Installed;
+  if (!findFormat(format)) return MissingStatus::Unsupported;
+  if (!formatEnabled(format)) return MissingStatus::FormatDisabled;
+  if (scanRunning()) return MissingStatus::Scanning;
+  if (!formatScanned(format)) return MissingStatus::NotScannedYet;
+  return MissingStatus::NotInstalled;
+}
+
+void clearScanStateForTests() {
+  gCacheScanned.store(false, std::memory_order_relaxed);
+  gScannedFormatBits.store(0, std::memory_order_relaxed);
+}
 
 ScanStatus scanStatus() {
   Service& s = service();

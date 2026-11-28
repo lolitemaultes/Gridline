@@ -11,6 +11,7 @@
 // CPU: the instrument is read through the session's snapshot (parsed once per document revision),
 // the waveform from the file's peaks pyramid through a column cache rebuilt only when the view
 // changes, the play tap once a frame while a voice of the instrument sounds.
+#include "UrlImportUi.h"
 #include "TrackerEditors.h"
 
 #include <algorithm>
@@ -49,6 +50,7 @@
 #include "Midi.h"
 #include "Keys.h"
 #include "LayoutPresets.h"
+#include "TrackerSampleFiles.h"
 #include "LayoutShellUi.h"
 #include "PluginUI.h"
 #include "Theme.h"
@@ -74,7 +76,7 @@ struct Held {
   ObjectId channel = kNoId;
   int pitch = -1;
 };
-enum class Modal { None, Volume, Resample, Echo, Mix, LoopFade, Remove, Convert, ReplaceEntry };
+enum class Modal { None, Volume, Resample, Echo, Mix, LoopFade, Remove, Convert, ReplaceEntry, Effects };
 enum class Shown { None, Sample, Plugin, Frame, Instrument, Chop, SeltInst, Clip };  // (Chop, SeltInst: Seltmann's screens, K-347; Clip: a Sampler's, 0.7.8)
 namespace seltt = packs::seltmann::tracker;
 struct St {
@@ -108,6 +110,17 @@ struct St {
   bool modalOpen = false;
   int toEntry = -1;         // 0.7.8: the used entry To entry asks to replace
   ObjectId convertCh = kNoId;  // K-391: the Sampler Convert to Tracker Sampler asks about
+  // K-436: the Effects box (the chain is kept for the next sample while the program runs; never saved).
+  struct FxRow {
+    PluginState st;
+    int mix = 100;     // percent of the effect heard
+    int preset = -1;   // the factory preset last stepped to (-1: Default)
+  };
+  std::vector<FxRow> fx;
+  int fxSel = 0;          // the row whose settings show
+  int fxPick = -1;        // the row the effect picker replaces (fx.size(): a new row)
+  int fxTail = 0;         // tenths of a second after the part, for echoes and reverb
+  double fxScroll = 0;    // the settings' first row in view
   std::vector<std::pair<float, int32_t>> tapLines;  // 0.7.8 (dev): the play lines drawn last frame (x, file frame)
   float well[4] = {0, 0, 0, 0};                     // 0.7.8 (dev): the waveform's area as last drawn
   // Preview.
@@ -493,6 +506,301 @@ void toEntryMenu(App& a, Ctx& c, ImVec2 b0, ImVec2 b1) {
   ImGui::EndPopup();
 }
 
+// ---- K-436: Effects (Gridline's own effects run over the sample, one undo step) ----
+constexpr int kMaxFx = 4;
+constexpr int kFxParamRows = 5;  // the settings in view: two columns of five
+
+const std::vector<const PluginInfo*>& fxList() {
+  static const std::vector<const PluginInfo*> list = tp::sampleEffects();
+  return list;
+}
+
+std::vector<tp::FxStep> fxChain() {
+  std::vector<tp::FxStep> v;
+  for (const auto& r : st().fx) v.push_back(tp::FxStep{r.st, r.mix / 100.0});
+  return v;
+}
+
+// The chain over the range (or the whole sample) of a copy, played at the play note on the sample
+// preview: what Apply would make, heard before it is kept.
+void fxPreview(App& a, Ctx& c) {
+  tp::Wave w;
+  if (!c.have() || !tp::waveOf(c.snap->e, c.k, *c.snap->inst, w)) return;
+  const tp::Span r0 = rangeOf(c);
+  const tp::Span r = r0.empty() ? tp::Span{std::max(0, w.cutA), w.cutB > 0 ? w.cutB : w.frames()} : r0;
+  const int32_t before = w.frames();
+  if (!tp::waveEffects(w, r, fxChain(), st().fxTail / 10.0, a.doc.song().tempo)) return;
+  const int32_t end = std::min<int32_t>(w.frames(), r.b + (w.frames() - before) + static_cast<int32_t>(st().fxTail / 10.0 * w.rate));
+  if (end <= r.a) return;
+  stopPreview(a);
+  auto pv = std::make_shared<Sample>();
+  const trk::SampleDef& sd = c.snap->e.text.def.samples[static_cast<size_t>(c.k)];
+  pv->sampleRate = w.rate * std::pow(2.0, ((c.m ? c.m->playNote : 49) - tp::rootNote(sd, w.rate)) / 12.0);
+  pv->left.assign(w.L.begin() + r.a, w.L.begin() + end);
+  if (w.stereo) pv->right.assign(w.R.begin() + r.a, w.R.begin() + end);
+  else pv->setMono();
+  St& s = st();
+  s.pvSample = pv;
+  s.pvStarted = ImGui::GetTime();
+  a.engine.preview(pv, true);
+}
+
+bool fxApply(App& a, Ctx& c) {
+  if (st().fx.empty()) return false;
+  const tp::Span sel = rangeOf(c);
+  const std::vector<tp::FxStep> chain = fxChain();
+  const double tail = st().fxTail / 10.0, tempo = a.doc.song().tempo;
+  return waveEdit(a, c, "sample effects", [&](tp::Wave& x) { return tp::waveEffects(x, sel, chain, tail, tempo); });
+}
+
+// The effect picker (the Add button and each row's name): Gridline's own effects by category.
+void fxPicker(App& a) {
+  (void)a;
+  if (!ImGui::BeginPopup("##tedfxpick")) return;
+  St& s = st();
+  std::string cat = "\x01";
+  bool open = false;
+  for (const PluginInfo* p : fxList()) {
+    if (p->category != cat) {
+      if (open) ImGui::EndMenu();
+      cat = p->category;
+      open = ImGui::BeginMenu(cat.c_str());
+    }
+    if (!open) continue;
+    if (ImGui::MenuItem(p->name.c_str())) {
+      St::FxRow row;
+      row.st = defaultPluginState(p->type);
+      if (s.fxPick >= 0 && s.fxPick < static_cast<int>(s.fx.size())) {
+        s.fx[static_cast<size_t>(s.fxPick)] = row;
+        s.fxSel = s.fxPick;
+      } else if (static_cast<int>(s.fx.size()) < kMaxFx) {
+        s.fx.push_back(row);
+        s.fxSel = static_cast<int>(s.fx.size()) - 1;
+      }
+      s.fxScroll = 0;
+    }
+  }
+  if (open) ImGui::EndMenu();
+  ImGui::EndPopup();
+}
+
+// The settings grid of one effect: two columns when every name and value fits beside a bar, one
+// parameter per row otherwise. Names are never cut short: the label column is the longest name's width.
+struct FxGrid {
+  int cols = 2, rowsAll = 0;
+  bool scroll = false;
+  float labW = 0, valW = 0, colW = 0, sbW = 0;
+  bool fits = true;  // every name and value has its room (false only past one per row)
+};
+FxGrid fxGrid(App& a, const PluginInfo& info, const PluginState& st, float width) {
+  FxGrid g;
+  const float fs = ImGui::GetFontSize();
+  ImFont* mono = monoFont(a);
+  float nameW = 0, valNeed = mono->CalcTextSizeA(fs, FLT_MAX, 0, "000.0").x, choiceNeed = 0;
+  for (size_t k = 0; k < info.params.size(); ++k) {
+    const ParamDesc& d = info.params[k];
+    nameW = std::max(nameW, a.fontRegular->CalcTextSizeA(fs, FLT_MAX, 0, i18n::tr(d.name.c_str())).x);
+    const float cur = k < st.params.size() ? st.params[k] : static_cast<float>(d.def);
+    if (d.kind == ParamKind::Continuous) {
+      for (double x : {d.min, d.max, d.def, static_cast<double>(cur)}) valNeed = std::max(valNeed, mono->CalcTextSizeA(fs, FLT_MAX, 0, d.format(x).c_str()).x);
+    } else {
+      const double hi = d.kind == ParamKind::Toggle ? 1.0 : d.choices.empty() ? d.max : static_cast<double>(d.choices.size() - 1);
+      for (double x = 0; x <= hi && x < 256; x += 1) choiceNeed = std::max(choiceNeed, mono->CalcTextSizeA(fs, FLT_MAX, 0, d.format(x).c_str()).x);
+    }
+  }
+  g.labW = std::ceil(nameW) + space::kGroup;
+  g.valW = std::ceil(valNeed) + space::kPad;
+  const float barMin = std::round(fs * 4), buttons = std::round(fs * 3.6f) + space::kPad;
+  const float need = g.labW + std::max(barMin + space::kPad + g.valW, std::ceil(choiceNeed) + 12 + buttons);
+  const int n = static_cast<int>(info.params.size());
+  for (int cols : {2, 1}) {
+    g.cols = cols;
+    g.rowsAll = (n + cols - 1) / cols;
+    g.scroll = g.rowsAll > kFxParamRows;
+    g.sbW = g.scroll ? std::round(fs * 1.1f) : 0;
+    const float room = width - (g.scroll ? g.sbW + space::kGroup : 0);
+    g.colW = cols == 2 ? std::floor((room - space::kGroup * 2) * 0.5f) : std::floor(room);
+    g.fits = need <= g.colW;
+    if (g.fits) break;
+  }
+  return g;
+}
+
+void effectsModal(App& a, Ctx& c) {
+  St& s = st();
+  const auto& P = pal();
+  const float fs = ImGui::GetFontSize(), rh = std::round(fs + 7), gap = 3;
+  const float w = std::round(fs * 40);
+  // caption, the chain's rows and its Add row, the settings title and rows, the tail row; the buttons.
+  const float h = std::round(fs * 2.6f + (fs + 6) * 2 + (kMaxFx + 1) * (rh + gap) + space::kGroup * 2 + kFxParamRows * (rh + gap) + (rh + gap) + rh + 28 + fs);
+  if (!beginModalBox(a, "##tedmodal", "Effects", ImVec2(w, h))) {
+    s.modal = Modal::None;
+    return;
+  }
+  ++s.modalBegun;
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  ImFont* mono = monoFont(a);
+  const ImVec2 o = ImGui::GetCursorScreenPos();
+  const float x0 = o.x, x1 = o.x + w - 20;
+  float y = o.y + 2;
+  const tp::Span sel = rangeOf(c);
+  dl->AddText(a.fontRegular, fs, ImVec2(x0, y), P.textDim,
+              i18n::tr(sel.empty() ? "Gridline's effects over the whole sample, in order from the top" : "Gridline's effects over the range, in order from the top"));
+  y += fs + 6;
+  // ---- the chain ----
+  if (s.fxSel >= static_cast<int>(s.fx.size())) s.fxSel = std::max(0, static_cast<int>(s.fx.size()) - 1);
+  const float numW = std::round(fs * 2.0f), xW = rh, mixW = std::round(fs * 8.5f), presetW = std::round(fs * 14);
+  const float nameX = x0 + numW + space::kGap, xX = x1 - xW, mixX = xX - space::kGroup - mixW, presetX = mixX - space::kGroup - presetW;
+  const float nameW = presetX - space::kGroup - nameX;
+  int remove = -1;
+  for (int i = 0; i < static_cast<int>(s.fx.size()); ++i) {
+    St::FxRow& row = s.fx[static_cast<size_t>(i)];
+    const PluginInfo* info = findPlugin(row.st.type);
+    ImGui::PushID(i);
+    char num[8];
+    std::snprintf(num, sizeof num, "%d", i + 1);
+    if (bevelButton(a, "##fxn", num, ImVec2(x0, y), ImVec2(x0 + numW, y + rh), i == s.fxSel, "Show this effect's settings")) s.fxSel = i, s.fxScroll = 0;
+    if (bevelButton(a, "##fxname", info ? info->name.c_str() : row.st.type.c_str(), ImVec2(nameX, y), ImVec2(nameX + nameW, y + rh), false,
+                    "Another effect in this place")) {
+      s.fxPick = i;
+      s.fxSel = i;
+      ImGui::OpenPopup("##tedfxpick");
+    }
+    devMenuRow(("Effect " + std::to_string(i + 1)).c_str(), nameX, y, nameX + nameW, y + rh);
+    const int np = info ? static_cast<int>(info->presets.size()) : 0;
+    const std::string pv = row.preset >= 0 && row.preset < np ? info->presets[static_cast<size_t>(row.preset)].name : std::string(i18n::tr("Default"));
+    if (const int d = stepper(a, "##fxpre", "Preset", pv, ImVec2(presetX, y), presetW, rh, "The effect's factory presets", std::round(fs * 3.6f), true); d && info) {
+      row.preset = ((row.preset + 1 + d) % (np + 1) + (np + 1)) % (np + 1) - 1;
+      row.st = row.preset >= 0 ? presetState(*info, static_cast<size_t>(row.preset)) : defaultPluginState(info->type);
+    }
+    char mx[16];
+    std::snprintf(mx, sizeof mx, "%d %%", row.mix);
+    if (const int d = stepper(a, "##fxmix", "Mix", mx, ImVec2(mixX, y), mixW, rh, "How much of the effect is heard (the rest is the sound before it)", std::round(fs * 2.4f), true))
+      row.mix = std::clamp(row.mix + d * (ImGui::GetIO().KeyShift ? 10 : 1), 0, 100);
+    if (bevelButton(a, "##fxdel", "x", ImVec2(xX, y), ImVec2(x1, y + rh), false, "Take this effect out of the chain")) remove = i;
+    ImGui::PopID();
+    y += rh + gap;
+  }
+  if (remove >= 0) {
+    s.fx.erase(s.fx.begin() + remove);
+    s.fxSel = std::clamp(s.fxSel - (s.fxSel >= remove ? 1 : 0), 0, std::max(0, static_cast<int>(s.fx.size()) - 1));
+    s.fxScroll = 0;
+  }
+  if (s.fx.empty()) {
+    dl->AddText(a.fontRegular, fs, ImVec2(x0, std::round(y + (rh - fs) * 0.5f)), P.textFaint, i18n::tr("No effect yet: add one below"));
+    y += rh + gap;
+  }
+  {
+    const bool room = static_cast<int>(s.fx.size()) < kMaxFx;
+    if (!room) ImGui::BeginDisabled();
+    const float bw = std::round(fs * 9);
+    if (bevelButton(a, "##fxadd", "Add effect...", ImVec2(x0, y), ImVec2(x0 + bw, y + rh), false, "One of Gridline's own effects at the end of the chain")) {
+      s.fxPick = static_cast<int>(s.fx.size());
+      ImGui::OpenPopup("##tedfxpick");
+    }
+    devMenuRow("Add effect", x0, y, x0 + bw, y + rh);
+    if (!room) ImGui::EndDisabled();
+    char cnt[48];
+    std::snprintf(cnt, sizeof cnt, i18n::tr("%d of %d"), static_cast<int>(s.fx.size()), kMaxFx);
+    dl->AddText(a.fontRegular, fs, ImVec2(x0 + bw + space::kGroup + 2, std::round(y + (rh - fs) * 0.5f)), P.textFaint, cnt);
+  }
+  // Rows not used by the chain keep the box's size steady.
+  y = o.y + 2 + fs + 6 + (kMaxFx + 1) * (rh + gap) + space::kGroup;
+  fxPicker(a);
+  dl->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + 1), P.line);
+  y += space::kGroup;
+  // ---- the selected effect's settings ----
+  St::FxRow* cur = s.fx.empty() ? nullptr : &s.fx[static_cast<size_t>(s.fxSel)];
+  const PluginInfo* ci = cur ? findPlugin(cur->st.type) : nullptr;
+  {
+    const std::string t = ci ? std::string(i18n::tr("Settings of")) + " " + std::to_string(s.fxSel + 1) + "  " + ci->name : std::string(i18n::tr("Settings"));
+    boxTitle(a, ImVec2(x0, y), t.c_str());
+    y += fs + 6;
+  }
+  const float gridY = y;
+  if (ci) {
+    normalizePluginState(cur->st);
+    const int n = static_cast<int>(ci->params.size());
+    const FxGrid g = fxGrid(a, *ci, cur->st, x1 - x0);
+    const int rowsAll = g.rowsAll;
+    const bool scroll = g.scroll;
+    const float sbW = g.sbW, colW = g.colW, labW = g.labW, valW = g.valW;
+    const int first = std::clamp(static_cast<int>(s.fxScroll), 0, std::max(0, rowsAll - kFxParamRows));
+    for (int rr = 0; rr < kFxParamRows; ++rr)
+      for (int col = 0; col < g.cols; ++col) {
+        const int k = (first + rr) * g.cols + col;
+        if (k >= n) continue;
+        const ParamDesc& d = ci->params[static_cast<size_t>(k)];
+        float& v = cur->st.params[static_cast<size_t>(k)];
+        const float cx = x0 + col * (colW + space::kGroup * 2), cy = gridY + rr * (rh + gap);
+        ImGui::PushID(1000 + k);
+        if (d.kind == ParamKind::Continuous) {
+          dl->AddText(a.fontRegular, fs, ImVec2(cx, std::round(cy + (rh - fs) * 0.5f)), P.textDim, i18n::tr(d.name.c_str()));
+          double out = 0;
+          const ImVec2 b0(cx + labW, cy), b1(cx + colW - valW - space::kPad, cy + rh);
+          if (valueBar("##fxv", b0, b1, d.toNormalized(v), 0.0, 1.0, false, &out, nullptr)) v = static_cast<float>(d.clamp(d.fromNormalized(out)));
+          if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) v = static_cast<float>(d.def);
+          const std::string txt = d.format(v);
+          const float tw = mono->CalcTextSizeA(fs, FLT_MAX, 0, txt.c_str()).x;
+          dl->AddText(mono, fs, ImVec2(std::round(std::max(b1.x + space::kPad, cx + colW - tw)), std::round(cy + (rh - fs) * 0.5f)), valueInk(), txt.c_str());
+        } else {
+          const std::string txt = d.format(v);
+          if (const int dd = stepper(a, "##fxc", d.name.c_str(), txt, ImVec2(cx, cy), colW, rh, nullptr, labW, true)) {
+            const double hi = d.kind == ParamKind::Toggle ? 1.0 : d.choices.empty() ? d.max : static_cast<double>(d.choices.size() - 1);
+            double nv = std::round(v) + dd;
+            if (nv > hi) nv = 0;
+            if (nv < 0) nv = hi;
+            v = static_cast<float>(d.clamp(nv));
+          }
+        }
+        ImGui::PopID();
+      }
+    if (scroll) {
+      double st0 = first;
+      if (vScrollBar(a, "##fxscroll", ImVec2(x1 - sbW, gridY), ImVec2(x1, gridY + kFxParamRows * (rh + gap) - gap), &st0, kFxParamRows, rowsAll, 1))
+        s.fxScroll = st0;
+      if (ImGui::IsWindowHovered() && ImGui::GetIO().MouseWheel != 0 && ImGui::GetIO().MousePos.y >= gridY &&
+          ImGui::GetIO().MousePos.y < gridY + kFxParamRows * (rh + gap))
+        s.fxScroll = std::clamp(s.fxScroll - ImGui::GetIO().MouseWheel, 0.0, static_cast<double>(rowsAll - kFxParamRows));
+    }
+  } else {
+    dl->AddText(a.fontRegular, fs, ImVec2(x0, std::round(gridY + (rh - fs) * 0.5f)), P.textFaint, i18n::tr("The settings of the effect picked in the chain show here"));
+  }
+  y = gridY + kFxParamRows * (rh + gap) + space::kGroup;
+  // ---- the tail ----
+  {
+    char tb[24];
+    std::snprintf(tb, sizeof tb, "%.1f s", s.fxTail / 10.0);
+    const float tw = std::round(fs * 12);
+    if (const int d = stepper(a, "##fxtail", "Tail", tb, ImVec2(x0, y), tw, rh, "Time after the sound for echoes and reverb to ring out", std::round(fs * 3.2f), true))
+      s.fxTail = std::clamp(s.fxTail + d * (ImGui::GetIO().KeyShift ? 10 : 1), 0, static_cast<int>(tp::kMaxEffectTail * 10));
+    dl->AddText(a.fontRegular, fs, ImVec2(x0 + tw + space::kGroup + 2, std::round(y + (rh - fs) * 0.5f)), P.textFaint,
+                i18n::tr(sel.empty() ? "the sample grows to hold it" : "it plays over what follows the range"));
+  }
+  // ---- Preview, Apply, Cancel ----
+  const float bw = std::round(fs * 7), by = std::round(o.y + h - rh - 28 - fs);
+  bool apply = false;
+  const bool any = !s.fx.empty() && c.have();
+  if (!any) ImGui::BeginDisabled();
+  if (bevelButton(a, "##fxpv", "Preview", ImVec2(x0, by), ImVec2(x0 + bw, by + rh), previewSounding(a), "Hear the result at the play note before it is kept")) fxPreview(a, c);
+  if (bevelButton(a, "##mgo", "Apply", ImVec2(x1 - 2 * bw - 6, by), ImVec2(x1 - bw - 6, by + rh), false, "Enter (one undo step)")) apply = true;
+  if (!any) ImGui::EndDisabled();
+  if (bevelButton(a, "##mno", "Cancel", ImVec2(x1 - bw, by), ImVec2(x1, by + rh), false, "Esc")) {
+    stopPreview(a);
+    ImGui::CloseCurrentPopup();
+    s.modal = Modal::None;
+  }
+  if (any && !ImGui::IsPopupOpen("##tedfxpick") && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false))) apply = true;
+  keepKeysHere();
+  if (apply) {
+    stopPreview(a);
+    if (fxApply(a, c)) status(std::string(i18n::tr("Effects applied to entry")) + " " + hex2(c.k + 1) + " (" + keys::fillKeys(i18n::N_("%s: back"), {keys::cmdKey("edit.undo", "Ctrl+Z")}) + ")");
+    ImGui::CloseCurrentPopup();
+    s.modal = Modal::None;
+  }
+  endModalBox();
+}
+
 // The valued edits' and the confirmations' boxes (the classic centred request, in the band's look).
 void modals(App& a, Ctx& c) {
   St& s = st();
@@ -501,6 +809,10 @@ void modals(App& a, Ctx& c) {
     s.modalOpen = false;
   }
   if (s.modal == Modal::None || s.modal == Modal::Convert) return;
+  if (s.modal == Modal::Effects) {  // K-436 (a box of its own size)
+    effectsModal(a, c);
+    return;
+  }
   const float fs = ImGui::GetFontSize(), rh = std::round(fs + 7), w = std::round(fs * 26);
   int rows = 2;
   const char* title = "";
@@ -671,6 +983,8 @@ void modals(App& a, Ctx& c) {
 }
 
 // The edits as menu items (the well's right-click menu, and Process... in narrow windows).
+void urlDialog(App& a, ObjectId ch);  // (below: Import from URL into the selected slot)
+
 void editMenuItems(App& a, Ctx& c, bool all) {
   const bool part = canPart(c), hasClip = !tp::clipboard().L.empty();
   const tp::Span r = rangeOf(c);
@@ -694,7 +1008,11 @@ void editMenuItems(App& a, Ctx& c, bool all) {
   if (ImGui::MenuItem(i18n::tr("Echo..."), nullptr, false, c.have())) openModal(Modal::Echo);
   if (ImGui::MenuItem(i18n::tr("Mix in..."), nullptr, false, c.ok() && tp::sampleCountOf(c.snap->e) > 1)) openModal(Modal::Mix);
   if (ImGui::MenuItem(i18n::tr("Loop fade..."), nullptr, false, c.have() && c.looping)) openModal(Modal::LoopFade);
+  if (ImGui::MenuItem(i18n::tr("Effects..."), nullptr, false, c.have())) openModal(Modal::Effects);  // K-436
+  devMenuRow("Process Effects", ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
   if (ImGui::MenuItem(i18n::tr("Cut after loop"), nullptr, false, minimisable(c))) edit(a, c, tp::HeaderEdit::TrimLoop);
+  // K-443: a web link's audio into the slot (also the URL... button beside Load... when the row has room).
+  if (ImGui::MenuItem(i18n::tr("Import from URL..."), nullptr, false, c.ok())) urlDialog(a, c.ch);
   if (all) {
     ImGui::Separator();
     if (ImGui::MenuItem(i18n::tr("Select all"), keys::namedText("Alt+A"), false, c.have())) edit(a, c, tp::HeaderEdit::SelectAll);
@@ -763,6 +1081,14 @@ void loadDialog(App& a, ObjectId ch) {
       a.notify(i18n::tr("The file has no audio to load"));
     }
   });
+}
+
+// URL...: a web link's audio into the selected slot, as Load... puts a file there (Import from URL).
+void urlDialog(App& a, ObjectId ch) {
+  urlimportui::openFor(a, urlimportui::Target{i18n::tr("Sample editor"), [ch](App& app, const std::string& p, const std::string&) {
+                                                const Bridge br(classicSampler(app, ch));
+                                                if (packs::trackerpack::headerLoadSample(app, ch, p) < 0) app.notify(i18n::tr("The file has no audio to load"));
+                                              }, false});
 }
 
 // The drop target over the well: an audio file goes into the selected slot.
@@ -960,8 +1286,13 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
     if (c.ok() && recv.empty()) {
       // 0.7.8: a plain button under the text (submitted first, so it takes the hover over the well's).
       const float bw = std::round(fs * 10), bh = std::round(fs + 8), bx = std::round((x0 + x1 - bw) * 0.5f), by = std::round(mid + fs + 10);
-      if (by + bh < y1 - 2 && bevelButton(a, "##twellbtn", "Load sample...", ImVec2(bx, by), ImVec2(bx + bw, by + bh), false, "Pick an audio file for this entry")) {
-        loadDialog(a, ch);
+      if (by + bh < y1 - 2) {
+        if (bevelButton(a, "##twellbtn", "Load sample...", ImVec2(bx - std::round(bw * 0.5f) - 4, by), ImVec2(bx + std::round(bw * 0.5f) - 4, by + bh), false,
+                        "Pick an audio file for this entry"))
+          loadDialog(a, ch);
+        if (bevelButton(a, "##twellurl", "From URL...", ImVec2(bx + std::round(bw * 0.5f) + 4, by), ImVec2(bx + std::round(bw * 1.5f) + 4, by + bh), false,
+                        "Import from URL: a web link's audio into this entry"))
+          urlDialog(a, ch);
       }
       ImGui::SetCursorScreenPos(ImVec2(x0, y0));
       if (ImGui::InvisibleButton("##twellload", ImVec2(std::max(1.0f, x1 - x0), std::max(1.0f, y1 - y0)))) {
@@ -1251,9 +1582,10 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
       case 7: return buttonsW({"Normalise", "Reverse", "Fix DC"});
       case 8: return buttonsW({"Resample...", "Echo...", "Mix in..."});
       case 9: return buttonsW({"Loop fade...", "Cut after loop", "Save range..."});
+      case 17: return buttonsW({"Effects..."});  // K-436
       case 10: return radiosW({"No loop", "Forward", "Ping-pong"});
       case 16: return std::ceil(textW("Backwards") + std::max(8.0f, std::round(fs * 0.8f)) + 11 + 2 * space::kPad);  // 0.7.8 (checkRow's box and gaps)
-      case 11: return std::max(radiosW({"16-bit", "8-bit"}), buttonsW({"Load..."}));
+      case 11: return std::max(radiosW({"16-bit", "8-bit"}), buttonsW({"Load..."}));  // (URL... joins Load... when the column has room)
       case 12: return labelColumn(a, {"Length", "Start", "End"}, space::kGroup) + monoW("00000000") + 6;
       case 13:
         return std::max(labelColumn(a, {"Loop start", "Loop length"}, space::kPad) + monoW(digits.c_str()) + 8 + arrowsW,
@@ -1292,6 +1624,7 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
       add(7, 5.4f);  // normalise, reverse, fix dc
       add(8, 6.4f);  // resample..., echo..., mix in...
       add(9, 7.6f);  // loop fade..., cut after loop, save range...
+      add(17, 5.2f);  // K-436: effects... (one button the column's height)
     }
     add(10, 6.6f);  // loop type
     if (fold < 2) add(16, 5.4f);  // 0.7.8: backwards (tight: in the Process... menu)
@@ -1475,6 +1808,14 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
     if (btn(8, 2, "##tmix", "Mix in...", c.ok() && have && tp::sampleCountOf(c.snap->e) > 1, false, "Another sample of the instrument mixed in"))
       openModal(Modal::Mix);
     if (btn(9, 0, "##tlf", "Loop fade...", have && c.looping, false, "The loop's end fades into the sound before its start")) openModal(Modal::LoopFade);
+    if (const Col* cl = colOf(17)) {  // K-436: Gridline's effects over the sample (or the range)
+      if (!have) ImGui::BeginDisabled();
+      if (bevelButton(a, "##tfx", "Effects...", ImVec2(cl->x, rowY(0)), ImVec2(cl->x + cl->w, rowY(2) + rowH), false,
+                      "Gridline's own effects over the range or the whole sample (Apply keeps the result, one undo step)") && have)
+        openModal(Modal::Effects);
+      if (!have) ImGui::EndDisabled();
+      devMenuRow("Effects button", cl->x, rowY(0), cl->x + cl->w, rowY(2) + rowH);
+    }
     const bool cal = btn(9, 1, "##tcal", "Cut after loop", minimisable(c), false,
                          c.rev ? "Played backwards: what comes before the loop's start goes (it is never heard)" : "What follows the loop's end goes");
     if (colOf(9)) devMenuRow("Cut after loop button", ImGui::GetItemRectMin().x, ImGui::GetItemRectMin().y, ImGui::GetItemRectMax().x, ImGui::GetItemRectMax().y);
@@ -1521,9 +1862,20 @@ void sampleScreen(App& a, ObjectId ch, ImVec2 p0, ImVec2 p1) {
         tp::opSampleBits(a, c.t, c.k, i == 1);
       if (!can) ImGui::EndDisabled();
     }
-    if (btn(11, 2, "##tload", "Load...", c.ok(), false, "An audio file into this slot")) {
+    // Load... and URL... share the row: a file, or a web link's audio, into this slot.
+    // (a narrow row keeps Load... whole; Import from URL is then in the Process... menu and the entry menu)
+    const float uw = buttonsW({"URL..."});
+    const bool both = cl->w >= buttonsW({"Load..."}) + 4 + uw;
+    if (!c.ok()) ImGui::BeginDisabled();
+    if (bevelButton(a, "##tload", "Load...", ImVec2(cl->x, rowY(2)), ImVec2(both ? cl->x + cl->w - uw - 4 : cl->x + cl->w, rowY(2) + rowH), false,
+                    "An audio file into this slot") &&
+        c.ok())
       loadDialog(a, ch);
-    }
+    if (both && bevelButton(a, "##turl", "URL...", ImVec2(cl->x + cl->w - uw, rowY(2)), ImVec2(cl->x + cl->w, rowY(2) + rowH), false,
+                            "Import from URL: a web link's audio into this slot") &&
+        c.ok())
+      urlDialog(a, ch);
+    if (!c.ok()) ImGui::EndDisabled();
   }
   // Readouts and steppers.
   if (const Col* cl = colOf(12)) {
@@ -3938,6 +4290,10 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
     close(a);
     return;
   }
+  if (cmd == "files") {  // K-435: presets and WAV files of a Tracker Sampler (TrackerSampleFiles.h)
+    trackerfiles::devCommand(a, args, frame);
+    return;
+  }
   // 0.7.8: a Sampler's Sample editor: "clip page wave|<tab>" (the page list's rows), "clip dump" (its parts as drawn).
   if (cmd == "clip") {
     const std::string what = args.size() > 2 ? args[2] : "dump";
@@ -4188,6 +4544,61 @@ void devCommand(App& a, const std::vector<std::string>& args, int frame) {
       const std::string k = args.size() > 3 ? args[3] : "volume";
       openModal(k == "resample" ? Modal::Resample : k == "echo" ? Modal::Echo : k == "mix" ? Modal::Mix : k == "loopfade" ? Modal::LoopFade : k == "remove" ? Modal::Remove : Modal::Volume);
     }
+  } else if (cmd == "fx") {  // K-436: fx add <type> · mix <row> <percent> · preset <row> <index> · param <row> <index> <value> · tail <tenths> · clear · show · preview · apply · dump
+    const std::string w = args.size() > 2 ? args[2] : "dump";
+    if (w == "add" && args.size() > 3 && static_cast<int>(s.fx.size()) < kMaxFx) {
+      St::FxRow row;
+      row.st = defaultPluginState(args[3]);
+      s.fx.push_back(row);
+      s.fxSel = static_cast<int>(s.fx.size()) - 1;
+    } else if (w == "mix" && arg(3, -1) >= 0 && arg(3, -1) < static_cast<long long>(s.fx.size())) {
+      s.fx[static_cast<size_t>(arg(3, 0))].mix = static_cast<int>(std::clamp<long long>(arg(4, 100), 0, 100));
+    } else if (w == "preset" && arg(3, -1) >= 0 && arg(3, -1) < static_cast<long long>(s.fx.size())) {
+      St::FxRow& row = s.fx[static_cast<size_t>(arg(3, 0))];
+      if (const PluginInfo* info = findPlugin(row.st.type); info && arg(4, -1) >= 0 && arg(4, -1) < static_cast<long long>(info->presets.size())) {
+        row.preset = static_cast<int>(arg(4, 0));
+        row.st = presetState(*info, static_cast<size_t>(row.preset));
+      }
+    } else if (w == "param" && arg(3, -1) >= 0 && arg(3, -1) < static_cast<long long>(s.fx.size()) && args.size() > 5) {
+      St::FxRow& row = s.fx[static_cast<size_t>(arg(3, 0))];
+      normalizePluginState(row.st);
+      if (arg(4, -1) >= 0 && arg(4, -1) < static_cast<long long>(row.st.params.size())) row.st.params[static_cast<size_t>(arg(4, 0))] = static_cast<float>(std::atof(args[5].c_str()));
+    } else if (w == "sel") {
+      s.fxSel = static_cast<int>(std::clamp<long long>(arg(3, 0), 0, std::max<long long>(0, static_cast<long long>(s.fx.size()) - 1)));
+    } else if (w == "tail") {
+      s.fxTail = static_cast<int>(std::clamp<long long>(arg(3, 0), 0, static_cast<long long>(tp::kMaxEffectTail * 10)));
+    } else if (w == "clear") {
+      s.fx.clear();
+      s.fxSel = 0;
+    } else if (w == "show") {
+      openModal(Modal::Effects);
+    } else if (w == "preview" && c.have()) {
+      fxPreview(a, c);
+    } else if (w == "fit") {  // every offered effect's settings grid at the box's width and this font size
+      const float width = std::round(ImGui::GetFontSize() * 40) - 20;
+      int two = 0, one = 0, short_ = 0;
+      std::string longest;
+      float lw = 0;
+      for (const PluginInfo* p : fxList()) {
+        PluginState ps = defaultPluginState(p->type);
+        normalizePluginState(ps);
+        const FxGrid g = fxGrid(a, *p, ps, width);
+        (g.cols == 2 ? two : one) += 1;
+        short_ += g.fits ? 0 : 1;
+        if (g.labW > lw) lw = g.labW, longest = p->type;
+      }
+      std::printf("tracker editors frame %d: fx fit effects %d two %d one %d short %d widest %s %.0f of %.0f\n", frame, static_cast<int>(fxList().size()), two, one,
+                  short_, longest.c_str(), static_cast<double>(lw), static_cast<double>(width));
+    } else if (w == "apply" && c.have()) {
+      std::printf("tracker editors frame %d: fx apply %s\n", frame, fxApply(a, c) ? "ok" : "nothing");
+    } else {
+      std::printf("tracker editors frame %d: fx rows %d sel %d tail %d effects %d frames %d stereo %d undo \"%s\"", frame, static_cast<int>(s.fx.size()), s.fxSel, s.fxTail,
+                  static_cast<int>(fxList().size()), c.have() ? c.frames : -1, c.have() && c.sp && !c.sp->mono() ? 1 : 0,
+                  a.doc.history().canUndo() ? a.doc.history().undoLabel().c_str() : "");
+      for (const auto& r : s.fx) std::printf(" %s:%d", r.st.type.c_str(), r.mix);
+      std::printf("\n");
+    }
+    std::fflush(stdout);
   } else if (cmd == "pencil" && c.have()) {  // pencil <frame> <value> <frame> <value> ...: a stroke as a right-drag draws it
     std::vector<std::pair<double, float>> pts;
     for (size_t i = 2; i + 1 < args.size(); i += 2) {

@@ -102,7 +102,8 @@ void mappingGraph(const ControllerLink& l, ImVec2 size) {
   ImVec2 prev;
   for (int i = 0; i <= n; ++i) {
     double u = static_cast<double>(i) / n;
-    double v = l.encoder != RemoteEncoder::Absolute ? remoteRange(l, u) : remoteRange(l, remoteCurve(l, u, &f));
+    const bool relInv = l.invert != (l.curve == ModCurve::Inverted);
+    double v = l.encoder != RemoteEncoder::Absolute ? remoteRange(l, relInv ? 1.0 - u : u) : remoteRange(l, remoteCurve(l, u, &f));
     ImVec2 q(p.x + 3 + (size.x - 6) * static_cast<float>(u), p.y + size.y - 3 - (size.y - 6) * static_cast<float>(std::clamp(v, 0.0, 1.0)));
     if (i > 0) dl->AddLine(prev, q, P.hot, 2.0f);
     prev = q;
@@ -404,10 +405,22 @@ void drawRemoteDialog(App& a) {
   static Internal in;
   const bool paramTarget = l.action == RemoteAction::None;
   const ParamId target{l.owner, l.index};
-  if (ImGui::IsWindowAppearing()) in = Internal{}, in.opened = l;
-  // k078-songlinks: the engine never applies an internal link to a song setting (tempo, swing,
-  // master pitch, groove accents), so the choice is not offered there. A link an older project
-  // already holds is still shown, with a button that removes it.
+  if (ImGui::IsWindowAppearing()) {
+    in = Internal{};
+    // K-412: when opening for an existing internal controller link (with no MIDI link yet),
+    // reflect its curve/invert/range/formula in the Mapping section so editing them works.
+    if (paramTarget && a.remoteEditIndex < 0)
+      if (const ModLink* cur = findModLink(a.doc.song(), l.owner, l.index)) {
+        l.curve = cur->curve;
+        l.invert = cur->invert;
+        l.min = cur->min;
+        l.max = cur->max;
+        l.formula = cur->formula;
+      }
+    in.opened = l;
+  }
+  // Internal controller links apply to song settings too (tempo, swing, master pitch, groove
+  // accents): the engine moves them live (AudioEngine::applyLinkValue).
   const bool internalOk = paramTarget && internalLinkApplies(a.doc.song(), target);
   internalShown() = !paramTarget ? "none" : internalOk ? "offered" : "note";
   if (paramTarget && !internalOk) {
@@ -418,10 +431,10 @@ void drawRemoteDialog(App& a) {
       ImGui::AlignTextToFramePadding();
       ImGui::TextUnformatted(controllerOutputName(a.doc.song(), cur->sourceOwner, cur->sourceSlot, cur->sourceOutput).c_str());
       ImGui::SameLine(0, theme::kS3);
-      if (ui::TextButton("Remove", false, 80, "Removes this link (it never moved this setting)")) remoteDialogRemoveInternal(a);
+      if (ui::TextButton("Remove", false, 80, "Removes this link")) remoteDialogRemoveInternal(a);
     }
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Internal controllers can't move song settings yet; link a MIDI control instead."));
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("This parameter cannot be linked to an internal controller."));
     ImGui::PopTextWrapPos();
     ui::EndSection();
   }
@@ -432,9 +445,10 @@ void drawRemoteDialog(App& a) {
     const ObjectId so = in.chosen ? in.owner : cur ? cur->sourceOwner : kNoId;
     const int ss = in.chosen ? in.slot : cur ? cur->sourceSlot : -1, sout = in.chosen ? in.output : cur ? cur->sourceOutput : 0;
     const auto outs = listControllerOutputs(a.doc.song());
+    if (cur && !none) internalShown() = "offered-linked";
     label("Controller");
     const std::string shown = none ? std::string(i18n::tr("None")) : controllerOutputName(a.doc.song(), so, ss, sout);
-    if (ui::BeginCombo("##internal", shown.c_str(), w + 140)) {
+    if (ui::BeginCombo("##internal", shown.c_str(), w + (cur && !none ? 60.0f : 140.0f))) {
       if (ImGui::Selectable(i18n::tr("None"), none)) in.chosen = true, in.none = true;
       for (const auto& o : outs)
         if (ImGui::Selectable(o.label.c_str(), !none && o.owner == so && o.slot == ss && o.output == sout))
@@ -442,7 +456,24 @@ void drawRemoteDialog(App& a) {
       ImGui::EndCombo();
     }
     ui::Hint("A controller in this project moves this control as it plays");
-    if (outs.empty()) {
+    if (cur && !none) {
+      ImGui::SameLine(0, theme::kS2);
+      if (ui::TextButton("Remove", false, 72, "Removes this internal controller link")) {
+        remoteDialogRemoveInternal(a);
+        in.chosen = true;
+        in.none = true;
+      }
+    }
+    if (target.owner == kSongId) {
+      ImGui::Dummy(ImVec2(150, 0));
+      ImGui::SameLine();
+      ImGui::PushTextWrapPos(0.0f);
+      ImGui::TextColored(theme::vec(!none ? P.accent : P.textFaint), "%s",
+                         !none ? i18n::tr("Live internal controller link active on this song setting.")
+                               : i18n::tr("Live internal controllers can drive this song setting directly."));
+      ImGui::PopTextWrapPos();
+    }
+    if (outs.empty() && none) {
       ImGui::Dummy(ImVec2(150, 0));
       ImGui::SameLine();
       ImGui::PushTextWrapPos(0.0f);  // (wrapped: it is wider than the dialog)
@@ -560,19 +591,33 @@ void drawRemoteDialog(App& a) {
   ImGui::SameLine(0, theme::kS2);
   const bool oscOk = l.source != RemoteSource::Osc || osc::validAddress(l.oscAddress);
   if (ui::PrimaryButton("Apply", 96, oscOk ? nullptr : "Enter or learn an OSC address first", oscOk)) {
-    // GitHub #60: the internal controller first; a new MIDI link nobody set up is not saved with it
+    // GitHub #60 / K-412: the internal controller first (carrying the Mapping section's curve,
+    // invert, min/max and formula onto the ModLink); a new MIDI link nobody set up is not saved with it.
     bool skipMidi = false;
-    if (internalOk && in.chosen) {
+    if (internalOk) {
       const ModLink* cur = findModLink(a.doc.song(), target.owner, target.index);
-      if (in.none) {
-        if (cur) a.doc.removeModLink(target);
-      } else if (!cur || cur->sourceOwner != in.owner || cur->sourceSlot != in.slot || cur->sourceOutput != in.output) {
-        ModLink m = cur ? *cur : ModLink{};
-        m.sourceOwner = in.owner, m.sourceSlot = in.slot, m.sourceOutput = in.output;
-        m.owner = target.owner, m.index = target.index;
+      const bool mappingChanged = l.curve != in.opened.curve || l.invert != in.opened.invert || l.min != in.opened.min ||
+                                  l.max != in.opened.max || l.formula != in.opened.formula;
+      if (in.chosen) {
+        if (in.none) {
+          if (cur) a.doc.removeModLink(target);
+        } else {
+          ModLink m = cur ? *cur : ModLink{};
+          m.sourceOwner = in.owner, m.sourceSlot = in.slot, m.sourceOutput = in.output;
+          m.owner = target.owner, m.index = target.index;
+          m.curve = l.curve, m.invert = l.invert, m.min = l.min, m.max = l.max, m.formula = l.formula;
+          if (!a.doc.setModLink(m)) a.notify("Cannot link this parameter", true);
+        }
+      } else if (cur && mappingChanged && a.remoteEditIndex < 0) {
+        ModLink m = *cur;
+        m.curve = l.curve, m.invert = l.invert, m.min = l.min, m.max = l.max, m.formula = l.formula;
         if (!a.doc.setModLink(m)) a.notify("Cannot link this parameter", true);
       }
-      skipMidi = !in.none && a.remoteEditIndex < 0 && l == in.opened;
+      const bool midiUnconfigured = a.remoteEditIndex < 0 && !linkctl::capture().hasCapture() && l.source == in.opened.source &&
+                                    l.cc == in.opened.cc && l.midiChannel == in.opened.midiChannel && l.port == in.opened.port &&
+                                    l.oscAddress == in.opened.oscAddress && l.hiRes == in.opened.hiRes;
+      const bool activeInternal = in.chosen ? !in.none : (cur != nullptr);
+      skipMidi = activeInternal && midiUnconfigured;
     }
     if (!skipMidi) saveLink(a);
     close = true;

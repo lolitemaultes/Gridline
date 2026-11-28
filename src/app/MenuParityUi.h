@@ -35,6 +35,19 @@ void toolsCleanupItems(App& a);  // clean-up: delete unused automation clips
 // The channel menu, in its sections (K-77):
 void channelItems(App& a, ObjectId channel);        // create: clone with controller links
 void channelStepItems(App& a, ObjectId channel);    // steps: repeat the first bar, bake note effects
+// K-438: write what the channel's sequencers play into the current pattern: "Bake note effects"
+// (its note processors) and, for an instrument with a sequencer of its own, "Write the sequence to
+// the piano roll". Each is one undo step. `useful`: only the items that apply (the plugin window
+// menu); else both show, greyed out when they do not apply (the channel menu).
+void printItems(App& a, ObjectId channel, bool useful = false);
+// K-438: the channel's instrument sends MIDI (an installed plugin with a MIDI output, a built-in
+// instrument with a sequencer of its own).
+bool sendsMidi(App& a, ObjectId channel, bool* hosted = nullptr);
+// Starts / stops recording the channel's MIDI output into a new pattern (App::outTake).
+void startMidiOutTake(App& a, ObjectId channel);
+void stopMidiOutTake(App& a);
+// Every UI frame: takes what was captured; ends the recording when the transport stops.
+void midiOutTakeFrame(App& a);
 void channelSampleItems(App& a, ObjectId channel);  // instrument: the sample in a new channel
 void channelLayerItems(App& a, ObjectId channel);   // properties: a layer's channels
 void rackItems(App& a, const std::vector<ObjectId>& selection);  // channel rack menu > Selected channels: swing typed in, declicking

@@ -9,11 +9,13 @@
 #include <functional>
 #include <map>
 #include <set>
+#include "PluginIcons.h"
 #include "MacroUi.h"
 #include "LayoutStyleUi.h"
 #include "EditorZoomUi.h"
 #include "../packs/PacksUi.h"
 #include "CollabUi.h"
+#include "CollabChatUi.h"
 #include "CursorAnchor.h"
 #include "../core/I18n.h"
 #include "../core/Platform.h"
@@ -36,6 +38,8 @@
 #include "Windows.h"
 #include "ContextMenus.h"
 #include "PluginFavsUi.h"
+#include "../host/CrossFormat.h"
+#include "../host/HostedPlugins.h"
 #include "../host/PluginScan.h"
 #include "HostedUi.h"
 #include "TrackIcons.h"
@@ -170,7 +174,7 @@ void pluginParamGrid(App& a, const PluginInfo& info, const std::function<ParamId
       ImGui::SetCursorPosX(x + (cell - 36) * 0.5f);
       bool bip = d.min < 0 && d.max > 0;
       ui::ParamKnob("k", pid, 18.0f, nullptr, bip);
-      std::string v = getParam(s, pid) ? d.format(*getParam(s, pid)) : "";
+      std::string v = getParam(s, pid) ? d.format(pui::shownValue(a, pid, *getParam(s, pid))) : "";  // K-446: as the knob shows it
       ImGui::PushFont(a.fontMono, 10.5f);
       ImVec2 ts = ImGui::CalcTextSize(v.c_str());
       ImGui::SetCursorPosX(x + (cell - ts.x) * 0.5f);
@@ -599,7 +603,7 @@ void stripSlots(App& a, const MixerTrack& t, ImVec2 p, float w) {
       if (ImGui::BeginDragDropSource()) {
         SlotDrag sd{t.id, k};
         ImGui::SetDragDropPayload("GL_SLOT", &sd, sizeof sd);
-        ui::DragPreview(ui::Icon::Mixer, ("Move " + info->name).c_str());
+        ui::DragPreview(ui::Icon::Mixer, ("Move " + info->name).c_str(), 0, info->type.c_str());
         ImGui::EndDragDropSource();
       }
     }
@@ -612,12 +616,21 @@ void stripSlots(App& a, const MixerTrack& t, ImVec2 p, float w) {
       browserui::acceptFileDrop(a, browse::DropTarget::MixerSlot, place);
       ImGui::EndDragDropTarget();
     }
-    dl->AddCircleFilled(ImVec2(p.x + 5, y + kExtSlotRowH * 0.5f), 2.0f, info ? (es.enabled ? P.led : P.surface600) : P.surface800, 6);
+    // K-450: a built-in effect shows its own icon where the LED was (faded when bypassed); an
+    // installed plugin keeps the LED.
+    float nameX = p.x + 10;
+    if (info && ui::drawPluginIcon(dl, info->type, ImVec2(p.x + 7, y + kExtSlotRowH * 0.5f), 11, ui::PluginIconSurface::MixerSlot,
+                                   es.enabled ? 1.0f : 0.4f)) {
+      nameX = p.x + 15;
+    } else {
+      if (info) ui::notePluginIconFallback(info->type, ui::PluginIconSurface::MixerSlot);
+      dl->AddCircleFilled(ImVec2(p.x + 5, y + kExtSlotRowH * 0.5f), 2.0f, info ? (es.enabled ? P.led : P.surface600) : P.surface800, 6);
+    }
     if (info) {  // 0.7.8: an installed plugin on its way: dimmed, with a small spinner
       const bool loading = isHostedType(info->type) && hostedLoading(a, PluginTarget{t.id, k});
       if (loading) ui::Spinner(dl, ImVec2(p.x + nameW - 5, y + kExtSlotRowH * 0.5f), 3.0f, P.textFaint);
-      theme::textEllipsis(dl, a.fontRegular, 10.0f, ImVec2(p.x + 10, y + 1), nameW - 11 - (loading ? 10 : 0), es.enabled && !loading ? P.text : P.textFaint,
-                          info->name.c_str());
+      theme::textEllipsis(dl, a.fontRegular, 10.0f, ImVec2(nameX, y + 1), nameW - (nameX - p.x) - 1 - (loading ? 10 : 0),
+                          es.enabled && !loading ? P.text : P.textFaint, info->name.c_str());
     }
     if (info && knobs) {
       ImGui::SetCursorScreenPos(ImVec2(p.x + w - 14, y));
@@ -937,6 +950,7 @@ void drawStrip(App& a, size_t i, ImVec2 p, float stripW, float stripH, const Str
       double val = send->level;
       bool released = false;
       ImGui::SetCursorScreenPos(ImVec2(std::round(p.x + stripW * 0.75f - 8), ry - 1));
+      if (const int di = s.mixerIndex(t.id); di >= 0) ui::SetNextKnobParam(sendParam(sel->id, di));  // K-446: moves with its automation
       if (ui::Knob("sendlvl", &val, d, 8.0f, nullptr, false, &released)) a.doc.setSend(sel->id, t.id, std::max(0.0001f, static_cast<float>(val)));
       if (released) a.doc.endGesture();
     }
@@ -2182,28 +2196,37 @@ void drawMixer(App& a) {
         const PluginInfo* info = findPlugin(es.plugin.type);
         const ImVec2 rowBase = ImGui::GetCursorScreenPos();
         ImVec2 q(rowBase.x, rowBase.y + slotGlideOffset(sel->id, k) * (rowH + 2));
+        const bool missingHosted = !info && isHostedType(es.plugin.type);
+        const bool occupied = info != nullptr || missingHosted;
+        std::string slotDisplayName;
+        host::MissingStatus missStatus = host::MissingStatus::Installed;
+        if (missingHosted) {
+          const host::ident::Identity sid = host::xformat::savedIdentity(es.plugin);
+          slotDisplayName = !sid.name.empty() ? sid.name : es.plugin.type;
+          missStatus = host::missingStatus(es.plugin.type);
+        }
         ImGui::SetCursorScreenPos(q);
         // Slot number + enable LED.
         char nb[4];
         std::snprintf(nb, sizeof nb, "%d", k + 1);
-        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q.x, std::round(rowBase.y + (rowH - theme::kFontLabel) * 0.5f)), info ? P.textDim : P.textFaint,
+        dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(q.x, std::round(rowBase.y + (rowH - theme::kFontLabel) * 0.5f)), occupied ? P.textDim : P.textFaint,
                     nb);  // the slot number stays: only the effect glides
         ImGui::SetCursorScreenPos(ImVec2(q.x + 12, q.y));
-        if (ImGui::InvisibleButton("en", ImVec2(16, rowH)) && info) ops::setSlotEnabled(a.doc, sel->id, k, !es.enabled);
-        if (info && ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##enmenu");
+        if (ImGui::InvisibleButton("en", ImVec2(16, rowH)) && occupied) ops::setSlotEnabled(a.doc, sel->id, k, !es.enabled);
+        if (occupied && ImGui::IsItemClicked(ImGuiMouseButton_Right)) ImGui::OpenPopup("##enmenu");
         if (ImGui::BeginPopup("##enmenu")) {  // the slot's on/off switch: automation and remote links
           knobContextMenu(a, slotEnableParam(sel->id, k));
           ImGui::EndPopup();
         }
-        ui::Hint(info ? (es.enabled ? "Bypass this effect (right-click: link the switch to a controller)" : "Enable this effect") : "Empty slot");
+        ui::Hint(occupied ? (es.enabled ? "Bypass this effect (right-click: link the switch to a controller)" : "Enable this effect") : "Empty slot");
         ui::Led(dl, ImVec2(q.x + 20, q.y + rowH * 0.5f), 4.0f, info && es.enabled);
         // Slot button: opens the effect list.
-        const float tail = info ? 20 + 4 + 22 + 4 : 0;
+        const float tail = occupied ? 20 + 4 + 22 + 4 : 0;
         const float bw = iw - 32 - tail;
         ImVec2 b0(q.x + 32, q.y + 1);
         ImGui::SetCursorScreenPos(b0);
         ImGui::InvisibleButton("slot", ImVec2(bw, rowH - 2));
-        if (static int noted = -1; !info && noted != ImGui::GetFrameCount()) {
+        if (static int noted = -1; !occupied && noted != ImGui::GetFrameCount()) {
           noted = ImGui::GetFrameCount();
           devNoteRect("fxslotempty");  // (dev: an "sdlat" target, the inspector's first free slot)
         }
@@ -2211,14 +2234,14 @@ void drawMixer(App& a) {
         const ui::WheelGate wg = ui::wheelGate(thinWheel || keys::modifierExact("mixer.slotWheelMove"));
         if (wg.scale > 0) {
           if (!thinWheel) ImGui::SetItemKeyOwner(ImGuiKey_MouseWheelY);  // the panel does not scroll under a slot (the gate claims it when thin)
-          if (wheelMove && !wheelDone && info) {
+          if (wheelMove && !wheelDone && occupied) {
             wheelSlot(a, sel->id, k, wio);
             wheelDone = true;
           }
         }
         if (ImGui::IsItemClicked()) ImGui::OpenPopup("##fxlist");
-        if (info && hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) a.fxEditor = {sel->id, k};
-        const ImU32 slotBg = info ? theme::mix(P.field, P.surface800, 0.35f) : P.field;
+        if (occupied && hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) a.fxEditor = {sel->id, k};
+        const ImU32 slotBg = occupied ? theme::mix(P.field, P.surface800, 0.35f) : P.field;
         dl->AddRectFilled(b0, ImVec2(b0.x + bw, b0.y + rowH - 2), open || hov ? theme::mix(slotBg, P.surface700, 0.6f) : slotBg, theme::kRadiusSm);
         dl->AddRect(b0, ImVec2(b0.x + bw, b0.y + rowH - 2), theme::withAlpha(P.ink, 0.35f), theme::kRadiusSm);
         // Latency this slot adds, right-aligned before the chevron.
@@ -2233,22 +2256,47 @@ void drawMixer(App& a) {
         const bool standIn = info && !es.plugin.original.empty();
         // 0.7.8 (user report: "couldn't load" showed while a plugin loaded): an installed plugin on its
         // way is dimmed with a small spinner; it never reads as failed.
-        const bool loading = info && isHostedType(info->type) && hostedLoading(a, PluginTarget{sel->id, k});
-        const float markW = standIn ? 10.0f : loading ? 16.0f : 0.0f;
-        theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(b0.x + 8, std::round(b0.y + (rowH - 2 - 13) * 0.5f) - 1), bw - 26 - latW - markW,
-                            info && !loading ? (es.enabled ? P.text : P.textFaint) : P.textFaint, info ? info->name.c_str() : i18n::tr("Empty slot"));
+        const bool loading = (info && isHostedType(info->type) && hostedLoading(a, PluginTarget{sel->id, k})) ||
+                             (missingHosted && missStatus == host::MissingStatus::Scanning);
+        const float markW = standIn ? 10.0f : loading ? 16.0f : missingHosted ? 10.0f : 0.0f;
+        const char* labelTxt = info ? info->name.c_str() : missingHosted ? slotDisplayName.c_str() : i18n::tr("Empty slot");
+        const ImU32 labelCol = info && !loading ? (es.enabled ? P.text : P.textFaint) : missingHosted ? P.textDim : P.textFaint;
+        // K-450: a built-in effect's own icon before its name.
+        float nx = b0.x + 8;
+        if (info && ui::drawPluginIcon(dl, info->type, ImVec2(b0.x + 13, std::round(b0.y + (rowH - 2) * 0.5f)), 14, ui::PluginIconSurface::MixerSlot,
+                                       es.enabled ? 1.0f : 0.4f))
+          nx = b0.x + 28;
+        else if (info)
+          ui::notePluginIconFallback(info->type, ui::PluginIconSurface::MixerSlot);
+        theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption + 1, ImVec2(nx, std::round(b0.y + (rowH - 2 - 13) * 0.5f) - 1), bw - 26 - latW - markW - (nx - b0.x - 8),
+                            labelCol, labelTxt);
         if (loading) ui::Spinner(dl, ImVec2(std::round(b0.x + bw - 26 - latW), std::round(b0.y + (rowH - 2) * 0.5f)), 4.0f, P.textDim);
-        if (standIn) {
+        if (standIn || (missingHosted && !loading)) {
+          const ImU32 dotCol = standIn ? P.hot
+                                       : missStatus == host::MissingStatus::NotScannedYet ? P.accent
+                                       : missStatus == host::MissingStatus::FormatDisabled ? P.hot
+                                                                                           : P.danger;
           const ImVec2 c(std::round(b0.x + bw - 20 - latW - 2), std::round(b0.y + (rowH - 2) * 0.5f));
-          dl->AddCircle(c, 3.5f, P.hot, 12, 1.5f);
-          dl->AddCircleFilled(c, 1.5f, P.hot, 8);
+          dl->AddCircle(c, 3.5f, dotCol, 12, 1.5f);
+          dl->AddCircleFilled(c, 1.5f, dotCol, 8);
         }
         ui::drawIcon(dl, ui::Icon::ChevronDown, ImVec2(b0.x + bw - 11, b0.y + (rowH - 2) * 0.5f), 10, P.textFaint);
         if (float pr = 0; info && collabui::fileLoading(a, es.plugin.data, &pr))  // J-111: an impulse response still arriving
           collabui::drawLoading(dl, ImVec2(b0.x + 2, b0.y + rowH - 6), ImVec2(b0.x + bw - 2, b0.y + rowH - 3), pr, true);
-        ui::Hint(info ? "Click to replace \xC2\xB7 double-click to open \xC2\xB7 right-click for options \xC2\xB7 wheel moves it up / down \xC2\xB7 drag to reorder or onto another track (Ctrl copies)"
-                      : "Click to insert an effect (or drop one from the browser)");
+        if (ImU32 fc = 0; const float fl = collabui::hasFlash(a) ? collabui::flash(a, collabchat::slotFlashKey(sel->id, k), &fc) : 0.0f) {
+          dl->AddRectFilled(b0, ImVec2(b0.x + bw, b0.y + rowH - 2), theme::withAlpha(fc, 0.25f * fl), theme::kRadiusSm);
+          dl->AddRect(b0, ImVec2(b0.x + bw, b0.y + rowH - 2), theme::withAlpha(fc, 0.95f * fl), theme::kRadiusSm, 0, 2.0f);
+        }
+        ui::Hint(occupied ? "Click to replace \xC2\xB7 double-click to open \xC2\xB7 right-click for options \xC2\xB7 wheel moves it up / down \xC2\xB7 drag to reorder or onto another track (Ctrl copies)"
+                          : "Click to insert an effect (or drop one from the browser)");
         if (standIn && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", standin::describe(es.plugin).c_str());  // what plays instead
+        else if (missingHosted && ImGui::IsItemHovered()) {
+          const char* why = missStatus == host::MissingStatus::NotScannedYet ? i18n::tr("Not scanned yet: double-click to scan")
+                            : missStatus == host::MissingStatus::Scanning    ? i18n::tr("Scanning for plugins...")
+                            : missStatus == host::MissingStatus::FormatDisabled ? i18n::tr("Format disabled in Plugin Manager")
+                                                                                : i18n::tr("Not installed: double-click for details");
+          ImGui::SetTooltip("%s: %s", slotDisplayName.c_str(), why);
+        }
         pickerPopup(a, "##fxlist", b0, ImVec2(b0.x + bw, b0.y + rowH - 2), sel->id, k, es.plugin.type);
         if (ImGui::BeginPopupContextItem("##slotmenu")) {
           mixerSlotMenu(a, sel->id, k);
@@ -2265,13 +2313,13 @@ void drawMixer(App& a) {
           }
           ImGui::EndDragDropTarget();
         }
-        if (info && ImGui::BeginDragDropSource()) {
+        if (occupied && ImGui::BeginDragDropSource()) {
           SlotDrag sd{sel->id, k};
           ImGui::SetDragDropPayload("GL_SLOT", &sd, sizeof sd);
-          ui::DragPreview(ui::Icon::Mixer, ("Move " + info->name + " (Ctrl: copy)").c_str());
+          ui::DragPreview(ui::Icon::Mixer, ("Move " + std::string(labelTxt) + " (Ctrl: copy)").c_str(), 0, info ? info->type.c_str() : nullptr);
           ImGui::EndDragDropSource();
         }
-        if (info) {
+        if (occupied) {
           ImGui::SetCursorScreenPos(ImVec2(b0.x + bw + 4, q.y + (rowH - 20) * 0.5f));
           ui::ParamKnob("mix", slotMixParam(sel->id, k), 10.0f);
           ImGui::SetCursorScreenPos(ImVec2(b0.x + bw + 4 + 20 + 4, q.y + (rowH - 22) * 0.5f));  // J-128: on the row's centre line
@@ -2400,7 +2448,10 @@ void drawEffectEditorBody(App& a, ObjectId mixerTrack, int slot, const BodyFrame
   const Song& s = a.doc.song();
   const MixerTrack* t = s.mixerTrack(mixerTrack);
   if (!t || slot < 0 || slot >= kEffectSlots) return;
-  if (!findPlugin(t->slots[static_cast<size_t>(slot)].plugin.type)) return;
+  const PluginState& slotSt = t->slots[static_cast<size_t>(slot)].plugin;
+  const PluginInfo* info = findPlugin(slotSt.type);
+  const bool missingHosted = !info && isHostedType(slotSt.type);
+  if (!info && !missingHosted) return;
   hostbody::drawn(hostbody::Body::EffectEditor, t->id, slot);
   const PluginTarget target{t->id, slot};
   if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) || ImGui::IsWindowAppearing()) {
@@ -2408,18 +2459,20 @@ void drawEffectEditorBody(App& a, ObjectId mixerTrack, int slot, const BodyFrame
     a.focusPluginSlot = target.slot;
   }
   menuButton("fxmenu", "Effect menu: presets, state, slot", [&a, target]() { pluginWindowMenu(a, target.owner, target.slot); });
-  ImGui::SameLine(0, 8);
-  drawPluginHeader(a, target);
+  if (info) {
+    ImGui::SameLine(0, 8);
+    drawPluginHeader(a, target);
+  }
   // K-245: the track's macro knobs under the editor, in the effect windows (not in a layout's device chain)
   const bool macros = f.host == nullptr || f.host[0] == 0;
-  if (logicplug::controlsView(a, t->slots[static_cast<size_t>(slot)].plugin.type)) {  // K-112b: the plain controls list
+  if (info && logicplug::controlsView(a, slotSt.type)) {  // K-112b: the plain controls list
     logicplug::drawControls(a, target, std::floor(f.width));
     if (macros) macroui::drawEffectStrip(a, t->id, std::floor(f.width));
     return;
   }
-  if (f.zoom) edzoomui::begin(a, f.zoomKey);  // K-210b: only the editor zooms, its header row keeps the interface size
+  if (f.zoom && !missingHosted) edzoomui::begin(a, f.zoomKey);  // K-210b: only the editor zooms, its header row keeps the interface size
   drawPluginBody(a, target, std::floor(f.width));
-  if (f.zoom) edzoomui::end(a, f.zoomKey);
+  if (f.zoom && !missingHosted) edzoomui::end(a, f.zoomKey);
   if (macros) macroui::drawEffectStrip(a, t->id, std::floor(f.width));
 }
 
@@ -2438,8 +2491,10 @@ void drawEffectEditor(App& a) {
     a.fxEditor = {kNoId, -1};
     return;
   }
-  const PluginInfo* info = findPlugin(t->slots[static_cast<size_t>(k)].plugin.type);
-  if (!info) {
+  const PluginState& slotSt = t->slots[static_cast<size_t>(k)].plugin;
+  const PluginInfo* info = findPlugin(slotSt.type);
+  const bool missingHosted = !info && isHostedType(slotSt.type);
+  if (!info && !missingHosted) {
     a.fxEditor = {kNoId, -1};
     return;
   }
@@ -2447,12 +2502,15 @@ void drawEffectEditor(App& a) {
   if (packs::claimEffectEditor(a, target)) return;  // K-15: Loupe pinned into the layout shows it there
   if (hostbody::claimed(hostbody::Body::EffectEditor)) return;  // K-112: a layout part draws it in its own frame
   if (logicplug::hidden()) return;  // K-112b: hidden (V), still open
+  std::string dispName = info ? info->name : host::xformat::savedIdentity(slotSt).name;
+  if (dispName.empty()) dispName = slotSt.type;
   std::string title = logicplug::active(a) ? logicplug::fxWindowTitle(s, *t)
-                                           : info->name + "  \u00b7  " + mixerTrackName(s, static_cast<size_t>(s.mixerIndex(t->id))) + "  \u00b7  slot " +
+                                           : dispName + "  \u00b7  " + mixerTrackName(s, static_cast<size_t>(s.mixerIndex(t->id))) + "  \u00b7  slot " +
                                                  std::to_string(k + 1) + "###fxeditor";
-  float width = info->editorWidth > 0 ? info->editorWidth : (info->type == "gl.eq" ? 780.0f : 600.0f);
-  if (isHostedType(info->type)) width = hostedui::dockedWidth(a, target, width);  // 0.7.8: its own interface inside
-  if (info->editorMinWidth > 0) {  // J-158: reflowing editors narrow to fit the main window first
+  if (info) title = ui::pluginWindowTitle(info->type, title);  // K-450: its icon before the name
+  float width = info ? (info->editorWidth > 0 ? info->editorWidth : (info->type == "gl.eq" ? 780.0f : 600.0f)) : 580.0f;
+  if (info && isHostedType(info->type)) width = hostedui::dockedWidth(a, target, width);  // 0.7.8: its own interface inside
+  if (info && info->editorMinWidth > 0) {  // J-158: reflowing editors narrow to fit the main window first
     const ImVec2 area = ui::EditorArea();
     width = std::floor(place::fitEditor(width, info->editorMinWidth, 24.0f + ImGui::GetStyle().ScrollbarSize, area.x, area.y).content);
   }
@@ -2463,26 +2521,54 @@ void drawEffectEditor(App& a) {
   }
   // K-19: the editor's own size on top of the interface scale (installed plugins keep theirs).
   // K-147: the window is exactly the editor's width at its size (plus the padding).
-  const bool zoomable = !isHostedType(info->type);
-  edzoomui::prepare(a, "fxeditor", info->type, width, zoomable);  // K-210b: the header row keeps the interface size (the window holds it)
-  // K-199: a Game mode session shows one window: built-in editors dock with the main view there.
-  const bool gameDock = zoomable && !logicplug::active(a) && gamepadui::dockPlugins(a);
-  const int fitFlags =  // J-158: capped to the work area, the rest scrolls
-      gameDock ? 0 : zoomable ? edzoomui::nextWindowSize("fxeditor") : ui::NextFloatingWindowSize(width + 24);
+  // K-421: Loupe (gl.edison) resizes freely and scales natively, remembering its window size & scale.
+  // (info is null for an installed plugin not scanned yet: its placeholder editor)
+  const bool gameDock = info && !isHostedType(slotSt.type) && !logicplug::active(a) && gamepadui::dockPlugins(a);
+  const bool loupeFree = slotSt.type == "gl.edison" && !gameDock && !logicplug::active(a);
+  const bool zoomable = info && !isHostedType(slotSt.type) && !loupeFree;
+  int fitFlags = 0;
+  if (loupeFree) {
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    float lw = 0.0f, lh = 0.0f;
+    bool forceSz = false;
+    packs::loupePreferredWindowSize(a, 16.0f, 92.0f, vp->WorkSize.x, vp->WorkSize.y, lw, lh, forceSz);
+    ImGui::SetNextWindowSize(ImVec2(lw, lh), forceSz ? ImGuiCond_Always : ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(480.0f, 360.0f),
+                                        ImVec2(std::max(480.0f, vp->WorkSize.x - 16.0f), std::max(360.0f, vp->WorkSize.y - 16.0f)));
+  } else {
+    edzoomui::prepare(a, "fxeditor", slotSt.type, width, zoomable);  // K-210b: the header row keeps the interface size (the window holds it)
+    fitFlags =  // J-158: capped to the work area, the rest scrolls
+        gameDock ? 0 : zoomable ? edzoomui::nextWindowSize("fxeditor") : ui::NextFloatingWindowSize(width + 24);
+  }
   if (gameDock) gamepadui::nextPluginWindowDocked(a);
   viewports::openAttached(title.c_str());  // opens inside the main window, never popped out by itself
   // K-112b: the title bar's underline (drawn by Begin from the frame outline) stays as in every layout
   bool vis = false;
   {
     const layoutui::BaseBorderScope border;
-    vis = ImGui::Begin(title.c_str(), &open,
-                       gameDock ? ImGuiWindowFlags_HorizontalScrollbar : (ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags));
+    const ImGuiWindowFlags winFlags = loupeFree ? ImGuiWindowFlags_NoDocking
+                                                : (gameDock ? ImGuiWindowFlags_HorizontalScrollbar
+                                                            : (ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | fitFlags));
+    vis = ImGui::Begin(title.c_str(), &open, winFlags);
   }
+  if (info) ui::drawPluginWindowTitleIcon(info->type);  // K-450: also on its tab when docked behind another
   if (vis) {
     ui::KeepWindowInViewport();
     ui::MarkDetachable();  // J-114: pops out / docks back like the panels
-    edzoomui::markRows("fxeditor");  // K-216: the header row (fit report)
-    drawEffectEditorBody(a, target.owner, target.slot, BodyFrame{width, true, ""});
+    if (loupeFree) {
+      drawEffectEditorBody(a, target.owner, target.slot, BodyFrame{std::floor(ImGui::GetContentRegionAvail().x), false, ""});
+      if (!ImGui::IsWindowAppearing() && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        const ImVec2 ws = ImGui::GetWindowSize();
+        packs::rememberLoupeWindowSize(a, ws.x, ws.y);
+      }
+    } else {
+      edzoomui::markRows("fxeditor");  // K-216: the header row (fit report)
+      drawEffectEditorBody(a, target.owner, target.slot, BodyFrame{width, true, ""});
+    }
+    if (ImU32 fc = 0; const float fl = collabui::flash(a, collabchat::pluginFlashKey(target.owner, target.slot), &fc)) {
+      const ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
+      ImGui::GetForegroundDrawList()->AddRect(wp, ImVec2(wp.x + ws.x, wp.y + ws.y), theme::withAlpha(fc, 0.90f * fl), theme::kRadius, 0, 3.0f);
+    }
   }
   ImGui::End();
   if (!open) a.fxEditor = {kNoId, -1};

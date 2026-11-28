@@ -3,6 +3,7 @@
 #include <cstring>
 #include <unordered_map>
 #include "../../third_party/imgui/imgui_internal.h"
+#include "EditorZoomUi.h"
 #include "TypeInMenu.h"
 
 namespace gl::audit {
@@ -243,15 +244,33 @@ std::vector<align::Text> textRuns(ImGuiWindow* root) {
     if (!inside) continue;
     const size_t first = out.size();
     scanList(w->DrawList, glyphs, tex, out);
+    // K-404: child windows inside an active edzoomui scaled region have not been scaled yet when
+    // alignaudit runs; map their text runs into final screen coordinates so adjacent scaled devices
+    // are audited where they actually appear.
+    ImVec2 zOrigin{0, 0}, zClip0{0, 0}, zClip1{0, 0};
+    float zScale = 1.0f;
+    const bool zScaled = edzoomui::pendingWindowTransform(w, zOrigin, zScale, zClip0, zClip1);
+    if (zScaled) {
+      auto mapX = [&](float x) { return zOrigin.x + (x - zOrigin.x) * zScale; };
+      auto mapY = [&](float y) { return zOrigin.y + (y - zOrigin.y) * zScale; };
+      for (size_t i = first; i < out.size(); ++i) {
+        align::Text& t = out[i];
+        t.r = align::Box{mapX(t.r.x0), mapY(t.r.y0), mapX(t.r.x1), mapY(t.r.y1)};
+        t.ink = align::Box{mapX(t.ink.x0), mapY(t.ink.y0), mapX(t.ink.x1), mapY(t.ink.y1)};
+        t.baseline = mapY(t.baseline);
+        t.size *= zScale;
+        if (t.ink.x1 <= zClip0.x || t.ink.x0 >= zClip1.x || t.ink.y1 <= zClip0.y || t.ink.y0 >= zClip1.y) t.clipped = false;
+      }
+    }
     // A scrolling region cuts the text at its scrolled edge on purpose: only the
     // other edges count.
-    const ImRect cr = w->InnerClipRect;
+    const ImRect cr = zScaled ? ImRect(zClip0, zClip1) : w->InnerClipRect;
     for (size_t i = first; i < out.size(); ++i) {
       align::Text& t = out[i];
       if (!t.clipped) continue;
       const bool atY = t.ink.y0 < cr.Min.y + 0.5f || t.ink.y1 > cr.Max.y - 0.5f;
       const bool atX = t.ink.x0 < cr.Min.x + 0.5f || t.ink.x1 > cr.Max.x - 0.5f;
-      if ((w->ScrollMax.y > 0 && atY && !atX) || (w->ScrollMax.x > 0 && atX && !atY)) t.clipped = false;
+      if ((w->ScrollMax.y > 0 && atY && !atX) || (w->ScrollMax.x > 0 && atX && !atY) || (zScaled && (atX || atY))) t.clipped = false;
     }
   }
   for (align::Text& t : out)

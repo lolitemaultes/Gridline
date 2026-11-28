@@ -53,6 +53,7 @@ struct PeerEdit {
 std::vector<PeerEdit> peerEdits(App& a);
 // Top bar: collaborator chips right to left from `rx`; returns the new right edge.
 float topBar(App& a, ImDrawList* dl, float rx, float top, float height);
+float topBarWidth(const App& a, float height);
 // Settings > Collaboration.
 void settingsPage(App& a, float fieldW);
 // Project settings: the Collaboration section.
@@ -110,6 +111,10 @@ bool fileLoading(App& a, const std::string& path, float* progress = nullptr);
 // A collaborator just changed `object` ("channels/#5", "playlist/#40", "mixer/#3"):
 // 0..1 highlight strength and the collaborator's colour.
 float flash(App& a, const std::string& object, ImU32* color = nullptr);
+// K-86 part 2: trigger a brief highlight flash on `object` (colorRgb == 0 uses theme hot/accent).
+void triggerFlash(App& a, const std::string& object, uint32_t colorRgb = 0, double durationSec = 1.8);
+bool hasFlash(const App& a, const std::string& object = "");
+uint32_t memberColorRgb(const App& a, uint64_t site);
 // Striped "loading" overlay for a placeholder (clip or slot).
 void drawLoading(ImDrawList* dl, ImVec2 a, ImVec2 b, float progress, bool compact);
 // Opens the collaboration panel / join dialog.

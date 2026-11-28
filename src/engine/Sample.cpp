@@ -1,6 +1,8 @@
 #include "Sample.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include <chrono>
+#include <filesystem>
 #include <thread>
 #include <set>
 #include <atomic>
@@ -379,7 +381,7 @@ bool SampleCache::shutdown(int waitMs) {
       return false;
     }
   }
-  for (auto& t : workers) t.join();
+  for (auto& t : workers) gl::threads::safeJoin(t);
   return true;
 }
 
@@ -392,12 +394,13 @@ SamplePtr SampleCache::decodeLocked(std::unique_lock<std::mutex>& lk, const std:
     s = loadSample(path);
   } catch (const std::exception&) {
   }
+  const FailStamp st = s ? FailStamp{} : stampOf(path);  // (this thread reads the file anyway)
   lk.lock();
   inflight_.erase(path);
   if (s)
     cache_[path] = s;
   else
-    failed_[path] = true;
+    failed_[path] = st;
   done_.notify_all();
   return s;
 }
@@ -484,6 +487,51 @@ void SampleCache::forget(const std::string& path) {
     cache_.erase(path);
   }
   gen_.fetch_add(1, std::memory_order_acq_rel);
+}
+
+SampleCache::FailStamp SampleCache::stampOf(const std::string& path) {
+  FailStamp st;
+  if (path.empty() || path.rfind("builtin:", 0) == 0 || remotefs::isRemote(path)) return st;
+  namespace fs = std::filesystem;
+  std::error_code ec;
+  const fs::path p = fs::u8path(path);
+  st.known = true;
+  st.exists = fs::is_regular_file(p, ec);
+  if (st.exists) {
+    st.size = static_cast<unsigned long long>(fs::file_size(p, ec));
+    if (ec) st.size = 0;
+    const auto t = fs::last_write_time(p, ec);
+    st.mtime = ec ? 0 : static_cast<long long>(t.time_since_epoch().count());
+  }
+  return st;
+}
+
+int SampleCache::recheckFailed(double minInterval) {
+  const long long nowMs =
+      std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  std::vector<std::pair<std::string, FailStamp>> look;
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    if (failed_.empty()) return 0;
+    if (recheckedAtMs_ >= 0 && nowMs >= recheckedAtMs_ && static_cast<double>(nowMs - recheckedAtMs_) < minInterval * 1000.0) return 0;
+    recheckedAtMs_ = nowMs;
+    constexpr size_t kMaxLooks = 512;  // (a project with thousands of missing files: the first of them)
+    for (const auto& [path, st] : failed_) {
+      if (!st.known) continue;
+      look.emplace_back(path, st);
+      if (look.size() >= kMaxLooks) break;
+    }
+  }
+  std::vector<std::string> changed;
+  for (const auto& [path, st] : look)  // (outside the lock: file status may take a moment)
+    if (!(stampOf(path) == st)) changed.push_back(path);
+  if (changed.empty()) return 0;
+  {
+    std::lock_guard<std::mutex> lk(mu_);
+    for (const auto& p : changed) failed_.erase(p);
+  }
+  gen_.fetch_add(1, std::memory_order_acq_rel);
+  return static_cast<int>(changed.size());
 }
 
 SamplePtr SampleCache::request(const std::string& path) {

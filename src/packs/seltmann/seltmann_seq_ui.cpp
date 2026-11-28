@@ -145,7 +145,7 @@ float pitchChip(App& a, const PluginTarget& t, Ed& e, const char* id, ImVec2 p0,
     float nv;
     // K-147: measured on screen (the editor may be drawn reduced or magnified)
     const float dy = io.MouseDelta.y * std::max(0.1f, edzoomui::currentZoom());
-    if (io.KeyShift) {  // fine: 0.05 semitone per pixel
+    if (io.KeyShift || io.KeyAlt) {  // fine: 0.05 semitone per pixel
       nv = v - dy * 0.05f;
       e.pitchFrom = nv;
       e.pitchAcc = 0;

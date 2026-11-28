@@ -44,6 +44,7 @@ struct Slot {
   ImVec2 centre{0, 0};
   // this frame's magnified region
   bool active = false;
+  bool inlineMode = false;  // K-404: inline scaled region inside a container (Device chain)
   ImGuiWindow* host = nullptr;
   ImGuiWindow* child = nullptr;
   ImVec2 origin{0, 0};
@@ -100,6 +101,7 @@ struct Member {
   float z = 1;
   bool inside = true;
   ImRect clip;
+  const ImGuiWindow* rootChild = nullptr;  // K-404: isolates sibling inline scaled editors
 };
 std::unordered_map<const ImGuiWindow*, Member>& members() {
   static std::unordered_map<const ImGuiWindow*, Member> m;
@@ -576,9 +578,15 @@ void mapPointer() {
     const Member& m = held ? capture : over;
     if (m.z != 1.0f) {
       const ImVec2 q = mapIn(m, lastReal);
-      std::vector<const ImGuiWindow*> keep;  // the editor's windows and the windows they sit in
-      for (const auto& [w, mm] : members())
+      std::vector<const ImGuiWindow*> keep;  // this editor's windows and the windows they sit in
+      for (const auto& [w, mm] : members()) {
+        if (m.rootChild && mm.rootChild != m.rootChild) {
+          // K-404: sibling inline scaled editors whose design rects overlap `q` must not steal input
+          const_cast<ImGuiWindow*>(w)->Flags |= ImGuiWindowFlags_NoMouseInputs;
+          continue;
+        }
         for (const ImGuiWindow* p = w; p; p = p->ParentWindow) keep.push_back(p);
+      }
       for (ImGuiWindow* w : g.Windows) {
         if (!w->Active || w->Hidden || (g.MouseViewport && w->Viewport != g.MouseViewport)) continue;
         if (std::find(keep.begin(), keep.end(), w) != keep.end() || !w->OuterRectClipped.Contains(q)) continue;
@@ -695,10 +703,136 @@ void afterRender() {
         if (inside) r.ClipWithFull(s.clip);
         c.ClipRect = ImVec4(r.Min.x, r.Min.y, r.Max.x, r.Max.y);
       }
-      members()[w] = Member{s.origin, s.z, inside, s.clip};
+      members()[w] = Member{s.origin, s.z, inside, s.clip, s.child};
     }
     s.active = false;
   }
+  // K-404: prune stale inline slots (closed/removed/scrolled-off devices) so the map stays small.
+  for (auto it = slots().begin(); it != slots().end();) {
+    if (it->second.inlineMode && frame - it->second.lastFrame > 30) it = slots().erase(it);
+    else ++it;
+  }
+}
+
+ImVec2 inlineDesignSize(const std::string& key, const std::string& type, float defaultW) {
+  if (auto it = slots().find(key); it != slots().end() && it->second.type == type && it->second.design.y > 16.0f) return it->second.design;
+  if (auto it = designCache().find(type); it != designCache().end() && it->second.y > 16.0f) return it->second;
+  return ImVec2(defaultW, 0.0f);
+}
+
+void beginInline(const std::string& key, const std::string& type, float designW, float z, ImVec2 clipMin, ImVec2 clipMax) {
+  Slot& s = slots()[key];
+  ImGuiContext& g = *GImGui;
+  const int frame = ImGui::GetFrameCount();
+  s.inlineMode = true;
+  s.host = ImGui::GetCurrentWindow();
+  s.lastFrame = frame;
+  s.regionFrame = frame;
+  s.type = type;
+  s.zoomable = true;
+  s.contentW = std::max(160.0f, designW);
+  s.z = std::fabs(z - 1.0f) > 0.001f ? z : 1.0f;
+  s.child = nullptr;
+  s.origin = ImGui::GetCursorScreenPos();
+  s.clip = ImRect(clipMin, clipMax);
+  if (s.host) s.clip.ClipWithFull(s.host->InnerClipRect);
+  s.active = s.z != 1.0f;
+  s.grouped = !s.active;
+  current() = s.z;
+  currentOrigin() = s.origin;
+  if (!s.active) {
+    ImGui::PushClipRect(s.clip.Min, s.clip.Max, true);
+    ImGui::BeginGroup();
+    return;
+  }
+  s.savedMax = s.host->DC.CursorMaxPos;
+  s.savedIdeal = s.host->DC.IdealMaxPos;
+  if (s.z < 1.0f) ImGui::PushClipRect(ImVec2(s.origin.x - 4096, s.origin.y - 4096), ImVec2(s.origin.x + 16384, s.origin.y + 16384), false);
+  ImGuiViewportP* vp = s.host->Viewport;
+  s.savedFb = vp->FramebufferScale;
+  s.savedVpPos = vp->Pos;
+  s.savedVpSize = vp->Size;
+  {
+    const Member tmp{s.origin, s.z, true, {}, nullptr};
+    const ImVec2 a = mapIn(tmp, vp->Pos), b = mapIn(tmp, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y));
+    vp->Pos = ImVec2(std::min(a.x, vp->Pos.x), std::min(a.y, vp->Pos.y));
+    vp->Size = ImVec2(std::max(b.x, s.savedVpPos.x + s.savedVpSize.x) - vp->Pos.x, std::max(b.y, s.savedVpPos.y + s.savedVpSize.y) - vp->Pos.y);
+  }
+  vp->FramebufferScale = ImVec2(s.savedFb.x * s.z, s.savedFb.y * s.z);
+  g.DrawListSharedData.InitialFringeScale = 1.0f / s.z;
+  s.fg = ImGui::GetForegroundDrawList(vp);
+  s.fgStart = s.fg->VtxBuffer.Size;
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+  ImGui::BeginChild((std::string("##edzoom_") + key).c_str(), ImVec2(s.contentW, 0), ImGuiChildFlags_AutoResizeY,
+                    ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground);
+  ImGui::PopStyleVar();
+  s.child = ImGui::GetCurrentWindow();
+}
+
+void endInline(const std::string& key) {
+  Slot& s = slots()[key];
+  current() = 1.0f;
+  ImGuiContext& g = *GImGui;
+  if (!s.active) {
+    ImGui::EndGroup();
+    ImGui::PopClipRect();
+    const ImVec2 sz = ImGui::GetItemRectSize();
+    if (sz.y > 16.0f) s.design = ImVec2(std::max(s.contentW, sz.x), sz.y);
+  } else {
+    if (s.child && s.child->Size.y > 16.0f) s.design = ImVec2(std::max(s.contentW, s.child->Size.x), s.child->Size.y);
+    ImGui::EndChild();
+    if (s.z < 1.0f) {
+      ImGui::PopClipRect();
+      s.host->DC.CursorMaxPos = s.savedMax;
+      s.host->DC.IdealMaxPos = s.savedIdeal;
+    }
+    ImGuiViewportP* vp = s.host->Viewport;
+    vp->FramebufferScale = s.savedFb;
+    vp->Pos = s.savedVpPos;
+    vp->Size = s.savedVpSize;
+    g.DrawListSharedData.InitialFringeScale = 1.0f;
+    ImGui::SetFontRasterizerDensity(s.savedFb.x);
+    if (s.fg) scaleVertices(s.fg, s.fgStart, s.origin, s.z);
+    s.fg = nullptr;
+    ImGui::SetCursorScreenPos(s.origin);
+    ImGui::Dummy(ImVec2(std::floor(s.design.x * s.z + 0.01f), std::ceil(s.design.y * s.z - 0.01f)));
+  }
+  if (s.design.y > 16.0f) designCache()[s.type] = s.design;
+}
+
+bool pendingWindowTransform(const void* imguiWindow, ImVec2& origin, float& z, ImVec2& clipMin, ImVec2& clipMax) {
+  const auto* w = static_cast<const ImGuiWindow*>(imguiWindow);
+  if (!w) return false;
+  const int frame = GImGui ? GImGui->FrameCount : -1;
+  for (const auto& [key, s] : slots()) {
+    if (!s.active || s.lastFrame != frame || !s.child) continue;
+    for (const ImGuiWindow* p = w; p; p = p->ParentWindow) {
+      if (p == s.child) {
+        origin = s.origin;
+        z = s.z;
+        clipMin = s.clip.Min;
+        clipMax = s.clip.Max;
+        return true;
+      }
+      if (!(p->Flags & ImGuiWindowFlags_ChildWindow)) break;
+    }
+  }
+  return false;
+}
+
+bool devToScreen(const void* imguiWindow, ImVec2& p) {
+  const auto* w = static_cast<const ImGuiWindow*>(imguiWindow);
+  if (!w) return false;
+  const int frame = GImGui ? GImGui->FrameCount : -1;
+  for (const auto& [key, s] : slots()) {
+    if (!s.active || s.lastFrame != frame || !s.child) continue;
+    for (const ImGuiWindow* q = w; q; q = q->ParentWindow)  // the family afterRender() scales (popups too)
+      if (q == s.child) {
+        p = mapOut(s.origin, s.z, p);
+        return true;
+      }
+  }
+  return false;
 }
 
 ImVec2 devWindowSize(const char* key) {

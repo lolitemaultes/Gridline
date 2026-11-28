@@ -245,6 +245,7 @@ struct Clip {
   double audioEnd = 0;       // source position where playback stops (0 = sample end)
   double fadeIn = 0, fadeOut = 0;  // fade lengths, seconds of playback time
   float gain = 1.0f;         // linear clip gain
+  float pan = 0.0f;          // K-414: per-clip stereo pan, -1 (left) .. +1 (right), 0 = centre
   float pitch = 0.0f;        // cents, added to the channel's pitch shift
   double stretch = 1.0;      // time factor (2 = plays half as fast)
   // J-164: the cents of the clip's whole pitch (channel pitch shift + `pitch`)
@@ -305,7 +306,7 @@ struct Clip {
     return id == o.id && pattern == o.pattern && track == o.track && start == o.start && length == o.length &&
            kind == o.kind && source == o.source && offset == o.offset && loop == o.loop && loopStart == o.loopStart &&
            loopLength == o.loopLength && muted == o.muted && audioStart == o.audioStart &&
-           audioEnd == o.audioEnd && fadeIn == o.fadeIn && fadeOut == o.fadeOut && gain == o.gain && pitch == o.pitch &&
+           audioEnd == o.audioEnd && fadeIn == o.fadeIn && fadeOut == o.fadeOut && gain == o.gain && pan == o.pan && pitch == o.pitch &&
            speedPitch == o.speedPitch && rateFit == o.rateFit &&
            stretch == o.stretch && syncBpm == o.syncBpm && tempoLock == o.tempoLock && reverse == o.reverse && takeGroup == o.takeGroup &&
            take == o.take && takeRating == o.takeRating && launched == o.launched && launchOnce == o.launchOnce && launchSet == o.launchSet && group == o.group && fadeInShape == o.fadeInShape &&

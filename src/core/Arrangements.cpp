@@ -92,6 +92,41 @@ bool removeArrangement(Song& s, int index) {
   return true;
 }
 
+bool moveArrangement(Song& s, int from, int to) {
+  ensureArrangementList(s);
+  const int n = static_cast<int>(s.arrangements.size());
+  if (from < 0 || from >= n || to < 0 || to >= n) return false;
+  if (from == to) return true;
+  Arrangement item = std::move(s.arrangements[static_cast<size_t>(from)]);
+  s.arrangements.erase(s.arrangements.begin() + from);
+  s.arrangements.insert(s.arrangements.begin() + to, std::move(item));
+  if (s.currentArrangement == from) {
+    s.currentArrangement = to;
+  } else if (from < s.currentArrangement && to >= s.currentArrangement) {
+    --s.currentArrangement;
+  } else if (from > s.currentArrangement && to <= s.currentArrangement) {
+    ++s.currentArrangement;
+  }
+  return true;
+}
+
+Song songWithArrangement(const Song& s, int index) {
+  Song copy = s;
+  if (index >= 0 && index < arrangementCount(copy)) selectArrangement(copy, index);
+  return copy;
+}
+
+Tick arrangementLengthTicks(const Song& s, int index) {
+  const int cur = s.arrangements.empty() ? 0 : s.currentArrangement;
+  if (index < 0 || index >= arrangementCount(s)) return 0;
+  if (s.arrangements.empty() || index == cur) return s.lengthTicks();
+  Tick end = 0;
+  for (const Clip& c : s.arrangements[static_cast<size_t>(index)].playlist) {
+    end = std::max(end, c.start + s.clipLength(c));
+  }
+  return end;
+}
+
 void forEachArrangementClip(Song& s, const std::function<void(Clip&)>& fn) {
   for (auto& c : s.playlist) fn(c);
   for (size_t i = 0; i < s.arrangements.size(); ++i)

@@ -61,6 +61,7 @@ enum class TailMode : int {
   Cut = 0,  // the file ends exactly at the scope end
   Leave,    // the file runs on until the tail has died away
   Wrap,     // the tail is mixed into the start of the file (seamless loops)
+  Fixed,    // the file runs on for exactly RenderJob::fixedTailSeconds, loud or quiet
   Count
 };
 // Sampler interpolation used while rendering (0 = the realtime default).
@@ -75,6 +76,7 @@ struct RenderJob {
   int loops = 1;                // the scope plays this many times (1..64)
   TailMode tail = TailMode::Cut;
   double maxTailSeconds = 30;   // Leave / Wrap: the tail never runs longer
+  double fixedTailSeconds = 2;  // Fixed: the tail's exact length (0..60 s)
   double silenceDb = -100;      // Leave / Wrap: level under which the tail counts as silent
   // Render switches.
   bool insertEffects = true;    // effect slots of the insert tracks

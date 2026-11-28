@@ -94,6 +94,23 @@ struct PluginInfo {
   // Effects that read notes from the engine's MIDI port bus (ProcessContext::
   // ports): the task graph runs every MIDI Out channel before their track.
   bool midiInput = false;
+  // K-438: a built-in instrument that sends MIDI (its own sequencer's notes) on the channel's MIDI
+  // output port (Channel::midiOutPort), to the channels listening on that port. Channel Settings
+  // offers the output port for it.
+  bool midiOutput = false;
+  // K-438: parameters (toggles) that switch the instrument's own sequencer on. While one is on, the
+  // instrument plays its sequence and sends it as MIDI; "Write the sequence to the piano roll"
+  // records what it plays into the pattern as notes and switches them off (engine/NoteFxBurn.h).
+  std::vector<int> sequencerParams = {};
+  // K-438: a sequencer in two parts, an arpeggiator playing what a clip player feeds it (Plasma).
+  // Printing one part sets `outParam` on the render copy to `arpOut` / `clipOut`, so only that
+  // part's notes come out of the MIDI output; arpOn / clipOn are the parts' switches.
+  struct SequencerParts {
+    int outParam = -1;
+    float arpOut = 0, clipOut = 0;
+    int arpOn = -1, clipOn = -1;
+  };
+  SequencerParts seqParts = {};
   // Appended "model" choice param (pack plugins): states saved before it existed
   // (shorter param vectors) normalise it to 0 = legacy; new instances use its default.
   int legacyModelParam = -1;

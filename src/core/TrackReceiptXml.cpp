@@ -1,5 +1,5 @@
 // Gridline - J-219: the Track Receipt spreadsheet (SpreadsheetML 2003: Excel
-// and LibreOffice open it). Sheets: Licenses, Usage, Release, Splits.
+// and LibreOffice open it). Sheets: Licenses, Usage, Areas (with markers), Release, Splits.
 #include <cmath>
 #include <cstdio>
 #include "TrackReceipt.h"
@@ -73,6 +73,15 @@ std::string originalText(const SongRow& s) {
 }
 
 }  // namespace
+
+std::string areaName(const Area& a, size_t index) {
+  if (!a.name.empty()) return a.name;
+  return a.beforeFirst ? std::string("Before the first marker") : "Area " + std::to_string(index + 1);
+}
+
+std::string areaBars(const Area& a) {
+  return a.bar1 > a.bar0 ? "bars " + std::to_string(a.bar0) + "-" + std::to_string(a.bar1) : "bar " + std::to_string(a.bar0);
+}
 
 std::string spreadsheetXml(const Report& r) {
   std::string x =
@@ -176,6 +185,45 @@ std::string spreadsheetXml(const Report& r) {
     if (f.uses.empty() && f.muted.empty()) useRow(nullptr);
   }
   U.end();
+  // ---- Areas: each marker area licensed on its own (the same sample in two areas counts in each)
+  Sheet A;
+  if (!r.areas.empty()) {
+    A.begin("Areas", {150, 70, 60, 60, 200, 260, 80, 80, 80, 260});
+    A.row(), A.str("By marker area", "title"), A.endRow();
+    A.row(), A.str("What each marker area uses of each original, counted as if the area were a song of its own.", "note"), A.endRow();
+    A.row(), A.endRow();
+    A.row();
+    for (const char* h : {"Area", "Bars", "From", "To", "Song", "File", "Seconds used", "Tier to choose (s)", "Sounds for (s)", "Notes"})
+      A.str(h, "h");
+    A.endRow();
+    for (size_t k = 0; k < r.areas.size(); ++k) {
+      const AreaRow& ar = r.areas[k];
+      const std::string name = areaName(ar.area, k), bars = areaBars(ar.area);
+      if (ar.songs.empty()) {
+        A.row(), A.str(name), A.str(bars), A.str(timeText(ar.area.a)), A.str(timeText(ar.area.b)), A.str("-"), A.str("");
+        A.str(""), A.str(""), A.str(""), A.str("No licensed sample is used here"), A.endRow();
+      }
+      for (const AreaSong& as : ar.songs) {
+        A.row(), A.str(name), A.str(bars), A.str(timeText(ar.area.a)), A.str(timeText(ar.area.b));
+        A.str(as.artist.empty() ? as.title : as.artist + " - " + as.title);
+        A.str("");
+        A.num(as.seconds);
+        if (!as.over) A.num(as.tier, "n0");
+        else A.str("none");
+        A.num(as.playSeconds);
+        std::string note = as.over ? "More than 60 s of this song is used in this area." : "";
+        if (as.rough) note += std::string(note.empty() ? "" : " ") + "Some of it may play in more than one area: counted in each.";
+        if (as.estimated) note += std::string(note.empty() ? "" : " ") + "Not measured: whole file.";
+        note.empty() ? A.str("") : A.str(note, as.over ? "warn" : nullptr);
+        A.endRow();
+        for (const AreaFile& f : as.files) {
+          A.row(), A.str(name), A.str(bars), A.str(timeText(ar.area.a)), A.str(timeText(ar.area.b));
+          A.str(as.title), A.str(f.name), A.num(f.seconds), A.str(""), A.num(f.playSeconds), A.str("seconds of this file"), A.endRow();
+        }
+      }
+    }
+    A.end();
+  }
   // ---- Release
   Sheet R;
   R.begin("Release", {170, 320});
@@ -245,7 +293,7 @@ std::string spreadsheetXml(const Report& r) {
   S.row(), S.str("Tracklib registers each sample on its side (for example 90 / 10), listing only your writers and publishers.", "note"),
       S.endRow();
   S.end();
-  x += L.xml + U.xml + R.xml + S.xml + "</Workbook>\n";
+  x += L.xml + U.xml + A.xml + R.xml + S.xml + "</Workbook>\n";
   return x;
 }
 

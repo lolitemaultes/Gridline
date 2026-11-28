@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -56,6 +57,7 @@ struct ScanResult {
   std::string bundle;           // the entry (path or AU key)
   int64_t mtime = 0;            // entry modification stamp; rescan when it changes
   bool ok = false;
+  bool needsBridge32 = false;   // K-323: 32-bit Windows PE plugin hosted via gridline-bridge32
   std::string error;  // why the entry is blacklisted
   std::vector<ScannedClass> classes;
   std::vector<ScanFailure> failed;  // K-180: its plugins that did not load (each listed as failed on its own)
@@ -128,8 +130,10 @@ ScanTimeouts scanTimeouts(double baseSeconds, int attempt);
 // progress (equal to sinceStart when it showed none), `progress` plugins described so far.
 bool scanTimedOut(const ScanTimeouts& t, double sinceStart, double sinceProgress, int progress);
 
+// K-437: `blockNetwork`: the scanner child is kept off the internet (sandbox/NetBlock.h); one that
+// cannot be fails the scan instead of loading the plugin.
 ScanResult scanIsolated(const std::string& exe, const std::string& format, const std::string& entry, double timeoutSeconds = 60,
-                        const std::atomic<bool>* cancel = nullptr, ScanReport* report = nullptr, int attempt = 0);
+                        const std::atomic<bool>* cancel = nullptr, ScanReport* report = nullptr, int attempt = 0, bool blockNetwork = false);
 // K-154: the memory one plugin's scan may use: a quarter of the physical memory, 2 to 8 GB (4 GB
 // when the size is unknown; big sample-based instruments take a gigabyte or two while they load).
 // What keeps the computer out of swap is the reserve below. GRIDLINE_SCAN_MEMORY_MB overrides it (tests).
@@ -161,6 +165,14 @@ std::string scanProgressFile(const std::string& outFile);
 // export table is not read: protected plugins (licence wrappers) fill or decrypt it while they load,
 // so a DLL whose file shows no entry point may still be a plugin (the scan decides). `entryPoints`
 // is kept for the callers' documentation of what the scan looks for.
+// K-323: PE binary architecture classification (reads MZ + PE COFF machine & optional magic).
+enum class PeArch : uint8_t { Unknown = 0, X86, X64, Arm64 };
+PeArch peArch(const std::string& path);
+const char* peArchName(PeArch arch);
+// K-323: true when `entry` (VST2 .dll or VST3 single-file / bundle with only Contents/x86-win)
+// is a 32-bit x86 Windows PE plugin that requires the 32-bit bridge process.
+bool needsBridge32ForPath(const std::string& format, const std::string& entry);
+
 std::string peDllPrecheck(const std::string& path, const std::vector<std::string>& entryPoints, uint16_t hostMachine = 0);
 // K-267: why a PE image of `machine` cannot load into a process of `hostMachine` ("" = it can).
 std::string peMachineMismatch(uint16_t machine, uint16_t hostMachine);
@@ -229,10 +241,17 @@ class ScanCache {
   // Entries of `format` that are new or changed since they were cached.
   std::vector<std::string> stale(const std::vector<std::string>& bundles, const std::string& format = "vst3") const;
   const std::string& file() const { return file_; }
+  // Q-14: distinguishes an empty/never-scanned cache from a populated or completed scan.
+  bool scanned() const { return scanned_ || !entries_.empty(); }
+  bool formatScanned(const std::string& format) const;
+  const std::set<std::string>& scannedFormats() const { return scannedFormats_; }
+  void markScanned(const std::string& format);
 
  private:
   std::string file_;
   std::vector<ScanResult> entries_;
+  bool scanned_ = false;
+  std::set<std::string> scannedFormats_;
 };
 
 }  // namespace gl::host

@@ -349,10 +349,14 @@ void patternLaneMenu(App& a, ObjectId pattern, ObjectId channel) {
   if (!p) return;
   ImGui::Separator();
   ImGui::TextDisabled("%s", i18n::tr("Pattern automation (events)"));
-  for (const auto& l : p->automation) {
+  for (const auto& l : effectiveRackAutoLanes(s, p)) {
     ParamId pid{l.owner, l.index};
+    AutomationClip tmp;
+    tmp.owner = l.owner;
+    tmp.index = l.index;
+    tmp.name = l.name;
     ImGui::PushID(static_cast<int>(pid.packed() & 0x7FFFFFFF));
-    if (ImGui::Selectable(patternAutoName(s, l).c_str(), laneTarget == pid)) laneTarget = pid;
+    if (ImGui::Selectable(patternAutoName(s, tmp).c_str(), laneTarget == pid)) laneTarget = pid;
     ImGui::PopID();
   }
   if (ImGui::BeginMenu(i18n::tr("Add lane for"))) {

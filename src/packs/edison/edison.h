@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 #include "../../core/PluginInfo.h"
+#include "../../core/TimeWarp.h"
 #include "../../engine/Effects.h"
 #include "../../engine/Sample.h"
 
@@ -68,6 +69,10 @@ struct Range {
 struct Marker {
   int64_t pos = 0;
   std::string name;
+  // K-419: originating Playlist warp marker metadata (warpId == 0 for plain Loupe markers).
+  uint32_t warpId = 0;
+  double warpOrigAt = -1.0;  // original source time (seconds)
+  double warpTo = -1.0;      // original warped time (seconds)
 };
 struct Region {
   int64_t start = 0, end = 0;
@@ -128,6 +133,9 @@ class History {
   const Content& cur() const { return cur_; }
   void reset(Content c);
   void push(const std::string& label, Content next);
+  // Replaces the version shown without an undo step (bookkeeping that does not change what the
+  // person sees, such as the ids Loupe's markers get when they are synced to warp markers).
+  void amend(Content c);
   // GitHub #69: with the selections around the edit; undo brings `selBefore` back, redo `selAfter`.
   void push(const std::string& label, Content next, Range selBefore, Range selAfter);
   bool undo();
@@ -251,6 +259,12 @@ Content addMarker(const Content& c, int64_t pos, const std::string& name);
 Content removeMarker(const Content& c, size_t index);
 Content renameMarker(const Content& c, size_t index, const std::string& name);
 Content moveMarker(const Content& c, size_t index, int64_t pos);
+// K-420: selection range from marker `index` to the next marker by sample position,
+// or to the end of the audio buffer when no later marker exists (or it is the only marker).
+Range markerSpan(const Content& c, size_t index);
+// K-419: round-trip PlaylistWarp markers <-> editable Loupe markers.
+Content importWarpMarkers(const Content& c, const std::vector<WarpMarker>& warp);
+std::vector<WarpMarker> exportWarpMarkers(const Content& c, const std::vector<WarpMarker>& origWarp = {});
 Content addRegion(const Content& c, Range r, const std::string& name);
 Content removeRegion(const Content& c, size_t index);
 Content renameRegion(const Content& c, size_t index, const std::string& name);

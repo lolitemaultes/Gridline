@@ -25,6 +25,46 @@ the next slide moves them on.
 - A note's own bend line and slides add up: the slide starts from wherever the bend line has
   taken the note.
 
+## Velocity
+
+A slide also takes the notes it moves from their velocity to the slide's own velocity, in a
+straight line over the slide's length, at the same time as their pitch. A slide at the velocity
+the note already has changes only its pitch.
+
+- **Fade in**: draw a note at 0% velocity and a slide note at the velocity it should reach. The
+  0% note is silent until the slide raises it. (A 0% note without a slide on it stays silent.)
+- **Fade out**: a slide at 0% takes the note down to silence by the slide's end. The note stays
+  silent until it ends.
+- **Crescendo and decrescendo**: a louder or softer slide swells or softens the note.
+- **Swells**: several slides in a row go on from where the last one left the note, so slides up
+  and down in turn make a note swell and fade again and again. Slides of the same pitch as the
+  note change only its level.
+
+A slide that changes the velocity draws its fade inside the note (a line from the velocity it
+starts from to its own, with a soft area under it) and in the velocity lane (the lane's bar for the
+slide runs from where it starts to the slide's velocity at its end). Velocity goes down to 0% in
+the piano roll's velocity lane, its velocity field and note properties, the Smooth event list and
+the Tracker's volume column.
+
+The slide's velocity acts on the note's level: a note taken from velocity 40 to 120 plays three
+times as loud, and 0% is silence on every instrument (on the plain synth's reference velocity
+curve, along that curve). Built-in instruments (the drum kit, the kick, snare, hat and
+clap and Seltmann among them) fade each note on its own, so a slide never changes the other notes
+still sounding. Known limit: a few fade their whole output instead, which also fades the other notes
+sounding on that channel while the slide runs (the next note brings the level back): the tracker
+instrument, the patch player, Flex, the turntable, Matrix FM with its reference engine on, Hex
+Synth while its sequencer runs and the slicer on its slice-player engine. The step bass plays one
+note at a time, so there is nothing else to fade. Installed plugins: VST3 plugins that list a
+per-note volume note expression get the fade on each note; other plugins (CLAP, VST2, Audio
+Units and VST3 plugins without it) have their whole output faded, which is the same as long as
+the slid notes are the only ones playing on the channel. Behind note effects a slide does
+nothing, as for its pitch.
+
+**Slides glide velocity**, under **Slide and portamento** in the piano roll's tools menu, turns
+this on or off for the project (one undo step, shared in a collaboration session). It is on for
+new projects. A project saved before slides glided velocity, with slides that would change a
+note's velocity, opens with it off, so it sounds as it did.
+
 ## Instruments
 
 Every built-in instrument follows slides note by note: synths, samplers, the multisampler,

@@ -28,6 +28,7 @@ File > Export > Render to file (WAV, FLAC, MP3, Ogg)...	Ctrl+R	file.render	e-
 File > Export > Mixer tracks (stems)...	Ctrl+Shift+R	file.renderStems	e-
 File > Export > All playlist tracks...			e-
 File > Export > All playlist track groups...			e-
+File > Export > Marker areas...			e-
 File > Export > Render again with the last settings...			e-
 File > Export > Song as MIDI file...	Ctrl+Shift+M	file.exportMidi	e-
 File > Export > Pattern as MIDI file...			e-
@@ -60,6 +61,7 @@ Edit > Deselect	Ctrl+D	playlist.deselect	e-
 Edit > Rename...	F2	edit.rename	e-
 Add > Instrument channel > Guide to the instruments...			e-
 Add > Instrument channel > Audio file as sampler...			e-
+Add > Instrument channel > Audio from URL as sampler...			e-
 Add > Instrument channel > Speech...			e-
 Add > Pattern	F4	pattern.new	e-
 Add > Automation clip for the last moved control			--
@@ -185,12 +187,12 @@ Options > Theme...			e-
 Options > Plugin manager...			e-
 Options > Song mode	L	transport.songMode	ec
 Options > Live mode			e-
-Options > Arrangements > Arrangement			ec
+Options > Arrangements > Arrangement	16 bars		ec
 Options > Arrangements > New arrangement			e-
 Options > Arrangements > Duplicate arrangement			e-
 Options > Arrangements > Delete arrangement			--
-Options > Arrangements > Previous arrangement			--
-Options > Arrangements > Next arrangement			--
+Options > Arrangements > Previous arrangement	Ctrl+Alt+Left	arrangement.previous	--
+Options > Arrangements > Next arrangement	Ctrl+Alt+Right	arrangement.next	--
 Options > Song position jumps > At once			ec
 Options > Song position jumps > Next beat			e-
 Options > Song position jumps > Next bar			e-
@@ -418,6 +420,7 @@ Tools > Piano roll tools > Slide and portamento > Make slide notes			e-
 Tools > Piano roll tools > Slide and portamento > Make normal notes			e-
 Tools > Piano roll tools > Slide and portamento > Portamento on			e-
 Tools > Piano roll tools > Slide and portamento > Portamento off			e-
+Tools > Piano roll tools > Slide and portamento > Slides glide velocity			ec
 Tools > Piano roll tools > Colour group > Group 1 (channel colour)			e-
 Tools > Piano roll tools > Colour group > Group 2			e-
 Tools > Piano roll tools > Colour group > Group 3			e-
@@ -528,6 +531,8 @@ Tools > Clean up > Trim unused mixer tracks			e-
 Tools > Clean up > Delete unused automation clips			e-
 Tools > Clean up > Delete unused patterns			e-
 Tools > AI assistant activity			e-
+Help > Setup wizard...			e-
+Help > Guided tour...			e-
 Help > Keyboard shortcuts	F1	help.shortcuts	e-
 Help > Load demo song			e-
 Help > Track Receipt...			e-

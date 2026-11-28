@@ -46,7 +46,9 @@ class Bus {
   // Watches the hosts' names (the bus's NameOwnerChanged signals; nothing waits): hostSeen()
   // follows them as they come and go.
   bool watchHosts();
-  bool hostSeen() const { return !owned_.empty(); }
+  bool hostSeen() const { return hosts_.present(); }
+  // A host has read the menus while there (HostState in DBusMenuModel.h): it shows them.
+  bool hostShows() const { return hosts_.shows(); }
   // A host appeared since the last call (the window is announced to it again).
   bool takeHostAppeared();
   // One step: reads, writes and dispatches what is waiting, for up to `timeoutMs`.
@@ -81,7 +83,7 @@ class Bus {
   std::string status_ = "not started";
   std::string chosen_;
   std::string registrar_;
-  std::set<std::string> owned_;  // the host names that have an owner now
+  HostState hosts_;  // the host names that have an owner now, and whether one read the menus
   bool appeared_ = false;
   bool watching_ = false;
 };
@@ -98,8 +100,10 @@ class Worker {
   // Starts the thread (once): it loads libdbus, connects, watches the hosts and serves the menus.
   void start(const char* library = nullptr);
   void stop();
-  // Something on the bus shows global menus (as last seen by the worker).
+  // Something on the bus could show global menus (as last seen by the worker).
   bool hostPresent() const { return host_.load(); }
+  // ... and has read the menus, so it shows them (GitHub #85: only then the app's menu row goes).
+  bool hostShows() const { return shows_.load(); }
   // The connection is up.
   bool connected() const { return up_.load(); }
   std::string status() const;
@@ -111,7 +115,7 @@ class Worker {
  private:
   void run(std::string library);
   std::thread thread_;
-  std::atomic<bool> stop_{false}, host_{false}, up_{false};
+  std::atomic<bool> stop_{false}, host_{false}, shows_{false}, up_{false};
   mutable std::mutex m_;
   std::string status_ = "not started", unique_, chosen_;
   bool pending_ = false, announce_ = false;

@@ -24,6 +24,7 @@
 //    Clips layout shows here only for a collaborator's instrument (PlaylistTrack::shownHere, B-03);
 //  - the Smooth layout's window state (Song::smooth.library: whether its Library pane shows; its Smart
 //    Control mappings, Song::smooth.controls, are song data and shared);
+//  - JACK / PipeWire port connections on this computer (Song::portLinks, K-357);
 //  - plugin parameters that are performance gestures or listening aids, not
 //    sound settings (isSessionParam: Solo / Listen / Delta / Hold / Freeze /
 //    Latch / Running toggles of Gridline's own plugins).

@@ -1,0 +1,5 @@
+<!-- Gridline original (GPL-3.0), drawn on the 24-unit grid: filled bar and left-pointing triangle (skip to start transport glyph). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+  <rect x="4" y="5" width="2.6" height="14" rx="1" />
+  <path d="M18.8 5.6a1 1 0 0 1 1.2.86v11.08a1 1 0 0 1-1.52.85l-9.2-5.54a1 1 0 0 1 0-1.7l9.2-5.55a1 1 0 0 1 .32-.12z" />
+</svg>

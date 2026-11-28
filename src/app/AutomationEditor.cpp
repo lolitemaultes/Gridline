@@ -18,6 +18,7 @@
 #include "PixelGrid.h"
 #include "ScrollBarUi.h"
 #include "SmoothScrollUi.h"
+#include "TrackpadGestureUi.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -91,6 +92,7 @@ struct Editor {
   float pxPerTick = 0.3f, scrollX = 0;
   smoothscroll::Axis axX;  // J-67: smooth scrolling / elastic left edge
   smoothzoom::Glide zoomGlide;  // J-188: smooth zooming
+  gesture::SmartZoomTimeline smartZoom;  // K-410: trackpad smart-zoom toggle state
   scrollbarui::Drag hBar;       // the time scroller above the ruler
   bool fit = true;
   Snap snap = Snap::Line;
@@ -915,6 +917,23 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   }
   const bool wheelZoom = hovered && io.MouseWheel != 0 && io.KeyCtrl;
   if (wheelZoom) timeline::zoomAt(s, E.pxPerTick, E.scrollX, std::pow(1.2, static_cast<double>(io.MouseWheel)), io.MousePos.x - gMin.x);
+  // K-410: trackpad pinch-to-zoom (1:1 anchored at pointer) and smart-zoom toggle (smoothly glided).
+  float pinchMag = 0.0f;
+  ImVec2 pinchPos{};
+  const bool pinchZoom = gestureui::consumePinch(hovered, origin.x, origin.y, origin.x + avail.x, origin.y + avail.y, pinchMag, pinchPos);
+  if (pinchZoom)
+    timeline::zoomAt(s, E.pxPerTick, E.scrollX, gesture::pinchFactor(pinchMag), std::clamp(pinchPos.x - gMin.x, 0.0f, gridW));
+  ImVec2 smartPos{};
+  if (gestureui::consumeSmartZoom(hovered, origin.x, origin.y, origin.x + avail.x, origin.y + avail.y, smartPos)) {
+    Tick span = std::max<Tick>(vis1 - vis0, s.beatTicks());
+    if (E.pattern != kNoId) {
+      const Tick bar = std::max<Tick>(1, s.barTicks());
+      span = std::max<Tick>(s.beatTicks(), std::min(span, (patternClipEnd(ac) + bar - 1) / bar * bar));
+    }
+    const float fitZ = static_cast<float>(timeline::fitZoom(s, span + span / 4, gridW));
+    const float fitS = std::max(0.0f, static_cast<float>(vis0) * fitZ - gridW / 40);
+    E.smartZoom.toggle(s, E.pxPerTick, E.scrollX, std::clamp(smartPos.x - gMin.x, 0.0f, gridW), fitZ, fitS);
+  }
   // An end of the time scroller dragged: the thumb's length sets the zoom, the opposite edge's tick stays put (1:1).
   bool barZoom = false;
   if (E.hBar.zooming() && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
@@ -924,7 +943,7 @@ void drawCanvas(App& a, const AutomationClip& ac) {
     barZoom = true;
   }
   E.pxPerTick = static_cast<float>(timeline::clampZoom(s, E.pxPerTick));
-  scrollui::zoomEnd(E.zoomGlide, E.pxPerTick, E.scrollX, (wheelZoom && !smoothscroll::isNotch(io.MouseWheel)) || barZoom);
+  scrollui::zoomEnd(E.zoomGlide, E.pxPerTick, E.scrollX, (wheelZoom && !smoothscroll::isNotch(io.MouseWheel)) || pinchZoom || barZoom);
   scrollui::clampOuter(E.axX, E.scrollX, 0.0f, 1e9f);  // J-67: the view's own glide / overscroll is left alone
   auto xOfSong = [&](double t) { return gMin.x + static_cast<float>(t) * E.pxPerTick - E.scrollX; };
   // K-276: time lines and bar shading on whole device pixels (PixelGrid.h), as the playlist and the
@@ -945,10 +964,17 @@ void drawCanvas(App& a, const AutomationClip& ac) {
   // J-67: through the smooth scroller (notches glide 80 px, trackpads 1:1, elastic left edge).
   float wheelX = 0;
   bool notchX = false;
-  if (hovered && io.MouseWheel != 0) {
-    if (!io.KeyCtrl) wheelX -= io.MouseWheel * 80, notchX = smoothscroll::isNotch(io.MouseWheel);
+  float panDx = 0.0f, panDy = 0.0f;
+  const bool pan2d = gestureui::consumePan2D(hovered, origin.x, origin.y, origin.x + avail.x, origin.y + avail.y, panDx, panDy);
+  if (pan2d) {
+    wheelX += panDx;
+    notchX = false;
+  } else {
+    if (hovered && io.MouseWheel != 0) {
+      if (!io.KeyCtrl) wheelX -= io.MouseWheel * 80, notchX = smoothscroll::isNotch(io.MouseWheel);
+    }
+    if (hovered && io.MouseWheelH != 0) wheelX -= io.MouseWheelH * 80, notchX = smoothscroll::isNotch(io.MouseWheelH);
   }
-  if (hovered && io.MouseWheelH != 0) wheelX -= io.MouseWheelH * 80, notchX = smoothscroll::isNotch(io.MouseWheelH);
   if (hovered && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) wheelX -= io.MouseDelta.x, notchX = false;
   scrollui::step(E.axX, E.scrollX, wheelX, notchX, 0.0f, 1e9f);
   // The time scroller: the clip and eight bars after it (the view itself scrolls on freely).
@@ -2184,8 +2210,16 @@ bool createPatternAutomationClip(App& a, ParamId pid, ObjectId pattern) {
   if (!p || !d || !v) return false;
   if (!findPatternLane(*p, pid.owner, pid.index)) {
     PatternAutomation c = newPatternClip(s, pid, static_cast<float>(d->toNormalized(*v)), s.patternContentLength(*p));
-    a.doc.editPattern(pattern, "create automation clip in pattern", [&](Pattern& x) { addPatternClip(x, c); });
+    a.doc.editSong("create automation clip in pattern", [&](Song& x) {
+      if (Pattern* q = x.pattern(pattern)) addPatternClip(*q, c);
+      ensureRackAutoLane(x, pid.owner, pid.index, c.name, c.color);  // K-413: persist across patterns
+    });
     a.notify("Automation clip for " + paramDisplayName(s, pid) + " in " + p->name);
+  } else if (!hasRackAutoLane(s, pid.owner, pid.index)) {
+    const PatternAutomation* cur = findPatternLane(*p, pid.owner, pid.index);
+    a.doc.editSong("show automation lane in rack", [&](Song& x) {
+      ensureRackAutoLane(x, pid.owner, pid.index, cur ? cur->name : std::string(), cur ? cur->color : AutomationClip{}.color);
+    });
   }
   openPatternAutomation(a, pattern, pid);
   return true;
@@ -2202,7 +2236,11 @@ void editPatternEvents(App& a, ParamId pid) {
   }
   if (!findPatternLane(*p, pid.owner, pid.index)) {
     AutoPoint pt{0, static_cast<float>(d->toNormalized(*v)), 0, AutoShape::Hold};
-    a.doc.editPattern(p->id, "edit events", [&](Pattern& x) { setPatternLane(x, pid.owner, pid.index, {pt}); });
+    const ObjectId patId = p->id;
+    a.doc.editSong("edit events", [&](Song& x) {
+      if (Pattern* q = x.pattern(patId)) setPatternLane(*q, pid.owner, pid.index, {pt});
+      ensureRackAutoLane(x, pid.owner, pid.index);  // K-413
+    });
   }
   pianoAutomationLane() = pid;
   if (s.channel(pid.owner)) a.openPianoRoll(pid.owner);

@@ -7,8 +7,10 @@
 #include <map>
 #include "ClipOps.h"
 #include "../core/ClipLoop.h"
+#include "../core/ClipRate.h"
 #include "../core/PluginParams.h"
 #include "Sample.h"
+#include "Slicing.h"
 
 namespace gl::pltools {
 
@@ -314,6 +316,58 @@ std::vector<ObjectId> sliceClips(Song& s, const std::vector<ObjectId>& ids, Tick
       }
     }
   return out;
+}
+
+TransientSnap snapCutToTransient(const Song& s, const Clip& clip, const TempoMap& tm, Tick pointerTick, double maxDistTicks,
+                                 Tick fallbackTick, double sensitivity) {
+  TransientSnap res{false, fallbackTick, -1};
+  if (clip.kind != ClipKind::Audio || !(maxDistTicks > 0.0)) return res;
+  const Channel* ch = s.channel(clip.source);
+  if (!ch) return res;
+  const ClipSource src = clipSource(*ch);
+  if (!src.ok() || !src.sample || src.sample->frames() < 64 || !(src.sample->sampleRate > 0.0)) return res;
+  const auto transients = cachedSampleTransients(src.sample, sensitivity);
+  if (!transients || transients->empty()) return res;
+
+  const Tick clipLen = s.clipLength(clip);
+  const Tick clipEnd = clip.start + clipLen;
+  if (clipLen <= 1) return res;
+
+  const double sr = src.sample->sampleRate;
+  const double last = static_cast<double>(src.sample->frames() - 1) / sr;
+  const std::vector<AudibleSpan> spans = clipAudibleSpans(s, clip, tm);
+  double bestDist = maxDistTicks + 1e-6;
+  for (const AudibleSpan& sp : spans) {
+    const Clip& pass = sp.pass;
+    const bool rev = clipPlaysReversed(*ch, pass);
+    const ClipRate r = clipRate(*ch, pass);
+    const double secPerTick = pass.syncBpm > 0 ? 60.0 / (pass.syncBpm * s.ppq) / r.timeFactor : 0.0;
+    const double speed = std::max(1e-9, r.speed);
+    const double startSec = tm.secondsAt(static_cast<double>(pass.start));
+    const std::vector<WarpPoint> wp = warpPoints(pass.warp, rev, last);
+    const double w0 = warpTimeAt(wp, sp.s0);
+    auto tickOf = [&](double p) {
+      return secPerTick > 0 ? static_cast<double>(pass.start) + p / secPerTick : tm.tickAtSeconds(startSec + p / speed);
+    };
+    for (int64_t f : *transients) {
+      if (f <= 0) continue;  // skip frame 0 (clip/sample start)
+      const double fileSec = static_cast<double>(f) / sr;
+      const double dirSec = rev ? last - fileSec : fileSec;
+      if (dirSec < sp.s0 - 1e-9 || dirSec > sp.s1 + 1e-9) continue;
+      const double t = tickOf(warpTimeAt(wp, dirSec) - w0);
+      if (!std::isfinite(t)) continue;
+      const Tick cand = static_cast<Tick>(std::llround(t));
+      if (cand <= clip.start || cand >= clipEnd) continue;
+      const double dist = std::fabs(t - static_cast<double>(pointerTick));
+      if (dist <= maxDistTicks && dist < bestDist) {
+        bestDist = dist;
+        res.snapped = true;
+        res.tick = cand;
+        res.sourceFrame = f;
+      }
+    }
+  }
+  return res;
 }
 
 std::vector<Tick> paintSlots(Tick anchor, Tick to, Tick len) {

@@ -169,8 +169,9 @@ recording stream then appears in your audio system as **Gridline** with the stre
 **Recording** (its output is **Playback**). Connect the other app's output to it with a PipeWire
 patchbay, then give an audio track the input **In 1 - In 2** and arm it as above. The stream goes
 through the same input buffer as any audio device, so measure or set the recording offset if the
-other app adds its own delay. A dedicated JACK / PipeWire driver with named inputs
-for each track is planned.
+other app adds its own delay. For named input and output ports, connections that are restored with the
+project, and input that arrives in the same callback as the output (no extra input buffer), switch **Settings > Audio > Driver type** to
+**JACK / PipeWire** (see [docs/jack.md](jack.md)).
 
 ## Record safe
 

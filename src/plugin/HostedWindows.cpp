@@ -315,6 +315,7 @@ void setPluginWindowDrawStats(bool) {}
 void setPluginWindowDevKeys(bool) {}
 void setPluginWindowDevResize(int, int) {}
 void devPrintPluginWindows(int) {}
+void devPrintPluginStalls(App&, int) {}  // (the app's plugin windows only: no stall report in the plugin build)
 bool devDragHostedEditor(int, int, double) { return false; }
 bool devMoveHostedEditor(int, int) { return false; }
 

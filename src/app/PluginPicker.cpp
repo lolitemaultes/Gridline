@@ -10,6 +10,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "PluginIcons.h"
 #include "CollabUi.h"
 #include "../core/I18n.h"
 #include "../core/PluginBrand.h"
@@ -35,6 +36,17 @@ namespace {
 
 bool pickerOpen = false;
 bool pickerFocusSearch = false;
+// (dev "pickerhead") The header's parts as drawn last frame, the header's height and the window.
+struct HeadPart {
+  const char* name;
+  ImVec2 a, b;
+};
+std::vector<HeadPart> gHeadParts;
+ImVec2 gHeadWp, gHeadWs;
+float gHeadH = 0;
+int gHeadFrame = -1;
+void noteHead(const char* name, ImVec2 a, ImVec2 b) { gHeadParts.push_back({name, a, b}); }
+void noteHead(const char* name) { noteHead(name, ImGui::GetItemRectMin(), ImGui::GetItemRectMax()); }
 bool hiddenForDrag = false;  // the picker steps aside while one of its tiles is dragged
 std::string dragName;
 
@@ -251,7 +263,7 @@ void tile(App& a, const PluginInfo& p, bool fav, ImVec2 pos) {
   if (ImGui::BeginDragDropSource()) {
     ImGui::SetDragDropPayload("GL_PLUGIN", p.type.data(), p.type.size());
     ui::DragPreview(p.kind == PluginKind::Generator ? ui::Icon::Plug : ui::Icon::Mixer, p.name.c_str(),
-                    theme::rgb(categoryRole(p.category, static_cast<int>(p.kind))));
+                    theme::rgb(categoryRole(p.category, static_cast<int>(p.kind))), p.type.c_str());
     ImGui::EndDragDropSource();
     hiddenForDrag = true;
     dragName = p.name;
@@ -271,13 +283,24 @@ void tile(App& a, const PluginInfo& p, bool fav, ImVec2 pos) {
     else v1 = (tsz.x / tsz.y) / (bw / bh);
     dl->AddImageRounded(tex, i0, i1, ImVec2((1 - u1) * 0.5f, 0), ImVec2((1 + u1) * 0.5f, v1), IM_COL32_WHITE, theme::kRadius);
     if (!hov) dl->AddRectFilled(i0, i1, theme::withAlpha(P.surface950, 0.12f), theme::kRadius);
+    // K-450: a built-in plugin's own icon at the thumbnail's top-left corner (installed plugins
+    // carry their format badge there).
+    if (ui::hasPluginIcon(p.type)) {
+      const ImVec2 c(i0.x + 15, i0.y + 15);
+      dl->AddRectFilled(ImVec2(c.x - 12, c.y - 12), ImVec2(c.x + 12, c.y + 12), theme::withAlpha(P.surface950, 0.55f), 6.0f);
+      ui::drawPluginIcon(dl, p.type, c, 20, ui::PluginIconSurface::Picker);
+    }
   } else {
     dl->AddRectFilledMultiColor(i0, i1, theme::mix(P.surface700, theme::rgb(rc), 0.10f), theme::mix(P.surface700, theme::rgb(rc), 0.10f),
                                 P.surface900, P.surface900);
     // Faint grid (rack-panel feel).
     for (float x = i0.x + 12; x < i1.x; x += 12) dl->AddLine(ImVec2(x, i0.y), ImVec2(x, i1.y), theme::withAlpha(P.line, 0.35f));
-    drawCategoryGlyph(dl, p.category, static_cast<int>(p.kind), ImVec2((i0.x + i1.x) * 0.5f, (i0.y + i1.y) * 0.5f), 62,
-                      theme::litRole(rc, hov ? 1.0f : 0.85f));
+    // K-450: a built-in plugin's own icon; an installed plugin its category's glyph.
+    const ImVec2 ic((i0.x + i1.x) * 0.5f, (i0.y + i1.y) * 0.5f);
+    if (!ui::drawPluginIcon(dl, p.type, ic, 48, ui::PluginIconSurface::Picker, hov ? 1.0f : 0.92f)) {
+      ui::notePluginIconFallback(p.type, ui::PluginIconSurface::Picker);
+      drawCategoryGlyph(dl, p.category, static_cast<int>(p.kind), ic, 62, theme::litRole(rc, hov ? 1.0f : 0.85f));
+    }
   }
   dl->AddRect(i0, i1, theme::withAlpha(P.line, 0.8f), theme::kRadius);
   // Kind / format badge (top-left).
@@ -334,6 +357,29 @@ void tile(App& a, const PluginInfo& p, bool fav, ImVec2 pos) {
 
 }  // namespace
 
+std::string devPickerHeader() {
+  // The header's parts as drawn last frame: overlapping pairs, and parts outside the window or
+  // below the header's line.
+  int overlaps = 0, outside = 0;
+  std::string parts;
+  char buf[160];
+  for (size_t i = 0; i < gHeadParts.size(); ++i) {
+    const HeadPart& h = gHeadParts[i];
+    std::snprintf(buf, sizeof buf, " %s %.0f %.0f %.0f %.0f", h.name, static_cast<double>(h.a.x - gHeadWp.x), static_cast<double>(h.a.y - gHeadWp.y),
+                  static_cast<double>(h.b.x - gHeadWp.x), static_cast<double>(h.b.y - gHeadWp.y));
+    parts += buf;
+    if (h.a.x < gHeadWp.x - 0.5f || h.b.x > gHeadWp.x + gHeadWs.x + 0.5f || h.b.y > gHeadWp.y + gHeadH + 0.5f) ++outside;
+    for (size_t j = i + 1; j < gHeadParts.size(); ++j) {
+      const HeadPart& o = gHeadParts[j];
+      const float w = std::min(h.b.x, o.b.x) - std::max(h.a.x, o.a.x), hh = std::min(h.b.y, o.b.y) - std::max(h.a.y, o.a.y);
+      if (w > 0.5f && hh > 0.5f) ++overlaps;
+    }
+  }
+  std::snprintf(buf, sizeof buf, "pickerhead frame %d: width %.0f head %.0f parts %zu overlaps %d outside %d |", gHeadFrame, static_cast<double>(gHeadWs.x),
+                static_cast<double>(gHeadH), gHeadParts.size(), overlaps, outside);
+  return buf + parts + "\n";
+}
+
 void drawPluginPicker(App& a) {
   if (keys::pressed("view.pluginPicker")) togglePluginPicker();
   if (!pickerOpen) return;
@@ -367,11 +413,63 @@ void drawPluginPicker(App& a) {
   if (::gl::keys::escapePressed(false)) pickerOpen = false;
 
   // ---- header ----
-  const float headH = 52;
+  // The parts flow from the title on: the search, the kind filter, the thumbnail buttons, each on
+  // the row it fits (a narrow window or a large interface scale wraps them to more rows, the
+  // search narrowing first); the guide and the close button keep the first row's right end.
+  // Widths are the parts' own (the filter's and the buttons' as drawn last frame).
+  gHeadParts.clear();
+  gHeadFrame = ImGui::GetFrameCount();
+  const float rowH = std::round(ImGui::GetFrameHeight());
+  const float padX = 16, padY = 14, gap = 12;
+  const float titleW = std::ceil(a.fontBold->CalcTextSizeA(theme::kFontTitle, 1e9f, 0, i18n::tr("Plugin picker")).x);
+  const float guideW = std::ceil(a.fontRegular->CalcTextSizeA(ImGui::GetFontSize(), 1e9f, 0, i18n::tr("Instrument guide")).x) + 24;
+  const float closeW = 24;
+  static float filterW = 0, thumbsW = 0, renderW = 0;  // as drawn last frame
+  auto textBtnW = [&](const char* label) { return std::ceil(ImGui::CalcTextSize(i18n::tr(label)).x + ImGui::GetStyle().FramePadding.x * 2); };
+  if (filterW <= 0) filterW = 420;
+  if (thumbsW <= 0) thumbsW = textBtnW("Thumbnails");
+  if (renderW <= 0) renderW = textBtnW("Render thumbnails");
+  const float x0 = wp.x + padX, x1 = wp.x + ws.x - padX;
+  const float rightW = guideW + 8 + closeW;  // the first row's right end
+  // The title block (the bar, the title, the count of plugins) is 236 wide when there is room.
+  const float titleBlockW = std::max(titleW + 12 + 90, std::min(220.0f, ws.x * 0.25f));
+  struct Slot {
+    float w;
+    ImVec2 at;
+  };
+  // Place the parts: on the first row between the title block and the right end, then on new rows.
+  const float searchFull = 300, searchMin = 160;
+  float x = x0 + titleBlockW + gap, y = wp.y + padY;
+  float rowEnd = x1 - rightW - gap;
+  int rows = 1;
+  auto place = [&](float w, float minW = 0) {
+    if (x + w > rowEnd && x > x0 + (rows == 1 ? titleBlockW + gap : 0) + 0.5f) {  // wrap
+      ++rows;
+      x = x0;
+      y += rowH + 8;
+      rowEnd = x1;
+    }
+    if (minW > 0) w = std::max(minW, std::min(w, rowEnd - x));
+    Slot sl{w, ImVec2(std::round(x), std::round(y))};
+    x += w + gap;
+    return sl;
+  };
+  // The search shrinks to its smallest before it moves to the next row.
+  const float firstRoom = rowEnd - x;
+  const Slot searchSlot = place(firstRoom >= searchMin ? std::min(searchFull, firstRoom) : searchFull, searchMin);
+  const Slot filterSlot = place(filterW);
+  const Slot thumbsSlot = place(thumbsW);
+  x -= gap - 6;
+  const Slot renderSlot = place(renderW);
+  const float headH = std::round(padY + rows * rowH + (rows - 1) * 8 + padY);
+  gHeadWp = wp, gHeadWs = ws, gHeadH = headH;
   dl->AddRectFilled(wp, ImVec2(wp.x + ws.x, wp.y + headH), P.surface900);
   dl->AddLine(ImVec2(wp.x, wp.y + headH), ImVec2(wp.x + ws.x, wp.y + headH), P.line);
-  dl->AddRectFilled(ImVec2(wp.x + 16, wp.y + 16), ImVec2(wp.x + 19, wp.y + 36), P.hot);
-  dl->AddText(a.fontBold, theme::kFontTitle, ImVec2(wp.x + 28, wp.y + 11), P.text, i18n::tr("Plugin picker"));
+  const float firstMid = wp.y + padY + rowH * 0.5f;
+  dl->AddRectFilled(ImVec2(x0, std::round(firstMid - 10)), ImVec2(x0 + 3, std::round(firstMid + 10)), P.hot);
+  const ImVec2 titleAt(x0 + 12, std::round(firstMid - theme::kFontTitle * 0.5f - 1));
+  dl->AddText(a.fontBold, theme::kFontTitle, titleAt, P.text, i18n::tr("Plugin picker"));
+  noteHead("title", titleAt, ImVec2(titleAt.x + titleW, titleAt.y + theme::kFontTitle));
   // Collect.
   const host::PluginPrefs prefs = host::pluginPrefs();
   // K-73: the groups of the last frame while the plugins, their grouping, the settings, the filter
@@ -401,47 +499,62 @@ void drawPluginPicker(App& a) {
   {
     char b[48];
     std::snprintf(b, sizeof b, "%d plugins", total);
-    dl->AddText(a.fontMono, theme::kFontLabel, ImVec2(wp.x + 150, wp.y + 16), P.textFaint, b);
+    const float cw = a.fontMono->CalcTextSizeA(theme::kFontLabel, 1e9f, 0, b).x;
+    const ImVec2 at(x0 + 12 + titleW + 12, std::round(firstMid - theme::kFontLabel * 0.5f));
+    if (at.x + cw <= searchSlot.at.x - 8 || searchSlot.at.y > wp.y + padY + 1) {  // only where it fits
+      dl->AddText(a.fontMono, theme::kFontLabel, at, P.textFaint, b);
+      noteHead("count", at, ImVec2(at.x + cw, at.y + theme::kFontLabel));
+    }
   }
   // Search.
-  ImGui::SetCursorScreenPos(ImVec2(wp.x + 236, wp.y + 14));
+  ImGui::SetCursorScreenPos(searchSlot.at);
   {
     ImVec2 p = ImGui::GetCursorScreenPos();
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(28, ImGui::GetStyle().FramePadding.y));
-    ImGui::SetNextItemWidth(300);
+    ImGui::SetNextItemWidth(searchSlot.w);
     if (pickerFocusSearch) {
       ImGui::SetKeyboardFocusHere();
       pickerFocusSearch = false;
     }
     ImGui::InputTextWithHint("##psearch", i18n::tr("Search plugins  (type:effect  tag:delay  tag:fav)"), S.search, sizeof S.search);
     ImGui::PopStyleVar();
+    noteHead("search");
     ui::FocusRing();
     ui::drawIcon(dl, ui::Icon::Search, ImVec2(p.x + 14, p.y + ImGui::GetFrameHeight() * 0.5f), 12, P.textFaint);
   }
-  ImGui::SameLine(0, 12);
+  ImGui::SetCursorScreenPos(filterSlot.at);
   {
     static const char* labels[] = {"All", "Instruments", "Effects", "Note effects", "Favourites"};
+    ImGui::BeginGroup();
     ui::Segmented("##pfilter", labels, 5, &S.filter, 0, 0);
+    ImGui::EndGroup();
+    filterW = std::ceil(ImGui::GetItemRectSize().x);
+    noteHead("filter");
   }
-  ImGui::SameLine(0, 12);
+  ImGui::SetCursorScreenPos(thumbsSlot.at);
   if (ui::TextButton("Thumbnails", S.thumbs, 0, "Show editor thumbnails (off: category glyphs)")) S.thumbs = !S.thumbs;
-  ImGui::SameLine(0, 6);
+  thumbsW = std::ceil(ImGui::GetItemRectSize().x);
+  noteHead("thumbs");
+  ImGui::SetCursorScreenPos(renderSlot.at);
   if (thumbnailRunActive()) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("Rendering thumbnails\xE2\x80\xA6"));
   } else if (ui::TextButton("Render thumbnails", false, 0, "Render every built-in editor once (in the background) and cache the images")) {
     startThumbnailRun(a);
   }
+  renderW = std::ceil(ImGui::GetItemRectSize().x);
+  noteHead("render");
   // GitHub #73: the guide to the instruments (which one is which), left of the close button.
   {
-    const float gw = std::ceil(a.fontRegular->CalcTextSizeA(ImGui::GetFontSize(), 1e9f, 0, i18n::tr("Instrument guide")).x) + 24;
-    ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x - 48 - gw, wp.y + 14));
-    if (ui::TextButton("Instrument guide", false, gw, "Opens the guide to the built-in instruments: what kind of sound engine each one is and what it is good for"))
+    ImGui::SetCursorScreenPos(ImVec2(std::round(x1 - closeW - 8 - guideW), wp.y + padY));
+    if (ui::TextButton("Instrument guide", false, guideW, "Opens the guide to the built-in instruments: what kind of sound engine each one is and what it is good for"))
       collabui::openUrl(guide::pageUrl());
     devNoteRect("pickerguide");
+    noteHead("guide");
   }
-  ImGui::SetCursorScreenPos(ImVec2(wp.x + ws.x - 40, wp.y + 14));
+  ImGui::SetCursorScreenPos(ImVec2(std::round(x1 - closeW), wp.y + padY));
   if (ui::IconButton("closepicker", ui::Icon::Close, false, 24, "Close (Esc / F8)")) pickerOpen = false;
+  noteHead("close");
 
   // ---- category rail ----
   const float railW = 196;

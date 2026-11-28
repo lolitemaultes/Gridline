@@ -15,6 +15,9 @@ Split ( Ctrl+E )
 Render clip to audio
 Render clip to file...
 Render to audio >
+--------------------------------
+Show on Stage
+Move to Stage room >
 ==== tree ====
 Cut
 Copy
@@ -37,3 +40,7 @@ Render to audio > Onto the next free drum pad
 Render to audio > Open in Loupe
 Render to audio > Save to the library
 Render to audio > Render options...
+Show on Stage
+Move to Stage room >
+Move to Stage room > Room 1
+Move to Stage room > New room...

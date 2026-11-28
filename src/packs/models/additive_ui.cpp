@@ -11,6 +11,7 @@
 // Each block's wheels take the reference block colour.
 #include <cstdlib>
 #include <map>
+#include "../../app/UrlImportUi.h"
 #include "../../app/ContextMenus.h"
 #include "../../core/I18n.h"
 #include "../../engine/Sample.h"
@@ -19,6 +20,20 @@
 #include "models_widgets.h"
 
 namespace gl::packs::models {
+
+// The ANALYSE A CYCLE path (its file dialog and Import from URL): the start of the file read as one cycle, one undo step.
+bool loadAdditiveAudio(App& a, const PluginTarget& t, const std::string& path) {
+  const PluginState* s0 = t.state(a.doc.song());
+  SamplePtr smp = sampleCache().get(path);
+  if (!s0 || !smp || smp->left.size() < 8) return false;
+  AdditiveData d = analyzeCycle(smp->left.data(), static_cast<int>(std::min<size_t>(smp->left.size(), 8192)), 256);
+  PluginState ns = *s0;
+  ns.data = serializeAdditiveData(d);
+  ns.params[AdSpectrumA] = SpCustom;
+  setPluginState(a, t, ns, "Analyse single cycle");
+  return true;
+}
+
 
 using namespace ui2;
 
@@ -342,18 +357,12 @@ void partialsPage(App& a, const PluginTarget& t, const PluginState& st, const fl
   flk::text(c, 578, o + 162, "CUSTOM TIMBRE TABLE");
   customTable(c, st, 578, o + 176, 260, 150);
   const PluginTarget tc = t;
-  if (flk::btn(c, "loadCycle", 578, o + 330, 128, 16, "ANALYSE A CYCLE...", false))
-    menus::fileDialog(a, "Analyse single-cycle wave", false, {".wav", ".flac", ".ogg", ".wv"}, "", [&a, tc](const std::string& path) {
-      const PluginState* s0 = tc.state(a.doc.song());
-      SamplePtr smp = sampleCache().get(path);
-      if (!s0 || !smp || smp->left.size() < 8) return;
-      AdditiveData d = analyzeCycle(smp->left.data(), static_cast<int>(std::min<size_t>(smp->left.size(), 8192)), 256);
-      PluginState ns = *s0;
-      ns.data = serializeAdditiveData(d);
-      ns.params[AdSpectrumA] = SpCustom;
-      setPluginState(a, tc, ns, "Analyse single cycle");
-    });
-  if (flk::btn(c, "clearCycle", 712, o + 330, 126, 16, "CLEAR TABLE", false) && !st.data.empty()) {
+  if (flk::btn(c, "loadCycle", 578, o + 330, 110, 16, "ANALYSE A CYCLE...", false))
+    menus::fileDialog(a, "Analyse single-cycle wave", false, {".wav", ".flac", ".ogg", ".wv"}, "",
+                      [&a, tc](const std::string& path) { loadAdditiveAudio(a, tc, path); });
+  if (flk::btn(c, "urlCycle", 692, o + 330, 56, 16, "FROM URL", false)) urlimportui::openForPlugin(a, t, 0);
+  if (ImGui::IsItemHovered()) a.setHint("Import from URL: a web link's audio, its first cycle analysed into the table");
+  if (flk::btn(c, "clearCycle", 752, o + 330, 86, 16, "CLEAR TABLE", false) && !st.data.empty()) {
     PluginState ns = st;
     ns.data.clear();
     setPluginState(a, t, ns, "Clear custom table");
@@ -407,5 +416,6 @@ void drawAdditive(App& a, const PluginTarget& t, float width) {
   F.end(kW, kH);
   ImGui::PopID();
 }
+
 
 }  // namespace gl::packs::models

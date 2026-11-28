@@ -19,6 +19,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "PluginIcons.h"
+#include "UrlImportUi.h"
 #include "../../third_party/imgui/imgui.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/I18n.h"
@@ -54,6 +56,7 @@
 #include "ClipEditor.h"
 #include "TrackerLook.h"
 #include "TrackerPages.h"
+#include "TrackerSampleFiles.h"
 #include "TrackerOrder.h"
 #include "TrackerView.h"
 #include "Widgets.h"
@@ -63,6 +66,7 @@
 #include "GridlineVersion.h"
 #include "DisplayConfirmUi.h"
 #include "Midi.h"
+#include "MidiUi.h"
 #include "../core/Remote.h"
 #include "../packs/samplers/patchplayer.h"
 #include "../packs/seltmann/seltmann_tracker.h"
@@ -1249,6 +1253,13 @@ void entryMenu(App& a, ObjectId ch, const packs::trackerpack::HeaderSamples& hs)
   ImGui::Separator();
   auto item = [](const char* label, bool enabled = true) { return insMenuItem(label, nullptr, false, enabled); };
   if (item("Load into entry...")) loadEntryDialog(a, ch, slot);
+  if (item("Import from URL into entry...")) {
+    const std::string label = std::string(i18n::tr("Entry")) + " " + trk::hex2(slot + 1);
+    urlimportui::openFor(a, urlimportui::Target{label, [ch, slot](App& app, const std::string& p, const std::string&) {
+                                                  if (packs::trackerpack::headerLoadSampleInto(app, ch, p, slot) < 0)
+                                                    app.notify(i18n::tr("That file holds no audio Gridline can read"), true);
+                                                }, false});
+  }
   if (item("Edit in the Sample editor")) trackereditors::open(a, trackereditors::Editor::Sample, ch, slot);
   ImGui::Separator();
   if (item("Clear entry", used)) {
@@ -2276,6 +2287,7 @@ int gDiskKind = 0;    // 0 songs (projects, song files, MIDI), 1 samples
 int gDiskFormat = 0;  // Save writes: 0 a project, 1 an audio file (the export dialog)
 bool gDiskRecent = false;  // the list shows the recent files instead of a folder
 std::string gDiskDir, gDiskSel;
+std::string gDiskMenu;  // K-445: the file or folder the Files list's right-click menu is for
 char gDiskName[256] = {};
 std::vector<DiskEntry> gDiskList;
 std::string gDiskListed;  // what the list was read for (folder, kind, all, sort)
@@ -2629,12 +2641,17 @@ void diskScreen(App& a, ImVec2 p0, ImVec2 p1) {
       cl->AddText(a.fontRegular, fs, ImVec2(ImGui::GetCursorScreenPos().x + 4, ImGui::GetCursorScreenPos().y + 2), P.textFaint,
                   i18n::tr(gDiskRecent ? "No recent files" : all ? "This folder is empty" : "No songs or samples here (All files lists the rest)"));
     std::string open;
+    bool diskMenuAsked = false;
     for (size_t i = 0; i < gDiskList.size(); ++i) {
       const DiskEntry& e = gDiskList[i];
       const ImVec2 q = ImGui::GetCursorScreenPos();
       ImGui::PushID(static_cast<int>(i));
       const bool click = ImGui::InvisibleButton("##dl", ImVec2(std::max(1.0f, lw), lrh));
       const bool hov = ImGui::IsItemHovered(), dbl = hov && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+      if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {  // K-445: the file or folder in the system's file manager
+        gDiskMenu = gDiskRecent ? e.name : (std::filesystem::path(gDiskDir) / e.name).string();
+        diskMenuAsked = true;
+      }
       ImGui::PopID();
       trackereditors::devMenuRow(("file " + e.name).c_str(), q.x, q.y, q.x + lw, q.y + lrh);  // 0.7.8 (dev): "tracker editors menu at file <name>"
       const bool sel = e.name == gDiskSel;
@@ -2652,6 +2669,17 @@ void diskScreen(App& a, ImVec2 p0, ImVec2 p1) {
       }
       if (dbl) open = e.dir ? (std::filesystem::path(gDiskDir) / e.name).string() : gDiskRecent ? e.name : (std::filesystem::path(gDiskDir) / e.name).string();
       if (dbl && e.dir) open = "/dir:" + open;
+    }
+    if (diskMenuAsked) ImGui::OpenPopup("##diskmenu");
+    if (ImGui::BeginPopup("##diskmenu")) {
+      // (the name as a disabled item: the Tracker's menus have no window padding, an item has its own)
+      ImGui::MenuItem((std::filesystem::path(gDiskMenu).filename().string() + "##diskmenuname").c_str(), nullptr, false, false);
+      ImGui::Separator();
+      if (insMenuItem(browserui::revealText(), nullptr, false, true)) browserui::revealInFileManager(a, gDiskMenu);
+      std::error_code ec;
+      if (ImGui::IsItemHovered())
+        ui::Hint(std::filesystem::is_directory(gDiskMenu, ec) ? gDiskMenu : std::filesystem::path(gDiskMenu).parent_path().string());
+      ImGui::EndPopup();
     }
     dScroll = ImGui::GetScrollY(), dScrollMax = ImGui::GetScrollMaxY();
     if (open.rfind("/dir:", 0) == 0) diskGo(a, open.substr(5));
@@ -2799,6 +2827,11 @@ void configAudio(App& a, ImVec2 t0, ImVec2 t1, float pad, float rowH, Group grou
   group(xa, xa + wDev, "Output device", rowsFit);
   if (st.getString("audio.backend") == "asio") {
     dl->AddText(a.fontRegular, fs, ImVec2(xa + 8, std::round(rowY(0) + (rowH - fs) * 0.5f)), P.textDim, i18n::tr("ASIO devices: All settings, Audio"));
+  } else if (st.getString("audio.backend") == "jack") {
+    dl->AddText(a.fontRegular, fs, ImVec2(xa + 8, std::round(rowY(0) + (rowH - fs) * 0.5f)), P.textDim, i18n::tr("JACK / PipeWire: All settings, Audio"));
+    if (rowsFit >= 2 && !a.audioStatus.empty()) {
+      dl->AddText(a.fontRegular, fs, ImVec2(xa + 8, std::round(rowY(1) + (rowH - fs) * 0.5f)), P.textFaint, a.audioStatus.c_str());
+    }
   } else {
     // The system default first, then every device.
     const int total = static_cast<int>(a.audioDevices.size()) + 1;
@@ -3297,7 +3330,12 @@ void extendedStrip(App& a) {
         else if (hov) dl->AddRectFilled(ImVec2(cx + 1, cy), ImVec2(cx + cw - 1, cy + lrh), theme::withAlpha(P.surface700, 0.6f));
         dl->AddRectFilled(ImVec2(cx + 2, cy + 2), ImVec2(cx + 5, cy + lrh - 2), theme::rgb(c.color));
         dl->AddText(mono, fs, ImVec2(cx + 9, ty), i == ci ? valueInk() : P.textDim, num.c_str());
-        const float nx = cx + 9 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00 ").x;
+        float nx = cx + 9 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00 ").x;
+        // K-450: the instrument's own icon before its name, when the column has room for both.
+        if (cx + cw - nx > 90 && lrh >= 14 &&
+            ui::drawPluginIcon(dl, c.plugin.type, ImVec2(std::round(nx + 6), std::round(cy + lrh * 0.5f)), std::min(12.0f, std::floor(lrh - 4)),
+                               ui::PluginIconSurface::Tracker, c.muted ? 0.45f : 1.0f))
+          nx += 17;
         theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(nx, ty), cx + cw - nx - 4, i == ci ? P.text : c.muted ? P.textFaint : P.textDim, c.name.c_str());
       }
       dl->PopClipRect();
@@ -3514,17 +3552,53 @@ void header(App& a) {
     bool fill = false;
     const float rw = songW - pad * 2, lw = peerFields(a, rw, srh, labelColumn(a, {"Tempo", "Step"}, space::kGroup), &fill);
     float y = by0 + pad;
-    char bpm[16];
-    const bool whole = std::fabs(s.tempo - std::round(s.tempo)) < 0.05;
-    std::snprintf(bpm, sizeof bpm, whole ? "%.0f" : "%.1f", s.tempo);
+    char bpm[24];
+    {  // K-409: show up to 3 decimals as typed, trimming trailing zeros
+      std::snprintf(bpm, sizeof bpm, "%.3f", s.tempo);
+      char* dot = std::strchr(bpm, '.');
+      if (dot) {
+        char* end = bpm + std::strlen(bpm);
+        while (end > dot + 1 && end[-1] == '0') *--end = '\0';
+        if (end == dot + 1) *dot = '\0';
+      }
+    }
     double typedBpm = std::nan("");
     if (const int d = stepper(a, "bpm", "Tempo", bpm, ImVec2(xs + pad, y), rw, srh,
-                              "The song tempo in beats per minute: click it to type one (arrows: steps of 1, Shift: 0.1)", lw, fill, &typedBpm)) {
+                              "The song tempo in beats per minute: click, double-click or right-click to type (arrows: steps of 1, Shift: 0.1)", lw, fill, &typedBpm)) {
       const double t = ImGui::GetIO().KeyShift ? std::round(s.tempo * 10 + d) / 10.0 : std::round(s.tempo) + d;
       a.doc.setParam(songParam(SongParam::Tempo), std::clamp(t, 10.0, 522.0), true);
     }
-    if (!std::isnan(typedBpm) && std::fabs(std::clamp(typedBpm, 10.0, 522.0) - s.tempo) > 1e-6)
-      a.doc.setParam(songParam(SongParam::Tempo), std::clamp(std::round(typedBpm * 10) / 10.0, 10.0, 522.0), true);
+    if (!std::isnan(typedBpm)) {
+      const double v = std::clamp(std::round(typedBpm * 1000.0) / 1000.0, 10.0, 522.0);
+      if (std::fabs(v - s.tempo) > 1e-6) {
+        a.doc.endGesture();
+        a.doc.setParam(songParam(SongParam::Tempo), v, false);
+        a.doc.endGesture();
+      }
+    }
+    devNoteRectAt("tempoint", xs + pad, y, xs + pad + rw, y + srh);
+    {  // K-409: right-click > Type a value... (and double-click on the Tempo label)
+      static bool openTrkBpmType = false;
+      const ImVec2 tp0(xs + pad, y), tp1(xs + pad + rw, y + srh);
+      if (ImGui::IsMouseHoveringRect(tp0, tp1) && ImGui::IsMouseClicked(ImGuiMouseButton_Right))
+        ImGui::OpenPopup("##trkbpmmenu");
+      if (ImGui::IsMouseHoveringRect(tp0, ImVec2(xs + pad + lw, y + srh)) && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+        openTrkBpmType = true;
+      if (ImGui::BeginPopup("##trkbpmmenu")) {
+        if (ImGui::MenuItem(i18n::tr("Type a value..."))) openTrkBpmType = true;
+        devNoteRect("tempotype");
+        ImGui::Separator();
+        knobContextMenu(a, songParam(SongParam::Tempo));
+        actionLinkMenuItems(a, RemoteAction::TapTempo);
+        ImGui::EndPopup();
+      }
+      if (openTrkBpmType) {
+        openTrkBpmType = false;
+        ImGui::OpenPopup("##type");
+      }
+      if (const auto d = describeParam(a.doc.song(), songParam(SongParam::Tempo)))
+        ui::ParamTypePopup(songParam(SongParam::Tempo), *d);
+    }
     y += srh + 2;
     const Pattern* p = s.pattern(a.curPattern);
     const trk::Grid g = p ? trk::gridOf(s, *p) : trk::Grid{};
@@ -3573,11 +3647,18 @@ void header(App& a) {
                               "The pattern's length in rows (a bar at a time)", lw, fill))
       stepRows(a, p, d);
     y += srh + 2;
-    const float hw = std::floor((rw - 2) / 2);
+    const float dblW = 24.0f;
+    const float hw = std::floor((rw - dblW - 4.0f) / 2.0f);
     if (bevelButton(a, "##exp", "Expand", ImVec2(xp + pad, y), ImVec2(xp + pad + hw, y + srh), false, "Notes twice as far apart: the block, or the whole pattern (made twice as long)"))
       scaleBlock(a, true);
-    if (bevelButton(a, "##shr", "Shrink", ImVec2(xp + pad + hw + 2, y), ImVec2(xp + patW - pad, y + srh), false, "Notes twice as close: the block, or the whole pattern (made half as long)"))
+    if (bevelButton(a, "##shr", "Shrink", ImVec2(xp + pad + hw + 2, y), ImVec2(xp + pad + hw * 2 + 2, y + srh), false, "Notes twice as close: the block, or the whole pattern (made half as long)"))
       scaleBlock(a, false);
+    if (bevelButton(a, "##dblpat", "+", ImVec2(xp + pad + hw * 2 + 4, y), ImVec2(xp + patW - pad, y + srh), false, "Double pattern length (duplicate notes & automation)") && p) {
+      if (ops::doublePattern(a.doc, p->id)) {
+        const Pattern* np = a.doc.song().pattern(p->id);
+        if (np) a.notify("Pattern doubled to " + std::to_string(np->bars) + " bars");
+      }
+    }
   }
   // ---- status strip: master level, octave, time (displays) ----
   {
@@ -3872,11 +3953,24 @@ void header(App& a) {
       const bool onNumber = ImGui::GetIO().MouseClickedPos[0].x < cx0 + 9 + mono->CalcTextSizeA(fs, FLT_MAX, 0, "00").x + 2;
       if (click && onNumber) {
         gSourceChannel = gSourceChannel == c.id ? kNoId : c.id;
-      } else if (click) {  // R3-06: the pattern keeps the keys, the cursor on the instrument's track
-        a.selectChannel(c.id);
-        cursorToChannel(a, c.id);
+      } else if (click) {  // R3-06 / K-425: Ctrl+click toggles and Shift+click range-selects instruments
+        const ImGuiIO& tio = ImGui::GetIO();
+        if (tio.KeyShift && ci >= 0) {
+          const int lo = std::min(ci, i), hi = std::max(ci, i);
+          a.selChannels.clear();
+          for (int k = lo; k <= hi && k < static_cast<int>(s.channels.size()); ++k) a.selChannels.insert(s.channels[static_cast<size_t>(k)].id);
+          a.selChannel = c.id;
+        } else if (tio.KeyCtrl || tio.KeySuper) {
+          if (a.selChannels.count(c.id) && a.selChannels.size() > 1) a.selChannels.erase(c.id);
+          else a.selChannels.insert(c.id);
+          a.selChannel = c.id;
+        } else {
+          a.selectChannel(c.id);
+          cursorToChannel(a, c.id);
+        }
       }
-      if (i == ci) dl->AddRectFilled(ImVec2(cx0 + 1, y), ImVec2(cx1 - 1, y + lrh), theme::withAlpha(P.surface600, 0.95f));
+      const bool rowSel = i == ci || a.selChannels.count(c.id) > 0;
+      if (rowSel) dl->AddRectFilled(ImVec2(cx0 + 1, y), ImVec2(cx1 - 1, y + lrh), theme::withAlpha(P.surface600, i == ci ? 0.95f : 0.72f));
       else if (hov) dl->AddRectFilled(ImVec2(cx0 + 1, y), ImVec2(cx1 - 1, y + lrh), theme::withAlpha(P.surface700, 0.6f));
       dl->AddRectFilled(ImVec2(cx0 + 2, y + 2), ImVec2(cx0 + 5, y + lrh - 2), theme::rgb(c.color));
       if (c.id == gSourceChannel) dl->AddRect(ImVec2(cx0 + 1, y), ImVec2(cx1 - 1, y + lrh), P.hot);  // the source mark
@@ -3910,16 +4004,31 @@ void header(App& a) {
           dl->AddText(mono, fs, ImVec2(std::round(cx1 - 4 - tw), ty), P.hot, tag);
           nameEnd -= tw + 6;
         }
-        theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(nx, ty), nameEnd - nx, i == ci ? P.text : c.muted ? P.textFaint : P.textDim, c.name.c_str());
+        // K-450: the instrument's own icon before its name, when the column has room for both.
+        float tx = nx;
+        if (nameEnd - nx > 90 && lrh >= 14 &&
+            ui::drawPluginIcon(dl, c.plugin.type, ImVec2(std::round(nx + 6), std::round(y + lrh * 0.5f)), std::min(12.0f, std::floor(lrh - 4)),
+                               ui::PluginIconSurface::Tracker, c.muted ? 0.45f : 1.0f))
+          tx += 17;
+        theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(tx, ty), nameEnd - tx, i == ci ? P.text : c.muted ? P.textFaint : P.textDim, c.name.c_str());
       }
     }
     dl->PopClipRect();
-    if (addMenuAsked) {
+    if (addMenuAsked || devMenuTake("trackeradd")) {  // dev: "menu open trackeradd"
       ImGui::OpenPopup("##insaddmenu");
     }
     if (ImGui::BeginPopup("##insaddmenu")) {
       addInstrumentItems(a);
       ImGui::EndPopup();
+    }
+    // K-425: Shift+Delete over the instrument list deletes the selected instruments (1 confirmation when >1,
+    // 1 undo step). Only with the pointer on the list: the pattern editor's Shift+Delete clears a cell.
+    if (!ImGui::GetIO().WantTextInput && ImGui::GetIO().KeyShift && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeySuper && !ImGui::GetIO().KeyAlt &&
+        ImGui::IsMouseHoveringRect(l0, l1, false) && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) {
+      std::vector<ObjectId> targets;
+      for (const Channel& ch : s.channels)
+        if (a.selChannels.count(ch.id) || ch.id == a.selChannel) targets.push_back(ch.id);
+      if (!targets.empty()) menus::deleteChannels(a, targets, "instruments");
     }
     // Samples.
     const ImVec2 sb0 = smpSide ? ImVec2(xIe, y0) : ImVec2(xI, yI1);
@@ -3982,6 +4091,10 @@ void header(App& a) {
         ImGui::SetCursorScreenPos(ImVec2(s0.x, ry));
         ImGui::PushID(5000 + slot);
         const bool rowClick = ImGui::InvisibleButton("##smprow", ImVec2(std::max(1.0f, s1.x - s0.x), srh));
+        if (ImGuiContext& g = *ImGui::GetCurrentContext(); g.TestEngineHookItems) {  // "Entry 01" for the item hooks (the dev "atitem")
+          const std::string rowLabel = "Entry " + trk::hex2(slot + 1);
+          IMGUI_TEST_ENGINE_ITEM_INFO(g.LastItemData.ID, rowLabel.c_str(), g.LastItemData.StatusFlags);
+        }
         const bool hov = ImGui::IsItemHovered();
         const bool empty = name.empty();
         // 0.7.8: a right-click opens the entry's menu; an audio file dropped on the row loads into it.
@@ -4304,6 +4417,8 @@ void instrumentMenu(App& a, ObjectId id) {
                              s.channels[static_cast<size_t>(i)].plugin.type);
       ImGui::EndMenu();
     }
+    // K-435: the instrument as a preset, its samples as files, the song's instruments into the library.
+    trackerfiles::menuItems(a, id);
   }
   if (ImGui::BeginMenu(i18n::tr("Add instrument"))) {
     addInstrumentItems(a);
@@ -4328,6 +4443,20 @@ void instrumentMenu(App& a, ObjectId id) {
     a.doc.moveChannel(a0, hi);
     a.doc.moveChannel(b0, lo);
     a.doc.endGroup(false);
+  }
+  if (i >= 0) {  // K-425: delete selected instrument(s) with 1 confirmation and 1 undo step
+    ImGui::Separator();
+    std::vector<ObjectId> targets;
+    if (a.selChannels.size() > 1 && a.selChannels.count(id)) {
+      for (const Channel& ch : s.channels)
+        if (a.selChannels.count(ch.id)) targets.push_back(ch.id);
+    } else {
+      targets.push_back(id);
+    }
+    const std::string delLbl = targets.size() > 1
+                                   ? std::string(i18n::tr("Delete")) + " " + std::to_string(targets.size()) + " " + i18n::tr("instruments") + "###trinsdel"
+                                   : std::string(i18n::tr("Delete instrument")) + "###trinsdel";
+    if (ImGui::MenuItem(delLbl.c_str(), "Shift+Del")) a.later([&a, targets] { menus::deleteChannels(a, targets, "instruments"); });
   }
   ImGui::EndPopup();
 }

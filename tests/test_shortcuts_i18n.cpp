@@ -89,7 +89,8 @@ void keymapTests() {
                                              // the clip grid: keys in the Clips set only (scene capture, edit grid, launch quantisation)
                                              "clips.captureScene", "clips.backToArrangement", "clips.gridNarrower", "clips.gridWider",
                                              "clips.gridTriplet", "clips.gridSnap", "clips.gridFixed", "clips.quant16", "clips.quant8",
-                                             "clips.quant4", "clips.quantBar", "clips.quantNone"};  // tracks from the playlist: the palette and menus open them
+                                             "clips.quant4", "clips.quantBar", "clips.quantNone",
+                                             "file.renderMarkerAreas"};  // (File > Export and the palette; bind a key if wanted)  // tracks from the playlist: the palette and menus open them
   for (const auto& c : keys::commands()) {
     unique &= ids.insert(c.id).second;
     // The Stage opens from the View menu; the typing octave commands have keys only in the

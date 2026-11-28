@@ -35,8 +35,16 @@ std::string foreignPresetType(const std::string& file);
 bool isForeignPresetFile(const std::string& file);
 // `relName` may contain folders ("FL Studio/Fruity Reeverb 2/Large hall").
 // Saves params and data. `source` is an optional note (e.g. where it came from).
+// K-435: the samples Gridline made for the state (an imported module's in the unpack cache, edited or
+// drawn audio: ProjectInterop.h isGridlineMadeFile) are copied into "<name> samples" beside the
+// preset and named relative to it; loadPreset finds them there again. Other files are referred to.
 bool savePreset(const std::string& root, const PluginState& st, const std::string& relName, const std::string& source = "",
                 bool exact = true);
+// The same at a file of the person's choice ("Save preset to file..."); `carried`: how many sample
+// references now name copies beside it.
+bool savePresetFile(const std::string& file, const PluginState& st, const std::string& source = "", bool exact = true, int* carried = nullptr);
+// The folder beside a preset file that holds the samples it carries.
+std::string presetSamplesFolder(const std::string& presetFile);
 
 // Effect chain: up to 10 slot states (empty type = empty slot) and their mix levels.
 struct ChainPreset {
@@ -57,6 +65,8 @@ struct AutomationShape {
 std::vector<PresetEntry> listAutomationShapes(const std::string& root);
 // K-151: swing presets, <root>/grooves/<folder…>/<name>.json (core/Groove.h reads them).
 std::vector<PresetEntry> listGrooves(const std::string& root);
+// 0.7.9: LFO presets, <root>/lfos/<folder…>/<name>.json (core/Lfo.h reads them).
+std::vector<PresetEntry> listLfoPresets(const std::string& root);
 bool loadAutomationShape(const std::string& file, int ppq, AutomationShape& out);
 bool saveAutomationShape(const std::string& root, const AutomationShape& shape, int ppq, const std::string& relName);
 

@@ -354,6 +354,15 @@ class Session {
   // name a join receives with the project.
   std::function<void(const std::string& before, const std::string& after, SiteId by)> onRenamed;
 
+  // ---- collaboration chat (K-86 part 2) ----
+  // Posts a chat message (optional text and/or structured attachment) over the collab CRDT
+  // under meta/chat:* without touching Document::history() or Document::revision().
+  bool sendChatMessage(const std::string& text, const ChatAttachment& att = {}, std::string* err = nullptr);
+  const std::vector<ChatMessage>& chatMessages() const { return chatMessages_; }
+  size_t unreadChat() const { return unreadChat_; }
+  void markChatRead() { unreadChat_ = 0; }
+  std::function<void(const ChatMessage&)> onChatMessage;
+
   // ---- queries ----
   const Config& config() const { return cfg_; }
   SiteId site() const { return me_; }
@@ -543,6 +552,7 @@ class Session {
   bool honoured(const Batch& b) const;
   bool metaAllowed(const Batch& b, const Op& op, SiteId adminNow) const;
   void refreshMembership();
+  void refreshChat(bool notifyNew);
   void rebuild();
   void requestCleanSnapshot();
   void finishExit();
@@ -712,6 +722,11 @@ class Session {
   bool ended_ = false;
   uint64_t lastContact_ = 0;
   double contactSavedAt_ = -1;
+  // K-86 part 2: collaboration chat state (reconstructed deterministically from meta/chat:*)
+  std::vector<ChatMessage> chatMessages_;
+  std::set<std::string> seenChatIds_;
+  size_t unreadChat_ = 0;
+  bool chatDirty_ = false;
 };
 
 // Deterministic repairs of a merged project JSON before it is loaded (sends to

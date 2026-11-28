@@ -5,6 +5,7 @@
 #include <map>
 #include <string>
 #include <vector>
+#include "CollabChat.h"
 #include "PluginInfo.h"
 #include "Types.h"
 
@@ -103,6 +104,28 @@ struct FreezeRecord {
   }
 };
 
+// K-413: persistent channel-rack automation lanes carried across every pattern.
+// Stored on Channel::automationLanes for channel-owned parameters and on
+// Song::rackAutoLanes for song / mixer targets so switching patterns keeps the
+// lane list visible and immediately drawable without re-mapping.
+struct ChannelAutoLane {
+  uint32_t index = 0;
+  std::string name;
+  Rgb color = 0x7A8696;
+  bool operator==(const ChannelAutoLane& o) const {
+    return index == o.index && name == o.name && color == o.color;
+  }
+};
+struct SongAutoLane {
+  ObjectId owner = kNoId;
+  uint32_t index = 0;
+  std::string name;
+  Rgb color = 0x7A8696;
+  bool operator==(const SongAutoLane& o) const {
+    return owner == o.owner && index == o.index && name == o.name && color == o.color;
+  }
+};
+
 // A channel-rack channel: an instrument plugin plus its strip and routing.
 struct Channel {
   ObjectId id = kNoId;
@@ -125,7 +148,8 @@ struct Channel {
   // (arpeggiator, chords, key mapping, …), in order. PluginKind::NoteFx types.
   std::vector<PluginState> noteFx;
   // --- Channel note settings (defaults keep the previous behaviour) ---
-  int fine = 0;              // fine tune, cents -200..200 (added to `pitchCents`)
+  int transpose = 0;         // K-411: per-channel transpose, whole semitones -48..48 (ChannelParam::Transpose)
+  int fine = 0;              // fine tune, cents -200..200 (added to `pitchCents` + `transpose`)
   float swingMix = 1.0f;     // share of the song swing applied to this channel's steps, 0..1
   float timeShift = 0;       // every note starts this many beats later, 0..1
   int polyphony = 0;         // maximum sounding notes (0 = unlimited); the oldest is cut
@@ -188,19 +212,24 @@ struct Channel {
   // GitHub #58: hidden from the channel rack (it still plays; the rack menu shows it again). Saved
   // with the song, so everyone in a collaboration sees the same rack.
   bool rackHidden = false;
+  // K-413: automation lanes persisted across patterns for this channel's parameters.
+  std::vector<ChannelAutoLane> automationLanes;
+  // K-128: per-track notes shown in the Notes panel's Track tab (omitted from JSON when empty).
+  std::string notes;
   bool fullKeyRange() const { return keyLo <= 0 && keyHi >= 127; }
 
   bool isLayer() const { return !layer.empty(); }
   bool operator==(const Channel& o) const {
     return id == o.id && name == o.name && color == o.color && plugin == o.plugin && gain == o.gain &&
            pan == o.pan && muted == o.muted && pitchCents == o.pitchCents && bendRange == o.bendRange && sustainPedal == o.sustainPedal && mixerTrack == o.mixerTrack && noteFx == o.noteFx &&
-           fine == o.fine && swingMix == o.swingMix && timeShift == o.timeShift && polyphony == o.polyphony &&
+           transpose == o.transpose && fine == o.fine && swingMix == o.swingMix && timeShift == o.timeShift && polyphony == o.polyphony &&
            mono == o.mono && porta == o.porta && portaTime == o.portaTime && expr == o.expr && cutGroup == o.cutGroup &&
            cutBy == o.cutBy && echo == o.echo && layer == o.layer && layerMode == o.layerMode && layerZones == o.layerZones &&
            macros == o.macros && group == o.group &&
            auxOuts == o.auxOuts && midiOutPort == o.midiOutPort && midiInPort == o.midiInPort && keyLo == o.keyLo &&
            keyHi == o.keyHi && swingTruncate == o.swingTruncate && audioClip == o.audioClip && flIcon == o.flIcon && icon == o.icon &&
-           freeze == o.freeze && hibernate == o.hibernate && keepRunning == o.keepRunning && rackHidden == o.rackHidden;
+           freeze == o.freeze && hibernate == o.hibernate && keepRunning == o.keepRunning && rackHidden == o.rackHidden &&
+           automationLanes == o.automationLanes && notes == o.notes;
   }
 };
 
@@ -807,7 +836,7 @@ struct ControllerLink {
 // of LFO links may drive one parameter (they add up); at most one other link does (findModLink).
 inline constexpr int kMaxSongLfos = 32;
 inline constexpr int kSongLfoSlot = -3;
-inline constexpr int kLfoMaxPoints = 64;
+inline constexpr int kLfoMaxPoints = 128;  // 0.7.9: room for a drawn stroke (was 64)
 inline constexpr int kLfoColours = 8;
 enum class LfoShape : uint8_t { Sine = 0, Triangle, SawUp, SawDown, Square, RandomHold, RandomGlide, Drawn, Count };
 enum class LfoRestart : uint8_t { Free = 0, OnPlay, EachNote, EachBar, Count };  // (EachBar: Chaos only)
@@ -818,9 +847,14 @@ enum class LfoKind : uint8_t { Lfo = 0, Chaos, Random, Count };
 // Random: what draws the next value. Tempo: every rate note (locked to the song while it plays); Hz:
 // its own clock; Note: each note of a channel; Roll: only the Roll button (a song edit, so it syncs).
 enum class RandomTrigger : uint8_t { Tempo = 0, Hz, Note, Roll, Count };
+// 0.7.9: how the line after a drawn point runs to the next one.
+inline constexpr uint8_t kLfoPointCurve = 0;   // straight, bent by `curve`
+inline constexpr uint8_t kLfoPointSmooth = 1;  // an S curve (flat at both points: a sine between two peaks)
+inline constexpr uint8_t kLfoPointStep = 2;    // holds the point's value until the next point
 struct LfoPoint {
   float x = 0, y = 0, curve = 0;  // x 0..1, y -1..1, curve -1..1 (the line after the point)
-  bool operator==(const LfoPoint& o) const { return x == o.x && y == o.y && curve == o.curve; }
+  uint8_t kind = kLfoPointCurve;
+  bool operator==(const LfoPoint& o) const { return x == o.x && y == o.y && curve == o.curve && kind == o.kind; }
 };
 struct SongLfo {
   ObjectId id = kNoId;
@@ -1000,6 +1034,11 @@ struct Song {
   // whose slides met notes of other colours, so they keep playing as they did). False (new
   // projects, FL imports): a slide note glides only the notes of its own colour, as in FL.
   bool slidesAnyColour = false;
+  // GitHub #87: a slide note also glides the velocity of the notes it slides, from where it is to
+  // the slide note's own velocity over the slide's length (fades in from a 0% note, fades out,
+  // swells). False: projects saved before 0.7.9 whose slides would have changed a note's velocity,
+  // so they keep playing as they did. True for new projects and FL imports.
+  bool slidesVelocity = true;
   float masterPitch = 0;   // semitones          (SongParam::MasterPitch)
   ObjectId nextId = kFirstObjectId;  // next unused object ID
   std::vector<Channel> channels;     // rack order
@@ -1011,6 +1050,7 @@ struct Song {
   std::vector<ModLink> modLinks;     // internal controller links
   std::vector<SongLfo> lfos;         // K-247: the LFO board, in board order (at most kMaxSongLfos)
   std::vector<AutomationClip> automations;  // automation clip contents (arrangement)
+  std::vector<SongAutoLane> rackAutoLanes;  // K-413: non-channel rack automation lanes persisted across patterns
   std::vector<Marker> markers;              // song markers, sorted by position (arrangement)
   std::vector<std::string> channelGroups;  // channel rack display groups (Channel::group indexes these)
   std::vector<PatternGroup> patternGroups;  // J-31: pattern groups (pattern list filter)
@@ -1060,6 +1100,21 @@ struct Song {
   // project opens only for a layout where the person has no workspaces of their own. View state: not
   // compared (no undo step); written only when present, so older projects read and write as before.
   std::map<std::string, std::string> workspaceCopy;
+  // K-86 part 2 (0.7.9): collaboration chat history. Persisted in project JSON only when non-empty
+  // so empty / non-collab projects serialize byte-identically to 0.7.8. Synced peer-to-peer under
+  // meta/chat:* without touching undo history; not compared by operator==.
+  std::vector<ChatMessage> collabChat;
+  // K-357: saved JACK / PipeWire port connections on this computer ("own" short port name ->
+  // "peer" full port name, e.g. "In 1" -> "Tone:out_1"). Per-computer session state: not compared
+  // (no undo step, never dirties the project), never synced in collaboration, and written to JSON
+  // only when non-empty (so untouched/empty projects stay byte-identical).
+  struct PortLink {
+    std::string own;
+    std::string peer;
+    bool operator==(const PortLink& o) const { return own == o.own && peer == o.peer; }
+    bool operator!=(const PortLink& o) const { return !(*this == o); }
+  };
+  std::vector<PortLink> portLinks;
 
   // J-111 (collaboration): object ids are partitioned between collaborators so
   // two computers never hand out the same id: with idStride > 1 every id this
@@ -1127,9 +1182,10 @@ struct Song {
 
   bool operator==(const Song& o) const {
     return info == o.info && ppq == o.ppq && tempo == o.tempo && timeSigNum == o.timeSigNum &&
-           timeSigDen == o.timeSigDen && swing == o.swing && swingNotes == o.swingNotes && groove == o.groove && slidesAnyColour == o.slidesAnyColour && masterPitch == o.masterPitch && nextId == o.nextId &&
+           timeSigDen == o.timeSigDen && swing == o.swing && swingNotes == o.swingNotes && groove == o.groove && slidesAnyColour == o.slidesAnyColour && slidesVelocity == o.slidesVelocity && masterPitch == o.masterPitch && nextId == o.nextId &&
            channels == o.channels && patterns == o.patterns && playlist == o.playlist && tracks == o.tracks &&
            mixer == o.mixer && links == o.links && modLinks == o.modLinks && lfos == o.lfos && automations == o.automations &&
+           rackAutoLanes == o.rackAutoLanes &&
            markers == o.markers && channelGroups == o.channelGroups && patternGroups == o.patternGroups && live == o.live && keptSends == o.keptSends &&
            arrangements == o.arrangements && cycleStart == o.cycleStart && cycleEnd == o.cycleEnd && cycleOn == o.cycleOn && projectEnd == o.projectEnd &&
            currentArrangement == o.currentArrangement && autoCrossfades == o.autoCrossfades && panLaw == o.panLaw && stage == o.stage && stageRooms == o.stageRooms && trackReceipt == o.trackReceipt && flExportGridline == o.flExportGridline && flOrigin == o.flOrigin &&

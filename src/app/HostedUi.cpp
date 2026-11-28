@@ -11,7 +11,9 @@
 #include <set>
 #include "../host/CrossFormat.h"
 #include "../host/HostedPlugins.h"
+#include "../host/PluginGroups.h"
 #include "../host/PluginPrefs.h"
+#include "../host/sandbox/NetBlock.h"
 #include "../host/vst3/Vst3Editor.h"
 #include "../packs/modulation/junction.h"
 #include "../packs/modulation/modulation_ui.h"
@@ -309,6 +311,10 @@ void setPluginWindowPolicy(const PluginWindowPolicy& p) {
 }
 bool pluginWindowPolicyManaged() { return policyRun().managed; }
 
+namespace {
+std::set<uint64_t> gNotResponding;  // targets whose plugin was said to be not responding
+}  // namespace
+
 void pumpHostedPlugins(App& a) {
   if (!a.doc.onPluginPlaced)  // K-112: plugins put on a track here (the window policy's "open on load")
     a.doc.onPluginPlaced = [&a](ObjectId owner, int slot, const std::string& type) {
@@ -341,9 +347,23 @@ void pumpHostedPlugins(App& a) {
     host::UiUpdate u;
     hi->pumpUi(u);
     if (u.crashed) {
+      gNotResponding.erase(t.key());
+      std::fprintf(stderr, "[plugin] %s: crashed (%s)\n", hi->hostedClass().name.c_str(), hi->crashReason().c_str());
       closeHostedEditor(a, t);
       a.notify(hi->hostedClass().name + " crashed (" + hi->crashReason() + "). It is silenced; reload it from its plugin window.", true);
       continue;
+    }
+    // A plugin in its own process that stops answering (its interface thread busy or stuck): said once,
+    // and again when it answers. Gridline never waits for it meanwhile (Backend::notResponding).
+    if (const bool stuck = hi->backend()->notResponding(); !hi->crashed() && stuck != (gNotResponding.count(t.key()) > 0)) {
+      if (stuck) {
+        gNotResponding.insert(t.key());
+        a.notify(hi->hostedClass().name + ": " + i18n::tr("not responding. Gridline goes on without it; it is stopped if it does not answer soon."), true);
+      } else {
+        gNotResponding.erase(t.key());
+        a.notify(hi->hostedClass().name + ": " + i18n::tr("responding again."));
+      }
+      std::fprintf(stderr, "[plugin] %s: %s\n", hi->hostedClass().name.c_str(), stuck ? "not responding" : "responding again");
     }
     if (t.node) {  // K-7: a module's values live in the Junction's data
       if (const PluginState* st = !u.edits.empty() ? t.state(a.doc.song()) : nullptr) {
@@ -456,6 +476,7 @@ void reloadHostedPlugin(App& a, const PluginTarget& t) {
 
 void setHostedSandbox(App& a, const std::string& typeRef, bool on) {
   const std::string type = typeRef;  // the caller's string may belong to a window this closes
+  if (!on && host::blocksNetwork(type)) return;  // K-437: a plugin kept off the internet stays in the sandbox
   if (host::runsInSandbox(type) == on) return;
   captureHostedStates(a);  // the new instance starts from the current state
   for (const PluginTarget& t : hostedTargets(a.doc.song())) {
@@ -467,6 +488,121 @@ void setHostedSandbox(App& a, const std::string& typeRef, bool on) {
   }
   host::setRunInSandbox(type, on);
   a.syncEngine();
+}
+
+void setHostedNetAccess(App& a, const std::vector<std::string>& typesRef, host::NetAccess access) {
+  const std::vector<std::string> types = typesRef;  // (the caller's list may belong to a window this closes)
+  std::set<std::string> changing;
+  for (const std::string& type : types)
+    if (host::netAccess(type) != access) changing.insert(type);
+  if (changing.empty()) return;
+  captureHostedStates(a);  // the new instances start from the current state
+  for (const PluginTarget& t : hostedTargets(a.doc.song())) {
+    const PluginState* st = t.state(a.doc.song());
+    if (st && changing.count(st->type) && hostedEditorOpen(t)) {
+      closeHostedEditor(a, t);
+      hostedui::reopenLater(t);  // the new instance shows its interface again
+    }
+  }
+  host::setNetAccess(std::vector<std::string>(changing.begin(), changing.end()), access);
+  a.syncEngine();
+}
+
+int hostedNetworkGuard(App& a, const std::vector<std::string>& types) {
+  for (const PluginTarget& t : hostedTargets(a.doc.song())) {
+    const PluginState* st = t.state(a.doc.song());
+    if (!st || std::find(types.begin(), types.end(), st->type) == types.end()) continue;
+    if (host::HostedInstance* hi = hostedInstanceFor(a, t); hi && hi->networkBlocked() && !hi->crashed()) return hi->backend()->networkGuard();
+  }
+  return 0;
+}
+
+std::vector<std::string> pluginFormatsOf(const std::string& type) {
+  std::vector<std::string> out;
+  const std::shared_ptr<const host::GroupSnapshot> s = host::pluginGroups();
+  if (s)
+    if (auto it = s->groupOf.find(type); it != s->groupOf.end() && it->second < s->groups.size())
+      for (size_t m : s->groups[it->second].members) out.push_back(s->items[m].type);
+  if (std::find(out.begin(), out.end(), type) == out.end()) out.push_back(type);
+  return out;
+}
+
+const char* netBlockUnavailableReason() {
+  if (host::networkBlockAvailable()) return nullptr;
+#if defined(_WIN32)
+  return i18n::N_("Not available on Windows yet: blocking one plugin needs administrator rights there.");
+#else
+  return i18n::N_("Not available on this system: blocking one plugin needs administrator rights here.");
+#endif
+}
+
+const char* netGuardText(int guard) {
+  switch (guard) {
+    case host::kNetSeatbelt: return i18n::N_("The system's sandbox, applied to the plugin's own process.");
+    case host::kNetNamespace: return i18n::N_("A private network space for the plugin's own process, with no way out.");
+    case host::kNetSeccomp: return i18n::N_("A system filter that refuses internet connections to the plugin's own process.");
+    default: return i18n::N_("Not blocked.");
+  }
+}
+
+void hostedui::internetAccess(App& a, const std::vector<std::string>& types, const std::string& name, int guard, float width) {
+  const auto& P = pal();
+  if (types.empty()) return;
+  const char* unavailable = netBlockUnavailableReason();
+  const host::NetAccess access = host::netAccess(types.front());
+  bool mixed = false;
+  for (const std::string& t : types) mixed = mixed || host::netAccess(t) != access;
+  auto wrapped = [&](ImU32 col, const char* text) {
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width);
+    ImGui::TextColored(theme::vec(col), "%s", text);
+    ImGui::PopTextWrapPos();
+  };
+  char line[512];
+  // The saved choice. Where blocking is not possible it can only be switched off.
+  static const char* const kChoices[] = {i18n::N_("Allowed"), i18n::N_("Blocked")};
+  static const char* const kHints[] = {i18n::N_("The plugin may connect to the internet"),
+                                       i18n::N_("The plugin runs in a sandbox that cannot connect to the internet")};
+  int choice = access == host::NetAccess::Allowed ? 0 : 1;
+  ImGui::BeginDisabled(unavailable != nullptr && access == host::NetAccess::Allowed);
+  if (ui::Segmented("##netaccess", kChoices, 2, &choice, 0, 0, kHints))
+    setHostedNetAccess(a, types, choice == 0 ? host::NetAccess::Allowed : host::NetAccess::Blocked);
+  ImGui::EndDisabled();
+  if (mixed) {
+    ImGui::SameLine(0, 8);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.textFaint), "%s", i18n::tr("(some formats differ)"));
+  }
+  ImGui::Dummy(ImVec2(0, 2));
+  switch (access) {
+    case host::NetAccess::Allowed:
+      std::snprintf(line, sizeof line, i18n::tr("%s can connect to the internet."), name.c_str());
+      wrapped(P.textDim, line);
+      break;
+    case host::NetAccess::Blocked:
+      std::snprintf(line, sizeof line, i18n::tr("%s cannot connect to the internet. Gridline itself still can."), name.c_str());
+      wrapped(P.text, line);
+      if (guard != host::kNetOpen) wrapped(P.textDim, i18n::tr(netGuardText(guard)));
+      wrapped(P.textFaint, i18n::tr("This system does not report the plugin's attempts to connect."));
+      break;
+    case host::NetAccess::AllowedUntilClose:
+      std::snprintf(line, sizeof line, i18n::tr("%s may connect until Gridline closes, then it is blocked again."), name.c_str());
+      wrapped(theme::lit(P.hot), line);
+      break;
+  }
+  if (access == host::NetAccess::Blocked) {
+    if (ui::TextButton("Allow until Gridline closes", false, 0,
+                       "For signing in or activating a licence: the plugin may connect until Gridline closes, then it is blocked again"))
+      setHostedNetAccess(a, types, host::NetAccess::AllowedUntilClose);
+  } else if (access == host::NetAccess::AllowedUntilClose) {
+    if (ui::TextButton("Block it again now", false, 0, "Blocks the plugin's internet access again without waiting for Gridline to close"))
+      setHostedNetAccess(a, types, host::NetAccess::Blocked);
+  }
+  if (unavailable) wrapped(P.textDim, i18n::tr(unavailable));
+  ImGui::Dummy(ImVec2(0, 2));
+  ImGui::PushFont(a.fontRegular, theme::kFontLabel);
+  wrapped(P.textFaint, i18n::tr("Plugins that sign in or check a licence online may not work while blocked: allow it until Gridline closes to activate it."));
+  wrapped(P.textFaint, i18n::tr("Not covered: licence managers and other programs that run on their own. This is a privacy setting, not protection against harmful plugins."));
+  ImGui::PopFont();
 }
 
 // ---------------------------------------------------------------- generic editor
@@ -488,6 +624,9 @@ void paramRow(App& a, const PluginTarget& t, host::HostedInstance* hi, int k, co
   ImGui::SetCursorScreenPos(b0);
   ImGui::InvisibleButton("##bar", ImVec2(barW, h));
   const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
+  const ImGuiID barId = ImGui::GetItemID();
+  // K-446: the value automation, a link or an LFO moves (held, until the pointer moves it).
+  if (double live = 0; ui::LiveParamValue(barId, pid, live)) val = d.clamp(live);
   const double n0 = d.toNormalized(val);
   if (ImGui::IsItemClicked() && (ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeySuper)) {
     a.doc.setParam(pid, d.def, false);
@@ -498,7 +637,10 @@ void paramRow(App& a, const PluginTarget& t, host::HostedInstance* hi, int k, co
   } else if (act) {
     float fine = ImGui::GetIO().KeyShift ? 0.1f : 1.0f;
     float dx = ImGui::GetIO().MouseDelta.x;
-    if (dx != 0) a.doc.setParam(pid, d.fromNormalized(std::clamp(n0 + dx / barW * fine, 0.0, 1.0)), true);
+    if (dx != 0) {
+      a.doc.setParam(pid, d.fromNormalized(std::clamp(n0 + dx / barW * fine, 0.0, 1.0)), true);
+      ui::NoteHeldEdit(barId);
+    }
   }
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   if (ImGui::IsItemActivated()) gLastTouched[t.key()] = k;
@@ -795,9 +937,9 @@ void header(App& a, const PluginTarget& t, host::HostedInstance* hi, const Plugi
   skin::label(dl, F, 520, 46, 112, 12, line, L.dim, 0, 9.5f, 2, false, false);
 
   // Pages.
-  static const char* const kTabs[] = {"PARAMETERS", "PROCESSING", "SETTINGS"};
+  static const char* const kTabs[] = {"PARAMETERS", "PROCESSING", "SETTINGS", "INTERNET"};  // K-437: Internet: page 4
   skin::TabLook tl;
-  skin::tabsUi(F, "##wtabs", 10, 70, 360, 20, kTabs, 3, w.tab, tl);
+  skin::tabsUi(F, "##wtabs", 10, 70, 440, 20, kTabs, 4, w.tab, tl);
   skin::reserve(F);
 }
 
@@ -862,11 +1004,20 @@ void processingPage(App& a, host::HostedInstance* hi, float width) {
         "Controller links and automation move modulatable parameters as modulation: the plugin keeps the song's value and shows the movement "
         "on top.");
   bool sandbox = hi->sandboxed();
+  const bool netLocked = sandbox && host::blocksNetwork(cls.type);  // K-437: blocking needs the sandbox
+  ImGui::BeginDisabled(netLocked);
   if (ui::TextButton("Make bridged (run in sandbox)", sandbox, 230,
                      "Runs this plugin in its own process: a crash silences it instead of closing Gridline (slightly more CPU)")) {
     setHostedSandbox(a, cls.type, !sandbox);
+    ImGui::EndDisabled();
     pui::endSection();
     return;
+  }
+  ImGui::EndDisabled();
+  if (netLocked) {  // its own line, wrapped: a narrow plugin window has no room beside the button
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + width - 24);
+    ImGui::TextColored(theme::vec(theme::pal().textFaint), "%s", i18n::tr("Needed while its internet access is blocked."));
+    ImGui::PopTextWrapPos();
   }
   ImGui::Spacing();
   const double sr = hi->backend()->sampleRate() > 0 ? hi->backend()->sampleRate() : 48000.0;
@@ -877,6 +1028,14 @@ void processingPage(App& a, host::HostedInstance* hi, float width) {
   ImGui::TextColored(theme::vec(theme::pal().textDim), i18n::tr("Tail: %s."), tailText.c_str());
   pui::endSection();
   if (o != before) applyOptions(a, cls.type, o);
+}
+
+// K-437: the plugin's internet access (the plugin window's Internet page).
+void internetPage(App& a, host::HostedInstance* hi, float width) {
+  const host::HostedClass& cls = hi->hostedClass();
+  pui::beginSection("INTERNET ACCESS", width);
+  hostedui::internetAccess(a, pluginFormatsOf(cls.type), cls.name, hi->networkBlocked() ? hi->backend()->networkGuard() : 0, width - 24);
+  pui::endSection();
 }
 
 void settingsPage(App& a, const PluginTarget& t, host::HostedInstance* hi, WrapperUi& w, float width) {
@@ -1054,12 +1213,137 @@ void drawHostedEditor(App& a, const PluginTarget& t, float width) {
   if (!info || !hi) {
     recordDraw("failed");
     pui::beginSection("HOSTED PLUGIN", width);
-    ImGui::TextColored(theme::vec(P.danger), "%s", info ? "This plugin could not be loaded." : "This plugin is not installed or not scanned yet.");
-    ImGui::TextColored(theme::vec(P.textFaint), "%s", st ? st->type.c_str() : "");
-    std::string err = host::lastError();
-    if (!err.empty()) ImGui::TextWrapped("%s", err.c_str());
-    ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Its parameters and state stay in the project."));
-    if (info && ui::TextButton("Try again", false, 0, "Loads the plugin again")) a.syncEngine();
+    const std::string ptype = st ? st->type : std::string();
+    std::string fmt, uid;
+    host::splitType(ptype, fmt, uid);
+    const char* fmtLabel = "Plugin";
+    if (const host::Format* f = host::findFormat(fmt)) fmtLabel = f->label;
+    else if (fmt == "vst3") fmtLabel = "VST3";
+    else if (fmt == "clap") fmtLabel = "CLAP";
+    else if (fmt == "vst2") fmtLabel = "VST2";
+    else if (fmt == "au") fmtLabel = "AU";
+    else if (fmt == "lv2") fmtLabel = "LV2";
+    const host::ident::Identity savedId = st ? host::xformat::savedIdentity(*st) : host::ident::Identity{};
+    const std::string displayName = info ? info->name : (!savedId.name.empty() ? savedId.name : ptype);
+    const host::MissingStatus ms = info ? host::MissingStatus::Installed : host::missingStatus(ptype);
+
+    // Title + format chip + crisp status pill (strictly using Theme palette roles).
+    const char* statusText = i18n::tr("Not installed");
+    ImU32 statusRole = P.danger;
+    if (info) {
+      statusText = i18n::tr("Could not load");
+      statusRole = P.danger;
+    } else if (ms == host::MissingStatus::NotScannedYet) {
+      statusText = i18n::tr("Not scanned yet");
+      statusRole = P.accent;
+    } else if (ms == host::MissingStatus::Scanning) {
+      statusText = i18n::tr("Scanning...");
+      statusRole = P.hot;
+    } else if (ms == host::MissingStatus::FormatDisabled) {
+      statusText = i18n::tr("Format disabled");
+      statusRole = P.hot;
+    } else if (ms == host::MissingStatus::Unsupported) {
+      statusText = i18n::tr("Unsupported format");
+      statusRole = P.danger;
+    }
+
+    auto drawPill = [&](const char* label, ImU32 role, bool monoFont) {
+      if (monoFont) ImGui::PushFont(a.fontMono, theme::kFontLabel);
+      else ImGui::PushFont(a.fontBold, theme::kFontLabel);
+      const ImVec2 ts = ImGui::CalcTextSize(label);
+      const float padX = 8.0f, h = std::max(20.0f, ts.y + 6.0f);
+      const ImVec2 p = ImGui::GetCursorScreenPos();
+      const ImVec2 sz(ts.x + padX * 2.0f, h);
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      dl->AddRectFilled(p, ImVec2(p.x + sz.x, p.y + sz.y), theme::withAlpha(role, P.dark ? 0.20f : 0.14f), 4.0f);
+      dl->AddRect(p, ImVec2(p.x + sz.x, p.y + sz.y), theme::withAlpha(role, P.dark ? 0.55f : 0.45f), 4.0f, 0, 1.0f);
+      const ImU32 fg = theme::mix(role, P.text, P.dark ? 0.22f : 0.30f);
+      dl->AddText(ImVec2(p.x + padX, p.y + std::floor((h - ts.y) * 0.5f)), fg, label);
+      ImGui::Dummy(sz);
+      ImGui::PopFont();
+    };
+
+    const float pillReserve = ImGui::CalcTextSize(statusText).x + ImGui::CalcTextSize(fmtLabel).x + 60.0f;
+    const float nameMaxW = std::max(120.0f, width - 28.0f - pillReserve);
+    ImGui::PushFont(a.fontBold, 15.0f);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(theme::vec(P.text), "%s", theme::fitText(displayName.c_str(), nameMaxW));
+    ImGui::PopFont();
+    ImGui::SameLine(0, 8.0f);
+    drawPill(fmtLabel, P.textDim, true);
+    ImGui::SameLine(0, 6.0f);
+    drawPill(statusText, statusRole, false);
+    if (!savedId.vendor.empty() && !info) {
+      ImGui::TextColored(theme::vec(P.textDim), i18n::tr("Vendor: %s"), savedId.vendor.c_str());
+    }
+
+    ImGui::Dummy(ImVec2(0, theme::kS1));
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + std::max(160.0f, width - 28.0f));
+    if (info) {
+      ImGui::TextColored(theme::vec(P.danger), "%s", i18n::tr("This plugin is installed but could not be loaded."));
+      std::string err = host::lastError();
+      if (!err.empty()) ImGui::TextColored(theme::vec(P.textDim), "%s", err.c_str());
+    } else if (ms == host::MissingStatus::NotScannedYet) {
+      ImGui::TextColored(theme::vec(P.text), "%s",
+                         i18n::tr("Plugins have not been scanned yet. Scan now to check whether this plugin is installed on this computer."));
+    } else if (ms == host::MissingStatus::Scanning) {
+      const host::ScanStatus ss = host::scanStatus();
+      const ImVec2 sp = ImGui::GetCursorScreenPos();
+      const float lh = ImGui::GetTextLineHeight();
+      ui::Spinner(ImGui::GetWindowDrawList(), ImVec2(sp.x + lh * 0.5f, sp.y + lh * 0.5f), lh * 0.36f, P.hot);
+      ImGui::Dummy(ImVec2(lh + theme::kS1, lh));
+      ImGui::SameLine(0, 0);
+      if (ss.total > 0) ImGui::TextColored(theme::vec(P.text), i18n::tr("Scanning for plugins (%d / %d)..."), ss.done, ss.total);
+      else ImGui::TextColored(theme::vec(P.text), "%s", i18n::tr("Scanning plugin folders..."));
+      const std::string cur = host::scanCurrentLabel(ss);
+      if (!cur.empty()) ImGui::TextColored(theme::vec(P.textDim), "%s", theme::fitText(cur.c_str(), std::max(140.0f, width - 32.0f)));
+    } else if (ms == host::MissingStatus::FormatDisabled) {
+      ImGui::TextColored(theme::vec(P.text), "%s",
+                         i18n::tr("This plugin format is switched off in Plugin Manager. Enable it and scan to load this plugin."));
+    } else if (ms == host::MissingStatus::Unsupported) {
+      ImGui::TextColored(theme::vec(P.text), "%s", i18n::tr("This plugin format is not supported on this operating system."));
+    } else {
+      ImGui::TextColored(theme::vec(P.text), "%s",
+                         i18n::tr("This plugin was not found in the last plugin scan. Install it and rescan to load it."));
+    }
+    ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Its saved parameters and plugin state remain untouched in the project."));
+    ImGui::PopTextWrapPos();
+
+    if (!ptype.empty()) {
+      ImGui::PushFont(a.fontMono, theme::kFontLabel);
+      ImGui::TextColored(theme::vec(P.textFaint), "%s", theme::fitText(ptype.c_str(), std::max(140.0f, width - 28.0f)));
+      ImGui::PopFont();
+    }
+
+    ImGui::Dummy(ImVec2(0, theme::kS2));
+    if (info) {
+      if (ui::PrimaryButton("Try again", 112, "Loads the plugin again")) a.syncEngine();
+      // K-437: a plugin that could not be kept off the internet is not loaded (fail closed).
+      if (st && host::blocksNetwork(st->type)) {
+        ImGui::SameLine(0, theme::kS2);
+        if (ui::TextButton("Allow until Gridline closes", false, 0,
+                           "Its internet access is blocked and this system could not block it: load it unblocked until Gridline closes"))
+          setHostedNetAccess(a, pluginFormatsOf(st->type), host::NetAccess::AllowedUntilClose);
+      }
+    } else {
+      if (ms == host::MissingStatus::NotScannedYet) {
+        if (ui::PrimaryButton("Scan for plugins", 156, "Scan your plugin folders in the background and load found plugins automatically")) {
+          a.scanByUser = true;
+          host::startScan(host::selfExecutablePath());
+        }
+      } else if (ms == host::MissingStatus::Scanning) {
+        ImGui::BeginDisabled();  // (a status in the scan button's place, not a lit button)
+        ui::TextButton("Scanning...", false, 124, "Plugin scan is running in the background");
+        ImGui::EndDisabled();
+      } else if (ms != host::MissingStatus::Unsupported) {
+        if (ui::PrimaryButton("Rescan plugins", 148, "Scan your plugin folders for newly installed plugins")) {
+          a.scanByUser = true;
+          host::startScan(host::selfExecutablePath());
+        }
+      }
+      if (ms != host::MissingStatus::Unsupported) ImGui::SameLine(0, theme::kS2);
+      if (ui::TextButton("Plugin manager...", false, 144, "Configure plugin formats and search folders")) a.showPluginManager = true;
+    }
     pui::endSection();
     if (!info && st && collabui::pluginOffersOtherFormats(a)) otherFormatsSection(a, t, *st, width);
     return;
@@ -1074,12 +1358,25 @@ void drawHostedEditor(App& a, const PluginTarget& t, float width) {
     pui::endSection();
     return;
   }
-  recordDraw("ready");
+  if (hi->backend()->notResponding()) {  // its process is busy: said so; Gridline and this window go on
+    recordDraw("not responding");
+    pui::beginSection("HOSTED PLUGIN", width);
+    const ImVec2 p = ImGui::GetCursorScreenPos();
+    const float h = ImGui::GetTextLineHeight();
+    ui::Spinner(ImGui::GetWindowDrawList(), ImVec2(p.x + h * 0.5f, p.y + h * 0.5f), h * 0.36f, P.danger);
+    ImGui::Dummy(ImVec2(h + theme::kS1, h));
+    ImGui::SameLine(0, 0);
+    ImGui::TextColored(theme::vec(P.danger), i18n::tr("%s is not responding."), cls.name.c_str());
+    ImGui::TextColored(theme::vec(P.textDim), "%s", i18n::tr("Gridline goes on without it. It is stopped if it does not answer soon."));
+    pui::endSection();
+  } else {
+    recordDraw("ready");
+  }
   const bool fresh = wrapperUi().try_emplace(t.key()).second;
   WrapperUi& w = wrapperFor(t, hi);
   if (fresh) w.tab = gWrapperPage;
   header(a, t, hi, *info, w, width);
-  hostedui::drawPage(a, t, w.tab, width);
+  hostedui::drawPage(a, t, w.tab == 3 ? 4 : w.tab, width);  // (page 3: the plugin bar's compact parameters)
 }
 
 void hostedui::drawPage(App& a, const PluginTarget& t, int page, float width) {
@@ -1095,6 +1392,10 @@ void hostedui::drawPage(App& a, const PluginTarget& t, int page, float width) {
   }
   if (page == 2) {
     settingsPage(a, t, hi, w, width);
+    return;
+  }
+  if (page == 4) {
+    internetPage(a, hi, width);
     return;
   }
 
@@ -1134,7 +1435,7 @@ void hostedui::drawPage(App& a, const PluginTarget& t, int page, float width) {
 }  // namespace gl
 
 namespace gl {
-void setHostedWrapperPage(int page) { gWrapperPage = std::clamp(page, 0, 2); }
+void setHostedWrapperPage(int page) { gWrapperPage = std::clamp(page, 0, 3); }  // K-437: 3 the Internet tab
 
 namespace hostedui {
 int presetCount(host::HostedInstance* hi) { return gl::presetCount(hi); }

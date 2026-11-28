@@ -12,7 +12,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <memory>
+#include <mutex>
 
 namespace gl {
 
@@ -48,6 +50,36 @@ std::vector<int64_t> computeSlices(const Sample& s, int mode, double sensitivity
     }
   }
   return out;
+}
+
+std::shared_ptr<const std::vector<int64_t>> cachedSampleTransients(const SamplePtr& smp, double sensitivity) {
+  static const auto kEmpty = std::make_shared<const std::vector<int64_t>>();
+  if (!smp || smp->frames() < 64) return kEmpty;
+  const int sensKey = static_cast<int>(std::lround(std::clamp(sensitivity, 0.0, 1.0) * 100.0));
+  struct Entry {
+    std::weak_ptr<const Sample> src;
+    std::shared_ptr<const std::vector<int64_t>> frames;
+  };
+  using Key = std::pair<const Sample*, int>;
+  static std::mutex mu;
+  static std::map<Key, Entry> cache;
+  const Key key{smp.get(), sensKey};
+  {
+    std::lock_guard<std::mutex> lk(mu);
+    auto it = cache.find(key);
+    if (it != cache.end() && it->second.src.lock() == smp) return it->second.frames;
+  }
+  auto computed = std::make_shared<std::vector<int64_t>>(computeSlices(*smp, 0, static_cast<double>(sensKey) / 100.0));
+  {
+    std::lock_guard<std::mutex> lk(mu);
+    if (cache.size() >= 64) {
+      for (auto it = cache.begin(); it != cache.end();)
+        it = it->second.src.expired() ? cache.erase(it) : std::next(it);
+      if (cache.size() >= 64) cache.erase(cache.begin());
+    }
+    cache[key] = Entry{smp, computed};
+  }
+  return computed;
 }
 
 namespace {

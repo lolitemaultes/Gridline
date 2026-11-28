@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include "../../app/UrlImportUi.h"
 #include "../../core/AudioBuffer.h"
 #include "../../core/Expr.h"
 #include "../../core/I18n.h"
@@ -742,7 +743,7 @@ void wtEditor(Ctx& c) {
       ImGui::PopID();
     }
     y += M(30) + M(10);
-    const float bw = (iw - M(16)) / 3;
+    const float bw = (iw - M(24)) / 4;
     if (btnLook(c, "load", ix, y, bw, M(30), "Load", false, false, T(12)))
       openFile(c, i18n::tr("Load wavetable"), {".wav"}, [o](App& a, const PluginTarget& t, const std::string& p) {
         editState(a, t, "Load wavetable", [&](PluginState& st, Model& m) {
@@ -771,7 +772,20 @@ void wtEditor(Ctx& c) {
         });
       });
     if (ImGui::IsItemHovered()) c.a.setHint("Import: copy a WAV's frames into the sound to edit them (2048 samples each, or the cycle length the file states)");
-    if (btnLook(c, "exp", ix + (bw + M(8)) * 2, y, bw, M(30), "Export", false, false, T(12))) exportFrames(c, F, d.tableName);
+    if (btnLook(c, "url", ix + (bw + M(8)) * 2, y, bw, M(30), "URL", false, false, T(12))) {
+      const PluginTarget tt = c.t;
+      urlimportui::openFor(c.a, urlimportui::Target{"Plasma (Wavetable)", [tt, o](App& a, const std::string& p, const std::string&) {
+        editState(a, tt, "Load wavetable", [&](PluginState& st, Model& m) {
+          auto& od = m.osc[static_cast<size_t>(o)];
+          od.table = "file:" + p;
+          od.tableName = fs_stem(p);
+          od.frames.clear();
+          st.params[static_cast<size_t>(oscP(o, O_Table))] = 0;
+        });
+      }, false});
+    }
+    if (ImGui::IsItemHovered()) c.a.setHint("Import from URL: a web link's audio played as the table, as Load does (kept in the project's Imported folder)");
+    if (btnLook(c, "exp", ix + (bw + M(8)) * 3, y, bw, M(30), "Export", false, false, T(12))) exportFrames(c, F, d.tableName);
     if (ImGui::IsItemHovered()) c.a.setHint("Save the table as a WAV of 2048-sample frames");
     cy += M(122) + M(10);
   }

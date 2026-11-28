@@ -6,12 +6,15 @@
 #include <cstring>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace gl::theme {
 
 namespace {
 Palette gPal;
+Palette gBasePal;
 bool gDark = true;
+uint64_t gThemeGen = 0;
 MarkTextureFn gMarkTex = nullptr;
 
 constexpr ImU32 hex(uint32_t rrggbb, uint8_t a = 255) {
@@ -24,36 +27,47 @@ const Palette& pal() { return gPal; }
 ImU32 popupBg(const Palette& p) { return p.dark ? mix(p.surface900, p.surface800, 0.35f) : mix(p.surface800, p.paper, 0.6f); }
 
 namespace {
-Palette gPalStack[8];
-int gPalDepth = 0;
+std::vector<Palette> gPalStack;
 }  // namespace
 
 void pushPalette(const Palette& p) {
-  if (gPalDepth < 8) gPalStack[gPalDepth] = gPal;
-  ++gPalDepth;
+  gPalStack.push_back(gPal);
   gPal = p;
 }
 
 void popPalette() {
-  if (gPalDepth <= 0) return;
-  --gPalDepth;
-  if (gPalDepth < 8) gPal = gPalStack[gPalDepth];
+  if (gPalStack.empty()) return;
+  gPal = gPalStack.back();
+  gPalStack.pop_back();
 }
+
+void resetPaletteStack() {
+  if (gPalStack.empty()) return;
+  gPal = gBasePal;
+  gPalStack.clear();
+}
+
+uint64_t generation() { return gThemeGen; }
+
 bool isDark() { return gDark; }
 
 ImU32 rgb(uint32_t rrggbb, float alpha) {
-  return hex(rrggbb, static_cast<uint8_t>(std::clamp(alpha, 0.0f, 1.0f) * 255.0f + 0.5f));
+  const float a = std::isfinite(alpha) ? std::clamp(alpha, 0.0f, 1.0f) : 1.0f;
+  return hex(rrggbb, static_cast<uint8_t>(a * 255.0f + 0.5f));
 }
 
 ImU32 withAlpha(ImU32 c, float a) {
-  uint32_t al = static_cast<uint32_t>(((c >> IM_COL32_A_SHIFT) & 0xFF) * std::clamp(a, 0.0f, 1.0f) + 0.5f);
+  const float af = std::isfinite(a) ? std::clamp(a, 0.0f, 1.0f) : 1.0f;
+  uint32_t al = static_cast<uint32_t>(((c >> IM_COL32_A_SHIFT) & 0xFF) * af + 0.5f) & 0xFFu;
   return (c & ~IM_COL32_A_MASK) | (al << IM_COL32_A_SHIFT);
 }
 
 ImU32 mix(ImU32 a, ImU32 b, float t) {
+  const float tf = std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.0f;
   auto ch = [&](int s) {
     float x = static_cast<float>((a >> s) & 0xFF), y = static_cast<float>((b >> s) & 0xFF);
-    return static_cast<ImU32>(x + (y - x) * t + 0.5f) << s;
+    const float v = std::clamp(x + (y - x) * tf + 0.5f, 0.0f, 255.0f);
+    return (static_cast<ImU32>(v) & 0xFFu) << s;
   };
   return ch(IM_COL32_R_SHIFT) | ch(IM_COL32_G_SHIFT) | ch(IM_COL32_B_SHIFT) | ch(IM_COL32_A_SHIFT);
 }
@@ -127,7 +141,10 @@ ImU32 lighten(ImU32 c, float amount, uint32_t black) {
 }
 
 void applyTweaks(Palette& p, const Tweaks& t) {
-  const float b = brightnessAmount(t.brightness);
+  auto unit = [](float v) { return std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f; };
+  const float b = brightnessAmount(unit(t.brightness));
+  const float hue = unit(t.hue), sat = unit(t.saturation);
+  const float k = unit(t.contrast);
   const BlackFaces K;
   const std::pair<ImU32*, uint32_t> faces[] = {{&p.surface950, K.surface950}, {&p.surface900, K.surface900}, {&p.surface800, K.surface800},
                                                {&p.surface700, K.surface700}, {&p.surface600, K.surface600}, {&p.line, K.line},
@@ -137,8 +154,8 @@ void applyTweaks(Palette& p, const Tweaks& t) {
   for (const auto& [c, black] : faces) *c = lighten(*c, b, black);
   // K-104: the panels' tint: their hue turned and their colour raised or taken out (role colours,
   // text and glyphs keep theirs).
-  if (t.hue != 0.0f || t.saturation != 0.0f) {
-    const float turn = std::clamp(t.hue, -1.0f, 1.0f) * 0.5f, sat = std::clamp(t.saturation, -1.0f, 1.0f);
+  if (hue != 0.0f || sat != 0.0f) {
+    const float turn = hue * 0.5f;
     for (const auto& fc : faces) {
       ImU32& c = *fc.first;
       const ImVec4 v = ImGui::ColorConvertU32ToFloat4(c);
@@ -175,7 +192,6 @@ void applyTweaks(Palette& p, const Tweaks& t) {
     keep(p.textFaint, 2.0f);
   }
   // Contrast: text and lines move away from (or toward) the panel colour.
-  const float k = std::clamp(t.contrast, -1.0f, 1.0f);
   if (k != 0.0f) {
     const ImU32 strong = p.dark ? p.paper : p.ink, panel = p.surface900;
     auto push = [&](ImU32& c, float amt) { c = k > 0 ? mix(c, strong, k * amt) : mix(c, panel, -k * amt); };
@@ -206,6 +222,12 @@ void applyTweaks(Palette& p, const Tweaks& t) {
     p.clipInkAmount = 0.62f;
     p.whiteGlyphs = true;
   }
+  // K-395: defensive readability invariant — text must never become unreadable against its panel.
+  const float minTextContrast = k < 0.0f ? 2.0f : 4.5f;
+  if (contrastRatio(p.text, p.surface900) < minTextContrast) {
+    const ImU32 strong = contrastRatio(p.paper, p.surface900) >= contrastRatio(p.ink, p.surface900) ? p.paper : p.ink;
+    for (int i = 0; i < 20 && contrastRatio(p.text, p.surface900) < minTextContrast; ++i) p.text = mix(p.text, strong, 0.15f);
+  }
 }
 }  // namespace
 
@@ -220,6 +242,11 @@ const Palette& darkFaces() { return gPal.dark ? gPal : gDarkFaces; }
 void setTweaks(const Tweaks& t) {
   gTweaks = t;
   apply(gDark);
+}
+
+void applyWithTweaks(bool dark, const Tweaks& t) {
+  gTweaks = t;
+  apply(dark);
 }
 
 Palette makePalette(bool dark, const Tweaks& t) {
@@ -314,10 +341,23 @@ Palette makePalette(bool dark, const Tweaks& t) {
 
 void apply(bool dark) {
   gDark = dark;
-  gPal = makePalette(dark, gTweaks);
-  gDarkFaces = gPal.dark ? gPal : makePalette(true, gTweaks);
-  const Palette& p = gPal;
-  dark = p.dark;  // K-177: light faces taken down to near black are styled as dark ones
+  gBasePal = makePalette(dark, gTweaks);
+  gDarkFaces = gBasePal.dark ? gBasePal : makePalette(true, gTweaks);
+  // K-395: if apply() runs while a temporary palette (plugin skin / Smooth faces) is pushed,
+  // update the stack's base slot so unwinding scopes always lands on the new theme rather than
+  // restoring the previous theme's palette.
+  if (gPalStack.empty())
+    gPal = gBasePal;
+  else
+    gPalStack[0] = gBasePal;
+  ++gThemeGen;
+  applyImGuiStyle();
+}
+
+void applyImGuiStyle() {
+  if (!ImGui::GetCurrentContext()) return;
+  const Palette& p = gBasePal;
+  const bool dark = p.dark;  // K-177: light faces taken down to near black are styled as dark ones
 
   ImGuiStyle& s = ImGui::GetStyle();
   s.WindowPadding = ImVec2(kS2, kS2);

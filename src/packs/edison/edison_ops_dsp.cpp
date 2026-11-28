@@ -145,6 +145,12 @@ void History::reset(Content c) {
   ++serial_;
 }
 
+void History::amend(Content c) {
+  cur_ = std::move(c);
+  if (!cur_.audio) cur_.audio = std::make_shared<const Audio>();
+  ++serial_;
+}
+
 void History::push(const std::string& label, Content next) {
   if (!next.audio) next.audio = std::make_shared<const Audio>();
   undo_.push_back(Step{label, std::move(cur_), curSel_});
@@ -560,8 +566,117 @@ Content renameMarker(const Content& c, size_t i, const std::string& name) {
 
 Content moveMarker(const Content& c, size_t i, int64_t pos) {
   if (i >= c.markers.size()) return c;
-  std::string name = c.markers[i].name;
-  return addMarker(removeMarker(c, i), pos, name);
+  Marker moved = c.markers[i];
+  moved.pos = std::clamp<int64_t>(pos, 0, c.frames());
+  Content o = removeMarker(c, i);
+  auto it = std::upper_bound(o.markers.begin(), o.markers.end(), moved.pos, [](int64_t p, const Marker& m) { return p < m.pos; });
+  o.markers.insert(it, std::move(moved));
+  return o;
+}
+
+Range markerSpan(const Content& c, size_t index) {
+  const int64_t n = c.frames();
+  if (n <= 0 || index >= c.markers.size()) return {};
+  const int64_t from = std::clamp<int64_t>(c.markers[index].pos, 0, n);
+  int64_t to = n;
+  for (const Marker& m : c.markers) {
+    const int64_t p = std::clamp<int64_t>(m.pos, 0, n);
+    if (p > from && p < to) to = p;
+  }
+  return {from, std::max(from, to)};
+}
+
+Content importWarpMarkers(const Content& c, const std::vector<WarpMarker>& warp) {
+  const int64_t n = c.frames();
+  const double rate = c.rate();
+  if (n <= 0 || !(rate > 0.0)) return c;
+  std::vector<WarpMarker> sorted = warp;
+  std::sort(sorted.begin(), sorted.end(), [](const WarpMarker& a, const WarpMarker& b) { return a.at < b.at; });
+  Content o = c;
+  // Preserve custom names for markers that already match by warpId or sample position.
+  auto findExistingName = [&](uint32_t id, int64_t pos) -> std::string {
+    if (id != 0)
+      for (const Marker& m : c.markers)
+        if (m.warpId == id && !m.name.empty()) return m.name;
+    for (const Marker& m : c.markers)
+      if (m.pos == pos && !m.name.empty()) return m.name;
+    return {};
+  };
+  o.markers.clear();
+  o.markers.reserve(sorted.size());
+  int k = 1;
+  for (const WarpMarker& w : sorted) {
+    if (!std::isfinite(w.at) || !std::isfinite(w.to)) continue;
+    const int64_t pos = std::clamp<int64_t>(static_cast<int64_t>(std::llround(w.at * rate)), 0, n);
+    std::string name = findExistingName(w.id, pos);
+    if (name.empty()) {
+      char b[32];
+      std::snprintf(b, sizeof b, "Warp %d", k);
+      name = b;
+    }
+    ++k;
+    o.markers.push_back(Marker{pos, std::move(name), w.id, w.at, w.to});
+  }
+  std::stable_sort(o.markers.begin(), o.markers.end(), [](const Marker& a, const Marker& b) { return a.pos < b.pos; });
+  return o;
+}
+
+std::vector<WarpMarker> exportWarpMarkers(const Content& c, const std::vector<WarpMarker>& origWarp) {
+  std::vector<WarpMarker> out;
+  const int64_t n = c.frames();
+  const double rate = c.rate();
+  if (n <= 0 || !(rate > 0.0) || c.markers.empty()) return out;
+  const double fileSec = static_cast<double>(n) / rate;
+  std::vector<WarpMarker> normOrig = origWarp;
+  normalizeWarp(normOrig, fileSec);
+  const std::vector<WarpPoint> origPts = warpPoints(normOrig, false, 0.0);
+
+  std::vector<Marker> sorted = c.markers;
+  std::stable_sort(sorted.begin(), sorted.end(), [](const Marker& a, const Marker& b) { return a.pos < b.pos; });
+
+  uint32_t nextId = nextWarpId(normOrig);
+  for (const Marker& m : sorted)
+    if (m.warpId >= nextId) nextId = m.warpId + 1;
+
+  std::vector<uint32_t> usedIds;
+  usedIds.reserve(sorted.size());
+  for (const Marker& m : sorted) {
+    const int64_t clampedPos = std::clamp<int64_t>(m.pos, 0, n);
+    uint32_t id = m.warpId;
+    if (id == 0 || std::find(usedIds.begin(), usedIds.end(), id) != usedIds.end()) id = nextId++;
+    usedIds.push_back(id);
+
+    const bool hasOrig = m.warpId != 0 && m.warpOrigAt >= 0.0 && m.warpTo >= 0.0 && std::isfinite(m.warpOrigAt) && std::isfinite(m.warpTo);
+    const bool unmoved = hasOrig && std::clamp<int64_t>(static_cast<int64_t>(std::llround(m.warpOrigAt * rate)), 0, n) == clampedPos;
+    double at = 0.0, to = 0.0;
+    if (unmoved) {
+      at = m.warpOrigAt;
+      to = m.warpTo;
+    } else {
+      at = std::clamp(static_cast<double>(clampedPos) / rate, 0.0, fileSec);
+      if (hasOrig) {
+        if (std::fabs(m.warpTo - m.warpOrigAt) < 1e-6)
+          to = at;
+        else
+          to = m.warpTo;
+      } else {
+        to = origPts.empty() ? at : warpTimeAt(origPts, at);
+      }
+    }
+    if (!out.empty()) {
+      const double da = at - out.back().at;
+      if (da < 1e-6) continue;  // duplicate sample position
+      const double minTo = out.back().to + std::max(kWarpMinSection, da / kWarpMaxSpeed) * 1.001;
+      const double maxTo = out.back().to + da / kWarpMinSpeed * 0.999;
+      if (to < minTo || to > maxTo) {
+        const double interp = origPts.empty() ? at : warpTimeAt(origPts, at);
+        to = std::clamp(interp, minTo, maxTo);
+      }
+    }
+    out.push_back(WarpMarker{id, at, to});
+  }
+  normalizeWarp(out, fileSec);
+  return out;
 }
 
 Content addRegion(const Content& c, Range r, const std::string& name) {

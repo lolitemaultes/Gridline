@@ -59,7 +59,10 @@ bool lowTonal(const float* const* in, int nch, int64_t n, double sr) {
 
 LowTonalMeasure measureLowTonal(const float* const* in, int nch, int64_t n, double sr) {
   LowTonalMeasure res;
-  if (n <= 0 || nch <= 0 || sr <= 0) return res;
+  if (!in || n <= 0 || nch <= 0 || !std::isfinite(sr) || sr <= 0) return res;
+  for (int c = 0; c < nch; ++c)
+    if (!in[c]) return res;
+  sr = std::clamp(sr, 4000.0, 768000.0);
   // Close to mono: what differs between the channels would be cut along with the rest.
   if (nch == 2) {
     double mid = 0, side = 0;
@@ -121,7 +124,10 @@ LowTonalMeasure measureLowTonal(const float* const* in, int nch, int64_t n, doub
 
 void lowTonalStream(const float* const* in, int nch, int64_t n, float* const* out, int64_t len, double sr,
                     const std::function<double(int64_t)>& x, const std::function<void(int64_t)>* progress) {
-  if (len <= 0 || nch <= 0) return;
+  if (!in || !out || len <= 0 || n <= 0 || nch <= 0 || !std::isfinite(sr) || sr <= 0 || !x) return;
+  for (int c = 0; c < nch; ++c)
+    if (!in[c] || !out[c]) return;
+  sr = std::clamp(sr, 4000.0, 768000.0);
   const int hop = std::max(1, static_cast<int>(std::lround(kWindowSec * sr / kOverlap)));
   const int win = hop * kOverlap;
   const int dec = decimationFor(sr);
@@ -135,10 +141,15 @@ void lowTonalStream(const float* const* in, int nch, int64_t n, float* const* ou
   std::vector<float> hann(static_cast<size_t>(win));
   for (int i = 0; i < win; ++i) hann[static_cast<size_t>(i)] = 0.25f - 0.25f * static_cast<float>(std::cos(2 * kPi * i / win));
   // The map before frame 0 runs on at its starting rate (the audio that leads in).
-  const double x0 = x(0);
+  const double rawX0 = x(0);
+  const double x0 = std::isfinite(rawX0) ? rawX0 : 0.0;
   const auto probe = std::min<int64_t>(len, std::max<int64_t>(16, static_cast<int64_t>(0.01 * sr)));
-  const double r0 = std::max(1e-4, (x(probe) - x0) / static_cast<double>(probe));
-  const auto mapped = [&](int64_t q) { return q < 0 ? x0 + static_cast<double>(q) * r0 : x(q); };
+  const double rawXp = x(probe);
+  const double r0 = (std::isfinite(rawXp) && probe > 0) ? std::max(1e-4, (rawXp - x0) / static_cast<double>(probe)) : 1.0;
+  const auto mapped = [&](int64_t q) {
+    const double v = q < 0 ? x0 + static_cast<double>(q) * r0 : x(q);
+    return std::isfinite(v) ? std::clamp(v, -1.0e12, 1.0e12) : x0;
+  };
   std::vector<double> corr(static_cast<size_t>(2 * searchLow + 1));
   const int refineStep = std::max(1, win / 512);
   int64_t prev = 0;

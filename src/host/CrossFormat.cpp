@@ -376,8 +376,13 @@ void resolveProjectJson(Json& project, std::vector<std::string>* report) {
 std::string describe(const LoadNote& n) {
   const std::string name = n.name.empty() ? n.from : n.name;
   if (n.via == "missing") {
-    if (n.suggest.empty()) return name + " (" + formatLabelOf(n.from) + ") is not installed";
-    return name + " (" + formatLabelOf(n.from) + ") is not installed; a possible match needs your confirmation in its plugin window";
+    const MissingStatus ms = missingStatus(n.from);
+    std::string reason = "is not installed";
+    if (ms == MissingStatus::NotScannedYet) reason = "has not been scanned yet";
+    else if (ms == MissingStatus::Scanning) reason = "is waiting for the plugin scan";
+    else if (ms == MissingStatus::FormatDisabled) reason = "format is disabled in Plugin Manager";
+    if (n.suggest.empty()) return name + " (" + formatLabelOf(n.from) + ") " + reason;
+    return name + " (" + formatLabelOf(n.from) + ") " + reason + "; a possible match needs your confirmation in its plugin window";
   }
   std::string s = name + ": opened the " + formatLabelOf(n.to) + " version (the project used the " + formatLabelOf(n.from) + " version)";
   if (n.via == "state") s += "; its settings were carried over";

@@ -10,6 +10,7 @@
 //               selectors, 3 × 3 controller wheels, bottom bar).
 #include <cfloat>
 #include <map>
+#include "UrlImportUi.h"
 #include "../engine/EffectsHw.h"
 #include "../core/I18n.h"
 #include "../engine/Dsp.h"
@@ -77,10 +78,61 @@ void timeModeBox(App& a, const PluginTarget& t, ImVec2 tl, ImVec2 size, const sk
   if (ImGui::BeginPopup("##tmpop")) {
     for (int i = 0; i < n; ++i) {
       const stretch::Mode m = stretch::kChoices[i];
-      if (ImGui::MenuItem(i18n::tr(stretch::modeName(m)), nullptr, i == at) && i != at) a.doc.setParam(pid, static_cast<double>(m), false);
+      if (ImGui::MenuItem(i18n::tr(stretch::modeName(m)), nullptr, i == at)) a.doc.setParam(pid, static_cast<double>(m), false);
       ui::Tooltip(stretch::modeHint(m));
     }
     ImGui::EndPopup();
+  }
+  ImGui::PopID();
+}
+
+// K-431: source-BPM / tempo-lock drag readout inside Sampler's TIME STRETCHING panel.
+void fitTempoBox(App& a, const PluginTarget& t, ImVec2 tl, ImVec2 size, const skin::Skin& k, float font) {
+  const ParamId pid = t.pid(SmpFitTempo);
+  const auto val = getParam(a.doc.song(), pid);
+  if (!val) return;
+  double shown = *val;
+  if (shown <= 0.0 && t.isChannel()) {
+    for (const Clip& c : a.doc.song().playlist)
+      if (c.kind == ClipKind::Audio && c.source == t.owner && c.syncBpm > 0.0) {
+        shown = c.syncBpm;
+        break;
+      }
+  }
+  {
+    ImVec2 p1(tl.x + size.x, tl.y + size.y);
+    skin::placeKitFrame(tl, p1);
+    size = ImVec2(p1.x - tl.x, p1.y - tl.y);
+  }
+  ImGui::PushID("##fittempo");
+  ImGui::SetCursorScreenPos(tl);
+  ImGui::SetNextItemWidth(size.x);
+  const float fs = font > 0 ? font : std::clamp(size.y * 0.62f, 9.0f, 13.0f);
+  ImGui::PushFont(a.fontMono, fs);
+  ImGui::PushStyleColor(ImGuiCol_FrameBg, k.lcdBg);
+  ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, skin::lighten(k.lcdBg, 0.06f));
+  ImGui::PushStyleColor(ImGuiCol_FrameBgActive, skin::lighten(k.lcdBg, 0.10f));
+  ImGui::PushStyleColor(ImGuiCol_Border, skin::darken(k.panel, 0.6f));
+  ImGui::PushStyleColor(ImGuiCol_Text, shown > 0.0 ? k.lcdText : k.textDim);
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, std::max(1.0f, (size.y - fs) * 0.5f - 1.0f)));
+  float v = static_cast<float>(shown);
+  if (ImGui::DragFloat("##fit", &v, 0.5f, 0.0f, 1000.0f, shown > 0.0 ? i18n::tr("follows from %.1f BPM") : i18n::tr("fixed tempo"))) {
+    double nextBpm = std::clamp(static_cast<double>(v), 0.0, 1000.0);
+    if (shown <= 0.0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && nextBpm > 0.0 && nextBpm < 10.0)
+      nextBpm = std::clamp(a.doc.song().tempo, 20.0, 300.0);
+    a.doc.setParam(pid, nextBpm, true);
+  }
+  if (ImGui::IsItemDeactivated()) a.doc.endGesture();
+  if (ImGui::IsItemHovered())
+    a.setHint(i18n::tr("Set, the sample follows the tempo: a stretch keeps its beats at any tempo (0: fixed)"));
+  ImGui::PopStyleVar(3);
+  ImGui::PopStyleColor(5);
+  ImGui::PopFont();
+  if (shown > 0.0) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddCircleFilled(ImVec2(tl.x + size.x - 8.0f, tl.y + size.y * 0.5f), 2.5f, k.fill);
   }
   ImGui::PopID();
 }
@@ -328,6 +380,7 @@ void editorSamplerFl(App& a, const PluginTarget& t, float width) {
     timeModeBox(a, t, F.p(234, 156), F.sz(184, 18), K, lf(F, 8));
     w(SmpPitchShift, 256, 190, "PITCH", skin::WheelBigLine | skin::WheelCentered);
     w(SmpTimeStretch, 352, 190, "TIME");
+    fitTempoBox(a, t, F.p(234, 266), F.sz(184, 20), K, lf(F, 7.5f));
     // PROCESSING
     panelBox(dl, F, 432, 137, 242, 157, K, "PROCESSING");
     skin::check(a, t, SmpNormalize, F.p(440, 158), F.sz(110, 17), K, "NORMALIZE");
@@ -512,15 +565,11 @@ void editorGranularFl(App& a, const PluginTarget& t, float width) {
     a.doc.setParam(t.pid(GrPosition), std::clamp((ImGui::GetIO().MousePos.x - p0.x) / sw, 0.0f, 1.0f), true);
   if (ImGui::IsItemDeactivated()) a.doc.endGesture();
   if (ImGui::IsItemHovered()) a.setHint("Drag to set the grain position · drop an audio file to load");
+  if (skin::button("##gurl", F.p(336, 401), F.sz(22, 16), K, GL_ICON_LABEL("download", "URL"), false, lf(F, 8))) urlimportui::openForPlugin(a, t, 0);
+  if (ImGui::IsItemHovered()) a.setHint("Import from URL: a web link's audio as the grain source");
   if (skin::button("##gopen", F.p(362, 401), F.sz(22, 16), K, GL_ICON_LABEL("ellipsis", "..."), false, lf(F, 8))) {
     PluginTarget tt = t;
-    openSampleDialog(a, "Load sample", [&a, tt](const std::string& path) {
-      const PluginState* cur = tt.state(a.doc.song());
-      if (!cur) return;
-      PluginState ns = *cur;
-      ns.data = path;
-      setPluginState(a, tt, ns, "load sample");
-    });
+    openSampleDialog(a, "Load sample", [&a, tt](const std::string& path) { urlimportui::loadPluginSample(a, tt, path); });
   }
   if (ImGui::IsItemHovered()) a.setHint("Open an audio file");
   endForm(F, width, kH);

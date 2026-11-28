@@ -5,6 +5,7 @@
 // waveform with the start point and the load button; the channel volume
 // envelope row (the reference instrument's channel envelope) underneath.
 #include <filesystem>
+#include "../../app/UrlImportUi.h"
 #include "../../app/App.h"
 #include "metal_widgets.h"
 #include "../../core/I18n.h"
@@ -114,9 +115,13 @@ void drawGrainScan(App& a, const PluginTarget& t, float width) {
     const float s0 = prmf(st, GsStart, 0) / 4096.0f;
     const float x = w0.x + (w1.x - w0.x) * s0;
     dl->AddLine(ImVec2(x, w0.y), ImVec2(x, w1.y), K.accent2C(), 2);
-    std::string nm = st.data.empty() ? std::string("built-in phrase — drop a sample on the channel or load one") : std::filesystem::path(st.data).filename().string();
+    std::string nm = st.data.empty() ? std::string("built-in phrase: drop a sample on the channel or load one") : std::filesystem::path(st.data).filename().string();
+    dl->PushClipRect(F.p(12, 326), F.p(284, 344), true);
     skin::text(dl, F.p(12, 328), K.textDim, nm.c_str(), F.font(8));
+    dl->PopClipRect();
     PluginTarget tt = t;
+    if (flk::btn(c, "##url", 292, 326, 43, 18, "URL", false)) urlimportui::openForPlugin(a, t, 0);
+    if (ImGui::IsItemHovered()) a.setHint("Import from URL: a web link's audio to scan");
     if (flk::btn(c, "##load", 340, 326, 43, 18, "LOAD", false))
       openSampleDialog(a, "Load sample", [&a, tt](const std::string& p) { commitPath(a, tt, p); });
   }
@@ -131,6 +136,11 @@ void drawGrainScan(App& a, const PluginTarget& t, float width) {
   flk::wheel(c, GsRoot, 340, 448, 28, "Root");
   ImGui::PopID();
   F.end(kW, kH);
+}
+
+bool loadGrainScanAudio(App& a, const PluginTarget& t, const std::string& path) {
+  commitPath(a, t, path);
+  return true;
 }
 
 }  // namespace gl::packs::models::metal

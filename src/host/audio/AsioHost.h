@@ -17,6 +17,7 @@
 
 #include "AsioAbi.h"
 #include "AsioCore.h"
+#include "DeviceRender.h"
 
 namespace gl::asio {
 
@@ -124,7 +125,7 @@ std::unique_ptr<Driver> loadDriver(const DriverEntry& e, std::string* err);
 
 // Called on the driver's thread for every buffer: `in[k]` = engine input k (device input
 // plan.inputs[k]), `out[k]` = device output plan.outputs[k], each `frames` floats.
-using RenderFn = void (*)(void* user, const float* const* in, int numIn, float* const* out, int numOut, int frames);
+using RenderFn = gl::audio::RenderFn;
 
 struct Config {
   std::string driver;  // DriverEntry::name

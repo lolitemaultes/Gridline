@@ -388,11 +388,13 @@ bool resolveTarget(const Song& song, Program& prog, ParamId target, ProgLink& pl
         case ChannelParam::Pitch: pl.kind = ProgLink::ChanPitch; break;
         case ChannelParam::Mute: pl.kind = ProgLink::ChanMute; break;
         case ChannelParam::Sustain: pl.kind = ProgLink::ChanSustain; break;
+        case ChannelParam::Transpose: pl.kind = ProgLink::ChanTranspose; break;
         default: return false;
       }
       if (pl.kind == ProgLink::ChanSustain) pc.sustainMoves = true;
-      else if (pl.kind != ProgLink::ChanPitch) pc.stripLinked = true;
-      else pc.pitchMoves = true;
+      else if (pl.kind == ProgLink::ChanPitch) pc.pitchMoves = true;
+      else if (pl.kind == ProgLink::ChanTranspose) pc.transposeMoves = true;
+      else pc.stripLinked = true;
     }
   } else if (mi >= 0) {
     pl.mixer = mi;
@@ -457,6 +459,15 @@ bool resolveTarget(const Song& song, Program& prog, ParamId target, ProgLink& pl
     pl.kind = ProgLink::LfoSetting;
     pl.fx = li;
     pl.param = static_cast<int>(target.index);
+  } else if (target.owner == kSongId) {
+    // 0.7.9: live internal-controller links on song settings (tempo, swing, master pitch, groove accents).
+    switch (static_cast<SongParam>(target.index)) {
+      case SongParam::Tempo: pl.kind = ProgLink::SongTempo; prog.tempoLinked = true; break;
+      case SongParam::Swing: pl.kind = ProgLink::SongSwing; prog.swingLinked = true; break;
+      case SongParam::MasterPitch: pl.kind = ProgLink::SongMasterPitch; prog.masterPitchLinked = true; break;
+      case SongParam::GrooveAccent: pl.kind = ProgLink::SongGrooveAccent; prog.grooveAccentLinked = true; break;
+      default: return false;
+    }
   } else {
     return false;
   }
@@ -482,6 +493,7 @@ struct ClipRenderCtx {
 // ProgramBuilder::patchClipLevels writes into a playing Program.
 void setClipLevels(const ProgAudioClip& out, const Clip& c, const ClipFades* fades) {  // (the levels are mutable)
   out.gain = clipgain::playGain(c.gain);  // J-79: the bottom of FL's range is silence
+  out.pan = std::clamp(c.pan, -1.0f, 1.0f);  // K-414: per-clip stereo pan
   if (fades) {  // J-38: resolved fades (automatic crossfades, curve shapes, tension)
     out.fadeIn = fades->in.len, out.fadeOut = fades->out.len;
     out.shapeIn = fades->in.shape, out.shapeOut = fades->out.shape;
@@ -568,7 +580,7 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
   // The channel's own pitch (knob + fine + master pitch) is part of it; when
   // it moves at run time (automation), the realtime grains take over.
   if (rctx && out.end > out.start && out.srcEnd > out.srcStart) {
-    const double chanSemis = (static_cast<double>(ch.pitchCents) + static_cast<double>(ch.fine)) / 100.0 + song.masterPitch;
+    const double chanSemis = static_cast<double>(ch.transpose) + (static_cast<double>(ch.pitchCents) + static_cast<double>(ch.fine)) / 100.0 + song.masterPitch;
     const double chanRatio = std::pow(2.0, chanSemis / 12.0);
     // J-153: every stored stretch mode is the one stretch (J-157: or Rubber Band)
     stretch::Mode mode = stretchMode ? keepMode : stretch::Mode::Resample;
@@ -577,7 +589,10 @@ bool compileAudioClip(const Song& song, const Channel& ch, const Clip& c, const 
     rq.srcStart = out.srcStart, rq.srcEnd = out.srcEnd;
     rq.reverse = out.reverse;
     rq.rate = rctx->sampleRate;
-    rq.frames = static_cast<int64_t>(std::ceil(out.durSec * rctx->sampleRate)) + 2;
+    const double rawFrames = (std::isfinite(out.durSec) && out.durSec > 0 && std::isfinite(rctx->sampleRate) && rctx->sampleRate > 0)
+                                 ? std::ceil(out.durSec * rctx->sampleRate) + 2.0
+                                 : 0.0;
+    rq.frames = (rawFrames > 0.0 && rawFrames <= 1.0e12) ? static_cast<int64_t>(rawFrames) : 0;
     rq.atTick = static_cast<double>(out.start);
     bool need = false;
     if (out.resampleSync) {  // J-193: resampled through the tempo map (pitch follows the speed)
@@ -684,6 +699,24 @@ void sortEvents(std::vector<NoteEv>& v) {
   });
 }
 
+// GitHub #87: each 0% note gets the loudest velocity of the slide notes that start while it sounds
+// (its colour group, or any with slidesAnyColour), the level a slide can fade it in to. `v` is sorted.
+void markSlideVelRefs(std::vector<NoteEv>& v, bool anyColour) {
+  for (size_t i = 0; i < v.size(); ++i) {
+    NoteEv& e = v[i];
+    if ((e.flags & kNoteSlide) || e.velocity > 0) continue;
+    const double on = noteOnTick(e), off = noteOffTick(e);
+    float peak = 0;
+    for (size_t k = i + 1; k < v.size(); ++k) {
+      const NoteEv& s = v[k];
+      if (noteOnTick(s) >= off) break;
+      if ((s.flags & kNoteSlide) && noteOnTick(s) >= on && (anyColour || (s.props.color & 15) == (e.props.color & 15)))
+        peak = std::max(peak, s.velocity);
+    }
+    e.slideVelRef = std::clamp(peak, 0.0f, 1.0f);
+  }
+}
+
 // Sets a start / end tick with its fraction (J-138).
 void setOn(NoteEv& e, double t) {
   const double f = std::floor(t);
@@ -767,7 +800,7 @@ void addLayerNotes(const Song& song, const Pattern& p, const Channel& target, in
     if (pos == l.layer.end()) continue;
     std::vector<NoteEv> src = compileChannelNotes(song, p, l);
     addLayerNotes(song, p, l, depth + 1, src);
-    const float shift = (l.pitchCents + static_cast<float>(l.fine)) / 100.0f;
+    const float shift = static_cast<float>(l.transpose) + (l.pitchCents + static_cast<float>(l.fine)) / 100.0f;
     const size_t self = static_cast<size_t>(pos - l.layer.begin());
     if (l.layerRack()) {  // K-169: zones, fades, transpose, layer solo, cycle / no-repeat modes
       addRackNotes(song, l, self, shift, src, out);
@@ -833,6 +866,8 @@ namespace {
 // pattern clip's passes with the swing the automation has where each pass starts.
 thread_local double gSwingOverride = -1.0;
 thread_local double gAccentOverride = -1.0;  // the same for the groove's accents (< 0: SongGroove::accent)
+thread_local bool gLiveSwing = false;        // 0.7.9: SongParam::Swing driven live on the audio thread
+thread_local bool gLiveAccent = false;       // 0.7.9: SongParam::GrooveAccent driven live on the audio thread
 // K-255: the pass of a looping clip a pattern is compiled for (lanes that run on take their phase from it).
 thread_local int64_t gLanePass = 0;
 // K-152 (0.7.8): swing that moves inside a pass. The swing and groove accent (thousandths, the
@@ -892,13 +927,15 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
   if (auto lt = p.stepLoop.find(channel); lt != p.stepLoop.end() && lt->second > 0 && static_cast<size_t>(lt->second) < total)
     loop = static_cast<size_t>(lt->second);
   // Song swing x the channel's share (J-138: steps and piano-roll notes alike).
-  const double songSwing = gSwingOverride >= 0.0 ? gSwingOverride : static_cast<double>(song.swing);  // K-152
+  // 0.7.9: when an internal controller drives swing or groove accents live, keep straight positions
+  // / unaccented velocities here and tag eligible notes for realtime warping in AudioEngine::dispatch.
+  const double songSwing = gLiveSwing ? 0.0 : (gSwingOverride >= 0.0 ? gSwingOverride : static_cast<double>(song.swing));  // K-152
   const double swing = std::clamp(songSwing * static_cast<double>(c.swingMix), 0.0, 1.0);
   // K-151: the song's swing shape (the classic step swing unless a preset or the groove editor
   // changed it; that one places every step and note exactly as swingWarp does).
   PlaceWarp gw;
-  gw.one = groove::makeWarp(song, &p, song.groove.shape, swing,
-                            std::clamp((gAccentOverride >= 0.0 ? gAccentOverride : static_cast<double>(song.groove.accent)) * static_cast<double>(c.swingMix), 0.0, 1.0));
+  const double songAccent = gLiveAccent ? 0.0 : (gAccentOverride >= 0.0 ? gAccentOverride : static_cast<double>(song.groove.accent));
+  gw.one = groove::makeWarp(song, &p, song.groove.shape, swing, std::clamp(songAccent * static_cast<double>(c.swingMix), 0.0, 1.0));
   gw.active = gw.one.active, gw.accents = gw.one.accents;
   // K-152 (0.7.8): swing automation that moves inside the pass: each cycle of the groove plays with
   // the swing and accent the automation has where each of its cells starts.
@@ -965,6 +1002,7 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
           e.props.detune = static_cast<float>(sp.fine) / 100.0f;
         }
         accent(e, at);
+        if (gLiveAccent) e.flags |= kNoteSwingAccent;
         out.push_back(e);
         continue;
       }
@@ -979,6 +1017,8 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
         setOn(e, on);
         setOff(e, stepEnd(on));
         accent(e, static_cast<double>(grid));
+        if (gLiveSwing) e.flags |= kNoteSwingTiming;
+        if (gLiveAccent) e.flags |= kNoteSwingAccent;
         out.push_back(e);
         continue;
       }
@@ -996,6 +1036,8 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       e.props.modY = sp.modY == kNoteModCentre ? 0.5f : static_cast<float>(sp.modY) / static_cast<float>(kNoteModMax + 1);
       e.props.detune = static_cast<float>(sp.fine) / 100.0f;  // J-180: the step keeps its key
       accent(e, static_cast<double>(grid));
+      if (gLiveSwing) e.flags |= kNoteSwingTiming;
+      if (gLiveAccent) e.flags |= kNoteSwingAccent;
       out.push_back(e);
     }
   }
@@ -1043,6 +1085,10 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
       if (n.modX == kNoteModCentre) e.props.modX = 0.5f;
       if (n.modY == kNoteModCentre) e.props.modY = 0.5f;
       e.flags = static_cast<uint8_t>((n.slide ? kNoteSlide : 0) | (n.porta ? kNotePorta : 0));
+      if (asStep || song.swingNotes) {
+        if (gLiveSwing && stepTicks > 0) e.flags |= kNoteSwingTiming;
+        if (gLiveAccent) e.flags |= kNoteSwingAccent;
+      }
       e.program = static_cast<int16_t>(n.program);  // K-348
       if (!n.slide) e.vib = n.vib;  // K-262: the note's vibrato rides its pitch line
       if (!n.bend.empty() && !n.slide) {  // K-25: slide notes glide other notes, they have no line of their own
@@ -1120,6 +1166,7 @@ std::vector<NoteEv> compileChannelNotes(const Song& song, const Pattern& p, cons
     for (auto& e : out) e.on += d, e.off += d;
   }
   sortEvents(out);
+  if (song.slidesVelocity) markSlideVelRefs(out, song.slidesAnyColour);
   return out;
 }
 
@@ -1171,6 +1218,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   prog->masterPitch = song.masterPitch;
   prog->ppq = song.ppq;
   prog->slidesAnyColour = song.slidesAnyColour;  // K-5
+  prog->slidesVelocity = song.slidesVelocity;    // GitHub #87
   prog->barTicks = song.barTicks();
   prog->beatTicks = song.beatTicks();
   prog->meter.build(song);
@@ -1187,12 +1235,15 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       for (const auto& es : m.slots) prog->meterReaders = prog->meterReaders || reads(es.plugin);
   }
   prog->songEnd = song.lengthTicks();
+  // K-415: Song mode end follows an explicit Project End marker when placed, otherwise the last clip
+  // rounded up to whole bars. Offline export reads prog->songEnd and is unaffected.
+  const Tick loopTarget = song.projectEnd > 0 ? song.projectEnd : prog->songEnd;
   Tick bar = std::max<Tick>(1, prog->barTicks);
-  prog->songLoopEnd = std::max(bar, (prog->songEnd + bar - 1) / bar * bar);
+  prog->songLoopEnd = std::max(bar, (loopTarget + bar - 1) / bar * bar);
   if (!prog->meter.constant()) {  // K-179: rounded up to a bar line of the meter map
     const MeterMap& mm = prog->meter;
-    const Tick b = mm.barStartAt(prog->songEnd);
-    prog->songLoopEnd = std::max(mm.nextBar(0), b == prog->songEnd ? b : mm.nextBar(prog->songEnd));
+    const Tick b = mm.barStartAt(loopTarget);
+    prog->songLoopEnd = std::max(mm.nextBar(0), b == loopTarget ? b : mm.nextBar(loopTarget));
   }
   {  // J-85: marker actions (FL's marker skip / pause / marker loop, Gridline's stop; FL's loop marker)
     std::vector<Tick> at;
@@ -1522,10 +1573,15 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     pc.volume = pc.modVolume = c.gain;
     pc.pan = pc.modPan = c.pan;
     pc.muted = pc.modMuted = c.muted;
-    pc.pitchCents = c.pitchCents;
+    pc.pitchCents = pc.pitchCentsLive = c.pitchCents;
+    pc.transpose = pc.transposeLive = c.transpose;
+    pc.hosted = isHostedType(c.plugin.type);
     pc.bendRange = c.bendRange;
+    pc.finePitch = static_cast<float>(c.fine) / 100.0f;
+    pc.swingMix = c.swingMix;
+    pc.swingTruncate = c.swingTruncate;
     pc.masterPitch = song.masterPitch + static_cast<float>(c.fine) / 100.0f;
-    pc.pitchOffset = pc.pitchTarget = (c.pitchCents + static_cast<float>(c.fine)) / 100.0f + song.masterPitch;
+    pc.pitchOffset = pc.pitchTarget = static_cast<float>(c.transpose) + (c.pitchCents + static_cast<float>(c.fine)) / 100.0f + song.masterPitch;
     int mi = song.mixerIndex(c.mixerTrack);
     pc.mixer = mi >= 0 ? mi : prog->master;
     for (ObjectId t : c.auxOuts) pc.auxMixer.push_back(t == kNoId ? -1 : song.mixerIndex(t));
@@ -1583,9 +1639,12 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
       pc.frozen = fz->second;
       pc.restable = false;
       pc.pitchOffset = pc.pitchTarget = 0;
-      pc.pitchCents = 0;
+      pc.pitchCents = pc.pitchCentsLive = 0;
+      pc.transpose = pc.transposeLive = 0;
+      pc.finePitch = 0;
       pc.masterPitch = 0;
       pc.pitchMoves = false;
+      pc.transposeMoves = false;
       if (pc.rt->gen) pc.rt->gen->setClipOnly(true);
     }
     pc.unloaded = unloadedChannels_.count(c.id) > 0;  // K-87
@@ -1688,11 +1747,12 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     }
     pl.output = std::clamp(ml.sourceOutput, 0, kMaxControllerOutputs - 1);
     ParamId target{ml.owner, ml.index};
-    if (!resolveTarget(song, *prog, target, pl)) continue;  // song parameters are not modulated
+    if (!resolveTarget(song, *prog, target, pl)) continue;
     pl.min = ml.min;
     pl.max = ml.max;
     pl.smoothMs = ml.smoothMs;
     pl.curve = ml.curve;
+    pl.invert = ml.invert;
     if (ml.curve == ModCurve::Formula && !pl.formula.compile(ml.formula.empty() ? "input" : ml.formula, {"input", "base", "t", "beat"}))
       pl.curve = ModCurve::Linear;  // invalid formula: plain mapping
     uint64_t key = target.packed();
@@ -1704,6 +1764,18 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   compileLfoPass(song, *prog, linkRts, lfoLinkRts);
   lfos_ = std::move(lfoRts);
   lfoLinks_ = std::move(lfoLinkRts);
+  // 0.7.9: initialise live song-parameter state (zero allocation on the audio thread).
+  prog->modTempo = song.tempo;
+  prog->modMasterPitch = song.masterPitch;
+  prog->modSwing = song.swing;
+  prog->modGrooveAccent = song.groove.accent;
+  if (prog->masterPitchLinked) {
+    for (ProgChannel& pc : prog->channels)
+      if (!pc.frozen) pc.pitchMoves = true;
+  }
+  if (prog->swingLinked || prog->grooveAccentLinked) {
+    prog->liveGroove = groove::makeWarp(song, nullptr, song.groove.shape, 1.0, 1.0);
+  }
   // --- PH-09: host macros (plugin build) ---
   prog->macros.assign(std::min(macroTargets_.size(), static_cast<size_t>(kHostMacros)), ProgMacro{});
   for (size_t k = 0; k < macroTargets_.size() && k < static_cast<size_t>(kHostMacros); ++k) {
@@ -1811,6 +1883,13 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     }
 
   // --- patterns (pattern mode) and song events ---
+  // 0.7.9: when an internal controller drives SongParam::Swing or SongParam::GrooveAccent live,
+  // compile straight timing / unaccented velocities and tag eligible notes for audio-thread warping.
+  gLiveSwing = prog->swingLinked;
+  gLiveAccent = prog->grooveAccentLinked;
+  struct LiveGrooveGuard {
+    ~LiveGrooveGuard() { gLiveSwing = gLiveAccent = false; }
+  } liveGrooveGuard;
   for (const auto& p : song.patterns) {
     ProgPattern pp;
     pp.id = p.id;
@@ -1825,7 +1904,7 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
   const std::vector<ClipFades> clipFades = resolveAllFades(song, prog->tempoMap);  // J-38
   bool deferred = false;  // J-196: some clip's render waits for the edit to settle
   // K-152: the song's swing and groove accent automation (song mode), if any: pattern clips follow
-  // them pass by pass.
+  // them pass by pass (skipped for a setting driven live by an internal controller).
   std::vector<AutomationLane> songLanes;
   const AutomationLane* swingLane = nullptr;
   const AutomationLane* accentLane = nullptr;
@@ -1833,8 +1912,8 @@ std::shared_ptr<const Program> ProgramBuilder::build(const Song& song) {
     if (am.owner == kSongId && (am.index == static_cast<uint32_t>(SongParam::Swing) || am.index == static_cast<uint32_t>(SongParam::GrooveAccent))) {
       songLanes = automationLanes(song);
       for (const auto& l : songLanes) {
-        if (l.targets(kSongId, static_cast<uint32_t>(SongParam::Swing))) swingLane = &l;
-        if (l.targets(kSongId, static_cast<uint32_t>(SongParam::GrooveAccent))) accentLane = &l;
+        if (!prog->swingLinked && l.targets(kSongId, static_cast<uint32_t>(SongParam::Swing))) swingLane = &l;
+        if (!prog->grooveAccentLinked && l.targets(kSongId, static_cast<uint32_t>(SongParam::GrooveAccent))) accentLane = &l;
       }
       break;
     }

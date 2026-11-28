@@ -141,3 +141,44 @@ and the other rows' steps as ghost notes. In the Tracker's pattern editor a row 
 its steps on the nearest row, marked with ~, and a track loop is drawn as a line with the rows after
 it dimmed; **Ctrl+Alt+L** sets the loop of the cursor's track at the cursor row (again on that row
 removes it).
+
+## Writing a sequencer's notes into the pattern
+
+Two commands turn what a channel's sequencers play into ordinary notes in the current pattern, so
+you can edit them in the piano roll:
+
+- **Bake note effects into the pattern** plays the channel's notes and steps through its note
+  effects (the arpeggiator, chords, the note sequencer, note scripts) and writes what comes out.
+  Steps go in where they play, with their own key, fine pitch and shift. The note effects are then
+  removed, so the pattern sounds the same.
+- **Write the sequence to the piano roll** is for instruments with a sequencer of their own (Acid
+  Bass, Step Bass, Plasma). It plays one pass of the pattern, writes every note the sequence plays
+  (accents as full velocity, slides as overlapping notes), then switches the instrument's sequencer
+  off. When Plasma's arpeggiator and clip player are both on, a small menu asks which one to write,
+  so no note is written twice: **The arpeggiator's notes** writes what you hear and switches both
+  off; **The clip player's notes** writes the clip and switches only the clip player off, so the
+  arpeggiator goes on playing the written notes.
+
+Both are in the channel's menu under **Steps**, in the plugin window's menu (in every layout,
+including the instrument's menu in Clips), and in the piano roll's **Tools** menu. Each is one undo
+step and reaches everyone in a collaboration session.
+
+### An installed plugin's MIDI output
+
+Arpeggiator, sequencer and chord plugins send notes on their MIDI output. Two commands in the
+plugin window's menu (every layout, including the instrument's menu in Clips) and the channel's
+**Steps** menu turn those notes into a pattern:
+
+- **Write its MIDI output to the piano roll** plays one pass of the current pattern without sound
+  and writes every note the plugin sends into a new pattern.
+- **Record this plugin's MIDI output into a pattern** starts the transport (if it is not playing)
+  and records the notes the plugin sends while it plays, also when you change its settings as it
+  goes. Stop the transport (or choose **Stop recording its MIDI output**) to keep them in a new
+  pattern. In pattern mode every loop pass records over the same bars; a note is kept once.
+
+The new pattern is named after the channel. Its notes are for the channel that plays what the
+plugin sends: the first channel listening on the plugin's MIDI output port, or the plugin's own
+channel when nothing listens. The plugin and the pattern you played stay as they are, so turn the
+plugin's own sequencer off before you play the new pattern. Each command is one undo step and
+reaches everyone in a collaboration session. Built-in instruments with a sequencer of their own
+(Acid Bass, Step Bass, Plasma) can be recorded the same way.

@@ -2947,4 +2947,27 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   return true;
 }
 
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path, int subTarget) {
+  const PluginInfo* info = t.info(a.doc.song());
+  if (!info || info->type != kType) return false;
+  ui::editState(a, t, "Import from URL", [&](PluginState& st, Model& m) {
+    auto& d = m.osc[0];
+    if (subTarget == 1) {
+      d.table = "file:" + path;
+      d.tableName = ui::fs_stem(path);
+      d.frames.clear();
+      st.params[static_cast<size_t>(oscP(0, O_Table))] = 0;
+    } else {
+      d.sample = path;
+      if (static_cast<int>(std::lround(st.params[static_cast<size_t>(oscP(0, O_Type))])) == OscWavetable) {
+        d.table = "file:" + path;
+        d.tableName = ui::fs_stem(path);
+        d.frames.clear();
+        st.params[static_cast<size_t>(oscP(0, O_Table))] = 0;
+      }
+    }
+  });
+  return true;
+}
+
 }  // namespace gl::packs::plasma

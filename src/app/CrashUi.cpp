@@ -1,5 +1,6 @@
 // Gridline: the crash pop-up and the project's recovery copies (see core/Crash.h).
 #include "CrashUi.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include <algorithm>
 #include <atomic>
@@ -225,6 +226,8 @@ struct CopyState {
   bool recovering = false;
   App* app = nullptr;
   double testSeconds = 0;  // tests: seconds between copies
+  // K-432 (GL-8006CE18): safe teardown on unexpected exit() when crashui::shutdown() was skipped.
+  ~CopyState() { gl::threads::safeJoin(writer); }
 };
 CopyState gCopy;
 
@@ -253,7 +256,7 @@ bool rescueSave(const char* path) {
 }
 
 void joinWriter() {
-  if (gCopy.writer.joinable()) gCopy.writer.join();
+  gl::threads::safeJoin(gCopy.writer);
 }
 
 // ---- pop-ups in the app ----

@@ -487,6 +487,7 @@ struct Note {
   double pitch = 60, glideFrom = 60, glideTarget = 60, glideLeft = 0, glideTotal = 0;
   bool glideLinear = false;  // K-144: a host glide (slide note, bend line): straight, not on the porta curve
   float vel = 0.8f, relVel = 0.5f;
+  VoiceVel vv;  // GitHub #87: a slide note's velocity glide (1 without one)
   NoteProps props;
   uint64_t age = 0;
   int index = 0;
@@ -642,6 +643,7 @@ class PlasmaGen final : public Generator {
     for (auto& n : notes_)
       if (n.active && n.id == id) startGlide(n, pitch, seconds), n.glideLinear = true;
   }
+  bool perVoiceVelocity() const override { return true; }  // GitHub #87: each note's own level
   // K-144: the wheel bends through the instrument's own range (never twice).
   bool handlesPitchBend() const override { return true; }
   void onMidi(uint8_t status, uint8_t d1, uint8_t d2) override {
@@ -761,6 +763,15 @@ class PlasmaGen final : public Generator {
     else viewLeft_ = std::max(0, viewLeft_ - n);
     const bool viewed = viewLeft_ > 0;
     viewed_ = viewed;
+    for (auto& nt : notes_)  // GitHub #87: each note's velocity glide, from this render's first sample
+      if (nt.active) {
+        const uint32_t seq = nt.vv.seq;
+        velVoice(nt.vv, nt.id);
+        if (nt.vv.seq != seq && os_ > 1) {  // the voices run oversampled: the ramp in their samples
+          nt.vv.left *= os_, nt.vv.delay *= os_;
+          nt.vv.step /= os_;
+        }
+      }
     // control periods on an absolute grid: the result does not depend on the host block size
     for (int pos = 0; pos < n;) {
       const bool grid = ctlLeft_ <= 0;
@@ -2271,7 +2282,7 @@ class PlasmaGen final : public Generator {
       }
       // amp: ENV 1 x amp, steal fade, smoothed per sample
       n.ampPrev += (ampTarget - n.ampPrev) * ampSlew;
-      float g0 = n.ampPrev;
+      float g0 = n.ampPrev * n.vv.next();  // GitHub #87 (exactly 1 without a velocity glide)
       if (n.stealing) {
         n.fade -= n.fadeStep;
         if (n.fade <= 0) {
@@ -2372,7 +2383,7 @@ class PlasmaGen final : public Generator {
       }
       for (int i = 0; i < clipSeq_.n; ++i) {
         const SeqNote& e = clipSeq_.ev[i];
-        if (midiOut >= 1) midi(e);
+        if (midiOut == 1 || midiOut == 2) midi(e);  // Clip Player, Synth
         if (arpOn) {
           if (e.on) arp_.noteOn(e.key, e.vel);
           else arp_.noteOff(e.key);
@@ -2388,7 +2399,7 @@ class PlasmaGen final : public Generator {
       for (int i = 0; i < 14; ++i) offs[i] = GV(G_ArpRate + i);
       arp_.run(s, offs, m, sr_, tempo_, beat_, playing_, G(G_Swing), static_cast<int>(G(G_SwingDiv)), scaleBuf_, static_cast<int>(G(G_Key)), seqOut_);
       live_.arpStep.store(arp_.step(), std::memory_order_relaxed);
-      if (midiOut == 2)
+      if (midiOut == 2 || midiOut == 3)  // Synth, Arpeggiator (K-438: its notes only)
         for (int i = 0; i < seqOut_.n; ++i) midi(seqOut_.ev[i]);
     }
     flushSeq(seqOut_);

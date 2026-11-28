@@ -1,5 +1,6 @@
 // Gridline — J-80: FL Studio export job, progress and report windows (see FlpExportUi.h).
 #include "FlpExportUi.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include "Keys.h"
 #include "../core/Crash.h"
@@ -51,7 +52,7 @@ struct Job {
   std::function<void(bool)> done;
   ~Job() {
     cancel = true;
-    if (worker.joinable()) worker.join();
+    gl::threads::safeJoin(worker);
   }
 } job;
 

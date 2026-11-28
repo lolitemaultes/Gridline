@@ -4,6 +4,7 @@
 //   Scratch Sampler: sample + region · move curve editor + mute lane +
 //                    vertical waveform · move keyboard · playback/shape panels
 #include <algorithm>
+#include "../../core/PluginBrand.h"
 #include "../../core/ThreadName.h"
 #include <bitset>
 #include <cctype>
@@ -25,6 +26,7 @@
 #include "../../app/KeyGlide.h"
 #include "../../app/PluginSkin.h"
 #include "../../app/Theme.h"
+#include "../../app/UrlImportUi.h"
 #include "../../app/Widgets.h"
 #include "../../engine/RegionActivity.h"
 #include "../../engine/Sample.h"
@@ -234,18 +236,23 @@ void zoneMenu(App& a, const PluginTarget& t, ZoneMap& m, MsEd& ed, int i) {
       a.notify("No note name in this file name");
     }
   }
-  if (ImGui::MenuItem(i18n::tr("Replace sample..."))) {
-    PluginTarget tt = t;
-    int zi = i;
-    openDialog(a, "Replace sample", kAudioExts, [&a, tt, zi](const std::string& p) {
-      const PluginState* cur = tt.state(a.doc.song());
+  {
+    const PluginTarget tt = t;
+    const int zi = i;
+    auto replace = [tt, zi](App& app, const std::string& p) {
+      const PluginState* cur = tt.state(app.doc.song());
       if (!cur) return;
       ZoneMap mm = currentMap(*cur);
       if (zi >= static_cast<int>(mm.zones.size())) return;
       mm.zones[static_cast<size_t>(zi)].path = p;
       mm.zones[static_cast<size_t>(zi)].name.clear();
-      commitMap(a, tt, mm, "replace sample");
-    });
+      commitMap(app, tt, mm, "replace sample");
+    };
+    if (ImGui::MenuItem(i18n::tr("Replace sample...")))
+      openDialog(a, "Replace sample", kAudioExts, [&a, replace](const std::string& p) { replace(a, p); });
+    if (ImGui::MenuItem(i18n::tr("Replace from URL...")))
+      urlimportui::openFor(a, urlimportui::Target{std::string(pluginDisplayName("gl.multisampler")) + " (" + i18n::tr("Zone") + " " + std::to_string(zi + 1) + ")",
+                                                  [replace](App& app, const std::string& p, const std::string&) { replace(app, p); }, false});
   }
 }
 
@@ -889,6 +896,8 @@ void editorDirectWave(App& a, const PluginTarget& t, float width) {
     bool am = ed.autoMapOnAdd;
     openDialog(a, "Add sample", kAudioExts, [&a, tt, am](const std::string& p) { addFiles(a, tt, {p}, false, am); });
   }
+  if (iskin::button(k, "##dwurl", 199, 13, 38, 18, "URL", false, 8.5f)) urlimportui::openForPlugin(a, t, 0);
+  if (ImGui::IsItemHovered()) a.setHint("Import from URL: a web link's audio added as a zone (each item of a playlist as its own zone)");
   if (iskin::button(k, "##dwfolder", 53, 13, 56, 18, "FOLDER", false, 8.5f)) {
     openDialog(a, "Load folder of samples", {"/"}, [&a, tt](const std::string& dir) {
       std::vector<std::string> files;
@@ -928,7 +937,7 @@ void editorDirectWave(App& a, const PluginTarget& t, float width) {
     else if (!m.sfzPath.empty()) title = fs::u8path(m.sfzPath).stem().u8string() + "  (SFZ)";
     else if (!m.sf2Path.empty()) title = m.sf2Name + "  (" + fs::path(m.sf2Path).filename().string() + ")";
     else title = std::to_string(m.zones.size()) + (m.zones.size() == 1 ? " zone" : " zones");
-    iskin::lcd(k, 201, 13, 208, 18, title.c_str(), k.c.lcdBg, k.c.lcdText, 9);
+    iskin::lcd(k, 241, 13, 168, 18, title.c_str(), k.c.lcdBg, k.c.lcdText, 9);
     if (blank) iskin::digi(a, t, k, MsFactorySet, 415, 13, 100, 18, {}, 8.5f);
     if (!m.sf2Path.empty()) {
       auto f = loadSf2(m.sf2Path);
@@ -946,10 +955,10 @@ void editorDirectWave(App& a, const PluginTarget& t, float width) {
       if (iskin::button(k, "##sfn", 439, 13, 22, 18, GL_ICON_LABEL("chevron-right", ">"), false, 9)) pick(cur + 1);
       // K-279: the patch drop-down: a click on the name opens the file's whole patch list.
       if (f && !f->presets.empty()) {
-        ImGui::SetCursorScreenPos(k.at(201, 13));
-        if (ImGui::InvisibleButton("##sf2list", ImVec2(k.px(208), k.px(18)))) ImGui::OpenPopup("##sf2pop");
+        ImGui::SetCursorScreenPos(k.at(241, 13));
+        if (ImGui::InvisibleButton("##sf2list", ImVec2(k.px(168), k.px(18)))) ImGui::OpenPopup("##sf2pop");
         if (ImGui::IsItemHovered()) {
-          ImGui::GetWindowDrawList()->AddRect(k.at(201, 13), k.at(409, 31), theme::withAlpha(k.c.text, 0.45f), 2);
+          ImGui::GetWindowDrawList()->AddRect(k.at(241, 13), k.at(409, 31), theme::withAlpha(k.c.text, 0.45f), 2);
           ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
           a.setHint("Click: choose a patch of this SoundFont from its list");
         }
@@ -1235,6 +1244,9 @@ void editorScratch(App& a, const PluginTarget& t, float width) {
       commitScratch(a, tt, dd, "load sample");
     });
   }
+  ImGui::SameLine(0, 4);
+  if (ui::TextButton("From URL...", false, 0, "Import from URL: a web link's audio to scratch"))
+    urlimportui::openForPlugin(a, t, 0);
   ImGui::SameLine(0, 6);
   ImGui::PushFont(a.fontMono, 10.5f);
   ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 3);
@@ -1446,6 +1458,24 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
   }
   if (st->type == kPatchPlayerType) {
     drawPatchPlayerEditor(a, t, width);
+    return true;
+  }
+  return false;
+}
+
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path, int /*subTarget*/) {
+  const PluginState* st = t.state(a.doc.song());
+  if (!st) return false;
+  if (st->type == "gl.multisampler") {
+    MsEd& ed = gMs[t.key()];
+    addFiles(a, t, {path}, false, ed.autoMapOnAdd);
+    return true;
+  }
+  if (st->type == "gl.scratch") {
+    ScratchData dd = parseScratch(st->data);
+    dd.path = path;
+    if (!resolveSample(path)) a.notify("Cannot decode " + path, true);
+    commitScratch(a, t, dd, "import sample from URL");
     return true;
   }
   return false;

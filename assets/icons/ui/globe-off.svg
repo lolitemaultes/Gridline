@@ -1,0 +1,9 @@
+<!-- Gridline original (GPL-3.0), drawn on the Lucide 24-unit grid and stroke rules: a globe struck through (a plugin kept off the internet). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M7.2 4.4A9 9 0 0 1 19.6 16.8" />
+  <path d="M5.6 6.1A9 9 0 0 0 17.9 18.4" />
+  <path d="M3 12h9" />
+  <path d="M10.3 4.1C9 6.4 8 9 8 12c0 3.4 1.4 6.5 4 9" />
+  <path d="M14.2 3.6c1.2 1.7 1.8 3.4 1.8 5.4" />
+  <path d="m3 3 18 18" />
+</svg>

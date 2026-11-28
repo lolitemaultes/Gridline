@@ -20,6 +20,7 @@
 #include "HostedPlugins.h"
 #include "PluginScan.h"
 #include "sandbox/Sandbox.h"
+#include "ui/NativeView.h"
 
 namespace fs = std::filesystem;
 
@@ -397,7 +398,9 @@ int childMain(const std::string& format, const std::string& entry, const std::st
     std::string d;
     const char* status = "pass";
     for (int round = 0; round < 2; ++round) {
+      native::installX11SafetyHandlers();
       std::unique_ptr<Editor> e = b->createEditor();
+      native::installX11SafetyHandlers();
       if (!e) {
         status = "fail";
         d = "createEditor failed (round " + std::to_string(round + 1) + ")";
@@ -412,7 +415,9 @@ int childMain(const std::string& format, const std::string& entry, const std::st
         d = "no offscreen window on this platform";
         break;
       }
-      if (!e->attach(parent)) {
+      const bool attached = e->attach(parent);
+      native::installX11SafetyHandlers();
+      if (!attached) {
         status = "fail";
         d = "attach failed";
         closeOffscreenEditorParent();

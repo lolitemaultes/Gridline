@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include "UrlImportUi.h"
 #include "../core/I18n.h"
 #include "../core/PluginBrand.h"
 #include "../core/PluginParams.h"
@@ -236,11 +237,14 @@ void editorTrio(App& a, const PluginTarget& t, float width) {
     bool anyCustom = ed::ival(st, SynOsc1Shape) == 7 || ed::ival(st, SynOsc2Shape) == 7 || ed::ival(st, SynOsc3Shape) == 7;
     std::string nm = st.data.empty() ? "(no sample)" : std::filesystem::path(st.data).filename().string();
     iskin::text(k, 286, 356, 130, 12, anyCustom ? "CUSTOM WAVE" : "CUSTOM WAVE (unused)", 9, k.c.textDim, 0, false, true);
-    if (iskin::button(k, "##cwave", 286, 368, 130, 16, nm.c_str(), false, 9) && t.isChannel())
-      chooseSample(a, "Custom wave sample", st.data, [&a, owner = t.owner](const std::string& p) {
-        a.doc.editChannel(owner, "load custom wave", [&](Channel& c) { c.plugin.data = p; });
-      });
+    if (iskin::button(k, "##cwave", 286, 368, 106, 16, nm.c_str(), false, 9) && t.isChannel()) {
+      const PluginTarget tt = t;
+      chooseSample(a, "Custom wave sample", st.data, [&a, tt](const std::string& p) { urlimportui::loadPluginSample(a, tt, p); });
+    }
     if (ImGui::IsItemHovered()) a.setHint("Custom-wave oscillators play one cycle of this sample (click to load)");
+    if (iskin::button(k, "##cwurl", 400, 368, 16, 16, "", false) && t.isChannel()) urlimportui::openForPlugin(a, t, 0);
+    if (ImGui::IsItemHovered()) a.setHint("Import from URL: a web link's audio as the custom wave");
+    ui::drawIconFitC(k.dl(), ui::Icon::Download, k.at(408, 376), ImVec2(k.px(10), k.px(10)), k.c.textDim);
   }
   // Title block (Gridline's own name).
   if (!pui::titleWordmarkIn(k.dl(), "gl.synth", k.at(424, 303), k.at(424 + 129, 303 + 50), k.px(32), 2, rgb(0x7D888E)))  // J-136: the wordmark

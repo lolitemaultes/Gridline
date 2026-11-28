@@ -20,12 +20,16 @@
 #include "../core/MediaTools.h"
 #include "../core/Platform.h"
 #include "../core/PluginInfo.h"
+#include "../core/PluginParams.h"
 #include "../core/Settings.h"
 #include "../core/UrlImport.h"
 #include "../engine/ClipOps.h"
 #include "../engine/Sample.h"
+#include "../engine/Slicing.h"
 #include "../host/net/Http.h"
+#include "../packs/PacksUi.h"
 #include "App.h"
+#include "BrowserUi.h"
 #include "CollabUi.h"
 #include "DevSignal.h"
 #include "DialogLayout.h"
@@ -99,6 +103,12 @@ struct State {
   // Settings: Reinstall the tools
   std::shared_ptr<SetupJob> reinstall;
   std::string reinstallStatus;
+  // K-408: optional plugin target ("Load into <plugin>" vs clip / browser)
+  Target target;
+  int targetPlace = 0;  // 0 = Load into plugin, 1 = Clip on a new track, 2 = Browser only
+  // K-408: last focused audio-loading plugin (for Ctrl+Shift+U while plugin window has focus)
+  PluginTarget focusedPlugin;
+  int focusedFrame = -10;
   // dev
   std::string fakeTool;  // GRIDLINE_URLIMPORT_FAKE_NET: offline tool setup (screenshots, tests)
   int fakeStepMs = 0;
@@ -508,7 +518,33 @@ void finishImport(App& a, const std::vector<ul::Result>& results) {
   }
   fs::remove_all(fs::u8path(S().workDir) / "items", ec);
   if (placed.empty()) return;
-  const bool clips = static_cast<int>(a.settings.getNumber("import.urlPlacement")) == 0;
+  State& st = S();
+  // K-408: when targeted at a plugin and "Load into <plugin>" is chosen, pass the imported WAV
+  // straight into that plugin's native load path (preserving auto-chop, deck selection, undo,
+  // collab file sharing via Imported/ and the sidecar .source.json metadata).
+  if (st.target.load && st.targetPlace == 0) {
+    for (const auto& p : placed) sampleCache().get(p.path);
+    // The plugin's own load path, as its Load button and a dropped file use it; everything it
+    // changes (several files, a renamed channel) is one undo step.
+    const std::string what = std::string(tr("Import from URL")) + (st.target.label.empty() ? "" : ": " + st.target.label);
+    a.doc.beginGroup(what);
+    if (st.target.multiFile) {
+      for (const auto& p : placed) st.target.load(a, p.path, p.name);
+    } else {
+      st.target.load(a, placed.front().path, placed.front().name);
+    }
+    a.doc.endGroup();
+    a.syncEngine();
+    const std::string first = fs::u8path(placed.front().path).filename().u8string();
+    const std::string tgt = st.target.label.empty() ? std::string(tr("plugin")) : st.target.label;
+    if (placed.size() == 1 || !st.target.multiFile)
+      a.notify("Imported " + first + " into " + tgt, false, placed.front().path);
+    else
+      a.notify("Imported " + std::to_string(placed.size()) + " files into " + tgt, false, dir);
+    a.uiSound(uisound::Event::Import);
+    return;
+  }
+  const bool clips = st.target.load ? (st.targetPlace == 1) : (static_cast<int>(a.settings.getNumber("import.urlPlacement")) == 0);
   // A collaborative project shares only the files the project refers to: "browser only" still
   // adds a channel for each file (no clip), so the file joins the project audio for everyone.
   const bool channels = clips || collabui::active(a);
@@ -702,8 +738,13 @@ void urlRow(App& a, bool enabled) {
 void drawEntry(App& a) {
   State& s = S();
   const auto& P = pal();
-  title(a, tr("Import from URL"));
-  wrapped(tr("A link to a video or audio page (most video and music sites). Its best audio is imported as a lossless WAV."), P.textDim);
+  const std::string heading = s.target.load && !s.target.label.empty()
+                                  ? std::string(tr("Import from URL")) + "  \xC2\xB7  " + s.target.label
+                                  : std::string(tr("Import from URL"));
+  title(a, heading.c_str());
+  wrapped(s.target.load ? tr("A link to a video or audio page. Its best audio is imported as a lossless WAV and loaded directly into this plugin.")
+                        : tr("A link to a video or audio page (most video and music sites). Its best audio is imported as a lossless WAV."),
+          P.textDim);
   ImGui::Dummy(ImVec2(0, theme::kS2));
   urlRow(a, true);
   if (!s.urlHint.empty()) wrapped(s.urlHint, P.danger);
@@ -808,7 +849,10 @@ void formLabel(const char* t, float col) {
 void drawPreview(App& a) {
   State& s = S();
   const auto& P = pal();
-  title(a, tr("Import from URL"));
+  const std::string heading = s.target.load && !s.target.label.empty()
+                                  ? std::string(tr("Import from URL")) + "  \xC2\xB7  " + s.target.label
+                                  : std::string(tr("Import from URL"));
+  title(a, heading.c_str());
   ImGui::Dummy(ImVec2(0, theme::kS2));
   urlRow(a, true);
   if (s.screen != Screen::Preview) return;  // Fetch again was pressed
@@ -821,12 +865,22 @@ void drawPreview(App& a) {
   const float col = ImGui::GetCursorPosX() + ui::FormColumn(labels, 3, 72, 140);
   // Where it goes.
   formLabel("Place", col);
-  int place = std::clamp(static_cast<int>(a.settings.getNumber("import.urlPlacement")), 0, 1);
-  const char* places[] = {i18n::N_("Clip on a new track"), i18n::N_("Browser only")};
-  const char* placeHints[] = {i18n::N_("An audio clip on a new playlist track at the playhead, and the file in the browser"),
-                              collabui::active(a) ? i18n::N_("No clip: the file joins the shared project audio as a channel")
-                                                  : i18n::N_("Only the file, in the browser's Imported folder")};
-  if (ui::Segmented("##place", places, 2, &place, 150, 0, placeHints)) a.settings.set("import.urlPlacement", place);
+  if (s.target.load) {
+    const std::string plugLabel = s.target.label.empty() ? std::string(tr("This plugin")) : s.target.label;
+    const char* places[] = {plugLabel.c_str(), i18n::N_("Clip on a new track"), i18n::N_("Browser only")};
+    const char* placeHints[] = {i18n::N_("Load the imported WAV straight into this plugin, keeping its file in the project's Imported folder"),
+                                i18n::N_("An audio clip on a new playlist track at the playhead, and the file in the browser"),
+                                collabui::active(a) ? i18n::N_("No clip: the file joins the shared project audio as a channel")
+                                                    : i18n::N_("Only the file, in the browser's Imported folder")};
+    ui::Segmented("##place", places, 3, &s.targetPlace, 120, 0, placeHints);
+  } else {
+    int place = std::clamp(static_cast<int>(a.settings.getNumber("import.urlPlacement")), 0, 1);
+    const char* places[] = {i18n::N_("Clip on a new track"), i18n::N_("Browser only")};
+    const char* placeHints[] = {i18n::N_("An audio clip on a new playlist track at the playhead, and the file in the browser"),
+                                collabui::active(a) ? i18n::N_("No clip: the file joins the shared project audio as a channel")
+                                                    : i18n::N_("Only the file, in the browser's Imported folder")};
+    if (ui::Segmented("##place", places, 2, &place, 150, 0, placeHints)) a.settings.set("import.urlPlacement", place);
+  }
   if (s.info.playlist) {
     formLabel("Items", col);
     const char* modes[] = {i18n::N_("First item"), i18n::N_("Choose items")};
@@ -1023,11 +1077,17 @@ std::string importedDir(const App& a) {
   return (fs::u8path(a.configDir()) / "Imported").u8string();
 }
 
-void open(App& a) {
+void openFor(App& a, Target target) {
   State& s = S();
   (void)a;
   readEnv();
-  if (s.screen != Screen::Closed) {  // already open: just focus the field
+  if (s.screen == Screen::Importing || s.screen == Screen::Fetching || s.screen == Screen::Setup) {
+    s.focusUrl = true;  // a job is running: it keeps the destination it started with
+    return;
+  }
+  s.target = std::move(target);
+  s.targetPlace = 0;
+  if (s.screen != Screen::Closed) {  // already open: update target and focus the field
     s.focusUrl = true;
     return;
   }
@@ -1047,6 +1107,122 @@ void open(App& a) {
   devsig::forget("urlimport-setup");
   devsig::forget("urlimport-cancelled");
   devsig::forget("urlimport-settled");
+}
+
+void open(App& a) { openFor(a, Target{}); }
+
+const std::vector<std::string>& audioLoadingPluginTypes() {
+  static const std::vector<std::string> kTypes = {
+      "gl.sampler",       // Sampler
+      "gl.slicer",        // Kerf
+      "gl.granular",      // Granular
+      "gl.pads",          // Abacus
+      "gl.synth",         // Tercet (custom wave)
+      "gl.seltmann",      // Seltmann
+      "gl.platter",       // Platter (Deck A / Deck B)
+      "gl.edison",        // Loupe
+      "gl.convolver",     // Convolver
+      "gl.turntablefx",   // Turntable (effect)
+      "gl.turntable",     // Turntable (legacy instrument)
+      "gl.grainscan",     // Grain Scanner
+      "gl.splinescratch", // Spline Scratch
+      "gl.multisampler",  // Multisampler
+      "gl.scratch",       // Scratch Sampler
+      "gl.tracker",       // Tracker Sampler
+      "gl.plasma",        // Plasma (sample / wavetable / IR)
+      "gl.harmor",        // Halftone (resynthesis)
+      "gl.additive",      // Facet (single-cycle analysis)
+  };
+  return kTypes;
+}
+
+bool pluginLoadsAudio(const std::string& type) {
+  const auto& types = audioLoadingPluginTypes();
+  return std::find(types.begin(), types.end(), type) != types.end();
+}
+
+std::string pluginAudioPath(const PluginState& st) {
+  if (st.data.empty()) return "";
+  // Most plugins store the audio path on line 0 of PluginState::data (or the whole string).
+  const size_t nl = st.data.find('\n');
+  std::string line = nl == std::string::npos ? st.data : st.data.substr(0, nl);
+  while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+  if (line.empty()) return "";
+  // Strip key/tag prefixes used by structured plugin data (e.g. Convolver, Scratch, Platter).
+  if (line.rfind("file:", 0) == 0) line = line.substr(5);
+  std::error_code ec;
+  if (fs::is_regular_file(fs::u8path(line), ec)) return line;
+  // Scan remaining lines for a path pointing to an imported WAV with a sidecar source file.
+  size_t pos = nl == std::string::npos ? st.data.size() : nl + 1;
+  while (pos < st.data.size()) {
+    const size_t next = st.data.find('\n', pos);
+    std::string sub = st.data.substr(pos, next == std::string::npos ? std::string::npos : next - pos);
+    while (!sub.empty() && (sub.back() == '\r' || sub.back() == ' ')) sub.pop_back();
+    const size_t eq = sub.find('=');
+    if (eq != std::string::npos) sub = sub.substr(eq + 1);
+    const size_t tab = sub.find('\t');
+    if (tab != std::string::npos) sub = sub.substr(0, tab);
+    if (sub.rfind("file:", 0) == 0) sub = sub.substr(5);
+    if (!sub.empty() && fs::is_regular_file(fs::u8path(sub), ec)) return sub;
+    if (next == std::string::npos) break;
+    pos = next + 1;
+  }
+  return "";
+}
+
+bool openForPlugin(App& a, const PluginTarget& t, int subTarget) {
+  const PluginInfo* info = t.info(a.doc.song());
+  if (!info || !pluginLoadsAudio(info->type)) return false;
+  const std::string type = info->type;
+  Target tgt;
+  tgt.label = info->name;
+  if (type == "gl.platter") tgt.label += subTarget == 1 ? std::string(" (") + tr("Deck B") + ")" : std::string(" (") + tr("Deck A") + ")";
+  if (type == "gl.plasma") tgt.label += subTarget == 1 ? std::string(" (") + tr("Wavetable") + ")" : std::string(" (") + tr("Layer 1") + ")";
+  tgt.multiFile = (type == "gl.tracker" || type == "gl.multisampler");
+  const PluginTarget tt = t;
+  // Every type goes through the function its editor's Load button and a dropped file use, with
+  // the editor's current choice (pad and layer, part, deck, entry).
+  tgt.load = [tt, type, subTarget](App& app, const std::string& wavPath, const std::string& title) {
+    if (packs::loadAudioIntoPlugin(app, tt, wavPath, title, subTarget)) return;
+    if (!tt.state(app.doc.song())) return;
+    if (type == "gl.sampler") {
+      if (tt.isChannel()) browserui::loadChannelSample(app, tt.owner, wavPath, "load sample");  // as a drop on the channel
+    } else if (type == "gl.pads") {
+      padsLoadSample(app, tt, wavPath);  // the selected pad and layer, as the editor's Load button
+    } else {
+      loadPluginSample(app, tt, wavPath);  // Kerf, Granular, Tercet: the file is the plugin's data
+    }
+  };
+  openFor(a, std::move(tgt));
+  return true;
+}
+
+void loadPluginSample(App& a, const PluginTarget& t, const std::string& path) {
+  const PluginState* cur = t.state(a.doc.song());
+  if (!cur) return;
+  const char* what = cur->type == "gl.slicer" ? "load loop" : cur->type == "gl.synth" ? "load custom wave" : "load sample";
+  PluginState ns = *cur;
+  ns.data = path;
+  setPluginState(a, t, ns, what);
+}
+
+void openForNewSampler(App& a) {
+  openFor(a, Target{tr("New sampler"), [](App& app, const std::string& p, const std::string&) { app.showNewInstrument(app.addInstrument("gl.sampler", p)); },
+                    true});
+}
+
+void noteFocusedPlugin(const PluginTarget& t) {
+  State& s = S();
+  s.focusedPlugin = t;
+  s.focusedFrame = ImGui::GetFrameCount();
+}
+
+bool openForFocusedPlugin(App& a) {
+  State& s = S();
+  if (ImGui::GetFrameCount() - s.focusedFrame <= 2) {
+    if (openForPlugin(a, s.focusedPlugin, 0)) return true;
+  }
+  return false;
 }
 
 void draw(App& a) {
@@ -1213,6 +1389,27 @@ void shutdown() {
 
 void start(bool automated) { S().automated = automated; }
 
+namespace {
+// A plugin named in a dev script: a channel's index, "sel" (the selected one), "open" (its window is open) or "last", "-1-slot" for the master's slots, or
+// "m<track>.<slot>" for a mixer track's slot.
+PluginTarget devTarget(App& a, const std::string& spec) {
+  const Song& sg = a.doc.song();
+  if (!spec.empty() && spec[0] == 'm') {
+    const size_t dot = spec.find('.');
+    const int track = std::atoi(spec.c_str() + 1), slot = dot == std::string::npos ? 0 : std::atoi(spec.c_str() + dot + 1);
+    if (track >= 0 && static_cast<size_t>(track) < sg.mixer.size()) return PluginTarget{sg.mixer[static_cast<size_t>(track)].id, slot};
+    return PluginTarget{};
+  }
+  if (spec == "open") return sg.channel(a.settingsChannel) ? PluginTarget{a.settingsChannel, -1} : PluginTarget{};
+  if (spec == "sel") return sg.channel(a.selChannel) ? PluginTarget{a.selChannel, -1} : PluginTarget{};
+  if (spec == "last") return sg.channels.empty() ? PluginTarget{} : PluginTarget{sg.channels.back().id, -1};
+  const int idx = std::atoi(spec.c_str());
+  if (idx >= 0 && static_cast<size_t>(idx) < sg.channels.size()) return PluginTarget{sg.channels[static_cast<size_t>(idx)].id, -1};
+  if (idx < 0 && !sg.mixer.empty()) return PluginTarget{sg.masterId(), -1 - idx};
+  return PluginTarget{};
+}
+}  // namespace
+
 void devCommand(App& a, const std::vector<std::string>& args) {
   State& s = S();
   s.automated = true;
@@ -1221,6 +1418,23 @@ void devCommand(App& a, const std::vector<std::string>& args) {
   const std::string arg = args.size() > 1 ? args[1] : std::string();
   if (cmd == "open") {
     open(a);
+  } else if (cmd == "forplugin") {
+    const int sub = args.size() > 2 ? std::atoi(args[2].c_str()) : 0;
+    const PluginTarget t = devTarget(a, args.size() > 1 ? args[1] : "0");
+    if (t.owner != kNoId) openForPlugin(a, t, sub);
+  } else if (cmd == "newsampler") {  // the Add menu's "Audio from URL as sampler..."
+    openForNewSampler(a);
+  } else if (cmd == "has" && args.size() > 2) {  // has <plugin> <text>: how often the plugin's data holds the text (tests)
+    const Song& sg = a.doc.song();
+    const PluginTarget t = devTarget(a, args[1]);
+    const PluginState* st = t.state(sg);
+    int n = 0;
+    if (st)
+      for (size_t at = st->data.find(args[2]); at != std::string::npos; at = st->data.find(args[2], at + 1)) ++n;
+    const Channel* ch = t.isChannel() ? sg.channel(t.owner) : nullptr;
+    std::printf("urlimport has %s: %d type %s undo %zu \"%s\" name \"%s\" channels %zu text \"%s\"\n", args[1].c_str(), n, st ? st->type.c_str() : "-",
+                a.doc.history().position(), a.doc.history().undoLabel().c_str(), ch ? ch->name.c_str() : "", sg.channels.size(), args[2].c_str());
+    std::fflush(stdout);
   } else if (cmd == "clipboard") {
     s.devClipboard = arg;
     s.devClipboardSet = true;
@@ -1238,7 +1452,9 @@ void devCommand(App& a, const std::vector<std::string>& args) {
     stopJobs();
     s.screen = Screen::Closed;
   } else if (cmd == "placement") {
-    a.settings.set("import.urlPlacement", arg == "browser" ? 1 : 0);
+    if (arg == "plugin") s.targetPlace = 0;
+    else if (arg == "browser") s.targetPlace = 2, a.settings.set("import.urlPlacement", 1);
+    else s.targetPlace = 1, a.settings.set("import.urlPlacement", 0);
   } else if (cmd == "playlist") {
     s.playlistMode = arg == "all" ? 1 : 0;
     std::fill(s.picked.begin(), s.picked.end(), 1);
@@ -1256,10 +1472,10 @@ void devCommand(App& a, const std::vector<std::string>& args) {
     std::fflush(stdout);
   } else if (cmd == "state") {
     static const char* names[] = {"closed", "entry", "setup", "fetching", "preview", "importing", "error"};
-    std::printf("urlimport state %s url \"%s\" title \"%s\" items %d yt-dlp %s ffmpeg %s error \"%s\" lead \"%s\" tools \"%s\"\n",
+    std::printf("urlimport state %s url \"%s\" title \"%s\" items %d yt-dlp %s ffmpeg %s error \"%s\" lead \"%s\" tools \"%s\" target \"%s\"\n",
                 names[static_cast<int>(s.screen)], s.url, s.info.title.c_str(), static_cast<int>(s.info.entries.size()),
                 mt::fromName(s.yt.from), mt::fromName(s.ff.from), s.error.c_str(), s.lead.c_str(),
-                (s.reinstallStatus.empty() ? s.updStatus : s.reinstallStatus).c_str());
+                (s.reinstallStatus.empty() ? s.updStatus : s.reinstallStatus).c_str(), s.target.load ? s.target.label.c_str() : "");
     std::fflush(stdout);
   }
 }

@@ -47,6 +47,8 @@ struct ExportSettings {
   std::string mixerFolder = "Mixer tracks";
   std::string playlistFolder = "Playlist tracks";
   std::string groupsFolder = "Track groups";
+  // K-406: which arrangement to export (-1 = current, >= 0 = arrangement index, -2 = all arrangements).
+  int arrangement = -1;
 };
 
 struct ExportOutcome {

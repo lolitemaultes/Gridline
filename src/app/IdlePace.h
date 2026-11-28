@@ -91,4 +91,10 @@ inline bool editorInUse(bool foreign, bool shown, bool pointerOver, bool keyboar
   return shown && (pointerOver || keyboard);
 }
 
+// 0.7.9 (TASKS.md:1441): SDL >= 2.0.16 falls back to a 1 ms busy-poll loop inside
+// SDL_WaitEventTimeout whenever SDL_JoystickEventState is SDL_ENABLE. Pause joystick event
+// polling across the kernel wait whenever nothing is shown or no joystick is connected (restored
+// before SDL_PumpEvents so hotplug and 4 Hz hidden controller polling still work).
+inline bool suppressJoystickWait(bool shown, int numJoysticks) { return !shown || numJoysticks <= 0; }
+
 }  // namespace gl::idlepace

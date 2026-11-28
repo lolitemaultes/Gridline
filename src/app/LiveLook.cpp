@@ -1,4 +1,5 @@
 // Gridline - the Live layout's own chrome (K-112 phase C). See LiveLook.h.
+#include "PluginIcons.h"
 #include "LiveLook.h"
 #include "AutomationEditor.h"
 #include "LiveGrid.h"
@@ -1955,11 +1956,12 @@ void transportFrame(App& a) {
         }
       }
       const MeterMap mm(s);
-      end = last > org ? (mm.barStartAt(last) == last ? last : mm.nextBar(last)) : 0;
+      const Tick target = s.projectEnd > org ? s.projectEnd : last;
+      end = target > org ? (mm.barStartAt(target) == target ? target : mm.nextBar(target)) : 0;
     }
-    // Checkpoint 57 (N56-05): it plays on past its end in silence, as the reference does (Loop on loops
-    // the brace); never into the clip grid (the start above).
-    a.engine.setArrangement(clips ? arrangementOrigin(a) : 0, clips ? end : 0, false);
+    // K-415: Clips Arrangement wraps at its end back to arrangement start (or stops when transport.stopAtEnd is on),
+    // never playing infinite silence and never wrapping into the clip grid.
+    a.engine.setArrangement(clips ? arrangementOrigin(a) : 0, clips ? end : 0, a.settings.getBool("transport.stopAtEnd"));
     a.engine.setSessionOverArrangement(clips);  // grid-1118: the clip grid plays over the arrangement
     if (clips) pendingLaunchFrame(a);
   }
@@ -2655,8 +2657,10 @@ HeaderPart drawHeaderBody(App& a, ImDrawList* dl, const HeaderDraw& h) {
   const bool autoArm = midiT && !armed && trackArmed(a, h.track);  // N47-10: the selected MIDI track, armed by itself
   if (!group && ctl) {  // checkpoint 52 (N51-11): a group records nothing (no arm, as in the grid)
     square(dl, c.arm, armed ? theme::withAlpha(P.arm, 0.85f) : autoArm ? theme::withAlpha(P.arm, 0.45f) : P.surface900, (audio || midiT) && h.hovered && c.arm.contains(m));
-    const ImVec2 ac((c.arm.a.x + c.arm.b.x) * 0.5f, (c.arm.a.y + c.arm.b.y) * 0.5f);
-    dl->AddCircleFilled(ac, std::min(3.5f, (c.arm.b.y - c.arm.a.y) * 0.25f), armed || autoArm ? theme::contrastText(P.arm) : audio || midiT ? P.text : theme::withAlpha(P.textDim, 0.45f), 12);  // K-112c (round 19): a neutral dot until armed (142, 157, 143)
+    const ImVec2 ac(std::round((c.arm.a.x + c.arm.b.x) * 0.5f), std::round((c.arm.a.y + c.arm.b.y) * 0.5f));
+    const float sz = std::min(7.5f, (c.arm.b.y - c.arm.a.y) * 0.52f);
+    ui::drawIconFitC(dl, ui::Icon::Record, ac, ImVec2(sz, sz),
+                     armed || autoArm ? theme::contrastText(P.arm) : audio || midiT ? P.text : theme::withAlpha(P.textDim, 0.45f));
   }
   // Volume (the linked mixer track's fader) or, while the grid plays a clip here, Back to arrangement.
   const bool hasVol = c.vol.b.x > c.vol.a.x;  // HDR-1118: a one-row header shows no volume (Back only)
@@ -2715,14 +2719,8 @@ HeaderPart drawHeaderBody(App& a, ImDrawList* dl, const HeaderDraw& h) {
   if (group) {
     const ImU32 fi = theme::withAlpha(ink, onFold ? 1.0f : 0.8f);
     // HDR-1118: the ring the size of the controls' line (inside a row too short for controls)
-    const float fr = std::min(6.5f, (ctl ? c.act.b.y - c.act.a.y : th) * 0.5f - 1.0f);
-    dl->AddCircle(ImVec2(fcx, fcy), fr, fi, 20, 1.2f);
-    const float u = fr / 6.5f;
-    if (t.folded) {
-      dl->AddTriangleFilled(ImVec2(fcx - 1.5f * u, fcy - 3 * u), ImVec2(fcx - 1.5f * u, fcy + 3 * u), ImVec2(fcx + 2.5f * u, fcy), fi);
-    } else {
-      dl->AddTriangleFilled(ImVec2(fcx - 3 * u, fcy - 1.5f * u), ImVec2(fcx + 3 * u, fcy - 1.5f * u), ImVec2(fcx, fcy + 2.5f * u), fi);
-    }
+    const float fs = std::min(13.0f, (ctl ? c.act.b.y - c.act.a.y : th) - 2.0f);
+    ui::drawIconFitC(dl, t.folded ? ui::Icon::CircleCaretRight : ui::Icon::CircleCaretDown, ImVec2(std::round(fcx), std::round(fcy)), ImVec2(fs, fs), fi);
   }
   if (!h.hovered) return HeaderPart::None;
   if (onFold) return HeaderPart::Fold;
@@ -3635,7 +3633,13 @@ void drawCard(App& a, ImDrawList* dl, BandPick& pick, const Device& d, ImVec2 p,
     }
     if (!d.target.isChannel()) dropOnInsert(a, d.target.owner, d.target.slot);
     const float fs = theme::kFontCaption;
-    const std::string nm = fitText(a.fontBold, fs, d.name, h - 50);
+    // K-450: a built-in device's own icon under the fold arrow, the name reading up below it.
+    float iconRoom = 0;
+    if (d.info && ui::drawPluginIcon(dl, d.info->type, ImVec2(p.x + w * 0.5f, p.y + 47), 14, ui::PluginIconSurface::DeviceBand, d.enabled ? 1.0f : 0.45f))
+      iconRoom = 20;
+    else if (d.info)
+      ui::notePluginIconFallback(d.info->type, ui::PluginIconSurface::DeviceBand);
+    const std::string nm = fitText(a.fontBold, fs, d.name, h - 50 - iconRoom);
     upwardText(dl, a.fontBold, fs, ImVec2(std::round(p.x + (w - fs) * 0.5f), p1.y - 8), d.enabled ? P.text : P.textDim, nm);
     if (selected) dl->AddRect(p, p1, P.hot, theme::kRadiusLg, 1.5f, 0);
     return;
@@ -3751,8 +3755,15 @@ void drawCard(App& a, ImDrawList* dl, BandPick& pick, const Device& d, ImVec2 p,
   const float fs = theme::kFontCaption + 1;
   const float ty = theme::textTop(a.fontBold, fs, p.y, kCardTitleH);
   dl->PushClipRect(ImVec2(nameX, p.y), ImVec2(nameX + nameW, p.y + kCardTitleH), true);
+  // K-450: a built-in device's own icon before its name.
+  float iconW = 0;
+  if (d.info && nameW > 40 &&
+      ui::drawPluginIcon(dl, d.info->type, ImVec2(nameX + 8, p.y + kCardTitleH * 0.5f), 14, ui::PluginIconSurface::DeviceBand, d.enabled ? 1.0f : 0.45f))
+    iconW = 22;
+  else if (d.info)
+    ui::notePluginIconFallback(d.info->type, ui::PluginIconSurface::DeviceBand);
   // (a long name ends in an ellipsis clear of the buttons after it, not cut through a letter)
-  dl->AddText(a.fontBold, fs, ImVec2(nameX + 1, ty), d.enabled ? P.text : P.textDim, fitText(a.fontBold, fs, d.name, nameW - 6).c_str());
+  dl->AddText(a.fontBold, fs, ImVec2(nameX + 1 + iconW, ty), d.enabled ? P.text : P.textDim, fitText(a.fontBold, fs, d.name, nameW - 6 - iconW).c_str());
   dl->PopClipRect();
   if (selected) dl->AddRect(p, p1, P.hot, theme::kRadiusLg, 1.5f, 0);
   const ImVec2 b0(p.x + kCardPad, p.y + kCardTitleH + 4);
@@ -6066,11 +6077,23 @@ std::vector<int> tracksFor(App& a, int track) {
 void deleteTracks(App& a, int track) {
   const std::vector<int> sel = tracksFor(a, track);
   a.later([&a, sel] {
-    std::string why;
-    if (trackmodes::deleteTracks(a.doc, sel, &why) <= 0) return a.notify(i18n::tr(why.empty() ? "Select the tracks to delete" : why.c_str()));
-    const int n = trackmodes::usedTrackCount(a.doc.song());
-    a.playlist.trackSel = {std::clamp(sel.empty() ? 0 : sel.front(), 0, std::max(0, n - 1))};
-    gSel = {};
+    auto run = [&a, sel] {
+      std::string why;
+      if (trackmodes::deleteTracks(a.doc, sel, &why) <= 0) return a.notify(i18n::tr(why.empty() ? "Select the tracks to delete" : why.c_str()));
+      const int n = trackmodes::usedTrackCount(a.doc.song());
+      a.playlist.trackSel = {std::clamp(sel.empty() ? 0 : sel.front(), 0, std::max(0, n - 1))};
+      gSel = {};
+    };
+    if (sel.size() > 1) {
+      a.confirm = {};
+      a.confirm.open = true;
+      a.confirm.title = std::string(i18n::tr("Delete ")) + std::to_string(sel.size()) + " " + i18n::tr("tracks") + "?";
+      a.confirm.subtitle = i18n::tr("Their clips and unused instruments are removed. Undo brings them back.");
+      a.confirm.okLabel = i18n::N_("Delete");
+      a.confirm.action = std::move(run);
+    } else {
+      run();
+    }
   });
 }
 void duplicateTracks(App& a, int track, bool withContent) {
@@ -6549,7 +6572,9 @@ void sessionStrip(App& a, ImDrawList* dl, const StripRow& g, int t, const MixerT
     const bool autoArm = midiT && !handArm && trackArmed(a, t);
     if (handArm) armed = true;  // N47-10: a MIDI track's own arm
     if (fitArm) square(dl, cr, armed ? theme::withAlpha(P.arm, 0.85f) : autoArm ? theme::withAlpha(P.arm, 0.45f) : P.surface900, (audio || midiT) && hovAny && cr.contains(m));
-    if (fitArm) dl->AddCircleFilled(ImVec2((cr.a.x + cr.b.x) * 0.5f, (cr.a.y + cr.b.y) * 0.5f), 3.5f, armed || autoArm ? theme::contrastText(P.arm) : audio ? P.text : theme::withAlpha(P.textDim, 0.45f), 12);  // K-112c (round 19): a neutral dot until armed (142, 157, 143)
+    if (fitArm)
+      ui::drawIconFitC(dl, ui::Icon::Record, ImVec2(std::round((cr.a.x + cr.b.x) * 0.5f), std::round((cr.a.y + cr.b.y) * 0.5f)), ImVec2(7.0f, 7.0f),
+                       armed || autoArm ? theme::contrastText(P.arm) : audio ? P.text : theme::withAlpha(P.textDim, 0.45f));
     ImGui::SetCursorScreenPos(ca.a);
     if (ImGui::InvisibleButton("##act", ImVec2(ca.b.x - ca.a.x, ca.b.y - ca.a.y))) clickHeader(a, t, HeaderPart::Activator, false);
     ui::Hint(headerHint(HeaderPart::Activator));
@@ -6724,9 +6749,7 @@ void drawClipGrid(App& a) {
       const float fx = x + w - 16, cy = std::round((y0 + yT1) * 0.5f);
       const ImU32 ink = theme::withAlpha(theme::contrastText(tc), onFold ? 1.0f : 0.8f);
       // A ringed fold button (149, 172): pointing right while folded, down while open.
-      dl->AddCircle(ImVec2(fx + 7.5f, cy), 6.5f, ink, 20, 1.2f);
-      if (tr.gridFolded) dl->AddTriangleFilled(ImVec2(fx + 6, cy - 3), ImVec2(fx + 6, cy + 3), ImVec2(fx + 10, cy), ink);
-      else dl->AddTriangleFilled(ImVec2(fx + 4.5f, cy - 1.5f), ImVec2(fx + 10.5f, cy - 1.5f), ImVec2(fx + 7.5f, cy + 2.5f), ink);
+      ui::drawIconFitC(dl, tr.gridFolded ? ui::Icon::CircleCaretRight : ui::Icon::CircleCaretDown, ImVec2(std::round(fx + 7.5f), cy), ImVec2(13.0f, 13.0f), ink);
     }
     ImGui::SetCursorScreenPos(ImVec2(x, y0));
     if (gRenTrack == t) {  // checkpoint 49: Rename: the title is a name field until Enter, Escape or a click away
@@ -6838,7 +6861,7 @@ void drawClipGrid(App& a) {
           ui::Hint(onButton ? "Launch: plays the group's clips in this scene (its tracks with an empty slot stop)" : "Group slot: the clips of the group's tracks in this scene");
         } else {
           dl->AddRectFilled(q0, q1, hov ? P.surface700 : P.surface800, 0.0f);
-          dl->AddRectFilled(ImVec2(q0.x + 6, cyy - 3), ImVec2(q0.x + 12, cyy + 3), hov && onButton ? P.text : hov ? P.textDim : P.textFaint);
+          ui::drawIconFitC(dl, ui::Icon::Stop, ImVec2(std::round(q0.x + 9.0f), cyy), ImVec2(7.0f, 7.0f), hov && onButton ? P.text : hov ? P.textDim : P.textFaint);
           ui::Hint(onButton ? "Stop: stops the group's tracks" : "Group slot: none of the group's tracks has a clip in this scene");
         }
         if (gSel.t == t && gSel.k == k) dl->AddRect(q0, q1, P.text, 0.0f, 0, 1.5f);  // S11: the selected (keyboard) slot
@@ -6933,7 +6956,7 @@ void drawClipGrid(App& a) {
         if (on || waiting || recording)  // the green reads on any clip colour
           dl->AddRectFilled(ImVec2(q0.x + 2.0f, q0.y + 2.0f), ImVec2(q0.x + 16.0f, q1.y - 2.0f), theme::mix(fill, IM_COL32(0, 0, 0, 255), 0.55f));
         if (recording)  // a recording clip's button is the record dot, as the reference's
-          dl->AddCircleFilled(ImVec2(q0.x + 9.0f, cyy), 4.0f, P.arm, 16);
+          ui::drawIconFitC(dl, ui::Icon::Record, ImVec2(std::round(q0.x + 9.0f), std::round(cyy)), ImVec2(8.0f, 8.0f), P.arm);
         else
           ui::drawIconFit(dl, ui::Icon::Play, ImVec2(q0.x + 6, cyy - 4.5f), ImVec2(q0.x + 13, cyy + 4.5f), triCol);
         dl->AddLine(ImVec2(q0.x + 16.5f, q0.y), ImVec2(q0.x + 16.5f, q1.y), theme::withAlpha(IM_COL32(16, 18, 22, 255), 0.35f));
@@ -6942,9 +6965,7 @@ void drawClipGrid(App& a) {
         const bool follows = c.launchSet.follow.on;  // grid2-1118: a clip with follow actions has a mark at its right end
         theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(q0.x + 19, theme::textTop(a.fontRegular, theme::kFontCaption, cyy, 0)), w - (follows ? 36 : 24), ink, lbl.c_str());
         if (follows) {
-          const float fx = std::round(q1.x - 13), fy = std::round(cyy);
-          dl->AddTriangleFilled(ImVec2(fx, fy - 4), ImVec2(fx + 7, fy), ImVec2(fx, fy + 4), theme::withAlpha(ink, 0.75f));
-          dl->AddLine(ImVec2(fx - 3, fy - 4), ImVec2(fx - 3, fy + 4), theme::withAlpha(ink, 0.75f), 1.5f);
+          ui::drawIconFitC(dl, ui::Icon::FollowAction, ImVec2(std::round(q1.x - 11.0f), std::round(cyy)), ImVec2(10.0f, 9.0f), theme::withAlpha(ink, 0.75f));
         }
         ui::Hint(onButton && recording ? "Recording: click to stop recording (the clip plays on)"
                  : onButton            ? "Launch: plays the clip at the track's launch grid (Enter launches the selected slot)"
@@ -6980,7 +7001,7 @@ void drawClipGrid(App& a) {
           dl->AddRect(ImVec2(q0.x + ri, q0.y + ri), ImVec2(q1.x - ri, q1.y - ri), P.arm, 0.0f, 0, 2.0f);
           const float ry = std::round((q0.y + q1.y) * 0.5f);
           dl->AddRectFilled(ImVec2(q0.x + 2.0f, q0.y + 2.0f), ImVec2(q0.x + 16.0f, q1.y - 2.0f), theme::mix(theme::content(tr.color), IM_COL32(0, 0, 0, 255), 0.55f));
-          dl->AddCircleFilled(ImVec2(q0.x + 9.0f, ry), 4.0f, P.arm, 16);
+          ui::drawIconFitC(dl, ui::Icon::Record, ImVec2(std::round(q0.x + 9.0f), ry), ImVec2(8.0f, 8.0f), P.arm);
           theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(q0.x + 19, theme::textTop(a.fontRegular, theme::kFontCaption, ry, 0)), w - 24,
                               theme::contrastText(theme::content(tr.color)), i18n::tr("Recording"));
           ImGui::PopID();
@@ -6993,9 +7014,9 @@ void drawClipGrid(App& a) {
         const float cyy = std::round((q0.y + q1.y) * 0.5f);
         // The stop square on the launch triangle's centre line (both centred 9 px in), so they line up down a column.
         if (recButton) {
-          dl->AddCircleFilled(ImVec2(q0.x + 9.0f, cyy), 3.5f, hov && onButton ? P.arm : theme::withAlpha(P.arm, hov ? 0.7f : 0.45f), 16);
+          ui::drawIconFitC(dl, ui::Icon::Record, ImVec2(std::round(q0.x + 9.0f), cyy), ImVec2(7.5f, 7.5f), hov && onButton ? P.arm : theme::withAlpha(P.arm, hov ? 0.7f : 0.45f));
         } else if (stopButton) {
-          dl->AddRectFilled(ImVec2(q0.x + 6, cyy - 3), ImVec2(q0.x + 12, cyy + 3), hov && onButton ? P.text : hov ? P.textDim : P.textFaint);
+          ui::drawIconFitC(dl, ui::Icon::Stop, ImVec2(std::round(q0.x + 9.0f), cyy), ImVec2(7.0f, 7.0f), hov && onButton ? P.text : hov ? P.textDim : P.textFaint);
         }
         ui::Hint(onButton && recButton ? "Record: records a new clip here (the track is armed)"
                  : onButton && !stopButton ? keys::withKeys(i18n::N_("No stop button: launching this slot or its scene leaves the track playing (%s adds it back)"), {keys::fixedKey("Cmd+E")})

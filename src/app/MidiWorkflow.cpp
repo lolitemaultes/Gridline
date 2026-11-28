@@ -412,6 +412,8 @@ void App::processMidi() {
     logicplug::endLayerTakes(*this, lastRecPos_);
   }
 
+  menuparity::midiOutTakeFrame(*this);  // K-438: an instrument's MIDI output being recorded
+
   // ---- multilink: remember the controls touched in Gridline ----
   if (multilink && doc.touchSerial() != multilinkSerial_) {
     ParamId t = doc.lastTouchedParam();

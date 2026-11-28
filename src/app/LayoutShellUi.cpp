@@ -70,7 +70,7 @@ const std::vector<WindowFlag>& windowFlags(App& a) {
       {"Performance", &a.showPerformance}, {"Settings", &a.showSettings},
       {"Keyboard shortcuts", &a.showShortcuts}, {"Project info", &a.showInfo},
       {"Plugin manager", &a.showPluginManager}, {"Collaboration", &a.showCollab},
-      {"Sync review", &a.showSyncReview}, {"Groove editor", &a.showGroove},
+      {"Sync review", &a.showSyncReview}, {"Chat", &a.showChat}, {"Groove editor", &a.showGroove},
       {"LFO board", &a.showLfoBoard},   {"LFO detail", &a.showLfoDetail},  // K-247
   };
   for (const layout::Item& it : layout::items())
@@ -697,7 +697,8 @@ const StripName kStripNames[] = {
     {"Browser", i18n::N_("Browser"), true},      {"Lists", i18n::N_("Lists"), true},          {"Notes", i18n::N_("Notes"), true},
     {"Files", i18n::N_("Files"), true},          {"###mcpactivity", i18n::N_("Assistant"), false},
     {"Collaboration", i18n::N_("Collaborate"), false}, {"Sync review", i18n::N_("Review"), false},
-    {"Piano roll", i18n::N_("Piano roll"), true}, {"Channel rack", i18n::N_("Steps"), true}, {"Loupe", i18n::N_("Loupe"), true},
+    {"Chat", i18n::N_("Chat"), false},
+    {"Piano roll", i18n::N_("Piano roll"), true}, {"Score", i18n::N_("Score"), false}, {"Channel rack", i18n::N_("Steps"), true}, {"Loupe", i18n::N_("Loupe"), true},
     {"###autoedit", i18n::N_("Automation"), true}, {"Chord progression", i18n::N_("Chords"), false}, {"Mixer", i18n::N_("Mixer"), true},
     {"Smart controls", i18n::N_("Smart controls"), false}, {"Pattern editor", i18n::N_("Pattern"), false},
     {"LFO board", i18n::N_("LFO board"), false},  // K-247: its segment shows while it is open
@@ -761,13 +762,15 @@ void closeTab(App& a, const std::string& region, panetabs::Strip& strip, const s
 panetabs::Strip paneStrip(App& a, Preset p, const std::string& region, const layout::State& st, TabCands& cand) {
   std::vector<std::string> members;
   // (the mixer's flag can stay set behind the audio editor: the audio editor is what the pane shows then)
-  gAudioOn = p == Preset::Logic && a.settings.getBool("ui.loupePinned") && !a.showPiano && !a.showRack;
+  const bool* scoreFlag = windowOpenFlag(a, "Score");
+  const bool scoreOn = scoreFlag && *scoreFlag;
+  gAudioOn = p == Preset::Logic && a.settings.getBool("ui.loupePinned") && !a.showPiano && !a.showRack && !scoreOn;
   for (const StripName& n : kStripNames) {
     if (region != windowHomeIn(n.window, p).region) continue;
     const bool audioSeg = p == Preset::Logic && std::string_view(n.window) == "Loupe";
     bool* f = audioSeg ? &gAudioOn : windowOpenFlag(a, n.window);
-    // D7 (R13-09): Smooth's Smart Controls keeps its tab while closed, as the reference's control bar keeps it
-    const bool keep = n.always || (p == Preset::Logic && std::string_view(n.window) == "Smart controls");
+    // D7 (R13-09): Smooth's Smart Controls and K-128 Score keep their tab while closed
+    const bool keep = n.always || (p == Preset::Logic && (std::string_view(n.window) == "Smart controls" || std::string_view(n.window) == "Score"));
     if (!f || (!keep && !*f)) continue;
     if (*f) tabClosed().erase(n.window), tabHistory().forget(n.window);  // opened another way: its tab is back
     if (tabClosed().count(n.window)) continue;
@@ -1349,7 +1352,9 @@ void showPaneWindow(App& a, const std::string& stableName) {
   bool* f = windowOpenFlag(a, stableName);
   if (!f) return;
   // (as the strip finds it this frame: the audio editor holds Smooth's lower pane)
-  gAudioOn = active() == Preset::Logic && a.settings.getBool("ui.loupePinned") && !a.showPiano && !a.showRack;
+  const bool* scoreFlag = windowOpenFlag(a, "Score");
+  const bool scoreOn = scoreFlag && *scoreFlag;
+  gAudioOn = active() == Preset::Logic && a.settings.getBool("ui.loupePinned") && !a.showPiano && !a.showRack && !scoreOn;
   showPaneTab(a, f);
 }
 
@@ -1377,7 +1382,9 @@ bool smoothViewShown(App& a, const char* cmd) {
   if (!v || !layout::visible(layout::shell(Preset::Logic), regionState(a, Preset::Logic), v->region)) return false;
   // (as the lower pane's strip finds it: the audio editor holds the pane while it is pinned there and no
   // other editor is open; the mixer's flag can stay set behind it)
-  const bool audio = a.settings.getBool("ui.loupePinned") && !a.showPiano && !a.showRack;
+  const bool* scoreFlag = windowOpenFlag(a, "Score");
+  const bool scoreOn = scoreFlag && *scoreFlag;
+  const bool audio = a.settings.getBool("ui.loupePinned") && !a.showPiano && !a.showRack && !scoreOn;
   const bool* smart = windowOpenFlag(a, "Smart controls");
   const bool smartOn = smart && *smart;
   const bool mixerOn = a.showMixer && !audio && !smartOn;
@@ -2710,7 +2717,7 @@ void inventoryFrame(App& a, int frame) {
   bool* f = windowOpenFlag(a, w);
   if (gInv.step == 0) {
     const bool can = f || openSpecial(a, w, true);
-    if (w == "Sync review" && !collabui::session(a)) {  // shows only in a shared session (the collab layout test covers it)
+    if ((w == "Sync review" || w == "Chat") && !collabui::session(a)) {  // shows only in a shared session (the collab layout test covers it)
       std::printf("frame %d inventory %s %s home %s %s skip needs a shared session\n", frame, it.id, w.c_str(), layout::kindName(h.kind),
                   *h.region ? h.region : "-");
       ++gInv.skipped, ++gInv.item;

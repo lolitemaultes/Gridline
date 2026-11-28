@@ -220,6 +220,7 @@ bool frameClockSleep(double seconds) {
 }
 
 bool displayWaitStart(void*) { return false; }  // (the run loop: frameClockSleep)
+bool displayWaitStartWayland(void*) { return false; }
 bool displaySleep(double) { return false; }
 
 void frameClockWake() {

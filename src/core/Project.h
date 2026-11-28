@@ -27,11 +27,23 @@ std::string projectToText(const Song& song);
 Json songToJson(const Song& song, bool withFlOrigin = true);
 // Accepts any known schema version (migrating it) and validates references.
 bool songFromJson(const Json& j, Song& out, std::string* err = nullptr);
+// While one lives (this thread), songFromJson builds the rack's automation lanes only from what the
+// document says: a project saved without them gets none derived from its patterns. Collaboration
+// builds each computer's song from the shared document; deriving them there differed per computer.
+struct NoRackLaneMigration {
+  NoRackLaneMigration();
+  ~NoRackLaneMigration();
+  NoRackLaneMigration(const NoRackLaneMigration&) = delete;
+  NoRackLaneMigration& operator=(const NoRackLaneMigration&) = delete;
+};
 // Upgrades a parsed project document to the latest schema in place.
 bool migrateProjectJson(Json& j, std::string* err = nullptr);
 // K-5: some pattern holds, for one channel, a slide note and notes of more than one colour
 // (a project saved before slides kept to their colour loads with Song::slidesAnyColour then).
 bool slidesMeetOtherColours(const Song& s);
+// GitHub #87: some slide note would change the velocity of a note it slides (a project saved
+// before slides glided velocity loads with Song::slidesVelocity off then, so it sounds the same).
+bool slidesChangeVelocity(const Song& s);
 
 // J-111: one element of a project document, its references checked against
 // `s` (collaboration applies remote edits element by element). The same code
@@ -39,6 +51,10 @@ bool slidesMeetOtherColours(const Song& s);
 // clipFromJson: 0 ok, 1 dropped (its audio / automation source is missing),
 // -2 its pattern is missing, -3 bad position.
 void channelFromJson(const Json& jc, Channel& c, const Song& s);
+// 0.7.9: one board source as the project writes it (no id; each field only when not the default), and
+// back (fields clamped; false: a kind this version does not know). LFO presets use the same object.
+Json lfoToJson(const SongLfo& l);
+bool lfoFromJson(const Json& jl, SongLfo& l);
 Json channelToJson(const Channel& c);  // the project document's channel object (K-169: layer presets)
 bool patternFromJson(const Json& jp, Pattern& p, const Song& s);
 int clipFromJson(const Json& jc, Clip& c, const Song& s);

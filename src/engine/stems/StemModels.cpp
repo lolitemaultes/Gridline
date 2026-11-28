@@ -241,14 +241,22 @@ std::string stemTitle(const std::string& s) {
   return t;
 }
 
+void extractRange(const ExtractRequest& req, double rate, int64_t frames, int64_t& from, int64_t& to) {
+  from = 0, to = frames;
+  if (!(req.end > req.start) || !(rate > 0)) return;
+  auto frame = [&](double sec) { return std::clamp<int64_t>(static_cast<int64_t>(std::llround(std::max(0.0, sec) * rate)), 0, frames); };
+  from = frame(req.start);
+  to = frame(req.end);
+}
+
 bool extractStems(const ExtractRequest& req, const std::function<void(double)>& progress, const std::atomic<bool>* cancel,
                   std::vector<std::pair<std::string, std::string>>* written, std::string* err) {
   const ModelInfo* m = findModel(req.modelId);
   if (!m) return fail(err, "unknown model " + req.modelId);
   if (!modelInstalled(*m)) return fail(err, "the model \"" + m->title + "\" is not downloaded yet");
   std::string lerr;
-  SamplePtr smp;
-  {
+  SamplePtr smp = req.sound;
+  if (!smp) {
     DecodeCancelScope scope(cancel);
     smp = loadSample(req.input, &lerr);
   }
@@ -257,9 +265,13 @@ bool extractStems(const ExtractRequest& req, const std::function<void(double)>& 
   const Sample& sm = *smp;
   const bool mono = sm.mono();
   const double rate = sm.sampleRate;
-  in.resize(mono ? 1 : 2, sm.frames());
-  std::copy(sm.left.begin(), sm.left.end(), in.plane(0));
-  if (!mono) std::copy(sm.right.data(), sm.right.data() + sm.frames(), in.plane(1));
+  // K-447: only the chosen part is copied and separated
+  int64_t from = 0, to = 0;
+  extractRange(req, rate, static_cast<int64_t>(sm.frames()), from, to);
+  if (to <= from) return fail(err, "the part to split holds no audio");
+  in.resize(mono ? 1 : 2, size_t(to - from));
+  std::copy(sm.left.begin() + from, sm.left.begin() + to, in.plane(0));
+  if (!mono) std::copy(sm.right.data() + from, sm.right.data() + to, in.plane(1));
   smp.reset();
   SplitRequest sr;
   for (const ModelFile& f : m->files) sr.modelFiles.push_back(modelFilePath(f));
@@ -283,10 +295,12 @@ bool extractStems(const ExtractRequest& req, const std::function<void(double)>& 
     AudioFileOptions o;
     o.bits = 32;
     if (!writeAudioFile(p.u8string(), res.stems[s], int(std::lround(rate)), o, err)) return false;
-    {  // J-219: a stem covers the whole input, second for second (Track Receipt)
+    {  // J-219: a stem covers its part of the input, second for second (Track Receipt)
       receipt::Origin og;
       og.source = req.input;
       og.kind = "stem";
+      og.start = double(from) / rate;
+      og.end = double(to) / rate;
       receipt::writeOrigin(p.u8string(), og);
     }
     if (written) written->emplace_back(id, p.u8string());

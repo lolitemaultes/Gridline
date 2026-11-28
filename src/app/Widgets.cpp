@@ -2,6 +2,7 @@
 #include "Look.h"
 #include "LookGeom.h"
 #include "Widgets.h"
+#include "PluginIcons.h"
 #include "LayoutStyleUi.h"
 #include "DialogLayout.h"
 #include "../core/WindowPlacement.h"
@@ -19,6 +20,8 @@
 #include "AlignAudit.h"
 #include "../packs/modulation/modulation_ui.h"
 #include "App.h"
+#include "CollabUi.h"
+#include "CollabChatUi.h"
 #include "PluginUI.h"
 #include "Keys.h"
 #include "Windows.h"
@@ -469,8 +472,11 @@ bool TextButton(const char* label, bool active, float width, const char* hint) {
     r = ImGui::Button(t, ImVec2(width, 0));
     ImGui::PopStyleColor();
     const std::string shown(t, ImGui::FindRenderedTextEnd(t));
-    theme::centreText(ImGui::GetWindowDrawList(), ImGui::GetFont(), ImGui::GetFontSize(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), textCol,
-                      shown.c_str());
+    // K-450: leading spaces keep room at the start (a plugin's icon there): the text centres in the rest.
+    const size_t lead = shown.find_first_not_of(' ');
+    const float leadW = lead != std::string::npos && lead > 0 ? ImGui::CalcTextSize(shown.substr(0, lead).c_str()).x : 0.0f;
+    theme::centreText(ImGui::GetWindowDrawList(), ImGui::GetFont(), ImGui::GetFontSize(), ImVec2(ImGui::GetItemRectMin().x + leadW, ImGui::GetItemRectMin().y),
+                      ImGui::GetItemRectMax(), textCol, shown.c_str() + (leadW > 0 ? lead : 0));
   } else {
     const StyledButtonFace face(ImGui::GetID(tr(label)), tr(label), width, active);  // J-129 control style
     r = ImGui::Button(tr(label), ImVec2(width, 0));
@@ -863,6 +869,7 @@ struct DevKnob {
   ImGuiID item = 0;
   double value = 0, norm = 0, defNorm = 0, stepNorm = 0;
   ImVec2 mn, mx;
+  ParamId pid;  // K-446
 };
 bool gDevKnobs = false;
 std::vector<DevKnob> gDevKnobsNow, gDevKnobsLast;  // this frame's controls, the last finished frame's
@@ -875,10 +882,10 @@ std::string devKnobReport() {
   int i = 0;
   for (const DevKnob& k : gDevKnobsLast) {
     char line[640];
-    std::snprintf(line, sizeof line, "  knob %d %s item %08x win \"%s\" id \"%s\" name \"%s\" value %.6g norm %.6f def %.6f step %.6f at %.1f %.1f size %.0f %.0f\n", i++,
+    std::snprintf(line, sizeof line, "  knob %d %s item %08x win \"%s\" id \"%s\" name \"%s\" value %.6g norm %.6f def %.6f step %.6f at %.1f %.1f size %.0f %.0f pid %u %u\n", i++,
                   k.kind.c_str(), static_cast<unsigned>(k.item), k.win.c_str(), k.id.c_str(), k.name.c_str(), k.value, k.norm, k.defNorm, k.stepNorm,
                   static_cast<double>((k.mn.x + k.mx.x) * 0.5f), static_cast<double>((k.mn.y + k.mx.y) * 0.5f), static_cast<double>(k.mx.x - k.mn.x),
-                  static_cast<double>(k.mx.y - k.mn.y));
+                  static_cast<double>(k.mx.y - k.mn.y), static_cast<unsigned>(k.pid.owner), static_cast<unsigned>(k.pid.index));
     out += line;
   }
   return out;
@@ -892,12 +899,12 @@ bool devKnobCentre(unsigned item, ImVec2& out, std::string* window) {
     }
   return false;
 }
-void devKnobRecord(const char* kind, const std::string& id, const ParamDesc& d, double value, ImVec2 mn, ImVec2 mx, double stepNorm) {
+void devKnobRecord(const char* kind, const std::string& id, const ParamDesc& d, double value, ImVec2 mn, ImVec2 mx, double stepNorm, ParamId pid) {
   if (!gDevKnobs) return;
   const ImGuiWindow* w = ImGui::GetCurrentWindowRead();
   DevKnob k;
   k.kind = kind, k.win = w ? stableWindowName(w->RootWindow ? w->RootWindow->Name : w->Name) : "-", k.id = id, k.name = d.name;
-  k.item = ImGui::GetItemID(), k.value = value, k.norm = d.toNormalized(value), k.defNorm = d.toNormalized(d.def), k.stepNorm = stepNorm, k.mn = mn, k.mx = mx;
+  k.item = ImGui::GetItemID(), k.value = value, k.norm = d.toNormalized(value), k.defNorm = d.toNormalized(d.def), k.stepNorm = stepNorm, k.mn = mn, k.mx = mx, k.pid = pid;
   gDevKnobsNow.push_back(std::move(k));
 }
 namespace {
@@ -967,10 +974,14 @@ void KnobDragSet(double norm) {
 
 bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const char* label, bool bipolar,
           bool* released, const std::function<void()>& extraMenu) {
-  const double step = d.kind == ParamKind::Choice ? 0.0 : gNextKnobStep;
+  const double explicitStep = d.kind == ParamKind::Choice ? 0.0 : gNextKnobStep;
   gNextKnobStep = 0;
+  const bool autoSemi = explicitStep <= 0.0 && isSemitonePitchParam(d);  // K-411: coarse semitone pitch snaps by default
   const KnobFaceFn face = gNextKnobFace;  // K-112D
   gNextKnobFace = nullptr;
+  const ImGuiIO& stepIo = ImGui::GetIO();
+  const bool semiFine = autoSemi && (stepIo.KeyShift || stepIo.KeyCtrl || stepIo.KeyAlt);
+  const double step = explicitStep > 0.0 ? explicitStep : (autoSemi && !semiFine ? 1.0 : 0.0);
   // On the step (whole numbers when 1), inside the range.
   auto onStep = [&](double v) { return step > 0 ? d.clamp(d.min + std::round((v - d.min) / step) * step) : v; };
   const ParamId knobParam = gNextKnobParam;
@@ -979,6 +990,10 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   // Asked only on a double-click or with the menu open (a mixer draws hundreds of knobs).
   auto selectionReset = [&knobParam] { return knobParam.owner != kNoId && mixerResetPending(app(), knobParam); };
   ImGui::PushID(id);
+  {  // K-446: a parameter's knob shows the value automation, a link or an LFO moves while it plays
+    double live = 0;
+    if (knobParam.owner != kNoId && LiveParamValue(ImGui::GetID("##knob"), knobParam, live)) *value = d.clamp(live);
+  }
   const auto& P = pal();
   const float labelFs = std::min(theme::kFontCaption, ImGui::GetFontSize());
   float w = std::max(radius * 2.0f, label ? ImGui::GetFont()->CalcTextSizeA(labelFs, 1e9f, 0, label).x : 0.0f);
@@ -1005,6 +1020,7 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
     if (v != *value) {
       *value = v;
       changed = true;
+      NoteHeldEdit(item);  // K-446: from here the knob shows the user's value, not the automation's
     }
   }
   if (wg.scale > 0 && io.MouseWheel != 0 && !act) {
@@ -1040,6 +1056,12 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
     face(dl, c, radius, static_cast<float>(d.toNormalized(*value)), bipolar, hov, act);
   } else {
     DrawKnob(dl, c, radius, static_cast<float>(d.toNormalized(*value)), bipolar, hov, act);
+  }
+  if (knobParam.owner != kNoId) {
+    if (ImU32 fc = 0; const float fl = collabui::hasFlash(app()) ? collabui::flash(app(), collabchat::paramFlashKey(knobParam), &fc) : 0.0f) {
+      dl->AddCircleFilled(c, radius + 3.0f, theme::withAlpha(fc, 0.22f * fl), 24);
+      dl->AddCircle(c, radius + 3.5f, theme::withAlpha(fc, 0.95f * fl), 24, 2.2f);
+    }
   }
   // K-247: an LFO's swing and live dot, its handle's drop, Alt-drag for its amount (on the knob's item).
   const bool lfoAlt = knobParam.owner != kNoId && lfoui::altOwned(app(), knobParam);
@@ -1098,7 +1120,7 @@ bool Knob(const char* id, double* value, const ParamDesc& d, float radius, const
   if (gDevKnobs) {  // K-148
     const double count = d.choices.empty() ? d.max : static_cast<double>(d.choices.size() - 1);
     const double stepNorm = d.kind == ParamKind::Choice ? 1.0 / std::max(1.0, count) : step > 0 && d.max > d.min ? step / (d.max - d.min) : 0.0;
-    devKnobRecord(d.kind == ParamKind::Choice ? "choice" : step > 0 ? "step" : "knob", id, d, *value, p, ImVec2(p.x + w, p.y + 2.0f * radius), stepNorm);
+    devKnobRecord(d.kind == ParamKind::Choice ? "choice" : step > 0 ? "step" : "knob", id, d, *value, p, ImVec2(p.x + w, p.y + 2.0f * radius), stepNorm, knobParam);
   }
   return changed;
 }
@@ -1132,15 +1154,29 @@ static bool liveSwingValue(App& a, ParamId pid, double& v) {
   return false;
 }
 
+// K-446: the control the pointer holds and has moved since it took it (its own value shows, the
+// user's grab wins over automation); 0: none. A held control the pointer has not moved yet still
+// shows the moving value, so the drag starts where the control was drawn.
+static ImGuiID gHeldEdited = 0;
+
 static bool liveMixerValue(App& a, ParamId pid, double& v) {
-  if (liveSwingValue(a, pid, v)) return true;
   const Song& s = a.doc.song();
+  // 0.7.9: song settings driven live by an internal controller / LFO follow their live value even stopped.
+  if (pid.owner == kSongId && isModulated(s, pid) && a.builder.modulatedValue(pid, v)) return true;
+  if (liveSwingValue(a, pid, v)) return true;
   const bool tracks = logicplug::active(a);
-  // R06-04: in the Tracks layout every automated control follows its curve while playing (a
-  // plugin's and a channel's too), as the reference moves them; elsewhere the mixer's own.
-  if (a.engine.playing()) {
-    if (!tracks && (pid.index >= kSlotBase || !s.mixerTrack(pid.owner))) return false;
-    return a.builder.modulatedValue(pid, v);
+  // R06-04 / K-446: every automated control follows its curve while playing (a plugin's, a
+  // channel's, a mixer track's, an effect slot's, a macro's: in every layout), and a control an
+  // internal controller or the LFO board moves follows it while stopped too (core showsLiveValue,
+  // the rule plugin editors use).
+  const bool playing = a.engine.playing();
+  if (playing || !s.modLinks.empty()) {
+    double live = 0;
+    if (a.builder.modulatedValue(pid, live) && showsLiveValue(s, pid, true, playing, false)) {
+      v = live;
+      return true;
+    }
+    if (playing) return false;
   }
   // R06-12: stopped, a Read track's control shows its curve at the playhead (song mode).
   if (!tracks || a.engine.mode() != PlayMode::Song) return false;
@@ -1189,6 +1225,19 @@ void OverrideMark(ImDrawList* dl, ImVec2 c, float r) {
 
 bool shownParamValue(ParamId pid, double& v) { return liveMixerValue(app(), pid, v); }
 
+bool ShowsLiveValue(ImGuiID item) {
+  const ImGuiID active = ImGui::GetActiveID();
+  if (gHeldEdited != 0 && gHeldEdited != active) gHeldEdited = 0;  // let go
+  return active != item || gHeldEdited != item;
+}
+void NoteHeldEdit(ImGuiID item) {
+  if (item != 0 && ImGui::GetActiveID() == item) gHeldEdited = item;
+}
+bool LiveParamValue(ImGuiID item, ParamId pid, double& v) {
+  if (pid.owner == kNoId || !ShowsLiveValue(item)) return false;
+  return liveMixerValue(app(), pid, v);
+}
+
 bool ParamKnob(const char* id, ParamId pid, float radius, const char* label, bool bipolar) {
   App& a = app();
   auto d = describeParam(a.doc.song(), pid);
@@ -1204,13 +1253,7 @@ bool ParamKnob(const char* id, ParamId pid, float radius, const char* label, boo
   bool linked = false;
   for (const auto& l : a.doc.song().links) linked = linked || (l.owner == pid.owner && l.index == pid.index);
   bool modulated = isModulated(a.doc.song(), pid);  // internal controller link
-  {
-    ImGui::PushID(id);
-    const ImGuiID kid = ImGui::GetID("##knob");
-    ImGui::PopID();
-    double live = 0;
-    if (ImGui::GetActiveID() != kid && liveMixerValue(a, pid, live)) val = live;
-  }
+  // (the value automation, a link or an LFO moves: Knob shows it, SetNextKnobParam below)
   auto menu = [&a, pid]() {
     knobContextMenu(a, pid);  // values, automation, Modulate (LFO board, macros, controllers), MIDI
   };
@@ -1316,10 +1359,15 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   ImVec2 p = ImGui::GetCursorScreenPos();
   ImGui::InvisibleButton("##fader", size);
   bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
-  const double pressed = ValueAtPress(*v);
+  const ImGuiID fid = ImGui::GetItemID();
+  // K-446: the value it shows (automation playing, a link, an LFO): a grab starts from there.
+  double shownNow = *v;
+  if (double live = 0; (gFaderLocked || ShowsLiveValue(fid)) && liveMixerValue(a, pid, live)) shownNow = d->clamp(live);
+  devKnobRecord("fader", id, *d, shownNow, p, ImVec2(p.x + size.x, p.y + size.y), 0, pid);  // K-148 / K-446: the value drawn
+  const double pressed = ValueAtPress(shownNow);
   const WheelGate wg = wheelGate();  // J-83: the thin mixer scrolls under the pointer
   ImGuiIO& io = ImGui::GetIO();
-  double n = d->toNormalized(*v);
+  double n = d->toNormalized(shownNow);
   bool changed = false;
   float capH = 18.0f, travel = size.y - capH;
   KnobDragPos(n);  // K-148: the shared drag path
@@ -1327,6 +1375,7 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
     const double nn = KnobDragMove(-io.MouseDelta.y / travel * (io.KeyShift ? 0.15 : 1.0));
     a.doc.setParam(pid, d->fromNormalized(nn), true);
     changed = true;
+    NoteHeldEdit(fid);
   }
   if (wg.scale > 0 && io.MouseWheel != 0 && !act && !gFaderLocked) {
     a.doc.setParam(pid, d->fromNormalized(std::clamp(n + io.MouseWheel * 0.02 * wg.scale, 0.0, 1.0)), true);
@@ -1358,8 +1407,13 @@ bool ParamFader(const char* id, ParamId pid, ImVec2 size) {
   if (wantType) ImGui::OpenPopup("##type");
   ParamTypePopup(pid, *d);
   double shown = *getParam(a.doc.song(), pid);
-  if (double live = 0; (!act || gFaderLocked) && liveMixerValue(a, pid, live)) shown = live;  // automation playing
+  if (double live = 0; (gFaderLocked || ShowsLiveValue(fid)) && liveMixerValue(a, pid, live)) shown = live;  // automation playing
   DrawFader(ImGui::GetWindowDrawList(), p, size, static_cast<float>(d->toNormalized(shown)), static_cast<float>(d->toNormalized(d->def)), hov, act);
+  if (ImU32 fc = 0; const float fl = collabui::hasFlash(a) ? collabui::flash(a, collabchat::paramFlashKey(pid), &fc) : 0.0f) {
+    ImDrawList* fdl = ImGui::GetWindowDrawList();
+    fdl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), theme::withAlpha(fc, 0.20f * fl), theme::kRadiusSm);
+    fdl->AddRect(ImVec2(p.x - 1.5f, p.y - 1.5f), ImVec2(p.x + size.x + 1.5f, p.y + size.y + 1.5f), theme::withAlpha(fc, 0.95f * fl), theme::kRadiusSm, 0, 2.2f);
+  }
   if (automationOverridden(pid)) OverrideMark(ImGui::GetWindowDrawList(), ImVec2(p.x + 4.0f, p.y + 4.0f));  // N59-01
   if (hov || act) {
     auto valueText = [&](double v) {
@@ -1593,6 +1647,7 @@ struct SectionFrame {
 std::vector<SectionMark> gSectionMarks;
 std::vector<std::unique_ptr<SectionFrame>> gSections;
 constexpr float kSectionPad = theme::kS2;
+bool gBoldCaptions = false;
 
 // K-112: a caption written in capitals ("FILE NAME AND LOCATION") as a sentence ("File name and
 // location"), keeping the names and abbreviations that are always written so.
@@ -1723,14 +1778,17 @@ void BeginSection(const char* caption, float width) {
     f->caption = SectionHeading(f->caption.c_str());
     gSectionMarks.push_back({f->caption, f->start.y - w->Pos.y + w->Scroll.y});
   }
+  if (gBoldCaptions && !f->heading && !f->caption.empty()) f->caption = sentenceCase(f->caption);
   ImGui::Dummy(ImVec2(0, f->caption.empty() ? kSectionPad - ImGui::GetStyle().ItemSpacing.y
-                         : f->heading         ? theme::kFontBody + 12
-                                              : theme::kFontLabel + 4));
+                         : f->heading || gBoldCaptions ? theme::kFontBody + 12
+                                                       : theme::kFontLabel + 4));
   ImGui::Indent(kSectionPad);
   // K-112b: the Logic layout's forms start every row at the control column.
   if (const float c = FormRowsIndented() ? FormColumnIndent() : 0.0f; c > kSectionPad) f->column = c - kSectionPad, ImGui::Indent(f->column);
   gSections.push_back(std::move(f));
 }
+
+void SetSectionBoldCaptions(bool on) { gBoldCaptions = on; }
 
 std::string SectionHeading(const char* caption) {
   // Words kept in capitals: abbreviations the captions use.
@@ -1828,6 +1886,10 @@ void EndSection() {
     App& a = app();
     theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(f->start.x, f->start.y + 8),
                         mx.x - f->start.x - kSectionPad * 2, P.text, f->caption.c_str());
+  } else if (!f->caption.empty() && gBoldCaptions) {
+    App& a = app();
+    theme::textEllipsis(dl, a.fontBold, theme::kFontBody, ImVec2(f->start.x + kSectionPad, f->start.y + 8),
+                        mx.x - f->start.x - kSectionPad * 2, P.text, f->caption.c_str());
   } else if (!f->caption.empty()) {
     App& a = app();
     theme::textEllipsis(dl, a.fontMono, theme::kFontLabel, ImVec2(f->start.x + kSectionPad, f->start.y + 5),
@@ -1893,14 +1955,17 @@ bool TabStrip(const char* id, const char* const* labels, int count, int* index, 
   return changed;
 }
 
-void DragPreview(Icon icon, const char* text, ImU32 tint) {
+void DragPreview(Icon icon, const char* text, ImU32 tint, const char* pluginType) {
   const auto& P = pal();
   ImDrawList* dl = ImGui::GetWindowDrawList();
   const ImVec2 p = ImGui::GetCursorScreenPos();
   const float h = 22.0f, tw = std::min(ImGui::CalcTextSize(text).x, 260.0f);
   const ImU32 bar = tint ? tint : P.hot;
   dl->AddRectFilled(p, ImVec2(p.x + 4, p.y + h), bar, 2.0f);
-  drawIcon(dl, icon, ImVec2(std::round(p.x + 17), std::round(p.y + h * 0.5f)), 12, theme::lit(bar));
+  if (!pluginType || !drawPluginIcon(dl, pluginType, ImVec2(std::round(p.x + 16), std::round(p.y + h * 0.5f)), 14, PluginIconSurface::Drag)) {
+    if (pluginType) notePluginIconFallback(pluginType, PluginIconSurface::Drag);
+    drawIcon(dl, icon, ImVec2(std::round(p.x + 17), std::round(p.y + h * 0.5f)), 12, theme::lit(bar));
+  }
   theme::textEllipsis(dl, nullptr, 0, ImVec2(p.x + 30, std::round(p.y + (h - ImGui::GetFontSize()) * 0.5f)), tw + 1, P.text, text);
   ImGui::Dummy(ImVec2(tw + 36, h));
 }

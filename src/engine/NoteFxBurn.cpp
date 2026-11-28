@@ -4,8 +4,14 @@
 #include <cmath>
 #include <map>
 #include <memory>
+#include "../core/Lanes.h"
 #include "../core/MenuOps.h"
+#include "../core/Params.h"
+#include "../core/StepNotes.h"
+#include "AudioEngine.h"
+#include "Freeze.h"
 #include "NoteFx.h"
+#include "Program.h"
 
 namespace gl {
 
@@ -151,20 +157,16 @@ bool burnNoteFxToPattern(Document& d, ObjectId pattern, ObjectId channel) {
   const Pattern* p = s.pattern(pattern);
   const Channel* ch = s.channel(channel);
   if (!p || !ch || ch->noteFx.empty()) return false;
+  // Steps play too, as the piano roll shows them (K-438: their pitch, fine pitch and shift, and a
+  // lane's own grid and loop; each step used to go in at its plain grid place).
   std::vector<Note> in;
-  if (auto it = p->notes.find(channel); it != p->notes.end()) in = it->second;
-  // Steps play too: each becomes a one-step note.
-  if (auto it = p->steps.find(channel); it != p->steps.end()) {
-    const Tick step = std::max<Tick>(1, s.ticksPerStep(*p));
-    const auto propsIt = p->stepProps.find(channel);
-    for (size_t i = 0; i < it->second.size(); ++i) {
-      if (!it->second[i]) continue;
-      Note n(static_cast<Tick>(i) * step, step, 60, std::min(127, static_cast<int>(it->second[i])));
-      if (propsIt != p->stepProps.end() && i < propsIt->second.size() && propsIt->second[i].pitch >= 0)
-        n.pitch = propsIt->second[i].pitch;
-      in.push_back(n);
-    }
+  if (lanes::ownGrid(*p, channel)) {
+    in = lanes::rowAsNotes(s, *p, channel);
+    if (auto it = p->notes.find(channel); it != p->notes.end()) in.insert(in.end(), it->second.begin(), it->second.end());
+  } else {
+    in = stepnotes::view(s, *p, channel);
   }
+  for (auto& n : in) n.step = false;  // (the processed notes are plain notes)
   if (in.empty()) return false;
   auto out = burnNoteFx(s, channel, in, s.patternLength(*p));
   const int processors = static_cast<int>(ch->noteFx.size());
@@ -174,6 +176,171 @@ bool burnNoteFxToPattern(Document& d, ObjectId pattern, ObjectId channel) {
   for (int k = processors - 1; k >= 0; --k) d.removeNoteFx(channel, k);
   d.endGroup();
   return true;
+}
+
+
+// ---------------------------------------------------------------- K-438: instrument sequencers
+
+bool sequencerOn(const Song& song, ObjectId channel) {
+  const Channel* c = song.channel(channel);
+  const PluginInfo* info = c ? findPlugin(c->plugin.type) : nullptr;
+  if (!info) return false;
+  for (int k : info->sequencerParams)
+    if (k >= 0 && static_cast<size_t>(k) < c->plugin.params.size() && c->plugin.params[static_cast<size_t>(k)] >= 0.5f) return true;
+  return false;
+}
+
+bool sequencerPartsOn(const Song& song, ObjectId channel) {
+  const Channel* c = song.channel(channel);
+  const PluginInfo* info = c ? findPlugin(c->plugin.type) : nullptr;
+  if (!info || info->seqParts.outParam < 0) return false;
+  auto on = [&](int k) { return k >= 0 && static_cast<size_t>(k) < c->plugin.params.size() && c->plugin.params[static_cast<size_t>(k)] >= 0.5f; };
+  return on(info->seqParts.arpOn) && on(info->seqParts.clipOn);
+}
+
+std::vector<Note> printSequence(const Song& song, ObjectId pattern, ObjectId channel, SeqPart part) {
+  std::vector<Note> out;
+  if (!song.pattern(pattern) || !song.channel(channel)) return out;
+  // The song a freeze of the channel plays (the channel and what feeds it notes), its MIDI output
+  // read here instead of going to listeners.
+  Song x = freeze::renderSong(song, freeze::channelUnit(channel));
+  for (auto& c : x.channels) {
+    if (c.id != channel) continue;
+    c.midiOutPort = -1;
+    const PluginInfo* info = findPlugin(c.plugin.type);
+    if (!info || info->seqParts.outParam < 0) continue;
+    // A two-part sequencer sends only the part printed (the render copy's MIDI Out setting).
+    const PluginInfo::SequencerParts& sp = info->seqParts;
+    auto on = [&](int k) { return k >= 0 && static_cast<size_t>(k) < c.plugin.params.size() && c.plugin.params[static_cast<size_t>(k)] >= 0.5f; };
+    if (part == SeqPart::Whole) part = on(sp.arpOn) ? SeqPart::Arpeggiator : SeqPart::ClipPlayer;
+    if (static_cast<size_t>(sp.outParam) < c.plugin.params.size())
+      c.plugin.params[static_cast<size_t>(sp.outParam)] = part == SeqPart::Arpeggiator ? sp.arpOut : sp.clipOut;
+  }
+  constexpr int kRate = 44100, kBlock = 64;
+  ProgramBuilder builder;
+  builder.setSampleRate(kRate);
+  auto prog = builder.build(x);
+  const ProgPattern* pe = prog->pattern(pattern);
+  const Tick end = pe ? pe->length : 0;
+  if (end <= 0) return out;
+  const TempoMap& map = prog->flatMap;  // patterns play at the song tempo
+  const int64_t total = static_cast<int64_t>(std::ceil(map.samplesBetween(0.0, static_cast<double>(end), kRate)));
+  AudioEngine eng(kRate);
+  eng.setProgram(prog);
+  eng.setOffline(true);
+  eng.setMode(PlayMode::Pattern);
+  eng.setPattern(pattern);
+  eng.play();
+  const std::shared_ptr<ChannelRuntime> rt = builder.channelRuntime(channel);
+  if (!rt || !rt->gen) return out;
+  struct Open {
+    Tick start = 0;
+    int velocity = 100;
+    bool on = false;
+  };
+  Open open[128];
+  auto tickOf = [&](int64_t frame) {
+    return std::clamp<Tick>(static_cast<Tick>(std::llround(map.tickAfterSamples(0.0, static_cast<double>(frame), kRate))), 0, end);
+  };
+  auto close = [&](int key, Tick at) {
+    Open& o = open[key];
+    if (!o.on) return;
+    if (at > o.start) out.push_back(Note(o.start, at - o.start, key, o.velocity));
+    o.on = false;
+  };
+  // A slide to a new key starts the new note before the old one ends (both in one instant): the old
+  // note then lasts a little into the new one, so the notes overlap and slide when played back.
+  const Tick overlap = std::max<Tick>(1, song.ppq / 16);
+  Tick lastOn = -1;
+  int lastKey = -1;
+  std::vector<float> L(kBlock), R(kBlock);
+  Generator::MidiOutEvent ev[512];
+  for (int64_t pos = 0; pos < total; pos += kBlock) {
+    const int n = static_cast<int>(std::min<int64_t>(kBlock, total - pos));
+    eng.process(L.data(), R.data(), n);
+    const int count = rt->gen->takeMidiOut(ev, 512);
+    for (int k = 0; k < count; ++k) {
+      const uint8_t st = ev[k].s & 0xF0;
+      const int key = ev[k].a & 0x7F;
+      const Tick at = tickOf(pos + std::clamp(ev[k].offset, 0, n));
+      if (st == 0x90 && ev[k].b > 0) {
+        close(key, at);  // a repeated key ends the note before it
+        if (at >= end) continue;
+        open[key] = {at, std::clamp(static_cast<int>(ev[k].b), 1, 127), true};
+        lastOn = at, lastKey = key;
+      } else if (st == 0x80 || st == 0x90) {
+        close(key, at == lastOn && key != lastKey ? std::min(end, at + overlap) : at);
+      }
+    }
+  }
+  for (int key = 0; key < 128; ++key) close(key, end);
+  ops::NoteSel sel(out.size(), false);
+  ops::sortNotes(out, sel);
+  return out;
+}
+
+bool printSequenceToPattern(Document& d, ObjectId pattern, ObjectId channel, SeqPart part) {
+  const Song& s = d.song();
+  const Channel* ch = s.channel(channel);
+  if (!s.pattern(pattern) || !ch || !sequencerOn(s, channel)) return false;
+  std::vector<Note> notes = printSequence(s, pattern, channel, part);
+  if (notes.empty()) return false;
+  const PluginInfo* info = findPlugin(ch->plugin.type);
+  std::vector<int> seq = info ? info->sequencerParams : std::vector<int>{};
+  if (info && info->seqParts.outParam >= 0 && part == SeqPart::ClipPlayer && sequencerPartsOn(s, channel))
+    seq = {info->seqParts.clipOn};  // the arpeggiator goes on playing the written notes
+  const int processors = static_cast<int>(ch->noteFx.size());
+  d.beginGroup("write the sequence to the piano roll");
+  d.setSteps(pattern, channel, {});
+  d.setNotes(pattern, channel, notes, "write the sequence to the piano roll");
+  for (int k : seq) d.setParam(channelPluginParam(channel, k), 0.0, false);
+  for (int k = processors - 1; k >= 0; --k) d.removeNoteFx(channel, k);
+  d.endGroup();
+  return true;
+}
+
+}  // namespace gl
+
+namespace gl {
+
+// ---------------------------------------------------------------- K-438: installed plugins' MIDI output
+
+ObjectId midiOutputTarget(const Song& song, ObjectId channel) {
+  const int ci = song.channelIndex(channel);
+  if (ci < 0) return kNoId;
+  const auto listeners = midiPortListeners(song);
+  if (static_cast<size_t>(ci) < listeners.size())
+    for (int l : listeners[static_cast<size_t>(ci)])
+      if (l >= 0 && static_cast<size_t>(l) < song.channels.size()) return song.channels[static_cast<size_t>(l)].id;
+  return channel;
+}
+
+ObjectId writeMidiOutputPattern(Document& d, ObjectId like, ObjectId source, ObjectId target, const std::vector<Note>& notes,
+                                const std::string& label) {
+  const Song& s = d.song();
+  const Channel* src = s.channel(source);
+  if (notes.empty() || !src || !s.channel(target)) return kNoId;
+  const Pattern* lp = s.pattern(like);
+  int bars = lp ? std::max(1, lp->bars) : 1;
+  const int steps = lp ? lp->stepsPerBar : 16;
+  const int meterNum = lp ? lp->meterNum : 0, meterDen = lp ? lp->meterDen : 0;
+  const Tick bar = lp ? s.patternBarTicks(*lp) : s.barTicks();
+  Tick last = 0;
+  for (const Note& n : notes) last = std::max(last, n.start + n.length);
+  if (bar > 0) bars = std::max<int>(bars, static_cast<int>((last + bar - 1) / bar));
+  const std::string name = src->name + " MIDI output";
+  d.beginGroup(label);
+  const ObjectId pat = d.addPattern(name, std::min(bars, kMaxPatternBars), steps, -1, meterNum, meterDen);
+  if (pat != kNoId) d.setNotes(pat, target, notes, label);
+  d.endGroup();
+  return pat;
+}
+
+ObjectId printMidiOutputToPattern(Document& d, ObjectId pattern, ObjectId channel) {
+  const Song& s = d.song();
+  if (!s.pattern(pattern) || !s.channel(channel)) return kNoId;
+  const std::vector<Note> notes = printSequence(s, pattern, channel);
+  return writeMidiOutputPattern(d, pattern, channel, midiOutputTarget(s, channel), notes, "write MIDI output to the piano roll");
 }
 
 }  // namespace gl

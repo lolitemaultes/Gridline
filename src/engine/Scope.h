@@ -36,6 +36,9 @@ class ScopeTap {
     return true;
   }
   size_t written() const { return pos_.load(std::memory_order_acquire); }
+  // K-142e (audio thread): the entire ring already holds exact silence and has been written to at
+  // least once, so readers see the same zeros without moving pos_ while the whole graph sleeps.
+  bool isAllZero() const { return zeros_ >= kSize && pos_.load(std::memory_order_relaxed) > 0; }
 
  private:
   std::array<float, kSize> buf_{};

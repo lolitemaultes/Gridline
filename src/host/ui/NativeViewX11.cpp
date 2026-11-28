@@ -21,16 +21,20 @@
 #include <unistd.h>
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <initializer_list>
 #include <map>
+#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
 #include "NativeView.h"
+#include "X11ErrorPolicy.h"
 #include "../../core/UiScale.h"
 
 namespace gl::host::native {
@@ -108,14 +112,93 @@ struct XWinAttrs {
   int overrideRedirect;
   void* screen;
 };
+struct XErrorEv {  // XErrorEvent
+  int type;
+  void* display;
+  XWin resourceid;
+  unsigned long serial;
+  unsigned char errorCode;
+  unsigned char requestCode;
+  unsigned char minorCode;
+};
 using XErrHandler = int (*)(void*, void*);
+using XIOErrHandler = int (*)(void*);
+using XIOErrExitHandler = void (*)(void*, void*);
+using XGetErrorTextFn = int (*)(void*, int, char*, int);
 
 constexpr long kKeyPressMask = 1L << 0, kKeyReleaseMask = 1L << 1, kStructureNotifyMask = 1L << 17, kSubstructureNotifyMask = 1L << 19;
 constexpr int kKeyPress = 2, kKeyRelease = 3, kCreateNotify = 16, kMapNotify = 19, kReparentNotify = 21, kConfigureNotify = 22;
 constexpr int kClientMessage = 33;
 constexpr long kPMinSize = 1L << 4, kPMaxSize = 1L << 5;
 
+// K-432 (GL-8006CE18): permanent non-fatal X11 error state and handlers.
+// Stored outside xlib() so callbacks never recurse into xlib() static init.
+x11policy::PolicyState& x11Policy() {
+  static x11policy::PolicyState st;
+  return st;
+}
+std::atomic<XGetErrorTextFn> gGetErrorText{nullptr};
+
+void writeStderrRaw(const char* data, size_t len) noexcept {
+  while (len > 0) {
+    const ssize_t n = ::write(2, data, len);
+    if (n <= 0) break;
+    data += n;
+    len -= static_cast<size_t>(n);
+  }
+}
+
+int gridlineX11ErrorHandler(void* dpy, void* evPtr) {
+  x11policy::ErrorEvent ev;
+  ev.display = dpy;
+  if (evPtr) {
+    const auto* xe = static_cast<const XErrorEv*>(evPtr);
+    if (!ev.display) ev.display = xe->display;
+    ev.resourceId = static_cast<uint64_t>(xe->resourceid);
+    ev.serial = static_cast<uint64_t>(xe->serial);
+    ev.errorCode = xe->errorCode;
+    ev.requestCode = xe->requestCode;
+    ev.minorCode = xe->minorCode;
+  }
+  const x11policy::Evaluation eval = x11Policy().handleError(ev);
+  if (eval.decision == x11policy::ErrorDecision::LogDetail || eval.decision == x11policy::ErrorDecision::LogSummary) {
+    char errText[128] = {};
+    if (XGetErrorTextFn fn = gGetErrorText.load(std::memory_order_acquire); fn && ev.display) {
+      fn(ev.display, static_cast<int>(ev.errorCode), errText, static_cast<int>(sizeof errText));
+      errText[sizeof(errText) - 1] = '\0';
+    }
+    char line[384] = {};
+    const size_t len = x11policy::formatErrorMessage(ev, errText, eval, line, sizeof line);
+    if (len > 0) writeStderrRaw(line, len);
+  }
+  return eval.returnCode;  // Always 0: never exit() on X11 protocol errors.
+}
+
+int gridlineX11IOErrorHandler(void* dpy) {
+  // Per Xlib's contract, an XIOErrorHandler must not return (Xlib calls exit(1) immediately if it
+  // does). Exit cleanly via _Exit(1) after logging so static destructors do not race with active
+  // worker threads, and leave crash cleanExit unset so the next launch recovers any unsaved work.
+  char line[256] = {};
+  const int n = std::snprintf(line, sizeof line,
+                              "[x11] fatal X11 I/O error on display %p (X server or XWayland connection lost); leaving cleanly without aborting\n", dpy);
+  if (n > 0) writeStderrRaw(line, static_cast<size_t>(n) >= sizeof(line) ? sizeof(line) - 1 : static_cast<size_t>(n));
+  std::fflush(nullptr);
+  std::_Exit(1);
+}
+
+void gridlineX11IOErrorExitHandler(void* dpy, void*) {
+  char line[192] = {};
+  const int n = std::snprintf(line, sizeof line, "[x11] X11 display %p I/O connection closed (X server or XWayland disconnected)\n", dpy);
+  if (n > 0) writeStderrRaw(line, static_cast<size_t>(n) >= sizeof(line) ? sizeof(line) - 1 : static_cast<size_t>(n));
+}
+
 struct Xlib {
+  int (*initThreads)() = nullptr;
+  XGetErrorTextFn getErrorText = nullptr;
+  XIOErrHandler (*setIOErrorHandler)(XIOErrHandler) = nullptr;
+  void (*setIOErrorExitHandler)(void*, XIOErrExitHandler, void*) = nullptr;
+  uintptr_t defaultErrorFn = 0;
+  uintptr_t defaultIOErrorFn = 0;
   XWin (*createSimpleWindow)(void*, XWin, int, int, unsigned, unsigned, unsigned, unsigned long, unsigned long) = nullptr;
   int (*mapWindow)(void*, XWin) = nullptr;
   int (*unmapWindow)(void*, XWin) = nullptr;  // 0.7.8: docked interfaces
@@ -153,6 +236,34 @@ struct Xlib {
   bool ok = false;
   bool keys = false;
 };
+
+void ensureSafetyHandlers(const Xlib& x) {
+  if (x.getErrorText) gGetErrorText.store(x.getErrorText, std::memory_order_release);
+  // Serialize swap-and-check across threads so concurrent calls cannot race on XSetErrorHandler.
+  static std::mutex mu;
+  std::lock_guard<std::mutex> lk(mu);
+  if (x.setErrorHandler) {
+    XErrHandler prev = x.setErrorHandler(gridlineX11ErrorHandler);
+    const uintptr_t prevAddr = x11policy::functionAddress(prev);
+    const uintptr_t ourAddr = x11policy::functionAddress(gridlineX11ErrorHandler);
+    Dl_info info{};
+    const bool haveSym = prevAddr != 0 && dladdr(reinterpret_cast<const void*>(prevAddr), &info) != 0 && info.dli_sname != nullptr;
+    const x11policy::HandlerKind kind =
+        x11policy::classifyHandler(prevAddr, ourAddr, x.defaultErrorFn, x11policy::isDefaultErrorSymbol(haveSym ? info.dli_sname : nullptr));
+    if (kind == x11policy::HandlerKind::ExternalCustom) x.setErrorHandler(prev);
+  }
+  if (x.setIOErrorHandler) {
+    XIOErrHandler prev = x.setIOErrorHandler(gridlineX11IOErrorHandler);
+    const uintptr_t prevAddr = x11policy::functionAddress(prev);
+    const uintptr_t ourAddr = x11policy::functionAddress(gridlineX11IOErrorHandler);
+    Dl_info info{};
+    const bool haveSym = prevAddr != 0 && dladdr(reinterpret_cast<const void*>(prevAddr), &info) != 0 && info.dli_sname != nullptr;
+    const x11policy::HandlerKind kind =
+        x11policy::classifyHandler(prevAddr, ourAddr, x.defaultIOErrorFn, x11policy::isDefaultIOErrorSymbol(haveSym ? info.dli_sname : nullptr));
+    if (kind == x11policy::HandlerKind::ExternalCustom) x.setIOErrorHandler(prev);
+  }
+}
+
 const Xlib& xlib() {
   static Xlib x = [] {
     Xlib l;
@@ -164,6 +275,13 @@ const Xlib& xlib() {
     }
     if (!h) return l;
     auto sym = [h](const char* n) { return dlsym(h, n); };
+    l.initThreads = reinterpret_cast<decltype(l.initThreads)>(sym("XInitThreads"));
+    if (l.initThreads) l.initThreads();  // K-432: before any XOpenDisplay (especially on Wayland!)
+    l.getErrorText = reinterpret_cast<decltype(l.getErrorText)>(sym("XGetErrorText"));
+    l.setIOErrorHandler = reinterpret_cast<decltype(l.setIOErrorHandler)>(sym("XSetIOErrorHandler"));
+    l.setIOErrorExitHandler = reinterpret_cast<decltype(l.setIOErrorExitHandler)>(sym("XSetIOErrorExitHandler"));
+    l.defaultErrorFn = reinterpret_cast<uintptr_t>(sym("_XDefaultError"));
+    l.defaultIOErrorFn = reinterpret_cast<uintptr_t>(sym("_XDefaultIOError"));
     l.createSimpleWindow = reinterpret_cast<decltype(l.createSimpleWindow)>(sym("XCreateSimpleWindow"));
     l.mapWindow = reinterpret_cast<decltype(l.mapWindow)>(sym("XMapWindow"));
     l.unmapWindow = reinterpret_cast<decltype(l.unmapWindow)>(sym("XUnmapWindow"));
@@ -199,6 +317,7 @@ const Xlib& xlib() {
     l.ok = l.createSimpleWindow && l.mapWindow && l.moveResizeWindow && l.destroyWindow && l.flush;
     l.keys = l.openDisplay && l.queryTree && l.selectInput && l.getWindowAttributes && l.pending && l.nextEvent && l.xfree && l.sync &&
              l.setErrorHandler && l.keycodeToKeysym;
+    ensureSafetyHandlers(l);
     return l;
   }();
   return x;
@@ -227,28 +346,32 @@ void* keyDisplay() {
   Keys& k = keyState();
   if (!k.tried) {
     k.tried = true;
-    if (xlib().keys) k.dpy = xlib().openDisplay(nullptr);
+    const Xlib& x = xlib();
+    if (x.keys) {
+      k.dpy = x.openDisplay(nullptr);
+      if (k.dpy && x.setIOErrorExitHandler) x.setIOErrorExitHandler(k.dpy, gridlineX11IOErrorExitHandler, nullptr);
+    }
   }
   return k.dpy;
 }
 
-// X errors on Gridline's connection (a window of the interface went away
-// between reading the tree and selecting on it) are expected and ignored;
-// errors of other connections go to the handler that was installed before.
-XErrHandler gPrevHandler = nullptr;
-int ignoreOwnErrors(void* d, void* e) {
-  if (d == keyState().dpy) return 0;
-  return gPrevHandler ? gPrevHandler(d, e) : 0;
-}
+// K-432 (GL-8006CE18): X errors on Gridline's own connection (a plugin window went away between
+// reading the tree and selecting on it) are suppressed silently via lock-free guard slots inside
+// the permanent handler — never by swapping XSetErrorHandler (which races with plugin threads and
+// previously restored libX11's fatal _XDefaultError on Wayland).
 struct ErrorGuard {
-  explicit ErrorGuard(void* d) : dpy(d) { gPrevHandler = xlib().setErrorHandler(ignoreOwnErrors); }
+  explicit ErrorGuard(void* d) : dpy(d) {
+    installX11SafetyHandlers();
+    slot = x11Policy().enterGuard(dpy);
+  }
   ~ErrorGuard() {
-    xlib().sync(dpy, 0);  // the errors of the calls above arrive while the guard is installed
-    xlib().setErrorHandler(gPrevHandler);
+    if (dpy && xlib().sync) xlib().sync(dpy, 0);  // flush errors for dpy while guard is active
+    x11Policy().leaveGuard(dpy, slot);
   }
   ErrorGuard(const ErrorGuard&) = delete;
   ErrorGuard& operator=(const ErrorGuard&) = delete;
-  void* dpy;
+  void* dpy = nullptr;
+  int slot = -1;
 };
 
 // Reads the container's window tree: tree changes are watched on every
@@ -480,6 +603,11 @@ void keepAbove(const Window& child, const Window& parent, bool on) {
   x.flush(child.display);
 }
 
+void installX11SafetyHandlers() {
+  const Xlib& x = xlib();
+  ensureSafetyHandlers(x);
+}
+
 Window windowOfView(void*) { return {}; }
 bool xServerAnswers() {
   const char* name = std::getenv("DISPLAY");
@@ -519,10 +647,12 @@ void* sideDisplay() {
   if (!st.tried) {
     st.tried = true;
     const char* name = std::getenv("DISPLAY");
-    if (name && *name && sideReady()) st.dpy = xlib().openDisplay(nullptr);
+    const Xlib& x = xlib();
+    if (name && *name && sideReady()) st.dpy = x.openDisplay(nullptr);
     if (st.dpy) {
-      st.wmProtocols = xlib().internAtom(st.dpy, "WM_PROTOCOLS", 0);
-      st.wmDelete = xlib().internAtom(st.dpy, "WM_DELETE_WINDOW", 0);
+      if (x.setIOErrorExitHandler) x.setIOErrorExitHandler(st.dpy, gridlineX11IOErrorExitHandler, nullptr);
+      st.wmProtocols = x.internAtom(st.dpy, "WM_PROTOCOLS", 0);
+      st.wmDelete = x.internAtom(st.dpy, "WM_DELETE_WINDOW", 0);
     }
   }
   return st.dpy;
@@ -558,6 +688,7 @@ void sideDrain() {
 }  // namespace
 
 void* sideWindowOpen(const std::string& title, int w, int h, bool resizable) {
+  installX11SafetyHandlers();
   void* dpy = sideDisplay();
   if (!dpy) return nullptr;
   const Xlib& x = xlib();
@@ -686,37 +817,106 @@ void frameClockStop() {}
 void frameClockIdle(bool) {}
 bool frameClockSleep(double) { return false; }
 
-// 0.7.8: the idle sleep on SDL's own X connection (NativeView.h displayWaitStart). A wake
-// from another thread is a byte written to a pipe of its own, which is safe from any thread (and
-// from a signal handler).
+// 0.7.8 (X11) + 0.7.9 (Wayland): the idle sleep on SDL's own display connection
+// (NativeView.h displayWaitStart / displayWaitStartWayland). A wake from another thread is a
+// byte written to a pipe of its own, which is safe from any thread (and from a signal handler).
 namespace {
+enum class WaitKind : uint8_t { None = 0, X11, Wayland };
+struct WlClient {
+  int (*getFd)(void*) = nullptr;
+  int (*prepareRead)(void*) = nullptr;
+  int (*flush)(void*) = nullptr;
+  int (*readEvents)(void*) = nullptr;
+  void (*cancelRead)(void*) = nullptr;
+  bool ok = false;
+};
+const WlClient& wlClient() {
+  static const WlClient w = [] {
+    WlClient c;
+    void* h = ::dlopen("libwayland-client.so.0", RTLD_LAZY | RTLD_LOCAL);
+    if (!h) h = ::dlopen("libwayland-client.so", RTLD_LAZY | RTLD_LOCAL);
+    if (!h) return c;
+    c.getFd = reinterpret_cast<decltype(c.getFd)>(::dlsym(h, "wl_display_get_fd"));
+    c.prepareRead = reinterpret_cast<decltype(c.prepareRead)>(::dlsym(h, "wl_display_prepare_read"));
+    c.flush = reinterpret_cast<decltype(c.flush)>(::dlsym(h, "wl_display_flush"));
+    c.readEvents = reinterpret_cast<decltype(c.readEvents)>(::dlsym(h, "wl_display_read_events"));
+    c.cancelRead = reinterpret_cast<decltype(c.cancelRead)>(::dlsym(h, "wl_display_cancel_read"));
+    c.ok = c.getFd && c.prepareRead && c.flush && c.readEvents && c.cancelRead;
+    return c;
+  }();
+  return w;
+}
+WaitKind gWaitKind = WaitKind::None;
 void* gWaitDisplay = nullptr;
-int gWaitFd = -1;                  // SDL's X connection
+int gWaitFd = -1;                  // SDL's X11 or Wayland display fd
 std::atomic<int> gWakeWrite{-1};   // the pipe frameClockWake writes to
 int gWakeRead = -1;
-}  // namespace
 
-bool displayWaitStart(void* xDisplay) {
-  if (gWaitDisplay) return gWaitDisplay == xDisplay;
-  const Xlib& x = xlib();
-  if (!xDisplay || !x.eventsQueued || !x.connectionNumber || !x.flush) return false;
-  const int fd = x.connectionNumber(xDisplay);
-  if (fd < 0) return false;
+bool initWakePipe() {
+  if (gWakeRead >= 0) return true;
   int p[2];
   if (::pipe(p) != 0) return false;
   for (int e : p) {
     ::fcntl(e, F_SETFL, ::fcntl(e, F_GETFL) | O_NONBLOCK);
     ::fcntl(e, F_SETFD, FD_CLOEXEC);
   }
-  gWaitDisplay = xDisplay;
-  gWaitFd = fd;
   gWakeRead = p[0];
   gWakeWrite.store(p[1]);
   return true;
 }
+}  // namespace
+
+bool displayWaitStart(void* xDisplay) {
+  if (gWaitKind != WaitKind::None) return gWaitKind == WaitKind::X11 && gWaitDisplay == xDisplay;
+  const Xlib& x = xlib();
+  if (!xDisplay || !x.eventsQueued || !x.connectionNumber || !x.flush) return false;
+  const int fd = x.connectionNumber(xDisplay);
+  if (fd < 0 || !initWakePipe()) return false;
+  gWaitDisplay = xDisplay;
+  gWaitFd = fd;
+  gWaitKind = WaitKind::X11;
+  return true;
+}
+
+bool displayWaitStartWayland(void* wlDisplay) {
+  if (gWaitKind != WaitKind::None) return gWaitKind == WaitKind::Wayland && gWaitDisplay == wlDisplay;
+  const WlClient& wl = wlClient();
+  if (!wlDisplay || !wl.ok) return false;
+  const int fd = wl.getFd(wlDisplay);
+  if (fd < 0 || !initWakePipe()) return false;
+  gWaitDisplay = wlDisplay;
+  gWaitFd = fd;
+  gWaitKind = WaitKind::Wayland;
+  return true;
+}
 
 bool displaySleep(double seconds) {
-  if (!gWaitDisplay) return false;
+  if (gWaitKind == WaitKind::None || !gWaitDisplay) return false;
+  const int ms = seconds <= 0 ? 0 : static_cast<int>(std::min(seconds * 1000.0 + 0.999, 2.0e9));
+  if (gWaitKind == WaitKind::Wayland) {
+    const WlClient& wl = wlClient();
+    // Canonical Wayland race-free poll: prepare_read returns -1 when events are already queued
+    // on the default queue (wake immediately without sleeping); 0 acquires the read lock.
+    if (wl.prepareRead(gWaitDisplay) != 0) return true;
+    if (wl.flush(gWaitDisplay) < 0 && errno != EAGAIN) {
+      wl.cancelRead(gWaitDisplay);
+      return true;
+    }
+    pollfd p[2] = {};
+    p[0].fd = gWaitFd;
+    p[0].events = POLLIN;
+    p[1].fd = gWakeRead;
+    p[1].events = POLLIN;
+    const int r = ::poll(p, 2, ms);
+    if (p[0].revents & POLLIN) wl.readEvents(gWaitDisplay);
+    else wl.cancelRead(gWaitDisplay);
+    if (p[1].revents & POLLIN) {
+      char buf[64];
+      while (::read(gWakeRead, buf, sizeof buf) > 0) {
+      }
+    }
+    return r != 0;
+  }
   const Xlib& x = xlib();
   // Events Xlib has already read off the connection (another call on it read them) are not on the
   // socket any more: they are there now. The requests waiting to go out go first (QueuedAfterFlush).
@@ -726,7 +926,6 @@ bool displaySleep(double seconds) {
   p[0].events = POLLIN;
   p[1].fd = gWakeRead;
   p[1].events = POLLIN;
-  const int ms = seconds <= 0 ? 0 : static_cast<int>(std::min(seconds * 1000.0 + 0.999, 2.0e9));
   const int r = ::poll(p, 2, ms);
   if (p[1].revents & POLLIN) {
     char buf[64];

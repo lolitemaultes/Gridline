@@ -232,12 +232,13 @@ class WavetableGen final : public Generator {
   bool perVoiceExpression() const override { return true; }  // K-193
   // K-142: resting n frames moves the shared LFOs and the effects on as render() would have.
   void rested(int n) override {
-    for (int pos = 0; pos < n;) {
-      const int m = std::min(n - pos, kChunk);
-      for (int l = 0; l < 4; ++l) globalLfo_[l].advance(lfoHz_[l] / sr_ * m);
-      pos += m;
-    }
+    for (int l = 0; l < 4; ++l) lfoRest_[l].advance(globalLfo_[l].phase, lfoHz_[l] / sr_, n, &globalLfo_[l].cycle);
     fx_.rested(n);
+  }
+  bool canDeferRest() const override { return fx_.canDeferRest(); }
+  void restedLong(int64_t n) override {
+    for (int l = 0; l < 4; ++l) lfoRest_[l].advance(globalLfo_[l].phase, lfoHz_[l] / sr_, n, &globalLfo_[l].cycle);
+    fx_.restedLong(n);
   }
 
  protected:
@@ -439,6 +440,7 @@ class WavetableGen final : public Generator {
   }
 
   void render(float* L, float* R, int n) override {
+    for (int l = 0; l < 4; ++l) lfoRest_[l].flush(globalLfo_[l].phase, &globalLfo_[l].cycle);
     int pos = 0;
     while (pos < n) {
       int m = std::min(n - pos, kChunk);
@@ -676,6 +678,7 @@ class WavetableGen final : public Generator {
   FxRack fx_;
   NoteStack stack_;
   LfoPhase globalLfo_[4];
+  RestPhase lfoRest_[4];
   O o_[2];
   F f_[2];
   bool parallel_ = false, noiseDark_ = false;

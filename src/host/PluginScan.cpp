@@ -13,6 +13,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include "../core/Project.h"
+#include "sandbox/NetBlock.h"
 #include "sandbox/Sandbox.h"
 #include "ui/QuietWindows.h"
 #include "../core/Platform.h"
@@ -65,6 +66,7 @@ Json toJson(const ScanResult& r) {
   j.object["bundle"] = str(r.bundle);
   j.object["mtime"] = num(static_cast<double>(r.mtime));
   j.object["ok"] = boolean(r.ok);
+  if (r.needsBridge32) j.object["needsBridge32"] = boolean(true);
   if (!r.error.empty()) j.object["error"] = str(r.error);
   Json classes = Json::makeArray();
   for (const auto& c : r.classes) {
@@ -122,6 +124,7 @@ bool fromJson(const Json& j, ScanResult& r) {
   r.bundle = j.text("bundle");
   r.mtime = jsonInt<int64_t>(j.num("mtime"));
   r.ok = flag(j, "ok");
+  r.needsBridge32 = flag(j, "needsBridge32");
   r.error = j.text("error");
   if (const Json* cs = j.find("classes"); cs && cs->is(Json::Type::Array))
     for (const auto& jc : cs->array) {
@@ -391,6 +394,71 @@ void scanProgress() {
 
 std::string scanProgressFile(const std::string& outFile) { return outFile + ".progress"; }
 
+const char* peArchName(PeArch arch) {
+  switch (arch) {
+    case PeArch::X86: return "x86";
+    case PeArch::X64: return "x64";
+    case PeArch::Arm64: return "Arm64";
+    case PeArch::Unknown: return "Unknown";
+  }
+  return "Unknown";
+}
+
+PeArch peArch(const std::string& path) {
+  std::ifstream f(fs::u8path(path), std::ios::binary);
+  if (!f) return PeArch::Unknown;
+  f.seekg(0, std::ios::end);
+  const std::streamoff size = f.tellg();
+  if (size < 64) return PeArch::Unknown;
+  auto read = [&](std::streamoff at, void* to, size_t n) {
+    if (at < 0 || at + static_cast<std::streamoff>(n) > size) return false;
+    f.clear();
+    f.seekg(at);
+    return static_cast<bool>(f.read(static_cast<char*>(to), static_cast<std::streamsize>(n)));
+  };
+  auto u16 = [&](std::streamoff at, uint32_t& v) {
+    unsigned char b[2];
+    if (!read(at, b, 2)) return false;
+    v = static_cast<uint32_t>(b[0]) | (static_cast<uint32_t>(b[1]) << 8);
+    return true;
+  };
+  auto u32 = [&](std::streamoff at, uint32_t& v) {
+    unsigned char b[4];
+    if (!read(at, b, 4)) return false;
+    v = static_cast<uint32_t>(b[0]) | (static_cast<uint32_t>(b[1]) << 8) | (static_cast<uint32_t>(b[2]) << 16) |
+        (static_cast<uint32_t>(b[3]) << 24);
+    return true;
+  };
+  char mz[2];
+  uint32_t peAt = 0, sig = 0, machine = 0, magic = 0;
+  if (!read(0, mz, 2) || mz[0] != 'M' || mz[1] != 'Z' || !u32(0x3C, peAt) || !u32(peAt, sig) || sig != 0x00004550u) return PeArch::Unknown;
+  if (!u16(static_cast<std::streamoff>(peAt) + 4, machine)) return PeArch::Unknown;
+  if (!u16(static_cast<std::streamoff>(peAt) + 24, magic)) return PeArch::Unknown;
+  if (machine == 0x014Cu && magic == 0x010Bu) return PeArch::X86;
+  if (machine == 0x8664u && magic == 0x020Bu) return PeArch::X64;
+  if (machine == 0xAA64u && magic == 0x020Bu) return PeArch::Arm64;
+  return PeArch::Unknown;
+}
+
+bool needsBridge32ForPath(const std::string& format, const std::string& entry) {
+  if (format != "vst2" && format != "vst3") return false;
+  std::error_code ec;
+  const fs::path p = fs::u8path(entry);
+  if (fs::is_regular_file(p, ec)) return peArch(entry) == PeArch::X86;
+  if (format == "vst3" && fs::is_directory(p, ec)) {
+    const fs::path contents = p / "Contents";
+    // If a native 64-bit Windows binary exists, no 32-bit bridge is needed.
+    if (fs::exists(contents / "x86_64-win", ec) || fs::exists(contents / "arm64-win", ec) || fs::exists(contents / "arm64x-win", ec))
+      return false;
+    const fs::path x86Dir = contents / "x86-win";
+    if (!fs::is_directory(x86Dir, ec)) return false;
+    for (const auto& de : fs::directory_iterator(x86Dir, ec)) {
+      if (de.is_regular_file(ec) && peArch(de.path().u8string()) == PeArch::X86) return true;
+    }
+  }
+  return false;
+}
+
 std::string peMachineMismatch(uint16_t machine, uint16_t hostMachine) {
   constexpr uint16_t kX86 = 0x14C, kX64 = 0x8664, kArm64 = 0xAA64;
   if (machine == hostMachine) return {};
@@ -456,6 +524,7 @@ void scanStep(const std::string& what) {
 
 int childMain(int argc, char** argv) {
   std::string format, entry, out, sandbox, prefsFile;
+  bool netBlock = false;
   for (int i = 1; i < argc; ++i) {
     if (std::strcmp(argv[i], "--scan-vst3") == 0 && i + 1 < argc) {
       format = "vst3";
@@ -469,7 +538,15 @@ int childMain(int argc, char** argv) {
       sandbox = argv[++i];
     } else if (std::strcmp(argv[i], "--plugin-prefs") == 0 && i + 1 < argc) {
       prefsFile = argv[++i];
+    } else if (std::strcmp(argv[i], kNetBlockArg) == 0) {
+      netBlock = true;
     }
+  }
+  // K-437: off the internet first, while this process has one thread and before any plugin loads.
+  if (netBlock && (!sandbox.empty() || !entry.empty())) {
+    std::string why;
+    const int guard = applyNetworkBlock(&why);
+    noteNetworkBlock(true, guard, why);
   }
   // K-13: the parent's plugin folders (read only), so a child searches what the parent does.
   if (!prefsFile.empty() && (!sandbox.empty() || !entry.empty())) loadPluginPrefsFile(prefsFile);
@@ -490,8 +567,10 @@ int childMain(int argc, char** argv) {
   r.format = format;
   r.bundle = entry;
   if (!out.empty()) progressFile() = scanProgressFile(out);
-  scanStep("start: " + format + " " + entry + (ole ? "" : " (the thread has no OLE)"));
-  if (const Format* f = findFormat(format))
+  scanStep("start: " + format + " " + entry + (ole ? "" : " (the thread has no OLE)") + (netBlock ? " (internet blocked)" : ""));
+  if (networkBlockRequested() && networkGuard() == kNetOpen)  // K-437: fail closed, never scanned with internet access
+    r.error = "internet access could not be blocked on this system (" + networkBlockError() + ")";
+  else if (const Format* f = findFormat(format))
     r = f->scanInProcess(entry);
   else
     r.error = "unsupported plugin format " + format;
@@ -598,7 +677,7 @@ std::string tailOf(const fs::path& file, size_t maxBytes) {
 }  // namespace
 
 ScanResult scanIsolated(const std::string& exe, const std::string& format, const std::string& entry, double timeoutSeconds,
-                        const std::atomic<bool>* cancel, ScanReport* report, int attempt) {
+                        const std::atomic<bool>* cancel, ScanReport* report, int attempt, bool blockNetwork) {
   ScanReport rep;
   ScanResult r;
   r.format = format;
@@ -610,9 +689,29 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
     if (report) *report = rep;
     return res;
   };
-  // K-73: what is plainly not a plugin for this computer (a 32-bit DLL in a 64-bit Gridline) is told
-  // without loading it in a child.
-  if (fmt && fmt->precheck) {
+  // K-323: 32-bit Windows PE VST2/VST3 plugins route through sibling gridline-bridge32.exe
+  // on 64-bit Windows instead of being rejected outright.
+  std::string scanExe = exe;
+  bool useBridge32 = false;
+#if defined(_WIN32) && !defined(_M_IX86) && !defined(__i386__)
+  if (needsBridge32ForPath(format, entry)) {
+    const std::string b32 = bridge32Executable(exe);
+    std::error_code ec;
+    if (b32.empty() || !fs::is_regular_file(fs::u8path(b32), ec)) {
+      r.error = bridge32UnavailableError(b32, false);
+      return done(std::move(r), ScanReport::Outcome::NotForThisComputer);
+    }
+    scanExe = b32;
+    useBridge32 = true;
+  }
+#elif defined(__APPLE__)
+  if (needsBridge32ForPath(format, entry)) {
+    r.error = bridge32UnavailableError({}, true);
+    return done(std::move(r), ScanReport::Outcome::NotForThisComputer);
+  }
+#endif
+  // K-73: what is plainly not a plugin for this computer is told without loading it in a child.
+  if (!useBridge32 && fmt && fmt->precheck) {
     if (std::string why = fmt->precheck(entry); !why.empty()) {
       r.error = why;
       return done(std::move(r), ScanReport::Outcome::NotForThisComputer);
@@ -624,8 +723,9 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
                                                               std::to_string(serial++) + ".json");
   const std::string tmpName = tmp.u8string();
   const fs::path progress = fs::u8path(scanProgressFile(tmpName)), part = fs::u8path(tmpName + ".part"), errLog = fs::u8path(tmpName + ".log");
-  std::vector<std::string> args = {exe, "--scan-plugin", format, entry, "--out", tmpName};
+  std::vector<std::string> args = {scanExe, "--scan-plugin", format, entry, "--out", tmpName};
   if (const std::string pf = pluginPrefsFile(); !pf.empty()) args.insert(args.end(), {"--plugin-prefs", pf});  // K-13
+  if (blockNetwork) args.push_back(kNetBlockArg);  // K-437
   // K-154: the child and whatever it starts (a bridge's host process) form one group / job: its
   // memory is watched as one, and it is ended as one.
   const std::uint64_t physical = platform::physicalMemoryBytes();
@@ -644,7 +744,7 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
     for (const fs::path& p : {tmp, progress, part, errLog}) fs::remove(p, ec);
     rep.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
   };
-  if (!child.start(exe, args, platform::Process::kTree)) {
+  if (!child.start(scanExe, args, platform::Process::kTree)) {
     r.error = "cannot start the scanner process";
     cleanUp();
     return done(std::move(r), ScanReport::Outcome::Failed);
@@ -765,6 +865,7 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
     parsed.format = format;
     parsed.bundle = entry;
     parsed.mtime = r.mtime;
+    if (useBridge32) parsed.needsBridge32 = true;
     const ScanReport::Outcome o = parsed.ok ? ScanReport::Outcome::Listed : ScanReport::Outcome::Failed;
     return done(std::move(parsed), o);
   }
@@ -788,6 +889,8 @@ ScanResult scanIsolated(const std::string& exe, const std::string& format, const
 
 bool ScanCache::load() {
   entries_.clear();
+  scanned_ = false;
+  scannedFormats_.clear();
   std::ifstream f(file_, std::ios::binary);
   if (!f) return false;
   std::stringstream ss;
@@ -795,11 +898,22 @@ bool ScanCache::load() {
   Json j;
   if (!jsonParse(ss.str(), j) || !j.is(Json::Type::Object)) return false;
   if (j.num("version") != kCacheVersion) return false;  // older layout: rescan everything
+  if (const Json* sc = j.find("scanned"); sc && sc->is(Json::Type::Bool)) scanned_ = sc->boolean;
+  if (const Json* sf = j.find("scannedFormats"); sf && sf->is(Json::Type::Array))
+    for (const auto& s : sf->array)
+      if (s.is(Json::Type::String) && !s.str.empty()) {
+        scannedFormats_.insert(s.str);
+        scanned_ = true;
+      }
   if (const Json* b = j.find("bundles"); b && b->is(Json::Type::Array))
     for (const auto& e : b->array) {
       ScanResult r;
-      if (fromJson(e, r)) entries_.push_back(std::move(r));
+      if (fromJson(e, r)) {
+        if (!r.format.empty()) scannedFormats_.insert(r.format);
+        entries_.push_back(std::move(r));
+      }
     }
+  if (!entries_.empty()) scanned_ = true;
   return true;
 }
 
@@ -807,6 +921,12 @@ bool ScanCache::save() const {
   if (file_.empty()) return false;
   Json j = Json::makeObject();
   j.object["version"] = num(kCacheVersion);
+  if (scanned_ || !entries_.empty()) j.object["scanned"] = boolean(true);
+  if (!scannedFormats_.empty()) {
+    Json sf = Json::makeArray();
+    for (const auto& f : scannedFormats_) sf.array.push_back(Json::makeString(f));
+    j.object["scannedFormats"] = std::move(sf);
+  }
   Json b = Json::makeArray();
   for (const auto& e : entries_) b.array.push_back(toJson(e));
   j.object["bundles"] = std::move(b);
@@ -815,6 +935,19 @@ bool ScanCache::save() const {
   // Per-writer temp name: the app's scanner and `gridline scan-plugins` (or a
   // second instance) may save the shared cache at the same time.
   return writeFileAtomic(file_, jsonStringify(j, 1));
+}
+
+bool ScanCache::formatScanned(const std::string& format) const {
+  if (format.empty()) return scanned();
+  if (scannedFormats_.count(format) > 0) return true;
+  for (const auto& e : entries_)
+    if (e.format == format) return true;
+  return false;
+}
+
+void ScanCache::markScanned(const std::string& format) {
+  scanned_ = true;
+  if (!format.empty()) scannedFormats_.insert(format);
 }
 
 const ScanResult* ScanCache::find(const std::string& bundle, const std::string& format) const {

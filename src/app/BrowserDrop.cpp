@@ -3,7 +3,9 @@
 #include <algorithm>
 #include "../core/ThreadName.h"
 #include <iterator>
+#include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <cstring>
@@ -40,6 +42,7 @@
 #include "LayoutPresets.h"
 #include "LiveLook.h"
 #include "LogicPlugins.h"
+#include "TrackerPages.h"
 #include "../packs/tracker/tracker.h"
 #include "../core/TrackerGrid.h"
 #include "SystemMenu.h"
@@ -491,6 +494,101 @@ void fileDragSource(const std::string& path, const char* label) {
   ImGui::EndDragDropSource();
 }
 
+const char* revealText() {
+#if defined(__APPLE__)
+  return i18n::N_("Show in Finder");
+#elif defined(_WIN32)
+  return i18n::N_("Show in Explorer");
+#else
+  return i18n::N_("Show in Files");
+#endif
+}
+
+bool revealInFileManager(App& a, const std::string& path) {
+  if (path.empty() || remotefs::isRemote(path)) return false;
+  std::error_code ec;
+  fs::path dir = fs::u8path(path);
+  if (fs::is_regular_file(dir, ec)) dir = dir.parent_path();  // a file: the folder holding it
+  if (!fs::exists(dir, ec)) fs::create_directories(dir, ec);  // one of Gridline's folders, not filled yet
+  const fs::path abs = fs::absolute(dir, ec);
+  const std::string shown = (ec ? dir : abs).u8string();
+  if (sysmenu::hiddenRun()) {  // tests and captures never open a window of another program
+    std::printf("reveal: %s\n", shown.c_str());
+    std::fflush(stdout);
+    return true;
+  }
+  std::string url = "file://";
+  for (unsigned char ch : (ec ? dir : abs).generic_u8string()) {
+    if (std::isalnum(ch) || ch == '/' || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+      url += static_cast<char>(ch);
+    } else {
+      char b[4];
+      std::snprintf(b, sizeof b, "%%%02X", ch);
+      url += b;
+    }
+  }
+#if defined(_WIN32)
+  if (url.size() > 7 && url[7] != '/') url.insert(7, "/");  // file:///C:/...
+#endif
+  if (collabui::openUrl(url)) return true;
+  a.notify(std::string(i18n::tr("The file manager could not be opened. The folder is")) + " " + shown, true);
+  return false;
+}
+
+bool addFileToPlaylist(App& a, const std::string& path) {
+  if (path.empty()) return false;
+  const Song& s = a.doc.song();
+  const Tick bar = std::max<Tick>(1, static_cast<Tick>(s.ppq) * 4 * std::max(1, s.timeSigNum) / std::max(1, s.timeSigDen));
+  const Tick at = std::max<Tick>(0, static_cast<Tick>(a.engine.position()) / bar * bar);
+  DropPlace pl;
+  pl.tick = at;
+  a.doc.beginGroup(i18n::tr("Add to the playlist"));
+  if (logicplug::active(a)) {  // the Tracks layout: audio goes on an audio track of its own
+    pl.track = trackmodes::addAudioTrack(a.doc);
+  } else {
+    int track = 0;
+    for (const Clip& c : s.playlist) track = std::max(track, c.track + 1);
+    pl.track = std::min(track, std::max(0, static_cast<int>(s.tracks.size()) - 1));
+  }
+  const bool ok = pl.track >= 0 && dropFiles(a, {path}, DropTarget::Playlist, pl);
+  a.doc.endGroup();
+  if (!ok) {
+    a.notify(std::string(i18n::tr("Could not add it to the playlist:")) + " " + fs::u8path(path).filename().u8string(), true);
+    return false;
+  }
+  a.showPlaylist = true;
+  char b[96];
+  std::snprintf(b, sizeof b, "%s %d",
+                livelook::active(a)       ? i18n::tr("Added to the arrangement on track")
+                : logicplug::active(a)    ? i18n::tr("Added on audio track")
+                : trackerpages::active(a) ? i18n::tr("Added to the song on track")
+                                          : i18n::tr("Added to the playlist on track"),
+                pl.track + 1);
+  a.notify(b);
+  return true;
+}
+
+bool addFileToRack(App& a, const std::string& path) {
+  if (path.empty()) return false;
+  const bool ok = dropFiles(a, {path}, DropTarget::Rack, DropPlace{});
+  if (ok) a.notify(trackerpages::active(a) ? i18n::tr("Added to the steps")
+                   : livelook::active(a) || logicplug::active(a) ? i18n::tr("Added as a sampler track")
+                                                                  : i18n::tr("Added to the channel rack"));
+  else a.notify(std::string(i18n::tr("Could not add it to the channel rack:")) + " " + fs::u8path(path).filename().u8string(), true);
+  return ok;
+}
+
+const char* playlistAddText(const App& a) {
+  if (livelook::active(a)) return i18n::tr("Add to the arrangement");
+  if (logicplug::active(a)) return i18n::tr("Add as an audio track");
+  return i18n::tr("Add to the playlist");  // the Tracker's menus say "song" themselves
+}
+
+const char* rackAddText(const App& a) {
+  if (livelook::active(a) || logicplug::active(a)) return i18n::tr("Add as a sampler track");
+  return i18n::tr("Add to the channel rack");  // the Tracker's menus say "steps" themselves
+}
+
 DropAction dropActionFor(App& a, const std::string& path, DropTarget target, const DropPlace& place) {
   const Decoded& d = decodeItem(path);
   if (!d.ok) return DropAction::None;
@@ -873,11 +971,25 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
         a.doc.editChannel(id, "follow the song tempo", [&](Channel& c) { loopimport::followTempo(c.plugin, li.bpm); });
         notifyFollows(a, li.bpm);
       }
+      if (id != kNoId && previewCarryPitch() && std::fabs(previewPitchSt()) > 1e-4f) {  // K-417: carry preview transpose
+        const float cents = std::clamp(previewPitchSt() * 100.0f, -1200.0f, 1200.0f);
+        a.doc.editChannel(id, "apply preview pitch", [cents](Channel& c) {
+          if (c.plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode)) c.plugin.params[pp::SmpStretchMode] = 1.0f;
+          if (c.plugin.params.size() > static_cast<size_t>(pp::SmpPitchShift)) c.plugin.params[pp::SmpPitchShift] = cents;
+        });
+      }
       a.showNewInstrument(id);
       return id != kNoId;
     }
     case DropAction::ReplaceInstrument:  // J-97: another instrument's row becomes a sampler with the file
       if (!replaceChannel(a, place.channel, "gl.sampler", nullptr, path, fs::path(path).stem().string(), "replace with sampler")) return false;
+      if (previewCarryPitch() && std::fabs(previewPitchSt()) > 1e-4f) {
+        const float cents = std::clamp(previewPitchSt() * 100.0f, -1200.0f, 1200.0f);
+        a.doc.editChannel(place.channel, "apply preview pitch", [cents](Channel& c) {
+          if (c.plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode)) c.plugin.params[pp::SmpStretchMode] = 1.0f;
+          if (c.plugin.params.size() > static_cast<size_t>(pp::SmpPitchShift)) c.plugin.params[pp::SmpPitchShift] = cents;
+        });
+      }
       a.showNewInstrument(place.channel);  // K-125
       return true;
     case DropAction::ReplaceFromPreset: {  // J-97: the row's instrument from a preset (FL "Replace")
@@ -922,9 +1034,14 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
       const int track = std::clamp(place.track, 0, kMaxPlaylistTracks - 1);
       const Tick start = std::max<Tick>(0, place.tick);
       const bool sync = ownTempo || ((previewSync() || clipsWarp) && bpm > 0);
-      if (ownTempo || (clipsWarp && sync))  // K-161: stretched to the song tempo, its pitch kept
-        a.doc.editChannel(ch, "", [](Channel& c) {
+      const bool carryPitch = previewCarryPitch() && std::fabs(previewPitchSt()) > 1e-4f;
+      if (ownTempo || (clipsWarp && sync) || carryPitch)  // K-161 / K-417: stretched to the song tempo / carried preview pitch
+        a.doc.editChannel(ch, "", [bpm, sync, carryPitch](Channel& c) {
           if (c.plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode)) c.plugin.params[pp::SmpStretchMode] = 1.0f;
+          if (sync && bpm > 0 && c.plugin.params.size() > static_cast<size_t>(pp::SmpFitTempo))
+            c.plugin.params[pp::SmpFitTempo] = static_cast<float>(std::clamp(bpm, 1e-3, 1000.0));
+          if (carryPitch && c.plugin.params.size() > static_cast<size_t>(pp::SmpPitchShift))
+            c.plugin.params[pp::SmpPitchShift] = std::clamp(previewPitchSt() * 100.0f, -1200.0f, 1200.0f);
         });
       a.doc.editSong("add audio clip", [&](Song& sg) {
         Clip c;
@@ -962,6 +1079,16 @@ bool runAction(App& a, const std::string& path, DropAction act, DropTarget targe
       if (t.isChannel()) {  // J-97: the channel keeps a name the user gave it
         if (!loadChannelSample(a, t.owner, path, act == DropAction::ReplaceSample ? "replace sample" : "load sample", act == DropAction::LoadSample)) return false;
         if (act == DropAction::ReplaceSample) a.selectChannel(t.owner);
+        if (previewCarryPitch() && std::fabs(previewPitchSt()) > 1e-4f) {  // K-417: carry preview pitch onto sampler
+          const Channel* curCh = a.doc.song().channel(t.owner);
+          if (curCh && curCh->plugin.type == "gl.sampler") {
+            const float cents = std::clamp(previewPitchSt() * 100.0f, -1200.0f, 1200.0f);
+            a.doc.editChannel(t.owner, "apply preview pitch", [cents](Channel& x) {
+              if (x.plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode)) x.plugin.params[pp::SmpStretchMode] = 1.0f;
+              if (x.plugin.params.size() > static_cast<size_t>(pp::SmpPitchShift)) x.plugin.params[pp::SmpPitchShift] = cents;
+            });
+          }
+        }
         // K-161: a slicer takes a loop file's own slices (sliced loops, tagged loops' beat markers).
         loopfile::Info li;
         const Channel* c = a.doc.song().channel(t.owner);
@@ -1770,17 +1897,67 @@ void openFiles(App& a, const std::vector<xdrop::Item>& items) {
 
 // ----------------------------------------------------------------- preview
 
+namespace {
+std::string gPreviewActivePath;
+}  // namespace
+
 bool& previewSync() {
   static bool on = false;
   return on;
 }
 
-void previewFile(App& a, const std::string& path) {
+int& previewQuant() {
+  static int q = static_cast<int>(AudioEngine::PreviewQuant::Bar);
+  return q;
+}
+
+int& previewSpeedIdx() {
+  static int idx = 1;  // 0=x1/2, 1=x1, 2=x2
+  return idx;
+}
+
+double previewSpeedMult() {
+  static const double kSpeeds[3] = {0.5, 1.0, 2.0};
+  return kSpeeds[std::clamp(previewSpeedIdx(), 0, 2)];
+}
+
+float& previewPitchSt() {
+  static float st = 0.0f;
+  return st;
+}
+
+bool& previewCarryPitch() {
+  static bool carry = true;
+  return carry;
+}
+
+const std::string& previewActivePath() {
+  return gPreviewActivePath;
+}
+
+void syncPreviewControls(App& a) {
+  a.engine.setPreviewPitch(previewPitchSt());
+  a.engine.setPreviewSpeed(previewSpeedMult());
+  a.engine.setPreviewQuant(static_cast<AudioEngine::PreviewQuant>(std::clamp(previewQuant(), 0, static_cast<int>(AudioEngine::PreviewQuant::Count) - 1)));
+}
+
+void scrubPreview(App& a, const std::string& path, double normPos) {
+  const double clamped = std::clamp(normPos, 0.0, 0.999);
+  if (a.engine.previewing() && gPreviewActivePath == path) {
+    a.engine.seekPreview(clamped);
+  } else {
+    previewFile(a, path, clamped, true);
+  }
+}
+
+void previewFile(App& a, const std::string& path, double startNorm, bool immediate) {
   if (browse::kindOf(path) == Kind::Instrument && !remotefs::isRemote(path)) {  // K-144: a note of the map, rendered on a worker
+    gPreviewActivePath = path;
     previewInstrument(path);
     return;
   }
   if (remotefs::isRemote(path)) {  // K-42: read on a background decoder and heard when it has arrived
+    gPreviewActivePath = path;
     a.previewWhenReady(path);
     return;
   }
@@ -1789,6 +1966,7 @@ void previewFile(App& a, const std::string& path) {
     a.notify("Cannot decode " + fs::path(path).filename().string(), true);
     return;
   }
+  gPreviewActivePath = path;
   // Remember what we learnt (files outside the indexed folders too).
   browse::FileMeta meta;
   if (!index().lookup(path, meta) || !meta.analysed) {
@@ -1805,66 +1983,69 @@ void previewFile(App& a, const std::string& path) {
     }
     index().put(meta);
   }
-  // K-161: a sliced loop previews at the song tempo the way it plays: each slice on its beat, at its own speed.
-  if (previewSync()) {
-    loopfile::Info li;
+  // Classify loop vs one-shot (K-407): one-shots stay unsynced; loops sync to tempo & transport phase.
+  loopfile::Info li;
+  const bool hasLoopInfo = loopFacts(path, li);
+  const bool taggedOneShot = std::find(meta.fileTags.begin(), meta.fileTags.end(), "one-shot") != meta.fileTags.end();
+  const bool taggedLoop = (hasLoopInfo && (li.loop || slicedLoop(li))) ||
+                          std::find(meta.fileTags.begin(), meta.fileTags.end(), "loop") != meta.fileTags.end();
+  double loopBpm = (hasLoopInfo && li.bpm > 0) ? li.bpm : meta.bpm;
+  if (loopBpm <= 0) loopBpm = browse::bpmFromName(fs::path(path).filename().string());
+  const bool isLoop = !taggedOneShot && loopBpm > 0.0 && (taggedLoop || s->seconds() >= 0.9);
+
+  // K-161: a sliced loop previews at the song tempo (with K-407 phase lock + K-417 pitch).
+  if (previewSync() && hasLoopInfo && slicedLoop(li) && li.beats > 0 && a.doc.song().tempo > 0 && s->sampleRate > 0) {
     const double songBpm = a.doc.song().tempo;
-    if (loopFacts(path, li) && slicedLoop(li) && li.beats > 0 && songBpm > 0 && s->sampleRate > 0) {
-      static std::string lastKey;
-      static SamplePtr last;
-      const std::string key = path + "@" + std::to_string(songBpm);
-      if (key != lastKey || !last) {
-        const double framesPerBeat = 60.0 / songBpm * 4.0 / (li.sigDen > 0 ? li.sigDen : 4) * s->sampleRate;
-        const size_t total = static_cast<size_t>(std::max(1.0, li.beats * framesPerBeat));
-        auto r = std::make_shared<Sample>();
-        r->path = s->path;
-        r->sampleRate = s->sampleRate;
-        r->left.assign(total, 0.0f);
-        r->right.assign(total, 0.0f);
-        for (size_t k = 0; k < li.slices.size(); ++k) {
-          const loopfile::Slice& sl = li.slices[k];
-          if (sl.muted) continue;
-          const size_t at = static_cast<size_t>(std::max(0.0, sl.beat * framesPerBeat));
-          const size_t until = k + 1 < li.slices.size() ? static_cast<size_t>(std::max(0.0, li.slices[k + 1].beat * framesPerBeat)) : total;
-          const size_t n = std::min({static_cast<size_t>(std::max<int64_t>(0, sl.length)), until > at ? until - at : 0, total - std::min(total, at),
-                                     s->frames() - std::min(s->frames(), static_cast<size_t>(sl.start)) });
-          const size_t fade = std::min<size_t>(n / 2, 64);
-          for (size_t i = 0; i < n; ++i) {
-            const float g = i + fade >= n ? static_cast<float>(n - i) / static_cast<float>(fade + 1) : 1.0f;  // no click where a slice is cut
-            r->left[at + i] += s->left[static_cast<size_t>(sl.start) + i] * g;
-            r->right[at + i] += s->right[static_cast<size_t>(sl.start) + i] * g;
-          }
+    static std::string lastKey;
+    static SamplePtr last;
+    const std::string key = path + "@" + std::to_string(songBpm);
+    if (key != lastKey || !last) {
+      const double framesPerBeat = 60.0 / songBpm * 4.0 / (li.sigDen > 0 ? li.sigDen : 4) * s->sampleRate;
+      const size_t total = static_cast<size_t>(std::max(1.0, li.beats * framesPerBeat));
+      auto r = std::make_shared<Sample>();
+      r->path = s->path;
+      r->sampleRate = s->sampleRate;
+      r->left.assign(total, 0.0f);
+      r->right.assign(total, 0.0f);
+      for (size_t k = 0; k < li.slices.size(); ++k) {
+        const loopfile::Slice& sl = li.slices[k];
+        if (sl.muted) continue;
+        const size_t at = static_cast<size_t>(std::max(0.0, sl.beat * framesPerBeat));
+        const size_t until = k + 1 < li.slices.size() ? static_cast<size_t>(std::max(0.0, li.slices[k + 1].beat * framesPerBeat)) : total;
+        const size_t n = std::min({static_cast<size_t>(std::max<int64_t>(0, sl.length)), until > at ? until - at : 0, total - std::min(total, at),
+                                   s->frames() - std::min(s->frames(), static_cast<size_t>(sl.start))});
+        const size_t fade = std::min<size_t>(n / 2, 64);
+        for (size_t i = 0; i < n; ++i) {
+          const float g = i + fade >= n ? static_cast<float>(n - i) / static_cast<float>(fade + 1) : 1.0f;
+          r->left[at + i] += s->left[static_cast<size_t>(sl.start) + i] * g;
+          r->right[at + i] += s->right[static_cast<size_t>(sl.start) + i] * g;
         }
-        last = r;
-        lastKey = key;
       }
-      a.engine.preview(last);
-      return;
+      last = r;
+      lastKey = key;
     }
-  }
-  const double ratio = previewSync() && meta.bpm > 0 ? browse::syncRatio(meta.bpm, a.doc.song().tempo) : 1.0;
-  if (std::fabs(ratio - 1.0) < 1e-4) {
-    a.engine.preview(s);
+    AudioEngine::PreviewOptions opt;
+    opt.synced = true;
+    opt.sampleBpm = songBpm;  // already rendered at songBpm; AudioEngine tracks live tempo changes + phase lock
+    opt.quant = static_cast<AudioEngine::PreviewQuant>(std::clamp(previewQuant(), 0, static_cast<int>(AudioEngine::PreviewQuant::Count) - 1));
+    opt.speedMult = previewSpeedMult();
+    opt.pitchSemitones = previewPitchSt();
+    opt.startNorm = startNorm;
+    opt.immediate = immediate;
+    a.engine.preview(last, opt);
     return;
   }
-  // Tempo sync: resample (speed follows the song tempo, like a synced loop).
-  static std::string lastKey;
-  static SamplePtr last;
-  const std::string key = path + "@" + std::to_string(ratio);
-  if (key != lastKey || !last) {
-    auto r = std::make_shared<Sample>();
-    r->path = s->path;
-    r->sampleRate = s->sampleRate;
-    const size_t n = static_cast<size_t>(static_cast<double>(s->frames()) / ratio);
-    r->left.resize(n);
-    r->right.resize(n);
-    // J-140: band-limited (was linear: aliasing when sped up, dull when slowed).
-    pitch::resample2(s->left.data(), s->right.data(), static_cast<int64_t>(s->frames()), 0.0, ratio, r->left.data(), r->right.data(),
-                     static_cast<int64_t>(n), pitch::Quality::Offline);
-    last = r;
-    lastKey = key;
-  }
-  a.engine.preview(last);
+
+  // K-407 + K-416 + K-417: realtime stretched preview on the audio thread (zero RT allocs).
+  AudioEngine::PreviewOptions opt;
+  opt.synced = previewSync() && isLoop;
+  opt.sampleBpm = opt.synced ? loopBpm : 0.0;
+  opt.quant = static_cast<AudioEngine::PreviewQuant>(std::clamp(previewQuant(), 0, static_cast<int>(AudioEngine::PreviewQuant::Count) - 1));
+  opt.speedMult = previewSpeedMult();
+  opt.pitchSemitones = previewPitchSt();
+  opt.startNorm = startNorm;
+  opt.immediate = immediate || !opt.synced;
+  a.engine.preview(s, opt);
 }
 
 }  // namespace gl::browserui

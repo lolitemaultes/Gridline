@@ -1,6 +1,7 @@
 // Gridline — MCP protocol session, JSON helpers, path policy, argument
 // validation, resources and prompts (see Mcp.h). The tools are in McpTools.cpp.
 #include "GridlineVersion.h"
+#include "ThreadJoin.h"
 #include "ThreadName.h"
 #include "Mcp.h"
 #include "SongDiff.h"
@@ -769,8 +770,7 @@ std::vector<std::shared_ptr<Job>> JobRunner::running() const {
 
 void JobRunner::cancelAll() {
   for (auto& s : slots_) s.job->cancel.store(true);
-  for (auto& s : slots_)
-    if (s.worker.joinable()) s.worker.join();
+  for (auto& s : slots_) gl::threads::safeJoin(s.worker);
 }
 
 void pollJobs(Environment& env) {

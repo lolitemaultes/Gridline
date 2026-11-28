@@ -110,6 +110,16 @@ void Model::add(const nativemenu::Item& it, int parent, const std::string& paren
   for (const nativemenu::Item& c : it.children) add(c, e.id, key, childSeen);
 }
 
+void HostState::nameOwner(const std::string& name, bool owned) {
+  if (owned) owned_.insert(name);
+  else owned_.erase(name);
+  if (owned_.empty()) read_ = false;
+}
+
+void HostState::menusRead() {
+  if (present()) read_ = true;
+}
+
 namespace {
 bool same(const Entry& a, const Entry& b) {
   return a.id == b.id && a.parent == b.parent && a.label == b.label && a.enabled == b.enabled && a.separator == b.separator &&

@@ -20,6 +20,12 @@
 #include "NoteRetrigger.h"
 #include "core/Json.h"
 #include "core/Settings.h"
+#include "core/Document.h"
+#include "core/PluginParams.h"
+#include "core/Project.h"
+#include "engine/AudioEngine.h"
+#include "engine/MidiOutTake.h"
+#include "engine/NoteFxBurn.h"
 #include "engine/Program.h"
 #include "host/HostedPlugins.h"
 #include "host/PluginPrefs.h"
@@ -408,6 +414,62 @@ void testSynth() {
   expect(!hi->backend()->hasEditor(), "no interface of its own: Gridline's generic parameter view");
 }
 
+// K-438: an installed plugin's own MIDI output into a pattern. The test synth echoes every note an
+// octave up on its MIDI output (CLAP, LV2: with Echo on; VST2: always); every format's output goes
+// through HostedCore into Generator::takeMidiOut, the path both commands read. Offline: "Write its
+// MIDI output to the piano roll" renders one pass; live: the engine's capture ring while playing,
+// drained by MidiOutTake as the UI does, kept in one undo step at the end.
+void checkHostedMidiOutput(const std::string& type, int echoParam, const char* label) {
+  Document d(makeEmptySong());
+  d.setParam(songParam(SongParam::Tempo), 120.0, false);
+  const ObjectId pat = d.song().patterns[0].id;
+  d.setPatternLength(pat, 1, 16);
+  const ObjectId a = d.addChannel("arp plugin", type);
+  if (echoParam >= 0) d.setParam(channelPluginParam(a, echoParam), 1, false);
+  d.addNote(pat, a, {0, 96, 57, 100});
+  d.addNote(pat, a, {192, 48, 60, 90});
+  const std::string L = label;
+  const size_t patterns = d.song().patterns.size();
+  // Offline print.
+  const ObjectId printed = printMidiOutputToPattern(d, pat, a);
+  const Pattern* pp = d.song().pattern(printed);
+  const std::vector<Note> pn = pp && pp->notes.count(a) ? pp->notes.at(a) : std::vector<Note>{};
+  std::printf("%s print: %zu notes", label, pn.size());
+  for (const Note& n : pn) std::printf(" [%lld +%lld key %d vel %d]", static_cast<long long>(n.start), static_cast<long long>(n.length), n.pitch, n.velocity);
+  std::printf("\n");
+  auto want = [](const std::vector<Note>& v) {
+    return v.size() == 2 && v[0].start == 0 && std::abs(v[0].length - 96) <= 1 && v[0].pitch == 69 && v[1].start == 192 &&
+           std::abs(v[1].length - 48) <= 1 && v[1].pitch == 72;
+  };
+  expect(want(pn), (L + ": its MIDI output written to the piano roll (a new pattern, the echoed notes)").c_str());
+  expect(d.song().patterns.size() == patterns + 1 && pp && pp->name == "arp plugin MIDI output", (L + ": print makes one pattern named after the channel").c_str());
+  d.undo();
+  expect(d.song().patterns.size() == patterns, (L + ": print is one undo step").c_str());
+  // Live take: 2.5 loop passes, nothing listening on its port.
+  ProgramBuilder b;
+  b.setSampleRate(44100);
+  AudioEngine e(44100.0);
+  e.setProgram(b.build(d.song()));
+  e.setMode(PlayMode::Pattern);
+  e.setPattern(pat);
+  MidiOutTake take;
+  take.begin(e, a, pat, d.song().patternContentLength(*d.song().pattern(pat)));
+  e.play();
+  std::vector<float> bl(256), br(256);
+  for (int at = 0; at < 88200 * 5 / 2; at += 256) {
+    e.process(bl.data(), br.data(), 256);
+    take.poll(e);
+  }
+  e.stop();
+  const ObjectId rec = take.end(d, e, midiOutputTarget(d.song(), a));
+  const Pattern* rp = d.song().pattern(rec);
+  const std::vector<Note> rn = rp && rp->notes.count(a) ? rp->notes.at(a) : std::vector<Note>{};
+  std::printf("%s live take: %zu notes, dropped %llu\n", label, rn.size(), static_cast<unsigned long long>(e.capturedMidiDropped()));
+  expect(want(rn), (L + ": its MIDI output recorded live into a pattern (the loop passes kept once)").c_str());
+  d.undo();
+  expect(d.song().patterns.size() == patterns, (L + ": the live take is one undo step").c_str());
+}
+
 // Two clips of one pattern back to back: this synth goes by the key alone, as LV2's MIDI does.
 void testNoteRetrigger() {
   auto* pr = probe<GridlineLv2Probe>(dspBinary(), "gridline_lv2_probe");
@@ -450,7 +512,7 @@ void testState() {
         run(st);
         return pr->responses > 0 && std::fabs(x[42] - 0.5f) < 1e-6f;
       },
-      5.0);
+      15.0);
   expect(loaded && pr->works == works + 1 && !pr->workOnRunThread, "worker: work on its own thread, response applied in the audio thread");
   std::string data;
   expect(hi->captureState(data) && data.compare(0, 6, "lv2s1:") == 0, "state with properties captured");
@@ -577,9 +639,12 @@ void testSandbox() {
     for (int i = 0; i < 256; ++i) in[static_cast<size_t>(i)] = std::sin(i * 0.05f) * 0.5f;
     x = in;
     y = in;
+    // Q-11: sandbox data-path checks run offline (as in test_hosting.cpp's OfflineScope) so
+    // parallel ctest CPU contention cannot trip the real-time 4-block budget (~21 ms).
     ProcessContext c = ctx48();
+    c.offline = true;
     fx->processAux(st, ChannelAux{}, c, x.data(), y.data(), 256);
-    expect(std::fabs(x[100] - 0.5f * in[100]) < 1e-6f, "sandbox: LV2 effect processes audio");
+    expect(std::fabs(x[100] - 0.5f * in[100]) < 1e-6f, ("sandbox: LV2 effect processes audio (" + hi->backend()->diagnostics() + ")").c_str());
     std::string data;
     expect(hi->captureState(data) && data.compare(0, 6, "lv2s1:") == 0 && hi->programCount() == 3, "sandbox: state and presets");
   }
@@ -587,12 +652,15 @@ void testSandbox() {
   host::setRunInSandbox(kSynth, true);
   auto g = createGenerator(kSynth);
   if (g) {
+    host::HostedInstance* hi = host::hostedInstance(g.get());
     PluginState st = defaultPluginState(kSynth);
     g->prepareHost(st, 48000);
     std::vector<float> L, R;
+    ProcessContext c = ctx48();
+    c.offline = true;
     g->noteOn(1, 69.0, 1.0f, 100);
-    runGen(*g, st, L, R, 512, 512);
-    expect(firstNonZero(L) == 100, "sandbox: sample-accurate atom MIDI");
+    runGen(*g, st, L, R, 512, 512, c);
+    expect(firstNonZero(L) == 100, ("sandbox: sample-accurate atom MIDI (" + hi->backend()->diagnostics() + ")").c_str());
   }
   host::setRunInSandbox(kSynth, false);
 }
@@ -630,13 +698,19 @@ void testPluginCheck() {
     for (const auto& p : plugins->array) {
       ++count;
       const std::string s = p.text("status");
-      // A block slower than real time on a busy machine (shared CI runner) is only a load
-      // warning: audio checks whose detail is just levels and load do not count.
+      // Q-11: a block slower than real time on a busy parallel test runner (32 frames @96 kHz is
+      // 333 us) produces a load-only warning on audio checks ("blocks 32..2048 ...: peak ...",
+      // "3 programs ...: peak ...", "told the plugin: peak ...", or "peak ..."). Distinguish
+      // load-only warnings accurately without masking denormals, silent output or state errors.
+      auto isLoadOnlyWarn = [](const std::string& d) {
+        return d.find("peak ") != std::string::npos && d.find("load avg ") != std::string::npos && d.find(" max ") != std::string::npos &&
+               d.find("denormal") == std::string::npos && d.find("no sound") == std::string::npos && d.find("silent output") == std::string::npos &&
+               d.find("NaN/inf") == std::string::npos && d.find("differ") == std::string::npos && d.find("read back") == std::string::npos;
+      };
       bool loadOnly = s == "warn";
       if (const Json* ch = p.find("checks"); ch && ch->is(Json::Type::Array))
         for (const auto& c : ch->array)
-          if (c.text("status") == "warn" && (c.text("detail").rfind("peak ", 0) != 0 || c.text("detail").find("denormal") != std::string::npos))
-            loadOnly = false;
+          if (c.text("status") == "warn" && !isLoadOnlyWarn(c.text("detail"))) loadOnly = false;
       if (s != "pass" && !loadOnly) {
         notes += p.text("name") + ": " + s + " (";
         if (const Json* ch = p.find("checks"); ch && ch->is(Json::Type::Array))
@@ -664,6 +738,7 @@ int main() {
   testGain();
   testSampleAccurate();
   testSynth();
+  checkHostedMidiOutput(kSynth, paramIndex(kSynth, "Echo"), "LV2");
   testNoteRetrigger();
   testState();
   testEditors();

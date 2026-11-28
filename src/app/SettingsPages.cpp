@@ -1,5 +1,6 @@
 // Gridline — J-24 settings pages (see SettingsPages.h).
 #include "CacheUi.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include "DisplayConfirmUi.h"
 #include "SettingsPages.h"
@@ -145,6 +146,12 @@ void generalSettingsPage(App& a, float fieldW) {
     choice("input.dockPlugins", "##dockplugins", dock,
            "Automatic: built-in plugin windows open as tabs beside the main view in Game mode, which shows one window");
   }
+  {  // K-422: piano roll note preview while transport plays
+    label("Piano roll");
+    bool pv = a.settings.getBool("piano.previewWhilePlaying");
+    if (ImGui::Checkbox(tr("Preview notes while playing"), &pv)) a.settings.set("piano.previewWhilePlaying", pv);
+    ui::Hint("When off (default), clicking or adding notes previews sound only while playback is stopped");
+  }
   ui::EndSection();
   updui::settingsSection(a);  // J-89: automatic update check, beta versions, Check now
 }
@@ -159,7 +166,7 @@ struct DataFolderCopy {
   std::thread worker;
   ~DataFolderCopy() {
     cancel = true;
-    if (worker.joinable()) worker.join();
+    gl::threads::safeJoin(worker);
   }
 };
 

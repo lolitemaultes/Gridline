@@ -101,6 +101,13 @@ void knobCell(App& a, const PluginTarget& t, int param, const char* label = null
 void choiceButtons(App& a, const PluginTarget& t, int param, float width = 0);
 // Toggle parameter as a pill button.
 void toggleButton(App& a, const PluginTarget& t, int param, const char* label = nullptr);
+// The standard right-click menu of a parameter control (reset to default, type a value, the
+// automation items, Modulate, the controller link: the menu the plugin editors' knobs show) over
+// a control the caller drew itself in the rectangle r0..r1 (several items, a segmented row, a
+// combo: the rectangle they share). Records the control for "atparam". Call it once per control.
+void paramContextMenu(App& a, ParamId pid, ImVec2 r0, ImVec2 r1);
+// The same over the last item drawn.
+void paramContextMenu(App& a, ParamId pid);
 // Interactive ADSR graph bound to four parameters (seconds / 0..1 sustain).
 void adsrGraph(App& a, const PluginTarget& t, int att, int dec, int sus, int rel, ImVec2 size);
 // Log-frequency helpers for graphs (20 Hz – 20 kHz).
@@ -217,6 +224,8 @@ bool devItem(ParamId pid, DevItem& out);
 // K-164: records the last item as parameter pid's control (for "atparam"), when an editor handles
 // the item itself instead of the drag helpers (Plasma's Link mode).
 void devItemHere(ParamId pid);
+// The same with the control's rectangle given (a knob drawn by another helper).
+void devItemHere(ParamId pid, ImVec2 r0, ImVec2 r1);
 // J-105 dev / test hook (--dev-input "sdlpt" / "pts"): the last drawn point editor of a
 // name ("conv.eq", "conv.env"): its plot rectangle (logical px; x0..x1 = 0..span, y1..y0 =
 // value 0..1), its points (t, v, tension), the point being dragged and the hovered one.

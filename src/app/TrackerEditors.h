@@ -106,6 +106,8 @@ bool closeRequest(App& a);
 //   op <cut|copy|paste|crop|delete|silence|reverse|normalise|fadein|fadeout|fixdc|minimise|selectall|clearrange>
 //   loop off|forward|pingpong · bits 8|16 · note <n> · play wave|range|view|stop · step <+1|-1>
 //   modal volume|resample|echo|mix|loopfade [values...] (applies) · remove · loopstart <d> · looplen <d>
+//   K-436, the Effects box: fx add <type> · mix <row> <percent> · preset <row> <k> · param <row> <k> <value> · sel <row> · tail <tenths>
+//   · clear · show · preview · apply · dump. K-435: files save|load|all|export|dump (TrackerSampleFiles.h)
 //   frame volume|pan|pitch|fine|mute|output|keylo|keyhi <value> · convert
 //   cp19, the Instrument editor: ins dump · ins at key <0..95> · ins at env vol|pan <tick> <level> (the pointer there)
 //   ins env vol|pan add <x> <y>|move <i> <x> <y>|end|delete <i>|addafter <i>|sustain <i>|loop <a> <b>|flag on|sustain|loop|preset <k>|sel <i>

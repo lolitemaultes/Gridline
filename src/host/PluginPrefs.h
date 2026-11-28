@@ -62,6 +62,10 @@ struct PluginPrefs {
   std::set<std::string> noDefaultFolders;
   std::set<std::string> disabledFormats;      // format ids not scanned / not listed ("vst2", …)
   std::set<std::string> sandbox;              // hosted types that run in a child process
+  // K-437: hosted types kept off the internet (they run in the sandbox, restricted by the system,
+  // sandbox/NetBlock.h), and whether plugins found from now on are added to them.
+  std::set<std::string> netBlock;
+  bool netBlockNew = false;
   std::set<std::string> favourites;           // plugin types (hosted or built-in)
   std::map<std::string, std::string> categories;  // plugin type → user category
   std::map<std::string, HostOptions> options;     // hosted type → processing options (non-default only)
@@ -73,7 +77,8 @@ struct PluginPrefs {
   bool browserAllFormats = false;
   bool operator==(const PluginPrefs& o) const {
     return extraFolders == o.extraFolders && formatFolders == o.formatFolders && disabledFolders == o.disabledFolders &&
-           noDefaultFolders == o.noDefaultFolders && disabledFormats == o.disabledFormats && sandbox == o.sandbox && favourites == o.favourites &&
+           noDefaultFolders == o.noDefaultFolders && disabledFormats == o.disabledFormats && sandbox == o.sandbox && netBlock == o.netBlock &&
+           netBlockNew == o.netBlockNew && favourites == o.favourites &&
            categories == o.categories && options == o.options && preferredFormat == o.preferredFormat && preferTypes == o.preferTypes &&
            browserAllFormats == o.browserAllFormats;
   }
@@ -89,9 +94,27 @@ PluginPrefs pluginPrefs();
 // Replaces the settings and saves them (when a config dir is known).
 void setPluginPrefs(const PluginPrefs& p);
 // True when the type runs out of process (also for every type while the
-// environment variable GRIDLINE_SANDBOX_ALL is set).
+// environment variable GRIDLINE_SANDBOX_ALL is set, and whenever its internet access is blocked).
 bool runsInSandbox(const std::string& type);
 void setRunInSandbox(const std::string& type, bool on);
+// K-437: internet access of a hosted type. The saved choice (Blocked: in netBlock) and, for this run
+// of Gridline only, "allowed until Gridline closes" on top of a blocked one (never saved).
+enum class NetAccess { Allowed, Blocked, AllowedUntilClose };
+NetAccess netAccess(const std::string& type);
+// Whether the type's instances (and scans) are blocked now: saved as blocked and not allowed for this run.
+bool blocksNetwork(const std::string& type);
+// Sets several types at once (one save).
+void setNetAccess(const std::vector<std::string>& types, NetAccess a);
+// Types allowed until Gridline closes (this run).
+std::set<std::string> netAllowedUntilClose();
+// Forgets the run's allowances (as a restart does; tests).
+void resetNetAllowedUntilClose();
+// Scans: remembers the found types as known (<config>/plugin-known.json) and, when the "new plugins"
+// default is Block, blocks the ones never found on this computer before (a rebuilt plugin cache
+// does not make known plugins new).
+void blockNewlyFound(const std::vector<std::string>& types);
+// The first run with the known list (no file yet): the plugins already cached are known, not new.
+void seedKnownPlugins(const std::vector<std::string>& types);
 bool formatEnabled(const std::string& format);
 // Processing options of a hosted type (defaults when never set).
 HostOptions hostOptions(const std::string& type);

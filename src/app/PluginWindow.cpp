@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cfloat>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -52,6 +53,7 @@
 #include "AppIcon.h"
 #include "HostedUi.h"
 #include "HostedUiPages.h"
+#include "IdSweep.h"
 #include "IdlePace.h"
 #include "LayoutPresets.h"
 #include "PluginWindowBar.h"
@@ -112,6 +114,7 @@ class SideWindowEditor final : public host::Editor {
   bool external() const override { return true; }
   bool isOpen() const override { return open_; }
   bool attach(void*) override {
+    native::installX11SafetyHandlers();
     foreigngl::ForeignGlScope g;  // the interface may draw with GLX while Gridline draws with EGL
     int w = 640, h = 420;
     inner_->size(w, h);
@@ -125,7 +128,9 @@ class SideWindowEditor final : public host::Editor {
       pendingH_.store(nh);
       return true;
     };
-    if (!inner_->attach(side_)) {
+    const bool attached = inner_->attach(side_);
+    native::installX11SafetyHandlers();  // re-ensure plugin did not reset XSetErrorHandler(nullptr)
+    if (!attached) {
       native::sideWindowClose(side_);
       side_ = nullptr;
       return false;
@@ -143,7 +148,7 @@ class SideWindowEditor final : public host::Editor {
     foreigngl::ForeignGlScope g;
     if (open_) {
       const int pw = pendingW_.exchange(0), ph = pendingH_.exchange(0);
-      if (pw > 0 && ph > 0) resizeTo(pw, ph);
+      if (pw > 0 && ph > 0 && (pw != w_ || ph != h_)) resizeTo(pw, ph);  // (the size it asked for: not told back, see pluginResize)
       int w = w_, h = h_;
       if (!native::sideWindowPump(side_, w, h)) open_ = false;  // the user closed it
       if (open_ && (w != w_ || h != h_)) {  // the window manager resized it
@@ -166,10 +171,10 @@ class SideWindowEditor final : public host::Editor {
   void detachOffThread() override { inner_->detachOffThread(); }
 
  private:
+  // The window to the interface's size (it asked for it, or it was told it already).
   void resizeTo(int w, int h) {
     native::sideWindowResize(side_, w, h, inner_->canResize());
     w_ = w, h_ = h;
-    inner_->setSize(w, h);
   }
   std::unique_ptr<host::Editor> inner_;
   std::string title_;
@@ -318,11 +323,13 @@ struct PluginWindow {
   int applying = 0;  // inside our own SDL_SetWindowSize
   // Resize asked for off the UI thread (CLAP request_resize is thread-safe).
   std::atomic<int> pendingW{0}, pendingH{0};
-  bool notifySize = false;  // tell the plugin its new size on the next idle
+  bool notifySize = false;  // tell the plugin its new size on the next idle (it got another than it asked for)
+  int resizeAsks = 0;       // sizes the plugin asked for that changed the window (dev: plugwin info)
   int extFrame[4] = {0, 0, 0, 0};
   Action action = Action::None;
   std::string capturePath;  // dev check: capture on the next draw
   int frames = 0;           // frames drawn since opening
+  uint64_t themeGen = 0;    // K-395: resync this window's ImGui style when the theme changes
   std::set<int> heldKeys;   // scancodes whose key-down went to the main window (J-66)
   int rootX = 0, rootY = 0;  // K-37: position the interface was last told about (Linux)
   bool rootKnown = false;
@@ -347,6 +354,8 @@ struct PluginWindow {
   std::vector<lay::Rect> shownHoles;
   bool placed = false;
   bool clicked = false;  // the user clicked the interface since it opened (until then it never keeps the keyboard)
+  bool wasOpening = false;   // its interface (out of process) was still opening last frame
+  bool stuckTitle = false;   // its window's title says the plugin is not responding
 
   int panelH() const { return panelPage >= 0 ? static_cast<int>(std::lround(lay::kPanelH * scale)) : 0; }
   void computeLayout() { L = external ? lay::layoutBarWindow(extFrame[2] > 0 ? extFrame[2] : 420, panelH()) : lay::layoutWindow(pw, ph, panelH(), scale); }
@@ -384,15 +393,24 @@ struct PluginWindow {
     if (container) native::setContainerFrame(nw, container, L.plugin);
   }
 
-  // The plugin asks for a new size (UI thread).
+  // The plugin asks for a new size (UI thread). The window takes it; the plugin is told its size
+  // (Editor::setSize) only when that is not what it asked for (below Gridline's minimum). Telling
+  // it the size it just asked for made a loop with a plugin that asks again from inside its
+  // set-size call (some frameworks do): a set-size and a resize request every frame, the
+  // interface laid out and drawn again each time (a window that flickers and a busy UI thread).
+  // CLAP: the host need not call set_size after request_resize; VST3: the frame's resizeView
+  // already told the view (Vst3Backend.cpp onResize); AU, VST2, LV2: the plugin sized itself.
   bool pluginResize(int w, int h) {
     if (dead) return false;
     const int ow = pw, oh = ph;
     pw = std::max(w, lay::kMinPluginW);
     ph = std::max(h, lay::kMinPluginH);
     apply();
-    notifySize = true;
-    if (pw != ow || ph != oh) log("plugin resized");
+    if (pw != w || ph != h) notifySize = true;
+    if (pw != ow || ph != oh) {
+      log("plugin resized");
+      ++resizeAsks;
+    }
     return true;
   }
 
@@ -485,8 +503,19 @@ struct PluginWindow {
 
   void finishClose() {
     editor.reset();  // detaches the plugin's view before its container and window go
-    if (container && docked) native::destroyDockedContainer(nw, container);
-    else if (container) native::destroyContainer(nw, container);
+    // A sandboxed interface embedded here (Linux) whose process is busy has not taken its window out
+    // of the container yet: destroying the container (and the window it is in) would destroy the
+    // plugin's window under it. They go once the process answers or is stopped (hidden meanwhile).
+    const bool later = container && backend && backend->awaitingAnswer();
+    void* c = container;
+    const bool wasDocked = docked;
+    const native::Window cw = nw;
+    auto dropContainer = [c, wasDocked, cw]() {
+      if (c && wasDocked) native::destroyDockedContainer(cw, c);
+      else if (c) native::destroyContainer(cw, c);
+    };
+    if (later && wasDocked) native::setDockedFrame(nw, c, shownFull, lay::Rect{}, {});
+    if (!later) dropContainer();
     container = nullptr;
     if (ctx) {
       ContextGuard g;
@@ -502,8 +531,17 @@ struct PluginWindow {
     }
     if (gl) SDL_GL_DeleteContext(gl);
     gl = nullptr;
-    if (win) {
-      giveKeyboardBack();
+    if (win) giveKeyboardBack();
+    if (later) {
+      if (win) SDL_HideWindow(win);
+      SDL_Window* sw = win;
+      if (gLog || std::getenv("GRIDLINE_DEV_PLUGIN_WINDOWS")) std::fprintf(stderr, "[plugin-window] %s: container kept until its process answers\n", name.c_str());
+      backend->whenAnswered([dropContainer, sw, n = name]() {
+        dropContainer();
+        if (sw) SDL_DestroyWindow(sw);
+        if (std::getenv("GRIDLINE_DEV_PLUGIN_WINDOWS")) std::fprintf(stderr, "[plugin-window] %s: container destroyed after its process answered\n", n.c_str());
+      });
+    } else if (win) {
       SDL_DestroyWindow(win);
     }
     // The keyboard goes back to the main window (not to another app's window).
@@ -597,8 +635,11 @@ bool createSurface(PluginWindow& w) {
   io.IniFilename = nullptr;
   io.LogFilename = nullptr;
   io.ConfigDragClickToInputText = true;
+  io.ConfigDebugHighlightIdConflicts = idsweep::highlight();  // K-459: Dear ImGui's ID popup for developers only
   io.FontDefault = defFont;
   ImGui::GetStyle() = style;
+  theme::applyImGuiStyle();
+  w.themeGen = theme::generation();
   ImGui_ImplSDL2_InitForOpenGL(w.win, w.gl);
   ImGui_ImplOpenGL3_Init(glrecovery::glsl());
   return true;
@@ -610,6 +651,10 @@ void renderWindow(PluginWindow& w) {
   host::HostedInstance* hi = hostedInstanceFor(*w.app, w.target);
   makeCurrent(w.win, w.gl);
   ImGui::SetCurrentContext(w.ctx);
+  if (w.themeGen != theme::generation()) {
+    theme::applyImGuiStyle();
+    w.themeGen = theme::generation();
+  }
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplSDL2_NewFrame();
   if (w.scale != 1.0) {  // K-35: as the main window: the bar in interface units, drawn at the scale
@@ -660,6 +705,14 @@ void renderWindow(PluginWindow& w) {
     std::vector<unsigned char> px(static_cast<size_t>(fbw) * static_cast<size_t>(std::max(rows, 1)) * 4);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
     glReadPixels(0, 0, fbw, rows, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+    // K-437: Gridline's own part (bar and panel) on its own as well: the window server's image of the
+    // whole window needs the screen recording permission, which a dev run must not ask for.
+    if (std::FILE* f = std::fopen((w.capturePath + ".bar.ppm").c_str(), "wb")) {
+      std::fprintf(f, "P6\n%d %d\n255\n", fbw, std::max(rows, 1));
+      for (int y = std::max(rows, 1) - 1; y >= 0; --y)
+        for (int x = 0; x < fbw; ++x) std::fwrite(&px[(static_cast<size_t>(y) * static_cast<size_t>(fbw) + static_cast<size_t>(x)) * 4], 1, 3, f);
+      std::fclose(f);
+    }
     if (!native::captureWindow(w.nw, w.capturePath, px.data(), fbw, rows)) std::fprintf(stderr, "plugin window capture failed\n");
     w.capturePath.clear();
   }
@@ -794,7 +847,7 @@ void runAction(PluginWindow& w) {
 
 void setPluginWindowLog(bool on) { gLog = on; }
 void setPluginWindowUiScale(float scale) { gUiScale = scale; }
-void setPluginWindowPanel(int page) { gStartPanel = std::clamp(page, -1, 2); }
+void setPluginWindowPanel(int page) { gStartPanel = std::clamp(page, -1, 3); }  // K-437: 3 the Internet page
 void setPluginWindowDevAction(const std::string& action) { gDevAction = action; }
 void setPluginWindowDrawStats(bool on) { gDrawStats = on; }
 void setPluginWindowDevKeys(bool on) { gDevKeys = on; }
@@ -848,6 +901,24 @@ void devPrintPluginWindows(int frame) {
                 static_cast<unsigned long>(reinterpret_cast<uintptr_t>(w->backend)));  // 0.7.8
   }
   std::fflush(stdout);
+}
+
+// Stress tests: the longest the plugin windows' idle took (their plugins' calls) and the longest
+// time between two of them (a frame held up anywhere), since the last report.
+namespace {
+double gIdleLongestMs = 0, gGapLongestMs = 0;
+std::chrono::steady_clock::time_point gLastIdle{};
+}  // namespace
+void devPrintPluginStalls(App& a, int frame) {
+  std::printf("plugwin frame %d: stalls idle %.0f ms apart %.0f ms windows %zu closing %zu\n", frame, gIdleLongestMs, gGapLongestMs, windows().size(),
+              closingWindows().size());
+  for (const auto& [k, w] : windows()) {
+    host::HostedInstance* hi = hostedInstanceFor(a, w->target);
+    std::printf("  plugwin \"%s\" size %dx%d resizes %d responding %d crashed %d\n", w->name.c_str(), w->pw, w->ph, w->resizeAsks,
+                hi && hi->backend()->notResponding() ? 0 : 1, hi && hi->crashed() ? 1 : 0);
+  }
+  std::fflush(stdout);
+  gIdleLongestMs = gGapLongestMs = 0;
 }
 
 bool devMoveHostedEditor(int x, int y) {
@@ -1046,6 +1117,7 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
     return false;
   }
   std::unique_ptr<host::Editor> editor;
+  native::installX11SafetyHandlers();
   crash::InsideScope inside("a plugin opening its window:", cls.name);
   try {
     editor = b->createEditor();
@@ -1053,6 +1125,7 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
     b->markLost();
     return false;
   }
+  native::installX11SafetyHandlers();
   if (!editor) {
     a.notify(cls.name + ": its interface cannot be shown on this system", true);
     return false;
@@ -1142,7 +1215,9 @@ bool openHostedEditor(App& a, const PluginTarget& t) {
       return raw->pluginResize(nw, nh);
     };
     const bool hadContainer = w.container != nullptr;
-    if (!hadContainer || !editor->attach(w.container)) {
+    const bool attached = hadContainer && editor->attach(w.container);
+    native::installX11SafetyHandlers();  // re-ensure plugin did not reset XSetErrorHandler(nullptr)
+    if (!attached) {
       w.editor = std::move(editor);
       w.close();
       if (!hadContainer)
@@ -1458,6 +1533,7 @@ DockOpen openDocked(App& a, const PluginTarget& t, SDL_Window* host) {
   const host::HostedClass& cls = hi->hostedClass();
   if (!b->editorAvailable()) return DockOpen::Failed;
   std::unique_ptr<host::Editor> editor;
+  native::installX11SafetyHandlers();
   {
     crash::InsideScope inside("a plugin opening its interface inside Gridline:", cls.name);
     try {
@@ -1467,6 +1543,7 @@ DockOpen openDocked(App& a, const PluginTarget& t, SDL_Window* host) {
       return DockOpen::NotYet;
     }
   }
+  native::installX11SafetyHandlers();
   if (!editor) {
     a.notify(cls.name + ": its interface cannot be shown on this system", true);
     return DockOpen::Failed;
@@ -1524,6 +1601,7 @@ DockOpen openDocked(App& a, const PluginTarget& t, SDL_Window* host) {
       b->markLost();
     }
   }
+  native::installX11SafetyHandlers();
   if (!attached) {
     w.editor = std::move(editor);
     w.close();
@@ -1789,6 +1867,16 @@ bool hostedui::dockedKeyEvent(const SDL_Event& ev) {
 }
 
 void hostedui::pluginWindowsIdle(App& a) {
+  const auto idleStart = std::chrono::steady_clock::now();
+  if (gLastIdle != std::chrono::steady_clock::time_point{})
+    gGapLongestMs = std::max(gGapLongestMs, std::chrono::duration<double, std::milli>(idleStart - gLastIdle).count());
+  struct Timed {  // (every way out of the idle below)
+    std::chrono::steady_clock::time_point t0;
+    ~Timed() {
+      gLastIdle = std::chrono::steady_clock::now();
+      gIdleLongestMs = std::max(gIdleLongestMs, std::chrono::duration<double, std::milli>(gLastIdle - t0).count());
+    }
+  } timed{idleStart};
   followMovedInstances(a);
   keepOverlaysClear();
   if (!gMainWin) {
@@ -1816,6 +1904,8 @@ void hostedui::pluginWindowsIdle(App& a) {
         if (gDevAction == "generic") w.action = Action::Generic;
         if (gDevAction == "sandbox") w.action = Action::Sandbox;
         if (gDevAction == "settings") w.setPanel(0);
+        if (gDevAction == "offline") w.setPanel(3);  // K-437: the OFFLINE button opens the Internet page
+        if (gDevAction.rfind("panel", 0) == 0) w.setPanel(std::atoi(gDevAction.c_str() + 5));  // "panel0".."panel3"
         gDevAction.clear();
       }
       if (gDrawStats && w.container && w.frames % 30 == 1) native::startDrawStats(w.container);  // interfaces add views late
@@ -1849,6 +1939,26 @@ void hostedui::pluginWindowsIdle(App& a) {
         w.rootX = rx, w.rootY = ry, w.rootKnown = true;
       }
 #endif
+      // An interface still opening in the plugin's own process that then refused: said so (it closes below).
+      const bool opening = w.editor->opening();
+      if (w.wasOpening && !opening && !w.editor->isOpen() && !(w.backend && w.backend->crashed()))
+        a.notify(w.name + ": " + i18n::tr("its interface could not be opened"), true);
+      if (w.wasOpening && !opening && w.editor->isOpen() && !w.external) {  // opened late: its own size now
+        int sw = w.pw, sh = w.ph;
+        if (w.editor->size(sw, sh) && (sw != w.pw || sh != w.ph)) w.pluginResize(sw, sh);
+        if (w.editor->canResize() != w.resizable) {
+          w.resizable = w.editor->canResize();
+          if (w.win) SDL_SetWindowResizable(w.win, w.resizable ? SDL_TRUE : SDL_FALSE);
+        }
+        w.log("opened late");
+      }
+      w.wasOpening = opening;
+      // The plugin's process is busy: its own window says so in its title (Gridline goes on; it closes as ever).
+      if (const bool stuck = w.backend && w.backend->notResponding(); w.win && stuck != w.stuckTitle) {
+        w.stuckTitle = stuck;
+        const std::string title = w.name + "  \xC2\xB7  " + hostedTargetName(a, w.target);
+        SDL_SetWindowTitle(w.win, (stuck ? title + "  (" + i18n::tr("not responding") + ")" : title).c_str());
+      }
       if (!w.external && !w.editor->isOpen()) {  // a sandboxed interface whose process died
         w.closeWhy = "its interface closed itself";
         w.close();

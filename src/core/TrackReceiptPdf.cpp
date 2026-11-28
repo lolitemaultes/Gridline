@@ -499,6 +499,56 @@ std::string resultsPdf(const Report& r) {
     songCard(w, s, idx++);
   }
 
+  // ---- marker areas: each one as if it were a song of its own
+  if (!r.areas.empty()) {
+    w.heading("By marker area", 90);
+    w.para("What each marker area of the arrangement uses of each original, counted as if the area were a song of its own: a "
+           "sample used in two areas counts in each. Seconds used is the time of the original; sounds for is how long it plays there.",
+           9.5, kDim);
+    for (size_t k = 0; k < r.areas.size(); ++k) {
+      const AreaRow& ar = r.areas[k];
+      std::vector<std::vector<std::string>> rows;
+      std::vector<std::vector<Color>> colors;
+      for (const AreaSong& as : ar.songs) {
+        std::string tier = as.over ? "Over 60 s" : "Up to " + std::to_string(as.tier) + " s";
+        rows.push_back({as.artist.empty() ? as.title : as.artist + " - " + as.title, secondsText(as.seconds) + " s", tier,
+                        as.playSeconds > 0 ? timeText(as.playSeconds) : "-"});
+        const Color c = as.over ? kDanger : kText;
+        colors.push_back({kText, c, c, kDim});
+        for (const AreaFile& f : as.files) {
+          rows.push_back({"    " + f.name, secondsText(f.seconds) + " s", "", f.playSeconds > 0 ? timeText(f.playSeconds) : "-"});
+          colors.push_back({kFaint, kFaint, kFaint, kFaint});
+        }
+        std::string note;
+        if (as.rough) note = "May play in more than one area: counted in each.";
+        if (as.estimated) note += std::string(note.empty() ? "" : " ") + "Not measured: whole file.";
+        if (!note.empty()) {
+          rows.push_back({"    " + note, "", "", ""});
+          colors.push_back({kDanger, kDanger, kDanger, kDanger});
+        }
+      }
+      if (rows.empty()) {
+        rows.push_back({"No licensed sample is used here.", "", "", ""});
+        colors.push_back({kFaint, kFaint, kFaint, kFaint});
+      }
+      // The area's title with its place, kept on the page with its table's first rows.
+      w.need(22 + 15 + 30);
+      w.y += k > 0 ? 10 : 8;  // (the first clear of the text above it)
+      w.d.fillColor(kSongs[k % 6]);
+      w.d.rect(kM, w.y + 1, 3, 13);
+      const std::string place = areaBars(ar.area) + ",  " + timeText(ar.area.a) + " - " + timeText(ar.area.b);
+      const double placeW = pdf::Doc::textWidth(place, 8.5, false);
+      const std::string name = areaName(ar.area, k);
+      const double avail = w.contentW() - 10 - placeW - 16;
+      w.d.fillColor(kInk);
+      const double nh = wrapped(&w.d, kM + 10, w.y + 1, name, pdf::Doc::fitSize(name, 11, true, avail, 9), true, avail, 13, kInk);
+      w.d.fillColor(kDim);
+      w.d.text(kM + w.contentW(), w.y + 12, place, 8.5, false, Align::Right);
+      w.y += std::max(20.0, nh + 7);
+      table(w, {0, 0.56, 0.72, 0.86}, {"Original song / file", "Seconds used", "Tier", "Sounds for"}, rows, 8.5, 10.5, {}, colors, -1, 3);
+    }
+  }
+
   // ---- splits
   std::vector<std::pair<std::string, double>> parts;
   const bool filled = r.sharesComplete;

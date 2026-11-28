@@ -56,6 +56,8 @@
 #include "LogicPlugins.h"
 #include "MenuDef.h"
 #include "LiveLook.h"
+#include "SetupWizardUi.h"
+#include "GuidedTourUi.h"
 #include "../core/TrackModes.h"
 
 namespace gl {
@@ -275,6 +277,8 @@ const md::Menu& fileDef() {
                       md::item(N_("All tracks as audio files..."), [](App& a) { exportui::openRender(a, exportui::Preset::PlaylistTracks); })
                           .only([](App& a) { return logicplug::active(a); }),  // R05-18
                       md::item(N_("All playlist track groups..."), [](App& a) { exportui::openRender(a, exportui::Preset::TrackGroups); }),  // J-31
+                      md::item(N_("Marker areas..."), "file.renderMarkerAreas", [](App& a) { exportui::openRender(a, exportui::Preset::MarkerAreas); })
+                          .tip(N_("Each stretch from one marker to the next as its own file (several songs in one arrangement)")),
                       md::provider([](App& a) { menuparity::exportItems(a); }),  // J-27
                       md::heading(N_("MIDI")),
                       md::item(N_("Song as MIDI file..."), "file.exportMidi", [](App& a) { exportui::exportMidiDialog(a, 0); }),
@@ -617,6 +621,8 @@ const md::Menu& clipsFileDef() {
                         // Checkpoint 59 (N58-12): the rows say they export
                         md::item(N_("Export each track..."), [](App& a) { exportui::openRender(a, exportui::Preset::PlaylistTracks); }),
                         md::item(N_("Export each track group..."), [](App& a) { exportui::openRender(a, exportui::Preset::TrackGroups); }),
+                        md::item(N_("Export marker areas..."), "file.renderMarkerAreas", [](App& a) { exportui::openRender(a, exportui::Preset::MarkerAreas); })
+                            .tip(N_("Each stretch from one marker to the next as its own file (several songs in one arrangement)")),
                         md::provider([](App& a) { menuparity::exportItems(a); }),
                         md::heading(N_("MIDI")),
                         rowOf(exp, "Time selection as MIDI file..."),
@@ -1032,6 +1038,9 @@ const md::Menu& toolsDef() {
 
 const md::Menu& helpDef() {
   static const md::Menu m = {
+      md::item(N_("Setup wizard..."), [](App& a) { setupwizard::open(a); }),
+      md::item(N_("Guided tour..."), [](App& a) { guidedtour::openFromMenu(a); }),
+      md::separator(),
       md::item(N_("Keyboard shortcuts"), "help.shortcuts", [](App& a) { a.showShortcuts = true; }),
       md::item(N_("Load demo song"), [](App& a) { a.guardUnsaved([&a]() { a.newFromTemplate("demo"); }); }),
       md::item(N_("Track Receipt..."), [](App& a) { receiptui::open(a); })  // J-219: parts of licensed samples used
@@ -1111,6 +1120,7 @@ bool menuShortcuts(App& a) {
   // File.
   if (key("file.saveNewVersion")) a.saveNewVersion();
   if (key("file.renderStems")) exportui::openRender(a, exportui::Preset::Stems);
+  if (key("file.renderMarkerAreas")) exportui::openRender(a, exportui::Preset::MarkerAreas);
   if (key("file.exportMidi")) exportui::exportMidiDialog(a, 0);
   if (key("file.quit")) a.quitRequested = true;
   if (key("tools.stopSound")) stopSound(a);
@@ -1171,7 +1181,7 @@ bool menuShortcuts(App& a) {
       for (ObjectId c : sel) ops::setChannelsColor(a.doc, {c}, randomColor());
       a.doc.endGroup();
     }
-    if (key("rack.delete")) ops::removeChannels(a.doc, sel);
+    if (key("rack.delete")) menus::deleteChannels(a, sel);  // Alt+Delete or Shift+Delete (Keymap)
     if (key("rack.moveUp")) ops::moveChannels(a.doc, sel, -1);
     if (key("rack.moveDown")) ops::moveChannels(a.doc, sel, 1);
     if (key("rack.routeFree")) chanroute::routeToFree(a, sel);  // J-195: says where they went

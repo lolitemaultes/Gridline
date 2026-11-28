@@ -32,7 +32,7 @@ OUT = os.path.join(ROOT, "assets", "i18n", "gridline.pot")
 # function name -> argument indexes holding English text (None = every literal argument)
 HELPERS = {
     "Hint": [0], "Tooltip": [0], "Label": [0], "BeginSection": [0], "TextButton": [0, 3], "PrimaryButton": [0, 2], "DangerButton": [0, 3], "IconButton": [4],
-    "ToggleIcon": [4], "EmptyState": [3, 4], "formLabel": [0], "label": [0], "dialogTitle": [1, 2],
+    "ToggleIcon": [4], "EmptyState": [3, 4], "formLabel": [0], "rowLabel": [0], "label": [0], "dialogTitle": [1, 2],
     "openPrompt": [0], "roleColour": [1, 2], "BeginDockWindow": [0], "windowTitle": [0],
     "sectionHeader": [0], "folderSection": [1, 4], "emptyLine": [0], "notify": [0],
     # J-77: Keep / Revert confirmations (title, row caption; what changed).
@@ -74,7 +74,7 @@ def source_files():
     files += [os.path.join(ROOT, "src", "core", "ExternalDrop.cpp")]  # J-75: drop hints ("Drop to add 3 audio clips ...")
     files += [os.path.join(ROOT, "src", "core", "ProjectFiles.cpp")]  # J-78: open / save dialog file types (N_)
     files += [os.path.join(ROOT, "src", "core", "PluginStandIn.cpp")]  # J-132: stand-in notices ("Not installed: ...")
-    files += [os.path.join(ROOT, "src", "core", n) for n in ("LayoutPreset.cpp", "MenuStyle.cpp")]  # layout names and menu titles (N_)
+    files += [os.path.join(ROOT, "src", "core", n) for n in ("LayoutPreset.cpp", "MenuStyle.cpp", "SetupTour.cpp")]  # layout names, menu titles, setup/tour (N_)
     files += [os.path.join(ROOT, "src", "engine", "Chop.cpp")]  # PL-13: chop preset names and hints (N_)
     files += [os.path.join(ROOT, "src", "engine", "ProjectLoad.cpp")]  # J-167: the loading window's log lines (N_)
     files += [os.path.join(ROOT, "src", "engine", "ClipTools.cpp")]  # an edited copy's channel name ("%s (edited)")

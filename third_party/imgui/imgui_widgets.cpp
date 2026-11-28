@@ -1429,8 +1429,14 @@ bool ImGui::RadioButton(const char* label, bool active)
 
     RenderNavCursor(total_bb, id);
     const int num_segment = window->DrawList->_CalcCircleAutoSegmentCount(radius);
+    if (active && GImGuiGridlineRadioDot >= 0.0f)  // GRIDLINE PATCH (smooth-radio): filled with the accent, a dot on it
+    {
+        window->DrawList->AddCircleFilled(center, radius, GetColorU32(ImGuiCol_CheckboxSelectedBg), num_segment);
+        window->DrawList->AddCircleFilled(center, ImMax(1.0f, radius * GImGuiGridlineRadioDot), GetColorU32(ImGuiCol_CheckMark));
+    }
+    else
     window->DrawList->AddCircleFilled(center, radius, GetColorU32((held && hovered) ? ImGuiCol_FrameBgActive : hovered ? ImGuiCol_FrameBgHovered : ImGuiCol_FrameBg), num_segment);
-    if (active)
+    if (active && GImGuiGridlineRadioDot < 0.0f)
     {
         const float pad = ImMax(1.0f, IM_TRUNC(square_sz / 6.0f));
         window->DrawList->AddCircleFilled(center, radius - pad, GetColorU32(ImGuiCol_CheckMark));

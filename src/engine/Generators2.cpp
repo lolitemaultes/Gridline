@@ -11,6 +11,7 @@
 #include "SlicexEngine.h"
 #include "../core/PluginParams.h"
 #include "Dsp.h"
+#include "EffectRest.h"
 #include "Generators.h"
 #include "Slicing.h"
 #include "KerfMarks.h"
@@ -581,6 +582,14 @@ class FmGen final : public Generator {
 class AcidGen final : public Generator {
  public:
   bool active() const override { return amp_ > 1e-5 || gate_ || (seqOn_ && playing_); }
+  // K-438: the notes its sequencer played in the last process(), for the channels listening on the
+  // channel's MIDI output port (and for writing the sequence to the piano roll).
+  int takeMidiOut(MidiOutEvent* out, int max) override {
+    const int k = std::min(sentCount_, max);
+    for (int i = 0; i < k; ++i) out[i] = sent_[static_cast<size_t>(i)];
+    sentCount_ = 0;
+    return k;
+  }
 
  protected:
   bool perVoiceExpression() const override { return true; }  // K-193: its one voice follows the sounding note
@@ -617,7 +626,9 @@ class AcidGen final : public Generator {
     tick0_ = ctx.tick / std::max(1, ctx.ppq);
     spb_ = 60.0 / std::max(1.0, ctx.tempo) * sr_;
     blockPos_ = 0;
+    sentCount_ = 0;  // a new block (messages nobody took are gone)
     if (!playing_) lastStep_ = -1;
+    if (!(seqOn_ && playing_)) seqKeyOff(0);  // the sequence stopped: its sounding note ends
   }
   void trigger(double pitch, bool accent, bool legato) {
     target_ = pitch;
@@ -670,6 +681,7 @@ class AcidGen final : public Generator {
   void onAllOff() override {
     heldN_ = 0;
     gate_ = false;
+    seqKeyOff(0);
   }
   void onKill() override {
     heldN_ = 0;
@@ -678,6 +690,31 @@ class AcidGen final : public Generator {
     f1_.reset();
     f2_.reset();
     lastStep_ = -1;
+    seqKeyOff(0);
+  }
+  // K-438: the sequence as MIDI: a note-on for each step that starts a note (accents at velocity
+  // 127, the rest at 100, under the accent threshold), its note-off when the gate closes. A slide
+  // to a new key starts the new note before the old one ends (overlapping notes slide when they
+  // are played back); a slide on the same key goes on as one note.
+  void emit(uint8_t st, uint8_t a, uint8_t b, int offset) {
+    if (sentCount_ >= static_cast<int>(sent_.size())) return;
+    MidiOutEvent& e = sent_[static_cast<size_t>(sentCount_++)];
+    e.offset = offset;
+    e.s = st, e.a = a, e.b = b;
+    e.pitch = -1.0f, e.time = 0.0f, e.detune = 0.0f;
+  }
+  void seqKeyOff(int offset) {
+    if (seqKey_ < 0) return;
+    emit(0x80, static_cast<uint8_t>(seqKey_), 0, offset);
+    seqKey_ = -1;
+  }
+  void seqKeyOn(double pitch, bool accent, bool legato, int offset) {
+    const int key = std::clamp(static_cast<int>(std::lround(pitch)), 0, 127);
+    if (legato && key == seqKey_) return;
+    const int old = seqKey_;
+    emit(0x90, static_cast<uint8_t>(key), accent ? 127 : 100, offset);
+    seqKey_ = key;
+    if (old >= 0 && old != key) emit(0x80, static_cast<uint8_t>(old), 0, offset);
   }
   // Internal 16-step sequencer, locked to the song position.
   void runSequencer(int i) {
@@ -699,16 +736,23 @@ class AcidGen final : public Generator {
       int prev = lastStep_ >= 0 ? static_cast<int>(((lastStep_ % seqLen_) + seqLen_) % seqLen_) : -1;
       lastStep_ = k;
       bool prevSlide = prev >= 0 && stepSlide_[prev] && stepGate_[prev] != 0;
+      const int at = static_cast<int>(blockPos_ + i);
       if (stepGate_[step] == 1) {
         double pitch = 48 + stepNote_[step] + stepOct_[step] * 12 + transpose_;
-        trigger(pitch, stepAcc_[step], prevSlide && gate_);
+        const bool legato = prevSlide && gate_;
+        seqKeyOn(pitch, stepAcc_[step], legato, at);
+        trigger(pitch, stepAcc_[step], legato);
       } else if (stepGate_[step] == 0 && !prevSlide) {
         gate_ = false;
+        seqKeyOff(at);
       }
     }
     // Gate length: release inside the step unless it slides or the next step ties.
     int next = (step + 1) % seqLen_;
-    if (stepGate_[step] != 0 && !stepSlide_[step] && stepGate_[next] != 2 && local > seqGate_) gate_ = false;
+    if (stepGate_[step] != 0 && !stepSlide_[step] && stepGate_[next] != 2 && local > seqGate_ && gate_) {
+      gate_ = false;
+      seqKeyOff(static_cast<int>(blockPos_ + i));
+    }
   }
   // K-142: its oscillator, slide and filters run free: at rest the same render runs on unheard,
   // so the next note starts where it would have.
@@ -803,6 +847,9 @@ class AcidGen final : public Generator {
   int64_t blockPos_ = 0;
   long lastStep_ = -1;
   int seqLen_ = 16;
+  int seqKey_ = -1;  // K-438: the key of the sequence's sounding note (-1: none)
+  std::array<MidiOutEvent, 128> sent_{};
+  int sentCount_ = 0;
   int stepNote_[pp::kAcSteps] = {}, stepOct_[pp::kAcSteps] = {}, stepGate_[pp::kAcSteps] = {};
   bool stepAcc_[pp::kAcSteps] = {}, stepSlide_[pp::kAcSteps] = {};
   Osc osc_;
@@ -824,9 +871,10 @@ class KeysGen final : public Generator {
  protected:
   bool perVoiceExpression() const override { return true; }  // K-193
   void rested(int n) override {  // K-277: the tremolo keeps its phase
-    tph_ += tremRate_ / sr_ * n;
-    tph_ -= std::floor(tph_);
+    restedLong(n);
   }
+  bool canDeferRest() const override { return true; }
+  void restedLong(int64_t n) override { tphRest_.advance(tph_, tremRate_ / sr_, n); }
   struct Voice {
     bool on = false, held = false;
     uint32_t id = 0;
@@ -976,6 +1024,7 @@ class KeysGen final : public Generator {
     for (auto& v : voices_) v = Voice{};
   }
   void render(float* L, float* R, int n) override {
+    tphRest_.flush(tph_);
     // Model: modulator ratio, bell partial ratio and bell weight.
     static const double modRatio[4] = {1.0, 2.0, 1.0, 1.0}, bellRatio[4] = {14.0, 7.0, 19.0, 14.0}, bellAmt[4] = {0.25, 0.1, 0.45, 0.05};
     static const double hardScale[4] = {1.0, 0.8, 1.35, 0.55};
@@ -1098,6 +1147,7 @@ class KeysGen final : public Generator {
   std::array<float, 1024> bufL_{}, bufR_{};
   Biquad lp_[2], shelf_[2];
   double sr_ = 44100, lastSr_ = 0, tph_ = 0, muffle_ = 9000;
+  RestPhase tphRest_;
   float lastMuffle_ = -1, lastTreble_ = -99;
   double decay_ = 3.5, release_ = 0.25, hard_ = 0.45, trem_ = 0.15, tremRate_ = 4.5, stereo_ = 0.5, detune_ = 4, drive_ = 0.1, velSens_ = 0.7, vol_ = 0.7;
   double velHard_ = 0, velMuffle_ = 0, tune_ = 0, stretch_ = 0, keyPan_ = 0;
@@ -1219,11 +1269,10 @@ class SlicerGen final : public Generator {
       double loopSec = param(s, SlLoopBeats, 4) * 60.0 / std::max(20.0, ctx.tempo);
       speed_ = smp->seconds() / loopSec;
     }
-    // K-239: the stretch voices from prepareHost (a sounding voice finishes on its own pool).
+    // K-239 / K-431: atomically claim pending_ with exchange() to prevent UAF on UI pool swap.
     keepPitch_ = !proc_ && keepsPitch(s);
-    if (StretchPool* p = pending_.load(std::memory_order_acquire)) {
-      if (!active_ || retired_.load(std::memory_order_acquire) == nullptr) {
-        pending_.store(nullptr, std::memory_order_release);
+    if (!active_ || retired_.load(std::memory_order_acquire) == nullptr) {
+      if (StretchPool* p = pending_.exchange(nullptr, std::memory_order_acq_rel)) {
         StretchPool* old = active_;
         active_ = p;
         for (auto& v : voices_) v.sv = -1;  // sounding voices go on reading at their rate

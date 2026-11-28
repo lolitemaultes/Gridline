@@ -46,7 +46,7 @@ void runAction(App& a, const PluginTarget& t, const std::string& type, Action ac
 // or options switched): opens the ones that are ready.
 void reopenPending(App& a);
 
-// Dev (tests): the bar button with that name (prev, preset, next, bypass, sandbox, generic, routefree,
+// Dev (tests): the bar button with that name (prev, preset, next, bypass, sandbox, offline, generic, routefree,
 // dockin, settings) is pressed the next time a bar draws it.
 void devPress(const std::string& name);
 

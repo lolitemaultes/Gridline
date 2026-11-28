@@ -18,6 +18,15 @@
 //           every bar plays every slice in tune but the first one or two after each step (the
 //           render of a new tempo takes a moment), no more of them than before.
 //           RAMP_DEBUG=1 prints every slice of both.
+//   slow    a 2x slower worker on a fresh file (cold warp cache), a steep ramp and a step every bar:
+//           every slice after the first two of a tempo within 10 cents, or no further off than the
+//           nearest render there when it started (+2 cents)
+//   spike   K-464b: the same rule for the steps with the region renders 0.4 s late after the first
+//   lateramp K-464b: the same rule for the steep ramp with every focused render 60 ms late
+//           (manual only: run it by name or with RESTRETCH_HOOKS=1; ctest does not run it)
+//   late    K-464: the same rule for the steps with every whole-region render 0.4 s late (a machine
+//           whose long stretches end late; before, the slices from the fourth of each bar until the
+//           region render landed played the plain source, 165 cents off, on every run)
 // RESTRETCH_BARS=<n> renders n bars (equal, ramp: 4, speed: 16); RESTRETCH_DUMP=<dir> writes each
 // render there as raw floats (to compare builds).
 #include <algorithm>
@@ -474,6 +483,12 @@ void rampCase(const Sample& src, int bars, double from, double to, bool stepped 
   sm::setWarpLogForTest(true);
   const std::vector<float> rtL = realtimeOf(s, frames, &songTook, &madeAt);
   const std::vector<sm::WarpLogEntry> made = sm::warpLogForTest();
+  if (std::getenv("RESTRETCH_DUMP")) {  // (real time too: to compare builds at a constant tempo)
+    AudioBuffer rb;
+    rb.resize(2, rtL.size());
+    for (size_t i = 0; i < rtL.size(); ++i) rb.at(0, i) = rb.at(1, i) = rtL[i];
+    dump(std::string(stepped ? "held_stepped_" : "held_ramp_") + std::to_string(static_cast<int>(from)) + "_" + std::to_string(static_cast<int>(to)) + "_realtime", rb);
+  }
   sm::setWarpLogForTest(false);
   const sm::WarpStats w1 = sm::warpStatsForTest();
   const double rtSecs = std::chrono::duration<double>(std::chrono::steady_clock::now() - rt0).count();
@@ -578,6 +593,117 @@ void rampCase(const Sample& src, int bars, double from, double to, bool stepped 
   }
 }
 
+// A 2x slower stretch worker on a fresh sample (cold warp cache), for a steep ramp (100 -> 140 bpm)
+// and a stepped one (100 -> 140 bpm, a step every bar). The worker is slowed for real, so how late
+// its renders come still depends on the machine: after the first two slices of each tempo a slice
+// is within 10 cents (the instrument aims kLiveCents), or, when the machine held the render back,
+// no further off than the nearest render that was there when the slice started (+2 cents, the
+// pitch measured over a slice's zero crossings). A voice playing a render further off than one it
+// had fails on any machine.
+void testSlowMachineRamp(bool late = false, bool lateRamp = false, bool spike = false) {
+  std::string prefix = "slow2x ", what = "under a 2x slower worker";
+  // Fresh WAV files so each case runs with a completely cold warp family (no cached renders from earlier tests).
+  auto makeFreshSine = [](const std::string& filename) -> std::pair<std::string, SamplePtr> {
+    std::vector<float> L(static_cast<size_t>(60.0 / kSrcBpm * kRate * 4 * 8));
+    for (size_t i = 0; i < L.size(); ++i)
+      L[i] = static_cast<float>(0.5 * std::sin(2 * 3.14159265358979 * kF0 * static_cast<double>(i) / kRate));
+    const std::string path = (tmpDir() / filename).string();
+    expect(sm::writeLoopWav(path, L, L, kRate), ("slow2x: write " + filename).c_str());
+    return {path, sampleCache().get(path)};
+  };
+  auto runSlow = [&](const std::string& label, const std::string& filename, double from, double to, bool stepped, double slowdown = 2.0,
+                     double regionDelay = 0.0, double focusDelay = 0.0, int delayFrom = 0) {
+    auto [path, src] = makeFreshSine(filename);
+    if (!src) return;
+    const int bars = barsFromEnv(4);
+    Song s = heldProject(*src, bars, from, to, stepped);
+    s.channels.front().plugin.data = sm::formatData(path, modelAt(*src, 0));
+    TempoMap map;
+    map.build(s);
+    const auto frames = static_cast<int64_t>(map.secondsAt(static_cast<double>(s.ppq) * 4 * bars) * kRate);
+    sm::setWarpSlowdownForTest(slowdown);
+    sm::setWarpRegionDelayForTest(regionDelay, delayFrom);
+    sm::setWarpFocusDelayForTest(focusDelay);
+    sm::resetWarpPeakForTest();
+    const sm::WarpStats w0 = sm::warpStatsForTest();
+    std::vector<double> madeAt;
+    sm::setWarpLogForTest(true);
+    const std::vector<float> rtL = realtimeOf(s, frames, nullptr, &madeAt);
+    const std::vector<sm::WarpLogEntry> made = sm::warpLogForTest();
+    sm::setWarpLogForTest(false);
+    const sm::WarpStats w1 = sm::warpStatsForTest();
+    sm::setWarpSlowdownForTest(1.0);
+    sm::setWarpRegionDelayForTest(0.0);
+    sm::setWarpFocusDelayForTest(0.0);
+    const auto rt1 = slicesOf(s, rtL, bars);
+    const size_t seg = stepped ? 16 : rt1.size();
+    double worstLate = 0.0, worstPastThere = -1e9;
+    int overTen = 0;
+    for (size_t k = 0; k < rt1.size(); ++k) {
+      if (k % seg < 2) continue;
+      const double c = std::fabs(rt1[k].cents);
+      worstLate = std::max(worstLate, c);
+      if (c <= 10.0) continue;
+      ++overTen;
+      // the renders there when the slice started (as in rampCase)
+      double nearest = 1e9;
+      if (!madeAt.empty()) {
+        const auto block = std::min(madeAt.size() - 1, static_cast<size_t>(map.secondsAt(static_cast<double>(k) * s.ppq / 4.0) * kRate) / 64);
+        const double startedAt = madeAt[block], tempo = map.bpmAt(map.tickAtSeconds(static_cast<double>(block * 64) / kRate));
+        for (const auto& m : made)
+          if (m.at <= startedAt) nearest = std::min(nearest, std::fabs(1200 * std::log2(tempo / m.tempo)));
+      }
+      worstPastThere = std::max(worstPastThere, c - (nearest + 2));
+    }
+    if (std::getenv("RAMP_DEBUG") && !madeAt.empty()) {  // (every slice: when it started, its pitch; every render: when it was there)
+      for (size_t k = 0; k < rt1.size(); ++k) {
+        const auto block = std::min(madeAt.size() - 1, static_cast<size_t>(map.secondsAt(static_cast<double>(k) * s.ppq / 4.0) * kRate) / 64);
+        std::printf("#   slice %3zu  at %6.3f s  %6.2f bpm  %+7.1f c\n", k, madeAt[block] - madeAt[0], rt1[k].tempo, rt1[k].cents);
+      }
+      for (const auto& m : made) std::printf("#   render at %6.3f s  %7.3f bpm\n", m.at - madeAt[0], m.tempo);
+    }
+    std::printf("# %-28s worst after the first 2 slices: %.2f cents (%d over 10; the most one was further off than the render there: %.1f cents), renders %d, throttled %d, a render up to %.3f s late\n",
+                (prefix + label).c_str(), worstLate, overTen, overTen ? worstPastThere : 0.0, w1.renders - w0.renders, w1.throttled - w0.throttled,
+                w1.worstLateSeconds);
+    expect(overTen == 0 || worstPastThere <= 0,
+           (prefix + label + ": " + what + " every slice is within 10 cents once its tempo's render is there").c_str());
+  };
+  if (spike) {
+    // K-464b: a machine that slows down after the worker has measured it (the region renders 0.4 s
+    // late from the second one on: the first, before Play, was quick), a tempo stepping every
+    // bar. Before, the worker sized what it rendered ahead of a step's region render by the time
+    // it had measured, so the slices from the fourth of each bar played the plain source until
+    // the region render landed (165 cents off at 110 bpm); now the region render is made in
+    // pieces and the playing beat is kept covered between them, whatever they take.
+    prefix = "slowing ", what = "with the region renders 0.4 s late after the first";
+    runSlow("stepped 100->140", "sine_spike_stepped.wav", 100, 140, true, 1.0, 0.4, 0.0, 1);
+    return;
+  }
+  if (lateRamp) {
+    // K-464b: a machine whose stretches end late (every focused render of the moving tempo 60 ms
+    // late, the worker at its own speed), the steep ramp: the renders at the region's start, which
+    // the slice after the region's last plays, are made in time. Before, they were made only
+    // when the playing beat had a render near the tempo, which a late render never left time for:
+    // the first slice after the wrap played the plain source (315 cents off at 120 bpm).
+    prefix = "late focus ", what = "with the focused renders 60 ms late";
+    runSlow("steep 100->140", "sine_late_ramp.wav", 100, 140, false, 1.0, 0.0, 0.06);
+    return;
+  }
+  if (late) {
+    // K-464: a machine whose long stretches end late (every whole-region render 0.4 s late, the
+    // worker at its own speed), a tempo stepping every bar: the region render of a step lands
+    // after the fourth slice of the bar has started. Before, the slices from the fourth until it
+    // landed played the plain source (165 cents off at 110 bpm) although a render at the new tempo
+    // (focused on the first slices of the step) was there, on every run; now the beats the voices
+    // reach while the region render is made have a render at the tempo first.
+    prefix = "late region ", what = "with the region renders 0.4 s late";
+    runSlow("stepped 100->140", "sine_late_stepped.wav", 100, 140, true, 1.0, 0.4);
+    return;
+  }
+  runSlow("steep 100->140", "sine_slow_ramp.wav", 100, 140, false);
+  runSlow("stepped 100->140", "sine_slow_stepped.wav", 100, 140, true);
+}
+
 void testRamp() {
   const SamplePtr src = loadSine();
   if (!src) return;
@@ -594,6 +720,12 @@ int main(int argc, char** argv) {
   if (only.empty() || only == "equal") testEqual();
   if (only.empty() || only == "speed") testSpeed();
   if (only.empty() || only == "ramp") testRamp();
+  if (only.empty() || only == "slow") testSlowMachineRamp();
+  if (only.empty() || only == "late") testSlowMachineRamp(true);
+  // (lateramp: manual only, by name or RESTRETCH_HOOKS=1: a 60 ms late render on a shared CI runner
+  // stacks on the runner's own delays; 107 of 108 under 6x load, not solid enough for ctest)
+  if (only == "lateramp" || (only.empty() && std::getenv("RESTRETCH_HOOKS"))) testSlowMachineRamp(false, true);
+  if (only.empty() || only == "spike") testSlowMachineRamp(false, false, true);
   sm::waitAnalysisIdle();
   return finish();
 }

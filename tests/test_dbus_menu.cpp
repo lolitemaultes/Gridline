@@ -92,6 +92,14 @@ void mockBus() {
     dbusmenu::Bus host;
     expect(host.open() && host.requestName("com.canonical.AppMenu.Registrar"), "mock bus: the stand-in host owns the registrar name");
     expect(within(3000, slowest, [&] { host.step(0); return w.hostPresent(); }), "mock bus: the host is seen without asking");
+    // GitHub #85: a name on the bus is not a menu on screen. Until the host reads the menus, the
+    // app keeps its own menu row.
+    w.post({}, {menu("File", {item("New", "file-new")})}, true, 0);
+    for (int i = 0; i < 30; ++i) {
+      host.step(0);
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    expect(w.hostPresent() && !w.hostShows(), "mock bus: a host that never read the menus does not show them (#85)");
     // A tree with labels that are not UTF-8 (libdbus would end the program on them unsanitised),
     // read by the stand-in menu bar, then an item clicked there.
     std::vector<Item> bad = {menu("File\xC3", {item("New\xFF\xFEone", "file-new"), item("Open", "file-open")})};
@@ -101,6 +109,7 @@ void mockBus() {
     const std::string dest = w.uniqueName();
     expect(!dest.empty(), "mock bus: the worker has a name on the bus");
     host.sendGetLayout(dest);
+    expect(within(3000, slowest, [&] { host.step(0); return w.hostShows(); }), "mock bus: the host read the menus: they are shown (#85)");
     // root 0, File 1, New 2. post() hands the tree to the worker's thread, which serves it after its
     // current bus step: a click read in that same step finds no item 2 yet and is dropped (a real menu
     // bar only clicks what it was served). So the click is sent again every 100 ms until it comes back.
@@ -121,6 +130,7 @@ void mockBus() {
     // The host goes away.
     host.releaseName("com.canonical.AppMenu.Registrar");
     expect(within(3000, slowest, [&] { host.step(0); return !w.hostPresent(); }), "mock bus: the host leaving is seen");
+    expect(!w.hostShows(), "mock bus: with the host gone the menus are not shown (#85)");
     t = Clock::now();
     (void)w.status();
     (void)w.takeChosen();
@@ -158,6 +168,27 @@ int main() {
     bad.set({}, {menu("Fi\xFF" "le", {item("x\xC3", "x")})});
     const dbusmenu::Entry* f = bad.entry(bad.entry(0)->children[0]);
     expect(f && f->label == "Fi\xEF\xBF\xBD" "le", "a label that is not UTF-8 is made valid");
+  }
+
+  // ---- GitHub #85: a global menu host shows the menus only once it has read them ----
+  {
+    dbusmenu::HostState h;
+    expect(!h.present() && !h.shows(), "host state: nothing at first");
+    h.menusRead();
+    expect(!h.shows(), "host state: a read with no host there proves nothing");
+    h.nameOwner("com.canonical.AppMenu.Registrar", true);
+    expect(h.present() && !h.shows(), "host state: a registrar on the bus alone does not show the menus");
+    h.menusRead();
+    expect(h.shows() && h.first() == "com.canonical.AppMenu.Registrar", "host state: the host read the menus: shown");
+    h.nameOwner("org.kde.kappmenu", true);
+    h.nameOwner("com.canonical.AppMenu.Registrar", false);
+    expect(h.shows() && h.first() == "org.kde.kappmenu", "host state: one host of two left: still shown");
+    h.nameOwner("org.kde.kappmenu", false);
+    expect(!h.present() && !h.shows(), "host state: every host gone: not shown");
+    h.nameOwner("com.canonical.AppMenu.Registrar", true);
+    expect(!h.shows(), "host state: a host back again must read the menus again");
+    h.clear();
+    expect(!h.present() && !h.shows(), "host state: cleared");
   }
 
   // ---- the tree ----

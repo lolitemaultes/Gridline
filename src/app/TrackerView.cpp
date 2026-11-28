@@ -430,6 +430,8 @@ bool isOffKey(int sc) { return sc == SDL_SCANCODE_NONUSBACKSLASH || sc == SDL_SC
 
 void audition(App& a, int sc, ObjectId ch, int pitch, int velocity) {
   if (ch == kNoId || pitch < 0 || pitch > 127) return;
+  // K-422: suppress note-entry preview while playing unless the user enabled it.
+  if (a.engine.playing() && !a.settings.getBool("piano.previewWhilePlaying")) return;
   State& s = st();
   if (const auto it = s.held.find(sc); it != s.held.end()) a.engine.noteOff(it->second.channel, it->second.pitch);
   a.engine.noteOn(ch, pitch, static_cast<float>(std::clamp(velocity, 1, 127)) / 127.0f);

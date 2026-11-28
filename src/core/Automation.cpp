@@ -292,7 +292,12 @@ std::vector<AutomationLane> automationLanes(const Song& song) {
 
 void TempoMap::setConstant(double bpm, int ppq) {
   ppq_ = std::max(1, ppq);
-  segs_.assign(1, Seg{0.0, std::clamp(bpm, 1.0, 1000.0), 0.0});
+  const double clamped = std::isfinite(bpm) ? std::clamp(bpm, 1.0, 1000.0) : 120.0;
+  if (segs_.size() == 1) {
+    segs_[0] = Seg{0.0, clamped, 0.0};
+  } else {
+    segs_.assign(1, Seg{0.0, clamped, 0.0});
+  }
   finish();
 }
 

@@ -97,6 +97,7 @@ parts:
       - libsdl2-2.0-0
       - libasound2t64
       - libjack-jackd2-0
+      - pipewire-jack
       - libpulse0
       - libgl1
       - libglx-mesa0

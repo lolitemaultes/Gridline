@@ -1,5 +1,6 @@
 // Gridline: render MIDI to audio (K-254), the interface. See RenderSheetUi.h.
 #include "RenderSheetUi.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include <algorithm>
 #include <atomic>
@@ -79,7 +80,7 @@ void loadMem(App& a) {
     const std::string k = kv.substr(0, q);
     const double v = std::atof(kv.c_str() + q + 1);
     const int iv = static_cast<int>(v);
-    if (k == "tail") gMem.tail = std::clamp(iv, -1, static_cast<int>(TailMode::Count) - 1);
+    if (k == "tail") gMem.tail = std::clamp(iv, -1, static_cast<int>(TailMode::Wrap));  // (the sheet offers Cut, Let ring, Wrap)
     else if (k == "maxTail") gMem.maxTail = std::clamp(v, 0.1, 30.0);
     else if (k == "trim") gMem.trim = std::clamp(iv, -1, 1);
     else if (k == "mute") gMem.mute = iv != 0;
@@ -375,6 +376,11 @@ struct Preview {
   std::shared_ptr<sr::Output> out;  // the finished preview
   std::string key;                  // what it shows
   std::string want;                 // what it should show
+  // K-432 (GL-8006CE18): safe teardown on unexpected exit() when renderui::shutdown() was skipped.
+  ~Preview() {
+    cancel = true;
+    gl::threads::joinWithin(worker, running);
+  }
 };
 Preview& preview() {
   static Preview p;
@@ -405,10 +411,8 @@ Sheet gSheet;
 void stopPreview() {
   Preview& p = preview();
   p.cancel = true;
-  if (p.worker.joinable()) {
-    host::serveUiThreadTasksWhile(p.running);
-    p.worker.join();
-  }
+  if (p.worker.joinable() && p.worker.get_id() != std::this_thread::get_id() && p.running.load()) host::serveUiThreadTasksWhile(p.running);
+  gl::threads::safeJoin(p.worker);
   p.cancel = false;
 }
 

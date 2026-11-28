@@ -1,5 +1,6 @@
 // Gridline - K-87: freezing and hibernating in the app (FreezeUi.h).
 #include "FreezeUi.h"
+#include "../core/ThreadJoin.h"
 #include "../core/ThreadName.h"
 #include <algorithm>
 #include <atomic>
@@ -63,7 +64,7 @@ struct Job {
   ~Job() {
     cancel = true;
     crash::InsideScope inside("waiting for a freeze render to stop");
-    if (worker.joinable()) worker.join();
+    gl::threads::safeJoin(worker);
   }
 };
 

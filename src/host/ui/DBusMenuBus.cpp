@@ -5,6 +5,7 @@
 // library's public headers and extra room at the end.
 #if !defined(_WIN32)
 #include "DBusMenuBus.h"
+#include "../../core/ThreadJoin.h"
 #include "../../core/ThreadName.h"
 #include <dlfcn.h>
 #include <cstdint>
@@ -352,7 +353,7 @@ bool Bus::open(const char* library) {
 }
 
 void Bus::close() {
-  owned_.clear();
+  hosts_.clear();
   watching_ = false;
   if (conn_) {
     D.connection_close(conn_);
@@ -373,7 +374,7 @@ bool Bus::hasHost() {
   registrar_.clear();
   for (const char* name : kHostNames) {
     if (D.bus_name_has_owner(conn_, name, &err)) {
-      owned_.insert(name);
+      hosts_.nameOwner(name, true);
       if (registrar_.empty()) registrar_ = name;
     }
     D.error_free(&err);
@@ -420,12 +421,12 @@ int Bus::filter(void* msg) {
   for (const char* h : kHostNames) ours = ours || name == h;
   if (!ours) return kNotHandled;
   if (after.empty()) {
-    owned_.erase(name);
+    hosts_.nameOwner(name, false);
   } else {
-    if (!owned_.count(name)) appeared_ = true;
-    owned_.insert(name);
+    if (!hosts_.has(name)) appeared_ = true;
+    hosts_.nameOwner(name, true);
   }
-  registrar_ = owned_.empty() ? std::string() : *owned_.begin();
+  registrar_ = hosts_.first();
   status_ = registrar_.empty() ? "dbusmenu on the session bus, no global menu host" : "dbusmenu: " + registrar_;
   return kNotHandled;  // others may watch it too
 }
@@ -554,6 +555,10 @@ int Bus::handle(void* msg) {
       D.message_iter_close_container(&out, &dict);
     }
   } else if (iface.empty() || iface == kIface) {
+    // A menu bar reading the menus or acting on them: the host shows them (GitHub #85).
+    if (member == "GetLayout" || member == "GetGroupProperties" || member == "GetProperty" || member == "Event" || member == "EventGroup" ||
+        member == "AboutToShow" || member == "AboutToShowGroup")
+      hosts_.menusRead();
     if (member == "GetLayout") {
       int32_t parent = 0, depth = -1;
       if (hasArgs) getInt(&in, parent), getInt(&in, depth);
@@ -666,7 +671,7 @@ void Worker::start(const char* library) {
 
 void Worker::stop() {
   stop_ = true;
-  if (thread_.joinable()) thread_.join();
+  gl::threads::safeJoin(thread_);
 }
 
 std::string Worker::status() const {
@@ -710,6 +715,7 @@ void Worker::run(std::string library) {
     status_ = bus.status();
   }
   host_ = bus.hostSeen();
+  shows_ = bus.hostShows();
   up_ = true;
   bool announced = false;
   unsigned long xid = 0;
@@ -733,6 +739,7 @@ void Worker::run(std::string library) {
     if (announce) bus.announce(xid), announced = true;
     if (bus.takeHostAppeared() && announced) bus.announce(xid);  // a host that (re)started needs the window again
     host_ = bus.hostSeen();
+    shows_ = bus.hostShows();
     std::string chosen = bus.takeChosen();
     std::lock_guard<std::mutex> l(m_);
     if (!chosen.empty()) chosen_ = chosen;
@@ -740,6 +747,7 @@ void Worker::run(std::string library) {
   }
   up_ = false;
   host_ = false;
+  shows_ = false;
   bus.close();
 }
 

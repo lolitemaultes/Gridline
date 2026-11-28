@@ -3,6 +3,7 @@
 // the band's spacing scale, the monospaced face); the waveform and the sequence blocks are the
 // Ribbon's own (their hit-testing, tools, cuts and flags), so a region edited here is edited as it
 // is in the other layouts.
+#include "../../app/UrlImportUi.h"
 #include "seltmann_tracker.h"
 
 #include <algorithm>
@@ -586,13 +587,18 @@ void wellState(App& a, const PluginTarget& t, sui::Ed& e, ImVec2 p0, ImVec2 p1) 
                           : i18n::tr("Breaks, loops, full songs, anything: Seltmann finds the tempo and the bars and chops it for you");
   theme::centreText(dl, boldFont(a), fs, ImVec2(p0.x, mid - fs * 2 - 4), ImVec2(p1.x, mid - fs - 4), P.text, t1);
   theme::centreText(dl, a.fontRegular, fs, ImVec2(p0.x + 8, mid - fs), ImVec2(p1.x - 8, mid), P.textDim, t2);
-  const float bh = std::round(fs + 8), bw = std::ceil(std::max(textW(a, "Load audio..."), textW(a, "Record...")) + 4 * space::kPad);
+  const float bh = std::round(fs + 8),
+              bw = std::ceil(std::max({textW(a, "Load audio..."), textW(a, "From URL..."), textW(a, "Record...")}) + 4 * space::kPad);
   const float bx = std::round((p0.x + p1.x) * 0.5f), by = mid + 6;
   if (by + bh < p1.y - 2) {
-    if (bevelButton(a, "##swload", "Load audio...", ImVec2(bx - bw - 2, by), ImVec2(bx - 2, by + bh), false, "Pick an audio file to chop"))
+    const float hw = std::round(bw * 0.5f);
+    if (bevelButton(a, "##swload", "Load audio...", ImVec2(bx - hw - 4 - bw, by), ImVec2(bx - hw - 4, by + bh), false, "Pick an audio file to chop"))
       sui::openLoadDialog(a, t, e);
     noteCtl("##swload");
-    if (bevelButton(a, "##swrec", "Record...", ImVec2(bx + 2, by), ImVec2(bx + 2 + bw, by + bh), false,
+    if (bevelButton(a, "##swurl", "From URL...", ImVec2(bx - hw, by), ImVec2(bx - hw + bw, by + bh), false, "Import from URL: a web link's audio, chopped here"))
+      urlimportui::openForPlugin(a, t, 0);
+    noteCtl("##swurl");
+    if (bevelButton(a, "##swrec", "Record...", ImVec2(bx - hw + bw + 4, by), ImVec2(bx - hw + 2 * bw + 4, by + bh), false,
                     "Record from an audio input (a microphone, an instrument) and chop the recording"))
       sui::openRecorder(a, t);
     noteCtl("##swrec");
@@ -1246,6 +1252,7 @@ std::vector<Column> chopColumns(App& a, const PluginTarget& t, sui::Ed& e, View&
                           [&a, t, &e] { sui::makeLoops(a, t, e); }, false, have);
   Cell loopsBox = sButton("##sloopsbox", "Loops...", "The pattern, the best phrases and the sections to drag out", [&v] { openModalCard(v, sui::CardLoops); }, false, have);
   Cell load = sButton("##sload", "Load...", "Load another audio file into this instance", [&a, t, &e] { sui::openLoadDialog(a, t, e); });
+  Cell url = sButton("##surl", "URL...", "Import from URL: a web link's audio into this instance", [&a, t] { urlimportui::openForPlugin(a, t, 0); });
   Cell take = sButton("##stake", "Record take", "Record a new take into this instance (keep the chop or analyse it fresh)", [&a, t] { sui::openRecorder(a, t); },
                      sui::recorderOpenFor(t));
   Cell tempo = sStepper("##stempo", "Tempo", fmt("%.2f", e.m.grid.bpm), "The tempo the analysis found (click to type; bar 1 stays)",
@@ -1297,7 +1304,7 @@ std::vector<Column> chopColumns(App& a, const PluginTarget& t, sui::Ed& e, View&
     col(6, 5.2f, {split4, del, startHere, stepsBox});
     col(1, 9.0f, {at(0), at(1), at(2), at(3)});
     col(4, 9.0f, {at(4), at(5), at(6), scopeRow(v, e)});
-    col(3, 8.2f, {row({loopDrag, midiDrag}), send, row({makeLoops, loopsBox}), row({load, take})});
+    col(3, 8.2f, {row({loopDrag, midiDrag}), send, row({makeLoops, loopsBox}), row({load, url, take})});
     col(5, 8.0f, {tempo, fixes, follow, gridBox});
     if (page) col(0, 4.6f, {exitB, instB, more, sCaption("")});
     else col(0, 4.6f, {exitB, pageB, instB, more});
@@ -1324,7 +1331,7 @@ std::vector<Column> chopColumns(App& a, const PluginTarget& t, sui::Ed& e, View&
   if (rows < 4) {
     Column hidden;
     hidden.prio = 99;
-    hidden.cells = {chopBtn("##sc1", "1 bar", 1, "A region per bar (Alt+2)"), hearR, hearS, rev, rest, split4, del, dup, startHere, reset, stepsBox, send, loopsBox, load, fixes, gridBox};
+    hidden.cells = {chopBtn("##sc1", "1 bar", 1, "A region per bar (Alt+2)"), hearR, hearS, rev, rest, split4, del, dup, startHere, reset, stepsBox, send, loopsBox, load, url, fixes, gridBox};
     hidden.least = 1e9f;
     c.push_back(std::move(hidden));
   }

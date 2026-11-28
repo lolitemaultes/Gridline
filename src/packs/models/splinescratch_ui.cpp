@@ -6,11 +6,13 @@
 // current patch (position or volume spline, chosen under the vertical sample
 // view) with its mute bar underneath; the vertical sample view on the right.
 #include <filesystem>
+#include "../../app/UrlImportUi.h"
 #include "../../app/App.h"
 #include "metal_widgets.h"
 #include "../../app/Widgets.h"
 
 namespace gl::packs::models::metal {
+bool loadSplineScratchAudio(App& a, const PluginTarget& t, const std::string& path);  // the LOAD button and Import from URL
 
 using namespace ui;
 
@@ -122,18 +124,13 @@ void drawSplineScratch(App& a, const PluginTarget& t, float width) {
   // ---- sample row
   PluginTarget tt = t;
   if (flk::btn(c, "##load", 1, 1, 34, 18, "LOAD", false))
-    openSampleDialog(a, "Load sample", [&a, tt](const std::string& p) {
-      const PluginState* now = tt.state(a.doc.song());
-      if (!now) return;
-      SsData dd;
-      parseScratchSpl(now->data, dd);
-      dd.path = p;
-      commit(a, tt, *now, dd, "load sample");
-    });
+    openSampleDialog(a, "Load sample", [&a, tt](const std::string& p) { loadSplineScratchAudio(a, tt, p); });
   {
-    std::string nm = d.path.empty() ? std::string("(built-in phrase — drop a sample on the channel)") : std::filesystem::path(d.path).filename().string();
-    flk::lcd(c, 39, 1, 212, 18, nm.c_str());
+    std::string nm = d.path.empty() ? std::string("(built-in phrase: drop a sample)")  /* (fits beside the URL button) */ : std::filesystem::path(d.path).filename().string();
+    flk::lcd(c, 39, 1, 174, 18, nm.c_str());
   }
+  if (flk::btn(c, "##url", 217, 1, 34, 18, "URL", false)) urlimportui::openForPlugin(a, t, 0);
+  if (ImGui::IsItemHovered()) a.setHint("Import from URL: a web link's audio to scratch");
   const ImVec2 w0 = F.p(0, 24), w1 = F.p(252, 97);
   skin::graphWell(dl, w0, w1, K);
   const float wa = prmf(st, SsStartWave, 0) / 10000.0f, wb = prmf(st, SsEndWave, 10000) / 10000.0f;
@@ -243,6 +240,16 @@ void drawSplineScratch(App& a, const PluginTarget& t, float width) {
   }
   ImGui::PopID();
   F.end(kW, kH);
+}
+
+bool loadSplineScratchAudio(App& a, const PluginTarget& t, const std::string& path) {
+  const PluginState* now = t.state(a.doc.song());
+  if (!now) return false;
+  SsData dd;
+  parseScratchSpl(now->data, dd);
+  dd.path = path;
+  commit(a, t, *now, dd, "load sample");
+  return true;
 }
 
 }  // namespace gl::packs::models::metal

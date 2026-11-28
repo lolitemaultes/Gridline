@@ -141,7 +141,7 @@ foreach(lay live logic)
 22 quit discard
 ")
   expect("sdlat frame 10: brplace0 at " "${lay}: the folder tab is listed as a place")
-  expect("browsertabs frame 18: count 5 shown -?[0-9]+ view [0-9]+ cat 13" "${lay}: clicking the place shows its folder")
+  expect("browsertabs frame 18: count 5 shown -?[0-9]+ view [0-9]+ cat 14" "${lay}: clicking the place shows its folder")  # (the first place: past the 14 categories)
 endforeach()
 settings(tracker)
 run(tracker "4 layout open Browser

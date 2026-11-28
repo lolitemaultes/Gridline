@@ -248,4 +248,112 @@ std::vector<AutoPoint> patternClipSteps(const PatternAutomation& c, Tick until, 
   return out;
 }
 
+// ---- K-413: persistent channel-rack automation lanes ------------------------
+
+bool ensureRackAutoLane(Song& s, ObjectId owner, uint32_t index, const std::string& name, Rgb color) {
+  if (owner == kNoId) return false;
+  if (Channel* ch = s.channel(owner)) {
+    for (auto& l : ch->automationLanes) {
+      if (l.index == index) {
+        if (l.name.empty() && !name.empty()) l.name = name;
+        if (l.color == AutomationClip{}.color && color != AutomationClip{}.color) l.color = color;
+        return false;
+      }
+    }
+    ch->automationLanes.push_back(ChannelAutoLane{index, name, color});
+    return true;
+  }
+  for (auto& l : s.rackAutoLanes) {
+    if (l.owner == owner && l.index == index) {
+      if (l.name.empty() && !name.empty()) l.name = name;
+      if (l.color == AutomationClip{}.color && color != AutomationClip{}.color) l.color = color;
+      return false;
+    }
+  }
+  s.rackAutoLanes.push_back(SongAutoLane{owner, index, name, color});
+  return true;
+}
+
+bool removeRackAutoLane(Song& s, ObjectId owner, uint32_t index) {
+  if (owner == kNoId) return false;
+  if (Channel* ch = s.channel(owner)) {
+    const auto n = ch->automationLanes.size();
+    ch->automationLanes.erase(std::remove_if(ch->automationLanes.begin(), ch->automationLanes.end(),
+                                             [index](const ChannelAutoLane& l) { return l.index == index; }),
+                              ch->automationLanes.end());
+    return ch->automationLanes.size() != n;
+  }
+  const auto n = s.rackAutoLanes.size();
+  s.rackAutoLanes.erase(std::remove_if(s.rackAutoLanes.begin(), s.rackAutoLanes.end(),
+                                       [owner, index](const SongAutoLane& l) { return l.owner == owner && l.index == index; }),
+                        s.rackAutoLanes.end());
+  return s.rackAutoLanes.size() != n;
+}
+
+bool hasRackAutoLane(const Song& s, ObjectId owner, uint32_t index) {
+  if (owner == kNoId) return false;
+  if (const Channel* ch = s.channel(owner)) {
+    for (const auto& l : ch->automationLanes)
+      if (l.index == index) return true;
+    return false;
+  }
+  for (const auto& l : s.rackAutoLanes)
+    if (l.owner == owner && l.index == index) return true;
+  return false;
+}
+
+void updateRackAutoLaneMeta(Song& s, ObjectId owner, uint32_t index, const std::string* name, const Rgb* color) {
+  if (Channel* ch = s.channel(owner)) {
+    for (auto& l : ch->automationLanes)
+      if (l.index == index) {
+        if (name) l.name = *name;
+        if (color) l.color = *color;
+        return;
+      }
+    return;
+  }
+  for (auto& l : s.rackAutoLanes)
+    if (l.owner == owner && l.index == index) {
+      if (name) l.name = *name;
+      if (color) l.color = *color;
+      return;
+    }
+}
+
+std::vector<SongAutoLane> effectiveRackAutoLanes(const Song& s, const Pattern* pat) {
+  std::vector<SongAutoLane> out;
+  auto findIdx = [&](ObjectId owner, uint32_t index) -> int {
+    for (size_t i = 0; i < out.size(); ++i)
+      if (out[i].owner == owner && out[i].index == index) return static_cast<int>(i);
+    return -1;
+  };
+  for (const Channel& ch : s.channels) {
+    for (const ChannelAutoLane& l : ch.automationLanes) {
+      if (findIdx(ch.id, l.index) < 0) out.push_back(SongAutoLane{ch.id, l.index, l.name, l.color});
+    }
+  }
+  for (const SongAutoLane& l : s.rackAutoLanes) {
+    if (l.owner != kNoId && findIdx(l.owner, l.index) < 0) out.push_back(l);
+  }
+  if (pat) {
+    for (const PatternAutomation& c : pat->automation) {
+      if (c.owner == kNoId) continue;
+      const int idx = findIdx(c.owner, c.index);
+      if (idx < 0) {
+        out.push_back(SongAutoLane{c.owner, c.index, c.name, c.color});
+      } else {
+        if (!c.name.empty()) out[static_cast<size_t>(idx)].name = c.name;
+        if (c.color != AutomationClip{}.color) out[static_cast<size_t>(idx)].color = c.color;
+      }
+    }
+  }
+  return out;
+}
+
+void migrateRackAutoLanes(Song& s) {
+  for (const Pattern& p : s.patterns)
+    for (const PatternAutomation& c : p.automation)
+      if (c.owner != kNoId) ensureRackAutoLane(s, c.owner, c.index, c.name, c.color);
+}
+
 }  // namespace gl

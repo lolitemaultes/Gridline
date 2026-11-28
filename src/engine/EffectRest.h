@@ -67,6 +67,57 @@ inline double advancePhase(double ph, double inc, int n) {
   return ph;
 }
 
+// K-142e: O(1) bit-identical phase advancement across arbitrary rest block splits (including
+// whole-graph deep sleep catching up thousands or millions of frames in one call on wakeup).
+// Accumulates exact integer frames at constant `inc` and resolves `start + inc * steps` on
+// flush (when waking into process() or if `inc` changes), so `K` calls of `n` frames produce the
+// exact same IEEE-754 double bit pattern as one call of `K * n` frames — in O(1) time.
+struct RestPhase {
+  double start = 0.0;
+  double inc = 0.0;
+  uint64_t startCycle = 0;
+  int64_t steps = 0;
+  bool active = false;
+
+  void advance(double& ph, double newInc, int64_t n, uint64_t* cycle = nullptr) {
+    if (n <= 0) return;
+    if (active && newInc != inc) flush(ph, cycle);
+    if (!active) {
+      start = ph;
+      inc = newInc;
+      startCycle = cycle ? *cycle : 0;
+      steps = 0;
+      active = true;
+    }
+    steps += n;
+  }
+
+  double at(double ph, double curInc, int64_t extra) const {
+    const double base = active && curInc == inc ? start : ph;
+    const int64_t tot = (active && curInc == inc ? steps : 0) + extra;
+    double p = base + curInc * static_cast<double>(tot);
+    p -= std::floor(p);
+    if (p >= 1.0) p = 0.0;
+    return p;
+  }
+
+  void flush(double& ph, uint64_t* cycle = nullptr) {
+    if (!active) return;
+    const double p = start + inc * static_cast<double>(steps);
+    const double w = std::floor(p);
+    ph = p - w;
+    if (ph >= 1.0) ph = 0.0;
+    if (cycle) *cycle = startCycle + (w > 0.0 ? static_cast<uint64_t>(w) : 0);
+    active = false;
+    steps = 0;
+  }
+
+  void reset() {
+    active = false;
+    steps = 0;
+  }
+};
+
 // Signal state below this (-160 dBFS) counts as settled for effects whose feedback or followers take
 // minutes to reach exact zero: left frozen, it changes the sound after the rest by less than -120 dBFS.
 constexpr double kRestQuiet = 1e-8;

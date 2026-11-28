@@ -22,6 +22,7 @@
 #include "../../app/KeyGlide.h"
 #include "../../app/KeyLight.h"
 #include "../../app/Theme.h"
+#include "../../app/UrlImportUi.h"
 #include "../../app/Widgets.h"
 #include "../../core/BrowserIndex.h"
 #include "../../core/ExternalDrop.h"
@@ -918,6 +919,9 @@ void samplesPanel(App& a, const PluginTarget& t, Ed& ed, Edit& e, const Instrume
       ImGui::SetCursorPosX(6);
       if (ui::TextButton(i18n::tr("Add file..."), false, 0, i18n::tr("Choose an audio file to add as a sample")))
         addFileDialog(a, t, sound);
+      ImGui::SameLine(0, 4);
+      if (ui::TextButton(i18n::tr("From URL..."), false, 0, i18n::tr("Import from URL: a web link's audio added as a sample (each item of a playlist as its own)")))
+        urlimportui::openForPlugin(a, t, 0);
       ImGui::Dummy(ImVec2(0, 2));
     }
   }
@@ -1859,6 +1863,15 @@ int headerRegionToEntry(App& a, ObjectId channel, int to) {
   const int slot = opRegionToEntry(a, c.t, k, r, to);
   if (slot >= 0) c.ed->m->sel = slot, c.ed->m->wantSlot = -1;
   return slot;
+}
+
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path) {
+  const PluginState* st = t.state(a.doc.song());
+  if (!st || st->type != trk::kInstrumentType) return false;
+  const int sound = !st->params.empty() ? static_cast<int>(std::lround(st->params[0])) : 0;
+  const int k = addFiles(a, t, {path}, sound);
+  if (k >= 0) memory(t.key()).sel = k;
+  return true;
 }
 
 }  // namespace gl::packs::trackerpack

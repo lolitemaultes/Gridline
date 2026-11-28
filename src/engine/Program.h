@@ -15,6 +15,7 @@
 #include <vector>
 #include "../core/Automation.h"
 #include "../core/Expr.h"
+#include "../core/Groove.h"
 #include "../core/LayerPick.h"
 #include "../core/Meter.h"
 #include "../core/Fades.h"
@@ -65,9 +66,14 @@ struct NoteEv {
   int16_t track = -1;
   // K-348: a program change (0..127) sent to the instrument just before the note (-1: none).
   int16_t program = -1;
+  // GitHub #87: a 0% note that slide notes fade in: the loudest velocity they take it to (0: none).
+  // The note starts at this velocity, silenced, so a slide can raise it (Program build, UI thread).
+  float slideVelRef = 0;
 };
-inline constexpr uint8_t kNoteSlide = 1;  // glides sounding notes instead of starting one
-inline constexpr uint8_t kNotePorta = 2;  // starts at the previous note's pitch and glides
+inline constexpr uint8_t kNoteSlide = 1;        // glides sounding notes instead of starting one
+inline constexpr uint8_t kNotePorta = 2;        // starts at the previous note's pitch and glides
+inline constexpr uint8_t kNoteSwingTiming = 4;  // 0.7.9: eligible for live SongParam::Swing timing warp
+inline constexpr uint8_t kNoteSwingAccent = 8;  // 0.7.9: eligible for live SongParam::GrooveAccent velocity
 
 inline constexpr int kMaxPendingNotes = 512;
 // Internal controller links are evaluated once per control block; while a
@@ -100,6 +106,58 @@ struct CpuStat {
 
 struct Program;
 
+// K-142e: bumps whenever any channel or effect runtime's editorOpen flag transitions to true,
+// letting a deeply sleeping audio graph detect an engaged editor in O(1) without scanning nodes.
+inline std::atomic<uint64_t>& editorOpenChanges() {
+  static std::atomic<uint64_t> n{0};
+  return n;
+}
+struct EditorFlag {
+  std::atomic<bool> v{false};
+  bool load(std::memory_order mo = std::memory_order_seq_cst) const { return v.load(mo); }
+  void store(bool on, std::memory_order mo = std::memory_order_seq_cst) {
+    const bool prev = v.exchange(on, mo);
+    if (on && !prev) editorOpenChanges().fetch_add(1, std::memory_order_release);
+  }
+  operator bool() const { return v.load(); }  // NOLINT
+};
+
+// K-142e: shared counter for whole-graph deep sleep. While deeply asleep the audio thread
+// increments one atomic (`blocks`) instead of touching every channel and effect runtime;
+// RestCounter::load() combines the node's own base count with the active ledger lock-free.
+struct SleepLedger {
+  std::atomic<uint64_t> seq{0};     // even = stable, odd = audio thread attaching/detaching
+  std::atomic<uint64_t> blocks{0};  // deep-sleep blocks accumulated in the current sleep
+  std::atomic<bool> active{false};
+};
+
+struct RestCounter {
+  std::atomic<uint64_t> base{0};
+  std::atomic<const SleepLedger*> ledger{nullptr};
+
+  uint64_t fetch_add(uint64_t d, std::memory_order mo = std::memory_order_seq_cst) { return base.fetch_add(d, mo); }
+  void store(uint64_t v, std::memory_order mo = std::memory_order_seq_cst) { base.store(v, mo); }
+  void attach(const SleepLedger* lg) { ledger.store(lg, std::memory_order_release); }
+  void detach(const SleepLedger* lg, uint64_t delta) {
+    if (ledger.load(std::memory_order_relaxed) != lg) return;
+    if (delta > 0) base.fetch_add(delta, std::memory_order_relaxed);
+    ledger.store(nullptr, std::memory_order_release);
+  }
+  uint64_t load(std::memory_order mo = std::memory_order_seq_cst) const {
+    for (int tries = 0; tries < 16; ++tries) {
+      const SleepLedger* lg = ledger.load(std::memory_order_acquire);
+      if (!lg) return base.load(mo);
+      const uint64_t s0 = lg->seq.load(std::memory_order_acquire);
+      if (s0 & 1u) continue;
+      const uint64_t b = base.load(std::memory_order_acquire);
+      const uint64_t cur = lg->active.load(std::memory_order_acquire) ? lg->blocks.load(std::memory_order_acquire) : 0;
+      const uint64_t s1 = lg->seq.load(std::memory_order_acquire);
+      if (s0 == s1 && ledger.load(std::memory_order_acquire) == lg) return b + cur;
+    }
+    return base.load(mo);
+  }
+};
+
 // Audio-thread state of one channel. Only the audio thread touches the
 // non-atomic members.
 struct ChannelRuntime {
@@ -125,6 +183,7 @@ struct ChannelRuntime {
     int bendSlot = -1;  // K-25: its bend line in bendSlots (-1 = none)
     int64_t bendFrom = 0;  // K-25: absolute sample the bend starts to apply (after a porta glide)
     int exprSlot[2] = {-1, -1};  // K-144: its pressure / timbre lanes in exprSlots (-1 = none)
+    float vel = 0;  // GitHub #87: the velocity it plays at, or the last slide took it to (0..1)
   };
   Pending pending[kMaxPendingNotes];
   int pendingCount = 0;
@@ -216,13 +275,13 @@ struct ChannelRuntime {
   // at or below kRestFaint), so the longer kRestHoldFaint applies.
   bool faintQuiet = false;
   // K-277: blocks left out / processed while the channel may rest (tests, the interface).
-  std::atomic<uint64_t> restBlocks{0}, runBlocks{0};
+  RestCounter restBlocks, runBlocks;
   std::atomic<bool> restingUi{false};  // (relaxed) resting now
   // K-142 (0.7.8): blocks the instrument's process() ran while the CPU report counts
   // (AudioEngine::setCallCounting); untouched otherwise.
   std::atomic<uint64_t> dspCalls{0};
   // K-277 (UI thread writes): its plugin's own editor is open (the editor may play notes itself).
-  std::atomic<bool> editorOpen{false};
+  EditorFlag editorOpen;
   // This block's output after the strip gains (the mixer pulls it).
   std::vector<float> outL = std::vector<float>(kEngineMaxBlock, 0.f), outR = std::vector<float>(kEngineMaxBlock, 0.f);
   CpuStat cpu;
@@ -300,11 +359,11 @@ struct EffectRuntime {
   // with nothing coming in (it makes sound by itself: never rests).
   int64_t faintFrames = 0;
   bool resting = false, selfSound = false;
-  std::atomic<uint64_t> restBlocks{0};  // blocks left out at rest (tests)
+  RestCounter restBlocks;               // blocks left out at rest (tests)
   std::atomic<uint64_t> dspCalls{0};    // K-142: blocks it ran while the CPU report counts
   // GitHub #66 (UI thread writes): its plugin's own editor is in use (open, and under the pointer
   // or holding the keyboard, or Gridline cannot tell).
-  std::atomic<bool> editorOpen{false};
+  EditorFlag editorOpen;
   bool warmed = false;  // UI thread: the builder ran warmUp on it (never read by the audio thread)
   std::atomic<float> meter{0};
   std::atomic<float> input{-120};
@@ -439,6 +498,7 @@ struct ProgAudioClip {
   // J-196: the clip's levels; the UI thread patches them into the playing
   // Program while only they change (ProgramBuilder::patchClipLevels).
   mutable Relaxed<float> gain = 1;
+  mutable Relaxed<float> pan = 0;  // K-414: -1..+1 stereo pan
   mutable Relaxed<double> fadeIn = 0, fadeOut = 0;  // seconds of playback time
   mutable Relaxed<FadeShape> shapeIn = FadeShape::Smooth, shapeOut = FadeShape::Smooth;  // J-38: curve shapes
   mutable Relaxed<float> tensionIn = 0, tensionOut = 0;                                  // J-38 / J-43: curve tension (FL unit)
@@ -490,15 +550,25 @@ struct ProgChannel {
   PluginState plugin;
   ChannelAux aux;
   mutable float gainL = 0, gainR = 0;  // target strip gains (taper, pan, mute applied)
-  // Channel pitch (knob + fine tune) + master pitch, semitones: what notes started in this block add
-  // (audio thread: changes only where the engine tells the instrument, AudioEngine::syncChannelPitch).
+  // Channel pitch (transpose + knob + fine tune) + master pitch, semitones: what notes started in
+  // this block add (audio thread: changes only where the engine tells the instrument,
+  // AudioEngine::syncChannelPitch).
   mutable float pitchOffset = 0;
   // The pitch automation and links ask for (semitones, as pitchOffset); taken at the next block.
   mutable float pitchTarget = 0;
-  mutable bool pitchLinked = false;    // automation / a link has set pitchTarget in this Program
+  mutable bool pitchLinked = false;    // automation / a link has set pitchCentsLive in this Program
   bool pitchMoves = false;             // J-153: automation / a link moves the channel pitch
   float volume = 0.78f, pan = 0, masterPitch = 0;  // unlinked strip values (masterPitch includes the channel fine tune)
+  float finePitch = 0;                 // 0.7.9: Channel::fine in semitones (separate from song.masterPitch)
+  float swingMix = 1.0f;               // 0.7.9: Channel::swingMix (0..1) for live SongSwing / SongGrooveAccent
+  bool swingTruncate = false;          // 0.7.9: Channel::swingTruncate for live SongSwing
   float pitchCents = 0;                // Channel::pitchCents
+  mutable float pitchCentsLive = 0;    // audio thread: live channel pitch in cents
+  int transpose = 0;                   // K-411: Channel::transpose (whole semitones, -48..48)
+  mutable int transposeLive = 0;       // audio thread: live integer semitone transpose
+  mutable bool transposeLinked = false;
+  bool transposeMoves = false;         // K-411: automation / link moves ChannelParam::Transpose
+  bool hosted = false;                 // K-411: hosted VST3/AU/CLAP/LV2 instrument
   int bendRange = 2;                   // Channel::bendRange
   bool muted = false;
   int mixer = 0;               // index into Program::mixer
@@ -671,8 +741,13 @@ struct ProgLink {
     MixDepth,                      // Stage distance (MixerTrack::depth)
     MixFocus,                      // Stage focus (MixerTrack::focus)
     ChanSustain,                   // the channel's sustain pedal (ChannelParam::Sustain)
+    ChanTranspose,                 // K-411: per-channel semitone transpose (ChannelParam::Transpose)
     MixMacro,                      // K-245: a mixer track's macro (param = the macro)
-    LfoSetting                     // K-247: a board LFO's own setting (fx = the LFO, param = lfo::LfoParam)
+    LfoSetting,                    // K-247: a board LFO's own setting (fx = the LFO, param = lfo::LfoParam)
+    SongTempo,                     // 0.7.9: song tempo (SongParam::Tempo, BPM)
+    SongSwing,                     // 0.7.9: global swing amount (SongParam::Swing, 0..1)
+    SongMasterPitch,               // 0.7.9: master pitch (SongParam::MasterPitch, semitones)
+    SongGrooveAccent               // 0.7.9: groove accent depth (SongParam::GrooveAccent, 0..1)
   };
   // source: a channel instrument (srcChannel) or a mixer slot (srcMixer, srcSlot); K-169: a
   // channel's macro (srcChannel = the channel, srcMacro = the macro); K-245: a mixer track's macro
@@ -684,6 +759,7 @@ struct ProgLink {
   double base = 0;  // unlinked normalized value (formula variable `base`)
   float min = 0, max = 1, smoothMs = 0;
   ModCurve curve = ModCurve::Linear;
+  bool invert = false;
   Expr formula;     // ModCurve::Formula; variables: input, base, t, beat
   std::shared_ptr<LinkRuntime> rt;
   // K-247: its source is a macro an LFO moves: applied in the LFO pass (Program::lfoOps), after that
@@ -858,6 +934,16 @@ struct Program {
   // The song's master pitch (semitones): MIDI Out channels send notes with it, so the channels
   // they feed (which add it again) get notes without it.
   float masterPitch = 0;
+  // 0.7.9: live internal-controller links on song settings (audio thread, zero allocation).
+  mutable double modTempo = 0;
+  mutable float modMasterPitch = 0;
+  mutable float modSwing = 0;
+  mutable float modGrooveAccent = 1;
+  bool tempoLinked = false;
+  bool masterPitchLinked = false;
+  bool swingLinked = false;
+  bool grooveAccentLinked = false;
+  groove::Warp liveGroove;  // full-strength groove shape (amount=1, accent=1), UI-built, fixed-size
   // Links between MIDI ports left out because they would feed a channel's MIDI back to itself
   // (for the interface: which channels, as (sender, listener) channel ids).
   std::vector<std::pair<ObjectId, ObjectId>> midiLoops;
@@ -904,6 +990,8 @@ struct Program {
   // K-5: slide notes glide the sounding notes of every colour (Song::slidesAnyColour, projects
   // saved before slides kept to their colour group); false: only the notes of their own colour.
   bool slidesAnyColour = false;
+  // GitHub #87: slide notes glide the velocity of the notes they slide too (Song::slidesVelocity).
+  bool slidesVelocity = true;
   // Live mode: the live area's clips and the tracks they sit on.
   std::vector<ProgLiveClip> liveClips;
   std::vector<ProgLiveTrack> liveTracks;

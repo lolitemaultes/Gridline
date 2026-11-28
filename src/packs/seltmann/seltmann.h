@@ -183,6 +183,15 @@ struct WarpLogEntry {
 };
 void setWarpLogForTest(bool on);
 std::vector<WarpLogEntry> warpLogForTest();
+// Tests (0.7.9): simulates a slower machine by scaling each real-time warp stretch duration by
+// `factor` (>= 1.0; 1.0 = normal speed, 2.0 = 2x slower worker). Offline renders are unaffected.
+void setWarpSlowdownForTest(double factor);
+// Tests (K-464): adds `seconds` to every whole-region render the real-time warp worker makes (a
+// machine whose long stretches end late), from the one after the first `fromRender` (K-464b: a
+// machine that slows down once the worker has measured it); 0 = none.
+void setWarpRegionDelayForTest(double seconds, int fromRender = 0);
+// Tests (K-464b): adds `seconds` to every focused render the worker makes while the tempo moves.
+void setWarpFocusDelayForTest(double seconds);
 // J-190: changes every time a job finishes (done or failed), so the app can rebuild what
 // was prepared on a provisional grid (Kerf's beat-grid slices).
 uint64_t analysisGeneration();

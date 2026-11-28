@@ -86,8 +86,10 @@ struct OutputValue {
 struct NoteEvent {
   // K-99: Expression = a held note's pressure or timbre (formats with note expressions: CLAP's
   // note dialect, VST3); `expr` says which, `value` is 0..1 (timbre: 0.5 = centre).
+  // GitHub #87: ExprVolume = the note's volume as a gain, 0..4 (1 = as it started; plugins with
+  // supportsNoteVolume()).
   enum Type : uint8_t { NoteOn, NoteOff, Tuning, Midi, Expression } type = NoteOn;
-  enum Expr : uint8_t { ExprPressure = 0, ExprBrightness = 1 };
+  enum Expr : uint8_t { ExprPressure = 0, ExprBrightness = 1, ExprVolume = 2 };
   uint8_t expr = ExprPressure;
   float value = 0;
   int offset = 0;       // sample offset in the block
@@ -95,7 +97,7 @@ struct NoteEvent {
   int16_t key = 60;     // MIDI key
   int8_t channel = 0;   // MIDI channel 0..15
   float velocity = 0;   // 0..1
-  double tuning = 0;    // NoteOn: semitones off `key`; Tuning: semitones off the started key
+  double tuning = 0;    // NoteOn: semitones off `key`; Tuning: semitones off `key` if tuningRelativeToKey(), else off started pitch
   uint8_t midi[3] = {0, 0, 0};  // Midi: status, data1, data2 (CC, pitch bend, pressure…)
   // NoteOn: per-note properties (piano roll) for formats with note
   // expressions: pan -1..1, modX / modY 0..1 (0.5 neutral; X → brightness).
@@ -186,6 +188,9 @@ class Editor {
   virtual bool external() const { return false; }
   // External editors: false once the user closed the window.
   virtual bool isOpen() const { return true; }
+  // Out-of-process editors: still opening (its process has not said yet whether it opened; isOpen is
+  // true meanwhile, false if it then refuses).
+  virtual bool opening() const { return false; }
   // External editors: top-left based global frame of the editor's own
   // window (the host docks its control bar under it). False when unknown.
   virtual bool windowFrame(int& x, int& y, int& w, int& h) const { (void)x, (void)y, (void)w, (void)h; return false; }
@@ -236,10 +241,20 @@ class Backend {
   virtual std::string auxOutputName(int k) const { return "Output " + std::to_string(k + 2); }
   // Per-note tuning (glides) is understood.
   virtual bool supportsTuning() const { return false; }
+  // Q-13: true when NoteEvent::Tuning replaces the note's tuning relative to its integer `key`
+  // (CLAP CLAP_NOTE_EXPRESSION_TUNING, since CLAP_EVENT_NOTE_ON carries no initial tuning), false
+  // when it adds on top of the NoteOn's initial tuning (VST3 kTuningTypeID).
+  virtual bool tuningRelativeToKey() const { return false; }
+  // Q-13: true when MIDI channel pitch bend (0xE0) reaches the plugin. Raw MIDI formats always
+  // accept it; VST3 only when the plugin maps kPitchBend via IMidiMapping.
+  virtual bool supportsPitchBend() const { return hasEventInput(); }
   // The plugin sends notes / MIDI (a MIDI output; see popMidiOut).
   virtual bool hasEventOutput() const { return false; }
   // The plugin pans notes itself from NoteEvent::pan (note expression).
   virtual bool handlesNotePan() const { return false; }
+  // GitHub #87: the plugin takes a held note's volume (NoteEvent::ExprVolume) as a note expression
+  // it says it understands (VST3 plugins listing the volume note expression).
+  virtual bool supportsNoteVolume() const { return false; }
   // Non-destructive modulation (addParamMod) is understood for parameter `id`.
   virtual bool supportsParamMod(uint32_t id) const { (void)id; return false; }
   // A bypass the plugin implements itself (bypass parameter, VST2 soft
@@ -292,6 +307,17 @@ class Backend {
   virtual bool loadPreset(const PresetRef& p) { (void)p; return false; }
   // Out-of-process instances: the plugin process died.
   virtual bool crashed() const { return lost(); }
+  // Out-of-process instances: a request is still unanswered (the plugin's process is busy, its
+  // interface thread in a long job or a loop of its own). Nothing on the UI thread waits for it: calls
+  // made meanwhile wait only briefly, and the UI thread leaves the plugin alone until it answers.
+  virtual bool awaitingAnswer() const { return false; }
+  // ... and it has been for a while (a second; an interface opening: five): shown as not responding.
+  // A plugin that stays so (30 s) counts as crashed (crashReason: it stopped responding).
+  virtual bool notResponding() const { return false; }
+  // `f` runs (UI thread) once nothing is awaited any more: the plugin answered, was stopped or the
+  // instance went. At once elsewhere. For what the plugin's process may still use (the window an
+  // interface is embedded in, Linux), so it is not destroyed under it.
+  virtual void whenAnswered(std::function<void()> f) { f(); }
   virtual std::string crashReason() const { return lost() ? (lostWhy_ ? lostWhy_ : "the connection to its process was lost") : std::string(); }
   // K-9: a call into the plugin threw (a bridged plugin whose other process is gone: every call
   // does from then on). The instance counts as crashed and nothing calls it again, its destructor
@@ -325,6 +351,8 @@ class Backend {
   // Out-of-process instances: the audio exchange so far, one line for test and log messages
   // (blocks sent / answered, budgets missed, the last wait against its budget). Empty otherwise.
   virtual std::string diagnostics() const { return {}; }
+  // K-437: how the instance's process is kept off the internet (sandbox/NetBlock.h NetGuard; 0: it is not).
+  virtual int networkGuard() const { return 0; }
   // Notified (UI thread) when the instance is destroyed while an editor shows it.
   std::function<void()> onGoingAway;
 

@@ -1607,7 +1607,7 @@ std::vector<Tool> buildTools() {
   Json noteItem = objSchema({{"start", numP("Start in beats from the pattern start", 0, 1e6)},
                              {"length", numP("Length in beats (default 1)", 0.0001, 1e6)},
                              {"pitch", intP("MIDI note number (60 = middle C)", 0, 127)},
-                             {"velocity", intP("Velocity (default 100)", 1, 127)},
+                             {"velocity", intP("Velocity (default 100; 0 is silent unless slide notes fade it in)", 0, 127)},
                              {"pan", intP("Note pan -64..64", -64, 64)},
                              {"fine", intP("Fine pitch in cents", -1200, 1200)},
                              {"muted", boolP("Kept but not played")},

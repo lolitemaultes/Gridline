@@ -9,6 +9,7 @@
 #include <vector>
 #include "../PacksUi.h"
 #include "../../app/DrawSmoothUi.h"
+#include "../../app/UrlImportUi.h"
 #include "../../engine/Dsp.h"
 #include "../../engine/Program.h"
 #include "sfx_common.h"
@@ -1037,9 +1038,11 @@ void editorConvolver(App& a, const PluginTarget& t, float width) {
   }
   // ---- SOURCE: impulse choice, file loading / drop zone, normalize, reverse, stereo mode.
   convSection(dl, F, 10, 292, 280, 94, K, i18n::tr("SOURCE"));
-  menu(a, t, CvSource, F, 18, 314, 168, 18, K);
-  if (skin::button("##loadir", F.p(192, 314), F.sz(90, 18), K, i18n::tr("LOAD..."), false, F.font(8.5f))) openIrDialog(a, t, parseConvData(st.data).path);
+  menu(a, t, CvSource, F, 18, 314, 160, 18, K);
+  if (skin::button("##loadir", F.p(186, 314), F.sz(62, 18), K, i18n::tr("LOAD..."), false, F.font(8.5f))) openIrDialog(a, t, parseConvData(st.data).path);
   if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Load a WAV / FLAC / MP3 impulse response (or drop a file on the view)"));
+  if (skin::button("##urlir", F.p(256, 314), F.sz(26, 18), K, GL_ICON_LABEL("download", "URL"), false, F.font(8.5f))) urlimportui::openForPlugin(a, t, 0);
+  if (ImGui::IsItemHovered()) a.setHint(i18n::tr("Import from URL: a web link's audio as the impulse response"));
   {
     const ImVec2 z0 = F.p(18, 337), z1 = F.p(282, 359);
     ImGui::SetCursorScreenPos(z0);
@@ -2709,6 +2712,13 @@ bool drawEditor(App& a, const PluginTarget& t, float width) {
     ok = false;
   ImGui::PopID();
   return ok;
+}
+
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path) {
+  const PluginInfo* info = t.info(a.doc.song());
+  if (!info || info->type != "gl.convolver") return false;
+  loadIr(a, t, path);
+  return true;
 }
 
 }  // namespace gl::packs::spacefx

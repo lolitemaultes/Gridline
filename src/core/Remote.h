@@ -37,6 +37,9 @@ int encodeRelative(RemoteEncoder e, int delta);
 // Link space: input u (0..1) → invert → curve / formula → w (0..1).
 // `formula` is the compiled ControllerLink::formula (may be empty).
 double remoteCurve(const ControllerLink& l, double u, const Expr* formula = nullptr);
+// Effective direction inversion for relative encoders and increment buttons
+// (combines l.invert, ModCurve::Inverted, and reversed range l.max < l.min).
+bool remoteInverted(const ControllerLink& l);
 // w → normalized target value in [min, max].
 inline double remoteRange(const ControllerLink& l, double w) { return l.min + (l.max - l.min) * w; }
 // Compiles a link formula (variable `input`); false + message on error.
@@ -92,12 +95,14 @@ class RemoteMapper {
 
  private:
   struct State {
-    double lastIn = -1;   // previous mapped hardware position (normalized target space), -1 = unknown
-    double lastOut = -1;  // value this link last wrote, -1 = none
+    uint64_t configHash = 0;  // K-412: resets takeover state when curve/invert/range/mode changes
+    double lastIn = -1;       // previous mapped hardware position (normalized target space), -1 = unknown
+    double lastOut = -1;      // value this link last wrote, -1 = none
     bool picked = false;
     bool toggled = false;
     bool down = false;
   };
+  static uint64_t configHashOf(const ControllerLink& l);
   const Expr* formula(const std::string& text);
   bool absolute(const ControllerLink& l, State& s, double n, double cur, double* out);
   std::map<uint64_t, State> st_;

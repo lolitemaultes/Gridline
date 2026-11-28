@@ -277,6 +277,29 @@ plugin's interface inside Gridline. Installed plugins' own windows do the same a
 above the main window, so a Gridline panel inside the main window cannot come in front of them.
 A plugin that shows its interface from its sandbox process on macOS raises its own window there.
 
+## A plugin that is busy or stops responding
+
+A plugin running in the sandbox (its plugin window's **Sandbox** button) is never waited for. When
+its interface is busy (it loads something, holds the mouse in a loop of its own, or is slow to open)
+Gridline keeps working: after a second without an answer (five while its interface opens) the CPU
+readout in its window's bar and the top of its panel say **Not responding**, its own window's title
+says so too, and a notice says it once, and again when it answers. Its window still closes at once.
+A plugin that does not answer for 30 seconds (60 while its interface opens) is stopped: it is shown as
+crashed and silenced, with **Reload plugin** in its window.
+
+A plugin running inside Gridline shares Gridline's interface thread: while it is busy nothing can be
+drawn. If it stays busy, Gridline's freeze report appears beside the window after 30 seconds, naming
+the plugin, with a way to save the project. Run such a plugin in the sandbox.
+
+A plugin that asks for its own size again each time it is given one (some plugin frameworks do) is
+resized once: Gridline tells a plugin its size only when it gives it another than it asked for (the
+smallest plugin size), so the window no longer flickers and keeps Gridline busy.
+
+Checked by the `plugin_freeze_app` test: the in-tree CLAP test effect with an interface that echoes
+sizes, asks for a new size twenty times a second, is busy for 4 seconds, takes 4 seconds to open or
+never comes back, and twelve quick closes and opens with the sandbox on and off, inside Gridline and
+in its own window, in every layout and the Light theme.
+
 ## In the Clips layout
 
 Every instrument and effect editor opens in its own floating window, as in Studio, wherever it is

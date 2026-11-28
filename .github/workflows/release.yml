@@ -583,9 +583,47 @@ jobs:
           cp AppDir/usr/share/icons/hicolor/256x256/apps/gridline.png AppDir/.DirIcon
           ./linuxdeploy --appdir AppDir --executable AppDir/usr/bin/gridline-app --executable AppDir/usr/bin/gridline \
             --desktop-file "$desktop" --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/gridline.png
+          # K-430 (GitHub #84): Debian 11's system libSDL2 is 2.0.14 (Dec 2020), which has no native
+          # PipeWire audio driver (added in 2.0.16), no SDL_GetAudioDeviceSpec, and no
+          # PA_STREAM_ADJUST_LATENCY on PulseAudio capture (added in 2.24), causing ~180-215 ms bursty
+          # capture on modern PipeWire/PulseAudio desktops. Build SDL 2.30.9 inside the Debian 11
+          # container (glibc 2.31) with dlopen backends so the AppImage talks natively to the host's
+          # PipeWire / PulseAudio / ALSA / JACK libraries instead of shipping Debian 11's libSDL2 + libpulse.
+          # The SDL build needs these headers; a missing one must fail the release, not ship a
+          # library without PulseAudio, Wayland, D-Bus (screensaver), IME or device hotplug.
+          apt-get install -y -q --no-install-recommends libpulse-dev libasound2-dev libjack-jackd2-dev libwayland-dev \
+            libxkbcommon-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxinerama-dev libxss-dev \
+            libdbus-1-dev libudev-dev libibus-1.0-dev
+          # PipeWire headers come from the archived backports suite (its Release file has expired, so
+          # skip the date check). Optional: without them SDL still talks to PipeWire through pipewire-pulse.
+          echo "deb http://archive.debian.org/debian bullseye-backports main" > /etc/apt/sources.list.d/bullseye-backports.list
+          apt-get -o Acquire::Check-Valid-Until=false update -q || true
+          apt-get install -y -q --no-install-recommends -t bullseye-backports libpipewire-0.3-dev || echo "::warning::libpipewire-0.3-dev unavailable: SDL is built without its native PipeWire driver"
+          sdl_ver=2.30.9
+          curl -fsSL -o /tmp/SDL2.tar.gz "https://github.com/libsdl-org/SDL/releases/download/release-$sdl_ver/SDL2-$sdl_ver.tar.gz"
+          echo "24b574f71c87a763f50704bbb630cbe38298d544a1f890f099a4696b1d6beba4  /tmp/SDL2.tar.gz" | sha256sum -c -
+          rm -rf /tmp/sdl2-src /tmp/sdl2-build && mkdir -p /tmp/sdl2-src
+          tar -C /tmp/sdl2-src --strip-components=1 -xzf /tmp/SDL2.tar.gz
+          cmake -S /tmp/sdl2-src -B /tmp/sdl2-build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TEST=OFF \
+            -DSDL_PIPEWIRE=ON -DSDL_PIPEWIRE_SHARED=ON \
+            -DSDL_PULSEAUDIO=ON -DSDL_PULSEAUDIO_SHARED=ON \
+            -DSDL_ALSA=ON -DSDL_ALSA_SHARED=ON \
+            -DSDL_JACK=ON -DSDL_JACK_SHARED=ON \
+            -DSDL_X11=ON -DSDL_X11_SHARED=ON \
+            -DSDL_WAYLAND=ON -DSDL_WAYLAND_SHARED=ON
+          cmake --build /tmp/sdl2-build -j4 --target SDL2
+          # The dlopen backends leave their library names in the binary: PulseAudio and ALSA must be there.
+          for so in libpulse libasound.so libwayland-client.so libdbus-1.so; do
+            strings /tmp/sdl2-build/libSDL2-2.0.so.0 | grep -q "$so" || { echo "SDL built without $so"; exit 1; }
+          done
+          strings /tmp/sdl2-build/libSDL2-2.0.so.0 | grep -q libpipewire-0.3.so || echo "::warning::SDL built without native PipeWire"
+          rm -f AppDir/usr/lib/libSDL2-2.0.so* AppDir/usr/lib/libpulse*.so* AppDir/usr/lib/libasound*.so* AppDir/usr/lib/libpipewire*.so*
+          cp -L /tmp/sdl2-build/libSDL2-2.0.so.0 AppDir/usr/lib/libSDL2-2.0.so.0
+          rm -rf /tmp/SDL2.tar.gz /tmp/sdl2-src /tmp/sdl2-build
           # linuxdeploy leaves out the libraries its exclude list expects on every system, but Debian
-          # 13 and newer systems no longer need libgpg-error, which the bundled libgcrypt (sound
-          # through libpulse and libsystemd) still does: it goes in by hand.
+          # 13 and newer systems no longer need libgpg-error, which any remaining bundled libgcrypt
+          # still needs: copy it if referenced.
           for lib in $(objdump -p AppDir/usr/lib/*.so* | sed -n 's/^ *NEEDED *\(libgpg-error\.so\.[0-9]*\)$/\1/p' | sort -u); do
             cp -L "$(ldconfig -p | awk -v l="$lib" '$1 == l { print $NF; exit }')" AppDir/usr/lib/
           done
@@ -919,6 +957,29 @@ jobs:
           python3 -I src/tools/release/downloads.py body "files/Gridline-$VER-downloads.json" --notes notes.md --out notes-body.md
           mv notes-body.md notes.md
           cat notes.md
+      - name: Sign SHA256SUMS for automatic updates
+        env:
+          GRIDLINE_UPDATE_SIGNING_KEY: ${{ secrets.GRIDLINE_UPDATE_SIGNING_KEY }}
+        run: |
+          # Builds that carry a release key (src/core/UpdateKeys.h) refuse an unsigned release, so a
+          # key in the source without the secret must stop the release (docs/updates.md, Release signing).
+          if grep -q 'RW[A-Za-z0-9+/=]\{40,\}' src/src/core/UpdateKeys.h; then has_key=1; else has_key=0; fi
+          if [ -z "$GRIDLINE_UPDATE_SIGNING_KEY" ]; then
+            if [ "$has_key" = 1 ]; then echo "::error::UpdateKeys.h has a release key but the GRIDLINE_UPDATE_SIGNING_KEY secret is not set"; exit 1; fi
+            echo "No signing key yet: SHA256SUMS is not signed."
+            exit 0
+          fi
+          sudo apt-get install -y minisign >/dev/null
+          umask 077
+          printf '%s\n' "$GRIDLINE_UPDATE_SIGNING_KEY" > "$RUNNER_TEMP/update.key"
+          sums="Gridline-$VER-SHA256SUMS"
+          minisign -S -s "$RUNNER_TEMP/update.key" -m "files/$sums" -x "files/$sums.minisig" \
+            -t "$(printf 'timestamp:%s\tfile:%s' "$(date -u +%s)" "$sums")"
+          rm -f "$RUNNER_TEMP/update.key"
+          if [ "$has_key" = 1 ]; then
+            grep -o 'RW[A-Za-z0-9+/=]\{40,\}' src/src/core/UpdateKeys.h | head -1 > "$RUNNER_TEMP/update.pub"
+            minisign -V -P "$(cat "$RUNNER_TEMP/update.pub")" -m "files/$sums" -x "files/$sums.minisig"
+          fi
       - name: Distribution channel files (K-1)
         run: |
           # Flathub, AUR, Homebrew, the Windows package managers, the FreeBSD port, COPR and the

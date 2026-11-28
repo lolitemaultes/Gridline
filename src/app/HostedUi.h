@@ -3,6 +3,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include "../host/PluginPrefs.h"
 #include "PluginUI.h"
 
 union SDL_Event;
@@ -53,6 +54,17 @@ void reloadHostedPlugin(App& a, const PluginTarget& t);
 // "Run in sandbox" for every instance of a hosted type (plugin manager,
 // plugin window); running instances are replaced.
 void setHostedSandbox(App& a, const std::string& type, bool on);
+// K-437: "Block internet access" for every instance of these hosted types (one plugin's formats, or
+// several plugins at once); running instances are replaced and their windows open again.
+void setHostedNetAccess(App& a, const std::vector<std::string>& types, host::NetAccess access);
+// How a running instance of these types is kept off the internet (NetBlock.h; 0: none runs blocked).
+int hostedNetworkGuard(App& a, const std::vector<std::string>& types);
+// Every format of the plugin `type` belongs to (the Plugin Manager's group), `type` itself at least.
+std::vector<std::string> pluginFormatsOf(const std::string& type);
+// Why "Block internet access" cannot be offered here (untranslated, for i18n::tr), nullptr when it can.
+const char* netBlockUnavailableReason();
+// How a blocked plugin's process is kept off the internet, for people (untranslated).
+const char* netGuardText(int guard);
 
 // Plugin windows of installed plugins (PluginWindow.cpp). An installed
 // plugin opens as itself: its own interface at the top of a Gridline window,
@@ -99,6 +111,9 @@ bool hostedEditorUnderMouse(PluginTarget& t, float& fx, float& fy);
 void closeHostedEditor(App& a, const PluginTarget& t, const char* why = nullptr);  // why: for the debug log
 // K-9 dev: every open plugin window with its native window ids and the plugin's rectangle, to stdout.
 void devPrintPluginWindows(int frame);
+// Stress tests: the longest plugin window idle and frame gap since the last call, and each window's
+// size, resize requests taken and whether its plugin answers, to stdout ("plugwin frame N: stalls ...").
+void devPrintPluginStalls(App& a, int frame);
 // Dev (GitHub issue 7): a drag inside the first open plugin window's interface (container point x, y,
 // up and down for `seconds`), as the mouse does it (macOS). False when there is none or no support.
 bool devDragHostedEditor(int x, int y, double seconds);
@@ -163,6 +178,10 @@ void setPluginWindowDevKeys(bool on);
 // plugin (HostOptions::window). Sandboxed interfaces on macOS (shown by the sandbox process) and
 // Gridline on Wayland keep windows of their own.
 namespace hostedui {
+// K-437: the "Block internet access" controls for one plugin (all of `types`, its formats): the
+// choice, what it means now, "allow until Gridline closes", and what it does not cover. `guard`:
+// how its running instance is kept off the internet (NetBlock.h), 0 when none runs blocked.
+void internetAccess(App& a, const std::vector<std::string>& types, const std::string& name, int guard, float width);
 // Where the target's interface opens now: inside Gridline (true) or in a window of its own.
 bool opensInside(App& a, const PluginTarget& t);
 // The target's pane shows its own interface inside Gridline now (not Gridline's panel).

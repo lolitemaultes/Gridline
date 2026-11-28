@@ -1,6 +1,6 @@
 # Gridline - hunt-clips3-1119: a new Clips set used as a person uses it, in the real app (hidden, isolated
 # config and HOME, the layout chosen through the real settings keys), by pointer and key input:
-#   1. track 2's title clicked, track 4's Shift-clicked, Delete: tracks 2 to 4 go, as one undo step (Delete
+#   1. track 2's title clicked, track 4's Shift-clicked, Delete (confirmed once): tracks 2 to 4 go, as one undo step (Delete
 #      did nothing on the Arrangement's titles);
 #   2. Cmd+Z brings them back; a title clicked, then a lane, then Delete: no track goes.
 #   cmake -DAPP=<gridline-app> -DOUT=<dir> -DSRC=<source dir> -P hunt1119c_clips_app.cmake
@@ -177,6 +177,8 @@ wait(6)
 click(${hx} ${h1})
 click(${hx} ${h3} shift)
 key(delete)
+wait(4)
+key(enter)  # (several tracks: Delete asks once first)
 wait(8)
 set(at_del ${F})
 at("plgeom")

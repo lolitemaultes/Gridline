@@ -8,6 +8,7 @@
 #include <map>
 #include <new>
 #include <set>
+#include "../core/Arrangements.h"
 #include "../core/Automation.h"
 #include "../core/Crash.h"
 #include "../core/Meter.h"
@@ -144,7 +145,10 @@ struct Writer {
 namespace {
 
 void runExportInto(ExportOutcome& out, const Song& song, const ExportSettings& s, const std::function<void(double, const std::string&)>& progress,
-                   const std::atomic<bool>* cancel) {
+                   const std::atomic<bool>* cancel);
+
+void runExportOne(ExportOutcome& out, const Song& song, const ExportSettings& s, const std::function<void(double, const std::string&)>& progress,
+                  const std::atomic<bool>* cancel) {
   std::error_code ec;
   fs::create_directories(s.folder, ec);
   if (ec) {
@@ -258,6 +262,71 @@ void runExportInto(ExportOutcome& out, const Song& song, const ExportSettings& s
       out.errors.push_back("MIDI: " + err);
   }
   if (progress) progress(1.0, "Done");
+}
+
+void runExportInto(ExportOutcome& out, const Song& song, const ExportSettings& s, const std::function<void(double, const std::string&)>& progress,
+                   const std::atomic<bool>* cancel) {
+  const int nArr = arrangementCount(song);
+  if (s.render.scope != RenderScope::Pattern && s.arrangement == -2 && nArr > 1) {
+    // K-406: export every arrangement (non-empty ones; if all are empty, report an error).
+    std::vector<int> indices;
+    for (int i = 0; i < nArr; ++i) {
+      if (arrangementLengthTicks(song, i) > 0) indices.push_back(i);
+    }
+    if (indices.empty()) {
+      out.errors.push_back("Nothing to render: every arrangement is empty");
+      return;
+    }
+    const bool multiFolder = s.splitMixer || s.splitPlaylist || s.splitPlaylistGroups;
+    for (size_t k = 0; k < indices.size(); ++k) {
+      if (cancel && cancel->load()) {
+        out.cancelled = true;
+        return;
+      }
+      const int ai = indices[k];
+      Song arrSong = songWithArrangement(song, ai);
+      const std::string arrName = safeFileName(arrangementName(song, ai));
+      ExportSettings sub = s;
+      sub.arrangement = -1;
+      if (multiFolder) {
+        sub.folder = (fs::path(s.folder) / arrName).string();
+      } else {
+        sub.baseName = s.baseName + " - " + arrName;
+      }
+      sub.projectTitle = (s.projectTitle.empty() ? s.baseName : s.projectTitle) + " - " + arrName;
+      auto subProgress = [&](double f, const std::string& what) {
+        if (progress) {
+          const double overall = (static_cast<double>(k) + f) / static_cast<double>(indices.size());
+          progress(overall, arrName + ": " + what);
+        }
+      };
+      ExportOutcome one;
+      runExportOne(one, arrSong, sub, subProgress, cancel);
+      if (out.frames == 0 && one.frames > 0) {
+        out.frames = one.frames;
+        out.peak = one.peak;
+        out.lufs = one.lufs;
+        out.ceilingLimited = one.ceilingLimited;
+      }
+      out.files.insert(out.files.end(), one.files.begin(), one.files.end());
+      out.errors.insert(out.errors.end(), one.errors.begin(), one.errors.end());
+      if (one.cancelled) {
+        out.cancelled = true;
+        return;
+      }
+    }
+    if (progress) progress(1.0, "Done");
+    return;
+  }
+  const int cur = song.arrangements.empty() ? 0 : song.currentArrangement;
+  if (s.render.scope != RenderScope::Pattern && s.arrangement >= 0 && s.arrangement < nArr && s.arrangement != cur) {
+    Song arrSong = songWithArrangement(song, s.arrangement);
+    ExportSettings single = s;
+    single.arrangement = -1;
+    runExportOne(out, arrSong, single, progress, cancel);
+    return;
+  }
+  runExportOne(out, song, s, progress, cancel);
 }
 
 }  // namespace

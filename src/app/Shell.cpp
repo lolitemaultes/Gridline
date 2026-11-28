@@ -88,6 +88,7 @@ workspace::Rect buildDefaultLayout(ImGuiID dockspace, ImVec2 size, int channels,
   ImGui::DockBuilderSplitNode(rest, ImGuiDir_Right, L.mixerFrac, &mixerNode, &mainNode);
   ImGui::DockBuilderDockWindow("Browser", left);
   ImGui::DockBuilderDockWindow("Undo history", left);
+  ImGui::DockBuilderDockWindow("Chat", left);
   if (alsoLeft) ImGui::DockBuilderDockWindow(alsoLeft, left);
   ImGui::DockBuilderDockWindow("Playlist", mainNode);
   ImGui::DockBuilderDockWindow("Piano roll", mainNode);
@@ -111,6 +112,7 @@ static void buildLiveLayout(ImGuiID dockspace, ImVec2 size, const char* alsoLeft
   ImGui::DockBuilderSplitNode(rest, ImGuiDir_Down, L.mixerFrac, &mixerNode, &mainNode);
   ImGui::DockBuilderDockWindow("Browser", left);
   ImGui::DockBuilderDockWindow("Undo history", left);
+  ImGui::DockBuilderDockWindow("Chat", left);
   if (alsoLeft) ImGui::DockBuilderDockWindow(alsoLeft, left);
   ImGui::DockBuilderDockWindow("Playlist", mainNode);
   ImGui::DockBuilderDockWindow("Live pads", mainNode);

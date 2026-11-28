@@ -120,15 +120,64 @@ double playedSpan(const Song& song, const Clip& c, double srcEnd) {
 // Ticks from the clip's start until it has played `span` of its own
 // (warped) seconds.
 Tick ticksForSpan(const Song& song, const Clip& c, double span) {
+  if (!std::isfinite(span) || !(span > 0)) return 0;
   const Channel* ch = song.channel(c.source);
   if (!ch) return 0;
   const ClipMap m = clipMap(song, *ch, c);
-  if (m.secPerTick > 0) return std::max<Tick>(1, static_cast<Tick>(std::llround(span / m.secPerTick)));
-  TempoMap map;
-  map.build(song);
-  const double s0 = map.secondsAt(static_cast<double>(c.start));
-  const double end = map.tickAtSeconds(s0 + span / std::max(1e-6, m.speed));
-  return std::max<Tick>(1, static_cast<Tick>(std::llround(end - static_cast<double>(c.start))));
+  double ticks = 0.0;
+  if (m.secPerTick > 0) {
+    ticks = span / m.secPerTick;
+  } else {
+    TempoMap map;
+    map.build(song);
+    const double s0 = map.secondsAt(static_cast<double>(c.start));
+    const double end = map.tickAtSeconds(s0 + span / std::max(1e-6, m.speed));
+    ticks = end - static_cast<double>(c.start);
+  }
+  if (!std::isfinite(ticks) || !(ticks > 0)) return 0;
+  return std::max<Tick>(1, static_cast<Tick>(std::llround(std::min(ticks, 4.0e15))));
+}
+
+// K-431: exact played audio span of `c` under `map`, preserving a trimmed end
+// in `c.audioEnd` so repeated BPM / time-stretch drags never drift.
+bool capturePlayedSpan(const Song& song, const Channel& ch, const TempoMap& map, Clip& c, double& spanOut) {
+  SamplePtr smp;
+  double a = 0, end = 0;
+  if (!sourceWindow(song, c, smp, a, end)) return false;
+  const std::vector<WarpPoint> w = clipWarp(song, c);
+  const Tick len = song.clipLength(c);
+  const double endTick = static_cast<double>(c.start + len);
+  const double played = clipSourceAt(song, c, map, endTick);
+  const ClipMap cm = clipMap(song, ch, c);
+  const double tickSrc =
+      cm.secPerTick > 0 ? cm.secPerTick : cm.speed * 60.0 / (map.bpmAt(std::max(0.0, endTick - 0.5)) * std::max(1, song.ppq));
+  double cut = played;
+  if (warpedSpan(w, played, end) <= 0.51 * tickSrc) cut = end;
+  if (!(cut > a)) cut = end;
+  if (cut < end - 1e-9) c.audioEnd = cut;
+  spanOut = warpedSpan(w, a, cut);
+  return std::isfinite(spanOut) && spanOut > 0;
+}
+
+bool anySyncedClipOnChannel(const Song& song, ObjectId channel) {
+  for (const Clip& k : song.playlist)
+    if (k.kind == ClipKind::Audio && k.source == channel && k.syncBpm > 0) return true;
+  return false;
+}
+
+void syncFitTempoFromLocked(Channel& ch, double bpm) {
+  if (ch.plugin.type == "gl.sampler" && ch.plugin.params.size() > static_cast<size_t>(pp::SmpFitTempo) &&
+      ch.plugin.params[pp::SmpFitTempo] <= 0.0f && std::isfinite(bpm) && bpm > 0.0) {
+    ch.plugin.params[pp::SmpFitTempo] = static_cast<float>(std::clamp(bpm, 1e-3, 1000.0));
+  }
+}
+
+void clearFitTempoIfUnsynced(Song& song, ObjectId channel) {
+  if (anySyncedClipOnChannel(song, channel)) return;
+  if (Channel* ch = song.channel(channel);
+      ch && ch->plugin.type == "gl.sampler" && ch->plugin.params.size() > static_cast<size_t>(pp::SmpFitTempo)) {
+    ch->plugin.params[pp::SmpFitTempo] = 0.0f;
+  }
 }
 }  // namespace
 
@@ -481,15 +530,27 @@ int fitClipToTempo(Song& song, ObjectId id) {
   map.build(song);
   const double bpm = map.bpmAt(static_cast<double>(c->start));
   const double secs = warpedSpan(clipWarp(song, *c), a, b);  // K-85: its warped length
-  if (!(secs > 0)) return 0;
+  if (!std::isfinite(secs) || !(secs > 0) || !std::isfinite(bpm) || !(bpm > 0)) return 0;
   // Beats in the audio at the song tempo (quarter-note beats of the tempo).
   const int beats = std::max(1, static_cast<int>(std::llround(secs * bpm / 60.0)));
-  const double tfCh = std::max(0.01, par(*song.channel(c->source), pp::SmpTimeStretch, 1));
+  const ObjectId chId = c->source;
+  const double tfCh = std::max(0.01, par(*song.channel(chId), pp::SmpTimeStretch, 1));
   c->stretch = 1.0;
   c->rateFit = 1.0;
-  c->syncBpm = beats * 60.0 / secs;
+  c->syncBpm = std::clamp(beats * 60.0 / secs, 1e-3, 1000.0);
   c->tempoLock = true;  // J-193: a fit is a stretch
   c->length = std::max<Tick>(1, static_cast<Tick>(std::llround(beats * song.ppq * tfCh)));
+  // K-431: fit-to-tempo switches a Resample channel to Stretch (preserving Rubber Band)
+  // and keeps SmpFitTempo in sync so BPM changes preserve both grid length and pitch.
+  if (Channel* ch = song.channel(chId); ch && ch->plugin.type == "gl.sampler") {
+    if (ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode) &&
+        !stretch::keepsPitch(stretch::modeOf(ch->plugin.params[pp::SmpStretchMode]))) {
+      ch->plugin.params[pp::SmpStretchMode] = static_cast<float>(stretch::kStretch);
+    }
+    if (ch->plugin.params.size() > static_cast<size_t>(pp::SmpFitTempo)) {
+      ch->plugin.params[pp::SmpFitTempo] = static_cast<float>(c->syncBpm);
+    }
+  }
   return beats;
 }
 
@@ -497,9 +558,13 @@ float normalizeClip(Song& song, ObjectId id, double targetDb) {
   Clip* c = song.clip(id);
   SamplePtr smp;
   double a = 0, b = 0;
-  if (!c || !sourceWindow(song, *c, smp, a, b)) return 0.f;
-  const size_t i0 = static_cast<size_t>(std::llround(a * smp->sampleRate));
-  const size_t i1 = std::min(smp->frames(), static_cast<size_t>(std::llround(b * smp->sampleRate)));
+  if (!c || !sourceWindow(song, *c, smp, a, b) || !std::isfinite(targetDb)) return 0.f;
+  const auto n = static_cast<int64_t>(smp->frames());
+  const auto f0 = std::clamp<int64_t>(static_cast<int64_t>(std::llround(a * smp->sampleRate)), 0, n);
+  const auto f1 = std::clamp<int64_t>(static_cast<int64_t>(std::llround(b * smp->sampleRate)), f0, n);
+  const auto i0 = static_cast<size_t>(f0);
+  const auto i1 = static_cast<size_t>(f1);
+  if (i1 <= i0) return 0.f;
   float peak = 0;
   for (size_t i = i0; i < i1; ++i) peak = std::max({peak, std::fabs(smp->left[i]), std::fabs(smp->right[i])});
   if (peak <= 1e-9f) return 0.f;
@@ -545,13 +610,16 @@ bool lockClipToTempo(const Song& song, Clip& c, const TempoMap& map) {
 bool setClipFollowsTempo(Song& song, ObjectId id, bool follow) {
   Clip* c = song.clip(id);
   if (!c || c->kind != ClipKind::Audio) return false;
-  const Channel* ch = song.channel(c->source);
+  const ObjectId chId = c->source;
+  Channel* ch = song.channel(chId);
   if (!ch) return false;
   TempoMap map;
   map.build(song);
   if (follow) {
     if (c->syncBpm > 0 && c->tempoLock) return false;
-    return lockClipToTempo(song, *c, map);
+    if (!lockClipToTempo(song, *c, map)) return false;
+    syncFitTempoFromLocked(*ch, c->syncBpm);
+    return true;
   }
   if (c->syncBpm <= 0) return false;
   // Off: the speed the tempo gives it now becomes its own (fixed seconds).
@@ -572,17 +640,20 @@ bool setClipFollowsTempo(Song& song, ObjectId id, bool follow) {
     *c = off;
     if (std::fabs(off.stretch - want) > 1e-9)  // clamped: the length follows the audio instead
       if (Tick n = ticksForSpan(song, *c, span); n > 0) song.clip(id)->length = n;
+    clearFitTempoIfUnsynced(song, chId);
     return true;
   }
   *c = off;
+  clearFitTempoIfUnsynced(song, chId);
   return true;
 }
 
 bool resetClipStretch(Song& song, ObjectId id) {
   Clip* c = song.clip(id);
   if (!c || c->kind != ClipKind::Audio || !song.channel(c->source)) return false;
+  const ObjectId chId = c->source;
   if (c->syncBpm > 0 && !c->tempoLock) {  // an older synced clip: as before (stays synced)
-    const Channel* ch = song.channel(c->source);
+    const Channel* ch = song.channel(chId);
     return setClipStretchMode(song, id, 1.0, static_cast<int>(std::lround(par(*ch, pp::SmpStretchMode, 0))));
   }
   TempoMap map;
@@ -594,6 +665,7 @@ bool resetClipStretch(Song& song, ObjectId id) {
   c->rateFit = 1.0;
   if (span > 0)
     if (Tick n = ticksForSpan(song, *c, span); n > 0) song.clip(id)->length = n;
+  clearFitTempoIfUnsynced(song, chId);
   return true;
 }
 
@@ -634,8 +706,9 @@ int refitClipsToTempo(Song& song, const std::vector<Clip>& before, const TempoMa
 
 bool setClipStretchMode(Song& song, ObjectId id, double timeFactor, int mode) {
   Clip* c = song.clip(id);
-  if (!c || c->kind != ClipKind::Audio || !(timeFactor > 0)) return false;
-  Channel* ch = song.channel(c->source);
+  if (!c || c->kind != ClipKind::Audio || !std::isfinite(timeFactor) || !(timeFactor > 0)) return false;
+  const ObjectId chId = c->source;
+  Channel* ch = song.channel(chId);
   if (!ch) return false;
   // J-164: the clip keeps playing the same stretch of its audio: its length
   // follows the speed change only (a time mode switch keeps it, "Time" x2
@@ -643,23 +716,128 @@ bool setClipStretchMode(Song& song, ObjectId id, double timeFactor, int mode) {
   TempoMap map;
   map.build(song);
   const double span = playedSpan(song, *c, clipSourceAt(song, *c, map, static_cast<double>(c->start + song.clipLength(*c))));  // K-85
+  const stretch::Mode m = stretch::choiceOf(stretch::modeOf(mode));
   if (ch->plugin.type == "gl.sampler" && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode))
-    ch->plugin.params[pp::SmpStretchMode] = static_cast<float>(stretch::choiceOf(stretch::modeOf(mode)));  // J-153 / J-157: Resample, Stretch or Rubber Band
+    ch->plugin.params[pp::SmpStretchMode] = static_cast<float>(m);  // J-153 / J-157: Resample, Stretch or Rubber Band
   c = song.clip(id);
   c->stretch = std::clamp(timeFactor, 0.0625, 16.0);
   if (span > 0)
     if (Tick n = ticksForSpan(song, *c, span); n > 0) song.clip(id)->length = n;
+  // K-431: switching a clip/channel to Stretch or Rubber Band locks unlocked
+  // audio clips on that channel to the project tempo grid (FL-style Stretch).
+  if (stretch::keepsPitch(m)) {
+    for (Clip& k : song.playlist)
+      if (k.kind == ClipKind::Audio && k.source == chId && k.syncBpm <= 0) lockClipToTempo(song, k, map);
+    if (const Clip* cur = song.clip(id); cur && cur->syncBpm > 0)
+      if (Channel* chc = song.channel(chId)) syncFitTempoFromLocked(*chc, cur->syncBpm);
+  }
   return true;
+}
+
+bool setChannelStretchMode(Song& song, ObjectId channel, int mode) {
+  Channel* ch = song.channel(channel);
+  if (!ch || ch->plugin.type != "gl.sampler" || ch->plugin.params.size() <= static_cast<size_t>(pp::SmpStretchMode)) return false;
+  const stretch::Mode m = stretch::choiceOf(stretch::modeOf(mode));
+  bool changed = false;
+  if (ch->plugin.params[pp::SmpStretchMode] != static_cast<float>(m)) {
+    ch->plugin.params[pp::SmpStretchMode] = static_cast<float>(m);
+    changed = true;
+  }
+  if (stretch::keepsPitch(m)) {
+    TempoMap map;
+    map.build(song);
+    double lockedBpm = 0.0;
+    for (Clip& c : song.playlist) {
+      if (c.kind != ClipKind::Audio || c.source != channel) continue;
+      if (c.syncBpm <= 0 && lockClipToTempo(song, c, map)) changed = true;
+      if (lockedBpm <= 0.0 && c.syncBpm > 0.0) lockedBpm = c.syncBpm;
+    }
+    if (lockedBpm > 0.0 && ch->plugin.params.size() > static_cast<size_t>(pp::SmpFitTempo) && ch->plugin.params[pp::SmpFitTempo] <= 0.0f) {
+      ch->plugin.params[pp::SmpFitTempo] = static_cast<float>(std::clamp(lockedBpm, 1e-3, 1000.0));
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+bool setChannelSourceBpm(Song& song, ObjectId channel, double bpm) {
+  Channel* ch = song.channel(channel);
+  if (!ch || ch->plugin.type != "gl.sampler" || ch->plugin.params.size() <= static_cast<size_t>(pp::SmpFitTempo)) return false;
+  const double target = (std::isfinite(bpm) && bpm > 0.0) ? std::clamp(bpm, 1e-3, 1000.0) : 0.0;
+  bool changed = false;
+  if (std::fabs(static_cast<double>(ch->plugin.params[pp::SmpFitTempo]) - target) > 1e-6) {
+    ch->plugin.params[pp::SmpFitTempo] = static_cast<float>(target);
+    changed = true;
+  }
+  if (target > 0.0 && ch->plugin.params.size() > static_cast<size_t>(pp::SmpStretchMode) &&
+      !stretch::keepsPitch(stretch::modeOf(ch->plugin.params[pp::SmpStretchMode]))) {
+    ch->plugin.params[pp::SmpStretchMode] = static_cast<float>(stretch::kStretch);
+    changed = true;
+  }
+  TempoMap map;
+  map.build(song);
+  for (Clip& c : song.playlist) {
+    if (c.kind != ClipKind::Audio || c.source != channel) continue;
+    const Clip before = c;
+    double span = 0.0;
+    const bool hasSpan = capturePlayedSpan(song, *ch, map, c, span);
+    if (target > 0.0) {
+      c.syncBpm = target;
+      c.tempoLock = true;
+      if (hasSpan)
+        if (Tick n = ticksForSpan(song, c, span); n > 0) c.length = n;
+    } else if (c.syncBpm > 0.0) {
+      c.syncBpm = 0.0;
+      c.tempoLock = false;
+      if (hasSpan)
+        if (Tick n = ticksForSpan(song, c, span); n > 0) c.length = n;
+    }
+    if (!(c == before)) changed = true;
+  }
+  return changed;
+}
+
+bool applyChannelTimeStretch(Song& song, ObjectId channel, double timeStretch) {
+  Channel* ch = song.channel(channel);
+  if (!ch || ch->plugin.type != "gl.sampler" || ch->plugin.params.size() <= static_cast<size_t>(pp::SmpTimeStretch)) return false;
+  const double target = (std::isfinite(timeStretch) && timeStretch > 0.0) ? std::clamp(timeStretch, 0.25, 4.0) : 1.0;
+  bool changed = false;
+  TempoMap map;
+  map.build(song);
+  std::vector<std::pair<ObjectId, double>> spans;
+  for (Clip& c : song.playlist) {
+    if (c.kind != ClipKind::Audio || c.source != channel) continue;
+    double span = 0.0;
+    if (capturePlayedSpan(song, *ch, map, c, span)) spans.emplace_back(c.id, span);
+  }
+  if (std::fabs(static_cast<double>(ch->plugin.params[pp::SmpTimeStretch]) - target) > 1e-6) {
+    ch->plugin.params[pp::SmpTimeStretch] = static_cast<float>(target);
+    changed = true;
+  }
+  const bool stretched = std::fabs(target - 1.0) > 1e-6;
+  double lockedBpm = 0.0;
+  for (const auto& [cid, span] : spans) {
+    Clip* c = song.clip(cid);
+    if (!c) continue;
+    const Clip before = *c;
+    if (Tick n = ticksForSpan(song, *c, span); n > 0) c->length = n;
+    if (stretched && c->syncBpm <= 0.0) lockClipToTempo(song, *c, map);
+    if (lockedBpm <= 0.0 && c->syncBpm > 0.0) lockedBpm = c->syncBpm;
+    if (!(*c == before)) changed = true;
+  }
+  if (stretched && lockedBpm > 0.0) syncFitTempoFromLocked(*ch, lockedBpm);
+  return changed;
 }
 
 std::string renderClipStretch(Song& song, ObjectId id, double timeFactor, double semitones, int mode, const std::string& dir) {
   Clip* c = song.clip(id);
   SamplePtr smp;
   double a = 0, b = 0;
-  if (!c || !sourceWindow(song, *c, smp, a, b) || !(timeFactor > 0)) return "";
+  if (!c || !sourceWindow(song, *c, smp, a, b) || !std::isfinite(timeFactor) || !(timeFactor > 0) || !std::isfinite(semitones)) return "";
   ed::Audio src = ed::fromSample(*smp);
-  const auto f0 = static_cast<int64_t>(std::llround(a * smp->sampleRate));
-  const auto f1 = std::min<int64_t>(src.frames(), static_cast<int64_t>(std::llround(b * smp->sampleRate)));
+  const auto f0 = std::clamp<int64_t>(static_cast<int64_t>(std::llround(a * smp->sampleRate)), 0, src.frames());
+  const auto f1 = std::clamp<int64_t>(static_cast<int64_t>(std::llround(b * smp->sampleRate)), f0, src.frames());
+  if (f1 <= f0) return "";
   ed::Audio win = ed::makeAudio(src.rate, src.channels, f1 - f0);
   std::copy(src.L.begin() + f0, src.L.begin() + f1, win.L.begin());
   std::copy(src.R.begin() + f0, src.R.begin() + f1, win.R.begin());
@@ -702,6 +880,7 @@ std::string renderClipStretch(Song& song, ObjectId id, double timeFactor, double
   c->stretch = 1.0;
   c->rateFit = 1.0;
   c->syncBpm = 0;
+  c->tempoLock = false;
   c->pitch = 0;
   c->speedPitch = 0;  // J-164
   if (Tick n = audioClipNaturalLength(song, *c); n > 0) song.clip(id)->length = n;

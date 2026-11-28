@@ -51,6 +51,10 @@ constexpr int kRuns = 3;
 std::string msText(int frames, double sr) { return latencyText(frames, sr); }
 
 std::string currentSetup(const App& a) {
+  if (a.jack.active) {
+    const std::string tag = "jack:" + a.jack.clientName;
+    return loopback::setupKey(tag, tag, a.engine.sampleRate(), a.audioBuffer);
+  }
   return loopback::setupKey(a.audioDevice, a.audioInputDevice, a.engine.sampleRate(), a.audioBuffer);
 }
 

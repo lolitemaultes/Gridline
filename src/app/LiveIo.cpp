@@ -124,8 +124,8 @@ void field(App& a, ImDrawList* dl, ImVec2 p0, ImVec2 p1, const std::string& text
   theme::textEllipsis(dl, a.fontRegular, fs, ImVec2(tx, ty), p1.x - tx - 4 - aw, dim ? P.textFaint : P.text, text.c_str());
   dl->PopClipRect();
   if (menu) {
-    const float cx = p1.x - 7, cy = (p0.y + p1.y) * 0.5f;
-    dl->AddTriangleFilled(ImVec2(cx - 3, cy - 1.5f), ImVec2(cx + 3, cy - 1.5f), ImVec2(cx, cy + 2), dim ? P.textFaint : P.textDim);
+    const float cx = std::round(p1.x - 7.0f), cy = std::round((p0.y + p1.y) * 0.5f);
+    ui::drawIconFitC(dl, ui::Icon::Down, ImVec2(cx, cy), ImVec2(7.0f, 5.0f), dim ? P.textFaint : P.textDim);
   }
 }
 
@@ -588,26 +588,24 @@ void drawMenus(App& a) {
   };
   if (gMenu == Menu::From) {
     const MixerTrack* lm = trackmodes::linkedMixer(s, t);
-    const int devCh = a.audioInputDevice.empty() ? 0 : a.engine.inputChannels();
-    const int listCh = std::max(devCh, 2);
+    const int devCh = a.jack.active ? a.jack.inputs : (a.audioInputDevice.empty() ? 0 : a.engine.inputChannels());
     auto pick = [&](int first, bool stereo) { trackmodes::setInput(a.doc, t, first, stereo); };
     if (ImGui::MenuItem(i18n::tr("No input"), nullptr, lm && lm->input < 0)) {
       pick(-1, true);
     }
-    for (int c = 0; c + 1 < listCh; c += 2) {
-      const std::string n = inputName(c, true);
-      if (ImGui::MenuItem(n.c_str(), nullptr, lm && lm->input == c && lm->inputStereo)) {
-        pick(c, true);
+    const std::vector<InputChoice> choices = inputChoices(a, true);
+    for (size_t i = 0; i < choices.size(); ++i) {
+      const InputChoice& c = choices[i];
+      ImGui::PushID(static_cast<int>(i));
+      const std::string item = inputChoiceMenuLabel(c);
+      if (ImGui::MenuItem(item.c_str(), nullptr, lm && lm->input == c.first && lm->inputStereo == c.stereo)) {
+        pick(c.first, c.stereo);
       }
-    }
-    for (int c = 0; c < listCh; ++c) {
-      const std::string n = inputName(c, false);
-      if (ImGui::MenuItem(n.c_str(), nullptr, lm && lm->input == c && !lm->inputStereo)) {
-        pick(c, false);
-      }
+      ImGui::PopID();
     }
     if (devCh == 0) {
-      ImGui::TextDisabled("%s", i18n::tr("No input device open (Settings, Audio)"));
+      ImGui::TextDisabled("%s", a.jack.active ? i18n::tr("No input ports (Settings, Audio, JACK / PipeWire ports)")
+                                              : i18n::tr("No input device open (Settings, Audio)"));
     }
   } else if (gMenu == Menu::Channel) {
     const ObjectId inst = instrumentOf(s, t);

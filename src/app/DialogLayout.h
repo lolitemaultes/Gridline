@@ -45,11 +45,19 @@ void PlaceNextDialog(ImVec2 want, ImGuiCond cond = ImGuiCond_Appearing, ImVec2 m
 // (DialogFooterHeight(footerRows)) inside DialogMaxHeight(); beyond that the
 // body scrolls and the footer buttons stay on screen. Always pair with
 // EndDialogBody().
+// The largest size ImGui will auto-fit a dialog window to (its screen's work size, less the safe
+// area padding). DialogArea() and DialogMaxHeight() never exceed it.
+ImVec2 DialogFitSize();
 void BeginDialogBody(const char* id, int footerRows = 1);
 // K-325: right after Begin of a dialog whose height follows its rows (no dialog body): keeps it
 // centred, as PlaceNextDialog placed it, while its first frames find its height.
 void SettleDialogCentred();
 void EndDialogBody();
+// K-442: the height a fixed scrolling list (a bordered child) of an auto-sizing dialog may take where
+// it is about to be placed: `want`, or less so the dialog (the list, `after` px of rows below it,
+// the footer of `footerRows`) still fits DialogArea(); never under `minH`. For a dialog with one
+// long list, instead of a dialog body around it (a list scrolling inside a scrolling body).
+float DialogListHeight(float want, float after = 0.0f, int footerRows = 1, float minH = 120.0f);
 
 // J-91: floating windows (channel and plugin windows, dialogs) stay inside the
 // work area between the top bar and the status bar. The clamp must move a

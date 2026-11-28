@@ -10,6 +10,7 @@
 #pragma once
 #include <cstdint>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 #include "NativeMenu.h"
@@ -50,6 +51,30 @@ class Model {
   std::map<std::string, int> ids_;  // path key -> id, kept across rebuilds
   int nextId_ = 1;
   uint32_t revision_ = 0;
+};
+
+// Whether a global menu host shows Gridline's menus (GitHub #85). A host's name on the bus only
+// says that something could show global menus: a registrar often has an owner with nothing on
+// screen to show them (a desktop whose panel has no global menu applet, a module left running, a
+// window the host cannot match), and the in-window menu row must not go away for that. A host
+// proves it shows the menus by reading them (GetLayout, AboutToShow, ...); until one has, the app
+// keeps its menu row. With no host left, the proof goes too.
+class HostState {
+ public:
+  // A host's well-known name gained (`owned`) or lost its owner.
+  void nameOwner(const std::string& name, bool owned);
+  // Something read the menus. Counts only while a host is there.
+  void menusRead();
+  bool has(const std::string& name) const { return owned_.count(name) != 0; }
+  bool present() const { return !owned_.empty(); }
+  bool shows() const { return present() && read_; }
+  // The first host name with an owner ("" when none).
+  std::string first() const { return owned_.empty() ? std::string() : *owned_.begin(); }
+  void clear() { *this = HostState(); }
+
+ private:
+  std::set<std::string> owned_;
+  bool read_ = false;
 };
 
 // "Ctrl+Shift+S" -> {{"Control", "Shift", "S"}}; "F9" -> {{"F9"}}; "" -> {}.

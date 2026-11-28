@@ -156,6 +156,11 @@ back their full height.
 **Open in Loupe** and the channel's **Volume**, **Pan** and **Pitch**, always in view (in a narrow
 pane it sits after the tab's modules instead). The mixer track box itself is in the header.
 
+Right-click any of the sampler's or the channel's controls (a knob, a switch, a segmented choice
+or a value field) for the same menu every plugin control has: **Reset to default**, **Type a
+value...**, the automation items, **Modulate** and the controller link. The clip's own settings
+are not parameters and have no such menu.
+
 The tabs and their modules:
 
 **This clip** (blue)

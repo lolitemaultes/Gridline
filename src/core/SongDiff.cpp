@@ -168,7 +168,7 @@ std::vector<std::string> songDiff(const Song& a, const Song& b, size_t maxLines)
       }
       const Clip& o = *it->second;
       if (o.start != c->start || o.track != c->track) ++moved;
-      else if (o.length != c->length || o.muted != c->muted || o.offset != c->offset || o.loop != c->loop || o.gain != c->gain) ++other;
+      else if (o.length != c->length || o.muted != c->muted || o.offset != c->offset || o.loop != c->loop || o.gain != c->gain || o.pan != c->pan) ++other;
     }
     if (added) L.add("Arrangement: " + std::to_string(added) + " clips added");
     if (removed) L.add("Arrangement: " + std::to_string(removed) + " clips removed");

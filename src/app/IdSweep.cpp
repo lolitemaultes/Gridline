@@ -2,6 +2,7 @@
 #include "IdSweep.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -22,17 +23,20 @@ namespace {
 
 struct Item {
   ImGuiID id;
-  ImVec2 min, max;
+  ImVec2 min, max;  // (clipped to the window when visible; else its whole rectangle)
   ImGuiWindow* window;
   bool allowDup;
+  bool visible;  // (inside the window's clip rectangle: the pointer can reach it)
 };
 
 ImGuiContext* mainCtx = nullptr;   // the sweep's context (plugin windows have their own)
-std::vector<Item> items;           // this frame's visible items (all windows)
+std::vector<Item> items;           // this frame's items (all windows; clipped ones too, for the doubled-ID check)
+std::unordered_set<ImGuiID> openable;  // this frame's items that open something when hovered (submenus, tree nodes)
 std::unordered_map<ImGuiID, std::string> labels;
 
 // The counter since the start of the run.
 int conflictFrames = 0;
+int popupFrames = 0;  // frames with Dear ImGui's own popup on screen (io.ConfigDebugHighlightIdConflicts)
 std::unordered_set<ImGuiID> conflictIds;
 ImGuiID lastConflict = 0;
 
@@ -44,6 +48,9 @@ int dwell = 1, dwellLeft = 0;  // frames on each item
 std::deque<ImVec2> queue;
 std::set<std::pair<ImGuiID, long long>> seen;  // (id, rounded centre): each item once
 int visited = 0, idle = 0, startFrame = 0;
+bool scanOnly = false;  // K-459: "scan": no pointer over every item, only over what opens (submenus); the doubled-ID check does the rest
+std::unordered_set<ImGuiID> sweepImplicit;  // items drawn into the implicit window during the sweep
+std::unordered_set<ImGuiID> checkedIds;     // the items of the swept windows the doubled-ID check saw
 std::unordered_set<ImGuiID> sweepConflicts, sweepStatic;
 std::map<std::string, int> sweptWindows;  // the items queued, by window
 std::unordered_map<ImGuiID, int> scrolled;  // the times a swept window was scrolled on
@@ -55,14 +62,21 @@ void onItem(ImGuiID id, ImVec2 mn, ImVec2 mx) {
   if (!w || id == w->ID) return;
   ImRect r(mn, mx);
   r.ClipWith(w->ClipRect);
-  if (r.GetWidth() < 1.0f || r.GetHeight() < 1.0f) return;
-  items.push_back({id, r.Min, r.Max, w, (g->LastItemData.ItemFlags & ImGuiItemFlags_AllowDuplicateId) != 0});
+  const bool visible = r.GetWidth() >= 1.0f && r.GetHeight() >= 1.0f;
+  if (!visible) r = ImRect(mn, mx);
+  items.push_back({id, r.Min, r.Max, w, (g->LastItemData.ItemFlags & ImGuiItemFlags_AllowDuplicateId) != 0, visible});
 }
 
-void onInfo(ImGuiID id, const char* label, int) {
-  if (ImGui::GetCurrentContext() != mainCtx || id == 0 || !label) return;
-  if (labels.size() < 20000) labels[id] = label;
+void onInfo(ImGuiID id, const char* label, int flags) {
+  if (ImGui::GetCurrentContext() != mainCtx || id == 0) return;
+  if (flags & ImGuiItemStatusFlags_Openable) openable.insert(id);
+  if (label && labels.size() < 20000) labels[id] = label;
 }
+
+// K-459: Dear ImGui's implicit window ("Debug##Default"): Dear ImGui begins it every frame (its title
+// bar adds two items) and hides it at the end of the frame unless something was drawn into it, outside
+// any Begin / End; then it shows as a "Debug" window.
+bool implicitWindow(const ImGuiWindow* w) { return w && w->IsFallbackWindow; }
 
 const char* windowName(const ImGuiWindow* w) { return w && w->Name ? w->Name : "?"; }
 
@@ -93,8 +107,8 @@ void printItems(ImGuiID id) {
 }
 
 void stop(int frameNo) {
-  std::printf("idsweep done frame %d frames %d items %d conflicts %zu static %zu\n", frameNo, ImGui::GetFrameCount() - startFrame, visited, sweepConflicts.size(),
-              sweepStatic.size());
+  std::printf("idsweep done frame %d frames %d items %d conflicts %zu static %zu implicit %zu checked %zu\n", frameNo, ImGui::GetFrameCount() - startFrame,
+              visited, sweepConflicts.size(), sweepStatic.size(), sweepImplicit.size(), checkedIds.size());
   for (const auto& [name, n] : sweptWindows) std::printf("idsweep window \"%s\" items %d\n", name.c_str(), n);
   std::fflush(stdout);
   sweeping = false;
@@ -105,10 +119,32 @@ void stop(int frameNo) {
 }
 
 int demoFrames = 0;  // "idsweep demo": frames left of the check's own conflicting pair
+int strayFrames = 0;  // "idsweep demo stray": frames left of a button drawn outside any window
+
+bool highlightOn = false;  // K-459: io.ConfigDebugHighlightIdConflicts of every context (off for users)
 
 }  // namespace
 
+void setHighlight(bool on) { highlightOn = on; }
+bool highlight() { return highlightOn; }
+bool highlightFor(bool automated) {
+  // GRIDLINE_DEV_IDS=0: off (a scripted run that checks what users get), any other value: on.
+  const char* env = std::getenv("GRIDLINE_DEV_IDS");
+  if (env && *env) return std::strcmp(env, "0") != 0;
+#ifndef NDEBUG
+  (void)automated;
+  return true;  // development builds
+#else
+  return automated;
+#endif
+}
+
 void drawDemo() {
+  if (strayFrames > 0) {  // K-459: the implicit-window check's own check (a button outside any Begin / End)
+    --strayFrames;
+    static const char* const kStray = "stray##k459";
+    ImGui::Button(kStray);
+  }
   if (demoFrames <= 0) return;
   --demoFrames;
   ImGui::SetNextWindowPos(ImVec2(40, 40), ImGuiCond_Always);
@@ -126,6 +162,7 @@ void drawDemo() {
 
 void frame(ImGuiIO& io, int) {
   items.clear();
+  openable.clear();
   if (!sweeping || queue.empty() || --dwellLeft > 0) return;
   dwellLeft = dwell;
   const ImVec2 p = queue.front();
@@ -143,12 +180,13 @@ void afterRender(bool dev, int frameNo) {
   ImGuiID cid = g.DebugDrawIdConflictsId;
   int count = g.DebugDrawIdConflictsCount;
   if (!cid && g.HoveredIdPreviousFrame && g.HoveredIdPreviousFrameItemCount > 1) cid = g.HoveredIdPreviousFrame, count = g.HoveredIdPreviousFrameItemCount;
+  if (g.DebugDrawIdConflictsId != 0) ++popupFrames;  // K-459: Dear ImGui's popup and outlines on screen this frame
   if (cid) {
     ++conflictFrames;
     lastConflict = cid;
     const bool fresh = conflictIds.insert(cid).second;
-    if (sweeping) sweepConflicts.insert(cid);
-    if (dev && fresh) {
+    const bool freshInSweep = sweeping && sweepConflicts.insert(cid).second;  // K-459: named again in each sweep that finds it
+    if (dev && (fresh || freshInSweep)) {
       int drawn = 0;  // (items are collected while sweeping)
       for (const Item& it : items) drawn += it.id == cid ? 1 : 0;
       std::printf("idconflict frame %d id 0x%08X tooltip-count %d drawn %d hovered-window \"%s\" mouse %.0f,%.0f label \"%s\"\n", frameNo, cid, count, drawn,
@@ -162,10 +200,28 @@ void afterRender(bool dev, int frameNo) {
   // (found after the first frame, a menu or popup the pointer opened: visited next, while it is open)
   int added = 0;
   std::vector<ImVec2> found;
-  std::unordered_map<ImGuiID, int> perId;
+  // (still active after the frame ended: something wrote into it, and users see it)
+  const ImGuiWindow* fallback = ImGui::FindWindowByName("Debug##Default");
+  const bool fallbackShown = fallback && fallback->IsFallbackWindow && fallback->Active;
+  // (one ID twice at the same place, within 2 px, is one widget: a multi-line text field submits its
+  // ID for the field and again for its scrolling child window; Dear ImGui does not count that as a conflict)
+  std::unordered_map<ImGuiID, std::vector<ImRect>> perId;
   for (const Item& it : items) {
+    if (fallbackShown && implicitWindow(it.window) && sweepImplicit.insert(it.id).second) {  // K-459: drawn outside any window
+      std::printf("idsweep implicit frame %d id 0x%08X label \"%s\" at %.0f,%.0f %.0fx%.0f\n", frameNo, it.id, labelOf(it.id).c_str(), static_cast<double>(it.min.x),
+                  static_cast<double>(it.min.y), static_cast<double>(it.max.x - it.min.x), static_cast<double>(it.max.y - it.min.y));
+    }
     if (!matches(it.window)) continue;
-    if (!it.allowDup) ++perId[it.id];
+    checkedIds.insert(it.id);
+    if (!it.allowDup) {
+      std::vector<ImRect>& places = perId[it.id];
+      const auto same = [&](const ImRect& r) {
+        return std::fabs(r.Min.x - it.min.x) <= 2.0f && std::fabs(r.Min.y - it.min.y) <= 2.0f && std::fabs(r.Max.x - it.max.x) <= 2.0f &&
+               std::fabs(r.Max.y - it.max.y) <= 2.0f;
+      };
+      if (std::none_of(places.begin(), places.end(), same)) places.push_back(ImRect(it.min, it.max));
+    }
+    if (!it.visible || (scanOnly && !openable.count(it.id))) continue;  // (the pointer: visible items; scanning, only those that open something)
     const ImVec2 c((it.min.x + it.max.x) * 0.5f, (it.min.y + it.max.y) * 0.5f);
     const long long key = (static_cast<long long>(c.x / 3.0f) << 20) ^ static_cast<long long>(c.y / 3.0f);
     if (static_cast<int>(seen.size()) >= maxTargets || !seen.insert({it.id, key}).second) continue;
@@ -176,7 +232,8 @@ void afterRender(bool dev, int frameNo) {
   if (visited == 0) queue.insert(queue.end(), found.begin(), found.end());
   else queue.insert(queue.begin(), found.begin(), found.end());
   // Without hovering: one ID drawn twice in the swept windows this frame (for the report).
-  for (const auto& [id, n] : perId) {
+  for (const auto& [id, places] : perId) {
+    const int n = static_cast<int>(places.size());
     if (n < 2 || !sweepStatic.insert(id).second) continue;
     std::printf("idsweep static frame %d id 0x%08X items %d label \"%s\"\n", frameNo, id, n, labelOf(id).c_str());
     printItems(id);
@@ -194,18 +251,24 @@ void afterRender(bool dev, int frameNo) {
     }
   }
   idle = queue.empty() && added == 0 ? idle + 1 : 0;
-  if (idle >= 3) stop(frameNo);
+  // (K-459: a window that has no items yet, as one opening or re-laid out, gets 30 frames to show them)
+  if (idle >= 3 && (visited > 0 || !checkedIds.empty() || ImGui::GetFrameCount() - startFrame >= 30)) stop(frameNo);
 }
 
 bool devCommand(const std::string& cmd, const std::vector<std::string>& args, int frameNo) {
   if (cmd == "idconflicts") {
-    std::printf("idconflicts frame %d conflicts %d ids %zu last 0x%08X\n", frameNo, conflictFrames, conflictIds.size(), lastConflict);
+    std::printf("idconflicts frame %d conflicts %d ids %zu last 0x%08X popup-frames %d\n", frameNo, conflictFrames, conflictIds.size(), lastConflict,
+                popupFrames);
     std::fflush(stdout);
     return true;
   }
   if (cmd != "idsweep") return false;
   const std::string a0 = args.empty() ? std::string() : args[0];
   if (a0 == "demo") {  // idsweep demo [frames]: a window with two buttons sharing an ID (the check checked)
+    if (args.size() > 1 && args[1] == "stray") {  // idsweep demo stray [frames]: a button drawn outside any window
+      strayFrames = args.size() > 2 ? std::atoi(args[2].c_str()) : 600;
+      return true;
+    }
     demoFrames = args.size() > 1 ? std::atoi(args[1].c_str()) : 600;
     return true;
   }
@@ -221,8 +284,10 @@ bool devCommand(const std::string& cmd, const std::vector<std::string>& args, in
     if (bar == std::string::npos) break;
     at = bar + 1;
   }
-  maxTargets = args.size() > 1 ? std::max(1, std::atoi(args[1].c_str())) : 3000;
-  dwell = args.size() > 2 ? std::max(1, std::atoi(args[2].c_str())) : 1;
+  // idsweep <filter> scan [dwell]: the doubled-ID check of every item, the pointer only over what opens
+  scanOnly = args.size() > 1 && args[1] == "scan";
+  maxTargets = args.size() > 1 && !scanOnly ? std::max(1, std::atoi(args[1].c_str())) : 3000;
+  dwell = scanOnly ? (args.size() > 2 ? std::max(1, std::atoi(args[2].c_str())) : 4) : args.size() > 2 ? std::max(1, std::atoi(args[2].c_str())) : 1;
   dwellLeft = 0;
   mainCtx = ImGui::GetCurrentContext();
   sweeping = true;
@@ -231,6 +296,8 @@ bool devCommand(const std::string& cmd, const std::vector<std::string>& args, in
   labels.clear();
   sweepConflicts.clear();
   sweepStatic.clear();
+  sweepImplicit.clear();
+  checkedIds.clear();
   sweptWindows.clear();
   scrolled.clear();
   visited = 0, idle = 0, startFrame = ImGui::GetFrameCount();

@@ -52,6 +52,33 @@ std::string lowerText(std::string s);
 // File name without folders ("a/b/c.wav" -> "c.wav").
 std::string baseName(const std::string& path);
 
+// ---- song identity of other file names (ReceiptSongNames.cpp) ----------------------
+// Sample files that are not named like store downloads still often carry the song they come
+// from inside a lot of noise: "VOCALS_86BPM_GMinor_VBV3_bless_ya_life.wav". The identity is
+// what is left of the name once that noise is taken out, so stems of one song group together
+// and different songs stay apart:
+//   1. the extension and folders go; the name is split into words at anything that is not a
+//      letter, a digit or "#" (a "." between digits stays: "98.00bpm");
+//   2. these words are left out: tempo ("86bpm", "bpm 98", "98.00bpm"), keys ("GMinor",
+//      "Dmaj", "C#min", "G minor"; short keys such as "Bm" or "F#" only next to a tempo or the
+//      word "key"), stems and sections ("vocals", "drums", "master", "chorus", ...), takes and
+//      versions ("take 2", "v3"), part numbers ("part 2": kept as the part, a timeline of its
+//      own), store notes ("clearance required", "royalty free") and pack codes (up to four
+//      letters then up to three digits: "VBV3", "SP404");
+//   3. the words left, in order, are the song: two names group only when these are the same.
+//      Fewer than two words left (and no single word of five letters or more): no identity,
+//      the file stays on its own as before.
+// Two titles that differ in any word ("bless ya life", "mike ransom world wide") never group.
+struct SongIdentity {
+  std::string key;      // lower case words joined by spaces ("bless ya life"); "" = none
+  std::string title;    // the same words as written in the name ("bless ya life")
+  // The words left out, as written, with why: "tempo", "key", "stem", "version", "part", "note", "code".
+  std::vector<std::pair<std::string, std::string>> dropped;
+  bool clearance = false;  // the name says "clearance required" (in any spelling)
+  int part = 0;            // "part 2", "pt2": a part of a long song (its own timeline); 0 = none
+};
+SongIdentity songIdentity(const std::string& pathOrName);
+
 // ---- ranges (seconds) ----------------------------------------------------------
 struct Range {
   double a = 0, b = 0;  // [a, b)
@@ -145,6 +172,9 @@ struct Release {
 struct Saved {
   std::map<std::string, SongFields> songs;  // by song key
   std::map<std::string, FileFields> files;  // by file path
+  // Songs the user merged: song key -> the song key it is counted with (chains are followed).
+  // A file kept on its own has FileFields::song "file:<path>" (kOwnSong).
+  std::map<std::string, std::string> merges;
   Release release;
   std::vector<Writer> writers;
   // K-322: the keys this version does not know (a newer Gridline's), kept so an edit here never
@@ -162,8 +192,8 @@ struct Saved {
   std::string heardFloor;
   std::vector<std::string> snapshots;
   bool operator==(const Saved& o) const {
-    return songs == o.songs && files == o.files && release == o.release && writers == o.writers && unknown == o.unknown &&
-           names == o.names && origins == o.origins && heardFloor == o.heardFloor && snapshots == o.snapshots;
+    return songs == o.songs && files == o.files && merges == o.merges && release == o.release && writers == o.writers &&
+           unknown == o.unknown && names == o.names && origins == o.origins && heardFloor == o.heardFloor && snapshots == o.snapshots;
   }
   bool empty() const;
 };
@@ -173,6 +203,19 @@ Saved savedFromJson(const std::string& json);
 // The fields of a file, matched by path, else (K-321) by "sha256:<hash>" when the hash is
 // known, else by file name.
 FileFields fileFields(const Saved& s, const std::string& path, const std::string& hash = {});
+// The song key of a file the user keeps on its own ("file:<path>").
+inline constexpr const char* kOwnSong = "file:";
+std::string ownSongKey(const std::string& path);
+// `key` after the user's merges (a merge loop stops where it would repeat).
+std::string mergedSong(const Saved& s, const std::string& key);
+// The user counts song `from` with song `into` (a merge on the way back from `into` to `from`
+// is undone first, so there is never a loop).
+void mergeSong(Saved& s, const std::string& from, const std::string& into);
+// Undoes every merge into `key`.
+void unmergeInto(Saved& s, const std::string& key);
+// The user keeps the files of song `key` apart: each is a song of its own, and the merges into
+// and out of `key` are undone.
+void keepApart(Saved& s, const std::string& key, const std::vector<std::string>& paths);
 
 // ---- measurement (engine/TrackReceiptPass.h fills it) -------------------------------
 struct Use {
@@ -202,6 +245,22 @@ struct Use {
     std::vector<std::string> reasons;      // what the score took off
   };
   Detail detail;
+  // When in the song it read (song seconds from the arrangement's start), for the marker areas:
+  // `timed` from the tap's segments (song seconds a..b read the file from srcA to srcB; srcB <
+  // srcA: backwards); else `spans`, the song seconds it sounded, only roughly (first to last
+  // read, or where its channel's patterns play). Neither: not known (it counts in every area).
+  struct Timed {
+    double a = 0, b = 0, srcA = 0, srcB = 0;
+  };
+  std::vector<Timed> timed;
+  Ranges spans;
+};
+// A marker area of the arrangement (core/MarkerAreas.h), in song seconds [a, b).
+struct Area {
+  std::string name;   // the marker's name ("" = before the first marker, or unnamed)
+  double a = 0, b = 0;
+  int bar0 = 0, bar1 = 0;  // first and last bar (1-based)
+  bool beforeFirst = false;  // the stretch before the first marker
 };
 struct FileIn {
   std::string path;
@@ -226,6 +285,7 @@ struct Measurement {
   std::vector<std::string> warnings;
   bool cancelled = false;
   std::string mode;  // "song", "patterns"
+  std::vector<Area> areas;  // the arrangement's marker areas (song mode); empty = no markers
 };
 
 // ---- the report ------------------------------------------------------------------
@@ -246,6 +306,10 @@ struct FileRow {
   bool estimated = false;    // some use is not measured (third-party plugin, analyser): whole file unless typed
   bool manual = false;       // the user typed the ranges (FileFields::ranges)
   std::vector<Use> uses, muted;
+  SongIdentity identity;     // the song its name names (other names than store downloads)
+  std::string songTitle;     // how its song is shown (also when nothing of it is counted)
+  std::string autoSong;      // its song before the user's merges (`song` is after them)
+  bool ownSong = false;      // the user keeps it on its own
 };
 struct RangeFrom {
   Range r;                        // a merged range of the original
@@ -280,6 +344,28 @@ struct SongRow {
   double autoShare = -1;  // the share the category and tier give (-1 = no category, nothing played or over 60 s)
   int64_t plays = 0;
   std::vector<std::string> warnings;
+  bool grouped = false;  // files with different names counted as this one song (by their names)
+  bool merged = false;   // the user merged another song into this one
+};
+// What of each song one marker area uses.
+struct AreaFile {
+  std::string path, name;
+  double seconds = 0;      // seconds of the file used in the area
+  double playSeconds = 0;  // song seconds it sounds in the area
+};
+struct AreaSong {
+  std::string key, artist, title;
+  double seconds = 0;      // seconds of the original used in the area, to 0.1 s (as SongRow::seconds)
+  double playSeconds = 0;  // song seconds some file of it sounds in the area
+  int tier = 0;
+  bool over = false;
+  bool rough = false;      // when some of it plays is only known roughly: counted in each area it may play in
+  bool estimated = false;  // some of it is not measured (inside a plugin): whole file
+  std::vector<AreaFile> files;
+};
+struct AreaRow {
+  Area area;
+  std::vector<AreaSong> songs;  // in the order of Report::songs; only songs used in the area
 };
 struct Report {
   std::string project;
@@ -290,6 +376,7 @@ struct Report {
   bool sharesComplete = false; // every song has a share
   std::vector<std::string> warnings;
   std::string mode;
+  std::vector<AreaRow> areas;  // one per marker area; empty without markers (the whole song is one section)
 };
 Report build(const Measurement& m, const Saved& saved, const std::string& projectName);
 
@@ -299,11 +386,16 @@ std::vector<std::string> reportDates(const std::string& releaseDate, int count);
 // A share typed by the user ("10", "10 %", "12.5") as a number; -1 when empty or not a number.
 double parseShare(const std::string& s);
 
+// An area's name in the outputs: its marker's name, "Before the first marker" or "Area N"
+// (index from 0); its bars ("bars 1-16", "bar 3").
+std::string areaName(const Area& a, size_t index);
+std::string areaBars(const Area& a);
+
 // ---- outputs --------------------------------------------------------------------
 // "<projectname>_trackreceipt.xml"
 std::string receiptFileName(const std::string& projectName);
 std::string resultsFileName(const std::string& projectName);  // "<projectname>_trackreceipt.pdf"
-// SpreadsheetML 2003 (opens in Excel and LibreOffice): Licenses, Usage, Release, Splits.
+// SpreadsheetML 2003 (opens in Excel and LibreOffice): Licenses, Usage, Areas (with markers), Release, Splits.
 std::string spreadsheetXml(const Report& r);
 // The styled results document (PDF 1.4, vector only, standard fonts).
 std::string resultsPdf(const Report& r);

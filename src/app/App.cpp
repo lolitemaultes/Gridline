@@ -31,6 +31,9 @@
 #include "../core/flp/Flp.h"
 #include "../core/flp/FlpPresets.h"
 #include "../core/PluginStandIn.h"
+#include "../core/Project.h"
+#include "../host/CrossFormat.h"
+#include "../host/HostedPlugins.h"
 #include "../core/ExternalDrop.h"
 #include "../core/Presets.h"
 #include <algorithm>
@@ -159,7 +162,7 @@ App::~App() {
   mcpui::shutdown();             // SC-07: stop the assistant server, remove its endpoint file
   oscui::shutdown();             // OSC server, notes it holds
   presetImport.cancel = true;
-  if (presetImport.worker.joinable()) presetImport.worker.join();
+  gl::threads::safeJoin(presetImport.worker);
   flpexport::shutdown();         // J-80: a running FL export is cancelled and waited for
   // J-77: a size / theme / language / audio change still waiting for Keep is not saved.
   dispconf::confirm().abandon();
@@ -332,6 +335,9 @@ void App::syncEngine() {
     sampleCache().trim();
     trimSamplesAt_ = -1;
   }
+  // K-435: a sample file that was missing (or unreadable) and is there now plays: the cache looks at
+  // its failed files at most twice a second and forgets the ones that changed (the generation moves).
+  sampleCache().recheckFailed();
   // J-190: a finished beat analysis also rebuilds (Kerf's beat-grid slices were provisional).
   const uint64_t sampleGen = sampleCache().generation() + kerfgrid::analysisGeneration();
   bool samplesReady = false;
@@ -402,6 +408,14 @@ void App::tick(double t) {
     if (rec != wasRecording_) uiSound(rec ? uisound::Event::RecordStart : uisound::Event::RecordStop);
     wasRecording_ = rec;
     const bool scanning = host::scanStatus().running;
+    const uint64_t hgen = host::hostedClassesGeneration();
+    if (hgen != lastHostedGen_) {
+      lastHostedGen_ = hgen;
+      resolveNewlyScannedPlugins();
+      noteMissingHostedTypes();
+    } else if (doc.revision() != missingTypesRev_) {
+      noteMissingHostedTypes();
+    }
     if (wasScanning_ && !scanning && scanByUser) {
       uiSound(uisound::Event::TaskDone);
       scanByUser = false;
@@ -447,6 +461,59 @@ void App::tick(double t) {
     } else {
       lastAutosave_ = wall;
     }
+  }
+}
+
+void App::noteMissingHostedTypes() {
+  missingTypesRev_ = doc.revision();
+  missingHostedTypes_.clear();
+  const Song& s = doc.song();
+  auto note = [&](const PluginState& st) {
+    if (isHostedType(st.type) && !host::hostedClass(st.type)) missingHostedTypes_.insert(st.type);
+  };
+  for (const auto& ch : s.channels) note(ch.plugin);
+  for (const auto& m : s.mixer)
+    for (const auto& sl : m.slots)
+      if (!sl.plugin.empty()) note(sl.plugin);
+}
+
+void App::resolveNewlyScannedPlugins() {
+  const Song& s = doc.song();
+  int resolvedDirect = 0;
+  bool anyStandInReady = false;
+  auto inspect = [&](const PluginState& st, const PluginTarget& target) {
+    // (only a type the scan has just registered: a plugin that was already scanned and has no
+    // instance, one that failed to load, is not counted again on every later scan)
+    if (isHostedType(st.type) && missingHostedTypes_.count(st.type) && host::hostedClass(st.type) && !hostedInstanceFor(*this, target) &&
+        !hostedLoading(*this, target)) {
+      ++resolvedDirect;
+    } else if (standin::isStandIn(st)) {
+      const PluginState orig = standin::originalState(st);
+      if (isHostedType(orig.type) && standin::installed(orig.type)) anyStandInReady = true;
+    }
+  };
+  for (const auto& ch : s.channels) inspect(ch.plugin, PluginTarget{ch.id, -1});
+  for (const auto& m : s.mixer)
+    for (int k = 0; k < kEffectSlots; ++k)
+      if (!m.slots[static_cast<size_t>(k)].plugin.empty()) inspect(m.slots[static_cast<size_t>(k)].plugin, PluginTarget{m.id, k});
+
+  int restoredStandIns = 0;
+  if (anyStandInReady) {
+    Json j = songToJson(doc.song());
+    std::vector<std::string> rep;
+    host::xformat::resolveProjectJson(j, &rep);
+    standin::resolveProjectJson(j, &rep);
+    Song s2;
+    if (!rep.empty() && songFromJson(j, s2)) {
+      restoredStandIns = static_cast<int>(rep.size());
+      doc.editSong("load newly scanned plugins", [&](Song& dst) { dst = std::move(s2); });
+    }
+  }
+  const int total = resolvedDirect + restoredStandIns;
+  if (total > 0) {
+    forceRebuild();
+    syncEngine();
+    notify(i18n::plural(total, "Loaded %d newly scanned plugin", "Loaded %d newly scanned plugins"));
   }
 }
 
@@ -618,6 +685,7 @@ void App::startProject(Song s) {
   playlist.selected.clear();
   engine.setMode(song.playlist.empty() ? PlayMode::Pattern : PlayMode::Song);
   rackReveal.quietSwitch(engine.mode());  // J-77: a new project does not count as choosing PAT
+  jack.restoreProjectLinks = true;        // K-357: apply auto-connect or template links when JACK is running
   syncEngine();
   home.projectOpened(now);  // J-141: the launcher gives way to the new project
 }
@@ -789,6 +857,10 @@ bool App::saveProjectAs(const std::string& path, SaveFormat format, std::functio
     std::vector<Song::OpenPluginWindow> wins;
     for (const auto& [owner, slot] : openPluginWindowList(*this)) wins.push_back({owner, slot});
     if (doc.song().pluginWindows != wins) doc.patchSong([&wins](Song& s) { s.pluginWindows = wins; });
+  }
+  if (jack.active && settings.getBool("audio.jack.restoreLinks") && captureJackLinks) {  // K-357: live JACK graph (per-computer)
+    const std::vector<Song::PortLink> links = captureJackLinks();
+    if (doc.song().portLinks != links) doc.patchSong([&links](Song& s) { s.portLinks = links; });
   }
   workspacesui::refreshProjectCopy(*this);  // K-237: the opt-in copy of the workspaces, as they are now
   auto saved = [this, p, format, epoch, serial]() {

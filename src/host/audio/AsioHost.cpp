@@ -1,6 +1,7 @@
 // Gridline: ASIO host logic and the simulated driver (K-6). Platform independent; the Windows
 // driver list and COM loading are in AsioWin.cpp. See AsioHost.h.
 #include "AsioHost.h"
+#include "../../core/ThreadJoin.h"
 #include "../../core/ThreadName.h"
 
 #include <algorithm>
@@ -81,7 +82,7 @@ abi::Error SimDriver::start() {
 abi::Error SimDriver::stop() {
   running_ = false;
   if (thread_) {
-    if (thread_->t.joinable()) thread_->t.join();
+    gl::threads::safeJoin(thread_->t);
     thread_.reset();
   }
   return abi::kOk;

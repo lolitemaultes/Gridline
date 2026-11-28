@@ -534,6 +534,8 @@ GL_NOINLINE void addInfo10(std::vector<PluginInfo>& v) {
     p.params[acStep(k, AcStepSlide)] = tog((n + " slide").c_str(), 0);
     p.params[acStep(k, AcStepGate)] = ch((n + " gate").c_str(), {"Rest", "Note", "Tie"}, k % 2 == 0 ? 1 : 0);
   }
+  p.midiOutput = true;  // K-438: the sequence goes out on the channel's MIDI output port
+  p.sequencerParams = {AcSeqOn};
   p.editorWidth = 700;
   p.presets = {{"Classic", {}}, {"Squelch", {{AcCutoff, 300.f}, {AcReso, 0.9f}, {AcEnvMod, 0.85f}, {AcDecay, 0.4f}}},
                {"Square sub", {{AcWave, 1.f}, {AcCutoff, 900.f}, {AcReso, 0.3f}, {AcEnvMod, 0.2f}}},

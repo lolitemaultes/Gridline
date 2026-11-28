@@ -185,6 +185,13 @@ class SampleCache {
   // J-111: a file that failed to load (not there yet) has arrived: the next
   // get() / request() tries again, and generation() changes so the app rebuilds.
   void forget(const std::string& path);
+  // A file that failed to load is not given up for good: every local file in the failed list whose
+  // existence, size or modification time changed since it failed is forgotten (the next get() or
+  // request() reads it, and generation() changes, so programs build again and editors redraw). The
+  // app calls it each frame; it looks at the files at most once every `minInterval` seconds. Files
+  // on a web or network drive are not looked at (a mount that stops answering holds the caller).
+  // Interface or loader thread only, never the audio thread: it reads file status. Returns how many.
+  int recheckFailed(double minInterval = 0.5);
 
   // While an instance lives on a thread, get() on that thread behaves like
   // request() (program builds in the app: nothing waits for the disk).
@@ -211,7 +218,16 @@ class SampleCache {
   std::condition_variable done_;  // a decode finished
   std::condition_variable work_;  // the queue has work
   std::map<std::string, SamplePtr> cache_;
-  std::map<std::string, bool> failed_;
+  // What a failed file looked like when it failed (recheckFailed): known false for files not looked at.
+  struct FailStamp {
+    bool known = false, exists = false;
+    long long mtime = 0;
+    unsigned long long size = 0;
+    bool operator==(const FailStamp& o) const { return known == o.known && exists == o.exists && mtime == o.mtime && size == o.size; }
+  };
+  static FailStamp stampOf(const std::string& path);
+  std::map<std::string, FailStamp> failed_;
+  long long recheckedAtMs_ = -1;  // (steady clock, mu_)
   std::set<std::string> inflight_;  // being decoded right now
   std::deque<std::string> queue_;   // waiting for a background decoder
   std::vector<std::thread> workers_;

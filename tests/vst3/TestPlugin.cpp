@@ -365,6 +365,7 @@ class SynthProcessor final : public RefCounted, public IComponent, public IAudio
           pitch_ = e.noteOn.pitch + e.noteOn.tuning / 100.0;
           bend_ = 0;
           amp_ = e.noteOn.velocity;
+          noteVol_ = 1;
           phase_ = 0;
           ++notesPlayed_;
         } else if (e.type == Event::kNoteOffEvent) {
@@ -373,6 +374,9 @@ class SynthProcessor final : public RefCounted, public IComponent, public IAudio
         } else if (e.type == Event::kNoteExpressionValueEvent && e.noteExpressionValue.typeId == kTuningTypeID &&
                    e.noteExpressionValue.noteId == noteId_) {
           bend_ = 240.0 * (e.noteExpressionValue.value - 0.5);
+        } else if (e.type == Event::kNoteExpressionValueEvent && e.noteExpressionValue.typeId == kVolumeTypeID &&
+                   e.noteExpressionValue.noteId == noteId_) {
+          noteVol_ = 4.0 * e.noteExpressionValue.value;  // GitHub #87: 0.25 = unity, 1 = +12 dB
         }
       }
       float s = 0, sub = 0;
@@ -384,8 +388,8 @@ class SynthProcessor final : public RefCounted, public IComponent, public IAudio
         subPhase_ -= std::floor(subPhase_);
         double x = std::sin(2.0 * M_PI * phase_);
         if (wave_ >= 0.5) x = x >= 0 ? 1.0 : -1.0;
-        s = static_cast<float>(x * amp_ * gain_);
-        sub = static_cast<float>(std::sin(2.0 * M_PI * subPhase_) * amp_ * gain_);
+        s = static_cast<float>(x * amp_ * gain_ * noteVol_);
+        sub = static_cast<float>(std::sin(2.0 * M_PI * subPhase_) * amp_ * gain_ * noteVol_);
       }
       L[i] = R[i] = s;
       if (SL) SL[i] = SR[i] = sub;
@@ -427,7 +431,7 @@ class SynthProcessor final : public RefCounted, public IComponent, public IAudio
   double sr_ = 44100, gain_ = 0.5, wave_ = 0, mode_ = 0;
   int32 notesPlayed_ = 0;
   int32 noteId_ = -1;
-  double pitch_ = 60, bend_ = 0, midiBend_ = 0, amp_ = 0, phase_ = 0, subPhase_ = 0;
+  double pitch_ = 60, bend_ = 0, midiBend_ = 0, amp_ = 0, phase_ = 0, subPhase_ = 0, noteVol_ = 1;
   Chip chip_{false};
 };
 
@@ -575,10 +579,24 @@ class SynthController final : public RefCounted,
     return kResultOk;
   }
   // INoteExpressionController
-  int32 PLUGIN_API getNoteExpressionCount(int32 bus, int16 channel) override { return bus == 0 && channel == 0 ? 1 : 0; }
+  // GitHub #87: GRIDLINE_TEST_NOTE_VOLUME=1 also lists the volume note expression (the processor
+  // always follows it), so a test can play the synth with and without per-note volume.
+  static bool noteVolume() {
+    const char* v = std::getenv("GRIDLINE_TEST_NOTE_VOLUME");
+    return v && v[0] == '1';
+  }
+  int32 PLUGIN_API getNoteExpressionCount(int32 bus, int16 channel) override { return bus == 0 && channel == 0 ? (noteVolume() ? 2 : 1) : 0; }
   tresult PLUGIN_API getNoteExpressionInfo(int32 bus, int16 channel, int32 index, NoteExpressionTypeInfo& info) override {
-    if (bus != 0 || channel != 0 || index != 0) return kInvalidArgument;
+    if (bus != 0 || channel != 0 || index < 0 || index >= getNoteExpressionCount(bus, channel)) return kInvalidArgument;
     info = NoteExpressionTypeInfo{};
+    if (index == 1) {
+      info.typeId = kVolumeTypeID;
+      setString(info.title, "Volume");
+      info.valueDesc.defaultValue = 0.25;
+      info.valueDesc.minimum = 0;
+      info.valueDesc.maximum = 1;
+      return kResultOk;
+    }
     info.typeId = kTuningTypeID;
     setString(info.title, "Tuning");
     info.valueDesc.defaultValue = 0.5;
@@ -593,11 +611,11 @@ class SynthController final : public RefCounted,
   tresult PLUGIN_API getNoteExpressionValueByString(int32, int16, NoteExpressionTypeID, const TChar*, NoteExpressionValue&) override {
     return kNotImplemented;
   }
-  // IMidiMapping: pitch bend → Bend, CC 7 → Gain.
+  // IMidiMapping: pitch bend (all 16 channels, for channel bend & MPE) → Bend, CC 7 → Gain.
   tresult PLUGIN_API getMidiControllerAssignment(int32 bus, int16 channel, CtrlNumber ctrl, ParamID& id) override {
-    if (bus != 0 || channel != 0) return kResultFalse;
+    if (bus != 0 || channel < 0 || channel >= 16) return kResultFalse;
     if (ctrl == kPitchBend) id = kBend;
-    else if (ctrl == kCtrlVolume) id = kGain;
+    else if (channel == 0 && ctrl == kCtrlVolume) id = kGain;
     else return kResultFalse;
     return kResultTrue;
   }

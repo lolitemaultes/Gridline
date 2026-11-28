@@ -190,6 +190,10 @@ bool btnLook(Ctx& c, const char* id, float x, float y, float w, float h, const c
   ImGui::PushID(id);
   ImGui::SetCursorScreenPos(c.p(x, y));
   const bool click = ImGui::InvisibleButton("##b", c.F.sz(w, h));
+  if (label && *label) {  // the button's label for the item hooks (the dev "atitem" finds it by name)
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    IMGUI_TEST_ENGINE_ITEM_INFO(g.LastItemData.ID, label, g.LastItemData.StatusFlags);
+  }
   const bool hov = ImGui::IsItemHovered(), act = ImGui::IsItemActive();
   const ImVec2 a = c.p(x, y), b = c.p(x + w, y + h);
   if (on) {

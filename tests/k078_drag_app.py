@@ -34,6 +34,13 @@ import sys
 import time
 
 APP, DEMO, OUT, GROUP = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+# The demo song is opened from a copy in this test's own folder: an edit of its audio saves an
+# "Edited audio" folder beside the project, which must never land in the source tree.
+os.makedirs(OUT, exist_ok=True)
+_demo_copy = os.path.join(OUT, "demo.gridline.json")
+if os.path.abspath(DEMO) != os.path.abspath(_demo_copy):
+    shutil.copyfile(DEMO, _demo_copy)
+DEMO = _demo_copy
 SCALE = float(sys.argv[5]) if len(sys.argv) > 5 else 1.0
 FIXED = len(sys.argv) > 6 and sys.argv[6] == "fixed"
 # 0.7.8 (the user's own drag log from the real app, rc5): the menu bar's walk of every menu (macOS fills

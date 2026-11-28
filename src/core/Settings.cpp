@@ -47,6 +47,7 @@ Settings::Settings() {
       {"input.gamepad", Json::makeString("auto")},  // K-199: game controller: "auto" (Game mode or a pad pressed), "on", "off"
       {"input.gamepadHintShown", b(false)},  // K-199: the one-time "Menu opens the command pad" note
       {"input.dockPlugins", Json::makeString("auto")},  // K-199: built-in plugin windows docked with the main view: "auto" (Game mode), "on", "off"
+      {"input.trackpadGestures", b(true)},  // K-410: native trackpad gestures (pinch zoom, 2D pan, smart-zoom; macOS + Windows)
       {"speech.voice", Json::makeString("")},  // K-107: the Speech dialog's last voice and settings (SpeechUi.cpp)
       {"files.dialogFavourites", Json::makeString("")},
       {"files.dialogRecent", Json::makeString("")},
@@ -81,8 +82,10 @@ Settings::Settings() {
       {"audio.loopbackSetup", Json::makeString("")},   //   the devices, rate and buffer it was measured with
       {"audio.loopbackInput", Json::makeNumber(0)},    //   the input channel the cable comes back on
       {"audio.recordBits", Json::makeNumber(32)},      // 32 = float, 24 / 16 = PCM
-      // K-6: audio backend. "system" = SDL (WASAPI / DirectSound on Windows), "asio" = an ASIO driver (Windows).
+      // K-6 / K-95 / K-357: audio backend. "system" = SDL (WASAPI / DirectSound / CoreAudio / PulseAudio / PipeWire) or WASAPI
+      // Exclusive when enabled (Windows), "asio" = an ASIO driver (Windows), "jack" = JACK / PipeWire named ports (Linux).
       {"audio.backend", Json::makeString("system")},
+      {"audio.wasapi.exclusive", b(false)},            // K-95: Windows WASAPI Exclusive event-driven low-latency mode (falls back to shared automatically)
       {"audio.asio.driver", Json::makeString("")},
       {"audio.asio.buffer", Json::makeNumber(0)},       // frames, 0 = the driver's preferred size
       {"audio.asio.sampleRate", Json::makeNumber(0)},   // 0 = the device's current rate
@@ -90,6 +93,17 @@ Settings::Settings() {
       {"audio.asio.inCount", Json::makeNumber(2)},      // device inputs opened (0 = none: the system input device)
       {"audio.asio.outMain", Json::makeNumber(0)},      // first device output of the main pair
       {"audio.asio.extraOuts", Json::makeString("")},   // "mixer:firstOut,..." extra output pairs
+      // K-357: JACK / PipeWire audio driver (Linux; simulated server with GRIDLINE_FAKE_JACK).
+      {"audio.jack.inputs", Json::makeNumber(2)},          // input ports (0..16)
+      {"audio.jack.extraPairs", Json::makeNumber(0)},      // extra stereo output pairs (0..15)
+      {"audio.jack.extraOuts", Json::makeString("")},      // "mixer:pair,..." mixer tracks sent to extra pairs
+      {"audio.jack.connectOutputs", b(true)},              // main outputs to physical playback on new projects
+      {"audio.jack.connectInputs", b(false)},              // inputs to physical capture (off avoids mic feedback)
+      {"audio.jack.restoreLinks", b(true)},                // save and restore port connections per project
+      {"audio.jack.autoReturn", b(true)},                  // return to JACK when the server comes back
+      {"audio.jack.bufferRequest", Json::makeNumber(0)},   // 0 = server default; requested frames otherwise
+      {"audio.jack.clientName", Json::makeString("Gridline")},
+      {"audio.jack.library", Json::makeString("")},        // explicit libjack.so.0 path (advanced)
       {"master.targetLufs", Json::makeNumber(-14)},    // RN-09: master chain loudness target
       // J-31: recording extras, audio logger, piano roll extras, quantized jumps.
       {"record.autoUnarm", b(false)},                  // disarm the tracks after a recording
@@ -138,6 +152,13 @@ Settings::Settings() {
       {"piano.snapIncomingMidi", b(false)},            // played notes land on the highlighted scale
       {"piano.editableGhosts", b(false)},              // clicking a ghost note edits it in place
       {"piano.followKeyMarkers", b(true)},             // scale highlighting follows key markers
+      {"piano.previewWhilePlaying", b(false)},         // K-422: note preview while transport plays (off by default)
+      {"piano.laneGrid.velocity", Json::makeNumber(0)},  // K-423: event-lane snap grid index per lane
+      {"piano.laneGrid.pan", Json::makeNumber(0)},
+      {"piano.laneGrid.release", Json::makeNumber(0)},
+      {"piano.laneGrid.fine", Json::makeNumber(0)},
+      {"piano.laneGrid.modX", Json::makeNumber(0)},
+      {"piano.laneGrid.modY", Json::makeNumber(0)},
       {"piano.recentChords", Json::makeString("")},    // the chord stamp's recent chords (chord indices, most recent first)
       {"piano.laneHeight", Json::makeNumber(0)},       // K-171: the lower lane's height in px (0 = automatic)
       {"piano.smoothLane", b(false)},                  // K-112D (audit G9): Smooth's velocity lane shown (hidden until asked for)
@@ -145,6 +166,7 @@ Settings::Settings() {
       {"piano.autoDrawCurve", Json::makeNumber(1)},    // K-171/K-202: curve the lane and the clip editor draw: 0 stepped, 1 linear (default), 2 smooth
       {"transport.jumpQuantize", Json::makeNumber(0)}, // ops::jumpGrid mode (0 = jump at once)
       {"transport.rememberSeek", b(true)},             // J-49: Stop returns to the last set song position
+      {"transport.stopAtEnd", b(false)},               // K-415: Song mode stops at end instead of looping back to start
       {"ui.scale", Json::makeNumber(1.0)},
       {"ui.windowSystem", Json::makeString("auto")},  // K-153: "auto" (X11 through XWayland when there is one) or "wayland" (Linux, BSD)
       {"ui.scaleAuto", b(true)},             // J-91: ui.scale is multiplied by the desktop's scale (core/UiScale.h)
@@ -203,6 +225,9 @@ Settings::Settings() {
       {"loupe.autoScroll", b(true)},         // Loupe follows the playhead while it plays (its own toggle sets it)
       {"loupe.specRange", Json::makeNumber(100)},     // Loupe's spectrogram shows this many dB below 0 dBFS (60, 80, 100, 120)
       {"loupe.specResolution", Json::makeNumber(1)},  // Loupe's spectrogram: 0 sharper in time, 1 balanced, 2 sharper in frequency
+      {"loupe.uiScale", Json::makeNumber(1.0)},       // K-421: Loupe editor scale (0.75 .. 2.0, remembered across sessions)
+      {"loupe.windowW", Json::makeNumber(0)},         // K-421: Loupe floating window width in logical px (0 = default for scale)
+      {"loupe.windowH", Json::makeNumber(0)},         // K-421: Loupe floating window height in logical px (0 = default for scale)
       {"ui.animations", b(true)},            // J-91: decorative interface animations (metronome tick, light fades, glides)
       {"ui.showHints", b(true)},
       // K-256: Smooth's control bar switches (ui.cbar.*) moved into its bar model (layout.logic.toolbar); a
@@ -218,6 +243,7 @@ Settings::Settings() {
       {"ui.lfoHideOnKnobs", b(false)},         // K-247: knobs a song LFO moves stop showing its swing and live dot (LfoUi.cpp)
       {"ui.confirmAutoRevert", b(true)},     // J-77: unconfirmed display / audio changes go back after 15 s
       {"playlist.warpSnapTransients", b(true)},  // K-85: a new warp marker lands on the nearest transient
+      {"playlist.sliceSnapTransients", b(false)},  // K-418: Slice tool snaps cuts to the nearest transient on audio clips
       {"playlist.quantizeStrength", Json::makeNumber(1.0)},  // K-85: audio quantize strength (0 .. 1)
       {"ui.autoScroll", b(true)},              // the playlist follows the song position while playing
       {"ui.autoScrollPattern", b(true)},       // K-4: the piano roll and channel rack follow the pattern position
@@ -268,6 +294,7 @@ Settings::Settings() {
       // K-79: window layout presets (core/LayoutPreset.h): "studio" | "live" | "logic". Per user, never in a project.
       {"ui.layout", Json::makeString("studio")},
       {"ui.layoutChosen", b(false)},                 // the welcome screen has offered the choice once
+      {"ui.setupDone", b(false)},                    // K-105: first-run setup wizard completed or dismissed
       {"ui.logicGlobalTracks", b(true)},             // R01-15: the Tracks layout's global tracks (the markers lane; G)
       {"ui.logicToolbar", b(false)},
       {"ui.logicAutoAsLanes", b(true)},              // K-112B cp46: automation-only tracks show as curves on their tracks' lanes
@@ -422,6 +449,8 @@ Settings::Settings() {
       {"sound.theme", Json::makeString("graphite")},
       // J-89: update check (core/Update.h, docs/updates.md).
       {"update.auto", b(true)},                     // check GitHub for a newer release at startup (once a day)
+      {"update.autoInstall", b(true)},              // install it by itself at start-up, where this copy can update itself
+      {"update.lastResult", Json::makeString("")},  // what the last start-up check found (English, Settings shows it)
       {"update.beta", b(false)},                    // include prereleases
       {"update.lastCheck", Json::makeNumber(0)},    // seconds since 1970 of the last check (0 = never)
       {"update.skipVersion", Json::makeString("")}, // "Skip this version"

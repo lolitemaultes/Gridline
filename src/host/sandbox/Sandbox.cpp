@@ -1,12 +1,16 @@
 #include "Sandbox.h"
+#include "../../core/ThreadJoin.h"
 #include "../../core/ThreadName.h"
 #include <algorithm>
 #include <atomic>
+#include <deque>
+#include <functional>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <new>
@@ -24,6 +28,8 @@
 #endif
 #include "../PluginPrefs.h"
 #include "../PluginScan.h"
+#include "../ui/NativeView.h"
+#include "NetBlock.h"
 #if !defined(__APPLE__) && !defined(_WIN32)
 #include "../vst3/Vst3Editor.h"
 #endif
@@ -35,38 +41,19 @@ namespace {
 
 // ---------------------------------------------------------------- shared memory
 
-constexpr uint32_t kShmMagic = 0x474C5342;  // "GLSB"
-constexpr uint32_t kShmVersion = 2;
-constexpr int kBlock = 1024;  // AudioEngine::kMaxBlock
-constexpr int kOutBuses = 16;  // main + 15 extra outputs
-constexpr int kMaxParams = 2048, kMaxEvents = 1024, kMaxMidiOut = 512;
+using shm::kBlock;
+using shm::kMaxEvents;
+using shm::kMaxMidiOut;
+using shm::kMaxParams;
+using shm::kOutBuses;
+using shm::kShmMagic;
+using shm::kShmVersion;
+using ParamChange = shm::ShmParamChange;
+using Shm = shm::ShmBlock;
 #if !defined(_WIN32)
 constexpr int kRpcFd = 3, kWakeFd = 4;  // descriptors in the child
 constexpr int kDoneFd = 5;  // K-277: the child's "block done" byte (the parent sleeps on it instead of spinning)
 #endif
-
-struct ParamChange {
-  uint32_t id;
-  int32_t offset;
-  double value;
-  int32_t mod;  // 1: modulation amount (addParamMod)
-};
-
-struct Shm {
-  uint32_t magic, version;
-  std::atomic<uint32_t> request, done;  // the audio handshake
-  int32_t frames, ok;
-  Transport transport;
-  int32_t nParams, nEvents;
-  ParamChange params[kMaxParams];
-  NoteEvent events[kMaxEvents];
-  float in[2][kBlock], sc[2][kBlock];
-  float out[kOutBuses][2][kBlock];
-  int32_t outCh[kOutBuses];
-  int32_t nMidiOut;
-  MidiOut midiOut[kMaxMidiOut];
-};
-static_assert(std::atomic<uint32_t>::is_always_lock_free, "lock-free atomics are required in shared memory");
 
 // ---------------------------------------------------------------- messages
 
@@ -360,7 +347,8 @@ struct ShmMap {
 struct Desc {
   std::string format;
   std::vector<ParamInfo> params;
-  bool eventInput = false, tuning = false, editor = false, eventOutput = false, bypass = false, notePan = false;
+  bool eventInput = false, tuning = false, tuningFromKey = false, pitchBend = true, editor = false, eventOutput = false, bypass = false,
+       notePan = false, noteVolume = false;
   int mainIn = 0, mainOut = 0, sc = 0;
   std::vector<std::string> auxNames;
   std::vector<int> outCh;
@@ -369,6 +357,7 @@ struct Desc {
   double sampleRate = 0;
   int maxBlock = 0;
   bool active = false;
+  int netGuard = 0;  // K-437: how the child is kept off the internet (NetBlock.h)
 };
 
 void putDesc(Wr& w, Backend& b) {
@@ -384,10 +373,13 @@ void putDesc(Wr& w, Backend& b) {
   }
   w.u8(b.hasEventInput());
   w.u8(b.supportsTuning());
+  w.u8(b.tuningRelativeToKey());
+  w.u8(b.supportsPitchBend());
   w.u8(b.hasEditor());
   w.u8(b.hasEventOutput());
   w.u8(b.hasBypass());
   w.u8(b.handlesNotePan());
+  w.u8(b.supportsNoteVolume());  // GitHub #87
   w.i32(b.mainInputChannels());
   w.i32(b.mainOutputChannels());
   w.i32(b.sidechainChannels());
@@ -402,6 +394,7 @@ void putDesc(Wr& w, Backend& b) {
   w.f64(b.sampleRate());
   w.i32(b.maxBlock());
   w.u8(b.active());
+  w.i32(networkGuard());  // K-437 (this child process's)
 }
 
 bool getDesc(Rd& r, Desc& d) {
@@ -420,10 +413,13 @@ bool getDesc(Rd& r, Desc& d) {
   }
   d.eventInput = r.u8();
   d.tuning = r.u8();
+  d.tuningFromKey = r.u8();
+  d.pitchBend = r.u8();
   d.editor = r.u8();
   d.eventOutput = r.u8();
   d.bypass = r.u8();
   d.notePan = r.u8();
+  d.noteVolume = r.u8();
   d.mainIn = std::min(2, r.i32());
   d.mainOut = std::min(2, r.i32());
   d.sc = std::min(2, r.i32());
@@ -437,6 +433,7 @@ bool getDesc(Rd& r, Desc& d) {
   d.sampleRate = r.f64();
   d.maxBlock = r.i32();
   d.active = r.u8();
+  d.netGuard = r.i32();
   return r.ok;
 }
 
@@ -458,6 +455,7 @@ class RemoteEditor final : public Editor {
   bool hostKey(bool down, int usage, uint32_t ch, uint32_t mods) override;
   bool external() const override { return !embedsEditors(); }
   bool isOpen() const override;
+  bool opening() const override;
   bool windowFrame(int& x, int& y, int& w, int& h) const override;
   bool popKey(KeyEvent& e) override;
   SandboxBackend* b_;
@@ -468,9 +466,9 @@ class RemoteEditor final : public Editor {
 class SandboxBackend final : public Backend {
  public:
   static std::unique_ptr<SandboxBackend> create(const std::string& exe, const std::string& format, const std::string& entry,
-                                                const std::string& uid, std::string* err, const std::string& name) {
+                                                const std::string& uid, std::string* err, const std::string& name, bool blockNetwork) {
     std::unique_ptr<SandboxBackend> s(new SandboxBackend);
-    if (!s->spawn(exe, err)) return nullptr;
+    if (!s->spawn(exe, err, blockNetwork)) return nullptr;
     Wr w;
     w.u8(OpCreate);
     w.str(format);
@@ -504,7 +502,8 @@ class SandboxBackend final : public Backend {
     // The child exits on EOF; give it a moment, then make sure.
     for (int i = 0; i < 100 && !exited_.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
     if (!exited_.load()) proc_.kill();
-    if (watcher_.joinable()) watcher_.join();
+    gl::threads::safeJoin(watcher_);
+    runAnswered();
     if (shm_) {
       shm_->~Shm();
       map_.close(sizeof(Shm));
@@ -513,6 +512,7 @@ class SandboxBackend final : public Backend {
 
   // ---- description ----
   const char* format() const override { return label_.c_str(); }
+  int networkGuard() const override { return desc_.netGuard; }
   const std::vector<ParamInfo>& params() const override { return desc_.params; }
   bool hasEventInput() const override { return desc_.eventInput; }
   int mainInputChannels() const override { return desc_.mainIn; }
@@ -523,6 +523,8 @@ class SandboxBackend final : public Backend {
     return k >= 0 && static_cast<size_t>(k) < desc_.auxNames.size() ? desc_.auxNames[static_cast<size_t>(k)] : Backend::auxOutputName(k);
   }
   bool supportsTuning() const override { return desc_.tuning; }
+  bool tuningRelativeToKey() const override { return desc_.tuningFromKey; }
+  bool supportsPitchBend() const override { return desc_.pitchBend; }
   bool hasEventOutput() const override { return desc_.eventOutput; }
   bool supportsParamMod(uint32_t id) const override {
     const int i = paramIndex(id);
@@ -530,6 +532,7 @@ class SandboxBackend final : public Backend {
   }
   bool hasBypass() const override { return desc_.bypass; }
   bool handlesNotePan() const override { return desc_.notePan; }
+  bool supportsNoteVolume() const override { return desc_.noteVolume; }
   void setRenderingOffline(bool offline) override { offline_.store(offline, std::memory_order_relaxed); }
   bool setOffline(bool offline) override {
     Wr w;
@@ -682,22 +685,32 @@ class SandboxBackend final : public Backend {
   std::unique_ptr<Editor> createEditor() override {
     if (!hasEditor() || editor_ || crashed_.load()) return nullptr;
     auto e = std::make_unique<RemoteEditor>(this);
-    if (embedsEditors()) {
+    editor_ = e.get();
+    if (embedsEditors()) {  // (its answer may come with a later frame: then it counts as opening)
       Wr w;
       w.u8(OpEditorCreate);
-      std::string reply;
-      if (!call(w.b, reply, kEditorOpenMs)) return nullptr;
-      Rd r(reply);
-      if (!r.u8()) return nullptr;
-      e->resizable = r.u8();
-      editorOpen_ = true;
+      if (!openAsync(w.b, OpEditorCreate)) {
+        editor_ = nullptr;
+        e->b_ = nullptr;
+        return nullptr;
+      }
     }
-    editor_ = e.get();
     return e;
   }
   // Polls the child: its host events, processor output values, editor state.
   void idle() override {
     if (crashed_.load()) return;
+    // An answer still to come (its interface thread is busy): read it if it is there, never wait.
+    if (!awaited_.empty()) {
+      takeAnswers(0);
+      if (!awaited_.empty()) {
+        giveUpWhenLost();
+        return;
+      }
+      sendHeldSize();
+      return;  // (the next frame polls again)
+    }
+    sendHeldSize();
     // K-142: with no interface open, a plugin whose processor ran no block since the last poll
     // (it rests, or nothing plays) and that was asked nothing meanwhile has nothing new for the
     // host but what its own threads did: it is polled once a second instead of every frame, so a
@@ -712,10 +725,18 @@ class SandboxBackend final : public Backend {
     stIdle_.fetch_add(1, std::memory_order_relaxed);
     Wr w;
     w.u8(OpIdle);
-    std::string reply;
-    if (!call(w.b, reply, 5000)) return;
+    stCalls_.fetch_add(1, std::memory_order_relaxed);
+    if (!sendMsg(rpc_, w.b)) {
+      if (!crashed_.load()) hang();
+      return;
+    }
+    awaited_.push_back({OpIdle, now});
+    takeAnswers(kIdleWaitMs);  // (it answers at once unless its interface thread is busy: then a later frame reads it)
+  }
+  // The idle poll's answer.
+  void readIdle(const std::string& reply) {
     Rd r(reply);
-    editorOpen_ = r.u8();
+    editorOpen_ = r.u8() && editor_;  // (an answer from before its window closed here: closed)
     hasFrame_ = r.u8();
     for (int& v : frame_) v = r.i32();
     uint32_t n = r.u32();
@@ -778,11 +799,27 @@ class SandboxBackend final : public Backend {
     w.u32(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(parent) >> 32));
     w.u32(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(parent) & 0xFFFFFFFFu));
     w.f64(scale);
-    std::string reply;
-    editorOpen_ = call(w.b, reply, kEditorOpenMs) && !reply.empty() && reply[0];
-    return editorOpen_;
+    return openAsync(w.b, OpEditorAttach);
+  }
+  // An interface opening (attach, or the sandbox's own window): sent without waiting long. One that
+  // opens slowly counts as open meanwhile (opening_), the UI thread goes on, and its answer is read by
+  // a later frame: a refusal then closes its window, as one that closes itself.
+  bool openAsync(const std::string& req, uint8_t op) {
+    if (crashed_.load() || !rpc_.valid()) return false;
+    if (!awaited_.empty()) takeAnswers(0);  // (busy: it goes behind what is awaited; the order is kept)
+    stCalls_.fetch_add(1, std::memory_order_relaxed);
+    if (!sendMsg(rpc_, req)) {
+      if (!crashed_.load()) hang();
+      return false;
+    }
+    opening_ = true;
+    editorOpen_ = false;
+    awaited_.push_back({op, std::chrono::steady_clock::now()});
+    takeAnswers(kOpenWaitMs);
+    return opening_ || editorOpen_;
   }
   bool editorSize(int& w, int& h) {
+    if (!awaited_.empty()) return false;  // (opening, or busy: its size comes with a later frame)
     Wr m;
     m.u8(OpEditorSize);
     std::string reply;
@@ -794,6 +831,7 @@ class SandboxBackend final : public Backend {
     return r.ok;
   }
   void editorConstrain(int& w, int& h) {
+    if (!awaited_.empty()) return;
     Wr m;
     m.u8(OpEditorConstrain);
     m.i32(w);
@@ -805,6 +843,11 @@ class SandboxBackend final : public Backend {
     if (r.ok) w = nw, h = nh;
   }
   void editorSetSize(int w, int h) {
+    if (!awaited_.empty() || opening_) {  // sent once it answers again (sendHeldSize)
+      heldW_ = w, heldH_ = h;
+      return;
+    }
+    heldW_ = heldH_ = 0;
     Wr m;
     m.u8(OpEditorSetSize);
     m.i32(w);
@@ -813,6 +856,7 @@ class SandboxBackend final : public Backend {
     call(m.b, reply, 5000);
   }
   bool editorHostKey(bool down, int usage, uint32_t ch, uint32_t mods) {
+    if (!awaited_.empty()) return false;  // (a busy interface: the key is Gridline's)
     Wr m;
     m.u8(OpEditorHostKey);
     m.u8(down);
@@ -833,20 +877,31 @@ class SandboxBackend final : public Backend {
     w.u8(OpOpenEditor);
     w.i32(x);
     w.i32(y);
-    std::string reply;
-    editorOpen_ = call(w.b, reply, 20000) && !reply.empty() && reply[0];
-    return editorOpen_;
+    return openAsync(w.b, OpOpenEditor);
   }
   void closeEditor() {
     editor_ = nullptr;
-    if (!editorOpen_) return;
+    heldW_ = heldH_ = 0;
+    if (!editorOpen_ && !opening_) return;
     editorOpen_ = false;
+    opening_ = false;  // (an answer to the opening still to come is read and dropped)
     Wr w;
     w.u8(OpCloseEditor);
-    std::string reply;
-    call(w.b, reply, 5000);
+    if (awaited_.empty()) {
+      std::string reply;
+      call(w.b, reply, 5000);
+      return;
+    }
+    // Busy: the window goes now; the plugin's process closes its interface once it gets to it.
+    if (crashed_.load() || !rpc_.valid()) return;
+    if (!sendMsg(rpc_, w.b)) {
+      if (!crashed_.load()) hang();
+      return;
+    }
+    awaited_.push_back({OpCloseEditor, std::chrono::steady_clock::now()});
   }
-  bool editorOpen() const { return editorOpen_ && !crashed_.load(); }
+  bool editorOpen() const { return (editorOpen_ || opening_) && !crashed_.load(); }
+  bool editorOpening() const { return opening_ && !crashed_.load(); }
   bool editorFrame(int& x, int& y, int& w, int& h) const {
     if (!editorOpen() || !hasFrame_) return false;
     x = frame_[0], y = frame_[1], w = frame_[2], h = frame_[3];
@@ -877,12 +932,12 @@ class SandboxBackend final : public Backend {
   }
   bool addParamChange(uint32_t id, double v, int offset) override {
     if (nParams_ >= kMaxParams) return false;
-    params_[nParams_++] = {id, offset, v, 0};
+    params_[nParams_++] = ParamChange{id, static_cast<int32_t>(offset), v, 0, 0};
     return true;
   }
   bool addParamMod(uint32_t id, double amount, int offset) override {
     if (nParams_ >= kMaxParams || !supportsParamMod(id)) return false;
-    params_[nParams_++] = {id, offset, amount, 1};
+    params_[nParams_++] = ParamChange{id, static_cast<int32_t>(offset), amount, 1, 0};
     return true;
   }
   bool popMidiOut(MidiOut& m) override {
@@ -918,12 +973,12 @@ class SandboxBackend final : public Backend {
       stInflight_.store(false, std::memory_order_relaxed);
     }
     lateSeconds_ = 0;
-    shm_->frames = n;
-    shm_->transport = t;
-    shm_->nParams = nParams_;
+    shm_->frames = static_cast<int32_t>(n);
+    shm_->transport = shm::toShm(t);
+    shm_->nParams = static_cast<int32_t>(nParams_);
     std::memcpy(shm_->params, params_.get(), sizeof(ParamChange) * static_cast<size_t>(nParams_));
-    shm_->nEvents = nEvents_;
-    std::memcpy(static_cast<void*>(shm_->events), events_.get(), sizeof(NoteEvent) * static_cast<size_t>(nEvents_));
+    shm_->nEvents = static_cast<int32_t>(nEvents_);
+    for (int i = 0; i < nEvents_; ++i) shm_->events[i] = shm::toShm(events_[i]);
     nParams_ = nEvents_ = 0;
     drainDone();
     const uint32_t seq = ++seq_;
@@ -944,8 +999,8 @@ class SandboxBackend final : public Backend {
                         std::memory_order_relaxed);
         stInflight_.store(false, std::memory_order_relaxed);
         silentOut_ = !shm_->ok;
-        midiCount_ = std::clamp(shm_->nMidiOut, 0, kMaxMidiOut);
-        std::memcpy(static_cast<void*>(midiBuf_.get()), shm_->midiOut, sizeof(MidiOut) * static_cast<size_t>(midiCount_));
+        midiCount_ = std::clamp(static_cast<int>(shm_->nMidiOut), 0, static_cast<int>(kMaxMidiOut));
+        for (int i = 0; i < midiCount_; ++i) midiBuf_[i] = shm::fromShm(shm_->midiOut[i]);
         return shm_->ok != 0;
       }
       if (crashed_.load()) return false;
@@ -996,7 +1051,7 @@ class SandboxBackend final : public Backend {
 #endif
   }
 
-  bool spawn(const std::string& exe, std::string* err) {
+  bool spawn(const std::string& exe, std::string* err, bool blockNetwork) {
     static std::atomic<int> serial{0};
 #if defined(_WIN32)
     shmName_ = "Local\\glsb." + std::to_string(platform::processId()) + "." + std::to_string(serial++);
@@ -1040,8 +1095,11 @@ class SandboxBackend final : public Backend {
     childWake = Chan{reinterpret_cast<std::intptr_t>(wakeR), -1};
     done_ = Chan{reinterpret_cast<std::intptr_t>(doneEv), -1};  // (the child gets the same event)
     inherit = {childRpc.r, childRpc.w, childWake.r, done_.r};
-    args[2] += "|" + std::to_string(childRpc.r) + "|" + std::to_string(childRpc.w) + "|" + std::to_string(childWake.r) + "|" +
-               std::to_string(platform::processId()) + "|" + std::to_string(done_.r);
+    args[2] += "|" + std::to_string(static_cast<uint64_t>(static_cast<uintptr_t>(childRpc.r))) + "|" +
+               std::to_string(static_cast<uint64_t>(static_cast<uintptr_t>(childRpc.w))) + "|" +
+               std::to_string(static_cast<uint64_t>(static_cast<uintptr_t>(childWake.r))) + "|" +
+               std::to_string(static_cast<uint64_t>(platform::processId())) + "|" +
+               std::to_string(static_cast<uint64_t>(static_cast<uintptr_t>(done_.r)));
     // K-154: a job: whatever the plugin starts (a bridge's host process) ends with the sandbox.
     const unsigned flags = platform::Process::kInheritStderr | platform::Process::kTree;
 #else
@@ -1072,6 +1130,7 @@ class SandboxBackend final : public Backend {
 #endif
     // K-13: the sandbox searches the same plugin folders (LV2 bundles that add to a plugin).
     if (const std::string pf = pluginPrefsFile(); !pf.empty()) args.insert(args.end(), {"--plugin-prefs", pf});
+    if (blockNetwork) args.push_back(kNetBlockArg);  // K-437: the child restricts itself before it loads the plugin
     const bool started = proc_.start(exe, args, flags, inherit);
     closeChan(childRpc);
     closeChan(childWake);
@@ -1097,6 +1156,15 @@ class SandboxBackend final : public Backend {
   // One request/response on the socket (UI thread).
   bool call(const std::string& req, std::string& reply, int timeoutMs) {
     if (crashed_.load() || !rpc_.valid()) return false;
+    // Answers to requests sent without waiting come first. Waited for only until the plugin counts as
+    // not responding: then the call fails at once (as for a crashed plugin) and the UI thread goes on.
+    if (!awaited_.empty()) {
+      const int left = notResponding() ? 0 : std::min(timeoutMs, std::max(0, graceMs(awaited_.front().op) - ageMs(awaited_.front())));
+      if (!takeAnswers(left)) {
+        giveUpWhenLost();
+        return false;
+      }
+    }
     if (req.empty() || static_cast<uint8_t>(req[0]) != OpIdle) idleDue_.store(true, std::memory_order_relaxed);  // K-142: what it answers to may leave host events
     stCalls_.fetch_add(1, std::memory_order_relaxed);
     if (!sendMsg(rpc_, req) || !recvMsg(rpc_, reply, timeoutMs)) {
@@ -1144,6 +1212,96 @@ class SandboxBackend final : public Backend {
   void hang() {
     markCrashed("the plugin stopped responding");
     if (!exited_.load()) proc_.kill();
+    runAnswered();  // (its process is gone: nothing of Gridline's is in use by it any more)
+  }
+
+ public:
+  bool awaitingAnswer() const override { return !awaited_.empty() && !crashed_.load(); }
+  void whenAnswered(std::function<void()> f) override {
+    if (awaited_.empty() || crashed_.load()) f();
+    else onAnswered_.push_back(std::move(f));
+  }
+  bool notResponding() const override {
+    return !awaited_.empty() && !crashed_.load() && ageMs(awaited_.front()) >= graceMs(awaited_.front().op);
+  }
+
+ private:
+  // Requests sent without waiting for their answers (the idle poll of a busy plugin, an interface
+  // opening or closing), oldest first. The socket's order is kept: every other call reads them first.
+  struct Awaited {
+    uint8_t op;
+    std::chrono::steady_clock::time_point since;
+  };
+  std::deque<Awaited> awaited_;
+  std::vector<std::function<void()>> onAnswered_;  // whenAnswered: run once none is awaited, or it is stopped
+  void runAnswered() {
+    std::vector<std::function<void()>> fs;
+    fs.swap(onAnswered_);
+    for (auto& f : fs) f();
+  }
+  bool opening_ = false;     // an interface opening: its answer awaited
+  int heldW_ = 0, heldH_ = 0;  // a size for the interface, sent once it answers
+  static constexpr int kIdleWaitMs = 15;    // the frame's wait for the idle poll's answer
+  static constexpr int kOpenWaitMs = 250;   // the frame's wait for an interface to open
+  static constexpr int kNotRespondingMs = 1000;  // unanswered this long: not responding (shown so)
+  static constexpr int kOpeningGraceMs = 5000;   // ... an interface opening (some take seconds)
+  static int ageMs(const Awaited& a) {
+    return static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - a.since).count());
+  }
+  static bool opens(uint8_t op) { return op == OpOpenEditor || op == OpEditorAttach || op == OpEditorCreate; }
+  static int graceMs(uint8_t op) { return opens(op) ? kOpeningGraceMs : kNotRespondingMs; }
+  // How long a plugin may go unanswered before it counts as stopped and its process is ended:
+  // GRIDLINE_DEV_SANDBOX_GIVE_UP_MS (tests), else 30 s (an interface opening: kEditorOpenMs).
+  static int giveUpMs(uint8_t op) {
+    static const int dev = [] {
+      const char* e = std::getenv("GRIDLINE_DEV_SANDBOX_GIVE_UP_MS");
+      return e ? std::max(1, std::atoi(e)) : 0;
+    }();
+    if (dev > 0) return dev;
+    return opens(op) ? kEditorOpenMs : 30000;
+  }
+  // Reads the answers that are there (waiting up to waitMs for each); true once none is awaited.
+  bool takeAnswers(int waitMs) {
+    while (!awaited_.empty()) {
+      if (crashed_.load() || !rpc_.valid()) return false;
+      if (!waitReadable(rpc_, waitMs)) return false;
+      std::string reply;
+      if (!recvMsg(rpc_, reply, 5000)) {
+        if (!crashed_.load()) hang();
+        return false;
+      }
+      const uint8_t op = awaited_.front().op;
+      awaited_.pop_front();
+      if (op == OpIdle) {
+        readIdle(reply);
+      } else if (op == OpEditorCreate) {
+        Rd r(reply);
+        const bool ok = r.u8() != 0, resizable = r.u8() != 0;
+        if (ok && editor_) editor_->resizable = resizable;
+        const bool attachNext = std::any_of(awaited_.begin(), awaited_.end(), [](const Awaited& x) { return x.op == OpEditorAttach; });
+        if (opening_ && (!ok || !attachNext)) {  // (an attach behind it says whether it opened)
+          editorOpen_ = ok;
+          opening_ = false;
+        }
+      } else if (op == OpOpenEditor || op == OpEditorAttach) {
+        if (opening_) editorOpen_ = !reply.empty() && reply[0];  // (closed meanwhile: dropped)
+        opening_ = false;
+      }
+    }
+    if (!unlinked_) {
+      ShmMap::unlinkName(shmName_);
+      unlinked_ = true;
+    }
+    if (!onAnswered_.empty()) runAnswered();
+    return true;
+  }
+  void giveUpWhenLost() {
+    if (!awaited_.empty() && ageMs(awaited_.front()) >= giveUpMs(awaited_.front().op)) hang();
+  }
+  void sendHeldSize() {
+    if (heldW_ <= 0 || !awaited_.empty() || opening_ || !editorOpen_) return;
+    const int w = heldW_, h = heldH_;
+    editorSetSize(w, h);
   }
 
   Desc desc_;
@@ -1214,6 +1372,7 @@ bool RemoteEditor::hostKey(bool down, int usage, uint32_t ch, uint32_t mods) {
   return b_ && embedsEditors() && b_->editorHostKey(down, usage, ch, mods);
 }
 bool RemoteEditor::isOpen() const { return b_ && b_->editorOpen(); }
+bool RemoteEditor::opening() const { return b_ && b_->editorOpening(); }
 bool RemoteEditor::windowFrame(int& x, int& y, int& w, int& h) const { return b_ && b_->editorFrame(x, y, w, h); }
 bool RemoteEditor::popKey(KeyEvent& e) { return b_ && b_->popKey(e); }
 
@@ -1245,13 +1404,13 @@ struct Child {
       else
         b->addParamChange(c.id, c.value, c.offset);
     }
-    for (int i = 0; i < std::min(shm->nEvents, kMaxEvents); ++i) b->addEvent(shm->events[i]);
+    for (int i = 0; i < std::min<int>(shm->nEvents, kMaxEvents); ++i) b->addEvent(shm::fromShm(shm->events[i]));
     for (int c = 0; c < 2; ++c) {
       if (float* d = b->inputChannel(c)) std::memcpy(d, shm->in[c], sizeof(float) * static_cast<size_t>(n));
       if (float* d = b->sidechainChannel(c)) std::memcpy(d, shm->sc[c], sizeof(float) * static_cast<size_t>(n));
     }
-    const bool ok = b->process(n, shm->transport);
-    const int buses = std::min(kOutBuses, 1 + b->auxOutputCount());
+    const bool ok = b->process(n, shm::fromShm(shm->transport));
+    const int buses = std::min<int>(kOutBuses, 1 + b->auxOutputCount());
     for (int k = 0; k < buses; ++k)
       for (int c = 0; c < 2; ++c) {
         const float* s = ok ? b->outputChannel(k, c < b->outputChannels(k) ? c : 0) : nullptr;
@@ -1263,8 +1422,8 @@ struct Child {
     MidiOut m;
     int nm = 0;
     while (b->popMidiOut(m))
-      if (nm < kMaxMidiOut) shm->midiOut[nm++] = m;
-    shm->nMidiOut = nm;
+      if (nm < kMaxMidiOut) shm->midiOut[nm++] = shm::toShm(m);
+    shm->nMidiOut = static_cast<int32_t>(nm);
     shm->ok = ok ? 1 : 0;
   }
 
@@ -1276,6 +1435,11 @@ struct Child {
       case OpCreate: {
         std::string format = r.str(), entry = r.str(), uid = r.str(), name = r.str(), err;
         std::lock_guard<std::mutex> g(lock);
+        if (networkBlockRequested() && networkGuard() == kNetOpen) {  // K-437: fail closed, never loaded with internet access
+          w.u8(0);
+          w.str("internet access could not be blocked on this system (" + networkBlockError() + ")");
+          break;
+        }
         backend = createBackend(format, entry, uid, &err);
         w.u8(backend != nullptr);
         if (!backend) {
@@ -1388,7 +1552,9 @@ struct Child {
         bool ok = false;
         const int px = r.i32(), py = r.i32();
         if (backend && !editor) {
+          native::installX11SafetyHandlers();
           editor = backend->createEditor();
+          native::installX11SafetyHandlers();
           int ew = 640, eh = 420;
           if (editor && editor->size(ew, eh)) {
             void* parent = sandboxOpenWindow(title + "  \xC2\xB7  Gridline sandbox", ew, eh, editor->canResize(), px, py);
@@ -1397,6 +1563,7 @@ struct Child {
               return true;
             };
             ok = parent && editor->attach(parent);
+            native::installX11SafetyHandlers();
             idles = 0;
           }
           if (!ok) {
@@ -1443,7 +1610,9 @@ struct Child {
       case OpEditorCreate: {
         bool ok = false;
         if (backend && !editor) {
+          native::installX11SafetyHandlers();
           editor = backend->createEditor();
+          native::installX11SafetyHandlers();
           ok = editor != nullptr;
           embedded = ok;
           idles = 0;
@@ -1458,6 +1627,7 @@ struct Child {
         const double scale = r.f64();
         bool ok = false;
         if (editor && embedded) {
+          native::installX11SafetyHandlers();
           editor->requestResize = [this](int nw, int nh) {
             askedW = nw;
             askedH = nh;
@@ -1465,6 +1635,7 @@ struct Child {
           };
           if (scale > 0) editor->setContentScale(scale);
           ok = editor->attach(reinterpret_cast<void*>(static_cast<uintptr_t>((hi << 32) | lo)));
+          native::installX11SafetyHandlers();
           if (!ok) {
             editor.reset();
             embedded = false;
@@ -1517,16 +1688,38 @@ struct Child {
 
 }  // namespace
 
+std::string bridge32Executable(const std::string& mainExe) {
+  if (const std::string env = platform::getEnv("GRIDLINE_BRIDGE32_EXE"); !env.empty()) return env;
+  if (mainExe.empty()) return {};
+  const std::filesystem::path p = std::filesystem::u8path(mainExe);
+  const bool hasWinExt = p.extension() == ".exe" || p.extension() == ".EXE";
+#if defined(_WIN32)
+  const char* name = "gridline-bridge32.exe";
+  (void)hasWinExt;
+#else
+  const char* name = hasWinExt ? "gridline-bridge32.exe" : "gridline-bridge32";
+#endif
+  return (p.parent_path() / name).u8string();
+}
+
+std::string bridge32UnavailableError(const std::string& bridgePath, bool isMacOs) {
+  if (isMacOs) return "32-bit plugins are not supported on macOS 10.15+";
+  if (bridgePath.empty()) return "32-bit plugin requires gridline-bridge32.exe beside Gridline (bridge path could not be resolved)";
+  return "32-bit plugin requires gridline-bridge32.exe beside Gridline (not found at \"" + bridgePath +
+         "\"). Install or build Gridline with 32-bit bridge support.";
+}
+
 std::unique_ptr<Backend> createSandboxBackend(const std::string& exe, const std::string& format, const std::string& entry,
-                                              const std::string& uid, std::string* err, const std::string& name) {
+                                              const std::string& uid, std::string* err, const std::string& name, bool blockNetwork) {
   if (exe.empty()) {
     if (err) *err = "no executable for the sandbox process";
     return nullptr;
   }
-  return SandboxBackend::create(exe, format, entry, uid, err, name.empty() ? uid : name);
+  return SandboxBackend::create(exe, format, entry, uid, err, name.empty() ? uid : name, blockNetwork);
 }
 
 int sandboxChildMain(const std::string& arg) {
+  native::installX11SafetyHandlers();  // K-432: XInitThreads + non-fatal error handler before any plugin loads
   std::string shmName = arg;
 #if defined(_WIN32)
   // "<block name>|<request pipe>|<reply pipe>|<wake pipe>|<parent pid>|<done event>" (see spawn()).
@@ -1539,9 +1732,12 @@ int sandboxChildMain(const std::string& arg) {
   }
   if (parts.size() < 4) return 4;
   shmName = parts[0];
-  const Chan rpc{static_cast<std::intptr_t>(std::stoll(parts[1])), static_cast<std::intptr_t>(std::stoll(parts[2]))};
-  const Chan wake{static_cast<std::intptr_t>(std::stoll(parts[3])), -1};
-  const std::intptr_t doneEv = parts.size() >= 6 ? static_cast<std::intptr_t>(std::stoll(parts[5])) : -1;
+  auto parseHandle = [](const std::string& s) -> std::intptr_t {
+    return static_cast<std::intptr_t>(static_cast<uintptr_t>(std::stoull(s)));
+  };
+  const Chan rpc{parseHandle(parts[1]), parseHandle(parts[2])};
+  const Chan wake{parseHandle(parts[3]), -1};
+  const std::intptr_t doneEv = parts.size() >= 6 ? parseHandle(parts[5]) : -1;
 #else
   ::signal(SIGPIPE, SIG_IGN);
   const Chan rpc{kRpcFd, kRpcFd};

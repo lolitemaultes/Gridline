@@ -1,7 +1,9 @@
 // Gridline — VST3 hosting tests. Uses only the in-tree test plugin
 // (GridlineTest.vst3, built from tests/vst3/TestPlugin.cpp).
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -479,6 +481,50 @@ void testControllerLink() {
   expect(std::fabs(renderSong(d.song(), o).peak() - linked) < 1e-4f, "after redo the link drives the parameter again");
 }
 
+// GitHub #87: slide notes glide a hosted instrument's note velocity. A plugin that lists the volume
+// note expression gets the glide per note; one that does not has its output scaled instead. Both
+// fade a held A4 out to silence over the slide, and fade a 0% note in to full level.
+double rmsIn(const AudioBuffer& b, double t0, double t1, double sr) {
+  const size_t a = static_cast<size_t>(t0 * sr), e = std::min(b.frames, static_cast<size_t>(t1 * sr));
+  double sum = 0;
+  for (size_t i = a; i < e; ++i) sum += 0.5 * (b.at(0, i) * b.at(0, i) + b.at(1, i) * b.at(1, i));
+  return e > a ? std::sqrt(sum / static_cast<double>(e - a)) : 0.0;
+}
+void testSlideVelocity() {
+  for (int perNote = 1; perNote >= 0; --perNote) {
+    setenv("GRIDLINE_TEST_NOTE_VOLUME", perNote ? "1" : "0", 1);
+    const std::string how = perNote ? "per-note volume: " : "output scaled: ";
+    auto song = [&](int baseVel, int slideVel) {
+      Document d(makeEmptySong());
+      d.setParam(songParam(SongParam::Tempo), 120.0, false);
+      const ObjectId pat = d.song().patterns[0].id;
+      const ObjectId ch = d.addChannel("vst", kSynth);
+      Note base(0, 384, 69, baseVel), slide(96, 96, 69, slideVel);
+      slide.slide = true;
+      d.setNotes(pat, ch, {base, slide}, "notes");
+      d.addClip(pat, 0, 0);
+      return d.song();
+    };
+    RenderOptions o;
+    o.blockSize = 256;
+    o.tail = 0;
+    const double sr = o.sampleRate;
+    const AudioBuffer plain = renderSong(song(127, 127), o);
+    const AudioBuffer out = renderSong(song(127, 0), o);
+    const double full = rmsIn(plain, 0.2, 0.45, sr), before = rmsIn(out, 0.2, 0.45, sr), mid = rmsIn(out, 0.7, 0.8, sr), after = rmsIn(out, 1.1, 1.4, sr);
+    std::printf("# %s fade out: plain %.4f, before %.4f, mid %.4f, after %.6f\n", how.c_str(), full, before, mid, after);
+    expect(full > 0.05 && std::fabs(before - full) < 1e-6, (how + "before the slide the note plays as it is").c_str());
+    expect(mid > 0.3 * full && mid < 0.7 * full, (how + "halfway through the slide it is about half as loud").c_str());
+    expect(after < 1e-4 * full, (how + "a slide to 0% fades the hosted note out to silence").c_str());
+    const AudioBuffer in = renderSong(song(0, 127), o);
+    const double inBefore = rmsIn(in, 0.05, 0.45, sr), inAfter = rmsIn(in, 1.1, 1.4, sr);
+    std::printf("# %s fade in: before %.6f, after %.4f (plain %.4f)\n", how.c_str(), inBefore, inAfter, rmsIn(plain, 1.1, 1.4, sr));
+    expect(inBefore < 1e-4 * full, (how + "a 0% note is silent before its slide").c_str());
+    expect(std::fabs(inAfter - rmsIn(plain, 1.1, 1.4, sr)) < 0.02 * full, (how + "a slide to 100% fades it in to full level").c_str());
+  }
+  unsetenv("GRIDLINE_TEST_NOTE_VOLUME");
+}
+
 }  // namespace
 
 int main() {
@@ -490,5 +536,6 @@ int main() {
   testEffect();
   testProjectAndRender();
   testControllerLink();
+  testSlideVelocity();
   return finish();
 }

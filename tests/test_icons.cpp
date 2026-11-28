@@ -69,6 +69,9 @@ int main() {
     // The track icon set (core/TrackIconSet: mixer, playlist and channel icons) uses the track-* SVGs by name.
     for (int i = 0; i < n; ++i)
       if (std::string(svgs[i].name).rfind("track-", 0) == 0) used.insert(svgs[i].name);
+    // K-450: the plugin icons (plugin-<id>.svg) are drawn by plugin type (app/PluginIcons.h).
+    for (int i = 0; i < n; ++i)
+      if (std::string(svgs[i].name).rfind("plugin-", 0) == 0) used.insert(svgs[i].name);
     bool none = true;
     for (int i = 0; i < n; ++i)
       if (!used.count(svgs[i].name)) {
@@ -103,7 +106,9 @@ int main() {
       for (int px : {16, 20, 24, 32, 48}) {
         const bool r = icons::rasterize(svgs[i].svg, px, icons::strokePx(static_cast<float>(px), 1.0f), a);
         const int cov = coverage(a);
-        if (!r || a.size() != static_cast<size_t>(px * px) || cov < px || cov > px * px * 9 / 10) {
+        // K-450: a plugin icon is a tile filling its box (test_plugin_icons checks its pictogram shows).
+        const bool tile = std::string(svgs[i].name).rfind("plugin-", 0) == 0;
+        if (!r || a.size() != static_cast<size_t>(px * px) || cov < px || cov > (tile ? px * px : px * px * 9 / 10)) {
           std::printf("# %s at %d px: parsed %d, coverage %d\n", svgs[i].name, px, r, cov);
           ok = false;
         }
@@ -145,7 +150,9 @@ int main() {
           }
           return best >= std::max(3, px / 5);
         };
-        if (solidLine(true, 0) || solidLine(true, px - 1) || solidLine(false, 0) || solidLine(false, px - 1)) {
+        // K-450: a plugin icon is a tile that fills its box by design (its edges land on whole pixels).
+        const bool tile = std::string(svgs[i].name).rfind("plugin-", 0) == 0;
+        if (!tile && (solidLine(true, 0) || solidLine(true, px - 1) || solidLine(false, 0) || solidLine(false, px - 1))) {
           std::printf("# %s at %d px: solid ink along the box edge (cut off)\n", svgs[i].name, px);
           edges = false;
         }

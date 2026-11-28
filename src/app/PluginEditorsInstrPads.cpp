@@ -24,6 +24,8 @@
 #include "../engine/Slicing.h"
 #include "InstrumentSkin.h"
 #include "PluginEditorsCommon.h"
+#include "../core/PluginBrand.h"
+#include "UrlImportUi.h"
 #include "../core/Platform.h"
 
 namespace gl {
@@ -572,25 +574,24 @@ void drawLayers(App& a, const PluginTarget& t, const iskin::Skin& k, const Plugi
       }
       ImGui::EndDragDropTarget();
     }
-    // Load / name / reverse.
+    // Load / Import from URL / name / reverse.
+    const int pk = pad, lk = ls.empty() ? 0 : ui.layer;
     if (iskin::button(k, "##sload", 302, 341, 18, 15, "", false)) {
       PluginTarget tt = t;
-      const int pk = pad, lk = ls.empty() ? 0 : ui.layer;
-      openSample(a, "Load pad sample", [&a, tt, pk, lk](const std::string& p) {
-        if (const PluginState* cur = tt.state(a.doc.song())) {
-          PluginState ns = *cur;
-          std::vector<LayerInfo> nl = readLayers(*cur, pk);
-          if (nl.empty()) nl.push_back(LayerInfo{});
-          nl[static_cast<size_t>(std::min<int>(lk, static_cast<int>(nl.size()) - 1))].path = p;
-          writeLayers(ns, pk, nl);
-          setPluginState(a, tt, ns, "load pad sample");
-        }
-      });
+      openSample(a, "Load pad sample", [&a, tt, pk, lk](const std::string& p) { padsLoadSample(a, tt, p, pk, lk); });
     }
+    if (ImGui::IsItemHovered()) a.setHint("Load a sample into this layer");
     iskin::glyphFolder(k.dl(), k.at(311, 348.5f), k.px(5), k.c.textDim);
+    if (iskin::button(k, "##surl", 322, 341, 18, 15, "", false)) {
+      PluginTarget tt = t;
+      const std::string label = std::string(pluginDisplayName("gl.pads")) + " (" + i18n::tr("Pad") + " " + std::to_string(pk + 1) + ")";
+      urlimportui::openFor(a, urlimportui::Target{label, [tt, pk, lk](App& app, const std::string& p, const std::string&) { padsLoadSample(app, tt, p, pk, lk); }, false});
+    }
+    if (ImGui::IsItemHovered()) a.setHint("Import from URL: a web link's audio into this layer");
+    ui::drawIconFitC(k.dl(), ui::Icon::Download, k.at(331, 348.5f), ImVec2(k.px(10), k.px(9)), k.c.textDim);
     std::string nm = ls.empty() || ls[static_cast<size_t>(ui.layer)].path == "none" ? std::string(i18n::tr("(empty)")) : fs::path(ls[static_cast<size_t>(ui.layer)].path).filename().string();
     if (!ls.empty() && ls[static_cast<size_t>(ui.layer)].path.empty()) nm = padName(st, pad) + " (built-in)";
-    iskin::text(k, 324, 341, 145, 15, nm.c_str(), 9, k.c.textDim, 0);
+    iskin::text(k, 344, 341, 125, 15, nm.c_str(), 9, k.c.textDim, 0);
     if (ui.layer < kPadLayers && !ls.empty()) {
       iskin::switchBtn(a, t, k, padL(pad, ui.layer, LayReverse), 472, 341, 18, 15, [&](ImDrawList* dl, ImVec2 p0, ImVec2 p1, bool on) {
         dl->AddRectFilled(p0, p1, on ? k.c.fill2 : rgb(0x1D1D1D), 2);
@@ -738,6 +739,21 @@ void editorFpc(App& a, const PluginTarget& t, float width) {
 }
 
 }  // namespace
+
+bool padsLoadSample(App& a, const PluginTarget& t, const std::string& path, int pad, int layer) {
+  const PluginState* cur = t.state(a.doc.song());
+  if (!cur || cur->type != "gl.pads") return false;
+  const FpcUi& ui = fpcUi[t.key()];
+  const int pk = std::clamp(pad >= 0 ? pad : ui.pad, 0, kPadsAll - 1);
+  PluginState ns = *cur;
+  std::vector<LayerInfo> nl = readLayers(*cur, pk);
+  if (nl.empty()) nl.push_back(LayerInfo{});
+  const int lk = layer >= 0 ? layer : ui.layer;
+  nl[static_cast<size_t>(std::clamp(lk, 0, static_cast<int>(nl.size()) - 1))].path = path;
+  writeLayers(ns, pk, nl);
+  setPluginState(a, t, ns, "load pad sample");
+  return true;
+}
 
 bool drawPadsEditorJ2(App& a, const PluginTarget& t, float width) {
   const PluginState* st = t.state(a.doc.song());

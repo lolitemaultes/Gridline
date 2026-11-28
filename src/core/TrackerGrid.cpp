@@ -456,7 +456,7 @@ Result setModuleEffect(std::vector<Note>& notes, const Track& t, const Grid& g, 
 void normalize(std::vector<Note>& notes) {
   for (Note& n : notes) {
     n.pitch = std::clamp(n.pitch, 0, 127);
-    n.velocity = std::clamp(n.velocity, 1, 127);
+    n.velocity = std::clamp(n.velocity, 0, 127);
     n.start = std::max<Tick>(n.start, 0);
     n.length = std::max<Tick>(n.length, 1);
   }
@@ -646,7 +646,8 @@ Result clearField(std::vector<Note>& notes, std::vector<uint8_t>& steps, std::ve
 
 Result setVolume(std::vector<Note>& notes, std::vector<uint8_t>& steps, const Track& t, int row, int column, int value) {
   const Cell& c = t.at(row, column);
-  const int v = std::clamp(value, 1, 127);
+  // GitHub #87: a note may be 0% (a slide fades it in); a step at 0 would be no step.
+  const int v = std::clamp(value, c.kind == Cell::On ? 0 : 1, 127);
   if (c.kind == Cell::On) {
     Note& n = notes[static_cast<size_t>(c.note)];
     if (n.velocity == v) return done(false);
@@ -854,7 +855,7 @@ Result interpolate(std::vector<Note>& notes, const Grid& g, int r0, int r1, Fiel
     else if (f == Field::Effect) {
       if (letter == 'T') n.fine = std::clamp(v, -128, 127);
       else setEffect(n, letter, v);
-    } else n.velocity = std::clamp(v, 1, 127);
+    } else n.velocity = std::clamp(v, 0, 127);
     res.changed = true;
   }
   return res;

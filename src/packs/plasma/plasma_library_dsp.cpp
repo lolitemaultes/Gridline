@@ -5,6 +5,7 @@
 // the library at once on the next start; a rescan replaces it when files
 // change.
 #include <algorithm>
+#include "../../core/ThreadJoin.h"
 #include "../../core/ThreadName.h"
 #include <atomic>
 #include <cctype>
@@ -49,7 +50,7 @@ struct Library {
   bool cacheRead = false;
   ~Library() {
     cancel = true;
-    if (worker.joinable()) worker.join();
+    gl::threads::safeJoin(worker);
   }
 };
 Library& lib() {

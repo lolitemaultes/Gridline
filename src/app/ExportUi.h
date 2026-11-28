@@ -26,6 +26,7 @@ enum class Preset {
   AudioClip,       // the current pattern as an audio clip
   PatternReplace,  // the current pattern as audio clips replacing its pattern clips
   TrackGroups,     // J-31: split playlist track groups
+  MarkerAreas,     // each marker area of the arrangement (marker to next marker) to its own file
 };
 void openRender(App& a, Preset p = Preset::Audio);
 // Opens the render dialog with the settings of the last render (formats, scope, splitting).
@@ -46,6 +47,14 @@ struct DevRender {
 void devStart(App& a, const DevRender& r);
 void devCancel();
 std::string devState();
+// Dev (Export marker areas): markerareas open | dump | start <folder> | tick <row> on|off | pattern <text>.
+// dump prints the areas, the rows the dialog drew last and the file names a start would write.
+void devMarkerAreas(App& a, const std::vector<std::string>& args, int frame);
+// Dev (the Export audio dialog): exportdlg open [preset] | scope song|selection|markers|areas|pattern |
+// tail cut|ring <s>|fixed <s>|wrap | name file|area|part add <letter>|remove <i>|text <text>|set <pattern> |
+// split none|mixer|playlist|groups | dest files|clip|editor | format <0..5> on|off | folder <path> | dump.
+// dump prints the choices, each name's pieces, the example, the footer's line and the folder as shown.
+void devExportDialog(App& a, const std::vector<std::string>& args, int frame);
 // Per frame (from drawDialogs): render dialog, progress, MIDI import, missing samples.
 void draw(App& a);
 // Body of a progress window (status line, bar, Cancel): the render progress

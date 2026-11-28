@@ -199,6 +199,9 @@ void maskSessionJson(Json& song) {
     if (it->second.is(Json::Type::Object)) it->second.object.erase("library");
     if (!it->second.is(Json::Type::Object) || it->second.object.empty()) song.object.erase(it);
   }
+  // K-86 part 2: collaboration chat travels under meta/chat:*, never via the song CRDT tree.
+  song.object.erase("collabChat");
+  song.object.erase("portLinks");  // K-357: this computer's JACK / PipeWire port graph
   maskPlugins(song, 0);
 }
 
@@ -295,6 +298,7 @@ void keepSessionState(Song& in, const Song& cur) {
   keepTracksShownHere(in, cur);
   in.smooth.library = cur.smooth.library;  // K-112D: this computer's Smooth window state, whatever layout the change came from
   // (D6, R12-03: in.smooth.controls, the Smart Control mappings, are the shared song's)
+  in.portLinks = cur.portLinks;  // K-357: this computer's JACK / PipeWire port connections
 }
 
 uint64_t sessionStateHash(const Song& s) {

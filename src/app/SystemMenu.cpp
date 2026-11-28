@@ -202,7 +202,9 @@ std::string idAt(const std::vector<nm::Item>& v, const std::vector<std::string>&
 
 }  // namespace
 
-bool active() { return nm::installed(); }
+// GitHub #85: the in-window row goes only once the system bar shows the menus. On Linux a global
+// menu host's name can be on the bus with nothing on screen to show them; the row then stays.
+bool active() { return nm::shown(); }
 void setDevForce(bool on) { gForce = on; }
 void setHiddenRun(bool hidden) { gHidden = hidden; }
 bool hiddenRun() { return gHidden; }
@@ -272,8 +274,9 @@ bool devCommand(App&, const std::vector<std::string>& args, int frame) {
     std::printf("SYSMENU BEGIN frame %d\n%sSYSMENU END\n", frame, dump().c_str());
   } else if (args[0] == "status") {
     // Read only (asking available() would start the Linux bus worker).
-    std::printf("frame %d sysmenu status installed %d bus %d (%s) walks %d deferred %d focus kept %d\n", frame, nm::installed() ? 1 : 0,
-                nm::busStarted() ? 1 : 0, nm::status().c_str(), gWalks, gDeferred, focusguard::Keep::kept());
+    std::printf("frame %d sysmenu status installed %d bus %d (%s) walks %d deferred %d focus kept %d shown %d\n", frame,
+                nm::installed() ? 1 : 0, nm::busStarted() ? 1 : 0, nm::status().c_str(), gWalks, gDeferred, focusguard::Keep::kept(),
+                nm::shown() ? 1 : 0);
   } else if (args[0] == "choose" && args.size() > 1) {
     std::string path = args[1];
     for (size_t i = 2; i < args.size(); ++i) path += " " + args[i];

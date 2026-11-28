@@ -33,6 +33,7 @@ void store(const Song& s, const TempoMap& tm, Clip& c, Field f, double v) {
   if (!isSwitch(f)) v = std::clamp(v, lo, hi);
   switch (f) {
     case Field::GainDb: c.gain = clipgain::fromDb(v <= clipgain::kMinDb ? clipgain::kMinDb - 0.1 : v); break;
+    case Field::Pan: c.pan = static_cast<float>(std::clamp(v / 100.0, -1.0, 1.0)); break;
     case Field::Mute: c.muted = v >= 0.5; break;
     case Field::Reverse:
       if ((v >= 0.5) != c.reverse) toggleClipReverse(s, c);
@@ -88,6 +89,7 @@ void store(const Song& s, const TempoMap& tm, Clip& c, Field f, double v) {
 const char* undoLabel(Field f) {
   switch (f) {
     case Field::GainDb: return "clip gain";
+    case Field::Pan: return "clip pan";
     case Field::Mute: return "mute clip";
     case Field::Reverse: return "reverse clip";
     case Field::FadeIn: return "clip fade in";
@@ -112,6 +114,7 @@ void range(Field f, double& lo, double& hi) {
   lo = 0, hi = 1;
   switch (f) {
     case Field::GainDb: lo = clipgain::kMinDb - 0.1, hi = clipgain::kMaxDb; break;
+    case Field::Pan: lo = -100.0, hi = 100.0; break;
     case Field::FadeIn:
     case Field::FadeOut: lo = 0, hi = 600; break;
     case Field::FadeInCurve:
@@ -129,6 +132,7 @@ double get(const Song& s, const Clip& c, Field f) {
   (void)s;
   switch (f) {
     case Field::GainDb: return clipgain::toDb(c.gain);
+    case Field::Pan: return static_cast<double>(c.pan) * 100.0;
     case Field::Mute: return c.muted ? 1 : 0;
     case Field::Reverse: return c.reverse ? 1 : 0;
     case Field::FadeIn: return c.fadeIn;
@@ -158,6 +162,21 @@ bool set(Document& d, const std::vector<ObjectId>& ids, ObjectId anchor, Field f
   targets.insert(anchor);
   TempoMap tm;
   tm.build(s);
+  if (f == Field::FollowTempo) {
+    // K-431: keep the channel's SmpFitTempo readout in sync with clip tempo follow.
+    Song trial = s;
+    bool chChanged = false;
+    for (const Clip& c : s.playlist) {
+      if (!targets.count(c.id) || c.kind != ClipKind::Audio) continue;
+      if (setClipFollowsTempo(trial, c.id, value >= 0.5)) chChanged = true;
+    }
+    if (!chChanged) return false;
+    d.editSong(undoLabel(f), [&trial](Song& x) {
+      x.playlist = trial.playlist;
+      x.channels = trial.channels;
+    });
+    return true;
+  }
   std::vector<Clip> next = s.playlist;
   bool changed = false;
   for (Clip& c : next) {

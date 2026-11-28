@@ -6,7 +6,7 @@
 #   its body must be drawn once, by its own window or by the Device chain where the home is Host;
 #   bars must be drawn; menus, dialogs, overlays and rows inside other windows are listed with what
 #   their home means. A layout home a later phase row builds is listed as planned with that row; only
-#   the windows of later rows (and Sync review, which needs a shared session) are skipped. No row may
+#   the windows of later rows (and Sync review and Chat, which need a shared session) are skipped. No row may
 #   fail, and every row of every layout is accounted for.
 #   Also at 200% interface size in the Live shell (the regions keep their windows).
 #   cmake -DAPP=<gridline-app> -DDEMO=<song> -DOUT=<dir> -P k112_inventory_app.cmake
@@ -54,7 +54,7 @@ function(inventory tag layout size scale)
   endif()
   string(REGEX MATCHALL "inventory [A-Z][0-9]+ [^\n]* skip [^\n]*" skips "${out}")
   foreach(k IN LISTS skips)
-    if(NOT k MATCHES " (N6|N7|N12|D29) ")
+    if(NOT k MATCHES " (N6|N7|N12|D29|B15) ")  # (B15 Chat: shown only in a shared session, like Sync review)
       message(SEND_ERROR "FAIL: ${tag}: an unexpected skip: ${k}")
     endif()
   endforeach()

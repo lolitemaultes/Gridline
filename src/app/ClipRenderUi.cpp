@@ -77,7 +77,7 @@ bool sendToLoupe(App& a, ObjectId clip) {
     layoutui::setRegionVisible(a, "logic.lower", true);
     a.showPiano = a.showRack = a.showMixer = false;
   }
-  packs::openAudioEditor(a, path, id);
+  packs::openAudioEditor(a, path, id, clip);
   return true;
 }
 

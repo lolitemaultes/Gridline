@@ -11,6 +11,7 @@
 #include "Arrangements.h"
 #include "ExternalDrop.h"
 #include "../engine/ClipOps.h"
+#include "PluginParams.h"
 #include "Lfo.h"
 
 namespace gl {
@@ -246,6 +247,52 @@ class TempoRefitCommand final : public Command {
  private:
   CommandPtr inner_;
   std::vector<Patch> patches_;
+};
+
+// K-431: a sampler stretch-mode / source-BPM / time-stretch edit together with
+// the playlist audio clips it locks or resizes. One mergeable undo step.
+class ChannelAndClipsCommand final : public Command {
+ public:
+  ChannelAndClipsCommand(std::string label, ObjectId chId, Channel chBefore, Channel chAfter,
+                         std::vector<TempoRefitCommand::Patch> patches, uint64_t key)
+      : label_(std::move(label)),
+        chId_(chId),
+        chBefore_(std::move(chBefore)),
+        chAfter_(std::move(chAfter)),
+        patches_(std::move(patches)),
+        key_(key) {}
+  void apply(Song& s) override {
+    if (Channel* ch = s.channel(chId_)) *ch = chAfter_;
+    for (const auto& p : patches_)
+      if (Clip* c = s.clip(p.id)) *c = p.after;
+  }
+  void revert(Song& s) override {
+    for (auto it = patches_.rbegin(); it != patches_.rend(); ++it)
+      if (Clip* c = s.clip(it->id)) *c = it->before;
+    if (Channel* ch = s.channel(chId_)) *ch = chBefore_;
+  }
+  std::string label() const override { return label_; }
+  size_t approxBytes() const override { return 64 + approxOf(chBefore_) + approxOf(chAfter_) + patches_.size() * 2 * sizeof(Clip); }
+  bool mayMoveTempo() const override { return false; }
+  uint64_t mergeKey() const override { return key_; }
+  bool mergeWith(const Command& next) override {
+    const auto* n = dynamic_cast<const ChannelAndClipsCommand*>(&next);
+    if (!n || n->chId_ != chId_ || key_ == 0 || n->key_ != key_) return false;
+    chAfter_ = n->chAfter_;
+    for (const auto& p : n->patches_) {
+      auto it = std::find_if(patches_.begin(), patches_.end(), [&](const TempoRefitCommand::Patch& q) { return q.id == p.id; });
+      if (it != patches_.end()) it->after = p.after;
+      else patches_.push_back(p);
+    }
+    return true;
+  }
+
+ private:
+  std::string label_;
+  ObjectId chId_;
+  Channel chBefore_, chAfter_;
+  std::vector<TempoRefitCommand::Patch> patches_;
+  uint64_t key_;
 };
 
 // Checkpoint 58 (N57-01): an edit that moved a track's output off the return its kept send waits for
@@ -832,17 +879,45 @@ bool Document::removeChannel(ObjectId id) {
   for (const auto& a : song_.arrangements)
     for (const auto& c : a.playlist) refs = refs || audioOf(c);
   for (const auto& ch : song_.channels) refs = refs || std::find(ch.layer.begin(), ch.layer.end(), id) != ch.layer.end();
-  // J-82: MIDI controller links and pattern automation lanes of its controls go too.
+  // J-82 / K-425: MIDI controller links, pattern automation, persistent rack lanes, playlist track
+  // links, and LFO note channels referencing this channel go cleanly too. Automation clips stay (with
+  // their clips in the playlist): their target is gone, the curve is the person's work.
   auto linkOf = [id](const ControllerLink& l) { return l.owner == id && l.action == RemoteAction::None; };
   auto laneOf = [id](const PatternAutomation& l) { return l.owner == id; };
+  auto rackLaneOf = [id](const SongAutoLane& l) { return l.owner == id; };
+  auto trackRef = [id](const PlaylistTrack& t) {
+    return t.channel == id || t.sound == id || (t.laneSet && t.laneOwner == id);
+  };
   for (const auto& l : song_.links) refs = refs || linkOf(l);
   for (const auto& p : song_.patterns)
     for (const auto& l : p.automation) refs = refs || laneOf(l);
+  for (const auto& l : song_.rackAutoLanes) refs = refs || rackLaneOf(l);
+  for (const auto& t : song_.tracks) refs = refs || trackRef(t);
+  for (const auto& ar : song_.arrangements)
+    for (const auto& t : ar.tracks) refs = refs || trackRef(t);
+  for (const auto& lf : song_.lfos) refs = refs || lf.noteChannel == id;
   if (refs)
     editSong("delete channel", [&](Song& s) {
       auto drop = [&](std::vector<Clip>& v) { v.erase(std::remove_if(v.begin(), v.end(), audioOf), v.end()); };
+      auto cleanTracks = [&](std::vector<PlaylistTrack>& ts) {
+        for (auto& t : ts) {
+          if (t.channel == id) {
+            t.channel = kNoId;
+            if (t.mode == TrackMode::Instrument) t.mode = TrackMode::Unassigned;
+          }
+          if (t.sound == id) t.sound = kNoId;
+          if (t.laneSet && t.laneOwner == id) t.laneSet = false, t.laneOwner = kNoId;
+        }
+      };
       drop(s.playlist);
-      for (auto& a : s.arrangements) drop(a.playlist);
+      cleanTracks(s.tracks);
+      for (auto& a : s.arrangements) {
+        drop(a.playlist);
+        cleanTracks(a.tracks);
+      }
+      s.rackAutoLanes.erase(std::remove_if(s.rackAutoLanes.begin(), s.rackAutoLanes.end(), rackLaneOf), s.rackAutoLanes.end());
+      for (auto& lf : s.lfos)
+        if (lf.noteChannel == id) lf.noteChannel = kNoId;
       for (auto& ch : s.channels) {
         ch.layer.erase(std::remove(ch.layer.begin(), ch.layer.end(), id), ch.layer.end());
         ch.layerZones.erase(std::remove_if(ch.layerZones.begin(), ch.layerZones.end(), [id](const LayerZone& z) { return z.child == id; }),
@@ -1023,6 +1098,44 @@ bool Document::setParam(ParamId id, double value, bool merge) {
   if (id != lastTouched_ && lastTouched_.owner != kNoId) prevTouched_ = lastTouched_;  // J-27: next to last tweaked
   lastTouched_ = id;
   ++touchSerial_;
+  // K-431: sampler time mode, source BPM (SmpFitTempo) and TIME knob stay in
+  // sync with playlist audio clips (locking Stretch/Rubber Band clips to the
+  // tempo grid and keeping dialed-in BPM locked across tempo changes).
+  if (const Channel* ch = song_.channel(id.owner); ch && ch->plugin.type == "gl.sampler" && id.index >= kChannelPluginBase) {
+    const uint32_t pi = id.index - kChannelPluginBase;
+    // Without audio clips on the channel the mode and TIME edits change only the parameter: they take
+    // the plain path below, so knob drags, MIDI and remote links never copy the whole song.
+    const auto hasClips = [&] {
+      for (const Clip& c : song_.playlist)
+        if (c.kind == ClipKind::Audio && c.source == ch->id) return true;
+      return false;
+    };
+    if ((pi == static_cast<uint32_t>(pp::SmpStretchMode) || pi == static_cast<uint32_t>(pp::SmpFitTempo) ||
+         pi == static_cast<uint32_t>(pp::SmpTimeStretch)) &&
+        (pi == static_cast<uint32_t>(pp::SmpFitTempo) || hasClips())) {
+      Song trial = song_;
+      bool ok = false;
+      if (pi == static_cast<uint32_t>(pp::SmpStretchMode))
+        ok = setChannelStretchMode(trial, ch->id, static_cast<int>(std::lround(after)));
+      else if (pi == static_cast<uint32_t>(pp::SmpFitTempo))
+        ok = setChannelSourceBpm(trial, ch->id, after);
+      else
+        ok = applyChannelTimeStretch(trial, ch->id, after);
+      if (!ok) return true;
+      const Channel* chAfter = trial.channel(ch->id);
+      if (!chAfter) return true;
+      std::vector<TempoRefitCommand::Patch> patches;
+      for (size_t i = 0; i < song_.playlist.size() && i < trial.playlist.size(); ++i)
+        if (!(song_.playlist[i] == trial.playlist[i])) patches.push_back({song_.playlist[i].id, song_.playlist[i], trial.playlist[i]});
+      if (*chAfter == *ch && patches.empty()) return true;
+      if (!merge) undo_.breakMerge();
+      exec(std::make_unique<ChannelAndClipsCommand>("change parameter", ch->id, *ch, *chAfter, std::move(patches), merge ? id.packed() : 0));
+      if (!merge) undo_.breakMerge();
+      paramBefore = *before;
+      if (paramObserver) paramObserver(id, after);
+      return true;
+    }
+  }
   if (after == *before) return true;
   if (!merge) undo_.breakMerge();
   exec(std::make_unique<ParamCommand>(id, *before, after, merge, song_.channel(id.owner) != nullptr));
@@ -1151,7 +1264,7 @@ bool Document::setNotes(ObjectId pattern, ObjectId channel, std::vector<Note> no
   if (!song_.pattern(pattern) || !song_.channel(channel)) return false;
   for (auto& n : notes) {
     n.pitch = std::clamp(n.pitch, 0, 127);
-    n.velocity = std::clamp(n.velocity, 1, 127);
+    n.velocity = std::clamp(n.velocity, 0, 127);  // GitHub #87: 0% is a note a slide can fade in
     n.start = std::max<Tick>(n.start, 0);
     n.length = std::max<Tick>(n.length, 1);
   }
@@ -1231,6 +1344,7 @@ bool Document::setClipLength(ObjectId id, Tick length) {
 bool clipLevelsOnly(const Clip& a, const Clip& b) {
   Clip x = b;
   x.gain = a.gain;
+  x.pan = a.pan;  // K-414: live-patched with gain into the playing Program
   x.fadeIn = a.fadeIn, x.fadeOut = a.fadeOut;
   x.fadeInManual = a.fadeInManual, x.fadeOutManual = a.fadeOutManual;
   x.fadeInShape = a.fadeInShape, x.fadeOutShape = a.fadeOutShape;
@@ -1600,6 +1714,7 @@ void clampLfo(SongLfo& l) {
     p.x = std::clamp(p.x, 0.0f, 1.0f);
     p.y = std::clamp(p.y, -1.0f, 1.0f);
     p.curve = std::clamp(p.curve, -1.0f, 1.0f);
+    if (p.kind > kLfoPointStep) p.kind = kLfoPointCurve;
   }
   l.rateNote = std::clamp(l.rateNote, 0, lfo::kRateCount - 1);
   l.rateKind = std::clamp(l.rateKind, 0, 2);

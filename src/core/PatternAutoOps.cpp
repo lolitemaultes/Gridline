@@ -40,6 +40,7 @@ MoveResult placementIntoPattern(Document& doc, ObjectId placement, ObjectId patt
   const ObjectId autoId = src->id;
   doc.editSong(keep ? "copy automation into pattern" : "move automation into pattern", [&](Song& x) {
     if (Pattern* q = x.pattern(pattern)) addPatternClip(*q, c);
+    ensureRackAutoLane(x, c.owner, c.index, c.name, c.color);  // K-413
     if (keep) return;
     x.playlist.erase(std::remove_if(x.playlist.begin(), x.playlist.end(), [&](const Clip& k) { return k.id == placement; }), x.playlist.end());
     bool used = false;
@@ -62,7 +63,10 @@ MoveResult automationIntoPattern(Document& doc, ObjectId automation, ObjectId pa
   if (src->owner == kNoId) return MoveResult::NoTarget;
   if (findPatternLane(*p, src->owner, src->index)) return MoveResult::TargetTaken;
   const PatternAutomation c = patternClipFromPlaylist(s, *src, nullptr, at);
-  doc.editPattern(pattern, "copy automation into pattern", [&](Pattern& q) { addPatternClip(q, c); });
+  doc.editSong("copy automation into pattern", [&](Song& x) {
+    if (Pattern* q = x.pattern(pattern)) addPatternClip(*q, c);
+    ensureRackAutoLane(x, c.owner, c.index, c.name, c.color);  // K-413
+  });
   return MoveResult::Done;
 }
 

@@ -110,8 +110,8 @@ void placeTheRest(dockplan::Plan& p) {
     const char* window;
     const char* buddy;
   };
-  static const Home kHomes[] = {{"Browser", "Undo history"}, {"Undo history", "Browser"}, {"Playlist", "Piano roll"},
-                                {"Piano roll", "Playlist"}, {"Mixer", nullptr}};
+  static const Home kHomes[] = {{"Browser", "Undo history"}, {"Undo history", "Browser"}, {"Chat", "Browser"},
+                                {"Playlist", "Piano roll"}, {"Piano roll", "Playlist"}, {"Mixer", nullptr}};
   for (const Home& h : kHomes) {
     if (has(h.window)) continue;
     dockplan::Node* leaf = h.buddy ? leafWith(p.root, h.buddy) : nullptr;

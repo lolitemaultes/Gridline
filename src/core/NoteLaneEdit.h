@@ -46,4 +46,20 @@ bool paintSegment(std::vector<Note>& notes, const std::vector<bool>& only, tools
 bool applyLine(std::vector<Note>& notes, const std::vector<bool>& only, tools::NoteProp p, double tA, double vA, double tB, double vB,
                SetFn set = nullptr, double slackTicks = 0);
 
+// ---- K-423: per-lane snap grids (velocity, pan, release, fine pitch, mod X/Y) ----
+struct GridOption {
+  const char* name;        // menu label ("1 semitone", "1/8", "Off", ...)
+  const char* shortLabel;  // compact header chip ("1 ST", "1/8", "OFF", ...)
+  int steps;               // number of equal divisions over [0, 1] (0 = off)
+};
+const std::vector<GridOption>& gridOptions(tools::NoteProp p);
+const char* gridSettingKey(tools::NoteProp p);
+int clampGridMode(tools::NoteProp p, int mode);
+int gridSteps(tools::NoteProp p, int mode);
+// Snaps a normalized lane value in [0, 1] to the lane's active grid (or passes through when
+// off or `bypass` is true, e.g. Alt held).
+double snapValue(tools::NoteProp p, int mode, double frac, bool bypass = false);
+// Normalized horizontal grid line heights in [0, 1] for drawing the lane grid (empty when off).
+std::vector<double> gridLines(tools::NoteProp p, int mode);
+
 }  // namespace gl::notelane

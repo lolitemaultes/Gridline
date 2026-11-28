@@ -124,15 +124,18 @@ Audio resampleAudio(const Audio& a, double newRate, int quality) {
   Audio o;
   o.channels = a.channels;
   o.rate = newRate;
-  if (a.rate <= 0 || newRate <= 0) return a;
+  if (!std::isfinite(a.rate) || !std::isfinite(newRate) || a.rate <= 0 || newRate <= 0 || a.frames() <= 0) return a;
   const double ratio = newRate / a.rate;
+  if (!std::isfinite(ratio) || ratio <= 0) return a;
   if (std::fabs(ratio - 1.0) < 1e-12) {
     o = a;
     o.rate = newRate;
     return o;
   }
   const int64_t n = a.frames();
-  const int64_t outN = static_cast<int64_t>(std::llround(static_cast<double>(n) * ratio));
+  const double rawOut = static_cast<double>(n) * ratio;
+  if (!std::isfinite(rawOut) || rawOut < 1.0 || rawOut > 1.6e8) return o;
+  const int64_t outN = static_cast<int64_t>(std::llround(rawOut));
   o.resize(outN);
   // J-140: the shared band-limited kernel (was a private Kaiser sinc).
   // Fast = realtime table, Normal and Best = offline table.
@@ -168,11 +171,13 @@ const char* stretchName(Stretch s) {
 }
 
 Audio stretchAudio(const Audio& a, double timeFactor, double semitones, Stretch mode, int quality) {
+  if (!std::isfinite(semitones)) semitones = 0.0;
+  semitones = std::clamp(semitones, -48.0, 48.0);
   const double P = std::pow(2.0, semitones / 12.0);
   Audio o;
   o.rate = a.rate;
   o.channels = a.channels;
-  if (a.frames() == 0) return o;
+  if (a.frames() <= 0 || !std::isfinite(a.rate) || a.rate <= 0) return o;
   if (mode == Stretch::Tape) {
     // Varispeed: faster playback raises the pitch and shortens the sound.
     Audio t = a;
@@ -181,14 +186,23 @@ Audio stretchAudio(const Audio& a, double timeFactor, double semitones, Stretch 
     o.rate = a.rate;
     return o;
   }
+  if (!std::isfinite(timeFactor) || timeFactor <= 0) timeFactor = 1.0;
   timeFactor = std::clamp(timeFactor, 0.05, 20.0);
-  const int64_t target = static_cast<int64_t>(std::llround(static_cast<double>(a.frames()) * timeFactor));
+  const double rawTarget = static_cast<double>(a.frames()) * timeFactor;
+  if (!std::isfinite(rawTarget) || rawTarget < 1.0 || rawTarget > 1.6e8) return o;
+  const int64_t target = static_cast<int64_t>(std::llround(rawTarget));
   stretch::Settings set;
   set.mode = mode == Stretch::RubberBand ? stretch::Mode::RubberBand : stretch::kStretch;
   set.pitch = P;
   const int nch = a.channels == 1 ? 1 : 2;
-  o.L.assign(static_cast<size_t>(std::max<int64_t>(0, target)), 0.f);
-  o.R.assign(o.L.size(), 0.f);
+  try {
+    o.L.assign(static_cast<size_t>(target), 0.f);
+    o.R.assign(o.L.size(), 0.f);
+  } catch (const std::bad_alloc&) {
+    o.L.clear();
+    o.R.clear();
+    return o;
+  }
   const float* in[2] = {a.L.data(), a.R.data()};
   float* out[2] = {o.L.data(), o.R.data()};
   stretch::process(in, nch, a.frames(), out, target, a.rate, set);

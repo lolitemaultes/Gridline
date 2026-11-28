@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
@@ -24,7 +25,8 @@ void stemsUsage() {
   std::fprintf(stderr,
                "usage:\n"
                "  gridline stems <audio> [--model ID] [--out DIR] [--stems vocals,drums,bass,other,guitar,piano]\n"
-               "                 [--threads N] [--download]\n"
+               "                 [--threads N] [--download] [--from SECONDS] [--to SECONDS]\n"
+               "                 (--from / --to: only that part of the file is split)\n"
                "  gridline stems --list              models, their stems and whether they are downloaded\n"
                "  gridline stems --download <ID>     download a model from its authors' server\n"
                "  gridline stems --import <file>     install a model file you already have\n"
@@ -133,11 +135,18 @@ int stemsCliMain(int argc, char** argv) {
     else if (a == "--threads") req.threads = std::atoi(next().c_str());
     else if (a == "--name") req.baseName = next();
     else if (a == "--download") allowDownload = true;
+    else if (a == "--from") req.start = std::atof(next().c_str());
+    else if (a == "--to") req.end = std::atof(next().c_str());
     else {
       std::fprintf(stderr, "unknown option %s\n", a.c_str());
       stemsUsage();
       return 2;
     }
+  }
+  if (req.start > 0 && req.end <= 0) req.end = 1e12;  // --from alone: to the end
+  if (req.start < 0 || (req.end > 0 && req.end <= req.start)) {
+    std::fprintf(stderr, "--to must come after --from\n");
+    return 2;
   }
   const st::ModelInfo* m = st::findModel(req.modelId);
   if (!m) {

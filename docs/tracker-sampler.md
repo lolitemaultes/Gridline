@@ -135,3 +135,44 @@ remembered as an app setting (not in the project), and the next Sampler or audio
 **Channel settings** and **Open plugin window** open a Sampler's settings in the floating Audio clip
 window, as in the other layouts. A Tracker Sampler's sample entries, loop handles, **Backwards** and
 **To entry** stay as described above.
+
+## Presets that keep their sound
+
+**Save as preset...** in the instrument list's right-click menu (or the save button in the plugin
+window's header) keeps the whole instrument: its samples, envelopes, key map and settings. Samples
+that Gridline made itself, such as the samples of an opened .xm or .mod file, edited or drawn audio
+and dropped files, are copied into a folder beside the preset named after it (for a preset called
+Lead, `Lead samples`), so the preset sounds the same after the module is closed, the cache is
+cleared or the project is moved. Samples from your own folders are only referred to, as before.
+**Save preset to file...** in the plugin window's menu does the same next to the file you choose,
+and **Load preset from file...** brings the preset's samples back with it.
+
+**Load preset** in the same menu lists your saved Tracker Sampler presets. Loading one is one undo
+step and reaches everyone in a collaboration session.
+
+To take every sound out of a module, open it and choose **Save every instrument as a preset**: each
+Tracker Sampler of the song goes into your presets, in a folder named after the song. **Export
+samples as WAV...** writes the instrument's samples as WAV files: one sample to the file you name,
+several as one file each, numbered after that name.
+
+Presets and projects saved by older versions that name a sample in Gridline's own folders at an old
+place (another home folder, a moved settings folder, a module opened again since) find the sample
+where those folders are now. A sample whose file was missing plays as soon as the file is back,
+without opening the project again.
+
+## Effects on a sample
+
+**Effects...** in the Sample editor (a button of its own in a wide window, in the **Process...** menu
+and the waveform's right-click menu otherwise) runs up to four of Gridline's own effects over the
+range, or over the whole sample when there is no range, in order from the top.
+
+- **Add effect...** picks an effect by category; a click on an effect's name puts another in its place
+  and **x** takes it out.
+- **Preset** steps through the effect's factory presets, and **Mix** sets how much of the effect is
+  heard. The settings of the effect picked (its number) show below; a double-click on a bar sets
+  its default.
+- **Tail** leaves time after the sound for echoes and reverb to ring out: at the end of the sample it
+  grows to hold them, after a range they play over what follows.
+- **Preview** plays the result at the play note before anything changes, and **Apply** keeps it as a
+  new edited file, one undo step, as every sample edit is. A mono sample becomes stereo when an
+  effect makes its sides differ.

@@ -1361,7 +1361,12 @@ std::set<int> emptyLanes(const Song& s, const std::set<int>& emptied) {
 int deleteTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
   const std::vector<int> del = withWholeGroups(s, tracks);
   if (del.empty()) return fail(why, "Select the tracks to delete."), 0;
-  if (static_cast<int>(del.size()) >= static_cast<int>(s.tracks.size())) return fail(why, "The last track cannot be deleted."), 0;
+  const int shown = usedTrackCount(s);
+  int delShown = 0;
+  for (int t : del)
+    if (t >= 0 && t < shown) ++delShown;
+  if (shown <= 1 || delShown >= shown || static_cast<int>(del.size()) >= static_cast<int>(s.tracks.size()))
+    return fail(why, "The last track cannot be deleted."), 0;
   std::set<int> gone(del.begin(), del.end());
   const ObjectId master = s.masterId();
   // N52-05: what the tracks own goes with them, decided before any of them goes (a group is still a
@@ -1403,9 +1408,28 @@ int deleteTracks(Song& s, const std::vector<int>& tracks, std::string* why) {
   std::set<int> emptied;
   for (ObjectId m : mixers) releaseMixer(s, m, &emptied);
   for (ObjectId c : chans) eraseChannel(s, c);
-  for (int t : emptyLanes(s, emptied)) gone.insert(t);
+  int goneInShown = delShown;
+  for (int t : emptyLanes(s, emptied)) {
+    if (gone.count(t)) continue;
+    const bool inShown = t >= 0 && t < shown;
+    if (inShown && goneInShown + 1 >= shown) continue;  // always keep at least one shown track
+    if (static_cast<int>(gone.size()) + 1 >= static_cast<int>(s.tracks.size())) continue;
+    gone.insert(t);
+    if (inShown) ++goneInShown;
+  }
   const int count = static_cast<int>(gone.size());
   eraseTracks(s, gone);
+  // K-395: if erasing left no named/assigned/clipped tracks at all, usedTrackCount() would fall back
+  // to kShownTracks (4), making unnamed tracks appear undeletable or making 1 track jump back to 4.
+  // Give the surviving shown tracks default names while keeping Studio's trailing empty tracks intact.
+  const int wantShown = std::max(1, shown - goneInShown);
+  bool stillExplicit = !s.playlist.empty();
+  for (int t = 0; !stillExplicit && t < static_cast<int>(s.tracks.size()); ++t)
+    if (s.tracks[static_cast<size_t>(t)].mode != TrackMode::Unassigned || !s.tracks[static_cast<size_t>(t)].name.empty()) stillExplicit = true;
+  if (!stillExplicit && wantShown < static_cast<int>(s.tracks.size())) {
+    const int keep = std::min(wantShown, static_cast<int>(s.tracks.size()));
+    for (int t = 0; t < keep; ++t) s.tracks[static_cast<size_t>(t)].name = "Track " + std::to_string(t + 1);
+  }
   for (ObjectId pid : pats) {
     if (const int pi = s.patternIndex(pid); pi >= 0) s.patterns.erase(s.patterns.begin() + pi);
     for (PatternGroup& g : s.patternGroups) g.patterns.erase(std::remove(g.patterns.begin(), g.patterns.end(), pid), g.patterns.end());

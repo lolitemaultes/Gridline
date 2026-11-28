@@ -78,7 +78,7 @@ foreach(layout studio live logic)
   if(layout STREQUAL "studio")
     set(pick "8 browser tab 3")   # Studio: the Sounds tab
   else()
-    set(pick "8 browser cat 12")  # Clips, Smooth: the Folders category
+    set(pick "8 browser cat folders")  # Clips, Smooth: the Folders category
   endif()
   run(geo_${layout} ${layout} "6 browser rows on\n${pick}\n14 browser rows\n" ${pane})
   row_at(folder "${L}/sub")

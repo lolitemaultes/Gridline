@@ -275,7 +275,8 @@ member. Inviting the person again also works (see above).
   notes, knobs or samples).
 * **Listening aids are yours too**: soloing a mixer track, record arm, input monitoring, a live clip
   you launched, folded tracks and track heights, and listening switches inside Gridline's plugins
-  (band solo and listen, Delta, Hold, Latch, display freezes) stay on your computer. Mute is shared,
+  (band solo and listen, Delta, Hold, Latch, display freezes) stay on your computer. The audio
+  driver, named ports and their connections belong to each computer as well. Mute is shared,
   because it is part of the mix.
 * **Freezing is shared, hibernating is not.** A frozen channel or mixer track reaches everyone with
   its render; only the computer that froze it renders it again when it gets out of date. Hibernated

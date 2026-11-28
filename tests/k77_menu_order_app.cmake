@@ -250,10 +250,12 @@ checkTree(track
       "Properties > Random colour" "Properties > Icon >" "Properties > Name after its first clip" "Properties > Size >" "Properties > Reset name, colour and icon"
       "Group > Hold the next 1 track" "Group > Group with the track above" "Group > Auto colour group" "Group > Collapse grouped tracks" "Group > Fold" "Group > Ungroup"
       "Clips > Send" "Clips > Merge pattern clips" "Clips > Mute all clips" "Clips > Unmute all clips")
-check(clip
-      "Edit pattern" "Duplicate" "Make unique" "Split at pattern repeats" "Slice at the song position" "Chop" "Split by channel" "Merge selected clips" "Fit length to pattern" "Render clip to audio" "Render clip to file..." "Rename pattern..." "Pattern colour" "Select all clips of this pattern" "Delete")
-check(arrclip
-      "Mute clip" "Loop" "Rename..." "Send to Loupe" "Reverse" "Channel settings" "Audio" "Edit clip..." "Time stretch" "Render clip to audio" "Render clip to file..." "Bounce this track to audio")
+check(clip  # K-456: the clip's length with Duplicate and Make unique, splitting and merging in one submenu beside Chop
+      "Edit pattern" "Duplicate" "Make unique" "Fit length to pattern" "Split and merge" "Chop" "Render clip to audio" "Render clip to file..." "Rename pattern..." "Pattern colour" "Select all clips of this pattern" "Delete")
+checkTree(clip
+      "Split and merge > Split at pattern repeats" "Split and merge > Slice at the song position" "Split and merge > Split by channel" "Split and merge > Merge selected clips")
+check(arrclip  # K-456: open it, its switches, its settings in submenus (gain, pitch and fades no longer inline), tools, render, Delete
+      "Edit clip..." "Send to Loupe" "Channel settings" "Mute clip" "Loop" "Reverse" "Rename..." "Gain, pan, pitch and fades" "Audio" "Warp markers" "Time stretch" "Render clip to audio" "Render clip to file..." "Bounce this track to audio" "Delete")
 checkTree(arrclip
       "Audio > Follow the project tempo" "Audio > Fit to tempo" "Audio > Normalize" "Audio > Make unique as sample" "Audio > Pitch a semitone up" "Audio > Pitch a semitone down")
 check(playlist

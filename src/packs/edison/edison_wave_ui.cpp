@@ -18,6 +18,7 @@
 #include "edison_style.h"
 #include "edison_ui.h"
 #include "../../app/SmoothScrollUi.h"
+#include "../../app/TrackpadGestureUi.h"
 #include "../../app/LiveWaveUi.h"
 #include "../../app/WarpWave.h"
 #include "../../app/Keys.h"
@@ -347,15 +348,28 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
     for (float x : {x0, x1}) dl->AddLine(ImVec2(x, r0.y), ImVec2(x, g.p1.y), C(col::Loop, 0.8f), 1.f);
   }
   int hoverMarker = -1;
+  float hoverMarkerDist = 1e9f;
   const ImVec2 mouse = ImGui::GetIO().MousePos;
+  const float fh = std::round(rulerH * 0.55f);
+  const float hitLeft = std::max(5.0f, P(5)), hitRight = std::max(hitLeft, fh * 0.9f + P(2));
   for (size_t k = 0; k < shownC.markers.size(); ++k) {
     const auto& m = c.markers[k];
     const float x = std::round(g.xOf(static_cast<double>(m.pos))) + 0.5f;
-    if (x < g.p0.x - 50 || x > g.p1.x) continue;
-    const bool hot = std::fabs(mouse.x - x) < 5 && mouse.y >= r0.y && mouse.y < r1.y;
-    if (hot) hoverMarker = static_cast<int>(k);
-    dl->AddLine(ImVec2(x, r0.y), ImVec2(x, g.p1.y), C(col::Marker, hot || s.dragMarker == static_cast<int>(k) ? 1.f : 0.75f), 1.f);
-    const float fh = std::round(rulerH * 0.55f);
+    if (x < g.p0.x - P(50) || x > g.p1.x) continue;
+    const bool inRulerHit = mouse.y >= r0.y && mouse.y < r1.y && mouse.x >= x - hitLeft && mouse.x <= x + hitRight;
+    const float dist = std::fabs(mouse.x - x);
+    if (inRulerHit && dist < hoverMarkerDist) {
+      hoverMarker = static_cast<int>(k);
+      hoverMarkerDist = dist;
+    }
+  }
+  for (size_t k = 0; k < shownC.markers.size(); ++k) {
+    const auto& m = c.markers[k];
+    const float x = std::round(g.xOf(static_cast<double>(m.pos))) + 0.5f;
+    if (x < g.p0.x - P(50) || x > g.p1.x) continue;
+    const bool hot = hoverMarker == static_cast<int>(k);
+    const float lw = std::max(1.f, M.s * 0.9f);
+    dl->AddLine(ImVec2(x, r0.y), ImVec2(x, g.p1.y), C(col::Marker, hot || s.dragMarker == static_cast<int>(k) ? 1.f : 0.75f), lw);
     dl->AddTriangleFilled(ImVec2(x, r0.y + 1), ImVec2(x + fh * 0.9f, r0.y + 1 + fh * 0.5f), ImVec2(x, r0.y + 1 + fh), C(col::Marker));
     sty::textAt(dl, fm, fs, x + P(4), g.p0.y + P(4) + fs * 0.5f, C(col::Marker), m.name.c_str(), 0);
   }
@@ -377,7 +391,14 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
   static float rulerPressX = 0;  // a drag along the ruler scrubs (a click sets the play position)
   if (ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
     if (hoverMarker >= 0) {
-      s.dragMarker = hoverMarker;
+      if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        // K-420: double-clicking a marker selects from it to the next marker (or the end), without dragging it.
+        s.sel = markerSpan(c, static_cast<size_t>(hoverMarker));
+        s.cursor = s.sel.a;
+        s.dragMarker = -1;
+      } else {
+        s.dragMarker = hoverMarker;
+      }
     } else {
       rulerPressX = mouse.x;
       s.cursor = snapFrame(a, s, g, g.frameAt(mouse.x));
@@ -393,26 +414,26 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
   if (ImGui::IsItemDeactivated() && s.scrubbing) scrubEnd(a, s);
   if (hoverMarker < 0 && ImGui::IsItemHovered() && s.frames() > 0)
     a.setHint(i18n::tr("Ruler: click to set the play position (playing: jump there), drag to scrub"));
-  if (s.dragMarker >= 0 && ImGui::IsItemActive() && static_cast<size_t>(s.dragMarker) < c.markers.size()) {
+  const bool markerDragged = ImGui::GetIO().MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] >= P(3) * P(3);
+  if (s.dragMarker >= 0 && ImGui::IsItemActive() && markerDragged && static_cast<size_t>(s.dragMarker) < c.markers.size()) {
     // J-67: previewed where it will land (the snapped frame), gliding between snap points.
     const double to = static_cast<double>(snapFrame(a, s, g, g.frameAt(std::clamp(mouse.x, g.p0.x, g.p1.x))));
     float x = std::clamp(g.xOf(scrollui::glide(0x45444D4Bull, to, s.snap != 0, 0.5)), g.p0.x, g.p1.x);
-    dl->AddLine(ImVec2(x, r0.y), ImVec2(x, g.p1.y), C(col::Marker), 2.f);
+    dl->AddLine(ImVec2(x, r0.y), ImVec2(x, g.p1.y), C(col::Marker), std::max(2.f, P(2)));
   }
   if (s.dragMarker >= 0 && ImGui::IsItemDeactivated()) {
-    if (static_cast<size_t>(s.dragMarker) < c.markers.size()) {
+    if (markerDragged && static_cast<size_t>(s.dragMarker) < c.markers.size()) {
       int64_t to = snapFrame(a, s, g, g.frameAt(std::clamp(mouse.x, g.p0.x, g.p1.x)));
       if (to != c.markers[static_cast<size_t>(s.dragMarker)].pos) applyNow(a, s, "Move marker", moveMarker(c, static_cast<size_t>(s.dragMarker), to));
     }
     s.dragMarker = -1;
   }
   if (hoverMarker >= 0 && ImGui::IsItemHovered()) {
-    a.setHint("Marker: drag to move, double-click to rename, right-click for options");
+    a.setHint(i18n::tr("Marker: drag to move, double-click to select to next marker, right-click for options"));
     if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-      s.renameMarker = hoverMarker;
-      s.renameRegion = -1;
-      std::snprintf(s.renameBuf, sizeof s.renameBuf, "%s", c.markers[static_cast<size_t>(hoverMarker)].name.c_str());
-      openTool(s, Tool::Rename);
+      s.sel = markerSpan(c, static_cast<size_t>(hoverMarker));
+      s.cursor = s.sel.a;
+      s.dragMarker = -1;
     }
   }
   if (ImGui::IsItemClicked(ImGuiMouseButton_Right) && hoverMarker >= 0) {
@@ -432,9 +453,8 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
         applyNow(a, s, "Snap marker", moveMarker(c, static_cast<size_t>(s.renameMarker), nearestZeroCrossing(c.a(), m.pos, static_cast<int64_t>(s.rate() * 0.01))));
       }
       if (ImGui::MenuItem(i18n::tr("Select to next marker"))) {
-        const int64_t from = c.markers[static_cast<size_t>(s.renameMarker)].pos;
-        const int64_t to = static_cast<size_t>(s.renameMarker) + 1 < c.markers.size() ? c.markers[static_cast<size_t>(s.renameMarker) + 1].pos : s.frames();
-        s.sel = {from, to};
+        s.sel = markerSpan(c, static_cast<size_t>(s.renameMarker));
+        s.cursor = s.sel.a;
       }
       if (ImGui::MenuItem(i18n::tr("Remove"))) applyNow(a, s, "Remove marker", removeMarker(c, static_cast<size_t>(s.renameMarker)));
     }
@@ -594,31 +614,69 @@ void drawWaveArea(App& a, Session& s, ImVec2 p0, ImVec2 p1, const sty::Metrics& 
     s.edgeDrag = 0;
   }
   if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && !(s.spectral && s.brushMode)) {
-    // Double-click: the region under the mouse, else the span between markers.
-    const int64_t f = static_cast<int64_t>(fm0);
-    Range r{0, s.frames()};
-    bool found = false;
-    for (const auto& rg : c.regions)
-      if (f >= rg.start && f < rg.end) r = {rg.start, rg.end}, found = true;
-    if (!found)
-      for (const auto& m : c.markers) {
-        if (m.pos <= f) r.a = std::max(r.a, m.pos);
-        if (m.pos > f) r.b = std::min(r.b, m.pos);
-      }
-    s.sel = r;
+    // K-420: double-clicking directly on a marker line/label in the lanes selects from it to the next marker (or end).
+    int hitM = -1;
+    float bestD = std::max(5.0f, P(5));
+    for (size_t k = 0; k < c.markers.size(); ++k) {
+      const float mx = std::round(g.xOf(static_cast<double>(c.markers[k].pos))) + 0.5f;
+      const float d = std::fabs(mouse.x - mx);
+      if (d <= bestD) bestD = d, hitM = static_cast<int>(k);
+    }
+    if (hitM >= 0) {
+      s.sel = markerSpan(c, static_cast<size_t>(hitM));
+      s.cursor = s.sel.a;
+    } else {
+      // Double-click elsewhere: the region under the mouse, else the span between markers.
+      const int64_t f = static_cast<int64_t>(fm0);
+      Range r{0, s.frames()};
+      bool found = false;
+      for (const auto& rg : c.regions)
+        if (f >= rg.start && f < rg.end) r = {rg.start, rg.end}, found = true;
+      if (!found)
+        for (const auto& m : c.markers) {
+          if (m.pos <= f) r.a = std::max(r.a, m.pos);
+          if (m.pos > f) r.b = std::min(r.b, m.pos);
+        }
+      s.sel = r;
+    }
   }
   double wheelFrames = 0;  // J-67: horizontal scroll input this frame (frames), eased by the smooth scroller
   bool wheelNotch = false;
   if (hovered) {
-    if (io.MouseWheel != 0) {
-      if (io.KeyCtrl || io.KeySuper)
-        s.vZoom = std::clamp(s.vZoom * (io.MouseWheel > 0 ? 1.25f : 0.8f), 0.25f, 16.f);
-      else if (io.KeyShift)
-        wheelFrames -= io.MouseWheel * s.viewLen * 0.1, wheelNotch = smoothscroll::isNotch(io.MouseWheel);
-      else
-        zoomBy(s, io.MouseWheel > 0 ? 0.8 : 1.25, fm0);
+    // K-410: trackpad pinch-to-zoom (anchored on the sample under the pointer), smart-zoom toggle,
+    // and smooth 2-finger pan without accidentally triggering discrete wheel zoom.
+    float pinchMag = 0.0f;
+    ImVec2 pinchPos{};
+    if (!live && gestureui::consumePinch(hovered, g.p0.x, g.p0.y, g.p1.x, g.p1.y, pinchMag, pinchPos)) {
+      const double factor = gesture::pinchFactor(pinchMag);
+      if (io.KeyAlt) {
+        s.vZoom = std::clamp(s.vZoom * static_cast<float>(factor), 0.25f, 16.f);
+      } else {
+        const double anchorFrame = std::clamp(g.frameAt(pinchPos.x), 0.0, n);
+        zoomBy(s, 1.0 / factor, anchorFrame);
+      }
     }
-    if (io.MouseWheelH != 0) wheelFrames += io.MouseWheelH * s.viewLen * 0.1, wheelNotch = smoothscroll::isNotch(io.MouseWheelH);
+    ImVec2 smartPos{};
+    if (!live && gestureui::consumeSmartZoom(hovered, g.p0.x, g.p0.y, g.p1.x, g.p1.y, smartPos)) {
+      const double anchorFrame = std::clamp(g.frameAt(smartPos.x), 0.0, n);
+      s.smartZoom.toggle(s.viewStart, s.viewLen, n, anchorFrame);
+    }
+    float panDx = 0.0f, panDy = 0.0f;
+    const bool pan2d = !live && gestureui::consumePan2D(hovered, g.p0.x, g.p0.y, g.p1.x, g.p1.y, panDx, panDy);
+    if (pan2d) {
+      wheelFrames += static_cast<double>(panDx) * (s.viewLen / std::max(1.0f, g.W()));
+      wheelNotch = false;
+    } else {
+      if (io.MouseWheel != 0) {
+        if (io.KeyCtrl || io.KeySuper)
+          s.vZoom = std::clamp(s.vZoom * (io.MouseWheel > 0 ? 1.25f : 0.8f), 0.25f, 16.f);
+        else if (io.KeyShift)
+          wheelFrames -= io.MouseWheel * s.viewLen * 0.1, wheelNotch = smoothscroll::isNotch(io.MouseWheel);
+        else
+          zoomBy(s, io.MouseWheel > 0 ? 0.8 : 1.25, fm0);
+      }
+      if (io.MouseWheelH != 0) wheelFrames += io.MouseWheelH * s.viewLen * 0.1, wheelNotch = smoothscroll::isNotch(io.MouseWheelH);
+    }
     char b[256];
     if (s.spectral) {
       // Time, frequency (and its note), and the level shown there.

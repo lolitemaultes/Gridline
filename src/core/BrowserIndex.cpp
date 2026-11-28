@@ -1,5 +1,6 @@
 // Gridline — browser content model (see BrowserIndex.h).
 #include "BrowserIndex.h"
+#include "ThreadJoin.h"
 #include "ThreadName.h"
 #include "FileOps.h"
 #include "RemoteFs.h"
@@ -1019,10 +1020,14 @@ void Index::stop() {
   }
   wake_.notify_all();
   if (worker_.joinable()) {
-    // The worker runs as a background job: on a busy machine it may not get a core again for
-    // seconds (Windows: about 4 s), so it is lifted to normal scheduling until it has ended.
-    platform::ThreadLift lift(worker_);
-    worker_.join();
+    if (worker_.get_id() == std::this_thread::get_id()) {
+      worker_.detach();
+    } else {
+      // The worker runs as a background job: on a busy machine it may not get a core again for
+      // seconds (Windows: about 4 s), so it is lifted to normal scheduling until it has ended.
+      platform::ThreadLift lift(worker_);
+      gl::threads::safeJoin(worker_);
+    }
   }
   busy_ = false;
 }

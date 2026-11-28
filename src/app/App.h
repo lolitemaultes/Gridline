@@ -27,8 +27,12 @@
 #include "../core/Settings.h"
 #include "../core/SmoothScroll.h"
 #include "../core/SmoothZoom.h"
+#include "../core/TrackpadGesture.h"
 #include "../core/Templates.h"
+#include "../core/ThreadJoin.h"
 #include "../engine/AudioEngine.h"
+#include "../engine/AudioWasapi.h"
+#include "../engine/MidiOutTake.h"
 #include "../engine/ProjectLoad.h"
 #include "../engine/Sample.h"
 #include "../engine/UiSounds.h"
@@ -58,6 +62,7 @@ struct PianoRollState {
   smoothscroll::Axis axX, axY;      // J-67: smooth scrolling / elastic edges
   smoothzoom::Glide zoomGlide;      // J-188: smooth zooming
   smoothzoom::RowGlide rowGlide;    // K-24: Alt+wheel row height, anchored at the pointer
+  gesture::SmartZoomTimeline smartZoom;  // K-410: trackpad smart-zoom toggle state
   Tool tool = Tool::Draw;
   Snap snap = Snap::Line;
   SnapGrid effGrid;          // grid the last frame snapped to (for the snap chip; may be a fraction of a tick)
@@ -127,6 +132,7 @@ struct PlaylistState {
   // K-24: vertical zoom (the track height) anchored at the pointer: Alt+wheel,
   // the vertical scroller's ends, the View menu; remembered in ui.playlistTrackHeight.
   smoothzoom::RowGlide rowGlide;
+  gesture::SmartZoomTimeline smartZoom;  // K-410: trackpad smart-zoom toggle state
   Tool tool = Tool::Draw;
   Snap snap = Snap::Line;
   SnapGrid effGrid;              // grid the last frame snapped to (for the snap chip; may be a fraction of a tick)
@@ -171,6 +177,7 @@ struct PlaylistState {
   bool showFades = true;                 // Shift+F: fade handles on audio clips
   int patternPreview = 0;                // J-173: pattern clips show 0 notes and automation, 1 notes, 2 automation
   bool zeroCross = false;                // audio clip edges land on zero crossings
+  bool sliceSnapTransients = false;      // K-418: Slice tool snaps cuts to nearest audio transient
   bool wideHeaders = false;              // track headers: wide / narrow
   Snap lastSnap = Snap::Line;            // snap the magnet restores
   int quickZoom = 0;                     // pending quick zoom (1..3: 4 / 16 / 64 bars fill the view)
@@ -231,7 +238,7 @@ class App {
   Document doc;
   // J-111: collaborative projects (app/CollabUi.h); made on first use.
   std::unique_ptr<collab::Controller> collab;
-  bool showCollab = false, showJoin = false, showSyncReview = false;
+  bool showCollab = false, showJoin = false, showSyncReview = false, showChat = false;
   AudioEngine engine{44100.0};
   ProgramBuilder builder;
   Settings settings;
@@ -278,6 +285,10 @@ class App {
     std::atomic<bool> running{false}, cancel{false}, finished{false};
     std::atomic<size_t> done{0}, total{0};
     std::string summary;  // written by the worker before `finished`
+    ~PresetImport() {
+      cancel = true;
+      gl::threads::safeJoin(worker);
+    }
   } presetImport;
   void startPresetImport();
   void pollPresetImport();
@@ -352,6 +363,8 @@ class App {
   int audioBuffer = 256;
   bool audioReopen = false;
   std::string audioStatus;
+  // K-95: cross-platform audio backend status, exact latency readout, and automatic fallback reason.
+  wasapi::BackendStatus audioBackendStatus;
   // K-6: ASIO backend (Windows; simulated drivers with GRIDLINE_FAKE_ASIO). Filled by main.
   struct AsioState {
     bool available = false;  // offered in Settings > Audio
@@ -372,12 +385,61 @@ class App {
     bool outputReady = false;
     bool panelRequest = false;  // UI: open the driver's control panel (main loop)
   } asio;
+  // K-357: JACK / PipeWire audio backend (Linux; simulated server with GRIDLINE_FAKE_JACK). Filled by main.
+  struct JackPortView {
+    std::string shortName;
+    std::string fullName;
+    std::string alias;
+    bool input = false;
+    int channel = 0;
+    std::vector<std::string> connected;
+  };
+  struct JackState {
+    bool available = false;        // offered in Settings > Audio
+    bool libraryMissing = false;   // libjack / pipewire-jack could not be loaded
+    bool active = false;           // the engine runs on JACK now
+    bool viaPipeWire = false;
+    bool fake = false;
+    bool waitingReturn = false;    // fell back to SDL after shutdown, probing for server return
+    std::string error;             // why the last open failed or the server stopped
+    std::string clientName;
+    int rate = 0;
+    int buffer = 0;
+    int inputs = 0;
+    int outputs = 0;
+    int extraPairs = 0;
+    int inLatency = 0;
+    int outLatency = 0;
+    int xruns = 0;
+    std::vector<JackPortView> inPorts;
+    std::vector<JackPortView> outPorts;
+    std::vector<std::string> extOutPorts;  // other apps' output ports (connectable to our inputs)
+    std::vector<std::string> extInPorts;   // other apps' input ports (connectable from our outputs)
+    // UI / project -> main loop requests:
+    bool reconnectRequest = false;
+    bool restoreProjectLinks = false;
+    bool refreshGraphRequest = false;
+    struct PatchRequest {
+      bool connect = true;
+      std::string own;
+      std::string peer;
+    };
+    std::vector<PatchRequest> patchRequests;
+  } jack;
+  std::function<std::vector<Song::PortLink>()> captureJackLinks;  // K-357: live snapshot at save time
   // Audio input & recording (J-8): input device (Settings → Audio), the
   // recording session (armed mixer tracks → playlist audio clips) and the
   // record filter (what the record button records).
   std::vector<std::string> audioInputDevices;
   std::string audioInputDevice;  // "" = no input, "*" = system default
-  int audioInputChannels = 2;    // channels the input stream delivers
+  int audioInputChannels = 2;    // channels the engine receives (clamped to kMaxInputChannels)
+  int audioInputHwChannels = 0;  // K-430: actual hardware channels opened on the capture device
+  int audioInputReqChannels = 0; // K-430: channels requested in Settings > Audio
+  int audioInputRate = 0;        // K-430: capture device sample rate (may differ from engine rate)
+  int audioInputBuffer = 0;      // K-430: capture device buffer frames (have.samples)
+  int audioInputOutFrames = 0;   // K-430: output buffer frames when input opened
+  double audioInputOpenedAt = 0; // K-430: app.now when capture device opened (zero-frame stall warning)
+  bool audioInputLiveDevice = false;  // K-430: real SDL capture device (not synth/loopback/test)
   int audioOutputPairs = 0;      // K-101 follow-up: extra output pairs of the system audio device (channels 3-4, ...)
   int audioInputLatency = 0;     // samples: capture buffer + jitter buffer + output buffer
   std::string audioInputStatus;
@@ -430,6 +492,8 @@ class App {
   int countInLength = 1;                       // N59-10: the count-in's length while it is off (the switches turn it on at this)
   bool stepRecord = false;                     // step editing from the keyboard (stopped transport)
   NoteRecorder recorder;
+  MidiOutTake outTake;         // K-438: recording an instrument's MIDI output (menuparity::midiOutTakeFrame)
+  bool outTakePlayed = false;  // the transport played since it started
   StepRecorder stepRecorder;
   MpeInput mpeIn;  // K-99: an MPE controller's per-note pitch, pressure and timbre (recorded into the notes' lanes)
   NoteCapture capture;  // K-112c: notes played while nothing records (the Live bar's Capture)
@@ -484,6 +548,7 @@ class App {
   const std::string& projectLoadName() const { return load_.shownAs; }  // the file being opened
   struct ImportReport {
     std::string source;                   // file name
+    bool missingPluginsOnly = false;      // Q-14: native project missing-plugins view (not an FLP import)
     std::vector<std::pair<std::string, int>> counts;
     std::vector<std::pair<std::string, int>> unmapped;
     std::vector<std::pair<std::string, int>> mapped;  // J-94: "FL plugin → Gridline plugin"
@@ -643,6 +708,7 @@ class App {
   // Log level / log file and language from the settings.
   void applySettingsHooks();
   std::string languageDir() const;  // assets/i18n: translation catalogues
+  bool freshInstall() const { return freshInstall_; }  // no settings file existed at start
   std::string templatesDir() const;  // <config>/templates (user templates)
   // Shipped + user templates (cached; rescan after saving or deleting one).
   const std::vector<TemplateInfo>& templates(bool rescan = false);
@@ -684,6 +750,13 @@ class App {
   bool autosaving_ = false;      // J-48: autosave writes quietly
   bool wasRecording_ = false;    // J-48: record start / stop sounds
   bool wasScanning_ = false;     // J-48: plugin scan finished sound
+  uint64_t lastHostedGen_ = 0;   // Q-14: resolves missing placeholders / stand-ins as scans register plugins
+  // The project's installed-plugin types with no scanned class yet (as of revision missingTypesRev_):
+  // a scan that registers one of them is what "newly scanned" means (resolveNewlyScannedPlugins).
+  std::set<std::string> missingHostedTypes_;
+  uint64_t missingTypesRev_ = ~uint64_t{0};
+  void noteMissingHostedTypes();
+  void resolveNewlyScannedPlugins();
   std::future<std::unique_ptr<uisound::Bank>> soundThemeLoad_;  // J-133: theme loading off the UI thread
 };
 

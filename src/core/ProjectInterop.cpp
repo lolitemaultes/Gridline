@@ -682,6 +682,186 @@ int adoptCacheFiles(Song& song, const std::string& cacheRoot, const std::string&
   return static_cast<int>(done.size()) > 0 ? std::max(copied, 1) : 0;
 }
 
+// ---- files Gridline made itself (K-435: presets that keep their sound) ----
+
+std::vector<std::string> gridlineFileRoots() {
+  return {archive::defaultCacheRoot(), (fs::u8path(platform::configRoot()) / "gridline").u8string()};
+}
+
+namespace {
+
+// `f` inside `root` (both made absolute and normal): the part below it, empty when not inside.
+fs::path below(const fs::path& root, const fs::path& f) {
+  auto r = root.begin();
+  auto i = f.begin();
+  for (; r != root.end() && i != f.end(); ++r, ++i)
+    if (*r != *i) return {};
+  if (r != root.end() || i == f.end()) return {};
+  fs::path rest;
+  for (; i != f.end(); ++i) rest /= *i;
+  return rest;
+}
+
+fs::path normalRoot(const std::string& root) {
+  std::error_code ec;
+  fs::path p = fs::weakly_canonical(pathOf(root), ec);
+  if (ec || p.empty()) p = pathOf(root).lexically_normal();
+  // (a trailing separator leaves an empty last part, which no file path has)
+  if (!p.empty() && p.filename().empty()) p = p.parent_path();
+  return p;
+}
+
+bool hasProjectFile(const fs::path& dir, const std::string& stem) {
+  std::error_code ec;
+  if (!stem.empty())
+    return fs::is_regular_file(dir / fs::u8path(stem + ".gridline.json"), ec) || fs::is_regular_file(dir / fs::u8path(stem + ".gridline"), ec);
+  for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+    const std::string n = it->path().filename().u8string();
+    for (const char* ext : {".gridline.json", ".gridline"}) {
+      const size_t e = std::strlen(ext);
+      if (n.size() > e && n.compare(n.size() - e, e, ext) == 0) return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+bool isGridlineMadeFile(const std::string& path, const std::vector<std::string>& roots) {
+  const fs::path p0 = pathOf(path);
+  if (p0.empty() || !p0.is_absolute()) return false;
+  std::error_code ec;
+  fs::path f = fs::weakly_canonical(p0, ec);
+  if (ec || f.empty()) f = p0.lexically_normal();
+  for (const auto& r : roots) {
+    if (r.empty()) continue;
+    const fs::path rest = below(normalRoot(r), f);
+    if (rest.empty()) continue;
+    // The rendered instruments are kept for good (that folder is their home): only referred to.
+    return rest.begin()->u8string() != "Rendered instruments";
+  }
+  // The folders Gridline makes beside a project (R11-02): they go when the project's folder goes.
+  const fs::path dir = f.parent_path();
+  const std::string name = dir.filename().u8string();
+  static const std::string kSamples = " Samples";
+  if (name == "Edited audio") return hasProjectFile(dir.parent_path(), "");
+  if (name.size() > kSamples.size() && name.compare(name.size() - kSamples.size(), kSamples.size(), kSamples) == 0)
+    return hasProjectFile(dir.parent_path(), name.substr(0, name.size() - kSamples.size()));
+  return false;
+}
+
+int bundleStateFiles(PluginState& st, const std::string& folder, const std::string& relativeTo, const std::vector<std::string>& roots, std::string* err) {
+  if (folder.empty()) return 0;
+  std::map<std::string, std::string> done;  // source -> the name the state now gives it
+  int changed = 0;
+  const fs::path dest = fs::u8path(folder);
+  forEachStateFileRef(st, [&](std::string& p) {
+    if (auto it = done.find(p); it != done.end()) {
+      p = it->second;
+      ++changed;
+      return;
+    }
+    if (!existsFile(p) || !isGridlineMadeFile(p, roots)) return;
+    std::error_code ec;
+    fs::create_directories(dest, ec);
+    const fs::path src = fs::u8path(p);
+    fs::path to;
+    for (int k = 0;; ++k) {  // a free name, the same file, or a copy already there with the same content
+      to = dest / fs::u8path(numberedName(fileNameOf(p), k));
+      if (!fs::exists(to, ec) || fs::equivalent(src, to, ec) || sameContent(src, to)) break;
+    }
+    if (!fs::exists(to, ec)) {
+      fs::copy_file(src, to, ec);
+      if (ec) {
+        if (err && err->empty()) *err = "could not copy " + fileNameOf(p) + ": " + ec.message();
+        return;
+      }
+    }
+    std::string named = to.u8string();
+    if (!relativeTo.empty()) {
+      const fs::path rel = to.lexically_normal().lexically_relative(fs::u8path(relativeTo).lexically_normal());
+      if (!rel.empty() && rel.is_relative() && *rel.begin() != "..") named = rel.generic_u8string();
+    }
+    done[p] = named;
+    p = named;
+    ++changed;
+  });
+  return changed;
+}
+
+std::string relinkGridlineFile(const std::string& path, const std::vector<std::string>& roots) {
+  const fs::path p = pathOf(path).lexically_normal();
+  if (p.empty() || !p.is_absolute()) return {};
+  std::vector<fs::path> parts(p.begin(), p.end());
+  std::error_code ec;
+  for (const auto& r : roots) {
+    // (the root as given, so the found name reads as the root's other files do; a trailing separator dropped)
+    fs::path root = pathOf(r).lexically_normal();
+    if (!root.empty() && root.filename().empty()) root = root.parent_path();
+    if (root.empty()) continue;
+    // The root's own name ("unpacked", "gridline") marks where it was in the saved name; what follows
+    // it is the same below the root now.
+    const fs::path m = root.filename();
+    if (m.empty()) continue;
+    for (size_t i = parts.size(); i-- > 0;) {
+      if (parts[i] != m || i + 1 >= parts.size()) continue;
+      fs::path rest;
+      for (size_t j = i + 1; j < parts.size(); ++j) rest /= parts[j];
+      const fs::path cand = root / rest;
+      if (cand != p && fs::is_regular_file(cand, ec)) return cand.u8string();
+      // An unpacked copy ("<name>-<version>/file") made again for another version of its source: the
+      // newest copy of the same name that holds the same file.
+      const std::string top = rest.begin()->u8string();
+      const size_t dash = top.rfind('-');
+      if (std::distance(rest.begin(), rest.end()) < 2 || dash == std::string::npos || dash == 0) break;
+      fs::path inner;
+      for (auto it = std::next(rest.begin()); it != rest.end(); ++it) inner /= *it;
+      const std::string prefix = top.substr(0, dash + 1);
+      fs::path best;
+      fs::file_time_type bestT{};
+      for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        const std::string n = it->path().filename().u8string();
+        if (n.size() <= prefix.size() || n.compare(0, prefix.size(), prefix) != 0 || n.find(".part") != std::string::npos) continue;
+        const fs::path c = it->path() / inner;
+        std::error_code e2;
+        if (!fs::is_regular_file(c, e2)) continue;
+        const auto t = fs::last_write_time(c, e2);
+        if (best.empty() || t > bestT) best = c, bestT = t;
+      }
+      if (!best.empty()) return best.u8string();
+      break;
+    }
+  }
+  return {};
+}
+
+int resolveStateFiles(PluginState& st, const std::string& baseDir, const std::vector<std::string>& roots) {
+  int changed = 0;
+  forEachStateFileRef(st, [&](std::string& p) {
+    const fs::path f = pathOf(p);
+    if (f.empty()) return;
+    std::error_code ec;
+    if (f.is_relative()) {
+      if (baseDir.empty()) return;
+      const fs::path abs = (pathOf(baseDir) / f).lexically_normal();
+      if (fs::is_regular_file(abs, ec)) p = abs.u8string(), ++changed;
+      return;
+    }
+    if (fs::exists(f, ec) || remotefs::isRemote(p)) return;
+    if (std::string moved = relinkGridlineFile(p, roots); !moved.empty()) p = moved, ++changed;
+  });
+  return changed;
+}
+
+int relinkGridlineFiles(Song& song, const std::vector<std::string>& roots) {
+  return forEachFileRef(song, [&](std::string& p) {
+    const fs::path f = pathOf(p);
+    std::error_code ec;
+    if (f.empty() || !f.is_absolute() || remotefs::isRemote(p) || fs::exists(f, ec)) return;
+    if (std::string moved = relinkGridlineFile(p, roots); !moved.empty()) p = moved;
+  });
+}
+
 int adoptProjectFolders(Song& song, const std::vector<std::pair<std::string, std::string>>& folders, const std::string& projectDir, std::string* err) {
   if (projectDir.empty() || folders.empty()) return 0;
   std::error_code ec;

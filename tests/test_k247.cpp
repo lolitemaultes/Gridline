@@ -15,8 +15,13 @@
 //     any block size; Bar, Play and Note restarts; calm against wild; bipolar and up only ranges;
 //     Random's steps, Middle spread, quantise levels, glide, Note and Roll triggers; a source that
 //     moves nothing is not run; no allocation; an export is bit-identical from run to run.
+//  6. (0.7.9) Drawn shapes: line, smooth and step points; every built-in shape as points; flip,
+//     invert, clear, grid snap and pencil strokes; one undo step each; the file (older points open as
+//     lines); the engine plays the table with no allocation. Presets: factory, save, list, load, delete.
 #include <algorithm>
 #include <atomic>
+#include <filesystem>
+#include <unistd.h>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -923,6 +928,271 @@ void testExportIdentical() {
 }
 }  // namespace
 
+namespace {
+// --------------------------------------------------------------- 6. (0.7.9) drawn shapes and presets
+
+float tableAt(const SongLfo& l, double x) {
+  lfo::DrawnTable t{};
+  lfo::buildTable(l, t);
+  return lfo::shapeValue(LfoShape::Drawn, x, 0, 0.5f, 4, 1, &t);
+}
+
+void testPointKinds() {
+  SongLfo l;
+  l.shape = LfoShape::Drawn;
+  l.points = {{0, -1, 0, kLfoPointSmooth}, {0.5f, 1, 0, kLfoPointStep}};
+  expect(near(tableAt(l, 0.25), 0, 2e-2) && tableAt(l, 0.05) < -0.9f && tableAt(l, 0.45) > 0.9f, "a smooth point: an S curve, flat at both ends");
+  expect(near(tableAt(l, 0.6), 1, 1e-6) && near(tableAt(l, 0.99), 1, 1e-6), "a step point holds its value to the next point");
+  l.points = {{0, -1, 0.8f, kLfoPointCurve}, {0.5f, 1, 0, kLfoPointCurve}};
+  const float bent = tableAt(l, 0.25);
+  l.points[0].curve = 0;
+  expect(near(tableAt(l, 0.25), 0, 2e-2) && std::fabs(bent) > 0.2f, "a line point bends with its curve");
+  // Every built-in shape as points draws the same cycle.
+  bool same = true;
+  for (LfoShape sh : {LfoShape::Sine, LfoShape::Triangle, LfoShape::SawUp, LfoShape::SawDown, LfoShape::Square, LfoShape::RandomHold}) {
+    SongLfo b;
+    b.shape = sh;
+    b.pulseWidth = 0.3f;
+    b.randomSteps = 4;
+    b.seed = 5;
+    SongLfo d = b;
+    d.shape = LfoShape::Drawn;
+    d.points = lfo::pointsFromShape(b);
+    double worst = 0;
+    for (int k = 0; k < 200; ++k) {
+      const double x = (k + 0.5) / 200.0;
+      worst = std::max(worst, static_cast<double>(std::fabs(lfo::shapeValue(sh, x, 0, b.pulseWidth, b.randomSteps, b.seed, nullptr) - tableAt(d, x))));
+    }
+    if (worst > 0.03) std::printf("# %s as points: off by %.3f\n", lfo::shapeName(sh), worst);
+    same = same && worst <= 0.03;
+  }
+  expect(same, "Edit this shape: every built-in shape as points plays the same cycle");
+}
+
+void testShapeOps() {
+  SongLfo l;
+  l.shape = LfoShape::Drawn;
+  l.points = {{0, -1, 0, kLfoPointCurve}, {0.25f, 1, 0, kLfoPointCurve}};  // up fast, down slowly
+  SongLfo f = l;
+  f.points = lfo::flipPoints(l.points);
+  bool mirrored = true;
+  for (int k = 1; k < 100; ++k) {
+    const double x = k / 100.0;
+    mirrored = mirrored && near(tableAt(f, x), tableAt(l, 1.0 - x), 3e-2);
+  }
+  expect(mirrored, "flip: the cycle runs backwards");
+  SongLfo st = l;
+  st.points = {{0, 1, 0, kLfoPointStep}, {0.25f, -1, 0, kLfoPointStep}};
+  SongLfo sf = st;
+  sf.points = lfo::flipPoints(st.points);
+  bool stepMirror = true;
+  for (int k = 1; k < 100; ++k)
+    if (k != 75) stepMirror = stepMirror && near(tableAt(sf, k / 100.0), tableAt(st, 1.0 - k / 100.0), 1e-6);
+  expect(stepMirror, "flip keeps steps as steps");
+  SongLfo inv = l;
+  inv.points = lfo::invertPoints(l.points);
+  expect(near(tableAt(inv, 0.25), -tableAt(l, 0.25), 1e-5) && near(tableAt(inv, 0.6), -tableAt(l, 0.6), 1e-5), "invert: upside down");
+  SongLfo c = l;
+  c.points = lfo::clearPoints();
+  expect(c.points.size() == 1 && near(tableAt(c, 0.3), 0, 1e-6) && near(tableAt(c, 0.9), 0, 1e-6), "clear: a flat line");
+  expect(near(lfo::snapX(0.13f, 4), 0.25f) && near(lfo::snapX(0.13f, 16), 0.125f) && near(lfo::snapX(0.13f, 0), 0.13f), "snap to the grid");
+  // A pencil stroke with a 16 grid: one step per crossed cell, the rest of the shape kept.
+  SongLfo p;
+  p.shape = LfoShape::Drawn;
+  p.points = lfo::clearPoints();
+  const auto pts = lfo::drawStroke(p, {{0.0f, 1.0f}, {0.24f, 1.0f}}, 16);
+  p.points = pts;
+  const bool steps = std::count_if(pts.begin(), pts.end(), [](const LfoPoint& q) { return q.kind == kLfoPointStep && q.x < 0.25f; }) >= 4;
+  expect(steps && near(tableAt(p, 0.1), 1, 1e-6) && near(tableAt(p, 0.2), 1, 1e-6) && near(tableAt(p, 0.5), 0, 1e-6) && near(tableAt(p, 0.9), 0, 1e-6),
+         "a pencil stroke on a grid: steps where it crossed, the old shape after");
+  // Freehand: a rising stroke over the whole cycle follows the hand.
+  SongLfo h;
+  h.shape = LfoShape::Drawn;
+  h.points = lfo::clearPoints();
+  std::vector<std::pair<float, float>> stroke;
+  for (int k = 0; k <= 400; ++k) stroke.emplace_back(k / 400.0f, std::sin(6.2831853f * (k / 400.0f)));
+  h.points = lfo::drawStroke(h, stroke, 0);
+  bool follows = h.points.size() <= static_cast<size_t>(kLfoMaxPoints);
+  for (int k = 1; k < 20; ++k) follows = follows && near(tableAt(h, k / 20.0), std::sin(6.283185307 * (k / 20.0)), 0.12);
+  expect(follows, "a freehand stroke follows the hand within the point limit");
+  // Backwards strokes work too.
+  SongLfo bk;
+  bk.shape = LfoShape::Drawn;
+  bk.points = lfo::clearPoints();
+  bk.points = lfo::drawStroke(bk, {{0.9f, -1.0f}, {0.6f, -1.0f}}, 8);
+  expect(near(tableAt(bk, 0.7), -1, 1e-6) && near(tableAt(bk, 0.3), 0, 1e-6), "a stroke drawn right to left");
+}
+
+void testDrawnDocument() {
+  Rig r;
+  Document d(r.s);
+  SongLfo l;
+  const ObjectId id = d.addLfo(l);
+  const size_t pos = d.history().position();
+  // "Edit this shape" is one edit; a stroke is one edit; undo takes back one at a time.
+  d.editLfo(id, "edit LFO shape", [](SongLfo& q) { q.points = lfo::pointsFromShape(q), q.shape = LfoShape::Drawn; });
+  const auto stroke = lfo::drawStroke(*d.song().lfo(id), {{0.5f, 1}, {0.7f, 1}}, 16);
+  d.editLfo(id, "draw LFO shape", [stroke](SongLfo& q) { q.points = stroke; });
+  expect(d.history().position() == pos + 2 && d.song().lfo(id)->points == stroke, "Edit this shape and a stroke: two undo steps");
+  d.undo();
+  expect(d.song().lfo(id)->shape == LfoShape::Drawn && d.song().lfo(id)->points == lfo::pointsFromShape(SongLfo{}), "undo takes back the stroke");
+  d.undo();
+  expect(d.song().lfo(id)->shape == LfoShape::Sine, "and then the conversion");
+  d.redo();
+  d.redo();
+  expect(d.song().lfo(id)->points == stroke, "redo brings both back");
+  // Kinds out of range are clamped by the document.
+  d.editLfo(id, "x", [](SongLfo& q) { q.points[0].kind = 9; });
+  expect(d.song().lfo(id)->points[0].kind == kLfoPointCurve, "an unknown point kind becomes a line");
+  // A full stroke still fits the limit.
+  std::vector<LfoPoint> many;
+  for (int k = 0; k < 200; ++k) many.push_back({k / 200.0f, 0, 0, kLfoPointStep});
+  d.editLfo(id, "x", [many](SongLfo& q) { q.points = many; });
+  expect(d.song().lfo(id)->points.size() == static_cast<size_t>(kLfoMaxPoints), "at most 128 points");
+}
+
+void testDrawnFile() {
+  Rig r;
+  Document d(r.s);
+  SongLfo l;
+  l.shape = LfoShape::Drawn;
+  l.points = {{0, -1, 0.3f, kLfoPointCurve}, {0.25f, 1, 0, kLfoPointSmooth}, {0.5f, 0.5f, 0, kLfoPointStep}};
+  const ObjectId id = d.addLfo(l);
+  const Json j = songToJson(d.song());
+  Song back;
+  expect(songFromJson(j, back) && back.lfos == d.song().lfos, "drawn points with kinds round trip");
+  // Line points write three numbers, as before; smooth and step write a fourth.
+  const Json* pts = j.find("lfos")->array[0].find("points");
+  expect(pts && pts->array.size() == 3 && pts->array[0].array.size() == 3 && pts->array[1].array.size() == 4 && pts->array[2].array.size() == 4,
+         "a line point saves as before; smooth and step add their kind");
+  // An older project's points (three numbers) open as lines; one without points has none.
+  Json old = j;
+  for (Json& p : old.object["lfos"].array[0].object["points"].array) p.array.resize(3);
+  Song ob;
+  expect(songFromJson(old, ob) && ob.lfos[0].points.size() == 3 &&
+             std::all_of(ob.lfos[0].points.begin(), ob.lfos[0].points.end(), [](const LfoPoint& q) { return q.kind == kLfoPointCurve; }),
+         "older drawn points open as lines");
+  Json none = j;
+  none.object["lfos"].array[0].object.erase("points");
+  Song nb;
+  expect(songFromJson(none, nb) && nb.lfos.size() == 1 && nb.lfos[0].points.empty(), "a drawn source without points opens (the default shape)");
+  (void)id;
+  // A project with no drawn shapes saves no point kinds.
+  Rig plain;
+  Document pd(plain.s);
+  pd.addLfo(SongLfo{});
+  const std::string txt = jsonCompact(songToJson(pd.song()));
+  expect(txt.find("points") == std::string::npos, "a source without a drawn shape writes no points");
+}
+
+void testDrawnPlays() {
+  // The engine plays the drawn table: the output follows the shape at the phase it reports.
+  Rig r;
+  Document d(r.s);
+  SongLfo l;
+  l.shape = LfoShape::Drawn;
+  l.points = {{0, -1, 0, kLfoPointSmooth}, {0.3f, 1, 0, kLfoPointStep}, {0.6f, 0.2f, -0.5f, kLfoPointCurve}};
+  l.rateNote = 4;
+  l.smoothMs = 0;
+  const ObjectId id = d.addLfo(l);
+  lfo::link(d, id, mixerParam(r.track, MixerParam::Pan), 0.2f);
+  std::vector<float> ph;
+  const auto v = playLfo(d.song(), id, 400, kControlBlock, &ph);
+  bool ok = true;
+  double worst = 0;
+  for (size_t k = 0; k < v.size(); ++k) {
+    const double want = tableAt(*d.song().lfo(id), ph[k]);
+    worst = std::max(worst, std::fabs(v[k] - want));
+  }
+  ok = worst < 0.05;
+  if (!ok) std::printf("# drawn plays off by %.3f\n", worst);
+  expect(ok, "the audio thread plays the drawn shape from its table");
+  // No allocation while a drawn shape with every kind of point runs.
+  ProgramBuilder pb;
+  AudioEngine eng(kSr);
+  eng.setMode(PlayMode::Song);
+  eng.setProgram(pb.build(d.song()));
+  eng.play();
+  std::vector<float> a(256), b(256);
+  for (int k = 0; k < 8; ++k) eng.process(a.data(), b.data(), 256);
+  gAllocs = 0;
+  gCounting = true;
+  for (int k = 0; k < 64; ++k) eng.process(a.data(), b.data(), 256);
+  gCounting = false;
+  expect(gAllocs.load() == 0, "no allocation while a drawn shape plays");
+  eng.stop();
+  expect(sizeof(lfo::DrawnTable) == sizeof(float) * lfo::kTableSize, "the drawn table is a fixed-size array");
+}
+
+void testPresets() {
+  const auto& f = lfo::presets();
+  expect(f.size() >= 8 && f.size() <= 12, "8 to 12 factory presets");
+  bool names = true, drawn = false, plays = true;
+  for (const auto& p : f) {
+    names = names && !p.name.empty() && p.factory;
+    drawn = drawn || p.lfo.shape == LfoShape::Drawn;
+    plays = plays && p.lfo.kind == LfoKind::Lfo && (p.lfo.shape != LfoShape::Drawn || !p.lfo.points.empty());
+  }
+  expect(names && drawn && plays, "factory presets have names; some are drawn shapes");
+  // Applying one keeps the source's name, colour, on and its targets.
+  Rig r;
+  Document d(r.s);
+  SongLfo l;
+  l.name = "Mine";
+  l.colour = 5;
+  const ObjectId id = d.addLfo(l);
+  const ParamId pan = mixerParam(r.track, MixerParam::Pan);
+  lfo::link(d, id, pan, 0.3f);
+  const lfo::Preset* stutter = nullptr;
+  for (const auto& p : f)
+    if (p.name == "Stutter gate") stutter = &p;
+  expect(stutter != nullptr, "Stutter gate is a factory preset");
+  if (!stutter) return;
+  const SongLfo set = stutter->lfo;
+  d.editLfo(id, "load LFO preset", [set](SongLfo& x) { lfo::applyPreset(x, set); });
+  const SongLfo* g = d.song().lfo(id);
+  expect(g->name == "Mine" && g->colour == 5 && g->shape == LfoShape::Drawn && g->points == set.points && lfo::linksOf(d.song(), id).size() == 1,
+         "loading a preset keeps the name, colour and targets");
+  d.undo();
+  expect(d.song().lfo(id)->shape == LfoShape::Sine, "loading a preset is one undo step");
+  // Save, list, load, delete in a scratch preset folder.
+  char tmpl[] = "/tmp/gl_lfo_presets_XXXXXX";
+  const char* dir = mkdtemp(tmpl);
+  expect(dir != nullptr, "a scratch folder");
+  if (!dir) return;
+  SongLfo mine;
+  mine.shape = LfoShape::Drawn;
+  mine.points = {{0, 1, 0, kLfoPointStep}, {0.75f, -1, 0, kLfoPointStep}};
+  mine.rateNote = 6;
+  mine.rateKind = 1;
+  mine.depth = 0.6f;
+  mine.smoothMs = 12;
+  mine.restart = LfoRestart::Free;
+  mine.name = "Not saved";
+  mine.id = 99;
+  std::string path, err;
+  expect(lfo::saveUserPreset(dir, mine, "Gates/Long gate", &path, &err), "save a user preset into a folder");
+  expect(path.find("/lfos/Gates/Long gate.json") != std::string::npos, "it lands in the user preset folder (lfos)");
+  const auto user = lfo::listUserPresets(dir);
+  expect(user.size() == 1 && user[0].name == "Long gate" && user[0].folder == "Gates" && !user[0].factory, "the user preset lists with its folder");
+  if (user.size() == 1) {
+    SongLfo want = lfo::presetSettings(mine);
+    expect(user[0].lfo == want, "every setting comes back (drawn points, rate, restart, knobs)");
+    expect(user[0].lfo.name.empty() && user[0].lfo.id == kNoId, "a preset keeps no name, id or targets");
+  }
+  expect(lfo::allPresets(dir).size() == f.size() + 1, "all presets: the factory ones and the user's");
+  lfo::Preset bad;
+  expect(!lfo::presetFromText("{\"format\":\"other\"}", bad) && !lfo::presetFromText("not json", bad), "other files are not LFO presets");
+  expect(!lfo::saveUserPreset(dir, mine, "  / ", nullptr, &err), "a preset needs a name");
+  if (!user.empty()) expect(lfo::deleteUserPreset(user[0]) && lfo::listUserPresets(dir).empty(), "delete a user preset");
+  lfo::Preset fp = f[0];
+  expect(!lfo::deleteUserPreset(fp), "factory presets cannot be deleted");
+  std::error_code ec;
+  std::filesystem::remove_all(dir, ec);
+}
+
+}  // namespace
+
 int main() {
   testModelAndFile();
   testDocument();
@@ -939,5 +1209,11 @@ int main() {
   testRandomEngine();
   testSourcesRest();
   testExportIdentical();
+  testPointKinds();
+  testShapeOps();
+  testDrawnDocument();
+  testDrawnFile();
+  testDrawnPlays();
+  testPresets();
   return finish();
 }

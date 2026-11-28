@@ -96,7 +96,7 @@ enum Global : int {
   G_VcSteps,        // 1..8 voice-control sequence length
   G_ArpOn,
   G_ClipOn,
-  G_MidiOut,        // choice: Off, Clip player, Synth (clip + arp)
+  G_MidiOut,        // choice: Off, Clip player, Synth (clip + arp), Arpeggiator (arp only)
   G_NoteLatch,
   G_ArpRate, G_ArpShift, G_ArpRange, G_ArpOffset, G_ArpRepeats, G_ArpGate, G_ArpChance, G_ArpRetrigRate,
   G_ArpVeloDecay, G_ArpVeloTarget, G_ArpTranspose, G_ArpWrapTranspose, G_ArpWrapRange, G_ArpWrapPhantom,  // -1..1 offsets

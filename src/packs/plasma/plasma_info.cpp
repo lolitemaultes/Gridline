@@ -866,6 +866,9 @@ std::string paramText(int k, double v, const std::vector<float>* params) {
 void appendInfos(std::vector<PluginInfo>& v) {
   PluginInfo p{kType, "Plasma", "Synth", PluginKind::Generator, {}, false, {}};
   p.params.resize(kParamCount);
+  p.sequencerParams = {G_ArpOn, G_ClipOn};  // K-438: what it plays can be written into the piano roll
+  p.seqParts = {G_MidiOut, 3.0f, 1.0f, G_ArpOn, G_ClipOn};  // MIDI Out: Arpeggiator, Clip Player
+  p.midiOutput = true;  // K-438: its MIDI Out setting sends on the channel's MIDI output port
   auto& P = p.params;
   auto set = [&](int k, ParamDesc d) { P[static_cast<size_t>(k)] = std::move(d); };
 
@@ -921,7 +924,7 @@ void appendInfos(std::vector<PluginInfo>& v) {
   set(G_VcSteps, lin("Voice Ctrl Steps", "", 1, 8, 8));
   set(G_ArpOn, tog("Arp", 0));
   set(G_ClipOn, tog("Clip Player", 0));
-  set(G_MidiOut, ch("MIDI Out", {"Off", "Clip Player", "Synth"}, 0));
+  set(G_MidiOut, ch("MIDI Out", {"Off", "Clip Player", "Synth", "Arpeggiator"}, 0));
   set(G_NoteLatch, tog("Note Latch", 0));
   const char* arpOff[] = {"Arp Rate", "Arp Shift", "Arp Range", "Arp Offset", "Arp Repeats", "Arp Gate", "Arp Chance",
                           "Arp Retrig Rate", "Arp Velo Decay", "Arp Velo Target", "Arp Transpose", "Arp Wrap Transpose",

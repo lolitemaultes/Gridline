@@ -25,6 +25,8 @@
 #include "core/flp/Flp.h"
 #include "core/flp/FlpWrapper.h"
 #include "engine/AudioEngine.h"
+#include "engine/MidiOutTake.h"
+#include "engine/NoteFxBurn.h"
 #include "engine/Render.h"
 #include "host/EditorLayout.h"
 #include "host/HostedPlugins.h"
@@ -1266,6 +1268,113 @@ void testMidiOutRouting() {
   expect(hi->hasMidiOutput() && hi->midiOutCount() == 1 && hi->hostedClass().eventOutput, "MIDI output detected and counted");
 }
 
+// K-438: note processors and the channel rack's steps play a hosted plugin as MIDI. The CLAP test
+// synth echoes every note it gets on its MIDI output (an octave up); a MIDI Out channel listening on
+// that port counts what arrived: the arpeggiator's notes, not the held chord.
+void testSequencersToHosted() {
+  auto heard = [](const Song& s, ObjectId listener) {
+    ProgramBuilder b;
+    b.setSampleRate(44100);
+    AudioEngine e{44100};
+    e.setProgram(b.build(s));
+    e.setMode(PlayMode::Pattern);
+    e.setPattern(s.patterns[0].id);
+    e.play();
+    std::vector<float> L(256), R(256);
+    std::vector<int> keys;
+    auto rt = b.channelRuntime(listener);
+    for (int at = 0; at < 88200 - 2000; at += 256) {  // one bar at 120 BPM (before the loop)
+      e.process(L.data(), R.data(), 256);
+      MidiOutRing::Msg m;
+      while (rt && rt->midiOut.pop(m))
+        if ((m.s & 0xF0) == 0x90 && m.b > 0) keys.push_back(m.a);
+    }
+    return keys;
+  };
+  for (int steps = 0; steps < 2; ++steps) {
+    Document d(makeEmptySong());
+    d.setParam(songParam(SongParam::Tempo), 120.0, false);
+    const ObjectId pat = d.song().patterns[0].id;
+    const ObjectId a = d.addChannel("hosted", kClapSynth), l = d.addChannel("listener", "gl.midiout");
+    d.editSong("ports", [&](Song& s) {
+      Channel* ca = s.channel(a);
+      ca->plugin.params[3] = 1.0f;  // Echo on
+      ca->midiOutPort = 3;
+      s.channel(l)->midiInPort = 3;
+    });
+    d.setParam(channelPluginParam(l, pp::MoPort), 5, false);
+    if (steps) {
+      std::vector<uint8_t> row(16, 0);
+      for (int k = 0; k < 16; k += 2) row[static_cast<size_t>(k)] = 100;
+      d.setSteps(pat, a, row);
+    } else {
+      d.addNote(pat, a, {0, 384, 60, 100});
+      d.addNote(pat, a, {0, 384, 64, 100});
+      d.addNoteFx(a, "gl.arp");
+    }
+    const auto keys = heard(d.song(), l);
+    const size_t want = steps ? 8 : 16;
+    expect(keys.size() == want, (std::string(steps ? "channel rack steps" : "arpeggiator") + " plays a hosted plugin: " + std::to_string(keys.size()) +
+                                 " notes came back from its MIDI output (" + std::to_string(want) + " played)").c_str());
+  }
+}
+
+// K-438: an installed plugin's own MIDI output into a pattern. The test synth echoes every note an
+// octave up on its MIDI output (CLAP, LV2: with Echo on; VST2: always); every format's output goes
+// through HostedCore into Generator::takeMidiOut, the path both commands read. Offline: "Write its
+// MIDI output to the piano roll" renders one pass; live: the engine's capture ring while playing,
+// drained by MidiOutTake as the UI does, kept in one undo step at the end.
+void checkHostedMidiOutput(const std::string& type, int echoParam, const char* label) {
+  Document d(makeEmptySong());
+  d.setParam(songParam(SongParam::Tempo), 120.0, false);
+  const ObjectId pat = d.song().patterns[0].id;
+  d.setPatternLength(pat, 1, 16);
+  const ObjectId a = d.addChannel("arp plugin", type);
+  if (echoParam >= 0) d.setParam(channelPluginParam(a, echoParam), 1, false);
+  d.addNote(pat, a, {0, 96, 57, 100});
+  d.addNote(pat, a, {192, 48, 60, 90});
+  const std::string L = label;
+  const size_t patterns = d.song().patterns.size();
+  // Offline print.
+  const ObjectId printed = printMidiOutputToPattern(d, pat, a);
+  const Pattern* pp = d.song().pattern(printed);
+  const std::vector<Note> pn = pp && pp->notes.count(a) ? pp->notes.at(a) : std::vector<Note>{};
+  std::printf("%s print: %zu notes", label, pn.size());
+  for (const Note& n : pn) std::printf(" [%lld +%lld key %d vel %d]", static_cast<long long>(n.start), static_cast<long long>(n.length), n.pitch, n.velocity);
+  std::printf("\n");
+  auto want = [](const std::vector<Note>& v) {
+    return v.size() == 2 && v[0].start == 0 && std::abs(v[0].length - 96) <= 1 && v[0].pitch == 69 && v[1].start == 192 &&
+           std::abs(v[1].length - 48) <= 1 && v[1].pitch == 72;
+  };
+  expect(want(pn), (L + ": its MIDI output written to the piano roll (a new pattern, the echoed notes)").c_str());
+  expect(d.song().patterns.size() == patterns + 1 && pp && pp->name == "arp plugin MIDI output", (L + ": print makes one pattern named after the channel").c_str());
+  d.undo();
+  expect(d.song().patterns.size() == patterns, (L + ": print is one undo step").c_str());
+  // Live take: 2.5 loop passes, nothing listening on its port.
+  ProgramBuilder b;
+  b.setSampleRate(44100);
+  AudioEngine e(44100.0);
+  e.setProgram(b.build(d.song()));
+  e.setMode(PlayMode::Pattern);
+  e.setPattern(pat);
+  MidiOutTake take;
+  take.begin(e, a, pat, d.song().patternContentLength(*d.song().pattern(pat)));
+  e.play();
+  std::vector<float> bl(256), br(256);
+  for (int at = 0; at < 88200 * 5 / 2; at += 256) {
+    e.process(bl.data(), br.data(), 256);
+    take.poll(e);
+  }
+  e.stop();
+  const ObjectId rec = take.end(d, e, midiOutputTarget(d.song(), a));
+  const Pattern* rp = d.song().pattern(rec);
+  const std::vector<Note> rn = rp && rp->notes.count(a) ? rp->notes.at(a) : std::vector<Note>{};
+  std::printf("%s live take: %zu notes, dropped %llu\n", label, rn.size(), static_cast<unsigned long long>(e.capturedMidiDropped()));
+  expect(want(rn), (L + ": its MIDI output recorded live into a pattern (the loop passes kept once)").c_str());
+  d.undo();
+  expect(d.song().patterns.size() == patterns, (L + ": the live take is one undo step").c_str());
+}
+
 // A MIDI Out channel playing the CLAP test synth on its port, with Rest silent instruments on
 // (realtime playback): the synth rests between the routed notes, wakes for them and sounds as
 // the same notes sequenced on it; the sustain pedal from the MIDI Out channel holds its notes
@@ -2327,7 +2436,7 @@ void testPluginWindowLayout() {
       for (int j = i + 1; j < L::kBarItemCount; ++j)
         if (b.visible[j]) apart = apart && !b.items[i].overlaps(b.items[j]);
     }
-    for (L::BarItem it : {L::kBarPrev, L::kBarPreset, L::kBarNext, L::kBarBypass, L::kBarSandbox, L::kBarGeneric, L::kBarSettings})
+    for (L::BarItem it : {L::kBarPrev, L::kBarPreset, L::kBarNext, L::kBarBypass, L::kBarSandbox, L::kBarOffline, L::kBarGeneric, L::kBarSettings})
       essential = essential && b.visible[it];
     essential = essential && b.items[L::kBarPreset].w >= 24;
     rows = rows && (bw >= L::oneRowBarWidth() ? b.rows == 1 && b.height == L::kBarRowH : b.rows == 2 && b.height == 2 * L::kBarRowH);
@@ -2335,7 +2444,7 @@ void testPluginWindowLayout() {
   }
   expect(inside, "control bar: every item inside the bar at every width");
   expect(apart, "control bar: items never overlap (min-width layout and wrapping)");
-  expect(essential, "control bar: presets, bypass, sandbox, generic and settings stay usable at small widths");
+  expect(essential, "control bar: presets, bypass, sandbox, offline, generic and settings stay usable at small widths");
   expect(rows, "control bar: one row when wide, two rows when narrow");
   expect(routeShown, "control bar: an instrument's bar always shows the route button, an effect's never; it never adds a row");
   expect(L::layoutBar(L::oneRowBarWidth(), true).visible[L::kBarCpu] && L::layoutBar(L::oneRowBarWidth(), true).rows == 1 &&
@@ -2648,6 +2757,9 @@ int main() {
   testStopReleasesHosted();
   testNoteRetrigger();
   testMidiOutRouting();
+  testSequencersToHosted();
+  checkHostedMidiOutput(kClapSynth, 3, "CLAP");
+  checkHostedMidiOutput(kVst2Synth, -1, "VST2");
   testMidiOutHostedListener();
   testSampleAccurate();
   testLatencyChange();

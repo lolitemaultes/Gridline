@@ -1,5 +1,6 @@
 // Gridline — application entry: SDL2 window + OpenGL 3 + Dear ImGui, audio
 // device, default layout, typing keyboard, file drops.
+#include "PluginIcons.h"
 #include "ClipEditor.h"
 #include "../core/ThreadName.h"
 #include "imgui_hooks/ImGuiItemHook.h"
@@ -21,6 +22,8 @@
 #include "SysWm.h"
 #include "VideoDriver.h"
 #include "KeyFocus.h"
+#include "KeyRepeatPairs.h"
+#include "AudioRecordUi.h"
 #include "MainWindowRole.h"
 #include "../core/VideoDriverChoice.h"
 #include "../core/ChromeOs.h"
@@ -82,6 +85,7 @@
 #include "AlignAudit.h"
 #include "IdSweep.h"
 #include "AppIcon.h"
+#include "AudioDriver.h"
 #include "AudioNames.h"
 #include "WindowFrame.h"
 #include "MacroUi.h"
@@ -89,6 +93,11 @@
 #include "PluginFavsUi.h"
 #include "../host/HostedPlugins.h"
 #include "../host/audio/AsioHost.h"
+#include "../host/audio/DeviceRender.h"
+#include "../host/audio/JackApi.h"
+#include "../host/audio/JackCore.h"
+#include "../host/audio/JackFake.h"
+#include "../host/audio/JackHost.h"
 #include "../host/PluginPrefs.h"
 #include "../host/vst3/Vst3Scan.h"
 #include "../host/ui/NativeView.h"
@@ -127,7 +136,10 @@
 #include "FlkeyUi.h"
 #include "../core/RackSelect.h"
 #include "../core/RemoteFs.h"
+#include "../core/SetupTour.h"
 #include "../core/SingleInstance.h"
+#include "SetupWizardUi.h"
+#include "GuidedTourUi.h"
 #include "WindowActivate.h"
 #include "WindowRaise.h"
 #include "ChordStampUi.h"
@@ -183,6 +195,7 @@
 #include "LookChrome.h"
 #include "SmoothLibrary.h"
 #include "SmoothScrollUi.h"
+#include "TrackpadGestureUi.h"
 #include "ExternalDragUi.h"
 #include "SuiteUi.h"
 #include "LauncherUi.h"
@@ -194,6 +207,8 @@
 #include "ProgressUi.h"
 #include "RecordCard.h"
 #include "UpdateUi.h"
+#include "SplashUpdate.h"
+#include "Splash.h"
 #include "UrlImportUi.h"
 #include "../host/net/Http.h"
 #include "../core/SafeFs.h"
@@ -202,10 +217,6 @@
 namespace fs = std::filesystem;
 using namespace gl;
 using namespace gl::shell;
-
-namespace gl {
-void drawSplash(ImFont* bold, ImFont* mono, float progress, const char* status, double time);
-}
 
 // The usable area of the display the main window was last planned on (the "sdlwin show" dev line).
 static SDL_Rect gPlannedIn{};
@@ -361,6 +372,36 @@ void wakeUiLoop() {
   host::native::frameClockWake();
 }
 
+// K-410: maps detached Gridline viewport native windows to their offset relative to the main window.
+SDL_Window* gGestureMainWindow = nullptr;
+bool gestureWindowOffset(void* nativeWindow, float& offX, float& offY, uint32_t& sdlWinId) {
+  if (!nativeWindow || !gGestureMainWindow) return false;
+  int mx = 0, my = 0;
+  SDL_GetWindowPosition(gGestureMainWindow, &mx, &my);
+  for (Uint32 id : viewports::windowIds()) {
+    SDL_Window* w = SDL_GetWindowFromID(id);
+    if (!w) continue;
+    SDL_SysWMinfo wm{};
+    SDL_VERSION(&wm.version);
+    if (!SDL_GetWindowWMInfo(w, &wm)) continue;
+    void* handle = nullptr;
+#if defined(__APPLE__)
+    if (wm.subsystem == SDL_SYSWM_COCOA) handle = static_cast<void*>(wm.info.cocoa.window);
+#elif defined(_WIN32)
+    if (wm.subsystem == SDL_SYSWM_WINDOWS) handle = static_cast<void*>(wm.info.win.window);
+#endif
+    if (handle == nativeWindow) {
+      int wx = 0, wy = 0;
+      SDL_GetWindowPosition(w, &wx, &wy);
+      offX = static_cast<float>(wx - mx);
+      offY = static_cast<float>(wy - my);
+      sdlWinId = static_cast<uint32_t>(id);
+      return true;
+    }
+  }
+  return false;
+}
+
 void audioCallback(void* user, Uint8* stream, int len) {
   auto* eng = static_cast<AudioEngine*>(user);
   crash::noteAudioThread();  // K-39: which thread a report comes from (a relaxed store)
@@ -398,14 +439,19 @@ void audioCallback(void* user, Uint8* stream, int len) {
                        static_cast<double>(frames) / eng->sampleRate());
 }
 
+std::atomic<int> gInStride{2};  // K-430: actual channel stride of the open SDL capture stream
+
 void inputCallback(void* user, Uint8* stream, int len) {
   auto* eng = static_cast<AudioEngine*>(user);
-  const int ch = std::max(1, eng->inputChannels());
-  eng->pushInput(reinterpret_cast<const float*>(stream), len / static_cast<int>(sizeof(float) * static_cast<size_t>(ch)));
+  const int stride = std::max(1, gInStride.load(std::memory_order_acquire));
+  const int bpf = static_cast<int>(sizeof(float)) * stride;
+  if (len <= 0 || bpf <= 0) return;
+  eng->pushInput(reinterpret_cast<const float*>(stream), len / bpf, stride);
 }
 
-// Capture device for mixer inputs (J-8). Opened only when an input device is
-// chosen (Settings → Audio), at the output's rate.
+// Capture device for mixer inputs (J-8, K-430). Opened only when an input device is
+// chosen (Settings → Audio). Negotiates native channels/rate gracefully so mono USB mics
+// and 48 kHz devices record cleanly into any project sample rate without starving.
 void openAudioInput(App& a, int rate, int outFrames) {
   if (gInDevice) {
     SDL_CloseAudioDevice(gInDevice);
@@ -415,13 +461,22 @@ void openAudioInput(App& a, int rate, int outFrames) {
   for (int i = 0, n = SDL_GetNumAudioDevices(1); i < n; ++i)
     if (const char* nm = SDL_GetAudioDeviceName(i, 1)) a.audioInputDevices.push_back(nm);
   a.audioInputLatency = 0;
+  a.audioInputHwChannels = 0;
+  a.audioInputReqChannels = 0;
+  a.audioInputRate = rate;
+  a.audioInputBuffer = 0;
+  a.audioInputOutFrames = outFrames;
+  a.audioInputOpenedAt = a.now;
+  a.audioInputLiveDevice = false;
   a.audioInputStatus.clear();
+  a.engine.setInputSampleRate(0.0);
+  a.engine.setInputPrefill(0);
   gSynthInput = false;
   gLoopbackFrames = 0;
   if (const char* lb = std::getenv("GRIDLINE_LOOPBACK_INPUT"); lb && std::atoi(lb) > 0) {  // K-123 (0.7.7) dev checks
     a.audioInputDevice = "Loopback (simulated)";
     a.engine.setInputChannels(2);
-    a.audioInputChannels = 2;
+    a.audioInputChannels = a.audioInputHwChannels = a.audioInputReqChannels = 2;
     a.audioInputLatency = outFrames;
     a.audioInputStatus = "Recording from a simulated loopback cable (development).";
     gLoopbackFrames = std::atoi(lb);
@@ -430,7 +485,7 @@ void openAudioInput(App& a, int rate, int outFrames) {
   if (const char* synth = std::getenv("GRIDLINE_SYNTH_INPUT"); synth && *synth && *synth != '0') {  // J-217 dev checks
     a.audioInputDevice = "Synthetic input";
     a.engine.setInputChannels(2);
-    a.audioInputChannels = 2;
+    a.audioInputChannels = a.audioInputHwChannels = a.audioInputReqChannels = 2;
     a.audioInputLatency = outFrames;
     a.audioInputStatus = "Recording from the synthetic input (development).";
     gSynthInput = true;
@@ -460,7 +515,7 @@ void openAudioInput(App& a, int rate, int outFrames) {
       }
       if (!ti.L.empty()) {
         a.engine.setInputChannels(2);
-        a.audioInputChannels = 2;
+        a.audioInputChannels = a.audioInputHwChannels = a.audioInputReqChannels = 2;
         a.audioInputStatus = "Recording from the test signal (GRIDLINE_TEST_INPUT).";
         gTestInput.store(&ti, std::memory_order_release);
       }
@@ -469,108 +524,191 @@ void openAudioInput(App& a, int rate, int outFrames) {
   }
   gTestInput.store(nullptr, std::memory_order_release);
   const int want = std::clamp(static_cast<int>(a.settings.getNumber("audio.inputChannels")), 1, kMaxInputChannels);
-  a.engine.setInputChannels(want);  // the callback's frame size; fixed while the device runs
+  a.audioInputReqChannels = want;
+  const char* name = a.audioInputDevice == "*" ? nullptr : a.audioInputDevice.c_str();
+  // K-430: query hardware native spec where supported (SDL 2.0.16+) so mono USB microphones
+  // (e.g. 1-ch 48 kHz devices) open cleanly instead of failing or forcing broken remixing.
+  SDL_AudioSpec nativeSpec{};
+  bool hasNative = false;
+  if (!name) {
+    hasNative = audiodriver::queryDefaultCaptureSpec(&nativeSpec);
+  } else {
+    for (int i = 0, n = static_cast<int>(a.audioInputDevices.size()); i < n; ++i) {
+      if (a.audioInputDevices[static_cast<size_t>(i)] == a.audioInputDevice) {
+        hasNative = audiodriver::queryCaptureDeviceSpec(i, &nativeSpec);
+        break;
+      }
+    }
+  }
+  const int openCh = (hasNative && nativeSpec.channels > 0 && want > static_cast<int>(nativeSpec.channels))
+                         ? static_cast<int>(nativeSpec.channels)
+                         : want;
+  const char* drv = SDL_GetCurrentAudioDriver();
+  const bool isPulse = drv && std::strcmp(drv, "pulseaudio") == 0;
+  // PulseAudio / pipewire-pulse rejects or falls back to large default fragments when fragsize
+  // is ultra-tiny (e.g. 64 frames); requesting >= 256 frames keeps low-latency capture stable.
+  const int minReqSamples = isPulse ? 256 : 128;
+  const int reqSamples = std::clamp(std::max(minReqSamples, outFrames), 64, 4096);
   SDL_AudioSpec spec{}, have{};
   spec.freq = rate;
   spec.format = AUDIO_F32SYS;
-  spec.channels = static_cast<Uint8>(want);
-  spec.samples = static_cast<Uint16>(std::max(64, outFrames));
+  spec.channels = static_cast<Uint8>(openCh);
+  spec.samples = static_cast<Uint16>(reqSamples);
   spec.callback = inputCallback;
   spec.userdata = &a.engine;
-  const char* name = a.audioInputDevice == "*" ? nullptr : a.audioInputDevice.c_str();
   audionames::applyStreamName(true);  // K-357: "Recording" in a PipeWire / PulseAudio patchbay
-  gInDevice = SDL_OpenAudioDevice(name, 1, &spec, &have, SDL_AUDIO_ALLOW_SAMPLES_CHANGE);
-  char buf[256];
+  const int allowFlags = SDL_AUDIO_ALLOW_SAMPLES_CHANGE | SDL_AUDIO_ALLOW_CHANNELS_CHANGE | SDL_AUDIO_ALLOW_FREQUENCY_CHANGE;
+  gInDevice = SDL_OpenAudioDevice(name, 1, &spec, &have, allowFlags);
+  if (!gInDevice && hasNative && (nativeSpec.freq > 0 || nativeSpec.channels > 0)) {
+    // Retry at the device's own preferred rate and channel count.
+    if (nativeSpec.freq > 0) spec.freq = nativeSpec.freq;
+    if (nativeSpec.channels > 0) spec.channels = nativeSpec.channels;
+    gInDevice = SDL_OpenAudioDevice(name, 1, &spec, &have, allowFlags);
+  }
+  if (!gInDevice && spec.channels != 1) {
+    // Last fallback for mono-only hardware on backends without SDL_GetAudioDeviceSpec.
+    spec.channels = 1;
+    gInDevice = SDL_OpenAudioDevice(name, 1, &spec, &have, allowFlags);
+  }
+  char buf[320];
   if (!gInDevice) {
     a.engine.setInputChannels(0);
     std::snprintf(buf, sizeof buf, "No audio input: %s", SDL_GetError());
     a.audioInputStatus = buf;
+    logging::warning("audio", std::string("capture open failed for ") + (name ? name : "default") + ": " + SDL_GetError());
     a.notify(a.audioInputStatus, true);
     return;
   }
-  a.engine.setInputPrefill(have.samples);
-  a.audioInputChannels = have.channels;
+  const int hwCh = std::max(1, static_cast<int>(have.channels));
+  const int engCh = std::clamp(hwCh, 1, kMaxInputChannels);
+  const int capRate = have.freq > 0 ? have.freq : rate;
+  const int capBuf = std::max(1, static_cast<int>(have.samples));
+  const int capBufOut = static_cast<int>(std::llround(static_cast<double>(capBuf) * static_cast<double>(std::max(1, rate)) / static_cast<double>(capRate)));
+  const int initPrefill = std::max<int>({capBufOut, outFrames, 256});
+  gInStride.store(hwCh, std::memory_order_release);
+  a.engine.setInputChannels(engCh);
+  a.engine.setInputSampleRate(static_cast<double>(capRate));
+  a.engine.setInputPrefill(initPrefill);
+  a.audioInputChannels = engCh;
+  a.audioInputHwChannels = hwCh;
+  a.audioInputRate = capRate;
+  a.audioInputBuffer = capBuf;
+  a.audioInputOutFrames = outFrames;
+  a.audioInputOpenedAt = a.now;
+  a.audioInputLiveDevice = true;
   // Capture buffer + jitter buffer, plus the output buffer the performer hears through.
-  a.audioInputLatency = 2 * have.samples + outFrames;
-  std::snprintf(buf, sizeof buf, "Recording from %s: %d channel%s, %d-frame buffer.", name ? name : "the default input", have.channels,
-                have.channels == 1 ? "" : "s", have.samples);
+  a.audioInputLatency = capBufOut + initPrefill + outFrames;
+  const char* devLabel = name ? name : "the default input";
+  if (capRate != rate) {
+    std::snprintf(buf, sizeof buf, "Recording from %s: %d channel%s%s, %d Hz -> %d Hz, %d-frame buffer.", devLabel, hwCh, hwCh == 1 ? "" : "s",
+                  hwCh == 1 ? " (mono)" : "", capRate, rate, capBuf);
+  } else {
+    std::snprintf(buf, sizeof buf, "Recording from %s: %d channel%s%s, %d Hz, %d-frame buffer.", devLabel, hwCh, hwCh == 1 ? "" : "s",
+                  hwCh == 1 ? " (mono)" : "", capRate, capBuf);
+  }
   a.audioInputStatus = buf;
+  {
+    char logBuf[384];
+    std::snprintf(logBuf, sizeof logBuf, "capture open (%s): %s | req %d ch @ %d Hz (%d smp) -> got %d ch @ %d Hz (%d smp, prefill %d smp)",
+                  drv ? drv : "unknown", devLabel, want, rate, reqSamples, hwCh, capRate, capBuf, initPrefill);
+    logging::info("audio", logBuf);
+  }
   SDL_PauseAudioDevice(gInDevice, 0);
 }
 
-// ---- K-6: ASIO backend (Windows; the simulated drivers with GRIDLINE_FAKE_ASIO) ----
-// The driver's thread calls asioRender for every buffer; everything it uses is sized when the
-// driver opens (UI thread).
-asio::Host gAsio;
-struct AsioRender {
+// ---- K-6 / K-357: shared realtime render callback (ASIO on Windows, JACK / PipeWire on Linux) ----
+// Fixed-size scratch buffers so neither ASIO nor dynamic-quantum JACK/PipeWire periods ever allocate
+// or resize on the realtime audio thread.
+struct DeviceRender {
   AudioEngine* eng = nullptr;
-  std::vector<float> inter;  // interleaved device input (frames * inputs)
-  std::vector<float> mix;    // interleaved main pair (interface sounds)
-  std::vector<float> monoR;  // right side of a one-output device
+  const std::atomic<bool>* freewheel = nullptr;  // JACK freewheel: skip UI sounds and fstats
+  float inter[kMaxInputChannels * AudioEngine::kMaxBlock] = {};
+  float mix[2 * AudioEngine::kMaxBlock] = {};
+  float monoR[AudioEngine::kMaxBlock] = {};
   int extraCount = 0;
   int extraMixer[asio::kMaxExtraOutputs] = {};
   int extraOut[asio::kMaxExtraOutputs] = {};  // index of the pair's left channel in out[]
   bool mono = false;
 };
-AsioRender gAsioRender;
-bool gAsioActive = false;        // the engine runs on the ASIO driver
-bool gAsioSkip = false;          // the next openAudio uses the system audio (the driver stopped)
-bool gAsioFollowDriver = false;  // the driver asked for a reset: take its new preferred buffer
-std::string gSdlInputDevice;     // the system input choice, kept while ASIO runs
-int gAsioPreferred = 0;          // the driver's preferred buffer when it was opened
-std::string gAsioPreferredOf;
 
-void asioRender(void* user, const float* const* in, int nIn, float* const* out, int nOut, int frames) {
-  auto* r = static_cast<AsioRender*>(user);
+void deviceRender(void* user, const float* const* in, int nIn, float* const* out, int nOut, int frames) {
+  auto* r = static_cast<DeviceRender*>(user);
   AudioEngine& eng = *r->eng;
-  static thread_local bool named = false;  // K-142: the driver's thread, named once
-  if (!named) gl::threads::setName("gl-audio"), named = true;
+  crash::noteAudioThread();
+  static thread_local bool named = false;  // K-142: the driver's thread, named once; its pokes never wake
+  if (!named) gl::threads::setName("gl-audio"), uiwake::markRealtimeThread(), named = true;
   const cpureport::AudioCallbackScope cpuScope;  // K-142, K-142z
-  const bool stats = fstats::enabled();
+  const bool freewheel = r->freewheel && r->freewheel->load(std::memory_order_relaxed);
+  const bool stats = !freewheel && fstats::enabled();
   const Uint64 t0 = stats ? SDL_GetPerformanceCounter() : 0;
-  if (nIn > 0) {
-    float* x = r->inter.data();
-    for (int c = 0; c < nIn; ++c) {
-      const float* src = in[c];
-      for (int i = 0; i < frames; ++i) x[static_cast<size_t>(i) * static_cast<size_t>(nIn) + static_cast<size_t>(c)] = src[i];
-    }
-    eng.pushInput(x, frames);
-  } else if (gSynthInput) {
-    pushSynthInput(eng, frames);
-  } else {
-    feedTestInput(&eng, frames);
-  }
-  if (nOut <= 0) return;
-  float* L = out[0];
-  float* R = r->mono ? r->monoR.data() : out[1];
+  const int inClamped = std::min(nIn, kMaxInputChannels);
+  const bool hasOut = nOut > 0 && out && out[0] && (r->mono || (nOut >= 2 && out[1]));
   for (int done = 0; done < frames;) {
     const int n = std::min(AudioEngine::kMaxBlock, frames - done);
-    float* tl[asio::kMaxExtraOutputs];
-    float* tr[asio::kMaxExtraOutputs];
-    for (int k = 0; k < r->extraCount; ++k) {
-      tl[k] = out[r->extraOut[k]] + done;
-      tr[k] = out[r->extraOut[k] + 1] + done;
+    if (inClamped > 0 && in) {
+      float* x = r->inter;
+      for (int c = 0; c < inClamped; ++c) {
+        const float* src = in[c];
+        if (src) {
+          const float* s = src + done;
+          for (int i = 0; i < n; ++i) x[static_cast<size_t>(i) * static_cast<size_t>(inClamped) + static_cast<size_t>(c)] = s[i];
+        } else {
+          for (int i = 0; i < n; ++i) x[static_cast<size_t>(i) * static_cast<size_t>(inClamped) + static_cast<size_t>(c)] = 0.f;
+        }
+      }
+      eng.pushInput(x, n);
+    } else if (gSynthInput) {
+      pushSynthInput(eng, n);
+    } else {
+      feedTestInput(&eng, n);
     }
-    AudioEngine::OutputTaps taps;
-    taps.count = r->extraCount;
-    taps.mixer = r->extraMixer;
-    taps.L = tl;
-    taps.R = tr;
-    eng.process(L + done, R + done, n, r->extraCount > 0 ? &taps : nullptr);
+    if (hasOut) {
+      float* L = out[0] + done;
+      float* R = r->mono ? r->monoR : (out[1] + done);
+      float* tl[asio::kMaxExtraOutputs];
+      float* tr[asio::kMaxExtraOutputs];
+      int validExtras = 0;
+      for (int k = 0; k < r->extraCount && k < asio::kMaxExtraOutputs; ++k) {
+        const int idx = r->extraOut[k];
+        if (idx >= 0 && idx + 1 < nOut && out[idx] && out[idx + 1]) {
+          tl[validExtras] = out[idx] + done;
+          tr[validExtras] = out[idx + 1] + done;
+          ++validExtras;
+        } else {
+          break;
+        }
+      }
+      AudioEngine::OutputTaps taps;
+      taps.count = validExtras;
+      taps.mixer = r->extraMixer;
+      taps.L = tl;
+      taps.R = tr;
+      eng.process(L, R, n, validExtras > 0 ? &taps : nullptr);
+      if (gUiSounds && !freewheel) {  // interface sounds on top of the main pair only (never recorded or metered)
+        float* m = r->mix;
+        for (int i = 0; i < n; ++i) m[2 * i] = L[i], m[2 * i + 1] = R[i];
+        gUiSounds->mix(m, n);
+        for (int i = 0; i < n; ++i) L[i] = m[2 * i], R[i] = m[2 * i + 1];
+      }
+      if (r->mono)
+        for (int i = 0; i < n; ++i) L[i] = 0.5f * (L[i] + R[i]);
+    }
     done += n;
   }
-  if (gUiSounds) {  // interface sounds on top of the main pair only (never recorded or metered)
-    float* m = r->mix.data();
-    for (int i = 0; i < frames; ++i) m[2 * i] = L[i], m[2 * i + 1] = R[i];
-    gUiSounds->mix(m, frames);
-    for (int i = 0; i < frames; ++i) L[i] = m[2 * i], R[i] = m[2 * i + 1];
-  }
-  if (r->mono)
-    for (int i = 0; i < frames; ++i) L[i] = 0.5f * (L[i] + R[i]);
   if (stats && eng.sampleRate() > 0)
     fstats::audioBlock(static_cast<double>(SDL_GetPerformanceCounter() - t0) / static_cast<double>(SDL_GetPerformanceFrequency()),
                        static_cast<double>(frames) / eng.sampleRate());
 }
+
+// ---- K-6: ASIO backend (Windows; the simulated drivers with GRIDLINE_FAKE_ASIO) ----
+asio::Host gAsio;
+DeviceRender gAsioRender;
+bool gAsioActive = false;        // the engine runs on the ASIO driver
+bool gAsioSkip = false;          // the next openAudio uses the system audio (the driver stopped)
+bool gAsioFollowDriver = false;  // the driver asked for a reset: take its new preferred buffer
+std::string gSdlInputDevice;     // the system input choice, kept while ASIO / JACK runs
+int gAsioPreferred = 0;          // the driver's preferred buffer when it was opened
+std::string gAsioPreferredOf;
 
 void* nativeWindowHandle() {
 #ifdef _WIN32
@@ -621,8 +759,9 @@ bool openAsio(App& a, int depth = 0) {
   Settings& st = a.settings;
   const asio::Config cfg = asioConfig(st);
   gAsioRender.eng = &a.engine;
+  gAsioRender.freewheel = nullptr;
   std::string err;
-  if (!gAsio.open(cfg, nativeWindowHandle(), asioRender, &gAsioRender, &err)) {
+  if (!gAsio.open(cfg, nativeWindowHandle(), deviceRender, &gAsioRender, &err)) {
     a.asio.error = err;
     gAsioFollowDriver = false;
     return false;
@@ -641,9 +780,6 @@ bool openAsio(App& a, int depth = 0) {
   const asio::ChannelPlan& plan = gAsio.plan();
   const int frames = gAsio.bufferFrames();
   const int nIn = static_cast<int>(plan.inputs.size());
-  gAsioRender.inter.assign(static_cast<size_t>(frames) * static_cast<size_t>(std::max(1, nIn)), 0.f);
-  gAsioRender.mix.assign(2 * static_cast<size_t>(frames), 0.f);
-  gAsioRender.monoR.assign(static_cast<size_t>(frames), 0.f);
   gAsioRender.mono = plan.mainL == plan.mainR;
   gAsioRender.extraCount = static_cast<int>(plan.extras.size());
   for (int k = 0; k < gAsioRender.extraCount; ++k) {
@@ -732,6 +868,393 @@ void pollAsio(App& a) {
   }
 }
 
+// ---- K-95: Windows WASAPI Exclusive backend (event-driven, MMCSS Pro Audio) ----
+wasapi::ExclusiveHost gWasapi;
+struct WasapiRender {
+  AudioEngine* eng = nullptr;
+  std::vector<float> mix;  // interleaved stereo scratch for UI sounds (sized on UI thread in openWasapi)
+};
+WasapiRender gWasapiRender;
+bool gWasapiActive = false;
+bool gWasapiSkip = false;  // set if the exclusive endpoint was invalidated until the user toggles/reopens
+
+void wasapiRender(void* user, float* outL, float* outR, int frames) {
+  auto* r = static_cast<WasapiRender*>(user);
+  AudioEngine& eng = *r->eng;
+  crash::noteAudioThread();
+  static thread_local bool named = false;  // its pokes never wake (uiwake), as the SDL callback's
+  if (!named) uiwake::markRealtimeThread(), named = true;
+  const cpureport::AudioCallbackScope cpuScope;
+  const bool stats = fstats::enabled();
+  const Uint64 t0 = stats ? SDL_GetPerformanceCounter() : 0;
+  if (gSynthInput) pushSynthInput(eng, frames);
+  else feedTestInput(&eng, frames);
+  for (int done = 0; done < frames;) {
+    const int n = std::min(AudioEngine::kMaxBlock, frames - done);
+    eng.process(outL + done, outR + done, n);
+    done += n;
+  }
+  if (gUiSounds && static_cast<size_t>(frames) * 2 <= r->mix.size()) {
+    float* m = r->mix.data();
+    for (int i = 0; i < frames; ++i) m[2 * i] = outL[i], m[2 * i + 1] = outR[i];
+    gUiSounds->mix(m, frames);
+    for (int i = 0; i < frames; ++i) outL[i] = m[2 * i], outR[i] = m[2 * i + 1];
+  }
+  if (stats && eng.sampleRate() > 0)
+    fstats::audioBlock(static_cast<double>(SDL_GetPerformanceCounter() - t0) / static_cast<double>(SDL_GetPerformanceFrequency()),
+                       static_cast<double>(frames) / eng.sampleRate());
+}
+
+std::string sdlDriverLabel(const char* drv) {
+  if (!drv || !*drv) return "System audio (SDL)";
+  const std::string d(drv);
+  if (d == "coreaudio") return "CoreAudio (SDL)";
+  if (d == "wasapi") return "WASAPI Shared (SDL)";
+  if (d == "directsound") return "DirectSound (SDL)";
+  if (d == "pipewire") return "PipeWire (SDL)";
+  if (d == "pulseaudio") return "PulseAudio (SDL)";
+  if (d == "alsa") return "ALSA (SDL)";
+  if (d == "jack") return "JACK (SDL)";
+  if (d == "sndio") return "sndio (SDL)";
+  if (d == "dummy") return "Dummy (SDL)";
+  return d + " (SDL)";
+}
+
+void closeWasapi() {
+  if (gWasapi.isOpen()) gWasapi.close();
+  gWasapiActive = false;
+}
+
+void pollWasapi(App& a) {
+  if (!gWasapiActive) return;
+  if (gWasapi.deviceLost()) {
+    a.notify("WASAPI Exclusive device was disconnected or invalidated. Falling back to shared audio.", true);
+    gWasapiSkip = true;
+    a.audioReopen = true;
+  }
+}
+
+// ---- K-357: JACK / PipeWire audio backend (Linux; simulated server with GRIDLINE_FAKE_JACK) ----
+jack::Host gJack;
+jack::RetryWorker gJackRetry;
+DeviceRender gJackRender;
+bool gJackActive = false;
+bool gJackSkip = false;
+bool gJackHiddenRun = false;
+const jack::Api* gJackApi = nullptr;
+jack::Api gJackFakeApi;
+std::vector<jack::Link> gJackReopenLinks;
+std::vector<jack::Link> gJackLastLinks;
+// The project's saved links that could not be made yet (their peer's program was not running): made
+// when that peer appears, then forgotten. Links the user removed since are never made again.
+std::vector<jack::Link> gJackPendingLinks;
+std::string gJackAliasSig;
+
+std::vector<jack::TrackInputRef> trackInputRefs(const Song& s) {
+  std::vector<jack::TrackInputRef> refs;
+  for (size_t i = 1; i < s.mixer.size(); ++i) {
+    const MixerTrack& m = s.mixer[i];
+    if (m.input >= 0) refs.push_back({mixerTrackName(s, i), m.input, m.inputStereo});
+  }
+  return refs;
+}
+
+std::string trackAliasSignature(const Song& s) {
+  std::string sig;
+  for (size_t i = 1; i < s.mixer.size(); ++i) {
+    const MixerTrack& m = s.mixer[i];
+    if (m.input >= 0) {
+      sig += std::to_string(m.input) + (m.inputStereo ? "s:" : "m:") + mixerTrackName(s, i) + "|";
+    }
+  }
+  return sig;
+}
+
+std::vector<jack::Link> songLinksToJack(const std::vector<Song::PortLink>& in) {
+  std::vector<jack::Link> out;
+  out.reserve(in.size());
+  for (const auto& l : in) out.push_back({l.own, l.peer});
+  return out;
+}
+
+const jack::Api* resolveJackApi(const Settings& st, std::string* err, bool* missing) {
+  if (missing) *missing = false;
+  if (jack::fakeEnabled()) {
+    gJackFakeApi = jack::appFakeServer().api();
+    return &gJackFakeApi;
+  }
+  const jack::Api* api = jack::loadApi(st.getString("audio.jack.library"), err);
+  if (!api && missing) *missing = true;
+  return api;
+}
+
+void publishJack(App& a) {
+  App::JackState& s = a.jack;
+  s.active = gJackActive;
+  s.viaPipeWire = gJack.viaPipeWire();
+  s.fake = gJack.isFake();
+  s.clientName = gJackActive ? gJack.clientName() : "";
+  s.rate = gJack.sampleRate();
+  s.buffer = gJack.bufferFrames();
+  s.inLatency = gJack.inputLatency();
+  s.outLatency = gJack.outputLatency();
+  s.xruns = gJack.xruns();
+  s.inputs = static_cast<int>(gJack.plan().ins.size());
+  s.outputs = static_cast<int>(gJack.plan().outs.size());
+  s.extraPairs = std::max(0, (s.outputs - 2) / 2);
+  s.inPorts.clear();
+  s.outPorts.clear();
+  s.extOutPorts.clear();
+  s.extInPorts.clear();
+  if (gJackActive) {
+    gJackLastLinks.clear();
+    for (const jack::PortInfo& pi : gJack.queryPorts()) {
+      for (const std::string& peer : pi.connected) gJackLastLinks.push_back({pi.shortName, peer});
+      App::JackPortView v{pi.shortName, pi.fullName, pi.alias, pi.input, pi.channel, pi.connected};
+      if (pi.input)
+        s.inPorts.push_back(std::move(v));
+      else
+        s.outPorts.push_back(std::move(v));
+    }
+    s.extOutPorts = gJack.listExternalPorts(true);
+    s.extInPorts = gJack.listExternalPorts(false);
+    jack::StatusInfo st{s.clientName, s.viaPipeWire, s.fake, s.rate, s.buffer, s.inputs, s.outputs, s.inLatency, s.outLatency, s.xruns};
+    a.audioStatus = jack::formatStatusLine(st);
+  }
+}
+
+void applyJackProjectLinks(App& a, const std::vector<jack::Link>& reopenLinks) {
+  if (!gJackActive) return;
+  const Settings& st = a.settings;
+  gJackPendingLinks.clear();
+  if (!reopenLinks.empty()) {
+    gJack.restoreLinks(reopenLinks);
+  } else if (st.getBool("audio.jack.restoreLinks") && !a.doc.song().portLinks.empty()) {
+    gJackPendingLinks = songLinksToJack(a.doc.song().portLinks);
+    gJack.restoreLinks(gJackPendingLinks);
+    const std::vector<jack::Link> made = gJack.snapshotLinks();
+    gJackPendingLinks.erase(std::remove_if(gJackPendingLinks.begin(), gJackPendingLinks.end(),
+                                           [&](const jack::Link& l) { return std::find(made.begin(), made.end(), l) != made.end(); }),
+                            gJackPendingLinks.end());
+  } else {
+    gJack.autoConnect(st.getBool("audio.jack.connectOutputs"), st.getBool("audio.jack.connectInputs"));
+    if (gJack.isFake() && gJack.plan().ins.size() >= 2) {
+      // Simulated server: patch the built-in "Tone" peer into In 1 / In 2 on a fresh project so
+      // input menus, meters and recording work out of the box in hidden/dev runs.
+      gJack.connect("In 1", "Tone:out_1");
+      gJack.connect("In 2", "Tone:out_2");
+    }
+  }
+  gJack.refreshLatencies();
+  a.audioInputLatency = gJack.inputLatency() + gJack.outputLatency();
+}
+
+bool openJack(App& a) {
+  gJackRetry.stop();
+  a.jack.waitingReturn = false;
+  a.jack.libraryMissing = false;
+  if (gJackHiddenRun && !jack::fakeEnabled()) {
+    a.jack.error = "Hidden run: JACK not opened.";
+    return false;
+  }
+  Settings& st = a.settings;
+  std::string err;
+  bool missing = false;
+  const jack::Api* api = resolveJackApi(st, &err, &missing);
+  if (!api) {
+    a.jack.libraryMissing = missing;
+    a.jack.error = err;
+    return false;
+  }
+  gJackApi = api;
+
+  jack::Config cfg;
+  cfg.inputs = std::clamp(static_cast<int>(st.getNumber("audio.jack.inputs")), 0, jack::kMaxInputs);
+  cfg.extraPairs = std::clamp(static_cast<int>(st.getNumber("audio.jack.extraPairs")), 0, jack::kMaxExtraPairs);
+  cfg.clientName = st.getString("audio.jack.clientName");
+  cfg.requestFrames = std::max(0, static_cast<int>(st.getNumber("audio.jack.bufferRequest")));
+  cfg.library = st.getString("audio.jack.library");
+  cfg.autoConnectOutputs = st.getBool("audio.jack.connectOutputs");
+  cfg.autoConnectInputs = st.getBool("audio.jack.connectInputs");
+
+  gJackRender.eng = &a.engine;
+  gJackRender.freewheel = &gJack.freewheelFlag();
+  gJackRender.mono = false;
+  if (!gJack.open(*api, cfg, deviceRender, &gJackRender, &err)) {
+    a.jack.error = err;
+    return false;
+  }
+
+  const int nIn = static_cast<int>(gJack.plan().ins.size());
+  const int extraPairs = std::max(0, (static_cast<int>(gJack.plan().outs.size()) - 2) / 2);
+  const std::vector<int> mixers = jack::resolveExtraMixers(extraPairs, asio::parseExtraOuts(st.getString("audio.jack.extraOuts")));
+  gJackRender.extraCount = extraPairs;
+  for (int k = 0; k < extraPairs && k < asio::kMaxExtraOutputs; ++k) {
+    gJackRender.extraMixer[k] = mixers[static_cast<size_t>(k)];
+    gJackRender.extraOut[k] = 2 + 2 * k;
+  }
+
+  const int rate = gJack.sampleRate();
+  const int frames = gJack.bufferFrames();
+  a.engine.setSampleRate(rate);  // client is not active yet
+  gUiSounds = nullptr;
+  if (!a.uiSoundsDisabled && !a.assetsDir.empty()) {
+    a.loadSoundTheme(rate, true);
+    gUiSounds = &a.uiSounds;
+  }
+  a.audioSampleRate = rate;
+  a.audioBuffer = frames;
+  a.audioOutputPairs = extraPairs;
+  a.audioInputStatus.clear();
+  a.audioInputLatency = 0;
+  gSynthInput = false;
+  gTestInput.store(nullptr, std::memory_order_release);
+  a.engine.setInputChannels(nIn);
+  a.engine.setInputPrefill(0);  // input and output arrive in the same callback: no jitter buffer
+  if (nIn > 0) {
+    a.audioInputDevice = "JACK: " + gJack.clientName();
+    a.audioInputChannels = nIn;
+    char buf[192];
+    std::snprintf(buf, sizeof buf, "JACK / PipeWire (%s): %d named input%s (In 1%s).", gJack.clientName().c_str(), nIn,
+                  nIn == 1 ? "" : "s", nIn > 1 ? (" to In " + std::to_string(nIn)).c_str() : "");
+    a.audioInputStatus = buf;
+  } else {
+    a.audioInputDevice.clear();
+    a.audioInputChannels = 0;
+    a.audioInputStatus = "JACK / PipeWire: 0 input ports.";
+  }
+
+  a.jack.error.clear();
+  if (!gJack.activate(&err)) {
+    gJack.close();
+    a.jack.error = err;
+    return false;
+  }
+  gJackActive = true;
+  gJack.setEngineOutputLatency(a.engine.outputLatency());
+  const std::vector<jack::Link> reopen = std::move(gJackReopenLinks);
+  gJackReopenLinks.clear();
+  applyJackProjectLinks(a, reopen);
+  gJack.updateInputAliases(trackInputRefs(a.doc.song()));
+  gJackAliasSig = trackAliasSignature(a.doc.song());
+  a.captureJackLinks = []() {
+    std::vector<Song::PortLink> out;
+    if (!gJackActive) return out;
+    for (const jack::Link& l : gJack.snapshotLinks()) out.push_back({l.own, l.peer});
+    return out;
+  };
+  publishJack(a);
+  return true;
+}
+
+void closeJack(App& a, bool snapshotForReopen) {
+  if (gJackActive && snapshotForReopen) gJackReopenLinks = gJack.snapshotLinks();
+  if (gJack.isOpen()) gJack.close();
+  if (gJackActive) {
+    gJackActive = false;
+    if (a.audioInputDevice.rfind("JACK: ", 0) == 0) a.audioInputDevice = gSdlInputDevice;
+    a.audioSampleRate = static_cast<int>(a.settings.getNumber("audio.sampleRate"));
+    a.audioBuffer = static_cast<int>(a.settings.getNumber("audio.bufferFrames"));
+  }
+  a.jack.active = false;
+  gJackAliasSig.clear();
+}
+
+void pollJack(App& a) {
+  if (a.jack.reconnectRequest) {
+    a.jack.reconnectRequest = false;
+    gJackSkip = false;
+    gJackRetry.stop();
+    a.jack.waitingReturn = false;
+    a.audioReopen = true;
+    return;
+  }
+  if (!gJackActive) {
+    if (gJackRetry.takeServerBack()) {
+      a.jack.waitingReturn = false;
+      if (a.settings.getString("audio.backend") == "jack" && a.settings.getBool("audio.jack.autoReturn")) {
+        gJackSkip = false;
+        a.notify("The JACK server is back: running on it again.");
+        a.audioReopen = true;
+      }
+    }
+    return;
+  }
+
+  gJack.setEngineOutputLatency(a.engine.outputLatency());
+
+  // Keep input port aliases / pretty names in sync with mixer track names and inputs (UI thread only).
+  const std::string aliasSig = trackAliasSignature(a.doc.song());
+  if (aliasSig != gJackAliasSig) {
+    gJackAliasSig = aliasSig;
+    gJack.updateInputAliases(trackInputRefs(a.doc.song()));
+    publishJack(a);
+  }
+
+  // Project opened or started: restore saved per-computer links (or auto-connect on a fresh song).
+  if (a.jack.restoreProjectLinks) {
+    a.jack.restoreProjectLinks = false;
+    applyJackProjectLinks(a, {});
+    publishJack(a);
+  }
+
+  // Explicit connect / disconnect requests from Settings > Audio.
+  if (!a.jack.patchRequests.empty()) {
+    std::vector<App::JackState::PatchRequest> reqs;
+    reqs.swap(a.jack.patchRequests);
+    for (const auto& r : reqs) {
+      if (r.connect)
+        gJack.connect(r.own, r.peer);
+      else
+        gJack.disconnect(r.own, r.peer);
+      // (a link the user changed by hand is theirs now: not made again when its peer reappears)
+      gJackPendingLinks.erase(std::remove(gJackPendingLinks.begin(), gJackPendingLinks.end(), jack::Link{r.own, r.peer}), gJackPendingLinks.end());
+    }
+    a.audioInputLatency = gJack.inputLatency() + gJack.outputLatency();
+    publishJack(a);
+  }
+
+  if (a.jack.refreshGraphRequest) {
+    a.jack.refreshGraphRequest = false;
+    publishJack(a);
+  }
+
+  const int ev = gJack.poll();
+  if (ev & jack::Host::Shutdown) {
+    const std::string why = gJack.shutdownReason();
+    a.jack.error = "The JACK server stopped" + (why.empty() ? "." : " (" + why + ").");
+    a.notify(a.jack.error + " Using the system audio until it is back.", true);
+    gJackReopenLinks = gJackLastLinks;
+    gJackSkip = true;
+    a.audioReopen = true;
+    if (a.settings.getBool("audio.jack.autoReturn") && gJackApi && (!gJackHiddenRun || jack::fakeEnabled())) {
+      gJackRetry.start(gJackApi, 2000);
+      a.jack.waitingReturn = true;
+    }
+    return;
+  }
+  if (ev & jack::Host::RateChanged) {
+    a.notify("The server changed its sample rate to " + std::to_string(gJack.sampleRate()) + " Hz: reopened.");
+    gJackReopenLinks = gJack.snapshotLinks();
+    a.audioReopen = true;
+    return;
+  }
+  if ((ev & jack::Host::ClientAppeared) && !gJackPendingLinks.empty()) {  // a program the project was linked to started
+    gJack.restoreLinks(gJackPendingLinks);
+    const std::vector<jack::Link> made = gJack.snapshotLinks();
+    gJackPendingLinks.erase(std::remove_if(gJackPendingLinks.begin(), gJackPendingLinks.end(),
+                                           [&](const jack::Link& l) { return std::find(made.begin(), made.end(), l) != made.end(); }),
+                            gJackPendingLinks.end());
+  }
+  if (ev & jack::Host::BufferChanged) {
+    a.audioBuffer = gJack.bufferFrames();
+  }
+  if (ev & (jack::Host::BufferChanged | jack::Host::Latency | jack::Host::Graph | jack::Host::ClientAppeared | jack::Host::Xrun)) {
+    a.audioInputLatency = gJack.inputLatency() + gJack.outputLatency();
+    publishJack(a);
+  }
+}
+
 void openAudio(App& a) {
   gTestInput.store(nullptr, std::memory_order_release);  // J-218: before the output callback stops
   if (gInDevice) {
@@ -743,10 +1266,17 @@ void openAudio(App& a) {
     gDevice = 0;
   }
   closeAsio(a);
+  closeWasapi();
+  const bool wantJack = jack::backendAvailable() && a.settings.getString("audio.backend") == "jack" && !gJackSkip;
+  closeJack(a, wantJack);
   a.audioOutputPairs = 0;  // K-101 follow-up: set again when the system device opens with more channels
   if (gVideoFps > 0) {  // K-10: the engine runs from the frame loop (videoClockStep)
     a.engine.setSampleRate(a.audioSampleRate);
     a.audioStatus = "Video clock: no audio device.";
+    a.audioBackendStatus = wasapi::BackendStatus{};
+    a.audioBackendStatus.backendName = "Video clock";
+    a.audioBackendStatus.sampleRate = a.audioSampleRate;
+    a.audioBackendStatus.bufferFrames = a.audioBuffer;
     return;
   }
   a.asio.available = asio::backendAvailable();
@@ -755,14 +1285,88 @@ void openAudio(App& a) {
     for (const auto& d : asio::listDrivers()) a.asio.drivers.push_back(d.name);
   if (a.asio.available && a.settings.getString("audio.backend") == "asio" && !gAsioSkip) {
     gSdlInputDevice = a.audioInputDevice;
-    if (openAsio(a)) return;
+    if (openAsio(a)) {
+      wasapi::BackendStatus bs;
+      bs.mode = wasapi::ActiveMode::Asio;
+      bs.backendName = "ASIO";
+      bs.deviceName = a.asio.driver;
+      bs.sampleFormat = a.asio.format.empty() ? "32-bit PCM" : a.asio.format;
+      bs.sampleRate = a.asio.rate;
+      bs.bufferFrames = a.asio.buffer;
+      bs.outputLatencyFrames = a.asio.outLatency;
+      bs.inputLatencyFrames = a.asio.inLatency;
+      bs.outputLatencyMs = 1000.0 * a.asio.outLatency / std::max(1, a.asio.rate);
+      bs.roundTripLatencyMs = 1000.0 * (a.asio.inLatency + a.asio.outLatency) / std::max(1, a.asio.rate);
+      a.audioBackendStatus = bs;
+      return;
+    }
     a.audioInputDevice = gSdlInputDevice;
     a.notify(a.asio.error + " Using the system audio.", true);
   }
   gAsioSkip = false;
+  a.jack.available = jack::backendAvailable();
+  if (a.jack.available && a.settings.getString("audio.backend") == "jack" && !gJackSkip) {
+    gSdlInputDevice = a.audioInputDevice;
+    if (openJack(a)) return;
+    a.audioInputDevice = gSdlInputDevice;
+    if (!gJackHiddenRun || jack::fakeEnabled()) a.notify(a.jack.error + " Using the system audio.", true);
+  }
+  gJackSkip = false;
+
+  // The output list in Settings (and the Tracker's) is filled before an exclusive open can return.
   a.audioDevices.clear();
   for (int i = 0, n = SDL_GetNumAudioDevices(0); i < n; ++i)
     if (const char* nm = SDL_GetAudioDeviceName(i, 0)) a.audioDevices.push_back(nm);
+
+  // K-95: Attempt WASAPI Exclusive when enabled; on any error fall back cleanly to SDL shared audio
+  // and preserve the human-readable fallback reason for Settings > Audio.
+  const bool wantWasapiExcl = a.settings.getBool("audio.wasapi.exclusive") && wasapi::ExclusiveHost::backendAvailable() && !gWasapiSkip;
+  wasapi::OpenFailure wasapiFail = wasapi::OpenFailure::None;
+  std::string wasapiFailDetail;
+  if (wantWasapiExcl) {
+    wasapi::Config wcfg;
+    wcfg.deviceName = a.audioDevice;
+    wcfg.sampleRate = a.audioSampleRate;
+    wcfg.bufferFrames = a.audioBuffer;
+    wcfg.channels = 2;
+    gWasapiRender.eng = &a.engine;
+    std::string werr;
+    if (gWasapi.open(wcfg, wasapiRender, &gWasapiRender, &wasapiFail, &werr)) {
+      const auto& wst = gWasapi.status();
+      gWasapiRender.mix.assign(2 * static_cast<size_t>(std::max(64, wst.bufferFrames)), 0.0f);
+      a.engine.setSampleRate(wst.sampleRate);
+      gUiSounds = nullptr;
+      if (!a.uiSoundsDisabled && !a.assetsDir.empty()) {
+        a.loadSoundTheme(wst.sampleRate, true);
+        gUiSounds = &a.uiSounds;
+      }
+      if (gWasapi.start(&werr)) {
+        gWasapiActive = true;
+        a.audioSampleRate = wst.sampleRate;
+        a.audioBuffer = wst.bufferFrames;
+        a.audioBackendStatus = wst;
+        openAudioInput(a, wst.sampleRate, wst.outputLatencyFrames);
+        if (a.audioInputLatency > 0) {
+          const auto lat = wasapi::computeLatency(wst.bufferFrames, 0, wst.sampleRate, true, a.audioInputLatency);
+          a.audioBackendStatus.inputLatencyFrames = a.audioInputLatency;
+          a.audioBackendStatus.roundTripLatencyMs = lat.roundTripMs;
+        }
+        char wbuf[256];
+        std::snprintf(wbuf, sizeof wbuf, "Running on %s via WASAPI Exclusive: %d Hz, %d-frame buffer (%s, %.1f ms).",
+                      wst.deviceName.c_str(), wst.sampleRate, wst.bufferFrames, wst.sampleFormat.c_str(), wst.outputLatencyMs);
+        a.audioStatus = wbuf;
+        return;
+      }
+      gWasapi.close();
+      wasapiFail = wasapi::OpenFailure::StreamInitFailed;
+      wasapiFailDetail = werr;
+    } else {
+      wasapiFailDetail = werr;
+    }
+    a.notify(wasapi::describeFailure(wasapiFail), true);
+  }
+  gWasapiSkip = false;
+
   SDL_AudioSpec want{}, have{};
   want.freq = a.audioSampleRate;
   want.format = AUDIO_F32SYS;
@@ -795,6 +1399,7 @@ void openAudio(App& a) {
   if (!gDevice) {
     std::snprintf(buf, sizeof buf, "No audio output: %s", SDL_GetError());
     a.audioStatus = buf;
+    a.audioBackendStatus = wasapi::resolveFallbackStatus(wantWasapiExcl, wasapiFail, {}, "No audio output", name ? name : "", a.audioSampleRate, a.audioBuffer, 0);
     a.notify(a.audioStatus, true);
     return;
   }
@@ -814,6 +1419,10 @@ void openAudio(App& a) {
   a.audioStatus = buf;
   SDL_PauseAudioDevice(gDevice, 0);
   openAudioInput(a, have.freq, have.samples);
+  const std::string drvLabel = sdlDriverLabel(SDL_GetCurrentAudioDriver());
+  const std::string devLabel = name ? name : "System default";
+  a.audioBackendStatus = wasapi::resolveFallbackStatus(wantWasapiExcl, wasapiFail, {}, drvLabel, devLabel, have.freq, have.samples, a.audioInputLatency);
+  (void)wasapiFailDetail;
 }
 
 std::string findAssets(const char* argv0) {
@@ -936,6 +1545,22 @@ void drawVideoCursor() {  // K-10: --video-cursor, a plain arrow at the dev poin
 }
 
 
+// GitHub #88 (KeyRepeatPairs.h): a held key's repeats that arrive as a release and a new press are one
+// press; the main loop's events come through it.
+keyrepeat::Pairs gKeyPairs;
+std::deque<SDL_Event> gKeyReady;
+// SDL_PollEvent through gKeyPairs: false when nothing is left to handle now (a release that waits for
+// its key's press stays until its time runs out).
+bool pollKeyEvent(SDL_Event& out) {
+  SDL_Event e;
+  while (gKeyReady.empty() && SDL_PollEvent(&e)) gKeyPairs.push(e, gKeyReady);
+  if (gKeyReady.empty()) gKeyPairs.flush(SDL_GetTicks(), gKeyReady);
+  if (gKeyReady.empty()) return false;
+  out = gKeyReady.front();
+  gKeyReady.pop_front();
+  return true;
+}
+
 struct HeldNote {
   ObjectId channel;
   int pitch;
@@ -1030,6 +1655,8 @@ void releaseTypedNotes(App& app, std::map<SDL_Scancode, HeldNote>& held) {
 //   K-10: cursor 0|1 (hides or shows the --video-cursor pointer)
 //   0.7.8: idconflicts (Dear ImGui's conflicting-ID finding, counted since the start) · idsweep <windows> [max] [dwell] | stop | demo
 //   (the pointer over every visible item of those windows, [dwell] frames each; IdSweep.h)
+//   K-442: dialogfit ["<label>"...] (each dialog's rect against the work area, "inside 0|1"; then each label's last item:
+//   clipped by its window, in the work area, covered by another window, "visible 0|1"; to stdout)
 //   stampstate (the chord stamp to stdout), zorder (the floating windows back to front, the focused window and the last one a press raised, to stdout)
 //   stage (the Stage window: each shown pill's centre, span, thickness, stored and live values, the selection, undo position)
 //   groove (the song's swing, the swing preset chip, its menu rows and the Groove editor's lanes and buttons to stdout)
@@ -1422,6 +2049,8 @@ struct DevLabelItem {
   std::string label;  // as shown: the text before any "##"
   ImVec2 min, max;
   bool popup = false;  // in a popup or menu window
+  ImVec2 clipMin, clipMax;  // K-442: its window's clip rect then (a scrolled body's or the dialog's)
+  ImGuiID root = 0;         // K-442: its root window
 };
 struct DevLabels {
   std::vector<DevLabelItem> items;
@@ -1441,6 +2070,13 @@ void devLabelHook(ImGuiID, const char* label, int) {
   it.min = g.LastItemData.Rect.Min;
   it.max = g.LastItemData.Rect.Max;
   it.popup = (g.CurrentWindow->RootWindow->Flags & ImGuiWindowFlags_Popup) != 0;
+  it.clipMin = g.CurrentWindow->ClipRect.Min;
+  it.clipMax = g.CurrentWindow->ClipRect.Max;
+  it.root = g.CurrentWindow->RootWindow->ID;
+  edzoomui::devToScreen(g.CurrentWindow, it.min);  // a magnified editor's item (or its popup's): where it shows
+  edzoomui::devToScreen(g.CurrentWindow, it.max);
+  edzoomui::devToScreen(g.CurrentWindow, it.clipMin);  // (its clip rect in the same place, for the K-442 clipped check)
+  edzoomui::devToScreen(g.CurrentWindow, it.clipMax);
   gDevLabels.items.push_back(std::move(it));
 }
 // The last-drawn item labelled `want` (a trailing '*': a label starting with the rest), rows of
@@ -1458,7 +2094,82 @@ const DevLabelItem* devFindLabel(const std::string& want) {
   return any;
 }
 
+// K-442: "dialogfit [labels...]": every dialog shown (a window that never docks, a modal popup,
+// floating; not Gridline's bars) against the work area between the bars: its rect, and whether it
+// lies wholly inside. Then each label asked for: the last item so labelled, whether it is visible
+// (inside its window's clip rect, inside the work area, and the front-most window under its centre
+// is its own dialog: not covered by another window).
+void devDialogFit(const std::vector<std::string>& labels, int frame) {
+  ImGuiContext& g = *ImGui::GetCurrentContext();
+  ImVec2 a0, a1;
+  ui::WorkArea(a0, a1);
+  const ImVec2 da = ui::DialogArea();
+  std::printf("dialogfit frame %d: area %.0f,%.0f %.0f,%.0f dialogarea %.0fx%.0f\n", frame, static_cast<double>(a0.x), static_cast<double>(a0.y),
+              static_cast<double>(a1.x), static_cast<double>(a1.y), static_cast<double>(da.x), static_cast<double>(da.y));
+  constexpr float kTol = 0.5f;
+  auto inside = [&](ImVec2 p0, ImVec2 p1) { return p0.x >= a0.x - kTol && p0.y >= a0.y - kTol && p1.x <= a1.x + kTol && p1.y <= a1.y + kTol; };
+  auto dialog = [](const ImGuiWindow* w) {
+    if (!w->WasActive || w->Hidden || w->DockIsActive || w != w->RootWindow) return false;
+    if (w->Flags & (ImGuiWindowFlags_ChildWindow | ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_ChildMenu)) return false;
+    if (w->Flags & ImGuiWindowFlags_Modal) return true;
+    if (w->Flags & ImGuiWindowFlags_Popup) return false;
+    if (w->Name[0] == '#' && w->Name[1] == '#') return ui::IsDialogWindow(w);  // (a "##" dialog with a footer or body)
+    return (w->Flags & ImGuiWindowFlags_NoDocking) != 0 || ui::IsDialogWindow(w);
+  };
+  for (const ImGuiWindow* w : g.Windows)
+    if (dialog(w))
+      std::printf("dialogfit window \"%s\" pos %.1f,%.1f size %.1fx%.1f inside %d\n", ui::stableWindowName(w->Name), static_cast<double>(w->Pos.x),
+                  static_cast<double>(w->Pos.y), static_cast<double>(w->Size.x), static_cast<double>(w->Size.y),
+                  inside(w->Pos, ImVec2(w->Pos.x + w->Size.x, w->Pos.y + w->Size.y)) ? 1 : 0);
+  for (const std::string& want : labels) {
+    const DevLabelItem* it = nullptr;
+    for (auto r = gDevLabels.items.rbegin(); r != gDevLabels.items.rend() && !it; ++r)
+      if (r->label == want) it = &*r;
+    if (!it) {
+      std::printf("dialogfit item \"%s\" shown 0 visible 0\n", want.c_str());
+      continue;
+    }
+    const bool clipped = it->min.x < it->clipMin.x - kTol || it->min.y < it->clipMin.y - kTol || it->max.x > it->clipMax.x + kTol || it->max.y > it->clipMax.y + kTol;
+    const ImVec2 c((it->min.x + it->max.x) * 0.5f, (it->min.y + it->max.y) * 0.5f);
+    const ImGuiWindow* front = nullptr;  // the front-most window under the item's centre (g.Windows: back to front)
+    for (const ImGuiWindow* w : g.Windows)
+      if (w->WasActive && !w->Hidden && w == w->RootWindow && !(w->Flags & (ImGuiWindowFlags_Tooltip | ImGuiWindowFlags_NoInputs)) &&
+          c.x >= w->Pos.x && c.y >= w->Pos.y && c.x < w->Pos.x + w->Size.x && c.y < w->Pos.y + w->Size.y)
+        front = w;
+    const ImGuiWindow* own = ImGui::FindWindowByID(it->root);
+    const bool covered = !front || front->ID != it->root;
+    std::printf("dialogfit item \"%s\" window \"%s\" rect %.1f,%.1f %.1f,%.1f shown 1 clipped %d inarea %d covered %d%s%s visible %d\n", want.c_str(),
+                own ? ui::stableWindowName(own->Name) : "?", static_cast<double>(it->min.x), static_cast<double>(it->min.y), static_cast<double>(it->max.x),
+                static_cast<double>(it->max.y), clipped ? 1 : 0, inside(it->min, it->max) ? 1 : 0, covered ? 1 : 0, covered && front ? " by " : "",
+                covered && front ? ui::stableWindowName(front->Name) : "", !clipped && inside(it->min, it->max) && !covered ? 1 : 0);
+  }
+  std::fflush(stdout);
+}
+
 static std::string gDevLastHint;  // hunt-1119: the hint the last frame showed (the dev input runs after it is cleared)
+
+// K-459: dev input that opens the windows and menus --show / --menu open at the start, during a run
+// (one run checks them all): "devmenu <name> | off", "show <window> | none".
+static bool windowDevCommand(App& app, const std::string& cmd, const std::string& w) {
+  if (cmd == "devmenu") {  // a menu as --menu <name> opens it (open popups closed first)
+    ImGui::ClosePopupsExceptModals();
+    devMenuShow(w == "off" ? std::string() : w);
+    return true;
+  }
+  if (cmd != "show") return false;
+  app.showAbout = app.showShortcuts = app.showExport = app.showInfo = app.showPluginManager = app.showGroove = app.showMaster = false;
+  app.showLivePads = app.showSettings = false;
+  if (w == "about") app.showAbout = true;
+  else if (w == "shortcuts") app.showShortcuts = true;
+  else if (w == "export") app.showExport = true;
+  else if (w == "info") app.showInfo = true;
+  else if (w == "plugins") app.showPluginManager = true;
+  else if (w == "groove") app.showGroove = true;
+  else if (w == "master") app.showMaster = true;
+  else if (w == "livepads") app.showLivePads = true;
+  else if (w.rfind("settings:", 0) == 0) app.showSettings = true, app.settingsTab = std::atoi(w.c_str() + 9);
+  return true;
+}
 
 void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
   ImGuiIO& io = ImGui::GetIO();
@@ -1501,8 +2212,9 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       fit.shots = l.args.size() > 1 ? l.args[1] : std::string();
       const char* only = std::getenv("GRIDLINE_FIT_ONLY");  // comma separated types (dev aid)
       for (const auto& p : pluginCatalog())
-        // (the sampler's settings are the Audio clip window, not a plugin window: no editor to fit)
-        if (!p.hidden && !isHostedType(p.type) && !clipwin::ownsType(p.type) &&
+        // (the sampler's settings are the Audio clip window, not a plugin window: no editor to fit;
+        // Loupe's effect window is sized by the person and its editor fills it, so it has no fit either)
+        if (!p.hidden && !isHostedType(p.type) && !clipwin::ownsType(p.type) && p.type != "gl.edison" &&
             (!only || (std::string(",") + only + ",").find("," + p.type + ",") != std::string::npos))
           fit.types.push_back(p.type);
     }
@@ -1615,9 +2327,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
     if (renderui::devCommand(app, l.cmd, l.args, frame)) continue;  // K-254: render ...
     if (packs::devCommand(app, l.cmd, l.args)) continue;  // K-15: loupe [pin <tab|below|left|right|float> | unpin]
     if (livetake::devCommand(app, l.cmd, l.args, frame)) continue;  // J-217: live recording checks
-    if (idsweep::devCommand(l.cmd, l.args, frame)) continue;  // 0.7.8: idconflicts · idsweep <windows> [max] [dwell] | stop | demo (IdSweep.h)
+    if (idsweep::devCommand(l.cmd, l.args, frame)) continue;
+    if (windowDevCommand(app, l.cmd, l.a0)) continue;  // K-459: devmenu <name> | off · show <window> | none  // 0.7.8: idconflicts · idsweep <windows> [max] [dwell] | stop | demo (IdSweep.h)
     if (recordrows::devCommand(app, l.cmd, l.args, frame)) continue;  // K-123: takes, input filter, recover, arming
     if (recmore::devCommand(app, l.cmd, l.args, frame)) continue;  // K-123 (0.7.7): quick punch, capture, start, latency
+    if (gestureui::devCommand(app, l.cmd, l.args, frame, pointer)) continue;  // K-410: pinch, smartzoom, pan, gestures
     // Three chains of commands: one long else-if chain goes past MSVC's nesting limit (C1061).
     bool middle = false, secondHalf = false;
     if (l.cmd == "move") {
@@ -1976,6 +2690,18 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       for (int p : app.typing.heldNotes()) std::printf(" %d", p);
       std::printf(" octave %d velocity %d chord %d\n", app.typing.octave, app.typing.velocity, app.typing.chordMode ? 1 : 0);
       std::fflush(stdout);
+    } else if (l.cmd == "typing" && l.a0 == "count") {  // GitHub #88: the engine's live note-ons and note-offs so far
+      std::printf("typing count %s on %llu off %llu folded %u\n", l.a1.c_str(), static_cast<unsigned long long>(app.engine.liveNoteCount()),
+                  static_cast<unsigned long long>(app.engine.liveNoteOffCount()), gKeyPairs.folded());
+      std::fflush(stdout);
+    } else if (l.cmd == "armstate") {  // GitHub #89: the input device, the engine's input channels and each mixer track's arm and input
+      std::printf("armstate frame %d: device [%s] inputs %d status [%s]\n", frame, app.audioInputDevice.c_str(), app.engine.inputChannels(),
+                  app.audioInputStatus.c_str());
+      const Song& s = app.doc.song();
+      for (size_t i = 0; i < s.mixer.size(); ++i)
+        if (s.mixer[i].armed || s.mixer[i].input >= 0)
+          std::printf("  arm %zu armed %d input %d stereo %d\n", i, s.mixer[i].armed ? 1 : 0, s.mixer[i].input, s.mixer[i].inputStereo ? 1 : 0);
+      std::fflush(stdout);
     } else if (l.cmd == "typing" && l.a0 == "select") {  // GitHub #42: typing select <channel index or name> [open]: as a click on the channel (open: its editor too)
       const Song& s = app.doc.song();
       const std::string which = l.args.size() > 1 ? l.args[1] : l.a1;  // (a quoted name may hold spaces)
@@ -2200,6 +2926,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       SDL_PushEvent(&q);
     } else if (l.cmd == "browser") {  // K-17 / K-18: browser rows and file operations (BrowserUi.h)
       browserui::devCommand(app, l.args, frame);
+    } else if (l.cmd == "arr") {  // K-406: arrangements (Live.cpp)
+      devArrangementCommand(app, l.args, frame);
     } else if (l.cmd == "layout" && !l.args.empty() && (l.args[0] == "minimize" || l.args[0] == "restore")) {
       // K-297 (development builds): the main window minimised or restored, as the window system does
       // it. A hidden run cannot minimise its window: there the events a real minimise sends (focus
@@ -2284,6 +3012,11 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       app.playlist.selected.clear();
       if (!l.args.empty()) app.playlist.selected.insert(static_cast<ObjectId>(std::strtoul(l.args[0].c_str(), nullptr, 10)));
       std::printf("clipsel frame %d: audio clip %u\n", frame, static_cast<unsigned>(livelook::focusedAudioClip(app)));
+    } else if (l.cmd == "stemsopen") {  // (dev): stemsopen <clip id> [t0 t1]: the Split stems window for that clip (song ticks [t0, t1) of it)
+      const ObjectId id = l.args.empty() ? kNoId : static_cast<ObjectId>(std::strtoul(l.args[0].c_str(), nullptr, 10));
+      const Tick t0 = l.args.size() > 2 ? static_cast<Tick>(std::atoll(l.args[1].c_str())) : 0;
+      const Tick t1 = l.args.size() > 2 ? static_cast<Tick>(std::atoll(l.args[2].c_str())) : 0;
+      stemsui::openForClip(app, id, t0, t1);
     } else if (l.cmd == "clipeditor") {  // K-249 (dev): the audio clip editor (ClipEditor.h)
       clipeditor::devCommand(app, l.cmd, l.args);
     } else if (l.cmd == "cliptools") {  // (dev): the clip menus' Audio tools (ClipToolsUi.h)
@@ -2374,6 +3107,26 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         std::printf("atitem frame %d: \"%s\" not shown\n", frame, want.c_str());
         std::fflush(stdout);
       }
+    } else if (l.cmd == "atpid") {  // atpid <owner> <index | pK>: the pointer to the centre of the control of that parameter
+      // (pK: the channel's plugin parameter K) drawn last frame (any window: pui::devItem), else "not shown"
+      const ObjectId owner = static_cast<ObjectId>(std::strtoul(l.a0.c_str(), nullptr, 10));
+      const ParamId pid = !l.a1.empty() && l.a1[0] == 'p' ? channelPluginParam(owner, std::atoi(l.a1.c_str() + 1))
+                                                          : ParamId{owner, static_cast<uint32_t>(std::strtoul(l.a1.c_str(), nullptr, 10))};
+      pui::DevItem it;
+      if (pui::devItem(pid, it) && it.frame >= ImGui::GetFrameCount() - 2) {
+        pointer = ImVec2((it.x0 + it.x1) * 0.5f, (it.y0 + it.y1) * 0.5f);
+        io.AddMousePosEvent(pointer.x, pointer.y);
+        std::printf("atpid frame %d: %s %s at %.1f %.1f\n", frame, l.a0.c_str(), l.a1.c_str(), static_cast<double>(pointer.x), static_cast<double>(pointer.y));
+      } else {
+        std::printf("atpid frame %d: %s %s not shown\n", frame, l.a0.c_str(), l.a1.c_str());
+      }
+      std::fflush(stdout);
+    } else if (l.cmd == "popuplabels") {  // popuplabels [tag]: the labelled rows of the popups and menus drawn last frame
+      std::string rows;
+      for (const DevLabelItem& it : gDevLabels.items)
+        if (it.popup) rows += " \"" + it.label + "\"";
+      std::printf("popuplabels frame %d %s:%s\n", frame, l.a0.empty() ? "-" : l.a0.c_str(), rows.c_str());
+      std::fflush(stdout);
     } else if (l.cmd == "scriptform") {  // the script window's knobs: value and where each one is
       std::printf("scriptform frame %d\n%s", frame, devScriptForm().c_str());
       std::fflush(stdout);
@@ -2491,6 +3244,10 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       r.formats = std::atoi(l.a0.c_str());
       r.folder = l.args.size() > 1 ? l.args[1] : l.a1;
       exportui::devStart(app, r);
+    } else if (l.cmd == "markerareas") {  // Export marker areas: open | dump | start <folder> | tick <row> on|off | pattern <text> (ExportUi.h)
+      exportui::devMarkerAreas(app, l.args, frame);
+    } else if (l.cmd == "exportdlg") {  // the Export audio dialog's choices: see ExportUi.h devExportDialog
+      exportui::devExportDialog(app, l.args, frame);
     } else if (l.cmd == "exportcancel") {
       exportui::devCancel();
     } else if (l.cmd == "rmchan") {  // K-9: rmchan <index>, as the rack's Delete
@@ -2594,6 +3351,24 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
         browserui::performItems(app, {it}, browse::DropTarget::Rack, {}, {});
       }
       app.syncEngine();
+    } else if (l.cmd == "plugicons") {  // K-450: "plugicons reset" / "plugicons": plugin icons drawn per surface since the reset
+      if (l.a0 == "reset") {
+        ui::resetPluginIconCounts();
+      } else {
+        const ui::PluginIconCounts& pc = ui::pluginIconCounts();
+        std::printf("plugicons frame %d:", frame);
+        for (int k = 0; k < static_cast<int>(ui::PluginIconSurface::Count); ++k)
+          std::printf(" %s %d/%d/%d", ui::pluginIconSurfaceName(static_cast<ui::PluginIconSurface>(k)), pc.own[k], pc.generic[k], pc.mistakes[k]);
+        std::printf("\n");
+        std::fflush(stdout);
+      }
+    } else if (l.cmd == "pickerhead") {  // dev: the plugin picker's header parts, overlaps, parts outside (BrowserUi.h)
+      std::printf("%s", browserui::devPickerHeader().c_str());
+      std::fflush(stdout);
+    } else if (l.cmd == "openwin") {  // K-450 (dev): openwin <window name>: a layout window opens (as from the View menu)
+      std::string w;
+      for (size_t i = 0; i < l.args.size(); ++i) w += (i ? " " : "") + l.args[i];
+      if (bool* f = layoutui::windowOpenFlag(app, w.empty() ? l.a0 : w)) *f = true;
     } else if (l.cmd == "closeplugins") {  // K-125: every plugin window closed, as View > Close plugin windows
       app.closePluginWindows();
     } else if (l.cmd == "instview") {  // K-124 / K-125: the open channel settings and the focused window
@@ -2701,6 +3476,8 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::fflush(stdout);
     } else if (l.cmd == "edzoomset") {  // K-19: edzoomset <plugin type> <zoom, 0 = automatic>: as the Editor size menu sets it
       app.settings.set("ui.editorZoom", edzoom::withZoom(app.settings.getString("ui.editorZoom"), l.a0, std::strtof(l.a1.c_str(), nullptr)));
+    } else if (l.cmd == "dialogfit") {  // K-442: dialogfit ["<label>"...]: each dialog's rect against the work area, the labels' visibility
+      devDialogFit(l.args, frame);
     } else if (l.cmd == "windows") {  // J-111h: windows [frames]
       devWindowsLeft = std::max(1, std::atoi(l.a0.c_str()));
     } else if (l.cmd == "zorder") {  // the floating windows back to front and the focused one (WindowRaise.h)
@@ -2731,6 +3508,10 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       else if (l.a0 == "back") app.home.back(app.now);
       else if (l.a0 == "close") app.closeProject();
       else launcherui::devReport(app);
+    } else if (l.cmd == "wizard") {  // K-105: wizard open|step <1..4>|next|back|close|look <id>|tone|state
+      setupwizard::devCommand(app, l.args, frame);
+    } else if (l.cmd == "tour") {  // K-105: tour start [demo]|menu|next|back|step <1..N>|stop|state
+      guidedtour::devCommand(app, l.args, frame);
     } else if (l.cmd == "dump") {
       const Song& s = app.doc.song();
       std::printf("dump frame %d: %zu clips, %zu selected, undo %zu\n", frame, s.playlist.size(), app.playlist.selected.size(),
@@ -2786,6 +3567,13 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       std::fflush(stdout);
     } else if (l.cmd == "selpattern") {  // J-173: selpattern <id>: the current pattern
       app.selectPattern(static_cast<ObjectId>(std::atoi(l.a0.c_str())));
+    } else if (l.cmd == "patterns") {  // K-428: pattern names and undo state to stdout
+      const Song& s = app.doc.song();
+      std::printf("patterns frame %d: cur %u undo %zu \"%s\"", frame, static_cast<unsigned>(app.curPattern),
+                  app.doc.history().position(), app.doc.history().undoLabel().c_str());
+      for (const auto& p : s.patterns) std::printf(" [%u:\"%s\"]", static_cast<unsigned>(p.id), p.name.c_str());
+      std::printf("\n");
+      std::fflush(stdout);
     } else if (l.cmd == "patauto") {  // J-173: every pattern's automation clips to stdout
       const Song& s = app.doc.song();
       std::printf("patauto frame %d: undo %zu\n", frame, app.doc.history().position());
@@ -2816,6 +3604,9 @@ void runDevInput(App& app, const std::vector<DevInputLine>& script, int frame) {
       devShowAutomationLane(std::atoi(l.a0.c_str()));
     } else if (l.cmd == "menu" && l.a0 == "open") {  // K-112b: menu open <id>: that menu opens (Windows.h devMenuOpen)
       devMenuOpen(l.a1);
+    } else if (l.cmd == "menu" && l.a0 == "click") {  // K-456: menu click <row>: a click on a row devRackItem names
+      std::printf("menu click frame %d: %s %s\n", frame, l.a1.c_str(), devRackClick(l.a1) ? "clicked" : "not shown");
+      std::fflush(stdout);
     } else if (l.cmd == "fxopen") {  // K-112b: fxopen <mixer track> <slot>: the effect window shows that slot (as --fx)
       const size_t mi = static_cast<size_t>(std::atoi(l.a0.c_str()));
       if (mi < app.doc.song().mixer.size()) app.fxEditor = {app.doc.song().mixer[mi].id, std::atoi(l.a1.c_str())};
@@ -3222,6 +4013,7 @@ int main(int argc, char** argv) {
   }
   bool hiddenRun = false;
   for (int i = 1; i < argc; ++i) hiddenRun = hiddenRun || std::string(argv[i]) == "--hidden";
+  gJackHiddenRun = hiddenRun;  // K-357: hidden runs never touch a real JACK server
   // Automated --hidden runs are silent: they use SDL's dummy audio driver, so tests and tools never
   // play through the speakers. A run that sets SDL_AUDIODRIVER itself, or GRIDLINE_HIDDEN_AUDIO=1,
   // keeps the real device.
@@ -3289,17 +4081,25 @@ int main(int argc, char** argv) {
   audionames::applyAppName();  // K-357: streams show as Gridline (read when the audio subsystem starts)
   gl::opendocs::setCommandLine(argc, argv);  // K-119: (AppKit repeats them as an open request)
   appicon::prepareIdentity();  // K-14: X11 WM_CLASS / Wayland app_id = the desktop entry id
+  // K-432 (GL-8006CE18): on Linux/BSD, call XInitThreads() and install a permanent non-fatal
+  // XSetErrorHandler before videodriver::prepare() (xServerAnswers -> XOpenDisplay) or SDL_Init().
+  // On Wayland, SDL2 never initializes X11, leaving _XDefaultError active for XWayland plugins.
+  host::native::installX11SafetyHandlers();
   {  // X11 where an X server answers: what plugin interfaces can open on (K-153: unless the setting says Wayland)
     Settings early;
     early.load(Settings::defaultPath());
     videodriver::prepare(early.getString("ui.windowSystem"));
   }
+  audiodriver::prepare();  // K-430: prefer native PipeWire on Linux when compiled in and running
   bool sdlStarted = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) == 0;
+  if (!sdlStarted && audiodriver::dropRequest()) sdlStarted = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) == 0;
   if (!sdlStarted && videodriver::dropRequest()) sdlStarted = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) == 0;
+  host::native::installX11SafetyHandlers();  // re-ensure after SDL_Init (never clobbers SDL's own handler)
 #if !defined(__APPLE__)
   if (sdlStarted && quiet::on()) SDL_AddEventWatch(quietShown, nullptr);  // quiet windows: each window shown fully transparent
 #endif
   videodriver::finish();
+  audiodriver::finish();
   if (const std::string sys = chromeos::describe(chromeos::current()); !sys.empty()) std::fprintf(stderr, "[system] %s\n", sys.c_str());  // K-75
   if (!sdlStarted) {
     std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -3413,6 +4213,7 @@ int main(int argc, char** argv) {
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   io.ConfigWindowsMoveFromTitleBarOnly = true;
   io.ConfigDragClickToInputText = true;
+  io.ConfigDebugHighlightIdConflicts = false;  // K-459: switched on below for tests and development runs only
 
   // ---- fonts (needed to draw the splash) ----
   std::string assets = findAssets(argv[0]);
@@ -3509,6 +4310,13 @@ int main(int argc, char** argv) {
   };
   splash(0.12f, "Loading interface");
   splash(0.22f, "Reading settings");
+  // Automatic updates: an update that was cut short is finished or undone, and a new version that
+  // keeps failing to start gives way to the old one, before the settings are read (SplashUpdate.h).
+  const std::vector<std::string> launchArgs(argv + 1, argv + argc);
+  if (splashupd::recoverAtStart(fs::u8path(Settings::defaultPath()).parent_path().u8string(), launchArgs)) {
+    crash::markCleanExit();
+    return 0;
+  }
   keycaps::setSystem([](int position) -> int { return SDL_GetKeyFromScancode(static_cast<SDL_Scancode>(position)); });  // GitHub #79
   App app;
   app.fontRegular = fRegular;
@@ -3524,6 +4332,84 @@ int main(int argc, char** argv) {
   }
   bool firstRun = !gl::safefs::existsAt(iniPath);
 
+  {  // Automatic updates: checked, downloaded and installed here, before the audio starts.
+    std::string devState, devShot;
+    float devScale = 1.0f;
+    bool automated = hiddenRun, noCheck = false;
+    for (int i = 1; i < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--dev-update-splash" && i + 1 < argc) devState = argv[i + 1];
+      if (a == "--screenshot" && i + 1 < argc) devShot = argv[i + 1];
+      if (a == "--scale" && i + 1 < argc) devScale = std::clamp(static_cast<float>(std::atof(argv[i + 1])), 1.0f, 4.0f);
+      if (a == "--no-update-check") noCheck = true;
+      if (a == "--screenshot" || a == "--profile-frames" || a == "--dev-input") automated = true;
+    }
+    auto updateFrame = [&](const SplashUpdateView& view, bool* quit) {
+      SDL_Event e;
+      while (SDL_PollEvent(&e)) {
+        if (gl::opendocs::take(e)) continue;  // K-119: kept for after the start
+        if (e.type == SDL_QUIT || (e.type == SDL_WINDOWEVENT && e.window.event == SDL_WINDOWEVENT_CLOSE)) *quit = true;
+        adoptUnfocusedKeys(e, window);
+        ImGui_ImplSDL2_ProcessEvent(&e);
+      }
+      const double tt = static_cast<double>(SDL_GetPerformanceCounter() - splashT0) / static_cast<double>(SDL_GetPerformanceFrequency());
+      ImGui_ImplOpenGL3_NewFrame();
+      ImGui_ImplSDL2_NewFrame();
+      ImGui::NewFrame();
+      drawSplashUpdate(fBold, fMono, view, tt);
+      ImGui::Render();
+      ImGui::UpdatePlatformWindows();
+      int w, h;
+      SDL_GL_GetDrawableSize(window, &w, &h);
+      glViewport(0, 0, w, h);
+      glClearColor(0.043f, 0.043f, 0.043f, 1.0f);
+      glClear(GL_COLOR_BUFFER_BIT);
+      ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+      SDL_GL_SwapWindow(window);
+      if (startHidden) SDL_Delay(8);  // no vsync wait for a window that is never shown
+    };
+    SplashUpdateView devView;
+    if (!devState.empty() && splashupd::devView(devState, devView)) {
+      // Dev check: each update state for screenshots, off-screen at --scale (2 = a 200% display).
+      int ww = 0, wh = 0;
+      SDL_GetWindowSize(window, &ww, &wh);
+      OffscreenTarget off;
+      const int fw = static_cast<int>(static_cast<float>(ww) * devScale), fh = static_cast<int>(static_cast<float>(wh) * devScale);
+      if (!devShot.empty() && off.create(fw, fh)) {
+        for (int f = 0; f < 8; ++f) {
+          ImGui_ImplOpenGL3_NewFrame();
+          ImGui_ImplSDL2_NewFrame();
+          io.DisplaySize = ImVec2(static_cast<float>(ww), static_cast<float>(wh));
+          io.DisplayFramebufferScale = ImVec2(devScale, devScale);
+          ImGui::NewFrame();
+          drawSplashUpdate(fBold, fMono, devView, 2.0 + f * 0.016);
+          ImGui::Render();
+          ImGui::UpdatePlatformWindows();
+          off.use(true);
+          glViewport(0, 0, fw, fh);
+          glClearColor(0.043f, 0.043f, 0.043f, 1.0f);
+          glClear(GL_COLOR_BUFFER_BIT);
+          ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+          if (f == 7) writePpm(devShot.c_str(), fw, fh);
+          off.use(false);
+        }
+        std::printf("update splash shot: %s (%s, %dx%d)\n", devShot.c_str(), devState.c_str(), fw, fh);
+      }
+      crash::markCleanExit();
+      return 0;
+    }
+    splashupd::Options uo;
+    uo.automated = automated;
+    uo.disabled = noCheck;
+    const splashupd::Result r = splashupd::run(app, launchArgs, uo, updateFrame);
+    if (r != splashupd::Result::Continue) {
+      // Restart: the watcher starts the new version as soon as this process has ended.
+      if (hiddenRun) std::printf("update: %s\n", r == splashupd::Result::Restart ? "restarting into the new version" : "quit at the splash");
+      std::fflush(stdout);
+      crash::markCleanExit();
+      return 0;
+    }
+  }
   splash(0.42f, "Starting audio engine");
   app.audioSampleRate = static_cast<int>(app.settings.getNumber("audio.sampleRate"));
   gl::setLegacyRateReference(app.audioSampleRate);  // J-104: old Bitcrusher "Downsample N" loads as this rate / N
@@ -3549,6 +4435,7 @@ int main(int argc, char** argv) {
   host::initHosting(app.configDir());
   splash(0.74f, "Preparing instruments and effects");
   app.syncEngine();
+  bool plainLaunchAtStart = false;
   {  // J-24: Settings > General > On startup (screenshot runs keep the built-in starter project)
     bool shot = false;
     for (int i = 1; i < argc; ++i) shot = shot || std::string(argv[i]) == "--screenshot";
@@ -3558,6 +4445,7 @@ int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) plainLaunch = plainLaunch && std::string(argv[i]).rfind("-psn_", 0) == 0;
     // K-119: a launch to open a document (macOS sends it as an open request, not an argument) is no plain launch.
     plainLaunch = plainLaunch && !gl::opendocs::pending();
+    plainLaunchAtStart = plainLaunch;
     if (shot)
       app.applySettingsHooks();
     else
@@ -3601,6 +4489,9 @@ int main(int argc, char** argv) {
   std::string devLayoutPreset;            // K-79 --layout studio|performance|tracks: this run only (nothing saved)
   std::vector<std::string> devPanes;      // K-79 --pane mixer|stage|piano|rack|history|browser|pads|settings: open a window at frame 3
   bool devSwitchCheck = false;
+  bool hasPluginArg = false;  // K-105: --plugin suppresses first-run setup wizard
+  bool devShowWizard = false;
+  bool devShowTour = false;
   std::string devStyleReport;             // K-112 --style-report <file>: the layout style report of the last frame
   int devSwitchFrame = -100;  // the frame a layout switch was applied on (for --switch-check)
   Uint64 devCheckTicks = 0;   // K-291: the switch frame's own state check (wall, counter ticks) and CPU time (ns)
@@ -3683,6 +4574,7 @@ int main(int argc, char** argv) {
       if (ci < app.doc.song().channels.size()) app.selectChannel(app.doc.song().channels[ci].id);
       devFocus = "Piano roll";
     } else if (arg == "--plugin" && i + 1 < argc) {
+      hasPluginArg = true;
       // Opens a plugin's editor on the demo song: instruments get a new channel,
       // effects go into the last slot of insert 1.
       std::string type = argv[++i];
@@ -3749,6 +4641,8 @@ int main(int argc, char** argv) {
     } else if (arg == "--show" && i + 1 < argc) {  // open a window for layout checks
       std::string w = argv[++i];
       if (w == "about") app.showAbout = true;
+      else if (w == "wizard") devShowWizard = true;         // K-105: first-run setup wizard
+      else if (w == "tour") devShowTour = true;             // K-105: interactive guided tour
       else if (w == "launcher") devLauncher = 0;            // J-141: the welcome launcher
       else if (w == "launcher-templates") devLauncher = 1;  // ... on its Templates view
       else if (w == "launcher-collab") devLauncher = 2;     // J-146: ... on its Collaborative view
@@ -3817,12 +4711,18 @@ int main(int argc, char** argv) {
       else if (w == "rendersummary") devExport = 5; // renders the song (WAV + FLAC + MIDI) into the temp folder, then the summary
       else if (w == "importreport") {  // layout check: a sample FL import summary
         app.showImportReport = true;
+        app.importReport.missingPluginsOnly = false;
         app.importReport.source = "Sample song.flp";
         app.importReport.counts = {{"Channels", 14}, {"Patterns", 9}, {"Playlist clips", 41}, {"Mixer inserts", 12}, {"Effects", 23}};
         app.importReport.unmapped = {{"Third-party plugin (no installed match)", 2},
                                      {"Wrapped third-party instrument whose plugin file is not installed on this computer", 1}};
         app.importReport.warnings = {"Two automation clips target parameters that have no Gridline equivalent; they were kept but do nothing.",
                                      "Time stretching of one audio clip is approximated."};
+      } else if (w == "missingplugins") {  // Q-14 layout check: missing/unscanned hosted plugins dialog
+        app.showImportReport = true;
+        app.importReport = App::ImportReport{};
+        app.importReport.missingPluginsOnly = true;
+        app.importReport.source = app.projectPath.empty() ? "Project" : std::filesystem::u8path(app.projectPath).filename().u8string();
       } else if (w == "steprec") {  // layout check: step record cursor in the piano roll
         app.stepRecord = true;
         app.stepRecorder.cursor = app.doc.song().ppq * 2;
@@ -3991,8 +4891,9 @@ int main(int argc, char** argv) {
   }
   splash(1.0f, "Ready");
   // New or changed plugins are scanned in the background, each in a child
-  // process (screenshot runs and GRIDLINE_NO_PLUGIN_SCAN skip it).
-  if (shotPath.empty() && profilePath.empty() && !std::getenv("GRIDLINE_NO_PLUGIN_SCAN")) host::startScan(host::selfExecutablePath());
+  // process (screenshot, profile, hidden/test runs and GRIDLINE_NO_PLUGIN_SCAN skip it).
+  if (shotPath.empty() && profilePath.empty() && !startHidden && !std::getenv("GRIDLINE_NO_PLUGIN_SCAN"))
+    host::startScan(host::selfExecutablePath());
   const PluginTarget devEditorTarget = app.fxEditor.first != kNoId ? PluginTarget{app.fxEditor.first, app.fxEditor.second}
                                                                    : PluginTarget{app.settingsChannel, -1};
 
@@ -4098,15 +4999,40 @@ int main(int argc, char** argv) {
   double pointerAt = -1;
   if (mainNative.valid() && !xdrop::native::install(mainNative.handle))  // J-75: hover, promises, links (macOS)
     std::fprintf(stderr, "[drop] native drop target unavailable; using SDL drop events\n");
+  gGestureMainWindow = window;
+  if (mainNative.valid() && !startHidden) gesture::native::install(mainNative.handle, &wakeUiLoop, &gestureWindowOffset);  // K-410
   {  // J-89: update check once the window is up; automated runs never touch the network
     updateOpts.hidden = startHidden;
     updateOpts.disabled = updateOpts.disabled || update::disabledByEnvironment();
     updateOpts.automated = startHidden || !shotPath.empty() || !profilePath.empty() || browserui::thumbMode() || !devInput.empty();
+    // K-459: Dear ImGui's "conflicting ID" popup and red outlines only in tests and development runs, never for users.
+    idsweep::setHighlight(idsweep::highlightFor(updateOpts.automated));
+    ImGui::GetIO().ConfigDebugHighlightIdConflicts = idsweep::highlight();
     updateOpts.openUrl = [](const std::string& url) { return SDL_OpenURL(url.c_str()) == 0; };
     collabui::setOpenUrl(updateOpts.openUrl);  // J-111e: Show in Finder / Files
     updui::start(app, updateOpts);
     suiteui::start(app, updateOpts.automated);  // J-131: Gridline Suite into the plug-in folders
     urlimportui::start(updateOpts.automated);    // J-192: scripted runs never download the tools
+  }
+  {  // K-105: First-run setup wizard on genuine new interactive launches (never blocks automated/quiet/upgraded runs).
+    if (devShowWizard) {
+      setupwizard::open(app, true);
+    } else if (devShowTour) {
+      guidedtour::start(app, false);
+    } else {
+      setuptour::FirstRunInputs fri;
+      fri.setupDone = app.settings.getBool("ui.setupDone");
+      // Settings already on disk at start: an existing installation, never a first run (ui.layoutChosen
+      // is only written when a layout was picked explicitly).
+      fri.layoutChosen = app.settings.getBool("ui.layoutChosen") || !app.freshInstall();
+      fri.plainLaunch = plainLaunchAtStart;
+      fri.hidden = startHidden;
+      fri.quietWindows = quiet::on();
+      fri.automated = updateOpts.automated || !devMenu.empty() || devOptions;
+      fri.embedded = app.embedded;
+      fri.hasPluginArg = hasPluginArg;
+      if (setuptour::shouldShowFirstRunWizard(fri)) setupwizard::open(app, true);
+    }
   }
   if (gVideoFps > 0) {
     fixedDt = 1.0 / gVideoFps;
@@ -4114,19 +5040,31 @@ int main(int argc, char** argv) {
   }
   const bool frameClock = gVideoFps == 0 && profilePath.empty() && mainNative.valid() && !std::getenv("GRIDLINE_VSYNC_SWAP") && host::native::frameClockStart(mainNative);
   if (frameClock) SDL_GL_SetSwapInterval(0);
-  // 0.7.8: SDL older than 2.0.16 (Debian 11, the Chromebook's Linux) has no sleeping wait:
-  // SDL_WaitEventTimeout looks for events every few milliseconds, most of an idle interface
-  // thread's time (0.7 to 0.9 % of a core hidden). There the idle wait sleeps on SDL's own X
-  // connection instead (NativeView.h displaySleep). GRIDLINE_DISPLAY_WAIT=1 uses it with any SDL,
-  // 0 never.
+  // 0.7.8 (X11) + 0.7.9 (Wayland): SDL older than 2.0.16 (Debian 11, the Chromebook's Linux) has
+  // no sleeping wait: SDL_WaitEventTimeout looks for events every few milliseconds, most of an
+  // idle interface thread's time (0.7 to 0.9 % of a core hidden). There the idle wait sleeps on
+  // SDL's own X11 or Wayland display fd instead (NativeView.h displaySleep).
+  // GRIDLINE_DISPLAY_WAIT=1 uses it with any SDL, 0 never.
   bool displayWait = false;
-#if defined(SDL_VIDEO_DRIVER_X11) && !defined(__APPLE__) && !defined(_WIN32)
-  if (!frameClock && pointerNative.display) {
+#if !defined(__APPLE__) && !defined(_WIN32)
+  if (!frameClock) {
     SDL_version sv;
     SDL_GetVersion(&sv);
     const char* dw = std::getenv("GRIDLINE_DISPLAY_WAIT");
     const bool want = dw ? std::strcmp(dw, "0") != 0 : SDL_VERSIONNUM(sv.major, sv.minor, sv.patch) < SDL_VERSIONNUM(2, 0, 16);
-    if (want) displayWait = host::native::displayWaitStart(pointerNative.display);
+    if (want) {
+#if defined(SDL_VIDEO_DRIVER_X11)
+      if (pointerNative.display) displayWait = host::native::displayWaitStart(pointerNative.display);
+#endif
+#if defined(SDL_VIDEO_DRIVER_WAYLAND)
+      if (!displayWait) {
+        SDL_SysWMinfo wm;
+        SDL_VERSION(&wm.version);
+        if (SDL_GetWindowWMInfo(window, &wm) && wm.subsystem == SDL_SYSWM_WAYLAND && wm.info.wl.display)
+          displayWait = host::native::displayWaitStartWayland(static_cast<void*>(wm.info.wl.display));
+      }
+#endif
+    }
   }
 #endif
   // The saved layout, read now that the main window is where it will be (J-113: detached
@@ -4149,8 +5087,13 @@ int main(int argc, char** argv) {
   }
   // K-112c (round 43): the project made at start (before the layout was known) is made again in
   // Clips, so it starts with Clips' tracks; one opened or already edited stays.
-  if (layoutPreset == layout::Preset::Live && !argOpened && !argProject && app.projectFile().empty() && app.doc.history().position() == 0)
+  // GitHub #86: the welcome screen of a plain launch stays up: the project behind it is only the
+  // placeholder (a new project would make it give way, as one the user chose does).
+  if (layoutPreset == layout::Preset::Live && !argOpened && !argProject && app.projectFile().empty() && app.doc.history().position() == 0) {
+    const bool welcome = app.home.visible() && !app.home.projectOpen();
     app.newProject();
+    if (welcome) app.home.showAtStartup(app.now);
+  }
   iniPath = (fs::path(app.configDir()) / layoutui::iniFile(app, layoutPreset)).string();
   firstRun = !gl::safefs::existsAt(iniPath);
   bool layoutRebuild = false;  // K-79: a preset switch found no saved layout file
@@ -4233,6 +5176,9 @@ int main(int argc, char** argv) {
       app.guardUnsaved([&running]() { running = false; });
     }
     pollAsio(app);  // K-6: driver resets, latency changes, the control panel
+    pollWasapi(app);  // K-95: endpoint invalidation -> automatic fallback
+    pollJack(app);  // K-357: JACK / PipeWire server events, port aliases, links and retry worker
+    armInputCheck(app);  // GitHub #89: a track just armed with no input device chosen opens the default one
     if (app.audioReopen) {
       app.audioReopen = false;
       openAudio(app);
@@ -4261,6 +5207,7 @@ int main(int argc, char** argv) {
     }
     app.engine.setMetronome(app.metronome);
     app.engine.setReturnToSeek(app.settings.getBool("transport.rememberSeek"));  // J-49
+    app.engine.setStopAtEnd(app.settings.getBool("transport.stopAtEnd"));        // K-415
     gDevLastHint = app.hint;
     app.hint.clear();
     statT = fstats::stamp();
@@ -4323,6 +5270,10 @@ int main(int argc, char** argv) {
           }
         }
         devstress::frame(app);  // a seeded stress run, if one was asked for
+        // GitHub #88: a scripted frame stands for at least a frame's time (hidden runs draw them far
+        // faster than real time), so a key's release from an earlier scripted frame goes on now and is
+        // never paired with a press the script gives later (a press in the same frame still is).
+        gKeyPairs.flush(0, gKeyReady, true);
         runDevInput(app, devInput, frameNo);
         idsweep::frame(io, frameNo);  // 0.7.8: the ID-conflict sweep's pointer (logical pixels, like the script's)
         lastScaledEvent = g.InputEventsNextEventId - 1;  // already in logical pixels
@@ -4335,6 +5286,7 @@ int main(int argc, char** argv) {
     }
     collabui::setPointerSize(static_cast<float>(pointerSize.arrowH) / uiScale, pointerSize.source);
     scrollui::configure(app.settings);  // J-67: smooth scrolling / elastic edges for every ImGui scroll region
+    gestureui::beginFrame(app.settings, uiScale);  // K-410: trackpad pinch, smart-zoom, 2D pan
     ui::SetWindowRubber(scrollui::params().elastic);  // J-117: the same switch for the windows' elastic boundary
     scrollui::beforeNewFrame();
     edzoomui::mapPointer();  // K-19: the pointer over a magnified plugin editor, in its design coordinates
@@ -4686,6 +5638,7 @@ int main(int argc, char** argv) {
     }
     browserui::thumbDraw(app);
     if (!devMenu.empty()) drawDevMenu(app, devMenu);
+    else if (!devMenuShown().empty()) drawDevMenu(app, devMenuShown());  // K-459: "devmenu <name>"
     if (!devFocus.empty() && frameNo == 3) app.focusWindow = devFocus;
     for (const auto& [f, id] : devSwitches)
       if (frameNo == f) layoutui::choose(app, layout::fromId(id), layout::linkedFromSettings(app.settings));
@@ -4867,6 +5820,8 @@ int main(int argc, char** argv) {
     // palette is put back by now, so its accent would read orange).
     if (!homeShown && layoutui::active() != layout::Preset::Studio)
       ui::drawKeyFocusFrame(layoutui::active() == layout::Preset::Logic && theme::pal().dark ? theme::withAlpha(theme::rgb(0x2F7FE0), 0.6f) : 0u);
+    guidedtour::draw(app);   // K-105: interactive spotlight & floating coachmark card over real workspace
+    setupwizard::draw(app);  // K-105: 4-step first-run setup wizard overlay
     ui::wheelFrameEnd();     // J-83
     collabui::drawCursors(app);  // J-111: collaborators' cursors, last: on top of every window, popup and menu
     layoutui::devFrame(app, frameNo);  // K-112: "layout inventory" (dev), once every window of the frame is drawn
@@ -5292,8 +6247,10 @@ int main(int argc, char** argv) {
         const bool shown = anythingShown();
         pace.setDeep(openHostedEditorTargets().empty() && !collabui::sendingFiles(app));  // K-142: 4 idle frames a second after a while, unless a plugin window is open (its parameters) or files go to a collaborator (a share a frame); a collaborator's edits wake the loop at once (follow-up)
         // (a game controller's buttons are read only when the loop looks: SDL has no wake for them)
+        const bool joyInit = SDL_WasInit(SDL_INIT_JOYSTICK) != 0;
+        const int numJoy = joyInit ? SDL_NumJoysticks() : 0;
         const double waitNow = paceNow();
-        idlepace::Wait w = idlepace::planWait(pace, waitNow, shown, app.doc.modified(), lastDrawn, cpureport::secondsToNext(), SDL_NumJoysticks() > 0,
+        idlepace::Wait w = idlepace::planWait(pace, waitNow, shown, app.doc.modified(), lastDrawn, cpureport::secondsToNext(), numJoy > 0,
                                               app.midi ? app.midi->secondsToNextLook(MidiManager::clockNow()) : 1e300);
         w.nap = std::min(w.nap, crash::frozenAfterSeconds() / 3.0);  // (the watchdog hears from a sleeping loop well within its limit)
         reportOnly = w.reportOnly;
@@ -5301,7 +6258,7 @@ int main(int argc, char** argv) {
         if (frameClock) host::native::frameClockIdle(true);
         // Events already queued (this thread's own, such as a window state the CPU report gives, or
         // ones SDL read meanwhile) take their turn now: the sleeps below wake only for new ones.
-        if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT)) {
+        if (SDL_HasEvents(SDL_FIRSTEVENT, SDL_LASTEVENT) || gKeyPairs.pending()) {  // (GitHub #88: a key's release waits a few ms)
           ++loopCount.events;
           pace.active(paceNow());
           break;
@@ -5313,7 +6270,24 @@ int main(int argc, char** argv) {
         ++loopCount.sleeps;
         if (frameClock) woke = host::native::frameClockSleep(w.nap);
         else if (displayWait) woke = host::native::displaySleep(w.nap);
-        else SDL_WaitEventTimeout(nullptr, std::max(1, static_cast<int>(std::ceil(w.nap * 1000.0))));
+        else {
+          // 0.7.9 (TASKS.md:1441): SDL >= 2.0.16 falls back to a 1 ms polling loop in
+          // SDL_WaitEventTimeout whenever joystick events are enabled. Suppress joystick event
+          // state during the kernel sleep when hidden or with no joystick attached, and restore
+          // before SDL_PumpEvents() so hotplug and 4 Hz hidden polling still work cleanly.
+          const bool pauseJoy = joyInit && idlepace::suppressJoystickWait(shown, numJoy);
+          const int prevJoy = pauseJoy ? SDL_JoystickEventState(SDL_QUERY) : SDL_IGNORE;
+          const int prevPad = pauseJoy ? SDL_GameControllerEventState(SDL_QUERY) : SDL_IGNORE;
+          if (pauseJoy) {
+            if (prevPad == SDL_ENABLE) SDL_GameControllerEventState(SDL_IGNORE);
+            if (prevJoy == SDL_ENABLE) SDL_JoystickEventState(SDL_IGNORE);
+          }
+          SDL_WaitEventTimeout(nullptr, std::max(1, static_cast<int>(std::ceil(w.nap * 1000.0))));
+          if (pauseJoy) {
+            if (prevJoy == SDL_ENABLE) SDL_JoystickEventState(SDL_ENABLE);
+            if (prevPad == SDL_ENABLE) SDL_GameControllerEventState(SDL_ENABLE);
+          }
+        }
         uiwake::endWait();
         if (woke) SDL_PumpEvents();
         if (termAsked) break;  // (a hidden run's SIGTERM: the turn ends the run)
@@ -5383,7 +6357,7 @@ int main(int argc, char** argv) {
       }
     };
     keycaps::refresh();  // GitHub #79: the computer's layout may have changed (shortcut names, the / key)
-    while (SDL_PollEvent(&ev)) {
+    while (pollKeyEvent(ev)) {  // (GitHub #88: SDL_PollEvent, a held key's release-and-press repeats folded)
       ++paceEvents;  // K-277
       if (ev.type == SDL_USEREVENT && ev.user.code == kUiWakeCode) continue;  // K-142: another thread woke the loop (its work is taken below)
       if (draglog::on()) {  // 0.7.8: the frame's mouse, window and key events
@@ -5477,9 +6451,11 @@ int main(int argc, char** argv) {
         }
         cmdWDownAt = 0;
       }
-      // J-55: "Follow system" picks up a desktop appearance change when Gridline is focused again.
+      // J-55 / K-395: "Follow system" picks up a desktop appearance change when Gridline is focused again,
+      // only re-applying if the resolved dark/light state actually changed.
       if (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_FOCUS_GAINED &&
-          ev.window.windowID == SDL_GetWindowID(window) && theme::modeFromSettings(app.settings) == theme::Mode::System)
+          ev.window.windowID == SDL_GetWindowID(window) && theme::modeFromSettings(app.settings) == theme::Mode::System &&
+          theme::systemPrefersDark() != theme::isDark())
         theme::applyFromSettings(app.settings, true);
       // J-75: files dropped by other applications. macOS reports them (with
       // the hover) through xdrop::native; elsewhere SDL reports them on release:
@@ -5546,6 +6522,7 @@ int main(int argc, char** argv) {
         }
       }
     }
+    if (gesture::hasPending()) ++paceEvents;  // K-410: native trackpad gestures wake idle pacing
     if (focusLostHeld) {  // 0.7.8 (above): the focus loss reaches ImGui once the button is up
       // The release normally comes to the window the press went to. Should it go elsewhere (or the
       // keys come back with the button already up), the system's own button state lets go for it (a
@@ -5674,6 +6651,7 @@ int main(int argc, char** argv) {
   smoothlib::shutdown();       // a Library preview render in progress likewise
   browserui::shutdownIndex();  // J-46: no worker left running into static teardown
   updui::shutdown();           // J-89: a running installer download is cancelled
+  splashupd::shutdown();       // an update download moved to the background stops (kept for the next start)
   urlimportui::shutdown();     // J-192: running downloads / conversions are stopped
   app.shutdownProjectLoad();   // J-167: a load in progress stops; its reader is joined
   // K-9: the project is dealt with by now; a plugin that never returns from closing (a bridged
@@ -5690,6 +6668,9 @@ int main(int argc, char** argv) {
   if (gDevice) SDL_CloseAudioDevice(gDevice);
   if (gInDevice) SDL_CloseAudioDevice(gInDevice);  // (SDL_Quit would too; explicit, like the output)
   gAsio.close();  // K-6: the driver stops before the engine goes
+  gWasapi.close();  // K-95: stop WASAPI Exclusive render thread before the engine goes
+  gJackRetry.stop();
+  gJack.close();  // K-357: JACK client stops before the engine goes
   // J-103: the static sample cache's decoders and the clip render thread are joined here,
   // not by their static destructors (a decode or render still running then would use
   // statics already destroyed). Offline work after this point decodes / renders inline.
@@ -5703,6 +6684,8 @@ int main(int argc, char** argv) {
   ImGui_ImplSDL2_Shutdown();
   ImGui::DestroyContext();
   SDL_GL_DeleteContext(gl);
+  gesture::native::uninstall();
+  gGestureMainWindow = nullptr;
   SDL_DestroyWindow(window);
   SDL_Quit();
   const int exitCode = browserui::auditIssueCount() > 0 ? 1 : 0;  // Q-7: --layout-audit fails on any inset issue

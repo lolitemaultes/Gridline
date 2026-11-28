@@ -10,6 +10,7 @@
 #include <cstring>
 #include <map>
 #include "../../app/App.h"
+#include "../../app/UrlImportUi.h"
 #include "../../core/I18n.h"
 #include "plasma_dsp.h"
 #include "plasma_ui.h"
@@ -173,6 +174,12 @@ void tableMenu(Ctx& c, int o) {
                [o](App& a, const PluginTarget& t, const std::string& p) {
                  editState(a, t, "Load sample", [&](PluginState&, Model& m) { m.osc[static_cast<size_t>(o)].sample = p; });
                });
+    if (ImGui::MenuItem(i18n::tr("Import sample from URL..."))) {
+      const PluginTarget tt = c.t;
+      urlimportui::openFor(c.a, urlimportui::Target{"Plasma (Layer " + std::to_string(o + 1) + ")", [tt, o](App& a, const std::string& p, const std::string&) {
+        editState(a, tt, "Import sample from URL", [&](PluginState&, Model& m) { m.osc[static_cast<size_t>(o)].sample = p; });
+      }, false});
+    }
     if (!c.m.osc[static_cast<size_t>(o)].sample.empty() && ImGui::MenuItem(i18n::tr("Clear (use the wavetable)"))) {
       c.m.osc[static_cast<size_t>(o)].sample.clear();
       commit(c, "Clear sample");
@@ -235,6 +242,18 @@ void tableMenu(Ctx& c, int o) {
         st.params[static_cast<size_t>(oscP(o, O_Table))] = 0;
       });
     });
+  if (ImGui::MenuItem(i18n::tr("Import wavetable from URL..."))) {
+    const PluginTarget tt = c.t;
+    urlimportui::openFor(c.a, urlimportui::Target{"Plasma (Wavetable)", [tt, o](App& a, const std::string& p, const std::string&) {
+      editState(a, tt, "Import wavetable from URL", [&](PluginState& st, Model& m) {
+        auto& d = m.osc[static_cast<size_t>(o)];
+        d.table = "file:" + p;
+        d.tableName = fs_stem(p);
+        d.frames.clear();
+        st.params[static_cast<size_t>(oscP(o, O_Table))] = 0;
+      });
+    }, false});
+  }
   if (ImGui::MenuItem(i18n::tr("Read the table folders again"))) tableCatalogUi(c, true);
   if (ImGui::IsItemHovered()) c.a.setHint("Lists the tables again: your table folder and the installed wavetable library");
   if (ImGui::MenuItem(i18n::tr("Edit the table..."))) c.u.wtOsc = o, openView(c.u, VTable);

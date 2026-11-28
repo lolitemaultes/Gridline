@@ -191,6 +191,31 @@ void drawBar(pluginbar::Bar& w, host::HostedInstance* hi) {
     w.action = pluginbar::Action::Sandbox;
   if (toggle(lay::kBarGeneric, "##generic", "GENERIC", false, "Show Gridline's parameter list instead of the plugin's interface"))
     w.action = pluginbar::Action::Generic;
+  // K-437: internet access. Lit while the plugin is kept off the internet; it opens the Internet page
+  // (the settings panel under the bar: a plugin window has no room for a pop-up over the interface).
+  {
+    const host::NetAccess acc = host::netAccess(w.type);
+    const bool blocked = acc == host::NetAccess::Blocked;
+    R(lay::kBarOffline, p0, p1);
+    const bool clicked = barButton("##offline", B.items[lay::kBarOffline], 0);
+    ui::Hint(blocked ? "Internet access blocked: the plugin cannot connect to the internet. Click for details"
+             : acc == host::NetAccess::AllowedUntilClose ? "Internet access allowed until Gridline closes, then blocked again. Click for details"
+                                                          : "Internet access allowed. Click to block it for this plugin");
+    const bool pageOpen = w.panelPage == 3;
+    boxAt(dl, p0, p1, blocked ? K.btnOn : ImGui::IsItemHovered() ? K.btnHov : K.btn, pageOpen ? K.text : K.edge);
+    const ImU32 ink = blocked ? K.D.paper : acc == host::NetAccess::AllowedUntilClose ? theme::lit(K.D.hot) : K.text;
+    if (B.items[lay::kBarOffline].w >= lay::kBarOfflineWideW) {
+      centredText(dl, fr, 10.5f, p0, p1, ink, "OFFLINE");
+    } else {  // a narrow bar: a globe, struck through while blocked (drawn here: the window has no icon atlas)
+      const ImVec2 c((p0.x + p1.x) * 0.5f, (p0.y + p1.y) * 0.5f);
+      const float r = 6.0f;
+      dl->AddCircle(c, r, ink, 20, 1.3f);
+      dl->AddLine(ImVec2(c.x - r, c.y), ImVec2(c.x + r, c.y), ink, 1.2f);
+      dl->AddEllipse(c, ImVec2(r * 0.45f, r), ink, 0.0f, 16, 1.2f);
+      if (blocked) dl->AddLine(ImVec2(c.x - r - 1, c.y - r - 1), ImVec2(c.x + r + 1, c.y + r + 1), ink, 1.6f);
+    }
+    if (clicked) w.wantPanel = pageOpen ? -1 : 3;
+  }
 
   // J-195: an instrument's channel to a free mixer track (named after it).
   if (t.isChannel() && B.visible[lay::kBarRoute]) {
@@ -220,14 +245,19 @@ void drawBar(pluginbar::Bar& w, host::HostedInstance* hi) {
     dl->AddRectFilled(p0, p1, K.lcd, 3.0f);
     const float fillW = std::clamp(avg, 0.0f, 1.0f) * (p1.x - p0.x);
     dl->AddRectFilled(ImVec2(p0.x, p1.y - 3), ImVec2(p0.x + fillW, p1.y), avg > 0.5f ? K.warn : K.btnOn, 1.0f);
+    const bool stuck = hi->backend()->notResponding();  // (its process is busy: Gridline goes on, the window still closes)
     char line[64];
     const double sr = hi->backend()->sampleRate() > 0 ? hi->backend()->sampleRate() : 48000.0;
-    std::snprintf(line, sizeof line, "CPU %.1f%%  %.1fms", 100.0 * avg, 1000.0 * hi->totalLatency() / sr);
-    centredText(dl, fm, 10.0f, p0, ImVec2(p1.x, p1.y - 2), K.dim, line);
+    if (stuck) std::snprintf(line, sizeof line, "%s", theme::fitText(i18n::tr("Not responding"), p1.x - p0.x - 8));
+    else std::snprintf(line, sizeof line, "CPU %.1f%%  %.1fms", 100.0 * avg, 1000.0 * hi->totalLatency() / sr);
+    centredText(dl, fm, 10.0f, p0, ImVec2(p1.x, p1.y - 2), stuck ? K.warn : K.dim, line);
     ImGui::SetCursorPos(ImVec2(static_cast<float>(B.items[lay::kBarCpu].x), static_cast<float>(B.items[lay::kBarCpu].y)));
     ImGui::Dummy(ImVec2(static_cast<float>(B.items[lay::kBarCpu].w), static_cast<float>(B.items[lay::kBarCpu].h)));
-    char tip[160];
-    std::snprintf(tip, sizeof tip, "Processing load %.1f%% (peak %.0f%%), latency %d samples (compensated)", 100.0 * avg, 100.0 * pk, hi->totalLatency());
+    char tip[200];
+    if (stuck)
+      std::snprintf(tip, sizeof tip, "%s", i18n::tr("The plugin has not answered for a while. Gridline goes on without it; it is stopped if it does not answer soon."));
+    else
+      std::snprintf(tip, sizeof tip, "Processing load %.1f%% (peak %.0f%%), latency %d samples (compensated)", 100.0 * avg, 100.0 * pk, hi->totalLatency());
     ui::Hint(tip);
   }
 
@@ -247,21 +277,23 @@ void drawPanel(pluginbar::Bar& w) {
   const float top = static_cast<float>(w.L.bar.h);
   dl->AddRectFilled(ImVec2(o.x, o.y + top), ImVec2(o.x + static_cast<float>(w.L.w), o.y + top + static_cast<float>(w.L.panel.h)), K.panel);
   ImGui::SetCursorPos(ImVec2(8, top + 6));
-  static const char* const kTabs[] = {"Processing", "Settings", "Parameters"};
+  static const char* const kTabs[] = {"Processing", "Settings", "Parameters", "Internet"};
   static const char* const kHints[] = {"Buffers, rendering mode, sandbox, latency", "MIDI ports, sidechain input, extra outputs, plugin facts",
-                                       "Every parameter: automate, link to a controller, type a value"};
+                                       "Every parameter: automate, link to a controller, type a value",
+                                       "Block this plugin's internet access"};
   int page = w.panelPage;
-  ui::TabStrip("##ptabs", kTabs, 3, &page, kHints);
+  ui::TabStrip("##ptabs", kTabs, 4, &page, kHints);
   if (page != w.panelPage) w.panelPage = page;
-  if (w.target.isChannel()) {
-    ImGui::SameLine(0, 12);
-    if (ui::TextButton("Channel\xE2\x80\xA6", false, 0, "Gridline's channel window: tuning, polyphony, note effects")) w.action = pluginbar::Action::ChannelPanel;
+  if (w.target.isChannel()) {  // its own row under the tabs, right-aligned, clear of the tab line (four tabs fill the strip)
+    const float bw = ui::TextButtonWidth("Channel\xE2\x80\xA6");
+    ImGui::SetCursorPos(ImVec2(static_cast<float>(w.L.w) - 8 - bw, ImGui::GetCursorPosY() + 8));
+    if (ui::TextButton("Channel\xE2\x80\xA6", false, bw, "Gridline's channel window: tuning, polyphony, note effects")) w.action = pluginbar::Action::ChannelPanel;
   }
   const float y = ImGui::GetCursorPosY() + 2;
   ImGui::SetCursorPos(ImVec2(8, y));
   const float width = static_cast<float>(w.L.w) - 16;
   ImGui::BeginChild("##page", ImVec2(width, top + static_cast<float>(w.L.panel.h) - y - 6), ImGuiChildFlags_None);
-  hostedui::drawPage(a, w.target, w.panelPage + 1, width - 12);  // tabs: processing, settings, parameters (compact)
+  hostedui::drawPage(a, w.target, w.panelPage + 1, width - 12);  // tabs: processing, settings, parameters (compact), internet
   ImGui::EndChild();
 }
 

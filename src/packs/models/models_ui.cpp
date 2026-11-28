@@ -12,6 +12,22 @@ void drawDrumModel(App& a, const PluginTarget& t, float width);
 bool drawDrumsEditors(App& a, const PluginTarget& t, float width);    // drums_ui.cpp (J-22)
 bool drawStringsEditors(App& a, const PluginTarget& t, float width);  // strings_ui.cpp (J-22)
 bool drawMetalEditors(App& a, const PluginTarget& t, float width);    // metal_ui.cpp (J-22)
+bool loadAdditiveAudio(App& a, const PluginTarget& t, const std::string& path);
+bool loadHarmorAudio(App& a, const PluginTarget& t, const std::string& path);
+namespace metal {
+bool loadGrainScanAudio(App& a, const PluginTarget& t, const std::string& path);
+bool loadSplineScratchAudio(App& a, const PluginTarget& t, const std::string& path);
+}  // namespace metal
+
+bool loadAudioIntoPlugin(App& a, const PluginTarget& t, const std::string& path) {
+  const PluginState* st = t.state(a.doc.song());
+  if (!st) return false;
+  if (st->type == "gl.grainscan") return metal::loadGrainScanAudio(a, t, path);
+  if (st->type == "gl.splinescratch") return metal::loadSplineScratchAudio(a, t, path);
+  if (st->type == "gl.harmor") return loadHarmorAudio(a, t, path);
+  if (st->type == "gl.additive") return loadAdditiveAudio(a, t, path);
+  return false;
+}
 
 bool drawEditor(App& a, const PluginTarget& t, float width) {
   const PluginState* st = t.state(a.doc.song());

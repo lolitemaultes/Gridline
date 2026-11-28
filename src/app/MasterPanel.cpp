@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include "PluginIcons.h"
 #include "../../third_party/imgui/imgui_internal.h"
 #include "../core/Mastering.h"
 #include "../core/PluginInfo.h"
@@ -213,7 +214,13 @@ void drawMasterChainBody(App& a, const BodyFrame&) {
     dl->AddRectFilled(p, ImVec2(p.x + w, p.y + 24), hov ? P.surface700 : P.field, theme::kRadiusSm);
     ui::Led(dl, ImVec2(p.x + 10, p.y + 12), 4.0f, es.enabled);
     const float eyeW = info ? 22.0f : 0.0f;  // Q-6: show / hide toggle at the right end
-    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(p.x + 20, p.y + 5), w - 24 - eyeW, es.enabled ? P.text : P.textFaint,
+    // K-450: the effect's own icon before its name.
+    float tx = p.x + 20;
+    if (info && ui::drawPluginIcon(dl, info->type, ImVec2(p.x + 27, p.y + 12), 14, ui::PluginIconSurface::MixerSlot, es.enabled ? 1.0f : 0.4f))
+      tx = p.x + 42;
+    else if (info)
+      ui::notePluginIconFallback(info->type, ui::PluginIconSurface::MixerSlot);
+    theme::textEllipsis(dl, a.fontRegular, theme::kFontCaption, ImVec2(tx, p.y + 5), w - (tx - p.x) - 4 - eyeW, es.enabled ? P.text : P.textFaint,
                         info ? info->name.c_str() : es.plugin.type.c_str());
     ImGui::InvisibleButton("##slot", ImVec2(w - eyeW, 24));
     if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {

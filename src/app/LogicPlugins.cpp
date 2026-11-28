@@ -1,5 +1,6 @@
 // Gridline - K-112b: plugin windows in the Tracks layout (see LogicPlugins.h).
 #include "LogicPlugins.h"
+#include "PluginIcons.h"
 #include "ExportUi.h"
 #include "Keys.h"
 #include "../packs/PacksUi.h"
@@ -768,8 +769,8 @@ void drawMoreFx(App& a) {
       gMoreFx.erase(gMoreFx.begin() + static_cast<long>(i));
       continue;
     }
-    const std::string title = mixerTrackName(s, static_cast<size_t>(std::max(0, s.mixerIndex(m->id)))) + "###fxmore" + std::to_string(m->id) + "_" +
-                              std::to_string(f.second);
+    const std::string title = ui::pluginWindowTitle(info->type, mixerTrackName(s, static_cast<size_t>(std::max(0, s.mixerIndex(m->id))))) + "###fxmore" +
+                              std::to_string(m->id) + "_" + std::to_string(f.second);
     float width = info->editorWidth > 0 ? info->editorWidth : (info->type == "gl.eq" ? 780.0f : 600.0f);
     if (info->editorMinWidth > 0) {  // R02-09: fitted to the main window as the effect window fits it
       const ImVec2 area = ui::EditorArea();
@@ -796,6 +797,7 @@ void drawMoreFx(App& a) {
       const layoutui::BaseBorderScope border;
       vis = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoFocusOnAppearing | fitFlags);
     }
+    ui::drawPluginWindowTitleIcon(info->type);  // K-450
     if (vis) {
       ui::KeepWindowInViewport();  // K-297: between the control bar and the window's bottom, as the effect window
       BodyFrame bf{width, zoomable, ""};

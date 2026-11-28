@@ -9,6 +9,7 @@
 #include <vector>
 #include "../../core/PluginInfo.h"
 #include "../../engine/Dsp.h"
+#include "../../engine/EffectRest.h"
 #include "../../engine/Generators.h"
 #include "synths.h"
 
@@ -208,7 +209,7 @@ class FxRack {
     sr_ = sr;
     drive_ = prm(s, base + FxDrive);
     bool cho = prmb(s, base + FxChoOn), dly = prmb(s, base + FxDlyOn), rev = prmb(s, base + FxRevOn);
-    if (cho && !choOn_) clear(chorus_);
+    if (cho && !choOn_) clear(chorus_), choZeros_ = kChorusLen;
     if (dly && !dlyOn_) clear(delay_);
     if (rev && !revOn_) clearReverb();
     choOn_ = cho, dlyOn_ = dly, revOn_ = rev;
@@ -232,6 +233,8 @@ class FxRack {
   }
 
   bool tailActive() const { return choOn_ || dlyOn_ || revOn_; }
+  // K-142e: O(1) deep-sleep catch-up once the chorus ring is zeroed and no delay is running.
+  bool canDeferRest() const { return !dlyOn_ && (!choOn_ || choZeros_ >= kChorusLen); }
 
   // K-142: n frames of silence went by while the instrument rested (Generator::rested): what
   // process() would have done with them. The chorus and the delay run as they would (their
@@ -239,18 +242,19 @@ class FxRack {
   // rooms (silent by then: the instrument rests only after its tail) are left as they are.
   void rested(int n) {
     if (choOn_) {  // K-142 (0.7.8 close): the silence written in runs, not a frame at a time
-      for (int left = std::min(n, kChorusLen); left > 0;) {
-        const int k = std::min(left, kChorusLen - choW_);
-        for (auto& ring : chorus_) std::fill(ring.begin() + choW_, ring.begin() + choW_ + k, 0.f);
-        choW_ = (choW_ + k) & (kChorusLen - 1);
-        left -= k;
+      if (choZeros_ < kChorusLen) {
+        for (int left = std::min(n, kChorusLen); left > 0;) {
+          const int k = std::min(left, kChorusLen - choW_);
+          for (auto& ring : chorus_) std::fill(ring.begin() + choW_, ring.begin() + choW_ + k, 0.f);
+          choW_ = (choW_ + k) & (kChorusLen - 1);
+          left -= k;
+        }
+        if (n > kChorusLen) choW_ = (choW_ + (n - kChorusLen)) & (kChorusLen - 1);
+        choZeros_ = std::min(kChorusLen, choZeros_ + n);
+      } else {
+        choW_ = (choW_ + n) & (kChorusLen - 1);
       }
-      if (n > kChorusLen) choW_ = (choW_ + (n - kChorusLen)) & (kChorusLen - 1);
-      const double inc = choRate_ / sr_;
-      for (int i = 0; i < n; ++i) {
-        choPh_ += inc;
-        if (choPh_ >= 1) choPh_ -= 1;
-      }
+      choRestPh_.advance(choPh_, choRate_ / sr_, n);
     }
     if (dlyOn_) {
       for (int i = 0; i < n; ++i) {
@@ -271,6 +275,18 @@ class FxRack {
       }
   }
 
+  void restedLong(int64_t n) {
+    if (choOn_) {
+      choW_ = static_cast<int>((static_cast<int64_t>(choW_) + n) & (kChorusLen - 1));
+      choRestPh_.advance(choPh_, choRate_ / sr_, n);
+    }
+    if (revOn_)
+      for (int c = 0; c < 2; ++c) {
+        for (auto& k : comb_[c]) k.pos = k.len > 0 ? static_cast<int>((static_cast<int64_t>(k.pos >= k.len ? 0 : k.pos) + n) % k.len) : 0;
+        for (auto& k : ap_[c]) k.pos = k.len > 0 ? static_cast<int>((static_cast<int64_t>(k.pos >= k.len ? 0 : k.pos) + n) % k.len) : 0;
+      }
+  }
+
   void process(float* L, float* R, int n) {
     if (drive_ > 0.001f) {
       double g = 1.0 + drive_ * 12.0, makeup = 1.0 / softClip(g * 0.5) * 0.5;
@@ -280,6 +296,8 @@ class FxRack {
       }
     }
     if (choOn_) {
+      choRestPh_.flush(choPh_);
+      choZeros_ = 0;
       double inc = choRate_ / sr_, baseD = 0.007 * sr_, depth = (0.0005 + 0.0045 * choDepth_) * sr_;
       for (int i = 0; i < n; ++i) {
         chorus_[0][static_cast<size_t>(choW_)] = L[i];
@@ -381,8 +399,9 @@ class FxRack {
   float drive_ = 0;
   bool choOn_ = false, dlyOn_ = false, revOn_ = false;
   std::vector<float> chorus_[2], delay_[2];
-  int choW_ = 0, dlyW_ = 0;
+  int choW_ = 0, dlyW_ = 0, choZeros_ = kChorusLen;
   double choPh_ = 0, choRate_ = 0.6, choDepth_ = 0.5, choMix_ = 0.5;
+  RestPhase choRestPh_;
   double dlyTime_ = 1000, dlyTarget_ = 1000, dlyFb_ = 0.4, dlyMix_ = 0.25, dlpL_ = 0, dlpR_ = 0;
   Comb comb_[2][8];
   Allpass ap_[2][4];
