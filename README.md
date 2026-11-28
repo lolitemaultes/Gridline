@@ -37,10 +37,6 @@
 
 <br>
 
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=DCNx7LjV0Pc"><img src="docs/images/showcase.jpg" alt="See Gridline in action: play the showcase video on YouTube" width="100%"></a>
-</p>
-
 ## Highlights
 
 <table>
